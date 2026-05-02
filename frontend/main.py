@@ -197,6 +197,7 @@ async def login_page(request: _StarletteRequest):
                         "id": result["staff_id"],
                         "full_name": result["full_name"],
                         "role": result["role"],
+                        "department_id": result.get("department_id"),
                     })
                     app.storage.tab["session_alive"] = True
                     if result["role"] == "chuyen_vien":
@@ -255,7 +256,11 @@ async def dashboard_page():
                 asyncio.to_thread(api.get, "/api/departments/"),
                 asyncio.to_thread(api.get, "/api/bundles/groups"),
             )
-        except Exception:
+        except Exception as e:
+            if isinstance(e, api.SessionExpiredError):
+                ui.notify(str(e), type="warning")
+                ui.navigate.to("/login")
+                return
             staff_list, depts, groups = [], [], []
 
         loading_row.set_visibility(False)
@@ -1423,7 +1428,7 @@ async def bundles_page():
                     list_year_sel  = ui.select(_year_opts,      label="Năm",            value=None).classes("w-36")
                     list_month_sel = ui.select(_month_opts,     label="Tháng",          value=None).classes("w-36")
                     ui.button("Lọc", icon="filter_list",
-                              on_click=lambda: load_groups()
+                              on_click=load_groups
                               ).classes("bg-red-700 text-white")
 
                 bundles_loading = ui.row().classes("w-full justify-center items-center py-6 hidden")
@@ -1553,9 +1558,9 @@ async def bundles_page():
                                                   on_click=lambda g_id=gid, d=bundle_lbl: _delete_group(g_id, d)
                                                   ).classes("bg-red-600 text-white text-xs px-3 py-1")
 
-                list_dept_sel.on("update:model-value",  lambda: load_groups())
-                list_year_sel.on("update:model-value",  lambda: load_groups())
-                list_month_sel.on("update:model-value", lambda: load_groups())
+                list_dept_sel.on("update:model-value",  load_groups)
+                list_year_sel.on("update:model-value",  load_groups)
+                list_month_sel.on("update:model-value", load_groups)
                 await load_groups()
 
             # ── Tab 2: Tạo bìa ───────────────────────────────────────────────
@@ -1566,7 +1571,11 @@ async def bundles_page():
                         asyncio.to_thread(api.get, "/api/staff/"),
                     )
                     depts = [d for d in depts if d.get("is_source")]
-                except Exception:
+                except Exception as e:
+                    if isinstance(e, api.SessionExpiredError):
+                        ui.notify(str(e), type="warning")
+                        ui.navigate.to("/login")
+                        return
                     depts, staff_list = [], []
 
                 dept_opts2  = {d["id"]: d["name"] for d in depts}
@@ -1582,10 +1591,10 @@ async def bundles_page():
                     ui.icon("check_circle", color="green").classes("text-6xl")
                     ui.label("Tạo bìa thành công!").classes("text-xl font-bold text-green-700")
                     success_detail = ui.label("").classes("text-gray-600 text-sm")
-                    def _ok_and_go():
+                    async def _ok_and_go():
                         success_dialog.close()
-                        load_groups()
                         tabs.set_value(t_list)
+                        await load_groups()
                     ui.button("OK", on_click=_ok_and_go).classes("bg-red-700 text-white px-10 mt-2")
 
                 with ui.row().classes("w-full gap-4 items-start"):

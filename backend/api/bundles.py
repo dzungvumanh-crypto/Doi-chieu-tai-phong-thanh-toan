@@ -1,5 +1,6 @@
 """Bundle management endpoints"""
 import json
+from urllib.parse import quote
 from datetime import date as date_type
 from typing import List, Optional, Tuple
 from collections import defaultdict
@@ -9,7 +10,7 @@ from sqlalchemy.orm import Session, joinedload
 from backend.database import get_db
 from backend.models import (
     Bundle, BundleGroup, BundleItem, DocumentEntry,
-    Department, Handover, KSNBStaff, SourceUser
+    Department, Handover, KSNBStaff, SourceUser, _vn_now
 )
 from backend.schemas import (
     BundleGroupOut, BundleUpdateRequest, BundleGenerateRequest,
@@ -96,6 +97,16 @@ def _get_bundle_label(bundle: Bundle, group_bundles) -> Tuple[int, int]:
     return 1, 1
 
 router = APIRouter(prefix="/api/bundles", tags=["Bundles"])
+
+
+def _download_headers(filename: str) -> dict:
+    fallback = "".join(ch if ord(ch) < 128 and ch not in '\\"' else "_" for ch in filename)
+    return {
+        "Content-Disposition": (
+            f"attachment; filename=\"{fallback}\"; "
+            f"filename*=UTF-8''{quote(filename, safe='')}"
+        )
+    }
 
 
 def _load_bundle_group(db: Session, group_id: int) -> BundleGroup:
@@ -314,7 +325,7 @@ def download_cover(
     return Response(
         content=docx_bytes,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
+        headers=_download_headers(filename),
     )
 
 
@@ -359,7 +370,7 @@ def download_all_covers(
     return Response(
         content=docx_bytes,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
+        headers=_download_headers(filename),
     )
 
 
@@ -374,8 +385,7 @@ def mark_bundle_printed(
     if not bundle:
         raise HTTPException(404, "Không tìm thấy tập")
 
-    from datetime import datetime
-    bundle.cover_printed_at = datetime.utcnow()
+    bundle.cover_printed_at = _vn_now()
     bundle.status = "printed"
     db.commit()
     return _load_bundle_group(db, bundle.group_id)
@@ -390,8 +400,7 @@ def mark_group_printed(
     """Đánh dấu tất cả tập trong nhóm là đã in bìa thực tế"""
     group = _load_bundle_group(db, group_id)
 
-    from datetime import datetime
-    now = datetime.utcnow()
+    now = _vn_now()
     for bundle in group.bundles:
         bundle.cover_printed_at = now
         bundle.status = "printed"
@@ -456,7 +465,7 @@ def download_bulk_covers(
     return Response(
         content=docx_bytes,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
+        headers=_download_headers(filename),
     )
 
 
@@ -708,7 +717,7 @@ def handover_archive_excel(
     return Response(
         content=buf.read(),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f"attachment; filename={filename}"},
+        headers=_download_headers(filename),
     )
 
 
