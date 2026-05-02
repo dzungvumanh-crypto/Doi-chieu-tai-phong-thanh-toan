@@ -44,6 +44,7 @@ class BundleResult:
     units: List[EntryUnit] = field(default_factory=list)
     label_seq: int = 1
     label_total: int = 1
+    custodian_name: str = "..."
 
 
 def to_roman(n: int) -> str:

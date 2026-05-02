@@ -109,13 +109,13 @@ def delete_staff(
     current: KSNBStaff = Depends(require_admin)
 ):
     if staff_id == current.id:
-        raise HTTPException(400, "Không thể xóa tài khoản của chính mình")
+        raise HTTPException(400, "Không thể vô hiệu hoá tài khoản của chính mình")
     s = db.query(KSNBStaff).get(staff_id)
     if not s:
         raise HTTPException(404, "Không tìm thấy cán bộ")
-    db.delete(s)
+    s.is_active = False
     db.commit()
-    return {"message": "Đã xóa cán bộ"}
+    return {"message": "Đã vô hiệu hoá tài khoản"}
 
 
 # ─── Leave records ───────────────────────────────────────────────────────────

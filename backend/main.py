@@ -35,14 +35,22 @@ def _ensure_indexes():
         "ALTER TABLE document_entries ADD COLUMN confirmed_by_id INTEGER REFERENCES ksnb_staff(id)",
         "ALTER TABLE document_entries ADD COLUMN confirmed_at DATETIME",
         "ALTER TABLE document_entries ADD COLUMN borrowed_at DATETIME",
+        # Gán phòng KSNB cho staff cũ không có department_id (idempotent)
+        "UPDATE ksnb_staff SET department_id = (SELECT id FROM departments WHERE code = 'KSNB' LIMIT 1) WHERE department_id IS NULL AND role IN ('admin', 'hau_kiem_vien', 'controller', 'viewer')",
     ]
+    import logging as _logging
+    _mig_log = _logging.getLogger(__name__)
     with engine.connect() as conn:
         for s in schema_migrations:
             try:
                 conn.execute(text(s))
                 conn.commit()
-            except Exception:
-                conn.rollback()   # cột đã tồn tại → bỏ qua
+            except Exception as exc:
+                conn.rollback()
+                msg = str(exc).lower()
+                if "duplicate column" not in msg and "already exists" not in msg:
+                    _mig_log.error("Migration failed: %s — %s", s, exc)
+                    raise
 
     stmts = [
         "CREATE INDEX IF NOT EXISTS ix_source_users_dept      ON source_users(department_id)",

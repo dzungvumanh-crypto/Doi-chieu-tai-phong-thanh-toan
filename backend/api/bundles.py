@@ -16,7 +16,7 @@ from backend.schemas import (
     StorageViewRow, StorageViewResponse,
     ArchiveRecord, HandoverArchiveResponse,
 )
-from backend.core.deps import get_current_staff, require_controller
+from backend.core.deps import get_current_staff, require_controller, require_ksnb
 from backend.services.bundle_service import generate_bundles_for_entries, EntryUnit
 from backend.services.cover_service import generate_covers_docx
 
@@ -117,7 +117,7 @@ def list_groups(
     month: Optional[int] = None,
     year: Optional[int] = None,
     db: Session = Depends(get_db),
-    _: KSNBStaff = Depends(get_current_staff)
+    _: KSNBStaff = Depends(require_ksnb)
 ):
     q = db.query(BundleGroup).options(
         joinedload(BundleGroup.department),
@@ -137,7 +137,7 @@ def list_groups(
 def get_group(
     group_id: int,
     db: Session = Depends(get_db),
-    _: KSNBStaff = Depends(get_current_staff)
+    _: KSNBStaff = Depends(require_ksnb)
 ):
     return _load_bundle_group(db, group_id)
 
@@ -165,6 +165,10 @@ def generate_bundles(
 
     if not entries:
         raise HTTPException(400, "Không có chứng từ để gom")
+
+    non_confirmed = [e for e in entries if e.entry_status != "confirmed"]
+    if non_confirmed:
+        raise HTTPException(400, f"{len(non_confirmed)} chứng từ chưa được xác nhận, không thể gom tập")
 
     found_ids = {e.id for e in entries}
     missing_ids = set(entry_ids) - found_ids
@@ -300,10 +304,11 @@ def download_cover(
         units=units,
         label_seq=label_seq,
         label_total=label_total,
+        custodian_name=cust_name,
     )
 
     dept_name = bundle.group.department.name if bundle.group.department else "Phòng"
-    docx_bytes = generate_covers_docx(dept_name, [br], cust_name)
+    docx_bytes = generate_covers_docx(dept_name, [br])
 
     filename = f"bia_tap_{bundle.sequence}.docx"
     return Response(
@@ -317,22 +322,22 @@ def download_cover(
 def download_all_covers(
     group_id: int,
     db: Session = Depends(get_db),
-    _: KSNBStaff = Depends(get_current_staff)
+    _: KSNBStaff = Depends(require_ksnb)
 ):
     """Tải tất cả bìa của 1 nhóm tập trong 1 file .docx"""
     group = _load_bundle_group(db, group_id)
 
     from backend.services.bundle_service import BundleResult
     bundle_results = []
-    custodian_name = "..."
 
     for bundle in sorted(group.bundles, key=lambda b: b.sequence):
+        cust_name = "..."
         if bundle.custodian_staff:
-            custodian_name = bundle.custodian_staff.full_name
+            cust_name = bundle.custodian_staff.full_name
         elif bundle.custodian_id:
             staff = db.query(KSNBStaff).get(bundle.custodian_id)
             if staff:
-                custodian_name = staff.full_name
+                cust_name = staff.full_name
 
         label_seq, label_total = _get_bundle_label(bundle, group.bundles)
 
@@ -343,11 +348,12 @@ def download_all_covers(
             units=_units_from_bundle(bundle),
             label_seq=label_seq,
             label_total=label_total,
+            custodian_name=cust_name,
         )
         bundle_results.append(br)
 
     dept_name = group.department.name if group.department else "Phòng"
-    docx_bytes = generate_covers_docx(dept_name, bundle_results, custodian_name)
+    docx_bytes = generate_covers_docx(dept_name, bundle_results)
 
     filename = f"bia_tat_ca_tap_{group_id}.docx"
     return Response(
@@ -398,7 +404,7 @@ def mark_group_printed(
 def download_bulk_covers(
     department_id: int,
     db: Session = Depends(get_db),
-    _: KSNBStaff = Depends(get_current_staff)
+    _: KSNBStaff = Depends(require_ksnb)
 ):
     """Tải tất cả bìa của 1 phòng (gom tất cả groups) vào 1 file .docx"""
     from backend.services.bundle_service import BundleResult
@@ -418,16 +424,16 @@ def download_bulk_covers(
         raise HTTPException(404, "Không có nhóm tập nào cho phòng này")
 
     all_bundle_results = []
-    custodian_name = "..."
 
     for group in groups:
         for bundle in sorted(group.bundles, key=lambda b: b.sequence):
+            cust_name = "..."
             if bundle.custodian_staff:
-                custodian_name = bundle.custodian_staff.full_name
+                cust_name = bundle.custodian_staff.full_name
             elif bundle.custodian_id:
                 staff = db.query(KSNBStaff).get(bundle.custodian_id)
                 if staff:
-                    custodian_name = staff.full_name
+                    cust_name = staff.full_name
 
             label_seq, label_total = _get_bundle_label(bundle, group.bundles)
 
@@ -438,13 +444,14 @@ def download_bulk_covers(
                 units=_units_from_bundle(bundle),
                 label_seq=label_seq,
                 label_total=label_total,
+                custodian_name=cust_name,
             )
             all_bundle_results.append(br)
 
     if not all_bundle_results:
         raise HTTPException(404, "Không có tập nào để tải bìa")
 
-    docx_bytes = generate_covers_docx(dept.name, all_bundle_results, custodian_name)
+    docx_bytes = generate_covers_docx(dept.name, all_bundle_results)
     filename = f"bia_phong_{department_id}.docx"
     return Response(
         content=docx_bytes,
@@ -613,7 +620,7 @@ def storage_view(
     year: int,
     month: int,
     db: Session = Depends(get_db),
-    _: KSNBStaff = Depends(get_current_staff),
+    _: KSNBStaff = Depends(require_ksnb),
 ):
     """
     Mỗi hàng = 1 "tập lớn":

@@ -8,6 +8,11 @@ from dotenv import load_dotenv
 load_dotenv()
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 
+
+class SessionExpiredError(Exception):
+    """Raised khi backend trả 401 — session đã hết hạn hoặc đã logout."""
+    pass
+
 # Persistent client — tái dùng TCP connection, tránh overhead kết nối mỗi request
 _client = httpx.Client(timeout=httpx.Timeout(10.0))
 _download_client = httpx.Client(timeout=httpx.Timeout(60.0))
@@ -82,13 +87,20 @@ def _parse_error(e: "httpx.HTTPStatusError") -> str:
     return str(detail) or str(e)
 
 
+def _raise_http_error(e: httpx.HTTPStatusError):
+    if e.response.status_code == 401:
+        clear_auth()
+        raise SessionExpiredError("Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.")
+    raise Exception(_parse_error(e))
+
+
 def get(path: str, params: dict = None) -> Any:
     try:
         r = _client.get(f"{BACKEND_URL}{path}", headers=_headers(), params=params)
         r.raise_for_status()
         return r.json()
     except httpx.HTTPStatusError as e:
-        raise Exception(_parse_error(e))
+        _raise_http_error(e)
     except Exception as e:
         raise Exception(str(e))
 
@@ -99,7 +111,7 @@ def post(path: str, data: dict = None) -> Any:
         r.raise_for_status()
         return r.json()
     except httpx.HTTPStatusError as e:
-        raise Exception(_parse_error(e))
+        _raise_http_error(e)
     except Exception as e:
         raise Exception(str(e))
 
@@ -110,7 +122,7 @@ def put(path: str, data: dict = None) -> Any:
         r.raise_for_status()
         return r.json()
     except httpx.HTTPStatusError as e:
-        raise Exception(_parse_error(e))
+        _raise_http_error(e)
     except Exception as e:
         raise Exception(str(e))
 
@@ -124,7 +136,7 @@ def delete(path: str) -> Any:
         except Exception:
             return {}
     except httpx.HTTPStatusError as e:
-        raise Exception(_parse_error(e))
+        _raise_http_error(e)
     except Exception as e:
         raise Exception(str(e))
 
@@ -136,6 +148,9 @@ def download(path: str, params: dict = None) -> bytes:
         r.raise_for_status()
         return r.content
     except httpx.HTTPStatusError as e:
+        if e.response.status_code == 401:
+            clear_auth()
+            raise SessionExpiredError("Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.")
         raise Exception(e.response.text)
     except Exception as e:
         raise Exception(str(e))

@@ -1,5 +1,5 @@
 """SQLAlchemy database setup"""
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from backend.core.config import settings
@@ -12,6 +12,14 @@ engine = create_engine(
     connect_args={"check_same_thread": False},
     echo=False,
 )
+
+
+@event.listens_for(engine, "connect")
+def _set_sqlite_pragma(conn, _):
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA journal_mode=WAL")
+
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 

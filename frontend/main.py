@@ -151,6 +151,16 @@ def _redirect_if_cv():
     return False
 
 
+def _handle_api_error(e: Exception) -> bool:
+    """Xử lý lỗi API. Trả True nếu session hết hạn và đã redirect (caller nên return)."""
+    if isinstance(e, api.SessionExpiredError):
+        ui.notify(str(e), type="warning")
+        ui.navigate.to("/login")
+        return True
+    ui.notify(str(e), type="negative")
+    return False
+
+
 # ─── LOGIN PAGE ──────────────────────────────────────────────────────────────
 from starlette.requests import Request as _StarletteRequest
 
@@ -364,7 +374,7 @@ async def staff_page():
                         ui.notify("Đã cập nhật tài khoản", type="positive")
                         await load_staff()
                     except Exception as e:
-                        ui.notify(str(e), type="negative")
+                        if _handle_api_error(e): return
                 ui.button("Lưu", on_click=do_edit).classes("bg-red-700 text-white")
 
         # ── Add dialog ────────────────────────────────────────────────────────
@@ -400,7 +410,7 @@ async def staff_page():
                         ui.notify("Đã thêm tài khoản", type="positive")
                         await load_staff()
                     except Exception as e:
-                        ui.notify(str(e), type="negative")
+                        if _handle_api_error(e): return
                 ui.button("Lưu", on_click=do_add).classes("bg-red-700 text-white")
 
         # ── Controls ──────────────────────────────────────────────────────────
@@ -505,7 +515,7 @@ async def staff_page():
             try:
                 staff_cache = await asyncio.to_thread(api.get, "/api/staff/", {"active_only": False})
             except Exception as e:
-                ui.notify(str(e), type="negative")
+                _handle_api_error(e)
             finally:
                 staff_loading.classes(add="hidden")
             render_staff_rows()
@@ -566,7 +576,7 @@ async def source_users_page():
                             "is_active": esu_active.value,
                         })
                     except Exception as e:
-                        ui.notify(str(e) or "Lỗi cập nhật", type="negative")
+                        if _handle_api_error(e): return
                         return
                     edit_su_dialog.close()
                     ui.notify("Đã cập nhật cán bộ", type="positive")
@@ -596,7 +606,7 @@ async def source_users_page():
                             "department_id": uf_dept.value,
                         })
                     except Exception as e:
-                        ui.notify(str(e) or "Lỗi thêm cán bộ", type="negative")
+                        if _handle_api_error(e): return
                         return
                     user_dialog.close()
                     ui.notify("Đã thêm cán bộ", type="positive")
@@ -636,7 +646,7 @@ async def source_users_page():
                     params["department_id"] = dept_filter.value
                 users = await asyncio.to_thread(api.get, "/api/source-users/", params)
             except Exception as e:
-                ui.notify(str(e), type="negative")
+                _handle_api_error(e)
                 su_loading.classes(add="hidden")
                 return
             su_loading.classes(add="hidden")
@@ -662,7 +672,7 @@ async def source_users_page():
                             try:
                                 await asyncio.to_thread(api.delete, f"/api/source-users/{uid}")
                             except Exception as e:
-                                ui.notify(str(e) or "Lỗi", type="negative")
+                                if _handle_api_error(e): return
                                 return
                             ui.notify("Đã ẩn cán bộ (dữ liệu lịch sử được giữ nguyên)", type="positive")
                             await load_users()
@@ -919,7 +929,7 @@ async def handovers_page():
                     {"department_id": dept_id, "year": year, "month": month},
                 )
             except Exception as e:
-                ui.notify(str(e), type="negative")
+                _handle_api_error(e)
                 loading_row.classes(add="hidden")
                 return
 
@@ -1199,7 +1209,7 @@ async def new_handover_page():
                     ui.notify("Đã tạo phiếu bàn giao", type="positive")
                     ui.navigate.to("/handovers")
                 except Exception as e:
-                    ui.notify(str(e), type="negative")
+                    if _handle_api_error(e): return
             ui.button("Lưu phiếu", on_click=save_handover).classes("bg-red-700 text-white px-6 py-2 rounded")
 
 
@@ -1219,7 +1229,7 @@ async def handover_detail_page(handover_id: int):
         try:
             h = await asyncio.to_thread(api.get, f"/api/handovers/{handover_id}")
         except Exception as e:
-            ui.notify(str(e), type="negative")
+            if _handle_api_error(e): return
             ui.label("Không tìm thấy phiếu bàn giao").classes("text-red-500")
             return
 
@@ -1429,7 +1439,7 @@ async def bundles_page():
                         ui.download(content, fname)
                         ui.notify("Đang tải bìa...", type="positive")
                     except Exception as e:
-                        ui.notify(str(e), type="negative")
+                        if _handle_api_error(e): return
 
                 async def _mark_group_printed(group_id: int):
                     try:
@@ -1437,7 +1447,7 @@ async def bundles_page():
                         ui.notify("Đã đánh dấu đã in", type="positive")
                         await load_groups()
                     except Exception as e:
-                        ui.notify(str(e), type="negative")
+                        if _handle_api_error(e): return
 
                 confirm_del_dialog = ui.dialog()
                 _del_target = {"id": None, "name": ""}
@@ -1456,7 +1466,7 @@ async def bundles_page():
                                 ui.notify("Đã xóa nhóm bìa", type="positive")
                                 await load_groups()
                             except Exception as e:
-                                ui.notify(str(e), type="negative")
+                                if _handle_api_error(e): return
                         ui.button("Xóa", on_click=_do_delete).classes("bg-red-600 text-white")
 
                 def _delete_group(group_id: int, dept_name: str):
@@ -1478,7 +1488,7 @@ async def bundles_page():
                             params["month"] = list_month_sel.value
                         groups = await asyncio.to_thread(api.get, "/api/bundles/groups", params)
                     except Exception as e:
-                        ui.notify(str(e), type="negative")
+                        _handle_api_error(e)
                         bundles_loading.classes(add="hidden")
                         return
                     bundles_loading.classes(add="hidden")
@@ -1603,7 +1613,7 @@ async def bundles_page():
                                     "month": nb_month.value,
                                 })
                             except Exception as e:
-                                ui.notify(str(e), type="negative")
+                                if _handle_api_error(e): return
                                 return
                             entry_ids = [
                                 e["entry_id"]
@@ -1628,7 +1638,7 @@ async def bundles_page():
                                 # Cập nhật preview bằng grid_data đã có, không gọi API lại
                                 await _refresh_preview(grid_data)
                             except Exception as e:
-                                ui.notify(str(e), type="negative")
+                                if _handle_api_error(e): return
 
                         ui.button("Tạo bìa chứng từ", icon="folder_zip",
                                   on_click=do_generate).classes(
@@ -1689,7 +1699,7 @@ async def bundles_page():
                             "month": month,
                         })
                     except Exception as e:
-                        ui.notify(str(e), type="negative")
+                        _handle_api_error(e)
                         return
                     await _refresh_preview(grid_data)
 
@@ -1810,7 +1820,7 @@ async def storage_page():
                             "month": s_month.value,
                         })
                     except Exception as e:
-                        ui.notify(str(e), type="negative")
+                        _handle_api_error(e)
                         storage_loading.classes(add="hidden")
                         return
                     storage_loading.classes(add="hidden")
@@ -1891,7 +1901,7 @@ async def storage_page():
                             "year": ha_year.value,
                         })
                     except Exception as e:
-                        ui.notify(str(e), type="negative")
+                        _handle_api_error(e)
                         ha_loading.classes(add="hidden")
                         return
                     ha_loading.classes(add="hidden")
@@ -1953,7 +1963,7 @@ async def storage_page():
                         ui.download(content, filename)
                         ui.notify("Đang tải file Excel...", type="positive")
                     except Exception as e:
-                        ui.notify(str(e), type="negative")
+                        _handle_api_error(e)
                     finally:
                         ha_loading.classes(add="hidden")
 
@@ -2040,6 +2050,10 @@ async def user_management_page():
                     cp_msg.set_text("Đổi mật khẩu thành công!")
                     cp_msg.classes("text-green-600")
                 except Exception as e:
+                    if isinstance(e, api.SessionExpiredError):
+                        ui.notify(str(e), type="warning")
+                        ui.navigate.to("/login")
+                        return
                     cp_msg.set_text(str(e))
                     cp_msg.classes("text-red-600")
 
@@ -2098,6 +2112,10 @@ async def user_management_page():
                         ar_msg.set_text(f"Đã đặt lại mật khẩu cho {selected_name}")
                         ar_msg.classes("text-green-600")
                     except Exception as e:
+                        if isinstance(e, api.SessionExpiredError):
+                            ui.notify(str(e), type="warning")
+                            ui.navigate.to("/login")
+                            return
                         ar_msg.set_text(str(e))
                         ar_msg.classes("text-red-600")
 

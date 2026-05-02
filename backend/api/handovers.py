@@ -451,6 +451,10 @@ def create_handover(
     db.flush()
 
     for e in body.entries:
+        su = db.query(SourceUser).get(e.source_user_id)
+        if not su or su.department_id != body.department_id:
+            su_code = su.user_code if su else str(e.source_user_id)
+            raise HTTPException(400, f"Cán bộ {su_code} không thuộc phòng này")
         entry = DocumentEntry(
             handover_id=h.id,
             source_user_id=e.source_user_id,
@@ -481,6 +485,11 @@ def add_entry(
         raise HTTPException(404, "Không tìm thấy phiếu bàn giao")
     if h.status == "confirmed":
         raise HTTPException(400, "Phiếu đã xác nhận, không thể thêm")
+
+    su = db.query(SourceUser).get(body.source_user_id)
+    if not su or su.department_id != h.department_id:
+        su_code = su.user_code if su else str(body.source_user_id)
+        raise HTTPException(400, f"Cán bộ {su_code} không thuộc phòng của phiếu bàn giao này")
 
     entry = DocumentEntry(
         handover_id=handover_id,

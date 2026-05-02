@@ -41,7 +41,7 @@ def _format_date_for_header(dates: List[date]) -> str:
         return f"Ngày {parts}"
 
 
-def _build_context(department_name: str, bundle: BundleResult, custodian_name: str) -> dict:
+def _build_context(department_name: str, bundle: BundleResult) -> dict:
     units_sorted = sorted(bundle.units, key=lambda u: (u.transaction_date, u.is_large, u.user_code))
     left_col = units_sorted[:8]
     right_col = units_sorted[8:16]
@@ -52,7 +52,7 @@ def _build_context(department_name: str, bundle: BundleResult, custodian_name: s
         "date_text": _format_date_for_header(dates),
         "tap_so": bundle_label(bundle.label_seq, bundle.label_total),
         "total_sheets": str(bundle.total_sheets),
-        "custodian": custodian_name,
+        "custodian": bundle.custodian_name,
     }
 
     for n in range(8):
@@ -100,14 +100,13 @@ def _render_to_doc(ctx: dict) -> Document:
 def generate_covers_docx(
     department_name: str,
     bundles: List[BundleResult],
-    custodian_name: str,
 ) -> bytes:
     if not bundles:
         buf = io.BytesIO()
         Document().save(buf)
         return buf.getvalue()
 
-    rendered = [_render_to_doc(_build_context(department_name, b, custodian_name)) for b in bundles]
+    rendered = [_render_to_doc(_build_context(department_name, b)) for b in bundles]
 
     if len(rendered) == 1:
         buf = io.BytesIO()
