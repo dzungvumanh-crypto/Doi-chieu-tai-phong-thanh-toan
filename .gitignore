@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Runtime/application data
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+data/*.db-*
+.nicegui/
+
+# Logs and temporary outputs
+*.log
+tmp_*.txt
+
+# Editor/OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Build/package output
+build/
+dist/
+*.egg-info/
