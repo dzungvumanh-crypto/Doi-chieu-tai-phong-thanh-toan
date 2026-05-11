@@ -127,6 +127,20 @@ def put(path: str, data: dict = None) -> Any:
         raise Exception(str(e))
 
 
+def patch(path: str, data: dict = None) -> Any:
+    try:
+        r = _client.patch(f"{BACKEND_URL}{path}", headers=_headers(), json=data)
+        r.raise_for_status()
+        try:
+            return r.json()
+        except Exception:
+            return {}
+    except httpx.HTTPStatusError as e:
+        _raise_http_error(e)
+    except Exception as e:
+        raise Exception(str(e))
+
+
 def delete(path: str) -> Any:
     try:
         r = _client.delete(f"{BACKEND_URL}{path}", headers=_headers())

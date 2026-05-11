@@ -20,6 +20,7 @@ MENU_ITEMS = [
     ("handovers",    "Bàn giao chứng từ",             "receipt_long"),
     ("bundles",      "Đóng chứng từ",                "folder_zip"),
     ("storage",      "Lưu trữ",                       "inventory_2"),
+    ("leaves",       "Nghỉ phép",                     "event_busy"),
 ]
 
 COLORS = {
@@ -38,9 +39,11 @@ COLORS = {
 
 MENU_ITEMS_CV = [
     ("handovers", "Bàn giao chứng từ", "receipt_long"),
+    ("leaves",    "Nghỉ phép",          "event_busy"),
 ]
 
-def _sidebar(current_page: str):
+def _sidebar(current_page: str) -> dict:
+    badge_refs: dict = {}
     with ui.column().classes("w-56 min-h-screen bg-red-900 text-white fixed left-0 top-0 shadow-xl"):
         # Logo
         with ui.row().classes("w-full items-center px-3 py-3 border-b border-red-700"):
@@ -52,11 +55,14 @@ def _sidebar(current_page: str):
         user_role = user.get("role", "") if user else ""
         if user:
             role_map = {
-                "admin": "Quản trị viên",
+                "giam_doc":      "Giám đốc",
+                "pho_giam_doc":  "Phó Giám đốc",
+                "admin":         "Quản trị viên",
                 "hau_kiem_vien": "Hậu kiểm viên",
-                "controller": "Kiểm soát viên",
-                "viewer": "Xem",
-                "chuyen_vien": "Giao dịch viên",
+                "truong_phong":  "Trưởng phòng",
+                "pho_phong":     "Phó phòng",
+                "controller":    "Phó phòng",  # backward compat JWT cũ
+                "chuyen_vien":   "Chuyên viên",
             }
             clickable = user_role != "chuyen_vien"
             col_cls = "px-4 py-3 border-b border-red-700 w-full"
@@ -82,7 +88,24 @@ def _sidebar(current_page: str):
                     "click", lambda k=key: ui.navigate.to(f"/{k}")
                 ):
                     ui.icon(icon).classes("text-xl mr-3 text-red-100")
-                    ui.label(label).classes("text-sm")
+                    ui.label(label).classes("text-sm flex-1")
+                    if key in ("leaves", "handovers"):
+                        b = ui.label("").classes(
+                            "text-xs font-bold bg-yellow-400 text-red-900 rounded-full "
+                            "min-w-[1.1rem] h-[1.1rem] flex items-center justify-center px-1"
+                        )
+                        b.set_visibility(False)
+                        badge_refs[key] = b
+
+        # Admin / GĐ / PGĐ: Nhật ký hệ thống
+        if user_role in ("admin", "giam_doc", "pho_giam_doc"):
+            is_active = current_page == "logs"
+            bg = "bg-red-700" if is_active else "hover:bg-red-800"
+            with ui.row().classes(f"w-full items-center px-4 py-3 cursor-pointer {bg}").on(
+                "click", lambda: ui.navigate.to("/logs")
+            ):
+                ui.icon("terminal").classes("text-xl mr-3 text-red-100")
+                ui.label("Nhật ký hệ thống").classes("text-sm")
 
         # Đăng xuất
         with ui.row().classes("w-full items-center px-4 py-3 cursor-pointer hover:bg-red-800 border-t border-red-700").on(
@@ -90,6 +113,7 @@ def _sidebar(current_page: str):
         ):
             ui.icon("logout").classes("text-xl mr-3 text-red-300")
             ui.label("Đăng xuất").classes("text-sm")
+    return badge_refs
 
 
 async def _logout():
@@ -130,7 +154,10 @@ def _require_auth():
     client = ui.context.client
 
     async def _tab_check():
-        await client.connected()
+        try:
+            await client.connected()
+        except Exception:
+            return  # Timeout hoặc lỗi kết nối — không logout
         # app.storage.tab internally calls context.client (fails post-await).
         # Access _tabs directly by tab_id — no context lookup needed.
         tab_id = client.tab_id
@@ -239,7 +266,7 @@ async def dashboard_page():
         return
     if _redirect_if_cv():
         return
-    _sidebar("home")
+    badge_refs = _sidebar("home")
     with _content_area():
         _page_header("Trang chủ", "Hệ thống quản lý KSNB&HTVH – Agribank")
 
@@ -249,39 +276,181 @@ async def dashboard_page():
             ui.label("Đang tải...").classes("text-gray-500 ml-3 text-sm")
         content = ui.column().classes("w-full gap-6")
 
-        await ui.context.client.connected()
         try:
-            staff_list, depts, groups = await asyncio.gather(
+            await ui.context.client.connected()
+        except Exception:
+            pass
+
+        async def _empty_list():
+            return []
+
+        async def _empty_dict():
+            return {}
+
+        try:
+            results = await asyncio.gather(
                 asyncio.to_thread(api.get, "/api/staff/"),
                 asyncio.to_thread(api.get, "/api/departments/"),
                 asyncio.to_thread(api.get, "/api/bundles/groups"),
+                asyncio.to_thread(api.get, "/api/dashboard/summary"),
+                asyncio.to_thread(api.get, "/api/dashboard/pending-counts"),
+                return_exceptions=True,
             )
         except Exception as e:
             if isinstance(e, api.SessionExpiredError):
                 ui.notify(str(e), type="warning")
                 ui.navigate.to("/login")
                 return
-            staff_list, depts, groups = [], [], []
+            results = [[], [], [], {}, {}]
+
+        staff_list, depts, groups, summary, pending = results
+        for r in results:
+            if isinstance(r, api.SessionExpiredError):
+                ui.notify(str(r), type="warning")
+                ui.navigate.to("/login")
+                return
+        staff_list = staff_list if isinstance(staff_list, list) else []
+        depts      = depts      if isinstance(depts, list)      else []
+        groups     = groups     if isinstance(groups, list)     else []
+        summary    = summary    if isinstance(summary, dict)    else {}
+        pending    = pending    if isinstance(pending, dict)    else {}
 
         loading_row.set_visibility(False)
 
+        # ── Cập nhật badge sidebar ────────────────────────────────────────────
+        for _bkey in ("leaves", "handovers"):
+            _cnt = pending.get(_bkey, 0)
+            if _bkey in badge_refs and isinstance(_cnt, int) and _cnt > 0:
+                badge_refs[_bkey].set_text(str(_cnt))
+                badge_refs[_bkey].set_visibility(True)
+
+        # ── Tỷ lệ đúng hạn ────────────────────────────────────────────────────
+        overall   = summary.get("overall", {})
+        rate_val  = overall.get("rate")     # None nếu chưa có dữ liệu
+        period    = summary.get("period", "")
+        on_time   = overall.get("on_time", 0)
+        late_cnt  = overall.get("late", 0)
+        total_doc = overall.get("total", 0)
+
+        if rate_val is None:
+            rate_str  = "—"
+            rate_icon = "help_outline"
+            rate_clr  = "bg-gray-50 border-gray-200"
+            rate_txt_clr = "text-gray-500"
+        elif rate_val >= 90:
+            rate_str  = f"{rate_val:.1f}%"
+            rate_icon = "check_circle"
+            rate_clr  = "bg-green-50 border-green-200"
+            rate_txt_clr = "text-green-700"
+        elif rate_val >= 70:
+            rate_str  = f"{rate_val:.1f}%"
+            rate_icon = "warning"
+            rate_clr  = "bg-yellow-50 border-yellow-200"
+            rate_txt_clr = "text-yellow-700"
+        else:
+            rate_str  = f"{rate_val:.1f}%"
+            rate_icon = "error"
+            rate_clr  = "bg-red-50 border-red-200"
+            rate_txt_clr = "text-red-700"
+
         stats = [
-            ("Cán bộ KSNB", len(staff_list), "people", "bg-red-50 border-red-200"),
-            ("Phòng nghiệp vụ", len([d for d in depts if d.get("is_source")]), "business", "bg-green-50 border-green-200"),
-            ("Nhóm tập",    len(groups), "folder_zip", "bg-purple-50 border-purple-200"),
-            ("Tập đã in",   sum(len(g.get("bundles", [])) for g in groups), "print", "bg-orange-50 border-orange-200"),
+            ("Cán bộ KSNB",    len(staff_list),                                      "people",     "bg-red-50 border-red-200"),
+            ("Phòng nghiệp vụ", len([d for d in depts if d.get("is_source")]),        "business",   "bg-blue-50 border-blue-200"),
+            ("Nhóm tập",        len(groups),                                           "folder_zip", "bg-purple-50 border-purple-200"),
+            ("Tập đã in",       sum(len(g.get("bundles", [])) for g in groups),        "print",      "bg-orange-50 border-orange-200"),
         ]
 
         with content:
-            with ui.row().classes("w-full gap-4 mb-6"):
-                for label, value, icon, colors in stats:
-                    with ui.card().classes(f"flex-1 p-4 rounded-xl border {colors} shadow-sm"):
+            # ── Thẻ thống kê + đúng hạn ──────────────────────────────────────
+            with ui.row().classes("w-full gap-4 mb-2 flex-wrap"):
+                for lbl, val, icon, colors in stats:
+                    with ui.card().classes(f"flex-1 min-w-[120px] p-4 rounded-xl border {colors} shadow-sm"):
                         with ui.row().classes("items-center gap-3"):
                             ui.icon(icon).classes("text-3xl text-gray-500")
                             with ui.column().classes("gap-0"):
-                                ui.label(str(value)).classes("text-3xl font-bold text-gray-800")
-                                ui.label(label).classes("text-sm text-gray-500")
+                                ui.label(str(val)).classes("text-3xl font-bold text-gray-800")
+                                ui.label(lbl).classes("text-sm text-gray-500")
 
+                # Thẻ đúng hạn
+                period_vn = ""
+                if period:
+                    try:
+                        y, m = period.split("-")
+                        period_vn = f"Tháng {int(m):02d}/{y}"
+                    except Exception:
+                        period_vn = period
+                with ui.card().classes(f"flex-1 min-w-[160px] p-4 rounded-xl border {rate_clr} shadow-sm"):
+                    with ui.row().classes("items-center gap-3"):
+                        ui.icon(rate_icon).classes(f"text-3xl {rate_txt_clr}")
+                        with ui.column().classes("gap-0"):
+                            ui.label(rate_str).classes(f"text-3xl font-bold {rate_txt_clr}")
+                            ui.label("Đúng hạn").classes("text-sm text-gray-500")
+                            if period_vn:
+                                ui.label(period_vn).classes("text-xs text-gray-400")
+
+            # ── Việc đang chờ tôi ─────────────────────────────────────────────
+            pend_leaves    = pending.get("leaves",    0)
+            pend_handovers = pending.get("handovers", 0)
+            if pend_leaves or pend_handovers:
+                with ui.card().classes("w-full p-4 rounded-xl shadow-sm bg-white border border-yellow-100"):
+                    ui.label("Việc đang chờ tôi").classes("font-semibold text-red-900 mb-3")
+                    if pend_handovers:
+                        with ui.row().classes(
+                            "w-full items-center gap-3 p-3 bg-orange-50 rounded-lg border border-orange-200 "
+                            "cursor-pointer hover:bg-orange-100 mb-2"
+                        ).on("click", lambda: ui.navigate.to("/handovers")):
+                            ui.icon("receipt_long").classes("text-2xl text-orange-600")
+                            with ui.column().classes("flex-1 gap-0"):
+                                ui.label(f"{pend_handovers} chứng từ chờ xác nhận").classes("text-sm font-semibold text-orange-800")
+                                ui.label("Nhấn để đến Bàn giao chứng từ").classes("text-xs text-orange-500")
+                            ui.icon("chevron_right").classes("text-orange-400")
+                    if pend_leaves:
+                        with ui.row().classes(
+                            "w-full items-center gap-3 p-3 bg-blue-50 rounded-lg border border-blue-200 "
+                            "cursor-pointer hover:bg-blue-100"
+                        ).on("click", lambda: ui.navigate.to("/leaves")):
+                            ui.icon("event_busy").classes("text-2xl text-blue-600")
+                            with ui.column().classes("flex-1 gap-0"):
+                                ui.label(f"{pend_leaves} đơn nghỉ phép chờ duyệt").classes("text-sm font-semibold text-blue-800")
+                                ui.label("Nhấn để đến Nghỉ phép").classes("text-xs text-blue-500")
+                            ui.icon("chevron_right").classes("text-blue-400")
+
+            # ── Tỷ lệ nộp đúng hạn theo phòng ───────────────────────────────
+            by_dept = summary.get("by_dept", [])
+            with ui.card().classes("w-full p-4 rounded-xl shadow-sm bg-white"):
+                with ui.row().classes("w-full justify-between items-center mb-1"):
+                    title_txt = f"Tỷ lệ nộp chứng từ đúng hạn — {period_vn}" if period_vn else "Tỷ lệ nộp chứng từ đúng hạn"
+                    ui.label(title_txt).classes("font-semibold text-red-900")
+                    if total_doc:
+                        ui.label(f"Tổng {total_doc} chứng từ · {on_time} đúng hạn · {late_cnt} muộn").classes("text-xs text-gray-500")
+                ui.label("Đúng hạn = nộp trong 1 ngày làm việc sau ngày giao dịch (bỏ T7/CN, ngày lễ, ngày nghỉ phép của người nhận)").classes(
+                    "text-xs text-gray-400 italic mb-3")
+
+                if not by_dept:
+                    ui.label("Chưa có dữ liệu bàn giao trong tháng này.").classes("text-gray-400 text-sm mt-1")
+                else:
+                    with ui.row().classes("w-full px-3 py-2 bg-red-50 text-xs font-semibold text-red-700 border-b border-red-100"):
+                        ui.label("Phòng").classes("flex-1")
+                        ui.label("Đúng hạn").classes("w-20 text-center")
+                        ui.label("Muộn").classes("w-16 text-center")
+                        ui.label("Tỷ lệ").classes("w-20 text-center")
+                    for row in by_dept:
+                        r = row.get("rate")
+                        if r is None:
+                            r_str, r_cls = "—", "bg-gray-100 text-gray-500"
+                        elif r >= 90:
+                            r_str, r_cls = f"{r:.1f}%", "bg-green-100 text-green-700"
+                        elif r >= 70:
+                            r_str, r_cls = f"{r:.1f}%", "bg-yellow-100 text-yellow-700"
+                        else:
+                            r_str, r_cls = f"{r:.1f}%", "bg-red-100 text-red-700"
+                        with ui.row().classes("w-full px-3 py-2 border-b border-gray-100 items-center"):
+                            ui.label(row.get("dept_name", "")).classes("flex-1 text-sm")
+                            ui.label(str(row.get("on_time", 0))).classes("w-20 text-center text-sm text-green-700 font-medium")
+                            ui.label(str(row.get("late", 0))).classes("w-16 text-center text-sm text-red-600")
+                            ui.label(r_str).classes(f"w-20 text-center text-xs font-semibold px-2 py-0.5 rounded {r_cls}")
+
+            # ── Các tập chứng từ gần đây ──────────────────────────────────────
             with ui.card().classes("w-full p-4 rounded-xl shadow-sm bg-white"):
                 with ui.row().classes("w-full justify-between items-center mb-3"):
                     ui.label("Các tập chứng từ gần đây").classes("font-semibold text-red-900")
@@ -331,7 +500,7 @@ async def staff_page():
     dept_id_to_name = {d["id"]: d["name"] for d in all_depts}
     all_dept_opts   = {d["id"]: d["name"] for d in all_depts}
 
-    _sidebar("staff")
+    _ = _sidebar("staff")
     with _content_area():
         _page_header("Quản lý User", "Quản lý tài khoản đăng nhập hệ thống")
 
@@ -339,13 +508,16 @@ async def staff_page():
         is_admin = current_user and current_user.get("role") == "admin"
 
         ROLE_OPTS = {
-            "admin":         "Quản trị viên",
+            "chuyen_vien":   "Chuyên viên",
+            "pho_phong":     "Phó phòng",
+            "truong_phong":  "Trưởng phòng",
             "hau_kiem_vien": "Hậu kiểm viên",
-            "controller":    "Kiểm soát viên",
-            "chuyen_vien":   "Giao dịch viên",
+            "giam_doc":      "Giám đốc",
+            "pho_giam_doc":  "Phó Giám đốc",
+            "admin":         "Quản trị viên",
         }
-        # viewer kept in display map for existing accounts, but removed from creation
-        role_map = {**ROLE_OPTS, "viewer": "Người xem"}
+        # controller kept in display map cho JWT session cũ chưa expire
+        role_map = {**ROLE_OPTS, "controller": "Phó phòng"}
 
         staff_cache = []
         edit_target = {"id": None}
@@ -387,7 +559,7 @@ async def staff_page():
         with add_dialog, ui.card().classes("w-96 p-6"):
             ui.label("Thêm tài khoản").classes("text-lg font-bold mb-4")
             f_name     = ui.input("Họ tên *").classes("w-full")
-            f_role     = ui.select(ROLE_OPTS, label="Quyền *", value="controller").classes("w-full mt-2")
+            f_role     = ui.select(ROLE_OPTS, label="Quyền *", value="chuyen_vien").classes("w-full mt-2")
             f_dept     = ui.select(all_dept_opts, label="Phòng *").classes("w-full mt-2")
             f_username = ui.input("Username *").classes("w-full mt-2")
             f_password = ui.input("Mật khẩu *", password=True).classes("w-full mt-2")
@@ -454,8 +626,10 @@ async def staff_page():
                     or q in s.get("employee_code", "").lower())
                 and (sel_dept == 0 or s.get("department_id") == sel_dept)
             ]
-            ksnb_list = [s for s in filtered if s.get("role") != "chuyen_vien"]
-            gdv_list  = [s for s in filtered if s.get("role") == "chuyen_vien"]
+            # Phân loại: Ban GĐ / tất cả phòng còn lại
+            _BGD_ROLES = {"giam_doc", "pho_giam_doc"}
+            bgd_list  = [s for s in filtered if s.get("role") in _BGD_ROLES]
+            dept_list = [s for s in filtered if s.get("role") not in _BGD_ROLES]
 
             with rows_container:
                 # Header
@@ -469,12 +643,7 @@ async def staff_page():
                         ui.label("Thao tác").classes("w-16 text-center")
 
                 def _row(s: dict):
-                    if s.get("department_id"):
-                        dname = dept_id_to_name.get(s["department_id"], "—")
-                    elif s.get("role") != "chuyen_vien":
-                        dname = "KSNB&HTVH"
-                    else:
-                        dname = "—"
+                    dname = dept_id_to_name.get(s.get("department_id"), "KSNB&HTVH")
                     with ui.row().classes("w-full px-3 py-2 border-b border-gray-100 items-center hover:bg-gray-50"):
                         ui.label(s["full_name"]).classes("flex-1 text-sm")
                         ui.label(role_map.get(s["role"], s["role"])).classes("w-28 text-center text-sm")
@@ -489,25 +658,25 @@ async def staff_page():
                                 ui.button(icon="edit", on_click=lambda s=s: open_edit(s)).props("flat dense").classes("text-red-600").tooltip("Sửa")
                                 ui.button(icon="delete", on_click=lambda sid=s["id"]: do_deactivate_staff(sid)).props("flat dense").classes("text-red-500").tooltip("Xóa")
 
-                # KSNB group
-                if ksnb_list:
+                # Nhóm Ban Giám đốc
+                if bgd_list:
                     with ui.row().classes("w-full px-3 py-1 bg-red-50 text-xs text-red-700 font-semibold border-b border-red-100 items-center gap-1"):
-                        ui.icon("people").classes("text-sm")
-                        ui.label("Phòng KSNB&HTVH")
-                    for s in ksnb_list:
+                        ui.icon("star").classes("text-sm")
+                        ui.label("Ban Giám đốc")
+                    for s in bgd_list:
                         _row(s)
 
-                # GDV groups — one section per department
-                if gdv_list:
+                # Nhóm theo phòng — Admin/HKV/TP/PP/CV gộp theo department_id
+                if dept_list:
                     by_dept: dict = {}
-                    for s in gdv_list:
+                    for s in dept_list:
                         by_dept.setdefault(s.get("department_id"), []).append(s)
                     for dept_id, members in sorted(by_dept.items(),
                                                    key=lambda x: dept_id_to_name.get(x[0], "")):
                         dname = dept_id_to_name.get(dept_id, f"Phòng ID {dept_id}")
                         with ui.row().classes("w-full px-3 py-1 bg-blue-50 text-xs text-blue-700 font-semibold border-b border-blue-100 items-center gap-1"):
                             ui.icon("badge").classes("text-sm")
-                            ui.label(f"Giao dịch viên — {dname}")
+                            ui.label(dname)
                         for s in members:
                             _row(s)
 
@@ -543,7 +712,7 @@ async def source_users_page():
         return
     if _redirect_if_cv():
         return
-    _sidebar("source_users")
+    _ = _sidebar("source_users")
     with _content_area():
         _page_header("Danh sách giao dịch viên", "User IPCAS, PaymentHub và Họ tên giao dịch viên các phòng")
 
@@ -742,7 +911,7 @@ async def handovers_page():
     user_role = user_data.get("role", "") if user_data else ""
     is_cv     = user_role == "chuyen_vien"
 
-    _sidebar("handovers")
+    badge_refs = _sidebar("handovers")
 
     # ── Right drawer panel ────────────────────────────────────────────────────
     with ui.right_drawer(value=False).props("width=360 overlay").classes(
@@ -758,9 +927,30 @@ async def handovers_page():
 
         # ── Filter controls ───────────────────────────────────────────────────
         try:
-            all_depts = [d for d in await asyncio.to_thread(api.get, "/api/departments/") if d.get("is_source")]
+            _all_depts_raw, _pending = await asyncio.gather(
+                asyncio.to_thread(api.get, "/api/departments/"),
+                asyncio.to_thread(api.get, "/api/dashboard/pending-counts"),
+                return_exceptions=True,
+            )
         except Exception:
-            all_depts = []
+            _all_depts_raw, _pending = [], {}
+        if not isinstance(_all_depts_raw, list):
+            _all_depts_raw = []
+        if isinstance(_pending, dict):
+            _hcnt = _pending.get("handovers", 0)
+            if "handovers" in badge_refs and _hcnt > 0:
+                badge_refs["handovers"].set_text(str(_hcnt))
+                badge_refs["handovers"].set_visibility(True)
+        all_depts = [d for d in _all_depts_raw if d.get("is_source")]
+
+        # Block Tổng hợp staff from accessing handovers entirely
+        if user_role in ("chuyen_vien", "pho_phong", "truong_phong"):
+            _user_dept_id = user_data.get("department_id") if user_data else None
+            _user_dept = next((d for d in _all_depts_raw if d.get("id") == _user_dept_id), None)
+            if _user_dept and _user_dept.get("code", "").upper() in ("TONGHOP", "TONG_HOP", "TH"):
+                ui.notify("Phòng Tổng hợp không có quyền truy cập bàn giao chứng từ", type="negative", timeout=5000)
+                ui.navigate.to("/")
+                return
 
         dept_opts  = {d["id"]: d["name"] for d in all_depts}
         year_opts  = {y: str(y) for y in range(2023, today.year + 3)}
@@ -771,6 +961,7 @@ async def handovers_page():
         default_dept  = cv_dept_id if (is_cv and cv_dept_id) else (all_depts[0]["id"] if all_depts else None)
         default_year  = today.year
         default_month = today.month
+
 
         with ui.card().classes("w-full shadow-sm rounded-xl bg-white p-4 mb-4"):
             with ui.row().classes("items-end gap-4 flex-wrap"):
@@ -793,6 +984,69 @@ async def handovers_page():
                         f"width:14px;height:14px;border-radius:3px;{bg};border:{border}"
                     )
                     ui.label(label).classes("text-xs text-gray-600")
+
+        async def save_pending():
+            save_btn.props("loading")
+            year  = sel_year.value
+            month = sel_month.value
+            # Collect all modified cells from the DOM (works even without prior blur)
+            changes = await ui.run_javascript("""
+                var r = [];
+                document.querySelectorAll('.hv-inp').forEach(function(inp) {
+                    var orig = parseInt(inp.dataset.orig || '0');
+                    var curr = inp.value === '' ? 0 : (parseInt(inp.value) || 0);
+                    if (curr !== orig) r.push({uid: parseInt(inp.dataset.uid), day: parseInt(inp.dataset.day), count: curr});
+                });
+                return r;
+            """)
+            changes = changes or []
+            errors = []
+            for item in changes:
+                date_str = f"{year}-{month:02d}-{item['day']:02d}"
+                try:
+                    await asyncio.to_thread(
+                        api.put, "/api/handovers/entry-upsert",
+                        {"source_user_id": item["uid"], "date": date_str, "sheet_count": item["count"]},
+                    )
+                except Exception as ex:
+                    if _handle_api_error(ex):
+                        save_btn.props(remove="loading")
+                        return
+                    errors.append(str(ex))
+            save_btn.props(remove="loading")
+            if errors:
+                ui.notify(f"Lỗi khi lưu: {'; '.join(errors[:3])}", type="negative")
+            elif changes:
+                ui.notify(f"Đã lưu {len(changes)} ô", type="positive")
+            else:
+                ui.notify("Không có thay đổi nào", type="info")
+            await load_grid()
+
+        with ui.row().classes("gap-2 mb-2 items-center"):
+            save_btn = ui.button("Lưu", icon="save",
+                on_click=save_pending
+            ).classes("bg-green-700 text-white px-4").tooltip("Lưu tất cả thay đổi")
+
+            async def _export_handovers():
+                try:
+                    import calendar as _cal
+                    y, m = sel_year.value, sel_month.value
+                    last_day = _cal.monthrange(y, m)[1]
+                    from_d = f"{y}-{m:02d}-01"
+                    to_d   = f"{y}-{m:02d}-{last_day:02d}"
+                    params = {"from_date": from_d, "to_date": to_d}
+                    if sel_dept.value:
+                        params["department_id"] = sel_dept.value
+                    content = await asyncio.to_thread(
+                        api.download, "/api/handovers/export",
+                        params=params,
+                    )
+                    ui.download(content, f"chung_tu_{y}_{m:02d}.xlsx")
+                except Exception as e:
+                    _handle_api_error(e)
+
+            ui.button("Xuất Excel", icon="download",
+                      on_click=_export_handovers).classes("bg-blue-700 text-white px-4").tooltip("Tải file Excel")
 
         title_label    = ui.label("").classes("text-lg font-bold text-red-900 mb-3")
         loading_row    = ui.row().classes("w-full justify-center items-center py-10 hidden")
@@ -840,53 +1094,105 @@ async def handovers_page():
                             f"width:8px;height:8px;border-radius:50%;background:{dot_color}"
                         )
                         ui.label(status_label_text).classes("text-xs font-semibold").style(f"color:{dot_color}")
+                    if hist.get("borrow_reason"):
+                        ui.label(f"Lý do mượn: {hist['borrow_reason']}").classes("text-xs text-orange-700 italic")
 
                 # Thao tác
                 with ui.column().classes("w-full px-4 py-3 border-b border-gray-100 gap-2"):
                     ui.label("THAO TÁC").classes("text-xs font-bold text-gray-400 tracking-widest")
                     has_action = False
 
-                    if user_role in ("admin", "hau_kiem_vien", "controller"):
+                    borrow_reason_val = hist.get("borrow_reason")
+
+                    if user_role in ("admin", "hau_kiem_vien", "pho_phong", "truong_phong"):
                         if current_status == "pending_confirm":
                             has_action = True
+                            btn_label = "✓  Xác nhận cho mượn" if borrow_reason_val else "✓  Xác nhận đã nhận"
                             async def _do_confirm(eid=entry_id, uname=user_name):
                                 try:
                                     await asyncio.to_thread(api.post, f"/api/handovers/entries/{eid}/confirm-received", {})
-                                    ui.notify("Đã xác nhận nhận chứng từ", type="positive")
+                                    ui.notify("Đã xác nhận", type="positive")
                                     await open_entry_panel(eid, uname)
                                     await load_grid()
                                 except Exception as ex2:
                                     ui.notify(str(ex2), type="negative")
-                            ui.button("✓  Xác nhận đã nhận", on_click=_do_confirm).classes(
-                                "w-full bg-green-600 text-white rounded-lg text-sm font-semibold"
-                            )
-
-                        if current_status == "borrowed":
-                            has_action = True
-                            async def _do_confirm_return(eid=entry_id, uname=user_name):
-                                try:
-                                    await asyncio.to_thread(api.post, f"/api/handovers/entries/{eid}/confirm-returned", {})
-                                    ui.notify("Đã xác nhận trả chứng từ", type="positive")
-                                    await open_entry_panel(eid, uname)
-                                    await load_grid()
-                                except Exception as ex2:
-                                    ui.notify(str(ex2), type="negative")
-                            ui.button("✓  Xác nhận đã trả", on_click=_do_confirm_return).classes(
-                                "w-full bg-green-600 text-white rounded-lg text-sm font-semibold"
-                            )
+                            with ui.row().classes("w-full gap-2"):
+                                ui.button(btn_label, on_click=_do_confirm).classes(
+                                    "flex-1 bg-green-600 text-white rounded-lg text-sm font-semibold"
+                                )
+                                with ui.dialog() as reject_dialog, ui.card().classes("w-96"):
+                                    ui.label("Từ chối chứng từ").classes("font-bold text-lg mb-2 text-red-700")
+                                    reject_reason_inp = ui.input("Lý do từ chối *").classes("w-full")
+                                    with ui.row().classes("justify-end gap-2 mt-3"):
+                                        ui.button("Huỷ", on_click=reject_dialog.close).props("flat")
+                                        async def _do_reject_submit(eid=entry_id, uname=user_name):
+                                            reason = reject_reason_inp.value.strip()
+                                            if not reason:
+                                                ui.notify("Vui lòng nhập lý do từ chối", type="warning")
+                                                return
+                                            try:
+                                                await asyncio.to_thread(api.post, f"/api/handovers/entries/{eid}/reject", {"reason": reason})
+                                                reject_dialog.close()
+                                                ui.notify("Đã từ chối chứng từ", type="warning")
+                                                right_panel.hide()
+                                                await load_grid()
+                                            except Exception as ex2:
+                                                ui.notify(str(ex2), type="negative")
+                                        ui.button("Từ chối", on_click=_do_reject_submit).classes("bg-red-600 text-white")
+                                ui.button("✗  Từ chối", on_click=reject_dialog.open).classes(
+                                    "flex-1 bg-red-600 text-white rounded-lg text-sm font-semibold"
+                                )
 
                     if is_cv and current_status == "confirmed":
                         has_action = True
-                        async def _do_borrow(eid=entry_id, uname=user_name):
-                            try:
-                                await asyncio.to_thread(api.post, f"/api/handovers/entries/{eid}/borrow", {})
-                                ui.notify("Đã đánh dấu mượn chứng từ", type="warning")
-                                await open_entry_panel(eid, uname)
-                                await load_grid()
-                            except Exception as ex2:
-                                ui.notify(str(ex2), type="negative")
-                        ui.button("↩  Mượn lại", on_click=_do_borrow).classes(
+                        with ui.dialog() as borrow_dialog, ui.card():
+                            ui.label("Mượn lại chứng từ").classes("font-bold text-lg mb-2")
+                            reason_inp = ui.input("Lý do mượn *").classes("w-full")
+                            with ui.row().classes("justify-end gap-2 mt-2"):
+                                ui.button("Huỷ", on_click=borrow_dialog.close).props("flat")
+                                async def _do_borrow_submit(eid=entry_id, uname=user_name):
+                                    reason = reason_inp.value.strip()
+                                    if not reason:
+                                        ui.notify("Vui lòng nhập lý do mượn", type="warning")
+                                        return
+                                    try:
+                                        await asyncio.to_thread(api.post, f"/api/handovers/entries/{eid}/borrow", {"reason": reason})
+                                        borrow_dialog.close()
+                                        ui.notify("Đã gửi yêu cầu mượn", type="warning")
+                                        await open_entry_panel(eid, uname)
+                                        await load_grid()
+                                    except Exception as ex2:
+                                        ui.notify(str(ex2), type="negative")
+                                ui.button("Gửi yêu cầu", on_click=_do_borrow_submit).classes("bg-orange-600 text-white")
+                        ui.button("↩  Mượn lại", on_click=borrow_dialog.open).classes(
                             "w-full bg-orange-500 text-white rounded-lg text-sm font-semibold"
+                        )
+
+                    if is_cv and current_status == "borrowed":
+                        has_action = True
+                        _current_count = hist.get("sheet_count", 1)
+                        with ui.dialog() as handback_dialog, ui.card():
+                            ui.label("Bàn giao lại chứng từ").classes("font-bold text-lg mb-1")
+                            ui.label("Số tờ bàn giao lại sẽ cập nhật số tờ hiện tại.").classes("text-sm text-gray-500 mb-2")
+                            count_inp = ui.number(label="Số tờ bàn giao *", value=_current_count, min=1, precision=0).classes("w-full")
+                            with ui.row().classes("justify-end gap-2 mt-2"):
+                                ui.button("Huỷ", on_click=handback_dialog.close).props("flat")
+                                async def _do_handback_submit(eid=entry_id, uname=user_name):
+                                    count = int(count_inp.value) if count_inp.value else 0
+                                    if count <= 0:
+                                        ui.notify("Vui lòng nhập số tờ hợp lệ", type="warning")
+                                        return
+                                    try:
+                                        await asyncio.to_thread(api.post, f"/api/handovers/entries/{eid}/handback", {"sheet_count": count})
+                                        handback_dialog.close()
+                                        ui.notify("Đã bàn giao lại chứng từ", type="positive")
+                                        right_panel.hide()
+                                        await load_grid()
+                                    except Exception as ex2:
+                                        ui.notify(str(ex2), type="negative")
+                                ui.button("Xác nhận bàn giao", on_click=_do_handback_submit).classes("bg-blue-600 text-white")
+                        ui.button("📋  Bàn giao lại", on_click=handback_dialog.open).classes(
+                            "w-full bg-blue-600 text-white rounded-lg text-sm font-semibold"
                         )
 
                     if not has_action:
@@ -956,156 +1262,123 @@ async def handovers_page():
                 }
 
             import calendar as _cal
+            import html as _html
 
-            NAME_W = "200px"
-            CELL_W = "50px"
+            # ── Build grid as single HTML string (much faster than NiceGUI widgets) ──
+            NW = 200   # name column width px
+            CW = 50    # cell width px
+            _SB = {    # status → (bg, border)
+                "confirmed":       ("#DCFCE7", "2px solid #16A34A"),
+                "pending_confirm": ("#FEF3C7", "2px solid #F59E0B"),
+                "borrowed":        ("#FFEDD5", "2px solid #EA580C"),
+            }
 
-            with grid_container:
-                if not users:
+            if not users:
+                with grid_container:
                     ui.label("Không có cán bộ nào trong phòng này").classes(
                         "text-gray-400 text-center py-8 w-full"
                     )
-                else:
-                    with ui.element("div").style(
-                        "overflow-x:auto; width:100%;"
-                        "border:1px solid #bfdbfe; border-radius:10px;"
-                        "box-shadow:0 2px 10px rgba(30,64,175,.10)"
-                    ):
-                        # ── Header row ────────────────────────────────────────
-                        with ui.row().style(
-                            "gap:0; flex-wrap:nowrap; background:#dbeafe;"
-                            "border-bottom:2px solid #93c5fd"
-                        ):
-                            ui.label("Họ và tên").style(
-                                f"min-width:{NAME_W}; width:{NAME_W}; flex-shrink:0;"
-                                "font-size:14px; font-weight:700; color:#1e40af;"
-                                "padding:10px 14px; border-right:2px solid #93c5fd;"
-                                "position:sticky; left:0; z-index:3; background:#dbeafe;"
-                            )
-                            for d in range(1, days_in_month + 1):
-                                dow     = _cal.weekday(year, month, d)
-                                is_wknd = dow >= 5
-                                hdr_bg  = "#fde68a" if is_wknd else "#dbeafe"
-                                hdr_col = "#92400e"  if is_wknd else "#1e40af"
-                                ui.label(f"{d:02d}").style(
-                                    f"min-width:{CELL_W}; width:{CELL_W}; flex-shrink:0;"
-                                    f"text-align:center; font-size:13px; font-weight:700;"
-                                    f"color:{hdr_col}; padding:10px 2px;"
-                                    f"border-right:1px solid #bfdbfe; background:{hdr_bg}"
-                                )
+            else:
+                p = [
+                    '<div style="overflow-x:auto;width:100%;border:1px solid #bfdbfe;'
+                    'border-radius:10px;box-shadow:0 2px 10px rgba(30,64,175,.10);">'
+                ]
+                # Header row
+                p.append(
+                    '<div style="display:flex;flex-wrap:nowrap;background:#dbeafe;border-bottom:2px solid #93c5fd;">'
+                    f'<div style="min-width:{NW}px;width:{NW}px;flex-shrink:0;font-size:14px;font-weight:700;'
+                    f'color:#1e40af;padding:10px 14px;border-right:2px solid #93c5fd;'
+                    f'position:sticky;left:0;z-index:3;background:#dbeafe;">Họ và tên</div>'
+                )
+                for d in range(1, days_in_month + 1):
+                    dow = _cal.weekday(year, month, d)
+                    hbg = "#fde68a" if dow >= 5 else "#dbeafe"
+                    hcl = "#92400e" if dow >= 5 else "#1e40af"
+                    p.append(
+                        f'<div style="min-width:{CW}px;width:{CW}px;flex-shrink:0;text-align:center;'
+                        f'font-size:13px;font-weight:700;color:{hcl};padding:10px 2px;'
+                        f'border-right:1px solid #bfdbfe;background:{hbg};">{d:02d}</div>'
+                    )
+                p.append('</div>')
 
-                        # ── Data rows ─────────────────────────────────────────
-                        for row_idx, u in enumerate(users):
-                            uid    = u["id"]
-                            name   = u.get("vn_name") or u.get("user_code") or ""
-                            row_bg = "#ffffff" if row_idx % 2 == 0 else "#f0f9ff"
+                # Data rows
+                for row_idx, u in enumerate(users):
+                    uid    = u["id"]
+                    name   = u.get("vn_name") or u.get("user_code") or ""
+                    rbg    = "#ffffff" if row_idx % 2 == 0 else "#f0f9ff"
+                    p.append(
+                        f'<div style="display:flex;flex-wrap:nowrap;border-bottom:1px solid #dbeafe;background:{rbg};">'
+                        f'<div style="min-width:{NW}px;width:{NW}px;flex-shrink:0;font-size:15px;font-weight:500;'
+                        f'padding:7px 14px;border-right:2px solid #dbeafe;white-space:nowrap;overflow:hidden;'
+                        f'display:flex;align-items:center;position:sticky;left:0;z-index:2;background:{rbg};">'
+                        f'{_html.escape(name)}</div>'
+                    )
+                    for d in range(1, days_in_month + 1):
+                        info    = cell_data.get(uid, {}).get(d, {})
+                        val     = info.get("sheet_count", 0)
+                        eid     = info.get("entry_id")
+                        status  = info.get("entry_status", "confirmed")
+                        dow     = _cal.weekday(year, month, d)
+                        if val:
+                            cbg, bdr = _SB.get(status, ("#f3f4f6", "1px solid #d1d5db"))
+                        elif dow >= 5:
+                            cbg, bdr = "#fef9c3", "1px solid #dbeafe"
+                        else:
+                            cbg, bdr = rbg, "1px solid #dbeafe"
+                        eid_attr = f' data-eid="{eid}"' if eid else ""
+                        p.append(
+                            f'<div style="min-width:{CW}px;width:{CW}px;flex-shrink:0;background:{cbg};border-right:{bdr};">'
+                            f'<input class="hv-inp" id="hv_{row_idx}_{d}" data-uid="{uid}" data-day="{d}"'
+                            f' data-orig="{val}" data-uname="{_html.escape(name, quote=True)}"{eid_attr}'
+                            f' value="{val if val else ""}"'
+                            f' style="width:100%;border:none;outline:none;background:transparent;'
+                            f'font-size:15px;font-weight:600;color:#1e3a8a;text-align:center;'
+                            f'padding:7px 0;box-sizing:border-box;" /></div>'
+                        )
+                    p.append('</div>')
+                p.append('</div>')
 
-                            with ui.row().style(
-                                f"gap:0; flex-wrap:nowrap;"
-                                f"border-bottom:1px solid #dbeafe; background:{row_bg}"
-                            ):
-                                ui.label(name).style(
-                                    f"min-width:{NAME_W}; width:{NAME_W}; flex-shrink:0;"
-                                    "font-size:15px; font-weight:500; padding:7px 14px;"
-                                    "border-right:2px solid #dbeafe; white-space:nowrap;"
-                                    "overflow:hidden; display:flex; align-items:center;"
-                                    f"position:sticky; left:0; z-index:2; background:{row_bg};"
-                                )
+                with grid_container:
+                    ui.html("".join(p))
 
-                                for d in range(1, days_in_month + 1):
-                                    info       = cell_data.get(uid, {}).get(d, {})
-                                    val        = info.get("sheet_count", 0)
-                                    entry_id   = info.get("entry_id")
-                                    status     = info.get("entry_status", "confirmed")
-                                    dow        = _cal.weekday(year, month, d)
-                                    is_wknd    = dow >= 5
-
-                                    # Màu nền: status > weekend > row_bg
-                                    status_bg, status_border = _CELL_STATUS_STYLE.get(
-                                        status if val else "confirmed", (None, None)
-                                    )
-                                    if val and status_bg:
-                                        cell_bg     = status_bg.replace("background:", "")
-                                        border_r    = status_border
-                                    elif is_wknd:
-                                        cell_bg  = "#fef9c3"
-                                        border_r = "1px solid #dbeafe"
-                                    else:
-                                        cell_bg  = row_bg
-                                        border_r = "1px solid #dbeafe"
-
-                                    def _make_save(u_id, day):
-                                        date_str = f"{year}-{month:02d}-{day:02d}"
-                                        async def _save(e):
-                                            try:
-                                                raw = e.sender.value
-                                                cnt = int(raw) if raw and str(raw).strip().isdigit() else 0
-                                                await asyncio.to_thread(
-                                                    api.put,
-                                                    "/api/handovers/entry-upsert",
-                                                    {"source_user_id": u_id, "date": date_str, "sheet_count": cnt},
-                                                )
-                                                await load_grid()
-                                            except Exception as ex:
-                                                ui.notify(str(ex), type="negative")
-                                        return _save
-
-                                    inp = ui.input(value=str(val) if val else "").style(
-                                        f"min-width:{CELL_W}; width:{CELL_W}; flex-shrink:0;"
-                                        f"border-right:{border_r}; background:{cell_bg}"
-                                    ).props(
-                                        f"dense borderless id='hv_{row_idx}_{d}' "
-                                        "input-style='font-size:15px; font-weight:600;"
-                                        " color:#1e3a8a; text-align:center; padding:7px 0'"
-                                    ).on("blur", _make_save(uid, d))
-
-                                    # Focus: mở panel khi ô có dữ liệu
-                                    if entry_id:
-                                        inp.on("focus", lambda eid=entry_id, uname=name: asyncio.ensure_future(
-                                            open_entry_panel(eid, uname)
-                                        ))
-
-            # Điều hướng bằng phím mũi tên
-            if users:
-                _n_rows = len(users) - 1
-                _n_cols = days_in_month
                 ui.run_javascript(f"""
-                    window._hv_max_row = {_n_rows};
-                    window._hv_max_col = {_n_cols};
+                    window._hv_max_row = {len(users) - 1};
+                    window._hv_max_col = {days_in_month};
+                    document.querySelectorAll('.hv-inp').forEach(function(inp) {{
+                        inp.addEventListener('focus', function() {{
+                            var eid = inp.dataset.eid;
+                            if (eid) emitEvent('hv_open_panel', {{entry_id: parseInt(eid), user_name: inp.dataset.uname||''}});
+                        }});
+                    }});
                     if (!window._hv_arrow_registered) {{
                         window._hv_arrow_registered = true;
                         document.addEventListener('keydown', function(e) {{
                             if (!['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) return;
                             var a = document.activeElement;
-                            if (!a || a.tagName !== 'INPUT') return;
-                            var w = a.closest('[id^="hv_"]');
-                            if (!w) return;
-                            var p = w.id.split('_');
-                            if (p.length < 3) return;
-                            var row = parseInt(p[1]), col = parseInt(p[2]);
+                            if (!a || !a.classList.contains('hv-inp')) return;
+                            var pts = a.id.split('_');
+                            if (pts.length < 3) return;
+                            var row = parseInt(pts[1]), col = parseInt(pts[2]);
                             var mr = window._hv_max_row, mc = window._hv_max_col;
                             e.preventDefault();
                             var tr = row, tc = col;
                             if (e.key==='ArrowUp') tr=Math.max(0,row-1);
                             else if (e.key==='ArrowDown') tr=Math.min(mr,row+1);
-                            else if (e.key==='ArrowLeft') {{
-                                if (col>1) tc=col-1;
-                                else if (row>0) {{ tr=row-1; tc=mc; }}
-                            }} else if (e.key==='ArrowRight') {{
-                                if (col<mc) tc=col+1;
-                                else if (row<mr) {{ tr=row+1; tc=1; }}
-                            }}
+                            else if (e.key==='ArrowLeft') {{ if(col>1)tc=col-1; else if(row>0){{tr=row-1;tc=mc;}} }}
+                            else if (e.key==='ArrowRight') {{ if(col<mc)tc=col+1; else if(row<mr){{tr=row+1;tc=1;}} }}
                             if (tr!==row||tc!==col) {{
                                 var el=document.getElementById('hv_'+tr+'_'+tc);
-                                var inp=el?el.querySelector('input'):null;
-                                if (inp) {{ inp.focus(); inp.select(); }}
+                                if(el) {{ el.focus(); el.select(); }}
                             }}
                         }});
                     }}
                 """)
 
         # app.storage.tab chỉ khả dụng sau khi WebSocket kết nối
-        await ui.context.client.connected()
+        try:
+            await ui.context.client.connected()
+        except Exception:
+            pass
 
         saved = app.storage.tab
         init_dept  = saved.get("hv_dept",  default_dept)
@@ -1119,6 +1392,10 @@ async def handovers_page():
         sel_year.value  = init_year
         sel_month.value = init_month
 
+        ui.on('hv_open_panel', lambda e: asyncio.ensure_future(
+            open_entry_panel(e.args['entry_id'], e.args.get('user_name', ''))
+        ))
+
         await load_grid()
 
 
@@ -1128,7 +1405,7 @@ async def new_handover_page():
         return
     if _redirect_if_cv():
         return
-    _sidebar("handovers")
+    _ = _sidebar("handovers")
     with _content_area():
         _page_header("Tạo phiếu bàn giao", "Nhập thông tin tiếp nhận chứng từ từ phòng nguồn")
 
@@ -1225,7 +1502,7 @@ async def handover_detail_page(handover_id: int):
         return
     if _redirect_if_cv():
         return
-    _sidebar("handovers")
+    _ = _sidebar("handovers")
     with _content_area():
         with ui.row().classes("w-full items-center gap-3 mb-4"):
             ui.button(icon="arrow_back", on_click=lambda: ui.navigate.to("/handovers")).props("flat").classes("text-red-700")
@@ -1392,7 +1669,7 @@ async def bundles_page():
         return
     if _redirect_if_cv():
         return
-    _sidebar("bundles")
+    _ = _sidebar("bundles")
     with _content_area():
         _page_header("Đóng chứng từ", "Tạo bìa chứng từ và quản lý")
 
@@ -1402,7 +1679,10 @@ async def bundles_page():
         current_user = api.get_current_user()
         is_admin = current_user and current_user.get("role") in ("admin", "hau_kiem_vien")
 
-        await ui.context.client.connected()
+        try:
+            await ui.context.client.connected()
+        except Exception:
+            pass
         with ui.tabs().classes("mb-4") as tabs:
             t_list = ui.tab("Danh sách bìa chứng từ")
             t_new  = ui.tab("Tạo bìa chứng từ")
@@ -1428,7 +1708,7 @@ async def bundles_page():
                     list_year_sel  = ui.select(_year_opts,      label="Năm",            value=None).classes("w-36")
                     list_month_sel = ui.select(_month_opts,     label="Tháng",          value=None).classes("w-36")
                     ui.button("Lọc", icon="filter_list",
-                              on_click=load_groups
+                              on_click=lambda: asyncio.ensure_future(load_groups())
                               ).classes("bg-red-700 text-white")
 
                 bundles_loading = ui.row().classes("w-full justify-center items-center py-6 hidden")
@@ -1708,9 +1988,15 @@ async def bundles_page():
                             "month": month,
                         })
                     except Exception as e:
-                        _handle_api_error(e)
+                        if _handle_api_error(e): return
                         return
                     await _refresh_preview(grid_data)
+
+                nb_dept.on("update:model-value",  load_entries_preview)
+                nb_year.on("update:model-value",  load_entries_preview)
+                nb_month.on("update:model-value", load_entries_preview)
+                if nb_dept.value:
+                    await load_entries_preview()
 
 
 # ─── STORAGE PAGE ─────────────────────────────────────────────────────────────
@@ -1720,7 +2006,7 @@ async def storage_page():
         return
     if _redirect_if_cv():
         return
-    _sidebar("storage")
+    _ = _sidebar("storage")
     with _content_area():
         _page_header("Lưu trữ", "Tra cứu và bàn giao tập chứng từ")
 
@@ -1783,10 +2069,10 @@ async def storage_page():
                     CE = "border:1px solid #000;text-align:center;padding:5px 8px;font-size:13px;color:#bbb"
                     CH = f"{C};background:#dbeafe;font-weight:700"
                     CF = f"{C};background:#dbeafe;font-weight:700"
-                    ED = "outline:none"  # contenteditable style
+                    ED = "outline:none"
 
                     n_total = n_day + n_sh + 1
-                    html = f"""<table style="border-collapse:collapse;width:100%;font-family:Arial,sans-serif">
+                    html = f"""<table id="sv-table" style="border-collapse:collapse;width:100%;font-family:Arial,sans-serif">
 <tr><td colspan="{n_total}" style="{C};font-size:17px;font-weight:700;padding:10px">
   Phòng {dept_name} {period}
 </td></tr>
@@ -1797,16 +2083,20 @@ async def storage_page():
 </tr>
 """
                     for r in rows:
-                        html += "<tr>"
+                        bids = r.get("bundle_ids", [])
+                        # data-bids: JSON array, data-ncols: số cột sheet thực tế
+                        html += f'<tr data-bids=\'{_json.dumps(bids)}\' data-ncols="{len(r["bundle_sheets"])}">'
                         for i in range(n_day):
                             v = str(r["days"][i]) if i < len(r["days"]) else ""
                             s = C if v else CE
                             html += f'<td contenteditable="true" style="{s};{ED}">{v}</td>'
                         for i in range(n_sh):
-                            v = str(r["bundle_sheets"][i]) if i < len(r["bundle_sheets"]) else ""
-                            s = C if v else CE
-                            html += f'<td contenteditable="true" style="{s};{ED}">{v}</td>'
-                        html += f'<td contenteditable="true" style="{C};font-weight:700;{ED}">{r["n_bundles"]}</td>'
+                            bid = bids[i] if i < len(bids) else ""
+                            v   = str(r["bundle_sheets"][i]) if i < len(r["bundle_sheets"]) else ""
+                            s   = C if v else CE
+                            da  = f' data-bid="{bid}"' if bid else ""
+                            html += f'<td contenteditable="true"{da} style="{s};{ED}">{v}</td>'
+                        html += f'<td style="{C};font-weight:700">{r["n_bundles"]}</td>'
                         html += "</tr>\n"
 
                     html += f"""<tr>
@@ -1844,7 +2134,35 @@ async def storage_page():
                             ).classes("text-gray-400 text-center py-8 w-full")
                             return
 
-                        with ui.row().classes("w-full justify-end mb-3"):
+                        async def do_save():
+                            # Đọc giá trị ô "Số chứng từ" từ DOM qua data-bid
+                            result = await ui.run_javascript("""
+                                var rows = [];
+                                document.querySelectorAll('#sv-table tr[data-bids]').forEach(function(tr) {
+                                    var bids = JSON.parse(tr.getAttribute('data-bids'));
+                                    if (!bids.length) return;
+                                    var sheets = [];
+                                    tr.querySelectorAll('td[data-bid]').forEach(function(td) {
+                                        var v = parseInt(td.innerText.trim().replace(/[^0-9]/g,''), 10);
+                                        sheets.push(isNaN(v) ? 0 : v);
+                                    });
+                                    if (sheets.length) rows.push({bundle_ids: bids, bundle_sheets: sheets});
+                                });
+                                return rows;
+                            """)
+                            if not result:
+                                ui.notify("Không có dữ liệu để lưu", type="warning")
+                                return
+                            try:
+                                await asyncio.to_thread(api.patch, "/api/bundles/storage-view",
+                                                        {"rows": result})
+                                ui.notify("Đã lưu thay đổi", type="positive")
+                            except Exception as e:
+                                if _handle_api_error(e): return
+
+                        with ui.row().classes("w-full justify-end gap-2 mb-3"):
+                            ui.button("Lưu thay đổi", icon="save",
+                                      on_click=do_save).classes("bg-red-700 text-white px-4")
                             def do_print():
                                 print_html = f"""<!DOCTYPE html><html><head>
 <meta charset="utf-8">
@@ -1984,7 +2302,7 @@ async def user_management_page():
         return
     if _redirect_if_cv():
         return
-    _sidebar("")
+    _ = _sidebar("")
     with _content_area():
         _page_header("Quản lý người dùng", "Đổi mật khẩu tài khoản")
 
@@ -2130,6 +2448,1054 @@ async def user_management_page():
 
                 with ui.row().classes("w-full justify-end mt-4"):
                     ui.button("Đặt lại mật khẩu", on_click=do_admin_reset).classes("bg-orange-600 text-white")
+
+
+# ─── LEAVES PAGE ─────────────────────────────────────────────────────────────
+_LEAVE_STATUS = {
+    "pending_ksv":      ("Chờ KSV duyệt",  "bg-orange-100 text-orange-700 border-orange-300"),
+    "pending_tong_hop": ("Chờ Tổng hợp",   "bg-yellow-100 text-yellow-700 border-yellow-300"),
+    "pending_gd":       ("Chờ GĐ duyệt",   "bg-blue-100 text-blue-700 border-blue-300"),
+    "approved":         ("Đã duyệt",        "bg-green-100 text-green-700 border-green-300"),
+    "rejected":         ("Từ chối",         "bg-red-100 text-red-700 border-red-300"),
+    "cancelled":        ("Đã hủy",          "bg-gray-100 text-gray-500 border-gray-300"),
+}
+_LEAVE_TYPE = {
+    "annual":   "Nghỉ phép năm",
+    "sick":     "Nghỉ ốm",
+    "personal": "Nghỉ việc riêng",
+    "other":    "Khác",
+}
+# Nhóm hiển thị 3 trạng thái đơn giản trong cột Trạng thái của bảng
+_STATUS_GROUP = {
+    "pending_ksv":      ("Chờ phê duyệt", "bg-orange-100 text-orange-700"),
+    "pending_tong_hop": ("Chờ phê duyệt", "bg-orange-100 text-orange-700"),
+    "pending_gd":       ("Chờ phê duyệt", "bg-orange-100 text-orange-700"),
+    "approved":         ("Hoàn thành",    "bg-green-100 text-green-700"),
+    "rejected":         ("Từ chối",       "bg-red-100 text-red-700"),
+    "cancelled":        ("Đã hủy",        "bg-gray-100 text-gray-500"),
+}
+
+
+def _leave_status_badge(status: str):
+    label, cls = _LEAVE_STATUS.get(status, (status, "bg-gray-100 text-gray-500"))
+    ui.label(label).classes(f"text-xs font-medium px-2 py-0.5 rounded border {cls}")
+
+
+def _fmt_leave_dates(start_str: str, end_str: str) -> str:
+    """1 ngày → DD/MM/YYYY; nhiều ngày → DD/MM – DD/MM/YYYY"""
+    if not start_str or not end_str:
+        return "—"
+    try:
+        from datetime import date as _date
+        s = _date.fromisoformat(start_str[:10])
+        e = _date.fromisoformat(end_str[:10])
+        if s == e:
+            return s.strftime("%d/%m/%Y")
+        return f"{s.strftime('%d/%m')} – {e.strftime('%d/%m/%Y')}"
+    except Exception:
+        return start_str[:10]
+
+
+def _gd_display(leave: dict) -> str:
+    """Thêm (TUQ) nếu PGĐ ký thay GĐ."""
+    name = leave.get("gd_approver_name") or ""
+    if name and leave.get("gd_is_pgd"):
+        return f"{name} (TUQ)"
+    return name
+
+
+@ui.page("/leaves")
+async def leaves_page():
+    if not _require_auth():
+        return
+    badge_refs = _sidebar("leaves")
+
+    current_user = api.get_current_user()
+    user_role    = current_user.get("role", "") if current_user else ""
+    user_id      = current_user.get("staff_id") if current_user else None
+
+    can_all        = user_role in ("admin", "hau_kiem_vien", "giam_doc", "pho_giam_doc")
+    can_delegation = user_role == "admin"
+    show_approver  = user_role not in ("giam_doc", "pho_giam_doc", "admin")
+
+    # ── Drawer và dialog phải là con trực tiếp của page ──────────────────────
+    with ui.right_drawer(value=False).props("width=440 overlay").classes(
+        "bg-white shadow-2xl overflow-y-auto"
+    ) as detail_drawer:
+        drawer_container = ui.column().classes("w-full gap-0")
+
+    with ui.dialog() as history_dialog, ui.card().classes("p-0 w-[560px] max-h-[80vh] overflow-y-auto"):
+        history_container = ui.column().classes("w-full gap-0")
+
+    # ── Dialog từ chối (yêu cầu lý do) ──────────────────────────────────────
+    _reject_cb: list = [None]
+    with ui.dialog() as reject_dialog, ui.card().classes("p-6 w-80"):
+        ui.label("Nhập lý do từ chối").classes("text-lg font-bold text-red-900 mb-4")
+        reject_reason = ui.textarea("Lý do từ chối").classes("w-full").props("rows=3")
+
+        async def _confirm_reject():
+            if not reject_reason.value.strip():
+                ui.notify("Vui lòng nhập lý do từ chối", type="warning")
+                return
+            cb = _reject_cb[0]
+            reason = reject_reason.value.strip()
+            reject_reason.value = ""
+            reject_dialog.close()
+            if cb:
+                await cb(reason)
+
+        with ui.row().classes("w-full justify-end gap-2 mt-4"):
+            ui.button("Hủy", on_click=reject_dialog.close).classes("text-gray-500")
+            ui.button("Xác nhận từ chối", on_click=_confirm_reject).classes("bg-red-700 text-white")
+
+    # ── Dialog TH chọn GĐ/PGĐ ────────────────────────────────────────────────
+    _th_cb: list = [None]
+    with ui.dialog() as th_dialog, ui.card().classes("p-6 w-96"):
+        ui.label("Chuyển lên GĐ/PGĐ phê duyệt").classes("text-lg font-bold text-red-900 mb-4")
+        th_gd_select = ui.select({}, label="Chọn GĐ / Phó GĐ").classes("w-full")
+        th_note      = ui.textarea("Ghi chú (tuỳ chọn)").classes("w-full mt-2").props("rows=2")
+
+        async def _load_gd_opts():
+            try:
+                lst = await asyncio.to_thread(api.get, "/api/leaves/gd-list")
+                th_gd_select.options = {s["id"]: f"{s['full_name']} — {s['role_label']}" for s in (lst or [])}
+                th_gd_select.update()
+            except Exception:
+                pass
+
+        async def _confirm_th_forward():
+            if not th_gd_select.value:
+                ui.notify("Vui lòng chọn GĐ/PGĐ", type="warning")
+                return
+            gd_id = th_gd_select.value
+            note  = th_note.value or None
+            th_note.value = ""
+            th_dialog.close()
+            cb = _th_cb[0]
+            if cb:
+                await cb(gd_id, note)
+
+        with ui.row().classes("w-full justify-end gap-2 mt-4"):
+            ui.button("Hủy", on_click=th_dialog.close).classes("text-gray-500")
+            ui.button("Xác nhận", on_click=_confirm_th_forward).classes("bg-blue-700 text-white")
+
+    with _content_area():
+        _page_header("Quản lý Nghỉ phép", "Đăng ký và phê duyệt nghỉ phép")
+
+        # ── Load dữ liệu song song ────────────────────────────────────────────
+        my_leaves, pending_leaves, all_leaves, delegations, balance_info, approver_list = \
+            [], [], [], [], {}, []
+
+        async def _empty():
+            return []
+
+        try:
+            results = await asyncio.gather(
+                asyncio.to_thread(api.get, "/api/leaves/", {"scope": "mine"}),
+                asyncio.to_thread(api.get, "/api/leaves/", {"scope": "pending"}),
+                asyncio.to_thread(api.get, "/api/leaves/", {"scope": "all"}) if can_all else _empty(),
+                asyncio.to_thread(api.get, "/api/delegations/") if can_delegation else _empty(),
+                asyncio.to_thread(api.get, "/api/auth/me"),
+                asyncio.to_thread(api.get, "/api/leaves/approvers") if show_approver else _empty(),
+                return_exceptions=True,
+            )
+            my_leaves, pending_leaves, all_leaves, delegations, balance_info, approver_list = results
+            for r in results:
+                if isinstance(r, api.SessionExpiredError):
+                    ui.notify(str(r), type="warning")
+                    ui.navigate.to("/login")
+                    return
+            my_leaves      = my_leaves      if isinstance(my_leaves, list)     else []
+            pending_leaves = pending_leaves if isinstance(pending_leaves, list) else []
+            all_leaves     = all_leaves     if isinstance(all_leaves, list)    else []
+            delegations    = delegations    if isinstance(delegations, list)   else []
+            balance_info   = balance_info   if isinstance(balance_info, dict)  else {}
+            approver_list  = approver_list  if isinstance(approver_list, list) else []
+        except Exception as e:
+            if _handle_api_error(e):
+                return
+
+        pending_ids = {lv["id"] for lv in pending_leaves}
+
+        # ── Cập nhật badge sidebar ────────────────────────────────────────────
+        _lcnt = len(pending_leaves)
+        if "leaves" in badge_refs and _lcnt > 0:
+            badge_refs["leaves"].set_text(str(_lcnt))
+            badge_refs["leaves"].set_visibility(True)
+
+        if any(lv.get("status") == "rejected" for lv in my_leaves):
+            ui.notify("Có đơn nghỉ phép bị từ chối. Xem tab 'Của tôi'.", type="negative", timeout=8000)
+
+        # ── Balance card ──────────────────────────────────────────────────────
+        annual    = balance_info.get("annual_leave_days", 12)
+        used      = balance_info.get("used_leave_days", 0)
+        remaining = max(0, annual - used)
+        with ui.row().classes("gap-4 mb-4"):
+            with ui.card().classes("bg-blue-50 border border-blue-200 p-4 rounded-xl min-w-40"):
+                ui.label("Phép còn lại").classes("text-xs text-blue-600")
+                ui.label(f"{remaining} / {annual} ngày").classes("text-xl font-bold text-blue-800")
+
+        # ── Dialogs tạo đơn / nộp lại ────────────────────────────────────────
+        approver_opts = {s["id"]: f"{s['full_name']} — {s['role_label']}" for s in approver_list}
+
+        with ui.dialog() as create_dialog, ui.card().classes("p-6 w-[420px]"):
+            ui.label("Tạo đơn nghỉ phép").classes("text-lg font-bold text-red-900 mb-4")
+            c_start    = ui.date(value="").props("label='Từ ngày' mask='YYYY-MM-DD'").classes("w-full")
+            c_end      = ui.date(value="").props("label='Đến ngày' mask='YYYY-MM-DD'").classes("w-full mt-2")
+            c_type     = ui.select({k: v for k, v in _LEAVE_TYPE.items()}, label="Loại nghỉ phép", value="annual").classes("w-full mt-2")
+            c_reason   = ui.textarea("Lý do (tuỳ chọn)").classes("w-full mt-2")
+            c_approver = ui.select(approver_opts, label="Người phê duyệt (KSV)").classes("w-full mt-2") if show_approver else None
+
+            async def do_create():
+                if not c_start.value or not c_end.value:
+                    ui.notify("Vui lòng chọn ngày", type="warning")
+                    return
+                if show_approver and not c_approver.value:
+                    ui.notify("Vui lòng chọn người phê duyệt", type="warning")
+                    return
+                body = {"start_date": c_start.value, "end_date": c_end.value,
+                        "leave_type": c_type.value, "reason": c_reason.value or None}
+                if show_approver:
+                    body["ksv_approver_id"] = c_approver.value
+                try:
+                    await asyncio.to_thread(api.post, "/api/leaves/", body)
+                    create_dialog.close()
+                    ui.notify("Đã tạo đơn nghỉ phép thành công!", type="positive")
+                    ui.navigate.to("/leaves")
+                except Exception as e:
+                    _handle_api_error(e)
+
+            with ui.row().classes("w-full justify-end gap-2 mt-4"):
+                ui.button("Hủy", on_click=create_dialog.close).classes("text-gray-500")
+                ui.button("Gửi đơn", on_click=do_create).classes("bg-red-700 text-white")
+
+        # ── Dialog nộp lại ────────────────────────────────────────────────────
+        _rsub_id: list = [None]
+        with ui.dialog() as resubmit_dialog, ui.card().classes("p-6 w-[420px]"):
+            ui.label("Chỉnh sửa & Nộp lại").classes("text-lg font-bold text-red-900 mb-4")
+            r_start    = ui.date(value="").props("label='Từ ngày' mask='YYYY-MM-DD'").classes("w-full")
+            r_end      = ui.date(value="").props("label='Đến ngày' mask='YYYY-MM-DD'").classes("w-full mt-2")
+            r_type     = ui.select({k: v for k, v in _LEAVE_TYPE.items()}, label="Loại nghỉ phép", value="annual").classes("w-full mt-2")
+            r_reason   = ui.textarea("Lý do (tuỳ chọn)").classes("w-full mt-2")
+            r_approver = ui.select(approver_opts, label="Người phê duyệt (KSV)").classes("w-full mt-2") if show_approver else None
+
+            async def do_resubmit():
+                lid = _rsub_id[0]
+                if not lid or not r_start.value or not r_end.value:
+                    ui.notify("Vui lòng chọn ngày", type="warning")
+                    return
+                if show_approver and not r_approver.value:
+                    ui.notify("Vui lòng chọn người phê duyệt", type="warning")
+                    return
+                body = {"start_date": r_start.value, "end_date": r_end.value,
+                        "leave_type": r_type.value, "reason": r_reason.value or None}
+                if show_approver:
+                    body["ksv_approver_id"] = r_approver.value
+                try:
+                    await asyncio.to_thread(api.put, f"/api/leaves/{lid}/resubmit", body)
+                    resubmit_dialog.close()
+                    detail_drawer.hide()
+                    ui.notify("Đã nộp lại đơn!", type="positive")
+                    ui.navigate.to("/leaves")
+                except Exception as e:
+                    _handle_api_error(e)
+
+            with ui.row().classes("w-full justify-end gap-2 mt-4"):
+                ui.button("Hủy", on_click=resubmit_dialog.close).classes("text-gray-500")
+                ui.button("Nộp lại", on_click=do_resubmit).classes("bg-orange-600 text-white")
+
+        # ── Hàm mở drawer chi tiết ────────────────────────────────────────────
+        async def open_detail(leave: dict):
+            drawer_container.clear()
+            with drawer_container:
+                lid      = leave["id"]
+                status   = leave["status"]
+                is_owner = user_id is not None and leave.get("staff_id") == user_id
+                in_pend  = lid in pending_ids
+                ksv_act  = status == "pending_ksv" and in_pend and user_role in ("truong_phong", "pho_phong", "hau_kiem_vien")
+                th_act   = status == "pending_tong_hop" and in_pend
+                gd_act   = status == "pending_gd" and in_pend and user_role in ("giam_doc", "pho_giam_doc")
+
+                with ui.row().classes("w-full bg-red-800 text-white px-5 py-4 items-center gap-2"):
+                    ui.icon("event_busy").classes("text-2xl")
+                    with ui.column().classes("gap-0"):
+                        ui.label("Chi tiết đơn nghỉ phép").classes("font-bold text-base")
+                        ui.label(leave.get("staff_name", "")).classes("text-red-200 text-sm")
+
+                with ui.column().classes("px-5 py-4 gap-3 w-full"):
+                    with ui.row().classes("items-center gap-2"):
+                        ui.label("Trạng thái:").classes("text-sm text-gray-600 font-medium")
+                        _leave_status_badge(status)
+
+                    def _info(lbl, val):
+                        with ui.row().classes("w-full items-start gap-2"):
+                            ui.label(lbl).classes("text-sm text-gray-500 w-28 shrink-0")
+                            ui.label(str(val) if val else "—").classes("text-sm font-medium flex-1")
+
+                    _info("Phòng:", leave.get("department_name") or "—")
+                    _info("Từ ngày:", (leave.get("start_date") or "")[:10])
+                    _info("Đến ngày:", (leave.get("end_date") or "")[:10])
+                    _info("Số ngày nghỉ:", f"{leave.get('leave_days', '')} ngày")
+                    _info("Loại:", _LEAVE_TYPE.get(leave.get("leave_type", ""), leave.get("leave_type", "")))
+                    _info("Lý do:", leave.get("reason") or "—")
+
+                    # Bước 1: KSV (ẩn nếu GĐ/PGĐ/admin tạo thẳng lên TH)
+                    if leave.get("ksv_approver_id") or status == "pending_ksv":
+                        with ui.column().classes("w-full bg-orange-50 rounded-lg p-3 gap-1 border border-orange-100"):
+                            ui.label("Bước 1 — KSV phê duyệt").classes("text-xs font-bold text-orange-700 uppercase")
+                            _info("Người duyệt:", leave.get("ksv_approver_name") or "Chưa xác định")
+                            if leave.get("ksv_approved_at"):
+                                _info("Ngày duyệt:", leave["ksv_approved_at"][:10])
+                                _info("Ý kiến:", leave.get("ksv_comment") or "—")
+
+                    # Bước 2: Tổng hợp
+                    with ui.column().classes("w-full bg-yellow-50 rounded-lg p-3 gap-1 border border-yellow-100"):
+                        ui.label("Bước 2 — Phòng Tổng hợp").classes("text-xs font-bold text-yellow-700 uppercase")
+                        _info("Người xử lý:", leave.get("tong_hop_approver_name") or "Chưa xử lý")
+                        if leave.get("tong_hop_approved_at"):
+                            _info("Ngày:", leave["tong_hop_approved_at"][:10])
+                            _info("Ghi chú:", leave.get("tong_hop_comment") or "—")
+
+                    # Bước 3: GĐ
+                    with ui.column().classes("w-full bg-blue-50 rounded-lg p-3 gap-1 border border-blue-100"):
+                        ui.label("Bước 3 — Giám đốc phê duyệt").classes("text-xs font-bold text-blue-700 uppercase")
+                        _info("Người duyệt:", _gd_display(leave) or "Chưa xác định")
+                        if leave.get("gd_approved_at"):
+                            _info("Ngày duyệt:", leave["gd_approved_at"][:10])
+                            _info("Ý kiến:", leave.get("gd_comment") or "—")
+
+                    ui.separator()
+
+                    async def _download(l=lid):
+                        try:
+                            content = await asyncio.to_thread(api.download, f"/api/leaves/{l}/download")
+                            ui.download(content, f"phieu_nghi_phep_{l}.docx")
+                        except Exception as e:
+                            _handle_api_error(e)
+
+                    with ui.row().classes("gap-2 flex-wrap"):
+                        ui.button("Tải phiếu", icon="download", on_click=_download).classes("bg-gray-100 text-gray-700 text-sm")
+
+                        # KSV
+                        if ksv_act:
+                            async def _ksv_approve(l=lid):
+                                try:
+                                    await asyncio.to_thread(api.put, f"/api/leaves/{l}/ksv-review", {"action": "approve"})
+                                    detail_drawer.hide()
+                                    ui.notify("Đã phê duyệt KSV", type="positive")
+                                    ui.navigate.to("/leaves")
+                                except Exception as e:
+                                    _handle_api_error(e)
+
+                            def _ksv_reject_open(l=lid):
+                                async def _cb(reason, _l=l):
+                                    try:
+                                        await asyncio.to_thread(api.put, f"/api/leaves/{_l}/ksv-review",
+                                            {"action": "reject", "comment": reason})
+                                        detail_drawer.hide()
+                                        ui.notify("Đã từ chối", type="warning")
+                                        ui.navigate.to("/leaves")
+                                    except Exception as e:
+                                        _handle_api_error(e)
+                                _reject_cb[0] = _cb
+                                reject_dialog.open()
+
+                            ui.button("Phê duyệt", on_click=_ksv_approve).classes("bg-green-600 text-white text-sm")
+                            ui.button("Từ chối",   on_click=_ksv_reject_open).classes("bg-red-600 text-white text-sm")
+
+                        # TH
+                        if th_act:
+                            async def _th_forward_open(l=lid):
+                                await _load_gd_opts()
+
+                                async def _cb(gd_id, note, _l=l):
+                                    try:
+                                        await asyncio.to_thread(api.post, f"/api/leaves/{_l}/tong-hop-review",
+                                            {"action": "forward", "gd_approver_id": gd_id, "comment": note})
+                                        detail_drawer.hide()
+                                        ui.notify("Đã chuyển lên GĐ/PGĐ", type="positive")
+                                        ui.navigate.to("/leaves")
+                                    except Exception as e:
+                                        _handle_api_error(e)
+                                _th_cb[0] = _cb
+                                th_dialog.open()
+
+                            def _th_reject_open(l=lid):
+                                async def _cb(reason, _l=l):
+                                    try:
+                                        await asyncio.to_thread(api.post, f"/api/leaves/{_l}/tong-hop-review",
+                                            {"action": "reject", "comment": reason})
+                                        detail_drawer.hide()
+                                        ui.notify("Đã từ chối", type="warning")
+                                        ui.navigate.to("/leaves")
+                                    except Exception as e:
+                                        _handle_api_error(e)
+                                _reject_cb[0] = _cb
+                                reject_dialog.open()
+
+                            ui.button("Chuyển GĐ/PGĐ", icon="forward",
+                                      on_click=lambda l=lid: asyncio.ensure_future(_th_forward_open(l))).classes("bg-blue-600 text-white text-sm")
+                            ui.button("Từ chối", on_click=_th_reject_open).classes("bg-red-600 text-white text-sm")
+
+                        # GĐ
+                        if gd_act:
+                            async def _gd_approve(l=lid):
+                                try:
+                                    await asyncio.to_thread(api.put, f"/api/leaves/{l}/gd-review", {"action": "approve"})
+                                    detail_drawer.hide()
+                                    ui.notify("Đã phê duyệt", type="positive")
+                                    ui.navigate.to("/leaves")
+                                except Exception as e:
+                                    _handle_api_error(e)
+
+                            def _gd_reject_open(l=lid):
+                                async def _cb(reason, _l=l):
+                                    try:
+                                        await asyncio.to_thread(api.put, f"/api/leaves/{_l}/gd-review",
+                                            {"action": "reject", "comment": reason})
+                                        detail_drawer.hide()
+                                        ui.notify("Đã từ chối", type="warning")
+                                        ui.navigate.to("/leaves")
+                                    except Exception as e:
+                                        _handle_api_error(e)
+                                _reject_cb[0] = _cb
+                                reject_dialog.open()
+
+                            ui.button("Phê duyệt", on_click=_gd_approve).classes("bg-green-600 text-white text-sm")
+                            ui.button("Từ chối",   on_click=_gd_reject_open).classes("bg-red-600 text-white text-sm")
+
+                        # Resubmit
+                        if is_owner and status == "rejected":
+                            def _open_resubmit(lv=leave):
+                                r_start.value  = (lv.get("start_date") or "")[:10]
+                                r_end.value    = (lv.get("end_date") or "")[:10]
+                                r_type.value   = lv.get("leave_type", "annual")
+                                r_reason.value = lv.get("reason") or ""
+                                _rsub_id[0]    = lv["id"]
+                                if r_approver:
+                                    r_approver.value = lv.get("ksv_approver_id")
+                                resubmit_dialog.open()
+
+                            ui.button("Sửa & Nộp lại", icon="refresh", on_click=_open_resubmit).classes("bg-orange-500 text-white text-sm")
+
+                        # Hủy
+                        if is_owner and status in ("pending_ksv", "pending_tong_hop", "pending_gd"):
+                            async def _cancel(l=lid):
+                                try:
+                                    await asyncio.to_thread(api.patch, f"/api/leaves/{l}/cancel", {})
+                                    detail_drawer.hide()
+                                    ui.notify("Đã hủy đơn", type="warning")
+                                    ui.navigate.to("/leaves")
+                                except Exception as e:
+                                    _handle_api_error(e)
+
+                            ui.button("Hủy đơn", icon="cancel", on_click=_cancel).classes("bg-gray-200 text-gray-700 text-sm")
+
+            detail_drawer.show()
+
+        # ── Hàm mở dialog lịch sử ────────────────────────────────────────────
+        async def open_history(leave: dict):
+            history_container.clear()
+            with history_container:
+                with ui.row().classes("w-full bg-gray-800 text-white px-5 py-3 items-center gap-2"):
+                    ui.icon("history").classes("text-xl")
+                    with ui.column().classes("gap-0"):
+                        ui.label("Lịch sử thao tác").classes("font-bold text-base")
+                        ui.label(leave.get("staff_name", "")).classes("text-gray-300 text-sm")
+                try:
+                    logs = await asyncio.to_thread(api.get, f"/api/leaves/{leave['id']}/history")
+                except Exception:
+                    logs = []
+                if not logs:
+                    with ui.column().classes("p-6"):
+                        ui.label("Chưa có lịch sử thao tác.").classes("text-gray-400 text-sm")
+                else:
+                    _COLOR = {"green": "bg-green-100 text-green-700", "red": "bg-red-100 text-red-700",
+                              "blue": "bg-blue-100 text-blue-700", "orange": "bg-orange-100 text-orange-700",
+                              "grey": "bg-gray-100 text-gray-500"}
+                    with ui.column().classes("px-5 py-4 gap-3 w-full"):
+                        for log in logs:
+                            cls = _COLOR.get(log.get("action_color", "grey"), "bg-gray-100 text-gray-500")
+                            with ui.row().classes("w-full items-start gap-3 border-b border-gray-100 pb-3"):
+                                with ui.column().classes("flex-1 gap-1"):
+                                    with ui.row().classes("items-center gap-2"):
+                                        ui.label(log.get("action_label", log.get("action", ""))).classes(
+                                            f"text-xs font-medium px-2 py-0.5 rounded {cls}")
+                                        ui.label(log.get("actor_name", "")).classes("text-sm font-medium")
+                                    if log.get("comment"):
+                                        ui.label(f"Lý do: {log['comment']}").classes("text-xs text-gray-500")
+                                    ts = log.get("created_at", "")
+                                    if ts:
+                                        ui.label(ts[:16].replace("T", " ")).classes("text-xs text-gray-400")
+            history_dialog.open()
+
+        # ── Tracking selection ────────────────────────────────────────────────
+        _sel: set = set()
+        _approve_btn: list = []
+        _reject_btn:  list = []
+
+        def _upd_btns():
+            en = bool(_sel)
+            for b in _approve_btn:
+                b.set_enabled(en)
+            for b in _reject_btn:
+                b.set_enabled(en)
+
+        # ── Bulk actions ──────────────────────────────────────────────────────
+        async def _bulk_approve():
+            ids = list(_sel)
+            lv_map = {lv["id"]: lv for lv in pending_leaves}
+            th_ids     = [i for i in ids if lv_map.get(i, {}).get("status") == "pending_tong_hop"]
+            other_ids  = [i for i in ids if i not in th_ids]
+
+            for i in other_ids:
+                st = lv_map.get(i, {}).get("status", "")
+                try:
+                    if st == "pending_ksv":
+                        await asyncio.to_thread(api.put, f"/api/leaves/{i}/ksv-review", {"action": "approve"})
+                    elif st == "pending_gd":
+                        await asyncio.to_thread(api.put, f"/api/leaves/{i}/gd-review", {"action": "approve"})
+                except Exception:
+                    pass
+
+            if th_ids:
+                await _load_gd_opts()
+                async def _th_bulk(gd_id, note):
+                    for i in th_ids:
+                        try:
+                            await asyncio.to_thread(api.post, f"/api/leaves/{i}/tong-hop-review",
+                                {"action": "forward", "gd_approver_id": gd_id, "comment": note})
+                        except Exception:
+                            pass
+                    _sel.clear()
+                    ui.notify("Hoàn thành", type="positive")
+                    ui.navigate.to("/leaves")
+                _th_cb[0] = _th_bulk
+                th_dialog.open()
+            else:
+                _sel.clear()
+                ui.notify("Đã phê duyệt các đơn đã chọn", type="positive")
+                ui.navigate.to("/leaves")
+
+        async def _bulk_reject_open():
+            ids = list(_sel)
+            lv_map = {lv["id"]: lv for lv in pending_leaves}
+            async def _cb(reason):
+                for i in ids:
+                    st = lv_map.get(i, {}).get("status", "")
+                    try:
+                        if st == "pending_ksv":
+                            await asyncio.to_thread(api.put, f"/api/leaves/{i}/ksv-review",
+                                {"action": "reject", "comment": reason})
+                        elif st == "pending_tong_hop":
+                            await asyncio.to_thread(api.post, f"/api/leaves/{i}/tong-hop-review",
+                                {"action": "reject", "comment": reason})
+                        elif st == "pending_gd":
+                            await asyncio.to_thread(api.put, f"/api/leaves/{i}/gd-review",
+                                {"action": "reject", "comment": reason})
+                    except Exception:
+                        pass
+                _sel.clear()
+                ui.notify("Đã từ chối các đơn đã chọn", type="warning")
+                ui.navigate.to("/leaves")
+            _reject_cb[0] = _cb
+            reject_dialog.open()
+
+        # ── Toolbar ───────────────────────────────────────────────────────────
+        with ui.row().classes("gap-2 mb-4 items-center flex-wrap"):
+            ui.button("+ Tạo đơn", icon="add", on_click=create_dialog.open).classes("bg-red-700 text-white")
+            ab = ui.button("Phê duyệt", icon="check_circle",
+                           on_click=lambda: asyncio.ensure_future(_bulk_approve())).classes(
+                "bg-green-600 text-white").props("disabled")
+            rb = ui.button("Từ chối", icon="cancel",
+                           on_click=lambda: asyncio.ensure_future(_bulk_reject_open())).classes(
+                "bg-red-600 text-white").props("disabled")
+            _approve_btn.append(ab)
+            _reject_btn.append(rb)
+
+            async def _export_leaves():
+                try:
+                    _scp = "all" if can_all else "mine"
+                    content = await asyncio.to_thread(
+                        api.download, "/api/leaves/export",
+                        params={"scope": _scp},
+                    )
+                    ui.download(content, "danh_sach_nghi_phep.xlsx")
+                except Exception as e:
+                    _handle_api_error(e)
+
+            ui.button("Xuất Excel", icon="download",
+                      on_click=_export_leaves).classes("bg-blue-700 text-white").tooltip("Tải file Excel")
+
+        # ── Hàm vẽ bảng ──────────────────────────────────────────────────────
+        def _draw_table(leaves: list, show_name: bool = False):
+            if not leaves:
+                ui.label("Không có đơn nghỉ phép nào.").classes("text-gray-400 text-sm mt-4")
+                return
+            with ui.column().classes("w-full gap-0"):
+                # Header
+                with ui.row().classes("w-full bg-red-50 border-b border-red-100 px-3 py-2 items-center gap-2"):
+                    ui.label("").classes("w-6 shrink-0")
+                    ui.label("Ngày tạo").classes("font-semibold text-red-800 text-xs w-20 shrink-0")
+                    ui.label("Trạng thái").classes("font-semibold text-red-800 text-xs w-28 shrink-0")
+                    if show_name:
+                        ui.label("Họ và tên").classes("font-semibold text-red-800 text-xs w-28 shrink-0")
+                    ui.label("Ngày nghỉ").classes("font-semibold text-red-800 text-xs w-32 shrink-0")
+                    ui.label("Kiểm soát").classes("font-semibold text-red-800 text-xs w-24 shrink-0")
+                    ui.label("Phòng TH").classes("font-semibold text-red-800 text-xs w-24 shrink-0")
+                    ui.label("Giám đốc").classes("font-semibold text-red-800 text-xs flex-1")
+                    ui.label("").classes("w-16 shrink-0")
+
+                for lv in leaves:
+                    sg_lbl, sg_cls = _STATUS_GROUP.get(lv["status"], (lv["status"], "bg-gray-100 text-gray-500"))
+                    with ui.row().classes("w-full bg-white border-b border-gray-100 px-3 py-1.5 items-center gap-2 hover:bg-red-50"):
+                        ck = ui.checkbox(value=False).classes("w-6 shrink-0")
+                        ck.on("update:model-value", lambda v, l=lv["id"]: (_sel.add(l) if v else _sel.discard(l)) or _upd_btns())
+
+                        ui.label((lv.get("created_at") or "")[:10]).classes("text-xs w-20 shrink-0")
+                        ui.label(sg_lbl).classes(f"text-xs px-1.5 py-0.5 rounded {sg_cls} w-28 shrink-0 text-center")
+                        if show_name:
+                            ui.label(lv.get("staff_name", "")).classes("text-xs w-28 shrink-0 truncate")
+                        ui.label(_fmt_leave_dates(lv.get("start_date",""), lv.get("end_date",""))).classes("text-xs w-32 shrink-0")
+                        ui.label(lv.get("ksv_approver_name") or "—").classes("text-xs w-24 shrink-0 truncate")
+                        ui.label(lv.get("tong_hop_approver_name") or "—").classes("text-xs w-24 shrink-0 truncate")
+                        ui.label(_gd_display(lv) or "—").classes("text-xs flex-1 truncate")
+                        with ui.row().classes("w-16 gap-0.5 justify-end shrink-0"):
+                            ui.button(icon="info", on_click=lambda l=lv: asyncio.ensure_future(open_detail(l))).props(
+                                "flat round dense size=sm").classes("text-blue-600").tooltip("Chi tiết")
+                            ui.button(icon="history", on_click=lambda l=lv: asyncio.ensure_future(open_history(l))).props(
+                                "flat round dense size=sm").classes("text-gray-500").tooltip("Lịch sử")
+
+        # ── Tabs ──────────────────────────────────────────────────────────────
+        with ui.tabs().classes("mb-4") as leave_tabs:
+            t_mine    = ui.tab("Của tôi")
+            t_pending = ui.tab(f"Chờ duyệt ({len(pending_leaves)})")
+            t_all     = ui.tab("Tất cả") if can_all else None
+            t_cal     = ui.tab("Lịch nghỉ phép")
+            t_deleg   = ui.tab("Ủy quyền GĐ") if can_delegation else None
+            t_holiday = ui.tab("Ngày lễ") if can_delegation else None
+
+        with ui.tab_panels(leave_tabs, value=t_mine).classes("w-full"):
+            with ui.tab_panel(t_mine):
+                _draw_table(my_leaves)
+
+            with ui.tab_panel(t_pending):
+                _draw_table(pending_leaves, show_name=True)
+
+            if can_all and t_all:
+                with ui.tab_panel(t_all):
+                    _draw_table(all_leaves, show_name=True)
+
+            with ui.tab_panel(t_cal):
+                import datetime as _dt_mod
+                _today = _dt_mod.date.today()
+                with ui.row().classes("gap-3 mb-4 items-center"):
+                    cal_year  = ui.select({y: str(y) for y in range(2024, _today.year + 2)},
+                                          label="Năm", value=_today.year).classes("w-28")
+                    cal_month = ui.select({m: f"Tháng {m:02d}" for m in range(1, 13)},
+                                          label="Tháng", value=_today.month).classes("w-36")
+
+                _CAL_TYPE_COLOR = {
+                    "annual":   "bg-blue-100 text-blue-800",
+                    "sick":     "bg-orange-100 text-orange-800",
+                    "personal": "bg-purple-100 text-purple-800",
+                    "other":    "bg-gray-100 text-gray-600",
+                }
+                _CAL_TYPE_DOT = {
+                    "annual":   "#1565C0",
+                    "sick":     "#E65100",
+                    "personal": "#6A1B9A",
+                    "other":    "#546E7A",
+                }
+                _DOW_VN = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"]
+
+                cal_container = ui.column().classes("w-full gap-0")
+
+                async def _reload_cal():
+                    cal_container.clear()
+                    try:
+                        data = await asyncio.to_thread(
+                            api.get, "/api/leaves/calendar",
+                            {"year": cal_year.value, "month": cal_month.value},
+                        )
+                    except Exception:
+                        data = {}
+                    days_map = data.get("days", {}) if isinstance(data, dict) else {}
+                    y, m = cal_year.value, cal_month.value
+
+                    import calendar as _cal_mod
+                    first_wd = _dt_mod.date(y, m, 1).weekday()  # 0=Thứ 2
+                    last_day = _cal_mod.monthrange(y, m)[1]
+
+                    with cal_container:
+                        # Chú thích
+                        with ui.row().classes("gap-4 mb-3 flex-wrap items-center"):
+                            for _lt, _cls in _CAL_TYPE_COLOR.items():
+                                with ui.row().classes("items-center gap-1"):
+                                    ui.element("span").classes(f"text-xs px-2 py-0.5 rounded {_cls}").set_text(
+                                        _LEAVE_TYPE.get(_lt, _lt))
+                        # Header ngày trong tuần
+                        with ui.row().classes("w-full grid gap-1").style(
+                                "display:grid;grid-template-columns:repeat(7,1fr)"):
+                            for d in _DOW_VN:
+                                ui.label(d).classes(
+                                    "text-center text-xs font-bold text-gray-500 py-1"
+                                    + (" text-red-600" if d == "CN" else "")
+                                )
+                        # Lưới ngày
+                        with ui.element("div").style(
+                                "display:grid;grid-template-columns:repeat(7,1fr);gap:4px"):
+                            # Ô trống trước ngày 1
+                            for _ in range(first_wd):
+                                ui.element("div").classes("rounded bg-gray-50 min-h-[72px] p-1")
+                            for day in range(1, last_day + 1):
+                                d_str = f"{y}-{m:02d}-{day:02d}"
+                                d_obj = _dt_mod.date(y, m, day)
+                                people = days_map.get(d_str, [])
+                                is_weekend = d_obj.weekday() >= 5
+                                is_today   = d_obj == _today
+                                bg = "bg-blue-50 border-blue-300" if is_today else (
+                                     "bg-red-50" if is_weekend else "bg-white border-gray-100")
+                                with ui.element("div").classes(
+                                        f"rounded border {bg} min-h-[72px] p-1 overflow-hidden"
+                                ):
+                                    ui.label(str(day)).classes(
+                                        "text-xs font-bold mb-1 " + (
+                                            "text-blue-700" if is_today else
+                                            "text-red-500" if is_weekend else "text-gray-700"
+                                        )
+                                    )
+                                    for p in people[:3]:
+                                        lt   = p.get("leave_type", "other")
+                                        cls  = _CAL_TYPE_COLOR.get(lt, "bg-gray-100 text-gray-600")
+                                        name = p.get("staff_name", "")
+                                        # Rút gọn họ tên → lấy tên cuối
+                                        short = name.split()[-1] if name else ""
+                                        ui.label(short).classes(
+                                            f"text-[10px] leading-tight px-1 rounded truncate {cls} mb-0.5 w-full")
+                                    if len(people) > 3:
+                                        ui.label(f"+{len(people)-3}").classes(
+                                            "text-[9px] text-gray-400 leading-tight")
+
+                cal_year.on("update:model-value",  lambda: asyncio.ensure_future(_reload_cal()))
+                cal_month.on("update:model-value", lambda: asyncio.ensure_future(_reload_cal()))
+                await _reload_cal()
+
+            if can_delegation and t_deleg:
+                with ui.tab_panel(t_deleg):
+                    # ── Dialog tạo ủy quyền ───────────────────────────────────
+                    gd_staff_list, pgd_staff_list = [], []
+                    try:
+                        gd_staff_list, pgd_staff_list = await asyncio.gather(
+                            asyncio.to_thread(api.get, "/api/delegations/staff/giam-doc"),
+                            asyncio.to_thread(api.get, "/api/delegations/staff/pho-giam-doc"),
+                        )
+                    except Exception:
+                        pass
+
+                    gd_opts  = {s["id"]: s["full_name"] for s in (gd_staff_list  or [])}
+                    pgd_opts = {s["id"]: s["full_name"] for s in (pgd_staff_list or [])}
+
+                    with ui.dialog() as deleg_dialog, ui.card().classes("p-6 w-96"):
+                        ui.label("Tạo ủy quyền Giám đốc").classes("text-lg font-bold text-red-900 mb-4")
+                        d_gd   = ui.select(gd_opts,  label="Giám đốc ủy quyền").classes("w-full")
+                        d_pgd  = ui.select(pgd_opts, label="Phó GĐ được ủy quyền").classes("w-full mt-2")
+                        d_from = ui.date(value="").props("label='Từ ngày' mask='YYYY-MM-DD'").classes("w-full mt-2")
+                        d_to   = ui.date(value="").props("label='Đến ngày' mask='YYYY-MM-DD'").classes("w-full mt-2")
+                        d_note = ui.input("Ghi chú (tuỳ chọn)").classes("w-full mt-2")
+
+                        async def do_create_deleg():
+                            if not d_gd.value or not d_pgd.value or not d_from.value or not d_to.value:
+                                ui.notify("Vui lòng điền đầy đủ thông tin", type="warning")
+                                return
+                            try:
+                                await asyncio.to_thread(api.post, "/api/delegations/", {
+                                    "giam_doc_id": d_gd.value, "pho_giam_doc_id": d_pgd.value,
+                                    "start_date": d_from.value, "end_date": d_to.value,
+                                    "note": d_note.value or None,
+                                })
+                                deleg_dialog.close()
+                                ui.notify("Đã tạo ủy quyền thành công!", type="positive")
+                                ui.navigate.to("/leaves")
+                            except Exception as e:
+                                _handle_api_error(e)
+
+                        with ui.row().classes("w-full justify-end gap-2 mt-4"):
+                            ui.button("Hủy", on_click=deleg_dialog.close).classes("text-gray-500")
+                            ui.button("Tạo ủy quyền", on_click=do_create_deleg).classes("bg-red-700 text-white")
+
+                    ui.button("+ Tạo ủy quyền", on_click=deleg_dialog.open).classes("bg-red-700 text-white mb-4")
+
+                    if not delegations:
+                        ui.label("Chưa có bản ghi ủy quyền nào.").classes("text-gray-400 text-sm")
+                    else:
+                        with ui.column().classes("w-full gap-0"):
+                            with ui.row().classes("w-full bg-red-50 border-b border-red-100 px-4 py-2 gap-3"):
+                                for hdr in ["Giám đốc", "Phó GĐ được ủy quyền", "Từ ngày", "Đến ngày", "Ghi chú", "Trạng thái", ""]:
+                                    ui.label(hdr).classes("font-semibold text-red-800 text-sm flex-1")
+                            for d in delegations:
+                                today_str = __import__("datetime").date.today().isoformat()
+                                is_eff = d["is_active"] and d["start_date"] <= today_str <= d["end_date"]
+                                badge_cls = "bg-green-100 text-green-700" if is_eff else "bg-gray-100 text-gray-500"
+                                badge_txt = "Đang hiệu lực" if is_eff else "Không hiệu lực"
+                                with ui.row().classes("w-full bg-white border-b border-gray-100 px-4 py-2 gap-3 items-center"):
+                                    ui.label(d.get("giam_doc_name", "")).classes("text-sm flex-1")
+                                    ui.label(d.get("pho_giam_doc_name", "")).classes("text-sm flex-1")
+                                    ui.label(d.get("start_date", "")[:10]).classes("text-sm flex-1")
+                                    ui.label(d.get("end_date", "")[:10]).classes("text-sm flex-1")
+                                    ui.label(d.get("note") or "—").classes("text-xs text-gray-500 flex-1")
+                                    ui.label(badge_txt).classes(f"text-xs px-2 py-0.5 rounded {badge_cls} flex-1")
+                                    if d["is_active"]:
+                                        async def do_deactivate(did=d["id"]):
+                                            try:
+                                                await asyncio.to_thread(api.patch, f"/api/delegations/{did}/deactivate", {})
+                                                ui.notify("Đã hủy ủy quyền", type="warning")
+                                                ui.navigate.to("/leaves")
+                                            except Exception as e:
+                                                _handle_api_error(e)
+                                        ui.button("Hủy", on_click=do_deactivate).classes("text-xs bg-gray-100 text-gray-600")
+                                    else:
+                                        ui.label("").classes("flex-1")
+
+            if can_delegation and t_holiday:
+                with ui.tab_panel(t_holiday):
+                    _cur_year = __import__("datetime").date.today().year
+                    with ui.row().classes("gap-3 mb-4 items-center"):
+                        h_year_sel = ui.select(
+                            {y: str(y) for y in range(2024, _cur_year + 3)},
+                            label="Năm", value=_cur_year,
+                        ).classes("w-28")
+                        ui.button("+ Thêm ngày lễ", icon="add",
+                                  on_click=lambda: add_holiday_dialog.open()).classes("bg-red-700 text-white")
+
+                    holiday_table_area = ui.column().classes("w-full gap-0")
+
+                    with ui.dialog() as add_holiday_dialog, ui.card().classes("p-6 w-80"):
+                        ui.label("Thêm ngày lễ").classes("text-lg font-bold text-red-900 mb-4")
+                        h_date_in = ui.date(value="").props("label='Ngày lễ' mask='YYYY-MM-DD'").classes("w-full")
+                        h_name_in = ui.input("Tên ngày lễ").classes("w-full mt-2")
+
+                        async def do_add_holiday():
+                            if not h_date_in.value or not h_name_in.value.strip():
+                                ui.notify("Vui lòng nhập đầy đủ thông tin", type="warning")
+                                return
+                            try:
+                                await asyncio.to_thread(api.post, "/api/admin/holidays/", {
+                                    "date": h_date_in.value,
+                                    "name": h_name_in.value.strip(),
+                                })
+                                h_date_in.value = ""
+                                h_name_in.value = ""
+                                add_holiday_dialog.close()
+                                ui.notify("Đã thêm ngày lễ!", type="positive")
+                                await _reload_holidays()
+                            except Exception as e:
+                                _handle_api_error(e)
+
+                        with ui.row().classes("w-full justify-end gap-2 mt-4"):
+                            ui.button("Hủy", on_click=add_holiday_dialog.close).classes("text-gray-500")
+                            ui.button("Thêm", on_click=do_add_holiday).classes("bg-red-700 text-white")
+
+                    async def _reload_holidays():
+                        holiday_table_area.clear()
+                        try:
+                            holidays_data = await asyncio.to_thread(
+                                api.get, "/api/admin/holidays/", {"year": h_year_sel.value}
+                            )
+                        except Exception:
+                            holidays_data = []
+                        holidays_data = holidays_data if isinstance(holidays_data, list) else []
+                        with holiday_table_area:
+                            if not holidays_data:
+                                ui.label("Chưa có ngày lễ nào trong năm này.").classes("text-gray-400 text-sm mt-4")
+                                return
+                            with ui.column().classes("w-full gap-0"):
+                                with ui.row().classes("w-full bg-red-50 border-b border-red-100 px-4 py-2 gap-3"):
+                                    ui.label("Ngày").classes("font-semibold text-red-800 text-sm w-32 shrink-0")
+                                    ui.label("Tên ngày lễ").classes("font-semibold text-red-800 text-sm flex-1")
+                                    ui.label("").classes("w-12 shrink-0")
+                                for h in holidays_data:
+                                    with ui.row().classes("w-full bg-white border-b border-gray-100 px-4 py-2 gap-3 items-center"):
+                                        ui.label(h.get("date", "")[:10]).classes("text-sm w-32 shrink-0 font-mono")
+                                        ui.label(h.get("name", "")).classes("text-sm flex-1")
+                                        async def do_del_holiday(hid=h["id"]):
+                                            try:
+                                                await asyncio.to_thread(api.delete, f"/api/admin/holidays/{hid}")
+                                                ui.notify("Đã xóa ngày lễ", type="warning")
+                                                await _reload_holidays()
+                                            except Exception as ex:
+                                                _handle_api_error(ex)
+                                        ui.button(icon="delete", on_click=do_del_holiday).props(
+                                            "flat round dense size=sm").classes("text-red-500 w-12 shrink-0")
+
+                    h_year_sel.on("update:model-value", lambda: asyncio.ensure_future(_reload_holidays()))
+                    await _reload_holidays()
+
+
+# ─── LOGS PAGE ───────────────────────────────────────────────────────────────
+_LOG_LEVEL_CFG = {
+    "ERROR":   ("Lỗi",       "bg-red-100 text-red-700 border-red-300"),
+    "WARNING": ("Cảnh báo",  "bg-orange-100 text-orange-700 border-orange-300"),
+    "INFO":    ("Thông tin", "bg-blue-100 text-blue-700 border-blue-300"),
+    "DEBUG":   ("Debug",     "bg-gray-100 text-gray-500 border-gray-300"),
+}
+
+
+@ui.page("/logs")
+async def logs_page():
+    if not _require_auth():
+        return
+    user = api.get_current_user()
+    if not user or user.get("role") not in ("admin", "giam_doc", "pho_giam_doc"):
+        ui.navigate.to("/home")
+        return
+    _ = _sidebar("logs")
+
+    with _content_area():
+        _page_header("Nhật ký hệ thống", "Xem lịch sử lỗi và cảnh báo của ứng dụng")
+
+        _level: list = [""]
+
+        # ── Toolbar ────────────────────────────────────────────────────────────
+        # (nút load được gắn sau khi _load được định nghĩa bên dưới)
+        toolbar_row = ui.row().classes("gap-2 mb-2 items-center flex-wrap")
+        status_label = ui.label("Đang tải...").classes("text-sm text-gray-500 mb-2")
+        log_container = ui.column().classes("w-full gap-0")
+
+        # ── Hàm load log ───────────────────────────────────────────────────────
+        async def _load(level: str = ""):
+            _level[0] = level
+            status_label.set_text("Đang tải...")
+            log_container.clear()
+            try:
+                data = await asyncio.to_thread(
+                    api.get, "/api/admin/logs/", {"level": level, "limit": 500}
+                )
+            except Exception as e:
+                status_label.set_text("Không thể tải log.")
+                if _handle_api_error(e):
+                    return
+                return
+            entries = data.get("entries", []) if isinstance(data, dict) else []
+            total   = data.get("total", len(entries)) if isinstance(data, dict) else len(entries)
+            status_label.set_text(f"Hiển thị {len(entries)} / {total} bản ghi (mới nhất trước)")
+
+            with log_container:
+                if not entries:
+                    ui.label("Không có bản ghi nào.").classes("text-gray-400 text-sm mt-4")
+                    return
+
+                with ui.row().classes("w-full bg-gray-100 border-b border-gray-200 px-3 py-2 items-center gap-2"):
+                    ui.label("Thời gian").classes("font-semibold text-gray-700 text-xs w-36 shrink-0")
+                    ui.label("Mức độ").classes("font-semibold text-gray-700 text-xs w-24 shrink-0")
+                    ui.label("Nguồn").classes("font-semibold text-gray-700 text-xs w-48 shrink-0")
+                    ui.label("Nội dung").classes("font-semibold text-gray-700 text-xs flex-1")
+
+                for e in entries:
+                    lv  = e.get("level", "INFO")
+                    lbl, badge_cls = _LOG_LEVEL_CFG.get(lv, (lv, "bg-gray-100 text-gray-500 border-gray-300"))
+                    row_bg = "bg-red-50" if lv == "ERROR" else ("bg-orange-50" if lv == "WARNING" else "bg-white")
+                    msg = e.get("msg", "")
+
+                    with ui.row().classes(f"w-full {row_bg} border-b border-gray-100 px-3 py-1.5 items-start gap-2"):
+                        ui.label(e.get("ts", "")).classes("text-xs font-mono w-36 shrink-0 text-gray-600 mt-0.5")
+                        ui.label(lbl).classes(
+                            f"text-xs font-medium px-2 py-0.5 rounded border {badge_cls} w-24 shrink-0 text-center mt-0.5"
+                        )
+                        ui.label(e.get("logger", "")).classes("text-xs font-mono w-48 shrink-0 text-gray-500 truncate mt-0.5")
+                        if "\n" in msg:
+                            ui.element("pre").classes(
+                                "text-xs font-mono flex-1 whitespace-pre-wrap break-all text-gray-800 leading-5"
+                            ).style("margin:0;background:transparent").set_text(msg)
+                        else:
+                            ui.label(msg).classes("text-xs flex-1 break-all text-gray-800")
+
+        # ── Gắn nút vào toolbar ────────────────────────────────────────────────
+        with toolbar_row:
+            ui.button("↻ Làm mới", icon="refresh",
+                      on_click=lambda: asyncio.ensure_future(_load(_level[0]))).classes(
+                "bg-gray-700 text-white text-sm")
+            ui.separator().props("vertical")
+            for _code, _vn in [("", "Tất cả"), ("ERROR", "Lỗi"), ("WARNING", "Cảnh báo"), ("INFO", "Thông tin")]:
+                ui.button(_vn,
+                          on_click=lambda c=_code: asyncio.ensure_future(_load(c))).classes(
+                    "text-sm bg-gray-100 text-gray-700 hover:bg-gray-200")
+            ui.separator().props("vertical")
+
+            async def _backup_db():
+                try:
+                    content = await asyncio.to_thread(api.download, "/api/admin/logs/backup")
+                    from datetime import date as _dt
+                    ui.download(content, f"ksnb_backup_{_dt.today().isoformat()}.db")
+                    ui.notify("Đã tạo bản sao DB thành công!", type="positive")
+                except Exception as e:
+                    _handle_api_error(e)
+
+            ui.button("Backup DB", icon="backup",
+                      on_click=_backup_db).classes("bg-orange-600 text-white text-sm").tooltip(
+                "Tải về bản sao cơ sở dữ liệu")
+
+        await _load("")
+
+        # ── Nhật ký đăng nhập ─────────────────────────────────────────────────
+        ui.separator().classes("my-4")
+        with ui.row().classes("items-center gap-3 mb-2"):
+            ui.label("Nhật ký đăng nhập").classes("text-base font-bold text-gray-800")
+            login_status_label = ui.label("").classes("text-sm text-gray-500")
+
+        login_filter_ref: list = [""]
+        login_container = ui.column().classes("w-full gap-0")
+
+        async def _load_logins(success_filter: str = ""):
+            login_filter_ref[0] = success_filter
+            login_status_label.set_text("Đang tải...")
+            login_container.clear()
+            try:
+                data = await asyncio.to_thread(
+                    api.get, "/api/admin/logs/logins",
+                    {"success": success_filter, "limit": 200},
+                )
+            except Exception:
+                login_status_label.set_text("Không thể tải nhật ký đăng nhập.")
+                return
+            entries = data.get("entries", []) if isinstance(data, dict) else []
+            total   = data.get("total", len(entries)) if isinstance(data, dict) else len(entries)
+            login_status_label.set_text(f"{len(entries)} / {total} bản ghi")
+
+            with login_container:
+                if not entries:
+                    ui.label("Không có bản ghi.").classes("text-gray-400 text-sm mt-2")
+                    return
+                with ui.row().classes("w-full bg-gray-100 border-b border-gray-200 px-3 py-2 items-center gap-2"):
+                    ui.label("Thời gian").classes("font-semibold text-gray-700 text-xs w-36 shrink-0")
+                    ui.label("Kết quả").classes("font-semibold text-gray-700 text-xs w-20 shrink-0")
+                    ui.label("Username").classes("font-semibold text-gray-700 text-xs w-28 shrink-0")
+                    ui.label("Họ và tên").classes("font-semibold text-gray-700 text-xs w-40 shrink-0")
+                    ui.label("IP").classes("font-semibold text-gray-700 text-xs w-28 shrink-0")
+                    ui.label("Chi tiết").classes("font-semibold text-gray-700 text-xs flex-1")
+                for e in entries:
+                    ok = e.get("success", False)
+                    badge_cls = "bg-green-100 text-green-700" if ok else "bg-red-100 text-red-700"
+                    badge_txt = "Thành công" if ok else "Thất bại"
+                    with ui.row().classes("w-full bg-white border-b border-gray-100 px-3 py-1.5 items-center gap-2"):
+                        ts = (e.get("created_at") or "")[:16].replace("T", " ")
+                        ui.label(ts).classes("text-xs font-mono w-36 shrink-0 text-gray-600")
+                        ui.label(badge_txt).classes(f"text-xs px-1.5 py-0.5 rounded {badge_cls} w-20 shrink-0 text-center")
+                        ui.label(e.get("username", "")).classes("text-xs w-28 shrink-0 font-mono truncate")
+                        ui.label(e.get("full_name") or "—").classes("text-xs w-40 shrink-0 truncate")
+                        ui.label(e.get("ip_address") or "—").classes("text-xs font-mono w-28 shrink-0 text-gray-500")
+                        ui.label(e.get("detail") or "").classes("text-xs flex-1 text-gray-500 truncate")
+
+        with ui.row().classes("gap-2 mb-2 items-center"):
+            for _sf, _lbl in [("", "Tất cả"), ("true", "Thành công"), ("false", "Thất bại")]:
+                ui.button(_lbl,
+                          on_click=lambda f=_sf: asyncio.ensure_future(_load_logins(f))).classes(
+                    "text-sm bg-gray-100 text-gray-700 hover:bg-gray-200")
+            ui.button("↻", icon="refresh",
+                      on_click=lambda: asyncio.ensure_future(_load_logins(login_filter_ref[0]))).classes(
+                "text-sm bg-gray-700 text-white")
+
+        await _load_logins("")
 
 
 # ─── Run ─────────────────────────────────────────────────────────────────────

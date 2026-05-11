@@ -3,12 +3,13 @@ import re
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 from backend.database import get_db
-from backend.models import KSNBStaff
+from backend.models import KSNBStaff, LoginLog, _vn_now
 from backend.schemas import LoginRequest, Token, PasswordChange, AdminPasswordReset
 from backend.core.security import verify_password, create_access_token, get_password_hash
 from backend.core.deps import get_current_staff, require_admin
 from backend.core.sessions import set_session, get_session_ip, clear_session
 from backend.core.config import settings
+from backend.core import rate_limit
 
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
 
@@ -30,36 +31,61 @@ def _validate_password(pwd: str):
 
 @router.post("/login", response_model=Token)
 def login(req: LoginRequest, request: Request, db: Session = Depends(get_db)):
-    staff = db.query(KSNBStaff).filter(
-        KSNBStaff.username == req.username,
-        KSNBStaff.is_active == True
-    ).first()
-    if not staff or not verify_password(req.password, staff.pwd_hash):
+    # ── Rate limit ──
+    wait = rate_limit.seconds_locked(req.username)
+    if wait:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Tên đăng nhập hoặc mật khẩu không đúng"
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Quá nhiều lần đăng nhập sai. Thử lại sau {wait} giây.",
         )
 
-    # Prefer the real browser IP forwarded by the NiceGUI frontend
     client_ip = (
         request.headers.get("X-Client-IP")
         or (request.client.host if request.client else "unknown")
     )
 
+    staff = db.query(KSNBStaff).filter(
+        KSNBStaff.username == req.username,
+        KSNBStaff.is_active == True
+    ).first()
+    if not staff or not verify_password(req.password, staff.pwd_hash):
+        rate_limit.record_failed(req.username)
+        db.add(LoginLog(
+            username=req.username, staff_id=None, ip_address=client_ip,
+            success=False, detail="Sai tên đăng nhập hoặc mật khẩu", created_at=_vn_now(),
+        ))
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Tên đăng nhập hoặc mật khẩu không đúng"
+        )
+
     existing_ip = get_session_ip(staff.id)
     if existing_ip and existing_ip != client_ip and not req.force:
+        db.add(LoginLog(
+            username=req.username, staff_id=staff.id, ip_address=client_ip,
+            success=False, detail=f"Session đang hoạt động tại {existing_ip}", created_at=_vn_now(),
+        ))
+        db.commit()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Tài khoản đang được sử dụng tại {existing_ip}",
         )
 
+    rate_limit.clear(req.username)
     set_session(staff.id, client_ip, ttl_hours=settings.ACCESS_TOKEN_EXPIRE_HOURS)
     token = create_access_token({"sub": str(staff.id)})
+    db.add(LoginLog(
+        username=req.username, staff_id=staff.id, ip_address=client_ip,
+        success=True, detail=None, created_at=_vn_now(),
+    ))
+    db.commit()
     return Token(
         access_token=token,
         staff_id=staff.id,
         full_name=staff.full_name,
-        role=staff.role
+        role=staff.role,
+        department_id=staff.department_id,
     )
 
 
@@ -103,8 +129,12 @@ def admin_reset_password(
 def get_me(current: KSNBStaff = Depends(get_current_staff)):
     return {
         "id": current.id,
+        "staff_id": current.id,
         "employee_code": current.employee_code,
         "full_name": current.full_name,
         "role": current.role,
         "username": current.username,
+        "department_id": current.department_id,
+        "annual_leave_days": current.annual_leave_days or 12,
+        "used_leave_days": current.used_leave_days or 0,
     }

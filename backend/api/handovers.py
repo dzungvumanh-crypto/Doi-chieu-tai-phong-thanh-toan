@@ -1,4 +1,4 @@
-"""Handover (Bàn giao chứng từ) endpoints"""
+﻿"""Handover (Bàn giao chứng từ) endpoints"""
 import calendar
 from typing import List, Optional
 from datetime import date
@@ -14,6 +14,7 @@ from backend.models import (
 from backend.schemas import (
     HandoverCreate, HandoverOut, DocumentEntryIn, DocumentEntryOut,
     GridEntryOut, GridResponse, EntryUpsertRequest, EntryHistoryOut, EntryHistoryItem,
+    BorrowRequest, HandbackRequest, RejectRequest,
 )
 from backend.core.deps import get_current_staff, require_controller, require_handover_write
 
@@ -21,12 +22,16 @@ router = APIRouter(prefix="/api/handovers", tags=["Handovers"])
 
 # ─── Mapping hiển thị lịch sử ────────────────────────────────────────────────
 _ACTION_LABEL = {
-    "handover":   ("Bàn giao chứng từ",      "blue"),
-    "edited_cv":  ("Sửa số tờ (GDV)",         "blue"),
-    "confirmed":  ("Xác nhận đã nhận",         "green"),
-    "borrowed":   ("Mượn lại chứng từ",        "orange"),
-    "returned":   ("Xác nhận đã trả",          "green"),
-    "edited_hkv": ("Sửa trực tiếp (HKV/KSV)", "purple"),
+    "handover":           ("Bàn giao chứng từ",       "blue"),
+    "edited_cv":          ("Sửa số tờ (CV)",           "blue"),
+    "confirmed":          ("Xác nhận đã nhận",          "green"),
+    "borrow_requested":   ("Yêu cầu mượn lại",          "orange"),
+    "borrowed":           ("Xác nhận cho mượn",         "orange"),
+    "returned":           ("Bàn giao lại",               "blue"),
+    "edited_hkv":         ("Sửa trực tiếp (HKV/KSV)",  "purple"),
+    "rejected_borrow":    ("Từ chối yêu cầu mượn",      "red"),
+    "rejected_return":    ("Từ chối bàn giao lại",       "red"),
+    "rejected_handover":  ("Từ chối chứng từ mới",       "red"),
 }
 
 _STATUS_LABEL = {
@@ -37,16 +42,17 @@ _STATUS_LABEL = {
 
 def _role_label(staff: KSNBStaff) -> str:
     role_map = {
-        "admin": "Quản trị viên",
+        "admin":         "Quản trị viên",
         "hau_kiem_vien": "Hậu kiểm viên",
-        "controller": "Kiểm soát viên",
-        "viewer": "Xem",
-        "chuyen_vien": "Chuyên viên",
+        "giam_doc":      "Giám đốc",
+        "pho_giam_doc":  "Phó Giám đốc",
+        "truong_phong":  "Trưởng phòng",
+        "pho_phong":     "Phó phòng",
+        "chuyen_vien":   "Chuyên viên",
     }
-    label = role_map.get(str(staff.role), str(staff.role))
-    if str(staff.role) == "chuyen_vien":
-        return "Giao dịch viên"
-    return label
+    # str(enum) changed in Python 3.11+ — use .value for safe extraction
+    role_val = staff.role.value if hasattr(staff.role, "value") else str(staff.role)
+    return role_map.get(role_val, role_val)
 
 
 # ─── Grid ─────────────────────────────────────────────────────────────────────
@@ -59,7 +65,7 @@ def get_handover_grid(
     current: KSNBStaff = Depends(require_handover_write),
 ):
     # Chuyên viên chỉ được xem đúng phòng của mình
-    if str(current.role) == "chuyen_vien" and current.department_id != department_id:
+    if current.role == "chuyen_vien" and current.department_id != department_id:
         raise HTTPException(403, "Chỉ được xem dữ liệu phòng của mình")
 
     days_in_month = calendar.monthrange(year, month)[1]
@@ -113,7 +119,7 @@ def upsert_entry(
     if not user:
         raise HTTPException(404, "Không tìm thấy cán bộ")
 
-    is_cv = str(current.role) == "chuyen_vien"
+    is_cv = current.role == "chuyen_vien"
 
     # Chuyên viên chỉ được nhập dữ liệu phòng của mình
     if is_cv and current.department_id != user.department_id:
@@ -142,6 +148,9 @@ def upsert_entry(
                 Handover.department_id == dept_id,
                 Handover.handover_date == body.date,
             ).first()
+
+    if handover is None:
+        raise HTTPException(500, "Không thể tạo phiếu bàn giao — DB constraint lỗi, hãy báo admin")
 
     # Tìm entry hiện tại
     entry = db.query(DocumentEntry).filter(
@@ -224,7 +233,7 @@ def upsert_entry(
     return {"ok": True}
 
 
-# ─── Xác nhận đã nhận (HKV/KSV) ─────────────────────────────────────────────
+# ─── Xác nhận đã nhận / xác nhận cho mượn (HKV/KSV) ────────────────────────
 @router.post("/entries/{entry_id}/confirm-received")
 def confirm_received(
     entry_id: int,
@@ -237,29 +246,41 @@ def confirm_received(
     if entry.entry_status != "pending_confirm":
         raise HTTPException(409, f"Trạng thái không hợp lệ: '{_STATUS_LABEL.get(entry.entry_status, entry.entry_status)}'. Chỉ xác nhận được khi đang chờ xác nhận.")
 
-    entry.entry_status = "confirmed"
-    entry.confirmed_by_id = current.id
-    entry.confirmed_at = _vn_now()
+    if entry.borrow_reason:
+        # Xác nhận yêu cầu mượn → Đang mượn
+        entry.entry_status = "borrowed"
+        entry.borrowed_at = _vn_now()
+        entry.borrow_reason = None
+        action = EntryChangeActionEnum.borrowed
+        message = "Đã xác nhận cho mượn chứng từ"
+    else:
+        # Xác nhận nhận mới hoặc sau bàn giao lại → Đã xác nhận
+        entry.entry_status = "confirmed"
+        entry.confirmed_by_id = current.id
+        entry.confirmed_at = _vn_now()
+        action = EntryChangeActionEnum.confirmed
+        message = "Đã xác nhận nhận chứng từ"
 
-    # Cập nhật received_by_id của handover nếu chưa có
-    handover = db.query(Handover).get(entry.handover_id)
-    if handover and handover.received_by_id is None:
-        handover.received_by_id = current.id
+        # Cập nhật received_by_id của handover nếu chưa có
+        handover = db.query(Handover).get(entry.handover_id)
+        if handover and handover.received_by_id is None:
+            handover.received_by_id = current.id
 
     db.add(EntryChangeLog(
         entry_id=entry_id,
-        action=EntryChangeActionEnum.confirmed,
+        action=action,
         performed_by_id=current.id,
         new_sheet_count=entry.sheet_count,
     ))
     db.commit()
-    return {"ok": True, "message": "Đã xác nhận nhận chứng từ"}
+    return {"ok": True, "message": message}
 
 
-# ─── Mượn lại (Chuyên viên) ──────────────────────────────────────────────────
+# ─── Gửi yêu cầu mượn lại (Chuyên viên) ─────────────────────────────────────
 @router.post("/entries/{entry_id}/borrow")
 def borrow_entry(
     entry_id: int,
+    body: BorrowRequest,
     db: Session = Depends(get_db),
     current: KSNBStaff = Depends(require_handover_write),
 ):
@@ -269,48 +290,136 @@ def borrow_entry(
     if entry.entry_status != "confirmed":
         raise HTTPException(409, f"Trạng thái không hợp lệ: '{_STATUS_LABEL.get(entry.entry_status, entry.entry_status)}'. Chỉ mượn được chứng từ đã xác nhận.")
 
+    reason = body.reason.strip()
+    if not reason:
+        raise HTTPException(400, "Vui lòng nhập lý do mượn")
+
     # Chuyên viên chỉ mượn được chứng từ thuộc phòng mình
-    if str(current.role) == "chuyen_vien":
+    if current.role == "chuyen_vien":
         source_user = db.query(SourceUser).get(entry.source_user_id)
         if source_user and source_user.department_id != current.department_id:
             raise HTTPException(403, "Chỉ được mượn chứng từ thuộc phòng của mình")
 
-    entry.entry_status = "borrowed"
-    entry.borrowed_at = _vn_now()
+    entry.entry_status = "pending_confirm"
+    entry.borrow_reason = reason
 
     db.add(EntryChangeLog(
         entry_id=entry_id,
-        action=EntryChangeActionEnum.borrowed,
+        action=EntryChangeActionEnum.borrow_requested,
         performed_by_id=current.id,
         new_sheet_count=entry.sheet_count,
     ))
     db.commit()
-    return {"ok": True, "message": "Đã đánh dấu mượn chứng từ"}
+    return {"ok": True, "message": "Đã gửi yêu cầu mượn chứng từ"}
 
 
-# ─── Xác nhận đã trả (HKV/KSV) ───────────────────────────────────────────────
-@router.post("/entries/{entry_id}/confirm-returned")
-def confirm_returned(
+# ─── Bàn giao lại (Chuyên viên, sau khi mượn) ────────────────────────────────
+@router.post("/entries/{entry_id}/handback")
+def handback_entry(
     entry_id: int,
+    body: HandbackRequest,
+    db: Session = Depends(get_db),
+    current: KSNBStaff = Depends(require_handover_write),
+):
+    entry = db.query(DocumentEntry).get(entry_id)
+    if not entry:
+        raise HTTPException(404, "Không tìm thấy chứng từ")
+    if entry.entry_status != "borrowed":
+        raise HTTPException(409, f"Trạng thái không hợp lệ: '{_STATUS_LABEL.get(entry.entry_status, entry.entry_status)}'. Chỉ bàn giao lại được khi đang mượn.")
+
+    # Chuyên viên chỉ bàn giao lại chứng từ thuộc phòng mình
+    if current.role == "chuyen_vien":
+        source_user = db.query(SourceUser).get(entry.source_user_id)
+        if source_user and source_user.department_id != current.department_id:
+            raise HTTPException(403, "Chỉ được bàn giao lại chứng từ thuộc phòng của mình")
+
+    old_count = entry.sheet_count
+    entry.entry_status = "pending_confirm"
+    entry.borrow_reason = None
+    entry.sheet_count = body.sheet_count
+    entry.entered_by_id = current.id
+
+    db.add(EntryChangeLog(
+        entry_id=entry_id,
+        action=EntryChangeActionEnum.returned,
+        performed_by_id=current.id,
+        old_sheet_count=old_count,
+        new_sheet_count=body.sheet_count,
+    ))
+    db.commit()
+    return {"ok": True, "message": "Đã bàn giao lại chứng từ"}
+
+
+# ─── Endpoint đã ngừng sử dụng — luồng mới: /handback → /confirm-received ───
+@router.post("/entries/{entry_id}/confirm-returned")
+def confirm_returned(entry_id: int, _: KSNBStaff = Depends(require_controller)):
+    raise HTTPException(410, "Endpoint đã ngừng sử dụng. Dùng /handback + /confirm-received")
+
+
+# ─── Từ chối (HKV/KSV) ───────────────────────────────────────────────────────
+@router.post("/entries/{entry_id}/reject")
+def reject_entry(
+    entry_id: int,
+    body: RejectRequest,
     db: Session = Depends(get_db),
     current: KSNBStaff = Depends(require_controller),
 ):
     entry = db.query(DocumentEntry).get(entry_id)
     if not entry:
         raise HTTPException(404, "Không tìm thấy chứng từ")
-    if entry.entry_status != "borrowed":
-        raise HTTPException(409, f"Trạng thái không hợp lệ: '{_STATUS_LABEL.get(entry.entry_status, entry.entry_status)}'. Chỉ xác nhận trả được khi đang mượn.")
+    if entry.entry_status != "pending_confirm":
+        raise HTTPException(409, f"Trạng thái không hợp lệ: '{_STATUS_LABEL.get(entry.entry_status, entry.entry_status)}'. Chỉ từ chối được khi đang chờ xác nhận.")
 
-    entry.entry_status = "confirmed"
+    reason = body.reason.strip()
+    if not reason:
+        raise HTTPException(400, "Vui lòng nhập lý do từ chối")
 
-    db.add(EntryChangeLog(
-        entry_id=entry_id,
-        action=EntryChangeActionEnum.returned,
-        performed_by_id=current.id,
-        new_sheet_count=entry.sheet_count,
-    ))
+    if entry.borrow_reason:
+        # Từ chối yêu cầu mượn → quay về confirmed, xóa borrow_reason
+        entry.entry_status = "confirmed"
+        entry.borrow_reason = None
+        db.add(EntryChangeLog(
+            entry_id=entry_id,
+            action=EntryChangeActionEnum.rejected_borrow,
+            performed_by_id=current.id,
+            new_sheet_count=entry.sheet_count,
+            notes=reason,
+        ))
+        db.commit()
+        return {"ok": True, "message": "Đã từ chối yêu cầu mượn chứng từ"}
+
+    # Không có borrow_reason → xét last log để phân loại
+    last_log = (
+        db.query(EntryChangeLog)
+        .filter(EntryChangeLog.entry_id == entry_id)
+        .order_by(EntryChangeLog.timestamp.desc())
+        .first()
+    )
+    last_action = (
+        last_log.action.value if last_log and hasattr(last_log.action, "value")
+        else (str(last_log.action) if last_log else None)
+    )
+
+    if last_action == "returned":
+        # Từ chối bàn giao lại → quay về borrowed, khôi phục số tờ cũ
+        if last_log.old_sheet_count is not None:
+            entry.sheet_count = last_log.old_sheet_count
+        entry.entry_status = "borrowed"
+        db.add(EntryChangeLog(
+            entry_id=entry_id,
+            action=EntryChangeActionEnum.rejected_return,
+            performed_by_id=current.id,
+            new_sheet_count=entry.sheet_count,
+            notes=reason,
+        ))
+        db.commit()
+        return {"ok": True, "message": "Đã từ chối bàn giao lại. Chứng từ vẫn đang mượn."}
+
+    # Chứng từ mới chưa được xác nhận (handover/edited_cv) → từ chối → xóa entry
+    # (cascade xóa cả change_logs)
+    db.delete(entry)
     db.commit()
-    return {"ok": True, "message": "Đã xác nhận trả chứng từ"}
+    return {"ok": True, "message": "Đã từ chối và xóa chứng từ"}
 
 
 # ─── Lịch sử thay đổi ────────────────────────────────────────────────────────
@@ -327,7 +436,7 @@ def get_entry_history(
         raise HTTPException(404, "Không tìm thấy chứng từ")
 
     # Chuyên viên chỉ được xem lịch sử chứng từ thuộc phòng mình
-    if str(current.role) == "chuyen_vien":
+    if current.role == "chuyen_vien":
         source_user = entry.source_user or db.query(SourceUser).get(entry.source_user_id)
         if source_user and source_user.department_id != current.department_id:
             raise HTTPException(403, "Không có quyền xem lịch sử chứng từ của phòng khác")
@@ -348,6 +457,10 @@ def get_entry_history(
             label = f"{label}: {log.old_sheet_count} → {log.new_sheet_count} tờ"
         elif log.new_sheet_count is not None and log.old_sheet_count is None:
             label = f"{label} — {log.new_sheet_count} tờ"
+
+        # Hiển thị lý do từ chối (notes) nếu có
+        if log.notes:
+            label = f"{label} · Lý do: {log.notes}"
 
         performer = log.performed_by
         role_label = _role_label(performer) if performer else "?"
@@ -379,6 +492,7 @@ def get_entry_history(
         sheet_count=entry.sheet_count,
         current_status=current_status,
         current_status_label=_STATUS_LABEL.get(current_status, current_status),
+        borrow_reason=entry.borrow_reason,
         logs=history_items,
     )
 
@@ -394,7 +508,7 @@ def list_handovers(
     current: KSNBStaff = Depends(get_current_staff)
 ):
     # Chuyên viên chỉ được xem handover của phòng mình
-    if str(current.role) == "chuyen_vien":
+    if current.role == "chuyen_vien":
         department_id = current.department_id
 
     q = db.query(Handover).options(
@@ -412,6 +526,79 @@ def list_handovers(
     return q.order_by(Handover.handover_date.desc()).all()
 
 
+@router.get("/export")
+def export_handovers(
+    from_date: Optional[date] = None,
+    to_date:   Optional[date] = None,
+    department_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    current: KSNBStaff = Depends(get_current_staff),
+):
+    """Xuất danh sách chứng từ bàn giao ra Excel."""
+    import io
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from fastapi.responses import StreamingResponse
+
+    if current.role == "chuyen_vien":
+        department_id = current.department_id
+
+    q = (
+        db.query(DocumentEntry)
+        .join(Handover, DocumentEntry.handover_id == Handover.id)
+        .join(SourceUser, DocumentEntry.source_user_id == SourceUser.id)
+        .join(Department, Handover.department_id == Department.id)
+    )
+    if department_id:
+        q = q.filter(Handover.department_id == department_id)
+    if from_date:
+        q = q.filter(Handover.handover_date >= from_date)
+    if to_date:
+        q = q.filter(Handover.handover_date <= to_date)
+    entries = q.order_by(Handover.handover_date.desc(), Department.name).all()
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Bàn giao chứng từ"
+
+    hdr_fill = PatternFill("solid", fgColor="1565C0")
+    hdr_font = Font(bold=True, color="FFFFFF")
+    headers  = ["STT", "Phòng", "Ngày bàn giao", "Ngày giao dịch",
+                "User IPCAS", "Họ và tên", "Số tờ", "Trạng thái", "Người nộp"]
+    widths   = [6, 20, 14, 14, 16, 25, 9, 16, 22]
+    ws.append(headers)
+    for cell, w in zip(ws[1], widths):
+        cell.fill = hdr_fill
+        cell.font = hdr_font
+        cell.alignment = Alignment(horizontal="center")
+        ws.column_dimensions[cell.column_letter].width = w
+
+    for idx, entry in enumerate(entries, 1):
+        h    = entry.handover
+        dept = h.department if h else None
+        su   = entry.source_user
+        ws.append([
+            idx,
+            dept.name if dept else "",
+            h.handover_date.strftime("%d/%m/%Y") if h else "",
+            entry.transaction_date.strftime("%d/%m/%Y"),
+            su.user_code if su else "",
+            su.vn_name or su.full_name or "" if su else "",
+            entry.sheet_count,
+            _STATUS_LABEL.get(entry.entry_status or "confirmed", entry.entry_status or ""),
+            h.delivered_by or "" if h else "",
+        ])
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename*=UTF-8''chung_tu_ban_giao.xlsx"},
+    )
+
+
 @router.get("/{handover_id}", response_model=HandoverOut)
 def get_handover(
     handover_id: int,
@@ -424,7 +611,7 @@ def get_handover(
     ).filter(Handover.id == handover_id).first()
     if not h:
         raise HTTPException(404, "Không tìm thấy phiếu bàn giao")
-    if str(current.role) == "chuyen_vien" and h.department_id != current.department_id:
+    if current.role == "chuyen_vien" and h.department_id != current.department_id:
         raise HTTPException(403, "Không có quyền xem phiếu của phòng khác")
     return h
 

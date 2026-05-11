@@ -1,4 +1,6 @@
 """FastAPI Application Entry Point"""
+import logging
+import logging.handlers
 import os
 import sys
 
@@ -7,13 +9,43 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
+from sqlalchemy.exc import OperationalError as SAOperationalError
 from backend.database import engine, Base
+
+
+# ── Logging tập trung ──────────────────────────────────────────────────────────
+def _setup_logging():
+    os.makedirs("logs", exist_ok=True)
+    fmt = logging.Formatter(
+        "%(asctime)s %(levelname)-8s %(name)s — %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    root = logging.getLogger()
+    if root.handlers:       # Tránh duplicate khi uvicorn --reload
+        return
+    root.setLevel(logging.INFO)
+    ch = logging.StreamHandler()
+    ch.setFormatter(fmt)
+    root.addHandler(ch)
+    fh = logging.handlers.RotatingFileHandler(
+        "logs/app.log", maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
+    )
+    fh.setFormatter(fmt)
+    root.addHandler(fh)
+
+_setup_logging()
 from backend.api.auth import router as auth_router
 from backend.api.staff import router as staff_router
 from backend.api.departments import dept_router, user_router
 from backend.api.handovers import router as handover_router
 from backend.api.bundles import router as bundle_router
+from backend.api.leaves import router as leaves_router
+from backend.api.delegations import router as delegations_router
+from backend.api.logs import router as logs_router
+from backend.api.dashboard import router as dashboard_router
+from backend.api.holidays import router as holidays_router
 
 # Tạo tables
 Base.metadata.create_all(bind=engine)
@@ -35,8 +67,70 @@ def _ensure_indexes():
         "ALTER TABLE document_entries ADD COLUMN confirmed_by_id INTEGER REFERENCES ksnb_staff(id)",
         "ALTER TABLE document_entries ADD COLUMN confirmed_at DATETIME",
         "ALTER TABLE document_entries ADD COLUMN borrowed_at DATETIME",
+        "ALTER TABLE document_entries ADD COLUMN borrow_reason TEXT",
         # Gán phòng KSNB cho staff cũ không có department_id (idempotent)
         "UPDATE ksnb_staff SET department_id = (SELECT id FROM departments WHERE code = 'KSNB' LIMIT 1) WHERE department_id IS NULL AND role IN ('admin', 'hau_kiem_vien', 'controller', 'viewer')",
+        # Quyền mới — migrate controller → pho_phong
+        "ALTER TABLE ksnb_staff ADD COLUMN annual_leave_days INTEGER DEFAULT 12",
+        "ALTER TABLE ksnb_staff ADD COLUMN used_leave_days INTEGER DEFAULT 0",
+        "UPDATE ksnb_staff SET role = 'pho_phong' WHERE role = 'controller'",
+        "UPDATE ksnb_staff SET role = 'chuyen_vien' WHERE role = 'viewer'",
+        "INSERT OR IGNORE INTO departments (code, name, is_source, is_active) VALUES ('TH', 'Phòng Tổng hợp', 0, 1)",
+        "INSERT OR IGNORE INTO departments (code, name, is_source, is_active) VALUES ('BGD', 'Ban Giám đốc', 0, 1)",
+        # Gán GĐ/PGĐ vào Ban Giám đốc (idempotent — chạy lại không hại)
+        "UPDATE ksnb_staff SET department_id = (SELECT id FROM departments WHERE code = 'BGD' LIMIT 1) WHERE role IN ('giam_doc', 'pho_giam_doc')",
+        # Mở rộng LeaveRecord cho workflow 2 bước
+        "ALTER TABLE leave_records ADD COLUMN ksv_approver_id INTEGER REFERENCES ksnb_staff(id)",
+        "ALTER TABLE leave_records ADD COLUMN ksv_approved_at DATETIME",
+        "ALTER TABLE leave_records ADD COLUMN ksv_comment TEXT",
+        "ALTER TABLE leave_records ADD COLUMN gd_approver_id INTEGER REFERENCES ksnb_staff(id)",
+        "ALTER TABLE leave_records ADD COLUMN gd_approved_at DATETIME",
+        "ALTER TABLE leave_records ADD COLUMN gd_comment TEXT",
+        "ALTER TABLE leave_records ADD COLUMN updated_at DATETIME",
+        "UPDATE leave_records SET status = 'pending_ksv' WHERE status = 'pending'",
+        # Bảng ủy quyền GĐ
+        """CREATE TABLE IF NOT EXISTS delegation_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            giam_doc_id INTEGER NOT NULL REFERENCES ksnb_staff(id),
+            pho_giam_doc_id INTEGER NOT NULL REFERENCES ksnb_staff(id),
+            start_date DATE NOT NULL,
+            end_date DATE NOT NULL,
+            note TEXT,
+            created_by_id INTEGER NOT NULL REFERENCES ksnb_staff(id),
+            is_active BOOLEAN DEFAULT 1,
+            created_at DATETIME
+        )""",
+        # Workflow nghỉ phép 3 bước — Phòng Tổng hợp
+        "ALTER TABLE leave_records ADD COLUMN tong_hop_approver_id INTEGER REFERENCES ksnb_staff(id)",
+        "ALTER TABLE leave_records ADD COLUMN tong_hop_approved_at DATETIME",
+        "ALTER TABLE leave_records ADD COLUMN tong_hop_comment TEXT",
+        # Bảng ngày lễ
+        """CREATE TABLE IF NOT EXISTS public_holidays (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date DATE NOT NULL UNIQUE,
+            name TEXT NOT NULL
+        )""",
+        # Bảng nhật ký đăng nhập
+        """CREATE TABLE IF NOT EXISTS login_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL,
+            staff_id INTEGER REFERENCES ksnb_staff(id),
+            ip_address TEXT,
+            success INTEGER NOT NULL,
+            detail TEXT,
+            created_at DATETIME
+        )""",
+        # Bảng lịch sử thao tác nghỉ phép
+        """CREATE TABLE IF NOT EXISTS leave_action_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            leave_id INTEGER NOT NULL REFERENCES leave_records(id),
+            actor_id INTEGER NOT NULL REFERENCES ksnb_staff(id),
+            action TEXT NOT NULL,
+            comment TEXT,
+            from_status TEXT,
+            to_status TEXT,
+            created_at DATETIME
+        )""",
     ]
     import logging as _logging
     _mig_log = _logging.getLogger(__name__)
@@ -51,6 +145,69 @@ def _ensure_indexes():
                 if "duplicate column" not in msg and "already exists" not in msg:
                     _mig_log.error("Migration failed: %s — %s", s, exc)
                     raise
+
+    # ── Rebuild handovers: received_by_id NOT NULL → nullable, thêm UNIQUE(dept,date) ──
+    import sqlite3 as _sqlite3
+    _db_path = engine.url.database
+    _raw = _sqlite3.connect(_db_path)
+    _raw.isolation_level = None  # autocommit để PRAGMA foreign_keys hoạt động
+    try:
+        _cur = _raw.cursor()
+        _cur.execute("PRAGMA table_info(handovers)")
+        _h_cols = {r[1]: r[3] for r in _cur.fetchall()}  # {col_name: notnull_flag}
+        _cur.execute("PRAGMA index_list(handovers)")
+        # origin='u' → UNIQUE constraint (phân biệt với 'c' = CREATE INDEX thường)
+        _uniq_ok = any(r[2] and r[3] == 'u' for r in _cur.fetchall())
+        _needs_rebuild = bool(_h_cols.get('received_by_id', 0)) or not _uniq_ok
+        if _needs_rebuild:
+            _mig_log.info("Rebuilding handovers table (received_by_id → nullable, UNIQUE added)...")
+            _cur.execute("PRAGMA foreign_keys = OFF")
+            # legacy_alter_table=ON ngăn SQLite tự cập nhật FK refs trong child tables khi RENAME
+            # (nếu để OFF, document_entries.handover_id sẽ bị đổi thành REFERENCES _handovers_bak)
+            _cur.execute("PRAGMA legacy_alter_table = ON")
+            _cur.execute("BEGIN EXCLUSIVE")
+            try:
+                _cur.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='handovers'")
+                _tbl_ok = bool(_cur.fetchone())
+                _cur.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='_handovers_bak'")
+                _bak_ok = bool(_cur.fetchone())
+                if _tbl_ok:
+                    if _bak_ok:
+                        _cur.execute("DROP TABLE _handovers_bak")
+                    _cur.execute("ALTER TABLE handovers RENAME TO _handovers_bak")
+                elif not _bak_ok:
+                    raise RuntimeError("Không tìm thấy dữ liệu handovers để migrate")
+                _cur.execute("""
+                    CREATE TABLE handovers (
+                        id INTEGER NOT NULL PRIMARY KEY,
+                        department_id INTEGER NOT NULL,
+                        handover_date DATE NOT NULL,
+                        received_by_id INTEGER,
+                        delivered_by VARCHAR(100),
+                        notes TEXT,
+                        status VARCHAR(20),
+                        created_at DATETIME,
+                        UNIQUE(department_id, handover_date)
+                    )
+                """)
+                _cur.execute("""
+                    INSERT INTO handovers
+                    SELECT id, department_id, handover_date, received_by_id,
+                           delivered_by, notes, status, created_at
+                    FROM _handovers_bak
+                """)
+                _cur.execute("DROP TABLE _handovers_bak")
+                _cur.execute("COMMIT")
+                _mig_log.info("handovers rebuild hoàn tất")
+            except Exception as _me:
+                _cur.execute("ROLLBACK")
+                _mig_log.error("handovers rebuild thất bại: %s", _me)
+                raise
+            finally:
+                _cur.execute("PRAGMA legacy_alter_table = OFF")
+                _cur.execute("PRAGMA foreign_keys = ON")
+    finally:
+        _raw.close()
 
     stmts = [
         "CREATE INDEX IF NOT EXISTS ix_source_users_dept      ON source_users(department_id)",
@@ -71,6 +228,15 @@ def _ensure_indexes():
         "CREATE INDEX IF NOT EXISTS ix_doc_entries_status      ON document_entries(entry_status)",
         "CREATE INDEX IF NOT EXISTS ix_entry_change_logs_entry ON entry_change_logs(entry_id)",
         "CREATE INDEX IF NOT EXISTS ix_entry_change_logs_actor ON entry_change_logs(performed_by_id)",
+        "CREATE INDEX IF NOT EXISTS ix_leave_records_ksv    ON leave_records(ksv_approver_id)",
+        "CREATE INDEX IF NOT EXISTS ix_leave_records_gd     ON leave_records(gd_approver_id)",
+        "CREATE INDEX IF NOT EXISTS ix_delegation_gd        ON delegation_records(giam_doc_id)",
+        "CREATE INDEX IF NOT EXISTS ix_delegation_pgd       ON delegation_records(pho_giam_doc_id)",
+        "CREATE INDEX IF NOT EXISTS ix_leave_records_th     ON leave_records(tong_hop_approver_id)",
+        "CREATE INDEX IF NOT EXISTS ix_leave_action_logs    ON leave_action_logs(leave_id)",
+        "CREATE INDEX IF NOT EXISTS ix_public_holidays_date ON public_holidays(date)",
+        "CREATE INDEX IF NOT EXISTS ix_login_logs_username  ON login_logs(username)",
+        "CREATE INDEX IF NOT EXISTS ix_login_logs_created   ON login_logs(created_at)",
     ]
     with engine.connect() as conn:
         for s in stmts:
@@ -100,6 +266,23 @@ app.include_router(dept_router)
 app.include_router(user_router)
 app.include_router(handover_router)
 app.include_router(bundle_router)
+app.include_router(leaves_router, prefix="/api/leaves", tags=["leaves"])
+app.include_router(delegations_router, prefix="/api/delegations", tags=["delegations"])
+app.include_router(logs_router, prefix="/api/admin/logs", tags=["admin-logs"])
+app.include_router(dashboard_router, prefix="/api/dashboard", tags=["dashboard"])
+app.include_router(holidays_router, prefix="/api/admin/holidays", tags=["holidays"])
+
+
+_db_log = logging.getLogger("db.contention")
+
+@app.exception_handler(SAOperationalError)
+async def _db_error_handler(request, exc):
+    msg = str(exc.orig) if exc.orig else str(exc)
+    if "locked" in msg.lower() or "busy" in msg.lower():
+        _db_log.warning("SQLite BUSY — %s %s : %s", request.method, request.url.path, msg)
+    else:
+        _db_log.error("DB OperationalError — %s %s : %s", request.method, request.url.path, msg)
+    return JSONResponse(status_code=503, content={"detail": "Hệ thống bận, vui lòng thử lại"})
 
 
 @app.get("/")

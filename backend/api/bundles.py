@@ -1,5 +1,8 @@
 """Bundle management endpoints"""
 import json
+import logging
+
+_log = logging.getLogger(__name__)
 from urllib.parse import quote
 from datetime import date as date_type
 from typing import List, Optional, Tuple
@@ -14,7 +17,7 @@ from backend.models import (
 )
 from backend.schemas import (
     BundleGroupOut, BundleUpdateRequest, BundleGenerateRequest,
-    StorageViewRow, StorageViewResponse,
+    StorageViewRow, StorageViewResponse, StorageViewUpdateRequest,
     ArchiveRecord, HandoverArchiveResponse,
 )
 from backend.core.deps import get_current_staff, require_controller, require_ksnb
@@ -29,7 +32,7 @@ def _get_dates_for_bundle(b: Bundle):
             data = json.loads(b.cover_units)
             return frozenset(date_type.fromisoformat(u["date"]) for u in data)
         except Exception:
-            pass
+            _log.warning("bundle %s: cover_units JSON lỗi, dùng BundleItems fallback", b.id)
     return frozenset(
         item.entry.transaction_date
         for item in b.items
@@ -55,7 +58,7 @@ def _units_from_bundle(bundle: Bundle) -> List[EntryUnit]:
                 for u in data
             ]
         except Exception:
-            pass
+            _log.warning("bundle %s: cover_units JSON lỗi khi build units, dùng BundleItems fallback", bundle.id)
     # Fallback: đọc từ BundleItems (trường hợp không có cover_units)
     units = []
     for item in bundle.items:
@@ -177,14 +180,23 @@ def generate_bundles(
     if not entries:
         raise HTTPException(400, "Không có chứng từ để gom")
 
-    non_confirmed = [e for e in entries if e.entry_status != "confirmed"]
-    if non_confirmed:
-        raise HTTPException(400, f"{len(non_confirmed)} chứng từ chưa được xác nhận, không thể gom tập")
+    # Chỉ gom các entry đã xác nhận; bỏ qua entry pending_confirm/borrowed
+    entries = [e for e in entries if (e.entry_status or "confirmed") == "confirmed"]
+    if not entries:
+        raise HTTPException(400, "Không có chứng từ đã xác nhận để gom tập")
 
     found_ids = {e.id for e in entries}
-    missing_ids = set(entry_ids) - found_ids
-    if missing_ids:
-        raise HTTPException(400, "Có chứng từ không tồn tại")
+
+    # ── Xóa bundle group cũ cùng phòng+tháng (nếu có) để regenerate ──
+    if req.notes:
+        old_groups = db.query(BundleGroup).filter(
+            BundleGroup.department_id == req.department_id,
+            BundleGroup.notes == req.notes,
+        ).all()
+        for old_g in old_groups:
+            db.delete(old_g)
+        if old_groups:
+            db.flush()
 
     invalid_entries = [
         e.id for e in entries
@@ -518,6 +530,7 @@ def _get_storage_rows_for_month(
         for dates, b in multi_day:
             group_rows.append(StorageViewRow(
                 days=sorted(d.day for d in dates),
+                bundle_ids=[b.id],
                 bundle_sheets=[b.total_sheets],
                 n_bundles=1,
             ))
@@ -525,6 +538,7 @@ def _get_storage_rows_for_month(
             date_bundles = sorted(date_bundles, key=lambda b: b.sequence)
             group_rows.append(StorageViewRow(
                 days=[date.day],
+                bundle_ids=[b.id for b in date_bundles],
                 bundle_sheets=[b.total_sheets for b in date_bundles],
                 n_bundles=len(date_bundles),
             ))
@@ -645,6 +659,24 @@ def storage_view(
         total_sheets=sum(sum(r.bundle_sheets) for r in all_rows),
         total_bundles=sum(r.n_bundles for r in all_rows),
     )
+
+
+@router.patch("/storage-view")
+def update_storage_view(
+    req: StorageViewUpdateRequest,
+    db: Session = Depends(get_db),
+    _: KSNBStaff = Depends(require_ksnb),
+):
+    """Cập nhật total_sheets của từng bundle theo chỉnh sửa thủ công."""
+    for row in req.rows:
+        for i, bundle_id in enumerate(row.bundle_ids):
+            if i >= len(row.bundle_sheets):
+                continue
+            bundle = db.query(Bundle).get(bundle_id)
+            if bundle:
+                bundle.total_sheets = row.bundle_sheets[i]
+    db.commit()
+    return {"ok": True}
 
 
 @router.get("/handover-archive", response_model=HandoverArchiveResponse)

@@ -1,11 +1,14 @@
 """Departments & Source Users endpoints"""
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import case
 from sqlalchemy.orm import Session
 from backend.database import get_db
 from backend.models import Department, SourceUser, KSNBStaff, DocumentEntry
 from backend.schemas import DepartmentOut, SourceUserCreate, SourceUserOut
 from backend.core.deps import get_current_staff, require_hkv_or_above
+
+_DEPT_ORDER = case({"BGD": 0}, value=Department.code, else_=1)
 
 dept_router = APIRouter(prefix="/api/departments", tags=["Departments"])
 user_router = APIRouter(prefix="/api/source-users", tags=["Source Users"])
@@ -14,7 +17,7 @@ user_router = APIRouter(prefix="/api/source-users", tags=["Source Users"])
 # ─── Departments ─────────────────────────────────────────────────────────────
 @dept_router.get("/", response_model=List[DepartmentOut])
 def list_departments(db: Session = Depends(get_db), _: KSNBStaff = Depends(get_current_staff)):
-    return db.query(Department).filter(Department.is_active == True).order_by(Department.name).all()
+    return db.query(Department).filter(Department.is_active == True).order_by(_DEPT_ORDER, Department.name).all()
 
 
 @dept_router.get("/{dept_id}", response_model=DepartmentOut)

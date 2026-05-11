@@ -17,3 +17,9 @@ data/*.db-shm
 # IDE
 .vscode/
 .idea/
+
+# Temp files
+tmp_*.txt
+
+# Logs
+logs/

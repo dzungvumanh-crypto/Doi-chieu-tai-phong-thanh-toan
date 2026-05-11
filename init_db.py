@@ -17,11 +17,13 @@ def init_db():
     try:
         # ─── Departments ──────────────────────────────────────────────────────
         depts_data = [
+            {"code": "BGD",    "name": "Ban Giám đốc",                            "is_source": False},
             {"code": "NOSTRO", "name": "Phòng Quản lý Tài khoản Nostro Vostro", "is_source": True},
             {"code": "SWIFT",  "name": "Phòng Swift",                             "is_source": True},
             {"code": "PAYMENT","name": "Phòng Thanh toán",                        "is_source": True},
             {"code": "ACCT",   "name": "Phòng Kế toán",                           "is_source": True},
-            {"code": "KSNB",   "name": "Phòng KSNB&HTVH",                         "is_source": False},
+            {"code": "KSNB",   "name": "Phòng KSNB&HTVH",  "is_source": False},
+            {"code": "TH",     "name": "Phòng Tổng hợp",  "is_source": False},
         ]
         dept_map = {}
         for d in depts_data:
@@ -42,14 +44,14 @@ def init_db():
                 "full_name": "Quản trị viên",
                 "role": "admin",
                 "username": "admin",
-                "password": "admin123",
+                "password": "Admin@2024!",
             },
             {
                 "employee_code": "NV002",
                 "full_name": "Kiểm soát viên 1",
                 "role": "controller",
                 "username": "kiensoat1",
-                "password": "ksnb2024",
+                "password": "Ksnb@2024!",
             },
         ]
         for s in admin_data:
@@ -103,8 +105,8 @@ def init_db():
         db.commit()
         print("\n✓ Database đã khởi tạo thành công!")
         print("\nTài khoản đăng nhập mặc định:")
-        print("  Admin      : admin / admin123")
-        print("  Controller : kiensoat1 / ksnb2024")
+        print("  Admin      : admin / Admin@2024!")
+        print("  Controller : kiensoat1 / Ksnb@2024!")
         print("  Chuyên viên: gdv_nostro / Nostro@2024! (NOSTRO)")
         print("  Chuyên viên: gdv_swift / Swift@2024!   (SWIFT)")
         print("  Chuyên viên: gdv_payment / Payment@2024! (PAYMENT)")

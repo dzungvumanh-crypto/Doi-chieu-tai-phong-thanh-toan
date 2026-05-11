@@ -1,12 +1,23 @@
 """Cấu hình ứng dụng"""
 import os
 from pathlib import Path
+from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).parent.parent.parent
+load_dotenv(BASE_DIR / ".env")
+
+# Fail fast — không dùng fallback để tránh JWT bị forge khi quên set env var
+_secret_key = os.getenv("SECRET_KEY", "")
+if not _secret_key:
+    raise RuntimeError(
+        "Biến môi trường SECRET_KEY chưa được đặt.\n"
+        "Tạo key mạnh: python -c \"import secrets; print(secrets.token_hex(32))\"\n"
+        "Sau đó: set SECRET_KEY=<giá_trị_vừa_tạo>  (Windows) hoặc export SECRET_KEY=... (Linux/Mac)"
+    )
 
 class Settings:
     APP_NAME: str = "KSNB&HTVH Manager"
-    SECRET_KEY: str = os.getenv("SECRET_KEY", "ksnb-secret-key-change-in-production-2024")
+    SECRET_KEY: str = _secret_key
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_HOURS: int = 8
 

@@ -5,12 +5,18 @@ from sqlalchemy import case
 from sqlalchemy.orm import Session
 from backend.database import get_db
 from backend.models import KSNBStaff, LeaveRecord, Department
-from backend.schemas import StaffCreate, StaffUpdate, StaffOut, LeaveCreate, LeaveOut
+from backend.schemas import StaffCreate, StaffUpdate, StaffOut
 from backend.core.security import get_password_hash
 from backend.core.deps import get_current_staff, require_admin
 
 _ROLE_ORDER = case(
-    {"admin": 0, "controller": 1, "hau_kiem_vien": 2, "chuyen_vien": 3, "viewer": 4},
+    {
+        "giam_doc": 0, "pho_giam_doc": 1,
+        "admin": 2,
+        "truong_phong": 3, "pho_phong": 4,
+        "hau_kiem_vien": 5,
+        "chuyen_vien": 6,
+    },
     value=KSNBStaff.role,
     else_=9,
 )
@@ -23,7 +29,9 @@ def _validate_dept(db: Session, role: str, department_id):
     if not dept:
         raise HTTPException(400, "Phòng ban không tồn tại hoặc không còn hoạt động")
     if role == "chuyen_vien" and not dept.is_source:
-        raise HTTPException(400, "Giao dịch viên chỉ thuộc phòng nguồn")
+        raise HTTPException(400, "Chuyên viên chỉ thuộc phòng nguồn")
+    if role in ("giam_doc", "pho_giam_doc") and dept.is_source:
+        raise HTTPException(400, "Giám đốc / Phó Giám đốc phải thuộc Ban Giám đốc")
 
 router = APIRouter(prefix="/api/staff", tags=["Staff"])
 
@@ -118,42 +126,16 @@ def delete_staff(
     return {"message": "Đã vô hiệu hoá tài khoản"}
 
 
-# ─── Leave records ───────────────────────────────────────────────────────────
-@router.get("/{staff_id}/leaves", response_model=List[LeaveOut])
-def list_leaves(
+# ─── Leave records (DEPRECATED — dùng /api/leaves/ thay thế) ────────────────
+@router.get("/{staff_id}/leaves", deprecated=True)
+def list_leaves_deprecated(
     staff_id: int,
     db: Session = Depends(get_db),
     _: KSNBStaff = Depends(get_current_staff)
 ):
+    # DEPRECATED — use GET /api/leaves/?scope=mine
     return db.query(LeaveRecord).filter(LeaveRecord.staff_id == staff_id).order_by(
         LeaveRecord.start_date.desc()
     ).all()
 
 
-@router.post("/{staff_id}/leaves", response_model=LeaveOut)
-def create_leave(
-    staff_id: int,
-    body: LeaveCreate,
-    db: Session = Depends(get_db),
-    _: KSNBStaff = Depends(require_admin)
-):
-    leave = LeaveRecord(staff_id=staff_id, **body.dict())
-    db.add(leave)
-    db.commit()
-    db.refresh(leave)
-    return leave
-
-
-@router.put("/leaves/{leave_id}/approve")
-def approve_leave(
-    leave_id: int,
-    db: Session = Depends(get_db),
-    current: KSNBStaff = Depends(require_admin)
-):
-    leave = db.query(LeaveRecord).get(leave_id)
-    if not leave:
-        raise HTTPException(404, "Không tìm thấy bản ghi nghỉ phép")
-    leave.status = "approved"
-    leave.approved_by_id = current.id
-    db.commit()
-    return {"message": "Đã phê duyệt"}
