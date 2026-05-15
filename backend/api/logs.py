@@ -61,6 +61,13 @@ def _parse_log_file(level_filter: str = "", limit: int = 200, offset: int = 0):
     return parsed[offset: offset + limit], total
 
 
+@router.get("/backup-info")
+def get_backup_info(_: object = Depends(require_admin_or_gd)):
+    """Thông tin bản backup gần nhất (dùng cho trang Admin)."""
+    from backend.services.backup_service import last_backup_info
+    return last_backup_info()
+
+
 @router.get("/backup")
 def backup_db(_: object = Depends(require_admin_or_gd)):
     """Tạo bản sao DB an toàn (SQLite online backup API) và trả về file tải về."""

@@ -82,6 +82,8 @@ def create_staff(
         phone=body.phone,
         email=body.email,
         start_date=body.start_date,
+        ipcas_code=body.ipcas_code,
+        payment_username=body.payment_username,
     )
     db.add(s)
     db.commit()

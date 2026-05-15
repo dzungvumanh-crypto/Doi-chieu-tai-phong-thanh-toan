@@ -17,6 +17,7 @@ class Token(BaseModel):
     full_name: str
     role: str
     department_id: Optional[int] = None
+    must_change_password: bool = False
 
 
 # ─── Department ─────────────────────────────────────────────────────────────
@@ -40,6 +41,8 @@ class StaffCreate(BaseModel):
     phone: Optional[str] = None
     email: Optional[str] = None
     start_date: Optional[date] = None
+    ipcas_code: Optional[str] = None
+    payment_username: Optional[str] = None
 
 class StaffUpdate(BaseModel):
     full_name: Optional[str] = None
@@ -48,6 +51,8 @@ class StaffUpdate(BaseModel):
     phone: Optional[str] = None
     email: Optional[str] = None
     is_active: Optional[bool] = None
+    ipcas_code: Optional[str] = None
+    payment_username: Optional[str] = None
 
 class StaffOut(BaseModel):
     id: int
@@ -59,6 +64,8 @@ class StaffOut(BaseModel):
     phone: Optional[str]
     email: Optional[str]
     start_date: Optional[date]
+    ipcas_code: Optional[str] = None
+    payment_username: Optional[str] = None
     is_active: bool
     class Config: from_attributes = True
 

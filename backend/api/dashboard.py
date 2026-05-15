@@ -78,19 +78,35 @@ def pending_counts(
     # admin, chuyen_vien → 0
 
     # ── Chứng từ chờ xác nhận ────────────────────────────────────────────────
+    handovers_by_dept: list[dict] = []
+
+    def _dept_breakdown(extra_filter=None):
+        q = (
+            db.query(Department.name, func.count(DocumentEntry.id))
+            .join(Handover, DocumentEntry.handover_id == Handover.id)
+            .join(Department, Handover.department_id == Department.id)
+            .filter(DocumentEntry.entry_status == "pending_confirm")
+        )
+        if extra_filter is not None:
+            q = q.filter(extra_filter)
+        rows = q.group_by(Department.name).order_by(Department.name).all()
+        return [{"dept_name": name, "count": cnt} for name, cnt in rows]
+
     if role == "hau_kiem_vien":
         handovers_count = db.query(func.count(DocumentEntry.id)).filter(
             DocumentEntry.entry_status == "pending_confirm",
         ).scalar() or 0
+        handovers_by_dept = _dept_breakdown()
 
     elif role == "chuyen_vien" and current.id:
         handovers_count = db.query(func.count(DocumentEntry.id)).filter(
             DocumentEntry.entry_status == "pending_confirm",
             DocumentEntry.entered_by_id == current.id,
         ).scalar() or 0
+        handovers_by_dept = _dept_breakdown(DocumentEntry.entered_by_id == current.id)
     # Còn lại → 0
 
-    return {"leaves": leaves_count, "handovers": handovers_count}
+    return {"leaves": leaves_count, "handovers": handovers_count, "handovers_by_dept": handovers_by_dept}
 
 
 @router.get("/summary")

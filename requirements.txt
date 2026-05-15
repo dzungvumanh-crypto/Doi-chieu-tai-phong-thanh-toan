@@ -11,3 +11,5 @@ python-dotenv==1.0.1
 docxtpl==0.16.8
 python-docx==1.1.2
 openpyxl==3.1.2
+pandas>=2.0.0
+xlrd>=2.0.1

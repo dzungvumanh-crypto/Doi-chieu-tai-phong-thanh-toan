@@ -13,6 +13,13 @@ class SessionExpiredError(Exception):
     """Raised khi backend trả 401 — session đã hết hạn hoặc đã logout."""
     pass
 
+
+class ViolationError(Exception):
+    """Raised khi server trả 422 với danh sách user có name_5 ≠ 0."""
+    def __init__(self, message: str, violations: list):
+        super().__init__(message)
+        self.violations = violations  # [{"user_code", "name_5", "system"}]
+
 # Persistent client — tái dùng TCP connection, tránh overhead kết nối mỗi request
 _client = httpx.Client(timeout=httpx.Timeout(10.0))
 _download_client = httpx.Client(timeout=httpx.Timeout(60.0))
@@ -91,6 +98,15 @@ def _raise_http_error(e: httpx.HTTPStatusError):
     if e.response.status_code == 401:
         clear_auth()
         raise SessionExpiredError("Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.")
+    if e.response.status_code == 422:
+        try:
+            detail = e.response.json().get("detail", "")
+            if isinstance(detail, dict) and "violations" in detail:
+                raise ViolationError(detail.get("message", "Vi phạm dữ liệu"), detail["violations"])
+        except ViolationError:
+            raise
+        except Exception:
+            pass
     raise Exception(_parse_error(e))
 
 
@@ -151,6 +167,64 @@ def delete(path: str) -> Any:
             return {}
     except httpx.HTTPStatusError as e:
         _raise_http_error(e)
+    except Exception as e:
+        raise Exception(str(e))
+
+
+def post_upload_bytes(path: str, files: dict) -> bytes:
+    """Multipart POST, nhận bytes response (ZIP, Excel…). Dùng cho generate-dept-zip."""
+    try:
+        h = {k: v for k, v in _headers().items() if k != "Content-Type"}
+        r = _download_client.post(f"{BACKEND_URL}{path}", headers=h, files=files)
+        r.raise_for_status()
+        return r.content
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 401:
+            clear_auth()
+            raise SessionExpiredError("Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.")
+        try:
+            body = e.response.json()
+            detail = body.get("detail", "")
+            if isinstance(detail, dict):
+                if "violations" in detail:
+                    raise ViolationError(
+                        detail.get("message", "Vi phạm dữ liệu"),
+                        detail["violations"],
+                    )
+                raise Exception(detail.get("message", str(detail)))
+            raise Exception(str(detail) or e.response.text)
+        except (SessionExpiredError, ViolationError):
+            raise
+        except Exception as inner:
+            raise Exception(str(inner))
+    except Exception as e:
+        raise Exception(str(e))
+
+
+def post_upload(path: str, files: dict, data: dict = None) -> Any:
+    """Gửi multipart/form-data (file upload). files = {'field': (name, bytes, mime)}"""
+    try:
+        h = {k: v for k, v in _headers().items() if k != "Content-Type"}
+        r = _download_client.post(f"{BACKEND_URL}{path}", headers=h, files=files, data=data or {})
+        r.raise_for_status()
+        return r.json()
+    except httpx.HTTPStatusError as e:
+        _raise_http_error(e)
+    except Exception as e:
+        raise Exception(str(e))
+
+
+def post_download(path: str, data: dict = None) -> bytes:
+    """POST với JSON body, nhận bytes (Excel/Word)."""
+    try:
+        r = _download_client.post(f"{BACKEND_URL}{path}", headers=_headers(), json=data or {})
+        r.raise_for_status()
+        return r.content
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 401:
+            clear_auth()
+            raise SessionExpiredError("Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.")
+        raise Exception(e.response.text)
     except Exception as e:
         raise Exception(str(e))
 

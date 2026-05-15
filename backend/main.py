@@ -46,6 +46,7 @@ from backend.api.delegations import router as delegations_router
 from backend.api.logs import router as logs_router
 from backend.api.dashboard import router as dashboard_router
 from backend.api.holidays import router as holidays_router
+from backend.api.reports import router as reports_router
 
 # Tạo tables
 Base.metadata.create_all(bind=engine)
@@ -131,6 +132,11 @@ def _ensure_indexes():
             to_status TEXT,
             created_at DATETIME
         )""",
+        # 1.3 — bắt buộc đổi mật khẩu lần đầu
+        "ALTER TABLE ksnb_staff ADD COLUMN must_change_password BOOLEAN DEFAULT 0",
+        # 1.4 — mã IPCAS và username Payment cho KSNB staff (HKV)
+        "ALTER TABLE ksnb_staff ADD COLUMN ipcas_code VARCHAR(20)",
+        "ALTER TABLE ksnb_staff ADD COLUMN payment_username VARCHAR(50)",
     ]
     import logging as _logging
     _mig_log = _logging.getLogger(__name__)
@@ -143,8 +149,13 @@ def _ensure_indexes():
                 conn.rollback()
                 msg = str(exc).lower()
                 if "duplicate column" not in msg and "already exists" not in msg:
-                    _mig_log.error("Migration failed: %s — %s", s, exc)
-                    raise
+                    if "database is locked" in msg or "locked" in msg:
+                        # DB bị lock bởi process cũ (backup scheduler chưa dừng)
+                        # Migration idempotent → bỏ qua, restart tiếp theo sẽ chạy lại
+                        _mig_log.warning("Migration skipped (DB locked, sẽ thử lại lần sau): %.80s", s)
+                    else:
+                        _mig_log.error("Migration failed: %s — %s", s, exc)
+                        raise
 
     # ── Rebuild handovers: received_by_id NOT NULL → nullable, thêm UNIQUE(dept,date) ──
     import sqlite3 as _sqlite3
@@ -245,6 +256,11 @@ def _ensure_indexes():
 
 _ensure_indexes()
 
+# ── Backup tự động ─────────────────────────────────────────────────────────────
+from backend.services.backup_service import start_scheduler as _start_backup
+from backend.core.config import settings as _settings
+_start_backup(_settings.DATABASE_URL.replace("sqlite:///", ""))
+
 app = FastAPI(
     title="KSNB&HTVH – Agribank",
     description="Hệ thống quản lý nhân sự và chứng từ hậu kiểm",
@@ -271,6 +287,7 @@ app.include_router(delegations_router, prefix="/api/delegations", tags=["delegat
 app.include_router(logs_router, prefix="/api/admin/logs", tags=["admin-logs"])
 app.include_router(dashboard_router, prefix="/api/dashboard", tags=["dashboard"])
 app.include_router(holidays_router, prefix="/api/admin/holidays", tags=["holidays"])
+app.include_router(reports_router)
 
 
 _db_log = logging.getLogger("db.contention")

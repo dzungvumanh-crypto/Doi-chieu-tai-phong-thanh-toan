@@ -62,11 +62,15 @@ class KSNBStaff(Base):
     phone = Column(String(20), nullable=True)
     email = Column(String(100), nullable=True)
     start_date = Column(Date, nullable=True)
-    annual_leave_days = Column(Integer, default=12)   # Hạn ngạch phép năm
-    used_leave_days   = Column(Integer, default=0)    # Số ngày đã dùng trong năm hiện tại
+    annual_leave_days    = Column(Integer, default=12)   # Hạn ngạch phép năm
+    used_leave_days      = Column(Integer, default=0)    # Số ngày đã dùng trong năm hiện tại
+    must_change_password = Column(Boolean, default=False) # True = bắt buộc đổi mk sau lần đăng nhập đầu
+    ipcas_code       = Column(String(20), nullable=True, index=True)  # Mã user IPCAS (col_tellerid)
+    payment_username = Column(String(50), nullable=True)               # Username hệ thống Payment
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=_vn_now)
 
+    department = relationship("Department", foreign_keys=[department_id])
     handovers_received = relationship("Handover", back_populates="received_by_staff")
     bundles_custodian = relationship("Bundle", back_populates="custodian_staff")
     bundle_groups_created = relationship("BundleGroup", back_populates="created_by_staff")

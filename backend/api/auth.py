@@ -86,6 +86,7 @@ def login(req: LoginRequest, request: Request, db: Session = Depends(get_db)):
         full_name=staff.full_name,
         role=staff.role,
         department_id=staff.department_id,
+        must_change_password=bool(staff.must_change_password),
     )
 
 
@@ -105,6 +106,7 @@ def change_password(
         raise HTTPException(status_code=400, detail="Mật khẩu cũ không đúng")
     _validate_password(req.new_password)
     current.pwd_hash = get_password_hash(req.new_password)
+    current.must_change_password = False
     db.commit()
     return {"message": "Đổi mật khẩu thành công"}
 
@@ -121,6 +123,7 @@ def admin_reset_password(
         raise HTTPException(404, "Không tìm thấy tài khoản")
     _validate_password(req.new_password)
     target.pwd_hash = get_password_hash(req.new_password)
+    target.must_change_password = True
     db.commit()
     return {"message": f"Đã đặt lại mật khẩu cho {target.full_name}"}
 

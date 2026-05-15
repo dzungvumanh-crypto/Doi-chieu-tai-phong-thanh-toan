@@ -58,7 +58,7 @@ def init_db():
             existing = db.query(KSNBStaff).filter(KSNBStaff.username == s["username"]).first()
             if not existing:
                 pwd = s.pop("password")
-                staff = KSNBStaff(**s, pwd_hash=get_password_hash(pwd))
+                staff = KSNBStaff(**s, pwd_hash=get_password_hash(pwd), must_change_password=True)
                 db.add(staff)
                 print(f"  + Cán bộ: {staff.full_name} ({staff.username})")
 
@@ -98,7 +98,7 @@ def init_db():
             if not existing:
                 dept_id = dept_map.get(cv.pop("dept_code"))
                 pwd     = cv.pop("password")
-                staff   = KSNBStaff(**cv, department_id=dept_id, pwd_hash=get_password_hash(pwd))
+                staff   = KSNBStaff(**cv, department_id=dept_id, pwd_hash=get_password_hash(pwd), must_change_password=True)
                 db.add(staff)
                 print(f"  + Chuyên viên: {staff.full_name} ({staff.username})")
 
@@ -110,6 +110,7 @@ def init_db():
         print("  Chuyên viên: gdv_nostro / Nostro@2024! (NOSTRO)")
         print("  Chuyên viên: gdv_swift / Swift@2024!   (SWIFT)")
         print("  Chuyên viên: gdv_payment / Payment@2024! (PAYMENT)")
+        print("\n⚠️  CẢNH BÁO BẢO MẬT: Hãy đổi mật khẩu ngay sau lần đăng nhập đầu tiên!")
 
     except Exception as e:
         db.rollback()
