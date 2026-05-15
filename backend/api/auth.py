@@ -1,9 +1,8 @@
 """Authentication endpoints"""
 import re
+import sqlite3
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlalchemy.orm import Session
-from backend.database import get_db
-from backend.models import KSNBStaff, LoginLog, _vn_now
+from backend.database import get_db, _vn_now
 from backend.schemas import LoginRequest, Token, PasswordChange, AdminPasswordReset
 from backend.core.security import verify_password, create_access_token, get_password_hash
 from backend.core.deps import get_current_staff, require_admin
@@ -30,7 +29,7 @@ def _validate_password(pwd: str):
 
 
 @router.post("/login", response_model=Token)
-def login(req: LoginRequest, request: Request, db: Session = Depends(get_db)):
+def login(req: LoginRequest, request: Request, db: sqlite3.Connection = Depends(get_db)):
     # ── Rate limit ──
     wait = rate_limit.seconds_locked(req.username)
     if wait:
@@ -44,28 +43,28 @@ def login(req: LoginRequest, request: Request, db: Session = Depends(get_db)):
         or (request.client.host if request.client else "unknown")
     )
 
-    staff = db.query(KSNBStaff).filter(
-        KSNBStaff.username == req.username,
-        KSNBStaff.is_active == True
-    ).first()
-    if not staff or not verify_password(req.password, staff.pwd_hash):
+    row = db.execute(
+        "SELECT * FROM ksnb_staff WHERE username = ? AND is_active = 1", (req.username,)
+    ).fetchone()
+    if not row or not verify_password(req.password, row["pwd_hash"]):
         rate_limit.record_failed(req.username)
-        db.add(LoginLog(
-            username=req.username, staff_id=None, ip_address=client_ip,
-            success=False, detail="Sai tên đăng nhập hoặc mật khẩu", created_at=_vn_now(),
-        ))
+        db.execute(
+            "INSERT INTO login_logs (username, staff_id, ip_address, success, detail, created_at) VALUES (?,?,?,?,?,?)",
+            (req.username, None, client_ip, 0, "Sai tên đăng nhập hoặc mật khẩu", _vn_now()),
+        )
         db.commit()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Tên đăng nhập hoặc mật khẩu không đúng"
         )
 
-    existing_ip = get_session_ip(staff.id)
+    staff = dict(row)
+    existing_ip = get_session_ip(staff["id"])
     if existing_ip and existing_ip != client_ip and not req.force:
-        db.add(LoginLog(
-            username=req.username, staff_id=staff.id, ip_address=client_ip,
-            success=False, detail=f"Session đang hoạt động tại {existing_ip}", created_at=_vn_now(),
-        ))
+        db.execute(
+            "INSERT INTO login_logs (username, staff_id, ip_address, success, detail, created_at) VALUES (?,?,?,?,?,?)",
+            (req.username, staff["id"], client_ip, 0, f"Session đang hoạt động tại {existing_ip}", _vn_now()),
+        )
         db.commit()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -73,40 +72,42 @@ def login(req: LoginRequest, request: Request, db: Session = Depends(get_db)):
         )
 
     rate_limit.clear(req.username)
-    set_session(staff.id, client_ip, ttl_hours=settings.ACCESS_TOKEN_EXPIRE_HOURS)
-    token = create_access_token({"sub": str(staff.id)})
-    db.add(LoginLog(
-        username=req.username, staff_id=staff.id, ip_address=client_ip,
-        success=True, detail=None, created_at=_vn_now(),
-    ))
+    set_session(staff["id"], client_ip, ttl_hours=settings.ACCESS_TOKEN_EXPIRE_HOURS)
+    token = create_access_token({"sub": str(staff["id"])})
+    db.execute(
+        "INSERT INTO login_logs (username, staff_id, ip_address, success, detail, created_at) VALUES (?,?,?,?,?,?)",
+        (req.username, staff["id"], client_ip, 1, None, _vn_now()),
+    )
     db.commit()
     return Token(
         access_token=token,
-        staff_id=staff.id,
-        full_name=staff.full_name,
-        role=staff.role,
-        department_id=staff.department_id,
-        must_change_password=bool(staff.must_change_password),
+        staff_id=staff["id"],
+        full_name=staff["full_name"],
+        role=staff["role"],
+        department_id=staff.get("department_id"),
+        must_change_password=bool(staff.get("must_change_password", 0)),
     )
 
 
 @router.post("/logout")
-def logout(current: KSNBStaff = Depends(get_current_staff)):
-    clear_session(current.id)
+def logout(current: dict = Depends(get_current_staff)):
+    clear_session(current["id"])
     return {"message": "Đã đăng xuất"}
 
 
 @router.post("/change-password")
 def change_password(
     req: PasswordChange,
-    current: KSNBStaff = Depends(get_current_staff),
-    db: Session = Depends(get_db)
+    current: dict = Depends(get_current_staff),
+    db: sqlite3.Connection = Depends(get_db),
 ):
-    if not verify_password(req.old_password, current.pwd_hash):
+    if not verify_password(req.old_password, current["pwd_hash"]):
         raise HTTPException(status_code=400, detail="Mật khẩu cũ không đúng")
     _validate_password(req.new_password)
-    current.pwd_hash = get_password_hash(req.new_password)
-    current.must_change_password = False
+    db.execute(
+        "UPDATE ksnb_staff SET pwd_hash = ?, must_change_password = 0 WHERE id = ?",
+        (get_password_hash(req.new_password), current["id"]),
+    )
     db.commit()
     return {"message": "Đổi mật khẩu thành công"}
 
@@ -114,30 +115,32 @@ def change_password(
 @router.post("/admin-reset-password")
 def admin_reset_password(
     req: AdminPasswordReset,
-    current: KSNBStaff = Depends(require_admin),
-    db: Session = Depends(get_db)
+    current: dict = Depends(require_admin),
+    db: sqlite3.Connection = Depends(get_db),
 ):
     """Admin đặt lại mật khẩu cho user khác (không cần nhập mật khẩu cũ)."""
-    target = db.query(KSNBStaff).filter(KSNBStaff.id == req.staff_id).first()
+    target = db.execute("SELECT * FROM ksnb_staff WHERE id = ?", (req.staff_id,)).fetchone()
     if not target:
         raise HTTPException(404, "Không tìm thấy tài khoản")
     _validate_password(req.new_password)
-    target.pwd_hash = get_password_hash(req.new_password)
-    target.must_change_password = True
+    db.execute(
+        "UPDATE ksnb_staff SET pwd_hash = ?, must_change_password = 1 WHERE id = ?",
+        (get_password_hash(req.new_password), req.staff_id),
+    )
     db.commit()
-    return {"message": f"Đã đặt lại mật khẩu cho {target.full_name}"}
+    return {"message": f"Đã đặt lại mật khẩu cho {target['full_name']}"}
 
 
 @router.get("/me")
-def get_me(current: KSNBStaff = Depends(get_current_staff)):
+def get_me(current: dict = Depends(get_current_staff)):
     return {
-        "id": current.id,
-        "staff_id": current.id,
-        "employee_code": current.employee_code,
-        "full_name": current.full_name,
-        "role": current.role,
-        "username": current.username,
-        "department_id": current.department_id,
-        "annual_leave_days": current.annual_leave_days or 12,
-        "used_leave_days": current.used_leave_days or 0,
+        "id": current["id"],
+        "staff_id": current["id"],
+        "employee_code": current["employee_code"],
+        "full_name": current["full_name"],
+        "role": current["role"],
+        "username": current["username"],
+        "department_id": current.get("department_id"),
+        "annual_leave_days": current.get("annual_leave_days") or 12,
+        "used_leave_days": current.get("used_leave_days") or 0,
     }

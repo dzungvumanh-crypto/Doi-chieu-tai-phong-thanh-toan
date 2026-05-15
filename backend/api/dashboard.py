@@ -1,17 +1,11 @@
 """Dashboard API — KPI tổng hợp và pending counts cho sidebar badge"""
+import sqlite3
 from datetime import date, timedelta
 from typing import FrozenSet
 from collections import defaultdict
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func
-from sqlalchemy.orm import Session
-
-from backend.database import get_db
+from backend.database import get_db, _vn_now
 from backend.core.deps import get_current_staff, TONG_HOP_CODES
-from backend.models import (
-    KSNBStaff, LeaveRecord, DocumentEntry, Handover, Department,
-    DelegationRecord, PublicHoliday, _vn_now,
-)
 
 router = APIRouter()
 
@@ -22,8 +16,6 @@ def _working_days_between(
     holiday_dates: FrozenSet[date],
     leave_dates: FrozenSet[date] = frozenset(),
 ) -> int:
-    """Số ngày làm việc thực trong (start_exclusive, end_inclusive].
-    Trừ T7/CN, ngày lễ, ngày nghỉ phép của người phụ trách nhận bàn giao."""
     count = 0
     d = start_exclusive + timedelta(days=1)
     while d <= end_inclusive:
@@ -33,90 +25,91 @@ def _working_days_between(
     return count
 
 
-def _is_tong_hop(staff: KSNBStaff, db: Session) -> bool:
-    if not staff.department_id:
+def _is_tong_hop(staff: dict, db: sqlite3.Connection) -> bool:
+    dept_id = staff.get("department_id")
+    if not dept_id:
         return False
-    dept = db.get(Department, staff.department_id)
-    return bool(dept and dept.code.upper() in TONG_HOP_CODES)
+    r = db.execute("SELECT code FROM departments WHERE id = ?", (dept_id,)).fetchone()
+    return bool(r and r["code"].upper() in TONG_HOP_CODES)
 
 
 @router.get("/pending-counts")
 def pending_counts(
-    current: KSNBStaff = Depends(get_current_staff),
-    db: Session = Depends(get_db),
+    current: dict = Depends(get_current_staff),
+    db: sqlite3.Connection = Depends(get_db),
 ):
-    """Số việc đang chờ current user — dùng cho badge sidebar."""
-    role = current.role
+    role = current["role"]
     leaves_count = 0
     handovers_count = 0
+    handovers_by_dept: list = []
 
-    # ── Đơn phép đang chờ ───────────────────────────────────────────────────
+    # ── Đơn phép đang chờ ──
     if role in ("truong_phong", "pho_phong", "hau_kiem_vien"):
-        leaves_count = db.query(func.count(LeaveRecord.id)).filter(
-            LeaveRecord.ksv_approver_id == current.id,
-            LeaveRecord.status == "pending_ksv",
-        ).scalar() or 0
+        leaves_count = db.execute(
+            "SELECT COUNT(*) FROM leave_records WHERE ksv_approver_id = ? AND status = 'pending_ksv'",
+            (current["id"],),
+        ).fetchone()[0] or 0
 
     elif _is_tong_hop(current, db):
-        leaves_count = db.query(func.count(LeaveRecord.id)).filter(
-            LeaveRecord.status == "pending_tong_hop",
-        ).scalar() or 0
+        leaves_count = db.execute(
+            "SELECT COUNT(*) FROM leave_records WHERE status = 'pending_tong_hop'"
+        ).fetchone()[0] or 0
 
     elif role in ("giam_doc", "pho_giam_doc"):
         today = _vn_now().date()
-        can_approve = (role == "giam_doc") or db.query(DelegationRecord).filter(
-            DelegationRecord.pho_giam_doc_id == current.id,
-            DelegationRecord.is_active == True,
-            DelegationRecord.start_date <= today,
-            DelegationRecord.end_date >= today,
-        ).first() is not None
+        can_approve = role == "giam_doc" or db.execute(
+            """SELECT id FROM delegation_records
+               WHERE pho_giam_doc_id = ? AND is_active = 1
+                 AND start_date <= ? AND end_date >= ?""",
+            (current["id"], today.isoformat(), today.isoformat()),
+        ).fetchone() is not None
         if can_approve:
-            leaves_count = db.query(func.count(LeaveRecord.id)).filter(
-                LeaveRecord.gd_approver_id == current.id,
-                LeaveRecord.status == "pending_gd",
-            ).scalar() or 0
-    # admin, chuyen_vien → 0
+            leaves_count = db.execute(
+                "SELECT COUNT(*) FROM leave_records WHERE gd_approver_id = ? AND status = 'pending_gd'",
+                (current["id"],),
+            ).fetchone()[0] or 0
 
-    # ── Chứng từ chờ xác nhận ────────────────────────────────────────────────
-    handovers_by_dept: list[dict] = []
-
-    def _dept_breakdown(extra_filter=None):
-        q = (
-            db.query(Department.name, func.count(DocumentEntry.id))
-            .join(Handover, DocumentEntry.handover_id == Handover.id)
-            .join(Department, Handover.department_id == Department.id)
-            .filter(DocumentEntry.entry_status == "pending_confirm")
-        )
-        if extra_filter is not None:
-            q = q.filter(extra_filter)
-        rows = q.group_by(Department.name).order_by(Department.name).all()
-        return [{"dept_name": name, "count": cnt} for name, cnt in rows]
-
+    # ── Chứng từ chờ xác nhận ──
     if role == "hau_kiem_vien":
-        handovers_count = db.query(func.count(DocumentEntry.id)).filter(
-            DocumentEntry.entry_status == "pending_confirm",
-        ).scalar() or 0
-        handovers_by_dept = _dept_breakdown()
+        handovers_count = db.execute(
+            "SELECT COUNT(*) FROM document_entries WHERE entry_status = 'pending_confirm'"
+        ).fetchone()[0] or 0
+        rows = db.execute(
+            """SELECT d.name AS dept_name, COUNT(de.id) AS cnt
+               FROM document_entries de
+               JOIN handovers h ON de.handover_id = h.id
+               JOIN departments d ON h.department_id = d.id
+               WHERE de.entry_status = 'pending_confirm'
+               GROUP BY d.name ORDER BY d.name"""
+        ).fetchall()
+        handovers_by_dept = [{"dept_name": r["dept_name"], "count": r["cnt"]} for r in rows]
 
-    elif role == "chuyen_vien" and current.id:
-        handovers_count = db.query(func.count(DocumentEntry.id)).filter(
-            DocumentEntry.entry_status == "pending_confirm",
-            DocumentEntry.entered_by_id == current.id,
-        ).scalar() or 0
-        handovers_by_dept = _dept_breakdown(DocumentEntry.entered_by_id == current.id)
-    # Còn lại → 0
+    elif role == "chuyen_vien" and current.get("id"):
+        handovers_count = db.execute(
+            "SELECT COUNT(*) FROM document_entries WHERE entry_status = 'pending_confirm' AND entered_by_id = ?",
+            (current["id"],),
+        ).fetchone()[0] or 0
+        rows = db.execute(
+            """SELECT d.name AS dept_name, COUNT(de.id) AS cnt
+               FROM document_entries de
+               JOIN handovers h ON de.handover_id = h.id
+               JOIN departments d ON h.department_id = d.id
+               WHERE de.entry_status = 'pending_confirm' AND de.entered_by_id = ?
+               GROUP BY d.name ORDER BY d.name""",
+            (current["id"],),
+        ).fetchall()
+        handovers_by_dept = [{"dept_name": r["dept_name"], "count": r["cnt"]} for r in rows]
 
     return {"leaves": leaves_count, "handovers": handovers_count, "handovers_by_dept": handovers_by_dept}
 
 
 @router.get("/summary")
 def dashboard_summary(
-    year: int = Query(None, description="Năm (mặc định năm hiện tại)"),
-    month: int = Query(None, description="Tháng 1-12 (mặc định tháng hiện tại)"),
-    current: KSNBStaff = Depends(get_current_staff),
-    db: Session = Depends(get_db),
+    year: int = Query(None),
+    month: int = Query(None),
+    current: dict = Depends(get_current_staff),
+    db: sqlite3.Connection = Depends(get_db),
 ):
-    """Tỷ lệ nộp chứng từ đúng hạn theo tháng, phân nhóm theo phòng."""
     today = _vn_now().date()
     if year is None:
         year = today.year
@@ -125,68 +118,56 @@ def dashboard_summary(
 
     period_start = date(year, month, 1)
     period_end   = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
-    # Mở rộng 35 ngày về trước để bao phủ transaction_date tháng trước
     lookup_start = period_start - timedelta(days=35)
 
-    # ── Preload ngày lễ ───────────────────────────────────────────────────────
+    # ── Ngày lễ ──
+    holiday_rows = db.execute(
+        "SELECT date FROM public_holidays WHERE date >= ? AND date < ?",
+        (lookup_start.isoformat(), period_end.isoformat()),
+    ).fetchall()
     holiday_dates: FrozenSet[date] = frozenset(
-        r.date for r in db.query(PublicHoliday.date).filter(
-            PublicHoliday.date >= lookup_start,
-            PublicHoliday.date < period_end,
-        ).all()
+        date.fromisoformat(r["date"]) for r in holiday_rows
     )
 
-    # ── Preload ngày nghỉ phép được duyệt của từng nhân viên KSNB ────────────
-    # (dùng để loại trừ ngày nhân viên nhận không làm việc)
-    leave_rows = db.query(
-        LeaveRecord.staff_id,
-        LeaveRecord.start_date,
-        LeaveRecord.end_date,
-    ).filter(
-        LeaveRecord.status == "approved",
-        LeaveRecord.end_date >= lookup_start,
-        LeaveRecord.start_date < period_end,
-    ).all()
+    # ── Ngày nghỉ phép được duyệt ──
+    leave_rows = db.execute(
+        """SELECT staff_id, start_date, end_date FROM leave_records
+           WHERE status = 'approved' AND end_date >= ? AND start_date < ?""",
+        (lookup_start.isoformat(), period_end.isoformat()),
+    ).fetchall()
 
-    _raw_leave: dict[int, set] = defaultdict(set)
-    for staff_id, lv_start, lv_end in leave_rows:
+    _raw_leave: dict = defaultdict(set)
+    for lr in leave_rows:
+        lv_start = date.fromisoformat(lr["start_date"])
+        lv_end   = date.fromisoformat(lr["end_date"])
         d = max(lv_start, lookup_start)
         while d <= lv_end and d < period_end:
-            if d.weekday() < 5:  # chỉ ngày làm việc mới cần lưu
-                _raw_leave[staff_id].add(d)
+            if d.weekday() < 5:
+                _raw_leave[lr["staff_id"]].add(d)
             d += timedelta(days=1)
-    staff_leave: dict[int, FrozenSet[date]] = {
-        sid: frozenset(dates) for sid, dates in _raw_leave.items()
-    }
+    staff_leave: dict = {sid: frozenset(dates) for sid, dates in _raw_leave.items()}
 
-    # ── Query entries đã bàn giao trong period ───────────────────────────────
-    rows = (
-        db.query(
-            DocumentEntry.transaction_date,
-            Handover.handover_date,
-            Handover.received_by_id,
-            Department.name.label("dept_name"),
-        )
-        .join(Handover, DocumentEntry.handover_id == Handover.id)
-        .join(Department, Handover.department_id == Department.id)
-        .filter(
-            Handover.handover_date >= period_start,
-            Handover.handover_date < period_end,
-        )
-        .all()
-    )
+    # ── Entries trong period ──
+    rows = db.execute(
+        """SELECT de.transaction_date, h.handover_date, h.received_by_id, d.name AS dept_name
+           FROM document_entries de
+           JOIN handovers h ON de.handover_id = h.id
+           JOIN departments d ON h.department_id = d.id
+           WHERE h.handover_date >= ? AND h.handover_date < ?""",
+        (period_start.isoformat(), period_end.isoformat()),
+    ).fetchall()
 
-    # ── Tính on_time: <= 1 ngày làm việc thực từ transaction_date ────────────
-    # (bỏ T7/CN, ngày lễ, ngày nghỉ phép của người phụ trách nhận)
-    by_dept: dict[str, dict] = {}
+    by_dept: dict = {}
     overall_total = 0
     overall_on_time = 0
 
-    for transaction_date, handover_date, received_by_id, dept_name in rows:
-        receiver_leave = staff_leave.get(received_by_id, frozenset()) if received_by_id else frozenset()
-        working_days   = _working_days_between(
-            transaction_date, handover_date, holiday_dates, receiver_leave
-        )
+    for row in rows:
+        tx_date      = date.fromisoformat(row["transaction_date"])
+        ho_date      = date.fromisoformat(row["handover_date"])
+        recv_id      = row["received_by_id"]
+        dept_name    = row["dept_name"]
+        receiver_leave = staff_leave.get(recv_id, frozenset()) if recv_id else frozenset()
+        working_days   = _working_days_between(tx_date, ho_date, holiday_dates, receiver_leave)
         on_time = working_days <= 1
 
         if dept_name not in by_dept:

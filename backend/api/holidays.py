@@ -1,13 +1,11 @@
 """Quản lý ngày lễ — dùng để tính ngày làm việc thực trong đơn nghỉ phép"""
+import sqlite3
 from datetime import date as _date
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
-
 from backend.database import get_db
 from backend.core.deps import get_current_staff, require_admin
-from backend.models import PublicHoliday
 
 router = APIRouter()
 
@@ -26,44 +24,49 @@ class HolidayOut(BaseModel):
 
 @router.get("/", response_model=List[HolidayOut])
 def list_holidays(
-    year: Optional[int] = Query(None, description="Lọc theo năm"),
-    _: object = Depends(get_current_staff),
-    db: Session = Depends(get_db),
+    year: Optional[int] = Query(None),
+    _: dict = Depends(get_current_staff),
+    db: sqlite3.Connection = Depends(get_db),
 ):
-    q = db.query(PublicHoliday)
     if year:
-        q = q.filter(
-            PublicHoliday.date >= _date(year, 1, 1),
-            PublicHoliday.date <= _date(year, 12, 31),
-        )
-    return q.order_by(PublicHoliday.date).all()
+        rows = db.execute(
+            "SELECT * FROM public_holidays WHERE date >= ? AND date <= ? ORDER BY date",
+            (f"{year}-01-01", f"{year}-12-31"),
+        ).fetchall()
+    else:
+        rows = db.execute("SELECT * FROM public_holidays ORDER BY date").fetchall()
+    return [dict(r) for r in rows]
 
 
 @router.post("/", response_model=HolidayOut)
 def create_holiday(
     body: HolidayCreate,
-    _: object = Depends(require_admin),
-    db: Session = Depends(get_db),
+    _: dict = Depends(require_admin),
+    db: sqlite3.Connection = Depends(get_db),
 ):
-    existing = db.query(PublicHoliday).filter(PublicHoliday.date == body.date).first()
+    existing = db.execute(
+        "SELECT * FROM public_holidays WHERE date = ?", (body.date.isoformat(),)
+    ).fetchone()
     if existing:
-        raise HTTPException(400, f"Ngày {body.date} đã được thêm ({existing.name})")
-    holiday = PublicHoliday(date=body.date, name=body.name.strip())
-    db.add(holiday)
+        raise HTTPException(400, f"Ngày {body.date} đã được thêm ({existing['name']})")
+    cur = db.execute(
+        "INSERT INTO public_holidays (date, name) VALUES (?, ?)",
+        (body.date.isoformat(), body.name.strip()),
+    )
     db.commit()
-    db.refresh(holiday)
-    return holiday
+    row = db.execute("SELECT * FROM public_holidays WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return dict(row)
 
 
 @router.delete("/{holiday_id}")
 def delete_holiday(
     holiday_id: int,
-    _: object = Depends(require_admin),
-    db: Session = Depends(get_db),
+    _: dict = Depends(require_admin),
+    db: sqlite3.Connection = Depends(get_db),
 ):
-    holiday = db.get(PublicHoliday, holiday_id)
-    if not holiday:
+    row = db.execute("SELECT id FROM public_holidays WHERE id = ?", (holiday_id,)).fetchone()
+    if not row:
         raise HTTPException(404, "Không tìm thấy ngày lễ")
-    db.delete(holiday)
+    db.execute("DELETE FROM public_holidays WHERE id = ?", (holiday_id,))
     db.commit()
     return {"ok": True}

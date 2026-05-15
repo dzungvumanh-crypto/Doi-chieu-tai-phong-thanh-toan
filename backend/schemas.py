@@ -100,39 +100,20 @@ class StorageViewUpdateRequest(BaseModel):
     rows: List[StorageViewUpdateRow]
 
 
-# ─── Source User ─────────────────────────────────────────────────────────────
-class SourceUserCreate(BaseModel):
-    user_code: str
-    full_name: Optional[str] = None   # User PaymentHub
-    vn_name: Optional[str] = None     # Họ và tên thực
-    department_id: int
-    is_active: bool = True
-
-class SourceUserOut(BaseModel):
-    id: int
-    user_code: str
-    full_name: Optional[str]
-    vn_name: Optional[str] = None
-    department_id: int
-    is_active: bool
-    department: Optional[DepartmentOut] = None
-    class Config: from_attributes = True
-
-
 # ─── Document Entry ─────────────────────────────────────────────────────────
 class DocumentEntryIn(BaseModel):
-    source_user_id: int
+    staff_id: int
     transaction_date: date
     sheet_count: int = Field(gt=0)
     notes: Optional[str] = None
 
 class DocumentEntryOut(BaseModel):
     id: int
-    source_user_id: int
+    staff_id: Optional[int] = None
     transaction_date: date
     sheet_count: int
     notes: Optional[str]
-    source_user: Optional[SourceUserOut] = None
+    staff: Optional[StaffOut] = None
     class Config: from_attributes = True
 
 
@@ -203,7 +184,7 @@ class BundleUpdateRequest(BaseModel):
 
 # ─── Handover Grid ───────────────────────────────────────────────────────────
 class GridEntryOut(BaseModel):
-    source_user_id: int
+    staff_id: int
     day: int
     sheet_count: int
     entry_id: Optional[int] = None
@@ -211,12 +192,12 @@ class GridEntryOut(BaseModel):
     entered_by_name: Optional[str] = None   # Tên người nhập
 
 class GridResponse(BaseModel):
-    users: List[SourceUserOut]
+    users: List[StaffOut]
     entries: List[GridEntryOut]
     days_in_month: int
 
 class EntryUpsertRequest(BaseModel):
-    source_user_id: int
+    staff_id: int
     date: date
     sheet_count: int = Field(ge=0)
 

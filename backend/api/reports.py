@@ -1,15 +1,14 @@
 """API endpoints báo cáo hậu kiểm IPCAS / Payment"""
 import logging
+import sqlite3
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import Response
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
 
 from backend.database import get_db
 from backend.core.deps import require_hkv_or_above
-from backend.models import KSNBStaff
 from backend.services.report_service import (
     parse_ipcas, parse_payment_teller, parse_payment_backchecker,
     enrich_and_group, merge_hkv,
@@ -30,20 +29,13 @@ def _dl_headers(filename: str) -> dict:
     }
 
 
-# ── Parse GDV + Teller → JSON grouped by dept ────────────────────────────────
-
 @router.post("/parse-gdv")
 async def parse_gdv(
     gdv_file: UploadFile = File(None),
     teller_file: UploadFile = File(None),
-    current: KSNBStaff = Depends(require_hkv_or_above),
-    db: Session = Depends(get_db),
+    current: dict = Depends(require_hkv_or_above),
+    db: sqlite3.Connection = Depends(get_db),
 ):
-    """
-    Upload file GDV (IPCAS .xls) và/hoặc Teller (Payment .xlsx).
-    Trả về dữ liệu grouped theo phòng.
-    HTTP 422 nếu có GD Hậu kiểm sai ≠ 0.
-    """
     result = {"ipcas": {}, "payment": {}, "month": 0, "year": 0}
     violations = []
 
@@ -78,29 +70,18 @@ async def parse_gdv(
     if violations:
         raise HTTPException(
             status_code=422,
-            detail={
-                "message": "GD Hậu kiểm sai đang lớn hơn 0. Đề nghị kiểm tra lại",
-                "violations": violations,
-            },
+            detail={"message": "GD Hậu kiểm sai đang lớn hơn 0. Đề nghị kiểm tra lại", "violations": violations},
         )
-
     return result
 
-
-# ── Parse HKV + Backchecker → JSON merged HKV list ───────────────────────────
 
 @router.post("/parse-hkv")
 async def parse_hkv(
     hkv_file: UploadFile = File(None),
     checker_file: UploadFile = File(None),
-    current: KSNBStaff = Depends(require_hkv_or_above),
-    db: Session = Depends(get_db),
+    current: dict = Depends(require_hkv_or_above),
+    db: sqlite3.Connection = Depends(get_db),
 ):
-    """
-    Upload file HKV (IPCAS .xls) và Backchecker (Payment .xlsx).
-    Trả về merged list per HKV user.
-    HTTP 422 nếu có vi phạm.
-    """
     ipcas_rows, payment_rows = [], []
     violations = []
     month, year = 0, 0
@@ -133,17 +114,12 @@ async def parse_hkv(
     if violations:
         raise HTTPException(
             status_code=422,
-            detail={
-                "message": "GD Hậu kiểm sai đang lớn hơn 0. Đề nghị kiểm tra lại",
-                "violations": violations,
-            },
+            detail={"message": "GD Hậu kiểm sai đang lớn hơn 0. Đề nghị kiểm tra lại", "violations": violations},
         )
 
     merged = merge_hkv(ipcas_rows, payment_rows, db)
     return {"hkv_rows": merged, "month": month, "year": year}
 
-
-# ── Generate Excel báo cáo phòng ─────────────────────────────────────────────
 
 class GenerateDeptRequest(BaseModel):
     dept_name: str
@@ -157,10 +133,10 @@ class GenerateDeptRequest(BaseModel):
 @router.post("/generate-dept")
 def generate_dept(
     body: GenerateDeptRequest,
-    current: KSNBStaff = Depends(require_hkv_or_above),
+    current: dict = Depends(require_hkv_or_above),
 ):
     try:
-        staff_name = body.staff_name or current.full_name or current.username
+        staff_name = body.staff_name or current.get("full_name") or current.get("username", "")
         excel_bytes = generate_dept_excel(
             dept_name=body.dept_name,
             month=body.month,
@@ -180,8 +156,6 @@ def generate_dept(
         raise HTTPException(status_code=500, detail=f"Lỗi sinh báo cáo Excel: {e}")
 
 
-# ── Generate Word báo cáo tổng hợp ───────────────────────────────────────────
-
 class GenerateWordRequest(BaseModel):
     month: int
     year: int
@@ -193,7 +167,7 @@ class GenerateWordRequest(BaseModel):
 @router.post("/generate-word")
 def generate_word(
     body: GenerateWordRequest,
-    current: KSNBStaff = Depends(require_hkv_or_above),
+    current: dict = Depends(require_hkv_or_above),
 ):
     try:
         word_bytes = generate_center_word(
@@ -214,19 +188,13 @@ def generate_word(
         raise HTTPException(status_code=500, detail=f"Lỗi sinh báo cáo Word: {e}")
 
 
-# ── Generate ZIP tất cả báo cáo phòng (1 request) ────────────────────────────
-
 @router.post("/generate-dept-zip")
 async def generate_dept_zip(
     gdv_file: UploadFile = File(None),
     teller_file: UploadFile = File(None),
-    current: KSNBStaff = Depends(require_hkv_or_above),
-    db: Session = Depends(get_db),
+    current: dict = Depends(require_hkv_or_above),
+    db: sqlite3.Connection = Depends(get_db),
 ):
-    """
-    Upload GDV + Teller → parse → generate 1 Excel/phòng → trả ZIP.
-    HTTP 422 nếu name_5 ≠ 0.
-    """
     violations = []
     ipcas_grouped: dict = {}
     payment_grouped: dict = {}
@@ -260,17 +228,14 @@ async def generate_dept_zip(
     if violations:
         raise HTTPException(
             status_code=422,
-            detail={
-                "message": "GD Hậu kiểm sai đang lớn hơn 0. Đề nghị kiểm tra lại",
-                "violations": violations,
-            },
+            detail={"message": "GD Hậu kiểm sai đang lớn hơn 0. Đề nghị kiểm tra lại", "violations": violations},
         )
 
     all_depts = set(ipcas_grouped.keys()) | set(payment_grouped.keys())
     if not all_depts:
         raise HTTPException(status_code=400, detail="Không có dữ liệu để tạo báo cáo")
 
-    staff_name = current.full_name or current.username
+    staff_name = current.get("full_name") or current.get("username", "")
     m_disp = month or 1
     y_disp = year or 2025
     excels = {}

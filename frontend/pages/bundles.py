@@ -303,8 +303,8 @@ async def bundles_page():
                                     ],
                                     rows=[{
                                         "id": e["entry_id"],
-                                        "name": (users_map.get(e["source_user_id"]) or {}).get("vn_name")
-                                                or (users_map.get(e["source_user_id"]) or {}).get("user_code") or "",
+                                        "name": (users_map.get(e["staff_id"]) or {}).get("full_name")
+                                                or (users_map.get(e["staff_id"]) or {}).get("ipcas_code") or "",
                                         "date": f"{year}-{month:02d}-{e['day']:02d}",
                                         "sheets": e["sheet_count"],
                                     } for e in grid_entries],

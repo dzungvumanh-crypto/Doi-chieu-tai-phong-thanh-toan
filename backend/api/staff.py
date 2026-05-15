@@ -1,129 +1,137 @@
 """KSNB Staff management endpoints"""
+import sqlite3
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import case
-from sqlalchemy.orm import Session
 from backend.database import get_db
-from backend.models import KSNBStaff, LeaveRecord, Department
 from backend.schemas import StaffCreate, StaffUpdate, StaffOut
 from backend.core.security import get_password_hash
 from backend.core.deps import get_current_staff, require_admin
 
-_ROLE_ORDER = case(
-    {
-        "giam_doc": 0, "pho_giam_doc": 1,
-        "admin": 2,
-        "truong_phong": 3, "pho_phong": 4,
-        "hau_kiem_vien": 5,
-        "chuyen_vien": 6,
-    },
-    value=KSNBStaff.role,
-    else_=9,
-)
+router = APIRouter(prefix="/api/staff", tags=["Staff"])
 
-def _validate_dept(db: Session, role: str, department_id):
-    """Validate department_id — bắt buộc với mọi role."""
+_ROLE_ORDER_SQL = """
+    CASE role
+        WHEN 'giam_doc'      THEN 0
+        WHEN 'pho_giam_doc'  THEN 1
+        WHEN 'admin'         THEN 2
+        WHEN 'truong_phong'  THEN 3
+        WHEN 'pho_phong'     THEN 4
+        WHEN 'hau_kiem_vien' THEN 5
+        WHEN 'chuyen_vien'   THEN 6
+        ELSE 9
+    END
+"""
+
+
+def _validate_dept(db: sqlite3.Connection, role: str, department_id):
     if not department_id:
         raise HTTPException(400, "Phải chọn phòng ban")
-    dept = db.query(Department).filter(Department.id == department_id, Department.is_active == True).first()
+    dept = db.execute(
+        "SELECT * FROM departments WHERE id = ? AND is_active = 1", (department_id,)
+    ).fetchone()
     if not dept:
         raise HTTPException(400, "Phòng ban không tồn tại hoặc không còn hoạt động")
-    if role == "chuyen_vien" and not dept.is_source:
+    if role == "chuyen_vien" and not dept["is_source"]:
         raise HTTPException(400, "Chuyên viên chỉ thuộc phòng nguồn")
-    if role in ("giam_doc", "pho_giam_doc") and dept.is_source:
+    if role in ("giam_doc", "pho_giam_doc") and dept["is_source"]:
         raise HTTPException(400, "Giám đốc / Phó Giám đốc phải thuộc Ban Giám đốc")
-
-router = APIRouter(prefix="/api/staff", tags=["Staff"])
 
 
 @router.get("/", response_model=List[StaffOut])
 def list_staff(
     active_only: bool = True,
-    db: Session = Depends(get_db),
-    _: KSNBStaff = Depends(get_current_staff)
+    department_id: Optional[int] = None,
+    db: sqlite3.Connection = Depends(get_db),
+    _: dict = Depends(get_current_staff),
 ):
-    q = db.query(KSNBStaff)
+    clauses = []
+    params = []
     if active_only:
-        q = q.filter(KSNBStaff.is_active == True)
-    return q.order_by(_ROLE_ORDER, KSNBStaff.full_name).all()
+        clauses.append("is_active = 1")
+    if department_id:
+        clauses.append("department_id = ?")
+        params.append(department_id)
+    where = "WHERE " + " AND ".join(clauses) if clauses else ""
+    rows = db.execute(
+        f"SELECT * FROM ksnb_staff {where} ORDER BY {_ROLE_ORDER_SQL}, full_name", params
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
 @router.get("/{staff_id}", response_model=StaffOut)
 def get_staff(
     staff_id: int,
-    db: Session = Depends(get_db),
-    _: KSNBStaff = Depends(get_current_staff)
+    db: sqlite3.Connection = Depends(get_db),
+    _: dict = Depends(get_current_staff),
 ):
-    s = db.query(KSNBStaff).get(staff_id)
-    if not s:
+    row = db.execute("SELECT * FROM ksnb_staff WHERE id = ?", (staff_id,)).fetchone()
+    if not row:
         raise HTTPException(404, "Không tìm thấy cán bộ")
-    return s
+    return dict(row)
 
 
 @router.post("/", response_model=StaffOut)
 def create_staff(
     body: StaffCreate,
-    db: Session = Depends(get_db),
-    _: KSNBStaff = Depends(require_admin)
+    db: sqlite3.Connection = Depends(get_db),
+    _: dict = Depends(require_admin),
 ):
-    if db.query(KSNBStaff).filter(KSNBStaff.username == body.username).first():
+    if db.execute("SELECT id FROM ksnb_staff WHERE username = ?", (body.username,)).fetchone():
         raise HTTPException(400, "Username đã tồn tại")
     emp_code = body.employee_code or body.username
-    if db.query(KSNBStaff).filter(KSNBStaff.employee_code == emp_code).first():
+    if db.execute("SELECT id FROM ksnb_staff WHERE employee_code = ?", (emp_code,)).fetchone():
         raise HTTPException(400, "Mã nhân viên đã tồn tại")
     _validate_dept(db, body.role, body.department_id)
-    s = KSNBStaff(
-        employee_code=emp_code,
-        full_name=body.full_name,
-        role=body.role,
-        department_id=body.department_id,
-        username=body.username,
-        pwd_hash=get_password_hash(body.password),
-        phone=body.phone,
-        email=body.email,
-        start_date=body.start_date,
-        ipcas_code=body.ipcas_code,
-        payment_username=body.payment_username,
+    cur = db.execute(
+        """INSERT INTO ksnb_staff
+           (employee_code, full_name, role, department_id, username, pwd_hash,
+            phone, email, start_date, ipcas_code, payment_username, is_active)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,1)""",
+        (emp_code, body.full_name, body.role, body.department_id, body.username,
+         get_password_hash(body.password), body.phone, body.email,
+         body.start_date.isoformat() if body.start_date else None,
+         body.ipcas_code, body.payment_username),
     )
-    db.add(s)
     db.commit()
-    db.refresh(s)
-    return s
+    row = db.execute("SELECT * FROM ksnb_staff WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return dict(row)
 
 
 @router.put("/{staff_id}", response_model=StaffOut)
 def update_staff(
     staff_id: int,
     body: StaffUpdate,
-    db: Session = Depends(get_db),
-    _: KSNBStaff = Depends(require_admin)
+    db: sqlite3.Connection = Depends(get_db),
+    _: dict = Depends(require_admin),
 ):
-    s = db.query(KSNBStaff).get(staff_id)
-    if not s:
+    row = db.execute("SELECT * FROM ksnb_staff WHERE id = ?", (staff_id,)).fetchone()
+    if not row:
         raise HTTPException(404, "Không tìm thấy cán bộ")
     update_data = body.dict(exclude_none=True)
-    new_role = update_data.get("role", str(s.role))
-    new_dept = update_data.get("department_id", s.department_id)
+    new_role = update_data.get("role", row["role"])
+    new_dept = update_data.get("department_id", row["department_id"])
     _validate_dept(db, new_role, new_dept)
-    for field, val in update_data.items():
-        setattr(s, field, val)
-    db.commit()
-    db.refresh(s)
-    return s
+    if update_data:
+        sets = ", ".join(f"{k} = ?" for k in update_data)
+        params = list(update_data.values()) + [staff_id]
+        db.execute(f"UPDATE ksnb_staff SET {sets} WHERE id = ?", params)
+        db.commit()
+    row = db.execute("SELECT * FROM ksnb_staff WHERE id = ?", (staff_id,)).fetchone()
+    return dict(row)
 
 
 @router.delete("/{staff_id}")
 def delete_staff(
     staff_id: int,
-    db: Session = Depends(get_db),
-    current: KSNBStaff = Depends(require_admin)
+    db: sqlite3.Connection = Depends(get_db),
+    current: dict = Depends(require_admin),
 ):
-    if staff_id == current.id:
+    if staff_id == current["id"]:
         raise HTTPException(400, "Không thể vô hiệu hoá tài khoản của chính mình")
-    s = db.query(KSNBStaff).get(staff_id)
-    if not s:
+    row = db.execute("SELECT id FROM ksnb_staff WHERE id = ?", (staff_id,)).fetchone()
+    if not row:
         raise HTTPException(404, "Không tìm thấy cán bộ")
-    s.is_active = False
+    db.execute("UPDATE ksnb_staff SET is_active = 0 WHERE id = ?", (staff_id,))
     db.commit()
     return {"message": "Đã vô hiệu hoá tài khoản"}
 
@@ -132,12 +140,10 @@ def delete_staff(
 @router.get("/{staff_id}/leaves", deprecated=True)
 def list_leaves_deprecated(
     staff_id: int,
-    db: Session = Depends(get_db),
-    _: KSNBStaff = Depends(get_current_staff)
+    db: sqlite3.Connection = Depends(get_db),
+    _: dict = Depends(get_current_staff),
 ):
-    # DEPRECATED — use GET /api/leaves/?scope=mine
-    return db.query(LeaveRecord).filter(LeaveRecord.staff_id == staff_id).order_by(
-        LeaveRecord.start_date.desc()
-    ).all()
-
-
+    rows = db.execute(
+        "SELECT * FROM leave_records WHERE staff_id = ? ORDER BY start_date DESC", (staff_id,)
+    ).fetchall()
+    return [dict(r) for r in rows]

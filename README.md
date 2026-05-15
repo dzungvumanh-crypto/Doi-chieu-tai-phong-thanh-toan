@@ -33,9 +33,10 @@ Kết quả:
 ```
 ✓ Database đã khởi tạo thành công!
 Tài khoản đăng nhập:
-  Admin     : admin / admin123
-  Phó phòng : kiensoat1 / ksnb2024
+  Admin      : admin / Admin@2024!
+  Controller : kiensoat1 / Ksnb@2024!
 ```
+> ⚠️ Đổi mật khẩu ngay sau lần đăng nhập đầu tiên.
 
 ### 4. Chạy hệ thống
 
@@ -57,7 +58,6 @@ ksnb/
 ├── backend/
 │   ├── main.py              # FastAPI app + schema migration khi khởi động
 │   ├── database.py          # SQLite engine (WAL mode, FK via PRAGMA)
-│   ├── models.py            # 13 bảng ORM
 │   ├── schemas.py           # Pydantic request/response schemas
 │   ├── core/
 │   │   ├── config.py        # Cấu hình (SECRET_KEY, DATABASE_URL...)
@@ -67,18 +67,20 @@ ksnb/
 │   │   └── rate_limit.py    # Rate limiting đăng nhập
 │   ├── api/
 │   │   ├── auth.py          # Đăng nhập / đăng xuất / đổi mật khẩu
-│   │   ├── staff.py         # Quản lý cán bộ KSNB
-│   │   ├── departments.py   # Phòng ban + user phòng nguồn
+│   │   ├── staff.py         # Quản lý cán bộ KSNB + GDV phòng nguồn
+│   │   ├── departments.py   # Phòng ban
 │   │   ├── handovers.py     # Phiếu bàn giao chứng từ
 │   │   ├── bundles.py       # Gom tập + in bìa
 │   │   ├── leaves.py        # Nghỉ phép (workflow 3 bước)
 │   │   ├── delegations.py   # Ủy quyền Giám đốc
 │   │   ├── dashboard.py     # Tổng quan thống kê
+│   │   ├── reports.py       # Báo cáo hậu kiểm
 │   │   ├── logs.py          # Nhật ký đăng nhập (admin)
 │   │   └── holidays.py      # Quản lý ngày lễ (admin)
 │   └── services/
 │       ├── bundle_service.py  # ⭐ Thuật toán gom tập (max 350 tờ)
 │       ├── cover_service.py   # ⭐ Tạo bìa Word (docxtpl)
+│       ├── report_service.py  # Xuất báo cáo Excel
 │       └── backup_service.py  # Backup SQLite tự động theo lịch
 ├── frontend/
 │   ├── main.py              # NiceGUI entry point — khởi động và đăng ký routes
@@ -88,7 +90,6 @@ ksnb/
 │       ├── login.py         # Đăng nhập
 │       ├── dashboard.py     # Tổng quan
 │       ├── staff.py         # Quản lý cán bộ KSNB
-│       ├── source_users.py  # User phòng nguồn
 │       ├── handovers.py     # Bàn giao chứng từ
 │       ├── bundles.py       # Gom tập + in bìa
 │       ├── storage.py       # Lưu trữ tập (số hộp, vị trí kệ)
@@ -114,7 +115,7 @@ ksnb/
 
 ### Module Nhân sự
 - Quản lý cán bộ KSNB (7 vai trò — xem bảng RBAC bên dưới)
-- Quản lý user 4 phòng nguồn (Swift, Thanh toán, Kế toán, Nostro&Vostro)
+- GDV phòng nguồn lưu trong bảng `ksnb_staff` (trường `ipcas_code`, `payment_username`)
 - Dashboard tổng quan (số liệu bàn giao, tập chứng từ, nghỉ phép)
 - Nhật ký đăng nhập (admin xem, lọc theo user/thời gian)
 
@@ -127,13 +128,14 @@ ksnb/
 - Resubmit đơn bị từ chối; huỷ đơn đang chờ
 
 ### Module Chứng từ Hậu kiểm
-- **Bàn giao**: Tạo phiếu bàn giao theo phòng, nhập số tờ từng user/ngày
+- **Bàn giao**: GDV nhập số tờ theo ngày, HKV/KSV xác nhận từng ô
 - **Gom tập tự động**:
   - Max 350 tờ/tập
   - (user, ngày) không bị tách sang tập khác
   - Nếu 1 ngày > 350 tờ → chia 2 tập cân bằng
 - **In bìa**: Tạo file `.docx` đúng format mẫu (2-column layout)
 - **Lưu trữ**: Ghi số hộp, vị trí kệ; tra cứu theo phòng/thời gian
+- **Báo cáo**: Xuất Excel tổng hợp hậu kiểm theo phòng
 - **Lịch sử thay đổi**: Ghi log mọi thao tác xác nhận, mượn, trả chứng từ
 
 ---

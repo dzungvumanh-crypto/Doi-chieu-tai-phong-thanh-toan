@@ -8,7 +8,6 @@ import frontend.api_client as api
 MENU_ITEMS = [
     ("home",         "Trang chủ",                     "dashboard"),
     ("staff",        "Quản lý User",                  "manage_accounts"),
-    ("source_users", "Danh sách giao dịch viên",       "manage_accounts"),
     ("handovers",    "Bàn giao chứng từ",             "receipt_long"),
     ("bundles",      "Đóng chứng từ",                "folder_zip"),
     ("storage",      "Lưu trữ",                       "inventory_2"),

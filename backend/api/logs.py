@@ -8,7 +8,6 @@ from datetime import datetime
 from typing import List
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session
 from backend.database import get_db
 from backend.core.config import settings
 from backend.core.deps import require_admin, require_admin_or_gd
@@ -20,7 +19,6 @@ _LOG_PATH = os.path.join(
     "logs", "app.log",
 )
 
-# Format: "2025-05-09 14:23:45 INFO     backend.api.auth — message"
 _LOG_RE = re.compile(
     r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+(\w+)\s+(\S+)\s+—\s+(.*)$"
 )
@@ -33,7 +31,6 @@ def _parse_log_file(level_filter: str = "", limit: int = 200, offset: int = 0):
     with open(_LOG_PATH, "r", encoding="utf-8", errors="replace") as f:
         lines = f.readlines()
 
-    # Parse forward, gom multi-line (traceback) vào entry trước đó
     parsed = []
     current = None
     for line in lines:
@@ -51,7 +48,6 @@ def _parse_log_file(level_filter: str = "", limit: int = 200, offset: int = 0):
     if current:
         parsed.append(current)
 
-    # Mới nhất trước
     parsed.reverse()
 
     if level_filter and level_filter.upper() not in ("ALL", ""):
@@ -62,15 +58,13 @@ def _parse_log_file(level_filter: str = "", limit: int = 200, offset: int = 0):
 
 
 @router.get("/backup-info")
-def get_backup_info(_: object = Depends(require_admin_or_gd)):
-    """Thông tin bản backup gần nhất (dùng cho trang Admin)."""
+def get_backup_info(_: dict = Depends(require_admin_or_gd)):
     from backend.services.backup_service import last_backup_info
     return last_backup_info()
 
 
 @router.get("/backup")
-def backup_db(_: object = Depends(require_admin_or_gd)):
-    """Tạo bản sao DB an toàn (SQLite online backup API) và trả về file tải về."""
+def backup_db(_: dict = Depends(require_admin_or_gd)):
     db_path = settings.DATABASE_URL.replace("sqlite:///", "")
     if not os.path.exists(db_path):
         from fastapi import HTTPException
@@ -103,34 +97,46 @@ def backup_db(_: object = Depends(require_admin_or_gd)):
 
 @router.get("/logins")
 def get_login_logs(
-    limit:   int  = Query(200, ge=1, le=1000),
-    offset:  int  = Query(0, ge=0),
-    success: str  = Query("", description="'' | 'true' | 'false'"),
-    _: object = Depends(require_admin_or_gd),
-    db: Session = Depends(get_db),
+    limit:   int = Query(200, ge=1, le=1000),
+    offset:  int = Query(0, ge=0),
+    success: str = Query(""),
+    _: dict = Depends(require_admin_or_gd),
+    db: sqlite3.Connection = Depends(get_db),
 ):
-    """Xem lịch sử đăng nhập / đăng nhập thất bại."""
-    from backend.models import LoginLog
-
-    q = db.query(LoginLog).order_by(LoginLog.created_at.desc())
+    clauses = []
+    params: list = []
     if success == "true":
-        q = q.filter(LoginLog.success == True)
+        clauses.append("ll.success = 1")
     elif success == "false":
-        q = q.filter(LoginLog.success == False)
-    total = q.count()
-    logs  = q.offset(offset).limit(limit).all()
+        clauses.append("ll.success = 0")
+    where = "WHERE " + " AND ".join(clauses) if clauses else ""
+
+    total = db.execute(
+        f"SELECT COUNT(*) FROM login_logs ll {where}", params
+    ).fetchone()[0]
+
+    rows = db.execute(
+        f"""SELECT ll.*, ks.full_name
+            FROM login_logs ll
+            LEFT JOIN ksnb_staff ks ON ll.staff_id = ks.id
+            {where}
+            ORDER BY ll.created_at DESC
+            LIMIT ? OFFSET ?""",
+        params + [limit, offset],
+    ).fetchall()
+
     return {
         "entries": [
             {
-                "id":         log.id,
-                "username":   log.username,
-                "full_name":  log.staff.full_name if log.staff else None,
-                "ip_address": log.ip_address,
-                "success":    log.success,
-                "detail":     log.detail,
-                "created_at": log.created_at.isoformat() if log.created_at else None,
+                "id":         r["id"],
+                "username":   r["username"],
+                "full_name":  r["full_name"],
+                "ip_address": r["ip_address"],
+                "success":    bool(r["success"]),
+                "detail":     r["detail"],
+                "created_at": r["created_at"],
             }
-            for log in logs
+            for r in rows
         ],
         "total": total, "limit": limit, "offset": offset,
     }
@@ -138,10 +144,10 @@ def get_login_logs(
 
 @router.get("/")
 def get_logs(
-    level: str = Query("", description="Lọc: ERROR | WARNING | INFO | DEBUG | ALL"),
+    level: str = Query(""),
     limit: int = Query(300, ge=1, le=2000),
     offset: int = Query(0, ge=0),
-    _: object = Depends(require_admin_or_gd),
+    _: dict = Depends(require_admin_or_gd),
 ):
     entries, total = _parse_log_file(level, limit, offset)
     return {"entries": entries, "total": total, "limit": limit, "offset": offset}

@@ -2,6 +2,7 @@
 import logging
 import logging.handlers
 import os
+import sqlite3
 import sys
 
 # Thêm root vào path
@@ -10,9 +11,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from sqlalchemy import text
-from sqlalchemy.exc import OperationalError as SAOperationalError
-from backend.database import engine, Base
 
 
 # ── Logging tập trung ──────────────────────────────────────────────────────────
@@ -38,7 +36,7 @@ def _setup_logging():
 _setup_logging()
 from backend.api.auth import router as auth_router
 from backend.api.staff import router as staff_router
-from backend.api.departments import dept_router, user_router
+from backend.api.departments import dept_router
 from backend.api.handovers import router as handover_router
 from backend.api.bundles import router as bundle_router
 from backend.api.leaves import router as leaves_router
@@ -47,18 +45,146 @@ from backend.api.logs import router as logs_router
 from backend.api.dashboard import router as dashboard_router
 from backend.api.holidays import router as holidays_router
 from backend.api.reports import router as reports_router
+from backend.database import DB_PATH
 
-# Tạo tables
-Base.metadata.create_all(bind=engine)
+
+# ── Tạo tables (fresh install) ────────────────────────────────────────────────
+def _create_tables(db_path: str):
+    """Tạo tất cả bảng nếu chưa có — idempotent."""
+    conn = sqlite3.connect(db_path)
+    cur = conn.cursor()
+    cur.execute("PRAGMA foreign_keys = OFF")
+    statements = [
+        """CREATE TABLE IF NOT EXISTS departments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code VARCHAR(20) NOT NULL UNIQUE,
+            name VARCHAR(200) NOT NULL,
+            is_source BOOLEAN DEFAULT 1,
+            is_active BOOLEAN DEFAULT 1
+        )""",
+        """CREATE TABLE IF NOT EXISTS ksnb_staff (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            employee_code VARCHAR(20) NOT NULL UNIQUE,
+            full_name VARCHAR(100) NOT NULL,
+            role TEXT NOT NULL DEFAULT 'chuyen_vien',
+            department_id INTEGER REFERENCES departments(id),
+            username VARCHAR(50) NOT NULL UNIQUE,
+            pwd_hash VARCHAR(200) NOT NULL,
+            phone VARCHAR(20),
+            email VARCHAR(100),
+            start_date DATE,
+            annual_leave_days INTEGER DEFAULT 12,
+            used_leave_days INTEGER DEFAULT 0,
+            must_change_password BOOLEAN DEFAULT 0,
+            ipcas_code VARCHAR(20),
+            payment_username VARCHAR(50),
+            is_active BOOLEAN DEFAULT 1,
+            created_at DATETIME
+        )""",
+        """CREATE TABLE IF NOT EXISTS source_users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_code TEXT,
+            full_name TEXT,
+            department_id INTEGER REFERENCES departments(id),
+            is_active INTEGER DEFAULT 1
+        )""",
+        """CREATE TABLE IF NOT EXISTS handovers (
+            id INTEGER NOT NULL PRIMARY KEY,
+            department_id INTEGER NOT NULL REFERENCES departments(id),
+            handover_date DATE NOT NULL,
+            received_by_id INTEGER REFERENCES ksnb_staff(id),
+            delivered_by VARCHAR(100),
+            notes TEXT,
+            status VARCHAR(20) DEFAULT 'draft',
+            created_at DATETIME,
+            UNIQUE(department_id, handover_date)
+        )""",
+        """CREATE TABLE IF NOT EXISTS document_entries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            handover_id INTEGER NOT NULL REFERENCES handovers(id),
+            source_user_id INTEGER,
+            transaction_date DATE NOT NULL,
+            sheet_count INTEGER NOT NULL,
+            notes TEXT,
+            entry_status TEXT DEFAULT 'confirmed',
+            entered_by_id INTEGER REFERENCES ksnb_staff(id),
+            confirmed_by_id INTEGER REFERENCES ksnb_staff(id),
+            confirmed_at DATETIME,
+            borrowed_at DATETIME,
+            borrow_reason TEXT,
+            staff_id INTEGER REFERENCES ksnb_staff(id)
+        )""",
+        """CREATE TABLE IF NOT EXISTS bundle_groups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            department_id INTEGER NOT NULL REFERENCES departments(id),
+            total_bundles INTEGER DEFAULT 1,
+            created_by_id INTEGER NOT NULL REFERENCES ksnb_staff(id),
+            created_at DATETIME,
+            notes TEXT
+        )""",
+        """CREATE TABLE IF NOT EXISTS bundles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id INTEGER NOT NULL REFERENCES bundle_groups(id),
+            sequence INTEGER NOT NULL,
+            total_sheets INTEGER DEFAULT 0,
+            custodian_id INTEGER REFERENCES ksnb_staff(id),
+            storage_box VARCHAR(50),
+            storage_location VARCHAR(200),
+            cover_printed_at DATETIME,
+            status VARCHAR(20) DEFAULT 'pending',
+            cover_units TEXT
+        )""",
+        """CREATE TABLE IF NOT EXISTS bundle_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            bundle_id INTEGER NOT NULL REFERENCES bundles(id),
+            entry_id INTEGER NOT NULL REFERENCES document_entries(id)
+        )""",
+        """CREATE TABLE IF NOT EXISTS entry_change_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            entry_id INTEGER NOT NULL REFERENCES document_entries(id),
+            action TEXT NOT NULL,
+            performed_by_id INTEGER NOT NULL REFERENCES ksnb_staff(id),
+            timestamp DATETIME,
+            old_sheet_count INTEGER,
+            new_sheet_count INTEGER,
+            notes TEXT
+        )""",
+        """CREATE TABLE IF NOT EXISTS leave_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            staff_id INTEGER NOT NULL REFERENCES ksnb_staff(id),
+            start_date DATE NOT NULL,
+            end_date DATE NOT NULL,
+            leave_type TEXT DEFAULT 'annual',
+            reason TEXT,
+            status TEXT DEFAULT 'pending_ksv',
+            ksv_approver_id INTEGER REFERENCES ksnb_staff(id),
+            ksv_approved_at DATETIME,
+            ksv_comment TEXT,
+            tong_hop_approver_id INTEGER REFERENCES ksnb_staff(id),
+            tong_hop_approved_at DATETIME,
+            tong_hop_comment TEXT,
+            gd_approver_id INTEGER REFERENCES ksnb_staff(id),
+            gd_approved_at DATETIME,
+            gd_comment TEXT,
+            created_at DATETIME,
+            updated_at DATETIME
+        )""",
+    ]
+    for s in statements:
+        cur.execute(s)
+    cur.execute("PRAGMA foreign_keys = ON")
+    conn.commit()
+    conn.close()
+
+
+_create_tables(DB_PATH)
 
 
 def _ensure_indexes():
     """Tạo index và migrate schema trên DB hiện tại (idempotent)."""
-    stmts = [
+    schema_migrations = [
         # Schema migration – thêm cột mới nếu chưa có (SQLite không hỗ trợ IF NOT EXISTS cho ADD COLUMN)
         # Bọc trong try/except ở Python để bỏ qua lỗi "duplicate column"
-    ]
-    schema_migrations = [
         "ALTER TABLE bundles ADD COLUMN cover_units TEXT",
         # Cột mới cho KSNBStaff (chuyên viên)
         "ALTER TABLE ksnb_staff ADD COLUMN department_id INTEGER REFERENCES departments(id)",
@@ -137,30 +263,43 @@ def _ensure_indexes():
         # 1.4 — mã IPCAS và username Payment cho KSNB staff (HKV)
         "ALTER TABLE ksnb_staff ADD COLUMN ipcas_code VARCHAR(20)",
         "ALTER TABLE ksnb_staff ADD COLUMN payment_username VARCHAR(50)",
+        # 1.5 — gộp SourceUser vào KSNBStaff: thêm staff_id vào document_entries
+        "ALTER TABLE document_entries ADD COLUMN staff_id INTEGER REFERENCES ksnb_staff(id)",
+        # Backfill staff_id: match source_users.user_code == ksnb_staff.ipcas_code
+        """UPDATE document_entries
+           SET staff_id = (
+               SELECT ks.id FROM ksnb_staff ks
+               JOIN source_users su ON trim(ks.ipcas_code) = trim(su.user_code)
+               WHERE su.id = document_entries.source_user_id
+               LIMIT 1
+           )
+           WHERE staff_id IS NULL AND source_user_id IS NOT NULL""",
+        # 1.6 — unique index mới dùng staff_id (constraint cũ trên source_user_id bị vô hiệu do NULL)
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_entry_staff_date ON document_entries(handover_id, staff_id, transaction_date)",
     ]
     import logging as _logging
     _mig_log = _logging.getLogger(__name__)
-    with engine.connect() as conn:
+    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn.row_factory = sqlite3.Row
+    try:
         for s in schema_migrations:
             try:
-                conn.execute(text(s))
+                conn.execute(s)
                 conn.commit()
             except Exception as exc:
                 conn.rollback()
                 msg = str(exc).lower()
                 if "duplicate column" not in msg and "already exists" not in msg:
                     if "database is locked" in msg or "locked" in msg:
-                        # DB bị lock bởi process cũ (backup scheduler chưa dừng)
-                        # Migration idempotent → bỏ qua, restart tiếp theo sẽ chạy lại
                         _mig_log.warning("Migration skipped (DB locked, sẽ thử lại lần sau): %.80s", s)
                     else:
                         _mig_log.error("Migration failed: %s — %s", s, exc)
                         raise
+    finally:
+        conn.close()
 
     # ── Rebuild handovers: received_by_id NOT NULL → nullable, thêm UNIQUE(dept,date) ──
-    import sqlite3 as _sqlite3
-    _db_path = engine.url.database
-    _raw = _sqlite3.connect(_db_path)
+    _raw = sqlite3.connect(DB_PATH)
     _raw.isolation_level = None  # autocommit để PRAGMA foreign_keys hoạt động
     try:
         _cur = _raw.cursor()
@@ -171,10 +310,9 @@ def _ensure_indexes():
         _uniq_ok = any(r[2] and r[3] == 'u' for r in _cur.fetchall())
         _needs_rebuild = bool(_h_cols.get('received_by_id', 0)) or not _uniq_ok
         if _needs_rebuild:
+            _mig_log = logging.getLogger(__name__)
             _mig_log.info("Rebuilding handovers table (received_by_id → nullable, UNIQUE added)...")
             _cur.execute("PRAGMA foreign_keys = OFF")
-            # legacy_alter_table=ON ngăn SQLite tự cập nhật FK refs trong child tables khi RENAME
-            # (nếu để OFF, document_entries.handover_id sẽ bị đổi thành REFERENCES _handovers_bak)
             _cur.execute("PRAGMA legacy_alter_table = ON")
             _cur.execute("BEGIN EXCLUSIVE")
             try:
@@ -209,10 +347,10 @@ def _ensure_indexes():
                 """)
                 _cur.execute("DROP TABLE _handovers_bak")
                 _cur.execute("COMMIT")
-                _mig_log.info("handovers rebuild hoàn tất")
+                logging.getLogger(__name__).info("handovers rebuild hoàn tất")
             except Exception as _me:
                 _cur.execute("ROLLBACK")
-                _mig_log.error("handovers rebuild thất bại: %s", _me)
+                logging.getLogger(__name__).error("handovers rebuild thất bại: %s", _me)
                 raise
             finally:
                 _cur.execute("PRAGMA legacy_alter_table = OFF")
@@ -220,9 +358,60 @@ def _ensure_indexes():
     finally:
         _raw.close()
 
-    stmts = [
+    # ── Rebuild document_entries: source_user_id NOT NULL → nullable ────────────
+    _raw_de = sqlite3.connect(DB_PATH)
+    _raw_de.isolation_level = None
+    try:
+        _cur_de = _raw_de.cursor()
+        _cur_de.execute("PRAGMA table_info(document_entries)")
+        _de_notnull = {r[1]: r[3] for r in _cur_de.fetchall()}
+        if _de_notnull.get("source_user_id", 0):  # notnull=1 → cần fix
+            _mig_log2 = logging.getLogger(__name__)
+            _mig_log2.info("Rebuilding document_entries (source_user_id NOT NULL → nullable)...")
+            _cur_de.execute("PRAGMA foreign_keys = OFF")
+            _cur_de.execute("PRAGMA legacy_alter_table = ON")
+            _cur_de.execute("BEGIN EXCLUSIVE")
+            try:
+                _cur_de.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='_de_bak'")
+                if _cur_de.fetchone():
+                    _cur_de.execute("DROP TABLE _de_bak")
+                _cur_de.execute("ALTER TABLE document_entries RENAME TO _de_bak")
+                _cur_de.execute("""
+                    CREATE TABLE document_entries (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        handover_id INTEGER NOT NULL REFERENCES handovers(id),
+                        source_user_id INTEGER,
+                        transaction_date DATE NOT NULL,
+                        sheet_count INTEGER NOT NULL,
+                        notes TEXT,
+                        entry_status TEXT DEFAULT 'confirmed',
+                        entered_by_id INTEGER REFERENCES ksnb_staff(id),
+                        confirmed_by_id INTEGER REFERENCES ksnb_staff(id),
+                        confirmed_at DATETIME,
+                        borrowed_at DATETIME,
+                        borrow_reason TEXT,
+                        staff_id INTEGER REFERENCES ksnb_staff(id)
+                    )
+                """)
+                _cur_de.execute("INSERT INTO document_entries SELECT * FROM _de_bak")
+                _cur_de.execute("DROP TABLE _de_bak")
+                _cur_de.execute("COMMIT")
+                _mig_log2.info("document_entries rebuild hoàn tất")
+            except Exception as _de_err:
+                _cur_de.execute("ROLLBACK")
+                logging.getLogger(__name__).error("document_entries rebuild thất bại: %s", _de_err)
+                raise
+            finally:
+                _cur_de.execute("PRAGMA legacy_alter_table = OFF")
+                _cur_de.execute("PRAGMA foreign_keys = ON")
+    finally:
+        _raw_de.close()
+
+    index_stmts = [
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_entry_staff_date ON document_entries(handover_id, staff_id, transaction_date)",
         "CREATE INDEX IF NOT EXISTS ix_source_users_dept      ON source_users(department_id)",
         "CREATE INDEX IF NOT EXISTS ix_doc_entries_user        ON document_entries(source_user_id)",
+        "CREATE INDEX IF NOT EXISTS ix_doc_entries_staff       ON document_entries(staff_id)",
         "CREATE INDEX IF NOT EXISTS ix_doc_entries_handover    ON document_entries(handover_id)",
         "CREATE INDEX IF NOT EXISTS ix_doc_entries_date        ON document_entries(transaction_date)",
         "CREATE INDEX IF NOT EXISTS ix_handovers_dept          ON handovers(department_id)",
@@ -234,7 +423,6 @@ def _ensure_indexes():
         "CREATE INDEX IF NOT EXISTS ix_bundle_items_bundle     ON bundle_items(bundle_id)",
         "CREATE INDEX IF NOT EXISTS ix_bundle_items_entry      ON bundle_items(entry_id)",
         "CREATE INDEX IF NOT EXISTS ix_leave_records_staff     ON leave_records(staff_id)",
-        # Indexes mới
         "CREATE INDEX IF NOT EXISTS ix_ksnb_staff_dept         ON ksnb_staff(department_id)",
         "CREATE INDEX IF NOT EXISTS ix_doc_entries_status      ON document_entries(entry_status)",
         "CREATE INDEX IF NOT EXISTS ix_entry_change_logs_entry ON entry_change_logs(entry_id)",
@@ -249,10 +437,13 @@ def _ensure_indexes():
         "CREATE INDEX IF NOT EXISTS ix_login_logs_username  ON login_logs(username)",
         "CREATE INDEX IF NOT EXISTS ix_login_logs_created   ON login_logs(created_at)",
     ]
-    with engine.connect() as conn:
-        for s in stmts:
-            conn.execute(text(s))
+    conn = sqlite3.connect(DB_PATH, timeout=30)
+    try:
+        for s in index_stmts:
+            conn.execute(s)
         conn.commit()
+    finally:
+        conn.close()
 
 _ensure_indexes()
 
@@ -279,7 +470,6 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(staff_router)
 app.include_router(dept_router)
-app.include_router(user_router)
 app.include_router(handover_router)
 app.include_router(bundle_router)
 app.include_router(leaves_router, prefix="/api/leaves", tags=["leaves"])
@@ -292,10 +482,10 @@ app.include_router(reports_router)
 
 _db_log = logging.getLogger("db.contention")
 
-@app.exception_handler(SAOperationalError)
+@app.exception_handler(sqlite3.OperationalError)
 async def _db_error_handler(request, exc):
-    msg = str(exc.orig) if exc.orig else str(exc)
-    if "locked" in msg.lower() or "busy" in msg.lower():
+    msg = str(exc).lower()
+    if "locked" in msg or "busy" in msg:
         _db_log.warning("SQLite BUSY — %s %s : %s", request.method, request.url.path, msg)
     else:
         _db_log.error("DB OperationalError — %s %s : %s", request.method, request.url.path, msg)

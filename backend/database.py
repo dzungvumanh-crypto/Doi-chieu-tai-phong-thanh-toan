@@ -1,37 +1,30 @@
-"""SQLAlchemy database setup"""
-from sqlalchemy import create_engine, event
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+"""SQLite connection factory — raw SQL, no ORM."""
+import sqlite3
+from pathlib import Path
+from datetime import datetime, timezone, timedelta
 from backend.core.config import settings
-import os
 
-os.makedirs(os.path.dirname(settings.DATABASE_URL.replace("sqlite:///", "")), exist_ok=True)
+DB_PATH = settings.DATABASE_URL.replace("sqlite:///", "")
+Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
 
-engine = create_engine(
-    settings.DATABASE_URL,
-    connect_args={
-        "check_same_thread": False,
-        "timeout": 30,        # Chờ tối đa 30s khi DB bị lock ở tầng SQLAlchemy
-    },
-    echo=False,
-)
+_VN_TZ = timezone(timedelta(hours=7))
 
 
-@event.listens_for(engine, "connect")
-def _set_sqlite_pragma(conn, _):
-    conn.execute("PRAGMA foreign_keys=ON")
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=30000")  # 30s — tầng SQLite
-    conn.execute("PRAGMA synchronous=NORMAL")  # An toàn với WAL, giảm I/O
-
-
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
+def _vn_now() -> datetime:
+    return datetime.now(_VN_TZ).replace(tzinfo=None)
 
 
 def get_db():
-    db = SessionLocal()
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=30000")
+    conn.execute("PRAGMA synchronous=NORMAL")
     try:
-        yield db
+        yield conn
+    except Exception:
+        conn.rollback()
+        raise
     finally:
-        db.close()
+        conn.close()

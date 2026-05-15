@@ -1,155 +1,145 @@
-﻿"""Quản lý ủy quyền Giám đốc → Phó Giám đốc"""
+"""Quản lý ủy quyền Giám đốc → Phó Giám đốc"""
+import sqlite3
 from typing import List
-
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
-
-from backend.database import get_db
-from backend.core.deps import get_current_staff, require_admin, TONG_HOP_CODES
-from backend.models import KSNBStaff, DelegationRecord, Department
-from backend.models import _vn_now
+from backend.database import get_db, _vn_now
+from backend.core.deps import get_current_staff, TONG_HOP_CODES
 from backend.schemas import DelegationCreate, DelegationOut
 
 router = APIRouter()
 
 
-def _deleg_to_out(d: DelegationRecord) -> dict:
+def _deleg_to_out(d: dict, db: sqlite3.Connection) -> dict:
+    def _name(staff_id):
+        if not staff_id:
+            return ""
+        r = db.execute("SELECT full_name FROM ksnb_staff WHERE id = ?", (staff_id,)).fetchone()
+        return r["full_name"] if r else ""
+
     return {
-        "id":                d.id,
-        "giam_doc_id":       d.giam_doc_id,
-        "giam_doc_name":     d.giam_doc.full_name if d.giam_doc else "",
-        "pho_giam_doc_id":   d.pho_giam_doc_id,
-        "pho_giam_doc_name": d.pho_giam_doc.full_name if d.pho_giam_doc else "",
-        "start_date":        d.start_date,
-        "end_date":          d.end_date,
-        "note":              d.note,
-        "is_active":         d.is_active,
-        "created_by_name":   d.created_by.full_name if d.created_by else "",
-        "created_at":        d.created_at,
+        "id":                d["id"],
+        "giam_doc_id":       d["giam_doc_id"],
+        "giam_doc_name":     _name(d["giam_doc_id"]),
+        "pho_giam_doc_id":   d["pho_giam_doc_id"],
+        "pho_giam_doc_name": _name(d["pho_giam_doc_id"]),
+        "start_date":        d["start_date"],
+        "end_date":          d["end_date"],
+        "note":              d.get("note"),
+        "is_active":         bool(d.get("is_active", 1)),
+        "created_by_name":   _name(d.get("created_by_id")),
+        "created_at":        d.get("created_at"),
     }
+
+
+def _is_tong_hop(staff_dict: dict, db: sqlite3.Connection) -> bool:
+    dept_id = staff_dict.get("department_id")
+    if not dept_id:
+        return False
+    r = db.execute("SELECT code FROM departments WHERE id = ?", (dept_id,)).fetchone()
+    return bool(r and r["code"].upper() in TONG_HOP_CODES)
 
 
 @router.post("/", response_model=DelegationOut)
 def create_delegation(
     body: DelegationCreate,
-    db: Session = Depends(get_db),
-    current: KSNBStaff = Depends(get_current_staff),
+    db: sqlite3.Connection = Depends(get_db),
+    current: dict = Depends(get_current_staff),
 ):
-    """Tạo ủy quyền — Admin hoặc staff thuộc phòng Tổng hợp."""
-    role = current.role
-    is_tong_hop = False
-    if current.department_id:
-        dept = db.query(Department).filter(Department.id == current.department_id).first()
-        if dept and dept.code.upper() in TONG_HOP_CODES:
-            is_tong_hop = True
-    if role != "admin" and not is_tong_hop:
+    if current["role"] != "admin" and not _is_tong_hop(current, db):
         raise HTTPException(403, "Chỉ Admin hoặc phòng Tổng hợp mới được tạo ủy quyền")
 
-    gd = db.query(KSNBStaff).filter(
-        KSNBStaff.id == body.giam_doc_id,
-        KSNBStaff.role == "giam_doc",
-        KSNBStaff.is_active == True,
-    ).first()
+    gd = db.execute(
+        "SELECT id FROM ksnb_staff WHERE id = ? AND role = 'giam_doc' AND is_active = 1",
+        (body.giam_doc_id,),
+    ).fetchone()
     if not gd:
         raise HTTPException(400, "Giám đốc không tồn tại hoặc không còn hoạt động")
 
-    pgd = db.query(KSNBStaff).filter(
-        KSNBStaff.id == body.pho_giam_doc_id,
-        KSNBStaff.role == "pho_giam_doc",
-        KSNBStaff.is_active == True,
-    ).first()
+    pgd = db.execute(
+        "SELECT id FROM ksnb_staff WHERE id = ? AND role = 'pho_giam_doc' AND is_active = 1",
+        (body.pho_giam_doc_id,),
+    ).fetchone()
     if not pgd:
         raise HTTPException(400, "Phó Giám đốc không tồn tại hoặc không còn hoạt động")
 
     if body.end_date < body.start_date:
         raise HTTPException(400, "Ngày kết thúc phải sau ngày bắt đầu")
 
-    # ── Kiểm tra overlap ──
-    overlap = db.query(DelegationRecord).filter(
-        DelegationRecord.pho_giam_doc_id == body.pho_giam_doc_id,
-        DelegationRecord.is_active == True,
-        DelegationRecord.start_date <= body.end_date,
-        DelegationRecord.end_date >= body.start_date,
-    ).first()
+    overlap = db.execute(
+        """SELECT id FROM delegation_records
+           WHERE pho_giam_doc_id = ? AND is_active = 1
+             AND start_date <= ? AND end_date >= ?""",
+        (body.pho_giam_doc_id, body.end_date.isoformat(), body.start_date.isoformat()),
+    ).fetchone()
     if overlap:
         raise HTTPException(409, "PGĐ này đã có ủy quyền trong khoảng thời gian trên")
 
-    deleg = DelegationRecord(
-        giam_doc_id     = body.giam_doc_id,
-        pho_giam_doc_id = body.pho_giam_doc_id,
-        start_date      = body.start_date,
-        end_date        = body.end_date,
-        note            = body.note,
-        created_by_id   = current.id,
-        is_active       = True,
-        created_at      = _vn_now(),
+    cur = db.execute(
+        """INSERT INTO delegation_records
+           (giam_doc_id, pho_giam_doc_id, start_date, end_date, note, created_by_id, is_active, created_at)
+           VALUES (?,?,?,?,?,?,1,?)""",
+        (body.giam_doc_id, body.pho_giam_doc_id, body.start_date.isoformat(),
+         body.end_date.isoformat(), body.note, current["id"], _vn_now()),
     )
-    db.add(deleg)
     db.commit()
-    db.refresh(deleg)
-    return _deleg_to_out(deleg)
+    row = db.execute("SELECT * FROM delegation_records WHERE id = ?", (cur.lastrowid,)).fetchone()
+    return _deleg_to_out(dict(row), db)
 
 
 @router.get("/", response_model=List[DelegationOut])
 def list_delegations(
-    db: Session = Depends(get_db),
-    current: KSNBStaff = Depends(get_current_staff),
+    db: sqlite3.Connection = Depends(get_db),
+    current: dict = Depends(get_current_staff),
 ):
-    q = db.query(DelegationRecord).order_by(DelegationRecord.created_at.desc())
-    # Chỉ admin/GĐ/PGĐ/HKV thấy toàn bộ; role khác chỉ thấy đang hiệu lực
-    if current.role not in ("admin", "hau_kiem_vien", "giam_doc", "pho_giam_doc"):
-        q = q.filter(DelegationRecord.is_active == True)
-    return [_deleg_to_out(d) for d in q.all()]
+    if current["role"] in ("admin", "hau_kiem_vien", "giam_doc", "pho_giam_doc"):
+        rows = db.execute(
+            "SELECT * FROM delegation_records ORDER BY created_at DESC"
+        ).fetchall()
+    else:
+        rows = db.execute(
+            "SELECT * FROM delegation_records WHERE is_active = 1 ORDER BY created_at DESC"
+        ).fetchall()
+    return [_deleg_to_out(dict(r), db) for r in rows]
 
 
 @router.patch("/{deleg_id}/deactivate", response_model=DelegationOut)
 def deactivate_delegation(
     deleg_id: int,
-    db: Session = Depends(get_db),
-    current: KSNBStaff = Depends(get_current_staff),
+    db: sqlite3.Connection = Depends(get_db),
+    current: dict = Depends(get_current_staff),
 ):
-    role = current.role
-    is_tong_hop = False
-    if current.department_id:
-        dept = db.query(Department).filter(Department.id == current.department_id).first()
-        if dept and dept.code.upper() in TONG_HOP_CODES:
-            is_tong_hop = True
-    if role != "admin" and not is_tong_hop:
+    if current["role"] != "admin" and not _is_tong_hop(current, db):
         raise HTTPException(403, "Chỉ Admin hoặc phòng Tổng hợp mới được hủy ủy quyền")
 
-    deleg = db.query(DelegationRecord).filter(DelegationRecord.id == deleg_id).first()
-    if not deleg:
+    row = db.execute("SELECT * FROM delegation_records WHERE id = ?", (deleg_id,)).fetchone()
+    if not row:
         raise HTTPException(404, "Không tìm thấy bản ghi ủy quyền")
-    if not deleg.is_active:
+    if not row["is_active"]:
         raise HTTPException(400, "Bản ghi ủy quyền đã được hủy trước đó")
 
-    deleg.is_active = False
+    db.execute("UPDATE delegation_records SET is_active = 0 WHERE id = ?", (deleg_id,))
     db.commit()
-    db.refresh(deleg)
-    return _deleg_to_out(deleg)
+    row = db.execute("SELECT * FROM delegation_records WHERE id = ?", (deleg_id,)).fetchone()
+    return _deleg_to_out(dict(row), db)
 
 
-@router.get("/staff/giam-doc", response_model=List[dict])
+@router.get("/staff/giam-doc")
 def list_giam_doc(
-    db: Session = Depends(get_db),
-    _: KSNBStaff = Depends(get_current_staff),
+    db: sqlite3.Connection = Depends(get_db),
+    _: dict = Depends(get_current_staff),
 ):
-    """Danh sách Giám đốc active (cho dropdown frontend)."""
-    staff = db.query(KSNBStaff).filter(
-        KSNBStaff.role == "giam_doc",
-        KSNBStaff.is_active == True,
-    ).all()
-    return [{"id": s.id, "full_name": s.full_name, "employee_code": s.employee_code} for s in staff]
+    rows = db.execute(
+        "SELECT id, full_name, employee_code FROM ksnb_staff WHERE role = 'giam_doc' AND is_active = 1"
+    ).fetchall()
+    return [dict(r) for r in rows]
 
 
-@router.get("/staff/pho-giam-doc", response_model=List[dict])
+@router.get("/staff/pho-giam-doc")
 def list_pho_giam_doc(
-    db: Session = Depends(get_db),
-    _: KSNBStaff = Depends(get_current_staff),
+    db: sqlite3.Connection = Depends(get_db),
+    _: dict = Depends(get_current_staff),
 ):
-    """Danh sách Phó Giám đốc active (cho dropdown frontend)."""
-    staff = db.query(KSNBStaff).filter(
-        KSNBStaff.role == "pho_giam_doc",
-        KSNBStaff.is_active == True,
-    ).all()
-    return [{"id": s.id, "full_name": s.full_name, "employee_code": s.employee_code} for s in staff]
+    rows = db.execute(
+        "SELECT id, full_name, employee_code FROM ksnb_staff WHERE role = 'pho_giam_doc' AND is_active = 1"
+    ).fetchall()
+    return [dict(r) for r in rows]

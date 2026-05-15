@@ -102,7 +102,11 @@ async def handovers_page():
 
         # Chú thích màu trạng thái
         with ui.row().classes("items-center gap-4 mb-2 flex-wrap"):
-            for status_key, label in [("confirmed", "Đã xác nhận"), ("pending_confirm", "Chờ xác nhận"), ("borrowed", "Đang mượn")]:
+            for status_key, label in [
+                ("confirmed",       "Đã xác nhận"),
+                ("pending_confirm", "Đã lưu — chờ KSV xác nhận"),
+                ("borrowed",        "Đang mượn"),
+            ]:
                 bg, border = _CELL_STATUS_STYLE[status_key]
                 with ui.row().classes("items-center gap-1"):
                     ui.element("div").style(
@@ -112,8 +116,8 @@ async def handovers_page():
 
         async def save_pending():
             save_btn.props("loading")
-            year  = sel_year.value
-            month = sel_month.value
+            year  = int(sel_year.value)
+            month = int(sel_month.value)
             # Collect all modified cells from the DOM (works even without prior blur)
             changes = await ui.run_javascript("""
                 var r = [];
@@ -127,11 +131,11 @@ async def handovers_page():
             changes = changes or []
             errors = []
             for item in changes:
-                date_str = f"{year}-{month:02d}-{item['day']:02d}"
                 try:
+                    date_str = f"{year}-{month:02d}-{item['day']:02d}"
                     await asyncio.to_thread(
                         api.put, "/api/handovers/entry-upsert",
-                        {"source_user_id": item["uid"], "date": date_str, "sheet_count": item["count"]},
+                        {"staff_id": item["uid"], "date": date_str, "sheet_count": item["count"]},
                     )
                 except Exception as ex:
                     if _handle_api_error(ex):
@@ -142,7 +146,7 @@ async def handovers_page():
             if errors:
                 ui.notify(f"Lỗi khi lưu: {'; '.join(errors[:3])}", type="negative")
             elif changes:
-                ui.notify(f"Đã lưu {len(changes)} ô", type="positive")
+                ui.notify("Đã lưu", type="positive")
             else:
                 ui.notify("Không có thay đổi nào", type="info")
             await load_grid()
@@ -378,7 +382,7 @@ async def handovers_page():
             # cell_data[uid][day] = {sheet_count, entry_id, entry_status}
             cell_data: dict = {}
             for e in entries:
-                uid_key = e["source_user_id"]
+                uid_key = e["staff_id"]
                 day_key = e["day"]
                 cell_data.setdefault(uid_key, {})[day_key] = {
                     "sheet_count":   e["sheet_count"],
@@ -429,7 +433,7 @@ async def handovers_page():
                 # Data rows
                 for row_idx, u in enumerate(users):
                     uid    = u["id"]
-                    name   = u.get("vn_name") or u.get("user_code") or ""
+                    name   = u.get("full_name") or u.get("ipcas_code") or ""
                     rbg    = "#ffffff" if row_idx % 2 == 0 else "#f0f9ff"
                     p.append(
                         f'<div style="display:flex;flex-wrap:nowrap;border-bottom:1px solid #dbeafe;background:{rbg};">'
@@ -556,9 +560,10 @@ async def new_handover_page():
         async def refresh_users():
             if f_dept.value and f_dept.value not in source_users_cache:
                 try:
-                    users = await asyncio.to_thread(api.get, "/api/source-users/", {"department_id": f_dept.value})
+                    users = await asyncio.to_thread(api.get, "/api/staff/", {"department_id": f_dept.value})
                     source_users_cache[f_dept.value] = {
-                        u["id"]: f"{u['user_code']}{' – ' + u['full_name'] if u.get('full_name') else ''}"
+                        u["id"]: f"{u.get('full_name') or u.get('ipcas_code') or ''}"
+                                 f"{' (' + u['ipcas_code'] + ')' if u.get('ipcas_code') else ''}"
                         for u in users
                     }
                 except:
@@ -576,14 +581,14 @@ async def new_handover_page():
                     for idx, entry in enumerate(entries):
                         with ui.row().classes("w-full items-center gap-2 mb-2"):
                             users_for_dept = source_users_cache.get(f_dept.value or 0, {})
-                            user_sel = ui.select(users_for_dept, value=entry.get("source_user_id"), label="User").classes("flex-1")
+                            user_sel = ui.select(users_for_dept, value=entry.get("staff_id"), label="User").classes("flex-1")
                             date_inp = ui.input("Ngày GD", value=entry.get("transaction_date", "")).classes("w-36")
                             count_inp = ui.number("Số tờ", value=entry.get("sheet_count", 0), min=1).classes("w-24")
                             ui.button(icon="delete", on_click=lambda i=idx: remove_entry(i)).classes("text-red-400")
 
                             def update_entry(i=idx, us=user_sel, d=date_inp, c=count_inp):
                                 if i < len(entries):
-                                    entries[i]["source_user_id"] = us.value
+                                    entries[i]["staff_id"] = us.value
                                     entries[i]["transaction_date"] = d.value
                                     entries[i]["sheet_count"] = int(c.value or 0)
 
@@ -592,7 +597,7 @@ async def new_handover_page():
                             count_inp.on("update:model-value", update_entry)
 
         def add_entry_row():
-            entries.append({"source_user_id": None, "transaction_date": str(__import__('datetime').date.today()), "sheet_count": 0})
+            entries.append({"staff_id": None, "transaction_date": str(__import__('datetime').date.today()), "sheet_count": 0})
             ui.run_coroutine(render_entries())
 
         def remove_entry(idx):
@@ -611,7 +616,7 @@ async def new_handover_page():
                         "department_id": f_dept.value,
                         "handover_date": f_date.value,
                         "delivered_by": f_deliver.value or None,
-                        "entries": [e for e in entries if e.get("source_user_id") and e.get("sheet_count", 0) > 0],
+                        "entries": [e for e in entries if e.get("staff_id") and e.get("sheet_count", 0) > 0],
                     })
                     ui.notify("Đã tạo phiếu bàn giao", type="positive")
                     ui.navigate.to("/handovers")
@@ -674,7 +679,7 @@ async def handover_detail_page(handover_id: int):
         async def load_detail_users():
             if dept_id and dept_id not in source_users_detail_cache:
                 try:
-                    users = await asyncio.to_thread(api.get, "/api/source-users/", {"department_id": dept_id})
+                    users = await asyncio.to_thread(api.get, "/api/staff/", {"department_id": dept_id})
                     source_users_detail_cache[dept_id] = users
                 except Exception:
                     source_users_detail_cache[dept_id] = []
@@ -711,11 +716,11 @@ async def handover_detail_page(handover_id: int):
                                 ui.label("").classes("w-10")
 
                         for e in entries:
-                            su = e.get("source_user") or {}
+                            s = e.get("staff") or {}
                             eid = e["id"]
                             with ui.row().classes("w-full px-3 py-2 border-b border-gray-100 items-center"):
-                                ui.label(su.get("user_code", "")).classes("flex-1 text-sm")
-                                ui.label(su.get("full_name") or "—").classes("flex-1 text-sm text-gray-600")
+                                ui.label(s.get("ipcas_code", "")).classes("flex-1 text-sm")
+                                ui.label(s.get("full_name") or "—").classes("flex-1 text-sm text-gray-600")
                                 ui.label(str(e.get("transaction_date", ""))).classes("w-28 text-center text-sm")
                                 ui.label(str(e.get("sheet_count", 0))).classes("w-20 text-center text-sm font-semibold")
                                 if is_draft:
@@ -734,7 +739,11 @@ async def handover_detail_page(handover_id: int):
         # Dialog thêm dòng
         await load_detail_users()
         users_for_dept = source_users_detail_cache.get(dept_id, [])
-        user_opts = {u["id"]: f"{u['user_code']}{' – ' + u['full_name'] if u.get('full_name') else ''}" for u in users_for_dept}
+        user_opts = {
+            u["id"]: f"{u.get('full_name') or u.get('ipcas_code') or ''}"
+                     f"{' (' + u['ipcas_code'] + ')' if u.get('ipcas_code') else ''}"
+            for u in users_for_dept
+        }
 
         with ui.dialog() as add_entry_dialog, ui.card().classes("w-96 p-6"):
             ui.label("Thêm dòng chứng từ").classes("text-lg font-bold mb-4")
@@ -750,7 +759,7 @@ async def handover_detail_page(handover_id: int):
                         return
                     try:
                         await asyncio.to_thread(api.post, f"/api/handovers/{handover_id}/entries", {
-                            "source_user_id": ae_user.value,
+                            "staff_id": ae_user.value,
                             "transaction_date": ae_date.value,
                             "sheet_count": int(ae_count.value),
                         })

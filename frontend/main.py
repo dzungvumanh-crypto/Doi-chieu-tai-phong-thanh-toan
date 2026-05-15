@@ -14,7 +14,6 @@ app.add_static_files('/static', os.path.join(os.path.dirname(__file__), 'static'
 import frontend.pages.login           # noqa: F401
 import frontend.pages.dashboard       # noqa: F401
 import frontend.pages.staff           # noqa: F401
-import frontend.pages.source_users    # noqa: F401
 import frontend.pages.handovers       # noqa: F401
 import frontend.pages.bundles         # noqa: F401
 import frontend.pages.storage         # noqa: F401

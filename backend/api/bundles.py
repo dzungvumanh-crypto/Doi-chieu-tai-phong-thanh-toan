@@ -1,104 +1,28 @@
 """Bundle management endpoints"""
+import io
 import json
 import logging
-
-_log = logging.getLogger(__name__)
-from urllib.parse import quote
+import sqlite3
+from collections import defaultdict
 from datetime import date as date_type
 from typing import List, Optional, Tuple
-from collections import defaultdict
+from urllib.parse import quote
+
+import openpyxl
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
-from sqlalchemy.orm import Session, joinedload
-from backend.database import get_db
-from backend.models import (
-    Bundle, BundleGroup, BundleItem, DocumentEntry,
-    Department, Handover, KSNBStaff, SourceUser, _vn_now
-)
-from backend.schemas import (
-    BundleGroupOut, BundleUpdateRequest, BundleGenerateRequest,
-    StorageViewRow, StorageViewResponse, StorageViewUpdateRequest,
-    ArchiveRecord, HandoverArchiveResponse,
-)
+from openpyxl.styles import Alignment, Border, Font, Side
+
 from backend.core.deps import get_current_staff, require_controller, require_ksnb
-from backend.services.bundle_service import generate_bundles_for_entries, EntryUnit
+from backend.database import get_db, _vn_now
+from backend.schemas import (
+    ArchiveRecord, BundleGenerateRequest, BundleUpdateRequest,
+    HandoverArchiveResponse, StorageViewResponse, StorageViewRow, StorageViewUpdateRequest,
+)
+from backend.services.bundle_service import BundleResult, EntryUnit, generate_bundles_for_entries
 from backend.services.cover_service import generate_covers_docx
 
-
-def _get_dates_for_bundle(b: Bundle):
-    """Lấy tập hợp ngày GD của 1 tập — ưu tiên cover_units, fallback BundleItems."""
-    if b.cover_units:
-        try:
-            data = json.loads(b.cover_units)
-            return frozenset(date_type.fromisoformat(u["date"]) for u in data)
-        except Exception:
-            _log.warning("bundle %s: cover_units JSON lỗi, dùng BundleItems fallback", b.id)
-    return frozenset(
-        item.entry.transaction_date
-        for item in b.items
-        if item.entry
-    )
-
-
-def _units_from_bundle(bundle: Bundle) -> List[EntryUnit]:
-    """Build EntryUnit list for cover from cover_units JSON if set, else from BundleItems."""
-    if bundle.cover_units:
-        try:
-            data = json.loads(bundle.cover_units)
-            return [
-                EntryUnit(
-                    entry_ids=[],
-                    source_user_id=0,
-                    user_code=u["user_code"],
-                    full_name=u.get("full_name"),
-                    transaction_date=date_type.fromisoformat(u["date"]),
-                    sheet_count=u["sheet_count"],
-                    is_large=u.get("is_large", False),
-                )
-                for u in data
-            ]
-        except Exception:
-            _log.warning("bundle %s: cover_units JSON lỗi khi build units, dùng BundleItems fallback", bundle.id)
-    # Fallback: đọc từ BundleItems (trường hợp không có cover_units)
-    units = []
-    for item in bundle.items:
-        e = item.entry
-        if e and e.source_user:
-            units.append(EntryUnit(
-                entry_ids=[e.id],
-                source_user_id=e.source_user_id,
-                user_code=e.source_user.user_code,
-                full_name=e.source_user.full_name,
-                transaction_date=e.transaction_date,
-                sheet_count=e.sheet_count,
-            ))
-    return units
-
-
-def _get_bundle_label(bundle: Bundle, group_bundles) -> Tuple[int, int]:
-    """
-    Tính (label_seq, label_total) cho bìa của 1 tập.
-    - Tập bị chia từ 1 ngày vượt 350: đánh số cục bộ (I/II, II/II, ...)
-    - Tập gom nhiều ngày hoặc tập đơn: luôn là I/I
-    """
-    bundle_dates = {b.id: _get_dates_for_bundle(b) for b in group_bundles}
-
-    # Nhóm các tập có cùng 1 ngày duy nhất (= các tập bị chia)
-    single_date_groups: dict = defaultdict(list)
-    for b in group_bundles:
-        dates = bundle_dates[b.id]
-        if len(dates) == 1:
-            single_date_groups[next(iter(dates))].append(b)
-
-    my_dates = bundle_dates.get(bundle.id, frozenset())
-    if len(my_dates) == 1:
-        day = next(iter(my_dates))
-        same = sorted(single_date_groups[day], key=lambda b: b.sequence)
-        if len(same) > 1:
-            idx = next(i + 1 for i, b in enumerate(same) if b.id == bundle.id)
-            return idx, len(same)
-    return 1, 1
-
+_log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/bundles", tags=["Bundles"])
 
 
@@ -112,515 +36,293 @@ def _download_headers(filename: str) -> dict:
     }
 
 
-def _load_bundle_group(db: Session, group_id: int) -> BundleGroup:
-    g = db.query(BundleGroup).options(
-        joinedload(BundleGroup.department),
-        joinedload(BundleGroup.bundles).joinedload(Bundle.custodian_staff),
-        joinedload(BundleGroup.bundles).joinedload(Bundle.items).joinedload(
-            BundleItem.entry
-        ).joinedload(DocumentEntry.source_user)
-    ).filter(BundleGroup.id == group_id).first()
+# ─── Helpers cho bundle data ──────────────────────────────────────────────────
+
+def _get_dates_for_bundle(bundle: dict) -> frozenset:
+    """Lấy tập hợp ngày GD — ưu tiên cover_units JSON, fallback qua items."""
+    if bundle.get("cover_units"):
+        try:
+            data = json.loads(bundle["cover_units"])
+            return frozenset(date_type.fromisoformat(u["date"]) for u in data)
+        except Exception:
+            _log.warning("bundle %s: cover_units JSON lỗi, dùng items fallback", bundle["id"])
+    return frozenset(
+        date_type.fromisoformat(item["entry"]["transaction_date"])
+        for item in bundle.get("items", [])
+        if item.get("entry") and item["entry"].get("transaction_date")
+    )
+
+
+def _units_from_bundle(bundle: dict) -> List[EntryUnit]:
+    """Build EntryUnit list từ cover_units JSON hoặc fallback qua items."""
+    if bundle.get("cover_units"):
+        try:
+            data = json.loads(bundle["cover_units"])
+            return [
+                EntryUnit(
+                    entry_ids=[], source_user_id=0,
+                    user_code=u["user_code"], full_name=u.get("full_name"),
+                    transaction_date=date_type.fromisoformat(u["date"]),
+                    sheet_count=u["sheet_count"], is_large=u.get("is_large", False),
+                )
+                for u in data
+            ]
+        except Exception:
+            _log.warning("bundle %s: cover_units JSON lỗi khi build units, dùng fallback", bundle["id"])
+    units = []
+    for item in bundle.get("items", []):
+        e = item.get("entry")
+        s = e.get("staff") if e else None
+        if e and s:
+            units.append(EntryUnit(
+                entry_ids=[e["id"]],
+                source_user_id=e["staff_id"],
+                user_code=s.get("ipcas_code") or "",
+                full_name=s.get("full_name"),
+                transaction_date=date_type.fromisoformat(e["transaction_date"]),
+                sheet_count=e["sheet_count"],
+            ))
+    return units
+
+
+def _get_bundle_label(bundle: dict, all_bundles: list) -> Tuple[int, int]:
+    bundle_dates = {b["id"]: _get_dates_for_bundle(b) for b in all_bundles}
+    single_date_groups: dict = defaultdict(list)
+    for b in all_bundles:
+        dates = bundle_dates[b["id"]]
+        if len(dates) == 1:
+            single_date_groups[next(iter(dates))].append(b)
+    my_dates = bundle_dates.get(bundle["id"], frozenset())
+    if len(my_dates) == 1:
+        day = next(iter(my_dates))
+        same = sorted(single_date_groups[day], key=lambda b: b["sequence"])
+        if len(same) > 1:
+            idx = next(i + 1 for i, b in enumerate(same) if b["id"] == bundle["id"])
+            return idx, len(same)
+    return 1, 1
+
+
+def _load_bundle_group(db: sqlite3.Connection, group_id: int) -> dict:
+    g = db.execute("SELECT * FROM bundle_groups WHERE id = ?", (group_id,)).fetchone()
     if not g:
         raise HTTPException(404, "Không tìm thấy nhóm tập")
-    return g
 
+    dept = db.execute("SELECT * FROM departments WHERE id = ?", (g["department_id"],)).fetchone()
+    creator = db.execute("SELECT * FROM ksnb_staff WHERE id = ?", (g["created_by_id"],)).fetchone()
 
-@router.get("/groups", response_model=List[BundleGroupOut])
-def list_groups(
-    department_id: Optional[int] = None,
-    month: Optional[int] = None,
-    year: Optional[int] = None,
-    db: Session = Depends(get_db),
-    _: KSNBStaff = Depends(require_ksnb)
-):
-    q = db.query(BundleGroup).options(
-        joinedload(BundleGroup.department),
-        joinedload(BundleGroup.created_by_staff),
-        joinedload(BundleGroup.bundles).joinedload(Bundle.items)
-    )
-    if department_id:
-        q = q.filter(BundleGroup.department_id == department_id)
-    if month:
-        q = q.filter(BundleGroup.notes.like(f"Tháng {month:02d}/%"))
-    if year:
-        q = q.filter(BundleGroup.notes.like(f"%/{year}"))
-    return q.order_by(BundleGroup.created_at.desc()).all()
+    bundle_rows = db.execute(
+        """SELECT b.*, ks.full_name AS cust_name
+           FROM bundles b
+           LEFT JOIN ksnb_staff ks ON b.custodian_id = ks.id
+           WHERE b.group_id = ? ORDER BY b.sequence""",
+        (group_id,),
+    ).fetchall()
 
+    bundles_out = []
+    for b in bundle_rows:
+        item_rows = db.execute(
+            """SELECT bi.id, bi.entry_id,
+                      de.transaction_date, de.sheet_count, de.notes, de.staff_id,
+                      ks.employee_code AS s_emp, ks.full_name AS s_name, ks.role AS s_role,
+                      ks.department_id AS s_dept, ks.username AS s_user,
+                      ks.phone AS s_phone, ks.email AS s_email, ks.start_date AS s_start,
+                      ks.ipcas_code, ks.payment_username, ks.is_active AS s_active
+               FROM bundle_items bi
+               JOIN document_entries de ON bi.entry_id = de.id
+               LEFT JOIN ksnb_staff ks ON de.staff_id = ks.id
+               WHERE bi.bundle_id = ?""",
+            (b["id"],),
+        ).fetchall()
 
-@router.get("/groups/{group_id}", response_model=BundleGroupOut)
-def get_group(
-    group_id: int,
-    db: Session = Depends(get_db),
-    _: KSNBStaff = Depends(require_ksnb)
-):
-    return _load_bundle_group(db, group_id)
+        items_out = []
+        for item in item_rows:
+            staff = None
+            if item["staff_id"]:
+                staff = {
+                    "id": item["staff_id"],
+                    "employee_code": item["s_emp"] or "",
+                    "full_name": item["s_name"] or "",
+                    "role": item["s_role"] or "",
+                    "department_id": item["s_dept"],
+                    "username": item["s_user"] or "",
+                    "phone": item["s_phone"],
+                    "email": item["s_email"],
+                    "start_date": item["s_start"],
+                    "ipcas_code": item["ipcas_code"],
+                    "payment_username": item["payment_username"],
+                    "is_active": bool(item["s_active"]),
+                }
+            items_out.append({
+                "id": item["id"],
+                "entry_id": item["entry_id"],
+                "entry": {
+                    "id": item["entry_id"],
+                    "staff_id": item["staff_id"],
+                    "transaction_date": item["transaction_date"],
+                    "sheet_count": item["sheet_count"],
+                    "notes": item["notes"],
+                    "staff": staff,
+                },
+            })
 
-
-@router.post("/generate", response_model=BundleGroupOut)
-def generate_bundles(
-    req: BundleGenerateRequest,
-    db: Session = Depends(get_db),
-    current: KSNBStaff = Depends(require_controller)
-):
-    """Tự động gom tập từ danh sách entry IDs"""
-    dept = db.query(Department).get(req.department_id)
-    if not dept:
-        raise HTTPException(404, "Không tìm thấy phòng")
-
-    entry_ids = list(dict.fromkeys(req.entry_ids))
-    if not entry_ids:
-        raise HTTPException(400, "Không có chứng từ để gom")
-
-    # Lấy entries và kiểm tra phạm vi phòng
-    entries = db.query(DocumentEntry).options(
-        joinedload(DocumentEntry.source_user),
-        joinedload(DocumentEntry.handover)
-    ).filter(DocumentEntry.id.in_(entry_ids)).all()
-
-    if not entries:
-        raise HTTPException(400, "Không có chứng từ để gom")
-
-    # Chỉ gom các entry đã xác nhận; bỏ qua entry pending_confirm/borrowed
-    entries = [e for e in entries if (e.entry_status or "confirmed") == "confirmed"]
-    if not entries:
-        raise HTTPException(400, "Không có chứng từ đã xác nhận để gom tập")
-
-    found_ids = {e.id for e in entries}
-
-    # ── Xóa bundle group cũ cùng phòng+tháng (nếu có) để regenerate ──
-    if req.notes:
-        old_groups = db.query(BundleGroup).filter(
-            BundleGroup.department_id == req.department_id,
-            BundleGroup.notes == req.notes,
-        ).all()
-        for old_g in old_groups:
-            db.delete(old_g)
-        if old_groups:
-            db.flush()
-
-    invalid_entries = [
-        e.id for e in entries
-        if not e.handover
-        or e.handover.department_id != req.department_id
-    ]
-    if invalid_entries:
-        raise HTTPException(
-            400,
-            "Có chứng từ không thuộc phòng đã chọn"
-        )
-
-    # Chuẩn bị data cho thuật toán
-    entries_data = []
-    for e in entries:
-        entries_data.append({
-            "id": e.id,
-            "source_user_id": e.source_user_id,
-            "user_code": e.source_user.user_code if e.source_user else str(e.source_user_id),
-            "full_name": e.source_user.full_name if e.source_user else None,
-            "transaction_date": e.transaction_date,
-            "sheet_count": e.sheet_count,
+        bundles_out.append({
+            "id": b["id"],
+            "group_id": b["group_id"],
+            "sequence": b["sequence"],
+            "total_sheets": b["total_sheets"],
+            "custodian_id": b["custodian_id"],
+            "custodian_name": b["cust_name"],
+            "storage_box": b["storage_box"],
+            "storage_location": b["storage_location"],
+            "cover_printed_at": b["cover_printed_at"],
+            "status": b["status"] or "pending",
+            "cover_units": b["cover_units"],
+            "items": items_out,
         })
 
-    # Chạy thuật toán gom tập
-    bundle_results = generate_bundles_for_entries(entries_data)
+    def _staff_dict(r):
+        if not r:
+            return None
+        return {
+            "id": r["id"],
+            "employee_code": r["employee_code"] or "",
+            "full_name": r["full_name"] or "",
+            "role": r["role"] or "",
+            "department_id": r["department_id"],
+            "username": r["username"] or "",
+            "phone": r["phone"],
+            "email": r["email"],
+            "start_date": r["start_date"],
+            "ipcas_code": r["ipcas_code"],
+            "payment_username": r["payment_username"],
+            "is_active": bool(r["is_active"]),
+        }
 
-    if not bundle_results:
-        raise HTTPException(400, "Không thể gom tập")
-
-    # Lưu vào DB
-    group = BundleGroup(
-        department_id=req.department_id,
-        total_bundles=len(bundle_results),
-        created_by_id=current.id,
-        notes=req.notes,
-    )
-    db.add(group)
-    db.flush()
-
-    for br in bundle_results:
-        cover_units_json = json.dumps([
-            {
-                "user_code": unit.user_code,
-                "full_name": unit.full_name,
-                "date": unit.transaction_date.isoformat(),
-                "sheet_count": unit.sheet_count,
-                "is_large": unit.is_large,
-            }
-            for unit in br.units
-        ], ensure_ascii=False)
-
-        bundle = Bundle(
-            group_id=group.id,
-            sequence=br.sequence,
-            total_sheets=br.total_sheets,
-            custodian_id=req.custodian_id,
-            status="pending",
-            cover_units=cover_units_json,
-        )
-        db.add(bundle)
-        db.flush()
-
-        for unit in br.units:
-            for entry_id in unit.entry_ids:
-                item = BundleItem(bundle_id=bundle.id, entry_id=entry_id)
-                db.add(item)
-
-    db.commit()
-    return _load_bundle_group(db, group.id)
+    return {
+        "id": g["id"],
+        "department_id": g["department_id"],
+        "total_bundles": g["total_bundles"],
+        "created_at": g["created_at"],
+        "notes": g["notes"],
+        "department": dict(dept) if dept else None,
+        "created_by_staff": _staff_dict(creator),
+        "bundles": bundles_out,
+    }
 
 
-@router.put("/{bundle_id}", response_model=BundleGroupOut)
-def update_bundle(
-    bundle_id: int,
-    req: BundleUpdateRequest,
-    db: Session = Depends(get_db),
-    _: KSNBStaff = Depends(require_controller)
-):
-    bundle = db.query(Bundle).get(bundle_id)
-    if not bundle:
-        raise HTTPException(404, "Không tìm thấy tập")
-    for field, val in req.dict(exclude_none=True).items():
-        setattr(bundle, field, val)
-    db.commit()
-    return _load_bundle_group(db, bundle.group_id)
+def _delete_group_cascade(db: sqlite3.Connection, group_id: int):
+    bundle_ids = [r["id"] for r in db.execute("SELECT id FROM bundles WHERE group_id = ?", (group_id,)).fetchall()]
+    if bundle_ids:
+        ph = ",".join("?" * len(bundle_ids))
+        db.execute(f"DELETE FROM bundle_items WHERE bundle_id IN ({ph})", bundle_ids)
+    db.execute("DELETE FROM bundles WHERE group_id = ?", (group_id,))
+    db.execute("DELETE FROM bundle_groups WHERE id = ?", (group_id,))
 
 
-@router.get("/{bundle_id}/cover")
-def download_cover(
-    bundle_id: int,
-    custodian_id: Optional[int] = None,
-    db: Session = Depends(get_db),
-    _: KSNBStaff = Depends(get_current_staff)
-):
-    """Tải bìa .docx cho 1 tập cụ thể"""
-    bundle = db.query(Bundle).options(
-        joinedload(Bundle.group).joinedload(BundleGroup.department),
-        joinedload(Bundle.items).joinedload(BundleItem.entry).joinedload(
-            DocumentEntry.source_user
-        ),
-        joinedload(Bundle.custodian_staff)
-    ).filter(Bundle.id == bundle_id).first()
+# ─── Storage / archive helpers ────────────────────────────────────────────────
 
-    if not bundle:
-        raise HTTPException(404, "Không tìm thấy tập")
+def _decompose_bundles_to_rows(bundles_data: list) -> list:
+    """Shared logic: bundles_data là list dict có id, sequence, total_sheets, cover_units, items."""
+    bundle_dates = {b["id"]: sorted(_get_dates_for_bundle(b)) for b in bundles_data}
+    single_day: dict = defaultdict(list)
+    multi_day: list = []
+    for b in bundles_data:
+        dates = bundle_dates[b["id"]]
+        if len(dates) == 1:
+            single_day[dates[0]].append(b)
+        elif len(dates) > 1:
+            multi_day.append((dates, b))
 
-    # Load toàn bộ group để tính nhãn cục bộ
-    group = _load_bundle_group(db, bundle.group_id)
-    label_seq, label_total = _get_bundle_label(bundle, group.bundles)
-
-    # Tìm custodian
-    cust_name = "..."
-    cid = custodian_id or bundle.custodian_id
-    if cid:
-        staff = db.query(KSNBStaff).get(cid)
-        if staff:
-            cust_name = staff.full_name
-
-    # Build bundle result
-    from backend.services.bundle_service import BundleResult
-    units = _units_from_bundle(bundle)
-
-    br = BundleResult(
-        sequence=bundle.sequence,
-        total_bundles_in_group=bundle.group.total_bundles,
-        total_sheets=bundle.total_sheets,
-        units=units,
-        label_seq=label_seq,
-        label_total=label_total,
-        custodian_name=cust_name,
-    )
-
-    dept_name = bundle.group.department.name if bundle.group.department else "Phòng"
-    docx_bytes = generate_covers_docx(dept_name, [br])
-
-    filename = f"bia_tap_{bundle.sequence}.docx"
-    return Response(
-        content=docx_bytes,
-        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers=_download_headers(filename),
-    )
+    rows = []
+    for dates, b in multi_day:
+        rows.append(StorageViewRow(
+            days=sorted(d.day for d in dates),
+            bundle_ids=[b["id"]],
+            bundle_sheets=[b["total_sheets"]],
+            n_bundles=1,
+        ))
+    for d, date_bundles in single_day.items():
+        date_bundles = sorted(date_bundles, key=lambda b: b["sequence"])
+        rows.append(StorageViewRow(
+            days=[d.day],
+            bundle_ids=[b["id"] for b in date_bundles],
+            bundle_sheets=[b["total_sheets"] for b in date_bundles],
+            n_bundles=len(date_bundles),
+        ))
+    rows.sort(key=lambda r: min(r.days) if r.days else 0)
+    return rows
 
 
-@router.get("/groups/{group_id}/cover-all")
-def download_all_covers(
-    group_id: int,
-    db: Session = Depends(get_db),
-    _: KSNBStaff = Depends(require_ksnb)
-):
-    """Tải tất cả bìa của 1 nhóm tập trong 1 file .docx"""
-    group = _load_bundle_group(db, group_id)
-
-    from backend.services.bundle_service import BundleResult
-    bundle_results = []
-
-    for bundle in sorted(group.bundles, key=lambda b: b.sequence):
-        cust_name = "..."
-        if bundle.custodian_staff:
-            cust_name = bundle.custodian_staff.full_name
-        elif bundle.custodian_id:
-            staff = db.query(KSNBStaff).get(bundle.custodian_id)
-            if staff:
-                cust_name = staff.full_name
-
-        label_seq, label_total = _get_bundle_label(bundle, group.bundles)
-
-        br = BundleResult(
-            sequence=bundle.sequence,
-            total_bundles_in_group=group.total_bundles,
-            total_sheets=bundle.total_sheets,
-            units=_units_from_bundle(bundle),
-            label_seq=label_seq,
-            label_total=label_total,
-            custodian_name=cust_name,
-        )
-        bundle_results.append(br)
-
-    dept_name = group.department.name if group.department else "Phòng"
-    docx_bytes = generate_covers_docx(dept_name, bundle_results)
-
-    filename = f"bia_tat_ca_tap_{group_id}.docx"
-    return Response(
-        content=docx_bytes,
-        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers=_download_headers(filename),
-    )
-
-
-@router.post("/{bundle_id}/mark-printed", response_model=BundleGroupOut)
-def mark_bundle_printed(
-    bundle_id: int,
-    db: Session = Depends(get_db),
-    _: KSNBStaff = Depends(require_controller)
-):
-    """Đánh dấu 1 tập là đã in bìa thực tế"""
-    bundle = db.query(Bundle).get(bundle_id)
-    if not bundle:
-        raise HTTPException(404, "Không tìm thấy tập")
-
-    bundle.cover_printed_at = _vn_now()
-    bundle.status = "printed"
-    db.commit()
-    return _load_bundle_group(db, bundle.group_id)
-
-
-@router.post("/groups/{group_id}/mark-printed", response_model=BundleGroupOut)
-def mark_group_printed(
-    group_id: int,
-    db: Session = Depends(get_db),
-    _: KSNBStaff = Depends(require_controller)
-):
-    """Đánh dấu tất cả tập trong nhóm là đã in bìa thực tế"""
-    group = _load_bundle_group(db, group_id)
-
-    now = _vn_now()
-    for bundle in group.bundles:
-        bundle.cover_printed_at = now
-        bundle.status = "printed"
-
-    db.commit()
-    return _load_bundle_group(db, group_id)
-
-
-@router.get("/cover-bulk")
-def download_bulk_covers(
-    department_id: int,
-    db: Session = Depends(get_db),
-    _: KSNBStaff = Depends(require_ksnb)
-):
-    """Tải tất cả bìa của 1 phòng (gom tất cả groups) vào 1 file .docx"""
-    from backend.services.bundle_service import BundleResult
-
-    dept = db.query(Department).get(department_id)
-    if not dept:
-        raise HTTPException(404, "Không tìm thấy phòng")
-
-    groups = db.query(BundleGroup).options(
-        joinedload(BundleGroup.bundles).joinedload(Bundle.custodian_staff),
-        joinedload(BundleGroup.bundles).joinedload(Bundle.items).joinedload(
-            BundleItem.entry
-        ).joinedload(DocumentEntry.source_user)
-    ).filter(BundleGroup.department_id == department_id).order_by(BundleGroup.created_at.asc()).all()
-
-    if not groups:
-        raise HTTPException(404, "Không có nhóm tập nào cho phòng này")
-
-    all_bundle_results = []
-
-    for group in groups:
-        for bundle in sorted(group.bundles, key=lambda b: b.sequence):
-            cust_name = "..."
-            if bundle.custodian_staff:
-                cust_name = bundle.custodian_staff.full_name
-            elif bundle.custodian_id:
-                staff = db.query(KSNBStaff).get(bundle.custodian_id)
-                if staff:
-                    cust_name = staff.full_name
-
-            label_seq, label_total = _get_bundle_label(bundle, group.bundles)
-
-            br = BundleResult(
-                sequence=bundle.sequence,
-                total_bundles_in_group=group.total_bundles,
-                total_sheets=bundle.total_sheets,
-                units=_units_from_bundle(bundle),
-                label_seq=label_seq,
-                label_total=label_total,
-                custodian_name=cust_name,
-            )
-            all_bundle_results.append(br)
-
-    if not all_bundle_results:
-        raise HTTPException(404, "Không có tập nào để tải bìa")
-
-    docx_bytes = generate_covers_docx(dept.name, all_bundle_results)
-    filename = f"bia_phong_{department_id}.docx"
-    return Response(
-        content=docx_bytes,
-        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers=_download_headers(filename),
-    )
+def _load_bundles_for_storage(db: sqlite3.Connection, group_id: int) -> list:
+    """Tải bundles + dates cho storage/archive view (minimal — chỉ cần dates)."""
+    bundles = db.execute(
+        "SELECT id, sequence, total_sheets, cover_units FROM bundles WHERE group_id = ? ORDER BY sequence",
+        (group_id,),
+    ).fetchall()
+    result = []
+    for b in bundles:
+        item_dates = db.execute(
+            "SELECT de.transaction_date FROM bundle_items bi JOIN document_entries de ON bi.entry_id = de.id WHERE bi.bundle_id = ?",
+            (b["id"],),
+        ).fetchall()
+        result.append({
+            "id": b["id"],
+            "sequence": b["sequence"],
+            "total_sheets": b["total_sheets"],
+            "cover_units": b["cover_units"],
+            "items": [{"entry": {"transaction_date": r["transaction_date"]}} for r in item_dates],
+        })
+    return result
 
 
 def _get_storage_rows_for_month(
-    db: Session, department_id: int, year: int, month: int
+    db: sqlite3.Connection, department_id: int, year: int, month: int
 ) -> tuple:
-    """Returns (dept_name, rows: list[StorageViewRow]) for one month."""
     notes_key = f"Tháng {month:02d}/{year}"
-    groups = (
-        db.query(BundleGroup)
-        .options(
-            joinedload(BundleGroup.department),
-            joinedload(BundleGroup.bundles)
-            .joinedload(Bundle.items)
-            .joinedload(BundleItem.entry),
-        )
-        .filter(
-            BundleGroup.department_id == department_id,
-            BundleGroup.notes == notes_key,
-        )
-        .order_by(BundleGroup.created_at)
-        .all()
-    )
+    groups = db.execute(
+        "SELECT id FROM bundle_groups WHERE department_id = ? AND notes = ? ORDER BY created_at",
+        (department_id, notes_key),
+    ).fetchall()
 
-    dept_name = ""
-    if groups and groups[0].department:
-        dept_name = groups[0].department.name
-    else:
-        d = db.query(Department).filter(Department.id == department_id).first()
-        if d:
-            dept_name = d.name
+    dept = db.execute("SELECT name FROM departments WHERE id = ?", (department_id,)).fetchone()
+    dept_name = dept["name"] if dept else ""
 
     all_rows: list = []
     for g in groups:
-        bundles = sorted(g.bundles, key=lambda b: b.sequence)
-        bundle_dates: dict = {}
-        for b in bundles:
-            bundle_dates[b.id] = sorted(_get_dates_for_bundle(b))
-
-        single_day: dict = defaultdict(list)
-        multi_day: list = []
-        for b in bundles:
-            dates = bundle_dates[b.id]
-            if len(dates) == 1:
-                single_day[dates[0]].append(b)
-            elif len(dates) > 1:
-                multi_day.append((dates, b))
-
-        group_rows: list = []
-        for dates, b in multi_day:
-            group_rows.append(StorageViewRow(
-                days=sorted(d.day for d in dates),
-                bundle_ids=[b.id],
-                bundle_sheets=[b.total_sheets],
-                n_bundles=1,
-            ))
-        for date, date_bundles in single_day.items():
-            date_bundles = sorted(date_bundles, key=lambda b: b.sequence)
-            group_rows.append(StorageViewRow(
-                days=[date.day],
-                bundle_ids=[b.id for b in date_bundles],
-                bundle_sheets=[b.total_sheets for b in date_bundles],
-                n_bundles=len(date_bundles),
-            ))
-        group_rows.sort(key=lambda r: min(r.days) if r.days else 0)
-        all_rows.extend(group_rows)
-
+        bundles_data = _load_bundles_for_storage(db, g["id"])
+        all_rows.extend(_decompose_bundles_to_rows(bundles_data))
     return dept_name, all_rows
 
 
 def _generate_archive_records(
-    db: Session, department_id: int, year: int, tieu_de_dau: str, tu_tap: str
+    db: sqlite3.Connection, department_id: int, year: int, tieu_de_dau: str, tu_tap: str
 ) -> list:
-    """Build archive record list for a whole year — 1 DB query for all 12 months."""
-    dept = db.query(Department).filter(Department.id == department_id).first()
-    dept_name = dept.name if dept else str(department_id)
+    dept = db.execute("SELECT name FROM departments WHERE id = ?", (department_id,)).fetchone()
+    dept_name = dept["name"] if dept else str(department_id)
 
-    # 1 query duy nhất cho cả năm (LIKE "Tháng %/YYYY")
-    groups = (
-        db.query(BundleGroup)
-        .options(
-            joinedload(BundleGroup.department),
-            joinedload(BundleGroup.bundles)
-            .joinedload(Bundle.items)
-            .joinedload(BundleItem.entry),
-        )
-        .filter(
-            BundleGroup.department_id == department_id,
-            BundleGroup.notes.like(f"Tháng %/{year}"),
-        )
-        .order_by(BundleGroup.created_at)
-        .all()
-    )
+    groups = db.execute(
+        "SELECT id, notes FROM bundle_groups WHERE department_id = ? AND notes LIKE ? ORDER BY created_at",
+        (department_id, f"Tháng %/{year}"),
+    ).fetchall()
 
-    if groups and groups[0].department:
-        dept_name = groups[0].department.name
-
-    # Phân nhóm theo tháng trong Python
     by_month: dict = defaultdict(list)
     for g in groups:
         try:
-            month = int((g.notes or "").split("/")[0].split(" ")[1])
+            month = int((g["notes"] or "").split("/")[0].split(" ")[1])
         except (IndexError, ValueError):
             continue
-        by_month[month].append(g)
+        by_month[month].append(g["id"])
 
     records = []
     for month in range(1, 13):
-        month_groups = by_month.get(month, [])
-        if not month_groups:
+        group_ids = by_month.get(month, [])
+        if not group_ids:
             continue
 
-        # Dùng lại logic decompose từ _get_storage_rows_for_month
         all_rows: list = []
-        for g in month_groups:
-            bundles = sorted(g.bundles, key=lambda b: b.sequence)
-            bundle_dates: dict = {}
-            for b in bundles:
-                bundle_dates[b.id] = sorted(_get_dates_for_bundle(b))
-            single_day: dict = defaultdict(list)
-            multi_day: list = []
-            for b in bundles:
-                dates = bundle_dates[b.id]
-                if len(dates) == 1:
-                    single_day[dates[0]].append(b)
-                elif len(dates) > 1:
-                    multi_day.append((dates, b))
-            group_rows: list = []
-            for dates, b in multi_day:
-                group_rows.append(StorageViewRow(
-                    days=sorted(d.day for d in dates),
-                    bundle_sheets=[b.total_sheets],
-                    n_bundles=1,
-                ))
-            for date, date_bundles in single_day.items():
-                date_bundles = sorted(date_bundles, key=lambda b: b.sequence)
-                group_rows.append(StorageViewRow(
-                    days=[date.day],
-                    bundle_sheets=[b.total_sheets for b in date_bundles],
-                    n_bundles=len(date_bundles),
-                ))
-            group_rows.sort(key=lambda r: min(r.days) if r.days else 0)
-            all_rows.extend(group_rows)
+        for gid in group_ids:
+            bundles_data = _load_bundles_for_storage(db, gid)
+            all_rows.extend(_decompose_bundles_to_rows(bundles_data))
 
         tieu_de_cuoi = f"{dept_name} tháng {month:02d}/{year}"
         for r in all_rows:
@@ -637,19 +339,393 @@ def _generate_archive_records(
     return records
 
 
+# ─── Endpoints ────────────────────────────────────────────────────────────────
+
+@router.get("/groups")
+def list_groups(
+    department_id: Optional[int] = None,
+    month: Optional[int] = None,
+    year: Optional[int] = None,
+    db: sqlite3.Connection = Depends(get_db),
+    _: dict = Depends(require_ksnb),
+):
+    clauses = []
+    params: list = []
+    if department_id:
+        clauses.append("bg.department_id = ?")
+        params.append(department_id)
+    if month:
+        clauses.append("bg.notes LIKE ?")
+        params.append(f"Tháng {month:02d}/%")
+    if year:
+        clauses.append("bg.notes LIKE ?")
+        params.append(f"%/{year}")
+
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    rows = db.execute(
+        f"""SELECT bg.*, d.code AS dept_code, d.name AS dept_name,
+                   d.is_source AS d_is_source, d.is_active AS d_is_active
+            FROM bundle_groups bg LEFT JOIN departments d ON bg.department_id = d.id
+            {where} ORDER BY bg.created_at DESC""",
+        params,
+    ).fetchall()
+
+    result = []
+    for g in rows:
+        creator = db.execute("SELECT * FROM ksnb_staff WHERE id = ?", (g["created_by_id"],)).fetchone()
+        bundle_rows = db.execute(
+            """SELECT b.id, b.sequence, b.total_sheets, b.custodian_id, b.storage_box,
+                      b.storage_location, b.cover_printed_at, b.status, b.cover_units,
+                      b.group_id
+               FROM bundles b WHERE b.group_id = ? ORDER BY b.sequence""",
+            (g["id"],),
+        ).fetchall()
+
+        bundles_out = []
+        for b in bundle_rows:
+            item_rows = db.execute(
+                "SELECT id, entry_id FROM bundle_items WHERE bundle_id = ?", (b["id"],)
+            ).fetchall()
+            bundles_out.append({
+                "id": b["id"],
+                "group_id": b["group_id"],
+                "sequence": b["sequence"],
+                "total_sheets": b["total_sheets"],
+                "custodian_id": b["custodian_id"],
+                "storage_box": b["storage_box"],
+                "storage_location": b["storage_location"],
+                "cover_printed_at": b["cover_printed_at"],
+                "status": b["status"] or "pending",
+                "cover_units": b["cover_units"],
+                "items": [{"id": r["id"], "entry_id": r["entry_id"], "entry": None} for r in item_rows],
+            })
+
+        dept_dict = None
+        if g["dept_name"]:
+            dept_dict = {
+                "id": g["department_id"],
+                "code": g["dept_code"] or "",
+                "name": g["dept_name"] or "",
+                "is_source": bool(g["d_is_source"]),
+                "is_active": bool(g["d_is_active"]),
+            }
+
+        creator_dict = None
+        if creator:
+            creator_dict = {
+                "id": creator["id"],
+                "employee_code": creator["employee_code"] or "",
+                "full_name": creator["full_name"] or "",
+                "role": creator["role"] or "",
+                "department_id": creator["department_id"],
+                "username": creator["username"] or "",
+                "phone": creator["phone"],
+                "email": creator["email"],
+                "start_date": creator["start_date"],
+                "ipcas_code": creator["ipcas_code"],
+                "payment_username": creator["payment_username"],
+                "is_active": bool(creator["is_active"]),
+            }
+
+        result.append({
+            "id": g["id"],
+            "department_id": g["department_id"],
+            "total_bundles": g["total_bundles"],
+            "created_at": g["created_at"],
+            "notes": g["notes"],
+            "department": dept_dict,
+            "created_by_staff": creator_dict,
+            "bundles": bundles_out,
+        })
+
+    return result
+
+
+@router.get("/groups/{group_id}")
+def get_group(
+    group_id: int,
+    db: sqlite3.Connection = Depends(get_db),
+    _: dict = Depends(require_ksnb),
+):
+    return _load_bundle_group(db, group_id)
+
+
+@router.post("/generate")
+def generate_bundles(
+    req: BundleGenerateRequest,
+    db: sqlite3.Connection = Depends(get_db),
+    current: dict = Depends(require_controller),
+):
+    """Tự động gom tập từ danh sách entry IDs"""
+    dept = db.execute("SELECT id FROM departments WHERE id = ?", (req.department_id,)).fetchone()
+    if not dept:
+        raise HTTPException(404, "Không tìm thấy phòng")
+
+    entry_ids = list(dict.fromkeys(req.entry_ids))
+    if not entry_ids:
+        raise HTTPException(400, "Không có chứng từ để gom")
+
+    ph = ",".join("?" * len(entry_ids))
+    entries = db.execute(
+        f"""SELECT de.id, de.handover_id, de.staff_id, de.transaction_date, de.sheet_count,
+                   de.entry_status, h.department_id AS h_dept_id,
+                   ks.ipcas_code, ks.full_name, ks.payment_username
+            FROM document_entries de
+            JOIN handovers h ON de.handover_id = h.id
+            LEFT JOIN ksnb_staff ks ON de.staff_id = ks.id
+            WHERE de.id IN ({ph})""",
+        entry_ids,
+    ).fetchall()
+
+    if not entries:
+        raise HTTPException(400, "Không có chứng từ để gom")
+
+    # Chỉ gom các entry đã xác nhận
+    entries = [e for e in entries if (e["entry_status"] or "confirmed") == "confirmed"]
+    if not entries:
+        raise HTTPException(400, "Không có chứng từ đã xác nhận để gom tập")
+
+    # Xóa bundle group cũ cùng phòng+tháng để regenerate
+    if req.notes:
+        old_groups = db.execute(
+            "SELECT id FROM bundle_groups WHERE department_id = ? AND notes = ?",
+            (req.department_id, req.notes),
+        ).fetchall()
+        for og in old_groups:
+            _delete_group_cascade(db, og["id"])
+
+    # Kiểm tra tất cả entry thuộc đúng phòng
+    invalid = [e["id"] for e in entries if e["h_dept_id"] != req.department_id]
+    if invalid:
+        raise HTTPException(400, "Có chứng từ không thuộc phòng đã chọn")
+
+    entries_data = [
+        {
+            "id": e["id"],
+            "source_user_id": e["staff_id"],
+            "user_code": e["ipcas_code"] or str(e["staff_id"]),
+            "full_name": e["full_name"],
+            "transaction_date": date_type.fromisoformat(e["transaction_date"]),
+            "sheet_count": e["sheet_count"],
+        }
+        for e in entries
+    ]
+
+    bundle_results = generate_bundles_for_entries(entries_data)
+    if not bundle_results:
+        raise HTTPException(400, "Không thể gom tập")
+
+    # Lưu vào DB
+    cur = db.execute(
+        "INSERT INTO bundle_groups (department_id, total_bundles, created_by_id, notes, created_at) VALUES (?,?,?,?,?)",
+        (req.department_id, len(bundle_results), current["id"], req.notes, str(_vn_now())),
+    )
+    group_id = cur.lastrowid
+
+    for br in bundle_results:
+        cover_units_json = json.dumps(
+            [
+                {
+                    "user_code": unit.user_code,
+                    "full_name": unit.full_name,
+                    "date": unit.transaction_date.isoformat(),
+                    "sheet_count": unit.sheet_count,
+                    "is_large": unit.is_large,
+                }
+                for unit in br.units
+            ],
+            ensure_ascii=False,
+        )
+        cur2 = db.execute(
+            "INSERT INTO bundles (group_id, sequence, total_sheets, custodian_id, status, cover_units) VALUES (?,?,?,?,?,?)",
+            (group_id, br.sequence, br.total_sheets, req.custodian_id, "pending", cover_units_json),
+        )
+        bundle_id = cur2.lastrowid
+        for unit in br.units:
+            for eid in unit.entry_ids:
+                db.execute("INSERT INTO bundle_items (bundle_id, entry_id) VALUES (?,?)", (bundle_id, eid))
+
+    db.commit()
+    return _load_bundle_group(db, group_id)
+
+
+@router.put("/{bundle_id}")
+def update_bundle(
+    bundle_id: int,
+    req: BundleUpdateRequest,
+    db: sqlite3.Connection = Depends(get_db),
+    _: dict = Depends(require_controller),
+):
+    b = db.execute("SELECT * FROM bundles WHERE id = ?", (bundle_id,)).fetchone()
+    if not b:
+        raise HTTPException(404, "Không tìm thấy tập")
+    update_data = {k: v for k, v in req.model_dump().items() if v is not None}
+    if update_data:
+        sets = ", ".join(f"{k}=?" for k in update_data)
+        db.execute(f"UPDATE bundles SET {sets} WHERE id=?", list(update_data.values()) + [bundle_id])
+        db.commit()
+    return _load_bundle_group(db, b["group_id"])
+
+
+@router.get("/{bundle_id}/cover")
+def download_cover(
+    bundle_id: int,
+    custodian_id: Optional[int] = None,
+    db: sqlite3.Connection = Depends(get_db),
+    _: dict = Depends(get_current_staff),
+):
+    b_row = db.execute("SELECT * FROM bundles WHERE id = ?", (bundle_id,)).fetchone()
+    if not b_row:
+        raise HTTPException(404, "Không tìm thấy tập")
+
+    group = _load_bundle_group(db, b_row["group_id"])
+    bundle = next((b for b in group["bundles"] if b["id"] == bundle_id), None)
+    if not bundle:
+        raise HTTPException(404, "Không tìm thấy tập")
+
+    label_seq, label_total = _get_bundle_label(bundle, group["bundles"])
+
+    cust_name = "..."
+    cid = custodian_id or b_row["custodian_id"]
+    if cid:
+        cust = db.execute("SELECT full_name FROM ksnb_staff WHERE id = ?", (cid,)).fetchone()
+        if cust:
+            cust_name = cust["full_name"]
+
+    units = _units_from_bundle(bundle)
+    br = BundleResult(
+        sequence=bundle["sequence"],
+        total_bundles_in_group=group["total_bundles"],
+        total_sheets=bundle["total_sheets"],
+        units=units,
+        label_seq=label_seq,
+        label_total=label_total,
+        custodian_name=cust_name,
+    )
+    dept_name = group["department"]["name"] if group.get("department") else "Phòng"
+    docx_bytes = generate_covers_docx(dept_name, [br])
+    return Response(
+        content=docx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers=_download_headers(f"bia_tap_{bundle['sequence']}.docx"),
+    )
+
+
+@router.get("/groups/{group_id}/cover-all")
+def download_all_covers(
+    group_id: int,
+    db: sqlite3.Connection = Depends(get_db),
+    _: dict = Depends(require_ksnb),
+):
+    group = _load_bundle_group(db, group_id)
+    bundle_results = []
+    for bundle in sorted(group["bundles"], key=lambda b: b["sequence"]):
+        cust_name = bundle.get("custodian_name") or "..."
+        label_seq, label_total = _get_bundle_label(bundle, group["bundles"])
+        bundle_results.append(BundleResult(
+            sequence=bundle["sequence"],
+            total_bundles_in_group=group["total_bundles"],
+            total_sheets=bundle["total_sheets"],
+            units=_units_from_bundle(bundle),
+            label_seq=label_seq,
+            label_total=label_total,
+            custodian_name=cust_name,
+        ))
+    dept_name = group["department"]["name"] if group.get("department") else "Phòng"
+    docx_bytes = generate_covers_docx(dept_name, bundle_results)
+    return Response(
+        content=docx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers=_download_headers(f"bia_tat_ca_tap_{group_id}.docx"),
+    )
+
+
+@router.post("/{bundle_id}/mark-printed")
+def mark_bundle_printed(
+    bundle_id: int,
+    db: sqlite3.Connection = Depends(get_db),
+    _: dict = Depends(require_controller),
+):
+    b = db.execute("SELECT group_id FROM bundles WHERE id = ?", (bundle_id,)).fetchone()
+    if not b:
+        raise HTTPException(404, "Không tìm thấy tập")
+    db.execute(
+        "UPDATE bundles SET cover_printed_at=?, status='printed' WHERE id=?",
+        (str(_vn_now()), bundle_id),
+    )
+    db.commit()
+    return _load_bundle_group(db, b["group_id"])
+
+
+@router.post("/groups/{group_id}/mark-printed")
+def mark_group_printed(
+    group_id: int,
+    db: sqlite3.Connection = Depends(get_db),
+    _: dict = Depends(require_controller),
+):
+    g = db.execute("SELECT id FROM bundle_groups WHERE id = ?", (group_id,)).fetchone()
+    if not g:
+        raise HTTPException(404, "Không tìm thấy nhóm tập")
+    db.execute(
+        "UPDATE bundles SET cover_printed_at=?, status='printed' WHERE group_id=?",
+        (str(_vn_now()), group_id),
+    )
+    db.commit()
+    return _load_bundle_group(db, group_id)
+
+
+@router.get("/cover-bulk")
+def download_bulk_covers(
+    department_id: int,
+    db: sqlite3.Connection = Depends(get_db),
+    _: dict = Depends(require_ksnb),
+):
+    dept = db.execute("SELECT * FROM departments WHERE id = ?", (department_id,)).fetchone()
+    if not dept:
+        raise HTTPException(404, "Không tìm thấy phòng")
+
+    group_rows = db.execute(
+        "SELECT id FROM bundle_groups WHERE department_id = ? ORDER BY created_at ASC",
+        (department_id,),
+    ).fetchall()
+    if not group_rows:
+        raise HTTPException(404, "Không có nhóm tập nào cho phòng này")
+
+    all_bundle_results = []
+    for gr in group_rows:
+        group = _load_bundle_group(db, gr["id"])
+        for bundle in sorted(group["bundles"], key=lambda b: b["sequence"]):
+            cust_name = bundle.get("custodian_name") or "..."
+            label_seq, label_total = _get_bundle_label(bundle, group["bundles"])
+            all_bundle_results.append(BundleResult(
+                sequence=bundle["sequence"],
+                total_bundles_in_group=group["total_bundles"],
+                total_sheets=bundle["total_sheets"],
+                units=_units_from_bundle(bundle),
+                label_seq=label_seq,
+                label_total=label_total,
+                custodian_name=cust_name,
+            ))
+
+    if not all_bundle_results:
+        raise HTTPException(404, "Không có tập nào để tải bìa")
+
+    docx_bytes = generate_covers_docx(dept["name"], all_bundle_results)
+    return Response(
+        content=docx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers=_download_headers(f"bia_phong_{department_id}.docx"),
+    )
+
+
 @router.get("/storage-view", response_model=StorageViewResponse)
 def storage_view(
     department_id: int,
     year: int,
     month: int,
-    db: Session = Depends(get_db),
-    _: KSNBStaff = Depends(require_ksnb),
+    db: sqlite3.Connection = Depends(get_db),
+    _: dict = Depends(require_ksnb),
 ):
-    """
-    Mỗi hàng = 1 "tập lớn":
-    - Bundle nhiều ngày → 1 hàng, số tập = 1.
-    - Nhiều bundle cùng 1 ngày (I/II, II/II...) → 1 hàng, số tập = n.
-    """
     dept_name, all_rows = _get_storage_rows_for_month(db, department_id, year, month)
     notes_key = f"Tháng {month:02d}/{year}"
     return StorageViewResponse(
@@ -664,17 +740,13 @@ def storage_view(
 @router.patch("/storage-view")
 def update_storage_view(
     req: StorageViewUpdateRequest,
-    db: Session = Depends(get_db),
-    _: KSNBStaff = Depends(require_ksnb),
+    db: sqlite3.Connection = Depends(get_db),
+    _: dict = Depends(require_ksnb),
 ):
-    """Cập nhật total_sheets của từng bundle theo chỉnh sửa thủ công."""
     for row in req.rows:
         for i, bundle_id in enumerate(row.bundle_ids):
-            if i >= len(row.bundle_sheets):
-                continue
-            bundle = db.query(Bundle).get(bundle_id)
-            if bundle:
-                bundle.total_sheets = row.bundle_sheets[i]
+            if i < len(row.bundle_sheets):
+                db.execute("UPDATE bundles SET total_sheets=? WHERE id=?", (row.bundle_sheets[i], bundle_id))
     db.commit()
     return {"ok": True}
 
@@ -685,8 +757,8 @@ def handover_archive_preview(
     year: int,
     tieu_de_dau: str = "Hồ sơ ngày",
     tu_tap: str = "tập",
-    db: Session = Depends(get_db),
-    _: KSNBStaff = Depends(get_current_staff),
+    db: sqlite3.Connection = Depends(get_db),
+    _: dict = Depends(get_current_staff),
 ):
     records = _generate_archive_records(db, department_id, year, tieu_de_dau, tu_tap)
     return HandoverArchiveResponse(records=records, total=len(records))
@@ -698,17 +770,12 @@ def handover_archive_excel(
     year: int,
     tieu_de_dau: str = "Hồ sơ ngày",
     tu_tap: str = "tập",
-    db: Session = Depends(get_db),
-    _: KSNBStaff = Depends(get_current_staff),
+    db: sqlite3.Connection = Depends(get_db),
+    _: dict = Depends(get_current_staff),
 ):
-    import io
-    import openpyxl
-    from openpyxl.styles import Alignment, Border, Font, Side
-
     records = _generate_archive_records(db, department_id, year, tieu_de_dau, tu_tap)
-
-    dept = db.query(Department).filter(Department.id == department_id).first()
-    dept_name = dept.name if dept else str(department_id)
+    dept = db.execute("SELECT name FROM departments WHERE id = ?", (department_id,)).fetchone()
+    dept_name = dept["name"] if dept else str(department_id)
 
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -756,12 +823,12 @@ def handover_archive_excel(
 @router.delete("/groups/{group_id}")
 def delete_group(
     group_id: int,
-    db: Session = Depends(get_db),
-    _: KSNBStaff = Depends(require_controller)
+    db: sqlite3.Connection = Depends(get_db),
+    _: dict = Depends(require_controller),
 ):
-    g = db.query(BundleGroup).get(group_id)
+    g = db.execute("SELECT id FROM bundle_groups WHERE id = ?", (group_id,)).fetchone()
     if not g:
         raise HTTPException(404, "Không tìm thấy nhóm tập")
-    db.delete(g)
+    _delete_group_cascade(db, group_id)
     db.commit()
     return {"message": "Đã xóa nhóm tập"}
