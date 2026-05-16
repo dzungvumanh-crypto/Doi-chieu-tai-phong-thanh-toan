@@ -1,5 +1,6 @@
 """Trang nghỉ phép — đăng ký, duyệt và lịch nghỉ."""
 import asyncio
+import datetime as _dt_mod
 from nicegui import ui, app
 import frontend.api_client as api
 from frontend.shared import _sidebar, _content_area, _page_header, _require_auth, _handle_api_error
@@ -15,6 +16,8 @@ _LEAVE_STATUS = {
 }
 _LEAVE_TYPE = {
     "annual":   "Nghỉ phép năm",
+    "dot_xuat": "Nghỉ đột xuất",
+    "bat_buoc": "Nghỉ phép bắt buộc",
     "sick":     "Nghỉ ốm",
     "personal": "Nghỉ việc riêng",
     "other":    "Khác",
@@ -192,22 +195,47 @@ async def leaves_page():
         # ── Dialogs tạo đơn / nộp lại ────────────────────────────────────────
         approver_opts = {s["id"]: f"{s['full_name']} — {s['role_label']}" for s in approver_list}
 
+        _today_slash = _dt_mod.date.today().isoformat().replace('-', '/')
+        _today_iso   = _dt_mod.date.today().isoformat()
+        _OPT_FUTURE  = f":options=\"d => d >= '{_today_slash}'\""
+        _OPT_ALL     = ":options=\"() => true\""
+
         with ui.dialog() as create_dialog, ui.card().classes("p-6 w-[420px]"):
             ui.label("Tạo đơn nghỉ phép").classes("text-lg font-bold text-red-900 mb-4")
-            c_start    = ui.date(value="").props("label='Từ ngày' mask='YYYY-MM-DD'").classes("w-full")
-            c_end      = ui.date(value="").props("label='Đến ngày' mask='YYYY-MM-DD'").classes("w-full mt-2")
+            c_dates    = ui.date(value=None).props(f"range mask='YYYY-MM-DD' {_OPT_FUTURE}").classes("w-full")
+            c_hint     = ui.label("Chỉ chọn ngày từ hôm nay trở đi").classes("text-xs text-orange-500 mt-0.5")
             c_type     = ui.select({k: v for k, v in _LEAVE_TYPE.items()}, label="Loại nghỉ phép", value="annual").classes("w-full mt-2")
             c_reason   = ui.textarea("Lý do (tuỳ chọn)").classes("w-full mt-2")
             c_approver = ui.select(approver_opts, label="Người phê duyệt (KSV)").classes("w-full mt-2") if show_approver else None
 
+            def _c_on_type():
+                lt = c_type.value
+                if lt == "annual":
+                    c_dates.props(_OPT_FUTURE)
+                    c_hint.set_text("Chỉ chọn ngày từ hôm nay trở đi")
+                    c_hint.style("color:#f97316")
+                elif lt == "bat_buoc":
+                    c_dates.props(_OPT_FUTURE)
+                    c_hint.set_text("Tối thiểu 5 ngày làm việc liên tiếp")
+                    c_hint.style("color:#3b82f6")
+                else:
+                    c_dates.props(_OPT_ALL)
+                    c_hint.set_text("Có thể chọn ngày trong quá khứ" if lt == "dot_xuat" else "")
+                    c_hint.style("color:#6b7280")
+
+            c_type.on("update:model-value", _c_on_type)
+
             async def do_create():
-                if not c_start.value or not c_end.value:
+                _cv = c_dates.value or {}
+                c_start_str = (_cv.get("from") or "")[:10] if isinstance(_cv, dict) else ""
+                c_end_str   = (_cv.get("to")   or "")[:10] if isinstance(_cv, dict) else ""
+                if not c_start_str or not c_end_str:
                     ui.notify("Vui lòng chọn ngày", type="warning")
                     return
                 if show_approver and not c_approver.value:
                     ui.notify("Vui lòng chọn người phê duyệt", type="warning")
                     return
-                body = {"start_date": c_start.value, "end_date": c_end.value,
+                body = {"start_date": c_start_str, "end_date": c_end_str,
                         "leave_type": c_type.value, "reason": c_reason.value or None}
                 if show_approver:
                     body["ksv_approver_id"] = c_approver.value
@@ -227,21 +255,41 @@ async def leaves_page():
         _rsub_id: list = [None]
         with ui.dialog() as resubmit_dialog, ui.card().classes("p-6 w-[420px]"):
             ui.label("Chỉnh sửa & Nộp lại").classes("text-lg font-bold text-red-900 mb-4")
-            r_start    = ui.date(value="").props("label='Từ ngày' mask='YYYY-MM-DD'").classes("w-full")
-            r_end      = ui.date(value="").props("label='Đến ngày' mask='YYYY-MM-DD'").classes("w-full mt-2")
+            r_dates    = ui.date(value=None).props(f"range mask='YYYY-MM-DD' {_OPT_FUTURE}").classes("w-full")
+            r_hint     = ui.label("Chỉ chọn ngày từ hôm nay trở đi").classes("text-xs text-orange-500 mt-0.5")
             r_type     = ui.select({k: v for k, v in _LEAVE_TYPE.items()}, label="Loại nghỉ phép", value="annual").classes("w-full mt-2")
             r_reason   = ui.textarea("Lý do (tuỳ chọn)").classes("w-full mt-2")
             r_approver = ui.select(approver_opts, label="Người phê duyệt (KSV)").classes("w-full mt-2") if show_approver else None
 
+            def _r_on_type():
+                lt = r_type.value
+                if lt == "annual":
+                    r_dates.props(_OPT_FUTURE)
+                    r_hint.set_text("Chỉ chọn ngày từ hôm nay trở đi")
+                    r_hint.style("color:#f97316")
+                elif lt == "bat_buoc":
+                    r_dates.props(_OPT_FUTURE)
+                    r_hint.set_text("Tối thiểu 5 ngày làm việc liên tiếp")
+                    r_hint.style("color:#3b82f6")
+                else:
+                    r_dates.props(_OPT_ALL)
+                    r_hint.set_text("Có thể chọn ngày trong quá khứ" if lt == "dot_xuat" else "")
+                    r_hint.style("color:#6b7280")
+
+            r_type.on("update:model-value", _r_on_type)
+
             async def do_resubmit():
                 lid = _rsub_id[0]
-                if not lid or not r_start.value or not r_end.value:
+                _rv = r_dates.value or {}
+                r_start_str = (_rv.get("from") or "")[:10] if isinstance(_rv, dict) else ""
+                r_end_str   = (_rv.get("to")   or "")[:10] if isinstance(_rv, dict) else ""
+                if not lid or not r_start_str or not r_end_str:
                     ui.notify("Vui lòng chọn ngày", type="warning")
                     return
                 if show_approver and not r_approver.value:
                     ui.notify("Vui lòng chọn người phê duyệt", type="warning")
                     return
-                body = {"start_date": r_start.value, "end_date": r_end.value,
+                body = {"start_date": r_start_str, "end_date": r_end_str,
                         "leave_type": r_type.value, "reason": r_reason.value or None}
                 if show_approver:
                     body["ksv_approver_id"] = r_approver.value
@@ -421,8 +469,7 @@ async def leaves_page():
                         # Resubmit
                         if is_owner and status == "rejected":
                             def _open_resubmit(lv=leave):
-                                r_start.value  = (lv.get("start_date") or "")[:10]
-                                r_end.value    = (lv.get("end_date") or "")[:10]
+                                r_dates.value  = {"from": (lv.get("start_date") or "")[:10], "to": (lv.get("end_date") or "")[:10]}
                                 r_type.value   = lv.get("leave_type", "annual")
                                 r_reason.value = lv.get("reason") or ""
                                 _rsub_id[0]    = lv["id"]
@@ -591,6 +638,7 @@ async def leaves_page():
                 with ui.row().classes("w-full bg-red-50 border-b border-red-100 px-3 py-2 items-center gap-2"):
                     ui.label("").classes("w-6 shrink-0")
                     ui.label("Ngày tạo").classes("font-semibold text-red-800 text-xs w-20 shrink-0")
+                    ui.label("Loại").classes("font-semibold text-red-800 text-xs w-28 shrink-0")
                     ui.label("Trạng thái").classes("font-semibold text-red-800 text-xs w-28 shrink-0")
                     if show_name:
                         ui.label("Họ và tên").classes("font-semibold text-red-800 text-xs w-28 shrink-0")
@@ -607,6 +655,7 @@ async def leaves_page():
                         ck.on("update:model-value", lambda v, l=lv["id"]: (_sel.add(l) if v else _sel.discard(l)) or _upd_btns())
 
                         ui.label((lv.get("created_at") or "")[:10]).classes("text-xs w-20 shrink-0")
+                        ui.label(_LEAVE_TYPE.get(lv.get("leave_type",""), lv.get("leave_type",""))).classes("text-xs w-28 shrink-0 truncate")
                         ui.label(sg_lbl).classes(f"text-xs px-1.5 py-0.5 rounded {sg_cls} w-28 shrink-0 text-center")
                         if show_name:
                             ui.label(lv.get("staff_name", "")).classes("text-xs w-28 shrink-0 truncate")

@@ -240,9 +240,14 @@ def create_leave(
     leave_days = calculate_leave_days(body.start_date, body.end_date, _h)
 
     if body.leave_type == "annual":
+        if body.start_date < date.today():
+            raise HTTPException(400, "Nghỉ phép năm phải từ hôm nay trở đi")
         remaining = (current.get("annual_leave_days") or 12) - (current.get("used_leave_days") or 0)
         if leave_days > remaining:
             raise HTTPException(400, f"Vượt quá số ngày phép còn lại ({remaining} ngày)")
+
+    if body.leave_type == "bat_buoc" and leave_days < 5:
+        raise HTTPException(400, "Nghỉ phép bắt buộc phải từ 5 ngày làm việc trở lên")
 
     overlap = db.execute(
         """SELECT id FROM leave_records
@@ -815,8 +820,10 @@ def download_leave_form(
         if r["gd_role"] == "pho_giam_doc":
             gd_name = f"{gd_name} (TUQ)"
 
+    # annual/bat_buoc → ngày làm đơn; dot_xuat và các loại khác → ngày bắt đầu nghỉ
+    _doc_date = now.date() if r["leave_type"] in ("annual", "bat_buoc") else start
     ctx = {
-        "ngay_thang_nam":   f"{now.day:02d} tháng {now.month:02d} năm {now.year}",
+        "ngay_thang_nam":   f"{_doc_date.day:02d} tháng {_doc_date.month:02d} năm {_doc_date.year}",
         "ho_va_ten":        r["staff_name"] or "",
         "chuc_vu":          _ROLE_VN.get(r["staff_role"] or "", r["staff_role"] or ""),
         "don_vi":           r["dept_name"] or "",
