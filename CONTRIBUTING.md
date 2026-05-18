@@ -39,53 +39,45 @@ Kiểm tra cài thành công: mở PowerShell, gõ `git --version`
 
 ### Bước 2 — Tải code về máy
 
+Mở PowerShell, chạy lần lượt:
+
 ```
 git clone https://github.com/khanhbq693/KSNB.git
 cd KSNB
 git checkout develop
 ```
 
-### Bước 3 — Tạo môi trường Python
-
-```
-python -m venv venv
-venv\Scripts\activate
-pip install -r requirements.txt
-```
-
-Dòng lệnh sẽ có `(venv)` ở đầu — nghĩa là đang trong môi trường riêng.
-
-### Bước 4 — Tạo file `.env`
-
-Tạo file tên `.env` ở thư mục gốc (cùng cấp với `run.py`):
-
-```
-SECRET_KEY=bat-ky-chuoi-nao-cung-duoc
-DATABASE_URL=sqlite:///./data/ksnb.db
-ENV=development
-ALLOWED_ORIGINS=http://localhost:8080
-```
-
-> **Quan trọng:** File `.env` chứa khoá bí mật. **Tuyệt đối không** đẩy file này lên GitHub.
-
-### Bước 5 — Khởi tạo database (chỉ làm 1 lần)
+### Bước 3 — Khởi tạo database (chỉ làm 1 lần)
 
 ```
 python init_db.py
 ```
 
-### Bước 6 — Chạy ứng dụng
+Lệnh này tạo tài khoản mẫu để đăng nhập thử.
 
-```
-python run.py
-```
+### Bước 4 — Chạy ứng dụng
+
+Bấm đúp vào file **`start.bat`** — file này tự động tạo môi trường Python, tạo file `.env`, rồi khởi động ứng dụng.
 
 Mở trình duyệt: `http://localhost:8080`  
 Tài khoản mẫu: `admin` / `admin123`
 
+> **Quan trọng:** File `.env` được tạo tự động và chứa khoá bí mật. **Tuyệt đối không** đẩy file này lên GitHub.
+
 ---
 
 ## Phần 3 — Quy trình Làm việc Hàng ngày
+
+### Các file .bat hỗ trợ Git
+
+Thay vì gõ lệnh git thủ công, dùng 4 file `.bat` có sẵn trong thư mục gốc:
+
+| File | Dùng khi nào |
+|------|-------------|
+| `git-start.bat` | Bắt đầu 1 công việc mới |
+| `git-save.bat` | Lưu thay đổi vừa làm |
+| `git-submit.bat` | Nộp code xong để người khác review |
+| `git-update.bat` | Lấy code mới nhất từ đồng nghiệp |
 
 ### Sơ đồ nhánh
 
@@ -95,18 +87,15 @@ develop     ← nơi mọi người gộp code vào
 nhánh riêng ← mỗi người làm trên đây
 ```
 
-### Bắt đầu công việc mới
+---
 
-```
-# 1. Lấy code mới nhất
-git checkout develop
-git pull origin develop
+### Bắt đầu công việc mới → `git-start.bat`
 
-# 2. Tạo nhánh riêng (đặt tên theo quy tắc: <mảng>/<mô-tả>)
-git checkout -b leaves/them-ly-do-huy-don
-```
+Bấm đúp vào `git-start.bat`. File sẽ:
+1. Tự động lấy code mới nhất từ `develop`
+2. Hỏi tên nhánh → nhập tên rồi Enter
 
-Ví dụ tên nhánh:
+Đặt tên nhánh theo quy tắc `<mảng-của-mình>/<mô-tả-ngắn>`:
 ```
 leaves/them-ly-do-huy-don
 handover/sua-loi-tinh-tong-to
@@ -114,37 +103,50 @@ bundles/cap-nhat-mau-bia-word
 staff/them-truong-ma-ipcas
 ```
 
-### Làm việc và lưu thay đổi
+---
 
-```
-git add backend/api/leaves.py frontend/pages/leaves.py
-git commit -m "feat: thêm trường lý do huỷ đơn nghỉ phép"
-```
+### Lưu thay đổi → `git-save.bat`
 
-Loại commit:
-- `feat:` — tính năng mới
-- `fix:` — sửa lỗi
-- `refactor:` — cải thiện code
-- `chore:` — cài đặt, thư viện
+Sau khi sửa xong một phần, bấm đúp vào `git-save.bat`. File sẽ:
+1. Hiển thị danh sách file đã thay đổi
+2. Hỏi nội dung commit → nhập mô tả rồi Enter
+
+Gõ nội dung commit theo quy tắc `<loại>: <mô tả>`:
+```
+feat: thêm trường lý do huỷ đơn nghỉ phép
+fix: sửa lỗi tính tổng số tờ
+refactor: tách hàm xử lý bước duyệt
+chore: cập nhật phiên bản thư viện
+```
 
 Commit thường xuyên (mỗi tính năng nhỏ 1 commit), không đợi xong hết mới commit.
 
-### Nộp code để review
+---
 
-```
-# Cập nhật code mới nhất trước khi nộp
-git fetch origin develop
-git rebase origin/develop
+### Nộp code để review → `git-submit.bat`
 
-# Đẩy lên GitHub
-git push origin leaves/them-ly-do-huy-don
-```
+Khi xong toàn bộ công việc, bấm đúp vào `git-submit.bat`. File sẽ:
+1. Kiểm tra còn thay đổi chưa lưu không
+2. Tự động cập nhật code mới nhất từ đồng nghiệp
+3. Đẩy code lên GitHub
+4. Tự mở trình duyệt vào trang tạo Pull Request
 
-Sau đó vào GitHub → thấy thông báo "Compare & pull request" → bấm vào → đảm bảo merge **vào `develop`** → điền mô tả → bấm **Create pull request**.
+Trong trang Pull Request vừa mở, điền mô tả rồi bấm **Create pull request**:
+- Làm gì trong PR này?
+- Test thế nào để kiểm tra?
+- Có thay đổi cấu trúc database không?
+
+---
+
+### Lấy code mới từ đồng nghiệp → `git-update.bat`
+
+Khi có thông báo đồng nghiệp vừa merge code mới vào `develop`, bấm đúp vào `git-update.bat` để cập nhật về máy.
 
 ---
 
 ## Phần 4 — File Dùng Chung (cẩn thận)
+
+Một số file ảnh hưởng đến toàn bộ hệ thống. Khi cần sửa, phải làm PR riêng và được Người 1 approve.
 
 ### Thêm cột mới vào database (`backend/main.py`)
 
@@ -155,17 +157,14 @@ Thêm vào cuối danh sách `schema_migrations` trong `_ensure_indexes()`:
 "ALTER TABLE leave_records ADD COLUMN cancel_reason TEXT",
 ```
 
-Tạo PR riêng cho thay đổi này. Ghi rõ: cột nào, bảng nào, ai cần.  
-**Phải được Người 1 approve.** Sau khi merge, thông báo nhóm pull develop và chạy lại app.
+Tạo PR riêng, ghi rõ: cột nào, bảng nào, ai cần.  
+**Phải được Người 1 approve.** Sau khi merge, thông báo nhóm chạy `git-update.bat` rồi khởi động lại app.
 
 ### Thêm thư viện (`requirements.txt`)
 
-```
-pip show <tên-thư-viện>   # kiểm tra chưa có
-# Thêm vào requirements.txt: pandas==2.2.2
-```
+Thêm vào `requirements.txt` kèm phiên bản cụ thể, ví dụ: `pandas==2.2.2`
 
-Tạo PR riêng, Người 1 approve, thông báo nhóm `pip install -r requirements.txt`.
+Tạo PR riêng, Người 1 approve. Sau khi merge, thông báo nhóm chạy lại `start.bat` (tự cài thư viện mới).
 
 ### Thêm enum (`backend/core/enums.py`)
 
@@ -195,8 +194,7 @@ Reviewer cần phản hồi trong 1 ngày làm việc.
 - [ ] App chạy được trên máy, không lỗi
 - [ ] Đã test tính năng mình làm
 - [ ] Không còn `print()` debug thừa
-- [ ] `git status` không thấy file `.env` hay `data/*.db`
-- [ ] Đã rebase trên develop mới nhất
+- [ ] `git-submit.bat` không báo lỗi `.env` hay conflict
 - [ ] Mô tả PR đầy đủ: làm gì, test thế nào, có thay đổi database không
 
 ---
