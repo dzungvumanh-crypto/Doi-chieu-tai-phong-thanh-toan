@@ -31,13 +31,21 @@ Khi nhiều người cùng sửa code, nếu không có quy tắc thì sẽ xả
 
 ## Phần 2 — Cài đặt Môi trường (làm 1 lần khi mới vào)
 
-### Bước 1 — Cài Git
+### Bước 1 — Cài Python
+
+Tải Python 3.10 trở lên tại: https://www.python.org/downloads/
+
+Khi cài, **nhớ tích vào ô "Add Python to PATH"** trước khi bấm Install.
+
+Kiểm tra cài thành công: mở PowerShell, gõ `python --version`
+
+### Bước 2 — Cài Git
 
 Tải tại: https://git-scm.com/download/win
 
 Kiểm tra cài thành công: mở PowerShell, gõ `git --version`
 
-### Bước 2 — Tải code về máy
+### Bước 3 — Tải code về máy
 
 Mở PowerShell, chạy lần lượt:
 
@@ -47,7 +55,7 @@ cd KSNB
 git checkout develop
 ```
 
-### Bước 3 — Khởi tạo database (chỉ làm 1 lần)
+### Bước 4 — Khởi tạo database (chỉ làm 1 lần)
 
 ```
 python init_db.py
@@ -55,7 +63,7 @@ python init_db.py
 
 Lệnh này tạo tài khoản mẫu để đăng nhập thử.
 
-### Bước 4 — Chạy ứng dụng
+### Bước 5 — Chạy ứng dụng
 
 Bấm đúp vào file **`start.bat`** — file này tự động tạo môi trường Python, tạo file `.env`, rồi khởi động ứng dụng.
 
