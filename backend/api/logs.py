@@ -6,9 +6,9 @@ import sqlite3
 import tempfile
 from datetime import datetime
 from typing import List
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
-from backend.database import get_db
+from backend.database import get_db, _vn_now
 from backend.core.config import settings
 from backend.core.deps import require_admin, require_admin_or_gd
 
@@ -64,7 +64,11 @@ def get_backup_info(_: dict = Depends(require_admin_or_gd)):
 
 
 @router.get("/backup")
-def backup_db(_: dict = Depends(require_admin_or_gd)):
+def backup_db(
+    request: Request,
+    current: dict = Depends(require_admin_or_gd),
+    db: sqlite3.Connection = Depends(get_db),
+):
     db_path = settings.DATABASE_URL.replace("sqlite:///", "")
     if not os.path.exists(db_path):
         from fastapi import HTTPException
@@ -86,7 +90,15 @@ def backup_db(_: dict = Depends(require_admin_or_gd)):
         except Exception:
             pass
 
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # Ghi audit log: ai tải, từ IP nào, lúc nào
+    client_ip = request.client.host if request.client else "unknown"
+    stamp = _vn_now().strftime("%Y%m%d_%H%M%S")
+    db.execute(
+        "INSERT INTO login_logs (username, staff_id, ip_address, success, detail, created_at) VALUES (?,?,?,?,?,?)",
+        (current["username"], current["id"], client_ip, 1, f"backup_download:{stamp}", _vn_now()),
+    )
+    db.commit()
+
     filename = f"ksnb_backup_{stamp}.db"
     return StreamingResponse(
         io.BytesIO(data),
@@ -118,7 +130,7 @@ def get_login_logs(
     rows = db.execute(
         f"""SELECT ll.*, ks.full_name
             FROM login_logs ll
-            LEFT JOIN ksnb_staff ks ON ll.staff_id = ks.id
+            LEFT JOIN user_tttt ks ON ll.staff_id = ks.id
             {where}
             ORDER BY ll.created_at DESC
             LIMIT ? OFFSET ?""",

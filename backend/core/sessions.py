@@ -1,31 +1,31 @@
-"""In-memory session store — tracks which IP each staff member is logged in from."""
+"""DB-backed session store — thay thế in-memory dict."""
+import sqlite3
 from datetime import datetime, timedelta
-from threading import Lock
-
-_sessions: dict = {}  # staff_id (int) -> {"ip": str, "expires_at": datetime}
-_lock = Lock()
 
 
-def set_session(staff_id: int, ip: str, ttl_hours: int = 8) -> None:
-    with _lock:
-        _sessions[staff_id] = {
-            "ip": ip,
-            "expires_at": datetime.utcnow() + timedelta(hours=ttl_hours),
-        }
+def _utc_str(dt: datetime) -> str:
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
-def get_session_ip(staff_id: int) -> str | None:
-    """Return the IP of the active session, or None if expired/absent."""
-    with _lock:
-        s = _sessions.get(staff_id)
-        if not s:
-            return None
-        if datetime.utcnow() > s["expires_at"]:
-            del _sessions[staff_id]
-            return None
-        return s["ip"]
+def set_session(db: sqlite3.Connection, staff_id: int, ip: str, ttl_hours: int = 8) -> None:
+    now = datetime.utcnow()
+    expires_at = _utc_str(now + timedelta(hours=ttl_hours))
+    db.execute(
+        "INSERT OR REPLACE INTO login_sessions (staff_id, ip_address, expires_at) VALUES (?,?,?)",
+        (staff_id, ip, expires_at),
+    )
+    # Dọn session hết hạn nhân tiện
+    db.execute("DELETE FROM login_sessions WHERE expires_at < ?", (_utc_str(now),))
 
 
-def clear_session(staff_id: int) -> None:
-    with _lock:
-        _sessions.pop(staff_id, None)
+def get_session_ip(db: sqlite3.Connection, staff_id: int) -> str | None:
+    now_str = _utc_str(datetime.utcnow())
+    row = db.execute(
+        "SELECT ip_address FROM login_sessions WHERE staff_id = ? AND expires_at > ?",
+        (staff_id, now_str),
+    ).fetchone()
+    return row["ip_address"] if row else None
+
+
+def clear_session(db: sqlite3.Connection, staff_id: int) -> None:
+    db.execute("DELETE FROM login_sessions WHERE staff_id = ?", (staff_id,))

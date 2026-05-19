@@ -13,12 +13,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from openpyxl.styles import Alignment, Border, Font, Side
 
-from backend.core.deps import get_current_staff, require_controller, require_ksnb
+from backend.core.deps import get_current_staff, require_pho_phong_or_above, require_ksnb
 from backend.database import get_db, _vn_now
-from backend.schemas import (
-    ArchiveRecord, BundleGenerateRequest, BundleUpdateRequest,
-    HandoverArchiveResponse, StorageViewResponse, StorageViewRow, StorageViewUpdateRequest,
+from backend.schemas.bundles import (
+    BundleGenerateRequest, BundleUpdateRequest,
+    StorageViewResponse, StorageViewRow, StorageViewUpdateRequest,
 )
+from backend.schemas.handovers import ArchiveRecord, HandoverArchiveResponse
 from backend.services.bundle_service import BundleResult, EntryUnit, generate_bundles_for_entries
 from backend.services.cover_service import generate_covers_docx
 
@@ -108,12 +109,12 @@ def _load_bundle_group(db: sqlite3.Connection, group_id: int) -> dict:
         raise HTTPException(404, "Không tìm thấy nhóm tập")
 
     dept = db.execute("SELECT * FROM departments WHERE id = ?", (g["department_id"],)).fetchone()
-    creator = db.execute("SELECT * FROM ksnb_staff WHERE id = ?", (g["created_by_id"],)).fetchone()
+    creator = db.execute("SELECT * FROM user_tttt WHERE id = ?", (g["created_by_id"],)).fetchone()
 
     bundle_rows = db.execute(
         """SELECT b.*, ks.full_name AS cust_name
            FROM bundles b
-           LEFT JOIN ksnb_staff ks ON b.custodian_id = ks.id
+           LEFT JOIN user_tttt ks ON b.custodian_id = ks.id
            WHERE b.group_id = ? ORDER BY b.sequence""",
         (group_id,),
     ).fetchall()
@@ -129,7 +130,7 @@ def _load_bundle_group(db: sqlite3.Connection, group_id: int) -> dict:
                       ks.ipcas_code, ks.payment_username, ks.is_active AS s_active
                FROM bundle_items bi
                JOIN document_entries de ON bi.entry_id = de.id
-               LEFT JOIN ksnb_staff ks ON de.staff_id = ks.id
+               LEFT JOIN user_tttt ks ON de.staff_id = ks.id
                WHERE bi.bundle_id = ?""",
             (b["id"],),
         ).fetchall()
@@ -372,7 +373,7 @@ def list_groups(
 
     result = []
     for g in rows:
-        creator = db.execute("SELECT * FROM ksnb_staff WHERE id = ?", (g["created_by_id"],)).fetchone()
+        creator = db.execute("SELECT * FROM user_tttt WHERE id = ?", (g["created_by_id"],)).fetchone()
         bundle_rows = db.execute(
             """SELECT b.id, b.sequence, b.total_sheets, b.custodian_id, b.storage_box,
                       b.storage_location, b.cover_printed_at, b.status, b.cover_units,
@@ -454,7 +455,7 @@ def get_group(
 def generate_bundles(
     req: BundleGenerateRequest,
     db: sqlite3.Connection = Depends(get_db),
-    current: dict = Depends(require_controller),
+    current: dict = Depends(require_pho_phong_or_above),
 ):
     """Tự động gom tập từ danh sách entry IDs"""
     dept = db.execute("SELECT id FROM departments WHERE id = ?", (req.department_id,)).fetchone()
@@ -472,7 +473,7 @@ def generate_bundles(
                    ks.ipcas_code, ks.full_name, ks.payment_username
             FROM document_entries de
             JOIN handovers h ON de.handover_id = h.id
-            LEFT JOIN ksnb_staff ks ON de.staff_id = ks.id
+            LEFT JOIN user_tttt ks ON de.staff_id = ks.id
             WHERE de.id IN ({ph})""",
         entry_ids,
     ).fetchall()
@@ -498,6 +499,23 @@ def generate_bundles(
     invalid = [e["id"] for e in entries if e["h_dept_id"] != req.department_id]
     if invalid:
         raise HTTPException(400, "Có chứng từ không thuộc phòng đã chọn")
+
+    # Kiểm tra entry đã thuộc tập đang hiệu lực (tránh gom trùng)
+    entry_ids = [e["id"] for e in entries]
+    placeholders = ",".join("?" * len(entry_ids))
+    already_bundled = db.execute(
+        f"""SELECT bi.entry_id, bg.notes
+            FROM bundle_items bi
+            JOIN bundles b ON bi.bundle_id = b.id
+            JOIN bundle_groups bg ON b.group_id = bg.id
+            WHERE bi.entry_id IN ({placeholders})""",
+        entry_ids,
+    ).fetchall()
+    if already_bundled:
+        conflicts = ", ".join(str(r["entry_id"]) for r in already_bundled)
+        raise HTTPException(
+            409, f"Chứng từ #{conflicts} đã thuộc tập khác. Hủy tập cũ trước khi gom lại."
+        )
 
     entries_data = [
         {
@@ -554,7 +572,7 @@ def update_bundle(
     bundle_id: int,
     req: BundleUpdateRequest,
     db: sqlite3.Connection = Depends(get_db),
-    _: dict = Depends(require_controller),
+    _: dict = Depends(require_pho_phong_or_above),
 ):
     b = db.execute("SELECT * FROM bundles WHERE id = ?", (bundle_id,)).fetchone()
     if not b:
@@ -588,7 +606,7 @@ def download_cover(
     cust_name = "..."
     cid = custodian_id or b_row["custodian_id"]
     if cid:
-        cust = db.execute("SELECT full_name FROM ksnb_staff WHERE id = ?", (cid,)).fetchone()
+        cust = db.execute("SELECT full_name FROM user_tttt WHERE id = ?", (cid,)).fetchone()
         if cust:
             cust_name = cust["full_name"]
 
@@ -644,7 +662,7 @@ def download_all_covers(
 def mark_bundle_printed(
     bundle_id: int,
     db: sqlite3.Connection = Depends(get_db),
-    _: dict = Depends(require_controller),
+    _: dict = Depends(require_pho_phong_or_above),
 ):
     b = db.execute("SELECT group_id FROM bundles WHERE id = ?", (bundle_id,)).fetchone()
     if not b:
@@ -661,7 +679,7 @@ def mark_bundle_printed(
 def mark_group_printed(
     group_id: int,
     db: sqlite3.Connection = Depends(get_db),
-    _: dict = Depends(require_controller),
+    _: dict = Depends(require_pho_phong_or_above),
 ):
     g = db.execute("SELECT id FROM bundle_groups WHERE id = ?", (group_id,)).fetchone()
     if not g:
@@ -824,7 +842,7 @@ def handover_archive_excel(
 def delete_group(
     group_id: int,
     db: sqlite3.Connection = Depends(get_db),
-    _: dict = Depends(require_controller),
+    _: dict = Depends(require_pho_phong_or_above),
 ):
     g = db.execute("SELECT id FROM bundle_groups WHERE id = ?", (group_id,)).fetchone()
     if not g:

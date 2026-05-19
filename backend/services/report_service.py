@@ -138,7 +138,7 @@ def enrich_and_group(rows: list, db: sqlite3.Connection, is_payment: bool = Fals
     if is_payment:
         users_rows = db.execute(
             f"""SELECT ks.*, d.name AS dept_name
-                FROM ksnb_staff ks
+                FROM user_tttt ks
                 LEFT JOIN departments d ON ks.department_id = d.id
                 WHERE lower(trim(ks.payment_username)) IN ({ph})""",
             lower_codes,
@@ -155,7 +155,7 @@ def enrich_and_group(rows: list, db: sqlite3.Connection, is_payment: bool = Fals
                 if code not in lookup:
                     row = db.execute(
                         """SELECT ks.*, d.name AS dept_name
-                           FROM ksnb_staff ks
+                           FROM user_tttt ks
                            LEFT JOIN departments d ON ks.department_id = d.id
                            WHERE lower(trim(ks.payment_username)) LIKE ?""",
                         (code + '%',),
@@ -165,7 +165,7 @@ def enrich_and_group(rows: list, db: sqlite3.Connection, is_payment: bool = Fals
     else:
         users_rows = db.execute(
             f"""SELECT ks.*, d.name AS dept_name
-                FROM ksnb_staff ks
+                FROM user_tttt ks
                 LEFT JOIN departments d ON ks.department_id = d.id
                 WHERE lower(trim(ks.ipcas_code)) IN ({ph})""",
             lower_codes,
@@ -215,7 +215,7 @@ def merge_hkv(ipcas_rows: list, payment_rows: list, db: sqlite3.Connection) -> l
         ph = ",".join("?" * len(lower_ipcas))
         for u in db.execute(
             f"""SELECT ks.*, d.name AS dept_name
-                FROM ksnb_staff ks
+                FROM user_tttt ks
                 LEFT JOIN departments d ON ks.department_id = d.id
                 WHERE lower(trim(ks.ipcas_code)) IN ({ph})""",
             lower_ipcas,
@@ -227,7 +227,7 @@ def merge_hkv(ipcas_rows: list, payment_rows: list, db: sqlite3.Connection) -> l
         ph = ",".join("?" * len(payment_names))
         for u in db.execute(
             f"""SELECT ks.*, d.name AS dept_name
-                FROM ksnb_staff ks
+                FROM user_tttt ks
                 LEFT JOIN departments d ON ks.department_id = d.id
                 WHERE lower(trim(ks.payment_username)) IN ({ph})""",
             payment_names,

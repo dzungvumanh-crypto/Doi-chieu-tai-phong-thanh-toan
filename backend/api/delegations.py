@@ -4,7 +4,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from backend.database import get_db, _vn_now
 from backend.core.deps import get_current_staff, TONG_HOP_CODES
-from backend.schemas import DelegationCreate, DelegationOut
+from backend.schemas.leaves import DelegationCreate, DelegationOut
 
 router = APIRouter()
 
@@ -13,7 +13,7 @@ def _deleg_to_out(d: dict, db: sqlite3.Connection) -> dict:
     def _name(staff_id):
         if not staff_id:
             return ""
-        r = db.execute("SELECT full_name FROM ksnb_staff WHERE id = ?", (staff_id,)).fetchone()
+        r = db.execute("SELECT full_name FROM user_tttt WHERE id = ?", (staff_id,)).fetchone()
         return r["full_name"] if r else ""
 
     return {
@@ -49,14 +49,14 @@ def create_delegation(
         raise HTTPException(403, "Chỉ Admin hoặc phòng Tổng hợp mới được tạo ủy quyền")
 
     gd = db.execute(
-        "SELECT id FROM ksnb_staff WHERE id = ? AND role = 'giam_doc' AND is_active = 1",
+        "SELECT id FROM user_tttt WHERE id = ? AND role = 'giam_doc' AND is_active = 1",
         (body.giam_doc_id,),
     ).fetchone()
     if not gd:
         raise HTTPException(400, "Giám đốc không tồn tại hoặc không còn hoạt động")
 
     pgd = db.execute(
-        "SELECT id FROM ksnb_staff WHERE id = ? AND role = 'pho_giam_doc' AND is_active = 1",
+        "SELECT id FROM user_tttt WHERE id = ? AND role = 'pho_giam_doc' AND is_active = 1",
         (body.pho_giam_doc_id,),
     ).fetchone()
     if not pgd:
@@ -129,7 +129,7 @@ def list_giam_doc(
     _: dict = Depends(get_current_staff),
 ):
     rows = db.execute(
-        "SELECT id, full_name, employee_code FROM ksnb_staff WHERE role = 'giam_doc' AND is_active = 1"
+        "SELECT id, full_name, employee_code FROM user_tttt WHERE role = 'giam_doc' AND is_active = 1"
     ).fetchall()
     return [dict(r) for r in rows]
 
@@ -140,6 +140,6 @@ def list_pho_giam_doc(
     _: dict = Depends(get_current_staff),
 ):
     rows = db.execute(
-        "SELECT id, full_name, employee_code FROM ksnb_staff WHERE role = 'pho_giam_doc' AND is_active = 1"
+        "SELECT id, full_name, employee_code FROM user_tttt WHERE role = 'pho_giam_doc' AND is_active = 1"
     ).fetchall()
     return [dict(r) for r in rows]

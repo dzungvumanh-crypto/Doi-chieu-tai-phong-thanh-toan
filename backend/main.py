@@ -4,6 +4,7 @@ import logging.handlers
 import os
 import sqlite3
 import sys
+from contextlib import asynccontextmanager
 
 # Thêm root vào path
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -62,7 +63,7 @@ def _create_tables(db_path: str):
             is_source BOOLEAN DEFAULT 1,
             is_active BOOLEAN DEFAULT 1
         )""",
-        """CREATE TABLE IF NOT EXISTS ksnb_staff (
+        """CREATE TABLE IF NOT EXISTS user_tttt (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             employee_code VARCHAR(20) NOT NULL UNIQUE,
             full_name VARCHAR(100) NOT NULL,
@@ -92,7 +93,7 @@ def _create_tables(db_path: str):
             id INTEGER NOT NULL PRIMARY KEY,
             department_id INTEGER NOT NULL REFERENCES departments(id),
             handover_date DATE NOT NULL,
-            received_by_id INTEGER REFERENCES ksnb_staff(id),
+            received_by_id INTEGER REFERENCES user_tttt(id),
             delivered_by VARCHAR(100),
             notes TEXT,
             status VARCHAR(20) DEFAULT 'draft',
@@ -107,18 +108,18 @@ def _create_tables(db_path: str):
             sheet_count INTEGER NOT NULL,
             notes TEXT,
             entry_status TEXT DEFAULT 'confirmed',
-            entered_by_id INTEGER REFERENCES ksnb_staff(id),
-            confirmed_by_id INTEGER REFERENCES ksnb_staff(id),
+            entered_by_id INTEGER REFERENCES user_tttt(id),
+            confirmed_by_id INTEGER REFERENCES user_tttt(id),
             confirmed_at DATETIME,
             borrowed_at DATETIME,
             borrow_reason TEXT,
-            staff_id INTEGER REFERENCES ksnb_staff(id)
+            staff_id INTEGER REFERENCES user_tttt(id)
         )""",
         """CREATE TABLE IF NOT EXISTS bundle_groups (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             department_id INTEGER NOT NULL REFERENCES departments(id),
             total_bundles INTEGER DEFAULT 1,
-            created_by_id INTEGER NOT NULL REFERENCES ksnb_staff(id),
+            created_by_id INTEGER NOT NULL REFERENCES user_tttt(id),
             created_at DATETIME,
             notes TEXT
         )""",
@@ -127,7 +128,7 @@ def _create_tables(db_path: str):
             group_id INTEGER NOT NULL REFERENCES bundle_groups(id),
             sequence INTEGER NOT NULL,
             total_sheets INTEGER DEFAULT 0,
-            custodian_id INTEGER REFERENCES ksnb_staff(id),
+            custodian_id INTEGER REFERENCES user_tttt(id),
             storage_box VARCHAR(50),
             storage_location VARCHAR(200),
             cover_printed_at DATETIME,
@@ -143,7 +144,7 @@ def _create_tables(db_path: str):
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             entry_id INTEGER NOT NULL REFERENCES document_entries(id),
             action TEXT NOT NULL,
-            performed_by_id INTEGER NOT NULL REFERENCES ksnb_staff(id),
+            performed_by_id INTEGER NOT NULL REFERENCES user_tttt(id),
             timestamp DATETIME,
             old_sheet_count INTEGER,
             new_sheet_count INTEGER,
@@ -151,23 +152,46 @@ def _create_tables(db_path: str):
         )""",
         """CREATE TABLE IF NOT EXISTS leave_records (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            staff_id INTEGER NOT NULL REFERENCES ksnb_staff(id),
+            staff_id INTEGER NOT NULL REFERENCES user_tttt(id),
             start_date DATE NOT NULL,
             end_date DATE NOT NULL,
             leave_type TEXT DEFAULT 'annual',
             reason TEXT,
             status TEXT DEFAULT 'pending_ksv',
-            ksv_approver_id INTEGER REFERENCES ksnb_staff(id),
+            ksv_approver_id INTEGER REFERENCES user_tttt(id),
             ksv_approved_at DATETIME,
             ksv_comment TEXT,
-            tong_hop_approver_id INTEGER REFERENCES ksnb_staff(id),
+            tong_hop_approver_id INTEGER REFERENCES user_tttt(id),
             tong_hop_approved_at DATETIME,
             tong_hop_comment TEXT,
-            gd_approver_id INTEGER REFERENCES ksnb_staff(id),
+            gd_approver_id INTEGER REFERENCES user_tttt(id),
             gd_approved_at DATETIME,
             gd_comment TEXT,
             created_at DATETIME,
             updated_at DATETIME
+        )""",
+        # Session và rate-limit được persist vào DB
+        """CREATE TABLE IF NOT EXISTS login_sessions (
+            staff_id INTEGER PRIMARY KEY REFERENCES user_tttt(id),
+            ip_address TEXT NOT NULL,
+            expires_at TEXT NOT NULL
+        )""",
+        """CREATE TABLE IF NOT EXISTS login_rate_limit (
+            username TEXT PRIMARY KEY,
+            attempt_count INTEGER DEFAULT 0,
+            window_start TEXT,
+            locked_until TEXT
+        )""",
+        # Audit log cho thao tác admin nhạy cảm
+        """CREATE TABLE IF NOT EXISTS audit_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            actor_id INTEGER REFERENCES user_tttt(id),
+            action TEXT NOT NULL,
+            target_type TEXT,
+            target_id INTEGER,
+            detail TEXT,
+            ip_address TEXT,
+            created_at DATETIME
         )""",
     ]
     for s in statements:
@@ -175,9 +199,6 @@ def _create_tables(db_path: str):
     cur.execute("PRAGMA foreign_keys = ON")
     conn.commit()
     conn.close()
-
-
-_create_tables(DB_PATH)
 
 
 def _ensure_indexes():
@@ -218,12 +239,12 @@ def _ensure_indexes():
         # Bảng ủy quyền GĐ
         """CREATE TABLE IF NOT EXISTS delegation_records (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            giam_doc_id INTEGER NOT NULL REFERENCES ksnb_staff(id),
-            pho_giam_doc_id INTEGER NOT NULL REFERENCES ksnb_staff(id),
+            giam_doc_id INTEGER NOT NULL REFERENCES user_tttt(id),
+            pho_giam_doc_id INTEGER NOT NULL REFERENCES user_tttt(id),
             start_date DATE NOT NULL,
             end_date DATE NOT NULL,
             note TEXT,
-            created_by_id INTEGER NOT NULL REFERENCES ksnb_staff(id),
+            created_by_id INTEGER NOT NULL REFERENCES user_tttt(id),
             is_active BOOLEAN DEFAULT 1,
             created_at DATETIME
         )""",
@@ -241,7 +262,7 @@ def _ensure_indexes():
         """CREATE TABLE IF NOT EXISTS login_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT NOT NULL,
-            staff_id INTEGER REFERENCES ksnb_staff(id),
+            staff_id INTEGER REFERENCES user_tttt(id),
             ip_address TEXT,
             success INTEGER NOT NULL,
             detail TEXT,
@@ -251,7 +272,7 @@ def _ensure_indexes():
         """CREATE TABLE IF NOT EXISTS leave_action_logs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             leave_id INTEGER NOT NULL REFERENCES leave_records(id),
-            actor_id INTEGER NOT NULL REFERENCES ksnb_staff(id),
+            actor_id INTEGER NOT NULL REFERENCES user_tttt(id),
             action TEXT NOT NULL,
             comment TEXT,
             from_status TEXT,
@@ -276,6 +297,51 @@ def _ensure_indexes():
            WHERE staff_id IS NULL AND source_user_id IS NOT NULL""",
         # 1.6 — unique index mới dùng staff_id (constraint cũ trên source_user_id bị vô hiệu do NULL)
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_entry_staff_date ON document_entries(handover_id, staff_id, transaction_date)",
+        # 2.0 — CHECK constraints cho dữ liệu nghiệp vụ (SQLite cho phép thêm qua trigger thay vì ALTER)
+        # Dùng trigger để chặn sheet_count <= 0 khi INSERT/UPDATE
+        """CREATE TRIGGER IF NOT EXISTS chk_sheet_count_insert
+           BEFORE INSERT ON document_entries
+           WHEN NEW.sheet_count <= 0
+           BEGIN SELECT RAISE(ABORT, 'sheet_count phải lớn hơn 0'); END""",
+        """CREATE TRIGGER IF NOT EXISTS chk_sheet_count_update
+           BEFORE UPDATE ON document_entries
+           WHEN NEW.sheet_count <= 0
+           BEGIN SELECT RAISE(ABORT, 'sheet_count phải lớn hơn 0'); END""",
+        # Chặn used_leave_days âm
+        """CREATE TRIGGER IF NOT EXISTS chk_used_leave_days
+           BEFORE UPDATE ON ksnb_staff
+           WHEN NEW.used_leave_days < 0
+           BEGIN SELECT RAISE(ABORT, 'used_leave_days không được âm'); END""",
+        # Persist session và rate-limit — tồn tại qua restart
+        """CREATE TABLE IF NOT EXISTS login_sessions (
+            staff_id INTEGER PRIMARY KEY REFERENCES user_tttt(id),
+            ip_address TEXT NOT NULL,
+            expires_at TEXT NOT NULL
+        )""",
+        """CREATE TABLE IF NOT EXISTS login_rate_limit (
+            username TEXT PRIMARY KEY,
+            attempt_count INTEGER DEFAULT 0,
+            window_start TEXT,
+            locked_until TEXT
+        )""",
+        # Audit log cho thao tác admin
+        """CREATE TABLE IF NOT EXISTS audit_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            actor_id INTEGER REFERENCES user_tttt(id),
+            action TEXT NOT NULL,
+            target_type TEXT,
+            target_id INTEGER,
+            detail TEXT,
+            ip_address TEXT,
+            created_at DATETIME
+        )""",
+        # Xóa mềm — ẩn khỏi danh sách nhưng giữ lịch sử
+        "ALTER TABLE user_tttt ADD COLUMN is_deleted BOOLEAN DEFAULT 0",
+        # Trigger dùng tên bảng mới (idempotent — IF NOT EXISTS)
+        """CREATE TRIGGER IF NOT EXISTS chk_used_leave_days
+           BEFORE UPDATE ON user_tttt
+           WHEN NEW.used_leave_days < 0
+           BEGIN SELECT RAISE(ABORT, 'used_leave_days không được âm'); END""",
     ]
     import logging as _logging
     _mig_log = _logging.getLogger(__name__)
@@ -289,7 +355,7 @@ def _ensure_indexes():
             except Exception as exc:
                 conn.rollback()
                 msg = str(exc).lower()
-                if "duplicate column" not in msg and "already exists" not in msg:
+                if "duplicate column" not in msg and "already exists" not in msg and "no such table" not in msg and "already another table" not in msg:
                     if "database is locked" in msg or "locked" in msg:
                         _mig_log.warning("Migration skipped (DB locked, sẽ thử lại lần sau): %.80s", s)
                     else:
@@ -297,6 +363,20 @@ def _ensure_indexes():
                         raise
     finally:
         conn.close()
+
+    # ── Rename ksnb_staff → user_tttt (one-time, idempotent) ─────────────────
+    _rc = sqlite3.connect(DB_PATH, timeout=30)
+    try:
+        _existing = {r[0] for r in _rc.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        if "ksnb_staff" in _existing:
+            if "user_tttt" in _existing:
+                # _create_tables() đã tạo user_tttt rỗng trước — xóa đi để rename
+                _rc.execute("DROP TABLE user_tttt")
+            _rc.execute("ALTER TABLE ksnb_staff RENAME TO user_tttt")
+            _rc.commit()
+            logging.getLogger(__name__).info("Đã đổi tên bảng ksnb_staff → user_tttt")
+    finally:
+        _rc.close()
 
     # ── Rebuild handovers: received_by_id NOT NULL → nullable, thêm UNIQUE(dept,date) ──
     _raw = sqlite3.connect(DB_PATH)
@@ -385,12 +465,12 @@ def _ensure_indexes():
                         sheet_count INTEGER NOT NULL,
                         notes TEXT,
                         entry_status TEXT DEFAULT 'confirmed',
-                        entered_by_id INTEGER REFERENCES ksnb_staff(id),
-                        confirmed_by_id INTEGER REFERENCES ksnb_staff(id),
+                        entered_by_id INTEGER REFERENCES user_tttt(id),
+                        confirmed_by_id INTEGER REFERENCES user_tttt(id),
                         confirmed_at DATETIME,
                         borrowed_at DATETIME,
                         borrow_reason TEXT,
-                        staff_id INTEGER REFERENCES ksnb_staff(id)
+                        staff_id INTEGER REFERENCES user_tttt(id)
                     )
                 """)
                 _cur_de.execute("INSERT INTO document_entries SELECT * FROM _de_bak")
@@ -435,32 +515,52 @@ def _ensure_indexes():
         "CREATE INDEX IF NOT EXISTS ix_leave_action_logs    ON leave_action_logs(leave_id)",
         "CREATE INDEX IF NOT EXISTS ix_public_holidays_date ON public_holidays(date)",
         "CREATE INDEX IF NOT EXISTS ix_login_logs_username  ON login_logs(username)",
-        "CREATE INDEX IF NOT EXISTS ix_login_logs_created   ON login_logs(created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_login_logs_created    ON login_logs(created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_login_sessions_exp    ON login_sessions(expires_at)",
+        "CREATE INDEX IF NOT EXISTS ix_audit_logs_actor      ON audit_logs(actor_id)",
+        "CREATE INDEX IF NOT EXISTS ix_audit_logs_created    ON audit_logs(created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_user_tttt_dept        ON user_tttt(department_id)",
     ]
     conn = sqlite3.connect(DB_PATH, timeout=30)
     try:
         for s in index_stmts:
-            conn.execute(s)
+            try:
+                conn.execute(s)
+            except Exception as _idx_exc:
+                if "already exists" not in str(_idx_exc).lower() and "no such table" not in str(_idx_exc).lower():
+                    raise
         conn.commit()
     finally:
         conn.close()
 
-_ensure_indexes()
-
-# ── Backup tự động ─────────────────────────────────────────────────────────────
-from backend.services.backup_service import start_scheduler as _start_backup
 from backend.core.config import settings as _settings
-_start_backup(_settings.DATABASE_URL.replace("sqlite:///", ""))
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Khởi động: tạo bảng, migrate schema, start backup scheduler."""
+    _create_tables(DB_PATH)
+    _ensure_indexes()
+    from backend.services.backup_service import start_scheduler as _start_backup
+    _start_backup(_settings.DATABASE_URL.replace("sqlite:///", ""))
+    yield
+
+
+_docs_url = "/docs" if (_settings.ENV != "production" or _settings.ENABLE_API_DOCS) else None
+_redoc_url = "/redoc" if (_settings.ENV != "production" or _settings.ENABLE_API_DOCS) else None
 
 app = FastAPI(
-    title="KSNB&HTVH – Agribank",
+    title="PAYMENT CENTER",
     description="Hệ thống quản lý nhân sự và chứng từ hậu kiểm",
     version="1.0.0",
+    lifespan=lifespan,
+    docs_url=_docs_url,
+    redoc_url=_redoc_url,
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_settings.ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -494,4 +594,4 @@ async def _db_error_handler(request, exc):
 
 @app.get("/")
 def root():
-    return {"message": "KSNB&HTVH API đang chạy", "docs": "/docs"}
+    return {"message": "PAYMENT CENTER API đang chạy", "docs": "/docs"}

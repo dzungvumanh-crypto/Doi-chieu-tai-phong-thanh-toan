@@ -14,7 +14,7 @@ async def dashboard_page():
         return
     badge_refs = _sidebar("home")
     with _content_area():
-        _page_header("Trang chủ", "Hệ thống quản lý KSNB&HTVH – Agribank")
+        _page_header("Trang chủ", "Hệ thống Trung tâm Thanh toán")
 
         loading_row = ui.row().classes("w-full justify-center items-center py-10")
         with loading_row:
@@ -84,7 +84,7 @@ async def dashboard_page():
             rate_clr, rate_txt_clr = "bg-red-50 border-red-200", "text-red-700"
 
         stats = [
-            ("Cán bộ KSNB",    len(staff_list),                               "people",     "bg-red-50 border-red-200"),
+            ("Người dùng",     len(staff_list),                               "people",     "bg-red-50 border-red-200"),
             ("Phòng nghiệp vụ", len([d for d in depts if d.get("is_source")]), "business",   "bg-blue-50 border-blue-200"),
             ("Nhóm tập",        len(groups),                                   "folder_zip", "bg-purple-50 border-purple-200"),
             ("Tập đã in",       sum(len(g.get("bundles", [])) for g in groups),"print",      "bg-orange-50 border-orange-200"),

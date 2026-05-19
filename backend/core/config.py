@@ -16,7 +16,7 @@ if not _secret_key:
     )
 
 class Settings:
-    APP_NAME: str = "KSNB&HTVH Manager"
+    APP_NAME: str = "PAYMENT CENTER"
     SECRET_KEY: str = _secret_key
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_HOURS: int = 8
@@ -28,5 +28,18 @@ class Settings:
 
     TEMPLATE_DIR: Path = BASE_DIR / "templates"
     MAX_SHEETS_PER_BUNDLE: int = 350
+
+    # Môi trường: development | production
+    ENV: str = os.getenv("ENV", "development")
+
+    # Origins được phép — phân cách bằng dấu phẩy, ví dụ: http://localhost:8080,http://192.168.1.100:8080
+    ALLOWED_ORIGINS: list = [
+        o.strip()
+        for o in os.getenv("ALLOWED_ORIGINS", "http://localhost:8080").split(",")
+        if o.strip()
+    ]
+
+    # Bật /docs, /redoc — chỉ bật khi debug; mặc định tắt ở production
+    ENABLE_API_DOCS: bool = os.getenv("ENABLE_API_DOCS", "").lower() in ("1", "true", "yes")
 
 settings = Settings()

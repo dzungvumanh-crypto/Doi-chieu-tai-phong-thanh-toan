@@ -11,10 +11,11 @@ from fastapi.responses import StreamingResponse
 from openpyxl.styles import Alignment, Font, PatternFill
 
 from backend.core.deps import (
-    get_current_staff, require_controller, require_handover_write,
+    get_current_staff, require_pho_phong_or_above, require_handover_write,
 )
+from backend.core.enums import EntryStatus
 from backend.database import get_db, _vn_now
-from backend.schemas import (
+from backend.schemas.handovers import (
     BorrowRequest, DocumentEntryIn, EntryHistoryItem, EntryHistoryOut,
     EntryUpsertRequest, GridEntryOut, GridResponse, HandbackRequest,
     HandoverCreate, RejectRequest,
@@ -37,9 +38,9 @@ _ACTION_LABEL = {
 }
 
 _STATUS_LABEL = {
-    "pending_confirm": "Chờ xác nhận",
-    "confirmed":       "Đã xác nhận",
-    "borrowed":        "Đang mượn",
+    EntryStatus.PENDING:   "Chờ xác nhận",
+    EntryStatus.CONFIRMED: "Đã xác nhận",
+    EntryStatus.BORROWED:  "Đang mượn",
 }
 
 _ROLE_LABEL = {
@@ -65,7 +66,7 @@ def _handover_to_dict(h: dict, db: sqlite3.Connection) -> dict:
                   ks.ipcas_code AS s_ipcas_code, ks.payment_username AS s_pay_user,
                   ks.is_active AS s_is_active
            FROM document_entries de
-           LEFT JOIN ksnb_staff ks ON de.staff_id = ks.id
+           LEFT JOIN user_tttt ks ON de.staff_id = ks.id
            WHERE de.handover_id = ? ORDER BY de.transaction_date""",
         (h["id"],),
     ).fetchall()
@@ -95,7 +96,7 @@ def _handover_to_dict(h: dict, db: sqlite3.Connection) -> dict:
             "transaction_date": e["transaction_date"],
             "sheet_count": e["sheet_count"],
             "notes": e["notes"],
-            "entry_status": e["entry_status"] or "confirmed",
+            "entry_status": e["entry_status"] or EntryStatus.CONFIRMED,
             "borrow_reason": e["borrow_reason"],
             "entered_by_id": e["entered_by_id"],
             "confirmed_by_id": e["confirmed_by_id"],
@@ -138,7 +139,7 @@ def get_handover_grid(
         """SELECT de.id, de.handover_id, de.staff_id, de.transaction_date, de.sheet_count,
                   de.entry_status, de.entered_by_id
            FROM document_entries de
-           JOIN ksnb_staff ks ON de.staff_id = ks.id
+           JOIN user_tttt ks ON de.staff_id = ks.id
            WHERE ks.department_id = ?
              AND de.transaction_date >= ? AND de.transaction_date < ?""",
         (department_id, period_start, period_end),
@@ -151,12 +152,12 @@ def get_handover_grid(
     if staff_ids_with_entries:
         ph = ",".join("?" * len(staff_ids_with_entries))
         user_rows = db.execute(
-            f"SELECT * FROM ksnb_staff WHERE department_id = ? AND (is_active = 1 OR id IN ({ph})) ORDER BY ipcas_code",
+            f"SELECT * FROM user_tttt WHERE department_id = ? AND (is_active = 1 OR id IN ({ph})) ORDER BY ipcas_code",
             [department_id] + list(staff_ids_with_entries),
         ).fetchall()
     else:
         user_rows = db.execute(
-            "SELECT * FROM ksnb_staff WHERE department_id = ? AND is_active = 1 ORDER BY ipcas_code",
+            "SELECT * FROM user_tttt WHERE department_id = ? AND is_active = 1 ORDER BY ipcas_code",
             (department_id,),
         ).fetchall()
 
@@ -165,7 +166,7 @@ def get_handover_grid(
     if entered_by_ids:
         ph2 = ",".join("?" * len(entered_by_ids))
         for r in db.execute(
-            f"SELECT id, full_name FROM ksnb_staff WHERE id IN ({ph2})", list(entered_by_ids)
+            f"SELECT id, full_name FROM user_tttt WHERE id IN ({ph2})", list(entered_by_ids)
         ).fetchall():
             entered_by_map[r["id"]] = r["full_name"]
 
@@ -175,7 +176,7 @@ def get_handover_grid(
             day=int(e["transaction_date"].split("-")[2]),
             sheet_count=e["sheet_count"],
             entry_id=e["id"],
-            entry_status=e["entry_status"] or "confirmed",
+            entry_status=e["entry_status"] or EntryStatus.CONFIRMED,
             entered_by_name=entered_by_map.get(e["entered_by_id"]) if e["entered_by_id"] else None,
         )
         for e in entry_rows
@@ -190,7 +191,7 @@ def upsert_entry(
     db: sqlite3.Connection = Depends(get_db),
     current: dict = Depends(require_handover_write),
 ):
-    staff_row = db.execute("SELECT * FROM ksnb_staff WHERE id = ?", (body.staff_id,)).fetchone()
+    staff_row = db.execute("SELECT * FROM user_tttt WHERE id = ?", (body.staff_id,)).fetchone()
     if not staff_row:
         raise HTTPException(404, "Không tìm thấy cán bộ")
 
@@ -223,11 +224,11 @@ def upsert_entry(
         if entry_row:
             old_count = entry_row["sheet_count"]
             if is_cv:
-                action = "edited_cv" if entry_row["entry_status"] == "confirmed" else "handover"
-                new_status = "pending_confirm"
+                action = "edited_cv" if entry_row["entry_status"] == EntryStatus.CONFIRMED else "handover"
+                new_status = EntryStatus.PENDING
             else:
                 action = "edited_hkv"
-                new_status = entry_row["entry_status"] or "confirmed"
+                new_status = entry_row["entry_status"] or EntryStatus.CONFIRMED
 
             set_extra, params_extra = "", []
             if not is_cv and entry_row["confirmed_by_id"] is None:
@@ -243,7 +244,7 @@ def upsert_entry(
                 (entry_row["id"], action, current["id"], old_count, body.sheet_count, str(_vn_now())),
             )
         else:
-            new_status = "pending_confirm" if is_cv else "confirmed"
+            new_status = EntryStatus.PENDING if is_cv else EntryStatus.CONFIRMED
             # Dùng INSERT thường (không IGNORE) để lỗi duplicate nổi lên thay vì âm thầm bỏ qua
             db.execute(
                 "INSERT INTO document_entries (handover_id, staff_id, transaction_date, sheet_count, entry_status, entered_by_id, confirmed_by_id, confirmed_at) VALUES (?,?,?,?,?,?,?,?)",
@@ -263,7 +264,7 @@ def upsert_entry(
                 raise HTTPException(500, "Không thể lưu chứng từ — vui lòng thử lại")
     else:
         if entry_row:
-            if is_cv and entry_row["entry_status"] != "pending_confirm":
+            if is_cv and entry_row["entry_status"] != EntryStatus.PENDING:
                 raise HTTPException(400, "Không thể xóa chứng từ đã được xác nhận. Vui lòng liên hệ HKV/KSV.")
             db.execute("DELETE FROM entry_change_logs WHERE entry_id = ?", (entry_row["id"],))
             db.execute("DELETE FROM document_entries WHERE id = ?", (entry_row["id"],))
@@ -277,25 +278,25 @@ def upsert_entry(
 def confirm_received(
     entry_id: int,
     db: sqlite3.Connection = Depends(get_db),
-    current: dict = Depends(require_controller),
+    current: dict = Depends(require_pho_phong_or_above),
 ):
     entry = db.execute("SELECT * FROM document_entries WHERE id = ?", (entry_id,)).fetchone()
     if not entry:
         raise HTTPException(404, "Không tìm thấy chứng từ")
-    if entry["entry_status"] != "pending_confirm":
+    if entry["entry_status"] != EntryStatus.PENDING:
         raise HTTPException(409, f"Trạng thái không hợp lệ: '{_STATUS_LABEL.get(entry['entry_status'], entry['entry_status'])}'. Chỉ xác nhận được khi đang chờ xác nhận.")
 
     if entry["borrow_reason"]:
         db.execute(
-            "UPDATE document_entries SET entry_status='borrowed', borrowed_at=?, borrow_reason=NULL WHERE id=?",
-            (str(_vn_now()), entry_id),
+            "UPDATE document_entries SET entry_status=?, borrowed_at=?, borrow_reason=NULL WHERE id=?",
+            (EntryStatus.BORROWED, str(_vn_now()), entry_id),
         )
         action = "borrowed"
         message = "Đã xác nhận cho mượn chứng từ"
     else:
         db.execute(
-            "UPDATE document_entries SET entry_status='confirmed', confirmed_by_id=?, confirmed_at=? WHERE id=?",
-            (current["id"], str(_vn_now()), entry_id),
+            "UPDATE document_entries SET entry_status=?, confirmed_by_id=?, confirmed_at=? WHERE id=?",
+            (EntryStatus.CONFIRMED, current["id"], str(_vn_now()), entry_id),
         )
         action = "confirmed"
         message = "Đã xác nhận nhận chứng từ"
@@ -324,7 +325,7 @@ def borrow_entry(
     entry = db.execute("SELECT * FROM document_entries WHERE id = ?", (entry_id,)).fetchone()
     if not entry:
         raise HTTPException(404, "Không tìm thấy chứng từ")
-    if entry["entry_status"] != "confirmed":
+    if entry["entry_status"] != EntryStatus.CONFIRMED:
         raise HTTPException(409, f"Trạng thái không hợp lệ: '{_STATUS_LABEL.get(entry['entry_status'], entry['entry_status'])}'. Chỉ mượn được chứng từ đã xác nhận.")
 
     reason = body.reason.strip()
@@ -332,13 +333,13 @@ def borrow_entry(
         raise HTTPException(400, "Vui lòng nhập lý do mượn")
 
     if current["role"] == "chuyen_vien" and entry["staff_id"]:
-        s = db.execute("SELECT department_id FROM ksnb_staff WHERE id = ?", (entry["staff_id"],)).fetchone()
+        s = db.execute("SELECT department_id FROM user_tttt WHERE id = ?", (entry["staff_id"],)).fetchone()
         if s and s["department_id"] != current.get("department_id"):
             raise HTTPException(403, "Chỉ được mượn chứng từ thuộc phòng của mình")
 
     db.execute(
-        "UPDATE document_entries SET entry_status='pending_confirm', borrow_reason=? WHERE id=?",
-        (reason, entry_id),
+        "UPDATE document_entries SET entry_status=?, borrow_reason=? WHERE id=?",
+        (EntryStatus.PENDING, reason, entry_id),
     )
     db.execute(
         "INSERT INTO entry_change_logs (entry_id, action, performed_by_id, new_sheet_count, timestamp) VALUES (?,?,?,?,?)",
@@ -359,18 +360,18 @@ def handback_entry(
     entry = db.execute("SELECT * FROM document_entries WHERE id = ?", (entry_id,)).fetchone()
     if not entry:
         raise HTTPException(404, "Không tìm thấy chứng từ")
-    if entry["entry_status"] != "borrowed":
+    if entry["entry_status"] != EntryStatus.BORROWED:
         raise HTTPException(409, f"Trạng thái không hợp lệ: '{_STATUS_LABEL.get(entry['entry_status'], entry['entry_status'])}'. Chỉ bàn giao lại được khi đang mượn.")
 
     if current["role"] == "chuyen_vien" and entry["staff_id"]:
-        s = db.execute("SELECT department_id FROM ksnb_staff WHERE id = ?", (entry["staff_id"],)).fetchone()
+        s = db.execute("SELECT department_id FROM user_tttt WHERE id = ?", (entry["staff_id"],)).fetchone()
         if s and s["department_id"] != current.get("department_id"):
             raise HTTPException(403, "Chỉ được bàn giao lại chứng từ thuộc phòng của mình")
 
     old_count = entry["sheet_count"]
     db.execute(
-        "UPDATE document_entries SET entry_status='pending_confirm', borrow_reason=NULL, sheet_count=?, entered_by_id=? WHERE id=?",
-        (body.sheet_count, current["id"], entry_id),
+        "UPDATE document_entries SET entry_status=?, borrow_reason=NULL, sheet_count=?, entered_by_id=? WHERE id=?",
+        (EntryStatus.PENDING, body.sheet_count, current["id"], entry_id),
     )
     db.execute(
         "INSERT INTO entry_change_logs (entry_id, action, performed_by_id, old_sheet_count, new_sheet_count, timestamp) VALUES (?,?,?,?,?,?)",
@@ -382,7 +383,7 @@ def handback_entry(
 
 # ─── Endpoint đã ngừng sử dụng ───────────────────────────────────────────────
 @router.post("/entries/{entry_id}/confirm-returned")
-def confirm_returned(entry_id: int, _: dict = Depends(require_controller)):
+def confirm_returned(entry_id: int, _: dict = Depends(require_pho_phong_or_above)):
     raise HTTPException(410, "Endpoint đã ngừng sử dụng. Dùng /handback + /confirm-received")
 
 
@@ -392,12 +393,12 @@ def reject_entry(
     entry_id: int,
     body: RejectRequest,
     db: sqlite3.Connection = Depends(get_db),
-    current: dict = Depends(require_controller),
+    current: dict = Depends(require_pho_phong_or_above),
 ):
     entry = db.execute("SELECT * FROM document_entries WHERE id = ?", (entry_id,)).fetchone()
     if not entry:
         raise HTTPException(404, "Không tìm thấy chứng từ")
-    if entry["entry_status"] != "pending_confirm":
+    if entry["entry_status"] != EntryStatus.PENDING:
         raise HTTPException(409, f"Trạng thái không hợp lệ: '{_STATUS_LABEL.get(entry['entry_status'], entry['entry_status'])}'. Chỉ từ chối được khi đang chờ xác nhận.")
 
     reason = body.reason.strip()
@@ -407,8 +408,8 @@ def reject_entry(
     if entry["borrow_reason"]:
         # Từ chối yêu cầu mượn → quay về confirmed
         db.execute(
-            "UPDATE document_entries SET entry_status='confirmed', borrow_reason=NULL WHERE id=?",
-            (entry_id,),
+            "UPDATE document_entries SET entry_status=?, borrow_reason=NULL WHERE id=?",
+            (EntryStatus.CONFIRMED, entry_id),
         )
         db.execute(
             "INSERT INTO entry_change_logs (entry_id, action, performed_by_id, new_sheet_count, notes, timestamp) VALUES (?,?,?,?,?,?)",
@@ -428,8 +429,8 @@ def reject_entry(
         # Từ chối bàn giao lại → quay về borrowed, khôi phục số tờ cũ
         restore_count = last_log["old_sheet_count"] if last_log["old_sheet_count"] is not None else entry["sheet_count"]
         db.execute(
-            "UPDATE document_entries SET entry_status='borrowed', sheet_count=? WHERE id=?",
-            (restore_count, entry_id),
+            "UPDATE document_entries SET entry_status=?, sheet_count=? WHERE id=?",
+            (EntryStatus.BORROWED, restore_count, entry_id),
         )
         db.execute(
             "INSERT INTO entry_change_logs (entry_id, action, performed_by_id, new_sheet_count, notes, timestamp) VALUES (?,?,?,?,?,?)",
@@ -454,7 +455,7 @@ def get_entry_history(
 ):
     entry = db.execute(
         "SELECT de.*, ks.full_name AS s_name, ks.ipcas_code, ks.payment_username, ks.department_id AS s_dept_id "
-        "FROM document_entries de LEFT JOIN ksnb_staff ks ON de.staff_id = ks.id WHERE de.id = ?",
+        "FROM document_entries de LEFT JOIN user_tttt ks ON de.staff_id = ks.id WHERE de.id = ?",
         (entry_id,),
     ).fetchone()
     if not entry:
@@ -467,7 +468,7 @@ def get_entry_history(
     logs = db.execute(
         """SELECT ecl.*, ks.full_name AS p_name, ks.role AS p_role
            FROM entry_change_logs ecl
-           LEFT JOIN ksnb_staff ks ON ecl.performed_by_id = ks.id
+           LEFT JOIN user_tttt ks ON ecl.performed_by_id = ks.id
            WHERE ecl.entry_id = ? ORDER BY ecl.timestamp DESC""",
         (entry_id,),
     ).fetchall()
@@ -511,7 +512,7 @@ def get_entry_history(
         ))
 
     s_name = entry["s_name"] or entry["payment_username"] or entry["ipcas_code"] or f"ID {entry['staff_id']}"
-    current_status = entry["entry_status"] or "confirmed"
+    current_status = entry["entry_status"] or EntryStatus.CONFIRMED
     tx_date = date.fromisoformat(entry["transaction_date"]).strftime("%d/%m/%Y") if entry["transaction_date"] else ""
 
     return EntryHistoryOut(
@@ -594,7 +595,7 @@ def export_handovers(
             FROM document_entries de
             JOIN handovers h ON de.handover_id = h.id
             JOIN departments d ON h.department_id = d.id
-            LEFT JOIN ksnb_staff ks ON de.staff_id = ks.id
+            LEFT JOIN user_tttt ks ON de.staff_id = ks.id
             {where}
             ORDER BY h.handover_date DESC, d.name""",
         params,
@@ -660,7 +661,7 @@ def get_handover(
 def create_handover(
     body: HandoverCreate,
     db: sqlite3.Connection = Depends(get_db),
-    current: dict = Depends(require_controller),
+    current: dict = Depends(require_pho_phong_or_above),
 ):
     dept = db.execute("SELECT id FROM departments WHERE id = ?", (body.department_id,)).fetchone()
     if not dept:
@@ -673,13 +674,13 @@ def create_handover(
     h_id = cur.lastrowid
 
     for e in body.entries:
-        s = db.execute("SELECT * FROM ksnb_staff WHERE id = ?", (e.staff_id,)).fetchone()
+        s = db.execute("SELECT * FROM user_tttt WHERE id = ?", (e.staff_id,)).fetchone()
         if not s or s["department_id"] != body.department_id:
             s_code = s["ipcas_code"] if s else str(e.staff_id)
             raise HTTPException(400, f"Cán bộ {s_code} không thuộc phòng này")
         db.execute(
             "INSERT INTO document_entries (handover_id, staff_id, transaction_date, sheet_count, notes, entry_status, entered_by_id, confirmed_by_id, confirmed_at) VALUES (?,?,?,?,?,?,?,?,?)",
-            (h_id, e.staff_id, e.transaction_date, e.sheet_count, e.notes, "confirmed", current["id"], current["id"], str(_vn_now())),
+            (h_id, e.staff_id, e.transaction_date, e.sheet_count, e.notes, EntryStatus.CONFIRMED, current["id"], current["id"], str(_vn_now())),
         )
 
     db.commit()
@@ -692,7 +693,7 @@ def add_entry(
     handover_id: int,
     body: DocumentEntryIn,
     db: sqlite3.Connection = Depends(get_db),
-    current: dict = Depends(require_controller),
+    current: dict = Depends(require_pho_phong_or_above),
 ):
     h = db.execute("SELECT * FROM handovers WHERE id = ?", (handover_id,)).fetchone()
     if not h:
@@ -700,14 +701,14 @@ def add_entry(
     if h["status"] == "confirmed":
         raise HTTPException(400, "Phiếu đã xác nhận, không thể thêm")
 
-    s = db.execute("SELECT * FROM ksnb_staff WHERE id = ?", (body.staff_id,)).fetchone()
+    s = db.execute("SELECT * FROM user_tttt WHERE id = ?", (body.staff_id,)).fetchone()
     if not s or s["department_id"] != h["department_id"]:
         s_code = s["ipcas_code"] if s else str(body.staff_id)
         raise HTTPException(400, f"Cán bộ {s_code} không thuộc phòng của phiếu bàn giao này")
 
     cur = db.execute(
         "INSERT INTO document_entries (handover_id, staff_id, transaction_date, sheet_count, notes, entry_status, entered_by_id, confirmed_by_id, confirmed_at) VALUES (?,?,?,?,?,?,?,?,?)",
-        (handover_id, body.staff_id, body.transaction_date, body.sheet_count, body.notes, "confirmed", current["id"], current["id"], str(_vn_now())),
+        (handover_id, body.staff_id, body.transaction_date, body.sheet_count, body.notes, EntryStatus.CONFIRMED, current["id"], current["id"], str(_vn_now())),
     )
     db.commit()
     entry_id = cur.lastrowid
@@ -720,7 +721,7 @@ def delete_entry(
     handover_id: int,
     entry_id: int,
     db: sqlite3.Connection = Depends(get_db),
-    _: dict = Depends(require_controller),
+    _: dict = Depends(require_pho_phong_or_above),
 ):
     row = db.execute(
         "SELECT id FROM document_entries WHERE id = ? AND handover_id = ?", (entry_id, handover_id)
@@ -737,7 +738,7 @@ def delete_entry(
 def confirm_handover(
     handover_id: int,
     db: sqlite3.Connection = Depends(get_db),
-    _: dict = Depends(require_controller),
+    _: dict = Depends(require_pho_phong_or_above),
 ):
     h = db.execute("SELECT * FROM handovers WHERE id = ?", (handover_id,)).fetchone()
     if not h:
@@ -756,7 +757,7 @@ def confirm_handover(
 def delete_handover(
     handover_id: int,
     db: sqlite3.Connection = Depends(get_db),
-    _: dict = Depends(require_controller),
+    _: dict = Depends(require_pho_phong_or_above),
 ):
     h = db.execute("SELECT * FROM handovers WHERE id = ?", (handover_id,)).fetchone()
     if not h:

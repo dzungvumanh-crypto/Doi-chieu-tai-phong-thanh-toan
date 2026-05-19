@@ -1,45 +1,54 @@
-"""In-memory rate limiter cho login endpoint."""
+"""DB-backed rate limiter cho login endpoint."""
+import sqlite3
 from datetime import datetime, timedelta
-from threading import Lock
 
-_attempts: dict = {}  # username → {"count": int, "window_start": datetime, "locked_until": datetime|None}
-_lock = Lock()
-
-MAX_FAILURES = 5        # số lần sai tối đa trong cửa sổ
-WINDOW = timedelta(minutes=5)   # cửa sổ đếm
-LOCKOUT = timedelta(minutes=15) # thời gian khóa
+MAX_FAILURES = 5
+WINDOW = timedelta(minutes=5)
+LOCKOUT = timedelta(minutes=15)
 
 
-def seconds_locked(username: str) -> int:
-    """Trả về số giây còn bị khóa; 0 nếu không bị khóa."""
+def _utc_str(dt: datetime) -> str:
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def seconds_locked(db: sqlite3.Connection, username: str) -> int:
     now = datetime.utcnow()
-    with _lock:
-        rec = _attempts.get(username)
-        if not rec:
-            return 0
-        lu = rec.get("locked_until")
-        if lu and now < lu:
-            return max(1, int((lu - now).total_seconds()))
+    row = db.execute(
+        "SELECT locked_until FROM login_rate_limit WHERE username = ?", (username,)
+    ).fetchone()
+    if not row or not row["locked_until"]:
         return 0
+    if _utc_str(now) < row["locked_until"]:
+        lu = datetime.strptime(row["locked_until"], "%Y-%m-%d %H:%M:%S")
+        return max(1, int((lu - now).total_seconds()))
+    return 0
 
 
-def record_failed(username: str) -> None:
-    """Ghi nhận 1 lần đăng nhập sai; khóa tài khoản nếu vượt ngưỡng."""
+def record_failed(db: sqlite3.Connection, username: str) -> None:
     now = datetime.utcnow()
-    with _lock:
-        rec = _attempts.get(username)
-        # Reset nếu cửa sổ đã hết
-        if rec and now - rec["window_start"] > WINDOW:
-            rec = None
-        if rec is None:
-            _attempts[username] = {"count": 1, "window_start": now, "locked_until": None}
-            return
-        rec["count"] += 1
-        if rec["count"] >= MAX_FAILURES:
-            rec["locked_until"] = now + LOCKOUT
+    row = db.execute(
+        "SELECT attempt_count, window_start FROM login_rate_limit WHERE username = ?", (username,)
+    ).fetchone()
+
+    # Còn trong cửa sổ thời gian?
+    in_window = False
+    if row and row["window_start"]:
+        ws = datetime.strptime(row["window_start"], "%Y-%m-%d %H:%M:%S")
+        in_window = (now - ws) <= WINDOW
+
+    if not in_window:
+        db.execute(
+            "INSERT OR REPLACE INTO login_rate_limit (username, attempt_count, window_start, locked_until) VALUES (?,?,?,NULL)",
+            (username, 1, _utc_str(now)),
+        )
+    else:
+        new_count = (row["attempt_count"] or 0) + 1
+        locked_until = _utc_str(now + LOCKOUT) if new_count >= MAX_FAILURES else None
+        db.execute(
+            "UPDATE login_rate_limit SET attempt_count = ?, locked_until = ? WHERE username = ?",
+            (new_count, locked_until, username),
+        )
 
 
-def clear(username: str) -> None:
-    """Xóa record sau khi đăng nhập thành công."""
-    with _lock:
-        _attempts.pop(username, None)
+def clear(db: sqlite3.Connection, username: str) -> None:
+    db.execute("DELETE FROM login_rate_limit WHERE username = ?", (username,))

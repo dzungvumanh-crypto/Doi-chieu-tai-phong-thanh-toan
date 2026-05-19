@@ -3,7 +3,7 @@ import sqlite3
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from backend.database import get_db
-from backend.schemas import DepartmentOut
+from backend.schemas.common import DepartmentOut
 from backend.core.deps import get_current_staff
 
 dept_router = APIRouter(prefix="/api/departments", tags=["Departments"])

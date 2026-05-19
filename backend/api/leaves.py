@@ -11,8 +11,9 @@ from fastapi.responses import StreamingResponse
 from backend.core.deps import (
     TONG_HOP_CODES, get_current_staff, require_gd_level, require_ksv,
 )
+from backend.core.enums import LeaveStatus
 from backend.database import get_db, _vn_now
-from backend.schemas import LeaveCreate, LeaveReview, TongHopReview
+from backend.schemas.leaves import LeaveCreate, LeaveReview, TongHopReview
 
 router = APIRouter()
 
@@ -20,8 +21,12 @@ LEAVE_TYPE_LABELS = {
     "annual":   "Nghỉ phép năm",
     "sick":     "Nghỉ ốm",
     "personal": "Nghỉ việc riêng",
+    "bat_buoc": "Nghỉ phép bắt buộc",
+    "dot_xuat": "Nghỉ đột xuất",
     "other":    "Khác",
 }
+
+_VALID_LEAVE_TYPES = frozenset(LEAVE_TYPE_LABELS.keys())
 
 ACTION_LABELS = {
     "create":       ("Nộp đơn",            "blue"),
@@ -36,12 +41,12 @@ ACTION_LABELS = {
 }
 
 _LEAVE_STATUS_VN = {
-    "pending_ksv":      "Chờ KSV duyệt",
-    "pending_tong_hop": "Chờ Tổng hợp",
-    "pending_gd":       "Chờ GĐ duyệt",
-    "approved":         "Đã phê duyệt",
-    "rejected":         "Bị từ chối",
-    "cancelled":        "Đã hủy",
+    LeaveStatus.PENDING_KSV:      "Chờ KSV duyệt",
+    LeaveStatus.PENDING_TONG_HOP: "Chờ Tổng hợp",
+    LeaveStatus.PENDING_GD:       "Chờ GĐ duyệt",
+    LeaveStatus.APPROVED:         "Đã phê duyệt",
+    LeaveStatus.REJECTED:         "Bị từ chối",
+    LeaveStatus.CANCELLED:        "Đã hủy",
 }
 
 # Các role cấp cao — bỏ qua bước KSV, vào thẳng pending_tong_hop
@@ -100,14 +105,14 @@ def _apply_status_transition(
 ):
     """Cập nhật status và điều chỉnh used_leave_days (idempotent)."""
     days = calculate_leave_days(start, end, holiday_dates)
-    if old_status != "approved" and new_status == "approved":
+    if old_status != LeaveStatus.APPROVED and new_status == LeaveStatus.APPROVED:
         db.execute(
-            "UPDATE ksnb_staff SET used_leave_days = COALESCE(used_leave_days, 0) + ? WHERE id = ?",
+            "UPDATE user_tttt SET used_leave_days = COALESCE(used_leave_days, 0) + ? WHERE id = ?",
             (days, staff_id),
         )
-    elif old_status == "approved" and new_status in ("cancelled", "rejected"):
+    elif old_status == LeaveStatus.APPROVED and new_status in (LeaveStatus.CANCELLED, LeaveStatus.REJECTED):
         db.execute(
-            "UPDATE ksnb_staff SET used_leave_days = MAX(0, COALESCE(used_leave_days, 0) - ?) WHERE id = ?",
+            "UPDATE user_tttt SET used_leave_days = MAX(0, COALESCE(used_leave_days, 0) - ?) WHERE id = ?",
             (days, staff_id),
         )
     db.execute(
@@ -129,7 +134,7 @@ def _log_action(
 def _validate_ksv(ksv_id: Optional[int], current: dict, db: sqlite3.Connection) -> dict:
     if not ksv_id:
         raise HTTPException(400, "Vui lòng chọn người phê duyệt bước KSV")
-    ksv = db.execute("SELECT * FROM ksnb_staff WHERE id = ? AND is_active = 1", (ksv_id,)).fetchone()
+    ksv = db.execute("SELECT * FROM user_tttt WHERE id = ? AND is_active = 1", (ksv_id,)).fetchone()
     if not ksv:
         raise HTTPException(400, "Người phê duyệt không tồn tại hoặc đã bị vô hiệu")
     if ksv["role"] not in ("truong_phong", "pho_phong", "hau_kiem_vien", "admin"):
@@ -148,10 +153,10 @@ def _leave_to_out(leave_id: int, db: sqlite3.Connection) -> dict:
                   gd.full_name AS gd_approver_name, gd.role AS gd_role,
                   d.name AS dept_name
            FROM leave_records lr
-           LEFT JOIN ksnb_staff s  ON lr.staff_id             = s.id
-           LEFT JOIN ksnb_staff kv ON lr.ksv_approver_id      = kv.id
-           LEFT JOIN ksnb_staff th ON lr.tong_hop_approver_id = th.id
-           LEFT JOIN ksnb_staff gd ON lr.gd_approver_id       = gd.id
+           LEFT JOIN user_tttt s  ON lr.staff_id             = s.id
+           LEFT JOIN user_tttt kv ON lr.ksv_approver_id      = kv.id
+           LEFT JOIN user_tttt th ON lr.tong_hop_approver_id = th.id
+           LEFT JOIN user_tttt gd ON lr.gd_approver_id       = gd.id
            LEFT JOIN departments d ON s.department_id          = d.id
            WHERE lr.id = ?""",
         (leave_id,),
@@ -205,7 +210,7 @@ def get_approvers(
         "admin":         "Quản trị viên",
     }
     rows = db.execute(
-        """SELECT id, full_name, role FROM ksnb_staff
+        """SELECT id, full_name, role FROM user_tttt
            WHERE is_active = 1 AND role IN ('truong_phong','pho_phong','hau_kiem_vien','admin')
              AND id != ? ORDER BY full_name""",
         (current["id"],),
@@ -221,7 +226,7 @@ def get_gd_list(
     if not (_is_tong_hop_staff(current, db) or current["role"] == "admin"):
         raise HTTPException(403, "Chỉ nhân viên Phòng Tổng hợp hoặc Admin mới được xem")
     rows = db.execute(
-        "SELECT id, full_name, role FROM ksnb_staff WHERE is_active = 1 AND role IN ('giam_doc','pho_giam_doc')"
+        "SELECT id, full_name, role FROM user_tttt WHERE is_active = 1 AND role IN ('giam_doc','pho_giam_doc')"
     ).fetchall()
     _ROLE_LABEL = {"giam_doc": "Giám đốc", "pho_giam_doc": "Phó Giám đốc"}
     return [{"id": r["id"], "full_name": r["full_name"], "role_label": _ROLE_LABEL.get(r["role"], r["role"])} for r in rows]
@@ -236,11 +241,14 @@ def create_leave(
     if body.end_date < body.start_date:
         raise HTTPException(400, "Ngày kết thúc phải sau ngày bắt đầu")
 
+    if body.leave_type not in _VALID_LEAVE_TYPES:
+        raise HTTPException(400, f"Loại nghỉ phép không hợp lệ: {body.leave_type}")
+
     _h = _load_holidays(db, body.start_date, body.end_date)
     leave_days = calculate_leave_days(body.start_date, body.end_date, _h)
 
     if body.leave_type == "annual":
-        if body.start_date < date.today():
+        if body.start_date < _vn_now().date():
             raise HTTPException(400, "Nghỉ phép năm phải từ hôm nay trở đi")
         remaining = (current.get("annual_leave_days") or 12) - (current.get("used_leave_days") or 0)
         if leave_days > remaining:
@@ -259,11 +267,11 @@ def create_leave(
         raise HTTPException(409, "Khoảng ngày nghỉ bị trùng với đơn hiện có")
 
     if current["role"] in _HIGH_ROLES:
-        initial_status  = "pending_tong_hop"
+        initial_status  = LeaveStatus.PENDING_TONG_HOP
         ksv_approver_id = None
     else:
         ksv = _validate_ksv(body.ksv_approver_id, current, db)
-        initial_status  = "pending_ksv"
+        initial_status  = LeaveStatus.PENDING_KSV
         ksv_approver_id = ksv["id"]
 
     cur = db.execute(
@@ -341,7 +349,7 @@ def leave_calendar(
         """SELECT lr.id, lr.start_date, lr.end_date, lr.leave_type, lr.status,
                   ks.full_name
            FROM leave_records lr
-           LEFT JOIN ksnb_staff ks ON lr.staff_id = ks.id
+           LEFT JOIN user_tttt ks ON lr.staff_id = ks.id
            WHERE lr.status NOT IN ('rejected','cancelled')
              AND lr.start_date <= ? AND lr.end_date >= ?""",
         (end.isoformat(), start.isoformat()),
@@ -408,10 +416,10 @@ def export_leaves(
                    gd.full_name AS gd_name, gd.role AS gd_role,
                    d.name AS dept_name
             FROM leave_records lr
-            LEFT JOIN ksnb_staff s  ON lr.staff_id             = s.id
-            LEFT JOIN ksnb_staff kv ON lr.ksv_approver_id      = kv.id
-            LEFT JOIN ksnb_staff th ON lr.tong_hop_approver_id = th.id
-            LEFT JOIN ksnb_staff gd ON lr.gd_approver_id       = gd.id
+            LEFT JOIN user_tttt s  ON lr.staff_id             = s.id
+            LEFT JOIN user_tttt kv ON lr.ksv_approver_id      = kv.id
+            LEFT JOIN user_tttt th ON lr.tong_hop_approver_id = th.id
+            LEFT JOIN user_tttt gd ON lr.gd_approver_id       = gd.id
             LEFT JOIN departments d ON s.department_id          = d.id
             {where}
             ORDER BY lr.created_at DESC""",
@@ -512,7 +520,7 @@ def ksv_review(
     leave = db.execute("SELECT * FROM leave_records WHERE id = ?", (leave_id,)).fetchone()
     if not leave:
         raise HTTPException(404, "Không tìm thấy đơn nghỉ phép")
-    if leave["status"] != "pending_ksv":
+    if leave["status"] != LeaveStatus.PENDING_KSV:
         raise HTTPException(400, f"Đơn đang ở trạng thái '{leave['status']}'")
     if leave["ksv_approver_id"] != current["id"]:
         raise HTTPException(403, "Bạn không phải người được chỉ định duyệt bước này")
@@ -520,7 +528,7 @@ def ksv_review(
         raise HTTPException(400, "Vui lòng nhập lý do từ chối")
 
     old = leave["status"]
-    new_status = "pending_tong_hop" if body.action == "approve" else "rejected"
+    new_status = LeaveStatus.PENDING_TONG_HOP if body.action == "approve" else LeaveStatus.REJECTED
     db.execute(
         "UPDATE leave_records SET ksv_approved_at=?, ksv_comment=? WHERE id=?",
         (str(_vn_now()), body.comment, leave_id),
@@ -548,7 +556,7 @@ def tong_hop_review(
     leave = db.execute("SELECT * FROM leave_records WHERE id = ?", (leave_id,)).fetchone()
     if not leave:
         raise HTTPException(404, "Không tìm thấy đơn nghỉ phép")
-    if leave["status"] != "pending_tong_hop":
+    if leave["status"] != LeaveStatus.PENDING_TONG_HOP:
         raise HTTPException(400, f"Đơn đang ở trạng thái '{leave['status']}'")
     if body.action == "reject" and not body.comment:
         raise HTTPException(400, "Vui lòng nhập lý do từ chối")
@@ -562,14 +570,14 @@ def tong_hop_review(
     if body.action == "forward":
         if not body.gd_approver_id:
             raise HTTPException(400, "Vui lòng chọn GĐ/PGĐ phê duyệt")
-        gd = db.execute("SELECT * FROM ksnb_staff WHERE id = ? AND is_active = 1", (body.gd_approver_id,)).fetchone()
+        gd = db.execute("SELECT * FROM user_tttt WHERE id = ? AND is_active = 1", (body.gd_approver_id,)).fetchone()
         if not gd or gd["role"] not in ("giam_doc", "pho_giam_doc"):
             raise HTTPException(400, "Người được chọn không phải GĐ hoặc PGĐ")
         db.execute("UPDATE leave_records SET gd_approver_id=? WHERE id=?", (body.gd_approver_id, leave_id))
-        new_status = "pending_gd"
+        new_status = LeaveStatus.PENDING_GD
         action_key = "th_forward"
     else:
-        new_status = "rejected"
+        new_status = LeaveStatus.REJECTED
         action_key = "th_reject"
 
     start = date.fromisoformat(leave["start_date"])
@@ -591,7 +599,7 @@ def gd_review(
     leave = db.execute("SELECT * FROM leave_records WHERE id = ?", (leave_id,)).fetchone()
     if not leave:
         raise HTTPException(404, "Không tìm thấy đơn nghỉ phép")
-    if leave["status"] != "pending_gd":
+    if leave["status"] != LeaveStatus.PENDING_GD:
         raise HTTPException(400, f"Đơn đang ở trạng thái '{leave['status']}'")
     if not _can_gd_review(current, db):
         raise HTTPException(403, "Phó Giám đốc chưa được ủy quyền phê duyệt")
@@ -601,7 +609,7 @@ def gd_review(
         raise HTTPException(400, "Vui lòng nhập lý do từ chối")
 
     old = leave["status"]
-    new_status = "approved" if body.action == "approve" else "rejected"
+    new_status = LeaveStatus.APPROVED if body.action == "approve" else LeaveStatus.REJECTED
     db.execute(
         "UPDATE leave_records SET gd_approved_at=?, gd_comment=?, gd_approver_id=? WHERE id=?",
         (str(_vn_now()), body.comment, current["id"], leave_id),
@@ -629,7 +637,7 @@ def resubmit_leave(
         raise HTTPException(404, "Không tìm thấy đơn nghỉ phép")
     if leave["staff_id"] != current["id"]:
         raise HTTPException(403, "Chỉ chủ nhân đơn mới được nộp lại")
-    if leave["status"] != "rejected":
+    if leave["status"] != LeaveStatus.REJECTED:
         raise HTTPException(400, "Chỉ có thể nộp lại đơn đã bị từ chối")
 
     if body.end_date < body.start_date:
@@ -651,11 +659,11 @@ def resubmit_leave(
         raise HTTPException(409, "Khoảng ngày nghỉ bị trùng với đơn hiện có")
 
     if current["role"] in _HIGH_ROLES:
-        new_status      = "pending_tong_hop"
+        new_status      = LeaveStatus.PENDING_TONG_HOP
         ksv_approver_id = None
     else:
         ksv = _validate_ksv(body.ksv_approver_id, current, db)
-        new_status      = "pending_ksv"
+        new_status      = LeaveStatus.PENDING_KSV
         ksv_approver_id = ksv["id"]
 
     old = leave["status"]
@@ -687,15 +695,15 @@ def cancel_leave(
         raise HTTPException(404, "Không tìm thấy đơn nghỉ phép")
     if leave["staff_id"] != current["id"] and current["role"] != "admin":
         raise HTTPException(403, "Chỉ chủ nhân đơn hoặc Admin mới được hủy")
-    if leave["status"] not in ("pending_ksv", "pending_tong_hop", "pending_gd", "approved"):
+    if leave["status"] not in (LeaveStatus.PENDING_KSV, LeaveStatus.PENDING_TONG_HOP, LeaveStatus.PENDING_GD, LeaveStatus.APPROVED):
         raise HTTPException(400, f"Không thể hủy đơn đang ở trạng thái '{leave['status']}'")
 
     old   = leave["status"]
     start = date.fromisoformat(leave["start_date"])
     end   = date.fromisoformat(leave["end_date"])
     _h    = _load_holidays(db, start, end)
-    _apply_status_transition(leave_id, old, "cancelled", start, end, leave["staff_id"], _h, db)
-    _log_action(db, leave_id, current["id"], "cancel", None, old, "cancelled")
+    _apply_status_transition(leave_id, old, LeaveStatus.CANCELLED, start, end, leave["staff_id"], _h, db)
+    _log_action(db, leave_id, current["id"], "cancel", None, old, LeaveStatus.CANCELLED)
     db.commit()
     return _leave_to_out(leave_id, db)
 
@@ -720,7 +728,7 @@ def get_leave_history(
     logs = db.execute(
         """SELECT lal.*, ks.full_name AS actor_name
            FROM leave_action_logs lal
-           LEFT JOIN ksnb_staff ks ON lal.actor_id = ks.id
+           LEFT JOIN user_tttt ks ON lal.actor_id = ks.id
            WHERE lal.leave_id = ? ORDER BY lal.created_at""",
         (leave_id,),
     ).fetchall()
@@ -783,10 +791,10 @@ def download_leave_form(
                   kv.full_name AS ksv_name,
                   gd.full_name AS gd_approver_name, gd.role AS gd_role
            FROM leave_records lr
-           LEFT JOIN ksnb_staff s  ON lr.staff_id             = s.id
+           LEFT JOIN user_tttt s  ON lr.staff_id             = s.id
            LEFT JOIN departments d ON s.department_id          = d.id
-           LEFT JOIN ksnb_staff kv ON lr.ksv_approver_id      = kv.id
-           LEFT JOIN ksnb_staff gd ON lr.gd_approver_id       = gd.id
+           LEFT JOIN user_tttt kv ON lr.ksv_approver_id      = kv.id
+           LEFT JOIN user_tttt gd ON lr.gd_approver_id       = gd.id
            WHERE lr.id = ?""",
         (leave_id,),
     ).fetchone()

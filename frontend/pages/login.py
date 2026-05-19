@@ -17,8 +17,7 @@ async def login_page(request: _StarletteRequest):
         with ui.card().classes("w-96 p-8 shadow-2xl rounded-2xl bg-white"):
             with ui.column().classes("w-full items-center mb-6"):
                 ui.image("/static/agribank_logo.png").classes("w-24 h-24 mb-2")
-                ui.label("KSNB&HTVH").classes("text-2xl font-bold text-red-900")
-                ui.label("Agribank – Trung tâm Thanh toán").classes("text-gray-700 text-sm font-bold")
+                ui.label("PAYMENT CENTER").classes("text-2xl font-bold text-red-900")
 
             username = ui.input("Tên đăng nhập", placeholder="admin").classes("w-full")
             password = ui.input("Mật khẩu", password=True, password_toggle_button=True).classes("w-full mt-3")

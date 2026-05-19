@@ -47,7 +47,7 @@ def _sidebar(current_page: str) -> dict:
         # Logo
         with ui.row().classes("w-full items-center px-3 py-3 border-b border-red-700"):
             ui.image("/static/agribank_logo.png").classes("w-10 h-10 shrink-0")
-            ui.label("KSNB & HTVH").classes("font-semibold text-sm text-white ml-2 leading-snug")
+            ui.label("PAYMENT CENTER").classes("font-semibold text-sm text-white ml-2 leading-snug")
 
         # Thông tin user (click → Quản lý người dùng)
         user = api.get_current_user()

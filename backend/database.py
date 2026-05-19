@@ -14,6 +14,21 @@ def _vn_now() -> datetime:
     return datetime.now(_VN_TZ).replace(tzinfo=None)
 
 
+def write_audit(
+    db: sqlite3.Connection,
+    actor_id: int,
+    action: str,
+    target_type: str = None,
+    target_id: int = None,
+    detail: str = None,
+    ip: str = None,
+) -> None:
+    db.execute(
+        "INSERT INTO audit_logs (actor_id, action, target_type, target_id, detail, ip_address, created_at) VALUES (?,?,?,?,?,?,?)",
+        (actor_id, action, target_type, target_id, detail, ip, _vn_now()),
+    )
+
+
 def get_db():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30)
     conn.row_factory = sqlite3.Row

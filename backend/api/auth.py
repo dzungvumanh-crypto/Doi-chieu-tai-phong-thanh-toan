@@ -2,8 +2,8 @@
 import re
 import sqlite3
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from backend.database import get_db, _vn_now
-from backend.schemas import LoginRequest, Token, PasswordChange, AdminPasswordReset
+from backend.database import get_db, _vn_now, write_audit
+from backend.schemas.auth import LoginRequest, Token, PasswordChange, AdminPasswordReset
 from backend.core.security import verify_password, create_access_token, get_password_hash
 from backend.core.deps import get_current_staff, require_admin
 from backend.core.sessions import set_session, get_session_ip, clear_session
@@ -31,23 +31,20 @@ def _validate_password(pwd: str):
 @router.post("/login", response_model=Token)
 def login(req: LoginRequest, request: Request, db: sqlite3.Connection = Depends(get_db)):
     # ── Rate limit ──
-    wait = rate_limit.seconds_locked(req.username)
+    wait = rate_limit.seconds_locked(db, req.username)
     if wait:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=f"Quá nhiều lần đăng nhập sai. Thử lại sau {wait} giây.",
         )
 
-    client_ip = (
-        request.headers.get("X-Client-IP")
-        or (request.client.host if request.client else "unknown")
-    )
+    client_ip = request.client.host if request.client else "unknown"
 
     row = db.execute(
-        "SELECT * FROM ksnb_staff WHERE username = ? AND is_active = 1", (req.username,)
+        "SELECT * FROM user_tttt WHERE username = ? AND is_active = 1", (req.username,)
     ).fetchone()
     if not row or not verify_password(req.password, row["pwd_hash"]):
-        rate_limit.record_failed(req.username)
+        rate_limit.record_failed(db, req.username)
         db.execute(
             "INSERT INTO login_logs (username, staff_id, ip_address, success, detail, created_at) VALUES (?,?,?,?,?,?)",
             (req.username, None, client_ip, 0, "Sai tên đăng nhập hoặc mật khẩu", _vn_now()),
@@ -59,7 +56,7 @@ def login(req: LoginRequest, request: Request, db: sqlite3.Connection = Depends(
         )
 
     staff = dict(row)
-    existing_ip = get_session_ip(staff["id"])
+    existing_ip = get_session_ip(db, staff["id"])
     if existing_ip and existing_ip != client_ip and not req.force:
         db.execute(
             "INSERT INTO login_logs (username, staff_id, ip_address, success, detail, created_at) VALUES (?,?,?,?,?,?)",
@@ -71,8 +68,8 @@ def login(req: LoginRequest, request: Request, db: sqlite3.Connection = Depends(
             detail=f"Tài khoản đang được sử dụng tại {existing_ip}",
         )
 
-    rate_limit.clear(req.username)
-    set_session(staff["id"], client_ip, ttl_hours=settings.ACCESS_TOKEN_EXPIRE_HOURS)
+    rate_limit.clear(db, req.username)
+    set_session(db, staff["id"], client_ip, ttl_hours=settings.ACCESS_TOKEN_EXPIRE_HOURS)
     token = create_access_token({"sub": str(staff["id"])})
     db.execute(
         "INSERT INTO login_logs (username, staff_id, ip_address, success, detail, created_at) VALUES (?,?,?,?,?,?)",
@@ -90,8 +87,12 @@ def login(req: LoginRequest, request: Request, db: sqlite3.Connection = Depends(
 
 
 @router.post("/logout")
-def logout(current: dict = Depends(get_current_staff)):
-    clear_session(current["id"])
+def logout(
+    current: dict = Depends(get_current_staff),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    clear_session(db, current["id"])
+    db.commit()
     return {"message": "Đã đăng xuất"}
 
 
@@ -105,7 +106,7 @@ def change_password(
         raise HTTPException(status_code=400, detail="Mật khẩu cũ không đúng")
     _validate_password(req.new_password)
     db.execute(
-        "UPDATE ksnb_staff SET pwd_hash = ?, must_change_password = 0 WHERE id = ?",
+        "UPDATE user_tttt SET pwd_hash = ?, must_change_password = 0 WHERE id = ?",
         (get_password_hash(req.new_password), current["id"]),
     )
     db.commit()
@@ -115,18 +116,21 @@ def change_password(
 @router.post("/admin-reset-password")
 def admin_reset_password(
     req: AdminPasswordReset,
+    request: Request,
     current: dict = Depends(require_admin),
     db: sqlite3.Connection = Depends(get_db),
 ):
-    """Admin đặt lại mật khẩu cho user khác (không cần nhập mật khẩu cũ)."""
-    target = db.execute("SELECT * FROM ksnb_staff WHERE id = ?", (req.staff_id,)).fetchone()
+    target = db.execute("SELECT * FROM user_tttt WHERE id = ?", (req.staff_id,)).fetchone()
     if not target:
         raise HTTPException(404, "Không tìm thấy tài khoản")
     _validate_password(req.new_password)
     db.execute(
-        "UPDATE ksnb_staff SET pwd_hash = ?, must_change_password = 1 WHERE id = ?",
+        "UPDATE user_tttt SET pwd_hash = ?, must_change_password = 1 WHERE id = ?",
         (get_password_hash(req.new_password), req.staff_id),
     )
+    client_ip = request.client.host if request.client else "unknown"
+    write_audit(db, current["id"], "password_reset", "staff", req.staff_id,
+                f"Reset password cho {target['full_name']}", client_ip)
     db.commit()
     return {"message": f"Đã đặt lại mật khẩu cho {target['full_name']}"}
 

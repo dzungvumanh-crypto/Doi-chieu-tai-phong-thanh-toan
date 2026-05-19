@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Script khởi chạy toàn bộ hệ thống KSNB&HTVH
+Script khởi chạy toàn bộ hệ thống PAYMENT CENTER
 
 Cách dùng:
   python run.py          # Chạy cả backend + frontend (auto-restart)
@@ -174,7 +174,7 @@ def run_all():
 
     sep = "─" * 54
     _print(f"\n  {'═' * 54}")
-    _print(f"    KSNB & HTVH  —  Hệ thống Quản lý Nội bộ Agribank")
+    _print(f"    PAYMENT CENTER  —  Hệ thống Trung tâm Thanh toán")
     _print(f"  {'═' * 54}")
     _print(f"    Backend   →  {BACKEND_URL}")
     _print(f"    Frontend  →  {FRONTEND_URL}")
