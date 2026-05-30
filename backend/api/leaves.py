@@ -12,7 +12,7 @@ from backend.core.deps import (
     TONG_HOP_CODES, get_current_staff, require_gd_level, require_ksv,
 )
 from backend.core.enums import LeaveStatus
-from backend.database import get_db, _vn_now
+from backend.database import get_db, _vn_now, compute_annual_leave
 from backend.schemas.leaves import LeaveCreate, LeaveReview, TongHopReview
 
 router = APIRouter()
@@ -787,6 +787,7 @@ def download_leave_form(
         """SELECT lr.*,
                   s.full_name AS staff_name, s.role AS staff_role,
                   s.employee_code, s.annual_leave_days, s.used_leave_days,
+                  s.join_industry_date,
                   d.name AS dept_name,
                   kv.full_name AS ksv_name,
                   gd.full_name AS gd_approver_name, gd.role AS gd_role
@@ -818,7 +819,7 @@ def download_leave_form(
     _h    = _load_holidays(db, start, end)
 
     leave_days = calculate_leave_days(start, end, _h)
-    tong_phep  = r["annual_leave_days"] or 12
+    tong_phep  = compute_annual_leave(r["join_industry_date"]) if r["join_industry_date"] else (r["annual_leave_days"] or 12)
     da_nghi    = r["used_leave_days"] or 0
     con_lai    = max(0, tong_phep - da_nghi - leave_days)
 

@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from backend.core.security import get_password_hash
 from backend.database import DB_PATH
-from backend.main import _create_tables, _ensure_indexes
+from backend.db.migrations import _create_tables, _ensure_indexes
 
 _ENV = os.getenv("ENV", "development")
 

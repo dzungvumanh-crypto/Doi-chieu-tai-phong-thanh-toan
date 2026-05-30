@@ -3,7 +3,7 @@ import sqlite3
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from backend.core.enums import StaffRole
-from backend.database import get_db
+from backend.database import get_db, compute_annual_leave
 from backend.core.security import decode_token
 from backend.core.sessions import get_session_ip
 
@@ -33,7 +33,11 @@ def get_current_staff(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Phiên đăng nhập đã hết hạn hoặc đã đăng xuất",
         )
-    return dict(row)
+    staff = dict(row)
+    # Tính annual_leave_days từ join_industry_date nếu có (ghi đè giá trị lưu sẵn)
+    if staff.get("join_industry_date"):
+        staff["annual_leave_days"] = compute_annual_leave(staff["join_industry_date"])
+    return staff
 
 
 def require_admin(current: dict = Depends(get_current_staff)) -> dict:

@@ -4,7 +4,7 @@
 Dùng `_vn_now()` từ `backend/models.py` cho mọi timestamp (UTC+7, naive datetime). Không dùng `datetime.utcnow()`.
 
 ## Schema Migrations
-Thêm câu SQL vào list `schema_migrations` trong `backend/main.py::_ensure_indexes()`.
+Thêm câu SQL vào list `schema_migrations` trong `backend/db/migrations.py::_ensure_indexes()`.
 Chạy idempotent khi khởi động — lỗi "duplicate column" bị nuốt; lỗi khác được log và raise.
 
 ## Authentication & Sessions

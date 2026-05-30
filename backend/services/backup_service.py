@@ -56,11 +56,15 @@ def _schedule_next(db_path: str):
 
 
 def start_scheduler(db_path: str = "data/ksnb.db"):
-    """Gọi khi khởi động app: backup ngay + lên lịch mỗi 24h."""
-    try:
-        run_backup(db_path)
-    except Exception:
-        pass  # Lỗi backup lúc khởi động không nên làm app crash
+    """Gọi khi khởi động app: backup ngay (background) + lên lịch mỗi 24h."""
+    def _initial():
+        try:
+            run_backup(db_path)
+        except Exception:
+            pass
+
+    # Chạy backup đầu tiên trong background để không block lifespan của FastAPI
+    threading.Thread(target=_initial, daemon=True, name="backup-init").start()
     _schedule_next(db_path)
     _log.info("Backup scheduler khởi động — chu kỳ %dh, lưu tối đa %d bản", _INTERVAL_HOURS, _KEEP)
 

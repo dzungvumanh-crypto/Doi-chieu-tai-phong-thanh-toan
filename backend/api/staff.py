@@ -6,7 +6,7 @@ import tempfile
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
 from fastapi.responses import StreamingResponse
-from backend.database import DB_PATH, get_db, write_audit
+from backend.database import DB_PATH, get_db, write_audit, compute_annual_leave
 from backend.schemas.staff import StaffCreate, StaffUpdate, StaffOut
 from backend.core.security import get_password_hash
 from backend.core.deps import get_current_staff, require_admin
@@ -78,7 +78,131 @@ def list_staff(
     rows = db.execute(
         f"SELECT * FROM user_tttt {where} ORDER BY {_ROLE_ORDER_SQL}, full_name", params
     ).fetchall()
-    return [dict(r) for r in rows]
+    return [_enrich(dict(r)) for r in rows]
+
+
+# ─── Export Excel / Import DB ────────────────────────────────────────────────
+# Đặt trước /{staff_id} để tránh FastAPI match "export" như int
+
+_ROLE_VN = {
+    "chuyen_vien":   "Chuyên viên",
+    "pho_phong":     "Phó phòng",
+    "truong_phong":  "Trưởng phòng",
+    "hau_kiem_vien": "Hậu kiểm viên",
+    "giam_doc":      "Giám đốc",
+    "pho_giam_doc":  "Phó Giám đốc",
+    "admin":         "Quản trị viên",
+    "controller":    "Phó phòng",
+}
+
+
+@router.get("/export")
+def export_staff_excel(
+    db: sqlite3.Connection = Depends(get_db),
+    _: dict = Depends(require_admin),
+):
+    import openpyxl
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from datetime import date, datetime as _dt
+
+    rows = db.execute("""
+        SELECT u.full_name, u.employee_code, u.role, d.name AS dept_name,
+               u.username, u.ipcas_code, u.payment_username, u.phone,
+               u.is_active, u.created_at
+        FROM user_tttt u
+        LEFT JOIN departments d ON u.department_id = d.id
+        WHERE u.is_deleted = 0 OR u.is_deleted IS NULL
+        ORDER BY d.name, u.full_name
+    """).fetchall()
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Danh sách cán bộ"
+
+    hdr_fill = PatternFill("solid", fgColor="C62828")
+    hdr_font = Font(bold=True, color="FFFFFF")
+    headers = ["STT", "Họ và tên", "Mã cán bộ", "Quyền", "Phòng", "Username",
+               "User IPCAS", "User Payment", "Điện thoại", "Trạng thái", "Ngày tạo"]
+    widths   = [6, 28, 14, 18, 24, 18, 14, 20, 14, 12, 14]
+    ws.append(headers)
+    for cell, w in zip(ws[1], widths):
+        cell.fill = hdr_fill
+        cell.font = hdr_font
+        cell.alignment = Alignment(horizontal="center")
+        ws.column_dimensions[cell.column_letter].width = w
+
+    for idx, r in enumerate(rows, 1):
+        created = ""
+        try:
+            created = _dt.fromisoformat(str(r["created_at"])).strftime("%d/%m/%Y")
+        except Exception:
+            pass
+        ws.append([
+            idx,
+            r["full_name"] or "",
+            r["employee_code"] or "",
+            _ROLE_VN.get(r["role"], r["role"]),
+            r["dept_name"] or "",
+            r["username"] or "",
+            r["ipcas_code"] or "",
+            r["payment_username"] or "",
+            r["phone"] or "",
+            "Hoạt động" if r["is_active"] else "Tạm khóa",
+            created,
+        ])
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    fname = f"danh_sach_can_bo_{date.today().strftime('%Y%m%d')}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{fname}"},
+    )
+
+
+@router.get("/export-db")
+def export_users_db(_: dict = Depends(require_admin)):
+    """Xuất bảng user_tttt thành file SQLite để chép sang hệ thống khác."""
+    tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    tmp.close()
+    try:
+        src = sqlite3.connect(DB_PATH)
+        exp = sqlite3.connect(tmp.name)
+        ddl = src.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='user_tttt'"
+        ).fetchone()[0]
+        exp.execute(ddl)
+        src.row_factory = sqlite3.Row
+        rows_db = src.execute(
+            "SELECT * FROM user_tttt WHERE is_deleted = 0 OR is_deleted IS NULL"
+        ).fetchall()
+        if rows_db:
+            cols = list(rows_db[0].keys())
+            ph = ",".join("?" * len(cols))
+            exp.executemany(f"INSERT INTO user_tttt VALUES ({ph})", [tuple(r) for r in rows_db])
+        exp.commit()
+        src.close()
+        exp.close()
+        data = open(tmp.name, "rb").read()
+    finally:
+        os.unlink(tmp.name)
+
+    from datetime import date as _date
+    fname_db = f"users_{_date.today().strftime('%Y%m%d')}.db"
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{fname_db}"'},
+    )
+
+
+def _enrich(row: dict) -> dict:
+    """Inject annual_leave_days tính từ join_industry_date nếu có."""
+    if row.get("join_industry_date"):
+        row["annual_leave_days"] = compute_annual_leave(row["join_industry_date"])
+    return row
 
 
 @router.get("/{staff_id}", response_model=StaffOut)
@@ -90,7 +214,7 @@ def get_staff(
     row = db.execute("SELECT * FROM user_tttt WHERE id = ?", (staff_id,)).fetchone()
     if not row:
         raise HTTPException(404, "Không tìm thấy cán bộ")
-    return dict(row)
+    return _enrich(dict(row))
 
 
 @router.post("/", response_model=StaffOut)
@@ -106,15 +230,16 @@ def create_staff(
     if db.execute("SELECT id FROM user_tttt WHERE employee_code = ?", (emp_code,)).fetchone():
         raise HTTPException(400, "Mã nhân viên đã tồn tại")
     _validate_dept(db, body.role, body.department_id)
+    join_date_iso = body.join_industry_date.isoformat() if body.join_industry_date else None
     cur = db.execute(
         """INSERT INTO user_tttt
            (employee_code, full_name, role, department_id, username, pwd_hash,
-            phone, email, start_date, ipcas_code, payment_username, is_active)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,1)""",
+            phone, email, start_date, join_industry_date, ipcas_code, payment_username, is_active)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1)""",
         (emp_code, body.full_name, body.role, body.department_id, body.username,
          get_password_hash(body.password), body.phone, body.email,
          body.start_date.isoformat() if body.start_date else None,
-         body.ipcas_code, body.payment_username),
+         join_date_iso, body.ipcas_code, body.payment_username),
     )
     new_id = cur.lastrowid
     client_ip = request.client.host if request.client else "unknown"
@@ -122,7 +247,7 @@ def create_staff(
                 f"Tạo tài khoản {body.username} ({body.full_name})", client_ip)
     db.commit()
     row = db.execute("SELECT * FROM user_tttt WHERE id = ?", (new_id,)).fetchone()
-    return dict(row)
+    return _enrich(dict(row))
 
 
 @router.put("/{staff_id}", response_model=StaffOut)
@@ -137,6 +262,9 @@ def update_staff(
     if not row:
         raise HTTPException(404, "Không tìm thấy cán bộ")
     update_data = body.dict(exclude_none=True)
+    # Serialize date object → ISO string cho sqlite3
+    if "join_industry_date" in update_data and update_data["join_industry_date"]:
+        update_data["join_industry_date"] = update_data["join_industry_date"].isoformat()
     if "employee_code" in update_data:
         dup = db.execute(
             "SELECT id FROM user_tttt WHERE employee_code = ? AND id != ?",
@@ -157,7 +285,7 @@ def update_staff(
                     f"Cập nhật {row['username']}: {changed}", client_ip)
         db.commit()
     row = db.execute("SELECT * FROM user_tttt WHERE id = ?", (staff_id,)).fetchone()
-    return dict(row)
+    return _enrich(dict(row))
 
 
 @router.delete("/{staff_id}")
@@ -178,45 +306,6 @@ def delete_staff(
                 f"Xóa tài khoản {row['username']} ({row['full_name']})", client_ip)
     db.commit()
     return {"message": "Đã xóa tài khoản"}
-
-
-# ─── Export / Import DB ──────────────────────────────────────────────────────
-
-@router.get("/export-db")
-def export_users_db(_: dict = Depends(require_admin)):
-    """Xuất bảng user_tttt thành file SQLite để chép sang hệ thống khác."""
-    tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-    tmp.close()
-    try:
-        src = sqlite3.connect(DB_PATH)
-        exp = sqlite3.connect(tmp.name)
-        # Copy schema
-        ddl = src.execute(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name='user_tttt'"
-        ).fetchone()[0]
-        exp.execute(ddl)
-        # Copy tất cả user chưa bị xóa
-        src.row_factory = sqlite3.Row
-        rows = src.execute("SELECT * FROM user_tttt WHERE is_deleted = 0 OR is_deleted IS NULL").fetchall()
-        if rows:
-            cols = [d[0] for d in rows[0].keys().__class__(rows[0])]
-            cols = list(rows[0].keys())
-            ph = ",".join("?" * len(cols))
-            exp.executemany(f"INSERT INTO user_tttt VALUES ({ph})", [tuple(r) for r in rows])
-        exp.commit()
-        src.close()
-        exp.close()
-        data = open(tmp.name, "rb").read()
-    finally:
-        os.unlink(tmp.name)
-
-    from datetime import date
-    fname = f"users_{date.today().strftime('%Y%m%d')}.db"
-    return StreamingResponse(
-        io.BytesIO(data),
-        media_type="application/octet-stream",
-        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
-    )
 
 
 @router.post("/import-db")

@@ -17,16 +17,19 @@ python frontend/main.py            # Frontend riêng
 ## Architecture
 
 **Backend** (`backend/`) — FastAPI REST API, port 8000:
-- `backend/main.py` — App entry; `_ensure_indexes()` chạy schema migration khi khởi động
-- `backend/models.py` — SQLAlchemy ORM (tất cả bảng)
-- `backend/schemas.py` — Pydantic request/response schemas
+- `backend/main.py` — App entry (~80 LOC); lifespan gọi migrations, routers đăng ký qua registry
+- `backend/db/migrations.py` — `_create_tables()` + `_ensure_indexes()`; **thêm migration tại đây**
+- `backend/api/registry.py` — Danh sách tất cả routers; **thêm router mới tại đây**
+- `backend/schemas/` — Pydantic request/response schemas (package)
 - `backend/database.py` — SQLite engine (WAL mode, FK via PRAGMA)
 - `backend/core/` — `deps.py` (RBAC), `security.py` (JWT), `sessions.py` (in-memory), `config.py`, `rate_limit.py`
 - `backend/api/` — Route handlers theo tính năng
 - `backend/services/` — Business logic (đóng tập, in bìa, phiếu nghỉ phép)
 
 **Frontend** (`frontend/`) — NiceGUI SPA, port 8080:
-- `frontend/main.py` — Single-file SPA: toàn bộ trang, layout, UI logic
+- `frontend/main.py` — Entry point; auto-discovers pages qua `pkgutil.iter_modules`
+- `frontend/pages/` — Mỗi file là một trang (`@ui.page`); thêm page mới chỉ cần tạo file
+- `frontend/shared.py` — Layout, sidebar, helpers dùng chung
 - `frontend/api_client.py` — httpx wrapper; token lưu trong `app.storage.user`
 
 **Templates** (`templates/`) — Word templates (docxtpl):
@@ -34,3 +37,13 @@ python frontend/main.py            # Frontend riêng
 - `don_xin_nghi_phep_tpl.docx` — Phiếu nghỉ phép
 
 **Database** (`data/`) — SQLite; WAL mode; FK constraints enforced.
+
+## Implementation Notes
+
+Mọi quyết định kỹ thuật không hiển nhiên, đánh đổi thiết kế, và vấn đề phát hiện trong quá trình implement **phải được ghi vào [`Implementation-notes.html`](Implementation-notes.html)** — cập nhật liên tục, không để sau.
+
+Dùng format: card per topic, bảng cho so sánh trước/sau và đánh đổi, badge màu cho trạng thái.
+
+## Quy tắc làm việc
+
+- **Dọn data test:** Sau khi test bất kỳ tính năng nào, phải tự xóa toàn bộ data đã tạo để test (user, phòng ban, chứng từ, đơn nghỉ phép, v.v.) trước khi báo hoàn thành. Không chờ người dùng nhắc.

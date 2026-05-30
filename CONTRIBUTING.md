@@ -23,7 +23,8 @@ Khi nhiều người cùng sửa code, nếu không có quy tắc thì sẽ xả
 | **Người 6** | Báo cáo & Admin | `backend/api/reports.py`, `backend/api/dashboard.py`, `backend/api/logs.py`, `backend/api/holidays.py`, `backend/services/report_service.py`, `frontend/pages/reports.py`, `frontend/pages/dashboard.py`, `frontend/pages/logs.py` |
 
 **Files dùng chung — phải được Người 1 approve mới được merge:**
-- `backend/main.py` (danh sách migration trong `_ensure_indexes()`)
+- `backend/db/migrations.py` (danh sách migration trong `_ensure_indexes()`)
+- `backend/api/registry.py` (danh sách router)
 - `backend/core/enums.py`
 - `init_db.py`, `requirements.txt`, `run.py`
 
@@ -156,7 +157,7 @@ Khi có thông báo đồng nghiệp vừa merge code mới vào `develop`, bấ
 
 Một số file ảnh hưởng đến toàn bộ hệ thống. Khi cần sửa, phải làm PR riêng và được Người 1 approve.
 
-### Thêm cột mới vào database (`backend/main.py`)
+### Thêm cột mới vào database (`backend/db/migrations.py`)
 
 Thêm vào cuối danh sách `schema_migrations` trong `_ensure_indexes()`:
 
@@ -167,6 +168,16 @@ Thêm vào cuối danh sách `schema_migrations` trong `_ensure_indexes()`:
 
 Tạo PR riêng, ghi rõ: cột nào, bảng nào, ai cần.  
 **Phải được Người 1 approve.** Sau khi merge, thông báo nhóm chạy `git-update.bat` rồi khởi động lại app.
+
+### Thêm API router mới (`backend/api/registry.py`)
+
+1. Tạo file `backend/api/<tên>.py` với `router = APIRouter(...)`
+2. Mở `backend/api/registry.py`, thêm 1 dòng import và 1 tuple vào `_ROUTERS`
+3. Tạo PR riêng, Người 1 approve
+
+### Thêm trang frontend mới (`frontend/pages/`)
+
+Chỉ cần tạo file `frontend/pages/<tên>.py` với `@ui.page("/route")` — **không cần sửa `frontend/main.py`**. Trang tự động được đăng ký khi app khởi động.
 
 ### Thêm thư viện (`requirements.txt`)
 

@@ -171,6 +171,17 @@ async def logs_page():
                         ui.label(e.get("ip_address") or "—").classes("text-xs font-mono w-28 shrink-0 text-gray-500")
                         ui.label(e.get("detail") or "").classes("text-xs flex-1 text-gray-500 truncate")
 
+        async def _export_logins():
+            try:
+                from datetime import date as _d
+                content = await asyncio.to_thread(
+                    api.download, "/api/admin/logs/logins/export",
+                    {"success": login_filter_ref[0]},
+                )
+                ui.download(content, f"nhat_ky_dang_nhap_{_d.today().strftime('%Y%m%d')}.xlsx")
+            except Exception as e:
+                _handle_api_error(e)
+
         with ui.row().classes("gap-2 mb-2 items-center"):
             for _sf, _lbl in [("", "Tất cả"), ("true", "Thành công"), ("false", "Thất bại")]:
                 ui.button(_lbl,
@@ -179,5 +190,8 @@ async def logs_page():
             ui.button("↻", icon="refresh",
                       on_click=lambda: asyncio.ensure_future(_load_logins(login_filter_ref[0]))).classes(
                 "text-sm bg-gray-700 text-white")
+            ui.button("Xuất Excel", icon="download",
+                      on_click=_export_logins).classes(
+                "text-sm bg-green-700 text-white").tooltip("Tải Excel nhật ký đăng nhập (theo bộ lọc hiện tại)")
 
         await _load_logins("")

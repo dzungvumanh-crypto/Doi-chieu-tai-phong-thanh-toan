@@ -107,6 +107,71 @@ def backup_db(
     )
 
 
+@router.get("/logins/export")
+def export_login_logs(
+    success: str = Query(""),
+    _: dict = Depends(require_admin_or_gd),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    import openpyxl
+    from openpyxl.styles import Alignment, Font, PatternFill
+
+    clauses = []
+    params: list = []
+    if success == "true":
+        clauses.append("ll.success = 1")
+    elif success == "false":
+        clauses.append("ll.success = 0")
+    where = "WHERE " + " AND ".join(clauses) if clauses else ""
+
+    rows = db.execute(
+        f"""SELECT ll.*, ks.full_name
+            FROM login_logs ll
+            LEFT JOIN user_tttt ks ON ll.staff_id = ks.id
+            {where}
+            ORDER BY ll.created_at DESC""",
+        params,
+    ).fetchall()
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Nhật ký đăng nhập"
+
+    hdr_fill = PatternFill("solid", fgColor="37474F")
+    hdr_font = Font(bold=True, color="FFFFFF")
+    headers = ["STT", "Thời gian", "Kết quả", "Username", "Họ và tên", "IP", "Chi tiết"]
+    widths  = [6, 18, 12, 20, 28, 18, 40]
+    ws.append(headers)
+    for cell, w in zip(ws[1], widths):
+        cell.fill = hdr_fill
+        cell.font = hdr_font
+        cell.alignment = Alignment(horizontal="center")
+        ws.column_dimensions[cell.column_letter].width = w
+
+    for idx, r in enumerate(rows, 1):
+        ts = (r["created_at"] or "")[:16].replace("T", " ")
+        ws.append([
+            idx,
+            ts,
+            "Thành công" if r["success"] else "Thất bại",
+            r["username"] or "",
+            r["full_name"] or "",
+            r["ip_address"] or "",
+            r["detail"] or "",
+        ])
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    from datetime import date
+    fname = f"nhat_ky_dang_nhap_{date.today().strftime('%Y%m%d')}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{fname}"},
+    )
+
+
 @router.get("/logins")
 def get_login_logs(
     limit:   int = Query(200, ge=1, le=1000),

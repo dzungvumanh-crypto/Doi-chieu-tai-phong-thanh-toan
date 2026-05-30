@@ -1,4 +1,4 @@
-"""Trang quản lý tài khoản cán bộ KSNB."""
+"""Trang quản lý tài khoản cán bộ TTTT."""
 import asyncio
 from nicegui import ui, app
 import frontend.api_client as api
@@ -45,14 +45,15 @@ async def staff_page():
         edit_dialog = ui.dialog()
         with edit_dialog, ui.card().classes("w-[28rem] p-6"):
             ui.label("Sửa tài khoản").classes("text-lg font-bold mb-4")
-            ef_name    = ui.input("Họ tên *").classes("w-full")
-            ef_empcode = ui.input("Mã cán bộ").props('placeholder="VD: 201700886"').classes("w-full mt-2")
-            ef_role    = ui.select(ROLE_OPTS, label="Quyền *").classes("w-full mt-2")
-            ef_dept    = ui.select(all_dept_opts, label="Phòng *").classes("w-full mt-2")
-            ef_phone   = ui.input("Điện thoại").classes("w-full mt-2")
-            ef_ipcas   = ui.input("User IPCAS").props('placeholder="VD: HQNTHN"').classes("w-full mt-2")
-            ef_payment = ui.input("User Payment").props('placeholder="VD: linhnguyendieu3"').classes("w-full mt-2")
-            ef_active  = ui.checkbox("Đang hoạt động").classes("mt-2")
+            ef_name        = ui.input("Họ tên *").classes("w-full")
+            ef_empcode     = ui.input("Mã cán bộ").props('placeholder="VD: 201700886"').classes("w-full mt-2")
+            ef_role        = ui.select(ROLE_OPTS, label="Quyền *").classes("w-full mt-2")
+            ef_dept        = ui.select(all_dept_opts, label="Phòng *").classes("w-full mt-2")
+            ef_phone       = ui.input("Điện thoại").classes("w-full mt-2")
+            ef_join_date   = ui.input("Ngày vào ngành").props('type="date"').classes("w-full mt-2")
+            ef_ipcas       = ui.input("User IPCAS").props('placeholder="VD: HQNTHN"').classes("w-full mt-2")
+            ef_payment     = ui.input("User Payment").props('placeholder="VD: linhnguyendieu3"').classes("w-full mt-2")
+            ef_active      = ui.checkbox("Đang hoạt động").classes("mt-2")
             with ui.row().classes("w-full justify-end gap-2 mt-4"):
                 ui.button("Hủy", on_click=lambda: edit_dialog.close()).classes("text-gray-500")
                 async def do_edit():
@@ -69,6 +70,7 @@ async def staff_page():
                             "phone": ef_phone.value or None,
                             "is_active": ef_active.value,
                             "department_id": ef_dept.value,
+                            "join_industry_date": ef_join_date.value or None,
                             "ipcas_code": ef_ipcas.value.strip().upper() or None,
                             "payment_username": ef_payment.value.strip() or None,
                         })
@@ -83,15 +85,16 @@ async def staff_page():
         add_dialog = ui.dialog()
         with add_dialog, ui.card().classes("w-96 p-6"):
             ui.label("Thêm tài khoản").classes("text-lg font-bold mb-4")
-            f_name     = ui.input("Họ tên *").classes("w-full")
-            f_empcode  = ui.input("Mã cán bộ").props('placeholder="VD: 201700886"').classes("w-full mt-2")
-            f_role     = ui.select(ROLE_OPTS, label="Quyền *", value="chuyen_vien").classes("w-full mt-2")
-            f_dept     = ui.select(all_dept_opts, label="Phòng *").classes("w-full mt-2")
-            f_username = ui.input("Username *").classes("w-full mt-2")
-            f_password = ui.input("Mật khẩu *", password=True).classes("w-full mt-2")
-            f_phone    = ui.input("Điện thoại").classes("w-full mt-2")
-            f_ipcas    = ui.input("User IPCAS").props('placeholder="VD: HQNTHN"').classes("w-full mt-2")
-            f_payment  = ui.input("User Payment").props('placeholder="VD: linhnguyendieu3"').classes("w-full mt-2")
+            f_name       = ui.input("Họ tên *").classes("w-full")
+            f_empcode    = ui.input("Mã cán bộ").props('placeholder="VD: 201700886"').classes("w-full mt-2")
+            f_role       = ui.select(ROLE_OPTS, label="Quyền *", value="chuyen_vien").classes("w-full mt-2")
+            f_dept       = ui.select(all_dept_opts, label="Phòng *").classes("w-full mt-2")
+            f_username   = ui.input("Username *").classes("w-full mt-2")
+            f_password   = ui.input("Mật khẩu *", password=True).classes("w-full mt-2")
+            f_phone      = ui.input("Điện thoại").classes("w-full mt-2")
+            f_join_date  = ui.input("Ngày vào ngành").props('type="date"').classes("w-full mt-2")
+            f_ipcas      = ui.input("User IPCAS").props('placeholder="VD: HQNTHN"').classes("w-full mt-2")
+            f_payment    = ui.input("User Payment").props('placeholder="VD: linhnguyendieu3"').classes("w-full mt-2")
             with ui.row().classes("w-full justify-end gap-2 mt-4"):
                 ui.button("Hủy", on_click=lambda: add_dialog.close()).classes("text-gray-500")
                 async def do_add():
@@ -110,6 +113,7 @@ async def staff_page():
                             "password": f_password.value,
                             "phone": f_phone.value or None,
                             "department_id": f_dept.value,
+                            "join_industry_date": f_join_date.value or None,
                             "ipcas_code": f_ipcas.value.strip().upper() or None,
                             "payment_username": f_payment.value.strip() or None,
                         })
@@ -129,6 +133,15 @@ async def staff_page():
                 ui.button("Tìm kiếm", icon="search", on_click=lambda: render_staff_rows()).classes("bg-gray-700 text-white").props("dense")
             if is_admin:
                 ui.button("+ Thêm tài khoản", on_click=lambda: add_dialog.open()).classes("bg-red-700 text-white").props("dense")
+                async def _do_export_excel():
+                    try:
+                        from datetime import date
+                        data = await asyncio.to_thread(api.download, "/api/staff/export")
+                        ui.download(data, f"danh_sach_can_bo_{date.today().strftime('%Y%m%d')}.xlsx")
+                    except Exception as e:
+                        if _handle_api_error(e): return
+                        ui.notify(str(e), type="negative")
+
                 async def do_export():
                     try:
                         data = await asyncio.to_thread(api.download, "/api/staff/export-db")
@@ -137,6 +150,7 @@ async def staff_page():
                     except Exception as e:
                         if _handle_api_error(e): return
                         ui.notify(str(e), type="negative")
+                ui.button("Xuất Excel", icon="download", on_click=lambda: asyncio.ensure_future(_do_export_excel())).props("dense").classes("bg-green-700 text-white")
                 ui.button("Xuất DB", icon="download", on_click=do_export).props("dense outline").classes("text-gray-700")
                 import_input = ui.upload(
                     label="Nhập DB",
@@ -170,6 +184,7 @@ async def staff_page():
             ef_role.set_value(s["role"])
             ef_dept.set_value(s.get("department_id"))
             ef_phone.set_value(s.get("phone") or "")
+            ef_join_date.set_value(s.get("join_industry_date") or "")
             ef_ipcas.set_value(s.get("ipcas_code") or "")
             ef_payment.set_value(s.get("payment_username") or "")
             ef_active.set_value(s.get("is_active", True))
@@ -199,11 +214,22 @@ async def staff_page():
                     ui.label("Quyền").classes("w-28 text-center")
                     ui.label("Phòng").classes("w-36")
                     ui.label("Username").classes("w-24")
+                    ui.label("Vào ngành / Phép").classes("w-32 text-center")
                     ui.label("User IPCAS").classes("w-24 text-center")
                     ui.label("User Payment").classes("w-32")
                     ui.label("TT").classes("w-16 text-center")
                     if is_admin:
                         ui.label("Thao tác").classes("w-16 text-center")
+
+                def _fmt_join(iso_str, leave_days):
+                    if not iso_str:
+                        return "—"
+                    try:
+                        from datetime import date as _date
+                        d = _date.fromisoformat(str(iso_str))
+                        return f"{d.strftime('%d/%m/%Y')} ({leave_days or 12}n)"
+                    except Exception:
+                        return str(iso_str)
 
                 def _row(s: dict):
                     dname = dept_id_to_name.get(s.get("department_id"), "—")
@@ -213,6 +239,7 @@ async def staff_page():
                         ui.label(role_map.get(s["role"], s["role"])).classes("w-28 text-center text-sm")
                         ui.label(dname).classes("w-36 text-sm text-gray-600")
                         ui.label(s.get("username", "")).classes("w-24 text-sm text-gray-500")
+                        ui.label(_fmt_join(s.get("join_industry_date"), s.get("annual_leave_days"))).classes("w-32 text-center text-xs text-gray-600")
                         ui.label(s.get("ipcas_code") or "—").classes("w-24 text-center text-sm font-mono text-gray-600")
                         ui.label(s.get("payment_username") or "—").classes("w-32 text-sm text-gray-500")
                         if s.get("is_active"):
@@ -239,7 +266,7 @@ async def staff_page():
                         by_dept.setdefault(s.get("department_id"), []).append(s)
                     for dept_id, members in sorted(by_dept.items(),
                                                    key=lambda x: dept_id_to_name.get(x[0], "")):
-                        dname = dept_id_to_name.get(dept_id, f"Phòng ID {dept_id}")
+                        dname = dept_id_to_name.get(dept_id, "Chưa phân phòng")
                         with ui.row().classes("w-full px-3 py-1 bg-blue-50 text-xs text-blue-700 font-semibold border-b border-blue-100 items-center gap-1"):
                             ui.icon("badge").classes("text-sm")
                             ui.label(dname)

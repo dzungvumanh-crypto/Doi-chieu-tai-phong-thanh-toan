@@ -29,6 +29,24 @@ def write_audit(
     )
 
 
+def compute_annual_leave(join_date_str, year: int = None) -> int:
+    """Tính số ngày phép năm: 12 ngày + 1 ngày mỗi 4 năm vào ngành.
+
+    Ví dụ: vào ngành 2007, năm 2011 → 13 ngày; năm 2015 → 14 ngày.
+    Trả về 12 nếu join_date_str là None hoặc không hợp lệ.
+    """
+    if not join_date_str:
+        return 12
+    from datetime import date
+    try:
+        join_date = join_date_str if isinstance(join_date_str, date) else date.fromisoformat(str(join_date_str))
+        ref_year = year or date.today().year
+        years = ref_year - join_date.year
+        return 12 + max(0, years // 4)
+    except Exception:
+        return 12
+
+
 def get_db():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30)
     conn.row_factory = sqlite3.Row

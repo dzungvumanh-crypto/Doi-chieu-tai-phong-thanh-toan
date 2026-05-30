@@ -13,6 +13,7 @@ class StaffCreate(BaseModel):
     phone: Optional[str] = None
     email: Optional[str] = None
     start_date: Optional[date] = None
+    join_industry_date: Optional[date] = None
     ipcas_code: Optional[str] = None
     payment_username: Optional[str] = None
 
@@ -24,6 +25,7 @@ class StaffUpdate(BaseModel):
     phone: Optional[str] = None
     email: Optional[str] = None
     is_active: Optional[bool] = None
+    join_industry_date: Optional[date] = None
     ipcas_code: Optional[str] = None
     payment_username: Optional[str] = None
 
@@ -37,6 +39,8 @@ class StaffOut(BaseModel):
     phone: Optional[str]
     email: Optional[str]
     start_date: Optional[date]
+    join_industry_date: Optional[date] = None
+    annual_leave_days: Optional[int] = None
     ipcas_code: Optional[str] = None
     payment_username: Optional[str] = None
     is_active: bool

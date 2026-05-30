@@ -85,7 +85,7 @@ async def dashboard_page():
 
         stats = [
             ("Người dùng",     len(staff_list),                               "people",     "bg-red-50 border-red-200"),
-            ("Phòng nghiệp vụ", len([d for d in depts if d.get("is_source")]), "business",   "bg-blue-50 border-blue-200"),
+            ("Phòng nghiệp vụ", len([d for d in depts if d.get("code") != "BGD"]), "business",   "bg-blue-50 border-blue-200"),
             ("Nhóm tập",        len(groups),                                   "folder_zip", "bg-purple-50 border-purple-200"),
             ("Tập đã in",       sum(len(g.get("bundles", [])) for g in groups),"print",      "bg-orange-50 border-orange-200"),
         ]

@@ -690,7 +690,6 @@ async def leaves_page():
                     _draw_table(all_leaves, show_name=True)
 
             with ui.tab_panel(t_cal):
-                import datetime as _dt_mod
                 _today = _dt_mod.date.today()
                 with ui.row().classes("gap-3 mb-4 items-center"):
                     cal_year  = ui.select({y: str(y) for y in range(2024, _today.year + 2)},

@@ -11,26 +11,29 @@ from nicegui import ui, app
 app.add_static_files('/static', os.path.join(os.path.dirname(__file__), 'static'))
 
 # Import page modules — @ui.page decorators tự đăng ký route khi import
-import frontend.pages.login           # noqa: F401
-import frontend.pages.dashboard       # noqa: F401
-import frontend.pages.staff           # noqa: F401
-import frontend.pages.handovers       # noqa: F401
-import frontend.pages.bundles         # noqa: F401
-import frontend.pages.storage         # noqa: F401
-import frontend.pages.user_management # noqa: F401
-import frontend.pages.leaves          # noqa: F401
-import frontend.pages.logs            # noqa: F401
-import frontend.pages.change_password # noqa: F401
-import frontend.pages.reports         # noqa: F401
+# Thêm page mới: chỉ cần tạo file frontend/pages/<tên>.py, không cần sửa file này
+import importlib
+import pkgutil
+import frontend.pages as _pages_pkg
+
+for _importer, _modname, _ispkg in pkgutil.iter_modules(_pages_pkg.__path__):
+    importlib.import_module(f"frontend.pages.{_modname}")
 
 # Re-export shared utilities để giữ backward compat với các import từ bên ngoài
 from frontend.shared import (           # noqa: F401
     _sidebar, _content_area, _page_header, _card,
     _require_auth, _redirect_if_cv, _handle_api_error,
-    MENU_ITEMS, MENU_ITEMS_CV, COLORS,
+    DEPARTMENTS, MENU_ITEMS_CV, COLORS,
 )
 
+def _on_exception(e: Exception):
+    import logging, traceback
+    logging.getLogger("nicegui.crash").error("Unhandled UI exception:\n%s", traceback.format_exc())
+
+
 if __name__ in {"__main__", "__mp_main__"}:
+    if hasattr(ui, "on_exception"):
+        ui.on_exception(_on_exception)
     ui.run(
         host="0.0.0.0",
         port=8080,

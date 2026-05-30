@@ -1,0 +1,43 @@
+"""Router registry — thêm router mới vào đây, không cần sửa main.py.
+
+Quy trình thêm router mới:
+1. Tạo file backend/api/<tên>.py với router = APIRouter(...)
+2. Thêm import bên dưới
+3. Thêm 1 tuple vào _ROUTERS
+4. Tạo PR riêng, Người 1 approve
+"""
+from fastapi import FastAPI
+
+from backend.api.auth import router as auth_router
+from backend.api.bundles import router as bundle_router
+from backend.api.dashboard import router as dashboard_router
+from backend.api.delegations import router as delegations_router
+from backend.api.departments import dept_router
+from backend.api.handovers import router as handover_router
+from backend.api.holidays import router as holidays_router
+from backend.api.leaves import router as leaves_router
+from backend.api.logs import router as logs_router
+from backend.api.reports import router as reports_router
+from backend.api.staff import router as staff_router
+
+# Thêm router mới: 1 dòng import ở trên + 1 tuple ở đây
+# Format: (router_object, {"prefix": "/api/...", "tags": ["..."]})
+# Nếu prefix/tags đã khai báo trong router file thì dùng {} rỗng
+_ROUTERS = [
+    (auth_router,        {}),
+    (staff_router,       {}),
+    (dept_router,        {}),
+    (handover_router,    {}),
+    (bundle_router,      {}),
+    (leaves_router,      {"prefix": "/api/leaves",         "tags": ["leaves"]}),
+    (delegations_router, {"prefix": "/api/delegations",    "tags": ["delegations"]}),
+    (logs_router,        {"prefix": "/api/admin/logs",     "tags": ["admin-logs"]}),
+    (dashboard_router,   {"prefix": "/api/dashboard",      "tags": ["dashboard"]}),
+    (holidays_router,    {"prefix": "/api/admin/holidays", "tags": ["holidays"]}),
+    (reports_router,     {}),
+]
+
+
+def apply_routers(app: FastAPI) -> None:
+    for router, kwargs in _ROUTERS:
+        app.include_router(router, **kwargs)

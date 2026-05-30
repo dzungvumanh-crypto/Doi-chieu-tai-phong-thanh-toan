@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Implementation Notes — PAYMENT CENTER</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 14px; line-height: 1.6; background: #f4f5f7; color: #24292f; }
+  .page { max-width: 1100px; margin: 0 auto; padding: 32px 24px 64px; }
+
+  h1 { font-size: 22px; font-weight: 700; color: #111; margin-bottom: 4px; }
+  .subtitle { color: #636e7b; font-size: 13px; margin-bottom: 32px; }
+
+  .card { background: #fff; border: 1px solid #d8dee4; border-radius: 8px; margin-bottom: 20px; overflow: hidden; }
+  .card-header { display: flex; align-items: center; gap: 10px; padding: 14px 18px; background: #f6f8fa; border-bottom: 1px solid #d8dee4; cursor: pointer; user-select: none; }
+  .card-header:hover { background: #eef1f4; }
+  .card-num { background: #c62828; color: #fff; font-size: 11px; font-weight: 700; border-radius: 50%; width: 22px; height: 22px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .card-title { font-weight: 600; font-size: 14px; flex: 1; }
+  .badge { font-size: 11px; padding: 2px 8px; border-radius: 12px; font-weight: 600; }
+  .badge-done   { background: #d1fae5; color: #065f46; }
+  .badge-warn   { background: #fef3c7; color: #92400e; }
+  .badge-info   { background: #dbeafe; color: #1e40af; }
+  .badge-skip   { background: #f3f4f6; color: #6b7280; }
+  .card-body { padding: 18px; }
+
+  table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 13px; }
+  th { background: #f6f8fa; text-align: left; padding: 8px 12px; font-weight: 600; color: #444; border: 1px solid #d8dee4; }
+  td { padding: 8px 12px; border: 1px solid #e6eaef; vertical-align: top; }
+  tr:nth-child(even) td { background: #fafafa; }
+
+  .label { font-weight: 600; color: #444; margin: 12px 0 4px; font-size: 13px; }
+  .label:first-child { margin-top: 0; }
+  p { margin: 6px 0; color: #444; font-size: 13px; }
+  code { background: #f0f3f6; border: 1px solid #dde2e9; border-radius: 4px; padding: 1px 5px; font-family: "SFMono-Regular", Consolas, monospace; font-size: 12px; color: #c62828; }
+  pre { background: #f6f8fa; border: 1px solid #d8dee4; border-radius: 6px; padding: 12px; font-size: 12px; overflow-x: auto; margin: 10px 0; font-family: "SFMono-Regular", Consolas, monospace; line-height: 1.5; }
+  ul { padding-left: 20px; margin: 6px 0; color: #444; font-size: 13px; }
+  li { margin: 3px 0; }
+  .pill { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 10px; font-weight: 600; margin-right: 4px; }
+  .pill-red   { background: #fee2e2; color: #991b1b; }
+  .pill-green { background: #d1fae5; color: #065f46; }
+  .pill-blue  { background: #dbeafe; color: #1e40af; }
+  .pill-gray  { background: #f3f4f6; color: #4b5563; }
+  .note { background: #fffbeb; border-left: 3px solid #f59e0b; padding: 8px 12px; border-radius: 0 4px 4px 0; font-size: 13px; margin: 10px 0; color: #78350f; }
+  .caution { background: #fef2f2; border-left: 3px solid #ef4444; padding: 8px 12px; border-radius: 0 4px 4px 0; font-size: 13px; margin: 10px 0; color: #7f1d1d; }
+  footer { text-align: center; color: #8b949e; font-size: 12px; margin-top: 40px; }
+  .arrow { color: #8b949e; margin: 0 4px; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
+  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-05-28</p>
+
+  <!-- 1 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">1</span>
+      <span class="card-title">Tách <code>backend/main.py</code> — Migrations + Registry</span>
+      <span class="badge badge-done">Hoàn thành</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Vấn đề</div>
+      <p><code>backend/main.py</code> ban đầu dài ~600 dòng — chứa SQL tạo bảng, migration schema, và đăng ký router. Mỗi người trong nhóm 6 đều phải sửa file này → conflict liên tục.</p>
+
+      <div class="label">Giải pháp</div>
+      <table>
+        <tr><th>File mới</th><th>Nội dung</th><th>Ai sửa</th></tr>
+        <tr><td><code>backend/db/migrations.py</code></td><td><code>_create_tables()</code> + <code>_ensure_indexes()</code></td><td>Người thêm migration mới</td></tr>
+        <tr><td><code>backend/api/registry.py</code></td><td><code>apply_routers()</code> + danh sách router</td><td>Người thêm router mới</td></tr>
+        <tr><td><code>backend/main.py</code></td><td>~80 dòng, chỉ glue code</td><td>Người 1 (approve only)</td></tr>
+      </table>
+
+      <div class="label">Files phải cập nhật theo</div>
+      <table>
+        <tr><th>File</th><th>Thay đổi</th><th>Trạng thái</th></tr>
+        <tr><td><code>init_db.py</code></td><td>Đổi import từ <code>backend.main</code> → <code>backend.db.migrations</code></td><td><span class="pill pill-green">✓ Đã làm</span></td></tr>
+        <tr><td><code>CONTRIBUTING.md</code></td><td>Cập nhật hướng dẫn thêm migration / router / page</td><td><span class="pill pill-green">✓ Đã làm</span></td></tr>
+        <tr><td><code>DESIGN.md</code></td><td>Đổi đường dẫn <code>_ensure_indexes()</code></td><td><span class="pill pill-green">✓ Đã làm</span></td></tr>
+        <tr><td><code>CLAUDE.md</code></td><td>Cập nhật mô tả kiến trúc</td><td><span class="pill pill-green">✓ Đã làm</span></td></tr>
+      </table>
+    </div>
+  </div>
+
+  <!-- 2 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">2</span>
+      <span class="card-title">Tính ngày phép tự động từ <code>join_industry_date</code></span>
+      <span class="badge badge-done">Hoàn thành</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Nghiệp vụ</div>
+      <p>Số ngày phép = <strong>12 + floor(số_năm_vào_ngành / 4)</strong>. VD: vào ngành 2007, năm 2015 → 14 ngày phép.</p>
+
+      <div class="label">Trước vs Sau</div>
+      <table>
+        <tr><th></th><th>Trước</th><th>Sau</th></tr>
+        <tr><td><strong>Nguồn dữ liệu</strong></td><td>Cột <code>annual_leave_days</code> tĩnh trong DB</td><td>Tính từ <code>join_industry_date</code> mỗi request</td></tr>
+        <tr><td><strong>Cập nhật</strong></td><td>Admin sửa tay mỗi năm</td><td>Tự động — không cần can thiệp</td></tr>
+        <tr><td><strong>Fallback</strong></td><td>—</td><td><code>annual_leave_days</code> trong DB nếu <code>join_industry_date = NULL</code></td></tr>
+      </table>
+
+      <div class="label">Nơi áp dụng <code>compute_annual_leave()</code></div>
+      <table>
+        <tr><th>File</th><th>Mục đích</th></tr>
+        <tr><td><code>backend/database.py</code></td><td>Định nghĩa hàm</td></tr>
+        <tr><td><code>backend/core/deps.py</code></td><td>Ghi đè trong dict mọi authenticated request</td></tr>
+        <tr><td><code>backend/api/staff.py</code></td><td>Hàm <code>_enrich()</code> khi trả response staff</td></tr>
+        <tr><td><code>backend/api/leaves.py</code></td><td>Khi generate phiếu Word</td></tr>
+        <tr><td><code>backend/schemas/staff.py</code></td><td>Thêm field vào schema Create/Update/Out</td></tr>
+      </table>
+
+      <div class="caution"><strong>Quan trọng:</strong> Cột <code>annual_leave_days</code> trong DB trở thành <em>legacy fallback</em>. Khi <code>join_industry_date</code> có giá trị, giá trị DB bị bỏ qua hoàn toàn. Không xóa cột để giữ backward compat.</div>
+
+      <div class="note"><strong>Token đăng nhập:</strong> <code>Token</code> schema không có <code>annual_leave_days</code>. Frontend lấy giá trị này từ <code>GET /api/staff/</code>, không phải từ JWT — đây KHÔNG phải bug.</div>
+    </div>
+  </div>
+
+  <!-- 3 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">3</span>
+      <span class="card-title">Auto-discovery Frontend Pages</span>
+      <span class="badge badge-done">Hoàn thành</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Trước</div>
+      <p>11 dòng hardcode import trong <code>frontend/main.py</code>. Thêm page mới phải sửa file chung → conflict.</p>
+
+      <div class="label">Sau</div>
+      <pre>import pkgutil, importlib
+import frontend.pages as _pages_pkg
+for _importer, _modname, _ispkg in pkgutil.iter_modules(_pages_pkg.__path__):
+    importlib.import_module(f"frontend.pages.{_modname}")</pre>
+
+      <div class="label">Đánh đổi</div>
+      <table>
+        <tr><th>Khía cạnh</th><th>Trước</th><th>Sau</th><th>Ảnh hưởng</th></tr>
+        <tr><td>Thứ tự import</td><td>Cụ thể, có chủ ý</td><td>Alphabetical</td><td><span class="pill pill-green">Không ảnh hưởng</span> — các page độc lập</td></tr>
+        <tr><td>Sub-package</td><td>N/A</td><td>Bị import nếu tồn tại</td><td><span class="pill pill-gray">Edge case</span> — hiện không có</td></tr>
+        <tr><td>Thêm page mới</td><td>Sửa <code>main.py</code></td><td>Chỉ tạo file mới</td><td><span class="pill pill-green">Tốt hơn</span></td></tr>
+      </table>
+
+      <div class="note">Nếu sau này cần skip sub-packages: thêm <code>if not _ispkg:</code> trước <code>importlib.import_module(...)</code>.</div>
+    </div>
+  </div>
+
+  <!-- 4 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">4</span>
+      <span class="card-title">Staff — Export Excel / Export DB / Import DB</span>
+      <span class="badge badge-done">Hoàn thành</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Endpoints mới (<code>backend/api/staff.py</code>)</div>
+      <table>
+        <tr><th>Endpoint</th><th>Mô tả</th><th>Quyền</th></tr>
+        <tr><td><code>GET /api/staff/export</code></td><td>Xuất danh sách cán bộ ra Excel (openpyxl)</td><td>Admin</td></tr>
+        <tr><td><code>GET /api/staff/export-db</code></td><td>Xuất bảng <code>user_tttt</code> thành file SQLite</td><td>Admin</td></tr>
+        <tr><td><code>POST /api/staff/import-db</code></td><td>Nhập file SQLite, upsert theo <code>employee_code</code></td><td>Admin</td></tr>
+      </table>
+
+      <div class="label">Quyết định thiết kế</div>
+      <table>
+        <tr><th>Quyết định</th><th>Lý do</th></tr>
+        <tr><td>Upsert theo <code>employee_code</code>, không phải <code>id</code></td><td><code>id</code> auto-increment có thể khác nhau giữa các máy; <code>employee_code</code> là mã nghiệp vụ, duy nhất và ổn định</td></tr>
+        <tr><td>Format <code>.db</code> thay vì CSV</td><td>Giữ nguyên kiểu dữ liệu, không cần parse; phù hợp offline sync</td></tr>
+        <tr><td>Ghi <code>audit_logs</code> khi import</td><td>Truy xuất ai nhập lúc nào, từ IP nào</td></tr>
+      </table>
+
+      <div class="note"><strong>Hạn chế đã biết:</strong> Import không kiểm tra schema compatibility. File <code>.db</code> từ phiên bản cũ (thiếu cột) vẫn chạy được nhưng bỏ qua cột mới. Chấp nhận được — tool nội bộ, không expose public.</div>
+    </div>
+  </div>
+
+  <!-- 5 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">5</span>
+      <span class="card-title">Login Logs Viewer</span>
+      <span class="badge badge-done">Hoàn thành</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Endpoints mới (<code>backend/api/logs.py</code>)</div>
+      <table>
+        <tr><th>Endpoint</th><th>Mô tả</th><th>Quyền</th></tr>
+        <tr><td><code>GET /api/admin/logs/logins</code></td><td>Danh sách login logs, filter <code>success</code>, phân trang</td><td>Admin + GĐ/PGĐ</td></tr>
+        <tr><td><code>GET /api/admin/logs/logins/export</code></td><td>Xuất Excel theo filter hiện tại</td><td>Admin + GĐ/PGĐ</td></tr>
+      </table>
+
+      <div class="label">Frontend (<code>frontend/pages/logs.py</code>)</div>
+      <ul>
+        <li>Section "Nhật ký đăng nhập" thêm phía dưới section log file</li>
+        <li>Filter: Tất cả / Thành công / Thất bại</li>
+        <li>Nút "Xuất Excel" — xuất theo filter đang chọn</li>
+        <li><code>api.download(path, params)</code> đã hỗ trợ query string → không cần sửa <code>api_client.py</code></li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- 6 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">6</span>
+      <span class="card-title">Exception Handler Frontend</span>
+      <span class="badge badge-info">Cải tiến nhỏ</span>
+    </div>
+    <div class="card-body">
+      <p>NiceGUI nuốt một số exception trong async UI callback mà không log — debug rất khó khi production.</p>
+      <pre>def _on_exception(e: Exception):
+    import logging, traceback
+    logging.getLogger("nicegui.crash").error("Unhandled UI exception:\n%s", traceback.format_exc())
+
+ui.on_exception(_on_exception)</pre>
+      <div class="note"><strong>Phạm vi:</strong> <code>ui.on_exception</code> chỉ bắt exception trong UI callbacks (click, submit...). Exception trong <code>asyncio.to_thread()</code> vẫn phải <code>try/except</code> bình thường.</div>
+    </div>
+  </div>
+
+  <!-- 7 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">7</span>
+      <span class="card-title">Dashboard Stat Fix — "Phòng nghiệp vụ"</span>
+      <span class="badge badge-warn">Bugfix</span>
+    </div>
+    <div class="card-body">
+      <table>
+        <tr><th></th><th>Code</th><th>Kết quả</th></tr>
+        <tr><td><strong>Cũ (sai)</strong></td><td><code>len([d for d in depts if d.get("is_source")])</code></td><td>Không đếm TH vì <code>is_source=False</code></td></tr>
+        <tr><td><strong>Mới (đúng)</strong></td><td><code>len([d for d in depts if d.get("code") != "BGD"])</code></td><td>Đếm TH, loại BGD</td></tr>
+      </table>
+      <p style="margin-top:10px">TH (Tổng hợp) là phòng nghiệp vụ thực sự — có nhân viên và công việc. Chỉ BGD không phải "phòng nghiệp vụ" theo nghĩa widget này.</p>
+      <div class="note"><strong>Rủi ro:</strong> Nếu sau này thêm phòng hành chính khác (HR, IT...) cũng có <code>is_source=False</code> và <code>code != "BGD"</code>, chúng sẽ bị tính nhầm vào đây. Cần xem lại điều kiện lúc đó.</div>
+    </div>
+  </div>
+
+  <!-- 8 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">8</span>
+      <span class="card-title">Vấn đề phát hiện — KHÔNG fix</span>
+      <span class="badge badge-skip">Bỏ qua có chủ ý</span>
+    </div>
+    <div class="card-body">
+      <table>
+        <tr><th>#</th><th>Vấn đề</th><th>Lý do không fix</th><th>Rủi ro</th></tr>
+        <tr>
+          <td>8a</td>
+          <td>Migration <code>ix_ksnb_staff_dept ON ksnb_staff</code> trong <code>_ensure_indexes()</code> — bảng đã đổi tên thành <code>user_tttt</code></td>
+          <td>Lỗi "no such table" được nuốt bởi error handler; index đúng (<code>ix_user_tttt_dept</code>) đã có trong <code>index_stmts</code></td>
+          <td><span class="pill pill-green">Thấp</span></td>
+        </tr>
+        <tr>
+          <td>8b</td>
+          <td><code>Token</code> login không trả <code>annual_leave_days</code></td>
+          <td>Frontend không dùng giá trị này từ JWT; lấy từ <code>/api/staff/</code> khi cần</td>
+          <td><span class="pill pill-green">Thấp</span></td>
+        </tr>
+        <tr>
+          <td>8c</td>
+          <td><code>pkgutil.iter_modules</code> không skip sub-packages trong <code>frontend/pages/</code></td>
+          <td>Không có sub-package nào hiện tại và không có kế hoạch tạo</td>
+          <td><span class="pill pill-green">Thấp</span></td>
+        </tr>
+      </table>
+    </div>
+  </div>
+
+  <!-- 9 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">9</span>
+      <span class="card-title">Files hỗ trợ — ngoài phạm vi web app</span>
+      <span class="badge badge-info">Thông tin</span>
+    </div>
+    <div class="card-body">
+      <table>
+        <tr><th>File / Thư mục</th><th>Mục đích</th><th>Quyết định</th></tr>
+        <tr>
+          <td><code>import_users_csv.py</code></td>
+          <td>Script one-off import CSV → <code>user_tttt</code> trực tiếp qua sqlite3</td>
+          <td>Giữ là script độc lập. Không expose qua API vì chỉ dùng khi setup / migration dữ liệu.</td>
+        </tr>
+        <tr>
+          <td><code>BaoCaoHauKiem/</code></td>
+          <td>Báo cáo Excel/Word mẫu nghiệp vụ</td>
+          <td>Không liên quan code — dữ liệu tham khảo.</td>
+        </tr>
+      </table>
+    </div>
+  </div>
+
+  <!-- 10 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">10</span>
+      <span class="card-title">UI Polish — Font, Scrollbar, Sidebar, Header, Stat Cards</span>
+      <span class="badge badge-done">Hoàn thành</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Mục tiêu</div>
+      <p>Nâng cấp giao diện thân thiện hơn mà không thay đổi tông màu, logo, hay text. Tất cả thay đổi là CSS/visual polish, không có thay đổi logic hay API.</p>
+
+      <div class="label">Thay đổi và lý do</div>
+      <table>
+        <tr><th>Thay đổi</th><th>File</th><th>Lý do</th></tr>
+        <tr>
+          <td>Font Inter toàn hệ thống (<code>_init_page_styles()</code>)</td>
+          <td><code>frontend/shared.py</code></td>
+          <td>Login page đã dùng Inter từ trước — các trang còn lại dùng font hệ thống gây không nhất quán</td>
+        </tr>
+        <tr>
+          <td>Custom scrollbar mỏng 5px, tông đỏ mờ</td>
+          <td><code>frontend/shared.py</code></td>
+          <td>Scrollbar mặc định trình duyệt quá thô so với design card-based hiện tại</td>
+        </tr>
+        <tr>
+          <td>Input focus ring đổi từ xanh (Quasar default) sang đỏ</td>
+          <td><code>frontend/shared.py</code></td>
+          <td>Quasar mặc định dùng primary color xanh dương — không khớp với branding đỏ</td>
+        </tr>
+        <tr>
+          <td>Sidebar: gradient thay cho flat <code>bg-red-900</code></td>
+          <td><code>frontend/shared.py</code></td>
+          <td>Gradient <code>#7f0000 → #8B0000</code> tạo chiều sâu nhẹ, không thay đổi tông màu</td>
+        </tr>
+        <tr>
+          <td>Active menu item: <code>border-l-4 border-yellow-300</code></td>
+          <td><code>frontend/shared.py</code></td>
+          <td>Indicator rõ hơn cho trang hiện tại — trước đây chỉ dựa vào background khác biệt nhỏ</td>
+        </tr>
+        <tr>
+          <td>Page header: accent bar dọc bên trái</td>
+          <td><code>frontend/shared.py</code></td>
+          <td>Tạo điểm nhấn cho tiêu đề; áp dụng tự động cho mọi trang qua <code>_page_header()</code></td>
+        </tr>
+        <tr>
+          <td>Stat cards dashboard: icon trong box màu rounded-xl</td>
+          <td><code>frontend/pages/dashboard.py</code></td>
+          <td>Icon "lơ lửng" bên cạnh số gây mất cân bằng visual; layout column (icon trên, metric dưới) phổ biến hơn trong dashboard hiện đại</td>
+        </tr>
+      </table>
+
+      <div class="label">Quyết định không làm</div>
+      <ul>
+        <li>Không dùng <code>hover:bg-red-800/60</code> (opacity modifier Tailwind v3) — NiceGUI bundle không đảm bảo hỗ trợ. Giữ nguyên <code>hover:bg-red-800</code>.</li>
+        <li>Không sửa trang login và change-password — đã có style riêng, hoạt động tốt.</li>
+        <li>Không sửa logic bảng dữ liệu (handovers, bundles, storage) — cải tiến shared.py đã áp dụng tự động qua <code>_card()</code> và <code>_page_header()</code>.</li>
+      </ul>
+
+      <div class="label">Lưu ý triển khai</div>
+      <p><code>_init_page_styles()</code> được gọi trong <code>_sidebar()</code> — chạy mỗi lần render trang. NiceGUI dedup <code>add_head_html</code> theo nội dung nên không bị inject trùng.</p>
+    </div>
+  </div>
+
+  <!-- 11 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">11</span>
+      <span class="card-title">Sidebar — Cấu trúc phòng ban dạng accordion</span>
+      <span class="badge badge-done">Hoàn thành</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Yêu cầu</div>
+      <p>Tổ chức lại sidebar thành 7 nhóm phòng ban. Mỗi phòng có thể mở rộng để hiện sub-items. Quản lý User và Log hệ thống giữ phẳng. Nghỉ phép → Phòng Tổng hợp, còn lại → Phòng KSNB & HTVH.</p>
+
+      <div class="label">Kỹ thuật accordion</div>
+      <p>Dùng thẻ HTML <code>&lt;details&gt;/&lt;summary&gt;</code> (native browser) thay vì <code>ui.expansion</code> (Quasar) vì:</p>
+      <table>
+        <tr><th>Lựa chọn</th><th>Ưu</th><th>Nhược</th></tr>
+        <tr><td><code>details/summary</code> (đã chọn)</td><td>Toàn quyền kiểm soát style, không bị Quasar override màu/padding</td><td>Cần CSS thêm để ẩn default marker và xoay chevron</td></tr>
+        <tr><td><code>ui.expansion</code> (Quasar)</td><td>Built-in animation</td><td>Quasar tự inject màu nền, font, padding — khó override với sidebar dark đỏ</td></tr>
+      </table>
+
+      <div class="label">CSS bổ sung</div>
+      <p>Inject qua <code>ui.add_head_html(_SIDEBAR_CSS)</code> trong <code>_sidebar()</code>: ẩn default marker, chevron xoay 90° khi <code>details[open]</code>.</p>
+
+      <div class="label">Auto-open department</div>
+      <p>Khi render sidebar, nếu <code>current_page</code> nằm trong <code>dept["items"]</code>, gọi <code>details.props("open")</code> để phòng tương ứng tự mở. Không cần JS hay session state.</p>
+
+      <div class="label">Phòng rỗng (Swift, Thanh toán, Kế toán, Nostro/Vostro, BGD)</div>
+      <p>Vẫn hiển thị và click được — khi mở ra không có sub-item. Đây là placeholder; thêm item sau bằng cách push vào <code>DEPARTMENTS[id]["items"]</code> trong <code>shared.py</code>.</p>
+
+      <div class="label">Sidebar width</div>
+      <p>Tăng từ <code>w-56</code> (14rem) → <code>w-64</code> (16rem) để tên phòng dài ("Phòng QLTK Nostro, Vostro") không bị wrap. <code>_content_area()</code> cập nhật tương ứng: <code>ml-64</code> và <code>calc(100vw - 16rem)</code>.</p>
+
+      <div class="label">Không thay đổi</div>
+      <ul>
+        <li>Chuyên viên vẫn thấy view phẳng (<code>MENU_ITEMS_CV</code>) — không theo phòng ban.</li>
+        <li>Badge số thông báo (handovers, leaves) giữ nguyên cơ chế — <code>_dept_group()</code> vẫn ghi vào <code>badge_refs</code>.</li>
+        <li>Route URLs không thay đổi — chỉ thay đổi cách hiển thị trong sidebar.</li>
+      </ul>
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-05-30</footer>
+</div>
+</body>
+</html>
