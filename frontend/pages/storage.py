@@ -10,6 +10,9 @@ async def storage_page():
         return
     if _redirect_if_cv():
         return
+    if not api.has_feature("menu.storage"):
+        ui.navigate.to("/home")
+        return
     _ = _sidebar("storage")
     with _content_area():
         _page_header("Lưu trữ", "Tra cứu và bàn giao tập chứng từ")

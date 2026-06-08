@@ -135,6 +135,27 @@ def admin_reset_password(
     return {"message": f"Đã đặt lại mật khẩu cho {target['full_name']}"}
 
 
+@router.get("/my-features")
+def get_my_features(
+    current: dict = Depends(get_current_staff),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """Trả về features của user hiện tại theo nhóm.
+    Admin → features=null (frontend hiểu là all-access).
+    Các role khác → UNION features của tất cả nhóm user thuộc.
+    """
+    if current["role"] == "admin":
+        return {"features": None}
+    rows = db.execute("""
+        SELECT DISTINCT gf.feature_code
+        FROM group_members gm
+        JOIN group_features gf ON gf.group_id = gm.group_id
+        JOIN user_groups g ON g.id = gm.group_id AND g.is_active = 1
+        WHERE gm.staff_id = ?
+    """, (current["id"],)).fetchall()
+    return {"features": [r["feature_code"] for r in rows]}
+
+
 @router.get("/me")
 def get_me(current: dict = Depends(get_current_staff)):
     return {

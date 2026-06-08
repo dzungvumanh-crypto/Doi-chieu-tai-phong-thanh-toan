@@ -65,6 +65,9 @@ def _gd_display(leave: dict) -> str:
 async def leaves_page():
     if not _require_auth():
         return
+    if not api.has_feature("menu.leaves"):
+        ui.navigate.to("/home")
+        return
     badge_refs = _sidebar("leaves")
 
     current_user = api.get_current_user()
@@ -379,7 +382,7 @@ async def leaves_page():
                         ui.button("Tải phiếu", icon="download", on_click=_download).classes("bg-gray-100 text-gray-700 text-sm")
 
                         # KSV
-                        if ksv_act:
+                        if ksv_act and api.has_feature("leaves.approve_ksv"):
                             async def _ksv_approve(l=lid):
                                 try:
                                     await asyncio.to_thread(api.put, f"/api/leaves/{l}/ksv-review", {"action": "approve"})
@@ -406,7 +409,7 @@ async def leaves_page():
                             ui.button("Từ chối",   on_click=_ksv_reject_open).classes("bg-red-600 text-white text-sm")
 
                         # TH
-                        if th_act:
+                        if th_act and api.has_feature("leaves.forward_th"):
                             async def _th_forward_open(l=lid):
                                 await _load_gd_opts()
 
@@ -440,7 +443,7 @@ async def leaves_page():
                             ui.button("Từ chối", on_click=_th_reject_open).classes("bg-red-600 text-white text-sm")
 
                         # GĐ
-                        if gd_act:
+                        if gd_act and api.has_feature("leaves.approve_gd"):
                             async def _gd_approve(l=lid):
                                 try:
                                     await asyncio.to_thread(api.put, f"/api/leaves/{l}/gd-review", {"action": "approve"})
@@ -467,7 +470,7 @@ async def leaves_page():
                             ui.button("Từ chối",   on_click=_gd_reject_open).classes("bg-red-600 text-white text-sm")
 
                         # Resubmit
-                        if is_owner and status == "rejected":
+                        if is_owner and status == "rejected" and api.has_feature("leaves.resubmit"):
                             def _open_resubmit(lv=leave):
                                 r_dates.value  = {"from": (lv.get("start_date") or "")[:10], "to": (lv.get("end_date") or "")[:10]}
                                 r_type.value   = lv.get("leave_type", "annual")
@@ -480,7 +483,7 @@ async def leaves_page():
                             ui.button("Sửa & Nộp lại", icon="refresh", on_click=_open_resubmit).classes("bg-orange-500 text-white text-sm")
 
                         # Hủy
-                        if is_owner and status in ("pending_ksv", "pending_tong_hop", "pending_gd"):
+                        if is_owner and status in ("pending_ksv", "pending_tong_hop", "pending_gd") and api.has_feature("leaves.cancel"):
                             async def _cancel(l=lid):
                                 try:
                                     await asyncio.to_thread(api.patch, f"/api/leaves/{l}/cancel", {})
@@ -603,14 +606,20 @@ async def leaves_page():
             reject_dialog.open()
 
         # ── Toolbar ───────────────────────────────────────────────────────────
+        _has_any_approve = any(api.has_feature(f) for f in (
+            "leaves.approve_ksv", "leaves.forward_th", "leaves.approve_gd"
+        ))
         with ui.row().classes("gap-2 mb-4 items-center flex-wrap"):
-            ui.button("+ Tạo đơn", icon="add", on_click=create_dialog.open).classes("bg-red-700 text-white")
+            create_btn = ui.button("+ Tạo đơn", icon="add", on_click=create_dialog.open).classes("bg-red-700 text-white")
+            create_btn.set_visibility(api.has_feature("leaves.create"))
             ab = ui.button("Phê duyệt", icon="check_circle",
                            on_click=lambda: asyncio.ensure_future(_bulk_approve())).classes(
                 "bg-green-600 text-white").props("disabled")
+            ab.set_visibility(_has_any_approve)
             rb = ui.button("Từ chối", icon="cancel",
                            on_click=lambda: asyncio.ensure_future(_bulk_reject_open())).classes(
                 "bg-red-600 text-white").props("disabled")
+            rb.set_visibility(_has_any_approve)
             _approve_btn.append(ab)
             _reject_btn.append(rb)
 

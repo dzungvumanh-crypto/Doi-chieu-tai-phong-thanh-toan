@@ -9,6 +9,7 @@ Quy trình thêm router mới:
 from fastapi import FastAPI
 
 from backend.api.auth import router as auth_router
+from backend.api.groups import router as groups_router
 from backend.api.bundles import router as bundle_router
 from backend.api.dashboard import router as dashboard_router
 from backend.api.delegations import router as delegations_router
@@ -35,6 +36,7 @@ _ROUTERS = [
     (dashboard_router,   {"prefix": "/api/dashboard",      "tags": ["dashboard"]}),
     (holidays_router,    {"prefix": "/api/admin/holidays", "tags": ["holidays"]}),
     (reports_router,     {}),
+    (groups_router,      {}),
 ]
 
 

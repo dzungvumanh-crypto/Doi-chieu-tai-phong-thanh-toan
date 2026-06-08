@@ -11,6 +11,9 @@ async def staff_page():
         return
     if _redirect_if_cv():
         return
+    if not api.has_feature("menu.staff"):
+        ui.navigate.to("/home")
+        return
 
     try:
         all_depts = await asyncio.to_thread(api.get, "/api/departments/")
@@ -132,7 +135,8 @@ async def staff_page():
                 dept_filter = ui.select(dept_filter_opts, value=0, label="Phòng").classes("w-48").props("dense")
                 ui.button("Tìm kiếm", icon="search", on_click=lambda: render_staff_rows()).classes("bg-gray-700 text-white").props("dense")
             if is_admin:
-                ui.button("+ Thêm tài khoản", on_click=lambda: add_dialog.open()).classes("bg-red-700 text-white").props("dense")
+                if api.has_feature("staff.create"):
+                    ui.button("+ Thêm tài khoản", on_click=lambda: add_dialog.open()).classes("bg-red-700 text-white").props("dense")
                 async def _do_export_excel():
                     try:
                         from datetime import date
@@ -150,13 +154,15 @@ async def staff_page():
                     except Exception as e:
                         if _handle_api_error(e): return
                         ui.notify(str(e), type="negative")
-                ui.button("Xuất Excel", icon="download", on_click=lambda: asyncio.ensure_future(_do_export_excel())).props("dense").classes("bg-green-700 text-white")
-                ui.button("Xuất DB", icon="download", on_click=do_export).props("dense outline").classes("text-gray-700")
-                import_input = ui.upload(
-                    label="Nhập DB",
-                    on_upload=lambda e: asyncio.create_task(_do_import(e)),
-                    auto_upload=True,
-                ).props('accept=".db" dense flat').classes("text-gray-700")
+                if api.has_feature("staff.export"):
+                    ui.button("Xuất Excel", icon="download", on_click=lambda: asyncio.ensure_future(_do_export_excel())).props("dense").classes("bg-green-700 text-white")
+                    ui.button("Xuất DB", icon="download", on_click=do_export).props("dense outline").classes("text-gray-700")
+                if api.has_feature("staff.import_db"):
+                    import_input = ui.upload(
+                        label="Nhập DB",
+                        on_upload=lambda e: asyncio.create_task(_do_import(e)),
+                        auto_upload=True,
+                    ).props('accept=".db" dense flat').classes("text-gray-700")
 
                 async def _do_import(e):
                     try:
@@ -248,8 +254,10 @@ async def staff_page():
                             ui.badge("Tạm khóa").classes("w-16 text-center").props('color="grey"')
                         if is_admin:
                             with ui.row().classes("w-16 gap-0 justify-center"):
-                                ui.button(icon="edit", on_click=lambda s=s: open_edit(s)).props("flat dense").classes("text-red-600").tooltip("Sửa")
-                                ui.button(icon="delete", on_click=lambda sid=s["id"], nm=s["full_name"]: do_deactivate_staff(sid, nm)).props("flat dense").classes("text-red-500").tooltip("Xóa")
+                                if api.has_feature("staff.edit"):
+                                    ui.button(icon="edit", on_click=lambda s=s: open_edit(s)).props("flat dense").classes("text-red-600").tooltip("Sửa")
+                                if api.has_feature("staff.delete"):
+                                    ui.button(icon="delete", on_click=lambda sid=s["id"], nm=s["full_name"]: do_deactivate_staff(sid, nm)).props("flat dense").classes("text-red-500").tooltip("Xóa")
 
                 # Nhóm Ban Giám đốc
                 if bgd_list:

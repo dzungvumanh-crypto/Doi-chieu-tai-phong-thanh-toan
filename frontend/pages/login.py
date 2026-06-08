@@ -38,6 +38,7 @@ async def login_page(request: _StarletteRequest):
                         "role": result["role"],
                         "department_id": result.get("department_id"),
                     })
+                    await asyncio.to_thread(api.load_my_features)
                     app.storage.tab["session_alive"] = True
                     if result.get("must_change_password"):
                         ui.navigate.to("/change-password")

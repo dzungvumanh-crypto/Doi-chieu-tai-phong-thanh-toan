@@ -10,6 +10,9 @@ async def bundles_page():
         return
     if _redirect_if_cv():
         return
+    if not api.has_feature("menu.bundles"):
+        ui.navigate.to("/home")
+        return
     _ = _sidebar("bundles")
     with _content_area():
         _page_header("Đóng chứng từ", "Tạo bìa chứng từ và quản lý")
@@ -168,13 +171,15 @@ async def bundles_page():
                                     "w-20 text-center text-sm font-semibold text-red-700"
                                 )
                                 with ui.row().classes("w-64 justify-end gap-2"):
-                                    ui.button("Tải xuống", icon="download",
-                                              on_click=lambda g_id=gid, lbl=file_label: _download_all_covers(g_id, lbl)
-                                              ).classes("bg-red-700 text-white text-xs px-3 py-1")
-                                    ui.button("In", icon="print",
-                                              on_click=lambda g_id=gid: _mark_group_printed(g_id)
-                                              ).classes("bg-green-700 text-white text-xs px-3 py-1")
-                                    if is_admin:
+                                    if api.has_feature("bundles.download_cover"):
+                                        ui.button("Tải xuống", icon="download",
+                                                  on_click=lambda g_id=gid, lbl=file_label: _download_all_covers(g_id, lbl)
+                                                  ).classes("bg-red-700 text-white text-xs px-3 py-1")
+                                    if api.has_feature("bundles.mark_printed"):
+                                        ui.button("In", icon="print",
+                                                  on_click=lambda g_id=gid: _mark_group_printed(g_id)
+                                                  ).classes("bg-green-700 text-white text-xs px-3 py-1")
+                                    if is_admin and api.has_feature("bundles.delete"):
                                         ui.button("Xóa", icon="delete",
                                                   on_click=lambda g_id=gid, d=bundle_lbl: _delete_group(g_id, d)
                                                   ).classes("bg-red-600 text-white text-xs px-3 py-1")
@@ -187,9 +192,11 @@ async def bundles_page():
             # ── Tab 2: Tạo bìa ───────────────────────────────────────────────
             with ui.tab_panel(t_new):
                 try:
-                    depts, staff_list = await asyncio.gather(
-                        asyncio.to_thread(api.get, "/api/departments/"),
-                        asyncio.to_thread(api.get, "/api/staff/"),
+                    depts = await asyncio.to_thread(api.get, "/api/departments/")
+                    ksnb_dept = next((d for d in depts if d.get("code") == "KSNB"), None)
+                    staff_list = await asyncio.to_thread(
+                        api.get, "/api/staff/",
+                        {"department_id": ksnb_dept["id"]} if ksnb_dept else None,
                     )
                     depts = [d for d in depts if d.get("is_source")]
                 except Exception as e:
@@ -270,10 +277,11 @@ async def bundles_page():
                             except Exception as e:
                                 if _handle_api_error(e): return
 
-                        ui.button("Tạo bìa chứng từ", icon="folder_zip",
+                        gen_btn = ui.button("Tạo bìa chứng từ", icon="folder_zip",
                                   on_click=do_generate).classes(
                             "w-full bg-red-700 text-white mt-4 py-2 rounded"
                         )
+                        gen_btn.set_visibility(api.has_feature("bundles.generate"))
 
                     # ── Phải: Preview chứng từ ────────────────────────────────
                     with ui.column().classes("flex-1 min-w-0"):

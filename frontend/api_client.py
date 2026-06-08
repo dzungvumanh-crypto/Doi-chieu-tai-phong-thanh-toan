@@ -37,6 +37,39 @@ def get_current_user() -> Optional[Dict]:
 def clear_auth():
     app.storage.user.pop("token", None)
     app.storage.user.pop("user_data", None)
+    app.storage.user.pop("features", None)
+
+
+def load_my_features() -> None:
+    """Gọi sau login. Lưu features vào app.storage.user['features'].
+    features=None → admin (all-access). features=[] → không có nhóm nào.
+    """
+    try:
+        result = get("/api/auth/my-features")
+        app.storage.user["features"] = result.get("features")  # None hoặc list[str]
+    except Exception:
+        app.storage.user["features"] = []  # safe fallback
+
+
+def has_feature(code: str) -> bool:
+    """Kiểm tra user có feature code này không.
+    Admin (features=None) → True cho mọi code.
+    """
+    user = get_current_user()
+    if not user:
+        return False
+    if user.get("role") == "admin":
+        return True
+    features = app.storage.user.get("features")
+    if features is None:
+        # Chưa load hoặc admin — check role thêm lần nữa
+        return user.get("role") == "admin"
+    return code in features
+
+
+def get_all_features() -> list:
+    """GET /api/groups/features/all — danh sách feature definitions theo nhóm."""
+    return get("/api/groups/features/all")
 
 
 def login(username: str, password: str, client_ip: str = None, force: bool = False) -> Any:

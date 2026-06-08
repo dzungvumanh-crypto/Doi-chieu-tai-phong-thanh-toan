@@ -17,8 +17,7 @@ _LOG_LEVEL_CFG = {
 async def logs_page():
     if not _require_auth():
         return
-    user = api.get_current_user()
-    if not user or user.get("role") not in ("admin", "giam_doc", "pho_giam_doc"):
+    if not api.has_feature("menu.logs"):
         ui.navigate.to("/home")
         return
     _ = _sidebar("logs")

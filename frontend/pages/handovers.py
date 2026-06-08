@@ -31,6 +31,9 @@ _ACTION_COLOR_MAP = {
 async def handovers_page():
     if not _require_auth():
         return
+    if not api.has_feature("menu.handovers"):
+        ui.navigate.to("/home")
+        return
 
     user_data = api.get_current_user()
     user_role = user_data.get("role", "") if user_data else ""
@@ -155,6 +158,7 @@ async def handovers_page():
             save_btn = ui.button("Lưu", icon="save",
                 on_click=save_pending
             ).classes("bg-green-700 text-white px-4").tooltip("Lưu tất cả thay đổi")
+            save_btn.set_visibility(api.has_feature("handovers.save_entry"))
 
             async def _export_handovers():
                 try:
@@ -235,44 +239,49 @@ async def handovers_page():
 
                     if user_role in ("admin", "hau_kiem_vien", "pho_phong", "truong_phong"):
                         if current_status == "pending_confirm":
-                            has_action = True
-                            btn_label = "✓  Xác nhận cho mượn" if borrow_reason_val else "✓  Xác nhận đã nhận"
-                            async def _do_confirm(eid=entry_id, uname=user_name):
-                                try:
-                                    await asyncio.to_thread(api.post, f"/api/handovers/entries/{eid}/confirm-received", {})
-                                    ui.notify("Đã xác nhận", type="positive")
-                                    await open_entry_panel(eid, uname)
-                                    await load_grid()
-                                except Exception as ex2:
-                                    if _handle_api_error(ex2): return
-                            with ui.row().classes("w-full gap-2"):
-                                ui.button(btn_label, on_click=_do_confirm).classes(
-                                    "flex-1 bg-green-600 text-white rounded-lg text-sm font-semibold"
-                                )
-                                with ui.dialog() as reject_dialog, ui.card().classes("w-96"):
-                                    ui.label("Từ chối chứng từ").classes("font-bold text-lg mb-2 text-red-700")
-                                    reject_reason_inp = ui.input("Lý do từ chối *").classes("w-full")
-                                    with ui.row().classes("justify-end gap-2 mt-3"):
-                                        ui.button("Huỷ", on_click=reject_dialog.close).props("flat")
-                                        async def _do_reject_submit(eid=entry_id, uname=user_name):
-                                            reason = reject_reason_inp.value.strip()
-                                            if not reason:
-                                                ui.notify("Vui lòng nhập lý do từ chối", type="warning")
-                                                return
-                                            try:
-                                                await asyncio.to_thread(api.post, f"/api/handovers/entries/{eid}/reject", {"reason": reason})
-                                                reject_dialog.close()
-                                                ui.notify("Đã từ chối chứng từ", type="warning")
-                                                right_panel.hide()
-                                                await load_grid()
-                                            except Exception as ex2:
-                                                if _handle_api_error(ex2): return
-                                        ui.button("Từ chối", on_click=_do_reject_submit).classes("bg-red-600 text-white")
-                                ui.button("✗  Từ chối", on_click=reject_dialog.open).classes(
-                                    "flex-1 bg-red-600 text-white rounded-lg text-sm font-semibold"
-                                )
+                            _can_confirm = api.has_feature("handovers.confirm_entry")
+                            _can_reject  = api.has_feature("handovers.reject_entry")
+                            if _can_confirm or _can_reject:
+                                has_action = True
+                                btn_label = "✓  Xác nhận cho mượn" if borrow_reason_val else "✓  Xác nhận đã nhận"
+                                async def _do_confirm(eid=entry_id, uname=user_name):
+                                    try:
+                                        await asyncio.to_thread(api.post, f"/api/handovers/entries/{eid}/confirm-received", {})
+                                        ui.notify("Đã xác nhận", type="positive")
+                                        await open_entry_panel(eid, uname)
+                                        await load_grid()
+                                    except Exception as ex2:
+                                        if _handle_api_error(ex2): return
+                                with ui.row().classes("w-full gap-2"):
+                                    if _can_confirm:
+                                        ui.button(btn_label, on_click=_do_confirm).classes(
+                                            "flex-1 bg-green-600 text-white rounded-lg text-sm font-semibold"
+                                        )
+                                    if _can_reject:
+                                        with ui.dialog() as reject_dialog, ui.card().classes("w-96"):
+                                            ui.label("Từ chối chứng từ").classes("font-bold text-lg mb-2 text-red-700")
+                                            reject_reason_inp = ui.input("Lý do từ chối *").classes("w-full")
+                                            with ui.row().classes("justify-end gap-2 mt-3"):
+                                                ui.button("Huỷ", on_click=reject_dialog.close).props("flat")
+                                                async def _do_reject_submit(eid=entry_id, uname=user_name):
+                                                    reason = reject_reason_inp.value.strip()
+                                                    if not reason:
+                                                        ui.notify("Vui lòng nhập lý do từ chối", type="warning")
+                                                        return
+                                                    try:
+                                                        await asyncio.to_thread(api.post, f"/api/handovers/entries/{eid}/reject", {"reason": reason})
+                                                        reject_dialog.close()
+                                                        ui.notify("Đã từ chối chứng từ", type="warning")
+                                                        right_panel.hide()
+                                                        await load_grid()
+                                                    except Exception as ex2:
+                                                        if _handle_api_error(ex2): return
+                                                ui.button("Từ chối", on_click=_do_reject_submit).classes("bg-red-600 text-white")
+                                        ui.button("✗  Từ chối", on_click=reject_dialog.open).classes(
+                                            "flex-1 bg-red-600 text-white rounded-lg text-sm font-semibold"
+                                        )
 
-                    if is_cv and current_status == "confirmed":
+                    if is_cv and current_status == "confirmed" and api.has_feature("handovers.borrow"):
                         has_action = True
                         with ui.dialog() as borrow_dialog, ui.card():
                             ui.label("Mượn lại chứng từ").classes("font-bold text-lg mb-2")
@@ -297,7 +306,7 @@ async def handovers_page():
                             "w-full bg-orange-500 text-white rounded-lg text-sm font-semibold"
                         )
 
-                    if is_cv and current_status == "borrowed":
+                    if is_cv and current_status == "borrowed" and api.has_feature("handovers.handback"):
                         has_action = True
                         _current_count = hist.get("sheet_count", 1)
                         with ui.dialog() as handback_dialog, ui.card():

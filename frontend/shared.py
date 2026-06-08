@@ -53,12 +53,25 @@ MENU_ITEMS_CV = [
     ("leaves",    "Nghỉ phép",          "event_busy"),
 ]
 
-# CSS để details/summary hoạt động đúng và chevron xoay khi mở
+# CSS flyout menu — submenu hiện bên phải khi hover, không đẩy item phía dưới
 _SIDEBAR_CSS = """<style>
-details > summary { list-style: none; }
-details > summary::-webkit-details-marker { display: none; }
-details[open] > summary .dept-chevron { transform: rotate(90deg); }
-.dept-chevron { transition: transform 0.15s ease; }
+.dept-item { position: relative; z-index: 0; }
+.dept-item:hover { z-index: 1000; }
+.dept-flyout {
+  display: none;
+  position: absolute;
+  left: 100%;
+  top: 0;
+  background-color: #7f1d1d;
+  z-index: 9999;
+  min-width: 13rem;
+  flex-direction: column;
+  box-shadow: 6px 4px 20px rgba(0,0,0,0.5);
+  border-radius: 0 8px 8px 0;
+  border-left: 3px solid #991b1b;
+  overflow: hidden;
+}
+.dept-item:hover .dept-flyout { display: flex; }
 </style>"""
 
 
@@ -87,37 +100,46 @@ def _nav_item(key: str, label: str, icon: str, current_page: str, badge_refs: di
             badge_refs[key] = b
 
 
-def _dept_group(dept: dict, current_page: str, badge_refs: dict):
-    """Nhóm phòng ban dạng accordion (details/summary)."""
-    dept_keys = {k for k, _, _ in dept["items"]}
-    is_open = current_page in dept_keys
+def _dept_group(dept: dict, current_page: str, badge_refs: dict, check_features: bool = True):
+    """Nhóm phòng ban — hover để xem flyout menu bên phải (không đẩy các mục dưới xuống).
+    check_features=True: lọc items theo api.has_feature(); False: hiện tất cả (dùng cho admin menu cứng).
+    """
+    # Lọc items theo feature (bỏ qua nếu check_features=False hoặc là admin-only menu)
+    visible_items = [
+        (k, lbl, ico) for k, lbl, ico in dept["items"]
+        if not check_features or api.has_feature(f"menu.{k}")
+    ]
+    # Ẩn cả dept group nếu không có item nào visible
+    if dept["items"] and not visible_items:
+        return
 
-    details = ui.element("details").classes("w-full")
-    if is_open:
-        details.props("open")
+    dept_keys = {k for k, _, _ in visible_items}
+    is_active_dept = current_page in dept_keys
 
-    with details:
-        # ── Header phòng ──
-        with ui.element("summary").classes(
-            "flex items-center px-3 py-2.5 cursor-pointer select-none hover:bg-red-800"
+    with ui.element("div").classes("dept-item w-full"):
+        # ── Header phòng (luôn hiển thị, không click) ──
+        active_cls = " bg-red-800" if is_active_dept else ""
+        with ui.element("div").classes(
+            f"flex items-center px-3 py-2.5 cursor-default select-none hover:bg-red-800 w-full{active_cls}"
         ):
             ui.icon(dept["icon"]).classes("text-base mr-2 text-red-200 shrink-0")
-            ui.label(dept["label"]).classes(
-                "text-xs font-semibold text-red-100 flex-1 leading-tight"
-            )
-            ui.icon("chevron_right").classes("dept-chevron text-sm text-red-400 shrink-0")
+            ui.label(dept["label"]).classes("text-xs font-semibold text-red-100 flex-1 leading-tight")
+            if visible_items:
+                ui.icon("chevron_right").classes("text-sm text-red-400 shrink-0")
 
-        # ── Sub-items ──
-        if dept["items"]:
-            with ui.column().classes("w-full").style("background: rgba(0,0,0,0.18)"):
-                for key, label, icon in dept["items"]:
+        # ── Flyout submenu (xuất hiện bên phải khi hover) ──
+        if visible_items:
+            with ui.element("div").classes("dept-flyout"):
+                with ui.element("div").classes("px-3 py-1.5 border-b border-red-700").style("background:#4c0519"):
+                    ui.label(dept["label"]).classes("text-xs font-semibold text-red-300")
+                for key, label, icon in visible_items:
                     is_active = current_page == key
                     bg = "bg-red-700" if is_active else "hover:bg-red-800"
                     with ui.row().classes(
-                        f"w-full items-center pl-8 pr-3 py-2 cursor-pointer {bg}"
+                        f"w-full items-center px-4 py-2.5 cursor-pointer {bg}"
                     ).on("click", lambda k=key: ui.navigate.to(f"/{k}")):
                         ui.icon(icon).classes("text-base mr-2 text-red-100 shrink-0")
-                        ui.label(label).classes("text-xs flex-1")
+                        ui.label(label).classes("text-sm flex-1")
                         if key in ("leaves", "handovers"):
                             b = ui.label("").classes(
                                 "text-xs font-bold bg-yellow-400 text-red-900 rounded-full "
@@ -132,7 +154,7 @@ def _sidebar(current_page: str) -> dict:
     ui.add_head_html(_SIDEBAR_CSS)
 
     with ui.column().classes(
-        "w-64 min-h-screen bg-red-900 text-white fixed left-0 top-0 shadow-xl"
+        "w-64 min-h-screen bg-red-900 text-white fixed left-0 top-0 shadow-xl z-[200]"
     ):
         # ── Logo ──
         with ui.row().classes(
@@ -171,28 +193,36 @@ def _sidebar(current_page: str) -> dict:
                         ui.icon("manage_accounts").classes("text-yellow-300 text-sm")
                 ui.label(role_map.get(user.get("role"), "")).classes("text-yellow-300 text-xs")
 
-        # ── Vùng menu (có scroll) ──
-        with ui.column().classes("w-full flex-1 overflow-y-auto py-1"):
+        # ── Vùng menu ──
+        with ui.column().classes("w-full flex-1 py-1"):
             # Trang chủ — luôn hiển thị
             _nav_item("home", "Trang chủ", "home", current_page, badge_refs)
 
-            if user_role == "chuyen_vien":
-                # Chuyên viên: chỉ thấy 2 mục (flat, không theo phòng ban)
-                for key, label, icon in MENU_ITEMS_CV:
-                    _nav_item(key, label, icon, current_page, badge_refs)
-            else:
-                # Phân cấp theo phòng ban (accordion)
-                for dept in DEPARTMENTS:
-                    _dept_group(dept, current_page, badge_refs)
+            # Phân cấp theo phòng ban (flyout) — hiện theo feature
+            for dept in DEPARTMENTS:
+                _dept_group(dept, current_page, badge_refs, check_features=True)
 
-                ui.separator().classes("border-red-700 my-1")
+            ui.separator().classes("border-red-700 my-1")
 
-                # Quản lý User (giữ nguyên, ngoài phòng ban)
+            # Quản lý User — admin luôn thấy, user khác cần feature
+            if user_role == "admin" or api.has_feature("menu.staff"):
                 _nav_item("staff", "Quản lý User", "manage_accounts", current_page, badge_refs)
 
-                # Nhật ký hệ thống (chỉ admin / GĐ / PGĐ, giữ nguyên)
-                if user_role in ("admin", "giam_doc", "pho_giam_doc"):
-                    _nav_item("logs", "Nhật ký hệ thống", "terminal", current_page, badge_refs)
+            # Nhật ký hệ thống — admin luôn thấy, user khác cần feature
+            if user_role == "admin" or api.has_feature("menu.logs"):
+                _nav_item("logs", "Nhật ký hệ thống", "terminal", current_page, badge_refs)
+
+            # Phân quyền chức năng — chỉ admin (hard-coded, không phải feature)
+            if user_role == "admin":
+                _dept_group({
+                    "id": "phanquyen",
+                    "label": "Phân quyền chức năng",
+                    "icon": "admin_panel_settings",
+                    "items": [
+                        ("groups", "Nhóm user", "groups"),
+                        ("group-features", "Phân quyền theo nhóm", "tune"),
+                    ],
+                }, current_page, badge_refs, check_features=False)
 
         # ── Đăng xuất ──
         with ui.row().classes(

@@ -395,7 +395,66 @@ ui.on_exception(_on_exception)</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-05-30</footer>
+  <!-- 12 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">12</span>
+      <span class="card-title">Phân quyền chức năng theo nhóm (Group-based Feature Authorization)</span>
+      <span class="badge badge-done">Hoàn thành</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh & Quyết định thiết kế</div>
+      <p>Trước đây UI kiểm soát theo <strong>role cứng</strong> (7 role). Yêu cầu mới: admin tạo nhóm linh hoạt, gán user, gán feature — nhóm quyết định UI thấy gì. Backend RBAC (<code>deps.py</code>) <strong>không đổi</strong> — feature chỉ ẩn UI, không bypass API protection.</p>
+
+      <div class="label">Tại sao dùng static feature codes thay vì dynamic?</div>
+      <table>
+        <tr><th>Lựa chọn</th><th>Ưu</th><th>Nhược</th></tr>
+        <tr><td>Static codes trong <code>features.py</code> (đã chọn)</td><td>Không mất sync giữa DB và code; typo bị phát hiện khi deploy; IDE hỗ trợ tìm kiếm</td><td>Thêm feature mới phải sửa code + deploy</td></tr>
+        <tr><td>Dynamic (admin tự nhập code trong DB)</td><td>Không cần redeploy khi thêm feature</td><td>Typo gây bug im lặng; không thể validate ở backend; khó audit</td></tr>
+      </table>
+      <p>Với internal tool ít người dùng, redeploy khi thêm feature là chấp nhận được. Static đảm bảo đúng hơn.</p>
+
+      <div class="label">Admin bypass — hai lớp kiểm tra</div>
+      <p><code>has_feature()</code> kiểm tra <code>user.get("role") == "admin"</code> trước — trả <code>True</code> trực tiếp, không đọc <code>features</code> list. Lý do: sau khi đổi password hoặc session cache stale, features có thể là <code>[]</code> nhưng admin không bao giờ bị lock out.</p>
+
+      <div class="label">UNION semantics cho multi-group</div>
+      <p>Backend dùng <code>SELECT DISTINCT gf.feature_code ... WHERE gm.staff_id = ?</code> — user thuộc nhiều nhóm tự động nhận union of features. Frontend chỉ nhận list codes, không cần biết nhóm nào cấp code nào.</p>
+
+      <div class="label">Feature cache — re-login để refresh</div>
+      <p>Features được load 1 lần sau login, lưu trong <code>app.storage.user["features"]</code>. Khi admin thay đổi phân quyền nhóm, user cần re-login để thấy hiệu lực.</p>
+      <div class="note">Tradeoff chấp nhận: internal tool, ít user, thay đổi quyền không thường xuyên. Real-time invalidation sẽ cần WebSocket hoặc polling — over-engineering cho use case này.</div>
+
+      <div class="label">Sidebar: ẩn dept group khi tất cả items bị hide</div>
+      <p><code>_dept_group()</code> lọc <code>visible_items</code> qua <code>has_feature()</code>. Nếu <code>dept["items"]</code> không rỗng nhưng <code>visible_items</code> rỗng → return sớm (không render header). Tránh user thấy flyout header nhưng click ra không có gì bên trong.</p>
+
+      <div class="label">logs.py — thay thế role check bằng feature check</div>
+      <p>Trước: <code>role not in ("admin", "giam_doc", "pho_giam_doc")</code>. Sau: <code>not has_feature("menu.logs")</code>. Admin vẫn thấy do bypass. GĐ/PGĐ thấy nếu được gán nhóm có <code>menu.logs</code>. Linh hoạt hơn — không hardcode role.</p>
+
+      <div class="label">Vấn đề phát hiện nhưng không fix</div>
+      <table>
+        <tr><th>Vấn đề</th><th>Lý do không fix ngay</th></tr>
+        <tr><td>User không thuộc nhóm nào → không thấy gì ngoài Trang chủ (silent lockout)</td><td>Admin phải tạo nhóm và gán user trước khi đưa vào production. Cần thêm warning UI nhưng out of scope lần này.</td></tr>
+        <tr><td>Xóa nhóm → user mất quyền ngay, không có thông báo</td><td>Acceptable cho internal tool. Audit log qua <code>logs.py</code> đủ để trace.</td></tr>
+        <tr><td>Feature check chỉ ở UI, không ở backend API route level</td><td>Backend RBAC (<code>deps.py</code>) vẫn chặn — feature check là UI convenience, không phải security layer. Đây là thiết kế có chủ ý.</td></tr>
+      </table>
+
+      <div class="label">Files tạo mới / sửa</div>
+      <ul>
+        <li><code>backend/core/features.py</code> — 30 feature codes + FEATURE_GROUPS categories</li>
+        <li><code>backend/db/migrations.py</code> — 3 bảng: <code>user_groups</code>, <code>group_members</code>, <code>group_features</code></li>
+        <li><code>backend/api/groups.py</code> — CRUD groups + members + features (9 endpoints)</li>
+        <li><code>backend/api/auth.py</code> — thêm <code>GET /api/auth/my-features</code></li>
+        <li><code>frontend/api_client.py</code> — <code>load_my_features()</code>, <code>has_feature()</code>, <code>get_all_features()</code></li>
+        <li><code>frontend/pages/login.py</code> — gọi <code>load_my_features()</code> sau login</li>
+        <li><code>frontend/pages/groups.py</code> — trang Nhóm user (mới)</li>
+        <li><code>frontend/pages/group_features.py</code> — trang Phân quyền theo nhóm (mới)</li>
+        <li><code>frontend/shared.py</code> — sidebar: filter by feature + flyout Phân quyền chức năng</li>
+        <li><code>frontend/pages/handovers.py</code>, <code>bundles.py</code>, <code>leaves.py</code>, <code>staff.py</code>, <code>storage.py</code>, <code>reports.py</code>, <code>logs.py</code> — page guard + button visibility</li>
+      </ul>
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-06-08</footer>
 </div>
 </body>
 </html>

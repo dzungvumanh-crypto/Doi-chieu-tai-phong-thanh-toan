@@ -154,6 +154,24 @@ def _create_tables(db_path: str):
             ip_address TEXT,
             created_at DATETIME
         )""",
+        # Phân quyền theo nhóm
+        """CREATE TABLE IF NOT EXISTS user_groups (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            name        VARCHAR(100) UNIQUE NOT NULL,
+            description TEXT,
+            is_active   BOOLEAN DEFAULT 1,
+            created_at  DATETIME
+        )""",
+        """CREATE TABLE IF NOT EXISTS group_members (
+            group_id INTEGER NOT NULL REFERENCES user_groups(id) ON DELETE CASCADE,
+            staff_id INTEGER NOT NULL REFERENCES user_tttt(id)   ON DELETE CASCADE,
+            PRIMARY KEY (group_id, staff_id)
+        )""",
+        """CREATE TABLE IF NOT EXISTS group_features (
+            group_id     INTEGER      NOT NULL REFERENCES user_groups(id) ON DELETE CASCADE,
+            feature_code VARCHAR(100) NOT NULL,
+            PRIMARY KEY (group_id, feature_code)
+        )""",
     ]
     for s in statements:
         cur.execute(s)
@@ -311,6 +329,25 @@ def _ensure_indexes():
         # ── Thêm migration mới DƯỚI ĐÂY ─────────────────────────────────────────
         # Format: # Người X — YYYY-MM-DD: mô tả ngắn
         # "ALTER TABLE <bảng> ADD COLUMN <cột> <kiểu>",
+
+        # Phân quyền theo nhóm — 2026-06-08
+        """CREATE TABLE IF NOT EXISTS user_groups (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            name        VARCHAR(100) UNIQUE NOT NULL,
+            description TEXT,
+            is_active   BOOLEAN DEFAULT 1,
+            created_at  DATETIME
+        )""",
+        """CREATE TABLE IF NOT EXISTS group_members (
+            group_id INTEGER NOT NULL REFERENCES user_groups(id) ON DELETE CASCADE,
+            staff_id INTEGER NOT NULL REFERENCES user_tttt(id)   ON DELETE CASCADE,
+            PRIMARY KEY (group_id, staff_id)
+        )""",
+        """CREATE TABLE IF NOT EXISTS group_features (
+            group_id     INTEGER      NOT NULL REFERENCES user_groups(id) ON DELETE CASCADE,
+            feature_code VARCHAR(100) NOT NULL,
+            PRIMARY KEY (group_id, feature_code)
+        )""",
     ]
     _mig_log = logging.getLogger(__name__)
     conn = sqlite3.connect(DB_PATH, timeout=30)

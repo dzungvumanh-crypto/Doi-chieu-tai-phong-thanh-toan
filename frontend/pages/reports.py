@@ -84,6 +84,9 @@ def reports_page():
         return
     if _redirect_if_cv():
         return
+    if not api.has_feature("menu.reports"):
+        ui.navigate.to("/home")
+        return
 
     # Đổi icon done → close (đỏ) trong q-uploader. Dùng selector rộng để bắt mọi trường hợp.
     ui.add_head_html("""<script>
