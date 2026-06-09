@@ -53,6 +53,7 @@ _STRUCTURE = [
                     ("leaves.approve_gd",   "Duyệt / Từ chối (bước Giám đốc)"),
                 ],
             },
+            {"code": "menu.th_reports", "label": "Báo cáo dữ liệu thanh toán", "actions": []},
         ],
     },
     {

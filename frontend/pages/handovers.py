@@ -31,13 +31,13 @@ _ACTION_COLOR_MAP = {
 async def handovers_page():
     if not _require_auth():
         return
-    if not api.has_feature("menu.handovers"):
-        ui.navigate.to("/home")
-        return
-
     user_data = api.get_current_user()
     user_role = user_data.get("role", "") if user_data else ""
     is_cv     = user_role == "chuyen_vien"
+    # chuyen_vien luôn được vào /handovers (trang nhà của họ)
+    if not is_cv and not api.has_feature("menu.handovers"):
+        ui.navigate.to("/home")
+        return
 
     badge_refs = _sidebar("handovers")
 
@@ -107,7 +107,7 @@ async def handovers_page():
         with ui.row().classes("items-center gap-4 mb-2 flex-wrap"):
             for status_key, label in [
                 ("confirmed",       "Đã xác nhận"),
-                ("pending_confirm", "Đã lưu — chờ KSV xác nhận"),
+                ("pending_confirm", "Chờ xác nhận"),
                 ("borrowed",        "Đang mượn"),
             ]:
                 bg, border = _CELL_STATUS_STYLE[status_key]

@@ -5,7 +5,7 @@ from fastapi.security import OAuth2PasswordBearer
 from backend.core.enums import StaffRole
 from backend.database import get_db, compute_annual_leave
 from backend.core.security import decode_token
-from backend.core.sessions import get_session_ip
+from backend.core.sessions import get_session_ip, get_session
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 
@@ -28,10 +28,19 @@ def get_current_staff(
     ).fetchone()
     if not row:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Tài khoản không tồn tại")
-    if get_session_ip(db, int(staff_id)) is None:
+    session_row = get_session(db, int(staff_id))
+    if session_row is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Phiên đăng nhập đã hết hạn hoặc đã đăng xuất",
+        )
+    # Nếu session_key trong JWT không khớp DB → phiên này đã bị thay thế bởi đăng nhập mới
+    token_sk = payload.get("sk")
+    stored_sk = session_row["session_key"] if session_row else None
+    if token_sk and stored_sk and token_sk != stored_sk:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="__session_displaced__",
         )
     staff = dict(row)
     # Tính annual_leave_days từ join_industry_date nếu có (ghi đè giá trị lưu sẵn)

@@ -7,10 +7,19 @@ from starlette.requests import Request as _StarletteRequest
 
 @ui.page("/login")
 async def login_page(request: _StarletteRequest):
-    client_ip = (
-        request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
-        or (request.client.host if request.client else "unknown")
-    )
+    # Ưu tiên request.client.host (TCP connection trực tiếp từ browser đến NiceGUI server).
+    # X-Forwarded-For chỉ dùng khi client là loopback — tức đang đứng sau một reverse proxy.
+    _direct_ip = request.client.host if request.client else ""
+    if _direct_ip and _direct_ip not in ("127.0.0.1", "::1", "localhost"):
+        client_ip = _direct_ip
+    else:
+        client_ip = (
+            request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+            or request.headers.get("X-Real-IP", "").strip()
+            or _direct_ip
+            or "unknown"
+        )
+    reason = request.query_params.get("reason", "")
 
     ui.add_head_html('<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">')
     with ui.column().classes("w-full min-h-screen items-center justify-center bg-gradient-to-br from-red-900 to-red-700"):
@@ -18,6 +27,16 @@ async def login_page(request: _StarletteRequest):
             with ui.column().classes("w-full items-center mb-6"):
                 ui.image("/static/agribank_logo.png").classes("w-24 h-24 mb-2")
                 ui.label("PAYMENT CENTER").classes("text-2xl font-bold text-red-900")
+
+            if reason == "displaced":
+                with ui.row().classes(
+                    "w-full items-center gap-2 mb-3 px-3 py-2 "
+                    "bg-orange-50 border border-orange-300 rounded-lg"
+                ):
+                    ui.icon("warning").classes("text-orange-500 text-lg shrink-0")
+                    ui.label("Tài khoản này đang được đăng nhập từ thiết bị khác").classes(
+                        "text-sm text-orange-700 font-medium leading-snug"
+                    )
 
             username = ui.input("Tên đăng nhập", placeholder="admin").classes("w-full")
             password = ui.input("Mật khẩu", password=True, password_toggle_button=True).classes("w-full mt-3")
@@ -42,7 +61,7 @@ async def login_page(request: _StarletteRequest):
                     app.storage.tab["session_alive"] = True
                     if result.get("must_change_password"):
                         ui.navigate.to("/change-password")
-                    elif result["role"] == "chuyen_vien":
+                    elif result["role"] == "chuyen_vien" and api.has_feature("menu.handovers"):
                         ui.navigate.to("/handovers")
                     else:
                         ui.navigate.to("/home")

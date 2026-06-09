@@ -138,16 +138,37 @@ async def groups_page():
                 (m for m in members_data if m["role"] != "admin"),
                 key=lambda m: _ROLE_ORDER.get(m["role"], 99),
             )
-            member_table_ref["table"].rows = [
-                {
-                    "id": m["id"],
-                    "full_name": m["full_name"],
-                    "role": _ROLE_LABEL.get(m["role"], m["role"]),
-                    "department": m.get("department_name") or "—",
-                }
-                for m in sorted_members
-            ]
-            member_table_ref["table"].update()
+
+            def _remove_cb(mid: int):
+                async def _cb():
+                    await remove_member(mid)
+                return _cb
+
+            container = member_table_ref["table"]
+            container.clear()
+            with container:
+                if not sorted_members:
+                    ui.label("Chưa có thành viên nào").classes("text-gray-400 text-sm py-2")
+                    return
+                with ui.row().classes(
+                    "w-full px-2 py-1.5 bg-red-50 border-b border-red-100 "
+                    "text-xs font-semibold text-red-700"
+                ):
+                    ui.label("Họ tên").classes("flex-1")
+                    ui.label("Chức vụ").classes("w-28")
+                    ui.label("Phòng ban").classes("flex-1")
+                    ui.element("div").classes("w-8")
+                for m in sorted_members:
+                    with ui.row().classes(
+                        "w-full px-2 py-2 border-b border-gray-100 items-center hover:bg-gray-50"
+                    ):
+                        ui.label(m["full_name"]).classes("flex-1 text-sm")
+                        ui.label(_ROLE_LABEL.get(m["role"], m["role"])).classes("w-28 text-sm text-gray-600")
+                        ui.label(m.get("department_name") or "—").classes("flex-1 text-sm text-gray-600")
+                        ui.button(
+                            icon="person_remove",
+                            on_click=_remove_cb(m["id"])
+                        ).props("flat dense color=red-6")
 
         # ── Actions ────────────────────────────────────────────────────────────
         async def save_group():
@@ -305,21 +326,11 @@ async def groups_page():
                                     "bg-red-700 text-white"
                                 )
 
-                            cols = [
-                                {"name": "full_name", "label": "Họ tên", "field": "full_name", "align": "left"},
-                                {"name": "role", "label": "Chức vụ", "field": "role", "align": "left"},
-                                {"name": "department", "label": "Phòng ban", "field": "department", "align": "left"},
-                                {"name": "actions", "label": "", "field": "actions"},
-                            ]
-                            tbl = ui.table(columns=cols, rows=[], row_key="id").classes("w-full")
-                            tbl.add_slot("body-cell-actions", """
-                                <q-td :props="props">
-                                    <q-btn flat dense icon="person_remove" color="red-6"
-                                           @click="$emit('remove', props.row.id)" />
-                                </q-td>
-                            """)
-                            tbl.on("remove", lambda e: asyncio.ensure_future(remove_member(e.args)))
-                            member_table_ref["table"] = tbl
+                            with ui.column().classes(
+                                "w-full rounded border border-gray-100 overflow-hidden"
+                            ) as member_col:
+                                pass
+                            member_table_ref["table"] = member_col
 
         # ── Initial load ───────────────────────────────────────────────────────
         async def _init():

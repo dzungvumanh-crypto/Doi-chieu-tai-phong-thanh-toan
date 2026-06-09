@@ -14,6 +14,7 @@ FEATURES: dict[str, str] = {
     "menu.storage":            "Lưu trữ (menu)",
     "menu.reports":            "Báo cáo (menu)",
     "menu.leaves":             "Nghỉ phép (menu)",
+    "menu.th_reports":         "Báo cáo dữ liệu thanh toán — Phòng TH (menu)",
     "menu.staff":              "Quản lý User (menu)",
     "menu.logs":               "Nhật ký hệ thống (menu)",
 
@@ -56,6 +57,7 @@ FEATURE_GROUPS: dict[str, dict] = {
             "menu.storage",
             "menu.reports",
             "menu.leaves",
+            "menu.th_reports",
             "menu.staff",
             "menu.logs",
         ],

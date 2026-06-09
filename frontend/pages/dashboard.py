@@ -2,7 +2,7 @@
 import asyncio
 from nicegui import ui
 import frontend.api_client as api
-from frontend.shared import _sidebar, _content_area, _page_header, _require_auth, _redirect_if_cv
+from frontend.shared import _sidebar, _content_area, _page_header, _require_auth
 
 
 @ui.page("/home")
@@ -10,7 +10,11 @@ from frontend.shared import _sidebar, _content_area, _page_header, _require_auth
 async def dashboard_page():
     if not _require_auth():
         return
-    if _redirect_if_cv():
+    # Chỉ redirect CV sang handovers nếu họ có quyền — tránh vòng lặp vô tận
+    # khi CV thuộc phòng TH (handovers chặn TH → redirect về home → lại redirect sang handovers)
+    _u = api.get_current_user()
+    if _u and _u.get("role") == "chuyen_vien" and api.has_feature("menu.handovers"):
+        ui.navigate.to("/handovers")
         return
     badge_refs = _sidebar("home")
     with _content_area():

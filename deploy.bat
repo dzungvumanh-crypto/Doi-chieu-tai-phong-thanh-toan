@@ -10,7 +10,7 @@ setlocal
 ::   Qua mang LAN:  set "DEST=\\192.168.1.100\TenShare\System"
 ::   Cung may:      set "DEST=C:\...\System"
 :: ============================================================
-set "DEST=C:\Users\KhanhPC\Desktop\System"
+set "DEST=D:\TTTT_System"
 
 echo ============================================================
 echo  Deploy code moi sang: %DEST%

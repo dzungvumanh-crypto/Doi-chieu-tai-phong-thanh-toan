@@ -454,7 +454,163 @@ ui.on_exception(_on_exception)</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-06-08</footer>
+  <!-- 13 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">13</span>
+      <span class="card-title">Báo cáo dữ liệu thanh toán SWIFT — Phòng Tổng hợp</span>
+      <span class="badge badge-done">Hoàn thành</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh</div>
+      <p>Phòng Tổng hợp upload file Lệnh đến (IN) và Lệnh đi (OUT) từ hệ thống SWIFT → hệ thống điền vào mẫu báo cáo D00054 của Ngân hàng Nhà nước (template cố định, không được sửa định dạng).</p>
+
+      <div class="label">Template path</div>
+      <p>Lưu tại <code>templates/Phòng Tổng hợp/Báo cáo giao dịch chuyển tiền qua Swift/D00054-*.xlsx</code>. Path được build bằng <code>pathlib.Path</code> trong Python — hoạt động đúng với Unicode trên Windows, không dùng shell để tránh encoding issue.</p>
+
+      <div class="label">Xử lý giá trị số</div>
+      <table>
+        <tr><th>Trường</th><th>Xử lý</th></tr>
+        <tr><td><code>STTLM_AMT</code> (IN) / <code>TOTAL_AMT</code> (OUT)</td><td>Chia 1000, làm tròn 2 chữ số thập phân → ghi <code>float</code> vào cell</td></tr>
+        <tr><td><code>TOTAL</code></td><td>Ghi <code>int</code></td></tr>
+        <tr><td>Ô có giá trị 0</td><td>Ghi <code>None</code> (để trống) thay vì 0 — template không yêu cầu điền 0 tường minh</td></tr>
+      </table>
+      <p>Ghi <code>float</code> thay vì string "144,55" để row 217 (Tổng cộng) tính đúng. Row 217 không có SUM formula trong template — tính thủ công trong Python sau khi điền xong các rows 20–214.</p>
+      <div class="note">Dấu phẩy thập phân (theo yêu cầu nghiệp vụ) được xử lý bởi định dạng ô trong template (locale ngân hàng). Không set <code>number_format</code> trong code để đảm bảo không sửa định dạng.</div>
+
+      <div class="label">Country matching</div>
+      <p>Template có 195 quốc gia (rows 20–214, cột C). File IN/OUT có tên quốc gia uppercase trong cột CTHED. Mapping bằng <code>upper().strip()</code> — đủ để match vì cả hai nguồn dùng cùng tên tiếng Anh theo chuẩn SWIFT. Quốc gia không match được → log warning, bỏ qua (không crash).</p>
+
+      <div class="label">Sidebar — Nested flyout (cascade 2 cấp)</div>
+      <p>Cấu trúc sidebar hiện tại chỉ hỗ trợ 1 cấp (dept → items). Đã mở rộng <code>_dept_group()</code> để items có thể là <strong>tuple</strong> (link trực tiếp) hoặc <strong>dict sub-group</strong> (nested flyout). CSS thêm class <code>.flyout-group</code> + <code>.sub-flyout</code> — hover trigger giống pattern dept-item hiện có. Không ảnh hưởng các dept khác vì chỉ tonghop có dict sub-group.</p>
+
+      <div class="label">Permission model</div>
+      <p>Backend dùng <code>get_current_staff</code> (bất kỳ user đã đăng nhập). Kiểm soát truy cập bằng feature <code>menu.th_reports</code> gán qua nhóm — phù hợp hơn role check vì nhân viên TH có roles khác nhau (truong_phong, pho_phong) và không có role riêng cho phòng TH.</p>
+
+      <div class="label">Period — query param thay vì Form field</div>
+      <p><code>period</code> (YYYYMM) truyền qua query string (<code>?period=202605</code>) thay vì Form field. Lý do: <code>api.post_upload_bytes()</code> trong frontend không hỗ trợ <code>data</code> parameter — tránh sửa api_client cho 1 endpoint duy nhất.</p>
+
+      <div class="label">Files tạo mới / sửa</div>
+      <ul>
+        <li><code>backend/services/th_report_service.py</code> — parse IN/OUT, fill template</li>
+        <li><code>backend/api/th_reports.py</code> — POST /api/th-reports/generate</li>
+        <li><code>backend/api/registry.py</code> — đăng ký router</li>
+        <li><code>backend/core/features.py</code> — thêm <code>menu.th_reports</code></li>
+        <li><code>frontend/shared.py</code> — nested flyout CSS + DEPARTMENTS + <code>_dept_group()</code></li>
+        <li><code>frontend/pages/th_reports.py</code> — trang mới route <code>/th-reports</code></li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- 14 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">14</span>
+      <span class="card-title">Fix vòng lặp vô tận home ↔ handovers — user chưa phân nhóm</span>
+      <span class="badge badge-done">Fix</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Root cause</div>
+      <p><code>_redirect_if_cv()</code> redirect <strong>tất cả</strong> <code>chuyen_vien</code> sang <code>/handovers</code> vô điều kiện. Khi CV thuộc phòng TH (hoặc chưa có nhóm quyền), <code>/handovers</code> phát hiện điều kiện bị chặn và redirect ngược về <code>/</code> (= <code>/home</code>) → lại kích hoạt <code>_redirect_if_cv()</code> → vòng vô tận.</p>
+      <pre>dashboard_page() → _redirect_if_cv() → /handovers
+                                              ↑         ↓  TH dept check → navigate("/")
+                                              └──────────┘</pre>
+
+      <div class="label">Đánh đổi quan trọng</div>
+      <p><code>_redirect_if_cv()</code> dùng ở 2 mục đích khác nhau:</p>
+      <table>
+        <tr><th>Nơi gọi</th><th>Mục đích</th><th>Thay đổi</th></tr>
+        <tr><td>bundles, storage, reports, staff...</td><td>Chặn CV truy cập trang không phải của họ → redirect /handovers</td><td>Giữ nguyên</td></tr>
+        <tr><td>dashboard (home)</td><td>Đưa CV về trang nhà của họ</td><td>Inline logic, thêm check <code>has_feature("menu.handovers")</code></td></tr>
+      </table>
+      <p>Thay vì sửa <code>_redirect_if_cv()</code> toàn cục (ảnh hưởng tất cả trang), fix inline tại <code>dashboard.py</code> và <code>login.py</code> để chỉ redirect nếu user thực sự có quyền handovers.</p>
+
+      <div class="label">Hành vi sau fix</div>
+      <ul>
+        <li>CV <strong>có</strong> feature <code>menu.handovers</code>: login/home → <code>/handovers</code> như cũ</li>
+        <li>CV <strong>không có</strong> feature (chưa phân nhóm, hoặc TH dept): dừng tại <code>/home</code> — không loop</li>
+        <li>Non-CV chưa phân nhóm: vẫn ở <code>/home</code>, sidebar ẩn hết menu (check_features)</li>
+      </ul>
+
+      <div class="label">Files sửa</div>
+      <ul>
+        <li><code>frontend/pages/dashboard.py</code> — thay <code>_redirect_if_cv()</code> bằng inline check + <code>has_feature</code></li>
+        <li><code>frontend/pages/login.py</code> — thêm <code>has_feature("menu.handovers")</code> trước khi redirect CV</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- 15 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">15</span>
+      <span class="card-title">Single-session enforcement — push-out khi đăng nhập từ thiết bị khác</span>
+      <span class="badge badge-done">done · 2026-06-09</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Quyết định thiết kế</div>
+      <p>Dùng <code>session_key</code> (UUID) thay vì so sánh IP để detect session bị thay thế. Lý do: NiceGUI là server-side rendering — mọi request từ browser đều đi qua NiceGUI server, nên <code>request.client.host</code> tại FastAPI luôn là <code>127.0.0.1</code>, không phải IP browser thật.</p>
+
+      <div class="label">Cơ chế hoạt động</div>
+      <table>
+        <tr><th>Bước</th><th>Hành động</th></tr>
+        <tr><td>Đăng nhập</td><td>Tạo UUID <code>session_key</code>, lưu vào <code>login_sessions.session_key</code>, nhúng vào JWT payload (<code>sk</code> claim)</td></tr>
+        <tr><td>Force-login từ máy 2</td><td><code>INSERT OR REPLACE</code> ghi đè <code>session_key</code> mới — session cũ của máy 1 bị invalidate</td></tr>
+        <tr><td>Máy 1 gọi API tiếp theo</td><td><code>deps.py</code> so sánh <code>JWT.sk</code> vs <code>login_sessions.session_key</code> → mismatch → 401 <code>__session_displaced__</code></td></tr>
+        <tr><td>Frontend nhận 401</td><td><code>api_client.py</code> raise <code>DisplacedSessionError</code> → redirect <code>/login?reason=displaced</code></td></tr>
+        <tr><td>Proactive check</td><td><code>ui.timer(60, _session_heartbeat)</code> trong <code>_require_auth</code> — nếu user ngồi idle cũng bị đẩy ra sau tối đa 60 giây</td></tr>
+      </table>
+
+      <div class="note">Backward compat: token cũ không có <code>sk</code> claim → bỏ qua check (null-safe: chỉ reject khi cả 2 bên đều có giá trị và khác nhau). Người dùng cũ không bị đẩy ra sau deploy.</div>
+    </div>
+  </div>
+
+  <!-- 16 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">16</span>
+      <span class="card-title">Fix IP logging — nhật ký luôn ghi 127.0.0.1</span>
+      <span class="badge badge-done">done · 2026-06-09</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Root cause</div>
+      <p>Frontend NiceGUI gửi IP thật qua header <code>X-Client-IP</code> khi login, nhưng <code>backend/api/auth.py</code> đọc <code>request.client.host</code> — đây là IP của NiceGUI process, luôn là <code>127.0.0.1</code>.</p>
+      <div class="label">Fix</div>
+      <p><code>client_ip = request.headers.get("X-Client-IP") or request.client.host</code> — ưu tiên header do frontend chuyển tiếp.</p>
+      <div class="note">Chỉ áp dụng cho endpoint login. Các endpoint khác không cần IP thật vì session đã được xác định qua JWT + session_key.</div>
+    </div>
+  </div>
+
+  <!-- 17 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">17</span>
+      <span class="card-title">Tách menu Nhật ký hệ thống + phân trang logs</span>
+      <span class="badge badge-done">done · 2026-06-09</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Thay đổi menu</div>
+      <p>Menu "Nhật ký hệ thống" (single link) chuyển thành dept-group flyout với 2 sub-item:</p>
+      <ul>
+        <li><strong>Lịch sử lỗi &amp; cảnh báo</strong> → <code>/logs</code> (file-based <code>app.log</code>)</li>
+        <li><strong>Nhật ký đăng nhập</strong> → <code>/login-logs</code> (DB-based <code>login_logs</code>)</li>
+      </ul>
+      <p>Cả 2 dùng chung feature flag <code>menu.logs</code> — không tạo thêm feature code mới để tránh phải re-assign cho các nhóm hiện tại.</p>
+
+      <div class="label">Phân trang</div>
+      <table>
+        <tr><th>Tham số</th><th>Giá trị</th><th>Lý do</th></tr>
+        <tr><td>Page size</td><td>50 bản ghi</td><td>Cân bằng giữa context và hiệu năng render</td></tr>
+        <tr><td>Retention</td><td>30 ngày</td><td>Login logs — cleanup lazy (chạy mỗi khi GET /logins được gọi)</td></tr>
+        <tr><td>System logs</td><td>50/page</td><td>Parsed từ file, không xóa — rotation do Python RotatingFileHandler</td></tr>
+      </table>
+
+      <div class="label">Đánh đổi</div>
+      <p>Lazy cleanup (xóa khi query) thay vì cron job: đơn giản hơn, không cần background task, nhưng lần query đầu tiên sau 30 ngày sẽ chậm hơn một chút nếu có nhiều bản ghi.</p>
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-06-09</footer>
 </div>
 </body>
 </html>

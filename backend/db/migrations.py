@@ -348,6 +348,8 @@ def _ensure_indexes():
             feature_code VARCHAR(100) NOT NULL,
             PRIMARY KEY (group_id, feature_code)
         )""",
+        # KSNB System — 2026-06-09: session_key để enforce single-session per user
+        "ALTER TABLE login_sessions ADD COLUMN session_key TEXT",
     ]
     _mig_log = logging.getLogger(__name__)
     conn = sqlite3.connect(DB_PATH, timeout=30)

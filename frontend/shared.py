@@ -42,6 +42,13 @@ DEPARTMENTS = [
         "icon": "summarize",
         "items": [
             ("leaves", "Nghỉ phép", "event_busy"),
+            {
+                "label": "Báo cáo",
+                "icon": "assessment",
+                "items": [
+                    ("th_reports", "Báo cáo dữ liệu thanh toán", "payments"),
+                ],
+            },
         ],
     },
     {"id": "bgd", "label": "Ban Giám đốc", "icon": "business_center", "items": []},
@@ -69,9 +76,26 @@ _SIDEBAR_CSS = """<style>
   box-shadow: 6px 4px 20px rgba(0,0,0,0.5);
   border-radius: 0 8px 8px 0;
   border-left: 3px solid #991b1b;
-  overflow: hidden;
+  overflow: visible;
 }
 .dept-item:hover .dept-flyout { display: flex; }
+.flyout-group { position: relative; z-index: 0; }
+.flyout-group:hover { z-index: 10001; }
+.sub-flyout {
+  display: none;
+  position: absolute;
+  left: 100%;
+  top: 0;
+  background-color: #7f1d1d;
+  z-index: 10000;
+  min-width: 13rem;
+  flex-direction: column;
+  box-shadow: 6px 4px 20px rgba(0,0,0,0.5);
+  border-radius: 0 8px 8px 0;
+  border-left: 3px solid #991b1b;
+  overflow: hidden;
+}
+.flyout-group:hover .sub-flyout { display: flex; }
 </style>"""
 
 
@@ -100,20 +124,34 @@ def _nav_item(key: str, label: str, icon: str, current_page: str, badge_refs: di
             badge_refs[key] = b
 
 
+def _item_visible(item, check_features: bool) -> bool:
+    """Kiểm tra một item (tuple hoặc sub-group dict) có visible không."""
+    if isinstance(item, tuple):
+        k, _, _ = item
+        return not check_features or api.has_feature(f"menu.{k}")
+    # dict = sub-group: visible nếu ít nhất 1 child visible
+    return any(
+        not check_features or api.has_feature(f"menu.{k}")
+        for k, _, _ in item["items"]
+    )
+
+
 def _dept_group(dept: dict, current_page: str, badge_refs: dict, check_features: bool = True):
     """Nhóm phòng ban — hover để xem flyout menu bên phải (không đẩy các mục dưới xuống).
     check_features=True: lọc items theo api.has_feature(); False: hiện tất cả (dùng cho admin menu cứng).
+    Item có thể là tuple (key, label, icon) hoặc dict sub-group {"label", "icon", "items"}.
     """
-    # Lọc items theo feature (bỏ qua nếu check_features=False hoặc là admin-only menu)
-    visible_items = [
-        (k, lbl, ico) for k, lbl, ico in dept["items"]
-        if not check_features or api.has_feature(f"menu.{k}")
-    ]
-    # Ẩn cả dept group nếu không có item nào visible
+    visible_items = [i for i in dept["items"] if _item_visible(i, check_features)]
     if dept["items"] and not visible_items:
         return
 
-    dept_keys = {k for k, _, _ in visible_items}
+    # Tổng hợp tất cả route keys (kể cả trong sub-group) để detect active state
+    dept_keys: set[str] = set()
+    for item in visible_items:
+        if isinstance(item, tuple):
+            dept_keys.add(item[0])
+        else:
+            dept_keys.update(k for k, _, _ in item["items"])
     is_active_dept = current_page in dept_keys
 
     with ui.element("div").classes("dept-item w-full"):
@@ -132,21 +170,54 @@ def _dept_group(dept: dict, current_page: str, badge_refs: dict, check_features:
             with ui.element("div").classes("dept-flyout"):
                 with ui.element("div").classes("px-3 py-1.5 border-b border-red-700").style("background:#4c0519"):
                     ui.label(dept["label"]).classes("text-xs font-semibold text-red-300")
-                for key, label, icon in visible_items:
-                    is_active = current_page == key
-                    bg = "bg-red-700" if is_active else "hover:bg-red-800"
-                    with ui.row().classes(
-                        f"w-full items-center px-4 py-2.5 cursor-pointer {bg}"
-                    ).on("click", lambda k=key: ui.navigate.to(f"/{k}")):
-                        ui.icon(icon).classes("text-base mr-2 text-red-100 shrink-0")
-                        ui.label(label).classes("text-sm flex-1")
-                        if key in ("leaves", "handovers"):
-                            b = ui.label("").classes(
-                                "text-xs font-bold bg-yellow-400 text-red-900 rounded-full "
-                                "min-w-[1.1rem] h-[1.1rem] flex items-center justify-center px-1"
-                            )
-                            b.set_visibility(False)
-                            badge_refs[key] = b
+                for item in visible_items:
+                    if isinstance(item, tuple):
+                        # ── Item thông thường ──
+                        key, label, icon = item
+                        is_active = current_page == key
+                        bg = "bg-red-700" if is_active else "hover:bg-red-800"
+                        with ui.row().classes(
+                            f"w-full items-center px-4 py-2.5 cursor-pointer {bg}"
+                        ).on("click", lambda k=key: ui.navigate.to(f"/{k}")):
+                            ui.icon(icon).classes("text-base mr-2 text-red-100 shrink-0")
+                            ui.label(label).classes("text-sm flex-1")
+                            if key in ("leaves", "handovers"):
+                                b = ui.label("").classes(
+                                    "text-xs font-bold bg-yellow-400 text-red-900 rounded-full "
+                                    "min-w-[1.1rem] h-[1.1rem] flex items-center justify-center px-1"
+                                )
+                                b.set_visibility(False)
+                                badge_refs[key] = b
+                    else:
+                        # ── Sub-group (nested flyout) ──
+                        sub_children = [
+                            (k, lbl, ico) for k, lbl, ico in item["items"]
+                            if not check_features or api.has_feature(f"menu.{k}")
+                        ]
+                        if not sub_children:
+                            continue
+                        is_active_sub = any(current_page == k for k, _, _ in sub_children)
+                        sub_bg = "bg-red-700" if is_active_sub else "hover:bg-red-800"
+                        with ui.element("div").classes("flyout-group w-full"):
+                            with ui.row().classes(
+                                f"w-full items-center px-4 py-2.5 cursor-default select-none {sub_bg}"
+                            ):
+                                ui.icon(item["icon"]).classes("text-base mr-2 text-red-100 shrink-0")
+                                ui.label(item["label"]).classes("text-sm flex-1")
+                                ui.icon("chevron_right").classes("text-sm text-red-400 shrink-0")
+                            with ui.element("div").classes("sub-flyout"):
+                                with ui.element("div").classes(
+                                    "px-3 py-1.5 border-b border-red-700"
+                                ).style("background:#4c0519"):
+                                    ui.label(item["label"]).classes("text-xs font-semibold text-red-300")
+                                for k, lbl, ico in sub_children:
+                                    is_active = current_page == k
+                                    bg = "bg-red-700" if is_active else "hover:bg-red-800"
+                                    with ui.row().classes(
+                                        f"w-full items-center px-4 py-2.5 cursor-pointer {bg}"
+                                    ).on("click", lambda kk=k: ui.navigate.to(f"/{kk}")):
+                                        ui.icon(ico).classes("text-base mr-2 text-red-100 shrink-0")
+                                        ui.label(lbl).classes("text-sm flex-1")
 
 
 def _sidebar(current_page: str) -> dict:
@@ -210,7 +281,15 @@ def _sidebar(current_page: str) -> dict:
 
             # Nhật ký hệ thống — admin luôn thấy, user khác cần feature
             if user_role == "admin" or api.has_feature("menu.logs"):
-                _nav_item("logs", "Nhật ký hệ thống", "terminal", current_page, badge_refs)
+                _dept_group({
+                    "id": "nhatky",
+                    "label": "Nhật ký hệ thống",
+                    "icon": "terminal",
+                    "items": [
+                        ("logs",       "Lịch sử lỗi & cảnh báo", "error_outline"),
+                        ("login-logs", "Nhật ký đăng nhập",       "login"),
+                    ],
+                }, current_page, badge_refs, check_features=False)
 
             # Phân quyền chức năng — chỉ admin (hard-coded, không phải feature)
             if user_role == "admin":
@@ -277,6 +356,19 @@ def _require_auth():
             api.clear_auth()
             client.open("/login")
     asyncio.ensure_future(_tab_check())
+
+    # ── Kiểm tra session bị thay thế mỗi 60 giây ──
+    async def _session_heartbeat():
+        try:
+            await asyncio.to_thread(api.get, "/api/auth/me")
+        except api.DisplacedSessionError:
+            api.clear_auth()
+            ui.notify("Tài khoản này đang được đăng nhập từ thiết bị khác", type="warning", timeout=4000)
+            client.open("/login?reason=displaced")
+        except Exception:
+            pass  # network hiccup — bỏ qua
+    ui.timer(60, _session_heartbeat)
+
     return True
 
 
@@ -290,7 +382,11 @@ def _redirect_if_cv():
 
 
 def _handle_api_error(e: Exception) -> bool:
-    """Xử lý lỗi API. Trả True nếu session hết hạn và đã redirect (caller nên return)."""
+    """Xử lý lỗi API. Trả True nếu cần redirect (caller nên return)."""
+    if isinstance(e, api.DisplacedSessionError):
+        ui.notify(str(e), type="warning", timeout=4000)
+        ui.navigate.to("/login?reason=displaced")
+        return True
     if isinstance(e, api.SessionExpiredError):
         ui.notify(str(e), type="warning")
         ui.navigate.to("/login")

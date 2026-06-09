@@ -4,8 +4,7 @@ import os
 import re
 import sqlite3
 import tempfile
-from datetime import datetime
-from typing import List
+from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 from backend.database import get_db, _vn_now
@@ -23,8 +22,11 @@ _LOG_RE = re.compile(
     r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+(\w+)\s+(\S+)\s+—\s+(.*)$"
 )
 
+PAGE_SIZE = 50
+LOG_RETENTION_DAYS = 30
 
-def _parse_log_file(level_filter: str = "", limit: int = 200, offset: int = 0):
+
+def _parse_log_file(level_filter: str = "", page: int = 1):
     if not os.path.exists(_LOG_PATH):
         return [], 0
 
@@ -54,7 +56,15 @@ def _parse_log_file(level_filter: str = "", limit: int = 200, offset: int = 0):
         parsed = [e for e in parsed if e["level"] == level_filter.upper()]
 
     total = len(parsed)
-    return parsed[offset: offset + limit], total
+    offset = (page - 1) * PAGE_SIZE
+    return parsed[offset: offset + PAGE_SIZE], total
+
+
+def _cleanup_login_logs(db: sqlite3.Connection) -> None:
+    """Xóa login_logs cũ hơn LOG_RETENTION_DAYS ngày."""
+    cutoff = (datetime.utcnow() - timedelta(days=LOG_RETENTION_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+    db.execute("DELETE FROM login_logs WHERE created_at < ?", (cutoff,))
+    db.commit()
 
 
 @router.get("/backup-info")
@@ -90,7 +100,6 @@ def backup_db(
         except Exception:
             pass
 
-    # Ghi audit log: ai tải, từ IP nào, lúc nào
     client_ip = request.client.host if request.client else "unknown"
     stamp = _vn_now().strftime("%Y%m%d_%H%M%S")
     db.execute(
@@ -174,12 +183,13 @@ def export_login_logs(
 
 @router.get("/logins")
 def get_login_logs(
-    limit:   int = Query(200, ge=1, le=1000),
-    offset:  int = Query(0, ge=0),
+    page:    int = Query(1, ge=1),
     success: str = Query(""),
     _: dict = Depends(require_admin_or_gd),
     db: sqlite3.Connection = Depends(get_db),
 ):
+    _cleanup_login_logs(db)
+
     clauses = []
     params: list = []
     if success == "true":
@@ -192,6 +202,7 @@ def get_login_logs(
         f"SELECT COUNT(*) FROM login_logs ll {where}", params
     ).fetchone()[0]
 
+    offset = (page - 1) * PAGE_SIZE
     rows = db.execute(
         f"""SELECT ll.*, ks.full_name
             FROM login_logs ll
@@ -199,7 +210,7 @@ def get_login_logs(
             {where}
             ORDER BY ll.created_at DESC
             LIMIT ? OFFSET ?""",
-        params + [limit, offset],
+        params + [PAGE_SIZE, offset],
     ).fetchall()
 
     return {
@@ -215,16 +226,24 @@ def get_login_logs(
             }
             for r in rows
         ],
-        "total": total, "limit": limit, "offset": offset,
+        "total":     total,
+        "page":      page,
+        "page_size": PAGE_SIZE,
+        "pages":     max(1, -(-total // PAGE_SIZE)),  # ceiling division
     }
 
 
 @router.get("/")
 def get_logs(
     level: str = Query(""),
-    limit: int = Query(300, ge=1, le=2000),
-    offset: int = Query(0, ge=0),
+    page:  int  = Query(1, ge=1),
     _: dict = Depends(require_admin_or_gd),
 ):
-    entries, total = _parse_log_file(level, limit, offset)
-    return {"entries": entries, "total": total, "limit": limit, "offset": offset}
+    entries, total = _parse_log_file(level, page)
+    return {
+        "entries":   entries,
+        "total":     total,
+        "page":      page,
+        "page_size": PAGE_SIZE,
+        "pages":     max(1, -(-total // PAGE_SIZE)),
+    }

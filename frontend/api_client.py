@@ -14,6 +14,11 @@ class SessionExpiredError(Exception):
     pass
 
 
+class DisplacedSessionError(Exception):
+    """Raised khi phiên bị thay thế bởi đăng nhập mới từ thiết bị khác."""
+    pass
+
+
 class ViolationError(Exception):
     """Raised khi server trả 422 với danh sách user có name_5 ≠ 0."""
     def __init__(self, message: str, violations: list):
@@ -130,6 +135,12 @@ def _parse_error(e: "httpx.HTTPStatusError") -> str:
 def _raise_http_error(e: httpx.HTTPStatusError):
     if e.response.status_code == 401:
         clear_auth()
+        try:
+            detail = e.response.json().get("detail", "")
+        except Exception:
+            detail = ""
+        if "__session_displaced__" in str(detail):
+            raise DisplacedSessionError("Tài khoản này đang được đăng nhập từ thiết bị khác")
         raise SessionExpiredError("Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.")
     if e.response.status_code == 422:
         try:

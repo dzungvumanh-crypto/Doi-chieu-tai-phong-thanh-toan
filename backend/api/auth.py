@@ -1,6 +1,8 @@
 """Authentication endpoints"""
+import logging
 import re
 import sqlite3
+import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from backend.database import get_db, _vn_now, write_audit
 from backend.schemas.auth import LoginRequest, Token, PasswordChange, AdminPasswordReset
@@ -11,6 +13,7 @@ from backend.core.config import settings
 from backend.core import rate_limit
 
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
+_log = logging.getLogger("auth")
 
 _PWD_RE = re.compile(r'^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^a-zA-Z\d]).{8,}$')
 
@@ -38,7 +41,16 @@ def login(req: LoginRequest, request: Request, db: sqlite3.Connection = Depends(
             detail=f"Quá nhiều lần đăng nhập sai. Thử lại sau {wait} giây.",
         )
 
-    client_ip = request.client.host if request.client else "unknown"
+    # X-Client-IP do NiceGUI frontend chuyển tiếp — IP thật của browser
+    client_ip = (
+        request.headers.get("X-Client-IP", "").strip()
+        or (request.client.host if request.client else "unknown")
+    )
+    _log.info("login attempt user=%r x_client_ip=%r fastapi_client=%r → used=%r",
+              req.username,
+              request.headers.get("X-Client-IP", "(not set)"),
+              request.client.host if request.client else None,
+              client_ip)
 
     row = db.execute(
         "SELECT * FROM user_tttt WHERE username = ? AND is_active = 1", (req.username,)
@@ -69,8 +81,9 @@ def login(req: LoginRequest, request: Request, db: sqlite3.Connection = Depends(
         )
 
     rate_limit.clear(db, req.username)
-    set_session(db, staff["id"], client_ip, ttl_hours=settings.ACCESS_TOKEN_EXPIRE_HOURS)
-    token = create_access_token({"sub": str(staff["id"])})
+    session_key = str(uuid.uuid4())
+    set_session(db, staff["id"], client_ip, session_key, ttl_hours=settings.ACCESS_TOKEN_EXPIRE_HOURS)
+    token = create_access_token({"sub": str(staff["id"]), "sk": session_key})
     db.execute(
         "INSERT INTO login_logs (username, staff_id, ip_address, success, detail, created_at) VALUES (?,?,?,?,?,?)",
         (req.username, staff["id"], client_ip, 1, None, _vn_now()),

@@ -20,6 +20,7 @@ from backend.api.leaves import router as leaves_router
 from backend.api.logs import router as logs_router
 from backend.api.reports import router as reports_router
 from backend.api.staff import router as staff_router
+from backend.api.th_reports import router as th_reports_router
 
 # Thêm router mới: 1 dòng import ở trên + 1 tuple ở đây
 # Format: (router_object, {"prefix": "/api/...", "tags": ["..."]})
@@ -36,6 +37,7 @@ _ROUTERS = [
     (dashboard_router,   {"prefix": "/api/dashboard",      "tags": ["dashboard"]}),
     (holidays_router,    {"prefix": "/api/admin/holidays", "tags": ["holidays"]}),
     (reports_router,     {}),
+    (th_reports_router,  {}),
     (groups_router,      {}),
 ]
 
