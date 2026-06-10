@@ -610,7 +610,181 @@ ui.on_exception(_on_exception)</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-06-09</footer>
+  <!-- 18 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">18</span>
+      <span class="card-title">Tích hợp Phân lịch trực Phòng Thanh toán</span>
+      <span class="badge badge-done">done · 2026-06-09</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Nguồn gốc</div>
+      <p>App standalone <code>Phan_truc_tai_phong_thanh_toan</code> (FastAPI + SQLAlchemy ORM, không có auth). Được tích hợp thành menu <strong>"Phân lịch trực"</strong> dưới Phòng Thanh toán trong hệ thống chính.</p>
+
+      <div class="label">Quyết định 1 — Không tạo bảng <code>duty_staff</code></div>
+      <table>
+        <tr><th>Lựa chọn</th><th>Ưu</th><th>Nhược</th></tr>
+        <tr>
+          <td>Tạo bảng <code>duty_staff</code> riêng (như app gốc)</td>
+          <td>Độc lập hoàn toàn; dễ seed data test</td>
+          <td>Duplicate data — 25 nhân viên đã có trong <code>user_tttt</code>; phải đồng bộ khi thêm/xóa/đổi tên</td>
+        </tr>
+        <tr>
+          <td><strong>Dùng <code>user_tttt</code> + bảng mỏng <code>duty_staff_meta</code> (đã chọn)</strong></td>
+          <td>Không duplicate; thêm/xóa nhân viên một chỗ; duty_role tự derive từ role có sẵn</td>
+          <td>Query phức tạp hơn (JOIN + COALESCE); phải filter theo dept code PAYMENT</td>
+        </tr>
+      </table>
+      <p><code>duty_staff_meta</code> chỉ lưu fields không thể derive: <code>can_do_sp</code>, <code>is_sp_backup</code>, <code>is_on_project</code>, <code>display_order</code>. <code>duty_role</code> derive trực tiếp: <code>truong_phong</code>/<code>pho_phong</code> → <code>LD</code>; <code>chuyen_vien</code> → <code>NV</code>.</p>
+
+      <div class="label">Quyết định 2 — Giữ <code>sp_id</code> riêng, không gộp vào <code>nv_ids</code></div>
+      <p>Trong app gốc, Song Phương (SP) là NV đặc biệt. Option gộp SP vào JSON array <code>nv_ids</code> với flag tiết kiệm cột nhưng làm phức tạp hóa logic hiển thị và xác định "tuần này ai đã trực SP". Giữ <code>sp_id</code> là cột riêng vì: (a) UI cần hiển thị SP tách biệt; (b) <code>get_week_assignees()</code> cần đọc riêng; (c) cảnh báo <code>sp_warning</code> chỉ áp dụng cho SP slot.</p>
+
+      <div class="label">Quyết định 3 — Bỏ bảng junction <code>duty_shift_nv</code></div>
+      <table>
+        <tr><th>Lựa chọn</th><th>Ưu</th><th>Nhược</th></tr>
+        <tr>
+          <td>Junction table <code>duty_shift_nv</code> (như app gốc)</td>
+          <td>Normalized; dễ JOIN khi query danh sách</td>
+          <td>Cần INSERT N rows cho mỗi shift; cần CASCADE delete; phức tạp hơn trong raw SQL</td>
+        </tr>
+        <tr>
+          <td><strong>JSON array <code>nv_ids</code> trong <code>duty_shifts</code> (đã chọn)</strong></td>
+          <td>Đơn giản; atomic insert; ít code hơn</td>
+          <td>Không thể JOIN trực tiếp; phải parse JSON khi query; không thể index theo NV</td>
+        </tr>
+      </table>
+      <p>Với max 5 NV/ca và số ca nhỏ (~5/tuần), performance không phải vấn đề. Đọc shifts rồi parse JSON trong Python đủ nhanh.</p>
+
+      <div class="label">Quyết định 4 — Lazy-init rotation state</div>
+      <p>App gốc gọi <code>init_rotation_for_year()</code> tại startup để seed <code>duty_rotation_state</code> cho 25 nhân viên hardcoded. Khi tích hợp, danh sách nhân viên đến từ DB — không thể seed tại startup vì connection chưa sẵn sàng. Thay bằng <code>INSERT OR IGNORE</code> lazy: khi <code>_get_rotation_state()</code> không tìm thấy record, tự tạo với <code>shift_count=0</code>. Tương đương về hành vi, đơn giản hơn về khởi tạo.</p>
+
+      <div class="label">Quyết định 5 — Department code PAYMENT</div>
+      <p>App gốc hardcode 25 tên nhân viên dưới dạng <code>SP_BACKUP_LEADERS = ["Nguyễn...", ...]</code>. Sau khi verify DB thực tế, phòng Thanh toán dùng code <code>'PAYMENT'</code> (không phải <code>'TT'</code> như dự đoán ban đầu). Staff query: <code>WHERE d.code='PAYMENT' AND u.role IN ('truong_phong','pho_phong','chuyen_vien')</code>. SP_BACKUP_LEADERS thay bằng query <code>duty_staff_meta WHERE is_sp_backup=1</code>.</p>
+
+      <div class="label">Quyết định 6 — ORM → Raw SQL (thay đổi lớn nhất)</div>
+      <table>
+        <tr><th>Thay đổi</th><th>ORM (gốc)</th><th>Raw SQL (tích hợp)</th></tr>
+        <tr><td>Query staff</td><td><code>db.query(Staff).all()</code></td><td><code>db.execute("SELECT ... FROM user_tttt JOIN ...").fetchall()</code></td></tr>
+        <tr><td>Insert shift</td><td><code>db.add(shift); db.flush()</code></td><td><code>cursor.execute("INSERT INTO ..."); cursor.lastrowid</code></td></tr>
+        <tr><td>Row access</td><td><code>shift.leader_id</code></td><td><code>shift["leader_id"]</code></td></tr>
+        <tr><td>Transaction</td><td><code>db.commit() / db.rollback()</code></td><td>Giữ nguyên <code>db.commit()</code></td></tr>
+      </table>
+      <div class="note">Constraint cứng của project: raw sqlite3 stdlib, không SQLAlchemy ORM. Xem <code>feedback_raw_sql.md</code>.</div>
+
+      <div class="label">Vấn đề phát hiện nhưng không fix</div>
+      <table>
+        <tr><th>Vấn đề</th><th>Lý do không fix</th></tr>
+        <tr><td>Nếu user_tttt có chuyên viên được cấp nhầm vào phòng PAYMENT từ phòng khác, họ sẽ xuất hiện trong pool phân trực</td><td>Nghiệp vụ: phân phòng đúng đắn là trách nhiệm admin. Không cần filter thêm.</td></tr>
+        <tr><td>Excel export chưa handle ca ngày lễ (holiday) — chưa ghi chú đặc biệt vào cell</td><td>Out of scope lần này; dữ liệu vẫn đúng, chỉ thiếu annotation trực quan.</td></tr>
+        <tr><td>Khi reset rotation, shift đã confirmed không bị xóa — chỉ rotation counter bị reset</td><td>Hành vi đúng: reset chỉ ảnh hưởng vòng xoay tương lai, không xóa lịch sử.</td></tr>
+      </table>
+
+      <div class="label">Files tạo mới</div>
+      <ul>
+        <li><code>backend/services/duty_calendar_utils.py</code> — tính ngày làm việc, cut-off, lễ VN</li>
+        <li><code>backend/services/duty_staff_service.py</code> — query user_tttt + duty_staff_meta</li>
+        <li><code>backend/services/duty_constraint_service.py</code> — absences, requests, special days, config</li>
+        <li><code>backend/services/duty_scheduler_engine.py</code> — thuật toán phân ca rotation</li>
+        <li><code>backend/services/duty_schedule_service.py</code> — CRUD shifts, enrich với user data</li>
+        <li><code>backend/services/duty_export_service.py</code> — xuất Excel openpyxl</li>
+        <li><code>backend/schemas/duty.py</code> — Pydantic schemas (không ORM)</li>
+        <li><code>backend/api/duty_staff.py</code>, <code>duty_constraints.py</code>, <code>duty_schedule.py</code>, <code>duty_stats.py</code>, <code>duty_export.py</code></li>
+        <li><code>frontend/pages/duty_schedule.py</code> — 5-tab page</li>
+      </ul>
+
+      <div class="label">Files sửa</div>
+      <ul>
+        <li><code>requirements.txt</code> — thêm <code>lunardate</code></li>
+        <li><code>backend/db/migrations.py</code> — 7 bảng <code>duty_*</code> + seed config</li>
+        <li><code>backend/core/features.py</code> — 7 feature codes + group mới</li>
+        <li><code>backend/api/registry.py</code> — đăng ký 5 routers (tổng 18)</li>
+        <li><code>frontend/shared.py</code> — thêm <code>duty_schedule</code> vào sidebar Phòng Thanh toán</li>
+        <li><code>frontend/api_client.py</code> — thêm <code>get_bytes()</code> cho download Excel</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- 19 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">19</span>
+      <span class="card-title">Báo cáo hậu kiểm — Thư công tác: sắp xếp IPCAS theo cấp bậc + hiển thị payment username</span>
+      <span class="badge badge-done">Hoàn thành</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Hai lỗi cần sửa</div>
+      <table>
+        <tr><th>Lỗi</th><th>Biểu hiện</th><th>Nguyên nhân gốc</th></tr>
+        <tr>
+          <td>IPCAS không có thứ tự</td>
+          <td>User xuất hiện theo thứ tự ngẫu nhiên từ file (ví dụ HQPTH trước HQDLINH)</td>
+          <td><code>merge_hkv()</code> build list theo thứ tự dict key — không sort theo role</td>
+        </tr>
+        <tr>
+          <td>Payment hiển thị IPCAS code</td>
+          <td>Section "Hệ thống Thanh toán tập trung" hiển thị <code>HQDLINH</code> thay vì <code>linhnguyendieu3</code></td>
+          <td><code>generate_center_word()</code> dùng <code>row.get('user_code')</code> cho cả IPCAS lẫn Payment — <code>user_code</code> luôn là IPCAS code</td>
+        </tr>
+      </table>
+
+      <div class="label">Giải pháp</div>
+      <table>
+        <tr><th>Thay đổi</th><th>Mô tả</th></tr>
+        <tr>
+          <td><code>merge_hkv()</code> thêm field <code>role</code></td>
+          <td>Lấy <code>role</code> từ DB khi lookup user — field này flow qua JSON đến <code>generate_center_word()</code></td>
+        </tr>
+        <tr>
+          <td><code>merge_hkv()</code> thêm field <code>payment_user_code</code></td>
+          <td>Lưu payment username gốc (từ file Backchecker, cột HKV, ví dụ <code>linhnguyendieu3</code>) riêng biệt với <code>user_code</code> (IPCAS code)</td>
+        </tr>
+        <tr>
+          <td><code>merge_hkv()</code> sort trước khi return</td>
+          <td>Sort theo <code>_ROLE_ORDER</code>: truong_phong(0) → pho_phong(1) → hau_kiem_vien(2) → chuyen_vien(3) → …</td>
+        </tr>
+        <tr>
+          <td><code>generate_center_word()</code> phần Payment</td>
+          <td>Dùng <code>row.get('payment_user_code') or row.get('user_code')</code> — hiển thị đúng username payment</td>
+        </tr>
+      </table>
+
+      <div class="label">Tại sao lưu <code>payment_user_code</code> riêng (không dùng lại <code>user_code</code>)</div>
+      <p><code>user_code</code> được dùng làm key để join dữ liệu IPCAS và Payment trong <code>merge_hkv()</code>. Đổi nghĩa của field này sẽ phá join logic. Thêm field mới là cách an toàn nhất — không ảnh hưởng logic hiện có, chỉ dùng thêm khi cần.</p>
+
+      <div class="label">Files sửa</div>
+      <ul>
+        <li><code>backend/services/report_service.py</code> — <code>merge_hkv()</code> và <code>generate_center_word()</code></li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- 20 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">20</span>
+      <span class="card-title">Phân lịch trực — bỏ yêu cầu phó phòng trở lên; đổi "Seed ngày lễ" → "Set Ngày lễ"</span>
+      <span class="badge badge-done">Hoàn thành</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Vấn đề</div>
+      <p>Tất cả endpoint write của module <code>duty</code> (staff meta, special-days, schedule generate/confirm/delete, constraints) đều dùng <code>require_pho_phong_or_above</code>. Người dùng cấp chuyên viên nhận 403 khi tick "Làm SP", "Backup SP", "Dự án", hoặc nhập ngày đặc biệt — dù UI đã hiển thị (do feature flag cho phép).</p>
+
+      <div class="label">Quyết định</div>
+      <p>Đổi toàn bộ dependency write trong 3 file API duty sang <code>get_current_staff</code>. Việc kiểm soát truy cập UI đã được delegate sang feature flag (<code>duty.manage_staff</code>, <code>duty.manage_config</code>, <code>duty.generate</code>, …). Backend chỉ cần đảm bảo user đã đăng nhập — không cần thêm tầng role check nữa.</p>
+
+      <div class="label">Files sửa</div>
+      <table>
+        <tr><th>File</th><th>Thay đổi</th></tr>
+        <tr><td><code>backend/api/duty_staff.py</code></td><td><code>require_pho_phong_or_above</code> → <code>get_current_staff</code> cho <code>POST /{user_id}/meta</code></td></tr>
+        <tr><td><code>backend/api/duty_constraints.py</code></td><td>Tất cả endpoint write (absences, special-days, shift-config, seed-holidays, compute-cutoff)</td></tr>
+        <tr><td><code>backend/api/duty_schedule.py</code></td><td>generate-week, generate-month, edit, confirm, confirm-week, delete, rotation/reset</td></tr>
+        <tr><td><code>frontend/pages/duty_schedule.py</code></td><td>Label nút "Seed ngày lễ" → "Set Ngày lễ"; notify message tương ứng</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-06-10</footer>
 </div>
 </body>
 </html>

@@ -21,6 +21,11 @@ from backend.api.logs import router as logs_router
 from backend.api.reports import router as reports_router
 from backend.api.staff import router as staff_router
 from backend.api.th_reports import router as th_reports_router
+from backend.api.duty_staff import router as duty_staff_router
+from backend.api.duty_constraints import router as duty_constraints_router
+from backend.api.duty_schedule import router as duty_schedule_router
+from backend.api.duty_stats import router as duty_stats_router
+from backend.api.duty_export import router as duty_export_router
 
 # Thêm router mới: 1 dòng import ở trên + 1 tuple ở đây
 # Format: (router_object, {"prefix": "/api/...", "tags": ["..."]})
@@ -38,7 +43,12 @@ _ROUTERS = [
     (holidays_router,    {"prefix": "/api/admin/holidays", "tags": ["holidays"]}),
     (reports_router,     {}),
     (th_reports_router,  {}),
-    (groups_router,      {}),
+    (groups_router,          {}),
+    (duty_staff_router,      {}),
+    (duty_constraints_router, {}),
+    (duty_schedule_router,   {}),
+    (duty_stats_router,      {}),
+    (duty_export_router,     {}),
 ]
 
 

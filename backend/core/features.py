@@ -45,61 +45,98 @@ FEATURES: dict[str, str] = {
     "staff.delete":            "Xóa nhân viên",
     "staff.export":            "Xuất Excel / DB",
     "staff.import_db":         "Nhập DB",
+
+    # Phân lịch trực — Phòng Thanh toán
+    "menu.duty_schedule":      "Phân lịch trực — Phòng Thanh toán (menu)",
+    "duty.generate":           "Tạo lịch trực tự động",
+    "duty.confirm":            "Xác nhận lịch trực",
+    "duty.delete":             "Xóa lịch trực",
+    "duty.export":             "Xuất Excel lịch trực",
+    "duty.manage_staff":       "Quản lý nhân viên phân lịch (can_do_sp, is_on_project...)",
+    "duty.manage_config":      "Cài đặt ca trực / ngày đặc biệt",
 }
 
-# ── Nhóm theo category cho UI phân quyền ─────────────────────────────────────
-FEATURE_GROUPS: dict[str, dict] = {
-    "Sidebar — Menu điều hướng": {
-        "icon": "menu",
-        "codes": [
-            "menu.handovers",
-            "menu.bundles",
-            "menu.storage",
-            "menu.reports",
-            "menu.leaves",
-            "menu.th_reports",
-            "menu.staff",
-            "menu.logs",
+# ── Cấu trúc phân cấp: Phòng → Menu → Action ─────────────────────────────────
+# Thêm phòng/menu/action mới tại đây — group_features.py tự render theo.
+# "actions": [] = menu hiển thị checkbox đơn, không có sub-items.
+FEATURE_GROUPS: list[dict] = [
+    {
+        "dept": "Phòng KSNB & HTVH",
+        "icon": "account_balance",
+        "menus": [
+            {
+                "code": "menu.handovers",
+                "actions": [
+                    "handovers.save_entry",
+                    "handovers.confirm_entry",
+                    "handovers.reject_entry",
+                    "handovers.borrow",
+                    "handovers.handback",
+                ],
+            },
+            {
+                "code": "menu.bundles",
+                "actions": [
+                    "bundles.generate",
+                    "bundles.download_cover",
+                    "bundles.mark_printed",
+                    "bundles.delete",
+                ],
+            },
+            {"code": "menu.storage",  "actions": []},
+            {"code": "menu.reports",  "actions": []},
         ],
     },
-    "Bàn giao chứng từ — Thao tác": {
-        "icon": "receipt_long",
-        "codes": [
-            "handovers.save_entry",
-            "handovers.confirm_entry",
-            "handovers.reject_entry",
-            "handovers.borrow",
-            "handovers.handback",
+    {
+        "dept": "Phòng Tổng hợp",
+        "icon": "summarize",
+        "menus": [
+            {
+                "code": "menu.leaves",
+                "actions": [
+                    "leaves.create",
+                    "leaves.cancel",
+                    "leaves.resubmit",
+                    "leaves.approve_ksv",
+                    "leaves.forward_th",
+                    "leaves.approve_gd",
+                ],
+            },
+            {"code": "menu.th_reports", "actions": []},
         ],
     },
-    "Đóng chứng từ — Thao tác": {
-        "icon": "folder_zip",
-        "codes": [
-            "bundles.generate",
-            "bundles.download_cover",
-            "bundles.mark_printed",
-            "bundles.delete",
+    {
+        "dept": "Phòng Thanh toán",
+        "icon": "payments",
+        "menus": [
+            {
+                "code": "menu.duty_schedule",
+                "actions": [
+                    "duty.generate",
+                    "duty.confirm",
+                    "duty.delete",
+                    "duty.export",
+                    "duty.manage_staff",
+                    "duty.manage_config",
+                ],
+            },
         ],
     },
-    "Nghỉ phép — Thao tác": {
-        "icon": "event_busy",
-        "codes": [
-            "leaves.create",
-            "leaves.cancel",
-            "leaves.resubmit",
-            "leaves.approve_ksv",
-            "leaves.forward_th",
-            "leaves.approve_gd",
+    {
+        "dept": "Quản lý hệ thống",
+        "icon": "admin_panel_settings",
+        "menus": [
+            {
+                "code": "menu.staff",
+                "actions": [
+                    "staff.create",
+                    "staff.edit",
+                    "staff.delete",
+                    "staff.export",
+                    "staff.import_db",
+                ],
+            },
+            {"code": "menu.logs", "actions": []},
         ],
     },
-    "Quản lý User — Thao tác": {
-        "icon": "manage_accounts",
-        "codes": [
-            "staff.create",
-            "staff.edit",
-            "staff.delete",
-            "staff.export",
-            "staff.import_db",
-        ],
-    },
-}
+]

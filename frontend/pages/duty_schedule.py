@@ -1,0 +1,598 @@
+"""Trang Phân lịch trực — Phòng Thanh toán."""
+import asyncio
+import html as _html
+from datetime import date, timedelta
+
+from nicegui import ui
+import frontend.api_client as api
+from frontend.shared import (
+    _sidebar, _content_area, _page_header, _require_auth, _handle_api_error,
+)
+
+_SHIFT_TYPE_LABEL = {
+    "normal":          "Thường",
+    "friday":          "Thứ 6",
+    "cutoff":          "Cut-off",
+    "settlement_main": "Quyết toán (chính)",
+    "settlement_sub":  "Quyết toán (phụ)",
+}
+
+_TYPE_ROW_COLOR = {
+    "normal":          "#EFF6FF",
+    "friday":          "#EEF2FF",
+    "cutoff":          "#FFF7ED",
+    "settlement_main": "#F5F3FF",
+    "settlement_sub":  "#F9FAFB",
+}
+
+_SPECIAL_COLOR = {
+    "holiday":    ("bg-red-50", "Nghỉ lễ",      "text-red-700"),
+    "cutoff":     ("bg-orange-50", "Cut-off",    "text-orange-700"),
+    "settlement": ("bg-purple-50", "Quyết toán", "text-purple-700"),
+    "makeup":     ("bg-blue-50", "Ngày bù",      "text-blue-700"),
+}
+
+_TH = "px-3 py-2 text-left font-medium border border-red-700 bg-red-800 text-white text-sm"
+_TD = "px-3 py-2 border border-gray-200 text-sm"
+
+
+def _week_start(d: date) -> date:
+    return d - timedelta(days=d.weekday())
+
+
+def _fmt_week_label(ws: date) -> str:
+    we = ws + timedelta(days=4)
+    return f"Tuần {ws:%d/%m} – {we:%d/%m/%Y}"
+
+
+def _h(s) -> str:
+    """HTML-escape để tránh XSS khi render dữ liệu user."""
+    return _html.escape(str(s or ""))
+
+
+@ui.page("/duty_schedule")
+async def duty_schedule_page():
+    if not _require_auth():
+        return
+    if not api.has_feature("menu.duty_schedule"):
+        ui.navigate.to("/home")
+        return
+
+    can_generate     = api.has_feature("duty.generate")
+    can_confirm      = api.has_feature("duty.confirm")
+    can_delete       = api.has_feature("duty.delete")
+    can_export       = api.has_feature("duty.export")
+    can_manage_staff = api.has_feature("duty.manage_staff")
+    can_manage_cfg   = api.has_feature("duty.manage_config")
+    can_write        = any([can_generate, can_confirm, can_delete, can_export,
+                            can_manage_staff, can_manage_cfg])
+
+    _sidebar("duty_schedule")
+    with _content_area():
+        _page_header("Phân lịch trực", "Phân ca trực Phòng Thanh toán theo tuần")
+
+        with ui.tabs().classes("mb-0") as tabs:
+            tab_schedule = ui.tab("schedule", label="Phân lịch",     icon="event")
+            tab_staff    = ui.tab("staff",    label="Nhân viên",     icon="groups")
+            tab_stats    = ui.tab("stats",    label="Thống kê",      icon="bar_chart")
+            tab_specials = ui.tab("specials", label="Ngày đặc biệt", icon="calendar_month")
+            tab_settings = ui.tab("settings", label="Cài đặt",       icon="settings")
+
+        with ui.tab_panels(tabs, value=tab_schedule).classes("w-full"):
+
+            # ════════════════════════════════════════════════════
+            # TAB 1 — PHÂN LỊCH
+            # ════════════════════════════════════════════════════
+            with ui.tab_panel(tab_schedule):
+                ws_ref = {"value": _week_start(date.today())}
+                week_label = ui.label("").classes("text-base font-semibold text-red-800 my-1")
+                schedule_area = ui.column().classes("w-full gap-1")
+
+                async def load_schedule():
+                    ws = ws_ref["value"]
+                    week_label.set_text(_fmt_week_label(ws))
+                    schedule_area.clear()
+                    try:
+                        shifts = await asyncio.to_thread(
+                            api.get, "/api/duty/schedule/week",
+                            {"week_start": ws.isoformat()}
+                        )
+                    except Exception as e:
+                        if _handle_api_error(e):
+                            return
+                        return
+
+                    with schedule_area:
+                        if not shifts:
+                            ui.label("Chưa có lịch trực tuần này. Nhấn 'Tạo lịch' để sinh tự động.").classes(
+                                "text-gray-400 italic py-4"
+                            )
+                            return
+
+                        rows_html = ""
+                        for s in shifts:
+                            bg = _TYPE_ROW_COLOR.get(s["shift_type"], "#FFFFFF")
+                            leader_name = _h((s.get("leader") or {}).get("full_name", "—"))
+                            sp_name     = _h((s.get("sp") or {}).get("full_name", "—"))
+                            sp_warn     = s.get("sp_warning") or ""
+                            if sp_warn == "leader_sp":
+                                sp_name = f'<span class="text-orange-600">(LD kiêm)</span>'
+                            elif sp_warn == "no_sp":
+                                sp_name = '<span class="text-red-600">Thiếu SP!</span>'
+                            nv_names = "<br>".join(_h(nv["full_name"]) for nv in (s.get("nvs") or []))
+                            stype_label = _h(_SHIFT_TYPE_LABEL.get(s["shift_type"], s["shift_type"]))
+                            status_label = "Đã xác nhận" if s["status"] == "confirmed" else "Bản thảo"
+                            status_cls = "color:#16A34A;font-weight:600" if s["status"] == "confirmed" else "color:#6B7280"
+                            rows_html += (
+                                f'<tr style="background:{bg}">'
+                                f'<td class="{_TD}">{_h(s["shift_date"])}</td>'
+                                f'<td class="{_TD}">{stype_label}</td>'
+                                f'<td class="{_TD}">{leader_name}</td>'
+                                f'<td class="{_TD}">{sp_name}</td>'
+                                f'<td class="{_TD}" style="white-space:pre-line">{nv_names or "—"}</td>'
+                                f'<td class="{_TD}" style="{status_cls}">{status_label}</td>'
+                                f'</tr>'
+                            )
+
+                        table_html = (
+                            '<div class="w-full overflow-x-auto">'
+                            '<table class="w-full border-collapse text-sm">'
+                            f'<thead><tr>'
+                            f'<th class="{_TH}">Ngày</th>'
+                            f'<th class="{_TH}">Loại ca</th>'
+                            f'<th class="{_TH}">Lãnh đạo</th>'
+                            f'<th class="{_TH}">Song Phương</th>'
+                            f'<th class="{_TH}">Nhân viên</th>'
+                            f'<th class="{_TH}">Trạng thái</th>'
+                            f'</tr></thead>'
+                            f'<tbody>{rows_html}</tbody>'
+                            '</table></div>'
+                        )
+                        ui.html(table_html)
+
+                # ── Week navigation ──────────────────────────────
+                with ui.row().classes("items-center gap-2 mb-2 flex-wrap"):
+                    ui.button(icon="chevron_left",
+                              on_click=lambda: [
+                                  ws_ref.__setitem__("value", ws_ref["value"] - timedelta(weeks=1)),
+                                  asyncio.ensure_future(load_schedule()),
+                              ]).props("flat dense")
+                    week_label
+                    ui.button(icon="chevron_right",
+                              on_click=lambda: [
+                                  ws_ref.__setitem__("value", ws_ref["value"] + timedelta(weeks=1)),
+                                  asyncio.ensure_future(load_schedule()),
+                              ]).props("flat dense")
+                    ui.button("Hôm nay",
+                              on_click=lambda: [
+                                  ws_ref.__setitem__("value", _week_start(date.today())),
+                                  asyncio.ensure_future(load_schedule()),
+                              ]).props("flat dense color=grey-6").classes("text-xs")
+
+                if can_write:
+                    with ui.row().classes("gap-2 mb-3 flex-wrap"):
+
+                        async def do_generate():
+                            ws = ws_ref["value"].isoformat()
+                            try:
+                                result = await asyncio.to_thread(
+                                    api.post, "/api/duty/schedule/generate-week",
+                                    {"week_start": ws, "overwrite_draft": True,
+                                     "overwrite_confirmed": False}
+                                )
+                                ui.notify(
+                                    f"Tạo {result['created']} ca, bỏ qua {result['skipped']}",
+                                    type="positive"
+                                )
+                                await load_schedule()
+                            except Exception as e:
+                                _handle_api_error(e)
+
+                        async def do_confirm_week():
+                            ws = ws_ref["value"].isoformat()
+                            try:
+                                result = await asyncio.to_thread(
+                                    api.post, f"/api/duty/schedule/confirm-week?week_start={ws}", {}
+                                )
+                                ui.notify(result.get("message", "Đã xác nhận"), type="positive")
+                                await load_schedule()
+                            except Exception as e:
+                                _handle_api_error(e)
+
+                        async def do_export():
+                            ws = ws_ref["value"].isoformat()
+                            try:
+                                file_bytes = await asyncio.to_thread(
+                                    api.get_bytes, "/api/duty/export/week",
+                                    {"week_start": ws}
+                                )
+                                filename = f"lich_truc_{ws.replace('-', '')}.xlsx"
+                                ui.download(file_bytes, filename=filename)
+                            except Exception as e:
+                                _handle_api_error(e)
+
+                        async def do_delete_week():
+                            ws = ws_ref["value"].isoformat()
+                            with ui.dialog() as dlg, ui.card():
+                                ui.label(f"Xóa toàn bộ ca trực tuần {ws}?").classes("font-semibold")
+                                ui.label("Ca đã xác nhận cũng sẽ bị xóa.").classes("text-red-600 text-sm mt-1")
+                                with ui.row().classes("justify-end gap-2 mt-3"):
+                                    ui.button("Hủy", on_click=dlg.close).props("flat")
+                                    async def _confirm_delete():
+                                        dlg.close()
+                                        try:
+                                            result = await asyncio.to_thread(
+                                                api.delete,
+                                                f"/api/duty/schedule/week?week_start={ws}"
+                                            )
+                                            ui.notify(result.get("message", "Đã xóa"), type="warning")
+                                            await load_schedule()
+                                        except Exception as ex:
+                                            _handle_api_error(ex)
+                                    ui.button("Xóa", on_click=_confirm_delete).props("color=negative")
+                            dlg.open()
+
+                        if can_generate:
+                            ui.button("Tạo lịch", icon="auto_fix_high",
+                                      on_click=do_generate).props("color=primary")
+                        if can_confirm:
+                            ui.button("Xác nhận tuần", icon="done_all",
+                                      on_click=do_confirm_week).props("color=positive")
+                        if can_export:
+                            ui.button("Xuất Excel", icon="download",
+                                      on_click=do_export).props("color=teal")
+                        if can_delete:
+                            ui.button("Xóa tuần", icon="delete_outline",
+                                      on_click=do_delete_week).props("color=negative flat")
+
+                asyncio.ensure_future(load_schedule())
+
+            # ════════════════════════════════════════════════════
+            # TAB 2 — NHÂN VIÊN
+            # ════════════════════════════════════════════════════
+            with ui.tab_panel(tab_staff):
+                staff_area = ui.column().classes("w-full")
+
+                async def load_staff():
+                    staff_area.clear()
+                    try:
+                        staff_list = await asyncio.to_thread(api.get, "/api/duty/staff")
+                    except Exception as e:
+                        if _handle_api_error(e):
+                            return
+                        return
+
+                    with staff_area:
+                        if can_manage_staff:
+                            ui.label("Thay đổi checkbox tự lưu ngay (không cần bấm Save).").classes(
+                                "text-xs text-gray-400 mb-3"
+                            )
+
+                        with ui.column().classes("w-full gap-1"):
+                            # Header
+                            with ui.row().classes("w-full bg-red-800 text-white px-2 py-2 rounded-t text-xs font-semibold gap-2"):
+                                ui.label("Họ tên").classes("flex-1 min-w-[160px]")
+                                ui.label("Chức vụ").classes("w-28")
+                                ui.label("Làm SP").classes("w-16 text-center")
+                                ui.label("Backup SP").classes("w-20 text-center")
+                                ui.label("Dự án").classes("w-16 text-center")
+
+                            _ROLE_LABEL = {
+                                "truong_phong": "Trưởng phòng",
+                                "pho_phong":    "Phó phòng",
+                                "chuyen_vien":  "Nhân viên",
+                            }
+                            _prev_role = None
+                            for p in staff_list:
+                                # Dòng separator phân nhóm chức vụ
+                                if p["role"] != _prev_role:
+                                    _prev_role = p["role"]
+                                    group_label = _ROLE_LABEL.get(p["role"], p["role"])
+                                    ui.label(group_label).classes(
+                                        "w-full text-xs font-bold text-red-800 px-2 pt-2 pb-0.5 border-b border-red-100"
+                                    )
+
+                                duty_color = "text-blue-700 bg-blue-50" if p["duty_role"] == "LD" else "text-green-700 bg-green-50"
+
+                                with ui.row().classes("w-full items-center px-2 py-1.5 border border-gray-100 hover:bg-gray-50 gap-2 text-sm"):
+                                    ui.label(p["full_name"]).classes("flex-1 font-medium min-w-[160px]")
+                                    ui.label(_ROLE_LABEL.get(p["role"], p["role"])).classes("w-28 text-xs text-gray-500")
+
+                                    def _make_toggle(pid, field):
+                                        async def handler(e):
+                                            if not can_manage_staff:
+                                                return
+                                            try:
+                                                await asyncio.to_thread(
+                                                    api.post, f"/api/duty/staff/{pid}/meta",
+                                                    {field: 1 if e.value else 0}
+                                                )
+                                            except Exception as ex:
+                                                _handle_api_error(ex)
+                                        return handler
+
+                                    cb_sp = ui.checkbox(
+                                        value=bool(p.get("can_do_sp", 0)),
+                                        on_change=_make_toggle(p["id"], "can_do_sp")
+                                    ).classes("w-16")
+                                    cb_sp.props("dense")
+                                    cb_sp.set_enabled(can_manage_staff)
+
+                                    cb_bk = ui.checkbox(
+                                        value=bool(p.get("is_sp_backup", 0)),
+                                        on_change=_make_toggle(p["id"], "is_sp_backup")
+                                    ).classes("w-20")
+                                    cb_bk.props("dense")
+                                    cb_bk.set_enabled(can_manage_staff and p["duty_role"] == "LD")
+
+                                    cb_proj = ui.checkbox(
+                                        value=bool(p.get("is_on_project", 0)),
+                                        on_change=_make_toggle(p["id"], "is_on_project")
+                                    ).classes("w-16")
+                                    cb_proj.props("dense")
+                                    cb_proj.set_enabled(can_manage_staff)
+
+                asyncio.ensure_future(load_staff())
+
+            # ════════════════════════════════════════════════════
+            # TAB 3 — THỐNG KÊ
+            # ════════════════════════════════════════════════════
+            with ui.tab_panel(tab_stats):
+                today_yr = date.today().year
+                stats_year = ui.number(label="Năm", value=today_yr, min=2020, max=2099, format="%d").classes("w-28")
+                stats_area = ui.column().classes("w-full mt-2")
+
+                async def load_stats():
+                    stats_area.clear()
+                    yr = int(stats_year.value or today_yr)
+                    try:
+                        data = await asyncio.to_thread(
+                            api.get, "/api/duty/stats/shift-count", {"year": yr}
+                        )
+                    except Exception as e:
+                        if _handle_api_error(e):
+                            return
+                        return
+
+                    with stats_area:
+                        rows_html = ""
+                        for p in data:
+                            total = p.get("total", 0)
+                            bg = "background:#F0FDF4" if total > 0 else ""
+                            rows_html += (
+                                f'<tr style="{bg}">'
+                                f'<td class="{_TD}">{_h(p["full_name"])}</td>'
+                                f'<td class="{_TD} text-xs text-gray-500">{_h(p["duty_role"])}</td>'
+                                f'<td class="{_TD} text-center">{p.get("normal",0) or ""}</td>'
+                                f'<td class="{_TD} text-center">{p.get("friday",0) or ""}</td>'
+                                f'<td class="{_TD} text-center">{p.get("cutoff",0) or ""}</td>'
+                                f'<td class="{_TD} text-center">{p.get("settlement_main",0) or ""}</td>'
+                                f'<td class="{_TD} text-center">{p.get("settlement_sub",0) or ""}</td>'
+                                f'<td class="{_TD} text-center font-bold">{total or ""}</td>'
+                                f'</tr>'
+                            )
+                        ui.html(
+                            '<div class="w-full overflow-x-auto">'
+                            '<table class="w-full border-collapse text-sm">'
+                            f'<thead><tr>'
+                            f'<th class="{_TH}">Họ tên</th>'
+                            f'<th class="{_TH}">Role</th>'
+                            f'<th class="{_TH}">Thường</th>'
+                            f'<th class="{_TH}">Thứ 6</th>'
+                            f'<th class="{_TH}">Cut-off</th>'
+                            f'<th class="{_TH}">QT Chính</th>'
+                            f'<th class="{_TH}">QT Phụ</th>'
+                            f'<th class="{_TH}">Tổng</th>'
+                            f'</tr></thead>'
+                            f'<tbody>{rows_html}</tbody>'
+                            '</table></div>'
+                        )
+
+                ui.button("Tải thống kê", icon="refresh",
+                          on_click=load_stats).props("flat dense color=primary").classes("mb-1")
+                asyncio.ensure_future(load_stats())
+
+            # ════════════════════════════════════════════════════
+            # TAB 4 — NGÀY ĐẶC BIỆT
+            # ════════════════════════════════════════════════════
+            with ui.tab_panel(tab_specials):
+                today_yr2 = date.today().year
+                today_mo  = date.today().month
+
+                with ui.row().classes("items-end gap-3 mb-3 flex-wrap"):
+                    yr_sp = ui.number(label="Năm", value=today_yr2, min=2020, max=2099, format="%d").classes("w-28")
+                    mo_sp = ui.number(label="Tháng (tuỳ chọn)", value=None, min=1, max=12, format="%d").classes("w-36")
+                    ui.button("Tải", icon="refresh",
+                              on_click=lambda: asyncio.ensure_future(load_specials())).props("flat dense color=primary")
+                    if can_manage_cfg:
+                        ui.button("Set Ngày lễ", icon="auto_fix_high",
+                                  on_click=lambda: asyncio.ensure_future(do_seed_holidays())).props("flat dense color=teal")
+                        ui.button("Tính Cut-off", icon="calculate",
+                                  on_click=lambda: asyncio.ensure_future(do_compute_cutoff())).props("flat dense color=orange")
+
+                specials_area = ui.column().classes("w-full gap-1")
+
+                async def load_specials():
+                    specials_area.clear()
+                    yr = int(yr_sp.value or today_yr2)
+                    mo_val = mo_sp.value
+                    mo = int(mo_val) if mo_val else None
+                    params = {"year": yr}
+                    if mo:
+                        params["month"] = mo
+                    try:
+                        data = await asyncio.to_thread(
+                            api.get, "/api/duty/constraints/special-days", params
+                        )
+                    except Exception as e:
+                        if _handle_api_error(e):
+                            return
+                        return
+
+                    with specials_area:
+                        if not data:
+                            ui.label("Không có ngày đặc biệt nào.").classes("text-gray-400 italic py-4")
+                        else:
+                            for item in data:
+                                bg_cls, type_lbl, text_cls = _SPECIAL_COLOR.get(
+                                    item["day_type"], ("bg-gray-50", item["day_type"], "text-gray-700")
+                                )
+                                with ui.row().classes(f"w-full items-center gap-3 px-3 py-2 rounded {bg_cls} border border-gray-100"):
+                                    ui.label(item["date"]).classes("font-mono font-semibold w-28 text-sm")
+                                    ui.label(type_lbl).classes(f"text-xs font-semibold w-24 {text_cls}")
+                                    ui.label(item.get("label") or "").classes("text-sm flex-1")
+                                    if item.get("is_confirmed"):
+                                        ui.icon("check_circle").classes("text-green-600")
+                                    else:
+                                        ui.label("Chưa xác nhận").classes("text-xs text-gray-400")
+                                    if can_manage_cfg:
+                                        if not item.get("is_confirmed"):
+                                            async def _confirm_sp(sid=item["id"]):
+                                                try:
+                                                    await asyncio.to_thread(
+                                                        api.post,
+                                                        f"/api/duty/constraints/special-days/{sid}/confirm", {}
+                                                    )
+                                                    await load_specials()
+                                                except Exception as ex:
+                                                    _handle_api_error(ex)
+                                            ui.button("Xác nhận", on_click=_confirm_sp).props("flat dense color=positive").classes("text-xs")
+                                        async def _del_sp(sid=item["id"]):
+                                            try:
+                                                await asyncio.to_thread(
+                                                    api.delete,
+                                                    f"/api/duty/constraints/special-days/{sid}"
+                                                )
+                                                await load_specials()
+                                            except Exception as ex:
+                                                _handle_api_error(ex)
+                                        ui.button(icon="delete", on_click=_del_sp).props("flat dense color=negative")
+
+                        if can_manage_cfg:
+                            ui.separator().classes("my-3")
+                            ui.label("Thêm ngày đặc biệt").classes("text-sm font-semibold text-gray-700 mb-2")
+                            with ui.row().classes("items-end gap-2 flex-wrap"):
+                                new_date = ui.input(label="Ngày (YYYY-MM-DD)", placeholder="2026-01-01").classes("w-40")
+                                new_type = ui.select(
+                                    label="Loại",
+                                    options={"holiday": "Nghỉ lễ", "cutoff": "Cut-off",
+                                             "settlement": "Quyết toán", "makeup": "Ngày bù"},
+                                    value="cutoff",
+                                ).classes("w-40")
+                                new_label = ui.input(label="Ghi chú (tuỳ chọn)").classes("w-48")
+
+                                async def do_add_special():
+                                    if not new_date.value:
+                                        ui.notify("Nhập ngày trước", type="warning")
+                                        return
+                                    try:
+                                        await asyncio.to_thread(
+                                            api.post, "/api/duty/constraints/special-days",
+                                            {"date": new_date.value, "day_type": new_type.value,
+                                             "label": new_label.value or None}
+                                        )
+                                        new_date.value = ""
+                                        new_label.value = ""
+                                        await load_specials()
+                                        ui.notify("Đã thêm", type="positive")
+                                    except Exception as ex:
+                                        _handle_api_error(ex)
+
+                                ui.button("Thêm", icon="add", on_click=do_add_special).props("color=primary")
+
+                async def do_seed_holidays():
+                    yr = int(yr_sp.value or today_yr2)
+                    try:
+                        result = await asyncio.to_thread(
+                            api.post, f"/api/duty/constraints/special-days/seed-holidays?year={yr}", {}
+                        )
+                        ui.notify(f"Đã set {result['seeded']} ngày lễ năm {yr}", type="positive")
+                        await load_specials()
+                    except Exception as e:
+                        _handle_api_error(e)
+
+                async def do_compute_cutoff():
+                    yr = int(yr_sp.value or today_yr2)
+                    mo = int(mo_sp.value or today_mo)
+                    try:
+                        result = await asyncio.to_thread(
+                            api.post, "/api/duty/constraints/special-days/compute-cutoff",
+                            {"month": mo, "year": yr}
+                        )
+                        ui.notify(f"Đã tính {len(result)} ngày cut-off cho T{mo}/{yr}", type="positive")
+                        await load_specials()
+                    except Exception as e:
+                        _handle_api_error(e)
+
+                asyncio.ensure_future(load_specials())
+
+            # ════════════════════════════════════════════════════
+            # TAB 5 — CÀI ĐẶT
+            # ════════════════════════════════════════════════════
+            with ui.tab_panel(tab_settings):
+                today_yr3 = date.today().year
+
+                with ui.card().classes("w-full max-w-md p-4 mt-2"):
+                    ui.label("Cấu hình ca trực").classes("text-base font-semibold text-red-800 mb-3")
+                    yr_cfg = ui.number(label="Năm", value=today_yr3, min=2020, max=2099, format="%d").classes("w-28 mb-2")
+                    nv_count_inp  = ui.number(label="Số NV mỗi ca", value=2, min=1, max=5, format="%d").classes("w-36")
+                    signer_inp    = ui.input(label="Tên người ký Excel").classes("w-64")
+
+                    async def load_cfg():
+                        yr = int(yr_cfg.value or today_yr3)
+                        try:
+                            cfg = await asyncio.to_thread(
+                                api.get, f"/api/duty/constraints/shift-config/{yr}"
+                            )
+                            nv_count_inp.value = cfg.get("nv_count", 2)
+                            signer_inp.value   = cfg.get("signer_name") or ""
+                        except Exception:
+                            pass  # Không có config → giữ giá trị mặc định
+
+                    yr_cfg.on("change", lambda: asyncio.ensure_future(load_cfg()))
+
+                    if can_manage_cfg:
+                        async def do_save_cfg():
+                            yr = int(yr_cfg.value or today_yr3)
+                            try:
+                                await asyncio.to_thread(
+                                    api.put, f"/api/duty/constraints/shift-config/{yr}",
+                                    {"nv_count": int(nv_count_inp.value or 2),
+                                     "signer_name": signer_inp.value or None}
+                                )
+                                ui.notify("Đã lưu", type="positive")
+                            except Exception as ex:
+                                _handle_api_error(ex)
+
+                        ui.button("Lưu cài đặt", icon="save",
+                                  on_click=do_save_cfg).props("color=primary").classes("mt-2")
+
+                if can_manage_cfg:
+                    with ui.card().classes("w-full max-w-md p-4 mt-3"):
+                        ui.label("Vòng xoay phân lịch").classes("text-base font-semibold text-red-800 mb-2")
+                        ui.label("Reset vòng xoay sẽ xóa toàn bộ thống kê ca trực năm được chọn. Dùng khi bắt đầu năm mới.").classes("text-xs text-gray-500 mb-3")
+
+                        async def do_reset_rotation():
+                            yr = int(yr_cfg.value or today_yr3)
+                            with ui.dialog() as dlg_r, ui.card():
+                                ui.label(f"Reset vòng xoay năm {yr}?").classes("font-semibold")
+                                ui.label("Thống kê sẽ bị xóa và bắt đầu lại.").classes("text-red-600 text-sm")
+                                with ui.row().classes("justify-end gap-2 mt-3"):
+                                    ui.button("Hủy", on_click=dlg_r.close).props("flat")
+                                    async def _do_reset():
+                                        dlg_r.close()
+                                        try:
+                                            await asyncio.to_thread(
+                                                api.post,
+                                                f"/api/duty/schedule/rotation/reset?year={yr}", {}
+                                            )
+                                            ui.notify(f"Đã reset vòng xoay năm {yr}", type="warning")
+                                        except Exception as ex:
+                                            _handle_api_error(ex)
+                                    ui.button("Reset", on_click=_do_reset).props("color=negative")
+                            dlg_r.open()
+
+                        ui.button("Reset vòng xoay", icon="refresh",
+                                  on_click=do_reset_rotation).props("color=negative flat")
+
+                asyncio.ensure_future(load_cfg())

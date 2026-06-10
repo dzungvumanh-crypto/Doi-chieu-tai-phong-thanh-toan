@@ -6,6 +6,7 @@ Tạo PR riêng, Người 1 approve.
 """
 import logging
 import sqlite3
+from datetime import datetime
 
 from backend.database import DB_PATH
 
@@ -350,6 +351,79 @@ def _ensure_indexes():
         )""",
         # KSNB System — 2026-06-09: session_key để enforce single-session per user
         "ALTER TABLE login_sessions ADD COLUMN session_key TEXT",
+
+        # ── Phân lịch trực Phòng Thanh toán — 2026-06-09 ────────────────────────
+        """CREATE TABLE IF NOT EXISTS duty_staff_meta (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id      INTEGER NOT NULL UNIQUE REFERENCES user_tttt(id),
+            can_do_sp    BOOLEAN DEFAULT 0,
+            is_sp_backup BOOLEAN DEFAULT 0,
+            is_on_project BOOLEAN DEFAULT 0,
+            display_order INTEGER DEFAULT 999,
+            created_at   DATETIME
+        )""",
+        """CREATE TABLE IF NOT EXISTS duty_absences (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            staff_id     INTEGER NOT NULL REFERENCES user_tttt(id),
+            absence_date DATE    NOT NULL,
+            created_at   DATETIME,
+            UNIQUE(staff_id, absence_date)
+        )""",
+        """CREATE TABLE IF NOT EXISTS duty_requests (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            staff_id     INTEGER NOT NULL REFERENCES user_tttt(id),
+            request_type VARCHAR(10) NOT NULL CHECK(request_type IN ('once','weekly')),
+            specific_date DATE,
+            day_of_week  INTEGER,
+            year         INTEGER,
+            is_active    BOOLEAN DEFAULT 1,
+            created_at   DATETIME
+        )""",
+        """CREATE TABLE IF NOT EXISTS duty_special_days (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            date         DATE    UNIQUE NOT NULL,
+            day_type     VARCHAR(20) NOT NULL CHECK(day_type IN ('holiday','cutoff','settlement','makeup')),
+            label        VARCHAR(100),
+            is_confirmed BOOLEAN DEFAULT 0,
+            created_at   DATETIME
+        )""",
+        """CREATE TABLE IF NOT EXISTS duty_rotation_state (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            year        INTEGER NOT NULL,
+            role        VARCHAR(20) NOT NULL,
+            staff_id    INTEGER NOT NULL REFERENCES user_tttt(id),
+            shift_count INTEGER DEFAULT 0,
+            last_used   DATE,
+            position    INTEGER DEFAULT 0,
+            UNIQUE(year, role, staff_id)
+        )""",
+        """CREATE TABLE IF NOT EXISTS duty_shifts (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            shift_date  DATE NOT NULL,
+            shift_type  VARCHAR(20) NOT NULL CHECK(shift_type IN ('normal','friday','cutoff','settlement_main','settlement_sub')),
+            leader_id   INTEGER REFERENCES user_tttt(id),
+            sp_id       INTEGER REFERENCES user_tttt(id),
+            sp_warning  VARCHAR(20),
+            nv_ids      TEXT DEFAULT '[]',
+            nv_count    INTEGER DEFAULT 0,
+            is_auto     BOOLEAN DEFAULT 1,
+            status      VARCHAR(10) DEFAULT 'draft' CHECK(status IN ('draft','confirmed')),
+            created_at  DATETIME,
+            UNIQUE(shift_date, shift_type)
+        )""",
+        """CREATE TABLE IF NOT EXISTS duty_shift_config (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            year        INTEGER UNIQUE NOT NULL,
+            nv_count    INTEGER DEFAULT 2,
+            signer_name VARCHAR(100)
+        )""",
+        f"INSERT OR IGNORE INTO duty_shift_config (year, nv_count) VALUES ({datetime.now().year}, 2)",
+        "CREATE INDEX IF NOT EXISTS ix_duty_staff_meta_user   ON duty_staff_meta(user_id)",
+        "CREATE INDEX IF NOT EXISTS ix_duty_absences_staff    ON duty_absences(staff_id)",
+        "CREATE INDEX IF NOT EXISTS ix_duty_absences_date     ON duty_absences(absence_date)",
+        "CREATE INDEX IF NOT EXISTS ix_duty_requests_staff    ON duty_requests(staff_id)",
+        "CREATE INDEX IF NOT EXISTS ix_duty_rotation_year     ON duty_rotation_state(year, role)",
+        "CREATE INDEX IF NOT EXISTS ix_duty_shifts_date       ON duty_shifts(shift_date)",
     ]
     _mig_log = logging.getLogger(__name__)
     conn = sqlite3.connect(DB_PATH, timeout=30)

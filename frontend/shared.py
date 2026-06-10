@@ -33,7 +33,12 @@ DEPARTMENTS = [
         ],
     },
     {"id": "swift",   "label": "Phòng Swift",               "icon": "swap_horiz",     "items": []},
-    {"id": "payment", "label": "Phòng Thanh toán",          "icon": "payments",        "items": []},
+    {
+        "id": "payment", "label": "Phòng Thanh toán", "icon": "payments",
+        "items": [
+            ("duty_schedule", "Phân lịch trực", "edit_calendar"),
+        ],
+    },
     {"id": "ktoan",   "label": "Phòng Kế toán",             "icon": "calculate",       "items": []},
     {"id": "nostro",  "label": "Phòng QLTK Nostro, Vostro", "icon": "account_balance", "items": []},
     {

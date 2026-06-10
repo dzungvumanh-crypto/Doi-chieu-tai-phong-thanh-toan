@@ -10,7 +10,7 @@ setlocal
 ::   Qua mang LAN:  set "DEST=\\192.168.1.100\TenShare\System"
 ::   Cung may:      set "DEST=C:\...\System"
 :: ============================================================
-set "DEST=D:\TTTT_System"
+set "DEST=C:\Users\ThanhDaoTien\Desktop\TTTT_System"
 
 echo ============================================================
 echo  Deploy code moi sang: %DEST%
@@ -39,7 +39,6 @@ echo [4/6] Copy file goc...
 copy /Y "%~dp0run.py"            "%DEST%\run.py"            >nul
 copy /Y "%~dp0init_db.py"        "%DEST%\init_db.py"        >nul
 copy /Y "%~dp0requirements.txt"  "%DEST%\requirements.txt"  >nul
-copy /Y "%~dp0deploy.bat"        "%DEST%\deploy.bat"        >nul
 if exist "%~dp0start.bat" copy /Y "%~dp0start.bat" "%DEST%\start.bat" >nul
 
 echo [5/6] Xoa __pycache__ cu tren may dich...
@@ -48,12 +47,24 @@ for /d /r "%DEST%" %%d in (__pycache__) do (
 )
 
 echo [6/6] Cap nhat thu vien Python (neu co package moi)...
-if exist "%DEST%\venv\Scripts\python.exe" (
-    "%DEST%\venv\Scripts\python.exe" -m pip install -r "%DEST%\requirements.txt" --quiet --upgrade
-    echo     [OK] Thu vien da cap nhat.
+set "DEST_PY="
+if exist "%DEST%\.venv\Scripts\python.exe" set "DEST_PY=%DEST%\.venv\Scripts\python.exe"
+if not defined DEST_PY if exist "%DEST%\venv\Scripts\python.exe" set "DEST_PY=%DEST%\venv\Scripts\python.exe"
+
+if defined DEST_PY (
+    "%DEST_PY%" --version >nul 2>&1
+    if errorlevel 1 (
+        echo     [!] venv tren may dich bi hong -- bo qua, start.bat se tu sua khi chay lai.
+    ) else (
+        "%DEST_PY%" -m pip install -r "%DEST%\requirements.txt" --quiet --upgrade
+        if errorlevel 1 (
+            echo     [!] pip install that bai -- chay start.bat tren may dich de thu lai.
+        ) else (
+            echo     [OK] Thu vien da cap nhat.
+        )
+    )
 ) else (
-    echo     [!] Khong tim thay venv tren may dich -- bo qua buoc nay.
-    echo         Chay start.bat lan dau de tao lai venv.
+    echo     [!] Chua co venv tren may dich -- start.bat se tu tao khi chay lan dau.
 )
 
 echo.

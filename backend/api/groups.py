@@ -209,16 +209,29 @@ def update_group_features(
 # ── Feature definitions ───────────────────────────────────────────────────────
 @router.get("/features/all")
 def get_all_features(_=Depends(get_current_staff)):
-    """Trả về toàn bộ feature definitions theo nhóm — dùng cho UI phân quyền."""
+    """Trả về cấu trúc phân cấp Phòng → Menu → Action — dùng cho UI phân quyền."""
     result = []
-    for group_label, meta in FEATURE_GROUPS.items():
-        result.append({
-            "group": group_label,
-            "icon": meta["icon"],
-            "features": [
-                {"code": c, "label": FEATURES[c]}
-                for c in meta["codes"]
-                if c in FEATURES
-            ],
-        })
+    for dept_def in FEATURE_GROUPS:
+        menus = []
+        for m in dept_def["menus"]:
+            code = m["code"]
+            if code not in FEATURES:
+                continue
+            # Bỏ hậu tố " (menu)" trong label để UI hiển thị gọn hơn
+            label = FEATURES[code].replace(" (menu)", "")
+            menus.append({
+                "code":    code,
+                "label":   label,
+                "actions": [
+                    {"code": a, "label": FEATURES[a]}
+                    for a in m["actions"]
+                    if a in FEATURES
+                ],
+            })
+        if menus:
+            result.append({
+                "dept":  dept_def["dept"],
+                "icon":  dept_def["icon"],
+                "menus": menus,
+            })
     return result

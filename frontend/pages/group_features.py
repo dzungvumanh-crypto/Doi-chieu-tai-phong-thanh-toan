@@ -1,80 +1,14 @@
-"""Trang phân quyền chức năng theo nhóm — chỉ admin."""
+"""Trang phân quyền chức năng theo nhóm — chỉ admin.
+
+Cấu trúc phòng/menu/action lấy động từ API — không hardcode ở frontend.
+Để thêm phòng/menu mới: chỉ sửa backend/core/features.py, trang này tự cập nhật.
+"""
 import asyncio
 from nicegui import ui
 import frontend.api_client as api
 from frontend.shared import (
     _sidebar, _content_area, _page_header, _require_auth, _handle_api_error,
 )
-
-# ── Cấu trúc menu theo phòng (định nghĩa tĩnh ở frontend) ───────────────────
-_STRUCTURE = [
-    {
-        "dept": "Phòng KSNB & HTVH",
-        "icon": "account_balance",
-        "menus": [
-            {
-                "code": "menu.handovers",
-                "label": "Bàn giao chứng từ",
-                "actions": [
-                    ("handovers.save_entry",    "Lưu số tờ chứng từ"),
-                    ("handovers.confirm_entry", "Xác nhận cho mượn / đã nhận"),
-                    ("handovers.reject_entry",  "Từ chối bàn giao"),
-                    ("handovers.borrow",        "Mượn lại chứng từ"),
-                    ("handovers.handback",      "Bàn giao lại chứng từ"),
-                ],
-            },
-            {
-                "code": "menu.bundles",
-                "label": "Đóng chứng từ",
-                "actions": [
-                    ("bundles.generate",       "Tạo bìa chứng từ"),
-                    ("bundles.download_cover", "Tải xuống bìa"),
-                    ("bundles.mark_printed",   "Đánh dấu đã in"),
-                    ("bundles.delete",         "Xóa nhóm bìa"),
-                ],
-            },
-            {"code": "menu.storage", "label": "Lưu trữ",  "actions": []},
-            {"code": "menu.reports", "label": "Báo cáo",  "actions": []},
-        ],
-    },
-    {
-        "dept": "Phòng Tổng hợp",
-        "icon": "summarize",
-        "menus": [
-            {
-                "code": "menu.leaves",
-                "label": "Nghỉ phép",
-                "actions": [
-                    ("leaves.create",       "Tạo đơn nghỉ phép"),
-                    ("leaves.cancel",       "Huỷ đơn nghỉ phép"),
-                    ("leaves.resubmit",     "Sửa & Nộp lại đơn"),
-                    ("leaves.approve_ksv",  "Duyệt / Từ chối (bước KSV)"),
-                    ("leaves.forward_th",   "Chuyển GĐ/PGĐ / Từ chối (bước Tổng hợp)"),
-                    ("leaves.approve_gd",   "Duyệt / Từ chối (bước Giám đốc)"),
-                ],
-            },
-            {"code": "menu.th_reports", "label": "Báo cáo dữ liệu thanh toán", "actions": []},
-        ],
-    },
-    {
-        "dept": "Quản lý hệ thống",
-        "icon": "admin_panel_settings",
-        "menus": [
-            {
-                "code": "menu.staff",
-                "label": "Quản lý User",
-                "actions": [
-                    ("staff.create",     "Tạo tài khoản mới"),
-                    ("staff.edit",       "Chỉnh sửa nhân viên"),
-                    ("staff.delete",     "Xóa nhân viên"),
-                    ("staff.export",     "Xuất Excel / DB"),
-                    ("staff.import_db",  "Nhập DB"),
-                ],
-            },
-            {"code": "menu.logs", "label": "Nhật ký hệ thống", "actions": []},
-        ],
-    },
-]
 
 
 @ui.page("/group-features")
@@ -91,22 +25,26 @@ async def group_features_page():
         _page_header("Phân quyền theo nhóm", "Chọn nhóm và tick các chức năng nhóm đó được phép dùng")
 
         # ── State ──────────────────────────────────────────────────────────────
-        groups_data: list = []
+        groups_data: list   = []
+        structure: list     = []          # từ API /features/all
         selected_group_id: dict = {"value": None}
-        current_codes: set = set()
-        menu_refs: dict = {}    # menu_code → checkbox element
-        action_refs: dict = {}  # action_code → checkbox element
+        current_codes: set  = set()
+        menu_refs: dict     = {}          # menu_code → checkbox element
+        action_refs: dict   = {}          # action_code → checkbox element
 
         group_selector = None
-        features_area = None
-        save_btn = None
-        status_label = None
+        features_area  = None
+        save_btn       = None
+        status_label   = None
 
-        # ── Load nhóm ──────────────────────────────────────────────────────────
+        # ── Load nhóm + cấu trúc features ─────────────────────────────────────
         async def load_initial():
-            nonlocal groups_data
+            nonlocal groups_data, structure
             try:
-                groups_data = await asyncio.to_thread(api.get, "/api/groups")
+                groups_data, structure = await asyncio.gather(
+                    asyncio.to_thread(api.get, "/api/groups"),
+                    asyncio.to_thread(api.get, "/api/groups/features/all"),
+                )
                 group_selector.options = {str(g["id"]): g["name"] for g in groups_data}
                 group_selector.update()
             except Exception as e:
@@ -131,31 +69,31 @@ async def group_features_page():
                     return
                 ui.notify(str(e), type="negative")
 
-        # ── Render cây phân quyền ─────────────────────────────────────────────
+        # ── Render cây phân quyền (từ structure lấy API) ───────────────────────
         def _render_features():
             features_area.clear()
             menu_refs.clear()
             action_refs.clear()
             with features_area:
-                for dept_def in _STRUCTURE:
+                if not structure:
+                    ui.label("Không tải được danh sách tính năng.").classes("text-red-500 text-sm")
+                    return
+
+                for dept_def in structure:
                     with ui.card().classes("w-full shadow-sm rounded-xl overflow-hidden mb-3"):
 
-                        # Header phòng — không có checkbox
-                        with ui.row().classes(
-                            "w-full bg-red-800 px-4 py-2.5 items-center gap-2"
-                        ):
+                        # Header phòng
+                        with ui.row().classes("w-full bg-red-800 px-4 py-2.5 items-center gap-2"):
                             ui.icon(dept_def["icon"]).classes("text-white text-base")
-                            ui.label(dept_def["dept"]).classes(
-                                "font-semibold text-white text-sm"
-                            )
+                            ui.label(dept_def["dept"]).classes("font-semibold text-white text-sm")
 
                         with ui.column().classes("px-4 py-2 gap-0 w-full"):
                             for menu in dept_def["menus"]:
                                 mcode    = menu["code"]
-                                acodes   = [ac for ac, _ in menu["actions"]]
+                                actions  = menu.get("actions", [])  # [{"code", "label"}, ...]
+                                acodes   = [a["code"] for a in actions]
                                 mchecked = mcode in current_codes
 
-                                # Dùng list làm mutable ref để closure on_change thấy được
                                 col_ref = [None]
 
                                 def _on_menu_toggle(e, ref=col_ref, codes=acodes):
@@ -166,10 +104,7 @@ async def group_features_page():
                                             if c in action_refs:
                                                 action_refs[c].set_value(False)
 
-                                # Menu item — có checkbox
-                                with ui.row().classes(
-                                    "w-full items-center border-b border-gray-100 py-2.5"
-                                ):
+                                with ui.row().classes("w-full items-center border-b border-gray-100 py-2.5"):
                                     menu_cb = ui.checkbox(
                                         menu["label"],
                                         value=mchecked,
@@ -177,37 +112,33 @@ async def group_features_page():
                                     ).classes("text-sm font-semibold text-gray-800")
                                 menu_refs[mcode] = menu_cb
 
-                                # Actions — chỉ render nếu menu có sub-features
                                 if acodes:
-                                    with ui.column().classes(
-                                        "pl-7 pb-2 pt-1 gap-1 w-full"
-                                    ) as action_col:
+                                    with ui.column().classes("pl-7 pb-2 pt-1 gap-1 w-full") as action_col:
                                         col_ref[0] = action_col
                                         action_col.set_visibility(mchecked)
-                                        for acode, alabel in menu["actions"]:
-                                            achecked = acode in current_codes and mchecked
+                                        for action in actions:
+                                            achecked = action["code"] in current_codes and mchecked
                                             acb = ui.checkbox(
-                                                alabel, value=achecked
+                                                action["label"], value=achecked
                                             ).classes("text-sm text-gray-600")
-                                            action_refs[acode] = acb
+                                            action_refs[action["code"]] = acb
 
         # ── Lưu phân quyền ────────────────────────────────────────────────────
         async def save_features():
             gid = selected_group_id["value"]
             if not gid:
                 return
-            # Duyệt _STRUCTURE để giữ đúng thứ tự và bỏ action khi menu không tick
             selected_codes: list[str] = []
-            for dept_def in _STRUCTURE:
+            for dept_def in structure:
                 for menu in dept_def["menus"]:
                     mcb = menu_refs.get(menu["code"])
                     if not mcb or not mcb.value:
                         continue
                     selected_codes.append(menu["code"])
-                    for acode, _ in menu["actions"]:
-                        acb = action_refs.get(acode)
+                    for action in menu.get("actions", []):
+                        acb = action_refs.get(action["code"])
                         if acb and acb.value:
-                            selected_codes.append(acode)
+                            selected_codes.append(action["code"])
             try:
                 await asyncio.to_thread(
                     api.put, f"/api/groups/{gid}/features", {"codes": selected_codes}
@@ -233,9 +164,7 @@ async def group_features_page():
                 status_label = ui.label("").classes("text-sm text-gray-500 self-center")
 
         with ui.column().classes("w-full gap-2") as features_area:
-            ui.label("Chọn nhóm để xem và chỉnh sửa quyền").classes(
-                "text-gray-400 text-sm py-4"
-            )
+            ui.label("Chọn nhóm để xem và chỉnh sửa quyền").classes("text-gray-400 text-sm py-4")
 
         save_btn = ui.button(
             "Lưu thay đổi", icon="save", on_click=save_features

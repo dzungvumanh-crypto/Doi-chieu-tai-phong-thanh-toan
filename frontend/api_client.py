@@ -161,6 +161,16 @@ def get(path: str, params: dict = None) -> Any:
         return r.json()
     except httpx.HTTPStatusError as e:
         _raise_http_error(e)
+
+
+def get_bytes(path: str, params: dict = None) -> bytes:
+    """GET endpoint trả về raw bytes (Excel, ZIP...)."""
+    try:
+        r = _download_client.get(f"{BACKEND_URL}{path}", headers=_headers(), params=params)
+        r.raise_for_status()
+        return r.content
+    except httpx.HTTPStatusError as e:
+        _raise_http_error(e)
     except Exception as e:
         raise Exception(str(e))
 

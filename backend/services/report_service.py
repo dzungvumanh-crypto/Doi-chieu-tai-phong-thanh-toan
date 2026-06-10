@@ -202,6 +202,12 @@ def enrich_and_group(rows: list, db: sqlite3.Connection, is_payment: bool = Fals
 
 # ── Merge IPCAS + Payment HKV theo user ──────────────────────────────────────
 
+_ROLE_ORDER = {
+    'truong_phong': 0, 'pho_phong': 1, 'hau_kiem_vien': 2,
+    'chuyen_vien': 3, 'giam_doc': 4, 'pho_giam_doc': 5, 'admin': 6,
+}
+
+
 def merge_hkv(ipcas_rows: list, payment_rows: list, db: sqlite3.Connection) -> list:
     ipcas_by_code = {r['user_code']: r for r in ipcas_rows}
     payment_by_name = {r['user_code'].lower(): r for r in payment_rows}
@@ -245,7 +251,9 @@ def merge_hkv(ipcas_rows: list, payment_rows: list, db: sqlite3.Connection) -> l
 
         merged.append({
             'user_code': code,
+            'payment_user_code': payment_username or code,
             'vn_name': vn_name,
+            'role': (u.get("role") or '') if u else '',
             'ipcas_tong_gd': ipcas_row['tong_gd'],
             'ipcas_gd_hk_dung': ipcas_row['gd_hk_dung'],
             'ipcas_gd_sai': ipcas_row.get('gd_sai', 0),
@@ -266,7 +274,9 @@ def merge_hkv(ipcas_rows: list, payment_rows: list, db: sqlite3.Connection) -> l
         vn_name = (u.get("full_name") or u.get("payment_username") or username) if u else username
         merged.append({
             'user_code': u.get("ipcas_code") if u else username,
+            'payment_user_code': username,
             'vn_name': vn_name,
+            'role': (u.get("role") or '') if u else '',
             'ipcas_tong_gd': 0,
             'ipcas_gd_hk_dung': 0,
             'ipcas_gd_sai': 0,
@@ -279,6 +289,8 @@ def merge_hkv(ipcas_rows: list, payment_rows: list, db: sqlite3.Connection) -> l
             'payment_bt_huy': payment_row['bt_huy'],
         })
 
+    # Sắp xếp theo cấp bậc: trưởng phòng → phó phòng → chuyên viên → ...
+    merged.sort(key=lambda r: _ROLE_ORDER.get(r.get('role', ''), 9))
     return merged
 
 
@@ -538,7 +550,8 @@ def generate_center_word(month: int, year: int,
         huy  = row.get('payment_bt_huy', 0)
         ty   = f"{round(dung/tong*100, 2):.2f}" if tong else "0.00"
         tp_gd += tong; tp_dung += dung; tp_sai += sai; tp_chua += chua; tp_huy += huy
-        _append_data_row(t1, data_row_xml, [str(stt), '1000', row.get('user_code', ''),
+        pay_code = row.get('payment_user_code') or row.get('user_code', '')
+        _append_data_row(t1, data_row_xml, [str(stt), '1000', pay_code,
                                             str(tong), str(dung), str(sai), str(chua), str(huy), ty])
     tp_ty = f"{round(tp_dung/tp_gd*100, 2):.2f}" if tp_gd else "0.00"
     _append_data_row(t1, total_ii_xml, ['', 'Tổng (II):', str(tp_gd), str(tp_dung),
