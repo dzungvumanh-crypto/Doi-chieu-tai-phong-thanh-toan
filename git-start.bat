@@ -8,6 +8,21 @@ echo  Bat dau cong viec moi
 echo ============================================================
 echo.
 
+echo [0/3] Kiem tra moi truong...
+git rev-parse --git-dir >nul 2>&1
+if errorlevel 1 (
+    echo.
+    echo [LOI] Thu muc nay KHONG phai git repository.
+    echo.
+    echo  File git-start.bat chi danh cho MAY LAP TRINH co clone repo tu GitHub.
+    echo  May chay chinh ^(may san xuat^) khong can va KHONG duoc chay file nay.
+    echo.
+    echo  Neu day la may lap trinh: hay clone repo truoc bang lenh:
+    echo    git clone https://github.com/khanhbq693/KSNB.git
+    echo.
+    pause & exit /b 1
+)
+
 echo [1/3] Chuyen sang develop va lay code moi nhat...
 git checkout develop
 if errorlevel 1 (
