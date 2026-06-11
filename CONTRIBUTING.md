@@ -44,29 +44,35 @@ Kiểm tra cài thành công: mở PowerShell, gõ `python --version`
 
 Tải tại: https://git-scm.com/download/win
 
-Kiểm tra cài thành công: mở PowerShell, gõ `git --version`
+Khi cài, chọn các tuỳ chọn mặc định, nhấn Next liên tục đến khi xong.
 
-### Bước 3 — Tải code về máy
+Kiểm tra cài thành công: mở PowerShell, gõ `git --version` → thấy số phiên bản là OK.
 
-Mở PowerShell, chạy lần lượt:
+### Bước 3 — Tải code về máy (làm 1 lần duy nhất)
 
+**Mở CMD tại thư mục muốn chứa project:**
+1. Mở File Explorer, vào thư mục muốn lưu (ví dụ `Desktop`)
+2. Click vào thanh địa chỉ trên cùng, gõ `cmd`, nhấn Enter
+3. Cửa sổ CMD mở ra đúng thư mục đó
+
+**Gõ lệnh sau rồi nhấn Enter:**
 ```
 git clone https://github.com/khanhbq693/KSNB.git
-cd KSNB
-git checkout develop
 ```
+
+Sau khi xong sẽ có thư mục `KSNB` — đây là thư mục làm việc từ nay.
+
+> **Lưu ý:** Chỉ clone 1 lần duy nhất. Những lần sau dùng `git-start.bat` để lấy code mới.
 
 ### Bước 4 — Khởi tạo database (chỉ làm 1 lần)
 
-```
-python init_db.py
-```
+Vào thư mục `KSNB` vừa clone, bấm đúp vào **`start.bat`**.
 
-Lệnh này tạo tài khoản mẫu để đăng nhập thử.
-
-### Bước 5 — Chạy ứng dụng
-
-Bấm đúp vào file **`start.bat`** — file này tự động tạo môi trường Python, tạo file `.env`, rồi khởi động ứng dụng.
+File này tự động:
+- Tạo môi trường Python (`.venv`)
+- Cài thư viện cần thiết
+- Tạo file `.env` chứa khoá bí mật
+- Khởi động ứng dụng
 
 Mở trình duyệt: `http://localhost:8080`  
 Tài khoản mẫu: `admin` / `admin123`
@@ -100,9 +106,11 @@ nhánh riêng ← mỗi người làm trên đây
 
 ### Bắt đầu công việc mới → `git-start.bat`
 
-Bấm đúp vào `git-start.bat`. File sẽ:
-1. Tự động lấy code mới nhất từ `develop`
+Mỗi khi bắt đầu một task mới, vào thư mục `KSNB`, bấm đúp vào `git-start.bat`. File sẽ:
+1. Tự động chuyển sang nhánh `develop` và lấy code mới nhất
 2. Hỏi tên nhánh → nhập tên rồi Enter
+
+> **Nếu thấy lỗi "not a git repository":** bạn đang chạy file từ sai thư mục — phải chạy từ bên trong thư mục `KSNB` (thư mục đã clone).
 
 Đặt tên nhánh theo quy tắc `<mảng-của-mình>/<mô-tả-ngắn>`:
 ```
