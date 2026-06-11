@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from openpyxl.styles import Alignment, Border, Font, Side
 
-from backend.core.deps import get_current_staff, require_pho_phong_or_above, require_ksnb
+from backend.core.deps import get_current_staff, require_feature
 from backend.database import get_db, _vn_now
 from backend.schemas.bundles import (
     BundleGenerateRequest, BundleUpdateRequest,
@@ -348,7 +348,7 @@ def list_groups(
     month: Optional[int] = None,
     year: Optional[int] = None,
     db: sqlite3.Connection = Depends(get_db),
-    _: dict = Depends(require_ksnb),
+    _: dict = Depends(require_feature("menu.bundles")),
 ):
     clauses = []
     params: list = []
@@ -446,7 +446,7 @@ def list_groups(
 def get_group(
     group_id: int,
     db: sqlite3.Connection = Depends(get_db),
-    _: dict = Depends(require_ksnb),
+    _: dict = Depends(require_feature("menu.bundles")),
 ):
     return _load_bundle_group(db, group_id)
 
@@ -455,7 +455,7 @@ def get_group(
 def generate_bundles(
     req: BundleGenerateRequest,
     db: sqlite3.Connection = Depends(get_db),
-    current: dict = Depends(require_pho_phong_or_above),
+    current: dict = Depends(require_feature("bundles.generate")),
 ):
     """Tự động gom tập từ danh sách entry IDs"""
     dept = db.execute("SELECT id FROM departments WHERE id = ?", (req.department_id,)).fetchone()
@@ -572,7 +572,7 @@ def update_bundle(
     bundle_id: int,
     req: BundleUpdateRequest,
     db: sqlite3.Connection = Depends(get_db),
-    _: dict = Depends(require_pho_phong_or_above),
+    _: dict = Depends(require_feature("bundles.generate")),
 ):
     b = db.execute("SELECT * FROM bundles WHERE id = ?", (bundle_id,)).fetchone()
     if not b:
@@ -633,7 +633,7 @@ def download_cover(
 def download_all_covers(
     group_id: int,
     db: sqlite3.Connection = Depends(get_db),
-    _: dict = Depends(require_ksnb),
+    _: dict = Depends(require_feature("bundles.download_cover")),
 ):
     group = _load_bundle_group(db, group_id)
     bundle_results = []
@@ -662,7 +662,7 @@ def download_all_covers(
 def mark_bundle_printed(
     bundle_id: int,
     db: sqlite3.Connection = Depends(get_db),
-    _: dict = Depends(require_pho_phong_or_above),
+    _: dict = Depends(require_feature("bundles.mark_printed")),
 ):
     b = db.execute("SELECT group_id FROM bundles WHERE id = ?", (bundle_id,)).fetchone()
     if not b:
@@ -679,7 +679,7 @@ def mark_bundle_printed(
 def mark_group_printed(
     group_id: int,
     db: sqlite3.Connection = Depends(get_db),
-    _: dict = Depends(require_pho_phong_or_above),
+    _: dict = Depends(require_feature("bundles.mark_printed")),
 ):
     g = db.execute("SELECT id FROM bundle_groups WHERE id = ?", (group_id,)).fetchone()
     if not g:
@@ -696,7 +696,7 @@ def mark_group_printed(
 def download_bulk_covers(
     department_id: int,
     db: sqlite3.Connection = Depends(get_db),
-    _: dict = Depends(require_ksnb),
+    _: dict = Depends(require_feature("bundles.download_cover")),
 ):
     dept = db.execute("SELECT * FROM departments WHERE id = ?", (department_id,)).fetchone()
     if not dept:
@@ -742,7 +742,7 @@ def storage_view(
     year: int,
     month: int,
     db: sqlite3.Connection = Depends(get_db),
-    _: dict = Depends(require_ksnb),
+    _: dict = Depends(require_feature("menu.storage")),
 ):
     dept_name, all_rows = _get_storage_rows_for_month(db, department_id, year, month)
     notes_key = f"Tháng {month:02d}/{year}"
@@ -759,7 +759,7 @@ def storage_view(
 def update_storage_view(
     req: StorageViewUpdateRequest,
     db: sqlite3.Connection = Depends(get_db),
-    _: dict = Depends(require_ksnb),
+    _: dict = Depends(require_feature("menu.storage")),
 ):
     for row in req.rows:
         for i, bundle_id in enumerate(row.bundle_ids):
@@ -842,7 +842,7 @@ def handover_archive_excel(
 def delete_group(
     group_id: int,
     db: sqlite3.Connection = Depends(get_db),
-    _: dict = Depends(require_pho_phong_or_above),
+    _: dict = Depends(require_feature("bundles.delete")),
 ):
     g = db.execute("SELECT id FROM bundle_groups WHERE id = ?", (group_id,)).fetchone()
     if not g:

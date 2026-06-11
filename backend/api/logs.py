@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 from backend.database import get_db, _vn_now
 from backend.core.config import settings
-from backend.core.deps import require_admin, require_admin_or_gd
+from backend.core.deps import require_admin, require_feature
 
 router = APIRouter()
 
@@ -68,7 +68,7 @@ def _cleanup_login_logs(db: sqlite3.Connection) -> None:
 
 
 @router.get("/backup-info")
-def get_backup_info(_: dict = Depends(require_admin_or_gd)):
+def get_backup_info(_: dict = Depends(require_feature("menu.logs"))):
     from backend.services.backup_service import last_backup_info
     return last_backup_info()
 
@@ -76,7 +76,7 @@ def get_backup_info(_: dict = Depends(require_admin_or_gd)):
 @router.get("/backup")
 def backup_db(
     request: Request,
-    current: dict = Depends(require_admin_or_gd),
+    current: dict = Depends(require_feature("menu.logs")),
     db: sqlite3.Connection = Depends(get_db),
 ):
     db_path = settings.DATABASE_URL.replace("sqlite:///", "")
@@ -119,7 +119,7 @@ def backup_db(
 @router.get("/logins/export")
 def export_login_logs(
     success: str = Query(""),
-    _: dict = Depends(require_admin_or_gd),
+    _: dict = Depends(require_feature("menu.logs")),
     db: sqlite3.Connection = Depends(get_db),
 ):
     import openpyxl
@@ -185,7 +185,7 @@ def export_login_logs(
 def get_login_logs(
     page:    int = Query(1, ge=1),
     success: str = Query(""),
-    _: dict = Depends(require_admin_or_gd),
+    _: dict = Depends(require_feature("menu.logs")),
     db: sqlite3.Connection = Depends(get_db),
 ):
     _cleanup_login_logs(db)
@@ -237,7 +237,7 @@ def get_login_logs(
 def get_logs(
     level: str = Query(""),
     page:  int  = Query(1, ge=1),
-    _: dict = Depends(require_admin_or_gd),
+    _: dict = Depends(require_feature("menu.logs")),
 ):
     entries, total = _parse_log_file(level, page)
     return {

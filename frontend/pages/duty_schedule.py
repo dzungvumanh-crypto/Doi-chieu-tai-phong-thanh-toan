@@ -72,11 +72,12 @@ async def duty_schedule_page():
         _page_header("Phân lịch trực", "Phân ca trực Phòng Thanh toán theo tuần")
 
         with ui.tabs().classes("mb-0") as tabs:
-            tab_schedule = ui.tab("schedule", label="Phân lịch",     icon="event")
-            tab_staff    = ui.tab("staff",    label="Nhân viên",     icon="groups")
-            tab_stats    = ui.tab("stats",    label="Thống kê",      icon="bar_chart")
-            tab_specials = ui.tab("specials", label="Ngày đặc biệt", icon="calendar_month")
-            tab_settings = ui.tab("settings", label="Cài đặt",       icon="settings")
+            tab_schedule = ui.tab("schedule",  label="Phân lịch",     icon="event")
+            tab_staff    = ui.tab("staff",     label="Nhân viên",     icon="groups")
+            tab_absence  = ui.tab("absence",   label="Vắng mặt",      icon="event_busy")
+            tab_stats    = ui.tab("stats",     label="Thống kê",      icon="bar_chart")
+            tab_specials = ui.tab("specials",  label="Ngày đặc biệt", icon="calendar_month")
+            tab_settings = ui.tab("settings",  label="Cài đặt",       icon="settings")
 
         with ui.tab_panels(tabs, value=tab_schedule).classes("w-full"):
 
@@ -335,7 +336,143 @@ async def duty_schedule_page():
                 asyncio.ensure_future(load_staff())
 
             # ════════════════════════════════════════════════════
-            # TAB 3 — THỐNG KÊ
+            # TAB 3 — VẮNG MẶT
+            # ════════════════════════════════════════════════════
+            with ui.tab_panel(tab_absence):
+                today_ab   = date.today()
+                ab_year_v  = {"v": today_ab.year}
+                ab_month_v = {"v": today_ab.month}
+
+                absence_area = ui.column().classes("w-full gap-1")
+
+                async def load_absences():
+                    absence_area.clear()
+                    yr = ab_year_v["v"]
+                    mo = ab_month_v["v"]
+                    try:
+                        data, staff_list = await asyncio.gather(
+                            asyncio.to_thread(api.get, "/api/duty/constraints/absences",
+                                              {"month": mo, "year": yr}),
+                            asyncio.to_thread(api.get, "/api/duty/staff"),
+                            return_exceptions=True,
+                        )
+                        if isinstance(data, Exception) or isinstance(staff_list, Exception):
+                            raise (data if isinstance(data, Exception) else staff_list)
+                    except Exception as e:
+                        if _handle_api_error(e):
+                            return
+                        return
+
+                    staff_map = {p["id"]: p["full_name"] for p in staff_list}
+
+                    with absence_area:
+                        # ── Form thêm vắng mặt ──────────────────────────────
+                        if can_manage_staff:
+                            with ui.card().classes("w-full max-w-xl p-4 mb-4"):
+                                ui.label("Khai báo vắng mặt").classes("text-sm font-semibold text-red-800 mb-3")
+                                staff_opts = {str(p["id"]): p["full_name"] for p in staff_list}
+                                with ui.row().classes("items-end gap-2 flex-wrap"):
+                                    sel_staff = ui.select(
+                                        label="Nhân viên",
+                                        options=staff_opts,
+                                        with_input=True,
+                                    ).classes("w-48")
+                                    ab_from = ui.input(
+                                        label="Từ ngày (YYYY-MM-DD)",
+                                        placeholder=today_ab.isoformat(),
+                                    ).classes("w-40")
+                                    ab_to = ui.input(
+                                        label="Đến ngày (để trống = 1 ngày)",
+                                        placeholder=today_ab.isoformat(),
+                                    ).classes("w-40")
+
+                                    async def do_add_absence():
+                                        if not sel_staff.value or not ab_from.value:
+                                            ui.notify("Chọn nhân viên và nhập ngày bắt đầu", type="warning")
+                                            return
+                                        try:
+                                            from_d = ab_from.value.strip()
+                                            to_d   = (ab_to.value.strip() or from_d)
+                                            if from_d == to_d:
+                                                await asyncio.to_thread(
+                                                    api.post, "/api/duty/constraints/absences",
+                                                    {"staff_id": int(sel_staff.value),
+                                                     "absence_date": from_d}
+                                                )
+                                            else:
+                                                await asyncio.to_thread(
+                                                    api.post, "/api/duty/constraints/absences/range",
+                                                    {"staff_id": int(sel_staff.value),
+                                                     "from_date": from_d, "to_date": to_d}
+                                                )
+                                            ab_from.value = ""
+                                            ab_to.value   = ""
+                                            await load_absences()
+                                            ui.notify("Đã khai báo vắng mặt", type="positive")
+                                        except Exception as ex:
+                                            _handle_api_error(ex)
+
+                                    ui.button("Thêm", icon="add", on_click=do_add_absence).props("color=primary")
+
+                        # ── Danh sách vắng mặt theo ngày ────────────────────
+                        if not data:
+                            ui.label("Không có khai báo vắng mặt nào trong tháng này.").classes(
+                                "text-gray-400 italic py-4"
+                            )
+                        else:
+                            # Gom nhóm theo ngày
+                            by_date: dict = {}
+                            for ab in data:
+                                by_date.setdefault(ab["absence_date"], []).append(ab)
+
+                            for d_str in sorted(by_date):
+                                with ui.row().classes("w-full items-start gap-2 border-b border-gray-100 py-2"):
+                                    ui.label(d_str).classes("font-mono text-sm font-semibold text-gray-700 w-28 shrink-0 pt-1")
+                                    with ui.row().classes("flex-wrap gap-1"):
+                                        for ab in by_date[d_str]:
+                                            name = staff_map.get(ab["staff_id"], f"#{ab['staff_id']}")
+                                            with ui.row().classes(
+                                                "items-center gap-1 bg-red-50 border border-red-200 "
+                                                "rounded-full px-2 py-0.5 text-xs text-red-800"
+                                            ):
+                                                ui.label(name)
+                                                if can_manage_staff:
+                                                    async def _del(aid=ab["id"]):
+                                                        try:
+                                                            await asyncio.to_thread(
+                                                                api.delete,
+                                                                f"/api/duty/constraints/absences/{aid}"
+                                                            )
+                                                            await load_absences()
+                                                        except Exception as ex:
+                                                            _handle_api_error(ex)
+                                                    ui.button(icon="close", on_click=_del).props(
+                                                        "flat dense round size=xs color=red"
+                                                    )
+
+                # ── Bộ lọc tháng/năm ────────────────────────────────────────
+                with ui.row().classes("items-end gap-3 mb-3 flex-wrap"):
+                    ab_yr_inp = ui.number(
+                        label="Năm", value=today_ab.year, min=2020, max=2099, format="%d"
+                    ).classes("w-28")
+                    ab_mo_inp = ui.number(
+                        label="Tháng", value=today_ab.month, min=1, max=12, format="%d"
+                    ).classes("w-24")
+
+                    def _on_ab_filter_change():
+                        ab_year_v["v"]  = int(ab_yr_inp.value or today_ab.year)
+                        ab_month_v["v"] = int(ab_mo_inp.value or today_ab.month)
+                        asyncio.ensure_future(load_absences())
+
+                    ab_yr_inp.on("change", lambda _: _on_ab_filter_change())
+                    ab_mo_inp.on("change", lambda _: _on_ab_filter_change())
+                    ui.button("Tải", icon="refresh",
+                              on_click=lambda: asyncio.ensure_future(load_absences())).props("flat dense color=primary")
+
+                asyncio.ensure_future(load_absences())
+
+            # ════════════════════════════════════════════════════
+            # TAB 4 — THỐNG KÊ (was 3)
             # ════════════════════════════════════════════════════
             with ui.tab_panel(tab_stats):
                 today_yr = date.today().year

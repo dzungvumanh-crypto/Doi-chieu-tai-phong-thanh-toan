@@ -9,7 +9,7 @@ from fastapi.responses import StreamingResponse
 from backend.database import DB_PATH, get_db, write_audit, compute_annual_leave
 from backend.schemas.staff import StaffCreate, StaffUpdate, StaffOut
 from backend.core.security import get_password_hash
-from backend.core.deps import get_current_staff, require_admin
+from backend.core.deps import get_current_staff, require_feature
 
 router = APIRouter(prefix="/api/staff", tags=["Staff"])
 
@@ -99,7 +99,7 @@ _ROLE_VN = {
 @router.get("/export")
 def export_staff_excel(
     db: sqlite3.Connection = Depends(get_db),
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_feature("staff.export")),
 ):
     import openpyxl
     from openpyxl.styles import Alignment, Font, PatternFill
@@ -163,7 +163,7 @@ def export_staff_excel(
 
 
 @router.get("/export-db")
-def export_users_db(_: dict = Depends(require_admin)):
+def export_users_db(_: dict = Depends(require_feature("staff.export"))):
     """Xuất bảng user_tttt thành file SQLite để chép sang hệ thống khác."""
     tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
     tmp.close()
@@ -222,7 +222,7 @@ def create_staff(
     body: StaffCreate,
     request: Request,
     db: sqlite3.Connection = Depends(get_db),
-    current: dict = Depends(require_admin),
+    current: dict = Depends(require_feature("staff.create")),
 ):
     if db.execute("SELECT id FROM user_tttt WHERE username = ?", (body.username,)).fetchone():
         raise HTTPException(400, "Username đã tồn tại")
@@ -256,7 +256,7 @@ def update_staff(
     body: StaffUpdate,
     request: Request,
     db: sqlite3.Connection = Depends(get_db),
-    current: dict = Depends(require_admin),
+    current: dict = Depends(require_feature("staff.edit")),
 ):
     row = db.execute("SELECT * FROM user_tttt WHERE id = ?", (staff_id,)).fetchone()
     if not row:
@@ -293,7 +293,7 @@ def delete_staff(
     staff_id: int,
     request: Request,
     db: sqlite3.Connection = Depends(get_db),
-    current: dict = Depends(require_admin),
+    current: dict = Depends(require_feature("staff.delete")),
 ):
     if staff_id == current["id"]:
         raise HTTPException(400, "Không thể xóa tài khoản của chính mình")
@@ -313,7 +313,7 @@ def import_users_db(
     file: UploadFile = File(...),
     request: Request = None,
     db: sqlite3.Connection = Depends(get_db),
-    current: dict = Depends(require_admin),
+    current: dict = Depends(require_feature("staff.import_db")),
 ):
     """Nhập bảng user_tttt từ file SQLite xuất bởi hệ thống cùng schema."""
     tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)

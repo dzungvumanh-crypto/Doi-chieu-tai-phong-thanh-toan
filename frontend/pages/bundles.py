@@ -179,7 +179,7 @@ async def bundles_page():
                                         ui.button("In", icon="print",
                                                   on_click=lambda g_id=gid: _mark_group_printed(g_id)
                                                   ).classes("bg-green-700 text-white text-xs px-3 py-1")
-                                    if is_admin and api.has_feature("bundles.delete"):
+                                    if api.has_feature("bundles.delete"):
                                         ui.button("Xóa", icon="delete",
                                                   on_click=lambda g_id=gid, d=bundle_lbl: _delete_group(g_id, d)
                                                   ).classes("bg-red-600 text-white text-xs px-3 py-1")

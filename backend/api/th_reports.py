@@ -5,7 +5,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from fastapi.responses import Response
 
-from backend.core.deps import get_current_staff
+from backend.core.deps import require_feature
 from backend.services.th_report_service import (
     parse_incoming, parse_outgoing, fill_template,
 )
@@ -29,7 +29,7 @@ async def generate_payment_report(
     in_file: UploadFile = File(...),
     out_file: UploadFile = File(...),
     period: str = Query(..., description="Kỳ báo cáo định dạng YYYYMM, ví dụ: 202605"),
-    current: dict = Depends(get_current_staff),
+    current: dict = Depends(require_feature("menu.th_reports")),
 ):
     """Nhận file Lệnh đến + Lệnh đi, điền vào mẫu D00054 và trả về file Excel."""
     # ── Validate period format ────────────────────────────────────────────────

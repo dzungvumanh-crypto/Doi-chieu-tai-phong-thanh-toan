@@ -55,58 +55,26 @@ def require_admin(current: dict = Depends(get_current_staff)) -> dict:
     return current
 
 
-def require_hkv_or_above(current: dict = Depends(get_current_staff)) -> dict:
-    if current["role"] not in (StaffRole.ADMIN, StaffRole.HAU_KIEM_VIEN):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cần quyền Hậu kiểm viên trở lên")
-    return current
-
-
-def require_controller(current: dict = Depends(get_current_staff)) -> dict:
-    """Deprecated alias — dùng require_pho_phong_or_above."""
-    return require_pho_phong_or_above(current)
-
-
-def require_pho_phong_or_above(current: dict = Depends(get_current_staff)) -> dict:
-    if current["role"] not in (StaffRole.ADMIN, StaffRole.HAU_KIEM_VIEN, StaffRole.TRUONG_PHONG, StaffRole.PHO_PHONG):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cần quyền Phó phòng trở lên")
-    return current
-
-
-def require_handover_write(
-    current: dict = Depends(get_current_staff),
-    db: sqlite3.Connection = Depends(get_db),
-) -> dict:
-    """Chuyên viên, Phó phòng, Trưởng phòng, Hậu kiểm viên, Admin đều được nhập/sửa bàn giao.
-    Ngoại lệ: staff thuộc phòng Tổng hợp bị chặn."""
-    if current["role"] not in (StaffRole.ADMIN, StaffRole.HAU_KIEM_VIEN, StaffRole.TRUONG_PHONG, StaffRole.PHO_PHONG, StaffRole.CHUYEN_VIEN):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Không có quyền thao tác bàn giao chứng từ")
-    dept_id = current.get("department_id")
-    if current["role"] in (StaffRole.CHUYEN_VIEN, StaffRole.PHO_PHONG, StaffRole.TRUONG_PHONG) and dept_id:
-        row = db.execute("SELECT code FROM departments WHERE id = ?", (dept_id,)).fetchone()
-        if row and row["code"].upper() in TONG_HOP_CODES:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Phòng Tổng hợp không có quyền truy cập bàn giao chứng từ")
-    return current
-
-
-def require_ksnb(current: dict = Depends(get_current_staff)) -> dict:
-    if current["role"] == StaffRole.CHUYEN_VIEN:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Không có quyền truy cập tính năng này")
-    return current
-
-
-def require_ksv(current: dict = Depends(get_current_staff)) -> dict:
-    if current["role"] not in (StaffRole.TRUONG_PHONG, StaffRole.PHO_PHONG):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cần quyền Trưởng phòng hoặc Phó phòng")
-    return current
-
-
-def require_gd_level(current: dict = Depends(get_current_staff)) -> dict:
-    if current["role"] not in (StaffRole.GIAM_DOC, StaffRole.PHO_GIAM_DOC):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cần quyền Giám đốc")
-    return current
-
-
-def require_admin_or_gd(current: dict = Depends(get_current_staff)) -> dict:
-    if current["role"] not in (StaffRole.ADMIN, StaffRole.GIAM_DOC, StaffRole.PHO_GIAM_DOC):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cần quyền Admin hoặc Giám đốc")
-    return current
+def require_feature(feature_code: str):
+    """Dependency factory — cho phép admin hoặc user có feature_code qua group."""
+    def _check(
+        current: dict = Depends(get_current_staff),
+        db: sqlite3.Connection = Depends(get_db),
+    ) -> dict:
+        if current["role"] == StaffRole.ADMIN:
+            return current
+        row = db.execute(
+            """SELECT 1 FROM group_features gf
+               JOIN group_members gm ON gm.group_id = gf.group_id
+               JOIN user_groups g ON g.id = gm.group_id AND g.is_active = 1
+               WHERE gm.staff_id = ? AND gf.feature_code = ?
+               LIMIT 1""",
+            (current["id"], feature_code),
+        ).fetchone()
+        if not row:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Không có quyền truy cập tính năng này",
+            )
+        return current
+    return _check

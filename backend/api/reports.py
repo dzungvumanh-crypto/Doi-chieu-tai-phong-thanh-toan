@@ -8,7 +8,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from backend.database import get_db
-from backend.core.deps import require_hkv_or_above
+from backend.core.deps import require_feature
 from backend.services.report_service import (
     parse_ipcas, parse_payment_teller, parse_payment_backchecker,
     enrich_and_group, merge_hkv,
@@ -33,7 +33,7 @@ def _dl_headers(filename: str) -> dict:
 async def parse_gdv(
     gdv_file: UploadFile = File(None),
     teller_file: UploadFile = File(None),
-    current: dict = Depends(require_hkv_or_above),
+    current: dict = Depends(require_feature("menu.reports")),
     db: sqlite3.Connection = Depends(get_db),
 ):
     result = {"ipcas": {}, "payment": {}, "month": 0, "year": 0}
@@ -79,7 +79,7 @@ async def parse_gdv(
 async def parse_hkv(
     hkv_file: UploadFile = File(None),
     checker_file: UploadFile = File(None),
-    current: dict = Depends(require_hkv_or_above),
+    current: dict = Depends(require_feature("menu.reports")),
     db: sqlite3.Connection = Depends(get_db),
 ):
     ipcas_rows, payment_rows = [], []
@@ -133,7 +133,7 @@ class GenerateDeptRequest(BaseModel):
 @router.post("/generate-dept")
 def generate_dept(
     body: GenerateDeptRequest,
-    current: dict = Depends(require_hkv_or_above),
+    current: dict = Depends(require_feature("menu.reports")),
 ):
     try:
         staff_name = body.staff_name or current.get("full_name") or current.get("username", "")
@@ -167,7 +167,7 @@ class GenerateWordRequest(BaseModel):
 @router.post("/generate-word")
 def generate_word(
     body: GenerateWordRequest,
-    current: dict = Depends(require_hkv_or_above),
+    current: dict = Depends(require_feature("menu.reports")),
 ):
     try:
         word_bytes = generate_center_word(
@@ -192,7 +192,7 @@ def generate_word(
 async def generate_dept_zip(
     gdv_file: UploadFile = File(None),
     teller_file: UploadFile = File(None),
-    current: dict = Depends(require_hkv_or_above),
+    current: dict = Depends(require_feature("menu.reports")),
     db: sqlite3.Connection = Depends(get_db),
 ):
     violations = []

@@ -8,9 +8,7 @@ from typing import FrozenSet, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
-from backend.core.deps import (
-    TONG_HOP_CODES, get_current_staff, require_gd_level, require_ksv,
-)
+from backend.core.deps import TONG_HOP_CODES, get_current_staff, require_feature
 from backend.core.enums import LeaveStatus
 from backend.database import get_db, _vn_now, compute_annual_leave
 from backend.schemas.leaves import LeaveCreate, LeaveReview, TongHopReview
@@ -515,7 +513,7 @@ def ksv_review(
     leave_id: int,
     body: LeaveReview,
     db: sqlite3.Connection = Depends(get_db),
-    current: dict = Depends(require_ksv),
+    current: dict = Depends(require_feature("leaves.approve_ksv")),
 ):
     leave = db.execute("SELECT * FROM leave_records WHERE id = ?", (leave_id,)).fetchone()
     if not leave:
@@ -594,7 +592,7 @@ def gd_review(
     leave_id: int,
     body: LeaveReview,
     db: sqlite3.Connection = Depends(get_db),
-    current: dict = Depends(require_gd_level),
+    current: dict = Depends(require_feature("leaves.approve_gd")),
 ):
     leave = db.execute("SELECT * FROM leave_records WHERE id = ?", (leave_id,)).fetchone()
     if not leave:
