@@ -47,6 +47,49 @@ def compute_annual_leave(join_date_str, year: int = None) -> int:
         return 12
 
 
+def compute_carry_over(staff_id: int, year: int, db,
+                       effective: bool = True, ref_date=None) -> float:
+    """Số ngày phép năm (year-1) chưa dùng được mang sang Q1/year.
+
+    effective=True : chỉ trả giá trị nếu ref_date (hoặc hôm nay) còn trong Q1.
+    effective=False: luôn trả số ngày thực tế, dùng để hiển thị / in phiếu.
+    ref_date       : ngày tham chiếu thay cho date.today() khi check Q1
+                     (dùng khi tạo đơn nghỉ trong tương lai).
+    """
+    from datetime import date as _date, timedelta
+    import json
+    if effective:
+        check_date = ref_date if ref_date else _date.today()
+        if check_date > _date(year, 3, 31):
+            return 0.0
+    prev_year = year - 1
+    q = db.execute(
+        "SELECT quota_days FROM leave_quotas WHERE staff_id=? AND year=?", (staff_id, prev_year)
+    ).fetchone()
+    staff = db.execute("SELECT join_industry_date FROM user_tttt WHERE id=?", (staff_id,)).fetchone()
+    prev_quota = float(q["quota_days"]) if q else float(
+        compute_annual_leave(staff["join_industry_date"] if staff else None, prev_year)
+    )
+    rows = db.execute(
+        """SELECT start_date, end_date, spread_dates FROM leave_records
+           WHERE staff_id=? AND leave_type='annual' AND status='approved'
+             AND strftime('%Y', start_date)=?""",
+        (staff_id, str(prev_year)),
+    ).fetchall()
+    used = 0.0
+    for row in rows:
+        if row["spread_dates"]:
+            used += len(json.loads(row["spread_dates"]))
+        else:
+            d = _date.fromisoformat(row["start_date"])
+            end = _date.fromisoformat(row["end_date"])
+            while d <= end:
+                if d.weekday() < 5:
+                    used += 1
+                d += timedelta(days=1)
+    return max(0.0, prev_quota - used)
+
+
 def get_db():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30)
     conn.row_factory = sqlite3.Row

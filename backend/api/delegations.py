@@ -86,6 +86,31 @@ def create_delegation(
     return _deleg_to_out(dict(row), db)
 
 
+@router.get("/active")
+def list_active_delegations(
+    db: sqlite3.Connection = Depends(get_db),
+    current: dict = Depends(get_current_staff),
+):
+    """Trả về danh sách ủy quyền đang và sắp hiệu lực (không cần quyền đặc biệt)."""
+    from datetime import date
+    today = date.today().isoformat()
+    rows = db.execute(
+        """SELECT dr.*,
+                  gd.full_name  AS giam_doc_name,
+                  pgd.full_name AS pho_giam_doc_name
+           FROM delegation_records dr
+           JOIN user_tttt gd  ON dr.giam_doc_id     = gd.id
+           JOIN user_tttt pgd ON dr.pho_giam_doc_id = pgd.id
+           WHERE dr.is_active = 1 AND dr.end_date >= ?
+           ORDER BY dr.start_date""",
+        (today,)
+    ).fetchall()
+    return [{"id": r["id"], "giam_doc_name": r["giam_doc_name"],
+             "pho_giam_doc_name": r["pho_giam_doc_name"],
+             "start_date": r["start_date"], "end_date": r["end_date"],
+             "note": r["note"] if r["note"] else ""} for r in rows]
+
+
 @router.get("/", response_model=List[DelegationOut])
 def list_delegations(
     db: sqlite3.Connection = Depends(get_db),

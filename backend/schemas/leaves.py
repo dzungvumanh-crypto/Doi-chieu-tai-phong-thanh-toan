@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from typing import Optional, Literal
+from typing import Optional, Literal, List
 from pydantic import BaseModel
 
 
@@ -10,6 +10,8 @@ class LeaveCreate(BaseModel):
     leave_type: str = "annual"
     reason: Optional[str] = None
     ksv_approver_id: Optional[int] = None  # Bắt buộc với chuyen_vien/pho_phong/truong_phong
+    gd_approver_id: Optional[int] = None   # Chọn trước Ban lãnh đạo phê duyệt
+    spread_dates: Optional[List[str]] = None  # YYYY-MM-DD list khi nghỉ ngày lẻ không liên tục
 
 class LeaveReview(BaseModel):
     action: Literal["approve", "reject"]
@@ -44,6 +46,9 @@ class LeaveOut(BaseModel):
     gd_is_pgd: bool = False              # True nếu người ký là PGĐ → hiện (TUQ)
     gd_approved_at: Optional[datetime] = None
     gd_comment: Optional[str] = None
+    is_direct: bool = False
+    spread_dates: Optional[List[str]] = None
+    recall_reason: Optional[str] = None
     created_at: datetime
     class Config: from_attributes = True
 
@@ -59,7 +64,34 @@ class LeaveActionLogOut(BaseModel):
     class Config: from_attributes = True
 
 
-# ─── Delegation ───────────────────────────────────────────────────────────────
+# ─── Quota & Direct ──────────────────────────────────────────────────────────
+class LeaveQuotaUpsert(BaseModel):
+    staff_id: int
+    year: int
+    quota_days: float
+
+class LeaveQuotaOut(BaseModel):
+    staff_id: int
+    staff_name: str
+    year: int
+    quota_days: float
+    carry_over: float = 0.0
+    used_days: float = 0.0
+    remaining: float = 0.0
+    class Config: from_attributes = True
+
+class DirectLeaveCreate(BaseModel):
+    staff_id: int
+    start_date: date
+    end_date: date
+    leave_type: str = "annual"
+    reason: Optional[str] = None
+    spread_dates: Optional[List[str]] = None
+
+class RecallCreate(BaseModel):
+    reason: str
+
+
 class DelegationCreate(BaseModel):
     giam_doc_id: int
     pho_giam_doc_id: int

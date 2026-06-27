@@ -44,7 +44,18 @@ def pending_counts(
     handovers_by_dept: list = []
 
     # ── Đơn phép đang chờ ──
-    if role in ("truong_phong", "pho_phong", "hau_kiem_vien"):
+    if _is_tong_hop(current, db) and role in ("truong_phong", "pho_phong", "hau_kiem_vien"):
+        # PP/TP Tổng hợp: đếm cả KSV phòng mình + TH toàn trung tâm
+        ksv_cnt = db.execute(
+            "SELECT COUNT(*) FROM leave_records WHERE ksv_approver_id = ? AND status = 'pending_ksv'",
+            (current["id"],),
+        ).fetchone()[0] or 0
+        th_cnt = db.execute(
+            "SELECT COUNT(*) FROM leave_records WHERE status = 'pending_tong_hop'"
+        ).fetchone()[0] or 0
+        leaves_count = ksv_cnt + th_cnt
+
+    elif role in ("truong_phong", "pho_phong", "hau_kiem_vien"):
         leaves_count = db.execute(
             "SELECT COUNT(*) FROM leave_records WHERE ksv_approver_id = ? AND status = 'pending_ksv'",
             (current["id"],),
@@ -101,6 +112,49 @@ def pending_counts(
         handovers_by_dept = [{"dept_name": r["dept_name"], "count": r["cnt"]} for r in rows]
 
     return {"leaves": leaves_count, "handovers": handovers_count, "handovers_by_dept": handovers_by_dept}
+
+
+@router.get("/leave-today")
+def leave_today_stats(
+    current: dict = Depends(get_current_staff),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """Thống kê đơn nghỉ phép hôm nay (approved): tổng + theo phòng."""
+    today = _vn_now().date().isoformat()
+
+    # Lấy tất cả phòng có nhân viên
+    depts = db.execute(
+        """SELECT id, name, code FROM departments WHERE is_active=1
+           ORDER BY CASE code
+               WHEN 'BGD'     THEN 1
+               WHEN 'PAYMENT' THEN 2
+               WHEN 'NOSTRO'  THEN 3
+               WHEN 'SWIFT'   THEN 4
+               WHEN 'ACCT'    THEN 5
+               WHEN 'KSNB'    THEN 6
+               WHEN 'TH'      THEN 7
+               ELSE 8 END"""
+    ).fetchall()
+
+    # Đếm người nghỉ theo phòng (approved, ngày nghỉ chứa hôm nay)
+    leave_rows = db.execute(
+        """SELECT s.department_id, COUNT(DISTINCT s.id) AS cnt
+           FROM leave_records lr
+           JOIN user_tttt s ON lr.staff_id = s.id
+           WHERE lr.status = 'approved'
+             AND lr.start_date <= ? AND lr.end_date >= ?
+             AND s.department_id IS NOT NULL
+           GROUP BY s.department_id""",
+        (today, today),
+    ).fetchall()
+    dept_map = {r["department_id"]: r["cnt"] for r in leave_rows}
+
+    total = sum(dept_map.values())
+    by_dept = [
+        {"dept_name": d["name"], "dept_code": d["code"], "count": dept_map.get(d["id"], 0)}
+        for d in depts
+    ]
+    return {"total": total, "by_dept": by_dept, "date": today}
 
 
 @router.get("/summary")
