@@ -89,13 +89,15 @@ def login(req: LoginRequest, request: Request, db: sqlite3.Connection = Depends(
         (req.username, staff["id"], client_ip, 1, None, _vn_now()),
     )
     db.commit()
+    # Mật khẩu mặc định "1" → bắt buộc đổi ngay
+    must_change = bool(staff.get("must_change_password", 0)) or req.password == "1"
     return Token(
         access_token=token,
         staff_id=staff["id"],
         full_name=staff["full_name"],
         role=staff["role"],
         department_id=staff.get("department_id"),
-        must_change_password=bool(staff.get("must_change_password", 0)),
+        must_change_password=must_change,
     )
 
 

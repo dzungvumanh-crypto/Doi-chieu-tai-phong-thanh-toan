@@ -34,8 +34,7 @@ async def handovers_page():
     user_data = api.get_current_user()
     user_role = user_data.get("role", "") if user_data else ""
     is_cv     = user_role == "chuyen_vien"
-    # chuyen_vien luôn được vào /handovers (trang nhà của họ)
-    if not is_cv and not api.has_feature("menu.handovers"):
+    if not api.has_feature("menu.handovers"):
         ui.navigate.to("/home")
         return
 
@@ -70,15 +69,6 @@ async def handovers_page():
                 badge_refs["handovers"].set_text(str(_hcnt))
                 badge_refs["handovers"].set_visibility(True)
         all_depts = [d for d in _all_depts_raw if d.get("is_source")]
-
-        # Block Tổng hợp staff from accessing handovers entirely
-        if user_role in ("chuyen_vien", "pho_phong", "truong_phong"):
-            _user_dept_id = user_data.get("department_id") if user_data else None
-            _user_dept = next((d for d in _all_depts_raw if d.get("id") == _user_dept_id), None)
-            if _user_dept and _user_dept.get("code", "").upper() in ("TONGHOP", "TONG_HOP", "TH"):
-                ui.notify("Phòng Tổng hợp không có quyền truy cập bàn giao chứng từ", type="negative", timeout=5000)
-                ui.navigate.to("/")
-                return
 
         dept_opts  = {d["id"]: d["name"] for d in all_depts}
         year_opts  = {y: str(y) for y in range(2023, today.year + 3)}
@@ -219,8 +209,12 @@ async def handovers_page():
                     with ui.row().classes("w-full justify-between items-center"):
                         ui.label(hist.get("source_user_name", user_name)).classes("font-bold text-red-900 text-base")
                         ui.button(icon="close", on_click=right_panel.hide).props("flat dense").classes("text-gray-400")
+                    _logs = hist.get("logs", [])
+                    _last_ts = _logs[0].get("timestamp", "") if _logs else ""
+                    _parts = _last_ts.split() if _last_ts else []
+                    _disp_date = _parts[-1] if len(_parts) >= 2 else hist.get("transaction_date", "")
                     ui.label(
-                        f"Ngày {hist.get('transaction_date', '')}  •  {hist.get('sheet_count', 0)} tờ"
+                        f"Ngày {_disp_date}  •  {hist.get('sheet_count', 0)} tờ"
                     ).classes("text-sm text-gray-600")
                     with ui.row().classes("items-center gap-1 mt-1"):
                         ui.element("div").style(
@@ -442,7 +436,8 @@ async def handovers_page():
                 # Data rows
                 for row_idx, u in enumerate(users):
                     uid    = u["id"]
-                    name   = u.get("full_name") or u.get("ipcas_code") or ""
+                    name   = (u.get("full_name") or u.get("ipcas_code")
+                              or u.get("employee_code") or u.get("username") or "")
                     rbg    = "#ffffff" if row_idx % 2 == 0 else "#f0f9ff"
                     p.append(
                         f'<div style="display:flex;flex-wrap:nowrap;border-bottom:1px solid #dbeafe;background:{rbg};">'
@@ -464,12 +459,15 @@ async def handovers_page():
                         else:
                             cbg, bdr = rbg, "1px solid #dbeafe"
                         eid_attr = f' data-eid="{eid}"' if eid else ""
+                        _locked = not api.has_feature("handovers.confirm_entry") and status in ("confirmed", "borrowed") and val
+                        _ro_attr = " readonly" if _locked else ""
+                        _cursor  = "cursor:not-allowed;opacity:0.7;" if _locked else ""
                         p.append(
                             f'<div style="min-width:{CW}px;width:{CW}px;flex-shrink:0;background:{cbg};border-right:{bdr};">'
                             f'<input class="hv-inp" id="hv_{row_idx}_{d}" data-uid="{uid}" data-day="{d}"'
-                            f' data-orig="{val}" data-uname="{_html.escape(name, quote=True)}"{eid_attr}'
+                            f' data-orig="{val}" data-uname="{_html.escape(name, quote=True)}"{eid_attr}{_ro_attr}'
                             f' value="{val if val else ""}"'
-                            f' style="width:100%;border:none;outline:none;background:transparent;'
+                            f' style="width:100%;border:none;outline:none;background:transparent;{_cursor}'
                             f'font-size:15px;font-weight:600;color:#1e3a8a;text-align:center;'
                             f'padding:7px 0;box-sizing:border-box;" /></div>'
                         )

@@ -29,7 +29,7 @@ _ACTION_LABEL = {
     "borrow_requested":   ("Yêu cầu mượn lại",          "orange"),
     "borrowed":           ("Xác nhận cho mượn",         "orange"),
     "returned":           ("Bàn giao lại",               "blue"),
-    "edited_hkv":         ("Sửa trực tiếp (HKV/KSV)",  "purple"),
+    "edited_hkv":         ("HKV sửa trực tiếp",          "purple"),
     "rejected_borrow":    ("Từ chối yêu cầu mượn",      "red"),
     "rejected_return":    ("Từ chối bàn giao lại",       "red"),
     "rejected_handover":  ("Từ chối chứng từ mới",       "red"),
@@ -143,16 +143,19 @@ def get_handover_grid(
     staff_ids_with_entries = {e["staff_id"] for e in entry_rows}
     entered_by_ids = {e["entered_by_id"] for e in entry_rows if e["entered_by_id"]}
 
-    # Staff: đang active + có entries trong tháng này
+    # Staff: đang active + có entries trong tháng này, bỏ truong_phong/pho_phong
+    _SKIP_ROLES = "('truong_phong','pho_phong')"
     if staff_ids_with_entries:
         ph = ",".join("?" * len(staff_ids_with_entries))
         user_rows = db.execute(
-            f"SELECT * FROM user_tttt WHERE department_id = ? AND (is_active = 1 OR id IN ({ph})) ORDER BY ipcas_code",
+            f"SELECT * FROM user_tttt WHERE department_id = ? AND role NOT IN {_SKIP_ROLES}"
+            f" AND (is_active = 1 OR id IN ({ph})) ORDER BY ipcas_code",
             [department_id] + list(staff_ids_with_entries),
         ).fetchall()
     else:
         user_rows = db.execute(
-            "SELECT * FROM user_tttt WHERE department_id = ? AND is_active = 1 ORDER BY ipcas_code",
+            f"SELECT * FROM user_tttt WHERE department_id = ? AND role NOT IN {_SKIP_ROLES}"
+            f" AND is_active = 1 ORDER BY ipcas_code",
             (department_id,),
         ).fetchall()
 
@@ -225,11 +228,13 @@ def upsert_entry(
         if entry_row:
             old_count = entry_row["sheet_count"]
             if not can_confirm:
-                action = "edited_cv" if entry_row["entry_status"] == EntryStatus.CONFIRMED else "handover"
+                if entry_row["entry_status"] in (EntryStatus.CONFIRMED, EntryStatus.BORROWED):
+                    raise HTTPException(403, "Chứng từ đã được xác nhận, không thể sửa trực tiếp")
+                action = "handover"
                 new_status = EntryStatus.PENDING
             else:
                 action = "edited_hkv"
-                new_status = entry_row["entry_status"] or EntryStatus.CONFIRMED
+                new_status = EntryStatus.CONFIRMED
 
             set_extra, params_extra = "", []
             if can_confirm and entry_row["confirmed_by_id"] is None:
