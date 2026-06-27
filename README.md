@@ -1,6 +1,4 @@
-# Hệ thống KSNB&HTVH – Agribank
-
-Hệ thống quản lý nhân sự và chứng từ hậu kiểm – Trung tâm Thanh toán Agribank.
+# Hệ thống của TTTT - Agribank
 
 ---
 
@@ -33,8 +31,7 @@ Kết quả:
 ```
 ✓ Database đã khởi tạo thành công!
 Tài khoản đăng nhập:
-  Admin      : admin / Admin@2024!
-  Controller : kiensoat1 / Ksnb@2024!
+  Admin : admin / Admin@2024!
 ```
 > ⚠️ Đổi mật khẩu ngay sau lần đăng nhập đầu tiên.
 
@@ -54,11 +51,9 @@ Truy cập:
 ## Cấu trúc hệ thống
 
 ```
-ksnb/
 ├── backend/
 │   ├── main.py              # FastAPI app + schema migration khi khởi động
 │   ├── database.py          # SQLite engine (WAL mode, FK via PRAGMA)
-│   ├── schemas.py           # Pydantic request/response schemas
 │   ├── core/
 │   │   ├── config.py        # Cấu hình (SECRET_KEY, DATABASE_URL...)
 │   │   ├── security.py      # JWT + bcrypt
@@ -67,39 +62,52 @@ ksnb/
 │   │   └── rate_limit.py    # Rate limiting đăng nhập
 │   ├── api/
 │   │   ├── auth.py          # Đăng nhập / đăng xuất / đổi mật khẩu
-│   │   ├── staff.py         # Quản lý cán bộ KSNB + GDV phòng nguồn
+│   │   ├── staff.py         # Quản lý cán bộ
 │   │   ├── departments.py   # Phòng ban
+│   │   ├── groups.py        # Nhóm cán bộ
 │   │   ├── handovers.py     # Phiếu bàn giao chứng từ
 │   │   ├── bundles.py       # Gom tập + in bìa
 │   │   ├── leaves.py        # Nghỉ phép (workflow 3 bước)
 │   │   ├── delegations.py   # Ủy quyền Giám đốc
 │   │   ├── dashboard.py     # Tổng quan thống kê
 │   │   ├── reports.py       # Báo cáo hậu kiểm
-│   │   ├── logs.py          # Nhật ký đăng nhập (admin)
+│   │   ├── th_reports.py    # Báo cáo tổng hợp (phòng TH)
+│   │   ├── duty_schedule.py # Lịch trực
+│   │   ├── duty_staff.py    # Cán bộ trực
+│   │   ├── duty_constraints.py # Ràng buộc lịch trực
+│   │   ├── duty_stats.py    # Thống kê lịch trực
+│   │   ├── duty_export.py   # Xuất lịch trực
+│   │   ├── logs.py          # Nhật ký hệ thống (admin)
 │   │   └── holidays.py      # Quản lý ngày lễ (admin)
 │   └── services/
-│       ├── bundle_service.py  # ⭐ Thuật toán gom tập (max 350 tờ)
-│       ├── cover_service.py   # ⭐ Tạo bìa Word (docxtpl)
+│       ├── bundle_service.py  # Thuật toán gom tập (max 350 tờ)
+│       ├── cover_service.py   # Tạo bìa Word (docxtpl)
 │       ├── report_service.py  # Xuất báo cáo Excel
-│       └── backup_service.py  # Backup SQLite tự động theo lịch
+│       └── backup_service.py  # Backup SQLite tự động
 ├── frontend/
-│   ├── main.py              # NiceGUI entry point — khởi động và đăng ký routes
+│   ├── main.py              # NiceGUI entry point
 │   ├── shared.py            # Layout chung (sidebar, header, helpers)
-│   ├── api_client.py        # httpx wrapper → backend (token trong app.storage.user)
+│   ├── api_client.py        # httpx wrapper → backend
 │   └── pages/
 │       ├── login.py         # Đăng nhập
 │       ├── dashboard.py     # Tổng quan
-│       ├── staff.py         # Quản lý cán bộ KSNB
+│       ├── staff.py         # Quản lý cán bộ
+│       ├── groups.py        # Quản lý nhóm
+│       ├── group_features.py # Phân quyền theo nhóm
 │       ├── handovers.py     # Bàn giao chứng từ
 │       ├── bundles.py       # Gom tập + in bìa
 │       ├── storage.py       # Lưu trữ tập (số hộp, vị trí kệ)
 │       ├── leaves.py        # Nghỉ phép
+│       ├── duty_schedule.py # Lịch trực
+│       ├── reports.py       # Báo cáo hậu kiểm
+│       ├── th_reports.py    # Báo cáo tổng hợp
 │       ├── user_management.py # Quản lý tài khoản (admin)
+│       ├── login_logs.py    # Nhật ký đăng nhập (admin)
 │       ├── logs.py          # Nhật ký hệ thống (admin)
 │       └── change_password.py # Đổi mật khẩu
 ├── templates/
-│   ├── bia_mau_goc.docx             # Mẫu bìa tập chứng từ (tham khảo)
-│   └── don_xin_nghi_phep_tpl.docx  # Template phiếu nghỉ phép (docxtpl)
+│   ├── bia_mau_goc.docx             # Mẫu bìa tập chứng từ
+│   └── don_xin_nghi_phep_tpl.docx  # Template phiếu nghỉ phép
 ├── data/
 │   └── ksnb.db             # SQLite database (tự tạo khi chạy lần đầu)
 ├── logs/
@@ -113,11 +121,11 @@ ksnb/
 
 ## Chức năng
 
-### Module Nhân sự
-- Quản lý cán bộ KSNB (7 vai trò — xem bảng RBAC bên dưới)
-- GDV phòng nguồn lưu trong bảng `ksnb_staff` (trường `ipcas_code`, `payment_username`)
-- Dashboard tổng quan (số liệu bàn giao, tập chứng từ, nghỉ phép)
-- Nhật ký đăng nhập (admin xem, lọc theo user/thời gian)
+### Module Nhân sự & Tài khoản
+- Quản lý cán bộ theo phòng ban, vai trò (7 vai trò — xem bảng RBAC)
+- Quản lý nhóm cán bộ và phân quyền tính năng theo nhóm
+- Dashboard tổng quan: số liệu bàn giao, tập chứng từ, nghỉ phép
+- Nhật ký đăng nhập và nhật ký thao tác hệ thống (admin xem, lọc theo user/thời gian)
 
 ### Module Nghỉ phép
 - Cán bộ tạo đơn xin nghỉ (phép năm, ốm, việc riêng, khác)
@@ -125,7 +133,7 @@ ksnb/
 - Ủy quyền Giám đốc: GĐ có thể ủy quyền cho PGĐ trong khoảng thời gian xác định
 - Tải phiếu nghỉ phép dạng `.docx` đúng mẫu
 - Theo dõi quota phép năm (hạn ngạch / đã dùng)
-- Resubmit đơn bị từ chối; huỷ đơn đang chờ
+- Resubmit đơn bị từ chối; huỷ đơn đang chờ hoặc đã duyệt
 
 ### Module Chứng từ Hậu kiểm
 - **Bàn giao**: GDV nhập số tờ theo ngày, HKV/KSV xác nhận từng ô
@@ -135,8 +143,15 @@ ksnb/
   - Nếu 1 ngày > 350 tờ → chia 2 tập cân bằng
 - **In bìa**: Tạo file `.docx` đúng format mẫu (2-column layout)
 - **Lưu trữ**: Ghi số hộp, vị trí kệ; tra cứu theo phòng/thời gian
-- **Báo cáo**: Xuất Excel tổng hợp hậu kiểm theo phòng
+- **Báo cáo hậu kiểm**: Xuất Excel tổng hợp theo phòng
+- **Báo cáo tổng hợp**: Báo cáo riêng cho phòng Tổng hợp
 - **Lịch sử thay đổi**: Ghi log mọi thao tác xác nhận, mượn, trả chứng từ
+
+### Module Lịch trực
+- Xếp lịch trực tự động cho phòng Thanh toán
+- Quản lý cán bộ trực, ràng buộc lịch trực (ngày không trực, giới hạn ca)
+- Thống kê số ca trực theo cán bộ, theo tháng
+- Xuất lịch trực ra file
 
 ---
 
@@ -194,7 +209,7 @@ Mở firewall port 8080 và 8000:
 
 ```bash
 # Windows
-netsh advfirewall firewall add rule name="KSNB" dir=in action=allow protocol=TCP localport=8080,8000
+netsh advfirewall firewall add rule name="TTTT" dir=in action=allow protocol=TCP localport=8080,8000
 ```
 
 Người dùng khác truy cập: `http://[IP-máy-chủ]:8080`
