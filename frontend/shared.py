@@ -37,6 +37,7 @@ DEPARTMENTS = [
         "id": "payment", "label": "Phòng Thanh toán", "icon": "payments",
         "items": [
             ("duty_schedule", "Phân lịch trực", "edit_calendar"),
+            ("cham_459901",   "Chấm 459901",    "task_alt"),
         ],
     },
     {"id": "ktoan",   "label": "Phòng Kế toán",             "icon": "calculate",       "items": []},

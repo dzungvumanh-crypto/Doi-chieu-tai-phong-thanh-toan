@@ -77,13 +77,15 @@ Truy cập:
 │   │   ├── duty_constraints.py # Ràng buộc lịch trực
 │   │   ├── duty_stats.py    # Thống kê lịch trực
 │   │   ├── duty_export.py   # Xuất lịch trực
+│   │   ├── cham459901.py    # Phân loại bút toán TK 459901
 │   │   ├── logs.py          # Nhật ký hệ thống (admin)
 │   │   └── holidays.py      # Quản lý ngày lễ (admin)
 │   └── services/
-│       ├── bundle_service.py  # Thuật toán gom tập (max 350 tờ)
-│       ├── cover_service.py   # Tạo bìa Word (docxtpl)
-│       ├── report_service.py  # Xuất báo cáo Excel
-│       └── backup_service.py  # Backup SQLite tự động
+│       ├── bundle_service.py       # Thuật toán gom tập (max 350 tờ)
+│       ├── cover_service.py        # Tạo bìa Word (docxtpl)
+│       ├── report_service.py       # Xuất báo cáo Excel
+│       ├── backup_service.py       # Backup SQLite tự động
+│       └── cham459901_service.py   # Xử lý ZIP + phân loại bút toán 459901
 ├── frontend/
 │   ├── main.py              # NiceGUI entry point
 │   ├── shared.py            # Layout chung (sidebar, header, helpers)
@@ -99,6 +101,7 @@ Truy cập:
 │       ├── storage.py       # Lưu trữ tập (số hộp, vị trí kệ)
 │       ├── leaves.py        # Nghỉ phép
 │       ├── duty_schedule.py # Lịch trực
+│       ├── cham_459901.py   # Phân loại bút toán TK 459901
 │       ├── reports.py       # Báo cáo hậu kiểm
 │       ├── th_reports.py    # Báo cáo tổng hợp
 │       ├── user_management.py # Quản lý tài khoản (admin)
@@ -152,6 +155,12 @@ Truy cập:
 - Quản lý cán bộ trực, ràng buộc lịch trực (ngày không trực, giới hạn ca)
 - Thống kê số ca trực theo cán bộ, theo tháng
 - Xuất lịch trực ra file
+
+### Module Chấm 459901
+- Phân loại bút toán tài khoản trung gian 459901 dành cho phòng Thanh toán
+- Upload file ZIP chứa dữ liệu giao dịch; xử lý bất đồng bộ (~65s)
+- Xuất 3 file Excel: **Huỷ**, **Đi**, **Khác** theo kết quả phân loại
+- Phân quyền riêng theo nhóm (`menu.cham_459901`, `cham_459901.process`)
 
 ---
 

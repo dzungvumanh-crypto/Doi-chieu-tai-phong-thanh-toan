@@ -38,6 +38,11 @@ FEATURES: dict[str, str] = {
     "leaves.approve_ksv":      "Duyệt / Từ chối (bước KSV)",
     "leaves.forward_th":       "Chuyển GĐ/PGĐ / Từ chối (bước Tổng hợp)",
     "leaves.approve_gd":       "Duyệt / Từ chối (bước Giám đốc)",
+    "leaves.dashboard":        "Dashboard nghỉ phép (tổng quan + thống kê)",
+    "leaves.quota_admin":      "Quản lý hạn mức phép theo năm",
+    "leaves.stats_export":     "Xuất báo cáo tổng hợp phép năm",
+    "leaves.declare_direct":   "Khai báo hộ nghỉ phép",
+    "leaves.recall":           "Rút đơn nhiều cấp",
 
     # Quản lý User — thao tác
     "staff.create":            "Tạo tài khoản mới",
@@ -54,6 +59,10 @@ FEATURES: dict[str, str] = {
     "duty.export":             "Xuất Excel lịch trực",
     "duty.manage_staff":       "Quản lý nhân viên phân lịch (can_do_sp, is_on_project...)",
     "duty.manage_config":      "Cài đặt ca trực / ngày đặc biệt",
+
+    # Chấm 459901 — Phòng Thanh toán
+    "menu.cham_459901":    "Chấm 459901 — Phân loại bút toán TK 459901 (menu)",
+    "cham_459901.process": "Xử lý file ZIP 459901",
 }
 
 # ── Cấu trúc phân cấp: Phòng → Menu → Action ─────────────────────────────────
@@ -100,6 +109,11 @@ FEATURE_GROUPS: list[dict] = [
                     "leaves.approve_ksv",
                     "leaves.forward_th",
                     "leaves.approve_gd",
+                    "leaves.dashboard",
+                    "leaves.quota_admin",
+                    "leaves.stats_export",
+                    "leaves.declare_direct",
+                    "leaves.recall",
                 ],
             },
             {"code": "menu.th_reports", "actions": []},
@@ -119,6 +133,10 @@ FEATURE_GROUPS: list[dict] = [
                     "duty.manage_staff",
                     "duty.manage_config",
                 ],
+            },
+            {
+                "code": "menu.cham_459901",
+                "actions": ["cham_459901.process"],
             },
         ],
     },
