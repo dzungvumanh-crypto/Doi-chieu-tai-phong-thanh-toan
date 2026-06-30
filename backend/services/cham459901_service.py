@@ -359,8 +359,10 @@ def _write_excel(df: pd.DataFrame, path: Path, sheet_name: str, hex_color: str) 
         '</sheetView></sheetViews>'
         + cols_xml
         + '<sheetData>' + ''.join(rows) + '</sheetData>'
-        + f'<mergeCells count="1"><mergeCell ref="A1:{last_col}1"/></mergeCells>'
+        # OOXML CT_Worksheet yêu cầu thứ tự cố định: autoFilter PHẢI đứng TRƯỚC mergeCells.
+        # Ghi sai thứ tự khiến Excel coi sheet1.xml là "unreadable content" và gỡ bỏ sheet.
         + f'<autoFilter ref="A2:{last_col}{n_data + 2}"/>'
+        + f'<mergeCells count="1"><mergeCell ref="A1:{last_col}1"/></mergeCells>'
         + '</worksheet>'
     )
 
