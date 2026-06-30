@@ -38,6 +38,7 @@ DEPARTMENTS = [
         "items": [
             ("duty_schedule", "Phân lịch trực", "edit_calendar"),
             ("cham_459901",   "Chấm 459901",    "task_alt"),
+            ("cham_ilo1000",  "Chấm ILO1000",   "checklist"),
         ],
     },
     {"id": "ktoan",   "label": "Phòng Kế toán",             "icon": "calculate",       "items": []},
