@@ -30,6 +30,7 @@ async def cham_ilo1000_page():
         'log_pos': 0,
         'timer':   None,
         'running': False,
+        'mode':    'upload',   # 'upload' | 'folder'
     }
 
     with ui.row().classes('w-full'):
@@ -37,41 +38,75 @@ async def cham_ilo1000_page():
         with _content_area():
             _page_header('Chấm ILO1000', 'Đối chiếu Hub · CITAD · EICP · Core — Phòng Thanh toán')
 
-            # ── Upload card ───────────────────────────────────────────────────
+            # ── Input card ────────────────────────────────────────────────────
             with ui.card().classes('w-full p-5 mb-4'):
-                ui.label('Tải lên file dữ liệu').classes('text-base font-semibold text-red-800 mb-1')
-                ui.label(_FILE_HINT).classes('text-xs text-gray-400 mb-3')
+                ui.label('Nguồn dữ liệu').classes('text-base font-semibold text-red-800 mb-3')
 
-                file_list_label = ui.label('Chưa chọn file nào').classes(
-                    'text-xs text-gray-400 italic mb-2'
-                )
+                # Toggle chọn chế độ
+                mode_toggle = ui.toggle(
+                    {'upload': 'Tải file lên', 'folder': 'Chọn thư mục server'},
+                    value='upload',
+                ).props('dense')
 
-                def on_upload(e):
-                    data = e.content.read()
-                    state['files'][e.name] = data
-                    names = ', '.join(state['files'].keys())
-                    file_list_label.set_text(f'Đã chọn ({len(state["files"])} file): {names}')
-                    file_list_label.classes(remove='text-gray-400 italic', add='text-green-700 font-medium')
+                # ── Chế độ Upload ─────────────────────────────────────────
+                upload_section = ui.column().classes('w-full mt-3 gap-1')
+                with upload_section:
+                    ui.label(_FILE_HINT).classes('text-xs text-gray-400 mb-1')
+                    file_list_label = ui.label('Chưa chọn file nào').classes(
+                        'text-xs text-gray-400 italic mb-2'
+                    )
 
-                def on_clear():
-                    state['files'].clear()
-                    file_list_label.set_text('Chưa chọn file nào')
-                    file_list_label.classes(remove='text-green-700 font-medium', add='text-gray-400 italic')
+                    def on_upload(e):
+                        data = e.content.read()
+                        state['files'][e.name] = data
+                        names = ', '.join(state['files'].keys())
+                        file_list_label.set_text(f'Đã chọn ({len(state["files"])} file): {names}')
+                        file_list_label.classes(
+                            remove='text-gray-400 italic', add='text-green-700 font-medium'
+                        )
 
-                ui.upload(
-                    on_upload=on_upload,
-                    auto_upload=True,
-                    multiple=True,
-                ).props(
-                    'accept=".xlsx,.xls,.csv,.zip" flat dense '
-                    'label="Chọn file (có thể chọn nhiều lần)..."'
-                ).classes('w-full mb-2')
+                    def on_clear():
+                        state['files'].clear()
+                        file_list_label.set_text('Chưa chọn file nào')
+                        file_list_label.classes(
+                            remove='text-green-700 font-medium', add='text-gray-400 italic'
+                        )
 
-                with ui.row().classes('gap-3 mb-1'):
+                    ui.upload(
+                        on_upload=on_upload,
+                        auto_upload=True,
+                        multiple=True,
+                    ).props(
+                        'accept=".xlsx,.xls,.csv,.zip" flat dense '
+                        'label="Chọn file (có thể chọn nhiều lần)..."'
+                    ).classes('w-full mb-1')
+
                     ui.button('Xóa tất cả file', icon='delete_outline', color='grey-6',
                               on_click=on_clear).props('flat dense').classes('text-xs')
 
-                with ui.row().classes('gap-3 mt-2'):
+                # ── Chế độ Folder ─────────────────────────────────────────
+                folder_section = ui.column().classes('w-full mt-3 gap-2')
+                folder_section.set_visibility(False)
+                with folder_section:
+                    ui.label(
+                        'Nhập đường dẫn thư mục chứa file ILO1000 trên server.'
+                    ).classes('text-xs text-gray-500')
+                    folder_input = ui.input(
+                        placeholder='Ví dụ: D:\\Data\\ILO1000\\ngay12',
+                    ).props('outlined dense clearable').classes('w-full')
+                    ui.label(
+                        'Thư mục phải chứa đủ: pHub_*.xlsx · UUID.csv · eicp*.XLS · GL02_*.zip'
+                    ).classes('text-xs text-gray-400')
+
+                def on_mode_change(val):
+                    state['mode'] = val
+                    upload_section.set_visibility(val == 'upload')
+                    folder_section.set_visibility(val == 'folder')
+
+                mode_toggle.on_value_change(lambda e: on_mode_change(e.value))
+
+                # Nút Chạy / Dừng
+                with ui.row().classes('gap-3 mt-4'):
                     btn_run = ui.button('Chạy đối chiếu', icon='play_arrow',
                                         color='red-8').classes('font-semibold')
                     btn_cancel = ui.button('Dừng', icon='stop_circle',
@@ -157,14 +192,21 @@ async def cham_ilo1000_page():
                         ).classes('text-xs')
 
             async def on_run():
-                if not state['files']:
-                    ui.notify('Chưa chọn file nào.', type='warning')
-                    return
                 if state['running']:
                     return
 
+                # Validate đầu vào theo mode
+                if state['mode'] == 'upload':
+                    if not state['files']:
+                        ui.notify('Chưa chọn file nào.', type='warning')
+                        return
+                else:
+                    folder_path = (folder_input.value or '').strip()
+                    if not folder_path:
+                        ui.notify('Chưa nhập đường dẫn thư mục.', type='warning')
+                        return
+
                 _clear_log()
-                _append_log('Đang upload file...')
                 result_card.set_visibility(False)
                 btn_run.set_visibility(False)
                 btn_cancel.set_visibility(True)
@@ -173,11 +215,20 @@ async def cham_ilo1000_page():
                 state['log_pos'] = 0
 
                 try:
-                    res = await asyncio.to_thread(
-                        api.post_multipart,
-                        '/api/ilo1000/start',
-                        files=[(name, data) for name, data in state['files'].items()],
-                    )
+                    if state['mode'] == 'upload':
+                        _append_log('Đang upload file...')
+                        res = await asyncio.to_thread(
+                            api.post_multipart,
+                            '/api/ilo1000/start',
+                            files=[(name, data) for name, data in state['files'].items()],
+                        )
+                    else:
+                        _append_log(f'Thư mục: {folder_path}')
+                        res = await asyncio.to_thread(
+                            api.post,
+                            '/api/ilo1000/start_folder',
+                            {'folder_path': folder_path},
+                        )
                 except Exception as e:
                     spinner.set_visibility(False)
                     btn_cancel.set_visibility(False)

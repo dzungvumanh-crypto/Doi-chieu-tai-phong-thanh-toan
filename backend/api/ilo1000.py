@@ -1,9 +1,11 @@
 """API endpoints cho Chấm ILO1000."""
 
+from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import Response
+from pydantic import BaseModel
 
 from backend.core.deps import require_feature
 from backend.services import ilo1000_service
@@ -47,6 +49,27 @@ async def start_job(
         saved[filename] = data
 
     job_id = ilo1000_service.start_job(saved)
+    return {'job_id': job_id}
+
+
+class FolderRequest(BaseModel):
+    folder_path: str
+
+
+@router.post('/start_folder')
+def start_from_folder(
+    req: FolderRequest,
+    _=Depends(require_feature('menu.cham_ilo1000')),
+):
+    """
+    Chạy pipeline từ thư mục server (không upload file).
+    Thư mục phải tồn tại và chứa file ILO1000 hợp lệ.
+    """
+    p = Path(req.folder_path)
+    if not p.exists() or not p.is_dir():
+        raise HTTPException(400, f'Thư mục không tồn tại: {req.folder_path}')
+
+    job_id = ilo1000_service.start_from_folder(str(p))
     return {'job_id': job_id}
 
 

@@ -55,7 +55,7 @@ def cancel_job(job_id: str) -> bool:
 
 
 def start_job(saved_files: dict[str, bytes]) -> str:
-    """Lưu file, chạy pipeline trong background thread. Trả job_id."""
+    """Lưu file upload, chạy pipeline trong background thread. Trả job_id."""
     job_id, job = _new_job()
 
     input_dir = TEMP_DIR / job_id / 'input'
@@ -65,12 +65,24 @@ def start_job(saved_files: dict[str, bytes]) -> str:
     for filename, data in saved_files.items():
         (input_dir / filename).write_bytes(data)
 
-    thread = threading.Thread(
+    threading.Thread(
         target=_run,
         args=(job_id, str(input_dir), job['output_dir']),
         daemon=True,
-    )
-    thread.start()
+    ).start()
+    return job_id
+
+
+def start_from_folder(folder_path: str) -> str:
+    """Chạy pipeline trực tiếp từ thư mục server (không cần upload file). Trả job_id."""
+    job_id, job = _new_job()
+    Path(job['output_dir']).mkdir(parents=True, exist_ok=True)
+
+    threading.Thread(
+        target=_run,
+        args=(job_id, folder_path, job['output_dir']),
+        daemon=True,
+    ).start()
     return job_id
 
 
