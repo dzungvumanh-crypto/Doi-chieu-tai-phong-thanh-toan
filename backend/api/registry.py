@@ -27,6 +27,8 @@ from backend.api.duty_schedule import router as duty_schedule_router
 from backend.api.duty_stats import router as duty_stats_router
 from backend.api.duty_export import router as duty_export_router
 from backend.api.cham459901 import router as cham459901_router
+from backend.api.ach import router as ach_router
+from backend.api.ilo1000 import router as ilo1000_router
 
 # Thêm router mới: 1 dòng import ở trên + 1 tuple ở đây
 # Format: (router_object, {"prefix": "/api/...", "tags": ["..."]})
@@ -51,6 +53,8 @@ _ROUTERS = [
     (duty_stats_router,      {}),
     (duty_export_router,     {}),
     (cham459901_router,      {}),
+    (ach_router,             {}),
+    (ilo1000_router,         {}),
 ]
 
 
