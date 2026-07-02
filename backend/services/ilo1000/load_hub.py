@@ -14,7 +14,11 @@ def load_hub(path: Path) -> pd.DataFrame:
     - Row 1: header thực sự
     - Row 2+: dữ liệu
     """
-    df = pd.read_excel(path, dtype=str, engine='openpyxl', header=1)
+    # calamine đọc XLSX nhanh hơn openpyxl ~3-4x; fallback nếu chưa cài
+    try:
+        df = pd.read_excel(path, dtype=str, engine='calamine', header=1)
+    except Exception:
+        df = pd.read_excel(path, dtype=str, engine='openpyxl', header=1)
     df.columns = df.columns.str.strip()
 
     # Rename cột pHub → tên chuẩn pipeline

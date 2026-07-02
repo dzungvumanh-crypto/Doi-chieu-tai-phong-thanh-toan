@@ -14,11 +14,8 @@ def _safe_str(s) -> pd.Series:
 
 def _first_match(keys: pd.Series, values: pd.Series) -> dict:
     """Giữ lần xuất hiện ĐẦU TIÊN của key — hành vi VLOOKUP của Excel."""
-    d: dict = {}
-    for k, v in zip(keys, values):
-        if k and k not in d:
-            d[k] = v
-    return d
+    mask = keys.astype(bool) & ~keys.duplicated(keep='first')
+    return dict(zip(keys[mask], values[mask]))
 
 
 # ── HUB ──────────────────────────────────────────────────────────────────────
@@ -65,9 +62,9 @@ def process_hub(hub_df: pd.DataFrame, eicp_maps: dict, ngay_int: int) -> tuple[p
     df['Trace'] = trace.values
     df['Trace2'] = pd.to_numeric(df['Trace'], errors='coerce')
 
-    # ── Ngày (ngày trong tháng, lấy 2 ký tự đầu của cột Ngày giờ kênh trả) ──
+    # ── Ngày (ngày trong tháng) — parse đầy đủ vì ngày đơn digit "5/05/..." bị lỗi khi dùng str[:2] ──
     ngay_gio = _safe_str(df[HUB_COL_NGAY_GIO])
-    df['Ngày'] = pd.to_numeric(ngay_gio.str[:2], errors='coerce')
+    df['Ngày'] = pd.to_datetime(ngay_gio, dayfirst=True, errors='coerce').dt.day.astype(float)
 
     # ── Flag "Chờ đi kênh": ngày > ngày đối chiếu + 1 ──
     ngay_dc_day = ngay_int % 100  # DD

@@ -38,19 +38,30 @@ def _read_csv_path(path: Path) -> pd.DataFrame:
     return _read_csv_bytes(data)
 
 
-def _from_zip(path: Path) -> pd.DataFrame:
+def _from_zip(path: Path, log=None) -> pd.DataFrame:
     frames = []
-    with zipfile.ZipFile(path, 'r') as zf:
-        for name in zf.namelist():
-            if name.lower().endswith('.csv'):
-                data = zf.read(name)
+    try:
+        with zipfile.ZipFile(path, 'r') as zf:
+            for name in zf.namelist():
+                if not name.lower().endswith('.csv'):
+                    continue
+                try:
+                    data = zf.read(name)
+                except RuntimeError as e:
+                    # Entry bị mã hóa (password required) — bỏ qua
+                    if log:
+                        log(f'  [WARN] ZIP entry mã hóa, bỏ qua: {name} ({e})')
+                    continue
                 frames.append(_read_csv_bytes(data))
+    except zipfile.BadZipFile as e:
+        if log:
+            log(f'  [WARN] File ZIP không hợp lệ, bỏ qua: {path.name} ({e})')
     if not frames:
         return pd.DataFrame(columns=CORE_HEADER)
     return pd.concat(frames, ignore_index=True)
 
 
-def load_core(paths: list[Path]) -> pd.DataFrame:
+def load_core(paths: list[Path], log=None) -> pd.DataFrame:
     """
     Đọc GL02 từ danh sách path (CSV và/hoặc ZIP).
     Trả DataFrame đã filter DRAMOUNT = 0.
@@ -58,7 +69,7 @@ def load_core(paths: list[Path]) -> pd.DataFrame:
     frames = []
     for p in paths:
         if p.suffix.lower() == '.zip':
-            frames.append(_from_zip(p))
+            frames.append(_from_zip(p, log=log))
         else:
             frames.append(_read_csv_path(p))
 

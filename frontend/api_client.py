@@ -255,6 +255,22 @@ def post_upload_bytes(path: str, files: dict) -> bytes:
         raise Exception(str(e))
 
 
+def post_multipart(path: str, files: list[tuple[str, bytes]], data: dict = None) -> Any:
+    """Gửi nhiều file cùng field 'files'. files = [(filename, bytes), ...]"""
+    try:
+        h       = {k: v for k, v in _headers().items() if k != "Content-Type"}
+        payload = [('files', (name, content, 'application/octet-stream'))
+                   for name, content in files]
+        r = _download_client.post(f"{BACKEND_URL}{path}", headers=h,
+                                  files=payload, data=data or {})
+        r.raise_for_status()
+        return r.json()
+    except httpx.HTTPStatusError as e:
+        _raise_http_error(e)
+    except Exception as e:
+        raise Exception(str(e))
+
+
 def post_upload(path: str, files: dict, data: dict = None) -> Any:
     """Gửi multipart/form-data (file upload). files = {'field': (name, bytes, mime)}"""
     try:

@@ -32,11 +32,11 @@ def _run_one_day(
     if not files.get('hub'):
         log(f'[{date_str}] WARN — không có file Hub, TT sẽ chỉ khớp theo Citad.')
 
-    # Nếu có cả ZIP lẫn CSV của GL02, ưu tiên dùng ZIP (chứa đầy đủ hơn)
+    # Nếu có cả ZIP lẫn CSV của GL02, ưu tiên CSV (ZIP thường bị mã hóa)
     core_files = files.get('core', [])
-    has_zip = any(p.suffix.lower() == '.zip' for p in core_files)
-    if has_zip:
-        core_files = [p for p in core_files if p.suffix.lower() == '.zip']
+    csv_cores = [p for p in core_files if p.suffix.lower() == '.csv']
+    if csv_cores:
+        core_files = csv_cores
         files = {**files, 'core': core_files}
 
     ngay_int = int(date_str)
@@ -49,7 +49,7 @@ def _run_one_day(
         f_hub   = ex.submit(load_hub, files['hub']) if files.get('hub') else None
         f_citad = ex.submit(load_citad, files['citad'])
         f_eicp  = ex.submit(load_eicp,  files.get('eicp', []))
-        f_core  = ex.submit(load_core,  files['core'])
+        f_core  = ex.submit(load_core,  files['core'], log)
 
         eicp_df = f_eicp.result()
         if cancel_event.is_set():

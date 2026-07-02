@@ -61,20 +61,21 @@ def extract_date(path: Path, file_type: str) -> str | None:
 
 
 def _read_citad_date(path: Path) -> str | None:
-    """Đọc TRX_DATE từ dòng đầu tiên của CITAD CSV."""
+    """Đọc TRX_DATE từ dòng đầu tiên của CITAD CSV (dùng csv.reader để xử lý quoted fields)."""
+    import csv
     try:
-        with path.open('r', encoding='utf-8-sig', errors='ignore') as f:
-            lines = [f.readline() for _ in range(3)]
-        header = lines[0].strip().split(',')
-        if 'TRX_DATE' not in header:
-            return None
-        idx = header.index('TRX_DATE')
-        for line in lines[1:]:
-            parts = line.strip().split(',')
-            if len(parts) > idx:
-                val = parts[idx].strip().strip('"')
-                if re.match(r'^\d{8}$', val):
-                    return val
+        with path.open('r', encoding='utf-8-sig', errors='ignore', newline='') as f:
+            reader = csv.reader(f)
+            header = next(reader, None)
+            if not header or 'TRX_DATE' not in header:
+                return None
+            idx = header.index('TRX_DATE')
+            for _ in range(2):
+                row = next(reader, None)
+                if row and len(row) > idx:
+                    val = row[idx].strip()
+                    if re.match(r'^\d{8}$', val):
+                        return val
     except Exception:
         pass
     return None
@@ -142,7 +143,6 @@ def group_files_by_date(paths: list[Path], log=None) -> dict[str, dict]:
 
     # Hub không khớp ngày → gán vào group nào có đủ citad+core nhất
     if groups:
-        orphan_hub = [p for date_str, g in groups.items() if not g['hub'] for p in []]
         # Thu thập hub files từ các group không có citad/core
         hub_only_groups = {d: g for d, g in groups.items() if g['hub'] and not g['citad'] and not g['core']}
         full_groups = {d: g for d, g in groups.items() if not g['hub'] and (g['citad'] or g['core'])}

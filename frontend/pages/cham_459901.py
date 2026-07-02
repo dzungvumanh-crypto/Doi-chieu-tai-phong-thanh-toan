@@ -22,6 +22,7 @@ async def cham_459901_page():
         "file_bytes": None,
         "file_name":  "",
         "result":     None,
+        "cancelled":  False,
     }
 
     with ui.row().classes("w-full"):
@@ -38,15 +39,24 @@ async def cham_459901_page():
                     "File ZIP được mã hóa AES-256 — xuất từ hệ thống GL02."
                 ).classes("text-xs text-gray-500 mb-4")
 
-                file_label = ui.label("Chưa chọn file").classes(
-                    "text-xs text-gray-400 italic mb-2"
-                )
+                with ui.row().classes("items-center gap-2 mb-2"):
+                    file_label = ui.label("Chưa chọn file").classes(
+                        "text-xs text-gray-400 italic"
+                    )
+                    clear_btn = (
+                        ui.button(icon="close")
+                        .props("flat dense round")
+                        .classes("text-red-400")
+                        .tooltip("Xóa file — chọn lại")
+                    )
+                    clear_btn.set_visibility(False)
 
                 def on_upload(e):
                     state["file_bytes"] = e.content.read()
                     state["file_name"]  = e.name
                     file_label.set_text(f"Đã chọn: {e.name}")
                     file_label.classes(remove="text-gray-400 italic", add="text-green-700 font-medium")
+                    clear_btn.set_visibility(True)
 
                 uploader = ui.upload(
                     on_upload=on_upload,
@@ -59,10 +69,16 @@ async def cham_459901_page():
                 progress_label = ui.label("").classes("text-xs text-gray-500 mb-3")
                 progress_label.set_visibility(False)
 
-                process_btn = ui.button(
-                    "Xử lý",
-                    icon="play_arrow",
-                ).classes("bg-red-800 text-white")
+                with ui.row().classes("items-center gap-3"):
+                    process_btn = ui.button(
+                        "Xử lý",
+                        icon="play_arrow",
+                    ).classes("bg-red-800 text-white")
+                    cancel_btn = (
+                        ui.button("Hủy xử lý", icon="stop")
+                        .classes("bg-gray-500 text-white")
+                    )
+                    cancel_btn.set_visibility(False)
 
                 if not api.has_feature("cham_459901.process"):
                     process_btn.props("disable")
@@ -71,13 +87,34 @@ async def cham_459901_page():
             # ── Kết quả ───────────────────────────────────────────────────────
             result_area = ui.column().classes("w-full")
 
-            # ── Handlers ──────────────────────────────────────────────────────
+            # ── Helpers & handlers ────────────────────────────────────────────
+            def _reset_file():
+                """Đặt lại toàn bộ UI về trạng thái chưa chọn file."""
+                state["file_bytes"] = None
+                state["file_name"]  = ""
+                state["result"]     = None
+                file_label.set_text("Chưa chọn file")
+                file_label.classes(remove="text-green-700 font-medium", add="text-gray-400 italic")
+                clear_btn.set_visibility(False)
+                uploader.reset()
+                result_area.clear()
+
+            clear_btn.on("click", _reset_file)
+
+            def on_cancel():
+                state["cancelled"] = True
+                progress_label.set_text("Đang dừng...")
+
+            cancel_btn.on("click", on_cancel)
+
             async def do_process():
                 if not state["file_bytes"]:
                     ui.notify("Vui lòng chọn file ZIP trước", type="warning")
                     return
 
+                state["cancelled"] = False
                 process_btn.props("loading disable")
+                cancel_btn.set_visibility(True)
                 result_area.clear()
 
                 # Hiện thanh tiến độ
@@ -97,14 +134,33 @@ async def cham_459901_page():
                 except Exception as e:
                     progress_bar.set_visibility(False)
                     progress_label.set_visibility(False)
+                    cancel_btn.set_visibility(False)
                     process_btn.props(remove="loading disable")
                     if not _handle_api_error(e):
                         ui.notify(f"Lỗi tải file: {e}", type="negative")
                     return
 
-                # ── Bước 2: Poll progress cho đến khi done ────────────────────
+                # Kiểm tra nếu bị hủy trong lúc đang upload
+                if state["cancelled"]:
+                    progress_bar.set_visibility(False)
+                    progress_label.set_visibility(False)
+                    cancel_btn.set_visibility(False)
+                    process_btn.props(remove="loading disable")
+                    ui.notify("Đã hủy — chọn lại file và thử lại", type="info")
+                    _reset_file()
+                    return
+
+                # ── Bước 2: Poll progress cho đến khi done hoặc bị hủy ────────
                 while True:
                     await asyncio.sleep(1.0)
+
+                    if state["cancelled"]:
+                        progress_bar.set_visibility(False)
+                        progress_label.set_visibility(False)
+                        ui.notify("Đã hủy xử lý — chọn lại file và thử lại", type="info")
+                        _reset_file()
+                        break
+
                     try:
                         prog = await asyncio.to_thread(
                             api.get, f"/api/cham459901/progress/{task_token}"
@@ -126,6 +182,7 @@ async def cham_459901_page():
                             _render_result(prog["result"])
                         break
 
+                cancel_btn.set_visibility(False)
                 process_btn.props(remove="loading disable")
 
             async def download_file(file_type: str):
