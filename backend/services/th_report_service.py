@@ -78,6 +78,23 @@ def _normalize_country(name: str) -> str:
     return _COUNTRY_NAME_MAP.get(upper, upper)
 
 
+# ── Đọc sheet dữ liệu ──────────────────────────────────────────────────────────
+# Tên sheet dữ liệu khác nhau tùy công cụ export ("Result" hoặc "Export
+# Worksheet"); sheet "SQL" (nếu có) chỉ chứa câu query, không phải dữ liệu.
+_KNOWN_DATA_SHEET_NAMES = ("Result", "Export Worksheet")
+
+
+def _read_data_sheet(file_bytes: bytes) -> pd.DataFrame:
+    wb = openpyxl.load_workbook(io.BytesIO(file_bytes), read_only=True)
+    try:
+        sheet_name = next((n for n in _KNOWN_DATA_SHEET_NAMES if n in wb.sheetnames), None)
+        if sheet_name is None:
+            sheet_name = next((n for n in wb.sheetnames if n.upper() != "SQL"), wb.sheetnames[0])
+    finally:
+        wb.close()
+    return pd.read_excel(io.BytesIO(file_bytes), sheet_name=sheet_name, dtype=str)
+
+
 # ── Parse ─────────────────────────────────────────────────────────────────────
 
 def parse_incoming(file_bytes: bytes) -> dict[str, dict]:
@@ -86,7 +103,7 @@ def parse_incoming(file_bytes: bytes) -> dict[str, dict]:
     Trả về {tên đã chuẩn hóa: {"count": int, "amount": float}}.
     amount = tổng STTLM_AMT / 1000, làm tròn 2 chữ số thập phân.
     """
-    df = pd.read_excel(io.BytesIO(file_bytes), sheet_name="Result", dtype=str)
+    df = _read_data_sheet(file_bytes)
     result: dict[str, dict] = {}
 
     for _, row in df.iterrows():
@@ -129,7 +146,7 @@ def parse_outgoing(file_bytes: bytes) -> dict[str, dict]:
     CUST_TYPE: CN → cá nhân, DN → doanh nghiệp, TCTD/TCTDO → TCTD.
     amount = TOTAL_AMT / 1000, làm tròn 2 chữ số thập phân.
     """
-    df = pd.read_excel(io.BytesIO(file_bytes), sheet_name="Result", dtype=str)
+    df = _read_data_sheet(file_bytes)
     result: dict[str, dict] = {}
 
     _empty: dict = {

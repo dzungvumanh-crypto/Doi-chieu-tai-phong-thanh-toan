@@ -40,31 +40,39 @@ copy /Y "%~dp0run.py"            "%DEST%\run.py"            >nul
 copy /Y "%~dp0init_db.py"        "%DEST%\init_db.py"        >nul
 copy /Y "%~dp0requirements.txt"  "%DEST%\requirements.txt"  >nul
 if exist "%~dp0start.bat" copy /Y "%~dp0start.bat" "%DEST%\start.bat" >nul
+if exist "%~dp0Logs_update.md" copy /Y "%~dp0Logs_update.md" "%DEST%\Logs_update.md" >nul
 
 echo [5/6] Xoa __pycache__ cu tren may dich...
 for /d /r "%DEST%" %%d in (__pycache__) do (
     if exist "%%d" rd /s /q "%%d"
 )
 
-echo [6/6] Cap nhat thu vien Python (neu co package moi)...
+echo [6/6] Kiem tra thu vien Python...
 set "DEST_PY="
 if exist "%DEST%\.venv\Scripts\python.exe" set "DEST_PY=%DEST%\.venv\Scripts\python.exe"
 if not defined DEST_PY if exist "%DEST%\venv\Scripts\python.exe" set "DEST_PY=%DEST%\venv\Scripts\python.exe"
 
-if defined DEST_PY (
-    "%DEST_PY%" --version >nul 2>&1
+set "NEED_PIP=0"
+if not exist "%DEST%\requirements.txt" set "NEED_PIP=1"
+if "%NEED_PIP%"=="0" (
+    fc /b "%~dp0requirements.txt" "%DEST%\requirements.txt" >nul 2>&1
+    if errorlevel 1 set "NEED_PIP=1"
+)
+
+if "%NEED_PIP%"=="1" (
+    echo     requirements.txt thay doi -- dang cai thu vien...
+    if not defined DEST_PY (
+        echo     [!] Chua co venv tren may dich -- start.bat se tu tao khi chay lan dau.
+        goto end
+    )
+    "%DEST_PY%" -m pip install -r "%DEST%\requirements.txt" --quiet
     if errorlevel 1 (
-        echo     [!] venv tren may dich bi hong -- bo qua, start.bat se tu sua khi chay lai.
+        echo     [!] pip install that bai -- kiem tra ket noi internet tren may dich.
     ) else (
-        "%DEST_PY%" -m pip install -r "%DEST%\requirements.txt" --quiet --upgrade
-        if errorlevel 1 (
-            echo     [!] pip install that bai -- chay start.bat tren may dich de thu lai.
-        ) else (
-            echo     [OK] Thu vien da cap nhat.
-        )
+        echo     [OK] Thu vien da cap nhat xong.
     )
 ) else (
-    echo     [!] Chua co venv tren may dich -- start.bat se tu tao khi chay lan dau.
+    echo     [OK] requirements.txt khong doi -- bo qua pip install.
 )
 
 echo.
@@ -76,5 +84,6 @@ echo.
 echo  LUU Y: Can file .env voi SECRET_KEY tren may dich.
 echo  Khoi dong lai ung dung: tat tien trinh cu, chay start.bat
 echo ============================================================
+:end
 pause
 endlocal

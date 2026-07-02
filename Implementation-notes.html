@@ -784,7 +784,28 @@ ui.on_exception(_on_exception)</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-06-10</footer>
+  <!-- 21 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">21</span>
+      <span class="card-title">Fix báo cáo TH: sheet dữ liệu IN/OUT đổi tên tùy công cụ export</span>
+      <span class="badge badge-done">Hoàn thành</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Vấn đề</div>
+      <p>Upload <code>IN_202606.xlsx</code> / <code>OUT_202606.xlsx</code> báo lỗi <code>Worksheet named 'Result' not found</code>. <code>parse_incoming()</code>/<code>parse_outgoing()</code> hardcode <code>sheet_name="Result"</code>, nhưng file export tháng 06 đặt tên sheet dữ liệu là <strong>"Export Worksheet"</strong> (kèm sheet <code>SQL</code> chứa câu query gốc) — không phải bug logic, mà là công cụ export DB (khả năng do người dùng đổi phiên bản/tuỳ chọn export) đặt tên sheet khác đợt trước.</p>
+
+      <div class="label">Kiểm chứng</div>
+      <p>So khớp file mẫu gốc (<code>IN_202605.xlsx</code>, commit <code>d74d766</code>, sheet <code>"Result"</code>) với file mới (sheet <code>"Export Worksheet"</code>) — cột dữ liệu giống hệt nhau (<code>CTHED, CTRYCD, STTLM_CUR, STTLM_AMT, TOTAL</code> cho IN; thêm <code>CUST_TYPE, TOTAL_AMT</code> cho OUT). Chỉ tên sheet khác, schema không đổi.</p>
+
+      <div class="label">Giải pháp</div>
+      <p>Thêm <code>_read_data_sheet()</code> trong <code>th_report_service.py</code>: ưu tiên sheet tên <code>"Result"</code> hoặc <code>"Export Worksheet"</code> nếu có; nếu không, lấy sheet đầu tiên khác <code>"SQL"</code>. Áp dụng cho cả <code>parse_incoming()</code> và <code>parse_outgoing()</code>.</p>
+
+      <div class="note">Đã test bằng file thật <code>IN_202606.xlsx</code>/<code>OUT_202606.xlsx</code> qua toàn bộ luồng <code>parse → fill_template</code>, ra 126 nước IN / 92 nước OUT, sinh file kết quả thành công. Danh sách quốc gia không khớp template (VD: <code>AMERICAN SAMOA</code>, <code>BERMUDA</code>…) là hạn chế đã biết của <code>_COUNTRY_NAME_MAP</code>, không liên quan đến bug này — vẫn chỉ log warning, không chặn luồng.</div>
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-07-02</footer>
 </div>
 </body>
 </html>

@@ -70,11 +70,9 @@ MENU_ITEMS_CV = [
 _SIDEBAR_CSS = """<style>
 .dept-item { position: relative; z-index: 0; }
 .dept-item:hover { z-index: 1000; }
-.dept-flyout {
+.dept-flyout, .sub-flyout {
   display: none;
-  position: absolute;
-  left: 100%;
-  top: 0;
+  position: fixed;
   background-color: #7f1d1d;
   z-index: 9999;
   min-width: 13rem;
@@ -87,22 +85,61 @@ _SIDEBAR_CSS = """<style>
 .dept-item:hover .dept-flyout { display: flex; }
 .flyout-group { position: relative; z-index: 0; }
 .flyout-group:hover { z-index: 10001; }
-.sub-flyout {
-  display: none;
-  position: absolute;
-  left: 100%;
-  top: 0;
-  background-color: #7f1d1d;
-  z-index: 10000;
-  min-width: 13rem;
-  flex-direction: column;
-  box-shadow: 6px 4px 20px rgba(0,0,0,0.5);
-  border-radius: 0 8px 8px 0;
-  border-left: 3px solid #991b1b;
-  overflow: hidden;
-}
+.sub-flyout { z-index: 10000; }
 .flyout-group:hover .sub-flyout { display: flex; }
-</style>"""
+
+/* ── Gradient nền sidebar ── */
+.sidebar-gradient {
+  background: linear-gradient(135deg, #991b1b 0%, #7f1d1d 50%, #450a0a 100%);
+}
+
+/* ── Thu gọn sidebar (chỉ hiện icon) ── */
+#app-sidebar { transition: width 0.2s ease; }
+#app-content { transition: margin-left 0.2s ease, width 0.2s ease; }
+body.sb-collapsed #app-sidebar { width: 4.5rem !important; }
+body.sb-collapsed #app-content { margin-left: 4.5rem !important; width: calc(100vw - 4.5rem) !important; }
+body.sb-collapsed .sidebar-label { display: none !important; }
+body.sb-collapsed .sidebar-row { justify-content: center !important; padding-left: 0 !important; padding-right: 0 !important; }
+body.sb-collapsed .sidebar-icon { margin-right: 0 !important; }
+
+/* ── Vùng menu tự cuộn khi cao hơn màn hình — luôn vừa với viewport ── */
+#sidebar-menu-scroll { scrollbar-width: thin; scrollbar-color: #b91c1c #7f1d1d; }
+#sidebar-menu-scroll::-webkit-scrollbar { width: 6px; }
+#sidebar-menu-scroll::-webkit-scrollbar-thumb { background: #b91c1c; border-radius: 3px; }
+</style>
+<script>
+function toggleSidebar() {
+  var collapsed = document.body.classList.toggle('sb-collapsed');
+  try { localStorage.setItem('sb-collapsed', collapsed ? '1' : '0'); } catch (e) {}
+}
+document.addEventListener('DOMContentLoaded', function () {
+  try {
+    if (localStorage.getItem('sb-collapsed') === '1') {
+      document.body.classList.add('sb-collapsed');
+    }
+  } catch (e) {}
+});
+
+/* ── Flyout menu con: position:fixed để thoát vùng overflow của sidebar cuộn,
+   JS tự tính tọa độ và đổi hướng mở lên/xuống theo khoảng trống còn lại ── */
+function _sidebarFlyoutOf(item) {
+  return item.querySelector(':scope > .dept-flyout') || item.querySelector(':scope > .sub-flyout');
+}
+document.addEventListener('mouseover', function (e) {
+  var item = e.target.closest('.dept-item, .flyout-group');
+  if (!item || item.contains(e.relatedTarget)) return;
+  var flyout = _sidebarFlyoutOf(item);
+  if (!flyout) return;
+  var rect = item.getBoundingClientRect();
+  flyout.style.left = rect.right + 'px';
+  flyout.style.top = rect.top + 'px';
+  flyout.style.bottom = 'auto';
+  if (flyout.getBoundingClientRect().bottom > window.innerHeight) {
+    flyout.style.top = 'auto';
+    flyout.style.bottom = (window.innerHeight - rect.bottom) + 'px';
+  }
+}, true);
+</script>"""
 
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -117,13 +154,13 @@ def _nav_item(key: str, label: str, icon: str, current_page: str, badge_refs: di
     is_active = current_page == key
     bg = "bg-red-700" if is_active else "hover:bg-red-800"
     with ui.row().classes(
-        f"w-full items-center px-4 py-2.5 cursor-pointer {bg}"
+        f"sidebar-row w-full items-center px-4 py-2.5 cursor-pointer {bg}"
     ).on("click", lambda k=key: ui.navigate.to(f"/{k}")):
-        ui.icon(icon).classes("text-lg mr-3 text-red-100 shrink-0")
-        ui.label(label).classes("text-sm flex-1")
+        ui.icon(icon).classes("sidebar-icon text-lg mr-3 text-red-100 shrink-0")
+        ui.label(label).classes("sidebar-label text-sm flex-1")
         if key in ("leaves", "handovers"):
             b = ui.label("").classes(
-                "text-xs font-bold bg-yellow-400 text-red-900 rounded-full "
+                "sidebar-label text-xs font-bold bg-yellow-400 text-red-900 rounded-full "
                 "min-w-[1.1rem] h-[1.1rem] flex items-center justify-center px-1"
             )
             b.set_visibility(False)
@@ -164,12 +201,12 @@ def _dept_group(dept: dict, current_page: str, badge_refs: dict, check_features:
         # ── Header phòng (luôn hiển thị, không click) ──
         active_cls = " bg-red-800" if is_active_dept else ""
         with ui.element("div").classes(
-            f"flex items-center px-3 py-2.5 cursor-default select-none hover:bg-red-800 w-full{active_cls}"
+            f"sidebar-row flex items-center px-3 py-2.5 cursor-default select-none hover:bg-red-800 w-full{active_cls}"
         ):
-            ui.icon(dept["icon"]).classes("text-base mr-2 text-red-200 shrink-0")
-            ui.label(dept["label"]).classes("text-xs font-semibold text-red-100 flex-1 leading-tight")
+            ui.icon(dept["icon"]).classes("sidebar-icon text-base mr-2 text-red-200 shrink-0")
+            ui.label(dept["label"]).classes("sidebar-label text-xs font-semibold text-red-100 flex-1 leading-tight")
             if visible_items:
-                ui.icon("chevron_right").classes("text-sm text-red-400 shrink-0")
+                ui.icon("chevron_right").classes("sidebar-label text-sm text-red-400 shrink-0")
 
         # ── Flyout submenu (xuất hiện bên phải khi hover) ──
         if visible_items:
@@ -230,16 +267,31 @@ def _sidebar(current_page: str) -> dict:
     badge_refs: dict = {}
     ui.add_head_html(_SIDEBAR_CSS)
 
-    with ui.column().classes(
-        "w-64 min-h-screen bg-red-900 text-white fixed left-0 top-0 shadow-xl z-[200]"
+    with ui.column().props("id=app-sidebar").classes(
+        "w-64 h-screen sidebar-gradient text-white fixed left-0 top-0 shadow-xl z-[200] "
+        "overflow-hidden flex flex-col"
     ):
+        # ── Nút thu gọn / mở rộng menu ──
+        with ui.row().classes(
+            "w-full items-center px-3 py-2 border-b border-red-700 shrink-0"
+        ):
+            ui.html(
+                '<button type="button" onclick="toggleSidebar()" '
+                'style="background:transparent;border:none;cursor:pointer;color:#fecaca;'
+                'display:flex;align-items:center;justify-content:center;width:2rem;height:2rem;'
+                'border-radius:6px;flex-shrink:0;" '
+                "onmouseover=\"this.style.background='rgba(255,255,255,0.12)'\" "
+                "onmouseout=\"this.style.background='transparent'\">"
+                '<i class="material-icons" style="font-size:20px;">menu</i></button>'
+            )
+
         # ── Logo ──
         with ui.row().classes(
-            "w-full items-center px-3 py-3 border-b border-red-700 shrink-0"
+            "sidebar-row w-full items-center px-3 py-3 border-b border-red-700 shrink-0"
         ):
-            ui.image("/static/agribank_logo.png").classes("w-10 h-10 shrink-0")
+            ui.image("/static/agribank_logo.png").classes("sidebar-icon w-10 h-10 shrink-0")
             ui.label("PAYMENT CENTER").classes(
-                "font-semibold text-sm text-white ml-2 leading-snug"
+                "sidebar-label font-semibold text-sm text-white ml-2 leading-snug"
             )
 
         # ── User info (click → /user-management nếu không phải chuyen_vien) ──
@@ -257,7 +309,7 @@ def _sidebar(current_page: str) -> dict:
                 "chuyen_vien":   "Chuyên viên",
             }
             clickable = user_role != "chuyen_vien"
-            col_cls = "px-4 py-3 border-b border-red-700 w-full shrink-0"
+            col_cls = "sidebar-label px-4 py-3 border-b border-red-700 w-full shrink-0"
             if clickable:
                 col_cls += " cursor-pointer hover:bg-red-800"
             col = ui.column().classes(col_cls)
@@ -270,8 +322,10 @@ def _sidebar(current_page: str) -> dict:
                         ui.icon("manage_accounts").classes("text-yellow-300 text-sm")
                 ui.label(role_map.get(user.get("role"), "")).classes("text-yellow-300 text-xs")
 
-        # ── Vùng menu ──
-        with ui.column().classes("w-full flex-1 py-1"):
+        # ── Vùng menu (tự cuộn nội bộ nếu cao hơn màn hình) ──
+        with ui.column().props("id=sidebar-menu-scroll").classes(
+            "w-full flex-1 py-1 overflow-y-auto min-h-0"
+        ):
             # Trang chủ — luôn hiển thị
             _nav_item("home", "Trang chủ", "home", current_page, badge_refs)
 
@@ -311,11 +365,11 @@ def _sidebar(current_page: str) -> dict:
 
         # ── Đăng xuất ──
         with ui.row().classes(
-            "w-full items-center px-4 py-3 cursor-pointer hover:bg-red-800 "
+            "sidebar-row w-full items-center px-4 py-3 cursor-pointer hover:bg-red-800 "
             "border-t border-red-700 shrink-0"
         ).on("click", _logout):
-            ui.icon("logout").classes("text-xl mr-3 text-red-300")
-            ui.label("Đăng xuất").classes("text-sm")
+            ui.icon("logout").classes("sidebar-icon text-xl mr-3 text-red-300")
+            ui.label("Đăng xuất").classes("sidebar-label text-sm")
 
     return badge_refs
 
@@ -323,6 +377,7 @@ def _sidebar(current_page: str) -> dict:
 def _content_area():
     return (
         ui.column()
+        .props("id=app-content")
         .classes("ml-64 min-h-screen bg-gray-50 p-6 overflow-x-hidden")
         .style("width: calc(100vw - 16rem)")
     )
