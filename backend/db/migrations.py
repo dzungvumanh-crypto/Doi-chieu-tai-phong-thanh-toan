@@ -173,6 +173,26 @@ def _create_tables(db_path: str):
             feature_code VARCHAR(100) NOT NULL,
             PRIMARY KEY (group_id, feature_code)
         )""",
+        """CREATE TABLE IF NOT EXISTS swift_recon_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            recon_type VARCHAR(10) NOT NULL,
+            recon_date DATETIME NOT NULL,
+            performed_by_id INTEGER REFERENCES user_tttt(id),
+            file_saa_name VARCHAR(255),
+            file_ql_name VARCHAR(255),
+            total_saa INTEGER,
+            total_ql INTEGER,
+            total_matched INTEGER,
+            total_diff INTEGER,
+            merged_json TEXT,
+            raw_a_json TEXT,
+            raw_b_json TEXT,
+            summary_json TEXT,
+            diff_a_only_json TEXT,
+            diff_b_only_json TEXT,
+            di_not_ack_json TEXT,
+            created_at DATETIME
+        )""",
     ]
     for s in statements:
         cur.execute(s)
