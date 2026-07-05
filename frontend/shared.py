@@ -32,7 +32,10 @@ DEPARTMENTS = [
             ("reports",   "Báo cáo",            "assessment"),
         ],
     },
-    {"id": "swift",   "label": "Phòng Swift",               "icon": "swap_horiz",     "items": []},
+    {"id": "swift", "label": "Phòng Swift", "icon": "swap_horiz",
+     "items": [
+         ("swift_recon", "Đối chiếu điện SWIFT", "compare_arrows"),
+     ]},
     {
         "id": "payment", "label": "Phòng Thanh toán", "icon": "payments",
         "items": [
