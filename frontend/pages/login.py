@@ -1,8 +1,44 @@
 """Trang đăng nhập."""
 import asyncio
+from datetime import datetime
 from nicegui import ui, app
 import frontend.api_client as api
 from starlette.requests import Request as _StarletteRequest
+
+_LOGIN_CSS = """
+<style>
+/* ── Nền đỏ sẫm + hoạ tiết trang trí (phương án A) ──────────────────── */
+html, body { background: #6E0F14 !important; }
+
+.pc-bg { position: fixed; inset: 0; overflow: hidden; z-index: 0; pointer-events: none; }
+.pc-bg::before {                     /* hình tròn sáng — góc trên phải */
+  content: ""; position: absolute; top: -120px; right: -120px;
+  width: 340px; height: 340px; border-radius: 50%;
+  background: rgba(255, 255, 255, 0.05);
+}
+.pc-bg::after {                      /* hình tròn tối — góc dưới trái */
+  content: ""; position: absolute; bottom: -160px; left: -100px;
+  width: 400px; height: 400px; border-radius: 50%;
+  background: rgba(0, 0, 0, 0.12);
+}
+.pc-ring {                           /* vòng tròn viền mảnh — mép trái */
+  position: absolute; top: 38%; left: -60px;
+  width: 180px; height: 180px; border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.08);
+}
+
+/* Thanh vàng đồng Agribank trên đỉnh trang */
+.pc-topbar {
+  position: fixed; top: 0; left: 0; right: 0; height: 4px;
+  background: #C9A227; z-index: 2; pointer-events: none;
+}
+
+/* Viền card đăng nhập — nội dung bên trong giữ nguyên */
+.pc-card { border: 1px solid #C9A227 !important; }
+
+.pc-footer { color: rgba(255, 255, 255, 0.55); font-size: 12px; }
+</style>
+"""
 
 
 @ui.page("/login")
@@ -22,8 +58,19 @@ async def login_page(request: _StarletteRequest):
     reason = request.query_params.get("reason", "")
 
     ui.add_head_html('<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">')
-    with ui.column().classes("w-full min-h-screen items-center justify-center bg-gradient-to-br from-red-900 to-red-700"):
-        with ui.card().classes("w-96 p-8 shadow-2xl rounded-2xl bg-white"):
+    ui.add_head_html(_LOGIN_CSS)
+
+    # Hoạ tiết nền (phương án A) — nằm dưới nội dung, không nhận sự kiện chuột
+    ui.element("div").classes("pc-topbar")
+    with ui.element("div").classes("pc-bg"):
+        ui.element("div").classes("pc-ring")
+
+    # bg-red-900 đặt trực tiếp trên container nội dung để đảm bảo hiển thị
+    # ngay cả khi lớp bọc của NiceGUI/Quasar phủ nền riêng lên trên <body>.
+    with ui.column().classes("w-full min-h-screen items-center justify-center bg-red-900").style(
+        "position: relative; z-index: 1; background: #6E0F14;"
+    ):
+        with ui.card().classes("w-96 p-8 shadow-2xl rounded-2xl bg-white pc-card"):
             with ui.column().classes("w-full items-center mb-6"):
                 ui.image("/static/agribank_logo.png").classes("w-24 h-24 mb-2")
                 ui.label("PAYMENT CENTER").classes("text-2xl font-bold text-red-900")
@@ -89,3 +136,5 @@ async def login_page(request: _StarletteRequest):
                 "w-full mt-4 bg-red-700 text-white font-semibold py-3 rounded-lg hover:bg-red-800"
             )
             password.on("keydown.enter", do_login)
+
+        ui.label(f"© {datetime.now().year} Agribank · Trung tâm Thanh toán").classes("pc-footer mt-5")

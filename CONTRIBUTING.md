@@ -57,16 +57,16 @@ Kiểm tra cài thành công: mở PowerShell, gõ `git --version` → thấy s�
 
 **Gõ lệnh sau rồi nhấn Enter:**
 ```
-git clone https://github.com/khanhbq693/KSNB.git
+git clone https://github.com/khanhbq693/TTTT.git
 ```
 
-Sau khi xong sẽ có thư mục `KSNB` — đây là thư mục làm việc từ nay.
+Sau khi xong sẽ có thư mục `TTTT` — đây là thư mục làm việc từ nay.
 
 > **Lưu ý:** Chỉ clone 1 lần duy nhất. Những lần sau dùng `git-start.bat` để lấy code mới.
 
 ### Bước 4 — Khởi tạo database (chỉ làm 1 lần)
 
-Vào thư mục `KSNB` vừa clone, bấm đúp vào **`start.bat`**.
+Vào thư mục `TTTT` vừa clone, bấm đúp vào **`start.bat`**.
 
 File này tự động:
 - Tạo môi trường Python (`.venv`)
@@ -106,11 +106,11 @@ nhánh riêng ← mỗi người làm trên đây
 
 ### Bắt đầu công việc mới → `git-start.bat`
 
-Mỗi khi bắt đầu một task mới, vào thư mục `KSNB`, bấm đúp vào `git-start.bat`. File sẽ:
+Mỗi khi bắt đầu một task mới, vào thư mục `TTTT`, bấm đúp vào `git-start.bat`. File sẽ:
 1. Tự động chuyển sang nhánh `develop` và lấy code mới nhất
 2. Hỏi tên nhánh → nhập tên rồi Enter
 
-> **Nếu thấy lỗi "not a git repository":** bạn đang chạy file từ sai thư mục — phải chạy từ bên trong thư mục `KSNB` (thư mục đã clone).
+> **Nếu thấy lỗi "not a git repository":** bạn đang chạy file từ sai thư mục — phải chạy từ bên trong thư mục `TTTT` (thư mục đã clone).
 
 Đặt tên nhánh theo quy tắc `<mảng-của-mình>/<mô-tả-ngắn>`:
 ```
