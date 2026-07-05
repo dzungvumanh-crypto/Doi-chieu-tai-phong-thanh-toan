@@ -72,6 +72,7 @@ Truy cập:
 │   │   ├── dashboard.py     # Tổng quan thống kê
 │   │   ├── reports.py       # Báo cáo hậu kiểm
 │   │   ├── th_reports.py    # Báo cáo tổng hợp (phòng TH)
+│   │   ├── swift_recon.py   # Đối chiếu điện SWIFT (phòng Swift)
 │   │   ├── duty_schedule.py # Lịch trực
 │   │   ├── duty_staff.py    # Cán bộ trực
 │   │   ├── duty_constraints.py # Ràng buộc lịch trực
@@ -84,8 +85,11 @@ Truy cập:
 │       ├── bundle_service.py       # Thuật toán gom tập (max 350 tờ)
 │       ├── cover_service.py        # Tạo bìa Word (docxtpl)
 │       ├── report_service.py       # Xuất báo cáo Excel
+│       ├── th_report_service.py    # Xuất báo cáo tổng hợp (phòng TH)
 │       ├── backup_service.py       # Backup SQLite tự động
-│       └── cham459901_service.py   # Xử lý ZIP + phân loại bút toán 459901
+│       ├── cham459901_service.py   # Xử lý ZIP + phân loại bút toán 459901
+│       ├── swift_recon/            # Đối chiếu điện SWIFT (parse, so khớp, export Excel)
+│       └── duty_*                  # Xếp lịch trực, ràng buộc, thống kê, xuất file (6 module)
 ├── frontend/
 │   ├── main.py              # NiceGUI entry point
 │   ├── shared.py            # Layout chung (sidebar, header, helpers)
@@ -104,6 +108,7 @@ Truy cập:
 │       ├── cham_459901.py   # Phân loại bút toán TK 459901
 │       ├── reports.py       # Báo cáo hậu kiểm
 │       ├── th_reports.py    # Báo cáo tổng hợp
+│       ├── swift_recon.py   # Đối chiếu điện SWIFT (phòng Swift)
 │       ├── user_management.py # Quản lý tài khoản (admin)
 │       ├── login_logs.py    # Nhật ký đăng nhập (admin)
 │       ├── logs.py          # Nhật ký hệ thống (admin)
@@ -155,6 +160,12 @@ Truy cập:
 - Quản lý cán bộ trực, ràng buộc lịch trực (ngày không trực, giới hạn ca)
 - Thống kê số ca trực theo cán bộ, theo tháng
 - Xuất lịch trực ra file
+
+### Module Đối chiếu điện SWIFT (phòng Swift)
+- Đối chiếu điện SAA ↔ Màn hình quản lý điện, 2 chiều: **Điện đến** / **Điện đi**
+- Xuất Excel 3 loại mỗi chiều: Tổng hợp, Chi tiết lệch, Bản ghi đang lọc
+- Tab **Lịch sử đối chiếu** — lưu vào bảng `swift_recon_history` trong DB chung
+- Phân quyền riêng theo nhóm (`menu.swift_recon`)
 
 ### Module Chấm 459901
 - Phân loại bút toán tài khoản trung gian 459901 dành cho phòng Thanh toán
