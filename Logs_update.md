@@ -4,6 +4,7 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 05/07/2026 Tài liệu - README: bổ sung module Đối chiếu điện SWIFT (phòng Swift) vào cây thư mục + mục Chức năng — bị sót khi merge module này trước đó
 - 05/07/2026 Giao diện - Đăng nhập: đổi theme trang login sang tông đỏ đô + viền vàng đồng (phương án A) — thêm thanh top bar, hoạ tiết vòng tròn trang trí, footer bản quyền; fix set nền trực tiếp trên container thay vì chỉ dựa vào `body` để tránh mất màu khi NiceGUI/Quasar phủ nền riêng
 - 05/07/2026 Tài liệu - README/CONTRIBUTING: cập nhật tên repo GitHub từ `KSNB` sang `TTTT` (đã đổi tên thật trên GitHub) trong hướng dẫn clone/di chuyển thư mục
 - 16:02:36 05/07/2026 Phòng Swift - Đối chiếu điện SWIFT: thêm module đối chiếu điện SAA <-> Màn hình quản lý điện (2 chiều Điện đến/Điện đi), 3 nút xuất Excel mỗi chiều (Tổng hợp/Chi tiết lệch/Bản ghi đang lọc), tab Lịch sử đối chiếu lưu vào DB chung (bảng `swift_recon_history`)
