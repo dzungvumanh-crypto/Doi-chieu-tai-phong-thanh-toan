@@ -110,9 +110,15 @@ class TestHubNgay:
         assert ngay != ngay or math.isnan(ngay), "Ngày rỗng → NaN"
 
     def test_cho_di_kenh_flag(self):
-        """Ngày > ngày_dc + 1 → 'Chờ đi kênh'. Đây là case hay bị miss khi str[:2] fail."""
+        """Ngày > ngày_dc → 'Chờ đi kênh'. Đây là case hay bị miss khi str[:2] fail."""
         # Ngày đối chiếu = 12, transaction ngày 14 → phải flag Chờ đi kênh
         df = self._make_hub('14/05/2026 08:00')
+        hub_out, _ = process_hub(df, {}, 20260512)
+        assert hub_out[HUB_COL_TRANG_THAI].iloc[0] == 'Chờ đi kênh'
+
+    def test_cho_di_kenh_flag_ngay_dc_plus_1(self):
+        """Ngày = ngày_dc + 1 (giao dịch xử lý ngày hôm sau) cũng phải bị flag — golden sample xác nhận."""
+        df = self._make_hub('13/05/2026 08:00')
         hub_out, _ = process_hub(df, {}, 20260512)
         assert hub_out[HUB_COL_TRANG_THAI].iloc[0] == 'Chờ đi kênh'
 
@@ -296,38 +302,40 @@ class TestEICPFirstMatch:
         )
 
 
-# ── Test 9: Hub EICP lookup sau khi filter (index alignment) ─────────────────
+# ── Test 9: Hub EICP lookup — không filter theo 'Số giao dịch' ───────────────
 
 class TestHubEicpIndexAlignment:
     """
-    Sau filter 'Số giao dịch contains S', df có subset index.
+    process_hub KHÔNG được filter bớt dòng theo 'Số giao dịch contains S' —
+    golden sample xác nhận cả giao dịch loại OT (hoàn trả lệnh gốc, không chứa 'S')
+    vẫn cần có mặt để CITAD/CORE tra Trace/Map dc đúng.
     EICP lookup phải dùng .map() trên toàn bộ df, không phải indexing trực tiếp.
     """
 
-    def test_eicp_lookup_correct_after_filter(self):
+    def test_eicp_lookup_and_no_row_dropped(self):
         rows = [
-            _hub_row('A001',  'STC_A', 'T_A', 'OK', '12/05/2026 09:00'),   # bị lọc (không có 'S')
-            _hub_row('SA002', 'STC_B', 'T_B', 'OK', '12/05/2026 09:00'),   # giữ lại (có 'S')
-            _hub_row('A003',  'STC_C', 'T_C', 'OK', '12/05/2026 09:00'),   # bị lọc
-            _hub_row('SB004', 'STC_D', 'T_D', 'OK', '12/05/2026 09:00'),   # giữ lại
+            _hub_row('A001',  'STC_A', 'T_A', 'OK', '12/05/2026 09:00'),   # trước đây bị lọc (không có 'S')
+            _hub_row('SA002', 'STC_B', 'T_B', 'OK', '12/05/2026 09:00'),
+            _hub_row('A003',  'STC_C', 'T_C', 'OK', '12/05/2026 09:00'),   # trước đây bị lọc
+            _hub_row('SB004', 'STC_D', 'T_D', 'OK', '12/05/2026 09:00'),
         ]
         df = pd.DataFrame(rows)
 
         eicp_maps = {'hub_to_core': {
+            'A001':  'TRACE_A001_CORE',
             'SA002': 'TRACE_SA002_CORE',
+            'A003':  'TRACE_A003_CORE',
             'SB004': 'TRACE_SB004_CORE',
         }}
         hub_out, _ = process_hub(df, eicp_maps, 20260512)
 
-        row_sa = hub_out[hub_out[HUB_COL_SO_GD] == 'SA002'].iloc[0]
-        row_sb = hub_out[hub_out[HUB_COL_SO_GD] == 'SB004'].iloc[0]
-
-        assert row_sa['Trace'] == 'TRACE_SA002_CORE', (
-            f"SA002 Trace sai: {row_sa['Trace']!r}"
-        )
-        assert row_sb['Trace'] == 'TRACE_SB004_CORE', (
-            f"SB004 Trace sai: {row_sb['Trace']!r}"
-        )
+        assert len(hub_out) == 4, "Không được filter bớt dòng theo 'Số giao dịch'"
+        for so_gd, expected_trace in [
+            ('A001', 'TRACE_A001_CORE'), ('SA002', 'TRACE_SA002_CORE'),
+            ('A003', 'TRACE_A003_CORE'), ('SB004', 'TRACE_SB004_CORE'),
+        ]:
+            row = hub_out[hub_out[HUB_COL_SO_GD] == so_gd].iloc[0]
+            assert row['Trace'] == expected_trace, f"{so_gd} Trace sai: {row['Trace']!r}"
 
 
 # ── Test 10: Luồng đầu cuối mini (integration) ───────────────────────────────
@@ -384,3 +392,61 @@ class TestEndToEndMini:
         # Không expect citad match ở đây vì format trace khác
         # Nhưng ít nhất TT phải là string (không phải NaN hay crash)
         assert isinstance(tt, str)
+
+
+# ── Test 11: load_hub gộp nhiều file pHub cùng ngày ─────────────────────────
+
+class TestLoadHubMultiFile:
+    """
+    pHub có thể export theo nhiều đợt/batch trong cùng 1 ngày (VD: sáng + chiều).
+    load_hub phải gộp TẤT CẢ file, không được ghi đè/mất dữ liệu của file trước.
+    """
+
+    def test_concat_multiple_files(self, tmp_path):
+        from backend.services.ilo1000.load_hub import load_hub
+
+        def _write_phub(path, so_gd_list):
+            rows = []
+            for so_gd in so_gd_list:
+                rows.append({
+                    'Số giao dịch': so_gd, 'Số Ref Hub': 'REF' + so_gd,
+                    'Số thành công': 'STC_' + so_gd, 'Số Trace 1': 'T_' + so_gd,
+                    'Số tiền thực chuyển': '1000000', 'Trạng thái': 'Hoàn thành',
+                    'Ngày giờ kênh trả': '12/05/2026 09:00', 'Nội dung chuyển tiền': '',
+                })
+            df = pd.DataFrame(rows)
+            # Ghi với 1 dòng title giả ở row 0, header ở row 1 (đúng format pHub thật)
+            with pd.ExcelWriter(path) as writer:
+                df.to_excel(writer, index=False, header=True, startrow=1)
+
+        p1 = tmp_path / 'batch1.xlsx'
+        p2 = tmp_path / 'batch2.xlsx'
+        _write_phub(p1, ['A001', 'A002'])
+        _write_phub(p2, ['B001', 'B002'])
+
+        result = load_hub([p1, p2])
+        assert len(result) == 4, "Phải gộp đủ dòng từ cả 2 file, không mất dòng của file nào"
+        assert set(result[HUB_COL_SO_GD]) == {'A001', 'A002', 'B001', 'B002'}
+
+    def test_dedup_same_transaction_across_files(self, tmp_path):
+        """Nếu 1 giao dịch (Số giao dịch) bị export trùng ở nhiều file → chỉ giữ 1 dòng."""
+        from backend.services.ilo1000.load_hub import load_hub
+
+        def _write_phub(path, so_gd_list):
+            rows = [{
+                'Số giao dịch': so_gd, 'Số Ref Hub': 'REF' + so_gd,
+                'Số thành công': 'STC_' + so_gd, 'Số Trace 1': 'T_' + so_gd,
+                'Số tiền thực chuyển': '1000000', 'Trạng thái': 'Hoàn thành',
+                'Ngày giờ kênh trả': '12/05/2026 09:00', 'Nội dung chuyển tiền': '',
+            } for so_gd in so_gd_list]
+            df = pd.DataFrame(rows)
+            with pd.ExcelWriter(path) as writer:
+                df.to_excel(writer, index=False, header=True, startrow=1)
+
+        p1 = tmp_path / 'batch1.xlsx'
+        p2 = tmp_path / 'batch2.xlsx'
+        _write_phub(p1, ['A001'])
+        _write_phub(p2, ['A001'])
+
+        result = load_hub([p1, p2])
+        assert len(result) == 1, "Giao dịch trùng ở 2 file phải dedup còn 1 dòng"

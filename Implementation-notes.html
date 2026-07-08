@@ -784,7 +784,103 @@ ui.on_exception(_on_exception)</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-06-10</footer>
+  <!-- 21 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">21</span>
+      <span class="card-title">Chấm 459901 — phân loại tiếp 4 nhóm: 1000 Hoàn trả / Chuyển chi nhánh / Điện KO offline / GD khác</span>
+      <span class="badge badge-done">1000HT recall 99,84% / precision 99,96%; KO Nợ=Có tuyệt đối, 0 dòng sai</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh</div>
+      <p><code>cham459901_service.py</code> đã có sẵn 2 bước (Lệnh Hủy, Lệnh Đi). Note nghiệp vụ (từ "hà") yêu cầu chấm tiếp phần "Khác" thành 4 nhóm nhỏ hơn. Validate qua 2 vòng dữ liệu: vòng 1 với GL02 chỉ 15 ngày đầu tháng 6 (<code>459 file chấm gửi a Dũng/</code>) — không đủ để kết luận vì file HUB/GL02 lệch phạm vi ngày; vòng 2 với bộ dữ liệu <strong>trọn tháng 6</strong> (GL02 1,3 triệu dòng + HUB đi/đến trọn tháng, <code>459 file chấm gửi a Dũng 1/</code>) — đây là bộ dùng để chốt thuật toán cuối cùng.</p>
+
+      <div class="label">Khám phá quan trọng nhất: REFERENCE của TK459 CHÍNH LÀ số Trace của HUB</div>
+      <p>Ban đầu hiểu nhầm 1000HT phải khớp "theo giá trị số tiền" (không có khóa định danh chung giữa TK459 và HUB) — thử nhiều cách (số tiền đơn thuần, số tiền+đếm khớp chính xác, số tiền+cùng ngày) đều bị giằng co giữa precision và recall (xem bảng "đường đi" bên dưới), vì bản chất là khớp mờ trên hàng chục nghìn dòng có nhiều số tiền trùng ngẫu nhiên. Người dùng yêu cầu đọc lại note kỹ hơn → phát hiện: <strong>REFERENCE (TK459), lấy phần số từ ký tự thứ 8 trở đi, chính là "Số Trace 1" (hub đi) hoặc "Số trace" dãy đầu (hub đến)</strong> — verify tay 20/20 dòng golden khớp chính xác tuyệt đối. Đây không phải khớp mờ theo số tiền mà là khớp ID thật, gần như không có rủi ro trùng ngẫu nhiên.</p>
+
+      <div class="label">Thuật toán cuối cùng — 1000 Hoàn trả</div>
+      <p>Cột A = REFERENCE (số, bỏ 7 ký tự tiền tố) + DRAMOUNT; Cột B = REFERENCE (số) + CRAMOUNT; Cột C = Trace 1 (hub đi) + Số tiền thực chuyển; Cột D = Trace đầu (hub đến) + Số tiền lệnh gốc. DK1: khớp hub đi ↔ hub đến theo LINK (<code>Số tham chiếu lệnh gốc</code> = <code>Số REF HUB</code>, override ACH-NAPAS) + tổng tiền nhóm bằng nhau. DK2: A==C (chân Nợ) hoặc B==D (chân Có) — nhưng <strong>chỉ đánh dấu khi tìm được ĐỦ CẢ 2 CHÂN của cùng 1 cặp hub</strong> (rule 18 "Tổng Nợ = Tổng Có" là điều kiện BẮT BUỘC theo xác nhận của người dùng — không phải kỳ vọng gần đúng). Dòng chỉ khớp được 1 chân → không đánh dấu, đẩy về GD khác kèm cột <code>GHI_CHU</code> = "Nghi ngờ 1000HT — chưa khớp đủ cặp".</p>
+
+      <div class="label">Thuật toán cuối cùng — Điện KO offline (DK1-DK3, người dùng làm rõ theo từng bước)</div>
+      <p>DK1: tập ứng viên Có = USERID chứa 'KO'. DK2: tập ứng viên Nợ = DRAMOUNT của các dòng có REMARK chứa marker 'Remitting Amount:VND'. DK3: ghép cặp N:N theo SỐ TIỀN bằng nhau giữa 1 dòng Nợ (DK2) và 1 dòng Có (DK1) — bắt buộc Nợ=Có từng cặp (xác nhận rõ ràng từ người dùng, không phải tổng cả ngày/cả tháng — đã thử cả 2 và không cân bằng ở bất kỳ mức nào). Dòng dư không ghép được cặp → GD khác, đánh dấu "Nghi ngờ Điện KO offline".</p>
+
+      <div class="label">Chuyển chi nhánh — không đổi so với thiết kế ban đầu</div>
+      <p>Người dùng xác nhận lại đúng thiết kế cũ: Cột E = DRAMOUNT+REMARK, Cột F = CRAMOUNT+REMARK, khớp khi E==F <strong>và Nợ=Có cả nhóm bắt buộc</strong>. Nhóm không cân bằng tuyệt đối (REMARK trùng lặp giữa nhiều giao dịch không liên quan) → loại bỏ toàn bộ, rơi về GD khác chấm tay — không tách phần trùng khớp ra.</p>
+
+      <table>
+        <tr><th>Nhóm</th><th>Kết quả trên dữ liệu trọn tháng 6 (1,3 triệu dòng TK459, sau fix thứ tự waterfall)</th></tr>
+        <tr><td>1000 Hoàn trả</td><td><span class="pill pill-green">39.548 dòng, LUÔN CHẴN, Nợ=Có lệch 0 tuyệt đối</span>. So golden: recall 99,84% (thiếu 62/39.520 ref), precision 99,96% (dư 16/39.474 ref)</td></tr>
+        <tr><td>Điện KO offline</td><td><span class="pill pill-green">220 dòng, LUÔN CHẴN, Nợ=Có lệch 0 tuyệt đối</span>. So golden: 130 khớp, <strong>0 dòng sai</strong>, thiếu 4/134 REFERENCE</td></tr>
+        <tr><td>Chuyển chi nhánh</td><td><span class="pill pill-green">704 dòng, <strong>0 dòng sai</strong></span>. So golden: 704/704 khớp tuyệt đối, chỉ còn 38 thiếu (giảm từ 74 — xem mục fix thứ tự bên dưới)</td></tr>
+      </table>
+      <p>Bảo toàn dòng/tiền: tổng 6 nhóm (huy+đi+1000ht+ccn+ko+khác) = đúng 1.309.760 dòng = tổng dòng đầu vào, không mất/thừa dòng nào.</p>
+
+      <div class="label">Vòng chấm tay của người dùng phát hiện lỗi thứ tự waterfall</div>
+      <p>Người dùng chấm tay thủ công toàn bộ 142 dòng "thiếu" (xuất từ file <code>Chi_tiet_du_sai_va_thieu.xlsx</code>) và trả về annotation: <strong>132/142 không phải lỗi</strong> (58+4 dòng chưa có định nghĩa nghiệp vụ cần chấm tay, 9 dòng thuộc dữ liệu tháng 5 ngoài phạm vi file đang chấm, 70 dòng người dùng xác nhận tôi phân loại đúng — riêng CCN có 70/74 xác nhận đúng). <strong>1 lỗi thật</strong> được chỉ đích danh: <code>REFERENCE=1000API845335</code> (CR=1.500.000.000đ, REMARK="Chuyen khoan") bị xếp nhầm vào Chuyển chi nhánh, đáng lẽ là 1000 Hoàn trả.</p>
+      <p><strong>Nguyên nhân:</strong> thứ tự cũ là Hủy→Đi→<strong>CCN→KO→1000HT</strong>→Khác (1000HT chạy sau cùng vì lúc đó còn dùng khóa mờ theo số tiền, dễ cướp nhầm CCN/KO nếu chạy trước). Sau khi đổi 1000HT sang khóa TRACE chính xác, giữ nguyên thứ tự cũ khiến CCN (khóa amt+REMARK, ít rủi ro hơn khóa mờ cũ nhưng vẫn có thể trùng ngẫu nhiên) chạy trước và cướp mất 1 chân của giao dịch 1000HT trước khi 1000HT kịp nhận diện bằng TRACE.</p>
+      <p><strong>Fix:</strong> đổi lại thứ tự thành Hủy→Đi→<strong>1000HT→CCN→KO</strong>→Khác — 1000HT (khóa ID chính xác, rủi ro gần như 0) chạy trước để bảo vệ các cặp giao dịch thật khỏi bị CCN/KO cướp nhầm bằng khóa mờ hơn. Kết quả: sửa đúng case trên, đồng thời CCN cải thiện phụ 668→704 khớp và 2→0 dòng sai (do loại bỏ nhiễu từ các dòng 1000HT lẽ ra không nên nằm trong pool CCN).</p>
+
+      <div class="label">Đường đi hiệu chỉnh 1000HT trước khi tìm ra khóa TRACE (để tránh lặp lại sai lầm)</div>
+      <table>
+        <tr><th>Cách</th><th>Khóa khớp (SAI — chỉ dựa số tiền)</th><th>Vấn đề</th></tr>
+        <tr><td>1</td><td>Số tiền đơn thuần (N:N min-count)</td><td>921 dòng dư là giao dịch hoàn toàn không liên quan (hóa đơn, lương…) trùng số tiền ngẫu nhiên</td></tr>
+        <tr><td>2</td><td>Số tiền + đếm khớp chính xác tuyệt đối</td><td>Quá chặt — chỉ cần dư 1 dòng trùng ngẫu nhiên bên cạnh dòng đúng là loại oan cả nhóm; recall sụp còn 25-68%</td></tr>
+        <tr><td>3</td><td>Số tiền + cùng ngày TRDATE</td><td>Cải thiện (96,9%/98,9%) nhưng vẫn còn ~660 dòng/tháng sai do trùng ngẫu nhiên cả số tiền lẫn ngày</td></tr>
+        <tr><td>4 (đúng)</td><td><strong>REFERENCE = Trace của HUB</strong> (khóa ID thật, không phải khớp mờ)</td><td>Giải quyết hoàn toàn — precision/recall đều &gt;99,8%, Nợ=Có lệch 0 tuyệt đối</td></tr>
+      </table>
+      <p class="note">Bài học: khi thuật toán khớp mờ (theo số tiền) cứ giằng co giữa precision/recall dù đã thử nhiều biến thể, nên nghi ngờ có khóa ID chính xác bị bỏ sót trong nghiệp vụ, thay vì tiếp tục tinh chỉnh ngưỡng/cửa sổ trên khóa mờ.</p>
+
+      <div class="label">Files sửa</div>
+      <table>
+        <tr><th>File</th><th>Thay đổi</th></tr>
+        <tr><td><code>backend/services/cham459901_service.py</code></td><td><code>_read_hub_di/_den</code> (thêm cột TRACE), <code>_match_hub_1000ht</code> (DK1), <code>_mark_1000ht</code> (khóa TRACE, bắt buộc đủ cặp), <code>_mark_ccn</code>, <code>_mark_ko</code> (ghép cặp N:N theo số tiền); <code>_classify()</code> mở rộng 3→6 nhóm + cột <code>GHI_CHU</code> đánh dấu nghi ngờ; <code>process_zip()</code>/<code>run_process()</code> nhận thêm 2 bytes HUB tùy chọn</td></tr>
+        <tr><td><code>backend/api/cham459901.py</code></td><td><code>VALID_TYPES</code> thêm <code>ht1000/ccn/ko</code>; <code>/process</code> nhận thêm 2 <code>UploadFile</code> tùy chọn</td></tr>
+        <tr><td><code>frontend/pages/cham_459901.py</code></td><td>Thêm 2 ô upload HUB đi/đến (tùy chọn); kết quả hiển thị 6 thẻ thay vì 3</td></tr>
+      </table>
+
+      <div class="label">Ghi chú khác</div>
+      <p><code>_write_excel()</code> (ghi XML tay, đã có từ trước) gặp <code>MemoryError</code> khi export bucket "Lệnh Đi" (600k+ dòng) trên máy dev khi RAM trống thấp — không liên quan thay đổi lần này, cần theo dõi nếu tái diễn ở môi trường khác/dữ liệu lớn hơn.</p>
+    </div>
+  </div>
+
+  <!-- 22 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">22</span>
+      <span class="card-title">Chấm 459901 — thêm nhóm thứ 6: Cân CN (Cân chi nhánh)</span>
+      <span class="badge badge-done">Khớp tuyệt đối 100% với 7.051 dòng dữ liệu mẫu thật (bỏ qua phần chấm tay bổ sung)</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh</div>
+      <p>Mục 6 trong note "hà" yêu cầu chấm thêm nhóm Cân CN, chèn vào waterfall <strong>sau Điện KO offline, trước GD khác</strong>. Note mô tả: ghép cột G = TRBRCD+DRAMOUNT, cột H = TRBRCD+CRAMOUNT; DK1 TRBRCD bằng nhau; DK2 Tổng Nợ (G) = Tổng Có (H); DK3 nếu TRBRCD=1000 thì tổng Nợ/Có phải &gt;5 tỷ. Mô tả chữ không đủ để suy ra chính xác mức gộp nhóm (toàn nhánh hay theo từng số tiền) — thay vì đoán, đã đối chiếu trực tiếp với dữ liệu thật.</p>
+
+      <div class="label">Đối chiếu dữ liệu thật để tìm đúng khóa gộp</div>
+      <p>Chạy pipeline hiện có (Hủy→Đi→1000HT→CCN→KO) trên bộ <code>GL02_20260630_1000.zip</code> + 2 file HUB, lấy phần còn lại rồi so với 2 file người dùng đã chấm tay <code>Hà chấm - Cân CN.xlsx</code> (6.678 dòng) và <code>Hà chấm - GD khác.xlsx</code> (373 dòng). Thử gộp toàn bộ theo TRBRCD (664 nhóm) → sai lệch 1.114 dòng khi gộp cả 2 file lại (nhóm 1000 không cân bằng nữa vì bị nhiễu bởi các dòng GD khác cùng nhánh). Đổi khóa gộp thành <code>TRBRCD + "|" + amt</code> (amt = max(|DRAMOUNT|,|CRAMOUNT|) làm tròn), gộp cả 2 file lại rồi kiểm tra Tổng Nợ=Tổng Có mỗi nhóm → <strong>khớp tuyệt đối 0 sai lệch trên 7.051 dòng</strong>.</p>
+
+      <div class="label">DK3 — phải hỏi lại người dùng, dữ liệu không tự nói lên được</div>
+      <p>Bản đối chiếu ở trên khớp 100% mà <strong>không cần áp DK3</strong> — vì file mẫu do người dùng chấm tay có thể đã bổ sung thêm các cặp nhỏ ở nhánh 1000 ngoài phạm vi thuật toán tự động (VD cặp 5.000.000đ, 4.015.754đ tại TRBRCD=1000 vẫn xuất hiện trong file mẫu). Hỏi lại người dùng xác nhận: <strong>đúng là các giao dịch nhỏ đó do người dùng tự chấm tay</strong>, không phải hệ thống tự động phải bắt được — do đó DK3 áp dụng <strong>theo từng nhóm khớp</strong> (không phải tổng toàn nhánh 1000): nếu TRBRCD=1000 mà tổng tiền nhóm ≤5 tỷ, KHÔNG tự động chấm Cân CN, để nguyên trong GD khác.</p>
+
+      <table>
+        <tr><th>Cách hiểu DK3</th><th>Kết quả</th></tr>
+        <tr><td>Ngưỡng tổng toàn nhánh 1000 (cộng dồn mọi cặp)</td><td>Khớp mẫu vì tổng thực tế ~177 nghìn tỷ luôn &gt;5 tỷ — nhưng đây là ngưỡng vô nghĩa trên thực tế, không loại được gì</td></tr>
+        <tr><td><strong>Ngưỡng theo từng nhóm/cặp đã khớp (đã chọn)</strong></td><td>Đúng theo xác nhận người dùng — loại các cặp nhỏ ở nhánh 1000 người dùng tự xử lý thủ công</td></tr>
+      </table>
+
+      <div class="label">Kết quả trên dữ liệu trọn tháng 6 (1.309.760 dòng, sau khi thêm bước 6)</div>
+      <p>huy=9.906, đi=1.252.204, 1000ht=39.548, ccn=704, ko=220, <strong>can_cn=6.556</strong>, khác=622 (giảm từ 7.178 trước khi có Cân CN). Tổng = 1.309.760 = đúng số dòng đầu vào, bảo toàn tuyệt đối.</p>
+
+      <div class="label">Files sửa</div>
+      <table>
+        <tr><th>File</th><th>Thay đổi</th></tr>
+        <tr><td><code>backend/services/cham459901_service.py</code></td><td>Thêm <code>_mark_can_cn()</code> (cùng pattern <code>_mark_ccn</code>, khóa <code>TRBRCD+amt</code> thay vì <code>amt+REMARK</code>, có ngưỡng DK3 cho nhánh 1000); <code>_classify()</code> chèn Bước 6 giữa KO và Khác, trả về thêm <code>df_can_cn</code>; <code>process_zip()</code> ghi thêm <code>can_cn.xlsx</code>, thêm <code>can_cn_rows</code> vào result</td></tr>
+        <tr><td><code>backend/api/cham459901.py</code></td><td><code>VALID_TYPES</code> thêm <code>can_cn</code></td></tr>
+        <tr><td><code>frontend/pages/cham_459901.py</code></td><td>Thêm thẻ "Cân CN" vào lưới kết quả (7 thẻ thay vì 6)</td></tr>
+        <tr><td><code>tests/test_cham459901_algorithm.py</code></td><td>Thêm <code>TestMarkCanCN</code> (8 test, bao gồm ngưỡng DK3 riêng cho nhánh 1000); cập nhật <code>TestClassifyIntegration</code> cho tuple 7 phần tử + test thứ tự waterfall</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-07-08</footer>
 </div>
 </body>
 </html>

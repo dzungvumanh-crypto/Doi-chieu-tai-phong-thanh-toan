@@ -17,3 +17,6 @@ lunardate>=0.2.0
 pyzipper>=0.3.6
 xlsxwriter>=3.1.0
 python-calamine>=0.2.0
+
+# ── Dev/test ─────────────────────────────────────────────────────────────────
+pytest>=8.0.0

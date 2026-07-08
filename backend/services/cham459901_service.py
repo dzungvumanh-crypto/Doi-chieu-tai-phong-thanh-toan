@@ -7,6 +7,7 @@ I/O được điều chỉnh để hoạt động với bytes (từ HTTP upload)
 import io
 import logging
 import shutil
+import threading
 import time
 import uuid
 import zipfile
@@ -33,14 +34,14 @@ CLEANUP_HOURS   = 2
 OUTPUT_COLS = [
     'TRDATE', 'TRBRCD', 'USERID', 'JOURSEQ', 'DYTRSEQ', 'LOCAC', 'CCY',
     'BUSCD', 'UNIT', 'TRCD', 'CUSTOMER', 'TRTP', 'REFERENCE', 'REMARK',
-    'DRAMOUNT', 'CRAMOUNT', 'CRTDTM',
+    'DRAMOUNT', 'CRAMOUNT', 'CRTDTM', 'GHI_CHU',
 ]
 
 COL_WIDTHS = {
     'TRDATE': 12, 'TRBRCD': 8, 'USERID': 13, 'JOURSEQ': 10, 'DYTRSEQ': 9,
     'LOCAC': 8, 'CCY': 5, 'BUSCD': 7, 'UNIT': 6, 'TRCD': 6, 'CUSTOMER': 18,
     'TRTP': 8, 'REFERENCE': 22, 'REMARK': 52, 'DRAMOUNT': 18, 'CRAMOUNT': 18,
-    'CRTDTM': 20,
+    'CRTDTM': 20, 'GHI_CHU': 38,
 }
 
 # Chỉ strip các cột dùng trong filter và xây key — không strip tất cả string cols
@@ -56,8 +57,13 @@ _COL_LETTERS = [
 
 log = logging.getLogger(__name__)
 
+
+class _Cancelled(Exception):
+    """Sentinel nội bộ — báo hiệu người dùng đã bấm Dừng, thoát sớm khỏi xử lý."""
+
+
 # ─── In-memory progress store ─────────────────────────────────────────────────
-# key = task_token; value = {pct, msg, done, error, result, _ts}
+# key = task_token; value = {pct, msg, done, error, cancelled, result, cancel_event, _ts}
 _progress: dict[str, dict] = {}
 
 
@@ -66,7 +72,8 @@ def init_progress() -> str:
     task_token = str(uuid.uuid4())
     _progress[task_token] = {
         "pct": 0, "msg": "Đang khởi tạo...",
-        "done": False, "error": None, "result": None,
+        "done": False, "error": None, "cancelled": False, "result": None,
+        "cancel_event": threading.Event(),
         "_ts": time.time(),
     }
     return task_token
@@ -76,21 +83,68 @@ def get_progress(task_token: str) -> dict | None:
     p = _progress.get(task_token)
     if p is None:
         return None
-    return {k: v for k, v in p.items() if not k.startswith("_")}
+    return {k: v for k, v in p.items() if not k.startswith("_") and k != "cancel_event"}
+
+
+def cancel_progress(task_token: str) -> bool:
+    """Đánh dấu yêu cầu dừng — pipeline sẽ tự thoát ở checkpoint gần nhất."""
+    p = _progress.get(task_token)
+    if p is None or p["done"]:
+        return False
+    p["cancel_event"].set()
+    return True
+
+
+def delete_result(result_token: str) -> bool:
+    """Xóa thư mục kết quả trên server (khi người dùng phát hiện sai sót, muốn làm lại)."""
+    out_dir = TEMP_DIR / result_token
+    if not out_dir.exists():
+        return False
+    shutil.rmtree(out_dir, ignore_errors=True)
+    return True
+
+
+def classify_upload_filename(filename: str) -> str | None:
+    """Tự nhận diện loại file theo tên khi upload nhiều file cùng lúc (kéo-thả kiểu ACH).
+    Trả về 'zip' | 'hub_di' | 'hub_den' | None (không nhận diện được)."""
+    name = filename.lower()
+    if name.endswith('.zip') and 'gl02' in name:
+        return 'zip'
+    if name.endswith('.xlsx'):
+        if 'quay' in name or 'chuyen tien di' in name or 'chuyen_tien_di' in name:
+            return 'hub_di'
+        if ('giao dich den' in name or 'giao_dich_den' in name
+                or ('danh_sach' in name and 'den' in name)
+                or ('danh sach' in name and 'den' in name)):
+            return 'hub_den'
+    return None
 
 
 def _set_prog(task_token: str | None, pct: int, msg: str) -> None:
     if task_token and task_token in _progress:
-        _progress[task_token]["pct"] = pct
-        _progress[task_token]["msg"] = msg
+        p = _progress[task_token]
+        if p["cancel_event"].is_set():
+            raise _Cancelled()
+        p["pct"] = pct
+        p["msg"] = msg
 
 
 # ─── Public API ───────────────────────────────────────────────────────────────
 
-def run_process(zip_bytes: bytes, task_token: str) -> None:
+def run_process(
+    zip_bytes: bytes,
+    task_token: str,
+    hub_di_bytes: bytes | None = None,
+    hub_den_bytes: bytes | None = None,
+) -> None:
     """Chạy process_zip trong background thread; cập nhật progress và bắt lỗi."""
     try:
-        process_zip(zip_bytes, task_token)
+        process_zip(zip_bytes, hub_di_bytes, hub_den_bytes, task_token)
+    except _Cancelled:
+        if task_token in _progress:
+            _progress[task_token].update({
+                "done": True, "cancelled": True, "msg": "Đã dừng theo yêu cầu.",
+            })
     except Exception as e:
         log.error("process_zip lỗi [%s]: %s", task_token, e, exc_info=True)
         if task_token in _progress:
@@ -100,8 +154,16 @@ def run_process(zip_bytes: bytes, task_token: str) -> None:
             })
 
 
-def process_zip(zip_bytes: bytes, task_token: str | None = None) -> dict:
-    """Nhận bytes của file ZIP → phân loại → lưu 3 xlsx → trả metadata."""
+def process_zip(
+    zip_bytes: bytes,
+    hub_di_bytes: bytes | None = None,
+    hub_den_bytes: bytes | None = None,
+    task_token: str | None = None,
+) -> dict:
+    """Nhận bytes ZIP (+ 2 file HUB đi/đến tùy chọn) → phân loại 7 nhóm → lưu 7 xlsx → trả metadata.
+
+    Thiếu file HUB → bỏ qua bước 1000 Hoàn trả (các dòng đó rơi về GD khác chấm thủ công).
+    """
     _cleanup_old_results()
     t0 = time.time()
 
@@ -109,29 +171,62 @@ def process_zip(zip_bytes: bytes, task_token: str | None = None) -> dict:
     df, filtered_rows = _load_data(zip_bytes)
     total_before = len(df) + filtered_rows
 
+    hub_di = hub_den = None
+    if hub_di_bytes is not None and hub_den_bytes is not None:
+        _set_prog(task_token, 15, "Đang đọc file HUB đi/đến...")
+        hub_di  = _read_hub_di(hub_di_bytes)
+        hub_den = _read_hub_den(hub_den_bytes)
+
     _set_prog(task_token, 30, "Bước 1 — Xác định lệnh hủy...")
-    df_huy, df_di, df_khac = _classify(df, task_token)
+    df_huy, df_di, df_1000ht, df_ccn, df_ko, df_can_cn, df_khac = _classify(
+        df, task_token, hub_di, hub_den,
+    )
 
     result_token = str(uuid.uuid4())
     out_dir = TEMP_DIR / result_token
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    _set_prog(task_token, 70, f"Xuất Excel — Lệnh Hủy ({len(df_huy):,} dòng)...")
-    _write_excel(df_huy,  out_dir / "huy.xlsx",  "Lệnh Hủy",  "C0392B")
+    try:
+        _set_prog(task_token, 85, f"Xuất Excel — Lệnh Hủy ({len(df_huy):,} dòng)...")
+        _write_excel(df_huy,    out_dir / "huy.xlsx",    "Lệnh Hủy",         "C0392B")
 
-    _set_prog(task_token, 80, f"Xuất Excel — Lệnh Đi ({len(df_di):,} dòng)...")
-    _write_excel(df_di,   out_dir / "di.xlsx",   "Lệnh Đi",   "27AE60")
+        _set_prog(task_token, 87, f"Xuất Excel — Lệnh Đi ({len(df_di):,} dòng)...")
+        _write_excel(df_di,     out_dir / "di.xlsx",     "Lệnh Đi",          "27AE60")
 
-    _set_prog(task_token, 92, f"Xuất Excel — Lệnh Khác ({len(df_khac):,} dòng)...")
-    _write_excel(df_khac, out_dir / "khac.xlsx", "Lệnh Khác", "E67E22")
+        _set_prog(task_token, 89, f"Xuất Excel — 1000 Hoàn trả ({len(df_1000ht):,} dòng)...")
+        _write_excel(df_1000ht, out_dir / "ht1000.xlsx", "1000 Hoàn trả",    "2980B9")
+
+        _set_prog(task_token, 91, f"Xuất Excel — Chuyển chi nhánh ({len(df_ccn):,} dòng)...")
+        _write_excel(df_ccn,    out_dir / "ccn.xlsx",    "Chuyển chi nhánh", "8E44AD")
+
+        _set_prog(task_token, 93, f"Xuất Excel — Điện KO offline ({len(df_ko):,} dòng)...")
+        _write_excel(df_ko,     out_dir / "ko.xlsx",     "Điện KO offline",  "16A085")
+
+        _set_prog(task_token, 95, f"Xuất Excel — Cân CN ({len(df_can_cn):,} dòng)...")
+        _write_excel(df_can_cn, out_dir / "can_cn.xlsx", "Cân CN",           "F1C40F")
+
+        _set_prog(task_token, 98, f"Xuất Excel — GD khác ({len(df_khac):,} dòng)...")
+        _write_excel(df_khac,   out_dir / "khac.xlsx",   "GD khác",          "E67E22")
+
+        # Checkpoint cuối — nếu người dùng bấm Dừng đúng lúc đang ghi file cuối, vẫn
+        # phải phát hiện trước khi báo "Hoàn thành!" thay vì hoàn tất bất chấp yêu cầu dừng.
+        _set_prog(task_token, 99, "Đang hoàn tất...")
+    except _Cancelled:
+        shutil.rmtree(out_dir, ignore_errors=True)
+        raise
 
     result = {
         "token":         result_token,
         "huy_rows":      len(df_huy),
         "di_rows":       len(df_di),
+        "ht1000_rows":   len(df_1000ht),
+        "ccn_rows":      len(df_ccn),
+        "ko_rows":       len(df_ko),
+        "can_cn_rows":   len(df_can_cn),
         "khac_rows":     len(df_khac),
         "total_rows":    total_before,
         "filtered_rows": filtered_rows,
+        "hub_provided":  hub_di is not None,
         "elapsed_s":     round(time.time() - t0, 1),
         "process_date":  datetime.now().strftime("%Y%m%d"),
     }
@@ -186,8 +281,11 @@ def _load_data(zip_bytes: bytes) -> tuple[pd.DataFrame, int]:
 def _classify(
     df: pd.DataFrame,
     task_token: str | None = None,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Phân loại: Hủy (set giao) → Đi (groupby balance=0) → Khác (còn lại)."""
+    hub_di: pd.DataFrame | None = None,
+    hub_den: pd.DataFrame | None = None,
+) -> tuple[pd.DataFrame, ...]:
+    """Phân loại thác nước: Hủy → Đi → 1000 Hoàn trả → Chuyển chi nhánh → Điện KO offline
+    → Cân CN → Khác."""
     # ── Bước 1: Lệnh Hủy ──────────────────────────────────────────────────────
     df['abs_amt']  = (df['DRAMOUNT'] + df['CRAMOUNT']).abs()
     df['_huy_key'] = (df['REFERENCE'] + '|' + df['TRBRCD'] + '|'
@@ -220,9 +318,226 @@ def _classify(
     for tmp_df in (df_huy, df_di, df_khac):
         tmp_df.drop(columns=[c for c in temp_cols if c in tmp_df.columns], inplace=True)
 
-    assert len(df_huy) + len(df_di) + len(df_khac) == len(df), "Lỗi logic phân loại!"
+    # ── Bước 3: 1000 Hoàn trả (cần đủ 2 file HUB đi/đến) ──────────────────────
+    # Ghép theo khóa TRACE (REFERENCE = số Trace của hub) — gần như không có rủi ro
+    # cướp nhầm (đã verify precision >99,9%) nên chạy TRƯỚC CCN/KO. Chạy sau khi 1000HT
+    # đã dùng khóa mờ theo số tiền từng khiến CCN/KO bị cướp; nay đã đảo lại vì khóa
+    # TRACE chính xác hơn nhiều so với khóa amt+REMARK (CCN) hay amt-pairing (KO) —
+    # để 1000HT chạy sau sẽ khiến CCN cướp mất 1 chân trước khi 1000HT kịp nhận diện
+    # (xem Implementation-notes.html, case REFERENCE=1000API845335).
+    _set_prog(task_token, 60, "Bước 3 — Đối chiếu 1000 Hoàn trả...")
+    if hub_di is not None and hub_den is not None and len(df_khac) > 0:
+        mask_ht, mask_ht_candidate = _mark_1000ht(df_khac, hub_di, hub_den)
+    else:
+        mask_ht = pd.Series(False, index=df_khac.index)
+        mask_ht_candidate = pd.Series(False, index=df_khac.index)
+    df_1000ht = df_khac[mask_ht].copy()
+    df_rem2   = df_khac[~mask_ht].copy()
 
-    return df_huy, df_di, df_khac
+    # ── Bước 4: Chuyển chi nhánh ──────────────────────────────────────────────
+    _set_prog(task_token, 70, "Bước 4 — Phân loại chuyển chi nhánh...")
+    mask_ccn = _mark_ccn(df_rem2)
+    df_ccn  = df_rem2[mask_ccn].copy()
+    df_rem3 = df_rem2[~mask_ccn].copy()
+
+    # ── Bước 5: Điện KO offline ───────────────────────────────────────────────
+    _set_prog(task_token, 80, "Bước 5 — Phân loại điện KO offline...")
+    mask_ko, mask_ko_candidate = _mark_ko(df_rem3)
+    df_ko   = df_rem3[mask_ko].copy()
+    df_rem4 = df_rem3[~mask_ko].copy()
+
+    # ── Bước 6: Cân CN ────────────────────────────────────────────────────────
+    _set_prog(task_token, 85, "Bước 6 — Phân loại Cân CN...")
+    mask_can_cn   = _mark_can_cn(df_rem4)
+    df_can_cn     = df_rem4[mask_can_cn].copy()
+    df_khac_final = df_rem4[~mask_can_cn].copy()
+
+    # Đánh dấu các dòng "nghi ngờ nhưng chưa đủ điều kiện" (1000HT hoặc KO) để chấm tay dễ hơn
+    ghi_chu = pd.Series('', index=df_khac_final.index)
+    ghi_chu[mask_ht_candidate.reindex(df_khac_final.index, fill_value=False)] = \
+        'Nghi ngờ 1000HT — chưa khớp đủ cặp, cần chấm tay'
+    ghi_chu[mask_ko_candidate.reindex(df_khac_final.index, fill_value=False)] = \
+        'Nghi ngờ Điện KO offline — chưa khớp đủ cặp, cần chấm tay'
+    df_khac_final['GHI_CHU'] = ghi_chu
+    for tmp_df in (df_huy, df_di, df_1000ht, df_ccn, df_ko, df_can_cn):
+        tmp_df['GHI_CHU'] = ''
+
+    assert (len(df_huy) + len(df_di) + len(df_ccn) + len(df_ko) + len(df_can_cn)
+            + len(df_1000ht) + len(df_khac_final)) == len(df), "Lỗi logic phân loại!"
+
+    return df_huy, df_di, df_1000ht, df_ccn, df_ko, df_can_cn, df_khac_final
+
+
+def _read_hub_di(raw_bytes: bytes) -> pd.DataFrame:
+    """Đọc file 'Quay_danh sach giao dich chuyen tien di' — tiêu đề ở dòng Excel thứ 2."""
+    raw = pd.read_excel(io.BytesIO(raw_bytes), header=None, engine='calamine')
+    df = raw.iloc[2:].copy()
+    df.columns = raw.iloc[1].tolist()
+    df = df.dropna(subset=['Số Trace 1']).reset_index(drop=True)
+
+    amt   = pd.to_numeric(df['Số tiền thực chuyển'], errors='coerce').fillna(0.0).round(0)
+    trace = pd.to_numeric(df['Số Trace 1'], errors='coerce')
+    is_napas = df['Hệ thống thanh toán'].astype(str).str.strip() == 'ACH-NAPAS'
+    # ACH-NAPAS: lấy ký tự thứ 47-52 (1-based) của "Nội dung chuyển tiền"
+    override = df['Nội dung chuyển tiền'].astype(str).str.slice(46, 52).str.strip()
+    link = df['Số tham chiếu lệnh gốc'].astype(str).str.strip()
+    link = link.where(~is_napas, override)
+
+    return pd.DataFrame({'AMOUNT': amt, 'TRACE': trace, 'LINK': link})
+
+
+def _read_hub_den(raw_bytes: bytes) -> pd.DataFrame:
+    """Đọc file 'Danh sach giao dich den' — tiêu đề ở dòng Excel thứ 3."""
+    raw = pd.read_excel(io.BytesIO(raw_bytes), header=None, engine='calamine')
+    df = raw.iloc[3:].copy()
+    df.columns = raw.iloc[2].tolist()
+    df = df.dropna(subset=['Số trace']).reset_index(drop=True)
+
+    amt   = pd.to_numeric(df['Số tiền lệnh gốc'], errors='coerce').fillna(0.0).round(0)
+    # Số trace: nếu có 2 dãy số (phân cách bởi ';') thì chỉ lấy dãy đầu tiên
+    trace = pd.to_numeric(df['Số trace'].astype(str).str.split(';').str[0], errors='coerce')
+    is_napas = df['Hệ thống thanh toán'].astype(str).str.strip() == 'ACH-NAPAS'
+    # ACH-NAPAS: lấy 6 số cuối của "Số thành công/MSGID"
+    override = df['Số thành công/MSGID'].astype(str).str.strip().str[-6:]
+    link = df['Số REF HUB'].astype(str).str.strip()
+    link = link.where(~is_napas, override)
+
+    return pd.DataFrame({'AMOUNT': amt, 'TRACE': trace, 'LINK': link})
+
+
+_BLANK_LINK = frozenset({'', 'nan', 'none', 'nat'})
+
+
+def _match_hub_1000ht(hub_di: pd.DataFrame, hub_den: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
+    """DK1: khớp hub đi ↔ hub đến theo LINK (Số tham chiếu lệnh gốc = Số REF HUB),
+    xác nhận bằng tổng tiền theo nhóm bằng nhau (đối chiếu N:N).
+    LINK rỗng/nan bị loại trước khi khớp — nhiều dòng thiếu "Số tham chiếu lệnh gốc"/
+    "Số REF HUB" (VD bút toán điều chỉnh thủ công) đều mang cùng giá trị rỗng, ghép nhóm
+    với nhau sẽ tạo trùng khớp giả (tổng tiền trùng ngẫu nhiên) không phải cùng 1 giao dịch."""
+    ok_di  = ~hub_di['LINK'].str.lower().isin(_BLANK_LINK)
+    ok_den = ~hub_den['LINK'].str.lower().isin(_BLANK_LINK)
+
+    sum_di  = hub_di[ok_di].groupby('LINK', sort=False)['AMOUNT'].sum()
+    sum_den = hub_den[ok_den].groupby('LINK', sort=False)['AMOUNT'].sum()
+    common  = sum_di.index.intersection(sum_den.index)
+    matched = common[(sum_di.loc[common] - sum_den.loc[common]).abs() < 1]
+
+    mask_di  = ok_di  & hub_di['LINK'].isin(matched)
+    mask_den = ok_den & hub_den['LINK'].isin(matched)
+    return mask_di, mask_den
+
+
+def _mark_1000ht(df: pd.DataFrame, hub_di: pd.DataFrame, hub_den: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
+    """1000 Hoàn trả (DK2): cột REFERENCE của TK459 (phần số từ ký tự thứ 8) CHÍNH LÀ
+    số Trace của hub — Trace 1 (hub đi) cho chân Nợ, Trace đầu tiên (hub đến) cho chân Có.
+    Đây là khóa định danh gần như tuyệt đối (đã verify 20/20 mẫu khớp chính xác), không phải
+    khớp mờ theo số tiền — nên ghép Cột A (REFERENCE_số + DRAMOUNT) = Cột C (Trace1 + Số tiền)
+    và Cột B (REFERENCE_số + CRAMOUNT) = Cột D (Trace đến + Số tiền lệnh gốc).
+
+    Mỗi cặp hub đã xác nhận DK1 chỉ được đánh dấu 1000HT trong TK459 khi tìm được ĐỦ CẢ 2
+    CHÂN (Nợ khớp cột C, Có khớp cột D của CÙNG 1 cặp hub) — đúng yêu cầu bắt buộc Nợ=Có theo
+    từng cặp giao dịch. Nếu TK459 chỉ chấm 1 phần kỳ trong khi HUB trải dài hơn, chân còn lại
+    có thể rơi ngoài kỳ dữ liệu — cặp đó không được xác nhận, dòng tìm thấy 1 chân sẽ được
+    đánh dấu "nghi ngờ" (mask_candidate) để chấm tay thay vì đoán.
+
+    Trả về (mask_confirmed, mask_candidate)."""
+    mask_di_1000ht, mask_den_1000ht = _match_hub_1000ht(hub_di, hub_den)
+    di_ok  = hub_di.loc[mask_di_1000ht,  ['LINK', 'TRACE', 'AMOUNT']]
+    den_ok = hub_den.loc[mask_den_1000ht, ['LINK', 'TRACE', 'AMOUNT']]
+
+    ref_suffix = pd.to_numeric(df['REFERENCE'].str.slice(7), errors='coerce')
+    dr = df['DRAMOUNT'].round(0)
+    cr = df['CRAMOUNT'].round(0)
+    tk = pd.DataFrame({'REF_SUFFIX': ref_suffix, 'DR': dr, 'CR': cr}, index=df.index).reset_index()
+
+    dr_match = tk.merge(di_ok,  left_on=['REF_SUFFIX', 'DR'], right_on=['TRACE', 'AMOUNT'], how='inner')
+    cr_match = tk.merge(den_ok, left_on=['REF_SUFFIX', 'CR'], right_on=['TRACE', 'AMOUNT'], how='inner')
+
+    links_confirmed = set(dr_match['LINK']) & set(cr_match['LINK'])
+
+    idx_confirmed = (
+        set(dr_match.loc[dr_match['LINK'].isin(links_confirmed), 'index'])
+        | set(cr_match.loc[cr_match['LINK'].isin(links_confirmed), 'index'])
+    )
+    idx_candidate = (
+        set(dr_match.loc[~dr_match['LINK'].isin(links_confirmed), 'index'])
+        | set(cr_match.loc[~cr_match['LINK'].isin(links_confirmed), 'index'])
+    ) - idx_confirmed
+
+    mask_confirmed = pd.Series(df.index.isin(idx_confirmed), index=df.index)
+    mask_candidate = pd.Series(df.index.isin(idx_candidate), index=df.index)
+    return mask_confirmed, mask_candidate
+
+
+def _mark_ccn(df: pd.DataFrame) -> pd.Series:
+    """Chuyển chi nhánh: ghép (số tiền + REMARK), khớp khi Tổng Nợ = Tổng Có của CẢ NHÓM.
+    Nhóm không cân bằng tuyệt đối (VD REMARK trùng lặp giữa nhiều giao dịch khác nhau)
+    bị loại bỏ hoàn toàn — không tách một phần — để rơi về GD khác chấm thủ công."""
+    if len(df) == 0:
+        return pd.Series(dtype=bool)
+    amt = df[['DRAMOUNT', 'CRAMOUNT']].abs().max(axis=1).round(0)
+    key = amt.astype('Int64').astype(str) + '|' + df['REMARK']
+
+    sum_dr  = df['DRAMOUNT'].groupby(key).transform('sum')
+    sum_cr  = df['CRAMOUNT'].groupby(key).transform('sum')
+    dr_any  = (df['DRAMOUNT'] != 0).groupby(key).transform('any')
+    cr_any  = (df['CRAMOUNT'] != 0).groupby(key).transform('any')
+
+    return (sum_cr - sum_dr).abs().lt(1) & dr_any & cr_any
+
+
+def _mark_can_cn(df: pd.DataFrame) -> pd.Series:
+    """Cân CN (Cân chi nhánh): ghép (TRBRCD + số tiền), khớp khi Tổng Nợ = Tổng Có của nhóm.
+    Riêng TRBRCD=1000: chỉ chấp nhận nếu tổng tiền nhóm >5 tỷ — nhóm nhỏ ở nhánh 1000 do
+    người dùng xử lý thủ công, để nguyên trong GD khác cho chấm tay."""
+    if len(df) == 0:
+        return pd.Series(dtype=bool)
+    amt = df[['DRAMOUNT', 'CRAMOUNT']].abs().max(axis=1).round(0)
+    key = df['TRBRCD'] + '|' + amt.astype('Int64').astype(str)
+
+    sum_dr  = df['DRAMOUNT'].groupby(key).transform('sum')
+    sum_cr  = df['CRAMOUNT'].groupby(key).transform('sum')
+    dr_any  = (df['DRAMOUNT'] != 0).groupby(key).transform('any')
+    cr_any  = (df['CRAMOUNT'] != 0).groupby(key).transform('any')
+    balanced = (sum_cr - sum_dr).abs().lt(1) & dr_any & cr_any
+
+    is_1000 = df['TRBRCD'] == '1000'
+    threshold_ok = sum_dr.gt(5_000_000_000) & sum_cr.gt(5_000_000_000)
+    return balanced & (~is_1000 | threshold_ok)
+
+
+def _mark_ko(df: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
+    """Điện KO offline (DK1-DK3): DK1 — tập ứng viên Có = USERID chứa 'KO'. DK2 — tập ứng
+    viên Nợ = DRAMOUNT của các dòng có REMARK chứa marker 'Remitting Amount:VND'. DK3 — ghép
+    cặp N:N theo SỐ TIỀN bằng nhau giữa 1 dòng Nợ (DK2) và 1 dòng Có (DK1), bắt buộc Nợ=Có
+    từng cặp; dòng không tìm được đối tác cùng số tiền thì KHÔNG đánh dấu, rơi về GD khác
+    (đánh dấu nghi ngờ) thay vì đoán.
+
+    Trả về (mask_confirmed, mask_candidate)."""
+    if len(df) == 0:
+        return pd.Series(dtype=bool), pd.Series(dtype=bool)
+
+    is_ko_user = df['USERID'].str.contains('KO', na=False)
+    is_remit   = df['REMARK'].str.contains('Remitting Amount:VND', na=False)
+
+    dr = df['DRAMOUNT'].round(0)
+    cr = df['CRAMOUNT'].round(0)
+    dr_amt = dr.where(is_remit & (dr != 0))
+    cr_amt = cr.where(is_ko_user & (cr != 0))
+
+    cnt_dr = dr_amt.dropna().value_counts()
+    cnt_cr = cr_amt.dropna().value_counts()
+    common = cnt_dr.index.intersection(cnt_cr.index)
+    n_match = {amt: min(cnt_dr[amt], cnt_cr[amt]) for amt in common}
+
+    cc_dr   = dr_amt.groupby(dr_amt).cumcount()
+    cc_cr   = cr_amt.groupby(cr_amt).cumcount()
+    limit_dr = dr_amt.map(n_match).fillna(0)
+    limit_cr = cr_amt.map(n_match).fillna(0)
+
+    mask_confirmed = (dr_amt.notna() & (cc_dr < limit_dr)) | (cr_amt.notna() & (cc_cr < limit_cr))
+    mask_candidate = (is_ko_user | is_remit) & ~mask_confirmed
+    return mask_confirmed, mask_candidate
 
 
 def _xe(s: str) -> str:
@@ -422,6 +737,8 @@ def _cleanup_old_results() -> None:
                 except Exception as e:
                     log.warning("Không xóa được %s: %s", sub, e)
 
-    stale = [k for k, v in _progress.items() if v.get("_ts", 0) < cutoff]
+    # list(...) chụp nhanh trước khi duyệt — tránh RuntimeError nếu 1 request khác
+    # gọi init_progress() làm thay đổi kích thước _progress cùng lúc (nhiều thread nền).
+    stale = [k for k, v in list(_progress.items()) if v.get("_ts", 0) < cutoff]
     for k in stale:
         _progress.pop(k, None)

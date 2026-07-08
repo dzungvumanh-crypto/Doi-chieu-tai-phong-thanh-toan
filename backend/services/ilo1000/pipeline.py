@@ -46,7 +46,7 @@ def _run_one_day(
 
     log(f'[{date_str}] Đang đọc file song song...')
     with ThreadPoolExecutor(max_workers=4) as ex:
-        f_hub   = ex.submit(load_hub, files['hub']) if files.get('hub') else None
+        f_hub   = ex.submit(load_hub, files.get('hub', [])) if files.get('hub') else None
         f_citad = ex.submit(load_citad, files['citad'])
         f_eicp  = ex.submit(load_eicp,  files.get('eicp', []))
         f_core  = ex.submit(load_core,  files['core'], log)

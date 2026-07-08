@@ -97,7 +97,7 @@ def group_files_by_date(paths: list[Path], log=None) -> dict[str, dict]:
 
     def _get_or_create(date_str: str) -> dict:
         if date_str not in groups:
-            groups[date_str] = {'hub': None, 'citad': [], 'eicp': [], 'core': []}
+            groups[date_str] = {'hub': [], 'citad': [], 'eicp': [], 'core': []}
         return groups[date_str]
 
     for p in paths:
@@ -124,7 +124,7 @@ def group_files_by_date(paths: list[Path], log=None) -> dict[str, dict]:
 
         g = _get_or_create(date_str)
         if ft == 'hub':
-            g['hub'] = p
+            g['hub'].append(p)
         elif ft == 'citad':
             g['citad'].append(p)
         elif ft in ('core_csv', 'core_zip'):
@@ -148,12 +148,13 @@ def group_files_by_date(paths: list[Path], log=None) -> dict[str, dict]:
         full_groups = {d: g for d, g in groups.items() if not g['hub'] and (g['citad'] or g['core'])}
 
         if hub_only_groups and full_groups:
-            # Lấy hub file từ group hub-only, gán vào group có dữ liệu nhất
+            # Lấy hub file(s) từ group hub-only, gán vào group có dữ liệu nhất
             best_full = max(full_groups.keys(), key=lambda d: len(full_groups[d]['citad']) + len(full_groups[d]['core']))
             for d, g in hub_only_groups.items():
-                groups[best_full]['hub'] = g['hub']
+                groups[best_full]['hub'].extend(g['hub'])
                 if log:
-                    log(f'  [INFO] Gán hub ({g["hub"].name}) vào nhóm {best_full} (ngày hub khác: {d})')
+                    names = ', '.join(p.name for p in g['hub'])
+                    log(f'  [INFO] Gán hub ({names}) vào nhóm {best_full} (ngày hub khác: {d})')
             # Xóa group hub-only rỗng
             for d in hub_only_groups:
                 del groups[d]

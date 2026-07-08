@@ -38,6 +38,35 @@ python frontend/main.py            # Frontend riêng
 
 **Database** (`data/`) — SQLite; WAL mode; FK constraints enforced.
 
+## Testing
+
+```bash
+.venv\Scripts\python.exe -m pytest tests/ -v          # TOÀN BỘ test suite
+.venv\Scripts\python.exe -m pytest tests/test_X.py -v # 1 file
+```
+
+**Quan trọng — dùng đúng `.venv`:** máy dev có nhiều Python song song; `.venv` (Python 3.12) là môi trường
+thật của dự án (đủ `python-jose`, `fastapi`, v.v., dùng bởi `run.py`) nhưng có thể thiếu `pytest`
+(`pip install pytest` một lần nếu vậy). Python hệ thống có thể có `pytest` nhưng thiếu dependency backend
+(`jose`...) — dùng nó chỉ chạy được test không import `backend.main`/API layer.
+
+**2 kiểu test, chọn theo đối tượng cần kiểm tra:**
+
+| Kiểu | Khi dùng | File mẫu |
+|---|---|---|
+| **Thuật toán/service** — import thẳng hàm từ `backend/services/*.py`, DataFrame tổng hợp nhỏ, không cần DB/HTTP | Logic phân loại, đối chiếu, tính toán — nơi sai sót gây hậu quả tài chính | `tests/test_cham459901_algorithm.py`, `tests/test_ilo1000_algorithm.py` |
+| **API-level** — `TestClient` từ `tests/conftest.py::admin_client`, gọi thật qua route `backend/api/*.py` | Hợp đồng request/response, validate input, mã lỗi HTTP, luồng nhiều bước (process → poll → cancel/delete) | `tests/test_cham459901_api.py` |
+
+`admin_client` (trong `conftest.py`) override `get_current_staff`/`get_db` để bypass JWT/session/DB thật —
+không cần tài khoản đăng nhập thật, không đụng `data/*.db`. Route nào thật sự cần đọc/ghi DB thì override
+`get_db` riêng trong test đó với schema cần thiết, đừng dựa vào DB thật.
+
+**Nguyên tắc viết test** (đúc kết từ 2 module trên, áp dụng dự án):
+- File thu nhỏ thật (CSV/xlsx/zip tổng hợp), **không mock** I/O — mock che giấu lỗi format thật (xem `doi-chieu` skill).
+- Với dữ liệu tài chính: luôn có test bất biến số học (bảo toàn dòng, Tổng Nợ = Tổng Có khi rule yêu cầu).
+- Test regression cho mỗi bug đã tìm+sửa (đặt tên rõ mô tả case, VD `test_1000ht_runs_before_ccn_to_avoid_being_stolen`).
+- `monkeypatch.setattr(module, 'TEMP_DIR', tmp_path)` khi test chạm file hệ thống — không được đụng `data/` thật.
+
 ## Implementation Notes
 
 Mọi quyết định kỹ thuật không hiển nhiên, đánh đổi thiết kế, và vấn đề phát hiện trong quá trình implement **phải được ghi vào [`Implementation-notes.html`](Implementation-notes.html)** — cập nhật liên tục, không để sau.

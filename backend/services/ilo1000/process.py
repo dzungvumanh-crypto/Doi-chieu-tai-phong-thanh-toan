@@ -31,10 +31,6 @@ def process_hub(hub_df: pd.DataFrame, eicp_maps: dict, ngay_int: int) -> tuple[p
     """
     df = hub_df.copy()
 
-    # ── Filter: Số giao dịch contains 'S' ──
-    so_gd = _safe_str(df[HUB_COL_SO_GD])
-    df = df[so_gd.str.contains('S', na=False)].copy()
-
     if df.empty:
         empty_dicts = {k: {} for k in ('stc_to_trace', 'trace_trangthai', 'trace_sotien')}
         return df, empty_dicts
@@ -66,9 +62,9 @@ def process_hub(hub_df: pd.DataFrame, eicp_maps: dict, ngay_int: int) -> tuple[p
     ngay_gio = _safe_str(df[HUB_COL_NGAY_GIO])
     df['Ngày'] = pd.to_datetime(ngay_gio, dayfirst=True, errors='coerce').dt.day.astype(float)
 
-    # ── Flag "Chờ đi kênh": ngày > ngày đối chiếu + 1 ──
+    # ── Flag "Chờ đi kênh": ngày > ngày đối chiếu (giao dịch xử lý sau ngày đối chiếu) ──
     ngay_dc_day = ngay_int % 100  # DD
-    after_mask = df['Ngày'].fillna(0) > ngay_dc_day + 1
+    after_mask = df['Ngày'].fillna(0) > ngay_dc_day
     df.loc[after_mask, HUB_COL_TRANG_THAI] = 'Chờ đi kênh'
 
     df['ngay'] = ngay_int

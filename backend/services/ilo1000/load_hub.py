@@ -4,12 +4,12 @@ from pathlib import Path
 
 import pandas as pd
 
-from .config import HUB_COLS_KEEP, HUB_COL_RENAME
+from .config import HUB_COLS_KEEP, HUB_COL_RENAME, HUB_COL_SO_GD
 
 
-def load_hub(path: Path) -> pd.DataFrame:
+def _load_one(path: Path) -> pd.DataFrame:
     """
-    Đọc pHub XLSX.
+    Đọc 1 file pHub XLSX.
     - Row 0: title ("DANH SÁCH GIAO DỊCH CHUYỂN TIỀN ĐI") → bỏ qua
     - Row 1: header thực sự
     - Row 2+: dữ liệu
@@ -30,3 +30,18 @@ def load_hub(path: Path) -> pd.DataFrame:
         result[col] = df[col].values if col in df.columns else pd.NA
 
     return result.copy()
+
+
+def load_hub(paths: list[Path] | Path) -> pd.DataFrame:
+    """
+    Đọc 1 hoặc nhiều file pHub XLSX cùng ngày và ghép lại (có thể export theo nhiều đợt/batch).
+    Deduplicate theo Số giao dịch — phòng trường hợp cùng 1 giao dịch xuất hiện ở nhiều file.
+    """
+    if isinstance(paths, (str, Path)):
+        paths = [paths]
+    frames = [_load_one(p) for p in paths]
+    if not frames:
+        return pd.DataFrame(columns=HUB_COLS_KEEP)
+    df = pd.concat(frames, ignore_index=True)
+    df = df.drop_duplicates(subset=[HUB_COL_SO_GD], keep='first')
+    return df.reset_index(drop=True)
