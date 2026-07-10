@@ -503,6 +503,46 @@ def list_leaves(
     return [_leave_to_out(r["id"], db) for r in rows]
 
 
+@router.get("/today")
+def leaves_today(
+    db: sqlite3.Connection = Depends(get_db),
+    _: dict = Depends(get_current_staff),
+):
+    """Thống kê nghỉ phép hôm nay: tổng + phân theo phòng."""
+    today = _vn_now().date().isoformat()
+    rows = db.execute(
+        """SELECT lr.id, lr.spread_dates, lr.start_date, lr.end_date,
+                  u.full_name, d.name AS dept_name
+           FROM leave_records lr
+           JOIN user_tttt u ON lr.staff_id = u.id
+           LEFT JOIN departments d ON u.department_id = d.id
+           WHERE lr.status = 'approved'
+             AND lr.start_date <= ? AND lr.end_date >= ?""",
+        (today, today),
+    ).fetchall()
+
+    result = []
+    for r in rows:
+        if r["spread_dates"]:
+            if today not in json.loads(r["spread_dates"]):
+                continue
+        result.append({
+            "staff_name": r["full_name"] or "",
+            "dept_name":  r["dept_name"] or "—",
+        })
+
+    by_dept: dict = {}
+    for item in result:
+        d = item["dept_name"]
+        by_dept[d] = by_dept.get(d, 0) + 1
+
+    return {
+        "total":   len(result),
+        "by_dept": [{"dept_name": d, "count": c}
+                    for d, c in sorted(by_dept.items(), key=lambda x: -x[1])],
+    }
+
+
 @router.get("/calendar")
 def leave_calendar(
     year: int,

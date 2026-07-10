@@ -4061,6 +4061,8 @@ async def leaves_page():
 
 
                     _today_iso_d = _dt_mod.date.today().isoformat()
+                    _drs_val = [""]   # ISO start date cho range thai_san/bao_hiem
+                    _dre_val = [""]   # ISO end date cho range
 
 
 
@@ -4236,9 +4238,38 @@ async def leaves_page():
 
                         d_staff  = ui.select(direct_staff_opts, label="Nhân viên").classes("w-full")
 
-                        d_dates  = ui.date(value=[]).props(f"multiple mask='YYYY-MM-DD' first-day-of-week='1' {_VI_LOCALE}").classes("w-full mt-2")
+                        d_dates_wrap = ui.column().classes("w-full mt-2 gap-0")
+                        with d_dates_wrap:
+                            d_dates = ui.date(value=[]).props(f"multiple mask='YYYY-MM-DD' first-day-of-week='1' {_VI_LOCALE}").classes("w-full")
+                            ui.label("Click chọn từng ngày → Click lại để bỏ chọn").classes("text-xs text-orange-500 mt-0.5")
 
-                        ui.label("Click chọn từng ngày → Click lại để bỏ chọn").classes("text-xs text-orange-500 mt-0.5")
+                        d_range_wrap = ui.column().classes("w-full mt-2 gap-2")
+                        d_range_wrap.set_visibility(False)
+                        with d_range_wrap:
+                            d_range_start = ui.input("Từ ngày (DD/MM/YYYY)").classes("w-full")
+                            d_range_end   = ui.input("Đến ngày (DD/MM/YYYY)").classes("w-full")
+                            ui.label("Nhập ngày theo định dạng DD/MM/YYYY").classes("text-xs text-gray-400")
+
+                        def _parse_drs():
+                            txt = d_range_start.value.strip()
+                            if not txt: _drs_val[0] = ""; return
+                            try:
+                                p = txt.replace("-", "/").split("/")
+                                d_,mo,yr = (int(p[0]),int(p[1]),int(p[2])) if len(p[2])==4 else (int(p[2]),int(p[1]),int(p[0]))
+                                _drs_val[0] = f"{yr:04d}-{mo:02d}-{d_:02d}"
+                            except Exception: _drs_val[0] = ""
+
+                        def _parse_dre():
+                            txt = d_range_end.value.strip()
+                            if not txt: _dre_val[0] = ""; return
+                            try:
+                                p = txt.replace("-", "/").split("/")
+                                d_,mo,yr = (int(p[0]),int(p[1]),int(p[2])) if len(p[2])==4 else (int(p[2]),int(p[1]),int(p[0]))
+                                _dre_val[0] = f"{yr:04d}-{mo:02d}-{d_:02d}"
+                            except Exception: _dre_val[0] = ""
+
+                        d_range_start.on("blur", _parse_drs)
+                        d_range_end.on("blur", _parse_dre)
 
                         d_type   = ui.select({k: v for k, v in _LEAVE_TYPE.items()}, label="Loại nghỉ", value="annual").classes("w-full mt-2")
 
@@ -4246,7 +4277,11 @@ async def leaves_page():
                         d_reason.set_visibility(False)
 
                         def _on_type_change(e):
-                            d_reason.set_visibility(e.value == "other")
+                            lt = e.value
+                            is_rng = lt in ("thai_san", "bao_hiem")
+                            d_dates_wrap.set_visibility(not is_rng)
+                            d_range_wrap.set_visibility(is_rng)
+                            d_reason.set_visibility(lt == "other")
 
                         d_type.on_value_change(_on_type_change)
 
@@ -4255,56 +4290,49 @@ async def leaves_page():
                         async def do_direct():
 
                             if not d_staff.value:
-
                                 ui.notify("Vui lòng chọn nhân viên", type="warning"); return
 
-                            raw = d_dates.value
-
-                            if not raw:
-
-                                ui.notify("Vui lòng chọn ít nhất 1 ngày", type="warning"); return
-
-                            dates = sorted(set(raw if isinstance(raw, list) else [raw]))
-
-                            dates = [d[:10] for d in dates if d]
-
-                            if not dates:
-
-                                ui.notify("Vui lòng chọn ít nhất 1 ngày", type="warning"); return
-
-
-
+                            lt = d_type.value
+                            is_rng = lt in ("thai_san", "bao_hiem")
                             staff_name = direct_staff_opts.get(d_staff.value, "nhân viên")
 
-                            body = {
+                            if is_rng:
+                                _parse_drs(); _parse_dre()
+                                start_val, end_val = _drs_val[0], _dre_val[0]
+                                if not start_val or not end_val:
+                                    ui.notify("Vui lòng nhập ngày bắt đầu và ngày kết thúc (DD/MM/YYYY)", type="warning"); return
+                                if end_val < start_val:
+                                    ui.notify("Ngày kết thúc phải sau ngày bắt đầu", type="warning"); return
+                                body = {"staff_id": d_staff.value, "start_date": start_val, "end_date": end_val,
+                                        "leave_type": lt, "reason": d_reason.value or None}
+                                confirm_lbl = f"Khai báo {_LEAVE_TYPE.get(lt, lt)} cho {staff_name} (từ {start_val} đến {end_val}). Đơn sẽ được duyệt ngay."
+                            else:
+                                raw = d_dates.value
+                                if not raw:
+                                    ui.notify("Vui lòng chọn ít nhất 1 ngày", type="warning"); return
+                                dates = sorted(set(raw if isinstance(raw, list) else [raw]))
+                                dates = [d[:10] for d in dates if d]
+                                if not dates:
+                                    ui.notify("Vui lòng chọn ít nhất 1 ngày", type="warning"); return
+                                if lt == "other" and not (d_reason.value or "").strip():
+                                    ui.notify("Vui lòng nhập lý do khi chọn loại Khác", type="warning"); return
+                                body = {"staff_id": d_staff.value, "start_date": dates[0], "end_date": dates[-1],
+                                        "spread_dates": dates, "leave_type": lt, "reason": d_reason.value or None}
+                                confirm_lbl = f"Khai báo nghỉ cho {staff_name} ({len(dates)} ngày). Đơn sẽ được duyệt ngay."
 
-                                "staff_id": d_staff.value,
-
-                                "start_date": dates[0], "end_date": dates[-1],
-
-                                "spread_dates": dates,
-
-                                "leave_type": d_type.value,
-
-                                "reason": d_reason.value or None,
-
-                            }
-
-
-
-                            # Inline dialog → không d→ng shared _ask_confirm
+                            # Inline dialog → không dùng shared _ask_confirm
 
                             with ui.dialog() as _dlg, ui.card().classes("p-6 w-96"):
 
                                 ui.label("Xác nhận khai báo hộ").classes("text-lg font-bold text-red-900 mb-1")
 
-                                ui.label(f"Khai báo nghỉ cho {staff_name} ({len(dates)} ngày). Đơn sẽ được duyệt ngay.").classes("text-sm text-gray-600 mb-4")
+                                ui.label(confirm_lbl).classes("text-sm text-gray-600 mb-4")
 
                                 with ui.row().classes("gap-3 justify-end w-full"):
 
                                     ui.button("Hủy", on_click=_dlg.close).props("flat").classes("text-gray-500")
 
-                                    async def _on_confirm(_b=body, _d=_dlg):
+                                    async def _on_confirm(_b=body, _d=_dlg, _rng=is_rng):
 
                                         _d.close()
 
@@ -4323,10 +4351,15 @@ async def leaves_page():
                                         ui.notify("✅ Khai báo hộ thành công!", type="positive", timeout=4000)
 
                                         d_staff.value = None
-
-                                        d_dates.value = None
+                                        if _rng:
+                                            _drs_val[0] = ""; _dre_val[0] = ""
+                                            d_range_start.value = ""; d_range_end.value = ""
+                                        else:
+                                            d_dates.value = None
 
                                         d_type.value = "annual"
+                                        d_dates_wrap.set_visibility(True)
+                                        d_range_wrap.set_visibility(False)
 
                                         d_reason.value = ""
 
