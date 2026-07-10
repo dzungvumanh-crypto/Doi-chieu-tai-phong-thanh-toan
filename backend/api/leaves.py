@@ -87,14 +87,21 @@ def _calc_used_days(staff_id: int, year: int, db: sqlite3.Connection,
         (staff_id, str(year)),
     ).fetchall()
     total = 0.0
+    _holidays: frozenset | None = None  # lazy load khi cần
     for row in rows:
         if row["spread_dates"]:
             total += len(json.loads(row["spread_dates"]))
         else:
+            if _holidays is None:
+                hrows = db.execute(
+                    "SELECT date FROM public_holidays WHERE date >= ? AND date <= ?",
+                    (f"{year}-01-01", f"{year}-12-31"),
+                ).fetchall()
+                _holidays = frozenset(date.fromisoformat(r["date"]) for r in hrows)
             d = date.fromisoformat(row["start_date"])
             e = date.fromisoformat(row["end_date"])
             while d <= e:
-                if d.weekday() < 5:
+                if d.weekday() < 5 and d not in _holidays:
                     total += 1
                 d += timedelta(days=1)
     return total
@@ -161,10 +168,8 @@ def _apply_status_transition(
         rec2 = db.execute("SELECT leave_type FROM leave_records WHERE id=?", (leave_id,)).fetchone()
         leave_type = rec2["leave_type"] if rec2 else None
 
-    if leave_type is None:
-        return
-
-    if leave_type not in _NO_QUOTA_TYPES:
+    # Chỉ điều chỉnh used_leave_days khi leave_type xác định và không miễn quota
+    if leave_type is not None and leave_type not in _NO_QUOTA_TYPES:
         if old_status != LeaveStatus.APPROVED and new_status == LeaveStatus.APPROVED:
             db.execute(
                 "UPDATE user_tttt SET used_leave_days = COALESCE(used_leave_days, 0) + ? WHERE id = ?",
@@ -366,20 +371,8 @@ def create_leave(
         ref_year  = eff_start.year
         carry_eff = compute_carry_over(current["id"], ref_year, db,
                                        effective=True, ref_date=eff_start)
-        quota     = (current.get("annual_leave_days") or 12)
-        used_r2   = db.execute(
-            """SELECT COALESCE(SUM(
-                   CASE WHEN spread_dates IS NOT NULL AND spread_dates != ''
-                        THEN json_array_length(spread_dates)
-                        ELSE (julianday(end_date) - julianday(start_date) + 1)
-                   END), 0)
-               FROM leave_records
-               WHERE staff_id=? AND status IN ('approved','pending_ksv','pending_tong_hop','pending_gd')
-                 AND strftime('%Y', start_date)=?
-                 AND leave_type NOT IN ('thai_san','bao_hiem')""",
-            (current["id"], str(ref_year))
-        ).fetchone()
-        used_total = float(used_r2[0]) if used_r2 else 0.0
+        quota      = (current.get("annual_leave_days") or 12)
+        used_total = _calc_used_days(current["id"], ref_year, db, include_pending=True)
         remaining  = quota + carry_eff - used_total
         if leave_days > remaining:
             raise HTTPException(400, f"Vượt quá số ngày phép còn lại ({remaining:.0f} ngày)")
@@ -1763,20 +1756,8 @@ def create_direct_leave(
                         (body.staff_id, eff_start.year)).fetchone() or {}).get("quota_days", 0)
             or compute_annual_leave(staff["join_industry_date"], eff_start.year)
         )
-        carry = compute_carry_over(body.staff_id, eff_start.year, db, effective=True, ref_date=eff_start)
-        used_r = db.execute(
-            """SELECT COALESCE(SUM(
-                   CASE WHEN spread_dates IS NOT NULL AND spread_dates != ''
-                        THEN json_array_length(spread_dates)
-                        ELSE (julianday(end_date) - julianday(start_date) + 1)
-                   END), 0)
-               FROM leave_records
-               WHERE staff_id=? AND status IN ('approved','pending_ksv','pending_tong_hop','pending_gd')
-                 AND strftime('%Y', start_date)=?
-                 AND leave_type NOT IN ('thai_san','bao_hiem')""",
-            (body.staff_id, str(eff_start.year))
-        ).fetchone()
-        used = float(used_r[0]) if used_r else 0.0
+        carry     = compute_carry_over(body.staff_id, eff_start.year, db, effective=True, ref_date=eff_start)
+        used      = _calc_used_days(body.staff_id, eff_start.year, db, include_pending=True)
         remaining = quota + carry - used
         if leave_days > remaining:
             raise HTTPException(400,
