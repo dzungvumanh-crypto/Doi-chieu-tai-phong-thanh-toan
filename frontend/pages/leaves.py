@@ -3523,7 +3523,7 @@ async def leaves_page():
 
                         ).classes("w-28")
 
-                        ui.button("+ Thôm ngày lễ", icon="add",
+                        ui.button("+ Thêm ngày lễ", icon="add",
 
                                   on_click=lambda: add_holiday_dialog.open()).classes("bg-red-700 text-white")
 
@@ -3535,7 +3535,7 @@ async def leaves_page():
 
                     with ui.dialog() as add_holiday_dialog, ui.card().classes("p-6 w-80"):
 
-                        ui.label("Thôm ngày lễ").classes("text-lg font-bold text-red-900 mb-4")
+                        ui.label("Thêm ngày lễ").classes("text-lg font-bold text-red-900 mb-4")
 
                         h_date_in = ui.date(value="").props(f"label='Ngày lễ' mask='YYYY-MM-DD' first-day-of-week='1' {_VI_LOCALE}").classes("w-full")
 
