@@ -1570,7 +1570,8 @@ def stats_annual(
                         ELSE (julianday(lr.end_date) - julianday(lr.start_date) + 1)
                    END), 0)
                FROM leave_records lr
-               WHERE lr.staff_id=? AND lr.leave_type='annual' AND lr.status='approved'
+               WHERE lr.staff_id=? AND lr.status='approved'
+                 AND lr.leave_type NOT IN ('thai_san','bao_hiem')
                  AND strftime('%Y', lr.start_date)=?""",
             (s["id"], str(year)),
         ).fetchone()
