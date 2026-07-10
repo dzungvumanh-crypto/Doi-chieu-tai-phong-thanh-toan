@@ -66,39 +66,38 @@ _HIGH_ROLES = frozenset(("giam_doc", "pho_giam_doc", "admin", "truong_phong"))
 # ─── Helpers ────────────────────────────────────────────────────────────────
 
 def _calc_used_days(staff_id: int, year: int, db: sqlite3.Connection,
-                    exclude_id: int | None = None) -> float:
+                    exclude_id: int | None = None,
+                    include_pending: bool = False) -> float:
     """Số ngày đã dùng trong năm — nguồn sự thật duy nhất.
 
-    Đếm tất cả loại TRỪ thai_san/bao_hiem. Chỉ đếm status=approved.
+    Đếm tất cả loại TRỪ thai_san/bao_hiem.
+    include_pending=True: cộng thêm đơn đang chờ duyệt (dùng khi kiểm tra quota lúc nộp lại).
     exclude_id: bỏ qua đơn đang xem (dùng khi in phiếu).
     """
-    if exclude_id is not None:
-        row = db.execute(
-            """SELECT COALESCE(SUM(
-                   CASE WHEN spread_dates IS NOT NULL AND spread_dates != ''
-                        THEN json_array_length(spread_dates)
-                        ELSE (julianday(end_date) - julianday(start_date) + 1)
-                   END), 0)
-               FROM leave_records
-               WHERE staff_id=? AND id!=? AND status='approved'
-                 AND leave_type NOT IN ('thai_san','bao_hiem')
-                 AND strftime('%Y', start_date)=?""",
-            (staff_id, exclude_id, str(year)),
-        ).fetchone()
+    if include_pending:
+        statuses = ("'approved','pending_ksv','pending_tong_hop','pending_gd'")
     else:
-        row = db.execute(
-            """SELECT COALESCE(SUM(
-                   CASE WHEN spread_dates IS NOT NULL AND spread_dates != ''
-                        THEN json_array_length(spread_dates)
-                        ELSE (julianday(end_date) - julianday(start_date) + 1)
-                   END), 0)
-               FROM leave_records
-               WHERE staff_id=? AND status='approved'
-                 AND leave_type NOT IN ('thai_san','bao_hiem')
-                 AND strftime('%Y', start_date)=?""",
-            (staff_id, str(year)),
-        ).fetchone()
-    return float(row[0]) if row else 0.0
+        statuses = "'approved'"
+    excl = f"AND id != {exclude_id}" if exclude_id is not None else ""
+    rows = db.execute(
+        f"""SELECT spread_dates, start_date, end_date FROM leave_records
+            WHERE staff_id=? {excl} AND status IN ({statuses})
+              AND leave_type NOT IN ('thai_san','bao_hiem')
+              AND strftime('%Y', start_date)=?""",
+        (staff_id, str(year)),
+    ).fetchall()
+    total = 0.0
+    for row in rows:
+        if row["spread_dates"]:
+            total += len(json.loads(row["spread_dates"]))
+        else:
+            d = date.fromisoformat(row["start_date"])
+            e = date.fromisoformat(row["end_date"])
+            while d <= e:
+                if d.weekday() < 5:
+                    total += 1
+                d += timedelta(days=1)
+    return total
 
 
 def _load_holidays(db: sqlite3.Connection, start: date, end: date) -> FrozenSet[date]:
@@ -161,6 +160,9 @@ def _apply_status_transition(
     else:
         rec2 = db.execute("SELECT leave_type FROM leave_records WHERE id=?", (leave_id,)).fetchone()
         leave_type = rec2["leave_type"] if rec2 else None
+
+    if leave_type is None:
+        return
 
     if leave_type not in _NO_QUOTA_TYPES:
         if old_status != LeaveStatus.APPROVED and new_status == LeaveStatus.APPROVED:
@@ -731,8 +733,8 @@ def delete_leave(
         raise HTTPException(403, "Chỉ có thể xóa đơn khai báo hộ")
     if leave["direct_by"] != current["id"] and current["role"] != "admin":
         raise HTTPException(403, "Không có quyền xóa đơn này")
-    # Hoàn trả used_leave_days nếu đơn đã approved
-    if leave["status"] == "approved":
+    # Hoàn trả used_leave_days nếu đơn đã approved và không phải loại miễn quota
+    if leave["status"] == "approved" and leave["leave_type"] not in _NO_QUOTA_TYPES:
         if leave["spread_dates"]:
             days = len(json.loads(leave["spread_dates"]))
         else:
@@ -908,7 +910,7 @@ def resubmit_leave(
         carry_eff = compute_carry_over(current["id"], ref_year, db,
                                        effective=True, ref_date=eff_start)
         quota     = (current.get("annual_leave_days") or 12)
-        used_cur  = _calc_used_days(current["id"], ref_year, db)
+        used_cur  = _calc_used_days(current["id"], ref_year, db, include_pending=True)
         remaining = quota + carry_eff - used_cur
         if leave_days > remaining:
             raise HTTPException(400, f"Vượt quá số ngày phép còn lại ({remaining:.0f} ngày)")
