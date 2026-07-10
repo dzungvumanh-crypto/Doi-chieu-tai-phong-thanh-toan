@@ -1093,7 +1093,8 @@ def download_leave_form(
     _prev_rows = db.execute(
         """SELECT start_date, end_date, spread_dates FROM leave_records
            WHERE staff_id=? AND status='approved' AND id!=?
-             AND strftime('%Y', start_date)=?""",
+             AND strftime('%Y', start_date)=?
+             AND leave_type NOT IN ('thai_san','bao_hiem')""",
         (r["staff_id"], leave_id, str(start.year)),
     ).fetchall()
     _year_start = date(start.year, 1, 1)
@@ -1125,7 +1126,8 @@ def download_leave_form(
         _prev_year_rows = db.execute(
             """SELECT start_date, end_date, spread_dates FROM leave_records
                WHERE staff_id=? AND status='approved'
-                 AND strftime('%Y', start_date)=?""",
+                 AND strftime('%Y', start_date)=?
+                 AND leave_type NOT IN ('thai_san','bao_hiem')""",
             (r["staff_id"], str(_prev_year)),
         ).fetchall()
         _h_prev = _load_holidays(db, date(_prev_year, 1, 1), date(_prev_year, 12, 31))
