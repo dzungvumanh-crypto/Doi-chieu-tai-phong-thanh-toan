@@ -65,6 +65,42 @@ _HIGH_ROLES = frozenset(("giam_doc", "pho_giam_doc", "admin", "truong_phong"))
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
 
+def _calc_used_days(staff_id: int, year: int, db: sqlite3.Connection,
+                    exclude_id: int | None = None) -> float:
+    """Số ngày đã dùng trong năm — nguồn sự thật duy nhất.
+
+    Đếm tất cả loại TRỪ thai_san/bao_hiem. Chỉ đếm status=approved.
+    exclude_id: bỏ qua đơn đang xem (dùng khi in phiếu).
+    """
+    if exclude_id is not None:
+        row = db.execute(
+            """SELECT COALESCE(SUM(
+                   CASE WHEN spread_dates IS NOT NULL AND spread_dates != ''
+                        THEN json_array_length(spread_dates)
+                        ELSE (julianday(end_date) - julianday(start_date) + 1)
+                   END), 0)
+               FROM leave_records
+               WHERE staff_id=? AND id!=? AND status='approved'
+                 AND leave_type NOT IN ('thai_san','bao_hiem')
+                 AND strftime('%Y', start_date)=?""",
+            (staff_id, exclude_id, str(year)),
+        ).fetchone()
+    else:
+        row = db.execute(
+            """SELECT COALESCE(SUM(
+                   CASE WHEN spread_dates IS NOT NULL AND spread_dates != ''
+                        THEN json_array_length(spread_dates)
+                        ELSE (julianday(end_date) - julianday(start_date) + 1)
+                   END), 0)
+               FROM leave_records
+               WHERE staff_id=? AND status='approved'
+                 AND leave_type NOT IN ('thai_san','bao_hiem')
+                 AND strftime('%Y', start_date)=?""",
+            (staff_id, str(year)),
+        ).fetchone()
+    return float(row[0]) if row else 0.0
+
+
 def _load_holidays(db: sqlite3.Connection, start: date, end: date) -> FrozenSet[date]:
     rows = db.execute(
         "SELECT date FROM public_holidays WHERE date >= ? AND date <= ?",
@@ -867,10 +903,15 @@ def resubmit_leave(
         leave_days  = calculate_leave_days(eff_start, eff_end, _h)
         spread_json = None
 
-    if body.leave_type == "annual":
-        remaining = (current.get("annual_leave_days") or 12) - (current.get("used_leave_days") or 0)
+    if body.leave_type not in _NO_QUOTA_TYPES and body.leave_type != "bat_buoc":
+        ref_year  = eff_start.year
+        carry_eff = compute_carry_over(current["id"], ref_year, db,
+                                       effective=True, ref_date=eff_start)
+        quota     = (current.get("annual_leave_days") or 12)
+        used_cur  = _calc_used_days(current["id"], ref_year, db)
+        remaining = quota + carry_eff - used_cur
         if leave_days > remaining:
-            raise HTTPException(400, f"Vượt quá số ngày phép còn lại ({remaining} ngày)")
+            raise HTTPException(400, f"Vượt quá số ngày phép còn lại ({remaining:.0f} ngày)")
 
     # Kiểm tra trùng ngày theo spread_dates thực tế
     if body.spread_dates:
@@ -1089,25 +1130,8 @@ def download_leave_form(
     carry_original = compute_carry_over(r["staff_id"], start.year, db, effective=False)
     # Carryover hiệu lực theo ngày bắt đầu của đơn (Q1 → có carryover, sau Q1 → 0)
     carry_eff_doc  = compute_carry_over(r["staff_id"], start.year, db, effective=True, ref_date=start)
-    # Số ngày đã nghỉ TRONG CÙNG NĂM (trừ đơn hiện tại) — tính từ leave_records theo năm
-    _prev_rows = db.execute(
-        """SELECT start_date, end_date, spread_dates FROM leave_records
-           WHERE staff_id=? AND status='approved' AND id!=?
-             AND strftime('%Y', start_date)=?
-             AND leave_type NOT IN ('thai_san','bao_hiem')""",
-        (r["staff_id"], leave_id, str(start.year)),
-    ).fetchall()
-    _year_start = date(start.year, 1, 1)
-    _year_end   = date(start.year, 12, 31)
-    _h_year     = _load_holidays(db, _year_start, _year_end)
-    da_nghi = 0.0
-    for _pr in _prev_rows:
-        if _pr["spread_dates"]:
-            da_nghi += len(json.loads(_pr["spread_dates"]))
-        else:
-            _s = date.fromisoformat(_pr["start_date"])
-            _e = date.fromisoformat(_pr["end_date"])
-            da_nghi += calculate_leave_days(_s, _e, _h_year)
+    # Số ngày đã nghỉ TRONG CÙNG NĂM (trừ đơn hiện tại)
+    da_nghi = _calc_used_days(r["staff_id"], start.year, db, exclude_id=leave_id)
     con_lai = max(0.0, tong_phep + carry_eff_doc - da_nghi - leave_days)
 
     # ── Biến 2-năm cho trường hợp có ngày dư ──
@@ -1123,22 +1147,7 @@ def download_leave_form(
         tong_so_phep_prev = float(_q_prev["quota_days"]) if _q_prev else float(
             compute_annual_leave(r["join_industry_date"], _prev_year) if r["join_industry_date"] else 12
         )
-        _prev_year_rows = db.execute(
-            """SELECT start_date, end_date, spread_dates FROM leave_records
-               WHERE staff_id=? AND status='approved'
-                 AND strftime('%Y', start_date)=?
-                 AND leave_type NOT IN ('thai_san','bao_hiem')""",
-            (r["staff_id"], str(_prev_year)),
-        ).fetchall()
-        _h_prev = _load_holidays(db, date(_prev_year, 1, 1), date(_prev_year, 12, 31))
-        da_nghi_prev = 0.0
-        for _ppr in _prev_year_rows:
-            if _ppr["spread_dates"]:
-                da_nghi_prev += len(json.loads(_ppr["spread_dates"]))
-            else:
-                _s2 = date.fromisoformat(_ppr["start_date"])
-                _e2 = date.fromisoformat(_ppr["end_date"])
-                da_nghi_prev += calculate_leave_days(_s2, _e2, _h_prev)
+        da_nghi_prev = _calc_used_days(r["staff_id"], _prev_year, db)
         con_lai_prev = max(0.0, tong_so_phep_prev - da_nghi_prev - carryover_used)
         con_lai_cur  = max(0.0, tong_phep - da_nghi - new_year_days)
     else:
