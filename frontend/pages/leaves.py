@@ -2395,7 +2395,7 @@ async def leaves_page():
             # Tách pending thành 2 danh sách: duyệt phòng (KSV) và xác nhận TT (TH)
             _pending_ksv_list = [lv for lv in pending_leaves if lv.get("status") == "pending_ksv"]
             _pending_th_list  = [lv for lv in pending_leaves if lv.get("status") == "pending_tong_hop"]
-            _is_dual_role     = balance_info.get("is_tong_hop", False) and user_role in ("truong_phong", "pho_phong", "hau_kiem_vien")
+            _is_dual_role     = api.has_feature("leaves.forward_th") and user_role in ("truong_phong", "pho_phong", "hau_kiem_vien")
 
             if _can_approve:
                 if _is_dual_role:
