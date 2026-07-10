@@ -3967,7 +3967,7 @@ async def leaves_page():
 
                                                         else:
 
-                                                            ui.notify(f"Để cập nhật {_sname}", type="positive", timeout=3000)
+                                                            ui.notify(f"Đã cập nhật {_sname}", type="positive", timeout=3000)
 
                                                             await _reload_quota()
 
@@ -4192,7 +4192,7 @@ async def leaves_page():
 
                                                             _dg.close()
 
-                                                            ui.notify(f"Đã Xóa thất bại: {ex}", type="negative", timeout=5000)
+                                                            ui.notify(f"Xóa thất bại: {ex}", type="negative", timeout=5000)
 
                                                             return
 
@@ -4344,7 +4344,7 @@ async def leaves_page():
 
                                             if not _handle_api_error(e):
 
-                                                ui.notify(f"Đã Khai báo thất bại: {e}", type="negative", timeout=5000)
+                                                ui.notify(f"Khai báo thất bại: {e}", type="negative", timeout=5000)
 
                                             return
 
