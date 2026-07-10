@@ -1933,7 +1933,7 @@ async def leaves_page():
 
             create_btn = ui.button("Tạo đơn", icon="add", on_click=_c_open).classes("bg-red-700 text-white text-base")
 
-            create_btn.set_visibility(user_role != "admin")
+            create_btn.set_visibility(api.has_feature("leaves.create"))
 
             ab = ui.button("Phê duyệt", icon="check_circle",
 
