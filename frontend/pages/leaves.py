@@ -4243,13 +4243,71 @@ async def leaves_page():
                             d_dates = ui.date(value=[]).props(f"multiple mask='YYYY-MM-DD' first-day-of-week='1' {_VI_LOCALE}").classes("w-full")
                             ui.label("Click chọn từng ngày → Click lại để bỏ chọn").classes("text-xs text-orange-500 mt-0.5")
 
+                        import calendar as _cal_d
+                        _d_today_ref = _dt_mod.date.today()
+                        _d_rs_cur = [_d_today_ref.year, _d_today_ref.month]
+                        _d_re_cur = [_d_today_ref.year, _d_today_ref.month]
+
                         d_range_wrap = ui.column().classes("w-full mt-2 gap-2")
                         d_range_wrap.set_visibility(False)
                         with d_range_wrap:
-                            d_range_start = ui.input("Từ ngày (DD/MM/YYYY)").classes("w-full")
-                            d_range_end   = ui.input("Đến ngày (DD/MM/YYYY)").classes("w-full")
-                            ui.label("Nhập ngày theo định dạng DD/MM/YYYY").classes("text-xs text-gray-400")
+                            ui.label("Chọn khoảng thời gian nghỉ").classes("text-xs text-blue-600 font-medium -mb-1")
+                            with ui.column().classes("w-full gap-0"):
+                                with ui.row().classes("w-full items-center gap-1"):
+                                    d_range_start = ui.input("Ngày bắt đầu", placeholder="DD/MM/YYYY").classes("flex-1")
+                                    _d_rs_btn = ui.button(icon="calendar_month").props("flat round dense size=sm color=grey-7")
+                                _d_rs_cal = ui.column().classes("w-full border border-gray-200 rounded p-2 bg-white mt-1")
+                                _d_rs_cal.set_visibility(False)
+                            with ui.column().classes("w-full gap-0 mt-1"):
+                                with ui.row().classes("w-full items-center gap-1"):
+                                    d_range_end = ui.input("Ngày kết thúc", placeholder="DD/MM/YYYY").classes("flex-1")
+                                    _d_re_btn = ui.button(icon="calendar_month").props("flat round dense size=sm color=grey-7")
+                                _d_re_cal = ui.column().classes("w-full border border-gray-200 rounded p-2 bg-white mt-1")
+                                _d_re_cal.set_visibility(False)
 
+                        def _d_rs_render():
+                            _d_rs_cal.clear()
+                            y, m = _d_rs_cur
+                            with _d_rs_cal:
+                                with ui.row().classes("w-full items-center justify-between mb-1"):
+                                    ui.button(icon="chevron_left",  on_click=_d_rs_prev).props("flat round dense size=sm")
+                                    ui.label(f"Tháng {m:02d}/{y}").classes("text-sm font-semibold text-gray-700")
+                                    ui.button(icon="chevron_right", on_click=_d_rs_next).props("flat round dense size=sm")
+                                with ui.row().classes("w-full gap-0"):
+                                    for h in ["T2","T3","T4","T5","T6","T7","CN"]:
+                                        ui.label(h).classes("text-xs text-center text-gray-400 w-[14.28%] py-0.5")
+                                first_wd = _dt_mod.date(y, m, 1).weekday()
+                                last_day = _cal_d.monthrange(y, m)[1]
+                                today_d  = _dt_mod.date.today()
+                                with ui.row().classes("w-full gap-0 flex-wrap"):
+                                    for _ in range(first_wd):
+                                        ui.label("").classes("w-[14.28%] h-7")
+                                    for day in range(1, last_day + 1):
+                                        ds = f"{y:04d}-{m:02d}-{day:02d}"; dobj = _dt_mod.date(y, m, day)
+                                        sel = (ds == _drs_val[0]); is_td = (dobj == today_d); wknd = dobj.weekday() >= 5
+                                        def _pick_d_rs(ds=ds):
+                                            def _do():
+                                                _drs_val[0] = ds
+                                                d_range_start.value = f"{ds[8:10]}/{ds[5:7]}/{ds[0:4]}"
+                                                _d_rs_cal.set_visibility(False); _d_rs_render()
+                                            return _do
+                                        with ui.element("div").classes("w-[14.28%] h-7 flex items-center justify-center"):
+                                            if sel:
+                                                ui.label(str(day)).classes("w-6 h-6 rounded-full bg-red-700 text-white text-xs font-bold flex items-center justify-center cursor-pointer").on("click", _pick_d_rs())
+                                            elif is_td:
+                                                ui.label(str(day)).classes("w-6 h-6 rounded-full ring-2 ring-red-500 text-red-600 text-xs font-bold flex items-center justify-center cursor-pointer hover:bg-red-50").on("click", _pick_d_rs())
+                                            elif wknd:
+                                                ui.label(str(day)).classes("w-6 h-6 rounded flex items-center justify-center text-xs text-blue-300 hover:bg-blue-50 cursor-pointer").on("click", _pick_d_rs())
+                                            else:
+                                                ui.label(str(day)).classes("w-6 h-6 rounded flex items-center justify-center text-xs text-gray-600 hover:bg-red-50 hover:text-red-700 cursor-pointer").on("click", _pick_d_rs())
+
+                        def _d_rs_prev():
+                            y, m = _d_rs_cur; _d_rs_cur[0], _d_rs_cur[1] = (y-1, 12) if m == 1 else (y, m-1); _d_rs_render()
+                        def _d_rs_next():
+                            y, m = _d_rs_cur; _d_rs_cur[0], _d_rs_cur[1] = (y+1, 1) if m == 12 else (y, m+1); _d_rs_render()
+                        def _d_rs_toggle():
+                            vis = not _d_rs_cal.visible; _d_rs_cal.set_visibility(vis)
+                            if vis: _d_rs_render()
                         def _parse_drs():
                             txt = d_range_start.value.strip()
                             if not txt: _drs_val[0] = ""; return
@@ -4258,7 +4316,52 @@ async def leaves_page():
                                 d_,mo,yr = (int(p[0]),int(p[1]),int(p[2])) if len(p[2])==4 else (int(p[2]),int(p[1]),int(p[0]))
                                 _drs_val[0] = f"{yr:04d}-{mo:02d}-{d_:02d}"
                             except Exception: _drs_val[0] = ""
+                        _d_rs_btn.on("click", _d_rs_toggle)
+                        d_range_start.on("blur", _parse_drs)
 
+                        def _d_re_render():
+                            _d_re_cal.clear()
+                            y, m = _d_re_cur
+                            with _d_re_cal:
+                                with ui.row().classes("w-full items-center justify-between mb-1"):
+                                    ui.button(icon="chevron_left",  on_click=_d_re_prev).props("flat round dense size=sm")
+                                    ui.label(f"Tháng {m:02d}/{y}").classes("text-sm font-semibold text-gray-700")
+                                    ui.button(icon="chevron_right", on_click=_d_re_next).props("flat round dense size=sm")
+                                with ui.row().classes("w-full gap-0"):
+                                    for h in ["T2","T3","T4","T5","T6","T7","CN"]:
+                                        ui.label(h).classes("text-xs text-center text-gray-400 w-[14.28%] py-0.5")
+                                first_wd = _dt_mod.date(y, m, 1).weekday()
+                                last_day = _cal_d.monthrange(y, m)[1]
+                                today_d  = _dt_mod.date.today()
+                                with ui.row().classes("w-full gap-0 flex-wrap"):
+                                    for _ in range(first_wd):
+                                        ui.label("").classes("w-[14.28%] h-7")
+                                    for day in range(1, last_day + 1):
+                                        ds = f"{y:04d}-{m:02d}-{day:02d}"; dobj = _dt_mod.date(y, m, day)
+                                        sel = (ds == _dre_val[0]); is_td = (dobj == today_d); wknd = dobj.weekday() >= 5
+                                        def _pick_d_re(ds=ds):
+                                            def _do():
+                                                _dre_val[0] = ds
+                                                d_range_end.value = f"{ds[8:10]}/{ds[5:7]}/{ds[0:4]}"
+                                                _d_re_cal.set_visibility(False); _d_re_render()
+                                            return _do
+                                        with ui.element("div").classes("w-[14.28%] h-7 flex items-center justify-center"):
+                                            if sel:
+                                                ui.label(str(day)).classes("w-6 h-6 rounded-full bg-red-700 text-white text-xs font-bold flex items-center justify-center cursor-pointer").on("click", _pick_d_re())
+                                            elif is_td:
+                                                ui.label(str(day)).classes("w-6 h-6 rounded-full ring-2 ring-red-500 text-red-600 text-xs font-bold flex items-center justify-center cursor-pointer hover:bg-red-50").on("click", _pick_d_re())
+                                            elif wknd:
+                                                ui.label(str(day)).classes("w-6 h-6 rounded flex items-center justify-center text-xs text-blue-300 hover:bg-blue-50 cursor-pointer").on("click", _pick_d_re())
+                                            else:
+                                                ui.label(str(day)).classes("w-6 h-6 rounded flex items-center justify-center text-xs text-gray-600 hover:bg-red-50 hover:text-red-700 cursor-pointer").on("click", _pick_d_re())
+
+                        def _d_re_prev():
+                            y, m = _d_re_cur; _d_re_cur[0], _d_re_cur[1] = (y-1, 12) if m == 1 else (y, m-1); _d_re_render()
+                        def _d_re_next():
+                            y, m = _d_re_cur; _d_re_cur[0], _d_re_cur[1] = (y+1, 1) if m == 12 else (y, m+1); _d_re_render()
+                        def _d_re_toggle():
+                            vis = not _d_re_cal.visible; _d_re_cal.set_visibility(vis)
+                            if vis: _d_re_render()
                         def _parse_dre():
                             txt = d_range_end.value.strip()
                             if not txt: _dre_val[0] = ""; return
@@ -4267,8 +4370,7 @@ async def leaves_page():
                                 d_,mo,yr = (int(p[0]),int(p[1]),int(p[2])) if len(p[2])==4 else (int(p[2]),int(p[1]),int(p[0]))
                                 _dre_val[0] = f"{yr:04d}-{mo:02d}-{d_:02d}"
                             except Exception: _dre_val[0] = ""
-
-                        d_range_start.on("blur", _parse_drs)
+                        _d_re_btn.on("click", _d_re_toggle)
                         d_range_end.on("blur", _parse_dre)
 
                         d_type   = ui.select({k: v for k, v in _LEAVE_TYPE.items()}, label="Loại nghỉ", value="annual").classes("w-full mt-2")
