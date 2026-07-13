@@ -179,6 +179,29 @@ async def leaves_page():
                 ui.button("Đã hiểu", on_click=_dp.close).classes("bg-red-700 text-white mt-4 w-full")
         ui.timer(0.5, _show_deleg_popup, once=True)
 
+    # ── Popup thông báo carry-over hết hiệu lực sau Q1 (1 lần/năm/user) ──────
+    async def _check_carryover_notice():
+        try:
+            res = await asyncio.to_thread(api.get, "/api/leaves/carryover-notice")
+        except Exception:
+            return
+        if not isinstance(res, dict) or not res.get("show"):
+            return
+        with ui.dialog(value=True) as _cn_dp, ui.card().classes("p-6 max-w-lg"):
+            ui.label("📌 Thông báo ngày phép chuyển kỳ").classes("text-lg font-bold text-red-900 mb-3")
+            ui.label(
+                "Ngày phép chuyển kỳ (carry-over) từ năm trước đã hết hiệu lực sau ngày 31/03. "
+                "Các ngày chưa sử dụng đã bị thu hồi và không còn được cộng vào hạn mức phép năm nay."
+            ).classes("text-sm text-gray-700 leading-relaxed")
+            async def _ack():
+                try:
+                    await asyncio.to_thread(api.post, "/api/leaves/carryover-notice/ack", {})
+                except Exception:
+                    pass
+                _cn_dp.close()
+            ui.button("Đã hiểu", on_click=_ack).classes("bg-red-700 text-white mt-4 w-full")
+    ui.timer(0.8, _check_carryover_notice, once=True)
+
 
 
     can_all        = (user_role in ("admin", "hau_kiem_vien", "giam_doc", "pho_giam_doc")
@@ -672,7 +695,9 @@ async def leaves_page():
                 if not txt: _rs_val[0] = ""; return
                 try:
                     parts = txt.replace("-", "/").split("/")
-                    d, mo, yr = (int(parts[0]), int(parts[1]), int(parts[2])) if len(parts[2]) == 4 else (int(parts[2]), int(parts[1]), int(parts[0]))
+                    if len(parts) != 3 or len(parts[2]) != 4:
+                        raise ValueError("Định dạng phải là dd/mm/yyyy")
+                    d, mo, yr = int(parts[0]), int(parts[1]), int(parts[2])
                     _dobj(yr, mo, d); _rs_val[0] = f"{yr:04d}-{mo:02d}-{d:02d}"
                 except Exception: _rs_val[0] = ""
             _rs_cal_btn.on("click", _rs_toggle)
@@ -726,7 +751,9 @@ async def leaves_page():
                 if not txt: _re_val[0] = ""; return
                 try:
                     parts = txt.replace("-", "/").split("/")
-                    d, mo, yr = (int(parts[0]), int(parts[1]), int(parts[2])) if len(parts[2]) == 4 else (int(parts[2]), int(parts[1]), int(parts[0]))
+                    if len(parts) != 3 or len(parts[2]) != 4:
+                        raise ValueError("Định dạng phải là dd/mm/yyyy")
+                    d, mo, yr = int(parts[0]), int(parts[1]), int(parts[2])
                     _dobj(yr, mo, d); _re_val[0] = f"{yr:04d}-{mo:02d}-{d:02d}"
                 except Exception: _re_val[0] = ""
             _re_cal_btn.on("click", _re_toggle)
@@ -801,7 +828,7 @@ async def leaves_page():
 
             c_approver = ui.select(approver_opts, label="Người phê duyệt (KSV)").classes("w-full mt-2") if show_approver else None
 
-            c_gd       = ui.select(gd_opts, label="Ban lãnh đạo phê duyệt (GĐ/PGĐ)").classes("w-full mt-2") if gd_opts else None
+            c_gd       = ui.select(gd_opts, label="Ban lãnh đạo phê duyệt (GĐ/PGĐ)").classes("w-full mt-2") if (gd_opts and user_role != "giam_doc") else None
 
 
 
@@ -880,9 +907,12 @@ async def leaves_page():
 
                     create_dialog.close()
 
-                    ui.notify("✅ Gửi đơn nghỉ phép thành công! Đơn đang chờ phê duyệt.",
-
-                              type="positive", timeout=4000)
+                    if user_role == "giam_doc":
+                        ui.notify("✅ Đơn nghỉ phép đã được ghi nhận và tự động duyệt.",
+                                  type="positive", timeout=4000)
+                    else:
+                        ui.notify("✅ Gửi đơn nghỉ phép thành công! Đơn đang chờ phê duyệt.",
+                                  type="positive", timeout=4000)
 
                     ui.timer(2.5, lambda: ui.navigate.to("/leaves"), once=True)
 
@@ -1151,6 +1181,11 @@ async def leaves_page():
 
                 gd_act   = status == "pending_gd" and in_pend and user_role in ("giam_doc", "pho_giam_doc")
 
+                # Đơn của GĐ đã tự động approved — TH chỉ cần "xác nhận đã biết" (thông báo),
+                # không phải điều kiện duyệt.
+                th_ack_act = (status == "approved" and leave.get("staff_role") == "giam_doc"
+                              and not leave.get("tong_hop_approver_id"))
+
 
 
                 with ui.row().classes("w-full bg-red-800 text-white px-5 py-4 items-center gap-2"):
@@ -1311,6 +1346,18 @@ async def leaves_page():
                                 ui.label("✓ Đã xác nhận").classes("text-xs text-green-600 font-semibold mt-1")
                             elif status not in ("pending_ksv", "pending_tong_hop") and _th_name:
                                 ui.label("(Dữ liệu không ghi ngày xác nhận)").classes("text-xs text-gray-400 italic")
+
+                            if th_ack_act and api.has_feature("leaves.forward_th"):
+                                ui.label("Đơn của Giám đốc đã tự động duyệt — chỉ cần Tổng hợp xác nhận đã biết.").classes("text-xs text-gray-500 italic mt-1")
+                                async def _th_ack(l=lid):
+                                    try:
+                                        await asyncio.to_thread(api.put, f"/api/leaves/{l}/tong-hop-ack", {})
+                                        detail_drawer.hide()
+                                        ui.notify("Đã xác nhận đã biết đơn của Giám đốc", type="positive")
+                                        _nav_pending()
+                                    except Exception as e:
+                                        _handle_api_error(e)
+                                ui.button("Xác nhận đã biết", icon="visibility", on_click=_th_ack).classes("bg-yellow-600 text-white text-xs mt-1")
 
 
 
@@ -1604,8 +1651,10 @@ async def leaves_page():
                             ui.button("Hủy đơn", icon="delete_forever", on_click=_cancel_rejected).classes("bg-gray-500 text-white text-sm")
 
                         # Hủy
-
-                        if (is_owner or user_role == "admin") and status not in ("cancelled", "rejected") and api.has_feature("leaves.cancel"):
+                        # GĐ có toàn quyền huỷ đơn của chính mình bất cứ lúc nào — luôn hiện nút
+                        # dù feature "leaves.cancel" chưa được cấp qua cấu hình phân quyền.
+                        if (is_owner or user_role == "admin") and status not in ("cancelled", "rejected") \
+                                and (api.has_feature("leaves.cancel") or (is_owner and user_role == "giam_doc")):
 
                             def _cancel_open(l=lid, cur_status=status):
                                 async def _do_cancel(_l=l, _st=cur_status):
@@ -1627,11 +1676,13 @@ async def leaves_page():
 
 
 
-                        # Rít đơn (recall) → chủ nhân yêu cầu rút đơn đã duyệt
+                        # Rút đơn (recall) → chủ nhân yêu cầu rút đơn đã duyệt.
+                        # GĐ đã có nút "Hủy đơn" tự xử lý ngay, không cần thêm bước này.
 
                         has_recall = api.has_feature("leaves.recall")
 
-                        if is_owner and status == "approved" and not leave.get("recall_reason") and has_recall:
+                        if is_owner and status == "approved" and not leave.get("recall_reason") \
+                                and has_recall and user_role != "giam_doc":
 
                             def _open_recall(l=lid):
 
@@ -1657,7 +1708,7 @@ async def leaves_page():
 
 
 
-                            ui.button("Rít đơn", icon="undo", on_click=_open_recall).classes("bg-orange-100 text-orange-800 text-sm")
+                            ui.button("Rút đơn", icon="undo", on_click=_open_recall).classes("bg-orange-100 text-orange-800 text-sm")
 
 
 
@@ -1933,7 +1984,8 @@ async def leaves_page():
 
             create_btn = ui.button("Tạo đơn", icon="add", on_click=_c_open).classes("bg-red-700 text-white text-base")
 
-            create_btn.set_visibility(api.has_feature("leaves.create"))
+            # admin không tham gia quy trình nghỉ phép (backend chặn 403) — ẩn nút dù has_feature() luôn True cho admin
+            create_btn.set_visibility(api.has_feature("leaves.create") and user_role != "admin")
 
             ab = ui.button("Phê duyệt", icon="check_circle",
 
@@ -2393,8 +2445,12 @@ async def leaves_page():
             _can_approve = user_role not in ("chuyen_vien",)
 
             # Tách pending thành 2 danh sách: duyệt phòng (KSV) và xác nhận TT (TH)
+            # Đơn của GĐ đã tự động approved cũng hiện ở đây để TH "xác nhận đã biết"
+            # (thông báo, không phải điều kiện duyệt).
             _pending_ksv_list = [lv for lv in pending_leaves if lv.get("status") == "pending_ksv"]
-            _pending_th_list  = [lv for lv in pending_leaves if lv.get("status") == "pending_tong_hop"]
+            _pending_th_list  = [lv for lv in pending_leaves if lv.get("status") == "pending_tong_hop"
+                                 or (lv.get("status") == "approved" and lv.get("staff_role") == "giam_doc"
+                                     and not lv.get("tong_hop_approver_id"))]
             _is_dual_role     = api.has_feature("leaves.forward_th") and user_role in ("truong_phong", "pho_phong", "hau_kiem_vien")
 
             if _can_approve:
@@ -3885,7 +3941,7 @@ async def leaves_page():
 
                                                 ui.label(f"{row.get('quota_days', 0):.0f}").classes(f"{_qc} w-20 text-center font-mono")
 
-                                                co = row.get("carry_original", 0)  # luôn hiển thị số ngày thực tế (kể cả sau Q1)
+                                                co = row.get("carry_over", 0)  # hết hiệu lực sau Q1 (31/3) — tự biến mất
 
                                                 co_cls = "text-blue-700 font-semibold" if co > 0 else "text-gray-300"
 
@@ -4313,7 +4369,10 @@ async def leaves_page():
                             if not txt: _drs_val[0] = ""; return
                             try:
                                 p = txt.replace("-", "/").split("/")
-                                d_,mo,yr = (int(p[0]),int(p[1]),int(p[2])) if len(p[2])==4 else (int(p[2]),int(p[1]),int(p[0]))
+                                if len(p) != 3 or len(p[2]) != 4:
+                                    raise ValueError("Định dạng phải là dd/mm/yyyy")
+                                d_,mo,yr = int(p[0]),int(p[1]),int(p[2])
+                                _dt_mod.date(yr, mo, d_)
                                 _drs_val[0] = f"{yr:04d}-{mo:02d}-{d_:02d}"
                             except Exception: _drs_val[0] = ""
                         _d_rs_btn.on("click", _d_rs_toggle)
@@ -4367,7 +4426,10 @@ async def leaves_page():
                             if not txt: _dre_val[0] = ""; return
                             try:
                                 p = txt.replace("-", "/").split("/")
-                                d_,mo,yr = (int(p[0]),int(p[1]),int(p[2])) if len(p[2])==4 else (int(p[2]),int(p[1]),int(p[0]))
+                                if len(p) != 3 or len(p[2]) != 4:
+                                    raise ValueError("Định dạng phải là dd/mm/yyyy")
+                                d_,mo,yr = int(p[0]),int(p[1]),int(p[2])
+                                _dt_mod.date(yr, mo, d_)
                                 _dre_val[0] = f"{yr:04d}-{mo:02d}-{d_:02d}"
                             except Exception: _dre_val[0] = ""
                         _d_re_btn.on("click", _d_re_toggle)

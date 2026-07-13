@@ -161,27 +161,42 @@ async def dashboard_page():
                             ui.icon("chevron_right").classes("text-blue-400")
 
             # ── Nghỉ phép hôm nay ─────────────────────────────────────────────
-            with ui.card().classes("w-full p-4 rounded-xl shadow-sm bg-white border border-gray-100"):
-                with ui.row().classes("w-full justify-between items-center mb-3"):
-                    ui.label(f"Nghỉ phép hôm nay ({_today.strftime('%d/%m/%Y')})").classes("font-semibold text-red-900")
-                    ui.label(f"{leave_total} người").classes(
-                        "text-xs font-semibold px-2 py-0.5 rounded-full "
-                        + ("bg-red-100 text-red-700" if leave_total else "bg-gray-100 text-gray-500")
-                    )
-                if not leave_total:
-                    ui.label("Không có ai nghỉ phép hôm nay.").classes("text-gray-400 text-sm")
-                else:
-                    with ui.row().classes("w-full px-3 py-2 bg-red-50 text-xs font-semibold text-red-700 border-b border-red-100 rounded-t"):
-                        ui.label("Phòng ban").classes("flex-1")
-                        ui.label("Số người").classes("w-24 text-center")
-                    for dept_item in leave_by_dept:
-                        with ui.row().classes("w-full px-3 py-2 border-b border-gray-100 items-center"):
-                            with ui.row().classes("flex-1 items-center gap-2"):
-                                ui.icon("meeting_room").classes("text-gray-400 text-base")
-                                ui.label(dept_item.get("dept_name", "")).classes("text-sm text-gray-800")
-                            ui.label(str(dept_item.get("count", 0))).classes(
-                                "w-24 text-center text-sm font-bold text-red-700"
-                            )
+            with ui.card().classes("w-full p-4 rounded-xl shadow-sm bg-white border-2 border-red-400"):
+                ui.label(f"Nghỉ phép hôm nay ({_today.strftime('%d/%m/%Y')})").classes("font-semibold text-red-900 mb-3")
+                _by_dept_map = {d.get("dept_name", ""): d.get("count", 0) for d in leave_by_dept}
+                # Thứ tự: BGD → Phòng Thanh toán → Phòng Tổng hợp → còn lại alpha
+                _DEPT_PRI = {"Phòng Thanh toán": 1, "Phòng Tổng hợp": 2}
+                _sorted_depts = sorted(depts, key=lambda d: (
+                    0 if d.get("code") == "BGD" else 1,
+                    _DEPT_PRI.get(d.get("name", ""), 99),
+                    d.get("name", ""),
+                ))
+                _CELL_COLORS = [
+                    "bg-red-50 border-red-200",
+                    "bg-blue-50 border-blue-200",
+                    "bg-green-50 border-green-200",
+                    "bg-purple-50 border-purple-200",
+                    "bg-yellow-50 border-yellow-200",
+                    "bg-orange-50 border-orange-200",
+                    "bg-teal-50 border-teal-200",
+                    "bg-pink-50 border-pink-200",
+                ]
+                with ui.row().classes("w-full gap-2 flex-nowrap"):
+                    # Ô tổng toàn trung tâm
+                    _color0 = _CELL_COLORS[0]
+                    _tc_num = "text-red-700 font-bold" if leave_total else "text-gray-400"
+                    with ui.element("div").classes(f"flex-1 min-w-0 p-2 rounded-xl border {_color0} flex flex-col items-center justify-center").style("min-height:80px"):
+                        ui.label(str(leave_total)).classes(f"text-2xl {_tc_num}")
+                        ui.label("Toàn trung tâm").classes("text-xs font-semibold text-gray-600 mt-1 leading-tight text-center")
+                    # Ô từng phòng ban
+                    for _di, _dept in enumerate(_sorted_depts):
+                        _dname   = _dept.get("name", "")
+                        _cnt     = _by_dept_map.get(_dname, 0)
+                        _color   = _CELL_COLORS[(_di + 1) % len(_CELL_COLORS)]
+                        _num_cls = "text-red-700 font-bold" if _cnt else "text-gray-400"
+                        with ui.element("div").classes(f"flex-1 min-w-0 p-2 rounded-xl border {_color} flex flex-col items-center justify-center").style("min-height:80px"):
+                            ui.label(str(_cnt)).classes(f"text-2xl {_num_cls}")
+                            ui.label(_dname).classes("text-xs text-gray-600 mt-1 leading-tight text-center")
 
             by_dept = summary.get("by_dept", [])
             with ui.card().classes("w-full p-4 rounded-xl shadow-sm bg-white"):

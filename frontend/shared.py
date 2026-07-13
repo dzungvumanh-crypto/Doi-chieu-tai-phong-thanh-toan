@@ -128,6 +128,10 @@ document.addEventListener('DOMContentLoaded', function () {
       document.body.classList.add('sb-collapsed');
     }
   } catch (e) {}
+  var sb = document.getElementById('app-sidebar');
+  if (sb) sb.addEventListener('click', function () {
+    if (document.body.classList.contains('sb-collapsed')) toggleSidebar();
+  });
 });
 
 /* ── Flyout menu con: position:fixed để thoát vùng overflow của sidebar cuộn,
@@ -159,13 +163,20 @@ async def _logout():
     ui.navigate.to("/login")
 
 
+def _collapse_sidebar():
+    ui.run_javascript(
+        "document.body.classList.add('sb-collapsed');"
+        "try{localStorage.setItem('sb-collapsed','1')}catch(e){}"
+    )
+
+
 def _nav_item(key: str, label: str, icon: str, current_page: str, badge_refs: dict):
     """Mục menu phẳng (không thuộc phòng ban)."""
     is_active = current_page == key
     bg = "bg-red-700" if is_active else "hover:bg-red-800"
     with ui.row().classes(
         f"sidebar-row w-full items-center px-4 py-2.5 cursor-pointer {bg}"
-    ).on("click", lambda k=key: ui.navigate.to(f"/{k}")):
+    ).on("click", lambda k=key: (_collapse_sidebar(), ui.navigate.to(f"/{k}"))):
         ui.icon(icon).classes("sidebar-icon text-lg mr-3 text-red-100 shrink-0")
         ui.label(label).classes("sidebar-label text-sm flex-1")
         if key in ("leaves", "handovers"):
@@ -231,7 +242,7 @@ def _dept_group(dept: dict, current_page: str, badge_refs: dict, check_features:
                         bg = "bg-red-700" if is_active else "hover:bg-red-800"
                         with ui.row().classes(
                             f"w-full items-center px-4 py-2.5 cursor-pointer {bg}"
-                        ).on("click", lambda k=key: ui.navigate.to(f"/{k}")):
+                        ).on("click", lambda k=key: (_collapse_sidebar(), ui.navigate.to(f"/{k}"))):
                             ui.icon(icon).classes("text-base mr-2 text-red-100 shrink-0")
                             ui.label(label).classes("text-sm flex-1")
                             if key in ("leaves", "handovers"):

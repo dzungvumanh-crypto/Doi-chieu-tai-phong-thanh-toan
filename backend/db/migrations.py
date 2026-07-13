@@ -444,6 +444,8 @@ def _ensure_indexes():
         "CREATE INDEX IF NOT EXISTS ix_duty_requests_staff    ON duty_requests(staff_id)",
         "CREATE INDEX IF NOT EXISTS ix_duty_rotation_year     ON duty_rotation_state(year, role)",
         "CREATE INDEX IF NOT EXISTS ix_duty_shifts_date       ON duty_shifts(shift_date)",
+        # Popup thông báo carry-over hết hiệu lực sau Q1 — mỗi user chỉ xem 1 lần/năm
+        "ALTER TABLE user_tttt ADD COLUMN carryover_notice_year INTEGER",
     ]
     _mig_log = logging.getLogger(__name__)
     conn = sqlite3.connect(DB_PATH, timeout=30)
