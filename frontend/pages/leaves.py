@@ -1653,8 +1653,9 @@ async def leaves_page():
                         # Hủy
                         # GĐ có toàn quyền huỷ đơn của chính mình bất cứ lúc nào — luôn hiện nút
                         # dù feature "leaves.cancel" chưa được cấp qua cấu hình phân quyền.
-                        if (is_owner or user_role == "admin") and status not in ("cancelled", "rejected") \
-                                and (api.has_feature("leaves.cancel") or (is_owner and user_role == "giam_doc")):
+                        _can_cancel_now = (is_owner or user_role == "admin") and status not in ("cancelled", "rejected") \
+                                and (api.has_feature("leaves.cancel") or (is_owner and user_role == "giam_doc"))
+                        if _can_cancel_now:
 
                             def _cancel_open(l=lid, cur_status=status):
                                 async def _do_cancel(_l=l, _st=cur_status):
@@ -1677,12 +1678,13 @@ async def leaves_page():
 
 
                         # Rút đơn (recall) → chủ nhân yêu cầu rút đơn đã duyệt.
-                        # GĐ đã có nút "Hủy đơn" tự xử lý ngay, không cần thêm bước này.
+                        # Nếu đã có nút "Hủy đơn" (tự xử lý ngay) thì không cần thêm bước này nữa
+                        # vì kết quả giống nhau (đơn chuyển sang cancelled).
 
                         has_recall = api.has_feature("leaves.recall")
 
                         if is_owner and status == "approved" and not leave.get("recall_reason") \
-                                and has_recall and user_role != "giam_doc":
+                                and has_recall and not _can_cancel_now:
 
                             def _open_recall(l=lid):
 
@@ -2554,11 +2556,17 @@ async def leaves_page():
                     if nq and nq not in (lv.get("staff_name") or "").lower(): continue
                     if dq and (lv.get("department_name") or lv.get("dept_name") or "") != dq: continue
                     if fd or td:
-                        s = _pf_parse(lv.get("start_date", ""))
-                        e = _pf_parse(lv.get("end_date", ""))
-                        if s and e:
-                            if fd and e < fd: continue
-                            if td and s > td: continue
+                        sd = lv.get("spread_dates")
+                        dates = [d for d in (_pf_parse(x) for x in sd) if d] if sd else []
+                        if dates:
+                            if not any((not fd or d >= fd) and (not td or d <= td) for d in dates):
+                                continue
+                        else:
+                            s = _pf_parse(lv.get("start_date", ""))
+                            e = _pf_parse(lv.get("end_date", ""))
+                            if s and e:
+                                if fd and e < fd: continue
+                                if td and s > td: continue
                     filtered.append(lv)
                 _pf_body.clear()
                 with _pf_body:
@@ -2851,19 +2859,31 @@ async def leaves_page():
 
                                 if from_d or to_d:
 
-                                    lv_start = _parse_date(lv.get("start_date", ""))
+                                    sd = lv.get("spread_dates")
 
-                                    lv_end   = _parse_date(lv.get("end_date", ""))
+                                    _dates = [d for d in (_parse_date(x) for x in sd) if d] if sd else []
 
-                                    if lv_start and lv_end:
+                                    if _dates:
 
-                                        if from_d and lv_end < from_d:
-
-                                            continue
-
-                                        if to_d and lv_start > to_d:
+                                        if not any((not from_d or d >= from_d) and (not to_d or d <= to_d) for d in _dates):
 
                                             continue
+
+                                    else:
+
+                                        lv_start = _parse_date(lv.get("start_date", ""))
+
+                                        lv_end   = _parse_date(lv.get("end_date", ""))
+
+                                        if lv_start and lv_end:
+
+                                            if from_d and lv_end < from_d:
+
+                                                continue
+
+                                            if to_d and lv_start > to_d:
+
+                                                continue
 
                                 filtered.append(lv)
 
@@ -3077,15 +3097,27 @@ async def leaves_page():
 
                                     if fd or td:
 
-                                        s = _parse_sf_date(lv.get("start_date",""))
+                                        sd = lv.get("spread_dates")
 
-                                        e = _parse_sf_date(lv.get("end_date",""))
+                                        _dates = [d for d in (_parse_sf_date(x) for x in sd) if d] if sd else []
 
-                                        if s and e:
+                                        if _dates:
 
-                                            if fd and e < fd: continue
+                                            if not any((not fd or d >= fd) and (not td or d <= td) for d in _dates):
 
-                                            if td and s > td: continue
+                                                continue
+
+                                        else:
+
+                                            s = _parse_sf_date(lv.get("start_date",""))
+
+                                            e = _parse_sf_date(lv.get("end_date",""))
+
+                                            if s and e:
+
+                                                if fd and e < fd: continue
+
+                                                if td and s > td: continue
 
                                     filtered.append(lv)
 
@@ -3719,7 +3751,7 @@ async def leaves_page():
 
                     _today_year = _dt_mod.date.today().year
 
-                    with ui.row().classes("gap-3 mb-4 items-center flex-wrap"):
+                    with ui.row().classes("gap-3 mb-4 items-end flex-nowrap"):
 
                         q_year_sel = ui.select(
 
@@ -3727,9 +3759,172 @@ async def leaves_page():
 
                             label="Năm", value=_today_year,
 
-                        ).classes("w-28")
+                        ).classes("w-28 shrink-0")
+
+                        if api.has_feature("leaves.quota_admin"):
+                            ui.upload(
+                                label="Nhập file hạn mức",
+                                on_upload=lambda e: asyncio.create_task(_qi_on_upload(e)),
+                                auto_upload=True,
+                            ).props('accept=".xlsx" dense flat hide-upload-btn').classes(
+                                "text-gray-700 w-56 shrink-0"
+                            ).tooltip(
+                                "File Excel có cột: STT, Họ và tên, Mã cán bộ, Phòng, Chức vụ, Hạn mức, Đã nghỉ"
+                            )
+                            ui.button("Lịch sử nhập", icon="history",
+                                      on_click=lambda: asyncio.ensure_future(_qi_open_history())
+                                      ).props("dense outline").classes("text-gray-700 shrink-0")
 
                     quota_area = ui.column().classes("w-full gap-0")
+
+                    # ── Nhập file hạn mức: preview trước khi áp dụng ─────────────
+                    _qi_state: dict = {"filename": "", "rows": []}
+                    _qi_checks: dict = {}
+
+                    with ui.dialog() as qi_preview_dialog, ui.card().classes("p-5 w-full max-w-4xl"):
+                        ui.label("Xem trước dữ liệu nhập").classes("text-lg font-bold text-red-900 mb-1")
+                        qi_summary_lbl = ui.label("").classes("text-sm text-gray-600 mb-2")
+                        qi_rows_area = ui.column().classes("w-full gap-0 max-h-96 overflow-y-auto border border-gray-200 rounded")
+                        with ui.row().classes("w-full justify-end gap-2 mt-4"):
+                            ui.button("Từ chối", on_click=qi_preview_dialog.close).props("flat").classes("text-gray-500")
+                            qi_apply_btn = ui.button("Đồng ý áp dụng", icon="check", on_click=lambda: asyncio.ensure_future(_qi_apply()))
+                            qi_apply_btn.classes("bg-red-700 text-white")
+
+                    def _qi_render_preview():
+                        qi_rows_area.clear()
+                        _qi_checks.clear()
+                        rows = _qi_state["rows"]
+                        matched = sum(1 for r in rows if r["matched"])
+                        qi_summary_lbl.set_text(
+                            f"File: {_qi_state['filename']} — Khớp {matched}/{len(rows)} dòng "
+                            f"(theo Mã cán bộ, dự phòng theo Tên nếu không có/không khớp mã). "
+                            f"Chỉ áp dụng cho các dòng đã tick và khớp được nhân viên."
+                        )
+                        with qi_rows_area:
+                            with ui.row().classes("w-full px-2 py-1.5 bg-red-50 text-xs font-semibold text-red-800 border-b border-red-100 sticky top-0"):
+                                ui.label("").classes("w-8")
+                                ui.label("Họ tên (file)").classes("flex-1")
+                                ui.label("Mã CB").classes("w-24")
+                                ui.label("Khớp theo").classes("w-20")
+                                ui.label("Khớp với (DB)").classes("flex-1")
+                                ui.label("Hạn mức (cũ→mới)").classes("w-32 text-center")
+                                ui.label("Đã nghỉ (cũ→mới)").classes("w-32 text-center")
+                            _match_lbl = {"ma_can_bo": "Mã CB", "ten": "Tên"}
+                            for _i, r in enumerate(rows):
+                                with ui.row().classes("w-full px-2 py-1.5 border-b border-gray-100 items-center text-xs"
+                                                       + ("" if r["matched"] else " bg-gray-50 text-gray-400")):
+                                    cb = ui.checkbox(value=r["matched"]).classes("w-8")
+                                    cb.set_enabled(r["matched"])
+                                    if r["matched"]:
+                                        _qi_checks[_i] = cb
+                                    ui.label(r["ho_ten"]).classes("flex-1")
+                                    ui.label(r["ma_can_bo"] or "→").classes("w-24")
+                                    ui.label(_match_lbl.get(r.get("match_method"), "→")).classes(
+                                        "w-20 " + ("text-green-700" if r["matched"] else "text-red-400"))
+                                    _matched_name = r.get("matched_name")
+                                    if r.get("row_error"):
+                                        ui.label(r["row_error"]).classes("flex-1 text-red-500")
+                                    elif _matched_name:
+                                        _name_mismatch = _matched_name.strip().lower() != r["ho_ten"].strip().lower()
+                                        ui.label(_matched_name).classes(
+                                            "flex-1 " + ("text-orange-600 font-semibold" if _name_mismatch else "text-gray-600"))
+                                    else:
+                                        ui.label("Không khớp nhân viên nào").classes("flex-1 text-red-400")
+                                    oq = r["old_quota_days"]
+                                    ui.label(f"{oq:.0f} → {r['new_quota_days']:.0f}" if oq is not None else f"→ {r['new_quota_days']:.0f}").classes("w-32 text-center")
+                                    ou = r["old_used_leave_days"]
+                                    ui.label(f"{ou:.0f} → {r['new_used_leave_days']:.0f}" if ou is not None else f"→ {r['new_used_leave_days']:.0f}").classes("w-32 text-center")
+
+                    async def _qi_on_upload(e):
+                        try:
+                            yr = q_year_sel.value
+                            result = await asyncio.to_thread(
+                                api.post_upload,
+                                f"/api/leaves/quotas/{yr}/import/preview",
+                                {"file": (e.name, e.content.read(),
+                                          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+                            )
+                            _qi_state["filename"] = result.get("filename") or e.name
+                            _qi_state["rows"] = result.get("rows") or []
+                            if not _qi_state["rows"]:
+                                ui.notify("Không đọc được dòng dữ liệu nào từ file.", type="warning")
+                                return
+                            _qi_render_preview()
+                            qi_preview_dialog.open()
+                        except Exception as ex:
+                            _handle_api_error(ex)
+
+                    async def _qi_apply():
+                        rows = [r for _i, r in enumerate(_qi_state["rows"]) if _i in _qi_checks and _qi_checks[_i].value]
+                        if not rows:
+                            ui.notify("Chưa chọn dòng nào để áp dụng.", type="warning")
+                            return
+                        yr = q_year_sel.value
+                        async def _do():
+                            try:
+                                res = await asyncio.to_thread(
+                                    api.post, f"/api/leaves/quotas/{yr}/import/apply",
+                                    {"filename": _qi_state["filename"], "rows": rows},
+                                )
+                                qi_preview_dialog.close()
+                                ui.notify(f"Đã áp dụng {res.get('applied', 0)} nhân viên. Có thể hoàn tác trong \"Lịch sử nhập\".",
+                                          type="positive")
+                                await _reload_quota()
+                            except Exception as ex:
+                                _handle_api_error(ex)
+                        _ask_confirm("Xác nhận áp dụng",
+                                     f"Áp dụng hạn mức + số ngày đã nghỉ cho {len(rows)} nhân viên từ file \"{_qi_state['filename']}\"? "
+                                     f"Giá trị hiện tại sẽ bị ghi đè (có thể hoàn tác sau).",
+                                     _do, "Đồng ý áp dụng", "bg-red-700")
+
+                    with ui.dialog() as qi_history_dialog, ui.card().classes("p-5 w-full max-w-3xl"):
+                        ui.label("Lịch sử nhập file hạn mức").classes("text-lg font-bold text-red-900 mb-3")
+                        qi_history_area = ui.column().classes("w-full gap-0 max-h-96 overflow-y-auto")
+                        with ui.row().classes("w-full justify-end mt-4"):
+                            ui.button("Đóng", on_click=qi_history_dialog.close).props("flat").classes("text-gray-500")
+
+                    async def _qi_open_history():
+                        qi_history_area.clear()
+                        try:
+                            batches = await asyncio.to_thread(api.get, "/api/leaves/quotas/import/history")
+                        except Exception as ex:
+                            _handle_api_error(ex)
+                            return
+                        batches = batches if isinstance(batches, list) else []
+                        with qi_history_area:
+                            if not batches:
+                                ui.label("Chưa có lần nhập nào.").classes("text-gray-400 text-sm")
+                            for b in batches:
+                                with ui.row().classes("w-full px-2 py-2 border-b border-gray-100 items-center text-xs gap-2"):
+                                    with ui.column().classes("flex-1 gap-0"):
+                                        ui.label(f"{b.get('filename') or '(không rõ tên file)'} — năm {b.get('year')}").classes("font-semibold text-sm")
+                                        ui.label(
+                                            f"{(b.get('imported_at') or '')[:16]} bởi {b.get('imported_by_name') or '→'} "
+                                            f"— áp dụng {b.get('matched_count', 0)}/{b.get('row_count', 0)} dòng"
+                                        ).classes("text-gray-500")
+                                        if b.get("status") == "rolled_back":
+                                            ui.label(
+                                                f"↩ Đã hoàn tác {(b.get('rolled_back_at') or '')[:16]} bởi {b.get('rolled_back_by_name') or '→'}"
+                                            ).classes("text-orange-600")
+                                    if b.get("status") == "applied":
+                                        async def _rb(bid=b["id"], fname=b.get("filename") or ""):
+                                            async def _do(_bid=bid):
+                                                try:
+                                                    res = await asyncio.to_thread(
+                                                        api.post, f"/api/leaves/quotas/import/{_bid}/rollback", {})
+                                                    ui.notify(f"Đã hoàn tác {res.get('restored', 0)} nhân viên.", type="positive")
+                                                    await _qi_open_history()
+                                                    await _reload_quota()
+                                                except Exception as ex:
+                                                    _handle_api_error(ex)
+                                            _ask_confirm("Xác nhận hoàn tác",
+                                                         f"Hoàn tác lần nhập \"{fname}\"? Hạn mức + số ngày đã nghỉ của các nhân viên "
+                                                         f"trong lần nhập này sẽ trở về giá trị trước đó.",
+                                                         _do, "Hoàn tác", "bg-orange-600")
+                                        ui.button("Hoàn tác", icon="undo", on_click=_rb).props("dense outline").classes("text-orange-700")
+                                    else:
+                                        ui.label("Đã hoàn tác").classes("text-gray-400 italic")
+                        qi_history_dialog.open()
 
 
 

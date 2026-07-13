@@ -2,11 +2,13 @@
 import io
 import json
 import os
+import re
 import sqlite3
+import unicodedata
 from datetime import date, timedelta
 from typing import FrozenSet, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import StreamingResponse
 
 from backend.core.deps import TONG_HOP_CODES, get_current_staff, require_feature
@@ -143,6 +145,19 @@ def _period_days(
     if leave_type in _NO_QUOTA_TYPES:
         return (end - start).days + 1
     return calculate_leave_days(start, end, holiday_dates)
+
+
+def _norm_vn(s) -> str:
+    """Chuẩn hoá text tiếng Việt để so khớp: bỏ dấu, chữ thường, gọn khoảng trắng.
+
+    Đ/đ không tự tách dấu qua NFD (không giống ă/â/ê...) nên phải thay tay.
+    """
+    if not s:
+        return ""
+    s = str(s).replace("Đ", "D").replace("đ", "d")
+    s = unicodedata.normalize("NFD", s)
+    s = "".join(c for c in s if unicodedata.category(c) != "Mn")
+    return re.sub(r"\s+", " ", s).strip().lower()
 
 
 def _is_tong_hop_staff(staff: dict, db: sqlite3.Connection) -> bool:
@@ -767,6 +782,48 @@ def export_leaves(
     )
 
 
+# ─── Thông báo carry-over hết hiệu lực sau Q1 ──────────────────────────────────
+# Phải khai báo TRƯỚC "/{leave_id}" bên dưới — nếu không, FastAPI/Starlette sẽ
+# khớp "/carryover-notice" vào route "/{leave_id}" trước (cùng 1 segment, cùng
+# method GET) rồi báo lỗi 422 khi ép kiểu int, route đúng bên dưới không bao
+# giờ được gọi tới.
+
+_CARRYOVER_NOTICE_CUTOFF = (3, 31)  # hết Q1 (31/3)
+
+
+@router.get("/carryover-notice")
+def get_carryover_notice(
+    db: sqlite3.Connection = Depends(get_db),
+    current: dict = Depends(get_current_staff),
+):
+    """Có cần hiện popup thông báo carry-over hết hiệu lực không — 1 lần/năm/user,
+    hiện cho mọi user (không phân biệt có carry-over hay không) kể từ sau 31/3."""
+    today = _vn_now().date()
+    year  = today.year
+    cutoff = date(year, *_CARRYOVER_NOTICE_CUTOFF)
+    if today <= cutoff:
+        return {"show": False}
+    row = db.execute(
+        "SELECT carryover_notice_year FROM user_tttt WHERE id=?", (current["id"],)
+    ).fetchone()
+    already_seen = bool(row and row["carryover_notice_year"] == year)
+    return {"show": not already_seen, "year": year}
+
+
+@router.post("/carryover-notice/ack")
+def ack_carryover_notice(
+    db: sqlite3.Connection = Depends(get_db),
+    current: dict = Depends(get_current_staff),
+):
+    """Đánh dấu user đã xem thông báo carry-over hết hiệu lực trong năm nay."""
+    year = _vn_now().date().year
+    db.execute(
+        "UPDATE user_tttt SET carryover_notice_year=? WHERE id=?", (year, current["id"]),
+    )
+    db.commit()
+    return {"ok": True}
+
+
 @router.get("/{leave_id}")
 def get_leave(
     leave_id: int,
@@ -1379,43 +1436,6 @@ def download_leave_form(
     )
 
 
-# ─── Thông báo carry-over hết hiệu lực sau Q1 ──────────────────────────────────
-
-_CARRYOVER_NOTICE_CUTOFF = (3, 31)  # hết Q1 (31/3)
-
-
-@router.get("/carryover-notice")
-def get_carryover_notice(
-    db: sqlite3.Connection = Depends(get_db),
-    current: dict = Depends(get_current_staff),
-):
-    """Có cần hiện popup thông báo carry-over hết hiệu lực không — 1 lần/năm/user,
-    hiện cho mọi user (không phân biệt có carry-over hay không) kể từ sau 31/3."""
-    today = _vn_now().date()
-    year  = today.year
-    cutoff = date(year, *_CARRYOVER_NOTICE_CUTOFF)
-    if today <= cutoff:
-        return {"show": False}
-    row = db.execute(
-        "SELECT carryover_notice_year FROM user_tttt WHERE id=?", (current["id"],)
-    ).fetchone()
-    already_seen = bool(row and row["carryover_notice_year"] == year)
-    return {"show": not already_seen, "year": year}
-
-
-@router.post("/carryover-notice/ack")
-def ack_carryover_notice(
-    db: sqlite3.Connection = Depends(get_db),
-    current: dict = Depends(get_current_staff),
-):
-    """Đánh dấu user đã xem thông báo carry-over hết hiệu lực trong năm nay."""
-    year = _vn_now().date().year
-    db.execute(
-        "UPDATE user_tttt SET carryover_notice_year=? WHERE id=?", (year, current["id"]),
-    )
-    db.commit()
-    return {"ok": True}
-
 
 # ─── Hạn mức phép (quota) ──────────────────────────────────────────────────────
 
@@ -1500,6 +1520,310 @@ def update_join_date(
     db.execute("UPDATE user_tttt SET join_industry_date=? WHERE id=?", (join_date, staff_id))
     db.commit()
     return {"ok": True, "staff_id": staff_id, "join_industry_date": join_date}
+
+
+# ─── Nhập file hạn mức (Excel) ─────────────────────────────────────────────────
+# File có thể khác cấu trúc/thứ tự cột giữa các lần — dò cột theo TIÊU ĐỀ (dòng
+# header) thay vì cố định vị trí, chỉ cần đủ các trường: STT, Họ và tên,
+# Mã cán bộ, Hạn mức, Đã nghỉ. Khớp nhân viên theo Mã cán bộ trước (duy nhất
+# theo từng người) — nếu không khớp thì thử theo tên (chuẩn hoá bỏ dấu, chỉ
+# nhận khi tên đó chỉ khớp đúng 1 nhân viên). Chỉ nhập "Hạn mức" + "Đã nghỉ"
+# (ghi đè used_leave_days) — không nhập "Chuyển năm" vì hệ thống tính động
+# từ hạn mức + số ngày đã dùng của năm trước.
+
+def _qi_detect_columns(ws) -> Optional[dict]:
+    """Dò dòng tiêu đề trong 6 dòng đầu, trả về map field -> chỉ số cột."""
+    for row in ws.iter_rows(min_row=1, max_row=6, values_only=True):
+        col_map: dict = {}
+        for idx, cell in enumerate(row or ()):
+            n = _norm_vn(cell)
+            if not n:
+                continue
+            if "stt" not in col_map and n == "stt":
+                col_map["stt"] = idx
+            elif "ma_can_bo" not in col_map and ("ma can bo" in n or "ma cb" in n or "ma nv" in n or "ma nhan vien" in n):
+                col_map["ma_can_bo"] = idx
+            elif "ho_ten" not in col_map and ("ho ten" in n or "ho va ten" in n or n == "ten"):
+                col_map["ho_ten"] = idx
+            elif "phong" not in col_map and "phong" in n:
+                col_map["phong"] = idx
+            elif "han_muc" not in col_map and "han muc" in n:
+                col_map["han_muc"] = idx
+            elif "da_nghi" not in col_map and "da nghi" in n:
+                col_map["da_nghi"] = idx
+        if {"stt", "ho_ten", "han_muc"} <= col_map.keys():
+            return col_map
+    return None
+
+
+@router.post("/quotas/{year}/import/preview")
+def import_quota_preview(
+    year: int,
+    file: UploadFile = File(...),
+    db: sqlite3.Connection = Depends(get_db),
+    current: dict = Depends(require_feature("leaves.quota_admin")),
+):
+    """Đọc file Excel hạn mức, khớp nhân viên theo Mã cán bộ / tên — KHÔNG ghi DB."""
+    import openpyxl
+    content = file.file.read()
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+    except Exception:
+        raise HTTPException(400, "File không hợp lệ — vui lòng chọn đúng file Excel (.xlsx)")
+    ws = wb.active
+
+    try:
+        col_map = _qi_detect_columns(ws)
+        if not col_map:
+            raise HTTPException(
+                400,
+                "Không tìm thấy dòng tiêu đề hợp lệ trong file — cần có tối thiểu các cột "
+                "STT, Họ và tên, Hạn mức (còn Mã cán bộ, Phòng, Đã nghỉ nếu có).",
+            )
+
+        staffs_by_code: dict = {}
+        staffs_by_name: dict = {}
+        staff_names: dict = {}
+        for r in db.execute("SELECT id, employee_code, full_name FROM user_tttt WHERE is_active=1").fetchall():
+            code = (r["employee_code"] or "").strip()
+            if code:
+                staffs_by_code[code] = r["id"]
+            staff_names[r["id"]] = r["full_name"] or ""
+            nm = _norm_vn(r["full_name"])
+            if nm:
+                staffs_by_name.setdefault(nm, []).append(r["id"])
+
+        # Gộp truy vấn hạn mức/đã dùng hiện tại thành 1 lần thay vì mỗi dòng 1 query.
+        old_quota_by_staff = {
+            r["staff_id"]: float(r["quota_days"])
+            for r in db.execute("SELECT staff_id, quota_days FROM leave_quotas WHERE year=?", (year,)).fetchall()
+        }
+        old_used_by_staff = {
+            r["id"]: float(r["used_leave_days"]) if r["used_leave_days"] is not None else 0.0
+            for r in db.execute("SELECT id, used_leave_days FROM user_tttt WHERE is_active=1").fetchall()
+        }
+
+        def _cell(row, key):
+            idx = col_map.get(key)
+            return row[idx] if idx is not None and idx < len(row) else None
+
+        def _to_stt(v):
+            """Chấp nhận STT dạng int, float nguyên (1.0), hoặc text số ("1")."""
+            if isinstance(v, bool):
+                return None
+            if isinstance(v, int):
+                return v
+            if isinstance(v, float) and v.is_integer():
+                return int(v)
+            if isinstance(v, str) and v.strip().isdigit():
+                return int(v.strip())
+            return None
+
+        rows_out = []
+        for row in ws.iter_rows(values_only=True):
+            stt = _to_stt(_cell(row, "stt"))
+            if stt is None:
+                continue
+            ho_ten  = _cell(row, "ho_ten")
+            ma_cb   = _cell(row, "ma_can_bo")
+            phong   = _cell(row, "phong")
+            han_muc = _cell(row, "han_muc")
+            da_nghi = _cell(row, "da_nghi")
+            if not (ho_ten and str(ho_ten).strip()) or han_muc is None:
+                continue
+
+            try:
+                new_quota = float(str(han_muc).strip().replace(",", "."))
+                new_used  = float(str(da_nghi).strip().replace(",", ".")) if da_nghi not in (None, "") else 0.0
+            except (ValueError, TypeError):
+                # Ô số liệu không hợp lệ — vẫn hiện dòng này để người dùng biết, nhưng
+                # đánh dấu lỗi và không cho tick áp dụng (matched=False).
+                rows_out.append({
+                    "stt": stt, "ho_ten": str(ho_ten).strip(),
+                    "ma_can_bo": str(ma_cb).strip() if ma_cb else "",
+                    "phong": str(phong).strip() if phong else "",
+                    "matched": False, "match_method": None, "staff_id": None,
+                    "new_quota_days": 0, "new_used_leave_days": 0,
+                    "old_quota_days": None, "old_used_leave_days": None,
+                    "row_error": "Hạn mức / Đã nghỉ không phải số hợp lệ",
+                })
+                continue
+
+            ma_cb_s = str(ma_cb).strip() if ma_cb else ""
+            staff_id = None
+            match_method = None
+            if ma_cb_s and ma_cb_s in staffs_by_code:
+                staff_id = staffs_by_code[ma_cb_s]
+                match_method = "ma_can_bo"
+            else:
+                cands = staffs_by_name.get(_norm_vn(ho_ten)) or []
+                if len(cands) == 1:
+                    staff_id = cands[0]
+                    match_method = "ten"
+
+            item = {
+                "stt":                 stt,
+                "ho_ten":              str(ho_ten).strip(),
+                "ma_can_bo":           ma_cb_s,
+                "phong":               str(phong).strip() if phong else "",
+                "matched":             staff_id is not None,
+                "match_method":        match_method,
+                "matched_name":        staff_names.get(staff_id) if staff_id else None,
+                "staff_id":            staff_id,
+                "new_quota_days":      new_quota,
+                "new_used_leave_days": new_used,
+                "old_quota_days":      old_quota_by_staff.get(staff_id) if staff_id else None,
+                "old_used_leave_days": old_used_by_staff.get(staff_id) if staff_id else None,
+            }
+            rows_out.append(item)
+    finally:
+        wb.close()
+
+    matched_count = sum(1 for r in rows_out if r["matched"])
+    return {"filename": file.filename, "rows": rows_out, "total": len(rows_out), "matched": matched_count}
+
+
+@router.post("/quotas/{year}/import/apply")
+def import_quota_apply(
+    year: int,
+    body: dict,
+    db: sqlite3.Connection = Depends(get_db),
+    current: dict = Depends(require_feature("leaves.quota_admin")),
+):
+    """Áp dụng dữ liệu hạn mức đã xem trước — ghi đè quota_days + used_leave_days,
+    lưu lại giá trị cũ vào quota_import_items để có thể hoàn tác."""
+    rows = body.get("rows") or []
+    filename = body.get("filename") or ""
+    rows = [r for r in rows if r.get("staff_id")]
+    if not rows:
+        raise HTTPException(400, "Không có dòng nào khớp nhân viên để áp dụng")
+
+    for r in rows:
+        try:
+            qd, ud = float(r.get("new_quota_days") or 0), float(r.get("new_used_leave_days") or 0)
+        except (ValueError, TypeError):
+            raise HTTPException(400, "Dữ liệu hạn mức/đã nghỉ không hợp lệ")
+        if qd < 0 or ud < 0:
+            raise HTTPException(400, "Hạn mức và số ngày đã nghỉ không được âm")
+
+    staff_ids = [r["staff_id"] for r in rows]
+    placeholders = ",".join("?" * len(staff_ids))
+    active_staff_ids = {
+        r["id"] for r in db.execute(
+            f"SELECT id FROM user_tttt WHERE id IN ({placeholders}) AND is_active=1", staff_ids
+        ).fetchall()
+    }
+    old_quota_by_staff = {
+        r["staff_id"]: float(r["quota_days"])
+        for r in db.execute(
+            f"SELECT staff_id, quota_days FROM leave_quotas WHERE year=? AND staff_id IN ({placeholders})",
+            [year] + staff_ids,
+        ).fetchall()
+    }
+    old_used_by_staff = {
+        r["id"]: float(r["used_leave_days"]) if r["used_leave_days"] is not None else 0.0
+        for r in db.execute(
+            f"SELECT id, used_leave_days FROM user_tttt WHERE id IN ({placeholders})", staff_ids
+        ).fetchall()
+    }
+
+    now = _vn_now()
+    cur = db.execute(
+        "INSERT INTO quota_import_batches (year, filename, imported_by, imported_at, row_count) VALUES (?,?,?,?,?)",
+        (year, filename, current["id"], now, len(rows)),
+    )
+    batch_id = cur.lastrowid
+
+    applied = 0
+    for r in rows:
+        staff_id = r["staff_id"]
+        if staff_id not in active_staff_ids:
+            continue
+        new_quota = float(r.get("new_quota_days") or 0)
+        new_used  = float(r.get("new_used_leave_days") or 0)
+        old_quota = old_quota_by_staff.get(staff_id)
+        old_used  = old_used_by_staff.get(staff_id, 0.0)
+
+        db.execute(
+            """INSERT INTO quota_import_items
+                   (batch_id, staff_id, old_quota_days, old_used_leave_days,
+                    new_quota_days, new_used_leave_days)
+               VALUES (?,?,?,?,?,?)""",
+            (batch_id, staff_id, old_quota, old_used, new_quota, new_used),
+        )
+        db.execute(
+            "INSERT INTO leave_quotas (staff_id, year, quota_days) VALUES (?,?,?) "
+            "ON CONFLICT(staff_id, year) DO UPDATE SET quota_days=excluded.quota_days",
+            (staff_id, year, new_quota),
+        )
+        db.execute("UPDATE user_tttt SET used_leave_days=? WHERE id=?", (new_used, staff_id))
+        applied += 1
+
+    db.execute("UPDATE quota_import_batches SET matched_count=? WHERE id=?", (applied, batch_id))
+    db.commit()
+    return {"batch_id": batch_id, "applied": applied}
+
+
+@router.get("/quotas/import/history")
+def import_quota_history(
+    year: Optional[int] = None,
+    db: sqlite3.Connection = Depends(get_db),
+    current: dict = Depends(require_feature("leaves.quota_admin")),
+):
+    """Lịch sử các lần nhập file hạn mức — dùng để hoàn tác."""
+    clause = "WHERE b.year=?" if year else ""
+    params = (year,) if year else ()
+    rows = db.execute(
+        f"""SELECT b.*, u.full_name AS imported_by_name, rb.full_name AS rolled_back_by_name
+            FROM quota_import_batches b
+            LEFT JOIN user_tttt u  ON b.imported_by     = u.id
+            LEFT JOIN user_tttt rb ON b.rolled_back_by  = rb.id
+            {clause}
+            ORDER BY b.imported_at DESC""",
+        params,
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+@router.post("/quotas/import/{batch_id}/rollback")
+def import_quota_rollback(
+    batch_id: int,
+    db: sqlite3.Connection = Depends(get_db),
+    current: dict = Depends(require_feature("leaves.quota_admin")),
+):
+    """Hoàn tác 1 lần nhập file — khôi phục quota_days + used_leave_days về giá trị
+    trước khi nhập. Nếu có lần nhập sau đó cũng đổi cùng nhân viên, giá trị sẽ bị
+    ghi đè theo lần hoàn tác này (không tự động dồn nhiều lần hoàn tác)."""
+    batch = db.execute("SELECT * FROM quota_import_batches WHERE id=?", (batch_id,)).fetchone()
+    if not batch:
+        raise HTTPException(404, "Không tìm thấy lần nhập")
+    if batch["status"] == "rolled_back":
+        raise HTTPException(400, "Lần nhập này đã được hoàn tác trước đó")
+
+    items = db.execute("SELECT * FROM quota_import_items WHERE batch_id=?", (batch_id,)).fetchall()
+    for it in items:
+        if it["old_quota_days"] is not None:
+            db.execute(
+                "INSERT INTO leave_quotas (staff_id, year, quota_days) VALUES (?,?,?) "
+                "ON CONFLICT(staff_id, year) DO UPDATE SET quota_days=excluded.quota_days",
+                (it["staff_id"], batch["year"], it["old_quota_days"]),
+            )
+        else:
+            db.execute(
+                "DELETE FROM leave_quotas WHERE staff_id=? AND year=?", (it["staff_id"], batch["year"])
+            )
+        if it["old_used_leave_days"] is not None:
+            db.execute(
+                "UPDATE user_tttt SET used_leave_days=? WHERE id=?",
+                (it["old_used_leave_days"], it["staff_id"]),
+            )
+
+    db.execute(
+        "UPDATE quota_import_batches SET status='rolled_back', rolled_back_by=?, rolled_back_at=? WHERE id=?",
+        (current["id"], _vn_now(), batch_id),
+    )
+    db.commit()
+    return {"ok": True, "batch_id": batch_id, "restored": len(items)}
 
 
 @router.get("/quotas/{year}/export")
