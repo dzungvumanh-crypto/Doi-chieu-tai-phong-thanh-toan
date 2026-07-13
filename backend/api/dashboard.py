@@ -1,28 +1,11 @@
 """Dashboard API — KPI tổng hợp và pending counts cho sidebar badge"""
 import sqlite3
-from datetime import date, timedelta
-from typing import FrozenSet
-from collections import defaultdict
 from fastapi import APIRouter, Depends, Query
 from backend.database import get_db, _vn_now
 from backend.core.deps import get_current_staff, TONG_HOP_CODES
+from backend.services.handover_report_service import compute_period
 
 router = APIRouter()
-
-
-def _working_days_between(
-    start_exclusive: date,
-    end_inclusive: date,
-    holiday_dates: FrozenSet[date],
-    leave_dates: FrozenSet[date] = frozenset(),
-) -> int:
-    count = 0
-    d = start_exclusive + timedelta(days=1)
-    while d <= end_inclusive:
-        if d.weekday() < 5 and d not in holiday_dates and d not in leave_dates:
-            count += 1
-        d += timedelta(days=1)
-    return count
 
 
 def _is_tong_hop(staff: dict, db: sqlite3.Connection) -> bool:
@@ -164,97 +147,12 @@ def dashboard_summary(
     current: dict = Depends(get_current_staff),
     db: sqlite3.Connection = Depends(get_db),
 ):
+    """KPI đúng hạn — dùng chung logic với Báo cáo bàn giao chứng từ."""
     today = _vn_now().date()
-    if year is None:
-        year = today.year
-    if month is None:
-        month = today.month
-
-    period_start = date(year, month, 1)
-    period_end   = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
-    lookup_start = period_start - timedelta(days=35)
-
-    # ── Ngày lễ ──
-    holiday_rows = db.execute(
-        "SELECT date FROM public_holidays WHERE date >= ? AND date < ?",
-        (lookup_start.isoformat(), period_end.isoformat()),
-    ).fetchall()
-    holiday_dates: FrozenSet[date] = frozenset(
-        date.fromisoformat(r["date"]) for r in holiday_rows
-    )
-
-    # ── Ngày nghỉ phép được duyệt ──
-    leave_rows = db.execute(
-        """SELECT staff_id, start_date, end_date FROM leave_records
-           WHERE status = 'approved' AND end_date >= ? AND start_date < ?""",
-        (lookup_start.isoformat(), period_end.isoformat()),
-    ).fetchall()
-
-    _raw_leave: dict = defaultdict(set)
-    for lr in leave_rows:
-        lv_start = date.fromisoformat(lr["start_date"])
-        lv_end   = date.fromisoformat(lr["end_date"])
-        d = max(lv_start, lookup_start)
-        while d <= lv_end and d < period_end:
-            if d.weekday() < 5:
-                _raw_leave[lr["staff_id"]].add(d)
-            d += timedelta(days=1)
-    staff_leave: dict = {sid: frozenset(dates) for sid, dates in _raw_leave.items()}
-
-    # ── Entries trong period ──
-    rows = db.execute(
-        """SELECT de.transaction_date, h.handover_date, h.received_by_id, d.name AS dept_name
-           FROM document_entries de
-           JOIN handovers h ON de.handover_id = h.id
-           JOIN departments d ON h.department_id = d.id
-           WHERE h.handover_date >= ? AND h.handover_date < ?""",
-        (period_start.isoformat(), period_end.isoformat()),
-    ).fetchall()
-
-    by_dept: dict = {}
-    overall_total = 0
-    overall_on_time = 0
-
-    for row in rows:
-        tx_date      = date.fromisoformat(row["transaction_date"])
-        ho_date      = date.fromisoformat(row["handover_date"])
-        recv_id      = row["received_by_id"]
-        dept_name    = row["dept_name"]
-        receiver_leave = staff_leave.get(recv_id, frozenset()) if recv_id else frozenset()
-        working_days   = _working_days_between(tx_date, ho_date, holiday_dates, receiver_leave)
-        on_time = working_days <= 1
-
-        if dept_name not in by_dept:
-            by_dept[dept_name] = {"total": 0, "on_time": 0}
-        by_dept[dept_name]["total"] += 1
-        if on_time:
-            by_dept[dept_name]["on_time"] += 1
-        overall_total += 1
-        if on_time:
-            overall_on_time += 1
-
-    overall_late = overall_total - overall_on_time
-    overall_rate = round(overall_on_time / overall_total * 100, 1) if overall_total > 0 else None
-
-    by_dept_list = []
-    for dept_name, data in sorted(by_dept.items()):
-        t  = data["total"]
-        ot = data["on_time"]
-        by_dept_list.append({
-            "dept_name": dept_name,
-            "total":     t,
-            "on_time":   ot,
-            "late":      t - ot,
-            "rate":      round(ot / t * 100, 1) if t > 0 else None,
-        })
-
+    result = compute_period(db, year or today.year, month or today.month)
     return {
-        "period":  f"{year:04d}-{month:02d}",
-        "overall": {
-            "total":   overall_total,
-            "on_time": overall_on_time,
-            "late":    overall_late,
-            "rate":    overall_rate,
-        },
-        "by_dept": by_dept_list,
+        "period":         result["period"],
+        "overall":        result["overall"],
+        "by_dept":        result["by_dept"],
+        "no_submit_date": result["no_submit_date"],
     }

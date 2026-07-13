@@ -805,7 +805,254 @@ ui.on_exception(_on_exception)</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-07-02</footer>
+  <!-- 22 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">22</span>
+      <span class="card-title">Deploy song song hệ thống TEST (9000/9090) — cổng đọc từ <code>.env</code> thay vì hardcode</span>
+      <span class="badge badge-done">Hoàn thành</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Vấn đề</div>
+      <p>Cần chạy song song 1 bản TEST (port 9000/9090) bên cạnh hệ thống chính (8000/8080) trên cùng máy để thử code trước khi deploy thật, qua <code>deploy-test.bat</code> mới (robocopy từ cùng nguồn <code>d:\System</code> như <code>deploy.bat</code>). Trước khi sửa, cổng bị <strong>hardcode</strong> trong <code>run.py</code> (<code>--port 8000</code>), <code>frontend/main.py</code> (<code>port=8080</code>) và <code>config.py</code> (<code>BACKEND_PORT: int = 8000</code>) — nghĩa là bản deploy cho máy TEST và máy CHÍNH ra cùng 1 bộ code y hệt nhau, không thể tách cổng khác nhau chỉ bằng cách đổi thư mục đích.</p>
+
+      <div class="label">Đánh đổi đã cân nhắc</div>
+      <table>
+        <tr><th>Phương án</th><th>Vấn đề</th></tr>
+        <tr><td>Giữ hardcode, tự sửa tay 4 file trên máy TEST sau mỗi lần deploy</td><td>Mỗi lần <code>deploy-test.bat</code> chạy robocopy sẽ đè mất phần sửa tay → máy TEST lại chạy cổng 8000/8080, trùng cổng máy CHÍNH nếu chạy chung 1 máy → xung đột cổng thật sự</td></tr>
+        <tr><td>Loại trừ <code>run.py</code>/<code>frontend/main.py</code> khỏi robocopy của <code>deploy-test.bat</code></td><td>Máy TEST sẽ không bao giờ nhận code mới ở 2 file này — dễ quên, logic nghiệp vụ khác trong <code>run.py</code> không được cập nhật</td></tr>
+        <tr><td><strong>Đọc cổng từ biến môi trường <code>.env</code></strong> (đã chọn)</td><td>Source code giống hệt nhau giữa 2 máy; khác nhau duy nhất ở file <code>.env</code> (vốn đã không bị <code>deploy*.bat</code> copy đè theo thiết kế sẵn có)</td></tr>
+      </table>
+
+      <div class="label">Giải pháp</div>
+      <ul>
+        <li><code>config.py</code>: <code>BACKEND_PORT</code>/<code>FRONTEND_PORT</code> đọc từ <code>os.getenv(...)</code>, mặc định giữ nguyên 8000/8080.</li>
+        <li><code>run.py</code>: load <code>.env</code> ở đầu file, dùng <code>BACKEND_PORT</code> cho cả URL log lẫn tham số <code>--port</code> truyền cho uvicorn subprocess.</li>
+        <li><code>frontend/main.py</code>: tự load <code>.env</code> (đứng một mình, không qua <code>run.py</code>) rồi đọc <code>FRONTEND_PORT</code> cho <code>ui.run(port=...)</code>.</li>
+        <li><code>api_client.py</code> (<code>BACKEND_URL</code>) và <code>config.py</code> (<code>ALLOWED_ORIGINS</code>, dùng cho CORS): mặc định <strong>suy ra</strong> từ <code>BACKEND_PORT</code>/<code>FRONTEND_PORT</code> nếu không set riêng — tránh phải nhớ set thêm 2 biến môi trường khi chỉ đổi cổng.</li>
+      </ul>
+
+      <div class="caution">Chưa tự động hoá: file <code>.env</code> trên thư mục TEST (<code>TTTT-System_Test\TTTT-develop</code>) phải được tạo/sửa tay với <code>BACKEND_PORT=9000</code> và <code>FRONTEND_PORT=9090</code> — <code>deploy.bat</code>/<code>deploy-test.bat</code> cố tình không copy <code>.env</code> (mỗi máy giữ <code>SECRET_KEY</code> riêng), nên bước này là một lần duy nhất, không lặp lại mỗi lần deploy.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">23</span>
+      <span class="card-title">Backup phụ ra thư mục khác + kiểm tra integrity bản backup vừa tạo</span>
+      <span class="badge badge-done">Hoàn thành</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Vấn đề</div>
+      <p>Backup tự động (<code>backup_service.py</code>) chỉ ghi vào <code>data/backups/</code> — <strong>cùng ổ đĩa, cùng máy</strong> với file chính. Ổ hỏng / ransomware / xóa nhầm <code>data/</code> sẽ mất cả gốc lẫn backup. Trong <code>data/</code> đã tồn tại 3 file <code>*corrupt*</code> — bằng chứng backup từng đẻ ra bản đã hỏng mà hệ thống không phát hiện (vì backup đọc từ file chính; nếu nguồn hỏng thì đích cũng hỏng).</p>
+
+      <div class="label">Đánh đổi đã cân nhắc</div>
+      <table>
+        <tr><th>Phương án</th><th>Vấn đề</th></tr>
+        <tr><td>Hardcode đường dẫn thư mục phụ trong code</td><td>Mỗi máy deploy có ổ/đường mạng khác nhau; hardcode phải sửa code mỗi nơi</td></tr>
+        <tr><td><strong>Đọc <code>BACKUP_EXTRA_DIR</code> từ <code>.env</code></strong> (đã chọn)</td><td>Bật/tắt và đổi vị trí chỉ bằng 1 dòng trong <code>.env</code> — không đụng code; để trống = không dùng</td></tr>
+      </table>
+
+      <div class="label">Giải pháp</div>
+      <ul>
+        <li><code>config.py</code>: thêm <code>BACKUP_EXTRA_DIR</code> đọc từ <code>os.getenv</code>, mặc định rỗng.</li>
+        <li><code>_mirror()</code>: sau khi tạo bản chính, <code>shutil.copy2</code> sang thư mục phụ rồi xoay-vòng riêng (giữ 7 bản). Lỗi thư mục phụ chỉ log, <strong>không</strong> làm hỏng backup chính.</li>
+        <li><code>_verify()</code>: chạy <code>PRAGMA integrity_check</code> trên bản vừa tạo; nếu không "ok" thì log lỗi (cảnh báo file chính có thể đã hỏng) nhưng vẫn giữ file để điều tra.</li>
+      </ul>
+
+      <div class="caution">Bản phụ vẫn được sao chép <strong>từ</strong> bản chính vốn tạo từ file gốc — nếu file gốc hỏng ngay lúc backup, bản phụ cũng hỏng theo. Thư mục phụ chống được mất ổ/máy, <strong>không</strong> chống được nguồn hỏng. Muốn an toàn hơn cần thêm bản backup định kỳ dài hạn (weekly/monthly, không xoay-vòng) — chưa làm.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">24</span>
+      <span class="card-title">Báo cáo bàn giao chứng từ + sửa KPI "đúng hạn" luôn 100% ở Dashboard</span>
+      <span class="badge badge-done">Hoàn thành</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Vấn đề gốc — KPI cũ không đo được gì</div>
+      <p>Dashboard tính đúng hạn bằng số ngày làm việc giữa <code>document_entries.transaction_date</code> và <code>handovers.handover_date</code>. Nhưng <code>entry-upsert</code> (đường nhập duy nhất của lưới bàn giao) gán <strong>cùng một giá trị <code>body.date</code></strong> vào cả hai cột. Khoảng cách luôn bằng 0 → mọi chứng từ luôn "đúng hạn" → tỷ lệ luôn 100%.</p>
+      <p>Kiểm chứng trên <code>data/ksnb.db</code>: <strong>544/544</strong> chứng từ có <code>transaction_date == handover_date</code>, <strong>0</strong> chứng từ có handover_date muộn hơn. KPI này sai từ khi ra đời, không phải hồi quy mới.</p>
+
+      <div class="label">Ngày nộp thật lấy từ đâu</div>
+      <p>Nguồn duy nhất ghi lại thời điểm nộp là <code>entry_change_logs</code>: timestamp nhỏ nhất của action <code>handover</code> (chuyên viên nộp) hoặc <code>edited_hkv</code> (HKV nhập trực tiếp). Dùng <code>MIN()</code> nên chỉ lần nộp <em>đầu tiên</em> mới tính — mượn lại rồi bàn giao lại (<code>returned</code>) không reset đồng hồ.</p>
+
+      <div class="label">Tại sao không thêm cột <code>submitted_at</code> vào <code>document_entries</code></div>
+      <table>
+        <tr><th>Phương án</th><th>Đánh giá</th></tr>
+        <tr><td>Thêm cột <code>submitted_at</code> + backfill</td><td>Cần migration, cần dual-write ở 4 endpoint, và vẫn <strong>không</strong> backfill được 525 chứng từ cũ (không có nguồn nào để backfill). Thêm rủi ro, không thêm dữ liệu.</td></tr>
+        <tr><td><strong>Suy ra từ <code>entry_change_logs</code> lúc query</strong> ✓</td><td>Log đã là nguồn chân lý sẵn có. Entry bị từ chối/xóa thì log xóa theo (manual cascade) nên không rò rỉ. Không migration, không dual-write.</td></tr>
+      </table>
+
+      <div class="label">Đánh đổi đã chấp nhận — 525/544 chứng từ cũ bị ẩn</div>
+      <p>Chỉ <strong>19/544</strong> chứng từ có log nộp. 525 chứng từ còn lại (87 của 11/2025, 433 của 03/2026) là dữ liệu import cũ: <code>entered_by_id</code>, <code>confirmed_at</code> và log đều rỗng — <strong>ngày nộp không tồn tại ở bất kỳ đâu trong DB</strong>.</p>
+      <p>Theo quyết định của người dùng: <strong>ẩn hoàn toàn</strong> khỏi báo cáo thay vì coi là đúng hạn (coi là đúng hạn = bịa số). Hệ quả phải chấp nhận: <em>tổng chứng từ trên báo cáo không khớp với màn hình Bàn giao</em>. Để người xem không tưởng là mất dữ liệu, backend trả thêm <code>no_submit_date</code> (số chứng từ bị loại) và cả hai màn hình in một dòng ghi chú xám.</p>
+
+      <div class="label">Dashboard và Báo cáo dùng chung một hàm</div>
+      <p><code>handover_report_service.compute_period()</code> là nguồn tính duy nhất; <code>dashboard.py</code> gọi lại rồi bỏ <code>late_entries</code>. Nếu để hai bản logic riêng, hai màn hình sẽ cho hai con số khác nhau — lỗi kinh điển của loại báo cáo này.</p>
+      <p>Kèm theo hai thay đổi hành vi <strong>có chủ đích</strong> ở Dashboard:</p>
+      <ul>
+        <li>Kỳ lọc đổi từ <code>handover_date</code> sang <code>transaction_date</code> — trả lời đúng câu hỏi "chứng từ phát sinh tháng này nộp ra sao".</li>
+        <li>Tỷ lệ tụt từ 100% xuống số thật (T6/2026: <strong>6,7%</strong> — 1 đúng hạn / 14 quá hạn). Đây là số đúng, không phải hồi quy.</li>
+      </ul>
+
+      <div class="label">Định nghĩa hạn nộp — giữ nguyên, không phát minh lại</div>
+      <p>Đúng hạn = nộp trong <strong>1 ngày làm việc</strong> sau ngày giao dịch, bỏ T7/CN, ngày lễ, và <em>ngày nghỉ phép đã duyệt của người nhận</em> (<code>handovers.received_by_id</code>). Quy tắc này bê nguyên từ KPI cũ để chỉ sửa <strong>dữ liệu đầu vào</strong>, không sửa <strong>nghiệp vụ</strong> — tránh trộn hai loại thay đổi trong một lần.</p>
+      <p>Ngày nộp so sánh ở mức <strong>ngày</strong> (bỏ giờ): nộp 23:59 cùng ngày giao dịch vẫn là đúng hạn.</p>
+
+      <div class="label">Feature code — vì sao không đổi <code>menu.reports</code></div>
+      <p>Menu "Báo cáo" cũ đổi nhãn thành "Báo cáo hậu kiểm" nhưng <strong>giữ nguyên code <code>menu.reports</code></strong>. Đổi code sẽ làm mọi bản ghi <code>group_features</code> đã gán trỏ vào code không còn tồn tại → toàn bộ nhóm mất quyền vào menu này mà không có cảnh báo. Nhãn là thứ hiển thị, code là khóa dữ liệu.</p>
+      <div class="caution">Feature mới <code>menu.handover_reports</code> chưa được gán cho nhóm nào. Admin thấy ngay (bypass), <strong>user thường sẽ không thấy menu</strong> cho tới khi admin gán quyền ở <em>Phân quyền theo nhóm</em>.</div>
+
+      <div class="label">Phát hiện nhưng CHƯA sửa</div>
+      <table>
+        <tr><th>Vấn đề</th><th>Vì sao chưa sửa</th></tr>
+        <tr>
+          <td>Cột <code>handovers.handover_date</code> giờ là dữ liệu chết — luôn bằng <code>transaction_date</code>, không còn dùng để tính hạn.</td>
+          <td>Vẫn được đọc ở <code>export_handovers</code> và dùng làm khóa <code>UNIQUE(department_id, handover_date)</code> để <code>entry-upsert</code> chống race condition. Xóa cột là thay đổi schema lan rộng, tách PR riêng.</td>
+        </tr>
+        <tr>
+          <td>Action <code>edited_cv</code> có trong <code>_ACTION_LABEL</code> nhưng không endpoint nào INSERT nó.</td>
+          <td>Tàn dư. Không đưa vào <code>_SUBMIT_ACTIONS</code> vì không có dữ liệu thật; nếu sau này dùng lại cần cân nhắc có tính là "nộp" không.</td>
+        </tr>
+      </table>
+
+      <div class="label">Kiểm chứng</div>
+      <ul>
+        <li><code>compute_period()</code> chạy trực tiếp trên <code>data/ksnb.db</code>, khớp với bảng tính tay 19 chứng từ có log.</li>
+        <li>Endpoint qua <code>TestClient</code> (override <code>get_current_staff</code>): 200 cho admin, <strong>403</strong> cho <code>chuyen_vien</code> (chưa có feature), <strong>400</strong> cho <code>month=13</code> / <code>year=1800</code>.</li>
+        <li><code>/api/dashboard/summary</code> và <code>/api/handover-reports/summary</code> trả cùng <code>overall</code> cho T6/2026 — xác nhận dùng chung logic.</li>
+        <li>Chưa chạy click-through trên trình duyệt: máy không có Playwright/Selenium, không tự cài. Rủi ro còn lại nằm ở render NiceGUI, không ở phần tính toán.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">25</span>
+      <span class="card-title">Xóa luồng "phiếu bàn giao" cũ — 2 trang mồ côi + 7 endpoint chết</span>
+      <span class="badge badge-done">Hoàn thành</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh — hai thế hệ thiết kế chồng lên nhau</div>
+      <p>Thiết kế gốc mô phỏng sổ giấy: mỗi lần phòng nghiệp vụ mang chứng từ sang thì lập một <em>phiếu bàn giao</em> (phòng, ngày, người giao), liệt kê từng dòng vào phiếu, cuối cùng xác nhận cả phiếu. Sau đó thiết kế đổi sang <strong>lưới theo tháng</strong>: mỗi ô là (cán bộ × ngày), HKV xác nhận <strong>từng ô</strong>. Khái niệm "phiếu" tụt xuống thành bản ghi kỹ thuật sinh tự động bởi <code>entry-upsert</code>. Code của thế hệ cũ không ai xóa.</p>
+
+      <div class="label">Bằng chứng luồng cũ CHƯA TỪNG chạy</div>
+      <table>
+        <tr><th>Dấu vết</th><th>Chỉ được ghi bởi</th><th>Thực tế trong <code>ksnb.db</code></th></tr>
+        <tr><td><code>handovers.delivered_by</code></td><td><code>create_handover</code></td><td><strong>0 / 148</strong> phiếu</td></tr>
+        <tr><td><code>handovers.status = 'confirmed'</code></td><td><code>confirm_handover</code></td><td><strong>0 / 148</strong> (tất cả là <code>draft</code>)</td></tr>
+      </table>
+      <p>Thêm nữa, git từ commit đầu tiên (<code>9d90723</code>) đã <strong>không có một dòng <code>navigate.to</code> nào</strong> trỏ tới <code>/handovers/new</code>. Trang sinh ra đã mồ côi. Trang <code>/handovers/{id}</code> chỉ được điều hướng từ chính nó.</p>
+
+      <div class="label">Vì sao phải xóa chứ không vá</div>
+      <ul>
+        <li><strong>Ghi thiếu nhật ký:</strong> <code>create_handover</code> / <code>add_entry</code> INSERT <code>document_entries</code> mà không ghi <code>entry_change_logs</code> → chứng từ tạo ra vô hình trong Báo cáo bàn giao (chỉ rơi vào <code>no_submit_date</code>) nhưng vẫn hiện trên lưới và file Excel. Hai màn hình nói hai chuyện.</li>
+        <li><strong>Vỡ ràng buộc:</strong> <code>create_handover</code> dùng <code>INSERT</code> thường, không bắt <code>UNIQUE(department_id, handover_date)</code>. Lưới đã sinh phiếu cho hầu hết các ngày → lập phiếu trùng ngày ném <code>IntegrityError</code> → HTTP <strong>500</strong> (mô phỏng trên bản sao DB, đã xác nhận).</li>
+        <li>Route không có ai dẫn tới nhưng <strong>không khóa</strong> — gõ thẳng URL là vào được.</li>
+      </ul>
+      <p>Vá đúng cách cần: nối nút vào menu + bắt lỗi trùng + bổ sung ghi log. Xóa thì mất 0 dữ liệu (chưa từng có bản ghi nào đi qua) và cái bẫy biến mất theo.</p>
+
+      <div class="label">Đã xóa</div>
+      <table>
+        <tr><th>Tầng</th><th>Xóa</th></tr>
+        <tr><td>Frontend</td><td><code>@ui.page("/handovers/new")</code>, <code>@ui.page("/handovers/{handover_id}")</code> (267 dòng); bỏ import <code>_redirect_if_cv</code> thành thừa</td></tr>
+        <tr><td>Backend API</td><td><code>_handover_to_dict</code>, <code>list_handovers</code> (<code>GET /</code>), <code>get_handover</code>, <code>create_handover</code>, <code>add_entry</code>, <code>delete_entry</code>, <code>confirm_handover</code>, <code>delete_handover</code> — 16 route xuống còn <strong>9</strong></td></tr>
+        <tr><td>Schemas</td><td><code>HandoverCreate</code>, <code>DocumentEntryIn</code>, <code>HandoverOut</code> + export trong <code>schemas/__init__.py</code></td></tr>
+      </table>
+      <div class="caution"><code>DocumentEntryOut</code> <strong>giữ lại</strong> dù luồng phiếu đã chết — <code>backend/schemas/bundles.py</code> dùng nó cho <code>BundleItemOut.entry</code>. <code>list_handovers</code> (<code>GET /api/handovers/</code>) tuy 0 caller nhưng là API công khai; xóa vì nó chỉ tồn tại để phục vụ khái niệm "phiếu" và là hộ dùng duy nhất còn lại của <code>_handover_to_dict</code>.</div>
+
+      <div class="label">Giữ lại có chủ đích</div>
+      <ul>
+        <li><code>export_handovers</code> (<code>GET /export</code>) — trang lưới đang gọi. Nó đọc <code>handovers.handover_date</code> nên bảng <code>handovers</code> vẫn cần thiết.</li>
+        <li><code>confirm_returned</code> (<code>POST /entries/{id}/confirm-returned</code>) — stub trả 410, cố ý giữ để client cũ nhận thông báo rõ thay vì 404.</li>
+        <li>Bảng <code>handovers</code> và cột <code>handover_date</code> — <code>entry-upsert</code> vẫn dùng <code>INSERT OR IGNORE</code> + <code>UNIQUE(department_id, handover_date)</code> để chống race condition.</li>
+      </ul>
+
+      <div class="label">Kiểm chứng không hồi quy</div>
+      <p>Dựng harness chạy trên <strong>bản sao</strong> <code>ksnb.db</code> (override <code>get_db</code> + <code>get_current_staff</code>), chụp hành vi <em>trước</em> khi xóa rồi chạy lại <em>sau</em> khi xóa. 17/17 kiểm tra của luồng lưới cho kết quả <strong>giống hệt</strong>: grid → entry-upsert (tạo/sửa/xóa ô) → ghi <code>entry_change_logs</code> → tạo handover cha tự động → history → borrow → confirm-received → handback → reject → export. 7 endpoint cũ chuyển từ 200/400/404 sang <strong>404 toàn bộ</strong>. Grep toàn repo: 0 tham chiếu còn sót tới 11 ký hiệu đã xóa. DB thật không bị ghi.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">26</span>
+      <span class="card-title">Giữ lịch sử khi HKV từ chối chứng từ mới — trạng thái <code>rejected</code></span>
+      <span class="badge badge-done">Hoàn thành</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Vấn đề</div>
+      <p>Khi HKV từ chối một chứng từ <em>mới</em> (chưa xác nhận), <code>reject_entry</code> chạy nhánh <code>DELETE entry_change_logs</code> + <code>DELETE document_entries</code> — xóa cả bản ghi lẫn toàn bộ log. Vì lịch sử gắn với <code>entry_id</code>, xóa entry là mất sạch lịch sử; ô trên lưới trống trơn, GDV không biết lý do bị từ chối. Nhãn <code>rejected_handover</code> ("Từ chối chứng từ mới") đã tồn tại sẵn trong bảng ánh xạ — ý định ban đầu là <strong>ghi log</strong>, nhưng code lại đi xóa.</p>
+
+      <div class="label">Quyết định thiết kế — vì sao thêm trạng thái <code>rejected</code></div>
+      <table>
+        <tr><th>Phương án</th><th>Đánh giá</th></tr>
+        <tr><td>Giữ log, xóa entry</td><td><strong>Loại</strong> — <code>get_entry_history</code> truy vấn entry trước, entry mất thì trả 404, log mồ côi không xem được.</td></tr>
+        <tr><td>Thêm status <code>rejected</code>, giữ entry</td><td><strong>Chọn</strong> — giữ nguyên entry + log, chỉ đổi trạng thái. Lịch sử xem được, ô hiện màu đỏ kèm lý do, GDV nộp lại được.</td></tr>
+      </table>
+
+      <div class="label">Luồng nộp lại — cái bẫy "cùng số tờ"</div>
+      <p>Nút "Lưu" ở lưới chỉ gửi ô có <em>thay đổi số</em> (JS so <code>curr !== orig</code>). Nếu chứng từ bị từ chối 5 tờ và GDV nộp lại đúng 5 tờ → JS thấy không đổi → không gửi → ô kẹt ở <code>rejected</code>. Vì thế bổ sung endpoint <code>POST /entries/{id}/resubmit</code> + nút <strong>"Nộp lại"</strong> trong panel (cho user có <code>handovers.save_entry</code>), đưa <code>rejected → pending_confirm</code> và ghi log <code>handover</code>. Nếu GDV gõ số khác thì <code>entry-upsert</code> tự lo (rejected không nằm trong <code>{confirmed, borrowed}</code> nên được phép sửa).</p>
+
+      <div class="label">Phạm vi ảnh hưởng đã kiểm</div>
+      <ul>
+        <li><code>dashboard/pending-counts</code> lọc <code>= 'pending_confirm'</code> → <code>rejected</code> không bị đếm nhầm là chờ duyệt.</li>
+        <li><code>bundles</code> lọc <code>== 'confirmed'</code> → <code>rejected</code> không lọt vào đóng tập.</li>
+        <li>Không cần migration: cột <code>entry_status</code> là TEXT, không có ràng buộc CHECK.</li>
+        <li>Cho phép GDV xóa ô <code>rejected</code> của mình (mở rộng điều kiện xóa từ chỉ <code>PENDING</code>) và sửa thông báo lỗi vốn ghi nhầm "đã được xác nhận".</li>
+      </ul>
+
+      <div class="label">Kiểm chứng</div>
+      <p>Harness gọi trực tiếp hàm endpoint (<code>reject_entry</code> / <code>get_entry_history</code> / <code>resubmit_entry</code>) trên DB tạm: sau reject entry vẫn còn, status = <code>rejected</code>, log lý do được lưu, lịch sử trả về không 404; sau resubmit về <code>pending_confirm</code> và log tích lũy 3 dòng; resubmit khi đang pending bị chặn 409. Toàn bộ pass, không đụng DB thật.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">27</span>
+      <span class="card-title">Bỏ chặn báo cáo hậu kiểm khi cột "GD Hậu kiểm sai" ≠ 0</span>
+      <span class="badge badge-done">Hoàn thành</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Vấn đề</div>
+      <p>Trước đây, mỗi khi file IPCAS/Payment có user với cột <code>GD Hậu kiểm sai</code> (<code>name_5</code>) khác 0, hệ thống gom thành "violations" và trả về HTTP 422 — chặn tạo báo cáo, bắt người dùng đi kiểm tra lại. Nghiệp vụ không còn cần cảnh báo này nữa.</p>
+
+      <div class="label">Cái bẫy đã sửa — nhánh violation nuốt luôn dữ liệu</div>
+      <p>Logic cũ không chỉ cảnh báo: cấu trúc là <code>if viols: gom_cảnh_báo() else: xử_lý_dữ_liệu()</code>. Nghĩa là chỉ cần một dòng sai ≠ 0 là <strong>toàn bộ file đó bị bỏ qua</strong>, không enrich, không đưa vào báo cáo. Vì vậy không thể chỉ xóa cái <code>raise 422</code> ở cuối — phải bỏ luôn nhánh rẽ để dữ liệu <em>luôn</em> được xử lý bất kể giá trị cột sai.</p>
+
+      <div class="label">Phạm vi gỡ bỏ (xóa sạch, không để code chết)</div>
+      <ul>
+        <li><code>report_service.py</code>: <code>parse_ipcas</code> trả <code>(rows, month, year)</code> thay vì kèm <code>violations</code>; <code>_parse_payment</code> trả thẳng <code>rows</code>. Cột <code>gd_sai</code> vẫn giữ để cộng dồn — chỉ bỏ việc bắt lỗi.</li>
+        <li><code>api/reports.py</code>: 3 endpoint (<code>parse-gdv</code>, <code>parse-hkv</code>, <code>generate-dept-zip</code>) bỏ biến <code>violations</code> và khối <code>raise HTTPException(422)</code>.</li>
+        <li><code>frontend/api_client.py</code>: xóa class <code>ViolationError</code> và 2 chỗ raise nó (nhánh 422 giờ rơi về xử lý lỗi chung).</li>
+        <li><code>frontend/pages/reports.py</code>: xóa hàm <code>_show_violations</code> và 3 chỗ bắt <code>ViolationError</code>.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">28</span>
+      <span class="card-title">BC HK theo phòng: cột TC (I)/TC (II) trống trên một số máy</span>
+      <span class="badge badge-done">Hoàn thành</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Triệu chứng</div>
+      <p>Cùng một file báo cáo phòng, mở ở máy A thì cột tổng <strong>TC (I)</strong>, <strong>TC (II)</strong> và cột tỷ lệ hiện số bình thường; mở ở máy B thì <strong>trống</strong>.</p>
+
+      <div class="label">Nguyên nhân</div>
+      <p><code>generate_dept_excel</code> ghi các ô tổng bằng <em>công thức Excel</em> (<code>=SUM(E9:E16)</code>, <code>=IFERROR(I/E*100,0)</code>). openpyxl không tính sẵn kết quả — file lưu <code>&lt;f&gt;SUM(...)&lt;/f&gt;&lt;v&gt;&lt;/v&gt;</code>, tức <strong>ô nhớ kết quả rỗng</strong>. Máy hiện số là máy Excel để chế độ tự tính lại; máy trống là máy không tính lại công thức khi mở (Excel chế độ Manual, hoặc mở bằng WPS/LibreOffice/xem nhanh Windows/Google Sheets). Cờ <code>fullCalcOnLoad="1"</code> có trong file nhưng chỉ đảm bảo với Excel desktop tự động, không phổ quát.</p>
+
+      <div class="label">Cách sửa</div>
+      <p>Bỏ hết công thức, <strong>tính giá trị bằng Python và ghi thẳng con số</strong> vào ô (tổng E–I cộng dồn từ list dict; tỷ lệ = <code>huy_cq/gd_hk_dung*100</code>). Giá trị nằm sẵn trong ô nên mọi máy/mọi phần mềm đều hiển thị, không còn phụ thuộc chế độ tính của Excel. <code>_write_total</code> đổi chữ ký từ <code>(r, label, start, end)</code> sang <code>(r, label, rows)</code>.</p>
+
+      <div class="label">Kiểm chứng</div>
+      <p>Gọi trực tiếp <code>generate_dept_excel</code> với dữ liệu mẫu, giải nén xlsx soi XML: 0 công thức còn lại, mọi ô có <code>&lt;v&gt;</code>; dòng TC (I) tổng đúng (E=15, I=3, tỷ lệ=20), dòng TC (II) đúng (E=7, I=4, tỷ lệ=57.14).</p>
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-07-10</footer>
 </div>
 </body>
 </html>

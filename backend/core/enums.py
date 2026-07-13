@@ -5,6 +5,7 @@ class EntryStatus(str, Enum):
     PENDING   = "pending_confirm"
     CONFIRMED = "confirmed"
     BORROWED  = "borrowed"
+    REJECTED  = "rejected"
 
 
 class LeaveStatus(str, Enum):

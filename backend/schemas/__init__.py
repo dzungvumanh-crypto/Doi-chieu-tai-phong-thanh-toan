@@ -4,8 +4,7 @@ from .auth import LoginRequest, Token, PasswordChange, AdminPasswordReset
 from .common import DepartmentOut
 from .staff import StaffCreate, StaffUpdate, StaffOut
 from .handovers import (
-    DocumentEntryIn, DocumentEntryOut,
-    HandoverCreate, HandoverOut,
+    DocumentEntryOut,
     GridEntryOut, GridResponse,
     EntryUpsertRequest, BorrowRequest, HandbackRequest, RejectRequest,
     EntryHistoryItem, EntryHistoryOut,
@@ -26,8 +25,7 @@ __all__ = [
     "LoginRequest", "Token", "PasswordChange", "AdminPasswordReset",
     "DepartmentOut",
     "StaffCreate", "StaffUpdate", "StaffOut",
-    "DocumentEntryIn", "DocumentEntryOut",
-    "HandoverCreate", "HandoverOut",
+    "DocumentEntryOut",
     "GridEntryOut", "GridResponse",
     "EntryUpsertRequest", "BorrowRequest", "HandbackRequest", "RejectRequest",
     "EntryHistoryItem", "EntryHistoryOut",

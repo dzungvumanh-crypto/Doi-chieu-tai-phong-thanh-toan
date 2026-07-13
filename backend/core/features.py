@@ -12,7 +12,9 @@ FEATURES: dict[str, str] = {
     "menu.handovers":          "Bàn giao chứng từ (menu)",
     "menu.bundles":            "Đóng chứng từ (menu)",
     "menu.storage":            "Lưu trữ (menu)",
-    "menu.reports":            "Báo cáo (menu)",
+    # Giữ nguyên code "menu.reports" — đổi code sẽ mất quyền đã gán trong group_features
+    "menu.reports":            "Báo cáo hậu kiểm (menu)",
+    "menu.handover_reports":   "Báo cáo bàn giao chứng từ (menu)",
     "menu.leaves":             "Nghỉ phép (menu)",
     "menu.th_reports":         "Báo cáo dữ liệu thanh toán — Phòng TH (menu)",
     "menu.staff":              "Quản lý User (menu)",
@@ -96,6 +98,7 @@ FEATURE_GROUPS: list[dict] = [
             },
             {"code": "menu.storage",  "actions": []},
             {"code": "menu.reports",  "actions": []},
+            {"code": "menu.handover_reports", "actions": []},
         ],
     },
     {

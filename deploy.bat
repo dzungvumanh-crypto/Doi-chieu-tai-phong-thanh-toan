@@ -84,6 +84,20 @@ echo.
 echo  LUU Y: Can file .env voi SECRET_KEY tren may dich.
 echo  Khoi dong lai ung dung: tat tien trinh cu, chay start.bat
 echo ============================================================
+echo.
+pause
+
+:: Sau khi deploy xong may chinh, tu dong cap nhat luon he thong TEST (9000/9090)
+if exist "%~dp0deploy-test.bat" (
+    call "%~dp0deploy-test.bat"
+) else (
+    echo [!] Khong tim thay deploy-test.bat -- bo qua cap nhat he thong test.
+    pause
+)
+goto realend
+
 :end
 pause
+
+:realend
 endlocal

@@ -16,13 +16,18 @@ import threading
 import time
 import urllib.request
 import urllib.error
+from dotenv import load_dotenv
 
 ROOT          = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(os.path.join(ROOT, ".env"))
+
 LOGS_DIR      = os.path.join(ROOT, "logs")
 MAX_RESTARTS  = 5
 RESTART_DELAY = 3
-BACKEND_URL   = "http://localhost:8000"
-FRONTEND_URL  = "http://localhost:8080"
+BACKEND_PORT  = os.getenv("BACKEND_PORT", "8000")
+FRONTEND_PORT = os.getenv("FRONTEND_PORT", "8080")
+BACKEND_URL   = f"http://localhost:{BACKEND_PORT}"
+FRONTEND_URL  = f"http://localhost:{FRONTEND_PORT}"
 POLL_TIMEOUT  = 40   # giây chờ mỗi service sẵn sàng
 
 _stop_event = threading.Event()
@@ -158,7 +163,7 @@ def run_backend():
     _run_with_restart(
         name="backend",
         cmd=[sys.executable, "-m", "uvicorn", "backend.main:app",
-             "--host", "0.0.0.0", "--port", "8000"],
+             "--host", "0.0.0.0", "--port", BACKEND_PORT],
     )
 
 

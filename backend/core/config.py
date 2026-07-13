@@ -22,9 +22,13 @@ class Settings:
     ACCESS_TOKEN_EXPIRE_HOURS: int = 8
 
     DATABASE_URL: str = f"sqlite:///{BASE_DIR}/data/ksnb.db"
+
+    # Thư mục backup phụ (nên ở ổ/máy khác) — để trống nếu không dùng.
+    # Ví dụ: BACKUP_EXTRA_DIR=D:\Backup_KSNB  hoặc  \\192.168.1.50\backup
+    BACKUP_EXTRA_DIR: str = os.getenv("BACKUP_EXTRA_DIR", "").strip()
     BACKEND_HOST: str = "0.0.0.0"
-    BACKEND_PORT: int = 8000
-    FRONTEND_PORT: int = 8080
+    BACKEND_PORT: int = int(os.getenv("BACKEND_PORT", "8000"))
+    FRONTEND_PORT: int = int(os.getenv("FRONTEND_PORT", "8080"))
 
     TEMPLATE_DIR: Path = BASE_DIR / "templates"
     MAX_SHEETS_PER_BUNDLE: int = 350
@@ -33,9 +37,10 @@ class Settings:
     ENV: str = os.getenv("ENV", "development")
 
     # Origins được phép — phân cách bằng dấu phẩy, ví dụ: http://localhost:8080,http://192.168.1.100:8080
+    # Mặc định suy ra từ FRONTEND_PORT nếu không set riêng
     ALLOWED_ORIGINS: list = [
         o.strip()
-        for o in os.getenv("ALLOWED_ORIGINS", "http://localhost:8080").split(",")
+        for o in os.getenv("ALLOWED_ORIGINS", f"http://localhost:{os.getenv('FRONTEND_PORT', '8080')}").split(",")
         if o.strip()
     ]
 

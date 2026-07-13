@@ -1,9 +1,13 @@
 """
 NiceGUI Frontend Application — Entry point
-Truy cập: http://localhost:8080
+Truy cập: http://localhost:<FRONTEND_PORT> (mặc định 8080, xem .env)
 """
 import sys, os
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT_DIR)
+
+from dotenv import load_dotenv
+load_dotenv(os.path.join(ROOT_DIR, ".env"))
 
 from nicegui import ui, app
 
@@ -36,7 +40,7 @@ if __name__ in {"__main__", "__mp_main__"}:
         ui.on_exception(_on_exception)
     ui.run(
         host="0.0.0.0",
-        port=8080,
+        port=int(os.getenv("FRONTEND_PORT", "8080")),
         title="PAYMENT CENTER",
         favicon="🏦",
         dark=False,

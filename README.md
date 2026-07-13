@@ -71,6 +71,7 @@ Truy cập:
 │   │   ├── delegations.py   # Ủy quyền Giám đốc
 │   │   ├── dashboard.py     # Tổng quan thống kê
 │   │   ├── reports.py       # Báo cáo hậu kiểm
+│   │   ├── handover_reports.py # Báo cáo bàn giao chứng từ (đúng hạn/quá hạn)
 │   │   ├── th_reports.py    # Báo cáo tổng hợp (phòng TH)
 │   │   ├── swift_recon.py   # Đối chiếu điện SWIFT (phòng Swift)
 │   │   ├── duty_schedule.py # Lịch trực
@@ -85,6 +86,7 @@ Truy cập:
 │       ├── bundle_service.py       # Thuật toán gom tập (max 350 tờ)
 │       ├── cover_service.py        # Tạo bìa Word (docxtpl)
 │       ├── report_service.py       # Xuất báo cáo Excel
+│       ├── handover_report_service.py # Tính chứng từ nộp đúng hạn / quá hạn
 │       ├── th_report_service.py    # Xuất báo cáo tổng hợp (phòng TH)
 │       ├── backup_service.py       # Backup SQLite tự động
 │       ├── cham459901_service.py   # Xử lý ZIP + phân loại bút toán 459901
@@ -107,6 +109,7 @@ Truy cập:
 │       ├── duty_schedule.py # Lịch trực
 │       ├── cham_459901.py   # Phân loại bút toán TK 459901
 │       ├── reports.py       # Báo cáo hậu kiểm
+│       ├── handover_reports.py # Báo cáo bàn giao chứng từ (đúng hạn/quá hạn)
 │       ├── th_reports.py    # Báo cáo tổng hợp
 │       ├── swift_recon.py   # Đối chiếu điện SWIFT (phòng Swift)
 │       ├── user_management.py # Quản lý tài khoản (admin)
@@ -151,7 +154,9 @@ Truy cập:
   - Nếu 1 ngày > 350 tờ → chia 2 tập cân bằng
 - **In bìa**: Tạo file `.docx` đúng format mẫu (2-column layout)
 - **Lưu trữ**: Ghi số hộp, vị trí kệ; tra cứu theo phòng/thời gian
-- **Báo cáo hậu kiểm**: Xuất Excel tổng hợp theo phòng
+- **Báo cáo** (menu con):
+  - *Báo cáo hậu kiểm*: Xuất Excel tổng hợp theo phòng
+  - *Báo cáo bàn giao chứng từ*: Số chứng từ nộp đúng hạn / quá hạn theo phòng; chi tiết cán bộ nào nộp chậm chứng từ ngày nào, chậm bao nhiêu ngày làm việc
 - **Báo cáo tổng hợp**: Báo cáo riêng cho phòng Tổng hợp
 - **Lịch sử thay đổi**: Ghi log mọi thao tác xác nhận, mượn, trả chứng từ
 

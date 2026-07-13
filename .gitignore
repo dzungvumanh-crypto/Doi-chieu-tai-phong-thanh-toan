@@ -28,3 +28,9 @@ logs/
 # Report outputs
 BaoCaoHauKiem/
 MCB.xlsx
+
+# Local artifacts / dữ liệu test (không đẩy lên repo)
+/Dữ liệu test/
+/deploy-test.bat
+/KSNB - HDSD phan mem ban giao chung tu.docx
+/Bắt đầu trên máy mới.txt

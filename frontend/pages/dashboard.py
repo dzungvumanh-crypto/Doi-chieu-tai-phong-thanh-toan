@@ -160,8 +160,15 @@ async def dashboard_page():
                     ui.label(title_txt).classes("font-semibold text-red-900")
                     if total_doc:
                         ui.label(f"Tổng {total_doc} chứng từ · {on_time} đúng hạn · {late_cnt} muộn").classes("text-xs text-gray-500")
-                ui.label("Đúng hạn = nộp trong 1 ngày làm việc sau ngày giao dịch (bỏ T7/CN, ngày lễ, ngày nghỉ phép của người nhận)").classes(
-                    "text-xs text-gray-400 italic mb-3")
+                with ui.column().classes("gap-0 mb-3"):
+                    ui.label("Đúng hạn = nộp trong 1 ngày làm việc sau ngày giao dịch (bỏ T7/CN, ngày lễ, ngày nghỉ phép của người nhận)").classes(
+                        "text-xs text-gray-400 italic")
+                    _skipped = summary.get("no_submit_date", 0)
+                    if _skipped:
+                        ui.label(
+                            f"Không tính {_skipped} chứng từ cũ chưa có dữ liệu ngày nộp. "
+                            f"Xem chi tiết tại Báo cáo bàn giao chứng từ."
+                        ).classes("text-xs text-gray-400 italic")
 
                 if not by_dept:
                     ui.label("Chưa có dữ liệu bàn giao trong tháng này.").classes("text-gray-400 text-sm mt-1")

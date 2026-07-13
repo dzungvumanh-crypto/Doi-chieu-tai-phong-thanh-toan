@@ -2,23 +2,26 @@
 import asyncio
 from nicegui import ui, app
 import frontend.api_client as api
-from frontend.shared import _sidebar, _content_area, _page_header, _require_auth, _redirect_if_cv, _handle_api_error
+from frontend.shared import _sidebar, _content_area, _page_header, _require_auth, _handle_api_error
 
 # Màu ô theo entry_status
 _CELL_STATUS_STYLE = {
     "pending_confirm": ("background:#FEF3C7", "2px solid #F59E0B"),  # vàng nhạt
-    "borrowed":        ("background:#FFEDD5", "2px solid #EA580C"),  # cam nhạt
+    "borrowed":        ("background:#EDE9FE", "2px solid #7C3AED"),  # tím nhạt
     "confirmed":       ("background:#DCFCE7", "2px solid #16A34A"),  # xanh lá nhạt
+    "rejected":        ("background:#FEE2E2", "2px solid #DC2626"),  # đỏ nhạt
 }
 _STATUS_DOT_COLOR = {
     "pending_confirm": "#D97706",
     "confirmed":       "#16A34A",
-    "borrowed":        "#EA580C",
+    "borrowed":        "#7C3AED",
+    "rejected":        "#DC2626",
 }
 _STATUS_LABEL_MAP = {
     "pending_confirm": "Chờ xác nhận",
     "confirmed":       "Đã xác nhận",
     "borrowed":        "Đang mượn",
+    "rejected":        "Bị từ chối",
 }
 _ACTION_COLOR_MAP = {
     "blue":   "#2563EB",
@@ -99,6 +102,7 @@ async def handovers_page():
                 ("confirmed",       "Đã xác nhận"),
                 ("pending_confirm", "Chờ xác nhận"),
                 ("borrowed",        "Đang mượn"),
+                ("rejected",        "Bị từ chối"),
             ]:
                 bg, border = _CELL_STATUS_STYLE[status_key]
                 with ui.row().classes("items-center gap-1"):
@@ -275,6 +279,20 @@ async def handovers_page():
                                             "flex-1 bg-red-600 text-white rounded-lg text-sm font-semibold"
                                         )
 
+                    if current_status == "rejected" and api.has_feature("handovers.save_entry"):
+                        has_action = True
+                        async def _do_resubmit(eid=entry_id, uname=user_name):
+                            try:
+                                await asyncio.to_thread(api.post, f"/api/handovers/entries/{eid}/resubmit", {})
+                                ui.notify("Đã nộp lại chứng từ", type="positive")
+                                right_panel.hide()
+                                await load_grid()
+                            except Exception as ex2:
+                                if _handle_api_error(ex2): return
+                        ui.button("↻  Nộp lại chứng từ", on_click=_do_resubmit).classes(
+                            "w-full bg-amber-600 text-white rounded-lg text-sm font-semibold"
+                        )
+
                     if is_cv and current_status == "confirmed" and api.has_feature("handovers.borrow"):
                         has_action = True
                         with ui.dialog() as borrow_dialog, ui.card():
@@ -402,7 +420,8 @@ async def handovers_page():
             _SB = {    # status → (bg, border)
                 "confirmed":       ("#DCFCE7", "2px solid #16A34A"),
                 "pending_confirm": ("#FEF3C7", "2px solid #F59E0B"),
-                "borrowed":        ("#FFEDD5", "2px solid #EA580C"),
+                "borrowed":        ("#EDE9FE", "2px solid #7C3AED"),
+                "rejected":        ("#FEE2E2", "2px solid #DC2626"),
             }
 
             if not users:
@@ -533,270 +552,3 @@ async def handovers_page():
         ))
 
         await load_grid()
-
-
-@ui.page("/handovers/new")
-async def new_handover_page():
-    if not _require_auth():
-        return
-    if _redirect_if_cv():
-        return
-    _ = _sidebar("handovers")
-    with _content_area():
-        _page_header("Tạo phiếu bàn giao", "Nhập thông tin tiếp nhận chứng từ từ phòng nguồn")
-
-        try:
-            depts = [d for d in await asyncio.to_thread(api.get, "/api/departments/") if d.get("is_source")]
-        except:
-            depts = []
-
-        dept_options = {d["id"]: d["name"] for d in depts}
-        entries = []  # List of entry dicts
-
-        with ui.card().classes("w-full p-6 mb-4 bg-white rounded-xl shadow-sm"):
-            ui.label("Thông tin chung").classes("font-semibold text-red-800 mb-3")
-            with ui.row().classes("w-full gap-4"):
-                f_dept = ui.select(dept_options, label="Phòng nguồn *").classes("flex-1")
-                f_date = ui.input("Ngày bàn giao *", value=str(__import__('datetime').date.today())).classes("flex-1")
-                f_deliver = ui.input("Người giao").classes("flex-1")
-
-        # Entries section
-        entries_container = ui.column().classes("w-full")
-        source_users_cache = {}
-
-        async def refresh_users():
-            if f_dept.value and f_dept.value not in source_users_cache:
-                try:
-                    users = await asyncio.to_thread(api.get, "/api/staff/", {"department_id": f_dept.value})
-                    source_users_cache[f_dept.value] = {
-                        u["id"]: f"{u.get('full_name') or u.get('ipcas_code') or ''}"
-                                 f"{' (' + u['ipcas_code'] + ')' if u.get('ipcas_code') else ''}"
-                        for u in users
-                    }
-                except:
-                    source_users_cache[f_dept.value] = {}
-
-        async def render_entries():
-            entries_container.clear()
-            await refresh_users()
-            with entries_container:
-                with ui.card().classes("w-full p-4 bg-white rounded-xl shadow-sm"):
-                    with ui.row().classes("w-full justify-between items-center mb-3"):
-                        ui.label(f"Chứng từ ({len(entries)} dòng)").classes("font-semibold text-red-800")
-                        ui.button("+ Thêm dòng", on_click=add_entry_row).classes("bg-green-600 text-white text-sm")
-
-                    for idx, entry in enumerate(entries):
-                        with ui.row().classes("w-full items-center gap-2 mb-2"):
-                            users_for_dept = source_users_cache.get(f_dept.value or 0, {})
-                            user_sel = ui.select(users_for_dept, value=entry.get("staff_id"), label="User").classes("flex-1")
-                            date_inp = ui.input("Ngày GD", value=entry.get("transaction_date", "")).classes("w-36")
-                            count_inp = ui.number("Số tờ", value=entry.get("sheet_count", 0), min=1).classes("w-24")
-                            ui.button(icon="delete", on_click=lambda i=idx: remove_entry(i)).classes("text-red-400")
-
-                            def update_entry(i=idx, us=user_sel, d=date_inp, c=count_inp):
-                                if i < len(entries):
-                                    entries[i]["staff_id"] = us.value
-                                    entries[i]["transaction_date"] = d.value
-                                    entries[i]["sheet_count"] = int(c.value or 0)
-
-                            user_sel.on("update:model-value", update_entry)
-                            date_inp.on("blur", update_entry)
-                            count_inp.on("update:model-value", update_entry)
-
-        def add_entry_row():
-            entries.append({"staff_id": None, "transaction_date": str(__import__('datetime').date.today()), "sheet_count": 0})
-            ui.run_coroutine(render_entries())
-
-        def remove_entry(idx):
-            if idx < len(entries):
-                entries.pop(idx)
-                ui.run_coroutine(render_entries())
-
-        f_dept.on("update:model-value", lambda: ui.run_coroutine(render_entries()))
-        add_entry_row()
-
-        with ui.row().classes("w-full justify-end gap-3 mt-4"):
-            ui.button("Hủy", on_click=lambda: ui.navigate.to("/handovers")).classes("text-gray-500 border px-4 py-2 rounded")
-            async def save_handover():
-                try:
-                    await asyncio.to_thread(api.post, "/api/handovers/", {
-                        "department_id": f_dept.value,
-                        "handover_date": f_date.value,
-                        "delivered_by": f_deliver.value or None,
-                        "entries": [e for e in entries if e.get("staff_id") and e.get("sheet_count", 0) > 0],
-                    })
-                    ui.notify("Đã tạo phiếu bàn giao", type="positive")
-                    ui.navigate.to("/handovers")
-                except Exception as e:
-                    if _handle_api_error(e): return
-            ui.button("Lưu phiếu", on_click=save_handover).classes("bg-red-700 text-white px-6 py-2 rounded")
-
-
-@ui.page("/handovers/{handover_id}")
-async def handover_detail_page(handover_id: int):
-    if not _require_auth():
-        return
-    if _redirect_if_cv():
-        return
-    _ = _sidebar("handovers")
-    with _content_area():
-        with ui.row().classes("w-full items-center gap-3 mb-4"):
-            ui.button(icon="arrow_back", on_click=lambda: ui.navigate.to("/handovers")).props("flat").classes("text-red-700")
-            ui.label("Chi tiết phiếu bàn giao").classes("text-2xl font-bold text-red-900")
-
-        try:
-            h = await asyncio.to_thread(api.get, f"/api/handovers/{handover_id}")
-        except Exception as e:
-            if _handle_api_error(e): return
-            ui.label("Không tìm thấy phiếu bàn giao").classes("text-red-500")
-            return
-
-        is_draft = h.get("status") == "draft"
-        dept = h.get("department") or {}
-        dept_id = dept.get("id") or h.get("department_id")
-
-        # Info card
-        with ui.card().classes("w-full p-4 mb-4 bg-white rounded-xl shadow-sm"):
-            with ui.row().classes("w-full gap-8 flex-wrap"):
-                with ui.column().classes("gap-1"):
-                    ui.label("Phòng nguồn").classes("text-xs text-gray-500")
-                    ui.label(dept.get("name", "")).classes("font-semibold")
-                with ui.column().classes("gap-1"):
-                    ui.label("Ngày bàn giao").classes("text-xs text-gray-500")
-                    ui.label(str(h.get("handover_date", ""))).classes("font-semibold")
-                with ui.column().classes("gap-1"):
-                    ui.label("Người giao").classes("text-xs text-gray-500")
-                    ui.label(h.get("delivered_by") or "—").classes("font-semibold")
-                with ui.column().classes("gap-1"):
-                    ui.label("Trạng thái").classes("text-xs text-gray-500")
-                    if is_draft:
-                        ui.badge("Nháp").props('color="orange"')
-                    else:
-                        ui.badge("Đã xác nhận").props('color="positive"')
-
-        # Entries section
-        entries_container = ui.column().classes("w-full")
-        detail_loading = ui.row().classes("w-full justify-center items-center py-4 hidden")
-        with detail_loading:
-            ui.spinner(size="lg", color="red")
-            ui.label("Đang tải...").classes("text-gray-500 ml-2 text-sm")
-
-        source_users_detail_cache = {}
-
-        async def load_detail_users():
-            if dept_id and dept_id not in source_users_detail_cache:
-                try:
-                    users = await asyncio.to_thread(api.get, "/api/staff/", {"department_id": dept_id})
-                    source_users_detail_cache[dept_id] = users
-                except Exception:
-                    source_users_detail_cache[dept_id] = []
-
-        async def render_detail_entries():
-            detail_loading.classes(remove="hidden")
-            entries_container.clear()
-            try:
-                current_h = await asyncio.to_thread(api.get, f"/api/handovers/{handover_id}")
-            except Exception as ex:
-                detail_loading.classes(add="hidden")
-                if _handle_api_error(ex): return
-                return
-            finally:
-                detail_loading.classes(add="hidden")
-
-            entries = current_h.get("entries", [])
-            total_sheets = sum(e.get("sheet_count", 0) for e in entries)
-
-            with entries_container:
-                with ui.card().classes("w-full p-4 bg-white rounded-xl shadow-sm"):
-                    with ui.row().classes("w-full justify-between items-center mb-3"):
-                        ui.label(f"Danh sách chứng từ ({len(entries)} dòng – tổng {total_sheets} tờ)").classes("font-semibold text-red-800")
-                        if is_draft:
-                            ui.button("+ Thêm dòng", on_click=lambda: add_entry_dialog.open()).classes("bg-green-600 text-white text-sm")
-
-                    if entries:
-                        with ui.row().classes("w-full px-3 py-2 bg-red-50 font-semibold text-xs text-red-700 rounded"):
-                            ui.label("User").classes("flex-1")
-                            ui.label("Họ tên").classes("flex-1")
-                            ui.label("Ngày GD").classes("w-28 text-center")
-                            ui.label("Số tờ").classes("w-20 text-center")
-                            if is_draft:
-                                ui.label("").classes("w-10")
-
-                        for e in entries:
-                            s = e.get("staff") or {}
-                            eid = e["id"]
-                            with ui.row().classes("w-full px-3 py-2 border-b border-gray-100 items-center"):
-                                ui.label(s.get("ipcas_code", "")).classes("flex-1 text-sm")
-                                ui.label(s.get("full_name") or "—").classes("flex-1 text-sm text-gray-600")
-                                ui.label(str(e.get("transaction_date", ""))).classes("w-28 text-center text-sm")
-                                ui.label(str(e.get("sheet_count", 0))).classes("w-20 text-center text-sm font-semibold")
-                                if is_draft:
-                                    ui.button(icon="delete", on_click=lambda eid=eid: do_delete_entry(eid)).props("flat dense").classes("w-10 text-red-400").tooltip("Xóa dòng")
-                    else:
-                        ui.label("Chưa có chứng từ nào").classes("text-gray-400 text-sm text-center py-4")
-
-        async def do_delete_entry(entry_id: int):
-            try:
-                await asyncio.to_thread(api.delete, f"/api/handovers/{handover_id}/entries/{entry_id}")
-                ui.notify("Đã xóa dòng chứng từ", type="positive")
-                await render_detail_entries()
-            except Exception as ex:
-                if _handle_api_error(ex): return
-
-        # Dialog thêm dòng
-        await load_detail_users()
-        users_for_dept = source_users_detail_cache.get(dept_id, [])
-        user_opts = {
-            u["id"]: f"{u.get('full_name') or u.get('ipcas_code') or ''}"
-                     f"{' (' + u['ipcas_code'] + ')' if u.get('ipcas_code') else ''}"
-            for u in users_for_dept
-        }
-
-        with ui.dialog() as add_entry_dialog, ui.card().classes("w-96 p-6"):
-            ui.label("Thêm dòng chứng từ").classes("text-lg font-bold mb-4")
-            ae_user = ui.select(user_opts, label="User *").classes("w-full")
-            ae_date = ui.input("Ngày GD (YYYY-MM-DD) *", value=str(__import__('datetime').date.today())).classes("w-full mt-2")
-            ae_count = ui.number("Số tờ *", value=1, min=1).classes("w-full mt-2")
-
-            with ui.row().classes("w-full justify-end gap-2 mt-4"):
-                ui.button("Hủy", on_click=add_entry_dialog.close).classes("text-gray-500")
-                async def do_add_entry():
-                    if not ae_user.value or not ae_date.value or not ae_count.value:
-                        ui.notify("Vui lòng điền đầy đủ thông tin", type="warning")
-                        return
-                    try:
-                        await asyncio.to_thread(api.post, f"/api/handovers/{handover_id}/entries", {
-                            "staff_id": ae_user.value,
-                            "transaction_date": ae_date.value,
-                            "sheet_count": int(ae_count.value),
-                        })
-                        ui.notify("Đã thêm dòng chứng từ", type="positive")
-                        add_entry_dialog.close()
-                        await render_detail_entries()
-                    except Exception as ex:
-                        if _handle_api_error(ex): return
-                ui.button("Thêm", on_click=do_add_entry).classes("bg-red-700 text-white")
-
-        await render_detail_entries()
-
-        # Action buttons (draft only)
-        if is_draft:
-            with ui.row().classes("w-full justify-end gap-3 mt-4"):
-                async def do_confirm_detail():
-                    try:
-                        await asyncio.to_thread(api.post, f"/api/handovers/{handover_id}/confirm")
-                        ui.notify("Đã xác nhận phiếu bàn giao", type="positive")
-                        ui.navigate.to(f"/handovers/{handover_id}")
-                    except Exception as ex:
-                        if _handle_api_error(ex): return
-
-                async def do_delete_handover():
-                    try:
-                        await asyncio.to_thread(api.delete, f"/api/handovers/{handover_id}")
-                        ui.notify("Đã xóa phiếu bàn giao", type="positive")
-                        ui.navigate.to("/handovers")
-                    except Exception as ex:
-                        if _handle_api_error(ex): return
-
-                ui.button("Xóa phiếu", icon="delete", on_click=do_delete_handover).classes("border border-red-500 text-red-500 px-4 py-2 rounded")
-                ui.button("Xác nhận phiếu", icon="check_circle", on_click=do_confirm_detail).classes("bg-green-600 text-white px-6 py-2 rounded")

@@ -15,6 +15,7 @@ from backend.api.dashboard import router as dashboard_router
 from backend.api.delegations import router as delegations_router
 from backend.api.departments import dept_router
 from backend.api.handovers import router as handover_router
+from backend.api.handover_reports import router as handover_reports_router
 from backend.api.holidays import router as holidays_router
 from backend.api.leaves import router as leaves_router
 from backend.api.logs import router as logs_router
@@ -44,6 +45,7 @@ _ROUTERS = [
     (dashboard_router,   {"prefix": "/api/dashboard",      "tags": ["dashboard"]}),
     (holidays_router,    {"prefix": "/api/admin/holidays", "tags": ["holidays"]}),
     (reports_router,     {}),
+    (handover_reports_router, {}),
     (th_reports_router,  {}),
     (groups_router,          {}),
     (duty_staff_router,      {}),

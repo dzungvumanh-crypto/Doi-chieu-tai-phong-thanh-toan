@@ -29,7 +29,14 @@ DEPARTMENTS = [
             ("handovers", "Bàn giao chứng từ", "receipt_long"),
             ("bundles",   "Đóng chứng từ",     "folder_zip"),
             ("storage",   "Lưu trữ",            "inventory_2"),
-            ("reports",   "Báo cáo",            "assessment"),
+            {
+                "label": "Báo cáo",
+                "icon": "assessment",
+                "items": [
+                    ("reports",          "Báo cáo hậu kiểm",          "fact_check"),
+                    ("handover_reports", "Báo cáo bàn giao chứng từ", "assignment_late"),
+                ],
+            },
         ],
     },
     {"id": "swift", "label": "Phòng Swift", "icon": "swap_horiz",

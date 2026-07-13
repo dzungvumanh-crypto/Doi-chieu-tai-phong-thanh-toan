@@ -6,7 +6,9 @@ from nicegui import app
 from dotenv import load_dotenv
 
 load_dotenv()
-BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
+# BACKEND_URL suy ra từ BACKEND_PORT nếu không set riêng — tránh quên đồng bộ
+# khi đổi cổng (vd. hệ thống test dùng .env khác với BACKEND_PORT=9000)
+BACKEND_URL = os.getenv("BACKEND_URL", f"http://localhost:{os.getenv('BACKEND_PORT', '8000')}")
 
 
 class SessionExpiredError(Exception):
@@ -18,12 +20,6 @@ class DisplacedSessionError(Exception):
     """Raised khi phiên bị thay thế bởi đăng nhập mới từ thiết bị khác."""
     pass
 
-
-class ViolationError(Exception):
-    """Raised khi server trả 422 với danh sách user có name_5 ≠ 0."""
-    def __init__(self, message: str, violations: list):
-        super().__init__(message)
-        self.violations = violations  # [{"user_code", "name_5", "system"}]
 
 # Persistent client — tái dùng TCP connection, tránh overhead kết nối mỗi request
 _client = httpx.Client(timeout=httpx.Timeout(10.0))
@@ -142,15 +138,6 @@ def _raise_http_error(e: httpx.HTTPStatusError):
         if "__session_displaced__" in str(detail):
             raise DisplacedSessionError("Tài khoản này đang được đăng nhập từ thiết bị khác")
         raise SessionExpiredError("Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.")
-    if e.response.status_code == 422:
-        try:
-            detail = e.response.json().get("detail", "")
-            if isinstance(detail, dict) and "violations" in detail:
-                raise ViolationError(detail.get("message", "Vi phạm dữ liệu"), detail["violations"])
-        except ViolationError:
-            raise
-        except Exception:
-            pass
     raise Exception(_parse_error(e))
 
 
@@ -240,14 +227,9 @@ def post_upload_bytes(path: str, files: dict) -> bytes:
             body = e.response.json()
             detail = body.get("detail", "")
             if isinstance(detail, dict):
-                if "violations" in detail:
-                    raise ViolationError(
-                        detail.get("message", "Vi phạm dữ liệu"),
-                        detail["violations"],
-                    )
                 raise Exception(detail.get("message", str(detail)))
             raise Exception(str(detail) or e.response.text)
-        except (SessionExpiredError, ViolationError):
+        except SessionExpiredError:
             raise
         except Exception as inner:
             raise Exception(str(inner))

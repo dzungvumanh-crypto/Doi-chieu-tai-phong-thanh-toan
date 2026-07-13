@@ -8,55 +8,6 @@ from frontend.shared import (
 )
 
 
-def _show_violations(violations: list, file_map: dict = None):
-    """
-    Hiển thị bảng các user có GD Hậu kiểm sai > 0.
-    file_map: {"IPCAS": "tên_file.xls", "Payment": "tên_file.xlsx"}
-    """
-    with ui.card().classes("w-full border border-red-400 bg-red-50 p-4"):
-        with ui.row().classes("items-center gap-2 mb-3"):
-            ui.icon("warning", color="red").classes("text-xl")
-            ui.label("GD Hậu kiểm sai đang lớn hơn 0. Đề nghị kiểm tra lại các user sau:").classes(
-                "text-red-700 font-semibold text-sm"
-            )
-
-        ipcas_viols = [v for v in violations if v.get("system") == "IPCAS"]
-        pay_viols   = [v for v in violations if v.get("system") == "Payment"]
-
-        for system, rows in [("IPCAS", ipcas_viols), ("Payment", pay_viols)]:
-            if not rows:
-                continue
-            fname = (file_map or {}).get(system, "")
-            header = f"Hệ thống {system}"
-            if fname:
-                header += f" — file: {fname}"
-            ui.label(header).classes("text-red-800 font-semibold text-xs mt-2 mb-1")
-
-            # IPCAS có row_num (số dòng trong file Excel); Payment là tổng hợp, không có dòng cụ thể
-            has_row = any("row_num" in v for v in rows)
-            col_defs = [("Mã user / Username", ""), ("GD HK sai", "w-28 text-center")]
-            if has_row:
-                col_defs.append(("Dòng trong file", "w-28 text-center"))
-
-            with ui.element("table").classes("w-full text-xs border-collapse"):
-                with ui.element("thead"):
-                    with ui.element("tr").classes("bg-red-100"):
-                        for h, cls in col_defs:
-                            with ui.element("th").classes(f"border border-red-300 px-2 py-1 {cls} font-semibold text-red-800"):
-                                ui.label(h).classes("text-xs")
-                with ui.element("tbody"):
-                    for v in rows:
-                        with ui.element("tr").classes("bg-white"):
-                            with ui.element("td").classes("border border-red-200 px-2 py-1 font-mono"):
-                                ui.label(v.get("user_code", "")).classes("text-xs text-red-700 font-semibold")
-                            with ui.element("td").classes("border border-red-200 px-2 py-1 text-center"):
-                                ui.label(str(v.get("name_5", ""))).classes("text-xs text-red-600 font-bold")
-                            if has_row:
-                                with ui.element("td").classes("border border-red-200 px-2 py-1 text-center"):
-                                    row_num = v.get("row_num")
-                                    ui.label(f"Dòng {row_num}" if row_num else "—").classes("text-xs text-gray-600")
-
-
 def _build_dept_summaries(ipcas_grouped: dict, payment_grouped: dict) -> list:
     """Gom dữ liệu GDV+Teller theo phòng → list dict cho generate_center_word Table 4."""
     all_depts = sorted(set(ipcas_grouped.keys()) | set(payment_grouped.keys()))
@@ -198,12 +149,6 @@ def reports_page():
                     ui.download(zip_bytes, "BC_HK_phong.zip")
                     ui.notify("Đã tạo báo cáo! File ZIP đang được tải về.", type="positive")
 
-                except api.ViolationError as ve:
-                    with result_area:
-                        _show_violations(ve.violations, {
-                            "IPCAS":   files["gdv_name"],
-                            "Payment": files["teller_name"],
-                        })
                 except Exception as e:
                     if not _handle_api_error(e):
                         ui.notify(str(e), type="negative")
@@ -247,13 +192,6 @@ def reports_page():
                     results = await asyncio.gather(*coros, return_exceptions=True)
 
                     hkv_r = results[0]
-                    if isinstance(hkv_r, api.ViolationError):
-                        with result_area:
-                            _show_violations(hkv_r.violations, {
-                                "IPCAS":   files["hkv_name"],
-                                "Payment": files["checker_name"],
-                            })
-                        return
                     if isinstance(hkv_r, Exception):
                         raise hkv_r
 
@@ -285,12 +223,6 @@ def reports_page():
                     ui.download(word_bytes, fname)
                     ui.notify("Đã tạo báo cáo Word thành công", type="positive")
 
-                except api.ViolationError as ve:
-                    with result_area:
-                        _show_violations(ve.violations, {
-                            "IPCAS":   files["hkv_name"],
-                            "Payment": files["checker_name"],
-                        })
                 except Exception as e:
                     if not _handle_api_error(e):
                         ui.notify(str(e), type="negative")
