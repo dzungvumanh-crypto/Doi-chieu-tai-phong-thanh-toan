@@ -833,6 +833,16 @@ ui.on_exception(_on_exception)</pre>
       </ul>
 
       <div class="caution">Chưa tự động hoá: file <code>.env</code> trên thư mục TEST (<code>TTTT-System_Test\TTTT-develop</code>) phải được tạo/sửa tay với <code>BACKEND_PORT=9000</code> và <code>FRONTEND_PORT=9090</code> — <code>deploy.bat</code>/<code>deploy-test.bat</code> cố tình không copy <code>.env</code> (mỗi máy giữ <code>SECRET_KEY</code> riêng), nên bước này là một lần duy nhất, không lặp lại mỗi lần deploy.</div>
+
+      <div class="label">Bug phát hiện sau khi deploy thật</div>
+      <p><code>deploy-test.bat</code> đã tạo/xác nhận đúng <code>.env</code> với <code>FRONTEND_PORT=9090</code> trong thư mục TEST, nhưng khi chạy <code>start.bat</code> ở đó, frontend vẫn lên cổng <strong>8080</strong>. Nguyên nhân: <code>load_dotenv()</code> ở cả 4 file (<code>config.py</code>, <code>run.py</code>, <code>frontend/main.py</code>, <code>api_client.py</code>) gọi <strong>không có <code>override=True</code></strong> — hành vi mặc định của <code>python-dotenv</code> là <strong>không ghi đè</strong> biến môi trường nếu nó đã tồn tại sẵn trong process (biến hệ thống/user Windows, hoặc còn sót lại từ phiên cmd khác). Nếu máy có sẵn <code>FRONTEND_PORT=8080</code> ở đâu đó ngoài <code>.env</code>, giá trị 9090 trong <code>.env</code> bị bỏ qua âm thầm — không có lỗi, không có log, chỉ là chạy sai cổng.</p>
+      <p><strong>Fix:</strong> thêm <code>override=True</code> vào cả 4 lệnh <code>load_dotenv()</code> — đảm bảo <code>.env</code> của từng thư mục deploy luôn là nguồn sự thật duy nhất, thắng mọi biến môi trường xung quanh. Độ tin cậy nguyên nhân: <strong>trung bình</strong> — hợp lý theo đúng cơ chế đã biết của thư viện, nhưng chưa xác minh trực tiếp trên máy TEST (không truy cập được máy đó từ phiên làm việc này) nên chưa loại trừ 100% khả năng khác (VD: nhầm cửa sổ/thư mục khi chạy <code>start.bat</code>).</p>
+
+      <div class="label">Nguyên nhân thật (xác nhận bằng <code>netstat</code> + <code>type .env</code> trên máy TEST)</div>
+      <p><code>override=True</code> không sai, nhưng chưa đủ: <code>.env</code> trên máy TEST thực tế đang ghi <code>BACKEND_PORT=8000</code> / <code>FRONTEND_PORT=8080</code> (không phải 9000/9090 như tưởng). Nguyên nhân không phải bug code — file cấu hình đơn giản là sai giá trị. <code>deploy-test.bat</code> lúc đó chỉ <em>cảnh báo</em> khi phát hiện sai, không tự sửa.</p>
+
+      <div class="label">Nâng cấp: tự sửa <code>.env</code> mỗi lần deploy</div>
+      <p><code>deploy-test.bat</code> bước [1/7] giờ tự thay đúng 2 dòng <code>BACKEND_PORT=</code> / <code>FRONTEND_PORT=</code> thành <code>9000</code>/<code>9090</code> nếu sai, đọc từng dòng qua <code>for /f</code> và chỉ so khớp tiền tố dòng (<code>findstr /b /c</code>) — <strong>khác về bản chất</strong> với đề xuất bị bác trước đó (tìm-thay chuỗi số <code>8080</code>/<code>8000</code> mù quáng trong toàn bộ code, có nguy cơ phá hỏng dữ liệu không liên quan như mã màu hex <code>"808080"</code> hoặc <code>timeout=8000</code>). Ở đây chỉ thao tác trên file <code>.env</code> có cấu trúc <code>KEY=VALUE</code>, giữ nguyên <code>SECRET_KEY</code> và mọi dòng khác.</p>
     </div>
   </div>
 
@@ -1052,7 +1062,41 @@ ui.on_exception(_on_exception)</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-07-10</footer>
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">29</span>
+      <span class="card-title">Tích hợp "Đối chiếu Song phương" — port app desktop thành menu Phòng Thanh toán</span>
+      <span class="badge badge-done">Hoàn thành</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh</div>
+      <p>Yêu cầu tích hợp app standalone <code>Doi_Chieu_Song_Phuong</code> (FastAPI + HTML thuần) thành menu trong hệ thống. App gốc nhận ZIP IPCAS (mã hóa AES, mật khẩu <code>DACwLdHi</code>) rồi định tuyến mỗi dòng lệnh theo 4 ngân hàng (theo <code>CUSTOMER</code>) × 2 chiều (ĐẾN nếu <code>CRAMOUNT=0</code>, ĐI nếu <code>DRAMOUNT=0</code>) → 8 file CSV.</p>
+
+      <div class="label">Quyết định thiết kế: port lõi, KHÔNG bê nguyên app</div>
+      <p>App gốc và module <code>Chấm 459901</code> có sẵn <strong>trùng kiến trúc gần như hoàn toàn</strong> (upload ZIP → xử lý nền → poll tiến độ → tải kết quả, cùng mật khẩu, cùng cột IPCAS). Nên tái dùng đúng khuôn <code>cham459901</code> (service + api + page + feature + menu) thay vì nhúng app gốc. Chỉ khác phần lõi: định tuyến theo NH+chiều thay vì phân loại hủy/đi/khác.</p>
+
+      <div class="label">Cắt bỏ toàn bộ phần desktop-only của app gốc</div>
+      <ul>
+        <li><strong>WinRAR + <code>multiprocessing.Pool(spawn)</code></strong>: tối ưu tốc độ cho desktop nhưng mong manh trên server (WinRAR không chắc có; spawn Pool trong <code>BackgroundTask</code> trên Windows dễ vỡ do pickling/re-import). Thay bằng 1 luồng nền in-process, stream dòng bằng <code>csv.reader</code> — đủ nhanh, ổn định.</li>
+        <li><strong><code>browse-folder</code>/<code>open-folder</code>/<code>export_folder</code></strong> (dùng <code>tkinter</code> + <code>explorer</code>): các thao tác này chạy <em>trên máy chủ</em>, vô nghĩa khi người dùng ở trình duyệt từ xa. Bỏ hẳn — tải file qua trình duyệt như <code>Chấm 459901</code>.</li>
+        <li><strong>Lịch sử xử lý (job history)</strong>: bỏ theo yêu cầu, đồng nhất với module cùng phòng (không thêm bảng DB).</li>
+      </ul>
+
+      <div class="label">Giữ nguyên định dạng CSV & ngữ nghĩa định tuyến của bản gốc</div>
+      <p>Xuất CSV (không đổi sang XLSX) theo yêu cầu — 8 file này là "chân core" cấp cho quy trình đối chiếu downstream, đổi định dạng có thể lệch hợp đồng dữ liệu. Giữ đúng 2 điểm ngữ nghĩa: (1) dòng có <em>cả</em> <code>CRAMOUNT</code> lẫn <code>DRAMOUNT</code> = 0 xuất hiện ở <strong>cả hai</strong> file ĐẾN và ĐI (dùng 2 nhánh <code>if</code> độc lập, không <code>elif</code>); (2) cột thiếu trong bộ 10 cột chuẩn được bổ sung vào cuối header, không xóa cột thừa.</p>
+
+      <div class="label">Đánh đổi đã chấp nhận — giữ <code>","join(row)</code> như bản gốc</div>
+      <p>Bản gốc ghi dòng bằng <code>",".join(row)</code> sau khi <code>csv.reader</code> đã bỏ dấu nháy. Nếu một trường (vd <code>REMARK</code>) chứa dấu phẩy, dòng xuất sẽ bị tách sai cột. <strong>Cố tình giữ nguyên</strong> để output khớp byte-for-byte với công cụ đang dùng ở nghiệp vụ (tránh làm lệch bộ đối chiếu đang chờ đúng định dạng cũ). Đây là hạn chế kế thừa, không phải lỗi phát sinh — cần biết nếu sau này dữ liệu có trường chứa dấu phẩy.</p>
+
+      <div class="label">Bổ sung dependency thiếu sẵn: <code>pyzipper</code></div>
+      <p>Giải mã ZIP AES-256 bắt buộc cần <code>pyzipper</code>; <code>zipfile</code> chuẩn không làm được. Module <code>cham459901</code> đã import <code>pyzipper</code> (có fallback) nhưng <code>requirements.txt</code> <strong>chưa liệt kê</strong> — thiếu sót có sẵn. Đã thêm <code>pyzipper&gt;=0.3.6</code> để cả hai tính năng chạy đúng.</p>
+
+      <div class="label">Kiểm chứng</div>
+      <p>Test lõi với ZIP AES tổng hợp: NH lạ bị lọc (total_rows đúng); dòng cả-hai-số-0 vào cả ĐẾN lẫn ĐI; <code>DRAMOUNT=0.00</code> nhận diện đúng; đủ 8 file kể cả file rỗng (chỉ header); header + dữ liệu đúng. Data test đã tự dọn.</p>
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-07-14</footer>
 </div>
 </body>
 </html>

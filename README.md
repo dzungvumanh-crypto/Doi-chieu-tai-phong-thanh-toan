@@ -80,6 +80,7 @@ Truy cập:
 │   │   ├── duty_stats.py    # Thống kê lịch trực
 │   │   ├── duty_export.py   # Xuất lịch trực
 │   │   ├── cham459901.py    # Phân loại bút toán TK 459901
+│   │   ├── doi_chieu_song_phuong.py # Đối chiếu song phương (định tuyến lệnh IPCAS)
 │   │   ├── logs.py          # Nhật ký hệ thống (admin)
 │   │   └── holidays.py      # Quản lý ngày lễ (admin)
 │   └── services/
@@ -90,6 +91,7 @@ Truy cập:
 │       ├── th_report_service.py    # Xuất báo cáo tổng hợp (phòng TH)
 │       ├── backup_service.py       # Backup SQLite tự động
 │       ├── cham459901_service.py   # Xử lý ZIP + phân loại bút toán 459901
+│       ├── doi_chieu_song_phuong_service.py # Định tuyến lệnh IPCAS theo NH + chiều → 8 CSV
 │       ├── swift_recon/            # Đối chiếu điện SWIFT (parse, so khớp, export Excel)
 │       └── duty_*                  # Xếp lịch trực, ràng buộc, thống kê, xuất file (6 module)
 ├── frontend/
@@ -108,6 +110,7 @@ Truy cập:
 │       ├── leaves.py        # Nghỉ phép
 │       ├── duty_schedule.py # Lịch trực
 │       ├── cham_459901.py   # Phân loại bút toán TK 459901
+│       ├── doi_chieu_song_phuong.py # Đối chiếu song phương (định tuyến lệnh IPCAS)
 │       ├── reports.py       # Báo cáo hậu kiểm
 │       ├── handover_reports.py # Báo cáo bàn giao chứng từ (đúng hạn/quá hạn)
 │       ├── th_reports.py    # Báo cáo tổng hợp
@@ -177,6 +180,12 @@ Truy cập:
 - Upload file ZIP chứa dữ liệu giao dịch; xử lý bất đồng bộ (~65s)
 - Xuất 3 file Excel: **Huỷ**, **Đi**, **Khác** theo kết quả phân loại
 - Phân quyền riêng theo nhóm (`menu.cham_459901`, `cham_459901.process`)
+
+### Module Đối chiếu Song phương
+- Định tuyến lệnh IPCAS phục vụ đối chiếu song phương tại phòng Thanh toán
+- Upload file ZIP (mã hóa AES-256) chứa dữ liệu IPCAS; xử lý bất đồng bộ, theo dõi tiến độ real-time
+- Phân loại mỗi dòng theo **4 ngân hàng** (Vietinbank 201, BIDV 202, Vietcombank 203, MBBank 311) × **2 chiều**: **ĐẾN** (`CRAMOUNT=0`) / **ĐI** (`DRAMOUNT=0`) → xuất **8 file CSV**
+- Phân quyền riêng theo nhóm (`menu.doi_chieu_song_phuong`, `doi_chieu_song_phuong.process`)
 
 ---
 
