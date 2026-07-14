@@ -2471,8 +2471,10 @@ async def leaves_page():
 
             t_declared = None  # gộp vào Dashboard
 
+            # Lịch nghỉ phép gộp chung với quyền Tạo đơn — ai tạo được đơn thì xem được lịch,
+            # không cần cấu hình phân quyền riêng.
             t_cal     = ui.tab("Lịch nghỉ phép")
-            if not api.has_feature("leaves.schedule"):
+            if not api.has_feature("leaves.create"):
                 t_cal.set_visibility(False)
 
             t_deleg   = ui.tab("Ủy quyền GĐ") if can_delegation else None
