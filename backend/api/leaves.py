@@ -1683,6 +1683,17 @@ def import_quota_preview(
     return {"filename": file.filename, "rows": rows_out, "total": len(rows_out), "matched": matched_count}
 
 
+def _import_spread_dates(n_days: int, year: int) -> list:
+    """Sinh n_days ngày làm việc (T2–T6) từ 02/01/year — dùng cho bản ghi nghỉ tổng hợp khi import."""
+    out = []
+    d = date(year, 1, 2)
+    while len(out) < n_days and d.year == year:
+        if d.weekday() < 5:
+            out.append(d.isoformat())
+        d += timedelta(days=1)
+    return out
+
+
 @router.post("/quotas/{year}/import/apply")
 def import_quota_apply(
     year: int,
@@ -1690,8 +1701,13 @@ def import_quota_apply(
     db: sqlite3.Connection = Depends(get_db),
     current: dict = Depends(require_feature("leaves.quota_admin")),
 ):
-    """Áp dụng dữ liệu hạn mức đã xem trước — ghi đè quota_days + used_leave_days,
-    lưu lại giá trị cũ vào quota_import_items để có thể hoàn tác."""
+    """Áp dụng dữ liệu hạn mức đã xem trước.
+
+    - quota_days → ghi vào leave_quotas.
+    - "Đã nghỉ" → tạo bản ghi nghỉ bat_buoc approved tổng hợp (nguồn sự thật cho
+      _calc_used_days), thay vì chỉ ghi used_leave_days (trường này không được đọc
+      khi tính hạn mức). Import lại sẽ thay bản ghi tổng hợp cũ (idempotent).
+    - Giá trị cũ + id bản ghi tạo ra lưu vào quota_import_items để hoàn tác."""
     rows = body.get("rows") or []
     filename = body.get("filename") or ""
     rows = [r for r in rows if r.get("staff_id")]
@@ -1744,18 +1760,45 @@ def import_quota_apply(
         old_quota = old_quota_by_staff.get(staff_id)
         old_used  = old_used_by_staff.get(staff_id, 0.0)
 
-        db.execute(
-            """INSERT INTO quota_import_items
-                   (batch_id, staff_id, old_quota_days, old_used_leave_days,
-                    new_quota_days, new_used_leave_days)
-               VALUES (?,?,?,?,?,?)""",
-            (batch_id, staff_id, old_quota, old_used, new_quota, new_used),
-        )
+        # ── Hạn mức ──
         db.execute(
             "INSERT INTO leave_quotas (staff_id, year, quota_days) VALUES (?,?,?) "
             "ON CONFLICT(staff_id, year) DO UPDATE SET quota_days=excluded.quota_days",
             (staff_id, year, new_quota),
         )
+
+        # ── "Đã nghỉ" → bản ghi nghỉ tổng hợp (để _calc_used_days đếm được) ──
+        # Xoá bản ghi tổng hợp import cũ trong năm để import lại không cộng dồn.
+        db.execute(
+            "DELETE FROM leave_records WHERE staff_id=? AND leave_type='bat_buoc' "
+            "AND strftime('%Y', start_date)=? AND reason LIKE '[Import]%'",
+            (staff_id, str(year)),
+        )
+        created_leave_id = None
+        n_days = int(round(new_used))
+        if n_days >= 1:
+            _sd = _import_spread_dates(n_days, year)
+            if _sd:
+                _c = db.execute(
+                    """INSERT INTO leave_records
+                           (staff_id, leave_type, start_date, end_date, spread_dates,
+                            status, reason, created_at, updated_at)
+                       VALUES (?,?,?,?,?,?,?,?,?)""",
+                    (staff_id, "bat_buoc", _sd[0], _sd[-1], json.dumps(_sd), "approved",
+                     f"[Import] Tổng hợp {n_days} ngày đã nghỉ năm {year} (batch #{batch_id})",
+                     now, now),
+                )
+                created_leave_id = _c.lastrowid
+
+        # ── Lưu item để hoàn tác (kèm id bản ghi vừa tạo) ──
+        db.execute(
+            """INSERT INTO quota_import_items
+                   (batch_id, staff_id, old_quota_days, old_used_leave_days,
+                    new_quota_days, new_used_leave_days, created_leave_id)
+               VALUES (?,?,?,?,?,?,?)""",
+            (batch_id, staff_id, old_quota, old_used, new_quota, new_used, created_leave_id),
+        )
+        # Trường cache — hiển thị hạn mức không đọc, giữ đồng bộ cho tương thích.
         db.execute("UPDATE user_tttt SET used_leave_days=? WHERE id=?", (new_used, staff_id))
         applied += 1
 
@@ -1791,9 +1834,10 @@ def import_quota_rollback(
     db: sqlite3.Connection = Depends(get_db),
     current: dict = Depends(require_feature("leaves.quota_admin")),
 ):
-    """Hoàn tác 1 lần nhập file — khôi phục quota_days + used_leave_days về giá trị
-    trước khi nhập. Nếu có lần nhập sau đó cũng đổi cùng nhân viên, giá trị sẽ bị
-    ghi đè theo lần hoàn tác này (không tự động dồn nhiều lần hoàn tác)."""
+    """Hoàn tác 1 lần nhập file — khôi phục quota_days, xoá bản ghi nghỉ tổng hợp đã
+    tạo, và khôi phục used_leave_days về giá trị trước khi nhập. Nếu có lần nhập sau
+    đó cũng đổi cùng nhân viên, giá trị sẽ bị ghi đè theo lần hoàn tác này (không tự
+    động dồn nhiều lần hoàn tác)."""
     batch = db.execute("SELECT * FROM quota_import_batches WHERE id=?", (batch_id,)).fetchone()
     if not batch:
         raise HTTPException(404, "Không tìm thấy lần nhập")
@@ -1812,6 +1856,10 @@ def import_quota_rollback(
             db.execute(
                 "DELETE FROM leave_quotas WHERE staff_id=? AND year=?", (it["staff_id"], batch["year"])
             )
+        # Xoá bản ghi nghỉ tổng hợp mà lần nhập này đã tạo (nếu có)
+        _clid = it["created_leave_id"] if "created_leave_id" in it.keys() else None
+        if _clid:
+            db.execute("DELETE FROM leave_records WHERE id=?", (_clid,))
         if it["old_used_leave_days"] is not None:
             db.execute(
                 "UPDATE user_tttt SET used_leave_days=? WHERE id=?",

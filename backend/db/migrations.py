@@ -466,8 +466,11 @@ def _ensure_indexes():
             old_quota_days       REAL,
             old_used_leave_days  REAL,
             new_quota_days       REAL,
-            new_used_leave_days  REAL
+            new_used_leave_days  REAL,
+            created_leave_id     INTEGER
         )""",
+        # DB đã tạo bảng trước khi có cột này → thêm bù (lỗi duplicate bị nuốt)
+        "ALTER TABLE quota_import_items ADD COLUMN created_leave_id INTEGER",
         "CREATE INDEX IF NOT EXISTS ix_quota_import_items_batch ON quota_import_items(batch_id)",
     ]
     _mig_log = logging.getLogger(__name__)

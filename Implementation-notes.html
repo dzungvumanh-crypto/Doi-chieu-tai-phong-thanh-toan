@@ -1052,7 +1052,30 @@ ui.on_exception(_on_exception)</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-07-10</footer>
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">29</span>
+      <span class="card-title">Import hạn mức: cột "Đã nghỉ" tạo bản ghi tổng hợp thay vì ghi trường mồ côi</span>
+      <span class="badge badge-done">Hoàn thành</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Vấn đề (phát hiện qua code review)</div>
+      <p><code>import_quota_apply</code> ghi cột "Đã nghỉ" thẳng vào <code>user_tttt.used_leave_days</code>. Nhưng mọi màn hình và logic hạn mức (<code>get_quotas</code>, phiếu in, chốt chặn tạo đơn) đều đọc qua <code>_calc_used_days()</code> — <strong>tính động từ <code>leave_records</code></strong>, không đọc <code>used_leave_days</code>. Hệ quả: import "Đã nghỉ" cho nhân viên chưa có đơn → bảng hạn mức vẫn hiện <strong>Đã dùng = 0</strong>, số nhập vào bốc hơi.</p>
+
+      <div class="label">Vì sao chọn "tạo bản ghi tổng hợp" (không phải fallback đọc <code>used_leave_days</code>)</div>
+      <p>Đây đã là pattern sẵn có của <code>seeds/migrate_leave_2026.py</code>: "đã nghỉ" được thể hiện bằng bản ghi <code>bat_buoc</code> approved với <code>spread_dates</code>. Làm import trong app khớp cùng pattern giữ <strong>một nguồn sự thật duy nhất</strong> (<code>leave_records</code>) — tránh phương án fallback cộng <code>used_leave_days</code> vốn dễ trùng đếm khi nhân viên có cả đơn thật.</p>
+
+      <div class="label">Giải pháp</div>
+      <p>Apply: xoá bản ghi <code>[Import]</code> cũ trong năm (idempotent, import lại không cộng dồn) → tạo bản ghi <code>bat_buoc</code> approved <code>spread_dates</code> = <code>int(round(new_used))</code> ngày làm việc → lưu <code>created_leave_id</code> vào <code>quota_import_items</code>. Rollback: xoá đúng bản ghi theo <code>created_leave_id</code>. Thêm cột <code>created_leave_id</code> (CREATE TABLE + ALTER bù cho DB cũ).</p>
+
+      <div class="note">Kiểm chứng bằng SQLite tạm (4 kịch bản): apply 8 → used=8; rollback → 0; import lại 5 → 5 (không =13); cùng đơn thật +2 → 7. Tất cả đạt.</div>
+
+      <div class="label">Hạn chế đã biết (chấp nhận)</div>
+      <p>① "Đã nghỉ" lẻ (VD 8.5) bị làm tròn về ngày nguyên vì hệ thống không hỗ trợ nửa ngày. ② Không nên trộn <em>script migrate offline</em> và <em>import trong app</em> cho cùng năm — import chỉ dọn bản ghi <code>[Import]</code>, không đụng bản ghi <code>[Migration]</code>, mix vào có thể cộng chồng. ③ Rollback một lần nhập cũ (sau khi đã có lần nhập mới đè lên cùng nhân viên) là best-effort — không tự dựng lại bản ghi đã bị lần sau xoá. ④ <code>used_leave_days</code> vẫn được ghi đồng bộ cho tương thích nhưng <strong>không</strong> phải nguồn hiển thị.</p>
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-07-14</footer>
 </div>
 </body>
 </html>
