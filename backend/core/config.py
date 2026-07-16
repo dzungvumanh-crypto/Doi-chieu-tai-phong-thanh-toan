@@ -4,7 +4,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).parent.parent.parent
-load_dotenv(BASE_DIR / ".env")
+load_dotenv(BASE_DIR / ".env", override=True)
 
 # Fail fast — không dùng fallback để tránh JWT bị forge khi quên set env var
 _secret_key = os.getenv("SECRET_KEY", "")
