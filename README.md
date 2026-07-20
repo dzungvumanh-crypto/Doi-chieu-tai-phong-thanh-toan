@@ -151,6 +151,7 @@ Truy cập:
 
 ### Module Chứng từ Hậu kiểm
 - **Bàn giao**: GDV nhập số tờ theo ngày, HKV/KSV xác nhận từng ô
+  - *Cán bộ chuyển phòng*: chứng từ hiển thị theo phòng tại **ngày giao dịch** — trước ngày chuyển ở phòng cũ, từ ngày chuyển ở phòng mới (lịch sử đổi phòng lưu ở bảng `staff_department_history`). Nhập bù chứng từ tháng cũ cho cán bộ đã chuyển vẫn vào đúng phòng cũ
 - **Gom tập tự động**:
   - Max 350 tờ/tập
   - (user, ngày) không bị tách sang tập khác

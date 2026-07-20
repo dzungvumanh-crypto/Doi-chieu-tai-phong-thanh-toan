@@ -1096,7 +1096,252 @@ ui.on_exception(_on_exception)</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-07-14</footer>
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">30</span>
+      <span class="card-title">Lưới bàn giao chứng từ — tự co cho vừa màn hình</span>
+      <span class="badge badge-done">Hoàn thành</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh</div>
+      <p>Lưới nhập số tờ trong <code>frontend/pages/handovers.py</code> dựng bằng chuỗi HTML với chiều rộng cứng: cột tên 200px + mỗi ngày 50px. Tháng 31 ngày = 1750px, rộng hơn vùng nội dung của phần lớn màn hình 1366px/1440px → người dùng luôn phải kéo ngang mới thấy hết ngày trong tháng.</p>
+
+      <div class="label">Quyết định: cho ô <em>co</em> nhưng không <em>giãn</em></div>
+      <p>Ô ngày đổi từ <code>width:50px;flex-shrink:0</code> sang <code>flex:0 1 50px;min-width:30px</code>. Cố ý dùng <code>flex-grow:0</code> chứ không phải <code>flex:1</code>: với grow, màn hình 2K/4K sẽ kéo ô ra 70–100px, đổi giao diện của người đang dùng màn hình lớn để giải quyết vấn đề của người dùng màn hình nhỏ. Với grow=0, màn hình rộng giữ nguyên y như trước, màn hình hẹp mới co lại — thay đổi hành vi tối thiểu, đúng phạm vi phàn nàn.</p>
+
+      <div class="label">Vì sao phải đặt <code>min-width</code> tường minh trên ô</div>
+      <p>Flex item mặc định <code>min-width:auto</code> = kích thước tối thiểu theo nội dung. Ô chứa <code>&lt;input&gt;</code>, mà input có chiều rộng nội tại mặc định ~20 ký tự → nếu để <code>auto</code>, ô sẽ <strong>không co được</strong> và thay đổi này vô tác dụng. <code>min-width:30px</code> vừa mở khoá co giãn, vừa đặt sàn đọc được (đủ 3 chữ số ở font 14px — đã hạ font ô từ 15px xuống 14px cho mức 30px).</p>
+
+      <div class="label">Vì sao hàng cần <code>min-width</code> tính bằng px, không dùng <code>min-content</code></div>
+      <p>Khi ô chạm sàn 30px mà vẫn tràn, phải cuộn ngang. Nếu hàng để chiều rộng auto (=100% khung nhìn), nền và viền hàng sẽ <strong>đứt ở mép màn hình</strong> khi cuộn sang phải. Cách gọn là <code>min-width:min-content</code>, nhưng min-content của hàng lại bị chiều rộng nội tại của input làm phồng lên (cùng lý do ở trên) → không đoán được. Nên tính thẳng <code>row_min = 200 + số_ngày × 30</code> bằng Python: hoàn toàn tất định, không phụ thuộc cách trình duyệt đo nội dung. <strong>Chỉ đúng nhờ <code>box-sizing:border-box</code></strong> ở mục dưới — nếu không, con số Python tính ra không phải chiều rộng thật.</p>
+
+      <div class="label">Phát hiện khi đo thật: <code>box-sizing:border-box</code> là bắt buộc, và có lỗi lệch cột có sẵn</div>
+      <p>Đo bằng Chrome headless (không phải suy luận) cho thấy <code>row_min</code> ban đầu <strong>sai</strong>: các ô đều dùng <code>content-box</code> mặc định, nên padding/border bị <em>cộng thêm</em> ngoài <code>width</code>:</p>
+      <ul>
+        <li>Cột tên: <code>width:200px</code> + <code>padding:7px 14px</code> + <code>border-right:2px</code> = <strong>230px thật</strong> → <code>row_min</code> hụt 92px, ô ngày không bao giờ co xuống 30px như thiết kế.</li>
+        <li><strong>Lỗi có sẵn từ trước thay đổi này</strong>: ô header ngày có <code>padding:10px 2px</code> + border 1px = <strong>55px</strong>, còn ô dữ liệu chỉ có border 1–2px = <strong>51–52px</strong>. Header và ô nhập <em>lệch cột nhau</em>, sai số cộng dồn dọc theo 31 ngày. Đo được <code>scrollWidth</code> hàng header = 1315 trong khi hàng dữ liệu = 1222.</li>
+      </ul>
+      <p>Thêm <code>box-sizing:border-box</code> cho cột tên + ô header + ô dữ liệu: mọi cột cùng <code>flex-basis</code> và cùng sàn <code>min-width</code> ⇒ header khớp ô nhập ở <em>mọi</em> chiều rộng, và <code>row_min</code> Python tính đúng bằng chiều rộng thật.</p>
+
+      <div class="label">Ngưỡng thực tế — số đo từ Chrome, không phải ước lượng</div>
+      <table>
+        <tr><th>Vùng lưới</th><th>Cột tên</th><th>Ô ngày (31 ngày)</th><th>Lệch header ↔ ô nhập</th><th>Cuộn ngang</th></tr>
+        <tr><td>1750px</td><td>200.0</td><td>50.00</td><td>0.00px</td><td>Không</td></tr>
+        <tr><td>1440px</td><td>200.0</td><td>40.08</td><td>0.06px</td><td>Không</td></tr>
+        <tr><td>1280px</td><td>200.0</td><td>34.95</td><td>0.09px</td><td>Không</td></tr>
+        <tr><td>1130px</td><td>200.0</td><td>30.00 (sàn)</td><td>0.00px</td><td>Không</td></tr>
+        <tr><td>950px</td><td>200.0</td><td>30.00 (sàn)</td><td>0.00px</td><td>Có — nền hàng liền</td></tr>
+      </table>
+      <p>Lệch &lt;0.1px là làm tròn subpixel của flexbox, mắt không thấy. Ảnh chụp xác nhận: từ 1130px trở lên hiện đủ 31 ngày không cuộn; số 3 chữ số vẫn đọc tốt ở ô 30px.</p>
+
+      <div class="label">Bài học</div>
+      <p>Bản sửa đầu tiên <strong>không đạt</strong> và compile sạch vẫn không phát hiện ra: lưới vẫn cuộn ở 1280px. Chỉ khi dựng lại lưới bằng đúng các chuỗi style rồi <em>đo</em> <code>getBoundingClientRect()</code> mới thấy 230px và 1315px. Với layout CSS, suy luận trên đầu không thay được phép đo.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">31</span>
+      <span class="card-title">Tra cứu lưu trữ — tiêu chí "Tất cả": bảng tổng hợp cả năm theo phòng × tháng</span>
+      <span class="badge badge-done">Hoàn thành</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh</div>
+      <p>Ô "Phòng nghiệp vụ" thêm lựa chọn <strong>Tất cả</strong>; khi chọn thì ẩn ô Tháng (tổng hợp cả năm nên chọn tháng vô nghĩa) và hiện bảng: cột 1 là tháng, mỗi phòng nguồn 1 cột lớn gồm 2 cột con (Số chứng từ / Số tập), cột cuối Tổng cộng cũng 2 cột con. Endpoint mới <code>GET /api/bundles/storage-summary?year=</code>.</p>
+
+      <div class="label">Cạm bẫy chính: tổng hợp phải khớp tuyệt đối với bảng chi tiết</div>
+      <p>Bảng tổng hợp và bảng chi tiết từng phòng nhìn cùng một dữ liệu — lệch nhau dù 1 tờ là mất niềm tin vào cả màn hình. Hướng đầu tiên là gộp thành <strong>1 câu SQL</strong> <code>SUM/COUNT</code> cho nhanh, với <code>EXISTS (SELECT 1 FROM bundle_items …)</code> để mô phỏng quy tắc "tập không có ngày thì bị loại" của <code>_decompose_bundles_to_rows</code>.</p>
+      <p><strong>Sai.</strong> Đối chiếu với dữ liệu thật phát hiện lệch ở phòng Nostro: chi tiết 4.823 tờ / 18 tập, SQL cho 4.209 / 16. Lý do: <code>_get_dates_for_bundle</code> lấy ngày từ <code>cover_units</code> (JSON) <em>trước</em>, chỉ fallback sang <code>bundle_items</code>. Nên một tập <strong>không có dòng nào trong <code>bundle_items</code></strong> vẫn có ngày qua <code>cover_units</code> và vẫn được tính ở bảng chi tiết — đúng 2 tập rơi vào trường hợp này. Điều kiện "tập có ngày" nằm trong JSON, <strong>không diễn đạt được bằng SQL</strong>.</p>
+
+      <div class="label">Quyết định: dùng lại <code>_get_storage_rows_for_month</code>, chấp nhận N+1</div>
+      <p>Endpoint gọi thẳng hàm dựng bảng chi tiết cho 4 phòng × 12 tháng. Đổi lại là nhiều truy vấn nhỏ thay vì 1 câu SQL, nhưng <strong>tổng luôn khớp chi tiết theo cấu trúc</strong>, không phải nhờ hai chỗ cùng nhớ một quy tắc ngầm. Lo ngại hiệu năng hoá ra là thừa: <strong>đo được 11ms</strong> cho cả năm. Nếu sau này dữ liệu phình to, tối ưu đúng cách là cache/denormalize <em>chung cho cả hai đường</em>, không phải viết lại quy tắc lần thứ hai bằng SQL.</p>
+
+      <div class="label">Không hardcode 4 phòng</div>
+      <p>Yêu cầu nói "4 phòng nghiệp vụ" và DB hiện đúng 4 (<code>is_source=1</code>), nhưng bảng dựng động theo số phòng trả về: <code>colspan</code> tiêu đề = <code>1 + n×2 + 2</code>. Thêm/bớt phòng nguồn thì bảng tự đúng, không phải sửa code.</p>
+
+      <div class="label">Đưa <code>_build_summary_html</code> ra cấp module</div>
+      <p><code>_build_html</code> (bảng chi tiết) nằm lồng trong hàm page nên không test được từ ngoài. Hàm dựng bảng tổng hợp là hàm thuần (chỉ phụ thuộc <code>data</code>) nên đặt ở cấp module để <em>test trên chính code chạy thật</em>, không test bản sao. Cùng lý do, tách <code>_print_table</code> dùng chung thay vì nhân đôi khối HTML in cho bảng thứ hai.</p>
+
+      <div class="label">Phạm vi — cố ý không làm</div>
+      <p>Không thêm dòng "Cộng cả năm" ở cuối bảng dù khá tự nhiên: yêu cầu chỉ nói "mỗi tháng là 1 dòng" và cột Tổng cộng theo tháng. Bảng tổng hợp cũng <strong>không cho sửa</strong> (không có nút Lưu như bảng chi tiết) — sửa số ở mức tổng thì không biết phân bổ về tập nào.</p>
+
+      <div class="label">Kiểm chứng</div>
+      <p>Đối chiếu 48 ô (4 phòng × 12 tháng) giữa endpoint và <code>_get_storage_rows_for_month</code>: <strong>lệch 0</strong>. Endpoint qua HTTP: 200, đủ 12 dòng, năm không có dữ liệu trả về toàn 0 chứ không lỗi. HTML: đúng 15 <code>&lt;tr&gt;</code>, <code>colspan=2</code> ×5, mỗi dòng 11 ô, cột Tổng cộng bằng đúng tổng 4 phòng. Ảnh chụp xác nhận bố cục 2 tầng header. Chỉ đọc DB, không tạo dữ liệu test.</p>
+    </div>
+  </div>
+
+  <!-- 32 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">32</span>
+      <span class="card-title">Nhật ký hệ thống (audit toàn bộ thao tác ghi) + cảnh báo lệch giờ NTP</span>
+      <span class="badge badge-done">Hoàn thành</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh</div>
+      <p>Yêu cầu: "Nhật ký hệ thống — ghi công việc thực hiện, thời gian, kết quả xử lý, user thao tác, IP" + "đồng bộ với nguồn thời gian chuẩn". Trước đó đã có hạ tầng bỏ dở: bảng <code>audit_logs</code> + hàm <code>write_audit()</code> nhưng chỉ được gọi ở 5 chỗ (quản lý User, reset mật khẩu) và <strong>không có trang xem nào</strong>.</p>
+
+      <div class="label">Quyết định lớn: 1 middleware trung tâm thay vì rải <code>write_audit</code> khắp ~20 file</div>
+      <p>"Phủ toàn bộ thao tác ghi" nếu làm thủ công là ~40+ điểm sửa trên 20 file api — đúng loại thay đổi dễ sót và dễ gây regression. Chọn <code>AuditMiddleware</code> (<code>backend/core/audit_middleware.py</code>): 1 điểm tích hợp, tự ghi mọi <code>POST/PUT/PATCH/DELETE</code> vào <code>audit_logs</code> (actor từ JWT, method, path, mã HTTP, IP).</p>
+      <table>
+        <tr><th>Tiêu chí</th><th>Middleware (đã chọn)</th><th>write_audit từng endpoint</th></tr>
+        <tr><td>Phủ sóng</td><td>Toàn bộ, không sót</td><td>Phải nhớ thêm ở mỗi endpoint</td></tr>
+        <tr><td>Rủi ro regression</td><td>Thấp (1 file)</td><td>Cao (sửa 20 file nghiệp vụ)</td></tr>
+        <tr><td>Chi tiết ngữ nghĩa</td><td>Chỉ method+path (mất <code>target_id</code>, "sửa field gì")</td><td>Giàu (target_id, mô tả)</td></tr>
+      </table>
+
+      <div class="label">Đánh đổi & chống trùng dòng</div>
+      <p>Middleware không biết <em>đối tượng nghiệp vụ nào</em> (chỉ có path). Chấp nhận được: yêu cầu chỉ cần ai/khi nào/làm gì/kết quả/IP, không cần diff field. Để 5 lời gọi <code>write_audit</code> ngữ nghĩa cũ tồn tại (giàu hơn cho thao tác nhạy cảm), middleware <strong>bỏ qua prefix <code>/api/staff</code> và <code>/api/auth</code></strong> để không sinh dòng trùng. Đăng nhập vẫn nằm ở <code>login_logs</code> riêng.</p>
+      <p>Cũng <strong>bỏ ghi 404/405</strong>: không khớp route = không có thao tác thực sự, ghi vào chỉ là nhiễu. Ghi audit không bao giờ được làm hỏng request nghiệp vụ — mọi lỗi ghi bị nuốt và log ở mức warning.</p>
+
+      <div class="label">Hai quy ước trong cùng một bảng</div>
+      <p><code>audit_logs</code> giờ chứa 2 loại dòng: (1) ngữ nghĩa — <code>action="staff_create"</code>, <code>target_type="staff"</code>; (2) generic từ middleware — <code>action="POST"</code>, <code>target_type="/api/leaves/"</code>. Trang xem (<code>audit_logs.py</code>) map cả hai sang nhãn tiếng Việt: bảng <code>_ACTION_VN</code> cho ngữ nghĩa, <code>method + _MODULE_VN[prefix]</code> cho generic. Prefix chưa map thì hiện path thô.</p>
+
+      <div class="label">Phản biện yêu cầu "đồng bộ nguồn thời gian chuẩn" — chỉ CẢNH BÁO, không tự sửa</div>
+      <p>Đặt lại giờ máy là việc của OS / domain controller (Windows Time / NTP), <strong>không thuộc tầng ứng dụng</strong> (cần quyền admin OS, sai tầng). App chỉ so đồng hồ máy với 1 máy chủ NTP và cảnh báo nếu lệch quá ngưỡng — phục vụ độ tin cậy của chính nhật ký. <code>time_sync.py</code> dùng <strong>raw socket UDP (RFC 5905), không thêm thư viện</strong>.</p>
+      <div class="caution">Mạng nội bộ ngân hàng có thể chặn NTP ra ngoài. Đã kiểm chứng: trên máy test NTP <code>pool.ntp.org</code> <strong>timeout</strong> → hàm trả <code>ok=False, error=...</code>, badge chuyển màu xám trung tính, <strong>không crash</strong>. Cấu hình <code>NTP_SERVER</code> trỏ NTP nội bộ (vd domain controller) hoặc <code>NTP_ENABLED=false</code> để tắt hẳn. Check chạy trong executor lúc khởi động nên không chặn boot.</div>
+
+      <div class="label">Dọn dẹp kèm theo</div>
+      <ul>
+        <li><code>audit_logs</code> bị <code>CREATE TABLE</code> <strong>trùng 2 lần</strong> trong migrations (idempotent nên vô hại) — đã bỏ bản thứ hai.</li>
+        <li>Retention: <code>audit_logs</code> giữ <strong>365 ngày</strong> (bằng chứng nghiệp vụ, giữ lâu) so với <code>login_logs</code> 30 ngày; dọn khi đọc trang.</li>
+      </ul>
+
+      <div class="label">Ghi chú môi trường (cho người test lại)</div>
+      <p><code>.venv</code> trên máy này hỏng — <code>pyvenv.cfg</code> trỏ Python nền <code>C:\Users\Administrator\...</code> đã bị gỡ (di sản của việc chuyển máy). Test bằng cách <strong>không sửa venv</strong>: chạy Python310 global (<code>C:\Users\HP\...</code>, cùng 3.10) với <code>PYTHONPATH</code> gồm gốc dự án + <code>.venv\Lib\site-packages</code>. Nếu muốn dùng lại venv thì cần tạo lại hoặc sửa <code>home</code> trong <code>pyvenv.cfg</code>.</p>
+
+      <div class="label">Kiểm chứng (đã dọn sạch data test)</div>
+      <p>TestClient (không chạy lifespan để khỏi đụng backup scheduler): POST route thật <code>/api/leaves/</code> (401) → ghi đúng 1 dòng <code>action=POST, detail=HTTP 401</code>; POST 404 và GET → không ghi; <code>DELETE /api/staff/999999</code> → middleware bỏ qua (đã có write_audit). JOIN <code>audit_logs × user_tttt</code> chạy đúng (đủ cột <code>username/full_name</code>). <code>audit_logs</code> trả về đúng số dòng ban đầu (32), không sót dòng test.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">33</span>
+      <span class="card-title">Trang chủ — gọn KPI + biểu đồ cột 4 phòng thay bảng tỷ lệ đúng hạn</span>
+      <span class="badge badge-done">Hoàn thành</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Yêu cầu</div>
+      <p>Rút gọn Dashboard: chỉ giữ 2 ô KPI (Người dùng, Phòng nghiệp vụ), bỏ 3 ô Nhóm tập / Tập đã in / Đúng hạn, bỏ card "Các tập chứng từ gần đây". Ô Người dùng <strong>không tính admin</strong>. Đổi bảng tỷ lệ đúng hạn thành biểu đồ cột nhóm: 4 phòng TT / KT / Swift / NosVos, mỗi phòng 2 cột (đúng hạn / nộp muộn).</p>
+
+      <div class="label">Vì sao thêm <code>dept_code</code> vào <code>compute_period()</code> thay vì so tên phòng ở frontend</div>
+      <p>Biểu đồ cần <strong>4 slot cố định</strong> theo đúng thứ tự TT→KT→Swift→NosVos, kể cả khi một phòng chưa có dữ liệu trong tháng (cột = 0). <code>by_dept</code> cũ chỉ trả <code>dept_name</code> — tên phòng dài, dễ đổi ("Phòng Quản lý Tài khoản Nostro Vostro"), khớp bằng chuỗi tiếng Việt là mong manh. Thêm <code>dept_code</code> (<code>PAYMENT / ACCT / SWIFT / NOSTRO</code>) cho map ổn định bằng khóa bất biến. Thay đổi thuần <strong>bổ sung field</strong> — <code>handover_reports.py</code> vẫn đọc <code>by_dept</code> như cũ, không vỡ.</p>
+
+      <div class="label">Map slot → code</div>
+      <table>
+        <tr><th>Nhãn biểu đồ</th><th>dept_code</th></tr>
+        <tr><td>Phòng Thanh toán</td><td><code>PAYMENT</code></td></tr>
+        <tr><td>Phòng Kế toán</td><td><code>ACCT</code></td></tr>
+        <tr><td>Phòng Swift</td><td><code>SWIFT</code></td></tr>
+        <tr><td>Phòng QLTK Nostro, Vostro</td><td><code>NOSTRO</code></td></tr>
+      </table>
+
+      <div class="label">Ô "Người dùng" bỏ admin</div>
+      <p><code>len([s for s in staff_list if s.get("role") != "admin"])</code> — admin là tài khoản kỹ thuật, không phải người dùng nghiệp vụ, nên không tính vào con số hiển thị.</p>
+
+      <div class="label">Dọn kèm theo</div>
+      <ul>
+        <li>Bỏ luôn lời gọi <code>GET /api/bundles/groups</code> trong <code>asyncio.gather</code> — sau khi xóa ô Nhóm tập / Tập đã in và card tập gần đây thì <code>groups</code> không còn nơi dùng.</li>
+        <li><code>period_vn</code> chuyển tính sớm (trước khối render) vì tiêu đề biểu đồ vẫn cần, nhưng ô rate card cũ (nơi tính cũ) đã bị xóa.</li>
+      </ul>
+
+      <div class="caution">Dùng <code>ui.echart</code> (ECharts, có sẵn trong NiceGUI 1.4.37) — lần đầu dùng chart trong dự án. Nếu <code>by_dept</code> rỗng vẫn giữ dòng "Chưa có dữ liệu bàn giao trong tháng này" thay vì vẽ biểu đồ toàn số 0.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">34</span>
+      <span class="card-title">Menu Lưu trữ — rút gọn tên "Phòng QLTK Nostro, Vostro" + sửa lặp chữ "Phòng"</span>
+      <span class="badge badge-done">Hoàn thành</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Yêu cầu</div>
+      <p>Trang Lưu trữ hiển thị "Phòng Quản lý Tài khoản Nostro Vostro" quá dài. Đổi thành <strong>"Phòng QLTK Nostro, Vostro"</strong> — chỉ ở tầng hiển thị, không sửa <code>departments.name</code> trong CSDL (tên gốc còn dùng ở nhiều nơi khác).</p>
+
+      <div class="label">Cách làm</div>
+      <p>Helper <code>_dept_display(name)</code> trong <code>frontend/pages/storage.py</code>: khớp chuỗi <code>"nostro"</code> (không phân biệt hoa/thường) → trả tên rút gọn; còn lại giữ nguyên. Khớp bằng khóa nội dung thay vì <code>dept_code</code> vì <code>/storage-summary</code> và <code>/storage-view</code> chỉ trả <code>name</code>, không trả <code>code</code>.</p>
+
+      <div class="label">Áp dụng 3 chỗ (đều thuộc tab "Tra cứu lưu trữ")</div>
+      <table>
+        <tr><th>Nơi</th><th>Chế độ</th></tr>
+        <tr><td>Header bảng "Tổng hợp lưu trữ"</td><td>Chọn "Tất cả" → tổng hợp cả năm</td></tr>
+        <tr><td>Dropdown "Phòng nghiệp vụ"</td><td>Bộ lọc</td></tr>
+        <tr><td>Tiêu đề bảng chi tiết + bản in A4</td><td>Chọn 1 phòng + tháng</td></tr>
+      </table>
+
+      <div class="label">Sửa kèm — lỗi lặp chữ "Phòng" có sẵn từ trước</div>
+      <p>Tiêu đề bảng chi tiết trước đây ghép cứng <code>Phòng {dept_name}</code>, nhưng <code>dept_name</code> lấy từ CSDL <strong>đã bắt đầu bằng "Phòng"</strong> → in ra "Phòng Phòng Kế toán". Bỏ tiền tố ghép cứng, để <code>_dept_display(dept_name)</code> tự cấp tên đầy đủ. Không phải hồi quy của lần này — sửa luôn vì đang đụng đúng dòng đó.</p>
+    </div>
+  </div>
+
+  <!-- 35 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">35</span>
+      <span class="card-title">Bàn giao chứng từ — cán bộ chuyển phòng vẫn hiện ở phòng cũ theo tháng</span>
+      <span class="badge badge-done">Hoàn thành</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Hiện tượng</div>
+      <p>GDV <code>trungbuiquang</code> chuyển từ Phòng NosVos sang Phòng Thanh toán (01/06/2026). Sau khi đổi phòng, lưới bàn giao chứng từ <strong>các tháng trước 06/2026 của Phòng NosVos không còn hiện tên anh ấy</strong> — chứng từ cũ "biến mất" khỏi phòng cũ.</p>
+
+      <div class="label">Nguyên nhân gốc</div>
+      <p>Endpoint <code>GET /api/handovers/grid</code> lọc chứng từ và danh sách cán bộ theo <strong>phòng hiện tại của user</strong> (<code>user_tttt.department_id</code>) qua <code>JOIN user_tttt ks ON de.staff_id = ks.id WHERE ks.department_id = ?</code>. Khi user đổi phòng, cột này đổi theo → mọi chứng từ lịch sử "chạy" sang phòng mới, biến mất khỏi phòng cũ.</p>
+      <div class="note"><strong>Dữ liệu vốn đã đúng:</strong> mỗi phiếu <code>handovers</code> lưu <code>department_id</code> <em>đóng băng</em> tại thời điểm tạo phiếu. Kiểm tra DB: chứng từ của Trung các tháng 2025-04, 2025-11, 2026-03 có <code>handovers.department_id = 1</code> (NosVos), tháng 2026-07 có <code>= 3</code> (Thanh toán). Không cần sửa/backfill dữ liệu — chỉ query hiển thị sai.</p></div>
+
+      <div class="label">Giải pháp — sửa đúng 1 endpoint</div>
+      <table>
+        <tr><th></th><th>Trước</th><th>Sau</th></tr>
+        <tr><td><strong>Lọc chứng từ</strong></td><td><code>JOIN user_tttt WHERE ks.department_id = ?</code> (phòng hiện tại)</td><td><code>JOIN handovers h WHERE h.department_id = ?</code> (phòng đóng băng trong phiếu)</td></tr>
+        <tr><td><strong>Danh sách hàng (cán bộ)</strong></td><td><code>WHERE department_id = ? AND (is_active OR id IN entries)</code> — loại trừ người đã chuyển đi</td><td><code>WHERE (department_id = ? AND is_active) OR id IN entries</code> — thêm người đã chuyển đi nhưng có chứng từ ở phòng này tháng đó</td></tr>
+      </table>
+      <div class="note">Thêm <code>de.staff_id IS NOT NULL</code> để giữ hành vi cũ (INNER JOIN user_tttt trước đây tự loại entry có <code>staff_id NULL</code> của dữ liệu import cũ).</div>
+
+      <div class="label">Vì sao không tạo bảng lịch sử đổi phòng</div>
+      <p>Đã cân nhắc bảng <code>staff_department_history</code> tra cứu phòng theo <code>transaction_date</code>. Bác vì thừa: (1) dữ liệu lịch sử đã đóng băng đúng phòng ở <code>handovers</code>; (2) báo cáo (<code>handover_report_service</code>) và export đã nhất quán dùng <code>handovers.department_id</code>; (3) sửa 1 query là giải quyết triệt để. Quy tắc "trước ngày đổi → phòng cũ, sau → phòng mới" được thỏa mãn tự nhiên vì phiếu đóng băng phòng tại thời điểm nhập chứng từ.</p>
+
+      <div class="note"><strong>Cập nhật:</strong> ca mép "nhập bù lùi ngày cho GDV đã đổi phòng" ban đầu chưa xử lý ở card này, đã được giải quyết bằng bảng lịch sử đổi phòng — xem <strong>card 36</strong>.</div>
+    </div>
+  </div>
+
+  <!-- 36 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">36</span>
+      <span class="card-title">Lịch sử đổi phòng cán bộ — nhập bù chứng từ về đúng phòng theo ngày giao dịch</span>
+      <span class="badge badge-done">Hoàn thành</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Vì sao cần</div>
+      <p>Nghiệp vụ phát sinh: nhập bù chứng từ giao dịch tháng 4, 5/2026 cho GDV <code>trungbuiquang</code> (đã chuyển NosVos → Thanh toán từ 01/06/2026) vào <strong>Phòng NosVos cũ</strong>. Cách đóng băng theo card 35 chỉ đúng cho chứng từ nhập <em>đúng kỳ</em>: nhập bù lùi ngày <em>sau khi</em> đã đổi phòng thì <code>upsert_entry</code> gán phiếu theo phòng hiện tại (Thanh toán) → sai phòng, và lưới NosVos không hiện GDV để nhập.</p>
+
+      <div class="label">Thiết kế — bảng <code>staff_department_history</code></div>
+      <p>Mỗi dòng = "từ <code>effective_from</code>, cán bộ thuộc <code>department_id</code>". Khoảng hiệu lực = <code>[effective_from, mốc kế tiếp)</code>. Dòng mới nhất còn hiệu lực = phòng hiện tại.</p>
+      <table>
+        <tr><th>Nơi</th><th>Ghi/đọc lịch sử</th></tr>
+        <tr><td><code>staff.create_staff</code></td><td>Ghi dòng baseline (phòng, <code>effective_from = 2000-01-01</code>) để phủ mọi tháng trước</td></tr>
+        <tr><td><code>staff.update_staff</code></td><td>Khi đổi phòng → ghi dòng mới, <code>effective_from = ngày quản trị viên thực hiện</code> (hôm nay)</td></tr>
+        <tr><td>Migration backfill</td><td>Mỗi user hiện hữu chưa có lịch sử → 1 dòng baseline (phòng hiện tại, 2000-01-01)</td></tr>
+        <tr><td><code>handovers._dept_at()</code></td><td>Tra phòng tại 1 ngày: <code>effective_from &lt;= date</code> mới nhất (tie-break <code>id DESC</code>)</td></tr>
+        <tr><td><code>handovers.upsert_entry</code></td><td>Phòng của phiếu = <code>_dept_at(staff, transaction_date)</code>, không phải phòng hiện tại</td></tr>
+        <tr><td><code>handovers.get_handover_grid</code></td><td>Hàng của lưới = cán bộ có khoảng lịch sử <em>giao</em> với tháng (window <code>LEAD</code>) → hiện dòng trống để nhập bù</td></tr>
+      </table>
+
+      <div class="label">Quy tắc hiển thị hàng trong lưới (overlap)</div>
+      <p>Cán bộ hiện ở lưới phòng X tháng M nếu khoảng <code>[effective_from, next)</code> giao <code>[đầu_tháng, đầu_tháng_sau)</code>: <code>effective_from &lt; period_end AND (next IS NULL OR next &gt; period_start)</code>. Nhờ mốc 01/06 rơi đúng đầu tháng nên biên sạch: Trung hiện ở NosVos tháng ≤ 05/2026, ở Thanh toán từ 06/2026, không trùng lặp.</p>
+
+      <div class="label">Dữ liệu lịch sử của Trung (sửa 1 lần)</div>
+      <p>Trung đã đổi phòng <em>trước khi</em> có tính năng này nên backfill tự động gán nhầm baseline = Thanh toán. Đã sửa trực tiếp trên DB (định danh theo <code>username</code> + <code>departments.code</code>, không hardcode id): baseline → NosVos (2000-01-01) + thêm mốc Thanh toán (2026-06-01). Đây là sửa <em>dữ liệu</em> theo sự việc có thật, đi kèm file <code>.db</code>.</p>
+
+      <div class="caution"><strong>Chuyên viên không tự nhập bù được:</strong> ô chọn phòng của GDV bị khóa vào phòng hiện tại (<code>frontend/pages/handovers.py</code>). Nhập bù cho GDV đã chuyển phòng do <strong>HKV / cán bộ phòng cũ</strong> chọn phòng cũ + tháng rồi nhập hộ — backend tự định tuyến phiếu về đúng phòng. Nếu sau này cần GDV tự nhập bù, phải nới quyền chọn phòng ở frontend.</div>
+
+      <div class="note"><strong>Backfill dùng mốc gốc <code>2000-01-01</code></strong> thay vì <code>start_date</code>: giữ đúng hành vi cũ (cán bộ active hiện ở lưới mọi tháng). Đổi phòng thật mới dùng ngày thực tế.</div>
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-07-20</footer>
 </div>
 </body>
 </html>

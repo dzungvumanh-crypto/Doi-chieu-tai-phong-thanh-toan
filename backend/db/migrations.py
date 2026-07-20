@@ -112,6 +112,14 @@ def _create_tables(db_path: str):
             new_sheet_count INTEGER,
             notes TEXT
         )""",
+        # Lịch sử đổi phòng cán bộ — dùng để định tuyến chứng từ về đúng phòng theo ngày giao dịch
+        """CREATE TABLE IF NOT EXISTS staff_department_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            staff_id INTEGER NOT NULL REFERENCES user_tttt(id),
+            department_id INTEGER NOT NULL REFERENCES departments(id),
+            effective_from DATE NOT NULL,
+            created_at DATETIME
+        )""",
         """CREATE TABLE IF NOT EXISTS leave_records (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             staff_id INTEGER NOT NULL REFERENCES user_tttt(id),
@@ -325,17 +333,7 @@ def _ensure_indexes():
             window_start TEXT,
             locked_until TEXT
         )""",
-        # Audit log cho thao tác admin
-        """CREATE TABLE IF NOT EXISTS audit_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            actor_id INTEGER REFERENCES user_tttt(id),
-            action TEXT NOT NULL,
-            target_type TEXT,
-            target_id INTEGER,
-            detail TEXT,
-            ip_address TEXT,
-            created_at DATETIME
-        )""",
+        # (audit_logs đã tạo ở trên — bỏ định nghĩa trùng)
         # Xóa mềm — ẩn khỏi danh sách nhưng giữ lịch sử
         "ALTER TABLE user_tttt ADD COLUMN is_deleted BOOLEAN DEFAULT 0",
         # Trigger dùng tên bảng mới (idempotent — IF NOT EXISTS)
@@ -444,6 +442,22 @@ def _ensure_indexes():
         "CREATE INDEX IF NOT EXISTS ix_duty_requests_staff    ON duty_requests(staff_id)",
         "CREATE INDEX IF NOT EXISTS ix_duty_rotation_year     ON duty_rotation_state(year, role)",
         "CREATE INDEX IF NOT EXISTS ix_duty_shifts_date       ON duty_shifts(shift_date)",
+
+        # ── Lịch sử đổi phòng cán bộ — 2026-07-20 ──────────────────────────────
+        # Bảng: mỗi dòng = "từ ngày effective_from, cán bộ thuộc phòng department_id"
+        """CREATE TABLE IF NOT EXISTS staff_department_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            staff_id INTEGER NOT NULL REFERENCES user_tttt(id),
+            department_id INTEGER NOT NULL REFERENCES departments(id),
+            effective_from DATE NOT NULL,
+            created_at DATETIME
+        )""",
+        # Backfill baseline: user chưa có lịch sử → 1 dòng (phòng hiện tại, hiệu lực từ 2000-01-01)
+        """INSERT INTO staff_department_history (staff_id, department_id, effective_from, created_at)
+           SELECT u.id, u.department_id, '2000-01-01', datetime('now')
+           FROM user_tttt u
+           WHERE u.department_id IS NOT NULL
+             AND NOT EXISTS (SELECT 1 FROM staff_department_history h WHERE h.staff_id = u.id)""",
     ]
     _mig_log = logging.getLogger(__name__)
     conn = sqlite3.connect(DB_PATH, timeout=30)
@@ -621,6 +635,7 @@ def _ensure_indexes():
         "CREATE INDEX IF NOT EXISTS ix_audit_logs_actor      ON audit_logs(actor_id)",
         "CREATE INDEX IF NOT EXISTS ix_audit_logs_created    ON audit_logs(created_at)",
         "CREATE INDEX IF NOT EXISTS ix_user_tttt_dept        ON user_tttt(department_id)",
+        "CREATE INDEX IF NOT EXISTS ix_staff_dept_hist       ON staff_department_history(staff_id, effective_from)",
     ]
     conn = sqlite3.connect(DB_PATH, timeout=30)
     try:
