@@ -28,6 +28,7 @@ from backend.api.duty_schedule import router as duty_schedule_router
 from backend.api.duty_stats import router as duty_stats_router
 from backend.api.duty_export import router as duty_export_router
 from backend.api.cham459901 import router as cham459901_router
+from backend.api.doi_chieu_song_phuong import router as doi_chieu_song_phuong_router
 from backend.api.swift_recon import router as swift_recon_router
 
 # Thêm router mới: 1 dòng import ở trên + 1 tuple ở đây
@@ -54,6 +55,7 @@ _ROUTERS = [
     (duty_stats_router,      {}),
     (duty_export_router,     {}),
     (cham459901_router,      {}),
+    (doi_chieu_song_phuong_router, {}),
     (swift_recon_router, {}),
 ]
 

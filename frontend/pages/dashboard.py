@@ -1,9 +1,9 @@
 """Trang chủ — Dashboard KPI."""
 import asyncio
-from datetime import date as _date_cls
+from datetime import date as _date
 from nicegui import ui
 import frontend.api_client as api
-from frontend.shared import _sidebar, _content_area, _page_header, _require_auth
+from frontend.shared import _sidebar, _content_area, _page_header, _require_auth, _handle_api_error
 
 
 
@@ -33,12 +33,11 @@ async def dashboard_page():
         except Exception:
             pass
 
-        _today = _date_cls.today()
+        _today = _date.today()
         try:
             results = await asyncio.gather(
                 asyncio.to_thread(api.get, "/api/staff/"),
                 asyncio.to_thread(api.get, "/api/departments/"),
-                asyncio.to_thread(api.get, "/api/bundles/groups"),
                 asyncio.to_thread(api.get, "/api/dashboard/summary"),
                 asyncio.to_thread(api.get, "/api/dashboard/pending-counts"),
                 asyncio.to_thread(api.get, "/api/leaves/today"),
@@ -49,9 +48,9 @@ async def dashboard_page():
                 ui.notify(str(e), type="warning")
                 ui.navigate.to("/login")
                 return
-            results = [[], [], [], {}, {}, {}]
+            results = [[], [], {}, {}, {}]
 
-        staff_list, depts, groups, summary, pending, today_leaves = results
+        staff_list, depts, summary, pending, today_leaves = results
         for r in results:
             if isinstance(r, api.SessionExpiredError):
                 ui.notify(str(r), type="warning")
@@ -59,7 +58,6 @@ async def dashboard_page():
                 return
         staff_list = staff_list if isinstance(staff_list, list) else []
         depts      = depts      if isinstance(depts, list)      else []
-        groups     = groups     if isinstance(groups, list)     else []
         summary    = summary    if isinstance(summary, dict)    else {}
         pending    = pending    if isinstance(pending, dict)    else {}
         today_leaves   = today_leaves if isinstance(today_leaves, dict) else {}
@@ -74,31 +72,11 @@ async def dashboard_page():
                 badge_refs[_bkey].set_text(str(_cnt))
                 badge_refs[_bkey].set_visibility(True)
 
-        overall   = summary.get("overall", {})
-        rate_val  = overall.get("rate")
-        period    = summary.get("period", "")
-        on_time   = overall.get("on_time", 0)
-        late_cnt  = overall.get("late", 0)
-        total_doc = overall.get("total", 0)
-
-        if rate_val is None:
-            rate_str, rate_icon = "—", "help_outline"
-            rate_clr, rate_txt_clr = "bg-gray-50 border-gray-200", "text-gray-500"
-        elif rate_val >= 90:
-            rate_str, rate_icon = f"{rate_val:.1f}%", "check_circle"
-            rate_clr, rate_txt_clr = "bg-green-50 border-green-200", "text-green-700"
-        elif rate_val >= 70:
-            rate_str, rate_icon = f"{rate_val:.1f}%", "warning"
-            rate_clr, rate_txt_clr = "bg-yellow-50 border-yellow-200", "text-yellow-700"
-        else:
-            rate_str, rate_icon = f"{rate_val:.1f}%", "error"
-            rate_clr, rate_txt_clr = "bg-red-50 border-red-200", "text-red-700"
-
+        # Số người dùng không tính quản trị viên (admin)
+        n_users = len([s for s in staff_list if s.get("role") != "admin"])
         stats = [
-            ("Người dùng",     len(staff_list),                               "people",     "bg-red-50 border-red-200"),
-            ("Phòng nghiệp vụ", len([d for d in depts if d.get("code") != "BGD"]), "business",   "bg-blue-50 border-blue-200"),
-            ("Nhóm tập",        len(groups),                                   "folder_zip", "bg-purple-50 border-purple-200"),
-            ("Tập đã in",       sum(len(g.get("bundles", [])) for g in groups),"print",      "bg-orange-50 border-orange-200"),
+            ("Người dùng",      n_users,                                           "people",   "bg-red-50 border-red-200"),
+            ("Phòng nghiệp vụ", len([d for d in depts if d.get("code") != "BGD"]), "business", "bg-blue-50 border-blue-200"),
         ]
 
         with content:
@@ -110,22 +88,6 @@ async def dashboard_page():
                             with ui.column().classes("gap-0"):
                                 ui.label(str(val)).classes("text-3xl font-bold text-gray-800")
                                 ui.label(lbl).classes("text-sm text-gray-500")
-
-                period_vn = ""
-                if period:
-                    try:
-                        y, m = period.split("-")
-                        period_vn = f"Tháng {int(m):02d}/{y}"
-                    except Exception:
-                        period_vn = period
-                with ui.card().classes(f"flex-1 min-w-[160px] p-4 rounded-xl border {rate_clr} shadow-sm"):
-                    with ui.row().classes("items-center gap-3"):
-                        ui.icon(rate_icon).classes(f"text-3xl {rate_txt_clr}")
-                        with ui.column().classes("gap-0"):
-                            ui.label(rate_str).classes(f"text-3xl font-bold {rate_txt_clr}")
-                            ui.label("Đúng hạn").classes("text-sm text-gray-500")
-                            if period_vn:
-                                ui.label(period_vn).classes("text-xs text-gray-400")
 
             pend_leaves       = pending.get("leaves",          0)
             pend_handovers    = pending.get("handovers",       0)
@@ -198,73 +160,91 @@ async def dashboard_page():
                             ui.label(str(_cnt)).classes(f"text-2xl {_num_cls}")
                             ui.label(_dname).classes("text-xs text-gray-600 mt-1 leading-tight text-center")
 
-            by_dept = summary.get("by_dept", [])
-            with ui.card().classes("w-full p-4 rounded-xl shadow-sm bg-white"):
-                with ui.row().classes("w-full justify-between items-center mb-1"):
-                    title_txt = f"Tỷ lệ nộp chứng từ đúng hạn — {period_vn}" if period_vn else "Tỷ lệ nộp chứng từ đúng hạn"
-                    ui.label(title_txt).classes("font-semibold text-red-900")
-                    if total_doc:
-                        ui.label(f"Tổng {total_doc} chứng từ · {on_time} đúng hạn · {late_cnt} muộn").classes("text-xs text-gray-500")
-                with ui.column().classes("gap-0 mb-3"):
-                    ui.label("Đúng hạn = nộp trong 1 ngày làm việc sau ngày giao dịch (bỏ T7/CN, ngày lễ, ngày nghỉ phép của người nhận)").classes(
-                        "text-xs text-gray-400 italic")
-                    _skipped = summary.get("no_submit_date", 0)
-                    if _skipped:
-                        ui.label(
-                            f"Không tính {_skipped} chứng từ cũ chưa có dữ liệu ngày nộp. "
-                            f"Xem chi tiết tại Báo cáo bàn giao chứng từ."
-                        ).classes("text-xs text-gray-400 italic")
+            # ── Biểu đồ nộp chứng từ đúng hạn — chọn Tháng/Năm để xem ──
+            dept_slots = [
+                ("PAYMENT", "Phòng Thanh toán"),
+                ("ACCT",    "Phòng Kế toán"),
+                ("SWIFT",   "Phòng Swift"),
+                ("NOSTRO",  "Phòng QLTK Nostro, Vostro"),
+            ]
+            _today = _date.today()
+            _year_opts  = list(range(_today.year, 2023, -1))
+            _month_opts = {m: f"Tháng {m:02d}" for m in range(1, 13)}
 
-                if not by_dept:
-                    ui.label("Chưa có dữ liệu bàn giao trong tháng này.").classes("text-gray-400 text-sm mt-1")
-                else:
-                    with ui.row().classes("w-full px-3 py-2 bg-red-50 text-xs font-semibold text-red-700 border-b border-red-100"):
-                        ui.label("Phòng").classes("flex-1")
-                        ui.label("Đúng hạn").classes("w-20 text-center")
-                        ui.label("Muộn").classes("w-16 text-center")
-                        ui.label("Tỷ lệ").classes("w-20 text-center")
-                    for row in by_dept:
-                        r = row.get("rate")
-                        if r is None:
-                            r_str, r_cls = "—", "bg-gray-100 text-gray-500"
-                        elif r >= 90:
-                            r_str, r_cls = f"{r:.1f}%", "bg-green-100 text-green-700"
-                        elif r >= 70:
-                            r_str, r_cls = f"{r:.1f}%", "bg-yellow-100 text-yellow-700"
+            with ui.card().classes("w-full p-4 rounded-xl shadow-sm bg-white"):
+                with ui.row().classes("w-full justify-between items-center mb-1 flex-wrap gap-2"):
+                    ui.label("Tỷ lệ nộp chứng từ đúng hạn").classes("font-semibold text-red-900")
+                    with ui.row().classes("items-center gap-2"):
+                        month_sel = ui.select(_month_opts, value=_today.month
+                                              ).props("dense outlined").classes("w-32")
+                        year_sel  = ui.select(_year_opts, value=_today.year
+                                              ).props("dense outlined").classes("w-28")
+
+                ui.label("Đúng hạn = nộp trong 1 ngày làm việc sau ngày giao dịch "
+                         "(bỏ T7/CN, ngày lễ, ngày nghỉ phép của người nhận)"
+                         ).classes("text-xs text-gray-400 italic")
+
+                chart_box = ui.column().classes("w-full gap-0")
+
+                def _render_chart(sm: dict):
+                    # Vẽ lại toàn bộ vùng biểu đồ theo dữ liệu kỳ đã chọn
+                    chart_box.clear()
+                    ov  = sm.get("overall", {})
+                    ot  = ov.get("on_time", 0)
+                    lt  = ov.get("late", 0)
+                    tot = ov.get("total", 0)
+                    bd  = sm.get("by_dept", [])
+                    by_code = {(r.get("dept_code") or "").upper(): r for r in bd}
+                    labels  = [lbl for _, lbl in dept_slots]
+                    ot_vals = [(by_code.get(c) or {}).get("on_time", 0) for c, _ in dept_slots]
+                    lt_vals = [(by_code.get(c) or {}).get("late", 0)    for c, _ in dept_slots]
+                    with chart_box:
+                        if tot:
+                            ui.label(f"Tổng {tot} chứng từ · {ot} đúng hạn · {lt} muộn"
+                                     ).classes("text-xs text-gray-500 mb-1")
+                        _skipped = sm.get("no_submit_date", 0)
+                        if _skipped:
+                            ui.label(
+                                f"Không tính {_skipped} chứng từ cũ chưa có dữ liệu ngày nộp. "
+                                f"Xem chi tiết tại Báo cáo bàn giao chứng từ."
+                            ).classes("text-xs text-gray-400 italic mb-1")
+                        if not bd:
+                            ui.label("Chưa có dữ liệu bàn giao trong kỳ này."
+                                     ).classes("text-gray-400 text-sm mt-1")
                         else:
-                            r_str, r_cls = f"{r:.1f}%", "bg-red-100 text-red-700"
-                        with ui.row().classes("w-full px-3 py-2 border-b border-gray-100 items-center"):
-                            ui.label(row.get("dept_name", "")).classes("flex-1 text-sm")
-                            ui.label(str(row.get("on_time", 0))).classes("w-20 text-center text-sm text-green-700 font-medium")
-                            ui.label(str(row.get("late", 0))).classes("w-16 text-center text-sm text-red-600")
-                            ui.label(r_str).classes(f"w-20 text-center text-xs font-semibold px-2 py-0.5 rounded {r_cls}")
+                            ui.echart({
+                                "tooltip": {"trigger": "axis", "axisPointer": {"type": "shadow"}},
+                                "legend": {"data": ["Đúng hạn", "Nộp muộn"], "bottom": 0},
+                                "grid": {"left": "3%", "right": "4%", "top": "8%", "bottom": "12%", "containLabel": True},
+                                "xAxis": {"type": "category", "data": labels,
+                                          "axisLabel": {"interval": 0, "fontSize": 11}},
+                                "yAxis": {"type": "value", "minInterval": 1},
+                                "series": [
+                                    {"name": "Đúng hạn", "type": "bar", "barGap": "10%", "data": ot_vals,
+                                     "itemStyle": {"color": "#16a34a"},
+                                     "label": {"show": True, "position": "top"}},
+                                    {"name": "Nộp muộn", "type": "bar", "data": lt_vals,
+                                     "itemStyle": {"color": "#dc2626"},
+                                     "label": {"show": True, "position": "top"}},
+                                ],
+                            }).classes("w-full").style("height: 340px")
 
-            with ui.card().classes("w-full p-4 rounded-xl shadow-sm bg-white"):
-                with ui.row().classes("w-full justify-between items-center mb-3"):
-                    ui.label("Các tập chứng từ gần đây").classes("font-semibold text-red-900")
-                    ui.button("Xem tất cả", icon="arrow_forward",
-                              on_click=lambda: ui.navigate.to("/bundles")
-                              ).props("flat dense").classes("text-red-700 text-sm")
-                if groups:
-                    with ui.row().classes(
-                        "w-full px-3 py-2 bg-red-50 text-xs font-semibold text-red-700"
-                        " border-b border-red-100 rounded-t"
-                    ):
-                        ui.label("Tên bìa chứng từ").classes("flex-1")
-                        ui.label("Số tập").classes("w-20 text-center")
-                        ui.label("Ngày tạo").classes("w-28 text-center")
-                    for g in groups[:10]:
-                        dept       = g.get("department") or {}
-                        dept_name  = dept.get("name", "N/A")
-                        notes      = g.get("notes") or ""
-                        bundle_lbl = f"{dept_name} – {notes}" if notes else dept_name
-                        n_bundles  = g.get("total_bundles", 0)
-                        date_str   = (g.get("created_at") or "")[:10]
-                        with ui.row().classes(
-                            "w-full px-3 py-2 border-b border-gray-100 items-center cursor-pointer hover:bg-red-50"
-                        ).on("click", lambda: ui.navigate.to("/bundles")):
-                            ui.label(bundle_lbl).classes("flex-1 text-sm text-gray-800")
-                            ui.label(str(n_bundles)).classes("w-20 text-center text-sm font-semibold text-red-700")
-                            ui.label(date_str).classes("w-28 text-center text-sm text-gray-500")
-                else:
-                    ui.label("Chưa có tập chứng từ nào").classes("text-gray-400 text-sm")
+                _render_chart(summary)  # kỳ mặc định (tháng hiện tại) — dùng lại data đã tải
+
+                async def _reload_chart():
+                    chart_box.clear()
+                    with chart_box:
+                        ui.spinner(size="1.5em", color="red").classes("my-6")
+                    try:
+                        sm = await asyncio.to_thread(
+                            api.get, "/api/dashboard/summary",
+                            {"year": year_sel.value, "month": month_sel.value},
+                        )
+                    except Exception as e:
+                        if _handle_api_error(e):
+                            return
+                        sm = {}
+                    _render_chart(sm if isinstance(sm, dict) else {})
+
+                month_sel.on_value_change(_reload_chart)
+                year_sel.on_value_change(_reload_chart)

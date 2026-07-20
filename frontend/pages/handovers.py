@@ -415,8 +415,12 @@ async def handovers_page():
             import html as _html
 
             # ── Build grid as single HTML string (much faster than NiceGUI widgets) ──
-            NW = 200   # name column width px
-            CW = 50    # cell width px
+            NW  = 200  # name column width px
+            CW  = 50   # cell width px — chiều rộng lý tưởng
+            MCW = 30   # cell width tối thiểu — co xuống mức này để vừa màn hình, hẹp hơn nữa mới cuộn ngang
+            # Bắt buộc: không có border-box thì padding/border của header (10px 2px + 1px)
+            # và của ô dữ liệu (chỉ border 1–2px) cộng thêm khác nhau → header lệch cột với ô nhập.
+            BB  = "box-sizing:border-box"
             _SB = {    # status → (bg, border)
                 "confirmed":       ("#DCFCE7", "2px solid #16A34A"),
                 "pending_confirm": ("#FEF3C7", "2px solid #F59E0B"),
@@ -434,10 +438,14 @@ async def handovers_page():
                     '<div style="overflow-x:auto;width:100%;border:1px solid #bfdbfe;'
                     'border-radius:10px;box-shadow:0 2px 10px rgba(30,64,175,.10);">'
                 ]
+                # Chiều rộng tối thiểu của hàng: dưới mức này mới cho cuộn ngang
+                row_min = NW + days_in_month * MCW
+
                 # Header row
                 p.append(
-                    '<div style="display:flex;flex-wrap:nowrap;background:#dbeafe;border-bottom:2px solid #93c5fd;">'
-                    f'<div style="min-width:{NW}px;width:{NW}px;flex-shrink:0;font-size:14px;font-weight:700;'
+                    f'<div style="display:flex;flex-wrap:nowrap;min-width:{row_min}px;'
+                    'background:#dbeafe;border-bottom:2px solid #93c5fd;">'
+                    f'<div style="{BB};min-width:{NW}px;width:{NW}px;flex-shrink:0;font-size:14px;font-weight:700;'
                     f'color:#1e40af;padding:10px 14px;border-right:2px solid #93c5fd;'
                     f'position:sticky;left:0;z-index:3;background:#dbeafe;">Họ và tên</div>'
                 )
@@ -446,7 +454,7 @@ async def handovers_page():
                     hbg = "#fde68a" if dow >= 5 else "#dbeafe"
                     hcl = "#92400e" if dow >= 5 else "#1e40af"
                     p.append(
-                        f'<div style="min-width:{CW}px;width:{CW}px;flex-shrink:0;text-align:center;'
+                        f'<div style="{BB};flex:0 1 {CW}px;min-width:{MCW}px;text-align:center;'
                         f'font-size:13px;font-weight:700;color:{hcl};padding:10px 2px;'
                         f'border-right:1px solid #bfdbfe;background:{hbg};">{d:02d}</div>'
                     )
@@ -459,8 +467,9 @@ async def handovers_page():
                               or u.get("employee_code") or u.get("username") or "")
                     rbg    = "#ffffff" if row_idx % 2 == 0 else "#f0f9ff"
                     p.append(
-                        f'<div style="display:flex;flex-wrap:nowrap;border-bottom:1px solid #dbeafe;background:{rbg};">'
-                        f'<div style="min-width:{NW}px;width:{NW}px;flex-shrink:0;font-size:15px;font-weight:500;'
+                        f'<div style="display:flex;flex-wrap:nowrap;min-width:{row_min}px;'
+                        f'border-bottom:1px solid #dbeafe;background:{rbg};">'
+                        f'<div style="{BB};min-width:{NW}px;width:{NW}px;flex-shrink:0;font-size:15px;font-weight:500;'
                         f'padding:7px 14px;border-right:2px solid #dbeafe;white-space:nowrap;overflow:hidden;'
                         f'display:flex;align-items:center;position:sticky;left:0;z-index:2;background:{rbg};">'
                         f'{_html.escape(name)}</div>'
@@ -482,12 +491,12 @@ async def handovers_page():
                         _ro_attr = " readonly" if _locked else ""
                         _cursor  = "cursor:not-allowed;opacity:0.7;" if _locked else ""
                         p.append(
-                            f'<div style="min-width:{CW}px;width:{CW}px;flex-shrink:0;background:{cbg};border-right:{bdr};">'
+                            f'<div style="{BB};flex:0 1 {CW}px;min-width:{MCW}px;background:{cbg};border-right:{bdr};">'
                             f'<input class="hv-inp" id="hv_{row_idx}_{d}" data-uid="{uid}" data-day="{d}"'
                             f' data-orig="{val}" data-uname="{_html.escape(name, quote=True)}"{eid_attr}{_ro_attr}'
                             f' value="{val if val else ""}"'
                             f' style="width:100%;border:none;outline:none;background:transparent;{_cursor}'
-                            f'font-size:15px;font-weight:600;color:#1e3a8a;text-align:center;'
+                            f'font-size:14px;font-weight:600;color:#1e3a8a;text-align:center;'
                             f'padding:7px 0;box-sizing:border-box;" /></div>'
                         )
                     p.append('</div>')

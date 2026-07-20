@@ -18,6 +18,7 @@ from backend.database import get_db, _vn_now
 from backend.schemas.bundles import (
     BundleGenerateRequest, BundleUpdateRequest,
     StorageViewResponse, StorageViewRow, StorageViewUpdateRequest,
+    StorageSummaryCell, StorageSummaryDept, StorageSummaryResponse, StorageSummaryRow,
 )
 from backend.schemas.handovers import ArchiveRecord, HandoverArchiveResponse
 from backend.services.bundle_service import BundleResult, EntryUnit, generate_bundles_for_entries
@@ -752,6 +753,43 @@ def storage_view(
         rows=all_rows,
         total_sheets=sum(sum(r.bundle_sheets) for r in all_rows),
         total_bundles=sum(r.n_bundles for r in all_rows),
+    )
+
+
+@router.get("/storage-summary", response_model=StorageSummaryResponse)
+def storage_summary(
+    year: int,
+    db: sqlite3.Connection = Depends(get_db),
+    _: dict = Depends(require_feature("menu.storage")),
+):
+    depts = db.execute(
+        "SELECT id, name FROM departments WHERE is_source = 1 ORDER BY id"
+    ).fetchall()
+
+    # Dùng lại đúng hàm dựng bảng chi tiết để tổng hợp luôn khớp với /storage-view.
+    # Không gộp thành 1 câu SQL SUM/COUNT: "tập có ngày" phụ thuộc cover_units JSON
+    # (xem _get_dates_for_bundle), không diễn đạt được bằng SQL.
+    rows = []
+    for month in range(1, 13):
+        cells = []
+        for d in depts:
+            _, det_rows = _get_storage_rows_for_month(db, d["id"], year, month)
+            cells.append(StorageSummaryCell(
+                department_id=d["id"],
+                total_sheets=sum(sum(r.bundle_sheets) for r in det_rows),
+                total_bundles=sum(r.n_bundles for r in det_rows),
+            ))
+        rows.append(StorageSummaryRow(
+            month=month,
+            cells=cells,
+            total_sheets=sum(c.total_sheets for c in cells),
+            total_bundles=sum(c.total_bundles for c in cells),
+        ))
+
+    return StorageSummaryResponse(
+        year=year,
+        departments=[StorageSummaryDept(id=d["id"], name=d["name"]) for d in depts],
+        rows=rows,
     )
 
 

@@ -46,8 +46,9 @@ DEPARTMENTS = [
     {
         "id": "payment", "label": "Phòng Thanh toán", "icon": "payments",
         "items": [
-            ("duty_schedule", "Phân lịch trực", "edit_calendar"),
-            ("cham_459901",   "Chấm 459901",    "task_alt"),
+            ("duty_schedule",         "Phân lịch trực",       "edit_calendar"),
+            ("cham_459901",           "Chấm 459901",          "task_alt"),
+            ("doi_chieu_song_phuong", "Đối chiếu Song phương", "account_balance"),
         ],
     },
     {"id": "ktoan",   "label": "Phòng Kế toán",             "icon": "calculate",       "items": []},
@@ -367,6 +368,7 @@ def _sidebar(current_page: str) -> dict:
                     "label": "Nhật ký hệ thống",
                     "icon": "terminal",
                     "items": [
+                        ("audit-logs", "Nhật ký hệ thống",        "history"),
                         ("logs",       "Lịch sử lỗi & cảnh báo", "error_outline"),
                         ("login-logs", "Nhật ký đăng nhập",       "login"),
                     ],

@@ -49,6 +49,10 @@ async def lifespan(app: FastAPI):
     _ensure_indexes()
     from backend.services.backup_service import start_scheduler as _start_backup
     _start_backup(_settings.DATABASE_URL.replace("sqlite:///", ""))
+    # Cảnh báo (không chặn khởi động) nếu đồng hồ máy lệch nguồn giờ chuẩn
+    import asyncio as _asyncio
+    from backend.services.time_sync import check_drift_and_log as _check_drift
+    _asyncio.get_event_loop().run_in_executor(None, _check_drift)
     yield
 
 
@@ -63,6 +67,9 @@ app = FastAPI(
     docs_url=_docs_url,
     redoc_url=_redoc_url,
 )
+
+from backend.core.audit_middleware import AuditMiddleware
+app.add_middleware(AuditMiddleware)
 
 app.add_middleware(
     CORSMiddleware,

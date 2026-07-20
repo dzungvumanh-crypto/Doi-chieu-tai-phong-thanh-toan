@@ -94,7 +94,7 @@ def _fetch_entries(db: sqlite3.Connection, period_start: date, period_end: date)
     return db.execute(
         f"""SELECT de.id, de.transaction_date, de.sheet_count, de.staff_id,
                    h.received_by_id,
-                   d.id AS dept_id, d.name AS dept_name,
+                   d.id AS dept_id, d.name AS dept_name, d.code AS dept_code,
                    MIN(ecl.timestamp) AS submitted_at,
                    u.full_name, u.ipcas_code, u.username, u.payment_username
             FROM document_entries de
@@ -163,7 +163,7 @@ def compute_period(db: sqlite3.Connection, year: int, month: int) -> dict:
 
         dept_name = r["dept_name"]
         bucket = by_dept.setdefault(
-            dept_name, {"dept_id": r["dept_id"], "total": 0, "on_time": 0}
+            dept_name, {"dept_id": r["dept_id"], "dept_code": r["dept_code"], "total": 0, "on_time": 0}
         )
         bucket["total"] += 1
         overall_total += 1
@@ -191,6 +191,7 @@ def compute_period(db: sqlite3.Connection, year: int, month: int) -> dict:
         t, ot = data["total"], data["on_time"]
         by_dept_list.append({
             "dept_id":   data["dept_id"],
+            "dept_code": data["dept_code"],
             "dept_name": dept_name,
             "total":     t,
             "on_time":   ot,

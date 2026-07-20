@@ -5,7 +5,7 @@ from typing import Optional, Any, Dict
 from nicegui import app
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
 # BACKEND_URL suy ra từ BACKEND_PORT nếu không set riêng — tránh quên đồng bộ
 # khi đổi cổng (vd. hệ thống test dùng .env khác với BACKEND_PORT=9000)
 BACKEND_URL = os.getenv("BACKEND_URL", f"http://localhost:{os.getenv('BACKEND_PORT', '8000')}")

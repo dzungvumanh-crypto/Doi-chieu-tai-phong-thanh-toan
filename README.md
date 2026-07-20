@@ -55,10 +55,11 @@ Truy cập:
 │   ├── main.py              # FastAPI app + schema migration khi khởi động
 │   ├── database.py          # SQLite engine (WAL mode, FK via PRAGMA)
 │   ├── core/
-│   │   ├── config.py        # Cấu hình (SECRET_KEY, DATABASE_URL...)
+│   │   ├── config.py        # Cấu hình (SECRET_KEY, DATABASE_URL, NTP...)
 │   │   ├── security.py      # JWT + bcrypt
 │   │   ├── deps.py          # FastAPI dependencies (RBAC)
 │   │   ├── sessions.py      # Session in-memory
+│   │   ├── audit_middleware.py # Ghi nhật ký thao tác tập trung → audit_logs
 │   │   └── rate_limit.py    # Rate limiting đăng nhập
 │   ├── api/
 │   │   ├── auth.py          # Đăng nhập / đăng xuất / đổi mật khẩu
@@ -80,6 +81,7 @@ Truy cập:
 │   │   ├── duty_stats.py    # Thống kê lịch trực
 │   │   ├── duty_export.py   # Xuất lịch trực
 │   │   ├── cham459901.py    # Phân loại bút toán TK 459901
+│   │   ├── doi_chieu_song_phuong.py # Đối chiếu song phương (định tuyến lệnh IPCAS)
 │   │   ├── logs.py          # Nhật ký hệ thống (admin)
 │   │   └── holidays.py      # Quản lý ngày lễ (admin)
 │   └── services/
@@ -89,7 +91,9 @@ Truy cập:
 │       ├── handover_report_service.py # Tính chứng từ nộp đúng hạn / quá hạn
 │       ├── th_report_service.py    # Xuất báo cáo tổng hợp (phòng TH)
 │       ├── backup_service.py       # Backup SQLite tự động
+│       ├── time_sync.py            # Cảnh báo lệch giờ máy chủ so NTP (không tự sửa)
 │       ├── cham459901_service.py   # Xử lý ZIP + phân loại bút toán 459901
+│       ├── doi_chieu_song_phuong_service.py # Định tuyến lệnh IPCAS theo NH + chiều → 8 CSV
 │       ├── swift_recon/            # Đối chiếu điện SWIFT (parse, so khớp, export Excel)
 │       └── duty_*                  # Xếp lịch trực, ràng buộc, thống kê, xuất file (6 module)
 ├── frontend/
@@ -108,13 +112,15 @@ Truy cập:
 │       ├── leaves.py        # Nghỉ phép
 │       ├── duty_schedule.py # Lịch trực
 │       ├── cham_459901.py   # Phân loại bút toán TK 459901
+│       ├── doi_chieu_song_phuong.py # Đối chiếu song phương (định tuyến lệnh IPCAS)
 │       ├── reports.py       # Báo cáo hậu kiểm
 │       ├── handover_reports.py # Báo cáo bàn giao chứng từ (đúng hạn/quá hạn)
 │       ├── th_reports.py    # Báo cáo tổng hợp
 │       ├── swift_recon.py   # Đối chiếu điện SWIFT (phòng Swift)
 │       ├── user_management.py # Quản lý tài khoản (admin)
 │       ├── login_logs.py    # Nhật ký đăng nhập (admin)
-│       ├── logs.py          # Nhật ký hệ thống (admin)
+│       ├── audit_logs.py    # Nhật ký thao tác — lịch sử ghi dữ liệu (admin)
+│       ├── logs.py          # Nhật ký lỗi & cảnh báo (admin)
 │       └── change_password.py # Đổi mật khẩu
 ├── templates/
 │   ├── bia_mau_goc.docx             # Mẫu bìa tập chứng từ
@@ -135,8 +141,9 @@ Truy cập:
 ### Module Nhân sự & Tài khoản
 - Quản lý cán bộ theo phòng ban, vai trò (7 vai trò — xem bảng RBAC)
 - Quản lý nhóm cán bộ và phân quyền tính năng theo nhóm
-- Dashboard tổng quan: số liệu bàn giao, tập chứng từ, nghỉ phép
-- Nhật ký đăng nhập và nhật ký thao tác hệ thống (admin xem, lọc theo user/thời gian)
+- Dashboard tổng quan: KPI người dùng & phòng nghiệp vụ, biểu đồ cột tỷ lệ nộp chứng từ đúng hạn/muộn theo 4 phòng (chọn tháng/năm để xem), công việc đang chờ (bàn giao, nghỉ phép)
+- **Nhật ký thao tác** (audit log): middleware ghi tập trung mọi request thay đổi dữ liệu (POST/PUT/PATCH/DELETE) vào bảng `audit_logs` — ai, làm gì, kết quả HTTP, IP, thời gian; lọc theo phương thức, tìm kiếm, phân trang; tự dọn sau 365 ngày
+- Nhật ký đăng nhập và nhật ký lỗi/cảnh báo hệ thống (admin xem, lọc theo user/thời gian)
 
 ### Module Nghỉ phép
 - Cán bộ tạo đơn xin nghỉ (phép năm, ốm, việc riêng, khác)
@@ -148,12 +155,13 @@ Truy cập:
 
 ### Module Chứng từ Hậu kiểm
 - **Bàn giao**: GDV nhập số tờ theo ngày, HKV/KSV xác nhận từng ô
+  - *Cán bộ chuyển phòng*: chứng từ hiển thị theo phòng tại **ngày giao dịch** — trước ngày chuyển ở phòng cũ, từ ngày chuyển ở phòng mới (lịch sử đổi phòng lưu ở bảng `staff_department_history`). Nhập bù chứng từ tháng cũ cho cán bộ đã chuyển vẫn vào đúng phòng cũ
 - **Gom tập tự động**:
   - Max 350 tờ/tập
   - (user, ngày) không bị tách sang tập khác
   - Nếu 1 ngày > 350 tờ → chia 2 tập cân bằng
 - **In bìa**: Tạo file `.docx` đúng format mẫu (2-column layout)
-- **Lưu trữ**: Ghi số hộp, vị trí kệ; tra cứu theo phòng/thời gian
+- **Lưu trữ**: Ghi số hộp, vị trí kệ; tra cứu theo phòng/thời gian; bảng tổng hợp cả năm (số tờ/số tập theo phòng × 12 tháng)
 - **Báo cáo** (menu con):
   - *Báo cáo hậu kiểm*: Xuất Excel tổng hợp theo phòng
   - *Báo cáo bàn giao chứng từ*: Số chứng từ nộp đúng hạn / quá hạn theo phòng; chi tiết cán bộ nào nộp chậm chứng từ ngày nào, chậm bao nhiêu ngày làm việc
@@ -177,6 +185,12 @@ Truy cập:
 - Upload file ZIP chứa dữ liệu giao dịch; xử lý bất đồng bộ (~65s)
 - Xuất 3 file Excel: **Huỷ**, **Đi**, **Khác** theo kết quả phân loại
 - Phân quyền riêng theo nhóm (`menu.cham_459901`, `cham_459901.process`)
+
+### Module Đối chiếu Song phương
+- Định tuyến lệnh IPCAS phục vụ đối chiếu song phương tại phòng Thanh toán
+- Upload file ZIP (mã hóa AES-256) chứa dữ liệu IPCAS; xử lý bất đồng bộ, theo dõi tiến độ real-time
+- Phân loại mỗi dòng theo **4 ngân hàng** (Vietinbank 201, BIDV 202, Vietcombank 203, MBBank 311) × **2 chiều**: **ĐẾN** (`CRAMOUNT=0`) / **ĐI** (`DRAMOUNT=0`) → xuất **8 file CSV**
+- Phân quyền riêng theo nhóm (`menu.doi_chieu_song_phuong`, `doi_chieu_song_phuong.process`)
 
 ---
 

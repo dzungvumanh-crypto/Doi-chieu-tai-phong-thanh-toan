@@ -136,4 +136,24 @@ async def logs_page():
             except Exception:
                 pass
 
+            # ── Badge lệch giờ so với nguồn NTP ──────────────────────────────
+            drift_badge = ui.label("").classes("text-xs px-2 py-0.5 rounded border ml-2")
+            _base_cls = "text-xs px-2 py-0.5 rounded border ml-2"
+            try:
+                ts = await asyncio.to_thread(api.get, "/api/admin/logs/time-sync")
+                if not isinstance(ts, dict) or not ts.get("enabled"):
+                    txt, color = "Đồng bộ giờ: đã tắt", "bg-gray-100 text-gray-500 border-gray-300"
+                elif ts.get("error"):
+                    txt, color = f"Giờ chuẩn: không kiểm tra được ({ts['server']})", "bg-gray-100 text-gray-500 border-gray-300"
+                    drift_badge.tooltip(ts["error"])
+                elif ts.get("ok"):
+                    txt, color = f"Giờ máy khớp NTP (lệch {ts['drift_seconds']}s)", "bg-green-100 text-green-700 border-green-300"
+                else:
+                    txt, color = f"⚠ Đồng hồ lệch {ts['drift_seconds']}s so với NTP {ts['server']}", "bg-red-100 text-red-700 border-red-300"
+                    drift_badge.tooltip(f"Ngưỡng cho phép {ts.get('threshold')}s — kiểm tra đồng hồ máy chủ")
+                drift_badge.classes(replace=f"{_base_cls} {color}")
+                drift_badge.set_text(txt)
+            except Exception:
+                pass
+
         await _load("", 1)

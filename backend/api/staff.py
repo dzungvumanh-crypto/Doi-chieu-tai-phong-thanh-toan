@@ -6,7 +6,10 @@ import tempfile
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
 from fastapi.responses import StreamingResponse
-from backend.database import DB_PATH, get_db, write_audit, compute_annual_leave
+from backend.database import DB_PATH, get_db, write_audit, compute_annual_leave, _vn_now
+
+# Mốc hiệu lực gốc cho dòng lịch sử phòng đầu tiên của mỗi cán bộ
+_DEPT_HISTORY_EPOCH = "2000-01-01"
 from backend.schemas.staff import StaffCreate, StaffUpdate, StaffOut
 from backend.core.security import get_password_hash
 from backend.core.deps import get_current_staff, require_feature
@@ -242,6 +245,12 @@ def create_staff(
          join_date_iso, body.ipcas_code, body.payment_username),
     )
     new_id = cur.lastrowid
+    # Dòng lịch sử phòng đầu tiên — hiệu lực từ epoch để phủ mọi tháng trước đó
+    if body.department_id:
+        db.execute(
+            "INSERT INTO staff_department_history (staff_id, department_id, effective_from, created_at) VALUES (?,?,?,?)",
+            (new_id, body.department_id, _DEPT_HISTORY_EPOCH, str(_vn_now())),
+        )
     client_ip = request.client.host if request.client else "unknown"
     write_audit(db, current["id"], "staff_create", "staff", new_id,
                 f"Tạo tài khoản {body.username} ({body.full_name})", client_ip)
@@ -279,6 +288,12 @@ def update_staff(
         sets = ", ".join(f"{k} = ?" for k in update_data)
         params = list(update_data.values()) + [staff_id]
         db.execute(f"UPDATE user_tttt SET {sets} WHERE id = ?", params)
+        # Đổi phòng → ghi mốc lịch sử, hiệu lực từ ngày quản trị viên thực hiện (hôm nay)
+        if new_dept != row["department_id"]:
+            db.execute(
+                "INSERT INTO staff_department_history (staff_id, department_id, effective_from, created_at) VALUES (?,?,?,?)",
+                (staff_id, new_dept, _vn_now().date().isoformat(), str(_vn_now())),
+            )
         client_ip = request.client.host if request.client else "unknown"
         changed = ", ".join(f"{k}={v}" for k, v in update_data.items() if k != "pwd_hash")
         write_audit(db, current["id"], "staff_update", "staff", staff_id,

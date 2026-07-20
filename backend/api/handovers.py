@@ -21,6 +21,21 @@ from backend.schemas.handovers import (
 
 router = APIRouter(prefix="/api/handovers", tags=["Handovers"])
 
+
+# ─── Phòng của cán bộ theo lịch sử đổi phòng ─────────────────────────────────
+def _dept_at(db: sqlite3.Connection, staff_id: int, date_iso: str):
+    """Phòng cán bộ thuộc về tại một ngày (dòng lịch sử mới nhất còn hiệu lực)."""
+    row = db.execute(
+        """SELECT department_id FROM staff_department_history
+           WHERE staff_id = ? AND effective_from <= ?
+           ORDER BY effective_from DESC, id DESC LIMIT 1""",
+        (staff_id, date_iso),
+    ).fetchone()
+    if row:
+        return row["department_id"]
+    u = db.execute("SELECT department_id FROM user_tttt WHERE id = ?", (staff_id,)).fetchone()
+    return u["department_id"] if u else None
+
 # ─── Mapping hiển thị lịch sử ────────────────────────────────────────────────
 _ACTION_LABEL = {
     "handover":           ("Bàn giao chứng từ",       "blue"),
@@ -66,35 +81,66 @@ def get_handover_grid(
     period_start = date(year, month, 1).isoformat()
     period_end = (date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)).isoformat()
 
-    # Entries trong tháng
+    # Entries trong tháng — lọc theo phòng ĐÓNG BĂNG trong phiếu bàn giao
+    # (handovers.department_id), KHÔNG theo phòng hiện tại của user. Nhờ vậy chứng
+    # từ của cán bộ đã chuyển phòng vẫn nằm ở phòng cũ cho các tháng trước khi chuyển.
     entry_rows = db.execute(
         """SELECT de.id, de.handover_id, de.staff_id, de.transaction_date, de.sheet_count,
                   de.entry_status, de.entered_by_id
            FROM document_entries de
-           JOIN user_tttt ks ON de.staff_id = ks.id
-           WHERE ks.department_id = ?
+           JOIN handovers h ON de.handover_id = h.id
+           WHERE h.department_id = ?
+             AND de.staff_id IS NOT NULL
              AND de.transaction_date >= ? AND de.transaction_date < ?""",
         (department_id, period_start, period_end),
     ).fetchall()
 
-    staff_ids_with_entries = {e["staff_id"] for e in entry_rows}
+    staff_ids_with_entries = {e["staff_id"] for e in entry_rows if e["staff_id"]}
     entered_by_ids = {e["entered_by_id"] for e in entry_rows if e["entered_by_id"]}
 
-    # Staff: đang active + có entries trong tháng này, bỏ truong_phong/pho_phong
+    # Cán bộ TỪNG thuộc phòng này trong bất kỳ ngày nào của tháng (theo lịch sử đổi
+    # phòng) → hiện dòng trống để có thể nhập bù. Khoảng của mỗi mốc lịch sử là
+    # [effective_from, mốc kế tiếp); giao với tháng ⇔ eff < period_end và (kế tiếp
+    # NULL hoặc kế tiếp > period_start).
+    overlap_rows = db.execute(
+        """WITH hist AS (
+               SELECT staff_id, department_id, effective_from,
+                      LEAD(effective_from) OVER (
+                          PARTITION BY staff_id ORDER BY effective_from, id
+                      ) AS next_from
+               FROM staff_department_history
+           )
+           SELECT DISTINCT staff_id FROM hist
+           WHERE department_id = ?
+             AND effective_from < ?
+             AND (next_from IS NULL OR next_from > ?)""",
+        (department_id, period_end, period_start),
+    ).fetchall()
+    overlap_ids = {r["staff_id"] for r in overlap_rows}
+
+    # Staff rows: (thuộc phòng tháng đó & active) HOẶC có chứng từ (bất kể active).
+    # Bỏ truong_phong/pho_phong.
     _SKIP_ROLES = "('truong_phong','pho_phong')"
-    if staff_ids_with_entries:
-        ph = ",".join("?" * len(staff_ids_with_entries))
-        user_rows = db.execute(
-            f"SELECT * FROM user_tttt WHERE department_id = ? AND role NOT IN {_SKIP_ROLES}"
-            f" AND (is_active = 1 OR id IN ({ph})) ORDER BY ipcas_code",
-            [department_id] + list(staff_ids_with_entries),
-        ).fetchall()
+    eligible_ids = overlap_ids | staff_ids_with_entries
+    if eligible_ids:
+        ph = ",".join("?" * len(eligible_ids))
+        if staff_ids_with_entries:
+            ph2 = ",".join("?" * len(staff_ids_with_entries))
+            user_rows = db.execute(
+                f"SELECT * FROM user_tttt WHERE role NOT IN {_SKIP_ROLES}"
+                f"   AND id IN ({ph})"
+                f"   AND (is_active = 1 OR id IN ({ph2}))"
+                f" ORDER BY ipcas_code",
+                list(eligible_ids) + list(staff_ids_with_entries),
+            ).fetchall()
+        else:
+            user_rows = db.execute(
+                f"SELECT * FROM user_tttt WHERE role NOT IN {_SKIP_ROLES}"
+                f"   AND id IN ({ph}) AND is_active = 1 ORDER BY ipcas_code",
+                list(eligible_ids),
+            ).fetchall()
     else:
-        user_rows = db.execute(
-            f"SELECT * FROM user_tttt WHERE department_id = ? AND role NOT IN {_SKIP_ROLES}"
-            f" AND is_active = 1 ORDER BY ipcas_code",
-            (department_id,),
-        ).fetchall()
+        user_rows = []
 
     # Tên người nhập
     entered_by_map: dict = {}
@@ -140,7 +186,9 @@ def upsert_entry(
         (current["id"],),
     ).fetchone())
 
-    dept_id = staff_row["department_id"]
+    # Phòng của chứng từ = phòng cán bộ thuộc về TẠI NGÀY GIAO DỊCH (không phải phòng
+    # hiện tại) → nhập bù cho cán bộ đã chuyển phòng vẫn vào đúng phòng cũ.
+    dept_id = _dept_at(db, body.staff_id, body.date.isoformat()) or staff_row["department_id"]
 
     # ── Get/create handover (INSERT OR IGNORE để chống race condition) ──
     db.execute(

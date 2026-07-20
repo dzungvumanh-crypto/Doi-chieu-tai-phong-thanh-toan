@@ -65,6 +65,10 @@ FEATURES: dict[str, str] = {
     # Chấm 459901 — Phòng Thanh toán
     "menu.cham_459901":    "Chấm 459901 — Phân loại bút toán TK 459901 (menu)",
     "cham_459901.process": "Xử lý file ZIP 459901",
+
+    # Đối chiếu Song phương — Phòng Thanh toán
+    "menu.doi_chieu_song_phuong":    "Đối chiếu Song phương — Định tuyến lệnh IPCAS (menu)",
+    "doi_chieu_song_phuong.process": "Xử lý file ZIP Đối chiếu Song phương",
     # Đối chiếu điện SWIFT — SWIFT
     "menu.swift_recon":        "Đối chiếu điện SWIFT — Phòng Swift (menu)",
 }
@@ -142,6 +146,10 @@ FEATURE_GROUPS: list[dict] = [
             {
                 "code": "menu.cham_459901",
                 "actions": ["cham_459901.process"],
+            },
+            {
+                "code": "menu.doi_chieu_song_phuong",
+                "actions": ["doi_chieu_song_phuong.process"],
             },
         ],
     },
