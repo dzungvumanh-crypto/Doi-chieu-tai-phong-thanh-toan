@@ -78,14 +78,21 @@ def compute_carry_over(staff_id: int, year: int, db,
         (staff_id, str(prev_year)),
     ).fetchall()
     used = 0.0
+    _holidays = None
     for row in rows:
         if row["spread_dates"]:
             used += len(json.loads(row["spread_dates"]))
         else:
+            if _holidays is None:
+                hrows = db.execute(
+                    "SELECT date FROM public_holidays WHERE date >= ? AND date <= ?",
+                    (f"{prev_year}-01-01", f"{prev_year}-12-31"),
+                ).fetchall()
+                _holidays = frozenset(_date.fromisoformat(r["date"]) for r in hrows)
             d = _date.fromisoformat(row["start_date"])
             end = _date.fromisoformat(row["end_date"])
             while d <= end:
-                if d.weekday() < 5:
+                if d.weekday() < 5 and d not in _holidays:
                     used += 1
                 d += timedelta(days=1)
     return max(0.0, prev_quota - used)

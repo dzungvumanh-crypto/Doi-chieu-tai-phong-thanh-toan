@@ -472,6 +472,24 @@ def _ensure_indexes():
         # DB đã tạo bảng trước khi có cột này → thêm bù (lỗi duplicate bị nuốt)
         "ALTER TABLE quota_import_items ADD COLUMN created_leave_id INTEGER",
         "CREATE INDEX IF NOT EXISTS ix_quota_import_items_batch ON quota_import_items(batch_id)",
+        # Người 3 — 2026-07-15: bù migration còn thiếu cho leave_records/leave_quotas.
+        # Các cột/bảng này đã được thêm out-of-band trên DB dùng để phát triển
+        # (không qua migrations.py) nên fresh-install trước đây bị lỗi "no such
+        # column"/"no such table" ở /api/leaves/today, khai báo hộ, hạn mức, dashboard.
+        "ALTER TABLE leave_records ADD COLUMN spread_dates TEXT",
+        "ALTER TABLE leave_records ADD COLUMN is_direct BOOLEAN DEFAULT 0",
+        "ALTER TABLE leave_records ADD COLUMN direct_by INTEGER REFERENCES user_tttt(id)",
+        "ALTER TABLE leave_records ADD COLUMN recall_reason TEXT",
+        """CREATE TABLE IF NOT EXISTS leave_quotas (
+            staff_id  INTEGER NOT NULL REFERENCES user_tttt(id),
+            year      INTEGER NOT NULL,
+            quota_days REAL   NOT NULL DEFAULT 12,
+            PRIMARY KEY (staff_id, year)
+        )""",
+        # year là cột thứ 2 trong PRIMARY KEY (staff_id, year) nên không tận dụng
+        # được index khi lọc riêng theo year (get_quotas/export_quotas/stats_annual,
+        # _carry_over_bulk) — thêm index riêng cho year.
+        "CREATE INDEX IF NOT EXISTS ix_leave_quotas_year ON leave_quotas(year)",
     ]
     _mig_log = logging.getLogger(__name__)
     conn = sqlite3.connect(DB_PATH, timeout=30)
