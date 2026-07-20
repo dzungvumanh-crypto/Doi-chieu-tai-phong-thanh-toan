@@ -150,7 +150,11 @@ Truy cập:
 - Workflow duyệt 3 bước: **KSV → Tổng hợp → Giám đốc**
 - Ủy quyền Giám đốc: GĐ có thể ủy quyền cho PGĐ trong khoảng thời gian xác định
 - Tải phiếu nghỉ phép dạng `.docx` đúng mẫu
-- Theo dõi quota phép năm (hạn ngạch / đã dùng)
+- Theo dõi quota phép năm (hạn ngạch / đã dùng); chuyển tiếp ngày phép chưa dùng năm trước sang Q1
+- Nghỉ thai sản / bảo hiểm (không trừ vào hạn mức phép năm), chọn khoảng ngày bằng lịch cuộn
+- Nhập hạn mức phép hàng loạt từ file Excel (xem trước / áp dụng / hoàn tác)
+- Khai báo hộ; ngày nghỉ lẻ không liên tục (`spread_dates`)
+- Bảng nghỉ phép hôm nay trên Trang chủ theo từng phòng
 - Resubmit đơn bị từ chối; huỷ đơn đang chờ hoặc đã duyệt
 
 ### Module Chứng từ Hậu kiểm
