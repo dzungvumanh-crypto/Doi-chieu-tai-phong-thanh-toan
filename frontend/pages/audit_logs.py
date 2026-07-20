@@ -1,52 +1,12 @@
-"""Trang Nhật ký hệ thống — lịch sử thao tác ghi dữ liệu (ai, làm gì, kết quả, IP)."""
+"""Trang Nhật ký hệ thống — lịch sử thao tác ghi dữ liệu (ai, làm gì, kết quả, IP).
+
+Nhãn "Công việc" và "Kết quả" do backend dịch sẵn (backend/services/audit_labels.py)
+— frontend chỉ hiển thị, tránh phải đồng bộ 2 bảng ánh xạ ở 2 nơi.
+"""
 import asyncio
 from nicegui import ui
 import frontend.api_client as api
 from frontend.shared import _sidebar, _content_area, _page_header, _require_auth, _handle_api_error
-
-# ── Ánh xạ sang nhãn tiếng Việt ──────────────────────────────────────────────
-# Hành động ngữ nghĩa (do write_audit ghi trực tiếp)
-_ACTION_VN = {
-    "staff_create":    "Tạo User",
-    "staff_update":    "Sửa User",
-    "staff_delete":    "Xóa User",
-    "staff_import_db": "Import User",
-    "password_reset":  "Đặt lại mật khẩu",
-}
-# Động từ theo HTTP method (do middleware ghi)
-_METHOD_VN = {"POST": "Tạo", "PUT": "Cập nhật", "PATCH": "Cập nhật", "DELETE": "Xóa"}
-# Tên module theo prefix đường dẫn — khớp dài nhất trước
-_MODULE_VN = [
-    ("/api/handover-reports",     "Báo cáo bàn giao"),
-    ("/api/handovers",            "Bàn giao chứng từ"),
-    ("/api/bundles",              "Đóng tập chứng từ"),
-    ("/api/leaves",               "Nghỉ phép"),
-    ("/api/delegations",          "Ủy quyền"),
-    ("/api/admin/holidays",       "Ngày lễ"),
-    ("/api/groups",               "Nhóm & phân quyền"),
-    ("/api/duty",                 "Phân ca trực"),
-    ("/api/swift-recon",          "Đối chiếu SWIFT"),
-    ("/api/doi_chieu_song_phuong", "Đối chiếu song phương"),
-    ("/api/cham459901",           "Chấm 459901"),
-    ("/api/th-reports",           "Báo cáo Tổng hợp"),
-    ("/api/reports",              "Báo cáo hậu kiểm"),
-    ("/api/departments",          "Phòng ban"),
-    ("/api/dashboard",            "Dashboard"),
-]
-
-
-def _module_label(path: str) -> str:
-    for prefix, label in _MODULE_VN:
-        if (path or "").startswith(prefix):
-            return label
-    return path or "—"
-
-
-def _friendly(action: str, target_type: str) -> str:
-    if action in _ACTION_VN:
-        return _ACTION_VN[action]
-    verb = _METHOD_VN.get(action, action)
-    return f"{verb} — {_module_label(target_type)}"
 
 
 @ui.page("/audit-logs")
@@ -106,15 +66,12 @@ async def audit_logs_page():
                 with ui.row().classes("w-full bg-gray-100 border-b border-gray-200 px-3 py-2 items-center gap-2"):
                     ui.label("Thời gian").classes("font-semibold text-gray-700 text-xs w-36 shrink-0")
                     ui.label("Người thao tác").classes("font-semibold text-gray-700 text-xs w-44 shrink-0")
-                    ui.label("Hành động").classes("font-semibold text-gray-700 text-xs w-56 shrink-0")
-                    ui.label("Đối tượng").classes("font-semibold text-gray-700 text-xs flex-1")
-                    ui.label("Kết quả").classes("font-semibold text-gray-700 text-xs w-20 shrink-0")
-                    ui.label("IP").classes("font-semibold text-gray-700 text-xs w-28 shrink-0")
+                    ui.label("Công việc").classes("font-semibold text-gray-700 text-xs flex-1")
+                    ui.label("Kết quả").classes("font-semibold text-gray-700 text-xs w-32 shrink-0")
+                    ui.label("IP").classes("font-semibold text-gray-700 text-xs w-32 shrink-0")
                 for e in entries:
                     ts = (e.get("created_at") or "")[:19].replace("T", " ")
-                    detail = e.get("detail") or ""
-                    # Kết quả: HTTP 2xx → xanh, còn lại → cam/đỏ
-                    ok = detail.startswith("HTTP 2") or e.get("action") in _ACTION_VN
+                    ok = e.get("result_ok", True)
                     res_cls = "bg-green-100 text-green-700" if ok else "bg-orange-100 text-orange-700"
                     with ui.row().classes(
                         f"w-full {'bg-white' if ok else 'bg-orange-50'} border-b border-gray-100 px-3 py-1.5 items-center gap-2"
@@ -122,14 +79,14 @@ async def audit_logs_page():
                         ui.label(ts).classes("text-xs font-mono w-36 shrink-0 text-gray-600")
                         ui.label(e.get("full_name") or e.get("username") or "—").classes(
                             "text-xs w-44 shrink-0 truncate")
-                        ui.label(_friendly(e.get("action", ""), e.get("target_type", ""))).classes(
-                            "text-xs w-56 shrink-0 font-medium text-gray-800 truncate")
-                        ui.label(e.get("target_type") or "—").classes(
-                            "text-xs flex-1 font-mono text-gray-500 truncate")
-                        ui.label(detail or "—").classes(
-                            f"text-xs px-1.5 py-0.5 rounded {res_cls} w-20 shrink-0 text-center font-medium truncate")
+                        # Công việc — path kỹ thuật ở tooltip cho ai cần tra cứu
+                        ui.label(e.get("work") or "—").classes(
+                            "text-xs flex-1 font-medium text-gray-800 truncate"
+                        ).tooltip(e.get("target_type") or "")
+                        ui.label(e.get("result") or "—").classes(
+                            f"text-xs px-1.5 py-0.5 rounded {res_cls} w-32 shrink-0 text-center font-medium truncate")
                         ui.label(e.get("ip_address") or "—").classes(
-                            "text-xs font-mono w-28 shrink-0 text-gray-500")
+                            "text-xs font-mono w-32 shrink-0 text-gray-500")
 
             with pager_row:
                 ui.button("◀ Trước",
@@ -152,7 +109,7 @@ async def audit_logs_page():
                 _handle_api_error(e)
 
         with toolbar_row:
-            for m, lbl in [("", "Tất cả"), ("POST", "Tạo"), ("PUT", "Cập nhật"), ("DELETE", "Xóa")]:
+            for m, lbl in [("", "Tất cả"), ("POST", "Ghi/Thêm"), ("PUT", "Cập nhật"), ("DELETE", "Xóa")]:
                 ui.button(lbl,
                           on_click=lambda mm=m: asyncio.ensure_future(_load(method=mm, page=1))).classes(
                     "text-sm bg-gray-100 text-gray-700 hover:bg-gray-200")

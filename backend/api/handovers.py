@@ -11,7 +11,7 @@ from fastapi.responses import StreamingResponse
 from openpyxl.styles import Alignment, Font, PatternFill
 
 from backend.core.deps import get_current_staff, require_feature
-from backend.core.enums import EntryStatus
+from backend.core.enums import EntryStatus, StaffRole
 from backend.database import get_db, _vn_now
 from backend.schemas.handovers import (
     BorrowRequest, EntryHistoryItem, EntryHistoryOut,
@@ -119,15 +119,15 @@ def get_handover_grid(
     overlap_ids = {r["staff_id"] for r in overlap_rows}
 
     # Staff rows: (thuộc phòng tháng đó & active) HOẶC có chứng từ (bất kể active).
-    # Bỏ truong_phong/pho_phong.
-    _SKIP_ROLES = "('truong_phong','pho_phong')"
+    # CHỈ giao dịch viên (chuyen_vien) — trưởng/phó phòng, HKV, GĐ, admin không lên lưới.
+    _GRID_ROLE = StaffRole.CHUYEN_VIEN.value
     eligible_ids = overlap_ids | staff_ids_with_entries
     if eligible_ids:
         ph = ",".join("?" * len(eligible_ids))
         if staff_ids_with_entries:
             ph2 = ",".join("?" * len(staff_ids_with_entries))
             user_rows = db.execute(
-                f"SELECT * FROM user_tttt WHERE role NOT IN {_SKIP_ROLES}"
+                f"SELECT * FROM user_tttt WHERE role = '{_GRID_ROLE}'"
                 f"   AND id IN ({ph})"
                 f"   AND (is_active = 1 OR id IN ({ph2}))"
                 f" ORDER BY ipcas_code",
@@ -135,7 +135,7 @@ def get_handover_grid(
             ).fetchall()
         else:
             user_rows = db.execute(
-                f"SELECT * FROM user_tttt WHERE role NOT IN {_SKIP_ROLES}"
+                f"SELECT * FROM user_tttt WHERE role = '{_GRID_ROLE}'"
                 f"   AND id IN ({ph}) AND is_active = 1 ORDER BY ipcas_code",
                 list(eligible_ids),
             ).fetchall()
@@ -175,6 +175,10 @@ def upsert_entry(
     staff_row = db.execute("SELECT * FROM user_tttt WHERE id = ?", (body.staff_id,)).fetchone()
     if not staff_row:
         raise HTTPException(404, "Không tìm thấy cán bộ")
+
+    # Chỉ giao dịch viên mới có chứng từ bàn giao — chặn tận gốc, không để lọt entry rác
+    if staff_row["role"] != StaffRole.CHUYEN_VIEN.value:
+        raise HTTPException(400, "Chỉ giao dịch viên mới có chứng từ bàn giao")
 
     # User có quyền confirm entry → tạo entry ở trạng thái CONFIRMED ngay
     can_confirm = current["role"] == "admin" or bool(db.execute(

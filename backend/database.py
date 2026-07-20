@@ -23,6 +23,13 @@ def write_audit(
     detail: str = None,
     ip: str = None,
 ) -> None:
+    # Không truyền ip → lấy IP thật đã lưu lúc đăng nhập (khớp Nhật ký đăng nhập)
+    if ip is None and actor_id:
+        try:
+            from backend.core.sessions import get_session_ip
+            ip = get_session_ip(db, actor_id)
+        except Exception:
+            pass
     db.execute(
         "INSERT INTO audit_logs (actor_id, action, target_type, target_id, detail, ip_address, created_at) VALUES (?,?,?,?,?,?,?)",
         (actor_id, action, target_type, target_id, detail, ip, _vn_now()),

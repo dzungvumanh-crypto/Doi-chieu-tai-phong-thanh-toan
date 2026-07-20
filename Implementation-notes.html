@@ -53,6 +53,43 @@
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
   <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-05-28</p>
 
+  <!-- 0 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">★</span>
+      <span class="card-title">Bìa chứng từ lệch bàn giao — hai bộ lọc vai trò khác nhau</span>
+      <span class="badge badge-done">Đã fix + dọn data</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Triệu chứng</div>
+      <p>Một dòng (phó phòng <code>HQDTTNGA</code> — 50 CT, ngày 03/04/2026) xuất hiện trên <strong>bìa tập</strong> nhưng không có ở <strong>lưới bàn giao</strong>. Người dùng khẳng định dòng này sai — người đó không phải giao dịch viên.</p>
+
+      <div class="label">Nguyên nhân gốc</div>
+      <p>Bàn giao và gom tập áp <strong>hai bộ lọc vai trò khác nhau</strong> trên cùng một bảng <code>document_entries</code>:</p>
+      <table>
+        <tr><th>Màn hình</th><th>Lọc vai trò</th><th>Với phó phòng</th></tr>
+        <tr><td>Lưới bàn giao (<code>handovers.py</code> /grid)</td><td>Blacklist <code>NOT IN (truong_phong, pho_phong)</code> — thêm ở commit <code>e91d746</code> (27/06/2026)</td><td>Ẩn</td></tr>
+        <tr><td>Gom tập / bìa (<code>bundles.py</code> /generate)</td><td>Không lọc vai trò — chỉ cần <code>entry_status='confirmed'</code></td><td>Vẫn nhặt lên bìa</td></tr>
+      </table>
+      <p>Không phải lỗi snapshot: <code>cover_units</code> JSON khớp đúng entry #537 thật trong DB. Timeline: entry tạo 08/06 (khi grid chưa ẩn phó phòng) → 27/06 thêm bộ lọc grid → entry thành "mồ côi", ẩn ở bàn giao nhưng vẫn confirmed nên gom tập vẫn nhặt.</p>
+
+      <div class="label">Quyết định — whitelist thay vì blacklist</div>
+      <p>Quy tắc nghiệp vụ đúng (theo người dùng): <strong>chỉ giao dịch viên</strong> (<code>role = chuyen_vien</code>) mới lên lưới bàn giao và mới được gom tập — kể cả admin/GĐ/HKV cũng không. Blacklist cũ vẫn để lọt admin, GĐ, HKV. Đổi sang whitelist ở cả 3 điểm:</p>
+      <table>
+        <tr><th>Điểm</th><th>Thay đổi</th></tr>
+        <tr><td><code>get_handover_grid</code></td><td><code>role NOT IN (...)</code> → <code>role = 'chuyen_vien'</code></td></tr>
+        <tr><td><code>upsert_entry</code></td><td>Chốt chặn tận gốc: từ chối tạo entry nếu <code>staff.role != chuyen_vien</code> → không thể phát sinh entry rác qua API</td></tr>
+        <tr><td><code>generate_bundles</code></td><td>Lọc <code>staff_role == chuyen_vien</code> trước khi gom (defense-in-depth)</td></tr>
+      </table>
+
+      <div class="label">Dọn data</div>
+      <p>Xóa entry #537 + <code>entry_change_logs</code> + <code>bundle_items</code>; sửa tập #287 (<code>total_sheets</code> 172→122, gỡ unit khỏi <code>cover_units</code>). Backup trước tại <code>data/backups/ksnb_before_cleanup_537_*.db</code>. Toàn DB chỉ có duy nhất 1 entry rác kiểu này.</p>
+
+      <div class="label">Không làm</div>
+      <p>Không regenerate cả nhóm tập 19 — vì gỡ 50 CT khỏi tập 172 CT không chạm ngưỡng đóng gói (350/300), sửa phẫu thuật 1 tập ít rủi ro hơn là rebuild toàn nhóm (đổi sequence/lưu trữ, ghi đè snapshot các tập khác).</p>
+    </div>
+  </div>
+
   <!-- 1 -->
   <div class="card">
     <div class="card-header">
@@ -1200,6 +1237,14 @@ ui.on_exception(_on_exception)</pre>
       <div class="label">Phản biện yêu cầu "đồng bộ nguồn thời gian chuẩn" — chỉ CẢNH BÁO, không tự sửa</div>
       <p>Đặt lại giờ máy là việc của OS / domain controller (Windows Time / NTP), <strong>không thuộc tầng ứng dụng</strong> (cần quyền admin OS, sai tầng). App chỉ so đồng hồ máy với 1 máy chủ NTP và cảnh báo nếu lệch quá ngưỡng — phục vụ độ tin cậy của chính nhật ký. <code>time_sync.py</code> dùng <strong>raw socket UDP (RFC 5905), không thêm thư viện</strong>.</p>
       <div class="caution">Mạng nội bộ ngân hàng có thể chặn NTP ra ngoài. Đã kiểm chứng: trên máy test NTP <code>pool.ntp.org</code> <strong>timeout</strong> → hàm trả <code>ok=False, error=...</code>, badge chuyển màu xám trung tính, <strong>không crash</strong>. Cấu hình <code>NTP_SERVER</code> trỏ NTP nội bộ (vd domain controller) hoặc <code>NTP_ENABLED=false</code> để tắt hẳn. Check chạy trong executor lúc khởi động nên không chặn boot.</div>
+
+      <div class="label">Tinh chỉnh sau phản hồi người dùng (dễ đọc + IP đúng)</div>
+      <ul>
+        <li><strong>IP hiện 127.0.0.1:</strong> frontend NiceGUI (cổng 8080) gọi backend (8000) <em>từ chính server</em> nên <code>request.client.host</code> = localhost; chỉ endpoint login mới gửi <code>X-Client-IP</code>. Sửa: middleware đã có <code>actor_id</code> → tra IP thật từ <code>login_sessions</code> (đã lưu lúc đăng nhập) → tự khớp Nhật ký đăng nhập. Thứ tự: header → session → client.host. Không phải sửa frontend đính header vào mọi request.</li>
+        <li><strong>"HTTP 200" khó hiểu:</strong> dịch mã HTTP sang tiếng Việt (Thành công / Không đủ quyền / Dữ liệu không hợp lệ / Lỗi hệ thống…).</li>
+        <li><strong>Cột "Đối tượng" là path thô:</strong> gộp thành 1 cột <strong>"Công việc"</strong> mô tả nghiệp vụ (vd <code>PUT /api/handovers/entry-upsert</code> → "Nhập/cập nhật bàn giao chứng từ"); path kỹ thuật chuyển vào tooltip + cột cuối của Excel.</li>
+      </ul>
+      <p><strong>Một nguồn nhãn duy nhất:</strong> logic dịch đặt ở <code>backend/services/audit_labels.py</code> (không để frontend và Excel mỗi nơi một bảng). Endpoint <code>/audit</code> trả sẵn <code>work</code>/<code>result</code>/<code>result_ok</code>; frontend chỉ hiển thị. Path chứa ID được chuẩn hóa <code>/\d+ → /{id}</code> trước khi tra bảng, nên <code>/api/leaves/37/gd-review</code> và <code>/api/leaves/40/gd-review</code> cùng ra "Giám đốc duyệt đơn nghỉ phép". Endpoint chưa map thì fallback "động từ + tên module" — vẫn dễ hiểu hơn path thô.</p>
 
       <div class="label">Dọn dẹp kèm theo</div>
       <ul>

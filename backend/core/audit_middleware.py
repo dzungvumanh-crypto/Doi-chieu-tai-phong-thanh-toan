@@ -10,6 +10,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from backend.database import DB_PATH, _vn_now
 from backend.core.security import decode_token
+from backend.core.sessions import get_session_ip
 
 _MUTATING = {"POST", "PUT", "PATCH", "DELETE"}
 
@@ -20,12 +21,21 @@ _SKIP_PREFIXES = (
 )
 
 
-def _client_ip(request) -> str | None:
-    # X-Client-IP do frontend NiceGUI chuyển tiếp — IP thật của browser
-    return (
-        request.headers.get("X-Client-IP", "").strip()
-        or (request.client.host if request.client else None)
-    )
+def _real_ip(request, db, actor_id) -> str | None:
+    # Frontend NiceGUI gọi backend từ chính server → request.client.host = 127.0.0.1.
+    # IP thật của browser đã được lưu ở login_sessions lúc đăng nhập → tra theo actor
+    # để khớp với Nhật ký đăng nhập. Thứ tự ưu tiên: header → session → client.host.
+    hdr = request.headers.get("X-Client-IP", "").strip()
+    if hdr:
+        return hdr
+    if actor_id is not None:
+        try:
+            sess_ip = get_session_ip(db, actor_id)
+            if sess_ip:
+                return sess_ip
+        except Exception:
+            pass
+    return request.client.host if request.client else None
 
 
 def _actor_id(request):
@@ -56,18 +66,20 @@ class AuditMiddleware(BaseHTTPMiddleware):
 
         try:
             db = sqlite3.connect(DB_PATH, timeout=30)
+            db.row_factory = sqlite3.Row
             try:
                 db.execute("PRAGMA busy_timeout=30000")
+                actor = _actor_id(request)
                 db.execute(
                     "INSERT INTO audit_logs (actor_id, action, target_type, target_id, detail, ip_address, created_at)"
                     " VALUES (?,?,?,?,?,?,?)",
                     (
-                        _actor_id(request),
+                        actor,
                         method,
                         path,
                         None,
                         f"HTTP {response.status_code}",
-                        _client_ip(request),
+                        _real_ip(request, db, actor),
                         _vn_now(),
                     ),
                 )

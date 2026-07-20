@@ -277,15 +277,16 @@ def get_audit_logs(
         params + [PAGE_SIZE, offset],
     ).fetchall()
 
+    from backend.services.audit_labels import describe_work, describe_result, result_ok
     return {
         "entries": [
             {
                 "id":          r["id"],
                 "created_at":  r["created_at"],
-                "action":      r["action"],
-                "target_type": r["target_type"],
-                "target_id":   r["target_id"],
-                "detail":      r["detail"],
+                "work":        describe_work(r["action"], r["target_type"]),
+                "result":      describe_result(r["detail"], r["action"]),
+                "result_ok":   result_ok(r["detail"], r["action"]),
+                "target_type": r["target_type"],   # path thô — cho tooltip tra cứu
                 "ip_address":  r["ip_address"],
                 "username":    r["username"],
                 "full_name":   r["full_name"],
@@ -309,6 +310,7 @@ def export_audit_logs(
     import openpyxl
     from openpyxl.styles import Alignment, Font, PatternFill
     from datetime import date
+    from backend.services.audit_labels import describe_work, describe_result
 
     where, params = _audit_where(method, q)
     rows = db.execute(
@@ -325,8 +327,8 @@ def export_audit_logs(
     ws.title = "Nhật ký hệ thống"
     hdr_fill = PatternFill("solid", fgColor="37474F")
     hdr_font = Font(bold=True, color="FFFFFF")
-    headers = ["STT", "Thời gian", "Người thao tác", "Username", "Hành động", "Đối tượng", "Kết quả", "IP"]
-    widths  = [6, 18, 26, 18, 12, 40, 12, 18]
+    headers = ["STT", "Thời gian", "Người thao tác", "Username", "Công việc", "Kết quả", "IP", "Đường dẫn kỹ thuật"]
+    widths  = [6, 18, 26, 18, 40, 20, 18, 40]
     ws.append(headers)
     for cell, w in zip(ws[1], widths):
         cell.fill = hdr_fill
@@ -339,8 +341,9 @@ def export_audit_logs(
         ws.append([
             idx, ts,
             r["full_name"] or "", r["username"] or "",
-            r["action"] or "", r["target_type"] or "",
-            r["detail"] or "", r["ip_address"] or "",
+            describe_work(r["action"], r["target_type"]),
+            describe_result(r["detail"], r["action"]),
+            r["ip_address"] or "", r["target_type"] or "",
         ])
 
     buf = io.BytesIO()

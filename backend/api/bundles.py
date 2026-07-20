@@ -14,6 +14,7 @@ from fastapi.responses import Response
 from openpyxl.styles import Alignment, Border, Font, Side
 
 from backend.core.deps import get_current_staff, require_feature
+from backend.core.enums import StaffRole
 from backend.database import get_db, _vn_now
 from backend.schemas.bundles import (
     BundleGenerateRequest, BundleUpdateRequest,
@@ -470,7 +471,7 @@ def generate_bundles(
     ph = ",".join("?" * len(entry_ids))
     entries = db.execute(
         f"""SELECT de.id, de.handover_id, de.staff_id, de.transaction_date, de.sheet_count,
-                   de.entry_status, h.department_id AS h_dept_id,
+                   de.entry_status, h.department_id AS h_dept_id, ks.role AS staff_role,
                    ks.ipcas_code, ks.full_name, ks.payment_username
             FROM document_entries de
             JOIN handovers h ON de.handover_id = h.id
@@ -486,6 +487,11 @@ def generate_bundles(
     entries = [e for e in entries if (e["entry_status"] or "confirmed") == "confirmed"]
     if not entries:
         raise HTTPException(400, "Không có chứng từ đã xác nhận để gom tập")
+
+    # Chỉ gom chứng từ của giao dịch viên (chuyen_vien) — loại entry rác của trưởng/phó phòng
+    entries = [e for e in entries if e["staff_role"] == StaffRole.CHUYEN_VIEN.value]
+    if not entries:
+        raise HTTPException(400, "Không có chứng từ của giao dịch viên để gom tập")
 
     # Xóa bundle group cũ cùng phòng+tháng để regenerate
     if req.notes:

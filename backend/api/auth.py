@@ -131,7 +131,6 @@ def change_password(
 @router.post("/admin-reset-password")
 def admin_reset_password(
     req: AdminPasswordReset,
-    request: Request,
     current: dict = Depends(require_admin),
     db: sqlite3.Connection = Depends(get_db),
 ):
@@ -143,9 +142,9 @@ def admin_reset_password(
         "UPDATE user_tttt SET pwd_hash = ?, must_change_password = 1 WHERE id = ?",
         (get_password_hash(req.new_password), req.staff_id),
     )
-    client_ip = request.client.host if request.client else "unknown"
+    # ip để None → write_audit tự lấy IP thật từ session (khớp Nhật ký đăng nhập)
     write_audit(db, current["id"], "password_reset", "staff", req.staff_id,
-                f"Reset password cho {target['full_name']}", client_ip)
+                f"Reset password cho {target['full_name']}")
     db.commit()
     return {"message": f"Đã đặt lại mật khẩu cho {target['full_name']}"}
 
