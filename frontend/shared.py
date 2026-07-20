@@ -357,6 +357,7 @@ def _sidebar(current_page: str) -> dict:
                     "label": "Nhật ký hệ thống",
                     "icon": "terminal",
                     "items": [
+                        ("audit-logs", "Nhật ký hệ thống",        "history"),
                         ("logs",       "Lịch sử lỗi & cảnh báo", "error_outline"),
                         ("login-logs", "Nhật ký đăng nhập",       "login"),
                     ],

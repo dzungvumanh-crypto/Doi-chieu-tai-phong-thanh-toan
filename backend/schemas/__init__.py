@@ -12,6 +12,7 @@ from .handovers import (
 )
 from .bundles import (
     StorageViewRow, StorageViewResponse, StorageViewUpdateRow, StorageViewUpdateRequest,
+    StorageSummaryDept, StorageSummaryCell, StorageSummaryRow, StorageSummaryResponse,
     BundleItemOut, BundleOut, BundleGroupOut,
     BundleGenerateRequest, BundleUpdateRequest,
 )
@@ -31,6 +32,7 @@ __all__ = [
     "EntryHistoryItem", "EntryHistoryOut",
     "ArchiveRecord", "HandoverArchiveResponse",
     "StorageViewRow", "StorageViewResponse", "StorageViewUpdateRow", "StorageViewUpdateRequest",
+    "StorageSummaryDept", "StorageSummaryCell", "StorageSummaryRow", "StorageSummaryResponse",
     "BundleItemOut", "BundleOut", "BundleGroupOut",
     "BundleGenerateRequest", "BundleUpdateRequest",
     "LeaveCreate", "LeaveReview", "TongHopReview",

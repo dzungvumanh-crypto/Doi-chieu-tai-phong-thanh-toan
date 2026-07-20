@@ -55,10 +55,11 @@ Truy cập:
 │   ├── main.py              # FastAPI app + schema migration khi khởi động
 │   ├── database.py          # SQLite engine (WAL mode, FK via PRAGMA)
 │   ├── core/
-│   │   ├── config.py        # Cấu hình (SECRET_KEY, DATABASE_URL...)
+│   │   ├── config.py        # Cấu hình (SECRET_KEY, DATABASE_URL, NTP...)
 │   │   ├── security.py      # JWT + bcrypt
 │   │   ├── deps.py          # FastAPI dependencies (RBAC)
 │   │   ├── sessions.py      # Session in-memory
+│   │   ├── audit_middleware.py # Ghi nhật ký thao tác tập trung → audit_logs
 │   │   └── rate_limit.py    # Rate limiting đăng nhập
 │   ├── api/
 │   │   ├── auth.py          # Đăng nhập / đăng xuất / đổi mật khẩu
@@ -90,6 +91,7 @@ Truy cập:
 │       ├── handover_report_service.py # Tính chứng từ nộp đúng hạn / quá hạn
 │       ├── th_report_service.py    # Xuất báo cáo tổng hợp (phòng TH)
 │       ├── backup_service.py       # Backup SQLite tự động
+│       ├── time_sync.py            # Cảnh báo lệch giờ máy chủ so NTP (không tự sửa)
 │       ├── cham459901_service.py   # Xử lý ZIP + phân loại bút toán 459901
 │       ├── doi_chieu_song_phuong_service.py # Định tuyến lệnh IPCAS theo NH + chiều → 8 CSV
 │       ├── swift_recon/            # Đối chiếu điện SWIFT (parse, so khớp, export Excel)
@@ -117,7 +119,8 @@ Truy cập:
 │       ├── swift_recon.py   # Đối chiếu điện SWIFT (phòng Swift)
 │       ├── user_management.py # Quản lý tài khoản (admin)
 │       ├── login_logs.py    # Nhật ký đăng nhập (admin)
-│       ├── logs.py          # Nhật ký hệ thống (admin)
+│       ├── audit_logs.py    # Nhật ký thao tác — lịch sử ghi dữ liệu (admin)
+│       ├── logs.py          # Nhật ký lỗi & cảnh báo (admin)
 │       └── change_password.py # Đổi mật khẩu
 ├── templates/
 │   ├── bia_mau_goc.docx             # Mẫu bìa tập chứng từ
@@ -138,8 +141,9 @@ Truy cập:
 ### Module Nhân sự & Tài khoản
 - Quản lý cán bộ theo phòng ban, vai trò (7 vai trò — xem bảng RBAC)
 - Quản lý nhóm cán bộ và phân quyền tính năng theo nhóm
-- Dashboard tổng quan: số liệu bàn giao, tập chứng từ, nghỉ phép
-- Nhật ký đăng nhập và nhật ký thao tác hệ thống (admin xem, lọc theo user/thời gian)
+- Dashboard tổng quan: biểu đồ cột bàn giao đúng hạn/muộn theo phòng, số liệu tập chứng từ, nghỉ phép
+- **Nhật ký thao tác** (audit log): middleware ghi tập trung mọi request thay đổi dữ liệu (POST/PUT/PATCH/DELETE) vào bảng `audit_logs` — ai, làm gì, kết quả HTTP, IP, thời gian; lọc theo phương thức, tìm kiếm, phân trang; tự dọn sau 365 ngày
+- Nhật ký đăng nhập và nhật ký lỗi/cảnh báo hệ thống (admin xem, lọc theo user/thời gian)
 
 ### Module Nghỉ phép
 - Cán bộ tạo đơn xin nghỉ (phép năm, ốm, việc riêng, khác)
@@ -157,7 +161,7 @@ Truy cập:
   - (user, ngày) không bị tách sang tập khác
   - Nếu 1 ngày > 350 tờ → chia 2 tập cân bằng
 - **In bìa**: Tạo file `.docx` đúng format mẫu (2-column layout)
-- **Lưu trữ**: Ghi số hộp, vị trí kệ; tra cứu theo phòng/thời gian
+- **Lưu trữ**: Ghi số hộp, vị trí kệ; tra cứu theo phòng/thời gian; bảng tổng hợp cả năm (số tờ/số tập theo phòng × 12 tháng)
 - **Báo cáo** (menu con):
   - *Báo cáo hậu kiểm*: Xuất Excel tổng hợp theo phòng
   - *Báo cáo bàn giao chứng từ*: Số chứng từ nộp đúng hạn / quá hạn theo phòng; chi tiết cán bộ nào nộp chậm chứng từ ngày nào, chậm bao nhiêu ngày làm việc

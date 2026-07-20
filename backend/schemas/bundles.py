@@ -29,6 +29,28 @@ class StorageViewUpdateRequest(BaseModel):
     rows: List[StorageViewUpdateRow]
 
 
+# ─── Storage Summary (toàn bộ phòng theo năm) ────────────────────────────────
+class StorageSummaryDept(BaseModel):
+    id: int
+    name: str
+
+class StorageSummaryCell(BaseModel):
+    department_id: int
+    total_sheets: int
+    total_bundles: int
+
+class StorageSummaryRow(BaseModel):
+    month: int
+    cells: List[StorageSummaryCell]      # cùng thứ tự với departments
+    total_sheets: int
+    total_bundles: int
+
+class StorageSummaryResponse(BaseModel):
+    year: int
+    departments: List[StorageSummaryDept]
+    rows: List[StorageSummaryRow]
+
+
 # ─── Bundle ──────────────────────────────────────────────────────────────────
 class BundleItemOut(BaseModel):
     id: int

@@ -47,4 +47,12 @@ class Settings:
     # Bật /docs, /redoc — chỉ bật khi debug; mặc định tắt ở production
     ENABLE_API_DOCS: bool = os.getenv("ENABLE_API_DOCS", "").lower() in ("1", "true", "yes")
 
+    # Nguồn thời gian chuẩn (NTP) — chỉ dùng để CẢNH BÁO lệch giờ, không tự sửa.
+    # Mạng nội bộ bị cô lập: đặt NTP_SERVER về NTP nội bộ (vd domain controller)
+    # hoặc NTP_ENABLED=false để tắt hẳn.
+    NTP_ENABLED: bool = os.getenv("NTP_ENABLED", "true").lower() not in ("0", "false", "no")
+    NTP_SERVER: str = os.getenv("NTP_SERVER", "pool.ntp.org").strip()
+    NTP_TIMEOUT_SEC: float = float(os.getenv("NTP_TIMEOUT_SEC", "3"))
+    NTP_DRIFT_THRESHOLD_SEC: int = int(os.getenv("NTP_DRIFT_THRESHOLD_SEC", "5"))
+
 settings = Settings()
