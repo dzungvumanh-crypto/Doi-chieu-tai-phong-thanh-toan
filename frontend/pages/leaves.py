@@ -98,25 +98,21 @@ def _fmt_leave_dates(start_str: str, end_str: str, spread_dates=None) -> str:
 
         if spread_dates and len(spread_dates) >= 2:
 
-            cal_days = (e - s).days + 1
+            parsed = sorted(_date.fromisoformat(d[:10]) for d in spread_dates)
 
-            if len(spread_dates) < cal_days:  # có khoảng trống → ngày lẻ không liên tiếp
+            if len(parsed) <= 4:
 
-                parsed = sorted(_date.fromisoformat(d[:10]) for d in spread_dates)
+                parts = [d.strftime("%d/%m") for d in parsed[:-1]]
 
-                if len(parsed) <= 4:
+                parts.append(parsed[-1].strftime("%d/%m/%Y"))
 
-                    parts = [d.strftime("%d/%m") for d in parsed[:-1]]
+                return ", ".join(parts)
 
-                    parts.append(parsed[-1].strftime("%d/%m/%Y"))
+            else:
 
-                    return ", ".join(parts)
+                first2 = ", ".join(d.strftime("%d/%m") for d in parsed[:2])
 
-                else:
-
-                    first2 = ", ".join(d.strftime("%d/%m") for d in parsed[:2])
-
-                    return f"{first2} +{len(parsed) - 2} ngày"
+                return f"{first2} +{len(parsed) - 2} ngày"
 
         return f"{s.strftime('%d/%m')} → {e.strftime('%d/%m/%Y')}"
 
@@ -172,7 +168,9 @@ async def leaves_page():
     _last_seen_key = f"_deleg_seen_{user_id}"
     _last_seen     = app.storage.user.get(_last_seen_key, "")
     _broadcast     = app.storage.general.get("_deleg_broadcast", {})
-    if _broadcast and _broadcast.get("ts", "") > _last_seen:
+    _deleg_end     = _broadcast.get("end_date", "")
+    _deleg_active  = not _deleg_end or _deleg_end >= __import__("datetime").date.today().isoformat()
+    if _broadcast and _broadcast.get("ts", "") > _last_seen and _deleg_active:
         app.storage.user[_last_seen_key] = _broadcast["ts"]
         async def _show_deleg_popup(msg=_broadcast["msg"]):
             with ui.dialog(value=True) as _dp, ui.card().classes("p-6 max-w-lg"):
@@ -180,6 +178,29 @@ async def leaves_page():
                 ui.label(msg).classes("text-sm text-gray-700 leading-relaxed")
                 ui.button("Đã hiểu", on_click=_dp.close).classes("bg-red-700 text-white mt-4 w-full")
         ui.timer(0.5, _show_deleg_popup, once=True)
+
+    # ── Popup thông báo carry-over hết hiệu lực sau Q1 (1 lần/năm/user) ──────
+    async def _check_carryover_notice():
+        try:
+            res = await asyncio.to_thread(api.get, "/api/leaves/carryover-notice")
+        except Exception:
+            return
+        if not isinstance(res, dict) or not res.get("show"):
+            return
+        with ui.dialog(value=True) as _cn_dp, ui.card().classes("p-6 max-w-lg"):
+            ui.label("📌 Thông báo ngày phép chuyển kỳ").classes("text-lg font-bold text-red-900 mb-3")
+            ui.label(
+                "Ngày phép chuyển kỳ (carry-over) từ năm trước đã hết hiệu lực sau ngày 31/03. "
+                "Các ngày chưa sử dụng đã bị thu hồi và không còn được cộng vào hạn mức phép năm nay."
+            ).classes("text-sm text-gray-700 leading-relaxed")
+            async def _ack():
+                try:
+                    await asyncio.to_thread(api.post, "/api/leaves/carryover-notice/ack", {})
+                except Exception:
+                    pass
+                _cn_dp.close()
+            ui.button("Đã hiểu", on_click=_ack).classes("bg-red-700 text-white mt-4 w-full")
+    ui.timer(0.8, _check_carryover_notice, once=True)
 
 
 
@@ -311,73 +332,17 @@ async def leaves_page():
 
 
 
+        def _reject_cancel():
+            # Xoá lý do đang gõ dở — nếu không, mở dialog từ chối cho đơn KHÁC sau
+            # đó vẫn còn giữ lý do của đơn trước, dễ gửi nhầm.
+            reject_reason.value = ""
+            reject_dialog.close()
+
         with ui.row().classes("w-full justify-end gap-2 mt-4"):
 
-            ui.button("Hủy", on_click=reject_dialog.close).classes("text-gray-500")
+            ui.button("Hủy", on_click=_reject_cancel).classes("text-gray-500")
 
             ui.button("Xác nhận từ chối", on_click=_confirm_reject).classes("bg-red-700 text-white")
-
-
-
-    # ── Dialog TH chọn GĐ/PGĐ ────────────────────────────────────────────────
-
-    _th_cb: list = [None]
-
-    with ui.dialog() as th_dialog, ui.card().classes("p-6 w-96"):
-
-        ui.label("Xác nhận & chuyển lên Ban lãnh đạo").classes("text-lg font-bold text-red-900 mb-4")
-
-        th_gd_select = ui.select({}, label="Chọn GĐ / PGĐ phê duyệt").classes("w-full")
-
-        th_note      = ui.textarea("Ghi chú (tuỳ chọn)").classes("w-full mt-2").props("rows=2")
-
-
-
-        async def _load_gd_opts():
-
-            try:
-
-                lst = await asyncio.to_thread(api.get, "/api/leaves/gd-list")
-
-                th_gd_select.options = {s["id"]: f"{s['full_name']} → {s['role_label']}" for s in (lst or [])}
-
-                th_gd_select.update()
-
-            except Exception:
-
-                pass
-
-
-
-        async def _confirm_th_forward():
-
-            if not th_gd_select.value:
-
-                ui.notify("Vui lòng chọn GĐ/PGĐ", type="warning")
-
-                return
-
-            gd_id = th_gd_select.value
-
-            note  = th_note.value or None
-
-            th_note.value = ""
-
-            th_dialog.close()
-
-            cb = _th_cb[0]
-
-            if cb:
-
-                await cb(gd_id, note)
-
-
-
-        with ui.row().classes("w-full justify-end gap-2 mt-4"):
-
-            ui.button("Hủy", on_click=th_dialog.close).classes("text-gray-500")
-
-            ui.button("Xác nhận", on_click=_confirm_th_forward).classes("bg-blue-700 text-white")
 
 
 
@@ -547,9 +512,22 @@ async def leaves_page():
 
         _today_iso   = _dt_mod.date.today().isoformat()
 
-        _OPT_FUTURE  = f":options=\"d => d >= '{_today_slash}'\""
+        # Quasar mặc định khoanh "hôm nay" bằng box-shadow 1px currentColor — quá
+        # mờ để thấy được trên nền sáng. Ghi đè rõ ràng hơn cho mọi lịch chọn ngày
+        # trong trang này.
+        ui.add_css(".q-date__today { box-shadow: 0 0 0 2px #C62828 !important; border-radius: 50%; }")
 
-        _OPT_ALL     = ":options=\"() => true\""
+        _VI_LOCALE = (
+            ":locale=\"{ days: ['Chủ nhật','Thứ 2','Thứ 3','Thứ 4','Thứ 5','Thứ 6','Thứ 7'],"
+            " daysShort: ['CN','T2','T3','T4','T5','T6','T7'],"
+            " months: ['Tháng 1','Tháng 2','Tháng 3','Tháng 4','Tháng 5','Tháng 6',"
+            "'Tháng 7','Tháng 8','Tháng 9','Tháng 10','Tháng 11','Tháng 12'],"
+            " monthsShort: ['T01','T02','T03','T04','T05','T06','T07','T08','T09','T10','T11','T12'] }\""
+        )
+
+        _OPT_FUTURE  = f":options=\"d => d >= '{_today_slash}'\" {_VI_LOCALE}"
+
+        _OPT_ALL     = f":options=\"() => true\" {_VI_LOCALE}"
 
 
 
@@ -581,9 +559,217 @@ async def leaves_page():
 
             ui.label("Tạo đơn nghỉ phép").classes("text-lg font-bold text-red-900 mb-4")
 
-            c_dates    = ui.date(value=None).props(f"multiple mask='YYYY-MM-DD' no-header first-day-of-week='1' {_OPT_FUTURE}").classes("w-full")
+            import calendar as _cal_mod2
+            from datetime import date as _dobj
 
-            c_hint     = ui.label("Click chọn từng ngày → Click lại để bờ chọn").classes("text-xs text-orange-500 mt-0.5")
+            _c_today_ref = _dobj.today()
+            _c_sel       = set()
+            _c_cur       = [_c_today_ref.year, _c_today_ref.month]
+            _c_min       = [_c_today_ref]   # list để mutate trong closure
+
+            c_grid_area = ui.column().classes("w-full border border-gray-200 rounded p-2 bg-white")
+            c_hint      = ui.label("Click chọn từng ngày · Click lại để bỏ chọn").classes("text-xs text-orange-500 mt-0.5")
+
+            # ── Date picker cho thai sản / bảo hiểm ──────────────────────────────
+            _rs_val = [""]   # YYYY-MM-DD ngày bắt đầu
+            _re_val = [""]   # YYYY-MM-DD ngày kết thúc
+            _rs_cur = [_c_today_ref.year, _c_today_ref.month]
+            _re_cur = [_c_today_ref.year, _c_today_ref.month]
+
+            c_range_area = ui.column().classes("w-full gap-2 mt-1")
+            c_range_area.set_visibility(False)
+            with c_range_area:
+                ui.label("Chọn khoảng thời gian nghỉ").classes("text-xs text-blue-600 font-medium -mb-1")
+                # Picker ngày bắt đầu
+                with ui.column().classes("w-full gap-0"):
+                    with ui.row().classes("w-full items-center gap-1"):
+                        c_range_start = ui.input("Ngày bắt đầu", placeholder="DD/MM/YYYY").classes("flex-1")
+                        _rs_cal_btn   = ui.button(icon="calendar_month").props("flat round dense size=sm color=grey-7")
+                    _rs_cal = ui.column().classes("w-full border border-gray-200 rounded p-2 bg-white mt-1")
+                    _rs_cal.set_visibility(False)
+                # Picker ngày kết thúc
+                with ui.column().classes("w-full gap-0 mt-1"):
+                    with ui.row().classes("w-full items-center gap-1"):
+                        c_range_end = ui.input("Ngày kết thúc", placeholder="DD/MM/YYYY").classes("flex-1")
+                        _re_cal_btn  = ui.button(icon="calendar_month").props("flat round dense size=sm color=grey-7")
+                    _re_cal = ui.column().classes("w-full border border-gray-200 rounded p-2 bg-white mt-1")
+                    _re_cal.set_visibility(False)
+
+            # ── Render calendar cho từng picker ───────────────────────────────────
+            def _rs_render():
+                _rs_cal.clear()
+                y, m = _rs_cur
+                with _rs_cal:
+                    with ui.row().classes("w-full items-center justify-between mb-1"):
+                        ui.button(icon="chevron_left",  on_click=_rs_prev).props("flat round dense size=sm")
+                        ui.label(f"Tháng {m:02d}/{y}").classes("text-sm font-semibold text-gray-700")
+                        ui.button(icon="chevron_right", on_click=_rs_next).props("flat round dense size=sm")
+                    with ui.row().classes("w-full gap-0"):
+                        for h in ["T2","T3","T4","T5","T6","T7","CN"]:
+                            ui.label(h).classes("text-xs text-center text-gray-400 w-[14.28%] py-0.5")
+                    first_wd = _dobj(y, m, 1).weekday()
+                    last_day = _cal_mod2.monthrange(y, m)[1]
+                    today_   = _dobj.today()
+                    with ui.row().classes("w-full gap-0 flex-wrap"):
+                        for _ in range(first_wd):
+                            ui.label("").classes("w-[14.28%] h-7")
+                        for day in range(1, last_day + 1):
+                            ds = f"{y:04d}-{m:02d}-{day:02d}"; dobj = _dobj(y, m, day)
+                            sel = (ds == _rs_val[0]); is_td = (dobj == today_); wknd = dobj.weekday() >= 5
+                            def _pick_rs(ds=ds):
+                                def _do():
+                                    _rs_val[0] = ds
+                                    c_range_start.value = f"{ds[8:10]}/{ds[5:7]}/{ds[0:4]}"
+                                    _rs_cal.set_visibility(False); _rs_render()
+                                return _do
+                            with ui.element("div").classes("w-[14.28%] h-7 flex items-center justify-center"):
+                                if sel:
+                                    ui.label(str(day)).classes("w-6 h-6 rounded-full bg-red-700 text-white text-xs font-bold flex items-center justify-center cursor-pointer").on("click", _pick_rs())
+                                elif is_td:
+                                    ui.label(str(day)).classes("w-6 h-6 rounded-full ring-2 ring-red-500 text-red-600 text-xs font-bold flex items-center justify-center cursor-pointer hover:bg-red-50").on("click", _pick_rs())
+                                elif wknd:
+                                    ui.label(str(day)).classes("w-6 h-6 rounded flex items-center justify-center text-xs text-blue-300 hover:bg-blue-50 cursor-pointer").on("click", _pick_rs())
+                                else:
+                                    ui.label(str(day)).classes("w-6 h-6 rounded flex items-center justify-center text-xs text-gray-600 hover:bg-red-50 hover:text-red-700 cursor-pointer").on("click", _pick_rs())
+
+            def _rs_prev():
+                y, m = _rs_cur; _rs_cur[0], _rs_cur[1] = (y-1, 12) if m == 1 else (y, m-1); _rs_render()
+            def _rs_next():
+                y, m = _rs_cur; _rs_cur[0], _rs_cur[1] = (y+1, 1) if m == 12 else (y, m+1); _rs_render()
+            def _rs_toggle():
+                vis = not _rs_cal.visible; _rs_cal.set_visibility(vis)
+                if vis: _rs_render()
+            def _rs_parse():
+                txt = c_range_start.value.strip()
+                if not txt: _rs_val[0] = ""; return
+                try:
+                    parts = txt.replace("-", "/").split("/")
+                    if len(parts) != 3 or len(parts[2]) != 4:
+                        raise ValueError("Định dạng phải là dd/mm/yyyy")
+                    d, mo, yr = int(parts[0]), int(parts[1]), int(parts[2])
+                    _dobj(yr, mo, d); _rs_val[0] = f"{yr:04d}-{mo:02d}-{d:02d}"
+                except Exception: _rs_val[0] = ""
+            _rs_cal_btn.on("click", _rs_toggle)
+            c_range_start.on("blur", _rs_parse)
+
+            def _re_render():
+                _re_cal.clear()
+                y, m = _re_cur
+                with _re_cal:
+                    with ui.row().classes("w-full items-center justify-between mb-1"):
+                        ui.button(icon="chevron_left",  on_click=_re_prev).props("flat round dense size=sm")
+                        ui.label(f"Tháng {m:02d}/{y}").classes("text-sm font-semibold text-gray-700")
+                        ui.button(icon="chevron_right", on_click=_re_next).props("flat round dense size=sm")
+                    with ui.row().classes("w-full gap-0"):
+                        for h in ["T2","T3","T4","T5","T6","T7","CN"]:
+                            ui.label(h).classes("text-xs text-center text-gray-400 w-[14.28%] py-0.5")
+                    first_wd = _dobj(y, m, 1).weekday()
+                    last_day = _cal_mod2.monthrange(y, m)[1]
+                    today_   = _dobj.today()
+                    with ui.row().classes("w-full gap-0 flex-wrap"):
+                        for _ in range(first_wd):
+                            ui.label("").classes("w-[14.28%] h-7")
+                        for day in range(1, last_day + 1):
+                            ds = f"{y:04d}-{m:02d}-{day:02d}"; dobj = _dobj(y, m, day)
+                            sel = (ds == _re_val[0]); is_td = (dobj == today_); wknd = dobj.weekday() >= 5
+                            def _pick_re(ds=ds):
+                                def _do():
+                                    _re_val[0] = ds
+                                    c_range_end.value = f"{ds[8:10]}/{ds[5:7]}/{ds[0:4]}"
+                                    _re_cal.set_visibility(False); _re_render()
+                                return _do
+                            with ui.element("div").classes("w-[14.28%] h-7 flex items-center justify-center"):
+                                if sel:
+                                    ui.label(str(day)).classes("w-6 h-6 rounded-full bg-red-700 text-white text-xs font-bold flex items-center justify-center cursor-pointer").on("click", _pick_re())
+                                elif is_td:
+                                    ui.label(str(day)).classes("w-6 h-6 rounded-full ring-2 ring-red-500 text-red-600 text-xs font-bold flex items-center justify-center cursor-pointer hover:bg-red-50").on("click", _pick_re())
+                                elif wknd:
+                                    ui.label(str(day)).classes("w-6 h-6 rounded flex items-center justify-center text-xs text-blue-300 hover:bg-blue-50 cursor-pointer").on("click", _pick_re())
+                                else:
+                                    ui.label(str(day)).classes("w-6 h-6 rounded flex items-center justify-center text-xs text-gray-600 hover:bg-red-50 hover:text-red-700 cursor-pointer").on("click", _pick_re())
+
+            def _re_prev():
+                y, m = _re_cur; _re_cur[0], _re_cur[1] = (y-1, 12) if m == 1 else (y, m-1); _re_render()
+            def _re_next():
+                y, m = _re_cur; _re_cur[0], _re_cur[1] = (y+1, 1) if m == 12 else (y, m+1); _re_render()
+            def _re_toggle():
+                vis = not _re_cal.visible; _re_cal.set_visibility(vis)
+                if vis: _re_render()
+            def _re_parse():
+                txt = c_range_end.value.strip()
+                if not txt: _re_val[0] = ""; return
+                try:
+                    parts = txt.replace("-", "/").split("/")
+                    if len(parts) != 3 or len(parts[2]) != 4:
+                        raise ValueError("Định dạng phải là dd/mm/yyyy")
+                    d, mo, yr = int(parts[0]), int(parts[1]), int(parts[2])
+                    _dobj(yr, mo, d); _re_val[0] = f"{yr:04d}-{mo:02d}-{d:02d}"
+                except Exception: _re_val[0] = ""
+            _re_cal_btn.on("click", _re_toggle)
+            c_range_end.on("blur", _re_parse)
+
+            def _c_render():
+                c_grid_area.clear()
+                y, m = _c_cur
+                min_d = _c_min[0]
+                with c_grid_area:
+                    with ui.row().classes("w-full items-center justify-between mb-1"):
+                        ui.button(icon="chevron_left", on_click=_c_prev).props("flat round dense size=sm")
+                        ui.label(f"Tháng {m:02d}/{y}").classes("text-sm font-semibold text-gray-700")
+                        ui.button(icon="chevron_right", on_click=_c_next).props("flat round dense size=sm")
+                    with ui.row().classes("w-full gap-0"):
+                        for h in ["T2","T3","T4","T5","T6","T7","CN"]:
+                            ui.label(h).classes("text-xs text-center text-gray-400 w-[14.28%] py-0.5")
+                    first_wd  = _dobj(y, m, 1).weekday()
+                    last_day  = _cal_mod2.monthrange(y, m)[1]
+                    _c_today_ = _dobj.today()
+                    with ui.row().classes("w-full gap-0 flex-wrap"):
+                        for _ in range(first_wd):
+                            ui.label("").classes("w-[14.28%] h-7")
+                        for day in range(1, last_day + 1):
+                            ds    = f"{y:04d}-{m:02d}-{day:02d}"
+                            dobj  = _dobj(y, m, day)
+                            sel   = ds in _c_sel
+                            past  = dobj < min_d
+                            wknd  = dobj.weekday() >= 5
+                            is_td = (dobj == _c_today_)
+                            def _mk(ds=ds):
+                                def _toggle():
+                                    _c_sel.discard(ds) if ds in _c_sel else _c_sel.add(ds)
+                                    _c_render()
+                                return _toggle
+                            wrap_cls = "w-[14.28%] h-7 flex items-center justify-center"
+                            with ui.element("div").classes(wrap_cls):
+                                if sel:
+                                    inner = "w-6 h-6 rounded-full bg-red-700 text-white text-xs font-bold flex items-center justify-center cursor-pointer"
+                                    if is_td:
+                                        inner += " ring-2 ring-offset-1 ring-red-400"
+                                    ui.label(str(day)).classes(inner).on("click", _mk())
+                                elif past:
+                                    inner = "w-6 h-6 flex items-center justify-center text-xs text-gray-400 hover:bg-red-50 hover:text-red-700 cursor-pointer rounded"
+                                    if is_td:
+                                        inner += " rounded-full ring-2 ring-gray-300"
+                                    ui.label(str(day)).classes(inner).on("click", _mk())
+                                elif is_td:
+                                    ui.label(str(day)).classes(
+                                        "w-6 h-6 rounded-full ring-2 ring-red-500 text-red-600 text-xs font-bold flex items-center justify-center cursor-pointer hover:bg-red-50"
+                                    ).on("click", _mk())
+                                elif wknd:
+                                    ui.label(str(day)).classes("w-6 h-6 rounded flex items-center justify-center text-xs text-blue-300 hover:bg-blue-50 cursor-pointer").on("click", _mk())
+                                else:
+                                    ui.label(str(day)).classes("w-6 h-6 rounded flex items-center justify-center text-xs text-gray-600 hover:bg-red-50 hover:text-red-700 cursor-pointer").on("click", _mk())
+
+            def _c_prev():
+                y, m = _c_cur
+                _c_cur[0], _c_cur[1] = (y-1, 12) if m == 1 else (y, m-1)
+                _c_render()
+
+            def _c_next():
+                y, m = _c_cur
+                _c_cur[0], _c_cur[1] = (y+1, 1) if m == 12 else (y, m+1)
+                _c_render()
+
+            _c_render()
 
             c_type     = ui.select({k: v for k, v in _LEAVE_TYPE.items()}, label="Loại nghỉ phép", value="annual").classes("w-full mt-2")
 
@@ -591,32 +777,32 @@ async def leaves_page():
 
             c_approver = ui.select(approver_opts, label="Người phê duyệt (KSV)").classes("w-full mt-2") if show_approver else None
 
-            c_gd       = ui.select(gd_opts, label="Ban lãnh đạo phê duyệt (GĐ/PGĐ)").classes("w-full mt-2") if gd_opts else None
+            c_gd       = ui.select(gd_opts, label="Ban lãnh đạo phê duyệt (GĐ/PGĐ)").classes("w-full mt-2") if (gd_opts and user_role != "giam_doc") else None
 
 
 
             def _c_on_type():
 
                 lt = c_type.value
+                is_range = lt in ("thai_san", "bao_hiem")
 
-                # Đổi label lý do tùy loại
+                c_grid_area.set_visibility(not is_range)
+                c_hint.set_visibility(not is_range)
+                c_range_area.set_visibility(is_range)
+
                 c_reason.props(f'label="{"Lý do (bắt buộc)" if lt == "other" else "Lý do (tuỳ chọn)"}"')
 
-                if lt in ("annual", "bat_buoc"):
-
-                    c_dates.props(_OPT_FUTURE)
-
-                    c_hint.set_text("Chỉ chọn ngày từ hôm nay trở đi" if lt == "annual" else "Tối thiểu 5 ngày làm việc")
-
-                    c_hint.style("color:#f97316" if lt == "annual" else "color:#3b82f6")
-
-                else:
-
-                    c_dates.props(_OPT_ALL)
-
-                    c_hint.set_text("Nhập lý do bên dưới" if lt == "other" else "Click chọn từng ngày")
-
-                    c_hint.style("color:#6b7280")
+                if not is_range:
+                    if lt in ("annual", "bat_buoc"):
+                        _c_min[0] = _dobj.today()
+                        c_hint.set_text("Chỉ chọn ngày từ hôm nay trở đi" if lt == "annual" else "Tối thiểu 5 ngày làm việc")
+                        c_hint.style("color:#f97316" if lt == "annual" else "color:#3b82f6")
+                    else:
+                        _c_min[0] = _dobj(2000, 1, 1)
+                        c_hint.set_text("Nhập lý do bên dưới" if lt == "other" else "Click chọn từng ngày")
+                        c_hint.style("color:#6b7280")
+                    _c_sel.clear()
+                    _c_render()
 
 
 
@@ -626,43 +812,42 @@ async def leaves_page():
 
             async def do_create():
 
-                raw = c_dates.value
+                lt = c_type.value
+                is_range = lt in ("thai_san", "bao_hiem")
 
-                if not raw:
+                if is_range:
+                    _rs_parse(); _re_parse()   # flush giá trị nhập tay nếu chưa blur
+                    start_val = _rs_val[0]
+                    end_val   = _re_val[0]
+                    if not start_val or not end_val:
+                        ui.notify("Vui lòng chọn hoặc nhập ngày bắt đầu và ngày kết thúc (DD/MM/YYYY)", type="warning"); return
+                    if end_val < start_val:
+                        ui.notify("Ngày kết thúc phải sau ngày bắt đầu", type="warning"); return
+                    body = {"start_date": start_val, "end_date": end_val,
+                            "leave_type": lt, "reason": c_reason.value or None}
+                else:
+                    dates = sorted(_c_sel)
 
-                    ui.notify("Vui lòng chọn ít nhất 1 ngày", type="warning"); return
+                    if not dates:
+                        ui.notify("Vui lòng chọn ít nhất 1 ngày", type="warning"); return
 
-                dates = sorted(set((raw if isinstance(raw, list) else [raw])))
+                    if lt == "other" and not (c_reason.value or "").strip():
+                        ui.notify("Vui lòng nhập lý do khi chọn loại Khác", type="warning"); return
 
-                dates = [d[:10] for d in dates if d]
-
-                if not dates:
-
-                    ui.notify("Vui lòng chọn ít nhất 1 ngày", type="warning"); return
-
-                if c_type.value == "other" and not (c_reason.value or "").strip():
-                    ui.notify("Vui lòng nhập lý do khi chọn loại Khác", type="warning"); return
+                    body = {"start_date": dates[0], "end_date": dates[-1],
+                            "spread_dates": dates,
+                            "leave_type": lt, "reason": c_reason.value or None}
 
                 if show_approver and not c_approver.value:
-
                     ui.notify("Vui lòng chọn người phê duyệt (KSV)", type="warning"); return
 
                 if c_gd and not c_gd.value:
-
                     ui.notify("Vui lòng chọn Ban lãnh đạo phê duyệt", type="warning"); return
 
-                body = {"start_date": dates[0], "end_date": dates[-1],
-
-                        "spread_dates": dates,
-
-                        "leave_type": c_type.value, "reason": c_reason.value or None}
-
                 if show_approver:
-
                     body["ksv_approver_id"] = c_approver.value
 
                 if c_gd and c_gd.value:
-
                     body["gd_approver_id"] = c_gd.value
 
                 try:
@@ -671,9 +856,12 @@ async def leaves_page():
 
                     create_dialog.close()
 
-                    ui.notify("✅ Gửi đơn nghỉ phép thành còng! Đơn đang chờ phê duyệt.",
-
-                              type="positive", timeout=4000)
+                    if user_role == "giam_doc":
+                        ui.notify("✅ Đơn nghỉ phép đã được ghi nhận và tự động duyệt.",
+                                  type="positive", timeout=4000)
+                    else:
+                        ui.notify("✅ Gửi đơn nghỉ phép thành công! Đơn đang chờ phê duyệt.",
+                                  type="positive", timeout=4000)
 
                     ui.timer(2.5, lambda: ui.navigate.to("/leaves"), once=True)
 
@@ -681,9 +869,33 @@ async def leaves_page():
 
                     if not _handle_api_error(e):
 
-                        ui.notify(f"Đã Gửi đơn thất bại: {e}", type="negative", timeout=5000)
+                        ui.notify(f"Gửi đơn thất bại: {e}", type="negative", timeout=5000)
 
 
+
+            def _c_open():
+                _c_today_now = _dobj.today()
+                _c_sel.clear()
+                _c_min[0] = _c_today_now
+                _c_cur[0], _c_cur[1] = _c_today_now.year, _c_today_now.month
+                c_type.value = "annual"
+                c_reason.value = ""
+                if c_approver:
+                    c_approver.value = None
+                if c_gd:
+                    c_gd.value = None
+                _rs_val[0] = ""; _re_val[0] = ""
+                _rs_cur[0], _rs_cur[1] = _c_today_now.year, _c_today_now.month
+                _re_cur[0], _re_cur[1] = _c_today_now.year, _c_today_now.month
+                c_range_start.value = ""
+                c_range_end.value   = ""
+                _rs_cal.set_visibility(False)
+                _re_cal.set_visibility(False)
+                c_grid_area.set_visibility(True)
+                c_hint.set_visibility(True)
+                c_range_area.set_visibility(False)
+                _c_render()
+                create_dialog.open()
 
             with ui.row().classes("w-full justify-end gap-2 mt-4"):
 
@@ -693,96 +905,6 @@ async def leaves_page():
 
 
 
-        # ── Dialog Xem & Sửa đơn (preview dạng mẫu giấy) ────────────────────
-        _edit_id: list = [None]
-
-        with ui.dialog().props("maximized") as edit_preview_dialog, \
-             ui.card().classes("w-full h-full max-w-2xl mx-auto p-0 overflow-auto"):
-
-            with ui.column().classes("w-full gap-0"):
-                # Toolbar
-                with ui.row().classes("w-full bg-red-800 px-4 py-3 items-center justify-between"):
-                    ui.label("Xem & Sửa đơn nghỉ phép").classes("text-white font-bold text-base")
-                    ui.button(icon="close", on_click=edit_preview_dialog.close).props("flat round dense").classes("text-white")
-
-                # Form preview giống mẫu giấy
-                with ui.column().classes("w-full p-6 gap-3 bg-white"):
-                    # Header quốc hiệu
-                    with ui.column().classes("w-full items-center gap-0 mb-2"):
-                        ui.label("CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM").classes("font-bold text-sm text-center")
-                        ui.label("Độc lập – Tự do – Hạnh phúc").classes("text-sm text-center")
-                        ui.label("─────────────────").classes("text-gray-400 text-xs text-center")
-                        ep_date_lbl = ui.label("").classes("text-sm text-right w-full italic")
-
-                    ui.label("ĐƠN XIN NGHỈ PHÉP").classes("font-bold text-lg text-center w-full mt-2")
-
-                    # Info nhân viên (read-only)
-                    ep_name_lbl  = ui.label("").classes("text-sm")
-                    ep_dept_lbl  = ui.label("").classes("text-sm")
-                    ep_intro_lbl = ui.label("").classes("text-sm mb-2")
-
-                    ui.separator()
-
-                    # Trường có thể sửa
-                    ui.label("Loại nghỉ phép:").classes("text-xs font-semibold text-gray-500 mt-2")
-                    ep_type = ui.select(
-                        {k: v for k, v in _LEAVE_TYPE.items()}, value="annual"
-                    ).classes("w-full")
-
-                    ui.label("Ngày nghỉ:").classes("text-xs font-semibold text-gray-500 mt-2")
-                    ep_dates = ui.date(value=None).props(
-                        f"multiple mask='YYYY-MM-DD' no-header first-day-of-week='1' {_OPT_ALL}"
-                    ).classes("w-full")
-                    ep_dates_hint = ui.label("").classes("text-xs text-orange-500")
-
-                    ui.label("Lý do xin nghỉ:").classes("text-xs font-semibold text-gray-500 mt-2")
-                    ep_reason = ui.textarea(placeholder="Nhập lý do...").props("rows=3").classes("w-full")
-
-                    ui.separator().classes("my-2")
-
-                    ui.label("Người phê duyệt (KSV):").classes("text-xs font-semibold text-gray-500")
-                    ep_ksv = ui.select(approver_opts, label="Chọn KSV phê duyệt").classes("w-full") if show_approver else None
-
-                    ui.label("Ban lãnh đạo phê duyệt (GĐ/PGĐ):").classes("text-xs font-semibold text-gray-500 mt-2")
-                    ep_gd = ui.select({}, label="Chọn GĐ/PGĐ").classes("w-full")
-
-                    # Buttons
-                    with ui.row().classes("w-full justify-end gap-2 mt-4"):
-                        ui.button("Hủy", on_click=edit_preview_dialog.close).props("flat").classes("text-gray-600")
-
-                        async def _ep_save():
-                            lid = _edit_id[0]
-                            if not lid: return
-                            raw = ep_dates.value
-                            if not raw:
-                                ui.notify("Chọn ít nhất 1 ngày", type="warning"); return
-                            dates = sorted(set(raw if isinstance(raw, list) else [raw]))
-                            dates = [d[:10] for d in dates if d]
-                            if not dates:
-                                ui.notify("Chọn ít nhất 1 ngày", type="warning"); return
-                            if show_approver and ep_ksv and not ep_ksv.value:
-                                ui.notify("Vui lòng chọn người phê duyệt KSV", type="warning"); return
-                            body = {
-                                "start_date":   dates[0], "end_date": dates[-1],
-                                "spread_dates": dates,
-                                "leave_type":   ep_type.value,
-                                "reason":       ep_reason.value or None,
-                            }
-                            if show_approver and ep_ksv:
-                                body["ksv_approver_id"] = ep_ksv.value
-                            if ep_gd.value:
-                                body["gd_approver_id"] = ep_gd.value
-                            try:
-                                await asyncio.to_thread(api.put, f"/api/leaves/{lid}/resubmit", body)
-                                edit_preview_dialog.close()
-                                detail_drawer.hide()
-                                ui.notify("Đã lưu & nộp lại đơn!", type="positive")
-                                ui.navigate.to("/leaves")
-                            except Exception as e:
-                                _handle_api_error(e)
-
-                        ui.button("Lưu & Nộp lại", icon="send", on_click=_ep_save).classes("bg-red-700 text-white")
-
         # ── Dialog nộp lại ────────────────────────────────────────────────────
 
         _rsub_id: list = [None]
@@ -791,9 +913,9 @@ async def leaves_page():
 
             ui.label("Chỉnh sửa & Nộp lại").classes("text-lg font-bold text-red-900 mb-4")
 
-            r_dates    = ui.date(value=None).props(f"multiple mask='YYYY-MM-DD' no-header first-day-of-week='1' {_OPT_FUTURE}").classes("w-full")
+            r_dates    = ui.date(value=[]).props(f"multiple mask='YYYY-MM-DD' no-header first-day-of-week='1' {_OPT_FUTURE}").classes("w-full")
 
-            r_hint     = ui.label("Click chọn từng ngày → Click lại để bờ chọn").classes("text-xs text-orange-500 mt-0.5")
+            r_hint     = ui.label("Click chọn từng ngày → Click lại để bỏ chọn").classes("text-xs text-orange-500 mt-0.5")
 
             r_type     = ui.select({k: v for k, v in _LEAVE_TYPE.items()}, label="Loại nghỉ phép", value="annual").classes("w-full mt-2")
 
@@ -879,7 +1001,7 @@ async def leaves_page():
 
                     detail_drawer.hide()
 
-                    ui.notify("Để nộp lại đơn!", type="positive")
+                    ui.notify("Đã nộp lại đơn!", type="positive")
 
                     ui.navigate.to("/leaves")
 
@@ -922,6 +1044,11 @@ async def leaves_page():
                 th_act   = status == "pending_tong_hop" and in_pend and _can_act
 
                 gd_act   = status == "pending_gd" and in_pend and user_role in ("giam_doc", "pho_giam_doc")
+
+                # Đơn của GĐ đã tự động approved — TH chỉ cần "xác nhận đã biết" (thông báo),
+                # không phải điều kiện duyệt.
+                th_ack_act = (status == "approved" and leave.get("staff_role") == "giam_doc"
+                              and not leave.get("tong_hop_approver_id"))
 
 
 
@@ -969,37 +1096,21 @@ async def leaves_page():
 
                         from datetime import date as _d
 
-                        try:
+                        with ui.row().classes("w-full items-start gap-2"):
 
-                            _cal = (_d.fromisoformat(_e) - _d.fromisoformat(_s)).days + 1
+                            ui.label("Ngày nghỉ:").classes("text-sm text-gray-500 w-28 shrink-0")
 
-                        except Exception:
+                            with ui.column().classes("flex-1 gap-0.5"):
 
-                            _cal = len(_sd)
+                                for _dstr in sorted(_sd):
 
-                        if len(_sd) < _cal:  # ngày lẻ không liên tiếp
+                                    try:
 
-                            with ui.row().classes("w-full items-start gap-2"):
+                                        ui.label(_d.fromisoformat(_dstr[:10]).strftime("%d/%m/%Y")).classes("text-sm font-medium")
 
-                                ui.label("Ngày nghỉ:").classes("text-sm text-gray-500 w-28 shrink-0")
+                                    except Exception:
 
-                                with ui.column().classes("flex-1 gap-0.5"):
-
-                                    for _dstr in sorted(_sd):
-
-                                        try:
-
-                                            ui.label(_d.fromisoformat(_dstr[:10]).strftime("%d/%m/%Y")).classes("text-sm font-medium")
-
-                                        except Exception:
-
-                                            ui.label(_dstr[:10]).classes("text-sm font-medium")
-
-                        else:
-
-                            _info("Từ ngày:", _s)
-
-                            _info("Đến ngày:", _e)
+                                        ui.label(_dstr[:10]).classes("text-sm font-medium")
 
                     else:
 
@@ -1023,7 +1134,7 @@ async def leaves_page():
 
                             ui.label("Khai báo hộ → Duyệt trực tiếp").classes("text-xs font-bold text-purple-700 uppercase")
 
-                            _info("Người khai báo:", leave.get("tong_hop_approver_name") or leave.get("ksv_approver_name") or "→")
+                            _info("Người khai báo:", leave.get("declarer_name") or "→")
 
                             _info("Ghi chú:", "Đơn được khai báo và duyệt trực tiếp, không qua quy trình phê duyệt.")
 
@@ -1042,16 +1153,22 @@ async def leaves_page():
                                         with ui.row().classes("gap-1"):
                                             async def _admin_ksv_approve(l=lid):
                                                 async def _do(_l=l):
-                                                    await asyncio.to_thread(api.put, f"/api/leaves/{_l}/ksv-review", {"action": "approve"})
-                                                    ui.notify("Đã duyệt bước KSV! Tiếp tục duyệt bước TH.", type="positive")
-                                                    updated = await asyncio.to_thread(api.get, f"/api/leaves/{_l}")
-                                                    if updated: await open_detail(updated)
+                                                    try:
+                                                        await asyncio.to_thread(api.put, f"/api/leaves/{_l}/ksv-review", {"action": "approve"})
+                                                        ui.notify("Đã duyệt bước KSV! Tiếp tục duyệt bước TH.", type="positive")
+                                                        updated = await asyncio.to_thread(api.get, f"/api/leaves/{_l}")
+                                                        if updated: await open_detail(updated)
+                                                    except Exception as e:
+                                                        _handle_api_error(e)
                                                 _ask_confirm("Duyệt bước KSV", "Xác nhận phê duyệt bước KSV?", _do, "Phê duyệt", "bg-green-600")
                                             ui.button(icon="check", on_click=_admin_ksv_approve).props("round dense flat").classes("text-green-600 bg-green-50").tooltip("Phê duyệt KSV")
                                             async def _admin_ksv_reject(l=lid):
                                                 async def _cb(reason, _l=l):
-                                                    await asyncio.to_thread(api.put, f"/api/leaves/{_l}/ksv-review", {"action": "reject", "comment": reason})
-                                                    detail_drawer.hide(); ui.notify("Đã từ chối!", type="warning"); _nav_pending()
+                                                    try:
+                                                        await asyncio.to_thread(api.put, f"/api/leaves/{_l}/ksv-review", {"action": "reject", "comment": reason})
+                                                        detail_drawer.hide(); ui.notify("Đã từ chối!", type="warning"); _nav_pending()
+                                                    except Exception as e:
+                                                        _handle_api_error(e)
                                                 _reject_cb[0] = _cb; reject_dialog.open()
                                             ui.button(icon="close", on_click=_admin_ksv_reject).props("round dense flat").classes("text-red-600 bg-red-50").tooltip("Từ chối KSV")
 
@@ -1076,17 +1193,23 @@ async def leaves_page():
                                     with ui.row().classes("gap-1"):
                                         async def _admin_th_approve(lv=leave, l=lid):
                                             async def _do(_l=l, _lv=lv):
-                                                await asyncio.to_thread(api.post, f"/api/leaves/{_l}/tong-hop-review",
-                                                    {"action": "forward", "gd_approver_id": _lv.get("gd_approver_id"), "comment": None})
-                                                ui.notify("Đã xác nhận TH! Tiếp tục duyệt bước GĐ.", type="positive")
-                                                updated = await asyncio.to_thread(api.get, f"/api/leaves/{_l}")
-                                                if updated: await open_detail(updated)
+                                                try:
+                                                    await asyncio.to_thread(api.post, f"/api/leaves/{_l}/tong-hop-review",
+                                                        {"action": "forward", "gd_approver_id": _lv.get("gd_approver_id"), "comment": None})
+                                                    ui.notify("Đã xác nhận TH! Tiếp tục duyệt bước GĐ.", type="positive")
+                                                    updated = await asyncio.to_thread(api.get, f"/api/leaves/{_l}")
+                                                    if updated: await open_detail(updated)
+                                                except Exception as e:
+                                                    _handle_api_error(e)
                                             _ask_confirm("Xác nhận TH", "Xác nhận & chuyển lên Ban lãnh đạo?", _do, "Xác nhận", "bg-green-600")
                                         ui.button(icon="check", on_click=_admin_th_approve).props("round dense flat").classes("text-green-600 bg-green-50").tooltip("Xác nhận TH")
                                         async def _admin_th_reject(l=lid):
                                             async def _cb(reason, _l=l):
-                                                await asyncio.to_thread(api.post, f"/api/leaves/{_l}/tong-hop-review", {"action": "reject", "comment": reason})
-                                                detail_drawer.hide(); ui.notify("Đã từ chối!", type="warning"); _nav_pending()
+                                                try:
+                                                    await asyncio.to_thread(api.post, f"/api/leaves/{_l}/tong-hop-review", {"action": "reject", "comment": reason})
+                                                    detail_drawer.hide(); ui.notify("Đã từ chối!", type="warning"); _nav_pending()
+                                                except Exception as e:
+                                                    _handle_api_error(e)
                                             _reject_cb[0] = _cb; reject_dialog.open()
                                         ui.button(icon="close", on_click=_admin_th_reject).props("round dense flat").classes("text-red-600 bg-red-50").tooltip("Từ chối TH")
 
@@ -1100,6 +1223,18 @@ async def leaves_page():
                             elif status not in ("pending_ksv", "pending_tong_hop") and _th_name:
                                 ui.label("(Dữ liệu không ghi ngày xác nhận)").classes("text-xs text-gray-400 italic")
 
+                            if th_ack_act and api.has_feature("leaves.forward_th"):
+                                ui.label("Đơn của Giám đốc đã tự động duyệt — chỉ cần Tổng hợp xác nhận đã biết.").classes("text-xs text-gray-500 italic mt-1")
+                                async def _th_ack(l=lid):
+                                    try:
+                                        await asyncio.to_thread(api.put, f"/api/leaves/{l}/tong-hop-ack", {})
+                                        detail_drawer.hide()
+                                        ui.notify("Đã xác nhận đã biết đơn của Giám đốc", type="positive")
+                                        _nav_pending()
+                                    except Exception as e:
+                                        _handle_api_error(e)
+                                ui.button("Xác nhận đã biết", icon="visibility", on_click=_th_ack).classes("bg-yellow-600 text-white text-xs mt-1")
+
 
 
                         # Bước 3: GĐ
@@ -1112,14 +1247,20 @@ async def leaves_page():
                                     with ui.row().classes("gap-1"):
                                         async def _admin_gd_approve(l=lid):
                                             async def _do(_l=l):
-                                                await asyncio.to_thread(api.put, f"/api/leaves/{_l}/gd-review", {"action": "approve"})
-                                                detail_drawer.hide(); ui.notify("Đã duyệt GĐ!", type="positive"); _nav_pending()
+                                                try:
+                                                    await asyncio.to_thread(api.put, f"/api/leaves/{_l}/gd-review", {"action": "approve"})
+                                                    detail_drawer.hide(); ui.notify("Đã duyệt GĐ!", type="positive"); _nav_pending()
+                                                except Exception as e:
+                                                    _handle_api_error(e)
                                             _ask_confirm("Duyệt bước GĐ", "Xác nhận phê duyệt bước Giám đốc?", _do, "Phê duyệt", "bg-green-600")
                                         ui.button(icon="check", on_click=_admin_gd_approve).props("round dense flat").classes("text-green-600 bg-green-50").tooltip("Phê duyệt GĐ")
                                         async def _admin_gd_reject(l=lid):
                                             async def _cb(reason, _l=l):
-                                                await asyncio.to_thread(api.put, f"/api/leaves/{_l}/gd-review", {"action": "reject", "comment": reason})
-                                                detail_drawer.hide(); ui.notify("Đã từ chối!", type="warning"); _nav_pending()
+                                                try:
+                                                    await asyncio.to_thread(api.put, f"/api/leaves/{_l}/gd-review", {"action": "reject", "comment": reason})
+                                                    detail_drawer.hide(); ui.notify("Đã từ chối!", type="warning"); _nav_pending()
+                                                except Exception as e:
+                                                    _handle_api_error(e)
                                             _reject_cb[0] = _cb; reject_dialog.open()
                                         ui.button(icon="close", on_click=_admin_gd_reject).props("round dense flat").classes("text-red-600 bg-red-50").tooltip("Từ chối GĐ")
 
@@ -1343,7 +1484,24 @@ async def leaves_page():
 
                                 _spread = lv.get("spread_dates")
 
-                                r_dates.value  = _spread if _spread else [(lv.get("start_date") or "")[:10]]
+                                if _spread:
+                                    r_dates.value = _spread
+                                else:
+                                    # Đơn cũ là khoảng liên tục (vd thai sản/bảo hiểm) — phải nạp
+                                    # ĐỦ mọi ngày từ start_date đến end_date vào picker "multiple",
+                                    # nếu không chỉ giữ lại ngày đầu, mất hết các ngày còn lại.
+                                    _s = (lv.get("start_date") or "")[:10]
+                                    _e = (lv.get("end_date") or "")[:10]
+                                    try:
+                                        _sd = _dt_mod.date.fromisoformat(_s)
+                                        _ed = _dt_mod.date.fromisoformat(_e) if _e else _sd
+                                        _all_days, _d = [], _sd
+                                        while _d <= _ed:
+                                            _all_days.append(_d.isoformat())
+                                            _d += _dt_mod.timedelta(days=1)
+                                        r_dates.value = _all_days
+                                    except ValueError:
+                                        r_dates.value = [_s] if _s else []
 
                                 r_type.value   = lv.get("leave_type", "annual")
 
@@ -1381,7 +1539,9 @@ async def leaves_page():
                                         await asyncio.to_thread(api.patch, f"/api/leaves/{_l}/cancel", {})
                                         detail_drawer.hide()
                                         ui.notify("Đã hủy đơn thành công", type="positive")
-                                        _nav_pending()
+                                        # Quay lại đúng tab đang đứng (không ép về "Chờ duyệt")
+                                        app.storage.user["_leaves_goto_raw"] = leave_tabs.value
+                                        ui.navigate.to("/leaves")
                                     except Exception as e:
                                         _handle_api_error(e)
                                 _ask_confirm("Xác nhận hủy đơn",
@@ -1392,8 +1552,11 @@ async def leaves_page():
                             ui.button("Hủy đơn", icon="delete_forever", on_click=_cancel_rejected).classes("bg-gray-500 text-white text-sm")
 
                         # Hủy
-
-                        if (is_owner or user_role == "admin") and status != "cancelled" and api.has_feature("leaves.cancel"):
+                        # GĐ có toàn quyền huỷ đơn của chính mình bất cứ lúc nào — luôn hiện nút
+                        # dù feature "leaves.cancel" chưa được cấp qua cấu hình phân quyền.
+                        _can_cancel_now = (is_owner or user_role == "admin") and status not in ("cancelled", "rejected") \
+                                and (api.has_feature("leaves.cancel") or (is_owner and user_role == "giam_doc"))
+                        if _can_cancel_now:
 
                             def _cancel_open(l=lid, cur_status=status):
                                 async def _do_cancel(_l=l, _st=cur_status):
@@ -1401,10 +1564,11 @@ async def leaves_page():
                                         await asyncio.to_thread(api.patch, f"/api/leaves/{_l}/cancel", {})
                                         detail_drawer.hide()
                                         ui.notify("Đã hủy đơn thành công", type="warning")
-                                        if _st == "pending_tong_hop":
-                                            _nav_pending_th()
-                                        else:
-                                            _nav_pending()
+                                        # Quay lại đúng tab đang đứng — không ép theo trạng thái đơn
+                                        # (trước đây pending_tong_hop luôn nhảy sang "Chờ xác nhận TT"
+                                        # dù đang xem từ Dashboard hay tab khác).
+                                        app.storage.user["_leaves_goto_raw"] = leave_tabs.value
+                                        ui.navigate.to("/leaves")
                                     except Exception as e:
                                         _handle_api_error(e)
                                 _ask_confirm("Xác nhận hủy đơn",
@@ -1415,11 +1579,14 @@ async def leaves_page():
 
 
 
-                        # Rít đơn (recall) → chủ nhân yêu cầu rút đơn đã duyệt
+                        # Rút đơn (recall) → chủ nhân yêu cầu rút đơn đã duyệt.
+                        # Nếu đã có nút "Hủy đơn" (tự xử lý ngay) thì không cần thêm bước này nữa
+                        # vì kết quả giống nhau (đơn chuyển sang cancelled).
 
                         has_recall = api.has_feature("leaves.recall")
 
-                        if is_owner and status == "approved" and not leave.get("recall_reason") and has_recall:
+                        if is_owner and status == "approved" and not leave.get("recall_reason") \
+                                and has_recall and not _can_cancel_now:
 
                             def _open_recall(l=lid):
 
@@ -1431,7 +1598,7 @@ async def leaves_page():
 
                                         detail_drawer.hide()
 
-                                        ui.notify("Để gửi yêu cầu rút → chờ Phòng Tổng hợp xác nhận", type="info")
+                                        ui.notify("Đã gửi yêu cầu rút → chờ Phòng Tổng hợp xác nhận", type="info")
 
                                         ui.navigate.to("/leaves")
 
@@ -1445,7 +1612,7 @@ async def leaves_page():
 
 
 
-                            ui.button("Rít đơn", icon="undo", on_click=_open_recall).classes("bg-orange-100 text-orange-800 text-sm")
+                            ui.button("Rút đơn", icon="undo", on_click=_open_recall).classes("bg-orange-100 text-orange-800 text-sm")
 
 
 
@@ -1461,7 +1628,7 @@ async def leaves_page():
 
                                     detail_drawer.hide()
 
-                                    ui.notify("Để xác nhận rút đơn", type="positive")
+                                    ui.notify("Đã xác nhận rút đơn", type="positive")
 
                                     ui.navigate.to("/leaves")
 
@@ -1493,9 +1660,11 @@ async def leaves_page():
 
                     with ui.column().classes("gap-0"):
 
-                        ui.label("Lịch sử thao t→c").classes("font-bold text-base")
+                        ui.label("Lịch sử thao tác").classes("font-bold text-base")
 
                         ui.label(leave.get("staff_name", "")).classes("text-gray-300 text-sm")
+
+                _load_error = False
 
                 try:
 
@@ -1504,12 +1673,19 @@ async def leaves_page():
                 except Exception:
 
                     logs = []
+                    _load_error = True
 
-                if not logs:
+                if _load_error:
 
                     with ui.column().classes("p-6"):
 
-                        ui.label("Chưa có lịch sử thao t→c.").classes("text-gray-400 text-sm")
+                        ui.label("Không tải được lịch sử — vui lòng thử lại.").classes("text-red-500 text-sm")
+
+                elif not logs:
+
+                    with ui.column().classes("p-6"):
+
+                        ui.label("Chưa có lịch sử thao tác.").classes("text-gray-400 text-sm")
 
                 else:
 
@@ -1601,7 +1777,7 @@ async def leaves_page():
 
                 other_ids = [i for i in _ids if i not in th_ids]
 
-
+                ok_count = 0
 
                 for i in other_ids:
 
@@ -1616,6 +1792,12 @@ async def leaves_page():
                         elif st == "pending_gd":
 
                             await asyncio.to_thread(api.put, f"/api/leaves/{i}/gd-review", {"action": "approve"})
+
+                        else:
+
+                            continue
+
+                        ok_count += 1
 
                     except Exception:
 
@@ -1632,12 +1814,20 @@ async def leaves_page():
                                 {"action": "forward",
                                  "gd_approver_id": lv_data.get("gd_approver_id"),
                                  "comment": None})
+                            ok_count += 1
                         except Exception:
                             pass
 
                 _sel.clear()
-                ui.notify(f"Đã phê duyệt {len(_ids)} đơn thành công!", type="positive", timeout=3000)
-                _nav_pending_th() if th_ids else _nav_pending()
+                fail_count = len(_ids) - ok_count
+                if fail_count:
+                    ui.notify(f"Phê duyệt {ok_count}/{len(_ids)} đơn — {fail_count} đơn lỗi (có thể đã bị xử lý trước đó), vui lòng kiểm tra lại.",
+                               type="warning", timeout=5000)
+                else:
+                    ui.notify(f"Đã phê duyệt {ok_count} đơn thành công!", type="positive", timeout=3000)
+                # _nav_pending()/_nav_pending_th() giờ đều "ở nguyên tab đang đứng"
+                # (giống hệt nhau) — không còn cần phân nhánh theo th_ids nữa.
+                _nav_pending()
 
 
 
@@ -1663,6 +1853,8 @@ async def leaves_page():
 
             async def _cb(reason):
 
+                ok_count = 0
+
                 for i in ids:
 
                     st = lv_map.get(i, {}).get("status", "")
@@ -1687,20 +1879,32 @@ async def leaves_page():
 
                                 {"action": "reject", "comment": reason})
 
+                        else:
+
+                            continue
+
+                        ok_count += 1
+
                     except Exception:
 
                         pass
 
                 _sel.clear()
 
-                ui.notify(f"Đã từ chối {len(ids)} đơn.", type="warning", timeout=3000)
+                fail_count = len(ids) - ok_count
 
-                # Có th_ids → từ TH tab, không → từ KSV/GĐ tab
-                th_ids_rej = [i for i in ids if lv_map.get(i, {}).get("status") == "pending_tong_hop"]
-                if th_ids_rej:
-                    _nav_pending_th()
+                if fail_count:
+
+                    ui.notify(f"Từ chối {ok_count}/{len(ids)} đơn — {fail_count} đơn lỗi (có thể đã bị xử lý trước đó), vui lòng kiểm tra lại.",
+                               type="warning", timeout=5000)
+
                 else:
-                    _nav_pending()
+
+                    ui.notify(f"Đã từ chối {ok_count} đơn.", type="warning", timeout=3000)
+
+                # _nav_pending()/_nav_pending_th() giờ đều "ở nguyên tab đang đứng"
+                # (giống hệt nhau) — không còn cần phân nhánh theo trạng thái đơn nữa.
+                _nav_pending()
 
             _reject_cb[0] = _cb
 
@@ -1719,8 +1923,9 @@ async def leaves_page():
 
         with ui.row().classes("gap-2 mb-4 items-center flex-wrap"):
 
-            create_btn = ui.button("+ Tạo đơn", icon="add", on_click=create_dialog.open).classes("bg-red-700 text-white")
+            create_btn = ui.button("Tạo đơn", icon="add", on_click=_c_open).classes("bg-red-700 text-white text-base")
 
+            # Không hardcode role — phân quyền hoàn toàn theo menu "Phân quyền theo nhóm".
             create_btn.set_visibility(api.has_feature("leaves.create"))
 
             ab = ui.button("Phê duyệt", icon="check_circle",
@@ -1875,8 +2080,23 @@ async def leaves_page():
 
                     # Không có tick → xuất theo tab + khoảng ngày filter
 
+                    def _dmy_to_iso(s):
+                        """DD/MM/YYYY → YYYY-MM-DD (rỗng nếu không hợp lệ)."""
+                        if not s or "/" not in s:
+                            return ""
+                        try:
+                            d, m, y = s.split("/")
+                            return f"{y}-{m}-{d}"
+                        except Exception:
+                            return ""
+
+                    _dp: dict = {}
+
                     if t_pending_th and _tab_match(t_pending_th, cur):
                         # Tab "Chờ xác nhận TT": chỉ xuất pending_tong_hop
+                        if not _pending_th_list:
+                            ui.notify("Không có đơn nào để xuất", type="warning")
+                            return
                         th_ids_str = ",".join(str(lv["id"]) for lv in _pending_th_list)
                         fname = _make_fname("don_cho_xac_nhan_tt")
                         content = await asyncio.to_thread(
@@ -1887,6 +2107,23 @@ async def leaves_page():
                         return
 
                     elif _tab_match(t_pending, cur):
+
+                        if _is_dual_role:
+                            # Dual role: tab "Chờ duyệt" chỉ hiện đơn KSV phòng mình
+                            # (pending_tong_hop đã có tab "Chờ xác nhận TT" riêng) —
+                            # export phải khớp đúng danh sách đang hiển thị, không
+                            # dùng scope="pending" (backend gộp cả 2 loại cho dual role).
+                            if not _pending_ksv_list:
+                                ui.notify("Không có đơn nào để xuất", type="warning")
+                                return
+                            ksv_ids_str = ",".join(str(lv["id"]) for lv in _pending_ksv_list)
+                            fname = _make_fname("don_cho_duyet")
+                            content = await asyncio.to_thread(
+                                api.download, "/api/leaves/export",
+                                params={"scope": "all", "ids": ksv_ids_str},
+                            )
+                            ui.download(content, fname)
+                            return
 
                         scp  = "pending"
 
@@ -1912,6 +2149,8 @@ async def leaves_page():
 
                         fname = _make_fname("don_khai_bao_ho", fv, tv)
 
+                        _dp = {"date_from": _dmy_to_iso(fv), "date_to": _dmy_to_iso(tv)}
+
                     elif _tab_match(t_dashboard, cur):
 
                         scp  = "all" if can_all else "mine"
@@ -1919,6 +2158,8 @@ async def leaves_page():
                         fv, tv = ((_f_from.value or "") if _f_from else ""), ((_f_to.value or "") if _f_to else "")
 
                         fname = _make_fname("tat_ca_don_nghi_phep", fv, tv)
+
+                        _dp = {"date_from": _dmy_to_iso(fv), "date_to": _dmy_to_iso(tv)}
 
                     else:
 
@@ -1928,7 +2169,7 @@ async def leaves_page():
 
                     content = await asyncio.to_thread(
 
-                        api.download, "/api/leaves/export", params={"scope": scp},
+                        api.download, "/api/leaves/export", params={"scope": scp, **_dp},
 
                     )
 
@@ -1977,15 +2218,19 @@ async def leaves_page():
 
             if True:
                 with ui.row().classes("w-full justify-center items-center gap-2 mt-3"):
-                    ui.button("«", on_click=lambda: _render(1)).props("flat dense").classes("text-gray-600")
-                    ui.button("‹", on_click=lambda: _render(state["page"]-1)).props("flat dense").classes("text-gray-600")
                     _pg_lbl = ui.label(f"Trang {state['page']} / {total_pages}   ({total} đơn)").classes("text-xs text-gray-500 px-2")
-                    ui.button("›", on_click=lambda: (_render(state["page"]+1), _pg_lbl.set_text(f"Trang {state['page']} / {total_pages}   ({total} đơn)"))).props("flat dense").classes("text-gray-600")
-                    ui.button("»", on_click=lambda: _render(total_pages)).props("flat dense").classes("text-gray-600")
+
+                    def _goto(p):
+                        _render(p)
+                        _pg_lbl.set_text(f"Trang {state['page']} / {total_pages}   ({total} đơn)")
+
+                    ui.button("«", on_click=lambda: _goto(1)).props("flat dense").classes("text-gray-600")
+                    ui.button("‹", on_click=lambda: _goto(state["page"]-1)).props("flat dense").classes("text-gray-600")
+                    ui.button("›", on_click=lambda: _goto(state["page"]+1)).props("flat dense").classes("text-gray-600")
+                    ui.button("»", on_click=lambda: _goto(total_pages)).props("flat dense").classes("text-gray-600")
                     def _go_page(e):
                         try:
-                            _render(int(e.value))
-                            _pg_lbl.set_text(f"Trang {state['page']} / {total_pages}   ({total} đơn)")
+                            _goto(int(e.value))
                         except Exception:
                             pass
                     ui.input("Đến trang", on_change=_go_page).props("dense outlined").classes("w-20 text-xs")
@@ -2181,27 +2426,39 @@ async def leaves_page():
             _can_approve = user_role not in ("chuyen_vien",)
 
             # Tách pending thành 2 danh sách: duyệt phòng (KSV) và xác nhận TT (TH)
+            # Đơn của GĐ đã tự động approved cũng hiện ở đây để TH "xác nhận đã biết"
+            # (thông báo, không phải điều kiện duyệt).
             _pending_ksv_list = [lv for lv in pending_leaves if lv.get("status") == "pending_ksv"]
-            _pending_th_list  = [lv for lv in pending_leaves if lv.get("status") == "pending_tong_hop"]
-            _is_dual_role     = bool(_pending_th_list) and user_role in ("truong_phong", "pho_phong", "hau_kiem_vien")
+            _pending_th_list  = [lv for lv in pending_leaves if lv.get("status") == "pending_tong_hop"
+                                 or (lv.get("status") == "approved" and lv.get("staff_role") == "giam_doc"
+                                     and not lv.get("tong_hop_approver_id"))]
+            _is_dual_role     = api.has_feature("leaves.forward_th") and user_role in ("truong_phong", "pho_phong", "hau_kiem_vien")
 
+            # name= cố định tách khỏi label= động — leave_tabs.value chính là "name"
+            # (Quasar QTabs v-model), nếu để label động làm luôn name thì mỗi lần số
+            # lượng đơn đổi (sau khi duyệt/từ chối...) sẽ không so khớp lại được tab
+            # đang đứng (_tab_match), khiến bị bật ngược về Dashboard.
             if _can_approve:
                 if _is_dual_role:
                     # PP/TP Tổng hợp: 2 tab riêng
-                    t_pending    = ui.tab(f"Chờ duyệt ({len(_pending_ksv_list)})") if _pending_ksv_list or True else None
-                    t_pending_th = ui.tab(f"Chờ xác nhận TT ({len(_pending_th_list)})")
+                    t_pending    = ui.tab(name="pending", label=f"Chờ duyệt ({len(_pending_ksv_list)})") if _pending_ksv_list or True else None
+                    t_pending_th = ui.tab(name="pending_th", label=f"Chờ xác nhận TT ({len(_pending_th_list)})")
                 else:
-                    t_pending    = ui.tab(f"Chờ duyệt ({len(pending_leaves)})")
+                    t_pending    = ui.tab(name="pending", label=f"Chờ duyệt ({len(pending_leaves)})")
                     t_pending_th = None
             else:
                 t_pending    = None
                 t_pending_th = None
 
-            t_dept    = ui.tab(f"Phòng tôi ({len(dept_leaves)})") if (can_dept and not _has_dash) else None
+            t_dept    = ui.tab(name="dept", label=f"Phòng tôi ({len(dept_leaves)})") if (can_dept and not _has_dash) else None
 
             t_declared = None  # gộp vào Dashboard
 
+            # Lịch nghỉ phép gộp chung với quyền Tạo đơn — ai tạo được đơn thì xem được lịch,
+            # không cần cấu hình phân quyền riêng.
             t_cal     = ui.tab("Lịch nghỉ phép")
+            if not api.has_feature("leaves.create"):
+                t_cal.set_visibility(False)
 
             t_deleg   = ui.tab("Ủy quyền GĐ") if can_delegation else None
 
@@ -2215,7 +2472,8 @@ async def leaves_page():
 
 
 
-        _goto = app.storage.user.pop("_leaves_goto", None)
+        _goto     = app.storage.user.pop("_leaves_goto", None)
+        _goto_raw = app.storage.user.pop("_leaves_goto_raw", None)
 
         if _goto == "khai_bao_ho" and t_direct:
             _default_tab = t_direct
@@ -2223,19 +2481,27 @@ async def leaves_page():
             _default_tab = t_pending
         elif _goto == "pending_th" and t_pending_th:
             _default_tab = t_pending_th
+        elif _goto_raw and any(
+            _tab_match(_t, _goto_raw)
+            for _t in (t_dashboard, t_mine, t_pending, t_pending_th, t_dept, t_direct, t_cal, t_quota, t_stats, t_deleg, t_holiday)
+        ):
+            _default_tab = next(
+                _t for _t in (t_dashboard, t_mine, t_pending, t_pending_th, t_dept, t_direct, t_cal, t_quota, t_stats, t_deleg, t_holiday)
+                if _tab_match(_t, _goto_raw)
+            )
         else:
             _default_tab = t_dashboard if t_dashboard else (t_mine or t_pending or t_cal)
 
+        # Nguyên tắc chung: mọi hành động (duyệt/từ chối/rút đơn/bulk...) xong đều ở
+        # nguyên tab đang đứng, trừ khi người dùng tự bấm sang tab khác — không ép
+        # về "Chờ duyệt"/"Chờ xác nhận TT" như trước nữa (kể cả khi thao tác từ
+        # Dashboard hay bất kỳ tab nào khác).
         def _nav_pending():
-            app.storage.user["_leaves_goto"] = "pending"
+            app.storage.user["_leaves_goto_raw"] = leave_tabs.value
             ui.navigate.to("/leaves")
 
         def _nav_pending_th():
-            # Nếu user có tab pending_th riêng thì về đó, không thì về pending
-            if t_pending_th is not None:
-                app.storage.user["_leaves_goto"] = "pending_th"
-            else:
-                app.storage.user["_leaves_goto"] = "pending"
+            app.storage.user["_leaves_goto_raw"] = leave_tabs.value
             ui.navigate.to("/leaves")
 
         def _draw_pending_with_filter(src: list):
@@ -2251,12 +2517,12 @@ async def leaves_page():
                 with ui.row().classes("gap-3 flex-wrap items-end"):
                     _pf_name   = ui.input("Tìm theo tên").props("dense clearable outlined").classes("w-40")
                     _pf_dept   = ui.select(_dept_opts, value="", label="Phòng").props("dense outlined").classes("w-36") if len(_dept_opts) > 1 else None
-                    with ui.input("Từ ngày").props("dense clearable readonly outlined").classes("w-32") as _pf_from:
+                    with ui.input("Ngày nghỉ từ").props("dense clearable readonly outlined").classes("w-32") as _pf_from:
                         with _pf_from.add_slot("append"):
                             ui.icon("event").classes("cursor-pointer").on("click", lambda: _pf_cal_from.open())
                         with ui.menu() as _pf_cal_from:
                             ui.date(mask="DD/MM/YYYY").props(f'{_OPT_ALL} first-day-of-week="1"').bind_value(_pf_from)
-                    with ui.input("Đến ngày").props("dense clearable readonly outlined").classes("w-32") as _pf_to:
+                    with ui.input("đến ngày").props("dense clearable readonly outlined").classes("w-32") as _pf_to:
                         with _pf_to.add_slot("append"):
                             ui.icon("event").classes("cursor-pointer").on("click", lambda: _pf_cal_to.open())
                         with ui.menu() as _pf_cal_to:
@@ -2284,11 +2550,17 @@ async def leaves_page():
                     if nq and nq not in (lv.get("staff_name") or "").lower(): continue
                     if dq and (lv.get("department_name") or lv.get("dept_name") or "") != dq: continue
                     if fd or td:
-                        s = _pf_parse(lv.get("start_date", ""))
-                        e = _pf_parse(lv.get("end_date", ""))
-                        if s and e:
-                            if fd and e < fd: continue
-                            if td and s > td: continue
+                        sd = lv.get("spread_dates")
+                        dates = [d for d in (_pf_parse(x) for x in sd) if d] if sd else []
+                        if dates:
+                            if not any((not fd or d >= fd) and (not td or d <= td) for d in dates):
+                                continue
+                        else:
+                            s = _pf_parse(lv.get("start_date", ""))
+                            e = _pf_parse(lv.get("end_date", ""))
+                            if s and e:
+                                if fd and e < fd: continue
+                                if td and s > td: continue
                     filtered.append(lv)
                 _pf_body.clear()
                 with _pf_body:
@@ -2308,6 +2580,26 @@ async def leaves_page():
 
             with _pf_body:
                 _draw_table_paged(src, show_name=True)
+
+        # Người dùng bấm sang tab nào thì tự nạp lại dữ liệu mới nhất của tab đó
+        # đúng 1 lần ngay sau cú bấm (toàn bộ dữ liệu trang chỉ fetch 1 lần lúc
+        # build, xem context ở trên) — dùng _leaves_goto_raw để reload xong quay
+        # lại đúng tab vừa chọn.
+        # Lưu ý: ui.tab_panels(leave_tabs, value=_default_tab) tự set value lúc
+        # MOUNT trang cũng kích hoạt on_value_change y hệt người dùng bấm — phải
+        # bỏ qua đúng 1 lần gọi đầu tiên đó, nếu không sẽ tạo vòng lặp reload vô
+        # hạn ngay từ lúc mở trang.
+        _tab_mounted = [False]
+
+        def _on_leave_tab_change():
+            _sel.clear()
+            if not _tab_mounted[0]:
+                _tab_mounted[0] = True
+                return
+            app.storage.user["_leaves_goto_raw"] = leave_tabs.value
+            ui.navigate.to("/leaves")
+
+        leave_tabs.on_value_change(_on_leave_tab_change)
 
         with ui.tab_panels(leave_tabs, value=_default_tab).classes("w-full"):
 
@@ -2371,6 +2663,8 @@ async def leaves_page():
 
                                     ("Đã duyệt", by_status.get("approved", 0), "bg-green-50 border-green-200 text-green-700"),
 
+                                    ("Khai báo hộ", by_status.get("direct", 0), "bg-purple-50 border-purple-200 text-purple-700"),
+
                                 ]
 
                                 for lbl, cnt, cls in _cards:
@@ -2399,7 +2693,7 @@ async def leaves_page():
 
 
 
-                    if can_all and all_leaves:
+                    if can_all:
 
                         ui.separator().classes("my-4")
 
@@ -2438,7 +2732,7 @@ async def leaves_page():
                                     "normal": "Thường",
                                 }, value="", label="Loại đơn").classes("w-36").props("dense")
 
-                                with ui.input("Từ ngày").classes("w-36").props("dense clearable readonly") as _f_from:
+                                with ui.input("Ngày nghỉ từ").classes("w-36").props("dense clearable readonly") as _f_from:
 
                                     with _f_from.add_slot("append"):
 
@@ -2448,7 +2742,7 @@ async def leaves_page():
 
                                         ui.date(mask="DD/MM/YYYY").props(f'{_OPT_ALL} first-day-of-week="1"').bind_value(_f_from)
 
-                                with ui.input("Đến ngày").classes("w-36").props("dense clearable readonly") as _f_to:
+                                with ui.input("đến ngày").classes("w-36").props("dense clearable readonly") as _f_to:
 
                                     with _f_to.add_slot("append"):
 
@@ -2579,19 +2873,31 @@ async def leaves_page():
 
                                 if from_d or to_d:
 
-                                    lv_start = _parse_date(lv.get("start_date", ""))
+                                    sd = lv.get("spread_dates")
 
-                                    lv_end   = _parse_date(lv.get("end_date", ""))
+                                    _dates = [d for d in (_parse_date(x) for x in sd) if d] if sd else []
 
-                                    if lv_start and lv_end:
+                                    if _dates:
 
-                                        if from_d and lv_end < from_d:
-
-                                            continue
-
-                                        if to_d and lv_start > to_d:
+                                        if not any((not from_d or d >= from_d) and (not to_d or d <= to_d) for d in _dates):
 
                                             continue
+
+                                    else:
+
+                                        lv_start = _parse_date(lv.get("start_date", ""))
+
+                                        lv_end   = _parse_date(lv.get("end_date", ""))
+
+                                        if lv_start and lv_end:
+
+                                            if from_d and lv_end < from_d:
+
+                                                continue
+
+                                            if to_d and lv_start > to_d:
+
+                                                continue
 
                                 filtered.append(lv)
 
@@ -2687,7 +2993,7 @@ async def leaves_page():
                                             _sf_dept_opts[dn] = dn
                                     _sf_dept = ui.select(_sf_dept_opts, value="", label="Phòng").classes("w-40").props("dense") if len(_sf_dept_opts) > 2 else None
 
-                                    with ui.input("Từ ngày").classes("w-36").props("dense clearable readonly") as _sf_from:
+                                    with ui.input("Ngày nghỉ từ").classes("w-36").props("dense clearable readonly") as _sf_from:
 
                                         with _sf_from.add_slot("append"):
 
@@ -2697,7 +3003,7 @@ async def leaves_page():
 
                                             ui.date(mask="DD/MM/YYYY").props(f'{_OPT_ALL} first-day-of-week="1"').bind_value(_sf_from)
 
-                                    with ui.input("Đến ngày").classes("w-36").props("dense clearable readonly") as _sf_to:
+                                    with ui.input("đến ngày").classes("w-36").props("dense clearable readonly") as _sf_to:
 
                                         with _sf_to.add_slot("append"):
 
@@ -2805,15 +3111,27 @@ async def leaves_page():
 
                                     if fd or td:
 
-                                        s = _parse_sf_date(lv.get("start_date",""))
+                                        sd = lv.get("spread_dates")
 
-                                        e = _parse_sf_date(lv.get("end_date",""))
+                                        _dates = [d for d in (_parse_sf_date(x) for x in sd) if d] if sd else []
 
-                                        if s and e:
+                                        if _dates:
 
-                                            if fd and e < fd: continue
+                                            if not any((not fd or d >= fd) and (not td or d <= td) for d in _dates):
 
-                                            if td and s > td: continue
+                                                continue
+
+                                        else:
+
+                                            s = _parse_sf_date(lv.get("start_date",""))
+
+                                            e = _parse_sf_date(lv.get("end_date",""))
+
+                                            if s and e:
+
+                                                if fd and e < fd: continue
+
+                                                if td and s > td: continue
 
                                     filtered.append(lv)
 
@@ -2865,9 +3183,9 @@ async def leaves_page():
 
                             _make_section_filter(dept_leaves, "Phòng tôi", True)
 
-                        elif my_leaves:
+                        else:
 
-                            # Chỉ hiện "Của tôi" nếu không có "Phòng tôi" (không có can_dept)
+                            # Luôn hiện "Của tôi" kể cả khi chưa có đơn nào
 
                             ui.separator().classes("my-4")
 
@@ -2932,9 +3250,9 @@ async def leaves_page():
 
                                           label="Năm", value=_today.year).classes("w-28")
 
-                    cal_month = ui.select({m: f"Thơng {m:02d}" for m in range(1, 13)},
+                    cal_month = ui.select({m: f"Tháng {m:02d}" for m in range(1, 13)},
 
-                                          label="Thơng", value=_today.month).classes("w-36")
+                                          label="Tháng", value=_today.month).classes("w-36")
 
 
 
@@ -2942,9 +3260,11 @@ async def leaves_page():
 
                     "annual":   "bg-blue-100 text-blue-800",
 
-                    "sick":     "bg-orange-100 text-orange-800",
+                    "bat_buoc": "bg-red-100 text-red-800",
 
-                    "personal": "bg-purple-100 text-purple-800",
+                    "thai_san": "bg-orange-100 text-orange-800",
+
+                    "bao_hiem": "bg-purple-100 text-purple-800",
 
                     "other":    "bg-gray-100 text-gray-600",
 
@@ -2954,9 +3274,11 @@ async def leaves_page():
 
                     "annual":   "#1565C0",
 
-                    "sick":     "#E65100",
+                    "bat_buoc": "#C62828",
 
-                    "personal": "#6A1B9A",
+                    "thai_san": "#E65100",
+
+                    "bao_hiem": "#6A1B9A",
 
                     "other":    "#546E7A",
 
@@ -3160,7 +3482,7 @@ async def leaves_page():
                             elif isinstance(v, str) and v:
                                 _d_sel.append(v)
 
-                        d_dates = ui.date(value=None, on_change=_on_d_change).props(
+                        d_dates = ui.date(value=[], on_change=_on_d_change).props(
                             f"multiple mask='YYYY-MM-DD' no-header first-day-of-week='1' {_OPT_ALL}"
                         ).classes("w-full")
 
@@ -3205,7 +3527,8 @@ async def leaves_page():
                                 if d_note.value:
                                     _msg += f" — {d_note.value}"
                                 app.storage.general["_deleg_broadcast"] = {
-                                    "msg": _msg, "ts": _dt_bc.now().isoformat()
+                                    "msg": _msg, "ts": _dt_bc.now().isoformat(),
+                                    "end_date": end_date,
                                 }
 
                                 ui.navigate.to("/leaves")
@@ -3224,7 +3547,17 @@ async def leaves_page():
 
 
 
-                    ui.button("+ Tạo ủy quyền", on_click=deleg_dialog.open).classes("bg-red-700 text-white mb-4")
+                    def _deleg_open():
+                        # Reset lại toàn bộ — nếu không, lần mở sau khi bấm "Hủy" dở
+                        # dang vẫn còn giữ GĐ/PGĐ/ngày/ghi chú của lần trước.
+                        d_gd.value = None
+                        d_pgd.value = None
+                        _d_sel.clear()
+                        d_dates.value = []
+                        d_note.value = ""
+                        deleg_dialog.open()
+
+                    ui.button("+ Tạo ủy quyền", on_click=_deleg_open).classes("bg-red-700 text-white mb-4")
 
 
 
@@ -3234,15 +3567,30 @@ async def leaves_page():
 
                     else:
 
-                        with ui.column().classes("w-full gap-0"):
+                        _dg_hdr = "font-semibold text-red-800 text-sm shrink-0 border-r border-red-200 pr-2 mr-2"
+                        _dg_c   = "text-sm shrink-0 border-r border-gray-200 pr-2 mr-2"
 
-                            with ui.row().classes("w-full bg-red-50 border-b border-red-100 px-4 py-2 gap-3"):
+                        with ui.column().classes("w-full gap-0 border border-gray-200 rounded overflow-hidden"):
 
-                                for hdr in ["Giám đốc", "PGĐ được ủy quyền", "Từ ngày", "Đến ngày", "Ghi chú", "Trạng thái", ""]:
+                            with ui.row().classes("w-full bg-red-50 border-b border-red-100 px-4 py-2 gap-0 items-center"):
 
-                                    ui.label(hdr).classes("font-semibold text-red-800 text-sm flex-1")
+                                ui.label("STT").classes(f"{_dg_hdr} w-10 text-center")
 
-                            for d in delegations:
+                                ui.label("Giám đốc").classes(f"{_dg_hdr} w-32")
+
+                                ui.label("PGĐ được ủy quyền").classes(f"{_dg_hdr} w-36")
+
+                                ui.label("Từ ngày").classes(f"{_dg_hdr} w-24 text-center")
+
+                                ui.label("Đến ngày").classes(f"{_dg_hdr} w-24 text-center")
+
+                                ui.label("Ghi chú").classes(f"{_dg_hdr} flex-1")
+
+                                ui.label("Trạng thái").classes(f"{_dg_hdr} w-32 text-center")
+
+                                ui.label("").classes("w-16 shrink-0")
+
+                            for _di, d in enumerate(delegations, 1):
 
                                 today_str = __import__("datetime").date.today().isoformat()
 
@@ -3252,19 +3600,21 @@ async def leaves_page():
 
                                 badge_txt = "đang hiệu lực" if is_eff else "Không hiệu lực"
 
-                                with ui.row().classes("w-full bg-white border-b border-gray-100 px-4 py-2 gap-3 items-center"):
+                                with ui.row().classes("w-full bg-white border-b border-gray-100 px-4 py-2 gap-0 items-center hover:bg-red-50"):
 
-                                    ui.label(d.get("giam_doc_name", "")).classes("text-sm flex-1")
+                                    ui.label(str(_di)).classes(f"{_dg_c} w-10 text-center")
 
-                                    ui.label(d.get("pho_giam_doc_name", "")).classes("text-sm flex-1")
+                                    ui.label(d.get("giam_doc_name", "")).classes(f"{_dg_c} w-32 truncate")
 
-                                    ui.label(d.get("start_date", "")[:10]).classes("text-sm flex-1")
+                                    ui.label(d.get("pho_giam_doc_name", "")).classes(f"{_dg_c} w-36 truncate")
 
-                                    ui.label(d.get("end_date", "")[:10]).classes("text-sm flex-1")
+                                    ui.label(d.get("start_date", "")[:10]).classes(f"{_dg_c} w-24 text-center")
 
-                                    ui.label(d.get("note") or "→").classes("text-xs text-gray-500 flex-1")
+                                    ui.label(d.get("end_date", "")[:10]).classes(f"{_dg_c} w-24 text-center")
 
-                                    ui.label(badge_txt).classes(f"text-xs px-2 py-0.5 rounded {badge_cls} flex-1")
+                                    ui.label(d.get("note") or "→").classes(f"{_dg_c} flex-1 text-gray-500")
+
+                                    ui.label(badge_txt).classes(f"text-xs px-2 py-0.5 rounded {badge_cls} w-32 shrink-0 border-r border-gray-200 mr-2 text-center")
 
                                     if d["is_active"]:
 
@@ -3274,7 +3624,7 @@ async def leaves_page():
 
                                                 await asyncio.to_thread(api.patch, f"/api/delegations/{did}/deactivate", {})
 
-                                                ui.notify("Để hủy ủy quyền", type="warning")
+                                                ui.notify("Đã hủy ủy quyền", type="warning")
 
                                                 ui.navigate.to("/leaves")
 
@@ -3282,11 +3632,11 @@ async def leaves_page():
 
                                                 _handle_api_error(e)
 
-                                        ui.button("Hủy", on_click=do_deactivate).classes("text-xs bg-gray-100 text-gray-600")
+                                        ui.button("Hủy", on_click=do_deactivate).classes("text-xs bg-gray-100 text-gray-600 w-16 shrink-0")
 
                                     else:
 
-                                        ui.label("").classes("flex-1")
+                                        ui.label("").classes("w-16 shrink-0")
 
 
 
@@ -3306,7 +3656,7 @@ async def leaves_page():
 
                         ).classes("w-28")
 
-                        ui.button("+ Thôm ngày lễ", icon="add",
+                        ui.button("+ Thêm ngày lễ", icon="add",
 
                                   on_click=lambda: add_holiday_dialog.open()).classes("bg-red-700 text-white")
 
@@ -3318,9 +3668,9 @@ async def leaves_page():
 
                     with ui.dialog() as add_holiday_dialog, ui.card().classes("p-6 w-80"):
 
-                        ui.label("Thôm ngày lễ").classes("text-lg font-bold text-red-900 mb-4")
+                        ui.label("Thêm ngày lễ").classes("text-lg font-bold text-red-900 mb-4")
 
-                        h_date_in = ui.date(value="").props("label='Ngày lễ' mask='YYYY-MM-DD' first-day-of-week='1'").classes("w-full")
+                        h_date_in = ui.date(value="").props(f"label='Ngày lễ' mask='YYYY-MM-DD' first-day-of-week='1' {_VI_LOCALE}").classes("w-full")
 
                         h_name_in = ui.input("Tên ngày lễ").classes("w-full mt-2")
 
@@ -3350,7 +3700,7 @@ async def leaves_page():
 
                                 add_holiday_dialog.close()
 
-                                ui.notify("Để thôm ngày lễ!", type="positive")
+                                ui.notify("Đã thêm ngày lễ!", type="positive")
 
                                 await _reload_holidays()
 
@@ -3360,9 +3710,14 @@ async def leaves_page():
 
 
 
+                        def _holiday_cancel():
+                            h_date_in.value = ""
+                            h_name_in.value = ""
+                            add_holiday_dialog.close()
+
                         with ui.row().classes("w-full justify-end gap-2 mt-4"):
 
-                            ui.button("Hủy", on_click=add_holiday_dialog.close).classes("text-gray-500")
+                            ui.button("Hủy", on_click=_holiday_cancel).classes("text-gray-500")
 
                             ui.button("Thêm", on_click=do_add_holiday).classes("bg-red-700 text-white")
 
@@ -3390,7 +3745,7 @@ async def leaves_page():
 
                             if not holidays_data:
 
-                                ui.label("Chưa có ngày lễ n→o trong năm này.").classes("text-gray-400 text-sm mt-4")
+                                ui.label("Chưa có ngày lễ nào trong năm này.").classes("text-gray-400 text-sm mt-4")
 
                                 return
 
@@ -3418,7 +3773,7 @@ async def leaves_page():
 
                                                 await asyncio.to_thread(api.delete, f"/api/admin/holidays/{hid}")
 
-                                                ui.notify("Để x→a ngày lễ", type="warning")
+                                                ui.notify("Đã xóa ngày lễ", type="warning")
 
                                                 await _reload_holidays()
 
@@ -3446,7 +3801,7 @@ async def leaves_page():
 
                     _today_year = _dt_mod.date.today().year
 
-                    with ui.row().classes("gap-3 mb-4 items-center"):
+                    with ui.row().classes("gap-3 mb-4 items-end flex-nowrap"):
 
                         q_year_sel = ui.select(
 
@@ -3454,11 +3809,176 @@ async def leaves_page():
 
                             label="Năm", value=_today_year,
 
-                        ).classes("w-28")
+                        ).classes("w-28 shrink-0")
 
-
+                        if api.has_feature("leaves.quota_admin"):
+                            ui.upload(
+                                label="Nhập file hạn mức",
+                                on_upload=lambda e: asyncio.create_task(_qi_on_upload(e)),
+                                auto_upload=True,
+                            ).props('accept=".xlsx" dense flat hide-upload-btn').classes(
+                                "text-gray-700 w-56 shrink-0"
+                            ).tooltip(
+                                "File Excel có cột: STT, Họ và tên, Mã cán bộ, Phòng, Chức vụ, Hạn mức, Đã nghỉ"
+                            )
+                            ui.button("Lịch sử nhập", icon="history",
+                                      on_click=lambda: asyncio.ensure_future(_qi_open_history())
+                                      ).props("dense outline").classes("text-gray-700 shrink-0")
 
                     quota_area = ui.column().classes("w-full gap-0")
+
+                    # ── Nhập file hạn mức: preview trước khi áp dụng ─────────────
+                    _qi_state: dict = {"filename": "", "rows": []}
+                    _qi_checks: dict = {}
+
+                    with ui.dialog() as qi_preview_dialog, ui.card().classes("p-5 w-full max-w-4xl"):
+                        ui.label("Xem trước dữ liệu nhập").classes("text-lg font-bold text-red-900 mb-1")
+                        qi_summary_lbl = ui.label("").classes("text-sm text-gray-600 mb-2")
+                        qi_rows_area = ui.column().classes("w-full gap-0 max-h-96 overflow-y-auto border border-gray-200 rounded")
+                        with ui.row().classes("w-full justify-end gap-2 mt-4"):
+                            ui.button("Từ chối", on_click=qi_preview_dialog.close).props("flat").classes("text-gray-500")
+                            qi_apply_btn = ui.button("Đồng ý áp dụng", icon="check", on_click=lambda: asyncio.ensure_future(_qi_apply()))
+                            qi_apply_btn.classes("bg-red-700 text-white")
+
+                    def _qi_render_preview():
+                        qi_rows_area.clear()
+                        _qi_checks.clear()
+                        rows = _qi_state["rows"]
+                        matched = sum(1 for r in rows if r["matched"])
+                        qi_summary_lbl.set_text(
+                            f"File: {_qi_state['filename']} — Khớp {matched}/{len(rows)} dòng "
+                            f"(theo Mã cán bộ, dự phòng theo Tên nếu không có/không khớp mã). "
+                            f"Chỉ áp dụng cho các dòng đã tick và khớp được nhân viên."
+                        )
+                        with qi_rows_area:
+                            with ui.row().classes("w-full px-2 py-1.5 bg-red-50 text-xs font-semibold text-red-800 border-b border-red-100 sticky top-0"):
+                                ui.label("").classes("w-8")
+                                ui.label("Họ tên (file)").classes("flex-1")
+                                ui.label("Mã CB").classes("w-24")
+                                ui.label("Khớp theo").classes("w-20")
+                                ui.label("Khớp với (DB)").classes("flex-1")
+                                ui.label("Hạn mức (cũ→mới)").classes("w-32 text-center")
+                                ui.label("Đã nghỉ (cũ→mới)").classes("w-32 text-center")
+                            _match_lbl = {"ma_can_bo": "Mã CB", "ten": "Tên"}
+                            for _i, r in enumerate(rows):
+                                with ui.row().classes("w-full px-2 py-1.5 border-b border-gray-100 items-center text-xs"
+                                                       + ("" if r["matched"] else " bg-gray-50 text-gray-400")):
+                                    cb = ui.checkbox(value=r["matched"]).classes("w-8")
+                                    cb.set_enabled(r["matched"])
+                                    if r["matched"]:
+                                        _qi_checks[_i] = cb
+                                    ui.label(r["ho_ten"]).classes("flex-1")
+                                    ui.label(r["ma_can_bo"] or "→").classes("w-24")
+                                    ui.label(_match_lbl.get(r.get("match_method"), "→")).classes(
+                                        "w-20 " + ("text-green-700" if r["matched"] else "text-red-400"))
+                                    _matched_name = r.get("matched_name")
+                                    if r.get("row_error"):
+                                        ui.label(r["row_error"]).classes("flex-1 text-red-500")
+                                    elif _matched_name:
+                                        _name_mismatch = _matched_name.strip().lower() != r["ho_ten"].strip().lower()
+                                        ui.label(_matched_name).classes(
+                                            "flex-1 " + ("text-orange-600 font-semibold" if _name_mismatch else "text-gray-600"))
+                                    else:
+                                        ui.label("Không khớp nhân viên nào").classes("flex-1 text-red-400")
+                                    oq = r["old_quota_days"]
+                                    ui.label(f"{oq:.0f} → {r['new_quota_days']:.0f}" if oq is not None else f"→ {r['new_quota_days']:.0f}").classes("w-32 text-center")
+                                    ou = r["old_used_leave_days"]
+                                    ui.label(f"{ou:.0f} → {r['new_used_leave_days']:.0f}" if ou is not None else f"→ {r['new_used_leave_days']:.0f}").classes("w-32 text-center")
+
+                    async def _qi_on_upload(e):
+                        try:
+                            yr = q_year_sel.value
+                            result = await asyncio.to_thread(
+                                api.post_upload,
+                                f"/api/leaves/quotas/{yr}/import/preview",
+                                {"file": (e.name, e.content.read(),
+                                          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+                            )
+                            _qi_state["filename"] = result.get("filename") or e.name
+                            _qi_state["rows"] = result.get("rows") or []
+                            if not _qi_state["rows"]:
+                                ui.notify("Không đọc được dòng dữ liệu nào từ file.", type="warning")
+                                return
+                            _qi_render_preview()
+                            qi_preview_dialog.open()
+                        except Exception as ex:
+                            _handle_api_error(ex)
+
+                    async def _qi_apply():
+                        rows = [r for _i, r in enumerate(_qi_state["rows"]) if _i in _qi_checks and _qi_checks[_i].value]
+                        if not rows:
+                            ui.notify("Chưa chọn dòng nào để áp dụng.", type="warning")
+                            return
+                        yr = q_year_sel.value
+                        async def _do():
+                            try:
+                                res = await asyncio.to_thread(
+                                    api.post, f"/api/leaves/quotas/{yr}/import/apply",
+                                    {"filename": _qi_state["filename"], "rows": rows},
+                                )
+                                qi_preview_dialog.close()
+                                ui.notify(f"Đã áp dụng {res.get('applied', 0)} nhân viên. Có thể hoàn tác trong \"Lịch sử nhập\".",
+                                          type="positive")
+                                await _reload_quota()
+                            except Exception as ex:
+                                _handle_api_error(ex)
+                        _ask_confirm("Xác nhận áp dụng",
+                                     f"Áp dụng hạn mức + số ngày đã nghỉ cho {len(rows)} nhân viên từ file \"{_qi_state['filename']}\"? "
+                                     f"Giá trị hiện tại sẽ bị ghi đè (có thể hoàn tác sau).",
+                                     _do, "Đồng ý áp dụng", "bg-red-700")
+
+                    with ui.dialog() as qi_history_dialog, ui.card().classes("p-5 w-full max-w-3xl"):
+                        ui.label("Lịch sử nhập file hạn mức").classes("text-lg font-bold text-red-900 mb-3")
+                        qi_history_area = ui.column().classes("w-full gap-0 max-h-96 overflow-y-auto")
+                        with ui.row().classes("w-full justify-end mt-4"):
+                            ui.button("Đóng", on_click=qi_history_dialog.close).props("flat").classes("text-gray-500")
+
+                    async def _qi_open_history():
+                        qi_history_area.clear()
+                        try:
+                            batches = await asyncio.to_thread(api.get, "/api/leaves/quotas/import/history")
+                        except Exception as ex:
+                            _handle_api_error(ex)
+                            return
+                        batches = batches if isinstance(batches, list) else []
+                        with qi_history_area:
+                            if not batches:
+                                ui.label("Chưa có lần nhập nào.").classes("text-gray-400 text-sm")
+                            for b in batches:
+                                with ui.row().classes("w-full px-2 py-2 border-b border-gray-100 items-center text-xs gap-2"):
+                                    with ui.column().classes("flex-1 gap-0"):
+                                        ui.label(f"{b.get('filename') or '(không rõ tên file)'} — năm {b.get('year')}").classes("font-semibold text-sm")
+                                        ui.label(
+                                            f"{(b.get('imported_at') or '')[:16]} bởi {b.get('imported_by_name') or '→'} "
+                                            f"— áp dụng {b.get('matched_count', 0)}/{b.get('row_count', 0)} dòng"
+                                        ).classes("text-gray-500")
+                                        if b.get("status") == "rolled_back":
+                                            ui.label(
+                                                f"↩ Đã hoàn tác {(b.get('rolled_back_at') or '')[:16]} bởi {b.get('rolled_back_by_name') or '→'}"
+                                            ).classes("text-orange-600")
+                                    if b.get("status") == "applied":
+                                        async def _rb(bid=b["id"], fname=b.get("filename") or ""):
+                                            async def _do(_bid=bid):
+                                                try:
+                                                    res = await asyncio.to_thread(
+                                                        api.post, f"/api/leaves/quotas/import/{_bid}/rollback", {})
+                                                    _skip = res.get("skipped_superseded", 0)
+                                                    _msg = f"Đã hoàn tác {res.get('restored', 0)} nhân viên."
+                                                    if _skip:
+                                                        _msg += f" Bỏ qua {_skip} người đã có lần nhập mới hơn đè lên."
+                                                    ui.notify(_msg, type="positive")
+                                                    await _qi_open_history()
+                                                    await _reload_quota()
+                                                except Exception as ex:
+                                                    _handle_api_error(ex)
+                                            _ask_confirm("Xác nhận hoàn tác",
+                                                         f"Hoàn tác lần nhập \"{fname}\"? Hạn mức + số ngày đã nghỉ của các nhân viên "
+                                                         f"trong lần nhập này sẽ trở về giá trị trước đó.",
+                                                         _do, "Hoàn tác", "bg-orange-600")
+                                        ui.button("Hoàn tác", icon="undo", on_click=_rb).props("dense outline").classes("text-orange-700")
+                                    else:
+                                        ui.label("Đã hoàn tác").classes("text-gray-400 italic")
+                        qi_history_dialog.open()
 
 
 
@@ -3498,7 +4018,7 @@ async def leaves_page():
 
                                     _q_calc_lbl.set_text(
 
-                                        f"✓ {yrs} năm còng t→c → {calc} ngày phép tự động")
+                                        f"✓ {yrs} năm công tác → {calc} ngày phép tự động")
 
                                 except Exception:
 
@@ -3516,11 +4036,11 @@ async def leaves_page():
 
                             "dense mask='##-##-####' placeholder='DD-MM-YYYY'")
 
-                        q_days_input = ui.number("Hạn mức ngày phép (tự động điền, có thể sửa thủ còng)",
+                        q_days_input = ui.number("Hạn mức ngày phép (tự động điền, có thể sửa thủ công)",
 
                                                  value=12, min=0, max=365).classes("w-full mt-2")
 
-                        ui.label("C→ng thức: 12 ngày + 1 ngày mỗi 5 năm còng t→c").classes("text-xs text-gray-400 mt-1 mb-4")
+                        ui.label("Công thức: 12 ngày + 1 ngày mỗi 5 năm công tác").classes("text-xs text-gray-400 mt-1 mb-4")
 
 
 
@@ -3588,11 +4108,26 @@ async def leaves_page():
 
 
 
-                            def _render_quota_header():
+                            def _render_quota_header(dept_rows, _row_cks):
 
                                 with ui.row().classes("w-full bg-red-50 border-b border-red-200 px-3 py-1.5 items-center gap-0"):
 
-                                    ui.label("").classes("w-6 shrink-0 mr-3")
+                                    _dept_ids = [r["staff_id"] for r in dept_rows]
+
+                                    def _select_all_q(e, _refs=_row_cks, _ids=_dept_ids):
+                                        for ck in _refs:
+                                            ck.set_value(e.value)
+                                        if e.value:
+                                            _quota_sel.update(_ids)
+                                        else:
+                                            for i in _ids:
+                                                _quota_sel.discard(i)
+
+                                    ui.checkbox(value=False, on_change=_select_all_q).props("dense").classes(
+                                        "w-6 shrink-0 border-r border-gray-200 pr-2 mr-2"
+                                    ).tooltip("Chọn / Bỏ chọn tất cả")
+
+                                    ui.label("STT").classes(f"{_qh} w-8 text-center")
 
                                     ui.label("Họ và tên").classes(f"{_qh} w-36")
 
@@ -3604,7 +4139,7 @@ async def leaves_page():
 
                                     ui.label("Đã dùng").classes(f"{_qh} w-20 text-center")
 
-                                    ui.label("Còn lại").classes(f"{_qh} flex-1 text-center")
+                                    ui.label("Ngày phép của năm").classes(f"{_qh} flex-1 text-center")
 
                                     ui.label("").classes("w-8 shrink-0")
 
@@ -3614,15 +4149,15 @@ async def leaves_page():
 
                                 "Ban Giám đốc": 0,
 
-                                "Phòng Thanh toàn": 1,
+                                "Phòng Thanh toán": 1,
 
                                 "Phòng Tổng hợp": 2,
 
                                 "Phòng Swift": 3,
 
-                                "Phòng Quản lý T→i khoản Nostro Vostro": 4,
+                                "Phòng Quản lý Tài khoản Nostro Vostro": 4,
 
-                                "Phòng Kế toàn": 5,
+                                "Phòng Kế toán": 5,
 
                                 "Phòng KSNB&HTVH": 6,
 
@@ -3648,9 +4183,11 @@ async def leaves_page():
 
                                             ui.label(f"{len(dept_rows)} người").classes("text-red-200 text-xs")
 
-                                        _render_quota_header()
+                                        _row_cks: list = []  # references tới từng checkbox hàng trong phòng này
 
-                                        for row in dept_rows:
+                                        _render_quota_header(dept_rows, _row_cks)
+
+                                        for _qi, row in enumerate(dept_rows, 1):
 
                                             with ui.row().classes("w-full bg-white border-b border-gray-300 px-3 py-1.5 items-center gap-0 hover:bg-red-50"):
 
@@ -3658,7 +4195,13 @@ async def leaves_page():
 
                                                     _quota_sel.add(sid) if e.value else _quota_sel.discard(sid)
 
-                                                ui.checkbox(value=False, on_change=_on_qck).classes("w-6 shrink-0 mr-3")
+                                                _qck = ui.checkbox(value=False, on_change=_on_qck).props("dense").classes(
+                                                    "w-6 shrink-0 border-r border-gray-200 pr-2 mr-2"
+                                                )
+
+                                                _row_cks.append(_qck)
+
+                                                ui.label(str(_qi)).classes(f"{_qc} w-8 text-center")
 
                                                 ui.label(row.get("staff_name", "")).classes(f"{_qc} w-36 truncate")
 
@@ -3670,7 +4213,7 @@ async def leaves_page():
 
                                                 ui.label(f"{row.get('quota_days', 0):.0f}").classes(f"{_qc} w-20 text-center font-mono")
 
-                                                co = row.get("carry_over", 0)  # = 0 sau Q1 (đ→ hết hạn)
+                                                co = row.get("carry_over", 0)  # hết hiệu lực sau Q1 (31/3) — tự biến mất
 
                                                 co_cls = "text-blue-700 font-semibold" if co > 0 else "text-gray-300"
 
@@ -3752,7 +4295,7 @@ async def leaves_page():
 
                                                         else:
 
-                                                            ui.notify(f"Để cập nhật {_sname}", type="positive", timeout=3000)
+                                                            ui.notify(f"Đã cập nhật {_sname}", type="positive", timeout=3000)
 
                                                             await _reload_quota()
 
@@ -3846,10 +4389,12 @@ async def leaves_page():
 
 
                     _today_iso_d = _dt_mod.date.today().isoformat()
+                    _drs_val = [""]   # ISO start date cho range thai_san/bao_hiem
+                    _dre_val = [""]   # ISO end date cho range
 
 
 
-                    ui.label("Khai báo nghỉ phép cho nhân viên kh→c (tạo đơn đã duyệt ngay).").classes("text-sm text-gray-500 mb-4")
+                    ui.label("Khai báo nghỉ phép cho nhân viên khác (tạo đơn đã duyệt ngay).").classes("text-sm text-gray-500 mb-4")
 
                     ui.add_css(".q-date__header { display: none !important; }")
 
@@ -3889,7 +4434,7 @@ async def leaves_page():
 
                             if not leaves:
 
-                                ui.label("Chưa có đơn n→o được khai báo.").classes("text-gray-400 text-sm")
+                                ui.label("Chưa có đơn nào được khai báo.").classes("text-gray-400 text-sm")
 
                                 return
 
@@ -3920,6 +4465,8 @@ async def leaves_page():
 
                                     ui.label("Phòng").classes(f"{_hc} w-32")
 
+                                    ui.label("Người khai báo").classes(f"{_hc} w-32")
+
                                     ui.label("Loại").classes(f"{_hc} w-28")
 
                                     ui.label("Ngày nghỉ").classes("font-semibold text-red-800 text-xs flex-1")
@@ -3945,6 +4492,8 @@ async def leaves_page():
 
                                         ui.label(dl.get("department_name") or "→").classes("text-xs w-32 shrink-0 truncate border-r border-gray-400 pr-2 mr-1")
 
+                                        ui.label(dl.get("declarer_name") or "→").classes("text-xs w-32 shrink-0 truncate border-r border-gray-400 pr-2 mr-1")
+
                                         ui.label(_LEAVE_TYPE.get(dl.get("leave_type",""), dl.get("leave_type",""))).classes("text-xs w-28 shrink-0 truncate border-r border-gray-400 pr-2 mr-1")
 
                                         ui.label(_fmt_leave_dates(dl.get("start_date",""), dl.get("end_date",""), dl.get("spread_dates"))).classes("text-xs flex-1")
@@ -3953,9 +4502,9 @@ async def leaves_page():
 
                                             with ui.dialog() as _ddlg, ui.card().classes("p-6 w-80"):
 
-                                                ui.label("Xác nhận x→a").classes("text-lg font-bold text-red-900 mb-1")
+                                                ui.label("Xác nhận xóa").classes("text-lg font-bold text-red-900 mb-1")
 
-                                                ui.label(f"Xóa đơn khai báo hộ của {sname}✓ Không thể hoàn t→c.").classes("text-sm text-gray-600 mb-4")
+                                                ui.label(f"Xóa đơn khai báo hộ của {sname}. Không thể hoàn tác.").classes("text-sm text-gray-600 mb-4")
 
                                                 with ui.row().classes("gap-3 justify-end w-full"):
 
@@ -3971,13 +4520,13 @@ async def leaves_page():
 
                                                             _dg.close()
 
-                                                            ui.notify(f"Đã Xóa thất bại: {ex}", type="negative", timeout=5000)
+                                                            ui.notify(f"Xóa thất bại: {ex}", type="negative", timeout=5000)
 
                                                             return
 
                                                         _dg.close()
 
-                                                        ui.notify("✅ Để x→a đơn khai báo hộ!", type="positive", timeout=3000)
+                                                        ui.notify("✅ Đã xóa đơn khai báo hộ!", type="positive", timeout=3000)
 
                                                         app.storage.user["_leaves_goto"] = "khai_bao_ho"
 
@@ -4003,9 +4552,12 @@ async def leaves_page():
 
                             _render_decl_table(fresh if isinstance(fresh, list) else [])
 
-                        except Exception:
+                        except Exception as e:
 
-                            pass
+                            _handle_api_error(e) or ui.notify(
+                                "Không tải lại được danh sách khai báo hộ — vui lòng F5 trang.",
+                                type="negative",
+                            )
 
 
 
@@ -4017,69 +4569,209 @@ async def leaves_page():
 
                         d_staff  = ui.select(direct_staff_opts, label="Nhân viên").classes("w-full")
 
-                        d_dates  = ui.date(value=None).props("multiple mask='YYYY-MM-DD' first-day-of-week='1'").classes("w-full mt-2")
+                        d_dates_wrap = ui.column().classes("w-full mt-2 gap-0")
+                        with d_dates_wrap:
+                            d_dates = ui.date(value=[]).props(f"multiple mask='YYYY-MM-DD' first-day-of-week='1' {_VI_LOCALE}").classes("w-full")
+                            ui.label("Click chọn từng ngày → Click lại để bỏ chọn").classes("text-xs text-orange-500 mt-0.5")
 
-                        ui.label("Click chọn từng ngày → Click lại để bờ chọn").classes("text-xs text-orange-500 mt-0.5")
+                        import calendar as _cal_d
+                        _d_today_ref = _dt_mod.date.today()
+                        _d_rs_cur = [_d_today_ref.year, _d_today_ref.month]
+                        _d_re_cur = [_d_today_ref.year, _d_today_ref.month]
+
+                        d_range_wrap = ui.column().classes("w-full mt-2 gap-2")
+                        d_range_wrap.set_visibility(False)
+                        with d_range_wrap:
+                            ui.label("Chọn khoảng thời gian nghỉ").classes("text-xs text-blue-600 font-medium -mb-1")
+                            with ui.column().classes("w-full gap-0"):
+                                with ui.row().classes("w-full items-center gap-1"):
+                                    d_range_start = ui.input("Ngày bắt đầu", placeholder="DD/MM/YYYY").classes("flex-1")
+                                    _d_rs_btn = ui.button(icon="calendar_month").props("flat round dense size=sm color=grey-7")
+                                _d_rs_cal = ui.column().classes("w-full border border-gray-200 rounded p-2 bg-white mt-1")
+                                _d_rs_cal.set_visibility(False)
+                            with ui.column().classes("w-full gap-0 mt-1"):
+                                with ui.row().classes("w-full items-center gap-1"):
+                                    d_range_end = ui.input("Ngày kết thúc", placeholder="DD/MM/YYYY").classes("flex-1")
+                                    _d_re_btn = ui.button(icon="calendar_month").props("flat round dense size=sm color=grey-7")
+                                _d_re_cal = ui.column().classes("w-full border border-gray-200 rounded p-2 bg-white mt-1")
+                                _d_re_cal.set_visibility(False)
+
+                        def _d_rs_render():
+                            _d_rs_cal.clear()
+                            y, m = _d_rs_cur
+                            with _d_rs_cal:
+                                with ui.row().classes("w-full items-center justify-between mb-1"):
+                                    ui.button(icon="chevron_left",  on_click=_d_rs_prev).props("flat round dense size=sm")
+                                    ui.label(f"Tháng {m:02d}/{y}").classes("text-sm font-semibold text-gray-700")
+                                    ui.button(icon="chevron_right", on_click=_d_rs_next).props("flat round dense size=sm")
+                                with ui.row().classes("w-full gap-0"):
+                                    for h in ["T2","T3","T4","T5","T6","T7","CN"]:
+                                        ui.label(h).classes("text-xs text-center text-gray-400 w-[14.28%] py-0.5")
+                                first_wd = _dt_mod.date(y, m, 1).weekday()
+                                last_day = _cal_d.monthrange(y, m)[1]
+                                today_d  = _dt_mod.date.today()
+                                with ui.row().classes("w-full gap-0 flex-wrap"):
+                                    for _ in range(first_wd):
+                                        ui.label("").classes("w-[14.28%] h-7")
+                                    for day in range(1, last_day + 1):
+                                        ds = f"{y:04d}-{m:02d}-{day:02d}"; dobj = _dt_mod.date(y, m, day)
+                                        sel = (ds == _drs_val[0]); is_td = (dobj == today_d); wknd = dobj.weekday() >= 5
+                                        def _pick_d_rs(ds=ds):
+                                            def _do():
+                                                _drs_val[0] = ds
+                                                d_range_start.value = f"{ds[8:10]}/{ds[5:7]}/{ds[0:4]}"
+                                                _d_rs_cal.set_visibility(False); _d_rs_render()
+                                            return _do
+                                        with ui.element("div").classes("w-[14.28%] h-7 flex items-center justify-center"):
+                                            if sel:
+                                                ui.label(str(day)).classes("w-6 h-6 rounded-full bg-red-700 text-white text-xs font-bold flex items-center justify-center cursor-pointer").on("click", _pick_d_rs())
+                                            elif is_td:
+                                                ui.label(str(day)).classes("w-6 h-6 rounded-full ring-2 ring-red-500 text-red-600 text-xs font-bold flex items-center justify-center cursor-pointer hover:bg-red-50").on("click", _pick_d_rs())
+                                            elif wknd:
+                                                ui.label(str(day)).classes("w-6 h-6 rounded flex items-center justify-center text-xs text-blue-300 hover:bg-blue-50 cursor-pointer").on("click", _pick_d_rs())
+                                            else:
+                                                ui.label(str(day)).classes("w-6 h-6 rounded flex items-center justify-center text-xs text-gray-600 hover:bg-red-50 hover:text-red-700 cursor-pointer").on("click", _pick_d_rs())
+
+                        def _d_rs_prev():
+                            y, m = _d_rs_cur; _d_rs_cur[0], _d_rs_cur[1] = (y-1, 12) if m == 1 else (y, m-1); _d_rs_render()
+                        def _d_rs_next():
+                            y, m = _d_rs_cur; _d_rs_cur[0], _d_rs_cur[1] = (y+1, 1) if m == 12 else (y, m+1); _d_rs_render()
+                        def _d_rs_toggle():
+                            vis = not _d_rs_cal.visible; _d_rs_cal.set_visibility(vis)
+                            if vis: _d_rs_render()
+                        def _parse_drs():
+                            txt = d_range_start.value.strip()
+                            if not txt: _drs_val[0] = ""; return
+                            try:
+                                p = txt.replace("-", "/").split("/")
+                                if len(p) != 3 or len(p[2]) != 4:
+                                    raise ValueError("Định dạng phải là dd/mm/yyyy")
+                                d_,mo,yr = int(p[0]),int(p[1]),int(p[2])
+                                _dt_mod.date(yr, mo, d_)
+                                _drs_val[0] = f"{yr:04d}-{mo:02d}-{d_:02d}"
+                            except Exception: _drs_val[0] = ""
+                        _d_rs_btn.on("click", _d_rs_toggle)
+                        d_range_start.on("blur", _parse_drs)
+
+                        def _d_re_render():
+                            _d_re_cal.clear()
+                            y, m = _d_re_cur
+                            with _d_re_cal:
+                                with ui.row().classes("w-full items-center justify-between mb-1"):
+                                    ui.button(icon="chevron_left",  on_click=_d_re_prev).props("flat round dense size=sm")
+                                    ui.label(f"Tháng {m:02d}/{y}").classes("text-sm font-semibold text-gray-700")
+                                    ui.button(icon="chevron_right", on_click=_d_re_next).props("flat round dense size=sm")
+                                with ui.row().classes("w-full gap-0"):
+                                    for h in ["T2","T3","T4","T5","T6","T7","CN"]:
+                                        ui.label(h).classes("text-xs text-center text-gray-400 w-[14.28%] py-0.5")
+                                first_wd = _dt_mod.date(y, m, 1).weekday()
+                                last_day = _cal_d.monthrange(y, m)[1]
+                                today_d  = _dt_mod.date.today()
+                                with ui.row().classes("w-full gap-0 flex-wrap"):
+                                    for _ in range(first_wd):
+                                        ui.label("").classes("w-[14.28%] h-7")
+                                    for day in range(1, last_day + 1):
+                                        ds = f"{y:04d}-{m:02d}-{day:02d}"; dobj = _dt_mod.date(y, m, day)
+                                        sel = (ds == _dre_val[0]); is_td = (dobj == today_d); wknd = dobj.weekday() >= 5
+                                        def _pick_d_re(ds=ds):
+                                            def _do():
+                                                _dre_val[0] = ds
+                                                d_range_end.value = f"{ds[8:10]}/{ds[5:7]}/{ds[0:4]}"
+                                                _d_re_cal.set_visibility(False); _d_re_render()
+                                            return _do
+                                        with ui.element("div").classes("w-[14.28%] h-7 flex items-center justify-center"):
+                                            if sel:
+                                                ui.label(str(day)).classes("w-6 h-6 rounded-full bg-red-700 text-white text-xs font-bold flex items-center justify-center cursor-pointer").on("click", _pick_d_re())
+                                            elif is_td:
+                                                ui.label(str(day)).classes("w-6 h-6 rounded-full ring-2 ring-red-500 text-red-600 text-xs font-bold flex items-center justify-center cursor-pointer hover:bg-red-50").on("click", _pick_d_re())
+                                            elif wknd:
+                                                ui.label(str(day)).classes("w-6 h-6 rounded flex items-center justify-center text-xs text-blue-300 hover:bg-blue-50 cursor-pointer").on("click", _pick_d_re())
+                                            else:
+                                                ui.label(str(day)).classes("w-6 h-6 rounded flex items-center justify-center text-xs text-gray-600 hover:bg-red-50 hover:text-red-700 cursor-pointer").on("click", _pick_d_re())
+
+                        def _d_re_prev():
+                            y, m = _d_re_cur; _d_re_cur[0], _d_re_cur[1] = (y-1, 12) if m == 1 else (y, m-1); _d_re_render()
+                        def _d_re_next():
+                            y, m = _d_re_cur; _d_re_cur[0], _d_re_cur[1] = (y+1, 1) if m == 12 else (y, m+1); _d_re_render()
+                        def _d_re_toggle():
+                            vis = not _d_re_cal.visible; _d_re_cal.set_visibility(vis)
+                            if vis: _d_re_render()
+                        def _parse_dre():
+                            txt = d_range_end.value.strip()
+                            if not txt: _dre_val[0] = ""; return
+                            try:
+                                p = txt.replace("-", "/").split("/")
+                                if len(p) != 3 or len(p[2]) != 4:
+                                    raise ValueError("Định dạng phải là dd/mm/yyyy")
+                                d_,mo,yr = int(p[0]),int(p[1]),int(p[2])
+                                _dt_mod.date(yr, mo, d_)
+                                _dre_val[0] = f"{yr:04d}-{mo:02d}-{d_:02d}"
+                            except Exception: _dre_val[0] = ""
+                        _d_re_btn.on("click", _d_re_toggle)
+                        d_range_end.on("blur", _parse_dre)
 
                         d_type   = ui.select({k: v for k, v in _LEAVE_TYPE.items()}, label="Loại nghỉ", value="annual").classes("w-full mt-2")
 
                         d_reason = ui.textarea("Lý do (tuỳ chọn)").classes("w-full mt-2").props("rows=2")
+                        d_reason.set_visibility(False)
+
+                        def _on_type_change(e):
+                            lt = e.value
+                            is_rng = lt in ("thai_san", "bao_hiem")
+                            d_dates_wrap.set_visibility(not is_rng)
+                            d_range_wrap.set_visibility(is_rng)
+                            d_reason.set_visibility(lt == "other")
+
+                        d_type.on_value_change(_on_type_change)
 
 
 
                         async def do_direct():
 
                             if not d_staff.value:
-
                                 ui.notify("Vui lòng chọn nhân viên", type="warning"); return
 
-                            raw = d_dates.value
-
-                            if not raw:
-
-                                ui.notify("Vui lòng chọn ít nhất 1 ngày", type="warning"); return
-
-                            dates = sorted(set(raw if isinstance(raw, list) else [raw]))
-
-                            dates = [d[:10] for d in dates if d]
-
-                            if not dates:
-
-                                ui.notify("Vui lòng chọn ít nhất 1 ngày", type="warning"); return
-
-
-
+                            lt = d_type.value
+                            is_rng = lt in ("thai_san", "bao_hiem")
                             staff_name = direct_staff_opts.get(d_staff.value, "nhân viên")
 
-                            body = {
+                            if is_rng:
+                                _parse_drs(); _parse_dre()
+                                start_val, end_val = _drs_val[0], _dre_val[0]
+                                if not start_val or not end_val:
+                                    ui.notify("Vui lòng nhập ngày bắt đầu và ngày kết thúc (DD/MM/YYYY)", type="warning"); return
+                                if end_val < start_val:
+                                    ui.notify("Ngày kết thúc phải sau ngày bắt đầu", type="warning"); return
+                                body = {"staff_id": d_staff.value, "start_date": start_val, "end_date": end_val,
+                                        "leave_type": lt, "reason": d_reason.value or None}
+                                confirm_lbl = f"Khai báo {_LEAVE_TYPE.get(lt, lt)} cho {staff_name} (từ {start_val} đến {end_val}). Đơn sẽ được duyệt ngay."
+                            else:
+                                raw = d_dates.value
+                                if not raw:
+                                    ui.notify("Vui lòng chọn ít nhất 1 ngày", type="warning"); return
+                                dates = sorted(set(raw if isinstance(raw, list) else [raw]))
+                                dates = [d[:10] for d in dates if d]
+                                if not dates:
+                                    ui.notify("Vui lòng chọn ít nhất 1 ngày", type="warning"); return
+                                if lt == "other" and not (d_reason.value or "").strip():
+                                    ui.notify("Vui lòng nhập lý do khi chọn loại Khác", type="warning"); return
+                                body = {"staff_id": d_staff.value, "start_date": dates[0], "end_date": dates[-1],
+                                        "spread_dates": dates, "leave_type": lt, "reason": d_reason.value or None}
+                                confirm_lbl = f"Khai báo nghỉ cho {staff_name} ({len(dates)} ngày). Đơn sẽ được duyệt ngay."
 
-                                "staff_id": d_staff.value,
-
-                                "start_date": dates[0], "end_date": dates[-1],
-
-                                "spread_dates": dates,
-
-                                "leave_type": d_type.value,
-
-                                "reason": d_reason.value or None,
-
-                            }
-
-
-
-                            # Inline dialog → không d→ng shared _ask_confirm
+                            # Inline dialog → không dùng shared _ask_confirm
 
                             with ui.dialog() as _dlg, ui.card().classes("p-6 w-96"):
 
                                 ui.label("Xác nhận khai báo hộ").classes("text-lg font-bold text-red-900 mb-1")
 
-                                ui.label(f"Khai báo nghỉ cho {staff_name} ({len(dates)} ngày). Đơn sẽ được duyệt ngay.").classes("text-sm text-gray-600 mb-4")
+                                ui.label(confirm_lbl).classes("text-sm text-gray-600 mb-4")
 
                                 with ui.row().classes("gap-3 justify-end w-full"):
 
                                     ui.button("Hủy", on_click=_dlg.close).props("flat").classes("text-gray-500")
 
-                                    async def _on_confirm(_b=body, _d=_dlg):
+                                    async def _on_confirm(_b=body, _d=_dlg, _rng=is_rng):
 
                                         _d.close()
 
@@ -4091,17 +4783,30 @@ async def leaves_page():
 
                                             if not _handle_api_error(e):
 
-                                                ui.notify(f"Đã Khai báo thất bại: {e}", type="negative", timeout=5000)
+                                                ui.notify(f"Khai báo thất bại: {e}", type="negative", timeout=5000)
 
                                             return
 
-                                        ui.notify("✅ Khai báo hộ thành còng!", type="positive", timeout=4000)
+                                        ui.notify("✅ Khai báo hộ thành công!", type="positive", timeout=4000)
+
+                                        # Không cần tự đánh dấu/nhảy trang nữa — bấm sang tab nào (kể cả
+                                        # Dashboard) sau đó sẽ tự nạp lại dữ liệu mới nhất (xem
+                                        # _on_leave_tab_change), vẫn ở nguyên tab Khai báo hộ ngay bây giờ.
 
                                         d_staff.value = None
+                                        if _rng:
+                                            _drs_val[0] = ""; _dre_val[0] = ""
+                                            d_range_start.value = ""; d_range_end.value = ""
+                                        else:
+                                            d_dates.value = None
 
-                                        d_dates.value = None
+                                        d_type.value = "annual"
+                                        d_dates_wrap.set_visibility(True)
+                                        d_range_wrap.set_visibility(False)
 
                                         d_reason.value = ""
+
+                                        d_reason.set_visibility(False)
 
                                         await _refresh_decl()
 
@@ -4127,7 +4832,7 @@ async def leaves_page():
 
                         _df_type_opts = {"": "Tất cả loại", **_LEAVE_TYPE}
 
-                        _df_depts     = sorted({dl.get("department_name") or "" for dl in declared_leaves if dl.get("department_name")})
+                        _df_depts     = sorted({s.get("department_name") or "" for s in direct_staff_list if s.get("department_name")})
 
                         _df_dept_opts = {"": "Tất cả phòng", **{d: d for d in _df_depts}}
 
@@ -4143,7 +4848,7 @@ async def leaves_page():
 
                                 _df_dept = ui.select(_df_dept_opts, value="", label="Phòng").classes("w-40").props("dense")
 
-                                with ui.input("Từ ngày").classes("w-36").props("dense clearable readonly") as _df_from:
+                                with ui.input("Ngày nghỉ từ").classes("w-36").props("dense clearable readonly") as _df_from:
 
                                     with _df_from.add_slot("append"):
 
@@ -4153,7 +4858,7 @@ async def leaves_page():
 
                                         ui.date(mask="DD/MM/YYYY").props(f'{_OPT_ALL} first-day-of-week="1"').bind_value(_df_from)
 
-                                with ui.input("Đến ngày").classes("w-36").props("dense clearable readonly") as _df_to:
+                                with ui.input("đến ngày").classes("w-36").props("dense clearable readonly") as _df_to:
 
                                     with _df_to.add_slot("append"):
 
@@ -4239,19 +4944,33 @@ async def leaves_page():
 
                                 if from_d or to_d:
 
-                                    s = _parse_decl_date(dl.get("start_date", ""))
+                                    # Đơn ngày lẻ (spread_dates) — so đúng các ngày thực tế
+                                    # thay vì envelope start/end, khớp _pf_apply/_apply_filter.
+                                    sd = dl.get("spread_dates")
 
-                                    e = _parse_decl_date(dl.get("end_date", ""))
+                                    dates = [d for d in (_parse_decl_date(x) for x in sd) if d] if sd else []
 
-                                    if s and e:
+                                    if dates:
 
-                                        if from_d and e < from_d:
-
-                                            continue
-
-                                        if to_d and s > to_d:
+                                        if not any((not from_d or d >= from_d) and (not to_d or d <= to_d) for d in dates):
 
                                             continue
+
+                                    else:
+
+                                        s = _parse_decl_date(dl.get("start_date", ""))
+
+                                        e = _parse_decl_date(dl.get("end_date", ""))
+
+                                        if s and e:
+
+                                            if from_d and e < from_d:
+
+                                                continue
+
+                                            if to_d and s > to_d:
+
+                                                continue
 
                                 filtered_d.append(dl)
 

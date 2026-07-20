@@ -1102,6 +1102,29 @@ ui.on_exception(_on_exception)</pre>
   <div class="card">
     <div class="card-header">
       <span class="card-num">29</span>
+      <span class="card-title">Import hạn mức: cột "Đã nghỉ" tạo bản ghi tổng hợp thay vì ghi trường mồ côi</span>
+      <span class="badge badge-done">Hoàn thành</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Vấn đề (phát hiện qua code review)</div>
+      <p><code>import_quota_apply</code> ghi cột "Đã nghỉ" thẳng vào <code>user_tttt.used_leave_days</code>. Nhưng mọi màn hình và logic hạn mức (<code>get_quotas</code>, phiếu in, chốt chặn tạo đơn) đều đọc qua <code>_calc_used_days()</code> — <strong>tính động từ <code>leave_records</code></strong>, không đọc <code>used_leave_days</code>. Hệ quả: import "Đã nghỉ" cho nhân viên chưa có đơn → bảng hạn mức vẫn hiện <strong>Đã dùng = 0</strong>, số nhập vào bốc hơi.</p>
+
+      <div class="label">Vì sao chọn "tạo bản ghi tổng hợp" (không phải fallback đọc <code>used_leave_days</code>)</div>
+      <p>Đây đã là pattern sẵn có của <code>seeds/migrate_leave_2026.py</code>: "đã nghỉ" được thể hiện bằng bản ghi <code>bat_buoc</code> approved với <code>spread_dates</code>. Làm import trong app khớp cùng pattern giữ <strong>một nguồn sự thật duy nhất</strong> (<code>leave_records</code>) — tránh phương án fallback cộng <code>used_leave_days</code> vốn dễ trùng đếm khi nhân viên có cả đơn thật.</p>
+
+      <div class="label">Giải pháp</div>
+      <p>Apply: xoá bản ghi <code>[Import]</code> cũ trong năm (idempotent, import lại không cộng dồn) → tạo bản ghi <code>bat_buoc</code> approved <code>spread_dates</code> = <code>int(round(new_used))</code> ngày làm việc → lưu <code>created_leave_id</code> vào <code>quota_import_items</code>. Rollback: xoá đúng bản ghi theo <code>created_leave_id</code>. Thêm cột <code>created_leave_id</code> (CREATE TABLE + ALTER bù cho DB cũ).</p>
+
+      <div class="note">Kiểm chứng bằng SQLite tạm (4 kịch bản): apply 8 → used=8; rollback → 0; import lại 5 → 5 (không =13); cùng đơn thật +2 → 7. Tất cả đạt.</div>
+
+      <div class="label">Hạn chế đã biết (chấp nhận)</div>
+      <p>① "Đã nghỉ" lẻ (VD 8.5) bị làm tròn về ngày nguyên vì hệ thống không hỗ trợ nửa ngày. ② Không nên trộn <em>script migrate offline</em> và <em>import trong app</em> cho cùng năm — import chỉ dọn bản ghi <code>[Import]</code>, không đụng bản ghi <code>[Migration]</code>, mix vào có thể cộng chồng. ③ Rollback một lần nhập cũ (sau khi đã có lần nhập mới đè lên cùng nhân viên) là best-effort — không tự dựng lại bản ghi đã bị lần sau xoá. ④ <code>used_leave_days</code> vẫn được ghi đồng bộ cho tương thích nhưng <strong>không</strong> phải nguồn hiển thị.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">30</span>
       <span class="card-title">Tích hợp "Đối chiếu Song phương" — port app desktop thành menu Phòng Thanh toán</span>
       <span class="badge badge-done">Hoàn thành</span>
     </div>
@@ -1135,7 +1158,7 @@ ui.on_exception(_on_exception)</pre>
 
   <div class="card">
     <div class="card-header">
-      <span class="card-num">30</span>
+      <span class="card-num">31</span>
       <span class="card-title">Lưới bàn giao chứng từ — tự co cho vừa màn hình</span>
       <span class="badge badge-done">Hoàn thành</span>
     </div>
@@ -1178,7 +1201,7 @@ ui.on_exception(_on_exception)</pre>
 
   <div class="card">
     <div class="card-header">
-      <span class="card-num">31</span>
+      <span class="card-num">32</span>
       <span class="card-title">Tra cứu lưu trữ — tiêu chí "Tất cả": bảng tổng hợp cả năm theo phòng × tháng</span>
       <span class="badge badge-done">Hoàn thành</span>
     </div>
@@ -1210,7 +1233,7 @@ ui.on_exception(_on_exception)</pre>
   <!-- 32 -->
   <div class="card">
     <div class="card-header">
-      <span class="card-num">32</span>
+      <span class="card-num">33</span>
       <span class="card-title">Nhật ký hệ thống (audit toàn bộ thao tác ghi) + cảnh báo lệch giờ NTP</span>
       <span class="badge badge-done">Hoàn thành</span>
     </div>
@@ -1262,7 +1285,7 @@ ui.on_exception(_on_exception)</pre>
 
   <div class="card">
     <div class="card-header">
-      <span class="card-num">33</span>
+      <span class="card-num">34</span>
       <span class="card-title">Trang chủ — gọn KPI + biểu đồ cột 4 phòng thay bảng tỷ lệ đúng hạn</span>
       <span class="badge badge-done">Hoàn thành</span>
     </div>
@@ -1301,7 +1324,7 @@ ui.on_exception(_on_exception)</pre>
 
   <div class="card">
     <div class="card-header">
-      <span class="card-num">34</span>
+      <span class="card-num">35</span>
       <span class="card-title">Menu Lưu trữ — rút gọn tên "Phòng QLTK Nostro, Vostro" + sửa lặp chữ "Phòng"</span>
       <span class="badge badge-done">Hoàn thành</span>
     </div>
@@ -1328,7 +1351,7 @@ ui.on_exception(_on_exception)</pre>
   <!-- 35 -->
   <div class="card">
     <div class="card-header">
-      <span class="card-num">35</span>
+      <span class="card-num">36</span>
       <span class="card-title">Bàn giao chứng từ — cán bộ chuyển phòng vẫn hiện ở phòng cũ theo tháng</span>
       <span class="badge badge-done">Hoàn thành</span>
     </div>
@@ -1358,7 +1381,7 @@ ui.on_exception(_on_exception)</pre>
   <!-- 36 -->
   <div class="card">
     <div class="card-header">
-      <span class="card-num">36</span>
+      <span class="card-num">37</span>
       <span class="card-title">Lịch sử đổi phòng cán bộ — nhập bù chứng từ về đúng phòng theo ngày giao dịch</span>
       <span class="badge badge-done">Hoàn thành</span>
     </div>
@@ -1387,6 +1410,32 @@ ui.on_exception(_on_exception)</pre>
       <div class="caution"><strong>Chuyên viên không tự nhập bù được:</strong> ô chọn phòng của GDV bị khóa vào phòng hiện tại (<code>frontend/pages/handovers.py</code>). Nhập bù cho GDV đã chuyển phòng do <strong>HKV / cán bộ phòng cũ</strong> chọn phòng cũ + tháng rồi nhập hộ — backend tự định tuyến phiếu về đúng phòng. Nếu sau này cần GDV tự nhập bù, phải nới quyền chọn phòng ở frontend.</div>
 
       <div class="note"><strong>Backfill dùng mốc gốc <code>2000-01-01</code></strong> thay vì <code>start_date</code>: giữ đúng hành vi cũ (cán bộ active hiện ở lưới mọi tháng). Đổi phòng thật mới dùng ngày thực tế.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">38</span>
+      <span class="card-title">Merge develop vào nhánh nghỉ phép — resolve xung đột Trang chủ (PR #7)</span>
+      <span class="badge badge-done">Hoàn thành</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh</div>
+      <p>Nhánh <code>leaves/fix-loi-review-nguoi1</code> fork từ trước khi <code>develop</code> có 5 commit mới (nhật ký tập trung, biểu đồ nộp chứng từ, bàn giao giữ phòng…). Merge lại xung đột <strong>3 file</strong>: <code>migrations.py</code>, <code>Implementation-notes.html</code>, <code>frontend/pages/dashboard.py</code>. Hai file kia (<code>shared.py</code>, <code>run.py</code>) tự merge sạch.</p>
+
+      <div class="label"><code>migrations.py</code> &amp; <code>Implementation-notes.html</code> — giữ cả hai</div>
+      <p>Hai bên chỉ <em>nối thêm</em> nội dung khác nhau vào cùng chỗ (migration của tính năng khác nhau; card tài liệu khác nhau) — không mâu thuẫn logic. Giữ cả hai, đánh lại số card cho liên tục (29→37).</p>
+
+      <div class="label">Xung đột thật ở <code>dashboard.py</code> — Trang chủ, quyết định không hiển nhiên</div>
+      <p><code>develop</code> (Người 6) <strong>thiết kế lại</strong> phần dưới Trang chủ: bỏ KPI "Nhóm tập/Tập đã in" (biến <code>groups</code>) và thay <em>bảng tỷ lệ đúng hạn tĩnh</em> bằng <em>biểu đồ cột 4 phòng chọn Tháng/Năm</em>. Nhánh này (Người 1) chỉ <strong>thêm</strong> khối "Nghỉ phép hôm nay".</p>
+      <table>
+        <tr><th>Xung đột</th><th>Cách xử lý &amp; lý do</th></tr>
+        <tr><td>Import <code>date</code> (<code>_date_cls</code> vs <code>_date</code>)</td><td>Thống nhất <code>_date</code> (tên của develop). Nếu để lệch tên → <code>NameError</code>.</td></tr>
+        <tr><td>Giải nén <code>gather()</code> (6 biến vs 4 biến)</td><td><code>gather</code> sau merge có <strong>5</strong> lời gọi (develop đã bỏ <code>/api/bundles/groups</code>). Giải nén đúng 5 biến: <code>staff_list, depts, summary, pending, today_leaves</code> — bỏ <code>groups</code> vì <strong>không còn dùng ở đâu</strong>. Để 6 biến → <code>ValueError: not enough values to unpack</code>.</td></tr>
+        <tr><td>Thân trang (2 khối UI)</td><td><strong>Giữ</strong> "Nghỉ phép hôm nay" (Người 1) + <strong>giữ</strong> biểu đồ Tháng/Năm (Người 6). <strong>Bỏ</strong> thẻ "Tỷ lệ đúng hạn tĩnh" của nhánh — vì develop đã thay bằng biểu đồ, và các biến nó cần (<code>period_vn/total_doc/late_cnt</code>) đã bị develop xoá phần tính → giữ lại sẽ <code>NameError</code>.</td></tr>
+      </table>
+
+      <div class="note">Kết quả: Trang chủ hiện <strong>cả</strong> "Nghỉ phép hôm nay" (Người 1) lẫn biểu đồ nộp chứng từ chọn Tháng/Năm (Người 6). Phần lõi nghỉ phép (<code>leaves.py</code> BE/FE) không xung đột. Đã <code>py_compile</code> pass.</div>
     </div>
   </div>
 

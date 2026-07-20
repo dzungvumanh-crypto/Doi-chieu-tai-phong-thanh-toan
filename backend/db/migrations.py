@@ -442,6 +442,52 @@ def _ensure_indexes():
         "CREATE INDEX IF NOT EXISTS ix_duty_requests_staff    ON duty_requests(staff_id)",
         "CREATE INDEX IF NOT EXISTS ix_duty_rotation_year     ON duty_rotation_state(year, role)",
         "CREATE INDEX IF NOT EXISTS ix_duty_shifts_date       ON duty_shifts(shift_date)",
+        # Popup thông báo carry-over hết hiệu lực sau Q1 — mỗi user chỉ xem 1 lần/năm
+        "ALTER TABLE user_tttt ADD COLUMN carryover_notice_year INTEGER",
+        # Nhập file hạn mức phép (Excel) — lưu lịch sử để có thể hoàn tác
+        """CREATE TABLE IF NOT EXISTS quota_import_batches (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            year           INTEGER NOT NULL,
+            filename       TEXT,
+            imported_by    INTEGER REFERENCES user_tttt(id),
+            imported_at    DATETIME,
+            row_count      INTEGER DEFAULT 0,
+            matched_count  INTEGER DEFAULT 0,
+            status         TEXT DEFAULT 'applied' CHECK(status IN ('applied','rolled_back')),
+            rolled_back_by INTEGER REFERENCES user_tttt(id),
+            rolled_back_at DATETIME
+        )""",
+        """CREATE TABLE IF NOT EXISTS quota_import_items (
+            id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+            batch_id             INTEGER NOT NULL REFERENCES quota_import_batches(id),
+            staff_id             INTEGER NOT NULL REFERENCES user_tttt(id),
+            old_quota_days       REAL,
+            old_used_leave_days  REAL,
+            new_quota_days       REAL,
+            new_used_leave_days  REAL,
+            created_leave_id     INTEGER
+        )""",
+        # DB đã tạo bảng trước khi có cột này → thêm bù (lỗi duplicate bị nuốt)
+        "ALTER TABLE quota_import_items ADD COLUMN created_leave_id INTEGER",
+        "CREATE INDEX IF NOT EXISTS ix_quota_import_items_batch ON quota_import_items(batch_id)",
+        # Người 3 — 2026-07-15: bù migration còn thiếu cho leave_records/leave_quotas.
+        # Các cột/bảng này đã được thêm out-of-band trên DB dùng để phát triển
+        # (không qua migrations.py) nên fresh-install trước đây bị lỗi "no such
+        # column"/"no such table" ở /api/leaves/today, khai báo hộ, hạn mức, dashboard.
+        "ALTER TABLE leave_records ADD COLUMN spread_dates TEXT",
+        "ALTER TABLE leave_records ADD COLUMN is_direct BOOLEAN DEFAULT 0",
+        "ALTER TABLE leave_records ADD COLUMN direct_by INTEGER REFERENCES user_tttt(id)",
+        "ALTER TABLE leave_records ADD COLUMN recall_reason TEXT",
+        """CREATE TABLE IF NOT EXISTS leave_quotas (
+            staff_id  INTEGER NOT NULL REFERENCES user_tttt(id),
+            year      INTEGER NOT NULL,
+            quota_days REAL   NOT NULL DEFAULT 12,
+            PRIMARY KEY (staff_id, year)
+        )""",
+        # year là cột thứ 2 trong PRIMARY KEY (staff_id, year) nên không tận dụng
+        # được index khi lọc riêng theo year (get_quotas/export_quotas/stats_annual,
+        # _carry_over_bulk) — thêm index riêng cho year.
+        "CREATE INDEX IF NOT EXISTS ix_leave_quotas_year ON leave_quotas(year)",
 
         # ── Lịch sử đổi phòng cán bộ — 2026-07-20 ──────────────────────────────
         # Bảng: mỗi dòng = "từ ngày effective_from, cán bộ thuộc phòng department_id"
