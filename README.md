@@ -141,7 +141,7 @@ Truy cập:
 ### Module Nhân sự & Tài khoản
 - Quản lý cán bộ theo phòng ban, vai trò (7 vai trò — xem bảng RBAC)
 - Quản lý nhóm cán bộ và phân quyền tính năng theo nhóm
-- Dashboard tổng quan: biểu đồ cột bàn giao đúng hạn/muộn theo phòng, số liệu tập chứng từ, nghỉ phép
+- Dashboard tổng quan: KPI người dùng & phòng nghiệp vụ, biểu đồ cột tỷ lệ nộp chứng từ đúng hạn/muộn theo 4 phòng (chọn tháng/năm để xem), công việc đang chờ (bàn giao, nghỉ phép)
 - **Nhật ký thao tác** (audit log): middleware ghi tập trung mọi request thay đổi dữ liệu (POST/PUT/PATCH/DELETE) vào bảng `audit_logs` — ai, làm gì, kết quả HTTP, IP, thời gian; lọc theo phương thức, tìm kiếm, phân trang; tự dọn sau 365 ngày
 - Nhật ký đăng nhập và nhật ký lỗi/cảnh báo hệ thống (admin xem, lọc theo user/thời gian)
 

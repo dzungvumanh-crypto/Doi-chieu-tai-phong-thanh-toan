@@ -1246,7 +1246,11 @@ ui.on_exception(_on_exception)</pre>
         <li><code>period_vn</code> chuyển tính sớm (trước khối render) vì tiêu đề biểu đồ vẫn cần, nhưng ô rate card cũ (nơi tính cũ) đã bị xóa.</li>
       </ul>
 
-      <div class="caution">Dùng <code>ui.echart</code> (ECharts, có sẵn trong NiceGUI 1.4.37) — lần đầu dùng chart trong dự án. Nếu <code>by_dept</code> rỗng vẫn giữ dòng "Chưa có dữ liệu bàn giao trong tháng này" thay vì vẽ biểu đồ toàn số 0.</div>
+      <div class="caution">Dùng <code>ui.echart</code> (ECharts, có sẵn trong NiceGUI 1.4.37) — lần đầu dùng chart trong dự án. Nếu <code>by_dept</code> rỗng vẫn giữ dòng "Chưa có dữ liệu bàn giao trong kỳ này" thay vì vẽ biểu đồ toàn số 0.</div>
+
+      <div class="label">Bổ sung sau — chọn Tháng/Năm để xem biểu đồ</div>
+      <p>Backend <code>/api/dashboard/summary</code> đã nhận sẵn <code>year</code>/<code>month</code> (mặc định kỳ hiện tại) nên <strong>không đụng backend</strong>. Frontend tách phần vẽ thành hàm <code>_render_chart(sm)</code> đổ vào container <code>chart_box</code>; 2 ô <code>ui.select</code> Tháng/Năm gọi <code>_reload_chart()</code> (async) → fetch lại summary theo kỳ rồi <code>chart_box.clear()</code> + vẽ lại. Kỳ mặc định dùng luôn <code>summary</code> đã tải trong <code>gather</code>, không gọi thừa 1 lần.</p>
+      <p>Toàn bộ phần phụ thuộc kỳ (dòng "Tổng N chứng từ…", ghi chú <code>no_submit_date</code>, và biểu đồ) nằm trong <code>chart_box</code> để refresh cùng nhau; chỉ tiêu đề tĩnh + định nghĩa "đúng hạn" + 2 ô select nằm ngoài. Bỏ <code>period_vn</code> (không còn nhúng kỳ vào tiêu đề vì đã có ô chọn). Danh sách năm: từ năm hiện tại lùi về 2024.</p>
     </div>
   </div>
 
