@@ -24,6 +24,7 @@ class StorageViewResponse(BaseModel):
 class StorageViewUpdateRow(BaseModel):
     bundle_ids: List[int]
     bundle_sheets: List[int]
+    new_sheets: List[int] = []   # số chứng từ nhập vào ô trống → tạo tập mới
 
 class StorageViewUpdateRequest(BaseModel):
     rows: List[StorageViewUpdateRow]

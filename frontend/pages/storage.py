@@ -149,7 +149,8 @@ async def storage_page():
                     n_day = max((len(r["days"]) for r in rows), default=1)
                     n_day = max(n_day, 2)
                     n_sh  = max((len(r["bundle_sheets"]) for r in rows), default=1)
-                    n_sh  = max(n_sh, 3)
+                    # +1 để mọi dòng luôn còn ít nhất 1 ô trống nhập thêm số chứng từ; tối thiểu 5 cột
+                    n_sh  = max(n_sh + 1, 5)
 
                     C  = "border:1px solid #000;text-align:center;padding:5px 8px;font-size:13px"
                     CE = "border:1px solid #000;text-align:center;padding:5px 8px;font-size:13px;color:#bbb"
@@ -175,13 +176,13 @@ async def storage_page():
                         for i in range(n_day):
                             v = str(r["days"][i]) if i < len(r["days"]) else ""
                             s = C if v else CE
-                            html += f'<td contenteditable="true" style="{s};{ED}">{v}</td>'
+                            html += f'<td contenteditable="true" data-col="day" style="{s};{ED}">{v}</td>'
                         for i in range(n_sh):
                             bid = bids[i] if i < len(bids) else ""
                             v   = str(r["bundle_sheets"][i]) if i < len(r["bundle_sheets"]) else ""
                             s   = C if v else CE
                             da  = f' data-bid="{bid}"' if bid else ""
-                            html += f'<td contenteditable="true"{da} style="{s};{ED}">{v}</td>'
+                            html += f'<td contenteditable="true" data-col="sheet"{da} style="{s};{ED}">{v}</td>'
                         html += f'<td style="{C};font-weight:700">{r["n_bundles"]}</td>'
                         html += "</tr>\n"
 
@@ -251,18 +252,22 @@ async def storage_page():
                             return
 
                         async def do_save():
-                            # Đọc giá trị ô "Số chứng từ" từ DOM qua data-bid
+                            # Đọc ô "Số chứng từ": ô có data-bid = tập cũ (0 = xoá),
+                            # ô trống được nhập = tập mới (new_sheets)
                             result = await ui.run_javascript("""
                                 var rows = [];
                                 document.querySelectorAll('#sv-table tr[data-bids]').forEach(function(tr) {
-                                    var bids = JSON.parse(tr.getAttribute('data-bids'));
-                                    if (!bids.length) return;
-                                    var sheets = [];
-                                    tr.querySelectorAll('td[data-bid]').forEach(function(td) {
+                                    var bundle_ids = [], bundle_sheets = [], new_sheets = [];
+                                    tr.querySelectorAll('td[data-col="sheet"]').forEach(function(td) {
                                         var v = parseInt(td.innerText.trim().replace(/[^0-9]/g,''), 10);
-                                        sheets.push(isNaN(v) ? 0 : v);
+                                        if (isNaN(v)) v = 0;
+                                        var bid = td.getAttribute('data-bid');
+                                        if (bid) { bundle_ids.push(parseInt(bid, 10)); bundle_sheets.push(v); }
+                                        else if (v > 0) { new_sheets.push(v); }
                                     });
-                                    if (sheets.length) rows.push({bundle_ids: bids, bundle_sheets: sheets});
+                                    if (bundle_ids.length || new_sheets.length)
+                                        rows.push({bundle_ids: bundle_ids, bundle_sheets: bundle_sheets,
+                                                   new_sheets: new_sheets});
                                 });
                                 return rows;
                             """)
@@ -275,6 +280,8 @@ async def storage_page():
                                 ui.notify("Đã lưu thay đổi", type="positive")
                             except Exception as e:
                                 if _handle_api_error(e): return
+                            # Tải lại để Số tập + tổng cuối tự cập nhật theo
+                            await load_storage()
 
                         with ui.row().classes("w-full justify-end gap-2 mb-3"):
                             ui.button("Lưu thay đổi", icon="save",

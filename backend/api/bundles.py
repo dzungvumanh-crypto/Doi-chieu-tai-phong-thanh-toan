@@ -799,16 +799,82 @@ def storage_summary(
     )
 
 
+def _bundle_dates(db: sqlite3.Connection, bundle_id: int) -> list:
+    """Ngày của một bundle — dùng cover_units, fallback qua items (giống _get_dates_for_bundle)."""
+    b = db.execute("SELECT id, cover_units FROM bundles WHERE id = ?", (bundle_id,)).fetchone()
+    if not b:
+        return []
+    item_dates = db.execute(
+        "SELECT de.transaction_date FROM bundle_items bi "
+        "JOIN document_entries de ON bi.entry_id = de.id WHERE bi.bundle_id = ?",
+        (bundle_id,),
+    ).fetchall()
+    return sorted(_get_dates_for_bundle({
+        "id": b["id"],
+        "cover_units": b["cover_units"],
+        "items": [{"entry": {"transaction_date": r["transaction_date"]}} for r in item_dates],
+    }))
+
+
+def _delete_bundle(db: sqlite3.Connection, bundle_id: int):
+    db.execute("DELETE FROM bundle_items WHERE bundle_id = ?", (bundle_id,))
+    db.execute("DELETE FROM bundles WHERE id = ?", (bundle_id,))
+
+
 @router.patch("/storage-view")
 def update_storage_view(
     req: StorageViewUpdateRequest,
     db: sqlite3.Connection = Depends(get_db),
     _: dict = Depends(require_feature("menu.storage")),
 ):
+    touched_groups: set = set()
+
     for row in req.rows:
+        anchor_id = row.bundle_ids[0] if row.bundle_ids else None
+        anchor = (
+            db.execute("SELECT group_id FROM bundles WHERE id = ?", (anchor_id,)).fetchone()
+            if anchor_id else None
+        )
+        group_id = anchor["group_id"] if anchor else None
+        if group_id is not None:
+            touched_groups.add(group_id)
+
+        # ── Thêm tập mới cho các ô trống được nhập (dùng ngày của dòng) ──
+        adds = [s for s in row.new_sheets if s and s > 0]
+        if adds and anchor_id and group_id is not None:
+            dates = _bundle_dates(db, anchor_id)
+            seq = (db.execute(
+                "SELECT COALESCE(MAX(sequence), 0) FROM bundles WHERE group_id = ?", (group_id,)
+            ).fetchone()[0])
+            for sheets in adds:
+                seq += 1
+                cover_units_json = json.dumps(
+                    [{"user_code": "", "full_name": "", "date": d.isoformat(),
+                      "sheet_count": sheets if i == 0 else 0, "is_large": False}
+                     for i, d in enumerate(dates)],
+                    ensure_ascii=False,
+                ) if dates else None
+                db.execute(
+                    "INSERT INTO bundles (group_id, sequence, total_sheets, status, cover_units) "
+                    "VALUES (?,?,?,?,?)",
+                    (group_id, seq, sheets, "pending", cover_units_json),
+                )
+
+        # ── Cập nhật / xoá tập hiện có (0 = xoá) ──
         for i, bundle_id in enumerate(row.bundle_ids):
-            if i < len(row.bundle_sheets):
-                db.execute("UPDATE bundles SET total_sheets=? WHERE id=?", (row.bundle_sheets[i], bundle_id))
+            if i >= len(row.bundle_sheets):
+                continue
+            val = row.bundle_sheets[i]
+            if val <= 0:
+                _delete_bundle(db, bundle_id)
+            else:
+                db.execute("UPDATE bundles SET total_sheets=? WHERE id=?", (val, bundle_id))
+
+    # ── Tính lại tổng số tập của các group bị ảnh hưởng ──
+    for gid in touched_groups:
+        cnt = db.execute("SELECT COUNT(*) FROM bundles WHERE group_id = ?", (gid,)).fetchone()[0]
+        db.execute("UPDATE bundle_groups SET total_bundles=? WHERE id=?", (cnt, gid))
+
     db.commit()
     return {"ok": True}
 

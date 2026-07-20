@@ -1439,6 +1439,35 @@ ui.on_exception(_on_exception)</pre>
     </div>
   </div>
 
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">39</span>
+      <span class="card-title">Tra cứu lưu trữ — thêm/xoá tập chứng từ ngay trên bảng, số tập tự cập nhật</span>
+      <span class="badge badge-done">Hoàn thành</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh &amp; bản chất dữ liệu (điều không đọc được từ UI)</div>
+      <p>Trong bảng "Tra cứu lưu trữ", mỗi <strong>dòng = một ngày</strong>, mỗi ô "Số chứng từ" = <code>total_sheets</code> của <strong>một tập</strong> (bundle), còn "Số tập" = <code>n_bundles</code> = <em>số bundle đếm được trong dòng</em> — không phải con số lưu riêng. Do đó yêu cầu "điền số vào ô trống → tăng số tập" thực chất là <strong>tạo một bundle mới</strong>, và "sửa về 0 → giảm số tập" là <strong>xoá bundle</strong>. Số tập / tổng cuối chỉ cần <strong>tải lại bảng</strong> sau khi lưu là backend đếm lại đúng.</p>
+
+      <table>
+        <tr><th>Thao tác người dùng</th><th>Xử lý backend (<code>PATCH /storage-view</code>)</th></tr>
+        <tr><td>Nhập số vào ô trống cạnh ô có sẵn</td><td>INSERT bundle mới cùng <code>group_id</code>, cùng ngày (lấy <code>cover_units</code> theo bundle mỏ neo của dòng), <code>sequence = MAX+1</code></td></tr>
+        <tr><td>Sửa số hiện có thành 0</td><td>DELETE bundle đó + <code>bundle_items</code></td></tr>
+        <tr><td>Sau mỗi lần lưu</td><td>Tính lại <code>bundle_groups.total_bundles = COUNT(bundles)</code>; frontend gọi lại <code>load_storage()</code></td></tr>
+      </table>
+
+      <div class="label">Quyết định không hiển nhiên</div>
+      <p><strong>Thứ tự xử lý: thêm trước, xoá/sửa sau.</strong> Bundle mới cần ngày &amp; group của dòng, lấy từ <code>bundle_ids[0]</code> (mỏ neo). Nếu xoá trước, mỏ neo có thể biến mất khi người dùng vừa thêm ô mới vừa xoá tập cũ trong cùng dòng.</p>
+      <p><strong>Cột "Số chứng từ" render dư 1 ô trống</strong> (<code>n_sh = max(n_sh+1, 3)</code>) để dòng rộng nhất cũng luôn còn chỗ nhập thêm — nếu không, dòng có số tập nhiều nhất sẽ kín ô, không thể thêm.</p>
+      <p><strong>JS đọc lại cả <code>bundle_ids</code> lẫn <code>bundle_sheets</code> từ cùng vòng lặp DOM</strong> (qua <code>td[data-col="sheet"]</code>) thay vì đọc <code>bundle_ids</code> từ attribute <code>data-bids</code> và sheets riêng — đảm bảo hai mảng luôn khớp chỉ số kể cả khi ô trống xen giữa.</p>
+
+      <div class="label">Đánh đổi chấp nhận</div>
+      <p>Bundle "thêm tay" <strong>không có chứng từ thật</strong> (<code>bundle_items</code> rỗng) — ngày lấy từ <code>cover_units</code> JSON (đúng theo <code>_get_dates_for_bundle</code>), <code>custodian_id</code> để trống. Xoá bundle là thao tác phá huỷ, có thể làm lệch số thứ tự "x/tổng" khi in bìa của các tập còn lại trong nhóm — chấp nhận vì đây là màn hình chỉnh tay của HKV, và <code>total_bundles</code> đã được tính lại để không lệch tổng.</p>
+
+      <div class="note">Kiểm thử tích hợp mức DB (kỳ 06/2099, phòng test, dọn sạch sau): 238 → thêm 100 → số tập 1→2, tổng 238→338, <code>group.total_bundles</code>=2; sửa 100→0 → số tập về 1, tổng về 238, <code>total_bundles</code>=1. Tất cả assert pass, không sót data test.</div>
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-07-20</footer>
 </div>
 </body>
