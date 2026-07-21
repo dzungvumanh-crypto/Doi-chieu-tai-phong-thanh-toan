@@ -1468,7 +1468,24 @@ ui.on_exception(_on_exception)</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-07-20</footer>
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">40</span>
+      <span class="card-title">Nút thu gọn sidebar không mở lại được — double-toggle do event bubbling</span>
+      <span class="badge badge-done">Hoàn thành</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Triệu chứng &amp; nguyên nhân (không đọc ra từ code)</div>
+      <p>Bấm nút góc trên trái thu gọn được sidebar, nhưng bấm lần nữa không mở lại. Nút <code>#sb-toggle</code> nằm <em>bên trong</em> <code>#app-sidebar</code>. Ngoài <code>onclick="toggleSidebar()"</code> của nút, còn một listener phủ trên toàn <code>#app-sidebar</code> (thêm ở <code>DOMContentLoaded</code>) với ý đồ "click bất kỳ đâu trên sidebar đang thu gọn → mở ra". Cú click nút <strong>bubble</strong> lên container → gọi <code>toggleSidebar()</code> lần hai → hoàn tác trạng thái vừa đổi.</p>
+
+      <div class="label">Quyết định</div>
+      <p>Guard listener của container: <code>if (e.target.closest('#sb-toggle')) return;</code> — bỏ qua click phát ra từ chính nút, vì nút đã tự toggle. Gán <code>id="sb-toggle"</code> cho nút để guard trỏ chính xác. Giữ nguyên tính năng "click vùng icon khi thu gọn → mở ra".</p>
+
+      <div class="note">Không dùng <code>stopPropagation</code> trên nút vì handler nút là inline attribute không sẵn <code>event</code>; guard ở container gọn và rõ ý hơn.</div>
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-07-21</footer>
 </div>
 </body>
 </html>

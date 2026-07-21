@@ -130,7 +130,9 @@ document.addEventListener('DOMContentLoaded', function () {
     }
   } catch (e) {}
   var sb = document.getElementById('app-sidebar');
-  if (sb) sb.addEventListener('click', function () {
+  if (sb) sb.addEventListener('click', function (e) {
+    // Bỏ qua click từ chính nút menu — nút đã tự toggle, tránh toggle 2 lần
+    if (e.target.closest('#sb-toggle')) return;
     if (document.body.classList.contains('sb-collapsed')) toggleSidebar();
   });
 });
@@ -298,7 +300,7 @@ def _sidebar(current_page: str) -> dict:
             "w-full items-center px-3 py-2 border-b border-red-700 shrink-0"
         ):
             ui.html(
-                '<button type="button" onclick="toggleSidebar()" '
+                '<button type="button" id="sb-toggle" onclick="toggleSidebar()" '
                 'style="background:transparent;border:none;cursor:pointer;color:#fecaca;'
                 'display:flex;align-items:center;justify-content:center;width:2rem;height:2rem;'
                 'border-radius:6px;flex-shrink:0;" '

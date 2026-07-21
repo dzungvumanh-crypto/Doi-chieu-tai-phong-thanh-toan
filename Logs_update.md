@@ -4,12 +4,15 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 21/07/2026 Giao diện - Sidebar:
+    + Fix nút thu gọn menu (góc trên trái): thu gọn được nhưng bấm lần nữa không mở lại. Nguyên nhân: click bị xử lý 2 lần (nút tự toggle + listener phủ trên sidebar bắt lại do event bubbling) triệt tiêu nhau. Nay listener bỏ qua click phát ra từ chính nút
+
 - 20/07/2026 Phòng KSNB&HTVH - Lưu trữ (sửa số chứng từ trên bảng):
     + Tra cứu lưu trữ cho phép chỉnh trực tiếp cột "Số chứng từ": nhập số vào ô trống để **thêm một tập** cho ngày đó, sửa số hiện có về **0 để xoá tập**. Sau khi lưu, "Số tập" và dòng tổng tự cộng lại (backend đếm lại số tập của nhóm)
     + Cột "Số chứng từ" mở rộng tối thiểu **5 cột** (luôn chừa ô trống để nhập thêm)
     + *Đánh đổi*: tập thêm tay không gắn chứng từ thật (chỉ ngày + số tờ); xoá tập có thể làm lệch số thứ tự "x/tổng" khi in bìa các tập còn lại — chấp nhận vì đây là màn hình chỉnh tay của HKV, tổng số tập đã được tính lại đúng
 
-- 20/07/2026 Toàn hệ thống - Nghỉ phép (nâng cấp lớn, gộp qua PR #7):
+- 20/07/2026 Toàn hệ thống - Nghỉ phép (Big update):
     + **Nghỉ thai sản / bảo hiểm**: không trừ vào hạn mức phép năm; chọn khoảng ngày bằng lịch cuộn (calendar dropdown); template phiếu hỗ trợ điều kiện 2 năm
     + **Nhập hạn mức phép hàng loạt từ file Excel**: xem trước → áp dụng → hoàn tác (rollback). Cột "Đã nghỉ" tạo bản ghi tổng hợp thay vì ghi từng trường mồ côi
     + **Carry-over**: chuyển tiếp ngày phép chưa dùng của năm trước sang Q1 năm sau
