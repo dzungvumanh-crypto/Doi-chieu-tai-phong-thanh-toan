@@ -1485,7 +1485,63 @@ ui.on_exception(_on_exception)</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-07-21</footer>
+  <!-- 41 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">41</span>
+      <span class="card-title">Nhóm "Quản trị viên" trong Quản lý User — admin không thuộc phòng</span>
+      <span class="badge badge-done">Hoàn thành</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Quyết định thiết kế (tại sao A thay vì B)</div>
+      <p>Gom user role <code>admin</code> thành một nhóm hiển thị riêng "Quản trị viên", song song với "Ban Giám đốc". Chọn cách <strong>gom theo role</strong> ở frontend (giống hệt cách BGD đang gom theo <code>_BGD_ROLES</code>), <em>không</em> tạo một phòng ảo <code>QTV</code> trong bảng <code>departments</code>.</p>
+      <table>
+        <tr><th>Phương án</th><th>Đánh đổi</th></tr>
+        <tr><td>Gom theo role (đã chọn)</td><td>Nhất quán với BGD; không cần migration; admin có <code>department_id = NULL</code> đúng bản chất "không thuộc phòng nào"</td></tr>
+        <tr><td>Tạo phòng ảo QTV</td><td>Đối xứng với BGD (BGD là phòng thật) nhưng phát sinh phòng rác trong mọi dropdown lọc phòng + cần migration</td></tr>
+      </table>
+
+      <div class="label">Ràng buộc & xử lý</div>
+      <p><code>_validate_dept()</code> bỏ qua yêu cầu chọn phòng khi role là admin. <code>create_staff</code>/<code>update_staff</code> <strong>ép <code>department_id</code> về NULL</strong> cho admin dù client có gửi gì. Frontend ẩn ô "Phòng *" khi chọn quyền Quản trị viên (cả dialog Thêm và Sửa), thay bằng dòng ghi chú.</p>
+
+      <div class="note">Cột <code>staff_department_history.department_id</code> là <code>NOT NULL</code> → guard <code>if new_dept != cũ <strong>and new_dept</strong></code> để không insert dòng lịch sử NULL khi chuyển user sang admin. Đây là "nhóm hiển thị" trong danh sách User, độc lập với hệ thống phân quyền <code>user_groups</code>/<code>group_members</code>.</div>
+    </div>
+  </div>
+
+  <!-- 42 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">42</span>
+      <span class="card-title">Tách Quản trị viên thành cấp 1 (toàn quyền) và cấp 2 (quyền theo nhóm)</span>
+      <span class="badge badge-done">Hoàn thành</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Quyết định thiết kế (tại sao A thay vì B)</div>
+      <p>Thêm role mới <code>admin_l2</code> ("Quản trị viên cấp 2"); role <code>admin</code> cũ đổi <em>nhãn hiển thị</em> thành "Quản trị viên cấp 1" nhưng <strong>giữ nguyên mã <code>admin</code></strong> và toàn bộ quyền all-access. Không đổi mã <code>admin</code> để tránh phải migrate hàng chục điểm <code>role == "admin"</code> (bypass all-access) trong <code>leaves.py</code>, <code>deps.py</code>, <code>auth.py</code>…</p>
+      <table>
+        <tr><th>Khía cạnh</th><th>Cấp 1 (<code>admin</code>)</th><th>Cấp 2 (<code>admin_l2</code>)</th></tr>
+        <tr><td>Quyền</td><td>All-access (<code>/my-features</code> trả <code>null</code>)</td><td>Theo nhóm — union <code>group_features</code> như role thường</td></tr>
+        <tr><td>Phòng</td><td>NULL (nhóm Quản trị viên)</td><td>NULL (nhóm Quản trị viên)</td></tr>
+        <tr><td>Menu "Phân quyền chức năng"</td><td>Thấy &amp; quản lý</td><td>Không (bị chặn <code>require_admin</code> + guard <code>role=="admin"</code>)</td></tr>
+        <tr><td>Là thành viên nhóm quyền</td><td>Bị loại (vô nghĩa vì all-access)</td><td>Được thêm vào nhóm để cấp quyền</td></tr>
+      </table>
+
+      <div class="label">Vì sao "tự chạy đúng" với ít sửa</div>
+      <p><code>require_feature()</code> đã sẵn nhánh: role <code>admin</code> → pass; role khác → tra <code>group_features</code>. Vì <code>admin_l2</code> là mã <em>khác</em> nên tự rơi vào nhánh tra nhóm — không cần thêm code RBAC. Guard loại admin khỏi nhóm (<code>role != "admin"</code>) tự động <em>không</em> loại <code>admin_l2</code>. Frontend <code>staff.py</code>: gộp cả hai vào biến <code>is_admin</code> để hiện công cụ quản lý, nhưng <strong>từng nút vẫn gated theo <code>has_feature()</code></strong> → cấp 2 chỉ thấy nút mà nhóm cho phép.</p>
+
+      <div class="label">Chống leo thang quyền (đã xử lý)</div>
+      <p>Cấp 2 <strong>không</strong> được đụng tới cấp 1. Chặn 2 lớp:</p>
+      <ul>
+        <li><b>Frontend</b> (<code>staff.py</code>): dropdown quyền dùng <code>FORM_ROLE_OPTS</code> — ẩn "Quản trị viên cấp 1" khi người thao tác là cấp 2; nút Sửa/Xóa trên hàng cấp 1 thay bằng icon khóa.</li>
+        <li><b>Backend</b> (nguồn sự thật, không tin frontend): <code>create_staff</code> chặn tạo role <code>admin</code>; <code>update_staff</code> chặn cả sửa tài khoản đang là <code>admin</code> lẫn nâng bất kỳ ai lên <code>admin</code>; <code>delete_staff</code> chặn xóa <code>admin</code>. Đều trả <code>403</code>.</li>
+      </ul>
+      <div class="note">Chỉ chặn theo hướng cấp 2 → cấp 1. Cấp 2 vẫn tạo/sửa/xóa được các role khác (kể cả cấp 2) tùy quyền nhóm. Cấp 1 không bị ảnh hưởng.</div>
+
+      <div class="note">Role là cột TEXT không có CHECK constraint → thêm <code>admin_l2</code> không cần migration. Nhãn "Quản trị viên" được đổi đồng bộ ở mọi <code>_ROLE_LABEL</code>/<code>_ROLE_VN</code> (staff, leaves, handovers, shared, groups).</div>
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-07-22</footer>
 </div>
 </body>
 </html>

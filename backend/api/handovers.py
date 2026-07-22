@@ -58,7 +58,8 @@ _STATUS_LABEL = {
 }
 
 _ROLE_LABEL = {
-    "admin":         "Quản trị viên",
+    "admin":         "Quản trị viên cấp 1",
+    "admin_l2":      "Quản trị viên cấp 2",
     "hau_kiem_vien": "Hậu kiểm viên",
     "giam_doc":      "Giám đốc",
     "pho_giam_doc":  "Phó Giám đốc",

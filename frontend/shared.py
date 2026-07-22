@@ -325,7 +325,8 @@ def _sidebar(current_page: str) -> dict:
             role_map = {
                 "giam_doc":      "Giám đốc",
                 "pho_giam_doc":  "Phó Giám đốc",
-                "admin":         "Quản trị viên",
+                "admin":         "Quản trị viên cấp 1",
+                "admin_l2":      "Quản trị viên cấp 2",
                 "hau_kiem_vien": "Hậu kiểm viên",
                 "truong_phong":  "Trưởng phòng",
                 "pho_phong":     "Phó phòng",

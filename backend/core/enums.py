@@ -18,7 +18,8 @@ class LeaveStatus(str, Enum):
 
 
 class StaffRole(str, Enum):
-    ADMIN          = "admin"
+    ADMIN          = "admin"        # Quản trị viên cấp 1 — toàn quyền
+    ADMIN_L2       = "admin_l2"     # Quản trị viên cấp 2 — quyền theo nhóm
     HAU_KIEM_VIEN  = "hau_kiem_vien"
     TRUONG_PHONG   = "truong_phong"
     PHO_PHONG      = "pho_phong"

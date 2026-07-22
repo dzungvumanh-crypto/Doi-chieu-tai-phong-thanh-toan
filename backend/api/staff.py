@@ -16,24 +16,30 @@ from backend.core.deps import get_current_staff, require_feature
 
 router = APIRouter(prefix="/api/staff", tags=["Staff"])
 
+# Quản trị viên (cấp 1 + cấp 2) — không thuộc phòng nào
+_ADMIN_ROLES = frozenset(("admin", "admin_l2"))
 # Role được xem toàn bộ nhân viên không bị giới hạn phòng
-_BROAD_VIEW_ROLES = frozenset(("admin", "hau_kiem_vien", "giam_doc", "pho_giam_doc"))
+_BROAD_VIEW_ROLES = frozenset(("admin", "admin_l2", "hau_kiem_vien", "giam_doc", "pho_giam_doc"))
 
 _ROLE_ORDER_SQL = """
     CASE role
         WHEN 'giam_doc'      THEN 0
         WHEN 'pho_giam_doc'  THEN 1
         WHEN 'admin'         THEN 2
-        WHEN 'truong_phong'  THEN 3
-        WHEN 'pho_phong'     THEN 4
-        WHEN 'hau_kiem_vien' THEN 5
-        WHEN 'chuyen_vien'   THEN 6
+        WHEN 'admin_l2'      THEN 3
+        WHEN 'truong_phong'  THEN 4
+        WHEN 'pho_phong'     THEN 5
+        WHEN 'hau_kiem_vien' THEN 6
+        WHEN 'chuyen_vien'   THEN 7
         ELSE 9
     END
 """
 
 
 def _validate_dept(db: sqlite3.Connection, role: str, department_id):
+    # Quản trị viên (cấp 1 + cấp 2) không thuộc phòng nào — bỏ qua yêu cầu chọn phòng
+    if role in _ADMIN_ROLES:
+        return
     if not department_id:
         raise HTTPException(400, "Phải chọn phòng ban")
     dept = db.execute(
@@ -94,7 +100,8 @@ _ROLE_VN = {
     "hau_kiem_vien": "Hậu kiểm viên",
     "giam_doc":      "Giám đốc",
     "pho_giam_doc":  "Phó Giám đốc",
-    "admin":         "Quản trị viên",
+    "admin":         "Quản trị viên cấp 1",
+    "admin_l2":      "Quản trị viên cấp 2",
     "controller":    "Phó phòng",
 }
 
@@ -232,24 +239,29 @@ def create_staff(
     emp_code = body.employee_code or body.username
     if db.execute("SELECT id FROM user_tttt WHERE employee_code = ?", (emp_code,)).fetchone():
         raise HTTPException(400, "Mã nhân viên đã tồn tại")
-    _validate_dept(db, body.role, body.department_id)
+    # QTV cấp 2 không được tạo QTV cấp 1 (tránh leo thang quyền)
+    if current["role"] == "admin_l2" and body.role == "admin":
+        raise HTTPException(403, "Quản trị viên cấp 2 không được tạo Quản trị viên cấp 1")
+    # Admin (cấp 1 + cấp 2) không thuộc phòng nào → ép department_id về None dù client có gửi
+    dept_id = None if body.role in _ADMIN_ROLES else body.department_id
+    _validate_dept(db, body.role, dept_id)
     join_date_iso = body.join_industry_date.isoformat() if body.join_industry_date else None
     cur = db.execute(
         """INSERT INTO user_tttt
            (employee_code, full_name, role, department_id, username, pwd_hash,
             phone, email, start_date, join_industry_date, ipcas_code, payment_username, is_active)
            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1)""",
-        (emp_code, body.full_name, body.role, body.department_id, body.username,
+        (emp_code, body.full_name, body.role, dept_id, body.username,
          get_password_hash(body.password), body.phone, body.email,
          body.start_date.isoformat() if body.start_date else None,
          join_date_iso, body.ipcas_code, body.payment_username),
     )
     new_id = cur.lastrowid
     # Dòng lịch sử phòng đầu tiên — hiệu lực từ epoch để phủ mọi tháng trước đó
-    if body.department_id:
+    if dept_id:
         db.execute(
             "INSERT INTO staff_department_history (staff_id, department_id, effective_from, created_at) VALUES (?,?,?,?)",
-            (new_id, body.department_id, _DEPT_HISTORY_EPOCH, str(_vn_now())),
+            (new_id, dept_id, _DEPT_HISTORY_EPOCH, str(_vn_now())),
         )
     client_ip = request.client.host if request.client else "unknown"
     write_audit(db, current["id"], "staff_create", "staff", new_id,
@@ -270,6 +282,12 @@ def update_staff(
     row = db.execute("SELECT * FROM user_tttt WHERE id = ?", (staff_id,)).fetchone()
     if not row:
         raise HTTPException(404, "Không tìm thấy cán bộ")
+    # QTV cấp 2 không được đụng tài khoản cấp 1, cũng không được nâng ai lên cấp 1
+    if current["role"] == "admin_l2":
+        if row["role"] == "admin":
+            raise HTTPException(403, "Quản trị viên cấp 2 không được sửa tài khoản Quản trị viên cấp 1")
+        if body.role == "admin":
+            raise HTTPException(403, "Quản trị viên cấp 2 không được nâng lên Quản trị viên cấp 1")
     update_data = body.dict(exclude_none=True)
     # Serialize date object → ISO string cho sqlite3
     if "join_industry_date" in update_data and update_data["join_industry_date"]:
@@ -283,13 +301,18 @@ def update_staff(
             raise HTTPException(400, "Mã cán bộ đã tồn tại")
     new_role = update_data.get("role", row["role"])
     new_dept = update_data.get("department_id", row["department_id"])
+    # Admin (cấp 1 + cấp 2) không thuộc phòng nào → ép department_id về None
+    if new_role in _ADMIN_ROLES:
+        new_dept = None
+        update_data["department_id"] = None
     _validate_dept(db, new_role, new_dept)
     if update_data:
         sets = ", ".join(f"{k} = ?" for k in update_data)
         params = list(update_data.values()) + [staff_id]
         db.execute(f"UPDATE user_tttt SET {sets} WHERE id = ?", params)
         # Đổi phòng → ghi mốc lịch sử, hiệu lực từ ngày quản trị viên thực hiện (hôm nay)
-        if new_dept != row["department_id"]:
+        # Bỏ qua khi chuyển sang admin (new_dept = None) vì history.department_id NOT NULL
+        if new_dept != row["department_id"] and new_dept:
             db.execute(
                 "INSERT INTO staff_department_history (staff_id, department_id, effective_from, created_at) VALUES (?,?,?,?)",
                 (staff_id, new_dept, _vn_now().date().isoformat(), str(_vn_now())),
@@ -312,9 +335,11 @@ def delete_staff(
 ):
     if staff_id == current["id"]:
         raise HTTPException(400, "Không thể xóa tài khoản của chính mình")
-    row = db.execute("SELECT username, full_name FROM user_tttt WHERE id = ?", (staff_id,)).fetchone()
+    row = db.execute("SELECT username, full_name, role FROM user_tttt WHERE id = ?", (staff_id,)).fetchone()
     if not row:
         raise HTTPException(404, "Không tìm thấy cán bộ")
+    if current["role"] == "admin_l2" and row["role"] == "admin":
+        raise HTTPException(403, "Quản trị viên cấp 2 không được xóa tài khoản Quản trị viên cấp 1")
     db.execute("UPDATE user_tttt SET is_deleted = 1, is_active = 0 WHERE id = ?", (staff_id,))
     client_ip = request.client.host if request.client else "unknown"
     write_audit(db, current["id"], "staff_delete", "staff", staff_id,

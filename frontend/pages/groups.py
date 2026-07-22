@@ -7,7 +7,8 @@ from frontend.shared import (
 )
 
 _ROLE_LABEL = {
-    "admin": "Quản trị viên",
+    "admin": "Quản trị viên cấp 1",
+    "admin_l2": "Quản trị viên cấp 2",
     "hau_kiem_vien": "Hậu kiểm viên",
     "truong_phong": "Trưởng phòng",
     "pho_phong": "Phó phòng",
@@ -19,10 +20,11 @@ _ROLE_LABEL = {
 _ROLE_ORDER = {
     "giam_doc": 0,
     "pho_giam_doc": 1,
-    "truong_phong": 2,
-    "pho_phong": 3,
-    "hau_kiem_vien": 4,
-    "chuyen_vien": 5,
+    "admin_l2": 2,
+    "truong_phong": 3,
+    "pho_phong": 4,
+    "hau_kiem_vien": 5,
+    "chuyen_vien": 6,
 }
 
 

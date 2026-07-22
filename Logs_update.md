@@ -4,8 +4,15 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 22/07/2026 Quản lý User - Nhóm & phân cấp Quản trị viên:
+    + Gom các tài khoản quản trị vào **nhóm "Quản trị viên"** trong danh sách Quản lý User (hiển thị như "Ban Giám đốc", các phòng). Admin **không thuộc phòng nào**: tạo/sửa admin sẽ ẩn ô chọn Phòng, `department_id` để trống
+    + Tách quyền quản trị thành **2 cấp**:
+        • **Quản trị viên cấp 1** (role cũ `admin`, chỉ đổi nhãn): toàn quyền như trước
+        • **Quản trị viên cấp 2** (`admin_l2`, mới): quyền hạn cấu hình qua **Phân quyền theo nhóm** (như các role thường), không mặc định all-access
+    + **Chống leo thang quyền**: cấp 2 không được tạo/sửa/xóa hay nâng ai lên cấp 1 — chặn ở cả giao diện (ẩn tùy chọn "cấp 1" khỏi dropdown, khóa nút thao tác trên hàng cấp 1) lẫn backend (trả 403)
+
 - 21/07/2026 Giao diện - Sidebar:
-    + Fix nút thu gọn menu (góc trên trái): thu gọn được nhưng bấm lần nữa không mở lại. Nguyên nhân: click bị xử lý 2 lần (nút tự toggle + listener phủ trên sidebar bắt lại do event bubbling) triệt tiêu nhau. Nay listener bỏ qua click phát ra từ chính nút
+    + Fix nút thu gọn menu (góc trên trái): lỗi thu gọn được nhưng bấm lần nữa không mở lại. 
 
 - 20/07/2026 Phòng KSNB&HTVH - Lưu trữ (sửa số chứng từ trên bảng):
     + Tra cứu lưu trữ cho phép chỉnh trực tiếp cột "Số chứng từ": nhập số vào ô trống để **thêm một tập** cho ngày đó, sửa số hiện có về **0 để xoá tập**. Sau khi lưu, "Số tập" và dòng tổng tự cộng lại (backend đếm lại số tập của nhóm)

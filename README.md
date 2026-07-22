@@ -139,7 +139,7 @@ Truy cập:
 ## Chức năng
 
 ### Module Nhân sự & Tài khoản
-- Quản lý cán bộ theo phòng ban, vai trò (7 vai trò — xem bảng RBAC)
+- Quản lý cán bộ theo phòng ban, vai trò (8 vai trò — xem bảng RBAC)
 - Quản lý nhóm cán bộ và phân quyền tính năng theo nhóm
 - Dashboard tổng quan: KPI người dùng & phòng nghiệp vụ, biểu đồ cột tỷ lệ nộp chứng từ đúng hạn/muộn theo 4 phòng (chọn tháng/năm để xem), công việc đang chờ (bàn giao, nghỉ phép)
 - **Nhật ký thao tác** (audit log): middleware ghi tập trung mọi request thay đổi dữ liệu (POST/PUT/PATCH/DELETE) vào bảng `audit_logs` — ai, làm gì, kết quả HTTP, IP, thời gian; lọc theo phương thức, tìm kiếm, phân trang; tự dọn sau 365 ngày
@@ -202,7 +202,8 @@ Truy cập:
 
 | Vai trò | Mô tả |
 |---|---|
-| `admin` | Toàn quyền hệ thống, quản lý tài khoản |
+| `admin` | **Quản trị viên cấp 1** — toàn quyền hệ thống, quản lý tài khoản & phân quyền nhóm |
+| `admin_l2` | **Quản trị viên cấp 2** — quyền theo nhóm chức năng được gán; không thuộc phòng nào; không được tạo/sửa/xóa tài khoản cấp 1 |
 | `hau_kiem_vien` | Quyền hậu kiểm (xác nhận, gom tập, in bìa) |
 | `giam_doc` | Duyệt nghỉ phép bước cuối; xem toàn bộ màn hình |
 | `pho_giam_doc` | Duyệt thay GĐ khi có ủy quyền còn hiệu lực |
@@ -210,7 +211,9 @@ Truy cập:
 | `pho_phong` | Duyệt nghỉ phép bước KSV; nhập bàn giao |
 | `chuyen_vien` | Nhập bàn giao, xem dữ liệu phòng mình |
 
-**Phân cấp**: `admin > hau_kiem_vien > giam_doc / pho_giam_doc > truong_phong > pho_phong > chuyen_vien`
+**Phân cấp**: `admin > admin_l2 > hau_kiem_vien > giam_doc / pho_giam_doc > truong_phong > pho_phong > chuyen_vien`
+
+> `admin_l2` (Quản trị viên cấp 2) hiển thị chung nhóm "Quản trị viên" như cấp 1, nhưng quyền hạn được cấu hình qua **Phân quyền theo nhóm** thay vì all-access.
 
 ---
 

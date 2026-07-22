@@ -427,7 +427,7 @@ def get_approvers(
         "truong_phong":  "Trưởng phòng",
         "pho_phong":     "Phó phòng",
         "hau_kiem_vien": "Hậu kiểm viên",
-        "admin":         "Quản trị viên",
+        "admin":         "Quản trị viên cấp 1",
     }
     dept_id = current.get("department_id")
     if dept_id:
@@ -1405,7 +1405,8 @@ _ROLE_VN = {
     "giam_doc":      "Giám đốc",
     "pho_giam_doc":  "Phó Giám đốc",
     "controller":    "Phó phòng",
-    "admin":         "Quản trị viên",
+    "admin":         "Quản trị viên cấp 1",
+    "admin_l2":      "Quản trị viên cấp 2",
 }
 
 _TPL_DIR = os.path.join(
