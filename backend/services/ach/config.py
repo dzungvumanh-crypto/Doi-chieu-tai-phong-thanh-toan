@@ -9,9 +9,7 @@ COLS_NPO = [
     'REMARK', 'DRAMOUNT', 'CRAMOUNT', 'CRTDTM',
 ]
 
-# Mốc thời gian mặc định (dùng làm fallback khi không có ngày truyền vào)
-from datetime import datetime, timedelta
+# Ngày đối chiếu mặc định (dùng làm fallback khi không có ngày truyền vào)
+from datetime import datetime
 _DEFAULT_DATE = datetime.today().replace(hour=0, minute=0, second=0, microsecond=0)
 NGAY_DT       = _DEFAULT_DATE
-TPAY_TU       = (_DEFAULT_DATE - timedelta(days=1)).replace(hour=23, minute=0, second=0)
-TPAY_DEN      = _DEFAULT_DATE.replace(hour=23, minute=0, second=0)

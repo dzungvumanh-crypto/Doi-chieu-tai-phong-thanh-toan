@@ -15,11 +15,12 @@ from . import config as _cfg
 from .b1_doc_session   import doc_session
 from .b2_xu_ly_gl02    import xu_ly_gl02
 from .b3_xu_ly_gw      import xu_ly_gw
-from .b4_xu_ly_mis_di  import xu_ly_mis_di, _doc_mis_di_raw, _process_mis_di
+from .b4_xu_ly_mis_di  import (
+    _doc_mis_di_raw, _process_mis_di, khop_voi_gw, tim_nhom_gw_thua, ap_dung_xac_nhan,
+)
 from .b5_doi_chieu_di  import doi_chieu_di
 from .b6_xu_ly_mis_den import xu_ly_mis_den
 from .b7_doi_chieu_den import doi_chieu_den
-from .b8_phan_tich     import phan_tich
 
 _COLS_NPO = _cfg.COLS_NPO
 
@@ -27,8 +28,11 @@ _COLS_MIS_DI = [
     'NGAY_GIAO_DICH', 'CHI_NHANH', 'CN tiền Hub', 'REFHUB', 'MSGREF',
     'MSGSEQ', 'TXID', 'KENH_THANH_TOAN', 'TRANG_THAI_LENH', 'SO_TIEN',
     'TRACE', 'SE_TRACE', 'SESSION', 'LOAI_LENH_OSB', 'NH_NHAN',
-    'MA_GIAO_DICH', 'NOI_DUNG', 'NGAY_KENH_TRA',
+    'MA_GIAO_DICH', 'NOI_DUNG', 'NGAY_KENH_TRA', 'MATCH_TYPE',
+    'LY_DO_GIU_SESSION_NULL',
 ]
+
+_COLS_CAN_XAC_NHAN = [c for c in _COLS_MIS_DI if c != 'MATCH_TYPE']
 
 _COLS_MIS_DEN = [
     'NGAY_GIAO_DICH', 'CHI_NHANH', 'REFHUB', 'MSGREF', 'MSGSEQ', 'TXID',
@@ -43,7 +47,6 @@ _XANH_LA    = '#C6EFCE'
 _DO         = '#FFC7CE'
 _CAM        = '#FFEB9C'
 _XANH_LAM   = '#DDEBF7'
-_XANH_NHAT  = '#E2EFDA'
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -64,22 +67,13 @@ def _tong_tien(df: pd.DataFrame, col: str) -> int:
     return int(pd.to_numeric(df[col], errors='coerce').fillna(0).sum())
 
 
-def _tao_cap_cn_tien(mis_di_final, df_timeout, dict_gw_count):
+def _tao_cap_cn_tien(df_mis_di, df_timeout, dict_gw_count):
+    """Bảng tham khảo (mục 3.2 bullet 1) — cặp CN TIỀN thừa ở MIS_đi so với GW."""
     cn_col = 'CN tiền Hub'
-    frames = []
-    if mis_di_final is not None and len(mis_di_final) > 0:
-        frames.append(mis_di_final)
-    if df_timeout is not None and len(df_timeout) > 0:
-        frames.append(df_timeout)
-
-    if not frames:
+    if df_mis_di is None or len(df_mis_di) == 0 or cn_col not in df_mis_di.columns:
         return pd.DataFrame(columns=['CHI_NHANH', 'SO_TIEN', 'COUNT_MIS', 'COUNT_GW', 'CHENH_LECH', 'SO_TIMEOUT'])
 
-    df_all = pd.concat(frames, ignore_index=True)
-    if cn_col not in df_all.columns:
-        return pd.DataFrame(columns=['CHI_NHANH', 'SO_TIEN', 'COUNT_MIS', 'COUNT_GW', 'CHENH_LECH', 'SO_TIMEOUT'])
-
-    cnt = df_all.groupby(cn_col, sort=False).size().rename('COUNT_MIS').reset_index()
+    cnt = df_mis_di.groupby(cn_col, sort=False).size().rename('COUNT_MIS').reset_index()
     cnt['COUNT_GW']   = cnt[cn_col].map(dict_gw_count).fillna(0).astype(int)
     cnt['CHENH_LECH'] = cnt['COUNT_MIS'] - cnt['COUNT_GW']
 
@@ -90,7 +84,7 @@ def _tao_cap_cn_tien(mis_di_final, df_timeout, dict_gw_count):
     else:
         cnt['SO_TIMEOUT'] = 0
 
-    ref       = df_all.drop_duplicates(subset=[cn_col])
+    ref       = df_mis_di.drop_duplicates(subset=[cn_col])
     lookup    = ref.set_index(cn_col)[['CHI_NHANH', 'SO_TIEN']]
     cnt['CHI_NHANH'] = cnt[cn_col].map(lookup['CHI_NHANH'].to_dict())
     cnt['SO_TIEN']   = cnt[cn_col].map(lookup['SO_TIEN'].to_dict())
@@ -142,30 +136,6 @@ def _tim_gw_xlsx(input_dir: str) -> str:
 
 # ─── Xuất Excel ───────────────────────────────────────────────────────────────
 
-def _viet_phan_tich(workbook, worksheet, df: pd.DataFrame):
-    if df is None or len(df) == 0:
-        worksheet.write(0, 0, '(Không có dữ liệu)')
-        return
-
-    fmt_col_hdr  = workbook.add_format({'bold': True, 'font_size': 10, 'bg_color': '#DDEBF7', 'border': 1})
-    fmt_header   = workbook.add_format({'bold': True, 'font_size': 10, 'bg_color': '#BDD7EE', 'border': 1})
-    fmt_sub      = workbook.add_format({'bold': True, 'font_size': 10, 'bg_color': '#E2EFDA', 'border': 1})
-    fmt_canh_bao = workbook.add_format({'bold': True, 'font_size': 10, 'bg_color': '#FFEB9C', 'border': 1})
-    fmt_data     = workbook.add_format({'font_size': 10, 'border': 1})
-
-    cols   = ['Chi tieu', 'Gia tri', 'Ghi chu']
-    widths = [60, 30, 70]
-    for ci, (col, w) in enumerate(zip(cols, widths)):
-        worksheet.write(0, ci, col, fmt_col_hdr)
-        worksheet.set_column(ci, ci, w)
-
-    for row_idx, row in df.iterrows():
-        typ = str(row.get('_type', ''))
-        fmt = {'header': fmt_header, 'sub_header': fmt_sub, 'canh_bao': fmt_canh_bao}.get(typ, fmt_data)
-        for ci, col in enumerate(cols):
-            worksheet.write(row_idx + 1, ci, str(row[col]) if row[col] else '', fmt)
-
-
 def _viet_sheet(workbook, worksheet, df: pd.DataFrame, header_color: str):
     if df is None or len(df) == 0:
         worksheet.write(0, 0, '(Không có dữ liệu)')
@@ -189,11 +159,80 @@ def _viet_sheet(workbook, worksheet, df: pd.DataFrame, header_color: str):
         worksheet.write_row(row_idx, 0, row, fmt_cell)
 
 
+def _viet_can_xac_nhan(workbook, worksheet, df: pd.DataFrame):
+    """Sheet CAN_XAC_NHAN của file checkpoint xác nhận thủ công — giao dịch SESSION
+    mập mờ (nhánh 1A của khop_voi_gw). Thêm cột KET_QUA_XAC_NHAN (dropdown 2 giá trị)
+    và vùng paste MSGREF bổ sung bên dưới. Không đổi dữ liệu gốc."""
+    if df is None or len(df) == 0:
+        worksheet.write(0, 0, '(Không có giao dịch nào cần xác nhận)')
+        return
+
+    fmt_header = workbook.add_format({'bold': True, 'bg_color': _CAM, 'border': 1, 'font_size': 10})
+    fmt_cell   = workbook.add_format({'font_size': 10, 'border': 1})
+    fmt_note   = workbook.add_format({'bold': True, 'font_size': 10, 'bg_color': _XANH_LAM, 'border': 1})
+
+    df = df.sort_values(['REFHUB', 'MSGREF'], kind='stable').reset_index(drop=True).copy()
+    for col in df.columns:
+        if pd.api.types.is_datetime64_any_dtype(df[col]):
+            df[col] = df[col].dt.strftime('%d/%m/%Y %H:%M:%S')
+
+    cols = list(df.columns) + ['KET_QUA_XAC_NHAN']
+    for col_idx, col_name in enumerate(cols):
+        width = min(max(len(str(col_name)), 8) + 2, 30)
+        worksheet.set_column(col_idx, col_idx, width)
+        worksheet.write(0, col_idx, str(col_name), fmt_header)
+
+    ket_qua_col = len(df.columns)
+    df_filled   = df.fillna('')
+    for row_idx, row in enumerate(df_filled.itertuples(index=False, name=None), start=1):
+        worksheet.write_row(row_idx, 0, row, fmt_cell)
+        worksheet.write(row_idx, ket_qua_col, '', fmt_cell)
+
+    n = len(df_filled)
+    worksheet.data_validation(1, ket_qua_col, n, ket_qua_col, {
+        'validate': 'list',
+        'source': ['Timeout không đi kênh', 'Đã đi kênh'],
+    })
+
+    start_row = n + 2
+    worksheet.merge_range(start_row, 0, start_row, ket_qua_col,
+                          'BỔ SUNG GIAO DỊCH BỊ BỎ SÓT — paste MSGREF vào cột bên dưới', fmt_note)
+    worksheet.write(start_row + 1, 0, 'MSGREF', fmt_header)
+
+
+def xuat_excel_xac_nhan(output_dir: str, session_id: str, ngay_dt: datetime,
+                        df_mis_di: pd.DataFrame, df_timeout: pd.DataFrame,
+                        log_callback=None) -> str:
+    """Checkpoint xác nhận thủ công (thay hướng mở rộng Business Rule cho Timeout
+    không đi kênh) — xuất file 2 sheet ngay sau khop_voi_gw() rồi dừng pipeline.
+    Sheet MIS_DI_CHUAN: tham khảo, không đổi. Sheet CAN_XAC_NHAN: nhánh 1A (SESSION
+    mập mờ) để người đối chiếu chọn dropdown KET_QUA_XAC_NHAN."""
+    _log        = log_callback or print
+    ngay_str    = ngay_dt.strftime('%Y%m%d')
+    output_path = os.path.join(output_dir, f'{ngay_str}_ACH_XacNhan.xlsx')
+
+    workbook = xlsxwriter.Workbook(output_path, {'strings_to_numbers': False})
+
+    ws1 = workbook.add_worksheet('MIS_DI_CHUAN')
+    ws1.set_tab_color(_XANH_LAM)
+    _viet_sheet(workbook, ws1, _clean(df_mis_di, _COLS_MIS_DI, 'MIS_DI_CHUAN'), _XANH_LAM)
+
+    ws2 = workbook.add_worksheet('CAN_XAC_NHAN')
+    ws2.set_tab_color(_CAM)
+    _viet_can_xac_nhan(workbook, ws2, _clean(df_timeout, _COLS_CAN_XAC_NHAN, 'CAN_XAC_NHAN'))
+
+    workbook.close()
+    _log(f'[DONE] File xác nhận: {output_path}')
+    return output_path
+
+
 def _viet_tong_ket(workbook, ws, session_id, ngay_str,
                    n_di_khop, s_di_khop,
                    n_npo_di_thua, s_npo_di_thua,
                    n_mis_di_thua, s_mis_di_thua,
                    n_timeout, s_timeout,
+                   n_gw_thua_xac_dinh, s_gw_thua_xac_dinh,
+                   n_gw_can_doi_chieu,
                    n_den_khop, s_den_khop,
                    n_npo_den_thua, s_npo_den_thua,
                    n_mis_den_thua, s_mis_den_thua):
@@ -220,11 +259,14 @@ def _viet_tong_ket(workbook, ws, session_id, ngay_str,
         ('Số GD khớp (MIS)',      n_di_khop,      s_di_khop),
         ('NPO_DI thừa',           n_npo_di_thua,  s_npo_di_thua),
         ('MIS_DI thừa',           n_mis_di_thua,  s_mis_di_thua),
-        ('Timeout không kênh',    n_timeout,      s_timeout),
+        ('Điện MIS_đi timeout không đi kênh', n_timeout, s_timeout),
+        ('GW thừa - xác định chắc chắn (C.1a)',    n_gw_thua_xac_dinh, s_gw_thua_xac_dinh),
+        ('GW thừa - cần đối chiếu thủ công (C.1a)', n_gw_can_doi_chieu,
+            'Gồm cả dòng GW lẫn MIS cùng nhóm — xem sheet GW_CAN_DOI_CHIEU'),
         ('Tổng NPO_DI (cần đối)', n_npo_di,
             f'{n_di_khop:,} khớp + {n_npo_di_thua:,} thừa'),
         ('Tổng MIS_DI (cần đối)', n_mis_di_total,
-            f'{n_di_khop:,} khớp + {n_mis_di_thua:,} thừa + {n_timeout:,} timeout'),
+            f'{n_di_khop:,} khớp + {n_mis_di_thua:,} thừa + {n_timeout:,} timeout không đi kênh'),
         ('', '', ''),
         ('=== CHIỀU ĐẾN ===', '', ''),
         ('Số GD khớp (MIS)',       n_den_khop,     s_den_khop),
@@ -252,23 +294,33 @@ def xuat_excel(output_path: str, session_id: str,
                df_mis_di_khop, df_npo_di_thua, df_mis_di_thua,
                df_timeout, df_mis_den_khop, df_npo_den_thua,
                df_mis_den_thua, df_gw_raw,
-               df_cap_cn_tien=None, df_phan_tich=None,
+               df_cap_cn_tien=None,
+               df_gw_thua_xac_dinh=None, df_gw_can_doi_chieu=None,
                log_callback=None):
 
     output_dir   = os.path.dirname(os.path.abspath(output_path))
     ngay_str     = os.path.basename(output_path).replace('doi_chieu_', '').replace('.xlsx', '')
     ngay_display = datetime.strptime(ngay_str, '%Y%m%d').strftime('%d/%m/%Y')
     df_gw_clean  = df_gw_raw.drop(columns=['KEY_GW'], errors='ignore') if df_gw_raw is not None else None
+    df_gw_thua_xac_dinh_clean = (
+        df_gw_thua_xac_dinh.drop(columns=['KEY_GW'], errors='ignore')
+        if df_gw_thua_xac_dinh is not None else None
+    )
+    df_gw_can_doi_chieu_clean = (
+        df_gw_can_doi_chieu.drop(columns=['KEY_GW', 'CN tiền Hub'], errors='ignore')
+        if df_gw_can_doi_chieu is not None else None
+    )
     _log         = log_callback or print
 
     sheets = [
         ('TONG_KET',           None,                                                     '#FFFFFF'),
-        ('PHAN_TICH',          df_phan_tich,                                             _XANH_NHAT),
         ('MIS_DI_KHOP',        _clean(df_mis_di_khop,  _COLS_MIS_DI, 'MIS_DI_KHOP'),   _XANH_LA),
         ('NPO_DI_THUA',        _clean(df_npo_di_thua,  _COLS_NPO,    'NPO_DI_THUA'),   _DO),
         ('MIS_DI_THUA',        _clean(df_mis_di_thua,  _COLS_MIS_DI, 'MIS_DI_THUA'),   _DO),
-        ('TIMEOUT_KHONG_KENH', _clean(df_timeout, _COLS_MIS_DI + ['CO_TRONG_GW'], 'TIMEOUT'), _CAM),
+        ('TIMEOUT_KHONG_KENH', _clean(df_timeout, _COLS_MIS_DI, 'TIMEOUT'),              _CAM),
         ('CAP_CN_TIEN',        df_cap_cn_tien,                                           _CAM),
+        ('GW_THUA_XAC_DINH',   df_gw_thua_xac_dinh_clean,                                _DO),
+        ('GW_CAN_DOI_CHIEU',   df_gw_can_doi_chieu_clean,                                _CAM),
         ('MIS_DEN_KHOP',       _clean(df_mis_den_khop, _COLS_MIS_DEN, 'MIS_DEN_KHOP'), _XANH_LA),
         ('NPO_DEN_THUA',       _clean(df_npo_den_thua, _COLS_NPO,    'NPO_DEN_THUA'),  _DO),
         ('MIS_DEN_THUA',       _clean(df_mis_den_thua, _COLS_MIS_DEN, 'MIS_DEN_THUA'), _DO),
@@ -307,6 +359,9 @@ def xuat_excel(output_path: str, session_id: str,
                     _tong_tien(df_mis_di_thua,   'SO_TIEN'),
                     len(df_timeout)      if df_timeout      is not None else 0,
                     _tong_tien(df_timeout,        'SO_TIEN'),
+                    len(df_gw_thua_xac_dinh) if df_gw_thua_xac_dinh is not None else 0,
+                    _tong_tien(df_gw_thua_xac_dinh, 'STTLMAMT'),
+                    len(df_gw_can_doi_chieu) if df_gw_can_doi_chieu is not None else 0,
                     len(df_mis_den_khop) if df_mis_den_khop is not None else 0,
                     _tong_tien(df_mis_den_khop,  'SO_TIEN'),
                     len(df_npo_den_thua) if df_npo_den_thua is not None else 0,
@@ -314,8 +369,6 @@ def xuat_excel(output_path: str, session_id: str,
                     len(df_mis_den_thua) if df_mis_den_thua is not None else 0,
                     _tong_tien(df_mis_den_thua,  'SO_TIEN'),
                 )
-            elif sheet_name == 'PHAN_TICH':
-                _viet_phan_tich(workbook, ws, df)
             else:
                 _viet_sheet(workbook, ws, df, color)
 
@@ -337,11 +390,23 @@ def _cancelled(ev) -> bool:
 
 def main_from_dir(input_dir: str, output_dir: str,
                   ngay: str = None, log_callback=None,
-                  cancel_event=None) -> str | None:
+                  cancel_event=None,
+                  dung_sau_khop_gw: bool = False,
+                  xac_nhan_path: str = None) -> str | None:
     """
     Chạy pipeline đối chiếu ACH từ thư mục đã có file.
     Trả về đường dẫn file .xlsx kết quả, hoặc None nếu cancelled.
     Thread-safe: không mutate config module-level.
+
+    dung_sau_khop_gw=True — Checkpoint xác nhận thủ công (Bước 1): dừng ngay sau
+    khop_voi_gw(), xuất file xác nhận 2 sheet thay vì chạy tiếp Phase 2 + báo cáo
+    cuối. Mặc định False — hành vi hiện tại của API/Frontend không đổi.
+
+    xac_nhan_path — Checkpoint xác nhận thủ công (Bước 3): đường dẫn file xác nhận
+    (Bước 1) đã được người đối chiếu điền. Nếu có, sau khop_voi_gw() sẽ áp dụng
+    `ap_dung_xac_nhan()` (Bước 2) để chuyển/giữ đúng nhánh trước khi chạy tiếp
+    Phase 2 + báo cáo cuối như bình thường. Không dùng đồng thời với
+    dung_sau_khop_gw=True (mutually exclusive — dung_sau_khop_gw luôn dừng trước).
     """
     def log(msg):
         print(msg)
@@ -360,9 +425,6 @@ def main_from_dir(input_dir: str, output_dir: str,
         else:
             ngay_dt      = _cfg.NGAY_DT
             ngay_str_cfg = ngay_dt.strftime('%d/%m/%Y')
-
-    tpay_tu  = (ngay_dt - timedelta(days=1)).replace(hour=23, minute=0, second=0)
-    tpay_den = ngay_dt.replace(hour=23, minute=0, second=0)
 
     os.makedirs(output_dir, exist_ok=True)
 
@@ -408,17 +470,17 @@ def main_from_dir(input_dir: str, output_dir: str,
         f_mis_den    = ex.submit(xu_ly_mis_den,   mis_den_files, session_id, ngay_dt, log_callback)
         f_mis_di_raw = ex.submit(_doc_mis_di_raw, mis_di_files, session_id, log_callback)
 
-        dict_gw_count, df_gw_raw = f_gw.result()
+        dict_gw_count, df_gw_raw, df_gw_goc = f_gw.result()
 
         if _cancelled(cancel_event):
             log('[CANCELLED] Người dùng đã dừng sau B3.')
             f_gl02.result(); f_mis_den.result(); f_mis_di_raw.result()
             return None
 
-        df_mis_di_data           = f_mis_di_raw.result()
-        mis_di_final, df_timeout = _process_mis_di(
-            df_mis_di_data, dict_gw_count, session_id,
-            df_gw_raw, tpay_tu, tpay_den, log_callback,
+        df_mis_di_data = f_mis_di_raw.result()
+        # Mục 2 — bỏ trạng thái CALD/ERPO/TPER (bước 1), lọc session (bước 2).
+        df_mis_di = _process_mis_di(
+            df_mis_di_data, session_id, ngay_dt, df_gw_goc, log_callback,
         )
 
         npo_di, npo_den = f_gl02.result()
@@ -430,16 +492,35 @@ def main_from_dir(input_dir: str, output_dir: str,
         log('[CANCELLED] Người dùng đã dừng sau Phase 1.')
         return None
 
-    df_cap_cn_tien = _tao_cap_cn_tien(mis_di_final, df_timeout, dict_gw_count)
+    # Mục 3 — so khớp CN TIỀN giữa MIS_đi và GW.
+    df_mis_di_khop_gw, df_timeout = khop_voi_gw(df_mis_di, dict_gw_count, df_gw_raw, log_callback)
+
+    if dung_sau_khop_gw:
+        log(f'[TIMING] Đến checkpoint khop_gw: {time.perf_counter()-_t0:.1f}s')
+        xac_nhan_out_path = xuat_excel_xac_nhan(
+            output_dir, session_id, ngay_dt, df_mis_di, df_timeout, log_callback,
+        )
+        log(f'[CHECKPOINT] Dừng để chờ xác nhận thủ công. File: {xac_nhan_out_path}')
+        return xac_nhan_out_path
+
+    if xac_nhan_path:
+        df_mis_di_khop_gw, df_timeout = ap_dung_xac_nhan(
+            xac_nhan_path, df_mis_di_khop_gw, df_timeout, df_mis_di_data, log_callback,
+        )
+
+    df_cap_cn_tien = _tao_cap_cn_tien(df_mis_di, df_timeout, dict_gw_count)
     _t1 = time.perf_counter()
 
-    # Phase 2: B5 + B7 song song
-    with ThreadPoolExecutor(max_workers=2) as ex:
-        f_di  = ex.submit(doi_chieu_di,  npo_di,  mis_di_final, log_callback)
-        f_den = ex.submit(doi_chieu_den, npo_den, df_mis_den,   log_callback)
+    # Phase 2: B5 + B7 + C.1a (GW-thừa) song song. Mục 4 — đối chiếu NPO_đi với
+    # "điện MIS_đi khớp đúng" (đầu ra mục 3), không phải MIS_đi thô.
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        f_di     = ex.submit(doi_chieu_di,     npo_di,    df_mis_di_khop_gw, log_callback)
+        f_den    = ex.submit(doi_chieu_den,    npo_den,   df_mis_den,        log_callback)
+        f_gwthua = ex.submit(tim_nhom_gw_thua, df_mis_di, df_gw_raw,         log_callback)
 
         df_mis_di_khop, df_npo_di_thua, df_mis_di_thua    = f_di.result()
         df_mis_den_khop, df_npo_den_thua, df_mis_den_thua = f_den.result()
+        df_gw_thua_xac_dinh, df_gw_can_doi_chieu           = f_gwthua.result()
 
     log(f'[TIMING] Phase 2 đối chiếu: {time.perf_counter()-_t1:.1f}s')
 
@@ -449,12 +530,6 @@ def main_from_dir(input_dir: str, output_dir: str,
 
     _t2 = time.perf_counter()
 
-    df_phan_tich = phan_tich(
-        df_npo_di_thua, df_mis_di_thua,
-        df_npo_den_thua, df_mis_den_thua,
-        len(df_mis_di_khop), len(df_mis_den_khop), df_timeout,
-    )
-
     output_path = os.path.join(output_dir, f'doi_chieu_{ngay_dt.strftime("%Y%m%d")}.xlsx')
     xuat_excel(
         output_path, session_id,
@@ -463,7 +538,8 @@ def main_from_dir(input_dir: str, output_dir: str,
         df_mis_den_khop, df_npo_den_thua, df_mis_den_thua,
         df_gw_raw,
         df_cap_cn_tien=df_cap_cn_tien,
-        df_phan_tich=df_phan_tich,
+        df_gw_thua_xac_dinh=df_gw_thua_xac_dinh,
+        df_gw_can_doi_chieu=df_gw_can_doi_chieu,
         log_callback=log_callback,
     )
     log(f'[TIMING] Phase 3 Excel: {time.perf_counter()-_t2:.1f}s')
