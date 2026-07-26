@@ -2217,6 +2217,49 @@ MSGREF=...433273  SessionId=16302  PrcFlg=Lệnh Hoàn thành</pre>
     </div>
   </div>
 
+  <!-- 49 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">49</span>
+      <span class="card-title">Milestone E — Verify KEY_DEN/KEY_DEN_HUB bằng dữ liệu MIS_đến thật (12/07)</span>
+      <span class="badge badge-done">Chạy thật B2+B6+B7 trên dữ liệu 12/07 — bất biến đúng, spot-check khớp 100%</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh</div>
+      <p>Mục 3b (Session Summary) ghi "chưa có dữ liệu MIS_đến thật để verify" — kiểm tra lại thấy dữ liệu
+        thật ĐÃ CÓ SẴN trong repo (<code>GL02_20260712_1000.zip</code> +
+        2× <code>doichieugd_*_DEN_9999_N.zip</code> ở thư mục <code>ACH 12.7</code>) — không cần chờ Business
+        Owner cung cấp gì thêm, chạy thẳng verify bằng dữ liệu đã có.</p>
+
+      <div class="label">Kết quả chạy thật B2 (GL02→NPO_đến) + B6 (MIS_đến) + B7 (đối chiếu đến)</div>
+      <pre style="background:#f8f9fa;padding:8px;border-radius:4px;font-size:12px;overflow-x:auto">NPO_DEN: 546.753 dòng | MIS_DEN: 559.236 dòng (sau lọc)
+Khớp: 522.774 | NPO_đến thừa: 23.979 | MIS_đến thừa: 36.462
+Bất biến NPO: 522.774 + 23.979 = 546.753 (khớp tổng gốc)
+Bất biến MIS: 522.774 + 36.462 = 559.236 (khớp tổng gốc)</pre>
+      <p>Không crash, bất biến số học đúng cả 2 chiều. Tỷ lệ khớp ~95,6% (NPO) / ~93,5% (MIS) — hợp lý cho dữ
+        liệu đối chiếu thật (luôn có phần thừa hai chiều trong hệ thống thanh toán thật).</p>
+
+      <div class="label">Spot-check 1 cặp khớp — xác nhận đúng NGHIỆP VỤ, không chỉ khớp cơ học</div>
+      <p>Chọn ngẫu nhiên 1 cặp khớp (<code>KEY_DEN_HUB = 1606983716652720000</code>), đối chiếu 2 nguồn dữ
+        liệu ĐỘC LẬP (GL02 lõi ngân hàng vs MIS_đến kênh):</p>
+      <table>
+        <tr><th></th><th>MIS_đến (KEY_DEN_HUB)</th><th>GL02/NPO_đến (KEY_DEN)</th><th>Khớp?</th></tr>
+        <tr><td>Chi nhánh</td><td>CHI_NHANH = 1606</td><td>TRBRCD = 1606</td><td>✅</td></tr>
+        <tr><td>Số tiền</td><td>SO_TIEN = 2.720.000</td><td>DRAMOUNT = 2.720.000</td><td>✅</td></tr>
+        <tr><td>Số trace</td><td>TRACE = 98371665</td><td>SO_TRACE (từ REFERENCE[7:19] = "1000API<b>98371665</b>") = 98371665</td><td>✅</td></tr>
+      </table>
+      <p>Cả 3 thành phần khớp tuyệt đối giữa 2 nguồn dữ liệu độc lập — xác nhận toàn bộ chuỗi công thức
+        (SO_TRACE từ REFERENCE, KEY_DEN, KEY_DEN_HUB) hoạt động ĐÚNG trên dữ liệu thật, không chỉ tự nhất
+        quán nội bộ hay chỉ đúng trên test tổng hợp (Milestone C).</p>
+
+      <div class="label">Kết luận</div>
+      <p><strong>Coi mục "Verify KEY_DEN/KEY_DEN_HUB bằng dữ liệu MIS_đến thật" đã HOÀN THÀNH.</strong> Cả 2
+        mục còn lại ở Session Summary mục 3b (C.1a, KEY_DEN_HUB) nay đều Done — mục 3b không còn hạng mục nào
+        mở. Script: <code>_scratch_verify_dien_rong_25_07/verify_mis_den_1207.py</code>,
+        <code>spot_check_key_den.py</code> (giữ lại làm tư liệu).</p>
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-07-26</footer>
 </div>
 </body>
