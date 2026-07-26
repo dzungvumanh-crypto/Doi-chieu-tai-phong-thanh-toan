@@ -129,7 +129,11 @@ def xu_ly_mis_den(zip_paths: List[str], session_id: str, ngay_doi_chieu: datetim
     df = df[df['TRANG_THAI_LENH'].astype(str).str.strip() != 'RJCT'].copy()
     df['SO_TIEN'] = pd.to_numeric(df['SO_TIEN'], errors='coerce').fillna(0).astype('int64')
     df['TRACE']   = df['TRACE'].fillna('').astype(str).str.strip().str.lstrip("'0")
-    df['KEY_DEN_HUB'] = df['TRACE'] + df['SO_TIEN'].astype(str)
+    df['KEY_DEN_HUB'] = (
+        df['CHI_NHANH'].astype(str).str.strip()
+        + df['TRACE']
+        + df['SO_TIEN'].astype(str)
+    )
 
     _log = log_callback or print
     _log(f'[B6] MIS_DEN | {len(df):,} dòng sau lọc')

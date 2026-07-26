@@ -2103,6 +2103,58 @@ ui.on_exception(_on_exception)</pre>
     </div>
   </div>
 
+  <!-- 47 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">47</span>
+      <span class="card-title">Milestone C — review "chọn thư mục server" + fix KEY_DEN/KEY_DEN_HUB (MIS_đến)</span>
+      <span class="badge badge-done">Thêm 32 test mới, tìm + sửa 1 bug crash thật ở b2_xu_ly_gl02.py</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Phần 1 — Review "chọn thư mục server" (đã commit ở mục 46, chưa có test trước đó)</div>
+      <p>Thêm <code>tests/test_ach_folder_mode.py</code> (13 test): <code>validate_required_files()</code>
+        (đủ file/thiếu PDF/PDF sai tên/thiếu GL02/thiếu GW/thiếu đủ 2 file DI hoặc DEN), API
+        <code>/validate_folder</code> (thư mục không tồn tại → 400, thư mục rỗng → <code>ok=False</code>,
+        đủ file → <code>ok=True</code>), API <code>/start_folder</code> (thư mục không tồn tại → 400, hợp lệ
+        → tạo job, xác nhận job cũng chạy Checkpoint (<code>dung_sau_khop_gw=True</code>) giống hệt mode
+        upload — nhất quán, không có đường tắt riêng cho mode folder). Không phát hiện vấn đề nghiệp vụ —
+        logic đã đúng, chỉ thiếu test.</p>
+
+      <div class="label">Phần 2 — Fix KEY_DEN/KEY_DEN_HUB chiều MIS_đến</div>
+      <p>Code đã có sẵn (uncommitted từ trước) đúng công thức tài liệu: <code>KEY_DEN = TRBRCD + SO_TRACE +
+        DRAMOUNT</code> (<code>b2_xu_ly_gl02.py</code>, mục 5) và <code>KEY_DEN_HUB = CHI_NHANH + TRACE +
+        SO_TIEN</code> (<code>b6_xu_ly_mis_den.py</code>, mục 5) — khớp <code>project_ach_timeout_rule.md</code>
+        đã ghi nhận thiếu thành phần chi nhánh trước đây. Thêm
+        <code>tests/test_ach_gl02_misden_algorithm.py</code> (19 test): SO_TRACE (vị trí ký tự 8, 12 ký tự,
+        lstrip 0, giữ '0' nếu toàn số 0, rỗng nếu REFERENCE rỗng), phân loại NPO_đi/NPO_đến theo CRAMOUNT,
+        lọc LOCAC/CUSTOMER, lọc session + SESSION rỗng theo ngày + loại RJCT ở MIS_đến, ghép đúng thứ tự
+        KEY_DI/KEY_DEN/KEY_DEN_HUB, làm sạch TRACE (bỏ dấu nháy + số 0 đầu).</p>
+
+      <div class="label">Bug thật tìm được + đã sửa — crash khi GL02 lọc hết sạch dòng</div>
+      <p><code>b2_xu_ly_gl02.py::xu_ly_gl02()</code>: khi TOÀN BỘ dòng bị loại bởi filter LOCAC/CUSTOMER
+        (<code>npo_di</code> hoặc <code>npo_den</code> rỗng 0 dòng — tình huống thật có thể xảy ra, vd nhầm
+        file GL02 khác ngày/chi nhánh), phép cộng chuỗi tạo <code>KEY_DI</code>/<code>KEY_DEN</code> raise
+        <code>TypeError: operation 'radd' not supported for dtype 'str' with dtype 'object'</code> — do
+        pandas dùng ArrowStringArray rỗng cộng với cột <code>.astype(str)</code> rỗng. Toàn bộ pipeline sẽ
+        crash thay vì báo "0 giao dịch" một cách bình thường. <strong>Fix</strong>: thêm điều kiện
+        <code>if len(npo_di) > 0 else pd.Series(dtype=object, ...)</code> tương tự cho cả 2 nhánh — không đổi
+        hành vi khi có dữ liệu thật (mọi lần chạy thật từ trước tới nay đều có dòng), chỉ tránh crash ở
+        trường hợp biên. Đã kiểm tra <code>b6_xu_ly_mis_den.py</code> không dính lỗi tương tự (test rỗng
+        pass ngay không cần sửa). Đây là quyết định kỹ thuật thuần (xử lý trường hợp biên), không đổi
+        Business Rule/công thức KEY_DEN/KEY_DEN_HUB.</p>
+
+      <div class="label">Câu hỏi nghiệp vụ CŨ vẫn còn treo (không phải phát hiện mới, không thuộc phạm vi sửa hôm nay)</div>
+      <p><code>_CUSTOMER_ACH = '1000-003526275'</code> (filter trong <code>b2_xu_ly_gl02.py</code>, đã có từ
+        commit gốc, không đổi hôm nay) — <code>project_ach_timeout_rule.md</code> ghi nhận từ 2026-07-18:
+        filter này không có trong tài liệu <code>DOI CHIEU ACH_v2.docx</code>, chưa có xác nhận đây có phải
+        chủ đích hay không. Vẫn đang mở, không liên quan tới fix KEY_DEN/KEY_DEN_HUB hôm nay.</p>
+
+      <div class="label">Kết quả</div>
+      <p>ACH suite sau Milestone C: <strong>106 test</strong> (74 sau Milestone B + 19 GL02/MIS_đến + 13
+        folder-mode). Toàn project: 254/255 pass (1 fail ILO1000 có từ trước, không liên quan).</p>
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-07-26</footer>
 </div>
 </body>

@@ -110,7 +110,8 @@ def xu_ly_gl02(zip_path: str, log_callback=None):
     if 'LOCAC' in df.columns:
         df['LOCAC'] = df['LOCAC'].astype(str).str.strip()
 
-    _extracted      = df['REFERENCE'].str.extract(r'[A-Za-z]+(\d+)$', expand=False)
+    # SO_TRACE = 12 ký tự từ ký tự thứ 8 của REFERENCE (mục 4.1 tài liệu đối chiếu).
+    _extracted      = df['REFERENCE'].str[7:19]
     _stripped       = _extracted.str.lstrip('0')
     df['SO_TRACE']  = _stripped.where(_stripped != '', other='0').where(_extracted.notna(), other='')
 
@@ -119,10 +120,14 @@ def xu_ly_gl02(zip_path: str, log_callback=None):
         npo_di['TRBRCD'].str.strip()
         + npo_di['SO_TRACE']
         + npo_di['CRAMOUNT'].astype(str)
-    )
+    ) if len(npo_di) > 0 else pd.Series(dtype=object, index=npo_di.index)
 
     npo_den = df[df['CRAMOUNT'] == 0].copy()
-    npo_den['KEY_DEN'] = npo_den['SO_TRACE'] + npo_den['DRAMOUNT'].astype(str)
+    npo_den['KEY_DEN'] = (
+        npo_den['TRBRCD'].str.strip()
+        + npo_den['SO_TRACE']
+        + npo_den['DRAMOUNT'].astype(str)
+    ) if len(npo_den) > 0 else pd.Series(dtype=object, index=npo_den.index)
 
     _log = log_callback or print
     _log(f'[B2] GL02 | NPO_DI: {len(npo_di):,} dòng | NPO_DEN: {len(npo_den):,} dòng')
