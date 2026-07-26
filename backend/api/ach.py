@@ -1,12 +1,17 @@
 """API endpoints cho tính năng Chấm đối chiếu ACH."""
 
+import glob
+import os
+from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import Response
+from pydantic import BaseModel
 
 from backend.core.deps import require_feature
 from backend.services import ach_service
+from backend.services.ach.validate import validate_required_files
 
 router = APIRouter(prefix='/api/ach', tags=['ach'])
 
@@ -49,6 +54,76 @@ async def start_job(
     ngay = ngay_doi_chieu.strip() or None
     job_id = ach_service.start_job(saved, ngay)
     return {'job_id': job_id}
+
+
+class ValidateRequest(BaseModel):
+    filenames: list[str]
+
+
+@router.post('/validate')
+def validate_files(
+    req: ValidateRequest,
+    _=Depends(require_feature('menu.cham_ach')),
+):
+    """Kiểm tra sớm theo tên file đã chọn (mode upload) — chưa cần upload nội dung."""
+    return validate_required_files(req.filenames)
+
+
+class FolderRequest(BaseModel):
+    folder_path: str
+    ngay_doi_chieu: str = ''
+
+
+@router.post('/validate_folder')
+def validate_folder(
+    req: FolderRequest,
+    _=Depends(require_feature('menu.cham_ach')),
+):
+    """Kiểm tra sớm theo tên file có trong thư mục server (mode folder)."""
+    p = Path(req.folder_path)
+    if not p.exists() or not p.is_dir():
+        raise HTTPException(400, f'Thư mục không tồn tại: {req.folder_path}')
+
+    filenames = [
+        os.path.basename(f)
+        for f in glob.glob(os.path.join(str(p), '**', '*'), recursive=True)
+        if os.path.isfile(f)
+    ]
+    return validate_required_files(filenames)
+
+
+@router.post('/start_folder')
+def start_from_folder(
+    req: FolderRequest,
+    _=Depends(require_feature('menu.cham_ach')),
+):
+    """Chạy pipeline từ thư mục server (không upload file)."""
+    p = Path(req.folder_path)
+    if not p.exists() or not p.is_dir():
+        raise HTTPException(400, f'Thư mục không tồn tại: {req.folder_path}')
+
+    ngay = req.ngay_doi_chieu.strip() or None
+    job_id = ach_service.start_from_folder(str(p), ngay)
+    return {'job_id': job_id}
+
+
+@router.post('/continue/{job_id}')
+async def continue_job(
+    job_id: str,
+    file: UploadFile,
+    _=Depends(require_feature('menu.cham_ach')),
+):
+    """Checkpoint xác nhận thủ công (Bước 3) — nhận file <ngày>_ACH_XacNhan.xlsx đã
+    điền cột KET_QUA_XAC_NHAN (và MSGREF bổ sung nếu có), chạy lại toàn bộ pipeline
+    áp dụng xác nhận rồi tiếp tục tới báo cáo cuối."""
+    data = await file.read()
+    try:
+        ach_service.continue_job(job_id, data, file.filename or 'xac_nhan.xlsx')
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {'ok': True}
 
 
 @router.get('/poll/{job_id}')

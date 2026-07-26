@@ -2019,6 +2019,90 @@ ui.on_exception(_on_exception)</pre>
     </div>
   </div>
 
+  <!-- 46 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">46</span>
+      <span class="card-title">Checkpoint xác nhận thủ công — wiring Engine → API → Frontend (Milestone B)</span>
+      <span class="badge badge-info">Code + 8 test API-level PASS — CHƯA click-through UI thật (không có
+        credential admin thật để đăng nhập browser)</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh</div>
+      <p>Engine Checkpoint (<code>pipeline.py::main_from_dir(dung_sau_khop_gw=..., xac_nhan_path=...)</code>,
+        <code>b4_xu_ly_mis_di.py::ap_dung_xac_nhan()</code>) đã xong và VERIFY PASS từ phiên 2026-07-24 (xem
+        <code>SESSION-SUMMARY-ACH-CHECKPOINT-2026-07-24.md</code>) nhưng cố ý CHƯA nối API/Frontend. Business
+        Owner giao Milestone B (25-26/07/2026): hoàn thiện toàn bộ luồng để dùng được trực tiếp qua web.</p>
+
+      <div class="label">Quyết định kỹ thuật — Checkpoint là mặc định, không có nút "bỏ qua"</div>
+      <p>Diễn giải câu "thay bằng Checkpoint xác nhận thủ công" (Session Summary mục 2.1) là <strong>THAY
+        THẾ</strong> luồng tự động cũ, không phải một chế độ tuỳ chọn — nên mọi lần chạy mới (cả mode upload
+        lẫn mode chọn thư mục server) đều tự động dùng <code>dung_sau_khop_gw=True</code>, không có checkbox
+        bật/tắt. Đây là suy luận hợp lý nhất từ văn bản đã chốt nhưng CHƯA được hỏi tường minh riêng — nếu sai
+        thì thêm 1 toggle là việc nhỏ, không ảnh hưởng số liệu đối chiếu (chỉ ảnh hưởng có dừng hỏi người dùng
+        hay không).</p>
+
+      <div class="label">Thiết kế job state machine (`backend/services/ach_service.py`)</div>
+      <ul>
+        <li>Thêm trạng thái <code>awaiting_confirmation</code> (bên cạnh pending/running/done/error/cancelled).
+          Job lưu thêm <code>input_dir</code>, <code>ngay</code> (để lần chạy 2 dùng lại — đúng kiến trúc
+          "chạy lại toàn bộ" đã chốt, KHÔNG resume state thật) và <code>xac_nhan_file</code>.</li>
+        <li><code>continue_job(job_id, bytes, filename)</code> — lưu file xác nhận vào
+          <code>TEMP_DIR/job_id/xac_nhan_in/</code>, spawn thread chạy lại <code>main_from_dir(...,
+          xac_nhan_path=...)</code> từ đầu.</li>
+        <li>Lỗi xác nhận sai/thiếu (<code>ValueError</code> từ <code>ap_dung_xac_nhan()</code> — thiếu chọn,
+          giá trị sai, MSGREF không khớp, trạng thái bị loại trừ...) → job quay lại
+          <code>awaiting_confirmation</code> kèm thông báo lỗi để người dùng sửa và nộp lại, KHÔNG coi là lỗi
+          chung cuộc (khác các lỗi khác vẫn → <code>error</code> terminal như trước).</li>
+        <li><code>cancel_job()</code> mở rộng: hủy job đang <code>awaiting_confirmation</code> có hiệu lực
+          NGAY (không cần thread, không cần cancel_event) vì không có gì đang chạy nền lúc đó.</li>
+        <li><code>_cleanup_old_jobs()</code> thêm <code>awaiting_confirmation</code> vào nhóm bị dọn sau 4h
+          nếu người dùng không quay lại xác nhận — tránh rò rỉ file/job vô thời hạn.</li>
+      </ul>
+
+      <div class="label">API mới</div>
+      <p><code>POST /api/ach/continue/{'{job_id}'}</code> — nhận 1 file upload (multipart), gọi
+        <code>continue_job()</code>; 404 nếu job không tồn tại, 400 nếu job không ở trạng thái chờ xác nhận.
+        Các endpoint cũ không đổi hợp đồng.</p>
+
+      <div class="label">Frontend (`frontend/pages/cham_ach.py`)</div>
+      <p>Thêm khu vực <code>checkpoint_card</code>: hiện khi poll trả <code>status ==
+        'awaiting_confirmation'</code> — nút tải file cần xác nhận, ô upload file đã điền, nút "Chạy tiếp"
+        (gọi <code>/continue</code> rồi resume polling). Nếu lần nộp trước bị từ chối, hiện lại lý do lỗi
+        ngay trên card. Nút "Dừng" vẫn hoạt động ở trạng thái chờ xác nhận (poll 1 lần ngay sau khi gọi
+        <code>/cancel</code> vì không có polling timer đang chạy lúc đó).</p>
+
+      <div class="label">Test mới — `tests/test_ach_checkpoint_api.py` (8 test, API-level qua admin_client)</div>
+      <p>Monkeypatch <code>ach_service.main_from_dir</code> (không chạy pipeline thật, đã test kỹ ở
+        test_ach_algorithm.py) để cô lập lớp orchestration mới: start → awaiting_confirmation → continue →
+        done; continue thất bại → quay lại awaiting_confirmation kèm lỗi; continue sai trạng thái → 400;
+        continue job không tồn tại → 404; cancel khi đang chờ xác nhận → cancelled ngay; cancel job đã kết
+        thúc → 404. Monkeypatch <code>TEMP_DIR</code> → <code>tmp_path</code>, không đụng <code>data/</code>
+        thật (đúng quy ước dự án). Toàn bộ suite ACH sau khi thêm: <strong>74/74 pass</strong>; toàn bộ
+        project: 222/223 pass (1 fail thuộc ILO1000, tồn tại từ trước, không liên quan).</p>
+
+      <div class="label">Giới hạn đã xác nhận rõ — CHƯA test UI thật qua browser</div>
+      <p>Đã khởi động backend+frontend thật (<code>python run.py</code>), xác nhận: backend boot sạch, route
+        <code>POST /api/ach/continue/{'{job_id}'}</code> có đúng trong OpenAPI schema, module frontend import
+        không lỗi, trang <code>/cham_ach</code> redirect đúng về <code>/login</code> khi chưa đăng nhập (cài
+        thêm Playwright để thử click-through thật). <strong>Không click-through được vào trang đã đăng nhập
+        vì không có mật khẩu admin thật</strong> (mật khẩu mặc định trong <code>init_db.py</code> không khớp
+        DB thật đang dùng) — không tự ý đổi/reset mật khẩu tài khoản thật. Đây là giới hạn môi trường, không
+        phải bug đã biết — cần Business Owner hoặc người có quyền tự bấm thử luồng Checkpoint trên UI thật
+        trước khi coi Milestone B hoàn thành đầy đủ.</p>
+
+      <div class="label">Phạm vi không đổi cùng đợt (đi kèm bắt buộc vì đan xen cùng file/hàm)</div>
+      <p><code>backend/api/ach.py</code>, <code>backend/services/ach_service.py</code>,
+        <code>frontend/pages/cham_ach.py</code> đã có sẵn tính năng "chọn thư mục server" (mode folder,
+        <code>validate_folder</code>/<code>start_folder</code>) từ trước, CHƯA được review/test riêng — vì
+        code Checkpoint mới đan xen trực tiếp trong cùng hàm/state (vd <code>on_run()</code>,
+        <code>_poll()</code> trong frontend) nên không tách ra được ở mức git commit mà không rewrite thủ công
+        rủi ro cao. Quyết định: commit chung, nhưng <strong>tính năng chọn thư mục server vẫn CHƯA được xác
+        minh</strong> — để lại đúng như Milestone C đã định (review riêng, không coi là "đã xong" chỉ vì đã
+        commit).</p>
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-07-26</footer>
 </div>
 </body>
