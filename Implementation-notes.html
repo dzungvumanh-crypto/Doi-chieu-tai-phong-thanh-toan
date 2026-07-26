@@ -880,7 +880,1146 @@ ui.on_exception(_on_exception)</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-07-08</footer>
+  <!-- 23 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">23</span>
+      <span class="card-title">Chấm ILO1000 — gộp dữ liệu cuối tuần cho phiên thứ 2</span>
+      <span class="badge badge-done">done · 2026-07-09</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh nghiệp vụ</div>
+      <p>ILO1000 đối chiếu kênh <strong>Citad Thấp</strong> (giao dịch &lt;500tr, tất toán theo lô). Citad chỉ chạy phiên giờ hành chính (8h–cutoff ~16h), <strong>không có phiên thứ 7/CN</strong> — trong khi hệ thống nội bộ Agribank có kênh chạy 24/7. Lệnh phát sinh sau cutoff thứ 6 + toàn bộ thứ 7 + CN đều dồn "chờ đi kênh" và được Citad xử lý vào phiên sáng thứ 2. Vì vậy chấm thứ 2 cần thêm dữ liệu nguồn của 3 ngày trước đó để bắt được các lệnh này, nếu không sẽ báo sai lệch "chưa khớp" cho giao dịch thực ra đã khớp.</p>
+
+      <div class="label">Yêu cầu cụ thể (người dùng cung cấp)</div>
+      <table>
+        <tr><th>Nguồn</th><th>Ngày lấy thêm cho chấm thứ 2 (T)</th></tr>
+        <tr><td>Hub</td><td>T-3 (thứ 6), T-2 (thứ 7), T-1 (CN)</td></tr>
+        <tr><td>EICP</td><td>T-3 (thứ 6), T-2 (thứ 7), T-1 (CN)</td></tr>
+        <tr><td>Core (GL02)</td><td>T-2 (thứ 7), T-1 (CN) — <strong>không</strong> lấy thêm thứ 6</td></tr>
+        <tr><td>Citad</td><td>Giữ nguyên — chỉ ngày T (thứ 2)</td></tr>
+      </table>
+      <p>Core không cần lấy thêm thứ 6 vì thứ 6 là ngày làm việc bình thường, đã tự chạy chấm riêng của nó (đã bao gồm toàn bộ core phát sinh trong ngày, kể cả sau cutoff). Thứ 7/CN không có phiên chấm riêng nào — core của 2 ngày này chưa từng được xử lý ở đâu, phải gộp vào thứ 2.</p>
+
+      <div class="label">Vì sao không cần sửa <code>process_hub</code>/<code>process_citad</code>/<code>process_core</code></div>
+      <p>Cơ chế flag "Chờ đi kênh" đã có sẵn trong <code>process_hub()</code> so sánh ngày thực trong nội dung Hub (<code>Ngày giờ kênh trả</code>) với ngày đối chiếu của <em>nhóm</em> đang xử lý — không quan tâm file Hub đó thuộc ngày nào. Do đó chỉ cần đưa đúng danh sách file vào nhóm ngày thứ 2 trước khi gọi pipeline; toàn bộ logic match Trace/Map dc/TT chạy nguyên vẹn không đổi.</p>
+
+      <div class="label">Cơ chế</div>
+      <p><code>merge_monday_carryover()</code> mới trong <code>backend/services/ilo1000/detect.py</code>, gọi ở cuối <code>group_files_by_date()</code> (sau khi đã gán EICP + fallback Hub). Tự động phát hiện nhóm ngày nào là thứ 2 qua <code>date.weekday() == 0</code> — không cần cờ bật thủ công ở UI, tự chạy khi thư mục/đợt upload có đủ file các ngày liên quan.</p>
+      <ul>
+        <li>Là <strong>COPY</strong>, không phải move: nối thêm Path vào list mới (<code>g['hub'] = g['hub'] + src['hub']</code>), không mutate list gốc của nhóm thứ 6/7/CN → thứ 6 vẫn tự ra báo cáo riêng bình thường không đổi.</li>
+        <li>Dùng <code>datetime.date</code> + <code>timedelta</code> để tính T-3/T-2/T-1 — tự động đúng khi thứ 2 rơi vào đầu tháng (T-3..T-1 là cuối tháng trước), không cần xử lý đặc biệt.</li>
+        <li>Thiếu file bù cuối tuần → <strong>không chặn chạy</strong>, chỉ log <code>CẢNH BÁO</code> liệt kê rõ thiếu gì (theo yêu cầu người dùng — ưu tiên vẫn ra được kết quả hơn là chặn cứng).</li>
+      </ul>
+
+      <div class="label">Giới hạn đã biết — EICP match theo DD, không có tháng/năm trong tên file</div>
+      <p><code>group_files_by_date()</code> gán EICP vào nhóm ngày bằng cách so khớp số ngày (DD) trích từ tên file với DD của nhóm, <strong>bỏ qua tháng/năm</strong> (giới hạn định dạng tên file gốc, không phải lỗi merge mới). Trong phạm vi 1 đợt xử lý (thường 1 tuần), không có 2 nhóm ngày nào trùng DD nên không phát sinh vấn đề — nhưng nếu đợt xử lý gộp nhiều tuần cách nhau đúng bội số của tháng, có thể gán nhầm. Chưa cần fix vì input luôn theo lô ngắn hạn.</p>
+
+      <div class="label">Test</div>
+      <p><code>tests/test_ilo1000_algorithm.py::TestMondayCarryover</code> — 5 test tổng hợp (không dùng file tháng 5 thật): gộp đúng theo từng loại nguồn, nhóm thứ 6 gốc không bị đổi, qua ranh giới tháng, cảnh báo khi thiếu file, ngày không phải thứ 2 không bị áp dụng.</p>
+    </div>
+  </div>
+
+  <!-- 24 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">24</span>
+      <span class="card-title">Chấm ILO1000 — đối chiếu với dữ liệu thật 06/07/2026, khớp 71,9% → 99,3%</span>
+      <span class="badge badge-done">done · 2026-07-09</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh</div>
+      <p>Chạy thử pipeline (kể cả tính năng gộp cuối tuần ở mục 23) trên bộ dữ liệu thật đầu tiên có bài chấm tay đối chứng (<code>4-6.7.2026/4-6.7.xlsx</code>, 44.569 dòng Core). Đối chiếu từng dòng theo khóa <code>TRDATE+TRBRCD+JOURSEQ+DYTRSEQ+REFERENCE</code> (unique 100%) phát hiện 4 lỗi liên tiếp, sửa từng lỗi và đo lại % khớp sau mỗi lần — quy trình đúng theo <code>doi-chieu</code> skill (đối chiếu dữ liệu thật, không đoán).</p>
+
+      <table>
+        <tr><th>Bước</th><th>Vấn đề phát hiện</th><th>% khớp TT (44.569 dòng)</th></tr>
+        <tr><td>0 (trước sửa)</td><td>—</td><td>—</td></tr>
+        <tr><td>1</td><td>ZIP GL02 mã hóa AES không đọc được + thiếu lọc kênh</td><td>N/A (core chỉ đọc được 1/8 phần hoặc lẫn 98% dữ liệu kênh khác)</td></tr>
+        <tr><td>2</td><td>Trace Hub có số 0 thừa ở đầu (text vs số)</td><td>71,9%</td></tr>
+        <tr><td>3</td><td>EICP áp dụng nhầm cho giao dịch không chứa 'S' (thiếu Số Trace 2)</td><td>77,7%</td></tr>
+        <tr><td>4 (sau khi sửa bước 3)</td><td>—</td><td><strong>99,3%</strong></td></tr>
+      </table>
+
+      <div class="label">Lỗi 1 — ZIP GL02 mã hóa AES không đọc được</div>
+      <p><code>load_core.py</code> dùng <code>zipfile.ZipFile</code> chuẩn (không hỗ trợ AES, không có mật khẩu) → mọi entry bị bỏ qua với WARN "mã hóa". Hệ quả: pipeline chỉ đọc được 1 file CSV export tay ngoài ZIP (44.569 dòng, do người dùng tự giải mã 1/8 phần) thay vì đọc đủ ZIP thật (8 phần, ~640MB). Fix: dùng <code>pyzipper.AESZipFile</code> + mật khẩu <code>ZIP_PASSWORD = b'DACwLdHi'</code> — <strong>mật khẩu chung với module Chấm 459901 / ACH</strong> (<code>backend/services/cham459901_service.py</code>, <code>backend/services/ach/config.py</code>), xác nhận đúng qua thử trực tiếp trên file GL02 thật.</p>
+      <div class="note">CSV đứng ngoài ZIP hoá ra <strong>byte-identical</strong> với 1 trong 8 entry bên trong ZIP (đã xác nhận bằng SHA-256) — không phải dữ liệu bổ sung, chỉ là bản export tay trùng lặp. Thêm bước <code>drop_duplicates()</code> sau khi gộp ZIP+CSV để tránh đếm trùng khi cả 2 nguồn cùng có mặt (quyết định của người dùng: dùng cả 2 + dedup, thay vì chỉ ưu tiên 1 nguồn).</p>
+      <p>Xoá hẳn quy tắc cũ "có CSV thì bỏ ZIP" trong <code>pipeline.py</code> (đặt ra khi tưởng ZIP luôn không đọc được) — không còn cần thiết vì <code>load_core</code> tự dedup.</p>
+
+      <div class="label">Lỗi 1b — GL02 chi nhánh 1000 chứa TOÀN BỘ kênh, không riêng ILO1000</div>
+      <p>Sau khi đọc đủ ZIP: 1.972.319 dòng Core, chỉ 40.061 khớp Citad/Hub (~2%) — vì GL02 chi nhánh 1000 gồm mọi kênh thanh toán (SWIFT, ACH...), không riêng Citad Thấp/ILO1000. Người dùng xác nhận điều kiện lọc đúng: <code>LOCAC=501202 & CUSTOMER=1000-000007709</code> (constants mới trong <code>config.py</code>: <code>CORE_FILTER_LOCAC</code>, <code>CORE_FILTER_CUSTOMER</code>). Sau lọc còn đúng 44.569 dòng — khớp chính xác số dòng bài chấm tay, xác nhận điều kiện lọc đúng ngay lần đầu.</p>
+      <div class="caution">Không có filter này thì <code>export_excel()</code> còn crash vì Excel giới hạn 1.048.576 dòng/sheet — 1.972.319 dòng vượt giới hạn. Lọc kênh giải quyết cả 2 vấn đề (đúng nghiệp vụ + tránh crash) cùng lúc.</div>
+
+      <div class="label">Lỗi 2 — Trace Hub có số 0 thừa ở đầu</div>
+      <p>File pHub thật có "Số Trace 1" lưu dạng text, đôi khi có số 0 đệm đầu (VD <code>"063403118"</code>) tùy đợt export — trong khi Core tính Trace độc lập từ REFERENCE không có số 0 đầu (<code>"63403118"</code>). <code>Map dc</code> là ghép chuỗi text nên 2 giá trị này không khớp dù cùng 1 số. Fix trong <code>process_hub()</code>: strip số 0 thừa cho Trace <strong>thuần chữ số</strong> (không đụng Trace BFX/EICP có ký tự chữ). Tăng khớp 71,9% → 77,7% (không tính bước 1, vốn không đo được % vì core sai hoàn toàn).</p>
+
+      <div class="label">Lỗi 3 — thiếu cột "Số Trace 2", áp EICP sai cho giao dịch không chứa 'S'</div>
+      <p>Đọc lại tài liệu gốc <code>CÁC BƯỚC LÀM ĐỐI CHIẾU ILO1.docx</code> (bước 37-38): quy trình thủ công chỉ áp BFX/EICP cho Hub row có "Số giao dịch" <strong>chứa 'S'</strong>. Bản audit tháng 5 trước đây (chưa có dữ liệu tháng 7, chưa biết cột "Số Trace 2" tồn tại) đã <strong>bỏ hẳn filter 'S'</strong> vì "thực nghiệm khớp tốt hơn" — quyết định đó chỉ đúng tạm thời, không phải quy tắc thật.</p>
+      <p>File pHub thật có sẵn cột <strong>"Số Trace 2"</strong> (chưa từng dùng trong code lẫn tài liệu). Đối chiếu trực tiếp trên dữ liệu thật: nhóm "không chứa S" (39.165 dòng, gồm cả loại "OT" — hoàn trả lệnh gốc) khớp <strong>96,5%</strong> qua Số Trace 2, so với chỉ 50% qua Số Trace 1; riêng loại OT khớp <strong>100%</strong> (7.359/7.359) qua Số Trace 2.</p>
+      <p>Fix: khôi phục nhánh rẽ theo 'S' đúng tài liệu gốc — "chứa S" → BFX/EICP (như cũ); "không chứa S" → dùng thẳng Số Trace 2 (cột mới thêm <code>HUB_COL_TRACE2_RAW</code> trong <code>config.py</code> + <code>HUB_COLS_KEEP</code>), fallback về Số Trace 1 nếu Số Trace 2 rỗng. <strong>Không filter bớt dòng</strong> — mọi dòng (kể cả OT) vẫn có mặt trong output, chỉ khác cách tính Trace. Khớp tăng 77,7% → <strong>99,3%</strong>.</p>
+      <div class="note">Đây chính là lý do gốc rễ của hiện tượng "~26-29% giao dịch OT không tra được" ghi nhận với dữ liệu tháng 5 trước đó — không phải giới hạn thật của nguồn dữ liệu như từng kết luận, mà là thiếu cột Số Trace 2 trong logic xử lý. Cần đánh giá lại kết luận cũ về dữ liệu tháng 5 nếu có dịp dùng lại.</div>
+
+      <div class="label">Còn lại 0,7% (302/44.569 dòng) — chưa điều tra hết</div>
+      <table>
+        <tr><th>Loại lệch</th><th>Số dòng</th><th>Nhận định ban đầu</th></tr>
+        <tr><td>citad → trống</td><td>107</td><td>Chưa rõ nguyên nhân — cần điều tra thêm (có thể vẫn do thiếu Hub/EICP thứ 6)</td></tr>
+        <tr><td>"Đã hủy" → "Hủy"</td><td>96</td><td>Nghi chỉ khác nhãn hiển thị (Hub gọi "Đã hủy", code gọi "Hủy") — cùng bản chất, chưa xác nhận</td></tr>
+        <tr><td>Chờ đi kênh → trống</td><td>44</td><td>Chưa điều tra</td></tr>
+        <tr><td>#N/A (bài chấm tay) → có kết quả (pipeline)</td><td>25</td><td>Có thể là pipeline làm TỐT HƠN bài chấm tay (golden tự bỏ trống, pipeline suy ra được), không hẳn là lỗi</td></tr>
+        <tr><td>OSB, TT Lệnh lỗi...</td><td>~10</td><td>Số lượng nhỏ, dạng đặc biệt</td></tr>
+      </table>
+
+      <div class="label">Phương pháp đối chiếu (giữ lại nếu cần lặp lại)</div>
+      <p>Khóa unique 100%: <code>TRDATE+TRBRCD+JOURSEQ+DYTRSEQ+REFERENCE</code> (khóa ngắn hơn thiếu <code>REFERENCE</code> chỉ unique ~91%, gây join bị nhân bản sai số liệu — đã gặp lỗi này 1 lần, phải làm lại). Đọc file Excel bằng <code>openpyxl</code> <code>data_only=True</code> để lấy giá trị đã tính của formula (không phải công thức thô). Sheet "hub" trong bài chấm tay có 1 dòng trống đầu tiên trước header — cần skip khi tìm header, không giả định header luôn ở row đầu.</p>
+
+      <div class="label">Nguyên tắc báo cáo kết quả đối chiếu — không dùng %</div>
+      <p>Theo yêu cầu người dùng (2026-07-09): số liệu tài chính chỉ báo cáo bằng 2 trạng thái <strong>"Đã cân khớp"</strong> / <strong>"Chưa cân khớp cần hoàn thiện"</strong> — không đóng khung bằng % (VD "99,3% khớp — rất tốt") vì dễ khiến người đọc hiểu nhầm là gần xong, che mất bản chất vẫn còn lỗi cần tìm nguyên nhân. Áp dụng cho mọi báo cáo tiến độ đối chiếu từ nay.</p>
+    </div>
+  </div>
+
+  <!-- 25 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">25</span>
+      <span class="card-title">Chấm ILO1000 — EICP tên file không chuẩn bị bỏ sót + xác nhận nhãn "hủy"</span>
+      <span class="badge badge-warn">Chưa cân khớp — 279/44.569 dòng lệch (04-06/7), 361/64.645 dòng lệch (11-13/7)</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Lỗi 5 — EICP đặt tên không theo công thức chuẩn bị bỏ hoàn toàn</div>
+      <p>File <code>eicp 3 7.XLS</code> (dữ liệu thứ 6 03/07, người dùng đặt tên không theo quy ước, lẽ ra phải là <code>eicp 3.XLS</code>) trích được ngày = 3 nhưng <strong>không có nhóm ngày nào (Hub/Citad/Core) mang ngày 03/07</strong> để gán vào (thứ 6 không có file Hub/Citad/Core riêng trong bộ dữ liệu này) → bị bỏ hoàn toàn, chỉ log WARN. Hệ quả: EICP chỉ đọc được 21.296/48.989 dòng thật.</p>
+      <p>Fix trong <code>detect.py::group_files_by_date()</code>: EICP không khớp được nhóm ngày nào → gán vào nhóm có nhiều citad+core nhất, <strong>cùng cơ chế fallback đã có sẵn cho Hub</strong> ("Hub không khớp ngày → gán vào nhóm nhiều dữ liệu nhất") — áp dụng nhất quán, không phải hack riêng cho file này. Sau fix: EICP đọc đủ 48.989 dòng, dòng lệch giảm 302 → 279 (nhóm "Đã hủy" khớp tăng 6 → 29 dòng nhờ có thêm dữ liệu Hub Trạng thái từ EICP thứ 6).</p>
+      <div class="note">Cảnh báo <code>CẢNH BÁO — thiếu: ... EICP thứ 6 (20260703) ...</code> từ <code>merge_monday_carryover()</code> (mục 23) vẫn hiển thị dù dữ liệu thực ra ĐÃ có (qua fallback tổng quát, không qua carryover T-3 cụ thể) — cảnh báo bị lệch thực tế nhưng vô hại (không mất dữ liệu, chỉ log gây hiểu nhầm nhẹ). Chưa fix vì cần refactor cách 2 cơ chế fallback biết về nhau — để dành nếu gây nhầm lẫn thật.</div>
+
+      <div class="label">Xác nhận — "huy" / "Đã hủy" / "Hủy" là CÙNG một khái niệm</div>
+      <p>Người dùng xác nhận (2026-07-16): các biến thể chính tả "huy" (không dấu, viết thường), "Đã hủy", "Hủy" trong nhãn TT đều cùng nghĩa — chỉ khác cách gõ tay giữa các lần chấm thủ công (không phải lỗi thuật toán). Xuất hiện ở cả 2 bộ dữ liệu: 04-06/7 dùng "Đã hủy" (96 dòng lệch nhãn với "Hủy"), 11-13/7 dùng "huy" (182 dòng). <strong>Không cần sửa code</strong> — khi so sánh với bài chấm tay cần chuẩn hóa các nhãn này về cùng 1 giá trị trước khi kết luận lệch.</p>
+
+      <div class="label">Bộ dữ liệu thứ 2 đã test — 11-13.7.2026</div>
+      <p>Thứ 6=10/7 (chỉ có EICP, không Hub/Citad/Core riêng), thứ 7=11/7, CN=12/7, thứ 2=13/7. Số dòng Core khớp chính xác tuyệt đối giữa pipeline và bài chấm tay (64.645 = 64.645). Hub được người dùng cung cấp dạng 4 file pHub export cùng lúc (không tách theo ngày) — cơ chế fallback Hub trong <code>detect.py</code> tự gộp đúng vào nhóm thứ 2, không cần sửa code. Còn 361/64.645 dòng lệch (đã xuất <code>11-13.7/output/361_dong_chua_can_khop.xlsx</code> cho người dùng chấm tay xác nhận) — cấu trúc lệch tương tự bộ 04-06/7 (citad→trống là nhóm lớn nhất, phần còn lại chủ yếu là biến thể nhãn "hủy").</p>
+
+      <div class="label">Trạng thái hiện tại — CHƯA CÂN KHỚP, việc cần làm tiếp</div>
+      <p>Người dùng tạm dừng đối chiếu chi tiết ở đây (2026-07-09), đã export danh sách dòng lệch để tự chấm tay và giải thích lại. Việc cần làm ở phiên sau: (1) người dùng xác nhận từng nhóm lệch còn lại (đặc biệt "citad → trống", nhóm lớn nhất, nguyên nhân chưa rõ) là lỗi code hay do dữ liệu/quy trình thủ công; (2) sau khi có xác nhận, sửa code tương ứng và lặp lại đối chiếu cho tới khi đạt cân khớp tuyệt đối trên cả 2 bộ dữ liệu.</p>
+    </div>
+  </div>
+
+  <!-- 26 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">26</span>
+      <span class="card-title">Chấm ACH — hướng sửa CALD/ERPO/TPER+GW PrcFlg (NGAY_KENH_TRA rỗng)</span>
+      <span class="badge badge-skip">SUPERSEDED bởi mục 27 — sai theo tài liệu chính thức</span>
+    </div>
+    <div class="card-body">
+      <p>Hướng sửa ban đầu (thêm nhánh NGAY_KENH_TRA rỗng, tra GW PrcFlg để tách "chênh lệch trạng thái") dựa trên suy đoán từ golden sample cũ (11/12 dòng CALD khớp 11.7/12.7) — <strong>SAI theo tài liệu chính thức <code>DOI CHIEU ACH_v2.docx</code></strong> mà người dùng cung cấp ngay sau đó. Người dùng xác nhận rõ ràng, nhiều lần (2026-07-18): CALD, ERPO, TPER đều bị loại vĩnh viễn ngay bước 1, không dùng lại cho "chênh lệch/không đi kênh". Xem mục 27 cho cách làm đúng.</p>
+    </div>
+  </div>
+
+  <!-- 27 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">27</span>
+      <span class="card-title">Chấm ACH — viết lại đúng theo DOI CHIEU ACH_v2.docx (MIS_đi + timeout không đi kênh)</span>
+      <span class="badge badge-warn">Một phần SUPERSEDED bởi mục 28 — thiếu nguồn CALD/ERPO/TPER</span>
+    </div>
+    <div class="card-body" style="background:#fef3c7;padding:8px 12px;border-radius:4px;margin-bottom:12px">
+      <strong>Cập nhật quan trọng (mục 28):</strong> bảng "11.7/12.7 = 0 timeout" bên dưới SAI —
+      đối chiếu ngược bảng chấm tay phát hiện 11.7/12.7 thật ra có 11/12 dòng timeout
+      (nguồn CALD/ERPO/TPER, xem mục 28). Chỉ giữ card này để lưu lịch sử quá trình sửa mục 4.1 (SO_TRACE).
+    </div>
+    <div class="card-body">
+      <div class="label">Nguồn thật — DOI CHIEU ACH_v2.docx</div>
+      <p>Người dùng cung cấp file <code>Đối chiếu ACH/Đối chiếu ACH/DOI CHIEU ACH/DOI CHIEU ACH_v2.docx</code> (5 mục) làm nguồn spec chính thức. Đọc bằng <code>python-docx</code> (Read tool không đọc được .docx trực tiếp — báo lỗi "binary file", phải extract qua script riêng). Toàn bộ logic ACH phải bám theo tài liệu này, không suy đoán từ code cũ hay golden sample cũ nữa.</p>
+
+      <div class="label">Viết lại mục 2 — MIS_đi (<code>b4_xu_ly_mis_di.py::_process_mis_di()</code>)</div>
+      <p>Bước 1 (TRẠNG THÁI): bỏ CALD/ERPO/TPER — vô điều kiện, làm trước, KHÔNG dùng lại 3 trạng thái này cho bước nào sau (khác hẳn cơ chế cũ ở mục 26 coi chúng là "chưa qua kênh"). Bước 2 (SESSION): session đúng HOẶC session rỗng nếu <code>NGAY_KENH_TRA</code> trong khung <code>[23h T-1, 23h T)</code>. Hàm giờ trả về 1 DataFrame duy nhất (MIS_đi), không còn 3-tuple (final/timeout/chenh_lech) như trước.</p>
+
+      <div class="label">Viết mới mục 3 — so khớp GW (<code>b4_xu_ly_mis_di.py::khop_voi_gw()</code>)</div>
+      <p>Đếm cặp CN_TIỀN (CHI_NHANH+SO_TIEN) giữa MIS_đi và GW (<code>dict_gw_count</code> có sẵn từ B3). Phần MIS_đi thừa so GW mà <code>TRANG_THAI_LENH=TPAY</code> → "timeout không đi kênh"; phần còn lại (kể cả thừa nhưng không phải TPAY) → "khớp đúng", là đầu vào cho mục 4 (<code>doi_chieu_di()</code> với NPO_đi) — trước đây mục 4 nhận thẳng MIS_đi thô, bỏ qua bước GW hoàn toàn.</p>
+
+      <div class="label">Sửa mục 4.1 — SO_TRACE (<code>b2_xu_ly_gl02.py</code>)</div>
+      <p>Đổi từ regex "chữ+số cuối REFERENCE" sang đúng công thức tài liệu: 12 ký tự từ ký tự thứ 8 (<code>REFERENCE.str[7:19]</code>). Verify trên dữ liệu thật 16.7 (1.103.271 dòng): chỉ khác 3 dòng, hội tụ giống nhau sau bước <code>lstrip('0')</code> sẵn có — rủi ro thực tế gần như 0 nhưng đúng spec.</p>
+
+      <div class="label">Kết quả verify dữ liệu thật (chiều đi)</div>
+      <table style="width:100%;border-collapse:collapse;font-size:13px;margin:8px 0">
+        <tr style="background:#f6f8fa"><th style="text-align:left;padding:4px 8px;border:1px solid #d8dee4">Ngày</th><th style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">MIS_đi</th><th style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">Timeout (TPAY thừa)</th><th style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">Tổng tiền timeout</th></tr>
+        <tr><td style="padding:4px 8px;border:1px solid #d8dee4">11.7</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">570.621</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">0</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">—</td></tr>
+        <tr><td style="padding:4px 8px;border:1px solid #d8dee4">12.7</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">562.499</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">0</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">—</td></tr>
+        <tr><td style="padding:4px 8px;border:1px solid #d8dee4">16.7</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">551.587</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4"><strong>4.628</strong></td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4"><strong>~10,15 tỷ VND</strong></td></tr>
+      </table>
+      <p>Khớp đúng với thực tế người dùng báo: chỉ 16.7 có vấn đề timeout lớn, 11.7/12.7 sạch (0) — không hề mâu thuẫn dù golden sample cũ từng nói 11.7/12.7 có 11/12 dòng "chưa qua kênh" (số đó dựa trên cơ chế sai ở mục 26, không dùng lại). Bất biến số học xác nhận đúng cho 16.7: khớp NPO (504.770) + MIS_đi thừa (42.189) + timeout (4.628) = 551.587 = MIS_đi gốc.</p>
+
+      <div class="label">Việc còn lại — CHƯA LÀM</div>
+      <p>Mục 1 (GL02→NPO) có thêm filter <code>CUSTOMER='1000-003526275'</code> không có trong tài liệu — cần xác nhận. Mục 5 (NPO_đến/MIS_đến): khóa <code>KEY_DEN</code>/<code>KEY_DEN_HUB</code> đang thiếu thành phần chi nhánh so với công thức 3 phần trong tài liệu — chưa sửa vì người dùng chưa đưa dữ liệu đến để verify.</p>
+
+      <div class="note">Test: viết lại hoàn toàn <code>tests/test_ach_algorithm.py</code> (20 test theo đúng mục 2+3, xác nhận bắt lỗi thật qua mutation test) — xóa <code>tests/test_ach_chenh_lech_random.py</code> (tiền đề GW PrcFlg lookup không còn đúng).</div>
+    </div>
+  </div>
+
+  <!-- 28 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">28</span>
+      <span class="card-title">Chấm ACH — "timeout không đi kênh" = 2 nguồn (CALD/ERPO/TPER + TPAY thừa GW)</span>
+      <span class="badge badge-warn">Một phần SUPERSEDED bởi mục 29 — nguồn 1 còn thiếu 2 điều kiện</span>
+    </div>
+    <div class="card-body" style="background:#fef3c7;padding:8px 12px;border-radius:4px;margin-bottom:12px">
+      <strong>Cập nhật (mục 29):</strong> bảng kết quả 15.06/16.06/17.06/18.06 bên dưới (8/1.455/15/2) SAI —
+      đối chiếu với bảng chấm tay thật (folder "Kết quả chấm tay") cho thấy cả 4 ngày phải = 0.
+      Nguồn 1 (CALD/ERPO/TPER) thiếu 2 điều kiện: MSGREF phải khác rỗng, và MSGREF phải KHÔNG tồn tại
+      trong GW dưới bất kỳ session/trạng thái nào — xem mục 29.
+    </div>
+    <div class="card-body">
+      <div class="label">Phát hiện — đối chiếu ngược bảng chấm tay bắt lỗi mục 27</div>
+      <p>Mục 27 kết luận 11.7/12.7 = 0 timeout — SAI. Đối chiếu ngược với bảng chấm tay thật
+        (<code>file chấm 11.7.xlsx</code>/<code>file chấm 12.7.xlsx</code>, sheet <code>dien ko di kenh</code>)
+        theo đúng REFHUB (không chỉ đếm số dòng): 11 dòng (11.7) và 12 dòng (12.7) — khớp REFHUB 100% —
+        thực chất có <code>TRANG_THAI_LENH = CALD</code> trong MIS_DI thô. Cột "TPAY" trong bảng chấm tay
+        là NHÃN người chấm tự đặt cho kết quả cuối cùng, không phải copy nguyên trạng thái gốc.
+        Người dùng xác nhận (2026-07-18): CALD/ERPO/TPER đúng nghĩa LÀ "timeout không đi kênh" —
+        chưa từng gửi sang kênh nên chắc chắn không có trong GW.</p>
+
+      <div class="label">Công thức cuối cùng — 2 nguồn cộng lại</div>
+      <p><strong>Nguồn 1</strong> (<code>_process_mis_di()</code>): CALD/ERPO/TPER + SESSION rỗng +
+        <code>NGAY_KENH_TRA</code> rơi đúng khung giờ đối chiếu <code>[23h T-1, 23h T)</code>. SESSION có
+        giá trị cụ thể = hủy bình thường trong batch, không phải timeout. <code>NGAY_KENH_TRA</code> rỗng
+        KHÔNG được nhận (đảo ngược lại hướng sửa tạm thời ở mục 26 — golden sample xác nhận chỉ nhận khi
+        CÓ giá trị và đúng khung giờ).</p>
+      <p><strong>Nguồn 2</strong> (<code>khop_voi_gw()</code>, mục 3 — không đổi so mục 27): MIS_đi (sau
+        bước 1+2) so CN_TIỀN với GW; phần thừa có <code>TRANG_THAI_LENH = TPAY</code> → timeout. TPAY là
+        điều kiện lọc DUY NHẤT ở nguồn này.</p>
+      <p>Tổng timeout = nguồn 1 + nguồn 2 (<code>pd.concat</code>), gộp thành 1 sheet
+        <code>TIMEOUT_KHONG_KENH</code> duy nhất theo yêu cầu người dùng.</p>
+
+      <div class="label">Kết quả verify — cả 7 ngày dữ liệu thật đều có timeout</div>
+      <table style="width:100%;border-collapse:collapse;font-size:13px;margin:8px 0">
+        <tr style="background:#f6f8fa"><th style="text-align:left;padding:4px 8px;border:1px solid #d8dee4">Ngày</th><th style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">Nguồn 1 (CALD/ERPO/TPER)</th><th style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">Nguồn 2 (TPAY thừa GW)</th><th style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">Tổng</th></tr>
+        <tr><td style="padding:4px 8px;border:1px solid #d8dee4">11.7</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">11 (1,8tr VND)</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">0</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4"><strong>11</strong></td></tr>
+        <tr><td style="padding:4px 8px;border:1px solid #d8dee4">12.7</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">12 (35,2tr VND)</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">0</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4"><strong>12</strong></td></tr>
+        <tr><td style="padding:4px 8px;border:1px solid #d8dee4">16.7</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">0</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">4.628 (10,15 tỷ)</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4"><strong>4.628</strong></td></tr>
+        <tr><td style="padding:4px 8px;border:1px solid #d8dee4">15.06</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">8 (26,1tr)</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">0</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4"><strong>8</strong></td></tr>
+        <tr><td style="padding:4px 8px;border:1px solid #d8dee4">16.06</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">1.455 (19,71 tỷ)</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">0</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4"><strong>1.455</strong></td></tr>
+        <tr><td style="padding:4px 8px;border:1px solid #d8dee4">17.06</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">15 (5,8tr)</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">0</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4"><strong>15</strong></td></tr>
+        <tr><td style="padding:4px 8px;border:1px solid #d8dee4">18.06</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">2 (1,2tr)</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">0</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4"><strong>2</strong></td></tr>
+      </table>
+      <p>Mọi ngày đều có timeout thật (khớp đúng "ngày nào cũng có" người dùng khẳng định) — không còn
+        ngày nào bất thường ra 0 như kết luận sai ở mục 27.</p>
+
+      <div class="note"><strong>Bài học quan trọng nhất:</strong> số liệu "khớp trùng hợp về số lượng" không đủ để tin —
+        phải đối chiếu NGƯỢC bằng REFHUB cụ thể với bảng chấm tay thật trước khi kết luận bất kỳ công thức
+        nào đúng, dù văn bản tài liệu viết rõ ràng đến đâu. Test: <code>tests/test_ach_algorithm.py</code>
+        (29 test, cả 2 nguồn, xác nhận bắt lỗi thật qua mutation test).</div>
+    </div>
+  </div>
+
+  <!-- 29 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">29</span>
+      <span class="card-title">Chấm ACH — CHỐT CUỐI THẬT: nguồn 1 cần thêm MSGREF thật + không tồn tại trong GW</span>
+      <span class="badge badge-done">Khớp 100% với MỌI tham chiếu đang có — golden sample + 4 ngày chấm tay</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bộ tham chiếu mới — "Kết quả chấm tay" (4 ngày 15-18.06)</div>
+      <p>Người dùng cung cấp <code>Đối chiếu ACH/dữ liệu test/Kết quả chấm tay/</code> (4 file, đúng 4 ngày
+        đang test) và xác nhận đây là <strong>chấm tay thật</strong> (không phải output tự động — dù trùng
+        cấu trúc sheet vì người dùng dựng Excel tay theo đúng format mong muốn). So sánh: MỌI chỉ tiêu khác
+        (khớp MIS_DI, NPO_DI thừa, MIS_DI thừa, cả chiều đến) khớp chính xác đến từng VND — chỉ riêng
+        "Timeout khong kenh" chấm tay = 0 cho cả 4 ngày, trong khi mục 28 cho ra 8/1.455/15/2.</p>
+
+      <div class="label">2 lỗ hổng còn thiếu trong nguồn 1 (CALD/ERPO/TPER)</div>
+      <p><strong>Lỗ hổng 1 — thiếu kiểm tra "không tồn tại trong GW":</strong> 8 dòng của 15.06 tưởng là
+        timeout nhưng THẬT RA có MSGREF trong GW với <code>PrcFlg='Đang sửa'</code>, <code>SessionId='0000'</code>
+        (khác hẳn 11.7/12.7 — hoàn toàn không có trong GW). Có trong GW dù trạng thái gì nghĩa là kênh ĐÃ
+        nhận điện. Fix: <code>b3_xu_ly_gw.py::xu_ly_gw()</code> giờ trả thêm <code>set_msgref_toan_bo</code>
+        (toàn bộ MSGREF trong GW, KHÔNG lọc session — khác với <code>dict_gw_count</code> đã lọc session
+        mục 3.1) để loại các dòng MSGREF xuất hiện ở GW dưới bất kỳ session/trạng thái nào.</p>
+      <p><strong>Lỗ hổng 2 — thiếu điều kiện MSGREF phải là mã thật:</strong> 581 dòng của 16.06 có MSGREF
+        RỖNG hoàn toàn (chỉ còn dấu <code>'</code> sau khi strip) — không đủ căn cứ tra GW (rỗng luôn
+        "không tìm thấy" một cách vô nghĩa). Không phải "chưa từng đi kênh" mà là một nhóm khác (có thể bị
+        hủy ở Hub trước cả khi được cấp mã tham chiếu). Fix: thêm điều kiện <code>MSGREF ≠ rỗng</code>.</p>
+
+      <div class="label">Công thức nguồn 1 CUỐI CÙNG — 5 điều kiện, tất cả bắt buộc</div>
+      <p><code>TRANG_THAI_LENH ∈ {CALD, ERPO, TPER}</code> VÀ <code>SESSION rỗng</code> VÀ
+        <code>NGAY_KENH_TRA</code> trong khung <code>[23h T-1, 23h T)</code> VÀ <code>MSGREF ≠ rỗng</code> VÀ
+        MSGREF đó không xuất hiện ở bất kỳ đâu trong GW.</p>
+
+      <div class="label">Kết quả verify cuối cùng — khớp 100% MỌI tham chiếu</div>
+      <table style="width:100%;border-collapse:collapse;font-size:13px;margin:8px 0">
+        <tr style="background:#f6f8fa"><th style="text-align:left;padding:4px 8px;border:1px solid #d8dee4">Ngày</th><th style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">Nguồn 1</th><th style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">Nguồn 2 (TPAY)</th><th style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">Tổng</th><th style="text-align:left;padding:4px 8px;border:1px solid #d8dee4">Tham chiếu</th></tr>
+        <tr><td style="padding:4px 8px;border:1px solid #d8dee4">11.7</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">11</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">0</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4"><strong>11</strong></td><td style="padding:4px 8px;border:1px solid #d8dee4">golden 11/11 REFHUB</td></tr>
+        <tr><td style="padding:4px 8px;border:1px solid #d8dee4">12.7</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">12</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">0</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4"><strong>12</strong></td><td style="padding:4px 8px;border:1px solid #d8dee4">golden 12/12 REFHUB</td></tr>
+        <tr><td style="padding:4px 8px;border:1px solid #d8dee4">16.7</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">0</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">4.628 (10,15 tỷ)</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4"><strong>4.628</strong></td><td style="padding:4px 8px;border:1px solid #d8dee4">người dùng xác nhận "gần đúng mong muốn"</td></tr>
+        <tr><td style="padding:4px 8px;border:1px solid #d8dee4">15.06</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">0</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">0</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4"><strong>0</strong></td><td style="padding:4px 8px;border:1px solid #d8dee4">chấm tay = 0</td></tr>
+        <tr><td style="padding:4px 8px;border:1px solid #d8dee4">16.06</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">0</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">0</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4"><strong>0</strong></td><td style="padding:4px 8px;border:1px solid #d8dee4">chấm tay = 0</td></tr>
+        <tr><td style="padding:4px 8px;border:1px solid #d8dee4">17.06</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">0</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">0</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4"><strong>0</strong></td><td style="padding:4px 8px;border:1px solid #d8dee4">chấm tay = 0</td></tr>
+        <tr><td style="padding:4px 8px;border:1px solid #d8dee4">18.06</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">0</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">0</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4"><strong>0</strong></td><td style="padding:4px 8px;border:1px solid #d8dee4">chấm tay = 0</td></tr>
+      </table>
+
+      <div class="note"><strong>Ghi nhớ:</strong> dùng <code>set_msgref_toan_bo</code> (KHÔNG lọc session) để
+        kiểm tra tồn tại trong GW — KHÔNG dùng <code>dict_gw_count</code> (đã lọc session mục 3.1), vì sẽ bỏ
+        sót các dòng GW thuộc session/trạng thái khác như "Đang sửa". Test:
+        <code>tests/test_ach_algorithm.py</code> (32 test, xác nhận bắt lỗi thật qua mutation test cho cả
+        2 điều kiện mới).</div>
+    </div>
+  </div>
+
+  <!-- 30 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">30</span>
+      <span class="card-title">Chấm ACH — gỡ "Nguồn 1", chuyển sang BR-ACH-001/002 (Change Plan chính thức)</span>
+      <span class="badge badge-warn">WIP — 2 câu hỏi Blocking (mapping PrcFlg, schema sheet gộp) chưa chốt</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Vì sao đảo ngược quyết định mục 29</div>
+      <p>Sau khi tổng hợp lại toàn bộ quy trình mục 2/3 (Project Handoff + Change Plan riêng), Business Owner
+        xác nhận chính thức: <strong>BR-ACH-001/002 thay thế hoàn toàn cơ chế "Nguồn 1"</strong> (CALD/ERPO/TPER
+        + session rỗng + khung giờ + MSGREF không có trong GW — mục 27-29) — không giữ lại logic cũ song song.
+        BR-ACH-001 xử lý nhiều giao dịch cùng CN_TIỀN theo 3 nhánh: <strong>1A</strong> (MIS thừa, TPAY, không có
+        trên GW → timeout thật), <strong>1B</strong> (MIS thừa, TPAY, CÓ trên GW → không phải thừa, là "khớp đúng"
+        + <code>MATCH_TYPE=TIMEOUT</code>), <strong>Trường hợp 2</strong> (GW thừa so MIS → xuất toàn bộ 2 nguồn
+        của nhóm CN_TIỀN đó, không tự suy luận chọn dòng). BR-ACH-002: bắt buộc cột <code>SOURCE</code> khi gộp
+        dữ liệu GW+MIS_đi vào 1 sheet.</p>
+
+      <div class="label">Đã làm (bước 1-3, không phụ thuộc 2 câu hỏi Blocking)</div>
+      <p><code>b4_xu_ly_mis_di.py::_process_mis_di()</code> gỡ toàn bộ khối "Nguồn 1" — giờ chỉ còn bước 1 (bỏ
+        CALD/ERPO/TPER) + bước 2 (lọc session), trả về 1 DataFrame thay vì tuple.
+        <code>b3_xu_ly_gw.py::xu_ly_gw()</code> gỡ <code>set_msgref_toan_bo</code>, trả về 2-tuple như trước khi
+        có "Nguồn 1". Thêm hàm mới <code>tim_nhom_gw_thua()</code> (Requirement C.1a, phần không phụ thuộc
+        schema) — chỉ so sánh COUNT theo nhóm CN_TIỀN để tìm GW thừa, không dùng <code>PrcFlg</code>/
+        <code>SessionId</code>, không chọn dòng cụ thể. <code>khop_voi_gw()</code> (mục 3, C.2) CỐ Ý giữ nguyên
+        điều kiện lọc TPAY-only cho tới khi có mapping <code>PrcFlg</code>↔nhánh 1A/1B chính thức.</p>
+
+      <div class="label">Làm rõ quan trọng của Business Owner — không suy diễn PrcFlg/SessionId</div>
+      <p>5 giá trị <code>PrcFlg</code> thật trong dữ liệu test: <code>Lệnh Hoàn thành</code>,
+        <code>ACH Từ chối</code>, <code>Lệnh Timeout</code>, <code>Chờ hoàn trả</code>, <code>Đang sửa</code> —
+        đã thống kê đầy đủ số lượng + ví dụ giao dịch cho Business Owner, KHÔNG tự đề xuất mapping nhánh 1A/1B.
+        Quan sát: mọi dòng <code>Đang sửa</code> đều có <code>SessionId='0000'</code> — Business Owner xác nhận
+        đây CHỈ là đặc điểm dữ liệu hiện tại, KHÔNG phải quy tắc suy diễn ngược (không được coi
+        <code>SessionId='0000'</code> ⇒ "Đang sửa", và không được coi <code>SessionId=NULL</code> ⇒
+        <code>SessionId='0000'</code>).</p>
+
+      <div class="label">2 câu hỏi Blocking còn lại (chưa code tiếp cho đến khi có câu trả lời)</div>
+      <p><strong>#2</strong> — cấu trúc cột cụ thể khi gộp schema GW (<code>BRCD</code>, <code>PrcFlg</code>,
+        <code>STTLMAMT</code>...) + MIS_đi (<code>CHI_NHANH</code>, <code>TRANG_THAI_LENH</code>,
+        <code>SO_TIEN</code>, <code>MSGREF</code>...) vào 1 sheet <code>TIMEOUT_KHONG_KENH</code> mới (ngoài
+        <code>SOURCE</code>/<code>MATCH_TYPE</code> đã chốt). <strong>#4</strong> — mapping chính thức giữa 5 giá
+        trị <code>PrcFlg</code> và nhánh 1A ("thừa thật")/1B ("đã có trên GW"). Sheet <code>CAP_CN_TIEN</code>
+        (Câu hỏi #1) giữ nguyên không đổi theo quyết định Business Owner, đánh giá lại sau khi C.1a/C.2 hoàn
+        thiện.</p>
+
+      <div class="label">Verify dữ liệu thật 16.7 (không đổi số liệu ngày này)</div>
+      <p>16.7: MIS_đi 551.587 dòng → khớp đúng 546.959, timeout (TPAY thừa GW) 4.628 dòng (~10,15 tỷ VND) — Y
+        NGUYÊN so với trước (ngày này "Nguồn 1" luôn = 0 nên việc gỡ nó không đổi tổng). Các ngày khác có
+        "Nguồn 1" &gt; 0 trước đây (11.7: 11, 12.7: 12, 15-18.06: 0-1.455 tùy ngày) SẼ giảm về đúng phần TPAY-only
+        khi chạy lại — RỦI RO NÀY ĐÃ ĐƯỢC Business Owner CHẤP NHẬN TRƯỚC (không giữ lại logic V1).</p>
+
+      <div class="note"><strong>Không lặp lại vòng lặp "xây rồi gỡ":</strong> BR-ACH-001/002 là quyết định
+        Business Owner xác nhận CHÍNH THỨC (không phải "tạm thời để nhìn số liệu" như "Nguồn 1" từng bắt đầu) —
+        không khôi phục "Nguồn 1" trong bất kỳ hình thức nào. Test: <code>tests/test_ach_algorithm.py</code> viết
+        lại hoàn toàn (26 test) — xóa <code>TestTimeoutTuTrangThai</code>, thêm <code>TestNguon1DaGoBo</code>
+        (regression) và <code>TestTimNhomGwThua</code> (C.1a).</div>
+    </div>
+  </div>
+
+  <!-- 31 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">31</span>
+      <span class="card-title">Chấm ACH — chốt Blocking #4: nhánh 1A/1B dựa MSGREF (không dùng PrcFlg), nhóm trước-dòng sau</span>
+      <span class="badge badge-done">Đã triển khai — verify 16.7: 4.628→4.643 dòng timeout (+15, đúng theo BR mới)</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Diễn biến chốt Business Rule (3 vòng làm rõ liên tiếp)</div>
+      <p>Vòng 1: Business Owner xác nhận nhánh 1A/1B <strong>không dựa vào <code>PrcFlg</code></strong> —
+        chỉ dựa vào MSGREF (đã chuẩn hóa — bỏ dấu nháy đơn đầu) có tồn tại trên GW sạch hay không. Vòng 2
+        (quan trọng nhất): Business Owner phát hiện đề xuất ban đầu của tôi <strong>ngầm giả định cumcount đã
+        chọn đúng bản ghi thừa</strong> — sai, vì cumcount chỉ chọn dòng theo VỊ TRÍ xuất hiện trong file khi 1
+        nhóm CN_TIỀN có nhiều dòng trùng, không có căn cứ để khẳng định dòng nào thật sự thiếu. Vòng 3: chốt thứ
+        tự bắt buộc — Requirement <strong>C.1</strong> xác định NHÓM chênh lệch (so tổng COUNT_MIS/COUNT_GW của
+        cả nhóm, không chọn dòng), rồi Requirement <strong>C.2</strong> mới tra MSGREF cho từng dòng TPAY
+        trong các nhóm đã xác định là thừa.</p>
+
+      <div class="label">Công thức cuối cùng — `khop_voi_gw()`</div>
+      <p><strong>C.1:</strong> <code>nhóm_thừa = COUNT_MIS(nhóm CN_TIỀN, mọi trạng thái) &gt; COUNT_GW(nhóm)</code>
+        — dùng <code>groupby(...).transform('size')</code>, đã BỎ HẲN <code>cumcount()</code>.
+        <strong>C.2:</strong> trong nhóm thừa, với mỗi dòng TPAY: MSGREF (chuẩn hóa) KHÔNG có trên GW sạch →
+        nhánh 1A "Timeout không đi kênh" → <code>df_timeout</code>. MSGREF CÓ trên GW sạch → nhánh 1B
+        "Timeout thật" → <code>df_khop_dung</code>, cột <code>MATCH_TYPE='TIMEOUT'</code> (đã thêm vào
+        <code>_COLS_MIS_DI</code> để hiển thị trong Excel). Dòng không phải TPAY trong nhóm thừa (SCNL/TXRT)
+        → khớp đúng như cũ, không <code>MATCH_TYPE</code>.</p>
+
+      <div class="label">Verify dữ liệu thật 16.7 — số liệu thay đổi nhẹ, đúng theo BR mới</div>
+      <table style="width:100%;border-collapse:collapse;font-size:13px;margin:8px 0">
+        <tr style="background:#f6f8fa"><th style="text-align:left;padding:4px 8px;border:1px solid #d8dee4">Chỉ tiêu</th><th style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">Logic cũ (cumcount)</th><th style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">Logic mới (nhóm+MSGREF)</th></tr>
+        <tr><td style="padding:4px 8px;border:1px solid #d8dee4">Timeout không đi kênh (1A)</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">4.628 (~10,147 tỷ)</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4"><strong>4.643 (~10,161 tỷ)</strong></td></tr>
+        <tr><td style="padding:4px 8px;border:1px solid #d8dee4">Timeout thật đã khớp GW (1B, mới)</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">—</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4"><strong>14</strong></td></tr>
+        <tr><td style="padding:4px 8px;border:1px solid #d8dee4">Khớp đúng</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">546.959</td><td style="text-align:right;padding:4px 8px;border:1px solid #d8dee4">546.944</td></tr>
+      </table>
+      <p>Chênh lệch +15 dòng: logic mới xét TOÀN BỘ dòng TPAY trong nhóm thừa (không chỉ N dòng cumcount từng
+        chọn theo vị trí file) — thay đổi đúng theo BR mới, không phải lỗi. Bất biến số học vẫn đúng:
+        546.944 + 4.643 = 551.587 = tổng MIS_đi.</p>
+
+      <div class="note"><strong>Bài học quan trọng nhất phiên này:</strong> một thiết kế "có vẻ đúng" (dùng
+        cumcount đã có sẵn để chọn dòng cần tra MSGREF) vẫn có thể ẩn chứa giả định sai nếu không tách bạch rõ
+        "xác định NHÓM chênh lệch" (không cần chọn dòng) và "phân loại TỪNG DÒNG trong nhóm đó" (cần tiêu chí
+        chính xác — ở đây là MSGREF) thành 2 bước độc lập. Test:
+        <code>tests/test_ach_algorithm.py::TestKhopVoiGw</code> (7 test, gồm 1 test cố tình đặt dòng "không
+        khớp" ở GIỮA thay vì cuối để xác nhận kết quả không phụ thuộc thứ tự/cumcount).</div>
+    </div>
+  </div>
+
+  <!-- 32 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">32</span>
+      <span class="card-title">Verify C.1+C.2 với bảng chấm thủ công thật (16.7) — khớp 100% tập giao dịch</span>
+      <span class="badge badge-info">Chờ Business Owner xác nhận cuối</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh</div>
+      <p>Business Owner cung cấp file chấm tay thật <code>Đối chiếu ACH/ACH 16.7/16.7.xlsx</code> (407MB, sheet
+        <code>dien ko di kenh</code>) để đối chiếu khách quan với đầu ra <code>TIMEOUT_KHONG_KENH</code> của
+        <code>khop_voi_gw()</code> sau khi sửa C.1+C.2 (xem mục 31). Yêu cầu: chỉ đối chiếu và báo cáo, không
+        tự kết luận đúng/sai, không sửa code.</p>
+
+      <div class="label">Trở ngại kỹ thuật gặp phải</div>
+      <ul>
+        <li>Thư mục <code>ACH 16.7</code> không có file MIS_ĐẾN → không chạy được <code>main_from_dir()</code>
+          đầy đủ. Đã chạy riêng nhánh chiều đi (B1→B3, B4, <code>khop_voi_gw()</code>) — đúng phạm vi C.1+C.2.</li>
+        <li>File GW gốc 83MB (sheet1.xml ~384MB giải nén) làm <code>pandas.read_excel(engine='calamine')</code>
+          hết bộ nhớ. Cài thêm <code>fastexcel</code> + <code>pyarrow</code> vào <code>.venv</code> — nhánh code
+          đã dự trù sẵn (<code>try: fastexcel except ImportError: calamine</code>) nhưng 2 gói này chưa có trong
+          <code>.venv</code>/<code>requirements.txt</code>. <strong>Chưa thêm vào requirements.txt</strong> — cần
+          quyết định riêng nếu muốn chốt.</li>
+        <li>File chuẩn không có MSGREF cho phần lớn dòng (transaction timeout thật sự thì kênh chưa từng trả
+          MSGREF) → đổi khóa đối chiếu sang <code>REFHUB</code> (khóa nội bộ Hub, luôn có giá trị).</li>
+      </ul>
+
+      <div class="label">Kết quả đối chiếu (REFHUB)</div>
+      <table>
+        <tr><th>Chỉ tiêu</th><th>Kết quả</th></tr>
+        <tr><td>Số dòng chuẩn / pipeline mới</td><td>4.643 / 4.643</td></tr>
+        <tr><td>Chỉ có ở chuẩn (thiếu ở pipeline mới)</td><td>0</td></tr>
+        <tr><td>Chỉ có ở pipeline mới (thừa so với chuẩn)</td><td>0</td></tr>
+        <tr><td>Khác biệt giá trị trên các dòng chung</td><td>4.643/4.643 dòng khác 2 cột <code>TRANG_THAI_LENH</code>
+          (<code>TT LỆNH LỖI</code> nhãn tay vs <code>TPAY</code> mã hệ thống) và <code>NGAY_KENH_TRA</code>
+          (dd/mm/yyyy vs yyyy-mm-dd) — thuần định dạng, không phải khác dữ liệu. SO_TIEN, CHI_NHANH, SESSION,
+          KENH_THANH_TOAN, MSGREF khớp 100%.</td></tr>
+      </table>
+
+      <div class="note">Tập giao dịch <code>TIMEOUT_KHONG_KENH</code> khớp tuyệt đối với bảng chấm tay thật —
+        không giao dịch thừa/thiếu, không chênh lệch số tiền. Chưa verify được MIS_DI_KHOP/NPO_DI_THUA/MIS_DI_THUA
+        và chiều đến vì file chuẩn không có sheet kết quả tương ứng (chỉ có dữ liệu nguồn thô) và thiếu dữ liệu
+        MIS_ĐẾN cho ngày này.</div>
+
+      <div class="label">Tư liệu lưu trữ</div>
+      <p>Script + CSV kết quả/khác biệt lưu tại <code>_scratch_verify_167/</code> (ổ E, ngoài phạm vi ổ C gần đầy)
+        để làm tư liệu hoàn thiện dự án theo yêu cầu Business Owner.
+        <strong>⚠ Nhắc xóa thư mục này khi dự án hoàn thành</strong> (không phải code, chỉ là dữ liệu verify tạm thời).</p>
+    </div>
+  </div>
+
+  <!-- 33 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">33</span>
+      <span class="card-title">Verify C.1+C.2 trên 2 bộ dữ liệu thật khác (11.7, 12.7) — kiểm tra khả năng tổng quát</span>
+      <span class="badge badge-warn">FAIL (khớp không tuyệt đối) — nguyên nhân đã xác định, chờ Business Owner quyết định</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Mục tiêu</div>
+      <p>Sau khi verify 16.7 khớp 100% (mục 32), Business Owner yêu cầu verify thêm 2 bộ dữ liệu thật khác
+        (11.7, 12.7 — có đủ MIS_ĐẾN nên chạy được <code>main_from_dir()</code> đầy đủ, không cần tách riêng
+        chiều đi) để kiểm tra tính tổng quát của thuật toán C.1+C.2, không sửa code.</p>
+
+      <div class="label">Kết quả — TIMEOUT_KHONG_KENH so với sheet <code>dien ko di kenh</code> (file chấm tay)</div>
+      <table>
+        <tr><th>Ngày</th><th>Pipeline mới</th><th>File chấm tay</th><th>Chênh lệch</th></tr>
+        <tr><td>11/07</td><td>0 dòng</td><td>11 dòng (~1.800.000 VND)</td><td>Thiếu 11 dòng</td></tr>
+        <tr><td>12/07</td><td>0 dòng</td><td>12 dòng (~35.223.000 VND)</td><td>Thiếu 12 dòng</td></tr>
+      </table>
+
+      <div class="label">Nguyên nhân — đã xác định 100%, không phải lỗi C.1/C.2</div>
+      <p>Tra từng REFHUB trong 23 dòng chênh lệch (11+12) vào đúng dữ liệu MIS_đi thô (2 file zip <code>*_DI_*</code>
+        gốc dùng làm input pipeline): <strong>100% (23/23) có <code>TRANG_THAI_LENH='CALD'</code></strong>.
+        Đây là trạng thái mà bước 1 của <code>_process_mis_di()</code> loại bỏ hoàn toàn theo BR-ACH-001 (mục 30)
+        — các dòng này chưa bao giờ tới được bước C.1/C.2 (nhóm CN_TIỀN + MSGREF), nên không phải lỗi thuật toán
+        C.1/C.2 mà là hệ quả của bước 1 (lọc TRẠNG THÁI) — một Requirement/quyết định khác, đã chốt từ trước.</p>
+
+      <div class="note">Con số 11 (11.7) và 12 (12.7) <strong>đã được dự đoán và Business Owner chấp nhận trước
+        khi verify này diễn ra</strong> — xem mục 30: "Các ngày khác có 'Nguồn 1' &gt; 0 trước đây (11.7: 11,
+        12.7: 12...) SẼ giảm về đúng phần TPAY-only khi chạy lại — RỦI RO NÀY ĐÃ ĐƯỢC Business Owner CHẤP NHẬN
+        TRƯỚC". Verify lần này xác nhận đúng bằng số liệu thật, không phát hiện gì mới.</div>
+
+      <div class="label">Bất biến số học (đã kiểm tra)</div>
+      <p>11.7: 509.316 (khớp) + 61.305 (MIS thừa) + 0 (timeout) = 570.621 = tổng MIS_đi sau bước 1+2. ✓<br>
+        12.7: 503.455 + 59.044 + 0 = 562.499 = tổng MIS_đi sau bước 1+2. ✓</p>
+
+      <div class="label">Phạm vi chưa verify được</div>
+      <p>Tương tự mục 32 — file chấm tay không có sheet kết quả cho MIS_DI_KHOP/NPO_DI_THUA/MIS_DI_THUA/chiều đến
+        (chỉ có dữ liệu nguồn thô <code>di</code>/<code>hub di</code>/<code>đến</code>/<code>hub den</code>) nên
+        không so sánh được các sheet này.</p>
+    </div>
+  </div>
+
+  <!-- 34 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">34</span>
+      <span class="card-title">Regression Verify C.1+C.2 — 4 ngày tháng 6 (golden sample) + tổng hợp quy luật 7 ngày</span>
+      <span class="badge badge-info">Đã tìm ra quy luật nhất quán — chờ Business Owner quyết định BR, chưa sửa code</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bộ dữ liệu</div>
+      <p>4 ngày tháng 6 (15-18/06) có input đầy đủ + "golden sample" (<code>Kết quả chấm tay/doi_chieu_*_ALL.zip</code>
+        — kết quả một phiên bản pipeline CŨ hơn, có sheet <code>PHAN_TICH</code> không còn trong code hiện tại,
+        đã được coi là chuẩn theo ghi chú mục 28). Đã chạy <code>main_from_dir()</code> đầy đủ, không sửa code.</p>
+
+      <div class="label">Kết quả TIMEOUT_KHONG_KENH — 4 ngày tháng 6</div>
+      <table>
+        <tr><th>Ngày</th><th>Pipeline mới</th><th>Golden sample</th><th>Khớp?</th></tr>
+        <tr><td>15/06</td><td>0</td><td>0</td><td>PASS</td></tr>
+        <tr><td>16/06</td><td>0</td><td>0</td><td>PASS</td></tr>
+        <tr><td>17/06</td><td>0</td><td>0</td><td>PASS</td></tr>
+        <tr><td>18/06</td><td>0</td><td>0</td><td>PASS</td></tr>
+      </table>
+      <p>Lưu ý: cả pipeline lẫn golden sample đều = 0 cho cả 4 ngày — đây là khớp ở trường hợp <em>không có gì để
+        phân loại</em> (không có nhóm CN_TIỀN thừa), không phải phép thử mạnh như 16.7 (4.643 dòng) hay
+        11.7/12.7 (có phát sinh CALD). Xác nhận thuật toán không tự sinh dương tính giả trên 4 ngày này, nhưng
+        không kiểm chứng thêm được gì về khả năng phân loại đúng khi có timeout thật.</p>
+
+      <div class="label">Tổng hợp quy luật — 7 ngày dữ liệu thật đã verify (16.7, 11.7, 12.7, 15-18.06)</div>
+      <table>
+        <tr><th>Ngày</th><th>Pipeline</th><th>Chuẩn</th><th>Kết quả</th><th>Nguyên nhân lệch (nếu có)</th></tr>
+        <tr><td>16/07</td><td>4.643</td><td>4.643</td><td>PASS tuyệt đối (REFHUB)</td><td>—</td></tr>
+        <tr><td>11/07</td><td>0</td><td>11</td><td>FAIL</td><td>100% (11/11) TRANG_THAI_LENH gốc = <code>CALD</code></td></tr>
+        <tr><td>12/07</td><td>0</td><td>12</td><td>FAIL</td><td>100% (12/12) TRANG_THAI_LENH gốc = <code>CALD</code></td></tr>
+        <tr><td>15-18/06</td><td>0</td><td>0</td><td>PASS (trivial)</td><td>—</td></tr>
+      </table>
+      <p><strong>Quy luật quan sát được:</strong> trong toàn bộ 23 dòng lệch từng ghi nhận (11.7+12.7), 100% đều
+        cùng một nguyên nhân duy nhất — trạng thái <code>CALD</code> trong MIS_đi gốc, bị bước 1 loại bỏ theo
+        BR-ACH-001. Không ngày nào trong 7 ngày cho thấy lệch do <code>TPAY</code>/<code>ERPO</code>/<code>TPER</code>
+        hay do chính logic nhóm CN_TIỀN/MSGREF (C.1/C.2) — mọi trường hợp có phát sinh (16.7: 4.643 dòng TPAY) đều
+        khớp tuyệt đối. Chưa có ngày nào trong dữ liệu hiện có làm lộ phản ví dụ khác ngoài mẫu hình CALD này.</p>
+
+      <div class="note">Không tự kết luận CALD nên giữ hay loại khỏi TIMEOUT_KHONG_KENH — đây là quyết định Business
+        Rule (phạm vi bước 1, ngoài C.1/C.2) cần Business Owner quyết định dựa trên quy luật vừa tổng hợp.
+        Chưa sửa code, chưa đổi Business Rule.</div>
+    </div>
+  </div>
+
+  <!-- 35 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">35</span>
+      <span class="card-title">Regression Verify C.1+C.2 — toàn bộ tháng 7 (7 ngày) — phát hiện nguyên nhân lệch THỨ HAI, khác CALD</span>
+      <span class="badge badge-warn">FAIL 5/7 ngày — 2 nhóm nguyên nhân riêng biệt, chờ Business Owner quyết định BR</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bộ dữ liệu mới verify: 06.07, 07.07, 08.07, 09.07</div>
+      <p>Thư mục <code>dữ liệu test tháng 7/ACH/{06-09}.07</code> — không có GL02 (không cần vì chỉ verify C.1+C.2),
+        mỗi ngày chỉ có 1 file MIS_đi (thiếu file T-1) nên phải ghép DI zip từ thư mục ngày liền trước để đủ cửa
+        sổ 2 ngày (riêng 06.07 không ghép được vì không có dữ liệu 05.07 — kết quả ngày này có thể chưa đầy đủ).
+        File GW tìm thấy đúng qua <code>_tim_gw_xlsx()</code> dù tên file không chứa "GW" (<code>LenhThanhToanDi
+        (39).xlsx</code>). File chấm tay mỗi ngày có sheet "TO ko đi kênh" — kích thước file lớn (release ~40MB)
+        do công thức copy xuống ~500K dòng, nhưng số dòng có dữ liệu thật (TRANG_THAI_LENH không rỗng) chỉ vài
+        chục dòng — đã lọc đúng trước khi so sánh.</p>
+
+      <div class="label">Kết quả TIMEOUT_KHONG_KENH — REFHUB làm khóa</div>
+      <table>
+        <tr><th>Ngày</th><th>Pipeline</th><th>Chấm tay</th><th>Kết quả</th></tr>
+        <tr><td>06/07 *</td><td>3</td><td>14</td><td>FAIL — thiếu 11</td></tr>
+        <tr><td>07/07</td><td>2</td><td>9</td><td>FAIL — thiếu 7</td></tr>
+        <tr><td>08/07</td><td>7</td><td>16</td><td>FAIL — thiếu 9</td></tr>
+        <tr><td>09/07</td><td>15</td><td>15</td><td>PASS tuyệt đối (REFHUB)</td></tr>
+      </table>
+      <p>* 06.07 thiếu file MIS_đi T-1 (05.07 không tồn tại trong dữ liệu hiện có) — 1/11 dòng thiếu xác nhận
+        do nguyên nhân này (REFHUB không tồn tại trong raw data đọc được), không phải do thuật toán.</p>
+
+      <div class="label">NGUYÊN NHÂN THỨ HAI — khác hẳn CALD, liên quan trực tiếp đến C.1</div>
+      <p>Tra riêng từng REFHUB thiếu (27 dòng, trừ 1 dòng thiếu dữ liệu T-1 nêu trên) vào dữ liệu MIS_đi đã qua
+        bước 1+2: <strong>100% (26/26) có TRANG_THAI_LENH = TPAY</strong> (không bị bước 1 loại) và
+        <strong>100% (26/26) đều CÓ mặt trong <code>df_mis_di</code> sau bước 2</strong> (không bị lọc session/
+        khung giờ loại). Tra tiếp nhóm CN_TIỀN (CHI_NHANH+SO_TIEN) của từng dòng:
+        <strong>100% (26/26) có COUNT_MIS(nhóm) ≤ COUNT_GW(nhóm)</strong> — tức nhóm đó, theo đúng định nghĩa
+        C.1 hiện tại (<code>groupby(...).transform('size') &gt; dict_gw_count</code>), KHÔNG được coi là "nhóm
+        thừa". Vì C.2 (tra MSGREF) chỉ áp dụng cho dòng TPAY trong các nhóm ĐÃ được C.1 xác định thừa, các dòng
+        này chưa từng được đưa vào bước tra MSGREF — dù MSGREF riêng của từng dòng có thể vẫn không tồn tại
+        trên GW (chưa kiểm chứng riêng lẻ).</p>
+
+      <div class="note"><strong>Đây là ranh giới của chính định nghĩa C.1 (mức nhóm), không phải lỗi bước 1/2:
+        </strong> nhóm CN_TIỀN của các dòng "thiếu" này có COUNT_GW ≥ COUNT_MIS — nghĩa là ở mức nhóm, không có
+        dấu hiệu thiếu hụt. Nhưng bảng chấm tay vẫn đánh dấu các dòng cụ thể này là timeout, gợi ý người chấm tay
+        có thể xác định "thừa" theo tiêu chí khác (vd. so khớp MSGREF cho từng dòng TPAY, không cần điều kiện nhóm
+        thừa trước). Không kết luận cách nào đúng — chỉ ghi nhận đây là khác biệt Ở CHÍNH ĐỊNH NGHĨA thuật toán
+        C.1, khác hẳn với nguyên nhân CALD (bước 1, ở 11.7/12.7) đã xác định trước đó.</div>
+
+      <div class="label">Tổng hợp toàn bộ 7 ngày tháng 7 đã verify</div>
+      <table>
+        <tr><th>Ngày</th><th>PASS/FAIL</th><th>Chênh lệch</th><th>Nguyên nhân chính</th></tr>
+        <tr><td>16/07</td><td>PASS</td><td>0</td><td>—</td></tr>
+        <tr><td>11/07</td><td>FAIL</td><td>11</td><td>100% CALD (bước 1, BR-ACH-001)</td></tr>
+        <tr><td>12/07</td><td>FAIL</td><td>12</td><td>100% CALD (bước 1, BR-ACH-001)</td></tr>
+        <tr><td>06/07</td><td>FAIL</td><td>11</td><td>10 TPAY nhóm không thừa (COUNT_MIS≤COUNT_GW) + 1 thiếu dữ liệu T-1</td></tr>
+        <tr><td>07/07</td><td>FAIL</td><td>7</td><td>100% TPAY nhóm không thừa (COUNT_MIS≤COUNT_GW)</td></tr>
+        <tr><td>08/07</td><td>FAIL</td><td>9</td><td>100% TPAY nhóm không thừa (COUNT_MIS≤COUNT_GW)</td></tr>
+        <tr><td>09/07</td><td>PASS</td><td>0</td><td>—</td></tr>
+      </table>
+      <p><strong>2 nhóm nguyên nhân độc lập, không chồng lấn:</strong> (1) CALD/bước 1 — chỉ xuất hiện ở 11.7,
+        12.7; (2) nhóm CN_TIỀN không thừa/C.1 — chỉ xuất hiện ở 06-08.07. Ngày 16.7 và 09.7 không có lệch nào.
+        Chưa ngày nào cho thấy lệch do ERPO/TPER hay do C.2 (tra MSGREF) tự nó sai.</p>
+
+      <div class="note">Không kết luận Business Rule đúng/sai, không sửa code. Chờ Business Owner quyết định
+        dựa trên 2 nhóm bằng chứng này — đặc biệt nhóm (2) vì nó chạm trực tiếp vào định nghĩa "nhóm thừa" của
+        C.1, không giống nhóm (1) vốn đã có quyết định BR-ACH-001 từ trước.</div>
+    </div>
+  </div>
+
+  <!-- 36 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">36</span>
+      <span class="card-title">ĐÍNH CHÍNH mục 35 — nguyên nhân thật của 06/07/08.07 là lỗi đọc file GW trùng sheet, KHÔNG phải định nghĩa C.1</span>
+      <span class="badge badge-warn">Bug xác nhận — chưa sửa code, chờ Business Owner quyết định cách sửa</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Business Owner phản biện đúng</div>
+      <p>Sau khi mục 35 kết luận "26/26 dòng thiếu do nhóm CN_TIỀN có COUNT_MIS ≤ COUNT_GW", Business Owner chỉ ra:
+        <em>"COUNT_MIS ≤ COUNT_GW là điều hệ thống ACH gần như không thể có — nếu 1 điện trên kênh sinh ra nhiều
+        hơn 1 bản ghi GW thì hệ thống đã phải dừng, không thể xảy ra hàng ngày."</em> Đây là phản biện đúng — đã
+        điều tra sâu hơn và xác nhận nguyên nhân thực sự khác hẳn kết luận ban đầu.</p>
+
+      <div class="label">Bằng chứng — GW bị đếm trùng vì đọc gộp 5 sheet</div>
+      <p>File GW ngày 06.07 (<code>LenhThanhToanDi (39).xlsx</code>) có 5 sheet: <code>Sheet 1</code> (1.000.000
+        dòng, gộp CHUNG 4 session khác nhau: 16282/16264/16302/0000), <code>đi GW 06.07</code> (541.060 dòng,
+        CHỈ riêng session 16282 — đúng ngày cần), <code>Sheet2</code>/<code>count</code>/<code>Sheet 2</code>
+        (phụ trợ). Vì tên file không trùng tên sheet nào, <code>_doc_bang_fastexcel()</code> (b3_xu_ly_gw.py) rơi
+        vào nhánh "đọc tất cả sheet rồi gộp" — nên dữ liệu session 16282 bị lấy <strong>2 lần</strong>: 1 lần từ
+        <code>Sheet 1</code> (541.242 dòng), 1 lần từ <code>đi GW 06.07</code> (541.060 dòng).</p>
+      <p>Xác minh trực tiếp: <strong>100% MSGREF của <code>đi GW 06.07</code> trùng khớp với <code>Sheet 1</code></strong>
+        (541.060/541.060), dữ liệu từng dòng giống hệt (BRCD, PrcFlg, STTLMAMT — chỉ khác định dạng số
+        "550,109VND" vs "550109"). Kiểm tra 10 nhóm CN_TIỀN "không thừa" ở mục 35: tỷ lệ COUNT_GW(dòng thô) /
+        số MSGREF GW duy nhất = <strong>đúng 2.0x ở cả 10/10 nhóm</strong> — không phải trùng hợp.</p>
+      <p>Kiểm tra riêng MSGREF của từng giao dịch "không thừa" đó (độc lập với đếm nhóm):
+        <strong>10/10 đều KHÔNG có MSGREF trên GW</strong> — tức từng giao dịch thực sự là timeout thật, chỉ bị
+        C.1 bỏ qua vì COUNT_GW của cả nhóm bị thổi phồng gấp đôi do lỗi đọc file.</p>
+
+      <div class="label">Vì sao 09.07 PASS còn 06/07/08.07 FAIL — cùng 1 cơ chế</div>
+      <p>File GW ngày 09.07 tên là <code>đi GW 09.07.xlsx</code> — trùng khớp với 1 trong 5 sheet nội bộ
+        (<code>"đi GW 09.07"</code>), nên <code>_doc_bang_fastexcel()</code> chỉ đọc đúng 1 sheet đó (log:
+        "chỉ đọc sheet 'đi GW 09.07' (1/5 sheets)") — không bị trùng lặp → khớp tuyệt đối. File GW của
+        06/07/08.07 đều tên <code>LenhThanhToanDi (39).xlsx</code> — không trùng sheet nào → luôn rơi vào nhánh
+        gộp tất cả → luôn bị lỗi này.</p>
+
+      <div class="note"><strong>Kết luận:</strong> nguyên nhân FAIL ở 06/07/08.07 <strong>không phải</strong> do
+        định nghĩa "nhóm thừa" của C.1 (như mục 35 kết luận ban đầu — nay đính chính), mà do lỗi kỹ thuật ở bước
+        đọc file GW (B3) khi file có nhiều sheet trùng lặp và tên file không khớp tên sheet. Đây có thể coi là
+        lỗi phần mềm cần sửa (không phải câu hỏi Business Rule) — nhưng <strong>chưa sửa code</strong>, chờ
+        Business Owner xác nhận hướng sửa (vd: loại trùng theo MSGREF khi gộp nhiều sheet, hoặc ưu tiên sheet
+        tên khớp ngày/session cụ thể thay vì gộp toàn bộ khi có nhiều sheet ứng viên).</div>
+    </div>
+  </div>
+
+  <!-- 37 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">37</span>
+      <span class="card-title">Change Plan sửa lỗi đọc GW (mục 36) — ưu tiên chọn đúng sheet theo nội dung, không đọc-tất-cả-rồi-dedup</span>
+      <span class="badge badge-info">Change Plan — chờ Business Owner phê duyệt, CHƯA sửa code</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Phạm vi</div>
+      <p>Chỉ sửa bước đọc file GW (<code>b3_xu_ly_gw.py</code>). Không đổi C.1/C.2 (<code>khop_voi_gw()</code>),
+        không đổi Business Rule.</p>
+
+      <div class="label">Phương án ban đầu (đã trình bày, Business Owner hỏi có cách tốt hơn không)</div>
+      <p>Đọc tất cả sheet như hiện tại rồi <code>drop_duplicates(subset=['MSGREF'])</code> — đúng nhưng lãng phí
+        (vẫn phải đọc/xử lý sheet dump lớn không liên quan).</p>
+
+      <div class="label">Phương án cập nhật — xác định đúng sheet theo NỘI DUNG (không theo tên file/sheet)</div>
+      <p>Verify trên cả 7 file GW thật (16.7, 11.7, 12.7, 06-09.07): <strong>mọi file đều có đúng 1 sheet mà
+        SessionId 100% thuần nhất và khớp đúng session mục tiêu</strong> — các sheet còn lại hoặc thiếu header
+        GW hợp lệ, hoặc trộn lẫn session KHÁC (không trùng session mục tiêu). Kết quả kiểm tra:</p>
+      <table>
+        <tr><th>File</th><th>Sheet đúng (thuần nhất)</th><th>Sheet bị loại</th></tr>
+        <tr><td>06.07</td><td><code>đi GW 06.07</code> (541.060 dòng, 1 session)</td><td><code>Sheet 1</code> (4 session trộn), <code>Sheet 2</code> (2 session khác), <code>Sheet2</code>/<code>count</code> (không phải dữ liệu GW)</td></tr>
+        <tr><td>07.07 / 08.07 / 09.07</td><td><code>đi GW &lt;ngày&gt;</code></td><td>tương tự</td></tr>
+        <tr><td>11.7 / 12.7 / 16.7</td><td>Chỉ 1 sheet duy nhất</td><td>—</td></tr>
+      </table>
+
+      <div class="label">Thiết kế đề xuất (2 lớp bảo vệ)</div>
+      <ol>
+        <li><strong>Đường chính:</strong> với mỗi sheet có header <code>BRCD</code>+<code>SessionId</code> hợp lệ,
+          kiểm tra tập <code>SessionId</code> duy nhất. Nếu đúng 1 sheet có <code>SessionId</code> thuần nhất =
+          session mục tiêu → đọc riêng sheet đó, dừng, không đọc/gộp sheet khác.</li>
+        <li><strong>Fallback</strong> (chỉ khi không tìm được sheet thuần nhất nào): gộp mọi dòng có
+          <code>SessionId</code> = mục tiêu từ tất cả sheet (kể cả sheet trộn lẫn), rồi
+          <code>drop_duplicates(subset=['MSGREF'])</code>.</li>
+        <li>Dù đi đường nào, vẫn giữ <code>drop_duplicates(subset=['MSGREF'])</code> làm bước kiểm tra cuối —
+          phòng vệ kép, chi phí gần như 0 khi dữ liệu đã sạch.</li>
+      </ol>
+      <p>Ưu điểm so với "đọc tất cả rồi dedup": không phải xử lý ~1 triệu dòng dữ liệu của 3 session không
+        liên quan vào kết quả cuối (giảm kích thước RAW_GW, giảm xử lý thừa ở bước 1/2/3); không phụ thuộc quy
+        ước đặt tên file/sheet (đã chứng minh không đáng tin cậy — 09.07 đúng nhờ trùng tên, còn lại thì không).</p>
+
+      <div class="note">Impact analysis, danh sách test cần chạy lại, và bảng module/Requirement bị ảnh hưởng —
+        giữ nguyên như đã trình bày ở mục 36 (không đổi, vì đây chỉ là cách hiện thực khác cho cùng mục tiêu
+        "mỗi giao dịch chỉ đọc 1 lần"). <strong>Chưa sửa code</strong> — chờ Business Owner phê duyệt phương án
+        này trước khi triển khai.</div>
+    </div>
+  </div>
+
+  <!-- 38 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">38</span>
+      <span class="card-title">Change Plan mục 37 ĐÃ TRIỂN KHAI — sửa xong lỗi đọc trùng GW, verify lại 7 ngày tháng 7</span>
+      <span class="badge badge-done">Đã sửa code, đã test, đã verify — 4/7 PASS tuyệt đối, 3/7 còn lệch KHÔNG liên quan lỗi này</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Đã làm</div>
+      <p><code>backend/services/ach/b3_xu_ly_gw.py</code>: thêm <code>_phan_loai_sheet_theo_session()</code>,
+        <code>_chon_du_lieu_gw()</code>, <code>_loai_trung_msgref()</code> — ưu tiên chọn đúng 1 sheet có
+        SessionId thuần nhất khớp session mục tiêu; fallback lọc+loại trùng MSGREF khi không có sheet thuần
+        nhất; log rõ sheet được chọn và lý do. Bỏ heuristic cũ "tên file trùng tên sheet" (đã chứng minh không
+        đáng tin cậy). Thêm <code>tests/test_ach_gw_reading.py</code> (12 test, phủ đúng kịch bản lỗi thật:
+        sheet tổng hợp + sheet riêng ngày trùng dữ liệu, fallback khi không có sheet thuần nhất, nhiều sheet
+        cùng thuần nhất). Toàn bộ suite: <strong>188 pass, 1 fail</strong> (fail thuộc module ILO1000 khác,
+        tồn tại từ trước, không liên quan thay đổi này).</p>
+
+      <div class="label">Verify lại 7 ngày tháng 7 sau khi sửa</div>
+      <table>
+        <tr><th>Ngày</th><th>Trước sửa</th><th>Sau sửa</th><th>Chuẩn</th><th>Kết quả</th></tr>
+        <tr><td>16/07</td><td>4.643</td><td>4.643</td><td>4.643</td><td>PASS (không đổi — GW chỉ 1 sheet)</td></tr>
+        <tr><td>11/07</td><td>0</td><td>0</td><td>11</td><td>FAIL (không đổi — GW chỉ 1 sheet, lệch do CALD bước 1, ngoài phạm vi)</td></tr>
+        <tr><td>12/07</td><td>0</td><td>0</td><td>12</td><td>FAIL (không đổi — tương tự 11.7)</td></tr>
+        <tr><td>06/07</td><td>3</td><td><strong>12</strong></td><td>14</td><td>FAIL — còn lệch 2 REFHUB (chi tiết dưới)</td></tr>
+        <tr><td>07/07</td><td>2</td><td><strong>9</strong></td><td>9</td><td><strong>PASS tuyệt đối</strong></td></tr>
+        <tr><td>08/07</td><td>7</td><td><strong>16</strong></td><td>16</td><td><strong>PASS tuyệt đối</strong></td></tr>
+        <tr><td>09/07</td><td>15</td><td>15</td><td>15</td><td>PASS (không đổi — GW tên file đã trùng sheet, không bị lỗi từ đầu)</td></tr>
+      </table>
+      <p>Log xác nhận cơ chế hoạt động đúng thiết kế, vd 06.07: <code>"[B3] Chọn sheet 'đi GW 06.07'
+        (541.060 dòng) — SessionId thuần nhất = 16282, không đọc/gộp sheet khác trong file."</code></p>
+
+      <div class="label">06.07 còn 2 REFHUB lệch — cả 2 đều KHÔNG liên quan lỗi đọc GW vừa sửa</div>
+      <table>
+        <tr><th>REFHUB</th><th>Nguyên nhân</th></tr>
+        <tr><td>260705140000004464434287</td><td>Ngày giao dịch 05/07/2026 — không tồn tại trong dữ liệu MIS_đi đọc được vì bộ dữ liệu hiện có thiếu hẳn file zip ngày 05/07 (không phải lỗi code, là giới hạn dữ liệu đã biết trước)</td></tr>
+        <tr><td>260706140000004465769902</td><td>Nhóm CN_TIỀN (CHI_NHANH 7907) có COUNT_MIS = 73 = COUNT_GW (73, đã đúng sau khi sửa lỗi trùng sheet) — <strong>bằng nhau, không lớn hơn</strong>, nên C.1 (yêu cầu COUNT_MIS &gt; COUNT_GW nghiêm ngặt) không coi là nhóm thừa. Nhưng tra riêng từng MSGREF: chỉ 72/73 MSGREF của MIS khớp GW — 1 giao dịch thật sự thiếu bị "triệt tiêu" bởi 1 bản ghi GW khác trong cùng nhóm không tương ứng MIS nào. Đây là <strong>ranh giới của chính định nghĩa C.1</strong> (so TỔNG SỐ LƯỢNG theo nhóm, không so khớp từng cặp) — phát hiện MỚI, ngoài phạm vi Change Plan mục 37, không phải lỗi đọc GW vừa sửa.</td></tr>
+      </table>
+
+      <div class="note">Change Plan mục 37 đã hoàn thành đúng mục tiêu (mỗi giao dịch GW chỉ đọc 1 lần, không
+        còn trùng lặp). 11.7/12.7 vẫn FAIL vì lý do khác (CALD, mục 30/36, đã biết trước, ngoài phạm vi). 06.07
+        còn 1 REFHUB lệch do thiếu dữ liệu (ngoài phạm vi) và 1 REFHUB do ranh giới định nghĩa C.1 (phát hiện
+        mới, cần Business Owner quyết định có sửa "&gt;" thành "&gt;=" hay giữ nguyên — <strong>chưa sửa</strong>,
+        chờ ý kiến).</div>
+    </div>
+  </div>
+
+  <!-- 39 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">39</span>
+      <span class="card-title">Business Owner xác nhận PASS 5/5 ngày mới (17-21/07) — Change Plan B3 tiếp tục đứng vững</span>
+      <span class="badge badge-done">Business Owner chấm tay xác nhận khớp cả 5 ngày</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh</div>
+      <p>Bộ dữ liệu mới <code>dữ liệu test tháng 7/test ngay 26 7</code> (5 ngày: 17,18,19,20,21/07) không có
+        GL02 và không có sẵn file chấm tay trong thư mục — Business Owner xác nhận Requirement C.1+C.2
+        (<code>khop_voi_gw()</code>) chỉ cần GW + MIS_đi, không cần GL02. Đã chạy riêng B1→B3→B4 (không qua
+        <code>main_from_dir()</code> vì thiếu GL02), xuất CSV <code>TIMEOUT_KHONG_KENH</code> từng ngày vào
+        <code>F:\DU LIEU ACH\KET QUA TIMEOUT KHONG DI KENH TEST NGAY 26 7\</code>, không tự đối chiếu (Business
+        Owner tự chấm tay).</p>
+
+      <div class="label">Kết quả pipeline (trước khi Business Owner chấm tay)</div>
+      <table>
+        <tr><th>Ngày</th><th>Số dòng TIMEOUT_KHONG_KENH</th><th>Ghi chú kỹ thuật</th></tr>
+        <tr><td>17/07</td><td>30</td><td>File GW 5 sheet, chọn đúng 1 sheet thuần nhất</td></tr>
+        <tr><td>18/07</td><td>7</td><td>File GW chỉ 2 sheet, KHÔNG có sheet thuần nhất → dùng nhánh fallback (lọc session + dedup MSGREF) — xác nhận nhánh dự phòng của Change Plan mục 37 hoạt động đúng trên cấu trúc file khác</td></tr>
+        <tr><td>19/07</td><td>22</td><td>File GW 5 sheet, chọn đúng 1 sheet thuần nhất</td></tr>
+        <tr><td>20/07</td><td>13</td><td>File GW 5 sheet, chọn đúng 1 sheet thuần nhất</td></tr>
+        <tr><td>21/07</td><td>139</td><td>File GW 5 sheet, chọn đúng 1 sheet thuần nhất</td></tr>
+      </table>
+
+      <div class="note"><strong>Business Owner xác nhận: khớp tuyệt đối cả 5/5 ngày</strong> sau khi tự chấm tay
+        thủ công. Đây là bộ dữ liệu HOÀN TOÀN MỚI (không dùng lại kết luận các lần verify 06-16/07 trước đó),
+        và là lần đầu file GW có cấu trúc chỉ 2 sheet (18/07) rơi vào đúng nhánh fallback thay vì nhánh chính —
+        cả 2 nhánh của Change Plan mục 37 đều đã được kiểm chứng bằng dữ liệu thật.</div>
+    </div>
+  </div>
+
+  <!-- 40 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">40</span>
+      <span class="card-title">CHỐT PHIÊN — Requirement C.1 + C.2 hoàn thành theo phạm vi hiện tại</span>
+      <span class="badge badge-done">Đóng phiên 2026-07-22 — không sửa thêm, không điều tra thêm</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label">1. Lỗi đọc trùng dữ liệu GW (B3) — ĐÃ SỬA XONG</div>
+      <p>Đọc đúng sheet có SessionId thuần nhất khớp session mục tiêu (fallback lọc+loại trùng MSGREF khi không
+        có sheet thuần nhất). Chi tiết kỹ thuật đầy đủ ở mục 36-38.</p>
+      <p><strong>Verify PASS (khớp tuyệt đối với chấm tay):</strong> 07/07, 08/07, 09/07, 16/07, 17/07, 18/07,
+        19/07, 20/07, 21/07 — <strong>9 ngày</strong>, trong đó 18/07 xác nhận đúng cả nhánh fallback (file GW
+        chỉ 2 sheet, không sheet nào thuần nhất). 17-21/07 do chính Business Owner tự chấm tay xác nhận.</p>
+
+      <div class="label">2. 11/07 và 12/07 — TẠM ĐÓNG, không điều tra thêm</div>
+      <p>Bằng chứng thời gian: file chấm tay `file chấm 11.7.xlsx` sửa lúc 09:27, còn file zip MIS_đi xuất
+        sau đó ~1h45 (11:12) — <strong>hai nguồn không chụp cùng một thời điểm từ hệ thống Hub/MIS</strong>.
+        Đây là nguyên nhân khả dĩ nhất cho chênh lệch trạng thái CALD (zip)/TPAY (chấm tay) trên cùng 11-12
+        giao dịch. <strong>Không coi đây là lỗi của C.1/C.2.</strong> Chỉ mở lại nếu có bộ dữ liệu (chấm tay +
+        MIS_đi) được xuất ra cùng một thời điểm.</p>
+
+      <div class="label">3. 06/07 — còn 2 giao dịch lệch, ghi nhận là giới hạn thuật toán, không sửa</div>
+      <table>
+        <tr><th>Giao dịch</th><th>Tình trạng</th></tr>
+        <tr><td>REFHUB 260705140000004464434287</td><td>Thiếu dữ liệu ngày 05/07 (không có file zip T-1 nào trong bộ dữ liệu hiện có) — không phải lỗi thuật toán.</td></tr>
+        <tr><td>REFHUB 260706140000004465769902</td><td>Nhóm CN_TIỀN (7907, 1.000.000) có COUNT_MIS = COUNT_GW = 73 (bằng nhau) — nhưng có đúng 1 MSGREF phía MIS thiếu đối ứng GW VÀ đúng 1 MSGREF phía GW thiếu đối ứng MIS (2 MSGREF khác nhau, bù trừ ở mức tổng COUNT). C.1 chỉ so tổng số lượng theo nhóm nên không phát hiện được trường hợp bù trừ 1-1 này.</td></tr>
+      </table>
+      <p>Đây chỉ là <strong>giới hạn của thuật toán C.1 hiện tại</strong> (so sánh mức nhóm, không so khớp
+        từng cặp giao dịch) — không sửa trong phiên này.</p>
+
+      <div class="label">4. Kết luận phạm vi Requirement</div>
+      <p><strong>Requirement C.1 + C.2 (`khop_voi_gw()`) được coi là HOÀN THÀNH theo phạm vi hiện tại</strong>
+        sau khi verify bằng nhiều ngày dữ liệu thật (9 ngày PASS tuyệt đối; 2 ngày — 11/07, 12/07 — tạm đóng vì
+        lệch thời điểm dữ liệu, không phải lỗi thuật toán; 1 ngày — 06/07 — còn 2 giao dịch được ghi nhận là
+        giới hạn đã biết, không phải bug).</p>
+
+      <div class="label">5. Backlog — ý tưởng cải tiến sau này (Requirement mới, KHÔNG phải bug)</div>
+      <p>Thực hiện đối chiếu tuyệt đối theo từng giao dịch (MSGREF-to-MSGREF, không qua bước đếm nhóm COUNT_MIS
+        vs COUNT_GW) để loại bỏ hiện tượng bù trừ 1 thiếu-1 thừa ở mức nhóm (xem mục 3 ở trên, trường hợp
+        260706140000004465769902). Đây là một <strong>Requirement mới</strong> nếu Business Owner muốn triển
+        khai, không phải sửa lỗi của C.1 hiện tại.</p>
+
+      <div class="note">Phiên làm việc kết thúc tại đây. Không sửa thêm code, không tạo Change Plan mới, không
+        điều tra thêm cho tới khi có yêu cầu tiếp theo.</div>
+    </div>
+  </div>
+
+  <!-- 41 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">41</span>
+      <span class="card-title">Backlog (chi tiết hoá) — module đối chiếu tuyệt đối theo MSGREF, tách khỏi C.1/C.2</span>
+      <span class="badge badge-info">Chưa triển khai — chỉ ghi nhận yêu cầu, chờ ưu tiên</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Không phải bug</div>
+      <p>Business Owner xác nhận rõ (2026-07-23): đây <strong>không phải lỗi của Requirement C.1/C.2</strong>
+        (xem mục 40, mục 3) và <strong>không nằm trong phạm vi sửa hiện tại</strong> — chỉ ghi nhận làm backlog.</p>
+
+      <div class="label">Giới hạn của C.1 mà backlog này muốn giải quyết</div>
+      <p>C.1 xác định nhóm timeout bằng so <code>COUNT_MIS</code> với <code>COUNT_GW</code> theo nhóm CN_TIỀN
+        (CHI_NHANH + SO_TIEN) — thuần đếm số lượng, không so khớp từng cặp giao dịch cụ thể. Khi
+        <code>COUNT_MIS = COUNT_GW</code> nhưng thực chất có 1 giao dịch chỉ tồn tại trên MIS và 1 giao dịch
+        khác (không phải cùng giao dịch) chỉ tồn tại trên GW, 2 chênh lệch này <strong>bù trừ nhau về số
+        lượng</strong> nên C.1 không phát hiện được (ví dụ thật đã gặp: REFHUB 260706140000004465769902,
+        06/07 — xem mục 40).</p>
+
+      <div class="label">Đề xuất Requirement mới — "Đối chiếu tuyệt đối theo MSGREF"</div>
+      <p>Một <strong>module Reconciliation độc lập</strong>, không sửa đổi logic C.1 hiện tại. Đối chiếu
+        từng MSGREF giữa MIS và GW (không qua bước đếm nhóm COUNT), phân loại mỗi giao dịch vào đúng 1 trong
+        3 kết quả:</p>
+      <table>
+        <tr><th>Kết quả</th><th>Ý nghĩa</th></tr>
+        <tr><td>MATCH</td><td>MSGREF có mặt ở cả MIS và GW</td></tr>
+        <tr><td>Chỉ có trên MIS</td><td>MSGREF chỉ tồn tại phía MIS — giao dịch thiếu đối ứng GW</td></tr>
+        <tr><td>Chỉ có trên GW</td><td>MSGREF chỉ tồn tại phía GW — giao dịch thiếu đối ứng MIS</td></tr>
+      </table>
+      <p>Mục tiêu: chỉ rõ CHÍNH XÁC giao dịch nào thiếu/thừa (theo MSGREF cấp-dòng), thay vì chỉ suy ra số
+        lượng chênh lệch ở mức nhóm như C.1 hiện tại — cùng nguyên tắc "không chọn bản ghi theo vị trí, phải
+        định danh chính xác cấp-dòng" đã áp dụng cho C.2 (xem [[feedback_no_position_based_record_selection]]
+        trong memory).</p>
+
+      <div class="label">Ưu tiên</div>
+      <p>Chỉ xem xét triển khai <strong>sau khi hoàn thành toàn bộ Requirement hiện tại</strong>, bao gồm cả
+        GW-thừa/C.1a (`tim_nhom_gw_thua()` — đã code, chưa wiring vào pipeline/Excel output, xem mục 30).</p>
+    </div>
+  </div>
+
+  <!-- 42 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">42</span>
+      <span class="card-title">Wiring Requirement C.1a (GW-thừa) vào pipeline + Excel — 2 sheet mới</span>
+      <span class="badge badge-done">Đã code, đã test (4 test mới, 44/44 ACH pass) — chờ Business Owner đối chiếu thực tế</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh</div>
+      <p><code>tim_nhom_gw_thua()</code> (Requirement C.1a, xem mục 30) đã code và có unit test từ
+        2026-07-21 nhưng chưa từng được gọi trong <code>main_from_dir()</code> — không có output nào cho
+        người dùng. Xác nhận (2026-07-23): quyết định thiết kế 1 câu hỏi treo — cấu trúc sheet Excel — chọn
+        phương án <strong>2 sheet riêng</strong> (không gộp 1 sheet có cột phân biệt).</p>
+
+      <div class="label">Đã làm</div>
+      <ul>
+        <li><code>pipeline.py::main_from_dir()</code> — gọi <code>tim_nhom_gw_thua(df_mis_di, df_gw_raw,
+          log_callback)</code> song song với B5/B7 trong Phase 2 (ThreadPoolExecutor 3 worker thay vì 2).</li>
+        <li><code>xuat_excel()</code> — thêm 2 sheet mới: <strong>GW_THUA_XAC_DINH</strong> (đỏ, GW thừa chắc
+          chắn — COUNT_MIS=0 cho nhóm) và <strong>GW_CAN_DOI_CHIEU</strong> (cam, nhóm lệch số lượng cần đối
+          chiếu tay — trộn dòng GW+MIS nguyên cột, có cột <code>SOURCE</code>/<code>NHOM_CN_TIEN</code>).
+          Cột khóa nội bộ (<code>KEY_GW</code>, <code>CN tiền Hub</code>) bị drop trước khi ghi ra Excel —
+          không có ý nghĩa nghiệp vụ với người đối chiếu tay.</li>
+        <li><code>_viet_tong_ket()</code> — thêm 2 dòng chỉ tiêu "GW thừa - xác định chắc chắn (C.1a)" (kèm
+          tổng tiền <code>STTLMAMT</code>) và "GW thừa - cần đối chiếu thủ công (C.1a)" (chỉ đếm dòng, không
+          tổng tiền vì trộn 2 nguồn khác đơn vị cột — xem mục 41, tránh cộng nhầm 2 chiều).</li>
+      </ul>
+      <p>Test mới <code>tests/test_ach_excel_export.py</code> (4 test, không mock — ghi .xlsx thật ra
+        tmp_path rồi đọc lại bằng openpyxl): sheet mới xuất hiện đúng tên, cột khóa nội bộ bị drop, TONG_KET
+        báo đúng số dòng, và xuất Excel không lỗi khi không truyền GW-thừa (tương thích ngược — 2 tham số mới
+        đều có default <code>None</code>). Toàn bộ ACH suite: <strong>44 pass</strong> (40 cũ + 4 mới).</p>
+
+      <div class="note">Chưa verify bằng dữ liệu ACH thật (chỉ verify kỹ thuật bằng DataFrame tổng hợp) —
+        cần Business Owner chạy lại 1 ngày dữ liệu thật, mở 2 sheet mới, xác nhận số liệu/cấu trúc cột hợp lý
+        trước khi coi C.1a hoàn thành đầy đủ (giống quy trình đã áp dụng cho C.1/C.2 ở mục 33-39).</div>
+    </div>
+  </div>
+
+  <!-- 43 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">43</span>
+      <span class="card-title">Verify C.1a (GW-thừa) trên 12 ngày dữ liệu thật — Code/Unit/Integration PASS, Requirement CHƯA Done</span>
+      <span class="badge badge-warn">Code Completed · Unit Test PASS · Integration Test PASS · Requirement DONE = chưa (chờ Business Owner đối chiếu tay)</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Trạng thái theo đúng 3 mốc yêu cầu</div>
+      <table>
+        <tr><th>Mốc</th><th>Trạng thái</th><th>Bằng chứng</th></tr>
+        <tr><td>Code Completed</td><td>✅</td><td><code>tim_nhom_gw_thua()</code> wiring vào <code>main_from_dir()</code> + 2 sheet Excel (mục 42)</td></tr>
+        <tr><td>Unit Test PASS</td><td>✅</td><td><code>tests/test_ach_algorithm.py</code> (nhóm C.1a, DataFrame tổng hợp)</td></tr>
+        <tr><td>Integration Test PASS</td><td>✅</td><td><code>tests/test_ach_excel_export.py</code> (4 test, ghi/đọc .xlsx thật qua openpyxl) — ACH suite 44/44 pass</td></tr>
+        <tr><td><strong>Requirement Done</strong></td><td><strong>❌ CHƯA</strong></td><td>Đã verify kỹ thuật trên dữ liệu thật (bên dưới) nhưng <strong>chưa có xác nhận đối chiếu tay của Business Owner</strong> cho phần GW-thừa cụ thể</td></tr>
+      </table>
+
+      <div class="label">Verify trên 12 ngày dữ liệu thật (chạy B1+B3+B4+C.1a trực tiếp, không qua GL02)</div>
+      <table>
+        <tr><th>Ngày</th><th>Session</th><th>MIS_đi</th><th>GW</th><th>GW thừa xác định</th><th>GW thừa cần đối chiếu</th><th>Ghi chú</th></tr>
+        <tr><td>11/07</td><td>16362</td><td>570.621</td><td>570.621</td><td>0</td><td>0</td><td>—</td></tr>
+        <tr><td>12/07</td><td>16364</td><td>562.499</td><td>562.499</td><td>0</td><td>0</td><td>—</td></tr>
+        <tr><td>16/07</td><td>16388</td><td>551.587</td><td>546.944</td><td>0</td><td>0</td><td>Khớp baseline đã chốt trước đây (khớp 546.944 / timeout 4.643) sau khi sửa lỗi ngày (xem ghi chú dưới)</td></tr>
+        <tr><td>06/07</td><td>16282</td><td>531.477</td><td>541.060</td><td><strong>1.241</strong></td><td><strong>5.316</strong></td><td><strong>KHÔNG dùng làm bằng chứng</strong> — ngày này thiếu file MIS_đi T-1 (05/07, đã biết từ mục 40), số liệu bị thổi phồng do dữ liệu thiếu chứ không phải tín hiệu nghiệp vụ thật</td></tr>
+        <tr><td>07/07</td><td>16302</td><td>571.593</td><td>571.587</td><td>0</td><td><strong>3 nhóm (1.001 dòng)</strong></td><td><strong>Bằng chứng thật đầu tiên</strong> — xem chi tiết bên dưới</td></tr>
+        <tr><td>08/07</td><td>16322</td><td>556.867</td><td>556.851</td><td>0</td><td>0</td><td>—</td></tr>
+        <tr><td>09/07</td><td>16324</td><td>565.140</td><td>565.125</td><td>0</td><td>0</td><td>—</td></tr>
+        <tr><td>17/07</td><td>16402</td><td>544.552</td><td>544.522</td><td>0</td><td>0</td><td>—</td></tr>
+        <tr><td>18/07</td><td>16404</td><td>568.761</td><td>568.754</td><td>0</td><td>0</td><td>—</td></tr>
+        <tr><td>19/07</td><td>16406</td><td>576.562</td><td>576.540</td><td>0</td><td>0</td><td>—</td></tr>
+        <tr><td>20/07</td><td>16408</td><td>582.774</td><td>582.761</td><td>0</td><td>0</td><td>—</td></tr>
+        <tr><td>21/07</td><td>16410</td><td>560.005</td><td>559.866</td><td>0</td><td>0</td><td>—</td></tr>
+      </table>
+
+      <div class="label">Bằng chứng thật — 07/07, 3 nhóm CN_TIỀN lệch (Trường hợp 2 BR-ACH-001)</div>
+      <table>
+        <tr><th>Nhóm CN_TIỀN</th><th>COUNT_GW</th><th>COUNT_MIS</th><th>Lệch</th></tr>
+        <tr><td>559050000</td><td>418</td><td>417</td><td>1</td></tr>
+        <tr><td>6501500000</td><td>45</td><td>44</td><td>1</td></tr>
+        <tr><td>220250000</td><td>39</td><td>38</td><td>1</td></tr>
+      </table>
+      <p>Cả 3 nhóm lệch đúng 1 dòng (GW nhiều hơn MIS 1 dòng) — đúng thiết kế BR-ACH-001 Trường hợp 2 (cả 2 bên đều có dữ liệu, không xác định được dòng cụ thể nào thừa) → toàn bộ 3 nhóm (1.001 dòng gốc, cả GW lẫn MIS) được xuất ra sheet <code>GW_CAN_DOI_CHIEU</code> để đối chiếu tay, không tự suy luận chọn 1 dòng. Ngày 07/07 dùng dữ liệu sạch (B3 chọn đúng 1 sheet thuần nhất, không rơi vào nhánh fallback) và đã từng PASS tuyệt đối cho C.1/C.2 ở mục 38 — độ tin cậy của bộ dữ liệu ngày này cao.</p>
+
+      <div class="label">Phát hiện phụ (ngoài phạm vi C.1a) — lỗi auto-detect ngày khi thư mục có nhiều PDF</div>
+      <p>Khi verify 16/07, <code>_tim_ngay_tu_pdf()</code> (dùng khi không truyền tham số <code>ngay</code>) ban đầu chọn sai ngày vì thư mục <code>ACH 16.7</code> có <strong>3 file PDF</strong> (do kênh gửi lại 2 lần — "QT Lần 1"/"QT Lần 2" — cộng 1 PDF gốc), và hàm chỉ lấy ngày từ file PDF đầu tiên theo thứ tự <code>os.walk()</code> (không xác định, phụ thuộc hệ điều hành) thay vì ưu tiên file có tên rõ ràng nhất. Kết quả sai ngày → sai khung giờ đối chiếu → MIS_đi bị thiếu ~4.664 dòng → suy ra 14+39 nhóm "GW-thừa" giả. Sau khi truyền tường minh <code>ngay='16/07/2026'</code>, kết quả khớp đúng baseline đã chốt và GW-thừa = 0. <strong>Đây là lỗi tiềm ẩn thật của <code>_tim_ngay_tu_pdf()</code>, ảnh hưởng mọi Requirement (không riêng C.1a) khi thư mục ngày có nhiều PDF do gửi lại nhiều lần</strong> — ghi nhận làm backlog riêng, chưa sửa trong phiên này (ngoài phạm vi yêu cầu verify C.1a).</p>
+
+      <div class="note"><strong>Kết luận: Requirement C.1a CHƯA được đánh dấu Done.</strong> Code/Unit Test/Integration Test đều PASS, và đã tìm được bằng chứng dữ liệu thật phát sinh GW-thừa (07/07, 3 nhóm). Nhưng đây mới là verify kỹ thuật của Claude — <strong>cần Business Owner tự đối chiếu tay 3 nhóm của 07/07 với chứng từ gốc</strong> để xác nhận pipeline phân loại đúng, trước khi coi C.1a hoàn thành (đúng quy trình đã áp dụng cho C.1/C.2 — không tự ý coi "test kỹ thuật pass" là "đã được chấp nhận"). 06/07 không dùng làm bằng chứng do thiếu dữ liệu T-1 đã biết trước.</div>
+    </div>
+  </div>
+
+  <!-- 44 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">44</span>
+      <span class="card-title">Requirement mới — bỏ lọc khung giờ cho MIS_đi SESSION=NULL, thay bằng tra GW gốc</span>
+      <span class="badge badge-warn">Code xong, test PASS, verify before/after trên 5 ngày thật — CHƯA đánh dấu hoàn thành, chờ Business Owner xác nhận</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Lý do thay đổi (Business Owner, 2026-07-23)</div>
+      <p>Business Rule cũ (`_process_mis_di()` bước 2) giữ giao dịch MIS_đi SESSION=NULL chỉ khi
+        <code>NGAY_KENH_TRA</code> rơi đúng khung giờ <code>[23h T-1, 23h T)</code>. Có giao dịch phát sinh
+        cuối phiên nhưng do độ trễ hệ thống bị xử lý ở session của phiên SAU — bộ lọc giờ làm bỏ sót/xếp
+        nhầm ngày các giao dịch này. Đây là <strong>Requirement mới, không phải sửa bug</strong>.</p>
+
+      <div class="label">Business Rule mới (đã chốt qua AskUserQuestion với Business Owner)</div>
+      <ul>
+        <li>SESSION khác NULL: <strong>không đổi</strong> — chỉ giữ đúng session đối chiếu.</li>
+        <li>SESSION = NULL: bỏ hẳn khung giờ. Tra SessionId thật của MSGREF trên <strong>GW gốc</strong>
+          (toàn bộ sheet GW, CHƯA lọc session/PrcFlg/làm sạch — chỉ dùng để tra cứu). 1 MSGREF chỉ lấy 1
+          SessionId đại diện; nếu GW gốc có ≥2 giá trị khác nhau (chưa dedup) → đánh dấu riêng, giữ để chấm
+          thủ công, không tự chọn.</li>
+        <li>Ngày giao dịch (<code>NGAY_GIAO_DICH</code> trên chính dòng MIS_đi) = <strong>T</strong> (ngày đối
+          chiếu): giữ nếu SessionId tìm được ∈ {rỗng, '0000', session đối chiếu} HOẶC không tìm thấy trên GW
+          gốc (đánh dấu riêng để phân biệt).</li>
+        <li>Ngày giao dịch = <strong>T-1</strong>: CHỈ giữ nếu SessionId = đúng session đối chiếu (không áp
+          dụng ngoại lệ rỗng/0000 như ngày T).</li>
+        <li>Ngày giao dịch khác cả T và T-1 (dữ liệu bất thường): Business Owner xác nhận "chưa nghĩ ra quy
+          tắc" → <strong>giữ tạm + đánh dấu riêng</strong>, chờ quy tắc chính thức.</li>
+      </ul>
+      <p>Cột mới <code>LY_DO_GIU_SESSION_NULL</code> ghi rõ lý do giữ mỗi giao dịch SESSION=NULL (6 giá trị:
+        <code>GW_SESSION_NULL</code>, <code>GW_SESSION_0000</code>, <code>GW_SESSION_DOI_CHIEU</code>,
+        <code>KHONG_TIM_THAY_TREN_GW</code>, <code>GW_GOC_NHIEU_SESSIONID_KHAC_NHAU</code>,
+        <code>NGAY_GIA_TRI_KHAC_T_VA_T-1</code>) — hiện trong Excel để chấm thủ công.</p>
+
+      <div class="label">Code đã sửa</div>
+      <ul>
+        <li><code>b3_xu_ly_gw.py</code> — hàm mới <code>_gop_gw_goc()</code> gộp toàn bộ sheet đã đọc (tái sử
+          dụng dữ liệu có sẵn trong <code>_doc_bang_fastexcel</code>/<code>_doc_bang_calamine</code>, không
+          đọc file lần 2). <code>xu_ly_gw()</code> đổi từ 2-tuple sang 3-tuple
+          <code>(dict_gw_count, df_gw_raw, df_gw_goc)</code>.</li>
+        <li><code>b4_xu_ly_mis_di.py</code> — hàm mới <code>_xay_dung_tra_cuu_gw_goc()</code>,
+          <code>_loc_session_null_theo_gw_goc()</code>. <code>_process_mis_di()</code> đổi signature: bỏ
+          <code>tpay_tu/tpay_den</code>, thêm <code>ngay_dt/df_gw_goc</code>.</li>
+        <li><code>pipeline.py::main_from_dir()</code> — wiring 3-tuple mới, bỏ tính <code>tpay_tu/tpay_den</code>,
+          thêm cột mới vào <code>_COLS_MIS_DI</code>.</li>
+        <li><code>config.py</code> — xóa <code>TPAY_TU</code>/<code>TPAY_DEN</code> (không còn dùng).</li>
+      </ul>
+      <p>Test: viết lại <code>TestMisDiBuoc2Session</code> → <code>TestMisDiBuoc2SessionKhacNull</code> +
+        <code>TestMisDiBuoc2SessionNullBrMoi</code> (12 test, phủ đủ nhánh: GW rỗng/0000/đúng/khác session,
+        không tìm thấy, nhiều SessionId xung đột, ngày khác T/T-1, chuẩn hóa MSGREF nháy đơn). Thêm
+        <code>TestGopGwGoc</code> (4 test) cho <code>_gop_gw_goc()</code>. Toàn bộ suite ACH:
+        <strong>57/57 pass</strong>; toàn bộ project: <strong>205/206 pass</strong> (1 fail thuộc module
+        ILO1000 khác, tồn tại từ trước, không liên quan).</p>
+
+      <div class="label">Verify before/after trên 5 ngày dữ liệu thật (17-21/07) — baseline = code CŨ chưa sửa</div>
+      <table>
+        <tr><th>Ngày</th><th>MIS_đi (cũ→mới)</th><th>Timeout (cũ→mới)</th><th>REFHUB giữ/mới/mất</th></tr>
+        <tr><td>17/07</td><td>544.552→544.546 (-6)</td><td>30→24 (-6)</td><td>23 / 1 / 7</td></tr>
+        <tr><td>18/07</td><td>568.761→568.761 (±0)</td><td>7→7 (±0)</td><td>7 / 0 / 0</td></tr>
+        <tr><td>19/07</td><td>576.562→576.563 (+1)</td><td>22→23 (+1)</td><td>22 / 1 / 0</td></tr>
+        <tr><td>20/07</td><td>582.774→582.773 (-1)</td><td>13→12 (-1)</td><td>12 / 0 / 1</td></tr>
+        <tr><td>21/07</td><td>560.005→560.005 (±0)</td><td>139→139 (±0)</td><td>139 / 0 / 0</td></tr>
+      </table>
+      <p>Bất biến khớp: chênh lệch MIS_đi tổng = chênh lệch số dòng Timeout ở MỌI ngày (không có dòng nào
+        "biến mất" âm thầm giữa khớp-đúng và timeout) — dấu hiệu kỹ thuật tốt, không có lỗi runtime/logic
+        lạc dòng.</p>
+
+      <div class="label">Phân tích TỪNG giao dịch khác biệt (theo đúng yêu cầu Business Owner — không chỉ so số lượng)</div>
+      <table>
+        <tr><th>Trường hợp</th><th>Chi tiết</th><th>Đánh giá</th></tr>
+        <tr>
+          <td><strong>1 giao dịch "chuyển ngày"</strong><br>REFHUB ...4548883659</td>
+          <td>Baseline: xuất hiện ở 20/07 (NGAY_KENH_TRA=19/07 23:37:52, rơi vào khung giờ [23h19/07,23h20/07)
+            của run 20.07 theo BR cũ). BR mới: xuất hiện ở 19/07 (NGAY_GIAO_DICH=19/07=chính ngày T của run
+            19.07; GW gốc xác nhận SessionId='0000' → <code>GW_SESSION_0000</code>).</td>
+          <td><strong>Đúng ý Business Owner</strong> — chính xác kịch bản "giao dịch cuối phiên bị xử lý lệch
+            sang phiên sau" mà BR mới được thiết kế để sửa. Giao dịch được gán đúng NGÀY NGHIỆP VỤ thật
+            (19/07) thay vì ngày bị lệch do giờ hệ thống (20/07).</td>
+        </tr>
+        <tr>
+          <td><strong>1 giao dịch "phục hồi"</strong><br>REFHUB ...4531398142 (17/07, mới)</td>
+          <td>NGAY_GIAO_DICH=16/07=T-1 của run 17.07. GW gốc xác nhận SessionId=16402=đúng session đối chiếu
+            → <code>GW_SESSION_DOI_CHIEU</code>. BR cũ loại vì NGAY_KENH_TRA nằm ngoài khung giờ.</td>
+          <td><strong>Đúng ý Business Owner</strong> — GW đã xác nhận rõ ràng giao dịch này thuộc đúng
+            session đối chiếu, BR cũ bỏ sót chỉ vì lệch giờ hệ thống.</td>
+        </tr>
+        <tr>
+          <td><strong>7 giao dịch "biến mất"</strong><br>17/07, cùng khoảng REFHUB ...45315316xx/45315320xx</td>
+          <td>Tất cả có <code>MSGREF</code> = chuỗi rỗng (chỉ còn dấu nháy <code>'</code> sau chuẩn hóa),
+            <code>SESSION</code> = NaN, <code>NGAY_GIAO_DICH</code>=16/07=T-1, <code>NGAY_KENH_TRA</code>=
+            16/07 23:27:xx (ngay sau mốc 23h — BR cũ giữ vì rơi đúng khung giờ). BR mới: MSGREF rỗng không
+            tra được trên GW gốc → "không tìm thấy"; theo quy tắc T-1 (chỉ giữ khi GW xác nhận ĐÚNG session
+            đối chiếu), "không tìm thấy" không đủ điều kiện → bị loại.</td>
+          <td><strong>Cần Business Owner xác nhận riêng</strong> — đây là hệ quả ĐÚNG theo quy tắc T-1 đã
+            chốt (nghiêm ngặt hơn ngày T), nhưng trường hợp "MSGREF rỗng" chưa từng được hỏi/xác nhận riêng.
+            Dự án từng có tiền lệ tương tự với cơ chế "Nguồn 1" cũ (đã gỡ) — coi MSGREF rỗng là 1 nhóm khác,
+            không tự suy diễn. <strong>Chưa tự kết luận đúng/sai</strong> — nêu rõ để Business Owner quyết
+            định có cần quy tắc riêng cho MSGREF rỗng hay giữ nguyên như hiện tại.</td>
+        </tr>
+      </table>
+
+      <div class="note"><strong>Kết luận: CHƯA đánh dấu Requirement hoàn thành.</strong> Code Completed, Unit
+        Test PASS, đã verify before/after đầy đủ trên 5 ngày dữ liệu thật với phân tích TỪNG giao dịch khác
+        biệt (không chỉ số lượng) — 2/3 loại thay đổi khớp đúng ý định Business Owner (chuyển ngày đúng,
+        phục hồi giao dịch bị bỏ sót); 1 loại (7 giao dịch MSGREF rỗng) là hệ quả kỹ thuật đúng theo quy tắc
+        đã chốt nhưng cần Business Owner xác nhận riêng vì chưa được hỏi tường minh trước đó. Toàn bộ CSV
+        chi tiết (baseline + BR mới, cả 5 ngày) đã lưu để tham chiếu khi cần.</div>
+    </div>
+  </div>
+
+  <!-- 45 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">45</span>
+      <span class="card-title">Bước 0 — Xác minh case 22/07 trước khi chốt Rule mới (mục 44) làm mặc định module ACH</span>
+      <span class="badge badge-done">Case "khác session" xác nhận đúng — Business Owner chốt 25/07/2026</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh</div>
+      <p>Business Owner quyết định (25/07/2026): Rule mới ở mục 44 (tra SessionId thật trên GW gốc cho
+        giao dịch SESSION=NULL, thay khung giờ <code>[23h T-1, 23h T)</code>) trở thành Business Rule mặc
+        định của module ACH; Rule cũ dừng phát triển. Trước khi chốt, xác minh độc lập 1 case cụ thể từ
+        <code>_scratch_verify_22_07_session_null_br/</code> (so sánh song song Rule cũ vs Rule mới trên dữ
+        liệu 22/07): Rule mới cho 18 dòng Timeout, Rule cũ cho 19 dòng — chênh lệch đúng 1 giao dịch (REFHUB
+        <code>...4566893942</code>, MSGREF <code>...0000619422</code>, CN 7703, 500.000đ) chỉ xuất hiện ở
+        Rule cũ.</p>
+
+      <div class="label">Tra cứu GW gốc thật</div>
+      <p>Tra trực tiếp file GW ngày 22/07 (<code>đi GW 22.07.xlsx</code>, sheet gộp 21-22/07 ~1 triệu dòng):
+        MSGREF trên có <strong>SessionId=16414</strong>, <strong>PrcFlg="Lệnh Timeout"</strong>. Phiên đối
+        chiếu ngày 22/07 = <strong>16412</strong> (đối chiếu các dòng <code>SESSION</code> đã biết trong kết
+        quả pipeline thật <code>ach_22_07_khong_gl02.xlsx</code>).</p>
+
+      <div class="label">Kết luận</div>
+      <ul>
+        <li><strong>Rule cũ SAI</strong> với giao dịch này — gán "Timeout không đi kênh" chỉ vì
+          <code>NGAY_KENH_TRA</code> khớp khung giờ, trong khi giao dịch thực ra <strong>đã có trên GW</strong>
+          (chỉ khác phiên, không phải "chưa đi kênh").</li>
+        <li><strong>Rule mới ĐÚNG</strong> — tra GW gốc phát hiện SessionId khác phiên đối chiếu (không
+          rỗng, không <code>'0000'</code>) → loại khỏi phạm vi đối chiếu ngày này.</li>
+        <li>Business Owner xác nhận trực tiếp (AskUserQuestion, 25/07/2026): hành vi "khác session → loại
+          khỏi lần chạy này" là <strong>chủ ý thiết kế</strong>, không phải lỗ hổng. Không đưa vào Checkpoint,
+          không tạo nhánh xử lý mới, không sửa Rule.</li>
+      </ul>
+
+      <div class="label">Phạm vi CÒN MỞ — không bị đóng bởi xác minh này</div>
+      <p>Case "khác session" ở trên là 1 nhánh cụ thể trong Rule mới. Hai điểm khác của mục 44 <strong>chưa
+        có xác nhận tương đương</strong> và vẫn ở trạng thái mở: nhánh <code>NGAY_GIA_TRI_KHAC_T_VA_T-1</code>
+        (ngày giao dịch khác cả T và T-1 — giữ tạm, "chưa nghĩ ra quy tắc") và case 7 giao dịch MSGREF rỗng
+        tại T-1 (xem mục 44). Không tự suy diễn 2 điểm này đã "Done" theo case hôm nay.</p>
+
+      <div class="label">Ghi chú kỹ thuật khác (không phải Business Rule)</div>
+      <p>Đã chạy lại thật <code>pytest</code> cho cả 3 file ACH (2026-07-25):
+        <code>test_ach_algorithm.py</code> (46) + <code>test_ach_excel_export.py</code> (4) +
+        <code>test_ach_gw_reading.py</code> (16) = <strong>66/66 PASS</strong>, 0 fail. Khác con số "57/57
+        pass" ghi ở mục 44 (chạy ngày 23/07) — chênh lệch do có thêm test mới thêm sau đó (vd
+        <code>TestApDungXacNhan</code>, <code>TestKhopVoiGw</code>, <code>TestTimNhomGwThua</code>,
+        <code>TestBatBienSoHoc</code>) chưa được cập nhật vào con số cũ, không phải lỗi.
+        <strong>Cập nhật (Bước 4, 2026-07-25):</strong> code liên quan Rule mới đã được
+        <strong>commit</strong> (<code>523608b</code>) — gồm <code>b3_xu_ly_gw.py</code>,
+        <code>b4_xu_ly_mis_di.py</code>, <code>config.py</code>, <code>pipeline.py</code>,
+        <code>tests/test_ach_algorithm.py</code>, <code>tests/test_ach_gw_reading.py</code>,
+        <code>tests/test_ach_excel_export.py</code>. Không gồm tính năng "chọn thư mục server"
+        (<code>ach.py</code>/<code>ach_service.py</code>/<code>validate.py</code>) và fix
+        <code>KEY_DEN</code>/<code>KEY_DEN_HUB</code> chiều MIS_đến (<code>b2_xu_ly_gl02.py</code>/
+        <code>b6_xu_ly_mis_den.py</code>) — 2 việc này khác phạm vi, vẫn uncommitted, chờ lệnh riêng.</p>
+
+      <div class="label">Quyết định Bước 3 (dọn code chết) — GIỮ NGUYÊN, không sửa</div>
+      <p>Đoạn <code>df['NGAY_KENH_TRA'] = pd.to_datetime(...)</code> (<code>b4_xu_ly_mis_di.py:238-240</code>)
+        không còn dùng để LỌC ở đâu cả (dead cho mục đích lọc), nhưng giá trị đã parse vẫn chảy tiếp vào cột
+        hiển thị <code>NGAY_KENH_TRA</code> trong Excel (<code>_COLS_MIS_DI</code>, các sheet
+        <code>MIS_DI_KHOP</code>/<code>MIS_DI_THUA</code>/<code>TIMEOUT_KHONG_KENH</code>) — nếu bỏ đoạn
+        parse, cột này sẽ hiển thị chuỗi thô thay vì datetime đã định dạng, tức là ĐỔI kết quả xuất Excel dù
+        nhỏ. Vì mục tiêu module là luồng đối chiếu Kênh→Hub→Core (Timeout chỉ là giao dịch lỗi phụ), và việc
+        xoá đoạn này không phục vụ trực tiếp luồng chính, quyết định: <strong>giữ nguyên, không sửa</strong>
+        — tránh rủi ro không cần thiết cho lợi ích bằng không.</p>
+
+      <div class="label">Verify diện rộng (sau Bước 4, commit 523608b) — 3 ngày thật khác (07/07, 08/07, 09/07)</div>
+      <table>
+        <tr><th>Ngày</th><th>MIS_đi</th><th>SESSION=NULL giữ (phân loại)</th><th>Timeout (1A)</th><th>Khớp đúng</th><th>Bất biến</th></tr>
+        <tr><td>07/07</td><td>571.596</td><td>78 (69 GW_SESSION_DOI_CHIEU / 6 GW_SESSION_0000 / 3 KHONG_TIM_THAY_TREN_GW)</td><td>9</td><td>571.587</td><td>OK (9+571.587=571.596)</td></tr>
+        <tr><td>08/07</td><td>556.869</td><td>126 (108 / 14 / 4)</td><td>18</td><td>556.851</td><td>OK</td></tr>
+        <tr><td>09/07</td><td>565.138</td><td>349 (335 / 12 / 2)</td><td>13</td><td>565.125</td><td>OK</td></tr>
+      </table>
+      <p>Chạy B1+B3+B4 (không cần GL02) trên dữ liệu thật, đủ 2 file DI mỗi ngày (T-1+T). Không phát sinh
+        <code>GW_GOC_NHIEU_SESSIONID_KHAC_NHAU</code> hay <code>NGAY_GIA_TRI_KHAC_T_VA_T-1</code> ở cả 3
+        ngày — 2 nhánh còn mở của Rule mới không bị kích hoạt, không phát sinh câu hỏi nghiệp vụ mới. Phần
+        lớn SESSION=NULL rơi vào <code>GW_SESSION_DOI_CHIEU</code> (đúng phiên đối chiếu) — hợp lý về nghiệp
+        vụ. Script: <code>_scratch_verify_dien_rong_25_07/run_b1b3b4.py</code> (giữ lại làm tư liệu, theo
+        đúng tiền lệ các thư mục <code>_scratch_verify_*</code> khác).</p>
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-07-26</footer>
 </div>
 </body>
 </html>
