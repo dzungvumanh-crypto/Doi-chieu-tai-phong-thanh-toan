@@ -2155,6 +2155,68 @@ ui.on_exception(_on_exception)</pre>
     </div>
   </div>
 
+  <!-- 48 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">48</span>
+      <span class="card-title">Milestone D — C.1a case 07/07: chứng minh 3 nhóm lệch cũ biến mất ĐÚNG là hệ quả của Rule mới</span>
+      <span class="badge badge-done">Đã chứng minh bằng GW gốc thật — coi C.1a HOÀN THÀNH cho case 07/07</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh</div>
+      <p>Trước khi đề nghị Business Owner đối chiếu tay 3 nhóm CN_TIỀN của 07/07 (mục 43 — bằng chứng
+        "COUNT_GW=418/COUNT_MIS=417, 45/44, 39/38"), chạy lại <code>tim_nhom_gw_thua()</code> trên code hiện
+        tại (đã qua Milestone B+C, Rule mới SESSION=NULL làm mặc định) → cho <strong>0 nhóm lệch</strong> thay
+        vì 3. Business Owner yêu cầu chứng minh nguyên nhân thay vì tìm case khác thay thế.</p>
+
+      <div class="label">Bước 1 — Phân tích nguyên nhân: đúng 1 dòng mỗi nhóm, cùng 1 kiểu mẫu</div>
+      <p>So sánh trực tiếp <code>_process_mis_di()</code> (Rule mới) với bản tái hiện lại logic khung giờ cũ
+        (chỉ để so sánh, không phải code production) trên cùng dữ liệu thô 07/07: cả 3 nhóm CN_TIỀN
+        (<code>559050000</code>, <code>6501500000</code>, <code>220250000</code>) đều lệch đúng 1 dòng, và cả
+        3 dòng chênh lệch có chung một mẫu:</p>
+      <table>
+        <tr><th>Nhóm CN_TIỀN</th><th>MSGREF</th><th>NGAY_GIAO_DICH</th><th>NGAY_KENH_TRA</th><th>LY_DO_GIU (Rule mới)</th></tr>
+        <tr><td>559050000</td><td>...0000433325</td><td>06/07/2026 (T-1)</td><td>06/07/2026 22:59:58</td><td>GW_SESSION_DOI_CHIEU</td></tr>
+        <tr><td>6501500000</td><td>...0000433271</td><td>06/07/2026 (T-1)</td><td>06/07/2026 22:59:55</td><td>GW_SESSION_DOI_CHIEU</td></tr>
+        <tr><td>220250000</td><td>...0000433273</td><td>06/07/2026 (T-1)</td><td>06/07/2026 22:59:55</td><td>GW_SESSION_DOI_CHIEU</td></tr>
+      </table>
+      <p>Cả 3 dòng: SESSION rỗng trên MIS_đi, <code>NGAY_KENH_TRA</code> rơi vào 22:59:55-58 ngày 06/07 —
+        CHỈ VÀI GIÂY TRƯỚC mốc 23:00:00. Rule cũ yêu cầu <code>NGAY_KENH_TRA ≥ 23h T-1</code> nên loại cả 3 vì
+        lệch vài giây trước biên khung giờ. Rule mới không dùng mốc giờ — tra thẳng GW gốc, thấy SessionId =
+        đúng phiên đối chiếu (16302) → xếp <code>GW_SESSION_DOI_CHIEU</code>, giữ lại.</p>
+
+      <div class="label">Bước 2 — Chứng minh ĐÚNG bằng GW gốc thật (không chỉ tin code tự báo cáo)</div>
+      <p>Tra ngược cả 3 MSGREF trực tiếp trên file GW gốc thật (<code>LenhThanhToanDi (39).xlsx</code>, sheet
+        gộp "Sheet 1" ~1 triệu dòng VÀ sheet "đi GW 07.07" đã lọc session — khớp cả 2 nơi):</p>
+      <pre style="background:#f8f9fa;padding:8px;border-radius:4px;font-size:12px;overflow-x:auto">MSGREF=...433325  SessionId=16302  PrcFlg=Lệnh Hoàn thành
+MSGREF=...433271  SessionId=16302  PrcFlg=Lệnh Hoàn thành
+MSGREF=...433273  SessionId=16302  PrcFlg=Lệnh Hoàn thành</pre>
+      <p>Cả 3 giao dịch <strong>THẬT SỰ đã đi kênh, đúng phiên đối chiếu 16302, trạng thái "Lệnh Hoàn
+        thành"</strong> — không phải giao dịch mập mờ/nghi vấn. Rule cũ bỏ sót cả 3 chỉ vì giới hạn kỹ thuật
+        của cơ chế khung giờ cứng (lệch vài giây quanh mốc 23h do độ trễ hệ thống) — đúng CHÍNH XÁC loại lỗi
+        mà Rule mới được thiết kế để sửa (cùng mẫu với case "giao dịch phục hồi" REFHUB ...4531398142 đã xác
+        nhận đúng ở 17/07, xem mục 44).</p>
+
+      <div class="label">Bước 3 — Chứng minh KHÔNG làm sai ngày khác</div>
+      <ul>
+        <li>Bất biến số học 07/07 vẫn đúng (571.596 dòng = 571.587 khớp + 9 timeout) — 3 dòng "phục hồi" được
+          CỘNG THÊM vào đúng nhóm của chúng, không có nhóm nào khác trong 07/07 phát sinh lệch mới
+          (<code>GW_CAN_DOI_CHIEU=0</code> cho TOÀN BỘ ngày, không chỉ 3 nhóm cũ).</li>
+        <li>Re-verify 08/07 và 09/07 trên code hiện tại: vẫn <strong>0 nhóm lệch</strong>, y hệt số liệu đã
+          ghi nhận trước đây — không có regression phát sinh ở 2 ngày lân cận.</li>
+      </ul>
+
+      <div class="label">Bước 4 — Kết luận</div>
+      <p>3 nhóm CN_TIỀN lệch của 07/07 không còn tồn tại VÌ Rule mới đã <strong>phục hồi đúng</strong> 3 giao
+        dịch thật sự thuộc phiên đối chiếu mà Rule cũ bỏ sót do hạn chế của cơ chế khung giờ cứng — đây là kết
+        quả ĐÚNG theo đúng mục tiêu thiết kế của Rule mới (chốt 2026-07-25), có bằng chứng độc lập từ GW gốc
+        thật, không phải suy luận. <strong>Coi C.1a HOÀN THÀNH cho case 07/07</strong> — không phải vì "hết
+        gì để đối chiếu" một cách mơ hồ, mà vì 3 nhóm lệch đã được chứng minh KHÔNG PHẢI chênh lệch thật, là
+        lỗi của Rule cũ đã được Rule mới sửa đúng. Script phân tích:
+        <code>_scratch_verify_dien_rong_25_07/analyze_0707_c1a_root_cause.py</code> (giữ lại làm tư liệu).</p>
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-07-26</footer>
 </div>
 </body>
