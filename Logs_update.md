@@ -4,6 +4,11 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 27/07/2026 Giao diện - Nới rộng vùng nội dung trên màn hình nhỏ:
+    + Máy có màn hình rộng từ 1440px trở xuống (máy trạm 1366×768) khi mở phần mềm sẽ **tự thu gọn sidebar**, vùng xem bảng rộng thêm khoảng 184px. Ai đã tự bấm nút thu gọn/mở rộng một lần thì phần mềm nghe theo lựa chọn đó, không tự đổi nữa
+    + Bảng rộng hơn màn hình nay **kéo ngang xem được**. Trước đây phần vượt khung bị cắt mất, không có cách nào kéo ra xem
+    + Sửa lỗi tính chiều rộng làm mọi trang thừa ra một khoảng bằng đúng bề rộng thanh cuộn dọc
+
 - 27/07/2026 Giao diện - Sidebar (thu gọn/mở rộng):
     + Sidebar **chỉ đóng/mở bằng nút ở góc trên cùng bên trái**. Trước đây click vào mục menu thì sidebar tự thu lại, còn click vùng trống khi đang thu gọn lại tự mở ra — cùng một thao tác cho hai kết quả ngược nhau tuỳ chỗ bấm
     + Click mục menu giờ chỉ chuyển trang, không đụng tới sidebar. Trạng thái đóng/mở giữ nguyên khi chuyển trang

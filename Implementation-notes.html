@@ -1622,6 +1622,46 @@ ui.on_exception(_on_exception)</pre>
     </div>
   </div>
 
+  <!-- 45 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">45</span>
+      <span class="card-title">Chiều rộng vùng nội dung — bỏ hack <code>100vw</code>, tự thu gọn sidebar trên màn hẹp</span>
+      <span class="badge badge-done">Đã fix</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Nguyên nhân gốc — <code>100vw</code> tính cả thanh cuộn dọc</div>
+      <p><code>_content_area()</code> đặt <code>width: calc(100vw - 16rem)</code> cạnh <code>ml-64</code>. Trong CSS, <code>100vw</code> là bề rộng viewport <strong>đã bao gồm</strong> thanh cuộn dọc, còn margin lại tính trên vùng khả dụng (đã trừ thanh cuộn). Hệ quả: mọi trang có nội dung dài đều tràn ngang đúng bằng bề rộng thanh cuộn (~15px).</p>
+      <p><code>overflow-x-hidden</code> ở cùng dòng chính là miếng vá che triệu chứng đó. Nhưng nó che <strong>mọi</strong> tràn ngang, không riêng 15px này — nội dung rộng hơn khung bị cắt mất mà không có thanh cuộn để kéo ra.</p>
+      <table>
+        <tr><th></th><th>Trước</th><th>Sau</th></tr>
+        <tr><td>Chiều rộng</td><td><code>calc(100vw - 16rem)</code> — dính thanh cuộn</td><td><code>calc(100% - 16rem)</code> — theo content-box của parent</td></tr>
+        <tr><td>Tràn ngang</td><td><code>overflow-x-hidden</code> — cắt cụt, mất nội dung</td><td><code>overflow-x-auto</code> — cho cuộn</td></tr>
+      </table>
+      <p>Đổi sang <code>100%</code> loại đúng nguyên nhân, nên <code>overflow-x-auto</code> không sinh thanh cuộn thừa trên các trang bình thường.</p>
+
+      <div class="label">Quyết định — auto-collapse bằng JS, không dùng media query</div>
+      <p>Máy trạm phổ biến 1366×768: sidebar 16rem + <code>p-6</code> hai bên còn <strong>1062px</strong> cho nội dung. Thu gọn sidebar xuống 4.5rem nâng lên <strong>1246px</strong> (+17%).</p>
+      <p>Phương án media query <code>@media (max-width: 1440px)</code> ép <code>width: 4.5rem</code>: <span class="pill pill-gray">Bỏ</span> — CSS ép cứng sẽ vô hiệu hoá nút <code>#sb-toggle</code> trên chính những màn hình đó (bấm mở ra, media query ép đóng lại). Đúng bằng loại xung đột "nhiều nguồn ghi trạng thái" mà card <span class="pill pill-gray">44</span> vừa dọn.</p>
+      <p>Thay bằng: khi <code>localStorage['sb-collapsed']</code> còn <code>null</code> (chưa ai bấm nút bao giờ) thì lấy mặc định theo <code>window.innerWidth &lt;= 1440</code>. Đã có lựa chọn lưu → luôn tôn trọng. Nút toggle vẫn là nguồn ghi duy nhất.</p>
+      <p>Không nghe <code>resize</code>: chỉ áp lúc load. Máy trạm hiếm khi đổi kích thước cửa sổ, và bám theo resize sẽ lại ghi đè lựa chọn người dùng giữa phiên.</p>
+
+      <div class="label">Không làm — thay sidebar bằng <code>ui.left_drawer()</code></div>
+      <p>Đề xuất trong đợt review là bỏ khối <code>&lt;div fixed&gt;</code> tự dựng để lấy breakpoint có sẵn của NiceGUI. <span class="pill pill-gray">Bỏ</span> — <code>left_drawer</code> là component Quasar với DOM và stacking context riêng, trong khi sidebar hiện tại gánh flyout menu nhiều cấp (<code>.dept-flyout</code>, <code>.sub-flyout</code>, z-index 10000–10001) cùng JS tự tính toạ độ. Chuyển đổi kéo theo dựng lại toàn bộ phần đó. Hệ thống không chạy trên mobile nên lợi ích duy nhất còn lại là overlay mode — không đáng.</p>
+
+      <div class="label">Phạm vi ảnh hưởng đã kiểm</div>
+      <table>
+        <tr><th>Điểm</th><th>Kết luận</th></tr>
+        <tr><td>19 trang gọi <code>_content_area()</code></td><td>Tất cả dùng chung, không trang nào tự dựng vùng nội dung riêng → sửa một chỗ là đủ</td></tr>
+        <tr><td>Bảng bàn giao (<code>handovers.py:438</code>)</td><td>Đã tự bọc <code>overflow-x:auto</code> — không phụ thuộc vùng cha, không đổi hành vi</td></tr>
+        <tr><td>Bảng nghỉ phép (<code>leaves.py</code>)</td><td>Dùng <code>%</code> và <code>flex-1</code>, co theo container — hưởng lợi trực tiếp từ +184px</td></tr>
+        <tr><td>Flyout sidebar</td><td><code>position: fixed</code> và nằm ngoài <code>#app-content</code> → không chịu ảnh hưởng của <code>overflow-x</code></td></tr>
+        <tr><td>CSS <code>body.sb-collapsed</code></td><td>Đổi <code>100vw</code> → <code>100%</code> cho khớp, nếu không trạng thái thu gọn vẫn giữ lỗi cũ</td></tr>
+      </table>
+      <div class="note">Grep toàn <code>frontend/</code>: không còn <code>100vw</code>; không có class responsive (<code>sm:</code>/<code>md:</code>/<code>lg:</code>/<code>xl:</code>) nào — đúng chủ đích, hệ thống chỉ chạy trên máy trạm desktop.</div>
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-07-27</footer>
 </div>
 </body>
