@@ -46,9 +46,15 @@ DEPARTMENTS = [
     {
         "id": "payment", "label": "Phòng Thanh toán", "icon": "payments",
         "items": [
-            ("duty_schedule",         "Phân lịch trực",       "edit_calendar"),
-            ("cham_459901",           "Chấm 459901",          "task_alt"),
-            ("doi_chieu_song_phuong", "Đối chiếu Song phương", "account_balance"),
+            ("duty_schedule", "Phân lịch trực", "edit_calendar"),
+            {
+                "label": "Đối chiếu",
+                "icon": "compare_arrows",
+                "items": [
+                    ("cham_459901",           "Chấm 459901",           "task_alt"),
+                    ("doi_chieu_song_phuong", "Đối chiếu Song phương", "account_balance"),
+                ],
+            },
         ],
     },
     {"id": "ktoan",   "label": "Phòng Kế toán",             "icon": "calculate",       "items": []},
@@ -282,7 +288,7 @@ def _dept_group(dept: dict, current_page: str, badge_refs: dict, check_features:
                                     bg = "bg-red-700" if is_active else "hover:bg-red-800"
                                     with ui.row().classes(
                                         f"w-full items-center px-4 py-2.5 cursor-pointer {bg}"
-                                    ).on("click", lambda kk=k: ui.navigate.to(f"/{kk}")):
+                                    ).on("click", lambda kk=k: (_collapse_sidebar(), ui.navigate.to(f"/{kk}"))):
                                         ui.icon(ico).classes("text-base mr-2 text-red-100 shrink-0")
                                         ui.label(lbl).classes("text-sm flex-1")
 

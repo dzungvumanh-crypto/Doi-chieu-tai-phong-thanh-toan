@@ -4,8 +4,12 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 27/07/2026 Phòng Thanh toán - Gom menu Đối chiếu:
+    + **Chấm 459901** và **Đối chiếu Song phương** chuyển thành 2 mục con của menu mới **Đối chiếu** (hover ra flyout cấp 2, giống nhóm "Báo cáo" bên KSNB). Phân quyền theo nhóm giữ nguyên (`menu.cham_459901`, `menu.doi_chieu_song_phuong`); nhóm "Đối chiếu" tự ẩn nếu user không có quyền cả 2 mục
+    + Tiện thể fix: bấm mục trong menu con cấp 2 nay cũng tự thu gọn sidebar như mục cấp 1 (trước đó bị sót, ảnh hưởng cả 2 nhóm "Báo cáo")
+
 - 22/07/2026 Quản lý User - Nhóm & phân cấp Quản trị viên:
-    + Gom các tài khoản quản trị vào **nhóm "Quản trị viên"** trong danh sách Quản lý User (hiển thị như "Ban Giám đốc", các phòng). Admin **không thuộc phòng nào**: tạo/sửa admin sẽ ẩn ô chọn Phòng, `department_id` để trống
+    + Gom các tài khoản quản trị vào **nhóm "Quản trị viên"** trong danh sách Quản lý User Admin **không thuộc phòng nào**: tạo/sửa admin sẽ ẩn ô chọn Phòng, `department_id` để trống
     + Tách quyền quản trị thành **2 cấp**:
         • **Quản trị viên cấp 1** (role cũ `admin`, chỉ đổi nhãn): toàn quyền như trước
         • **Quản trị viên cấp 2** (`admin_l2`, mới): quyền hạn cấu hình qua **Phân quyền theo nhóm** (như các role thường), không mặc định all-access

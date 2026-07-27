@@ -186,12 +186,14 @@ Truy cập:
 
 ### Module Chấm 459901
 - Phân loại bút toán tài khoản trung gian 459901 dành cho phòng Thanh toán
+- Menu: **Phòng Thanh toán → Đối chiếu → Chấm 459901**
 - Upload file ZIP chứa dữ liệu giao dịch; xử lý bất đồng bộ (~65s)
 - Xuất 3 file Excel: **Huỷ**, **Đi**, **Khác** theo kết quả phân loại
 - Phân quyền riêng theo nhóm (`menu.cham_459901`, `cham_459901.process`)
 
 ### Module Đối chiếu Song phương
 - Định tuyến lệnh IPCAS phục vụ đối chiếu song phương tại phòng Thanh toán
+- Menu: **Phòng Thanh toán → Đối chiếu → Đối chiếu Song phương**
 - Upload file ZIP (mã hóa AES-256) chứa dữ liệu IPCAS; xử lý bất đồng bộ, theo dõi tiến độ real-time
 - Phân loại mỗi dòng theo **4 ngân hàng** (Vietinbank 201, BIDV 202, Vietcombank 203, MBBank 311) × **2 chiều**: **ĐẾN** (`CRAMOUNT=0`) / **ĐI** (`DRAMOUNT=0`) → xuất **8 file CSV**
 - Phân quyền riêng theo nhóm (`menu.doi_chieu_song_phuong`, `doi_chieu_song_phuong.process`)
