@@ -1541,7 +1541,49 @@ ui.on_exception(_on_exception)</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-07-22</footer>
+  <!-- 43 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">43</span>
+      <span class="card-title">Sidebar: 3 mục phòng ban "chết" hiện với mọi user</span>
+      <span class="badge badge-done">Đã fix</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Triệu chứng</div>
+      <p>Phòng Kế toán, Phòng QLTK Nostro/Vostro, Ban Giám đốc luôn xuất hiện trên sidebar nhưng bấm không ra gì: không mũi tên <code>chevron_right</code>, không flyout, con trỏ <code>cursor-default</code>. Không phân biệt được với menu bị lỗi.</p>
+
+      <div class="label">Nguyên nhân — short-circuit của <code>and</code></div>
+      <table>
+        <tr><th>Trước</th><th>Sau</th></tr>
+        <tr>
+          <td><code>if dept["items"] and not visible_items: return</code></td>
+          <td><code>if not visible_items: return</code></td>
+        </tr>
+        <tr>
+          <td>Với phòng rỗng, <code>dept["items"] == []</code> là falsy → vế trái chặn <code>return</code> → header vẫn render, nhưng hai khối phía dưới đều gated bởi <code>if visible_items</code> nên không có nội dung.</td>
+          <td>Phòng không có mục nào hiển thị được (kể cả do rỗng sẵn) thì bỏ qua hoàn toàn.</td>
+        </tr>
+      </table>
+
+      <div class="label">Đây là chủ ý, không phải typo</div>
+      <p>Vế <code>dept["items"] and</code> chỉ có đúng một tác dụng là <em>giữ lại</em> phòng rỗng — nếu chỉ muốn "ẩn khi rỗng" thì đã viết <code>if not visible_items</code> ngay từ đầu. Ý định là placeholder cho phòng chưa có tính năng. Nhưng phần render không hề có tín hiệu nào báo "đang phát triển", nên placeholder không đọc ra là placeholder. <strong>Ý định đúng, thực thi thiếu → chọn ẩn thay vì hoàn thiện placeholder.</strong></p>
+      <div class="note">Nếu sau này muốn placeholder thật: cần thêm <code>opacity</code> giảm + tooltip "Đang phát triển", không phải khôi phục điều kiện cũ.</div>
+
+      <div class="label">Đánh đổi đã chấp nhận</div>
+      <p>3 entry rỗng ở <code>DEPARTMENTS</code> giờ là dead data — <span class="pill pill-gray">giữ lại</span> làm marker cho biết hệ thống dự kiến mở rộng tới đâu, kèm comment. Xoá hẳn thì gọn hơn nhưng mất dấu vết dự định.</p>
+
+      <div class="label">Phạm vi ảnh hưởng đã kiểm</div>
+      <table>
+        <tr><th>Caller <code>_dept_group()</code></th><th>Kết luận</th></tr>
+        <tr><td>Vòng lặp <code>DEPARTMENTS</code></td><td>Chỉ 3 phòng rỗng bị ẩn. Phòng có items mà user thiếu feature thì <em>trước fix cũng đã return</em> → không đổi</td></tr>
+        <tr><td>Nhật ký hệ thống · Phân quyền chức năng</td><td><code>check_features=False</code> → <code>_item_visible()</code> luôn True → <code>visible_items</code> không rỗng → không đổi</td></tr>
+      </table>
+      <div class="caution"><code>DEPARTMENTS</code> ở <code>frontend/shared.py</code> là menu tĩnh, <strong>không phải</strong> bảng phòng ban trong DB. Ẩn mục "Ban Giám đốc" trên sidebar không đụng tới phòng <code>BGD</code>/<code>is_source</code> trong luồng duyệt nghỉ phép.</div>
+      <p>Không tồn tại feature key <code>menu.ktoan</code> / <code>menu.nostro</code> / <code>menu.bgd</code> ở bất kỳ đâu trong codebase → 3 phòng này không bao giờ có item, kể cả với admin all-access.</p>
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-07-27</footer>
 </div>
 </body>
 </html>

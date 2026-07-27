@@ -57,6 +57,7 @@ DEPARTMENTS = [
             },
         ],
     },
+    # ── Phòng chưa có chức năng — giữ làm marker mở rộng, items rỗng nên không render ──
     {"id": "ktoan",   "label": "Phòng Kế toán",             "icon": "calculate",       "items": []},
     {"id": "nostro",  "label": "Phòng QLTK Nostro, Vostro", "icon": "account_balance", "items": []},
     {
@@ -74,6 +75,7 @@ DEPARTMENTS = [
             },
         ],
     },
+    # ── Chưa có chức năng — xem ghi chú ở nhóm phòng rỗng phía trên ──
     {"id": "bgd", "label": "Ban Giám đốc", "icon": "business_center", "items": []},
 ]
 
@@ -215,8 +217,8 @@ def _dept_group(dept: dict, current_page: str, badge_refs: dict, check_features:
     Item có thể là tuple (key, label, icon) hoặc dict sub-group {"label", "icon", "items"}.
     """
     visible_items = [i for i in dept["items"] if _item_visible(i, check_features)]
-    if dept["items"] and not visible_items:
-        return
+    if not visible_items:
+        return  # gồm cả phòng chưa có chức năng (items rỗng) — không render header chết
 
     # Tổng hợp tất cả route keys (kể cả trong sub-group) để detect active state
     dept_keys: set[str] = set()

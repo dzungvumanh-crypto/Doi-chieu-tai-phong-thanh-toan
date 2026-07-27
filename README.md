@@ -217,6 +217,9 @@ Truy cập:
 
 > `admin_l2` (Quản trị viên cấp 2) hiển thị chung nhóm "Quản trị viên" như cấp 1, nhưng quyền hạn được cấu hình qua **Phân quyền theo nhóm** thay vì all-access.
 
+### Menu sidebar
+Menu nhóm theo phòng ban, hover để mở flyout bên phải. Một phòng **chỉ hiện khi user có ít nhất 1 chức năng** của phòng đó (`menu.<key>`) — phòng chưa có chức năng hoặc user không được cấp quyền nào thì ẩn hoàn toàn, không hiện tên phòng rỗng. Riêng `chuyen_vien` dùng menu phẳng (Bàn giao chứng từ, Nghỉ phép).
+
 ---
 
 ## Quy trình duyệt nghỉ phép
