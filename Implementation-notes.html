@@ -1583,6 +1583,45 @@ ui.on_exception(_on_exception)</pre>
     </div>
   </div>
 
+  <!-- 44 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">44</span>
+      <span class="card-title">Sidebar: cùng thao tác click cho hai kết quả ngược nhau</span>
+      <span class="badge badge-done">Đã fix</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Triệu chứng</div>
+      <p>Click trong sidebar cho kết quả phụ thuộc vị trí: click vùng trống khi đang thu gọn → <strong>mở ra</strong>; click một mục menu → <strong>thu lại</strong>. Người dùng không đoán được thao tác của mình sẽ làm gì.</p>
+
+      <div class="label">Nguyên nhân — hai cơ chế điều khiển song song</div>
+      <table>
+        <tr><th>Nguồn</th><th>Hành vi</th></tr>
+        <tr><td>Listener trên <code>#app-sidebar</code> (DOMContentLoaded)</td><td>Click bất kỳ đâu khi đang thu gọn → <code>toggleSidebar()</code> → mở ra</td></tr>
+        <tr><td><code>_collapse_sidebar()</code> gọi kèm mọi <code>navigate</code></td><td>Click mục menu → thu gọn</td></tr>
+        <tr><td><code>#sb-toggle</code></td><td>Toggle — đúng ý định, nhưng bị hai cơ chế trên lấn át</td></tr>
+      </table>
+      <p>Card <span class="pill pill-gray">40</span> đã vá triệu chứng double-toggle bằng guard <code>closest('#sb-toggle')</code>, nhưng không xử lý gốc: trạng thái thu gọn có <strong>ba</strong> nơi ghi vào.</p>
+
+      <div class="label">Quyết định — một nguồn điều khiển duy nhất</div>
+      <p>Xoá cả listener container lẫn <code>_collapse_sidebar()</code>. Chỉ <code>#sb-toggle</code> đổi trạng thái. Guard <code>closest('#sb-toggle')</code> của card 40 tự tiêu vì không còn listener để guard.</p>
+      <p>Phương án thay thế đã cân nhắc: giữ auto-collapse khi điều hướng để tiết kiệm màn hình. <span class="pill pill-gray">Bỏ</span> — nó ghi đè lựa chọn người dùng đã lưu trong <code>localStorage</code>, và mỗi lần đổi trang lại reset về thu gọn.</p>
+
+      <div class="label">Nút toggle phải tự nói trạng thái</div>
+      <p>Trước: icon <code>menu</code> cố định ở cả hai trạng thái → nhìn không biết bấm sẽ mở hay đóng. Sau: <code>menu_open</code> khi đang mở, <code>menu</code> khi đang thu gọn, đổi bằng CSS theo <code>body.sb-collapsed</code> — không cần JS đồng bộ icon, nên không thể lệch với trạng thái thật.</p>
+
+      <div class="label">Phạm vi ảnh hưởng đã kiểm</div>
+      <table>
+        <tr><th>Điểm</th><th>Kết luận</th></tr>
+        <tr><td>4 call site <code>_collapse_sidebar()</code> (nav phẳng, flyout, sub-flyout)</td><td>Chỉ bỏ vế collapse, <code>ui.navigate.to()</code> giữ nguyên → điều hướng không đổi</td></tr>
+        <tr><td>Click icon khi đang thu gọn</td><td>Vẫn điều hướng như cũ (handler của <code>ui.row</code>, không phải listener container)</td></tr>
+        <tr><td>Flyout hover khi thu gọn</td><td>Chạy trên <code>mouseover</code>, không liên quan → không đổi</td></tr>
+        <tr><td>Khôi phục trạng thái từ <code>localStorage</code></td><td>Giữ nguyên; giờ giá trị lưu phản ánh đúng ý người dùng vì chỉ nút mới ghi</td></tr>
+      </table>
+      <div class="note">Grep toàn codebase: không còn reference <code>_collapse_sidebar</code>; <code>sb-collapsed</code> chỉ còn xuất hiện trong CSS và <code>toggleSidebar()</code>.</div>
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-07-27</footer>
 </div>
 </body>

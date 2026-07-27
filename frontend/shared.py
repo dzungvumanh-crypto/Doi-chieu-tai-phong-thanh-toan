@@ -116,10 +116,15 @@ _SIDEBAR_CSS = """<style>
 #app-sidebar { transition: width 0.2s ease; }
 #app-content { transition: margin-left 0.2s ease, width 0.2s ease; }
 body.sb-collapsed #app-sidebar { width: 4.5rem !important; }
-body.sb-collapsed #app-content { margin-left: 4.5rem !important; width: calc(100vw - 4.5rem) !important; }
+body.sb-collapsed #app-content { margin-left: 4.5rem !important; width: calc(100% - 4.5rem) !important; }
 body.sb-collapsed .sidebar-label { display: none !important; }
 body.sb-collapsed .sidebar-row { justify-content: center !important; padding-left: 0 !important; padding-right: 0 !important; }
 body.sb-collapsed .sidebar-icon { margin-right: 0 !important; }
+
+/* Nút toggle: đang mở hiện icon "đóng", đang thu gọn hiện icon "mở" */
+.sb-ico-expand { display: none; }
+body.sb-collapsed .sb-ico-expand { display: inline; }
+body.sb-collapsed .sb-ico-collapse { display: none; }
 
 /* ── Vùng menu tự cuộn khi cao hơn màn hình — luôn vừa với viewport ── */
 #sidebar-menu-scroll { scrollbar-width: thin; scrollbar-color: #b91c1c #7f1d1d; }
@@ -131,18 +136,14 @@ function toggleSidebar() {
   var collapsed = document.body.classList.toggle('sb-collapsed');
   try { localStorage.setItem('sb-collapsed', collapsed ? '1' : '0'); } catch (e) {}
 }
+/* Màn hẹp (máy trạm 1366px) thu gọn sidebar sẵn để nhường chỗ cho bảng;
+   chỉ áp khi người dùng chưa từng tự bấm nút toggle */
+var SB_NARROW_PX = 1440;
 document.addEventListener('DOMContentLoaded', function () {
-  try {
-    if (localStorage.getItem('sb-collapsed') === '1') {
-      document.body.classList.add('sb-collapsed');
-    }
-  } catch (e) {}
-  var sb = document.getElementById('app-sidebar');
-  if (sb) sb.addEventListener('click', function (e) {
-    // Bỏ qua click từ chính nút menu — nút đã tự toggle, tránh toggle 2 lần
-    if (e.target.closest('#sb-toggle')) return;
-    if (document.body.classList.contains('sb-collapsed')) toggleSidebar();
-  });
+  var pref = null;
+  try { pref = localStorage.getItem('sb-collapsed'); } catch (e) {}
+  var collapsed = pref === null ? window.innerWidth <= SB_NARROW_PX : pref === '1';
+  if (collapsed) document.body.classList.add('sb-collapsed');
 });
 
 /* ── Flyout menu con: position:fixed để thoát vùng overflow của sidebar cuộn,
@@ -174,20 +175,13 @@ async def _logout():
     ui.navigate.to("/login")
 
 
-def _collapse_sidebar():
-    ui.run_javascript(
-        "document.body.classList.add('sb-collapsed');"
-        "try{localStorage.setItem('sb-collapsed','1')}catch(e){}"
-    )
-
-
 def _nav_item(key: str, label: str, icon: str, current_page: str, badge_refs: dict):
     """Mục menu phẳng (không thuộc phòng ban)."""
     is_active = current_page == key
     bg = "bg-red-700" if is_active else "hover:bg-red-800"
     with ui.row().classes(
         f"sidebar-row w-full items-center px-4 py-2.5 cursor-pointer {bg}"
-    ).on("click", lambda k=key: (_collapse_sidebar(), ui.navigate.to(f"/{k}"))):
+    ).on("click", lambda k=key: ui.navigate.to(f"/{k}")):
         ui.icon(icon).classes("sidebar-icon text-lg mr-3 text-red-100 shrink-0")
         ui.label(label).classes("sidebar-label text-sm flex-1")
         if key in ("leaves", "handovers"):
@@ -253,7 +247,7 @@ def _dept_group(dept: dict, current_page: str, badge_refs: dict, check_features:
                         bg = "bg-red-700" if is_active else "hover:bg-red-800"
                         with ui.row().classes(
                             f"w-full items-center px-4 py-2.5 cursor-pointer {bg}"
-                        ).on("click", lambda k=key: (_collapse_sidebar(), ui.navigate.to(f"/{k}"))):
+                        ).on("click", lambda k=key: ui.navigate.to(f"/{k}")):
                             ui.icon(icon).classes("text-base mr-2 text-red-100 shrink-0")
                             ui.label(label).classes("text-sm flex-1")
                             if key in ("leaves", "handovers"):
@@ -290,7 +284,7 @@ def _dept_group(dept: dict, current_page: str, badge_refs: dict, check_features:
                                     bg = "bg-red-700" if is_active else "hover:bg-red-800"
                                     with ui.row().classes(
                                         f"w-full items-center px-4 py-2.5 cursor-pointer {bg}"
-                                    ).on("click", lambda kk=k: (_collapse_sidebar(), ui.navigate.to(f"/{kk}"))):
+                                    ).on("click", lambda kk=k: ui.navigate.to(f"/{kk}")):
                                         ui.icon(ico).classes("text-base mr-2 text-red-100 shrink-0")
                                         ui.label(lbl).classes("text-sm flex-1")
 
@@ -309,12 +303,14 @@ def _sidebar(current_page: str) -> dict:
         ):
             ui.html(
                 '<button type="button" id="sb-toggle" onclick="toggleSidebar()" '
+                'title="Thu gọn / mở rộng menu" aria-label="Thu gọn / mở rộng menu" '
                 'style="background:transparent;border:none;cursor:pointer;color:#fecaca;'
                 'display:flex;align-items:center;justify-content:center;width:2rem;height:2rem;'
                 'border-radius:6px;flex-shrink:0;" '
                 "onmouseover=\"this.style.background='rgba(255,255,255,0.12)'\" "
                 "onmouseout=\"this.style.background='transparent'\">"
-                '<i class="material-icons" style="font-size:20px;">menu</i></button>'
+                '<i class="material-icons sb-ico-collapse" style="font-size:20px;">menu_open</i>'
+                '<i class="material-icons sb-ico-expand" style="font-size:20px;">menu</i></button>'
             )
 
         # ── Logo ──
@@ -412,8 +408,8 @@ def _content_area():
     return (
         ui.column()
         .props("id=app-content")
-        .classes("ml-64 min-h-screen bg-gray-50 p-6 overflow-x-hidden")
-        .style("width: calc(100vw - 16rem)")
+        .classes("ml-64 min-h-screen bg-gray-50 p-6 overflow-x-auto")
+        .style("width: calc(100% - 16rem)")
     )
 
 
