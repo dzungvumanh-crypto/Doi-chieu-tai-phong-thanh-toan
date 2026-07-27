@@ -201,6 +201,29 @@ def _create_tables(db_path: str):
             di_not_ack_json TEXT,
             created_at DATETIME
         )""",
+        """CREATE TABLE IF NOT EXISTS doi_chieu_citad_sessions (
+            ngay        TEXT    NOT NULL,
+            staff_id    INTEGER NOT NULL REFERENCES user_tttt(id) ON DELETE CASCADE,
+            data        TEXT    NOT NULL,
+            updated_at  DATETIME,
+            PRIMARY KEY (ngay, staff_id)
+        )""",
+        """CREATE TABLE IF NOT EXISTS doi_soat_citad_history (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            ngay_cham           VARCHAR(10) NOT NULL,
+            recon_date          DATETIME NOT NULL,
+            performed_by_id     INTEGER REFERENCES user_tttt(id),
+            citad_file_names    TEXT,
+            ipcas_file_names    TEXT,
+            hub_file_names      TEXT,
+            total_citad         INTEGER,
+            total_ipcas         INTEGER,
+            total_hub           INTEGER,
+            n_khop              INTEGER,
+            n_lech              INTEGER,
+            lech_json           TEXT,
+            created_at          DATETIME
+        )""",
     ]
     for s in statements:
         cur.execute(s)
