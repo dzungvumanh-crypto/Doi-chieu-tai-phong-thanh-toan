@@ -1,0 +1,54 @@
+{
+  "manifest_version": 3,
+  "name": "CITAD – Lấy số liệu đối chiếu (TTTT)",
+  "version": "2.0",
+  "description": "Tự động lấy số liệu CITAD và PaymentHub vào module Đối chiếu CITAD của app TTTT",
+  "permissions": ["storage", "activeTab"],
+  "host_permissions": [
+    "http://10.0.85.100/*",
+    "http://localhost:8000/*",
+    "https://paymenthub.agribank.com.vn/*",
+        "https://payment.agribank.com.vn/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "http://10.0.85.100/CITAD001/Modules/BangKeGiaoDichTrongNgay/*",
+        "http://10.0.85.100/CITAD001/Modules/BangKeGiaoDichNgoaiTeTrongNgay/*",
+        "http://10.0.85.100/CITAD/Modules/BangKeGiaoDichTrongNgay/*",
+        "http://10.0.85.100/CITAD/Modules/BangKeGiaoDichNgoaiTeTrongNgay/*",
+        "http://10.0.85.100/CITAD9212/Modules/BangKeGiaoDichTrongNgay/*",
+        "http://10.0.85.100/CITAD9212/Modules/BangKeGiaoDichNgoaiTeTrongNgay/*",
+        "http://10.0.85.100/CITAD7917/Modules/BangKeGiaoDichTrongNgay/*",
+        "http://10.0.85.100/CITAD7917/Modules/BangKeGiaoDichNgoaiTeTrongNgay/*",
+        "http://10.0.85.100/CITAD4818/Modules/BangKeGiaoDichTrongNgay/*",
+        "http://10.0.85.100/CITAD4818/Modules/BangKeGiaoDichNgoaiTeTrongNgay/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_end"
+    },
+    {
+      "matches": [
+        "https://paymenthub.agribank.com.vn/statistic/party*",
+        "https://paymenthub.agribank.com.vn/statistic/*",
+        "https://paymenthub.agribank.com.vn/transaction/*",
+        "https://paymenthub.agribank.com.vn/*/giao-dich*",
+        "https://paymenthub.agribank.com.vn/*",
+        "https://payment.agribank.com.vn/*"
+      ],
+      "js": ["content_paymenthub.js"],
+      "run_at": "document_end"
+    },
+    {
+      "matches": [
+        "https://payment.agribank.com.vn/payment-in/*"
+      ],
+      "js": ["content_paymenthub.js"],
+      "run_at": "document_end"
+    }
+  ],
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png"
+  }
+}

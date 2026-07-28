@@ -13,6 +13,14 @@ class ReconcileResultOut(BaseModel):
     history_error: Optional[str] = None
 
 
+class ExportIn(BaseModel):
+    """Payload xuất Excel — frontend gửi lại đúng kết quả /reconcile gần
+    nhất đang giữ trong state (không bắt upload lại file)."""
+    ngay_cham: str = ""
+    n_khop: int = 0
+    lech: List[Dict[str, Any]] = []
+
+
 class HistoryOut(BaseModel):
     id: int
     ngay_cham: str

@@ -8,10 +8,9 @@ Logic parse/đối soát/xuất Excel lấy NGUYÊN từ `parsers.py`/`reconcile
 `exporters.py` (port từ `citad-fixed/DoiSoatCITAD.py`, không sửa logic) —
 xem docstring từng file trong `backend/services/doi_soat_citad/`.
 
-Router MỚI, tự quản lý. 2 việc cần Người 1 duyệt riêng (xem
-SNIPPETS_TO_PASTE.md):
-  1. Đăng ký router này vào backend/api/registry.py
-  2. Thêm bảng doi_soat_citad_history vào backend/db/migrations.py
+Router MỚI — đã đăng ký sẵn trong `backend/api/registry.py` và bảng
+`doi_soat_citad_history` đã thêm sẵn trong `backend/db/migrations.py` (cùng
+PR này, cần Người 1 duyệt vì đây là 2 file dùng chung).
 """
 from __future__ import annotations
 
@@ -24,7 +23,7 @@ from fastapi.responses import Response
 
 from backend.database import get_db
 from backend.core.deps import require_feature
-from backend.schemas.doi_soat_citad import HistoryOut, ReconcileResultOut
+from backend.schemas.doi_soat_citad import ExportIn, HistoryOut, ReconcileResultOut
 from backend.services.doi_soat_citad import exporters, parsers, reconcile
 from backend.services.doi_soat_citad.history_service import (
     get_recon_detail,
@@ -114,15 +113,15 @@ async def do_reconcile(
 
 @router.post("/export")
 async def export_excel(
-    payload: dict,
+    payload: ExportIn,
     current: dict = Depends(require_feature("menu.doi_soat_citad")),
 ):
     """Nhận lại `ngay_cham`, `n_khop`, `lech` mà frontend đang giữ trong state
     (kết quả của lần /reconcile gần nhất) — không bắt người dùng upload lại
     file, giống hệt hành vi bản gốc (đối soát xong mới bấm Xuất Excel)."""
-    ngay_cham = payload.get("ngay_cham", "")
-    n_khop = int(payload.get("n_khop", 0))
-    lech = payload.get("lech", [])
+    ngay_cham = payload.ngay_cham
+    n_khop = payload.n_khop
+    lech = payload.lech
     if not lech and not n_khop:
         raise HTTPException(400, "Chưa có dữ liệu đối soát để xuất")
 
@@ -141,7 +140,7 @@ async def export_excel(
     )
 
 
-@router.get("/history")
+@router.get("/history", response_model=List[HistoryOut])
 async def get_history(
     limit: int = 100,
     db=Depends(get_db),

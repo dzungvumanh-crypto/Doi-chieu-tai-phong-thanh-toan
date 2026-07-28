@@ -10,11 +10,21 @@ và công thức tính chênh lệch gốc:
   - Chênh lệch = Tổng CITAD − Tổng PaymentHub  (đúng theo `_calc()` gốc)
 
 Nút "Nạp CITAD"/"Nạp PaymentHub" đọc buffer do Extension Chrome gửi lên
-(xem TTTT_new_modules/extension/) — thay vì poll timer như bản tkinter,
-người dùng bấm nút để nạp giống hệt hành vi gốc.
+(xem `extension_citad/`) — thay vì poll timer như bản tkinter, người dùng
+bấm nút để nạp giống hệt hành vi gốc. Buffer được tách theo `owner`
+(username TTTT cấu hình trong Extension) nên nhiều người dùng chung backend
+không ghi đè/xoá dữ liệu của nhau (khác bản gốc — bản gốc chạy 1 server
+cục bộ/máy nên vốn chỉ có 1 người dùng).
+
+Napas/Ebanking chỉ có 2 field "IH Đến — Món/Tiền" thực sự được dùng trong
+`_calc()`/session/export ở bản gốc (đã kiểm tra `_calc()`, `_get_session_data`,
+`_export_excel` trong `citad-fixed/DoiChieuCITAD.py` gốc) — UI chỉ hiện đúng
+2 ô này, không vẽ 8 field × 2 dòng như bản gốc (grid gốc có 12/16 ô không hề
+được đọc ở đâu, chỉ gây hiểu nhầm).
 """
 import asyncio
 import datetime
+from urllib.parse import quote
 
 from nicegui import ui
 import frontend.api_client as api
@@ -63,8 +73,8 @@ def doi_chieu_citad_page():
     data = {
         "gD": {c: {u: {f: 0.0 for f in FK} for u in CURS} for c in CONGS},
         "phD": {u: {f: 0.0 for f in FK} for u in CURS},
-        "napas": {f: 0.0 for f in FK},
-        "ebank": {f: 0.0 for f in FK},
+        "napas": {"den_ih_m": 0.0, "den_ih_t": 0.0},
+        "ebank": {"den_ih_m": 0.0, "den_ih_t": 0.0},
     }
     inputs = {
         "gE": {c: {u: {} for u in CURS} for c in CONGS},
@@ -84,6 +94,8 @@ def doi_chieu_citad_page():
             for u in CURS:
                 for f in FK:
                     ci[f] += data["gD"][c][u][f]
+        # Chỉ cộng Napas, KHÔNG cộng Ebanking — đúng hành vi _calc() gốc,
+        # xem ghi chú chi tiết trong doi_chieu_citad_service.py::build_xlsx.
         ci["den_ih_m"] += data["napas"]["den_ih_m"]
         ci["den_ih_t"] += data["napas"]["den_ih_t"]
 
@@ -127,17 +139,20 @@ def doi_chieu_citad_page():
                         entry_store[cur][fk] = inp
 
     def build_napas_ebank_grid(container):
+        """Chỉ 2 field IH Đến (Món/Tiền) — DUY NHẤT được dùng trong recalc()/
+        session/export (xem docstring đầu file). Không vẽ 6 field còn lại
+        của mỗi dòng để tránh ô nhập "chết" không có tác dụng gì."""
         with container:
-            with ui.grid(columns=len(FK) + 1).classes("w-full gap-1"):
+            with ui.grid(columns=3).classes("w-full gap-2 max-w-lg"):
                 ui.label("").classes("text-xs")
-                for lbl in FK_LBL:
-                    ui.label(lbl).classes("text-xs font-bold text-gray-500 text-center")
+                ui.label("IH Đến — Món").classes("text-xs font-bold text-gray-500 text-center")
+                ui.label("IH Đến — Tiền").classes("text-xs font-bold text-gray-500 text-center")
                 for label, store, entry_store in [
                     ("Napas", data["napas"], inputs["napasE"]),
                     ("Ebanking", data["ebank"], inputs["ebankE"]),
                 ]:
                     ui.label(label).classes("text-sm font-bold self-center")
-                    for fk in FK:
+                    for fk in ("den_ih_m", "den_ih_t"):
                         def _on_change(e, _f=fk, _dd=store):
                             _dd[_f] = nv(e.value)
                             recalc()
@@ -278,7 +293,11 @@ def doi_chieu_citad_page():
 
     async def do_load_session():
         try:
-            sess = await asyncio.to_thread(api.get, f"/api/doi-chieu-citad/session/{ngay_input.value}")
+            # quote(safe="") vì ngay có dạng dd/mm/yyyy — nếu không encode dấu
+            # "/", httpx sẽ tách nó thành nhiều path segment và route
+            # /session/{ngay} (1 segment) sẽ không khớp, luôn trả 404.
+            ngay_enc = quote(ngay_input.value, safe="")
+            sess = await asyncio.to_thread(api.get, f"/api/doi-chieu-citad/session/{ngay_enc}")
         except Exception as e:
             if _handle_api_error(e):
                 return
@@ -300,7 +319,7 @@ def doi_chieu_citad_page():
             for f in FK:
                 data["phD"][u][f] = 0.0
                 inputs["phE"][u][f].value = ''
-        for f in FK:
+        for f in ("den_ih_m", "den_ih_t"):
             data["napas"][f] = 0.0
             data["ebank"][f] = 0.0
             inputs["napasE"][f].value = ''

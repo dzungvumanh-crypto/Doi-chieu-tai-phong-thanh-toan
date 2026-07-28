@@ -215,14 +215,25 @@ def _build_result_panel(tab, state):
             if lech is None:
                 return
 
+            filter_buttons = []
+
+            def _update_filter_buttons():
+                for i, btn in enumerate(filter_buttons):
+                    if i == active_filter["idx"]:
+                        btn.props(remove="outline", add="unelevated")
+                    else:
+                        btn.props(remove="unelevated", add="outline")
+
             with filter_row:
                 for i, (lbl, _statuses) in enumerate(FILTERS):
                     def _select(i=i):
                         active_filter["idx"] = i
+                        _update_filter_buttons()
                         render_table()
-                    ui.button(lbl, on_click=_select).props(
+                    btn = ui.button(lbl, on_click=_select).props(
                         f"{'unelevated' if active_filter['idx'] == i else 'outline'} dense"
                     )
+                    filter_buttons.append(btn)
                 search_input["widget"] = ui.input("Tìm kiếm...").props("dense outlined clearable").classes("w-64")
                 search_input["widget"].on("update:model-value", lambda e: render_table())
 

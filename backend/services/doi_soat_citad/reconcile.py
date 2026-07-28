@@ -2,11 +2,20 @@
 """
 reconcile.py
 ------------
-Port NGUYÊN 1:1 thuật toán đối soát từ `citad-fixed/DoiSoatCITAD.py::run_doiSoat_ram`
-— đây là quy tắc nghiệp vụ cốt lõi (khớp theo msgref/txid, ưu tiên trạng
-thái IPCAS Đến theo PRIORITY_TT, chỉ nhận SCNL là thành công cho lệnh Đi,
-bỏ PYED/PYEK khi tính dư IPCAS Đến...). KHÔNG được sửa bất kỳ điều kiện
-nào trong hàm này khi port.
+Port thuật toán đối soát từ `DoiSoatCITAD.py::run_doiSoat_ram` của tool
+desktop gốc — quy tắc nghiệp vụ cốt lõi ĐÃ DUYỆT và giữ nguyên khi port:
+khớp theo msgref (Đi) / txid (Đến), ưu tiên trạng thái IPCAS Đến theo
+PRIORITY_TT khi trùng txid, chỉ nhận SCNL là thành công cho lệnh Đi (khác đi
+→ 'lech_trang_thai'), bỏ PYED/PYEK khi tính dư IPCAS Đến.
+
+Ghi chú review (phát hiện khi chuẩn bị PR, ĐÃ SỬA — không phải thay đổi quy
+tắc nghiệp vụ đã duyệt): bản gốc có 1 nhánh "phân biệt theo nh_nhan khi
+msgref trùng" (map phụ `ipcas_di_map2`) nhưng chưa từng chạy được — map phụ
+được dựng từ CÙNG vòng lặp, CÙNG thứ tự với map chính nên luôn suy ra lại
+đúng map chính (dict đầu tiên theo msgref thắng ở cả 2 map); hơn nữa dữ liệu
+CITAD parse ra (`parsers.py`) không có field `nh_nhan` nên không có gì để so
+khớp. Đã bỏ hẳn map phụ chết này thay vì giữ code không chạy — hành vi khớp
+lệnh KHÔNG đổi (map phụ chưa bao giờ ảnh hưởng tới kết quả).
 """
 from __future__ import annotations
 
@@ -15,18 +24,11 @@ VALID_DI = {'SCNL'}  # Đi: chỉ SCNL là thành công
 
 
 def run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows):
-    """Đối soát trong RAM bằng dict Python
-
-    Sửa 1: Trùng số GD — khi msgref bị trùng, dùng (msgref, nh_nhan) để phân biệt.
-            Key vẫn ưu tiên msgref đơn (tương thích cũ), chỉ dùng nh_nhan khi cần.
-    Sửa 2: Lệch trạng thái — lệnh Đi có ở cả CITAD + IPCAS nhưng IPCAS != SCNL
-            → status 'lech_trang_thai' thay vì tính là khớp.
-    """
-    # Build map IPCAS Đi
-    # - ipcas_di_map : msgref -> row  (key chính, giữ nguyên như cũ)
-    # - ipcas_di_map2: (msgref, nh_nhan) -> row  (dùng khi trùng msgref)
+    """Đối soát trong RAM bằng dict Python — xem docstring module để biết
+    quy tắc khớp lệnh và ghi chú về nhánh dead-code đã bỏ khi chuẩn bị PR."""
+    # Build map IPCAS Đi/Đến — msgref/txid -> row (bản ghi đầu tiên thắng
+    # nếu trùng, trừ Đến ưu tiên theo PRIORITY_TT bên dưới)
     ipcas_di_map = {}
-    ipcas_di_map2 = {}   # (msgref, nh_nhan) -> row
     ipcas_den_map = {}
     for r in ipcas_rows:
         if r['chieu'] == 'di':
@@ -35,9 +37,6 @@ def run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows):
                 continue
             if k not in ipcas_di_map:
                 ipcas_di_map[k] = r
-            k2 = (k, r.get('nh_nhan', ''))
-            if k2 not in ipcas_di_map2:
-                ipcas_di_map2[k2] = r
         else:
             k = r['txid']
             if not k:
@@ -62,12 +61,6 @@ def run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows):
             if k not in hub_den_map:
                 hub_den_map[k] = r
 
-    # Index phu: msgref -> row dau tien trong map2 (de fallback O(1))
-    _ipcas_di_map2_ref = {}
-    for (mg, nh), r in ipcas_di_map2.items():
-        if mg not in _ipcas_di_map2_ref:
-            _ipcas_di_map2_ref[mg] = r
-
     n_khop = 0
     lech = []
     citad_matched_di = set()
@@ -91,11 +84,8 @@ def run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows):
                 lech.append({**r, 'status': 'only_citad', 'key_agri': '', 'nh_nhan': '', 'trang_thai': ''})
 
         elif chieu == 'di':
-            # VND Đi: tìm theo msgref, nếu trùng thì phân biệt thêm nh_nhan
+            # VND Đi: tìm theo msgref
             m = ipcas_di_map.get(sogd)
-            if not m:
-                # Fallback: tim trong map2 theo msgref (O(1) qua dict phu)
-                m = _ipcas_di_map2_ref.get(sogd)
             if m:
                 citad_matched_di.add(sogd)
                 tt = m.get('trang_thai', '')

@@ -1,9 +1,12 @@
 """Business logic Đối chiếu CITAD ↔ PaymentHub.
 
-- Buffer CITAD/PaymentHub: port NGUYÊN từ `citad-fixed/server.py`
-  (`_citad_buffer`, `_ph_buffer` — dict in-memory, chỉ là nơi tạm giữ dữ
-  liệu Extension vừa gửi lên cho tới khi người dùng bấm "Nạp", không cần
-  bền vững qua restart, giống hệt hành vi bản gốc).
+- Buffer CITAD/PaymentHub: dict in-memory tạm giữ dữ liệu Extension vừa gửi
+  lên cho tới khi người dùng bấm "Nạp" — KHÔNG cần bền vững qua restart,
+  giống bản gốc. Khác bản gốc ở 1 điểm bắt buộc: bản gốc chạy 1 server cục
+  bộ trên máy từng người nên buffer vốn chỉ có 1 chủ; nay dùng chung 1
+  backend cho cả Phòng Thanh toán nên buffer phải tách theo `owner`
+  (username TTTT gửi kèm từ Extension) — nếu không, 2 người cùng đối chiếu
+  một lúc sẽ ghi đè/xoá dữ liệu của nhau (đã phát hiện khi review).
 - `_build_xlsx()`: port NGUYÊN 1:1 từ `citad-fixed/server.py::_build_xlsx`
   — đây là mẫu báo cáo "BÁO CÁO ĐỐI CHIẾU GIAO DỊCH HỆ THỐNG THANH TOÁN
   ĐIỆN TỬ LIÊN NGÂN HÀNG" đã duyệt, KHÔNG được đổi bất kỳ dòng
@@ -34,34 +37,37 @@ def _format_vn_date(day_str: str) -> str:
     except Exception:
         return day_str
 
-# ── CITAD / PaymentHub buffer (in-memory, KHÔNG đổi so với bản gốc) ────────
-_citad_buffer: dict = {}
-_ph_buffer: dict = {}
+# ── CITAD / PaymentHub buffer (in-memory) — tách theo owner (username) ────
+# {owner: {key: data}} — mỗi người dùng chỉ thấy/xoá buffer của chính mình.
+_citad_buffer: dict[str, dict] = {}
+_ph_buffer: dict[str, dict] = {}
 
 
 def buffer_save_citad(data: dict) -> None:
-    _citad_buffer[data["key"]] = data
+    owner = data["owner"]
+    _citad_buffer.setdefault(owner, {})[data["key"]] = data
 
 
-def buffer_get_citad() -> list:
-    return list(_citad_buffer.values())
+def buffer_get_citad(owner: str) -> list:
+    return list(_citad_buffer.get(owner, {}).values())
 
 
-def buffer_clear_citad() -> None:
-    _citad_buffer.clear()
+def buffer_clear_citad(owner: str) -> None:
+    _citad_buffer.pop(owner, None)
 
 
-def buffer_save_ph(items: list) -> None:
+def buffer_save_ph(owner: str, items: list) -> None:
+    bucket = _ph_buffer.setdefault(owner, {})
     for item in items:
-        _ph_buffer[item["key"]] = item
+        bucket[item["key"]] = item
 
 
-def buffer_get_ph() -> list:
-    return list(_ph_buffer.values())
+def buffer_get_ph(owner: str) -> list:
+    return list(_ph_buffer.get(owner, {}).values())
 
 
-def buffer_clear_ph() -> None:
-    _ph_buffer.clear()
+def buffer_clear_ph(owner: str) -> None:
+    _ph_buffer.pop(owner, None)
 
 
 # ── Session theo ngày + staff_id ────────────────────────────────────────────
@@ -133,6 +139,15 @@ def build_xlsx(data: ExportIn) -> bytes:
             src = (data.gD.get(str(c), {}) or {}).get(u, {}) or {}
             for i, f in enumerate(FK):
                 ci[i] += nv(src.get(f, 0))
+    # Chỉ cộng Napas (nm/nt) vào tổng CITAD — KHÔNG cộng Ebanking (em/et).
+    # Đã đối chiếu với DoiChieuCITAD.py::_calc() của tool desktop gốc: gốc
+    # CŨNG chỉ cộng napas.den_ih_m/t vào ci['den_ih_m'/'t'], không có dòng
+    # tương ứng cho ebank — đây là hành vi gốc, KHÔNG phải sai sót khi port.
+    # Ebanking vẫn được in đúng vị trí cột trong Excel (dòng 'Ebanking' dùng
+    # data.em/et riêng) nhưng không tính vào dòng Chênh lệch. Nếu Phòng
+    # Thanh toán xác nhận đây là bug nghiệp vụ của bản gốc (không phải chủ
+    # ý), cần sửa ở đây (ci[4] += nv(data.em); ci[5] += nv(data.et)) — không
+    # tự ý đổi vì ảnh hưởng trực tiếp số liệu báo cáo gửi NHNN.
     ci[4] += nv(data.nm)
     ci[5] += nv(data.nt)
     ph = [0] * 8

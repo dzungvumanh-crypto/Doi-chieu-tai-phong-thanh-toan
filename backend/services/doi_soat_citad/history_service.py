@@ -11,8 +11,9 @@ DB/lịch sử — mỗi lần đối soát chỉ hiện kết quả trên màn 
 này để khớp chuẩn trải nghiệm với các module đối chiếu khác (xem
 `backend/services/swift_recon/history_service.py` — cùng khuôn mẫu).
 
-Raw SQL / sqlite3 thuần, không dùng ORM (CONTRIBUTING.md, mục 7).
-Bảng được tạo trong backend/db/migrations.py — xem SNIPPETS_TO_PASTE.md.
+Raw SQL / sqlite3 thuần, không dùng ORM (theo quy ước chung của dự án —
+CONTRIBUTING.md, mục "Tuyệt đối Không được Làm").
+Bảng đã tạo sẵn trong backend/db/migrations.py (cùng PR này).
 """
 from __future__ import annotations
 

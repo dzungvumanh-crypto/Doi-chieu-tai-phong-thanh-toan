@@ -373,12 +373,8 @@ def _parse_ipcas_text(text, filename, ngay_cham):
                     if ngay_gd and ngay_gd != ngay_cham:
                         continue
         else:
-            # Lọc trạng thái Đến: chỉ bỏ lệnh thực sự từ chối/trả lại
-            # SBSC=từ chối, RFED=trả lại Fed, SBFL=từ chối giao dịch
-            # WFPG/PYED/PYEK/SDEB/RTSC/CGBR = hợp lệ, giữ lại
-            # Giu tat ca trang thai Den - CITAD ghi nhan het ke ca SBSC/SBFL/RFED
-            if False:  # khong loc bo trang thai nao
-                continue
+            # Chiều Đến: KHÔNG lọc bỏ theo trạng thái nào cả — CITAD ghi
+            # nhận hết kể cả SBSC/SBFL/RFED, chỉ lọc theo ngày.
             if ngay_cham and ngay_gd and ngay_gd != ngay_cham:
                 continue
 
@@ -437,7 +433,7 @@ def parse_ipcas_files(filepaths, ngay_cham, progress_cb=None):
                                     text = raw.decode(enc)
                                     break
                                 except Exception:
-                                    text = raw.decode('latin-1', errors='replace')
+                                    continue  # 'latin-1' ở cuối luôn thành công (không raise)
                             rows = _parse_ipcas_text(text, name, ngay_cham)
                             all_rows += rows
             except Exception as e:
@@ -452,7 +448,7 @@ def parse_ipcas_files(filepaths, ngay_cham, progress_cb=None):
                         text = raw.decode(enc)
                         break
                     except Exception:
-                        text = raw.decode('latin-1', errors='replace')
+                        continue  # 'latin-1' ở cuối luôn thành công (không raise)
                 rows = _parse_ipcas_text(text, fname, ngay_cham)
                 all_rows += rows
             except Exception as e:
@@ -490,6 +486,11 @@ def _parse_hub_xls(filepath, ext, fname, ngay_cham):
         sheets = [(name, _OpenpyxlWs(wb[name])) for name in wb.sheetnames]
         wb.close()
     else:
+        if not _HAS_XLRD:
+            raise RuntimeError(
+                f"Không đọc được file .xls '{fname}': thiếu thư viện xlrd "
+                "(chỉ hỗ trợ .xlsx nếu không có xlrd)."
+            )
         wb = xlrd.open_workbook(filepath)
         sheets = [(wb.sheet_by_index(i).name, _XlrdWs(wb.sheet_by_index(i)))
                   for i in range(wb.nsheets)]
