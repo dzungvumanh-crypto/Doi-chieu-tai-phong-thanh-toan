@@ -7,7 +7,7 @@ from nicegui import ui
 import frontend.api_client as api
 from frontend.shared import (
     _sidebar, _content_area, _page_header, _require_auth,
-    _redirect_if_cv, _handle_api_error,
+    _handle_api_error,
 )
 
 _DEADLINE_NOTE = (
@@ -125,8 +125,6 @@ def _late_detail(late_entries: list):
 @ui.page("/handover_reports")
 def handover_reports_page():
     if not _require_auth():
-        return
-    if _redirect_if_cv():
         return
     if not api.has_feature("menu.handover_reports"):
         ui.navigate.to("/home")

@@ -3,7 +3,8 @@ import asyncio
 from nicegui import ui, app
 import frontend.api_client as api
 import frontend.ui_kit as ui_kit
-from frontend.shared import _sidebar, _content_area, _page_header, _require_auth, _handle_api_error
+from frontend.shared import (_sidebar, _content_area, _page_header, _require_auth,
+                             _handle_api_error, _query_params, _qp_int)
 
 # Nhãn + màu trạng thái lấy từ ui_kit.STATUS — trước đây là 3 map song song ở đây.
 # Dựng lại đúng định dạng CSS mà lưới đang cần.
@@ -30,7 +31,7 @@ async def handovers_page():
         ui.navigate.to("/home")
         return
 
-    badge_refs = _sidebar("handovers")
+    _sidebar("handovers")
 
     # ── Right drawer panel ────────────────────────────────────────────────────
     with ui.right_drawer(value=False).props("width=360 overlay").classes(
@@ -45,21 +46,14 @@ async def handovers_page():
         today = _date.today()
 
         # ── Filter controls ───────────────────────────────────────────────────
+        # Badge sidebar do khối "Công việc chờ xử lý" trong shared.py tự nạp —
+        # trang này không còn phải gọi /pending-counts nữa.
         try:
-            _all_depts_raw, _pending = await asyncio.gather(
-                asyncio.to_thread(api.get, "/api/departments/"),
-                asyncio.to_thread(api.get, "/api/dashboard/pending-counts"),
-                return_exceptions=True,
-            )
+            _all_depts_raw = await asyncio.to_thread(api.get, "/api/departments/")
         except Exception:
-            _all_depts_raw, _pending = [], {}
+            _all_depts_raw = []
         if not isinstance(_all_depts_raw, list):
             _all_depts_raw = []
-        if isinstance(_pending, dict):
-            _hcnt = _pending.get("handovers", 0)
-            if "handovers" in badge_refs and _hcnt > 0:
-                badge_refs["handovers"].set_text(str(_hcnt))
-                badge_refs["handovers"].set_visibility(True)
         all_depts = [d for d in _all_depts_raw if d.get("is_source")]
 
         dept_opts  = {d["id"]: d["name"] for d in all_depts}
@@ -170,6 +164,10 @@ async def handovers_page():
             ui.spinner(size="3em", color="red")
             ui.label("Đang tải dữ liệu...").classes("text-gray-500 ml-3 text-sm")
         grid_container = ui.column().classes("w-full")
+
+        # Ô chứng từ cần nhảy tới, đến từ ?entry=. Dùng list làm ô nhớ vì load_grid()
+        # được định nghĩa trước chỗ đọc query param, và phải xoá được sau khi dùng.
+        focus_entry: list = [None]
 
         def _save_filter_state():
             app.storage.tab["hv_dept"]  = sel_dept.value
@@ -527,6 +525,26 @@ async def handovers_page():
                     }}
                 """)
 
+                # ── Nhảy tới ô được chỉ đích danh (?entry= từ màn hình theo dõi) ──
+                # Chạy sau khi lưới đã vào DOM. Chỉ dùng một lần: xoá cờ ngay để lần
+                # đổi phòng/tháng kế tiếp không kéo màn hình về ô cũ.
+                if focus_entry[0]:
+                    _eid = focus_entry[0]
+                    focus_entry[0] = None
+                    ui.run_javascript(f"""
+                        (function() {{
+                            var el = document.querySelector('.hv-inp[data-eid="{_eid}"]');
+                            if (!el) return;
+                            el.scrollIntoView({{behavior:'smooth', block:'center', inline:'center'}});
+                            el.focus(); el.select();
+                            var cell = el.parentElement;
+                            var keep = cell.style.boxShadow;
+                            cell.style.transition = 'box-shadow .3s';
+                            cell.style.boxShadow = '0 0 0 3px #dc2626';
+                            setTimeout(function() {{ cell.style.boxShadow = keep; }}, 2600);
+                        }})();
+                    """)
+
         # app.storage.tab chỉ khả dụng sau khi WebSocket kết nối
         try:
             await ui.context.client.connected()
@@ -537,8 +555,21 @@ async def handovers_page():
         init_dept  = saved.get("hv_dept",  default_dept)
         init_year  = saved.get("hv_year",  default_year)
         init_month = saved.get("hv_month", default_month)
+
+        # Deep-link từ màn hình theo dõi: ?dept=&year=&month=&entry=
+        # Ưu tiên hơn bộ lọc đã lưu — người dùng vừa chỉ đích danh chứng từ cần xem.
+        _qp = _query_params()
+        init_dept  = _qp_int(_qp, "dept")  or init_dept
+        init_year  = _qp_int(_qp, "year")  or init_year
+        init_month = _qp_int(_qp, "month") or init_month
+        focus_entry[0] = _qp_int(_qp, "entry")
+
         if init_dept not in dept_opts:
             init_dept = default_dept
+        if init_year not in year_opts:
+            init_year = default_year
+        if init_month not in month_opts:
+            init_month = default_month
 
         if not is_cv:
             sel_dept.value  = init_dept

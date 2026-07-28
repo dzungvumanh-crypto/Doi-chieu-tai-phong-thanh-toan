@@ -4,10 +4,21 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
-- 28/07/2026 ⚠️ LƯU Ý KHI DEPLOY ĐỢT NÀY:
-    + **Người dùng sẽ bị đăng xuất một lần** sau khi khởi động lại. Không tránh được — khoá ký phiên đăng nhập trước đây nằm cứng trong mã nguồn, nay chuyển ra file cấu hình. Nên deploy ngoài giờ cao điểm
-    + `start.bat` **tự sinh khoá mới** nếu file `.env` chưa có — không phải làm gì thủ công trên máy chính lẫn máy test
-    + Thư viện giao diện được nâng cấp nên lần chạy đầu `start.bat` sẽ mất thêm ít phút để cài lại
+- 28/07/2026 Sidebar - Việc chờ xử lý hiện ở mọi trang:
+    + Số việc đang chờ trước đây chỉ hiện ở **3 trong 21 trang**. Đứng ở trang Lưu trữ thì không hề biết mình có 12 chứng từ chờ xác nhận. Nay khối **Công việc chờ xử lý** nằm đầu sidebar, theo người dùng đi khắp hệ thống, tự ẩn khi không còn việc
+    + Bấm vào mở **màn hình theo dõi riêng**: chứng từ của ai, phòng nào, ai nộp, ngày nào — và bấm tiếp là nhảy thẳng tới đúng ô cần xử lý, không phải tự tìm lại
+    + Khối "Công việc đang chờ" trên Trang chủ đã gỡ. Cùng một thông tin không nên có hai chỗ hiển thị, nhất là khi một chỗ bắt phải quay về Trang chủ mới thấy
+    + Số trên sidebar cập nhật khi chuyển trang, **không tự làm mới tại chỗ**. Duyệt xong một đơn thì số đúng ngay ở trang kế tiếp
+
+- 28/07/2026 Phân quyền - Chuyên viên vào được Trang chủ:
+    + Chuyên viên bấm "Trang chủ" trước đây bị bật ngược về Bàn giao chứng từ — mục menu nhìn thấy nhưng không bao giờ vào được. Nay **mọi vai trò đều đăng nhập vào Trang chủ** và ra vào bình thường
+    + Ô "Người dùng" trên Trang chủ đổi nhãn thành **"Nhân sự phòng"** với chuyên viên / trưởng phòng / phó phòng, vì con số họ nhận được vốn chỉ tính phòng mình — nhãn cũ dễ bị đọc nhầm thành toàn trung tâm
+    + ⚠️ **Phân quyền nhóm nay có tác dụng thật với chuyên viên.** Trước đây admin cấp quyền Báo cáo / Lưu trữ / Nhân sự / Đóng tập cho một chuyên viên thì màn hình phân quyền báo đã cấp, menu cũng hiện ra, nhưng bấm vào bị đá ra mà không báo gì — do còn một lớp chặn cứng theo chức danh nằm đè lên. Đã gỡ lớp đó. **Chuyên viên không tự nhiên có thêm quyền gì**; chỉ khác là quyền đã cấp thì dùng được
+
+- 28/07/2026
+    + Khoá ký phiên đăng nhập trước đây nằm cứng trong mã nguồn
+    + `start.bat` **tự sinh khoá mới** nếu file `.env` chưa có
+    + Thư viện giao diện được nâng cấp
 
 - 28/07/2026 Bảo mật - Vá thư viện xử lý file tải lên:
     + Thư viện đọc file tải lên đang dùng có **16 lỗ hổng đã biết**, trong đó 4 lỗi nghiêm trọng (1 lỗi cho phép ghi file tuỳ ý, 3 lỗi làm treo máy chủ). Đã nâng lên bản vá sạch hoàn toàn
@@ -30,7 +41,7 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
     + **Phông chữ Inter nay dùng cho cả 21 trang**. Trước đây chỉ trang Đăng nhập và Đổi mật khẩu có, 19 trang còn lại rơi về phông mặc định — đăng nhập một kiểu chữ, vào việc lại một kiểu khác
     + Thống nhất nhãn trạng thái chứng từ: "Bị từ chối" ở màn Bàn giao và "Từ chối" ở màn Nghỉ phép nay dùng chung một chữ **"Từ chối"**
 
-- 28/07/2026 Kỹ thuật - Dọn nền (không thấy được nhưng cần biết):
+- 28/07/2026 Kỹ thuật - Dọn nền
     + Nâng thư viện giao diện lên bản mới (vượt qua một mốc thay đổi lớn). Đã đối chiếu từng dòng CSS của hai bản để chắc chắn **không có gì đổi hình dạng** — 70 khung thẻ trong hệ thống giữ nguyên
     + Sửa bẫy trong hệ thống nâng cấp cơ sở dữ liệu: có 18 câu lệnh trỏ sai tên bảng và **thất bại im lặng** mỗi lần khởi động. Chưa gây hại, nhưng người viết tính năng tiếp theo mà chép nhầm mẫu này thì cột dữ liệu sẽ không được thêm mà không ai biết
     + Cảnh báo khi khởi động nếu máy chủ đang mở ra mạng nội bộ mà chưa cấu hình đúng — gồm cả việc **trang liệt kê toàn bộ 144 cửa giao tiếp đang mở công khai** cho ai vào được cổng 8000

@@ -12,13 +12,10 @@ from frontend.shared import _sidebar, _content_area, _page_header, _require_auth
 async def dashboard_page():
     if not _require_auth():
         return
-    # Chỉ redirect CV sang handovers nếu họ có quyền — tránh vòng lặp vô tận
-    # khi CV thuộc phòng TH (handovers chặn TH → redirect về home → lại redirect sang handovers)
-    _u = api.get_current_user()
-    if _u and _u.get("role") == "chuyen_vien" and api.has_feature("menu.handovers"):
-        ui.navigate.to("/handovers")
-        return
-    badge_refs = _sidebar("home")
+    # Không redirect chuyên viên sang /handovers nữa: mục "Trang chủ" luôn có trên
+    # sidebar nên redirect làm nó thành mục bấm không bao giờ vào được. Việc đưa CV
+    # đáp thẳng xuống Bàn giao chứng từ vẫn giữ, nhưng nằm ở trang login.
+    _sidebar("home")
     with _content_area():
         _page_header("Trang chủ", "Hệ thống Trung tâm Thanh toán")
 
@@ -35,11 +32,11 @@ async def dashboard_page():
 
         _today = _date.today()
         try:
+            # Bỏ /pending-counts: sidebar tự nạp số, Trang chủ không còn khối nào dùng
             results = await asyncio.gather(
                 asyncio.to_thread(api.get, "/api/staff/"),
                 asyncio.to_thread(api.get, "/api/departments/"),
                 asyncio.to_thread(api.get, "/api/dashboard/summary"),
-                asyncio.to_thread(api.get, "/api/dashboard/pending-counts"),
                 asyncio.to_thread(api.get, "/api/leaves/today"),
                 return_exceptions=True,
             )
@@ -48,9 +45,9 @@ async def dashboard_page():
                 ui.notify(str(e), type="warning")
                 ui.navigate.to("/login")
                 return
-            results = [[], [], {}, {}, {}]
+            results = [[], [], {}, {}]
 
-        staff_list, depts, summary, pending, today_leaves = results
+        staff_list, depts, summary, today_leaves = results
         for r in results:
             if isinstance(r, api.SessionExpiredError):
                 ui.notify(str(r), type="warning")
@@ -59,23 +56,23 @@ async def dashboard_page():
         staff_list = staff_list if isinstance(staff_list, list) else []
         depts      = depts      if isinstance(depts, list)      else []
         summary    = summary    if isinstance(summary, dict)    else {}
-        pending    = pending    if isinstance(pending, dict)    else {}
         today_leaves   = today_leaves if isinstance(today_leaves, dict) else {}
         leave_total    = today_leaves.get("total", 0)
         leave_by_dept  = today_leaves.get("by_dept", [])
 
         loading_row.set_visibility(False)
 
-        for _bkey in ("leaves", "handovers"):
-            _cnt = pending.get(_bkey, 0)
-            if _bkey in badge_refs and isinstance(_cnt, int) and _cnt > 0:
-                badge_refs[_bkey].set_text(str(_cnt))
-                badge_refs[_bkey].set_visibility(True)
+        # Badge sidebar do khối "Công việc chờ xử lý" trong shared.py tự nạp.
 
-        # Số người dùng không tính quản trị viên (admin)
+        # Số người dùng không tính quản trị viên (admin).
+        # /api/staff/ chỉ trả nhân sự phòng mình cho CV/TP/PP — nhãn phải nói đúng
+        # phạm vi của con số, nếu không CV sẽ đọc "Người dùng: 8" là toàn trung tâm.
+        _role = (api.get_current_user() or {}).get("role", "")
+        _users_label = "Người dùng" if _role not in ("chuyen_vien", "truong_phong", "pho_phong") \
+                       else "Nhân sự phòng"
         n_users = len([s for s in staff_list if s.get("role") != "admin"])
         stats = [
-            ("Người dùng",      n_users,                                           "people",   "bg-red-50 border-red-200"),
+            (_users_label,      n_users,                                           "people",   "bg-red-50 border-red-200"),
             ("Phòng nghiệp vụ", len([d for d in depts if d.get("code") != "BGD"]), "business", "bg-blue-50 border-blue-200"),
         ]
 
@@ -89,38 +86,9 @@ async def dashboard_page():
                                 ui.label(str(val)).classes("text-3xl font-bold text-gray-800")
                                 ui.label(lbl).classes("text-sm text-gray-500")
 
-            pend_leaves       = pending.get("leaves",          0)
-            pend_handovers    = pending.get("handovers",       0)
-            by_dept_handovers = pending.get("handovers_by_dept", [])
-            if pend_leaves or pend_handovers:
-                with ui.card().classes("w-full p-4 rounded-xl shadow-sm bg-white border border-yellow-100"):
-                    ui.label("Công việc đang chờ").classes("font-semibold text-red-900 mb-3")
-                    if pend_handovers:
-                        with ui.row().classes(
-                            "w-full items-center gap-3 p-3 bg-orange-50 rounded-lg border border-orange-200 "
-                            "cursor-pointer hover:bg-orange-100 mb-2"
-                        ).on("click", lambda: ui.navigate.to("/handovers")):
-                            ui.icon("receipt_long").classes("text-2xl text-orange-600")
-                            with ui.column().classes("flex-1 gap-1"):
-                                ui.label(f"{pend_handovers} chứng từ chờ xác nhận").classes("text-sm font-semibold text-orange-800")
-                                if by_dept_handovers:
-                                    for dept_item in by_dept_handovers:
-                                        ui.label(
-                                            f"• {dept_item['count']:02d} chứng từ — {dept_item['dept_name']}"
-                                        ).classes("text-xs text-orange-700")
-                                else:
-                                    ui.label("Nhấn để đến Bàn giao chứng từ").classes("text-xs text-orange-500")
-                            ui.icon("chevron_right").classes("text-orange-400")
-                    if pend_leaves:
-                        with ui.row().classes(
-                            "w-full items-center gap-3 p-3 bg-blue-50 rounded-lg border border-blue-200 "
-                            "cursor-pointer hover:bg-blue-100"
-                        ).on("click", lambda: ui.navigate.to("/leaves")):
-                            ui.icon("event_busy").classes("text-2xl text-blue-600")
-                            with ui.column().classes("flex-1 gap-0"):
-                                ui.label(f"{pend_leaves} đơn nghỉ phép chờ duyệt").classes("text-sm font-semibold text-blue-800")
-                                ui.label("Nhấn để đến Nghỉ phép").classes("text-xs text-blue-500")
-                            ui.icon("chevron_right").classes("text-blue-400")
+            # Khối "Công việc đang chờ" đã chuyển hẳn về sidebar + trang /pending/<loại>.
+            # Để lại đây sẽ là nơi thứ hai hiển thị cùng một thông tin, và là nơi duy nhất
+            # người dùng phải quay về Trang chủ mới thấy được.
 
             # ── Nghỉ phép hôm nay ─────────────────────────────────────────────
             with ui.card().classes("w-full p-4 rounded-xl shadow-sm bg-white border-2 border-red-400"):

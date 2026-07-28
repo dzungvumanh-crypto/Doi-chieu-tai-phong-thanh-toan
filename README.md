@@ -127,6 +127,7 @@ Truy cập:
 │   └── pages/
 │       ├── login.py         # Đăng nhập
 │       ├── dashboard.py     # Tổng quan
+│       ├── pending_work.py  # Màn hình theo dõi việc chờ xử lý (/pending/<loại>)
 │       ├── staff.py         # Quản lý cán bộ
 │       ├── groups.py        # Quản lý nhóm
 │       ├── group_features.py # Phân quyền theo nhóm
@@ -165,7 +166,8 @@ Truy cập:
 ### Module Nhân sự & Tài khoản
 - Quản lý cán bộ theo phòng ban, vai trò (8 vai trò — xem bảng RBAC)
 - Quản lý nhóm cán bộ và phân quyền tính năng theo nhóm
-- Dashboard tổng quan: KPI người dùng & phòng nghiệp vụ, biểu đồ cột tỷ lệ nộp chứng từ đúng hạn/muộn theo 4 phòng (chọn tháng/năm để xem), công việc đang chờ (bàn giao, nghỉ phép)
+- Dashboard tổng quan: KPI người dùng & phòng nghiệp vụ, bảng nghỉ phép hôm nay theo phòng, biểu đồ cột tỷ lệ nộp chứng từ đúng hạn/muộn theo 4 phòng (chọn tháng/năm để xem). **Mọi vai trò đều vào Trang chủ sau khi đăng nhập**
+- **Công việc chờ xử lý**: khối ở đầu sidebar, hiện trên mọi trang — số chứng từ chờ xác nhận và đơn nghỉ phép chờ duyệt của **chính người đang đăng nhập**; bấm vào mở màn hình theo dõi `/pending/<loại>` có đủ chi tiết và link nhảy thẳng tới ô cần xử lý
 - **Nhật ký thao tác** (audit log): middleware ghi tập trung mọi request thay đổi dữ liệu (POST/PUT/PATCH/DELETE) vào bảng `audit_logs` — ai, làm gì, kết quả HTTP, IP, thời gian; lọc theo phương thức, tìm kiếm, phân trang; tự dọn sau 365 ngày
 - Nhật ký đăng nhập và nhật ký lỗi/cảnh báo hệ thống (admin xem, lọc theo user/thời gian)
 
@@ -243,6 +245,10 @@ Truy cập:
 
 ### Menu sidebar
 Menu nhóm theo phòng ban, hover để mở flyout bên phải. Một phòng **chỉ hiện khi user có ít nhất 1 chức năng** của phòng đó (`menu.<key>`) — phòng chưa có chức năng hoặc user không được cấp quyền nào thì ẩn hoàn toàn, không hiện tên phòng rỗng. Riêng `chuyen_vien` dùng menu phẳng (Bàn giao chứng từ, Nghỉ phép).
+
+Trên cùng là khối **Công việc chờ xử lý**, tự ẩn khi không có việc nào. Dưới nó là **Trang chủ** — hiện với mọi vai trò và mọi vai trò đều vào được.
+
+> **Phân quyền màn hình đi theo nhóm quyền, không theo vai trò.** Các trang Báo cáo, Lưu trữ, Báo cáo bàn giao, Nhân sự, Đóng tập chỉ kiểm `menu.<key>` — giống hệt luật mà backend (`require_feature`) và sidebar đang dùng. Trước đây các trang này còn một lớp chặn cứng theo vai trò chạy **trước** lớp nhóm quyền, khiến quyền admin cấp cho `chuyen_vien` qua nhóm không có tác dụng mà không báo gì. Lớp đó đã gỡ; chỉ `/user-management` còn giữ vì là trang duy nhất không gắn mã feature nào.
 
 **Thu gọn / mở rộng**: chỉ bằng nút ở góc trên cùng bên trái. Click vào mục menu chỉ điều hướng, không đổi trạng thái sidebar. Icon nút phản ánh trạng thái hiện tại (`menu_open` khi đang mở, `menu` khi đang thu gọn). Lựa chọn được lưu trong `localStorage` và giữ nguyên khi chuyển trang.
 

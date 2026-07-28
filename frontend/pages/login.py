@@ -107,10 +107,9 @@ async def login_page(request: _StarletteRequest):
                     })
                     await asyncio.to_thread(api.load_my_features)
                     app.storage.tab["session_alive"] = True
+                    # Mọi vai trò đều đáp xuống Trang chủ — một điểm vào duy nhất.
                     if result.get("must_change_password"):
                         ui.navigate.to("/change-password")
-                    elif result["role"] == "chuyen_vien" and api.has_feature("menu.handovers"):
-                        ui.navigate.to("/handovers")
                     else:
                         ui.navigate.to("/home")
                 except Exception as e:

@@ -38,11 +38,7 @@ async def change_password_page():
                         "new_password": f_new.value,
                     })
                     ui.notify("Đổi mật khẩu thành công!", type="positive")
-                    user = api.get_current_user()
-                    if user and user.get("role") == "chuyen_vien":
-                        ui.navigate.to("/handovers")
-                    else:
-                        ui.navigate.to("/home")
+                    ui.navigate.to("/home")
                 except Exception as e:
                     if _handle_api_error(e):
                         return

@@ -3,7 +3,7 @@ import asyncio
 import html as _html
 from nicegui import ui, app
 import frontend.api_client as api
-from frontend.shared import _sidebar, _content_area, _page_header, _require_auth, _redirect_if_cv, _handle_api_error
+from frontend.shared import _sidebar, _content_area, _page_header, _require_auth, _handle_api_error
 
 
 def _dept_display(name: str) -> str:
@@ -55,8 +55,6 @@ def _build_summary_html(data: dict) -> str:
 @ui.page("/storage")
 async def storage_page():
     if not _require_auth():
-        return
-    if _redirect_if_cv():
         return
     if not api.has_feature("menu.storage"):
         ui.navigate.to("/home")

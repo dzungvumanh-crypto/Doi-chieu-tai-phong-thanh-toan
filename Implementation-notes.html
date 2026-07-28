@@ -1988,7 +1988,123 @@ ui.on_exception(_on_exception)</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-07-27</footer>
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">46</span>
+      <span class="card-title">Sidebar — khối "Công việc chờ xử lý" thay cho badge rải rác</span>
+      <span class="badge badge-done">Đã fix</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Vấn đề gốc — badge chỉ sống ở 3/19 trang</div>
+      <p><code>_sidebar()</code> trả về <code>badge_refs</code> để mỗi trang <strong>tự</strong> gọi <code>/pending-counts</code> rồi đổ số vào. Grep ra đúng ba trang làm việc đó: <code>dashboard.py</code>, <code>handovers.py</code>, <code>leaves.py</code>. Mười sáu trang còn lại dựng badge rồi để trống vĩnh viễn — người dùng đứng ở trang Lưu trữ không hề biết mình có 12 chứng từ chờ.</p>
+      <p>Đây là loại hợp đồng mà người thêm trang mới không có cách nào biết là mình phải thực hiện. Chuyển trách nhiệm nạp số vào <strong>chính <code>shared.py</code></strong> để trang mới tự có, không phải nhớ gì.</p>
+
+      <div class="label">Quyết định — nạp bằng <code>ui.timer</code>, không gọi API trong <code>_sidebar()</code></div>
+      <table>
+        <tr><th>Phương án</th><th>Giá phải trả</th><th></th></tr>
+        <tr><td>Gọi API đồng bộ ngay trong <code>_sidebar()</code></td><td>Chặn render cả 19 trang thêm một lượt gọi mạng</td><td><span class="pill pill-gray">Bỏ</span></td></tr>
+        <tr><td>Sửa cả 19 trang tự nạp</td><td>19 chỗ phải nhớ; trang thứ 20 sẽ quên</td><td><span class="pill pill-gray">Bỏ</span></td></tr>
+        <tr><td><code>ui.timer(0.1, once=True)</code> trong <code>_sidebar()</code></td><td>Khối hiện trễ ~105ms sau khi trang vẽ xong</td><td><span class="pill">Chọn</span></td></tr>
+      </table>
+      <p>Chấp nhận nhấp nháy vì khối nằm ở sidebar, không phải nội dung chính — và <code>_sidebar()</code> là hàm <strong>đồng bộ</strong>, không có chỗ nào <code>await</code> được mà không đổi chữ ký của cả 19 trang.</p>
+      <p><strong>Thời gian load trang không đổi.</strong> Trang dựng xong và trả về trước khi có lời gọi API nào; timer chỉ chạy sau khi WebSocket đã nối. Đo trên DB thật: <code>/pending-counts</code> trung vị <strong>4,3ms</strong> (p95 7,7ms) — ngang <code>/departments/</code> mà mọi trang đang gọi sẵn. <code>asyncio.to_thread</code> giữ lời gọi ở luồng riêng nên event loop không bị chẹn.</p>
+      <p>Cân đối theo trang: 16 trang trước đây không có badge nay thêm 1 lời gọi nằm ngoài đường tới hạn; <code>handovers.py</code> <strong>bớt</strong> 1 lời gọi (không còn tự đổ badge); Trang chủ không đổi vì vẫn cần <code>/pending-counts</code> cho thẻ "Công việc đang chờ".</p>
+      <p>Khối dựng sẵn ở trạng thái <code>visible=False</code> rồi mới bật, thay vì dựng phần tử sau khi có dữ liệu: giữ được mọi thao tác DOM trong lúc build, không phải giữ tham chiếu tới slot cha để chèn ngược về sau.</p>
+
+      <div class="label">Nguồn sự thật cho phân quyền — <code>_leave_filter()</code> / <code>_handover_filter()</code></div>
+      <p><code>/pending-counts</code> có 7 nhánh vai trò (PP/TP Tổng hợp hai vai, TP/PP thường, TH đơn thuần, GĐ, PGĐ có uỷ quyền còn hiệu lực…). Endpoint mới <code>/pending-items</code> phải lọc <strong>y hệt</strong>, nếu không số trên sidebar và danh sách trong hộp thoại sẽ lệch nhau — và lệch một cách âm thầm.</p>
+      <p>Nên tách thành hàm trả <code>(mệnh đề WHERE, tham số)</code> dùng chung, thay vì chép SQL sang endpoint mới. Đã kiểm: 22 tổ hợp vai trò × phòng ban trong DB thật đều cho <code>counts == len(items)</code>.</p>
+
+      <div class="label">Màn hình theo dõi riêng, không phải hộp thoại</div>
+      <p>Bản đầu dựng hộp thoại gọn trong sidebar. <span class="pill pill-gray">Bỏ</span> — người dùng cần <strong>theo dõi</strong> danh sách này (chứng từ của ai, phòng nào, ai nộp, ngày nào), không chỉ nhảy qua nó. Hộp thoại không chứa nổi 7 cột, không lưu được vào lịch sử trình duyệt, và mất khi bấm ra ngoài.</p>
+      <p>Thay bằng <code>frontend/pages/pending_work.py</code> → <code>/pending/{kind}</code>. Một file cho cả hai loại vì bố cục bảng và cách nạp dữ liệu giống hệt nhau; chỉ khác định nghĩa cột và đích đến. Tách hai file sẽ nhân đôi phần khung mà không thêm gì.</p>
+      <p><code>_sidebar(kind)</code> nhận thẳng <code>"handovers"</code>/<code>"leaves"</code> nên mục nghiệp vụ tương ứng vẫn sáng khi đang đứng ở màn hình theo dõi — người dùng không bị mất dấu mình đang ở đâu.</p>
+      <p><strong>Bẫy khi dựng bảng bằng <code>ui.row()</code>:</strong> NiceGUI đặt <code>gap: var(--nicegui-default-gap)</code> = <strong>1rem</strong> cho mọi <code>.nicegui-row</code>. Đặt <code>border-b</code> lên từng ô thì đường kẻ đứt quãng đúng ở các khoảng hở đó — thấy rõ nhất ở cột cuối vì ô header rỗng. Viền phải đặt lên <strong>hàng</strong>, và cả hai hàng (header + dữ liệu) đều cần <code>gap-0</code> thì cột mới thẳng. Đáng nhớ cho hạng mục làm lại bảng biểu sắp tới — mọi "bảng" dựng bằng flex-row trong dự án đều dính bẫy này.</p>
+
+      <div class="label">Deep-link — hai cơ chế khác nhau cho hai màn hình</div>
+      <table>
+        <tr><th>Đích</th><th>Cách dẫn</th><th>Vì sao</th></tr>
+        <tr><td>Bàn giao chứng từ</td><td>Query param <code>?dept=&amp;year=&amp;month=&amp;entry=</code></td><td>Trang đã có sẵn ba bộ lọc đúng ba tham số đầu; <code>entry</code> là chìa để nhảy đúng ô</td></tr>
+        <tr><td>Nghỉ phép</td><td><code>app.storage.user["_leaves_goto"]</code> + <code>_leaves_focus</code></td><td>Trang đã có sẵn cơ chế chọn tab bằng <code>_leaves_goto</code> — thêm query param nữa là dựng cơ chế thứ hai làm cùng một việc</td></tr>
+      </table>
+      <p><strong>Nhảy đúng ô chứng từ.</strong> Mỗi ô trên lưới là <code>&lt;input class="hv-inp" data-eid="…"&gt;</code> — sẵn có từ trước, dùng cho panel lịch sử. Tận dụng luôn: sau khi lưới vào DOM, chạy <code>querySelector('.hv-inp[data-eid="…"]')</code> rồi <code>scrollIntoView</code> + focus + viền đỏ 2,6 giây. Không phải thêm thuộc tính đánh dấu nào mới.</p>
+      <p><code>focus_entry</code> là <strong>list một phần tử</strong> chứ không phải biến thường: <code>load_grid()</code> được định nghĩa trước chỗ đọc query param nên cần ô nhớ chia sẻ, và phải xoá được ngay sau lần dùng đầu — nếu không, mỗi lần đổi phòng/tháng lưới sẽ lại kéo màn hình về ô cũ.</p>
+      <p><code>_leaves_goto</code> được mở rộng đổ chéo (<code>pending</code> ⇄ <code>pending_th</code>): màn hình theo dõi chỉ biết <em>trạng thái đơn</em>, không biết người dùng có hai tab duyệt hay một. Không có fallback thì TH đơn vai bấm vào sẽ rơi về tab mặc định.</p>
+
+      <div class="label">Gỡ khối "Công việc đang chờ" khỏi Trang chủ</div>
+      <p>Giữ lại sẽ là <strong>nơi thứ hai</strong> hiển thị cùng một thông tin — và là nơi duy nhất bắt người dùng quay về Trang chủ mới thấy. Sidebar hiện diện ở mọi trang, nên nó thắng về mọi mặt.</p>
+      <p>Gỡ theo kéo <code>/pending-counts</code> ra khỏi <code>asyncio.gather</code> của Trang chủ: trang này giờ gọi <strong>4 API thay vì 5</strong>. Đây là lần đổi duy nhất trong đợt làm chạm tới thời gian load thật của một trang, và nó đi theo hướng nhanh hơn.</p>
+
+      <div class="label">Chặn link chết</div>
+      <p><code>/pending-counts</code> lọc theo <strong>vai trò</strong>, còn menu lọc theo <strong>feature</strong> (<code>api.has_feature</code>) — hai lớp phân quyền độc lập. Về lý thuyết có người đếm ra 3 đơn nhưng không được cấp <code>menu.leaves</code>. Khối kiểm cả hai trước khi hiện dòng, nếu không sẽ dựng ra link bấm vào bị đá về <code>/home</code>.</p>
+
+      <div class="label">Badge khi sidebar thu gọn</div>
+      <p>Ở chế độ 4.5rem, <code>.sidebar-label</code> bị ẩn và <code>.sidebar-row</code> bị ép <code>justify-content:center</code>. Badge cố ý <strong>không</strong> mang class <code>.sidebar-label</code> để sống sót, rồi được <code>position:absolute</code> đẩy lên góc phải kèm <code>box-shadow</code> viền nền — nếu để nguyên trong luồng flex, badge sẽ dồn sát và chồng lên icon.</p>
+
+      <div class="label">Phạm vi ảnh hưởng đã kiểm</div>
+      <table>
+        <tr><th>Điểm</th><th>Kết luận</th></tr>
+        <tr><td><code>badge_refs</code> ở 3 trang</td><td>Đã gỡ hết phần đổ số. <code>_sidebar()</code> vẫn trả <code>dict</code> rỗng để 19 chữ ký gọi không phải sửa</td></tr>
+        <tr><td><code>handovers.py</code> gọi <code>/pending-counts</code></td><td>Bỏ — trang không còn cần. <code>asyncio.gather</code> hai lời gọi rút về một <code>to_thread</code></td></tr>
+        <tr><td><code>_LEAVE_TYPE</code> trong <code>leaves.py</code></td><td>Trỏ về <code>ui_kit.LEAVE_TYPE</code>. <code>shared.py</code> không import được <code>leaves.py</code> (vòng tròn) nên map phải nằm ở <code>ui_kit</code></td></tr>
+        <tr><td>Deep-link tham số rác</td><td><code>_qp_int()</code> trả <code>None</code> khi không parse được; giá trị ngoài <code>dept_opts</code>/<code>year_opts</code>/<code>month_opts</code> rơi về mặc định</td></tr>
+      </table>
+
+      <div class="label">Chưa làm — và vì sao</div>
+      <p><strong>Số trên sidebar không tự cập nhật.</strong> Duyệt xong một đơn, số vẫn giữ nguyên cho tới lần chuyển trang kế tiếp. Thêm <code>ui.timer</code> lặp sẽ bắt 19 trang gọi <code>/pending-counts</code> định kỳ suốt phiên làm việc — đắt hơn nhiều so với phiền toái nó giải quyết. Mọi thao tác duyệt hiện đều kết thúc bằng <code>ui.navigate.to()</code>, tức sidebar dựng lại và số đúng ngay sau đó.</p>
+      <p><strong>Trần 200 dòng</strong> cho danh sách chi tiết, không phân trang. Màn hình theo dõi không phải chỗ duyệt hàng trăm việc; quá ngưỡng thì màn hình nghiệp vụ mới là nơi có bộ lọc và phân trang. Nếu thực tế thường xuyên chạm trần thì mới thêm — thêm sẵn bây giờ là đoán mò.</p>
+      <p><strong>Không có bộ lọc / sắp xếp</strong> trên màn hình theo dõi. Danh sách sắp sẵn theo ngày giao dịch giảm dần (chứng từ) và ngày bắt đầu tăng dần (nghỉ phép — việc gấp lên trước). Với vài chục dòng, bộ lọc là chi phí không thu lại được.</p>
+
+      <div class="note">Kiểm bằng client socket.io thật (không có trình duyệt tự động trong môi trường này). Sidebar: 4 kịch bản ẩn/hiện đều đúng. Màn hình theo dõi: dựng đủ 7 cột + nút cho chứng từ, 8 cột cho nghỉ phép, trạng thái rỗng, và loại việc không tồn tại (trang trống, đã chuyển hướng). Backend kiểm qua HTTP với user tạm vai hậu kiểm viên trên DB thật; mọi data test đã xoá.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">47</span>
+      <span class="card-title">Chuyên viên vào được Trang chủ — gỡ redirect ở <code>/home</code></span>
+      <span class="badge badge-done">Đã fix</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Triệu chứng — mục menu bấm không bao giờ vào được</div>
+      <p><code>dashboard_page()</code> đá thẳng chuyên viên có <code>menu.handovers</code> sang <code>/handovers</code>. Nhưng sidebar <strong>luôn</strong> vẽ mục "Trang chủ" cho mọi vai trò. Kết quả: chuyên viên bấm "Trang chủ" thì bị bật ngược về Bàn giao chứng từ — nhìn như trang hỏng, không như một quyết định phân quyền.</p>
+
+      <div class="label">Vì sao gỡ chứ không phải ẩn mục menu</div>
+      <p>Redirect này hợp lý ở thời điểm nó ra đời: Trang chủ khi đó chỉ là vài con số chuyên viên không dùng tới. Sau hạng mục 46, khối "Công việc đang chờ" đã dời hẳn về sidebar, còn Trang chủ giữ lại "Nghỉ phép hôm nay" và biểu đồ tỷ lệ đúng hạn — đều là thứ chuyên viên xem được và không lộ dữ liệu ngoài quyền. Lý do ban đầu của redirect đã hết hiệu lực, nên gỡ đúng hơn là ẩn mục menu để che nó đi.</p>
+
+      <div class="label">Trang chủ là điểm vào duy nhất cho mọi vai trò</div>
+      <p>Đích sau đăng nhập rẽ theo vai trò ở <strong>ba</strong> chỗ độc lập: <code>login.py</code>, <code>change_password.py</code>, và <code>_redirect_if_cv()</code> trong <code>shared.py</code>. Ba chỗ, cùng một luật ngầm "chuyên viên thì về Bàn giao chứng từ" — thêm một luồng vào hệ thống là thêm một chỗ phải nhớ chép lại luật đó.</p>
+      <p>Gộp cả ba về <code>/home</code>. Không còn nhánh nào phụ thuộc vai trò, nên cũng không còn chỗ nào để quên đồng bộ.</p>
+      <div class="label">Phát hiện lớn hơn — chặn theo vai trò đè lên nhóm quyền</div>
+      <p>Lần theo <code>_redirect_if_cv()</code> thì lộ ra ba lớp phân quyền không cùng một luật:</p>
+      <table>
+        <tr><th>Lớp</th><th>Chặn theo</th></tr>
+        <tr><td>Backend API</td><td><strong>Feature</strong> — <code>Depends(require_feature("menu.storage"))</code></td></tr>
+        <tr><td>Sidebar hiện/ẩn mục</td><td><strong>Feature</strong> — <code>api.has_feature(f"menu.{k}")</code>, không đọc vai trò</td></tr>
+        <tr><td><code>_redirect_if_cv()</code></td><td><strong>Vai trò</strong> — chặn cứng <code>chuyen_vien</code></td></tr>
+      </table>
+      <p>Hai lớp đầu là hệ thống nhóm quyền. Lớp thứ ba là tàn dư từ trước khi có nó, và nó chạy <strong>trước</strong> lớp feature ở 5/6 trang — tức nó vô hiệu hoá lớp feature đối với chuyên viên.</p>
+      <p><code>add_member</code> không lọc vai trò, chỉ kiểm nhân viên còn hoạt động. Nên admin <strong>cấp được</strong> <code>menu.storage</code> cho một chuyên viên: backend chấp nhận mọi lời gọi API của người đó, sidebar hiện mục "Lưu trữ", bấm vào thì bị đá về — <strong>không một dòng thông báo nào</strong>. Admin cấp quyền, giao diện xác nhận đã cấp, người dùng không vào được và không ai hiểu tại sao.</p>
+      <p>Đã gỡ <code>_redirect_if_cv()</code> khỏi 5 trang có sẵn feature check: Báo cáo, Lưu trữ, Báo cáo bàn giao, Nhân sự, Đóng tập. Chuyên viên <strong>không</strong> tự nhiên vào được gì — lớp feature vẫn chặn y như trước; chỉ khác là quyền admin cấp qua nhóm giờ có tác dụng thật.</p>
+      <p>Giữ lại đúng một chỗ: <code>/user-management</code>, trang duy nhất không có mã feature nào để kiểm. Không đặt thêm feature mới cho nó ở đợt này vì đó là mở rộng hệ thống nhóm quyền, không phải sửa lỗi — và chuyên viên vẫn có <code>/change-password</code> nên không mất chức năng. Docstring của hàm ghi rõ lý do để trang mới không gọi lại nó.</p>
+
+      <div class="label">Hệ quả kéo theo — nhãn "Người dùng" nói sai phạm vi</div>
+      <p><code>/api/staff/</code> lọc theo vai trò: chuyên viên, trưởng phòng, phó phòng chỉ nhận nhân sự <strong>phòng mình</strong>. Trước đây không ai để ý vì ba vai này hoặc bị chặn khỏi Trang chủ, hoặc số nhỏ trông vẫn hợp lý. Mở cửa cho chuyên viên thì ô "Người dùng: 8" sẽ bị đọc thành toàn trung tâm.</p>
+      <p>Đổi nhãn thành "Nhân sự phòng" cho ba vai đó thay vì gọi thêm API tổng: con số đang hiển thị vốn đã đúng với phạm vi họ được thấy, sai chỉ ở chữ. Cấp cho họ số toàn trung tâm sẽ là nới quyền xem, không phải sửa lỗi.</p>
+      <p>Ô "Phòng nghiệp vụ" giữ nguyên — <code>/api/departments/</code> trả đủ mọi phòng cho mọi vai trò.</p>
+
+      <div class="label">Phạm vi ảnh hưởng đã kiểm</div>
+      <table>
+        <tr><th>Điểm</th><th>Kết luận</th></tr>
+        <tr><td><code>_redirect_if_cv()</code> ở 6 trang khác</td><td>Không đụng — đó là chặn quyền thật (Báo cáo, Lưu trữ, Nhân sự, Đóng tập…). Trang chủ không dùng hàm này</td></tr>
+        <tr><td>Vòng lặp chuyển hướng</td><td>Không còn khả năng phát sinh: <code>/handovers</code> chỉ đá về <code>/home</code> khi thiếu <code>menu.handovers</code>, mà <code>/home</code> giờ không đá đi đâu cả</td></tr>
+        <tr><td>4 API Trang chủ gọi</td><td><code>/staff/</code>, <code>/departments/</code>, <code>/dashboard/summary</code>, <code>/leaves/today</code> — cả bốn chỉ cần <code>get_current_staff</code>, chuyên viên gọi được, không sinh 403</td></tr>
+        <tr><td>"Nghỉ phép hôm nay"</td><td>Trả toàn trung tâm cho mọi vai trò, không scope theo phòng. Giữ nguyên — chuyên viên vốn đã gọi được endpoint này từ trước, đây không phải cửa mới mở</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-07-28</footer>
 </div>
 </body>
 </html>

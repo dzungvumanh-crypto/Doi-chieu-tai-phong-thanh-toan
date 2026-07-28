@@ -4,7 +4,7 @@ from nicegui import ui, app
 import frontend.api_client as api
 from frontend.shared import (
     _sidebar, _content_area, _page_header, _require_auth,
-    _redirect_if_cv, _handle_api_error,
+    _handle_api_error,
 )
 
 
@@ -32,8 +32,6 @@ def _build_dept_summaries(ipcas_grouped: dict, payment_grouped: dict) -> list:
 @ui.page("/reports")
 def reports_page():
     if not _require_auth():
-        return
-    if _redirect_if_cv():
         return
     if not api.has_feature("menu.reports"):
         ui.navigate.to("/home")

@@ -26,19 +26,8 @@ _LEAVE_STATUS = {
 
 }
 
-_LEAVE_TYPE = {
-
-    "bat_buoc":     "Nghỉ phép bắt buộc",
-
-    "annual":       "Nghỉ phép năm",
-
-    "thai_san":     "Nghỉ thai sản",
-
-    "bao_hiem":     "Nghỉ bảo hiểm",
-
-    "other":        "Khác",
-
-}
+# Định nghĩa thật nằm ở ui_kit.LEAVE_TYPE — sidebar cũng đọc map này.
+_LEAVE_TYPE = ui_kit.LEAVE_TYPE
 
 # Nhóm hiển thị 3 trạng thái đơn giản trong cột Trạng thái của bảng
 
@@ -150,7 +139,7 @@ async def leaves_page():
 
         return
 
-    badge_refs = _sidebar("leaves")
+    _sidebar("leaves")
 
 
 
@@ -462,15 +451,7 @@ async def leaves_page():
 
 
 
-        # ── Cập nhật badge sidebar ────────────────────────────────────────────
-
-        _lcnt = len(pending_leaves)
-
-        if "leaves" in badge_refs and _lcnt > 0:
-
-            badge_refs["leaves"].set_text(str(_lcnt))
-
-            badge_refs["leaves"].set_visibility(True)
+        # Badge sidebar do khối "Công việc chờ xử lý" trong shared.py tự nạp.
 
 
 
@@ -2473,10 +2454,12 @@ async def leaves_page():
 
         if _goto == "khai_bao_ho" and t_direct:
             _default_tab = t_direct
-        elif _goto == "pending" and t_pending:
-            _default_tab = t_pending
-        elif _goto == "pending_th" and t_pending_th:
-            _default_tab = t_pending_th
+        # Đổ chéo sang tab còn lại khi tab mong muốn không tồn tại với vai trò này:
+        # sidebar chỉ biết trạng thái đơn, không biết người dùng có 2 tab hay 1.
+        elif _goto == "pending" and (t_pending or t_pending_th):
+            _default_tab = t_pending or t_pending_th
+        elif _goto == "pending_th" and (t_pending_th or t_pending):
+            _default_tab = t_pending_th or t_pending
         elif _goto_raw and any(
             _tab_match(_t, _goto_raw)
             for _t in (t_dashboard, t_mine, t_pending, t_pending_th, t_dept, t_direct, t_cal, t_quota, t_stats, t_deleg, t_holiday)
@@ -5009,6 +4992,16 @@ async def leaves_page():
                         # Hiện count ngay từ đầu
 
                         _df_count.set_text(f"{len(declared_leaves)} / {len(declared_leaves)} đơn")
+
+        # ── Bung sẵn chi tiết đơn được chỉ đích danh từ sidebar ───────────────
+        # Đặt cuối hàm vì open_detail vẽ vào drawer_container, mà container đó
+        # phải dựng xong trước. Không tìm thấy đơn (vừa bị người khác duyệt) thì
+        # im lặng ở lại tab đã chọn — vẫn là màn hình thao tác đúng.
+        _focus_id = app.storage.user.pop("_leaves_focus", None)
+        if _focus_id:
+            _focus_lv = next((lv for lv in pending_leaves if lv.get("id") == _focus_id), None)
+            if _focus_lv:
+                await open_detail(_focus_lv)
 
 
 
