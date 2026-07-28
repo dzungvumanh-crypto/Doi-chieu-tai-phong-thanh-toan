@@ -61,7 +61,7 @@ async def logs_page():
 
             with log_container:
                 if not entries:
-                    ui.label("Không có bản ghi nào.").classes("text-gray-400 text-sm mt-4")
+                    ui.label("Không có bản ghi nào.").classes("text-gray-500 text-sm mt-4")
                     return
 
                 with ui.row().classes("w-full bg-gray-100 border-b border-gray-200 px-3 py-2 items-center gap-2"):
@@ -124,7 +124,7 @@ async def logs_page():
                       on_click=_backup_db).classes("bg-orange-600 text-white text-sm").tooltip(
                 "Tải về bản sao cơ sở dữ liệu")
 
-            backup_info_label = ui.label("").classes("text-xs text-gray-400 ml-2")
+            backup_info_label = ui.label("").classes("text-xs text-gray-500 ml-2")
             try:
                 bk = await asyncio.to_thread(api.get, "/api/admin/logs/backup-info")
                 if isinstance(bk, dict) and bk.get("exists"):

@@ -2,26 +2,15 @@
 import asyncio
 from nicegui import ui, app
 import frontend.api_client as api
+import frontend.ui_kit as ui_kit
 from frontend.shared import _sidebar, _content_area, _page_header, _require_auth, _handle_api_error
 
-# Màu ô theo entry_status
+# Nhãn + màu trạng thái lấy từ ui_kit.STATUS — trước đây là 3 map song song ở đây.
+# Dựng lại đúng định dạng CSS mà lưới đang cần.
 _CELL_STATUS_STYLE = {
-    "pending_confirm": ("background:#FEF3C7", "2px solid #F59E0B"),  # vàng nhạt
-    "borrowed":        ("background:#EDE9FE", "2px solid #7C3AED"),  # tím nhạt
-    "confirmed":       ("background:#DCFCE7", "2px solid #16A34A"),  # xanh lá nhạt
-    "rejected":        ("background:#FEE2E2", "2px solid #DC2626"),  # đỏ nhạt
-}
-_STATUS_DOT_COLOR = {
-    "pending_confirm": "#D97706",
-    "confirmed":       "#16A34A",
-    "borrowed":        "#7C3AED",
-    "rejected":        "#DC2626",
-}
-_STATUS_LABEL_MAP = {
-    "pending_confirm": "Chờ xác nhận",
-    "confirmed":       "Đã xác nhận",
-    "borrowed":        "Đang mượn",
-    "rejected":        "Bị từ chối",
+    code: (f"background:{bg}", f"2px solid {border}")
+    for code in ("pending_confirm", "borrowed", "confirmed", "rejected")
+    for bg, border in [ui_kit.status_cell(code)]
 }
 _ACTION_COLOR_MAP = {
     "blue":   "#2563EB",
@@ -198,21 +187,21 @@ async def handovers_page():
                 with panel_container:
                     with ui.row().classes("w-full justify-between items-center px-4 py-3 bg-red-50 border-b border-red-100"):
                         ui.label("Lỗi").classes("font-bold text-red-900")
-                        ui.button(icon="close", on_click=right_panel.hide).props("flat dense").classes("text-gray-400")
+                        ui.button(icon="close", on_click=right_panel.hide).props("flat dense").classes("text-gray-500")
                     ui.label(str(ex)).classes("text-red-500 p-4 text-sm")
                 right_panel.show()
                 return
 
             current_status = hist.get("current_status", "confirmed")
-            dot_color = _STATUS_DOT_COLOR.get(current_status, "#6B7280")
-            status_label_text = _STATUS_LABEL_MAP.get(current_status, current_status)
+            dot_color = ui_kit.status_dot(current_status)
+            status_label_text = ui_kit.status_label(current_status)
 
             with panel_container:
                 # Header
                 with ui.column().classes("w-full bg-red-50 px-4 py-3 border-b border-red-100 gap-1"):
                     with ui.row().classes("w-full justify-between items-center"):
                         ui.label(hist.get("source_user_name", user_name)).classes("font-bold text-red-900 text-base")
-                        ui.button(icon="close", on_click=right_panel.hide).props("flat dense").classes("text-gray-400")
+                        ui.button(icon="close", on_click=right_panel.hide).props("flat dense").classes("text-gray-500")
                     _logs = hist.get("logs", [])
                     _last_ts = _logs[0].get("timestamp", "") if _logs else ""
                     _parts = _last_ts.split() if _last_ts else []
@@ -230,7 +219,7 @@ async def handovers_page():
 
                 # Thao tác
                 with ui.column().classes("w-full px-4 py-3 border-b border-gray-100 gap-2"):
-                    ui.label("THAO TÁC").classes("text-xs font-bold text-gray-400 tracking-widest")
+                    ui.label("THAO TÁC").classes("text-xs font-bold text-gray-500 tracking-widest")
                     has_action = False
 
                     borrow_reason_val = hist.get("borrow_reason")
@@ -346,14 +335,14 @@ async def handovers_page():
                         )
 
                     if not has_action:
-                        ui.label("Không có thao tác khả dụng").classes("text-sm text-gray-400 italic")
+                        ui.label("Không có thao tác khả dụng").classes("text-sm text-gray-500 italic")
 
                 # Lịch sử
                 with ui.column().classes("w-full px-4 py-3 gap-4"):
-                    ui.label("LỊCH SỬ THAY ĐỔI").classes("text-xs font-bold text-gray-400 tracking-widest")
+                    ui.label("LỊCH SỬ THAY ĐỔI").classes("text-xs font-bold text-gray-500 tracking-widest")
                     logs = hist.get("logs", [])
                     if not logs:
-                        ui.label("Chưa có lịch sử").classes("text-sm text-gray-400 italic")
+                        ui.label("Chưa có lịch sử").classes("text-sm text-gray-500 italic")
                     else:
                         for log in logs:
                             dot_c = _ACTION_COLOR_MAP.get(log.get("action_color", "blue"), "#2563EB")
@@ -363,7 +352,7 @@ async def handovers_page():
                                     f"background:{dot_c};margin-top:5px;flex-shrink:0"
                                 )
                                 with ui.column().classes("flex-1 gap-0"):
-                                    ui.label(log.get("timestamp", "")).classes("text-xs text-gray-400 font-mono")
+                                    ui.label(log.get("timestamp", "")).classes("text-xs text-gray-500 font-mono")
                                     ui.label(log.get("performed_by_role", "")).classes("text-xs text-gray-500")
                                     ui.label(log.get("action_label", "")).classes("text-sm font-medium text-gray-800")
 
@@ -431,7 +420,7 @@ async def handovers_page():
             if not users:
                 with grid_container:
                     ui.label("Không có cán bộ nào trong phòng này").classes(
-                        "text-gray-400 text-center py-8 w-full"
+                        "text-gray-500 text-center py-8 w-full"
                     )
             else:
                 p = [

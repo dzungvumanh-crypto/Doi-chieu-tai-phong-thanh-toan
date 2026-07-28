@@ -45,8 +45,7 @@ async def staff_page():
         # Cấp 2 không được gán "Quản trị viên cấp 1" → ẩn khỏi dropdown
         FORM_ROLE_OPTS = {k: v for k, v in ROLE_OPTS.items()
                           if not (acting_is_l2 and k == "admin")}
-        # controller kept in display map cho JWT session cũ chưa expire
-        role_map = {**ROLE_OPTS, "controller": "Phó phòng"}
+        role_map = dict(ROLE_OPTS)
 
         staff_cache = []
         edit_target = {"id": None}
@@ -327,7 +326,7 @@ async def staff_page():
                             _row(s)
 
                 if not filtered:
-                    ui.label("Không có kết quả").classes("text-gray-400 text-center py-6 w-full")
+                    ui.label("Không có kết quả").classes("text-gray-500 text-center py-6 w-full")
 
         async def load_staff():
             nonlocal staff_cache

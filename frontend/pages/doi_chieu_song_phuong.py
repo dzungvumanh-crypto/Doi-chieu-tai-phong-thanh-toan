@@ -43,14 +43,14 @@ async def doi_chieu_song_phuong_page():
                 ).classes("text-xs text-gray-500 mb-4")
 
                 file_label = ui.label("Chưa chọn file").classes(
-                    "text-xs text-gray-400 italic mb-2"
+                    "text-xs text-gray-500 italic mb-2"
                 )
 
                 def on_upload(e):
                     state["file_bytes"] = e.content.read()
                     state["file_name"]  = e.name
                     file_label.set_text(f"Đã chọn: {e.name}")
-                    file_label.classes(remove="text-gray-400 italic", add="text-green-700 font-medium")
+                    file_label.classes(remove="text-gray-500 italic", add="text-green-700 font-medium")
 
                 uploader = ui.upload(
                     on_upload=on_upload, auto_upload=True,

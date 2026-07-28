@@ -125,7 +125,7 @@ async def bundles_page():
                     with groups_container:
                         if not groups:
                             ui.label("Chưa có bìa chứng từ nào").classes(
-                                "text-gray-400 text-center py-8"
+                                "text-gray-500 text-center py-8"
                             )
                             return
 
@@ -321,7 +321,7 @@ async def bundles_page():
                                     pass
                         else:
                             ui.label("Không có chứng từ nào trong tháng này").classes(
-                                "text-gray-400 text-sm text-center py-4"
+                                "text-gray-500 text-sm text-center py-4"
                             )
 
                 async def load_entries_preview():

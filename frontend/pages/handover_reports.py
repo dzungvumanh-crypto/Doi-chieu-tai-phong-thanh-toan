@@ -57,10 +57,10 @@ def _kpi_cards(overall: dict):
 def _dept_table(by_dept: list):
     with ui.card().classes("w-full p-4 rounded-xl shadow-sm bg-white"):
         ui.label("Thống kê theo phòng nghiệp vụ").classes("font-semibold text-red-900 mb-1")
-        ui.label(_DEADLINE_NOTE).classes("text-xs text-gray-400 italic mb-3")
+        ui.label(_DEADLINE_NOTE).classes("text-xs text-gray-500 italic mb-3")
 
         if not by_dept:
-            ui.label("Chưa có chứng từ nào trong kỳ này.").classes("text-gray-400 text-sm")
+            ui.label("Chưa có chứng từ nào trong kỳ này.").classes("text-gray-500 text-sm")
             return
 
         with ui.row().classes("w-full px-3 py-2 bg-red-50 text-xs font-semibold text-red-700 border-b border-red-100"):
@@ -83,7 +83,7 @@ def _dept_table(by_dept: list):
 def _late_detail(late_entries: list):
     with ui.card().classes("w-full p-4 rounded-xl shadow-sm bg-white"):
         ui.label("Chi tiết chứng từ nộp quá hạn").classes("font-semibold text-red-900 mb-1")
-        ui.label("Nhấn vào tên phòng để xem danh sách.").classes("text-xs text-gray-400 italic mb-3")
+        ui.label("Nhấn vào tên phòng để xem danh sách.").classes("text-xs text-gray-500 italic mb-3")
 
         if not late_entries:
             with ui.row().classes("items-center gap-2 py-2"):
@@ -182,7 +182,7 @@ def handover_reports_page():
                         ui.label(
                             f"Ghi chú: {skipped} chứng từ trong kỳ không có dữ liệu ngày nộp "
                             f"(nhập trước khi hệ thống ghi lịch sử thao tác) — không đưa vào báo cáo."
-                        ).classes("text-xs text-gray-400 italic")
+                        ).classes("text-xs text-gray-500 italic")
 
             load_btn.on("click", load)
             ui.timer(0.1, load, once=True)

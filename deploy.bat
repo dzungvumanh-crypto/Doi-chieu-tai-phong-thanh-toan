@@ -82,6 +82,8 @@ echo  Du lieu data\ksnb.db KHONG bi thay doi.
 echo  Schema DB se tu dong migrate khi khoi dong lai.
 echo.
 echo  LUU Y: Can file .env voi SECRET_KEY tren may dich.
+echo  Ban nay them bien STORAGE_SECRET -- start.bat se TU SINH neu .env chua co.
+echo  Nguoi dung dang dang nhap se bi dang xuat MOT LAN sau khi khoi dong lai.
 echo  Khoi dong lai ung dung: tat tien trinh cu, chay start.bat
 echo ============================================================
 echo.

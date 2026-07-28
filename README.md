@@ -35,7 +35,30 @@ Tài khoản đăng nhập:
 ```
 > ⚠️ Đổi mật khẩu ngay sau lần đăng nhập đầu tiên.
 
-### 4. Chạy hệ thống
+### 4. Cấu hình `.env` (bắt buộc)
+
+Copy `.env.example` thành `.env` rồi điền hai khoá bí mật — **thiếu là hệ thống không khởi động**:
+
+```bash
+python -c "import secrets; print(secrets.token_hex(32))"   # chạy 2 lần, lấy 2 giá trị khác nhau
+```
+
+```ini
+SECRET_KEY=<giá trị 1>       # khoá ký JWT (backend)
+STORAGE_SECRET=<giá trị 2>   # khoá ký cookie phiên (frontend)
+```
+
+> Trên Windows, `start.bat` **tự sinh cả hai** nếu `.env` chưa có hoặc còn thiếu — không cần làm tay.
+> Đổi `STORAGE_SECRET` sẽ đăng xuất toàn bộ người dùng đang đăng nhập một lần.
+
+Chạy thật trên mạng nội bộ thì đặt thêm (xem mục [Truy cập LAN](#truy-cập-lan-nhiều-người-dùng)):
+
+```ini
+ENV=production                                  # tắt /docs, /redoc
+ALLOWED_ORIGINS=http://192.168.1.100:8080       # IP thật của máy chủ
+```
+
+### 5. Chạy hệ thống
 
 ```bash
 python run.py
@@ -99,6 +122,7 @@ Truy cập:
 ├── frontend/
 │   ├── main.py              # NiceGUI entry point
 │   ├── shared.py            # Layout chung (sidebar, header, helpers)
+│   ├── ui_kit.py            # Nguồn sự thật: màu, trạng thái, khung chờ, font
 │   ├── api_client.py        # httpx wrapper → backend
 │   └── pages/
 │       ├── login.py         # Đăng nhập
@@ -271,6 +295,15 @@ netsh advfirewall firewall add rule name="TTTT" dir=in action=allow protocol=TCP
 ```
 
 Người dùng khác truy cập: `http://[IP-máy-chủ]:8080`
+
+Đặt trong `.env` — quên là máy khác bị CORS chặn, và trang liệt kê toàn bộ endpoint bị mở công khai:
+
+```ini
+ALLOWED_ORIGINS=http://192.168.1.100:8080    # thay bằng IP thật, nhiều giá trị cách nhau dấu phẩy
+ENV=production                               # tắt /docs và /redoc
+```
+
+Backend tự **cảnh báo trong log khi khởi động** nếu đang lắng nghe trên mạng mà hai biến này chưa đặt đúng.
 
 ---
 

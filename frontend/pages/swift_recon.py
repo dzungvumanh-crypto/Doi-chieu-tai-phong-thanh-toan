@@ -463,7 +463,7 @@ def _build_history_panel(tab, history_refresh):
                 return
             with hist_area:
                 if not rows:
-                    ui.label("Chưa có lịch sử đối chiếu nào").classes("text-gray-400 p-4")
+                    ui.label("Chưa có lịch sử đối chiếu nào").classes("text-gray-500 p-4")
                     return
 
                 with ui.row().classes(
@@ -508,7 +508,7 @@ def _build_history_panel(tab, history_refresh):
                 status_to_label = _status_to_label(detail["recon_type"])
                 with detail_area:
                     if not records:
-                        ui.label("Không có bản ghi chi tiết").classes("text-gray-400 text-sm p-2")
+                        ui.label("Không có bản ghi chi tiết").classes("text-gray-500 text-sm p-2")
                         return
                     raw_cols = [k for k in records[0].keys() if not k.startswith("_")]
                     display_cols = ["STT", "Trạng thái"] + raw_cols

@@ -146,7 +146,7 @@ async def dashboard_page():
                 with ui.row().classes("w-full gap-2 flex-nowrap"):
                     # Ô tổng toàn trung tâm
                     _color0 = _CELL_COLORS[0]
-                    _tc_num = "text-red-700 font-bold" if leave_total else "text-gray-400"
+                    _tc_num = "text-red-700 font-bold" if leave_total else "text-gray-500"
                     with ui.element("div").classes(f"flex-1 min-w-0 p-2 rounded-xl border {_color0} flex flex-col items-center justify-center").style("min-height:80px"):
                         ui.label(str(leave_total)).classes(f"text-2xl {_tc_num}")
                         ui.label("Toàn trung tâm").classes("text-xs font-semibold text-gray-600 mt-1 leading-tight text-center")
@@ -155,7 +155,7 @@ async def dashboard_page():
                         _dname   = _dept.get("name", "")
                         _cnt     = _by_dept_map.get(_dname, 0)
                         _color   = _CELL_COLORS[(_di + 1) % len(_CELL_COLORS)]
-                        _num_cls = "text-red-700 font-bold" if _cnt else "text-gray-400"
+                        _num_cls = "text-red-700 font-bold" if _cnt else "text-gray-500"
                         with ui.element("div").classes(f"flex-1 min-w-0 p-2 rounded-xl border {_color} flex flex-col items-center justify-center").style("min-height:80px"):
                             ui.label(str(_cnt)).classes(f"text-2xl {_num_cls}")
                             ui.label(_dname).classes("text-xs text-gray-600 mt-1 leading-tight text-center")
@@ -182,7 +182,7 @@ async def dashboard_page():
 
                 ui.label("Đúng hạn = nộp trong 1 ngày làm việc sau ngày giao dịch "
                          "(bỏ T7/CN, ngày lễ, ngày nghỉ phép của người nhận)"
-                         ).classes("text-xs text-gray-400 italic")
+                         ).classes("text-xs text-gray-500 italic")
 
                 chart_box = ui.column().classes("w-full gap-0")
 
@@ -207,10 +207,10 @@ async def dashboard_page():
                             ui.label(
                                 f"Không tính {_skipped} chứng từ cũ chưa có dữ liệu ngày nộp. "
                                 f"Xem chi tiết tại Báo cáo bàn giao chứng từ."
-                            ).classes("text-xs text-gray-400 italic mb-1")
+                            ).classes("text-xs text-gray-500 italic mb-1")
                         if not bd:
                             ui.label("Chưa có dữ liệu bàn giao trong kỳ này."
-                                     ).classes("text-gray-400 text-sm mt-1")
+                                     ).classes("text-gray-500 text-sm mt-1")
                         else:
                             ui.echart({
                                 "tooltip": {"trigger": "axis", "axisPointer": {"type": "shadow"}},

@@ -36,18 +36,48 @@ def save_upload_to_path(upload: UploadFile) -> tuple[str, callable]:
         return path, lambda: _safe_remove_file(path)
 
     # ── .zip: giải nén, tự tìm file .xls/.htm/.html bên trong ──────────────
+    # mkdtemp() nằm NGOÀI try để except còn dọn được. Mọi lỗi phía sau đều xoá
+    # thư mục trước khi ném lên — trước đây zip hỏng / zip-slip / zip có mật khẩu
+    # đều để lại thư mục tạm vĩnh viễn, mỗi lần upload lỗi là một thư mục rác.
     extract_dir = tempfile.mkdtemp(prefix="swiftrecon_")
+    try:
+        chosen_path = _extract_and_pick(raw, extract_dir)
+    except Exception:
+        shutil.rmtree(extract_dir, ignore_errors=True)
+        raise
+    return chosen_path, lambda: shutil.rmtree(extract_dir, ignore_errors=True)
+
+
+def _extract_and_pick(raw: bytes, extract_dir: str) -> str:
+    """Giải nén raw vào extract_dir, trả path file .xls/.htm/.html phù hợp nhất.
+
+    Mọi lỗi do file người dùng đều ném `UnknownFileFormat` → API trả 422 kèm
+    thông báo tiếng Việt, thay vì 500 kèm stack trace.
+    """
     zip_path = os.path.join(extract_dir, "upload.zip")
     with open(zip_path, "wb") as f:
         f.write(raw)
 
-    with zipfile.ZipFile(zip_path) as zf:
+    try:
+        archive = zipfile.ZipFile(zip_path)
+    except zipfile.BadZipFile as e:
+        raise parsers.UnknownFileFormat(
+            "File tải lên không phải file .zip hợp lệ — có thể tải bị lỗi, "
+            "bị cắt dở, hoặc chỉ được đổi đuôi tên thành .zip."
+        ) from e
+
+    with archive as zf:
         extract_root_abs = os.path.abspath(extract_dir)
         for member in zf.namelist():
             member_path = os.path.abspath(os.path.join(extract_dir, member))
             if not member_path.startswith(extract_root_abs + os.sep) and member_path != extract_root_abs:
                 raise parsers.UnknownFileFormat(f"File .zip chứa đường dẫn không an toàn: {member}")
-        zf.extractall(extract_dir)
+        try:
+            zf.extractall(extract_dir)
+        except RuntimeError as e:
+            raise parsers.UnknownFileFormat(
+                "File .zip có đặt mật khẩu — hãy giải nén ra rồi tải lại file bên trong."
+            ) from e
     os.remove(zip_path)
 
     candidates = []
@@ -60,12 +90,10 @@ def save_upload_to_path(upload: UploadFile) -> tuple[str, callable]:
                 candidates.append((in_files_subfolder, depth, os.path.join(root, fname)))
 
     if not candidates:
-        shutil.rmtree(extract_dir, ignore_errors=True)
         raise parsers.UnknownFileFormat("File .zip tải lên không chứa file .xls/.htm/.html nào cả.")
 
     candidates.sort(key=lambda c: (c[0], c[1]))
-    chosen_path = candidates[0][2]
-    return chosen_path, lambda: shutil.rmtree(extract_dir, ignore_errors=True)
+    return candidates[0][2]
 
 
 def _safe_remove_file(path: str) -> None:

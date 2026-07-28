@@ -209,7 +209,7 @@ async def storage_page():
                     with result_area:
                         if not html_table:
                             ui.label("Không có phòng nghiệp vụ nào").classes(
-                                "text-gray-400 text-center py-8 w-full"
+                                "text-gray-500 text-center py-8 w-full"
                             )
                             return
                         with ui.row().classes("w-full justify-end gap-2 mb-3"):
@@ -248,7 +248,7 @@ async def storage_page():
                             ui.label(
                                 f"Không có dữ liệu cho {_s_dept_opts.get(s_dept.value,'')} "
                                 f"tháng {s_month.value:02d}/{s_year.value}"
-                            ).classes("text-gray-400 text-center py-8 w-full")
+                            ).classes("text-gray-500 text-center py-8 w-full")
                             return
 
                         async def do_save():
@@ -348,7 +348,7 @@ async def storage_page():
                         if not records:
                             ui.label(
                                 f"Không có dữ liệu cho {dept_lbl} năm {ha_year.value}"
-                            ).classes("text-gray-400 text-sm text-center py-6 w-full")
+                            ).classes("text-gray-500 text-sm text-center py-6 w-full")
                             return
 
                         preview = records[:30]
@@ -373,7 +373,7 @@ async def storage_page():
                                     ui.label(rec["tieu_de"]).classes("flex-1 text-sm")
                         if total > 30:
                             ui.label(f"... và {total - 30} hồ sơ khác (xem đầy đủ trong file Excel)").classes(
-                                "text-gray-400 text-sm text-center py-2"
+                                "text-gray-500 text-sm text-center py-2"
                             )
 
                 async def download_archive():

@@ -3,6 +3,7 @@ import asyncio
 from datetime import datetime
 from nicegui import ui, app
 import frontend.api_client as api
+import frontend.ui_kit as ui_kit
 from starlette.requests import Request as _StarletteRequest
 
 _LOGIN_CSS = """
@@ -57,7 +58,7 @@ async def login_page(request: _StarletteRequest):
         )
     reason = request.query_params.get("reason", "")
 
-    ui.add_head_html('<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">')
+    ui_kit.install()          # trang này không có sidebar nên phải tự gọi
     ui.add_head_html(_LOGIN_CSS)
 
     # Hoạ tiết nền (phương án A) — nằm dưới nội dung, không nhận sự kiện chuột

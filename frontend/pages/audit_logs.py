@@ -61,7 +61,7 @@ async def audit_logs_page():
 
             with audit_container:
                 if not entries:
-                    ui.label("Không có bản ghi.").classes("text-gray-400 text-sm mt-2")
+                    ui.label("Không có bản ghi.").classes("text-gray-500 text-sm mt-2")
                     return
                 with ui.row().classes("w-full bg-gray-100 border-b border-gray-200 px-3 py-2 items-center gap-2"):
                     ui.label("Thời gian").classes("font-semibold text-gray-700 text-xs w-36 shrink-0")

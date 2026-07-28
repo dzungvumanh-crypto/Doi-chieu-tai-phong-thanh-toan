@@ -94,7 +94,7 @@ def reports_page():
                     for key, label, accept, group in FILE_DEFS:
                         with ui.column().classes("gap-1 min-w-0"):
                             ui.label(label).classes("text-sm font-medium text-gray-700 leading-tight")
-                            ui.label(f"({group})").classes("text-xs text-gray-400")
+                            ui.label(f"({group})").classes("text-xs text-gray-500")
 
                             def _make_handler(k):
                                 def _handler(e):

@@ -1,3 +1,8 @@
+> ⚠️ **TÀI LIỆU LỊCH SỬ — KHÔNG DÙNG LÀM THAM CHIẾU KỸ THUẬT.**
+> Bảng `ksnb_staff` trong các câu `ALTER TABLE` dưới đây **nay tên là `user_tttt`**.
+> Chạy lại nguyên văn sẽ báo lỗi `no such table`.
+> Tham chiếu đang dùng: `CLAUDE.md`, `DESIGN.md`.
+
 # UPGRADE260512 — Nâng cấp Pha 1 (trừ 1.2)
 
 **Ngày cập nhật:** 12/05/2026  

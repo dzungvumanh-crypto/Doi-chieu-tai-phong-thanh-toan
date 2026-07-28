@@ -731,6 +731,9 @@ def leave_calendar(
     import calendar as _cal
     if not (1 <= month <= 12):
         raise HTTPException(400, "month phải từ 1 đến 12")
+    # date(year, ...) bên dưới ném ValueError nếu năm ngoài 1..9999 → HTTP 500
+    if not (2000 <= year <= 2100):
+        raise HTTPException(400, "year phải từ 2000 đến 2100")
     last_day = _cal.monthrange(year, month)[1]
     start = date(year, month, 1)
     end   = date(year, month, last_day)
@@ -1404,7 +1407,6 @@ _ROLE_VN = {
     "hau_kiem_vien": "Hậu kiểm viên",
     "giam_doc":      "Giám đốc",
     "pho_giam_doc":  "Phó Giám đốc",
-    "controller":    "Phó phòng",
     "admin":         "Quản trị viên cấp 1",
     "admin_l2":      "Quản trị viên cấp 2",
 }

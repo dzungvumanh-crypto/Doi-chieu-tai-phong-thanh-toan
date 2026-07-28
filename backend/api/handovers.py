@@ -6,7 +6,7 @@ from datetime import date
 from typing import Optional
 
 import openpyxl
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from openpyxl.styles import Alignment, Font, PatternFill
 
@@ -73,8 +73,10 @@ _ROLE_LABEL = {
 @router.get("/grid", response_model=GridResponse)
 def get_handover_grid(
     department_id: int,
-    year: int,
-    month: int,
+    # Chặn ở tầng khai báo: monthrange()/date() bên dưới ném IllegalMonthError
+    # và ValueError với giá trị ngoài khoảng → lọt lên thành HTTP 500.
+    year: int = Query(..., ge=2000, le=2100),
+    month: int = Query(..., ge=1, le=12),
     db: sqlite3.Connection = Depends(get_db),
     current: dict = Depends(require_feature("menu.handovers")),
 ):

@@ -1,5 +1,9 @@
 # Implementation Notes
 
+> ⚠️ **BẢN CŨ, ĐÃ NGỪNG CẬP NHẬT (28/05/2026).**
+> Bản đang dùng là [`Implementation-notes.html`](Implementation-notes.html) — xem `CLAUDE.md`.
+> Giữ lại file này làm lịch sử. Bảng `ksnb_staff` nhắc bên dưới nay tên là `user_tttt`.
+
 > Ghi chú triển khai — quyết định kỹ thuật, đánh đổi, thứ cần biết.
 > Cập nhật liên tục trong quá trình implement.
 

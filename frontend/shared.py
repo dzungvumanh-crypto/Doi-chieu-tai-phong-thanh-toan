@@ -3,20 +3,12 @@ import asyncio
 import os
 from nicegui import ui, app
 import frontend.api_client as api
+import frontend.ui_kit as ui_kit
 
 # ─── Colors ──────────────────────────────────────────────────────────────────
-COLORS = {
-    "primary": "#8B0000",
-    "accent": "#C00000",
-    "bg": "#F5F7FA",
-    "card": "#FFFFFF",
-    "text": "#1A1A2E",
-    "muted": "#6B7280",
-    "border": "#E5E7EB",
-    "success": "#16A34A",
-    "warning": "#D97706",
-    "danger": "#DC2626",
-}
+# Định nghĩa thật nằm ở ui_kit.py — giữ tên COLORS ở đây cho code cũ và
+# phần re-export trong frontend/main.py.
+COLORS = ui_kit.COLORS
 
 # ─── Navigation structure ─────────────────────────────────────────────────────
 # Mỗi department có thể có items con. Thêm item mới: chèn vào "items" của phòng tương ứng.
@@ -291,6 +283,7 @@ def _dept_group(dept: dict, current_page: str, badge_refs: dict, check_features:
 
 def _sidebar(current_page: str) -> dict:
     badge_refs: dict = {}
+    ui_kit.install()          # token màu + font Inter cho 19 trang có sidebar
     ui.add_head_html(_SIDEBAR_CSS)
 
     with ui.column().props("id=app-sidebar").classes(
@@ -334,7 +327,6 @@ def _sidebar(current_page: str) -> dict:
                 "hau_kiem_vien": "Hậu kiểm viên",
                 "truong_phong":  "Trưởng phòng",
                 "pho_phong":     "Phó phòng",
-                "controller":    "Phó phòng",
                 "chuyen_vien":   "Chuyên viên",
             }
             clickable = user_role != "chuyen_vien"

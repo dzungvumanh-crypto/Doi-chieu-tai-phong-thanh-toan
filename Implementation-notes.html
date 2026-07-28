@@ -51,7 +51,333 @@
 <div class="page">
 
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
-  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-05-28</p>
+  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-07-28</p>
+
+  <!-- D -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">D</span>
+      <span class="card-title">Tham số tháng/năm không kiểm tra — 500 và một lỗi trả sai âm thầm</span>
+      <span class="badge badge-done">Đã sửa + kiểm thử</span>
+    </div>
+    <div class="card-body">
+      <p>Phát hiện khi kiểm thử chi tiết bàn giao chứng từ. Cùng loại với nhóm C: <strong>đầu vào xấu → 500</strong>.
+      Nhưng lần này có thêm một biến thể nguy hiểm hơn — trả về số liệu <em>trông hợp lệ nhưng sai</em>.</p>
+
+      <div class="label">Khuôn sửa đã có sẵn — chỉ sót đúng một chỗ</div>
+      <p>Điều đáng chú ý không phải là lỗi, mà là <strong>ba endpoint anh em đều đã làm đúng theo ba cách khác nhau</strong>,
+      và <code>handovers/grid</code> là chỗ duy nhất bị bỏ quên:</p>
+      <table>
+        <tr><th>Endpoint</th><th>Cách chặn</th><th>Với month=13</th></tr>
+        <tr><td><code>duty_schedule.py:29</code></td><td><code>Query(..., ge=1, le=12)</code></td><td>422</td></tr>
+        <tr><td><code>duty_stats.py:27</code></td><td><code>Query(..., ge=1, le=12)</code></td><td>422</td></tr>
+        <tr><td><code>handover_reports.py:24</code></td><td><code>if not 1 &lt;= month &lt;= 12: raise 400</code></td><td>400</td></tr>
+        <tr><td><code>leaves.py:732</code></td><td>chặn tháng, <strong>quên năm</strong></td><td>400 · nhưng <code>year=0</code> → <strong>500</strong></td></tr>
+        <tr><td><strong><code>handovers.py:77</code></strong></td><td><strong>không có gì</strong></td><td><strong>500</strong></td></tr>
+      </table>
+      <p>Nghĩa là không thiếu nhận thức — người viết biết phải chặn, chỉ áp sót. Sửa là <em>áp lại khuôn đã có</em>,
+      không phải nghĩ ra cách mới. Chọn <code>Query(ge/le)</code> cho <code>handovers</code> vì FastAPI tự sinh 422
+      kèm mô tả trường sai, không cần thêm dòng nào trong thân hàm.</p>
+
+      <div class="label">Lỗi thứ hai: <code>or</code> coi số 0 là "không truyền"</div>
+      <pre>year  = year  or today.year      # ← month=0 lọt xuống đây
+month = month or today.month     #   và bị thay bằng tháng hiện tại</pre>
+      <p><code>0</code> là giá trị falsy, nên nó <strong>không bao giờ tới được</strong> dòng kiểm tra
+      <code>1 &lt;= month &lt;= 12</code> ngay bên dưới. Người gọi hỏi "tháng 0" và nhận về số liệu tháng hiện tại,
+      dán nhãn <code>period=2026-07</code>, không cảnh báo gì.</p>
+      <p><strong>Đây nguy hiểm hơn lỗi 500.</strong> Lỗi 500 thì biết ngay là hỏng. Cái này trả về báo cáo trông
+      bình thường nhưng không phải kỳ được hỏi — nếu có script hay tích hợp truyền <code>month=0</code> do lỗi
+      tính toán, số liệu sai sẽ trôi qua không ai biết. Sửa bằng <code>is None</code> thay cho <code>or</code>.</p>
+
+      <div class="label">Mức độ — nói rõ để không đánh giá quá</div>
+      <table>
+        <tr><th>Yếu tố</th><th>Đánh giá</th></tr>
+        <tr><td>Chạm được từ giao diện?</td><td><strong>Không</strong> — dropdown dựng từ <code>range(1, 13)</code></td></tr>
+        <tr><td>Hỏng dữ liệu?</td><td>Không — cả ba endpoint chỉ đọc</td></tr>
+        <tr><td>Rò rỉ thông tin?</td><td>Không — body chỉ là chuỗi chung chung</td></tr>
+        <tr><td>Tác hại thực</td><td>Ghi rác vào log; và với lỗi <code>or</code> thì là <strong>số liệu sai âm thầm</strong></td></tr>
+      </table>
+      <p>Nhẹ hơn hẳn nhóm C: lỗi ZIP hỏng chạm được từ giao diện chỉ bằng cách tải nhầm file, còn cái này phải
+      gọi API trực tiếp. Ghi lại chủ yếu vì <em>khuôn sửa đã có mà vẫn sót</em> — kiểu lỗi này sẽ còn tái diễn
+      mỗi lần thêm endpoint mới nhận tháng/năm.</p>
+
+      <div class="label">Kiểm thử</div>
+      <p>20 ca, cả hai chiều. Đầu vào xấu: <code>month</code> = 13/0/−1, <code>year</code> = 0/99999/1999/2101 →
+      tất cả 422 hoặc 400, phản hồi <strong>JSON</strong> thay vì chuỗi <code>text/plain</code> như trước
+      (quan trọng: frontend kỳ vọng JSON có trường <code>detail</code>, nhận chuỗi trần sẽ vấp thêm lỗi thứ hai
+      khi xử lý). Đường đúng: 2026/04 vẫn trả đủ 83 chứng từ, hai biên 2000/01 và 2100/12 đều 200, và gọi
+      <code>/summary</code> không tham số vẫn mặc định đúng tháng hiện tại.</p>
+    </div>
+  </div>
+
+  <!-- C -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">C</span>
+      <span class="card-title">Ba lỗi xử lý file upload — phát hiện khi test bằng tài khoản thật</span>
+      <span class="badge badge-done">Đã sửa + kiểm thử</span>
+    </div>
+    <div class="card-body">
+      <p>Cả ba <strong>có sẵn từ trước</strong>, không liên quan đến nhóm A/B — <code>git diff</code> xác nhận
+      các file này chưa từng bị đụng tới trong đợt thay đổi. Phát hiện được vì lần đầu chạy upload thật
+      qua tài khoản có quyền, thay vì chỉ kiểm tới lớp RBAC.</p>
+
+      <div class="label">Lỗi 1+2 — cùng một khối code, cùng một nguyên nhân</div>
+      <p><code>save_upload_to_path()</code> gọi <code>tempfile.mkdtemp()</code> rồi mới mở ZIP. Có <strong>ba</strong>
+      đường ném lỗi giữa hai bước đó — ZIP hỏng, ZIP chứa đường dẫn thoát thư mục, ZIP đặt mật khẩu — và
+      <em>không đường nào</em> dọn thư mục vừa tạo. Riêng nhánh ZIP hỏng còn không được bắt, nên lòi ra HTTP 500
+      kèm stack trace.</p>
+      <table>
+        <tr><th>Trước</th><th>Sau</th></tr>
+        <tr><td>ZIP hỏng → <strong>500</strong> + stack trace</td><td><strong>422</strong> + "File tải lên không phải file .zip hợp lệ — có thể tải bị lỗi, bị cắt dở, hoặc chỉ được đổi đuôi tên thành .zip."</td></tr>
+        <tr><td>Mỗi lần lỗi để lại 1 thư mục tạm vĩnh viễn</td><td><strong>0</strong> thư mục rò rỉ trên mọi đường lỗi</td></tr>
+      </table>
+      <p>Rò rỉ thư mục tạm là thứ đáng ngại hơn lỗi 500: người dùng nội bộ có quyền <code>swift_recon</code>
+      lặp lại thao tác upload sai sẽ dần làm đầy ổ đĩa máy chủ, mà không có dấu hiệu gì.</p>
+      <p><strong>Cách sửa:</strong> tách phần giải nén ra <code>_extract_and_pick()</code>, gọi trong
+      <code>try/except</code> dọn-rồi-ném-lại. <code>mkdtemp()</code> cố ý đặt <em>ngoài</em> <code>try</code> —
+      để trong thì <code>except</code> không có tên thư mục mà dọn.</p>
+      <p>Ghi nhận mặt tốt của code cũ: <strong>có</strong> chống zip-slip (kiểm đường dẫn thoát thư mục giải nén).
+      Người viết đã nghĩ tới bảo mật, chỉ sót nhánh dọn dẹp.</p>
+
+      <div class="label">Lỗi 3 — và cái bẫy trong chính bản vá của tôi</div>
+      <p><code>_load_data()</code> lấy <code>dfs[0]</code> mà không kiểm rỗng → ZIP không có <code>.csv</code>
+      cho ra <code>IndexError: list index out of range</code>. Người vận hành nhận đúng câu đó, không biết sửa gì.</p>
+      <p>Bản vá đầu của tôi bắt <code>zipfile.BadZipFile</code> — <strong>và nó không chạy.</strong> Kiểm thử lộ ra:
+      <code>pyzipper</code> (dùng cho ZIP mã hoá AES của IPCAS) <em>đóng gói bản <code>zipfile</code> riêng</em>, nên
+      <code>pyzipper.BadZipFile</code> không phải lớp con của <code>zipfile.BadZipFile</code> — hai lớp hoàn toàn
+      tách biệt, <code>issubclass()</code> trả <code>False</code>.</p>
+      <pre>_ZipFile = pyzipper.AESZipFile
+_BAD_ZIP = (pyzipper.BadZipFile, zipfile.BadZipFile)   # phải bắt cả hai</pre>
+      <p><strong>Đây là lý do đáng viết ra:</strong> nếu chỉ đọc code mà không chạy thử, bản vá trông đúng hoàn toàn
+      và lỗi 500 vẫn còn nguyên. Quy tắc rút ra — <em>khi bắt ngoại lệ từ thư viện có bản fork/vendor
+      (pyzipper, ujson, orjson…), phải xác minh lớp ngoại lệ thật bằng <code>type(e).__mro__</code>, không suy từ tên.</em></p>
+
+      <div class="label">Thêm: phân biệt lỗi người dùng và lỗi hệ thống</div>
+      <p>Thêm <code>InputError(ValueError)</code>. <code>run_process()</code> nay tách hai nhánh: lỗi do file thì
+      log WARNING và <strong>hiển thị thẳng thông báo</strong> qua <code>/progress</code>; lỗi hệ thống giữ nguyên
+      log ERROR + "xem log server". Trước đây mọi lỗi đều rơi vào nhánh thứ hai, kể cả lỗi người dùng tự sửa được.</p>
+      <p>Bổ sung kiểm cột bắt buộc của CSV — cùng loại vấn đề: thiếu cột trước đây cho <code>KeyError</code> trần,
+      nay báo rõ thiếu cột nào.</p>
+
+      <div class="label">Kiểm thử</div>
+      <p>Hai tầng. Tầng service: 7 tình huống (ZIP hỏng · ZIP rỗng · ZIP sai nội dung · ZIP hợp lệ · CSV thiếu cột ·
+      CSV đủ cột), đo số thư mục tạm rò rỉ mỗi lần. Tầng HTTP với tài khoản thật: xác nhận mã trả về đúng
+      422/200 và <code>/progress</code> trả thông báo đọc được. Đường chạy đúng vẫn nguyên: Excel hợp lệ → 200,
+      đọc đủ số dòng, thư mục tạm dọn sạch sau khi dùng.</p>
+    </div>
+  </div>
+
+  <!-- B -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">B</span>
+      <span class="card-title">B1 spike NiceGUI + B2 <code>ui_kit.py</code></span>
+      <span class="badge badge-done">B2 xong · B1 chỉ đánh giá</span>
+    </div>
+    <div class="card-body">
+      <p>Chi tiết spike ở <a href="SPIKE_B1_NICEGUI.md"><code>SPIKE_B1_NICEGUI.md</code></a>.
+      <strong><code>requirements.txt</code> không bị sửa</strong> — vẫn <code>nicegui==1.4.37</code>.</p>
+
+      <div class="label">B1 — nút thắt không nằm ở nơi ba vòng rà soát đã tìm</div>
+      <p>Cả ba vòng đều soi breaking change của API giao diện. Nút thắt thật là <strong>ràng buộc phiên bản</strong>:
+      <code>fastapi==0.109.1</code> đòi <code>starlette&lt;0.36</code>, còn <code>nicegui&gt;=2.13</code> đòi
+      <code>starlette&gt;=0.45.3</code> — không thoả đồng thời. <code>nicegui 2.12.1</code> là bản 2.x cuối cùng
+      chưa ép starlette, nên nó vượt qua ranh giới 2.0 mà <em>không đụng backend</em>.</p>
+      <p>Toàn bộ 9 API bị gỡ ở 2.0 đều <strong>0 lần dùng</strong>. Hai <code>right_drawer</code> mà vòng trước
+      cho là phải sửa hoá ra đều là con trực tiếp của page — dựng bản tái hiện chạy trên cả hai phiên bản,
+      không <code>RuntimeError</code>. Rủi ro còn lại duy nhất là <strong>thị giác</strong>: 70 <code>ui.card</code>,
+      trong đó 11 dòng có cả card lẫn border.</p>
+
+      <div class="label">Đã triển khai lên môi trường thật (28/07)</div>
+      <p><code>nicegui 1.4.37 → 2.12.1</code> · <code>python-multipart 0.0.9 → &gt;=0.0.31</code>.
+      <strong><code>fastapi</code>, <code>starlette</code>, <code>uvicorn</code> giữ nguyên</strong> — đúng như spike dự đoán.
+      Kiểm thử sau nâng cấp: 21/21 trang import sạch, middleware 6/6, render <code>/login</code> HTTP 200,
+      6 mẫu cấu trúc (drawer, table, card, upload, storage) đều OK, 0 lỗi trong log.</p>
+
+      <div class="label">Rủi ro "70 card" giải bằng so CSS, không phải soi mắt</div>
+      <p>Hạng mục duy nhất còn lại sau 4 tài liệu rà soát — và nó <strong>bằng 0</strong>. Cách giải: tải wheel
+      1.4.37 về, trích <code>quasar.css</code> + <code>nicegui.css</code> + <code>card.py</code>, so trực tiếp với bản 2.12.1.</p>
+      <table>
+        <tr><th>Giả định</th><th>Sự thật đo được</th></tr>
+        <tr><td>2.0 bỏ padding tự động của <code>ui.card</code></td><td><code>.nicegui-card</code> vẫn <code>padding: 1rem</code> ở cả hai bản</td></tr>
+        <tr><td>Quasar bỏ luật gỡ border/shadow của phần tử con</td><td>Không bỏ — <strong>viết lại thành opt-out</strong>: <code>:not(.q--avoid-card-border)</code></td></tr>
+        <tr><td>Nên hành vi đổi</td><td><strong>Không đổi</strong> — <code>grep</code> toàn package: không có gì gắn class opt-out đó</td></tr>
+      </table>
+      <p><strong>Tài liệu của chính thư viện mô tả sai bản này.</strong> Docstring <code>Card</code> và release notes 2.0.0
+      đều ghi "không còn ẩn border/shadow của phần tử con", nhưng cơ chế chưa được nối dây ở 2.12.1.
+      Bài học: <em>release notes là giả thuyết, CSS đã cài mới là bằng chứng.</em></p>
+      <p>Còn một cảnh báo hẹp: luật mới dùng cú pháp <code>:nth-child(1 of :not(...))</code>, cần Chrome/Edge 111+
+      (03/2023). Trình duyệt cũ hơn sẽ bỏ qua hai luật bo góc con đầu/cuối — tác động rất nhỏ vì các card đều
+      dùng <code>overflow-hidden</code>, việc cắt viền đã tự bo góc.</p>
+
+      <div class="label">A7 — đính chính khuyến nghị của chính mình</div>
+      <p>Ban đầu tôi đề nghị <code>python-multipart&gt;=0.0.18</code>. Sai: đó là mức tối thiểu <em>NiceGUI đòi</em>,
+      không phải mức <em>an toàn</em>. Tra lại OSV theo từng bản: 0.0.9 có 16 lỗ hổng, <strong>0.0.18 vẫn còn 14</strong>,
+      phải <code>&gt;=0.0.31</code> mới sạch. Đã áp dụng <code>&gt;=0.0.31</code>.</p>
+      <p>Bài học: lấy ràng buộc phiên bản của thư viện khác làm ngưỡng bảo mật là nhầm hai mục tiêu khác nhau —
+      họ pin để API tương thích, không phải để vá lỗ hổng.</p>
+
+      <div class="label">A7 — thay đổi hành vi thật, đã đo biên an toàn</div>
+      <p>Các bản vá DoS hoạt động bằng cách <strong>thêm giới hạn</strong>, nên chúng đổi hành vi chứ không chỉ
+      vá lỗi. Đo trên endpoint upload thật:</p>
+      <table>
+        <tr><th>Trường hợp</th><th>Kết quả</th></tr>
+        <tr><td>≤ 8 header trên một part</td><td>401 — qua được parser, tới RBAC</td></tr>
+        <tr><td>≥ 9 header trên một part</td><td><strong>400 — parser từ chối</strong> (giới hạn mới từ bản 0.0.27)</td></tr>
+        <tr><td>4 part × 200KB (endpoint nhiều part nhất)</td><td>401 — bình thường</td></tr>
+        <tr><td>1 part 5MB</td><td>401 — bình thường</td></tr>
+      </table>
+      <p>Trình duyệt và <code>ui.upload</code> gửi <strong>2–3 header mỗi part</strong>
+      (<code>Content-Disposition</code>, <code>Content-Type</code>, đôi khi <code>Content-Transfer-Encoding</code>).
+      Biên an toàn khoảng <strong>3 lần</strong> — không có đường nào chạm tới giới hạn trong sử dụng bình thường.
+      Ghi lại vì nếu sau này có client tự dựng request multipart thủ công thì đây là chỗ đầu tiên cần nhìn.</p>
+
+      <div class="label">B1 — phát hiện quan trọng hơn chính spike</div>
+      <p><code>python-multipart==0.0.9</code> đang chạy có <strong>16 lỗ hổng đã biết, 4 mức HIGH</strong> — gồm một
+      lỗi ghi file tuỳ ý và ba lỗi DoS. Đây là thư viện xử lý mọi upload; hệ thống có 9 chỗ <code>ui.upload</code>
+      và các endpoint nạp ZIP. <strong>Đề nghị tách thành A7 làm ngay</strong>, không chờ nhóm B. Việc nới pin này
+      cũng chính là điều kiện của phương án nâng cấp — hai mục tiêu trùng nhau.</p>
+
+      <div class="label">B2 — thiết kế bám bài học <code>_card</code> vs <code>_page_header</code></div>
+      <p>Trong <code>shared.py</code>, <code>_page_header()</code> được 19/21 trang dùng còn <code>_card()</code>
+      chỉ 1. Khác biệt: <code>_page_header</code> giải quyết việc mọi trang đều phải làm tại một điểm chèn hiển nhiên;
+      <code>_card</code> cạnh tranh với việc gõ <code>ui.card()</code> — ngắn hơn và ai cũng thuộc.</p>
+      <p>Nên <code>ui_kit</code> chọn API <strong>một tham số</strong>: <code>status_chip("approved")</code>,
+      <code>status_label(code)</code>, <code>status_dot(code)</code>. Ngắn hơn cách viết tay thì mới có cơ được dùng.
+      Và <code>install()</code> được cắm vào <code>_sidebar()</code> — điểm mà 19 trang đã đi qua — nên token màu
+      và font Inter phủ toàn hệ thống mà không phải sửa 21 trang.</p>
+
+      <div class="label">B2 — va chạm khi gộp sổ đăng ký trạng thái</div>
+      <p>Khoá <code>rejected</code> tồn tại ở hai nơi với hai nhãn: "Bị từ chối" (bàn giao) và "Từ chối" (nghỉ phép).
+      Đã thống nhất thành <strong>"Từ chối"</strong>. Đây là <em>thay đổi chữ hiển thị duy nhất</em> của cả B2 —
+      đã đối chiếu 10 mã trạng thái trước/sau để chắc không có chỗ nào đổi ngoài ý muốn, và xác nhận màu ô lưới
+      bàn giao giống hệt bản cũ từng ký tự.</p>
+
+      <div class="label">B2 — card đặt padding tường minh, không dựa mặc định</div>
+      <p><code>ui_kit.card()</code> khai báo padding thay vì để Quasar tự lo. Lý do đến thẳng từ B1: NiceGUI 2.0 bỏ
+      CSS padding tự động của <code>ui.card</code>. Card dựng qua <code>ui_kit</code> giữ nguyên hình dạng ở cả 1.4.x
+      lẫn 2.x — mỗi card chuyển sang nó là bớt một mục phải soi mắt khi nâng cấp.</p>
+      <p>Cùng lý do, <code>install()</code> cố ý <strong>không</strong> dùng cờ chống gọi trùng qua
+      <code>context.get_client()</code>: API đó bị gỡ ở 2.0. Gọi trùng chỉ tạo thẻ <code>&lt;link&gt;</code> lặp,
+      trình duyệt tự gộp — vô hại.</p>
+
+      <div class="label">Phát hiện tình cờ: con số "5.018 dòng" bị thổi phồng 72%</div>
+      <p><code>frontend/pages/leaves.py</code> có <strong>một dòng trống xen giữa mỗi dòng code</strong> —
+      2.097/5.018 dòng là trống (41%), trong khi mọi file khác chỉ 8–11%. Số dòng thật là <strong>2.921</strong>.</p>
+      <p>Con số 5.018 đã được trích trong cả 5 tài liệu rà soát và là cơ sở định giá C2 ("3–4 ngày, rủi ro Cao").
+      <strong>Nên tính lại C2.</strong> Chưa chuẩn hoá khoảng trắng vì không an toàn bằng lệnh đơn giản: xoá dòng
+      trống nằm trong chuỗi ba nháy sẽ làm hỏng HTML/CSS nhúng — cần xử lý bằng <code>tokenize</code>, là một việc
+      riêng chứ không phải thao tác phụ.</p>
+
+      <div class="label">Kết quả đo được của B2</div>
+      <table>
+        <tr><th>Chỉ số</th><th>Trước</th><th>Sau</th></tr>
+        <tr><td>Nơi định nghĩa trạng thái</td><td>3 nơi, 3 cơ chế</td><td><strong>1</strong> (<code>ui_kit.STATUS</code>)</td></tr>
+        <tr><td>Map trạng thái rời trong <code>pages/</code></td><td><code>_STATUS_LABEL_MAP</code>, <code>_STATUS_DOT_COLOR</code>, <code>_CELL_STATUS_STYLE</code>, <code>_LEAVE_STATUS</code></td><td><strong>0</strong> — đều trỏ về <code>ui_kit</code></td></tr>
+        <tr><td>Mã hex ngoài nguồn tập trung</td><td>118</td><td><strong>93</strong> (−21%; phần còn lại thuộc B5)</td></tr>
+        <tr><td>Trang tự nạp font Inter</td><td>2/21 (19 trang không có font)</td><td><strong>0</strong> — 21/21 qua <code>install()</code></td></tr>
+        <tr><td><code>ui.skeleton</code></td><td>0</td><td>có <code>skeleton_rows()</code>, <code>skeleton_cards()</code></td></tr>
+      </table>
+      <p><strong>Không phóng đại:</strong> B2 chỉ dựng hạ tầng và chứng minh trên 4 trang
+      (<code>handovers</code>, <code>duty_schedule</code>, <code>leaves</code>, <code>login</code>).
+      93 mã hex còn lại và việc áp <code>empty_state()</code>/<code>skeleton()</code> cho 16 trang chưa có chỉ báo
+      tải là việc của B5 — đúng như phân chia ban đầu.</p>
+    </div>
+  </div>
+
+  <!-- A -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">A</span>
+      <span class="card-title">Nhóm A1–A6 — vá nhanh sau 3 vòng rà soát chéo</span>
+      <span class="badge badge-done">Đã xong + kiểm thử</span>
+    </div>
+    <div class="card-body">
+      <p>Xuất phát từ chuỗi 5 tài liệu rà soát chéo (<code>RA_SOAT_TTTT_DEVELOP.md</code> →
+      <code>CHOT_VONG_DOI_CHIEU.md</code>). Nhóm B (nâng cấp giao diện) hoãn;
+      <strong>B3 (menu bàn phím) và B4 (phím tắt) đã bị huỷ hẳn</strong> — đừng khôi phục từ tài liệu cũ.</p>
+
+      <div class="label">A6 — Bẫy migration: vấn đề thật không phải tên bảng sai</div>
+      <p>Tên bảng <code>ksnb_staff</code> → <code>user_tttt</code> đã đổi từ lâu, nhưng 18 câu SQL trong
+      <code>schema_migrations</code> vẫn dùng tên cũ. Điều khiến nó nguy hiểm là <strong>thứ tự thực thi</strong>:
+      khối đổi tên nằm <em>sau</em> vòng lặp migration, và danh sách nuốt lỗi có <code>"no such table"</code>.</p>
+      <table>
+        <tr><th>Hệ quả</th><th>Mức độ thật</th></tr>
+        <tr><td>18 câu SQL trượt im lặng mỗi lần khởi động</td><td><span class="pill pill-green">Không thiệt hại</span> — đều đã chạy xong trước khi đổi tên, hoặc có bản trùng dùng tên mới thay thế (trigger <code>chk_used_leave_days</code>, index <code>ix_user_tttt_dept</code>)</td></tr>
+        <tr><td>Migration mới viết sai tên bảng sẽ trượt im lặng</td><td><span class="pill pill-red">Đây mới là rủi ro</span> — <code>DESIGN.md</code> bảo "thêm SQL vào list", list đầy ví dụ tên cũ, lỗi bị nuốt → cột không được thêm, không log, app vẫn khởi động</td></tr>
+      </table>
+      <p><strong>Đính chính so với báo cáo ban đầu:</strong> tôi từng nói "cài mới hôm nay sẽ ra DB khác DB đang chạy".
+      Sai về mức độ — khác biệt chỉ là hai index thừa còn sót tên cũ (<code>ix_ksnb_staff_dept</code>,
+      <code>ix_ksnb_staff_id</code>), không ảnh hưởng chức năng vì bản trùng tên mới đã phủ. Giá trị của A6 là
+      <strong>chặn lỗi tương lai</strong>, không phải sửa lỗi hiện tại.</p>
+
+      <div class="label">A6 — Vì sao đảo thứ tự thay vì chỉ đổi tên</div>
+      <p>Chỉ đổi tên trong SQL là chưa đủ: DB cũ còn bảng <code>ksnb_staff</code> sẽ trượt <em>toàn bộ</em> migration
+      (giờ trỏ vào <code>user_tttt</code> chưa có dữ liệu). Phải đưa khối đổi tên lên <strong>trước</strong> vòng lặp
+      để cả 3 đường đều đúng: DB cũ → đổi tên rồi migrate; DB hiện tại → no-op; DB mới → no-op.</p>
+
+      <div class="label">A6 — Đánh đổi: raise thay vì DROP im lặng</div>
+      <p>Khối đổi tên cũ có <code>DROP TABLE user_tttt</code> vô điều kiện khi cả 2 bảng cùng tồn tại. Giả định
+      "bảng này chắc chắn rỗng do <code>_create_tables()</code> vừa tạo" đúng trong luồng bình thường, nhưng nếu sai
+      thì mất toàn bộ dữ liệu nhân sự không dấu vết. Thêm kiểm tra <code>COUNT(*)</code>: có dữ liệu thì
+      <strong>chặn khởi động</strong> và báo xử lý thủ công. Chấp nhận đánh đổi "app không lên" để đổi lấy "không mất dữ liệu".</p>
+
+      <div class="label">A5 — Comment trong code dựa trên tiền đề sai</div>
+      <p><code>frontend/pages/staff.py</code> giữ <code>"controller"</code> trong bản đồ hiển thị với lý do
+      <em>"cho JWT session cũ chưa expire"</em>. Kiểm lại: <code>get_current_staff</code> đọc role từ
+      <strong>DB mỗi request</strong> (<code>SELECT * FROM user_tttt</code>), không lấy từ token — nên nhánh đó
+      không thể chạm tới dù JWT cũ đến đâu. Cộng với 0 bản ghi <code>role='controller'</code> trong DB → xoá cả 4 chỗ.
+      Giữ nguyên câu migration <code>UPDATE ... SET role='pho_phong' WHERE role='controller'</code> vì DB cũ vẫn cần nó.</p>
+
+      <div class="label">A4 — Cảnh báo bám sự thật quan sát được, không bám cờ khai báo</div>
+      <p>Cảnh báo CORS/<code>/docs</code> kích hoạt theo <code>BACKEND_HOST</code> chứ không theo <code>ENV</code>.
+      Lý do: người quên đặt <code>ALLOWED_ORIGINS</code> gần như chắc chắn cũng quên <code>ENV=production</code> —
+      cảnh báo dựa vào <code>ENV</code> sẽ không bao giờ nổ đúng lúc cần. Đã xác nhận cả 2 cảnh báo nổ trên cấu hình hiện tại.</p>
+
+      <div class="label">A2 — Tác dụng phụ đã chấp nhận</div>
+      <p>Đổi <code>storage_secret</code> từ hardcode sang env <strong>vô hiệu hoá toàn bộ cookie phiên đang có</strong> —
+      mọi người dùng bị đăng xuất một lần ở lần deploy đầu. Không có cách tránh: giữ giá trị cũ nghĩa là giữ nguyên lỗ hổng.
+      Đã ghi cảnh báo này vào cả thông báo lỗi lẫn <code>.env.example</code>.</p>
+
+      <div class="label">A1 — Không viết lại lịch sử</div>
+      <p><code>Plan/</code> và <code>Upgrade/</code> mô tả đúng hệ thống <em>tại thời điểm viết</em>. Sửa tên bảng trong đó
+      là bóp méo hồ sơ. Chọn dán banner cảnh báo đầu file thay vì sửa nội dung. Riêng <code>CLAUDE.md</code>/<code>DESIGN.md</code>
+      là chỉ dẫn đang có hiệu lực → sửa thẳng.</p>
+      <p>Bằng chứng cho thấy tài liệu sai gây hại thật: chính người rà soát đã cảnh báo "<code>PLAN.md</code> lỗi thời"
+      rồi sau đó vẫn lấy tên bảng <code>ksnb_staff</code> từ đúng file đó.</p>
+
+      <div class="label">Phát hiện nhưng KHÔNG xử lý</div>
+      <table>
+        <tr><th>Việc</th><th>Vì sao để lại</th></tr>
+        <tr><td>Index thừa trong DB: <code>ix_ksnb_staff_dept</code>, <code>ix_ksnb_staff_id</code> (trùng chức năng với <code>ix_user_tttt_dept</code>)</td><td>Vô hại, chỉ tốn chỗ. Xoá index trên DB đang chạy thật cần cửa sổ bảo trì — không đáng cho lợi ích cosmetic</td></tr>
+        <tr><td><code>backend/__pycache__/models.cpython-310.pyc</code> và <code>schemas.cpython-310.pyc</code> mồ côi (không còn <code>.py</code> tương ứng)</td><td>Python 3 không import từ <code>.pyc</code> mồ côi nên vô hại. Là dấu vết refactor cũ — chính nó xác nhận <code>backend/models.py</code> từng tồn tại, giải thích vì sao <code>DESIGN.md</code> trỏ tới nó</td></tr>
+        <tr><td><code>data/</code> có 3 file DB hỏng từ 14–15/05/2026 còn sót</td><td>Ngoài phạm vi nhóm A. Nên hỏi trước khi xoá — có thể đang giữ làm bằng chứng sự cố</td></tr>
+        <tr><td>Đoạn CSS sửa menu ở phụ lục <code>CHOT_VONG_DOI_CHIEU.md</code> có lỗi <code>pointer-events</code> tự vô hiệu hoá độ trễ 120ms</td><td>Thuộc B3 — <strong>đã huỷ</strong>. Ghi lại phòng khi có người khôi phục đoạn CSS đó</td></tr>
+      </table>
+
+      <div class="label">A2 — Bẫy deploy phát hiện sau: <code>start.bat</code> không bù được biến mới</div>
+      <p><code>start.bat</code> chỉ sinh <code>.env</code> khi file <strong>chưa tồn tại</strong>. Trên máy chủ
+      <code>.env</code> đã có sẵn (chứa <code>SECRET_KEY</code>) nên nó bị bỏ qua hoàn toàn → sau khi deploy,
+      frontend fail-fast và <strong>không khởi động được</strong>. Cả máy chính lẫn hệ thống test (9000/9090) đều dính,
+      vì <code>deploy.bat</code> tự gọi <code>deploy-test.bat</code>.</p>
+      <p>Chọn sửa <code>start.bat</code> để <strong>tự bù biến còn thiếu</strong> thay vì viết hướng dẫn gõ tay từng máy.
+      Lý do: cả hai script deploy đều copy <code>start.bat</code>, nên bản vá tự lan sang mọi máy đích ở lần deploy kế tiếp —
+      không phụ thuộc vào việc người vận hành có đọc hướng dẫn hay không.</p>
+      <p>Chi tiết dễ sai đã xử lý: ghi <code>echo.</code> trước khi append, để <code>.env</code> nào không có dòng trống
+      cuối file cũng không bị nối <code>SECRET_KEY=...STORAGE_SECRET=...</code> thành một dòng.
+      Kiểm thử 5 tình huống (không có <code>.env</code> · <code>.env</code> cũ thiếu khoá · đã có khoá · thiếu newline cuối ·
+      chạy 2 lần) — đều đúng, idempotent.</p>
+      <p><strong>Nguyên tắc rút ra:</strong> mỗi lần thêm biến môi trường bắt buộc, phải sửa <code>start.bat</code> kèm theo.
+      Fail-fast chỉ an toàn khi có đường tự phục hồi trên máy đích.</p>
+
+      <div class="label">Kiểm thử đã chạy</div>
+      <p>Migration thử trên 4 kịch bản DB (bản sao DB thật 78 dòng · DB rỗng cài mới · DB cũ còn tên
+      <code>ksnb_staff</code> · migration sai tên bảng phải raise) — cả 4 đạt. Boot backend thật qua
+      <code>lifespan</code>: 169 route, <code>PRAGMA integrity_check = ok</code>, 78 dòng nguyên vẹn.
+      Fail-fast <code>STORAGE_SECRET</code> kiểm cả 2 chiều. Không tạo data test trong DB.</p>
+    </div>
+  </div>
 
   <!-- 0 -->
   <div class="card">
