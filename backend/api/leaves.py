@@ -709,6 +709,10 @@ def leaves_today(
     _: dict = Depends(get_current_staff),
 ):
     """Thống kê nghỉ phép hôm nay: tổng + phân theo phòng."""
+    # Chỉ đếm đơn ĐÃ DUYỆT — cố ý khác /calendar (lịch tháng hiện cả đơn chờ,
+    # nhưng có nhãn trạng thái đi kèm). Endpoint này chỉ phục vụ card "Nghỉ phép
+    # hôm nay" ở Trang chủ — con số trần, không nhãn — nên gộp đơn chưa duyệt vào
+    # sẽ báo người vẫn đang đi làm là đã nghỉ. Đừng "đồng bộ" hai chỗ này.
     today = _vn_now().date().isoformat()
     rows = db.execute(
         """SELECT lr.id, lr.spread_dates, lr.start_date, lr.end_date,
@@ -716,7 +720,7 @@ def leaves_today(
            FROM leave_records lr
            JOIN user_tttt u ON lr.staff_id = u.id
            LEFT JOIN departments d ON u.department_id = d.id
-           WHERE lr.status NOT IN ('rejected','cancelled')
+           WHERE lr.status = 'approved'
              AND lr.start_date <= ? AND lr.end_date >= ?""",
         (today, today),
     ).fetchall()
