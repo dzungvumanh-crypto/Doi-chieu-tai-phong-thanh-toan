@@ -177,10 +177,13 @@ Truy cập:
 - Ủy quyền Giám đốc: GĐ có thể ủy quyền cho PGĐ trong khoảng thời gian xác định
 - Tải phiếu nghỉ phép dạng `.docx` đúng mẫu
 - Theo dõi quota phép năm (hạn ngạch / đã dùng); chuyển tiếp ngày phép chưa dùng năm trước sang Q1
+- Banner "Phép còn lại" tính đủ hạn mức nhập tay + ngày chuyển kỳ, khớp đúng tab Hạn mức phép
+- Đơn nghỉ vắt qua ranh giới năm (vd 29/12 → 02/01) được chia đúng cho từng năm khi tính hạn mức
 - Nghỉ thai sản / bảo hiểm (không trừ vào hạn mức phép năm), chọn khoảng ngày bằng lịch cuộn
 - Nhập hạn mức phép hàng loạt từ file Excel (xem trước / áp dụng / hoàn tác)
 - Khai báo hộ; ngày nghỉ lẻ không liên tục (`spread_dates`)
-- Bảng nghỉ phép hôm nay trên Trang chủ theo từng phòng
+- Bảng nghỉ phép hôm nay trên Trang chủ theo từng phòng — **chỉ đếm đơn đã duyệt** (lịch tháng trong menu thì hiện cả đơn đang chờ, kèm nhãn trạng thái)
+- Chống duyệt trùng: hai người (hoặc hai tab) bấm duyệt cùng lúc thì chỉ lần đầu có hiệu lực, lần sau báo đơn đã được xử lý
 - Resubmit đơn bị từ chối; huỷ đơn đang chờ hoặc đã duyệt
 
 ### Module Chứng từ Hậu kiểm
