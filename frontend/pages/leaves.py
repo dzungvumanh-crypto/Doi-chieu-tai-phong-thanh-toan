@@ -335,7 +335,7 @@ async def leaves_page():
 
         # ── Banner thông báo ủy quyền đang hiệu lực ──────────────────────────
         try:
-            _active_deleg = api.get("/api/delegations/active") or []
+            _active_deleg = await asyncio.to_thread(api.get, "/api/delegations/active") or []
         except Exception:
             _active_deleg = []
 
@@ -368,6 +368,7 @@ async def leaves_page():
 
         my_leaves, pending_leaves, all_leaves, dept_leaves, declared_leaves, delegations, balance_info, approver_list = \
             [], [], [], [], [], [], {}, []
+        my_balance = {}
 
 
 
@@ -407,11 +408,13 @@ async def leaves_page():
 
                 asyncio.to_thread(api.get, "/api/leaves/approvers") if show_approver else _empty(),
 
+                asyncio.to_thread(api.get, "/api/leaves/my-balance"),
+
                 return_exceptions=True,
 
             )
 
-            my_leaves, pending_leaves, all_leaves, dept_leaves, declared_leaves, delegations, balance_info, approver_list = results
+            my_leaves, pending_leaves, all_leaves, dept_leaves, declared_leaves, delegations, balance_info, approver_list, my_balance = results
 
             for r in results:
 
@@ -439,6 +442,8 @@ async def leaves_page():
 
             approver_list  = approver_list   if isinstance(approver_list, list)   else []
 
+            my_balance     = my_balance      if isinstance(my_balance, dict)      else {}
+
         except Exception as e:
 
             if _handle_api_error(e):
@@ -462,12 +467,17 @@ async def leaves_page():
 
 
         # ── Balance card ──────────────────────────────────────────────────────
+        # Lấy từ /api/leaves/my-balance (tôn trọng override hạn mức thủ công +
+        # cộng carry-over) thay vì annual_leave_days ở /api/auth/me (chỉ tính
+        # theo công thức tự động, không có carry-over) — khớp đúng tab Hạn mức phép.
 
-        annual    = balance_info.get("annual_leave_days", 12)
+        quota     = my_balance.get("quota_days", 12)
 
-        used      = balance_info.get("used_leave_days", 0)
+        carry     = my_balance.get("carry_over", 0)
 
-        remaining = max(0, annual - used)
+        annual    = quota + carry
+
+        remaining = my_balance.get("remaining", max(0, annual - my_balance.get("used_days", 0)))
 
         with ui.row().classes("gap-4 mb-4"):
 
@@ -475,7 +485,7 @@ async def leaves_page():
 
                 ui.label("Phép còn lại").classes("text-xs text-blue-600")
 
-                ui.label(f"{remaining} / {annual} ngày").classes("text-xl font-bold text-blue-800")
+                ui.label(f"{remaining:g} / {annual:g} ngày").classes("text-xl font-bold text-blue-800")
 
 
 
@@ -526,9 +536,19 @@ async def leaves_page():
 
                 gd_opts[s["id"]] = s["full_name"] + " (PGĐ)"
 
-        except Exception:
+        except Exception as e:
 
-            pass
+            if _handle_api_error(e):
+
+                return
+
+            # gd_opts rỗng → field "Ban lãnh đạo phê duyệt" sẽ ẩn khỏi form Tạo đơn
+
+            # (xem điều kiện gd_opts and user_role != "giam_doc" bên dưới) — cảnh
+
+            # báo rõ để người dùng biết đây là do lỗi tải dữ liệu, không phải thiết kế.
+
+            ui.notify("Không tải được danh sách GĐ/PGĐ — vui lòng tải lại trang trước khi tạo đơn", type="negative")
 
 
 
@@ -926,7 +946,7 @@ async def leaves_page():
 
                     r_dates.props(_OPT_ALL)
 
-                    r_hint.set_text("Có thể chọn ngày trong quý khứ" if lt == "dot_xuat" else "")
+                    r_hint.set_text("")
 
                     r_hint.style("color:#6b7280")
 
@@ -3174,14 +3194,6 @@ async def leaves_page():
 
 
 
-            if can_declared and t_declared:
-
-                with ui.tab_panel(t_declared):
-
-                    _draw_table_paged(declared_leaves, show_name=True)
-
-
-
             if t_mine:
 
                 with ui.tab_panel(t_mine):
@@ -3208,14 +3220,6 @@ async def leaves_page():
                 with ui.tab_panel(t_dept):
 
                     _draw_table_paged(dept_leaves, show_name=True)
-
-
-
-            if can_declared and t_declared:
-
-                with ui.tab_panel(t_declared):
-
-                    _draw_table_paged(declared_leaves, show_name=True)
 
 
 
@@ -3417,19 +3421,33 @@ async def leaves_page():
 
                     gd_staff_list, pgd_staff_list = [], []
 
-                    try:
+                    _deleg_staff_results = await asyncio.gather(
 
-                        gd_staff_list, pgd_staff_list = await asyncio.gather(
+                        asyncio.to_thread(api.get, "/api/delegations/staff/giam-doc"),
 
-                            asyncio.to_thread(api.get, "/api/delegations/staff/giam-doc"),
+                        asyncio.to_thread(api.get, "/api/delegations/staff/pho-giam-doc"),
 
-                            asyncio.to_thread(api.get, "/api/delegations/staff/pho-giam-doc"),
+                        return_exceptions=True,
 
-                        )
+                    )
 
-                    except Exception:
+                    _deleg_staff_err = next((r for r in _deleg_staff_results if isinstance(r, Exception)), None)
 
-                        pass
+                    if _deleg_staff_err is not None:
+
+                        if isinstance(_deleg_staff_err, api.SessionExpiredError):
+
+                            if _handle_api_error(_deleg_staff_err):
+
+                                return
+
+                        else:
+
+                            ui.notify("Không tải được danh sách GĐ/PGĐ để tạo ủy quyền", type="negative")
+
+                    else:
+
+                        gd_staff_list, pgd_staff_list = _deleg_staff_results
 
 
 
@@ -3862,7 +3880,12 @@ async def leaves_page():
                                     oq = r["old_quota_days"]
                                     ui.label(f"{oq:.0f} → {r['new_quota_days']:.0f}" if oq is not None else f"→ {r['new_quota_days']:.0f}").classes("w-32 text-center")
                                     ou = r["old_used_leave_days"]
-                                    ui.label(f"{ou:.0f} → {r['new_used_leave_days']:.0f}" if ou is not None else f"→ {r['new_used_leave_days']:.0f}").classes("w-32 text-center")
+                                    with ui.row().classes("w-32 items-center justify-center gap-1"):
+                                        ui.label(f"{ou:.0f} → {r['new_used_leave_days']:.0f}" if ou is not None else f"→ {r['new_used_leave_days']:.0f}").classes("text-center")
+                                        if r.get("rounded_warning"):
+                                            ui.icon("warning", size="xs").classes("text-orange-500").tooltip(
+                                                "Giá trị lẻ (nửa ngày) sẽ bị làm tròn lên nguyên ngày khi áp dụng"
+                                            )
 
                     async def _qi_on_upload(e):
                         try:
@@ -3991,7 +4014,7 @@ async def leaves_page():
 
                                     yrs     = max(0, yr_ref - yr_join)
 
-                                    calc    = 12 + yrs // 5
+                                    calc    = 12 + yrs // 4
 
                                     q_days_input.value = calc
 
@@ -4019,7 +4042,7 @@ async def leaves_page():
 
                                                  value=12, min=0, max=365).classes("w-full mt-2")
 
-                        ui.label("Công thức: 12 ngày + 1 ngày mỗi 5 năm công tác").classes("text-xs text-gray-500 mt-1 mb-4")
+                        ui.label("Công thức: 12 ngày + 1 ngày mỗi 4 năm công tác").classes("text-xs text-gray-500 mt-1 mb-4")
 
 
 
@@ -4110,6 +4133,8 @@ async def leaves_page():
 
                                     ui.label("Họ và tên").classes(f"{_qh} w-36")
 
+                                    ui.label("Mã cán bộ").classes(f"{_qh} w-24 text-center")
+
                                     ui.label("Ngày vào ngành").classes(f"{_qh} w-28 text-center")
 
                                     ui.label("Hạn mức").classes(f"{_qh} w-20 text-center")
@@ -4183,6 +4208,8 @@ async def leaves_page():
                                                 ui.label(str(_qi)).classes(f"{_qc} w-8 text-center")
 
                                                 ui.label(row.get("staff_name", "")).classes(f"{_qc} w-36 truncate")
+
+                                                ui.label(row.get("employee_code", "") or "→").classes(f"{_qc} w-24 text-center")
 
                                                 jd = row.get("join_industry_date") or ""
 
@@ -4380,10 +4407,9 @@ async def leaves_page():
 
 
                     # ── Define helpers TRƯỚC để _submit có thể d→ng ──────────
-
-                    _decl_state = {"leaves": list(declared_leaves)}
-
-
+                    # Nguồn lọc DUY NHẤT phải là declared_leaves gốc (bất biến trong
+                    # vòng đời trang) — không dùng lại kết quả đã lọc lần trước làm
+                    # nguồn cho lần lọc/"Xóa lọc" tiếp theo, tránh lọc chồng lọc.
 
                     # Placeholder containers → sẽ được assign sau khi render
 
@@ -4392,8 +4418,6 @@ async def leaves_page():
 
 
                     def _render_decl_table(leaves: list):
-
-                        _decl_state["leaves"] = leaves
 
                         c = _decl_refs["container"]
 
@@ -4903,7 +4927,7 @@ async def leaves_page():
 
                             to_d    = _parse_decl_date(_df_to.value)
 
-                            src = _decl_state.get("leaves", declared_leaves)
+                            src = declared_leaves
 
                             filtered_d = []
 
@@ -4971,7 +4995,7 @@ async def leaves_page():
 
                             _df_to.value   = ""
 
-                            src = _decl_state.get("leaves", declared_leaves)
+                            src = declared_leaves
 
                             _df_count.set_text(f"{len(src)} / {len(src)} đơn")
 
