@@ -4,6 +4,34 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 29/07/2026 Nghỉ phép - Tính đúng hạn mức khi nghỉ vắt qua giao thừa dương lịch:
+    + Đơn nghỉ liền mạch bắc qua ngày 31/12 (ví dụ nghỉ từ 29/12 đến 02/01) trước đây bị **trừ trọn vào năm cũ**, kể cả những ngày thực tế đã sang năm mới. Người nghỉ bị mất oan số ngày phép đúng bằng phần vắt sang năm sau
+    + Nay mỗi ngày được tính vào đúng năm của nó. Ví dụ nghỉ 29/12 → 02/01 thì 3 ngày làm việc cuối tháng 12 trừ vào năm cũ, 2 ngày đầu tháng 1 trừ vào năm mới
+    + ⚠️ **Số ngày phép chuyển kỳ của một số người sẽ tăng lên sau đợt cập nhật này.** Đây là con số đúng, không phải lỗi — nhưng ai đang theo dõi số phép bằng sổ tay hoặc file Excel riêng sẽ thấy lệch với hệ thống. Cần đối chiếu lại với những người từng nghỉ bắc qua Tết dương lịch
+
+- 29/07/2026 Nghỉ phép - Không còn trừ phép hai lần khi bấm duyệt nhanh:
+    + Bấm nút duyệt hai lần liên tiếp, hoặc hai người cùng duyệt một đơn ở hai máy, trước đây có thể **trừ hạn mức phép hai lần** cho cùng một đơn
+    + Nay chỉ lần bấm đầu tiên có hiệu lực, lần sau báo *"Đơn đã được xử lý bởi một yêu cầu khác, vui lòng tải lại trang"*
+
+- 29/07/2026 Nghỉ phép - Ô "Phép còn lại" hiện đúng số:
+    + Ô này trước đây tính theo công thức thâm niên, **bỏ qua hạn mức phòng Tổng hợp nhập tay và bỏ qua ngày phép chuyển từ năm trước sang**. Người xem thấy một số ở đầu trang, bấm vào tab Hạn mức phép lại thấy số khác
+    + Nay hai chỗ dùng chung một cách tính, không còn lệch
+
+- 29/07/2026 Nghỉ phép - Phiếu in ra và quyền xem đơn:
+    + Phiếu nghỉ phép trước đây **luôn in cứng chức danh "TUQ. GIÁM ĐỐC / PHÓ GIÁM ĐỐC"** ở ô ký, kể cả khi người duyệt là Giám đốc. Nay in đúng chức danh của người thực sự ký
+    + Nghỉ nhiều ngày liền nhau mà chỉ cách nhau thứ 7, Chủ nhật (ví dụ nghỉ thứ 6 rồi nghỉ tiếp thứ 2) nay ghi gọn *"Từ ngày… đến hết ngày…"* thay vì liệt kê rời từng ngày
+    + **Người khai báo hộ nay xem lại được chính đơn mình đã khai.** Trước đây khai xong thì không mở ra xem, không xem lịch sử, cũng không tải phiếu về được
+
+- 29/07/2026 Nghỉ phép - Số ngày trong báo cáo và bảng hạn mức:
+    + Cột "Số ngày" ở Trang tổng hợp của lãnh đạo và ở file Excel báo cáo năm trước đây **đếm cả thứ 7, Chủ nhật và ngày lễ**, nên luôn cao hơn số ngày thực bị trừ vào hạn mức. Nay tính giống hệt cách trừ hạn mức
+    + Công thức gợi ý khi sửa hạn mức thủ công sửa lại thành **12 ngày + 1 ngày mỗi 4 năm công tác** (trước ghi nhầm mỗi 5 năm, lệch với cách hệ thống thực sự tính)
+    + Bảng Hạn mức phép thêm cột **Mã cán bộ**
+    + Nhập hạn mức từ Excel: ô "Đã nghỉ" ghi số lẻ nửa ngày nay **hiện cảnh báo trước khi áp dụng**, vì hệ thống không có khái niệm nửa ngày phép và sẽ làm tròn
+
+- 29/07/2026 Trang chủ - Bảng nghỉ hôm nay giữ nguyên cách đếm:
+    + Bảng "Nghỉ phép hôm nay" **chỉ đếm đơn đã được duyệt xong**. Người vừa nộp đơn mà cấp trên chưa duyệt thì vẫn tính là đang đi làm
+    + Lịch tháng trong menu Nghỉ phép thì ngược lại — có hiện cả đơn đang chờ, nhưng ở đó mỗi dòng đều kèm nhãn trạng thái nên không gây nhầm. Hai chỗ khác nhau là **có chủ đích**
+
 - 28/07/2026 Sidebar - Việc chờ xử lý hiện ở mọi trang:
     + Số việc đang chờ trước đây chỉ hiện ở **3 trong 21 trang**. Đứng ở trang Lưu trữ thì không hề biết mình có 12 chứng từ chờ xác nhận. Nay khối **Công việc chờ xử lý** nằm đầu sidebar, theo người dùng đi khắp hệ thống, tự ẩn khi không còn việc
     + Bấm vào mở **màn hình theo dõi riêng**: chứng từ của ai, phòng nào, ai nộp, ngày nào — và bấm tiếp là nhảy thẳng tới đúng ô cần xử lý, không phải tự tìm lại
