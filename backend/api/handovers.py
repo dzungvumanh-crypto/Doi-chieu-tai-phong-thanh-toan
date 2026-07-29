@@ -22,6 +22,49 @@ from backend.schemas.handovers import (
 router = APIRouter(prefix="/api/handovers", tags=["Handovers"])
 
 
+# ─── Phạm vi phòng được truy cập ─────────────────────────────────────────────
+# Người hậu kiểm (có quyền xác nhận chứng từ) làm việc trên chứng từ của MỌI phòng
+# nguồn → không giới hạn phòng. GĐ/PGĐ xem được mọi phòng nhưng vốn không có quyền
+# save/confirm nên chỉ đọc. Còn lại — giao dịch viên, lãnh đạo phòng nguồn — chỉ
+# thao tác trong phòng của chính mình.
+_ALL_DEPT_ROLES = (StaffRole.ADMIN.value, StaffRole.GIAM_DOC.value, StaffRole.PHO_GIAM_DOC.value)
+
+
+def _has_feature(db: sqlite3.Connection, staff_id: int, feature_code: str) -> bool:
+    return bool(db.execute(
+        """SELECT 1 FROM group_features gf
+           JOIN group_members gm ON gm.group_id = gf.group_id
+           JOIN user_groups g ON g.id = gm.group_id AND g.is_active = 1
+           WHERE gm.staff_id = ? AND gf.feature_code = ?
+           LIMIT 1""",
+        (staff_id, feature_code),
+    ).fetchone())
+
+
+def _can_view_all_depts(db: sqlite3.Connection, current: dict) -> bool:
+    return (current["role"] in _ALL_DEPT_ROLES
+            or _has_feature(db, current["id"], "handovers.confirm_entry"))
+
+
+def _assert_dept_allowed(db: sqlite3.Connection, current: dict, department_id: Optional[int]) -> None:
+    """Chặn user chỉ được xem phòng mình khi đụng tới dữ liệu phòng khác."""
+    if _can_view_all_depts(db, current):
+        return
+    if current.get("department_id") is None:
+        raise HTTPException(403, "Tài khoản chưa được gán phòng — không thể xem chứng từ")
+    if department_id != current["department_id"]:
+        raise HTTPException(403, "Chỉ được xem chứng từ của phòng mình")
+
+
+def _entry_dept(db: sqlite3.Connection, entry_id: int) -> Optional[int]:
+    row = db.execute(
+        """SELECT h.department_id FROM document_entries de
+           JOIN handovers h ON h.id = de.handover_id WHERE de.id = ?""",
+        (entry_id,),
+    ).fetchone()
+    return row["department_id"] if row else None
+
+
 # ─── Phòng của cán bộ theo lịch sử đổi phòng ─────────────────────────────────
 def _dept_at(db: sqlite3.Connection, staff_id: int, date_iso: str):
     """Phòng cán bộ thuộc về tại một ngày (dòng lịch sử mới nhất còn hiệu lực)."""
@@ -80,6 +123,8 @@ def get_handover_grid(
     db: sqlite3.Connection = Depends(get_db),
     current: dict = Depends(require_feature("menu.handovers")),
 ):
+    _assert_dept_allowed(db, current, department_id)
+
     days_in_month = calendar.monthrange(year, month)[1]
     period_start = date(year, month, 1).isoformat()
     period_end = (date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)).isoformat()
@@ -183,15 +228,15 @@ def upsert_entry(
     if staff_row["role"] != StaffRole.CHUYEN_VIEN.value:
         raise HTTPException(400, "Chỉ giao dịch viên mới có chứng từ bàn giao")
 
+    # Người không phải hậu kiểm chỉ nhập cho cán bộ phòng mình. So theo phòng HIỆN TẠI
+    # của cán bộ (không phải phòng tại ngày giao dịch) để GDV vẫn nhập bù được cho
+    # tháng trước khi chính mình chuyển phòng.
+    if body.staff_id != current["id"]:
+        _assert_dept_allowed(db, current, staff_row["department_id"])
+
     # User có quyền confirm entry → tạo entry ở trạng thái CONFIRMED ngay
-    can_confirm = current["role"] == "admin" or bool(db.execute(
-        """SELECT 1 FROM group_features gf
-           JOIN group_members gm ON gm.group_id = gf.group_id
-           JOIN user_groups g ON g.id = gm.group_id AND g.is_active = 1
-           WHERE gm.staff_id = ? AND gf.feature_code = 'handovers.confirm_entry'
-           LIMIT 1""",
-        (current["id"],),
-    ).fetchone())
+    can_confirm = (current["role"] == StaffRole.ADMIN.value
+                   or _has_feature(db, current["id"], "handovers.confirm_entry"))
 
     # Phòng của chứng từ = phòng cán bộ thuộc về TẠI NGÀY GIAO DỊCH (không phải phòng
     # hiện tại) → nhập bù cho cán bộ đã chuyển phòng vẫn vào đúng phòng cũ.
@@ -281,6 +326,7 @@ def confirm_received(
     entry = db.execute("SELECT * FROM document_entries WHERE id = ?", (entry_id,)).fetchone()
     if not entry:
         raise HTTPException(404, "Không tìm thấy chứng từ")
+    _assert_dept_allowed(db, current, _entry_dept(db, entry_id))
     if entry["entry_status"] != EntryStatus.PENDING:
         raise HTTPException(409, f"Trạng thái không hợp lệ: '{_STATUS_LABEL.get(entry['entry_status'], entry['entry_status'])}'. Chỉ xác nhận được khi đang chờ xác nhận.")
 
@@ -323,6 +369,7 @@ def borrow_entry(
     entry = db.execute("SELECT * FROM document_entries WHERE id = ?", (entry_id,)).fetchone()
     if not entry:
         raise HTTPException(404, "Không tìm thấy chứng từ")
+    _assert_dept_allowed(db, current, _entry_dept(db, entry_id))
     if entry["entry_status"] != EntryStatus.CONFIRMED:
         raise HTTPException(409, f"Trạng thái không hợp lệ: '{_STATUS_LABEL.get(entry['entry_status'], entry['entry_status'])}'. Chỉ mượn được chứng từ đã xác nhận.")
 
@@ -353,6 +400,7 @@ def handback_entry(
     entry = db.execute("SELECT * FROM document_entries WHERE id = ?", (entry_id,)).fetchone()
     if not entry:
         raise HTTPException(404, "Không tìm thấy chứng từ")
+    _assert_dept_allowed(db, current, _entry_dept(db, entry_id))
     if entry["entry_status"] != EntryStatus.BORROWED:
         raise HTTPException(409, f"Trạng thái không hợp lệ: '{_STATUS_LABEL.get(entry['entry_status'], entry['entry_status'])}'. Chỉ bàn giao lại được khi đang mượn.")
 
@@ -386,6 +434,7 @@ def reject_entry(
     entry = db.execute("SELECT * FROM document_entries WHERE id = ?", (entry_id,)).fetchone()
     if not entry:
         raise HTTPException(404, "Không tìm thấy chứng từ")
+    _assert_dept_allowed(db, current, _entry_dept(db, entry_id))
     if entry["entry_status"] != EntryStatus.PENDING:
         raise HTTPException(409, f"Trạng thái không hợp lệ: '{_STATUS_LABEL.get(entry['entry_status'], entry['entry_status'])}'. Chỉ từ chối được khi đang chờ xác nhận.")
 
@@ -450,6 +499,7 @@ def resubmit_entry(
     entry = db.execute("SELECT * FROM document_entries WHERE id = ?", (entry_id,)).fetchone()
     if not entry:
         raise HTTPException(404, "Không tìm thấy chứng từ")
+    _assert_dept_allowed(db, current, _entry_dept(db, entry_id))
     if entry["entry_status"] != EntryStatus.REJECTED:
         raise HTTPException(409, f"Trạng thái không hợp lệ: '{_STATUS_LABEL.get(entry['entry_status'], entry['entry_status'])}'. Chỉ nộp lại được chứng từ bị từ chối.")
 
@@ -470,7 +520,7 @@ def resubmit_entry(
 def get_entry_history(
     entry_id: int,
     db: sqlite3.Connection = Depends(get_db),
-    current: dict = Depends(get_current_staff),
+    current: dict = Depends(require_feature("menu.handovers")),
 ):
     entry = db.execute(
         "SELECT de.*, ks.full_name AS s_name, ks.ipcas_code, ks.payment_username, ks.department_id AS s_dept_id "
@@ -479,6 +529,7 @@ def get_entry_history(
     ).fetchone()
     if not entry:
         raise HTTPException(404, "Không tìm thấy chứng từ")
+    _assert_dept_allowed(db, current, _entry_dept(db, entry_id))
 
     logs = db.execute(
         """SELECT ecl.*, ks.full_name AS p_name, ks.role AS p_role
@@ -548,9 +599,16 @@ def export_handovers(
     to_date: Optional[date] = None,
     department_id: Optional[int] = None,
     db: sqlite3.Connection = Depends(get_db),
-    current: dict = Depends(get_current_staff),
+    current: dict = Depends(require_feature("menu.handovers")),
 ):
     """Xuất danh sách chứng từ bàn giao ra Excel."""
+    # Không được xem mọi phòng → ép về phòng mình, bỏ qua department_id client gửi lên.
+    # (Không lọc = xuất toàn bộ chứng từ mọi phòng.)
+    if not _can_view_all_depts(db, current):
+        if current.get("department_id") is None:
+            raise HTTPException(403, "Tài khoản chưa được gán phòng — không thể xuất dữ liệu")
+        department_id = current["department_id"]
+
     clauses = []
     params: list = []
     if department_id:

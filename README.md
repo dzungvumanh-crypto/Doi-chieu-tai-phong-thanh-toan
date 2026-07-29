@@ -188,7 +188,8 @@ Truy cập:
 
 ### Module Chứng từ Hậu kiểm
 - **Bàn giao**: GDV nhập số tờ theo ngày, HKV/KSV xác nhận từng ô
-  - *Cán bộ chuyển phòng*: chứng từ hiển thị theo phòng tại **ngày giao dịch** — trước ngày chuyển ở phòng cũ, từ ngày chuyển ở phòng mới (lịch sử đổi phòng lưu ở bảng `staff_department_history`). Nhập bù chứng từ tháng cũ cho cán bộ đã chuyển vẫn vào đúng phòng cũ
+  - *Phạm vi phòng*: người có quyền hậu kiểm (`handovers.confirm_entry`) và GĐ/PGĐ thao tác được trên **mọi phòng nguồn**; các vai trò còn lại chỉ xem và nhập trong **phòng của chính mình** — dropdown chọn phòng cũng chỉ liệt kê phòng đó. Backend chặn ở cả `grid`, `entry-upsert`, các thao tác theo chứng từ, `history` và `export` (xuất Excel tự ép về phòng người gọi)
+  - *Cán bộ chuyển phòng*: chứng từ hiển thị theo phòng tại **ngày giao dịch** — trước ngày chuyển ở phòng cũ, từ ngày chuyển ở phòng mới (lịch sử đổi phòng lưu ở bảng `staff_department_history`). Nhập bù chứng từ tháng cũ cho cán bộ đã chuyển vẫn vào đúng phòng cũ; do giới hạn phạm vi phòng ở trên, việc nhập bù này do người hậu kiểm thực hiện
 - **Gom tập tự động**:
   - Max 350 tờ/tập
   - (user, ngày) không bị tách sang tập khác
@@ -238,8 +239,8 @@ Truy cập:
 | `hau_kiem_vien` | Quyền hậu kiểm (xác nhận, gom tập, in bìa) |
 | `giam_doc` | Duyệt nghỉ phép bước cuối; xem toàn bộ màn hình |
 | `pho_giam_doc` | Duyệt thay GĐ khi có ủy quyền còn hiệu lực |
-| `truong_phong` | Duyệt nghỉ phép bước KSV; nhập bàn giao |
-| `pho_phong` | Duyệt nghỉ phép bước KSV; nhập bàn giao |
+| `truong_phong` | Duyệt nghỉ phép bước KSV; nhập bàn giao (phòng mình, trừ khi có quyền hậu kiểm) |
+| `pho_phong` | Duyệt nghỉ phép bước KSV; nhập bàn giao (phòng mình, trừ khi có quyền hậu kiểm) |
 | `chuyen_vien` | Nhập bàn giao, xem dữ liệu phòng mình |
 
 **Phân cấp**: `admin > admin_l2 > hau_kiem_vien > giam_doc / pho_giam_doc > truong_phong > pho_phong > chuyen_vien`

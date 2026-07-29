@@ -4,6 +4,13 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 29/07/2026 Bàn giao chứng từ - Mỗi phòng chỉ còn thấy chứng từ của phòng mình:
+    + Trước đây bất kỳ ai đăng nhập được đều **tải được file Excel chứa toàn bộ chứng từ của mọi phòng** — kể cả tài khoản không được cấp quyền gì trong menu Bàn giao. Xem lịch sử một chứng từ bất kỳ cũng vậy
+    + Người có quyền nhập còn **xem được lưới của phòng khác và nhập chứng từ cho cán bộ phòng khác**
+    + Nay ô chọn Phòng chỉ hiện phòng của chính mình; mọi thao tác trên chứng từ phòng khác đều bị chặn, kể cả khi gọi thẳng vào hệ thống mà không qua màn hình
+    + **Hậu kiểm viên, Trưởng/Phó phòng KSNB và Giám đốc/Phó Giám đốc không đổi** — vẫn xem và làm việc trên mọi phòng như trước
+    + ⚠️ **Cán bộ đã chuyển phòng không tự mở lại được chứng từ tháng còn ở phòng cũ.** Chứng từ vẫn nằm nguyên ở phòng cũ và không mất đi, nhưng từ nay việc nhập bù cho những tháng đó phải nhờ hậu kiểm viên làm
+
 - 29/07/2026 Nghỉ phép - Tính đúng hạn mức khi nghỉ vắt qua giao thừa dương lịch:
     + Đơn nghỉ liền mạch bắc qua ngày 31/12 (ví dụ nghỉ từ 29/12 đến 02/01) trước đây bị **trừ trọn vào năm cũ**, kể cả những ngày thực tế đã sang năm mới. Người nghỉ bị mất oan số ngày phép đúng bằng phần vắt sang năm sau
     + Nay mỗi ngày được tính vào đúng năm của nó. Ví dụ nghỉ 29/12 → 02/01 thì 3 ngày làm việc cuối tháng 12 trừ vào năm cũ, 2 ngày đầu tháng 1 trừ vào năm mới

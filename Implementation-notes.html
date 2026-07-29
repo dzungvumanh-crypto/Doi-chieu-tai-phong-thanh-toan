@@ -2227,7 +2227,69 @@ ui.on_exception(_on_exception)</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-07-28</footer>
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">G</span>
+      <span class="card-title">Giới hạn phạm vi phòng ở menu Bàn giao chứng từ — vá 3 lỗ hổng phát hiện khi kiểm thử</span>
+      <span class="badge badge-done">Đã vá + kiểm chứng</span>
+    </div>
+    <div class="card-body">
+      <p>Kiểm thử step-by-step luồng bàn giao (27 bước, mỗi bước một tài khoản thật) cho thấy luồng nghiệp vụ
+      đúng hoàn toàn, nhưng <strong>phạm vi dữ liệu thì không có rào nào</strong>: mọi kiểm tra quyền đều là
+      "có tính năng hay không", không có kiểm tra "phòng nào".</p>
+
+      <div class="label">Ba lỗ hổng, đo bằng request thật</div>
+      <table>
+        <tr><th>Endpoint</th><th>Trước khi vá</th></tr>
+        <tr><td><code>GET /api/handovers/export</code></td><td>Chỉ có <code>get_current_staff</code>. Tài khoản đã gỡ hết nhóm quyền vẫn tải được Excel <strong>1049 dòng chứng từ của mọi phòng</strong></td></tr>
+        <tr><td><code>GET /entries/{id}/history</code></td><td>Cũng chỉ cần đăng nhập — xem được lịch sử chứng từ phòng bất kỳ</td></tr>
+        <tr><td><code>grid</code> + <code>entry-upsert</code></td><td>Có <code>require_feature</code> nhưng không so phòng: GDV phòng A xem được lưới phòng khác và <strong>tạo được chứng từ cho cán bộ phòng khác</strong></td></tr>
+      </table>
+
+      <div class="label">Tiêu chí "được xem mọi phòng": chọn theo quyền, không theo phòng KSNB</div>
+      <p>Hai cách định nghĩa đều khớp dữ liệu thật hiện tại (toàn bộ HKV + lãnh đạo KSNB đều thuộc phòng KSNB
+      <em>và</em> đều có <code>handovers.confirm_entry</code>) — chỉ lệch đúng một người: Trưởng phòng Thanh toán
+      trong nhóm "Full quyền".</p>
+      <table>
+        <tr><th>Phương án</th><th>Đánh đổi</th></tr>
+        <tr><td><strong>Theo quyền hậu kiểm</strong> (đã chọn)</td><td>Admin đổi phạm vi qua màn hình Nhóm, không phải sửa code. Hệ quả: ai được gán <code>confirm_entry</code> là tự động thấy mọi phòng — cấp quyền nhầm nhóm sẽ mở rộng phạm vi mà người gán không nhận ra</td></tr>
+        <tr><td>Theo phòng KSNB</td><td>Sát nghiệp vụ, không phụ thuộc cấu hình nhóm, nhưng phải hardcode mã phòng và mọi thay đổi tổ chức đều phải sửa code</td></tr>
+      </table>
+      <p>GĐ/PGĐ được thêm vào danh sách xem-mọi-phòng theo <code>role</code> chứ không qua nhóm: họ vốn không có
+      <code>save_entry</code>/<code>confirm_entry</code> nên vẫn là chỉ đọc — đã kiểm chứng bằng request thật
+      (nhập và xác nhận đều 403).</p>
+
+      <div class="label">Vì sao <code>export</code> ép phòng thay vì trả 403</div>
+      <p>Frontend luôn gửi <code>department_id</code> theo dropdown, nhưng gọi thẳng API mà bỏ tham số này thì
+      "không lọc" nghĩa là "xuất tất cả" — đúng cái lỗ hổng vừa vá. Nếu trả 403 khi thiếu tham số thì nút Xuất Excel
+      hỏng với người dùng bình thường. Chọn cách ghi đè <code>department_id</code> về phòng của người gọi:
+      luôn ra file hợp lệ, và tham số client gửi lên không còn quyết định được phạm vi.</p>
+
+      <div class="label">Đánh đổi đã chấp nhận: cán bộ chuyển phòng mất đường vào phòng cũ</div>
+      <p>Chứng từ được gắn vào phòng <strong>tại ngày giao dịch</strong> (<code>_dept_at</code>), nên sau khi chuyển
+      phòng, chứng từ tháng cũ vẫn nằm ở phòng cũ — nhưng lưới phòng cũ giờ trả 403 với chính người đó.</p>
+      <table>
+        <tr><th>Tình huống (đã chạy thật)</th><th>Kết quả</th></tr>
+        <tr><td>Tự nhập bù ngày còn ở phòng cũ</td><td>API cho phép (bỏ qua check khi <code>staff_id == current.id</code>), chứng từ vào đúng phòng cũ</td></tr>
+        <tr><td>Mở lưới phòng cũ để xem lại</td><td><strong>403</strong> — và dropdown UI cũng không còn phòng đó</td></tr>
+        <tr><td>HKV thao tác trên phòng cũ</td><td>Bình thường — đây là đường xử lý duy nhất còn lại cho nhập bù sau chuyển phòng</td></tr>
+      </table>
+      <p>Backend vẫn cho tự nhập bù dù UI không có đường vào: <strong>cố ý giữ</strong>, vì đó là quy tắc dữ liệu
+      (chứng từ của chính mình) chứ không phải quy tắc màn hình. Nếu sau này cần, chỉ việc nới dropdown cho các phòng
+      từng thuộc theo <code>staff_department_history</code> mà không phải đụng backend.</p>
+
+      <div class="label">Phạm vi ảnh hưởng đã kiểm</div>
+      <table>
+        <tr><th>Điểm</th><th>Kết luận</th></tr>
+        <tr><td><code>frontend/pages/bundles.py</code> gọi <code>/handovers/grid</code> 2 chỗ</td><td>Không vỡ — chỉ 4 nhóm có <code>menu.bundles</code> (KSNB, Lãnh đạo KSNB, Full quyền, Ban Giám đốc), cả 4 đều thuộc diện xem-mọi-phòng</td></tr>
+        <tr><td>Deep-link <code>?dept=</code> và bộ lọc lưu trong <code>app.storage.tab</code></td><td>Đã có sẵn <code>if init_dept not in dept_opts</code> → tự ép về phòng mình khi dept_opts bị thu hẹp</td></tr>
+        <tr><td>Biến <code>is_cv</code> ở trang handovers</td><td>Giữ lại — nó điều khiển nút Mượn/Bàn giao lại (loại người dùng), khác hẳn <code>can_view_all</code> (phạm vi phòng). Trước đây một biến gánh cả hai vai trò</td></tr>
+        <tr><td>Chặn ở frontend</td><td>Chỉ là trải nghiệm. Mọi quy tắc đều được backend kiểm lại — đã xác nhận bằng request bỏ qua UI</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-07-29</footer>
 </div>
 </body>
 </html>

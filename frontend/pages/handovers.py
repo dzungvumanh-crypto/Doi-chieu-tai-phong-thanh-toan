@@ -26,7 +26,11 @@ async def handovers_page():
         return
     user_data = api.get_current_user()
     user_role = user_data.get("role", "") if user_data else ""
-    is_cv     = user_role == "chuyen_vien"
+    is_cv     = user_role == "chuyen_vien"   # chỉ GDV mới có nút Mượn / Bàn giao lại
+    # Người hậu kiểm (có quyền xác nhận) và GĐ/PGĐ làm việc trên mọi phòng nguồn;
+    # còn lại chỉ thấy phòng của chính mình. Backend chặn lại y hệt — đây chỉ là UI.
+    can_view_all = (api.has_feature("handovers.confirm_entry")
+                    or user_role in ("giam_doc", "pho_giam_doc"))
     if not api.has_feature("menu.handovers"):
         ui.navigate.to("/home")
         return
@@ -56,21 +60,32 @@ async def handovers_page():
             _all_depts_raw = []
         all_depts = [d for d in _all_depts_raw if d.get("is_source")]
 
+        # Không có quyền xem mọi phòng → danh sách chỉ còn phòng của mình
+        my_dept_id = user_data.get("department_id") if user_data else None
+        if not can_view_all:
+            all_depts = [d for d in all_depts if d["id"] == my_dept_id]
+
         dept_opts  = {d["id"]: d["name"] for d in all_depts}
         year_opts  = {y: str(y) for y in range(2023, today.year + 3)}
         month_opts = {m: f"Tháng {m:02d}" for m in range(1, 13)}
 
-        # Chuyên viên: tự động xác định phòng của mình
-        cv_dept_id = user_data.get("department_id") if is_cv else None
-        default_dept  = cv_dept_id if (is_cv and cv_dept_id) else (all_depts[0]["id"] if all_depts else None)
+        default_dept  = all_depts[0]["id"] if all_depts else None
         default_year  = today.year
         default_month = today.month
 
 
+        # Phòng của user không phải phòng nguồn (hoặc chưa được gán phòng) → không có
+        # chứng từ nào để hiển thị; nói rõ thay vì để lưới trống không lý do.
+        if not all_depts:
+            with ui.card().classes("w-full bg-amber-50 border border-amber-300 rounded-xl p-4 mb-4"):
+                ui.label("Phòng của bạn không có chứng từ bàn giao. "
+                         "Liên hệ quản trị nếu bạn cần xem phòng khác."
+                         ).classes("text-amber-800 text-sm")
+
         with ui.card().classes("w-full shadow-sm rounded-xl bg-white p-4 mb-4"):
             with ui.row().classes("items-end gap-4 flex-wrap"):
                 sel_dept = ui.select(dept_opts, label="Phòng", value=default_dept).classes("w-72")
-                if is_cv:
+                if not can_view_all:
                     sel_dept.props("disable")
                     sel_dept.tooltip("Phòng của bạn (không thể thay đổi)")
                 sel_year  = ui.select(year_opts,  label="Năm",   value=default_year).classes("w-28")
@@ -571,7 +586,7 @@ async def handovers_page():
         if init_month not in month_opts:
             init_month = default_month
 
-        if not is_cv:
+        if can_view_all:
             sel_dept.value  = init_dept
         sel_year.value  = init_year
         sel_month.value = init_month
