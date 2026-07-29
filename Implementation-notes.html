@@ -51,7 +51,71 @@
 <div class="page">
 
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
-  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-07-28</p>
+  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-07-29</p>
+
+  <!-- E -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">E</span>
+      <span class="card-title">Merge PR nghỉ phép — rà soát ảnh hưởng lan sang phần khác</span>
+      <span class="badge badge-done">Đã merge + hoàn 1 hunk</span>
+    </div>
+    <div class="card-body">
+      <p>Merge nhánh <code>leaves/soat-loi-han-muc-va-quy-trinh-duyet</code> (commit <code>0a33e9b</code>, 15 mục sửa
+      trong menu Nghỉ phép). Phạm vi rà soát được giới hạn có chủ đích: <strong>không xét logic nghiệp vụ bên trong
+      menu</strong> — đó là quyền quyết định của PR — chỉ xét code có rò rỉ ảnh hưởng ra ngoài menu hay không.</p>
+
+      <div class="label">Chỉ một điểm chạm ra ngoài, và nó dựa trên giả định sai</div>
+      <p>PR đổi bộ lọc trạng thái của <code>GET /api/leaves/today</code> từ <code>status='approved'</code> sang
+      <code>NOT IN ('rejected','cancelled')</code>, với lý do ghi trong commit message là "đồng bộ điều kiện status
+      giữa Nghỉ hôm nay và lịch tháng". Giả định đó sai:</p>
+      <table>
+        <tr><th>Endpoint</th><th>Ai gọi</th><th>Hiển thị</th></tr>
+        <tr><td><code>/api/leaves/today</code></td><td><strong>Chỉ Trang chủ</strong> (<code>pages/dashboard.py:40</code>)</td><td>Con số trần, không nhãn trạng thái</td></tr>
+        <tr><td><code>/api/leaves/calendar</code></td><td>Lịch tháng trong menu Nghỉ phép</td><td>Từng mục kèm nhãn trạng thái</td></tr>
+      </table>
+      <p>Hai thứ này <strong>không cùng phục vụ một màn hình</strong>, và menu Nghỉ phép không hề đọc
+      <code>/today</code>. Nên việc nới điều kiện không đồng bộ được gì với lịch tháng — tác dụng duy nhất là làm card
+      "Nghỉ phép hôm nay" ở Trang chủ đếm thêm đơn chưa duyệt, tức <em>báo người vẫn đang đi làm là đã nghỉ</em>.</p>
+      <p><strong>Quyết định:</strong> hoàn lại đúng hunk đó (<code>ca4b71e</code>), giữ nguyên <code>/calendar</code>
+      theo ý PR. Lịch tháng hiện đơn chờ duyệt là hợp lý vì ở đó mỗi mục có nhãn trạng thái đi kèm; card trên Trang chủ
+      thì không. Đã thêm comment ngay tại chỗ để lần sau không ai "đồng bộ" lại.</p>
+
+      <div class="label">Các đường lây lan đã kiểm và xác nhận sạch</div>
+      <table>
+        <tr><th>Đường</th><th>Kết quả</th></tr>
+        <tr><td>Module khác import hàm trong <code>backend/api/leaves.py</code></td><td>Không — <code>registry.py</code> chỉ lấy <code>router</code></td></tr>
+        <tr><td>Trang khác import <code>frontend/pages/leaves.py</code></td><td>Không — các trang nạp độc lập qua <code>pkgutil</code></td></tr>
+        <tr><td>Endpoint <code>/api/leaves/*</code> khác bị gọi từ ngoài</td><td>Không — ngoài <code>/today</code>, tất cả chỉ gọi từ <code>pages/leaves.py</code></td></tr>
+        <tr><td>Template <code>don_xin_nghi_phep_tpl.docx</code> dùng chung</td><td>Không — chỉ <code>_pick_template</code> render</td></tr>
+        <tr><td>Nhật ký thao tác</td><td>Không vỡ — middleware chỉ ghi POST/PUT/PATCH/DELETE nên <code>/my-balance</code> (GET) không sinh log; mã 409 mới đã có sẵn nhãn</td></tr>
+        <tr><td>Badge "Công việc chờ xử lý" ở sidebar</td><td>Không — đọc <code>/api/dashboard/pending-counts</code>, truy vấn riêng</td></tr>
+        <tr><td>Cột cache <code>used_leave_days</code></td><td>Sau PR không màn hình nào đọc nữa → lệch số cũng không hiển thị sai ở đâu</td></tr>
+      </table>
+
+      <div class="label">Phát hiện nhưng KHÔNG sửa — và lý do</div>
+      <table>
+        <tr><th>Vấn đề</th><th>Vì sao để lại</th></tr>
+        <tr><td>Khoá lạc quan trong <code>_apply_status_transition</code> không phủ <code>approve_recall</code>,
+            <code>delete_leave</code>, <code>create_direct_leave</code> — ba chỗ này vẫn tự sửa
+            <code>used_leave_days</code>. Nặng nhất: bấm hai lần "xác nhận rút" một đơn Giám đốc đã duyệt sẽ trừ hai lần.</td>
+            <td>Logic nội bộ menu Nghỉ phép → thuộc quyền PR. Đã báo lại, không tự sửa.</td></tr>
+        <tr><td>Fix đơn vắt ranh giới năm chỉ áp cho 4 hàm tính hạn mức, không áp cho báo cáo
+            (<code>leader_dashboard</code>, Excel năm vẫn lọc <code>strftime('%Y', start_date)</code>).
+            Đơn 29/12→02/01 sẽ ra 3+2 ngày ở tab Hạn mức nhưng 5+0 ở báo cáo.</td>
+            <td>Như trên — nội bộ menu.</td></tr>
+        <tr><td><code>compute_carry_over</code> (bản đơn lẻ, dùng ở đường chặn hạn mức lúc tạo đơn) chưa được sửa cùng
+            <code>_carry_over_bulk</code> (bản gộp, dùng để hiển thị). Fix nằm ở nhánh riêng
+            <code>fix/carry-over-vat-nam</code> (<code>c1473eb</code>), <strong>chưa merge</strong>.</td>
+            <td>Nhánh khác, không thuộc phạm vi lần merge này. Nhưng đến khi merge nốt thì số hiển thị và số backend
+            dùng để chặn sẽ lệch nhau với đơn vắt năm.</td></tr>
+        <tr><td><code>/api/dashboard/leave-today</code> là bản sao logic đếm nghỉ hôm nay, vẫn giữ
+            <code>status='approved'</code>. Hiện <strong>không frontend nào gọi</strong>.</td>
+            <td>Mồ côi, không gây lệch hiển thị. Sau lần sửa này thì nó lại khớp chuẩn với <code>/today</code>.
+            Dọn dẹp riêng, không gộp vào PR.</td></tr>
+      </table>
+    </div>
+  </div>
 
   <!-- D -->
   <div class="card">
