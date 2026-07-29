@@ -350,6 +350,59 @@ def doi_chieu_citad_page():
                 return
             ui.notify(f"Lỗi xuất Excel: {e}", type="negative")
 
+    # ── Kết nối Extension (mã kết nối cá nhân — xem docstring api/doi_chieu_citad.py) ──
+    ext_status_label = None
+
+    async def refresh_extension_status():
+        try:
+            status = await asyncio.to_thread(api.get, "/api/doi-chieu-citad/extension-token/status")
+        except Exception:
+            return
+        if status.get("connected"):
+            last = status.get("last_used_at") or "chưa dùng lần nào"
+            ext_status_label.text = f"🟢 Đã kết nối — lần dùng gần nhất: {last}"
+            ext_status_label.classes(remove="text-gray-500", add="text-green-700")
+        else:
+            ext_status_label.text = "⚪ Chưa kết nối Extension"
+            ext_status_label.classes(remove="text-green-700", add="text-gray-500")
+
+    async def do_create_extension_token():
+        try:
+            result = await asyncio.to_thread(api.post, "/api/doi-chieu-citad/extension-token", {})
+        except Exception as e:
+            if _handle_api_error(e):
+                return
+            ui.notify(f"Lỗi: {e}", type="negative")
+            return
+        with ui.dialog() as dialog, ui.card().classes("w-full max-w-lg"):
+            ui.label("Mã kết nối Extension mới").classes("text-lg font-bold")
+            ui.label(
+                "Chỉ hiện ĐÚNG 1 LẦN — sao chép ngay và dán vào Extension "
+                "(extension_citad/content.js, hằng số EXTENSION_TOKEN). "
+                "Tạo mã mới sẽ tự động huỷ mã cũ."
+            ).classes("text-sm text-gray-500")
+            token_input = ui.input(value=result["token"]).props("readonly outlined dense").classes("w-full font-mono")
+            with ui.row().classes("w-full justify-end gap-2 mt-2"):
+                ui.button(
+                    "Sao chép", icon="content_copy",
+                    on_click=lambda: ui.run_javascript(
+                        f"navigator.clipboard.writeText({token_input.value!r})"
+                    ),
+                ).props("outline")
+                ui.button("Đóng", on_click=dialog.close).classes("bg-red-800 text-white")
+        dialog.open()
+        await refresh_extension_status()
+
+    async def do_revoke_extension_token():
+        try:
+            await asyncio.to_thread(api.delete, "/api/doi-chieu-citad/extension-token")
+            ui.notify("Đã thu hồi mã kết nối", type="positive")
+            await refresh_extension_status()
+        except Exception as e:
+            if _handle_api_error(e):
+                return
+            ui.notify(f"Lỗi: {e}", type="negative")
+
     with ui.row().classes("w-full"):
         _sidebar("doi_chieu_citad")
         with _content_area():
@@ -357,6 +410,19 @@ def doi_chieu_citad_page():
                 "Đối chiếu CITAD ↔ PaymentHub",
                 "Đối chiếu số liệu CITAD (NHNN) với PaymentHub (Agribank) theo từng ngày",
             )
+
+            with _card("Kết nối Extension (nạp số liệu tự động từ CITAD/PaymentHub)"):
+                with ui.row().classes("w-full items-center gap-3 p-2"):
+                    ext_status_label = ui.label("Đang kiểm tra...").classes("text-sm text-gray-500")
+                    ui.button("Tạo mã kết nối mới", icon="vpn_key", on_click=do_create_extension_token).props("outline")
+                    ui.button("Thu hồi", icon="link_off", on_click=do_revoke_extension_token).props(
+                        "outline color=red dense"
+                    )
+                ui.label(
+                    "Mỗi người tự tạo 1 mã riêng, dán vào Extension đúng 1 lần — không dùng chung khoá "
+                    "với người khác. Xem hướng dẫn trong extension_citad/README.md."
+                ).classes("text-xs text-gray-500 px-2 -mt-2")
+                ui.timer(0.1, refresh_extension_status, once=True)
 
             with ui.row().classes("w-full items-end gap-3 flex-wrap mb-2"):
                 ngay_input = _date_picker_input("Ngày")

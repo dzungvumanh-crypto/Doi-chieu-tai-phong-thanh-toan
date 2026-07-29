@@ -14,32 +14,49 @@ cách nào tự động cài qua repo).
 2. Bật **Developer mode** (góc trên phải)
 3. Bấm **Load unpacked**, chọn đúng thư mục `extension_citad/` này
 
-## Cấu hình bắt buộc trước khi dùng
+## Xác thực — mã kết nối cá nhân (bắt buộc, không dùng chung)
 
-Mở `content.js` **và** `content_paymenthub.js`, sửa 3 hằng số ở đầu file:
+Bản đầu dùng 1 khoá cố định cho toàn Phòng Thanh toán — đã bỏ sau review bảo
+mật vì ai cũng ghi được buffer dưới bất kỳ tên nào. Giờ **mỗi người tự tạo 1
+mã riêng**, không chia sẻ mã của mình cho người khác dùng chung.
+
+**Bước 1 — Tạo mã kết nối:**
+1. Đăng nhập web TTTT thật (không phải Extension), vào `/doi_chieu_citad`
+2. Ở mục **"Kết nối Extension"**, bấm **"Tạo mã kết nối mới"**
+3. Sao chép mã hiện ra — **chỉ hiện ĐÚNG 1 LẦN**, không xem lại được (tạo mã
+   mới sẽ tự động huỷ mã cũ)
+
+**Bước 2 — Dán vào Extension:**
+Mở `content.js` **và** `content_paymenthub.js`, sửa 2 hằng số ở đầu file:
 
 | Hằng số | Ý nghĩa | Giá trị |
 |---|---|---|
-| `SERVER` | Địa chỉ backend TTTT thật (không phải `localhost`) | `http://<IP-hoặc-domain-backend>:8000` |
-| `EXTENSION_KEY` | Khoá bí mật xác thực Extension, không phải mật khẩu đăng nhập | Đúng giá trị `CITAD_EXTENSION_KEY` đã đặt trong `.env` của backend |
-| `STAFF_USERNAME` | Username TTTT của người dùng máy này | Đúng username bạn dùng để đăng nhập web TTTT |
+| `SERVER` | Địa chỉ backend TTTT thật (không phải `localhost`) | `https://<domain-backend>:8000` — **bắt buộc HTTPS** nếu không chỉ chạy trên localhost, xem cảnh báo bên dưới |
+| `EXTENSION_TOKEN` | Mã kết nối cá nhân vừa tạo ở Bước 1 | Dán nguyên văn, không sửa |
 
-**Vì sao cần `STAFF_USERNAME`:** buffer trên backend được tách riêng theo
-từng người dùng (mỗi người 1 vùng nhớ tạm) — nếu để nguyên giá trị mặc định
-`CHUA_CAU_HINH`, Extension sẽ báo lỗi và không lưu được gì (tránh trường hợp
-nhiều người dùng chung backend ghi đè/xoá dữ liệu của nhau).
+Sau khi sửa, vào `chrome://extensions`, bấm nút "Reload" (biểu tượng vòng
+tròn) của extension để áp dụng.
 
-## Cách dùng
+## ⚠️ Vì sao bắt buộc HTTPS khi dùng thật
+
+Extension gửi `EXTENSION_TOKEN` trong mỗi request. Nếu `SERVER` là `http://`
+(không mã hoá), bất kỳ ai bắt được gói tin trên cùng mạng nội bộ cũng đọc
+được mã này ở dạng chữ thường — có mã là ghi được buffer thay bạn. Extension
+tự in cảnh báo ra Console nếu phát hiện `SERVER` không bắt đầu bằng
+`https://`. Chỉ chấp nhận chạy HTTP khi test trên `localhost` (không rời máy).
+
+## Cách dùng hàng ngày
 
 1. Vào trang CITAD hoặc PaymentHub, tra cứu/truy vấn số liệu như bình thường
    — Extension tự phát hiện kết quả mới và tự lưu (có toast báo góc dưới
    phải màn hình). Nếu không tự lưu, dùng nút thủ công góc dưới phải trang.
+   Nếu thấy toast đỏ báo "mã kết nối không hợp lệ" — mã đã hết hạn/bị thu
+   hồi (ví dụ do bạn tạo mã mới trên máy khác), quay lại Bước 1 lấy mã mới.
 2. Vào `/doi_chieu_citad` trên web TTTT, bấm **"Nạp CITAD"** hoặc **"Nạp
    PaymentHub"** để nạp đúng số liệu vừa lưu vào bảng đối chiếu.
 
-## Sau khi cấu hình xong
+## Nếu đổi máy hoặc nghi ngờ mã bị lộ
 
-Chrome không tự đóng gói lại extension khi sửa file trực tiếp trong thư mục
-đã Load unpacked — chỉ cần bấm nút "Reload" (biểu tượng vòng tròn) của
-extension tại `chrome://extensions` sau khi sửa `content.js`/
-`content_paymenthub.js` để áp dụng thay đổi.
+Vào `/doi_chieu_citad` → "Kết nối Extension" → **"Thu hồi"** (hoặc bấm "Tạo
+mã kết nối mới" để tự động thay mã cũ) — mã cũ ngừng hoạt động ngay lập tức,
+không ảnh hưởng tới mã của người khác trong phòng.

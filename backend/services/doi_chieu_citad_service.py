@@ -4,9 +4,16 @@
   lên cho tới khi người dùng bấm "Nạp" — KHÔNG cần bền vững qua restart,
   giống bản gốc. Khác bản gốc ở 1 điểm bắt buộc: bản gốc chạy 1 server cục
   bộ trên máy từng người nên buffer vốn chỉ có 1 chủ; nay dùng chung 1
-  backend cho cả Phòng Thanh toán nên buffer phải tách theo `owner`
-  (username TTTT gửi kèm từ Extension) — nếu không, 2 người cùng đối chiếu
-  một lúc sẽ ghi đè/xoá dữ liệu của nhau (đã phát hiện khi review).
+  backend cho cả Phòng Thanh toán nên buffer phải tách theo `owner`.
+
+  `owner` KHÔNG do client tự khai (đã sửa sau review bảo mật — trước đây
+  Extension tự gửi `owner` trong payload, ai có khoá chung cũng ghi được
+  buffer dưới bất kỳ tên nào, kể cả chèn số liệu giả để chênh lệch ra đúng
+  0). Giờ `owner` = username suy ra từ 1 "mã kết nối" (extension token) cá
+  nhân — mỗi người tự tạo trên `/doi_chieu_citad` sau khi đã đăng nhập thật,
+  dán vào Extension 1 lần (xem `generate_extension_token`/
+  `resolve_extension_token` bên dưới). Token bị lộ chỉ ảnh hưởng đúng 1
+  người, thu hồi riêng lẻ được — không cần đổi khoá chung cho cả phòng.
 - `_build_xlsx()`: port NGUYÊN 1:1 từ `citad-fixed/server.py::_build_xlsx`
   — đây là mẫu báo cáo "BÁO CÁO ĐỐI CHIẾU GIAO DỊCH HỆ THỐNG THANH TOÁN
   ĐIỆN TỬ LIÊN NGÂN HÀNG" đã duyệt, KHÔNG được đổi bất kỳ dòng
@@ -20,8 +27,10 @@
 """
 from __future__ import annotations
 
+import hashlib
 import io
 import json
+import secrets
 import sqlite3
 
 from backend.database import _vn_now
@@ -43,8 +52,7 @@ _citad_buffer: dict[str, dict] = {}
 _ph_buffer: dict[str, dict] = {}
 
 
-def buffer_save_citad(data: dict) -> None:
-    owner = data["owner"]
+def buffer_save_citad(owner: str, data: dict) -> None:
     _citad_buffer.setdefault(owner, {})[data["key"]] = data
 
 
@@ -68,6 +76,70 @@ def buffer_get_ph(owner: str) -> list:
 
 def buffer_clear_ph(owner: str) -> None:
     _ph_buffer.pop(owner, None)
+
+
+# ── Extension token — mỗi staff 1 token cá nhân (thay khoá tĩnh dùng chung) ──
+# Chỉ lưu SHA-256 hash, không lưu plaintext — không thể xem lại token cũ,
+# chỉ tạo mã mới (tự thu hồi mã cũ vì PRIMARY KEY staff_id, 1 token/người).
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def generate_extension_token(db: sqlite3.Connection, staff_id: int) -> str:
+    """Tạo token mới cho staff_id, GHI ĐÈ token cũ nếu có (thu hồi tự động).
+    Trả về token PLAINTEXT — CHỈ lần này, gọi lại sẽ ra token khác."""
+    token = secrets.token_urlsafe(32)
+    now = _vn_now()
+    db.execute(
+        """INSERT INTO doi_chieu_citad_extension_tokens (staff_id, token_hash, created_at, last_used_at)
+           VALUES (?,?,?,NULL)
+           ON CONFLICT(staff_id) DO UPDATE SET token_hash=excluded.token_hash,
+                                                created_at=excluded.created_at,
+                                                last_used_at=NULL""",
+        (staff_id, _hash_token(token), now),
+    )
+    db.commit()
+    return token
+
+
+def resolve_extension_token(db: sqlite3.Connection, token: str) -> str | None:
+    """Token hợp lệ -> trả về username chủ token (cập nhật last_used_at).
+    Token sai/rỗng/đã bị thu hồi -> None (caller trả 403, không đoán bừa)."""
+    if not token:
+        return None
+    row = db.execute(
+        """SELECT t.staff_id, u.username FROM doi_chieu_citad_extension_tokens t
+           JOIN user_tttt u ON u.id = t.staff_id AND u.is_active = 1
+           WHERE t.token_hash = ?""",
+        (_hash_token(token),),
+    ).fetchone()
+    if not row:
+        return None
+    db.execute(
+        "UPDATE doi_chieu_citad_extension_tokens SET last_used_at=? WHERE staff_id=?",
+        (_vn_now(), row["staff_id"]),
+    )
+    db.commit()
+    return row["username"]
+
+
+def revoke_extension_token(db: sqlite3.Connection, staff_id: int) -> None:
+    db.execute("DELETE FROM doi_chieu_citad_extension_tokens WHERE staff_id=?", (staff_id,))
+    db.commit()
+
+
+def get_extension_token_status(db: sqlite3.Connection, staff_id: int) -> dict:
+    row = db.execute(
+        "SELECT created_at, last_used_at FROM doi_chieu_citad_extension_tokens WHERE staff_id=?",
+        (staff_id,),
+    ).fetchone()
+    if not row:
+        return {"connected": False, "created_at": None, "last_used_at": None}
+    return {
+        "connected": True,
+        "created_at": str(row["created_at"]) if row["created_at"] else None,
+        "last_used_at": str(row["last_used_at"]) if row["last_used_at"] else None,
+    }
 
 
 # ── Session theo ngày + staff_id ────────────────────────────────────────────

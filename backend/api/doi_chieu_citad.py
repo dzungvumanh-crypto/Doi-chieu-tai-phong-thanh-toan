@@ -6,27 +6,39 @@ Excel lấy từ `doi_chieu_citad_service.py` — xem docstring ở đó.
 
 Đây là router MỚI, tự quản lý. 2 việc cần Người 1 duyệt riêng:
   1. Đăng ký router này vào backend/api/registry.py
-  2. Thêm bảng doi_chieu_citad_sessions vào backend/db/migrations.py
+  2. Thêm bảng doi_chieu_citad_sessions + doi_chieu_citad_extension_tokens
+     vào backend/db/migrations.py
 
-## Xác thực 2 nhóm endpoint khác nhau
+## Xác thực buffer — thiết kế lại sau review bảo mật
 
-- `POST /citad-buffer`, `POST /paymenthub-buffer`: Extension Chrome gọi,
-  KHÔNG có JWT (chạy trong content script, không đăng nhập TTTT) — xác thực
-  bằng header `X-Extension-Key` khớp biến môi trường `CITAD_EXTENSION_KEY`.
-  Biến này BẮT BUỘC phải đặt (fail-fast lúc import, giống `SECRET_KEY` trong
-  `backend/core/config.py`) — nếu để mặc định rỗng thì bất kỳ ai chạm được
-  cổng backend cũng ghi/đè được buffer của người khác.
-- `GET`/`DELETE /citad-buffer`, `GET`/`DELETE /paymenthub-buffer`, mọi
-  endpoint session/export: người dùng đã đăng nhập trên web gọi qua
-  `frontend/api_client.py` (có sẵn JWT) — xác thực bằng
-  `require_feature("menu.doi_chieu_citad")` như mọi router khác trong hệ
-  thống, và tự động chỉ thao tác trên buffer/session của CHÍNH người đó
-  (`current["username"]` / `current["id"]`).
+Bản đầu dùng 1 khoá tĩnh dùng chung (`CITAD_EXTENSION_KEY`) cho toàn Phòng
+Thanh toán + field `owner` do CHÍNH Extension tự khai trong payload. Review
+chỉ ra: ai có khoá cũng ghi được buffer dưới BẤT KỲ tên nào — kể cả cố tình
+chèn số liệu giả để dòng chênh lệch ra đúng 0 rồi người lập bảng ký duyệt mà
+không biết. Đây là lỗ hổng nặng nhất trong toàn bộ PR.
+
+Thiết kế mới — **mã kết nối (extension token) cá nhân**:
+- Người dùng đăng nhập web TTTT thật (JWT) → vào `/doi_chieu_citad` → bấm
+  "Tạo mã kết nối" → nhận 1 token ngẫu nhiên (chỉ hiện ĐÚNG 1 lần) → dán vào
+  Extension (`extension_citad/content.js`, hằng số `EXTENSION_TOKEN`).
+- Backend chỉ lưu SHA-256 hash của token (`doi_chieu_citad_extension_tokens`,
+  1 dòng/staff — tạo mã mới tự thu hồi mã cũ).
+- `POST /citad-buffer`, `POST /paymenthub-buffer`: xác thực bằng header
+  `X-Extension-Token`, backend TRA CỨU `owner` từ token hợp lệ trong DB —
+  KHÔNG còn nhận `owner` do client tự khai trong payload nữa.
+- `GET`/`DELETE` buffer, mọi endpoint session/export/token: người dùng đã
+  đăng nhập gọi qua `frontend/api_client.py` (JWT) — `require_feature` +
+  `current["username"]` như mọi router khác.
+
+Token bị lộ chỉ ảnh hưởng đúng 1 người (không phải cả phòng), thu hồi được
+riêng lẻ, không cần đổi khoá chung. Vẫn còn 1 rủi ro CHƯA giải quyết bằng
+code: token truyền qua HTTP thường (không TLS) vẫn đọc được nếu bắt gói tin
+trên mạng nội bộ — bắt buộc backend production phải chạy sau HTTPS, xem
+cảnh báo tự động trong `extension_citad/content.js`.
 """
 from __future__ import annotations
 
 import io
-import os
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import StreamingResponse
@@ -36,6 +48,8 @@ from backend.core.deps import require_feature
 from backend.schemas.doi_chieu_citad import (
     CitadBufferIn,
     ExportIn,
+    ExtensionTokenOut,
+    ExtensionTokenStatus,
     PaymentHubBufferIn,
     SessionIn,
 )
@@ -43,33 +57,26 @@ from backend.services import doi_chieu_citad_service as svc
 
 router = APIRouter(prefix="/api/doi-chieu-citad", tags=["doi-chieu-citad"])
 
-# Fail fast — không dùng fallback rỗng để tránh buffer bị mở công khai khi
-# quên set env var (xem docstring module + backend/core/config.py::SECRET_KEY
-# cho cùng 1 kiểu bảo vệ đã áp dụng trong dự án).
-_EXTENSION_KEY = os.getenv("CITAD_EXTENSION_KEY", "").strip()
-if not _EXTENSION_KEY:
-    raise RuntimeError(
-        "Biến môi trường CITAD_EXTENSION_KEY chưa được đặt.\n"
-        "Đây là khoá để Extension Chrome (Đối chiếu CITAD) gọi được API buffer "
-        "mà không cần đăng nhập — KHÔNG được để trống, kể cả môi trường dev.\n"
-        "Tạo key mạnh: python -c \"import secrets; print(secrets.token_hex(32))\"\n"
-        "Sau đó thêm vào .env: CITAD_EXTENSION_KEY=<giá_trị_vừa_tạo>\n"
-        "Rồi đặt đúng giá trị này vào extension_citad/content.js và "
-        "content_paymenthub.js (biến EXTENSION_KEY)."
-    )
 
-
-def _check_extension_key(x_extension_key: str = Header(default="")):
-    if x_extension_key != _EXTENSION_KEY:
-        raise HTTPException(status_code=403, detail="Sai hoặc thiếu khoá Extension")
+def _resolve_extension_owner(x_extension_token: str = Header(default=""), db=Depends(get_db)) -> str:
+    """Dependency cho 2 endpoint POST buffer — trả về username chủ token
+    hợp lệ, KHÔNG bao giờ tin owner do client tự khai."""
+    owner = svc.resolve_extension_token(db, x_extension_token)
+    if not owner:
+        raise HTTPException(
+            status_code=403,
+            detail="Mã kết nối Extension không hợp lệ hoặc đã bị thu hồi — "
+            "vào /doi_chieu_citad, mục 'Kết nối Extension' để tạo mã mới.",
+        )
+    return owner
 
 
 # ── CITAD buffer ─────────────────────────────────────────────────────────
-# POST: Extension gọi (khoá riêng, không JWT). GET/DELETE: người dùng web gọi
-# (JWT, tự động chỉ thấy/xoá buffer của chính mình qua current["username"]).
-@router.post("/citad-buffer", dependencies=[Depends(_check_extension_key)])
-def save_citad_buffer(data: CitadBufferIn):
-    svc.buffer_save_citad(data.model_dump())
+# POST: Extension gọi (xác thực bằng token cá nhân, không JWT). GET/DELETE:
+# người dùng web gọi (JWT, tự động chỉ thấy/xoá buffer của chính mình).
+@router.post("/citad-buffer")
+def save_citad_buffer(data: CitadBufferIn, owner: str = Depends(_resolve_extension_owner)):
+    svc.buffer_save_citad(owner, data.model_dump())
     return {"ok": True}
 
 
@@ -85,9 +92,9 @@ def clear_citad_buffer(current: dict = Depends(require_feature("menu.doi_chieu_c
 
 
 # ── PaymentHub buffer ────────────────────────────────────────────────────
-@router.post("/paymenthub-buffer", dependencies=[Depends(_check_extension_key)])
-def save_ph_buffer(data: PaymentHubBufferIn):
-    svc.buffer_save_ph(data.owner, data.items)
+@router.post("/paymenthub-buffer")
+def save_ph_buffer(data: PaymentHubBufferIn, owner: str = Depends(_resolve_extension_owner)):
+    svc.buffer_save_ph(owner, data.items)
     return {"ok": True}
 
 
@@ -99,6 +106,26 @@ def get_ph_buffer(current: dict = Depends(require_feature("menu.doi_chieu_citad"
 @router.delete("/paymenthub-buffer")
 def clear_ph_buffer(current: dict = Depends(require_feature("menu.doi_chieu_citad"))):
     svc.buffer_clear_ph(current["username"])
+    return {"ok": True}
+
+
+# ── Mã kết nối Extension (thay CITAD_EXTENSION_KEY dùng chung) ───────────
+@router.get("/extension-token/status", response_model=ExtensionTokenStatus)
+def extension_token_status(db=Depends(get_db), current: dict = Depends(require_feature("menu.doi_chieu_citad"))):
+    return svc.get_extension_token_status(db, current["id"])
+
+
+@router.post("/extension-token", response_model=ExtensionTokenOut)
+def create_extension_token(db=Depends(get_db), current: dict = Depends(require_feature("menu.doi_chieu_citad"))):
+    """Tạo mã mới — TỰ ĐỘNG thu hồi mã cũ (1 token/người). Trả plaintext
+    ĐÚNG 1 LẦN, backend chỉ lưu hash, không xem lại được."""
+    token = svc.generate_extension_token(db, current["id"])
+    return {"token": token}
+
+
+@router.delete("/extension-token")
+def delete_extension_token(db=Depends(get_db), current: dict = Depends(require_feature("menu.doi_chieu_citad"))):
+    svc.revoke_extension_token(db, current["id"])
     return {"ok": True}
 
 

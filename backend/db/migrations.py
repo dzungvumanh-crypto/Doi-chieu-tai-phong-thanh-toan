@@ -208,6 +208,14 @@ def _create_tables(db_path: str):
             updated_at  DATETIME,
             PRIMARY KEY (ngay, staff_id)
         )""",
+        # Mã kết nối Extension cá nhân (thay khoá tĩnh dùng chung sau review
+        # bảo mật) — 1 token/staff, chỉ lưu hash, tạo mã mới tự thu hồi mã cũ.
+        """CREATE TABLE IF NOT EXISTS doi_chieu_citad_extension_tokens (
+            staff_id     INTEGER PRIMARY KEY REFERENCES user_tttt(id) ON DELETE CASCADE,
+            token_hash   TEXT NOT NULL UNIQUE,
+            created_at   DATETIME,
+            last_used_at DATETIME
+        )""",
         """CREATE TABLE IF NOT EXISTS doi_soat_citad_history (
             id                  INTEGER PRIMARY KEY AUTOINCREMENT,
             ngay_cham           VARCHAR(10) NOT NULL,

@@ -2,18 +2,26 @@
  * Bản cập nhật để trỏ vào backend TTTT dùng chung (thay vì server cổng
  * 8100 riêng của tool desktop cũ). Toàn bộ logic đọc DOM/scrape số liệu
  * GIỮ NGUYÊN 100% — chỉ đổi SERVER, đường dẫn API (prefix
- * /api/doi-chieu-citad/...) và thêm header X-Extension-Key.
+ * /api/doi-chieu-citad/...) và cách xác thực (mã kết nối cá nhân, xem dưới).
+ *
+ * XÁC THỰC: mỗi người tự tạo 1 "mã kết nối" (token) trên trang
+ * /doi_chieu_citad (mục "Kết nối Extension") sau khi đã đăng nhập TTTT thật,
+ * dán vào EXTENSION_TOKEN bên dưới. KHÔNG dùng chung 1 mã cho nhiều người —
+ * backend tra token ra đúng chủ token, không còn tin bất kỳ tên nào tự khai.
  */
 
 // Đang trỏ về server TEST chạy cục bộ (TTTT_test_run/, xem báo cáo trong hội thoại).
-// Khi triển khai thật: đổi SERVER thành domain/IP thật của backend TTTT, và
-// EXTENSION_KEY thành đúng giá trị CITAD_EXTENSION_KEY đã cấu hình ở backend (.env).
+// Khi triển khai thật: đổi SERVER thành domain/IP thật của backend TTTT —
+// BẮT BUỘC dùng https:// nếu backend chạy trên mạng thật (không chỉ localhost),
+// nếu không mã kết nối và số liệu sẽ truyền ở dạng đọc được trên mạng.
 const SERVER = 'http://localhost:8000';
-const EXTENSION_KEY = 'test-local-key';
-// Username TTTT của người dùng máy này — BẮT BUỘC đặt đúng, dùng để tách
-// buffer riêng cho từng người (nhiều người cùng dùng chung 1 backend).
-// Đổi giá trị này thành đúng username đăng nhập TTTT của bạn trước khi dùng.
-const STAFF_USERNAME = 'CHUA_CAU_HINH';
+// Mã kết nối cá nhân — lấy từ /doi_chieu_citad, mục "Kết nối Extension".
+// Mỗi người có 1 mã riêng, không chia sẻ cho người khác.
+const EXTENSION_TOKEN = 'CHUA_CAU_HINH';
+
+if (!SERVER.startsWith('https://')) {
+  console.warn('[CITAD Extension] SERVER không dùng HTTPS — mã kết nối và số liệu truyền ở dạng đọc được trên mạng nội bộ. Chỉ chấp nhận được khi test trên localhost.');
+}
 
 const CONG_MAP = {
   'CITAD001':  '1',
@@ -95,12 +103,11 @@ function hasResults() {
 
 // ── Gửi lên server ───────────────────────────────────────────────────
 async function saveToServer(cfg, res) {
-  if (STAFF_USERNAME === 'CHUA_CAU_HINH') {
-    showToast('⚠️ Chưa cấu hình STAFF_USERNAME trong content.js — không lưu được', '#f59e0b', 6000);
+  if (EXTENSION_TOKEN === 'CHUA_CAU_HINH') {
+    showToast('⚠️ Chưa cấu hình EXTENSION_TOKEN trong content.js — vào /doi_chieu_citad để tạo mã kết nối', '#f59e0b', 6000);
     return false;
   }
   const payload = {
-    owner:  STAFF_USERNAME,
     key:    `citad_${cfg.cong}_${cfg.loaiTien}_${cfg.chieu}_${cfg.loaiDV}`,
     cong:   cfg.cong,
     loai:   cfg.loaiDV,
@@ -113,9 +120,12 @@ async function saveToServer(cfg, res) {
   try {
     const r = await fetch(`${SERVER}/api/doi-chieu-citad/citad-buffer`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Extension-Key': EXTENSION_KEY },
+      headers: { 'Content-Type': 'application/json', 'X-Extension-Token': EXTENSION_TOKEN },
       body: JSON.stringify(payload)
     });
+    if (r.status === 403) {
+      showToast('✗ Mã kết nối không hợp lệ hoặc đã bị thu hồi — tạo mã mới ở /doi_chieu_citad', '#ef4444', 8000);
+    }
     return r.ok;
   } catch(e) { return false; }
 }
