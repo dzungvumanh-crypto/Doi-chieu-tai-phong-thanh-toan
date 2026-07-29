@@ -5,8 +5,11 @@ PaymentHub/Payment (Agribank) rồi gửi lên module **Đối chiếu CITAD** c
 TTTT (`/doi_chieu_citad`), thay cho việc gõ tay từng số.
 
 Đây là add-on trình duyệt độc lập — không chạy trong tiến trình backend/
-frontend của app, nên phải cài **thủ công** vào từng máy cần dùng (không có
-cách nào tự động cài qua repo).
+frontend của app, nên phải cài **thủ công** vào từng máy cần dùng. Chrome
+không cho phép trang web tự cài extension cho người dùng (giới hạn bảo mật
+của trình duyệt, không phải do cách đóng gói ở đây) — bước "Load unpacked"
+dưới đây là bước duy nhất không thể bỏ qua bằng code. Sau bước đó, mọi cấu
+hình đều làm qua giao diện, không cần sửa file nào.
 
 ## Cài đặt (mỗi máy làm 1 lần)
 
@@ -14,36 +17,54 @@ cách nào tự động cài qua repo).
 2. Bật **Developer mode** (góc trên phải)
 3. Bấm **Load unpacked**, chọn đúng thư mục `extension_citad/` này
 
-## Xác thực — mã kết nối cá nhân (bắt buộc, không dùng chung)
+## Cấu hình — tự động, không cần dán tay
 
-Bản đầu dùng 1 khoá cố định cho toàn Phòng Thanh toán — đã bỏ sau review bảo
-mật vì ai cũng ghi được buffer dưới bất kỳ tên nào. Giờ **mỗi người tự tạo 1
-mã riêng**, không chia sẻ mã của mình cho người khác dùng chung.
+Ở `/doi_chieu_citad`, mục **"Kết nối Extension"**, bấm **"Tạo mã kết nối
+mới"**. Nếu Extension đã cài trên đúng trình duyệt đang mở trang này, mã sẽ
+được gửi thẳng vào Extension ngay lập tức (qua `chrome.runtime.sendMessage`
+— xem `background.js`) — không cần sao chép/dán gì cả, dùng được luôn.
 
-**Bước 1 — Tạo mã kết nối:**
-1. Đăng nhập web TTTT thật (không phải Extension), vào `/doi_chieu_citad`
-2. Ở mục **"Kết nối Extension"**, bấm **"Tạo mã kết nối mới"**
-3. Sao chép mã hiện ra — **chỉ hiện ĐÚNG 1 LẦN**, không xem lại được (tạo mã
+Cơ chế: `manifest.json` khai `externally_connectable.matches` chỉ cho phép
+đúng các origin của trang TTTT gọi vào Extension, và ID của Extension được
+**cố định** bằng khoá `"key"` gắn cứng trong `manifest.json` (không đổi theo
+máy/thư mục cài đặt lúc "Load unpacked") — nhờ vậy trang web luôn gọi đúng
+Extension mà không cần biết ID sinh ngẫu nhiên trên từng máy.
+
+**⚠️ Khi deploy sang domain production khác `localhost:8080`**: phải thêm
+domain thật vào `externally_connectable.matches` trong `manifest.json`, sau
+đó build + phát lại bản `.zip` mới (đổi origin nhưng không đổi khoá `"key"`
+thì ID vẫn giữ nguyên, không phải cài lại từ đầu trên các máy đã cài).
+
+### Nếu không tự kết nối được (dán tay — trang Tuỳ chọn)
+
+Xảy ra khi: mở trang `/doi_chieu_citad` bằng trình duyệt/máy khác với máy đã
+cài Extension, dùng trình duyệt không hỗ trợ `externally_connectable` (không
+phải Chrome/Edge), hoặc domain trang web chưa được thêm vào
+`externally_connectable.matches` ở trên. Khi đó dialog sau khi tạo mã sẽ tự
+chuyển sang hiện mã kèm nút sao chép — làm theo:
+
+1. Sao chép mã hiện ra — **chỉ hiện ĐÚNG 1 LẦN**, không xem lại được (tạo mã
    mới sẽ tự động huỷ mã cũ)
+2. Bấm icon Extension trên thanh công cụ Chrome → **"Tuỳ chọn"** (hoặc vào
+   `chrome://extensions` → tìm extension này → **Chi tiết** → **Tuỳ chọn**)
+3. Điền:
+   - **SERVER**: địa chỉ backend TTTT thật (`https://<domain>` — bắt buộc
+     HTTPS nếu không phải localhost, xem cảnh báo bên dưới)
+   - **Mã kết nối**: dán mã đã sao chép ở bước 1
+4. Bấm **Lưu cấu hình** — trình duyệt sẽ hỏi xác nhận quyền truy cập đúng
+   domain SERVER, bấm **Cho phép**
 
-**Bước 2 — Dán vào Extension:**
-Mở `content.js` **và** `content_paymenthub.js`, sửa 2 hằng số ở đầu file:
-
-| Hằng số | Ý nghĩa | Giá trị |
-|---|---|---|
-| `SERVER` | Địa chỉ backend TTTT thật (không phải `localhost`) | `https://<domain-backend>:8000` — **bắt buộc HTTPS** nếu không chỉ chạy trên localhost, xem cảnh báo bên dưới |
-| `EXTENSION_TOKEN` | Mã kết nối cá nhân vừa tạo ở Bước 1 | Dán nguyên văn, không sửa |
-
-Sau khi sửa, vào `chrome://extensions`, bấm nút "Reload" (biểu tượng vòng
-tròn) của extension để áp dụng.
+Không cần Reload extension sau khi lưu (dù tự động hay dán tay) — content
+script tự đọc cấu hình mới ở lần tải trang CITAD/PaymentHub tiếp theo.
 
 ## ⚠️ Vì sao bắt buộc HTTPS khi dùng thật
 
-Extension gửi `EXTENSION_TOKEN` trong mỗi request. Nếu `SERVER` là `http://`
+Extension gửi "Mã kết nối" trong mỗi request. Nếu `SERVER` là `http://`
 (không mã hoá), bất kỳ ai bắt được gói tin trên cùng mạng nội bộ cũng đọc
-được mã này ở dạng chữ thường — có mã là ghi được buffer thay bạn. Extension
-tự in cảnh báo ra Console nếu phát hiện `SERVER` không bắt đầu bằng
-`https://`. Chỉ chấp nhận chạy HTTP khi test trên `localhost` (không rời máy).
+được mã này ở dạng chữ thường — có mã là ghi được buffer thay bạn. Trang
+Tuỳ chọn và Console của Extension tự cảnh báo nếu phát hiện `SERVER` không
+bắt đầu bằng `https://`. Chỉ chấp nhận chạy HTTP khi test trên `localhost`
+(không rời máy).
 
 ## Cách dùng hàng ngày
 
@@ -60,3 +81,13 @@ tự in cảnh báo ra Console nếu phát hiện `SERVER` không bắt đầu b
 Vào `/doi_chieu_citad` → "Kết nối Extension" → **"Thu hồi"** (hoặc bấm "Tạo
 mã kết nối mới" để tự động thay mã cũ) — mã cũ ngừng hoạt động ngay lập tức,
 không ảnh hưởng tới mã của người khác trong phòng.
+
+## Muốn bỏ luôn cả bước "Load unpacked" thủ công?
+
+Không thể bằng code — nhưng có 2 hướng tổ chức có thể cân nhắc (ngoài phạm
+vi extension này):
+- **Chrome Web Store (Private/Unlisted)**: đóng gói + submit, người dùng chỉ
+  cần bấm "Add to Chrome" 1 lần, không cần Developer mode. Cần tài khoản
+  Google Developer của Agribank.
+- **Chrome Enterprise / Group Policy**: IT đẩy extension tự động vào mọi máy
+  qua domain, người dùng không cần thao tác gì. Cần hạ tầng AD/GPO nội bộ.

@@ -24,6 +24,12 @@
   doichieu.db, khoá theo ngay+user_id tự nhập) — port sang dùng chung DB
   của TTTT (bảng `doi_chieu_citad_sessions`), khoá theo `staff_id` thật từ
   JWT thay vì chuỗi 'default' hard code.
+- `build_extension_zip()`: nén thư mục `extension_citad/` (nằm ở gốc repo,
+  cạnh `backend/`) thành 1 file .zip TẠI THỜI ĐIỂM TẢI — không lưu sẵn file
+  zip nào, luôn khớp đúng code hiện tại của extension, không cần bước build
+  riêng. Phục vụ nút "Tải Extension" trên `/doi_chieu_citad` (Chrome không
+  cho web tự cài extension — đây chỉ là tải file để người dùng tự Load
+  unpacked, xem `extension_citad/README.md`).
 """
 from __future__ import annotations
 
@@ -32,9 +38,14 @@ import io
 import json
 import secrets
 import sqlite3
+import zipfile
+from pathlib import Path
 
+from backend.core.config import BASE_DIR
 from backend.database import _vn_now
 from backend.schemas.doi_chieu_citad import ExportIn
+
+EXTENSION_DIR = BASE_DIR / "extension_citad"
 
 
 def _format_vn_date(day_str: str) -> str:
@@ -387,4 +398,18 @@ def build_xlsx(data: ExportIn) -> bytes:
 
     buf = io.BytesIO()
     wb.save(buf)
+    return buf.getvalue()
+
+
+# ── Tải Extension Chrome dạng .zip (phục vụ nút "Tải Extension") ──────────
+def build_extension_zip() -> bytes:
+    """Nén `extension_citad/` thành .zip trong bộ nhớ — không lưu file tạm,
+    không cần bước build riêng, luôn khớp đúng code hiện tại trên server."""
+    if not EXTENSION_DIR.is_dir():
+        raise FileNotFoundError(f"Không tìm thấy thư mục {EXTENSION_DIR}")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for path in sorted(EXTENSION_DIR.rglob("*")):
+            if path.is_file():
+                zf.write(path, arcname=Path("extension_citad") / path.relative_to(EXTENSION_DIR))
     return buf.getvalue()

@@ -4,23 +4,27 @@
  * GIỮ NGUYÊN 100% — chỉ đổi SERVER, đường dẫn API (prefix
  * /api/doi-chieu-citad/...) và cách xác thực (mã kết nối cá nhân, xem dưới).
  *
- * XÁC THỰC: mỗi người tự tạo 1 "mã kết nối" (token) trên trang
- * /doi_chieu_citad (mục "Kết nối Extension") sau khi đã đăng nhập TTTT thật,
- * dán vào EXTENSION_TOKEN bên dưới. KHÔNG dùng chung 1 mã cho nhiều người —
- * backend tra token ra đúng chủ token, không còn tin bất kỳ tên nào tự khai.
+ * CẤU HÌNH: không sửa file này — bấm icon Extension trên thanh công cụ →
+ * "Tuỳ chọn" (Options), điền SERVER + dán "Mã kết nối" lấy từ trang
+ * /doi_chieu_citad (mục "Kết nối Extension") sau khi đã đăng nhập TTTT thật.
+ * KHÔNG dùng chung 1 mã cho nhiều người — backend tra token ra đúng chủ,
+ * không còn tin bất kỳ tên nào tự khai (xem options.js).
  */
 
-// Đang trỏ về server TEST chạy cục bộ (TTTT_test_run/, xem báo cáo trong hội thoại).
-// Khi triển khai thật: đổi SERVER thành domain/IP thật của backend TTTT —
-// BẮT BUỘC dùng https:// nếu backend chạy trên mạng thật (không chỉ localhost),
-// nếu không mã kết nối và số liệu sẽ truyền ở dạng đọc được trên mạng.
-const SERVER = 'http://localhost:8000';
-// Mã kết nối cá nhân — lấy từ /doi_chieu_citad, mục "Kết nối Extension".
-// Mỗi người có 1 mã riêng, không chia sẻ cho người khác.
-const EXTENSION_TOKEN = 'CHUA_CAU_HINH';
+// Đọc từ chrome.storage.local (điền qua trang Tuỳ chọn của Extension) —
+// rỗng cho tới khi người dùng cấu hình lần đầu.
+let SERVER = '';
+let EXTENSION_TOKEN = '';
 
-if (!SERVER.startsWith('https://')) {
-  console.warn('[PaymentHub Extension] SERVER không dùng HTTPS — mã kết nối và số liệu truyền ở dạng đọc được trên mạng nội bộ. Chỉ chấp nhận được khi test trên localhost.');
+async function loadConfig() {
+  const cfg = await chrome.storage.local.get(['server', 'extensionToken']);
+  SERVER = cfg.server || '';
+  EXTENSION_TOKEN = cfg.extensionToken || '';
+  if (!SERVER || !EXTENSION_TOKEN) {
+    console.warn('[PaymentHub Extension] Chưa cấu hình — bấm icon Extension trên thanh công cụ → Tuỳ chọn.');
+  } else if (!SERVER.startsWith('https://')) {
+    console.warn('[PaymentHub Extension] SERVER không dùng HTTPS — mã kết nối và số liệu truyền ở dạng đọc được trên mạng nội bộ. Chỉ chấp nhận được khi test trên localhost.');
+  }
 }
 
 function parseNum(s) {
@@ -164,8 +168,8 @@ function hasBaoCaoResults() {
 let lastBaoCaoKey = '';
 
 async function saveBaoCao(manual=false) {
-  if (EXTENSION_TOKEN === 'CHUA_CAU_HINH') {
-    if (manual) showToast('⚠️ Chưa cấu hình EXTENSION_TOKEN — vào /doi_chieu_citad để tạo mã kết nối', '#f59e0b', 6000);
+  if (!SERVER || !EXTENSION_TOKEN) {
+    if (manual) showToast('⚠️ Chưa cấu hình Extension — bấm icon Extension trên thanh công cụ → Tuỳ chọn', '#f59e0b', 6000);
     return;
   }
   if (!hasBaoCaoResults()) {
@@ -252,8 +256,8 @@ function hasTraCuuResults() {
 let lastTraCuuKey = '';
 
 async function saveTraCuu(source, manual=false) {
-  if (EXTENSION_TOKEN === 'CHUA_CAU_HINH') {
-    if (manual) showToast('⚠️ Chưa cấu hình EXTENSION_TOKEN — vào /doi_chieu_citad để tạo mã kết nối', '#f59e0b', 6000);
+  if (!SERVER || !EXTENSION_TOKEN) {
+    if (manual) showToast('⚠️ Chưa cấu hình Extension — bấm icon Extension trên thanh công cụ → Tuỳ chọn', '#f59e0b', 6000);
     return;
   }
   if (!hasTraCuuResults()) {
@@ -318,6 +322,8 @@ function observeTraCuu(source) {
 /* ══════════════════════════════════════════════════════
    KHỞI CHẠY theo URL
    ══════════════════════════════════════════════════════ */
+(async () => {
+await loadConfig();
 const _url = window.location.href;
 
 if (_url.includes('paymenthub.agribank.com.vn/statistic')) {
@@ -327,3 +333,4 @@ if (_url.includes('paymenthub.agribank.com.vn/statistic')) {
 } else if (_url.includes('payment.agribank.com.vn/payment-in')) {
   observeTraCuu('payment');
 }
+})();

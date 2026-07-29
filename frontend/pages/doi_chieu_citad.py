@@ -24,11 +24,19 @@ Napas/Ebanking chỉ có 2 field "IH Đến — Món/Tiền" thực sự đượ
 """
 import asyncio
 import datetime
+import json
 from urllib.parse import quote
 
 from nicegui import ui
 import frontend.api_client as api
 from frontend.shared import _sidebar, _content_area, _page_header, _card, _require_auth, _handle_api_error
+
+# ID cố định của extension_citad — suy ra tất định từ khoá "key" gắn cứng
+# trong extension_citad/manifest.json (không phụ thuộc máy/thư mục cài đặt
+# lúc "Load unpacked"). Dùng để gọi chrome.runtime.sendMessage từ trang này
+# sang extension qua "externally_connectable" (xem extension_citad/background.js).
+# Nếu thay khoá "key" trong manifest.json thì PHẢI cập nhật lại hằng số này.
+_EXTENSION_ID = "dhollmjgbbjdcedijlmklmknndcachjh"
 
 
 def _date_picker_input(label: str, initial: str = None):
@@ -366,6 +374,40 @@ def doi_chieu_citad_page():
             ext_status_label.text = "⚪ Chưa kết nối Extension"
             ext_status_label.classes(remove="text-green-700", add="text-gray-500")
 
+    async def _try_auto_connect_extension(token: str) -> bool:
+        """Gửi trực tiếp {server, token} vào extension qua
+        chrome.runtime.sendMessage (chỉ hoạt động nếu extension_citad đã
+        được cài — Chrome tự chặn theo whitelist origin khai trong
+        manifest.json::externally_connectable, xem background.js). Trả về
+        False (không throw) cho MỌI lý do thất bại — chưa cài extension,
+        trình duyệt không phải Chrome/Edge, hoặc bị chặn — để luôn còn
+        đường lùi là dán tay."""
+        payload = json.dumps({"type": "SET_CONFIG", "server": api.BACKEND_URL, "token": token})
+        js = f"""
+            return await new Promise((resolve) => {{
+                if (!(window.chrome && chrome.runtime && chrome.runtime.sendMessage)) {{
+                    resolve({{ok: false, error: 'no_chrome_runtime'}});
+                    return;
+                }}
+                try {{
+                    chrome.runtime.sendMessage({_EXTENSION_ID!r}, {payload}, (response) => {{
+                        if (chrome.runtime.lastError) {{
+                            resolve({{ok: false, error: chrome.runtime.lastError.message}});
+                        }} else {{
+                            resolve(response || {{ok: false, error: 'empty_response'}});
+                        }}
+                    }});
+                }} catch (e) {{
+                    resolve({{ok: false, error: String(e)}});
+                }}
+            }});
+        """
+        try:
+            result = await ui.run_javascript(js, timeout=3.0)
+        except Exception:
+            return False
+        return bool(isinstance(result, dict) and result.get("ok"))
+
     async def do_create_extension_token():
         try:
             result = await asyncio.to_thread(api.post, "/api/doi-chieu-citad/extension-token", {})
@@ -374,22 +416,34 @@ def doi_chieu_citad_page():
                 return
             ui.notify(f"Lỗi: {e}", type="negative")
             return
+        token = result["token"]
+        auto_ok = await _try_auto_connect_extension(token)
         with ui.dialog() as dialog, ui.card().classes("w-full max-w-lg"):
-            ui.label("Mã kết nối Extension mới").classes("text-lg font-bold")
-            ui.label(
-                "Chỉ hiện ĐÚNG 1 LẦN — sao chép ngay và dán vào Extension "
-                "(extension_citad/content.js, hằng số EXTENSION_TOKEN). "
-                "Tạo mã mới sẽ tự động huỷ mã cũ."
-            ).classes("text-sm text-gray-500")
-            token_input = ui.input(value=result["token"]).props("readonly outlined dense").classes("w-full font-mono")
-            with ui.row().classes("w-full justify-end gap-2 mt-2"):
-                ui.button(
-                    "Sao chép", icon="content_copy",
-                    on_click=lambda: ui.run_javascript(
-                        f"navigator.clipboard.writeText({token_input.value!r})"
-                    ),
-                ).props("outline")
-                ui.button("Đóng", on_click=dialog.close).classes("bg-red-800 text-white")
+            if auto_ok:
+                ui.label("✓ Đã tự động kết nối vào Extension").classes("text-lg font-bold text-green-700")
+                ui.label(
+                    "Mã kết nối mới đã được gửi thẳng vào Extension đang cài trên trình duyệt "
+                    "này — không cần dán tay. Có thể dùng ngay các nút \"Lấy dữ liệu\" trên "
+                    "trang CITAD/PaymentHub."
+                ).classes("text-sm text-gray-500")
+                ui.button("Đóng", on_click=dialog.close).classes("bg-green-700 text-white mt-2")
+            else:
+                ui.label("Mã kết nối Extension mới").classes("text-lg font-bold")
+                ui.label(
+                    "Không tự động kết nối được (chưa cài Extension trên trình duyệt này, hoặc "
+                    "trình duyệt không hỗ trợ) — chỉ hiện mã ĐÚNG 1 LẦN, sao chép ngay, rồi bấm "
+                    "icon Extension trên thanh công cụ Chrome → \"Tuỳ chọn\" → dán vào ô Mã kết "
+                    "nối. Tạo mã mới sẽ tự động huỷ mã cũ."
+                ).classes("text-sm text-gray-500")
+                token_input = ui.input(value=token).props("readonly outlined dense").classes("w-full font-mono")
+                with ui.row().classes("w-full justify-end gap-2 mt-2"):
+                    ui.button(
+                        "Sao chép", icon="content_copy",
+                        on_click=lambda: ui.run_javascript(
+                            f"navigator.clipboard.writeText({token_input.value!r})"
+                        ),
+                    ).props("outline")
+                    ui.button("Đóng", on_click=dialog.close).classes("bg-red-800 text-white")
         dialog.open()
         await refresh_extension_status()
 
@@ -398,6 +452,20 @@ def doi_chieu_citad_page():
             await asyncio.to_thread(api.delete, "/api/doi-chieu-citad/extension-token")
             ui.notify("Đã thu hồi mã kết nối", type="positive")
             await refresh_extension_status()
+        except Exception as e:
+            if _handle_api_error(e):
+                return
+            ui.notify(f"Lỗi: {e}", type="negative")
+
+    async def do_download_extension():
+        try:
+            content = await asyncio.to_thread(api.get_bytes, "/api/doi-chieu-citad/extension-download")
+            ui.download(content, "extension_citad.zip")
+            ui.notify(
+                "Đã tải xong — giải nén rồi vào chrome://extensions, bật Developer mode, "
+                "bấm Load unpacked và chọn thư mục vừa giải nén.",
+                type="positive", multi_line=True, timeout=8000,
+            )
         except Exception as e:
             if _handle_api_error(e):
                 return
@@ -412,15 +480,24 @@ def doi_chieu_citad_page():
             )
 
             with _card("Kết nối Extension (nạp số liệu tự động từ CITAD/PaymentHub)"):
-                with ui.row().classes("w-full items-center gap-3 p-2"):
+                with ui.row().classes("w-full items-center gap-3 p-2 flex-wrap"):
                     ext_status_label = ui.label("Đang kiểm tra...").classes("text-sm text-gray-500")
+                    ui.button("Tải Extension (.zip)", icon="download", on_click=do_download_extension).props(
+                        "outline"
+                    )
                     ui.button("Tạo mã kết nối mới", icon="vpn_key", on_click=do_create_extension_token).props("outline")
                     ui.button("Thu hồi", icon="link_off", on_click=do_revoke_extension_token).props(
                         "outline color=red dense"
                     )
                 ui.label(
-                    "Mỗi người tự tạo 1 mã riêng, dán vào Extension đúng 1 lần — không dùng chung khoá "
-                    "với người khác. Xem hướng dẫn trong extension_citad/README.md."
+                    "Lần đầu dùng: (1) Tải Extension → giải nén → chrome://extensions → Developer mode → "
+                    "Load unpacked, chọn thư mục vừa giải nén — bước này vẫn phải tự làm 1 lần, Chrome không "
+                    "cho web tự cài extension. (2) Bấm \"Tạo mã kết nối mới\" ở trên — nếu Extension đã cài "
+                    "trên đúng trình duyệt này, mã sẽ tự động được gửi thẳng vào Extension, không cần dán tay. "
+                    "Chỉ khi không tự kết nối được (trình duyệt khác, hoặc Extension chưa cài) mới cần sao "
+                    "chép và dán thủ công vào trang Tuỳ chọn của Extension như hướng dẫn hiện ra. Mỗi người tự "
+                    "tạo 1 mã riêng, không dùng chung với người khác. Chi tiết trong file README.md nằm sẵn "
+                    "trong bản .zip vừa tải."
                 ).classes("text-xs text-gray-500 px-2 -mt-2")
                 ui.timer(0.1, refresh_extension_status, once=True)
 

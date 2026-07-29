@@ -3,6 +3,7 @@
   "name": "CITAD – Lấy số liệu đối chiếu (TTTT)",
   "version": "2.0",
   "description": "Tự động lấy số liệu CITAD và PaymentHub vào module Đối chiếu CITAD của app TTTT",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAmeVTuernAkmE8a790OHIK/gG4D2E/oa4h3PdhRNyJIMDvEt0xnf757r2z/4wX5+XjJVyImDOMUx6HAj1TGQRff+JbF3+nDaawZwB6PrY56aedxy9Z412vs+1SmW9vqa7hOdwF3vlVjnofMK0SXP+5y3bw47FIfAeho7ZfM4nkhHLZOozg8Q2UJFV6AX1KgzaUPZaz0NonqCOJNHtcCj9OsyjdXhBinYlaz/UkqjwFkVCY+ZOj8m60Lxsa2LuufRTjqdjcsG+NN1Lok4KVi6vAxVs/bUKw9AYsEWE6Sex1ITp+CdP5/o/mxdjG3I3bnZSRT8QdnQ2whKVn1mm6fdfBwIDAQAB",
   "permissions": ["storage", "activeTab"],
   "host_permissions": [
     "http://10.0.85.100/*",
@@ -10,6 +11,15 @@
     "https://paymenthub.agribank.com.vn/*",
         "https://payment.agribank.com.vn/*"
   ],
+  "optional_host_permissions": ["http://*/*", "https://*/*"],
+  "options_page": "options.html",
+  "background": { "service_worker": "background.js" },
+  "externally_connectable": {
+    "matches": [
+      "http://localhost:8080/*",
+      "http://127.0.0.1:8080/*"
+    ]
+  },
   "content_scripts": [
     {
       "matches": [
@@ -35,13 +45,6 @@
         "https://paymenthub.agribank.com.vn/*/giao-dich*",
         "https://paymenthub.agribank.com.vn/*",
         "https://payment.agribank.com.vn/*"
-      ],
-      "js": ["content_paymenthub.js"],
-      "run_at": "document_end"
-    },
-    {
-      "matches": [
-        "https://payment.agribank.com.vn/payment-in/*"
       ],
       "js": ["content_paymenthub.js"],
       "run_at": "document_end"

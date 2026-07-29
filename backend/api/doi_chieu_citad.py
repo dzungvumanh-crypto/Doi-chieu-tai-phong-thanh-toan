@@ -41,7 +41,7 @@ from __future__ import annotations
 import io
 
 from fastapi import APIRouter, Depends, Header, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
 from backend.database import get_db
 from backend.core.deps import require_feature
@@ -127,6 +127,22 @@ def create_extension_token(db=Depends(get_db), current: dict = Depends(require_f
 def delete_extension_token(db=Depends(get_db), current: dict = Depends(require_feature("menu.doi_chieu_citad"))):
     svc.revoke_extension_token(db, current["id"])
     return {"ok": True}
+
+
+@router.get("/extension-download")
+def download_extension(current: dict = Depends(require_feature("menu.doi_chieu_citad"))):
+    """Tải extension_citad/ dạng .zip để người dùng tự giải nén + Load
+    unpacked — Chrome không cho web tự cài extension, đây chỉ là bước tải
+    file cho tiện, không thay thế được thao tác cài thủ công."""
+    try:
+        content = svc.build_extension_zip()
+    except FileNotFoundError as e:
+        raise HTTPException(500, str(e))
+    return Response(
+        content=content,
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="extension_citad.zip"'},
+    )
 
 
 # ── Session theo ngày (thay cho SQLite riêng của bản gốc) ───────────────
