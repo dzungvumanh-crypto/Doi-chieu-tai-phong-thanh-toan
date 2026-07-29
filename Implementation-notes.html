@@ -53,6 +53,65 @@
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
   <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-07-29</p>
 
+  <!-- F -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">F</span>
+      <span class="card-title">Merge fix carry-over vắt năm — khi "file dùng chung" không có nghĩa là ảnh hưởng rộng</span>
+      <span class="badge badge-done">Đã merge + kiểm chứng</span>
+    </div>
+    <div class="card-body">
+      <p>Merge nhánh <code>fix/carry-over-vat-nam</code> (<code>c1473eb</code>) — sửa <code>compute_carry_over</code>
+      tính sai với đơn nghỉ vắt qua ngày 31/12. Đây là nhánh song song với PR nghỉ phép ở card E, cùng tách từ
+      <code>f21d38a</code>, không chồng file nào nên merge sạch.</p>
+
+      <div class="label">Vì sao commit này trông đáng lo hơn thực tế</div>
+      <p>Khác với PR ở card E (chỉ đụng file trong menu Nghỉ phép), commit này sửa <code>backend/database.py</code> —
+      file được <strong>~20 module import</strong>, gồm <code>deps.py</code>, <code>auth.py</code>,
+      <code>dashboard.py</code>, <code>staff.py</code>, trực ban, SWIFT, bàn giao chứng từ. Phản xạ đầu tiên là bán
+      kính ảnh hưởng rộng hơn hẳn.</p>
+      <p><strong>Ấn tượng đó sai.</strong> "Cùng file" không đồng nghĩa với "cùng vùng ảnh hưởng":</p>
+      <table>
+        <tr><th>Câu hỏi</th><th>Trả lời</th></tr>
+        <tr><td>Các module kia import gì từ <code>database.py</code>?</td><td><code>get_db</code>, <code>_vn_now</code>, <code>compute_annual_leave</code> — <strong>không ai import <code>compute_carry_over</code></strong></td></tr>
+        <tr><td>Bao nhiêu nơi gọi hàm được sửa?</td><td>Đúng 1 file: <code>backend/api/leaves.py</code> (5 điểm gọi)</td></tr>
+        <tr><td>Diff có chạm phạm vi module?</td><td>Không — nằm trọn trong thân hàm, không đổi chữ ký, không đổi kiểu trả về, không thêm import</td></tr>
+        <tr><td>Đổi lược đồ CSDL?</td><td>Không</td></tr>
+        <tr><td>Hiệu năng?</td><td>Không xấu đi — <code>staff_id=?</code> vẫn đứng đầu, vẫn dùng <code>ix_leave_records_staff</code>; còn bỏ được <code>strftime</code> trên cột</td></tr>
+      </table>
+      <p>Vì tên hàm là duy nhất trong toàn bộ mã nguồn nên một lần grep đã phủ hết mọi cách gọi, kể cả gọi gián tiếp
+      qua tên module. <strong>Kết luận: không có ảnh hưởng ra ngoài chức năng Nghỉ phép.</strong></p>
+
+      <div class="label">Không merge mới là trạng thái rủi ro hơn</div>
+      <p>Sau card E, <code>_carry_over_bulk</code> (sinh ra số <em>hiển thị</em> ở tab Hạn mức và banner) đã tính đúng
+      đơn vắt năm, còn <code>compute_carry_over</code> (số backend dùng để <em>chặn</em> lúc tạo đơn) thì chưa. Merge
+      này đưa hai bên về cùng kết quả — nó <strong>xoá lệch chứ không tạo lệch</strong>.</p>
+
+      <div class="label">Kiểm chứng — không dừng ở compile</div>
+      <p>Compile và <code>import backend.main</code> chỉ chứng minh không sập, không chứng minh hết lệch. Đã dựng
+      SQLite in-memory (không đụng CSDL thật, không có data test cần dọn) chạy song song hai hàm trên 3 ca: đơn vắt
+      năm, đơn trong năm làm đối chứng, và đơn <code>spread_dates</code> vắt năm — cả 3 khớp nhau.</p>
+      <p>Đối chiếu thêm với bản trước merge để chắc test chạm đúng lỗi, dùng đơn 29/12/2025 → 02/01/2026, hạn mức
+      2025 là 12 ngày:</p>
+      <table>
+        <tr><th></th><th>Ngày chuyển kỳ</th><th>Vì sao</th></tr>
+        <tr><td>Trước merge</td><td><strong>7.0</strong></td><td>Trừ cả 5 ngày làm việc, kể cả 1–2/1 thuộc năm 2026</td></tr>
+        <tr><td>Sau merge</td><td><strong>9.0</strong></td><td>Chỉ trừ 29–31/12 là 3 ngày làm việc thuộc năm 2025</td></tr>
+      </table>
+
+      <div class="label">Lưu ý vận hành — thứ duy nhất cần lường trước</div>
+      <p>Đây không phải rủi ro kỹ thuật mà là <strong>số liệu sẽ đổi</strong>: nhân viên từng có đơn vắt qua 31/12 sẽ
+      thấy ngày phép chuyển kỳ <em>tăng lên</em>. Hành vi này đúng, nhưng ai đang đối chiếu số bằng tay sẽ thấy con số
+      nhảy mà không rõ lý do.</p>
+      <p>Chưa đo được phạm vi thật: truy vấn <code>data/ksnb.db</code> cho ra 0 đơn vắt năm vì bảng
+      <code>leave_records</code> <strong>hiện rỗng hoàn toàn</strong> — đây là CSDL phát triển sạch, không phản ánh
+      dữ liệu vận hành. Muốn biết ảnh hưởng tới bao nhiêu người thì phải chạy cùng truy vấn đó trên bản đang dùng thật:</p>
+      <pre>SELECT lr.id, u.full_name, lr.start_date, lr.end_date, lr.status
+FROM leave_records lr LEFT JOIN user_tttt u ON lr.staff_id = u.id
+WHERE substr(lr.start_date,1,4) &lt;&gt; substr(lr.end_date,1,4)</pre>
+    </div>
+  </div>
+
   <!-- E -->
   <div class="card">
     <div class="card-header">
