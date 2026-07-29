@@ -81,14 +81,14 @@ def compute_carry_over(staff_id: int, year: int, db,
         """SELECT start_date, end_date, spread_dates FROM leave_records
            WHERE staff_id=? AND status='approved'
              AND leave_type NOT IN ('thai_san','bao_hiem')
-             AND strftime('%Y', start_date)=?""",
-        (staff_id, str(prev_year)),
+             AND start_date <= ? AND end_date >= ?""",
+        (staff_id, f"{prev_year}-12-31", f"{prev_year}-01-01"),
     ).fetchall()
     used = 0.0
     _holidays = None
     for row in rows:
         if row["spread_dates"]:
-            used += len(json.loads(row["spread_dates"]))
+            used += len([d for d in json.loads(row["spread_dates"]) if d.startswith(str(prev_year))])
         else:
             if _holidays is None:
                 hrows = db.execute(
@@ -99,7 +99,7 @@ def compute_carry_over(staff_id: int, year: int, db,
             d = _date.fromisoformat(row["start_date"])
             end = _date.fromisoformat(row["end_date"])
             while d <= end:
-                if d.weekday() < 5 and d not in _holidays:
+                if d.year == prev_year and d.weekday() < 5 and d not in _holidays:
                     used += 1
                 d += timedelta(days=1)
     return max(0.0, prev_quota - used)
