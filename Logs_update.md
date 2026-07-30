@@ -4,6 +4,19 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 30/07/2026 Trang chủ - Xem hết trang không phải cuộn:
+    + Trang chủ trước đây **dài hơn màn hình**, phải cuộn xuống mới thấy hết biểu đồ nộp chứng từ. Nay toàn bộ nằm vừa trong một màn hình, không còn thanh cuộn
+    + Ô "Người dùng" và "Phòng nghiệp vụ" chuyển lên nằm cùng hàng với tiêu đề — vẫn đủ thông tin, gọn hơn
+    + Khối **Nghỉ phép hôm nay** phóng to: số nghỉ to và rõ hơn hẳn
+    + Biểu đồ nộp chứng từ thu gọn lại, cột không còn bè ra choán màn hình
+    + Ô phòng Nostro rút gọn thành **"Phòng QLTK Nostro, Vostro"** để nhãn nằm một dòng như các ô khác. Tên đầy đủ trên phiếu nghỉ phép, bìa tập và báo cáo **không đổi**
+
+- 30/07/2026 Khởi động - `start.bat` không cài lại thư viện mỗi lần đổi máy:
+    + Mang thư mục dự án (chạy từ USB) sang máy khác thì mỗi lần bấm `start.bat` đều báo *".venv bị hỏng"* rồi **cài lại toàn bộ thư viện, mất vài phút**. Nay script vá môi trường tại chỗ, **khoảng 2 giây là chạy được**
+    + Khi thật sự có lỗi, script **in rõ nguyên văn lỗi** ra màn hình thay vì im lặng cài lại
+    + ⚠️ Máy mới cần **Python 3.10.x**. Máy chỉ có 3.11/3.12 thì vẫn phải cài lại thư viện và **cần internet**
+    + Lần chạy đầu sau đợt cập nhật này sẽ cài lại thư viện **một lần** (khoảng 10 giây), sau đó bỏ qua
+
 - 29/07/2026 Bàn giao chứng từ - Mỗi phòng chỉ còn thấy chứng từ của phòng mình:
     + Trước đây bất kỳ ai đăng nhập được đều **tải được file Excel chứa toàn bộ chứng từ của mọi phòng** — kể cả tài khoản không được cấp quyền gì trong menu Bàn giao. Xem lịch sử một chứng từ bất kỳ cũng vậy
     + Người có quyền nhập còn **xem được lưới của phòng khác và nhập chứng từ cho cán bộ phòng khác**

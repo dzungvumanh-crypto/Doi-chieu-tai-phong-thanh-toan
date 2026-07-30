@@ -3,10 +3,12 @@ chcp 65001 >nul
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
+set "VENV_PY=.venv\Scripts\python.exe"
+
 :: Dung py.exe (Windows Python Launcher) neu co, fallback sang python
 where py >nul 2>&1 && set "PY=py" || set "PY=python"
 
-:: Tao .env voi SECRET_KEY + STORAGE_SECRET ngau nhien neu chua co
+:: ── Tao .env voi SECRET_KEY + STORAGE_SECRET ngau nhien neu chua co ──
 if not exist ".env" (
     echo [!] Khong tim thay file .env. Dang tao moi voi khoa ngau nhien...
     for /f "delims=" %%K in ('%PY% -c "import secrets; print(secrets.token_hex(32))"') do set "NEWKEY=%%K"
@@ -36,35 +38,91 @@ if errorlevel 1 (
     echo.
 )
 
-:: Neu .venv bi hong (Python bi go cai/di chuyen), tu tao lai
-.venv\Scripts\python.exe --version >nul 2>&1
-if errorlevel 1 (
-    echo [!] .venv bi hong. Dang tao lai...
-    %PY% --version >nul 2>&1
+:: ── Kiem tra .venv ──
+:: Duong chay binh thuong chi ton ~0.1s. Chi khi that su hong moi vao nhanh sua chua.
+set "FORCE_PIP=0"
+set "VENV_OK=0"
+if exist "!VENV_PY!" (
+    "!VENV_PY!" -c "import sys" >nul 2>&1 && set "VENV_OK=1"
+)
+
+if "!VENV_OK!"=="0" (
+    echo [!] .venv khong dung duoc. Chi tiet loi:
+    if exist "!VENV_PY!" (
+        "!VENV_PY!" -c "import sys" 2>&1
+    ) else (
+        echo     Khong tim thay !VENV_PY!
+    )
+    echo.
+
+    %PY% -c "import sys" >nul 2>&1
     if errorlevel 1 (
-        echo [LOI] Khong tim thay Python. Vui long cai lai Python 3.10+.
+        echo [LOI] Khong chay duoc Python he thong ^(lenh: %PY%^).
+        echo       Cai lai Python 3.10+ tu python.org, nho tick "Add to PATH".
+        echo       Neu Windows mo Microsoft Store khi go "python": tat App Execution Alias
+        echo       trong Settings ^> Apps ^> Advanced app settings ^> App execution aliases.
         pause
         exit /b 1
     )
-    if exist ".venv" rmdir /s /q .venv
-    %PY% -m venv .venv
-    echo [*] Cai dat thu vien...
-    .venv\Scripts\python.exe -m pip install -r requirements.txt --quiet
-    echo [OK] Xong.
+
+    rem Buoc 1 -- va lai venv tai cho: giu nguyen thu vien da cai, mat vai giay.
+    if exist ".venv" (
+        echo [*] Dang sua .venv tai cho ^(giu lai thu vien da cai^)...
+        %PY% -m venv --upgrade .venv >nul 2>&1
+        "!VENV_PY!" -c "import sys" >nul 2>&1 && set "VENV_OK=1"
+    )
+
+    if "!VENV_OK!"=="1" (
+        rem Venv chay lai duoc, nhung neu ban Python thay doi thi cac goi bien dich san
+        rem nhu pandas / bcrypt / cryptography se khong import duoc -- khi do cai lai goi.
+        "!VENV_PY!" -c "import fastapi, nicegui, docxtpl, pandas, bcrypt" >nul 2>&1
+        if errorlevel 1 (
+            echo [*] Thu vien khong khop ban Python moi -- se cai lai.
+            set "FORCE_PIP=1"
+        ) else (
+            echo [OK] Da sua xong .venv, khong can cai lai thu vien.
+        )
+    ) else (
+        echo [*] Khong sua duoc -- tao lai tu dau ^(mat vai phut^)...
+        if exist ".venv" rmdir /s /q .venv
+        %PY% -m venv .venv
+        if errorlevel 1 (
+            echo [LOI] Khong tao duoc .venv.
+            pause
+            exit /b 1
+        )
+        set "FORCE_PIP=1"
+    )
     echo.
 )
 
-:: Cap nhat thu vien neu requirements.txt moi hon .venv (tuc la co package moi)
-for /f %%T in ('powershell -NoProfile -Command "(Get-Item requirements.txt).LastWriteTime.Ticks"') do set "REQ_TIME=%%T"
-for /f %%T in ('powershell -NoProfile -Command "if (Test-Path .venv\.req_stamp) { Get-Content .venv\.req_stamp } else { echo 0 }"') do set "STAMP=%%T"
+:: ── Cai/cap nhat thu vien khi requirements.txt doi (hoac vua dung lai venv) ──
+:: Dau van tay = thoi diem sua + kich thuoc file, lay bang batch thuan (khong goi PowerShell).
+set "REQ_TIME="
+for %%F in ("requirements.txt") do set "REQ_TIME=%%~tF %%~zF"
+if not defined REQ_TIME (
+    echo [LOI] Khong tim thay requirements.txt.
+    pause
+    exit /b 1
+)
+
+set "STAMP="
+if exist ".venv\.req_stamp" for /f "usebackq delims=" %%S in (".venv\.req_stamp") do set "STAMP=%%S"
+if "!FORCE_PIP!"=="1" set "STAMP="
+
 if not "!REQ_TIME!"=="!STAMP!" (
-    echo [*] requirements.txt da thay doi. Dang cap nhat thu vien...
-    .venv\Scripts\python.exe -m pip install -r requirements.txt --quiet
-    echo !REQ_TIME! > .venv\.req_stamp
+    echo [*] Dang cai/cap nhat thu vien...
+    "!VENV_PY!" -m pip install -r requirements.txt --quiet --disable-pip-version-check
+    if errorlevel 1 (
+        echo [LOI] Cai thu vien that bai -- kiem tra ket noi internet.
+        pause
+        exit /b 1
+    )
+    >".venv\.req_stamp" echo !REQ_TIME!
     echo [OK] Cap nhat xong.
     echo.
 )
 
 echo Khoi dong he thong KSNB^&HTVH...
-.venv\Scripts\python.exe run.py
+"!VENV_PY!" run.py
 pause
