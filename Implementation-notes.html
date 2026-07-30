@@ -2289,7 +2289,150 @@ ui.on_exception(_on_exception)</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-07-29</footer>
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">H</span>
+      <span class="card-title">Trang chủ vừa đúng 1 viewport — bỏ cuộn dọc</span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+      <p>Trang chủ cao khoảng 900–950px trong khi vùng nhìn thấy của trình duyệt trên màn hình 1080p chỉ còn
+      ~900px, nên luôn phải cuộn để thấy hết biểu đồ. Bốn khối xếp dọc, khối nào cũng có khoảng trống thừa.</p>
+
+      <div class="label">Vì sao không chỉ giảm chiều cao biểu đồ</div>
+      <p>Biểu đồ trước đây cố định <code>height: 340px</code>. Hạ xuống một số nhỏ hơn thì vừa màn hình laptop
+      nhưng bỏ trống nửa dưới màn hình 27". Chọn cách khác: <strong>khoá vùng nội dung đúng
+      <code>h-screen</code>, cho ba khối trên cao cố định (<code>flex-none</code>) và để card biểu đồ
+      <code>flex-1 min-h-0</code> ăn hết phần còn lại</strong> — cùng một layout tự vừa mọi chiều cao màn hình,
+      không đoán số pixel.</p>
+      <table>
+        <tr><th>Khối</th><th>Trước</th><th>Sau</th></tr>
+        <tr><td>Tiêu đề + 2 ô thống kê</td><td>2 hàng riêng, cả hai gần như trống (~150px)</td><td>Gộp 1 hàng: tiêu đề trái, 2 chip số phải (~44px)</td></tr>
+        <tr><td>Nghỉ phép hôm nay</td><td>ô cao <code>min-height:80px</code>, số <code>text-2xl</code></td><td><code>height:56px</code>, số <code>text-xl</code>, nhãn phòng <code>text-[10px]</code></td></tr>
+        <tr><td>Biểu đồ</td><td><code>height: 340px</code> cứng</td><td><code>flex-1</code> + <code>min-height:180px</code></td></tr>
+      </table>
+
+      <div class="label">Nén nội dung vẫn chưa hết cuộn — nguyên nhân thật nằm ở lớp bọc của NiceGUI</div>
+      <p>Sau khi nội dung đã cao đúng <code>100vh</code>, thanh cuộn <strong>vẫn còn</strong>. Lý do:
+      <code>.nicegui-content</code> — lớp <code>div</code> mà NiceGUI tự bọc quanh mọi trang
+      (<code>client.py</code>) — có <code>padding: 1rem</code> cứng trong <code>nicegui.css</code>.
+      Một khối cao 100vh nằm trong lớp đó thì trang cao <code>100vh + 32px</code>, và 32px đó chính là
+      thanh cuộn. Không có cách nào nén nội dung cho hết được, vì phần thừa không thuộc nội dung.</p>
+      <p>Vá bằng CSS <strong>chỉ áp cho trang chủ</strong> — <code>ui.add_head_html()</code> mặc định
+      <code>shared=False</code> nên chỉ vào HTML của client đang mở trang này, các trang khác giữ nguyên
+      padding 1rem. Đưa <code>.nicegui-content</code> về <code>padding: 0</code> không làm lệch giao diện vì
+      <code>#app-content</code> đã có <code>p-4</code> riêng — khoảng thụt lề trông y như cũ, chỉ mất 32px
+      chiều cao thừa. Thêm <code>html, body { overflow: hidden }</code> để một thanh cuộn 1px do làm tròn
+      pixel (màn hình có devicePixelRatio lẻ, hoặc zoom) cũng không xuất hiện.</p>
+
+      <div class="label">Hai chi tiết dễ vỡ nếu ai đó sửa lại</div>
+      <table>
+        <tr><th>Điểm</th><th>Lý do bắt buộc</th></tr>
+        <tr><td><code>min-h-0</code> trên mọi cấp từ vùng nội dung xuống <code>ui.echart</code></td><td>Mặc định flex item có <code>min-height:auto</code> — không có <code>min-h-0</code> thì chuỗi lồng nhau không co lại được và biểu đồ lại đẩy trang dài ra, đúng lỗi ban đầu</td></tr>
+        <tr><td><code>grid</code> của echart đổi từ <code>%</code> sang px</td><td>Khi vùng vẽ bị nén còn ~200px, <code>top: "8%"</code> chỉ còn 16px và nhãn giá trị trên đầu cột bị cắt. Px giữ chỗ ổn định ở mọi chiều cao</td></tr>
+      </table>
+      <p>Không cần thêm JS xử lý resize: component <code>echart.js</code> của NiceGUI đã tự đăng ký
+      <code>ResizeObserver</code> sau lần vẽ đầu tiên, nên chart tự vẽ lại khi cửa sổ đổi kích thước.</p>
+
+      <div class="label">Chia lại tỷ lệ: khối nghỉ phép to lên, biểu đồ nhẹ đi</div>
+      <p>Lần nén đầu làm ô nghỉ phép quá bé (56px) còn biểu đồ chiếm ~630px — mất cân đối. Chỉnh lại:
+      ô nghỉ phép <code>104px</code>, số <code>text-4xl</code>, tên phòng <code>text-xs</code>.</p>
+      <p>Phần "biểu đồ trông thô" <strong>không phải do khung cao</strong> mà do bề rộng cột: chỉ 4 phòng trải
+      hết chiều ngang nên echart tự kéo cột rộng ~150px. Chặn <code>barMaxWidth: 44</code> + bo góc trên
+      <code>borderRadius: [3,3,0,0]</code> là hết. Kèm theo giới hạn <code>max-height: 380px</code> cho phần
+      tử echart để vùng vẽ không phình theo màn hình lớn.</p>
+      <table>
+        <tr><th>Chọn giới hạn ở đâu</th><th>Kết quả</th></tr>
+        <tr><td><strong>Ở phần tử echart</strong> (đã chọn)</td><td>Card vẫn <code>flex-1</code> nên vẫn lấp kín trang, chỗ dư thành khoảng trắng <em>bên trong</em> card trắng — gần như không nhìn thấy</td></tr>
+        <tr><td>Ở card biểu đồ</td><td>Card ngắn lại, chỗ dư thành khoảng xám <code>bg-gray-50</code> ở đáy trang — nhìn rõ như lỗi layout</td></tr>
+      </table>
+      <p>Trên màn hình rất cao (&gt; ~1200px) sẽ có dải trắng ~150px dưới chú giải biểu đồ. Muốn hết hẳn thì
+      phải đổi bố cục: đặt biểu đồ và khối nghỉ phép <em>cạnh nhau</em> (2/3 – 1/3, ô nghỉ phép xếp dọc) —
+      chưa làm vì đó là thay đổi bố cục, không phải chỉnh kích thước.</p>
+
+      <div class="label">Đánh đổi đã chấp nhận</div>
+      <table>
+        <tr><th>Quyết định</th><th>Hệ quả</th></tr>
+        <tr><td>Ghi đè class của <code>_content_area()</code> ngay tại trang chủ thay vì sửa helper</td><td><code>_content_area()</code> dùng chung cho ~20 trang, nhiều trang có bảng dài <em>cần</em> cuộn. Sửa helper là đổi hành vi toàn hệ thống để giải quyết một trang</td></tr>
+        <tr><td>Chặn cuộn ở <code>html, body</code> nhưng giữ <code>overflow-y-auto</code> trên <code>#app-content</code></td><td>Trang không bao giờ có thanh cuộn. Màn hình rất thấp (&lt; ~460px hoặc zoom lớn) thì cuộn bên trong vùng nội dung — vẫn xem được, thay vì bị cắt mất</td></tr>
+        <tr><td><code>overflow-x-auto</code> → <code>overflow-x-hidden</code> ở vùng nội dung</td><td>Không mất gì: hàng ô nghỉ phép dùng <code>flex-1 min-w-0</code> nên co lại chứ không tràn ngang. Đổi để không có thanh cuộn ngang</td></tr>
+        <tr><td>Rút gọn tên phòng NOSTRO ở tầng hiển thị (<code>_DEPT_SHORT</code>), không sửa <code>departments.name</code></td><td>Tên đầy đủ "Phòng Quản lý Tài khoản Nostro Vostro" còn dùng ở phiếu nghỉ phép, bìa tập và báo cáo — đổi trong DB là đổi cả những chỗ đó. Đánh đổi: thêm phòng có tên dài sau này phải nhớ bổ sung vào dict, nếu không nhãn lại xuống 2 dòng. Tra theo <code>code</code> nên đổi tên phòng không làm mất mapping</td></tr>
+        <tr><td>Hàng ô nghỉ phép vẫn <code>flex-nowrap</code> 9 ô</td><td>Chưa xử lý: thêm phòng ban thứ 10–11 thì các ô hẹp dần và tên phòng xuống nhiều dòng. Giữ nguyên vì đây là hành vi cũ, không thuộc phạm vi lần sửa này</td></tr>
+      </table>
+      <p><strong>Chưa kiểm chứng bằng ảnh chụp:</strong> môi trường không có công cụ điều khiển trình duyệt,
+      nên số liệu chiều cao ở trên là tính toán từ class Tailwind, không phải đo trên màn hình thật.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">I</span>
+      <span class="card-title">start.bat dựng lại .venv mỗi lần đổi máy (dự án chạy từ USB)</span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+      <p>Mỗi lần chạy <code>start.bat</code> đều in <em>".venv bị hỏng. Đang tạo lại..."</em> rồi cài lại ~40 gói,
+      mất vài phút — trong khi kiểm tra thủ công thì <code>.venv</code> hoàn toàn bình thường.</p>
+
+      <div class="label">Nguyên nhân chính — thư mục dự án nằm trên USB</div>
+      <p>Ổ <code>D:</code> là <strong>ổ USB removable</strong>, dự án được mang qua lại giữa nhiều máy.
+      File <code>pyvenv.cfg</code> của venv ghi <strong>đường dẫn tuyệt đối</strong> tới Python đã tạo ra nó
+      (<code>home = C:\Users\Administrator\AppData\Local\Programs\Python\Python310</code>). Cắm sang máy khác thì
+      đường dẫn đó không tồn tại → <code>.venv\Scripts\python.exe</code> báo <code>No Python at '...'</code> →
+      script kết luận venv hỏng và dựng lại toàn bộ <em>lên USB</em> (chậm hơn ổ cứng nhiều lần).
+      Chạy cố định một máy thì không bao giờ gặp.</p>
+      <p><strong>Điều kiện còn lại chưa xử lý:</strong> thư viện trong venv là bản biên dịch gắn với Python 3.10
+      (<code>*.cp310-win_amd64.pyd</code>). Máy khác có 3.10.x → vá 2 giây là xong. Máy có 3.11/3.12 → venv vá được
+      nhưng import gói biên dịch sẽ hỏng, script phải cài lại toàn bộ và <em>cần internet</em>.
+      Đã cân nhắc kho wheels offline trên USB và Python portable — chủ dự án chọn giữ nguyên vì các máy đang dùng đều có 3.10.</p>
+
+      <div class="label">Lỗi thứ hai, độc lập — xuống dòng LF</div>
+      <p>Phát hiện thêm khi mổ xẻ: <code>start.bat</code> trong thư mục làm việc bị ghi bằng <strong>xuống dòng LF</strong> (do công cụ ghi file,
+      không phải do <code>git checkout</code> — repo đang bật <code>core.autocrlf=true</code> nhưng file bị ghi đè sau đó).
+      <code>cmd.exe</code> đọc file .bat theo <em>vị trí byte</em> và luôn giả định mỗi dòng kết thúc bằng 2 byte
+      <code>CRLF</code>; với file LF nó lệch dần 1 byte mỗi dòng, nên từ giữa file trở đi các lệnh bị ăn mất ký tự đầu.
+      Dòng kiểm tra venv chạy sai → <code>errorlevel 1</code> → nhánh "hỏng" kích hoạt mọi lần. Đã tái hiện được:
+      chạy bản LF cho ra <code>'01' is not recognized</code> (từ <code>chcp 65001</code>),
+      chuyển sang CRLF thì chạy sạch.</p>
+      <p><code>deploy.bat</code> dùng <code>copy /Y start.bat</code> — copy nguyên byte, nên máy chạy chính nhận đúng
+      file lỗi đó. Đã thêm <code>.gitattributes</code> (<code>*.bat text eol=crlf</code>) để lần checkout/clone sau
+      không tái phát.</p>
+
+      <div class="label">Sửa thêm phần logic — vì lỗi kiểu này sẽ còn xảy ra</div>
+      <table>
+        <tr><th>Vấn đề</th><th>Trước</th><th>Sau</th></tr>
+        <tr><td>Venv lỗi</td><td><code>rmdir /s /q .venv</code> + tạo mới + cài lại toàn bộ (vài phút)</td><td>Thử <code>venv --upgrade</code> vá tại chỗ trước — <strong>đo được 2,0 giây</strong>, giữ nguyên site-packages; chỉ xoá dựng lại khi vá thất bại</td></tr>
+        <tr><td>Không ai biết lý do hỏng</td><td>Lỗi bị nuốt bằng <code>&gt;nul 2&gt;&amp;1</code></td><td>In nguyên văn lỗi của <code>python.exe</code> ra màn hình trước khi sửa</td></tr>
+        <tr><td>So sánh mốc thời gian requirements.txt</td><td>2 lần gọi <code>powershell -NoProfile</code> mỗi lần khởi động (~1–2s)</td><td><code>for %%F in (...) do set "REQ_TIME=%%~tF %%~zF"</code> — batch thuần, ~0ms</td></tr>
+      </table>
+
+      <div class="label">Điểm cần biết khi bảo trì</div>
+      <table>
+        <tr><th>Điểm</th><th>Lý do</th></tr>
+        <tr><td>Sau khi <code>venv --upgrade</code> vẫn phải thử <code>import fastapi, nicegui, docxtpl, pandas, bcrypt</code></td><td>Nếu Python nền đổi bản (3.10 → 3.12), venv chạy được nhưng các gói biên dịch sẵn không import nổi. Trường hợp đó mới đặt <code>FORCE_PIP=1</code> để cài lại — vẫn rẻ hơn xoá cả venv</td></tr>
+        <tr><td>Định dạng <code>.req_stamp</code> đổi từ ticks sang chuỗi ngày+kích thước</td><td>Lần chạy đầu sau thay đổi này sẽ cài lại thư viện một lần (~10s do có cache pip 153MB), sau đó bỏ qua</td></tr>
+        <tr><td>Mọi file .bat/.ps1 sửa bằng công cụ ghi file phải kiểm tra lại CRLF</td><td>Trình soạn thảo/agent thường ghi LF theo mặc định; batch LF hỏng âm thầm, không báo lỗi rõ ràng</td></tr>
+      </table>
+      <div class="label">Bẫy thứ hai — vấp ngay trong lần sửa này</div>
+      <p>Bản sửa đầu tiên làm <code>start.bat</code> chết ngay với thông báo <code>se was unexpected at this time.</code>
+      Nguyên nhân: bên trong khối <code>if (...)</code> có dòng chú thích
+      <code>:: (pandas, bcrypt, cryptography...) se khong import duoc</code>. Hai lỗi cùng lúc:
+      <code>::</code> không hợp lệ bên trong khối ngoặc (phải dùng <code>rem</code>), và dấu <code>)</code> trong câu chú thích
+      <strong>đóng khối sớm</strong> — cmd đọc tiếp thấy chữ <em>"se"</em> nên báo đúng chữ đó.
+      Quy tắc: trong mọi khối <code>( ... )</code> chỉ dùng <code>rem</code>, và không để <code>(</code> <code>)</code>
+      chưa escape trong bất kỳ dòng nào — kể cả chú thích.</p>
+      <p>Bài học quy trình: bản test đầu tiên chạy trên <em>bản sao đã lược bỏ chú thích</em> nên không phát hiện được lỗi.
+      Về sau phải chạy thử <strong>chính file thật</strong>, đầu-cuối. Kết quả kiểm chứng cuối cùng: lần chạy đầu cài lại
+      thư viện một lần rồi lên backend+frontend; lần chạy thứ hai vào thẳng <code>run.py</code>,
+      <strong>backend sẵn sàng sau 6,9 giây</strong>, <code>.venv</code> không bị dựng lại.</p>
+
+      <p><strong>Chưa xử lý:</strong> <code>git-save.bat</code>, <code>git-start.bat</code>, <code>git-submit.bat</code>,
+      <code>git-update.bat</code>, <code>deploy-test.bat</code> cũng đang LF — đã chuyển sang CRLF cùng lần này,
+      nhưng chưa chạy thử từng file vì chúng thao tác git/deploy thật.</p>
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-07-30</footer>
 </div>
 </body>
 </html>
