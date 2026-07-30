@@ -20,10 +20,13 @@
   format/màu/border/công thức nào khi port. NGOẠI LỆ duy nhất (theo yêu
   cầu bổ sung sau khi port): dòng ngày ở tiêu đề A4 đổi từ "(dd/mm/yyyy)"
   sang "(Ngày d tháng m năm yyyy)" — xem `_format_vn_date()`.
-- Session lưu theo (ngay, staff_id): bản gốc dùng SQLite riêng (file
-  doichieu.db, khoá theo ngay+user_id tự nhập) — port sang dùng chung DB
-  của TTTT (bảng `doi_chieu_citad_sessions`), khoá theo `staff_id` thật từ
-  JWT thay vì chuỗi 'default' hard code.
+- Session lưu theo `ngay` — 1 bản CHUNG cho cả phòng (bản gốc dùng SQLite
+  riêng, khoá theo ngay+user_id tự nhập, vốn chỉ 1 người/máy nên không có
+  khái niệm "chung"). Nhiều người cùng chấm 1 ngày: ai lưu sau cùng là bản
+  hiện hành (ghi đè `doi_chieu_citad_sessions`), nhưng mỗi lần lưu đều ghi
+  thêm 1 dòng vào `doi_chieu_citad_history` (ngay, staff_id, created_at) —
+  xem `get_reconciliation_history()` — nút "Lịch sử đối chiếu" trên trang
+  hiển thị đúng thứ tự ai đã chấm ngày đó lúc nào.
 - `build_extension_zip()`: nén thư mục `extension_citad/` (nằm ở gốc repo,
   cạnh `backend/`) thành 1 file .zip TẠI THỜI ĐIỂM TẢI — không lưu sẵn file
   zip nào, luôn khớp đúng code hiện tại của extension, không cần bước build
@@ -39,7 +42,7 @@ import json
 import secrets
 import sqlite3
 import zipfile
-from pathlib import Path
+from datetime import datetime
 
 from backend.core.config import BASE_DIR
 from backend.database import _vn_now
@@ -113,24 +116,43 @@ def generate_extension_token(db: sqlite3.Connection, staff_id: int) -> str:
     return token
 
 
+# last_used_at chỉ phục vụ hiển thị trạng thái tương đối trên UI ("lần dùng
+# gần nhất") — không cần chính xác từng giây. Extension gọi buffer liên tục
+# (mỗi lần MutationObserver bắt được kết quả mới), nếu ghi lại last_used_at
+# trên MỌI request thì mỗi request tốn thêm 1 giao dịch ghi (khoá cả file
+# SQLite, cạnh tranh trực tiếp với audit_logs của AuditMiddleware và mọi
+# module khác dùng chung data/ksnb.db) chỉ để đổi 1 con số hiển thị không ai
+# cần xem realtime. Gộp lại: chỉ ghi khi đã quá _LAST_USED_THROTTLE_SECONDS
+# kể từ lần ghi trước.
+_LAST_USED_THROTTLE_SECONDS = 60
+
+
 def resolve_extension_token(db: sqlite3.Connection, token: str) -> str | None:
-    """Token hợp lệ -> trả về username chủ token (cập nhật last_used_at).
+    """Token hợp lệ -> trả về username chủ token. Chỉ ghi lại last_used_at
+    nếu đã "cũ" hơn _LAST_USED_THROTTLE_SECONDS (xem comment trên) — phần
+    lớn request KHÔNG còn tốn giao dịch ghi nào ở đây nữa.
     Token sai/rỗng/đã bị thu hồi -> None (caller trả 403, không đoán bừa)."""
     if not token:
         return None
     row = db.execute(
-        """SELECT t.staff_id, u.username FROM doi_chieu_citad_extension_tokens t
+        """SELECT t.staff_id, t.last_used_at, u.username FROM doi_chieu_citad_extension_tokens t
            JOIN user_tttt u ON u.id = t.staff_id AND u.is_active = 1
            WHERE t.token_hash = ?""",
         (_hash_token(token),),
     ).fetchone()
     if not row:
         return None
-    db.execute(
-        "UPDATE doi_chieu_citad_extension_tokens SET last_used_at=? WHERE staff_id=?",
-        (_vn_now(), row["staff_id"]),
-    )
-    db.commit()
+    now = _vn_now()
+    last_used = row["last_used_at"]
+    stale = last_used is None or (
+        now - datetime.fromisoformat(str(last_used))
+    ).total_seconds() >= _LAST_USED_THROTTLE_SECONDS
+    if stale:
+        db.execute(
+            "UPDATE doi_chieu_citad_extension_tokens SET last_used_at=? WHERE staff_id=?",
+            (now, row["staff_id"]),
+        )
+        db.commit()
     return row["username"]
 
 
@@ -153,37 +175,123 @@ def get_extension_token_status(db: sqlite3.Connection, staff_id: int) -> dict:
     }
 
 
-# ── Session theo ngày + staff_id ────────────────────────────────────────────
+# ── Session theo ngày — 1 bản CHUNG cho cả phòng (không tách theo người) ────
+# Nhiều người cùng chấm 1 ngày: ai lưu sau cùng là bản hiện hành (ghi đè),
+# nhưng mỗi lần lưu đều lưu NGUYÊN VẸN số liệu phiên chấm đó vào
+# doi_chieu_citad_history — xem get_reconciliation_history()/
+# get_history_entry_data() — nên xem/tải lại đúng bản của từng lần lưu,
+# không chỉ biết ai đã sửa lúc nào.
 def session_save(db: sqlite3.Connection, ngay: str, staff_id: int, data: dict) -> None:
+    now = _vn_now()
+    data_json = json.dumps(data)
     db.execute(
-        """INSERT INTO doi_chieu_citad_sessions (ngay, staff_id, data, updated_at)
+        """INSERT INTO doi_chieu_citad_sessions (ngay, data, updated_at, updated_by)
            VALUES (?,?,?,?)
-           ON CONFLICT(ngay, staff_id) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at""",
-        (ngay, staff_id, json.dumps(data), _vn_now()),
+           ON CONFLICT(ngay) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at,
+                                            updated_by=excluded.updated_by""",
+        (ngay, data_json, now, staff_id),
+    )
+    db.execute(
+        "INSERT INTO doi_chieu_citad_history (ngay, staff_id, data, created_at) VALUES (?,?,?,?)",
+        (ngay, staff_id, data_json, now),
     )
     db.commit()
 
 
-def session_get(db: sqlite3.Connection, ngay: str, staff_id: int) -> dict | None:
+def session_get(db: sqlite3.Connection, ngay: str) -> dict | None:
     row = db.execute(
-        "SELECT data FROM doi_chieu_citad_sessions WHERE ngay=? AND staff_id=?",
-        (ngay, staff_id),
+        "SELECT data FROM doi_chieu_citad_sessions WHERE ngay=?",
+        (ngay,),
     ).fetchone()
     return json.loads(row["data"]) if row else None
 
 
-def session_list(db: sqlite3.Connection, staff_id: int) -> list:
+def session_list(db: sqlite3.Connection) -> list:
     rows = db.execute(
-        "SELECT data FROM doi_chieu_citad_sessions WHERE staff_id=? ORDER BY ngay DESC",
-        (staff_id,),
+        "SELECT data FROM doi_chieu_citad_sessions ORDER BY ngay DESC",
     ).fetchall()
     return [json.loads(r["data"]) for r in rows]
 
 
-def session_delete(db: sqlite3.Connection, ngay: str, staff_id: int) -> None:
-    db.execute(
-        "DELETE FROM doi_chieu_citad_sessions WHERE ngay=? AND staff_id=?", (ngay, staff_id)
-    )
+def _parse_ngay(ngay: str) -> datetime | None:
+    try:
+        return datetime.strptime(ngay.strip(), "%d/%m/%Y")
+    except Exception:
+        return None
+
+
+def get_reconciliation_days(
+    db: sqlite3.Connection, tu_ngay: str | None = None, den_ngay: str | None = None
+) -> list:
+    """1 dòng/ngày đã có ai chấm — ngày, người lưu sau cùng, số lần lưu,
+    cập nhật lúc — phục vụ tab "Lịch sử" (bảng nhiều ngày cùng lúc, lọc
+    theo khoảng ngày). Lọc/sắp xếp bằng Python vì cột `ngay` lưu dạng text
+    dd/mm/yyyy — so sánh chuỗi trực tiếp trong SQL sẽ SAI thứ tự thời gian
+    (ví dụ "01/12/2026" < "05/01/2026" theo string nhưng đến sau)."""
+    rows = db.execute(
+        """SELECT s.ngay, s.updated_at, u.username AS updated_by_username,
+                  (SELECT COUNT(*) FROM doi_chieu_citad_history h WHERE h.ngay = s.ngay) AS so_lan_luu
+           FROM doi_chieu_citad_sessions s
+           LEFT JOIN user_tttt u ON u.id = s.updated_by"""
+    ).fetchall()
+
+    tu_dt = _parse_ngay(tu_ngay) if tu_ngay else None
+    den_dt = _parse_ngay(den_ngay) if den_ngay else None
+
+    parsed = []
+    for r in rows:
+        d = _parse_ngay(r["ngay"])
+        if d is None:  # bỏ qua dòng ngày lỗi định dạng, không để sập cả danh sách
+            continue
+        if tu_dt and d < tu_dt:
+            continue
+        if den_dt and d > den_dt:
+            continue
+        parsed.append((d, {
+            "ngay": r["ngay"],
+            "updated_by_username": r["updated_by_username"],
+            "updated_at": str(r["updated_at"]) if r["updated_at"] else None,
+            "so_lan_luu": r["so_lan_luu"],
+        }))
+    parsed.sort(key=lambda t: t[0], reverse=True)
+    return [item for _, item in parsed]
+
+
+def get_reconciliation_history(db: sqlite3.Connection, ngay: str) -> list:
+    """Lịch sử từng lần lưu đối chiếu CITAD của 1 ngày cụ thể, theo đúng thứ
+    tự thời gian đã lưu (cũ -> mới) — mỗi dòng gắn với username người đã
+    chấm, để biết ngày nào nhiều người cùng làm thì ai sửa lúc nào. KHÔNG
+    trả kèm số liệu (có thể nặng nếu nhiều dòng) — xem từng bản cụ thể qua
+    get_history_entry_data(id)."""
+    rows = db.execute(
+        """SELECT h.id, h.staff_id, u.username, h.created_at
+           FROM doi_chieu_citad_history h
+           JOIN user_tttt u ON u.id = h.staff_id
+           WHERE h.ngay = ?
+           ORDER BY h.created_at ASC, h.id ASC""",
+        (ngay,),
+    ).fetchall()
+    return [
+        {
+            "id": r["id"], "staff_id": r["staff_id"], "username": r["username"],
+            "created_at": str(r["created_at"]),
+        }
+        for r in rows
+    ]
+
+
+def get_history_entry_data(db: sqlite3.Connection, history_id: int) -> dict | None:
+    """Số liệu NGUYÊN VẸN của đúng 1 lần lưu trong lịch sử — phục vụ nút
+    "Tải" trên từng dòng lịch sử, xem lại/khôi phục đúng bản của lần lưu
+    đó (khác nút "Tải" chính, luôn lấy bản HIỆN HÀNH mới nhất)."""
+    row = db.execute(
+        "SELECT data FROM doi_chieu_citad_history WHERE id=?", (history_id,)
+    ).fetchone()
+    return json.loads(row["data"]) if row else None
+
+
+def session_delete(db: sqlite3.Connection, ngay: str) -> None:
+    db.execute("DELETE FROM doi_chieu_citad_sessions WHERE ngay=?", (ngay,))
     db.commit()
 
 
@@ -404,12 +512,20 @@ def build_xlsx(data: ExportIn) -> bytes:
 # ── Tải Extension Chrome dạng .zip (phục vụ nút "Tải Extension") ──────────
 def build_extension_zip() -> bytes:
     """Nén `extension_citad/` thành .zip trong bộ nhớ — không lưu file tạm,
-    không cần bước build riêng, luôn khớp đúng code hiện tại trên server."""
+    không cần bước build riêng, luôn khớp đúng code hiện tại trên server.
+
+    File nằm NGAY GỐC zip (không bọc thêm 1 lớp thư mục "extension_citad/"
+    bên trong) — nếu bọc thêm, công cụ giải nén của Windows ("Extract All")
+    sẽ tạo 1 thư mục ngoài cùng trùng tên file zip (cũng "extension_citad"),
+    cộng với lớp bên trong zip → lồng 2 lần
+    (extension_citad/extension_citad/manifest.json), khiến Chrome báo lỗi
+    "Manifest file is missing or unreadable" vì manifest.json không nằm
+    ngay trong thư mục người dùng chọn ở "Load unpacked"."""
     if not EXTENSION_DIR.is_dir():
         raise FileNotFoundError(f"Không tìm thấy thư mục {EXTENSION_DIR}")
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for path in sorted(EXTENSION_DIR.rglob("*")):
             if path.is_file():
-                zf.write(path, arcname=Path("extension_citad") / path.relative_to(EXTENSION_DIR))
+                zf.write(path, arcname=path.relative_to(EXTENSION_DIR))
     return buf.getvalue()

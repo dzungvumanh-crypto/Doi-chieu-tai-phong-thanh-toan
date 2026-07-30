@@ -14,6 +14,7 @@ PR này, cần Người 1 duyệt vì đây là 2 file dùng chung).
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import tempfile
 from typing import List, Optional
@@ -70,23 +71,38 @@ async def do_reconcile(
     if not citad_files and not ipcas_files:
         raise HTTPException(400, "Cần ít nhất file CITAD và file IPCAS")
 
-    citad_paths, citad_names, cleanup_citad = _save_uploads(citad_files)
-    ipcas_paths, ipcas_names, cleanup_ipcas = _save_uploads(ipcas_files)
-    hub_paths, hub_names, cleanup_hub = _save_uploads(hub_files)
-    try:
-        citad_rows, citad_errors = parsers.parse_citad_files(citad_paths)
-        ipcas_rows, ipcas_errors = parsers.parse_ipcas_files(ipcas_paths, ngay_cham)
-        hub_rows, hub_errors = parsers.parse_hub_files(hub_paths, ngay_cham)
-    finally:
-        cleanup_citad()
-        cleanup_ipcas()
-        cleanup_hub()
+    # Đọc/ghi file tạm (I/O) + parse Excel/CSV (CPU, có thể mất vài giây với
+    # file lớn/nhiều dòng) đều là hàm ĐỒNG BỘ — chạy thẳng trong endpoint
+    # async sẽ CHẶN CẢ event loop của FastAPI, ảnh hưởng MỌI người dùng khác
+    # đang thao tác trên app TTTT (không riêng module CITAD) trong lúc xử
+    # lý. Gộp hết vào 1 hàm sync, chạy qua asyncio.to_thread để nhường lại
+    # event loop cho các request khác.
+    def _blocking_parse_and_reconcile():
+        citad_paths, citad_names, cleanup_citad = _save_uploads(citad_files)
+        ipcas_paths, ipcas_names, cleanup_ipcas = _save_uploads(ipcas_files)
+        hub_paths, hub_names, cleanup_hub = _save_uploads(hub_files)
+        try:
+            citad_rows, citad_errors = parsers.parse_citad_files(citad_paths)
+            ipcas_rows, ipcas_errors = parsers.parse_ipcas_files(ipcas_paths, ngay_cham)
+            hub_rows, hub_errors = parsers.parse_hub_files(hub_paths, ngay_cham)
+        finally:
+            cleanup_citad()
+            cleanup_ipcas()
+            cleanup_hub()
+        errors = citad_errors + ipcas_errors + hub_errors
+        n_khop, lech = reconcile.run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows)
+        return (
+            citad_rows, ipcas_rows, hub_rows, citad_names, ipcas_names, hub_names,
+            errors, n_khop, lech,
+        )
 
-    errors = citad_errors + ipcas_errors + hub_errors
+    (
+        citad_rows, ipcas_rows, hub_rows, citad_names, ipcas_names, hub_names,
+        errors, n_khop, lech,
+    ) = await asyncio.to_thread(_blocking_parse_and_reconcile)
+
     if errors and not (citad_rows or ipcas_rows or hub_rows):
         raise HTTPException(422, "; ".join(errors))
-
-    n_khop, lech = reconcile.run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows)
 
     history_saved, history_error = True, None
     try:

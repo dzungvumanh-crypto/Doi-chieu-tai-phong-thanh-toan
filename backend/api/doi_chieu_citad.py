@@ -6,8 +6,8 @@ Excel lấy từ `doi_chieu_citad_service.py` — xem docstring ở đó.
 
 Đây là router MỚI, tự quản lý. 2 việc cần Người 1 duyệt riêng:
   1. Đăng ký router này vào backend/api/registry.py
-  2. Thêm bảng doi_chieu_citad_sessions + doi_chieu_citad_extension_tokens
-     vào backend/db/migrations.py
+  2. Thêm bảng doi_chieu_citad_sessions + doi_chieu_citad_extension_tokens +
+     doi_chieu_citad_history vào backend/db/migrations.py
 
 ## Xác thực buffer — thiết kế lại sau review bảo mật
 
@@ -145,17 +145,47 @@ def download_extension(current: dict = Depends(require_feature("menu.doi_chieu_c
     )
 
 
-# ── Session theo ngày (thay cho SQLite riêng của bản gốc) ───────────────
+# ── Session theo ngày — 1 bản CHUNG cho cả phòng (không tách theo người,
+# xem docstring session_save trong service) ───────────────────────────────
+# QUAN TRỌNG: {ngay:path} là path converter "tham lam" (khớp cả dấu "/"
+# trong ngay=dd/mm/yyyy) — Starlette khớp route theo ĐÚNG THỨ TỰ ĐĂNG KÝ,
+# nên MỌI route có tiền tố "/session/{ngay:path}" phải đăng ký các route cụ
+# thể hơn ("/history", ...) TRƯỚC route trần "/session/{ngay:path}". Nếu
+# đăng ký sai thứ tự, "/session/{ngay:path}" (rộng hơn) sẽ nuốt mất request
+# đáng lẽ khớp route cụ thể hơn (đã từng gây lỗi: gọi .../history luôn rơi
+# vào get_session(), coi "<ngay>/history" là 1 chuỗi ngay, trả về rỗng).
 @router.get("/sessions")
 def list_sessions(db=Depends(get_db), current: dict = Depends(require_feature("menu.doi_chieu_citad"))):
-    return svc.session_list(db, current["id"])
+    return svc.session_list(db)
+
+
+@router.get("/reconciliation-days")
+def get_reconciliation_days(
+    tu_ngay: str | None = None,
+    den_ngay: str | None = None,
+    db=Depends(get_db),
+    current: dict = Depends(require_feature("menu.doi_chieu_citad")),
+):
+    """1 dòng/ngày đã có ai chấm — phục vụ tab "Lịch sử" (bảng nhiều ngày,
+    lọc theo khoảng ngày). tu_ngay/den_ngay dạng dd/mm/yyyy, để trống =
+    không giới hạn đầu/cuối."""
+    return svc.get_reconciliation_days(db, tu_ngay, den_ngay)
+
+
+@router.get("/session/{ngay:path}/history")
+def get_reconciliation_history(
+    ngay: str, db=Depends(get_db), current: dict = Depends(require_feature("menu.doi_chieu_citad"))
+):
+    """Lịch sử từng lần lưu đối chiếu của 1 ngày — mỗi dòng gắn username
+    người đã chấm, phục vụ trường hợp nhiều người cùng chấm 1 ngày."""
+    return svc.get_reconciliation_history(db, ngay)
 
 
 @router.get("/session/{ngay:path}")
 def get_session(
     ngay: str, db=Depends(get_db), current: dict = Depends(require_feature("menu.doi_chieu_citad"))
 ):
-    return svc.session_get(db, ngay, current["id"]) or {}
+    return svc.session_get(db, ngay) or {}
 
 
 @router.post("/session")
@@ -170,8 +200,20 @@ def save_session(
 def delete_session(
     ngay: str, db=Depends(get_db), current: dict = Depends(require_feature("menu.doi_chieu_citad"))
 ):
-    svc.session_delete(db, ngay, current["id"])
+    svc.session_delete(db, ngay)
     return {"ok": True}
+
+
+@router.get("/history-entry/{history_id}")
+def get_history_entry(
+    history_id: int, db=Depends(get_db), current: dict = Depends(require_feature("menu.doi_chieu_citad"))
+):
+    """Số liệu nguyên vẹn của đúng 1 dòng trong lịch sử — phục vụ nút "Tải"
+    trên từng dòng ở dialog "Lịch sử đối chiếu"."""
+    data = svc.get_history_entry_data(db, history_id)
+    if data is None:
+        raise HTTPException(404, "Không tìm thấy bản ghi lịch sử này")
+    return data
 
 
 # ── Xuất Excel ────────────────────────────────────────────────────────────

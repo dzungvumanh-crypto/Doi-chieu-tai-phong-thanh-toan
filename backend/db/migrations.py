@@ -201,12 +201,25 @@ def _create_tables(db_path: str):
             di_not_ack_json TEXT,
             created_at DATETIME
         )""",
+        # Đối chiếu CITAD 1 ngày = 1 báo cáo CHUNG của cả phòng (không tách
+        # theo staff_id nữa — ai lưu sau cùng là bản hiện hành, xem lịch sử
+        # từng lần lưu ở bảng doi_chieu_citad_history bên dưới).
         """CREATE TABLE IF NOT EXISTS doi_chieu_citad_sessions (
+            ngay        TEXT    PRIMARY KEY,
+            data        TEXT    NOT NULL,
+            updated_at  DATETIME,
+            updated_by  INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL
+        )""",
+        # Lịch sử từng lần lưu đối chiếu CITAD — 1 dòng/lần bấm Lưu, kèm
+        # NGUYÊN VẸN số liệu của phiên chấm đó (không chỉ ai/lúc nào) — để
+        # ngày nào nhiều người cùng chấm thì xem/tải lại đúng bản của từng
+        # lần lưu, không chỉ biết mỗi tên người lưu.
+        """CREATE TABLE IF NOT EXISTS doi_chieu_citad_history (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
             ngay        TEXT    NOT NULL,
             staff_id    INTEGER NOT NULL REFERENCES user_tttt(id) ON DELETE CASCADE,
             data        TEXT    NOT NULL,
-            updated_at  DATETIME,
-            PRIMARY KEY (ngay, staff_id)
+            created_at  DATETIME NOT NULL
         )""",
         # Mã kết nối Extension cá nhân (thay khoá tĩnh dùng chung sau review
         # bảo mật) — 1 token/staff, chỉ lưu hash, tạo mã mới tự thu hồi mã cũ.
@@ -702,6 +715,7 @@ def _ensure_indexes():
         "CREATE INDEX IF NOT EXISTS ix_leave_records_ksv    ON leave_records(ksv_approver_id)",
         "CREATE INDEX IF NOT EXISTS ix_leave_records_gd     ON leave_records(gd_approver_id)",
         "CREATE INDEX IF NOT EXISTS ix_doi_soat_citad_history_date ON doi_soat_citad_history(recon_date)",
+        "CREATE INDEX IF NOT EXISTS ix_doi_chieu_citad_history_ngay ON doi_chieu_citad_history(ngay)",
         "CREATE INDEX IF NOT EXISTS ix_delegation_gd        ON delegation_records(giam_doc_id)",
         "CREATE INDEX IF NOT EXISTS ix_delegation_pgd       ON delegation_records(pho_giam_doc_id)",
         "CREATE INDEX IF NOT EXISTS ix_leave_records_th     ON leave_records(tong_hop_approver_id)",

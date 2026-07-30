@@ -160,7 +160,7 @@ def _upload_column(label, accept, state, key):
             status.text = f"Đã chọn {len(state[key])} file: " + ", ".join(n for n, _ in state[key])
             status.classes(remove="text-gray-500", add="text-green-700")
 
-        ui.upload(multiple=True, auto_upload=True, on_upload=on_upload).props(
+        uploader = ui.upload(multiple=True, auto_upload=True, on_upload=on_upload).props(
             f'accept="{accept}" flat dense label="Chọn file"'
         ).classes("w-full")
 
@@ -168,6 +168,11 @@ def _upload_column(label, accept, state, key):
             state[key] = []
             status.text = "Chưa chọn file nào"
             status.classes(remove="text-green-700", add="text-gray-500")
+            # state[key] chỉ là danh sách phía Python — bản thân ui.upload (QUploader)
+            # giữ RIÊNG 1 hàng đợi file phía client, không tự xoá theo. Không gọi
+            # .reset() thì danh sách file (kèm dấu tick, % tải) vẫn hiện nguyên trên
+            # UI dù state đã rỗng — đúng lỗi "ấn Xoá không xoá được" đã gặp.
+            uploader.reset()
 
         ui.button("Xoá file đã chọn", on_click=clear).props("dense outline size=sm")
 
@@ -182,6 +187,14 @@ def _build_result_panel(tab, state):
         current_view = {"rows": None}
         search_input = {"widget": None}
         active_filter = {"idx": 0}
+        # Kết quả đối soát có thể lên tới hàng trăm nghìn dòng (đúng bản chất
+        # nghiệp vụ — đối soát cả ngày giao dịch) — dồn hết vào 1 lần
+        # ui.table(rows=...) từng làm TREO CỨNG cả trang (gửi + render toàn
+        # bộ dòng cùng lúc qua websocket), kể cả không chuyển được tab khác.
+        # Cắt trang phía Python trước khi đưa vào ui.table — mỗi lần chỉ gửi
+        # đúng 1 trang.
+        PAGE_SIZE = 200
+        page_state = {"num": 1}
 
         def render():
             stats_area.clear()
@@ -228,14 +241,28 @@ def _build_result_panel(tab, state):
                 for i, (lbl, _statuses) in enumerate(FILTERS):
                     def _select(i=i):
                         active_filter["idx"] = i
+                        page_state["num"] = 1  # đổi bộ lọc -> quay về trang 1, tránh trang trống
                         _update_filter_buttons()
                         render_table()
                     btn = ui.button(lbl, on_click=_select).props(
                         f"{'unelevated' if active_filter['idx'] == i else 'outline'} dense"
                     )
                     filter_buttons.append(btn)
-                search_input["widget"] = ui.input("Tìm kiếm...").props("dense outlined clearable").classes("w-64")
-                search_input["widget"].on("update:model-value", lambda e: render_table())
+                # debounce=300: kết quả có thể tới hàng trăm nghìn dòng — mỗi
+                # lần lọc phải quét lại toàn bộ danh sách phía Python (đồng
+                # bộ, chặn event loop dùng chung). Không debounce thì gõ mỗi
+                # ký tự lại quét 1 lần, gõ nhanh dồn lại gây khựng cho cả
+                # server. Quasar tự delay 300ms sau khi ngừng gõ mới bắn
+                # update:model-value, không cần tự viết timer.
+                search_input["widget"] = ui.input("Tìm kiếm...").props(
+                    "dense outlined clearable debounce=300"
+                ).classes("w-64")
+
+                def _on_search(e):
+                    page_state["num"] = 1
+                    render_table()
+
+                search_input["widget"].on("update:model-value", _on_search)
 
             def render_table():
                 table_area.clear()
@@ -261,15 +288,46 @@ def _build_result_panel(tab, state):
                     if q and q not in " ".join(str(v).lower() for v in row.values()):
                         continue
                     rows.append(row)
+
+                # Kết quả có thể tới hàng trăm nghìn dòng — CẮT TRANG trước khi
+                # đưa vào ui.table(), không đẩy nguyên cả danh sách vào 1 lần
+                # (xem ghi chú PAGE_SIZE ở đầu hàm) — mỗi lần chỉ gửi/render
+                # đúng PAGE_SIZE dòng, giữ trang luôn phản hồi được.
+                total = len(rows)
+                n_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
+                if page_state["num"] > n_pages:
+                    page_state["num"] = n_pages
+                start = (page_state["num"] - 1) * PAGE_SIZE
+                page_rows = rows[start:start + PAGE_SIZE]
+
                 with table_area:
-                    ui.label(f"Hiển thị {len(rows)}/{len(view)} dòng theo bộ lọc hiện tại.").classes(
-                        "text-gray-500 text-sm mb-1"
-                    )
+                    with ui.row().classes("w-full items-center justify-between mb-1"):
+                        ui.label(
+                            f"Hiển thị {len(page_rows)}/{total} dòng theo bộ lọc hiện tại "
+                            f"— trang {page_state['num']}/{n_pages}."
+                        ).classes("text-gray-500 text-sm")
+                        with ui.row().classes("gap-1 items-center"):
+                            def _prev_page():
+                                if page_state["num"] > 1:
+                                    page_state["num"] -= 1
+                                    render_table()
+
+                            def _next_page():
+                                if page_state["num"] < n_pages:
+                                    page_state["num"] += 1
+                                    render_table()
+
+                            ui.button(icon="chevron_left", on_click=_prev_page).props(
+                                "dense flat size=sm" + ("" if page_state["num"] > 1 else " disable")
+                            )
+                            ui.button(icon="chevron_right", on_click=_next_page).props(
+                                "dense flat size=sm" + ("" if page_state["num"] < n_pages else " disable")
+                            )
                     cols = [
                         {"name": k, "label": lbl, "field": k, "align": "right" if k == "so_tien" else "left", "sortable": True}
                         for k, lbl in DISPLAY_COLS
                     ]
-                    with ui.table(columns=cols, rows=rows, row_key="stt").classes("w-full"):
+                    with ui.table(columns=cols, rows=page_rows, row_key="stt").classes("w-full"):
                         pass
                     current_view["rows"] = rows
 
@@ -325,6 +383,60 @@ def _build_history_panel(tab, history_refresh):
             history_id = r["id"]
             detail_area = ui.column().classes("w-full")
             expanded = {"open": False}
+            # Lịch sử đối soát có thể lưu snapshot tới hàng trăm nghìn dòng
+            # lệch (đúng bản chất — 1 ngày giao dịch thật) — đẩy cả khối đó
+            # vào 1 ui.table() từng làm TREO CỨNG trình duyệt y hệt panel kết
+            # quả chính trước khi được phân trang. Áp dụng lại đúng cách đó
+            # ở đây: cắt trang phía Python, chỉ render 1 trang mỗi lần.
+            HIST_PAGE_SIZE = 200
+            hist_state = {"records": None, "page": 1}
+
+            def render_hist_page():
+                detail_area.clear()
+                records = hist_state["records"]
+                if not records:
+                    with detail_area:
+                        ui.label("Không có lệnh lệch nào (khớp 100%)").classes("text-gray-400 text-sm p-2")
+                    return
+                total = len(records)
+                n_pages = max(1, (total + HIST_PAGE_SIZE - 1) // HIST_PAGE_SIZE)
+                if hist_state["page"] > n_pages:
+                    hist_state["page"] = n_pages
+                start = (hist_state["page"] - 1) * HIST_PAGE_SIZE
+                page_records = records[start:start + HIST_PAGE_SIZE]
+                with detail_area:
+                    with ui.row().classes("w-full items-center justify-between mb-1"):
+                        ui.label(
+                            f"Hiển thị {len(page_records)}/{total} dòng — trang {hist_state['page']}/{n_pages}."
+                        ).classes("text-gray-500 text-xs")
+                        with ui.row().classes("gap-1"):
+                            def _prev():
+                                if hist_state["page"] > 1:
+                                    hist_state["page"] -= 1
+                                    render_hist_page()
+
+                            def _next():
+                                if hist_state["page"] < n_pages:
+                                    hist_state["page"] += 1
+                                    render_hist_page()
+
+                            ui.button(icon="chevron_left", on_click=_prev).props("dense flat size=sm")
+                            ui.button(icon="chevron_right", on_click=_next).props("dense flat size=sm")
+                    cols = [
+                        {"name": k, "label": lbl, "field": k, "align": "left", "sortable": True}
+                        for k, lbl in [("status", "Trạng thái"), ("so_gd", "Số GD"), ("key_agri", "Key Agribank"),
+                                       ("so_tien", "Số tiền"), ("ngay", "Ngày"), ("nh_nhan", "Ngân hàng")]
+                    ]
+                    rows = [
+                        {
+                            "status": STATUS_LBL.get(rec.get("status"), rec.get("status")),
+                            "so_gd": rec.get("so_gd"), "key_agri": rec.get("key_agri"),
+                            "so_tien": rec.get("so_tien"), "ngay": rec.get("ngay"), "nh_nhan": rec.get("nh_nhan"),
+                        }
+                        for rec in page_records
+                    ]
+                    with ui.table(columns=cols, rows=rows, row_key="so_gd").classes("w-full"):
+                        pass
 
             async def xem_chi_tiet():
                 if expanded["open"]:
@@ -339,26 +451,9 @@ def _build_history_panel(tab, history_refresh):
                     ui.notify(f"Lỗi: {e}", type="negative")
                     return
                 expanded["open"] = True
-                records = detail["lech_records"]
-                with detail_area:
-                    if not records:
-                        ui.label("Không có lệnh lệch nào (khớp 100%)").classes("text-gray-400 text-sm p-2")
-                        return
-                    cols = [
-                        {"name": k, "label": lbl, "field": k, "align": "left", "sortable": True}
-                        for k, lbl in [("status", "Trạng thái"), ("so_gd", "Số GD"), ("key_agri", "Key Agribank"),
-                                       ("so_tien", "Số tiền"), ("ngay", "Ngày"), ("nh_nhan", "Ngân hàng")]
-                    ]
-                    rows = [
-                        {
-                            "status": STATUS_LBL.get(rec.get("status"), rec.get("status")),
-                            "so_gd": rec.get("so_gd"), "key_agri": rec.get("key_agri"),
-                            "so_tien": rec.get("so_tien"), "ngay": rec.get("ngay"), "nh_nhan": rec.get("nh_nhan"),
-                        }
-                        for rec in records
-                    ]
-                    with ui.table(columns=cols, rows=rows, row_key="so_gd").classes("w-full"):
-                        pass
+                hist_state["records"] = detail["lech_records"]
+                hist_state["page"] = 1
+                render_hist_page()
 
             async def dl_excel():
                 try:

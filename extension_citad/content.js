@@ -173,10 +173,6 @@ async function autoSaveIfNew() {
   if (!hasResults()) return;
 
   const cfg = readConfig();
-  const key = `${cfg.cong}_${cfg.loaiTien}_${cfg.chieu}_${cfg.loaiDV}`;
-
-  // Tránh lưu trùng cùng tổ hợp
-  if (key === lastSavedKey) return;
 
   // Bỏ qua nếu thiếu thông tin
   if (!cfg.cong || !cfg.chieu || !cfg.loaiDV || cfg.loaiDV === 'all') return;
@@ -186,6 +182,15 @@ async function autoSaveIfNew() {
   // Không lưu nếu kết quả toàn 0 (trang chưa load xong)
   if (res.soMon === 0 && res.soTien === 0) return;
 
+  // Key gồm cả SỐ LIỆU, không chỉ tổ hợp cổng/loại tiền/chiều — để: (1) truy
+  // vấn lại đúng tổ hợp cũ nhưng số liệu đã đổi (có giao dịch mới về trong
+  // ngày) vẫn được lưu lại đúng số mới nhất; (2) bảng kết quả biến mất rồi
+  // hiện lại với ĐÚNG số liệu cũ (trang CITAD nạp lại từng phần mỗi lần bấm
+  // truy vấn) không bị coi là "mới" và gửi trùng lên server — mỗi request
+  // trùng tốn thêm 1 lượt ghi last_used_at + 1 dòng audit_logs trên cùng 1
+  // file SQLite dùng chung toàn app.
+  const key = `${cfg.cong}_${cfg.loaiTien}_${cfg.chieu}_${cfg.loaiDV}_${res.soMon}_${res.soTien}`;
+  if (key === lastSavedKey) return;
   lastSavedKey = key;
 
   const ok = await saveToServer(cfg, res);
@@ -286,7 +291,10 @@ function observe() {
       autoSaveIfNew();
     } else {
       removeManualBtn();
-      lastSavedKey = ''; // reset khi trang xóa kết quả (đang load mới)
+      // KHÔNG reset lastSavedKey ở đây nữa — key giờ đã gồm cả số liệu (xem
+      // autoSaveIfNew), nên bảng biến mất rồi hiện lại với số liệu CŨ vẫn tự
+      // bị chặn gửi trùng; số liệu MỚI (khác) vẫn tính ra key khác, tự gửi
+      // bình thường, không cần reset.
     }
   });
 
