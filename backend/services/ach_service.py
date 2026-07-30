@@ -16,9 +16,11 @@ from pathlib import Path
 from typing import Any
 
 from backend.services.ach.pipeline import main_from_dir
+from backend.services.ach.b4_xu_ly_mis_di import _doc_sheet_can_xac_nhan
 
 TEMP_DIR    = Path('data/temp_ach')
 CLEANUP_TTL = 4 * 3600  # giữ file kết quả tối đa 4 giờ
+_OUTPUT_SUBFOLDER = 'Output'  # tên thư mục con khi copy kết quả về thư mục dữ liệu (mode folder)
 
 # ─── In-memory job store ─────────────────────────────────────────────────────
 # {job_id: {status, logs, files, error, cancel_event, _ts, output_dir}}
@@ -39,7 +41,12 @@ def _new_job() -> tuple[str, dict]:
         'output_dir':    str(TEMP_DIR / job_id / 'output'),
         'input_dir':     None,   # dùng lại cho lần chạy tiếp (Checkpoint Bước 3)
         'ngay':          None,
-        'xac_nhan_file': None,   # tên file <ngày>_ACH_XacNhan.xlsx khi đang chờ xác nhận
+        'xac_nhan_file':  None,   # tên file <ngày>_ACH_XacNhan.xlsx khi đang chờ xác nhận
+        'xac_nhan_count': None,   # số giao dịch cần xác nhận (đọc từ sheet CAN_XAC_NHAN) — None nếu không đếm được
+        'mode':           'upload',  # 'upload' | 'folder' — quyết định có copy kết quả về thư mục nguồn hay không
+        'source_folder':  None,   # đường dẫn thư mục người dùng chọn (chỉ có ở mode folder)
+        'final_output_dir': None,  # nơi kết quả cuối THỰC SỰ nằm sau khi copy (mode folder, copy thành công)
+        'copy_error':     None,   # lý do copy về thư mục nguồn thất bại (nếu có)
     }
     with _lock:
         _jobs[job_id] = job
@@ -84,6 +91,7 @@ def start_job(saved_files: dict[str, bytes], ngay: str | None) -> str:
 
     job['input_dir'] = str(input_dir)
     job['ngay']      = ngay
+    job['mode']      = 'upload'
 
     thread = threading.Thread(
         target=_run,
@@ -97,12 +105,15 @@ def start_job(saved_files: dict[str, bytes], ngay: str | None) -> str:
 
 def start_from_folder(folder_path: str, ngay: str | None) -> str:
     """Chạy pipeline trực tiếp từ thư mục server (không cần upload file). Trả job_id.
-    Luôn chạy ở chế độ Checkpoint — xem `start_job()`."""
+    Luôn chạy ở chế độ Checkpoint — xem `start_job()`. Kết quả cuối sẽ được copy về
+    lại `folder_path` (xem `_copy_results_to_source()`)."""
     job_id, job = _new_job()
     Path(job['output_dir']).mkdir(parents=True, exist_ok=True)
 
-    job['input_dir'] = folder_path
-    job['ngay']      = ngay
+    job['input_dir']     = folder_path
+    job['ngay']           = ngay
+    job['mode']           = 'folder'
+    job['source_folder']  = folder_path
 
     thread = threading.Thread(
         target=_run,
@@ -143,6 +154,40 @@ def continue_job(job_id: str, xac_nhan_bytes: bytes, xac_nhan_filename: str) -> 
     thread.start()
 
 
+def _dem_giao_dich_can_xac_nhan(xac_nhan_path: str) -> int | None:
+    """Đếm số dòng sheet CAN_XAC_NHAN của file Checkpoint vừa tạo — CHỈ phục vụ hiển
+    thị UX ("Có XX giao dịch cần xác nhận"), không dùng để quyết định gì trong
+    pipeline. Tái dùng đúng parser đã có (`_doc_sheet_can_xac_nhan`) thay vì viết lại
+    logic đọc sheet. Trả None nếu không đếm được (file lỗi/thiếu) — không được để
+    lỗi ở đây làm gián đoạn luồng Checkpoint chính."""
+    try:
+        df, _msgref_bo_sung = _doc_sheet_can_xac_nhan(xac_nhan_path)
+        return len(df)
+    except Exception:
+        return None
+
+
+def _copy_results_to_source(job: dict, output_dir: str, result_files: list[str], log) -> None:
+    """Bước 4 (UX) — copy toàn bộ file kết quả cuối về `<source_folder>/Output/` để
+    người dùng không phải tìm trong `data/temp_ach/...`. CHỈ áp dụng mode folder.
+    Không ảnh hưởng `job['files']`/`job['status']` đã có — nút tải trong
+    `data/temp_ach` (qua `/api/ach/download/...`) vẫn luôn hoạt động độc lập, dùng
+    làm phương án dự phòng nếu copy lỗi (VD ổ mạng mất kết nối)."""
+    dest_dir = Path(job['source_folder']) / _OUTPUT_SUBFOLDER
+    try:
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        for fname in result_files:
+            shutil.copy2(Path(output_dir) / fname, dest_dir / fname)
+        job['final_output_dir'] = str(dest_dir)
+        job['copy_error']       = None
+        log(f'[JOB] Đã copy {len(result_files):,} file kết quả về: {dest_dir}')
+    except Exception as e:
+        job['final_output_dir'] = None
+        job['copy_error']       = str(e)
+        log(f'[JOB][LỖI] Không copy được kết quả về {dest_dir}: {e} — '
+            f'vẫn tải được qua nút bên dưới.')
+
+
 def _run(job_id: str, input_dir: str, output_dir: str, ngay: str | None,
         dung_sau_khop_gw: bool = False, xac_nhan_path: str | None = None):
     job = get_job(job_id)
@@ -175,9 +220,12 @@ def _run(job_id: str, input_dir: str, output_dir: str, ngay: str | None,
 
         if dung_sau_khop_gw:
             # Dừng ở Checkpoint — chờ người dùng tải + điền + upload lại file xác nhận.
-            job['xac_nhan_file'] = os.path.basename(output_path)
-            job['files']         = [job['xac_nhan_file']]
-            job['status']        = 'awaiting_confirmation'
+            # LƯU Ý: phải tính xac_nhan_count TRƯỚC khi đổi status — nơi khác (API
+            # poll) có thể đọc job ngay khi thấy status đổi, không được để race.
+            job['xac_nhan_file']  = os.path.basename(output_path)
+            job['files']          = [job['xac_nhan_file']]
+            job['xac_nhan_count'] = _dem_giao_dich_can_xac_nhan(output_path)
+            job['status']         = 'awaiting_confirmation'
             log('[JOB] Đang chờ xác nhận thủ công nhánh Timeout.')
             return
 
@@ -189,7 +237,14 @@ def _run(job_id: str, input_dir: str, output_dir: str, ngay: str | None,
                 result_files.append(fname)
         result_files.sort()
 
-        job['files']  = result_files
+        job['files'] = result_files
+
+        # LƯU Ý: copy TRƯỚC khi đổi status='done' — polling có thể dừng lại ngay khi
+        # thấy 'done' (xem frontend `_stop_timer()`), không được để race làm mất
+        # thông tin final_output_dir/copy_error ở lần poll đầu tiên bắt được 'done'.
+        if job['mode'] == 'folder' and job['source_folder']:
+            _copy_results_to_source(job, output_dir, result_files, log)
+
         job['status'] = 'done'
 
     except Exception as e:

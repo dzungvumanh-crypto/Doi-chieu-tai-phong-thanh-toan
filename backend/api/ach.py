@@ -142,10 +142,14 @@ def poll_job(
         raise HTTPException(404, 'Job không tồn tại hoặc đã hết hạn.')
 
     return {
-        'status': job['status'],
-        'logs':   job['logs'][since:],
-        'files':  job['files'],
-        'error':  job['error'],
+        'status':           job['status'],
+        'logs':             job['logs'][since:],
+        'files':            job['files'],
+        'error':            job['error'],
+        'xac_nhan_count':   job.get('xac_nhan_count'),
+        'mode':             job.get('mode'),
+        'final_output_dir': job.get('final_output_dir'),
+        'copy_error':       job.get('copy_error'),
     }
 
 

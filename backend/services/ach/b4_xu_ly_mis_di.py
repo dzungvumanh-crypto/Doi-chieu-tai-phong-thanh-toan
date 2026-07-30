@@ -271,6 +271,84 @@ def _chuan_hoa_msgref(s: pd.Series) -> pd.Series:
     return s.fillna('').astype(str).str.strip().str.lstrip("'")
 
 
+_COLS_CAN_KIEM_TRA_THU_CONG = [
+    'NGAY_GIAO_DICH', 'CHI_NHANH', 'CN tiền Hub', 'REFHUB', 'MSGREF', 'TRANG_THAI_LENH',
+    'SO_TIEN', 'SESSION', 'NGAY_KENH_TRA', 'LY_DO_CAN_KIEM_TRA',
+]
+
+
+def tim_can_kiem_tra_thu_cong(df: pd.DataFrame, session_id: str, ngay_dt: datetime,
+                              df_gw_goc: pd.DataFrame, log_callback=None) -> pd.DataFrame:
+    """Milestone F (Option C, Business Owner chốt 2026-07-27) — 2 nhánh SESSION=NULL
+    còn treo (chưa có Business Rule tự động chính thức) được xuất RIÊNG để người đối
+    chiếu tự quyết định, KHÔNG tự suy luận giữ/loại thay:
+
+    1. `NGAY_GIA_TRI_KHAC_T_VA_T-1` — NGAY_GIAO_DICH không phải T cũng không phải
+       T-1. Nhánh này ĐANG được `_process_mis_di()` giữ tạm trong MIS_đi (không đổi)
+       — hàm này chỉ hiển thị lại để người chấm biết cần xác nhận.
+    2. MSGREF rỗng hoặc không tra được SessionId trên GW gốc tại NGAY_GIAO_DICH=T-1 —
+       nhánh này ĐANG bị `_process_mis_di()` loại thẳng khỏi MIS_đi (không đổi hành
+       vi loại đó — đúng yêu cầu "không thay đổi Rule tự động"). Hàm này tạo BẢN SAO
+       độc lập để hiển thị, không ảnh hưởng gì tới luồng chính.
+
+    Không xử lý case "T-1, có SessionId nhưng rỗng/0000/khác session đối chiếu" —
+    đó là hành vi ĐÃ CHỐT ("khác session → loại khỏi lần chạy này", xác nhận
+    2026-07-25), không phải 1 trong 2 nhánh còn treo được nêu tên ở đây.
+
+    Trả về DataFrame (có thể rỗng) — KHÔNG rỗng nghĩa là còn giao dịch cần chấm tay,
+    không phải dấu hiệu lỗi.
+    """
+    _log = log_callback or print
+
+    df = df.copy()
+    df['SO_TIEN']  = pd.to_numeric(df['SO_TIEN'], errors='coerce').fillna(0).astype('int64')
+    df['SO_TRACE'] = _tao_so_trace(df)
+    df['NGAY_KENH_TRA'] = pd.to_datetime(
+        df['NGAY_KENH_TRA'].str.strip(), format='%d/%m/%Y %H:%M:%S', errors='coerce'
+    )
+    df['SESSION']      = df['SESSION'].fillna('').astype(str).str.strip().str.lstrip("'")
+    df['SESSION_NULL'] = df['SESSION'].isin(['', 'nan', 'None', 'NaN'])
+
+    # CALD/ERPO/TPER không bao giờ vào diện chấm tay (BR đã chốt, không đổi).
+    mask_trang_thai_loai_tru = df['TRANG_THAI_LENH'].isin(_TRANG_THAI_LOAI_TRU)
+    df_null = df[df['SESSION_NULL'] & ~mask_trang_thai_loai_tru]
+
+    if len(df_null) == 0:
+        _log('[Milestone F][Option C] Giao dịch cần kiểm tra thủ công: 0')
+        return _them_cot_khoa(df_null.copy())[_COLS_CAN_KIEM_TRA_THU_CONG[:-1]].assign(LY_DO_CAN_KIEM_TRA='')
+
+    mask_giu, ly_do = _loc_session_null_theo_gw_goc(df_null, session_id, ngay_dt, df_gw_goc)
+
+    # Nhánh 1 — NGAY_GIA_TRI_KHAC_T_VA_T-1 (đã được giữ trong MIS_đi).
+    mask_nhanh_1 = ly_do == 'NGAY_GIA_TRI_KHAC_T_VA_T-1'
+
+    # Nhánh 2 — T-1 + không tra được SessionId trên GW gốc (đang bị loại khỏi MIS_đi).
+    ngay_gd     = pd.to_datetime(df_null['NGAY_GIAO_DICH'].str.strip(), format='%d/%m/%Y', errors='coerce')
+    ngay_T1     = (ngay_dt - timedelta(days=1)).date()
+    la_ngay_T1  = ngay_gd.dt.date == ngay_T1
+    msgref_norm = _chuan_hoa_msgref(df_null['MSGREF'])
+    tra_cuu     = _xay_dung_tra_cuu_gw_goc(df_gw_goc)
+    session_gw  = msgref_norm.map(tra_cuu)
+    khong_tim_thay = session_gw.isna()
+
+    mask_nhanh_2 = la_ngay_T1 & khong_tim_thay & ~mask_giu
+    la_rong      = msgref_norm == ''
+    ly_do_nhanh_2 = pd.Series('', index=df_null.index)
+    ly_do_nhanh_2 = ly_do_nhanh_2.mask(mask_nhanh_2 & la_rong, 'MSGREF_RONG_TAI_T-1')
+    ly_do_nhanh_2 = ly_do_nhanh_2.mask(mask_nhanh_2 & ~la_rong, 'MSGREF_KHONG_TIM_THAY_TREN_GW_TAI_T-1')
+
+    mask_can_kiem_tra = mask_nhanh_1 | mask_nhanh_2
+    ly_do_cuoi = ly_do.where(mask_nhanh_1, ly_do_nhanh_2)
+
+    df_ket_qua = _them_cot_khoa(df_null[mask_can_kiem_tra].copy())
+    df_ket_qua['LY_DO_CAN_KIEM_TRA'] = ly_do_cuoi[mask_can_kiem_tra].values
+
+    _log(f'[Milestone F][Option C] Giao dịch cần kiểm tra thủ công: {len(df_ket_qua):,} '
+         f'(NGAY_GIA_TRI_KHAC_T_VA_T-1: {int(mask_nhanh_1.sum()):,}, '
+         f'MSGREF rỗng/không tìm thấy tại T-1: {int(mask_nhanh_2.sum()):,})')
+    return df_ket_qua[_COLS_CAN_KIEM_TRA_THU_CONG].reset_index(drop=True)
+
+
 def khop_voi_gw(df_mis_di: pd.DataFrame, dict_gw_count: dict, df_gw: pd.DataFrame,
                log_callback=None):
     """Mục 3 tài liệu đối chiếu — so khớp CN TIỀN (CHI_NHANH+SO_TIEN) giữa MIS_đi và GW.
@@ -388,7 +466,7 @@ def tim_nhom_gw_thua(df_mis_di: pd.DataFrame, df_gw: pd.DataFrame, log_callback=
 
 # ─── Bước 2 — Checkpoint xác nhận thủ công: đọc file xác nhận (Bước 1) ────────
 
-_GIA_TRI_XAC_NHAN_HOP_LE = {'Timeout không đi kênh', 'Đã đi kênh'}
+_GIA_TRI_XAC_NHAN_HOP_LE = {'Timeout không đi kênh', 'Timeout không đi kênh khác phiên đối chiếu'}
 
 
 def _doc_sheet_can_xac_nhan(xac_nhan_path: str):
@@ -464,17 +542,21 @@ def ap_dung_xac_nhan(xac_nhan_path: str, df_mis_di_khop_gw: pd.DataFrame,
     """Bước 2 — Checkpoint xác nhận thủ công (thay hướng mở rộng Business Rule cho
     Timeout không đi kênh, xem project_ach_timeout_rule.md). `khop_voi_gw()` chỉ
     PHÂN LUỒNG MIS_đi thành 2 nhánh (khớp đúng / Timeout không đi kênh) — file xác
-    nhận phúc tra lại quyết định phân luồng cho nhánh Timeout (nhánh 1A), KHÔNG sửa
-    dữ liệu gốc.
+    nhận phúc tra lại PHẠM VI của nhánh Timeout (nhánh 1A), KHÔNG sửa dữ liệu gốc.
 
-    - KET_QUA_XAC_NHAN = 'Timeout không đi kênh' → ở lại nhánh Timeout.
-    - KET_QUA_XAC_NHAN = 'Đã đi kênh' → máy phân loại sai; CHUYỂN sang nhánh khớp
-      đúng (tương đương nhánh 1B tự động), gắn MATCH_TYPE='TIMEOUT' để phân biệt với
-      khớp tự nhiên trong báo cáo cuối.
+    Toàn bộ giao dịch nhánh 1A đều THẬT SỰ là Timeout không đi kênh — không có khái
+    niệm "máy phân loại sai". Xác nhận thủ công chỉ phân loại PHẠM VI:
+    - KET_QUA_XAC_NHAN = 'Timeout không đi kênh' → Timeout của phiên đang đối chiếu.
+    - KET_QUA_XAC_NHAN = 'Timeout không đi kênh khác phiên đối chiếu' → vẫn là
+      Timeout, nhưng không thuộc phiên này (đối chiếu ở đúng phiên của nó là quy
+      trình thủ công riêng, ngoài phạm vi lần chạy này).
+    Cả 2 loại đều Ở LẠI nhánh Timeout, gắn cột `PHAN_LOAI_TIMEOUT` để phân biệt —
+    KHÔNG loại nào quay lại pool đối chiếu (`df_mis_di_khop_gw`) của B5.
     - MSGREF bổ sung (giao dịch Timeout bị thuật toán bỏ sót hoàn toàn) → tra trên
-      `df_mis_di_raw` (MIS_đi RAW, CHƯA lọc), thêm vào nhánh Timeout. Trạng thái
-      thuộc {CALD, ERPO, TPER} (đã bị BR bước 1 loại hẳn, xem `_process_mis_di()`)
-      → từ chối, báo lỗi — không được lách BR bằng đường bổ sung thủ công.
+      `df_mis_di_raw` (MIS_đi RAW, CHƯA lọc), thêm vào nhánh Timeout, `PHAN_LOAI_
+      TIMEOUT='Phiên này'` (bị bỏ sót ở chính phiên này). Trạng thái thuộc
+      {CALD, ERPO, TPER} (đã bị BR bước 1 loại hẳn, xem `_process_mis_di()`) →
+      từ chối, báo lỗi — không được lách BR bằng đường bổ sung thủ công.
 
     Trả về (df_mis_di_khop_gw_final, df_timeout_final) — dùng thay
     (df_mis_di_khop_gw, df_timeout) ở phần còn lại của pipeline.
@@ -484,7 +566,7 @@ def ap_dung_xac_nhan(xac_nhan_path: str, df_mis_di_khop_gw: pd.DataFrame,
     df_can_xac_nhan, msgref_bo_sung = _doc_sheet_can_xac_nhan(xac_nhan_path)
 
     if len(df_can_xac_nhan) == 0:
-        msgref_da_di_kenh  = []
+        msgref_khac_phien  = []
         msgref_giu_timeout = []
         _log('[Bước 2] CAN_XAC_NHAN: không có giao dịch nào cần xác nhận.')
     else:
@@ -502,10 +584,12 @@ def ap_dung_xac_nhan(xac_nhan_path: str, df_mis_di_khop_gw: pd.DataFrame,
             chi_tiet = list(zip(sai['MSGREF'].astype(str), gia_tri[sai.index]))
             raise ValueError(f'Giá trị KET_QUA_XAC_NHAN không hợp lệ: {chi_tiet}')
 
-        msgref_da_di_kenh  = df_can_xac_nhan.loc[gia_tri == 'Đã đi kênh', 'MSGREF'].astype(str).tolist()
+        msgref_khac_phien  = df_can_xac_nhan.loc[
+            gia_tri == 'Timeout không đi kênh khác phiên đối chiếu', 'MSGREF'
+        ].astype(str).tolist()
         msgref_giu_timeout = df_can_xac_nhan.loc[gia_tri == 'Timeout không đi kênh', 'MSGREF'].astype(str).tolist()
-        _log(f'[Bước 2] CAN_XAC_NHAN: chuyển sang khớp đúng (Đã đi kênh) {len(msgref_da_di_kenh)}, '
-             f'giữ trong Timeout (Timeout không đi kênh) {len(msgref_giu_timeout)}')
+        _log(f'[Bước 2] CAN_XAC_NHAN: Timeout khác phiên đối chiếu {len(msgref_khac_phien)}, '
+             f'Timeout của phiên này {len(msgref_giu_timeout)}')
 
     msgref_timeout_chuan = _chuan_hoa_msgref(df_timeout['MSGREF']) if len(df_timeout) else pd.Series(dtype=str)
 
@@ -522,15 +606,17 @@ def ap_dung_xac_nhan(xac_nhan_path: str, df_mis_di_khop_gw: pd.DataFrame,
             )
         return found
 
-    df_chuyen_khop = _tra_theo_msgref(msgref_da_di_kenh, 'Đã đi kênh')
+    df_khac_phien  = _tra_theo_msgref(msgref_khac_phien, 'Timeout không đi kênh khác phiên đối chiếu')
     df_giu_timeout = _tra_theo_msgref(msgref_giu_timeout, 'Timeout không đi kênh')
 
-    if len(df_chuyen_khop) > 0:
-        df_chuyen_khop['MATCH_TYPE'] = 'TIMEOUT'
+    # Checkpoint chỉ phân loại PHẠM VI của Timeout — không đụng pool đối chiếu B5.
+    df_mis_di_khop_gw_final = df_mis_di_khop_gw
+    _log(f'[Bước 2] MIS_đi khớp đúng: {len(df_mis_di_khop_gw_final)} dòng (không đổi bởi Checkpoint)')
 
-    df_mis_di_khop_gw_final = pd.concat([df_mis_di_khop_gw, df_chuyen_khop], ignore_index=True, sort=False)
-    _log(f'[Bước 2] MIS_đi khớp đúng (final): {len(df_mis_di_khop_gw_final)} dòng '
-         f'({len(df_chuyen_khop)} dòng chuyển từ Timeout)')
+    if len(df_khac_phien) > 0:
+        df_khac_phien['PHAN_LOAI_TIMEOUT'] = 'Khác phiên đối chiếu'
+    if len(df_giu_timeout) > 0:
+        df_giu_timeout['PHAN_LOAI_TIMEOUT'] = 'Phiên này'
 
     df_bo_sung = df_giu_timeout.iloc[0:0].copy()
     if msgref_bo_sung:
@@ -540,7 +626,7 @@ def ap_dung_xac_nhan(xac_nhan_path: str, df_mis_di_khop_gw: pd.DataFrame,
             raise ValueError(f'MSGREF bị paste trùng lặp trong vùng bổ sung: {trung_trong_paste}')
 
         msgref_da_biet_chuan = {
-            str(m).strip().lstrip("'") for m in (msgref_da_di_kenh + msgref_giu_timeout)
+            str(m).strip().lstrip("'") for m in (msgref_khac_phien + msgref_giu_timeout)
         }
         msgref_raw_chuan = _chuan_hoa_msgref(df_mis_di_raw['MSGREF'])
 
@@ -570,10 +656,15 @@ def ap_dung_xac_nhan(xac_nhan_path: str, df_mis_di_khop_gw: pd.DataFrame,
             raise ValueError(f'MSGREF bổ sung đã có sẵn trong CAN_XAC_NHAN: {trung_voi_da_biet}')
 
         df_bo_sung = pd.concat(rows, ignore_index=True) if rows else df_bo_sung
+        if len(df_bo_sung) > 0:
+            df_bo_sung['PHAN_LOAI_TIMEOUT'] = 'Phiên này'
 
     _log(f'[Bước 2] Bổ sung từ MSGREF paste thêm: {len(df_bo_sung)} giao dịch')
 
-    df_timeout_final = pd.concat([df_giu_timeout, df_bo_sung], ignore_index=True, sort=False)
-    _log(f'[Bước 2] Timeout không đi kênh (final): {len(df_timeout_final)} dòng')
+    df_timeout_final = pd.concat(
+        [df_giu_timeout, df_khac_phien, df_bo_sung], ignore_index=True, sort=False,
+    )
+    _log(f'[Bước 2] Timeout không đi kênh (final): {len(df_timeout_final)} dòng '
+         f'(khác phiên đối chiếu: {len(df_khac_phien)})')
 
     return df_mis_di_khop_gw_final, df_timeout_final

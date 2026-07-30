@@ -17,6 +17,7 @@ from .b2_xu_ly_gl02    import xu_ly_gl02
 from .b3_xu_ly_gw      import xu_ly_gw
 from .b4_xu_ly_mis_di  import (
     _doc_mis_di_raw, _process_mis_di, khop_voi_gw, tim_nhom_gw_thua, ap_dung_xac_nhan,
+    tim_can_kiem_tra_thu_cong,
 )
 from .b5_doi_chieu_di  import doi_chieu_di
 from .b6_xu_ly_mis_den import xu_ly_mis_den
@@ -29,10 +30,10 @@ _COLS_MIS_DI = [
     'MSGSEQ', 'TXID', 'KENH_THANH_TOAN', 'TRANG_THAI_LENH', 'SO_TIEN',
     'TRACE', 'SE_TRACE', 'SESSION', 'LOAI_LENH_OSB', 'NH_NHAN',
     'MA_GIAO_DICH', 'NOI_DUNG', 'NGAY_KENH_TRA', 'MATCH_TYPE',
-    'LY_DO_GIU_SESSION_NULL',
+    'LY_DO_GIU_SESSION_NULL', 'PHAN_LOAI_TIMEOUT',
 ]
 
-_COLS_CAN_XAC_NHAN = [c for c in _COLS_MIS_DI if c != 'MATCH_TYPE']
+_COLS_CAN_XAC_NHAN = [c for c in _COLS_MIS_DI if c not in ('MATCH_TYPE', 'PHAN_LOAI_TIMEOUT')]
 
 _COLS_MIS_DEN = [
     'NGAY_GIAO_DICH', 'CHI_NHANH', 'REFHUB', 'MSGREF', 'MSGSEQ', 'TXID',
@@ -191,7 +192,7 @@ def _viet_can_xac_nhan(workbook, worksheet, df: pd.DataFrame):
     n = len(df_filled)
     worksheet.data_validation(1, ket_qua_col, n, ket_qua_col, {
         'validate': 'list',
-        'source': ['Timeout không đi kênh', 'Đã đi kênh'],
+        'source': ['Timeout không đi kênh', 'Timeout không đi kênh khác phiên đối chiếu'],
     })
 
     start_row = n + 2
@@ -201,21 +202,18 @@ def _viet_can_xac_nhan(workbook, worksheet, df: pd.DataFrame):
 
 
 def xuat_excel_xac_nhan(output_dir: str, session_id: str, ngay_dt: datetime,
-                        df_mis_di: pd.DataFrame, df_timeout: pd.DataFrame,
+                        df_timeout: pd.DataFrame,
                         log_callback=None) -> str:
     """Checkpoint xác nhận thủ công (thay hướng mở rộng Business Rule cho Timeout
-    không đi kênh) — xuất file 2 sheet ngay sau khop_voi_gw() rồi dừng pipeline.
-    Sheet MIS_DI_CHUAN: tham khảo, không đổi. Sheet CAN_XAC_NHAN: nhánh 1A (SESSION
-    mập mờ) để người đối chiếu chọn dropdown KET_QUA_XAC_NHAN."""
+    không đi kênh) — xuất file 1 sheet CAN_XAC_NHAN ngay sau khop_voi_gw() rồi dừng
+    pipeline. Chỉ chứa nhánh 1A (SESSION mập mờ) để người đối chiếu chọn dropdown
+    KET_QUA_XAC_NHAN — không kèm sheet tham khảo (đã bỏ theo yêu cầu Business Owner,
+    người chấm thủ công chỉ cần đúng danh sách Timeout cần xác nhận)."""
     _log        = log_callback or print
     ngay_str    = ngay_dt.strftime('%Y%m%d')
     output_path = os.path.join(output_dir, f'{ngay_str}_ACH_XacNhan.xlsx')
 
     workbook = xlsxwriter.Workbook(output_path, {'strings_to_numbers': False})
-
-    ws1 = workbook.add_worksheet('MIS_DI_CHUAN')
-    ws1.set_tab_color(_XANH_LAM)
-    _viet_sheet(workbook, ws1, _clean(df_mis_di, _COLS_MIS_DI, 'MIS_DI_CHUAN'), _XANH_LAM)
 
     ws2 = workbook.add_worksheet('CAN_XAC_NHAN')
     ws2.set_tab_color(_CAM)
@@ -223,6 +221,46 @@ def xuat_excel_xac_nhan(output_dir: str, session_id: str, ngay_dt: datetime,
 
     workbook.close()
     _log(f'[DONE] File xác nhận: {output_path}')
+    return output_path
+
+
+_COLS_CAN_KIEM_TRA_HIEN_THI = {
+    'REFHUB':             'REFHUB',
+    'MSGREF':             'MSGREF',
+    'CHI_NHANH':          'Chi nhánh',
+    'CN tiền Hub':        'CN_TIỀN',
+    'SO_TIEN':            'Số tiền',
+    'SESSION':            'Session',
+    'NGAY_GIAO_DICH':     'Ngày giao dịch',
+    'NGAY_KENH_TRA':      'Ngày kênh trả',
+    'TRANG_THAI_LENH':    'Trạng thái lệnh',
+    'LY_DO_CAN_KIEM_TRA': 'Lý do phải kiểm tra',
+}
+
+
+def xuat_excel_can_kiem_tra_thu_cong(output_dir: str, ngay_dt: datetime,
+                                     df_can_kiem_tra: pd.DataFrame,
+                                     log_callback=None) -> str:
+    """Milestone F (Option C, Business Owner chốt 2026-07-27) — file RIÊNG cho 2
+    nhánh SESSION=NULL còn treo (`NGAY_GIA_TRI_KHAC_T_VA_T-1`, MSGREF rỗng/không tìm
+    thấy tại T-1 — xem `b4_xu_ly_mis_di.py::tim_can_kiem_tra_thu_cong()`). CHỈ hiển
+    thị để người đối chiếu tự quyết định — KHÔNG đổi Rule tự động, KHÔNG có cơ chế
+    đọc lại (khác Checkpoint `xuat_excel_xac_nhan()`/`ap_dung_xac_nhan()`)."""
+    _log        = log_callback or print
+    ngay_str    = ngay_dt.strftime('%Y%m%d')
+    output_path = os.path.join(output_dir, f'{ngay_str}_ACH_CanKiemTraThuCong.xlsx')
+
+    workbook = xlsxwriter.Workbook(output_path, {'strings_to_numbers': False})
+    ws = workbook.add_worksheet('CAN_KIEM_TRA_THU_CONG')
+    ws.set_tab_color(_CAM)
+
+    df_hien_thi = _clean(df_can_kiem_tra, list(_COLS_CAN_KIEM_TRA_HIEN_THI.keys()), 'CAN_KIEM_TRA_THU_CONG')
+    if df_hien_thi is not None and len(df_hien_thi) > 0:
+        df_hien_thi = df_hien_thi.rename(columns=_COLS_CAN_KIEM_TRA_HIEN_THI)
+    _viet_sheet(workbook, ws, df_hien_thi, _CAM)
+
+    workbook.close()
+    _log(f'[DONE] File cần kiểm tra thủ công ({len(df_can_kiem_tra):,} dòng): {output_path}')
     return output_path
 
 
@@ -482,6 +520,11 @@ def main_from_dir(input_dir: str, output_dir: str,
         df_mis_di = _process_mis_di(
             df_mis_di_data, session_id, ngay_dt, df_gw_goc, log_callback,
         )
+        # Milestone F (Option C) — 2 nhánh SESSION=NULL còn treo, xuất riêng cho
+        # người chấm thủ công, KHÔNG đổi hành vi giữ/loại của _process_mis_di() ở trên.
+        df_can_kiem_tra_thu_cong = tim_can_kiem_tra_thu_cong(
+            df_mis_di_data, session_id, ngay_dt, df_gw_goc, log_callback,
+        )
 
         npo_di, npo_den = f_gl02.result()
         df_mis_den      = f_mis_den.result()
@@ -492,13 +535,15 @@ def main_from_dir(input_dir: str, output_dir: str,
         log('[CANCELLED] Người dùng đã dừng sau Phase 1.')
         return None
 
+    xuat_excel_can_kiem_tra_thu_cong(output_dir, ngay_dt, df_can_kiem_tra_thu_cong, log_callback)
+
     # Mục 3 — so khớp CN TIỀN giữa MIS_đi và GW.
     df_mis_di_khop_gw, df_timeout = khop_voi_gw(df_mis_di, dict_gw_count, df_gw_raw, log_callback)
 
     if dung_sau_khop_gw:
         log(f'[TIMING] Đến checkpoint khop_gw: {time.perf_counter()-_t0:.1f}s')
         xac_nhan_out_path = xuat_excel_xac_nhan(
-            output_dir, session_id, ngay_dt, df_mis_di, df_timeout, log_callback,
+            output_dir, session_id, ngay_dt, df_timeout, log_callback,
         )
         log(f'[CHECKPOINT] Dừng để chờ xác nhận thủ công. File: {xac_nhan_out_path}')
         return xac_nhan_out_path

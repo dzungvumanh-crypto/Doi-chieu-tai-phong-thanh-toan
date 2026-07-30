@@ -46,6 +46,7 @@ import pytest
 
 from backend.services.ach.b4_xu_ly_mis_di import (
     _process_mis_di, khop_voi_gw, tim_nhom_gw_thua, ap_dung_xac_nhan,
+    tim_can_kiem_tra_thu_cong,
 )
 from backend.services.ach.pipeline import xuat_excel_xac_nhan
 
@@ -65,7 +66,7 @@ def _row(refhub, chi_nhanh, trang_thai, trace, so_tien='500000',
         'NGAY_GIAO_DICH':   ngay_giao_dich,
         'CHI_NHANH':        chi_nhanh,
         'REFHUB':           refhub,
-        'MSGREF':           msgref or ('MSG' + refhub),
+        'MSGREF':           ('MSG' + refhub) if msgref is None else msgref,
         'MSGSEQ':           '1',
         'TXID':             'TX' + refhub,
         'KENH_THANH_TOAN':  'ACH-NAPAS',
@@ -273,6 +274,104 @@ class TestMisDiBuoc2SessionNullBrMoi:
         assert df_mis_di.iloc[0]['LY_DO_GIU_SESSION_NULL'] == ''
 
 
+# ── Milestone F (Option C, 2026-07-27) — file riêng cho người chấm thủ công ─────
+
+class TestCanKiemTraThuCong:
+    """`tim_can_kiem_tra_thu_cong()` — KHÔNG đổi Rule tự động của `_process_mis_di()`
+    (kiểm chứng bằng cách so `len(df_mis_di)` không đổi ở các test dưới), chỉ tạo
+    thêm 1 view riêng cho 2 nhánh SESSION=NULL còn treo."""
+
+    def _ckt(self, rows, ngay_dt=_NGAY_DT, df_gw_goc=_DF_GW_GOC_RONG):
+        df = pd.DataFrame(rows)
+        return tim_can_kiem_tra_thu_cong(df, SID, ngay_dt, df_gw_goc)
+
+    def test_ngay_gia_tri_khac_t_va_t1_xuat_hien_trong_file_rieng(self):
+        rows = [_row('R1', '1000', 'SCNL', '111', session='', msgref='MSG_BAT_KY',
+                     ngay_giao_dich='05/07/2026')]
+        df_ckt = self._ckt(rows)
+        assert len(df_ckt) == 1
+        assert df_ckt.iloc[0]['LY_DO_CAN_KIEM_TRA'] == 'NGAY_GIA_TRI_KHAC_T_VA_T-1'
+        assert df_ckt.iloc[0]['REFHUB'] == 'R1'
+        # Không đổi Rule tự động — dòng này vẫn được _process_mis_di() giữ tạm như cũ.
+        df_mis_di = _mis_di(rows)
+        assert len(df_mis_di) == 1
+        assert df_mis_di.iloc[0]['LY_DO_GIU_SESSION_NULL'] == 'NGAY_GIA_TRI_KHAC_T_VA_T-1'
+
+    def test_msgref_rong_tai_t1_xuat_hien_trong_file_rieng(self):
+        rows = [_row('R1', '1000', 'SCNL', '111', session='', msgref='',
+                     ngay_giao_dich='10/07/2026')]
+        df_ckt = self._ckt(rows)
+        assert len(df_ckt) == 1
+        assert df_ckt.iloc[0]['LY_DO_CAN_KIEM_TRA'] == 'MSGREF_RONG_TAI_T-1'
+        # Không đổi Rule tự động — dòng này vẫn bị _process_mis_di() loại như cũ.
+        df_mis_di = _mis_di(rows)
+        assert len(df_mis_di) == 0
+
+    def test_msgref_khong_tim_thay_tai_t1_xuat_hien_trong_file_rieng(self):
+        rows = [_row('R1', '1000', 'SCNL', '111', session='', msgref='MSG_KHONG_CO',
+                     ngay_giao_dich='10/07/2026')]
+        df_ckt = self._ckt(rows)
+        assert len(df_ckt) == 1
+        assert df_ckt.iloc[0]['LY_DO_CAN_KIEM_TRA'] == 'MSGREF_KHONG_TIM_THAY_TREN_GW_TAI_T-1'
+        df_mis_di = _mis_di(rows)
+        assert len(df_mis_di) == 0
+
+    def test_t1_dung_session_doi_chieu_khong_xuat_hien(self):
+        """Case đã CHỐT ('khác session → loại', xác nhận 2026-07-25) và case khớp
+        đúng session đối chiếu — KHÔNG phải 1 trong 2 nhánh còn treo, không vào file
+        chấm tay."""
+        df_gw_goc = pd.DataFrame({'MSGREF': ['MSGR1'], 'SessionId': [SID]})
+        rows = [_row('R1', '1000', 'SCNL', '111', session='', msgref='MSGR1',
+                     ngay_giao_dich='10/07/2026')]
+        df_ckt = self._ckt(rows, df_gw_goc=df_gw_goc)
+        assert len(df_ckt) == 0
+
+    def test_t1_session_rong_tren_gw_khong_xuat_hien(self):
+        """Case 'T-1, GW có nhưng SessionId rỗng' — KHÔNG phải 2 nhánh còn treo được
+        đặt tên (đã loại theo Rule đã chốt 'chỉ nhận đúng session đối chiếu ở T-1'),
+        không thuộc phạm vi Milestone F Option C."""
+        df_gw_goc = pd.DataFrame({'MSGREF': ['MSGR1'], 'SessionId': ['']})
+        rows = [_row('R1', '1000', 'SCNL', '111', session='', msgref='MSGR1',
+                     ngay_giao_dich='10/07/2026')]
+        df_ckt = self._ckt(rows, df_gw_goc=df_gw_goc)
+        assert len(df_ckt) == 0
+
+    def test_ngay_t_khong_vao_file_chấm_tay(self):
+        """Mọi nhánh ở ngày T (rỗng/0000/đúng session/không tìm thấy) đều đã được
+        _process_mis_di() GIỮ với lý do riêng — không thuộc 2 nhánh còn treo."""
+        rows = [_row('R1', '1000', 'SCNL', '111', session='', msgref='MSG_KHONG_CO',
+                     ngay_giao_dich='11/07/2026')]
+        df_ckt = self._ckt(rows)
+        assert len(df_ckt) == 0
+
+    def test_cald_khong_vao_file_chấm_tay_du_ngay_khac_t_t1(self):
+        """CALD/ERPO/TPER không bao giờ vào diện chấm tay — BR đã chốt, không đổi."""
+        rows = [_row('R1', '1000', 'CALD', '111', session='', msgref='MSG_BAT_KY',
+                     ngay_giao_dich='05/07/2026')]
+        df_ckt = self._ckt(rows)
+        assert len(df_ckt) == 0
+
+    def test_khong_co_du_lieu_tra_ve_dataframe_rong_dung_cot(self):
+        rows = [_row('R1', '1000', 'SCNL', '111', session=SID)]
+        df_ckt = self._ckt(rows)
+        assert len(df_ckt) == 0
+        assert 'LY_DO_CAN_KIEM_TRA' in df_ckt.columns
+        assert 'REFHUB' in df_ckt.columns
+
+    def test_nhieu_giao_dich_ca_2_nhanh_cung_luc(self):
+        rows = [
+            _row('R1', '1000', 'SCNL', '111', session='', msgref='',
+                 ngay_giao_dich='10/07/2026'),
+            _row('R2', '2000', 'TXRT', '222', session='', msgref='MSG_BAT_KY',
+                 ngay_giao_dich='05/07/2026'),
+            _row('R3', '3000', 'SCNL', '333', session=SID),  # bình thường, không vào
+        ]
+        df_ckt = self._ckt(rows)
+        assert len(df_ckt) == 2
+        ly_do = set(df_ckt['LY_DO_CAN_KIEM_TRA'])
+        assert ly_do == {'MSGREF_RONG_TAI_T-1', 'NGAY_GIA_TRI_KHAC_T_VA_T-1'}
+
+
 # ── Regression: cơ chế "Nguồn 1" đã bị gỡ hoàn toàn (2026-07-21) ────────────────
 
 class TestNguon1DaGoBo:
@@ -476,19 +575,22 @@ def _ghi_xac_nhan(path, ket_qua_map, msgref_bo_sung=None):
     wb.save(path)
 
 
-def _xuat_xac_nhan(tmp_path, df_mis_di, df_timeout):
-    return xuat_excel_xac_nhan(str(tmp_path), SID, _NGAY_DT, df_mis_di, df_timeout)
+def _xuat_xac_nhan(tmp_path, df_timeout):
+    return xuat_excel_xac_nhan(str(tmp_path), SID, _NGAY_DT, df_timeout)
 
 
 class TestApDungXacNhan:
     """Bước 2 — engine đọc file xác nhận do xuat_excel_xac_nhan() (Bước 1) sinh ra.
 
     khop_voi_gw() chỉ PHÂN LUỒNG MIS_đi (không phải "tìm Timeout") — file xác nhận
-    phúc tra lại quyết định phân luồng cho nhánh Timeout (nhánh 1A), KHÔNG sửa dữ
-    liệu gốc:
-    - 'Timeout không đi kênh' → ở lại nhánh Timeout.
-    - 'Đã đi kênh' → máy phân loại SAI, CHUYỂN sang nhánh khớp đúng (MATCH_TYPE=
-      'TIMEOUT'), tiếp tục tham gia Phase 2 — KHÔNG bị loại khỏi kết quả.
+    phúc tra lại PHẠM VI của nhánh Timeout (nhánh 1A), KHÔNG sửa dữ liệu gốc. Toàn
+    bộ giao dịch nhánh 1A đều THẬT SỰ là Timeout — không có khái niệm "máy phân loại
+    sai". Xác nhận chỉ phân loại phạm vi:
+    - 'Timeout không đi kênh' → Timeout của phiên đang đối chiếu.
+    - 'Timeout không đi kênh khác phiên đối chiếu' → vẫn là Timeout, chỉ không
+      thuộc phiên này.
+    CẢ HAI đều ở lại nhánh Timeout (gắn cột PHAN_LOAI_TIMEOUT để phân biệt) — KHÔNG
+    loại nào quay lại pool đối chiếu (df_mis_di_khop_gw).
 
     Test round-trip qua file Excel thật (không mock I/O) + qua chính `khop_voi_gw()`
     để có schema thật (KEY_HUB, CN tiền Hub, MATCH_TYPE) — đúng nguyên tắc doi-chieu
@@ -506,44 +608,59 @@ class TestApDungXacNhan:
         df_gw   = pd.DataFrame([_gw_row('5000500000', 'MSGBASE')])
         return khop_voi_gw(df_mis_di, dict_gw, df_gw), df_mis_di
 
-    def test_giu_timeout_va_chuyen_da_di_kenh_sang_khop_dung(self, tmp_path):
+    def test_khac_phien_khong_quay_lai_pool_doi_chieu(self, tmp_path):
+        """'Timeout không đi kênh khác phiên đối chiếu' vẫn là Timeout — KHÔNG quay
+        lại pool đối chiếu (df_mis_di_khop_gw), chỉ gắn PHAN_LOAI_TIMEOUT để phân
+        biệt trong cùng sheet Timeout. Tổng số dòng (khớp + timeout) bảo toàn."""
         (khop, timeout), df_mis_di = self._khop_va_timeout()
-        path = _xuat_xac_nhan(tmp_path, df_mis_di, timeout)
-        _ghi_xac_nhan(path, {'MSGKEEP': 'Timeout không đi kênh', 'MSGMOVE': 'Đã đi kênh'})
+        tong_truoc = len(khop) + len(timeout)
+        path = _xuat_xac_nhan(tmp_path, timeout)
+        _ghi_xac_nhan(path, {
+            'MSGKEEP': 'Timeout không đi kênh',
+            'MSGMOVE': 'Timeout không đi kênh khác phiên đối chiếu',
+        })
 
         df_raw = pd.DataFrame([_row('R9', '9000', 'TPAY', '999', msgref='MSGUNUSED')])
         khop_final, timeout_final = ap_dung_xac_nhan(path, khop, timeout, df_raw)
 
-        # "Đã đi kênh" KHÔNG bị loại — chuyển sang khớp đúng, gắn MATCH_TYPE='TIMEOUT'.
-        assert set(khop_final['MSGREF']) == {'MSGBASE', 'MSGMOVE'}
-        moved = khop_final[khop_final['MSGREF'] == 'MSGMOVE'].iloc[0]
-        assert moved['MATCH_TYPE'] == 'TIMEOUT'
-        assert khop_final[khop_final['MSGREF'] == 'MSGBASE'].iloc[0]['MATCH_TYPE'] == ''
+        # Pool đối chiếu không đổi — Checkpoint không đụng vào khớp GW.
+        assert set(khop_final['MSGREF']) == set(khop['MSGREF'])
+        assert len(khop_final) == len(khop)
 
-        # "Timeout không đi kênh" ở lại nhánh Timeout.
-        assert set(timeout_final['MSGREF']) == {'MSGKEEP'}
+        # Cả 2 loại đều ở lại Timeout, phân biệt bằng PHAN_LOAI_TIMEOUT.
+        assert set(timeout_final['MSGREF']) == {'MSGKEEP', 'MSGMOVE'}
+        assert timeout_final[timeout_final['MSGREF'] == 'MSGKEEP'].iloc[0]['PHAN_LOAI_TIMEOUT'] == 'Phiên này'
+        assert timeout_final[timeout_final['MSGREF'] == 'MSGMOVE'].iloc[0]['PHAN_LOAI_TIMEOUT'] == 'Khác phiên đối chiếu'
+
+        # Bất biến số học: không rơi rớt, không nhân đôi dòng nào.
+        assert len(khop_final) + len(timeout_final) == tong_truoc
 
     def test_bo_sung_msgref_tra_tu_raw_vao_nhanh_timeout(self, tmp_path):
         (khop, timeout), df_mis_di = self._khop_va_timeout()
-        path = _xuat_xac_nhan(tmp_path, df_mis_di, timeout)
-        _ghi_xac_nhan(path, {'MSGKEEP': 'Timeout không đi kênh', 'MSGMOVE': 'Đã đi kênh'},
-                      msgref_bo_sung=['MSGBOSUNG1'])
+        path = _xuat_xac_nhan(tmp_path, timeout)
+        _ghi_xac_nhan(path, {
+            'MSGKEEP': 'Timeout không đi kênh',
+            'MSGMOVE': 'Timeout không đi kênh khác phiên đối chiếu',
+        }, msgref_bo_sung=['MSGBOSUNG1'])
 
         df_raw = pd.DataFrame([
             _row('R8', '8000', 'TPAY', '888', msgref='MSGBOSUNG1', so_tien='777000'),
         ])
         khop_final, timeout_final = ap_dung_xac_nhan(path, khop, timeout, df_raw)
 
-        assert set(timeout_final['MSGREF']) == {'MSGKEEP', 'MSGBOSUNG1'}
+        assert set(timeout_final['MSGREF']) == {'MSGKEEP', 'MSGMOVE', 'MSGBOSUNG1'}
         bosung = timeout_final[timeout_final['MSGREF'] == 'MSGBOSUNG1'].iloc[0]
         assert str(bosung['SO_TIEN']) == '777000'  # nguyên dòng gốc, không tính lại
-        assert set(khop_final['MSGREF']) == {'MSGBASE', 'MSGMOVE'}  # không đổi
+        assert bosung['PHAN_LOAI_TIMEOUT'] == 'Phiên này'  # bị bỏ sót ở chính phiên này
+        assert set(khop_final['MSGREF']) == set(khop['MSGREF'])  # pool đối chiếu không đổi
 
     def test_loi_bo_sung_msgref_khong_tim_thay(self, tmp_path):
         (khop, timeout), df_mis_di = self._khop_va_timeout()
-        path = _xuat_xac_nhan(tmp_path, df_mis_di, timeout)
-        _ghi_xac_nhan(path, {'MSGKEEP': 'Timeout không đi kênh', 'MSGMOVE': 'Đã đi kênh'},
-                      msgref_bo_sung=['MSG_KHONG_TON_TAI'])
+        path = _xuat_xac_nhan(tmp_path, timeout)
+        _ghi_xac_nhan(path, {
+            'MSGKEEP': 'Timeout không đi kênh',
+            'MSGMOVE': 'Timeout không đi kênh khác phiên đối chiếu',
+        }, msgref_bo_sung=['MSG_KHONG_TON_TAI'])
 
         df_raw = pd.DataFrame([_row('R8', '8000', 'TPAY', '888', msgref='MSGKHAC')])
         with pytest.raises(ValueError, match='Không tìm thấy MSGREF'):
@@ -554,9 +671,11 @@ class TestApDungXacNhan:
         {CALD,ERPO,TPER} — nhóm đã bị BR bước 1 loại hẳn — phải từ chối, không được
         lách BR bằng đường bổ sung thủ công."""
         (khop, timeout), df_mis_di = self._khop_va_timeout()
-        path = _xuat_xac_nhan(tmp_path, df_mis_di, timeout)
-        _ghi_xac_nhan(path, {'MSGKEEP': 'Timeout không đi kênh', 'MSGMOVE': 'Đã đi kênh'},
-                      msgref_bo_sung=['MSGCALD1'])
+        path = _xuat_xac_nhan(tmp_path, timeout)
+        _ghi_xac_nhan(path, {
+            'MSGKEEP': 'Timeout không đi kênh',
+            'MSGMOVE': 'Timeout không đi kênh khác phiên đối chiếu',
+        }, msgref_bo_sung=['MSGCALD1'])
 
         df_raw = pd.DataFrame([_row('R8', '8000', 'CALD', '888', msgref='MSGCALD1')])
         with pytest.raises(ValueError, match='TRANG_THAI_LENH'):
@@ -564,7 +683,7 @@ class TestApDungXacNhan:
 
     def test_loi_thieu_xac_nhan(self, tmp_path):
         (khop, timeout), df_mis_di = self._khop_va_timeout()
-        path = _xuat_xac_nhan(tmp_path, df_mis_di, timeout)
+        path = _xuat_xac_nhan(tmp_path, timeout)
         # Không gọi _ghi_xac_nhan — cột KET_QUA_XAC_NHAN để trống.
 
         df_raw = pd.DataFrame([_row('R8', '8000', 'TPAY', '888', msgref='MSGKHAC')])
@@ -573,8 +692,8 @@ class TestApDungXacNhan:
 
     def test_loi_gia_tri_khong_hop_le(self, tmp_path):
         (khop, timeout), df_mis_di = self._khop_va_timeout()
-        path = _xuat_xac_nhan(tmp_path, df_mis_di, timeout)
-        _ghi_xac_nhan(path, {'MSGKEEP': 'Không rõ', 'MSGMOVE': 'Đã đi kênh'})
+        path = _xuat_xac_nhan(tmp_path, timeout)
+        _ghi_xac_nhan(path, {'MSGKEEP': 'Không rõ', 'MSGMOVE': 'Timeout không đi kênh khác phiên đối chiếu'})
 
         df_raw = pd.DataFrame([_row('R8', '8000', 'TPAY', '888', msgref='MSGKHAC')])
         with pytest.raises(ValueError, match='không hợp lệ'):
@@ -582,9 +701,11 @@ class TestApDungXacNhan:
 
     def test_loi_trung_lap_msgref_bo_sung(self, tmp_path):
         (khop, timeout), df_mis_di = self._khop_va_timeout()
-        path = _xuat_xac_nhan(tmp_path, df_mis_di, timeout)
-        _ghi_xac_nhan(path, {'MSGKEEP': 'Timeout không đi kênh', 'MSGMOVE': 'Đã đi kênh'},
-                      msgref_bo_sung=['MSGBOSUNG1', 'MSGBOSUNG1'])
+        path = _xuat_xac_nhan(tmp_path, timeout)
+        _ghi_xac_nhan(path, {
+            'MSGKEEP': 'Timeout không đi kênh',
+            'MSGMOVE': 'Timeout không đi kênh khác phiên đối chiếu',
+        }, msgref_bo_sung=['MSGBOSUNG1', 'MSGBOSUNG1'])
 
         df_raw = pd.DataFrame([_row('R8', '8000', 'TPAY', '888', msgref='MSGBOSUNG1')])
         with pytest.raises(ValueError, match='trùng lặp'):
@@ -594,8 +715,11 @@ class TestApDungXacNhan:
         """MSGREF trong CAN_XAC_NHAN không tìm thấy trong df_timeout truyền vào ở
         lần gọi này (vd dữ liệu đã đổi) — không được âm thầm bỏ qua quyết định."""
         (khop, timeout), df_mis_di = self._khop_va_timeout()
-        path = _xuat_xac_nhan(tmp_path, df_mis_di, timeout)
-        _ghi_xac_nhan(path, {'MSGKEEP': 'Timeout không đi kênh', 'MSGMOVE': 'Đã đi kênh'})
+        path = _xuat_xac_nhan(tmp_path, timeout)
+        _ghi_xac_nhan(path, {
+            'MSGKEEP': 'Timeout không đi kênh',
+            'MSGMOVE': 'Timeout không đi kênh khác phiên đối chiếu',
+        })
 
         timeout_thieu = timeout[timeout['MSGREF'] != 'MSGMOVE'].reset_index(drop=True)
         df_raw = pd.DataFrame([_row('R8', '8000', 'TPAY', '888', msgref='MSGKHAC')])
@@ -612,7 +736,7 @@ class TestApDungXacNhan:
         khop, timeout = khop_voi_gw(df_mis_di, dict_gw, df_gw)
         assert len(timeout) == 0
 
-        path = _xuat_xac_nhan(tmp_path, df_mis_di, timeout)
+        path = _xuat_xac_nhan(tmp_path, timeout)
         df_raw = pd.DataFrame([_row('R8', '8000', 'TPAY', '888', msgref='MSGKHAC')])
         khop_final, timeout_final = ap_dung_xac_nhan(path, khop, timeout, df_raw)
 
