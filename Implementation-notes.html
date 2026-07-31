@@ -3072,6 +3072,67 @@ Bất biến MIS: 522.774 + 36.462 = 559.236 (khớp tổng gốc)</pre>
     </div>
   </div>
 
+  <!-- 63 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">63</span>
+      <span class="card-title">Điểm 4 — ĐÃ CODE, ĐÃ TEST, ĐÃ VERIFY DỮ LIỆU THẬT (đối chiếu chéo ngày MIS thừa T-2 ⟷ NPO thừa T-1)</span>
+      <span class="badge badge-done">313/313 test toàn dự án PASS (28 test mới) — verify thật 26-27.07, chưa commit</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Đã làm</div>
+      <p>Module mới <code>backend/services/ach/b11_doi_chieu_cheo_ngay.py</code> — đúng thiết kế chốt ở mục 58:
+        <code>danh_dau_da_can_di()</code>/<code>danh_dau_da_can_den()</code> ghép khóa <code>KEY_DI</code>/
+        <code>KEY_HUB</code> (đi) và <code>KEY_DEN</code>/<code>KEY_DEN_HUB</code> (đến) giữa NPO thừa (T-1,
+        phần còn lại SAU Điểm 3) và MIS thừa T-2, loại lệnh OSB khỏi input T-2 trước khi so khớp
+        (<code>osb_common.py</code>), chỉ thêm cột <code>GHI_CHU_T2</code> — không xoá/tách dòng.
+        <code>doc_mis_di_thua_t2()</code>/<code>doc_mis_den_thua_t2()</code> đọc lại đúng file chương trình tự
+        xuất (schema <code>_COLS_MIS_DI</code>/<code>_COLS_MIS_DEN</code>), báo lỗi rõ nếu thiếu cột.</p>
+      <p><code>pipeline.py</code>: tự dò 2 file T-2 tùy chọn trong <code>input_dir</code> theo pattern
+        <code>MIS_DI_THUA*.csv</code>/<code>MIS_DEN_THUA*.csv</code> (tái dùng <code>_tim_file()</code> có sẵn —
+        KHÔNG cần thêm tham số mới cho <code>main_from_dir()</code>/<code>ach_service.py</code>/API, vì mode
+        upload đã cho chọn nhiều file tùy ý và mode folder đã tự quét cả thư mục). Gọi 2 hàm đánh dấu ngay sau
+        <code>tach_dien_huy()</code> (Điểm 3), trước <code>xuat_excel()</code>. Thêm <code>_COLS_NPO_THUA</code>
+        (= <code>COLS_NPO</code> + <code>GHI_CHU_T2</code>) CHỈ áp cho 2 sheet <code>NPO_DI_THUA</code>/
+        <code>NPO_DEN_THUA</code> — 2 sheet huỷ Điểm 3 không đổi. Frontend (<code>cham_ach.py</code>): thêm
+        <code>.csv</code> vào <code>accept</code> của ô upload + cập nhật hint — không cần UI mới vì cả 2 mode
+        đều đã hỗ trợ đính kèm file tùy ý.</p>
+
+      <div class="label">Bug thật phát hiện khi verify dữ liệu thật (không phải giả thuyết)</div>
+      <ul>
+        <li><b>Tự khớp nhầm với chính output của mình:</b> <code>_tim_file()</code> dò đệ quy cả thư mục con —
+          nếu 1 thư mục ngày đã có sẵn <code>Output/</code> từ lần chạy trước (mode folder tự copy kết quả về),
+          glob <code>MIS_DI_THUA*.csv</code> bắt luôn file đó, tưởng nhầm là file T-2 thật của ngày hôm trước.
+          Sửa bằng <code>_tim_file_ngoai_output()</code> mới (loại các match có thành phần đường dẫn
+          <code>Output</code>) — dùng riêng cho 2 lookup T-2, không đổi hành vi <code>_tim_file()</code> gốc
+          (GL02/MIS_DI/MIS_DEN/GW vẫn dò như cũ).</li>
+        <li><b>Đọc lại file T-2 bị lỗi <code>cannot insert 'CN tiền Hub', already exists</code>:</b> file
+          <code>MIS_DI_THUA_*.csv</code> chương trình xuất ra đã có sẵn cột <code>CN tiền Hub</code> (nằm trong
+          <code>_COLS_MIS_DI</code>) — gọi lại <code>_them_cot_khoa()</code> (viết cho MIS_đi thô, chưa có cột
+          này) để tính <code>KEY_HUB</code> bị crash. Sửa bằng cách <code>drop</code> cột đó trước khi gọi lại,
+          để hàm tự tính lại từ đầu (giá trị giống hệt, chỉ là thứ tự tính toán).</li>
+      </ul>
+
+      <div class="label">Verify</div>
+      <p>28 test mới (<code>tests/test_ach_cheo_ngay.py</code> 26 test thuật toán + đọc file + dò file tránh
+        Output/, <code>tests/test_ach_excel_export.py</code> 2 test wiring cột) PASS. 313/313 test toàn dự án
+        PASS (1 fail ILO1000 không liên quan, có từ trước, không đổi).</p>
+      <p><b>Verify dữ liệu thật đầy đủ qua pipeline thật (không phải script rời như lúc lập kế hoạch mục 58)</b>
+        — chạy 2 lần liên tiếp trên <code>G:\ACH chua doi chieu ngay 26-27.07\</code> (đọc dữ liệu thật, ghi kết
+        quả ra thư mục scratch riêng, KHÔNG ghi gì lên G:): ngày 26/07 trước (sinh file T-2 mới bằng code hiện
+        tại) rồi ngày 27/07 sau (đính kèm 2 file T-2 vừa sinh). Kết quả: <b>chiều đi 25.677/25.699 dòng NPO_đi
+        thừa được đánh dấu (99,9%)</b>, <b>chiều đến 21.297/21.305 dòng (99,96%)</b> — cùng hướng và còn cao hơn
+        số liệu verify bằng script rời trước khi code (98,7%/100,0%, mục 58). Số dòng sheet
+        <code>NPO_DI_THUA</code> giữ nguyên 25.699 trước/sau khi thêm cột (đúng bất biến "không xoá/tách
+        dòng").</p>
+
+      <div class="label">Chưa làm</div>
+      <p>Chưa merge/push. Tiếp theo theo lộ trình mục 59: <b>Điểm 2</b> (đối chiếu OSB qua file QT, mục 56) —
+        điểm cuối cùng trong 4 điểm. Riêng biệt: tính năng MỚI "chạy thẳng bỏ qua checkpoint" — CHƯA làm, hỏi
+        lại Business Owner sau khi xong cả 4 điểm (xem mục 62).</p>
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-07-31</footer>
 </div>
 </body>

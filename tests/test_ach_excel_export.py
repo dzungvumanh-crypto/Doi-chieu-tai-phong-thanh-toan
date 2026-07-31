@@ -208,3 +208,45 @@ def test_tong_ket_tach_dien_huy_khoi_npo_di_thua(tmp_path):
     n_huy_trong_ngay = len(dfs['df_dien_huy_trong_ngay'])
     n_huy_khac_ngay = len(dfs['df_dien_huy_khac_ngay'])
     assert rows['Tổng NPO_DI (cần đối)'] == n_di_khop + n_npo_di_thua + n_huy_trong_ngay + n_huy_khac_ngay
+
+
+# ── Điểm 4 (2026-07-31) — cột GHI_CHU_T2 trên NPO_DI_THUA/NPO_DEN_THUA ─────────
+
+def test_ghi_chu_t2_xuat_hien_tren_npo_di_thua_va_npo_den_thua(tmp_path):
+    dfs = _synthetic_dfs()
+    dfs['df_npo_di_thua']  = dfs['df_npo_di_thua'].assign(GHI_CHU_T2=['Hạch toán lệnh ngày T-2'])
+    dfs['df_npo_den_thua'] = dfs['df_npo_den_thua'].assign(GHI_CHU_T2=[''])
+    output_path = str(tmp_path / 'doi_chieu_20260731.xlsx')
+
+    xuat_excel(output_path, '16282', dfs['df_mis_di_khop'], dfs['df_npo_di_thua'],
+               dfs['df_mis_di_thua'], dfs['df_timeout'], dfs['df_mis_den_khop'],
+               dfs['df_npo_den_thua'], dfs['df_mis_den_thua'], dfs['df_gw_raw'])
+
+    wb = openpyxl.load_workbook(output_path)
+    header_di  = [c.value for c in next(wb['NPO_DI_THUA'].iter_rows(max_row=1))]
+    header_den = [c.value for c in next(wb['NPO_DEN_THUA'].iter_rows(max_row=1))]
+    assert 'GHI_CHU_T2' in header_di
+    assert 'GHI_CHU_T2' in header_den
+
+    di_col = header_di.index('GHI_CHU_T2') + 1
+    assert wb['NPO_DI_THUA'].cell(row=2, column=di_col).value == 'Hạch toán lệnh ngày T-2'
+
+
+def test_ghi_chu_t2_khong_xuat_hien_tren_sheet_huy_diem_3(tmp_path):
+    """GHI_CHU_T2 chỉ có ý nghĩa trên NPO_DI_THUA/NPO_DEN_THUA — 2 sheet huỷ của
+    Điểm 3 không nên bị ảnh hưởng bởi wiring cột mới của Điểm 4."""
+    dfs = _synthetic_dfs()
+    dfs['df_npo_di_thua'] = dfs['df_npo_di_thua'].assign(GHI_CHU_T2=[''])
+    output_path = str(tmp_path / 'doi_chieu_20260731.xlsx')
+
+    xuat_excel(output_path, '16282', dfs['df_mis_di_khop'], dfs['df_npo_di_thua'],
+               dfs['df_mis_di_thua'], dfs['df_timeout'], dfs['df_mis_den_khop'],
+               dfs['df_npo_den_thua'], dfs['df_mis_den_thua'], dfs['df_gw_raw'],
+               df_dien_huy_trong_ngay=dfs['df_dien_huy_trong_ngay'],
+               df_dien_huy_khac_ngay=dfs['df_dien_huy_khac_ngay'])
+
+    wb = openpyxl.load_workbook(output_path)
+    header_trong_ngay = [c.value for c in next(wb['DIEN_DI_HUY_TRONG_NGAY'].iter_rows(max_row=1))]
+    header_khac_ngay  = [c.value for c in next(wb['DIEN_DI_HUY_KHAC_NGAY'].iter_rows(max_row=1))]
+    assert 'GHI_CHU_T2' not in header_trong_ngay
+    assert 'GHI_CHU_T2' not in header_khac_ngay

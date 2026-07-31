@@ -23,8 +23,14 @@ from .b5_doi_chieu_di  import doi_chieu_di
 from .b6_xu_ly_mis_den import xu_ly_mis_den
 from .b7_doi_chieu_den import doi_chieu_den
 from .b10_xu_ly_npo_di_thua import tach_dien_huy
+from .b11_doi_chieu_cheo_ngay import (
+    danh_dau_da_can_di, danh_dau_da_can_den, doc_mis_di_thua_t2, doc_mis_den_thua_t2,
+)
 
 _COLS_NPO = _cfg.COLS_NPO
+# Điểm 4 — thêm cột ghi chú đối chiếu chéo ngày CHỈ trên sheet NPO_DI_THUA/
+# NPO_DEN_THUA (không áp cho sheet huỷ Điểm 3 — cột này không có ý nghĩa ở đó).
+_COLS_NPO_THUA = _COLS_NPO + ['GHI_CHU_T2']
 
 _COLS_MIS_DI = [
     'NGAY_GIAO_DICH', 'CHI_NHANH', 'CN tiền Hub', 'REFHUB', 'MSGREF',
@@ -119,6 +125,19 @@ def _tim_ngay_tu_pdf(input_dir: str) -> str | None:
 def _tim_file(input_dir: str, pattern: str) -> list:
     abs_dir = os.path.abspath(input_dir)
     return sorted(glob.glob(os.path.join(abs_dir, '**', pattern), recursive=True))
+
+
+def _tim_file_ngoai_output(input_dir: str, pattern: str) -> list:
+    """Giống `_tim_file()` nhưng loại các file nằm trong thư mục con 'Output'
+    (kết quả tự copy về của CHÍNH lần chạy trước cùng thư mục — xem
+    `ach_service.py::_OUTPUT_SUBFOLDER`). Điểm 4 dò file MIS thừa T-2 bằng
+    pattern trùng tên với file chương trình tự xuất — nếu không loại trừ, chạy
+    lại 1 thư mục đã có Output/ cũ sẽ tự khớp nhầm với kết quả của chính ngày
+    đang chạy thay vì file T-2 thật (khác thư mục ngày hôm trước)."""
+    return [
+        f for f in _tim_file(input_dir, pattern)
+        if 'output' not in {p.lower() for p in os.path.normpath(f).split(os.sep)}
+    ]
 
 
 def _tim_gw_xlsx(input_dir: str) -> str:
@@ -364,7 +383,7 @@ def xuat_excel(output_path: str, session_id: str,
     sheets = [
         ('TONG_KET',           None,                                                     '#FFFFFF'),
         ('MIS_DI_KHOP',        _clean(df_mis_di_khop,  _COLS_MIS_DI, 'MIS_DI_KHOP'),   _XANH_LA),
-        ('NPO_DI_THUA',        _clean(df_npo_di_thua,  _COLS_NPO,    'NPO_DI_THUA'),   _DO),
+        ('NPO_DI_THUA',        _clean(df_npo_di_thua,  _COLS_NPO_THUA, 'NPO_DI_THUA'), _DO),
         ('DIEN_DI_HUY_TRONG_NGAY', _clean(df_dien_huy_trong_ngay, _COLS_NPO, 'DIEN_DI_HUY_TRONG_NGAY'), _XANH_LAM),
         ('DIEN_DI_HUY_KHAC_NGAY',  _clean(df_dien_huy_khac_ngay,  _COLS_NPO, 'DIEN_DI_HUY_KHAC_NGAY'),  _XANH_LAM),
         ('MIS_DI_THUA',        _clean(df_mis_di_thua,  _COLS_MIS_DI, 'MIS_DI_THUA'),   _DO),
@@ -373,7 +392,7 @@ def xuat_excel(output_path: str, session_id: str,
         ('GW_THUA_XAC_DINH',   df_gw_thua_xac_dinh_clean,                                _DO),
         ('GW_CAN_DOI_CHIEU',   df_gw_can_doi_chieu_clean,                                _CAM),
         ('MIS_DEN_KHOP',       _clean(df_mis_den_khop, _COLS_MIS_DEN, 'MIS_DEN_KHOP'), _XANH_LA),
-        ('NPO_DEN_THUA',       _clean(df_npo_den_thua, _COLS_NPO,    'NPO_DEN_THUA'),  _DO),
+        ('NPO_DEN_THUA',       _clean(df_npo_den_thua, _COLS_NPO_THUA, 'NPO_DEN_THUA'), _DO),
         ('MIS_DEN_THUA',       _clean(df_mis_den_thua, _COLS_MIS_DEN, 'MIS_DEN_THUA'), _DO),
         ('RAW_GW',             df_gw_clean,                                              _XANH_LAM),
     ]
@@ -515,7 +534,24 @@ def main_from_dir(input_dir: str, output_dir: str,
     if len(mis_den_files) < 2:
         raise FileNotFoundError(f'Cần 2 file MIS_DEN zip, chỉ tìm thấy {len(mis_den_files)}')
 
-    log(f'Tìm thấy: GL02={len(gl02_files)}, DI={len(mis_di_files)}, DEN={len(mis_den_files)}')
+    # Điểm 4 (tùy chọn) — file MIS thừa T-2 do chương trình tự xuất ra lần chạy
+    # trước, đính kèm để đối chiếu chéo ngày. Không có → bỏ qua, không chặn luồng
+    # chính (đúng tinh thần file tùy chọn như Điểm 2/QT).
+    mis_di_thua_t2_files  = _tim_file_ngoai_output(input_dir, 'MIS_DI_THUA*.csv')
+    mis_den_thua_t2_files = _tim_file_ngoai_output(input_dir, 'MIS_DEN_THUA*.csv')
+    if len(mis_di_thua_t2_files) > 1:
+        raise FileNotFoundError(
+            f'Có nhiều hơn 1 file MIS_đi thừa T-2 khớp MIS_DI_THUA*.csv — giữ lại đúng 1 file: '
+            f'{mis_di_thua_t2_files}'
+        )
+    if len(mis_den_thua_t2_files) > 1:
+        raise FileNotFoundError(
+            f'Có nhiều hơn 1 file MIS_đến thừa T-2 khớp MIS_DEN_THUA*.csv — giữ lại đúng 1 file: '
+            f'{mis_den_thua_t2_files}'
+        )
+
+    log(f'Tìm thấy: GL02={len(gl02_files)}, DI={len(mis_di_files)}, DEN={len(mis_den_files)}, '
+        f'MIS_đi thừa T-2={len(mis_di_thua_t2_files)}, MIS_đến thừa T-2={len(mis_den_thua_t2_files)}')
 
     if _cancelled(cancel_event):
         log('[CANCELLED] Người dùng đã dừng. Không xử lý.')
@@ -591,6 +627,13 @@ def main_from_dir(input_dir: str, output_dir: str,
     df_dien_huy_trong_ngay, df_dien_huy_khac_ngay, df_npo_di_thua = tach_dien_huy(
         df_npo_di_thua, log_callback,
     )
+
+    # Điểm 4 — đối chiếu chéo ngày: MIS thừa (T-2) ⟷ NPO thừa (T-1, phần còn lại
+    # SAU Điểm 3), cả 2 chiều. Không có file T-2 → chỉ thêm cột GHI_CHU_T2 rỗng.
+    df_mis_di_thua_t2  = doc_mis_di_thua_t2(mis_di_thua_t2_files[0])   if mis_di_thua_t2_files  else None
+    df_mis_den_thua_t2 = doc_mis_den_thua_t2(mis_den_thua_t2_files[0]) if mis_den_thua_t2_files else None
+    df_npo_di_thua  = danh_dau_da_can_di(df_npo_di_thua,  df_mis_di_thua_t2,  log_callback)
+    df_npo_den_thua = danh_dau_da_can_den(df_npo_den_thua, df_mis_den_thua_t2, log_callback)
 
     log(f'[TIMING] Phase 2 đối chiếu: {time.perf_counter()-_t1:.1f}s')
 
