@@ -169,8 +169,8 @@ async def cham_ach_page():
                 ui.label('Chế độ xử lý Checkpoint').classes('text-sm font-medium text-gray-700 mt-4')
                 checkpoint_mode_radio = ui.radio(
                     {
-                        'inline':   'Xác nhận ngay khi phát hiện Timeout (quy trình hiện tại)',
-                        'deferred': 'Chạy hết phần tự động, sau đó mới xác nhận Timeout rồi tiếp tục chạy',
+                        'inline':   'Xác nhận ngay khi MIS_đi vừa tạo xong (quy trình hiện tại)',
+                        'deferred': 'Chạy hết phần tự động, sau đó mới xác nhận MIS_đi rồi tiếp tục chạy',
                     },
                     value='inline',
                 ).props('dense')
@@ -183,8 +183,8 @@ async def cham_ach_page():
                                            color='grey-6').classes('font-semibold')
                     btn_cancel.set_visibility(False)
                     ui.label(
-                        'Pipeline sẽ dừng lại sau khi so khớp GW để bạn xác nhận nhánh '
-                        'Timeout, rồi mới chạy tiếp tới báo cáo cuối.'
+                        'Pipeline sẽ dừng lại ngay sau khi tạo xong MIS_đi để bạn xác nhận, '
+                        'rồi mới chạy tiếp tới báo cáo cuối.'
                     ).classes('text-xs text-gray-400')
 
             # ── Log card ──────────────────────────────────────────────────────
@@ -364,11 +364,18 @@ async def cham_ach_page():
                         checkpoint_dialog.close()
                         ui.notify('Đã dừng theo yêu cầu.', type='warning')
 
+            def _mo_ta_can_xac_nhan(res: dict) -> str:
+                so_luong  = res.get('xac_nhan_count')
+                tong_tien = res.get('xac_nhan_tong_tien')
+                if so_luong is not None and tong_tien is not None:
+                    return f'Có {so_luong:,} giao dịch MIS_đi cần xác nhận, tổng {tong_tien:,} VND.'
+                return 'Cần xác nhận thủ công MIS_đi.'
+
             def _enter_checkpoint(res: dict):
-                """Job đã dừng ở Checkpoint sau khop_voi_gw() — hiện NGAY popup để
-                người dùng tải, điền cột KET_QUA_XAC_NHAN, kéo-thả (hoặc chọn) lại
-                file rồi bấm "Chạy tiếp". Không đổi cơ chế Checkpoint — chỉ đổi cách
-                trình bày (card ẩn/hiện → popup tự mở)."""
+                """Job đã dừng ở Checkpoint ngay sau khi tạo xong MIS_đi (Điểm 1,
+                2026-07-31) — hiện NGAY popup để người dùng tải, tick cột LOAI_BO,
+                kéo-thả (hoặc chọn) lại file rồi bấm "Chạy tiếp". Không đổi cơ chế
+                Checkpoint — chỉ đổi cách trình bày (card ẩn/hiện → popup tự mở)."""
                 btn_run.set_visibility(False)
                 btn_cancel.set_visibility(True)
                 result_card.set_visibility(False)
@@ -378,27 +385,21 @@ async def cham_ach_page():
                 files         = res.get('files', [])
                 xac_nhan_file = files[0] if files else None
                 loi_lan_truoc = res.get('error')
-                so_luong      = res.get('xac_nhan_count')
 
                 with checkpoint_dialog, ui.card().classes('p-5').style('min-width: 480px'):
-                    if so_luong is not None:
-                        ui.label(f'Có {so_luong:,} giao dịch cần xác nhận.').classes(
-                            'text-base font-semibold text-orange-800 mb-1'
-                        )
-                    else:
-                        ui.label('Cần xác nhận thủ công nhánh Timeout.').classes(
-                            'text-base font-semibold text-orange-800 mb-1'
-                        )
+                    ui.label(_mo_ta_can_xac_nhan(res)).classes(
+                        'text-base font-semibold text-orange-800 mb-1'
+                    )
                     ui.label(f'{xac_nhan_file} đã sẵn sàng.').classes('text-sm text-gray-700 mb-2')
                     if loi_lan_truoc:
                         ui.label(f'File xác nhận vừa nộp bị từ chối: {loi_lan_truoc}').classes(
                             'text-xs text-red-600 mb-2'
                         )
                     ui.label(
-                        '1) Tải file bên dưới · 2) Mở file, ở sheet CAN_XAC_NHAN chọn '
-                        'KET_QUA_XAC_NHAN cho MỌI dòng (có thể paste thêm MSGREF bị bỏ sót vào '
-                        'vùng "BỔ SUNG" cuối sheet) · 3) Kéo-thả (hoặc chọn) lại file đã điền '
-                        'rồi bấm "Chạy tiếp".'
+                        '1) Tải file bên dưới · 2) Mở file, ở sheet MIS_DI_CONFIRM tick "loại bỏ" '
+                        'cho dòng cần loại (để trống = giữ lại, mặc định), có thể paste thêm REFHUB '
+                        'bị bỏ sót vào vùng "BỔ SUNG" cuối sheet · 3) Kéo-thả (hoặc chọn) lại file đã '
+                        'điền rồi bấm "Chạy tiếp".'
                     ).classes('text-xs text-gray-600 mb-3')
 
                     if xac_nhan_file:
@@ -454,10 +455,7 @@ async def cham_ach_page():
                 lại đúng _enter_checkpoint() như Chế độ A (không tách logic riêng)."""
                 state['pending_checkpoint_res'] = res
                 btn_cancel.set_visibility(False)
-                so_luong = res.get('xac_nhan_count')
-                text = (f'Có {so_luong:,} giao dịch Timeout cần xác nhận.' if so_luong is not None
-                        else 'Cần xác nhận thủ công nhánh Timeout.')
-                checkpoint_banner_label.set_text(text)
+                checkpoint_banner_label.set_text(_mo_ta_can_xac_nhan(res))
                 checkpoint_banner.set_visibility(True)
 
             def _open_pending_checkpoint():

@@ -2260,7 +2260,742 @@ Bất biến MIS: 522.774 + 36.462 = 559.236 (khớp tổng gốc)</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-07-26</footer>
+  <!-- 50 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">50</span>
+      <span class="card-title">Regression 22/07+23/07 bằng dữ liệu thật + chứng minh Rule không phải "replay" kết quả chấm tay</span>
+      <span class="badge badge-done">Timeout khớp 100% cả 2 ngày, chứng minh độc lập bằng SHA256</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Kết quả chính</div>
+      <p>Chạy pipeline hiện tại (không sửa code) trên dữ liệu thật 22/07 (session 16412) và 23/07
+        (session 16414), đối chiếu với file kết quả nghiệp vụ. Sheet <code>TIMEOUT_KHONG_KENH</code> khớp
+        <strong>tuyệt đối 18/18 và 12/12 REFHUB</strong>, tổng tiền khớp từng VND (353.316.625đ và
+        39.241.600đ). Chiều Đi (Khớp/NPO thừa/MIS thừa) khớp tuyệt đối 100% cả 2 ngày, bất biến số học
+        đúng. 106/106 test PASS, không sửa code.</p>
+
+      <div class="label">Chứng minh Rule tự hoạt động, không "học thuộc" đáp án nghiệp vụ</div>
+      <p>Business Owner yêu cầu bằng chứng chứ không chỉ kết luận. Đã thực hiện: (1) đối chiếu timestamp —
+        file kết quả engine ghi lúc 09:10/09:16, script đầu tiên mở file nghiệp vụ tạo lúc 09:17 (SAU); (2)
+        grep code xác nhận không có đường dẫn nào đọc file <code>KET QUA*.xlsx</code>; (3) tái dựng cơ học cả
+        30 giao dịch Timeout (COUNT_MIS/COUNT_GW/MSGREF-trên-GW) trực tiếp từ <code>RAW_GW</code>+
+        <code>MIS_DI_KHOP</code>+<code>MIS_DI_THUA</code>, không đụng file nghiệp vụ; (4) <strong>thực nghiệm
+        quyết định</strong>: đổi tên ẩn 2 thư mục <code>KET QUA 22.07</code>/<code>KET QUA 23.07</code>, chạy
+        lại toàn bộ pipeline, so SHA256 sheet <code>MIS_DI_KHOP</code> (505.889/490.655 dòng) — <strong>giống
+        hệt byte-by-byte</strong> giữa lần có và lần ẩn file nghiệp vụ. Kết luận: Rule đúng vì đúng bản chất
+        nghiệp vụ, không phải vì code đọc đáp án. Chi tiết:
+        <code>G:\ACH CHUA DOI CHIEU\Regression_22_23_07\CHUNG_MINH_RULE_KHONG_PHAI_REPLAY.md</code>.</p>
+
+      <div class="label">Điều tra dấu hỏi mở chiều Đến (8/18 dòng lệch bucket "XX ht XX")</div>
+      <p>Giả thuyết ban đầu (B6 loại thẳng SESSION=NULL tại T-1, tương tự lỗ hổng Milestone F nhưng chiều
+        Đến) bị <strong>bác bỏ bằng thực nghiệm có kiểm soát</strong>: thêm thử các dòng bị loại vào MIS_đến
+        rồi chạy lại <code>doi_chieu_den()</code> — số Khớp KHÔNG đổi (chênh lệch = 0) ở cả 2 ngày. Test
+        giao (intersect) rộng hơn với NPO_đến thừa cho tỷ lệ trùng 99,9% — quá cao để có ý nghĩa (nhiễu do
+        khóa không đủ chọn lọc khi so với tập ứng viên lớn). Kết luận nhiều khả năng nhất: bucket
+        <code>"XX ht XX"</code> trong sheet <code>tong</code> của nghiệp vụ đo 1 khái niệm khác (phân loại
+        session/OSB), không phải trạng thái khớp NPO — so sánh trực tiếp 2 con số này ở báo cáo trước là
+        <strong>không tương đương</strong>, không phải bằng chứng của lỗi thật. Không tìm thấy lỗi kỹ thuật ở
+        <code>KEY_DEN</code>/<code>KEY_DEN_HUB</code>/<code>doi_chieu_den()</code>. Chi tiết:
+        <code>DIEU_TRA_BUCKET_CHIEU_DEN.md</code> (cùng thư mục).</p>
+
+      <div class="label">Phát hiện phụ (ghi nhận, không xử lý trong lần này)</div>
+      <p><code>b6_xu_ly_mis_den.py::xu_ly_mis_den()</code> loại thẳng giao dịch SESSION=NULL tại
+        NGAY_GIAO_DICH=T-1 (8 dòng 22/07, 6 dòng 23/07) — không có cơ chế tra cứu tương tự Rule mới chiều
+        Đi. Đã xác nhận các dòng này KHÔNG có NPO_đến tương ứng (không ảnh hưởng số liệu hiện tại) nhưng đây
+        là 1 khoảng trống thiết kế tương tự tinh thần Milestone F, ở chiều Đến — đề xuất Business Owner cân
+        nhắc cùng phương án xử lý (Option C) cho nhánh này ở lần quyết định sau.</p>
+    </div>
+  </div>
+
+  <!-- 51 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">51</span>
+      <span class="card-title">Milestone F — Option C: file riêng "Cần kiểm tra thủ công" cho 2 nhánh SESSION=NULL còn treo</span>
+      <span class="badge badge-done">Code + 9 test mới, 115/115 PASS, verify trên dữ liệu thật 22/07+23/07</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Quyết định Business Owner (2026-07-27)</div>
+      <p>Với 2 nhánh còn treo (<code>NGAY_GIA_TRI_KHAC_T_VA_T-1</code>, MSGREF rỗng/không tìm thấy tại T-1),
+        Business Owner chọn <strong>Option C</strong>: KHÔNG tự động quyết định giữ/loại, xuất riêng 1 file
+        cho người chấm thủ công tự quyết. Yêu cầu tường minh: không đổi Rule tự động hiện tại, không suy
+        luận thêm, chỉ xuất đúng các giao dịch cần con người quyết định.</p>
+
+      <div class="label">Thiết kế — không đụng hàm đã có nhiều test bảo vệ</div>
+      <p><code>_process_mis_di()</code> (46 test phụ thuộc, có test khẳng định tường minh trả về 1 DataFrame
+        không phải tuple) <strong>giữ nguyên 100%</strong> — hành vi giữ/loại 2 nhánh này trong luồng chính
+        KHÔNG đổi. Thêm hàm ĐỘC LẬP mới <code>tim_can_kiem_tra_thu_cong()</code>
+        (<code>b4_xu_ly_mis_di.py</code>) tái sử dụng <code>_loc_session_null_theo_gw_goc()</code> (gọi lại,
+        không sửa) để lấy đúng 2 nhánh: (1) <code>NGAY_GIA_TRI_KHAC_T_VA_T-1</code> — đã được giữ trong
+        MIS_đi, hiển thị lại; (2) MSGREF rỗng/không tìm thấy tại T-1 — đang bị loại thẳng khỏi MIS_đi, hàm
+        mới tạo bản sao độc lập để hiển thị, không ảnh hưởng luồng chính. Phân biệt rõ 2 lý do con
+        (<code>MSGREF_RONG_TAI_T-1</code> vs <code>MSGREF_KHONG_TIM_THAY_TREN_GW_TAI_T-1</code>) thay vì gộp
+        chung — tránh suy luận thay người dùng.</p>
+      <p>Cố tình KHÔNG route case "T-1, GW có nhưng SessionId rỗng/0000/khác session đối chiếu" vào file này
+        — đó là hành vi ĐÃ CHỐT ("khác session → loại khỏi lần chạy này", xác nhận 2026-07-25), không phải 1
+        trong 2 nhánh được nêu tên. Có test riêng khẳng định case này KHÔNG xuất hiện trong file.</p>
+
+      <div class="label">Xuất file</div>
+      <p><code>pipeline.py::xuat_excel_can_kiem_tra_thu_cong()</code> — file
+        <code>&lt;ngày&gt;_ACH_CanKiemTraThuCong.xlsx</code>, sheet <code>CAN_KIEM_TRA_THU_CONG</code>, cột
+        hiển thị tiếng Việt: REFHUB, MSGREF, Chi nhánh, CN_TIỀN, Số tiền, Session, Ngày giao dịch, Ngày kênh
+        trả, Trạng thái lệnh, Lý do phải kiểm tra. Xuất LUÔN ở mọi lần chạy (kể cả 0 dòng — vẫn tạo file với
+        ghi chú "không có dữ liệu", nhất quán với các sheet khác) — không phụ thuộc mode Checkpoint. Đây là
+        file THUẦN HIỂN THỊ, không có cơ chế đọc lại (khác Checkpoint xác nhận thủ công).</p>
+
+      <div class="label">Verify</div>
+      <p>9 test mới (tổng ACH suite 115/115 PASS). Chạy lại dữ liệu thật 22/07+23/07: mọi số liệu cũ
+        (Khớp/thừa/Timeout, bất biến) <strong>không đổi 1 đơn vị nào</strong> — đúng cam kết "không đổi Rule
+        tự động". File mới sinh ra đúng: 22/07 → 105 dòng (toàn bộ <code>MSGREF_RONG_TAI_T-1</code>), 23/07 →
+        2 dòng (<code>MSGREF_KHONG_TIM_THAY_TREN_GW_TAI_T-1</code>, trùng đúng 2 REFHUB đã là Timeout hợp lệ
+        của 22/07 — hợp lý vì MIS_đi zip luôn chứa cả dữ liệu ngày T-1).</p>
+    </div>
+  </div>
+
+  <!-- 52 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">52</span>
+      <span class="card-title">UX Checkpoint — popup + đếm số giao dịch + auto-copy kết quả về thư mục nguồn (mode folder)</span>
+      <span class="badge badge-done">Không đổi Business Rule/pipeline/Checkpoint — chỉ đổi orchestration + trình bày</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh</div>
+      <p>Business Owner phản hồi trải nghiệm dùng thật: phải tự tìm file trong <code>data/temp_ach/...</code>,
+        không biết còn bao nhiêu giao dịch cần xác nhận. Sau khi phân tích kiến trúc Client–Server thật (backend
+        chạy trên máy chủ, trình duyệt có thể ở máy khác — xem thảo luận thiết kế trước khi code), chốt phương án
+        AN TOÀN: vẫn giữ nguyên cơ chế upload lại file xác nhận (không đọc trực tiếp — xem mục "Chưa làm" bên
+        dưới), chỉ cải thiện lớp orchestration (<code>ach_service.py</code>) và trình bày (<code>cham_ach.py</code>).</p>
+
+      <div class="label">Đã làm</div>
+      <ul>
+        <li><code>ach_service.py</code>: thêm <code>job['mode']</code> ('upload'/'folder'),
+          <code>job['source_folder']</code>, <code>job['xac_nhan_count']</code> (đếm bằng cách tái dùng
+          <code>_doc_sheet_can_xac_nhan()</code> đã có — không viết lại logic đọc sheet, không đổi
+          <code>b4_xu_ly_mis_di.py</code>), <code>job['final_output_dir']</code>/<code>job['copy_error']</code>.</li>
+        <li>Hàm mới <code>_copy_results_to_source()</code> — chỉ chạy khi <code>mode == 'folder'</code>, copy
+          (không move) toàn bộ file kết quả về <code>&lt;thư mục nguồn&gt;/Output/</code> SAU khi
+          <code>main_from_dir()</code> đã chạy xong hoàn toàn. Lỗi copy (vd ổ mạng mất kết nối — đã xảy ra thật
+          2 lần trong phiên trước) được bắt riêng, không làm job thành 'error'; nút tải qua
+          <code>/api/ach/download/...</code> luôn là phương án dự phòng độc lập.</li>
+        <li><b>Phát hiện + sửa 2 race condition</b> trong lúc viết test (không phải yêu cầu, tự tìm ra): cả
+          <code>xac_nhan_count</code> lẫn kết quả copy đều bị gán SAU khi đổi <code>job['status']</code> —
+          polling phía frontend dừng lại NGAY khi thấy status đổi (<code>_stop_timer()</code>), nên có thể bắt
+          được status mới nhưng field liên quan vẫn còn <code>None</code>. Đã đảo thứ tự: tính toán xong xuôi
+          rồi mới đổi status.</li>
+        <li><code>cham_ach.py</code>: <code>checkpoint_card</code> (inline, ẩn/hiện) → <code>ui.dialog()</code>
+          tự mở khi tới Checkpoint (pattern đã dùng ở <code>bundles.py</code>/<code>leaves.py</code>), hiển thị
+          "Có N giao dịch cần xác nhận", nút "Đã xác nhận – Chạy tiếp" theo đúng chữ Business Owner yêu cầu,
+          gợi ý kéo-thả file. Mode mặc định đổi sang 'folder' (đúng khung "chỉ chọn 1 thư mục"). Sau khi 'done',
+          hiển thị đường dẫn đã copy (hoặc lý do copy lỗi) ngay trong card kết quả, giữ nguyên nút tải làm dự
+          phòng.</li>
+      </ul>
+
+      <div class="label">Verify</div>
+      <p>122/122 test ACH PASS (thêm test đếm số dòng CAN_XAC_NHAN bằng file .xlsx thật — không phải bytes giả;
+        test copy thành công/thất bại cho mode folder; test xác nhận mode upload KHÔNG copy gì). 270/271 test
+        toàn dự án PASS (1 fail ILO1000 không liên quan, đã xác nhận tồn tại từ trước bằng git stash).</p>
+
+      <div class="label">CHƯA làm — hoãn có chủ đích (không phải quên)</div>
+      <p>Ý tưởng "backend đọc trực tiếp file xác nhận đã sửa, bỏ qua bước upload lại" — Business Owner CHỦ Ý
+        không làm ở lần này: Rule vẫn đang hoàn thiện, muốn ổn định nghiệp vụ trước, sẽ tối ưu UX sau khi nghiệm
+        thu toàn bộ Rule. Về mặt kỹ thuật, ý tưởng này CHỈ an toàn nếu xác nhận được máy chủ và thư mục nguồn
+        (vd <code>G:\...</code>) là ổ mạng nhìn thấy được từ CẢ 2 phía (server lẫn máy người dùng) — nếu không,
+        backend đọc "trực tiếp" sẽ đọc nhầm bản chưa sửa hoặc lỗi không tìm thấy file. Khi làm, chỉ cần đổi
+        nguồn cấp <code>xac_nhan_path</code> cho <code>continue_job()</code> — không đụng
+        <code>ap_dung_xac_nhan()</code> hay bất kỳ Business Rule nào.</p>
+    </div>
+  </div>
+
+  <!-- 53 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">53</span>
+      <span class="card-title">Chế độ xử lý Checkpoint A/B + rút gọn file xác nhận còn 1 sheet</span>
+      <span class="badge badge-done">Không đổi Business Rule/pipeline/thuật toán/Checkpoint — chỉ đổi UX + 1 sheet tham khảo</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh</div>
+      <p>Business Owner phản hồi 2 điểm sau khi dùng thật: (1) popup Checkpoint tự mở ngay khi tới, muốn có lựa
+        chọn "chạy hết phần tự động rồi mới xác nhận" thay vì bị chặn ngay lúc đó; (2) sheet <code>MIS_DI_CHUAN</code>
+        (tham khảo) trong file xác nhận không cần thiết — nếu Timeout sai thì cũng không còn tin sheet tham khảo.
+        Trước khi code, đã thảo luận kiến trúc riêng để xác nhận: cả 2 chế độ dùng chung 100% pipeline/state
+        machine hiện có (<code>main_from_dir()</code>, <code>khop_voi_gw()</code>, <code>ap_dung_xac_nhan()</code>
+        không đổi); khác biệt duy nhất là tầng trình bày frontend — thời điểm gọi <code>_enter_checkpoint()</code>.</p>
+
+      <div class="label">Đã làm</div>
+      <ul>
+        <li><b>Chế độ A/B (frontend-only, 0 dòng backend)</b>: <code>cham_ach.py</code> thêm
+          <code>ui.radio()</code> "Chế độ xử lý Checkpoint" trước nút "Chạy đối chiếu" — Chế độ A (mặc định,
+          hành vi hiện tại) gọi <code>_enter_checkpoint()</code> ngay khi poll thấy
+          <code>awaiting_confirmation</code>; Chế độ B hoãn lại, chỉ hiện banner tĩnh "Có N giao dịch Timeout
+          cần xác nhận" + nút "Xem và xác nhận" — bấm vào mới gọi đúng <code>_enter_checkpoint()</code> đó
+          (tái dùng nguyên hàm, không tách logic riêng, không thêm endpoint mới).</li>
+        <li>Nút "Dừng" ẩn trong lúc chờ ở Chế độ B (chưa mở xác nhận), hiện lại ngay khi mở — tận dụng đúng dòng
+          <code>btn_cancel.set_visibility(True)</code> có sẵn trong <code>_enter_checkpoint()</code>, chỉ cần ẩn
+          thêm 1 dòng khi vào trạng thái chờ (<code>_show_checkpoint_banner()</code>).</li>
+        <li>Bỏ sheet <code>MIS_DI_CHUAN</code> khỏi <code>xuat_excel_xac_nhan()</code> (<code>pipeline.py</code>)
+          — file xác nhận giờ chỉ còn đúng 1 sheet <code>CAN_XAC_NHAN</code>. Xác nhận trước khi sửa: hàm đọc lại
+          <code>_doc_sheet_can_xac_nhan()</code> vốn dĩ đã CHỈ đọc sheet <code>CAN_XAC_NHAN</code>, chưa từng đụng
+          <code>MIS_DI_CHUAN</code> — sheet đó thuần túy display-only, xóa không ảnh hưởng
+          <code>ap_dung_xac_nhan()</code> hay bất kỳ Business Rule nào. Tham số <code>df_mis_di</code> của hàm
+          xuất file cũng bỏ theo (không còn dùng trong hàm này; vẫn dùng bình thường ở nơi khác trong
+          <code>main_from_dir()</code>).</li>
+        <li><b>Lợi ích phụ:</b> việc này giải quyết luôn 1 mục backlog cũ — <code>xuat_excel_xac_nhan()</code>
+          từng chưa áp <code>CSV_THRESHOLD</code> cho sheet <code>MIS_DI_CHUAN</code> (đã thấy 72MB/562K dòng
+          trên dữ liệu thật); sheet đó không còn tồn tại nên vấn đề kích cỡ file biến mất theo.</li>
+      </ul>
+
+      <div class="label">Verify</div>
+      <p>122/122 test ACH PASS (gồm 8 test <code>TestApDungXacNhan</code> cập nhật signature
+        <code>xuat_excel_xac_nhan()</code> mới — không đổi assertion nghiệp vụ). Backend + frontend import sạch.</p>
+
+      <div class="label">Giới hạn đã biết — điều kiện sử dụng của bản này (không phải bug)</div>
+      <p>Chế độ B chỉ hoạt động đúng trong PHẠM VI đã Business Owner xác nhận: cùng một phiên làm việc, không
+        đóng tab/tải lại trang, backend không restart. <code>state</code> (gồm <code>job_id</code>) là biến cục
+        bộ trong closure trang NiceGUI — không lưu ở URL/localStorage/DB — nên tải lại trang hoặc đóng tab sẽ mất
+        khả năng nối lại với job (dù job vẫn sống ở backend trong TTL 4h). Đây là giới hạn CÓ SẴN từ trước
+        (áp dụng cho cả Chế độ A), không phải rủi ro mới — chỉ đáng chú ý hơn ở Chế độ B vì nó khuyến khích đúng
+        hành vi "đi làm việc khác rồi quay lại". Resume thật (persist job, sống qua restart) CHỦ Ý không làm ở
+        milestone này — sẽ mở thành milestone riêng nếu cần.</p>
+    </div>
+  </div>
+
+  <!-- 54 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">54</span>
+      <span class="card-title">Đính chính bản chất nghiệp vụ "Đã đi kênh" → "Timeout không đi kênh khác phiên đối chiếu"</span>
+      <span class="badge badge-done">Sửa Business Rule Checkpoint theo UAT — 122/122 test PASS, đã commit dc9945a</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh — lỗi hiểu sai bản chất phát hiện qua UAT</div>
+      <p>Code cũ (từ khi có Checkpoint, xem mục 46) coi lựa chọn "Đã đi kênh" trong sheet
+        <code>CAN_XAC_NHAN</code> là "máy phân loại SAI — giao dịch thực ra đã khớp GW của chính phiên đang
+        đối chiếu" → nối thẳng vào <code>df_mis_di_khop_gw_final</code>, để B5
+        (<code>doi_chieu_di()</code>) so khớp lại với GL02 của phiên này. Business Owner chỉ ra qua UAT: đây
+        là hiểu sai — <strong>toàn bộ giao dịch nhánh Timeout (1A) đều thật sự là Timeout</strong>, không có
+        khái niệm "máy phân loại sai". Lựa chọn thứ 2 chỉ đánh dấu <strong>phạm vi</strong>: "Timeout này
+        không thuộc phiên đang đối chiếu, mà thuộc phiên khác" — vẫn là Timeout, không bao giờ được quay lại
+        pool đối chiếu. Công thức nghiệp vụ chốt: <code>Timeout của phiên đối chiếu = Tổng Timeout chương
+        trình tính ra − Timeout khác phiên đối chiếu</code>.</p>
+
+      <div class="label">Thiết kế đã chốt cùng Business Owner trước khi sửa</div>
+      <ul>
+        <li>Đóng vòng cho giao dịch "khác phiên": xử lý <strong>thủ công ngoài code</strong> — người chấm
+          phiên đúng tự paste MSGREF vào vùng bổ sung (<code>msgref_bo_sung</code>) của phiên đó. Không cần
+          chương trình tự động điều hướng.</li>
+        <li>Hiển thị: <strong>chung 1 sheet</strong> <code>TIMEOUT_KHONG_KENH</code>, phân biệt bằng cột mới
+          <code>PHAN_LOAI_TIMEOUT</code> ('Phiên này' / 'Khác phiên đối chiếu') — không tách sheet riêng.</li>
+        <li><code>TONG_KET</code>/<code>SO_TIMEOUT</code> (sheet <code>CAP_CN_TIEN</code>) phải đếm
+          <strong>đủ cả 2 loại</strong> (không trừ khác phiên) — bảo toàn bất biến số học "Tổng MIS_đi =
+          MIS_đi khớp đúng + Timeout" theo đúng mục 3.2 tài liệu nghiệp vụ. Nhờ thiết kế "Checkpoint không
+          đụng pool đối chiếu" ở dưới, không cần sửa gì thêm ở đây — biến truyền vào đã tự động đúng.</li>
+      </ul>
+
+      <div class="label">Thay đổi code</div>
+      <p><code>ap_dung_xac_nhan()</code> (<code>b4_xu_ly_mis_di.py</code>) — bỏ hẳn đoạn nối vào
+        <code>df_mis_di_khop_gw_final</code>; hàm giờ trả nguyên <code>df_mis_di_khop_gw</code> không đổi.
+        Cả nhóm "giữ Timeout phiên này", "khác phiên đối chiếu", và "bổ sung MSGREF" (luôn tính "Phiên này" —
+        bị thuật toán bỏ sót ở chính phiên này, khác bản chất "khác phiên") đều gộp vào
+        <code>df_timeout_final</code>, gắn <code>PHAN_LOAI_TIMEOUT</code>. Dropdown xác nhận
+        (<code>pipeline.py::_viet_can_xac_nhan()</code>) đổi nhãn giá trị thứ 2 thành "Timeout không đi kênh
+        khác phiên đối chiếu". Cột <code>PHAN_LOAI_TIMEOUT</code> thêm vào <code>_COLS_MIS_DI</code> — cơ chế
+        <code>_clean()</code> có sẵn tự loại cột không tồn tại nên chỉ hiện ở sheet Timeout, không lẫn vào
+        <code>MIS_DI_KHOP</code>/<code>MIS_DI_THUA</code>.</p>
+
+      <div class="label">Verify</div>
+      <p>Viết lại toàn bộ <code>TestApDungXacNhan</code> theo ngữ nghĩa mới + thêm test mới
+        <code>test_khac_phien_khong_quay_lai_pool_doi_chieu</code> khẳng định bất biến số học (tổng
+        khớp+timeout bảo toàn trước/sau xác nhận, đúng ví dụ 12 Timeout / 11 phiên này / 1 khác phiên Business
+        Owner đưa ra). 122/122 test ACH PASS, grep toàn <code>backend/</code> xác nhận không còn sót tham
+        chiếu "Đã đi kênh" cũ. Đã commit chung với Milestone F (mục 51) vào <code>dc9945a</code> — 2 việc nằm
+        chung file nên không tách commit được (xem SESSION-SUMMARY-ACH-2026-07-30.md).</p>
+
+      <div class="label">Chưa làm</div>
+      <p>Chưa click-through UI thật để xác nhận dropdown mới hiển thị đúng trên Excel thật (cùng hạng mục còn
+        treo với UI Milestone F, mục 51 — chờ dữ liệu G:). Chưa push lên remote.</p>
+    </div>
+  </div>
+
+  <!-- 55 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">55</span>
+      <span class="card-title">PR "Điểm 1: Dời điểm chấm thủ công về MIS_đi" — kế hoạch đã chốt, CHƯA viết code</span>
+      <span class="badge badge-info">Change Plan — chờ Business Owner giao Điểm 2/3, CHƯA sửa code</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh</div>
+      <p>Business Owner gửi PR riêng (<code>PR_DoiChieuACH_Diem1_ChamThuCong_MISdi.md</code>) yêu cầu dời điểm
+        dừng chấm thủ công từ SAU <code>khop_voi_gw()</code> (bước 6-7, chấm nhánh Timeout đã lọc) lên NGAY
+        SAU <code>_process_mis_di()</code> (bước 5, chấm chính MIS_đi gốc) — lý do: "đầu vào bẩn → kết quả sai",
+        muốn người chấm kiểm chứng dữ liệu GỐC thay vì danh sách Timeout đã qua xử lý. PR nêu rõ đây LÀ Điểm 1
+        trong loạt 3 điểm, Điểm 2/3 "chưa chốt, sẽ bổ sung sau" — nên phiên này CHỈ lập kế hoạch, không code.</p>
+
+      <p><b>Xung đột quan trọng đã phát hiện và được Business Owner xác nhận trước khi lập kế hoạch:</b> Điểm 1
+        yêu cầu bỏ hẳn bước 8/9 (cơ chế Checkpoint xác nhận Timeout, nhãn "Timeout không đi kênh khác phiên đối
+        chiếu", cột <code>PHAN_LOAI_TIMEOUT</code>) — chính là tính năng vừa hoàn thành, test 122/122 PASS, và
+        đính chính bản chất nghiệp vụ trong CÙNG NGÀY hôm nay (mục 54, commit <code>dc9945a</code>). Đã hỏi
+        thẳng và Business Owner xác nhận: <b>xóa hẳn, gộp vào 1 checkpoint duy nhất ở MIS_đi</b> — không phải
+        giữ song song, không phải khôi phục dưới hình thức khác ở Điểm 2/3.</p>
+
+      <div class="label">Quyết định đã chốt cùng Business Owner (trước khi code)</div>
+      <ul>
+        <li>Cơ chế Timeout-confirm cũ (<code>xuat_excel_xac_nhan()</code>, <code>_viet_can_xac_nhan()</code>,
+          <code>ap_dung_xac_nhan()</code>, <code>_doc_sheet_can_xac_nhan()</code>, mục 54) — <b>xóa hẳn</b>,
+          không giữ song song với checkpoint mới.</li>
+        <li>File <code>_ACH_CanKiemTraThuCong.xlsx</code> (Milestone F Option C, mục 51 — 2 nhánh SESSION=NULL
+          còn treo) — <b>bỏ file riêng</b>, gộp vào file confirm MIS_đi mới (MIS_đi đã chứa sẵn các dòng giữ
+          tạm này). Cần sort/tô màu ưu tiên các dòng có <code>LY_DO_GIU_SESSION_NULL</code> khác rỗng lên đầu
+          để người chấm không bỏ sót giữa hàng nghìn dòng MIS_đi.</li>
+        <li>Cột chấm tay mới: tên <code>LOAI_BO</code>, 2 giá trị {trống, "loại bỏ"} — thay hẳn dropdown
+          <code>KET_QUA_XAC_NHAN</code> cũ.</li>
+        <li>Khu vực bổ sung giao dịch bỏ sót: đổi khóa tra cứu từ MSGREF → <b>REFHUB</b> — chủ đích của Business
+          Owner để né vấn đề MSGREF từng rỗng ở một số giao dịch (đã gặp trong mục 51/54). REFHUB trùng ≥2 dòng
+          trên MIS_hub thô → báo lỗi, từ chối chạy tiếp (đúng nguyên tắc không tự chọn theo vị trí, xuyên suốt
+          module ACH).</li>
+        <li>File confirm xuất ĐẦY ĐỦ cột thô MIS_hub (17 cột) + cột tính toán (<code>CN tiền Hub</code>,
+          <code>LY_DO_GIU_SESSION_NULL</code>, <code>SO_TRACE</code>...) — không chỉ cột thô, để người chấm
+          hiểu được TẠI SAO 1 dòng nằm trong diện xem xét.</li>
+        <li>UI hiển thị số liệu chờ chấm: <b>tổng số giao dịch VÀ tổng số tiền</b> MIS_đi cần chấm (khác cơ chế
+          cũ chỉ đếm số dòng <code>CAN_XAC_NHAN</code>) — <code>_dem_giao_dich_can_xac_nhan()</code> cần đổi
+          sang trả về cả 2 giá trị.</li>
+        <li>Đổi tên file/sheet để tránh nhầm với cơ chế cũ: <code>&lt;ngày&gt;_ACH_XacNhan.xlsx</code> →
+          <code>&lt;ngày&gt;_ACH_ConfirmMISdi.xlsx</code>; sheet <code>CAN_XAC_NHAN</code> →
+          <code>MIS_DI_CONFIRM</code>. Không cần tương thích ngược (file tạm trong phiên làm việc, không lưu
+          trữ dài hạn).</li>
+      </ul>
+
+      <div class="label">Rủi ro đã lường trước</div>
+      <p>Số liệu Timeout đầu ra SẼ khác các bộ regression cũ (22/07, 23/07 — mục 47/48) vì input đã qua thêm 1
+        lớp chấm tay trước khi tính <code>khop_voi_gw()</code> — đây là thay đổi CÓ CHỦ ĐÍCH của Điểm 1, không
+        được coi là lệch = bug khi verify sau này. <code>khop_voi_gw()</code> giữ nguyên logic, chỉ đổi input
+        thành MIS_đi đã chấm.</p>
+
+      <div class="label">Chưa làm — cố ý</div>
+      <p>CHƯA viết bất kỳ dòng code nào theo yêu cầu tường minh của Business Owner ("chỉ viết code khi tôi yêu
+        cầu vì còn phần 2 và phần 3"). Kế hoạch chi tiết (danh sách file/hàm, thứ tự thực hiện) đã thảo luận
+        đầy đủ trong hội thoại, chưa lưu thành file riêng — tham chiếu lại hội thoại khi bắt đầu code, hoặc yêu
+        cầu Claude tóm tắt lại kế hoạch nếu mất ngữ cảnh.</p>
+    </div>
+  </div>
+
+  <!-- 56 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">56</span>
+      <span class="card-title">PR "Điểm 2: Đối chiếu điện OSB (đi &amp; đến)" — kế hoạch đã chốt, CHƯA viết code</span>
+      <span class="badge badge-info">Change Plan — chờ Business Owner giao Điểm 3, CHƯA sửa code</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh</div>
+      <p>Business Owner gửi PR thứ 2 (<code>PR_DoiChieuACH_Diem2_DoiChieuOSB.md</code>) — bổ sung luồng đối
+        chiếu riêng cho điện OSB (đi &amp; đến), dựa trên 1 file input mới (Quyết toán OSB — "QT"), tách qua
+        cột <code>LOAI_LENH_OSB</code>, map với QT qua khóa <code>CN TRACE TIỀN</code>. PR bản gốc ghi nguồn
+        tách là "MIS khớp đúng" (bước 10-11) — ĐÃ SỬA LẠI thành <code>MIS_đi thừa</code>/<code>MIS_đến thừa</code>
+        sau khi verify dữ liệu thật (xem chi tiết bên dưới). PR gắn rõ với Điểm 1 (mục 55) — đầu ra bước 5-11
+        sẽ đổi hình dạng sau khi Điểm 1 triển khai (checkpoint xác nhận MIS_đi thay đổi phần nào rơi vào
+        "thừa") — <b>phải làm Điểm 1 trước Điểm 2</b>.</p>
+
+      <div class="label">Xác minh bằng code thật (trả lời các ❓ PR tự nêu)</div>
+      <ul>
+        <li>Cột "CN TRACE TIỀN" phía MIS <b>đã tồn tại sẵn</b>, không cần build lại: chiều đi là cột
+          <code>KEY_HUB</code> (<code>b4_xu_ly_mis_di.py::_them_cot_khoa()</code>) =
+          <code>CHI_NHANH.strip() + SO_TRACE + SO_TIEN</code>; chiều đến là cột <code>KEY_DEN_HUB</code>
+          (<code>b6_xu_ly_mis_den.py::xu_ly_mis_den()</code>) = <code>CHI_NHANH.strip() + TRACE(lstrip '0)
+          + SO_TIEN</code>. Cả 2 cột sống sót nguyên vẹn tới <code>df_mis_di_khop</code>/<code>df_mis_den_khop</code>
+          (đầu ra bước 10-11) vì <code>_doi_chieu()</code> chỉ lọc dòng, không đổi cột.</li>
+        <li><b>Không có ký tự phân tách</b> giữa 3 thành phần khi ghép chuỗi — QT phải ghép đúng thứ tự
+          Chi_nhánh+Trace+Tiền, không chèn ký tự nào.</li>
+        <li>Cột <code>LOAI_LENH_OSB</code> đã tồn tại từ CSV MIS_hub gốc, sống sót tới
+          <code>df_mis_di_khop</code>/<code>df_mis_den_khop</code>/<code>df_mis_di_thua</code>/<code>df_mis_den_thua</code>.
+          <b>Đã verify trên dữ liệu thật (mục 58, <code>G:\ACH CHUA DOI CHIEU NGAY 24-26.07</code>, 2 ngày
+          24/07+25/07) — 2 điểm PR ghi SAI, đã sửa lại:</b> (1) giá trị thực tế chiều đi là
+          <b>chữ <code>'O'</code></b>, không phải "số 0" như PR viết; chiều đến đúng là số <code>'1'</code>.
+          (2) <code>MIS_DI_KHOP</code>/<code>MIS_DEN_KHOP</code> (đầu ra bước 10-11, nguồn PR §3 ban đầu chỉ
+          định để tách OSB) có <b>0 dòng OSB</b> trên CẢ 2 ngày kiểm tra (0/505.193, 0/486.310 chiều đi;
+          0/510.596, 0/495.691 chiều đến) — toàn bộ lệnh OSB đang nằm ở
+          <code>MIS_DI_THUA</code>/<code>MIS_DEN_THUA</code> (50-55% số dòng thừa mỗi ngày là OSB).
+          <b>Kiểm tra thêm theo yêu cầu Business Owner — so trực tiếp OSB(thừa) với OSB(khớp đúng) + đối
+          chiếu đủ 3 nhóm (khớp đúng + thừa + Timeout) để chắc chắn không có lệnh OSB nào "mất tích" ở nhóm
+          khác:</b> chiều đi 24/07 — khớp đúng 0, thừa 33.324, Timeout không đi kênh 1 dòng → tổng 33.325;
+          25/07 — khớp đúng 0, thừa 30.034, Timeout 1 dòng → tổng 30.035. OSB(thừa) ≠ OSB(khớp đúng) rõ ràng
+          (33.324/30.034 so với 0) — 99,997% lệnh OSB nằm ở MIS_đi thừa, không lọt sang nhóm nào khác ngoài 1
+          dòng/ngày rơi vào Timeout (không liên quan khớp đúng).</li>
+        <li><b>ĐÃ XÁC NHẬN với Business Owner — nguyên nhân và quyết định cuối cùng:</b> bên sổ cái (NPO/GL02)
+          ghi nhận OSB bằng <b>1 bút toán QUYẾT TOÁN TỔNG theo ngày</b> (mẫu thấy
+          <code>REFERENCE='1000OSB'</code>, không phải trace của từng giao dịch), KHÔNG có dòng riêng cho
+          từng giao dịch OSB. Vì vậy lệnh OSB riêng lẻ bên MIS KHÔNG BAO GIỜ khớp được NPO qua khóa
+          <code>KEY_HUB</code>/<code>KEY_DEN_HUB</code> (so từng giao dịch) — khác bản chất với lệch ngày do
+          phiên (mục 58, Điểm 4): đây là 2 bên ghi nhận theo 2 cách hoàn toàn khác nhau (từng giao dịch >< gộp
+          tổng), không phải vấn đề thời gian. <b>Nguồn tách OSB (mục 3 PR) CHỐT LÀ
+          <code>MIS_đi thừa</code>/<code>MIS_đến thừa</code></b> (không phải <code>MIS khớp đúng</code> như PR
+          viết ban đầu) — cập nhật thiết kế trước khi code, không phải suy đoán nữa.</li>
+        <li>Cơ chế map (Trùng / thừa 1 bên / thừa bên kia) tái dùng đúng hàm <code>_doi_chieu()</code> có sẵn
+          (<code>b5_doi_chieu_di.py</code>) — không viết lại thuật toán so khớp.</li>
+        <li><code>b8_phan_tich.py</code> tồn tại trong thư mục <code>ach/</code> nhưng là code chết, không
+          được gọi ở đâu trong <code>main_from_dir()</code> hiện tại — module OSB mới đặt tên
+          <code>b9_doi_chieu_osb.py</code> để tiếp nối đúng số, không liên quan/không đụng file b8.</li>
+      </ul>
+
+      <div class="label">Quyết định đã chốt cùng Business Owner (trước khi code)</div>
+      <ul>
+        <li>File QT <b>tùy chọn</b> — thiếu thì bỏ qua nhánh OSB, luồng ACH chính (7 file cũ) vẫn chạy bình
+          thường. KHÔNG thêm vào điều kiện chặn ở <code>validate_required_files()</code>.</li>
+        <li>File kết quả OSB xuất RIÊNG (ngoài <code>doi_chieu_&lt;ngày&gt;.xlsx</code>), 5 sheet, TÁCH theo
+          chiều: <code>TONG_KET</code>, <code>OSB_DI_DA_QUYET_TOAN</code>, <code>OSB_DEN_DA_QUYET_TOAN</code>,
+          <code>DI_CHUA_KHOP</code> (gộp OSB thừa + QT thừa chiều đi, phân biệt bằng cột <code>NGUON</code>),
+          <code>DEN_CHUA_KHOP</code> (tương tự chiều đến).</li>
+        <li>Quy ước mã chi nhánh giữa MIS (<code>CHI_NHANH</code> có sẵn) và QT (tự tính từ 4 số cuối Ref
+          nợ/Ref có) — Business Owner xác nhận CÙNG quy ước, không cần verify thêm trước khi code.</li>
+      </ul>
+
+      <div class="label">File/hàm dự kiến (chưa viết)</div>
+      <ul>
+        <li><i>(mới)</i> <code>backend/services/ach/b9_doi_chieu_osb.py</code> — <code>xu_ly_qt()</code> (đọc
+          Excel QT, dò header theo nội dung như pattern <code>_xu_ly_sheet()</code> ở b3, tách QT đi/QT đến
+          theo cột "chiều giao dịch", build key theo mục 4.1/4.2 PR), <code>tach_osb()</code> (lọc
+          <code>LOAI_LENH_OSB</code>), <code>doi_chieu_osb()</code> (gọi lại <code>_doi_chieu()</code>).</li>
+        <li><code>validate.py</code> — thêm check QT dạng optional (không chặn <code>ok</code> tổng thể).</li>
+        <li><code>pipeline.py</code> — <code>_tim_qt_xlsx()</code> (pattern giống <code>_tim_gw_xlsx()</code>),
+          nhánh gọi OSB sau Phase 2 (không phụ thuộc bước 12 GW-thừa), <code>xuat_excel_osb()</code>.</li>
+        <li><code>ach_service.py::_run()</code> — thêm file OSB vào <code>job['files']</code> nếu QT có mặt.</li>
+      </ul>
+
+      <div class="label">Rủi ro lớn nhất</div>
+      <p>Định dạng "Số tiền" QT sau khi đổi dấu phân cách (chấm→phẩy) phải ra đúng chuỗi số nguyên trần khớp
+        tuyệt đối <code>SO_TIEN.astype(str)</code> bên MIS — lệch 1 số 0 hoặc còn phần thập phân là map trượt
+        toàn bộ. Cần verify kỹ bằng file QT mẫu thật trước khi viết <code>xu_ly_qt()</code>, viết test thuật
+        toán độc lập trước (đúng thói quen dự án).</p>
+
+      <div class="label">Chưa làm — cố ý</div>
+      <p>CHƯA viết code, theo đúng yêu cầu PR + xác nhận của Business Owner ("chỉ viết code khi tôi yêu cầu vì
+        còn phần 2 và phần 3", nhắc lại từ mục 55). Thứ tự triển khai bắt buộc: xong Điểm 1 (mục 55) trước, rồi
+        mới tới Điểm 2 này. Điểm 3 (PR thứ 3) chưa được cung cấp.</p>
+    </div>
+  </div>
+
+  <!-- 57 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">57</span>
+      <span class="card-title">PR "Điểm 3: NPO_đi thừa → tách điện đi huỷ trong ngày/khác ngày" — kế hoạch đã chốt, CHƯA viết code</span>
+      <span class="badge badge-info">Change Plan — chờ Business Owner giao Điểm 4, CHƯA sửa code</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh</div>
+      <p>Business Owner gửi PR thứ 3 (<code>PR_DoiChieuACH_Diem3_NPOdiThua_DienHuy.md</code>) — xử lý thêm trên
+        <code>df_npo_di_thua</code> (đầu ra bước 10, <b>đã tồn tại</b>, không đổi cách sinh ra): tách 2 nhóm
+        "điện đi huỷ trong ngày" (cặp/nhóm CRAMOUNT triệt tiêu nhau) và "điện đi huỷ khác ngày"
+        (<code>TRTP='Cancel'</code>), phần còn lại vẫn là NPO_đi thừa như cũ. Không phụ thuộc Điểm 2 (OSB) —
+        chỉ bám cùng lineage <code>df_mis_di_khop → df_npo_di_thua</code> như Điểm 1, nên có thể làm song song
+        với Điểm 2, chỉ cần Điểm 1 xong trước.</p>
+
+      <div class="label">Xác minh bằng code thật (trả lời các ❓ PR tự nêu)</div>
+      <ul>
+        <li><code>df_npo_di_thua</code> sinh từ <code>doi_chieu_di()</code>
+          (<code>b5_doi_chieu_di.py:37-44</code>), cột = <code>COLS_NPO</code> (<code>config.py</code>) +
+          <code>SO_TRACE</code> + <code>KEY_DI</code> (thêm ở <code>b2_xu_ly_gl02.py:113-123</code>).
+          <code>SO_TRACE</code> đã có sẵn (trích <code>REFERENCE[7:19]</code>, lstrip '0') — không cần tính
+          lại. <code>TRTP</code> tồn tại nhưng <b>chưa từng được lọc/dùng ở bất kỳ đâu trong pipeline hiện
+          tại</b> — giá trị <code>'Cancel'</code> mới chỉ là giả định của PR, chưa verify trên dữ liệu thật.
+          Tiền: 2 cột riêng <code>DRAMOUNT</code>/<code>CRAMOUNT</code>, không dùng dấu để phân biệt nợ/có.</li>
+        <li><b>Phát hiện quan trọng trước khi hỏi:</b> <code>b2_xu_ly_gl02.py:118+125</code> chia GL02 thành 2
+          nhánh loại trừ nhau theo <code>CRAMOUNT != 0</code> (đi) / <code>CRAMOUNT == 0</code> (đến). Nếu hiểu
+          "1 dòng ghi nợ" theo nghĩa đen là dòng chỉ có <code>DRAMOUNT</code>, dòng đó sẽ rơi vào nhánh NPO_đến,
+          không bao giờ nằm trong <code>npo_di_thua</code> để ghép cặp — thuật toán PR mô tả sẽ không bao giờ
+          tìm được cặp nào theo cách hiểu đó.</li>
+      </ul>
+
+      <div class="label">Quyết định đã chốt cùng Business Owner (trước khi code)</div>
+      <ul>
+        <li><b>Định nghĩa "cặp/nhóm" đã chốt</b> (giải quyết phát hiện ở trên): 2+ dòng CÙNG nằm trong
+          <code>npo_di_thua</code>, cùng cột <code>CRAMOUNT</code>, 1 (hoặc nhiều) dương + 1 (hoặc nhiều) âm,
+          <b>tổng CRAMOUNT của cả nhóm = 0</b> — không phải khác cột DRAMOUNT/CRAMOUNT như chữ PR gợi ý ban
+          đầu. Thuật toán: <code>groupby(CHECK_TRUNG)</code>, nhóm nào <code>sum(CRAMOUNT) == 0</code> → toàn
+          bộ nhóm vào "huỷ trong ngày" (điều kiện <code>len(nhóm) >= 2</code> tự động thỏa vì mỗi dòng
+          <code>npo_di_thua</code> luôn có CRAMOUNT ≠ 0, 1 dòng đơn lẻ không bao giờ tổng = 0).</li>
+        <li><b>Mở rộng "cặp" (đúng 2 dòng) thành "nhóm"</b> (≥2 dòng, miễn tổng = 0) — khác giả định thận trọng
+          ban đầu của PR (chỉ nhận đúng 2 dòng, bỏ qua nhóm lớn hơn).</li>
+        <li>Sheet "điện đi huỷ khác ngày": liệt kê chi tiết từng dòng + 1 dòng tổng (số món + số tiền) cuối
+          sheet — không phải chỉ bảng tổng hợp.</li>
+        <li>Sheet Tổng kết của báo cáo chính: thêm dòng riêng cho 2 nhóm huỷ (số món + số tiền mỗi nhóm).</li>
+      </ul>
+
+      <div class="label">File/hàm dự kiến (chưa viết)</div>
+      <ul>
+        <li><i>(mới)</i> <code>backend/services/ach/b10_xu_ly_npo_di_thua.py</code> —
+          <code>tach_dien_huy(df_npo_di_thua)</code> → trả về <code>(df_huy_trong_ngay, df_huy_khac_ngay,
+          df_npo_di_thua_con_lai)</code>. B1: <code>CHECK_TRUNG = TRBRCD + SO_TRACE</code> (chưa chốt ký tự
+          phân tách — đề xuất không phân tách theo tiền lệ <code>KEY_DI</code>, cần xác nhận thêm). B2: nhóm
+          theo trên. B3: trên phần còn lại, lọc <code>TRTP == 'Cancel'</code>. B4: phần còn lại giữ nguyên là
+          NPO_đi thừa.</li>
+        <li><code>pipeline.py</code> — gọi hàm trên ngay sau khi có <code>df_npo_di_thua</code> (Phase 2),
+          trước <code>xuat_excel()</code>; <code>xuat_excel()</code> thêm 2 sheet mới, và <b>PHẢI thay</b> input
+          sheet <code>NPO_DI_THUA</code> bằng <code>df_npo_di_thua_con_lai</code> — nếu quên trừ, 1 dòng sẽ bị
+          đếm trùng ở cả sheet huỷ lẫn sheet NPO_đi thừa, sai bất biến số học.</li>
+        <li><code>_viet_tong_ket()</code> — thêm 2 dòng số liệu huỷ.</li>
+      </ul>
+
+      <div class="label">Câu hỏi còn mở (nhỏ, không chặn)</div>
+      <p>Ký tự phân tách khi ghép <code>CHECK_TRUNG</code> — đề xuất không phân tách (theo tiền lệ
+        <code>KEY_DI</code>), chưa được Business Owner xác nhận riêng, sẽ chốt khi bắt đầu code.</p>
+
+      <div class="label">Chưa làm — cố ý</div>
+      <p>CHƯA viết code, theo đúng yêu cầu PR + Business Owner (còn Điểm 4 chưa cung cấp). Thứ tự triển khai:
+        Điểm 1 (mục 55) bắt buộc trước; Điểm 3 này và Điểm 2 (mục 56) độc lập với nhau, có thể làm song song
+        sau khi Điểm 1 xong.</p>
+    </div>
+  </div>
+
+  <!-- 58 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">58</span>
+      <span class="card-title">Điểm 4 (chưa có PR chính thức): Đối chiếu MIS thừa (T-2) với NPO thừa (T-1) — CẢ 2 CHIỀU đi &amp; đến — ý tưởng đã VERIFY bằng dữ liệu thật, kế hoạch đã chốt, CHƯA viết code</span>
+      <span class="badge badge-info">Change Plan — thảo luận tổng thể, chưa có PR chi tiết từ nghiệp vụ, CHƯA sửa code</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh nghiệp vụ (Business Owner giải thích)</div>
+      <p>Không phải bug — là chênh lệch CẤU TRÚC do 2 hệ thống cắt phiên khác nhau: hệ thống sổ cái (NPO/GL02)
+        chạy theo lịch thực (0h-24h), hệ thống kênh ACH (MIS_hub) cắt phiên 23h-23h. Kết quả: 1 giao dịch kênh
+        đã xử lý xong (trạng thái <code>SCNL</code>) nhưng bút toán sổ cái tương ứng có thể "rơi" sang phiên
+        đối chiếu của ngày HÔM SAU — khiến nó bị báo "MIS_đi thừa" oan ở ngày hiện tại, rồi "tự nhiên khớp" khi
+        chạy đối chiếu ngày kế tiếp. Quy trình thực tế: chương trình luôn chạy trễ 1 ngày (xử lý cho "ngày
+        T-1"), và tại thời điểm đó người dùng ĐÃ CÓ SẴN file MIS_đi thừa của ngày T-2 (từ lần chạy trước, đã
+        xong) — nên chỉ cần cho họ đính kèm thêm file đó khi chạy đối chiếu hôm nay.</p>
+
+      <div class="label">Đã VERIFY bằng dữ liệu thật trước khi thiết kế — CẢ 2 CHIỀU</div>
+      <p>Ghép khóa <code>KEY_HUB</code>/<code>KEY_DI</code> (chiều đi) và <code>KEY_DEN_HUB</code>/<code>KEY_DEN</code>
+        (chiều đến) — công thức có sẵn trong <code>b4_xu_ly_mis_di.py</code>/<code>b6_xu_ly_mis_den.py</code>/
+        <code>b2_xu_ly_gl02.py</code>, không cần khóa mới:</p>
+      <ul>
+        <li><b>Chiều đi</b> (<code>G:\ACH chua doi chieu ngay 26-27.07\</code>, 26/07→27/07): MIS_đi thừa 26/07
+          (proxy T-2) ⟷ NPO_đi thừa 27/07 (proxy T-1, lệch đúng 1 ngày) — <b>25.678/26.019 dòng NPO khớp =
+          98,7%</b>; 25.678/57.097 dòng MIS khớp = 45,0%. Cùng ngày (đối chứng): 0% trùng. Chiều ngược (đối
+          chứng): 0% trùng — xác nhận đúng chiều lệch: MIS báo "thừa" TRƯỚC, NPO "bắt kịp" 1 ngày SAU.
+          <b>25.677/25.678 dòng khớp có <code>TRANG_THAI_LENH = SCNL</code></b> — khớp đúng ghi chú có sẵn
+          trong code (<code>b8_phan_tich.py</code>): <i>"SCNL: Đã thanh toán — có thể thuộc session khác,
+          bình thường"</i>.</li>
+        <li><b>Chiều đến</b> (<code>G:\ACH CHUA DOI CHIEU NGAY 24-26.07\OUTPUT\</code>, 24/07→25/07, ĐÃ loại
+          trừ lệnh OSB trước khi so khớp — xem quyết định "loại trừ OSB" bên dưới): MIS_đến thừa 24/07 (T-2,
+          non-OSB) ⟷ NPO_đến thừa 25/07 (T-1) — <b>21.152/21.153 dòng = 100,0%</b> (chỉ 1 dòng lệch), gần như
+          khớp TUYỆT ĐỐI, còn mạnh hơn chiều đi. Cùng ngày (đối chứng): 0% trùng. Chiều ngược (đối chứng): 0%
+          trùng — đúng cùng quy luật lệch chiều như bên đi.</li>
+      </ul>
+
+      <div class="label">Quyết định đã chốt cùng Business Owner (trước khi code)</div>
+      <ul>
+        <li><b>Áp dụng ĐỐI XỨNG cho cả 2 chiều</b> — Business Owner xác nhận chiều đến giống hệt bản chất chiều
+          đi: người chấm nạp thêm file MIS_đến thừa (T-2) để đối chiếu với NPO_đến thừa (T-1), cùng nguyên
+          nhân gốc (lệch phiên 23h-23h ≠ 24h thực). Toàn bộ quyết định thiết kế bên dưới áp dụng chung cho cả
+          2 chiều, chỉ đổi khóa/cột tương ứng (đi: <code>KEY_HUB</code>/<code>KEY_DI</code>, sheet
+          <code>NPO_DI_THUA</code>; đến: <code>KEY_DEN_HUB</code>/<code>KEY_DEN</code>, sheet
+          <code>NPO_DEN_THUA</code>).</li>
+        <li>File MIS thừa T-2 (đi và/hoặc đến) là input MỚI, TÙY CHỌN (giống file QT ở Điểm 2, mục 56) — chính
+          là file/sheet <code>MIS_DI_THUA_&lt;ngày&gt;.csv</code>/<code>MIS_DEN_THUA_&lt;ngày&gt;.csv</code>
+          do CHƯƠNG TRÌNH đã tự xuất ra 2 hôm trước, cột đã đúng sẵn <code>_COLS_MIS_DI</code>/schema MIS_đến
+          — không cần viết parser mới, chỉ cần validate đúng cấu trúc cột khi đọc lại (báo lỗi rõ nếu người
+          dùng lỡ sửa file). 2 file độc lập nhau — có thể chỉ nạp 1 trong 2, hoặc cả 2, hoặc không nạp gì.</li>
+        <li><b>KHÔNG thêm sheet riêng</b> (đã cân nhắc rồi bỏ) — chỉ thêm <b>1 CỘT ghi chú mới</b> ngay trên
+          sheet <code>NPO_DI_THUA</code>/<code>NPO_DEN_THUA</code> có sẵn của báo cáo chính. Dòng khớp với MIS
+          T-2 → ghi <code>"Hạch toán lệnh ngày T-2"</code>; dòng không khớp (thừa thật) → để trống. Không
+          xoá/không tách dòng khỏi sheet gốc — số liệu Tổng kết hiện có KHÔNG đổi, chỉ thêm annotation.</li>
+        <li>Đối chiếu bằng đúng khóa đã kiểm chứng ở trên, tái dùng hàm <code>_doi_chieu()</code> có sẵn
+          (không viết thuật toán so khớp mới) — dùng chung cho cả 2 chiều.</li>
+        <li><b>Loại trừ lệnh OSB khỏi input MIS thừa (T-2) trước khi đối chiếu chéo ngày — CẢ 2 CHIỀU</b> —
+          Business Owner chỉ ra: 1 dòng MIS thừa "chưa khớp NPO" có 2 nguyên nhân khác nhau — (1) lệch ngày do
+          phiên 23h-23h ≠ 24h thực (Điểm 4 xử lý được, sẽ tự khớp khi đợi đúng 1 ngày), (2) là lệnh OSB mà NPO
+          KHÔNG có bản ghi từng giao dịch riêng lẻ (đối chiếu đúng của nó là qua QT ở Điểm 2, không phải qua
+          NPO) — loại "thừa" này KHÔNG BAO GIỜ khớp NPO dù đợi bao nhiêu ngày, phải lọc <code>LOAI_LENH_OSB</code>
+          khác rỗng ra khỏi phạm vi Điểm 4 trước khi so khớp. Verify trên dữ liệu thật
+          (<code>G:\ACH CHUA DOI CHIEU NGAY 24-26.07</code>, 2 ngày 24/07+25/07): lệnh OSB chiếm 50-55% số
+          dòng MIS_đi thừa VÀ ~40% số dòng MIS_đến thừa mỗi ngày (giá trị cột thực tế là chữ <code>'O'</code>
+          chiều đi, số <code>'1'</code> chiều đến — PR Điểm 2 ghi nhầm chiều đi là "số 0", cần sửa lại khi
+          triển khai Điểm 2, xem mục 56). Trên mẫu đã kiểm tra, 0 dòng khớp chéo-ngày là lệnh OSB ở cả 2 chiều
+          — nhưng không có gì đảm bảo logic nên vẫn phải lọc chủ động, không dựa vào may rủi dữ liệu mẫu.</li>
+        <li><b>Phạm vi CHỈ 1 ngày lệch</b> (T-2 với T-1), cả 2 chiều — quyết định tường minh của Business
+          Owner: vẫn còn giao dịch không khớp cả sau T-2/T-3, nhưng để tránh phình to dự án, phần đó CHỦ Ý để
+          người dùng tự theo dõi thủ công, hẹn làm ở đợt cập nhật sau (không phải bug bỏ sót).</li>
+        <li>Không có file T-2 (1 trong 2 hoặc cả 2 chiều) → bỏ qua bước đánh dấu tương ứng, sheet
+          <code>NPO_DI_THUA</code>/<code>NPO_DEN_THUA</code> giữ nguyên như hiện tại, không chặn luồng chính
+          (đúng tinh thần Điểm 2).</li>
+      </ul>
+
+      <div class="label">File/hàm dự kiến (chưa viết)</div>
+      <ul>
+        <li><i>(mới)</i> <code>backend/services/ach/b11_doi_chieu_cheo_ngay.py</code> — dùng chung cho cả 2
+          chiều: <code>danh_dau_da_can_di(df_npo_di_thua, df_mis_di_thua_t2)</code> và
+          <code>danh_dau_da_can_den(df_npo_den_thua, df_mis_den_thua_t2)</code>, cả 2 đều LỌC BỎ dòng có
+          <code>LOAI_LENH_OSB</code> trên input MIS T-2 trước khi gọi <code>_doi_chieu()</code> → trả về
+          <code>df_npo_..._thua</code> đã thêm cột ghi chú.</li>
+        <li><code>pipeline.py</code> — đọc 2 file MIS thừa T-2 (đi/đến, đều tùy chọn độc lập), gọi 2 hàm trên
+          ngay sau khi có <code>df_npo_di_thua</code>/<code>df_npo_den_thua</code> (Phase 2), TRƯỚC khi ghi
+          sheet tương ứng ở <code>xuat_excel()</code>.</li>
+        <li>Frontend — thêm 2 ô chọn file tùy chọn "MIS_đi thừa ngày T-2" và "MIS_đến thừa ngày T-2" (pattern
+          giống ô chọn file QT).</li>
+      </ul>
+
+      <div class="label">Chưa làm — cố ý</div>
+      <p>CHƯA viết code — đợt này chưa có PR chi tiết chính thức từ nghiệp vụ (khác Điểm 1-3), mới dừng ở mức
+        thảo luận tổng thể + verify tính khả thi bằng dữ liệu thật theo đúng yêu cầu Business Owner. Khi có
+        PR chi tiết (nếu có) hoặc được yêu cầu code trực tiếp, đọc lại mục này trước khi thiết kế.</p>
+    </div>
+  </div>
+
+  <!-- 59 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">59</span>
+      <span class="card-title">Lộ trình triển khai tổng hợp 4 điểm (mục 55-58) — thứ tự bắt buộc, KHÔNG làm cùng lúc</span>
+      <span class="badge badge-info">Roadmap — chưa bắt đầu code điểm nào</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Quyết định</div>
+      <p>Business Owner hỏi nên chạy cả 4 điểm 1 lượt hay tuần tự — khuyến nghị: <b>tuần tự, mỗi điểm code
+        xong → test → verify dữ liệu thật (nếu có) → commit riêng, rồi mới sang điểm tiếp theo</b>. Không gộp
+        chung 1 commit — Điểm 1 xóa code đang chạy thật + đổi hẳn UX checkpoint, nếu sửa đồng thời với 3 tính
+        năng khác trên nền chưa ổn định sẽ khó khoanh vùng lỗi, vi phạm nguyên tắc "triển khai theo bước cực
+        nhỏ" đã áp dụng xuyên suốt (xem <code>feedback_strict_incremental_steps</code> trong bộ nhớ dự án).</p>
+
+      <div class="label">Thứ tự bắt buộc</div>
+      <ol>
+        <li><b>Điểm 1</b> (mục 55) — làm trước tiên, bắt buộc. Rủi ro cao nhất: xóa hẳn cơ chế Checkpoint
+          Timeout cũ (bước 8/9), đổi vị trí dừng pipeline, sửa API/frontend, viết lại phần lớn
+          <code>test_ach_checkpoint_api.py</code>. Mọi điểm còn lại phụ thuộc trực tiếp đầu ra bước 5-11 của
+          điểm này.</li>
+        <li><b>Điểm 3</b> (mục 57) — làm trước Điểm 4, vì cả 2 cùng sửa <code>xuat_excel()</code> trên sheet
+          <code>NPO_DI_THUA</code>: Điểm 3 TRỪ dòng huỷ ra khỏi sheet này trước.</li>
+        <li><b>Điểm 4</b> (mục 58) — làm sau Điểm 3, thêm cột ghi chú "Hạch toán lệnh ngày T-2" lên PHẦN CÒN
+          LẠI của <code>NPO_DI_THUA</code>/<code>NPO_DEN_THUA</code> (đã trừ huỷ ở bước trên) — không đánh dấu
+          nhầm lên dòng đã bị Điểm 3 tách ra.</li>
+        <li><b>Điểm 2</b> (mục 56) — độc lập hoàn toàn, không đụng <code>xuat_excel()</code> của báo cáo chính
+          (xuất file OSB riêng). Có thể làm bất cứ lúc nào sau Điểm 1, kể cả chen giữa Điểm 3/4, không bắt
+          buộc phải làm cuối — xếp cuối trong danh sách chỉ vì rủi ro thấp nhất, không phải vì phụ thuộc kỹ
+          thuật.</li>
+      </ol>
+
+      <div class="label">Chưa làm — cố ý</div>
+      <p>CHƯA bắt đầu code điểm nào. Khi được yêu cầu triển khai, đọc lại đúng mục tương ứng (55/56/57/58)
+        trước khi viết — mỗi mục đã có đủ: file/hàm dự kiến, quyết định đã chốt cùng Business Owner, câu hỏi
+        còn mở (nếu có), và số liệu verify trên dữ liệu thật.</p>
+    </div>
+  </div>
+
+  <!-- 60 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">60</span>
+      <span class="card-title">Rà soát trước khi code — Module ACH 4 điểm (theo checklist RaSoat_TruocKhiCode_ACH_4Diem.md)</span>
+      <span class="badge badge-warn">5 mục còn chờ SIGN-OFF trước khi bắt đầu code — xem chi tiết bên dưới</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh</div>
+      <p>Business Owner mang bản kế hoạch 4 điểm (mục 55-59) đi trao đổi với Claude.ai, nhận lại 1 checklist
+        rà soát (<code>RaSoat_TruocKhiCode_ACH_4Diem.md</code>) chỉ ra các chỗ kế hoạch tự sửa khác mô tả
+        nghiệp vụ gốc + giả định chưa kiểm chứng. Yêu cầu: verify bằng code+dữ liệu thật, KHÔNG tự quyết
+        Business Rule, chỉ dừng hỏi khi có quyết định nghiệp vụ. Toàn bộ mục dưới đây đã verify xong bằng dữ
+        liệu thật (2 bộ dữ liệu G: đã dùng ở mục 58), <b>CHƯA VIẾT CODE.</b></p>
+
+      <div class="label">A1 — Giá trị LOAI_LENH_OSB: [VERIFY] xong, [SIGN-OFF] còn treo</div>
+      <p>Verify tới cấp mã ký tự trên 4 ngày độc lập (24/07, 25/07, 26/07, 27/07): chiều đi = mã 79
+        (<b>chữ <code>'O'</code></b>, KHÔNG phải mã 48 <code>'0'</code>); chiều đến = mã 49 (đúng số
+        <code>'1'</code>). Nhất quán tuyệt đối, không ngoại lệ. Mâu thuẫn trực tiếp mô tả nghiệp vụ gốc (đi =
+        số 0) — nếu code sai sẽ lọc ra 0 dòng OSB chiều đi ở CẢ Điểm 2 lẫn Điểm 4, không báo lỗi. <b>Cần
+        Business Owner xác nhận tường minh trước khi code.</b></p>
+
+      <div class="label">A2 — Nguồn tách OSB = MIS thừa: bằng chứng củng cố thêm, [SIGN-OFF] còn treo</div>
+      <p>Đối chiếu đủ 3 nhóm (khớp đúng + thừa + Timeout), không sót dòng OSB nào: 24/07 tổng 33.325 (khớp 0,
+        thừa 33.324, Timeout 1); 25/07 tổng 30.035 (khớp 0, thừa 30.034, Timeout 1). Lý do nghiệp vụ đã xác
+        nhận trước đó (mục 56): NPO ghi OSB bằng 1 bút toán quyết toán TỔNG/ngày. Tài liệu rà soát yêu cầu
+        tái xác nhận độc lập — dù đã đồng ý ở mục 56, vẫn liệt lại đây theo đúng checklist.</p>
+
+      <div class="label">B1 — Định nghĩa "cặp huỷ trong ngày": [VERIFY] xong, kết quả rất sạch</div>
+      <ul>
+        <li><b>Không bắc cầu đi/đến</b> — kiểm tra toàn bộ SO_TRACE trùng giữa NPO_DI_THUA và
+          NPO_DEN_THUA: chỉ 1 trace trùng/ngày, và đó là <code>SO_TRACE='0'</code> (giá trị MẶC ĐỊNH khi
+          REFERENCE không đủ dài để trích trace — chính là dòng OSB tổng hợp
+          <code>REFERENCE='1000OSB'</code>, dài 7 ký tự, không đủ 19 để trích <code>[7:19]</code>). Không có
+          case "nợ ở đến, có ở đi" thật nào.</li>
+        <li><b>Tìm được bằng chứng thật cho "nhóm sum(CRAMOUNT)=0"</b>: 24/07 có 178 nhóm, 25/07 có 272
+          nhóm — TOÀN BỘ đều đúng 2 dòng (1 <code>TRTP=Normal</code> dương + 1 <code>TRTP=Cancel</code> âm,
+          cùng REFERENCE). Chưa thấy nhóm ≥3 dòng trên mẫu — việc mở "cặp" → "nhóm ≥2" là tổng quát hóa an
+          toàn, dù thực tế chưa cần dùng tới.</li>
+        <li><b>Phát hiện MỚI (không có trong checklist gốc):</b> <code>SO_TRACE='0'</code> là giá trị MẶC
+          ĐỊNH dùng chung cho MỌI REFERENCE không trích được trace — nếu tương lai có ≥2 giao dịch KHÔNG LIÊN
+          QUAN cùng rơi vào default này và tổng CRAMOUNT tình cờ = 0, thuật toán sẽ gộp nhầm thành "cặp huỷ".
+          Trên dữ liệu đã kiểm tra chỉ có đúng 1 dòng (OSB) rơi vào default/ngày nên chưa xảy ra, nhưng là rủi
+          ro thiết kế cần phòng — đề xuất loại trừ dòng <code>SO_TRACE=='0'</code> khỏi thuật toán
+          <code>CHECK_TRUNG</code> trước khi group. <b>Cần Business Owner xác nhận</b> (ảnh hưởng logic
+          nghiệp vụ, không tự quyết).</li>
+      </ul>
+
+      <div class="label">B2 — Giá trị thật TRTP: [VERIFY] xong, không còn nghi vấn</div>
+      <p>NPO_DI_THUA chỉ có đúng 2 giá trị: <code>Normal</code> và <code>Cancel</code>. 24/07: 190 dòng
+        Cancel (178 đã ghép cặp huỷ-trong-ngày, còn <b>12 dòng rơi vào huỷ-khác-ngày</b> — xác nhận bước 3
+        Điểm 3 CÓ dữ liệu thật để kiểm chứng); 25/07: 272 dòng Cancel, tất cả đã ghép cặp (0 dòng huỷ-khác-ngày
+        ngày đó). Khớp hoàn hảo với B1 — <code>'Cancel'</code> đúng là giá trị thật, không cần sign-off thêm.</p>
+
+      <div class="label">C1 — Bỏ file _ACH_CanKiemTraThuCong.xlsx: [SIGN-OFF] còn treo</div>
+      <p>Đọc lại <code>b4_xu_ly_mis_di.py::tim_can_kiem_tra_thu_cong()</code> (dòng 280-349) — xác nhận đúng
+        2 nhánh: nhánh 1 (<code>NGAY_GIA_TRI_KHAC_T_VA_T-1</code>) CÓ trong MIS_đi; nhánh 2 (MSGREF
+        rỗng/không tìm thấy tại T-1) định nghĩa tường minh bằng <code>~mask_giu</code> — bằng chứng chắc chắn
+        100% nhánh 2 KHÔNG BAO GIỜ có trong MIS_đi. Nếu gộp file vào confirm MIS_đi, nhánh 2 biến mất hoàn
+        toàn khỏi tầm nhìn người chấm. <b>2 phương án cần chọn:</b> (a) thêm 1 sheet phụ chỉ-để-xem cho nhánh
+        2 trong CÙNG file confirm mới; (b) giữ file riêng nhưng thu hẹp chỉ còn nhánh 2.</p>
+
+      <div class="label">C2 — OSB đọng trong MIS thừa báo cáo chính: [SIGN-OFF] còn treo</div>
+      <p>Điểm 2 xuất OSB ra file riêng, không đụng <code>xuat_excel()</code> chính — sheet MIS_DI_THUA/
+        MIS_DEN_THUA và TONG_KET của báo cáo chính vẫn đếm CẢ OSB (50-55% số dòng MIS thừa). Người đọc báo
+        cáo chính dễ hiểu lầm mức độ "chưa đối chiếu được" thực sự. <b>2 phương án cần chọn:</b> (a) chấp
+        nhận như vậy; (b) thêm 1 dòng phụ ở TONG_KET "Trong đó: lệnh OSB (xem file riêng)" — chỉ hiển thị
+        thêm, không đổi số liệu chính.</p>
+
+      <div class="label">D1 — Module OSB dùng chung: [ACTION] đã tự chốt (quyết định kiến trúc, không phải Business Rule)</div>
+      <p>Đồng ý đề xuất — tạo <code>backend/services/ach/osb_common.py</code> ngay sau Điểm 1, trước Điểm 3:
+        hằng số <code>OSB_DI_VALUE='O'</code>/<code>OSB_DEN_VALUE='1'</code> (chốt theo A1 sau khi sign-off)
+        + hàm <code>la_lenh_osb_di()</code>/<code>la_lenh_osb_den()</code>, dùng chung cho Điểm 2 và Điểm 4.
+        <b>Lộ trình cập nhật (mục 59):</b> Điểm 1 → [module OSB dùng chung] → Điểm 3 → Điểm 4 → Điểm 2.</p>
+
+      <div class="label">E2/E3 — Rủi ro nhỏ, không chặn</div>
+      <p><b>E2:</b> verify <code>CHI_NHANH</code>/<code>TRBRCD</code> luôn đúng 4 ký tự cố định trên toàn bộ
+        mẫu — ranh giới đầu của khóa nối chuỗi an toàn. Ranh giới SO_TRACE|SO_TIEN vẫn có rủi ro lý thuyết
+        (SO_TRACE dài 8 hoặc 9 ký tự không cố định) — chấp nhận theo tiền lệ, thêm <code>assert</code> độ dài
+        khi code. <b>E3:</b> chưa verify được — không có file QT mẫu thật trong 2 bộ dữ liệu đã dùng, cần xin
+        file QT thật trước khi code Điểm 2.</p>
+
+      <div class="label">SIGN-OFF cuối — Business Owner đã chốt cả 5 mục (2026-07-31), ĐÃ ĐÓNG</div>
+      <ol>
+        <li><b>A1 — CHỐT: dùng chữ <code>'O'</code></b> chiều đi (theo dữ liệu thật đã verify, không dùng số
+          <code>'0'</code> như mô tả gốc).</li>
+        <li><b>A2 — CHỐT (tái xác nhận):</b> nguồn tách OSB = MIS thừa.</li>
+        <li><b>B1 — CHỐT: mở "cặp"→"nhóm≥2" (đồng ý)</b>; <b>KHÔNG loại trừ</b> dòng
+          <code>SO_TRACE='0'</code> mặc định khỏi <code>CHECK_TRUNG</code> — Business Owner chấp nhận rủi ro
+          lý thuyết này vì trên dữ liệu thật chưa từng xảy ra (chỉ 1 dòng OSB rơi vào default/ngày, không đủ
+          2 dòng để group nhầm). Giữ nguyên thuật toán gốc, không thêm bước lọc.</li>
+        <li><b>C1 — CHỐT: phương án (a)</b> — thêm 1 sheet phụ CHỈ-ĐỂ-XEM cho nhánh 2 (MSGREF rỗng/không tìm
+          thấy tại T-1) ngay trong file confirm MIS_đi mới, không có cột chấm (vì nhánh này không thuộc
+          MIS_đi nên không có gì để "loại bỏ"). KHÔNG giữ file `_ACH_CanKiemTraThuCong.xlsx` riêng nữa.</li>
+        <li><b>C2 — CHỐT: phương án (b)</b> — thêm 1 dòng phụ ở <code>TONG_KET</code> báo cáo chính ghi chú
+          số lượng lệnh OSB nằm trong MIS thừa (ví dụ "Trong đó: lệnh OSB — xem file OSB riêng"), KHÔNG đổi
+          số liệu chính hiện có.</li>
+      </ol>
+      <p><b>Tất cả 6 việc chặn (mục F) đã đóng đầy đủ, kèm bằng chứng dữ liệu thật cho từng mục [VERIFY].
+        Đủ điều kiện bắt đầu code, theo đúng thứ tự đã chốt ở mục 59 (bổ sung module OSB dùng chung — D1):
+        Điểm 1 → [osb_common.py] → Điểm 3 → Điểm 4 → Điểm 2.</b></p>
+
+      <div class="label">Lưu ý — nguyên tắc làm việc mới (áp dụng từ đây trở đi)</div>
+      <p>Ngay sau vòng sign-off này, Business Owner đặt ra 10 nguyên tắc làm việc xuyên suốt dự án ACH — xem
+        memory <code>feedback_ach_nghiepvu_truoc_kythuat.md</code>. Cốt lõi: nghiệp vụ luôn đứng trước kỹ
+        thuật, không mở rộng bài toán ngoài đúng yêu cầu, không phình dự án, không suy diễn/bảo vệ code khi
+        hiểu sai nghiệp vụ. Khi bắt đầu code Điểm 1, đọc lại nguyên tắc này trước — đặc biệt tránh việc tự
+        thêm abstraction/kiểm tra/tối ưu ngoài đúng phạm vi đã chốt ở mục 55-60.</p>
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-07-31</footer>
 </div>
 </body>
 </html>

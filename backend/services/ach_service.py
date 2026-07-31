@@ -15,8 +15,10 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
+
 from backend.services.ach.pipeline import main_from_dir
-from backend.services.ach.b4_xu_ly_mis_di import _doc_sheet_can_xac_nhan
+from backend.services.ach.b4_xu_ly_mis_di import _doc_sheet_confirm_mis_di
 
 TEMP_DIR    = Path('data/temp_ach')
 CLEANUP_TTL = 4 * 3600  # giữ file kết quả tối đa 4 giờ
@@ -41,8 +43,9 @@ def _new_job() -> tuple[str, dict]:
         'output_dir':    str(TEMP_DIR / job_id / 'output'),
         'input_dir':     None,   # dùng lại cho lần chạy tiếp (Checkpoint Bước 3)
         'ngay':          None,
-        'xac_nhan_file':  None,   # tên file <ngày>_ACH_XacNhan.xlsx khi đang chờ xác nhận
-        'xac_nhan_count': None,   # số giao dịch cần xác nhận (đọc từ sheet CAN_XAC_NHAN) — None nếu không đếm được
+        'xac_nhan_file':  None,   # tên file <ngày>_ACH_ConfirmMISdi.xlsx khi đang chờ xác nhận
+        'xac_nhan_count': None,   # số giao dịch MIS_đi cần chấm (đọc từ sheet MIS_DI_CONFIRM) — None nếu không đếm được
+        'xac_nhan_tong_tien': None,  # tổng SO_TIEN các giao dịch cần chấm — None nếu không đếm được
         'mode':           'upload',  # 'upload' | 'folder' — quyết định có copy kết quả về thư mục nguồn hay không
         'source_folder':  None,   # đường dẫn thư mục người dùng chọn (chỉ có ở mode folder)
         'final_output_dir': None,  # nơi kết quả cuối THỰC SỰ nằm sau khi copy (mode folder, copy thành công)
@@ -96,7 +99,7 @@ def start_job(saved_files: dict[str, bytes], ngay: str | None) -> str:
     thread = threading.Thread(
         target=_run,
         args=(job_id, str(input_dir), job['output_dir'], ngay),
-        kwargs={'dung_sau_khop_gw': True},
+        kwargs={'dung_sau_mis_di': True},
         daemon=True,
     )
     thread.start()
@@ -118,7 +121,7 @@ def start_from_folder(folder_path: str, ngay: str | None) -> str:
     thread = threading.Thread(
         target=_run,
         args=(job_id, folder_path, job['output_dir'], ngay),
-        kwargs={'dung_sau_khop_gw': True},
+        kwargs={'dung_sau_mis_di': True},
         daemon=True,
     )
     thread.start()
@@ -154,17 +157,20 @@ def continue_job(job_id: str, xac_nhan_bytes: bytes, xac_nhan_filename: str) -> 
     thread.start()
 
 
-def _dem_giao_dich_can_xac_nhan(xac_nhan_path: str) -> int | None:
-    """Đếm số dòng sheet CAN_XAC_NHAN của file Checkpoint vừa tạo — CHỈ phục vụ hiển
-    thị UX ("Có XX giao dịch cần xác nhận"), không dùng để quyết định gì trong
-    pipeline. Tái dùng đúng parser đã có (`_doc_sheet_can_xac_nhan`) thay vì viết lại
-    logic đọc sheet. Trả None nếu không đếm được (file lỗi/thiếu) — không được để
-    lỗi ở đây làm gián đoạn luồng Checkpoint chính."""
+def _thong_ke_mis_di_can_confirm(xac_nhan_path: str) -> tuple[int | None, int | None]:
+    """Đếm tổng số giao dịch + tổng số tiền trên sheet MIS_DI_CONFIRM của file
+    Checkpoint vừa tạo — CHỈ phục vụ hiển thị UX ("Có XX giao dịch, YY VND cần
+    chấm"), không dùng để quyết định gì trong pipeline. Tái dùng đúng parser đã có
+    (`_doc_sheet_confirm_mis_di`) thay vì viết lại logic đọc sheet. Trả (None, None)
+    nếu không đếm được (file lỗi/thiếu) — không được để lỗi ở đây làm gián đoạn
+    luồng Checkpoint chính."""
     try:
-        df, _msgref_bo_sung = _doc_sheet_can_xac_nhan(xac_nhan_path)
-        return len(df)
+        df, _refhub_bo_sung = _doc_sheet_confirm_mis_di(xac_nhan_path)
+        so_luong  = len(df)
+        tong_tien = int(pd.to_numeric(df['SO_TIEN'], errors='coerce').fillna(0).sum()) if so_luong else 0
+        return so_luong, tong_tien
     except Exception:
-        return None
+        return None, None
 
 
 def _copy_results_to_source(job: dict, output_dir: str, result_files: list[str], log) -> None:
@@ -189,7 +195,7 @@ def _copy_results_to_source(job: dict, output_dir: str, result_files: list[str],
 
 
 def _run(job_id: str, input_dir: str, output_dir: str, ngay: str | None,
-        dung_sau_khop_gw: bool = False, xac_nhan_path: str | None = None):
+        dung_sau_mis_di: bool = False, xac_nhan_path: str | None = None):
     job = get_job(job_id)
     if job is None:
         return
@@ -208,7 +214,7 @@ def _run(job_id: str, input_dir: str, output_dir: str, ngay: str | None,
             ngay=ngay,
             log_callback=log,
             cancel_event=job['cancel_event'],
-            dung_sau_khop_gw=dung_sau_khop_gw,
+            dung_sau_mis_di=dung_sau_mis_di,
             xac_nhan_path=xac_nhan_path,
         )
 
@@ -218,15 +224,15 @@ def _run(job_id: str, input_dir: str, output_dir: str, ngay: str | None,
             log('[JOB] Đã dừng theo yêu cầu.')
             return
 
-        if dung_sau_khop_gw:
+        if dung_sau_mis_di:
             # Dừng ở Checkpoint — chờ người dùng tải + điền + upload lại file xác nhận.
-            # LƯU Ý: phải tính xac_nhan_count TRƯỚC khi đổi status — nơi khác (API
-            # poll) có thể đọc job ngay khi thấy status đổi, không được để race.
-            job['xac_nhan_file']  = os.path.basename(output_path)
-            job['files']          = [job['xac_nhan_file']]
-            job['xac_nhan_count'] = _dem_giao_dich_can_xac_nhan(output_path)
-            job['status']         = 'awaiting_confirmation'
-            log('[JOB] Đang chờ xác nhận thủ công nhánh Timeout.')
+            # LƯU Ý: phải tính xac_nhan_count/tong_tien TRƯỚC khi đổi status — nơi
+            # khác (API poll) có thể đọc job ngay khi thấy status đổi, không được để race.
+            job['xac_nhan_file'] = os.path.basename(output_path)
+            job['files']         = [job['xac_nhan_file']]
+            job['xac_nhan_count'], job['xac_nhan_tong_tien'] = _thong_ke_mis_di_can_confirm(output_path)
+            job['status']        = 'awaiting_confirmation'
+            log('[JOB] Đang chờ xác nhận thủ công MIS_đi.')
             return
 
         # Thu thập các file kết quả (xlsx + CSV)
@@ -250,8 +256,8 @@ def _run(job_id: str, input_dir: str, output_dir: str, ngay: str | None,
     except Exception as e:
         import traceback
         if xac_nhan_path is not None and isinstance(e, ValueError):
-            # Lỗi do file xác nhận điền sai/thiếu (ap_dung_xac_nhan) — quay lại chờ
-            # xác nhận để người dùng sửa và upload lại, không coi là lỗi chung cuộc.
+            # Lỗi do file xác nhận điền sai/thiếu (ap_dung_confirm_mis_di) — quay lại
+            # chờ xác nhận để người dùng sửa và upload lại, không coi là lỗi chung cuộc.
             job['status'] = 'awaiting_confirmation'
             job['error']  = str(e)
             log(f'[LỖI XÁC NHẬN] {e}')

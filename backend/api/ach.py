@@ -113,9 +113,9 @@ async def continue_job(
     file: UploadFile,
     _=Depends(require_feature('menu.cham_ach')),
 ):
-    """Checkpoint xác nhận thủ công (Bước 3) — nhận file <ngày>_ACH_XacNhan.xlsx đã
-    điền cột KET_QUA_XAC_NHAN (và MSGREF bổ sung nếu có), chạy lại toàn bộ pipeline
-    áp dụng xác nhận rồi tiếp tục tới báo cáo cuối."""
+    """Checkpoint xác nhận thủ công tại MIS_đi (Bước 3) — nhận file
+    <ngày>_ACH_ConfirmMISdi.xlsx đã điền cột LOAI_BO (và REFHUB bổ sung nếu có),
+    chạy lại toàn bộ pipeline áp dụng MIS_đi chuẩn rồi tiếp tục tới báo cáo cuối."""
     data = await file.read()
     try:
         ach_service.continue_job(job_id, data, file.filename or 'xac_nhan.xlsx')
@@ -146,7 +146,8 @@ def poll_job(
         'logs':             job['logs'][since:],
         'files':            job['files'],
         'error':            job['error'],
-        'xac_nhan_count':   job.get('xac_nhan_count'),
+        'xac_nhan_count':      job.get('xac_nhan_count'),
+        'xac_nhan_tong_tien':  job.get('xac_nhan_tong_tien'),
         'mode':             job.get('mode'),
         'final_output_dir': job.get('final_output_dir'),
         'copy_error':       job.get('copy_error'),

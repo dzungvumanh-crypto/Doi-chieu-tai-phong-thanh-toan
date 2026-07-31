@@ -16,8 +16,8 @@ from .b1_doc_session   import doc_session
 from .b2_xu_ly_gl02    import xu_ly_gl02
 from .b3_xu_ly_gw      import xu_ly_gw
 from .b4_xu_ly_mis_di  import (
-    _doc_mis_di_raw, _process_mis_di, khop_voi_gw, tim_nhom_gw_thua, ap_dung_xac_nhan,
-    tim_can_kiem_tra_thu_cong,
+    _doc_mis_di_raw, _process_mis_di, khop_voi_gw, tim_nhom_gw_thua, ap_dung_confirm_mis_di,
+    tim_giao_dich_bi_loai_session_null,
 )
 from .b5_doi_chieu_di  import doi_chieu_di
 from .b6_xu_ly_mis_den import xu_ly_mis_den
@@ -33,7 +33,12 @@ _COLS_MIS_DI = [
     'LY_DO_GIU_SESSION_NULL', 'PHAN_LOAI_TIMEOUT',
 ]
 
-_COLS_CAN_XAC_NHAN = [c for c in _COLS_MIS_DI if c not in ('MATCH_TYPE', 'PHAN_LOAI_TIMEOUT')]
+_COLS_MIS_DI_CONFIRM = [
+    'NGAY_GIAO_DICH', 'CHI_NHANH', 'CN tiền Hub', 'REFHUB', 'MSGREF',
+    'MSGSEQ', 'TXID', 'KENH_THANH_TOAN', 'TRANG_THAI_LENH', 'SO_TIEN',
+    'TRACE', 'SE_TRACE', 'SO_TRACE', 'SESSION', 'LOAI_LENH_OSB', 'NH_NHAN',
+    'MA_GIAO_DICH', 'NOI_DUNG', 'NGAY_KENH_TRA', 'LY_DO_GIU_SESSION_NULL',
+]
 
 _COLS_MIS_DEN = [
     'NGAY_GIAO_DICH', 'CHI_NHANH', 'REFHUB', 'MSGREF', 'MSGSEQ', 'TXID',
@@ -160,12 +165,13 @@ def _viet_sheet(workbook, worksheet, df: pd.DataFrame, header_color: str):
         worksheet.write_row(row_idx, 0, row, fmt_cell)
 
 
-def _viet_can_xac_nhan(workbook, worksheet, df: pd.DataFrame):
-    """Sheet CAN_XAC_NHAN của file checkpoint xác nhận thủ công — giao dịch SESSION
-    mập mờ (nhánh 1A của khop_voi_gw). Thêm cột KET_QUA_XAC_NHAN (dropdown 2 giá trị)
-    và vùng paste MSGREF bổ sung bên dưới. Không đổi dữ liệu gốc."""
+def _viet_confirm_mis_di(workbook, worksheet, df: pd.DataFrame):
+    """Sheet MIS_DI_CONFIRM của file checkpoint xác nhận thủ công tại MIS_đi (Điểm
+    1, 2026-07-31 — thay cơ chế Timeout-confirm cũ). Toàn bộ MIS_đi (đầu ra bước 5,
+    TRƯỚC khi so khớp GW) + cột LOAI_BO (dropdown: trống = giữ (mặc định), 'loại
+    bỏ' = bỏ dòng) + vùng paste REFHUB bổ sung bên dưới. Không đổi dữ liệu gốc."""
     if df is None or len(df) == 0:
-        worksheet.write(0, 0, '(Không có giao dịch nào cần xác nhận)')
+        worksheet.write(0, 0, '(MIS_đi rỗng — không có giao dịch nào)')
         return
 
     fmt_header = workbook.add_format({'bold': True, 'bg_color': _CAM, 'border': 1, 'font_size': 10})
@@ -177,51 +183,28 @@ def _viet_can_xac_nhan(workbook, worksheet, df: pd.DataFrame):
         if pd.api.types.is_datetime64_any_dtype(df[col]):
             df[col] = df[col].dt.strftime('%d/%m/%Y %H:%M:%S')
 
-    cols = list(df.columns) + ['KET_QUA_XAC_NHAN']
+    cols = list(df.columns) + ['LOAI_BO']
     for col_idx, col_name in enumerate(cols):
         width = min(max(len(str(col_name)), 8) + 2, 30)
         worksheet.set_column(col_idx, col_idx, width)
         worksheet.write(0, col_idx, str(col_name), fmt_header)
 
-    ket_qua_col = len(df.columns)
+    loai_bo_col = len(df.columns)
     df_filled   = df.fillna('')
     for row_idx, row in enumerate(df_filled.itertuples(index=False, name=None), start=1):
         worksheet.write_row(row_idx, 0, row, fmt_cell)
-        worksheet.write(row_idx, ket_qua_col, '', fmt_cell)
+        worksheet.write(row_idx, loai_bo_col, '', fmt_cell)
 
     n = len(df_filled)
-    worksheet.data_validation(1, ket_qua_col, n, ket_qua_col, {
+    worksheet.data_validation(1, loai_bo_col, n, loai_bo_col, {
         'validate': 'list',
-        'source': ['Timeout không đi kênh', 'Timeout không đi kênh khác phiên đối chiếu'],
+        'source': ['loại bỏ'],
     })
 
     start_row = n + 2
-    worksheet.merge_range(start_row, 0, start_row, ket_qua_col,
-                          'BỔ SUNG GIAO DỊCH BỊ BỎ SÓT — paste MSGREF vào cột bên dưới', fmt_note)
-    worksheet.write(start_row + 1, 0, 'MSGREF', fmt_header)
-
-
-def xuat_excel_xac_nhan(output_dir: str, session_id: str, ngay_dt: datetime,
-                        df_timeout: pd.DataFrame,
-                        log_callback=None) -> str:
-    """Checkpoint xác nhận thủ công (thay hướng mở rộng Business Rule cho Timeout
-    không đi kênh) — xuất file 1 sheet CAN_XAC_NHAN ngay sau khop_voi_gw() rồi dừng
-    pipeline. Chỉ chứa nhánh 1A (SESSION mập mờ) để người đối chiếu chọn dropdown
-    KET_QUA_XAC_NHAN — không kèm sheet tham khảo (đã bỏ theo yêu cầu Business Owner,
-    người chấm thủ công chỉ cần đúng danh sách Timeout cần xác nhận)."""
-    _log        = log_callback or print
-    ngay_str    = ngay_dt.strftime('%Y%m%d')
-    output_path = os.path.join(output_dir, f'{ngay_str}_ACH_XacNhan.xlsx')
-
-    workbook = xlsxwriter.Workbook(output_path, {'strings_to_numbers': False})
-
-    ws2 = workbook.add_worksheet('CAN_XAC_NHAN')
-    ws2.set_tab_color(_CAM)
-    _viet_can_xac_nhan(workbook, ws2, _clean(df_timeout, _COLS_CAN_XAC_NHAN, 'CAN_XAC_NHAN'))
-
-    workbook.close()
-    _log(f'[DONE] File xác nhận: {output_path}')
-    return output_path
+    worksheet.merge_range(start_row, 0, start_row, loai_bo_col,
+                          'BỔ SUNG GIAO DỊCH BỊ BỎ SÓT — paste REFHUB vào cột bên dưới', fmt_note)
+    worksheet.write(start_row + 1, 0, 'REFHUB', fmt_header)
 
 
 _COLS_CAN_KIEM_TRA_HIEN_THI = {
@@ -238,29 +221,35 @@ _COLS_CAN_KIEM_TRA_HIEN_THI = {
 }
 
 
-def xuat_excel_can_kiem_tra_thu_cong(output_dir: str, ngay_dt: datetime,
-                                     df_can_kiem_tra: pd.DataFrame,
-                                     log_callback=None) -> str:
-    """Milestone F (Option C, Business Owner chốt 2026-07-27) — file RIÊNG cho 2
-    nhánh SESSION=NULL còn treo (`NGAY_GIA_TRI_KHAC_T_VA_T-1`, MSGREF rỗng/không tìm
-    thấy tại T-1 — xem `b4_xu_ly_mis_di.py::tim_can_kiem_tra_thu_cong()`). CHỈ hiển
-    thị để người đối chiếu tự quyết định — KHÔNG đổi Rule tự động, KHÔNG có cơ chế
-    đọc lại (khác Checkpoint `xuat_excel_xac_nhan()`/`ap_dung_xac_nhan()`)."""
+def xuat_excel_confirm_mis_di(output_dir: str, session_id: str, ngay_dt: datetime,
+                              df_mis_di: pd.DataFrame, df_bi_loai: pd.DataFrame,
+                              log_callback=None) -> str:
+    """Checkpoint xác nhận thủ công tại MIS_đi (Điểm 1, 2026-07-31 — thay hẳn cơ chế
+    Timeout-confirm cũ, xem project_ach_4diem_pr_plan) — xuất file 2 sheet ngay sau
+    `_process_mis_di()` (bước 5) rồi dừng pipeline:
+    - MIS_DI_CONFIRM: sheet chính, người chấm điền cột LOAI_BO + bổ sung REFHUB.
+    - CAN_KIEM_TRA_THU_CONG: CHỈ ĐỂ XEM — giao dịch SESSION=NULL bị `_process_mis_di()`
+      loại thẳng khỏi MIS_đi (không thuộc MIS_đi nên không có cột chấm, gộp thay
+      cho file `_ACH_CanKiemTraThuCong.xlsx` riêng của Milestone F cũ)."""
     _log        = log_callback or print
     ngay_str    = ngay_dt.strftime('%Y%m%d')
-    output_path = os.path.join(output_dir, f'{ngay_str}_ACH_CanKiemTraThuCong.xlsx')
+    output_path = os.path.join(output_dir, f'{ngay_str}_ACH_ConfirmMISdi.xlsx')
 
     workbook = xlsxwriter.Workbook(output_path, {'strings_to_numbers': False})
-    ws = workbook.add_worksheet('CAN_KIEM_TRA_THU_CONG')
-    ws.set_tab_color(_CAM)
 
-    df_hien_thi = _clean(df_can_kiem_tra, list(_COLS_CAN_KIEM_TRA_HIEN_THI.keys()), 'CAN_KIEM_TRA_THU_CONG')
-    if df_hien_thi is not None and len(df_hien_thi) > 0:
-        df_hien_thi = df_hien_thi.rename(columns=_COLS_CAN_KIEM_TRA_HIEN_THI)
-    _viet_sheet(workbook, ws, df_hien_thi, _CAM)
+    ws1 = workbook.add_worksheet('MIS_DI_CONFIRM')
+    ws1.set_tab_color(_CAM)
+    _viet_confirm_mis_di(workbook, ws1, _clean(df_mis_di, _COLS_MIS_DI_CONFIRM, 'MIS_DI_CONFIRM'))
+
+    ws2 = workbook.add_worksheet('CAN_KIEM_TRA_THU_CONG')
+    ws2.set_tab_color(_CAM)
+    df_bi_loai_hien_thi = _clean(df_bi_loai, list(_COLS_CAN_KIEM_TRA_HIEN_THI.keys()), 'CAN_KIEM_TRA_THU_CONG')
+    if df_bi_loai_hien_thi is not None and len(df_bi_loai_hien_thi) > 0:
+        df_bi_loai_hien_thi = df_bi_loai_hien_thi.rename(columns=_COLS_CAN_KIEM_TRA_HIEN_THI)
+    _viet_sheet(workbook, ws2, df_bi_loai_hien_thi, _CAM)
 
     workbook.close()
-    _log(f'[DONE] File cần kiểm tra thủ công ({len(df_can_kiem_tra):,} dòng): {output_path}')
+    _log(f'[DONE] File confirm MIS_đi: {output_path}')
     return output_path
 
 
@@ -429,22 +418,25 @@ def _cancelled(ev) -> bool:
 def main_from_dir(input_dir: str, output_dir: str,
                   ngay: str = None, log_callback=None,
                   cancel_event=None,
-                  dung_sau_khop_gw: bool = False,
+                  dung_sau_mis_di: bool = False,
                   xac_nhan_path: str = None) -> str | None:
     """
     Chạy pipeline đối chiếu ACH từ thư mục đã có file.
     Trả về đường dẫn file .xlsx kết quả, hoặc None nếu cancelled.
     Thread-safe: không mutate config module-level.
 
-    dung_sau_khop_gw=True — Checkpoint xác nhận thủ công (Bước 1): dừng ngay sau
-    khop_voi_gw(), xuất file xác nhận 2 sheet thay vì chạy tiếp Phase 2 + báo cáo
-    cuối. Mặc định False — hành vi hiện tại của API/Frontend không đổi.
+    dung_sau_mis_di=True — Checkpoint xác nhận thủ công tại MIS_đi (Điểm 1,
+    2026-07-31 — Bước 1): dừng ngay sau `_process_mis_di()` (bước 5), TRƯỚC khi gọi
+    `khop_voi_gw()`, xuất file confirm MIS_đi (2 sheet) thay vì chạy tiếp
+    khop_voi_gw()/Phase 2/báo cáo cuối. Mặc định False.
 
-    xac_nhan_path — Checkpoint xác nhận thủ công (Bước 3): đường dẫn file xác nhận
-    (Bước 1) đã được người đối chiếu điền. Nếu có, sau khop_voi_gw() sẽ áp dụng
-    `ap_dung_xac_nhan()` (Bước 2) để chuyển/giữ đúng nhánh trước khi chạy tiếp
-    Phase 2 + báo cáo cuối như bình thường. Không dùng đồng thời với
-    dung_sau_khop_gw=True (mutually exclusive — dung_sau_khop_gw luôn dừng trước).
+    xac_nhan_path — Checkpoint xác nhận thủ công (Bước 3): đường dẫn file confirm
+    (Bước 1) đã được người đối chiếu điền (cột LOAI_BO + khu bổ sung REFHUB). Nếu
+    có, áp dụng `ap_dung_confirm_mis_di()` (Bước 2) NGAY SAU `_process_mis_di()`,
+    TRƯỚC khi gọi `khop_voi_gw()`, để tính MIS_đi chuẩn — rồi chạy tiếp
+    `khop_voi_gw()`/Phase 2/báo cáo cuối như bình thường, KHÔNG dừng lại lần 2 (đã
+    bỏ hẳn Checkpoint xác nhận Timeout cũ). Không dùng đồng thời với
+    dung_sau_mis_di=True (mutually exclusive — dung_sau_mis_di luôn dừng trước).
     """
     def log(msg):
         print(msg)
@@ -520,11 +512,6 @@ def main_from_dir(input_dir: str, output_dir: str,
         df_mis_di = _process_mis_di(
             df_mis_di_data, session_id, ngay_dt, df_gw_goc, log_callback,
         )
-        # Milestone F (Option C) — 2 nhánh SESSION=NULL còn treo, xuất riêng cho
-        # người chấm thủ công, KHÔNG đổi hành vi giữ/loại của _process_mis_di() ở trên.
-        df_can_kiem_tra_thu_cong = tim_can_kiem_tra_thu_cong(
-            df_mis_di_data, session_id, ngay_dt, df_gw_goc, log_callback,
-        )
 
         npo_di, npo_den = f_gl02.result()
         df_mis_den      = f_mis_den.result()
@@ -535,23 +522,24 @@ def main_from_dir(input_dir: str, output_dir: str,
         log('[CANCELLED] Người dùng đã dừng sau Phase 1.')
         return None
 
-    xuat_excel_can_kiem_tra_thu_cong(output_dir, ngay_dt, df_can_kiem_tra_thu_cong, log_callback)
-
-    # Mục 3 — so khớp CN TIỀN giữa MIS_đi và GW.
-    df_mis_di_khop_gw, df_timeout = khop_voi_gw(df_mis_di, dict_gw_count, df_gw_raw, log_callback)
-
-    if dung_sau_khop_gw:
-        log(f'[TIMING] Đến checkpoint khop_gw: {time.perf_counter()-_t0:.1f}s')
-        xac_nhan_out_path = xuat_excel_xac_nhan(
-            output_dir, session_id, ngay_dt, df_timeout, log_callback,
+    if dung_sau_mis_di:
+        log(f'[TIMING] Đến checkpoint MIS_đi: {time.perf_counter()-_t0:.1f}s')
+        df_bi_loai = tim_giao_dich_bi_loai_session_null(
+            df_mis_di_data, session_id, ngay_dt, df_gw_goc, log_callback,
+        )
+        xac_nhan_out_path = xuat_excel_confirm_mis_di(
+            output_dir, session_id, ngay_dt, df_mis_di, df_bi_loai, log_callback,
         )
         log(f'[CHECKPOINT] Dừng để chờ xác nhận thủ công. File: {xac_nhan_out_path}')
         return xac_nhan_out_path
 
     if xac_nhan_path:
-        df_mis_di_khop_gw, df_timeout = ap_dung_xac_nhan(
-            xac_nhan_path, df_mis_di_khop_gw, df_timeout, df_mis_di_data, log_callback,
+        df_mis_di = ap_dung_confirm_mis_di(
+            xac_nhan_path, df_mis_di, df_mis_di_data, log_callback,
         )
+
+    # Mục 3 — so khớp CN TIỀN giữa MIS_đi (đã confirm nếu có) và GW.
+    df_mis_di_khop_gw, df_timeout = khop_voi_gw(df_mis_di, dict_gw_count, df_gw_raw, log_callback)
 
     df_cap_cn_tien = _tao_cap_cn_tien(df_mis_di, df_timeout, dict_gw_count)
     _t1 = time.perf_counter()
