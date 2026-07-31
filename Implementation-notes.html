@@ -2995,6 +2995,48 @@ Bất biến MIS: 522.774 + 36.462 = 559.236 (khớp tổng gốc)</pre>
     </div>
   </div>
 
+  <!-- 61 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">61</span>
+      <span class="card-title">Điểm 1 + module OSB dùng chung (D1) — ĐÃ CODE, ĐÃ TEST, ĐÃ COMMIT trên nhánh riêng</span>
+      <span class="badge badge-done">129/129 test ACH PASS (122 Điểm 1 + 7 osb_common) — chưa merge vào nhánh chính</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Đã làm</div>
+      <p>Sau khi đóng đủ 6 mục chặn ở mục 60 (kèm sign-off Business Owner cho từng điểm), đã triển khai đúng
+        thiết kế chốt ở mục 55: xóa hẳn cơ chế Timeout-confirm cũ
+        (<code>ap_dung_xac_nhan()</code>, <code>_doc_sheet_can_xac_nhan()</code>,
+        <code>xuat_excel_xac_nhan()</code>, <code>xuat_excel_can_kiem_tra_thu_cong()</code>), thay bằng
+        checkpoint mới tại MIS_đi (<code>ap_dung_confirm_mis_di()</code>,
+        <code>_doc_sheet_confirm_mis_di()</code>, <code>xuat_excel_confirm_mis_di()</code>,
+        <code>tim_giao_dich_bi_loai_session_null()</code> — rút gọn từ
+        <code>tim_can_kiem_tra_thu_cong()</code> cũ còn đúng 1 nhánh theo sign-off C1). Đổi kwarg
+        <code>dung_sau_khop_gw</code> → <code>dung_sau_mis_di</code>, UI hiển thị tổng số GD + tổng tiền
+        (<code>_thong_ke_mis_di_can_confirm()</code> thay <code>_dem_giao_dich_can_xac_nhan()</code>). Module
+        <code>osb_common.py</code> (D1) tạo ngay sau, chốt hằng số <code>OSB_DI_VALUE='O'</code>/
+        <code>OSB_DEN_VALUE='1'</code> dùng chung cho Điểm 2/4 sau này.</p>
+
+      <div class="label">Quy trình an toàn đã dùng</div>
+      <p>Toàn bộ làm trên nhánh Git riêng <code>ach-4diem-capnhat</code> (tạo từ commit ổn định
+        <code>dc9945a</code>, đã tag <code>truoc-cap-nhat-ACH-4diem-2026-07-31</code>) — nhánh
+        <code>Cham_ILO1000</code> giữ nguyên không đụng tới, có thể quay lại bất cứ lúc nào nếu cần. Cũng đã
+        tạo 1 bản backup .zip riêng phần code (<code>Downloads\Backup_ACH\Backup_Code_TruocCapNhat_ACH_2026-07-31.zip</code>)
+        theo yêu cầu Business Owner trước khi bắt đầu code. 2 commit riêng biệt:
+        <code>aca9d71</code> (Điểm 1) và <code>ee34556</code> (osb_common.py).</p>
+
+      <div class="label">Verify</div>
+      <p>122/122 test ACH cũ + mới PASS (bao gồm <code>TestApDungConfirmMisDi</code> mới, round-trip qua file
+        Excel thật — không mock I/O) + 7/7 test <code>osb_common.py</code> mới. 276/277 test toàn dự án PASS —
+        1 fail duy nhất ở <code>test_ilo1000_algorithm.py</code>, xác nhận là thay đổi ILO1000 KHÔNG LIÊN QUAN
+        đang dang dở từ trước khi bắt đầu phiên này (không đụng tới, không phải lỗi do Điểm 1 gây ra).</p>
+
+      <div class="label">Chưa làm</div>
+      <p>Chưa merge nhánh <code>ach-4diem-capnhat</code> vào <code>Cham_ILO1000</code>, chưa push. Tiếp theo
+        theo đúng lộ trình mục 59: <b>Điểm 3</b> (tách điện đi huỷ từ NPO_đi thừa).</p>
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-07-31</footer>
 </div>
 </body>
