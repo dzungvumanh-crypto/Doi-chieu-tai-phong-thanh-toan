@@ -17,6 +17,18 @@ import time
 import urllib.request
 import urllib.error
 
+# Console Windows mặc định dùng codepage hệ thống (thường cp1252/cp1258 —
+# không đủ ký tự tiếng Việt) cho stdout của tiến trình KHÔNG gắn trực tiếp vào
+# console (stdout bị redirect ra file, như backend/frontend subprocess bên
+# dưới) — không phụ thuộc `chcp` (chỉ đổi codepage console hiển thị, không ảnh
+# hưởng tiến trình con ghi ra file). Ép UTF-8 ở đây để mọi log tiếng Việt
+# (kể cả log từ subprocess con) không bao giờ crash UnicodeEncodeError.
+if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+os.environ.setdefault("PYTHONUTF8", "1")
+
 ROOT          = os.path.dirname(os.path.abspath(__file__))
 LOGS_DIR      = os.path.join(ROOT, "logs")
 MAX_RESTARTS  = 5
