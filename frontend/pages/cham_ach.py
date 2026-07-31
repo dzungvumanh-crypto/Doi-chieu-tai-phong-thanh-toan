@@ -66,6 +66,7 @@ async def cham_ach_page():
         'xac_nhan_upload': None,   # (filename, bytes) file xác nhận đã điền, chờ upload
         'checkpoint_mode': 'inline',   # 'inline' | 'deferred' — cách xử lý khi tới Checkpoint
         'pending_checkpoint_res': None,   # kết quả poll lúc tới Checkpoint (mode deferred, chờ mở)
+        'bo_qua_checkpoint': False,   # True = chạy thẳng, coi MIS_đi đúng 100%, không dừng chờ xác nhận
     }
 
     with ui.row().classes('w-full'):
@@ -168,14 +169,31 @@ async def cham_ach_page():
                 validate_card.set_visibility(False)
 
                 # ── Chế độ xử lý Checkpoint ───────────────────────────────
-                ui.label('Chế độ xử lý Checkpoint').classes('text-sm font-medium text-gray-700 mt-4')
-                checkpoint_mode_radio = ui.radio(
-                    {
-                        'inline':   'Xác nhận ngay khi MIS_đi vừa tạo xong (quy trình hiện tại)',
-                        'deferred': 'Chạy hết phần tự động, sau đó mới xác nhận MIS_đi rồi tiếp tục chạy',
-                    },
-                    value='inline',
-                ).props('dense')
+                checkpoint_section = ui.column().classes('w-full gap-1 mt-4')
+                with checkpoint_section:
+                    ui.label('Chế độ xử lý Checkpoint').classes('text-sm font-medium text-gray-700')
+                    checkpoint_mode_radio = ui.radio(
+                        {
+                            'inline':   'Xác nhận ngay khi MIS_đi vừa tạo xong (quy trình hiện tại)',
+                            'deferred': 'Chạy hết phần tự động, sau đó mới xác nhận MIS_đi rồi tiếp tục chạy',
+                        },
+                        value='inline',
+                    ).props('dense')
+
+                # ── Chạy thẳng, bỏ qua Checkpoint (2026-07-31) ─────────────
+                with ui.row().classes(
+                    'w-full items-start gap-2 mt-3 p-3 rounded bg-orange-50 border border-orange-200'
+                ):
+                    ui.icon('warning').classes('text-orange-700 mt-1')
+                    with ui.column().classes('gap-0'):
+                        bo_qua_checkbox = ui.checkbox(
+                            'Chạy thẳng — bỏ qua xác nhận thủ công MIS_đi'
+                        ).props('dense').classes('text-orange-900 font-medium')
+                        ui.label(
+                            'Coi TOÀN BỘ MIS_đi là đúng 100% (không loại dòng nào, không bổ sung REFHUB), '
+                            'chạy một mạch tới báo cáo cuối — KHÔNG dừng lại chờ xác nhận. Chỉ dùng khi '
+                            'chắc chắn không nghi ngờ dữ liệu.'
+                        ).classes('text-xs text-orange-700')
 
                 # Nút Chạy / Dừng
                 with ui.row().classes('gap-3 mt-4 items-center'):
@@ -184,10 +202,53 @@ async def cham_ach_page():
                     btn_cancel = ui.button('Dừng', icon='stop_circle',
                                            color='grey-6').classes('font-semibold')
                     btn_cancel.set_visibility(False)
-                    ui.label(
+                    hint_chay_label = ui.label(
                         'Pipeline sẽ dừng lại ngay sau khi tạo xong MIS_đi để bạn xác nhận, '
                         'rồi mới chạy tiếp tới báo cáo cuối.'
                     ).classes('text-xs text-gray-400')
+
+                def _cap_nhat_hint_chay():
+                    if state['bo_qua_checkpoint']:
+                        hint_chay_label.set_text(
+                            'Sẽ CHẠY THẲNG tới báo cáo cuối — KHÔNG dừng lại chờ xác nhận MIS_đi.'
+                        )
+                        hint_chay_label.classes(
+                            remove='text-gray-400', add='text-orange-700 font-semibold'
+                        )
+                    else:
+                        hint_chay_label.set_text(
+                            'Pipeline sẽ dừng lại ngay sau khi tạo xong MIS_đi để bạn xác nhận, '
+                            'rồi mới chạy tiếp tới báo cáo cuối.'
+                        )
+                        hint_chay_label.classes(
+                            remove='text-orange-700 font-semibold', add='text-gray-400'
+                        )
+
+                def _on_bo_qua_change(val: bool):
+                    state['bo_qua_checkpoint'] = val
+                    checkpoint_section.set_visibility(not val)
+                    _cap_nhat_hint_chay()
+
+                bo_qua_checkbox.on_value_change(lambda e: _on_bo_qua_change(e.value))
+
+                # ── Popup xác nhận lại trước khi chạy thẳng ────────────────
+                bo_qua_confirm_dialog = ui.dialog()
+                with bo_qua_confirm_dialog, ui.card().classes('p-5').style('min-width: 420px'):
+                    ui.label('Xác nhận chạy thẳng, bỏ qua Checkpoint').classes(
+                        'text-base font-semibold text-orange-800 mb-2'
+                    )
+                    ui.label(
+                        'Pipeline sẽ KHÔNG dừng lại để bạn xác nhận MIS_đi — toàn bộ được coi là đúng 100% '
+                        'và đi thẳng vào báo cáo cuối. Nếu sau này phát hiện sai sót, bạn cần chạy lại '
+                        '(bỏ tick) để đi qua Checkpoint như bình thường.'
+                    ).classes('text-sm text-gray-700 mb-4')
+                    with ui.row().classes('gap-2 justify-end w-full'):
+                        ui.button('Hủy', color='grey-6').props('flat').on(
+                            'click', bo_qua_confirm_dialog.close
+                        )
+                        btn_xac_nhan_chay_thang = ui.button(
+                            'Tôi hiểu, chạy thẳng luôn', icon='play_arrow', color='orange-8',
+                        ).classes('font-semibold')
 
             # ── Log card ──────────────────────────────────────────────────────
             with ui.card().classes('w-full p-0 mb-4'):
@@ -528,24 +589,7 @@ async def cham_ach_page():
                             'click', _tai_ket_qua
                         ).classes('text-xs')
 
-            async def on_run():
-                if state['running']:
-                    return
-
-                if state['mode'] == 'upload' and not state['files']:
-                    ui.notify('Chưa chọn file nào.', type='warning')
-                    return
-                if state['mode'] == 'folder' and not (folder_input.value or '').strip():
-                    ui.notify('Chưa nhập đường dẫn thư mục.', type='warning')
-                    return
-
-                # Chốt kiểm tra ngay trước khi chạy — chặn nếu thiếu/sai file.
-                ok = await _validate_now()
-                if not ok:
-                    ui.notify('Bộ file chưa đủ/đúng — xem chi tiết bên trên trước khi chạy.',
-                              type='negative')
-                    return
-
+            async def _thuc_hien_chay():
                 _clear_log()
                 result_card.set_visibility(False)
                 checkpoint_dialog.close()
@@ -568,14 +612,20 @@ async def cham_ach_page():
                             api.post_multipart,
                             '/api/ach/start',
                             files=[(name, data) for name, data in state['files'].items()],
-                            data={'ngay_doi_chieu': ngay or ''},
+                            data={
+                                'ngay_doi_chieu': ngay or '',
+                                'bo_qua_checkpoint': str(state['bo_qua_checkpoint']).lower(),
+                            },
                         )
                     else:
                         folder_path = folder_input.value.strip()
                         _append_log(f'Thư mục: {folder_path}')
                         res = await asyncio.to_thread(
                             api.post, '/api/ach/start_folder',
-                            {'folder_path': folder_path, 'ngay_doi_chieu': ngay or ''},
+                            {
+                                'folder_path': folder_path, 'ngay_doi_chieu': ngay or '',
+                                'bo_qua_checkpoint': state['bo_qua_checkpoint'],
+                            },
                         )
                 except Exception as e:
                     spinner.set_visibility(False)
@@ -592,6 +642,38 @@ async def cham_ach_page():
 
                 # Polling timer
                 state['timer'] = ui.timer(_POLL_INTERVAL, _poll)
+
+            async def on_run():
+                if state['running']:
+                    return
+
+                if state['mode'] == 'upload' and not state['files']:
+                    ui.notify('Chưa chọn file nào.', type='warning')
+                    return
+                if state['mode'] == 'folder' and not (folder_input.value or '').strip():
+                    ui.notify('Chưa nhập đường dẫn thư mục.', type='warning')
+                    return
+
+                # Chốt kiểm tra ngay trước khi chạy — chặn nếu thiếu/sai file.
+                ok = await _validate_now()
+                if not ok:
+                    ui.notify('Bộ file chưa đủ/đúng — xem chi tiết bên trên trước khi chạy.',
+                              type='negative')
+                    return
+
+                if state['bo_qua_checkpoint']:
+                    # Lớp an toàn thêm: xác nhận lại lần nữa trước khi chạy thẳng bỏ
+                    # qua Checkpoint (2026-07-31) — tránh bấm nhầm/quên đang bật.
+                    bo_qua_confirm_dialog.open()
+                    return
+
+                await _thuc_hien_chay()
+
+            async def _on_xac_nhan_chay_thang():
+                bo_qua_confirm_dialog.close()
+                await _thuc_hien_chay()
+
+            btn_xac_nhan_chay_thang.on('click', _on_xac_nhan_chay_thang)
 
             async def on_cancel():
                 if not state['job_id']:

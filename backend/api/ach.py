@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
 
@@ -31,12 +31,24 @@ def _dl_headers(filename: str) -> dict:
 @router.post('/start')
 async def start_job(
     files: list[UploadFile],
-    ngay_doi_chieu: str = '',
+    ngay_doi_chieu: str = Form(''),
+    bo_qua_checkpoint: bool = Form(False),
     _=Depends(require_feature('menu.cham_ach')),
 ):
     """
     Nhận nhiều file (PDF, GL02.zip, GW.xlsx, MIS_DI.zip x2, MIS_DEN.zip x2).
     Trả về {job_id} ngay lập tức, pipeline chạy nền.
+
+    bo_qua_checkpoint=True — chạy thẳng một mạch tới báo cáo cuối, coi toàn bộ
+    MIS_đi mặc định đúng, KHÔNG dừng lại chờ xác nhận thủ công (tính năng mới
+    2026-07-31, xem project_ach_chay_thang_bo_qua_checkpoint). Mặc định False —
+    hành vi Checkpoint bắt buộc như từ trước tới nay không đổi.
+
+    LƯU Ý (bug thật phát hiện 2026-07-31, sửa cùng lúc): `ngay_doi_chieu`/
+    `bo_qua_checkpoint` PHẢI khai báo `Form(...)` tường minh — khi route có
+    `list[UploadFile]`, FastAPI KHÔNG tự suy luận tham số kiểu đơn giản khác là
+    Form field (khác giả định trước đó); để mặc định thường sẽ luôn nhận giá trị
+    default, không đọc được dữ liệu client gửi lên.
     """
     if not files:
         raise HTTPException(400, 'Cần upload ít nhất 1 file.')
@@ -52,7 +64,7 @@ async def start_job(
         saved[filename] = data
 
     ngay = ngay_doi_chieu.strip() or None
-    job_id = ach_service.start_job(saved, ngay)
+    job_id = ach_service.start_job(saved, ngay, bo_qua_checkpoint=bo_qua_checkpoint)
     return {'job_id': job_id}
 
 
@@ -72,6 +84,7 @@ def validate_files(
 class FolderRequest(BaseModel):
     folder_path: str
     ngay_doi_chieu: str = ''
+    bo_qua_checkpoint: bool = False
 
 
 @router.post('/validate_folder')
@@ -97,13 +110,14 @@ def start_from_folder(
     req: FolderRequest,
     _=Depends(require_feature('menu.cham_ach')),
 ):
-    """Chạy pipeline từ thư mục server (không upload file)."""
+    """Chạy pipeline từ thư mục server (không upload file). bo_qua_checkpoint — xem
+    docstring `start_job()`."""
     p = Path(req.folder_path)
     if not p.exists() or not p.is_dir():
         raise HTTPException(400, f'Thư mục không tồn tại: {req.folder_path}')
 
     ngay = req.ngay_doi_chieu.strip() or None
-    job_id = ach_service.start_from_folder(str(p), ngay)
+    job_id = ach_service.start_from_folder(str(p), ngay, bo_qua_checkpoint=req.bo_qua_checkpoint)
     return {'job_id': job_id}
 
 

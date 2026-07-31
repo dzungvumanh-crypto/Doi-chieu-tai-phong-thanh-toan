@@ -3231,6 +3231,71 @@ Bất biến MIS: 522.774 + 36.462 = 559.236 (khớp tổng gốc)</pre>
     </div>
   </div>
 
+  <!-- 65 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">65</span>
+      <span class="card-title">Tính năng "Chạy thẳng — bỏ qua Checkpoint" — ĐÃ CODE, ĐÃ TEST, ĐÃ VERIFY QUA UI THẬT</span>
+      <span class="badge badge-done">344/344 test toàn dự án PASS (6 test mới) — click-through UI thật qua Playwright, chưa commit</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh</div>
+      <p>Business Owner cần dùng ngay cho công việc trước mắt (2026-07-31, ngay sau khi xong cả 4 điểm — xem
+        mục 62/64, [[project_ach_chay_thang_bo_qua_checkpoint]]): tùy chọn "không nghi ngờ dữ liệu → chạy một
+        mạch tới báo cáo cuối, coi MIS_đi đúng 100%, không dừng lại hỏi gì" — khác hẳn Chế độ A/B hiện có (mục
+        53, cả 2 chế độ đó vẫn LUÔN dừng, chỉ khác popup tự mở hay không).</p>
+
+      <div class="label">Phát hiện quan trọng trước khi code — engine đã sẵn hỗ trợ, rủi ro gần bằng 0</div>
+      <p><code>pipeline.py::main_from_dir(dung_sau_mis_di=False)</code> đã LÀ đúng hành vi "chạy thẳng" —
+        nhánh này đã chạy PRODUCTION hàng ngày (chính là code chạy khi bấm "Đã xác nhận – Chạy tiếp" ở
+        Checkpoint, `continue_job()` gọi `_run()` không truyền `dung_sau_mis_di`, mặc định `False`). Vấn đề
+        chỉ nằm ở lớp orchestration: <code>ach_service.py::start_job()</code>/<code>start_from_folder()</code>
+        khóa cứng <code>dung_sau_mis_di=True</code> cho MỌI lần chạy đầu — không có đường nào từ UI đổi được.
+        Giải pháp: chỉ "mở khóa" tham số đã có sẵn, KHÔNG sửa 1 dòng nào trong thuật toán đối chiếu (b1-b11).</p>
+
+      <div class="label">Đã làm — 3 lớp tối thiểu</div>
+      <ul>
+        <li><b>API</b> (<code>backend/api/ach.py</code>): thêm <code>bo_qua_checkpoint: bool = False</code> vào
+          <code>/start</code> (multipart) và <code>FolderRequest</code> (<code>/start_folder</code>, JSON).</li>
+        <li><b>Service</b> (<code>ach_service.py</code>): <code>start_job()</code>/<code>start_from_folder()</code>
+          nhận thêm tham số, truyền <code>dung_sau_mis_di=not bo_qua_checkpoint</code> thay vì hardcode
+          <code>True</code>. Không đụng <code>_run()</code> — nhánh "chạy thẳng tới done" đã có sẵn, hoạt động
+          đúng ngay khi gọi trực tiếp từ lần chạy đầu.</li>
+        <li><b>Frontend</b> (<code>cham_ach.py</code>): checkbox cảnh báo màu cam, MẶC ĐỊNH TẮT, ẩn hẳn phần
+          "Chế độ xử lý Checkpoint" khi bật (không còn ý nghĩa), đổi hint dưới nút Chạy. Lớp an toàn thêm: bấm
+          "Chạy đối chiếu" khi đang bật → hiện popup xác nhận lại lần 2 ("Xác nhận chạy thẳng, bỏ qua
+          Checkpoint") trước khi thực sự tạo job — tránh bấm nhầm/quên đang bật.</li>
+      </ul>
+
+      <div class="label">Bug thật phát hiện khi viết test (không phải giả thuyết)</div>
+      <p><code>list[UploadFile]</code> + tham số kiểu đơn giản KHÔNG khai báo <code>Form(...)</code> tường minh
+        trên route <code>/api/ach/start</code> → FastAPI (0.109.1) KHÔNG tự suy luận là Form field, luôn nhận
+        giá trị mặc định, im lặng bỏ qua dữ liệu client gửi lên — verify bằng repro tối giản riêng, không phải
+        đoán. Phát hiện khi thêm <code>bo_qua_checkpoint</code>, hoá ra <code>ngay_doi_chieu</code> (tham số cũ,
+        có từ trước) cũng bị lỗi Y HỆT — <b>"Ngày đối chiếu" nhập tay qua mode Tải file lên chưa từng hoạt động
+        từ trước tới giờ</b> (luôn fallback tự động lấy từ PDF). Sửa cả 2 bằng <code>Form(...)</code> tường
+        minh, thêm test hồi quy riêng cho <code>ngay_doi_chieu</code>.</p>
+
+      <div class="label">Verify</div>
+      <p>6 test mới (<code>tests/test_ach_bo_qua_checkpoint.py</code>) PASS — cả 2 mode upload/folder, cả 2
+        chiều mặc định (vẫn dừng Checkpoint) và bật cờ (chạy thẳng tới <code>done</code> ngay lần đầu), mode
+        folder bật cờ vẫn copy kết quả về nguồn đúng, cộng test hồi quy <code>ngay_doi_chieu</code>. 344/344
+        test toàn dự án PASS (1 fail ILO1000 không liên quan, có từ trước, không đổi).</p>
+      <p><b>Click-through UI THẬT qua Playwright (không mock/stub)</b> — khởi động backend+frontend thật, tạo 1
+        tài khoản admin tạm để đăng nhập (đã xoá sạch sau test, đúng quy tắc "Dọn data test" của dự án), thao
+        tác trên trình duyệt thật: tick checkbox → phần "Chế độ xử lý Checkpoint" ẩn đúng, hint đổi màu cam
+        đúng chữ → bấm "Chạy đối chiếu" → popup xác nhận hiện đúng → bấm "Hủy" → job KHÔNG được tạo (nút Chạy
+        vẫn hiện) → bấm lại "Chạy đối chiếu" → "Tôi hiểu, chạy thẳng luôn" → job THẬT được tạo qua backend thật
+        (không stub), log cho thấy pipeline đi thẳng qua bước MIS_đi tới bước tìm GW mà KHÔNG dừng ở Checkpoint
+        (lỗi dừng lại sau đó vì dùng file GW rỗng giả — đúng kỳ vọng, không phải lỗi tính năng). Không có lỗi
+        console/JS nào trong toàn bộ luồng.</p>
+
+      <div class="label">Chưa làm</div>
+      <p>Chưa commit. Chưa merge/push nhánh <code>ach-4diem-capnhat</code> vào <code>Cham_ILO1000</code> — vẫn
+        chờ quyết định Business Owner (câu hỏi còn mở duy nhất của toàn bộ đợt cập nhật ACH này).</p>
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-07-31</footer>
 </div>
 </body>

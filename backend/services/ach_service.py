@@ -76,12 +76,21 @@ def cancel_job(job_id: str) -> bool:
     return False
 
 
-def start_job(saved_files: dict[str, bytes], ngay: str | None) -> str:
+def start_job(saved_files: dict[str, bytes], ngay: str | None,
+             bo_qua_checkpoint: bool = False) -> str:
     """
     Tạo job mới, lưu file vào disk, chạy pipeline trong background thread.
     saved_files: {filename: bytes}
-    Trả về job_id. Luôn chạy ở chế độ Checkpoint (dừng sau khop_voi_gw() chờ xác
-    nhận thủ công nhánh Timeout) — thay cho việc tự động phân loại toàn bộ.
+    Trả về job_id. Mặc định chạy ở chế độ Checkpoint (dừng sau
+    `_process_mis_di()` chờ xác nhận thủ công MIS_đi) — thay cho việc tự động
+    phân loại toàn bộ.
+
+    bo_qua_checkpoint=True (2026-07-31, xem
+    project_ach_chay_thang_bo_qua_checkpoint) — chạy thẳng một mạch tới báo cáo
+    cuối, coi toàn bộ MIS_đi mặc định đúng, KHÔNG dừng lại chờ xác nhận. Đây là
+    nhánh code ĐÃ CHẠY THẬT hàng ngày (giống hệt `_run()` khi `continue_job()`
+    gọi lại không truyền `dung_sau_mis_di`, mặc định `False`) — chỉ khác là được
+    phép chọn ngay từ lần chạy đầu tiên, không phải chờ qua Checkpoint trước.
     """
     job_id, job = _new_job()
 
@@ -99,17 +108,19 @@ def start_job(saved_files: dict[str, bytes], ngay: str | None) -> str:
     thread = threading.Thread(
         target=_run,
         args=(job_id, str(input_dir), job['output_dir'], ngay),
-        kwargs={'dung_sau_mis_di': True},
+        kwargs={'dung_sau_mis_di': not bo_qua_checkpoint},
         daemon=True,
     )
     thread.start()
     return job_id
 
 
-def start_from_folder(folder_path: str, ngay: str | None) -> str:
+def start_from_folder(folder_path: str, ngay: str | None,
+                      bo_qua_checkpoint: bool = False) -> str:
     """Chạy pipeline trực tiếp từ thư mục server (không cần upload file). Trả job_id.
-    Luôn chạy ở chế độ Checkpoint — xem `start_job()`. Kết quả cuối sẽ được copy về
-    lại `folder_path` (xem `_copy_results_to_source()`)."""
+    Mặc định chạy ở chế độ Checkpoint — xem `start_job()` (bo_qua_checkpoint tương
+    tự). Kết quả cuối sẽ được copy về lại `folder_path` (xem
+    `_copy_results_to_source()`)."""
     job_id, job = _new_job()
     Path(job['output_dir']).mkdir(parents=True, exist_ok=True)
 
@@ -121,7 +132,7 @@ def start_from_folder(folder_path: str, ngay: str | None) -> str:
     thread = threading.Thread(
         target=_run,
         args=(job_id, folder_path, job['output_dir'], ngay),
-        kwargs={'dung_sau_mis_di': True},
+        kwargs={'dung_sau_mis_di': not bo_qua_checkpoint},
         daemon=True,
     )
     thread.start()
