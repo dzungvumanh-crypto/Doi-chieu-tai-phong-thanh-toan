@@ -3033,7 +3033,42 @@ Bất biến MIS: 522.774 + 36.462 = 559.236 (khớp tổng gốc)</pre>
 
       <div class="label">Chưa làm</div>
       <p>Chưa merge nhánh <code>ach-4diem-capnhat</code> vào <code>Cham_ILO1000</code>, chưa push. Tiếp theo
-        theo đúng lộ trình mục 59: <b>Điểm 3</b> (tách điện đi huỷ từ NPO_đi thừa).</p>
+        theo đúng lộ trình mục 59: <b>Điểm 3</b> (tách điện đi huỷ từ NPO_đi thừa) — ĐÃ XONG, xem mục 62.</p>
+    </div>
+  </div>
+
+  <!-- 62 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">62</span>
+      <span class="card-title">Điểm 3 — ĐÃ CODE, ĐÃ TEST, ĐÃ COMMIT (tách điện đi huỷ khỏi NPO_đi thừa)</span>
+      <span class="badge badge-done">294/294 test ACH+liên quan PASS — commit 058bd2d, cùng nhánh ach-4diem-capnhat</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Đã làm</div>
+      <p>Module mới <code>backend/services/ach/b10_xu_ly_npo_di_thua.py::tach_dien_huy()</code> — đúng thiết kế
+        chốt ở mục 57/60: <code>groupby(CHECK_TRUNG=TRBRCD+SO_TRACE)</code> trong NPO_đi thừa,
+        <code>sum(CRAMOUNT)==0</code> → "điện đi huỷ trong ngày"; phần còn lại lọc <code>TRTP=='Cancel'</code>
+        → "điện đi huỷ khác ngày"; phần còn lại nữa vẫn là NPO_đi thừa. KHÔNG loại trừ
+        <code>SO_TRACE='0'</code> mặc định (đúng sign-off, chấp nhận rủi ro lý thuyết).
+        <code>pipeline.py</code>: thêm 2 sheet <code>DIEN_DI_HUY_TRONG_NGAY</code>/
+        <code>DIEN_DI_HUY_KHAC_NGAY</code> (sheet khác ngày kèm dòng TỔNG số món+tiền, hàm
+        <code>_viet_sheet_co_tong()</code> mới) vào báo cáo chính; TRỪ 2 nhóm huỷ khỏi sheet
+        <code>NPO_DI_THUA</code>; <code>TONG_KET</code> thêm 2 dòng riêng + sửa công thức Tổng NPO_DI cộng
+        đủ cả 2 khoản huỷ (bảo toàn số học).</p>
+
+      <div class="label">Verify</div>
+      <p>8/8 test thuật toán (<code>tests/test_ach_dien_huy.py</code>, gồm test nhóm ≥3 dòng, test bất biến số
+        học) + 7/7 test Excel export mới (<code>tests/test_ach_excel_export.py</code>) PASS. 294/294 test
+        ACH+liên quan PASS toàn dự án (1 fail ILO1000 không liên quan, có từ trước, không đổi).</p>
+
+      <div class="label">Chưa làm</div>
+      <p>Chưa merge/push. Tiếp theo theo lộ trình mục 59: <b>Điểm 4</b> (đối chiếu chéo ngày MIS thừa
+        T-2 ⟷ NPO thừa T-1, cả 2 chiều — mục 58) — làm SAU Điểm 3 vì cùng đụng sheet <code>NPO_DI_THUA</code>,
+        Điểm 3 đã trừ huỷ trước nên Điểm 4 giờ có thể thêm cột ghi chú lên đúng phần còn lại. Sau Điểm 4 tới
+        Điểm 2 (OSB). Riêng biệt: tính năng MỚI "chạy thẳng bỏ qua checkpoint" (yêu cầu 2026-07-31, xem memory
+        <code>project_ach_chay_thang_bo_qua_checkpoint.md</code>) — CHƯA làm, phải hỏi lại Business Owner sau
+        khi xong cả 4 điểm, không tự ý chen ngang.</p>
     </div>
   </div>
 
