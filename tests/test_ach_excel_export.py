@@ -46,6 +46,15 @@ def _synthetic_dfs():
         'SOURCE': ['GW', 'MIS'], 'NHOM_CN_TIEN': ['00048880000', '00048880000'],
     })
 
+    # Điểm 3 — điện đi huỷ trong ngày (2 dòng đối ứng) / khác ngày (1 dòng Cancel).
+    df_dien_huy_trong_ngay = pd.DataFrame({
+        'TRBRCD': ['1240', '1240'], 'CRAMOUNT': [3_000_000, -3_000_000],
+        'TRTP': ['Normal', 'Cancel'],
+    })
+    df_dien_huy_khac_ngay = pd.DataFrame({
+        'TRBRCD': ['1300'], 'CRAMOUNT': [-6_000_000], 'TRTP': ['Cancel'],
+    })
+
     return dict(
         df_mis_di_khop=df_mis_di_khop, df_npo_di_thua=df_npo_di_thua,
         df_mis_di_thua=df_mis_di_thua, df_timeout=df_timeout,
@@ -53,6 +62,8 @@ def _synthetic_dfs():
         df_mis_den_thua=df_mis_den_thua, df_gw_raw=df_gw_raw,
         df_gw_thua_xac_dinh=df_gw_thua_xac_dinh,
         df_gw_can_doi_chieu=df_gw_can_doi_chieu,
+        df_dien_huy_trong_ngay=df_dien_huy_trong_ngay,
+        df_dien_huy_khac_ngay=df_dien_huy_khac_ngay,
     )
 
 
@@ -131,3 +142,69 @@ def test_xuat_excel_khong_co_gw_thua_van_chay_duoc(tmp_path):
     rows = {row[0].value: row[1].value for row in ws.iter_rows(min_row=2) if row[0].value}
     assert rows['GW thừa - xác định chắc chắn (C.1a)'] == 0
     assert rows['GW thừa - cần đối chiếu thủ công (C.1a)'] == 0
+
+
+# ── Điểm 3 (2026-07-31) — sheet DIEN_DI_HUY_TRONG_NGAY / DIEN_DI_HUY_KHAC_NGAY ──
+
+def test_dien_huy_sheets_present(tmp_path):
+    dfs = _synthetic_dfs()
+    output_path = str(tmp_path / 'doi_chieu_20260731.xlsx')
+
+    xuat_excel(output_path, '16282', dfs['df_mis_di_khop'], dfs['df_npo_di_thua'],
+               dfs['df_mis_di_thua'], dfs['df_timeout'], dfs['df_mis_den_khop'],
+               dfs['df_npo_den_thua'], dfs['df_mis_den_thua'], dfs['df_gw_raw'],
+               df_dien_huy_trong_ngay=dfs['df_dien_huy_trong_ngay'],
+               df_dien_huy_khac_ngay=dfs['df_dien_huy_khac_ngay'])
+
+    wb = openpyxl.load_workbook(output_path)
+    assert 'DIEN_DI_HUY_TRONG_NGAY' in wb.sheetnames
+    assert 'DIEN_DI_HUY_KHAC_NGAY' in wb.sheetnames
+    assert wb['DIEN_DI_HUY_TRONG_NGAY'].max_row == 3  # header + 2 dòng, KHÔNG có dòng tổng
+    assert wb['DIEN_DI_HUY_KHAC_NGAY'].max_row == 3   # header + 1 dòng + 1 dòng TỔNG
+
+
+def test_dien_huy_khac_ngay_co_dong_tong(tmp_path):
+    """Sheet DIEN_DI_HUY_KHAC_NGAY phải kèm dòng TỔNG (số món + số tiền) cuối
+    sheet — đúng yêu cầu PR gốc, khác DIEN_DI_HUY_TRONG_NGAY."""
+    dfs = _synthetic_dfs()
+    output_path = str(tmp_path / 'doi_chieu_20260731.xlsx')
+
+    xuat_excel(output_path, '16282', dfs['df_mis_di_khop'], dfs['df_npo_di_thua'],
+               dfs['df_mis_di_thua'], dfs['df_timeout'], dfs['df_mis_den_khop'],
+               dfs['df_npo_den_thua'], dfs['df_mis_den_thua'], dfs['df_gw_raw'],
+               df_dien_huy_khac_ngay=dfs['df_dien_huy_khac_ngay'])
+
+    wb = openpyxl.load_workbook(output_path)
+    ws = wb['DIEN_DI_HUY_KHAC_NGAY']
+    dong_tong = [c.value for c in ws[3]]
+    assert dong_tong[0] == 'TỔNG: 1 món'
+    assert dong_tong[1] == '-6,000,000 VND'
+
+
+def test_tong_ket_tach_dien_huy_khoi_npo_di_thua(tmp_path):
+    """TONG_KET phải hiển thị đúng số dòng huỷ trong ngày/khác ngày, và Tổng NPO_DI
+    phải cộng đủ cả 2 khoản huỷ (bảo toàn số học)."""
+    dfs = _synthetic_dfs()
+    output_path = str(tmp_path / 'doi_chieu_20260731.xlsx')
+
+    xuat_excel(output_path, '16282', dfs['df_mis_di_khop'], dfs['df_npo_di_thua'],
+               dfs['df_mis_di_thua'], dfs['df_timeout'], dfs['df_mis_den_khop'],
+               dfs['df_npo_den_thua'], dfs['df_mis_den_thua'], dfs['df_gw_raw'],
+               df_dien_huy_trong_ngay=dfs['df_dien_huy_trong_ngay'],
+               df_dien_huy_khac_ngay=dfs['df_dien_huy_khac_ngay'])
+
+    wb = openpyxl.load_workbook(output_path)
+    ws = wb['TONG_KET']
+    rows = {row[0].value: row[1].value for row in ws.iter_rows(min_row=2) if row[0].value}
+
+    assert rows['  Điện đi huỷ trong ngày (đã tách khỏi NPO_DI thừa)'] == 2
+    assert rows['  Điện đi huỷ khác ngày (đã tách khỏi NPO_DI thừa)'] == 1
+    # NPO_DI thừa (1 dòng, CRAMOUNT=500_000 từ _synthetic_dfs) + 2 huỷ trong ngày
+    # + 1 huỷ khác ngày = 4, cộng thêm 0 dòng khớp (không truyền n_di_khop thật ở
+    # test này, df_mis_di_khop chỉ có cột CHI_NHANH/SO_TIEN không phải MSGREF khớp
+    # đúng nghĩa) — kiểm tra đúng phép cộng của Tổng NPO_DI theo giá trị hiện có.
+    n_di_khop = len(dfs['df_mis_di_khop'])
+    n_npo_di_thua = len(dfs['df_npo_di_thua'])
+    n_huy_trong_ngay = len(dfs['df_dien_huy_trong_ngay'])
+    n_huy_khac_ngay = len(dfs['df_dien_huy_khac_ngay'])
+    assert rows['Tổng NPO_DI (cần đối)'] == n_di_khop + n_npo_di_thua + n_huy_trong_ngay + n_huy_khac_ngay
