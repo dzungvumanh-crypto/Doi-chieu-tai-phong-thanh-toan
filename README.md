@@ -268,6 +268,15 @@ Máy có màn hình rộng **≤ 1440px** (máy trạm 1366×768) mặc định 
 ### Vùng nội dung
 Giao diện thiết kế cho **máy trạm desktop**, không có breakpoint mobile. Vùng nội dung rộng `calc(100% - 16rem)` (hoặc `- 4.5rem` khi sidebar thu gọn) và cho **cuộn ngang** khi bảng vượt khung — không cắt bớt nội dung.
 
+Đầu mỗi trang hiển thị **đường dẫn menu** dẫn tới trang đó, ví dụ *Phòng KSNB & HTVH / Báo cáo / **Báo cáo hậu kiểm***. Phần cha in nhỏ màu xám, tên trang giữ cỡ tiêu đề. Đường dẫn **suy ra từ route** rồi tra bảng dựng sẵn từ chính cây menu (`shared.BREADCRUMBS`) — đổi tên một mục trong `DEPARTMENTS` thì breadcrumb tự đổi theo, không có chỗ thứ hai phải sửa. Trang không nằm trong menu (`/home`, `/user-management`) không hiện phần cha.
+
+> Điều kiện: route của trang phải trùng khoá menu (`@ui.page("/reports")` ↔ khoá `reports`) — ràng buộc này vốn đã có sẵn vì sidebar điều hướng bằng `ui.navigate.to(f"/{key}")`.
+
+### Màn hình đăng nhập
+Hai bên ô đăng nhập là **các cụm đường dẫn nhanh** tới hệ thống nghiệp vụ (Thanh toán trong nước / Thanh toán quốc tế / Nội bộ), click mở tab mới. Danh sách để cứng trong `frontend/pages/login.py` chứ không nằm trong DB — cố ý, để trang login **không phụ thuộc backend**: backend chết thì người dùng vẫn mở được CITAD, mail, iOffice.
+
+Bố cục khoá bằng biến CSS (`--pc-row`, `--pc-head`, `--pc-pad`, `--pc-bd`) để các hàng trái/phải luôn ngang nhau. Khoảng cách giữa hai cụm bên phải **tính bằng Python** từ số link mỗi cụm (`_split_gap_css()`) — thêm hoặc bớt link ở cụm nào cũng tự khớp lại.
+
 ---
 
 ## Quy trình duyệt nghỉ phép

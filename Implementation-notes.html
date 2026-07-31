@@ -2432,7 +2432,139 @@ ui.on_exception(_on_exception)</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-07-30</footer>
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">J</span>
+      <span class="card-title">Hai cột đường dẫn nhanh trên trang đăng nhập</span>
+    </div>
+    <div class="card-body">
+      <p>Thêm hai cột link (payment/CITAD/OSB bên trái, SWIFT/mail/iOffice/eLearning bên phải) kèm hai bên
+      card đăng nhập, mở tab mới khi click.</p>
+
+      <div class="label">Danh sách link để cứng trong code, không đưa vào DB</div>
+      <table>
+        <tr><th>Phương án</th><th>Đánh đổi</th></tr>
+        <tr><td><strong>Hằng số trong <code>frontend/pages/login.py</code></strong> (đã chọn)</td>
+            <td>Sửa link phải sửa code + restart. Đổi lại: trang login <em>không gọi API</em> — nếu backend chết,
+            người dùng vẫn mở được CITAD/mail để làm việc.</td></tr>
+        <tr><td>Bảng cấu hình trong DB + endpoint public</td>
+            <td>Sửa qua giao diện được, nhưng phải mở một endpoint <strong>không cần token</strong> ở màn hình
+            chưa đăng nhập, và link biến mất khi backend chết — đúng lúc cần nhất.</td></tr>
+      </table>
+
+      <div class="label">Tên hiển thị thay cho URL — nhưng chỉ một phần</div>
+      <p>Mỗi mục trong nhóm nhận <strong>hai dạng</strong>: chuỗi URL trần (hiện nguyên URL) hoặc cặp
+      <code>(tên, URL)</code>. Dạng hỗn hợp này xấu về mặt kiểu dữ liệu, nhưng đổi lại 15 link chưa có tên
+      không phải viết thành <code>(url, url)</code> lặp lại. Link có tên thì URL đầy đủ chuyển xuống
+      <code>tooltip</code> — người dùng vẫn kiểm được mình sắp đi đâu trước khi bấm, điều mà tên hiển thị
+      một mình không cho biết.</p>
+
+      <div class="label">Nhóm có tiêu đề <em>và</em> hàng trái/phải vẫn ngang nhau</div>
+      <p>Hai yêu cầu này va nhau. Yêu cầu cũ: <code>payment.agribank</code> phải ngang hàng
+      <code>swifthub.agribank</code>, <code>mail.agribank</code> ngang <code>CITAD4818</code>.
+      Yêu cầu mới: gom thành 3 panel có tiêu đề (Trong nước 10 link · Quốc tế 2 · Nội bộ 4) — panel có
+      padding, viền, tiêu đề, tức chèn thêm chiều cao <em>không phải bội số của hàng</em>.</p>
+      <p>Cách giải: khoá mọi kích thước bằng biến CSS
+      (<code>--pc-row 44</code>, <code>--pc-head 38</code>, <code>--pc-pad 14</code>, <code>--pc-bd 1</code>)
+      rồi tính khoảng cách giữa 2 panel bên phải bằng <code>calc()</code>, với hệ số
+      <strong>lấy từ chính <code>len()</code> của 3 nhóm</strong> (<code>_split_gap_css()</code>):</p>
+      <table>
+        <tr><th>Điều kiện</th><th>Phương trình</th></tr>
+        <tr><td>Hai cột cao bằng nhau (để <code>items-center</code> không làm lệch)</td>
+            <td><code>G = H<sub>trái</sub> − H<sub>p1</sub> − H<sub>p2</sub> = (n−n<sub>1</sub>−n<sub>2</sub>)·row − head − 2·pad − 2·bd</code></td></tr>
+        <tr><td>Hàng đầu của panel dưới bên phải khớp đúng một hàng bên trái</td>
+            <td><code>p1 + G + bd + pad + head = bd + pad + head + k·row</code> → cũng ra đúng biểu thức trên,
+            với <code>k = n − n<sub>2</sub></code> luôn là số nguyên</td></tr>
+      </table>
+      <p>Hai điều kiện quy về <strong>cùng một phương trình</strong>, nên một giá trị <code>gap</code> duy nhất
+      thoả cả hai — không phải đo tay, không phải JS. Cách cũ dùng <code>None</code> làm hàng trống đã bỏ:
+      panel có tiêu đề rồi thì hàng trống không còn chỗ đứng.</p>
+
+      <div class="label">Bẫy đã tự gỡ: hệ số viết cứng trong CSS</div>
+      <p>Bản đầu ghi thẳng <code>3 * var(--pc-row)</code> vào CSS kèm chú thích "đổi số link thì nhớ sửa hệ số".
+      Ngay lượt sửa kế tiếp — bỏ 1 link nhóm Quốc tế — hệ số đã sai. Chú thích cảnh báo <strong>không cứu được</strong>
+      một ràng buộc mà máy tự kiểm được. Nay <code>_split_gap_css()</code> tính hệ số từ
+      <code>len()</code> của 3 nhóm rồi sinh ra thẻ <code>&lt;style&gt;</code> lúc dựng trang;
+      thêm/bớt link nhóm nào cũng tự khớp lại.</p>
+      <p>Đánh đổi: một quy tắc CSS bị tách khỏi khối <code>_LOGIN_CSS</code> và phải
+      <code>add_head_html</code> lần thứ hai — đọc code phải nhảy hai chỗ. Chấp nhận, vì cái mất đi là một
+      lỗi âm thầm (hàng lệch vài pixel, không ai để ý).</p>
+
+      <div class="label">Căn giữa khoảng trống hai bên</div>
+      <p>Cột link dùng <code>flex-1 flex justify-center</code>, card <code>w-96 shrink-0</code>. Cột link nhận
+      toàn bộ phần thừa mỗi bên rồi tự căn giữa phần đó — nên khi cửa sổ rộng ra, link giãn theo và luôn nằm
+      giữa khoảng trống thay vì dính vào mép card (cách cũ dùng <code>w-64</code> cố định thì bị dính).</p>
+
+      <div class="label">Thứ tự khi màn hình hẹp</div>
+      <p>Ba khối nằm trong một <code>ui.row()</code> có <code>flex-wrap</code>. Nếu để thứ tự DOM tự nhiên,
+      màn hẹp sẽ đẩy <strong>cột link trái lên trên</strong> và ô đăng nhập tụt xuống dưới màn hình.
+      Dùng <code>order-1 lg:order-2</code> cho card và <code>order-2 lg:order-1</code> cho cột trái:
+      dưới 1024px card luôn đứng đầu, link xếp xuống dưới.</p>
+
+      <p><strong>Chưa xử lý:</strong> chưa phân quyền — mọi người đều thấy đủ 16 link kể cả link không dùng đến.
+      Ràng buộc số link mỗi nhóm ↔ hệ số trong <code>calc()</code> mới chỉ là comment, chưa có gì chặn tự động.
+      Nếu về sau danh sách link thay đổi thường xuyên thì nên bỏ hẳn ràng buộc "hàng ngang nhau" —
+      nó là thứ khiến layout không tự co giãn được.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">K</span>
+      <span class="card-title">Breadcrumb — hiện đường dẫn menu ở đầu mỗi trang</span>
+    </div>
+    <div class="card-body">
+      <p>Trước đây đầu trang chỉ có tiêu đề (<em>"Báo cáo hậu kiểm"</em>), không cho biết mục đó nằm ở đâu
+      trong menu. Nay hiện cả đường dẫn:
+      <em>Phòng KSNB &amp; HTVH / Báo cáo / <strong>Báo cáo hậu kiểm</strong></em>.</p>
+
+      <div class="label">Một dòng, không phải hai</div>
+      <p>Bản đầu tách làm hai dòng — breadcrumb nhỏ ở trên, tiêu đề lớn ở dưới. Sai: đoạn cuối breadcrumb
+      <strong>trùng y hệt</strong> tiêu đề, nên tên trang hiện <em>hai lần</em> liền nhau
+      (<em>"Phòng Swift / Đối chiếu điện SWIFT"</em> rồi ngay dưới <em>"Đối chiếu điện SWIFT"</em>).
+      Nay gộp một dòng: đoạn cha nhỏ màu xám, tên trang giữ nguyên <code>text-2xl</code> đỏ đậm,
+      căn theo <code>items-baseline</code> để chữ to chữ nhỏ đứng chung đường chân.</p>
+      <p>Đoạn cuối lấy từ tham số <code>title</code> mà trang tự truyền, <strong>không</strong> lấy nhãn menu —
+      bảng breadcrumb chỉ cung cấp phần cha. Điều này xoá luôn rủi ro "hai nguồn lệch nhau" ghi ở bản trước.</p>
+
+      <div class="label">Trang <em>không</em> tự khai báo đường dẫn của mình</div>
+      <table>
+        <tr><th>Phương án</th><th>Đánh đổi</th></tr>
+        <tr><td><strong>Suy ra từ route</strong> (<code>ui.context.client.page.path</code>) rồi tra bảng dựng
+            sẵn từ cây menu (đã chọn)</td>
+            <td>Ràng buộc ngầm: route phải trùng khoá menu. Hiện đúng với cả 16 trang vì sidebar điều hướng
+            bằng <code>ui.navigate.to(f"/{key}")</code> — tức ràng buộc này <em>vốn đã</em> tồn tại từ trước,
+            không phải cái mới sinh ra. Đổi lại: <strong>0 dòng sửa</strong> ở 19 trang gọi
+            <code>_page_header()</code>.</td></tr>
+        <tr><td>Thêm tham số <code>_page_header(title, sub, key)</code></td>
+            <td>Tường minh, nhưng phải sửa 19 chỗ và mỗi chỗ là một cơ hội gõ sai khoá — sai thì
+            breadcrumb chỉ <em>hiện nhầm</em> chứ không lỗi, nên sẽ không ai phát hiện.</td></tr>
+      </table>
+
+      <div class="label">Phải tách 2 nhóm menu ra khỏi <code>_sidebar()</code></div>
+      <p>"Nhật ký hệ thống" và "Phân quyền chức năng" trước đây là dict viết thẳng trong thân
+      <code>_sidebar()</code> nên code ngoài không đọc được. Đã nâng thành hằng số module
+      (<code>DEPT_NHATKY</code>, <code>DEPT_PHANQUYEN</code>). Nếu không tách thì phải chép lại nhãn ở chỗ thứ
+      hai — và hai bản sao sẽ lệch nhau ngay lần đổi tên đầu tiên. Dữ liệu bê nguyên, không sửa giá trị.</p>
+
+      <div class="label">Hai trường hợp lề phải xử lý</div>
+      <table>
+        <tr><th>Tình huống</th><th>Cách xử lý</th></tr>
+        <tr><td>Nhóm và mục con <strong>trùng tên</strong> (nhóm "Nhật ký hệ thống" có mục cũng tên
+            "Nhật ký hệ thống")</td>
+            <td>Bỏ đoạn trùng liền kề, nếu không sẽ ra <em>"Nhật ký hệ thống / Nhật ký hệ thống"</em></td></tr>
+        <tr><td>Đường dẫn chỉ còn <strong>1 đoạn</strong> sau khi bỏ trùng, hoặc trang không nằm trong menu
+            (<code>/home</code>, <code>/user-management</code>, <code>/login</code>)</td>
+            <td>Không có phần cha nào để hiện → đầu trang trông y như trước khi có tính năng này</td></tr>
+      </table>
+
+      <p><strong>Đã cân nhắc và bỏ:</strong> cho các đoạn cha bấm được. Cấp phòng và cấp nhóm
+      (<em>Báo cáo</em>, <em>Đối chiếu</em>) <strong>không có route</strong> — chúng chỉ là mục hover trong
+      sidebar. Làm chúng trông bấm được mà bấm không đi đâu thì tệ hơn là để chữ thường.</p>
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-07-31</footer>
 </div>
 </body>
 </html>

@@ -74,11 +74,62 @@ DEPARTMENTS = [
     {"id": "bgd", "label": "Ban Giám đốc", "icon": "business_center", "items": []},
 ]
 
+# Hai nhóm dưới đây trước nằm inline trong _sidebar(). Tách ra module-level để
+# breadcrumb đọc được — nếu không sẽ phải chép lại nhãn ở chỗ thứ hai và hai
+# bản sao sẽ lệch nhau ngay lần đổi tên đầu tiên.
+DEPT_NHATKY = {
+    "id": "nhatky",
+    "label": "Nhật ký hệ thống",
+    "icon": "terminal",
+    "items": [
+        ("audit-logs", "Nhật ký hệ thống",        "history"),
+        ("logs",       "Lịch sử lỗi & cảnh báo", "error_outline"),
+        ("login-logs", "Nhật ký đăng nhập",       "login"),
+    ],
+}
+
+DEPT_PHANQUYEN = {
+    "id": "phanquyen",
+    "label": "Phân quyền chức năng",
+    "icon": "admin_panel_settings",
+    "items": [
+        ("groups",         "Nhóm user",           "groups"),
+        ("group-features", "Phân quyền theo nhóm", "tune"),
+    ],
+}
+
 # Chuyên viên chỉ thấy 2 mục này (flat, không theo phòng ban)
 MENU_ITEMS_CV = [
     ("handovers", "Bàn giao chứng từ", "receipt_long"),
     ("leaves",    "Nghỉ phép",          "event_busy"),
 ]
+
+
+def _build_breadcrumbs() -> dict[str, list[str]]:
+    """route key → đường dẫn menu. Dựng 1 lần lúc import từ chính cây menu."""
+    def _clean(parts: list[str]) -> list[str]:
+        # Bỏ đoạn trùng liền kề: nhóm "Nhật ký hệ thống" có item cùng tên,
+        # để nguyên sẽ ra "Nhật ký hệ thống / Nhật ký hệ thống".
+        out: list[str] = []
+        for p in parts:
+            if not out or out[-1] != p:
+                out.append(p)
+        return out
+
+    paths: dict[str, list[str]] = {}
+    for dept in [*DEPARTMENTS, DEPT_NHATKY, DEPT_PHANQUYEN]:
+        for item in dept["items"]:
+            if isinstance(item, tuple):
+                paths[item[0]] = _clean([dept["label"], item[1]])
+            else:
+                for k, lbl, _ in item["items"]:
+                    paths[k] = _clean([dept["label"], item["label"], lbl])
+    return paths
+
+
+# Trang không nằm trong menu (login, /home, /user-management...) không có khoá
+# ở đây → _page_header bỏ qua breadcrumb, hiển thị như cũ.
+BREADCRUMBS = _build_breadcrumbs()
 
 # CSS flyout menu — submenu hiện bên phải khi hover, không đẩy item phía dưới
 _SIDEBAR_CSS = """<style>
@@ -460,28 +511,11 @@ def _sidebar(current_page: str) -> dict:
 
             # Nhật ký hệ thống — admin luôn thấy, user khác cần feature
             if user_role == "admin" or api.has_feature("menu.logs"):
-                _dept_group({
-                    "id": "nhatky",
-                    "label": "Nhật ký hệ thống",
-                    "icon": "terminal",
-                    "items": [
-                        ("audit-logs", "Nhật ký hệ thống",        "history"),
-                        ("logs",       "Lịch sử lỗi & cảnh báo", "error_outline"),
-                        ("login-logs", "Nhật ký đăng nhập",       "login"),
-                    ],
-                }, current_page, check_features=False)
+                _dept_group(DEPT_NHATKY, current_page, check_features=False)
 
             # Phân quyền chức năng — chỉ admin (hard-coded, không phải feature)
             if user_role == "admin":
-                _dept_group({
-                    "id": "phanquyen",
-                    "label": "Phân quyền chức năng",
-                    "icon": "admin_panel_settings",
-                    "items": [
-                        ("groups", "Nhóm user", "groups"),
-                        ("group-features", "Phân quyền theo nhóm", "tune"),
-                    ],
-                }, current_page, check_features=False)
+                _dept_group(DEPT_PHANQUYEN, current_page, check_features=False)
 
         # ── Đăng xuất ──
         with ui.row().classes(
@@ -503,9 +537,29 @@ def _content_area():
     )
 
 
+def _current_breadcrumb() -> list[str]:
+    """Đường dẫn menu của trang đang mở, suy ra từ route — trang tự khai báo
+    thì 19 chỗ gọi _page_header đều phải sửa và dễ ghi sai."""
+    try:
+        route = ui.context.client.page.path
+    except Exception as e:
+        _log.warning("Không đọc được route cho breadcrumb: %s", e)
+        return []
+    crumbs = BREADCRUMBS.get(route.strip("/"), [])
+    return crumbs if len(crumbs) > 1 else []   # 1 đoạn = trùng tiêu đề, bỏ
+
+
 def _page_header(title: str, subtitle: str = ""):
+    # Breadcrumb và tiêu đề nằm chung một dòng — tách hai dòng thì tên trang bị
+    # lặp lại hai lần. Đoạn cuối lấy từ `title` (trang tự khai), không lấy nhãn
+    # menu, nên không có chuyện hai nguồn lệch nhau.
+    ancestors = _current_breadcrumb()[:-1]
     with ui.column().classes("mb-6"):
-        ui.label(title).classes("text-2xl font-bold text-red-900")
+        with ui.row().classes("items-baseline gap-1.5 flex-wrap"):
+            for name in ancestors:
+                ui.label(name).classes("text-sm text-gray-500")
+                ui.label("/").classes("text-sm text-gray-300")
+            ui.label(title).classes("text-2xl font-bold text-red-900")
         if subtitle:
             ui.label(subtitle).classes("text-gray-500 text-sm mt-1")
 
