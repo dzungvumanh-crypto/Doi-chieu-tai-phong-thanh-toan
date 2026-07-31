@@ -16,11 +16,11 @@ from backend.services.ach.pipeline import xuat_excel
 def _synthetic_dfs():
     df_mis_di_khop = pd.DataFrame({'CHI_NHANH': ['0001'], 'SO_TIEN': [1_000_000]})
     df_npo_di_thua = pd.DataFrame({'CRAMOUNT': [500_000]})
-    df_mis_di_thua = pd.DataFrame({'SO_TIEN': [200_000]})
+    df_mis_di_thua = pd.DataFrame({'SO_TIEN': [200_000], 'LOAI_LENH_OSB': ['']})
     df_timeout     = pd.DataFrame({'SO_TIEN': [300_000]})
     df_mis_den_khop  = pd.DataFrame({'SO_TIEN': [400_000]})
     df_npo_den_thua  = pd.DataFrame({'DRAMOUNT': [100_000]})
-    df_mis_den_thua  = pd.DataFrame({'SO_TIEN': [150_000]})
+    df_mis_den_thua  = pd.DataFrame({'SO_TIEN': [150_000], 'LOAI_LENH_OSB': ['']})
     df_gw_raw = pd.DataFrame({
         'BRCD': ['0001', '0002'], 'STTLMAMT': [1_000_000, 2_000_000],
         'MSGREF': ['REF1', 'REF2'], 'SessionId': ['16282', '16282'],

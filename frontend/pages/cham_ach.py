@@ -15,7 +15,8 @@ _POLL_INTERVAL = 1.5   # giây
 _FILE_HINT = (
     'PDF (session) · GL02*.zip · GW*.xlsx · '
     '2× *_DI_*.zip · 2× *_DEN_*.zip · '
-    '(tùy chọn, Điểm 4) MIS_DI_THUA*.csv / MIS_DEN_THUA*.csv của lần chạy ngày T-2'
+    '(tùy chọn, Điểm 4) MIS_DI_THUA*.csv / MIS_DEN_THUA*.csv của lần chạy ngày T-2 · '
+    '(tùy chọn, Điểm 2) QT*.xlsx (Quyết toán OSB đi/đến)'
 )
 
 # Mốc log → % tiến trình (tăng dần, không lùi lại)

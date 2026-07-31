@@ -3133,6 +3133,104 @@ Bất biến MIS: 522.774 + 36.462 = 559.236 (khớp tổng gốc)</pre>
     </div>
   </div>
 
+  <!-- 64 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">64</span>
+      <span class="card-title">Điểm 2 — ĐÃ CODE, ĐÃ TEST, ĐÃ VERIFY DỮ LIỆU THẬT (đối chiếu OSB qua file Quyết toán "QT") — CẢ 4 ĐIỂM ĐÃ XONG</span>
+      <span class="badge badge-done">332/332 test toàn dự án PASS (33 test mới) — verify thật 27-29.07, khớp tuyệt đối file tham khảo Business Owner, chưa commit</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh — có file QT thật, khác hẳn giả định lúc lập kế hoạch (mục 56/60-E3)</div>
+      <p>Business Owner cung cấp thư mục dữ liệu đầy đủ <code>G:\ACH CHECK DOI CHIEU NGAY 27-29.07\</code> (3
+        ngày độc lập, mỗi ngày có sẵn cặp file <code>QT đi &lt;ngày&gt;.xlsx</code>/<code>QT đến &lt;ngày&gt;.xlsx</code>
+        thật) — giải quyết đúng điều kiện chặn E3 (mục 60: "chưa verify được, cần xin file QT thật trước khi code
+        Điểm 2"). Đọc thử cấu trúc file TRƯỚC khi viết <code>xu_ly_qt()</code>, phát hiện nhiều điểm khác mô tả
+        PR gốc:</p>
+      <ul>
+        <li>File QT đi/đến luôn CHỈ chứa đúng 1 giá trị cột "Chiều giao dịch" (100% "GD đi" hoặc 100% "GD về")
+          — không cần tách theo cột này như PR dự kiến, file tự thân đã tách sẵn theo tên.</li>
+        <li>"Số tiền" là số nguyên thuần (không có dấu chấm/phẩy phân cách) — rủi ro lớn nhất PR nêu ra hoá ra
+          không xảy ra trên dữ liệu thật.</li>
+        <li>File có sẵn 1 cột KHÔNG TÊN trùng giá trị với khóa "CN TRACE TIỀN" dự kiến — verify khớp 100% nhưng
+          CỐ Ý không dùng (vị trí cột lệch giữa các file/chiều, không có nhãn xác nhận đúng ý nghĩa nghiệp vụ)
+          — tự tính lại từ cột có nhãn rõ ràng (CN thực hiện + Mã giao dịch + Số tiền), đúng công thức
+          <code>KEY_HUB</code>/<code>KEY_DEN_HUB</code> đã dùng bên MIS.</li>
+        <li>QT đi (không phải QT đến) có một số dòng "Kiểu giao dịch"='Cancel' với Số tiền ÂM (~12/31.748 dòng,
+          tỷ lệ tương tự cả 3 ngày) — PR gốc không nhắc tới. Hỏi lại Business Owner: <b>CHỐT giữ nguyên, không
+          lọc riêng</b> — số tiền âm tự nhiên không khớp khóa dương bên MIS, không cần xử lý đặc biệt.</li>
+      </ul>
+
+      <div class="label">Đã làm</div>
+      <p>Module mới <code>backend/services/ach/b9_doi_chieu_osb.py</code>:</p>
+      <ul>
+        <li><code>xu_ly_qt()</code> — dò TOÀN BỘ sheet trong file theo nội dung (cần cả 'STT' và 'Số tiền'),
+          KHÔNG cố định <code>sheet_name=0</code>/tên sheet (file thật có sheet phụ <code>Config</code> đứng
+          TRƯỚC sheet dữ liệu — xem bug thật bên dưới). Phân loại chiều tự động qua cột "Chiều giao dịch". Tính
+          lại <code>CN_TRACE_TIEN</code> từ "CN thực hiện" (regex lấy mã số đầu chuỗi "&lt;mã&gt; - &lt;tên&gt;"),
+          "Mã giao dịch" (bỏ số 0 đầu, đúng công thức <code>SO_TRACE</code>/<code>TRACE</code> bên MIS), "Số
+          tiền". Báo lỗi rõ nếu thiếu cột/sai định dạng/lẫn 2 chiều trong 1 file.</li>
+        <li><code>doi_chieu_osb_di()</code>/<code>doi_chieu_osb_den()</code> — tách lệnh OSB khỏi MIS thừa
+          (<code>osb_common.la_lenh_osb_di/den</code>) TRƯỚC khi gọi <code>_doi_chieu()</code> có sẵn so khớp
+          với QT; trả về (đã quyết toán, chưa khớp — gộp cả 2 nguồn MIS/QT, cột <code>NGUON</code> phân biệt,
+          đúng pattern <code>_gan_nguon</code>/<code>SOURCE</code> đã dùng ở <code>tim_nhom_gw_thua()</code>).</li>
+      </ul>
+      <p><code>pipeline.py</code>: tự dò file QT tùy chọn theo pattern <code>QT*.xlsx</code> (tái dùng
+        <code>_tim_file_ngoai_output()</code> đã có từ Điểm 4), phân loại đi/đến qua nội dung — KHÔNG cần tham
+        số mới cho <code>main_from_dir()</code>/service/API/frontend (cùng lý do Điểm 4: cả 2 mode upload/folder
+        đã hỗ trợ đính kèm file tùy ý). Gọi đối chiếu OSB ngay sau Điểm 4 (độc lập hoàn toàn, không đụng
+        <code>df_npo_..._thua</code>), xuất file riêng <code>&lt;ngày&gt;_ACH_OSB.xlsx</code> qua
+        <code>xuat_excel_osb()</code> mới (5 sheet: TONG_KET, OSB_DI_DA_QUYET_TOAN, OSB_DEN_DA_QUYET_TOAN,
+        DI_CHUA_KHOP, DEN_CHUA_KHOP) — KHÔNG đụng <code>doi_chieu_&lt;ngày&gt;.xlsx</code> chính.</p>
+      <p><b>Sign-off C2 (mục 60)</b> — thêm 2 dòng ghi chú vào <code>TONG_KET</code> báo cáo CHÍNH: "Trong đó:
+        lệnh OSB (MIS_đi/đến thừa) — xem file OSB riêng nếu có nạp file QT", đếm bằng
+        <code>la_lenh_osb_di/den()</code> trên <code>df_mis_di_thua</code>/<code>df_mis_den_thua</code> — LUÔN
+        hiển thị (không phụ thuộc có nạp QT hay không, vì đây chỉ là chú thích số liệu đã có sẵn), KHÔNG đổi số
+        liệu chính. Frontend (<code>cham_ach.py</code>): cập nhật hint (không cần đổi <code>accept</code> vì QT
+        là <code>.xlsx</code> đã được chấp nhận sẵn).</p>
+
+      <div class="label">2 bug thật phát hiện khi verify dữ liệu thật (không phải giả thuyết)</div>
+      <ul>
+        <li><b><code>sheet_name=0</code> bắt trúng sheet 'Config' thay vì sheet dữ liệu:</b> file QT thật luôn
+          có 2 sheet, <code>Config</code> (bảng tra loại chi nhánh) đứng TRƯỚC <code>Sheet 1</code> (dữ liệu
+          thật) — đọc theo VỊ TRÍ (<code>sheet_name=0</code>) bắt nhầm sheet đầu tiên. Sửa bằng
+          <code>_doc_sheet_du_lieu_qt()</code> mới: quét toàn bộ sheet, chọn đúng sheet có header
+          'STT'+'Số tiền', báo lỗi nếu 0 hoặc ≥2 sheet khớp (không tự chọn theo vị trí).</li>
+        <li><b>Fixture test thiếu cột <code>LOAI_LENH_OSB</code>:</b> <code>_synthetic_dfs()</code> trong
+          <code>test_ach_excel_export.py</code> (viết từ trước, cho Điểm 3) không có cột này — production luôn
+          có (nằm trong <code>_COLS_MIS_DI</code>/schema MIS_đến) nên không phải bug code, chỉ sửa fixture test
+          cho đúng schema thật.</li>
+      </ul>
+
+      <div class="label">Verify</div>
+      <p>33 test mới (<code>tests/test_ach_osb_reconciliation.py</code>: 8 test <code>xu_ly_qt</code> bao gồm
+        regression cho bug sheet Config, 6 test <code>doi_chieu_osb_di/den</code>, 4 test
+        <code>xuat_excel_osb()</code>, 1 test ghi chú C2) PASS. <b>332/332 test toàn dự án PASS</b> (1 fail
+        ILO1000 không liên quan, có từ trước, không đổi).</p>
+      <p><b>Verify dữ liệu thật ĐẦY ĐỦ qua pipeline thật, cả 3 ngày độc lập</b> (27/07, 28/07, 29/07 —
+        <code>G:\ACH CHECK DOI CHIEU NGAY 27-29.07\</code>, đọc + GHI kết quả thật vào từng thư mục
+        <code>&lt;ngày&gt;\Output\</code> theo yêu cầu Business Owner):</p>
+      <table>
+        <tr><th>Ngày</th><th>OSB đi khớp/thừa</th><th>OSB đến khớp/thừa</th></tr>
+        <tr><td>27/07</td><td>29.081 / 2.710</td><td>13.421 / 823</td></tr>
+        <tr><td>28/07</td><td>30.270 / 2.593</td><td>13.045 / 797</td></tr>
+        <tr><td>29/07</td><td>27.651 / 2.451</td><td>13.401 / 807</td></tr>
+      </table>
+      <p><b>Khớp TUYỆT ĐỐI với 2 file Business Owner tự làm tay để đối chiếu độc lập</b>
+        (<code>28.07\OSB đi thừa ngày 27.07.xlsx</code>: 2.710 dòng; <code>28.07\OSB đến thừa ngày 27.07.xlsx</code>:
+        823 dòng) — đúng bằng số liệu code tự động tính ra cho ngày 27/07 (2.710/823), không lệch 1 dòng. Tỷ lệ
+        đã quyết toán/thừa chiều đi ~56% OSB trong MIS_đi thừa, khớp lại đúng số liệu verify lúc lập kế hoạch
+        (mục 56: "50-55% số dòng thừa mỗi ngày là OSB").</p>
+
+      <div class="label">Toàn bộ 4 điểm cập nhật ACH đã hoàn thành</div>
+      <p>Điểm 1 (<code>aca9d71</code>) → osb_common.py D1 (<code>ee34556</code>) → Điểm 3 (<code>058bd2d</code>)
+        → Điểm 4 (<code>bdccc76</code>) → Điểm 2 (commit tiếp theo). Còn lại: merge/push nhánh
+        <code>ach-4diem-capnhat</code> vào <code>Cham_ILO1000</code> (chờ quyết định Business Owner), và tính
+        năng riêng biệt "chạy thẳng bỏ qua checkpoint" (mục 62, chưa làm, phải hỏi lại sau khi xong cả 4 điểm —
+        NAY đã tới lúc hỏi).</p>
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-07-31</footer>
 </div>
 </body>
