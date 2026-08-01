@@ -98,6 +98,15 @@ FEATURES: dict[str, str] = {
     "so_truc.ksv_confirm":      "Xác nhận / Từ chối sổ trực (vai KSV)",
     # Đối chiếu điện SWIFT — hậu tố phòng bỏ vì đã có dải nhãn "Phòng Swift"
     "menu.swift_recon":        "Đối chiếu điện SWIFT (menu)",
+
+    # Chấm công — Phòng Kế toán. "menu.attendance" CHỈ để làm tiêu đề nhóm hiển thị
+    # trong màn Phân quyền theo nhóm — sidebar KHÔNG dùng code này để ẩn/hiện (xem
+    # frontend/shared.py::_sidebar(), vẫn gate theo department code ACCT như cũ) vì
+    # mọi nhân viên ACCT đều cần thấy menu để xem "Công của tôi", không riêng người
+    # được cấp quyền. 2 action dưới đây mới thực sự được check (attendance.py).
+    "menu.attendance":       "Chấm công (menu)",
+    "attendance.view_dept":  "Xem bảng công cả phòng + lịch sử các tháng",
+    "attendance.export":     "Xuất Excel bảng công",
 }
 
 # ── Cấu trúc màn hình phân quyền ──────────────────────────────────────────────
@@ -263,6 +272,17 @@ FEATURE_GROUPS: list[dict] = [
                     {"code": "menu.logs", "actions": []},
                 ],
             },
+        ],
+    },
+    {
+        # Cho phép admin gán quyền "xem bảng công cả phòng + xuất Excel" cho 1 GDV
+        # cụ thể được giao theo dõi chấm công, không cần nâng role lên trưởng/phó
+        # phòng — attendance.py sẽ check role trưởng/phó phòng/admin HOẶC 2 quyền
+        # này (cộng thêm, không thay thế check role cũ).
+        "dept": "Phòng Kế toán",
+        "icon": "calculate",
+        "menus": [
+            {"code": "menu.attendance", "actions": ["attendance.view_dept", "attendance.export"]},
         ],
     },
 ]

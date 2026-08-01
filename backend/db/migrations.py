@@ -723,6 +723,136 @@ def _ensure_indexes():
             signed_at  DATETIME
         )""",
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_leave_sig_slot ON leave_signatures(leave_id, slot)",
+
+        # ── Chấm công — Phòng Kế toán — 2026-07-23 ──────────────────────────────
+        """CREATE TABLE IF NOT EXISTS attendance_symbols (
+            symbol      TEXT PRIMARY KEY,
+            description TEXT NOT NULL,
+            work_value  REAL NOT NULL DEFAULT 0,
+            color       TEXT DEFAULT '#E5E7EB',
+            is_active   BOOLEAN DEFAULT 1
+        )""",
+        """INSERT OR IGNORE INTO attendance_symbols (symbol, description, work_value, color, is_active) VALUES
+            ('x',   'Công cả ngày', 1.0, '#DCFCE7', 1),
+            ('P',   'Nghỉ phép',    0.0, '#FEE2E2', 1),
+            ('0.5', 'Nửa công',     0.5, '#FEF9C3', 1)""",
+        """CREATE TABLE IF NOT EXISTS attendances (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            staff_id     INTEGER NOT NULL REFERENCES user_tttt(id),
+            date         DATE    NOT NULL,
+            symbol       TEXT    NOT NULL REFERENCES attendance_symbols(symbol),
+            work_value   REAL    NOT NULL DEFAULT 0,
+            status       TEXT    NOT NULL DEFAULT 'auto' CHECK(status IN ('auto','adjusted','confirmed')),
+            note         TEXT,
+            confirmed_by INTEGER REFERENCES user_tttt(id),
+            confirmed_at DATETIME,
+            created_at   DATETIME,
+            updated_at   DATETIME,
+            UNIQUE(staff_id, date)
+        )""",
+        """CREATE TABLE IF NOT EXISTS attendance_adjustments (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            attendance_id   INTEGER NOT NULL REFERENCES attendances(id),
+            requested_by    INTEGER NOT NULL REFERENCES user_tttt(id),
+            old_symbol      TEXT,
+            new_symbol      TEXT NOT NULL,
+            old_work_value  REAL,
+            new_work_value  REAL NOT NULL,
+            reason          TEXT NOT NULL,
+            status          TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected')),
+            reviewer_id     INTEGER REFERENCES user_tttt(id),
+            reviewed_at     DATETIME,
+            reject_reason   TEXT,
+            created_at      DATETIME
+        )""",
+        # Trigger: đơn nghỉ phép chuyển sang 'approved' → tự ghi symbol 'P' vào attendances.
+        # Không sửa backend/api/leaves.py (module khác phụ trách) — dùng trigger SQL thuần,
+        # tự kích hoạt trên câu UPDATE status thật của leaves.py, không gọi code Python nào
+        # từ đó. spread_dates (nghỉ ngày lẻ không liên tục, cột JSON có sẵn trên
+        # leave_records): nếu có giá trị thì chỉ đánh dấu đúng các ngày trong JSON đó; nếu
+        # NULL thì đánh dấu toàn bộ ngày làm việc trong [start_date,end_date] (bỏ T7/CN +
+        # public_holidays). Chỉ ghi đè dòng đang status='auto' — không đụng dòng đã
+        # 'adjusted'/'confirmed' (kế toán đã tự xử lý ngày đó). datetime('now','+7 hours')
+        # xấp xỉ _vn_now() vì trigger SQL thuần không gọi được hàm Python — trade-off này
+        # được ghi trong Implementation-notes.html.
+        """CREATE TRIGGER IF NOT EXISTS trg_leave_approved_sync_attendance
+            AFTER UPDATE OF status ON leave_records
+            WHEN NEW.status = 'approved' AND OLD.status != 'approved'
+            BEGIN
+                INSERT INTO attendances (staff_id, date, symbol, work_value, status, created_at, updated_at)
+                WITH RECURSIVE d(day) AS (
+                    SELECT NEW.start_date
+                    UNION ALL
+                    SELECT date(day, '+1 day') FROM d WHERE day < NEW.end_date
+                )
+                SELECT NEW.staff_id, day, 'P',
+                       (SELECT work_value FROM attendance_symbols WHERE symbol='P'),
+                       'auto', datetime('now','+7 hours'), datetime('now','+7 hours')
+                FROM d
+                WHERE (
+                    (NEW.spread_dates IS NOT NULL AND day IN (SELECT value FROM json_each(NEW.spread_dates)))
+                    OR
+                    (NEW.spread_dates IS NULL AND strftime('%w', day) NOT IN ('0','6')
+                         AND day NOT IN (SELECT date FROM public_holidays))
+                )
+                ON CONFLICT(staff_id, date) DO UPDATE SET
+                    symbol = 'P',
+                    work_value = (SELECT work_value FROM attendance_symbols WHERE symbol='P'),
+                    status = 'auto',
+                    updated_at = datetime('now','+7 hours')
+                WHERE attendances.status = 'auto';
+            END""",
+        # Trigger bổ sung: backend/api/leaves.py::create_direct_leave ("khai báo hộ") INSERT
+        # thẳng leave_records với status='approved' ngay từ đầu (không qua UPDATE) — trigger
+        # AFTER UPDATE ở trên sẽ không kích hoạt cho trường hợp này. Thêm trigger AFTER INSERT
+        # cùng logic để phủ đúng path này (phát hiện khi test thực tế qua API /api/leaves/direct).
+        """CREATE TRIGGER IF NOT EXISTS trg_leave_direct_insert_sync_attendance
+            AFTER INSERT ON leave_records
+            WHEN NEW.status = 'approved'
+            BEGIN
+                INSERT INTO attendances (staff_id, date, symbol, work_value, status, created_at, updated_at)
+                WITH RECURSIVE d(day) AS (
+                    SELECT NEW.start_date
+                    UNION ALL
+                    SELECT date(day, '+1 day') FROM d WHERE day < NEW.end_date
+                )
+                SELECT NEW.staff_id, day, 'P',
+                       (SELECT work_value FROM attendance_symbols WHERE symbol='P'),
+                       'auto', datetime('now','+7 hours'), datetime('now','+7 hours')
+                FROM d
+                WHERE (
+                    (NEW.spread_dates IS NOT NULL AND day IN (SELECT value FROM json_each(NEW.spread_dates)))
+                    OR
+                    (NEW.spread_dates IS NULL AND strftime('%w', day) NOT IN ('0','6')
+                         AND day NOT IN (SELECT date FROM public_holidays))
+                )
+                ON CONFLICT(staff_id, date) DO UPDATE SET
+                    symbol = 'P',
+                    work_value = (SELECT work_value FROM attendance_symbols WHERE symbol='P'),
+                    status = 'auto',
+                    updated_at = datetime('now','+7 hours')
+                WHERE attendances.status = 'auto';
+            END""",
+        # Trigger ngược: đơn đã 'approved' bị huỷ/từ chối lại → xoá dòng 'P' tự động tương
+        # ứng (chỉ xoá nếu vẫn còn status='auto' — nếu đã bị chỉnh tay/duyệt điều chỉnh
+        # thành 'adjusted'/'confirmed' thì giữ nguyên, không đụng).
+        """CREATE TRIGGER IF NOT EXISTS trg_leave_unapprove_revert_attendance
+            AFTER UPDATE OF status ON leave_records
+            WHEN OLD.status = 'approved' AND NEW.status IN ('cancelled','rejected')
+            BEGIN
+                DELETE FROM attendances
+                WHERE staff_id = NEW.staff_id
+                  AND date BETWEEN NEW.start_date AND NEW.end_date
+                  AND symbol = 'P'
+                  AND status = 'auto';
+            END""",
+
+        # ── Gỡ bỏ Check-in/out tự động — 2026-07-29 (người dùng đổi ý, không dùng
+        # nữa) — DROP thay vì để nguyên CREATE, vì DB đang chạy sống đã lỡ tạo
+        # bảng/trigger này ở migration trước đó (2026-07-24), cần dọn sạch. Không
+        # xoá/sửa lịch sử migration cũ, chỉ nối thêm bước dọn dẹp phía sau.
+        "DROP TRIGGER IF EXISTS trg_login_sync_checkin",
+        "DROP TABLE IF EXISTS attendance_checkin_logs",
     ]
     _mig_log = logging.getLogger(__name__)
 
@@ -984,6 +1114,10 @@ def _ensure_indexes():
         "CREATE INDEX IF NOT EXISTS ix_ttqt_branches_sort     ON ttqt_branches(is_closed, sort_order)",
         "CREATE INDEX IF NOT EXISTS ix_so_truc_records_date ON so_truc_records(truc_date)",
         "CREATE UNIQUE INDEX IF NOT EXISTS ux_so_truc_active_date ON so_truc_records(truc_date) WHERE status != 'cancelled'",
+        "CREATE INDEX IF NOT EXISTS ix_attendances_date           ON attendances(date)",
+        "CREATE INDEX IF NOT EXISTS ix_attendance_adj_attendance  ON attendance_adjustments(attendance_id)",
+        "CREATE INDEX IF NOT EXISTS ix_attendance_adj_status      ON attendance_adjustments(status)",
+        "CREATE INDEX IF NOT EXISTS ix_attendance_adj_requested_by ON attendance_adjustments(requested_by)",
     ]
     conn = sqlite3.connect(DB_PATH, timeout=30)
     try:

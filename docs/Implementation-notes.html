@@ -3340,6 +3340,40 @@ ui.on_exception(_on_exception)</pre>
       </table>
       <div class="caution"><code>DEPARTMENTS</code> ở <code>frontend/shared.py</code> là menu tĩnh, <strong>không phải</strong> bảng phòng ban trong DB. Ẩn mục "Ban Giám đốc" trên sidebar không đụng tới phòng <code>BGD</code>/<code>is_source</code> trong luồng duyệt nghỉ phép.</div>
       <p>Không tồn tại feature key <code>menu.ktoan</code> / <code>menu.nostro</code> / <code>menu.bgd</code> ở bất kỳ đâu trong codebase → 3 phòng này không bao giờ có item, kể cả với admin all-access.</p>
+      <span class="card-title">Module Chấm công (Phòng Kế toán) — trigger SQL thay vì sửa leaves.py</span>
+      <span class="badge badge-done">Hoàn thành</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh</div>
+      <p>Module mới cho Phòng Kế toán (<code>attendance_symbols</code>, <code>attendances</code>, <code>attendance_adjustments</code>) cần tự động đồng bộ <code>symbol='P'</code> vào bảng công khi đơn nghỉ phép được duyệt. Ràng buộc cứng từ người dùng: <strong>không được sửa <code>backend/api/leaves.py</code></strong> (module người khác phụ trách).</p>
+
+      <div class="label">Quyết định — SQLite TRIGGER thuần SQL thay vì hook Python</div>
+      <p>Thêm 3 trigger trong <code>backend/db/migrations.py</code> (không đụng file Python nào của leaves.py):</p>
+      <table>
+        <tr><th>Trigger</th><th>Kích hoạt khi</th><th>Việc làm</th></tr>
+        <tr><td><code>trg_leave_approved_sync_attendance</code></td><td><code>AFTER UPDATE OF status</code> — chuyển sang <code>approved</code></td><td>Ghi/upsert <code>symbol='P'</code> cho mọi ngày làm việc trong khoảng (hoặc đúng <code>spread_dates</code> nếu nghỉ ngày lẻ)</td></tr>
+        <tr><td><code>trg_leave_direct_insert_sync_attendance</code></td><td><code>AFTER INSERT</code> — <code>NEW.status='approved'</code> ngay từ đầu</td><td>Phủ path "khai báo hộ" (<code>POST /api/leaves/direct</code>) — INSERT thẳng status đã approved, <strong>không</strong> qua UPDATE nên trigger UPDATE ở trên không kích hoạt được. Phát hiện lỗ hổng này khi test thực tế qua API, không phải từ đọc code tĩnh.</td></tr>
+        <tr><td><code>trg_leave_unapprove_revert_attendance</code></td><td><code>AFTER UPDATE OF status</code> — từ <code>approved</code> sang <code>cancelled</code>/<code>rejected</code></td><td>Xoá dòng <code>P</code> tương ứng</td></tr>
+      </table>
+
+      <div class="label">Vì sao trigger, không phải sửa leaves.py hay poll</div>
+      <p>Hệ thống chưa có scheduler/queue nào sẵn có để làm polling định kỳ. Gọi hàm Python từ <code>leaves.py</code> đòi hỏi thêm 1 dòng import/call trong file đó — vi phạm ràng buộc. Trigger SQL kích hoạt trực tiếp trên câu <code>UPDATE</code>/<code>INSERT</code> thật mà <code>leaves.py</code> đã chạy sẵn, hoàn toàn trong suốt với code Python — không cần biết trigger tồn tại.</p>
+
+      <div class="label">Đánh đổi đã chấp nhận</div>
+      <ul>
+        <li><code>datetime('now','+7 hours')</code> xấp xỉ giờ VN thay vì gọi <code>_vn_now()</code> — trigger SQL thuần không gọi được hàm Python. Chỉ ảnh hưởng cột <code>updated_at</code> mang tính audit thứ cấp, không ảnh hưởng nghiệp vụ tính công.</li>
+        <li>Cả 2 trigger ghi đều có <code>WHERE attendances.status = 'auto'</code> / <code>AND status='auto'</code> — bảo vệ dòng đã <code>adjusted</code>/<code>confirmed</code> (kế toán đã tự xử lý) khỏi bị auto-sync ghi đè hoặc xoá nhầm. Đã test cả 2 chiều: dòng confirmed giữa khoảng nghỉ không bị xoá khi huỷ đơn; dòng confirmed không bị ghi đè khi có đơn nghỉ mới trùng ngày được duyệt.</li>
+      </ul>
+
+      <div class="label">RBAC — không đăng ký feature code mới</div>
+      <p>DESIGN.md liệt kê dependency theo tên role (<code>require_pho_phong_or_above</code>...) đã lỗi thời — <code>backend/core/deps.py</code> thực tế chỉ có <code>get_current_staff</code>/<code>require_admin</code>/<code>require_feature</code>. Người dùng từ chối cho sửa <code>backend/core/features.py</code> (khu vực Người 1, ngoài phạm vi giao). Toàn bộ RBAC module này dùng <code>get_current_staff</code> + check role/phòng ban thủ công (<code>_require_acct_scope</code>, giống pattern trong <code>leaves.py</code>), không dùng <code>require_feature</code> ở đâu.</p>
+
+      <div class="label">Hiện sidebar chỉ cho đúng phòng ACCT — không qua feature-flag</div>
+      <p><code>frontend/shared.py::_sidebar()</code> tra <code>department_id</code> hiện tại ra <code>code</code> bằng cách gọi endpoint có sẵn <code>GET /api/departments/{id}</code> (không cần sửa backend), cache trong <code>app.storage.user</code>, rồi truyền <code>check_features=False</code> (tham số đã có sẵn, vốn dùng cho "Nhật ký hệ thống") riêng cho dept <code>"ktoan"</code> khi đúng là nhân viên ACCT/admin.</p>
+      <div class="note">Hệ quả phụ đã kiểm chứng: với user KHÔNG thuộc ACCT, toàn bộ mục "Phòng Kế toán" biến mất khỏi sidebar (không chỉ ẩn mũi tên) — vì <code>_dept_group()</code> đã có sẵn logic <code>if dept["items"] and not visible_items: return</code>. Đây <strong>không phải bug mới</strong>, mà khớp đúng hành vi hiện có của mọi phòng ban khác có item thật (Swift, Thanh toán, Tổng hợp) khi user không có feature nào trong đó.</div>
+
+      <div class="label">Verify đã làm</div>
+      <p>Test qua API thật (không phải unit test giả lập): PUT/day, POST+PUT duyệt điều chỉnh, GET/export (mở file xlsx kiểm tra style/màu), cả 2 loại trigger (UPDATE và INSERT-trực-tiếp) qua flow <code>/api/leaves</code> thật, cơ chế bảo vệ dòng confirmed theo cả 2 chiều. Test UI thật bằng Playwright (cài mới, xác nhận không phát sinh chi phí) qua 3 tài khoản (trưởng phòng ACCT, chuyên viên ACCT, trưởng phòng phòng khác) — sidebar, tabs theo role, dialog sửa/điều chỉnh, auto-refresh sau lưu đều đúng, 0 lỗi console.</p>
     </div>
   </div>
 
@@ -3379,6 +3413,34 @@ ui.on_exception(_on_exception)</pre>
         <tr><td>Khôi phục trạng thái từ <code>localStorage</code></td><td>Giữ nguyên; giờ giá trị lưu phản ánh đúng ý người dùng vì chỉ nút mới ghi</td></tr>
       </table>
       <div class="note">Grep toàn codebase: không còn reference <code>_collapse_sidebar</code>; <code>sb-collapsed</code> chỉ còn xuất hiện trong CSS và <code>toggleSidebar()</code>.</div>
+      <span class="card-title">Chấm công — mở rộng: phân quyền theo nhóm, check-in/out tự động, xuất Excel theo mẫu thật</span>
+      <span class="badge badge-done">Hoàn thành</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh</div>
+      <p>3 nhu cầu phát sinh sau khi module Chấm công cơ bản đã chạy: (1) admin cần gán được quyền "xem cả phòng + xuất Excel" cho 1 GDV cụ thể, không khoá cứng theo role; (2) báo cáo check-in/out tham khảo song song qua giờ đăng nhập/đăng xuất; (3) xuất Excel đúng mẫu thật của Phòng Kế toán (ảnh tham khảo) — hoạ tiết hatch T7/CN, 2 dòng ký "Lập bảng"/"Kiểm soát".</p>
+
+      <div class="label">Đảo ngược quyết định — sửa <code>backend/core/features.py</code></div>
+      <p>Ở lần trước, người dùng từ chối sửa file này (thuộc khu vực Người 1). Lần này đồng ý sửa sau khi xác nhận không vi phạm mục nào trong "Tuyệt đối không được làm" của CONTRIBUTING.md (các mục đó chỉ nói git workflow + convention code). Thêm 2 feature code <code>attendance.view_dept</code>/<code>attendance.export</code> — <strong>cộng thêm</strong> cho role trưởng/phó phòng/admin sẵn có, không thay thế (helper <code>_has_group_feature()</code> trong <code>attendance.py</code>, không tái dùng closure trong <code>deps.py::require_feature</code> vì nó raise 403 trực tiếp thay vì trả bool). <code>menu.attendance</code> đăng ký kèm nhưng chỉ để làm tiêu đề nhóm hiển thị trong màn phân quyền — sidebar vẫn gate theo department code như cũ (không đổi), vì mọi nhân viên ACCT đều cần thấy menu để vào "Công của tôi".</p>
+
+      <div class="label">Bug phát hiện khi test thật (không thấy được nếu chỉ đọc code tĩnh)</div>
+      <p><code>GET /month</code> có dòng <code>if current["role"] == "chuyen_vien": scope = "mine"</code> chạy <strong>trước</strong> khi check quyền — ép luôn cả GDV vừa được cấp <code>attendance.view_dept</code> về scope "mine", khiến quyền vừa gán vô tác dụng. Test qua API với tài khoản <code>gdv_granted</code> (được cấp quyền) lộ ra ngay: gọi <code>scope=dept</code> vẫn chỉ nhận về đúng 1 dòng của chính mình. Sửa thành <code>if role=="chuyen_vien" and not _can_view_dept(...): scope="mine"</code>. Áp dụng sửa tương tự cho <code>GET /day</code> (đồng nhất quyền xem 1 ngày của người khác).</p>
+
+      <div class="label">Check-in/out tự động — trigger trên <code>login_logs</code>, không sửa <code>auth.py</code></div>
+      <p>Bảng mới <code>attendance_checkin_logs</code> (1 dòng/nhân viên/ngày, giống quy ước <code>attendances</code>). <strong>Giờ vào</strong>: trigger <code>trg_login_sync_checkin</code> bắt trên <code>AFTER INSERT ON login_logs</code> (bảng đã có sẵn, do <code>auth.py::login</code> ghi) — lọc riêng nhân viên ACCT, giữ nguyên mốc đăng nhập <strong>đầu tiên</strong> trong ngày qua nhiều lần đăng nhập lại (chỉ <code>ip_address</code> cập nhật theo lần cuối) — đã test thực tế bằng 2 lần đăng nhập liên tiếp, xác nhận đúng.</p>
+      <p><strong>Giờ ra</strong>: <code>POST /api/auth/logout</code> không ghi log gì cả (đã đọc code thật để xác nhận) — vì không được sửa <code>auth.py</code>, thêm endpoint <code>PUT /api/attendance/checkin/logout</code> (thuộc <code>attendance.py</code>) gọi từ <code>frontend/shared.py::_logout()</code> (đã được phép sửa từ trước) ngay trước <code>api.clear_auth()</code>. Endpoint tự no-op (không lỗi) nếu người logout không thuộc ACCT, vì <code>_logout()</code> dùng chung cho toàn hệ thống. Chấp nhận để trống giờ ra nếu tắt máy đột ngột (không dùng disconnect-event — đã bàn và thấy phức tạp không tương xứng lợi ích cho bản đầu).</p>
+
+      <div class="label">Xuất Excel theo mẫu ảnh thật</div>
+      <table>
+        <tr><th>Chi tiết</th><th>Cách làm</th></tr>
+        <tr><td>Hoạ tiết hatch T7/CN</td><td><code>PatternFill(fill_type="lightUp", fgColor="FFFFFF", bgColor="FFF9C4")</code> thay vì tô màu phẳng</td></tr>
+        <tr><td>"Lập bảng"</td><td>Tự động = <code>current["full_name"]</code> — đúng người đang xuất, dù là GDV được cấp quyền hay trưởng/phó phòng</td></tr>
+        <tr><td>"Kiểm soát"</td><td>Query param bắt buộc <code>kiem_soat_id</code>, validate lại ở backend (không tin dropdown frontend) — phải là trưởng/phó phòng ACCT đang active</td></tr>
+      </table>
+      <div class="note">Không thêm dòng ký "Phó giám đốc" (người dùng tự nhận nhầm lẫn ban đầu) và không thêm phần chú thích cuối bảng ("Đi học/Đi công tác: chấm đầy đủ"...) — để dành cập nhật sau nếu cần, không đưa vào lần này.</div>
+
+      <div class="label">Verify đã làm</div>
+      <p>Tạo nhóm quyền thật qua <code>POST /api/groups</code> + gán <code>attendance.view_dept</code>/<code>attendance.export</code> cho 1 tài khoản <code>chuyen_vien</code> (<code>gdv_granted</code>) qua <code>PUT /api/groups/{id}/features</code> — xác nhận API trả về đúng codes (không bị lọc bỏ, tức đã đăng ký đúng trong <code>FEATURES</code>). Test 3 tài khoản qua cả API lẫn UI thật (Playwright): <code>tp_ketoan</code> (trưởng phòng), <code>gdv_granted</code> (chuyên viên được cấp quyền — thấy đủ tab Bảng công phòng/nút Xuất Excel/dialog chọn Kiểm soát), <code>gdv_normal</code> (chuyên viên thường — chỉ thấy Công của tôi + Check-in/out, không thấy Bảng công phòng/Xuất Excel). Mở file Excel xuất ra bằng <code>openpyxl</code>, xác nhận đúng tên ở 2 dòng ký + hoạ tiết hatch.</p>
     </div>
   </div>
 
@@ -5062,6 +5124,75 @@ else:
           cảnh báo <code>multi_sp</code>.</li>
         <li><code>tests/test_duty_scheduler_algorithm.py</code> — <b>mới</b>, 19 test (module này trước đó
           không có test nào).</li>
+      <span class="card-title">Chấm công — bug nút Xuất Excel im lặng + căn chỉnh in A4</span>
+      <span class="badge badge-done">Hoàn thành</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bug: nút "Tải xuống" báo cáo không phản hồi gì (không lỗi, không tải)</div>
+      <p>Người dùng báo "tải báo cáo không hoạt động". Log backend cho thấy <code>GET /api/attendance/export</code> luôn trả <strong>200 OK</strong> — vấn đề nằm hoàn toàn ở frontend. Đọc log tiến trình <code>frontend/main.py</code> (không phải console trình duyệt) lộ ra traceback thật:</p>
+      <pre>RuntimeError: The current slot cannot be determined because the slot stack for this task is empty.
+This may happen if you try to create UI from a background task.</pre>
+      <p>Nguyên nhân: 3 chỗ trong <code>frontend/pages/attendance.py</code> dùng <code>on_click=lambda: asyncio.create_task(fn())</code>. <code>asyncio.create_task()</code> tạo 1 Task mới, tách khỏi cơ chế NiceGUI dùng để tra "slot" (client/vùng UI hiện tại) theo <em>từng Task</em> — Task mới không có slot nên mọi lệnh <code>ui.download()</code>/<code>ui.notify()</code> bên trong crash âm thầm, không hiện gì trên trình duyệt. Sửa bằng cách trả thẳng coroutine từ handler (<code>on_click=fn</code> hoặc <code>lambda: fn()</code> — không bọc <code>create_task</code>), để NiceGUI tự <code>await</code> trong đúng context — đúng pattern đã dùng ở các nút khác cùng file (<code>_approve_adjustment</code>, <code>_save_edit</code>).</p>
+      <div class="note">Bài học quy trình: lỗi này <strong>không xuất hiện trong console trình duyệt</strong> — lần test Playwright trước đó báo "0 lỗi console" nhưng bug vẫn tồn tại, vì đây là exception phía server Python. Từ nay verify UI phải đọc cả log tiến trình NiceGUI, không chỉ browser console.</div>
+
+      <div class="label">Căn chỉnh Excel để in trực tiếp trên A4</div>
+      <p>Bản xuất trước chỉ có bảng dữ liệu, thiếu hẳn phần quốc hiệu/tiêu đề so với mẫu giấy thật. Thêm vào <code>export_month</code>:</p>
+      <ul>
+        <li>9 dòng tiêu đề trước bảng (dòng 1-9): tên ngân hàng + quốc hiệu (merge 2 khối trái/phải, chia đôi số cột tính động theo <code>days_in_month</code>), tên phòng, "BẢNG CHẤM CÔNG" + tháng/năm (merge hết bề ngang, căn giữa). Bảng dữ liệu dời xuống dòng 10 (<code>header_row</code>), thay các chỗ tham chiếu cứng <code>ws[1]</code> trước đó.</li>
+        <li><code>page_setup.orientation="landscape"</code>, <code>paperSize=A4</code>, <code>fitToWidth=1</code>/<code>fitToHeight=0</code> (co vừa 1 trang ngang, cho phép nhiều trang dọc nếu đông người), <code>print_title_rows</code> lặp lại tiêu đề mỗi trang.</li>
+        <li>Viền kẻ ô (<code>Border thin</code>) cho toàn bộ header + dữ liệu — bản trước chỉ có màu nền, không có viền.</li>
+      </ul>
+      <div class="caution">Không có LibreOffice/Excel trong môi trường để render Print Preview thật — chỉ verify được bằng cách đọc lại thuộc tính file qua <code>openpyxl</code> (orientation, fitToWidth, merged cells, border) và xác nhận đúng theo thiết kế. Cần người dùng tự mở file bằng Excel thật để xác nhận hình thức in cuối cùng.</div>
+      <div class="note">Chữ ký số (ký điện tử) được người dùng chủ động gạt lại — ngân hàng chưa có sẵn hạ tầng CA/token nào tích hợp trong hệ thống (đã grep toàn bộ codebase, không thấy), nằm ngoài phạm vi "làm đẹp file Excel" nếu làm sau này.</div>
+    </div>
+  </div>
+
+  <!-- 46 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">46</span>
+      <span class="card-title">Chấm công — gỡ bỏ tính năng Check-in/out tự động</span>
+      <span class="badge badge-info">Đã gỡ bỏ theo yêu cầu</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Quyết định</div>
+      <p>Người dùng đổi ý, gỡ bỏ toàn bộ tính năng "check-in/out tự động qua sign-in/out" mô tả ở card #44 (bảng <code>attendance_checkin_logs</code>, trigger <code>trg_login_sync_checkin</code>, 2 endpoint <code>GET/PUT /api/attendance/checkin*</code>, tab "Check-in/out", hook trong <code>_logout()</code>). Quyền <code>attendance.view_dept</code>/<code>attendance.export</code> (phân quyền theo nhóm cho bảng công chính) <strong>giữ nguyên</strong> — không liên quan tới check-in/out, không bị gỡ.</p>
+
+      <div class="label">Cách gỡ — không sửa/xoá lịch sử migration cũ</div>
+      <p>Vì DB đang chạy sống đã lỡ áp dụng migration tạo bảng/trigger này (2026-07-24), chỉ xoá 2 câu <code>CREATE TABLE</code>/<code>CREATE TRIGGER</code> khỏi <code>schema_migrations</code> là không đủ — DB cũ vẫn còn bảng mồ côi. Thay vào đó <strong>nối thêm</strong> 2 câu <code>DROP TRIGGER IF EXISTS</code>/<code>DROP TABLE IF EXISTS</code> ở cuối danh sách (không xoá đoạn migration gốc khỏi lịch sử, đúng nguyên tắc idempotent forward-only của <code>_ensure_indexes()</code>) — restart backend một lần là dọn sạch cả bảng, trigger, index liên quan trên DB thật đang dùng, đã verify trực tiếp bằng <code>sqlite3</code> trước/sau restart.</p>
+
+      <div class="label">File đã sửa</div>
+      <table>
+        <tr><th>File</th><th>Thay đổi</th></tr>
+        <tr><td><code>backend/db/migrations.py</code></td><td>Xoá CREATE TABLE/TRIGGER + index check-in; thêm 2 câu DROP dọn DB sống</td></tr>
+        <tr><td><code>backend/api/attendance.py</code></td><td>Xoá <code>GET /checkin</code>, <code>PUT /checkin/logout</code></td></tr>
+        <tr><td><code>frontend/pages/attendance.py</code></td><td>Xoá fetch, biến, tab và tab-panel Check-in/out</td></tr>
+        <tr><td><code>frontend/shared.py</code></td><td><code>_logout()</code> về đúng bản gốc (chỉ <code>logout_session</code> + <code>clear_auth</code> + điều hướng)</td></tr>
+      </table>
+      <p>Verify: <code>grep -rn checkin backend/ frontend/</code> chỉ còn 2 dòng DROP có chủ đích; restart app không lỗi; test Playwright xác nhận 3 tab còn lại (Bảng công phòng/Công của tôi/Duyệt điều chỉnh) vẫn hoạt động, không còn tab Check-in/out, 0 lỗi console lẫn log Python.</p>
+    </div>
+  </div>
+
+  <!-- 47 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">47</span>
+      <span class="card-title">Chấm công — chặn lặp yêu cầu điều chỉnh công</span>
+      <span class="badge badge-done">Đã fix + dọn data</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Triệu chứng</div>
+      <p>Người dùng bấm nhanh nút "Gửi" khi xin điều chỉnh công, tạo ra 2 dòng <code>attendance_adjustments</code> giống hệt nhau cho cùng <code>attendance_id</code>, cách nhau 2 giây — cả 2 đều bị duyệt riêng lẻ. Xác nhận trực tiếp trong DB thật đang chạy trước khi sửa.</p>
+
+      <div class="label">Fix — chặn ở backend, không chỉ debounce frontend</div>
+      <p><code>POST /api/attendance/adjustments</code> giờ kiểm tra đã có yêu cầu <code>status='pending'</code> cho cùng <code>attendance_id</code> chưa trước khi insert — nếu có, trả <code>409</code> kèm thông báo rõ ràng thay vì tạo dòng mới. Đây là chốt chặn chính vì debounce phía client (khoá nút "Gửi" khi đang chờ phản hồi, cũng đã thêm ở <code>frontend/pages/attendance.py::_submit_adjust</code>) không chặn được trường hợp client tự động gửi lại request khi mạng chậm/timeout.</p>
+      <div class="note">Đã test lại qua API thật: gửi 2 request liên tiếp cùng ngày → request thứ 2 nhận đúng <code>409</code>, không tạo dòng trùng. Đã xoá dòng trùng cũ + data test vừa tạo lúc verify.</div>
+
+      <div class="label">Xác nhận thêm theo yêu cầu người dùng (không phải bug)</div>
+      <ul>
+        <li><strong>Đồng bộ nghỉ phép → chấm công</strong> vẫn hoạt động đúng sau khi gỡ Check-in/out (card #46) — test lại bằng mô phỏng UPDATE status thật trên DB sống: duyệt đơn tạo đúng symbol <code>P</code>, huỷ đơn xoá đúng dòng <code>P</code> đó.</li>
+        <li><strong>"Thêm ký hiệu công"</strong> nằm trong dialog "Cấu hình ký hiệu công" (icon bánh răng cạnh nút Xuất Excel), chỉ hiện khi <code>role == "admin"</code> — không phải <code>admin_l2</code>, không phải trưởng/phó phòng.</li>
+        <li><strong>Tài khoản ACCT không bị bắt đổi mật khẩu lần đầu</strong> vì <code>must_change_password</code> chỉ được set cứng trong <code>init_db.py</code> cho tài khoản seed ban đầu — endpoint tạo tài khoản thường (<code>POST /api/staff/</code>, dùng để tạo <code>tp_ketoan</code>/<code>cv_ketoan</code>/<code>gdv_theodoi</code>) không set cờ này cho bất kỳ tài khoản nào, không riêng ACCT. Hành vi có sẵn của <code>backend/api/staff.py</code>, ngoài phạm vi module Chấm công.</li>
       </ul>
     </div>
   </div>

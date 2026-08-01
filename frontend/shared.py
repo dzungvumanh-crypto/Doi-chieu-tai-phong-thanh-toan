@@ -84,6 +84,12 @@ MENU_TREE = [
             },
         ],
     },
+    {
+        "id": "ktoan",
+        "label": "Phòng Kế toán",
+        "icon": "calculate",
+        "items": [("attendance", "Chấm công", "schedule")],
+    },
     ("leaves",        "Nghỉ phép",         "event_busy"),
     ("duty_schedule", "Phân lịch trực",    "edit_calendar"),
     ("so_truc",        "Sổ trực cuối ngày", "assignment_turned_in"),
@@ -494,6 +500,24 @@ def _dept_group(dept: dict, current_page: str, check_features: bool = True):
                                         ui.label(lbl).classes("text-sm flex-1")
 
 
+def _user_dept_code(user: dict) -> str | None:
+    """Tra department_id của user ra code (vd 'ACCT'), cache trong app.storage.user
+    để không gọi lại API mỗi lần chuyển trang. Dùng để giới hạn hiển thị menu
+    "Chấm công" (Phòng Kế toán) chỉ cho đúng nhân viên phòng đó."""
+    if "_dept_code" in app.storage.user:
+        return app.storage.user["_dept_code"]
+    code = None
+    dept_id = user.get("department_id") if user else None
+    if dept_id:
+        try:
+            row = api.get(f"/api/departments/{dept_id}")
+            code = row.get("code")
+        except Exception:
+            code = None
+    app.storage.user["_dept_code"] = code
+    return code
+
+
 def _sidebar(current_page: str) -> dict:
     # Trả về dict rỗng — badge số đã chuyển hết vào khối "Công việc chờ xử lý".
     # Giữ kiểu trả về để 19 trang đang gọi không phải sửa chữ ký.
@@ -573,6 +597,15 @@ def _sidebar(current_page: str) -> dict:
                 if isinstance(node, tuple):
                     if api.has_feature(f"menu.{node[0]}"):
                         _nav_item(*node, current_page)
+                elif node["id"] == "ktoan":
+                    # "Chấm công" không dùng feature-flag — chỉ hiện cho đúng
+                    # nhân viên Phòng Kế toán (code ACCT) hoặc admin.
+                    # Sửa theo review PR #22: trước đây user không thuộc ACCT vẫn rơi về
+                    # check_features=True — nếu lỡ được cấp nhầm feature menu.attendance
+                    # (qua Phân quyền theo nhóm) thì vẫn hiện menu rồi 403 khi bấm vào.
+                    # Giờ không thuộc ACCT/admin thì bỏ qua hẳn, không render.
+                    if user_role == "admin" or _user_dept_code(user) == "ACCT":
+                        _dept_group(node, current_page, check_features=False)
                 else:
                     _dept_group(node, current_page, check_features=True)
 
