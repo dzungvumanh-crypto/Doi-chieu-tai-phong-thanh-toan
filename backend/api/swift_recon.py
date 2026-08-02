@@ -7,6 +7,15 @@ API đối chiếu điện SWIFT (SAA <-> Màn hình quản lý điện) — Ph�
 Logic đối chiếu thuần lấy NGUYÊN từ parsers.py / reconcile.py / exporters.py
 gốc (không sửa logic) — xem backend/services/swift_recon/.
 
+CẬP NHẬT (đợt 2):
+  - Hỗ trợ NHIỀU FILE mỗi bên (SAA có thể xuất nhiều lần trong ngày) — các
+    endpoint reconcile-*/export-* giờ nhận `saa_files`/`ql_files` (danh sách)
+    thay vì 1 file duy nhất. Toàn bộ file cùng bên được PARSE RIÊNG rồi GỘP
+    (concat) lại thành 1 tập bản ghi duy nhất trước khi đối chiếu — không sửa
+    gì trong parsers.py.
+  - 2 endpoint MỚI: export-summary-template / export-diff-template — xuất
+    theo đúng biểu mẫu Mẫu 04/05 (xem template_exporters.py).
+
 Đây là router MỚI của bạn — file này bạn tự quản lý, không cần ai duyệt
 logic bên trong. Chỉ có 2 việc còn lại cần Người 1 duyệt riêng:
   1. Đăng ký router này vào backend/api/registry.py
@@ -25,7 +34,7 @@ from fastapi.responses import Response
 from backend.database import get_db
 from backend.core.deps import require_feature
 from backend.schemas.swift_recon import ExportFilteredIn
-from backend.services.swift_recon import exporters, parsers, reconcile
+from backend.services.swift_recon import exporters, parsers, reconcile, template_exporters
 from backend.services.swift_recon.history_service import (
     get_recon_detail,
     list_recon_history,
@@ -53,14 +62,79 @@ def _load(upload: UploadFile, source: str) -> pd.DataFrame:
         cleanup()
 
 
+def _load_many(uploads: list[UploadFile], source: str) -> pd.DataFrame:
+    """Parse TỪNG file rồi gộp lại thành 1 DataFrame duy nhất — dùng khi 1
+    bên (thường là SAA) phải xuất nhiều lần trong ngày nên có nhiều file.
+
+    Mỗi file được parse riêng bằng ĐÚNG hàm load_file() hiện có (không sửa
+    parsers.py), lỗi ở file nào báo rõ tên file đó. Gộp bằng pd.concat đơn
+    giản — nếu 2 file vô tình trùng nhau (cùng khoá `_key`), bản ghi trùng
+    vẫn được GIỮ NGUYÊN CẢ HAI (không tự động loại trùng), vì:
+      - Có thể 2 điện khác nhau nhưng vô tình trùng 6/16 ký tự cuối của khoá
+        (hiếm nhưng có thể xảy ra) — tự loại có thể làm mất điện thật.
+      - Nếu người dùng lỡ tải trùng 1 file 2 lần, tổng số dòng sẽ tăng gấp
+        đôi RÕ RÀNG trên giao diện (mỗi ô upload hiện đúng số dòng từng
+        file + tổng cộng) nên dễ phát hiện để tự xoá bớt, thay vì âm thầm
+        loại bỏ sai bản ghi hợp lệ.
+    """
+    if not uploads:
+        raise parsers.UnknownFileFormat("Chưa chọn file nào.")
+    frames = []
+    for up in uploads:
+        try:
+            frames.append(_load(up, source))
+        except parsers.UnknownFileFormat as e:
+            raise parsers.UnknownFileFormat(f"[{up.filename}] {e}")
+    return pd.concat(frames, ignore_index=True)
+
+
 def _to_records(df: pd.DataFrame) -> list:
     """DataFrame -> list[dict] JSON-safe (NaN/NaT -> None)."""
     return df.where(pd.notnull(df), None).to_dict(orient="records")
 
 
+def _join_names(uploads: list[UploadFile]) -> str:
+    return "; ".join(u.filename for u in uploads)
+
+
+def _key_match_summary(df_a: pd.DataFrame, df_b: pd.DataFrame, label_a: str, label_b: str) -> pd.DataFrame:
+    """Tổng hợp số lượng điện theo từng loại điện — cột 'Chênh lệch' tính
+    bằng SỐ BẢN GHI THỰC SỰ KHÔNG KHỚP KHOÁ (ONLY_A + ONLY_B theo _msg_type,
+    lấy từ chính reconcile.match_by_key() — ĐÚNG cơ chế khoá dùng ở tab
+    "Kết quả đối chiếu" và file "Chi tiết lệch"), KHÔNG PHẢI hiệu số lượng
+    thô (count_a - count_b) như reconcile.summarize_counts() gốc.
+
+    Lý do đổi: hiệu số lượng thô có thể che giấu sai lệch thật — ví dụ 1 loại
+    điện có 5 bản ghi ở mỗi bên nhưng KHÔNG PHẢI 5 giao dịch trùng khoá (5
+    giao dịch hoàn toàn khác nhau ở 2 bên) vẫn báo "Chênh lệch = 0" nếu tính
+    theo số lượng — trong khi tính theo khoá sẽ báo đúng 10 bản ghi lệch.
+    Không sửa reconcile.py gốc — chỉ dùng lại match_by_key() đã có sẵn."""
+    count_a = df_a.groupby("_msg_type").size().rename(label_a)
+    count_b = df_b.groupby("_msg_type").size().rename(label_b)
+    merged = pd.concat([count_a, count_b], axis=1).fillna(0).astype(int)
+    merged = merged.reset_index().rename(columns={"_msg_type": "Loại điện"})
+
+    mr = reconcile.match_by_key(df_a, df_b)
+    only_a_types = df_a.loc[mr.only_a, "_msg_type"] if len(mr.only_a) else pd.Series(dtype=object)
+    only_b_types = df_b.loc[mr.only_b, "_msg_type"] if len(mr.only_b) else pd.Series(dtype=object)
+    diff_counts = pd.concat([only_a_types, only_b_types]).value_counts()
+    merged["Chênh lệch"] = merged["Loại điện"].map(diff_counts).fillna(0).astype(int)
+    merged = merged.sort_values(by="Loại điện").reset_index(drop=True)
+
+    total_row = {
+        "Loại điện": "TỔNG",
+        label_a: int(merged[label_a].sum()),
+        label_b: int(merged[label_b].sum()),
+        "Chênh lệch": int(merged["Chênh lệch"].sum()),
+    }
+    return pd.concat([merged, pd.DataFrame([total_row])], ignore_index=True)
+
+
 # ── Kiểm tra & đọc thử 1 file ngay khi vừa chọn (trước khi bấm Đối chiếu) ───
 # Khớp UX bản gốc: mỗi ô upload báo NGAY ✅/❌ + số dòng đọc được, KHÔNG đợi
-# đến lúc bấm nút đối chiếu mới biết file có đọc được hay không.
+# đến lúc bấm nút đối chiếu mới biết file có đọc được hay không. Giữ NGUYÊN
+# dạng single-file — kiểm tra từng file NGAY LÚC chọn, dù sau này nhiều file
+# được gộp lại (mỗi file vẫn cần biết ✅/❌ riêng của chính nó).
 @router.post("/parse-preview")
 async def parse_preview(
     file: UploadFile = File(...),
@@ -76,22 +150,22 @@ async def parse_preview(
     return {"filename": file.filename, "rows": len(df)}
 
 
-# ── Đối chiếu điện đến ───────────────────────────────────────────────────────
+# ── Đối chiếu điện đến (mỗi bên có thể gồm NHIỀU file) ──────────────────────
 @router.post("/reconcile-den")
 async def reconcile_den(
-    saa_file: UploadFile = File(...),
-    ql_file: UploadFile = File(...),
+    saa_files: list[UploadFile] = File(...),
+    ql_files: list[UploadFile] = File(...),
     db=Depends(get_db),
     current: dict = Depends(require_feature("menu.swift_recon")),
 ):
     try:
-        df_saa = _load(saa_file, "SAA_DEN")
-        df_ql = _load(ql_file, "QL_DEN")
+        df_saa = _load_many(saa_files, "SAA_DEN")
+        df_ql = _load_many(ql_files, "QL_DEN")
     except parsers.UnknownFileFormat as e:
         raise HTTPException(422, str(e))
 
     merged = reconcile.build_merged_view(df_saa, df_ql, "SAA", "QL")
-    summary = reconcile.summarize_counts(df_saa, df_ql, "SAA", "QL")
+    summary = _key_match_summary(df_saa, df_ql, "SAA", "QL")
     saa_only = reconcile.diff_only_a(df_saa, df_ql)
     ql_only = reconcile.diff_only_b(df_saa, df_ql)
 
@@ -102,7 +176,7 @@ async def reconcile_den(
     try:
         save_recon_history(
             db, recon_type="den", performed_by_id=current["id"],
-            file_saa_name=saa_file.filename, file_ql_name=ql_file.filename,
+            file_saa_name=_join_names(saa_files), file_ql_name=_join_names(ql_files),
             total_saa=len(df_saa), total_ql=len(df_ql),
             total_matched=total_matched, total_diff=total_diff,
             merged_records=_to_records(merged),
@@ -127,19 +201,19 @@ async def reconcile_den(
 # ── Đối chiếu điện đi (đúng thứ tự QL trước, SAA sau — như bản desktop) ─────
 @router.post("/reconcile-di")
 async def reconcile_di(
-    ql_file: UploadFile = File(...),
-    saa_file: UploadFile = File(...),
+    ql_files: list[UploadFile] = File(...),
+    saa_files: list[UploadFile] = File(...),
     db=Depends(get_db),
     current: dict = Depends(require_feature("menu.swift_recon")),
 ):
     try:
-        df_ql = _load(ql_file, "QL_DI")
-        df_saa = _load(saa_file, "SAA_DI")
+        df_ql = _load_many(ql_files, "QL_DI")
+        df_saa = _load_many(saa_files, "SAA_DI")
     except parsers.UnknownFileFormat as e:
         raise HTTPException(422, str(e))
 
     merged = reconcile.build_merged_view(df_ql, df_saa, "QL", "SAA", ack_check=ACK_CHECK_DI)
-    summary = reconcile.summarize_counts(df_ql, df_saa, "QL", "SAA")
+    summary = _key_match_summary(df_ql, df_saa, "QL", "SAA")
     ql_only = reconcile.diff_only_a(df_ql, df_saa)
     saa_only = reconcile.diff_only_b(df_ql, df_saa)
     di_not_ack = reconcile.extract_matched_not_ack(merged, "QL", "SAA")
@@ -151,7 +225,7 @@ async def reconcile_di(
     try:
         save_recon_history(
             db, recon_type="di", performed_by_id=current["id"],
-            file_saa_name=saa_file.filename, file_ql_name=ql_file.filename,
+            file_saa_name=_join_names(saa_files), file_ql_name=_join_names(ql_files),
             total_saa=len(df_saa), total_ql=len(df_ql),
             total_matched=total_matched, total_diff=total_diff,
             merged_records=_to_records(merged),
@@ -178,23 +252,27 @@ async def reconcile_di(
 #    không bắt người dùng chọn file lần 2 — xem frontend/pages/swift_recon.py) ──
 @router.post("/export-summary")
 async def export_summary(
-    saa_den: UploadFile | None = File(None),
-    ql_den: UploadFile | None = File(None),
-    ql_di: UploadFile | None = File(None),
-    saa_di: UploadFile | None = File(None),
+    # LƯU Ý: dùng default_factory=list (KHÔNG dùng Optional/None làm mặc định) —
+    # FastAPI 0.109.1 (bản đang pin trong requirements.txt) có lỗi không tự
+    # bọc list khi multipart chỉ gửi ĐÚNG 1 file cho field kiểu Optional[List[UploadFile]],
+    # báo lỗi 422 'Input should be a valid list'. default_factory=list tránh được lỗi này.
+    saa_den: list[UploadFile] = File(default_factory=list),
+    ql_den: list[UploadFile] = File(default_factory=list),
+    ql_di: list[UploadFile] = File(default_factory=list),
+    saa_di: list[UploadFile] = File(default_factory=list),
     current: dict = Depends(require_feature("menu.swift_recon")),
 ):
     summary_den = summary_di = None
     try:
         if saa_den and ql_den:
-            df_saa_den = _load(saa_den, "SAA_DEN")
-            df_ql_den = _load(ql_den, "QL_DEN")
-            summary_den = reconcile.summarize_counts(df_saa_den, df_ql_den, "SAA", "QL")
+            df_saa_den = _load_many(saa_den, "SAA_DEN")
+            df_ql_den = _load_many(ql_den, "QL_DEN")
+            summary_den = _key_match_summary(df_saa_den, df_ql_den, "SAA", "QL")
 
         if ql_di and saa_di:
-            df_ql_di = _load(ql_di, "QL_DI")
-            df_saa_di = _load(saa_di, "SAA_DI")
-            summary_di = reconcile.summarize_counts(df_ql_di, df_saa_di, "QL", "SAA")
+            df_ql_di = _load_many(ql_di, "QL_DI")
+            df_saa_di = _load_many(saa_di, "SAA_DI")
+            summary_di = _key_match_summary(df_ql_di, df_saa_di, "QL", "SAA")
 
         if summary_den is None and summary_di is None:
             raise HTTPException(400, "Chưa có dữ liệu đối chiếu nào để xuất")
@@ -216,23 +294,27 @@ async def export_summary(
 
 @router.post("/export-diff")
 async def export_diff(
-    saa_den: UploadFile | None = File(None),
-    ql_den: UploadFile | None = File(None),
-    ql_di: UploadFile | None = File(None),
-    saa_di: UploadFile | None = File(None),
+    # LƯU Ý: dùng default_factory=list (KHÔNG dùng Optional/None làm mặc định) —
+    # FastAPI 0.109.1 (bản đang pin trong requirements.txt) có lỗi không tự
+    # bọc list khi multipart chỉ gửi ĐÚNG 1 file cho field kiểu Optional[List[UploadFile]],
+    # báo lỗi 422 'Input should be a valid list'. default_factory=list tránh được lỗi này.
+    saa_den: list[UploadFile] = File(default_factory=list),
+    ql_den: list[UploadFile] = File(default_factory=list),
+    ql_di: list[UploadFile] = File(default_factory=list),
+    saa_di: list[UploadFile] = File(default_factory=list),
     current: dict = Depends(require_feature("menu.swift_recon")),
 ):
     saa_den_only = ql_den_only = ql_di_only = saa_di_only = di_not_ack = None
     try:
         if saa_den and ql_den:
-            df_saa_den = _load(saa_den, "SAA_DEN")
-            df_ql_den = _load(ql_den, "QL_DEN")
+            df_saa_den = _load_many(saa_den, "SAA_DEN")
+            df_ql_den = _load_many(ql_den, "QL_DEN")
             saa_den_only = reconcile.diff_only_a(df_saa_den, df_ql_den)
             ql_den_only = reconcile.diff_only_b(df_saa_den, df_ql_den)
 
         if ql_di and saa_di:
-            df_ql_di = _load(ql_di, "QL_DI")
-            df_saa_di = _load(saa_di, "SAA_DI")
+            df_ql_di = _load_many(ql_di, "QL_DI")
+            df_saa_di = _load_many(saa_di, "SAA_DI")
             ql_di_only = reconcile.diff_only_a(df_ql_di, df_saa_di)
             saa_di_only = reconcile.diff_only_b(df_ql_di, df_saa_di)
             merged_di = reconcile.build_merged_view(df_ql_di, df_saa_di, "QL", "SAA", ack_check=ACK_CHECK_DI)
@@ -256,6 +338,96 @@ async def export_diff(
         )
     except parsers.UnknownFileFormat as e:
         raise HTTPException(422, str(e))
+
+
+# ── Xuất Excel THEO BIỂU MẪU (Mẫu 04 / Mẫu 05) — xem cảnh báo giả định ở
+#    đầu file template_exporters.py trước khi dùng cho báo cáo chính thức ──
+@router.post("/export-summary-template")
+async def export_summary_template(
+    # LƯU Ý: dùng default_factory=list (KHÔNG dùng Optional/None làm mặc định) —
+    # FastAPI 0.109.1 (bản đang pin trong requirements.txt) có lỗi không tự
+    # bọc list khi multipart chỉ gửi ĐÚNG 1 file cho field kiểu Optional[List[UploadFile]],
+    # báo lỗi 422 'Input should be a valid list'. default_factory=list tránh được lỗi này.
+    saa_den: list[UploadFile] = File(default_factory=list),
+    ql_den: list[UploadFile] = File(default_factory=list),
+    ql_di: list[UploadFile] = File(default_factory=list),
+    saa_di: list[UploadFile] = File(default_factory=list),
+    current: dict = Depends(require_feature("menu.swift_recon")),
+):
+    try:
+        if saa_den and ql_den:
+            direction, df_a, source_a, df_b, source_b = (
+                "den", _load_many(saa_den, "SAA_DEN"), "SAA_DEN", _load_many(ql_den, "QL_DEN"), "QL_DEN",
+            )
+        elif ql_di and saa_di:
+            direction, df_a, source_a, df_b, source_b = (
+                "di", _load_many(ql_di, "QL_DI"), "QL_DI", _load_many(saa_di, "SAA_DI"), "SAA_DI",
+            )
+        else:
+            raise HTTPException(400, "Chưa có dữ liệu đối chiếu nào để xuất")
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as out:
+            out_path = out.name
+        template_exporters.export_summary_template(out_path, direction, df_a, source_a, df_b, source_b)
+        with open(out_path, "rb") as f:
+            content = f.read()
+        os.remove(out_path)
+        fname = f"Tong_hop_theo_bieu_mau_Dien{direction.upper()}.xlsx"
+        return Response(
+            content=content,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+        )
+    except HTTPException:
+        raise
+    except parsers.UnknownFileFormat as e:
+        raise HTTPException(422, str(e))
+    except Exception as e:  # noqa: BLE001 — luôn trả JSON lỗi rõ ràng, không để lộ traceback dạng non-JSON
+        raise HTTPException(500, f"Lỗi khi xuất Excel Tổng hợp theo biểu mẫu: {e}")
+
+
+@router.post("/export-diff-template")
+async def export_diff_template(
+    # LƯU Ý: dùng default_factory=list (KHÔNG dùng Optional/None làm mặc định) —
+    # FastAPI 0.109.1 (bản đang pin trong requirements.txt) có lỗi không tự
+    # bọc list khi multipart chỉ gửi ĐÚNG 1 file cho field kiểu Optional[List[UploadFile]],
+    # báo lỗi 422 'Input should be a valid list'. default_factory=list tránh được lỗi này.
+    saa_den: list[UploadFile] = File(default_factory=list),
+    ql_den: list[UploadFile] = File(default_factory=list),
+    ql_di: list[UploadFile] = File(default_factory=list),
+    saa_di: list[UploadFile] = File(default_factory=list),
+    current: dict = Depends(require_feature("menu.swift_recon")),
+):
+    try:
+        if saa_den and ql_den:
+            direction, df_a, source_a, df_b, source_b = (
+                "den", _load_many(saa_den, "SAA_DEN"), "SAA_DEN", _load_many(ql_den, "QL_DEN"), "QL_DEN",
+            )
+        elif ql_di and saa_di:
+            direction, df_a, source_a, df_b, source_b = (
+                "di", _load_many(ql_di, "QL_DI"), "QL_DI", _load_many(saa_di, "SAA_DI"), "SAA_DI",
+            )
+        else:
+            raise HTTPException(400, "Chưa có dữ liệu đối chiếu nào để xuất")
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as out:
+            out_path = out.name
+        template_exporters.export_diff_template(out_path, direction, df_a, source_a, df_b, source_b)
+        with open(out_path, "rb") as f:
+            content = f.read()
+        os.remove(out_path)
+        fname = f"Chi_tiet_lech_theo_bieu_mau_Dien{direction.upper()}.xlsx"
+        return Response(
+            content=content,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+        )
+    except HTTPException:
+        raise
+    except parsers.UnknownFileFormat as e:
+        raise HTTPException(422, str(e))
+    except Exception as e:  # noqa: BLE001 — luôn trả JSON lỗi rõ ràng, không để lộ traceback dạng non-JSON
+        raise HTTPException(500, f"Lỗi khi xuất Excel Chi tiết lệch theo biểu mẫu: {e}")
 
 
 # ── Xuất đúng các bản ghi đang lọc trên giao diện (không phải toàn bộ) ──────
@@ -304,7 +476,8 @@ async def export_raw_from_history(
 ):
     """Tải lại dữ liệu ĐÃ IMPORT (không phải file .xls gốc byte-for-byte —
     xem ghi chú ở cuối file — mà là đúng các dòng/cột đã đọc được từ file đó
-    tại thời điểm đối chiếu), dưới dạng .xlsx dễ mở lại."""
+    tại thời điểm đối chiếu, GỘP TỪ TẤT CẢ file đã dùng lần đó nếu là nhiều
+    file), dưới dạng .xlsx dễ mở lại."""
     if side not in ("a", "b"):
         raise HTTPException(400, "side phải là 'a' hoặc 'b'")
     detail = get_recon_detail(db, history_id)
