@@ -237,7 +237,12 @@ Truy cập:
 
 ### Module Đối chiếu điện SWIFT (phòng Swift)
 - Đối chiếu điện SAA ↔ Màn hình quản lý điện, 2 chiều: **Điện đến** / **Điện đi**
-- Xuất Excel 3 loại mỗi chiều: Tổng hợp, Chi tiết lệch, Bản ghi đang lọc
+- Mỗi bên nhận **nhiều file** (SAA có thể xuất nhiều đợt trong ngày) — tự gộp
+  trước khi đối chiếu; giới hạn 10 file hoặc 100 MB mỗi ô
+- Xuất Excel 5 loại mỗi chiều: Tổng hợp, Chi tiết lệch, Bản ghi đang lọc,
+  **Tổng hợp theo biểu mẫu** và **Chi tiết lệch theo biểu mẫu** (Mẫu 04/05,
+  khung nền lấy từ `backend/services/swift_recon/templates/`)
+- Cột "Chênh lệch" đếm số bản ghi **không khớp khoá**, không phải hiệu số lượng
 - Tab **Lịch sử đối chiếu** — lưu vào bảng `swift_recon_history` trong DB chung
 - Phân quyền riêng theo nhóm (`menu.swift_recon`)
 
