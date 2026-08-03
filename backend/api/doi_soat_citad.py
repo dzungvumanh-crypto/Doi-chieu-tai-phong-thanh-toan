@@ -128,7 +128,11 @@ async def do_reconcile(
 
 
 @router.post("/export")
-async def export_excel(
+# KHÔNG async — exporters.export_doiSoat() đồng bộ, có thể mất vài giây với
+# danh sách lệch lớn. FastAPI tự đẩy hàm `def` thường (không async) vào
+# threadpool, không chặn event loop dùng chung — đúng cách endpoint export
+# của doi_chieu_citad.py đã làm sẵn (không async, không bị lỗi này).
+def export_excel(
     payload: ExportIn,
     current: dict = Depends(require_feature("menu.doi_soat_citad")),
 ):
@@ -178,7 +182,8 @@ async def get_history_detail(
 
 
 @router.get("/history/{history_id}/export")
-async def export_from_history(
+# KHÔNG async — cùng lý do với export_excel() ở trên.
+def export_from_history(
     history_id: int,
     db=Depends(get_db),
     current: dict = Depends(require_feature("menu.doi_soat_citad")),

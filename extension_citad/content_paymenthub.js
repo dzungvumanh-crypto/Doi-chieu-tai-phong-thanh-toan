@@ -84,6 +84,33 @@ function removeManualBtn() {
   if (el) el.remove();
 }
 
+// ── Lùi thời gian thử lại khi gửi thất bại ─────────────────────────────
+// showToast() cũng là 1 thay đổi trên document.body — đúng thứ
+// MutationObserver bên dưới đang theo dõi. Nếu đặt lại khoá chặn trùng
+// NGAY sau khi hiện toast, observer bắt được thay đổi đó và gọi lại hàm
+// gửi ngay lập tức — thành vòng lặp không có độ trễ, chỉ bị chặn bởi thời
+// gian round-trip của request đang lỗi. Với mã 403 (mã kết nối sai/bị thu
+// hồi) vòng lặp đó không bao giờ tự tắt, mỗi vòng vẫn tốn 1 dòng
+// audit_logs. Chỉ lùi thời gian thử lại (tăng dần, tối đa 5 phút) cho lỗi
+// CÓ THỂ tạm thời (mất mạng, server lỗi) — 403 thì KHÔNG tự thử lại, chỉ
+// nút thủ công mới thử lại được.
+function _makeRetryScheduler(resetFn) {
+  let failCount = 0;
+  let timer = null;
+  return {
+    scheduleRetry() {
+      failCount++;
+      const delay = Math.min(5000 * (2 ** (failCount - 1)), 300000); // 5s → tối đa 5 phút
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(resetFn, delay);
+    },
+    resetBackoff() {
+      failCount = 0;
+      if (timer) { clearTimeout(timer); timer = null; }
+    },
+  };
+}
+
 /* ══════════════════════════════════════════════════════
    1. PAYMENTHUB – Báo cáo kênh thanh toán
    ══════════════════════════════════════════════════════ */
@@ -166,6 +193,7 @@ function hasBaoCaoResults() {
 }
 
 let lastBaoCaoKey = '';
+const _baoCaoRetry = _makeRetryScheduler(() => { lastBaoCaoKey = ''; });
 
 async function saveBaoCao(manual=false) {
   if (!SERVER || !EXTENSION_TOKEN) {
@@ -198,33 +226,45 @@ async function saveBaoCao(manual=false) {
     { key:`ph_${tien}_di_il`,  loai:'il', chieu:'di',  tien, soMon: il.di_m,  soTien: il.di_t  },
   ];
 
-  try {
-    const r = await fetch(`${SERVER}/api/doi-chieu-citad/paymenthub-buffer`, {
-      method:'POST',
-      headers:{'Content-Type':'application/json', 'X-Extension-Token': EXTENSION_TOKEN},
-      body: JSON.stringify({ items, ts: new Date().toLocaleTimeString('vi-VN') })
-    });
-    if (r.status === 403) {
-      showToast('✗ Mã kết nối không hợp lệ hoặc đã bị thu hồi — tạo mã mới ở /doi_chieu_citad', '#ef4444', 8000);
-    }
-    if (r.ok) {
-      showToast(
-        `✓ ${manual?'Đã lưu':'Tự lưu'} PaymentHub – ${tien}<br>` +
-        `<small style="color:#94a3b8">IH Đến: ${ih.den_m.toLocaleString('vi-VN')} món | IL Đi: ${il.di_m.toLocaleString('vi-VN')} món</small>`,
-        '#10b981', 5000
-      );
-    } else {
-      showToast(`✗ Lỗi server (${SERVER})`, '#ef4444');
-      lastBaoCaoKey = '';
-    }
-  } catch(e) {
-    showToast('✗ Không kết nối server. Kiểm tra backend TTTT đang chạy.', '#ef4444');
-    lastBaoCaoKey = '';
+  // fetch() thật chạy trong background.js (service worker) để né CORS —
+  // fetch() từ content script mang Origin của trang PaymentHub, bị chặn
+  // (đã kiểm chứng thực tế), xem background.js.
+  const result = await new Promise((resolve) => {
+    chrome.runtime.sendMessage(
+      {
+        type: 'BUFFER_POST',
+        url: `${SERVER}/api/doi-chieu-citad/paymenthub-buffer`,
+        token: EXTENSION_TOKEN,
+        body: { items, ts: new Date().toLocaleTimeString('vi-VN') },
+      },
+      (response) => resolve(response || { ok: false, status: null })
+    );
+  });
+
+  if (result.status === 403) {
+    // Mã kết nối sai/bị thu hồi — KHÔNG phải sự cố tạm thời, không tự thử
+    // lại (return sớm, không rơi xuống nhánh else bên dưới — trước đây
+    // status===403 vẫn có ok===false nên lọt xuống else, reset khoá và
+    // lặp lại vô hạn).
+    showToast('✗ Mã kết nối không hợp lệ hoặc đã bị thu hồi — tạo mã mới ở /doi_chieu_citad', '#ef4444', 8000);
+    return;
+  }
+  if (result.ok) {
+    showToast(
+      `✓ ${manual?'Đã lưu':'Tự lưu'} PaymentHub – ${tien}<br>` +
+      `<small style="color:#94a3b8">IH Đến: ${ih.den_m.toLocaleString('vi-VN')} món | IL Đi: ${il.di_m.toLocaleString('vi-VN')} món</small>`,
+      '#10b981', 5000
+    );
+    _baoCaoRetry.resetBackoff();
+  } else {
+    showToast(`✗ Lỗi server (${SERVER})`, '#ef4444');
+    _baoCaoRetry.scheduleRetry();
   }
 }
 
 function observeBaoCao() {
   createManualBtn('Lưu lại PaymentHub', '#1d4ed8', () => {
+    _baoCaoRetry.resetBackoff();
     lastBaoCaoKey = '';
     saveBaoCao(true);
   });
@@ -254,6 +294,7 @@ function hasTraCuuResults() {
 }
 
 let lastTraCuuKey = '';
+const _traCuuRetry = _makeRetryScheduler(() => { lastTraCuuKey = ''; });
 
 async function saveTraCuu(source, manual=false) {
   if (!SERVER || !EXTENSION_TOKEN) {
@@ -284,32 +325,40 @@ async function saveTraCuu(source, manual=false) {
     ts: new Date().toLocaleTimeString('vi-VN')
   };
 
-  try {
-    const r = await fetch(`${SERVER}/api/doi-chieu-citad/paymenthub-buffer`, {
-      method:'POST',
-      headers:{'Content-Type':'application/json', 'X-Extension-Token': EXTENSION_TOKEN},
-      body: JSON.stringify({ items: [payload], ts: payload.ts })
-    });
-    if (r.ok) {
-      showToast(
-        `✓ ${manual?'Đã lưu':'Tự lưu'} Napas IH Đến – ${data.loaiTien}<br>` +
-        `<small style="color:#94a3b8">${data.soMon.toLocaleString('vi-VN')} món | ${data.soTien.toLocaleString('vi-VN')}</small>`,
-        '#10b981', 5000
-      );
-    } else if (r.status === 403) {
-      showToast('✗ Mã kết nối không hợp lệ hoặc đã bị thu hồi — tạo mã mới ở /doi_chieu_citad', '#ef4444', 8000);
-    } else {
-      showToast(`✗ Lỗi server (${SERVER})`, '#ef4444');
-      lastTraCuuKey = '';
-    }
-  } catch(e) {
-    showToast('✗ Không kết nối server. Kiểm tra backend TTTT đang chạy.', '#ef4444');
-    lastTraCuuKey = '';
+  // fetch() thật chạy trong background.js (service worker) để né CORS —
+  // xem ghi chú tương tự ở saveBaoCao()/background.js.
+  const result = await new Promise((resolve) => {
+    chrome.runtime.sendMessage(
+      {
+        type: 'BUFFER_POST',
+        url: `${SERVER}/api/doi-chieu-citad/paymenthub-buffer`,
+        token: EXTENSION_TOKEN,
+        body: { items: [payload], ts: payload.ts },
+      },
+      (response) => resolve(response || { ok: false, status: null })
+    );
+  });
+
+  if (result.ok) {
+    showToast(
+      `✓ ${manual?'Đã lưu':'Tự lưu'} Napas IH Đến – ${data.loaiTien}<br>` +
+      `<small style="color:#94a3b8">${data.soMon.toLocaleString('vi-VN')} món | ${data.soTien.toLocaleString('vi-VN')}</small>`,
+      '#10b981', 5000
+    );
+    _traCuuRetry.resetBackoff();
+  } else if (result.status === 403) {
+    // Mã kết nối sai/bị thu hồi — không phải sự cố tạm thời, không lên
+    // lịch thử lại.
+    showToast('✗ Mã kết nối không hợp lệ hoặc đã bị thu hồi — tạo mã mới ở /doi_chieu_citad', '#ef4444', 8000);
+  } else {
+    showToast(`✗ Lỗi server (${SERVER})`, '#ef4444');
+    _traCuuRetry.scheduleRetry();
   }
 }
 
 function observeTraCuu(source) {
   createManualBtn('Lưu lại Napas IH Đến', '#065f46', () => {
+    _traCuuRetry.resetBackoff();
     lastTraCuuKey = '';
     saveTraCuu(source, true);
   });

@@ -106,10 +106,17 @@ function hasResults() {
 }
 
 // ── Gửi lên server ───────────────────────────────────────────────────
+// Trả về { ok, permanent } thay vì chỉ true/false — "permanent" đánh dấu
+// lỗi KHÔNG phải sự cố tạm thời (chưa cấu hình, mã kết nối sai/bị thu hồi)
+// để autoSaveIfNew() biết KHÔNG được tự thử lại (xem _makeRetryScheduler).
+//
+// KHÔNG tự fetch() ở đây — content script mang Origin của trang CITAD nên
+// bị CORS chặn (đã kiểm chứng thực tế). Gửi message cho background.js
+// (service worker, không bị CORS chặn kiểu này) thực hiện fetch() thật.
 async function saveToServer(cfg, res) {
   if (!SERVER || !EXTENSION_TOKEN) {
     showToast('⚠️ Chưa cấu hình Extension — bấm icon Extension trên thanh công cụ → Tuỳ chọn', '#f59e0b', 6000);
-    return false;
+    return { ok: false, permanent: true };
   }
   const payload = {
     key:    `citad_${cfg.cong}_${cfg.loaiTien}_${cfg.chieu}_${cfg.loaiDV}`,
@@ -121,17 +128,49 @@ async function saveToServer(cfg, res) {
     soTien: res.soTien,
     ts: new Date().toLocaleTimeString('vi-VN')
   };
-  try {
-    const r = await fetch(`${SERVER}/api/doi-chieu-citad/citad-buffer`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Extension-Token': EXTENSION_TOKEN },
-      body: JSON.stringify(payload)
-    });
-    if (r.status === 403) {
-      showToast('✗ Mã kết nối không hợp lệ hoặc đã bị thu hồi — tạo mã mới ở /doi_chieu_citad', '#ef4444', 8000);
-    }
-    return r.ok;
-  } catch(e) { return false; }
+  const result = await new Promise((resolve) => {
+    chrome.runtime.sendMessage(
+      {
+        type: 'BUFFER_POST',
+        url: `${SERVER}/api/doi-chieu-citad/citad-buffer`,
+        token: EXTENSION_TOKEN,
+        body: payload,
+      },
+      (response) => resolve(response || { ok: false, status: null })
+    );
+  });
+  if (result.status === 403) {
+    showToast('✗ Mã kết nối không hợp lệ hoặc đã bị thu hồi — tạo mã mới ở /doi_chieu_citad', '#ef4444', 8000);
+    return { ok: false, permanent: true };
+  }
+  return { ok: result.ok, permanent: false };
+}
+
+// ── Lùi thời gian thử lại khi gửi thất bại ─────────────────────────────
+// showToast() cũng là 1 thay đổi trên document.body — đúng thứ
+// MutationObserver bên dưới đang theo dõi. Nếu đặt lại khoá chặn trùng
+// NGAY sau khi hiện toast, observer bắt được thay đổi đó và gọi lại hàm
+// gửi ngay lập tức — thành vòng lặp không có độ trễ, chỉ bị chặn bởi thời
+// gian round-trip của request đang lỗi. Với lỗi permanent (mã kết nối sai/
+// bị thu hồi) vòng lặp đó không bao giờ tự tắt, mỗi vòng vẫn tốn 1 dòng
+// audit_logs. Chỉ lùi thời gian thử lại (tăng dần, tối đa 5 phút) cho lỗi
+// CÓ THỂ tạm thời (mất mạng, server lỗi) — lỗi permanent thì KHÔNG tự thử
+// lại, chỉ nút thủ công mới thử lại được.
+function _makeRetryScheduler(resetFn) {
+  let failCount = 0;
+  let timer = null;
+  return {
+    scheduleRetry() {
+      failCount++;
+      const delay = Math.min(5000 * (2 ** (failCount - 1)), 300000); // 5s → tối đa 5 phút
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(resetFn, delay);
+    },
+    resetBackoff() {
+      failCount = 0;
+      if (timer) { clearTimeout(timer); timer = null; }
+    },
+  };
 }
 
 // ── Toast thông báo nhỏ ──────────────────────────────────────────────
@@ -168,6 +207,7 @@ function showToast(msg, color='#10b981', duration=3000) {
 
 // ── Auto-save: tự động lưu khi phát hiện kết quả mới ───────────────
 let lastSavedKey = '';
+const _saveRetry = _makeRetryScheduler(() => { lastSavedKey = ''; });
 
 async function autoSaveIfNew() {
   if (!hasResults()) return;
@@ -193,7 +233,7 @@ async function autoSaveIfNew() {
   if (key === lastSavedKey) return;
   lastSavedKey = key;
 
-  const ok = await saveToServer(cfg, res);
+  const { ok, permanent } = await saveToServer(cfg, res);
 
   const loaiLabel = cfg.loaiDV === 'ih' ? 'IH' : 'IL';
   const chieuLabel = cfg.chieu === 'di' ? 'Đi' : 'Đến';
@@ -204,9 +244,15 @@ async function autoSaveIfNew() {
       `<small style="color:#94a3b8">${res.soMon.toLocaleString('vi-VN')} món | ${res.soTien.toLocaleString('vi-VN')}</small>`,
       '#10b981', 4000
     );
+    _saveRetry.resetBackoff();
   } else {
     showToast(`✗ Không kết nối server (${SERVER})`, '#ef4444', 4000);
-    lastSavedKey = ''; // cho phép thử lại
+    // permanent (chưa cấu hình / mã kết nối sai-bị thu hồi): KHÔNG tự thử
+    // lại — chỉ nút thủ công mới xoá được khoá. Lỗi có thể tạm thời (mạng,
+    // server lỗi): lùi thời gian thử lại tăng dần thay vì thử lại ngay.
+    if (!permanent) {
+      _saveRetry.scheduleRetry();
+    }
   }
 }
 
@@ -266,6 +312,7 @@ function createManualBtn() {
   btn.onmouseout  = () => { btn.style.opacity='0.85'; };
   btn.onclick = async () => {
     if (!hasResults()) { showToast('Chưa có kết quả, hãy Truy vấn trước', '#f59e0b'); return; }
+    _saveRetry.resetBackoff(); // bấm tay = thử ngay, không chờ backoff còn lại
     lastSavedKey = ''; // reset để cho phép lưu lại
     await autoSaveIfNew();
   };

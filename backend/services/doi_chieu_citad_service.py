@@ -124,7 +124,7 @@ def generate_extension_token(db: sqlite3.Connection, staff_id: int) -> str:
 # module khác dùng chung data/ksnb.db) chỉ để đổi 1 con số hiển thị không ai
 # cần xem realtime. Gộp lại: chỉ ghi khi đã quá _LAST_USED_THROTTLE_SECONDS
 # kể từ lần ghi trước.
-_LAST_USED_THROTTLE_SECONDS = 60
+_LAST_USED_THROTTLE_SECONDS = 300
 
 
 def resolve_extension_token(db: sqlite3.Connection, token: str) -> str | None:
