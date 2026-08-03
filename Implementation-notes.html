@@ -51,7 +51,332 @@
 <div class="page">
 
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
-  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-07-29</p>
+  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-03</p>
+
+  <!-- H -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">H</span>
+      <span class="card-title">Bể luồng, hàng đợi audit, cache NTP — và vì sao KHÔNG dùng mẫu token</span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Bối cảnh: hai bể luồng khác nhau, dễ nhầm</p>
+      <table>
+        <tr><th>Bể</th><th>Kích thước</th><th>Ai dùng</th></tr>
+        <tr><td>anyio <code>CapacityLimiter</code></td><td>40</td>
+            <td>Mọi endpoint <code>def</code> <strong>và</strong> <code>BackgroundTasks</code> với hàm sync</td></tr>
+        <tr><td>executor mặc định của asyncio</td><td><code>min(32, cpu+4)</code> = 12 ở máy này</td>
+            <td><code>asyncio.to_thread</code></td></tr>
+      </table>
+
+      <div class="caution">
+      <strong>Đã đề xuất chuyển các export nặng sang mẫu <code>BackgroundTasks</code> + token của
+      Chấm 459901. Đã tự bác bỏ sau khi đọc mã nguồn Starlette.</strong>
+      <code>BackgroundTask.__call__</code> với hàm sync gọi <code>run_in_threadpool</code> →
+      <code>anyio.to_thread.run_sync</code> → <strong>đúng bể 40 token đó</strong>. Chuyển sang mẫu
+      token không giảm được chút áp lực nào; nó chỉ khiến client thôi giữ kết nối HTTP.
+      </div>
+
+      <p class="label">Bằng chứng: bể 40 cạn thì mọi thứ chết theo</p>
+      <table>
+        <tr><th>Số việc nặng đồng thời</th><th><code>/auth/me</code> trung vị</th><th><code>/auth/me</code> chậm nhất</th></tr>
+        <tr><td>0 (nền)</td><td>26 ms</td><td>26 ms</td></tr>
+        <tr><td>40</td><td>30 ms</td><td><span class="pill pill-red">38.217 ms</span></td></tr>
+        <tr><td>80</td><td>59 ms</td><td><span class="pill pill-red">59.033 ms</span></td></tr>
+      </table>
+      <p>Trung vị vẫn thấp — nghĩa là <strong>phần lớn người dùng thấy bình thường, một số ít treo
+      cả phút</strong>. Chính là kiểu lỗi "lúc có lúc không" đã dùng để bác <code>--workers</code> ở card G.</p>
+
+      <p class="label">Vì sao tăng số luồng KHÔNG giúp gì</p>
+      <p>40 việc nặng song song mất 43,3 s — đúng bằng 40 × 1,08 s chạy nối đuôi, tức
+      <strong>không hề có song song</strong>. <code>docxtpl</code>/<code>openpyxl</code> là Python
+      thuần nên giữ GIL suốt. Nới bể chỉ cho nhiều việc cùng giành GIL, tổng thời gian y nguyên mà
+      request nhẹ vẫn bị bỏ đói. Cách đúng là <em>giới hạn</em>, không phải nới.</p>
+
+      <p class="label">Giải pháp: một limiter riêng cho việc nặng</p>
+      <p><code>backend/core/concurrency.py</code> giữ <code>CapacityLimiter(4)</code> riêng. Endpoint
+      nặng chuyển từ <code>def</code> sang <code>async def</code> + <code>await run_heavy(...)</code>.
+      36 token còn lại của bể 40 luôn dành cho request nhẹ.</p>
+      <p><strong>Gom về một mối:</strong> các endpoint sửa ở card G đang dùng
+      <code>asyncio.to_thread</code> (bể 12 riêng) cũng đổi sang <code>run_heavy</code>. Nếu để hai
+      bể, tổng việc nặng chạy cùng lúc là 4 + 12 = 16, tức giới hạn 4 chỉ là ảo.</p>
+      <table>
+        <tr><th>Kết quả đo lại</th><th>Trước</th><th>Sau</th></tr>
+        <tr><td>Đỉnh việc nặng đồng thời</td><td>không giới hạn</td><td><span class="pill pill-green">4</span></td></tr>
+        <tr><td><code>/auth/me</code> khi có tải nặng</td><td>38.217 ms</td><td><span class="pill pill-green">873 ms</span></td></tr>
+      </table>
+
+      <p class="label">Ghi audit: từ 5,5 s xuống 38 ms</p>
+      <p>Card G đẩy việc ghi audit sang threadpool nên người khác hết bị vạ lây, nhưng vẫn
+      <code>await</code> → chính người bấm nút phải đợi. Đo được: khi có lệnh ghi khác giữ khoá,
+      <strong>mọi POST chậm thêm 5.507 ms</strong>.</p>
+      <p>Nay <code>audit_queue.py</code> có một luồng ghi <em>duy nhất</em> + hàng đợi trần 2000 dòng.
+      Middleware chỉ bỏ vào rồi đi tiếp → POST còn <strong>38 ms</strong>. Một người ghi duy nhất
+      cũng có nghĩa hai kết nối audit không bao giờ tranh khoá nhau.</p>
+
+      <p class="label">NTP: bỏ lệnh gọi mạng ngoài khỏi request</p>
+      <p><code>/admin/logs/time-sync</code> hỏi thẳng <code>pool.ntp.org</code> ngay trong request.
+      Đo trong môi trường test: lần gọi thật mất <strong>3.129 ms</strong> (chạm trần
+      <code>NTP_TIMEOUT_SEC</code>) và giữ một luồng suốt thời gian đó. Cache 10 phút → còn
+      <strong>6 ms</strong>. Trả thêm <code>cached</code>/<code>cache_age_seconds</code>; các trường
+      cũ giữ nguyên nên giao diện không phải sửa.</p>
+
+      <p class="label"><code>run.py</code>: ba lời báo sai khi đã có instance chạy sẵn</p>
+      <p>Phát hiện tình cờ lúc chạy thử. Khởi động lần hai: con của nó chết vì không bind được cổng,
+      nhưng <code>_poll()</code> gõ trúng <em>instance đang chạy</em> nên báo <em>"✓ Frontend sẵn
+      sàng"</em> rồi <em>"HỆ THỐNG ĐÃ SẴN SÀNG"</em>; sau 5 vòng restart nó kết luận <em>"Hệ thống đã
+      dừng hoàn toàn"</em> — trong khi hệ thống thật vẫn đang phục vụ bình thường.</p>
+      <p>Người vận hành đọc dòng cuối sẽ tin mình vừa tắt hệ thống, và bước tiếp theo rất tự nhiên là
+      chạy lại lần nữa. Nay: kiểm tra cổng trước khi khởi động (dừng ngay, kèm lệnh
+      <code>netstat</code>/<code>taskkill</code>), thêm phát hiện "chết trong 5 giây đầu, 2 lần liên
+      tiếp" cho trường hợp tranh cổng, và không in "SẴN SÀNG" nếu <code>_stop_event</code> đã bật.
+      Thời gian từ 29 giây thrash + 3 thông báo sai <span class="arrow">→</span> dừng tức thì.</p>
+
+      <p class="label">Đánh đổi đã chấp nhận</p>
+      <table>
+        <tr><th>Quyết định</th><th>Đánh đổi</th></tr>
+        <tr><td><code>MAX_HEAVY = 4</code> dùng chung cho mọi việc nặng</td>
+            <td>4 người đối chiếu SWIFT thì người thứ 5 muốn xuất bìa phải xếp hàng. Đúng về bản
+            chất — 4 việc GIL-bound đã bão hoà CPU, cái thứ 5 chỉ làm mọi người chậm đi. Chỉnh được
+            qua biến môi trường <code>MAX_HEAVY_TASKS</code>.</td></tr>
+        <tr><td>Hàng đợi audit đầy thì bỏ dòng mới</td>
+            <td>Mất dòng nhật ký khi DB kẹt rất lâu (có WARNING, chỉ kêu 1 lần/đợt). Chấp nhận: thà
+            mất một dòng còn hơn ăn hết RAM.</td></tr>
+        <tr><td>Cache NTP 10 phút</td>
+            <td>Badge lệch giờ có thể cũ tới 10 phút. Độ lệch đồng hồ thay đổi theo giờ, không theo
+            giây — và đã trả kèm <code>cache_age_seconds</code> nếu sau này muốn hiện ra.</td></tr>
+      </table>
+
+      <p class="label">Phát hiện thêm khi kiểm thử lại: <code>localhost</code> tốn 2 giây mỗi kết nối mới</p>
+      <p>Đang truy nguyên một cú chậm 2 giây tưởng là do khoá DB thì lộ ra thủ phạm hoàn toàn khác.
+      Trên Windows <code>localhost</code> phân giải ra <code>::1</code> (IPv6) <em>trước</em>, mà
+      <code>uvicorn --host 0.0.0.0</code> chỉ lắng nghe IPv4. Mỗi kết nối MỚI thử IPv6, thất bại sau
+      ~2 giây, rồi mới quay sang IPv4.</p>
+      <table>
+        <tr><th>Bắt tay TCP sau khi nghỉ 7s</th><th>Thời gian</th></tr>
+        <tr><td><code>localhost:8000</code></td><td><span class="pill pill-red">2062 ms</span></td></tr>
+        <tr><td><code>127.0.0.1:8000</code></td><td><span class="pill pill-green">18 ms</span></td></tr>
+      </table>
+      <p><code>.env</code> đang đặt <code>BACKEND_URL=http://localhost:8000</code>, tức
+      <strong>mọi lời gọi frontend→backend sau ~5 giây nhàn rỗi đều tốn thêm 2 giây</strong> —
+      httpx hết hạn kết nối trong pool rồi phải mở kết nối mới. Ở giờ vắng thì gần như mọi thao tác
+      đầu tiên của người dùng đều dính.</p>
+      <div class="note">
+      <strong>Vì sao không ai phát hiện ra:</strong> mọi phép đo trước đó đều bắn request liên tục
+      nên kết nối luôn nóng. Chỉ khi có khoảng nghỉ &gt; 5 giây — đúng như người dùng thật — nó mới
+      lộ ra. Bài học: đo hiệu năng bằng cách bắn liên tục sẽ giấu mất đúng loại chi phí mà người
+      dùng thật phải trả.
+      </div>
+      <p>Sửa ở 3 chỗ: <code>.env</code>, giá trị mặc định trong <code>api_client.py</code>, và
+      <code>run.py</code> (tách URL để tự kiểm tra khỏi URL hiển thị — vẫn in
+      <code>localhost</code> cho người dùng gõ vào trình duyệt vì trình duyệt có Happy Eyeballs,
+      không dính lỗi này).</p>
+
+      <p class="label"><code>BACKEND_HOST</code>: biến cấu hình không điều khiển gì cả</p>
+      <p><code>start.bat</code> ghi <code>BACKEND_HOST=0.0.0.0</code> vào <code>.env</code> mỗi lần
+      tạo file mới, nhưng <code>config.py</code> hardcode <code>BACKEND_HOST: str = "0.0.0.0"</code>
+      — <strong>không đọc biến môi trường</strong> — còn địa chỉ bind thật thì do <code>run.py</code>
+      hardcode <code>--host 0.0.0.0</code>. Sửa <code>.env</code> không có tác dụng gì, và <em>im
+      lặng</em> không báo.</p>
+      <p>Kéo theo lỗi thứ hai: cảnh báo khởi động <em>"backend đang lắng nghe trên mọi địa chỉ
+      mạng"</em> đọc chính hằng số cứng đó. Docstring của nó ghi <em>"Bám vào sự thật quan sát được
+      (BACKEND_HOST)"</em> — nhưng <code>BACKEND_HOST</code> không quan sát gì cả. Đổi bind address
+      kiểu gì cảnh báo cũng kêu y hệt, tức là <strong>kêu sai</strong>.</p>
+      <p>Nay <code>BACKEND_HOST</code> đọc từ <code>.env</code>, <code>run.py</code> truyền chính giá
+      trị đó cho uvicorn, và cảnh báo bám theo. Đã kiểm cả hai chiều:</p>
+      <table>
+        <tr><th><code>BACKEND_HOST</code></th><th>uvicorn bind</th><th>Gọi từ máy khác</th><th>Cảnh báo khởi động</th></tr>
+        <tr><td><code>127.0.0.1</code></td><td><code>127.0.0.1:8000</code></td>
+            <td><span class="pill pill-green">từ chối</span></td><td>0</td></tr>
+        <tr><td><code>0.0.0.0</code></td><td><code>0.0.0.0:8000</code></td>
+            <td>200</td><td>2</td></tr>
+      </table>
+      <p>Trong cả hai trường hợp frontend cổng 8080 vẫn bind <code>0.0.0.0</code> (hardcode ở
+      <code>frontend/main.py</code>) nên người dùng LAN không bị ảnh hưởng — đã kiểm.</p>
+      <div class="note">
+      <strong>Lưu ý khi triển khai:</strong> <code>.env</code> được nạp với
+      <code>override=True</code>, nên nó <em>đè lên</em> biến môi trường của shell. Đặt
+      <code>set BACKEND_HOST=...</code> rồi chạy sẽ không ăn thua — phải sửa trong <code>.env</code>.
+      </div>
+
+      <p class="label">Deploy: hai biến phải sửa tay, quên thì im lặng</p>
+      <p><code>deploy.bat</code> cố ý <strong>không đụng tới <code>.env</code></strong> của máy đích
+      (giữ <code>SECRET_KEY</code> và cấu hình riêng). Hệ quả: <code>BACKEND_URL</code> và
+      <code>BACKEND_HOST</code> phải sửa tay — mà quên thì không có dấu hiệu gì, hệ thống vẫn chạy,
+      chỉ là mỗi kết nối mới tốn thêm 2 giây.</p>
+      <p>Nay cả hai script tự kiểm qua <code>deploy_env_check.py</code>:
+      <code>deploy.bat</code> phát hiện rồi <strong>hỏi</strong> trước khi sửa (cấu hình máy chủ
+      không nên đổi lặng lẽ), <code>deploy-test.bat</code> <strong>tự sửa</strong> — khớp với cách
+      nó vốn tự sửa cổng 9000/9090.</p>
+      <table>
+        <tr><th>Quyết định</th><th>Lý do</th></tr>
+        <tr><td>Viết helper bằng Python thay vì batch thuần</td>
+            <td><code>for /f</code> của cmd <em>nuốt dòng trống</em> và vướng dấu ngoặc trong
+            comment. Khối sửa <code>.env</code> sẵn có trong <code>deploy-test.bat</code> đang mang
+            đúng rủi ro này. Sửa nhầm <code>.env</code> là mất <code>SECRET_KEY</code> — quá đắt để
+            đánh cược vào chuỗi batch.</td></tr>
+        <tr><td>Không tự đổi <em>giá trị</em> <code>BACKEND_HOST</code></td>
+            <td><code>0.0.0.0</code> hay <code>127.0.0.1</code> tuỳ vào có máy khác gọi API hay
+            không — quyết định của người vận hành. Script chỉ thêm dòng nếu thiếu, giữ nguyên hành
+            vi cũ.</td></tr>
+        <tr><td>Ưu tiên <code>.venv\Scripts\python.exe</code> hơn <code>py</code></td>
+            <td>Phát hiện khi chạy thử: trình khởi chạy <code>py</code> trên máy này vướng bản
+            Microsoft Store alias và báo <em>"Unable to create process"</em>. <code>.venv</code>
+            luôn có sẵn trên máy deploy vì chính nó đang chạy hệ thống.</td></tr>
+      </table>
+      <div class="caution">
+      <code>deploy_env_check.py</code> <strong>phải được <code>git add</code></strong>.
+      <code>deploy.bat</code> nằm trong git và gọi tới nó; thiếu file thì bước kiểm chỉ in cảnh báo
+      rồi đi tiếp — không hỏng deploy, nhưng mất tác dụng bảo vệ.
+      <code>deploy-test.bat</code> thì nằm trong <code>.gitignore</code> (đường dẫn riêng từng máy),
+      nên sửa ở đó chỉ có hiệu lực cục bộ.
+      </div>
+
+      <p class="label">Phát hiện nhưng CHƯA sửa</p>
+      <table>
+        <tr><th>Vấn đề</th><th>Vì sao để lại</th></tr>
+        <tr><td>Cảnh báo <code>ALLOWED_ORIGINS</code> nói người dùng vào bằng IP sẽ "bị CORS chặn"</td>
+            <td>Nhiều khả năng <strong>không đúng</strong>: trình duyệt chỉ nói chuyện với cổng 8080,
+            không bao giờ chạm cổng 8000, nên CORS giữa hai cổng không xảy ra. Đã kiểm HTML trang
+            đăng nhập — không có tham chiếu nào tới cổng 8000. Chưa kiểm hết mọi trang nên chưa sửa
+            câu chữ. Độ tin cậy: trung bình.</td></tr>
+        <tr><td>Endpoint <strong>ghi</strong> nặng chưa được đo (sinh lịch trực tháng, tạo tập chứng
+            từ, duyệt nghỉ phép)</td>
+            <td>Chúng sửa dữ liệu thật nên không chạy thử được trên DB đang dùng. Cần một bản sao DB
+            để đo. Theo phép đo khoá ghi thì đây là khoảng trống thật.</td></tr>
+        <tr><td><code>/download/{token}</code> của Chấm 459901 không kiểm token thuộc về ai</td>
+            <td>Chỉ kiểm <code>require_feature</code>. Ai có quyền menu đó, nếu biết token, tải được
+            kết quả của người khác. Token là uuid4 nên không đoán được, nhưng nó nằm trong URL →
+            lọt vào log truy cập. Là lỗi phân quyền, không phải hiệu năng — để riêng.</td></tr>
+        <tr><td>Đồng hồ máy chủ lệch 9,25–9,62 s so với NTP</td>
+            <td>Việc của OS/domain, không thuộc tầng ứng dụng. Hệ thống đã tự cảnh báo. Nhật ký đang
+            bị sai giờ chừng đó.</td></tr>
+        <tr><td>File <code>.db-journal</code> mồ côi trong <code>data/backups</code></td>
+            <td>Có từ 28/07, do <code>_verify()</code> mở bản backup. Vô hại, 512 byte.</td></tr>
+      </table>
+
+    </div>
+  </div>
+
+  <!-- G -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">G</span>
+      <span class="card-title">Gỡ nghẽn event loop — vì sao <code>--workers</code> là đáp án sai</span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Triệu chứng</p>
+      <p>Một người đối chiếu SWIFT hoặc xuất báo cáo là cả hệ thống khựng: người khác đăng nhập,
+      mở nghỉ phép, xem chứng từ đều treo. Backend chạy <strong>một tiến trình uvicorn duy nhất</strong>,
+      và các endpoint nặng khai báo <code>async def</code> nhưng bên trong chạy code đồng bộ
+      (pandas, giải nén, sinh Excel) → giữ chặt event loop suốt thời gian xử lý.</p>
+
+      <div class="caution">
+      <strong>Đề xuất đầu tiên là thêm <code>--workers</code>. Đã bác bỏ.</strong> Nó không chữa
+      đúng bệnh và làm hỏng hai tính năng đang chạy tốt — xem bảng dưới.
+      </div>
+
+      <p class="label">Vì sao <code>--workers N</code> không dùng được ở đây</p>
+      <table>
+        <tr><th>Lý do</th><th>Hậu quả cụ thể</th></tr>
+        <tr>
+          <td>Không chữa gốc</td>
+          <td>Mỗi worker vẫn tự đứng im khi gặp request nặng. Đi từ "cả hệ thống treo" sang
+          "1/N số người treo <em>ngẫu nhiên</em>" — khó chẩn đoán hơn vì lỗi lúc có lúc không.</td>
+        </tr>
+        <tr>
+          <td><code>_progress</code> nằm trong RAM tiến trình</td>
+          <td><strong>Làm hỏng Chấm 459901 + Đối chiếu song phương.</strong> Upload rơi vào worker 1,
+          poll tiến độ rơi vào worker 2 → 404 "Token không tồn tại". Trớ trêu: đây đúng là hai tính
+          năng <em>duy nhất</em> đã kiến trúc đúng (BackgroundTasks, không chặn loop).</td>
+        </tr>
+        <tr>
+          <td><code>lifespan</code> chạy N lần</td>
+          <td>N luồng cùng sao chép file SQLite lúc khởi động, N lịch backup song song tranh nhau
+          xoá bản cũ theo <code>_KEEP</code>.</td>
+        </tr>
+      </table>
+      <p><em>Phần an toàn:</em> phiên đăng nhập và rate-limit login đều DB-backed — hai chỗ dễ vỡ
+      nhất khi tách tiến trình thì đã làm đúng từ trước.</p>
+
+      <p class="label">Đo đối chứng (xuất Excel 40k dòng, đo độ trễ <code>/api/auth/me</code> chạy nền)</p>
+      <table>
+        <tr><th>Phiên bản</th><th><code>/me</code> trung vị</th><th><code>/me</code> chậm nhất</th><th>Việc nặng</th></tr>
+        <tr><td>Trước (đồng bộ trên loop)</td><td>7,2 ms</td><td><span class="pill pill-red">2206 ms</span></td><td>2223 ms</td></tr>
+        <tr><td>Sau (<code>asyncio.to_thread</code>)</td><td>7,3 ms</td><td><span class="pill pill-green">485 ms</span></td><td>2118 ms</td></tr>
+      </table>
+      <p>Trước khi sửa, request nhẹ bị chặn <strong>gần trọn</strong> thời gian của request nặng
+      (2206 / 2223 ms) — đúng định nghĩa "cả hệ thống đứng".</p>
+
+      <p class="label">Đánh đổi đã chấp nhận</p>
+      <table>
+        <tr><th>Quyết định</th><th>Đánh đổi</th></tr>
+        <tr>
+          <td>Audit timeout 30s <span class="arrow">→</span> 5s</td>
+          <td>DB bận quá 5s thì <strong>mất dòng audit</strong> (có log WARNING). Chấp nhận: ghi
+          nhật ký là việc phụ, không đáng để giữ một luồng đứng chờ 30 giây.</td>
+        </tr>
+        <tr>
+          <td>Hàm <code>_work()</code> lồng trong endpoint thay vì helper cấp module</td>
+          <td>Trông lặp hơn, nhưng giữ nguyên <em>y hệt</em> luồng try/except cũ — đặc biệt là
+          <code>UnknownFileFormat</code> → 422 và <code>HTTPException</code> ném từ <em>bên trong</em>
+          luồng. Ưu tiên không đổi hành vi hơn là gọn code.</td>
+        </tr>
+        <tr>
+          <td>Poll dừng sau 15 phút / 10 lỗi liên tiếp</td>
+          <td>Việc xử lý thật sự dài hơn 15 phút sẽ bị bỏ giữa chừng ở phía UI (file vẫn sinh ra ở
+          server). Chấp nhận: mọi file thực tế xử lý dưới 1 phút.</td>
+        </tr>
+      </table>
+
+      <p class="label">Hai lỗi khuếch đại lẫn nhau — nay đã cắt</p>
+      <p><code>audit_logs</code> chỉ được dọn <em>bên trong</em> endpoint xem nhật ký. Không admin nào
+      mở màn hình đó thì bảng phình vô hạn (1 dòng cho mỗi thao tác ghi của mỗi người). Rồi khi có
+      người mở, một <code>DELETE</code> khổng lồ chạy giữa request, giữ khoá ghi lâu — <strong>đúng
+      lúc đó</strong> AuditMiddleware với <code>busy_timeout=30000</code> đứng chờ và kéo cả backend
+      theo. Tách việc dọn ra chạy nền mỗi 12h: mỗi lần xoá ít, và không nằm trên đường đi của
+      request nào.</p>
+
+      <p class="label">Phát hiện nhưng CHƯA sửa — có chủ đích</p>
+      <table>
+        <tr><th>Vấn đề</th><th>Vì sao để lại</th></tr>
+        <tr>
+          <td>Còn 485 ms độ trễ đỉnh</td>
+          <td>Chủ yếu do FastAPI/Pydantic parse body JSON 40k bản ghi <em>trên event loop</em> —
+          nằm ngoài phạm vi <code>to_thread</code>. Muốn hết phải phân trang payload, thuộc mục
+          dưới.</td>
+        </tr>
+        <tr>
+          <td><code>swift_recon_history</code> lưu trùng dữ liệu 3 lần
+          (<code>merged</code> đã chứa gần hết <code>raw_a</code> + <code>raw_b</code>)</td>
+          <td>Cần đổi schema. Người dùng quyết định hoãn. Kéo theo: file SQLite phình → backup 24h
+          chép nguyên file × 7 bản.</td>
+        </tr>
+        <tr>
+          <td><code>_progress</code> vẫn nằm trong RAM</td>
+          <td>Backend restart vẫn mất tiến độ đang chạy. Khác biệt là nay UI <em>thoát được</em>
+          sau 15 phút thay vì kẹt vĩnh viễn. Sửa triệt để = chuyển sang SQLite, gộp chung với việc
+          bỏ blob trùng ở trên.</td>
+        </tr>
+        <tr>
+          <td>Upload không giới hạn dung lượng phía server</td>
+          <td>Chỉ 3/7 tính năng có <code>max_file_size</code> ở client — mà đó là client, gọi thẳng
+          API là qua được. Vấn đề an toàn, không phải hiệu năng; để riêng.</td>
+        </tr>
+      </table>
+
+      <div class="note">
+      <strong>Cho người sửa sau:</strong> nếu có ngày thật sự cần <code>--workers</code>, điều kiện
+      tiên quyết là (1) <code>_progress</code> ra khỏi RAM, (2) chỉ một worker chạy backup +
+      log-cleanup scheduler. Đừng bật trước khi làm xong hai việc đó.
+      </div>
+
+    </div>
+  </div>
 
   <!-- F -->
   <div class="card">
@@ -2564,7 +2889,7 @@ ui.on_exception(_on_exception)</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-07-31</footer>
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-03</footer>
 </div>
 </body>
 </html>

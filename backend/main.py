@@ -51,8 +51,12 @@ _redoc_url = "/redoc" if _docs_open else None
 def _warn_deployment_config():
     """Cảnh báo cấu hình rủi ro khi chạy trên LAN. Không chặn khởi động.
 
-    Bám vào sự thật quan sát được (BACKEND_HOST) thay vì cờ khai báo (ENV):
-    người quên đặt ALLOWED_ORIGINS thường quên luôn ENV=production.
+    Bám vào địa chỉ bind thật (BACKEND_HOST) thay vì cờ khai báo (ENV): người
+    quên đặt ALLOWED_ORIGINS thường quên luôn ENV=production.
+
+    BACKEND_HOST nay đọc từ .env và chính `run.py` truyền nó cho uvicorn, nên
+    cảnh báo này phản ánh đúng thực tế. Trước đây nó là hằng số cứng "0.0.0.0":
+    đổi bind address kiểu gì thì cảnh báo vẫn kêu y hệt — tức là kêu sai.
     """
     log = logging.getLogger("startup.config")
     on_lan = _settings.BACKEND_HOST not in ("127.0.0.1", "localhost")
@@ -88,13 +92,20 @@ async def lifespan(app: FastAPI):
     _create_tables(DB_PATH)
     _ensure_indexes()
     _warn_deployment_config()
+    _db_file = _settings.DATABASE_URL.replace("sqlite:///", "")
     from backend.services.backup_service import start_scheduler as _start_backup
-    _start_backup(_settings.DATABASE_URL.replace("sqlite:///", ""))
+    _start_backup(_db_file)
+    from backend.services.log_cleanup_service import start_scheduler as _start_log_cleanup
+    _start_log_cleanup(_db_file)
+    from backend.core import audit_queue
+    audit_queue.start()
     # Cảnh báo (không chặn khởi động) nếu đồng hồ máy lệch nguồn giờ chuẩn
     import asyncio as _asyncio
     from backend.services.time_sync import check_drift_and_log as _check_drift
     _asyncio.get_event_loop().run_in_executor(None, _check_drift)
     yield
+    # Xả nốt dòng audit đang chờ trước khi tiến trình chết
+    audit_queue.stop()
 
 app = FastAPI(
     title="PAYMENT CENTER",

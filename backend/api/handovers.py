@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from openpyxl.styles import Alignment, Font, PatternFill
 
+from backend.core.concurrency import run_heavy
 from backend.core.deps import get_current_staff, require_feature
 from backend.core.enums import EntryStatus, StaffRole
 from backend.database import get_db, _vn_now
@@ -594,7 +595,7 @@ def get_entry_history(
 
 
 @router.get("/export")
-def export_handovers(
+async def export_handovers(
     from_date: Optional[date] = None,
     to_date: Optional[date] = None,
     department_id: Optional[int] = None,
@@ -622,55 +623,60 @@ def export_handovers(
         params.append(to_date.isoformat())
 
     where = "WHERE " + " AND ".join(clauses) if clauses else ""
-    entries = db.execute(
-        f"""SELECT de.id, de.transaction_date, de.sheet_count, de.entry_status,
-                   h.handover_date, h.delivered_by,
-                   d.name AS dept_name,
-                   ks.ipcas_code, ks.full_name, ks.payment_username
-            FROM document_entries de
-            JOIN handovers h ON de.handover_id = h.id
-            JOIN departments d ON h.department_id = d.id
-            LEFT JOIN user_tttt ks ON de.staff_id = ks.id
-            {where}
-            ORDER BY h.handover_date DESC, d.name""",
-        params,
-    ).fetchall()
 
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Bàn giao chứng từ"
+    def _work() -> io.BytesIO:
+        entries = db.execute(
+            f"""SELECT de.id, de.transaction_date, de.sheet_count, de.entry_status,
+                       h.handover_date, h.delivered_by,
+                       d.name AS dept_name,
+                       ks.ipcas_code, ks.full_name, ks.payment_username
+                FROM document_entries de
+                JOIN handovers h ON de.handover_id = h.id
+                JOIN departments d ON h.department_id = d.id
+                LEFT JOIN user_tttt ks ON de.staff_id = ks.id
+                {where}
+                ORDER BY h.handover_date DESC, d.name""",
+            params,
+        ).fetchall()
 
-    hdr_fill = PatternFill("solid", fgColor="1565C0")
-    hdr_font = Font(bold=True, color="FFFFFF")
-    headers = ["STT", "Phòng", "Ngày bàn giao", "Ngày giao dịch",
-               "User IPCAS", "Họ và tên", "Số tờ", "Trạng thái", "Người nộp"]
-    widths  = [6, 20, 14, 14, 16, 25, 9, 16, 22]
-    ws.append(headers)
-    for cell, w in zip(ws[1], widths):
-        cell.fill = hdr_fill
-        cell.font = hdr_font
-        cell.alignment = Alignment(horizontal="center")
-        ws.column_dimensions[cell.column_letter].width = w
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Bàn giao chứng từ"
 
-    for idx, e in enumerate(entries, 1):
-        ho_date = date.fromisoformat(e["handover_date"]).strftime("%d/%m/%Y") if e["handover_date"] else ""
-        tx_date = date.fromisoformat(e["transaction_date"]).strftime("%d/%m/%Y") if e["transaction_date"] else ""
-        display_name = e["full_name"] or e["payment_username"] or ""
-        ws.append([
-            idx,
-            e["dept_name"] or "",
-            ho_date,
-            tx_date,
-            e["ipcas_code"] or "",
-            display_name,
-            e["sheet_count"],
-            _STATUS_LABEL.get(e["entry_status"] or "confirmed", e["entry_status"] or ""),
-            e["delivered_by"] or "",
-        ])
+        hdr_fill = PatternFill("solid", fgColor="1565C0")
+        hdr_font = Font(bold=True, color="FFFFFF")
+        headers = ["STT", "Phòng", "Ngày bàn giao", "Ngày giao dịch",
+                   "User IPCAS", "Họ và tên", "Số tờ", "Trạng thái", "Người nộp"]
+        widths  = [6, 20, 14, 14, 16, 25, 9, 16, 22]
+        ws.append(headers)
+        for cell, w in zip(ws[1], widths):
+            cell.fill = hdr_fill
+            cell.font = hdr_font
+            cell.alignment = Alignment(horizontal="center")
+            ws.column_dimensions[cell.column_letter].width = w
 
-    buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
+        for idx, e in enumerate(entries, 1):
+            ho_date = date.fromisoformat(e["handover_date"]).strftime("%d/%m/%Y") if e["handover_date"] else ""
+            tx_date = date.fromisoformat(e["transaction_date"]).strftime("%d/%m/%Y") if e["transaction_date"] else ""
+            display_name = e["full_name"] or e["payment_username"] or ""
+            ws.append([
+                idx,
+                e["dept_name"] or "",
+                ho_date,
+                tx_date,
+                e["ipcas_code"] or "",
+                display_name,
+                e["sheet_count"],
+                _STATUS_LABEL.get(e["entry_status"] or "confirmed", e["entry_status"] or ""),
+                e["delivered_by"] or "",
+            ])
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return buf
+
+    buf = await run_heavy(_work)
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

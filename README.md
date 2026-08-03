@@ -58,6 +58,22 @@ ENV=production                                  # tắt /docs, /redoc
 ALLOWED_ORIGINS=http://192.168.1.100:8080       # IP thật của máy chủ
 ```
 
+Hai biến tuỳ chọn liên quan đến hiệu năng và mức độ kín của backend:
+
+```ini
+BACKEND_URL=http://127.0.0.1:8000   # frontend gọi backend — KHÔNG dùng localhost
+BACKEND_HOST=127.0.0.1              # địa chỉ backend lắng nghe
+```
+
+> **Đừng dùng `localhost` cho `BACKEND_URL`.** Trên Windows nó phân giải ra `::1` (IPv6)
+> trước, mà uvicorn chỉ lắng nghe IPv4 → mỗi kết nối mới tốn thêm ~2 giây chờ IPv6
+> thất bại. Đo được: `localhost` 2062 ms so với `127.0.0.1` 18 ms. Không đặt dòng này
+> cũng được — mặc định trong code đã là `127.0.0.1`.
+
+> `BACKEND_HOST=127.0.0.1` kín hơn: trình duyệt người dùng chỉ nói chuyện với frontend
+> cổng 8080, không bao giờ chạm cổng 8000. Chỉ đặt khi chắc chắn **không có máy nào khác
+> gọi thẳng API**. Mặc định `0.0.0.0` (nghe mọi giao diện).
+
 ### 5. Chạy hệ thống
 
 ```bash
@@ -88,8 +104,10 @@ Truy cập:
 │   │   ├── config.py        # Cấu hình (SECRET_KEY, DATABASE_URL, NTP...)
 │   │   ├── security.py      # JWT + bcrypt
 │   │   ├── deps.py          # FastAPI dependencies (RBAC)
-│   │   ├── sessions.py      # Session in-memory
+│   │   ├── sessions.py      # Session lưu DB (bảng login_sessions) — không mất khi restart
 │   │   ├── audit_middleware.py # Ghi nhật ký thao tác tập trung → audit_logs
+│   │   ├── audit_queue.py   # Hàng đợi + 1 luồng ghi audit, không chặn response
+│   │   ├── concurrency.py   # Giới hạn số việc nặng chạy đồng thời (sinh Word/Excel)
 │   │   └── rate_limit.py    # Rate limiting đăng nhập
 │   ├── api/
 │   │   ├── auth.py          # Đăng nhập / đăng xuất / đổi mật khẩu
@@ -121,7 +139,8 @@ Truy cập:
 │       ├── handover_report_service.py # Tính chứng từ nộp đúng hạn / quá hạn
 │       ├── th_report_service.py    # Xuất báo cáo tổng hợp (phòng TH)
 │       ├── backup_service.py       # Backup SQLite tự động
-│       ├── time_sync.py            # Cảnh báo lệch giờ máy chủ so NTP (không tự sửa)
+│       ├── log_cleanup_service.py  # Dọn login_logs / audit_logs quá hạn theo lịch
+│       ├── time_sync.py            # Cảnh báo lệch giờ máy chủ so NTP (không tự sửa, có cache)
 │       ├── cham459901_service.py   # Xử lý ZIP + phân loại bút toán 459901
 │       ├── doi_chieu_song_phuong_service.py # Định tuyến lệnh IPCAS theo NH + chiều → 8 CSV
 │       ├── swift_recon/            # Đối chiếu điện SWIFT (parse, so khớp, export Excel)
@@ -163,6 +182,7 @@ Truy cập:
 │   └── app.log             # Log xoay vòng (5 MB × 3 file)
 ├── init_db.py               # Khởi tạo DB + seed data
 ├── run.py                   # Launcher (chạy backend + frontend song song)
+├── deploy_env_check.py      # Kiểm/sửa .env máy đích khi deploy (deploy.bat gọi)
 └── requirements.txt
 ```
 
@@ -313,12 +333,16 @@ Database SQLite được backup tự động vào thư mục `data/backups/`. L�
 
 ## Truy cập LAN (nhiều người dùng)
 
-Mở firewall port 8080 và 8000:
+Mở firewall port 8080:
 
 ```bash
 # Windows
-netsh advfirewall firewall add rule name="TTTT" dir=in action=allow protocol=TCP localport=8080,8000
+netsh advfirewall firewall add rule name="TTTT" dir=in action=allow protocol=TCP localport=8080
 ```
+
+> Chỉ cần mở 8080. Trình duyệt người dùng **không bao giờ gọi thẳng cổng 8000** — frontend
+> gọi backend qua loopback trong cùng máy chủ. Mở thêm 8000 chỉ để lộ API ra mạng mà không
+> được lợi ích gì; nếu không có hệ thống nào khác cần, đặt luôn `BACKEND_HOST=127.0.0.1`.
 
 Người dùng khác truy cập: `http://[IP-máy-chủ]:8080`
 

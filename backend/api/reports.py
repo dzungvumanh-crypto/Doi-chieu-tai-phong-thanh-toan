@@ -8,6 +8,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from backend.database import get_db
+from backend.core.concurrency import run_heavy
 from backend.core.deps import require_feature
 from backend.services.report_service import (
     parse_ipcas, parse_payment_teller, parse_payment_backchecker,
@@ -41,8 +42,8 @@ async def parse_gdv(
     if gdv_file and gdv_file.filename:
         try:
             raw = await gdv_file.read()
-            rows, month, year = parse_ipcas(raw)
-            result["ipcas"] = enrich_and_group(rows, db, is_payment=False)
+            rows, month, year = await run_heavy(parse_ipcas, raw)
+            result["ipcas"] = await run_heavy(enrich_and_group, rows, db, is_payment=False)
             if month:
                 result["month"] = month
             if year:
@@ -54,8 +55,8 @@ async def parse_gdv(
     if teller_file and teller_file.filename:
         try:
             raw = await teller_file.read()
-            rows = parse_payment_teller(raw)
-            result["payment"] = enrich_and_group(rows, db, is_payment=True)
+            rows = await run_heavy(parse_payment_teller, raw)
+            result["payment"] = await run_heavy(enrich_and_group, rows, db, is_payment=True)
         except Exception as e:
             log.error("parse_gdv Payment error: %s", e)
             raise HTTPException(status_code=400, detail=f"Lỗi đọc file Teller: {e}")
@@ -76,7 +77,7 @@ async def parse_hkv(
     if hkv_file and hkv_file.filename:
         try:
             raw = await hkv_file.read()
-            rows, m, y = parse_ipcas(raw)
+            rows, m, y = await run_heavy(parse_ipcas, raw)
             ipcas_rows = rows
             month, year = m or month, y or year
         except Exception as e:
@@ -86,12 +87,12 @@ async def parse_hkv(
     if checker_file and checker_file.filename:
         try:
             raw = await checker_file.read()
-            payment_rows = parse_payment_backchecker(raw)
+            payment_rows = await run_heavy(parse_payment_backchecker, raw)
         except Exception as e:
             log.error("parse_hkv Payment error: %s", e)
             raise HTTPException(status_code=400, detail=f"Lỗi đọc file Backchecker: {e}")
 
-    merged = merge_hkv(ipcas_rows, payment_rows, db)
+    merged = await run_heavy(merge_hkv, ipcas_rows, payment_rows, db)
     return {"hkv_rows": merged, "month": month, "year": year}
 
 
@@ -176,8 +177,8 @@ async def generate_dept_zip(
     if gdv_file and gdv_file.filename:
         try:
             raw = await gdv_file.read()
-            rows, m, y = parse_ipcas(raw)
-            ipcas_grouped = enrich_and_group(rows, db, is_payment=False)
+            rows, m, y = await run_heavy(parse_ipcas, raw)
+            ipcas_grouped = await run_heavy(enrich_and_group, rows, db, is_payment=False)
             month, year = m or month, y or year
         except Exception as e:
             log.error("generate_dept_zip IPCAS: %s", e)
@@ -186,8 +187,8 @@ async def generate_dept_zip(
     if teller_file and teller_file.filename:
         try:
             raw = await teller_file.read()
-            rows = parse_payment_teller(raw)
-            payment_grouped = enrich_and_group(rows, db, is_payment=True)
+            rows = await run_heavy(parse_payment_teller, raw)
+            payment_grouped = await run_heavy(enrich_and_group, rows, db, is_payment=True)
         except Exception as e:
             log.error("generate_dept_zip Payment: %s", e)
             raise HTTPException(status_code=400, detail=f"Lỗi đọc file Teller: {e}")
@@ -199,19 +200,22 @@ async def generate_dept_zip(
     staff_name = current.get("full_name") or current.get("username", "")
     m_disp = month or 1
     y_disp = year or 2025
-    excels = {}
-    for dept in sorted(all_depts):
-        excel_bytes = generate_dept_excel(
-            dept_name=dept,
-            month=m_disp,
-            year=y_disp,
-            ipcas_rows=ipcas_grouped.get(dept, []),
-            payment_rows=payment_grouped.get(dept, []),
-            staff_name=staff_name,
-        )
-        excels[f"BC_HK_{dept}_T{m_disp:02d}{y_disp}.xlsx"] = excel_bytes
+    # Cả vòng lặp sinh Excel + nén ZIP gom vào 1 lần sang threadpool: đây là
+    # phần tốn thời gian nhất của endpoint, tỉ lệ thuận với số phòng.
+    def _build_all() -> bytes:
+        excels = {}
+        for dept in sorted(all_depts):
+            excels[f"BC_HK_{dept}_T{m_disp:02d}{y_disp}.xlsx"] = generate_dept_excel(
+                dept_name=dept,
+                month=m_disp,
+                year=y_disp,
+                ipcas_rows=ipcas_grouped.get(dept, []),
+                payment_rows=payment_grouped.get(dept, []),
+                staff_name=staff_name,
+            )
+        return build_zip(excels)
 
-    zip_bytes = build_zip(excels)
+    zip_bytes = await run_heavy(_build_all)
     zip_name = f"BC_HK_phong_T{m_disp:02d}{y_disp}.zip"
     return Response(
         content=zip_bytes,

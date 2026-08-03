@@ -26,7 +26,12 @@ class Settings:
     # Thư mục backup phụ (nên ở ổ/máy khác) — để trống nếu không dùng.
     # Ví dụ: BACKUP_EXTRA_DIR=D:\Backup_KSNB  hoặc  \\192.168.1.50\backup
     BACKUP_EXTRA_DIR: str = os.getenv("BACKUP_EXTRA_DIR", "").strip()
-    BACKEND_HOST: str = "0.0.0.0"
+    # Địa chỉ backend lắng nghe. `run.py` đọc chính biến này để truyền cho uvicorn,
+    # nên đổi ở .env là đổi thật — trước đây nó là hằng số cứng, ai sửa .env cũng
+    # không có tác dụng gì, mà cảnh báo khởi động lại dựa vào nó nên báo sai.
+    #   0.0.0.0   = nghe mọi giao diện (cần khi có máy khác gọi thẳng API)
+    #   127.0.0.1 = chỉ nghe nội bộ máy — kín hơn, đủ dùng khi frontend cùng máy
+    BACKEND_HOST: str = os.getenv("BACKEND_HOST", "0.0.0.0").strip() or "0.0.0.0"
     BACKEND_PORT: int = int(os.getenv("BACKEND_PORT", "8000"))
     FRONTEND_PORT: int = int(os.getenv("FRONTEND_PORT", "8080"))
 

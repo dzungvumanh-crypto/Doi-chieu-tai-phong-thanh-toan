@@ -9,6 +9,7 @@ cô lập chặn NTP, timeout...) được nuốt và trả về ok=False + erro
 """
 import socket
 import struct
+import threading
 import time
 import logging
 
@@ -18,6 +19,17 @@ _log = logging.getLogger("time_sync")
 
 # NTP epoch (1900-01-01) → Unix epoch (1970-01-01)
 _NTP_UNIX_DELTA = 2208988800
+
+# ── Cache ────────────────────────────────────────────────────────────────────
+# check_drift() gọi mạng ngoài NGAY TRONG request. Trên mạng nội bộ bị cô lập
+# (đúng kịch bản mà config.py đã lường trước), mỗi lần gọi chặn tới
+# NTP_TIMEOUT_SEC giây và giữ một luồng của bể 40. Độ lệch đồng hồ thay đổi rất
+# chậm nên không có lý do gì phải hỏi lại NTP mỗi lần admin mở màn hình nhật ký.
+CACHE_SECONDS = 600
+
+_cache: dict | None = None
+_cache_ts: float = 0.0
+_cache_lock = threading.Lock()
 
 
 def _ntp_unix_time(server: str, timeout: float) -> float:
@@ -37,8 +49,27 @@ def _ntp_unix_time(server: str, timeout: float) -> float:
     return secs - _NTP_UNIX_DELTA
 
 
-def check_drift() -> dict:
-    """So đồng hồ máy với NTP. Trả về dict mô tả kết quả, không bao giờ raise."""
+def check_drift(force: bool = False) -> dict:
+    """So đồng hồ máy với NTP, có cache CACHE_SECONDS giây.
+
+    `force=True` bỏ qua cache — dùng lúc khởi động và khi admin bấm làm mới.
+    Kết quả kèm `cached`/`cache_age_seconds` để giao diện nói rõ số liệu cũ bao lâu.
+    """
+    global _cache, _cache_ts
+    if not force:
+        with _cache_lock:
+            if _cache is not None and (time.time() - _cache_ts) < CACHE_SECONDS:
+                return {**_cache, "cached": True,
+                        "cache_age_seconds": int(time.time() - _cache_ts)}
+
+    r = _check_drift_live()
+    with _cache_lock:
+        _cache, _cache_ts = r, time.time()
+    return {**r, "cached": False, "cache_age_seconds": 0}
+
+
+def _check_drift_live() -> dict:
+    """Hỏi thẳng NTP, không qua cache. Không bao giờ raise."""
     if not settings.NTP_ENABLED:
         return {"ok": False, "enabled": False, "server": settings.NTP_SERVER,
                 "drift_seconds": None, "threshold": settings.NTP_DRIFT_THRESHOLD_SEC,
@@ -58,7 +89,7 @@ def check_drift() -> dict:
 
 def check_drift_and_log() -> dict:
     """Chạy check_drift + ghi log phù hợp (dùng khi khởi động)."""
-    r = check_drift()
+    r = check_drift(force=True)
     if not r["enabled"]:
         return r
     if r["error"]:

@@ -23,6 +23,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 
 from backend.database import get_db
+from backend.core.concurrency import run_heavy
 from backend.core.deps import require_feature
 from backend.schemas.swift_recon import ExportFilteredIn
 from backend.services.swift_recon import exporters, parsers, reconcile
@@ -70,7 +71,7 @@ async def parse_preview(
     if source not in ("SAA_DEN", "QL_DEN", "QL_DI", "SAA_DI"):
         raise HTTPException(400, "source không hợp lệ")
     try:
-        df = _load(file, source)
+        df = await run_heavy(_load, file, source)
     except parsers.UnknownFileFormat as e:
         raise HTTPException(422, str(e))
     return {"filename": file.filename, "rows": len(df)}
@@ -84,44 +85,49 @@ async def reconcile_den(
     db=Depends(get_db),
     current: dict = Depends(require_feature("menu.swift_recon")),
 ):
-    try:
+    # Toàn bộ phần nặng (đọc file, giải nén, pandas, lưu lịch sử) chạy trong
+    # threadpool — chạy thẳng ở đây sẽ giữ event loop và làm treo cả hệ thống.
+    def _work() -> dict:
         df_saa = _load(saa_file, "SAA_DEN")
         df_ql = _load(ql_file, "QL_DEN")
+
+        merged = reconcile.build_merged_view(df_saa, df_ql, "SAA", "QL")
+        summary = reconcile.summarize_counts(df_saa, df_ql, "SAA", "QL")
+        saa_only = reconcile.diff_only_a(df_saa, df_ql)
+        ql_only = reconcile.diff_only_b(df_saa, df_ql)
+
+        total_matched = int((merged["_status"] == "MATCHED").sum()) if len(merged) else 0
+        total_diff = len(merged) - total_matched
+
+        history_saved, history_error = True, None
+        try:
+            save_recon_history(
+                db, recon_type="den", performed_by_id=current["id"],
+                file_saa_name=saa_file.filename, file_ql_name=ql_file.filename,
+                total_saa=len(df_saa), total_ql=len(df_ql),
+                total_matched=total_matched, total_diff=total_diff,
+                merged_records=_to_records(merged),
+                raw_a_records=_to_records(df_saa),
+                raw_b_records=_to_records(df_ql),
+                summary_records=_to_records(summary),
+                diff_a_only_records=_to_records(saa_only),
+                diff_b_only_records=_to_records(ql_only),
+            )
+        except Exception as e:  # noqa: BLE001 — không để lỗi lưu lịch sử chặn mất kết quả đối chiếu
+            history_saved, history_error = False, str(e)
+
+        return {
+            "summary": _to_records(summary),
+            "records": _to_records(merged),
+            "total_a": len(df_saa), "total_b": len(df_ql),
+            "total_matched": total_matched, "total_diff": total_diff,
+            "history_saved": history_saved, "history_error": history_error,
+        }
+
+    try:
+        return await run_heavy(_work)
     except parsers.UnknownFileFormat as e:
         raise HTTPException(422, str(e))
-
-    merged = reconcile.build_merged_view(df_saa, df_ql, "SAA", "QL")
-    summary = reconcile.summarize_counts(df_saa, df_ql, "SAA", "QL")
-    saa_only = reconcile.diff_only_a(df_saa, df_ql)
-    ql_only = reconcile.diff_only_b(df_saa, df_ql)
-
-    total_matched = int((merged["_status"] == "MATCHED").sum()) if len(merged) else 0
-    total_diff = len(merged) - total_matched
-
-    history_saved, history_error = True, None
-    try:
-        save_recon_history(
-            db, recon_type="den", performed_by_id=current["id"],
-            file_saa_name=saa_file.filename, file_ql_name=ql_file.filename,
-            total_saa=len(df_saa), total_ql=len(df_ql),
-            total_matched=total_matched, total_diff=total_diff,
-            merged_records=_to_records(merged),
-            raw_a_records=_to_records(df_saa),
-            raw_b_records=_to_records(df_ql),
-            summary_records=_to_records(summary),
-            diff_a_only_records=_to_records(saa_only),
-            diff_b_only_records=_to_records(ql_only),
-        )
-    except Exception as e:  # noqa: BLE001 — không để lỗi lưu lịch sử chặn mất kết quả đối chiếu
-        history_saved, history_error = False, str(e)
-
-    return {
-        "summary": _to_records(summary),
-        "records": _to_records(merged),
-        "total_a": len(df_saa), "total_b": len(df_ql),
-        "total_matched": total_matched, "total_diff": total_diff,
-        "history_saved": history_saved, "history_error": history_error,
-    }
 
 
 # ── Đối chiếu điện đi (đúng thứ tự QL trước, SAA sau — như bản desktop) ─────
@@ -132,46 +138,49 @@ async def reconcile_di(
     db=Depends(get_db),
     current: dict = Depends(require_feature("menu.swift_recon")),
 ):
-    try:
+    def _work() -> dict:
         df_ql = _load(ql_file, "QL_DI")
         df_saa = _load(saa_file, "SAA_DI")
+
+        merged = reconcile.build_merged_view(df_ql, df_saa, "QL", "SAA", ack_check=ACK_CHECK_DI)
+        summary = reconcile.summarize_counts(df_ql, df_saa, "QL", "SAA")
+        ql_only = reconcile.diff_only_a(df_ql, df_saa)
+        saa_only = reconcile.diff_only_b(df_ql, df_saa)
+        di_not_ack = reconcile.extract_matched_not_ack(merged, "QL", "SAA")
+
+        total_matched = int((merged["_status"] == "MATCHED").sum()) if len(merged) else 0
+        total_diff = len(merged) - total_matched
+
+        history_saved, history_error = True, None
+        try:
+            save_recon_history(
+                db, recon_type="di", performed_by_id=current["id"],
+                file_saa_name=saa_file.filename, file_ql_name=ql_file.filename,
+                total_saa=len(df_saa), total_ql=len(df_ql),
+                total_matched=total_matched, total_diff=total_diff,
+                merged_records=_to_records(merged),
+                raw_a_records=_to_records(df_ql),
+                raw_b_records=_to_records(df_saa),
+                summary_records=_to_records(summary),
+                diff_a_only_records=_to_records(ql_only),
+                diff_b_only_records=_to_records(saa_only),
+                di_not_ack_records=_to_records(di_not_ack),
+            )
+        except Exception as e:  # noqa: BLE001
+            history_saved, history_error = False, str(e)
+
+        return {
+            "summary": _to_records(summary),
+            "records": _to_records(merged),
+            "total_a": len(df_ql), "total_b": len(df_saa),
+            "total_matched": total_matched, "total_diff": total_diff,
+            "history_saved": history_saved, "history_error": history_error,
+        }
+
+    try:
+        return await run_heavy(_work)
     except parsers.UnknownFileFormat as e:
         raise HTTPException(422, str(e))
-
-    merged = reconcile.build_merged_view(df_ql, df_saa, "QL", "SAA", ack_check=ACK_CHECK_DI)
-    summary = reconcile.summarize_counts(df_ql, df_saa, "QL", "SAA")
-    ql_only = reconcile.diff_only_a(df_ql, df_saa)
-    saa_only = reconcile.diff_only_b(df_ql, df_saa)
-    di_not_ack = reconcile.extract_matched_not_ack(merged, "QL", "SAA")
-
-    total_matched = int((merged["_status"] == "MATCHED").sum()) if len(merged) else 0
-    total_diff = len(merged) - total_matched
-
-    history_saved, history_error = True, None
-    try:
-        save_recon_history(
-            db, recon_type="di", performed_by_id=current["id"],
-            file_saa_name=saa_file.filename, file_ql_name=ql_file.filename,
-            total_saa=len(df_saa), total_ql=len(df_ql),
-            total_matched=total_matched, total_diff=total_diff,
-            merged_records=_to_records(merged),
-            raw_a_records=_to_records(df_ql),
-            raw_b_records=_to_records(df_saa),
-            summary_records=_to_records(summary),
-            diff_a_only_records=_to_records(ql_only),
-            diff_b_only_records=_to_records(saa_only),
-            di_not_ack_records=_to_records(di_not_ack),
-        )
-    except Exception as e:  # noqa: BLE001
-        history_saved, history_error = False, str(e)
-
-    return {
-        "summary": _to_records(summary),
-        "records": _to_records(merged),
-        "total_a": len(df_ql), "total_b": len(df_saa),
-        "total_matched": total_matched, "total_diff": total_diff,
-        "history_saved": history_saved, "history_error": history_error,
-    }
 
 
 # ── Xuất Excel (nhận lại đúng những file frontend đã có sẵn trong state,
@@ -184,8 +193,8 @@ async def export_summary(
     saa_di: UploadFile | None = File(None),
     current: dict = Depends(require_feature("menu.swift_recon")),
 ):
-    summary_den = summary_di = None
-    try:
+    def _work() -> bytes:
+        summary_den = summary_di = None
         if saa_den and ql_den:
             df_saa_den = _load(saa_den, "SAA_DEN")
             df_ql_den = _load(ql_den, "QL_DEN")
@@ -205,6 +214,10 @@ async def export_summary(
         with open(out_path, "rb") as f:
             content = f.read()
         os.remove(out_path)
+        return content
+
+    try:
+        content = await run_heavy(_work)
         return Response(
             content=content,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -222,8 +235,8 @@ async def export_diff(
     saa_di: UploadFile | None = File(None),
     current: dict = Depends(require_feature("menu.swift_recon")),
 ):
-    saa_den_only = ql_den_only = ql_di_only = saa_di_only = di_not_ack = None
-    try:
+    def _work() -> bytes:
+        saa_den_only = ql_den_only = ql_di_only = saa_di_only = di_not_ack = None
         if saa_den and ql_den:
             df_saa_den = _load(saa_den, "SAA_DEN")
             df_ql_den = _load(ql_den, "QL_DEN")
@@ -249,6 +262,10 @@ async def export_diff(
         with open(out_path, "rb") as f:
             content = f.read()
         os.remove(out_path)
+        return content
+
+    try:
+        content = await run_heavy(_work)
         return Response(
             content=content,
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -266,18 +283,22 @@ async def export_filtered(
 ):
     if not payload.records:
         raise HTTPException(400, "Không có bản ghi nào để xuất")
-    df = pd.DataFrame(payload.records)
-    cols = [c for c in payload.columns if c in df.columns]
-    if cols:
-        df = df[cols]
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as out:
-        out_path = out.name
-    df.to_excel(out_path, index=False, sheet_name="BanGhiDangLoc")
-    with open(out_path, "rb") as f:
-        content = f.read()
-    os.remove(out_path)
+    def _work() -> bytes:
+        df = pd.DataFrame(payload.records)
+        cols = [c for c in payload.columns if c in df.columns]
+        if cols:
+            df = df[cols]
 
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as out:
+            out_path = out.name
+        df.to_excel(out_path, index=False, sheet_name="BanGhiDangLoc")
+        with open(out_path, "rb") as f:
+            content = f.read()
+        os.remove(out_path)
+        return content
+
+    content = await run_heavy(_work)
     return Response(
         content=content,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -292,7 +313,7 @@ async def get_history(
     db=Depends(get_db),
     current: dict = Depends(require_feature("menu.swift_recon")),
 ):
-    return list_recon_history(db, limit)
+    return await run_heavy(list_recon_history, db, limit)
 
 
 @router.get("/history/{history_id}/export-raw")
@@ -307,20 +328,25 @@ async def export_raw_from_history(
     tại thời điểm đối chiếu), dưới dạng .xlsx dễ mở lại."""
     if side not in ("a", "b"):
         raise HTTPException(400, "side phải là 'a' hoặc 'b'")
-    detail = get_recon_detail(db, history_id)
-    if not detail:
-        raise HTTPException(404, "Không tìm thấy")
 
-    records = detail["raw_a_records"] if side == "a" else detail["raw_b_records"]
-    df = pd.DataFrame(records)
-    df = df[[c for c in df.columns if not c.startswith("_")]]  # bỏ cột nội bộ (_key, _msg_type...)
+    def _work() -> tuple[bytes, dict]:
+        detail = get_recon_detail(db, history_id)
+        if not detail:
+            raise HTTPException(404, "Không tìm thấy")
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as out:
-        out_path = out.name
-    df.to_excel(out_path, index=False, sheet_name="DuLieuDaImport")
-    with open(out_path, "rb") as f:
-        content = f.read()
-    os.remove(out_path)
+        records = detail["raw_a_records"] if side == "a" else detail["raw_b_records"]
+        df = pd.DataFrame(records)
+        df = df[[c for c in df.columns if not c.startswith("_")]]  # bỏ cột nội bộ (_key, _msg_type...)
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as out:
+            out_path = out.name
+        df.to_excel(out_path, index=False, sheet_name="DuLieuDaImport")
+        with open(out_path, "rb") as f:
+            content = f.read()
+        os.remove(out_path)
+        return content, detail
+
+    content, detail = await run_heavy(_work)
 
     is_den = detail["recon_type"] == "den"
     side_name = ("SAA" if is_den else "QL") if side == "a" else ("QL" if is_den else "SAA")
@@ -338,7 +364,7 @@ async def get_history_detail(
     db=Depends(get_db),
     current: dict = Depends(require_feature("menu.swift_recon")),
 ):
-    detail = get_recon_detail(db, history_id)
+    detail = await run_heavy(get_recon_detail, db, history_id)
     if not detail:
         raise HTTPException(404, "Không tìm thấy")
     return detail
@@ -352,22 +378,26 @@ async def export_summary_from_history(
 ):
     """Sinh Excel Tổng hợp TỪ ĐÚNG snapshot đã lưu tại thời điểm đối chiếu
     (không tính lại từ raw_a/raw_b) — đảm bảo đúng y hệt dữ liệu audit."""
-    detail = get_recon_detail(db, history_id)
-    if not detail:
-        raise HTTPException(404, "Không tìm thấy")
-    summary_df = pd.DataFrame(detail["summary_records"])
+    def _work() -> tuple[bytes, str]:
+        detail = get_recon_detail(db, history_id)
+        if not detail:
+            raise HTTPException(404, "Không tìm thấy")
+        summary_df = pd.DataFrame(detail["summary_records"])
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as out:
-        out_path = out.name
-    exporters.export_summary_excel(
-        out_path,
-        summary_den=summary_df if detail["recon_type"] == "den" else None,
-        summary_di=summary_df if detail["recon_type"] == "di" else None,
-    )
-    with open(out_path, "rb") as f:
-        content = f.read()
-    os.remove(out_path)
-    fname = f"Tong_hop_doi_chieu_Dien{detail['recon_type'].upper()}_lichsu_{history_id}.xlsx"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as out:
+            out_path = out.name
+        exporters.export_summary_excel(
+            out_path,
+            summary_den=summary_df if detail["recon_type"] == "den" else None,
+            summary_di=summary_df if detail["recon_type"] == "di" else None,
+        )
+        with open(out_path, "rb") as f:
+            content = f.read()
+        os.remove(out_path)
+        return content, detail["recon_type"]
+
+    content, recon_type = await run_heavy(_work)
+    fname = f"Tong_hop_doi_chieu_Dien{recon_type.upper()}_lichsu_{history_id}.xlsx"
     return Response(
         content=content,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -383,30 +413,34 @@ async def export_diff_from_history(
 ):
     """Sinh Excel Chi tiết lệch TỪ ĐÚNG snapshot đã lưu tại thời điểm đối
     chiếu (không tính lại) — đảm bảo đúng y hệt dữ liệu audit."""
-    detail = get_recon_detail(db, history_id)
-    if not detail:
-        raise HTTPException(404, "Không tìm thấy")
+    def _work() -> tuple[bytes, str]:
+        detail = get_recon_detail(db, history_id)
+        if not detail:
+            raise HTTPException(404, "Không tìm thấy")
 
-    only_a = pd.DataFrame(detail["diff_a_only_records"])
-    only_b = pd.DataFrame(detail["diff_b_only_records"])
-    di_not_ack = pd.DataFrame(detail["di_not_ack_records"]) if detail["di_not_ack_records"] is not None else None
+        only_a = pd.DataFrame(detail["diff_a_only_records"])
+        only_b = pd.DataFrame(detail["diff_b_only_records"])
+        di_not_ack = pd.DataFrame(detail["di_not_ack_records"]) if detail["di_not_ack_records"] is not None else None
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as out:
-        out_path = out.name
-    if detail["recon_type"] == "den":
-        exporters.export_diff_excel(
-            out_path, saa_den_only=only_a, ql_den_only=only_b,
-            ql_di_only=None, saa_di_only=None, di_matched_not_ack=None,
-        )
-    else:
-        exporters.export_diff_excel(
-            out_path, saa_den_only=None, ql_den_only=None,
-            ql_di_only=only_a, saa_di_only=only_b, di_matched_not_ack=di_not_ack,
-        )
-    with open(out_path, "rb") as f:
-        content = f.read()
-    os.remove(out_path)
-    fname = f"Chi_tiet_lech_doi_chieu_Dien{detail['recon_type'].upper()}_lichsu_{history_id}.xlsx"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as out:
+            out_path = out.name
+        if detail["recon_type"] == "den":
+            exporters.export_diff_excel(
+                out_path, saa_den_only=only_a, ql_den_only=only_b,
+                ql_di_only=None, saa_di_only=None, di_matched_not_ack=None,
+            )
+        else:
+            exporters.export_diff_excel(
+                out_path, saa_den_only=None, ql_den_only=None,
+                ql_di_only=only_a, saa_di_only=only_b, di_matched_not_ack=di_not_ack,
+            )
+        with open(out_path, "rb") as f:
+            content = f.read()
+        os.remove(out_path)
+        return content, detail["recon_type"]
+
+    content, recon_type = await run_heavy(_work)
+    fname = f"Chi_tiet_lech_doi_chieu_Dien{recon_type.upper()}_lichsu_{history_id}.xlsx"
     return Response(
         content=content,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

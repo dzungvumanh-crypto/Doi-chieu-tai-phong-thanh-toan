@@ -25,29 +25,69 @@ if not exist "%DEST%" (
     exit /b 1
 )
 
+:: .env cua may dich KHONG bi copy de (giu SECRET_KEY va cau hinh rieng), nen hai
+:: bien duoi day phai sua tay -- va quen thi im lang khong bao gi. Kiem ho luon.
+echo [1/7] Kiem tra .env tren may dich (BACKEND_URL/BACKEND_HOST)...
+:: Tim Python CHAY DUOC. Khong chi kiem tra file co ton tai: du an nam tren o USB,
+:: doi may la .venv hong (xem start.bat) -- file van con nhung chay la loi. Con
+:: `py` thi tren mot so may vuong ban Microsoft Store alias. Nen thu chay thu that.
+set "PY="
+if exist "%~dp0.venv\Scripts\python.exe" "%~dp0.venv\Scripts\python.exe" -c "pass" >nul 2>&1 && set "PY=%~dp0.venv\Scripts\python.exe"
+if not defined PY py -c "pass" >nul 2>&1 && set "PY=py"
+if not defined PY python -c "pass" >nul 2>&1 && set "PY=python"
+if not defined PY goto envkhongpy
+
+"%PY%" "%~dp0deploy_env_check.py" "%DEST%\.env" 8000 check
+if errorlevel 2 goto envloi
+if errorlevel 1 goto envsua
+goto envxong
+
+:envkhongpy
+echo     [!] Khong tim thay Python chay duoc tren may nay -- BO QUA buoc kiem tra .env.
+echo         Hay tu kiem tren may dich: BACKEND_URL phai la http://127.0.0.1:8000
+goto envxong
+
+:envloi
+echo     [!] Khong kiem tra duoc .env -- xem thong bao tren, sua tay neu can.
+goto envxong
+
+:envsua
+echo.
+set /p FIXENV=    Sua lai .env cho dung? (Y/n):
+if /i "%FIXENV%"=="n" goto envboqua
+"%PY%" "%~dp0deploy_env_check.py" "%DEST%\.env" 8000 fix
+goto envxong
+
+:envboqua
+echo     [BO QUA] .env giu nguyen -- nho sua tay TRUOC khi khoi dong lai.
+
+:envxong
+echo.
+
 :: Copy tung folder code -- bo qua venv, data, __pycache__
-echo [1/6] Copy backend...
+echo [2/7] Copy backend...
 robocopy "%~dp0backend"    "%DEST%\backend"    /E /XD __pycache__ /XF *.pyc /NFL /NDL /NJH /NJS
 
-echo [2/6] Copy frontend...
+echo [3/7] Copy frontend...
 robocopy "%~dp0frontend"   "%DEST%\frontend"   /E /XD __pycache__ /XF *.pyc /NFL /NDL /NJH /NJS
 
-echo [3/6] Copy templates...
+echo [4/7] Copy templates...
 robocopy "%~dp0templates"  "%DEST%\templates"  /E /NFL /NDL /NJH /NJS
 
-echo [4/6] Copy file goc...
+echo [5/7] Copy file goc...
 copy /Y "%~dp0run.py"            "%DEST%\run.py"            >nul
 copy /Y "%~dp0init_db.py"        "%DEST%\init_db.py"        >nul
 copy /Y "%~dp0requirements.txt"  "%DEST%\requirements.txt"  >nul
 if exist "%~dp0start.bat" copy /Y "%~dp0start.bat" "%DEST%\start.bat" >nul
 if exist "%~dp0Logs_update.md" copy /Y "%~dp0Logs_update.md" "%DEST%\Logs_update.md" >nul
+if exist "%~dp0deploy_env_check.py" copy /Y "%~dp0deploy_env_check.py" "%DEST%\deploy_env_check.py" >nul
 
-echo [5/6] Xoa __pycache__ cu tren may dich...
+echo [6/7] Xoa __pycache__ cu tren may dich...
 for /d /r "%DEST%" %%d in (__pycache__) do (
     if exist "%%d" rd /s /q "%%d"
 )
 
-echo [6/6] Kiem tra thu vien Python...
+echo [7/7] Kiem tra thu vien Python...
 set "DEST_PY="
 if exist "%DEST%\.venv\Scripts\python.exe" set "DEST_PY=%DEST%\.venv\Scripts\python.exe"
 if not defined DEST_PY if exist "%DEST%\venv\Scripts\python.exe" set "DEST_PY=%DEST%\venv\Scripts\python.exe"

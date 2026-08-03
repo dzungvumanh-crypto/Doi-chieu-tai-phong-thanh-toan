@@ -8,7 +8,11 @@ from dotenv import load_dotenv
 load_dotenv(override=True)
 # BACKEND_URL suy ra từ BACKEND_PORT nếu không set riêng — tránh quên đồng bộ
 # khi đổi cổng (vd. hệ thống test dùng .env khác với BACKEND_PORT=9000)
-BACKEND_URL = os.getenv("BACKEND_URL", f"http://localhost:{os.getenv('BACKEND_PORT', '8000')}")
+# Dùng 127.0.0.1 chứ KHÔNG dùng localhost: trên Windows `localhost` phân giải ra
+# ::1 (IPv6) trước, mà uvicorn --host 0.0.0.0 chỉ lắng nghe IPv4. Mỗi lần httpx
+# mở kết nối MỚI (sau ~5s nhàn rỗi là pool hết hạn) sẽ chờ IPv6 thất bại ~2 giây
+# rồi mới quay sang IPv4. Đo được: localhost 2062ms vs 127.0.0.1 18ms.
+BACKEND_URL = os.getenv("BACKEND_URL", f"http://127.0.0.1:{os.getenv('BACKEND_PORT', '8000')}")
 
 
 class SessionExpiredError(Exception):

@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from openpyxl.styles import Alignment, Border, Font, Side
 
+from backend.core.concurrency import run_heavy
 from backend.core.deps import get_current_staff, require_feature
 from backend.core.enums import StaffRole
 from backend.database import get_db, _vn_now
@@ -637,27 +638,31 @@ def download_cover(
 
 
 @router.get("/groups/{group_id}/cover-all")
-def download_all_covers(
+async def download_all_covers(
     group_id: int,
     db: sqlite3.Connection = Depends(get_db),
     _: dict = Depends(require_feature("bundles.download_cover")),
 ):
-    group = _load_bundle_group(db, group_id)
-    bundle_results = []
-    for bundle in sorted(group["bundles"], key=lambda b: b["sequence"]):
-        cust_name = bundle.get("custodian_name") or "..."
-        label_seq, label_total = _get_bundle_label(bundle, group["bundles"])
-        bundle_results.append(BundleResult(
-            sequence=bundle["sequence"],
-            total_bundles_in_group=group["total_bundles"],
-            total_sheets=bundle["total_sheets"],
-            units=_units_from_bundle(bundle),
-            label_seq=label_seq,
-            label_total=label_total,
-            custodian_name=cust_name,
-        ))
-    dept_name = group["department"]["name"] if group.get("department") else "Phòng"
-    docx_bytes = generate_covers_docx(dept_name, bundle_results)
+    # ~100ms mỗi tập (một lần render docxtpl) — nhóm 31 tập mất ~3,1s
+    def _work() -> bytes:
+        group = _load_bundle_group(db, group_id)
+        bundle_results = []
+        for bundle in sorted(group["bundles"], key=lambda b: b["sequence"]):
+            cust_name = bundle.get("custodian_name") or "..."
+            label_seq, label_total = _get_bundle_label(bundle, group["bundles"])
+            bundle_results.append(BundleResult(
+                sequence=bundle["sequence"],
+                total_bundles_in_group=group["total_bundles"],
+                total_sheets=bundle["total_sheets"],
+                units=_units_from_bundle(bundle),
+                label_seq=label_seq,
+                label_total=label_total,
+                custodian_name=cust_name,
+            ))
+        dept_name = group["department"]["name"] if group.get("department") else "Phòng"
+        return generate_covers_docx(dept_name, bundle_results)
+
+    docx_bytes = await run_heavy(_work)
     return Response(
         content=docx_bytes,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -700,42 +705,46 @@ def mark_group_printed(
 
 
 @router.get("/cover-bulk")
-def download_bulk_covers(
+async def download_bulk_covers(
     department_id: int,
     db: sqlite3.Connection = Depends(get_db),
     _: dict = Depends(require_feature("bundles.download_cover")),
 ):
-    dept = db.execute("SELECT * FROM departments WHERE id = ?", (department_id,)).fetchone()
-    if not dept:
-        raise HTTPException(404, "Không tìm thấy phòng")
+    # Cả phòng — nặng hơn cover-all vì gộp mọi nhóm tập
+    def _work() -> bytes:
+        dept = db.execute("SELECT * FROM departments WHERE id = ?", (department_id,)).fetchone()
+        if not dept:
+            raise HTTPException(404, "Không tìm thấy phòng")
 
-    group_rows = db.execute(
-        "SELECT id FROM bundle_groups WHERE department_id = ? ORDER BY created_at ASC",
-        (department_id,),
-    ).fetchall()
-    if not group_rows:
-        raise HTTPException(404, "Không có nhóm tập nào cho phòng này")
+        group_rows = db.execute(
+            "SELECT id FROM bundle_groups WHERE department_id = ? ORDER BY created_at ASC",
+            (department_id,),
+        ).fetchall()
+        if not group_rows:
+            raise HTTPException(404, "Không có nhóm tập nào cho phòng này")
 
-    all_bundle_results = []
-    for gr in group_rows:
-        group = _load_bundle_group(db, gr["id"])
-        for bundle in sorted(group["bundles"], key=lambda b: b["sequence"]):
-            cust_name = bundle.get("custodian_name") or "..."
-            label_seq, label_total = _get_bundle_label(bundle, group["bundles"])
-            all_bundle_results.append(BundleResult(
-                sequence=bundle["sequence"],
-                total_bundles_in_group=group["total_bundles"],
-                total_sheets=bundle["total_sheets"],
-                units=_units_from_bundle(bundle),
-                label_seq=label_seq,
-                label_total=label_total,
-                custodian_name=cust_name,
-            ))
+        all_bundle_results = []
+        for gr in group_rows:
+            group = _load_bundle_group(db, gr["id"])
+            for bundle in sorted(group["bundles"], key=lambda b: b["sequence"]):
+                cust_name = bundle.get("custodian_name") or "..."
+                label_seq, label_total = _get_bundle_label(bundle, group["bundles"])
+                all_bundle_results.append(BundleResult(
+                    sequence=bundle["sequence"],
+                    total_bundles_in_group=group["total_bundles"],
+                    total_sheets=bundle["total_sheets"],
+                    units=_units_from_bundle(bundle),
+                    label_seq=label_seq,
+                    label_total=label_total,
+                    custodian_name=cust_name,
+                ))
 
-    if not all_bundle_results:
-        raise HTTPException(404, "Không có tập nào để tải bìa")
+        if not all_bundle_results:
+            raise HTTPException(404, "Không có tập nào để tải bìa")
 
-    docx_bytes = generate_covers_docx(dept["name"], all_bundle_results)
+        return generate_covers_docx(dept["name"], all_bundle_results)
+
+    docx_bytes = await run_heavy(_work)
     return Response(
         content=docx_bytes,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -893,7 +902,7 @@ def handover_archive_preview(
 
 
 @router.get("/handover-archive-excel")
-def handover_archive_excel(
+async def handover_archive_excel(
     department_id: int,
     year: int,
     tieu_de_dau: str = "Hồ sơ ngày",
@@ -901,48 +910,51 @@ def handover_archive_excel(
     db: sqlite3.Connection = Depends(get_db),
     _: dict = Depends(get_current_staff),
 ):
-    records = _generate_archive_records(db, department_id, year, tieu_de_dau, tu_tap)
-    dept = db.execute("SELECT name FROM departments WHERE id = ?", (department_id,)).fetchone()
-    dept_name = dept["name"] if dept else str(department_id)
+    def _work() -> tuple[bytes, str]:
+        records = _generate_archive_records(db, department_id, year, tieu_de_dau, tu_tap)
+        dept = db.execute("SELECT name FROM departments WHERE id = ?", (department_id,)).fetchone()
+        dept_name = dept["name"] if dept else str(department_id)
 
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Bàn giao lưu trữ"
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Bàn giao lưu trữ"
 
-    thin = Side(style="thin")
-    border = Border(left=thin, right=thin, top=thin, bottom=thin)
-    font_h = Font(name="Times New Roman", size=11, bold=True)
-    font_d = Font(name="Times New Roman", size=11)
-    align_c = Alignment(horizontal="center", vertical="center")
-    align_l = Alignment(horizontal="left", vertical="center", wrap_text=True)
+        thin = Side(style="thin")
+        border = Border(left=thin, right=thin, top=thin, bottom=thin)
+        font_h = Font(name="Times New Roman", size=11, bold=True)
+        font_d = Font(name="Times New Roman", size=11)
+        align_c = Alignment(horizontal="center", vertical="center")
+        align_l = Alignment(horizontal="left", vertical="center", wrap_text=True)
 
-    for col, hdr in enumerate(["NGAY_MO_HS", "NGAY_KT_HS", "TIEUDE_HS"], 1):
-        cell = ws.cell(row=1, column=col, value=hdr)
-        cell.font = font_h
-        cell.border = border
-        cell.alignment = align_c
-
-    ws.column_dimensions["A"].width = 14
-    ws.column_dimensions["B"].width = 14
-    ws.column_dimensions["C"].width = 75
-
-    for row_i, rec in enumerate(records, 2):
-        for col, (val, aln) in enumerate(
-            [(rec.ngay_mo, align_c), (rec.ngay_kt, align_c), (rec.tieu_de, align_l)], 1
-        ):
-            cell = ws.cell(row=row_i, column=col, value=val)
-            cell.font = font_d
+        for col, hdr in enumerate(["NGAY_MO_HS", "NGAY_KT_HS", "TIEUDE_HS"], 1):
+            cell = ws.cell(row=1, column=col, value=hdr)
+            cell.font = font_h
             cell.border = border
-            cell.alignment = aln
+            cell.alignment = align_c
 
-    buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
+        ws.column_dimensions["A"].width = 14
+        ws.column_dimensions["B"].width = 14
+        ws.column_dimensions["C"].width = 75
 
+        for row_i, rec in enumerate(records, 2):
+            for col, (val, aln) in enumerate(
+                [(rec.ngay_mo, align_c), (rec.ngay_kt, align_c), (rec.tieu_de, align_l)], 1
+            ):
+                cell = ws.cell(row=row_i, column=col, value=val)
+                cell.font = font_d
+                cell.border = border
+                cell.alignment = aln
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return buf.read(), dept_name
+
+    content, dept_name = await run_heavy(_work)
     safe_name = dept_name.replace("/", "-").replace("\\", "-")
     filename = f"ban_giao_luu_tru_{safe_name}_{year}.xlsx"
     return Response(
-        content=buf.read(),
+        content=content,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers=_download_headers(filename),
     )
