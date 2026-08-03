@@ -207,6 +207,7 @@ function showToast(msg, color='#10b981', duration=3000) {
 
 // ── Auto-save: tự động lưu khi phát hiện kết quả mới ───────────────
 let lastSavedKey = '';
+let _saving = false; // đang có 1 lượt gửi dở chưa xong — chặn gửi trùng
 const _saveRetry = _makeRetryScheduler(() => { lastSavedKey = ''; });
 
 async function autoSaveIfNew() {
@@ -231,67 +232,43 @@ async function autoSaveIfNew() {
   // file SQLite dùng chung toàn app.
   const key = `${cfg.cong}_${cfg.loaiTien}_${cfg.chieu}_${cfg.loaiDV}_${res.soMon}_${res.soTien}`;
   if (key === lastSavedKey) return;
+  // Nút thủ công reset lastSavedKey='' rồi gọi lại hàm này ngay lập tức để
+  // "bấm tay = thử ngay" — nhưng nếu lượt gửi TRƯỚC (do MutationObserver
+  // kích hoạt) còn đang chạy dở (await saveToServer chưa xong), bấm nút
+  // nhiều lần liên tiếp sẽ tạo nhiều request POST song song cùng dữ liệu
+  // trước khi request đầu kịp hoàn tất → nhân đôi dòng buffer/audit_logs.
+  // Chặn bằng cờ _saving thay vì chỉ dựa vào khoá dedup (khoá đã bị nút
+  // thủ công chủ động xoá nên không còn tác dụng chặn trong tình huống này).
+  if (_saving) return;
   lastSavedKey = key;
+  _saving = true;
 
-  const { ok, permanent } = await saveToServer(cfg, res);
+  try {
+    const { ok, permanent } = await saveToServer(cfg, res);
 
-  const loaiLabel = cfg.loaiDV === 'ih' ? 'IH' : 'IL';
-  const chieuLabel = cfg.chieu === 'di' ? 'Đi' : 'Đến';
+    const loaiLabel = cfg.loaiDV === 'ih' ? 'IH' : 'IL';
+    const chieuLabel = cfg.chieu === 'di' ? 'Đi' : 'Đến';
 
-  if (ok) {
-    showToast(
-      `✓ Tự lưu: Cổng ${cfg.cong} – ${cfg.loaiTien} – ${loaiLabel} ${chieuLabel}<br>` +
-      `<small style="color:#94a3b8">${res.soMon.toLocaleString('vi-VN')} món | ${res.soTien.toLocaleString('vi-VN')}</small>`,
-      '#10b981', 4000
-    );
-    _saveRetry.resetBackoff();
-  } else {
-    showToast(`✗ Không kết nối server (${SERVER})`, '#ef4444', 4000);
-    // permanent (chưa cấu hình / mã kết nối sai-bị thu hồi): KHÔNG tự thử
-    // lại — chỉ nút thủ công mới xoá được khoá. Lỗi có thể tạm thời (mạng,
-    // server lỗi): lùi thời gian thử lại tăng dần thay vì thử lại ngay.
-    if (!permanent) {
-      _saveRetry.scheduleRetry();
+    if (ok) {
+      showToast(
+        `✓ Tự lưu: Cổng ${cfg.cong} – ${cfg.loaiTien} – ${loaiLabel} ${chieuLabel}<br>` +
+        `<small style="color:#94a3b8">${res.soMon.toLocaleString('vi-VN')} món | ${res.soTien.toLocaleString('vi-VN')}</small>`,
+        '#10b981', 4000
+      );
+      _saveRetry.resetBackoff();
+    } else {
+      showToast(`✗ Không kết nối server (${SERVER})`, '#ef4444', 4000);
+      // permanent (chưa cấu hình / mã kết nối sai-bị thu hồi): KHÔNG tự thử
+      // lại — chỉ nút thủ công mới xoá được khoá. Lỗi có thể tạm thời (mạng,
+      // server lỗi): lùi thời gian thử lại tăng dần thay vì thử lại ngay.
+      if (!permanent) {
+        _saveRetry.scheduleRetry();
+      }
     }
+  } finally {
+    _saving = false;
   }
 }
-
-// ── Popup thành công ─────────────────────────────────────────────────
-function showPopup(msg) {
-  const old = document.getElementById('_citad_popup');
-  if (old) old.remove();
-  const overlay = document.createElement('div');
-  overlay.id = '_citad_popup';
-  overlay.style.cssText = `
-    position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999999;
-    display:flex;align-items:center;justify-content:center;
-    animation:_fadeIn .15s ease;
-  `;
-  overlay.innerHTML = `
-    <div style="
-      background:#1e293b;border:1.5px solid #10b981;border-radius:14px;
-      padding:28px 32px;min-width:320px;max-width:420px;
-      box-shadow:0 8px 32px rgba(0,0,0,.5);font-family:Arial,sans-serif;
-      text-align:center;position:relative;
-    ">
-      <div style="font-size:36px;margin-bottom:10px;">✅</div>
-      <div style="color:#10b981;font-size:15px;font-weight:bold;margin-bottom:12px;">Nạp dữ liệu thành công</div>
-      <div style="color:#e2e8f0;font-size:13px;line-height:1.7;">${msg}</div>
-      <button onclick="document.getElementById('_citad_popup').remove()" style="
-        margin-top:18px;background:#10b981;color:#fff;border:none;
-        border-radius:8px;padding:8px 28px;font-size:13px;font-weight:bold;
-        cursor:pointer;
-      ">OK</button>
-    </div>
-  `;
-  overlay.addEventListener('click', function(e){
-    if (e.target === overlay) overlay.remove();
-  });
-  document.body.appendChild(overlay);
-  // Tu dong dong sau 6 giay
-  setTimeout(() => { if (overlay.parentNode) overlay.remove(); }, 6000);
-}
-
 
 // ── Nút thủ công (dự phòng) ─────────────────────────────────────────
 function createManualBtn() {

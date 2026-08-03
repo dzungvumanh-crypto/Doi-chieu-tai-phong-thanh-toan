@@ -39,6 +39,7 @@ cảnh báo tự động trong `extension_citad/content.js`.
 from __future__ import annotations
 
 import io
+import re
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
@@ -54,6 +55,12 @@ from backend.schemas.doi_chieu_citad import (
     SessionIn,
 )
 from backend.services import doi_chieu_citad_service as svc
+
+
+def _safe_filename(name: str) -> str:
+    """Lọc ký tự có thể phá cấu trúc header Content-Disposition (dấu ngoặc
+    kép, xuống dòng, backslash) — `sheet_name` đến từ input người dùng."""
+    return re.sub(r'[\r\n"\\]', '_', name)
 
 router = APIRouter(prefix="/api/doi-chieu-citad", tags=["doi-chieu-citad"])
 
@@ -237,7 +244,7 @@ def get_history_entry(
 @router.post("/export")
 def export_excel(data: ExportIn, current: dict = Depends(require_feature("menu.doi_chieu_citad"))):
     buf = svc.build_xlsx(data)
-    fname = f"Doi_chieu_CITAD_{data.sheet_name}.xlsx"
+    fname = _safe_filename(f"Doi_chieu_CITAD_{data.sheet_name}.xlsx")
     return StreamingResponse(
         io.BytesIO(buf),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

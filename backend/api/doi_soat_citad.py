@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import tempfile
 from typing import List, Optional
 
@@ -26,6 +27,12 @@ from backend.database import get_db
 from backend.core.deps import require_feature
 from backend.schemas.doi_soat_citad import ExportIn, HistoryOut, ReconcileResultOut
 from backend.services.doi_soat_citad import exporters, parsers, reconcile
+
+
+def _safe_filename(name: str) -> str:
+    """Lọc ký tự có thể phá cấu trúc header Content-Disposition (dấu ngoặc
+    kép, xuống dòng, backslash) — `ngay_cham` đến từ input người dùng."""
+    return re.sub(r'[\r\n"\\]', '_', name)
 from backend.services.doi_soat_citad.history_service import (
     get_recon_detail,
     list_recon_history,
@@ -68,7 +75,7 @@ async def do_reconcile(
     db=Depends(get_db),
     current: dict = Depends(require_feature("menu.doi_soat_citad")),
 ):
-    if not citad_files and not ipcas_files:
+    if not citad_files or not ipcas_files:
         raise HTTPException(400, "Cần ít nhất file CITAD và file IPCAS")
 
     # Đọc/ghi file tạm (I/O) + parse Excel/CSV (CPU, có thể mất vài giây với
@@ -124,6 +131,10 @@ async def do_reconcile(
         "lech": lech,
         "history_saved": history_saved,
         "history_error": history_error,
+        # Vẫn còn rows đọc được nên không rơi vào nhánh 422 ở trên, nhưng
+        # 1 phần file bị lỗi — phải báo cho người dùng biết kết quả có thể
+        # THIẾU dữ liệu, không được coi là đối soát đầy đủ.
+        "parse_warnings": errors,
     }
 
 
@@ -147,12 +158,16 @@ def export_excel(
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as out:
         out_path = out.name
-    exporters.export_doiSoat(lech, n_khop, ngay_cham, out_path)
-    with open(out_path, "rb") as f:
-        content = f.read()
-    os.remove(out_path)
+    try:
+        exporters.export_doiSoat(lech, n_khop, ngay_cham, out_path)
+        with open(out_path, "rb") as f:
+            content = f.read()
+    finally:
+        # try/finally — nếu export_doiSoat() raise (dữ liệu bất thường), file
+        # tạm vẫn phải bị xoá, không thì rò rỉ đĩa dần qua mỗi lượt export lỗi.
+        os.remove(out_path)
 
-    fname = f"DoiSoat_CITAD_IPCAS_{ngay_cham.replace('/', '-')}.xlsx"
+    fname = _safe_filename(f"DoiSoat_CITAD_IPCAS_{ngay_cham.replace('/', '-')}.xlsx")
     return Response(
         content=content,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -196,10 +211,12 @@ def export_from_history(
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as out:
         out_path = out.name
-    exporters.export_doiSoat(detail["lech_records"], detail["n_khop"], detail["ngay_cham"], out_path)
-    with open(out_path, "rb") as f:
-        content = f.read()
-    os.remove(out_path)
+    try:
+        exporters.export_doiSoat(detail["lech_records"], detail["n_khop"], detail["ngay_cham"], out_path)
+        with open(out_path, "rb") as f:
+            content = f.read()
+    finally:
+        os.remove(out_path)
 
     fname = f"DoiSoat_CITAD_IPCAS_lichsu_{history_id}.xlsx"
     return Response(

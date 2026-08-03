@@ -39,6 +39,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import re
 import secrets
 import sqlite3
 import zipfile
@@ -352,7 +353,10 @@ def build_xlsx(data: ExportIn) -> bytes:
     diff = [ci[i] - ph[i] for i in range(8)]
     wb = Workbook()
     ws = wb.active
-    ws.title = data.sheet_name[:31]
+    # openpyxl raise lỗi (500 không kiểm soát) nếu tên sheet chứa ký tự Excel
+    # cấm (: \ / ? * [ ]) — lọc trước khi gán, không đổi nội dung số liệu.
+    safe_sheet_name = re.sub(r'[:\\/?*\[\]]', '_', data.sheet_name) or 'Sheet1'
+    ws.title = safe_sheet_name[:31]
     NUM = '#,##0'
     for col, wd in zip('ABCDEFGHIJ', [24.43, 7, 11.43, 30.14, 11.43, 28.57, 10.86, 30.14, 12.43, 28.57]):
         ws.column_dimensions[col].width = wd

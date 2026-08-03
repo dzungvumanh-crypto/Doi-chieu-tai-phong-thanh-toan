@@ -193,6 +193,7 @@ function hasBaoCaoResults() {
 }
 
 let lastBaoCaoKey = '';
+let _savingBaoCao = false; // đang có 1 lượt gửi dở chưa xong — chặn gửi trùng
 const _baoCaoRetry = _makeRetryScheduler(() => { lastBaoCaoKey = ''; });
 
 async function saveBaoCao(manual=false) {
@@ -217,8 +218,22 @@ async function saveBaoCao(manual=false) {
     if (manual) showToast('Số liệu toàn 0, kiểm tra lại kết quả', '#f59e0b');
     return;
   }
+  // Nút thủ công reset lastBaoCaoKey='' rồi gọi saveBaoCao(true) ngay lập
+  // tức — nếu request TRƯỚC (do observer/interval kích hoạt) còn đang chạy
+  // dở, bấm nút nhiều lần liên tiếp sẽ gửi trùng dữ liệu. Chặn bằng cờ
+  // đang-xử-lý, không chỉ dựa vào khoá dedup (đã bị nút thủ công xoá).
+  if (_savingBaoCao) return;
   lastBaoCaoKey = key;
+  _savingBaoCao = true;
 
+  try {
+    await _doSaveBaoCao(ih, il, tien, manual);
+  } finally {
+    _savingBaoCao = false;
+  }
+}
+
+async function _doSaveBaoCao(ih, il, tien, manual) {
   const items = [
     { key:`ph_${tien}_den_ih`, loai:'ih', chieu:'den', tien, soMon: ih.den_m, soTien: ih.den_t },
     { key:`ph_${tien}_di_ih`,  loai:'ih', chieu:'di',  tien, soMon: ih.di_m,  soTien: ih.di_t  },
@@ -269,9 +284,28 @@ function observeBaoCao() {
     saveBaoCao(true);
   });
 
-  const observer = new MutationObserver(() => saveBaoCao(false));
+  // PaymentHub là SPA (Ant Design) — điều hướng nội bộ không reload trang,
+  // nên content script cũ (đã inject 1 lần) vẫn tiếp tục chạy trên URL
+  // MỚI nếu không tự dừng. hasTraCuuResults()/hasBaoCaoResults() chỉ quét
+  // text chung trên toàn document.body nên có thể vô tình khớp ở 1 trang
+  // không liên quan, tự POST nhầm dữ liệu. Ghi lại URL lúc bắt đầu, huỷ
+  // observer/interval + gỡ nút thủ công ngay khi URL đổi.
+  const startHref = window.location.href;
+  const observer = new MutationObserver(() => {
+    if (window.location.href !== startHref) { _stopWatching(observer, interval); return; }
+    saveBaoCao(false);
+  });
   observer.observe(document.body, { childList: true, subtree: true });
-  setInterval(() => saveBaoCao(false), 1500);
+  const interval = setInterval(() => {
+    if (window.location.href !== startHref) { _stopWatching(observer, interval); return; }
+    saveBaoCao(false);
+  }, 1500);
+}
+
+function _stopWatching(observer, intervalId) {
+  observer.disconnect();
+  clearInterval(intervalId);
+  removeManualBtn();
 }
 
 /* ══════════════════════════════════════════════════════
@@ -294,6 +328,7 @@ function hasTraCuuResults() {
 }
 
 let lastTraCuuKey = '';
+let _savingTraCuu = false; // đang có 1 lượt gửi dở chưa xong — chặn gửi trùng
 const _traCuuRetry = _makeRetryScheduler(() => { lastTraCuuKey = ''; });
 
 async function saveTraCuu(source, manual=false) {
@@ -313,8 +348,20 @@ async function saveTraCuu(source, manual=false) {
 
   const key = `${data.loaiTien}_${data.soTien}_${source}`;
   if (!manual && key === lastTraCuuKey) return;
+  // Cùng lý do với saveBaoCao(): nút thủ công xoá khoá dedup rồi gọi lại
+  // ngay — cần cờ đang-xử-lý riêng để double-click không gửi trùng.
+  if (_savingTraCuu) return;
   lastTraCuuKey = key;
+  _savingTraCuu = true;
 
+  try {
+    await _doSaveTraCuu(data, source, manual);
+  } finally {
+    _savingTraCuu = false;
+  }
+}
+
+async function _doSaveTraCuu(data, source, manual) {
   const payload = {
     key:    `napas_ih_den_${data.loaiTien}`,
     loai:   'ih', chieu: 'den',
@@ -363,9 +410,18 @@ function observeTraCuu(source) {
     saveTraCuu(source, true);
   });
 
-  const observer = new MutationObserver(() => saveTraCuu(source, false));
+  // Cùng lý do dừng theo URL như observeBaoCao() — tránh tự POST nhầm dữ
+  // liệu nếu SPA điều hướng sang trang khác mà không reload.
+  const startHref = window.location.href;
+  const observer = new MutationObserver(() => {
+    if (window.location.href !== startHref) { _stopWatching(observer, interval); return; }
+    saveTraCuu(source, false);
+  });
   observer.observe(document.body, { childList: true, subtree: true });
-  setInterval(() => saveTraCuu(source, false), 1500);
+  const interval = setInterval(() => {
+    if (window.location.href !== startHref) { _stopWatching(observer, interval); return; }
+    saveTraCuu(source, false);
+  }, 1500);
 }
 
 /* ══════════════════════════════════════════════════════

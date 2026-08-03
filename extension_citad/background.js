@@ -19,6 +19,24 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
     sendResponse({ ok: false, error: 'missing server/token' });
     return;
   }
+  // externally_connectable đã giới hạn origin GỬI được message này (Chrome
+  // tự chặn, không phải code ở đây) — nhưng KHÔNG kiểm tra giá trị BÊN
+  // TRONG message, nên nếu chính origin đó bị XSS (hoặc cổng dev bị app
+  // khác chiếm), 1 trang độc hại vẫn có thể gửi `server` trỏ sang máy chủ
+  // khác, khiến buffer/token thật bị POST nhầm sang đó ở lần lưu kế tiếp.
+  // Chặn bớt rủi ro này bằng cách bắt buộc `server` là URL http/https hợp
+  // lệ (không chấp nhận `javascript:`, `data:`, chuỗi rác...).
+  let parsed;
+  try {
+    parsed = new URL(message.server);
+  } catch (e) {
+    sendResponse({ ok: false, error: 'invalid server URL' });
+    return;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    sendResponse({ ok: false, error: 'server URL must be http(s)' });
+    return;
+  }
   chrome.storage.local.set(
     { server: message.server, extensionToken: message.token },
     () => sendResponse({ ok: true })
@@ -46,18 +64,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || message.type !== 'BUFFER_POST') return false; // không phải gửi cho mình
 
   (async () => {
+    // Không có timeout thì backend "treo" (nhận TCP nhưng không phản hồi)
+    // sẽ làm fetch() không bao giờ resolve/reject — content script đã set
+    // khoá dedup TRƯỚC khi gọi sang đây nên cơ chế tự lưu cho tổ hợp đó bị
+    // treo vĩnh viễn, không toast lỗi, không lên lịch retry. AbortController
+    // đảm bảo luôn có phản hồi (ok:false) trong tối đa 20s để content script
+    // biết mà lên lịch thử lại qua _makeRetryScheduler.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20000);
     try {
       const r = await fetch(message.url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Extension-Token': message.token },
         body: JSON.stringify(message.body),
+        signal: controller.signal,
       });
       sendResponse({ ok: r.ok, status: r.status });
     } catch (e) {
-      // Mất mạng / server không phản hồi / CORS vẫn còn chặn vì thiếu
-      // host_permissions — status=null để content script biết đây không
-      // phải lỗi HTTP cụ thể (không phải 403).
+      // Mất mạng / server không phản hồi / bị abort do timeout / CORS vẫn
+      // còn chặn vì thiếu host_permissions — status=null để content script
+      // biết đây không phải lỗi HTTP cụ thể (không phải 403).
       sendResponse({ ok: false, status: null, error: String(e) });
+    } finally {
+      clearTimeout(timer);
     }
   })();
   return true; // giữ kênh sendResponse mở cho fetch() bất đồng bộ

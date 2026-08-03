@@ -34,7 +34,16 @@ async function save() {
   // Xin quyền truy cập đúng domain SERVER (MV3 không cho khai host cố định
   // khi domain backend thật chưa biết trước — xin động lúc lưu, đúng domain
   // cần dùng, không xin quyền rộng hơn mức cần thiết).
-  const origin = new URL(server).origin + '/*';
+  let origin;
+  try {
+    // Regex ở trên chỉ kiểm tra tiền tố http(s):// — chuỗi sau đó vẫn có
+    // thể không phải URL hợp lệ (VD ký tự lạ), khiến new URL() throw. Nếu
+    // không bọc try/catch, bấm "Lưu cấu hình" sẽ im lặng không phản hồi gì.
+    origin = new URL(server).origin + '/*';
+  } catch (e) {
+    showStatus('SERVER không phải địa chỉ hợp lệ', 'err');
+    return;
+  }
   try {
     const granted = await chrome.permissions.request({ origins: [origin] });
     if (!granted) {

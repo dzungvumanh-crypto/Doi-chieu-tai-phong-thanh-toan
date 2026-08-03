@@ -11,6 +11,12 @@ class ReconcileResultOut(BaseModel):
     lech: List[Dict[str, Any]]
     history_saved: bool = True
     history_error: Optional[str] = None
+    # Lỗi parse ở TỪNG file riêng lẻ (VD 1/3 file CITAD hỏng định dạng) —
+    # khác với lỗi 422 (chặn hẳn request khi TOÀN BỘ file đều lỗi, không có
+    # dòng nào đọc được). Có phần tử ở đây nghĩa là kết quả đối soát THIẾU
+    # dữ liệu từ (các) file lỗi, không phải rỗng hoàn toàn — vẫn phải hiện
+    # rõ cho người dùng biết, không được coi là "đối soát xong" bình thường.
+    parse_warnings: List[str] = []
 
 
 class ExportIn(BaseModel):
