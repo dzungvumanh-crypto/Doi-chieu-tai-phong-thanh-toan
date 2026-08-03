@@ -4,6 +4,16 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 03/08/2026 Đối chiếu điện SWIFT - Nạp nhiều file một lúc và xuất Excel theo đúng biểu mẫu:
+    + Mỗi ô chọn file nay **nhận nhiều file cùng lúc**. SAA phải xuất làm nhiều đợt trong ngày thì cứ thả hết vào đúng ô đó, hệ thống tự gộp lại trước khi đối chiếu — không phải đối chiếu từng đợt rồi tự cộng tay
+    + Mỗi file vẫn báo riêng ✅/❌ và **số dòng đọc được ngay khi vừa chọn**, kèm dòng tổng cộng. Chọn nhầm thì bấm ✕ ở cạnh tên file để bỏ ra, không phải làm lại từ đầu
+    + Giới hạn **10 file hoặc 100 MB mỗi ô**. Vượt quá thì báo ngay và không nạp thêm — tránh làm hệ thống hết bộ nhớ ảnh hưởng sang các màn hình khác
+    + Thêm **2 nút xuất Excel theo biểu mẫu**: *Tổng hợp theo biểu mẫu* (Mẫu 04) và *Chi tiết lệch theo biểu mẫu* (Mẫu 05). File tải về đã có sẵn quốc hiệu, tiêu đề, dòng ký — in ra trình ký được ngay, không phải chép số sang mẫu Word thủ công
+    + Hai biểu mẫu này tự phân loại điện về **SWIFT / IPCAS / P-HUB** dựa trên cột *Channel Process* có sẵn trong file Quản lý điện
+    + ⚠️ **Cột "Chênh lệch" đổi cách tính — số sẽ khác trước.** Trước đây lấy hiệu số lượng hai bên; nay đếm đúng số điện **thực sự không khớp**. Ví dụ một loại điện có 5 bản ghi ở mỗi bên nhưng là 5 giao dịch hoàn toàn khác nhau: trước báo *Chênh lệch = 0* (trông như khớp), nay báo đúng *10*. Số mới mới là số đúng, nhưng ai đang theo dõi bằng file riêng sẽ thấy lệch với hệ thống
+    + ⚠️ **Các lần đối chiếu đã lưu ở tab Lịch sử TRƯỚC đợt này vẫn giữ con số theo cách tính cũ.** Không so trực tiếp cột Chênh lệch của bản ghi cũ với bản ghi mới
+    + ⚠️ Trên hai biểu mẫu mới, ô **ngày đối chiếu** đang bị điền ngày in báo cáo. Đối chiếu số liệu của ngày hôm trước thì **sửa lại ngày này bằng tay trước khi trình ký**
+
 - 31/07/2026 Đăng nhập - Thêm lối tắt tới các hệ thống nghiệp vụ ngay ở màn hình đăng nhập:
     + Hai bên ô đăng nhập nay có **3 cụm đường dẫn**: *Thanh toán trong nước* (10 lối tắt), *Thanh toán quốc tế* (2), *Nội bộ* (4). Click là mở tab mới, không phải nhớ hay gõ lại địa chỉ
     + Mỗi lối tắt hiện **tên tiếng Việt** thay vì địa chỉ khó nhớ — ví dụ *"Hệ thống TT ĐTLNH - Cổng 12"* thay cho `http://10.0.85.100/CITAD9212`. Rê chuột lên vẫn xem được địa chỉ đầy đủ trước khi bấm

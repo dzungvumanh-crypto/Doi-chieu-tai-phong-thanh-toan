@@ -53,6 +53,92 @@
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
   <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-03</p>
 
+  <!-- I -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">I</span>
+      <span class="card-title">Gộp PR #13 (đối chiếu SWIFT): hai nhánh sửa cùng một lỗi bằng hai cách loại trừ nhau</span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Xung đột không nằm ở text mà ở kiến trúc</p>
+      <p>PR #13 và <code>develop</code> phát hiện cùng một lỗi — backend đóng băng khi xử lý file
+      nặng — rồi sửa theo hai hướng không thể cùng tồn tại:</p>
+      <table>
+        <tr><th>Nhánh</th><th>Cách sửa</th><th>Bể luồng thực tế</th></tr>
+        <tr><td><code>develop</code> 084c0e2</td>
+            <td>Giữ <code>async def</code>, bọc việc nặng bằng <code>await run_heavy(...)</code></td>
+            <td><span class="pill pill-green">Limiter riêng, 4 token</span></td></tr>
+        <tr><td>PR #13 147379d</td>
+            <td>Đổi toàn bộ 13 endpoint sang <code>def</code></td>
+            <td><span class="pill pill-red">Bể chung 40 token</span></td></tr>
+      </table>
+
+      <div class="caution">
+      <strong>Giữ cách của develop.</strong> Khai <code>def</code> khiến FastAPI đẩy việc nặng vào bể
+      chung 40 token và <strong>vô hiệu hoá <code>CapacityLimiter(4)</code> ở card H</strong> — đúng
+      cái mà <code>backend/core/concurrency.py</code> sinh ra để chặn. <code>swift_recon</code> lại là
+      module nặng nhất (pandas + openpyxl + gộp nhiều file), nên để nó lọt ra ngoài giới hạn là mất
+      gần hết giá trị của card H.
+      </div>
+
+      <p class="label">Cái bẫy để lại cho lần sửa sau</p>
+      <p>PR #13 kèm một đoạn docstring dặn thẳng <em>"KHÔNG đổi lại thành <code>async def</code>"</em>.
+      Nếu giữ nguyên, người sửa tiếp theo làm đúng theo đó là hỏng lại — nên đoạn này đã được viết lại
+      thành: không chạy thẳng trên event loop, <strong>và cũng không dùng <code>def</code></strong>,
+      chỉ <code>async def</code> + <code>run_heavy</code>.</p>
+
+      <p class="label">Xuất Excel theo biểu mẫu — số đo trước/sau khi tác giả PR sửa</p>
+      <table>
+        <tr><th>Kịch bản</th><th>Trước</th><th>Sau</th><th>Cấu trúc file</th></tr>
+        <tr><td>Chi tiết lệch, 12 bản ghi</td><td><span class="pill pill-red">10,53 s</span></td>
+            <td><span class="pill pill-green">0,13 s</span></td><td>OK</td></tr>
+        <tr><td>Chi tiết lệch, 300 bản ghi</td><td><span class="pill pill-red">12,44 s</span></td>
+            <td><span class="pill pill-green">0,45 s</span></td><td>OK</td></tr>
+        <tr><td>Chi tiết lệch, 1300 bản ghi</td><td>—</td>
+            <td><span class="pill pill-green">1,60 s</span></td><td>OK</td></tr>
+        <tr><td>Tổng hợp, ít loại điện hơn mẫu (xoá dòng)</td>
+            <td><span class="pill pill-red">Mất khối chữ ký</span></td>
+            <td><span class="pill pill-green">0,09 s</span></td><td>OK</td></tr>
+        <tr><td>Tổng hợp, nhiều loại điện hơn mẫu (chèn dòng)</td>
+            <td><span class="pill pill-red">Excel báo file hỏng + mất số liệu</span></td>
+            <td><span class="pill pill-green">0,13 s</span></td><td>OK</td></tr>
+      </table>
+      <p>Gốc rễ: <code>openpyxl.insert_rows()</code>/<code>delete_rows()</code> dịch chuyển
+      <em>giá trị ô</em> nhưng <strong>không dịch toạ độ vùng gộp ô</strong>. Vùng gộp cũ đứng nguyên
+      rồi nuốt mất dòng chữ ký trôi vào đó. Đã vá bằng <code>_shift_merges()</code> gọi ngay sau mỗi
+      lần chèn/xoá, cộng với việc thay 4 file mẫu từ báo cáo thật (2612 dòng) sang form trắng.</p>
+
+      <p class="label">Nợ kỹ thuật đã nhận, chưa trả</p>
+      <div class="caution">
+      <code>template_exporters.py</code> chạm 4 API <strong>nội bộ</strong> của openpyxl:
+      <code>cell._style</code>, <code>merged_cells.ranges.add()</code> (cố ý bỏ qua kiểm tra chồng lấn),
+      <code>_clean_merge_range()</code>, dựng <code>MergedCell</code> gán thẳng vào <code>ws._cells</code>.
+      Đúng với <code>openpyxl==3.1.2</code> đang pin. Nhưng openpyxl còn được dùng ở 10 chỗ khác
+      (<code>staff</code>, <code>leaves</code>, <code>logs</code>, <code>bundles</code>,
+      <code>handovers</code>, <code>duty_export</code>, <code>th_report</code>…). Ai nâng thư viện vì
+      một tính năng khác sẽ làm <code>swift_recon</code> sinh file hỏng <strong>âm thầm</strong> —
+      không raise, không log. <strong>Chưa có test khoá lại bất biến này.</strong>
+      </div>
+
+      <p class="label">Phát hiện nhưng KHÔNG sửa khi gộp — và vì sao</p>
+      <table>
+        <tr><th>Vấn đề</th><th>Lý do để lại</th></tr>
+        <tr><td>Ô "ngày đối chiếu" trên biểu mẫu bị điền ngày in báo cáo (hai ngày này khác nghĩa,
+            mẫu gốc lệch nhau 3 ngày)</td>
+            <td rowspan="3">Nằm gọn trong module, không chạm vận hành hệ thống và không ảnh hưởng
+            tính năng khác — người review chốt để tác giả PR xử lý ở đợt sau. Sửa xen vào lúc gộp sẽ
+            làm diff khó soát. Riêng mục ngày đã ghi cảnh báo ⚠️ trong
+            <code>Logs_update.md</code> vì người dùng cần biết để sửa tay trước khi trình ký.</td></tr>
+        <tr><td>Điện đi: cột Chênh lệch ở Tổng hợp lệch <code>total_diff</code> đúng bằng số bản ghi
+            <code>MATCHED_NOT_ACK</code></td></tr>
+        <tr><td>Bản ghi Lịch sử cũ/mới cùng tên cột "Chênh lệch" nhưng khác cách tính</td></tr>
+      </table>
+
+    </div>
+  </div>
+
   <!-- H -->
   <div class="card">
     <div class="card-header">
