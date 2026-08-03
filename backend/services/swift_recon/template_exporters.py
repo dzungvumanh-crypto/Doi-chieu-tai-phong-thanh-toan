@@ -38,12 +38,12 @@ from __future__ import annotations
 
 import os
 import re
-from copy import copy
 from datetime import datetime
 
 import pandas as pd
 from openpyxl import load_workbook
 from openpyxl.cell.cell import MergedCell
+from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
 from backend.services.swift_recon import reconcile
@@ -305,20 +305,90 @@ def _row_merge_spans(ws: Worksheet, row: int) -> list:
     ]
 
 
-def _copy_row_style(ws: Worksheet, src_row: int, dst_row: int, max_col: int):
-    for col in range(1, max_col + 1):
-        s = ws.cell(row=src_row, column=col)
+def _capture_row_style(ws: Worksheet, src_row: int, max_col: int) -> list:
+    """Lấy style của TỪNG CỘT trên dòng mẫu ĐÚNG 1 LẦN, trả về danh sách các
+    `_style` (StyleArray nội bộ của openpyxl — mảng CHỈ SỐ đã được "gộp
+    trùng"/interned sẵn từ khi mở file, ví dụ font số mấy, border số mấy...).
+
+    Gán THẲNG mảng chỉ số này (`cell._style = ...`) cho ô mới, KHÔNG đi qua
+    `cell.font = ...`/`cell.border = ...` — vì mỗi lần gán qua các thuộc
+    tính đó, openpyxl phải so sánh + băm (hash) TOÀN BỘ nội dung style để
+    tìm/thêm vào bảng style dùng chung, dù style hệt nhau — cực tốn khi lặp
+    lại hàng chục nghìn lần (đo được ~28 giây cho ~1300 dòng lệch — xem review
+    PR #13). Style ở đây ĐÃ được openpyxl gộp trùng sẵn từ lúc đọc file mẫu,
+    nên chỉ cần copy đúng mảng chỉ số đó sang ô mới là đủ, không cần làm lại
+    việc gộp trùng."""
+    from copy import copy as _copy
+    return [_copy(ws.cell(row=src_row, column=col)._style) for col in range(1, max_col + 1)]
+
+
+def _apply_row_style(ws: Worksheet, styles: list, dst_row: int, src_row_height):
+    for col, st in enumerate(styles, start=1):
         d = ws.cell(row=dst_row, column=col)
         if isinstance(d, MergedCell):
             continue
-        d.font = copy(s.font)
-        d.border = copy(s.border)
-        d.fill = copy(s.fill)
-        d.number_format = s.number_format
-        d.alignment = copy(s.alignment)
-    src_h = ws.row_dimensions[src_row].height
-    if src_h:
-        ws.row_dimensions[dst_row].height = src_h
+        d._style = st
+    if src_row_height:
+        ws.row_dimensions[dst_row].height = src_row_height
+
+
+def _fast_merge(ws: Worksheet, coord: str):
+    """Tương đương ws.merge_cells(coord) nhưng BỎ QUA bước kiểm tra chồng lấn
+    (overlap check) mà openpyxl làm mặc định — bước đó quét TOÀN BỘ vùng gộp
+    đã có mỗi lần gọi (O(n) mỗi lần, O(n²) tổng khi gọi hàng nghìn lần), là
+    một trong các nguyên nhân khiến xuất Excel biểu mẫu với nhiều bản ghi
+    lệch mất hàng chục giây (xem review PR #13). An toàn bỏ qua vì các vùng
+    gộp ở đây luôn nằm trong ĐÚNG 1 dòng, các dòng không bao giờ chồng lấn
+    nhau. Việc gọi `ws._clean_merge_range()` (dựng lại viền — border — cho
+    vùng gộp) vẫn giữ nguyên vì đây là bước bắt buộc để merge hiển thị đúng."""
+    from openpyxl.worksheet.merge import MergedCellRange
+    mcr = MergedCellRange(ws, coord)
+    ws.merged_cells.ranges.add(mcr)  # thẳng vào set, bỏ qua MultiCellRange.add() có overlap check
+    ws._clean_merge_range(mcr)
+
+
+def _register_merge_no_format(ws: Worksheet, coord: str, learned_styles: dict):
+    """Đăng ký 1 vùng gộp GIỐNG HỆT hình dạng 1 vùng gộp đã xử lý đầy đủ
+    trước đó (đã có viền đúng), nhưng KHÔNG gọi lại bước dựng viền
+    (`MergedCellRange.format()` — chậm, ~16s riêng bước này khi có hàng nghìn
+    dòng, đo được ở review PR #13) — thay vào đó GÁN THẲNG style đã "học"
+    được từ vùng gộp mẫu (đã qua format() đúng 1 lần) cho các ô placeholder.
+    An toàn vì mọi vùng gộp cùng hình dạng (ví dụ luôn là cột C:D của 1 dòng
+    dữ liệu) đều cần viền giống hệt nhau."""
+    from openpyxl.cell.cell import MergedCell as _MergedCell
+    from openpyxl.utils.cell import range_boundaries
+    from openpyxl.worksheet.merge import MergedCellRange
+    mcr = MergedCellRange(ws, coord)
+    ws.merged_cells.ranges.add(mcr)
+    min_col, min_row, max_col_, max_row_ = range_boundaries(coord)
+    cells = mcr.cells
+    next(cells)  # bỏ ô đầu (anchor) — giữ style đã set qua _apply_row_style
+    for row, col in cells:
+        mc = _MergedCell(ws, row, col)
+        style = learned_styles.get(col)
+        if style is not None:
+            mc._style = style
+        ws._cells[row, col] = mc
+
+
+def _shift_merges(ws: Worksheet, from_row: int, delta: int):
+    """Bù lỗi CÓ THẬT của openpyxl: `ws.insert_rows()`/`ws.delete_rows()`
+    dịch chuyển đúng NỘI DUNG ô (value) nằm dưới điểm chèn/xoá, nhưng
+    KHÔNG dịch chuyển toạ độ các VÙNG GỘP Ô (merge) tương ứng — đã tự kiểm
+    chứng trực tiếp: dòng chữ ký cuối biểu mẫu di chuyển đúng vị trí (giá
+    trị ô), nhưng vùng gộp bọc quanh nó thì đứng yên tại toạ độ CŨ, khiến
+    dòng chữ ký hiển thị sai/mất hẳn trên file xuất ra.
+
+    Gọi hàm này NGAY sau MỌI lần insert_rows/delete_rows: dịch toạ độ mọi
+    vùng gộp có `min_row >= from_row` (điểm chèn/xoá, tính theo vị trí TRƯỚC
+    khi insert/delete) thêm đúng `delta` dòng (dương khi chèn, âm khi xoá)."""
+    from openpyxl.worksheet.merge import MergedCellRange
+    stale = [rng for rng in list(ws.merged_cells.ranges) if rng.min_row >= from_row]
+    for rng in stale:
+        ws.merged_cells.ranges.discard(rng)
+        new_coord = (f"{get_column_letter(rng.min_col)}{rng.min_row + delta}:"
+                     f"{get_column_letter(rng.max_col)}{rng.max_row + delta}")
+        ws.merged_cells.ranges.add(MergedCellRange(ws, new_coord))
 
 
 def _ensure_data_rows(ws: Worksheet, data_start: int, footer_col: int, footer_text: str,
@@ -336,16 +406,40 @@ def _ensure_data_rows(ws: Worksheet, data_start: int, footer_col: int, footer_te
 
     if n_needed > n_current:
         add_n = n_needed - n_current
+        row_styles = _capture_row_style(ws, data_start, max_col)  # 1 lần duy nhất, không lặp lại theo dòng
+        row_height = ws.row_dimensions[data_start].height
         ws.insert_rows(footer_row, amount=add_n)
-        for i in range(add_n):
+        _shift_merges(ws, footer_row, add_n)  # bù lỗi openpyxl — xem docstring _shift_merges
+
+        # Dòng ĐẦU TIÊN chèn thêm: xử lý ĐẦY ĐỦ (kể cả dựng viền merge qua
+        # _fast_merge) rồi "học" lại style thật sự của các ô trong từng vùng
+        # gộp — để các dòng SAU tái dùng, khỏi phải dựng viền lại từ đầu mỗi
+        # dòng (bước chậm nhất còn lại — xem review PR #13).
+        r0 = data_start + n_current
+        _apply_row_style(ws, row_styles, r0, row_height)
+        learned_by_span = []  # 1 dict {col: style} cho mỗi vùng gộp (c1,c2)
+        for c1, c2 in spans:
+            coord = f"{get_column_letter(c1)}{r0}:{get_column_letter(c2)}{r0}"
+            _fast_merge(ws, coord)
+            learned_by_span.append({
+                col: ws.cell(row=r0, column=col)._style for col in range(c1, c2 + 1)
+            })
+
+        for i in range(1, add_n):
             r = data_start + n_current + i
-            _copy_row_style(ws, data_start, r, max_col)
-            for c1, c2 in spans:
-                ws.merge_cells(start_row=r, start_column=c1, end_row=r, end_column=c2)
+            _apply_row_style(ws, row_styles, r, row_height)
+            for (c1, c2), learned in zip(spans, learned_by_span):
+                coord = f"{get_column_letter(c1)}{r}:{get_column_letter(c2)}{r}"
+                _register_merge_no_format(ws, coord, learned)
         footer_row += add_n
     elif n_needed < n_current:
         remove_n = n_current - n_needed
-        ws.delete_rows(footer_row - remove_n, amount=remove_n)
+        del_start = footer_row - remove_n
+        # bỏ hẳn vùng gộp nằm TRONG khoảng sắp xoá (không còn ý nghĩa)
+        for rng in [r for r in list(ws.merged_cells.ranges) if del_start <= r.min_row < footer_row]:
+            ws.merged_cells.ranges.discard(rng)
+        ws.delete_rows(del_start, amount=remove_n)
+        _shift_merges(ws, footer_row, -remove_n)  # bù lỗi openpyxl — xem docstring _shift_merges
         footer_row -= remove_n
 
     return footer_row

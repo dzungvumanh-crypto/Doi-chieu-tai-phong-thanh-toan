@@ -16,6 +16,16 @@ Dữ liệu (merged view) được backend trả về nguyên trong response JSO
 trong `state` của phiên làm việc (còn sống khi tab trình duyệt còn mở) — lọc
 /hiển thị làm bằng Python thuần ngay tại đây, KHÔNG gọi lại backend mỗi lần
 đổi bộ lọc. Chỉ gọi backend khi: đối chiếu, và khi xuất Excel.
+
+CẬP NHẬT (đợt 3 — theo review PR #13): mỗi ô upload giờ giới hạn tối đa 10
+file HOẶC tổng 100MB (`MAX_FILES_PER_SLOT`/`MAX_TOTAL_BYTES_PER_SLOT` trong
+`_on_file_upload`), chặn NGAY khi vượt, báo rõ lý do — vì trước đó danh sách
+file cộng dồn không giới hạn, có thể khiến tiến trình NiceGUI (chung cho MỌI
+trang khác, không riêng Swift) hết bộ nhớ nếu người dùng chọn quá nhiều file
+lớn. Đã CÂN NHẮC nhưng CHƯA giải phóng `a_files`/`b_files` ngay sau khi đối
+chiếu xong (dù reviewer có đề xuất) — vì 4/5 nút xuất Excel cần gửi lại đúng
+những file đó; đánh đổi là giữ bytes trong RAM đến khi người dùng rời tab
+hoặc tự xoá file, chấp nhận được nhờ đã có trần 100MB/ô ở trên.
 """
 import asyncio
 from collections import Counter
@@ -178,10 +188,38 @@ def _build_input_panel(tab, direction, title, label_a, label_b, state, tabs, res
                 state[direction][f"{which}_files"].pop(idx)
                 _render_file_list(which, list_area)
 
+            # Giới hạn bộ nhớ mỗi ô upload — theo review PR #13: trước đây
+            # KHÔNG có giới hạn số file/tổng dung lượng (chỉ chặn từng file
+            # riêng lẻ ≤20MB qua max_file_size), nên 1 phiên có thể giữ hàng
+            # trăm MB byte thô trong RAM của tiến trình NiceGUI — tiến trình
+            # NÀY phục vụ chung mọi trang khác (dashboard, nghỉ phép...),
+            # không chỉ riêng màn hình Swift.
+            MAX_FILES_PER_SLOT = 10
+            MAX_TOTAL_BYTES_PER_SLOT = 100 * 1024 * 1024  # 100 MB
+
             async def _on_file_upload(e, which, source, list_area):
                 d = state[direction]
                 fname = e.name
                 raw = e.content.read()
+
+                existing = d[f"{which}_files"]
+                if len(existing) >= MAX_FILES_PER_SLOT:
+                    ui.notify(
+                        f"Ô này đã có tối đa {MAX_FILES_PER_SLOT} file — xoá bớt file cũ "
+                        f"(nút ✕) trước khi thêm '{fname}', để tránh hệ thống dùng quá nhiều bộ nhớ.",
+                        type="warning", multi_line=True, timeout=0, close_button=True,
+                    )
+                    return
+                total_bytes = sum(len(f["bytes"]) for f in existing) + len(raw)
+                if total_bytes > MAX_TOTAL_BYTES_PER_SLOT:
+                    ui.notify(
+                        f"Thêm '{fname}' sẽ khiến tổng dung lượng ô này vượt quá "
+                        f"{MAX_TOTAL_BYTES_PER_SLOT // (1024 * 1024)} MB — xoá bớt file cũ "
+                        f"hoặc chia nhỏ ra nạp riêng từng đợt.",
+                        type="warning", multi_line=True, timeout=0, close_button=True,
+                    )
+                    return
+
                 entry = {"name": fname, "bytes": raw, "rows": None, "error": None, "loading": True}
                 d[f"{which}_files"].append(entry)
                 _render_file_list(which, list_area)

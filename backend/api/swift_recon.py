@@ -16,6 +16,22 @@ CẬP NHẬT (đợt 2):
   - 2 endpoint MỚI: export-summary-template / export-diff-template — xuất
     theo đúng biểu mẫu Mẫu 04/05 (xem template_exporters.py).
 
+CẬP NHẬT (đợt 3 — sửa theo review PR #13, quan trọng, đọc trước khi sửa
+tiếp file này):
+  - TOÀN BỘ endpoint trong file này khai báo `def` (KHÔNG `async def`).
+    Backend chạy 1 tiến trình/1 luồng (uvicorn không kèm --workers), và mọi
+    thao tác bên trong (đọc .xls, openpyxl) đều là code CHẶN (blocking) —
+    không có chỗ nào await thật sự. Nếu khai `async def`, FastAPI chạy thẳng
+    trên event loop duy nhất đó, làm ĐÓNG BĂNG TOÀN BỘ hệ thống (mọi trang
+    khác: đăng nhập, dashboard, nghỉ phép...) trong lúc xử lý — đã đo được
+    tới 10-12 giây/lần xuất Excel theo biểu mẫu trước khi sửa. Khai `def`
+    (đồng bộ) để FastAPI tự đẩy sang thread pool phụ, event loop chính vẫn
+    rảnh phục vụ request khác. KHÔNG đổi lại thành `async def` trừ khi thực
+    sự thêm `await` một thao tác I/O bất đồng bộ thật bên trong.
+  - `get_db()` (backend/database.py) đã tạo connection mới mỗi request với
+    `check_same_thread=False` nên chạy trong thread pool an toàn, không cần
+    sửa gì thêm ở đó.
+
 Đây là router MỚI của bạn — file này bạn tự quản lý, không cần ai duyệt
 logic bên trong. Chỉ có 2 việc còn lại cần Người 1 duyệt riêng:
   1. Đăng ký router này vào backend/api/registry.py
@@ -136,7 +152,7 @@ def _key_match_summary(df_a: pd.DataFrame, df_b: pd.DataFrame, label_a: str, lab
 # dạng single-file — kiểm tra từng file NGAY LÚC chọn, dù sau này nhiều file
 # được gộp lại (mỗi file vẫn cần biết ✅/❌ riêng của chính nó).
 @router.post("/parse-preview")
-async def parse_preview(
+def parse_preview(
     file: UploadFile = File(...),
     source: str = Form("SAA_DEN"),  # SAA_DEN | QL_DEN | QL_DI | SAA_DI
     current: dict = Depends(require_feature("menu.swift_recon")),
@@ -152,7 +168,7 @@ async def parse_preview(
 
 # ── Đối chiếu điện đến (mỗi bên có thể gồm NHIỀU file) ──────────────────────
 @router.post("/reconcile-den")
-async def reconcile_den(
+def reconcile_den(
     saa_files: list[UploadFile] = File(...),
     ql_files: list[UploadFile] = File(...),
     db=Depends(get_db),
@@ -200,7 +216,7 @@ async def reconcile_den(
 
 # ── Đối chiếu điện đi (đúng thứ tự QL trước, SAA sau — như bản desktop) ─────
 @router.post("/reconcile-di")
-async def reconcile_di(
+def reconcile_di(
     ql_files: list[UploadFile] = File(...),
     saa_files: list[UploadFile] = File(...),
     db=Depends(get_db),
@@ -251,7 +267,7 @@ async def reconcile_di(
 # ── Xuất Excel (nhận lại đúng những file frontend đã có sẵn trong state,
 #    không bắt người dùng chọn file lần 2 — xem frontend/pages/swift_recon.py) ──
 @router.post("/export-summary")
-async def export_summary(
+def export_summary(
     # LƯU Ý: dùng default_factory=list (KHÔNG dùng Optional/None làm mặc định) —
     # FastAPI 0.109.1 (bản đang pin trong requirements.txt) có lỗi không tự
     # bọc list khi multipart chỉ gửi ĐÚNG 1 file cho field kiểu Optional[List[UploadFile]],
@@ -293,7 +309,7 @@ async def export_summary(
 
 
 @router.post("/export-diff")
-async def export_diff(
+def export_diff(
     # LƯU Ý: dùng default_factory=list (KHÔNG dùng Optional/None làm mặc định) —
     # FastAPI 0.109.1 (bản đang pin trong requirements.txt) có lỗi không tự
     # bọc list khi multipart chỉ gửi ĐÚNG 1 file cho field kiểu Optional[List[UploadFile]],
@@ -343,7 +359,7 @@ async def export_diff(
 # ── Xuất Excel THEO BIỂU MẪU (Mẫu 04 / Mẫu 05) — xem cảnh báo giả định ở
 #    đầu file template_exporters.py trước khi dùng cho báo cáo chính thức ──
 @router.post("/export-summary-template")
-async def export_summary_template(
+def export_summary_template(
     # LƯU Ý: dùng default_factory=list (KHÔNG dùng Optional/None làm mặc định) —
     # FastAPI 0.109.1 (bản đang pin trong requirements.txt) có lỗi không tự
     # bọc list khi multipart chỉ gửi ĐÚNG 1 file cho field kiểu Optional[List[UploadFile]],
@@ -387,7 +403,7 @@ async def export_summary_template(
 
 
 @router.post("/export-diff-template")
-async def export_diff_template(
+def export_diff_template(
     # LƯU Ý: dùng default_factory=list (KHÔNG dùng Optional/None làm mặc định) —
     # FastAPI 0.109.1 (bản đang pin trong requirements.txt) có lỗi không tự
     # bọc list khi multipart chỉ gửi ĐÚNG 1 file cho field kiểu Optional[List[UploadFile]],
@@ -432,7 +448,7 @@ async def export_diff_template(
 
 # ── Xuất đúng các bản ghi đang lọc trên giao diện (không phải toàn bộ) ──────
 @router.post("/export-filtered")
-async def export_filtered(
+def export_filtered(
     payload: ExportFilteredIn,
     current: dict = Depends(require_feature("menu.swift_recon")),
 ):
@@ -459,7 +475,7 @@ async def export_filtered(
 
 # ── Lịch sử đối chiếu (đọc từ bảng swift_recon_history) ─────────────────────
 @router.get("/history")
-async def get_history(
+def get_history(
     limit: int = 100,
     db=Depends(get_db),
     current: dict = Depends(require_feature("menu.swift_recon")),
@@ -468,7 +484,7 @@ async def get_history(
 
 
 @router.get("/history/{history_id}/export-raw")
-async def export_raw_from_history(
+def export_raw_from_history(
     history_id: int,
     side: str = "a",  # "a" hoặc "b"
     db=Depends(get_db),
@@ -506,7 +522,7 @@ async def export_raw_from_history(
 
 
 @router.get("/history/{history_id}")
-async def get_history_detail(
+def get_history_detail(
     history_id: int,
     db=Depends(get_db),
     current: dict = Depends(require_feature("menu.swift_recon")),
@@ -518,7 +534,7 @@ async def get_history_detail(
 
 
 @router.get("/history/{history_id}/export-summary")
-async def export_summary_from_history(
+def export_summary_from_history(
     history_id: int,
     db=Depends(get_db),
     current: dict = Depends(require_feature("menu.swift_recon")),
@@ -549,7 +565,7 @@ async def export_summary_from_history(
 
 
 @router.get("/history/{history_id}/export-diff")
-async def export_diff_from_history(
+def export_diff_from_history(
     history_id: int,
     db=Depends(get_db),
     current: dict = Depends(require_feature("menu.swift_recon")),
