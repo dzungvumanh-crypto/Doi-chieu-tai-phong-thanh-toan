@@ -29,7 +29,51 @@ from urllib.parse import quote
 
 from nicegui import ui
 import frontend.api_client as api
-from frontend.shared import _sidebar, _content_area, _page_header, _card, _require_auth, _handle_api_error
+from frontend.shared import _sidebar, _content_area, _require_auth, _handle_api_error
+
+# Card kiểu "modern SaaS" RIÊNG cho trang này (icon trong khung màu + tiêu đề,
+# không dùng banner phủ màu như `_card()` dùng chung ở frontend/shared.py —
+# đó là component DÙNG CHUNG CHO CẢ APP, không đổi ở đây để tránh ảnh hưởng
+# các trang khác; trang này tự định nghĩa card riêng thay vì import `_card`).
+# Mỗi tuple: (nền icon, màu chữ/icon, viền dòng tiêu đề, nền mờ phủ CẢ card —
+# đủ 8 màu để mỗi bảng nhỏ (PaymentHub + 5 Cổng CITAD) có 1 màu riêng, dễ
+# phân biệt khi cuộn qua nhiều bảng liên tiếp giống hệt nhau về cấu trúc).
+_ACCENT = {
+    "blue": ("bg-blue-50", "text-blue-600", "border-blue-100", "bg-blue-50/40"),
+    "indigo": ("bg-indigo-50", "text-indigo-600", "border-indigo-100", "bg-indigo-50/40"),
+    "emerald": ("bg-emerald-50", "text-emerald-600", "border-emerald-100", "bg-emerald-50/40"),
+    "amber": ("bg-amber-50", "text-amber-600", "border-amber-100", "bg-amber-50/40"),
+    "rose": ("bg-rose-50", "text-rose-600", "border-rose-100", "bg-rose-50/40"),
+    "cyan": ("bg-cyan-50", "text-cyan-600", "border-cyan-100", "bg-cyan-50/40"),
+    "purple": ("bg-purple-50", "text-purple-600", "border-purple-100", "bg-purple-50/40"),
+    "teal": ("bg-teal-50", "text-teal-600", "border-teal-100", "bg-teal-50/40"),
+}
+
+
+def _navy_header(title: str, subtitle: str = ""):
+    """Thanh tiêu đề nền xanh navy đậm, chữ trắng — theo mẫu banner người
+    dùng gửi (ảnh Kanban Board), thay cho `_page_header()` dùng chung ở
+    frontend/shared.py (chỉ đổi RIÊNG ở trang này, không đụng shared.py)."""
+    with ui.column().classes(
+        "w-full bg-blue-950 rounded-2xl px-6 py-4 mb-4 gap-0.5"
+    ):
+        ui.label(title).classes("text-xl font-bold text-white tracking-wide")
+        if subtitle:
+            ui.label(subtitle).classes("text-blue-200 text-sm")
+
+
+def _section_card(title: str, icon: str = "table_chart", accent: str = "blue"):
+    bg, text, border, wash = _ACCENT.get(accent, _ACCENT["blue"])
+    card = ui.card().classes(
+        "w-full rounded-2xl border border-gray-200 shadow-sm hover:shadow-md "
+        f"transition-shadow duration-200 {wash} p-0 overflow-hidden"
+    )
+    with card:
+        with ui.row().classes(f"w-full items-center gap-3 px-5 py-4 border-b {border} bg-gray-50/60"):
+            with ui.row().classes(f"items-center justify-center w-9 h-9 rounded-xl {bg} shrink-0"):
+                ui.icon(icon).classes(f"{text} text-lg")
+            ui.label(title).classes("font-semibold text-gray-800 text-[15px]")
+    return card
 
 # ID cố định của extension_citad — suy ra tất định từ khoá "key" gắn cứng
 # trong extension_citad/manifest.json (không phụ thuộc máy/thư mục cài đặt
@@ -46,8 +90,8 @@ def _date_picker_input(label: str, initial: str = None):
     with ui.input(label, value=initial).props('dense outlined').classes('w-44') as date_input:
         with date_input.add_slot('append'):
             ui.icon('edit_calendar').on('click', lambda: menu.open()).classes('cursor-pointer')
-    with ui.menu() as menu:
-        ui.date(value=initial, mask='DD/MM/YYYY').bind_value(date_input)
+        with ui.menu() as menu:
+            ui.date(value=initial, mask='DD/MM/YYYY', on_change=menu.close).bind_value(date_input)
     return date_input
 
 
@@ -63,11 +107,14 @@ def _date_filter_input(label: str):
     with ui.input(label, value="").props("dense outlined clearable").classes("w-44") as date_input:
         with date_input.add_slot("append"):
             ui.icon("edit_calendar").on("click", lambda: menu.open()).classes("cursor-pointer")
-    with ui.menu() as menu:
-        ui.date(mask="DD/MM/YYYY").bind_value(date_input)
+        with ui.menu() as menu:
+            ui.date(mask="DD/MM/YYYY", on_change=menu.close).bind_value(date_input)
     return date_input
 
 CONGS = [1, 9, 18, 17, 12]
+# Mỗi cổng 1 màu riêng (xem `_ACCENT`) — chỉ để phân biệt trực quan giữa
+# các bảng nhập liệu giống hệt nhau về cấu trúc, không mang ý nghĩa nghiệp vụ.
+CONG_ACCENT = {1: "indigo", 9: "purple", 18: "rose", 17: "cyan", 12: "teal"}
 CURS = ['VNĐ', 'USD', 'EUR']
 FK = ['di_ih_m', 'di_ih_t', 'di_il_m', 'di_il_t', 'den_ih_m', 'den_ih_t', 'den_il_m', 'den_il_t']
 FK_LBL = ['ĐI IH Món', 'ĐI IH Tiền', 'ĐI IL Món', 'ĐI IL Tiền',
@@ -124,13 +171,13 @@ def doi_chieu_citad_page():
         khi cùng set 1 thuộc tính — dễ ra chữ xám mờ trên nền xanh, khó đọc)."""
         if row_idx == 0:
             tokens = [t for t in extra.split() if not t.startswith("text-gray")]
-            cls = " ".join(tokens) + " bg-blue-600 text-white py-1"
+            cls = " ".join(tokens) + " bg-blue-600 text-white py-2"
         else:
-            cls = extra
+            cls = extra + " py-1.5"
         if col_idx < n_cols - 1:
-            cls += " border-r border-gray-700 pr-2"
+            cls += " border-r border-gray-300 pr-2"
         if row_idx < n_rows - 1:
-            cls += " border-b border-gray-700 pb-1"
+            cls += " border-b border-gray-300 pb-1"
         return cls
 
     def recalc():
@@ -169,14 +216,18 @@ def doi_chieu_citad_page():
         with container:
             n_cols = len(FK) + 1
             n_rows = len(row_keys) + 1
-            with ui.grid(columns=n_cols).classes("w-full gap-1 border border-gray-700 rounded p-2"):
-                ui.label("Loại tiền").classes(_grid_cell_cls(0, 0, n_rows, n_cols, "text-xs font-bold text-gray-500"))
+            with ui.grid(columns=n_cols).classes("w-full gap-0 p-4"):
+                ui.label("Loại tiền").classes(
+                    _grid_cell_cls(0, 0, n_rows, n_cols, "text-sm font-bold text-gray-500 text-center")
+                )
                 for col_idx, lbl in enumerate(FK_LBL, start=1):
                     ui.label(lbl).classes(
-                        _grid_cell_cls(0, col_idx, n_rows, n_cols, "text-xs font-bold text-gray-500 text-center")
+                        _grid_cell_cls(0, col_idx, n_rows, n_cols, "text-sm font-bold text-gray-500 text-center")
                     )
                 for row_idx, cur in enumerate(row_keys, start=1):
-                    ui.label(cur).classes(_grid_cell_cls(row_idx, 0, n_rows, n_cols, "text-sm font-bold self-center"))
+                    ui.label(cur).classes(
+                        _grid_cell_cls(row_idx, 0, n_rows, n_cols, "text-sm font-bold self-center text-center")
+                    )
                     entry_store[cur] = {}
                     for col_idx, fk in enumerate(FK, start=1):
                         def _on_change(e, _c=cur, _f=fk, _dd=data_store):
@@ -185,6 +236,7 @@ def doi_chieu_citad_page():
                         inp = ui.input(value='', on_change=_on_change).props(
                             'dense outlined input-class="text-right"'
                         ).classes(_grid_cell_cls(row_idx, col_idx, n_rows, n_cols, "w-full"))
+                        inp.on('blur', lambda _, _i=inp: setattr(_i, 'value', fmt(_i.value)))
                         entry_store[cur][fk] = inp
 
     def build_napas_ebank_grid(container):
@@ -197,23 +249,29 @@ def doi_chieu_citad_page():
         with container:
             n_cols = len(FK) + 1
             n_rows = 3
-            with ui.grid(columns=n_cols).classes("w-full gap-1 border border-gray-700 rounded p-2"):
-                ui.label("Loại tiền").classes(_grid_cell_cls(0, 0, n_rows, n_cols, "text-xs font-bold text-gray-500"))
+            with ui.grid(columns=n_cols).classes("w-full gap-0 p-4"):
+                ui.label("Loại tiền").classes(
+                    _grid_cell_cls(0, 0, n_rows, n_cols, "text-sm font-bold text-gray-500 text-center")
+                )
                 for col_idx, lbl in enumerate(FK_LBL, start=1):
                     ui.label(lbl).classes(
-                        _grid_cell_cls(0, col_idx, n_rows, n_cols, "text-xs font-bold text-gray-500 text-center")
+                        _grid_cell_cls(0, col_idx, n_rows, n_cols, "text-sm font-bold text-gray-500 text-center")
                     )
                 for row_idx, (label, store, entry_store) in enumerate([
                     ("Napas", data["napas"], inputs["napasE"]),
                     ("Ebanking", data["ebank"], inputs["ebankE"]),
                 ], start=1):
-                    ui.label(label).classes(_grid_cell_cls(row_idx, 0, n_rows, n_cols, "text-sm font-bold self-center"))
+                    ui.label(label).classes(
+                        _grid_cell_cls(row_idx, 0, n_rows, n_cols, "text-sm font-bold self-center text-center")
+                    )
                     for col_idx, fk in enumerate(FK, start=1):
                         cell_cls = _grid_cell_cls(row_idx, col_idx, n_rows, n_cols, "w-full")
                         if fk not in ("den_ih_m", "den_ih_t"):
                             # Cột không dùng — giữ ô trống để chiếm đúng bề rộng cột,
                             # không phải ô nhập (không có ý nghĩa nghiệp vụ ở đây).
-                            ui.label("").classes(cell_cls)
+                            # Tô nền xám nhạt để rõ ràng đây là ô "không dùng" có chủ
+                            # đích, không phải lỗi giao diện làm mất ô.
+                            ui.label("").classes(cell_cls + " bg-gray-50")
                             continue
 
                         def _on_change(e, _f=fk, _dd=store):
@@ -222,6 +280,7 @@ def doi_chieu_citad_page():
                         inp = ui.input(value='', on_change=_on_change).props(
                             'dense outlined input-class="text-right"'
                         ).classes(cell_cls)
+                        inp.on('blur', lambda _, _i=inp: setattr(_i, 'value', fmt(_i.value)))
                         entry_store[fk] = inp
 
     def apply_session_data(sess: dict):
@@ -372,7 +431,9 @@ def doi_chieu_citad_page():
                     dialog.close()
                     await _save_session_now()
 
-                ui.button("Xác nhận lưu", icon="save", on_click=_confirm).classes("bg-green-700 text-white")
+                ui.button("Xác nhận lưu", icon="save", on_click=_confirm).classes(
+                    "bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg"
+                )
         dialog.open()
 
     async def _load_history_entry(history_id: int, ngay_hien_thi: str):
@@ -396,19 +457,19 @@ def doi_chieu_citad_page():
             if not entries:
                 ui.label("Chưa có ai lưu đối chiếu cho ngày này.").classes("text-sm text-gray-500 p-2")
                 return
-            with ui.column().classes("w-full border border-gray-700 rounded gap-0"):
+            with ui.column().classes("w-full border border-gray-200 rounded-xl gap-0 overflow-hidden"):
                 for i, r in enumerate(entries, start=1):
                     is_last = i == len(entries)
                     with ui.row().classes(
                         "w-full items-center gap-0 px-2 py-1"
-                        + ("" if is_last else " border-b border-gray-700")
-                        + (" bg-green-900" if is_last else "")
+                        + ("" if is_last else " border-b border-gray-200")
+                        + (" bg-emerald-50" if is_last else "")
                     ):
-                        ui.label(str(i)).classes("text-xs text-gray-500 w-6 border-r border-gray-700 pr-2 mr-2")
+                        ui.label(str(i)).classes("text-xs text-gray-500 w-6 border-r border-gray-200 pr-2 mr-2")
                         ui.label(r["username"]).classes(
-                            "text-sm font-bold flex-grow border-r border-gray-700 pr-2 mr-2"
+                            "text-sm font-bold flex-grow border-r border-gray-200 pr-2 mr-2"
                         )
-                        ui.label(r["created_at"]).classes("text-xs text-gray-400 border-r border-gray-700 pr-2 mr-2")
+                        ui.label(r["created_at"]).classes("text-xs text-gray-400 border-r border-gray-200 pr-2 mr-2")
                         if is_last:
                             ui.badge("Bản hiện hành").props('color="positive"').classes("mr-2")
                         ui.button(
@@ -458,14 +519,14 @@ def doi_chieu_citad_page():
                     )
                     ui.label(msg).classes("text-gray-400 p-4")
                     return
-                with ui.column().classes("w-full border border-gray-700 rounded gap-0"):
+                with ui.column().classes("w-full border border-gray-200 rounded-xl gap-0 overflow-hidden"):
                     with ui.row().classes(
-                        "w-full items-center gap-0 px-3 py-2 bg-blue-600 border-b border-gray-700 "
+                        "w-full items-center gap-0 px-3 py-2 bg-blue-600 border-b border-gray-200 "
                         "text-xs font-semibold text-white"
                     ):
-                        ui.label("Ngày").classes("w-28 border-r border-gray-700 pr-2 mr-2")
-                        ui.label("Người lưu sau cùng").classes("w-44 border-r border-gray-700 pr-2 mr-2")
-                        ui.label("Số lần lưu").classes("w-24 text-center border-r border-gray-700 pr-2 mr-2")
+                        ui.label("Ngày").classes("w-28 border-r border-white/30 pr-2 mr-2")
+                        ui.label("Người lưu sau cùng").classes("w-44 border-r border-white/30 pr-2 mr-2")
+                        ui.label("Số lần lưu").classes("w-24 text-center border-r border-white/30 pr-2 mr-2")
                         ui.label("Cập nhật lúc").classes("flex-1")
                     for i, r in enumerate(rows, start=1):
                         _day_row(r, is_last=(i == len(rows)))
@@ -473,14 +534,14 @@ def doi_chieu_citad_page():
         def _day_row(r: dict, is_last: bool):
             ngay = r["ngay"]
             expanded = {"open": False}
-            with ui.column().classes("w-full" + ("" if is_last else " border-b border-gray-700")):
+            with ui.column().classes("w-full" + ("" if is_last else " border-b border-gray-200")):
                 with ui.row().classes(
-                    "w-full items-center gap-0 px-3 py-2 cursor-pointer hover:bg-gray-800"
+                    "w-full items-center gap-0 px-3 py-2 cursor-pointer hover:bg-gray-50"
                 ) as row:
-                    ui.label(ngay).classes("w-28 font-bold border-r border-gray-700 pr-2 mr-2")
-                    ui.label(r["updated_by_username"] or "—").classes("w-44 border-r border-gray-700 pr-2 mr-2")
+                    ui.label(ngay).classes("w-28 font-bold border-r border-gray-200 pr-2 mr-2")
+                    ui.label(r["updated_by_username"] or "—").classes("w-44 border-r border-gray-200 pr-2 mr-2")
                     ui.label(str(r["so_lan_luu"])).classes(
-                        "w-24 text-center border-r border-gray-700 pr-2 mr-2"
+                        "w-24 text-center border-r border-gray-200 pr-2 mr-2"
                     )
                     ui.label(r["updated_at"] or "").classes("flex-1 text-xs text-gray-400")
                     ui.icon("expand_more").classes("text-gray-500")
@@ -558,11 +619,11 @@ def doi_chieu_citad_page():
             return
         if status.get("connected"):
             last = status.get("last_used_at") or "chưa dùng lần nào"
-            ext_status_label.text = f"🟢 Đã kết nối — lần dùng gần nhất: {last}"
-            ext_status_label.classes(remove="text-gray-500", add="text-green-700")
+            ext_status_label.text = f"● Đã kết nối — lần dùng gần nhất: {last}"
+            ext_status_label.classes(remove="bg-gray-100 text-gray-500", add="bg-emerald-50 text-emerald-700")
         else:
-            ext_status_label.text = "⚪ Chưa kết nối Extension"
-            ext_status_label.classes(remove="text-green-700", add="text-gray-500")
+            ext_status_label.text = "○ Chưa kết nối Extension"
+            ext_status_label.classes(remove="bg-emerald-50 text-emerald-700", add="bg-gray-100 text-gray-500")
 
     async def _try_auto_connect_extension(token: str) -> bool:
         """Gửi trực tiếp {server, token} vào extension qua
@@ -616,7 +677,9 @@ def doi_chieu_citad_page():
                     "này — không cần dán tay. Có thể dùng ngay các nút \"Lấy dữ liệu\" trên "
                     "trang CITAD/PaymentHub."
                 ).classes("text-sm text-gray-500")
-                ui.button("Đóng", on_click=dialog.close).classes("bg-green-700 text-white mt-2")
+                ui.button("Đóng", on_click=dialog.close).classes(
+                    "bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg mt-2"
+                )
             else:
                 ui.label("Mã kết nối Extension mới").classes("text-lg font-bold")
                 ui.label(
@@ -633,7 +696,9 @@ def doi_chieu_citad_page():
                             f"navigator.clipboard.writeText({token_input.value!r})"
                         ),
                     ).props("outline")
-                    ui.button("Đóng", on_click=dialog.close).classes("bg-red-800 text-white")
+                    ui.button("Đóng", on_click=dialog.close).classes(
+                        "bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg"
+                    )
         dialog.open()
         await refresh_extension_status()
 
@@ -664,20 +729,24 @@ def doi_chieu_citad_page():
     with ui.row().classes("w-full"):
         _sidebar("doi_chieu_citad")
         with _content_area():
-            _page_header(
-                "Đối chiếu CITAD ↔ PaymentHub",
+            _navy_header(
+                "ĐỐI CHIẾU CITAD ↔ PAYMENTHUB",
                 "Đối chiếu số liệu CITAD (NHNN) với PaymentHub (Agribank) theo từng ngày",
             )
 
-            with ui.tabs().classes("w-full") as tabs:
+            with ui.tabs().props(
+                "active-color=indigo-600 indicator-color=indigo-600 align=left"
+            ).classes("w-full border-b border-gray-200 mb-1") as tabs:
                 tab_doi_chieu = ui.tab("Đối chiếu")
                 tab_lich_su = ui.tab("Lịch sử")
 
             with ui.tab_panels(tabs, value=tab_doi_chieu).classes("w-full"):
                 with ui.tab_panel(tab_doi_chieu):
-                    with _card("Kết nối Extension (nạp số liệu tự động từ CITAD/PaymentHub)"):
+                    with _section_card("Kết nối Extension (nạp số liệu tự động từ CITAD/PaymentHub)", icon="extension", accent="indigo"):
                         with ui.row().classes("w-full items-center gap-3 p-2 flex-wrap"):
-                            ext_status_label = ui.label("Đang kiểm tra...").classes("text-sm text-gray-500")
+                            ext_status_label = ui.label("Đang kiểm tra...").classes(
+                                "text-xs font-medium px-3 py-1.5 rounded-full bg-gray-100 text-gray-500"
+                            )
                             ui.button(
                                 "Tải Extension (.zip)", icon="download", on_click=do_download_extension
                             ).props("outline")
@@ -699,35 +768,46 @@ def doi_chieu_citad_page():
                         ).classes("text-xs text-gray-500 px-2 -mt-2")
                         ui.timer(0.1, refresh_extension_status, once=True)
 
-                    with ui.row().classes("w-full items-end gap-3 flex-wrap mb-2"):
+                    with ui.row().classes(
+                        "w-full items-end gap-3 flex-wrap mb-2 bg-white rounded-2xl "
+                        "border border-gray-200 shadow-sm p-4"
+                    ):
                         ngay_input = _date_picker_input("Ngày")
                         lap_bang_input = ui.input("Lập bảng").props("dense outlined").classes("w-48")
                         kiem_soat_input = ui.input("Kiểm soát").props("dense outlined").classes("w-48")
-                        ui.button("Nạp CITAD", icon="cloud_download", on_click=load_citad_buffer).props("outline")
-                        ui.button("Nạp PaymentHub", icon="cloud_download", on_click=load_phub_buffer).props("outline")
-                        ui.button("Lưu", icon="save", on_click=do_save_session).classes("bg-green-700 text-white")
-                        ui.button("Xoá", icon="delete", on_click=do_reset).props("outline color=red")
-                        ui.button("Xuất Excel", icon="grid_on", on_click=do_export).classes("bg-red-800 text-white")
+                        ui.button("Nạp CITAD", icon="cloud_download", on_click=load_citad_buffer).props("outline").classes("rounded-lg")
+                        ui.button("Nạp PaymentHub", icon="cloud_download", on_click=load_phub_buffer).props("outline").classes("rounded-lg")
+                        ui.button("Lưu", icon="save", on_click=do_save_session).classes(
+                            "bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg"
+                        )
+                        ui.button("Xoá", icon="delete", on_click=do_reset).props("outline color=red").classes("rounded-lg")
+                        ui.button("Xuất Excel", icon="grid_on", on_click=do_export).classes(
+                            "bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg"
+                        )
 
-                    with _card("PaymentHub – Agribank"):
+                    with _section_card("PaymentHub – Agribank", icon="account_balance", accent="blue"):
                         build_grid(ui.column().classes("w-full"), inputs["phE"], data["phD"], CURS)
 
                     for cong in CONGS:
-                        with _card(f"Cổng {cong} – CITAD (NHNN)"):
+                        with _section_card(
+                            f"Cổng {cong} – CITAD (NHNN)", icon="swap_horiz", accent=CONG_ACCENT.get(cong, "blue")
+                        ):
                             build_grid(ui.column().classes("w-full"), inputs["gE"][cong], data["gD"][cong], CURS)
 
-                    with _card("Napas / Ebanking (bổ sung)"):
+                    with _section_card("Napas / Ebanking (bổ sung)", icon="add_card", accent="amber"):
                         build_napas_ebank_grid(ui.column().classes("w-full"))
 
-                    with _card("Bảng chênh lệch (CITAD − PaymentHub)"):
+                    with _section_card("Bảng chênh lệch (CITAD − PaymentHub)", icon="balance", accent="emerald"):
                         n_cols = len(FK) + 1
                         n_rows = 4  # 1 dòng tiêu đề + CITAD/PaymentHub/CHÊNH LỆCH
 
-                        with ui.grid(columns=n_cols).classes("w-full gap-1 border border-gray-700 rounded p-2"):
-                            ui.label("").classes(_grid_cell_cls(0, 0, n_rows, n_cols, "text-xs"))
+                        with ui.grid(columns=n_cols).classes("w-full gap-0 p-4"):
+                            ui.label("").classes(
+                                _grid_cell_cls(0, 0, n_rows, n_cols, "text-sm font-bold text-gray-500 text-center")
+                            )
                             for col_idx, lbl in enumerate(FK_LBL, start=1):
                                 ui.label(lbl).classes(
-                                    _grid_cell_cls(0, col_idx, n_rows, n_cols, "text-xs font-bold text-gray-500 text-center")
+                                    _grid_cell_cls(0, col_idx, n_rows, n_cols, "text-sm font-bold text-gray-500 text-center")
                                 )
                             for row_idx, (key, label, color) in enumerate([
                                 ("citad", "CITAD", "text-sky-600"),

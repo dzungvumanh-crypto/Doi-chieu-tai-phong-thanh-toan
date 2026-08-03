@@ -11,10 +11,21 @@ backend mỗi lần đổi bộ lọc — chỉ gọi backend khi: đối soát,
 """
 import asyncio
 import datetime
+import hashlib
 
 from nicegui import ui
 import frontend.api_client as api
-from frontend.shared import _sidebar, _content_area, _page_header, _card, _require_auth, _handle_api_error
+from frontend.shared import _sidebar, _content_area, _card, _require_auth, _handle_api_error
+
+
+def _navy_header(title: str, subtitle: str = ""):
+    """Thanh tiêu đề nền xanh navy đậm, chữ trắng — theo mẫu banner người
+    dùng gửi (ảnh Kanban Board), thay cho `_page_header()` dùng chung ở
+    frontend/shared.py (chỉ đổi RIÊNG ở trang này, không đụng shared.py)."""
+    with ui.column().classes("w-full bg-blue-950 rounded-2xl px-6 py-4 mb-4 gap-0.5"):
+        ui.label(title).classes("text-xl font-bold text-white tracking-wide")
+        if subtitle:
+            ui.label(subtitle).classes("text-blue-200 text-sm")
 
 
 def _date_picker_input(label: str, initial: str = None):
@@ -24,8 +35,8 @@ def _date_picker_input(label: str, initial: str = None):
     with ui.input(label, value=initial).props('dense outlined').classes('w-44') as date_input:
         with date_input.add_slot('append'):
             ui.icon('edit_calendar').on('click', lambda: menu.open()).classes('cursor-pointer')
-    with ui.menu() as menu:
-        ui.date(value=initial, mask='DD/MM/YYYY').bind_value(date_input)
+        with ui.menu() as menu:
+            ui.date(value=initial, mask='DD/MM/YYYY', on_change=menu.close).bind_value(date_input)
     return date_input
 
 STATUS_LBL = {
@@ -73,8 +84,8 @@ def doi_soat_citad_page():
     with ui.row().classes("w-full"):
         _sidebar("doi_soat_citad")
         with _content_area():
-            _page_header(
-                "Đối soát CITAD ↔ IPCAS",
+            _navy_header(
+                "ĐỐI SOÁT CITAD ↔ IPCAS",
                 "Đối soát lệnh chuyển tiền giữa CITAD (NHNN) và IPCAS (Agribank) theo ngày chấm",
             )
 
@@ -129,6 +140,17 @@ def _build_input_panel(tab, state, tabs, result_tab, history_refresh):
                 state["ngay_cham"] = ngay_input.value
                 with msg_area:
                     ui.label("Đối soát xong — xem kết quả ở tab tương ứng.").classes("text-green-700")
+                    warnings = data.get("parse_warnings") or []
+                    if warnings:
+                        # 1 phần file lỗi nhưng vẫn còn file khác đọc được nên
+                        # backend không chặn hẳn (422) — kết quả vẫn ra nhưng
+                        # THIẾU dữ liệu từ (các) file lỗi, phải cảnh báo rõ,
+                        # không để người dùng tưởng đối soát đầy đủ.
+                        ui.label(
+                            f"⚠ {len(warnings)} file bị lỗi khi đọc, kết quả có thể THIẾU dữ liệu:"
+                        ).classes("text-orange-600 font-bold mt-1")
+                        for w in warnings:
+                            ui.label(f"• {w}").classes("text-orange-600 text-sm")
                 if not data.get("history_saved", True):
                     ui.notify(
                         f"Đối soát xong nhưng LƯU LỊCH SỬ bị lỗi: {data.get('history_error')}",
@@ -154,10 +176,53 @@ def _upload_column(label, accept, state, key):
     with ui.column().classes("gap-1"):
         ui.label(label).classes("text-sm font-medium")
         status = ui.label("Chưa chọn file nào").classes("text-gray-500 text-xs")
+        file_rows_area = ui.column().classes("gap-0.5 mt-1")
+        # Song song với state[key] (name, bytes) — chỉ để phát hiện + hiển thị
+        # file trùng NỘI DUNG (hash SHA-256 của toàn bộ byte), KHÔNG dựa vào
+        # tên file — người dùng có thể lỡ chọn cùng 1 file gốc 2 lần dưới 2
+        # tên khác nhau (VD tải lại/đổi tên bản sao) mà không nhận ra.
+        entries = []
+
+        def render_rows():
+            file_rows_area.clear()
+            with file_rows_area:
+                for ent in entries:
+                    if ent["dup"]:
+                        ui.label(f"⚠ {ent['name']} — TRÙNG NỘI DUNG với file khác trong nhóm này").classes(
+                            "text-xs text-red-600 font-bold"
+                        )
+                    else:
+                        ui.label(ent["name"]).classes("text-xs text-gray-500")
 
         def on_upload(e):
-            state[key].append((e.name, e.content.read()))
-            status.text = f"Đã chọn {len(state[key])} file: " + ", ".join(n for n, _ in state[key])
+            content = e.content.read()
+            file_hash = hashlib.sha256(content).hexdigest()
+            dup_with = [ent["name"] for ent in entries if ent["hash"] == file_hash]
+
+            state[key].append((e.name, content))
+            entries.append({"name": e.name, "hash": file_hash, "dup": bool(dup_with)})
+
+            if dup_with:
+                # Đánh dấu ĐỎ cả file cũ lẫn file mới (không chỉ file vừa chọn) —
+                # người dùng cần thấy rõ CẢ 2 bản đang trùng nhau để tự quyết định
+                # xoá bớt, không tự động loại bỏ thay người dùng.
+                for ent in entries:
+                    if ent["hash"] == file_hash:
+                        ent["dup"] = True
+                with ui.dialog() as dlg, ui.card().classes("max-w-md"):
+                    ui.label("⚠ Phát hiện file trùng nội dung").classes("text-lg font-bold text-red-600")
+                    ui.label(
+                        f'File "{e.name}" có NỘI DUNG GIỐNG Y HỆT (từng byte) với file đã chọn trước đó '
+                        f'trong nhóm "{label}" — dù tên file khác nhau. Có thể bạn đã lỡ chọn trùng 1 file, '
+                        f'khiến số liệu bị tính 2 lần khi đối soát. Các file đang trùng nhau:'
+                    ).classes("text-sm text-gray-700")
+                    for n in dup_with + [e.name]:
+                        ui.label(f"• {n}").classes("text-sm text-red-600 font-mono")
+                    ui.button("Đã hiểu", on_click=dlg.close).classes("bg-red-600 text-white mt-3")
+                dlg.open()
+
+            render_rows()
+            status.text = f"Đã chọn {len(state[key])} file"
             status.classes(remove="text-gray-500", add="text-green-700")
 
         uploader = ui.upload(multiple=True, auto_upload=True, on_upload=on_upload).props(
@@ -166,6 +231,8 @@ def _upload_column(label, accept, state, key):
 
         def clear():
             state[key] = []
+            entries.clear()
+            file_rows_area.clear()
             status.text = "Chưa chọn file nào"
             status.classes(remove="text-green-700", add="text-gray-500")
             # state[key] chỉ là danh sách phía Python — bản thân ui.upload (QUploader)
@@ -214,16 +281,18 @@ def _build_result_panel(tab, state):
                 n_only_agri = sum(1 for r in lech if r.get("status") in ("only_ipcas", "only_hub"))
                 n_lech_tt = sum(1 for r in lech if r.get("status") == "lech_trang_thai")
                 n_total = n_khop + len(lech)
-                for lbl, val, color in [
-                    ("TỔNG LỆNH", n_total, "text-gray-800"),
-                    ("KHỚP", n_khop, "text-green-700"),
-                    ("CHỈ CITAD", n_only_citad, "text-red-600"),
-                    ("CHỈ AGRIBANK", n_only_agri, "text-blue-600"),
-                    ("LỆCH TRẠNG THÁI", n_lech_tt, "text-orange-600"),
+                for lbl, val, bg, border, text in [
+                    ("TỔNG LỆNH", n_total, "bg-slate-50", "border-slate-400", "text-slate-800"),
+                    ("KHỚP", n_khop, "bg-emerald-50", "border-emerald-500", "text-emerald-700"),
+                    ("CHỈ CITAD", n_only_citad, "bg-red-50", "border-red-500", "text-red-600"),
+                    ("CHỈ AGRIBANK", n_only_agri, "bg-blue-50", "border-blue-500", "text-blue-600"),
+                    ("LỆCH TRẠNG THÁI", n_lech_tt, "bg-amber-50", "border-amber-500", "text-orange-600"),
                 ]:
-                    with ui.card().classes("px-4 py-2"):
-                        ui.label(lbl).classes("text-xs text-gray-500")
-                        ui.label(f"{val:,}").classes(f"text-xl font-bold {color}")
+                    with ui.card().classes(
+                        f"px-4 py-2 min-w-[150px] rounded-xl shadow-sm border-l-4 {border} {bg}"
+                    ):
+                        ui.label(lbl).classes("text-xs font-medium text-gray-500")
+                        ui.label(f"{val:,}").classes(f"text-xl font-bold {text}")
 
             if lech is None:
                 return
@@ -324,10 +393,19 @@ def _build_result_panel(tab, state):
                                 "dense flat size=sm" + ("" if page_state["num"] < n_pages else " disable")
                             )
                     cols = [
-                        {"name": k, "label": lbl, "field": k, "align": "right" if k == "so_tien" else "left", "sortable": True}
+                        {
+                            "name": k, "label": lbl, "field": k,
+                            "align": "center", "sortable": True,
+                            # field vẫn giữ SỐ THÔ (để sắp xếp đúng thứ tự số học) —
+                            # :format là hàm JS Quasar dùng RIÊNG để hiển thị, có dấu
+                            # phẩy ngăn cách hàng nghìn giống bảng Đối chiếu CITAD.
+                            **({":format": "val => val ? val.toLocaleString('en-US') : val"} if k == "so_tien" else {}),
+                        }
                         for k, lbl in DISPLAY_COLS
                     ]
-                    with ui.table(columns=cols, rows=page_rows, row_key="stt").classes("w-full"):
+                    with ui.table(columns=cols, rows=page_rows, row_key="stt").props(
+                        'bordered separator="cell" table-header-class="bg-blue-900 text-white"'
+                    ).classes("w-full"):
                         pass
                     current_view["rows"] = rows
 
@@ -368,7 +446,7 @@ def _build_history_panel(tab, history_refresh):
                     ui.label("Chưa có lịch sử đối soát nào").classes("text-gray-400 p-4")
                     return
                 with ui.row().classes(
-                    "w-full items-center gap-3 px-3 py-2 bg-gray-100 rounded text-xs font-semibold text-gray-600"
+                    "w-full items-center gap-3 px-3 py-2 bg-blue-900 rounded text-xs font-semibold text-white"
                 ):
                     ui.label("Thời gian").classes("w-36")
                     ui.label("Ngày chấm").classes("w-24")
@@ -423,7 +501,11 @@ def _build_history_panel(tab, history_refresh):
                             ui.button(icon="chevron_left", on_click=_prev).props("dense flat size=sm")
                             ui.button(icon="chevron_right", on_click=_next).props("dense flat size=sm")
                     cols = [
-                        {"name": k, "label": lbl, "field": k, "align": "left", "sortable": True}
+                        {
+                            "name": k, "label": lbl, "field": k,
+                            "align": "center", "sortable": True,
+                            **({":format": "val => val ? val.toLocaleString('en-US') : val"} if k == "so_tien" else {}),
+                        }
                         for k, lbl in [("status", "Trạng thái"), ("so_gd", "Số GD"), ("key_agri", "Key Agribank"),
                                        ("so_tien", "Số tiền"), ("ngay", "Ngày"), ("nh_nhan", "Ngân hàng")]
                     ]
@@ -435,7 +517,9 @@ def _build_history_panel(tab, history_refresh):
                         }
                         for rec in page_records
                     ]
-                    with ui.table(columns=cols, rows=rows, row_key="so_gd").classes("w-full"):
+                    with ui.table(columns=cols, rows=rows, row_key="so_gd").props(
+                        'bordered separator="cell" table-header-class="bg-blue-900 text-white"'
+                    ).classes("w-full"):
                         pass
 
             async def xem_chi_tiet():
