@@ -18,6 +18,13 @@ _MUTATING = {"POST", "PUT", "PATCH", "DELETE"}
 _SKIP_PREFIXES = (
     "/api/auth",    # login/logout → login_logs; đổi mật khẩu → write_audit
     "/api/staff",   # tạo/sửa/xóa/import User → write_audit ngữ nghĩa
+    # Đối chiếu CITAD (Extension) — 2 endpoint này xác thực bằng header
+    # X-Extension-Token, không phải JWT, nên _actor_id() ở dưới luôn trả
+    # None cho chúng dù backend tra được đúng người từ token. Đã tự ghi
+    # audit đúng actor_id trong _resolve_extension_owner()
+    # (backend/api/doi_chieu_citad.py) — bỏ qua ở đây để tránh ghi trùng.
+    "/api/doi-chieu-citad/citad-buffer",
+    "/api/doi-chieu-citad/paymenthub-buffer",
 )
 
 

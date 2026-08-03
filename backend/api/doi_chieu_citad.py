@@ -40,10 +40,10 @@ from __future__ import annotations
 
 import io
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 
-from backend.database import get_db
+from backend.database import get_db, write_audit
 from backend.core.deps import require_feature
 from backend.schemas.doi_chieu_citad import (
     CitadBufferIn,
@@ -58,16 +58,33 @@ from backend.services import doi_chieu_citad_service as svc
 router = APIRouter(prefix="/api/doi-chieu-citad", tags=["doi-chieu-citad"])
 
 
-def _resolve_extension_owner(x_extension_token: str = Header(default=""), db=Depends(get_db)) -> str:
+def _resolve_extension_owner(
+    request: Request, x_extension_token: str = Header(default=""), db=Depends(get_db)
+) -> str:
     """Dependency cho 2 endpoint POST buffer — trả về username chủ token
-    hợp lệ, KHÔNG bao giờ tin owner do client tự khai."""
-    owner = svc.resolve_extension_token(db, x_extension_token)
-    if not owner:
+    hợp lệ, KHÔNG bao giờ tin owner do client tự khai.
+
+    Tự ghi audit ở ĐÂY (write_audit, actor_id đúng người) thay vì để
+    AuditMiddleware chung ghi — middleware đó chỉ đọc JWT qua header
+    Authorization, không biết X-Extension-Token là ai nên mọi dòng audit từ
+    Extension trước đây đều có actor_id=NULL dù backend tra được chính xác.
+    Do middleware chung vẫn sẽ ghi thêm 1 dòng NỮA (actor_id=NULL) cho cùng
+    request nếu không chặn, đã thêm '/api/doi-chieu-citad/citad-buffer' và
+    '/paymenthub-buffer' vào _SKIP_PREFIXES trong
+    backend/core/audit_middleware.py (đúng mục đích _SKIP_PREFIXES ghi sẵn:
+    "tự ghi audit riêng ... middleware bỏ qua") — PHẢI sửa cùng lúc, không
+    thì sẽ có double audit."""
+    resolved = svc.resolve_extension_token(db, x_extension_token)
+    if not resolved:
         raise HTTPException(
             status_code=403,
             detail="Mã kết nối Extension không hợp lệ hoặc đã bị thu hồi — "
             "vào /doi_chieu_citad, mục 'Kết nối Extension' để tạo mã mới.",
         )
+    staff_id, owner = resolved
+    write_audit(db, actor_id=staff_id, action=request.method, target_type=request.url.path,
+                detail="qua Extension (X-Extension-Token)")
+    db.commit()
     return owner
 
 

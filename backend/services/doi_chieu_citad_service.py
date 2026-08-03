@@ -127,10 +127,13 @@ def generate_extension_token(db: sqlite3.Connection, staff_id: int) -> str:
 _LAST_USED_THROTTLE_SECONDS = 300
 
 
-def resolve_extension_token(db: sqlite3.Connection, token: str) -> str | None:
-    """Token hợp lệ -> trả về username chủ token. Chỉ ghi lại last_used_at
-    nếu đã "cũ" hơn _LAST_USED_THROTTLE_SECONDS (xem comment trên) — phần
-    lớn request KHÔNG còn tốn giao dịch ghi nào ở đây nữa.
+def resolve_extension_token(db: sqlite3.Connection, token: str) -> tuple[int, str] | None:
+    """Token hợp lệ -> trả về (staff_id, username) chủ token — staff_id để
+    caller ghi audit đúng người (xem `_resolve_extension_owner` trong
+    `backend/api/doi_chieu_citad.py`), username để dùng làm khoá buffer như
+    trước. Chỉ ghi lại last_used_at nếu đã "cũ" hơn
+    _LAST_USED_THROTTLE_SECONDS (xem comment trên) — phần lớn request KHÔNG
+    còn tốn giao dịch ghi nào ở đây nữa.
     Token sai/rỗng/đã bị thu hồi -> None (caller trả 403, không đoán bừa)."""
     if not token:
         return None
@@ -153,7 +156,7 @@ def resolve_extension_token(db: sqlite3.Connection, token: str) -> str | None:
             (now, row["staff_id"]),
         )
         db.commit()
-    return row["username"]
+    return row["staff_id"], row["username"]
 
 
 def revoke_extension_token(db: sqlite3.Connection, staff_id: int) -> None:
