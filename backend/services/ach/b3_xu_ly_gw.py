@@ -156,11 +156,15 @@ def xu_ly_gw(xlsx_path: str, session_id: str, log_callback=None):
 
     # Bước 1 — session đúng (đã đảm bảo ở _chon_du_lieu_gw, lọc lại ở đây để phòng vệ)
     # + bỏ trạng thái ACH từ chối (PrcFlg).
-    mask = (
-        (df['SessionId'].astype(str).str.strip() == str(session_id)) &
-        (df['PrcFlg'].astype(str).str.strip() != 'ACH Từ chối')
-    )
-    df = df[mask].copy()
+    n_truoc          = len(df)
+    mask_sai_session = df['SessionId'].astype(str).str.strip() != str(session_id)
+    mask_tu_choi     = df['PrcFlg'].astype(str).str.strip() == 'ACH Từ chối'
+    df = df[~mask_sai_session & ~mask_tu_choi].copy()
+    # Audit 2026-08-04 — trước đây chỉ log tổng số dòng còn lại (dòng 176-177),
+    # không tách được đóng góp của từng điều kiện lọc khi cần chẩn đoán.
+    _log(f'[B3] Bước 1: loại {int(mask_sai_session.sum()):,} dòng sai session, '
+         f'{int((mask_tu_choi & ~mask_sai_session).sum()):,} dòng "ACH Từ chối" '
+         f'(giữ {len(df):,}/{n_truoc:,} dòng)')
 
     # Bước 2 — định dạng lại STTLMAMT (bỏ chữ VND, ra số).
     df['STTLMAMT'] = (

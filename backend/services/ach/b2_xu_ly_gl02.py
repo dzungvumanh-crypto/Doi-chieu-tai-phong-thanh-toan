@@ -17,25 +17,39 @@ from .zip_utils import (
 )
 
 _COLS_REQUIRED = ['TRBRCD', 'REFERENCE', 'DRAMOUNT', 'CRAMOUNT']
+# LOCAC = mã đơn vị hạch toán kênh ACH trên GL02 (nguồn: modules/b2_xu_ly_gl02.py
+# bản gốc PR). CUSTOMER lọc thêm vì 1 LOCAC=502003 có thể có nhiều CUSTOMER khác
+# nhau — chỉ đúng mã khách hàng này mới là giao dịch kênh ACH thật.
 _LOCAC_TARGET  = '502003'
 _CUSTOMER_ACH  = '1000-003526275'
 
 
-def _doc_zip(zip_path: str) -> pd.DataFrame:
+def _log_loc_filter(df_truoc: pd.DataFrame, df_sau: pd.DataFrame, ten_file: str, log_callback) -> None:
+    """Audit 2026-08-04 — trước đây lọc LOCAC/CUSTOMER (2 nhánh 7z/pyzipper) không
+    log số dòng bị loại, dễ khiến 1 chi nhánh/khách hàng biến mất khỏi NPO mà
+    không ai biết."""
+    _log = log_callback or print
+    n_truoc, n_sau = len(df_truoc), len(df_sau)
+    if n_truoc != n_sau:
+        _log(f'[B2] {ten_file}: loại {n_truoc - n_sau:,} dòng theo LOCAC={_LOCAC_TARGET}/'
+             f'CUSTOMER={_CUSTOMER_ACH} (giữ {n_sau:,}/{n_truoc:,})')
+
+
+def _doc_zip(zip_path: str, log_callback=None) -> pd.DataFrame:
     result = _find_zip_tool()
     if result:
         tool_path, tool_type = result
         print(f'[B2][DIAG] {tool_type}: {tool_path} | {os.path.basename(zip_path)}')
         try:
-            return _doc_zip_tool(zip_path, tool_path, tool_type)
+            return _doc_zip_tool(zip_path, tool_path, tool_type, log_callback)
         except Exception as e:
             print(f'[B2][WARN] {tool_type} lỗi ({e}), dùng pyzipper...')
     else:
         print(f'[B2][DIAG] 7z/WinRAR NOT found — pyzipper | {os.path.basename(zip_path)}')
-    return _doc_zip_pyzipper(zip_path)
+    return _doc_zip_pyzipper(zip_path, log_callback)
 
 
-def _doc_zip_tool(zip_path: str, tool_path: str, tool_type: str) -> pd.DataFrame:
+def _doc_zip_tool(zip_path: str, tool_path: str, tool_type: str, log_callback=None) -> pd.DataFrame:
     tmp_dir = tempfile.mkdtemp(prefix='ach_b2_')
     try:
         _t  = time.perf_counter()
@@ -61,10 +75,12 @@ def _doc_zip_tool(zip_path: str, tool_path: str, tool_type: str) -> pd.DataFrame
                     missing = [c for c in _COLS_REQUIRED if c not in chunk.columns]
                     if missing:
                         raise ValueError(f'Thiếu cột: {missing}')
+                chunk_truoc = chunk
                 if 'LOCAC' in chunk.columns:
                     chunk = chunk[chunk['LOCAC'].str.strip() == _LOCAC_TARGET]
                 if 'CUSTOMER' in chunk.columns:
                     chunk = chunk[chunk['CUSTOMER'].str.strip() == _CUSTOMER_ACH]
+                _log_loc_filter(chunk_truoc, chunk, name, log_callback)
                 if not chunk.empty:
                     file_frames.append(chunk)
             if file_frames:
@@ -74,7 +90,7 @@ def _doc_zip_tool(zip_path: str, tool_path: str, tool_type: str) -> pd.DataFrame
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
-def _doc_zip_pyzipper(zip_path: str) -> pd.DataFrame:
+def _doc_zip_pyzipper(zip_path: str, log_callback=None) -> pd.DataFrame:
     frames = []
     with pyzipper.AESZipFile(zip_path, 'r') as z:
         z.setpassword(ZIP_PASSWORD)
@@ -92,10 +108,12 @@ def _doc_zip_pyzipper(zip_path: str) -> pd.DataFrame:
             missing = [c for c in _COLS_REQUIRED if c not in df.columns]
             if missing:
                 raise ValueError(f'Thiếu cột: {missing}')
+            df_truoc = df
             if 'LOCAC' in df.columns:
                 df = df[df['LOCAC'].str.strip() == _LOCAC_TARGET]
             if 'CUSTOMER' in df.columns:
                 df = df[df['CUSTOMER'].str.strip() == _CUSTOMER_ACH]
+            _log_loc_filter(df_truoc, df, name, log_callback)
             if not df.empty:
                 frames.append(df)
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=_COLS_NPO)
@@ -103,7 +121,7 @@ def _doc_zip_pyzipper(zip_path: str) -> pd.DataFrame:
 
 def xu_ly_gl02(zip_path: str, log_callback=None):
     """Doc GL02 zip, trả về (df_npo_di, df_npo_den)."""
-    df = _doc_zip(zip_path)
+    df = _doc_zip(zip_path, log_callback)
 
     df['CRAMOUNT'] = pd.to_numeric(df['CRAMOUNT'], errors='coerce').fillna(0).astype('int64')
     df['DRAMOUNT'] = pd.to_numeric(df['DRAMOUNT'], errors='coerce').fillna(0).astype('int64')

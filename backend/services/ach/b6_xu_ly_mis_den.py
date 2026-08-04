@@ -107,11 +107,13 @@ def _doc_zip_pyzipper(zip_path: str, session_filter: str = None) -> pd.DataFrame
 
 def xu_ly_mis_den(zip_paths: List[str], session_id: str, ngay_doi_chieu: datetime, log_callback=None):
     """Đọc 2 ZIP MIS_DEN song song, trả về df_mis_den đã xử lý."""
-    sid = str(session_id)
+    _log = log_callback or print
+    sid  = str(session_id)
     with ThreadPoolExecutor(max_workers=2) as ex:
         futures = [ex.submit(_doc_zip, p, sid) for p in zip_paths]
         frames  = [f.result() for f in futures]
     df = pd.concat(frames, ignore_index=True)
+    n_tho = len(df)
 
     df['NGAY_GIAO_DICH'] = pd.to_datetime(
         df['NGAY_GIAO_DICH'].str.strip(), format='%d/%m/%Y', errors='coerce'
@@ -124,9 +126,15 @@ def xu_ly_mis_den(zip_paths: List[str], session_id: str, ngay_doi_chieu: datetim
         df['SESSION_NULL'] & (df['NGAY_GIAO_DICH'] == ngay_ts)
     )
     df = df[mask_ok].copy()
+    _log(f'[B6] Loại {n_tho - len(df):,} dòng sai session/ngày (giữ {len(df):,}/{n_tho:,} dòng thô)')
 
     df['NGAY_GIAO_DICH'] = df['NGAY_GIAO_DICH'].dt.strftime('%d/%m/%Y').fillna('')
+    # Bỏ trạng thái RJCT — Business Rule gốc (Đối chiếu ACH/docs/KE_HOACH_CODE.md,
+    # BƯỚC 6.3: "Bỏ TRANG_THAI_LENH = 'RJCT'", giữ lại tất cả còn lại kể cả trạng
+    # thái null/rỗng). Audit 2026-08-04: trước đây không log số dòng bị loại.
+    n_truoc_rjct = len(df)
     df = df[df['TRANG_THAI_LENH'].astype(str).str.strip() != 'RJCT'].copy()
+    _log(f"[B6] Loại {n_truoc_rjct - len(df):,} dòng TRANG_THAI_LENH='RJCT' (BƯỚC 6.3)")
     df['SO_TIEN'] = pd.to_numeric(df['SO_TIEN'], errors='coerce').fillna(0).astype('int64')
     df['TRACE']   = df['TRACE'].fillna('').astype(str).str.strip().str.lstrip("'0")
     df['KEY_DEN_HUB'] = (
@@ -135,6 +143,5 @@ def xu_ly_mis_den(zip_paths: List[str], session_id: str, ngay_doi_chieu: datetim
         + df['SO_TIEN'].astype(str)
     )
 
-    _log = log_callback or print
     _log(f'[B6] MIS_DEN | {len(df):,} dòng sau lọc')
     return df.reset_index(drop=True)
