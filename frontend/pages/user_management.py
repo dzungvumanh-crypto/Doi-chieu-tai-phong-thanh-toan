@@ -100,7 +100,7 @@ async def user_management_page():
         if is_admin:
             with ui.card().classes("w-full max-w-xl shadow-sm rounded-xl bg-white p-6"):
                 ui.label("Đặt lại mật khẩu cho người dùng khác").classes("text-lg font-bold text-orange-700 mb-1")
-                ui.label("Chỉ Quản trị viên mới thấy mục này").classes("text-xs text-gray-400 mb-4")
+                ui.label("Chỉ Quản trị viên mới thấy mục này").classes("text-xs text-gray-500 mb-4")
 
                 try:
                     staff_list = await asyncio.to_thread(api.get, "/api/staff/", {"active_only": True})

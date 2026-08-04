@@ -9,6 +9,17 @@ sys.path.insert(0, ROOT_DIR)
 from dotenv import load_dotenv
 load_dotenv(os.path.join(ROOT_DIR, ".env"), override=True)
 
+# Fail fast — khoá ký cookie app.storage.user. Không fallback: giá trị đoán được
+# cho phép forge cookie phiên đăng nhập. Cùng lý do với SECRET_KEY ở backend/core/config.py
+STORAGE_SECRET = os.getenv("STORAGE_SECRET", "").strip()
+if not STORAGE_SECRET:
+    raise RuntimeError(
+        "Biến môi trường STORAGE_SECRET chưa được đặt.\n"
+        "Tạo key mạnh: python -c \"import secrets; print(secrets.token_hex(32))\"\n"
+        "Sau đó thêm vào file .env:  STORAGE_SECRET=<giá_trị_vừa_tạo>\n"
+        "Lưu ý: đổi giá trị này sẽ đăng xuất toàn bộ người dùng đang đăng nhập."
+    )
+
 from nicegui import ui, app
 
 # Serve static assets (logo, etc.)
@@ -46,6 +57,6 @@ if __name__ in {"__main__", "__mp_main__"}:
         dark=False,
         reload=False,
         show=False,
-        storage_secret="ksnb-htvh-agribank-2025",
+        storage_secret=STORAGE_SECRET,
         reconnect_timeout=30,
     )

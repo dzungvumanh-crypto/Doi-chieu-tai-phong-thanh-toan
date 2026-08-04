@@ -4,6 +4,119 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 03/08/2026 Đối chiếu điện SWIFT - Nạp nhiều file một lúc và xuất Excel theo đúng biểu mẫu:
+    + Mỗi ô chọn file nay **nhận nhiều file cùng lúc**. SAA phải xuất làm nhiều đợt trong ngày thì cứ thả hết vào đúng ô đó, hệ thống tự gộp lại trước khi đối chiếu — không phải đối chiếu từng đợt rồi tự cộng tay
+    + Mỗi file vẫn báo riêng ✅/❌ và **số dòng đọc được ngay khi vừa chọn**, kèm dòng tổng cộng. Chọn nhầm thì bấm ✕ ở cạnh tên file để bỏ ra, không phải làm lại từ đầu
+    + Giới hạn **10 file hoặc 100 MB mỗi ô**. Vượt quá thì báo ngay và không nạp thêm — tránh làm hệ thống hết bộ nhớ ảnh hưởng sang các màn hình khác
+    + Thêm **2 nút xuất Excel theo biểu mẫu**: *Tổng hợp theo biểu mẫu* (Mẫu 04) và *Chi tiết lệch theo biểu mẫu* (Mẫu 05). File tải về đã có sẵn quốc hiệu, tiêu đề, dòng ký — in ra trình ký được ngay, không phải chép số sang mẫu Word thủ công
+    + Hai biểu mẫu này tự phân loại điện về **SWIFT / IPCAS / P-HUB** dựa trên cột *Channel Process* có sẵn trong file Quản lý điện
+    + ⚠️ **Cột "Chênh lệch" đổi cách tính — số sẽ khác trước.** Trước đây lấy hiệu số lượng hai bên; nay đếm đúng số điện **thực sự không khớp**. Ví dụ một loại điện có 5 bản ghi ở mỗi bên nhưng là 5 giao dịch hoàn toàn khác nhau: trước báo *Chênh lệch = 0* (trông như khớp), nay báo đúng *10*. Số mới mới là số đúng, nhưng ai đang theo dõi bằng file riêng sẽ thấy lệch với hệ thống
+    + ⚠️ **Các lần đối chiếu đã lưu ở tab Lịch sử TRƯỚC đợt này vẫn giữ con số theo cách tính cũ.** Không so trực tiếp cột Chênh lệch của bản ghi cũ với bản ghi mới
+    + ⚠️ Trên hai biểu mẫu mới, ô **ngày đối chiếu** đang bị điền ngày in báo cáo. Đối chiếu số liệu của ngày hôm trước thì **sửa lại ngày này bằng tay trước khi trình ký**
+
+- 31/07/2026 Đăng nhập - Thêm lối tắt tới các hệ thống nghiệp vụ ngay ở màn hình đăng nhập:
+    + Hai bên ô đăng nhập nay có **3 cụm đường dẫn**: *Thanh toán trong nước* (10 lối tắt), *Thanh toán quốc tế* (2), *Nội bộ* (4). Click là mở tab mới, không phải nhớ hay gõ lại địa chỉ
+    + Mỗi lối tắt hiện **tên tiếng Việt** thay vì địa chỉ khó nhớ — ví dụ *"Hệ thống TT ĐTLNH - Cổng 12"* thay cho `http://10.0.85.100/CITAD9212`. Rê chuột lên vẫn xem được địa chỉ đầy đủ trước khi bấm
+    + Các lối tắt **vẫn dùng được khi hệ thống đang lỗi** — chúng không phụ thuộc vào máy chủ của phần mềm này
+    + Đã bỏ đường dẫn `www.swift.com`
+    + Sửa lỗi ô *Tên đăng nhập* và *Mật khẩu* bị **tô nền xanh** khi trình duyệt tự điền mật khẩu đã lưu
+
+- 31/07/2026 Toàn hệ thống - Đầu mỗi trang hiện rõ đang đứng ở đâu trong menu:
+    + Trước đây đầu trang chỉ có tên màn hình (*"Báo cáo hậu kiểm"*), không biết mục đó nằm ở phòng nào, nhóm nào. Nay hiện cả đường đi: *Phòng KSNB & HTVH / Báo cáo / **Báo cáo hậu kiểm***
+    + Áp dụng cho **tất cả các màn hình** có trong menu. Trang chủ và Quản lý User nằm ở cấp ngoài cùng nên không có phần dẫn đường
+
+- 30/07/2026 Trang chủ - Xem hết trang không phải cuộn:
+    + Trang chủ trước đây **dài hơn màn hình**, phải cuộn xuống mới thấy hết biểu đồ nộp chứng từ. Nay toàn bộ nằm vừa trong một màn hình, không còn thanh cuộn
+    + Ô "Người dùng" và "Phòng nghiệp vụ" chuyển lên nằm cùng hàng với tiêu đề — vẫn đủ thông tin, gọn hơn
+    + Khối **Nghỉ phép hôm nay** phóng to: số nghỉ to và rõ hơn hẳn
+    + Biểu đồ nộp chứng từ thu gọn lại, cột không còn bè ra choán màn hình
+    + Ô phòng Nostro rút gọn thành **"Phòng QLTK Nostro, Vostro"** để nhãn nằm một dòng như các ô khác. Tên đầy đủ trên phiếu nghỉ phép, bìa tập và báo cáo **không đổi**
+
+- 30/07/2026 Khởi động - `start.bat` không cài lại thư viện mỗi lần đổi máy:
+    + Mang thư mục dự án (chạy từ USB) sang máy khác thì mỗi lần bấm `start.bat` đều báo *".venv bị hỏng"* rồi **cài lại toàn bộ thư viện, mất vài phút**. Nay script vá môi trường tại chỗ, **khoảng 2 giây là chạy được**
+    + Khi thật sự có lỗi, script **in rõ nguyên văn lỗi** ra màn hình thay vì im lặng cài lại
+    + ⚠️ Máy mới cần **Python 3.10.x**. Máy chỉ có 3.11/3.12 thì vẫn phải cài lại thư viện và **cần internet**
+    + Lần chạy đầu sau đợt cập nhật này sẽ cài lại thư viện **một lần** (khoảng 10 giây), sau đó bỏ qua
+
+- 29/07/2026 Bàn giao chứng từ - Mỗi phòng chỉ còn thấy chứng từ của phòng mình:
+    + Trước đây bất kỳ ai đăng nhập được đều **tải được file Excel chứa toàn bộ chứng từ của mọi phòng** — kể cả tài khoản không được cấp quyền gì trong menu Bàn giao. Xem lịch sử một chứng từ bất kỳ cũng vậy
+    + Người có quyền nhập còn **xem được lưới của phòng khác và nhập chứng từ cho cán bộ phòng khác**
+    + Nay ô chọn Phòng chỉ hiện phòng của chính mình; mọi thao tác trên chứng từ phòng khác đều bị chặn, kể cả khi gọi thẳng vào hệ thống mà không qua màn hình
+    + **Hậu kiểm viên, Trưởng/Phó phòng KSNB và Giám đốc/Phó Giám đốc không đổi** — vẫn xem và làm việc trên mọi phòng như trước
+    + ⚠️ **Cán bộ đã chuyển phòng không tự mở lại được chứng từ tháng còn ở phòng cũ.** Chứng từ vẫn nằm nguyên ở phòng cũ và không mất đi, nhưng từ nay việc nhập bù cho những tháng đó phải nhờ hậu kiểm viên làm
+
+- 29/07/2026 Nghỉ phép - Tính đúng hạn mức khi nghỉ vắt qua giao thừa dương lịch:
+    + Đơn nghỉ liền mạch bắc qua ngày 31/12 (ví dụ nghỉ từ 29/12 đến 02/01) trước đây bị **trừ trọn vào năm cũ**, kể cả những ngày thực tế đã sang năm mới. Người nghỉ bị mất oan số ngày phép đúng bằng phần vắt sang năm sau
+    + Nay mỗi ngày được tính vào đúng năm của nó. Ví dụ nghỉ 29/12 → 02/01 thì 3 ngày làm việc cuối tháng 12 trừ vào năm cũ, 2 ngày đầu tháng 1 trừ vào năm mới
+    + ⚠️ **Số ngày phép chuyển kỳ của một số người sẽ tăng lên sau đợt cập nhật này.** Đây là con số đúng, không phải lỗi — nhưng ai đang theo dõi số phép bằng sổ tay hoặc file Excel riêng sẽ thấy lệch với hệ thống. Cần đối chiếu lại với những người từng nghỉ bắc qua Tết dương lịch
+
+- 29/07/2026 Nghỉ phép - Không còn trừ phép hai lần khi bấm duyệt nhanh:
+    + Bấm nút duyệt hai lần liên tiếp, hoặc hai người cùng duyệt một đơn ở hai máy, trước đây có thể **trừ hạn mức phép hai lần** cho cùng một đơn
+    + Nay chỉ lần bấm đầu tiên có hiệu lực, lần sau báo *"Đơn đã được xử lý bởi một yêu cầu khác, vui lòng tải lại trang"*
+
+- 29/07/2026 Nghỉ phép - Ô "Phép còn lại" hiện đúng số:
+    + Ô này trước đây tính theo công thức thâm niên, **bỏ qua hạn mức phòng Tổng hợp nhập tay và bỏ qua ngày phép chuyển từ năm trước sang**. Người xem thấy một số ở đầu trang, bấm vào tab Hạn mức phép lại thấy số khác
+    + Nay hai chỗ dùng chung một cách tính, không còn lệch
+
+- 29/07/2026 Nghỉ phép - Phiếu in ra và quyền xem đơn:
+    + Phiếu nghỉ phép trước đây **luôn in cứng chức danh "TUQ. GIÁM ĐỐC / PHÓ GIÁM ĐỐC"** ở ô ký, kể cả khi người duyệt là Giám đốc. Nay in đúng chức danh của người thực sự ký
+    + Nghỉ nhiều ngày liền nhau mà chỉ cách nhau thứ 7, Chủ nhật (ví dụ nghỉ thứ 6 rồi nghỉ tiếp thứ 2) nay ghi gọn *"Từ ngày… đến hết ngày…"* thay vì liệt kê rời từng ngày
+    + **Người khai báo hộ nay xem lại được chính đơn mình đã khai.** Trước đây khai xong thì không mở ra xem, không xem lịch sử, cũng không tải phiếu về được
+
+- 29/07/2026 Nghỉ phép - Số ngày trong báo cáo và bảng hạn mức:
+    + Cột "Số ngày" ở Trang tổng hợp của lãnh đạo và ở file Excel báo cáo năm trước đây **đếm cả thứ 7, Chủ nhật và ngày lễ**, nên luôn cao hơn số ngày thực bị trừ vào hạn mức. Nay tính giống hệt cách trừ hạn mức
+    + Công thức gợi ý khi sửa hạn mức thủ công sửa lại thành **12 ngày + 1 ngày mỗi 4 năm công tác** (trước ghi nhầm mỗi 5 năm, lệch với cách hệ thống thực sự tính)
+    + Bảng Hạn mức phép thêm cột **Mã cán bộ**
+    + Nhập hạn mức từ Excel: ô "Đã nghỉ" ghi số lẻ nửa ngày nay **hiện cảnh báo trước khi áp dụng**, vì hệ thống không có khái niệm nửa ngày phép và sẽ làm tròn
+
+- 29/07/2026 Trang chủ - Bảng nghỉ hôm nay giữ nguyên cách đếm:
+    + Bảng "Nghỉ phép hôm nay" **chỉ đếm đơn đã được duyệt xong**. Người vừa nộp đơn mà cấp trên chưa duyệt thì vẫn tính là đang đi làm
+    + Lịch tháng trong menu Nghỉ phép thì ngược lại — có hiện cả đơn đang chờ, nhưng ở đó mỗi dòng đều kèm nhãn trạng thái nên không gây nhầm. Hai chỗ khác nhau là **có chủ đích**
+
+- 28/07/2026 Sidebar - Việc chờ xử lý hiện ở mọi trang:
+    + Số việc đang chờ trước đây chỉ hiện ở **3 trong 21 trang**. Đứng ở trang Lưu trữ thì không hề biết mình có 12 chứng từ chờ xác nhận. Nay khối **Công việc chờ xử lý** nằm đầu sidebar, theo người dùng đi khắp hệ thống, tự ẩn khi không còn việc
+    + Bấm vào mở **màn hình theo dõi riêng**: chứng từ của ai, phòng nào, ai nộp, ngày nào — và bấm tiếp là nhảy thẳng tới đúng ô cần xử lý, không phải tự tìm lại
+    + Khối "Công việc đang chờ" trên Trang chủ đã gỡ. Cùng một thông tin không nên có hai chỗ hiển thị, nhất là khi một chỗ bắt phải quay về Trang chủ mới thấy
+    + Số trên sidebar cập nhật khi chuyển trang, **không tự làm mới tại chỗ**. Duyệt xong một đơn thì số đúng ngay ở trang kế tiếp
+
+- 28/07/2026 Phân quyền - Chuyên viên vào được Trang chủ:
+    + Chuyên viên bấm "Trang chủ" trước đây bị bật ngược về Bàn giao chứng từ — mục menu nhìn thấy nhưng không bao giờ vào được. Nay **mọi vai trò đều đăng nhập vào Trang chủ** và ra vào bình thường
+    + Ô "Người dùng" trên Trang chủ đổi nhãn thành **"Nhân sự phòng"** với chuyên viên / trưởng phòng / phó phòng, vì con số họ nhận được vốn chỉ tính phòng mình — nhãn cũ dễ bị đọc nhầm thành toàn trung tâm
+    + ⚠️ **Phân quyền nhóm nay có tác dụng thật với chuyên viên.** Trước đây admin cấp quyền Báo cáo / Lưu trữ / Nhân sự / Đóng tập cho một chuyên viên thì màn hình phân quyền báo đã cấp, menu cũng hiện ra, nhưng bấm vào bị đá ra mà không báo gì — do còn một lớp chặn cứng theo chức danh nằm đè lên. Đã gỡ lớp đó. **Chuyên viên không tự nhiên có thêm quyền gì**; chỉ khác là quyền đã cấp thì dùng được
+
+- 28/07/2026
+    + Khoá ký phiên đăng nhập trước đây nằm cứng trong mã nguồn
+    + `start.bat` **tự sinh khoá mới** nếu file `.env` chưa có
+    + Thư viện giao diện được nâng cấp
+
+- 28/07/2026 Bảo mật - Vá thư viện xử lý file tải lên:
+    + Thư viện đọc file tải lên đang dùng có **16 lỗ hổng đã biết**, trong đó 4 lỗi nghiêm trọng (1 lỗi cho phép ghi file tuỳ ý, 3 lỗi làm treo máy chủ). Đã nâng lên bản vá sạch hoàn toàn
+    + Ảnh hưởng mọi chỗ tải file: nạp ZIP đối chiếu SWIFT, chấm 459901, nhập hạn mức phép, nhập DB nhân sự
+    + Khoá ký phiên đăng nhập chuyển từ trong mã nguồn ra file cấu hình — trước đây ai đọc được mã nguồn đều có thể giả mạo phiên của người khác
+
+- 28/07/2026 Toàn hệ thống - Tải nhầm file không còn làm treo trang:
+    + Tải lên file `.zip` **hỏng hoặc bị đổi tên đuôi** trước đây báo "Internal Server Error" khó hiểu. Nay báo rõ: *"File tải lên không phải file .zip hợp lệ — có thể tải bị lỗi, bị cắt dở, hoặc chỉ được đổi đuôi tên thành .zip"*
+    + File `.zip` **có đặt mật khẩu** nay báo *"hãy giải nén ra rồi tải lại file bên trong"* thay vì lỗi hệ thống
+    + Chấm 459901: ZIP không chứa file `.csv`, hoặc file `.csv` thiếu cột, nay **báo đúng thiếu cột nào** thay vì dòng chữ "list index out of range"
+    + Sửa lỗi ngầm: mỗi lần tải nhầm file, máy chủ để lại một thư mục rác không bao giờ xoá. Lặp lại nhiều lần sẽ làm đầy ổ đĩa
+
+- 28/07/2026 Phòng KSNB&HTVH - Sửa lỗi tháng/năm không hợp lệ:
+    + Gọi lưới bàn giao với tháng ngoài 1–12 (qua đường dẫn trực tiếp, không qua giao diện) làm treo trang. Nay báo lỗi rõ ràng
+    + **Báo cáo bàn giao trả sai số liệu âm thầm**: hỏi "tháng 0" thì hệ thống lặng lẽ trả về số liệu **tháng hiện tại** kèm nhãn tháng hiện tại, không cảnh báo gì. Nay báo *"Tháng phải nằm trong khoảng 1–12"*
+    + Lịch nghỉ phép cũng chặn năm ngoài 2000–2100 (trước đó mới chặn tháng)
+
+- 28/07/2026 Giao diện - Chữ dễ đọc hơn và thống nhất phông:
+    + Chữ ghi chú màu xám nhạt trên toàn hệ thống (**72 chỗ**) đổi sang đậm hơn một bậc — trước đây độ tương phản chỉ đạt 2,5 trên chuẩn tối thiểu 4,5, khó đọc với người phải nhìn bảng số liệu cả ngày
+    + **Phông chữ Inter nay dùng cho cả 21 trang**. Trước đây chỉ trang Đăng nhập và Đổi mật khẩu có, 19 trang còn lại rơi về phông mặc định — đăng nhập một kiểu chữ, vào việc lại một kiểu khác
+    + Thống nhất nhãn trạng thái chứng từ: "Bị từ chối" ở màn Bàn giao và "Từ chối" ở màn Nghỉ phép nay dùng chung một chữ **"Từ chối"**
+
+- 28/07/2026 Kỹ thuật - Dọn nền
+    + Nâng thư viện giao diện lên bản mới (vượt qua một mốc thay đổi lớn). Đã đối chiếu từng dòng CSS của hai bản để chắc chắn **không có gì đổi hình dạng** — 70 khung thẻ trong hệ thống giữ nguyên
+    + Sửa bẫy trong hệ thống nâng cấp cơ sở dữ liệu: có 18 câu lệnh trỏ sai tên bảng và **thất bại im lặng** mỗi lần khởi động. Chưa gây hại, nhưng người viết tính năng tiếp theo mà chép nhầm mẫu này thì cột dữ liệu sẽ không được thêm mà không ai biết
+    + Cảnh báo khi khởi động nếu máy chủ đang mở ra mạng nội bộ mà chưa cấu hình đúng — gồm cả việc **trang liệt kê toàn bộ 144 cửa giao tiếp đang mở công khai** cho ai vào được cổng 8000
+    + Sửa 4 chỗ tài liệu hướng dẫn nội bộ mô tả sai kiến trúc (chỉ tới file không tồn tại, sai tên bảng dữ liệu)
+    + Thêm `frontend/ui_kit.py` — gom màu, nhãn trạng thái, khung chờ về một chỗ. Trước đây nhãn trạng thái được định nghĩa ở 3 nơi theo 3 cách khác nhau
+
 - 27/07/2026 Giao diện - Nới rộng vùng nội dung trên màn hình nhỏ:
     + Máy có màn hình rộng từ 1440px trở xuống (máy trạm 1366×768) khi mở phần mềm sẽ **tự thu gọn sidebar**, vùng xem bảng rộng thêm khoảng 184px. Ai đã tự bấm nút thu gọn/mở rộng một lần thì phần mềm nghe theo lựa chọn đó, không tự đổi nữa
     + Bảng rộng hơn màn hình nay **kéo ngang xem được**. Trước đây phần vượt khung bị cắt mất, không có cách nào kéo ra xem

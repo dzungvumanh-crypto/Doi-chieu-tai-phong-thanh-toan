@@ -5,6 +5,7 @@ from datetime import date, timedelta
 
 from nicegui import ui
 import frontend.api_client as api
+import frontend.ui_kit as ui_kit
 from frontend.shared import (
     _sidebar, _content_area, _page_header, _require_auth, _handle_api_error,
 )
@@ -106,7 +107,7 @@ async def duty_schedule_page():
                     with schedule_area:
                         if not shifts:
                             ui.label("Chưa có lịch trực tuần này. Nhấn 'Tạo lịch' để sinh tự động.").classes(
-                                "text-gray-400 italic py-4"
+                                "text-gray-500 italic py-4"
                             )
                             return
 
@@ -122,8 +123,9 @@ async def duty_schedule_page():
                                 sp_name = '<span class="text-red-600">Thiếu SP!</span>'
                             nv_names = "<br>".join(_h(nv["full_name"]) for nv in (s.get("nvs") or []))
                             stype_label = _h(_SHIFT_TYPE_LABEL.get(s["shift_type"], s["shift_type"]))
-                            status_label = "Đã xác nhận" if s["status"] == "confirmed" else "Bản thảo"
-                            status_cls = "color:#16A34A;font-weight:600" if s["status"] == "confirmed" else "color:#6B7280"
+                            status_label = ui_kit.status_label(s["status"])
+                            status_cls = f'color:{ui_kit.status_dot(s["status"])}' + (
+                                ";font-weight:600" if s["status"] == "confirmed" else "")
                             rows_html += (
                                 f'<tr style="background:{bg}">'
                                 f'<td class="{_TD}">{_h(s["shift_date"])}</td>'
@@ -266,7 +268,7 @@ async def duty_schedule_page():
                     with staff_area:
                         if can_manage_staff:
                             ui.label("Thay đổi checkbox tự lưu ngay (không cần bấm Save).").classes(
-                                "text-xs text-gray-400 mb-3"
+                                "text-xs text-gray-500 mb-3"
                             )
 
                         with ui.column().classes("w-full gap-1"):
@@ -417,7 +419,7 @@ async def duty_schedule_page():
                         # ── Danh sách vắng mặt theo ngày ────────────────────
                         if not data:
                             ui.label("Không có khai báo vắng mặt nào trong tháng này.").classes(
-                                "text-gray-400 italic py-4"
+                                "text-gray-500 italic py-4"
                             )
                         else:
                             # Gom nhóm theo ngày
@@ -568,7 +570,7 @@ async def duty_schedule_page():
 
                     with specials_area:
                         if not data:
-                            ui.label("Không có ngày đặc biệt nào.").classes("text-gray-400 italic py-4")
+                            ui.label("Không có ngày đặc biệt nào.").classes("text-gray-500 italic py-4")
                         else:
                             for item in data:
                                 bg_cls, type_lbl, text_cls = _SPECIAL_COLOR.get(
@@ -581,7 +583,7 @@ async def duty_schedule_page():
                                     if item.get("is_confirmed"):
                                         ui.icon("check_circle").classes("text-green-600")
                                     else:
-                                        ui.label("Chưa xác nhận").classes("text-xs text-gray-400")
+                                        ui.label("Chưa xác nhận").classes("text-xs text-gray-500")
                                     if can_manage_cfg:
                                         if not item.get("is_confirmed"):
                                             async def _confirm_sp(sid=item["id"]):

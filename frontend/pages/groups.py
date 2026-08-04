@@ -150,7 +150,7 @@ async def groups_page():
             container.clear()
             with container:
                 if not sorted_members:
-                    ui.label("Chưa có thành viên nào").classes("text-gray-400 text-sm py-2")
+                    ui.label("Chưa có thành viên nào").classes("text-gray-500 text-sm py-2")
                     return
                 with ui.row().classes(
                     "w-full px-2 py-1.5 bg-red-50 border-b border-red-100 "
@@ -287,12 +287,12 @@ async def groups_page():
                     ui.label("Danh sách nhóm").classes("font-semibold text-red-800 flex-1")
                     ui.button(icon="add", on_click=create_group_dialog).props("flat dense").classes("text-red-700")
                 with ui.column().classes("w-full p-2 gap-1") as group_list_col:
-                    ui.label("Đang tải...").classes("text-gray-400 text-sm px-2 py-2")
+                    ui.label("Đang tải...").classes("text-gray-500 text-sm px-2 py-2")
 
             # Cột phải — chi tiết nhóm
             with ui.column().classes("flex-1 gap-4"):
                 with ui.label("Chọn một nhóm ở bên trái để xem chi tiết") as no_selection_label:
-                    no_selection_label.classes("text-gray-400 text-sm py-4")
+                    no_selection_label.classes("text-gray-500 text-sm py-4")
 
                 with ui.column().classes("w-full gap-4") as detail_card:
                     detail_card.set_visibility(False)

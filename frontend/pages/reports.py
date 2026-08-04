@@ -4,7 +4,7 @@ from nicegui import ui, app
 import frontend.api_client as api
 from frontend.shared import (
     _sidebar, _content_area, _page_header, _require_auth,
-    _redirect_if_cv, _handle_api_error,
+    _handle_api_error,
 )
 
 
@@ -32,8 +32,6 @@ def _build_dept_summaries(ipcas_grouped: dict, payment_grouped: dict) -> list:
 @ui.page("/reports")
 def reports_page():
     if not _require_auth():
-        return
-    if _redirect_if_cv():
         return
     if not api.has_feature("menu.reports"):
         ui.navigate.to("/home")
@@ -94,7 +92,7 @@ def reports_page():
                     for key, label, accept, group in FILE_DEFS:
                         with ui.column().classes("gap-1 min-w-0"):
                             ui.label(label).classes("text-sm font-medium text-gray-700 leading-tight")
-                            ui.label(f"({group})").classes("text-xs text-gray-400")
+                            ui.label(f"({group})").classes("text-xs text-gray-500")
 
                             def _make_handler(k):
                                 def _handler(e):

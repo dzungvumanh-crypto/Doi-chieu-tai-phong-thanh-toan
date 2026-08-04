@@ -261,30 +261,30 @@ def _ensure_indexes():
         # Bọc trong try/except ở Python để bỏ qua lỗi "duplicate column"
         "ALTER TABLE bundles ADD COLUMN cover_units TEXT",
         # Cột mới cho KSNBStaff (chuyên viên)
-        "ALTER TABLE ksnb_staff ADD COLUMN department_id INTEGER REFERENCES departments(id)",
+        "ALTER TABLE user_tttt ADD COLUMN department_id INTEGER REFERENCES departments(id)",
         # Cột mới cho DocumentEntry
         "ALTER TABLE document_entries ADD COLUMN entry_status TEXT DEFAULT 'confirmed'",
-        "ALTER TABLE document_entries ADD COLUMN entered_by_id INTEGER REFERENCES ksnb_staff(id)",
-        "ALTER TABLE document_entries ADD COLUMN confirmed_by_id INTEGER REFERENCES ksnb_staff(id)",
+        "ALTER TABLE document_entries ADD COLUMN entered_by_id INTEGER REFERENCES user_tttt(id)",
+        "ALTER TABLE document_entries ADD COLUMN confirmed_by_id INTEGER REFERENCES user_tttt(id)",
         "ALTER TABLE document_entries ADD COLUMN confirmed_at DATETIME",
         "ALTER TABLE document_entries ADD COLUMN borrowed_at DATETIME",
         "ALTER TABLE document_entries ADD COLUMN borrow_reason TEXT",
         # Gán phòng KSNB cho staff cũ không có department_id (idempotent)
-        "UPDATE ksnb_staff SET department_id = (SELECT id FROM departments WHERE code = 'KSNB' LIMIT 1) WHERE department_id IS NULL AND role IN ('admin', 'hau_kiem_vien', 'controller', 'viewer')",
+        "UPDATE user_tttt SET department_id = (SELECT id FROM departments WHERE code = 'KSNB' LIMIT 1) WHERE department_id IS NULL AND role IN ('admin', 'hau_kiem_vien', 'controller', 'viewer')",
         # Quyền mới — migrate controller → pho_phong
-        "ALTER TABLE ksnb_staff ADD COLUMN annual_leave_days INTEGER DEFAULT 12",
-        "ALTER TABLE ksnb_staff ADD COLUMN used_leave_days INTEGER DEFAULT 0",
-        "UPDATE ksnb_staff SET role = 'pho_phong' WHERE role = 'controller'",
-        "UPDATE ksnb_staff SET role = 'chuyen_vien' WHERE role = 'viewer'",
+        "ALTER TABLE user_tttt ADD COLUMN annual_leave_days INTEGER DEFAULT 12",
+        "ALTER TABLE user_tttt ADD COLUMN used_leave_days INTEGER DEFAULT 0",
+        "UPDATE user_tttt SET role = 'pho_phong' WHERE role = 'controller'",
+        "UPDATE user_tttt SET role = 'chuyen_vien' WHERE role = 'viewer'",
         "INSERT OR IGNORE INTO departments (code, name, is_source, is_active) VALUES ('TH', 'Phòng Tổng hợp', 0, 1)",
         "INSERT OR IGNORE INTO departments (code, name, is_source, is_active) VALUES ('BGD', 'Ban Giám đốc', 0, 1)",
         # Gán GĐ/PGĐ vào Ban Giám đốc (idempotent — chạy lại không hại)
-        "UPDATE ksnb_staff SET department_id = (SELECT id FROM departments WHERE code = 'BGD' LIMIT 1) WHERE role IN ('giam_doc', 'pho_giam_doc')",
+        "UPDATE user_tttt SET department_id = (SELECT id FROM departments WHERE code = 'BGD' LIMIT 1) WHERE role IN ('giam_doc', 'pho_giam_doc')",
         # Mở rộng LeaveRecord cho workflow 2 bước
-        "ALTER TABLE leave_records ADD COLUMN ksv_approver_id INTEGER REFERENCES ksnb_staff(id)",
+        "ALTER TABLE leave_records ADD COLUMN ksv_approver_id INTEGER REFERENCES user_tttt(id)",
         "ALTER TABLE leave_records ADD COLUMN ksv_approved_at DATETIME",
         "ALTER TABLE leave_records ADD COLUMN ksv_comment TEXT",
-        "ALTER TABLE leave_records ADD COLUMN gd_approver_id INTEGER REFERENCES ksnb_staff(id)",
+        "ALTER TABLE leave_records ADD COLUMN gd_approver_id INTEGER REFERENCES user_tttt(id)",
         "ALTER TABLE leave_records ADD COLUMN gd_approved_at DATETIME",
         "ALTER TABLE leave_records ADD COLUMN gd_comment TEXT",
         "ALTER TABLE leave_records ADD COLUMN updated_at DATETIME",
@@ -302,7 +302,7 @@ def _ensure_indexes():
             created_at DATETIME
         )""",
         # Workflow nghỉ phép 3 bước — Phòng Tổng hợp
-        "ALTER TABLE leave_records ADD COLUMN tong_hop_approver_id INTEGER REFERENCES ksnb_staff(id)",
+        "ALTER TABLE leave_records ADD COLUMN tong_hop_approver_id INTEGER REFERENCES user_tttt(id)",
         "ALTER TABLE leave_records ADD COLUMN tong_hop_approved_at DATETIME",
         "ALTER TABLE leave_records ADD COLUMN tong_hop_comment TEXT",
         # Bảng ngày lễ
@@ -333,16 +333,16 @@ def _ensure_indexes():
             created_at DATETIME
         )""",
         # 1.3 — bắt buộc đổi mật khẩu lần đầu
-        "ALTER TABLE ksnb_staff ADD COLUMN must_change_password BOOLEAN DEFAULT 0",
+        "ALTER TABLE user_tttt ADD COLUMN must_change_password BOOLEAN DEFAULT 0",
         # 1.4 — mã IPCAS và username Payment cho KSNB staff (HKV)
-        "ALTER TABLE ksnb_staff ADD COLUMN ipcas_code VARCHAR(20)",
-        "ALTER TABLE ksnb_staff ADD COLUMN payment_username VARCHAR(50)",
+        "ALTER TABLE user_tttt ADD COLUMN ipcas_code VARCHAR(20)",
+        "ALTER TABLE user_tttt ADD COLUMN payment_username VARCHAR(50)",
         # 1.5 — gộp SourceUser vào KSNBStaff: thêm staff_id vào document_entries
-        "ALTER TABLE document_entries ADD COLUMN staff_id INTEGER REFERENCES ksnb_staff(id)",
-        # Backfill staff_id: match source_users.user_code == ksnb_staff.ipcas_code
+        "ALTER TABLE document_entries ADD COLUMN staff_id INTEGER REFERENCES user_tttt(id)",
+        # Backfill staff_id: match source_users.user_code == user_tttt.ipcas_code
         """UPDATE document_entries
            SET staff_id = (
-               SELECT ks.id FROM ksnb_staff ks
+               SELECT ks.id FROM user_tttt ks
                JOIN source_users su ON trim(ks.ipcas_code) = trim(su.user_code)
                WHERE su.id = document_entries.source_user_id
                LIMIT 1
@@ -360,11 +360,7 @@ def _ensure_indexes():
            BEFORE UPDATE ON document_entries
            WHEN NEW.sheet_count <= 0
            BEGIN SELECT RAISE(ABORT, 'sheet_count phải lớn hơn 0'); END""",
-        # Chặn used_leave_days âm
-        """CREATE TRIGGER IF NOT EXISTS chk_used_leave_days
-           BEFORE UPDATE ON ksnb_staff
-           WHEN NEW.used_leave_days < 0
-           BEGIN SELECT RAISE(ABORT, 'used_leave_days không được âm'); END""",
+        # (trigger chk_used_leave_days định nghĩa ở dưới, sau khi bảng đã đổi tên)
         # Persist session và rate-limit — tồn tại qua restart
         """CREATE TABLE IF NOT EXISTS login_sessions (
             staff_id INTEGER PRIMARY KEY REFERENCES user_tttt(id),
@@ -550,6 +546,31 @@ def _ensure_indexes():
              AND NOT EXISTS (SELECT 1 FROM staff_department_history h WHERE h.staff_id = u.id)""",
     ]
     _mig_log = logging.getLogger(__name__)
+
+    # ── Rename ksnb_staff → user_tttt (one-time, idempotent) ─────────────────
+    # PHẢI chạy TRƯỚC schema_migrations: mọi câu SQL trong list dùng tên mới `user_tttt`.
+    # Nếu để sau, DB cũ (còn tên `ksnb_staff`) sẽ trượt toàn bộ migration bên dưới.
+    _rc = sqlite3.connect(DB_PATH, timeout=30)
+    try:
+        _existing = {r[0] for r in _rc.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        if "ksnb_staff" in _existing:
+            if "user_tttt" in _existing:
+                # _create_tables() đã tạo user_tttt rỗng trước — xóa đi để rename.
+                # Chỉ xóa khi thật sự rỗng: bảng có dữ liệu nghĩa là tình huống ngoài dự kiến,
+                # thà dừng lại còn hơn mất dữ liệu nhân sự.
+                _n = _rc.execute("SELECT COUNT(*) FROM user_tttt").fetchone()[0]
+                if _n:
+                    raise RuntimeError(
+                        f"Tồn tại song song 2 bảng: ksnb_staff và user_tttt (user_tttt có {_n} dòng). "
+                        "Không tự động gộp — cần xử lý thủ công trước khi khởi động."
+                    )
+                _rc.execute("DROP TABLE user_tttt")
+            _rc.execute("ALTER TABLE ksnb_staff RENAME TO user_tttt")
+            _rc.commit()
+            _mig_log.info("Đã đổi tên bảng ksnb_staff → user_tttt")
+    finally:
+        _rc.close()
+
     conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
     try:
@@ -560,7 +581,10 @@ def _ensure_indexes():
             except Exception as exc:
                 conn.rollback()
                 msg = str(exc).lower()
-                if "duplicate column" not in msg and "already exists" not in msg and "no such table" not in msg and "already another table" not in msg:
+                # Nuốt có chủ đích: migration đã chạy ở lần khởi động trước.
+                # KHÔNG thêm "no such table" vào đây — sai tên bảng phải báo lỗi,
+                # nếu không migration hỏng sẽ trôi qua im lặng (cột không được thêm).
+                if "duplicate column" not in msg and "already exists" not in msg and "already another table" not in msg:
                     if "database is locked" in msg or "locked" in msg:
                         _mig_log.warning("Migration skipped (DB locked, sẽ thử lại lần sau): %.80s", s)
                     else:
@@ -568,20 +592,6 @@ def _ensure_indexes():
                         raise
     finally:
         conn.close()
-
-    # ── Rename ksnb_staff → user_tttt (one-time, idempotent) ─────────────────
-    _rc = sqlite3.connect(DB_PATH, timeout=30)
-    try:
-        _existing = {r[0] for r in _rc.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
-        if "ksnb_staff" in _existing:
-            if "user_tttt" in _existing:
-                # _create_tables() đã tạo user_tttt rỗng trước — xóa đi để rename
-                _rc.execute("DROP TABLE user_tttt")
-            _rc.execute("ALTER TABLE ksnb_staff RENAME TO user_tttt")
-            _rc.commit()
-            logging.getLogger(__name__).info("Đã đổi tên bảng ksnb_staff → user_tttt")
-    finally:
-        _rc.close()
 
     # ── Rebuild handovers: received_by_id NOT NULL → nullable, thêm UNIQUE(dept,date) ──
     _raw = sqlite3.connect(DB_PATH)
@@ -772,7 +782,6 @@ def _ensure_indexes():
         "CREATE INDEX IF NOT EXISTS ix_bundle_items_bundle     ON bundle_items(bundle_id)",
         "CREATE INDEX IF NOT EXISTS ix_bundle_items_entry      ON bundle_items(entry_id)",
         "CREATE INDEX IF NOT EXISTS ix_leave_records_staff     ON leave_records(staff_id)",
-        "CREATE INDEX IF NOT EXISTS ix_ksnb_staff_dept         ON ksnb_staff(department_id)",
         "CREATE INDEX IF NOT EXISTS ix_doc_entries_status      ON document_entries(entry_status)",
         "CREATE INDEX IF NOT EXISTS ix_entry_change_logs_entry ON entry_change_logs(entry_id)",
         "CREATE INDEX IF NOT EXISTS ix_entry_change_logs_actor ON entry_change_logs(performed_by_id)",

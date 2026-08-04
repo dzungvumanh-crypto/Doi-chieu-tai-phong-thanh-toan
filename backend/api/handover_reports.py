@@ -18,8 +18,11 @@ def handover_summary(
     db: sqlite3.Connection = Depends(get_db),
 ):
     today = _vn_now().date()
-    year = year or today.year
-    month = month or today.month
+    # Phân biệt "không truyền" với "truyền số 0": `or` coi 0 là falsy nên
+    # month=0 từng bị thay âm thầm bằng tháng hiện tại — trả số liệu tháng khác
+    # với thứ được hỏi, không cảnh báo gì.
+    year = today.year if year is None else year
+    month = today.month if month is None else month
 
     if not 1 <= month <= 12:
         raise HTTPException(400, "Tháng phải nằm trong khoảng 1–12")

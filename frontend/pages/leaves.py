@@ -8,41 +8,26 @@ from nicegui import ui, app
 
 import frontend.api_client as api
 
+import frontend.ui_kit as ui_kit
+
 from frontend.shared import _sidebar, _content_area, _page_header, _require_auth, _handle_api_error
 
 
 
 # ─── LEAVES PAGE ─────────────────────────────────────────────────────────────
 
+# Nhãn + màu chuyển về ui_kit.STATUS. Giữ tên _LEAVE_STATUS cho code cũ trong file.
+
 _LEAVE_STATUS = {
 
-    "pending_ksv":      ("Chờ KSV duyệt",  "bg-orange-100 text-orange-700 border-orange-300"),
+    k: (ui_kit.status_label(k), ui_kit.STATUS[k]["chip"])
 
-    "pending_tong_hop": ("Chờ Tổng hợp",   "bg-yellow-100 text-yellow-700 border-yellow-300"),
-
-    "pending_gd":       ("Chờ GĐ duyệt",   "bg-blue-100 text-blue-700 border-blue-300"),
-
-    "approved":         ("Đã duyệt",        "bg-green-100 text-green-700 border-green-300"),
-
-    "rejected":         ("Từ chối",         "bg-red-100 text-red-700 border-red-300"),
-
-    "cancelled":        ("Đã hủy",          "bg-gray-100 text-gray-500 border-gray-300"),
+    for k in ("pending_ksv", "pending_tong_hop", "pending_gd", "approved", "rejected", "cancelled")
 
 }
 
-_LEAVE_TYPE = {
-
-    "bat_buoc":     "Nghỉ phép bắt buộc",
-
-    "annual":       "Nghỉ phép năm",
-
-    "thai_san":     "Nghỉ thai sản",
-
-    "bao_hiem":     "Nghỉ bảo hiểm",
-
-    "other":        "Khác",
-
-}
+# Định nghĩa thật nằm ở ui_kit.LEAVE_TYPE — sidebar cũng đọc map này.
+_LEAVE_TYPE = ui_kit.LEAVE_TYPE
 
 # Nhóm hiển thị 3 trạng thái đơn giản trong cột Trạng thái của bảng
 
@@ -154,7 +139,7 @@ async def leaves_page():
 
         return
 
-    badge_refs = _sidebar("leaves")
+    _sidebar("leaves")
 
 
 
@@ -350,7 +335,7 @@ async def leaves_page():
 
         # ── Banner thông báo ủy quyền đang hiệu lực ──────────────────────────
         try:
-            _active_deleg = api.get("/api/delegations/active") or []
+            _active_deleg = await asyncio.to_thread(api.get, "/api/delegations/active") or []
         except Exception:
             _active_deleg = []
 
@@ -383,6 +368,7 @@ async def leaves_page():
 
         my_leaves, pending_leaves, all_leaves, dept_leaves, declared_leaves, delegations, balance_info, approver_list = \
             [], [], [], [], [], [], {}, []
+        my_balance = {}
 
 
 
@@ -422,11 +408,13 @@ async def leaves_page():
 
                 asyncio.to_thread(api.get, "/api/leaves/approvers") if show_approver else _empty(),
 
+                asyncio.to_thread(api.get, "/api/leaves/my-balance"),
+
                 return_exceptions=True,
 
             )
 
-            my_leaves, pending_leaves, all_leaves, dept_leaves, declared_leaves, delegations, balance_info, approver_list = results
+            my_leaves, pending_leaves, all_leaves, dept_leaves, declared_leaves, delegations, balance_info, approver_list, my_balance = results
 
             for r in results:
 
@@ -454,6 +442,8 @@ async def leaves_page():
 
             approver_list  = approver_list   if isinstance(approver_list, list)   else []
 
+            my_balance     = my_balance      if isinstance(my_balance, dict)      else {}
+
         except Exception as e:
 
             if _handle_api_error(e):
@@ -466,15 +456,7 @@ async def leaves_page():
 
 
 
-        # ── Cập nhật badge sidebar ────────────────────────────────────────────
-
-        _lcnt = len(pending_leaves)
-
-        if "leaves" in badge_refs and _lcnt > 0:
-
-            badge_refs["leaves"].set_text(str(_lcnt))
-
-            badge_refs["leaves"].set_visibility(True)
+        # Badge sidebar do khối "Công việc chờ xử lý" trong shared.py tự nạp.
 
 
 
@@ -485,12 +467,17 @@ async def leaves_page():
 
 
         # ── Balance card ──────────────────────────────────────────────────────
+        # Lấy từ /api/leaves/my-balance (tôn trọng override hạn mức thủ công +
+        # cộng carry-over) thay vì annual_leave_days ở /api/auth/me (chỉ tính
+        # theo công thức tự động, không có carry-over) — khớp đúng tab Hạn mức phép.
 
-        annual    = balance_info.get("annual_leave_days", 12)
+        quota     = my_balance.get("quota_days", 12)
 
-        used      = balance_info.get("used_leave_days", 0)
+        carry     = my_balance.get("carry_over", 0)
 
-        remaining = max(0, annual - used)
+        annual    = quota + carry
+
+        remaining = my_balance.get("remaining", max(0, annual - my_balance.get("used_days", 0)))
 
         with ui.row().classes("gap-4 mb-4"):
 
@@ -498,7 +485,7 @@ async def leaves_page():
 
                 ui.label("Phép còn lại").classes("text-xs text-blue-600")
 
-                ui.label(f"{remaining} / {annual} ngày").classes("text-xl font-bold text-blue-800")
+                ui.label(f"{remaining:g} / {annual:g} ngày").classes("text-xl font-bold text-blue-800")
 
 
 
@@ -549,9 +536,19 @@ async def leaves_page():
 
                 gd_opts[s["id"]] = s["full_name"] + " (PGĐ)"
 
-        except Exception:
+        except Exception as e:
 
-            pass
+            if _handle_api_error(e):
+
+                return
+
+            # gd_opts rỗng → field "Ban lãnh đạo phê duyệt" sẽ ẩn khỏi form Tạo đơn
+
+            # (xem điều kiện gd_opts and user_role != "giam_doc" bên dưới) — cảnh
+
+            # báo rõ để người dùng biết đây là do lỗi tải dữ liệu, không phải thiết kế.
+
+            ui.notify("Không tải được danh sách GĐ/PGĐ — vui lòng tải lại trang trước khi tạo đơn", type="negative")
 
 
 
@@ -606,7 +603,7 @@ async def leaves_page():
                         ui.button(icon="chevron_right", on_click=_rs_next).props("flat round dense size=sm")
                     with ui.row().classes("w-full gap-0"):
                         for h in ["T2","T3","T4","T5","T6","T7","CN"]:
-                            ui.label(h).classes("text-xs text-center text-gray-400 w-[14.28%] py-0.5")
+                            ui.label(h).classes("text-xs text-center text-gray-500 w-[14.28%] py-0.5")
                     first_wd = _dobj(y, m, 1).weekday()
                     last_day = _cal_mod2.monthrange(y, m)[1]
                     today_   = _dobj.today()
@@ -662,7 +659,7 @@ async def leaves_page():
                         ui.button(icon="chevron_right", on_click=_re_next).props("flat round dense size=sm")
                     with ui.row().classes("w-full gap-0"):
                         for h in ["T2","T3","T4","T5","T6","T7","CN"]:
-                            ui.label(h).classes("text-xs text-center text-gray-400 w-[14.28%] py-0.5")
+                            ui.label(h).classes("text-xs text-center text-gray-500 w-[14.28%] py-0.5")
                     first_wd = _dobj(y, m, 1).weekday()
                     last_day = _cal_mod2.monthrange(y, m)[1]
                     today_   = _dobj.today()
@@ -719,7 +716,7 @@ async def leaves_page():
                         ui.button(icon="chevron_right", on_click=_c_next).props("flat round dense size=sm")
                     with ui.row().classes("w-full gap-0"):
                         for h in ["T2","T3","T4","T5","T6","T7","CN"]:
-                            ui.label(h).classes("text-xs text-center text-gray-400 w-[14.28%] py-0.5")
+                            ui.label(h).classes("text-xs text-center text-gray-500 w-[14.28%] py-0.5")
                     first_wd  = _dobj(y, m, 1).weekday()
                     last_day  = _cal_mod2.monthrange(y, m)[1]
                     _c_today_ = _dobj.today()
@@ -746,7 +743,7 @@ async def leaves_page():
                                         inner += " ring-2 ring-offset-1 ring-red-400"
                                     ui.label(str(day)).classes(inner).on("click", _mk())
                                 elif past:
-                                    inner = "w-6 h-6 flex items-center justify-center text-xs text-gray-400 hover:bg-red-50 hover:text-red-700 cursor-pointer rounded"
+                                    inner = "w-6 h-6 flex items-center justify-center text-xs text-gray-500 hover:bg-red-50 hover:text-red-700 cursor-pointer rounded"
                                     if is_td:
                                         inner += " rounded-full ring-2 ring-gray-300"
                                     ui.label(str(day)).classes(inner).on("click", _mk())
@@ -949,7 +946,7 @@ async def leaves_page():
 
                     r_dates.props(_OPT_ALL)
 
-                    r_hint.set_text("Có thể chọn ngày trong quý khứ" if lt == "dot_xuat" else "")
+                    r_hint.set_text("")
 
                     r_hint.style("color:#6b7280")
 
@@ -1179,7 +1176,7 @@ async def leaves_page():
                                     _info("Ý kiến:", leave.get("ksv_comment") or "→")
                                     ui.label("✓ Đã phê duyệt").classes("text-xs text-green-600 font-semibold mt-1")
                                 elif status != "pending_ksv" and leave.get("ksv_approver_id"):
-                                    ui.label("(Dữ liệu không ghi ngày duyệt)").classes("text-xs text-gray-400 italic")
+                                    ui.label("(Dữ liệu không ghi ngày duyệt)").classes("text-xs text-gray-500 italic")
 
 
 
@@ -1221,7 +1218,7 @@ async def leaves_page():
                                 _info("Ghi chú:", leave.get("tong_hop_comment") or "→")
                                 ui.label("✓ Đã xác nhận").classes("text-xs text-green-600 font-semibold mt-1")
                             elif status not in ("pending_ksv", "pending_tong_hop") and _th_name:
-                                ui.label("(Dữ liệu không ghi ngày xác nhận)").classes("text-xs text-gray-400 italic")
+                                ui.label("(Dữ liệu không ghi ngày xác nhận)").classes("text-xs text-gray-500 italic")
 
                             if th_ack_act and api.has_feature("leaves.forward_th"):
                                 ui.label("Đơn của Giám đốc đã tự động duyệt — chỉ cần Tổng hợp xác nhận đã biết.").classes("text-xs text-gray-500 italic mt-1")
@@ -1271,7 +1268,7 @@ async def leaves_page():
                                 _info("Ý kiến:", leave.get("gd_comment") or "→")
                                 ui.label("✓ Đã phê duyệt").classes("text-xs text-green-600 font-semibold mt-1")
                             elif status == "approved":
-                                ui.label("(Dữ liệu không ghi ngày duyệt)").classes("text-xs text-gray-400 italic")
+                                ui.label("(Dữ liệu không ghi ngày duyệt)").classes("text-xs text-gray-500 italic")
 
 
 
@@ -1685,7 +1682,7 @@ async def leaves_page():
 
                     with ui.column().classes("p-6"):
 
-                        ui.label("Chưa có lịch sử thao tác.").classes("text-gray-400 text-sm")
+                        ui.label("Chưa có lịch sử thao tác.").classes("text-gray-500 text-sm")
 
                 else:
 
@@ -1721,7 +1718,7 @@ async def leaves_page():
 
                                     if ts:
 
-                                        ui.label(ts[:16].replace("T", " ")).classes("text-xs text-gray-400")
+                                        ui.label(ts[:16].replace("T", " ")).classes("text-xs text-gray-500")
 
             history_dialog.open()
 
@@ -2195,7 +2192,7 @@ async def leaves_page():
                               export_sel: set = None):
             """Wrapper thêm pagination 50 dòng/trang cho _draw_table."""
             if not leaves:
-                ui.label("Không có đơn nghỉ phép nào.").classes("text-gray-400 text-sm mt-4")
+                ui.label("Không có đơn nghỉ phép nào.").classes("text-gray-500 text-sm mt-4")
                 return
             total = len(leaves)
             total_pages = max(1, (total + _PAGE_SIZE - 1) // _PAGE_SIZE)
@@ -2240,7 +2237,7 @@ async def leaves_page():
 
             if not leaves:
 
-                ui.label("Không có đơn nghỉ phép nào.").classes("text-gray-400 text-sm mt-4")
+                ui.label("Không có đơn nghỉ phép nào.").classes("text-gray-500 text-sm mt-4")
 
                 return
 
@@ -2348,7 +2345,7 @@ async def leaves_page():
 
 
 
-                        ui.label(str(_row_idx)).classes("text-xs w-8 shrink-0 text-center text-gray-400 border-r border-gray-400 pr-2 mr-1")
+                        ui.label(str(_row_idx)).classes("text-xs w-8 shrink-0 text-center text-gray-500 border-r border-gray-400 pr-2 mr-1")
 
                         ui.label((lv.get("created_at") or "")[:10]).classes("text-xs w-20 shrink-0 border-r border-gray-400 pr-2 mr-1")
 
@@ -2477,10 +2474,12 @@ async def leaves_page():
 
         if _goto == "khai_bao_ho" and t_direct:
             _default_tab = t_direct
-        elif _goto == "pending" and t_pending:
-            _default_tab = t_pending
-        elif _goto == "pending_th" and t_pending_th:
-            _default_tab = t_pending_th
+        # Đổ chéo sang tab còn lại khi tab mong muốn không tồn tại với vai trò này:
+        # sidebar chỉ biết trạng thái đơn, không biết người dùng có 2 tab hay 1.
+        elif _goto == "pending" and (t_pending or t_pending_th):
+            _default_tab = t_pending or t_pending_th
+        elif _goto == "pending_th" and (t_pending_th or t_pending):
+            _default_tab = t_pending_th or t_pending
         elif _goto_raw and any(
             _tab_match(_t, _goto_raw)
             for _t in (t_dashboard, t_mine, t_pending, t_pending_th, t_dept, t_direct, t_cal, t_quota, t_stats, t_deleg, t_holiday)
@@ -3195,14 +3194,6 @@ async def leaves_page():
 
 
 
-            if can_declared and t_declared:
-
-                with ui.tab_panel(t_declared):
-
-                    _draw_table_paged(declared_leaves, show_name=True)
-
-
-
             if t_mine:
 
                 with ui.tab_panel(t_mine):
@@ -3229,14 +3220,6 @@ async def leaves_page():
                 with ui.tab_panel(t_dept):
 
                     _draw_table_paged(dept_leaves, show_name=True)
-
-
-
-            if can_declared and t_declared:
-
-                with ui.tab_panel(t_declared):
-
-                    _draw_table_paged(declared_leaves, show_name=True)
 
 
 
@@ -3418,7 +3401,7 @@ async def leaves_page():
 
                                         ui.label(f"+{len(people)-3}").classes(
 
-                                            "text-[9px] text-gray-400 leading-tight")
+                                            "text-[9px] text-gray-500 leading-tight")
 
 
 
@@ -3438,19 +3421,33 @@ async def leaves_page():
 
                     gd_staff_list, pgd_staff_list = [], []
 
-                    try:
+                    _deleg_staff_results = await asyncio.gather(
 
-                        gd_staff_list, pgd_staff_list = await asyncio.gather(
+                        asyncio.to_thread(api.get, "/api/delegations/staff/giam-doc"),
 
-                            asyncio.to_thread(api.get, "/api/delegations/staff/giam-doc"),
+                        asyncio.to_thread(api.get, "/api/delegations/staff/pho-giam-doc"),
 
-                            asyncio.to_thread(api.get, "/api/delegations/staff/pho-giam-doc"),
+                        return_exceptions=True,
 
-                        )
+                    )
 
-                    except Exception:
+                    _deleg_staff_err = next((r for r in _deleg_staff_results if isinstance(r, Exception)), None)
 
-                        pass
+                    if _deleg_staff_err is not None:
+
+                        if isinstance(_deleg_staff_err, api.SessionExpiredError):
+
+                            if _handle_api_error(_deleg_staff_err):
+
+                                return
+
+                        else:
+
+                            ui.notify("Không tải được danh sách GĐ/PGĐ để tạo ủy quyền", type="negative")
+
+                    else:
+
+                        gd_staff_list, pgd_staff_list = _deleg_staff_results
 
 
 
@@ -3563,7 +3560,7 @@ async def leaves_page():
 
                     if not delegations:
 
-                        ui.label("Chưa có bản ghi ủy quyền nào.").classes("text-gray-400 text-sm")
+                        ui.label("Chưa có bản ghi ủy quyền nào.").classes("text-gray-500 text-sm")
 
                     else:
 
@@ -3745,7 +3742,7 @@ async def leaves_page():
 
                             if not holidays_data:
 
-                                ui.label("Chưa có ngày lễ nào trong năm này.").classes("text-gray-400 text-sm mt-4")
+                                ui.label("Chưa có ngày lễ nào trong năm này.").classes("text-gray-500 text-sm mt-4")
 
                                 return
 
@@ -3862,7 +3859,7 @@ async def leaves_page():
                             _match_lbl = {"ma_can_bo": "Mã CB", "ten": "Tên"}
                             for _i, r in enumerate(rows):
                                 with ui.row().classes("w-full px-2 py-1.5 border-b border-gray-100 items-center text-xs"
-                                                       + ("" if r["matched"] else " bg-gray-50 text-gray-400")):
+                                                       + ("" if r["matched"] else " bg-gray-50 text-gray-500")):
                                     cb = ui.checkbox(value=r["matched"]).classes("w-8")
                                     cb.set_enabled(r["matched"])
                                     if r["matched"]:
@@ -3883,7 +3880,12 @@ async def leaves_page():
                                     oq = r["old_quota_days"]
                                     ui.label(f"{oq:.0f} → {r['new_quota_days']:.0f}" if oq is not None else f"→ {r['new_quota_days']:.0f}").classes("w-32 text-center")
                                     ou = r["old_used_leave_days"]
-                                    ui.label(f"{ou:.0f} → {r['new_used_leave_days']:.0f}" if ou is not None else f"→ {r['new_used_leave_days']:.0f}").classes("w-32 text-center")
+                                    with ui.row().classes("w-32 items-center justify-center gap-1"):
+                                        ui.label(f"{ou:.0f} → {r['new_used_leave_days']:.0f}" if ou is not None else f"→ {r['new_used_leave_days']:.0f}").classes("text-center")
+                                        if r.get("rounded_warning"):
+                                            ui.icon("warning", size="xs").classes("text-orange-500").tooltip(
+                                                "Giá trị lẻ (nửa ngày) sẽ bị làm tròn lên nguyên ngày khi áp dụng"
+                                            )
 
                     async def _qi_on_upload(e):
                         try:
@@ -3943,7 +3945,7 @@ async def leaves_page():
                         batches = batches if isinstance(batches, list) else []
                         with qi_history_area:
                             if not batches:
-                                ui.label("Chưa có lần nhập nào.").classes("text-gray-400 text-sm")
+                                ui.label("Chưa có lần nhập nào.").classes("text-gray-500 text-sm")
                             for b in batches:
                                 with ui.row().classes("w-full px-2 py-2 border-b border-gray-100 items-center text-xs gap-2"):
                                     with ui.column().classes("flex-1 gap-0"):
@@ -3977,7 +3979,7 @@ async def leaves_page():
                                                          _do, "Hoàn tác", "bg-orange-600")
                                         ui.button("Hoàn tác", icon="undo", on_click=_rb).props("dense outline").classes("text-orange-700")
                                     else:
-                                        ui.label("Đã hoàn tác").classes("text-gray-400 italic")
+                                        ui.label("Đã hoàn tác").classes("text-gray-500 italic")
                         qi_history_dialog.open()
 
 
@@ -4012,7 +4014,7 @@ async def leaves_page():
 
                                     yrs     = max(0, yr_ref - yr_join)
 
-                                    calc    = 12 + yrs // 5
+                                    calc    = 12 + yrs // 4
 
                                     q_days_input.value = calc
 
@@ -4040,7 +4042,7 @@ async def leaves_page():
 
                                                  value=12, min=0, max=365).classes("w-full mt-2")
 
-                        ui.label("Công thức: 12 ngày + 1 ngày mỗi 5 năm công tác").classes("text-xs text-gray-400 mt-1 mb-4")
+                        ui.label("Công thức: 12 ngày + 1 ngày mỗi 4 năm công tác").classes("text-xs text-gray-500 mt-1 mb-4")
 
 
 
@@ -4086,7 +4088,7 @@ async def leaves_page():
 
                             if not data:
 
-                                ui.label("Không có dữ liệu.").classes("text-gray-400 text-sm mt-4")
+                                ui.label("Không có dữ liệu.").classes("text-gray-500 text-sm mt-4")
 
                                 return
 
@@ -4130,6 +4132,8 @@ async def leaves_page():
                                     ui.label("STT").classes(f"{_qh} w-8 text-center")
 
                                     ui.label("Họ và tên").classes(f"{_qh} w-36")
+
+                                    ui.label("Mã cán bộ").classes(f"{_qh} w-24 text-center")
 
                                     ui.label("Ngày vào ngành").classes(f"{_qh} w-28 text-center")
 
@@ -4204,6 +4208,8 @@ async def leaves_page():
                                                 ui.label(str(_qi)).classes(f"{_qc} w-8 text-center")
 
                                                 ui.label(row.get("staff_name", "")).classes(f"{_qc} w-36 truncate")
+
+                                                ui.label(row.get("employee_code", "") or "→").classes(f"{_qc} w-24 text-center")
 
                                                 jd = row.get("join_industry_date") or ""
 
@@ -4401,10 +4407,9 @@ async def leaves_page():
 
 
                     # ── Define helpers TRƯỚC để _submit có thể d→ng ──────────
-
-                    _decl_state = {"leaves": list(declared_leaves)}
-
-
+                    # Nguồn lọc DUY NHẤT phải là declared_leaves gốc (bất biến trong
+                    # vòng đời trang) — không dùng lại kết quả đã lọc lần trước làm
+                    # nguồn cho lần lọc/"Xóa lọc" tiếp theo, tránh lọc chồng lọc.
 
                     # Placeholder containers → sẽ được assign sau khi render
 
@@ -4413,8 +4418,6 @@ async def leaves_page():
 
 
                     def _render_decl_table(leaves: list):
-
-                        _decl_state["leaves"] = leaves
 
                         c = _decl_refs["container"]
 
@@ -4434,7 +4437,7 @@ async def leaves_page():
 
                             if not leaves:
 
-                                ui.label("Chưa có đơn nào được khai báo.").classes("text-gray-400 text-sm")
+                                ui.label("Chưa có đơn nào được khai báo.").classes("text-gray-500 text-sm")
 
                                 return
 
@@ -4484,7 +4487,7 @@ async def leaves_page():
                                         _dck = ui.checkbox(value=False, on_change=_on_decl_ck).props("dense").classes("w-6 shrink-0 mr-2")
                                         _decl_row_cks.append(_dck)
 
-                                        ui.label(str(_di)).classes("text-xs w-8 shrink-0 text-center text-gray-400 border-r border-gray-400 pr-2 mr-1")
+                                        ui.label(str(_di)).classes("text-xs w-8 shrink-0 text-center text-gray-500 border-r border-gray-400 pr-2 mr-1")
 
                                         ui.label((dl.get("created_at") or "")[:10]).classes("text-xs w-20 shrink-0 border-r border-gray-400 pr-2 mr-1 text-gray-500")
 
@@ -4606,7 +4609,7 @@ async def leaves_page():
                                     ui.button(icon="chevron_right", on_click=_d_rs_next).props("flat round dense size=sm")
                                 with ui.row().classes("w-full gap-0"):
                                     for h in ["T2","T3","T4","T5","T6","T7","CN"]:
-                                        ui.label(h).classes("text-xs text-center text-gray-400 w-[14.28%] py-0.5")
+                                        ui.label(h).classes("text-xs text-center text-gray-500 w-[14.28%] py-0.5")
                                 first_wd = _dt_mod.date(y, m, 1).weekday()
                                 last_day = _cal_d.monthrange(y, m)[1]
                                 today_d  = _dt_mod.date.today()
@@ -4663,7 +4666,7 @@ async def leaves_page():
                                     ui.button(icon="chevron_right", on_click=_d_re_next).props("flat round dense size=sm")
                                 with ui.row().classes("w-full gap-0"):
                                     for h in ["T2","T3","T4","T5","T6","T7","CN"]:
-                                        ui.label(h).classes("text-xs text-center text-gray-400 w-[14.28%] py-0.5")
+                                        ui.label(h).classes("text-xs text-center text-gray-500 w-[14.28%] py-0.5")
                                 first_wd = _dt_mod.date(y, m, 1).weekday()
                                 last_day = _cal_d.monthrange(y, m)[1]
                                 today_d  = _dt_mod.date.today()
@@ -4924,7 +4927,7 @@ async def leaves_page():
 
                             to_d    = _parse_decl_date(_df_to.value)
 
-                            src = _decl_state.get("leaves", declared_leaves)
+                            src = declared_leaves
 
                             filtered_d = []
 
@@ -4992,7 +4995,7 @@ async def leaves_page():
 
                             _df_to.value   = ""
 
-                            src = _decl_state.get("leaves", declared_leaves)
+                            src = declared_leaves
 
                             _df_count.set_text(f"{len(src)} / {len(src)} đơn")
 
@@ -5013,6 +5016,16 @@ async def leaves_page():
                         # Hiện count ngay từ đầu
 
                         _df_count.set_text(f"{len(declared_leaves)} / {len(declared_leaves)} đơn")
+
+        # ── Bung sẵn chi tiết đơn được chỉ đích danh từ sidebar ───────────────
+        # Đặt cuối hàm vì open_detail vẽ vào drawer_container, mà container đó
+        # phải dựng xong trước. Không tìm thấy đơn (vừa bị người khác duyệt) thì
+        # im lặng ở lại tab đã chọn — vẫn là màn hình thao tác đúng.
+        _focus_id = app.storage.user.pop("_leaves_focus", None)
+        if _focus_id:
+            _focus_lv = next((lv for lv in pending_leaves if lv.get("id") == _focus_id), None)
+            if _focus_lv:
+                await open_detail(_focus_lv)
 
 
 

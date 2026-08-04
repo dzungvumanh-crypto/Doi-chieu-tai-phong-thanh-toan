@@ -102,7 +102,6 @@ _ROLE_VN = {
     "pho_giam_doc":  "Phó Giám đốc",
     "admin":         "Quản trị viên cấp 1",
     "admin_l2":      "Quản trị viên cấp 2",
-    "controller":    "Phó phòng",
 }
 
 

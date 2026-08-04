@@ -51,7 +51,867 @@
 <div class="page">
 
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
-  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-05-28</p>
+  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-03</p>
+
+  <!-- I -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">I</span>
+      <span class="card-title">Gộp PR #13 (đối chiếu SWIFT): hai nhánh sửa cùng một lỗi bằng hai cách loại trừ nhau</span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Xung đột không nằm ở text mà ở kiến trúc</p>
+      <p>PR #13 và <code>develop</code> phát hiện cùng một lỗi — backend đóng băng khi xử lý file
+      nặng — rồi sửa theo hai hướng không thể cùng tồn tại:</p>
+      <table>
+        <tr><th>Nhánh</th><th>Cách sửa</th><th>Bể luồng thực tế</th></tr>
+        <tr><td><code>develop</code> 084c0e2</td>
+            <td>Giữ <code>async def</code>, bọc việc nặng bằng <code>await run_heavy(...)</code></td>
+            <td><span class="pill pill-green">Limiter riêng, 4 token</span></td></tr>
+        <tr><td>PR #13 147379d</td>
+            <td>Đổi toàn bộ 13 endpoint sang <code>def</code></td>
+            <td><span class="pill pill-red">Bể chung 40 token</span></td></tr>
+      </table>
+
+      <div class="caution">
+      <strong>Giữ cách của develop.</strong> Khai <code>def</code> khiến FastAPI đẩy việc nặng vào bể
+      chung 40 token và <strong>vô hiệu hoá <code>CapacityLimiter(4)</code> ở card H</strong> — đúng
+      cái mà <code>backend/core/concurrency.py</code> sinh ra để chặn. <code>swift_recon</code> lại là
+      module nặng nhất (pandas + openpyxl + gộp nhiều file), nên để nó lọt ra ngoài giới hạn là mất
+      gần hết giá trị của card H.
+      </div>
+
+      <p class="label">Cái bẫy để lại cho lần sửa sau</p>
+      <p>PR #13 kèm một đoạn docstring dặn thẳng <em>"KHÔNG đổi lại thành <code>async def</code>"</em>.
+      Nếu giữ nguyên, người sửa tiếp theo làm đúng theo đó là hỏng lại — nên đoạn này đã được viết lại
+      thành: không chạy thẳng trên event loop, <strong>và cũng không dùng <code>def</code></strong>,
+      chỉ <code>async def</code> + <code>run_heavy</code>.</p>
+
+      <p class="label">Xuất Excel theo biểu mẫu — số đo trước/sau khi tác giả PR sửa</p>
+      <table>
+        <tr><th>Kịch bản</th><th>Trước</th><th>Sau</th><th>Cấu trúc file</th></tr>
+        <tr><td>Chi tiết lệch, 12 bản ghi</td><td><span class="pill pill-red">10,53 s</span></td>
+            <td><span class="pill pill-green">0,13 s</span></td><td>OK</td></tr>
+        <tr><td>Chi tiết lệch, 300 bản ghi</td><td><span class="pill pill-red">12,44 s</span></td>
+            <td><span class="pill pill-green">0,45 s</span></td><td>OK</td></tr>
+        <tr><td>Chi tiết lệch, 1300 bản ghi</td><td>—</td>
+            <td><span class="pill pill-green">1,60 s</span></td><td>OK</td></tr>
+        <tr><td>Tổng hợp, ít loại điện hơn mẫu (xoá dòng)</td>
+            <td><span class="pill pill-red">Mất khối chữ ký</span></td>
+            <td><span class="pill pill-green">0,09 s</span></td><td>OK</td></tr>
+        <tr><td>Tổng hợp, nhiều loại điện hơn mẫu (chèn dòng)</td>
+            <td><span class="pill pill-red">Excel báo file hỏng + mất số liệu</span></td>
+            <td><span class="pill pill-green">0,13 s</span></td><td>OK</td></tr>
+      </table>
+      <p>Gốc rễ: <code>openpyxl.insert_rows()</code>/<code>delete_rows()</code> dịch chuyển
+      <em>giá trị ô</em> nhưng <strong>không dịch toạ độ vùng gộp ô</strong>. Vùng gộp cũ đứng nguyên
+      rồi nuốt mất dòng chữ ký trôi vào đó. Đã vá bằng <code>_shift_merges()</code> gọi ngay sau mỗi
+      lần chèn/xoá, cộng với việc thay 4 file mẫu từ báo cáo thật (2612 dòng) sang form trắng.</p>
+
+      <p class="label">Nợ kỹ thuật đã nhận, chưa trả</p>
+      <div class="caution">
+      <code>template_exporters.py</code> chạm 4 API <strong>nội bộ</strong> của openpyxl:
+      <code>cell._style</code>, <code>merged_cells.ranges.add()</code> (cố ý bỏ qua kiểm tra chồng lấn),
+      <code>_clean_merge_range()</code>, dựng <code>MergedCell</code> gán thẳng vào <code>ws._cells</code>.
+      Đúng với <code>openpyxl==3.1.2</code> đang pin. Nhưng openpyxl còn được dùng ở 10 chỗ khác
+      (<code>staff</code>, <code>leaves</code>, <code>logs</code>, <code>bundles</code>,
+      <code>handovers</code>, <code>duty_export</code>, <code>th_report</code>…). Ai nâng thư viện vì
+      một tính năng khác sẽ làm <code>swift_recon</code> sinh file hỏng <strong>âm thầm</strong> —
+      không raise, không log. <strong>Chưa có test khoá lại bất biến này.</strong>
+      </div>
+
+      <p class="label">Phát hiện nhưng KHÔNG sửa khi gộp — và vì sao</p>
+      <table>
+        <tr><th>Vấn đề</th><th>Lý do để lại</th></tr>
+        <tr><td>Ô "ngày đối chiếu" trên biểu mẫu bị điền ngày in báo cáo (hai ngày này khác nghĩa,
+            mẫu gốc lệch nhau 3 ngày)</td>
+            <td rowspan="3">Nằm gọn trong module, không chạm vận hành hệ thống và không ảnh hưởng
+            tính năng khác — người review chốt để tác giả PR xử lý ở đợt sau. Sửa xen vào lúc gộp sẽ
+            làm diff khó soát. Riêng mục ngày đã ghi cảnh báo ⚠️ trong
+            <code>Logs_update.md</code> vì người dùng cần biết để sửa tay trước khi trình ký.</td></tr>
+        <tr><td>Điện đi: cột Chênh lệch ở Tổng hợp lệch <code>total_diff</code> đúng bằng số bản ghi
+            <code>MATCHED_NOT_ACK</code></td></tr>
+        <tr><td>Bản ghi Lịch sử cũ/mới cùng tên cột "Chênh lệch" nhưng khác cách tính</td></tr>
+      </table>
+
+    </div>
+  </div>
+
+  <!-- H -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">H</span>
+      <span class="card-title">Bể luồng, hàng đợi audit, cache NTP — và vì sao KHÔNG dùng mẫu token</span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Bối cảnh: hai bể luồng khác nhau, dễ nhầm</p>
+      <table>
+        <tr><th>Bể</th><th>Kích thước</th><th>Ai dùng</th></tr>
+        <tr><td>anyio <code>CapacityLimiter</code></td><td>40</td>
+            <td>Mọi endpoint <code>def</code> <strong>và</strong> <code>BackgroundTasks</code> với hàm sync</td></tr>
+        <tr><td>executor mặc định của asyncio</td><td><code>min(32, cpu+4)</code> = 12 ở máy này</td>
+            <td><code>asyncio.to_thread</code></td></tr>
+      </table>
+
+      <div class="caution">
+      <strong>Đã đề xuất chuyển các export nặng sang mẫu <code>BackgroundTasks</code> + token của
+      Chấm 459901. Đã tự bác bỏ sau khi đọc mã nguồn Starlette.</strong>
+      <code>BackgroundTask.__call__</code> với hàm sync gọi <code>run_in_threadpool</code> →
+      <code>anyio.to_thread.run_sync</code> → <strong>đúng bể 40 token đó</strong>. Chuyển sang mẫu
+      token không giảm được chút áp lực nào; nó chỉ khiến client thôi giữ kết nối HTTP.
+      </div>
+
+      <p class="label">Bằng chứng: bể 40 cạn thì mọi thứ chết theo</p>
+      <table>
+        <tr><th>Số việc nặng đồng thời</th><th><code>/auth/me</code> trung vị</th><th><code>/auth/me</code> chậm nhất</th></tr>
+        <tr><td>0 (nền)</td><td>26 ms</td><td>26 ms</td></tr>
+        <tr><td>40</td><td>30 ms</td><td><span class="pill pill-red">38.217 ms</span></td></tr>
+        <tr><td>80</td><td>59 ms</td><td><span class="pill pill-red">59.033 ms</span></td></tr>
+      </table>
+      <p>Trung vị vẫn thấp — nghĩa là <strong>phần lớn người dùng thấy bình thường, một số ít treo
+      cả phút</strong>. Chính là kiểu lỗi "lúc có lúc không" đã dùng để bác <code>--workers</code> ở card G.</p>
+
+      <p class="label">Vì sao tăng số luồng KHÔNG giúp gì</p>
+      <p>40 việc nặng song song mất 43,3 s — đúng bằng 40 × 1,08 s chạy nối đuôi, tức
+      <strong>không hề có song song</strong>. <code>docxtpl</code>/<code>openpyxl</code> là Python
+      thuần nên giữ GIL suốt. Nới bể chỉ cho nhiều việc cùng giành GIL, tổng thời gian y nguyên mà
+      request nhẹ vẫn bị bỏ đói. Cách đúng là <em>giới hạn</em>, không phải nới.</p>
+
+      <p class="label">Giải pháp: một limiter riêng cho việc nặng</p>
+      <p><code>backend/core/concurrency.py</code> giữ <code>CapacityLimiter(4)</code> riêng. Endpoint
+      nặng chuyển từ <code>def</code> sang <code>async def</code> + <code>await run_heavy(...)</code>.
+      36 token còn lại của bể 40 luôn dành cho request nhẹ.</p>
+      <p><strong>Gom về một mối:</strong> các endpoint sửa ở card G đang dùng
+      <code>asyncio.to_thread</code> (bể 12 riêng) cũng đổi sang <code>run_heavy</code>. Nếu để hai
+      bể, tổng việc nặng chạy cùng lúc là 4 + 12 = 16, tức giới hạn 4 chỉ là ảo.</p>
+      <table>
+        <tr><th>Kết quả đo lại</th><th>Trước</th><th>Sau</th></tr>
+        <tr><td>Đỉnh việc nặng đồng thời</td><td>không giới hạn</td><td><span class="pill pill-green">4</span></td></tr>
+        <tr><td><code>/auth/me</code> khi có tải nặng</td><td>38.217 ms</td><td><span class="pill pill-green">873 ms</span></td></tr>
+      </table>
+
+      <p class="label">Ghi audit: từ 5,5 s xuống 38 ms</p>
+      <p>Card G đẩy việc ghi audit sang threadpool nên người khác hết bị vạ lây, nhưng vẫn
+      <code>await</code> → chính người bấm nút phải đợi. Đo được: khi có lệnh ghi khác giữ khoá,
+      <strong>mọi POST chậm thêm 5.507 ms</strong>.</p>
+      <p>Nay <code>audit_queue.py</code> có một luồng ghi <em>duy nhất</em> + hàng đợi trần 2000 dòng.
+      Middleware chỉ bỏ vào rồi đi tiếp → POST còn <strong>38 ms</strong>. Một người ghi duy nhất
+      cũng có nghĩa hai kết nối audit không bao giờ tranh khoá nhau.</p>
+
+      <p class="label">NTP: bỏ lệnh gọi mạng ngoài khỏi request</p>
+      <p><code>/admin/logs/time-sync</code> hỏi thẳng <code>pool.ntp.org</code> ngay trong request.
+      Đo trong môi trường test: lần gọi thật mất <strong>3.129 ms</strong> (chạm trần
+      <code>NTP_TIMEOUT_SEC</code>) và giữ một luồng suốt thời gian đó. Cache 10 phút → còn
+      <strong>6 ms</strong>. Trả thêm <code>cached</code>/<code>cache_age_seconds</code>; các trường
+      cũ giữ nguyên nên giao diện không phải sửa.</p>
+
+      <p class="label"><code>run.py</code>: ba lời báo sai khi đã có instance chạy sẵn</p>
+      <p>Phát hiện tình cờ lúc chạy thử. Khởi động lần hai: con của nó chết vì không bind được cổng,
+      nhưng <code>_poll()</code> gõ trúng <em>instance đang chạy</em> nên báo <em>"✓ Frontend sẵn
+      sàng"</em> rồi <em>"HỆ THỐNG ĐÃ SẴN SÀNG"</em>; sau 5 vòng restart nó kết luận <em>"Hệ thống đã
+      dừng hoàn toàn"</em> — trong khi hệ thống thật vẫn đang phục vụ bình thường.</p>
+      <p>Người vận hành đọc dòng cuối sẽ tin mình vừa tắt hệ thống, và bước tiếp theo rất tự nhiên là
+      chạy lại lần nữa. Nay: kiểm tra cổng trước khi khởi động (dừng ngay, kèm lệnh
+      <code>netstat</code>/<code>taskkill</code>), thêm phát hiện "chết trong 5 giây đầu, 2 lần liên
+      tiếp" cho trường hợp tranh cổng, và không in "SẴN SÀNG" nếu <code>_stop_event</code> đã bật.
+      Thời gian từ 29 giây thrash + 3 thông báo sai <span class="arrow">→</span> dừng tức thì.</p>
+
+      <p class="label">Đánh đổi đã chấp nhận</p>
+      <table>
+        <tr><th>Quyết định</th><th>Đánh đổi</th></tr>
+        <tr><td><code>MAX_HEAVY = 4</code> dùng chung cho mọi việc nặng</td>
+            <td>4 người đối chiếu SWIFT thì người thứ 5 muốn xuất bìa phải xếp hàng. Đúng về bản
+            chất — 4 việc GIL-bound đã bão hoà CPU, cái thứ 5 chỉ làm mọi người chậm đi. Chỉnh được
+            qua biến môi trường <code>MAX_HEAVY_TASKS</code>.</td></tr>
+        <tr><td>Hàng đợi audit đầy thì bỏ dòng mới</td>
+            <td>Mất dòng nhật ký khi DB kẹt rất lâu (có WARNING, chỉ kêu 1 lần/đợt). Chấp nhận: thà
+            mất một dòng còn hơn ăn hết RAM.</td></tr>
+        <tr><td>Cache NTP 10 phút</td>
+            <td>Badge lệch giờ có thể cũ tới 10 phút. Độ lệch đồng hồ thay đổi theo giờ, không theo
+            giây — và đã trả kèm <code>cache_age_seconds</code> nếu sau này muốn hiện ra.</td></tr>
+      </table>
+
+      <p class="label">Phát hiện thêm khi kiểm thử lại: <code>localhost</code> tốn 2 giây mỗi kết nối mới</p>
+      <p>Đang truy nguyên một cú chậm 2 giây tưởng là do khoá DB thì lộ ra thủ phạm hoàn toàn khác.
+      Trên Windows <code>localhost</code> phân giải ra <code>::1</code> (IPv6) <em>trước</em>, mà
+      <code>uvicorn --host 0.0.0.0</code> chỉ lắng nghe IPv4. Mỗi kết nối MỚI thử IPv6, thất bại sau
+      ~2 giây, rồi mới quay sang IPv4.</p>
+      <table>
+        <tr><th>Bắt tay TCP sau khi nghỉ 7s</th><th>Thời gian</th></tr>
+        <tr><td><code>localhost:8000</code></td><td><span class="pill pill-red">2062 ms</span></td></tr>
+        <tr><td><code>127.0.0.1:8000</code></td><td><span class="pill pill-green">18 ms</span></td></tr>
+      </table>
+      <p><code>.env</code> đang đặt <code>BACKEND_URL=http://localhost:8000</code>, tức
+      <strong>mọi lời gọi frontend→backend sau ~5 giây nhàn rỗi đều tốn thêm 2 giây</strong> —
+      httpx hết hạn kết nối trong pool rồi phải mở kết nối mới. Ở giờ vắng thì gần như mọi thao tác
+      đầu tiên của người dùng đều dính.</p>
+      <div class="note">
+      <strong>Vì sao không ai phát hiện ra:</strong> mọi phép đo trước đó đều bắn request liên tục
+      nên kết nối luôn nóng. Chỉ khi có khoảng nghỉ &gt; 5 giây — đúng như người dùng thật — nó mới
+      lộ ra. Bài học: đo hiệu năng bằng cách bắn liên tục sẽ giấu mất đúng loại chi phí mà người
+      dùng thật phải trả.
+      </div>
+      <p>Sửa ở 3 chỗ: <code>.env</code>, giá trị mặc định trong <code>api_client.py</code>, và
+      <code>run.py</code> (tách URL để tự kiểm tra khỏi URL hiển thị — vẫn in
+      <code>localhost</code> cho người dùng gõ vào trình duyệt vì trình duyệt có Happy Eyeballs,
+      không dính lỗi này).</p>
+
+      <p class="label"><code>BACKEND_HOST</code>: biến cấu hình không điều khiển gì cả</p>
+      <p><code>start.bat</code> ghi <code>BACKEND_HOST=0.0.0.0</code> vào <code>.env</code> mỗi lần
+      tạo file mới, nhưng <code>config.py</code> hardcode <code>BACKEND_HOST: str = "0.0.0.0"</code>
+      — <strong>không đọc biến môi trường</strong> — còn địa chỉ bind thật thì do <code>run.py</code>
+      hardcode <code>--host 0.0.0.0</code>. Sửa <code>.env</code> không có tác dụng gì, và <em>im
+      lặng</em> không báo.</p>
+      <p>Kéo theo lỗi thứ hai: cảnh báo khởi động <em>"backend đang lắng nghe trên mọi địa chỉ
+      mạng"</em> đọc chính hằng số cứng đó. Docstring của nó ghi <em>"Bám vào sự thật quan sát được
+      (BACKEND_HOST)"</em> — nhưng <code>BACKEND_HOST</code> không quan sát gì cả. Đổi bind address
+      kiểu gì cảnh báo cũng kêu y hệt, tức là <strong>kêu sai</strong>.</p>
+      <p>Nay <code>BACKEND_HOST</code> đọc từ <code>.env</code>, <code>run.py</code> truyền chính giá
+      trị đó cho uvicorn, và cảnh báo bám theo. Đã kiểm cả hai chiều:</p>
+      <table>
+        <tr><th><code>BACKEND_HOST</code></th><th>uvicorn bind</th><th>Gọi từ máy khác</th><th>Cảnh báo khởi động</th></tr>
+        <tr><td><code>127.0.0.1</code></td><td><code>127.0.0.1:8000</code></td>
+            <td><span class="pill pill-green">từ chối</span></td><td>0</td></tr>
+        <tr><td><code>0.0.0.0</code></td><td><code>0.0.0.0:8000</code></td>
+            <td>200</td><td>2</td></tr>
+      </table>
+      <p>Trong cả hai trường hợp frontend cổng 8080 vẫn bind <code>0.0.0.0</code> (hardcode ở
+      <code>frontend/main.py</code>) nên người dùng LAN không bị ảnh hưởng — đã kiểm.</p>
+      <div class="note">
+      <strong>Lưu ý khi triển khai:</strong> <code>.env</code> được nạp với
+      <code>override=True</code>, nên nó <em>đè lên</em> biến môi trường của shell. Đặt
+      <code>set BACKEND_HOST=...</code> rồi chạy sẽ không ăn thua — phải sửa trong <code>.env</code>.
+      </div>
+
+      <p class="label">Deploy: hai biến phải sửa tay, quên thì im lặng</p>
+      <p><code>deploy.bat</code> cố ý <strong>không đụng tới <code>.env</code></strong> của máy đích
+      (giữ <code>SECRET_KEY</code> và cấu hình riêng). Hệ quả: <code>BACKEND_URL</code> và
+      <code>BACKEND_HOST</code> phải sửa tay — mà quên thì không có dấu hiệu gì, hệ thống vẫn chạy,
+      chỉ là mỗi kết nối mới tốn thêm 2 giây.</p>
+      <p>Nay cả hai script tự kiểm qua <code>deploy_env_check.py</code>:
+      <code>deploy.bat</code> phát hiện rồi <strong>hỏi</strong> trước khi sửa (cấu hình máy chủ
+      không nên đổi lặng lẽ), <code>deploy-test.bat</code> <strong>tự sửa</strong> — khớp với cách
+      nó vốn tự sửa cổng 9000/9090.</p>
+      <table>
+        <tr><th>Quyết định</th><th>Lý do</th></tr>
+        <tr><td>Viết helper bằng Python thay vì batch thuần</td>
+            <td><code>for /f</code> của cmd <em>nuốt dòng trống</em> và vướng dấu ngoặc trong
+            comment. Khối sửa <code>.env</code> sẵn có trong <code>deploy-test.bat</code> đang mang
+            đúng rủi ro này. Sửa nhầm <code>.env</code> là mất <code>SECRET_KEY</code> — quá đắt để
+            đánh cược vào chuỗi batch.</td></tr>
+        <tr><td>Không tự đổi <em>giá trị</em> <code>BACKEND_HOST</code></td>
+            <td><code>0.0.0.0</code> hay <code>127.0.0.1</code> tuỳ vào có máy khác gọi API hay
+            không — quyết định của người vận hành. Script chỉ thêm dòng nếu thiếu, giữ nguyên hành
+            vi cũ.</td></tr>
+        <tr><td>Ưu tiên <code>.venv\Scripts\python.exe</code> hơn <code>py</code></td>
+            <td>Phát hiện khi chạy thử: trình khởi chạy <code>py</code> trên máy này vướng bản
+            Microsoft Store alias và báo <em>"Unable to create process"</em>. <code>.venv</code>
+            luôn có sẵn trên máy deploy vì chính nó đang chạy hệ thống.</td></tr>
+      </table>
+      <div class="caution">
+      <code>deploy_env_check.py</code> <strong>phải được <code>git add</code></strong>.
+      <code>deploy.bat</code> nằm trong git và gọi tới nó; thiếu file thì bước kiểm chỉ in cảnh báo
+      rồi đi tiếp — không hỏng deploy, nhưng mất tác dụng bảo vệ.
+      <code>deploy-test.bat</code> thì nằm trong <code>.gitignore</code> (đường dẫn riêng từng máy),
+      nên sửa ở đó chỉ có hiệu lực cục bộ.
+      </div>
+
+      <p class="label">Phát hiện nhưng CHƯA sửa</p>
+      <table>
+        <tr><th>Vấn đề</th><th>Vì sao để lại</th></tr>
+        <tr><td>Cảnh báo <code>ALLOWED_ORIGINS</code> nói người dùng vào bằng IP sẽ "bị CORS chặn"</td>
+            <td>Nhiều khả năng <strong>không đúng</strong>: trình duyệt chỉ nói chuyện với cổng 8080,
+            không bao giờ chạm cổng 8000, nên CORS giữa hai cổng không xảy ra. Đã kiểm HTML trang
+            đăng nhập — không có tham chiếu nào tới cổng 8000. Chưa kiểm hết mọi trang nên chưa sửa
+            câu chữ. Độ tin cậy: trung bình.</td></tr>
+        <tr><td>Endpoint <strong>ghi</strong> nặng chưa được đo (sinh lịch trực tháng, tạo tập chứng
+            từ, duyệt nghỉ phép)</td>
+            <td>Chúng sửa dữ liệu thật nên không chạy thử được trên DB đang dùng. Cần một bản sao DB
+            để đo. Theo phép đo khoá ghi thì đây là khoảng trống thật.</td></tr>
+        <tr><td><code>/download/{token}</code> của Chấm 459901 không kiểm token thuộc về ai</td>
+            <td>Chỉ kiểm <code>require_feature</code>. Ai có quyền menu đó, nếu biết token, tải được
+            kết quả của người khác. Token là uuid4 nên không đoán được, nhưng nó nằm trong URL →
+            lọt vào log truy cập. Là lỗi phân quyền, không phải hiệu năng — để riêng.</td></tr>
+        <tr><td>Đồng hồ máy chủ lệch 9,25–9,62 s so với NTP</td>
+            <td>Việc của OS/domain, không thuộc tầng ứng dụng. Hệ thống đã tự cảnh báo. Nhật ký đang
+            bị sai giờ chừng đó.</td></tr>
+        <tr><td>File <code>.db-journal</code> mồ côi trong <code>data/backups</code></td>
+            <td>Có từ 28/07, do <code>_verify()</code> mở bản backup. Vô hại, 512 byte.</td></tr>
+      </table>
+
+    </div>
+  </div>
+
+  <!-- G -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">G</span>
+      <span class="card-title">Gỡ nghẽn event loop — vì sao <code>--workers</code> là đáp án sai</span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Triệu chứng</p>
+      <p>Một người đối chiếu SWIFT hoặc xuất báo cáo là cả hệ thống khựng: người khác đăng nhập,
+      mở nghỉ phép, xem chứng từ đều treo. Backend chạy <strong>một tiến trình uvicorn duy nhất</strong>,
+      và các endpoint nặng khai báo <code>async def</code> nhưng bên trong chạy code đồng bộ
+      (pandas, giải nén, sinh Excel) → giữ chặt event loop suốt thời gian xử lý.</p>
+
+      <div class="caution">
+      <strong>Đề xuất đầu tiên là thêm <code>--workers</code>. Đã bác bỏ.</strong> Nó không chữa
+      đúng bệnh và làm hỏng hai tính năng đang chạy tốt — xem bảng dưới.
+      </div>
+
+      <p class="label">Vì sao <code>--workers N</code> không dùng được ở đây</p>
+      <table>
+        <tr><th>Lý do</th><th>Hậu quả cụ thể</th></tr>
+        <tr>
+          <td>Không chữa gốc</td>
+          <td>Mỗi worker vẫn tự đứng im khi gặp request nặng. Đi từ "cả hệ thống treo" sang
+          "1/N số người treo <em>ngẫu nhiên</em>" — khó chẩn đoán hơn vì lỗi lúc có lúc không.</td>
+        </tr>
+        <tr>
+          <td><code>_progress</code> nằm trong RAM tiến trình</td>
+          <td><strong>Làm hỏng Chấm 459901 + Đối chiếu song phương.</strong> Upload rơi vào worker 1,
+          poll tiến độ rơi vào worker 2 → 404 "Token không tồn tại". Trớ trêu: đây đúng là hai tính
+          năng <em>duy nhất</em> đã kiến trúc đúng (BackgroundTasks, không chặn loop).</td>
+        </tr>
+        <tr>
+          <td><code>lifespan</code> chạy N lần</td>
+          <td>N luồng cùng sao chép file SQLite lúc khởi động, N lịch backup song song tranh nhau
+          xoá bản cũ theo <code>_KEEP</code>.</td>
+        </tr>
+      </table>
+      <p><em>Phần an toàn:</em> phiên đăng nhập và rate-limit login đều DB-backed — hai chỗ dễ vỡ
+      nhất khi tách tiến trình thì đã làm đúng từ trước.</p>
+
+      <p class="label">Đo đối chứng (xuất Excel 40k dòng, đo độ trễ <code>/api/auth/me</code> chạy nền)</p>
+      <table>
+        <tr><th>Phiên bản</th><th><code>/me</code> trung vị</th><th><code>/me</code> chậm nhất</th><th>Việc nặng</th></tr>
+        <tr><td>Trước (đồng bộ trên loop)</td><td>7,2 ms</td><td><span class="pill pill-red">2206 ms</span></td><td>2223 ms</td></tr>
+        <tr><td>Sau (<code>asyncio.to_thread</code>)</td><td>7,3 ms</td><td><span class="pill pill-green">485 ms</span></td><td>2118 ms</td></tr>
+      </table>
+      <p>Trước khi sửa, request nhẹ bị chặn <strong>gần trọn</strong> thời gian của request nặng
+      (2206 / 2223 ms) — đúng định nghĩa "cả hệ thống đứng".</p>
+
+      <p class="label">Đánh đổi đã chấp nhận</p>
+      <table>
+        <tr><th>Quyết định</th><th>Đánh đổi</th></tr>
+        <tr>
+          <td>Audit timeout 30s <span class="arrow">→</span> 5s</td>
+          <td>DB bận quá 5s thì <strong>mất dòng audit</strong> (có log WARNING). Chấp nhận: ghi
+          nhật ký là việc phụ, không đáng để giữ một luồng đứng chờ 30 giây.</td>
+        </tr>
+        <tr>
+          <td>Hàm <code>_work()</code> lồng trong endpoint thay vì helper cấp module</td>
+          <td>Trông lặp hơn, nhưng giữ nguyên <em>y hệt</em> luồng try/except cũ — đặc biệt là
+          <code>UnknownFileFormat</code> → 422 và <code>HTTPException</code> ném từ <em>bên trong</em>
+          luồng. Ưu tiên không đổi hành vi hơn là gọn code.</td>
+        </tr>
+        <tr>
+          <td>Poll dừng sau 15 phút / 10 lỗi liên tiếp</td>
+          <td>Việc xử lý thật sự dài hơn 15 phút sẽ bị bỏ giữa chừng ở phía UI (file vẫn sinh ra ở
+          server). Chấp nhận: mọi file thực tế xử lý dưới 1 phút.</td>
+        </tr>
+      </table>
+
+      <p class="label">Hai lỗi khuếch đại lẫn nhau — nay đã cắt</p>
+      <p><code>audit_logs</code> chỉ được dọn <em>bên trong</em> endpoint xem nhật ký. Không admin nào
+      mở màn hình đó thì bảng phình vô hạn (1 dòng cho mỗi thao tác ghi của mỗi người). Rồi khi có
+      người mở, một <code>DELETE</code> khổng lồ chạy giữa request, giữ khoá ghi lâu — <strong>đúng
+      lúc đó</strong> AuditMiddleware với <code>busy_timeout=30000</code> đứng chờ và kéo cả backend
+      theo. Tách việc dọn ra chạy nền mỗi 12h: mỗi lần xoá ít, và không nằm trên đường đi của
+      request nào.</p>
+
+      <p class="label">Phát hiện nhưng CHƯA sửa — có chủ đích</p>
+      <table>
+        <tr><th>Vấn đề</th><th>Vì sao để lại</th></tr>
+        <tr>
+          <td>Còn 485 ms độ trễ đỉnh</td>
+          <td>Chủ yếu do FastAPI/Pydantic parse body JSON 40k bản ghi <em>trên event loop</em> —
+          nằm ngoài phạm vi <code>to_thread</code>. Muốn hết phải phân trang payload, thuộc mục
+          dưới.</td>
+        </tr>
+        <tr>
+          <td><code>swift_recon_history</code> lưu trùng dữ liệu 3 lần
+          (<code>merged</code> đã chứa gần hết <code>raw_a</code> + <code>raw_b</code>)</td>
+          <td>Cần đổi schema. Người dùng quyết định hoãn. Kéo theo: file SQLite phình → backup 24h
+          chép nguyên file × 7 bản.</td>
+        </tr>
+        <tr>
+          <td><code>_progress</code> vẫn nằm trong RAM</td>
+          <td>Backend restart vẫn mất tiến độ đang chạy. Khác biệt là nay UI <em>thoát được</em>
+          sau 15 phút thay vì kẹt vĩnh viễn. Sửa triệt để = chuyển sang SQLite, gộp chung với việc
+          bỏ blob trùng ở trên.</td>
+        </tr>
+        <tr>
+          <td>Upload không giới hạn dung lượng phía server</td>
+          <td>Chỉ 3/7 tính năng có <code>max_file_size</code> ở client — mà đó là client, gọi thẳng
+          API là qua được. Vấn đề an toàn, không phải hiệu năng; để riêng.</td>
+        </tr>
+      </table>
+
+      <div class="note">
+      <strong>Cho người sửa sau:</strong> nếu có ngày thật sự cần <code>--workers</code>, điều kiện
+      tiên quyết là (1) <code>_progress</code> ra khỏi RAM, (2) chỉ một worker chạy backup +
+      log-cleanup scheduler. Đừng bật trước khi làm xong hai việc đó.
+      </div>
+
+    </div>
+  </div>
+
+  <!-- F -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">F</span>
+      <span class="card-title">Merge fix carry-over vắt năm — khi "file dùng chung" không có nghĩa là ảnh hưởng rộng</span>
+      <span class="badge badge-done">Đã merge + kiểm chứng</span>
+    </div>
+    <div class="card-body">
+      <p>Merge nhánh <code>fix/carry-over-vat-nam</code> (<code>c1473eb</code>) — sửa <code>compute_carry_over</code>
+      tính sai với đơn nghỉ vắt qua ngày 31/12. Đây là nhánh song song với PR nghỉ phép ở card E, cùng tách từ
+      <code>f21d38a</code>, không chồng file nào nên merge sạch.</p>
+
+      <div class="label">Vì sao commit này trông đáng lo hơn thực tế</div>
+      <p>Khác với PR ở card E (chỉ đụng file trong menu Nghỉ phép), commit này sửa <code>backend/database.py</code> —
+      file được <strong>~20 module import</strong>, gồm <code>deps.py</code>, <code>auth.py</code>,
+      <code>dashboard.py</code>, <code>staff.py</code>, trực ban, SWIFT, bàn giao chứng từ. Phản xạ đầu tiên là bán
+      kính ảnh hưởng rộng hơn hẳn.</p>
+      <p><strong>Ấn tượng đó sai.</strong> "Cùng file" không đồng nghĩa với "cùng vùng ảnh hưởng":</p>
+      <table>
+        <tr><th>Câu hỏi</th><th>Trả lời</th></tr>
+        <tr><td>Các module kia import gì từ <code>database.py</code>?</td><td><code>get_db</code>, <code>_vn_now</code>, <code>compute_annual_leave</code> — <strong>không ai import <code>compute_carry_over</code></strong></td></tr>
+        <tr><td>Bao nhiêu nơi gọi hàm được sửa?</td><td>Đúng 1 file: <code>backend/api/leaves.py</code> (5 điểm gọi)</td></tr>
+        <tr><td>Diff có chạm phạm vi module?</td><td>Không — nằm trọn trong thân hàm, không đổi chữ ký, không đổi kiểu trả về, không thêm import</td></tr>
+        <tr><td>Đổi lược đồ CSDL?</td><td>Không</td></tr>
+        <tr><td>Hiệu năng?</td><td>Không xấu đi — <code>staff_id=?</code> vẫn đứng đầu, vẫn dùng <code>ix_leave_records_staff</code>; còn bỏ được <code>strftime</code> trên cột</td></tr>
+      </table>
+      <p>Vì tên hàm là duy nhất trong toàn bộ mã nguồn nên một lần grep đã phủ hết mọi cách gọi, kể cả gọi gián tiếp
+      qua tên module. <strong>Kết luận: không có ảnh hưởng ra ngoài chức năng Nghỉ phép.</strong></p>
+
+      <div class="label">Không merge mới là trạng thái rủi ro hơn</div>
+      <p>Sau card E, <code>_carry_over_bulk</code> (sinh ra số <em>hiển thị</em> ở tab Hạn mức và banner) đã tính đúng
+      đơn vắt năm, còn <code>compute_carry_over</code> (số backend dùng để <em>chặn</em> lúc tạo đơn) thì chưa. Merge
+      này đưa hai bên về cùng kết quả — nó <strong>xoá lệch chứ không tạo lệch</strong>.</p>
+
+      <div class="label">Kiểm chứng — không dừng ở compile</div>
+      <p>Compile và <code>import backend.main</code> chỉ chứng minh không sập, không chứng minh hết lệch. Đã dựng
+      SQLite in-memory (không đụng CSDL thật, không có data test cần dọn) chạy song song hai hàm trên 3 ca: đơn vắt
+      năm, đơn trong năm làm đối chứng, và đơn <code>spread_dates</code> vắt năm — cả 3 khớp nhau.</p>
+      <p>Đối chiếu thêm với bản trước merge để chắc test chạm đúng lỗi, dùng đơn 29/12/2025 → 02/01/2026, hạn mức
+      2025 là 12 ngày:</p>
+      <table>
+        <tr><th></th><th>Ngày chuyển kỳ</th><th>Vì sao</th></tr>
+        <tr><td>Trước merge</td><td><strong>7.0</strong></td><td>Trừ cả 5 ngày làm việc, kể cả 1–2/1 thuộc năm 2026</td></tr>
+        <tr><td>Sau merge</td><td><strong>9.0</strong></td><td>Chỉ trừ 29–31/12 là 3 ngày làm việc thuộc năm 2025</td></tr>
+      </table>
+
+      <div class="label">Lưu ý vận hành — thứ duy nhất cần lường trước</div>
+      <p>Đây không phải rủi ro kỹ thuật mà là <strong>số liệu sẽ đổi</strong>: nhân viên từng có đơn vắt qua 31/12 sẽ
+      thấy ngày phép chuyển kỳ <em>tăng lên</em>. Hành vi này đúng, nhưng ai đang đối chiếu số bằng tay sẽ thấy con số
+      nhảy mà không rõ lý do.</p>
+      <p>Chưa đo được phạm vi thật: truy vấn <code>data/ksnb.db</code> cho ra 0 đơn vắt năm vì bảng
+      <code>leave_records</code> <strong>hiện rỗng hoàn toàn</strong> — đây là CSDL phát triển sạch, không phản ánh
+      dữ liệu vận hành. Muốn biết ảnh hưởng tới bao nhiêu người thì phải chạy cùng truy vấn đó trên bản đang dùng thật:</p>
+      <pre>SELECT lr.id, u.full_name, lr.start_date, lr.end_date, lr.status
+FROM leave_records lr LEFT JOIN user_tttt u ON lr.staff_id = u.id
+WHERE substr(lr.start_date,1,4) &lt;&gt; substr(lr.end_date,1,4)</pre>
+    </div>
+  </div>
+
+  <!-- E -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">E</span>
+      <span class="card-title">Merge PR nghỉ phép — rà soát ảnh hưởng lan sang phần khác</span>
+      <span class="badge badge-done">Đã merge + hoàn 1 hunk</span>
+    </div>
+    <div class="card-body">
+      <p>Merge nhánh <code>leaves/soat-loi-han-muc-va-quy-trinh-duyet</code> (commit <code>0a33e9b</code>, 15 mục sửa
+      trong menu Nghỉ phép). Phạm vi rà soát được giới hạn có chủ đích: <strong>không xét logic nghiệp vụ bên trong
+      menu</strong> — đó là quyền quyết định của PR — chỉ xét code có rò rỉ ảnh hưởng ra ngoài menu hay không.</p>
+
+      <div class="label">Chỉ một điểm chạm ra ngoài, và nó dựa trên giả định sai</div>
+      <p>PR đổi bộ lọc trạng thái của <code>GET /api/leaves/today</code> từ <code>status='approved'</code> sang
+      <code>NOT IN ('rejected','cancelled')</code>, với lý do ghi trong commit message là "đồng bộ điều kiện status
+      giữa Nghỉ hôm nay và lịch tháng". Giả định đó sai:</p>
+      <table>
+        <tr><th>Endpoint</th><th>Ai gọi</th><th>Hiển thị</th></tr>
+        <tr><td><code>/api/leaves/today</code></td><td><strong>Chỉ Trang chủ</strong> (<code>pages/dashboard.py:40</code>)</td><td>Con số trần, không nhãn trạng thái</td></tr>
+        <tr><td><code>/api/leaves/calendar</code></td><td>Lịch tháng trong menu Nghỉ phép</td><td>Từng mục kèm nhãn trạng thái</td></tr>
+      </table>
+      <p>Hai thứ này <strong>không cùng phục vụ một màn hình</strong>, và menu Nghỉ phép không hề đọc
+      <code>/today</code>. Nên việc nới điều kiện không đồng bộ được gì với lịch tháng — tác dụng duy nhất là làm card
+      "Nghỉ phép hôm nay" ở Trang chủ đếm thêm đơn chưa duyệt, tức <em>báo người vẫn đang đi làm là đã nghỉ</em>.</p>
+      <p><strong>Quyết định:</strong> hoàn lại đúng hunk đó (<code>ca4b71e</code>), giữ nguyên <code>/calendar</code>
+      theo ý PR. Lịch tháng hiện đơn chờ duyệt là hợp lý vì ở đó mỗi mục có nhãn trạng thái đi kèm; card trên Trang chủ
+      thì không. Đã thêm comment ngay tại chỗ để lần sau không ai "đồng bộ" lại.</p>
+
+      <div class="label">Các đường lây lan đã kiểm và xác nhận sạch</div>
+      <table>
+        <tr><th>Đường</th><th>Kết quả</th></tr>
+        <tr><td>Module khác import hàm trong <code>backend/api/leaves.py</code></td><td>Không — <code>registry.py</code> chỉ lấy <code>router</code></td></tr>
+        <tr><td>Trang khác import <code>frontend/pages/leaves.py</code></td><td>Không — các trang nạp độc lập qua <code>pkgutil</code></td></tr>
+        <tr><td>Endpoint <code>/api/leaves/*</code> khác bị gọi từ ngoài</td><td>Không — ngoài <code>/today</code>, tất cả chỉ gọi từ <code>pages/leaves.py</code></td></tr>
+        <tr><td>Template <code>don_xin_nghi_phep_tpl.docx</code> dùng chung</td><td>Không — chỉ <code>_pick_template</code> render</td></tr>
+        <tr><td>Nhật ký thao tác</td><td>Không vỡ — middleware chỉ ghi POST/PUT/PATCH/DELETE nên <code>/my-balance</code> (GET) không sinh log; mã 409 mới đã có sẵn nhãn</td></tr>
+        <tr><td>Badge "Công việc chờ xử lý" ở sidebar</td><td>Không — đọc <code>/api/dashboard/pending-counts</code>, truy vấn riêng</td></tr>
+        <tr><td>Cột cache <code>used_leave_days</code></td><td>Sau PR không màn hình nào đọc nữa → lệch số cũng không hiển thị sai ở đâu</td></tr>
+      </table>
+
+      <div class="label">Phát hiện nhưng KHÔNG sửa — và lý do</div>
+      <table>
+        <tr><th>Vấn đề</th><th>Vì sao để lại</th></tr>
+        <tr><td>Khoá lạc quan trong <code>_apply_status_transition</code> không phủ <code>approve_recall</code>,
+            <code>delete_leave</code>, <code>create_direct_leave</code> — ba chỗ này vẫn tự sửa
+            <code>used_leave_days</code>. Nặng nhất: bấm hai lần "xác nhận rút" một đơn Giám đốc đã duyệt sẽ trừ hai lần.</td>
+            <td>Logic nội bộ menu Nghỉ phép → thuộc quyền PR. Đã báo lại, không tự sửa.</td></tr>
+        <tr><td>Fix đơn vắt ranh giới năm chỉ áp cho 4 hàm tính hạn mức, không áp cho báo cáo
+            (<code>leader_dashboard</code>, Excel năm vẫn lọc <code>strftime('%Y', start_date)</code>).
+            Đơn 29/12→02/01 sẽ ra 3+2 ngày ở tab Hạn mức nhưng 5+0 ở báo cáo.</td>
+            <td>Như trên — nội bộ menu.</td></tr>
+        <tr><td><code>compute_carry_over</code> (bản đơn lẻ, dùng ở đường chặn hạn mức lúc tạo đơn) chưa được sửa cùng
+            <code>_carry_over_bulk</code> (bản gộp, dùng để hiển thị). Fix nằm ở nhánh riêng
+            <code>fix/carry-over-vat-nam</code> (<code>c1473eb</code>), <strong>chưa merge</strong>.</td>
+            <td>Nhánh khác, không thuộc phạm vi lần merge này. Nhưng đến khi merge nốt thì số hiển thị và số backend
+            dùng để chặn sẽ lệch nhau với đơn vắt năm.</td></tr>
+        <tr><td><code>/api/dashboard/leave-today</code> là bản sao logic đếm nghỉ hôm nay, vẫn giữ
+            <code>status='approved'</code>. Hiện <strong>không frontend nào gọi</strong>.</td>
+            <td>Mồ côi, không gây lệch hiển thị. Sau lần sửa này thì nó lại khớp chuẩn với <code>/today</code>.
+            Dọn dẹp riêng, không gộp vào PR.</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <!-- D -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">D</span>
+      <span class="card-title">Tham số tháng/năm không kiểm tra — 500 và một lỗi trả sai âm thầm</span>
+      <span class="badge badge-done">Đã sửa + kiểm thử</span>
+    </div>
+    <div class="card-body">
+      <p>Phát hiện khi kiểm thử chi tiết bàn giao chứng từ. Cùng loại với nhóm C: <strong>đầu vào xấu → 500</strong>.
+      Nhưng lần này có thêm một biến thể nguy hiểm hơn — trả về số liệu <em>trông hợp lệ nhưng sai</em>.</p>
+
+      <div class="label">Khuôn sửa đã có sẵn — chỉ sót đúng một chỗ</div>
+      <p>Điều đáng chú ý không phải là lỗi, mà là <strong>ba endpoint anh em đều đã làm đúng theo ba cách khác nhau</strong>,
+      và <code>handovers/grid</code> là chỗ duy nhất bị bỏ quên:</p>
+      <table>
+        <tr><th>Endpoint</th><th>Cách chặn</th><th>Với month=13</th></tr>
+        <tr><td><code>duty_schedule.py:29</code></td><td><code>Query(..., ge=1, le=12)</code></td><td>422</td></tr>
+        <tr><td><code>duty_stats.py:27</code></td><td><code>Query(..., ge=1, le=12)</code></td><td>422</td></tr>
+        <tr><td><code>handover_reports.py:24</code></td><td><code>if not 1 &lt;= month &lt;= 12: raise 400</code></td><td>400</td></tr>
+        <tr><td><code>leaves.py:732</code></td><td>chặn tháng, <strong>quên năm</strong></td><td>400 · nhưng <code>year=0</code> → <strong>500</strong></td></tr>
+        <tr><td><strong><code>handovers.py:77</code></strong></td><td><strong>không có gì</strong></td><td><strong>500</strong></td></tr>
+      </table>
+      <p>Nghĩa là không thiếu nhận thức — người viết biết phải chặn, chỉ áp sót. Sửa là <em>áp lại khuôn đã có</em>,
+      không phải nghĩ ra cách mới. Chọn <code>Query(ge/le)</code> cho <code>handovers</code> vì FastAPI tự sinh 422
+      kèm mô tả trường sai, không cần thêm dòng nào trong thân hàm.</p>
+
+      <div class="label">Lỗi thứ hai: <code>or</code> coi số 0 là "không truyền"</div>
+      <pre>year  = year  or today.year      # ← month=0 lọt xuống đây
+month = month or today.month     #   và bị thay bằng tháng hiện tại</pre>
+      <p><code>0</code> là giá trị falsy, nên nó <strong>không bao giờ tới được</strong> dòng kiểm tra
+      <code>1 &lt;= month &lt;= 12</code> ngay bên dưới. Người gọi hỏi "tháng 0" và nhận về số liệu tháng hiện tại,
+      dán nhãn <code>period=2026-07</code>, không cảnh báo gì.</p>
+      <p><strong>Đây nguy hiểm hơn lỗi 500.</strong> Lỗi 500 thì biết ngay là hỏng. Cái này trả về báo cáo trông
+      bình thường nhưng không phải kỳ được hỏi — nếu có script hay tích hợp truyền <code>month=0</code> do lỗi
+      tính toán, số liệu sai sẽ trôi qua không ai biết. Sửa bằng <code>is None</code> thay cho <code>or</code>.</p>
+
+      <div class="label">Mức độ — nói rõ để không đánh giá quá</div>
+      <table>
+        <tr><th>Yếu tố</th><th>Đánh giá</th></tr>
+        <tr><td>Chạm được từ giao diện?</td><td><strong>Không</strong> — dropdown dựng từ <code>range(1, 13)</code></td></tr>
+        <tr><td>Hỏng dữ liệu?</td><td>Không — cả ba endpoint chỉ đọc</td></tr>
+        <tr><td>Rò rỉ thông tin?</td><td>Không — body chỉ là chuỗi chung chung</td></tr>
+        <tr><td>Tác hại thực</td><td>Ghi rác vào log; và với lỗi <code>or</code> thì là <strong>số liệu sai âm thầm</strong></td></tr>
+      </table>
+      <p>Nhẹ hơn hẳn nhóm C: lỗi ZIP hỏng chạm được từ giao diện chỉ bằng cách tải nhầm file, còn cái này phải
+      gọi API trực tiếp. Ghi lại chủ yếu vì <em>khuôn sửa đã có mà vẫn sót</em> — kiểu lỗi này sẽ còn tái diễn
+      mỗi lần thêm endpoint mới nhận tháng/năm.</p>
+
+      <div class="label">Kiểm thử</div>
+      <p>20 ca, cả hai chiều. Đầu vào xấu: <code>month</code> = 13/0/−1, <code>year</code> = 0/99999/1999/2101 →
+      tất cả 422 hoặc 400, phản hồi <strong>JSON</strong> thay vì chuỗi <code>text/plain</code> như trước
+      (quan trọng: frontend kỳ vọng JSON có trường <code>detail</code>, nhận chuỗi trần sẽ vấp thêm lỗi thứ hai
+      khi xử lý). Đường đúng: 2026/04 vẫn trả đủ 83 chứng từ, hai biên 2000/01 và 2100/12 đều 200, và gọi
+      <code>/summary</code> không tham số vẫn mặc định đúng tháng hiện tại.</p>
+    </div>
+  </div>
+
+  <!-- C -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">C</span>
+      <span class="card-title">Ba lỗi xử lý file upload — phát hiện khi test bằng tài khoản thật</span>
+      <span class="badge badge-done">Đã sửa + kiểm thử</span>
+    </div>
+    <div class="card-body">
+      <p>Cả ba <strong>có sẵn từ trước</strong>, không liên quan đến nhóm A/B — <code>git diff</code> xác nhận
+      các file này chưa từng bị đụng tới trong đợt thay đổi. Phát hiện được vì lần đầu chạy upload thật
+      qua tài khoản có quyền, thay vì chỉ kiểm tới lớp RBAC.</p>
+
+      <div class="label">Lỗi 1+2 — cùng một khối code, cùng một nguyên nhân</div>
+      <p><code>save_upload_to_path()</code> gọi <code>tempfile.mkdtemp()</code> rồi mới mở ZIP. Có <strong>ba</strong>
+      đường ném lỗi giữa hai bước đó — ZIP hỏng, ZIP chứa đường dẫn thoát thư mục, ZIP đặt mật khẩu — và
+      <em>không đường nào</em> dọn thư mục vừa tạo. Riêng nhánh ZIP hỏng còn không được bắt, nên lòi ra HTTP 500
+      kèm stack trace.</p>
+      <table>
+        <tr><th>Trước</th><th>Sau</th></tr>
+        <tr><td>ZIP hỏng → <strong>500</strong> + stack trace</td><td><strong>422</strong> + "File tải lên không phải file .zip hợp lệ — có thể tải bị lỗi, bị cắt dở, hoặc chỉ được đổi đuôi tên thành .zip."</td></tr>
+        <tr><td>Mỗi lần lỗi để lại 1 thư mục tạm vĩnh viễn</td><td><strong>0</strong> thư mục rò rỉ trên mọi đường lỗi</td></tr>
+      </table>
+      <p>Rò rỉ thư mục tạm là thứ đáng ngại hơn lỗi 500: người dùng nội bộ có quyền <code>swift_recon</code>
+      lặp lại thao tác upload sai sẽ dần làm đầy ổ đĩa máy chủ, mà không có dấu hiệu gì.</p>
+      <p><strong>Cách sửa:</strong> tách phần giải nén ra <code>_extract_and_pick()</code>, gọi trong
+      <code>try/except</code> dọn-rồi-ném-lại. <code>mkdtemp()</code> cố ý đặt <em>ngoài</em> <code>try</code> —
+      để trong thì <code>except</code> không có tên thư mục mà dọn.</p>
+      <p>Ghi nhận mặt tốt của code cũ: <strong>có</strong> chống zip-slip (kiểm đường dẫn thoát thư mục giải nén).
+      Người viết đã nghĩ tới bảo mật, chỉ sót nhánh dọn dẹp.</p>
+
+      <div class="label">Lỗi 3 — và cái bẫy trong chính bản vá của tôi</div>
+      <p><code>_load_data()</code> lấy <code>dfs[0]</code> mà không kiểm rỗng → ZIP không có <code>.csv</code>
+      cho ra <code>IndexError: list index out of range</code>. Người vận hành nhận đúng câu đó, không biết sửa gì.</p>
+      <p>Bản vá đầu của tôi bắt <code>zipfile.BadZipFile</code> — <strong>và nó không chạy.</strong> Kiểm thử lộ ra:
+      <code>pyzipper</code> (dùng cho ZIP mã hoá AES của IPCAS) <em>đóng gói bản <code>zipfile</code> riêng</em>, nên
+      <code>pyzipper.BadZipFile</code> không phải lớp con của <code>zipfile.BadZipFile</code> — hai lớp hoàn toàn
+      tách biệt, <code>issubclass()</code> trả <code>False</code>.</p>
+      <pre>_ZipFile = pyzipper.AESZipFile
+_BAD_ZIP = (pyzipper.BadZipFile, zipfile.BadZipFile)   # phải bắt cả hai</pre>
+      <p><strong>Đây là lý do đáng viết ra:</strong> nếu chỉ đọc code mà không chạy thử, bản vá trông đúng hoàn toàn
+      và lỗi 500 vẫn còn nguyên. Quy tắc rút ra — <em>khi bắt ngoại lệ từ thư viện có bản fork/vendor
+      (pyzipper, ujson, orjson…), phải xác minh lớp ngoại lệ thật bằng <code>type(e).__mro__</code>, không suy từ tên.</em></p>
+
+      <div class="label">Thêm: phân biệt lỗi người dùng và lỗi hệ thống</div>
+      <p>Thêm <code>InputError(ValueError)</code>. <code>run_process()</code> nay tách hai nhánh: lỗi do file thì
+      log WARNING và <strong>hiển thị thẳng thông báo</strong> qua <code>/progress</code>; lỗi hệ thống giữ nguyên
+      log ERROR + "xem log server". Trước đây mọi lỗi đều rơi vào nhánh thứ hai, kể cả lỗi người dùng tự sửa được.</p>
+      <p>Bổ sung kiểm cột bắt buộc của CSV — cùng loại vấn đề: thiếu cột trước đây cho <code>KeyError</code> trần,
+      nay báo rõ thiếu cột nào.</p>
+
+      <div class="label">Kiểm thử</div>
+      <p>Hai tầng. Tầng service: 7 tình huống (ZIP hỏng · ZIP rỗng · ZIP sai nội dung · ZIP hợp lệ · CSV thiếu cột ·
+      CSV đủ cột), đo số thư mục tạm rò rỉ mỗi lần. Tầng HTTP với tài khoản thật: xác nhận mã trả về đúng
+      422/200 và <code>/progress</code> trả thông báo đọc được. Đường chạy đúng vẫn nguyên: Excel hợp lệ → 200,
+      đọc đủ số dòng, thư mục tạm dọn sạch sau khi dùng.</p>
+    </div>
+  </div>
+
+  <!-- B -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">B</span>
+      <span class="card-title">B1 spike NiceGUI + B2 <code>ui_kit.py</code></span>
+      <span class="badge badge-done">B2 xong · B1 chỉ đánh giá</span>
+    </div>
+    <div class="card-body">
+      <p>Chi tiết spike ở <a href="SPIKE_B1_NICEGUI.md"><code>SPIKE_B1_NICEGUI.md</code></a>.
+      <strong><code>requirements.txt</code> không bị sửa</strong> — vẫn <code>nicegui==1.4.37</code>.</p>
+
+      <div class="label">B1 — nút thắt không nằm ở nơi ba vòng rà soát đã tìm</div>
+      <p>Cả ba vòng đều soi breaking change của API giao diện. Nút thắt thật là <strong>ràng buộc phiên bản</strong>:
+      <code>fastapi==0.109.1</code> đòi <code>starlette&lt;0.36</code>, còn <code>nicegui&gt;=2.13</code> đòi
+      <code>starlette&gt;=0.45.3</code> — không thoả đồng thời. <code>nicegui 2.12.1</code> là bản 2.x cuối cùng
+      chưa ép starlette, nên nó vượt qua ranh giới 2.0 mà <em>không đụng backend</em>.</p>
+      <p>Toàn bộ 9 API bị gỡ ở 2.0 đều <strong>0 lần dùng</strong>. Hai <code>right_drawer</code> mà vòng trước
+      cho là phải sửa hoá ra đều là con trực tiếp của page — dựng bản tái hiện chạy trên cả hai phiên bản,
+      không <code>RuntimeError</code>. Rủi ro còn lại duy nhất là <strong>thị giác</strong>: 70 <code>ui.card</code>,
+      trong đó 11 dòng có cả card lẫn border.</p>
+
+      <div class="label">Đã triển khai lên môi trường thật (28/07)</div>
+      <p><code>nicegui 1.4.37 → 2.12.1</code> · <code>python-multipart 0.0.9 → &gt;=0.0.31</code>.
+      <strong><code>fastapi</code>, <code>starlette</code>, <code>uvicorn</code> giữ nguyên</strong> — đúng như spike dự đoán.
+      Kiểm thử sau nâng cấp: 21/21 trang import sạch, middleware 6/6, render <code>/login</code> HTTP 200,
+      6 mẫu cấu trúc (drawer, table, card, upload, storage) đều OK, 0 lỗi trong log.</p>
+
+      <div class="label">Rủi ro "70 card" giải bằng so CSS, không phải soi mắt</div>
+      <p>Hạng mục duy nhất còn lại sau 4 tài liệu rà soát — và nó <strong>bằng 0</strong>. Cách giải: tải wheel
+      1.4.37 về, trích <code>quasar.css</code> + <code>nicegui.css</code> + <code>card.py</code>, so trực tiếp với bản 2.12.1.</p>
+      <table>
+        <tr><th>Giả định</th><th>Sự thật đo được</th></tr>
+        <tr><td>2.0 bỏ padding tự động của <code>ui.card</code></td><td><code>.nicegui-card</code> vẫn <code>padding: 1rem</code> ở cả hai bản</td></tr>
+        <tr><td>Quasar bỏ luật gỡ border/shadow của phần tử con</td><td>Không bỏ — <strong>viết lại thành opt-out</strong>: <code>:not(.q--avoid-card-border)</code></td></tr>
+        <tr><td>Nên hành vi đổi</td><td><strong>Không đổi</strong> — <code>grep</code> toàn package: không có gì gắn class opt-out đó</td></tr>
+      </table>
+      <p><strong>Tài liệu của chính thư viện mô tả sai bản này.</strong> Docstring <code>Card</code> và release notes 2.0.0
+      đều ghi "không còn ẩn border/shadow của phần tử con", nhưng cơ chế chưa được nối dây ở 2.12.1.
+      Bài học: <em>release notes là giả thuyết, CSS đã cài mới là bằng chứng.</em></p>
+      <p>Còn một cảnh báo hẹp: luật mới dùng cú pháp <code>:nth-child(1 of :not(...))</code>, cần Chrome/Edge 111+
+      (03/2023). Trình duyệt cũ hơn sẽ bỏ qua hai luật bo góc con đầu/cuối — tác động rất nhỏ vì các card đều
+      dùng <code>overflow-hidden</code>, việc cắt viền đã tự bo góc.</p>
+
+      <div class="label">A7 — đính chính khuyến nghị của chính mình</div>
+      <p>Ban đầu tôi đề nghị <code>python-multipart&gt;=0.0.18</code>. Sai: đó là mức tối thiểu <em>NiceGUI đòi</em>,
+      không phải mức <em>an toàn</em>. Tra lại OSV theo từng bản: 0.0.9 có 16 lỗ hổng, <strong>0.0.18 vẫn còn 14</strong>,
+      phải <code>&gt;=0.0.31</code> mới sạch. Đã áp dụng <code>&gt;=0.0.31</code>.</p>
+      <p>Bài học: lấy ràng buộc phiên bản của thư viện khác làm ngưỡng bảo mật là nhầm hai mục tiêu khác nhau —
+      họ pin để API tương thích, không phải để vá lỗ hổng.</p>
+
+      <div class="label">A7 — thay đổi hành vi thật, đã đo biên an toàn</div>
+      <p>Các bản vá DoS hoạt động bằng cách <strong>thêm giới hạn</strong>, nên chúng đổi hành vi chứ không chỉ
+      vá lỗi. Đo trên endpoint upload thật:</p>
+      <table>
+        <tr><th>Trường hợp</th><th>Kết quả</th></tr>
+        <tr><td>≤ 8 header trên một part</td><td>401 — qua được parser, tới RBAC</td></tr>
+        <tr><td>≥ 9 header trên một part</td><td><strong>400 — parser từ chối</strong> (giới hạn mới từ bản 0.0.27)</td></tr>
+        <tr><td>4 part × 200KB (endpoint nhiều part nhất)</td><td>401 — bình thường</td></tr>
+        <tr><td>1 part 5MB</td><td>401 — bình thường</td></tr>
+      </table>
+      <p>Trình duyệt và <code>ui.upload</code> gửi <strong>2–3 header mỗi part</strong>
+      (<code>Content-Disposition</code>, <code>Content-Type</code>, đôi khi <code>Content-Transfer-Encoding</code>).
+      Biên an toàn khoảng <strong>3 lần</strong> — không có đường nào chạm tới giới hạn trong sử dụng bình thường.
+      Ghi lại vì nếu sau này có client tự dựng request multipart thủ công thì đây là chỗ đầu tiên cần nhìn.</p>
+
+      <div class="label">B1 — phát hiện quan trọng hơn chính spike</div>
+      <p><code>python-multipart==0.0.9</code> đang chạy có <strong>16 lỗ hổng đã biết, 4 mức HIGH</strong> — gồm một
+      lỗi ghi file tuỳ ý và ba lỗi DoS. Đây là thư viện xử lý mọi upload; hệ thống có 9 chỗ <code>ui.upload</code>
+      và các endpoint nạp ZIP. <strong>Đề nghị tách thành A7 làm ngay</strong>, không chờ nhóm B. Việc nới pin này
+      cũng chính là điều kiện của phương án nâng cấp — hai mục tiêu trùng nhau.</p>
+
+      <div class="label">B2 — thiết kế bám bài học <code>_card</code> vs <code>_page_header</code></div>
+      <p>Trong <code>shared.py</code>, <code>_page_header()</code> được 19/21 trang dùng còn <code>_card()</code>
+      chỉ 1. Khác biệt: <code>_page_header</code> giải quyết việc mọi trang đều phải làm tại một điểm chèn hiển nhiên;
+      <code>_card</code> cạnh tranh với việc gõ <code>ui.card()</code> — ngắn hơn và ai cũng thuộc.</p>
+      <p>Nên <code>ui_kit</code> chọn API <strong>một tham số</strong>: <code>status_chip("approved")</code>,
+      <code>status_label(code)</code>, <code>status_dot(code)</code>. Ngắn hơn cách viết tay thì mới có cơ được dùng.
+      Và <code>install()</code> được cắm vào <code>_sidebar()</code> — điểm mà 19 trang đã đi qua — nên token màu
+      và font Inter phủ toàn hệ thống mà không phải sửa 21 trang.</p>
+
+      <div class="label">B2 — va chạm khi gộp sổ đăng ký trạng thái</div>
+      <p>Khoá <code>rejected</code> tồn tại ở hai nơi với hai nhãn: "Bị từ chối" (bàn giao) và "Từ chối" (nghỉ phép).
+      Đã thống nhất thành <strong>"Từ chối"</strong>. Đây là <em>thay đổi chữ hiển thị duy nhất</em> của cả B2 —
+      đã đối chiếu 10 mã trạng thái trước/sau để chắc không có chỗ nào đổi ngoài ý muốn, và xác nhận màu ô lưới
+      bàn giao giống hệt bản cũ từng ký tự.</p>
+
+      <div class="label">B2 — card đặt padding tường minh, không dựa mặc định</div>
+      <p><code>ui_kit.card()</code> khai báo padding thay vì để Quasar tự lo. Lý do đến thẳng từ B1: NiceGUI 2.0 bỏ
+      CSS padding tự động của <code>ui.card</code>. Card dựng qua <code>ui_kit</code> giữ nguyên hình dạng ở cả 1.4.x
+      lẫn 2.x — mỗi card chuyển sang nó là bớt một mục phải soi mắt khi nâng cấp.</p>
+      <p>Cùng lý do, <code>install()</code> cố ý <strong>không</strong> dùng cờ chống gọi trùng qua
+      <code>context.get_client()</code>: API đó bị gỡ ở 2.0. Gọi trùng chỉ tạo thẻ <code>&lt;link&gt;</code> lặp,
+      trình duyệt tự gộp — vô hại.</p>
+
+      <div class="label">Phát hiện tình cờ: con số "5.018 dòng" bị thổi phồng 72%</div>
+      <p><code>frontend/pages/leaves.py</code> có <strong>một dòng trống xen giữa mỗi dòng code</strong> —
+      2.097/5.018 dòng là trống (41%), trong khi mọi file khác chỉ 8–11%. Số dòng thật là <strong>2.921</strong>.</p>
+      <p>Con số 5.018 đã được trích trong cả 5 tài liệu rà soát và là cơ sở định giá C2 ("3–4 ngày, rủi ro Cao").
+      <strong>Nên tính lại C2.</strong> Chưa chuẩn hoá khoảng trắng vì không an toàn bằng lệnh đơn giản: xoá dòng
+      trống nằm trong chuỗi ba nháy sẽ làm hỏng HTML/CSS nhúng — cần xử lý bằng <code>tokenize</code>, là một việc
+      riêng chứ không phải thao tác phụ.</p>
+
+      <div class="label">Kết quả đo được của B2</div>
+      <table>
+        <tr><th>Chỉ số</th><th>Trước</th><th>Sau</th></tr>
+        <tr><td>Nơi định nghĩa trạng thái</td><td>3 nơi, 3 cơ chế</td><td><strong>1</strong> (<code>ui_kit.STATUS</code>)</td></tr>
+        <tr><td>Map trạng thái rời trong <code>pages/</code></td><td><code>_STATUS_LABEL_MAP</code>, <code>_STATUS_DOT_COLOR</code>, <code>_CELL_STATUS_STYLE</code>, <code>_LEAVE_STATUS</code></td><td><strong>0</strong> — đều trỏ về <code>ui_kit</code></td></tr>
+        <tr><td>Mã hex ngoài nguồn tập trung</td><td>118</td><td><strong>93</strong> (−21%; phần còn lại thuộc B5)</td></tr>
+        <tr><td>Trang tự nạp font Inter</td><td>2/21 (19 trang không có font)</td><td><strong>0</strong> — 21/21 qua <code>install()</code></td></tr>
+        <tr><td><code>ui.skeleton</code></td><td>0</td><td>có <code>skeleton_rows()</code>, <code>skeleton_cards()</code></td></tr>
+      </table>
+      <p><strong>Không phóng đại:</strong> B2 chỉ dựng hạ tầng và chứng minh trên 4 trang
+      (<code>handovers</code>, <code>duty_schedule</code>, <code>leaves</code>, <code>login</code>).
+      93 mã hex còn lại và việc áp <code>empty_state()</code>/<code>skeleton()</code> cho 16 trang chưa có chỉ báo
+      tải là việc của B5 — đúng như phân chia ban đầu.</p>
+    </div>
+  </div>
+
+  <!-- A -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">A</span>
+      <span class="card-title">Nhóm A1–A6 — vá nhanh sau 3 vòng rà soát chéo</span>
+      <span class="badge badge-done">Đã xong + kiểm thử</span>
+    </div>
+    <div class="card-body">
+      <p>Xuất phát từ chuỗi 5 tài liệu rà soát chéo (<code>RA_SOAT_TTTT_DEVELOP.md</code> →
+      <code>CHOT_VONG_DOI_CHIEU.md</code>). Nhóm B (nâng cấp giao diện) hoãn;
+      <strong>B3 (menu bàn phím) và B4 (phím tắt) đã bị huỷ hẳn</strong> — đừng khôi phục từ tài liệu cũ.</p>
+
+      <div class="label">A6 — Bẫy migration: vấn đề thật không phải tên bảng sai</div>
+      <p>Tên bảng <code>ksnb_staff</code> → <code>user_tttt</code> đã đổi từ lâu, nhưng 18 câu SQL trong
+      <code>schema_migrations</code> vẫn dùng tên cũ. Điều khiến nó nguy hiểm là <strong>thứ tự thực thi</strong>:
+      khối đổi tên nằm <em>sau</em> vòng lặp migration, và danh sách nuốt lỗi có <code>"no such table"</code>.</p>
+      <table>
+        <tr><th>Hệ quả</th><th>Mức độ thật</th></tr>
+        <tr><td>18 câu SQL trượt im lặng mỗi lần khởi động</td><td><span class="pill pill-green">Không thiệt hại</span> — đều đã chạy xong trước khi đổi tên, hoặc có bản trùng dùng tên mới thay thế (trigger <code>chk_used_leave_days</code>, index <code>ix_user_tttt_dept</code>)</td></tr>
+        <tr><td>Migration mới viết sai tên bảng sẽ trượt im lặng</td><td><span class="pill pill-red">Đây mới là rủi ro</span> — <code>DESIGN.md</code> bảo "thêm SQL vào list", list đầy ví dụ tên cũ, lỗi bị nuốt → cột không được thêm, không log, app vẫn khởi động</td></tr>
+      </table>
+      <p><strong>Đính chính so với báo cáo ban đầu:</strong> tôi từng nói "cài mới hôm nay sẽ ra DB khác DB đang chạy".
+      Sai về mức độ — khác biệt chỉ là hai index thừa còn sót tên cũ (<code>ix_ksnb_staff_dept</code>,
+      <code>ix_ksnb_staff_id</code>), không ảnh hưởng chức năng vì bản trùng tên mới đã phủ. Giá trị của A6 là
+      <strong>chặn lỗi tương lai</strong>, không phải sửa lỗi hiện tại.</p>
+
+      <div class="label">A6 — Vì sao đảo thứ tự thay vì chỉ đổi tên</div>
+      <p>Chỉ đổi tên trong SQL là chưa đủ: DB cũ còn bảng <code>ksnb_staff</code> sẽ trượt <em>toàn bộ</em> migration
+      (giờ trỏ vào <code>user_tttt</code> chưa có dữ liệu). Phải đưa khối đổi tên lên <strong>trước</strong> vòng lặp
+      để cả 3 đường đều đúng: DB cũ → đổi tên rồi migrate; DB hiện tại → no-op; DB mới → no-op.</p>
+
+      <div class="label">A6 — Đánh đổi: raise thay vì DROP im lặng</div>
+      <p>Khối đổi tên cũ có <code>DROP TABLE user_tttt</code> vô điều kiện khi cả 2 bảng cùng tồn tại. Giả định
+      "bảng này chắc chắn rỗng do <code>_create_tables()</code> vừa tạo" đúng trong luồng bình thường, nhưng nếu sai
+      thì mất toàn bộ dữ liệu nhân sự không dấu vết. Thêm kiểm tra <code>COUNT(*)</code>: có dữ liệu thì
+      <strong>chặn khởi động</strong> và báo xử lý thủ công. Chấp nhận đánh đổi "app không lên" để đổi lấy "không mất dữ liệu".</p>
+
+      <div class="label">A5 — Comment trong code dựa trên tiền đề sai</div>
+      <p><code>frontend/pages/staff.py</code> giữ <code>"controller"</code> trong bản đồ hiển thị với lý do
+      <em>"cho JWT session cũ chưa expire"</em>. Kiểm lại: <code>get_current_staff</code> đọc role từ
+      <strong>DB mỗi request</strong> (<code>SELECT * FROM user_tttt</code>), không lấy từ token — nên nhánh đó
+      không thể chạm tới dù JWT cũ đến đâu. Cộng với 0 bản ghi <code>role='controller'</code> trong DB → xoá cả 4 chỗ.
+      Giữ nguyên câu migration <code>UPDATE ... SET role='pho_phong' WHERE role='controller'</code> vì DB cũ vẫn cần nó.</p>
+
+      <div class="label">A4 — Cảnh báo bám sự thật quan sát được, không bám cờ khai báo</div>
+      <p>Cảnh báo CORS/<code>/docs</code> kích hoạt theo <code>BACKEND_HOST</code> chứ không theo <code>ENV</code>.
+      Lý do: người quên đặt <code>ALLOWED_ORIGINS</code> gần như chắc chắn cũng quên <code>ENV=production</code> —
+      cảnh báo dựa vào <code>ENV</code> sẽ không bao giờ nổ đúng lúc cần. Đã xác nhận cả 2 cảnh báo nổ trên cấu hình hiện tại.</p>
+
+      <div class="label">A2 — Tác dụng phụ đã chấp nhận</div>
+      <p>Đổi <code>storage_secret</code> từ hardcode sang env <strong>vô hiệu hoá toàn bộ cookie phiên đang có</strong> —
+      mọi người dùng bị đăng xuất một lần ở lần deploy đầu. Không có cách tránh: giữ giá trị cũ nghĩa là giữ nguyên lỗ hổng.
+      Đã ghi cảnh báo này vào cả thông báo lỗi lẫn <code>.env.example</code>.</p>
+
+      <div class="label">A1 — Không viết lại lịch sử</div>
+      <p><code>Plan/</code> và <code>Upgrade/</code> mô tả đúng hệ thống <em>tại thời điểm viết</em>. Sửa tên bảng trong đó
+      là bóp méo hồ sơ. Chọn dán banner cảnh báo đầu file thay vì sửa nội dung. Riêng <code>CLAUDE.md</code>/<code>DESIGN.md</code>
+      là chỉ dẫn đang có hiệu lực → sửa thẳng.</p>
+      <p>Bằng chứng cho thấy tài liệu sai gây hại thật: chính người rà soát đã cảnh báo "<code>PLAN.md</code> lỗi thời"
+      rồi sau đó vẫn lấy tên bảng <code>ksnb_staff</code> từ đúng file đó.</p>
+
+      <div class="label">Phát hiện nhưng KHÔNG xử lý</div>
+      <table>
+        <tr><th>Việc</th><th>Vì sao để lại</th></tr>
+        <tr><td>Index thừa trong DB: <code>ix_ksnb_staff_dept</code>, <code>ix_ksnb_staff_id</code> (trùng chức năng với <code>ix_user_tttt_dept</code>)</td><td>Vô hại, chỉ tốn chỗ. Xoá index trên DB đang chạy thật cần cửa sổ bảo trì — không đáng cho lợi ích cosmetic</td></tr>
+        <tr><td><code>backend/__pycache__/models.cpython-310.pyc</code> và <code>schemas.cpython-310.pyc</code> mồ côi (không còn <code>.py</code> tương ứng)</td><td>Python 3 không import từ <code>.pyc</code> mồ côi nên vô hại. Là dấu vết refactor cũ — chính nó xác nhận <code>backend/models.py</code> từng tồn tại, giải thích vì sao <code>DESIGN.md</code> trỏ tới nó</td></tr>
+        <tr><td><code>data/</code> có 3 file DB hỏng từ 14–15/05/2026 còn sót</td><td>Ngoài phạm vi nhóm A. Nên hỏi trước khi xoá — có thể đang giữ làm bằng chứng sự cố</td></tr>
+        <tr><td>Đoạn CSS sửa menu ở phụ lục <code>CHOT_VONG_DOI_CHIEU.md</code> có lỗi <code>pointer-events</code> tự vô hiệu hoá độ trễ 120ms</td><td>Thuộc B3 — <strong>đã huỷ</strong>. Ghi lại phòng khi có người khôi phục đoạn CSS đó</td></tr>
+      </table>
+
+      <div class="label">A2 — Bẫy deploy phát hiện sau: <code>start.bat</code> không bù được biến mới</div>
+      <p><code>start.bat</code> chỉ sinh <code>.env</code> khi file <strong>chưa tồn tại</strong>. Trên máy chủ
+      <code>.env</code> đã có sẵn (chứa <code>SECRET_KEY</code>) nên nó bị bỏ qua hoàn toàn → sau khi deploy,
+      frontend fail-fast và <strong>không khởi động được</strong>. Cả máy chính lẫn hệ thống test (9000/9090) đều dính,
+      vì <code>deploy.bat</code> tự gọi <code>deploy-test.bat</code>.</p>
+      <p>Chọn sửa <code>start.bat</code> để <strong>tự bù biến còn thiếu</strong> thay vì viết hướng dẫn gõ tay từng máy.
+      Lý do: cả hai script deploy đều copy <code>start.bat</code>, nên bản vá tự lan sang mọi máy đích ở lần deploy kế tiếp —
+      không phụ thuộc vào việc người vận hành có đọc hướng dẫn hay không.</p>
+      <p>Chi tiết dễ sai đã xử lý: ghi <code>echo.</code> trước khi append, để <code>.env</code> nào không có dòng trống
+      cuối file cũng không bị nối <code>SECRET_KEY=...STORAGE_SECRET=...</code> thành một dòng.
+      Kiểm thử 5 tình huống (không có <code>.env</code> · <code>.env</code> cũ thiếu khoá · đã có khoá · thiếu newline cuối ·
+      chạy 2 lần) — đều đúng, idempotent.</p>
+      <p><strong>Nguyên tắc rút ra:</strong> mỗi lần thêm biến môi trường bắt buộc, phải sửa <code>start.bat</code> kèm theo.
+      Fail-fast chỉ an toàn khi có đường tự phục hồi trên máy đích.</p>
+
+      <div class="label">Kiểm thử đã chạy</div>
+      <p>Migration thử trên 4 kịch bản DB (bản sao DB thật 78 dòng · DB rỗng cài mới · DB cũ còn tên
+      <code>ksnb_staff</code> · migration sai tên bảng phải raise) — cả 4 đạt. Boot backend thật qua
+      <code>lifespan</code>: 169 route, <code>PRAGMA integrity_check = ok</code>, 78 dòng nguyên vẹn.
+      Fail-fast <code>STORAGE_SECRET</code> kiểm cả 2 chiều. Không tạo data test trong DB.</p>
+    </div>
+  </div>
 
   <!-- 0 -->
   <div class="card">
@@ -1662,7 +2522,460 @@ ui.on_exception(_on_exception)</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-07-27</footer>
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">46</span>
+      <span class="card-title">Sidebar — khối "Công việc chờ xử lý" thay cho badge rải rác</span>
+      <span class="badge badge-done">Đã fix</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Vấn đề gốc — badge chỉ sống ở 3/19 trang</div>
+      <p><code>_sidebar()</code> trả về <code>badge_refs</code> để mỗi trang <strong>tự</strong> gọi <code>/pending-counts</code> rồi đổ số vào. Grep ra đúng ba trang làm việc đó: <code>dashboard.py</code>, <code>handovers.py</code>, <code>leaves.py</code>. Mười sáu trang còn lại dựng badge rồi để trống vĩnh viễn — người dùng đứng ở trang Lưu trữ không hề biết mình có 12 chứng từ chờ.</p>
+      <p>Đây là loại hợp đồng mà người thêm trang mới không có cách nào biết là mình phải thực hiện. Chuyển trách nhiệm nạp số vào <strong>chính <code>shared.py</code></strong> để trang mới tự có, không phải nhớ gì.</p>
+
+      <div class="label">Quyết định — nạp bằng <code>ui.timer</code>, không gọi API trong <code>_sidebar()</code></div>
+      <table>
+        <tr><th>Phương án</th><th>Giá phải trả</th><th></th></tr>
+        <tr><td>Gọi API đồng bộ ngay trong <code>_sidebar()</code></td><td>Chặn render cả 19 trang thêm một lượt gọi mạng</td><td><span class="pill pill-gray">Bỏ</span></td></tr>
+        <tr><td>Sửa cả 19 trang tự nạp</td><td>19 chỗ phải nhớ; trang thứ 20 sẽ quên</td><td><span class="pill pill-gray">Bỏ</span></td></tr>
+        <tr><td><code>ui.timer(0.1, once=True)</code> trong <code>_sidebar()</code></td><td>Khối hiện trễ ~105ms sau khi trang vẽ xong</td><td><span class="pill">Chọn</span></td></tr>
+      </table>
+      <p>Chấp nhận nhấp nháy vì khối nằm ở sidebar, không phải nội dung chính — và <code>_sidebar()</code> là hàm <strong>đồng bộ</strong>, không có chỗ nào <code>await</code> được mà không đổi chữ ký của cả 19 trang.</p>
+      <p><strong>Thời gian load trang không đổi.</strong> Trang dựng xong và trả về trước khi có lời gọi API nào; timer chỉ chạy sau khi WebSocket đã nối. Đo trên DB thật: <code>/pending-counts</code> trung vị <strong>4,3ms</strong> (p95 7,7ms) — ngang <code>/departments/</code> mà mọi trang đang gọi sẵn. <code>asyncio.to_thread</code> giữ lời gọi ở luồng riêng nên event loop không bị chẹn.</p>
+      <p>Cân đối theo trang: 16 trang trước đây không có badge nay thêm 1 lời gọi nằm ngoài đường tới hạn; <code>handovers.py</code> <strong>bớt</strong> 1 lời gọi (không còn tự đổ badge); Trang chủ không đổi vì vẫn cần <code>/pending-counts</code> cho thẻ "Công việc đang chờ".</p>
+      <p>Khối dựng sẵn ở trạng thái <code>visible=False</code> rồi mới bật, thay vì dựng phần tử sau khi có dữ liệu: giữ được mọi thao tác DOM trong lúc build, không phải giữ tham chiếu tới slot cha để chèn ngược về sau.</p>
+
+      <div class="label">Nguồn sự thật cho phân quyền — <code>_leave_filter()</code> / <code>_handover_filter()</code></div>
+      <p><code>/pending-counts</code> có 7 nhánh vai trò (PP/TP Tổng hợp hai vai, TP/PP thường, TH đơn thuần, GĐ, PGĐ có uỷ quyền còn hiệu lực…). Endpoint mới <code>/pending-items</code> phải lọc <strong>y hệt</strong>, nếu không số trên sidebar và danh sách trong hộp thoại sẽ lệch nhau — và lệch một cách âm thầm.</p>
+      <p>Nên tách thành hàm trả <code>(mệnh đề WHERE, tham số)</code> dùng chung, thay vì chép SQL sang endpoint mới. Đã kiểm: 22 tổ hợp vai trò × phòng ban trong DB thật đều cho <code>counts == len(items)</code>.</p>
+
+      <div class="label">Màn hình theo dõi riêng, không phải hộp thoại</div>
+      <p>Bản đầu dựng hộp thoại gọn trong sidebar. <span class="pill pill-gray">Bỏ</span> — người dùng cần <strong>theo dõi</strong> danh sách này (chứng từ của ai, phòng nào, ai nộp, ngày nào), không chỉ nhảy qua nó. Hộp thoại không chứa nổi 7 cột, không lưu được vào lịch sử trình duyệt, và mất khi bấm ra ngoài.</p>
+      <p>Thay bằng <code>frontend/pages/pending_work.py</code> → <code>/pending/{kind}</code>. Một file cho cả hai loại vì bố cục bảng và cách nạp dữ liệu giống hệt nhau; chỉ khác định nghĩa cột và đích đến. Tách hai file sẽ nhân đôi phần khung mà không thêm gì.</p>
+      <p><code>_sidebar(kind)</code> nhận thẳng <code>"handovers"</code>/<code>"leaves"</code> nên mục nghiệp vụ tương ứng vẫn sáng khi đang đứng ở màn hình theo dõi — người dùng không bị mất dấu mình đang ở đâu.</p>
+      <p><strong>Bẫy khi dựng bảng bằng <code>ui.row()</code>:</strong> NiceGUI đặt <code>gap: var(--nicegui-default-gap)</code> = <strong>1rem</strong> cho mọi <code>.nicegui-row</code>. Đặt <code>border-b</code> lên từng ô thì đường kẻ đứt quãng đúng ở các khoảng hở đó — thấy rõ nhất ở cột cuối vì ô header rỗng. Viền phải đặt lên <strong>hàng</strong>, và cả hai hàng (header + dữ liệu) đều cần <code>gap-0</code> thì cột mới thẳng. Đáng nhớ cho hạng mục làm lại bảng biểu sắp tới — mọi "bảng" dựng bằng flex-row trong dự án đều dính bẫy này.</p>
+
+      <div class="label">Deep-link — hai cơ chế khác nhau cho hai màn hình</div>
+      <table>
+        <tr><th>Đích</th><th>Cách dẫn</th><th>Vì sao</th></tr>
+        <tr><td>Bàn giao chứng từ</td><td>Query param <code>?dept=&amp;year=&amp;month=&amp;entry=</code></td><td>Trang đã có sẵn ba bộ lọc đúng ba tham số đầu; <code>entry</code> là chìa để nhảy đúng ô</td></tr>
+        <tr><td>Nghỉ phép</td><td><code>app.storage.user["_leaves_goto"]</code> + <code>_leaves_focus</code></td><td>Trang đã có sẵn cơ chế chọn tab bằng <code>_leaves_goto</code> — thêm query param nữa là dựng cơ chế thứ hai làm cùng một việc</td></tr>
+      </table>
+      <p><strong>Nhảy đúng ô chứng từ.</strong> Mỗi ô trên lưới là <code>&lt;input class="hv-inp" data-eid="…"&gt;</code> — sẵn có từ trước, dùng cho panel lịch sử. Tận dụng luôn: sau khi lưới vào DOM, chạy <code>querySelector('.hv-inp[data-eid="…"]')</code> rồi <code>scrollIntoView</code> + focus + viền đỏ 2,6 giây. Không phải thêm thuộc tính đánh dấu nào mới.</p>
+      <p><code>focus_entry</code> là <strong>list một phần tử</strong> chứ không phải biến thường: <code>load_grid()</code> được định nghĩa trước chỗ đọc query param nên cần ô nhớ chia sẻ, và phải xoá được ngay sau lần dùng đầu — nếu không, mỗi lần đổi phòng/tháng lưới sẽ lại kéo màn hình về ô cũ.</p>
+      <p><code>_leaves_goto</code> được mở rộng đổ chéo (<code>pending</code> ⇄ <code>pending_th</code>): màn hình theo dõi chỉ biết <em>trạng thái đơn</em>, không biết người dùng có hai tab duyệt hay một. Không có fallback thì TH đơn vai bấm vào sẽ rơi về tab mặc định.</p>
+
+      <div class="label">Gỡ khối "Công việc đang chờ" khỏi Trang chủ</div>
+      <p>Giữ lại sẽ là <strong>nơi thứ hai</strong> hiển thị cùng một thông tin — và là nơi duy nhất bắt người dùng quay về Trang chủ mới thấy. Sidebar hiện diện ở mọi trang, nên nó thắng về mọi mặt.</p>
+      <p>Gỡ theo kéo <code>/pending-counts</code> ra khỏi <code>asyncio.gather</code> của Trang chủ: trang này giờ gọi <strong>4 API thay vì 5</strong>. Đây là lần đổi duy nhất trong đợt làm chạm tới thời gian load thật của một trang, và nó đi theo hướng nhanh hơn.</p>
+
+      <div class="label">Chặn link chết</div>
+      <p><code>/pending-counts</code> lọc theo <strong>vai trò</strong>, còn menu lọc theo <strong>feature</strong> (<code>api.has_feature</code>) — hai lớp phân quyền độc lập. Về lý thuyết có người đếm ra 3 đơn nhưng không được cấp <code>menu.leaves</code>. Khối kiểm cả hai trước khi hiện dòng, nếu không sẽ dựng ra link bấm vào bị đá về <code>/home</code>.</p>
+
+      <div class="label">Badge khi sidebar thu gọn</div>
+      <p>Ở chế độ 4.5rem, <code>.sidebar-label</code> bị ẩn và <code>.sidebar-row</code> bị ép <code>justify-content:center</code>. Badge cố ý <strong>không</strong> mang class <code>.sidebar-label</code> để sống sót, rồi được <code>position:absolute</code> đẩy lên góc phải kèm <code>box-shadow</code> viền nền — nếu để nguyên trong luồng flex, badge sẽ dồn sát và chồng lên icon.</p>
+
+      <div class="label">Phạm vi ảnh hưởng đã kiểm</div>
+      <table>
+        <tr><th>Điểm</th><th>Kết luận</th></tr>
+        <tr><td><code>badge_refs</code> ở 3 trang</td><td>Đã gỡ hết phần đổ số. <code>_sidebar()</code> vẫn trả <code>dict</code> rỗng để 19 chữ ký gọi không phải sửa</td></tr>
+        <tr><td><code>handovers.py</code> gọi <code>/pending-counts</code></td><td>Bỏ — trang không còn cần. <code>asyncio.gather</code> hai lời gọi rút về một <code>to_thread</code></td></tr>
+        <tr><td><code>_LEAVE_TYPE</code> trong <code>leaves.py</code></td><td>Trỏ về <code>ui_kit.LEAVE_TYPE</code>. <code>shared.py</code> không import được <code>leaves.py</code> (vòng tròn) nên map phải nằm ở <code>ui_kit</code></td></tr>
+        <tr><td>Deep-link tham số rác</td><td><code>_qp_int()</code> trả <code>None</code> khi không parse được; giá trị ngoài <code>dept_opts</code>/<code>year_opts</code>/<code>month_opts</code> rơi về mặc định</td></tr>
+      </table>
+
+      <div class="label">Chưa làm — và vì sao</div>
+      <p><strong>Số trên sidebar không tự cập nhật.</strong> Duyệt xong một đơn, số vẫn giữ nguyên cho tới lần chuyển trang kế tiếp. Thêm <code>ui.timer</code> lặp sẽ bắt 19 trang gọi <code>/pending-counts</code> định kỳ suốt phiên làm việc — đắt hơn nhiều so với phiền toái nó giải quyết. Mọi thao tác duyệt hiện đều kết thúc bằng <code>ui.navigate.to()</code>, tức sidebar dựng lại và số đúng ngay sau đó.</p>
+      <p><strong>Trần 200 dòng</strong> cho danh sách chi tiết, không phân trang. Màn hình theo dõi không phải chỗ duyệt hàng trăm việc; quá ngưỡng thì màn hình nghiệp vụ mới là nơi có bộ lọc và phân trang. Nếu thực tế thường xuyên chạm trần thì mới thêm — thêm sẵn bây giờ là đoán mò.</p>
+      <p><strong>Không có bộ lọc / sắp xếp</strong> trên màn hình theo dõi. Danh sách sắp sẵn theo ngày giao dịch giảm dần (chứng từ) và ngày bắt đầu tăng dần (nghỉ phép — việc gấp lên trước). Với vài chục dòng, bộ lọc là chi phí không thu lại được.</p>
+
+      <div class="note">Kiểm bằng client socket.io thật (không có trình duyệt tự động trong môi trường này). Sidebar: 4 kịch bản ẩn/hiện đều đúng. Màn hình theo dõi: dựng đủ 7 cột + nút cho chứng từ, 8 cột cho nghỉ phép, trạng thái rỗng, và loại việc không tồn tại (trang trống, đã chuyển hướng). Backend kiểm qua HTTP với user tạm vai hậu kiểm viên trên DB thật; mọi data test đã xoá.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">47</span>
+      <span class="card-title">Chuyên viên vào được Trang chủ — gỡ redirect ở <code>/home</code></span>
+      <span class="badge badge-done">Đã fix</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Triệu chứng — mục menu bấm không bao giờ vào được</div>
+      <p><code>dashboard_page()</code> đá thẳng chuyên viên có <code>menu.handovers</code> sang <code>/handovers</code>. Nhưng sidebar <strong>luôn</strong> vẽ mục "Trang chủ" cho mọi vai trò. Kết quả: chuyên viên bấm "Trang chủ" thì bị bật ngược về Bàn giao chứng từ — nhìn như trang hỏng, không như một quyết định phân quyền.</p>
+
+      <div class="label">Vì sao gỡ chứ không phải ẩn mục menu</div>
+      <p>Redirect này hợp lý ở thời điểm nó ra đời: Trang chủ khi đó chỉ là vài con số chuyên viên không dùng tới. Sau hạng mục 46, khối "Công việc đang chờ" đã dời hẳn về sidebar, còn Trang chủ giữ lại "Nghỉ phép hôm nay" và biểu đồ tỷ lệ đúng hạn — đều là thứ chuyên viên xem được và không lộ dữ liệu ngoài quyền. Lý do ban đầu của redirect đã hết hiệu lực, nên gỡ đúng hơn là ẩn mục menu để che nó đi.</p>
+
+      <div class="label">Trang chủ là điểm vào duy nhất cho mọi vai trò</div>
+      <p>Đích sau đăng nhập rẽ theo vai trò ở <strong>ba</strong> chỗ độc lập: <code>login.py</code>, <code>change_password.py</code>, và <code>_redirect_if_cv()</code> trong <code>shared.py</code>. Ba chỗ, cùng một luật ngầm "chuyên viên thì về Bàn giao chứng từ" — thêm một luồng vào hệ thống là thêm một chỗ phải nhớ chép lại luật đó.</p>
+      <p>Gộp cả ba về <code>/home</code>. Không còn nhánh nào phụ thuộc vai trò, nên cũng không còn chỗ nào để quên đồng bộ.</p>
+      <div class="label">Phát hiện lớn hơn — chặn theo vai trò đè lên nhóm quyền</div>
+      <p>Lần theo <code>_redirect_if_cv()</code> thì lộ ra ba lớp phân quyền không cùng một luật:</p>
+      <table>
+        <tr><th>Lớp</th><th>Chặn theo</th></tr>
+        <tr><td>Backend API</td><td><strong>Feature</strong> — <code>Depends(require_feature("menu.storage"))</code></td></tr>
+        <tr><td>Sidebar hiện/ẩn mục</td><td><strong>Feature</strong> — <code>api.has_feature(f"menu.{k}")</code>, không đọc vai trò</td></tr>
+        <tr><td><code>_redirect_if_cv()</code></td><td><strong>Vai trò</strong> — chặn cứng <code>chuyen_vien</code></td></tr>
+      </table>
+      <p>Hai lớp đầu là hệ thống nhóm quyền. Lớp thứ ba là tàn dư từ trước khi có nó, và nó chạy <strong>trước</strong> lớp feature ở 5/6 trang — tức nó vô hiệu hoá lớp feature đối với chuyên viên.</p>
+      <p><code>add_member</code> không lọc vai trò, chỉ kiểm nhân viên còn hoạt động. Nên admin <strong>cấp được</strong> <code>menu.storage</code> cho một chuyên viên: backend chấp nhận mọi lời gọi API của người đó, sidebar hiện mục "Lưu trữ", bấm vào thì bị đá về — <strong>không một dòng thông báo nào</strong>. Admin cấp quyền, giao diện xác nhận đã cấp, người dùng không vào được và không ai hiểu tại sao.</p>
+      <p>Đã gỡ <code>_redirect_if_cv()</code> khỏi 5 trang có sẵn feature check: Báo cáo, Lưu trữ, Báo cáo bàn giao, Nhân sự, Đóng tập. Chuyên viên <strong>không</strong> tự nhiên vào được gì — lớp feature vẫn chặn y như trước; chỉ khác là quyền admin cấp qua nhóm giờ có tác dụng thật.</p>
+      <p>Giữ lại đúng một chỗ: <code>/user-management</code>, trang duy nhất không có mã feature nào để kiểm. Không đặt thêm feature mới cho nó ở đợt này vì đó là mở rộng hệ thống nhóm quyền, không phải sửa lỗi — và chuyên viên vẫn có <code>/change-password</code> nên không mất chức năng. Docstring của hàm ghi rõ lý do để trang mới không gọi lại nó.</p>
+
+      <div class="label">Hệ quả kéo theo — nhãn "Người dùng" nói sai phạm vi</div>
+      <p><code>/api/staff/</code> lọc theo vai trò: chuyên viên, trưởng phòng, phó phòng chỉ nhận nhân sự <strong>phòng mình</strong>. Trước đây không ai để ý vì ba vai này hoặc bị chặn khỏi Trang chủ, hoặc số nhỏ trông vẫn hợp lý. Mở cửa cho chuyên viên thì ô "Người dùng: 8" sẽ bị đọc thành toàn trung tâm.</p>
+      <p>Đổi nhãn thành "Nhân sự phòng" cho ba vai đó thay vì gọi thêm API tổng: con số đang hiển thị vốn đã đúng với phạm vi họ được thấy, sai chỉ ở chữ. Cấp cho họ số toàn trung tâm sẽ là nới quyền xem, không phải sửa lỗi.</p>
+      <p>Ô "Phòng nghiệp vụ" giữ nguyên — <code>/api/departments/</code> trả đủ mọi phòng cho mọi vai trò.</p>
+
+      <div class="label">Phạm vi ảnh hưởng đã kiểm</div>
+      <table>
+        <tr><th>Điểm</th><th>Kết luận</th></tr>
+        <tr><td><code>_redirect_if_cv()</code> ở 6 trang khác</td><td>Không đụng — đó là chặn quyền thật (Báo cáo, Lưu trữ, Nhân sự, Đóng tập…). Trang chủ không dùng hàm này</td></tr>
+        <tr><td>Vòng lặp chuyển hướng</td><td>Không còn khả năng phát sinh: <code>/handovers</code> chỉ đá về <code>/home</code> khi thiếu <code>menu.handovers</code>, mà <code>/home</code> giờ không đá đi đâu cả</td></tr>
+        <tr><td>4 API Trang chủ gọi</td><td><code>/staff/</code>, <code>/departments/</code>, <code>/dashboard/summary</code>, <code>/leaves/today</code> — cả bốn chỉ cần <code>get_current_staff</code>, chuyên viên gọi được, không sinh 403</td></tr>
+        <tr><td>"Nghỉ phép hôm nay"</td><td>Trả toàn trung tâm cho mọi vai trò, không scope theo phòng. Giữ nguyên — chuyên viên vốn đã gọi được endpoint này từ trước, đây không phải cửa mới mở</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">G</span>
+      <span class="card-title">Giới hạn phạm vi phòng ở menu Bàn giao chứng từ — vá 3 lỗ hổng phát hiện khi kiểm thử</span>
+      <span class="badge badge-done">Đã vá + kiểm chứng</span>
+    </div>
+    <div class="card-body">
+      <p>Kiểm thử step-by-step luồng bàn giao (27 bước, mỗi bước một tài khoản thật) cho thấy luồng nghiệp vụ
+      đúng hoàn toàn, nhưng <strong>phạm vi dữ liệu thì không có rào nào</strong>: mọi kiểm tra quyền đều là
+      "có tính năng hay không", không có kiểm tra "phòng nào".</p>
+
+      <div class="label">Ba lỗ hổng, đo bằng request thật</div>
+      <table>
+        <tr><th>Endpoint</th><th>Trước khi vá</th></tr>
+        <tr><td><code>GET /api/handovers/export</code></td><td>Chỉ có <code>get_current_staff</code>. Tài khoản đã gỡ hết nhóm quyền vẫn tải được Excel <strong>1049 dòng chứng từ của mọi phòng</strong></td></tr>
+        <tr><td><code>GET /entries/{id}/history</code></td><td>Cũng chỉ cần đăng nhập — xem được lịch sử chứng từ phòng bất kỳ</td></tr>
+        <tr><td><code>grid</code> + <code>entry-upsert</code></td><td>Có <code>require_feature</code> nhưng không so phòng: GDV phòng A xem được lưới phòng khác và <strong>tạo được chứng từ cho cán bộ phòng khác</strong></td></tr>
+      </table>
+
+      <div class="label">Tiêu chí "được xem mọi phòng": chọn theo quyền, không theo phòng KSNB</div>
+      <p>Hai cách định nghĩa đều khớp dữ liệu thật hiện tại (toàn bộ HKV + lãnh đạo KSNB đều thuộc phòng KSNB
+      <em>và</em> đều có <code>handovers.confirm_entry</code>) — chỉ lệch đúng một người: Trưởng phòng Thanh toán
+      trong nhóm "Full quyền".</p>
+      <table>
+        <tr><th>Phương án</th><th>Đánh đổi</th></tr>
+        <tr><td><strong>Theo quyền hậu kiểm</strong> (đã chọn)</td><td>Admin đổi phạm vi qua màn hình Nhóm, không phải sửa code. Hệ quả: ai được gán <code>confirm_entry</code> là tự động thấy mọi phòng — cấp quyền nhầm nhóm sẽ mở rộng phạm vi mà người gán không nhận ra</td></tr>
+        <tr><td>Theo phòng KSNB</td><td>Sát nghiệp vụ, không phụ thuộc cấu hình nhóm, nhưng phải hardcode mã phòng và mọi thay đổi tổ chức đều phải sửa code</td></tr>
+      </table>
+      <p>GĐ/PGĐ được thêm vào danh sách xem-mọi-phòng theo <code>role</code> chứ không qua nhóm: họ vốn không có
+      <code>save_entry</code>/<code>confirm_entry</code> nên vẫn là chỉ đọc — đã kiểm chứng bằng request thật
+      (nhập và xác nhận đều 403).</p>
+
+      <div class="label">Vì sao <code>export</code> ép phòng thay vì trả 403</div>
+      <p>Frontend luôn gửi <code>department_id</code> theo dropdown, nhưng gọi thẳng API mà bỏ tham số này thì
+      "không lọc" nghĩa là "xuất tất cả" — đúng cái lỗ hổng vừa vá. Nếu trả 403 khi thiếu tham số thì nút Xuất Excel
+      hỏng với người dùng bình thường. Chọn cách ghi đè <code>department_id</code> về phòng của người gọi:
+      luôn ra file hợp lệ, và tham số client gửi lên không còn quyết định được phạm vi.</p>
+
+      <div class="label">Đánh đổi đã chấp nhận: cán bộ chuyển phòng mất đường vào phòng cũ</div>
+      <p>Chứng từ được gắn vào phòng <strong>tại ngày giao dịch</strong> (<code>_dept_at</code>), nên sau khi chuyển
+      phòng, chứng từ tháng cũ vẫn nằm ở phòng cũ — nhưng lưới phòng cũ giờ trả 403 với chính người đó.</p>
+      <table>
+        <tr><th>Tình huống (đã chạy thật)</th><th>Kết quả</th></tr>
+        <tr><td>Tự nhập bù ngày còn ở phòng cũ</td><td>API cho phép (bỏ qua check khi <code>staff_id == current.id</code>), chứng từ vào đúng phòng cũ</td></tr>
+        <tr><td>Mở lưới phòng cũ để xem lại</td><td><strong>403</strong> — và dropdown UI cũng không còn phòng đó</td></tr>
+        <tr><td>HKV thao tác trên phòng cũ</td><td>Bình thường — đây là đường xử lý duy nhất còn lại cho nhập bù sau chuyển phòng</td></tr>
+      </table>
+      <p>Backend vẫn cho tự nhập bù dù UI không có đường vào: <strong>cố ý giữ</strong>, vì đó là quy tắc dữ liệu
+      (chứng từ của chính mình) chứ không phải quy tắc màn hình. Nếu sau này cần, chỉ việc nới dropdown cho các phòng
+      từng thuộc theo <code>staff_department_history</code> mà không phải đụng backend.</p>
+
+      <div class="label">Phạm vi ảnh hưởng đã kiểm</div>
+      <table>
+        <tr><th>Điểm</th><th>Kết luận</th></tr>
+        <tr><td><code>frontend/pages/bundles.py</code> gọi <code>/handovers/grid</code> 2 chỗ</td><td>Không vỡ — chỉ 4 nhóm có <code>menu.bundles</code> (KSNB, Lãnh đạo KSNB, Full quyền, Ban Giám đốc), cả 4 đều thuộc diện xem-mọi-phòng</td></tr>
+        <tr><td>Deep-link <code>?dept=</code> và bộ lọc lưu trong <code>app.storage.tab</code></td><td>Đã có sẵn <code>if init_dept not in dept_opts</code> → tự ép về phòng mình khi dept_opts bị thu hẹp</td></tr>
+        <tr><td>Biến <code>is_cv</code> ở trang handovers</td><td>Giữ lại — nó điều khiển nút Mượn/Bàn giao lại (loại người dùng), khác hẳn <code>can_view_all</code> (phạm vi phòng). Trước đây một biến gánh cả hai vai trò</td></tr>
+        <tr><td>Chặn ở frontend</td><td>Chỉ là trải nghiệm. Mọi quy tắc đều được backend kiểm lại — đã xác nhận bằng request bỏ qua UI</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">H</span>
+      <span class="card-title">Trang chủ vừa đúng 1 viewport — bỏ cuộn dọc</span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+      <p>Trang chủ cao khoảng 900–950px trong khi vùng nhìn thấy của trình duyệt trên màn hình 1080p chỉ còn
+      ~900px, nên luôn phải cuộn để thấy hết biểu đồ. Bốn khối xếp dọc, khối nào cũng có khoảng trống thừa.</p>
+
+      <div class="label">Vì sao không chỉ giảm chiều cao biểu đồ</div>
+      <p>Biểu đồ trước đây cố định <code>height: 340px</code>. Hạ xuống một số nhỏ hơn thì vừa màn hình laptop
+      nhưng bỏ trống nửa dưới màn hình 27". Chọn cách khác: <strong>khoá vùng nội dung đúng
+      <code>h-screen</code>, cho ba khối trên cao cố định (<code>flex-none</code>) và để card biểu đồ
+      <code>flex-1 min-h-0</code> ăn hết phần còn lại</strong> — cùng một layout tự vừa mọi chiều cao màn hình,
+      không đoán số pixel.</p>
+      <table>
+        <tr><th>Khối</th><th>Trước</th><th>Sau</th></tr>
+        <tr><td>Tiêu đề + 2 ô thống kê</td><td>2 hàng riêng, cả hai gần như trống (~150px)</td><td>Gộp 1 hàng: tiêu đề trái, 2 chip số phải (~44px)</td></tr>
+        <tr><td>Nghỉ phép hôm nay</td><td>ô cao <code>min-height:80px</code>, số <code>text-2xl</code></td><td><code>height:56px</code>, số <code>text-xl</code>, nhãn phòng <code>text-[10px]</code></td></tr>
+        <tr><td>Biểu đồ</td><td><code>height: 340px</code> cứng</td><td><code>flex-1</code> + <code>min-height:180px</code></td></tr>
+      </table>
+
+      <div class="label">Nén nội dung vẫn chưa hết cuộn — nguyên nhân thật nằm ở lớp bọc của NiceGUI</div>
+      <p>Sau khi nội dung đã cao đúng <code>100vh</code>, thanh cuộn <strong>vẫn còn</strong>. Lý do:
+      <code>.nicegui-content</code> — lớp <code>div</code> mà NiceGUI tự bọc quanh mọi trang
+      (<code>client.py</code>) — có <code>padding: 1rem</code> cứng trong <code>nicegui.css</code>.
+      Một khối cao 100vh nằm trong lớp đó thì trang cao <code>100vh + 32px</code>, và 32px đó chính là
+      thanh cuộn. Không có cách nào nén nội dung cho hết được, vì phần thừa không thuộc nội dung.</p>
+      <p>Vá bằng CSS <strong>chỉ áp cho trang chủ</strong> — <code>ui.add_head_html()</code> mặc định
+      <code>shared=False</code> nên chỉ vào HTML của client đang mở trang này, các trang khác giữ nguyên
+      padding 1rem. Đưa <code>.nicegui-content</code> về <code>padding: 0</code> không làm lệch giao diện vì
+      <code>#app-content</code> đã có <code>p-4</code> riêng — khoảng thụt lề trông y như cũ, chỉ mất 32px
+      chiều cao thừa. Thêm <code>html, body { overflow: hidden }</code> để một thanh cuộn 1px do làm tròn
+      pixel (màn hình có devicePixelRatio lẻ, hoặc zoom) cũng không xuất hiện.</p>
+
+      <div class="label">Hai chi tiết dễ vỡ nếu ai đó sửa lại</div>
+      <table>
+        <tr><th>Điểm</th><th>Lý do bắt buộc</th></tr>
+        <tr><td><code>min-h-0</code> trên mọi cấp từ vùng nội dung xuống <code>ui.echart</code></td><td>Mặc định flex item có <code>min-height:auto</code> — không có <code>min-h-0</code> thì chuỗi lồng nhau không co lại được và biểu đồ lại đẩy trang dài ra, đúng lỗi ban đầu</td></tr>
+        <tr><td><code>grid</code> của echart đổi từ <code>%</code> sang px</td><td>Khi vùng vẽ bị nén còn ~200px, <code>top: "8%"</code> chỉ còn 16px và nhãn giá trị trên đầu cột bị cắt. Px giữ chỗ ổn định ở mọi chiều cao</td></tr>
+      </table>
+      <p>Không cần thêm JS xử lý resize: component <code>echart.js</code> của NiceGUI đã tự đăng ký
+      <code>ResizeObserver</code> sau lần vẽ đầu tiên, nên chart tự vẽ lại khi cửa sổ đổi kích thước.</p>
+
+      <div class="label">Chia lại tỷ lệ: khối nghỉ phép to lên, biểu đồ nhẹ đi</div>
+      <p>Lần nén đầu làm ô nghỉ phép quá bé (56px) còn biểu đồ chiếm ~630px — mất cân đối. Chỉnh lại:
+      ô nghỉ phép <code>104px</code>, số <code>text-4xl</code>, tên phòng <code>text-xs</code>.</p>
+      <p>Phần "biểu đồ trông thô" <strong>không phải do khung cao</strong> mà do bề rộng cột: chỉ 4 phòng trải
+      hết chiều ngang nên echart tự kéo cột rộng ~150px. Chặn <code>barMaxWidth: 44</code> + bo góc trên
+      <code>borderRadius: [3,3,0,0]</code> là hết. Kèm theo giới hạn <code>max-height: 380px</code> cho phần
+      tử echart để vùng vẽ không phình theo màn hình lớn.</p>
+      <table>
+        <tr><th>Chọn giới hạn ở đâu</th><th>Kết quả</th></tr>
+        <tr><td><strong>Ở phần tử echart</strong> (đã chọn)</td><td>Card vẫn <code>flex-1</code> nên vẫn lấp kín trang, chỗ dư thành khoảng trắng <em>bên trong</em> card trắng — gần như không nhìn thấy</td></tr>
+        <tr><td>Ở card biểu đồ</td><td>Card ngắn lại, chỗ dư thành khoảng xám <code>bg-gray-50</code> ở đáy trang — nhìn rõ như lỗi layout</td></tr>
+      </table>
+      <p>Trên màn hình rất cao (&gt; ~1200px) sẽ có dải trắng ~150px dưới chú giải biểu đồ. Muốn hết hẳn thì
+      phải đổi bố cục: đặt biểu đồ và khối nghỉ phép <em>cạnh nhau</em> (2/3 – 1/3, ô nghỉ phép xếp dọc) —
+      chưa làm vì đó là thay đổi bố cục, không phải chỉnh kích thước.</p>
+
+      <div class="label">Đánh đổi đã chấp nhận</div>
+      <table>
+        <tr><th>Quyết định</th><th>Hệ quả</th></tr>
+        <tr><td>Ghi đè class của <code>_content_area()</code> ngay tại trang chủ thay vì sửa helper</td><td><code>_content_area()</code> dùng chung cho ~20 trang, nhiều trang có bảng dài <em>cần</em> cuộn. Sửa helper là đổi hành vi toàn hệ thống để giải quyết một trang</td></tr>
+        <tr><td>Chặn cuộn ở <code>html, body</code> nhưng giữ <code>overflow-y-auto</code> trên <code>#app-content</code></td><td>Trang không bao giờ có thanh cuộn. Màn hình rất thấp (&lt; ~460px hoặc zoom lớn) thì cuộn bên trong vùng nội dung — vẫn xem được, thay vì bị cắt mất</td></tr>
+        <tr><td><code>overflow-x-auto</code> → <code>overflow-x-hidden</code> ở vùng nội dung</td><td>Không mất gì: hàng ô nghỉ phép dùng <code>flex-1 min-w-0</code> nên co lại chứ không tràn ngang. Đổi để không có thanh cuộn ngang</td></tr>
+        <tr><td>Rút gọn tên phòng NOSTRO ở tầng hiển thị (<code>_DEPT_SHORT</code>), không sửa <code>departments.name</code></td><td>Tên đầy đủ "Phòng Quản lý Tài khoản Nostro Vostro" còn dùng ở phiếu nghỉ phép, bìa tập và báo cáo — đổi trong DB là đổi cả những chỗ đó. Đánh đổi: thêm phòng có tên dài sau này phải nhớ bổ sung vào dict, nếu không nhãn lại xuống 2 dòng. Tra theo <code>code</code> nên đổi tên phòng không làm mất mapping</td></tr>
+        <tr><td>Hàng ô nghỉ phép vẫn <code>flex-nowrap</code> 9 ô</td><td>Chưa xử lý: thêm phòng ban thứ 10–11 thì các ô hẹp dần và tên phòng xuống nhiều dòng. Giữ nguyên vì đây là hành vi cũ, không thuộc phạm vi lần sửa này</td></tr>
+      </table>
+      <p><strong>Chưa kiểm chứng bằng ảnh chụp:</strong> môi trường không có công cụ điều khiển trình duyệt,
+      nên số liệu chiều cao ở trên là tính toán từ class Tailwind, không phải đo trên màn hình thật.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">I</span>
+      <span class="card-title">start.bat dựng lại .venv mỗi lần đổi máy (dự án chạy từ USB)</span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+      <p>Mỗi lần chạy <code>start.bat</code> đều in <em>".venv bị hỏng. Đang tạo lại..."</em> rồi cài lại ~40 gói,
+      mất vài phút — trong khi kiểm tra thủ công thì <code>.venv</code> hoàn toàn bình thường.</p>
+
+      <div class="label">Nguyên nhân chính — thư mục dự án nằm trên USB</div>
+      <p>Ổ <code>D:</code> là <strong>ổ USB removable</strong>, dự án được mang qua lại giữa nhiều máy.
+      File <code>pyvenv.cfg</code> của venv ghi <strong>đường dẫn tuyệt đối</strong> tới Python đã tạo ra nó
+      (<code>home = C:\Users\Administrator\AppData\Local\Programs\Python\Python310</code>). Cắm sang máy khác thì
+      đường dẫn đó không tồn tại → <code>.venv\Scripts\python.exe</code> báo <code>No Python at '...'</code> →
+      script kết luận venv hỏng và dựng lại toàn bộ <em>lên USB</em> (chậm hơn ổ cứng nhiều lần).
+      Chạy cố định một máy thì không bao giờ gặp.</p>
+      <p><strong>Điều kiện còn lại chưa xử lý:</strong> thư viện trong venv là bản biên dịch gắn với Python 3.10
+      (<code>*.cp310-win_amd64.pyd</code>). Máy khác có 3.10.x → vá 2 giây là xong. Máy có 3.11/3.12 → venv vá được
+      nhưng import gói biên dịch sẽ hỏng, script phải cài lại toàn bộ và <em>cần internet</em>.
+      Đã cân nhắc kho wheels offline trên USB và Python portable — chủ dự án chọn giữ nguyên vì các máy đang dùng đều có 3.10.</p>
+
+      <div class="label">Lỗi thứ hai, độc lập — xuống dòng LF</div>
+      <p>Phát hiện thêm khi mổ xẻ: <code>start.bat</code> trong thư mục làm việc bị ghi bằng <strong>xuống dòng LF</strong> (do công cụ ghi file,
+      không phải do <code>git checkout</code> — repo đang bật <code>core.autocrlf=true</code> nhưng file bị ghi đè sau đó).
+      <code>cmd.exe</code> đọc file .bat theo <em>vị trí byte</em> và luôn giả định mỗi dòng kết thúc bằng 2 byte
+      <code>CRLF</code>; với file LF nó lệch dần 1 byte mỗi dòng, nên từ giữa file trở đi các lệnh bị ăn mất ký tự đầu.
+      Dòng kiểm tra venv chạy sai → <code>errorlevel 1</code> → nhánh "hỏng" kích hoạt mọi lần. Đã tái hiện được:
+      chạy bản LF cho ra <code>'01' is not recognized</code> (từ <code>chcp 65001</code>),
+      chuyển sang CRLF thì chạy sạch.</p>
+      <p><code>deploy.bat</code> dùng <code>copy /Y start.bat</code> — copy nguyên byte, nên máy chạy chính nhận đúng
+      file lỗi đó. Đã thêm <code>.gitattributes</code> (<code>*.bat text eol=crlf</code>) để lần checkout/clone sau
+      không tái phát.</p>
+
+      <div class="label">Sửa thêm phần logic — vì lỗi kiểu này sẽ còn xảy ra</div>
+      <table>
+        <tr><th>Vấn đề</th><th>Trước</th><th>Sau</th></tr>
+        <tr><td>Venv lỗi</td><td><code>rmdir /s /q .venv</code> + tạo mới + cài lại toàn bộ (vài phút)</td><td>Thử <code>venv --upgrade</code> vá tại chỗ trước — <strong>đo được 2,0 giây</strong>, giữ nguyên site-packages; chỉ xoá dựng lại khi vá thất bại</td></tr>
+        <tr><td>Không ai biết lý do hỏng</td><td>Lỗi bị nuốt bằng <code>&gt;nul 2&gt;&amp;1</code></td><td>In nguyên văn lỗi của <code>python.exe</code> ra màn hình trước khi sửa</td></tr>
+        <tr><td>So sánh mốc thời gian requirements.txt</td><td>2 lần gọi <code>powershell -NoProfile</code> mỗi lần khởi động (~1–2s)</td><td><code>for %%F in (...) do set "REQ_TIME=%%~tF %%~zF"</code> — batch thuần, ~0ms</td></tr>
+      </table>
+
+      <div class="label">Điểm cần biết khi bảo trì</div>
+      <table>
+        <tr><th>Điểm</th><th>Lý do</th></tr>
+        <tr><td>Sau khi <code>venv --upgrade</code> vẫn phải thử <code>import fastapi, nicegui, docxtpl, pandas, bcrypt</code></td><td>Nếu Python nền đổi bản (3.10 → 3.12), venv chạy được nhưng các gói biên dịch sẵn không import nổi. Trường hợp đó mới đặt <code>FORCE_PIP=1</code> để cài lại — vẫn rẻ hơn xoá cả venv</td></tr>
+        <tr><td>Định dạng <code>.req_stamp</code> đổi từ ticks sang chuỗi ngày+kích thước</td><td>Lần chạy đầu sau thay đổi này sẽ cài lại thư viện một lần (~10s do có cache pip 153MB), sau đó bỏ qua</td></tr>
+        <tr><td>Mọi file .bat/.ps1 sửa bằng công cụ ghi file phải kiểm tra lại CRLF</td><td>Trình soạn thảo/agent thường ghi LF theo mặc định; batch LF hỏng âm thầm, không báo lỗi rõ ràng</td></tr>
+      </table>
+      <div class="label">Bẫy thứ hai — vấp ngay trong lần sửa này</div>
+      <p>Bản sửa đầu tiên làm <code>start.bat</code> chết ngay với thông báo <code>se was unexpected at this time.</code>
+      Nguyên nhân: bên trong khối <code>if (...)</code> có dòng chú thích
+      <code>:: (pandas, bcrypt, cryptography...) se khong import duoc</code>. Hai lỗi cùng lúc:
+      <code>::</code> không hợp lệ bên trong khối ngoặc (phải dùng <code>rem</code>), và dấu <code>)</code> trong câu chú thích
+      <strong>đóng khối sớm</strong> — cmd đọc tiếp thấy chữ <em>"se"</em> nên báo đúng chữ đó.
+      Quy tắc: trong mọi khối <code>( ... )</code> chỉ dùng <code>rem</code>, và không để <code>(</code> <code>)</code>
+      chưa escape trong bất kỳ dòng nào — kể cả chú thích.</p>
+      <p>Bài học quy trình: bản test đầu tiên chạy trên <em>bản sao đã lược bỏ chú thích</em> nên không phát hiện được lỗi.
+      Về sau phải chạy thử <strong>chính file thật</strong>, đầu-cuối. Kết quả kiểm chứng cuối cùng: lần chạy đầu cài lại
+      thư viện một lần rồi lên backend+frontend; lần chạy thứ hai vào thẳng <code>run.py</code>,
+      <strong>backend sẵn sàng sau 6,9 giây</strong>, <code>.venv</code> không bị dựng lại.</p>
+
+      <p><strong>Chưa xử lý:</strong> <code>git-save.bat</code>, <code>git-start.bat</code>, <code>git-submit.bat</code>,
+      <code>git-update.bat</code>, <code>deploy-test.bat</code> cũng đang LF — đã chuyển sang CRLF cùng lần này,
+      nhưng chưa chạy thử từng file vì chúng thao tác git/deploy thật.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">J</span>
+      <span class="card-title">Hai cột đường dẫn nhanh trên trang đăng nhập</span>
+    </div>
+    <div class="card-body">
+      <p>Thêm hai cột link (payment/CITAD/OSB bên trái, SWIFT/mail/iOffice/eLearning bên phải) kèm hai bên
+      card đăng nhập, mở tab mới khi click.</p>
+
+      <div class="label">Danh sách link để cứng trong code, không đưa vào DB</div>
+      <table>
+        <tr><th>Phương án</th><th>Đánh đổi</th></tr>
+        <tr><td><strong>Hằng số trong <code>frontend/pages/login.py</code></strong> (đã chọn)</td>
+            <td>Sửa link phải sửa code + restart. Đổi lại: trang login <em>không gọi API</em> — nếu backend chết,
+            người dùng vẫn mở được CITAD/mail để làm việc.</td></tr>
+        <tr><td>Bảng cấu hình trong DB + endpoint public</td>
+            <td>Sửa qua giao diện được, nhưng phải mở một endpoint <strong>không cần token</strong> ở màn hình
+            chưa đăng nhập, và link biến mất khi backend chết — đúng lúc cần nhất.</td></tr>
+      </table>
+
+      <div class="label">Tên hiển thị thay cho URL — nhưng chỉ một phần</div>
+      <p>Mỗi mục trong nhóm nhận <strong>hai dạng</strong>: chuỗi URL trần (hiện nguyên URL) hoặc cặp
+      <code>(tên, URL)</code>. Dạng hỗn hợp này xấu về mặt kiểu dữ liệu, nhưng đổi lại 15 link chưa có tên
+      không phải viết thành <code>(url, url)</code> lặp lại. Link có tên thì URL đầy đủ chuyển xuống
+      <code>tooltip</code> — người dùng vẫn kiểm được mình sắp đi đâu trước khi bấm, điều mà tên hiển thị
+      một mình không cho biết.</p>
+
+      <div class="label">Nhóm có tiêu đề <em>và</em> hàng trái/phải vẫn ngang nhau</div>
+      <p>Hai yêu cầu này va nhau. Yêu cầu cũ: <code>payment.agribank</code> phải ngang hàng
+      <code>swifthub.agribank</code>, <code>mail.agribank</code> ngang <code>CITAD4818</code>.
+      Yêu cầu mới: gom thành 3 panel có tiêu đề (Trong nước 10 link · Quốc tế 2 · Nội bộ 4) — panel có
+      padding, viền, tiêu đề, tức chèn thêm chiều cao <em>không phải bội số của hàng</em>.</p>
+      <p>Cách giải: khoá mọi kích thước bằng biến CSS
+      (<code>--pc-row 44</code>, <code>--pc-head 38</code>, <code>--pc-pad 14</code>, <code>--pc-bd 1</code>)
+      rồi tính khoảng cách giữa 2 panel bên phải bằng <code>calc()</code>, với hệ số
+      <strong>lấy từ chính <code>len()</code> của 3 nhóm</strong> (<code>_split_gap_css()</code>):</p>
+      <table>
+        <tr><th>Điều kiện</th><th>Phương trình</th></tr>
+        <tr><td>Hai cột cao bằng nhau (để <code>items-center</code> không làm lệch)</td>
+            <td><code>G = H<sub>trái</sub> − H<sub>p1</sub> − H<sub>p2</sub> = (n−n<sub>1</sub>−n<sub>2</sub>)·row − head − 2·pad − 2·bd</code></td></tr>
+        <tr><td>Hàng đầu của panel dưới bên phải khớp đúng một hàng bên trái</td>
+            <td><code>p1 + G + bd + pad + head = bd + pad + head + k·row</code> → cũng ra đúng biểu thức trên,
+            với <code>k = n − n<sub>2</sub></code> luôn là số nguyên</td></tr>
+      </table>
+      <p>Hai điều kiện quy về <strong>cùng một phương trình</strong>, nên một giá trị <code>gap</code> duy nhất
+      thoả cả hai — không phải đo tay, không phải JS. Cách cũ dùng <code>None</code> làm hàng trống đã bỏ:
+      panel có tiêu đề rồi thì hàng trống không còn chỗ đứng.</p>
+
+      <div class="label">Bẫy đã tự gỡ: hệ số viết cứng trong CSS</div>
+      <p>Bản đầu ghi thẳng <code>3 * var(--pc-row)</code> vào CSS kèm chú thích "đổi số link thì nhớ sửa hệ số".
+      Ngay lượt sửa kế tiếp — bỏ 1 link nhóm Quốc tế — hệ số đã sai. Chú thích cảnh báo <strong>không cứu được</strong>
+      một ràng buộc mà máy tự kiểm được. Nay <code>_split_gap_css()</code> tính hệ số từ
+      <code>len()</code> của 3 nhóm rồi sinh ra thẻ <code>&lt;style&gt;</code> lúc dựng trang;
+      thêm/bớt link nhóm nào cũng tự khớp lại.</p>
+      <p>Đánh đổi: một quy tắc CSS bị tách khỏi khối <code>_LOGIN_CSS</code> và phải
+      <code>add_head_html</code> lần thứ hai — đọc code phải nhảy hai chỗ. Chấp nhận, vì cái mất đi là một
+      lỗi âm thầm (hàng lệch vài pixel, không ai để ý).</p>
+
+      <div class="label">Căn giữa khoảng trống hai bên</div>
+      <p>Cột link dùng <code>flex-1 flex justify-center</code>, card <code>w-96 shrink-0</code>. Cột link nhận
+      toàn bộ phần thừa mỗi bên rồi tự căn giữa phần đó — nên khi cửa sổ rộng ra, link giãn theo và luôn nằm
+      giữa khoảng trống thay vì dính vào mép card (cách cũ dùng <code>w-64</code> cố định thì bị dính).</p>
+
+      <div class="label">Thứ tự khi màn hình hẹp</div>
+      <p>Ba khối nằm trong một <code>ui.row()</code> có <code>flex-wrap</code>. Nếu để thứ tự DOM tự nhiên,
+      màn hẹp sẽ đẩy <strong>cột link trái lên trên</strong> và ô đăng nhập tụt xuống dưới màn hình.
+      Dùng <code>order-1 lg:order-2</code> cho card và <code>order-2 lg:order-1</code> cho cột trái:
+      dưới 1024px card luôn đứng đầu, link xếp xuống dưới.</p>
+
+      <p><strong>Chưa xử lý:</strong> chưa phân quyền — mọi người đều thấy đủ 16 link kể cả link không dùng đến.
+      Ràng buộc số link mỗi nhóm ↔ hệ số trong <code>calc()</code> mới chỉ là comment, chưa có gì chặn tự động.
+      Nếu về sau danh sách link thay đổi thường xuyên thì nên bỏ hẳn ràng buộc "hàng ngang nhau" —
+      nó là thứ khiến layout không tự co giãn được.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">K</span>
+      <span class="card-title">Breadcrumb — hiện đường dẫn menu ở đầu mỗi trang</span>
+    </div>
+    <div class="card-body">
+      <p>Trước đây đầu trang chỉ có tiêu đề (<em>"Báo cáo hậu kiểm"</em>), không cho biết mục đó nằm ở đâu
+      trong menu. Nay hiện cả đường dẫn:
+      <em>Phòng KSNB &amp; HTVH / Báo cáo / <strong>Báo cáo hậu kiểm</strong></em>.</p>
+
+      <div class="label">Một dòng, không phải hai</div>
+      <p>Bản đầu tách làm hai dòng — breadcrumb nhỏ ở trên, tiêu đề lớn ở dưới. Sai: đoạn cuối breadcrumb
+      <strong>trùng y hệt</strong> tiêu đề, nên tên trang hiện <em>hai lần</em> liền nhau
+      (<em>"Phòng Swift / Đối chiếu điện SWIFT"</em> rồi ngay dưới <em>"Đối chiếu điện SWIFT"</em>).
+      Nay gộp một dòng: đoạn cha nhỏ màu xám, tên trang giữ nguyên <code>text-2xl</code> đỏ đậm,
+      căn theo <code>items-baseline</code> để chữ to chữ nhỏ đứng chung đường chân.</p>
+      <p>Đoạn cuối lấy từ tham số <code>title</code> mà trang tự truyền, <strong>không</strong> lấy nhãn menu —
+      bảng breadcrumb chỉ cung cấp phần cha. Điều này xoá luôn rủi ro "hai nguồn lệch nhau" ghi ở bản trước.</p>
+
+      <div class="label">Trang <em>không</em> tự khai báo đường dẫn của mình</div>
+      <table>
+        <tr><th>Phương án</th><th>Đánh đổi</th></tr>
+        <tr><td><strong>Suy ra từ route</strong> (<code>ui.context.client.page.path</code>) rồi tra bảng dựng
+            sẵn từ cây menu (đã chọn)</td>
+            <td>Ràng buộc ngầm: route phải trùng khoá menu. Hiện đúng với cả 16 trang vì sidebar điều hướng
+            bằng <code>ui.navigate.to(f"/{key}")</code> — tức ràng buộc này <em>vốn đã</em> tồn tại từ trước,
+            không phải cái mới sinh ra. Đổi lại: <strong>0 dòng sửa</strong> ở 19 trang gọi
+            <code>_page_header()</code>.</td></tr>
+        <tr><td>Thêm tham số <code>_page_header(title, sub, key)</code></td>
+            <td>Tường minh, nhưng phải sửa 19 chỗ và mỗi chỗ là một cơ hội gõ sai khoá — sai thì
+            breadcrumb chỉ <em>hiện nhầm</em> chứ không lỗi, nên sẽ không ai phát hiện.</td></tr>
+      </table>
+
+      <div class="label">Phải tách 2 nhóm menu ra khỏi <code>_sidebar()</code></div>
+      <p>"Nhật ký hệ thống" và "Phân quyền chức năng" trước đây là dict viết thẳng trong thân
+      <code>_sidebar()</code> nên code ngoài không đọc được. Đã nâng thành hằng số module
+      (<code>DEPT_NHATKY</code>, <code>DEPT_PHANQUYEN</code>). Nếu không tách thì phải chép lại nhãn ở chỗ thứ
+      hai — và hai bản sao sẽ lệch nhau ngay lần đổi tên đầu tiên. Dữ liệu bê nguyên, không sửa giá trị.</p>
+
+      <div class="label">Hai trường hợp lề phải xử lý</div>
+      <table>
+        <tr><th>Tình huống</th><th>Cách xử lý</th></tr>
+        <tr><td>Nhóm và mục con <strong>trùng tên</strong> (nhóm "Nhật ký hệ thống" có mục cũng tên
+            "Nhật ký hệ thống")</td>
+            <td>Bỏ đoạn trùng liền kề, nếu không sẽ ra <em>"Nhật ký hệ thống / Nhật ký hệ thống"</em></td></tr>
+        <tr><td>Đường dẫn chỉ còn <strong>1 đoạn</strong> sau khi bỏ trùng, hoặc trang không nằm trong menu
+            (<code>/home</code>, <code>/user-management</code>, <code>/login</code>)</td>
+            <td>Không có phần cha nào để hiện → đầu trang trông y như trước khi có tính năng này</td></tr>
+      </table>
+
+      <p><strong>Đã cân nhắc và bỏ:</strong> cho các đoạn cha bấm được. Cấp phòng và cấp nhóm
+      (<em>Báo cáo</em>, <em>Đối chiếu</em>) <strong>không có route</strong> — chúng chỉ là mục hover trong
+      sidebar. Làm chúng trông bấm được mà bấm không đi đâu thì tệ hơn là để chữ thường.</p>
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-03</footer>
 </div>
 </body>
 </html>

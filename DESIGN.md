@@ -1,15 +1,29 @@
 # DESIGN.md — Patterns & Business Logic
 
 ## Timestamps
-Dùng `_vn_now()` từ `backend/models.py` cho mọi timestamp (UTC+7, naive datetime). Không dùng `datetime.utcnow()`.
+Dùng `_vn_now()` từ `backend/database.py` cho mọi timestamp (UTC+7, naive datetime). Không dùng `datetime.utcnow()`.
+
+## Tên bảng
+Bảng nhân sự tên là **`user_tttt`**. Tên cũ `ksnb_staff` đã bị đổi (xem `_ensure_indexes()` trong
+`backend/db/migrations.py`) — các file trong `Plan/` và `Upgrade/` là tài liệu lịch sử, vẫn ghi tên cũ.
+**Không copy tên bảng từ hai thư mục đó.**
 
 ## Schema Migrations
 Thêm câu SQL vào list `schema_migrations` trong `backend/db/migrations.py::_ensure_indexes()`.
-Chạy idempotent khi khởi động — lỗi "duplicate column" bị nuốt; lỗi khác được log và raise.
+Chạy idempotent khi khởi động.
+
+Lỗi bị nuốt **có chủ đích** (nghĩa là migration đã chạy ở lần khởi động trước):
+`duplicate column`, `already exists`, `already another table`.
+
+Mọi lỗi khác — **kể cả `no such table`** — được log ERROR và raise, chặn khởi động.
+Riêng `database is locked` chỉ log WARNING và bỏ qua, thử lại ở lần khởi động sau.
+
+> `no such table` từng nằm trong danh sách nuốt lỗi. Hậu quả: migration viết sai tên bảng
+> thất bại **im lặng** — không log, không chặn khởi động, cột không được thêm. Đừng đưa lại vào.
 
 ## Authentication & Sessions
-- JWT verify bởi `get_current_staff` trong `deps.py`
-- Session lưu in-memory (`backend/core/sessions.py`) — mất khi restart
+- JWT verify bởi `get_current_staff` trong `deps.py` — role đọc từ **DB** mỗi request, không lấy từ token
+- Session lưu trong DB (`backend/core/sessions.py` → bảng `login_sessions`) — **không** mất khi restart
 - 401 từ backend → `SessionExpiredError` → `_handle_api_error()` redirect về `/login`
 - Trong `asyncio.gather()`: check `isinstance(e, api.SessionExpiredError)` trước `Exception`
 

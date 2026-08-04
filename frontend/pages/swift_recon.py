@@ -1,14 +1,31 @@
 """Trang Đối chiếu điện SWIFT (SAA <-> Màn hình quản lý điện) — Phòng Swift.
 
 Giao diện khớp tính năng với bản web gốc (web_app.py):
-  - 4 tab: 1. Điện đến / 2. Điện đi / 3. Kết quả đối chiếu điện đến / 4. Kết quả đối chiếu điện đi
+  - 5 tab: 1. Điện đến / 2. Điện đi / 3. Kết quả đối chiếu điện đến /
+           4. Kết quả đối chiếu điện đi / 5. Lịch sử
   - Mỗi tab kết quả có 2 bộ lọc độc lập: theo Trạng thái, theo Loại điện (multi-select)
-  - Mỗi chiều có 3 nút xuất Excel: Tổng hợp / Chi tiết lệch / Bản ghi đang lọc
+  - Mỗi chiều có 5 nút xuất Excel: Tổng hợp / Chi tiết lệch / Bản ghi đang lọc /
+    Tổng hợp theo biểu mẫu / Chi tiết lệch theo biểu mẫu
+
+CẬP NHẬT (đợt 2): mỗi bên (SAA / Quản lý điện) giờ nhận NHIỀU FILE cùng lúc —
+vì SAA có thể phải xuất nhiều lần trong ngày (nhiều file cùng chiều, không
+trùng khoá). Mỗi file vẫn được kiểm tra ✅/❌ NGAY khi vừa chọn như trước,
+danh sách file hiện đầy đủ bên dưới ô upload kèm nút xoá từng file.
 
 Dữ liệu (merged view) được backend trả về nguyên trong response JSON và giữ
 trong `state` của phiên làm việc (còn sống khi tab trình duyệt còn mở) — lọc
 /hiển thị làm bằng Python thuần ngay tại đây, KHÔNG gọi lại backend mỗi lần
 đổi bộ lọc. Chỉ gọi backend khi: đối chiếu, và khi xuất Excel.
+
+CẬP NHẬT (đợt 3 — theo review PR #13): mỗi ô upload giờ giới hạn tối đa 10
+file HOẶC tổng 100MB (`MAX_FILES_PER_SLOT`/`MAX_TOTAL_BYTES_PER_SLOT` trong
+`_on_file_upload`), chặn NGAY khi vượt, báo rõ lý do — vì trước đó danh sách
+file cộng dồn không giới hạn, có thể khiến tiến trình NiceGUI (chung cho MỌI
+trang khác, không riêng Swift) hết bộ nhớ nếu người dùng chọn quá nhiều file
+lớn. Đã CÂN NHẮC nhưng CHƯA giải phóng `a_files`/`b_files` ngay sau khi đối
+chiếu xong (dù reviewer có đề xuất) — vì 4/5 nút xuất Excel cần gửi lại đúng
+những file đó; đánh đổi là giữ bytes trong RAM đến khi người dùng rời tab
+hoặc tự xoá file, chấp nhận được nhờ đã có trần 100MB/ô ở trên.
 """
 import asyncio
 from collections import Counter
@@ -66,12 +83,14 @@ def swift_recon_page():
     </style>
     """)
 
-    # State giữ file bytes + kết quả đối chiếu của TỪNG CHIỀU riêng biệt,
+    # State giữ DANH SÁCH file (mỗi bên có thể nhiều file, ví dụ SAA xuất
+    # nhiều lần trong ngày) + kết quả đối chiếu của TỪNG CHIỀU riêng biệt,
     # y hệt 2 DirectionState (DEN, DI) độc lập trong bản gốc.
+    # Mỗi phần tử a_files/b_files: {"name","bytes","rows","error","loading"}
     state = {
-        "den": {"a_bytes": None, "a_name": "", "b_bytes": None, "b_name": "",
+        "den": {"a_files": [], "b_files": [],
                 "summary": None, "records": None, "total_matched": 0, "total_diff": 0},
-        "di":  {"a_bytes": None, "a_name": "", "b_bytes": None, "b_name": "",
+        "di":  {"a_files": [], "b_files": [],
                 "summary": None, "records": None, "total_matched": 0, "total_diff": 0},
     }
     renderers = {}  # direction -> hàm render lại tab kết quả
@@ -114,83 +133,140 @@ def _build_input_panel(tab, direction, title, label_a, label_b, state, tabs, res
     with ui.tab_panel(tab):
         with _card(f"Tải lên file — {title}"):
             with ui.grid(columns=2).classes("w-full gap-6 p-4"):
-                with ui.column().classes("gap-1"):
-                    ui.label(label_a).classes("text-sm font-medium")
-                    status_a = ui.label("❌ Chưa có file hợp lệ nào được nạp").classes("text-red-600 text-xs")
+                with ui.column().classes("gap-1 w-full"):
+                    ui.label(f"{label_a} (có thể chọn nhiều file)").classes("text-sm font-medium")
+                    list_area_a = ui.column().classes("w-full gap-1")
                     ui.upload(
-                        auto_upload=True, max_file_size=20_000_000,
-                        on_upload=lambda e: _on_file_upload(e, "a", source_a, status_a),
-                    ).props('accept=".xls,.xlsx,.zip" flat dense label="Chọn file"').classes("w-full")
-                with ui.column().classes("gap-1"):
-                    ui.label(label_b).classes("text-sm font-medium")
-                    status_b = ui.label("❌ Chưa có file hợp lệ nào được nạp").classes("text-red-600 text-xs")
+                        multiple=True, auto_upload=True, max_file_size=20_000_000,
+                        on_upload=lambda e: _on_file_upload(e, "a", source_a, list_area_a),
+                    ).props('accept=".xls,.xlsx,.zip" flat dense label="Chọn file (chọn được nhiều file)"').classes("w-full")
+                with ui.column().classes("gap-1 w-full"):
+                    ui.label(f"{label_b} (có thể chọn nhiều file)").classes("text-sm font-medium")
+                    list_area_b = ui.column().classes("w-full gap-1")
                     ui.upload(
-                        auto_upload=True, max_file_size=20_000_000,
-                        on_upload=lambda e: _on_file_upload(e, "b", source_b, status_b),
-                    ).props('accept=".xls,.xlsx,.zip" flat dense label="Chọn file"').classes("w-full")
+                        multiple=True, auto_upload=True, max_file_size=20_000_000,
+                        on_upload=lambda e: _on_file_upload(e, "b", source_b, list_area_b),
+                    ).props('accept=".xls,.xlsx,.zip" flat dense label="Chọn file (chọn được nhiều file)"').classes("w-full")
 
             ui.label(
                 "Nếu file .xls xuất ra bị lỗi 'Không tìm thấy <table>' (file thực chất chỉ là khung dẫn "
                 "tới file khác trong thư mục '..._files' đi kèm): nén (zip) CẢ file .xls VÀ thư mục "
                 "'..._files' cạnh nó lại rồi tải file .zip lên."
             ).classes("text-gray-500 text-xs px-4 -mt-2")
+            ui.label(
+                "Nếu 1 bên phải xuất nhiều lần trong ngày (ví dụ SAA xuất nhiều đợt): cứ chọn/kéo thả "
+                "thêm file vào đúng ô đó — hệ thống tự gộp toàn bộ bản ghi từ các file trong CÙNG 1 ô lại "
+                "với nhau trước khi đối chiếu. Xoá bớt file bằng nút ✕ cạnh mỗi dòng nếu chọn nhầm."
+            ).classes("text-gray-500 text-xs px-4 -mt-1")
 
-            async def _on_file_upload(e, which, source, status_label):
+            def _render_file_list(which, list_area):
+                d = state[direction]
+                files = d[f"{which}_files"]
+                list_area.clear()
+                with list_area:
+                    if not files:
+                        ui.label("❌ Chưa có file hợp lệ nào được nạp").classes("text-red-600 text-xs")
+                        return
+                    n_ok = sum(1 for f in files if not f.get("error") and not f.get("loading"))
+                    total_rows = sum(f["rows"] for f in files if f.get("rows") is not None)
+                    if n_ok:
+                        ui.label(f"✅ Đang dùng để đối chiếu: {n_ok} file — tổng {total_rows} dòng") \
+                            .classes("text-green-700 text-xs font-medium")
+                    for i, f in enumerate(files):
+                        with ui.row().classes("items-center gap-1 w-full no-wrap"):
+                            if f.get("loading"):
+                                ui.label(f"⏳ Đang kiểm tra {f['name']}...").classes("text-orange-600 text-xs flex-1")
+                            elif f.get("error"):
+                                ui.label(f"❌ {f['name']} — lỗi, KHÔNG được dùng: {f['error']}") \
+                                    .classes("text-red-600 text-xs flex-1")
+                            else:
+                                ui.label(f"✅ {f['name']} ({f['rows']} dòng)").classes("text-green-700 text-xs flex-1")
+                            ui.button(icon="close", on_click=lambda _e=None, idx=i: _remove_file(which, idx, list_area)) \
+                                .props("dense flat round size=sm")
+
+            def _remove_file(which, idx, list_area):
+                state[direction][f"{which}_files"].pop(idx)
+                _render_file_list(which, list_area)
+
+            # Giới hạn bộ nhớ mỗi ô upload — theo review PR #13: trước đây
+            # KHÔNG có giới hạn số file/tổng dung lượng (chỉ chặn từng file
+            # riêng lẻ ≤20MB qua max_file_size), nên 1 phiên có thể giữ hàng
+            # trăm MB byte thô trong RAM của tiến trình NiceGUI — tiến trình
+            # NÀY phục vụ chung mọi trang khác (dashboard, nghỉ phép...),
+            # không chỉ riêng màn hình Swift.
+            MAX_FILES_PER_SLOT = 10
+            MAX_TOTAL_BYTES_PER_SLOT = 100 * 1024 * 1024  # 100 MB
+
+            async def _on_file_upload(e, which, source, list_area):
                 d = state[direction]
                 fname = e.name
                 raw = e.content.read()
-                if which == "a":
-                    d["a_bytes"], d["a_name"] = raw, fname
-                else:
-                    d["b_bytes"], d["b_name"] = raw, fname
-                status_label.text = f"⏳ Đang kiểm tra {fname}..."
-                status_label.classes(remove="text-red-600 text-green-700", add="text-orange-600")
+
+                existing = d[f"{which}_files"]
+                if len(existing) >= MAX_FILES_PER_SLOT:
+                    ui.notify(
+                        f"Ô này đã có tối đa {MAX_FILES_PER_SLOT} file — xoá bớt file cũ "
+                        f"(nút ✕) trước khi thêm '{fname}', để tránh hệ thống dùng quá nhiều bộ nhớ.",
+                        type="warning", multi_line=True, timeout=0, close_button=True,
+                    )
+                    return
+                total_bytes = sum(len(f["bytes"]) for f in existing) + len(raw)
+                if total_bytes > MAX_TOTAL_BYTES_PER_SLOT:
+                    ui.notify(
+                        f"Thêm '{fname}' sẽ khiến tổng dung lượng ô này vượt quá "
+                        f"{MAX_TOTAL_BYTES_PER_SLOT // (1024 * 1024)} MB — xoá bớt file cũ "
+                        f"hoặc chia nhỏ ra nạp riêng từng đợt.",
+                        type="warning", multi_line=True, timeout=0, close_button=True,
+                    )
+                    return
+
+                entry = {"name": fname, "bytes": raw, "rows": None, "error": None, "loading": True}
+                d[f"{which}_files"].append(entry)
+                _render_file_list(which, list_area)
                 try:
                     result = await asyncio.to_thread(
                         api.post_upload, "/api/swift-recon/parse-preview",
                         {"file": (fname, raw, "application/octet-stream")}, {"source": source},
                     )
-                    status_label.text = f"✅ Đang dùng để đối chiếu: {fname} ({result['rows']} dòng)"
-                    status_label.classes(remove="text-red-600 text-orange-600", add="text-green-700")
+                    entry["rows"] = result["rows"]
+                    entry["loading"] = False
                     ui.notify(f"Đã nạp {result['rows']} dòng từ {fname}", type="positive")
                 except Exception as ex:
-                    if which == "a":
-                        d["a_bytes"] = None
-                    else:
-                        d["b_bytes"] = None
-                    status_label.text = f"❌ {fname} — lỗi, KHÔNG được dùng: {ex}"
-                    status_label.classes(remove="text-orange-600 text-green-700", add="text-red-600")
+                    entry["error"] = str(ex)
+                    entry["loading"] = False
                     ui.notify(f"Lỗi đọc file {fname}: {ex}", type="negative", multi_line=True, timeout=0, close_button=True)
+                _render_file_list(which, list_area)
 
             msg_area = ui.column().classes("px-4")
             btn = ui.button(f"Đối chiếu {title.lower()}", icon="compare_arrows").classes("bg-red-800 text-white m-4")
 
             async def do_reconcile():
                 d = state[direction]
-                if not d["a_bytes"] or not d["b_bytes"]:
-                    ui.notify("Vui lòng nạp đủ 2 file hợp lệ trước khi đối chiếu", type="warning")
+                a_valid = [f for f in d["a_files"] if not f.get("error") and not f.get("loading")]
+                b_valid = [f for f in d["b_files"] if not f.get("error") and not f.get("loading")]
+                if not a_valid or not b_valid:
+                    ui.notify("Vui lòng nạp ít nhất 1 file hợp lệ mỗi bên trước khi đối chiếu", type="warning")
                     return
                 btn.props("loading")
                 msg_area.clear()
                 try:
                     endpoint = f"/api/swift-recon/reconcile-{direction}"
                     if direction == "den":
-                        files = {
-                            "saa_file": (d["a_name"], d["a_bytes"], "application/octet-stream"),
-                            "ql_file": (d["b_name"], d["b_bytes"], "application/octet-stream"),
-                        }
+                        files = [("saa_files", (f["name"], f["bytes"], "application/octet-stream")) for f in a_valid]
+                        files += [("ql_files", (f["name"], f["bytes"], "application/octet-stream")) for f in b_valid]
                     else:
-                        files = {
-                            "ql_file": (d["a_name"], d["a_bytes"], "application/octet-stream"),
-                            "saa_file": (d["b_name"], d["b_bytes"], "application/octet-stream"),
-                        }
+                        files = [("ql_files", (f["name"], f["bytes"], "application/octet-stream")) for f in a_valid]
+                        files += [("saa_files", (f["name"], f["bytes"], "application/octet-stream")) for f in b_valid]
                     data = await asyncio.to_thread(api.post_upload, endpoint, files)
                     d["summary"] = data["summary"]
                     d["records"] = data["records"]
                     d["total_matched"] = data["total_matched"]
                     d["total_diff"] = data["total_diff"]
                     with msg_area:
-                        ui.label("Đối chiếu xong — xem kết quả ở tab tương ứng.").classes("text-green-700")
+                        ui.label(
+                            f"Đối chiếu xong ({data['total_a']} bản ghi bên A / {data['total_b']} bản ghi bên B, "
+                            f"gộp từ {len(a_valid)} + {len(b_valid)} file) — xem kết quả ở tab tương ứng."
+                        ).classes("text-green-700")
                     if not data.get("history_saved", True):
                         ui.notify(
                             f"Đối chiếu xong nhưng LƯU LỊCH SỬ bị lỗi: {data.get('history_error')}",
@@ -399,6 +475,38 @@ def _build_result_panel(tab, direction, chieu_ten, state, renderers):
                     return
                 ui.notify(f"Lỗi: {e}", type="negative")
 
+        async def do_export_summary_template():
+            d = state[direction]
+            if d["summary"] is None:
+                ui.notify("Vui lòng đối chiếu trước khi xuất file.", type="warning")
+                return
+            files = _files_for_export(state, direction)
+            try:
+                content = await asyncio.to_thread(
+                    api.post_upload_bytes, "/api/swift-recon/export-summary-template", files
+                )
+                ui.download(content, f"Tong_hop_theo_bieu_mau_Dien{direction.upper()}.xlsx")
+            except Exception as e:
+                if _handle_api_error(e):
+                    return
+                ui.notify(f"Lỗi: {e}", type="negative")
+
+        async def do_export_diff_template():
+            d = state[direction]
+            if d["records"] is None:
+                ui.notify("Vui lòng đối chiếu trước khi xuất file.", type="warning")
+                return
+            files = _files_for_export(state, direction)
+            try:
+                content = await asyncio.to_thread(
+                    api.post_upload_bytes, "/api/swift-recon/export-diff-template", files
+                )
+                ui.download(content, f"Chi_tiet_lech_theo_bieu_mau_Dien{direction.upper()}.xlsx")
+            except Exception as e:
+                if _handle_api_error(e):
+                    return
+                ui.notify(f"Lỗi: {e}", type="negative")
+
         async def do_export_filtered():
             if not current_view["records"]:
                 ui.notify("Không có bản ghi nào đang hiển thị theo bộ lọc hiện tại để xuất.", type="warning")
@@ -423,25 +531,32 @@ def _build_result_panel(tab, direction, chieu_ten, state, renderers):
                 .classes("bg-red-800 text-white")
             ui.button(f"Xuất Excel bản ghi đang lọc — {chieu_ten}", icon="filter_alt", on_click=do_export_filtered) \
                 .props("outline")
+            ui.button(f"Xuất Excel Tổng hợp theo biểu mẫu — {chieu_ten}", icon="description",
+                      on_click=do_export_summary_template).props("outline").classes("text-red-800")
+            ui.button(f"Xuất Excel Chi tiết lệch theo biểu mẫu — {chieu_ten}", icon="description",
+                      on_click=do_export_diff_template).props("outline").classes("text-red-800")
 
         renderers[direction] = render
         render()
 
 
-def _files_for_export(state: dict, direction: str) -> dict:
-    """Chỉ gửi đúng cặp file của CHIỀU đang xuất (không gộp cả 2 chiều)."""
+def _files_for_export(state: dict, direction: str) -> list:
+    """Chỉ gửi đúng các file của CHIỀU đang xuất (không gộp cả 2 chiều) —
+    trả về LIST các tuple (field_name, (filename, bytes, mime)) để hỗ trợ
+    gửi NHIỀU file cùng field name (multipart) — httpx nhận list này y hệt
+    dict 1-file-1-field, chỉ khác là cho phép lặp field name."""
     d = state[direction]
-    if not d["a_bytes"] or not d["b_bytes"]:
-        return {}
+    a_valid = [f for f in d["a_files"] if not f.get("error") and not f.get("loading")]
+    b_valid = [f for f in d["b_files"] if not f.get("error") and not f.get("loading")]
+    if not a_valid or not b_valid:
+        return []
     if direction == "den":
-        return {
-            "saa_den": (d["a_name"], d["a_bytes"], "application/octet-stream"),
-            "ql_den": (d["b_name"], d["b_bytes"], "application/octet-stream"),
-        }
-    return {
-        "ql_di": (d["a_name"], d["a_bytes"], "application/octet-stream"),
-        "saa_di": (d["b_name"], d["b_bytes"], "application/octet-stream"),
-    }
+        files = [("saa_den", (f["name"], f["bytes"], "application/octet-stream")) for f in a_valid]
+        files += [("ql_den", (f["name"], f["bytes"], "application/octet-stream")) for f in b_valid]
+    else:
+        files = [("ql_di", (f["name"], f["bytes"], "application/octet-stream")) for f in a_valid]
+        files += [("saa_di", (f["name"], f["bytes"], "application/octet-stream")) for f in b_valid]
+    return files
 
 
 def _build_history_panel(tab, history_refresh):
@@ -463,7 +578,7 @@ def _build_history_panel(tab, history_refresh):
                 return
             with hist_area:
                 if not rows:
-                    ui.label("Chưa có lịch sử đối chiếu nào").classes("text-gray-400 p-4")
+                    ui.label("Chưa có lịch sử đối chiếu nào").classes("text-gray-500 p-4")
                     return
 
                 with ui.row().classes(
@@ -508,7 +623,7 @@ def _build_history_panel(tab, history_refresh):
                 status_to_label = _status_to_label(detail["recon_type"])
                 with detail_area:
                     if not records:
-                        ui.label("Không có bản ghi chi tiết").classes("text-gray-400 text-sm p-2")
+                        ui.label("Không có bản ghi chi tiết").classes("text-gray-500 text-sm p-2")
                         return
                     raw_cols = [k for k in records[0].keys() if not k.startswith("_")]
                     display_cols = ["STT", "Trạng thái"] + raw_cols

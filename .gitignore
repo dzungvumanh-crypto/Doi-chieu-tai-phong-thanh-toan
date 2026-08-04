@@ -34,3 +34,10 @@ MCB.xlsx
 /deploy-test.bat
 /KSNB - HDSD phan mem ban giao chung tu.docx
 /Bắt đầu trên máy mới.txt
+
+# Tên file tiếng Việt trên đĩa ở dạng Unicode TRỘN (ư + dấu rời), không khớp
+# dạng dựng sẵn viết ở trên → git bỏ qua luật. Ghi thêm đúng dạng thật:
+/Bắt đầu trên máy mới.txt
+/Bắt đầu trên máy mới.txt
+/Dữ liệu test
+/Dữ liệu test

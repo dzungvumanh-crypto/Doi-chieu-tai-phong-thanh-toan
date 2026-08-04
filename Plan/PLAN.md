@@ -1,3 +1,8 @@
+> ⚠️ **TÀI LIỆU LỊCH SỬ — KHÔNG DÙNG LÀM THAM CHIẾU KỸ THUẬT.**
+> Viết cho `KSNB-main` (11/05/2026). Đường dẫn file và số dòng không còn đúng.
+> Bảng `ksnb_staff` nhắc trong file này **nay tên là `user_tttt`**.
+> Tham chiếu đang dùng: `CLAUDE.md`, `DESIGN.md`.
+
 # PLAN.md — Kế hoạch cải tiến hệ thống KSNB&HTVH
 
 > Agribank – Trung tâm Thanh toán  

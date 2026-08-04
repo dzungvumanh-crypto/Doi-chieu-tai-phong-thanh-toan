@@ -2,26 +2,16 @@
 import asyncio
 from nicegui import ui, app
 import frontend.api_client as api
-from frontend.shared import _sidebar, _content_area, _page_header, _require_auth, _handle_api_error
+import frontend.ui_kit as ui_kit
+from frontend.shared import (_sidebar, _content_area, _page_header, _require_auth,
+                             _handle_api_error, _query_params, _qp_int)
 
-# Màu ô theo entry_status
+# Nhãn + màu trạng thái lấy từ ui_kit.STATUS — trước đây là 3 map song song ở đây.
+# Dựng lại đúng định dạng CSS mà lưới đang cần.
 _CELL_STATUS_STYLE = {
-    "pending_confirm": ("background:#FEF3C7", "2px solid #F59E0B"),  # vàng nhạt
-    "borrowed":        ("background:#EDE9FE", "2px solid #7C3AED"),  # tím nhạt
-    "confirmed":       ("background:#DCFCE7", "2px solid #16A34A"),  # xanh lá nhạt
-    "rejected":        ("background:#FEE2E2", "2px solid #DC2626"),  # đỏ nhạt
-}
-_STATUS_DOT_COLOR = {
-    "pending_confirm": "#D97706",
-    "confirmed":       "#16A34A",
-    "borrowed":        "#7C3AED",
-    "rejected":        "#DC2626",
-}
-_STATUS_LABEL_MAP = {
-    "pending_confirm": "Chờ xác nhận",
-    "confirmed":       "Đã xác nhận",
-    "borrowed":        "Đang mượn",
-    "rejected":        "Bị từ chối",
+    code: (f"background:{bg}", f"2px solid {border}")
+    for code in ("pending_confirm", "borrowed", "confirmed", "rejected")
+    for bg, border in [ui_kit.status_cell(code)]
 }
 _ACTION_COLOR_MAP = {
     "blue":   "#2563EB",
@@ -36,12 +26,16 @@ async def handovers_page():
         return
     user_data = api.get_current_user()
     user_role = user_data.get("role", "") if user_data else ""
-    is_cv     = user_role == "chuyen_vien"
+    is_cv     = user_role == "chuyen_vien"   # chỉ GDV mới có nút Mượn / Bàn giao lại
+    # Người hậu kiểm (có quyền xác nhận) và GĐ/PGĐ làm việc trên mọi phòng nguồn;
+    # còn lại chỉ thấy phòng của chính mình. Backend chặn lại y hệt — đây chỉ là UI.
+    can_view_all = (api.has_feature("handovers.confirm_entry")
+                    or user_role in ("giam_doc", "pho_giam_doc"))
     if not api.has_feature("menu.handovers"):
         ui.navigate.to("/home")
         return
 
-    badge_refs = _sidebar("handovers")
+    _sidebar("handovers")
 
     # ── Right drawer panel ────────────────────────────────────────────────────
     with ui.right_drawer(value=False).props("width=360 overlay").classes(
@@ -56,38 +50,42 @@ async def handovers_page():
         today = _date.today()
 
         # ── Filter controls ───────────────────────────────────────────────────
+        # Badge sidebar do khối "Công việc chờ xử lý" trong shared.py tự nạp —
+        # trang này không còn phải gọi /pending-counts nữa.
         try:
-            _all_depts_raw, _pending = await asyncio.gather(
-                asyncio.to_thread(api.get, "/api/departments/"),
-                asyncio.to_thread(api.get, "/api/dashboard/pending-counts"),
-                return_exceptions=True,
-            )
+            _all_depts_raw = await asyncio.to_thread(api.get, "/api/departments/")
         except Exception:
-            _all_depts_raw, _pending = [], {}
+            _all_depts_raw = []
         if not isinstance(_all_depts_raw, list):
             _all_depts_raw = []
-        if isinstance(_pending, dict):
-            _hcnt = _pending.get("handovers", 0)
-            if "handovers" in badge_refs and _hcnt > 0:
-                badge_refs["handovers"].set_text(str(_hcnt))
-                badge_refs["handovers"].set_visibility(True)
         all_depts = [d for d in _all_depts_raw if d.get("is_source")]
+
+        # Không có quyền xem mọi phòng → danh sách chỉ còn phòng của mình
+        my_dept_id = user_data.get("department_id") if user_data else None
+        if not can_view_all:
+            all_depts = [d for d in all_depts if d["id"] == my_dept_id]
 
         dept_opts  = {d["id"]: d["name"] for d in all_depts}
         year_opts  = {y: str(y) for y in range(2023, today.year + 3)}
         month_opts = {m: f"Tháng {m:02d}" for m in range(1, 13)}
 
-        # Chuyên viên: tự động xác định phòng của mình
-        cv_dept_id = user_data.get("department_id") if is_cv else None
-        default_dept  = cv_dept_id if (is_cv and cv_dept_id) else (all_depts[0]["id"] if all_depts else None)
+        default_dept  = all_depts[0]["id"] if all_depts else None
         default_year  = today.year
         default_month = today.month
 
 
+        # Phòng của user không phải phòng nguồn (hoặc chưa được gán phòng) → không có
+        # chứng từ nào để hiển thị; nói rõ thay vì để lưới trống không lý do.
+        if not all_depts:
+            with ui.card().classes("w-full bg-amber-50 border border-amber-300 rounded-xl p-4 mb-4"):
+                ui.label("Phòng của bạn không có chứng từ bàn giao. "
+                         "Liên hệ quản trị nếu bạn cần xem phòng khác."
+                         ).classes("text-amber-800 text-sm")
+
         with ui.card().classes("w-full shadow-sm rounded-xl bg-white p-4 mb-4"):
             with ui.row().classes("items-end gap-4 flex-wrap"):
                 sel_dept = ui.select(dept_opts, label="Phòng", value=default_dept).classes("w-72")
-                if is_cv:
+                if not can_view_all:
                     sel_dept.props("disable")
                     sel_dept.tooltip("Phòng của bạn (không thể thay đổi)")
                 sel_year  = ui.select(year_opts,  label="Năm",   value=default_year).classes("w-28")
@@ -182,6 +180,10 @@ async def handovers_page():
             ui.label("Đang tải dữ liệu...").classes("text-gray-500 ml-3 text-sm")
         grid_container = ui.column().classes("w-full")
 
+        # Ô chứng từ cần nhảy tới, đến từ ?entry=. Dùng list làm ô nhớ vì load_grid()
+        # được định nghĩa trước chỗ đọc query param, và phải xoá được sau khi dùng.
+        focus_entry: list = [None]
+
         def _save_filter_state():
             app.storage.tab["hv_dept"]  = sel_dept.value
             app.storage.tab["hv_year"]  = sel_year.value
@@ -198,21 +200,21 @@ async def handovers_page():
                 with panel_container:
                     with ui.row().classes("w-full justify-between items-center px-4 py-3 bg-red-50 border-b border-red-100"):
                         ui.label("Lỗi").classes("font-bold text-red-900")
-                        ui.button(icon="close", on_click=right_panel.hide).props("flat dense").classes("text-gray-400")
+                        ui.button(icon="close", on_click=right_panel.hide).props("flat dense").classes("text-gray-500")
                     ui.label(str(ex)).classes("text-red-500 p-4 text-sm")
                 right_panel.show()
                 return
 
             current_status = hist.get("current_status", "confirmed")
-            dot_color = _STATUS_DOT_COLOR.get(current_status, "#6B7280")
-            status_label_text = _STATUS_LABEL_MAP.get(current_status, current_status)
+            dot_color = ui_kit.status_dot(current_status)
+            status_label_text = ui_kit.status_label(current_status)
 
             with panel_container:
                 # Header
                 with ui.column().classes("w-full bg-red-50 px-4 py-3 border-b border-red-100 gap-1"):
                     with ui.row().classes("w-full justify-between items-center"):
                         ui.label(hist.get("source_user_name", user_name)).classes("font-bold text-red-900 text-base")
-                        ui.button(icon="close", on_click=right_panel.hide).props("flat dense").classes("text-gray-400")
+                        ui.button(icon="close", on_click=right_panel.hide).props("flat dense").classes("text-gray-500")
                     _logs = hist.get("logs", [])
                     _last_ts = _logs[0].get("timestamp", "") if _logs else ""
                     _parts = _last_ts.split() if _last_ts else []
@@ -230,7 +232,7 @@ async def handovers_page():
 
                 # Thao tác
                 with ui.column().classes("w-full px-4 py-3 border-b border-gray-100 gap-2"):
-                    ui.label("THAO TÁC").classes("text-xs font-bold text-gray-400 tracking-widest")
+                    ui.label("THAO TÁC").classes("text-xs font-bold text-gray-500 tracking-widest")
                     has_action = False
 
                     borrow_reason_val = hist.get("borrow_reason")
@@ -346,14 +348,14 @@ async def handovers_page():
                         )
 
                     if not has_action:
-                        ui.label("Không có thao tác khả dụng").classes("text-sm text-gray-400 italic")
+                        ui.label("Không có thao tác khả dụng").classes("text-sm text-gray-500 italic")
 
                 # Lịch sử
                 with ui.column().classes("w-full px-4 py-3 gap-4"):
-                    ui.label("LỊCH SỬ THAY ĐỔI").classes("text-xs font-bold text-gray-400 tracking-widest")
+                    ui.label("LỊCH SỬ THAY ĐỔI").classes("text-xs font-bold text-gray-500 tracking-widest")
                     logs = hist.get("logs", [])
                     if not logs:
-                        ui.label("Chưa có lịch sử").classes("text-sm text-gray-400 italic")
+                        ui.label("Chưa có lịch sử").classes("text-sm text-gray-500 italic")
                     else:
                         for log in logs:
                             dot_c = _ACTION_COLOR_MAP.get(log.get("action_color", "blue"), "#2563EB")
@@ -363,7 +365,7 @@ async def handovers_page():
                                     f"background:{dot_c};margin-top:5px;flex-shrink:0"
                                 )
                                 with ui.column().classes("flex-1 gap-0"):
-                                    ui.label(log.get("timestamp", "")).classes("text-xs text-gray-400 font-mono")
+                                    ui.label(log.get("timestamp", "")).classes("text-xs text-gray-500 font-mono")
                                     ui.label(log.get("performed_by_role", "")).classes("text-xs text-gray-500")
                                     ui.label(log.get("action_label", "")).classes("text-sm font-medium text-gray-800")
 
@@ -431,7 +433,7 @@ async def handovers_page():
             if not users:
                 with grid_container:
                     ui.label("Không có cán bộ nào trong phòng này").classes(
-                        "text-gray-400 text-center py-8 w-full"
+                        "text-gray-500 text-center py-8 w-full"
                     )
             else:
                 p = [
@@ -538,6 +540,26 @@ async def handovers_page():
                     }}
                 """)
 
+                # ── Nhảy tới ô được chỉ đích danh (?entry= từ màn hình theo dõi) ──
+                # Chạy sau khi lưới đã vào DOM. Chỉ dùng một lần: xoá cờ ngay để lần
+                # đổi phòng/tháng kế tiếp không kéo màn hình về ô cũ.
+                if focus_entry[0]:
+                    _eid = focus_entry[0]
+                    focus_entry[0] = None
+                    ui.run_javascript(f"""
+                        (function() {{
+                            var el = document.querySelector('.hv-inp[data-eid="{_eid}"]');
+                            if (!el) return;
+                            el.scrollIntoView({{behavior:'smooth', block:'center', inline:'center'}});
+                            el.focus(); el.select();
+                            var cell = el.parentElement;
+                            var keep = cell.style.boxShadow;
+                            cell.style.transition = 'box-shadow .3s';
+                            cell.style.boxShadow = '0 0 0 3px #dc2626';
+                            setTimeout(function() {{ cell.style.boxShadow = keep; }}, 2600);
+                        }})();
+                    """)
+
         # app.storage.tab chỉ khả dụng sau khi WebSocket kết nối
         try:
             await ui.context.client.connected()
@@ -548,10 +570,23 @@ async def handovers_page():
         init_dept  = saved.get("hv_dept",  default_dept)
         init_year  = saved.get("hv_year",  default_year)
         init_month = saved.get("hv_month", default_month)
+
+        # Deep-link từ màn hình theo dõi: ?dept=&year=&month=&entry=
+        # Ưu tiên hơn bộ lọc đã lưu — người dùng vừa chỉ đích danh chứng từ cần xem.
+        _qp = _query_params()
+        init_dept  = _qp_int(_qp, "dept")  or init_dept
+        init_year  = _qp_int(_qp, "year")  or init_year
+        init_month = _qp_int(_qp, "month") or init_month
+        focus_entry[0] = _qp_int(_qp, "entry")
+
         if init_dept not in dept_opts:
             init_dept = default_dept
+        if init_year not in year_opts:
+            init_year = default_year
+        if init_month not in month_opts:
+            init_month = default_month
 
-        if not is_cv:
+        if can_view_all:
             sel_dept.value  = init_dept
         sel_year.value  = init_year
         sel_month.value = init_month

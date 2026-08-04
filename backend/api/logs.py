@@ -4,7 +4,6 @@ import os
 import re
 import sqlite3
 import tempfile
-from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 from backend.database import get_db, _vn_now
@@ -23,8 +22,8 @@ _LOG_RE = re.compile(
 )
 
 PAGE_SIZE = 50
-LOG_RETENTION_DAYS = 30
-AUDIT_RETENTION_DAYS = 365
+# Thời hạn lưu nhật ký + việc dọn nằm ở backend/services/log_cleanup_service.py
+# (chạy nền theo lịch, không dọn trong request xem nhật ký nữa)
 
 
 def _parse_log_file(level_filter: str = "", page: int = 1):
@@ -59,20 +58,6 @@ def _parse_log_file(level_filter: str = "", page: int = 1):
     total = len(parsed)
     offset = (page - 1) * PAGE_SIZE
     return parsed[offset: offset + PAGE_SIZE], total
-
-
-def _cleanup_login_logs(db: sqlite3.Connection) -> None:
-    """Xóa login_logs cũ hơn LOG_RETENTION_DAYS ngày."""
-    cutoff = (datetime.utcnow() - timedelta(days=LOG_RETENTION_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
-    db.execute("DELETE FROM login_logs WHERE created_at < ?", (cutoff,))
-    db.commit()
-
-
-def _cleanup_audit_logs(db: sqlite3.Connection) -> None:
-    """Xóa audit_logs cũ hơn AUDIT_RETENTION_DAYS ngày."""
-    cutoff = (datetime.utcnow() - timedelta(days=AUDIT_RETENTION_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
-    db.execute("DELETE FROM audit_logs WHERE created_at < ?", (cutoff,))
-    db.commit()
 
 
 @router.get("/backup-info")
@@ -196,8 +181,6 @@ def get_login_logs(
     _: dict = Depends(require_feature("menu.logs")),
     db: sqlite3.Connection = Depends(get_db),
 ):
-    _cleanup_login_logs(db)
-
     clauses = []
     params: list = []
     if success == "true":
@@ -262,7 +245,6 @@ def get_audit_logs(
     _: dict = Depends(require_feature("menu.logs")),
     db: sqlite3.Connection = Depends(get_db),
 ):
-    _cleanup_audit_logs(db)
     where, params = _audit_where(method, q)
     base = f"""FROM audit_logs al
                LEFT JOIN user_tttt ks ON al.actor_id = ks.id
