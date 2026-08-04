@@ -201,6 +201,50 @@ def _create_tables(db_path: str):
             di_not_ack_json TEXT,
             created_at DATETIME
         )""",
+        # Đối chiếu CITAD 1 ngày = 1 báo cáo CHUNG của cả phòng (không tách
+        # theo staff_id nữa — ai lưu sau cùng là bản hiện hành, xem lịch sử
+        # từng lần lưu ở bảng doi_chieu_citad_history bên dưới).
+        """CREATE TABLE IF NOT EXISTS doi_chieu_citad_sessions (
+            ngay        TEXT    PRIMARY KEY,
+            data        TEXT    NOT NULL,
+            updated_at  DATETIME,
+            updated_by  INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL
+        )""",
+        # Lịch sử từng lần lưu đối chiếu CITAD — 1 dòng/lần bấm Lưu, kèm
+        # NGUYÊN VẸN số liệu của phiên chấm đó (không chỉ ai/lúc nào) — để
+        # ngày nào nhiều người cùng chấm thì xem/tải lại đúng bản của từng
+        # lần lưu, không chỉ biết mỗi tên người lưu.
+        """CREATE TABLE IF NOT EXISTS doi_chieu_citad_history (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            ngay        TEXT    NOT NULL,
+            staff_id    INTEGER NOT NULL REFERENCES user_tttt(id) ON DELETE CASCADE,
+            data        TEXT    NOT NULL,
+            created_at  DATETIME NOT NULL
+        )""",
+        # Mã kết nối Extension cá nhân (thay khoá tĩnh dùng chung sau review
+        # bảo mật) — 1 token/staff, chỉ lưu hash, tạo mã mới tự thu hồi mã cũ.
+        """CREATE TABLE IF NOT EXISTS doi_chieu_citad_extension_tokens (
+            staff_id     INTEGER PRIMARY KEY REFERENCES user_tttt(id) ON DELETE CASCADE,
+            token_hash   TEXT NOT NULL UNIQUE,
+            created_at   DATETIME,
+            last_used_at DATETIME
+        )""",
+        """CREATE TABLE IF NOT EXISTS doi_soat_citad_history (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            ngay_cham           VARCHAR(10) NOT NULL,
+            recon_date          DATETIME NOT NULL,
+            performed_by_id     INTEGER REFERENCES user_tttt(id),
+            citad_file_names    TEXT,
+            ipcas_file_names    TEXT,
+            hub_file_names      TEXT,
+            total_citad         INTEGER,
+            total_ipcas         INTEGER,
+            total_hub           INTEGER,
+            n_khop              INTEGER,
+            n_lech              INTEGER,
+            lech_json           TEXT,
+            created_at          DATETIME
+        )""",
     ]
     for s in statements:
         cur.execute(s)
@@ -658,6 +702,70 @@ def _ensure_indexes():
     finally:
         _raw_de.close()
 
+    # ── Rebuild doi_chieu_citad_sessions: khoá (ngay, staff_id) → khoá ngay riêng ──
+    # CREATE TABLE IF NOT EXISTS ở _create_tables() không làm gì trên DB đã có
+    # bảng này với schema CŨ (từ trước khi đổi sang "1 bản ghi CHUNG/ngày") —
+    # session_save() mới dùng INSERT ... ON CONFLICT(ngay) sẽ lỗi trên bảng cũ
+    # (thiếu cột updated_by, khoá chính không khớp ON CONFLICT(ngay), cột
+    # staff_id NOT NULL không được cấp giá trị). SQLite không đổi khoá chính
+    # tại chỗ nên phải dựng bảng mới, chép dữ liệu, xoá bảng cũ, đổi tên.
+    _raw_dc = sqlite3.connect(DB_PATH)
+    _raw_dc.isolation_level = None
+    try:
+        _cur_dc = _raw_dc.cursor()
+        _cur_dc.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='doi_chieu_citad_sessions'")
+        if _cur_dc.fetchone():
+            _cur_dc.execute("PRAGMA table_info(doi_chieu_citad_sessions)")
+            _dc_cols = {r[1] for r in _cur_dc.fetchall()}
+            if "staff_id" in _dc_cols:  # dấu hiệu bảng vẫn còn schema cũ
+                _mig_log3 = logging.getLogger(__name__)
+                _mig_log3.info("Rebuilding doi_chieu_citad_sessions (khoá (ngay, staff_id) → khoá ngay riêng)...")
+                _cur_dc.execute("PRAGMA foreign_keys = OFF")
+                _cur_dc.execute("PRAGMA legacy_alter_table = ON")
+                _cur_dc.execute("BEGIN EXCLUSIVE")
+                try:
+                    _cur_dc.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='_doi_chieu_citad_sessions_bak'"
+                    )
+                    if _cur_dc.fetchone():
+                        _cur_dc.execute("DROP TABLE _doi_chieu_citad_sessions_bak")
+                    _cur_dc.execute("ALTER TABLE doi_chieu_citad_sessions RENAME TO _doi_chieu_citad_sessions_bak")
+                    _cur_dc.execute("""
+                        CREATE TABLE doi_chieu_citad_sessions (
+                            ngay        TEXT    PRIMARY KEY,
+                            data        TEXT    NOT NULL,
+                            updated_at  DATETIME,
+                            updated_by  INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL
+                        )
+                    """)
+                    # Bảng cũ có thể nhiều dòng/ngày (1 dòng/staff_id) — mỗi ngày chỉ
+                    # giữ lại ĐÚNG 1 dòng: người lưu SAU CÙNG (updated_at lớn nhất,
+                    # lệch giờ thì lấy staff_id lớn hơn để có kết quả tất định).
+                    _cur_dc.execute("""
+                        INSERT INTO doi_chieu_citad_sessions (ngay, data, updated_at, updated_by)
+                        SELECT ngay, data, updated_at, staff_id
+                        FROM (
+                            SELECT ngay, data, updated_at, staff_id,
+                                   ROW_NUMBER() OVER (
+                                       PARTITION BY ngay ORDER BY updated_at DESC, staff_id DESC
+                                   ) AS rn
+                            FROM _doi_chieu_citad_sessions_bak
+                        )
+                        WHERE rn = 1
+                    """)
+                    _cur_dc.execute("DROP TABLE _doi_chieu_citad_sessions_bak")
+                    _cur_dc.execute("COMMIT")
+                    _mig_log3.info("doi_chieu_citad_sessions rebuild hoàn tất")
+                except Exception as _dc_err:
+                    _cur_dc.execute("ROLLBACK")
+                    logging.getLogger(__name__).error("doi_chieu_citad_sessions rebuild thất bại: %s", _dc_err)
+                    raise
+                finally:
+                    _cur_dc.execute("PRAGMA legacy_alter_table = OFF")
+                    _cur_dc.execute("PRAGMA foreign_keys = ON")
+    finally:
+        _raw_dc.close()
+
     index_stmts = [
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_entry_staff_date ON document_entries(handover_id, staff_id, transaction_date)",
         "CREATE INDEX IF NOT EXISTS ix_source_users_dept      ON source_users(department_id)",
@@ -679,6 +787,8 @@ def _ensure_indexes():
         "CREATE INDEX IF NOT EXISTS ix_entry_change_logs_actor ON entry_change_logs(performed_by_id)",
         "CREATE INDEX IF NOT EXISTS ix_leave_records_ksv    ON leave_records(ksv_approver_id)",
         "CREATE INDEX IF NOT EXISTS ix_leave_records_gd     ON leave_records(gd_approver_id)",
+        "CREATE INDEX IF NOT EXISTS ix_doi_soat_citad_history_date ON doi_soat_citad_history(recon_date)",
+        "CREATE INDEX IF NOT EXISTS ix_doi_chieu_citad_history_ngay ON doi_chieu_citad_history(ngay)",
         "CREATE INDEX IF NOT EXISTS ix_delegation_gd        ON delegation_records(giam_doc_id)",
         "CREATE INDEX IF NOT EXISTS ix_delegation_pgd       ON delegation_records(pho_giam_doc_id)",
         "CREATE INDEX IF NOT EXISTS ix_leave_records_th     ON leave_records(tong_hop_approver_id)",
