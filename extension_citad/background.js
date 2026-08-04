@@ -11,7 +11,18 @@
  * dưới (khi đó phải build lại + phát lại bản .zip mới, xem README.md).
  */
 chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
-  if (!message || message.type !== 'SET_CONFIG') {
+  if (!message) {
+    sendResponse({ ok: false, error: 'unknown message type' });
+    return;
+  }
+  // GET_VERSION: trang /doi_chieu_citad dùng để so sánh với bản mới nhất
+  // backend đang phát hành, báo popup nếu Extension đang cài đã cũ — chỉ
+  // đọc chrome.runtime.getManifest(), không cần permission gì thêm.
+  if (message.type === 'GET_VERSION') {
+    sendResponse({ ok: true, version: chrome.runtime.getManifest().version });
+    return;
+  }
+  if (message.type !== 'SET_CONFIG') {
     sendResponse({ ok: false, error: 'unknown message type' });
     return;
   }

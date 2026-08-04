@@ -4,6 +4,24 @@ Content script tự động đọc số liệu từ trang CITAD (NHNN, `10.0.85.
 PaymentHub/Payment (Agribank) rồi gửi lên module **Đối chiếu CITAD** của app
 TTTT (`/doi_chieu_citad`), thay cho việc gõ tay từng số.
 
+## Trình duyệt hỗ trợ
+
+Extension đóng gói theo chuẩn Manifest V3 — chạy được **KHÔNG CẦN SỬA GÌ**
+trên mọi trình duyệt nền **Chromium**, vì các trình duyệt này dùng chung 1
+nền tảng extension với Chrome (đọc thẳng cùng 1 thư mục `extension_citad/`
+qua "Load unpacked"):
+- **Google Chrome**
+- **Microsoft Edge** (`edge://extensions`)
+- **Cốc Cốc** (`coccoc://extensions` — trình duyệt Việt Nam, cũng nền
+  Chromium)
+- Brave, Opera, Vivaldi và các trình duyệt Chromium khác — tương tự
+
+**KHÔNG hỗ trợ Firefox/Safari** — 2 trình duyệt này dùng nền tảng extension
+khác hẳn (Firefox: cơ chế ID riêng + hỗ trợ `externally_connectable`/service
+worker khác biệt; Safari: bắt buộc build qua Xcode trên máy Mac, không chỉ
+là "Load unpacked" thư mục này) — cần làm lại gần như từ đầu nếu muốn hỗ
+trợ, ngoài phạm vi bản hiện tại.
+
 Đây là add-on trình duyệt độc lập — không chạy trong tiến trình backend/
 frontend của app, nên phải cài **thủ công** vào từng máy cần dùng. Chrome
 không cho phép trang web tự cài extension cho người dùng (giới hạn bảo mật
@@ -13,7 +31,9 @@ hình đều làm qua giao diện, không cần sửa file nào.
 
 ## Cài đặt (mỗi máy làm 1 lần)
 
-1. Mở `chrome://extensions` (hoặc `edge://extensions`)
+1. Mở `chrome://extensions` (Edge: `edge://extensions`, Cốc Cốc:
+   `coccoc://extensions` — trình duyệt Chromium nào cũng vào được trang
+   quản lý extension theo đường dẫn tương tự)
 2. Bật **Developer mode** (góc trên phải)
 3. Bấm **Load unpacked**, chọn đúng thư mục `extension_citad/` này
 
@@ -39,7 +59,8 @@ thì ID vẫn giữ nguyên, không phải cài lại từ đầu trên các má
 
 Xảy ra khi: mở trang `/doi_chieu_citad` bằng trình duyệt/máy khác với máy đã
 cài Extension, dùng trình duyệt không hỗ trợ `externally_connectable` (không
-phải Chrome/Edge), hoặc domain trang web chưa được thêm vào
+phải Chrome/Edge/Cốc Cốc/trình duyệt Chromium khác), hoặc domain trang web
+chưa được thêm vào
 `externally_connectable.matches` ở trên. Khi đó dialog sau khi tạo mã sẽ tự
 chuyển sang hiện mã kèm nút sao chép — làm theo:
 

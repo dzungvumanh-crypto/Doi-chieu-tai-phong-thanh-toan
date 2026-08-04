@@ -133,6 +133,26 @@ def fmt(v):
     return '' if v == 0 else f'{int(v):,}'
 
 
+_CELL_DATA_BG = "bg-red-50"
+
+
+def _apply_cell_bg(inp):
+    """Tô nền hồng đỏ nhạt cho ô đã có dữ liệu — giúp nhìn lướt biết ngay ô
+    nào đã nhập, ô nào còn trống, đặc biệt hữu ích khi bảng có nhiều cột."""
+    if inp.value:
+        inp.classes(add=_CELL_DATA_BG)
+    else:
+        inp.classes(remove=_CELL_DATA_BG)
+
+
+def _set_input(inp, value):
+    """Gán `.value` + đồng bộ luôn màu nền — dùng ở MỌI nơi gán giá trị ô
+    bằng code (nạp session/buffer, xoá) thay vì gán `.value` trực tiếp, để
+    không sót chỗ nào quên tô/xoá màu nền."""
+    inp.value = value
+    _apply_cell_bg(inp)
+
+
 @ui.page("/doi_chieu_citad")
 def doi_chieu_citad_page():
     if not _require_auth():
@@ -180,14 +200,17 @@ def doi_chieu_citad_page():
             cls += " border-b border-gray-300 pb-1"
         return cls
 
-    def recalc():
+    def _compute_totals():
+        """Tổng CITAD (5 cổng + Napas IH Đến, KHÔNG cộng Ebanking) và tổng
+        PaymentHub — đúng công thức `_calc()` gốc, xem ghi chú chi tiết
+        trong `doi_chieu_citad_service.py::build_xlsx`. Dùng chung cho cả
+        `recalc()` (hiện trên trang) và preview trước khi xuất Excel — luôn
+        khớp nhau, tính 1 nơi duy nhất."""
         ci = {f: 0.0 for f in FK}
         for c in CONGS:
             for u in CURS:
                 for f in FK:
                     ci[f] += data["gD"][c][u][f]
-        # Chỉ cộng Napas, KHÔNG cộng Ebanking — đúng hành vi _calc() gốc,
-        # xem ghi chú chi tiết trong doi_chieu_citad_service.py::build_xlsx.
         ci["den_ih_m"] += data["napas"]["den_ih_m"]
         ci["den_ih_t"] += data["napas"]["den_ih_t"]
 
@@ -195,7 +218,10 @@ def doi_chieu_citad_page():
         for u in CURS:
             for f in FK:
                 ph[f] += data["phD"][u][f]
+        return ci, ph
 
+    def recalc():
+        ci, ph = _compute_totals()
         for f in FK:
             ci_val, ph_val = ci[f], ph[f]
             df_val = ci_val - ph_val
@@ -232,11 +258,12 @@ def doi_chieu_citad_page():
                     for col_idx, fk in enumerate(FK, start=1):
                         def _on_change(e, _c=cur, _f=fk, _dd=data_store):
                             _dd[_c][_f] = nv(e.value)
+                            _apply_cell_bg(e.sender)
                             recalc()
                         inp = ui.input(value='', on_change=_on_change).props(
                             'dense outlined input-class="text-right"'
                         ).classes(_grid_cell_cls(row_idx, col_idx, n_rows, n_cols, "w-full"))
-                        inp.on('blur', lambda _, _i=inp: setattr(_i, 'value', fmt(_i.value)))
+                        inp.on('blur', lambda _, _i=inp: _set_input(_i, fmt(_i.value)))
                         entry_store[cur][fk] = inp
 
     def build_napas_ebank_grid(container):
@@ -276,11 +303,12 @@ def doi_chieu_citad_page():
 
                         def _on_change(e, _f=fk, _dd=store):
                             _dd[_f] = nv(e.value)
+                            _apply_cell_bg(e.sender)
                             recalc()
                         inp = ui.input(value='', on_change=_on_change).props(
                             'dense outlined input-class="text-right"'
                         ).classes(cell_cls)
-                        inp.on('blur', lambda _, _i=inp: setattr(_i, 'value', fmt(_i.value)))
+                        inp.on('blur', lambda _, _i=inp: _set_input(_i, fmt(_i.value)))
                         entry_store[fk] = inp
 
     def apply_session_data(sess: dict):
@@ -296,22 +324,22 @@ def doi_chieu_citad_page():
                 for f in FK:
                     v = (gD.get(str(c), {}) or {}).get(u, {}).get(f, 0)
                     data["gD"][c][u][f] = nv(v)
-                    inputs["gE"][c][u][f].value = fmt(v)
+                    _set_input(inputs["gE"][c][u][f], fmt(v))
         phD = sess.get("phD", {})
         for u in CURS:
             for f in FK:
                 v = (phD.get(u, {}) or {}).get(f, 0)
                 data["phD"][u][f] = nv(v)
-                inputs["phE"][u][f].value = fmt(v)
+                _set_input(inputs["phE"][u][f], fmt(v))
         # Napas/Ebanking chỉ có 2 field IH Đến trong session gốc (napas_m/napas_t)
         data["napas"]["den_ih_m"] = nv(sess.get("napas_m", 0))
         data["napas"]["den_ih_t"] = nv(sess.get("napas_t", 0))
-        inputs["napasE"]["den_ih_m"].value = fmt(data["napas"]["den_ih_m"])
-        inputs["napasE"]["den_ih_t"].value = fmt(data["napas"]["den_ih_t"])
+        _set_input(inputs["napasE"]["den_ih_m"], fmt(data["napas"]["den_ih_m"]))
+        _set_input(inputs["napasE"]["den_ih_t"], fmt(data["napas"]["den_ih_t"]))
         data["ebank"]["den_ih_m"] = nv(sess.get("ebank_m", 0))
         data["ebank"]["den_ih_t"] = nv(sess.get("ebank_t", 0))
-        inputs["ebankE"]["den_ih_m"].value = fmt(data["ebank"]["den_ih_m"])
-        inputs["ebankE"]["den_ih_t"].value = fmt(data["ebank"]["den_ih_t"])
+        _set_input(inputs["ebankE"]["den_ih_m"], fmt(data["ebank"]["den_ih_m"]))
+        _set_input(inputs["ebankE"]["den_ih_t"], fmt(data["ebank"]["den_ih_t"]))
         recalc()
 
     def get_session_payload() -> dict:
@@ -354,8 +382,8 @@ def doi_chieu_citad_page():
             if fk_m in FK:
                 data["gD"][cong][tien][fk_m] = nv(so_mon)
                 data["gD"][cong][tien][fk_t] = nv(so_tien)
-                inputs["gE"][cong][tien][fk_m].value = fmt(so_mon)
-                inputs["gE"][cong][tien][fk_t].value = fmt(so_tien)
+                _set_input(inputs["gE"][cong][tien][fk_m], fmt(so_mon))
+                _set_input(inputs["gE"][cong][tien][fk_t], fmt(so_tien))
                 count += 1
         try:
             await asyncio.to_thread(api.delete, "/api/doi-chieu-citad/citad-buffer")
@@ -384,8 +412,8 @@ def doi_chieu_citad_page():
             if src == "napas":
                 data["napas"]["den_ih_m"] = nv(so_mon)
                 data["napas"]["den_ih_t"] = nv(so_tien)
-                inputs["napasE"]["den_ih_m"].value = fmt(so_mon)
-                inputs["napasE"]["den_ih_t"].value = fmt(so_tien)
+                _set_input(inputs["napasE"]["den_ih_m"], fmt(so_mon))
+                _set_input(inputs["napasE"]["den_ih_t"], fmt(so_tien))
                 count += 1
                 continue
             if tien not in CURS:
@@ -394,8 +422,8 @@ def doi_chieu_citad_page():
             if fk_m in FK:
                 data["phD"][tien][fk_m] = nv(so_mon)
                 data["phD"][tien][fk_t] = nv(so_tien)
-                inputs["phE"][tien][fk_m].value = fmt(so_mon)
-                inputs["phE"][tien][fk_t].value = fmt(so_tien)
+                _set_input(inputs["phE"][tien][fk_m], fmt(so_mon))
+                _set_input(inputs["phE"][tien][fk_t], fmt(so_tien))
                 count += 1
         try:
             await asyncio.to_thread(api.delete, "/api/doi-chieu-citad/paymenthub-buffer")
@@ -573,20 +601,20 @@ def doi_chieu_citad_page():
             for u in CURS:
                 for f in FK:
                     data["gD"][c][u][f] = 0.0
-                    inputs["gE"][c][u][f].value = ''
+                    _set_input(inputs["gE"][c][u][f], '')
         for u in CURS:
             for f in FK:
                 data["phD"][u][f] = 0.0
-                inputs["phE"][u][f].value = ''
+                _set_input(inputs["phE"][u][f], '')
         for f in ("den_ih_m", "den_ih_t"):
             data["napas"][f] = 0.0
             data["ebank"][f] = 0.0
-            inputs["napasE"][f].value = ''
-            inputs["ebankE"][f].value = ''
+            _set_input(inputs["napasE"][f], '')
+            _set_input(inputs["ebankE"][f], '')
         recalc()
         ui.notify("Đã xoá toàn bộ dữ liệu", type="info")
 
-    async def do_export():
+    async def _do_download_export():
         gD = {str(c): {u: {f: data["gD"][c][u][f] for f in FK} for u in CURS} for c in CONGS}
         phD = {u: {f: data["phD"][u][f] for f in FK} for u in CURS}
         payload = {
@@ -608,6 +636,67 @@ def doi_chieu_citad_page():
             if _handle_api_error(e):
                 return
             ui.notify(f"Lỗi xuất Excel: {e}", type="negative")
+
+    def do_export():
+        # Xem trước ĐẦY ĐỦ đúng các dòng sẽ có trong file Excel tải về (khớp
+        # từng dòng với doi_chieu_citad_service.py::build_xlsx: Payment theo
+        # từng loại tiền, CITAD tổng, từng Cổng × loại tiền, Napas, Ebanking,
+        # Chênh lệch) — không chỉ 3 dòng tóm tắt như trước, để người dùng
+        # soát được đúng số liệu chi tiết trước khi tải, giống hệt thứ tự
+        # trong Excel (chỉ khác: header ở đây 1 tầng thay vì 3 tầng gộp ô
+        # "LỆNH ĐI/LỆNH ĐẾN" như Excel — tên cột ĐI/ĐẾN IH/IL Món/Tiền đã
+        # chứa đủ thông tin, và đồng bộ đúng kiểu header các bảng khác trên
+        # trang này).
+        ci, ph = _compute_totals()
+        cols = [
+            {"name": "label", "label": "", "field": "label", "align": "left"},
+            {"name": "cur", "label": "Loại tiền", "field": "cur", "align": "center"},
+        ] + [{"name": fk, "label": lbl, "field": fk, "align": "center"} for fk, lbl in zip(FK, FK_LBL)]
+
+        rows = []
+
+        def _add_row(label, cur, vals):
+            row = {"id": len(rows), "label": label, "cur": cur}
+            for fk, v in zip(FK, vals):
+                row[fk] = fmt(v) or "—"
+            rows.append(row)
+
+        for cur in ["EUR", "USD", "VNĐ"]:  # đúng thứ tự Payment trong Excel
+            _add_row(f"Payment {cur}", cur, [data["phD"][cur][f] for f in FK])
+        _add_row("CITAD (tổng)", "", [ci[f] for f in FK])
+        for cong in CONGS:
+            for i, cur in enumerate(CURS):
+                _add_row(f"Cổng {cong}" if i == 0 else "", cur, [data["gD"][cong][cur][f] for f in FK])
+        _add_row("Napas", "", [0, 0, 0, 0, data["napas"]["den_ih_m"], data["napas"]["den_ih_t"], 0, 0])
+        _add_row("Ebanking", "", [0, 0, 0, 0, data["ebank"]["den_ih_m"], data["ebank"]["den_ih_t"], 0, 0])
+        diff_row = {"id": len(rows), "label": "CHÊNH LỆCH", "cur": ""}
+        for fk in FK:
+            diff_row[fk] = diff_labels["diff"][fk].text  # tái dùng text đã tính sẵn, luôn khớp trang
+        rows.append(diff_row)
+
+        with ui.dialog() as dialog, ui.card().classes("w-full max-w-6xl"):
+            ui.label(f"Xem trước — Đối chiếu CITAD ngày {ngay_input.value or '—'}").classes(
+                "text-lg font-bold text-gray-800"
+            )
+            ui.label(
+                f"Lập bảng: {lap_bang_input.value or '—'}     Kiểm soát: {kiem_soat_input.value or '—'}"
+            ).classes("text-sm text-gray-500 mb-2")
+            with ui.element("div").classes("w-full overflow-x-auto"):
+                with ui.table(columns=cols, rows=rows, row_key="id").props(
+                    'bordered dense separator="cell" table-header-class="bg-blue-900 text-white"'
+                ).classes("w-full"):
+                    pass
+            with ui.row().classes("w-full justify-end gap-2 mt-3"):
+                ui.button("Đóng", on_click=dialog.close).props("outline")
+
+                async def _confirm_download():
+                    await _do_download_export()
+                    dialog.close()
+
+                ui.button("Tải xuống", icon="download", on_click=_confirm_download).classes(
+                    "bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg"
+                )
+        dialog.open()
 
     # ── Kết nối Extension (mã kết nối cá nhân — xem docstring api/doi_chieu_citad.py) ──
     ext_status_label = None
@@ -631,8 +720,8 @@ def doi_chieu_citad_page():
         được cài — Chrome tự chặn theo whitelist origin khai trong
         manifest.json::externally_connectable, xem background.js). Trả về
         False (không throw) cho MỌI lý do thất bại — chưa cài extension,
-        trình duyệt không phải Chrome/Edge, hoặc bị chặn — để luôn còn
-        đường lùi là dán tay."""
+        trình duyệt không phải Chromium (Chrome/Edge/Cốc Cốc/...), hoặc bị
+        chặn — để luôn còn đường lùi là dán tay."""
         payload = json.dumps({"type": "SET_CONFIG", "server": api.BACKEND_URL, "token": token})
         js = f"""
             return await new Promise((resolve) => {{
@@ -685,7 +774,7 @@ def doi_chieu_citad_page():
                 ui.label(
                     "Không tự động kết nối được (chưa cài Extension trên trình duyệt này, hoặc "
                     "trình duyệt không hỗ trợ) — chỉ hiện mã ĐÚNG 1 LẦN, sao chép ngay, rồi bấm "
-                    "icon Extension trên thanh công cụ Chrome → \"Tuỳ chọn\" → dán vào ô Mã kết "
+                    "icon Extension trên thanh công cụ trình duyệt → \"Tuỳ chọn\" → dán vào ô Mã kết "
                     "nối. Tạo mã mới sẽ tự động huỷ mã cũ."
                 ).classes("text-sm text-gray-500")
                 token_input = ui.input(value=token).props("readonly outlined dense").classes("w-full font-mono")
@@ -725,6 +814,86 @@ def doi_chieu_citad_page():
             if _handle_api_error(e):
                 return
             ui.notify(f"Lỗi: {e}", type="negative")
+
+    _ACK_STORAGE_KEY = "citad_ext_update_ack"
+
+    async def _get_installed_extension_version() -> str | None:
+        """Hỏi Extension đang cài trên máy đang chạy version nào, qua
+        chrome.runtime.sendMessage tới GET_VERSION (background.js) — cùng cơ
+        chế externally_connectable với _try_auto_connect_extension. Trả về
+        None cho MỌI lý do không lấy được (chưa cài, trình duyệt khác, bản
+        quá cũ không hiểu message này) — không phân biệt được các trường hợp
+        này với nhau nên không thể kết luận "đang dùng bản cũ" một cách chắc
+        chắn, phải coi là "không biết" để tránh làm phiền người chưa cài
+        Extension bao giờ."""
+        js = f"""
+            return await new Promise((resolve) => {{
+                if (!(window.chrome && chrome.runtime && chrome.runtime.sendMessage)) {{
+                    resolve(null);
+                    return;
+                }}
+                try {{
+                    chrome.runtime.sendMessage({_EXTENSION_ID!r}, {{type: 'GET_VERSION'}}, (response) => {{
+                        if (chrome.runtime.lastError || !response || !response.ok) {{
+                            resolve(null);
+                        }} else {{
+                            resolve(response.version || null);
+                        }}
+                    }});
+                }} catch (e) {{
+                    resolve(null);
+                }}
+            }});
+        """
+        try:
+            return await ui.run_javascript(js, timeout=3.0)
+        except Exception:
+            return None
+
+    async def _check_extension_update():
+        installed = await _get_installed_extension_version()
+        if not installed:
+            return  # không cài/không rõ — im lặng bỏ qua, không đoán bừa
+        try:
+            latest = (await asyncio.to_thread(api.get, "/api/doi-chieu-citad/extension-version"))["version"]
+        except Exception:
+            return
+        if installed == latest:
+            return
+        try:
+            acked = await ui.run_javascript(f"return localStorage.getItem({_ACK_STORAGE_KEY!r})", timeout=2.0)
+        except Exception:
+            acked = None
+        if acked == latest:
+            return  # đã xác nhận đúng bản mới nhất này rồi — không hiện lại
+
+        # persistent: chặn đóng bằng click ra ngoài/phím Esc — người dùng yêu
+        # cầu rõ CHỈ bấm nút "Đã xác nhận" tường minh mới được phép ngừng
+        # hiện popup, không có cách đóng thụ động nào khác.
+        with ui.dialog().props("persistent") as dialog, ui.card().classes("w-full max-w-lg"):
+            ui.label("⚠ Có bản cập nhật mới cho Extension").classes("text-lg font-bold text-orange-600")
+            ui.label(
+                f"Đang dùng: {installed}  —  Bản mới nhất: {latest}"
+            ).classes("text-sm font-bold text-gray-700")
+            ui.label(
+                "Vào chrome://extensions, gỡ bản Extension cũ, rồi tải lại bản mới bên dưới và "
+                "\"Load unpacked\" lại thư mục vừa giải nén."
+            ).classes("text-sm text-gray-500")
+            with ui.row().classes("w-full justify-end gap-2 mt-3"):
+                ui.button(
+                    "Tải Extension mới", icon="download", on_click=do_download_extension
+                ).props("outline")
+
+                async def _confirm_update():
+                    await ui.run_javascript(
+                        f"localStorage.setItem({_ACK_STORAGE_KEY!r}, {latest!r})"
+                    )
+                    dialog.close()
+
+                ui.button("Đã xác nhận", icon="check", on_click=_confirm_update).classes(
+                    "bg-orange-600 hover:bg-orange-700 text-white rounded-lg"
+                )
+        dialog.open()
 
     with ui.row().classes("w-full"):
         _sidebar("doi_chieu_citad")
@@ -767,6 +936,7 @@ def doi_chieu_citad_page():
                             "trong bản .zip vừa tải."
                         ).classes("text-xs text-gray-500 px-2 -mt-2")
                         ui.timer(0.1, refresh_extension_status, once=True)
+                        ui.timer(0.1, _check_extension_update, once=True)
 
                     with ui.row().classes(
                         "w-full items-end gap-3 flex-wrap mb-2 bg-white rounded-2xl "
