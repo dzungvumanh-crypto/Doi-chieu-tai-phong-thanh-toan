@@ -156,12 +156,20 @@ async def cham_ach_page():
 
                 mode_toggle.on_value_change(lambda e: on_mode_change(e.value))
 
-                # Ngày đối chiếu
+                # Ngày đối chiếu — gõ tay hoặc bấm icon lịch để chọn ngày
                 with ui.row().classes('items-center gap-3 mt-3'):
                     ui.label('Ngày đối chiếu:').classes('text-sm text-gray-600')
-                    ngay_input = ui.input(
+                    with ui.input(
                         placeholder='dd/mm/yyyy  (bỏ trống = tự động từ PDF)',
-                    ).props('dense outlined clearable').classes('w-44')
+                    ).props('dense outlined clearable').classes('w-44') as ngay_input:
+                        with ui.menu().props('no-parent-event') as ngay_menu:
+                            ui.date(mask='DD/MM/YYYY').props(
+                                'first-day-of-week="1"'
+                            ).bind_value(ngay_input)
+                        with ngay_input.add_slot('append'):
+                            ui.icon('event').on('click', ngay_menu.open).classes(
+                                'cursor-pointer text-gray-500'
+                            )
                     ui.label('Bỏ trống → tự động lấy từ tên file PDF').classes('text-xs text-gray-400')
 
                 # ── Kết quả kiểm tra file ───────────────────────────────────
