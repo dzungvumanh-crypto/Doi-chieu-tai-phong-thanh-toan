@@ -194,6 +194,15 @@ def _loc_session_null_theo_gw_goc(df_null: pd.DataFrame, session_id: str,
       tắc chính thức cho trường hợp này, đánh dấu riêng để xem xét sau.
     GW gốc có ≥2 SessionId khác nhau cho cùng MSGREF → không xác định, giữ + đánh
     dấu riêng (không tự chọn 1 giá trị).
+
+    Cập nhật 2026-08-04 (audit toàn diện — không thông báo giao dịch bị loại ngầm):
+    trước đây các trường hợp bị LOẠI (mask_giu=False) tại T-1 (không tìm thấy/session
+    rỗng/'0000'), và trường hợp tìm thấy trên GW gốc nhưng là 1 SessionId thật KHÁC
+    (không rỗng/'0000'/đúng phiên) tại CẢ T lẫn T-1, đều rơi qua hết 6 nhánh trên mà
+    KHÔNG được gán `ly_do` (giữ chuỗi rỗng) — không có cách nào biết SAU NÀY vì sao
+    1 giao dịch cụ thể bị loại. Hành vi GIỮ/LOẠI (`mask_giu`) hoàn toàn KHÔNG đổi
+    (case "khác session" đã được Business Owner xác nhận là loại có chủ đích,
+    25/07/2026) — chỉ bổ sung nhãn để không còn "vô hình" trong báo cáo/chấm tay.
     """
     tra_cuu = _xay_dung_tra_cuu_gw_goc(df_gw_goc)
     sid = str(session_id).strip()
@@ -234,6 +243,16 @@ def _loc_session_null_theo_gw_goc(df_null: pd.DataFrame, session_id: str,
 
     m = (la_ngay_T | la_ngay_T1) & ~nhieu_gia_tri & ~khong_tim_thay & la_dung
     mask_giu |= m; ly_do = ly_do.mask(m, 'GW_SESSION_DOI_CHIEU')
+
+    # Mọi trường hợp còn lại (T hoặc T-1) không khớp bất kỳ nhánh GIỮ nào ở trên đều
+    # đã bị loại đúng theo BR (T-1 chỉ giữ khi đúng session; "khác session thật" tại
+    # T/T-1 là loại có chủ đích) — gán nhãn CHUNG để không còn rỗng, tách biệt case cụ
+    # thể "tìm thấy nhưng khác session" cho dễ chấm tay hơn case "không tìm thấy".
+    m = ~la_khac & ~mask_giu & ~khong_tim_thay
+    ly_do = ly_do.mask(m, 'GW_SESSION_KHAC')
+
+    m = ~la_khac & ~mask_giu & khong_tim_thay
+    ly_do = ly_do.mask(m, 'KHONG_TIM_THAY_TREN_GW_TAI_T-1')
 
     return mask_giu, ly_do
 

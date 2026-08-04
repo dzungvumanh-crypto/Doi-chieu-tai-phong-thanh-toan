@@ -48,7 +48,7 @@ import pytest
 
 from backend.services.ach.b4_xu_ly_mis_di import (
     _process_mis_di, khop_voi_gw, tim_nhom_gw_thua, ap_dung_confirm_mis_di,
-    tim_giao_dich_bi_loai_session_null,
+    tim_giao_dich_bi_loai_session_null, _loc_session_null_theo_gw_goc, _chuan_hoa_co_ban,
 )
 from backend.services.ach.pipeline import xuat_excel_confirm_mis_di
 
@@ -274,6 +274,79 @@ class TestMisDiBuoc2SessionNullBrMoi:
         )
         assert len(df_mis_di) == 1
         assert df_mis_di.iloc[0]['LY_DO_GIU_SESSION_NULL'] == ''
+
+
+# ── Audit 2026-08-04 — nhãn `ly_do` cho case bị LOẠI không còn rỗng ─────────────
+# Trước đây, giao dịch bị `_process_mis_di()` LOẠI khỏi MIS_đi (case T-1 không tìm
+# thấy/rỗng/'0000', và case "khác session thật" tại CẢ T lẫn T-1) hoàn toàn KHÔNG
+# được `_loc_session_null_theo_gw_goc()` gán `ly_do` — không đâu trong hệ thống ghi
+# lại VÌ SAO 1 giao dịch cụ thể bị loại. Test dưới đây gọi thẳng hàm nội bộ (không
+# qua `_process_mis_di()`, vì dòng bị loại không còn xuất hiện trong output của nó)
+# để xác nhận `ly_do` không còn rỗng cho MỌI case bị loại — KHÔNG kiểm tra lại
+# `mask_giu` (đã có `TestMisDiBuoc2SessionNullBrMoi` bảo vệ, không đổi).
+
+def _df_null_1_dong(msgref, ngay_giao_dich, session=''):
+    """Dựng `df_null` tối thiểu đúng định dạng `_process_mis_di()` truyền vào
+    `_loc_session_null_theo_gw_goc()` — 1 dòng SESSION=NULL."""
+    row = _row('R1', '1000', 'SCNL', '111', session=session, msgref=msgref,
+               ngay_giao_dich=ngay_giao_dich)
+    df = _chuan_hoa_co_ban(pd.DataFrame([row]))
+    df['SESSION'] = df['SESSION'].fillna('').astype(str).str.strip().str.lstrip("'")
+    return df
+
+
+class TestLocSessionNullLyDoKhongConVoHinh:
+    def test_ngay_T_khac_session_that_duoc_gan_nhan(self):
+        """T, MSGREF tìm thấy trên GW gốc, SessionId là 1 giá trị thật KHÁC (không
+        rỗng/'0000'/đúng phiên) — trước đây `ly_do` rỗng dù bị loại."""
+        df_gw_goc = pd.DataFrame({'MSGREF': ['MSGR1'], 'SessionId': ['44']})
+        df_null = _df_null_1_dong('MSGR1', '11/07/2026')
+        mask_giu, ly_do = _loc_session_null_theo_gw_goc(df_null, SID, _NGAY_DT, df_gw_goc)
+        assert mask_giu.iloc[0] == False
+        assert ly_do.iloc[0] == 'GW_SESSION_KHAC'
+
+    def test_ngay_T1_khong_tim_thay_duoc_gan_nhan(self):
+        df_null = _df_null_1_dong('MSG_KHONG_CO', '10/07/2026')
+        mask_giu, ly_do = _loc_session_null_theo_gw_goc(df_null, SID, _NGAY_DT, _DF_GW_GOC_RONG)
+        assert mask_giu.iloc[0] == False
+        assert ly_do.iloc[0] == 'KHONG_TIM_THAY_TREN_GW_TAI_T-1'
+
+    def test_ngay_T1_gw_session_rong_duoc_gan_nhan(self):
+        df_gw_goc = pd.DataFrame({'MSGREF': ['MSGR1'], 'SessionId': ['']})
+        df_null = _df_null_1_dong('MSGR1', '10/07/2026')
+        mask_giu, ly_do = _loc_session_null_theo_gw_goc(df_null, SID, _NGAY_DT, df_gw_goc)
+        assert mask_giu.iloc[0] == False
+        assert ly_do.iloc[0] == 'GW_SESSION_KHAC'
+
+    def test_ngay_T1_gw_session_0000_duoc_gan_nhan(self):
+        df_gw_goc = pd.DataFrame({'MSGREF': ['MSGR1'], 'SessionId': ['0000']})
+        df_null = _df_null_1_dong('MSGR1', '10/07/2026')
+        mask_giu, ly_do = _loc_session_null_theo_gw_goc(df_null, SID, _NGAY_DT, df_gw_goc)
+        assert mask_giu.iloc[0] == False
+        assert ly_do.iloc[0] == 'GW_SESSION_KHAC'
+
+    def test_ngay_T1_khac_session_that_duoc_gan_nhan(self):
+        df_gw_goc = pd.DataFrame({'MSGREF': ['MSGR1'], 'SessionId': ['44']})
+        df_null = _df_null_1_dong('MSGR1', '10/07/2026')
+        mask_giu, ly_do = _loc_session_null_theo_gw_goc(df_null, SID, _NGAY_DT, df_gw_goc)
+        assert mask_giu.iloc[0] == False
+        assert ly_do.iloc[0] == 'GW_SESSION_KHAC'
+
+    def test_khong_co_case_bi_loai_nao_con_ly_do_rong(self):
+        """Bao quát toàn bộ tổ hợp (T/T-1) x (không tìm thấy/rỗng/'0000'/khác/đúng)
+        — mọi dòng có `mask_giu=False` đều PHẢI có `ly_do` khác rỗng."""
+        to_hop = [
+            ('11/07/2026', pd.DataFrame({'MSGREF': ['M'], 'SessionId': ['77']}), 'M'),
+            ('10/07/2026', pd.DataFrame(columns=['MSGREF', 'SessionId']), 'KHONG_CO'),
+            ('10/07/2026', pd.DataFrame({'MSGREF': ['M'], 'SessionId': ['']}), 'M'),
+            ('10/07/2026', pd.DataFrame({'MSGREF': ['M'], 'SessionId': ['0000']}), 'M'),
+            ('10/07/2026', pd.DataFrame({'MSGREF': ['M'], 'SessionId': ['77']}), 'M'),
+        ]
+        for ngay, df_gw_goc, msgref in to_hop:
+            df_null = _df_null_1_dong(msgref, ngay)
+            mask_giu, ly_do = _loc_session_null_theo_gw_goc(df_null, SID, _NGAY_DT, df_gw_goc)
+            if not mask_giu.iloc[0]:
+                assert ly_do.iloc[0] != '', f'ly_do rỗng dù bị loại: ngay={ngay}, msgref={msgref}'
 
 
 # ── Điểm 1 (2026-07-31) — giao dịch SESSION=NULL bị loại, hiển thị CHỈ ĐỂ XEM ──
