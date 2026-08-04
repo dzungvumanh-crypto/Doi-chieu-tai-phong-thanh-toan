@@ -4,6 +4,9 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 04/08/2026 Tài khoản - Đặt lại mật khẩu cho người dùng khác:
+    + Ô *Chọn người dùng* nay **gõ được để tìm**, không phải cuộn hết danh sách nhân sự. Cách dùng giống hệt ô *Thêm nhân viên* ở màn *Quản lý nhóm quyền*
+
 - 04/08/2026 Bàn giao chứng từ - Phân lại quyền xem và quyền nhập liệu:
     + **Trưởng phòng, Phó phòng** nay vào được màn hình *Bàn giao chứng từ* — xem lưới **phòng của mình**. Cần quản trị cấp mục *Bàn giao chứng từ* trong màn *Phân quyền chức năng* cho nhóm của họ thì mới hiện menu
     + **Quyền nhập/sửa số tờ của Trưởng phòng, Phó phòng vẫn theo nhóm quyền như mọi người khác** — không cấp *Lưu số tờ chứng từ* thì chỉ xem, không gõ được

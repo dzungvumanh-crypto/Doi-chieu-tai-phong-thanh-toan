@@ -114,7 +114,11 @@ async def user_management_page():
                     for s in staff_list if s["id"] != self_id
                 }
 
-                ar_user = ui.select(staff_options, label="Chọn người dùng").classes("w-full")
+                ar_user = ui.select(
+                    staff_options,
+                    label="Chọn người dùng",
+                    with_input=True,
+                ).classes("w-full")
                 ar_new  = ui.input("Mật khẩu mới", password=True, password_toggle_button=True).classes("w-full mt-3")
                 ar_conf = ui.input("Nhập lại mật khẩu mới", password=True, password_toggle_button=True).classes("w-full mt-3")
                 ar_msg  = ui.label("").classes("text-sm mt-2")
