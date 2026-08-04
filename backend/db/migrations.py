@@ -692,6 +692,70 @@ def _ensure_indexes():
     finally:
         _raw_de.close()
 
+    # ── Rebuild doi_chieu_citad_sessions: khoá (ngay, staff_id) → khoá ngay riêng ──
+    # CREATE TABLE IF NOT EXISTS ở _create_tables() không làm gì trên DB đã có
+    # bảng này với schema CŨ (từ trước khi đổi sang "1 bản ghi CHUNG/ngày") —
+    # session_save() mới dùng INSERT ... ON CONFLICT(ngay) sẽ lỗi trên bảng cũ
+    # (thiếu cột updated_by, khoá chính không khớp ON CONFLICT(ngay), cột
+    # staff_id NOT NULL không được cấp giá trị). SQLite không đổi khoá chính
+    # tại chỗ nên phải dựng bảng mới, chép dữ liệu, xoá bảng cũ, đổi tên.
+    _raw_dc = sqlite3.connect(DB_PATH)
+    _raw_dc.isolation_level = None
+    try:
+        _cur_dc = _raw_dc.cursor()
+        _cur_dc.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='doi_chieu_citad_sessions'")
+        if _cur_dc.fetchone():
+            _cur_dc.execute("PRAGMA table_info(doi_chieu_citad_sessions)")
+            _dc_cols = {r[1] for r in _cur_dc.fetchall()}
+            if "staff_id" in _dc_cols:  # dấu hiệu bảng vẫn còn schema cũ
+                _mig_log3 = logging.getLogger(__name__)
+                _mig_log3.info("Rebuilding doi_chieu_citad_sessions (khoá (ngay, staff_id) → khoá ngay riêng)...")
+                _cur_dc.execute("PRAGMA foreign_keys = OFF")
+                _cur_dc.execute("PRAGMA legacy_alter_table = ON")
+                _cur_dc.execute("BEGIN EXCLUSIVE")
+                try:
+                    _cur_dc.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='_doi_chieu_citad_sessions_bak'"
+                    )
+                    if _cur_dc.fetchone():
+                        _cur_dc.execute("DROP TABLE _doi_chieu_citad_sessions_bak")
+                    _cur_dc.execute("ALTER TABLE doi_chieu_citad_sessions RENAME TO _doi_chieu_citad_sessions_bak")
+                    _cur_dc.execute("""
+                        CREATE TABLE doi_chieu_citad_sessions (
+                            ngay        TEXT    PRIMARY KEY,
+                            data        TEXT    NOT NULL,
+                            updated_at  DATETIME,
+                            updated_by  INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL
+                        )
+                    """)
+                    # Bảng cũ có thể nhiều dòng/ngày (1 dòng/staff_id) — mỗi ngày chỉ
+                    # giữ lại ĐÚNG 1 dòng: người lưu SAU CÙNG (updated_at lớn nhất,
+                    # lệch giờ thì lấy staff_id lớn hơn để có kết quả tất định).
+                    _cur_dc.execute("""
+                        INSERT INTO doi_chieu_citad_sessions (ngay, data, updated_at, updated_by)
+                        SELECT ngay, data, updated_at, staff_id
+                        FROM (
+                            SELECT ngay, data, updated_at, staff_id,
+                                   ROW_NUMBER() OVER (
+                                       PARTITION BY ngay ORDER BY updated_at DESC, staff_id DESC
+                                   ) AS rn
+                            FROM _doi_chieu_citad_sessions_bak
+                        )
+                        WHERE rn = 1
+                    """)
+                    _cur_dc.execute("DROP TABLE _doi_chieu_citad_sessions_bak")
+                    _cur_dc.execute("COMMIT")
+                    _mig_log3.info("doi_chieu_citad_sessions rebuild hoàn tất")
+                except Exception as _dc_err:
+                    _cur_dc.execute("ROLLBACK")
+                    logging.getLogger(__name__).error("doi_chieu_citad_sessions rebuild thất bại: %s", _dc_err)
+                    raise
+                finally:
+                    _cur_dc.execute("PRAGMA legacy_alter_table = OFF")
+                    _cur_dc.execute("PRAGMA foreign_keys = ON")
+    finally:
+        _raw_dc.close()
+
     index_stmts = [
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_entry_staff_date ON document_entries(handover_id, staff_id, transaction_date)",
         "CREATE INDEX IF NOT EXISTS ix_source_users_dept      ON source_users(department_id)",
