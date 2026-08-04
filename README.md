@@ -260,6 +260,34 @@ Truy cập:
 - Phân loại mỗi dòng theo **4 ngân hàng** (Vietinbank 201, BIDV 202, Vietcombank 203, MBBank 311) × **2 chiều**: **ĐẾN** (`CRAMOUNT=0`) / **ĐI** (`DRAMOUNT=0`) → xuất **8 file CSV**
 - Phân quyền riêng theo nhóm (`menu.doi_chieu_song_phuong`, `doi_chieu_song_phuong.process`)
 
+### Module Đối chiếu CITAD ↔ PaymentHub
+- Đối chiếu số liệu tổng CITAD (NHNN) với PaymentHub (Agribank) theo từng ngày
+- Menu: **Phòng Thanh toán → Đối chiếu → Đối chiếu CITAD**
+- Nhập tay 5 cổng CITAD × 3 loại tiền × 8 trường; chênh lệch tính lại ngay khi gõ
+- Mỗi ngày là **một bản ghi chung cả phòng** (`doi_chieu_citad_sessions`, khoá theo `ngay`) —
+  ai lưu sau cùng là bản hiện hành; mỗi lần bấm Lưu ghi thêm 1 dòng vào
+  `doi_chieu_citad_history` để xem/tải lại từng bản cũ
+- Xuất Excel theo mẫu *"Báo cáo đối chiếu giao dịch hệ thống thanh toán điện tử liên ngân hàng"*
+  đã duyệt (`build_xlsx` — không đổi format/công thức khi sửa)
+- Kèm **Extension trình duyệt** (`extension_citad/`) tự lấy số liệu từ trang CITAD/PaymentHub:
+  tải `.zip` ngay trên màn hình, ghép nối bằng *mã kết nối* cá nhân
+  (`doi_chieu_citad_extension_tokens`, chỉ lưu hash SHA-256, tạo mã mới tự thu hồi mã cũ).
+  Chỉ chạy trên Chromium (Chrome/Edge/Cốc Cốc), phải cài tay từng máy
+- Phân quyền riêng theo nhóm (`menu.doi_chieu_citad`)
+
+### Module Đối soát CITAD ↔ IPCAS
+- Đối soát từng lệnh chuyển tiền giữa CITAD (NHNN) và IPCAS (Agribank) theo ngày chấm
+- Menu: **Phòng Thanh toán → Đối soát CITAD ↔ IPCAS**
+- Upload file CITAD (`.xls`/`.zip`), IPCAS (`.csv`/`.zip`) và Hub ngoại tệ (`.xls`); khớp trong RAM
+  theo `msgref` (Đi) / `txid` (Đến), phân loại lệch thành 4 nhóm: **Chỉ CITAD / Chỉ IPCAS / Chỉ Hub /
+  Lệch trạng thái**
+- Cảnh báo khi chọn **trùng nội dung file** (băm SHA-256 toàn bộ byte, không dựa vào tên file)
+- Xuất Excel 4 sheet; tab **Lịch sử** lưu `doi_soat_citad_history` kèm snapshot nguyên vẹn danh sách
+  lệch — xem lại/tải lại đúng số liệu của lần đối soát cũ, không tính lại từ file gốc
+- Phân quyền riêng theo nhóm (`menu.doi_soat_citad`)
+- ⚠️ **Lỗi đã biết:** file CITAD định dạng `.xlsx` bị đọc ra rỗng mà không báo lỗi
+  (`parsers.py` — `read_only=True` kèm `close()` trước khi đọc). **Dùng `.xls`** cho tới khi sửa xong
+
 ---
 
 ## Phân quyền (RBAC)
