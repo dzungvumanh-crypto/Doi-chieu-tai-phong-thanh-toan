@@ -83,6 +83,22 @@ def _resolve_extension_owner(
     thì sẽ có double audit."""
     resolved = svc.resolve_extension_token(db, x_extension_token)
     if not resolved:
+        # Ghi audit CẢ khi token không hợp lệ/đã bị thu hồi — đây là tín hiệu
+        # cần theo dõi (máy quên cập nhật token mới, hoặc có người đang dò
+        # token), đặc biệt vì cơ chế thử lại phía Extension giờ có backoff
+        # tới 5 phút nên 1 máy cấu hình sai sẽ âm thầm gửi mãi. _SKIP_PREFIXES
+        # đã chặn AuditMiddleware chung ghi thay cho 2 đường dẫn này, nên nếu
+        # không tự ghi ở đây thì request thất bại sẽ KHÔNG ĐỂ LẠI VẾT GÌ (khác
+        # trước khi có middleware chung, vẫn còn 1 dòng actor_id=NULL).
+        # PHẢI commit TRƯỚC khi raise — get_db() rollback mọi thay đổi chưa
+        # commit khi có exception, ghi audit sau raise sẽ bị huỷ theo.
+        ip = request.headers.get("X-Client-IP", "").strip() or (request.client.host if request.client else None)
+        write_audit(
+            db, actor_id=None, action=request.method, target_type=request.url.path,
+            detail="THẤT BẠI: mã kết nối Extension không hợp lệ hoặc đã bị thu hồi",
+            ip=ip,
+        )
+        db.commit()
         raise HTTPException(
             status_code=403,
             detail="Mã kết nối Extension không hợp lệ hoặc đã bị thu hồi — "
@@ -167,6 +183,14 @@ def download_extension(current: dict = Depends(require_feature("menu.doi_chieu_c
         media_type="application/zip",
         headers={"Content-Disposition": 'attachment; filename="extension_citad.zip"'},
     )
+
+
+@router.get("/extension-version")
+def extension_version(current: dict = Depends(require_feature("menu.doi_chieu_citad"))):
+    """Version mới nhất backend đang phát hành (đọc từ manifest.json) —
+    frontend so với version Extension đang cài trên máy để báo popup nhắc
+    cập nhật nếu khác nhau."""
+    return {"version": svc.get_extension_latest_version()}
 
 
 # ── Session theo ngày — 1 bản CHUNG cho cả phòng (không tách theo người,

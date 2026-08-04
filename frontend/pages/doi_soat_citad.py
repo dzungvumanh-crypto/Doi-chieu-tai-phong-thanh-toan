@@ -194,9 +194,17 @@ def _upload_column(label, accept, state, key):
                     else:
                         ui.label(ent["name"]).classes("text-xs text-gray-500")
 
-        def on_upload(e):
-            content = e.content.read()
-            file_hash = hashlib.sha256(content).hexdigest()
+        async def on_upload(e):
+            # Đọc file (I/O) + băm SHA-256 (CPU) đều là việc đồng bộ — chạy
+            # thẳng trong handler sẽ chặn event loop của tiến trình frontend
+            # DÙNG CHUNG cho mọi người dùng đang mở web, không riêng trang
+            # này (đúng khuôn mẫu asyncio.to_thread đã quy định trong
+            # DESIGN.md). File càng lớn/càng nhiều file liên tiếp thì càng
+            # khựng rõ cho người khác.
+            def _read_and_hash():
+                data = e.content.read()
+                return data, hashlib.sha256(data).hexdigest()
+            content, file_hash = await asyncio.to_thread(_read_and_hash)
             dup_with = [ent["name"] for ent in entries if ent["hash"] == file_hash]
 
             state[key].append((e.name, content))

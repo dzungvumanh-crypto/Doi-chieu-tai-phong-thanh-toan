@@ -27,17 +27,17 @@ from backend.database import get_db
 from backend.core.deps import require_feature
 from backend.schemas.doi_soat_citad import ExportIn, HistoryOut, ReconcileResultOut
 from backend.services.doi_soat_citad import exporters, parsers, reconcile
+from backend.services.doi_soat_citad.history_service import (
+    get_recon_detail,
+    list_recon_history,
+    save_recon_history,
+)
 
 
 def _safe_filename(name: str) -> str:
     """Lọc ký tự có thể phá cấu trúc header Content-Disposition (dấu ngoặc
     kép, xuống dòng, backslash) — `ngay_cham` đến từ input người dùng."""
     return re.sub(r'[\r\n"\\]', '_', name)
-from backend.services.doi_soat_citad.history_service import (
-    get_recon_detail,
-    list_recon_history,
-    save_recon_history,
-)
 
 router = APIRouter(prefix="/api/doi-soat-citad", tags=["doi-soat-citad"])
 
@@ -113,7 +113,13 @@ async def do_reconcile(
 
     history_saved, history_error = True, None
     try:
-        save_recon_history(
+        # save_recon_history() json.dumps() nguyên danh sách lech (có thể
+        # hàng chục nghìn dòng) + ghi SQLite — đồng bộ, chạy thẳng trong
+        # route async sẽ chặn event loop CHUNG của backend giống hệt lớp lỗi
+        # đã sửa ở on_upload (frontend). Bọc asyncio.to_thread như bước
+        # parse+đối soát ngay phía trên.
+        await asyncio.to_thread(
+            save_recon_history,
             db, ngay_cham=ngay_cham, performed_by_id=current["id"],
             citad_file_names=citad_names, ipcas_file_names=ipcas_names, hub_file_names=hub_names,
             total_citad=len(citad_rows), total_ipcas=len(ipcas_rows), total_hub=len(hub_rows),
@@ -181,7 +187,9 @@ async def get_history(
     db=Depends(get_db),
     current: dict = Depends(require_feature("menu.doi_soat_citad")),
 ):
-    return list_recon_history(db, limit)
+    # list_recon_history() json.loads() từng dòng lịch sử — đồng bộ, chặn
+    # event loop chung nếu chạy thẳng. Xem ghi chú tương tự ở do_reconcile().
+    return await asyncio.to_thread(list_recon_history, db, limit)
 
 
 @router.get("/history/{history_id}")
@@ -190,7 +198,10 @@ async def get_history_detail(
     db=Depends(get_db),
     current: dict = Depends(require_feature("menu.doi_soat_citad")),
 ):
-    detail = get_recon_detail(db, history_id)
+    # get_recon_detail() json.loads() snapshot lech_json có thể rất lớn —
+    # đồng bộ, chặn event loop chung nếu chạy thẳng. Xem ghi chú tương tự ở
+    # do_reconcile().
+    detail = await asyncio.to_thread(get_recon_detail, db, history_id)
     if not detail:
         raise HTTPException(404, "Không tìm thấy")
     return detail

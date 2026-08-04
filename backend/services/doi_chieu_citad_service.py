@@ -42,6 +42,7 @@ import json
 import re
 import secrets
 import sqlite3
+import threading
 import zipfile
 from datetime import datetime
 
@@ -63,34 +64,50 @@ def _format_vn_date(day_str: str) -> str:
 
 # ── CITAD / PaymentHub buffer (in-memory) — tách theo owner (username) ────
 # {owner: {key: data}} — mỗi người dùng chỉ thấy/xoá buffer của chính mình.
+# Route dùng các hàm này đều là `def` đồng bộ nên FastAPI chạy chúng trong
+# threadpool THẬT (nhiều thread đồng thời) — không có _buffer_lock thì 2 lỗi
+# thật xảy ra: (1) buffer_get_*() lặp .values() trong khi thread khác đang
+# thêm key mới (đổi kích thước dict) → CPython ném "RuntimeError: dictionary
+# changed size during iteration"; (2) buffer_save_*() gồm 2 bước KHÔNG
+# nguyên tử (setdefault rồi mới gán) — nếu buffer_clear_*() xen giữa 2 bước
+# đó, item vừa ghi rơi vào bucket đã bị pop khỏi dict ngoài, biến mất im
+# lặng. Cả 2 tình huống đều khả thi thực tế: Extension bắn nhiều request
+# liên tiếp trong khi người dùng bấm "Nạp" gần như đồng thời.
+_buffer_lock = threading.Lock()
 _citad_buffer: dict[str, dict] = {}
 _ph_buffer: dict[str, dict] = {}
 
 
 def buffer_save_citad(owner: str, data: dict) -> None:
-    _citad_buffer.setdefault(owner, {})[data["key"]] = data
+    with _buffer_lock:
+        _citad_buffer.setdefault(owner, {})[data["key"]] = data
 
 
 def buffer_get_citad(owner: str) -> list:
-    return list(_citad_buffer.get(owner, {}).values())
+    with _buffer_lock:
+        return list(_citad_buffer.get(owner, {}).values())
 
 
 def buffer_clear_citad(owner: str) -> None:
-    _citad_buffer.pop(owner, None)
+    with _buffer_lock:
+        _citad_buffer.pop(owner, None)
 
 
 def buffer_save_ph(owner: str, items: list) -> None:
-    bucket = _ph_buffer.setdefault(owner, {})
-    for item in items:
-        bucket[item["key"]] = item
+    with _buffer_lock:
+        bucket = _ph_buffer.setdefault(owner, {})
+        for item in items:
+            bucket[item["key"]] = item
 
 
 def buffer_get_ph(owner: str) -> list:
-    return list(_ph_buffer.get(owner, {}).values())
+    with _buffer_lock:
+        return list(_ph_buffer.get(owner, {}).values())
 
 
 def buffer_clear_ph(owner: str) -> None:
-    _ph_buffer.pop(owner, None)
+    with _buffer_lock:
+        _ph_buffer.pop(owner, None)
 
 
 # ── Extension token — mỗi staff 1 token cá nhân (thay khoá tĩnh dùng chung) ──
@@ -536,3 +553,14 @@ def build_extension_zip() -> bytes:
             if path.is_file():
                 zf.write(path, arcname=path.relative_to(EXTENSION_DIR))
     return buf.getvalue()
+
+
+def get_extension_latest_version() -> str:
+    """Đọc field "version" từ manifest.json — LUÔN khớp đúng bản .zip
+    `build_extension_zip()` đang phát hành (đọc trực tiếp từ file, không
+    hardcode số ở chỗ khác). Frontend dùng để so sánh với version Extension
+    đang cài trên máy người dùng (hỏi qua chrome.runtime.sendMessage), báo
+    popup nhắc cập nhật nếu khác nhau."""
+    manifest_path = EXTENSION_DIR / "manifest.json"
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    return data["version"]
