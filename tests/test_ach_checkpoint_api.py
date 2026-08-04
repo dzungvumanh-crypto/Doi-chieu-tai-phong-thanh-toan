@@ -58,12 +58,13 @@ def _wait_status(job_id, until, timeout_s=5):
     raise AssertionError(f"Job không đổi trạng thái sau {timeout_s}s: {job}")
 
 
-def _stub_main_from_dir(*, xac_nhan_ket_qua='ok'):
+def _stub_main_from_dir(*, xac_nhan_ket_qua='ok', loi_msg='Giá trị LOAI_BO không hợp lệ'):
     """Trả stub thay cho pipeline.main_from_dir thật.
     - Gọi với dung_sau_mis_di=True  -> tạo file ConfirmMISdi.xlsx giả, dừng ở checkpoint.
     - Gọi với xac_nhan_path đặt     -> tuỳ `xac_nhan_ket_qua`:
         'ok'    -> tạo file doi_chieu_*.xlsx giả, coi như chạy xong.
-        'loi'   -> raise ValueError (giả lập file xác nhận điền sai/thiếu).
+        'loi'   -> raise ValueError(loi_msg) (giả lập file xác nhận điền sai/thiếu,
+                   hoặc REFHUB bổ sung không tìm thấy — xem `loi_msg`).
     """
     def _fn(input_dir, output_dir, ngay=None, log_callback=None, cancel_event=None,
            dung_sau_mis_di=False, xac_nhan_path=None):
@@ -75,7 +76,7 @@ def _stub_main_from_dir(*, xac_nhan_ket_qua='ok'):
             return path
         if xac_nhan_path is not None:
             if xac_nhan_ket_qua == 'loi':
-                raise ValueError('Giá trị LOAI_BO không hợp lệ')
+                raise ValueError(loi_msg)
             path = os.path.join(output_dir, 'doi_chieu_20260101.xlsx')
             open(path, 'wb').write(b'fake-final')
             return path
@@ -167,6 +168,46 @@ class TestContinueSauCheckpoint:
         assert 'LOAI_BO' in job['error']
         # File xác nhận gốc vẫn còn để người dùng tải lại sửa, không bị xoá.
         assert job['files'] == ['20260101_ACH_ConfirmMISdi.xlsx']
+
+    def test_continue_refhub_bo_sung_khong_tim_thay_bao_loi_ro_qua_api(
+        self, admin_client, monkeypatch, tmp_path,
+    ):
+        """2026-08-04 — case thật đã gặp: REFHUB dán vào vùng bổ sung không tìm
+        thấy ở dữ liệu ngày đang chạy LẪN dữ liệu ngày khác (`_tim_di_zip_ngay_khac`)
+        → `ap_dung_confirm_mis_di()` raise đúng thông báo 'Không tìm thấy REFHUB
+        trên MIS_đi RAW'. Test này khẳng định thông báo CỤ THỂ đó (không phải lỗi
+        LOAI_BO chung chung) đi xuyên suốt tới `job['error']` — đúng nội dung
+        frontend `cham_ach.py::_enter_checkpoint()` hiển thị cho người dùng."""
+        monkeypatch.setattr(svc, 'TEMP_DIR', tmp_path)
+        loi_that = ("Không tìm thấy REFHUB trên MIS_đi RAW: "
+                    "['260731000000004616351608', '260731000000004617750314']")
+        monkeypatch.setattr(
+            svc, 'main_from_dir',
+            _stub_main_from_dir(xac_nhan_ket_qua='loi', loi_msg=loi_that),
+        )
+        r = admin_client.post(
+            '/api/ach/start',
+            files=[('files', ('GW.xlsx', b'fake', _XLSX_MIME))],
+            data={'ngay_doi_chieu': ''},
+        )
+        job_id = r.json()['job_id']
+        _wait_status(job_id, 'awaiting_confirmation')
+
+        r2 = admin_client.post(
+            f'/api/ach/continue/{job_id}',
+            files=[('file', ('20260101_ACH_ConfirmMISdi.xlsx', b'da-dien', _XLSX_MIME))],
+        )
+        assert r2.status_code == 200  # nộp thành công, lỗi phát sinh khi CHẠY (async)
+
+        job = _wait_status(job_id, 'awaiting_confirmation')
+        assert job['status'] == 'awaiting_confirmation'
+        assert 'Không tìm thấy REFHUB trên MIS_đi RAW' in job['error']
+        assert '260731000000004616351608' in job['error']
+        # File confirm gốc vẫn còn để người dùng sửa + nộp lại, không bị mất.
+        assert job['files'] == ['20260101_ACH_ConfirmMISdi.xlsx']
+
+        poll = admin_client.get(f'/api/ach/poll/{job_id}')
+        assert poll.json()['error'] == loi_that
 
     def test_continue_khi_chua_toi_checkpoint_bao_loi_400(self, admin_client, monkeypatch, tmp_path):
         monkeypatch.setattr(svc, 'TEMP_DIR', tmp_path)

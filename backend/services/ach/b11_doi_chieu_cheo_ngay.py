@@ -11,8 +11,17 @@ _COLS_BAT_BUOC_DI  = ['CHI_NHANH', 'SO_TIEN', 'TRACE', 'SE_TRACE', 'NGAY_KENH_TR
 _COLS_BAT_BUOC_DEN = ['CHI_NHANH', 'SO_TIEN', 'TRACE', 'LOAI_LENH_OSB']
 
 
-def _doc_csv_thua_t2(path: str, cols_bat_buoc: list, nhan: str) -> pd.DataFrame:
-    df = pd.read_csv(path, dtype=str, encoding='utf-8-sig', low_memory=False)
+def _doc_file_thua_t2(path: str, cols_bat_buoc: list, nhan: str) -> pd.DataFrame:
+    """Đọc file MIS thừa T-2 — chấp nhận CẢ 2 loại: `.csv` chương trình tự xuất
+    (sheet quá `CSV_THRESHOLD`) LẪN `.xlsx` do người chấm tự sửa tay rồi lưu lại
+    (2026-08-03, Business Owner cần dùng khi kết quả chương trình tự xuất bị sai,
+    phải nạp lại file đã chỉnh). `dtype=str` cho cả 2 nhánh để giữ đúng hành vi
+    cột số/mã tham chiếu dạng chuỗi như trước (tránh Excel tự suy ra kiểu số/ngày
+    làm hỏng TRACE/SE_TRACE khi tính lại khóa đối chiếu)."""
+    if path.lower().endswith('.csv'):
+        df = pd.read_csv(path, dtype=str, encoding='utf-8-sig', low_memory=False)
+    else:
+        df = pd.read_excel(path, dtype=str, engine='calamine')
     df.columns = [c.strip() for c in df.columns]
     missing = [c for c in cols_bat_buoc if c not in df.columns]
     if missing:
@@ -21,15 +30,17 @@ def _doc_csv_thua_t2(path: str, cols_bat_buoc: list, nhan: str) -> pd.DataFrame:
 
 
 def doc_mis_di_thua_t2(path: str) -> pd.DataFrame:
-    """Đọc file MIS_đi thừa T-2 (đúng file chương trình tự xuất từ lần chạy trước,
-    sheet/CSV MIS_DI_THUA) — chỉ validate đúng cấu trúc cột, không parser mới."""
-    return _doc_csv_thua_t2(path, _COLS_BAT_BUOC_DI, 'MIS_đi thừa')
+    """Đọc file MIS_đi thừa T-2 — file chương trình tự xuất (`.csv`) hoặc file
+    người chấm tự sửa tay rồi lưu lại (`.xlsx`, tên bắt đầu bằng "MIS đi thừa") —
+    chỉ validate đúng cấu trúc cột, không parser mới."""
+    return _doc_file_thua_t2(path, _COLS_BAT_BUOC_DI, 'MIS_đi thừa')
 
 
 def doc_mis_den_thua_t2(path: str) -> pd.DataFrame:
-    """Đọc file MIS_đến thừa T-2 (đúng file chương trình tự xuất, sheet/CSV
-    MIS_DEN_THUA) — chỉ validate đúng cấu trúc cột, không parser mới."""
-    return _doc_csv_thua_t2(path, _COLS_BAT_BUOC_DEN, 'MIS_đến thừa')
+    """Đọc file MIS_đến thừa T-2 — file chương trình tự xuất (`.csv`) hoặc file
+    người chấm tự sửa tay rồi lưu lại (`.xlsx`, tên bắt đầu bằng "MIS đến thừa") —
+    chỉ validate đúng cấu trúc cột, không parser mới."""
+    return _doc_file_thua_t2(path, _COLS_BAT_BUOC_DEN, 'MIS_đến thừa')
 
 
 def danh_dau_da_can_di(df_npo_di_thua: pd.DataFrame, df_mis_di_thua_t2: pd.DataFrame | None,

@@ -23,12 +23,14 @@ Trạng thái hiện tại (2026-07-23, theo quyết định Business Owner):
     dùng `cumcount()` (cumcount từng chọn dòng theo vị trí file — bị Business Owner
     bác bỏ vì đó là suy luận không có căn cứ khi 1 nhóm có nhiều dòng trùng khóa).
   - **C.2** (chỉ trong nhóm đã xác định thừa ở C.1): tra MSGREF (chuẩn hóa —
-    `.strip().lstrip("'")`) cho TỪNG dòng TPAY, không phụ thuộc `PrcFlg`, không phụ
-    thuộc thứ tự xuất hiện trong file. MSGREF không có trên GW sạch → nhánh 1A
-    (timeout). MSGREF có trên GW sạch → nhánh 1B ("Timeout thật", vào khớp đúng với
-    cột `MATCH_TYPE='TIMEOUT'`).
-  - Trạng thái không phải TPAY trong nhóm thừa (SCNL/TXRT) → vẫn khớp đúng, không
-    `MATCH_TYPE` (TPAY là điều kiện lọc duy nhất, không đổi).
+    `.strip().lstrip("'")`) cho TỪNG dòng, không phụ thuộc `PrcFlg`, không phụ thuộc
+    thứ tự xuất hiện trong file. MSGREF không có trên GW sạch → nhánh 1A (timeout).
+    MSGREF có trên GW sạch → nhánh 1B ("Timeout thật", vào khớp đúng với cột
+    `MATCH_TYPE='TIMEOUT'`).
+  - **Cập nhật 2026-08-03** — TPAY KHÔNG còn là điều kiện lọc riêng ở C.2: mọi trạng
+    thái còn lại trong nhóm thừa (SCNL/TXRT/TXPR/TXCA/...) đều được xét y hệt TPAY, vì
+    CALD/ERPO/TPER đã bị loại hẳn ở Bước 1. Business Owner xác nhận sẽ phát sinh nhiều
+    trạng thái mới theo thời gian, không muốn liệt kê danh sách trắng cố định.
 - `tim_nhom_gw_thua()` (Requirement C.1a, phía GW-thừa) — xác định nhóm CN_TIỀN có
   COUNT_GW > COUNT_MIS, trả về DỮ LIỆU GỐC (không phải bảng tổng hợp COUNT) để chấm
   thủ công thẳng — làm rõ 2026-07-21: (1) COUNT_MIS=0 → "đã xác định chênh lệch"
@@ -404,12 +406,40 @@ class TestKhopVoiGw:
         assert len(timeout) == 0
         assert khop.iloc[0]['MATCH_TYPE'] == ''
 
-    def test_nhom_thua_khong_phai_tpay_van_khop_dung(self):
-        """Nhóm thừa nhưng KHÔNG phải TPAY (SCNL) → vẫn 'khớp đúng', không tra
-        MSGREF, không có MATCH_TYPE. TPAY là điều kiện lọc duy nhất."""
-        df_mis_di = _mis_di([_row('R1', '1000', 'SCNL', '111', session=SID, so_tien='500000')])
+    def test_nhom_thua_khong_phai_tpay_cung_bi_xet_timeout(self):
+        """Cập nhật 2026-08-03: nhóm thừa, trạng thái SCNL (không phải TPAY), MSGREF
+        KHÔNG có trên GW sạch → vẫn là nhánh 1A (timeout), y hệt TPAY — KHÔNG còn
+        được miễn trừ chỉ vì khác TPAY."""
+        df_mis_di = _mis_di([_row('R1', '1000', 'SCNL', '111', session=SID,
+                                  so_tien='500000', msgref='MSGR1')])
         dict_gw = {}  # nhóm thừa: COUNT_MIS=1 > COUNT_GW=0
-        df_gw = pd.DataFrame([_gw_row('9999999999', 'KHAC_NHOM')])
+        df_gw = pd.DataFrame([_gw_row('9999999999', 'KHAC_MSGREF')])
+        khop, timeout = khop_voi_gw(df_mis_di, dict_gw, df_gw)
+        assert len(khop) == 0
+        assert len(timeout) == 1
+        assert timeout.iloc[0]['REFHUB'] == 'R1'
+
+    def test_nhom_thua_khong_phai_tpay_co_msgref_tren_gw_la_timeout_that(self):
+        """Cập nhật 2026-08-03: nhóm thừa, trạng thái TXPR (không phải TPAY), MSGREF
+        CÓ trên GW sạch → nhánh 1B, vào khớp đúng với MATCH_TYPE='TIMEOUT' — đối xứng
+        với hành vi TPAY, không phân biệt trạng thái."""
+        df_mis_di = _mis_di([_row('R1', '1000', 'TXPR', '111', session=SID,
+                                  so_tien='500000', msgref='MSGR1')])
+        dict_gw = {}  # nhóm thừa theo COUNT
+        df_gw = pd.DataFrame([_gw_row('1000999999', 'MSGR1')])
+        khop, timeout = khop_voi_gw(df_mis_di, dict_gw, df_gw)
+        assert len(timeout) == 0
+        assert len(khop) == 1
+        assert khop.iloc[0]['MATCH_TYPE'] == 'TIMEOUT'
+
+    def test_nhom_khop_du_trang_thai_bat_ky_khong_bi_xet(self):
+        """Nhóm KHÔNG thừa (COUNT_MIS <= COUNT_GW) → mọi trạng thái đều khớp đúng
+        ngay ở C.1, không tra MSGREF (dù MSGREF không hề có trên GW) — C.1 vẫn quyết
+        định trước, C.2 không đổi thứ tự."""
+        df_mis_di = _mis_di([_row('R1', '1000', 'TXCA', '111', session=SID,
+                                  so_tien='500000', msgref='MSG_KHONG_CO_O_GW')])
+        dict_gw = {'1000500000': 1}
+        df_gw = pd.DataFrame([_gw_row('1000500000', 'MSGREF_KHAC_HOAN_TOAN')])
         khop, timeout = khop_voi_gw(df_mis_di, dict_gw, df_gw)
         assert len(khop) == 1
         assert len(timeout) == 0
@@ -656,6 +686,75 @@ class TestApDungConfirmMisDi:
             ap_dung_confirm_mis_di(path, df_mis_di, df_mis_di_raw)
 
     def test_loi_refhub_bo_sung_khong_tim_thay(self, tmp_path):
+        df_mis_di, rows = self._mis_di_3_dong()
+        path = _xuat_confirm(tmp_path, df_mis_di)
+        _ghi_confirm(path, refhub_bo_sung=['R_KHONG_TON_TAI'])
+
+        df_mis_di_raw = pd.DataFrame(rows)
+        with pytest.raises(ValueError, match='Không tìm thấy REFHUB'):
+            ap_dung_confirm_mis_di(path, df_mis_di, df_mis_di_raw)
+
+    def test_bo_sung_tim_thay_o_ngay_khac_khi_khong_co_ngay_hien_tai(self, tmp_path):
+        """2026-08-04 — REFHUB không có trong df_mis_di_raw của ngày đang chạy
+        nhưng có ở nguồn `doc_them_ngay_khac()` (VD zip MIS_đi của thư mục ngày
+        khác) → vẫn thêm được, không báo lỗi 'Không tìm thấy'."""
+        df_mis_di, rows = self._mis_di_3_dong()
+        path = _xuat_confirm(tmp_path, df_mis_di)
+        _ghi_confirm(path, refhub_bo_sung=['RD'])
+
+        df_mis_di_raw = pd.DataFrame(rows)  # KHÔNG có RD
+        row_ngay_khac = _row('RD', '8000', 'TPAY', '444', session='99999',
+                             so_tien='800000', msgref='MSGD')
+
+        so_lan_goi = []
+
+        def _doc_them():
+            so_lan_goi.append(1)
+            return pd.DataFrame([row_ngay_khac])
+
+        df_chuan = ap_dung_confirm_mis_di(
+            path, df_mis_di, df_mis_di_raw, doc_them_ngay_khac=_doc_them,
+        )
+        assert set(df_chuan['REFHUB']) == {'RA', 'RB', 'RC', 'RD'}
+        assert len(so_lan_goi) == 1  # có gọi callback vì cần tra thêm
+
+    def test_khong_goi_doc_them_ngay_khac_khi_khong_can(self, tmp_path):
+        """Lazy — REFHUB đã tìm thấy đủ trong dữ liệu ngày đang chạy thì KHÔNG
+        được gọi `doc_them_ngay_khac()` (tránh đọc zip thừa không cần thiết)."""
+        df_mis_di, rows = self._mis_di_3_dong()
+        path = _xuat_confirm(tmp_path, df_mis_di)
+        _ghi_confirm(path, refhub_bo_sung=['RD'])
+
+        rows_raw = rows + [_row('RD', '8000', 'TPAY', '444', session='99999',
+                                so_tien='800000', msgref='MSGD')]
+        df_mis_di_raw = pd.DataFrame(rows_raw)
+
+        def _doc_them():
+            raise AssertionError('Không được gọi khi đã tìm thấy trong ngày hiện tại')
+
+        df_chuan = ap_dung_confirm_mis_di(
+            path, df_mis_di, df_mis_di_raw, doc_them_ngay_khac=_doc_them,
+        )
+        assert 'RD' in set(df_chuan['REFHUB'])
+
+    def test_bo_sung_khong_tim_thay_ca_ngay_khac_van_bao_loi(self, tmp_path):
+        df_mis_di, rows = self._mis_di_3_dong()
+        path = _xuat_confirm(tmp_path, df_mis_di)
+        _ghi_confirm(path, refhub_bo_sung=['R_KHONG_TON_TAI'])
+
+        df_mis_di_raw = pd.DataFrame(rows)
+
+        def _doc_them():
+            return pd.DataFrame(columns=df_mis_di_raw.columns)  # ngày khác cũng không có
+
+        with pytest.raises(ValueError, match='Không tìm thấy REFHUB'):
+            ap_dung_confirm_mis_di(
+                path, df_mis_di, df_mis_di_raw, doc_them_ngay_khac=_doc_them,
+            )
+
+    def test_khong_truyen_doc_them_ngay_khac_hanh_vi_khong_doi(self, tmp_path):
+        """Mặc định (không truyền doc_them_ngay_khac) — hành vi y hệt trước đây,
+        vẫn báo lỗi 'Không tìm thấy' khi REFHUB không có trong ngày hiện tại."""
         df_mis_di, rows = self._mis_di_3_dong()
         path = _xuat_confirm(tmp_path, df_mis_di)
         _ghi_confirm(path, refhub_bo_sung=['R_KHONG_TON_TAI'])

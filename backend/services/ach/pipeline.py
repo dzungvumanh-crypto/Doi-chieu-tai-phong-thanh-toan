@@ -17,7 +17,7 @@ from .b2_xu_ly_gl02    import xu_ly_gl02
 from .b3_xu_ly_gw      import xu_ly_gw
 from .b4_xu_ly_mis_di  import (
     _doc_mis_di_raw, _process_mis_di, khop_voi_gw, tim_nhom_gw_thua, ap_dung_confirm_mis_di,
-    tim_giao_dich_bi_loai_session_null,
+    tim_giao_dich_bi_loai_session_null, doc_mis_di_khong_loc_session,
 )
 from .b5_doi_chieu_di  import doi_chieu_di
 from .b6_xu_ly_mis_den import xu_ly_mis_den
@@ -140,6 +140,47 @@ def _tim_file_ngoai_output(input_dir: str, pattern: str) -> list:
         f for f in _tim_file(input_dir, pattern)
         if 'output' not in {p.lower() for p in os.path.normpath(f).split(os.sep)}
     ]
+
+
+def _tim_file_thua_t2(input_dir: str, patterns: list) -> list:
+    """Điểm 4 (2026-08-03) — dò file MIS thừa T-2 theo NHIỀU pattern: file chương
+    trình tự xuất (`MIS_DI_THUA*.csv`) LẪN file người chấm tự sửa tay rồi lưu lại
+    (`MIS đi thừa*.xlsx`, đúng tên thật Business Owner đang dùng). Bám theo TÊN
+    file, không suy đoán theo nội dung cột — file `OSB đi thừa*.xlsx` (Điểm 2) có
+    cấu trúc cột giống hệt nhưng KHÔNG phải input T-2, chỉ tên file mới phân biệt
+    được chắc chắn."""
+    found, seen = [], set()
+    for pat in patterns:
+        for f in _tim_file_ngoai_output(input_dir, pat):
+            if f not in seen:
+                seen.add(f)
+                found.append(f)
+    return sorted(found)
+
+
+def _tim_di_zip_ngay_khac(input_dir: str) -> list:
+    """Tìm thêm `*_DI_*.zip` ở các thư mục ANH EM (cùng thư mục cha) với
+    `input_dir` — phục vụ tra REFHUB bổ sung (Checkpoint Bước 2) từ NGÀY KHÁC khi
+    không có trong dữ liệu thô của chính ngày đang chạy (2026-08-04, Business
+    Owner cần thêm giao dịch timeout của vài ngày trước vào báo cáo ngày sau, ví
+    dụ chạy tuần tự các thư mục `31.07/`, `01.08/`... cùng 1 thư mục cha).
+
+    Chỉ có ý nghĩa ở mode folder (input_dir là thư mục thật, có anh em cùng cấp)
+    — mode upload không có khái niệm này, tự nhiên trả về rỗng vì input_dir nằm
+    trong `data/temp_ach/<job_id>/input`, thư mục cha chỉ có đúng 1 con."""
+    abs_dir = os.path.abspath(input_dir)
+    parent  = os.path.dirname(abs_dir)
+    if not os.path.isdir(parent):
+        return []
+    found = []
+    try:
+        with os.scandir(parent) as it:
+            for entry in it:
+                if entry.is_dir() and os.path.abspath(entry.path) != abs_dir:
+                    found.extend(_tim_file(entry.path, '*_DI_*.zip'))
+    except OSError:
+        return []
+    return found
 
 
 def _tim_gw_xlsx(input_dir: str) -> str:
@@ -653,17 +694,21 @@ def main_from_dir(input_dir: str, output_dir: str,
     # Điểm 4 (tùy chọn) — file MIS thừa T-2 do chương trình tự xuất ra lần chạy
     # trước, đính kèm để đối chiếu chéo ngày. Không có → bỏ qua, không chặn luồng
     # chính (đúng tinh thần file tùy chọn như Điểm 2/QT).
-    mis_di_thua_t2_files  = _tim_file_ngoai_output(input_dir, 'MIS_DI_THUA*.csv')
-    mis_den_thua_t2_files = _tim_file_ngoai_output(input_dir, 'MIS_DEN_THUA*.csv')
+    mis_di_thua_t2_files  = _tim_file_thua_t2(
+        input_dir, ['MIS_DI_THUA*.csv', 'MIS_DI_THUA*.xlsx', 'MIS đi thừa*.csv', 'MIS đi thừa*.xlsx'],
+    )
+    mis_den_thua_t2_files = _tim_file_thua_t2(
+        input_dir, ['MIS_DEN_THUA*.csv', 'MIS_DEN_THUA*.xlsx', 'MIS đến thừa*.csv', 'MIS đến thừa*.xlsx'],
+    )
     if len(mis_di_thua_t2_files) > 1:
         raise FileNotFoundError(
-            f'Có nhiều hơn 1 file MIS_đi thừa T-2 khớp MIS_DI_THUA*.csv — giữ lại đúng 1 file: '
-            f'{mis_di_thua_t2_files}'
+            f'Có nhiều hơn 1 file MIS_đi thừa T-2 (MIS_DI_THUA*.csv/.xlsx hoặc "MIS đi thừa*") — '
+            f'giữ lại đúng 1 file: {mis_di_thua_t2_files}'
         )
     if len(mis_den_thua_t2_files) > 1:
         raise FileNotFoundError(
-            f'Có nhiều hơn 1 file MIS_đến thừa T-2 khớp MIS_DEN_THUA*.csv — giữ lại đúng 1 file: '
-            f'{mis_den_thua_t2_files}'
+            f'Có nhiều hơn 1 file MIS_đến thừa T-2 (MIS_DEN_THUA*.csv/.xlsx hoặc "MIS đến thừa*") — '
+            f'giữ lại đúng 1 file: {mis_den_thua_t2_files}'
         )
 
     # Điểm 2 (tùy chọn) — file Quyết toán OSB "QT" (đi và/hoặc đến, tự phân loại
@@ -737,8 +782,17 @@ def main_from_dir(input_dir: str, output_dir: str,
         return xac_nhan_out_path
 
     if xac_nhan_path:
+        def _doc_them_ngay_khac():
+            zip_khac = _tim_di_zip_ngay_khac(input_dir)
+            if not zip_khac:
+                return pd.DataFrame(columns=df_mis_di_data.columns)
+            log(f'[Bước 2] Không thấy REFHUB bổ sung ở dữ liệu ngày đang chạy — '
+                f'tra thêm {len(zip_khac)} file MIS_đi ở thư mục khác...')
+            return doc_mis_di_khong_loc_session(zip_khac, log_callback)
+
         df_mis_di = ap_dung_confirm_mis_di(
             xac_nhan_path, df_mis_di, df_mis_di_data, log_callback,
+            doc_them_ngay_khac=_doc_them_ngay_khac,
         )
 
     # Mục 3 — so khớp CN TIỀN giữa MIS_đi (đã confirm nếu có) và GW.

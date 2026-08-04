@@ -138,6 +138,21 @@ def _doc_mis_di_raw(zip_paths: List[str], session_id: str, log_callback=None) ->
     return pd.concat(frames, ignore_index=True)
 
 
+def doc_mis_di_khong_loc_session(zip_paths: List[str], log_callback=None) -> pd.DataFrame:
+    """Đọc nhiều ZIP MIS_DI KHÔNG lọc theo session (khác `_doc_mis_di_raw()`) —
+    dùng riêng cho tra cứu REFHUB bổ sung từ NGÀY KHÁC ở Checkpoint Bước 2
+    (2026-08-04, xem `ap_dung_confirm_mis_di()`): người chấm chủ động xác nhận 1
+    giao dịch cụ thể theo đúng REFHUB, không cần khớp session của ngày đang chạy."""
+    _log = log_callback or print
+    _log(f'[B4] Đọc {len(zip_paths)} file MIS_DI (không lọc session, tra REFHUB ngày khác)...')
+    if not zip_paths:
+        return pd.DataFrame(columns=_COLS)
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        futures = [ex.submit(_doc_zip, p, None) for p in zip_paths]
+        frames  = [f.result() for f in futures]
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=_COLS)
+
+
 def _them_cot_khoa(df: pd.DataFrame) -> pd.DataFrame:
     """Thêm cột KEY_HUB (đối chiếu NPO) và 'CN tiền Hub' (đối chiếu GW) — dùng chung
     cho cả MIS_đi lẫn nhóm timeout theo trạng thái."""
@@ -354,16 +369,20 @@ def khop_voi_gw(df_mis_di: pd.DataFrame, dict_gw_count: dict, df_gw: pd.DataFram
     `tim_nhom_gw_thua()`).
 
     Requirement C.2 — CHỈ trong các nhóm đã xác định thừa ở C.1, tra MSGREF (đã chuẩn
-    hóa — bỏ dấu nháy đơn đầu) cho TỪNG dòng TPAY để phân loại (không so MSGREF trên
-    toàn bộ dữ liệu trước khi có nhóm chênh lệch):
+    hóa — bỏ dấu nháy đơn đầu) cho TỪNG dòng để phân loại (không so MSGREF trên toàn
+    bộ dữ liệu trước khi có nhóm chênh lệch):
     - MSGREF KHÔNG có trên GW sạch → nhánh 1A, "Timeout không đi kênh" → df_timeout.
     - MSGREF CÓ trên GW sạch → nhánh 1B, "Timeout thật" (đã được kênh xác nhận, KHÔNG
       phải thừa) → df_khop_dung, đánh dấu cột `MATCH_TYPE = 'TIMEOUT'`.
     Tuyệt đối KHÔNG dùng `PrcFlg` của GW để quyết định — chỉ dựa vào MSGREF có tồn
     tại hay không, bất kể GW đang ở trạng thái gì.
 
-    Dòng không phải TPAY trong nhóm thừa (SCNL/TXRT...) → vẫn vào df_khop_dung, không
-    có MATCH_TYPE (TPAY là điều kiện lọc duy nhất cho khái niệm timeout, không đổi).
+    Phạm vi trạng thái xét ở C.2 (chốt 2026-08-03, thay quy tắc TPAY-only cũ): TOÀN
+    BỘ trạng thái còn lại trong nhóm thừa đều được xét như TPAY — vì CALD/ERPO/TPER
+    (biến `_TRANG_THAI_LOAI_TRU`) đã bị loại hẳn ở Bước 1 (`_process_mis_di()`), không
+    cần lọc lại theo trạng thái ở đây nữa. Business Owner xác nhận sẽ có nhiều trạng
+    thái khác ngoài TPAY phát sinh theo thời gian (đã thấy TXPR/TXCA thực tế) và muốn
+    xử lý đồng nhất, không liệt kê danh sách trắng cố định.
 
     Trả về (df_khop_dung, df_timeout).
     """
@@ -375,15 +394,15 @@ def khop_voi_gw(df_mis_di: pd.DataFrame, dict_gw_count: dict, df_gw: pd.DataFram
     cnt_gw_nhom    = df_mis_di[cn_col].map(dict_gw_count).fillna(0).astype(int)
     mask_nhom_thua = cnt_mis_nhom > cnt_gw_nhom
 
-    # C.2 — trong nhóm thừa, tra MSGREF cho từng dòng TPAY.
+    # C.2 — trong nhóm thừa, tra MSGREF cho MỌI dòng (CALD/ERPO/TPER đã loại ở Bước 1).
     msgref_mis    = _chuan_hoa_msgref(df_mis_di['MSGREF'])
     msgref_gw_set = frozenset(_chuan_hoa_msgref(df_gw['MSGREF']))
 
-    mask_tpay_trong_nhom_thua = mask_nhom_thua & (df_mis_di['TRANG_THAI_LENH'] == 'TPAY')
-    mask_co_tren_gw           = msgref_mis.isin(msgref_gw_set)
+    mask_xet_trong_nhom_thua = mask_nhom_thua
+    mask_co_tren_gw          = msgref_mis.isin(msgref_gw_set)
 
-    mask_timeout      = mask_tpay_trong_nhom_thua & ~mask_co_tren_gw   # nhánh 1A
-    mask_timeout_that = mask_tpay_trong_nhom_thua & mask_co_tren_gw    # nhánh 1B
+    mask_timeout      = mask_xet_trong_nhom_thua & ~mask_co_tren_gw   # nhánh 1A
+    mask_timeout_that = mask_xet_trong_nhom_thua & mask_co_tren_gw    # nhánh 1B
 
     df = df_mis_di.copy()
     df['MATCH_TYPE'] = ''
@@ -528,7 +547,8 @@ def _doc_sheet_confirm_mis_di(xac_nhan_path: str):
 
 
 def ap_dung_confirm_mis_di(xac_nhan_path: str, df_mis_di: pd.DataFrame,
-                          df_mis_di_raw: pd.DataFrame, log_callback=None) -> pd.DataFrame:
+                          df_mis_di_raw: pd.DataFrame, log_callback=None,
+                          doc_them_ngay_khac=None) -> pd.DataFrame:
     """Bước 2 — Checkpoint xác nhận thủ công tại MIS_đi (Điểm 1, 2026-07-31 — thay
     hẳn cơ chế Timeout-confirm cũ, xem project_ach_4diem_pr_plan). File confirm
     (Bước 1, `xuat_excel_confirm_mis_di()`) cho người chấm 2 việc trên MIS_đi (đầu
@@ -544,6 +564,13 @@ def ap_dung_confirm_mis_di(xac_nhan_path: str, df_mis_di: pd.DataFrame,
     Công thức: MIS_đi chuẩn = (MIS_đi ban đầu − dòng LOAI_BO='loại bỏ') + (REFHUB
     hợp lệ ở khu bổ sung). REFHUB trùng ≥2 dòng trên MIS_hub thô → báo lỗi, từ chối
     chạy tiếp (không tự chọn 1 dòng theo vị trí).
+
+    doc_them_ngay_khac — callback KHÔNG tham số (2026-08-04, mở rộng theo yêu cầu
+    Business Owner: cần thêm giao dịch timeout của vài ngày trước vào báo cáo ngày
+    hiện tại), trả về DataFrame MIS_đi thô bổ sung từ NGÀY KHÁC (không lọc
+    session). CHỈ được gọi (tối đa 1 lần, lazy) khi có REFHUB bổ sung KHÔNG tìm
+    thấy trong `df_mis_di_raw` của chính ngày đang chạy. Mặc định `None` — hành vi
+    y hệt trước đây, không đổi gì nếu không dùng.
 
     Trả về df_mis_di_chuan — dùng thay `df_mis_di` ở phần còn lại của pipeline
     (trước khi gọi `khop_voi_gw()`).
@@ -581,6 +608,8 @@ def ap_dung_confirm_mis_di(xac_nhan_path: str, df_mis_di: pd.DataFrame,
         refhub_da_co_chuan = set(refhub_mis_di_chuan) - refhub_loai_bo
         refhub_raw_chuan   = df_mis_di_raw['REFHUB'].astype(str).str.strip().str.lstrip("'")
 
+        df_raw_ngay_khac = None  # lazy cache — chỉ đọc 1 lần nếu thật sự cần
+
         rows, khong_tim_thay, trung_voi_da_co, trung_lap_tren_raw = [], [], [], []
         for r in refhub_bo_sung:
             r_norm = str(r).strip().lstrip("'")
@@ -588,12 +617,23 @@ def ap_dung_confirm_mis_di(xac_nhan_path: str, df_mis_di: pd.DataFrame,
                 trung_voi_da_co.append(r)
                 continue
             match = df_mis_di_raw[refhub_raw_chuan == r_norm]
+            nguon = 'dữ liệu ngày đang chạy'
+            if len(match) == 0 and doc_them_ngay_khac is not None:
+                if df_raw_ngay_khac is None:
+                    df_raw_ngay_khac = doc_them_ngay_khac()
+                if len(df_raw_ngay_khac) > 0:
+                    refhub_khac_chuan = (
+                        df_raw_ngay_khac['REFHUB'].astype(str).str.strip().str.lstrip("'")
+                    )
+                    match = df_raw_ngay_khac[refhub_khac_chuan == r_norm]
+                    nguon = 'dữ liệu ngày khác'
             if len(match) == 0:
                 khong_tim_thay.append(r)
                 continue
             if len(match) > 1:
                 trung_lap_tren_raw.append(r)
                 continue
+            _log(f'[Bước 2] REFHUB bổ sung {r_norm}: tìm thấy từ {nguon}.')
             rows.append(match)
 
         if khong_tim_thay:
