@@ -11,7 +11,7 @@ from backend.services.ach.b11_doi_chieu_cheo_ngay import (
     doc_mis_di_thua_t2, doc_mis_den_thua_t2,
 )
 from backend.services.ach.pipeline import (
-    _tim_file_ngoai_output, _tim_file_thua_t2, _tim_di_zip_ngay_khac,
+    _tim_file_ngoai_output, _tim_file_thua_t2, _tim_di_zip_ngay_khac, _tim_gw_xlsx,
 )
 
 
@@ -209,6 +209,27 @@ class TestTimDiZipNgayKhac:
         ket_qua = _tim_di_zip_ngay_khac(str(parent / '02.08'))
         assert sorted(ket_qua) == sorted([str(f1), str(f2)])
 
+    def test_loi_os_khi_quet_duoc_log_khong_con_im_lang(self, tmp_path, monkeypatch):
+        """Audit 2026-08-04 — trước đây OSError khi quét thư mục cha bị nuốt im
+        lặng (return []), không phân biệt được với 'thật sự không có dữ liệu ngày
+        khác'. Giờ phải log WARN kèm lý do."""
+        import backend.services.ach.pipeline as pipeline_mod
+
+        ngay_a = tmp_path / '31.07'
+        ngay_a.mkdir()
+
+        def _scandir_loi(path):
+            raise OSError('Ổ đĩa mất kết nối (giả lập test)')
+
+        monkeypatch.setattr(pipeline_mod.os, 'scandir', _scandir_loi)
+
+        logs = []
+        ket_qua = _tim_di_zip_ngay_khac(str(ngay_a), log_callback=logs.append)
+        assert ket_qua == []
+        canh_bao = [l for l in logs if '[WARN]' in l]
+        assert len(canh_bao) == 1
+        assert 'Ổ đĩa mất kết nối' in canh_bao[0]
+
 
 # ── Đọc file T-2 dạng .xlsx (người chấm tự sửa tay) ──────────────────────────
 # 2026-08-03: Business Owner cần nạp lại file T-2 đã tự sửa tay (khi kết quả
@@ -276,3 +297,55 @@ class TestTimFileThuaT2:
         f.write_text('x')
         ket_qua = _tim_file_thua_t2(str(tmp_path), ['MIS_DI_THUA*.csv', 'MIS_DI_THUA*.csv'])
         assert ket_qua == [str(f)]
+
+
+# ── Dò file GW .xlsx — phân biệt "không tìm thấy" với "tìm thấy nhưng lỗi đọc" ──
+# Audit 2026-08-04: trước đây bất kỳ lỗi đọc file nào (kể cả đúng file GW nhưng
+# hỏng/khoá tạm thời) đều bị nuốt im lặng, cuối cùng chỉ báo "Không tìm thấy file
+# GW" — gây hiểu lầm thiếu file trong khi thật ra có file nhưng lỗi đọc.
+
+def _tao_gw_xlsx_hop_le(path):
+    import xlsxwriter
+    wb = xlsxwriter.Workbook(str(path))
+    ws = wb.add_worksheet('GW')
+    ws.write_row(0, 0, ['BRCD', 'SessionId', 'STTLMAMT', 'MSGREF', 'PrcFlg'])
+    ws.write_row(1, 0, ['1000', '16282', '500000', 'MSG1', 'Lệnh Hoàn thành'])
+    wb.close()
+
+
+class TestTimGwXlsx:
+    def test_tim_thay_file_hop_le(self, tmp_path):
+        f = tmp_path / 'đi GW 30.07.xlsx'
+        _tao_gw_xlsx_hop_le(f)
+        ket_qua = _tim_gw_xlsx(str(tmp_path))
+        assert ket_qua == str(f)
+
+    def test_khong_co_file_nao_bao_loi_khong_tim_thay(self, tmp_path):
+        with pytest.raises(FileNotFoundError, match='Không tìm thấy file GW .xlsx trong'):
+            _tim_gw_xlsx(str(tmp_path))
+
+    def test_file_loi_doc_duoc_phan_biet_voi_khong_tim_thay(self, tmp_path):
+        """File tên có 'GW' nhưng nội dung hỏng (không phải xlsx thật) — thông báo
+        lỗi cuối phải nêu rõ CÓ file lỗi đọc, không chỉ nói chung chung 'không tìm
+        thấy'."""
+        f = tmp_path / 'GW loi.xlsx'
+        f.write_bytes(b'khong-phai-file-excel-that')
+        with pytest.raises(FileNotFoundError, match='có 1 file lỗi khi đọc'):
+            _tim_gw_xlsx(str(tmp_path))
+
+    def test_file_loi_doc_duoc_log_canh_bao(self, tmp_path):
+        f = tmp_path / 'GW loi.xlsx'
+        f.write_bytes(b'khong-phai-file-excel-that')
+        logs = []
+        with pytest.raises(FileNotFoundError):
+            _tim_gw_xlsx(str(tmp_path), log_callback=logs.append)
+        assert any('[WARN]' in l and 'GW loi.xlsx' in l for l in logs)
+
+    def test_1_file_loi_1_file_hop_le_van_tim_dung(self, tmp_path):
+        """Có file lỗi lẫn file hợp lệ trong cùng thư mục — vẫn phải tìm ra đúng
+        file hợp lệ, không dừng lại ở file lỗi đầu tiên."""
+        (tmp_path / 'GW loi.xlsx').write_bytes(b'khong-phai-file-excel-that')
+        f_dung = tmp_path / 'GW dung.xlsx'
+        _tao_gw_xlsx_hop_le(f_dung)
+        ket_qua = _tim_gw_xlsx(str(tmp_path))
+        assert ket_qua == str(f_dung)

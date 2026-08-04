@@ -159,7 +159,7 @@ def _tim_file_thua_t2(input_dir: str, patterns: list) -> list:
     return sorted(found)
 
 
-def _tim_di_zip_ngay_khac(input_dir: str) -> list:
+def _tim_di_zip_ngay_khac(input_dir: str, log_callback=None) -> list:
     """Tìm thêm `*_DI_*.zip` ở các thư mục ANH EM (cùng thư mục cha) với
     `input_dir` — phục vụ tra REFHUB bổ sung (Checkpoint Bước 2) từ NGÀY KHÁC khi
     không có trong dữ liệu thô của chính ngày đang chạy (2026-08-04, Business
@@ -169,6 +169,7 @@ def _tim_di_zip_ngay_khac(input_dir: str) -> list:
     Chỉ có ý nghĩa ở mode folder (input_dir là thư mục thật, có anh em cùng cấp)
     — mode upload không có khái niệm này, tự nhiên trả về rỗng vì input_dir nằm
     trong `data/temp_ach/<job_id>/input`, thư mục cha chỉ có đúng 1 con."""
+    _log    = log_callback or print
     abs_dir = os.path.abspath(input_dir)
     parent  = os.path.dirname(abs_dir)
     if not os.path.isdir(parent):
@@ -179,17 +180,23 @@ def _tim_di_zip_ngay_khac(input_dir: str) -> list:
             for entry in it:
                 if entry.is_dir() and os.path.abspath(entry.path) != abs_dir:
                     found.extend(_tim_file(entry.path, '*_DI_*.zip'))
-    except OSError:
+    except OSError as e:
+        # Audit 2026-08-04 — trước đây lỗi OS khi quét thư mục anh em bị nuốt im
+        # lặng (return []) — không phân biệt được với "thật sự không có dữ liệu
+        # ngày khác", khiến REFHUB bổ sung báo "không tìm thấy" gây hiểu lầm.
+        _log(f'[Bước 2][WARN] Lỗi quét thư mục anh em của {abs_dir}: {e}')
         return []
     return found
 
 
-def _tim_gw_xlsx(input_dir: str) -> str:
+def _tim_gw_xlsx(input_dir: str, log_callback=None) -> str:
+    _log      = log_callback or print
     abs_dir   = os.path.abspath(input_dir)
     all_xlsx  = glob.glob(os.path.join(abs_dir, '**', '*.xlsx'), recursive=True)
     candidates = [f for f in all_xlsx if 'GW' in os.path.basename(f).upper()]
     if not candidates:
         candidates = all_xlsx
+    loi_doc = []  # Audit 2026-08-04 — file lỗi khi đọc, phân biệt với "thật sự thiếu file"
     for f in candidates:
         try:
             xl = pd.ExcelFile(f, engine='calamine')
@@ -199,8 +206,15 @@ def _tim_gw_xlsx(input_dir: str) -> str:
                 flat = set(str(v).strip() for v in df_peek.values.flatten() if str(v) != 'nan')
                 if 'BRCD' in flat and 'SessionId' in flat:
                     return f
-        except Exception:
+        except Exception as e:
+            loi_doc.append((os.path.basename(f), str(e)))
+            _log(f'[WARN] Lỗi đọc "{os.path.basename(f)}" khi dò file GW, thử file khác: {e}')
             continue
+    if loi_doc:
+        raise FileNotFoundError(
+            f'Không tìm thấy file GW .xlsx hợp lệ trong: {abs_dir} — '
+            f'có {len(loi_doc)} file lỗi khi đọc (không phải thiếu file): {loi_doc}'
+        )
     raise FileNotFoundError('Không tìm thấy file GW .xlsx trong: ' + abs_dir)
 
 
@@ -690,7 +704,7 @@ def main_from_dir(input_dir: str, output_dir: str,
 
     session_id    = doc_session(input_dir, log_callback)
     gl02_files    = _tim_file(input_dir, 'GL02*.zip')
-    gw_path       = _tim_gw_xlsx(input_dir)
+    gw_path       = _tim_gw_xlsx(input_dir, log_callback)
     mis_di_files  = _tim_file(input_dir, '*_DI_*.zip')
     mis_den_files = _tim_file(input_dir, '*_DEN_*.zip')
 
@@ -800,7 +814,7 @@ def main_from_dir(input_dir: str, output_dir: str,
 
     if xac_nhan_path:
         def _doc_them_ngay_khac():
-            zip_khac = _tim_di_zip_ngay_khac(input_dir)
+            zip_khac = _tim_di_zip_ngay_khac(input_dir, log_callback)
             if not zip_khac:
                 return pd.DataFrame(columns=df_mis_di_data.columns)
             log(f'[Bước 2] Không thấy REFHUB bổ sung ở dữ liệu ngày đang chạy — '
