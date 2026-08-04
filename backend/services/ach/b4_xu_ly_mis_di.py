@@ -374,6 +374,48 @@ def tim_giao_dich_bi_loai_session_null(df: pd.DataFrame, session_id: str, ngay_d
     return df_ket_qua[_COLS_CAN_KIEM_TRA_THU_CONG].reset_index(drop=True)
 
 
+def tim_toan_bo_giao_dich_bi_loai_session_null(df: pd.DataFrame, session_id: str, ngay_dt: datetime,
+                                               df_gw_goc: pd.DataFrame, log_callback=None) -> pd.DataFrame:
+    """Audit 2026-08-04 — bản MỞ RỘNG của `tim_giao_dich_bi_loai_session_null()`:
+    hàm cũ chỉ bắt lại đúng 1 nhánh loại (T-1, không tìm thấy trên GW gốc) để hiển
+    thị TẠM trong file confirm MIS_đi lúc Checkpoint (`dung_sau_mis_di=True`) — các
+    nhánh loại khác (T-1 rỗng/'0000', "khác session thật" tại cả T/T-1) hoàn toàn
+    KHÔNG xuất hiện ở BẤT KỲ báo cáo nào, kể cả báo cáo CUỐI `doi_chieu_<ngày>.xlsx`,
+    vì `tim_giao_dich_bi_loai_session_null()` chỉ được gọi có điều kiện.
+
+    Hàm này trả về TOÀN BỘ giao dịch SESSION=NULL bị `_process_mis_di()` loại
+    (mọi lý do, dùng đúng `ly_do` đã hoàn thiện ở `_loc_session_null_theo_gw_goc()`
+    — xem cập nhật 2026-08-04 ở đó), để gọi UNCONDITIONALLY trong `main_from_dir()`
+    và luôn xuất hiện trong báo cáo cuối — không còn giao dịch nào biến mất hoàn
+    toàn khỏi mọi báo cáo. KHÔNG thay thế `tim_giao_dich_bi_loai_session_null()`
+    (vẫn giữ nguyên cho file confirm Checkpoint, có nhãn chi tiết hơn cho riêng case
+    T-1/MSGREF rỗng).
+
+    Trả về DataFrame (có thể rỗng).
+    """
+    _log = log_callback or print
+
+    df = _chuan_hoa_co_ban(df)
+    df['SESSION']      = df['SESSION'].fillna('').astype(str).str.strip().str.lstrip("'")
+    df['SESSION_NULL'] = df['SESSION'].isin(['', 'nan', 'None', 'NaN'])
+
+    mask_trang_thai_loai_tru = df['TRANG_THAI_LENH'].isin(_TRANG_THAI_LOAI_TRU)
+    df_null = df[df['SESSION_NULL'] & ~mask_trang_thai_loai_tru]
+
+    if len(df_null) == 0:
+        _log('[Audit] Giao dịch SESSION=NULL bị loại khỏi MIS_đi (mọi lý do): 0')
+        return _them_cot_khoa(df_null.copy())[_COLS_CAN_KIEM_TRA_THU_CONG[:-1]].assign(LY_DO_CAN_KIEM_TRA='')
+
+    mask_giu, ly_do = _loc_session_null_theo_gw_goc(df_null, session_id, ngay_dt, df_gw_goc)
+    mask_bi_loai = ~mask_giu
+
+    df_ket_qua = _them_cot_khoa(df_null[mask_bi_loai].copy())
+    df_ket_qua['LY_DO_CAN_KIEM_TRA'] = ly_do[mask_bi_loai].values
+
+    _log(f'[Audit] Giao dịch SESSION=NULL bị loại khỏi MIS_đi (mọi lý do): {len(df_ket_qua):,}')
+    return df_ket_qua[_COLS_CAN_KIEM_TRA_THU_CONG].reset_index(drop=True)
+
+
 def khop_voi_gw(df_mis_di: pd.DataFrame, dict_gw_count: dict, df_gw: pd.DataFrame,
                log_callback=None):
     """Mục 3 tài liệu đối chiếu — so khớp CN TIỀN (CHI_NHANH+SO_TIEN) giữa MIS_đi và GW.

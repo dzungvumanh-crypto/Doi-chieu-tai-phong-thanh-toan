@@ -18,6 +18,7 @@ from .b3_xu_ly_gw      import xu_ly_gw
 from .b4_xu_ly_mis_di  import (
     _doc_mis_di_raw, _process_mis_di, khop_voi_gw, tim_nhom_gw_thua, ap_dung_confirm_mis_di,
     tim_giao_dich_bi_loai_session_null, doc_mis_di_khong_loc_session,
+    tim_toan_bo_giao_dich_bi_loai_session_null,
 )
 from .b5_doi_chieu_di  import doi_chieu_di
 from .b6_xu_ly_mis_den import xu_ly_mis_den
@@ -343,7 +344,8 @@ def _viet_tong_ket(workbook, ws, session_id, ngay_str,
                    n_den_khop, s_den_khop,
                    n_npo_den_thua, s_npo_den_thua,
                    n_mis_den_thua, s_mis_den_thua,
-                   n_osb_di_thua=0, n_osb_den_thua=0):
+                   n_osb_di_thua=0, n_osb_den_thua=0,
+                   n_session_null_bi_loai=0, s_session_null_bi_loai=0):
     fmt_label  = workbook.add_format({'bold': True, 'font_size': 10})
     fmt_header = workbook.add_format({'bold': True, 'font_size': 10,
                                       'bg_color': '#DDEBF7', 'border': 1})
@@ -371,6 +373,8 @@ def _viet_tong_ket(workbook, ws, session_id, ngay_str,
         ('MIS_DI thừa',           n_mis_di_thua,  s_mis_di_thua),
         ('  Trong đó: lệnh OSB (MIS_đi thừa) — xem file OSB riêng nếu có nạp file QT', n_osb_di_thua, ''),
         ('Điện MIS_đi timeout không đi kênh', n_timeout, s_timeout),
+        ('  Giao dịch SESSION=NULL bị loại khỏi MIS_đi (xem sheet SESSION_NULL_BI_LOAI)',
+            n_session_null_bi_loai, s_session_null_bi_loai),
         ('GW thừa - xác định chắc chắn (C.1a)',    n_gw_thua_xac_dinh, s_gw_thua_xac_dinh),
         ('GW thừa - cần đối chiếu thủ công (C.1a)', n_gw_can_doi_chieu,
             'Gồm cả dòng GW lẫn MIS cùng nhóm — xem sheet GW_CAN_DOI_CHIEU'),
@@ -410,6 +414,7 @@ def xuat_excel(output_path: str, session_id: str,
                df_cap_cn_tien=None,
                df_gw_thua_xac_dinh=None, df_gw_can_doi_chieu=None,
                df_dien_huy_trong_ngay=None, df_dien_huy_khac_ngay=None,
+               df_session_null_bi_loai=None,
                log_callback=None):
 
     output_dir   = os.path.dirname(os.path.abspath(output_path))
@@ -444,6 +449,7 @@ def xuat_excel(output_path: str, session_id: str,
         ('DIEN_DI_HUY_KHAC_NGAY',  _clean(df_dien_huy_khac_ngay,  _COLS_NPO, 'DIEN_DI_HUY_KHAC_NGAY'),  _XANH_LAM),
         ('MIS_DI_THUA',        _clean(df_mis_di_thua,  _COLS_MIS_DI, 'MIS_DI_THUA'),   _DO),
         ('TIMEOUT_KHONG_KENH', _clean(df_timeout, _COLS_MIS_DI, 'TIMEOUT'),              _CAM),
+        ('SESSION_NULL_BI_LOAI', df_session_null_bi_loai,                                _CAM),
         ('CAP_CN_TIEN',        df_cap_cn_tien,                                           _CAM),
         ('GW_THUA_XAC_DINH',   df_gw_thua_xac_dinh_clean,                                _DO),
         ('GW_CAN_DOI_CHIEU',   df_gw_can_doi_chieu_clean,                                _CAM),
@@ -500,6 +506,10 @@ def xuat_excel(output_path: str, session_id: str,
                     _tong_tien(df_mis_den_thua,  'SO_TIEN'),
                     n_osb_di_thua=n_osb_di_thua,
                     n_osb_den_thua=n_osb_den_thua,
+                    n_session_null_bi_loai=(
+                        len(df_session_null_bi_loai) if df_session_null_bi_loai is not None else 0
+                    ),
+                    s_session_null_bi_loai=_tong_tien(df_session_null_bi_loai, 'SO_TIEN'),
                 )
             elif sheet_name == 'DIEN_DI_HUY_KHAC_NGAY':
                 _viet_sheet_co_tong(workbook, ws, df, color, 'CRAMOUNT')
@@ -781,6 +791,13 @@ def main_from_dir(input_dir: str, output_dir: str,
         log(f'[CHECKPOINT] Dừng để chờ xác nhận thủ công. File: {xac_nhan_out_path}')
         return xac_nhan_out_path
 
+    # Audit 2026-08-04 — LUÔN tính (không chỉ ở Checkpoint) để giao dịch SESSION=NULL
+    # bị loại (mọi lý do — xem tim_toan_bo_giao_dich_bi_loai_session_null()) không
+    # còn biến mất hoàn toàn khỏi báo cáo cuối khi chạy thẳng/chạy tiếp.
+    df_session_null_bi_loai = tim_toan_bo_giao_dich_bi_loai_session_null(
+        df_mis_di_data, session_id, ngay_dt, df_gw_goc, log_callback,
+    )
+
     if xac_nhan_path:
         def _doc_them_ngay_khac():
             zip_khac = _tim_di_zip_ngay_khac(input_dir)
@@ -855,6 +872,7 @@ def main_from_dir(input_dir: str, output_dir: str,
         df_gw_can_doi_chieu=df_gw_can_doi_chieu,
         df_dien_huy_trong_ngay=df_dien_huy_trong_ngay,
         df_dien_huy_khac_ngay=df_dien_huy_khac_ngay,
+        df_session_null_bi_loai=df_session_null_bi_loai,
         log_callback=log_callback,
     )
 

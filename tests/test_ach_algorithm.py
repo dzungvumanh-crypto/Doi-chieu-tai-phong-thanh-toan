@@ -49,6 +49,7 @@ import pytest
 from backend.services.ach.b4_xu_ly_mis_di import (
     _process_mis_di, khop_voi_gw, tim_nhom_gw_thua, ap_dung_confirm_mis_di,
     tim_giao_dich_bi_loai_session_null, _loc_session_null_theo_gw_goc, _chuan_hoa_co_ban,
+    tim_toan_bo_giao_dich_bi_loai_session_null,
 )
 from backend.services.ach.pipeline import xuat_excel_confirm_mis_di
 
@@ -433,6 +434,62 @@ class TestGiaoDichBiLoaiSessionNull:
         assert len(df_bi_loai) == 0
         assert 'LY_DO_CAN_KIEM_TRA' in df_bi_loai.columns
         assert 'REFHUB' in df_bi_loai.columns
+
+
+# ── Audit 2026-08-04 — tim_toan_bo_giao_dich_bi_loai_session_null() ────────────
+# Bản MỞ RỘNG của tim_giao_dich_bi_loai_session_null(): bắt lại TOÀN BỘ case bị
+# loại (không chỉ T-1/không tìm thấy), dùng cho sheet SESSION_NULL_BI_LOAI ở báo
+# cáo CUỐI — LUÔN chạy, không chỉ ở Checkpoint. Đối lập trực tiếp với các test
+# "...khong_xuat_hien" ở TestGiaoDichBiLoaiSessionNull phía trên (hàm CŨ cố tình
+# không hiện các case này) — hàm MỚI phải hiện ĐẦY ĐỦ.
+
+class TestToanBoGiaoDichBiLoaiSessionNull:
+    def _bi_loai(self, rows, ngay_dt=_NGAY_DT, df_gw_goc=_DF_GW_GOC_RONG):
+        df = pd.DataFrame(rows)
+        return tim_toan_bo_giao_dich_bi_loai_session_null(df, SID, ngay_dt, df_gw_goc)
+
+    def test_t1_session_rong_tren_gw_XUAT_HIEN(self):
+        """Khác `tim_giao_dich_bi_loai_session_null()` (case này KHÔNG hiện) — bản
+        toàn bộ PHẢI hiện, vì đây vẫn là 1 giao dịch thật bị loại khỏi MIS_đi."""
+        df_gw_goc = pd.DataFrame({'MSGREF': ['MSGR1'], 'SessionId': ['']})
+        rows = [_row('R1', '1000', 'SCNL', '111', session='', msgref='MSGR1',
+                     ngay_giao_dich='10/07/2026')]
+        df_bi_loai = self._bi_loai(rows, df_gw_goc=df_gw_goc)
+        assert len(df_bi_loai) == 1
+        assert df_bi_loai.iloc[0]['LY_DO_CAN_KIEM_TRA'] == 'GW_SESSION_KHAC'
+
+    def test_ngay_T_khac_session_that_XUAT_HIEN(self):
+        """Case "khác session thật" tại NGÀY T — trước audit 2026-08-04 hoàn toàn
+        vô hình ở MỌI hàm, kể cả hàm cũ."""
+        df_gw_goc = pd.DataFrame({'MSGREF': ['MSGR1'], 'SessionId': ['44']})
+        rows = [_row('R1', '1000', 'SCNL', '111', session='', msgref='MSGR1',
+                     ngay_giao_dich='11/07/2026')]
+        df_bi_loai = self._bi_loai(rows, df_gw_goc=df_gw_goc)
+        assert len(df_bi_loai) == 1
+        assert df_bi_loai.iloc[0]['LY_DO_CAN_KIEM_TRA'] == 'GW_SESSION_KHAC'
+
+    def test_msgref_rong_tai_t1_van_xuat_hien_nhan_gop(self):
+        """Case cũ (MSGREF rỗng tại T-1) vẫn xuất hiện ở bản mới, chỉ khác nhãn gộp
+        chung 'KHONG_TIM_THAY_TREN_GW_TAI_T-1' thay vì tách riêng MSGREF_RONG."""
+        rows = [_row('R1', '1000', 'SCNL', '111', session='', msgref='',
+                     ngay_giao_dich='10/07/2026')]
+        df_bi_loai = self._bi_loai(rows)
+        assert len(df_bi_loai) == 1
+        assert df_bi_loai.iloc[0]['LY_DO_CAN_KIEM_TRA'] == 'KHONG_TIM_THAY_TREN_GW_TAI_T-1'
+
+    def test_ngay_khac_t_va_t1_khong_xuat_hien_vi_duoc_giu(self):
+        """Ngày khác T/T-1 luôn ĐƯỢC GIỮ (mask_giu=True) — không thuộc diện 'bị
+        loại', đúng như hàm cũ."""
+        rows = [_row('R1', '1000', 'SCNL', '111', session='', msgref='MSG_BAT_KY',
+                     ngay_giao_dich='05/07/2026')]
+        df_bi_loai = self._bi_loai(rows)
+        assert len(df_bi_loai) == 0
+
+    def test_khong_co_du_lieu_tra_ve_dataframe_rong_dung_cot(self):
+        rows = [_row('R1', '1000', 'SCNL', '111', session=SID)]
+        df_bi_loai = self._bi_loai(rows)
+        assert len(df_bi_loai) == 0
+        assert 'LY_DO_CAN_KIEM_TRA' in df_bi_loai.columns
 
 
 # ── Regression: cơ chế "Nguồn 1" đã bị gỡ hoàn toàn (2026-07-21) ────────────────

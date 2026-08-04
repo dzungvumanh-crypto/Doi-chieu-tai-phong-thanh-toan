@@ -250,3 +250,64 @@ def test_ghi_chu_t2_khong_xuat_hien_tren_sheet_huy_diem_3(tmp_path):
     header_khac_ngay  = [c.value for c in next(wb['DIEN_DI_HUY_KHAC_NGAY'].iter_rows(max_row=1))]
     assert 'GHI_CHU_T2' not in header_trong_ngay
     assert 'GHI_CHU_T2' not in header_khac_ngay
+
+
+# ── Audit 2026-08-04 — sheet SESSION_NULL_BI_LOAI (giao dịch SESSION=NULL bị loại
+# khỏi MIS_đi, mọi lý do — trước đây hoàn toàn vô hình ở báo cáo cuối) ──────────
+
+def test_session_null_bi_loai_sheet_xuat_hien_va_co_du_lieu(tmp_path):
+    dfs = _synthetic_dfs()
+    df_bi_loai = pd.DataFrame({
+        'REFHUB': ['R1'], 'MSGREF': ['MSG1'], 'SO_TIEN': [999_000],
+        'LY_DO_CAN_KIEM_TRA': ['GW_SESSION_KHAC'],
+    })
+    output_path = str(tmp_path / 'doi_chieu_20260804.xlsx')
+
+    xuat_excel(output_path, '16282', dfs['df_mis_di_khop'], dfs['df_npo_di_thua'],
+               dfs['df_mis_di_thua'], dfs['df_timeout'], dfs['df_mis_den_khop'],
+               dfs['df_npo_den_thua'], dfs['df_mis_den_thua'], dfs['df_gw_raw'],
+               df_session_null_bi_loai=df_bi_loai)
+
+    wb = openpyxl.load_workbook(output_path)
+    assert 'SESSION_NULL_BI_LOAI' in wb.sheetnames
+    ws = wb['SESSION_NULL_BI_LOAI']
+    header = [c.value for c in next(ws.iter_rows(max_row=1))]
+    assert 'LY_DO_CAN_KIEM_TRA' in header
+    ly_do_col = header.index('LY_DO_CAN_KIEM_TRA') + 1
+    assert ws.cell(row=2, column=ly_do_col).value == 'GW_SESSION_KHAC'
+
+
+def test_tong_ket_bao_cao_so_luong_session_null_bi_loai(tmp_path):
+    dfs = _synthetic_dfs()
+    df_bi_loai = pd.DataFrame({
+        'REFHUB': ['R1', 'R2'], 'SO_TIEN': [999_000, 111_000],
+        'LY_DO_CAN_KIEM_TRA': ['GW_SESSION_KHAC', 'KHONG_TIM_THAY_TREN_GW_TAI_T-1'],
+    })
+    output_path = str(tmp_path / 'doi_chieu_20260804.xlsx')
+
+    xuat_excel(output_path, '16282', dfs['df_mis_di_khop'], dfs['df_npo_di_thua'],
+               dfs['df_mis_di_thua'], dfs['df_timeout'], dfs['df_mis_den_khop'],
+               dfs['df_npo_den_thua'], dfs['df_mis_den_thua'], dfs['df_gw_raw'],
+               df_session_null_bi_loai=df_bi_loai)
+
+    wb = openpyxl.load_workbook(output_path)
+    ws = wb['TONG_KET']
+    rows = {row[0].value: row[1].value for row in ws.iter_rows(min_row=2) if row[0].value}
+    assert rows['  Giao dịch SESSION=NULL bị loại khỏi MIS_đi (xem sheet SESSION_NULL_BI_LOAI)'] == 2
+
+
+def test_khong_co_session_null_bi_loai_van_chay_duoc(tmp_path):
+    """Không truyền df_session_null_bi_loai (None mặc định, hoặc DataFrame rỗng) —
+    Excel vẫn xuất được, TONG_KET hiện 0, không lỗi."""
+    dfs = _synthetic_dfs()
+    output_path = str(tmp_path / 'doi_chieu_20260804.xlsx')
+
+    xuat_excel(output_path, '16282', dfs['df_mis_di_khop'], dfs['df_npo_di_thua'],
+               dfs['df_mis_di_thua'], dfs['df_timeout'], dfs['df_mis_den_khop'],
+               dfs['df_npo_den_thua'], dfs['df_mis_den_thua'], dfs['df_gw_raw'])
+
+    wb = openpyxl.load_workbook(output_path)
+    assert 'SESSION_NULL_BI_LOAI' in wb.sheetnames
+    ws = wb['TONG_KET']
+    rows = {row[0].value: row[1].value for row in ws.iter_rows(min_row=2) if row[0].value}
+    assert rows['  Giao dịch SESSION=NULL bị loại khỏi MIS_đi (xem sheet SESSION_NULL_BI_LOAI)'] == 0
