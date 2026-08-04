@@ -44,7 +44,9 @@ import re
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 
-from backend.database import get_db, write_audit
+from backend.database import get_db
+from backend.core import audit_queue
+from backend.core.concurrency import run_heavy
 from backend.core.deps import require_feature
 from backend.schemas.doi_chieu_citad import (
     CitadBufferIn,
@@ -71,43 +73,48 @@ def _resolve_extension_owner(
     """Dependency cho 2 endpoint POST buffer — trả về username chủ token
     hợp lệ, KHÔNG bao giờ tin owner do client tự khai.
 
-    Tự ghi audit ở ĐÂY (write_audit, actor_id đúng người) thay vì để
-    AuditMiddleware chung ghi — middleware đó chỉ đọc JWT qua header
-    Authorization, không biết X-Extension-Token là ai nên mọi dòng audit từ
-    Extension trước đây đều có actor_id=NULL dù backend tra được chính xác.
-    Do middleware chung vẫn sẽ ghi thêm 1 dòng NỮA (actor_id=NULL) cho cùng
-    request nếu không chặn, đã thêm '/api/doi-chieu-citad/citad-buffer' và
-    '/paymenthub-buffer' vào _SKIP_PREFIXES trong
-    backend/core/audit_middleware.py (đúng mục đích _SKIP_PREFIXES ghi sẵn:
-    "tự ghi audit riêng ... middleware bỏ qua") — PHẢI sửa cùng lúc, không
-    thì sẽ có double audit."""
+    Tự ghi audit ở ĐÂY (actor_id đúng người) thay vì để AuditMiddleware chung
+    ghi — middleware đó chỉ đọc JWT qua header Authorization, không biết
+    X-Extension-Token là ai nên mọi dòng audit từ Extension trước đây đều có
+    actor_id=NULL dù backend tra được chính xác. Do middleware chung vẫn sẽ
+    ghi thêm 1 dòng NỮA cho cùng request nếu không chặn, đã thêm
+    '/api/doi-chieu-citad/citad-buffer' và '/paymenthub-buffer' vào
+    _SKIP_PREFIXES trong backend/core/audit_middleware.py (đúng mục đích
+    _SKIP_PREFIXES ghi sẵn: "tự ghi audit riêng ... middleware bỏ qua") —
+    PHẢI sửa cùng lúc, không thì sẽ có double audit.
+
+    Ghi qua `audit_queue.enqueue()` chứ KHÔNG dùng `write_audit()` đồng bộ:
+    đây là 2 endpoint tần suất cao nhất hệ thống (Extension tự gửi mỗi lần
+    có số liệu mới), mà ghi audit đồng bộ trên request từng làm mỗi POST
+    chậm thêm 5,5 giây khi có lệnh ghi khác đang giữ khoá DB — đúng lý do
+    commit "perf: gỡ nghẽn backend" đẩy toàn bộ audit sang hàng đợi nền.
+    Hàng đợi cũng không bao giờ raise và ghi bằng kết nối riêng, nên không
+    còn phải commit trước khi raise như bản đồng bộ trước đây."""
     resolved = svc.resolve_extension_token(db, x_extension_token)
+    ip_hdr = request.headers.get("X-Client-IP", "").strip() or None
+    client_ip = request.client.host if request.client else None
     if not resolved:
         # Ghi audit CẢ khi token không hợp lệ/đã bị thu hồi — đây là tín hiệu
         # cần theo dõi (máy quên cập nhật token mới, hoặc có người đang dò
-        # token), đặc biệt vì cơ chế thử lại phía Extension giờ có backoff
-        # tới 5 phút nên 1 máy cấu hình sai sẽ âm thầm gửi mãi. _SKIP_PREFIXES
-        # đã chặn AuditMiddleware chung ghi thay cho 2 đường dẫn này, nên nếu
-        # không tự ghi ở đây thì request thất bại sẽ KHÔNG ĐỂ LẠI VẾT GÌ (khác
-        # trước khi có middleware chung, vẫn còn 1 dòng actor_id=NULL).
-        # PHẢI commit TRƯỚC khi raise — get_db() rollback mọi thay đổi chưa
-        # commit khi có exception, ghi audit sau raise sẽ bị huỷ theo.
-        ip = request.headers.get("X-Client-IP", "").strip() or (request.client.host if request.client else None)
-        write_audit(
-            db, actor_id=None, action=request.method, target_type=request.url.path,
+        # token), đặc biệt vì cơ chế thử lại phía Extension có backoff tới 5
+        # phút nên 1 máy cấu hình sai sẽ âm thầm gửi mãi. _SKIP_PREFIXES đã
+        # chặn AuditMiddleware chung ghi thay cho 2 đường dẫn này, nên nếu
+        # không tự ghi ở đây thì request thất bại sẽ KHÔNG ĐỂ LẠI VẾT GÌ.
+        audit_queue.enqueue(
+            request.method, request.url.path, 403, "", ip_hdr, client_ip,
+            actor_id=None,
             detail="THẤT BẠI: mã kết nối Extension không hợp lệ hoặc đã bị thu hồi",
-            ip=ip,
         )
-        db.commit()
         raise HTTPException(
             status_code=403,
             detail="Mã kết nối Extension không hợp lệ hoặc đã bị thu hồi — "
             "vào /doi_chieu_citad, mục 'Kết nối Extension' để tạo mã mới.",
         )
     staff_id, owner = resolved
-    write_audit(db, actor_id=staff_id, action=request.method, target_type=request.url.path,
-                detail="qua Extension (X-Extension-Token)")
-    db.commit()
+    audit_queue.enqueue(
+        request.method, request.url.path, 200, "", ip_hdr, client_ip,
+        actor_id=staff_id, detail="qua Extension (X-Extension-Token)",
+    )
     return owner
 
 
@@ -266,8 +273,11 @@ def get_history_entry(
 
 # ── Xuất Excel ────────────────────────────────────────────────────────────
 @router.post("/export")
-def export_excel(data: ExportIn, current: dict = Depends(require_feature("menu.doi_chieu_citad"))):
-    buf = svc.build_xlsx(data)
+async def export_excel(data: ExportIn, current: dict = Depends(require_feature("menu.doi_chieu_citad"))):
+    # build_xlsx() dựng workbook openpyxl — việc nặng, phải qua run_heavy()
+    # để nằm trong giới hạn dùng chung (backend/core/concurrency.py). Khai
+    # `def` thường thì rơi vào bể 40 token chung của anyio, ngoài giới hạn đó.
+    buf = await run_heavy(svc.build_xlsx, data)
     fname = _safe_filename(f"Doi_chieu_CITAD_{data.sheet_name}.xlsx")
     return StreamingResponse(
         io.BytesIO(buf),

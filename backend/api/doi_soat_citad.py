@@ -11,10 +11,21 @@ xem docstring từng file trong `backend/services/doi_soat_citad/`.
 Router MỚI — đã đăng ký sẵn trong `backend/api/registry.py` và bảng
 `doi_soat_citad_history` đã thêm sẵn trong `backend/db/migrations.py` (cùng
 PR này, cần Người 1 duyệt vì đây là 2 file dùng chung).
+
+VIỆC NẶNG — đọc trước khi sửa file này:
+  Mọi endpoint ở đây khai `async def` và đẩy TOÀN BỘ phần nặng (đọc file
+  upload, giải nén, parse Excel/CSV, đối soát, sinh xlsx, json.dumps/loads
+  danh sách lệch hàng chục nghìn dòng) vào `await run_heavy(...)`.
+
+  KHÔNG dùng `asyncio.to_thread` và KHÔNG khai endpoint `def` thường cho
+  việc nặng: cả hai đều lọt ra ngoài `CapacityLimiter` riêng ở
+  `backend/core/concurrency.py` (MAX_HEAVY=4). Endpoint `def` rơi vào bể 40
+  token chung của anyio — 40 việc nặng đồng thời từng làm `/api/auth/me`
+  kẹt 38 giây (số đo trong commit "perf: gỡ nghẽn backend"). Cùng khuôn mẫu
+  `backend/api/swift_recon.py` đang dùng.
 """
 from __future__ import annotations
 
-import asyncio
 import os
 import re
 import tempfile
@@ -24,6 +35,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 
 from backend.database import get_db
+from backend.core.concurrency import run_heavy
 from backend.core.deps import require_feature
 from backend.schemas.doi_soat_citad import ExportIn, HistoryOut, ReconcileResultOut
 from backend.services.doi_soat_citad import exporters, parsers, reconcile
@@ -82,8 +94,9 @@ async def do_reconcile(
     # file lớn/nhiều dòng) đều là hàm ĐỒNG BỘ — chạy thẳng trong endpoint
     # async sẽ CHẶN CẢ event loop của FastAPI, ảnh hưởng MỌI người dùng khác
     # đang thao tác trên app TTTT (không riêng module CITAD) trong lúc xử
-    # lý. Gộp hết vào 1 hàm sync, chạy qua asyncio.to_thread để nhường lại
-    # event loop cho các request khác.
+    # lý. Gộp hết vào 1 hàm sync, chạy qua run_heavy() để vừa nhường lại
+    # event loop, vừa nằm trong giới hạn việc nặng dùng chung (xem docstring
+    # đầu file).
     def _blocking_parse_and_reconcile():
         citad_paths, citad_names, cleanup_citad = _save_uploads(citad_files)
         ipcas_paths, ipcas_names, cleanup_ipcas = _save_uploads(ipcas_files)
@@ -106,7 +119,7 @@ async def do_reconcile(
     (
         citad_rows, ipcas_rows, hub_rows, citad_names, ipcas_names, hub_names,
         errors, n_khop, lech,
-    ) = await asyncio.to_thread(_blocking_parse_and_reconcile)
+    ) = await run_heavy(_blocking_parse_and_reconcile)
 
     if errors and not (citad_rows or ipcas_rows or hub_rows):
         raise HTTPException(422, "; ".join(errors))
@@ -116,9 +129,9 @@ async def do_reconcile(
         # save_recon_history() json.dumps() nguyên danh sách lech (có thể
         # hàng chục nghìn dòng) + ghi SQLite — đồng bộ, chạy thẳng trong
         # route async sẽ chặn event loop CHUNG của backend giống hệt lớp lỗi
-        # đã sửa ở on_upload (frontend). Bọc asyncio.to_thread như bước
+        # đã sửa ở on_upload (frontend). Bọc run_heavy() như bước
         # parse+đối soát ngay phía trên.
-        await asyncio.to_thread(
+        await run_heavy(
             save_recon_history,
             db, ngay_cham=ngay_cham, performed_by_id=current["id"],
             citad_file_names=citad_names, ipcas_file_names=ipcas_names, hub_file_names=hub_names,
@@ -144,12 +157,23 @@ async def do_reconcile(
     }
 
 
+def _build_doisoat_xlsx(lech, n_khop, ngay_cham) -> bytes:
+    """Sinh xlsx ra file tạm rồi đọc lại thành bytes. Hàm ĐỒNG BỘ — luôn gọi
+    qua `run_heavy()`, không gọi thẳng trong route async."""
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as out:
+        out_path = out.name
+    try:
+        exporters.export_doiSoat(lech, n_khop, ngay_cham, out_path)
+        with open(out_path, "rb") as f:
+            return f.read()
+    finally:
+        # try/finally — nếu export_doiSoat() raise (dữ liệu bất thường), file
+        # tạm vẫn phải bị xoá, không thì rò rỉ đĩa dần qua mỗi lượt export lỗi.
+        os.remove(out_path)
+
+
 @router.post("/export")
-# KHÔNG async — exporters.export_doiSoat() đồng bộ, có thể mất vài giây với
-# danh sách lệch lớn. FastAPI tự đẩy hàm `def` thường (không async) vào
-# threadpool, không chặn event loop dùng chung — đúng cách endpoint export
-# của doi_chieu_citad.py đã làm sẵn (không async, không bị lỗi này).
-def export_excel(
+async def export_excel(
     payload: ExportIn,
     current: dict = Depends(require_feature("menu.doi_soat_citad")),
 ):
@@ -162,16 +186,7 @@ def export_excel(
     if not lech and not n_khop:
         raise HTTPException(400, "Chưa có dữ liệu đối soát để xuất")
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as out:
-        out_path = out.name
-    try:
-        exporters.export_doiSoat(lech, n_khop, ngay_cham, out_path)
-        with open(out_path, "rb") as f:
-            content = f.read()
-    finally:
-        # try/finally — nếu export_doiSoat() raise (dữ liệu bất thường), file
-        # tạm vẫn phải bị xoá, không thì rò rỉ đĩa dần qua mỗi lượt export lỗi.
-        os.remove(out_path)
+    content = await run_heavy(_build_doisoat_xlsx, lech, n_khop, ngay_cham)
 
     fname = _safe_filename(f"DoiSoat_CITAD_IPCAS_{ngay_cham.replace('/', '-')}.xlsx")
     return Response(
@@ -189,7 +204,7 @@ async def get_history(
 ):
     # list_recon_history() json.loads() từng dòng lịch sử — đồng bộ, chặn
     # event loop chung nếu chạy thẳng. Xem ghi chú tương tự ở do_reconcile().
-    return await asyncio.to_thread(list_recon_history, db, limit)
+    return await run_heavy(list_recon_history, db, limit)
 
 
 @router.get("/history/{history_id}")
@@ -201,33 +216,27 @@ async def get_history_detail(
     # get_recon_detail() json.loads() snapshot lech_json có thể rất lớn —
     # đồng bộ, chặn event loop chung nếu chạy thẳng. Xem ghi chú tương tự ở
     # do_reconcile().
-    detail = await asyncio.to_thread(get_recon_detail, db, history_id)
+    detail = await run_heavy(get_recon_detail, db, history_id)
     if not detail:
         raise HTTPException(404, "Không tìm thấy")
     return detail
 
 
 @router.get("/history/{history_id}/export")
-# KHÔNG async — cùng lý do với export_excel() ở trên.
-def export_from_history(
+async def export_from_history(
     history_id: int,
     db=Depends(get_db),
     current: dict = Depends(require_feature("menu.doi_soat_citad")),
 ):
     """Sinh Excel TỪ ĐÚNG snapshot `lech` đã lưu tại thời điểm đối soát
     (không tính lại từ file gốc) — đảm bảo đúng y hệt dữ liệu audit."""
-    detail = get_recon_detail(db, history_id)
+    detail = await run_heavy(get_recon_detail, db, history_id)
     if not detail:
         raise HTTPException(404, "Không tìm thấy")
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as out:
-        out_path = out.name
-    try:
-        exporters.export_doiSoat(detail["lech_records"], detail["n_khop"], detail["ngay_cham"], out_path)
-        with open(out_path, "rb") as f:
-            content = f.read()
-    finally:
-        os.remove(out_path)
+    content = await run_heavy(
+        _build_doisoat_xlsx, detail["lech_records"], detail["n_khop"], detail["ngay_cham"]
+    )
 
     fname = f"DoiSoat_CITAD_IPCAS_lichsu_{history_id}.xlsx"
     return Response(
