@@ -1,6 +1,7 @@
 """Handover (Bàn giao chứng từ) endpoints"""
 import calendar
 import io
+import logging
 import sqlite3
 from datetime import date
 from typing import Optional
@@ -19,16 +20,29 @@ from backend.schemas.handovers import (
     EntryUpsertRequest, GridEntryOut, GridResponse, HandbackRequest,
     RejectRequest,
 )
+from backend.services.handover_report_service import SUBMIT_ACTIONS
+
+# `log` là tên biến lặp trong get_entry_history → logger phải mang tên khác
+log_ = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/handovers", tags=["Handovers"])
 
 
 # ─── Phạm vi phòng được truy cập ─────────────────────────────────────────────
-# Người hậu kiểm (có quyền xác nhận chứng từ) làm việc trên chứng từ của MỌI phòng
-# nguồn → không giới hạn phòng. GĐ/PGĐ xem được mọi phòng nhưng vốn không có quyền
-# save/confirm nên chỉ đọc. Còn lại — giao dịch viên, lãnh đạo phòng nguồn — chỉ
-# thao tác trong phòng của chính mình.
-_ALL_DEPT_ROLES = (StaffRole.ADMIN.value, StaffRole.GIAM_DOC.value, StaffRole.PHO_GIAM_DOC.value)
+# Hai trục độc lập: XEM phòng nào, và CÓ được ghi hay không.
+#   Xem mọi phòng — admin, GĐ, PGĐ (giám sát toàn đơn vị) và người hậu kiểm
+#                   (có feature confirm_entry, nghiệp vụ chạy trên mọi phòng nguồn).
+#   Còn lại        — kể cả trưởng/phó phòng — chỉ phòng của chính mình.
+#   Ghi            — admin/GĐ/PGĐ bị cấm hoàn toàn; ai còn lại thì theo feature nhóm
+#                    và chỉ trong phòng mình (trừ hậu kiểm).
+_READ_ALL_DEPT_ROLES = (StaffRole.ADMIN.value, StaffRole.GIAM_DOC.value,
+                        StaffRole.PHO_GIAM_DOC.value)
+
+# Vai trò CHỈ ĐỌC ở màn bàn giao — chặn cứng ở tầng dependency, không qua feature.
+# Admin bypass toàn bộ require_feature() nên nếu không chặn riêng ở đây thì admin
+# vẫn ghi được mọi thứ. GĐ/PGĐ chỉ giám sát, không nhập liệu nghiệp vụ.
+_NO_WRITE_ROLES = (StaffRole.ADMIN.value, StaffRole.GIAM_DOC.value,
+                   StaffRole.PHO_GIAM_DOC.value)
 
 
 def _has_feature(db: sqlite3.Connection, staff_id: int, feature_code: str) -> bool:
@@ -43,18 +57,42 @@ def _has_feature(db: sqlite3.Connection, staff_id: int, feature_code: str) -> bo
 
 
 def _can_view_all_depts(db: sqlite3.Connection, current: dict) -> bool:
-    return (current["role"] in _ALL_DEPT_ROLES
+    return (current["role"] in _READ_ALL_DEPT_ROLES
             or _has_feature(db, current["id"], "handovers.confirm_entry"))
 
 
+def _can_write_all_depts(db: sqlite3.Connection, current: dict) -> bool:
+    # Không còn vai trò nào được ghi xuyên phòng theo role — chỉ hậu kiểm (theo feature).
+    return _has_feature(db, current["id"], "handovers.confirm_entry")
+
+
+def require_handover_write(feature_code: str):
+    """require_feature + chặn cứng vai trò chỉ đọc. Dùng cho mọi endpoint ghi."""
+    def _check(current: dict = Depends(require_feature(feature_code))) -> dict:
+        if current["role"] in _NO_WRITE_ROLES:
+            raise HTTPException(403, "Vai trò của bạn chỉ được xem, không được thao tác trên chứng từ bàn giao")
+        return current
+    return _check
+
+
 def _assert_dept_allowed(db: sqlite3.Connection, current: dict, department_id: Optional[int]) -> None:
-    """Chặn user chỉ được xem phòng mình khi đụng tới dữ liệu phòng khác."""
+    """Chặn user chỉ được XEM phòng mình khi đụng tới dữ liệu phòng khác."""
     if _can_view_all_depts(db, current):
         return
     if current.get("department_id") is None:
         raise HTTPException(403, "Tài khoản chưa được gán phòng — không thể xem chứng từ")
     if department_id != current["department_id"]:
         raise HTTPException(403, "Chỉ được xem chứng từ của phòng mình")
+
+
+def _assert_dept_write_allowed(db: sqlite3.Connection, current: dict, department_id: Optional[int]) -> None:
+    """Chặn thao tác (lưu / xác nhận / mượn / trả / từ chối) lên phòng khác."""
+    if _can_write_all_depts(db, current):
+        return
+    if current.get("department_id") is None:
+        raise HTTPException(403, "Tài khoản chưa được gán phòng — không thể thao tác chứng từ")
+    if department_id != current["department_id"]:
+        raise HTTPException(403, "Chỉ được thao tác trên chứng từ của phòng mình")
 
 
 def _entry_dept(db: sqlite3.Connection, entry_id: int) -> Optional[int]:
@@ -219,7 +257,7 @@ def get_handover_grid(
 def upsert_entry(
     body: EntryUpsertRequest,
     db: sqlite3.Connection = Depends(get_db),
-    current: dict = Depends(require_feature("handovers.save_entry")),
+    current: dict = Depends(require_handover_write("handovers.save_entry")),
 ):
     staff_row = db.execute("SELECT * FROM user_tttt WHERE id = ?", (body.staff_id,)).fetchone()
     if not staff_row:
@@ -233,7 +271,7 @@ def upsert_entry(
     # của cán bộ (không phải phòng tại ngày giao dịch) để GDV vẫn nhập bù được cho
     # tháng trước khi chính mình chuyển phòng.
     if body.staff_id != current["id"]:
-        _assert_dept_allowed(db, current, staff_row["department_id"])
+        _assert_dept_write_allowed(db, current, staff_row["department_id"])
 
     # User có quyền confirm entry → tạo entry ở trạng thái CONFIRMED ngay
     can_confirm = (current["role"] == StaffRole.ADMIN.value
@@ -322,12 +360,12 @@ def upsert_entry(
 def confirm_received(
     entry_id: int,
     db: sqlite3.Connection = Depends(get_db),
-    current: dict = Depends(require_feature("handovers.confirm_entry")),
+    current: dict = Depends(require_handover_write("handovers.confirm_entry")),
 ):
     entry = db.execute("SELECT * FROM document_entries WHERE id = ?", (entry_id,)).fetchone()
     if not entry:
         raise HTTPException(404, "Không tìm thấy chứng từ")
-    _assert_dept_allowed(db, current, _entry_dept(db, entry_id))
+    _assert_dept_write_allowed(db, current, _entry_dept(db, entry_id))
     if entry["entry_status"] != EntryStatus.PENDING:
         raise HTTPException(409, f"Trạng thái không hợp lệ: '{_STATUS_LABEL.get(entry['entry_status'], entry['entry_status'])}'. Chỉ xác nhận được khi đang chờ xác nhận.")
 
@@ -365,12 +403,12 @@ def borrow_entry(
     entry_id: int,
     body: BorrowRequest,
     db: sqlite3.Connection = Depends(get_db),
-    current: dict = Depends(require_feature("handovers.borrow")),
+    current: dict = Depends(require_handover_write("handovers.borrow")),
 ):
     entry = db.execute("SELECT * FROM document_entries WHERE id = ?", (entry_id,)).fetchone()
     if not entry:
         raise HTTPException(404, "Không tìm thấy chứng từ")
-    _assert_dept_allowed(db, current, _entry_dept(db, entry_id))
+    _assert_dept_write_allowed(db, current, _entry_dept(db, entry_id))
     if entry["entry_status"] != EntryStatus.CONFIRMED:
         raise HTTPException(409, f"Trạng thái không hợp lệ: '{_STATUS_LABEL.get(entry['entry_status'], entry['entry_status'])}'. Chỉ mượn được chứng từ đã xác nhận.")
 
@@ -396,12 +434,12 @@ def handback_entry(
     entry_id: int,
     body: HandbackRequest,
     db: sqlite3.Connection = Depends(get_db),
-    current: dict = Depends(require_feature("handovers.handback")),
+    current: dict = Depends(require_handover_write("handovers.handback")),
 ):
     entry = db.execute("SELECT * FROM document_entries WHERE id = ?", (entry_id,)).fetchone()
     if not entry:
         raise HTTPException(404, "Không tìm thấy chứng từ")
-    _assert_dept_allowed(db, current, _entry_dept(db, entry_id))
+    _assert_dept_write_allowed(db, current, _entry_dept(db, entry_id))
     if entry["entry_status"] != EntryStatus.BORROWED:
         raise HTTPException(409, f"Trạng thái không hợp lệ: '{_STATUS_LABEL.get(entry['entry_status'], entry['entry_status'])}'. Chỉ bàn giao lại được khi đang mượn.")
 
@@ -430,12 +468,12 @@ def reject_entry(
     entry_id: int,
     body: RejectRequest,
     db: sqlite3.Connection = Depends(get_db),
-    current: dict = Depends(require_feature("handovers.reject_entry")),
+    current: dict = Depends(require_handover_write("handovers.reject_entry")),
 ):
     entry = db.execute("SELECT * FROM document_entries WHERE id = ?", (entry_id,)).fetchone()
     if not entry:
         raise HTTPException(404, "Không tìm thấy chứng từ")
-    _assert_dept_allowed(db, current, _entry_dept(db, entry_id))
+    _assert_dept_write_allowed(db, current, _entry_dept(db, entry_id))
     if entry["entry_status"] != EntryStatus.PENDING:
         raise HTTPException(409, f"Trạng thái không hợp lệ: '{_STATUS_LABEL.get(entry['entry_status'], entry['entry_status'])}'. Chỉ từ chối được khi đang chờ xác nhận.")
 
@@ -495,12 +533,12 @@ def reject_entry(
 def resubmit_entry(
     entry_id: int,
     db: sqlite3.Connection = Depends(get_db),
-    current: dict = Depends(require_feature("handovers.save_entry")),
+    current: dict = Depends(require_handover_write("handovers.save_entry")),
 ):
     entry = db.execute("SELECT * FROM document_entries WHERE id = ?", (entry_id,)).fetchone()
     if not entry:
         raise HTTPException(404, "Không tìm thấy chứng từ")
-    _assert_dept_allowed(db, current, _entry_dept(db, entry_id))
+    _assert_dept_write_allowed(db, current, _entry_dept(db, entry_id))
     if entry["entry_status"] != EntryStatus.REJECTED:
         raise HTTPException(409, f"Trạng thái không hợp lệ: '{_STATUS_LABEL.get(entry['entry_status'], entry['entry_status'])}'. Chỉ nộp lại được chứng từ bị từ chối.")
 
@@ -582,10 +620,27 @@ def get_entry_history(
     current_status = entry["entry_status"] or EntryStatus.CONFIRMED
     tx_date = date.fromisoformat(entry["transaction_date"]).strftime("%d/%m/%Y") if entry["transaction_date"] else ""
 
+    # ── Ngày nộp thật ──
+    # Log sớm nhất của hành động "nộp lần đầu". Không lấy log mới nhất (thao tác sau
+    # như xác nhận / mượn sẽ đẩy ngày trôi đi) và không lấy `handovers.handover_date`
+    # (luôn bằng transaction_date khi nhập qua lưới).
+    submit_ts = min(
+        (str(l["timestamp"]) for l in logs
+         if (l["action"] or "") in SUBMIT_ACTIONS and l["timestamp"]),
+        default=None,
+    )
+    submit_date = None
+    if submit_ts:
+        try:
+            submit_date = date.fromisoformat(submit_ts[:10]).strftime("%d/%m/%Y")
+        except ValueError:
+            log_.warning("Timestamp nộp chứng từ không đọc được: entry=%s raw=%r", entry_id, submit_ts)
+
     return EntryHistoryOut(
         entry_id=entry_id,
         source_user_name=s_name,
         transaction_date=tx_date,
+        submit_date=submit_date,
         sheet_count=entry["sheet_count"],
         current_status=current_status,
         current_status_label=_STATUS_LABEL.get(current_status, current_status),

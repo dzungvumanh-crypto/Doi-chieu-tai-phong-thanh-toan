@@ -4,6 +4,28 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 04/08/2026 Bàn giao chứng từ - Phân lại quyền xem và quyền nhập liệu:
+    + **Trưởng phòng, Phó phòng** nay vào được màn hình *Bàn giao chứng từ* — xem lưới **phòng của mình**. Cần quản trị cấp mục *Bàn giao chứng từ* trong màn *Phân quyền chức năng* cho nhóm của họ thì mới hiện menu
+    + **Quyền nhập/sửa số tờ của Trưởng phòng, Phó phòng vẫn theo nhóm quyền như mọi người khác** — không cấp *Lưu số tờ chứng từ* thì chỉ xem, không gõ được
+    + ⚠️ **Admin, Giám đốc, Phó giám đốc từ nay CHỈ XEM, không nhập/sửa/xác nhận được chứng từ.** Đổi lại các vị này xem được **tất cả các phòng** và xuất Excel toàn bộ. Trước đây tài khoản admin sửa được dữ liệu bàn giao — nay không còn. **Cần chữa số liệu nhập sai thì phải dùng tài khoản hậu kiểm hoặc tài khoản trong đúng phòng đó**, không nhờ admin được nữa
+    + Ô nhập trên lưới nay **khoá hẳn** với người không có quyền lưu. Trước đây vẫn gõ được vào ô nhưng bấm Lưu thì không có gì xảy ra — nhìn như hệ thống nuốt mất số vừa nhập
+
+- 04/08/2026 Phòng Thanh toán - Thêm 2 màn hình Đối chiếu CITAD và Đối soát CITAD ↔ IPCAS:
+    + Menu *Phòng Thanh toán → Đối chiếu* có thêm **Đối chiếu CITAD** (đối chiếu số liệu với PaymentHub) và **Đối soát CITAD ↔ IPCAS** (khớp từng lệnh chuyển tiền). Cả hai chuyển từ công cụ chạy riêng trên máy vào thẳng phần mềm, dùng chung tài khoản và phân quyền như mọi màn hình khác
+    + **Đối chiếu CITAD**: nhập số liệu 5 cổng × 3 loại tiền, chênh lệch tự tính ngay khi gõ. Mỗi ngày là **một bản ghi chung của cả phòng**, kèm tab *Lịch sử* xem lại từng lần lưu. Xuất Excel đúng mẫu báo cáo NHNN đã duyệt
+    + **Đối soát CITAD ↔ IPCAS**: tải file CITAD, IPCAS và Hub ngoại tệ lên, hệ thống khớp lệnh rồi liệt kê phần lệch theo 4 nhóm, xuất Excel 4 sheet. Có lưu lịch sử để xem lại đúng số liệu của lần đối soát cũ. Hệ thống **cảnh báo khi chọn trùng file** (so nội dung từng byte, không dựa vào tên file)
+    + Kèm **Extension trình duyệt** tự lấy số liệu từ trang CITAD và PaymentHub sang, khỏi chép tay. Tải ngay trên màn hình Đối chiếu CITAD, ghép nối bằng *mã kết nối* riêng của từng người
+    + ⚠️ **Đối soát CITAD: dùng file CITAD định dạng `.xls`, KHÔNG dùng `.xlsx`.** File `.xlsx` hiện bị đọc ra rỗng mà **không báo lỗi** — màn hình vẫn hiện "đối soát xong" nhưng số khớp bằng 0 và toàn bộ lệnh bị xếp vào "Chỉ IPCAS". Lỗi đã biết, đang chờ sửa. Trong lúc chờ, nếu kết quả ra như vậy thì kiểm lại định dạng file trước khi kết luận số liệu lệch
+    + ⚠️ **Đối chiếu CITAD lưu chung một bản cho cả phòng** — hai người cùng chấm một ngày thì ai bấm Lưu sau cùng là bản hiện hành. Bản của người trước không mất, xem lại ở tab *Lịch sử*
+    + ⚠️ Extension **phải cài tay trên từng máy** và chỉ chạy trên **Chrome, Edge, Cốc Cốc** (không có Firefox, Safari). Hướng dẫn cài nằm trong file tải về
+    + ⚠️ Nút *Tạo mã kết nối* có thể báo "đã tự động kết nối" nhưng Extension vẫn không gửi được — đang còn lỗi địa chỉ máy chủ. Nếu gặp, mở *Tuỳ chọn* của Extension điền tay địa chỉ và mã kết nối
+
+- 04/08/2026 Bàn giao chứng từ - Cột "Ngày bàn giao" hiện đúng ngày nộp thật:
+    + Trước đây cột **Ngày bàn giao** ở màn hình *Công việc chờ xử lý* luôn trùng khít cột *Ngày chứng từ* — chứng từ ngày 03/08 nộp ngày 04/08 vẫn báo bàn giao 03/08. Nay lấy đúng **thời điểm chuyên viên thực sự nộp** ghi trong lịch sử thao tác
+    + Ô chi tiết bên phải lưới nhập nay ghi rõ **hai dòng có nhãn**: *Ngày chứng từ* và *Ngày bàn giao*. Trước đây chỉ có một dòng "Ngày ..." lấy theo thao tác gần nhất — sau khi hậu kiểm xác nhận, ngày đó bị đổi theo ngày xác nhận, nhìn tưởng là ngày nộp
+    + ⚠️ Chứng từ nhập từ **trước khi hệ thống ghi lịch sử** không có ngày nộp ở bất kỳ đâu trong dữ liệu → hiện dấu `—` thay vì đoán bừa
+    + Cùng cách tính với báo cáo *Tỷ lệ nộp đúng hạn*, nên hai màn hình không còn nói hai con số khác nhau
+
 - 03/08/2026 Đối chiếu điện SWIFT - Nạp nhiều file một lúc và xuất Excel theo đúng biểu mẫu:
     + Mỗi ô chọn file nay **nhận nhiều file cùng lúc**. SAA phải xuất làm nhiều đợt trong ngày thì cứ thả hết vào đúng ô đó, hệ thống tự gộp lại trước khi đối chiếu — không phải đối chiếu từng đợt rồi tự cộng tay
     + Mỗi file vẫn báo riêng ✅/❌ và **số dòng đọc được ngay khi vừa chọn**, kèm dòng tổng cộng. Chọn nhầm thì bấm ✕ ở cạnh tên file để bỏ ra, không phải làm lại từ đầu
@@ -18,7 +40,6 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
     + Hai bên ô đăng nhập nay có **3 cụm đường dẫn**: *Thanh toán trong nước* (10 lối tắt), *Thanh toán quốc tế* (2), *Nội bộ* (4). Click là mở tab mới, không phải nhớ hay gõ lại địa chỉ
     + Mỗi lối tắt hiện **tên tiếng Việt** thay vì địa chỉ khó nhớ — ví dụ *"Hệ thống TT ĐTLNH - Cổng 12"* thay cho `http://10.0.85.100/CITAD9212`. Rê chuột lên vẫn xem được địa chỉ đầy đủ trước khi bấm
     + Các lối tắt **vẫn dùng được khi hệ thống đang lỗi** — chúng không phụ thuộc vào máy chủ của phần mềm này
-    + Đã bỏ đường dẫn `www.swift.com`
     + Sửa lỗi ô *Tên đăng nhập* và *Mật khẩu* bị **tô nền xanh** khi trình duyệt tự điền mật khẩu đã lưu
 
 - 31/07/2026 Toàn hệ thống - Đầu mỗi trang hiện rõ đang đứng ở đâu trong menu:

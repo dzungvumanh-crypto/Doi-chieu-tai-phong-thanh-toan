@@ -22,7 +22,7 @@ log = logging.getLogger(__name__)
 DEADLINE_WORKING_DAYS = 1
 
 # Action đánh dấu chứng từ được nộp lần đầu
-_SUBMIT_ACTIONS = ("handover", "edited_hkv")
+SUBMIT_ACTIONS = ("handover", "edited_hkv")
 
 # Nới ngày tra cứu lễ/phép ra trước kỳ báo cáo để phủ hết khoảng tx → nộp
 _LOOKUP_PAD_DAYS = 35
@@ -102,12 +102,12 @@ def _fetch_entries(db: sqlite3.Connection, period_start: date, period_end: date)
             JOIN departments d ON h.department_id = d.id
             JOIN entry_change_logs ecl
               ON ecl.entry_id = de.id
-             AND ecl.action IN ({','.join('?' * len(_SUBMIT_ACTIONS))})
+             AND ecl.action IN ({','.join('?' * len(SUBMIT_ACTIONS))})
             LEFT JOIN user_tttt u ON de.staff_id = u.id
             WHERE de.transaction_date >= ? AND de.transaction_date < ?
             GROUP BY de.id
             ORDER BY d.name, de.transaction_date""",
-        (*_SUBMIT_ACTIONS, period_start.isoformat(), period_end.isoformat()),
+        (*SUBMIT_ACTIONS, period_start.isoformat(), period_end.isoformat()),
     ).fetchall()
 
 
@@ -118,9 +118,9 @@ def _count_without_submit_log(db: sqlite3.Connection, period_start: date, period
               AND NOT EXISTS (
                   SELECT 1 FROM entry_change_logs ecl
                   WHERE ecl.entry_id = de.id
-                    AND ecl.action IN ({','.join('?' * len(_SUBMIT_ACTIONS))})
+                    AND ecl.action IN ({','.join('?' * len(SUBMIT_ACTIONS))})
               )""",
-        (period_start.isoformat(), period_end.isoformat(), *_SUBMIT_ACTIONS),
+        (period_start.isoformat(), period_end.isoformat(), *SUBMIT_ACTIONS),
     ).fetchone()[0] or 0
 
 

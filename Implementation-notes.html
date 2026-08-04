@@ -53,6 +53,84 @@
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
   <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-03</p>
 
+  <!-- J -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">J</span>
+      <span class="card-title">"Ngày bàn giao" hiển thị sai — tàn dư của cột <code>handovers.handover_date</code></span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Triệu chứng</p>
+      <p>Chứng từ ngày 03/08/2026 được chuyên viên nộp lúc 13:45 ngày <strong>04/08</strong>. Màn hình
+      <em>Công việc chờ xử lý</em> hiện "Ngày bàn giao 03/08" — trùng khít cột "Ngày chứng từ", nên cột
+      này không mang thêm thông tin nào.</p>
+
+      <p class="label">Ba nguồn ngày, chỉ một cái đúng</p>
+      <table>
+        <tr><th>Nguồn</th><th>Giá trị thật (entry 1077)</th><th>Dùng được?</th></tr>
+        <tr><td><code>document_entries.transaction_date</code></td><td>2026-08-03</td>
+            <td>Là ngày chứng từ, không phải ngày nộp</td></tr>
+        <tr><td><code>handovers.handover_date</code></td><td>2026-08-03</td>
+            <td><span class="pill pill-red">Luôn = transaction_date</span> khi nhập qua lưới</td></tr>
+        <tr><td><code>entry_change_logs</code> action <code>handover</code></td><td>2026-08-04 13:45:08</td>
+            <td><span class="pill pill-green">Ngày nộp thật</span></td></tr>
+      </table>
+
+      <p>Đây chính là cái bẫy đã mô tả ở card về KPI "nộp đúng hạn": <code>entry-upsert</code> gán cùng
+      một <code>body.date</code> vào cả hai cột. Lần đó chỉ báo cáo được vá; màn hình theo dõi vẫn đọc
+      cột chết. <strong>Bài học: khi một cột bị tuyên bố là dữ liệu chết, phải grep hết consumer ngay
+      lúc đó</strong> — không thì lỗi tái xuất ở màn hình khác vài tuần sau.</p>
+
+      <p class="label">Popup lịch sử — sai theo kiểu khác, khó thấy hơn</p>
+      <div class="caution">
+      Popup lấy ngày từ <strong>log mới nhất</strong> (<code>logs[0].timestamp</code>). Với chứng từ mới
+      nộp chỉ có 1 log nên vô tình hiện đúng 04/08. Nhưng khi HKV xác nhận vào 10/08, cùng chỗ đó sẽ ghi
+      "Ngày 10/08" — một con số trôi theo thao tác cuối cùng, không phải ngày nộp. Loại lỗi này không ai
+      báo vì nhìn vẫn "có vẻ hợp lý".
+      </div>
+
+      <p class="label">Cách sửa</p>
+      <table>
+        <tr><th>Chỗ</th><th>Trước</th><th>Sau</th></tr>
+        <tr><td><code>/api/dashboard/pending-items</code></td><td>trả <code>handover_date</code></td>
+            <td>trả <code>submit_date</code> = <code>MIN(timestamp)</code> của log nộp</td></tr>
+        <tr><td><code>/api/handovers/entries/{id}/history</code></td><td>—</td>
+            <td>thêm <code>submit_date</code>, tính từ log đã nạp sẵn (không query thêm)</td></tr>
+        <tr><td>Popup lưới</td><td>"Ngày {log mới nhất}"</td>
+            <td>hai dòng có nhãn rõ: "Ngày chứng từ" và "Ngày bàn giao"</td></tr>
+      </table>
+
+      <p><code>_SUBMIT_ACTIONS</code> đổi thành <code>SUBMIT_ACTIONS</code> (public) trong
+      <code>handover_report_service</code> — giờ có ba module đọc chung định nghĩa "thế nào là nộp".
+      Nếu mỗi nơi tự liệt kê action, báo cáo và màn hình theo dõi sẽ nói hai con số khác nhau đúng lúc
+      thêm một action mới.</p>
+
+      <p class="label">Đánh đổi đã chấp nhận</p>
+      <table>
+        <tr><th>Quyết định</th><th>Lý do</th></tr>
+        <tr><td>Chứng từ không có log nộp hiện <code>—</code>, <strong>không</strong> fallback về
+            <code>handover_date</code></td>
+            <td>Fallback sẽ tái tạo đúng con số sai vừa bỏ đi, và không cách nào phân biệt "nộp đúng
+            ngày chứng từ" với "không biết ngày nộp". Dữ liệu import cũ thà để trống.</td></tr>
+        <tr><td>Bỏ hẳn field <code>handover_date</code> khỏi payload thay vì giữ song song</td>
+            <td>Consumer duy nhất là <code>pending_work.py</code>. Giữ lại chỉ tạo cơ hội cho màn hình
+            sau này lại đọc nhầm cột chết.</td></tr>
+        <tr><td>Cột <code>handovers.handover_date</code> vẫn chưa xoá</td>
+            <td>Còn là khoá <code>UNIQUE(department_id, handover_date)</code> chống race condition ở
+            <code>entry-upsert</code>, và <code>export_handovers</code> vẫn đọc. Xoá là đổi schema lan
+            rộng — tách PR riêng.</td></tr>
+      </table>
+
+      <p class="label">Kiểm chứng</p>
+      <p>Gọi thẳng <code>pending_items()</code> và <code>get_entry_history()</code> trên
+      <code>data/ksnb.db</code>: entry 1077 trả <code>tx=03/08/2026, submit=04/08/2026</code>; entry 578
+      (chứng từ 06/04, nộp muộn) trả <code>submit=17/07/2026</code> — khoảng cách thật hiện ra đúng.</p>
+
+    </div>
+  </div>
+
   <!-- I -->
   <div class="card">
     <div class="card-header">
@@ -2975,7 +3053,224 @@ ui.on_exception(_on_exception)</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-03</footer>
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">L</span>
+      <span class="card-title">Bàn giao chứng từ — tách quyền XEM và quyền GHI</span>
+      <span class="badge badge-done">Đã fix</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Quy tắc đích</div>
+      <table>
+        <tr><th>Vai trò</th><th>Xem</th><th>Ghi</th></tr>
+        <tr><td>Admin, GĐ, PGĐ</td><td><strong>Mọi phòng nguồn</strong></td>
+            <td><span class="pill pill-gray">Cấm hoàn toàn</span></td></tr>
+        <tr><td>Trưởng phòng, Phó phòng</td><td>Chỉ phòng của mình</td>
+            <td>Phòng của mình, <strong>chỉ khi nhóm được cấp feature</strong>
+            (<code>handovers.save_entry</code>…) ở màn Phân quyền chức năng</td></tr>
+        <tr><td>Có <code>handovers.confirm_entry</code> (hậu kiểm)</td><td>Mọi phòng nguồn</td>
+            <td>Mọi phòng nguồn</td></tr>
+        <tr><td>Giao dịch viên</td><td>Chỉ phòng của mình</td><td>Phòng của mình, theo feature nhóm</td></tr>
+      </table>
+
+      <div class="label">Vấn đề — một hàm gác cả đọc lẫn ghi</div>
+      <p><code>_assert_dept_allowed()</code> trong <code>backend/api/handovers.py</code> được gọi ở
+      <strong>cả 9 điểm</strong>: 3 điểm đọc (lưới, lịch sử ô, xuất Excel) và 6 điểm ghi (lưu, xác nhận,
+      mượn, bàn giao lại, từ chối, nộp lại). Một hàm, một danh sách vai trò
+      (<code>_ALL_DEPT_ROLES</code>) cho cả hai loại.</p>
+      <p>Bảng trên có <strong>hai trục độc lập</strong> — "xem phòng nào" và "có được ghi không" — mà một
+      danh sách vai trò duy nhất không diễn đạt được: admin phải nằm trong nhóm xem-mọi-phòng nhưng lại
+      phải nằm ngoài nhóm được-ghi. Nên phải tách hàm gác.</p>
+
+      <div class="label">Cách làm — tách phạm vi ĐỌC và phạm vi GHI</div>
+      <table>
+        <tr><th></th><th>Trước</th><th>Sau</th></tr>
+        <tr><td>Hằng số vai trò</td>
+            <td><code>_ALL_DEPT_ROLES</code> = admin, GĐ, PGĐ — dùng cho <em>cả</em> đọc và ghi</td>
+            <td><code>_READ_ALL_DEPT_ROLES</code> = admin, GĐ, PGĐ (chỉ còn dùng cho đọc)<br>
+                <code>_NO_WRITE_ROLES</code> = admin, GĐ, PGĐ — <strong>chỉ đọc, chặn cứng</strong></td></tr>
+        <tr><td>Hàm gác phạm vi phòng</td>
+            <td><code>_assert_dept_allowed()</code> — 9 điểm gọi</td>
+            <td><code>_assert_dept_allowed()</code> — 3 điểm đọc<br>
+                <code>_assert_dept_write_allowed()</code> — 6 điểm ghi</td></tr>
+        <tr><td>Chặn vai trò chỉ đọc</td>
+            <td>Không có</td>
+            <td><code>require_handover_write(feature)</code> — dependency bọc ngoài
+                <code>require_feature()</code>, đặt ở chữ ký của cả 6 endpoint ghi</td></tr>
+        <tr><td>Ghi xuyên phòng</td>
+            <td>admin / GĐ / PGĐ, hoặc có <code>handovers.confirm_entry</code></td>
+            <td><strong>Chỉ</strong> người có <code>handovers.confirm_entry</code> (hậu kiểm)</td></tr>
+      </table>
+      <p>Hai hàm <code>_assert_dept_*</code> gần giống nhau nhưng <strong>khác câu báo lỗi</strong>
+      ("Chỉ được <em>xem</em>…" và "Chỉ được <em>thao tác</em>…"). Gộp lại thành một hàm có cờ
+      <code>write=True</code> thì tiết kiệm được 6 dòng nhưng chỗ gọi mất khả năng đọc ra ý định — mà đây
+      chính là chỗ ý định cần rõ nhất.</p>
+
+      <div class="label">Tại sao chặn vai trò phải là <em>dependency</em>, không phải thêm role vào hàm gác</div>
+      <p>Ba lý do, lý do đầu là bắt buộc:</p>
+      <ul>
+        <li><strong>Admin bypass toàn bộ <code>require_feature()</code></strong> (xem
+        <code>deps.py</code> — <code>if current["role"] == ADMIN: return current</code>). Chặn admin bằng
+        cách xoá tên khỏi danh sách "ghi xuyên phòng" là <em>không đủ</em>: admin có
+        <code>department_id</code> thì vẫn ghi được trong phòng đó. Phải có lệnh cấm riêng.</li>
+        <li><code>_assert_dept_write_allowed()</code> ở endpoint <code>entry-upsert</code> nằm
+        <strong>trong nhánh <code>if body.staff_id != current["id"]</code></strong> — tức không phải lúc nào
+        cũng chạy. Đặt lệnh cấm ở đó sẽ có một đường vòng không được gác.</li>
+        <li>Ở chữ ký hàm, đọc <code>require_handover_write("handovers.save_entry")</code> là thấy ngay
+        "endpoint này ghi dữ liệu" — không phải lần theo thân hàm.</li>
+      </ul>
+      <p>Đã kiểm bằng cách gọi thẳng dependency với từng vai trò: admin / GĐ / PGĐ → <code>403</code>;
+      TP / PP / HKV / CV → qua (và vẫn còn phải qua tầng feature nhóm phía sau).</p>
+
+      <div class="label">Hệ quả đã chấp nhận — admin không sửa được dữ liệu bàn giao qua giao diện</div>
+      <p>Trước đây admin là đường thoát cuối khi cần chữa một ô nhập sai mà chủ dữ liệu không tự sửa được.
+      Bỏ quyền ghi của admin là bỏ luôn đường đó: sửa dữ liệu bàn giao giờ <strong>chỉ</strong> qua tài khoản
+      hậu kiểm hoặc tài khoản trong đúng phòng có feature tương ứng. Đây là <strong>lựa chọn có chủ đích</strong>
+      của người dùng (tách bạch quản trị hệ thống khỏi nghiệp vụ), không phải sót.</p>
+
+      <div class="label">Điều không đổi — và tại sao</div>
+      <table>
+        <tr><th>Điểm</th><th>Kết luận</th></tr>
+        <tr><td>Vào được menu "Bàn giao chứng từ"</td>
+            <td>Vẫn cần feature <code>menu.handovers</code> gán qua nhóm. Vai trò <strong>không</strong> tự
+            mở menu — đây vẫn là cách duy nhất cho TP/PP thấy trang.</td></tr>
+        <tr><td>Phạm vi phòng của TP/PP</td>
+            <td>Không đổi — vẫn chỉ phòng của mình, rơi vào nhánh <code>else</code> sẵn có.
+            <strong>Ngoại lệ:</strong> nếu quản trị cấp <code>handovers.confirm_entry</code> cho nhóm của
+            TP/PP thì họ xem (và ghi) được mọi phòng — đây là cơ chế hậu kiểm có từ trước, không phải
+            đường vòng mới. Muốn TP/PP tuyệt đối không ra khỏi phòng mình thì <em>đừng cấp feature đó</em>.</td></tr>
+        <tr><td>Nút thao tác trên panel chi tiết</td>
+            <td>Vẫn theo <code>api.has_feature(...)</code>, nhưng nay AND thêm cờ <code>can_write</code>.
+            <strong>Bắt buộc</strong>: <code>api.has_feature()</code> phía frontend cũng trả
+            <code>True</code> cho mọi code khi vai trò là admin — không có cờ này thì admin vẫn thấy đủ nút,
+            bấm vào chỉ nhận 403.</td></tr>
+        <tr><td>Ô nhập trên lưới</td>
+            <td>Khoá <code>readonly</code> khi <code>can_save</code> sai. Trước đó điều kiện khoá chỉ xét ô
+            đã chốt (<code>confirmed</code>/<code>borrowed</code>) — ai <em>không</em> có
+            <code>handovers.save_entry</code> vẫn gõ được vào ô trống, chỉ là nút Lưu bị ẩn nên gõ xong
+            không đi đâu cả. Lỗi này <strong>có từ trước</strong>, không do đợt sửa này sinh ra, nhưng nằm
+            đúng chỗ đang siết quyền nên vá luôn.</td></tr>
+        <tr><td>Badge "Chứng từ chờ xác nhận" ở sidebar</td>
+            <td><code>_handover_filter()</code> trong <code>dashboard.py</code> chỉ trả bộ lọc cho
+            <code>hau_kiem_vien</code> và <code>chuyen_vien</code> → TP/PP vẫn không có badge. Đây là
+            <strong>lớp phân quyền theo vai trò riêng biệt</strong>, không liên quan phạm vi phòng — cố ý
+            không đụng tới.</td></tr>
+        <tr><td><code>/api/handovers/export</code></td>
+            <td>Dùng <code>_can_view_all_depts()</code> nên tự đi theo phạm vi xem: admin/GĐ/PGĐ xuất được
+            mọi phòng, TP/PP bị ép về <code>current["department_id"]</code>. <strong>Cố ý dùng chung hàm</strong>
+            — xuất là đọc đúng dữ liệu đang thấy trên lưới; để hai bên lệch nhau sẽ thành lỗi khó hiểu
+            ("thấy trên màn hình mà xuất ra không có"). Lưu ý: xuất Excel là <em>đọc</em>, nên admin vẫn
+            xuất được dù bị cấm ghi.</td></tr>
+        <tr><td>Lọc vai trò trên lưới</td>
+            <td>Lưới vẫn chỉ liệt kê <code>chuyen_vien</code> (<code>_GRID_ROLE</code>) — không đụng tới.</td></tr>
+      </table>
+      <p>Frontend <code>can_view_all</code> ở <code>frontend/pages/handovers.py</code> giữ đúng danh sách vai
+      trò như backend — nó quyết định ô chọn "Phòng" có bị <code>disable</code> hay không. Lệch nhau theo
+      chiều nào cũng hỏng: rộng hơn backend thì người dùng chọn được phòng rồi nhận 403; hẹp hơn thì ô chọn
+      khoá dù backend cho phép.</p>
+    </div>
+  </div>
+
+  <!-- M -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">M</span>
+      <span class="card-title">Merge Đối chiếu/Đối soát CITAD — nhánh tách trước đợt gỡ nghẽn backend</span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Bối cảnh: 5 PR chồng nhau, chỉ merge 1</p>
+      <p>PR #8 → #11 → #12 → #14 → #15 lần lượt chồng lên nhau, mỗi PR chứa trọn PR trước.
+      <strong>#15 bao trùm cả bốn PR kia</strong> nên chỉ merge #15; bốn PR còn lại tự chuyển
+      trạng thái Merged khi commit đầu nhánh của chúng thành tổ tiên của <code>develop</code>.
+      Ai xem lại lịch sử đừng tìm 5 lần merge riêng.</p>
+
+      <p class="label">Vấn đề cốt lõi: git merge sạch nhưng hành vi ngược hướng</p>
+      <p>Nhánh tách ra tại <code>d5722f8</code>, tức là <strong>trước</strong> commit
+      <code>084c0e2</code> ("perf: gỡ nghẽn backend"). Commit đó đặt ra hai khuôn mẫu mới cho toàn
+      hệ thống. Nhánh CITAD không đụng vào file nào của hai khuôn mẫu ấy nên
+      <code>git merge-tree</code> báo sạch — nhưng code bên trong vẫn theo lối cũ. Đây là loại xung
+      đột git không phát hiện được, phải đọc mới thấy.</p>
+
+      <table>
+        <tr><th>Khuôn mẫu develop đặt ra</th><th>Nhánh CITAD đang làm</th><th>Đã sửa khi merge</th></tr>
+        <tr><td><code>async def</code> + <code>await run_heavy(...)</code> cho việc nặng, nằm trong
+            <code>CapacityLimiter(4)</code> của <code>backend/core/concurrency.py</code></td>
+            <td><code>asyncio.to_thread</code> (không giới hạn) và endpoint <code>def</code> thường
+            (rơi vào bể 40 token chung của anyio, <em>ngoài</em> giới hạn)</td>
+            <td>6 chỗ: parse+đối soát, 3 lời gọi <code>history_service</code>, 3 endpoint xuất Excel</td></tr>
+        <tr><td>Ghi audit qua <code>audit_queue</code> (luồng nền, không chặn response)</td>
+            <td><code>write_audit()</code> đồng bộ ngay trong request</td>
+            <td><code>_resolve_extension_owner</code> chuyển sang <code>enqueue()</code></td></tr>
+      </table>
+
+      <p>Số đo trong <code>084c0e2</code> cho thấy vì sao không thể bỏ qua: 40 việc nặng đồng thời
+      làm <code>/api/auth/me</code> kẹt <strong>38 giây</strong>; POST khi DB bị khoá ghi chậm thêm
+      <strong>5,5 giây</strong> chỉ vì một dòng nhật ký. Hai endpoint buffer của CITAD là nơi có tần
+      suất cao nhất hệ thống — Extension tự gửi mỗi lần có số liệu mới — nên để nguyên lối cũ là dựng
+      lại đúng nút thắt vừa gỡ.</p>
+
+      <p class="label">Vì sao <code>enqueue()</code> thêm tham số thay vì giữ <code>write_audit()</code></p>
+      <p>Hàng đợi suy người thao tác từ JWT trong header <code>Authorization</code>. Hai endpoint buffer
+      xác thực bằng <code>X-Extension-Token</code> — backend tra ra <em>đúng</em> người từ token, nhưng
+      không có JWT để hàng đợi tự suy. Nên <code>enqueue()</code> nhận thêm <code>actor_id</code> và
+      <code>detail</code>, mặc định <code>None</code> để tương thích ngược với lời gọi sẵn có ở
+      <code>AuditMiddleware</code>.</p>
+      <p>Cân nhắc đã bỏ: viết một hàm <code>enqueue_explicit()</code> riêng. Bỏ vì sẽ có hai đường ghi
+      audit song song phải giữ đồng bộ với nhau, mà khác biệt duy nhất chỉ là nguồn của
+      <code>actor_id</code>.</p>
+      <p>Hệ quả phụ có lợi: hàng đợi không bao giờ ném lỗi và ghi bằng kết nối riêng, nên bỏ được thao
+      tác <code>db.commit()</code> trước <code>raise</code> mà bản đồng bộ bắt buộc phải có (vì
+      <code>get_db()</code> rollback mọi thay đổi chưa commit khi request ném lỗi).</p>
+
+      <p class="label">Bảng <code>doi_chieu_citad_sessions</code>: vì sao phải rebuild</p>
+      <p>Bảng đổi khoá chính từ <code>(ngay, staff_id)</code> sang <code>ngay</code> giữa các PR trong
+      cùng nhánh. <code>CREATE TABLE IF NOT EXISTS</code> <strong>không làm gì</strong> khi bảng đã tồn
+      tại, và lỗi này <em>không</em> chặn khởi động (câu lệnh vẫn "thành công") — chỉ lộ ra khi người
+      dùng bấm Lưu. Bất kỳ máy nào từng chạy PR #8/#11/#12 đều dính. Đã thêm khối rebuild thật trong
+      <code>_ensure_indexes()</code>, bám đúng khuôn mẫu <code>document_entries</code> có sẵn.</p>
+      <p>Lưu ý cho người sửa sau: khối này là <strong>lần đầu dự án dùng hàm cửa sổ SQLite</strong>
+      (<code>ROW_NUMBER()</code>, cần SQLite ≥ 3.25). Nếu có môi trường nào chạy SQLite cũ hơn thì
+      migration sẽ ném lỗi và <em>chặn khởi động cả hệ thống</em>.</p>
+
+      <p class="label">Lỗi đã biết, cố ý chưa sửa trong đợt này</p>
+      <table>
+        <tr><th>Lỗi</th><th>Vì sao chưa sửa</th></tr>
+        <tr><td><code>parsers.py:74</code> — <code>load_workbook(read_only=True)</code> rồi
+            <code>wb.close()</code> <em>trước</em> khi đọc ô nào. Ở chế độ read-only openpyxl đọc theo
+            luồng, đóng file xong mọi lần đọc đều ném lỗi — mà <code>_OpenpyxlWs.cell_value</code> lại
+            nuốt exception trả chuỗi rỗng. Kết quả: <strong>mọi file CITAD <code>.xlsx</code> parse ra
+            0 dòng, không báo lỗi</strong>; màn hình vẫn hiện "đối soát xong", số khớp = 0, toàn bộ
+            lệnh xếp vào "Chỉ IPCAS". File <code>.xls</code> đi đường <code>xlrd</code> nên không dính
+            — đây là lý do test không phát hiện.</td>
+            <td>Tách riêng để sửa gọn một chỗ, không trộn vào đợt merge kiến trúc. Đã ghi cảnh báo
+            "dùng .xls, không dùng .xlsx" vào <code>Logs_update.md</code> cho người dùng.</td></tr>
+        <tr><td>Nút "Tạo mã kết nối" gửi <code>api.BACKEND_URL</code> (mặc định
+            <code>http://localhost:8000</code>) sang Extension. Đó là địa chỉ nhìn từ <em>máy chủ</em>,
+            còn Extension chạy trên <em>máy trạm</em>. <code>background.js</code> chỉ lưu chuỗi nhận
+            được, không thử kết nối, nên giao diện báo "✓ đã tự động kết nối" trong khi địa chỉ sai.</td>
+            <td>Cần lấy địa chỉ từ <code>window.location</code> của trang đang mở, và cho service worker
+            thử gọi backend trước khi báo thành công — không phải sửa một dòng.</td></tr>
+        <tr><td><code>manifest.json</code> khai <code>externally_connectable</code> kèm số cổng
+            (<code>http://localhost:8080/*</code>). Match pattern của Chrome không chứa cổng; ngoài ra
+            địa chỉ frontend thật trên LAN cũng không nằm trong danh sách.</td>
+            <td>Chưa xác minh được — cần nạp Extension thật trên trình duyệt, môi trường phát triển
+            không lái được Chrome. Hai khả năng: manifest bị từ chối (Extension không nạp được) hoặc
+            tính năng tự kết nối im lặng không chạy.</td></tr>
+      </table>
+
+      <p class="label">Bài học cho lần sau</p>
+      <p>Ba lỗi trong đợt này cùng một gốc: tính năng được phát triển và kiểm thử trên <strong>một máy
+      duy nhất</strong>, nơi máy chủ và trình duyệt là cùng một host — CORS chặn extension, địa chỉ
+      backend sai, <code>externally_connectable</code> khai localhost. Cả ba chạy hoàn hảo trên máy dev
+      và hỏng ngay khi tách ra hai máy. Tính năng nào có phần chạy trong trình duyệt người dùng thì
+      <strong>phải test với backend và trình duyệt ở hai máy khác nhau</strong> trước khi báo xong.</p>
+
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-04</footer>
 </div>
 </body>
 </html>

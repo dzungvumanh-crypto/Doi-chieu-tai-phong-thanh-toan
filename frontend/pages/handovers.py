@@ -27,10 +27,18 @@ async def handovers_page():
     user_data = api.get_current_user()
     user_role = user_data.get("role", "") if user_data else ""
     is_cv     = user_role == "chuyen_vien"   # chỉ GDV mới có nút Mượn / Bàn giao lại
-    # Người hậu kiểm (có quyền xác nhận) và GĐ/PGĐ làm việc trên mọi phòng nguồn;
-    # còn lại chỉ thấy phòng của chính mình. Backend chặn lại y hệt — đây chỉ là UI.
+    # Xem mọi phòng nguồn: admin/GĐ/PGĐ và người hậu kiểm. Trưởng/phó phòng chỉ
+    # phòng của mình. Backend chặn y hệt — đây chỉ là UI.
     can_view_all = (api.has_feature("handovers.confirm_entry")
                     or user_role in ("giam_doc", "pho_giam_doc"))
+    # Admin và GĐ/PGĐ chỉ được xem, không ghi. Backend chặn cứng ở require_handover_write()
+    # — ở đây phải ẩn nút tương ứng, nếu không người dùng bấm vào chỉ nhận 403.
+    # Riêng admin: api.has_feature() luôn trả True nên mọi gate feature bên dưới phải AND
+    # thêm cờ này mới có tác dụng.
+    can_write = user_role not in ("admin", "giam_doc", "pho_giam_doc")
+    # Nhập được số tờ hay không = vai trò cho ghi VÀ nhóm được cấp feature. Tính một
+    # lần ở đây vì lưới gọi lại cho từng ô (30 ngày × N cán bộ).
+    can_save = can_write and api.has_feature("handovers.save_entry")
     if not api.has_feature("menu.handovers"):
         ui.navigate.to("/home")
         return
@@ -150,7 +158,7 @@ async def handovers_page():
             save_btn = ui.button("Lưu", icon="save",
                 on_click=save_pending
             ).classes("bg-green-700 text-white px-4").tooltip("Lưu tất cả thay đổi")
-            save_btn.set_visibility(api.has_feature("handovers.save_entry"))
+            save_btn.set_visibility(can_save)
 
             async def _export_handovers():
                 try:
@@ -215,12 +223,14 @@ async def handovers_page():
                     with ui.row().classes("w-full justify-between items-center"):
                         ui.label(hist.get("source_user_name", user_name)).classes("font-bold text-red-900 text-base")
                         ui.button(icon="close", on_click=right_panel.hide).props("flat dense").classes("text-gray-500")
-                    _logs = hist.get("logs", [])
-                    _last_ts = _logs[0].get("timestamp", "") if _logs else ""
-                    _parts = _last_ts.split() if _last_ts else []
-                    _disp_date = _parts[-1] if len(_parts) >= 2 else hist.get("transaction_date", "")
+                    # Hai ngày khác nhau về nghĩa, phải ghi rõ nhãn: ngày chứng từ là
+                    # ngày phát sinh giao dịch, ngày nộp là lúc CV thực sự bàn giao.
                     ui.label(
-                        f"Ngày {_disp_date}  •  {hist.get('sheet_count', 0)} tờ"
+                        f"Ngày chứng từ {hist.get('transaction_date', '')}"
+                        f"  •  {hist.get('sheet_count', 0)} tờ"
+                    ).classes("text-sm text-gray-600")
+                    ui.label(
+                        f"Ngày bàn giao {hist.get('submit_date') or '—'}"
                     ).classes("text-sm text-gray-600")
                     with ui.row().classes("items-center gap-1 mt-1"):
                         ui.element("div").style(
@@ -237,7 +247,7 @@ async def handovers_page():
 
                     borrow_reason_val = hist.get("borrow_reason")
 
-                    if user_role in ("admin", "hau_kiem_vien", "pho_phong", "truong_phong"):
+                    if user_role in ("hau_kiem_vien", "pho_phong", "truong_phong"):
                         if current_status == "pending_confirm":
                             _can_confirm = api.has_feature("handovers.confirm_entry")
                             _can_reject  = api.has_feature("handovers.reject_entry")
@@ -281,7 +291,7 @@ async def handovers_page():
                                             "flex-1 bg-red-600 text-white rounded-lg text-sm font-semibold"
                                         )
 
-                    if current_status == "rejected" and api.has_feature("handovers.save_entry"):
+                    if current_status == "rejected" and can_save:
                         has_action = True
                         async def _do_resubmit(eid=entry_id, uname=user_name):
                             try:
@@ -489,7 +499,11 @@ async def handovers_page():
                         else:
                             cbg, bdr = rbg, "1px solid #dbeafe"
                         eid_attr = f' data-eid="{eid}"' if eid else ""
-                        _locked = not api.has_feature("handovers.confirm_entry") and status in ("confirmed", "borrowed") and val
+                        # Không có quyền nhập → khoá mọi ô; có quyền thì chỉ khoá ô đã
+                        # chốt (hậu kiểm vẫn sửa được ô đã chốt).
+                        _locked = (not can_save
+                                   or (not api.has_feature("handovers.confirm_entry")
+                                       and status in ("confirmed", "borrowed") and val))
                         _ro_attr = " readonly" if _locked else ""
                         _cursor  = "cursor:not-allowed;opacity:0.7;" if _locked else ""
                         p.append(

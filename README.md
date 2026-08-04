@@ -215,7 +215,9 @@ Truy cập:
 
 ### Module Chứng từ Hậu kiểm
 - **Bàn giao**: GDV nhập số tờ theo ngày, HKV/KSV xác nhận từng ô
-  - *Phạm vi phòng*: người có quyền hậu kiểm (`handovers.confirm_entry`) và GĐ/PGĐ thao tác được trên **mọi phòng nguồn**; các vai trò còn lại chỉ xem và nhập trong **phòng của chính mình** — dropdown chọn phòng cũng chỉ liệt kê phòng đó. Backend chặn ở cả `grid`, `entry-upsert`, các thao tác theo chứng từ, `history` và `export` (xuất Excel tự ép về phòng người gọi)
+  - *Phạm vi xem*: `admin` / GĐ / PGĐ và người có quyền hậu kiểm (`handovers.confirm_entry`) xem được **mọi phòng nguồn**; các vai trò còn lại — kể cả trưởng/phó phòng — chỉ xem **phòng của chính mình**, dropdown chọn phòng cũng chỉ liệt kê phòng đó. Backend chặn ở `grid`, `history` và `export` (xuất Excel tự ép về phòng người gọi)
+  - *Phạm vi ghi*: `admin`, `giam_doc`, `pho_giam_doc` **chỉ đọc — bị cấm hoàn toàn** mọi thao tác ghi (`_NO_WRITE_ROLES`, chặn ở dependency `require_handover_write` nên `admin` không bypass được như với `require_feature`). Các vai trò còn lại ghi được **trong phòng mình** nếu nhóm được cấp feature tương ứng; riêng người có `handovers.confirm_entry` ghi được trên mọi phòng
+  - Vào được menu vẫn cần feature `menu.handovers` — vai trò không tự mở menu
   - *Cán bộ chuyển phòng*: chứng từ hiển thị theo phòng tại **ngày giao dịch** — trước ngày chuyển ở phòng cũ, từ ngày chuyển ở phòng mới (lịch sử đổi phòng lưu ở bảng `staff_department_history`). Nhập bù chứng từ tháng cũ cho cán bộ đã chuyển vẫn vào đúng phòng cũ; do giới hạn phạm vi phòng ở trên, việc nhập bù này do người hậu kiểm thực hiện
 - **Gom tập tự động**:
   - Max 350 tờ/tập
@@ -294,13 +296,13 @@ Truy cập:
 
 | Vai trò | Mô tả |
 |---|---|
-| `admin` | **Quản trị viên cấp 1** — toàn quyền hệ thống, quản lý tài khoản & phân quyền nhóm |
+| `admin` | **Quản trị viên cấp 1** — toàn quyền hệ thống, quản lý tài khoản & phân quyền nhóm. **Ngoại lệ: chỉ đọc ở Bàn giao chứng từ** |
 | `admin_l2` | **Quản trị viên cấp 2** — quyền theo nhóm chức năng được gán; không thuộc phòng nào; không được tạo/sửa/xóa tài khoản cấp 1 |
 | `hau_kiem_vien` | Quyền hậu kiểm (xác nhận, gom tập, in bìa) |
-| `giam_doc` | Duyệt nghỉ phép bước cuối; xem toàn bộ màn hình |
-| `pho_giam_doc` | Duyệt thay GĐ khi có ủy quyền còn hiệu lực |
-| `truong_phong` | Duyệt nghỉ phép bước KSV; nhập bàn giao (phòng mình, trừ khi có quyền hậu kiểm) |
-| `pho_phong` | Duyệt nghỉ phép bước KSV; nhập bàn giao (phòng mình, trừ khi có quyền hậu kiểm) |
+| `giam_doc` | Duyệt nghỉ phép bước cuối; xem toàn bộ màn hình. **Chỉ đọc ở Bàn giao chứng từ** (xem mọi phòng) |
+| `pho_giam_doc` | Duyệt thay GĐ khi có ủy quyền còn hiệu lực. **Chỉ đọc ở Bàn giao chứng từ** (xem mọi phòng) |
+| `truong_phong` | Duyệt nghỉ phép bước KSV; xem + nhập bàn giao **phòng mình** nếu nhóm được cấp feature (trừ khi có quyền hậu kiểm) |
+| `pho_phong` | Duyệt nghỉ phép bước KSV; xem + nhập bàn giao **phòng mình** nếu nhóm được cấp feature (trừ khi có quyền hậu kiểm) |
 | `chuyen_vien` | Nhập bàn giao, xem dữ liệu phòng mình |
 
 **Phân cấp**: `admin > admin_l2 > hau_kiem_vien > giam_doc / pho_giam_doc > truong_phong > pho_phong > chuyen_vien`

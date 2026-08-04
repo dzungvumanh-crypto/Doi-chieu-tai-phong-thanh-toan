@@ -3,7 +3,7 @@ import sqlite3
 from fastapi import APIRouter, Depends, Query
 from backend.database import get_db, _vn_now
 from backend.core.deps import get_current_staff, TONG_HOP_CODES
-from backend.services.handover_report_service import compute_period
+from backend.services.handover_report_service import compute_period, SUBMIT_ACTIONS
 
 router = APIRouter()
 
@@ -101,6 +101,20 @@ def pending_counts(
 _ITEMS_LIMIT = 200
 
 
+# Ngày nộp thật lấy từ log, KHÔNG lấy `handovers.handover_date`: nhập qua lưới thì
+# cột đó được gán đúng bằng transaction_date nên luôn trùng ngày chứng từ.
+# Cùng nguồn với handover_report_service để hai màn hình không nói hai con số.
+_SUBMIT_AT_SQL = f"""(SELECT MIN(ecl.timestamp) FROM entry_change_logs ecl
+                       WHERE ecl.entry_id = de.id
+                         AND ecl.action IN ({','.join('?' * len(SUBMIT_ACTIONS))}))"""
+
+
+def _iso_date(raw) -> str | None:
+    """'2026-08-04 13:45:08.27' → '2026-08-04'. Không có log nộp → None."""
+    s = str(raw or "")[:10]
+    return s if len(s) == 10 else None
+
+
 def _split_iso(iso: str) -> tuple:
     """'2026-08-01' → (2026, 8, 1). Chuỗi lạ → (None, None, None)."""
     parts = (iso or "").split("-")
@@ -164,7 +178,7 @@ def pending_items(
                        de.transaction_date  AS transaction_date,
                        de.sheet_count       AS sheet_count,
                        de.notes             AS notes,
-                       h.handover_date      AS handover_date,
+                       {_SUBMIT_AT_SQL}     AS submit_at,
                        d.id                 AS dept_id,
                        d.name               AS dept_name,
                        owner.full_name      AS staff_name,
@@ -178,7 +192,8 @@ def pending_items(
                 WHERE {hf[0]}
                 ORDER BY de.transaction_date DESC, d.name, owner.ipcas_code
                 LIMIT {_ITEMS_LIMIT}""",
-            hf[1],
+            # Tham số subquery trong SELECT đứng TRƯỚC tham số của WHERE
+            [*SUBMIT_ACTIONS, *hf[1]],
         ).fetchall()
         for r in rows:
             y, m, dd = _split_iso(r["transaction_date"])
@@ -191,7 +206,7 @@ def pending_items(
                 "sheet_count":      r["sheet_count"],
                 "entered_by_name":  r["entered_by_name"] or "",
                 "transaction_date": r["transaction_date"],
-                "handover_date":    r["handover_date"],
+                "submit_date":      _iso_date(r["submit_at"]),
                 "notes":            r["notes"] or "",
                 "year":             y,
                 "month":            m,
