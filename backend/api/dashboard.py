@@ -3,7 +3,9 @@ import sqlite3
 from fastapi import APIRouter, Depends, Query
 from backend.database import get_db, _vn_now
 from backend.core.deps import get_current_staff, TONG_HOP_CODES
-from backend.services.handover_report_service import compute_period, SUBMIT_ACTIONS
+from backend.services.handover_report_service import (
+    compute_period, submitted_at_sql, SUBMITTED_AT_PARAMS,
+)
 
 router = APIRouter()
 
@@ -104,9 +106,7 @@ _ITEMS_LIMIT = 200
 # Ngày nộp thật lấy từ log, KHÔNG lấy `handovers.handover_date`: nhập qua lưới thì
 # cột đó được gán đúng bằng transaction_date nên luôn trùng ngày chứng từ.
 # Cùng nguồn với handover_report_service để hai màn hình không nói hai con số.
-_SUBMIT_AT_SQL = f"""(SELECT MIN(ecl.timestamp) FROM entry_change_logs ecl
-                       WHERE ecl.entry_id = de.id
-                         AND ecl.action IN ({','.join('?' * len(SUBMIT_ACTIONS))}))"""
+_SUBMIT_AT_SQL = submitted_at_sql()
 
 
 def _iso_date(raw) -> str | None:
@@ -193,7 +193,7 @@ def pending_items(
                 ORDER BY de.transaction_date DESC, d.name, owner.ipcas_code
                 LIMIT {_ITEMS_LIMIT}""",
             # Tham số subquery trong SELECT đứng TRƯỚC tham số của WHERE
-            [*SUBMIT_ACTIONS, *hf[1]],
+            [*SUBMITTED_AT_PARAMS, *hf[1]],
         ).fetchall()
         for r in rows:
             y, m, dd = _split_iso(r["transaction_date"])

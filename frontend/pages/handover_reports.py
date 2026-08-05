@@ -152,8 +152,17 @@ def handover_reports_page():
                         value=today.year, label="Năm",
                     ).classes("w-32")
                     load_btn = ui.button("Xem báo cáo", icon="search").classes("bg-red-800 text-white")
+                    export_btn = ui.button("Xuất file Word", icon="description").classes(
+                        "bg-blue-800 text-white"
+                    )
+                    export_btn.disable()
 
             result_area = ui.column().classes("w-full gap-5")
+
+            # Kỳ ĐANG HIỂN THỊ — không lấy thẳng từ ô chọn: người dùng có thể đổi
+            # tháng mà chưa bấm "Xem báo cáo", khi đó file xuất ra sẽ lệch với bảng
+            # đang nhìn thấy.
+            shown = {"year": None, "month": None}
 
             async def load():
                 load_btn.props("loading")
@@ -169,6 +178,9 @@ def handover_reports_page():
                 finally:
                     load_btn.props(remove="loading")
 
+                shown["year"], shown["month"] = year_sel.value, month_sel.value
+                export_btn.enable()
+
                 result_area.clear()
                 with result_area:
                     _kpi_cards(data.get("overall", {}))
@@ -182,5 +194,29 @@ def handover_reports_page():
                             f"(nhập trước khi hệ thống ghi lịch sử thao tác) — không đưa vào báo cáo."
                         ).classes("text-xs text-gray-500 italic")
 
+            async def do_export():
+                if shown["year"] is None:
+                    ui.notify("Hãy xem báo cáo trước khi xuất file", type="warning")
+                    return
+                export_btn.props("loading")
+                try:
+                    content = await asyncio.to_thread(
+                        api.download, "/api/handover-reports/export",
+                        {"year": shown["year"], "month": shown["month"]},
+                    )
+                except Exception as e:
+                    if not _handle_api_error(e):
+                        ui.notify(str(e), type="negative")
+                    return
+                finally:
+                    export_btn.props(remove="loading")
+
+                ui.download(
+                    content,
+                    f"Bao_cao_ban_giao_chung_tu_T{shown['month']:02d}_{shown['year']}.docx",
+                )
+                ui.notify("Đã xuất báo cáo Word", type="positive")
+
             load_btn.on("click", load)
+            export_btn.on("click", do_export)
             ui.timer(0.1, load, once=True)
