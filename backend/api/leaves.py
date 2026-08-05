@@ -56,8 +56,8 @@ ACTION_LABELS = {
 _LEAVE_STATUS_VN = {
     LeaveStatus.PENDING_KSV:      "Chờ KSV duyệt",
     LeaveStatus.PENDING_TONG_HOP: "Chờ Tổng hợp",
-    LeaveStatus.PENDING_GD:       "Chờ GĐ duyệt",
-    LeaveStatus.APPROVED:         "Đã phê duyệt",
+    LeaveStatus.PENDING_GD:       "Chờ Ban lãnh đạo duyệt",
+    LeaveStatus.APPROVED:         "Hoàn thành",
     LeaveStatus.REJECTED:         "Bị từ chối",
     LeaveStatus.CANCELLED:        "Đã hủy",
 }
@@ -549,7 +549,8 @@ def create_leave(
     if body.spread_dates:
         _existing = db.execute(
             """SELECT start_date, end_date, spread_dates FROM leave_records
-               WHERE staff_id=? AND status NOT IN ('rejected','cancelled')""",
+               WHERE staff_id=? AND status NOT IN ('rejected','cancelled')
+                 AND NOT (reason LIKE '[Import]%' OR reason LIKE '[Điều chỉnh]%')""",
             (current["id"],)
         ).fetchall()
         _new_days = set(spread)
@@ -567,6 +568,7 @@ def create_leave(
         _existing2 = db.execute(
             """SELECT start_date, end_date, spread_dates FROM leave_records
                WHERE staff_id=? AND status NOT IN ('rejected','cancelled')
+                 AND NOT (reason LIKE '[Import]%' OR reason LIKE '[Điều chỉnh]%')
                  AND start_date<=? AND end_date>=?""",
             (current["id"], eff_end.isoformat(), eff_start.isoformat())
         ).fetchall()
@@ -635,7 +637,11 @@ def list_leaves(
     current: dict = Depends(get_current_staff),
 ):
     role = current["role"]
-    clauses: list = []
+    # Bản ghi tổng hợp giả (nhập Excel / sửa tay hạn mức, xem update_used_days và
+    # import_quota_apply) chỉ phục vụ tính _calc_used_days — không phải đơn nghỉ
+    # phép thật, không có người nộp/KSV/TH/GĐ nào cả. Ẩn khỏi mọi danh sách đơn để
+    # khỏi hiện như 1 đơn thật trong "Đơn của tôi"/"Chờ duyệt"/lịch/toàn trung tâm.
+    clauses: list = ["NOT (reason LIKE '[Import]%' OR reason LIKE '[Điều chỉnh]%')"]
     params: list  = []
 
     if scope == "mine":
@@ -770,6 +776,7 @@ def leave_calendar(
            FROM leave_records lr
            LEFT JOIN user_tttt ks ON lr.staff_id = ks.id
            WHERE lr.status NOT IN ('rejected','cancelled')
+             AND NOT (lr.reason LIKE '[Import]%' OR lr.reason LIKE '[Điều chỉnh]%')
              AND lr.start_date <= ? AND lr.end_date >= ?""",
         (end.isoformat(), start.isoformat()),
     ).fetchall()
@@ -808,7 +815,9 @@ def export_leaves(
     from openpyxl.styles import Alignment, Font, PatternFill
 
     role = current["role"]
-    clauses: list = []
+    # Bản ghi tổng hợp giả (nhập Excel / sửa tay hạn mức) không phải đơn nghỉ phép
+    # thật — ẩn khỏi file xuất, xem chú thích tương tự ở list_leaves().
+    clauses: list = ["NOT (lr.reason LIKE '[Import]%' OR lr.reason LIKE '[Điều chỉnh]%')"]
     params: list  = []
 
     # Nếu có danh sách ID cụ thể → xuất đúng những dòng đó
@@ -1295,7 +1304,8 @@ def resubmit_leave(
     if body.spread_dates:
         _existing = db.execute(
             """SELECT start_date, end_date, spread_dates FROM leave_records
-               WHERE staff_id=? AND id!=? AND status NOT IN ('rejected','cancelled')""",
+               WHERE staff_id=? AND id!=? AND status NOT IN ('rejected','cancelled')
+                 AND NOT (reason LIKE '[Import]%' OR reason LIKE '[Điều chỉnh]%')""",
             (current["id"], leave_id)
         ).fetchall()
         _new_days = set(spread)
@@ -1309,6 +1319,7 @@ def resubmit_leave(
         _existing2 = db.execute(
             """SELECT start_date, end_date, spread_dates FROM leave_records
                WHERE staff_id=? AND id!=? AND status NOT IN ('rejected','cancelled')
+                 AND NOT (reason LIKE '[Import]%' OR reason LIKE '[Điều chỉnh]%')
                  AND start_date<=? AND end_date>=?""",
             (current["id"], leave_id, eff_end.isoformat(), eff_start.isoformat())
         ).fetchall()
@@ -1839,6 +1850,72 @@ def update_join_date(
     return {"ok": True, "staff_id": staff_id, "join_industry_date": join_date}
 
 
+@router.patch("/quotas/staff/{staff_id}/used-days")
+def update_used_days(
+    staff_id: int,
+    body: dict,
+    db: sqlite3.Connection = Depends(get_db),
+    current: dict = Depends(require_feature("leaves.quota_admin")),
+):
+    """Sửa tay số ngày đã dùng cho 1 nhân viên/năm.
+
+    _calc_used_days (nguồn sự thật duy nhất) không đọc user_tttt.used_leave_days —
+    nó đếm từ leave_records — nên sửa tay cũng phải ghi qua 1 bản ghi nghỉ bat_buoc
+    approved tổng hợp, giống hệt cơ chế "Nhập file hạn mức" (import_quota_apply).
+    Xoá bản ghi tổng hợp cũ (dù tạo bởi import hay sửa tay trước đó) trước khi tạo
+    mới — 2 cách nhập luôn thay thế lẫn nhau, không cộng dồn.
+    """
+    try:
+        year = int(body.get("year"))
+        used_days = float(body.get("used_days"))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "year/used_days không hợp lệ")
+    if used_days < 0:
+        raise HTTPException(400, "Số ngày đã dùng không được âm")
+    staff = db.execute("SELECT id FROM user_tttt WHERE id=? AND is_active=1", (staff_id,)).fetchone()
+    if not staff:
+        raise HTTPException(404, "Không tìm thấy nhân viên")
+
+    db.execute(
+        "DELETE FROM leave_records WHERE staff_id=? AND leave_type='bat_buoc' "
+        "AND strftime('%Y', start_date)=? AND (reason LIKE '[Import]%' OR reason LIKE '[Điều chỉnh]%')",
+        (staff_id, str(year)),
+    )
+    # used_days là TỔNG mong muốn (khớp giá trị đang hiển thị/tiền điền trên dialog —
+    # vốn đã gồm cả đơn nghỉ THẬT), không phải số ngày cộng thêm. Sau khi xoá bản ghi
+    # tổng hợp cũ ở trên, phần còn lại trong leave_records là đơn THẬT — phải trừ đi
+    # phần này rồi mới chèn đúng phần chênh lệch. Thiếu bước trừ này thì mỗi lần lưu
+    # (kể cả không đổi gì, vì dialog tự điền sẵn tổng hiện tại) sẽ cộng dồn thêm đúng
+    # bằng tổng cũ — tăng vô hạn qua từng lần bấm Lưu.
+    real_used = _calc_used_days(staff_id, year, db, include_pending=True)
+    delta = used_days - real_used
+    n_days = int(delta + 0.5) if delta > 0 else 0  # round-half-up, không âm
+    if n_days >= 1:
+        sd = _import_spread_dates(n_days, year)
+        if sd:
+            now = _vn_now()
+            db.execute(
+                """INSERT INTO leave_records
+                       (staff_id, leave_type, start_date, end_date, spread_dates,
+                        status, reason, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                (staff_id, "bat_buoc", sd[0], sd[-1], json.dumps(sd), "approved",
+                 f"[Điều chỉnh] Đặt số ngày đã dùng = {n_days} (năm {year})",
+                 now, now),
+            )
+    final_used = real_used + n_days
+    db.execute("UPDATE user_tttt SET used_leave_days=? WHERE id=?", (final_used, staff_id))
+    db.commit()
+    return {
+        "ok": True, "staff_id": staff_id, "year": year,
+        "used_days": final_used,
+        # requested < real_used (vd đơn thật đã nhiều hơn số muốn đặt) → không thể trừ
+        # bớt đơn thật bằng bản ghi tổng hợp, kết quả bị chặn ở real_used — báo cho
+        # frontend biết để thông báo thay vì im lặng lệch số.
+        "capped": used_days < real_used,
+    }
+
+
 # ─── Nhập file hạn mức (Excel) ─────────────────────────────────────────────────
 # File có thể khác cấu trúc/thứ tự cột giữa các lần — dò cột theo TIÊU ĐỀ (dòng
 # header) thay vì cố định vị trí, chỉ cần đủ các trường: STT, Họ và tên,
@@ -2090,10 +2167,11 @@ def import_quota_apply(
         )
 
         # ── "Đã nghỉ" → bản ghi nghỉ tổng hợp (để _calc_used_days đếm được) ──
-        # Xoá bản ghi tổng hợp import cũ trong năm để import lại không cộng dồn.
+        # Xoá bản ghi tổng hợp cũ trong năm (import HOẶC sửa tay trước đó) để
+        # import lại không cộng dồn — 2 cách nhập luôn thay thế lẫn nhau.
         db.execute(
             "DELETE FROM leave_records WHERE staff_id=? AND leave_type='bat_buoc' "
-            "AND strftime('%Y', start_date)=? AND reason LIKE '[Import]%'",
+            "AND strftime('%Y', start_date)=? AND (reason LIKE '[Import]%' OR reason LIKE '[Điều chỉnh]%')",
             (staff_id, str(year)),
         )
         created_leave_id = None
@@ -2354,7 +2432,7 @@ def export_all_leaves_annual(
 
     _STATUS_VN = {
         "pending_ksv": "Chờ KSV duyệt", "pending_tong_hop": "Chờ Tổng hợp",
-        "pending_gd": "Chờ GĐ duyệt", "approved": "Đã duyệt",
+        "pending_gd": "Chờ Ban lãnh đạo duyệt", "approved": "Hoàn thành",
         "rejected": "Từ chối", "cancelled": "Đã hủy"
     }
     headers = ["STT", "Ngày tạo", "Họ và tên", "Phòng", "Loại nghỉ", "Ngày nghỉ",
@@ -2547,12 +2625,15 @@ def leader_dashboard(
             p_where = "lr.gd_approver_id = ? AND lr.status = 'pending_gd'"
             p_params.append(current["id"])
     elif _is_tong_hop_staff(current, db) and role in ("truong_phong", "pho_phong", "hau_kiem_vien"):
-        # PP/TP Tổng hợp: xem cả KSV phòng mình + TH toàn trung tâm
-        p_where = (f"(lr.status = 'pending_tong_hop' OR (lr.ksv_approver_id = ? AND lr.status = 'pending_ksv') "
-                   f"OR {_gd_unack})")
+        # PP/TP Tổng hợp: xem cả KSV phòng mình + TH/GĐ toàn trung tâm — khớp đúng
+        # phạm vi "toàn trung tâm" đã áp dụng cho approved/top_staff bên dưới
+        # (_scope_required). Thiếu pending_gd ở đây khiến ô "Chờ GĐ" luôn hiện 0
+        # dù đơn đang thật sự chờ GĐ (nhìn thấy trong bảng danh sách bên dưới).
+        p_where = (f"(lr.status IN ('pending_tong_hop', 'pending_gd') "
+                   f"OR (lr.ksv_approver_id = ? AND lr.status = 'pending_ksv') OR {_gd_unack})")
         p_params.append(current["id"])
     elif _is_tong_hop_staff(current, db):
-        p_where = f"(lr.status = 'pending_tong_hop' OR {_gd_unack})"
+        p_where = f"(lr.status IN ('pending_tong_hop', 'pending_gd') OR {_gd_unack})"
     elif role in ("truong_phong", "pho_phong", "hau_kiem_vien"):
         p_where = "lr.ksv_approver_id = ? AND lr.status = 'pending_ksv'"
         p_params.append(current["id"])
@@ -2590,15 +2671,19 @@ def leader_dashboard(
     by_status: dict = {}
     for r in pending_rows:
         by_status[r["status"]] = by_status.get(r["status"], 0) + 1
+    # Bản ghi tổng hợp giả (nhập Excel/sửa tay hạn mức) không phải đơn nghỉ phép
+    # thật — loại khỏi "Hoàn thành"/"Khai báo hộ" để khớp với list_leaves() (đã ẩn
+    # tương tự) và không đếm 1 thao tác đối soát hạn mức như 1 đơn đã hoàn thành.
+    _not_synthetic = "AND NOT (lr.reason LIKE '[Import]%' OR lr.reason LIKE '[Điều chỉnh]%')"
     approved_cnt = db.execute(
         f"""SELECT COUNT(*) FROM leave_records lr JOIN user_tttt s ON lr.staff_id = s.id
-           WHERE lr.status='approved' AND strftime('%Y', lr.start_date)=?{_dept_sql}""",
+           WHERE lr.status='approved' AND strftime('%Y', lr.start_date)=?{_dept_sql} {_not_synthetic}""",
         [str(yr)] + _dept_params,
     ).fetchone()[0]
     by_status["approved"] = approved_cnt
     by_status["direct"] = db.execute(
         f"""SELECT COUNT(*) FROM leave_records lr JOIN user_tttt s ON lr.staff_id = s.id
-           WHERE lr.is_direct=1 AND lr.status='approved' AND strftime('%Y', lr.start_date)=?{_dept_sql}""",
+           WHERE lr.is_direct=1 AND lr.status='approved' AND strftime('%Y', lr.start_date)=?{_dept_sql} {_not_synthetic}""",
         [str(yr)] + _dept_params,
     ).fetchone()[0]
     pending = [
@@ -2619,7 +2704,7 @@ def leader_dashboard(
                   lr.start_date, lr.end_date
            FROM leave_records lr
            JOIN user_tttt s ON lr.staff_id = s.id
-           WHERE lr.status='approved' AND strftime('%Y', lr.start_date)=?{_dept_sql}""",
+           WHERE lr.status='approved' AND strftime('%Y', lr.start_date)=?{_dept_sql} {_not_synthetic}""",
         [str(yr)] + _dept_params,
     ).fetchall()
     _holidays_yr = _load_holidays(db, date(yr, 1, 1), date(yr, 12, 31))
@@ -2694,7 +2779,8 @@ def create_direct_leave(
     existing = db.execute(
         """SELECT lr.id, lr.start_date, lr.end_date, lr.spread_dates
            FROM leave_records lr
-           WHERE lr.staff_id=? AND lr.status NOT IN ('cancelled','rejected')""",
+           WHERE lr.staff_id=? AND lr.status NOT IN ('cancelled','rejected')
+             AND NOT (lr.reason LIKE '[Import]%' OR lr.reason LIKE '[Điều chỉnh]%')""",
         (body.staff_id,)
     ).fetchall()
     conflict_dates = []
