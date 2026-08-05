@@ -51,7 +51,144 @@
 <div class="page">
 
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
-  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-03</p>
+  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-05</p>
+
+  <!-- L -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">L</span>
+      <span class="card-title">Xuất báo cáo bàn giao chứng từ ra Word A4 ngang</span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Kỳ xuất file lấy từ đâu</p>
+      <p>Nút "Xuất file Word" <strong>không</strong> đọc thẳng hai ô chọn Tháng/Năm mà đọc biến
+      <code>shown</code> — kỳ của bảng đang hiển thị. Người dùng có thể đổi ô chọn rồi bấm xuất luôn
+      mà quên bấm "Xem báo cáo"; nếu lấy theo ô chọn thì file Word là tháng khác với bảng đang nhìn,
+      mà không có gì báo. Nút bị <code>disable</code> tới khi có dữ liệu lần đầu (trang tự tải khi mở,
+      nên thực tế chỉ khoá vài trăm ms).</p>
+
+      <p class="label">Không tính lại số liệu ở tầng sinh file</p>
+      <p><code>build_report_docx()</code> nhận nguyên dict của <code>compute_period()</code>, không đụng DB.
+      Cùng lý do đã ghi ở card về dashboard: hai đường tính khác nhau sẽ cho hai con số khác nhau, và
+      chênh lệch giữa file gửi lãnh đạo với màn hình là loại lỗi tệ nhất của báo cáo.</p>
+
+      <p class="label">Truy vấn ở luồng request, chỉ sinh file trong <code>run_heavy</code></p>
+      <p><code>sqlite3.Connection</code> gắn với luồng tạo ra nó (<code>check_same_thread</code>), nên không
+      đẩy được cả <code>compute_period()</code> vào bể việc nặng. Đánh đổi: phần truy vấn vẫn nằm trong bể
+      luồng chung 40 token. Chấp nhận được — phần nặng thật là dựng docx, còn truy vấn đã có sẵn ở
+      endpoint <code>/summary</code> chạy như vậy từ đầu.</p>
+
+      <table>
+        <tr><th>Chi tiết</th><th>Quyết định</th><th>Lý do</th></tr>
+        <tr><td>Khổ giấy</td><td>A4 ngang, gán tay <code>page_width/height</code></td>
+            <td><code>section.orientation = LANDSCAPE</code> của python-docx <strong>không</strong> tự hoán đổi
+            kích thước — thiếu bước gán tay thì Word vẫn in ra khổ dọc.</td></tr>
+        <tr><td>Font</td><td>Times New Roman 13, set cả <code>rFonts</code> eastAsia/cs</td>
+            <td>Chỉ đặt <code>style.font.name</code> thì dấu tiếng Việt rơi về font mặc định trên một số máy.</td></tr>
+        <tr><td>Cột chi tiết quá hạn</td><td>Bỏ cột User IPCAS</td>
+            <td>Yêu cầu nghiệp vụ: bản in cho lãnh đạo chỉ cần họ tên. Màn hình vẫn giữ cột IPCAS để tra cứu.</td></tr>
+        <tr><td>Bảng tổng hợp</td><td>Theo phòng + dòng TỔNG CỘNG</td>
+            <td>Gộp KPI tổng và bảng theo phòng của màn hình vào một bảng — bản in không có card KPI.</td></tr>
+        <tr><td>Cỡ chữ</td><td>Tiêu đề 16, toàn bộ phần còn lại 14</td>
+            <td>Đặt ở style <code>Normal</code>, các đoạn khác không gán cỡ riêng — sửa một chỗ là đổi cả file.</td></tr>
+      </table>
+
+      <p class="label">Gộp ô họ tên: khoá gom là <code>staff_id</code>, không phải tên</p>
+      <p>Chứng từ quá hạn của cùng một cán bộ được xếp liên tiếp và gộp thành <strong>một ô</strong> ở cột
+      Họ và tên. Gom theo tên sẽ gộp nhầm hai cán bộ trùng họ tên thành một khối — hiếm nhưng có thật ở
+      đơn vị đông người, và khi xảy ra thì bản in sai mà không ai nhận ra.</p>
+
+      <div class="note"><code>cell.merge()</code> của python-docx <strong>nối paragraph của mọi ô bị gộp</strong>:
+      ô gộp 7 dòng có 7 paragraph rỗng và cao gấp 7 lần dòng thường. Phải xoá hết paragraph thừa rồi mới ghi
+      tên vào (<code>_set_cell_text</code>). Không có bước này thì bảng vẫn "đúng" về dữ liệu nhưng giãn
+      loang lổ, rất khó truy ra nguyên nhân.</div>
+
+      <p class="label">Thứ tự trong file khác thứ tự trên màn hình — có chủ đích</p>
+      <p>Màn hình xếp theo số ngày chậm giảm dần. Trong file, thứ tự <strong>cụm cán bộ</strong> vẫn theo
+      lần xuất hiện đầu (tức người chậm nhất lên trước), nhưng <strong>trong một cụm</strong> thì sắp theo
+      ngày giao dịch tăng dần — đọc lịch sử nộp của một người theo trình tự thời gian mới có nghĩa.</p>
+
+      <p class="label">Chưa làm</p>
+      <ul>
+        <li>Không có khối chữ ký / "Hà Nội, ngày ... tháng ..." — chưa có yêu cầu, và mẫu ký duyệt của
+        đơn vị chưa chốt. Thêm sau khi biết mẫu thì rẻ hơn là đoán bây giờ rồi phải sửa.</li>
+        <li>Bỏ dòng ghi chú cuối file theo yêu cầu — kể cả cảnh báo "<em>n</em> chứng từ không có dữ liệu
+        ngày nộp nên không đưa vào báo cáo". Người đọc file Word <strong>không</strong> biết có chứng từ bị
+        loại; thông tin này chỉ còn trên màn hình.</li>
+      </ul>
+
+    </div>
+  </div>
+
+  <!-- K -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">K</span>
+      <span class="card-title">Lần nộp bị HKV từ chối không còn được tính là "đã nộp"</span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Vấn đề nghiệp vụ</p>
+      <p>Chứng từ ngày 03/08, GDV nộp 04/08, HKV <strong>từ chối</strong>, GDV nộp lại 05/08. Vì ngày nộp
+      lấy bằng <code>MIN(timestamp)</code> trên toàn bộ log nộp, lần nộp 04/08 vẫn thắng
+      <span class="pill pill-red">→ đúng hạn</span> dù chứng từ hợp lệ chỉ có từ 05/08.</p>
+
+      <p>Hệ quả nặng hơn con số lệch: chứng từ bị từ chối và <strong>không bao giờ nộp lại</strong> vẫn
+      nằm trong nhóm đúng hạn — một log <code>handover</code> đủ để "khoá" KPI ở mức tốt vĩnh viễn.</p>
+
+      <p class="label">Quy tắc mới</p>
+      <p>Ngày nộp = log nộp sớm nhất <strong>sau lần <code>rejected_handover</code> gần nhất</strong>.
+      Vẫn là "lần nộp đầu", chỉ khác ở chỗ các lần đã bị trả về bị loại khỏi tập ứng viên.</p>
+
+      <table>
+        <tr><th>Kịch bản (tx = T2 03/08)</th><th>Trước</th><th>Sau</th></tr>
+        <tr><td>Nộp 04/08, không bị từ chối</td><td>đúng hạn</td><td>đúng hạn</td></tr>
+        <tr><td>Nộp 04/08 → từ chối → nộp lại 05/08</td>
+            <td><span class="pill pill-red">đúng hạn</span></td>
+            <td><span class="pill pill-green">muộn 1 ngày</span></td></tr>
+        <tr><td>Nộp 04/08 → từ chối → chưa nộp lại</td>
+            <td><span class="pill pill-red">đúng hạn</span></td>
+            <td>không tính vào báo cáo</td></tr>
+      </table>
+
+      <p class="label">Vì sao chỉ <code>rejected_handover</code></p>
+      <p>Có ba action từ chối. <code>rejected_borrow</code> và <code>rejected_return</code> thuộc luồng
+      mượn – trả, xảy ra <em>sau</em> khi chứng từ đã được xác nhận. Nếu tính cả hai, một lần từ chối cho
+      mượn vào tháng sau sẽ xoá sạch ngày nộp gốc và biến chứng từ đúng hạn thành "chưa nộp".</p>
+
+      <p class="label">Đánh đổi đã chấp nhận</p>
+      <table>
+        <tr><th>Quyết định</th><th>Lý do / hệ quả</th></tr>
+        <tr><td>Chứng từ bị từ chối, chưa nộp lại → <strong>biến mất khỏi báo cáo</strong>, không đếm
+            vào <code>no_submit_date</code></td>
+            <td>Quyết định của nghiệp vụ: chưa có lần nộp hợp lệ thì chưa có gì để chấm.
+            <span class="pill pill-gray">Hệ quả</span> mẫu số của phòng co lại và không có chỗ nào trên UI
+            giải thích vì sao. Nếu sau này cần minh bạch, thêm một ô đếm riêng ở
+            <code>compute_period</code> — dữ liệu đã đủ, chỉ thiếu chỗ hiển thị.</td></tr>
+        <tr><td>So sánh timestamp bằng <strong>chuỗi</strong>, không parse datetime</td>
+            <td>Mọi insert vào <code>entry_change_logs</code> đều dùng <code>str(_vn_now())</code> nên định
+            dạng đồng nhất <code>YYYY-MM-DD HH:MM:SS[.ffffff]</code> — so sánh chuỗi cho đúng thứ tự và
+            chạy được ngay trong SQL. <span class="pill pill-red">Rủi ro</span> nếu về sau có chỗ ghi log
+            bằng <code>isoformat()</code> (dấu <code>T</code>): với hai log <em>cùng ngày</em>, bản
+            <code>T</code> sẽ luôn được coi là muộn hơn.</td></tr>
+        <tr><td>Bỏ INNER JOIN, chuyển sang subquery tương quan trong SELECT</td>
+            <td>Cùng một mảnh SQL dùng được cả ở báo cáo lẫn dashboard. Bỏ luôn <code>GROUP BY de.id</code>.
+            Có index <code>ix_entry_change_logs_entry</code> nên chi phí không đáng kể.</td></tr>
+      </table>
+
+      <div class="note">
+      Bài học lặp lại từ card J: quy tắc "thế nào là đã nộp" nằm ở <strong>ba</strong> nơi — báo cáo,
+      dashboard, popup lịch sử. Lần này gom hẳn thành <code>submitted_at_sql()</code> (dùng trong SQL) và
+      <code>submitted_at_from_logs()</code> (dùng khi đã có sẵn list log) trong
+      <code>handover_report_service</code>. Sửa một chỗ, ba màn hình đi theo.
+      Hằng số <code>SUBMIT_ACTIONS</code> không còn được import trực tiếp ở nơi khác.
+      </div>
+
+    </div>
+  </div>
 
   <!-- J -->
   <div class="card">
@@ -3140,7 +3277,10 @@ ui.on_exception(_on_exception)</pre>
             TP/PP thì họ xem (và ghi) được mọi phòng — đây là cơ chế hậu kiểm có từ trước, không phải
             đường vòng mới. Muốn TP/PP tuyệt đối không ra khỏi phòng mình thì <em>đừng cấp feature đó</em>.</td></tr>
         <tr><td>Nút thao tác trên panel chi tiết</td>
-            <td>Vẫn theo <code>api.has_feature(...)</code>, nhưng nay AND thêm cờ <code>can_write</code>.
+            <td>Vẫn theo <code>api.has_feature(...)</code>, nhưng nay AND thêm cờ vai trò
+            (<code>can_write</code>, và <code>can_save = can_write and has_feature("save_entry")</code> cho
+            nhóm nút nhập liệu — tính <strong>một lần</strong> ngoài vòng lặp vì lưới dựng lại biểu thức này
+            cho từng ô, 30 ngày × N cán bộ).
             <strong>Bắt buộc</strong>: <code>api.has_feature()</code> phía frontend cũng trả
             <code>True</code> cho mọi code khi vai trò là admin — không có cờ này thì admin vẫn thấy đủ nút,
             bấm vào chỉ nhận 403.</td></tr>
@@ -3270,7 +3410,168 @@ ui.on_exception(_on_exception)</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-04</footer>
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">48</span>
+      <span class="card-title">Danh sách CN thực hiện TTQT — danh mục nhập từ Excel</span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Vì sao đưa vào bảng DB thay vì đọc thẳng file Excel</p>
+      <p>File nguồn (<code>Danh sach CN thuc hien TTQT 1.xlsx</code>) chỉ có 218 dòng, đọc thẳng mỗi
+      lần mở trang hoàn toàn khả thi về tốc độ. Chọn bảng <code>ttqt_branches</code> vì lý do vận hành:
+      danh sách thay đổi lắt nhắt (đổi tên CN, đóng BIC, chuyển loại I/II) và người sửa là cán bộ
+      nghiệp vụ, không phải người có quyền thay file trên máy chủ. Đọc thẳng file thì mọi chỉnh sửa
+      đều phải qua người quản trị.</p>
+
+      <p class="label">Quy ước "Đóng BICCODE" trong file gốc</p>
+      <p>File không có cột trạng thái. Thay vào đó có <strong>một dòng đánh dấu</strong> ghi
+      "Đóng BICCODE" ở cột đầu; mọi dòng phía dưới là chi nhánh đã đóng BIC (14 dòng), phía trên là
+      đang hoạt động (204 dòng). Parser bật cờ <code>is_closed</code> khi gặp dòng này thay vì bắt
+      người dùng thêm cột mới — file gốc vẫn nhập được nguyên trạng, không phải sửa tay trước khi nhập.
+      Export ghi lại đúng quy ước đó nên file xuất ra nhập lại được (đã kiểm: 219 dòng ra, 219 dòng
+      vào, 0 lỗi).</p>
+
+      <p class="label">Đánh đổi đã chấp nhận</p>
+      <table>
+        <tr><th>Quyết định</th><th>Được</th><th>Mất</th></tr>
+        <tr><td>Dò dòng tiêu đề bằng cách tìm ô "MÃ CN" + "TÊN CN" trong 30 dòng đầu, không cố định
+            dòng 4</td>
+            <td>File có thêm/bớt dòng ghi chú ở đầu vẫn nhập được</td>
+            <td>File có 2 vùng bảng trong 1 sheet sẽ chỉ đọc vùng đầu</td></tr>
+        <tr><td><code>delete_missing</code> mặc định <strong>tắt</strong> (chỉ thêm + cập nhật)</td>
+            <td>Nhập nhầm file cũ không xoá mất CN mới thêm tay</td>
+            <td>Muốn đồng bộ đúng bằng file phải tự tích ô — nếu quên, CN đã bỏ khỏi file vẫn còn
+            trong danh sách</td></tr>
+        <tr><td>Trùng mã CN <em>trong cùng một file</em>: giữ dòng đầu, bỏ dòng sau và báo cảnh báo</td>
+            <td>Kết quả không phụ thuộc thứ tự dòng</td>
+            <td>Người nhập phải đọc cảnh báo mới biết dòng nào bị bỏ</td></tr>
+        <tr><td>Không ràng buộc <code>UNIQUE</code> cho <code>swift_bic</code> (chỉ <code>ma_cn</code>)</td>
+            <td>Không chặn nhập khi ngân hàng thu hồi rồi cấp lại BIC cho CN khác</td>
+            <td>Nhập nhầm 2 CN cùng BIC sẽ không bị phát hiện</td></tr>
+      </table>
+
+      <p class="label">Vì sao có cột <code>sort_order</code></p>
+      <p>Mã CN trong file <strong>không tăng dần</strong> (1000, 1080, 1090, 1200… rồi 6223 xen giữa)
+      và thứ tự đó phản ánh cách xếp theo địa bàn mà nghiệp vụ quen nhìn. Sắp theo <code>ma_cn</code>
+      sẽ xáo trộn danh sách so với bản in. <code>sort_order</code> lưu đúng số thứ tự dòng lúc nhập;
+      CN thêm tay được đẩy xuống cuối nhóm tương ứng.</p>
+
+      <p class="label">Điểm cần biết khi bảo trì</p>
+      <table>
+        <tr><th>Điểm</th><th>Chi tiết</th></tr>
+        <tr><td>Khoá menu là <code>ttqt_branches</code>, không phải <code>ttqt-branches</code></td>
+            <td>Sidebar dùng chung một khoá cho cả route (<code>/ttqt_branches</code>) lẫn mã quyền
+            (<code>menu.ttqt_branches</code>). Đặt gạch ngang sẽ sinh mã quyền
+            <code>menu.ttqt-branches</code> không khớp <code>features.py</code> và mục menu biến mất
+            với mọi user không phải admin. Đường dẫn API thì ngược lại — dùng gạch ngang
+            (<code>/api/ttqt-branches</code>) cho khớp các router khác.</td></tr>
+        <tr><td>Ô GHI CHÚ trong file gốc có 2 ô là kiểu <em>ngày tháng</em>, không phải chữ</td>
+            <td><code>_cell_str()</code> đổi sang <code>dd/mm/yyyy</code>. Nếu để openpyxl trả nguyên
+            đối tượng <code>datetime</code> thì cột hiện ra "2020-06-06 00:00:00".</td></tr>
+        <tr><td>Cột ĐỊA CHỈ TIẾNG ANH rỗng toàn bộ trong file hiện tại</td>
+            <td>Vẫn giữ cột trong bảng và biểu mẫu — cột có trong tiêu đề file gốc, khả năng cao sẽ
+            được điền dần.</td></tr>
+        <tr><td>Bảng dùng slot <code>body</code> (ghi đè cả dòng) chứ không phải
+            <code>body-cell-actions</code></td>
+            <td>Cần tô xám cả dòng CN đã đóng BIC khi lọc "Tất cả" — slot theo ô không đặt được class
+            cho <code>&lt;tr&gt;</code>. Cờ <code>can_edit</code>/<code>can_delete</code> phải gắn vào
+            <em>từng dòng</em> vì template Vue chỉ đọc được <code>props.row</code>, không thấy biến
+            Python.</td></tr>
+      </table>
+
+      <p class="label">Đã kiểm</p>
+      <p>Backend qua HTTP với user tạm vai admin trên DB thật: lọc theo trạng thái (204 / 14 / 218),
+      lọc loại CN, tìm theo BIC; thêm — trùng mã trả 400 — sửa — xoá — xoá lại trả 404; mã CN rỗng trả
+      422; nhập file <code>.txt</code> và file <code>.xlsx</code> không có cột "MÃ CN" đều báo lỗi rõ
+      ràng; xuất Excel rồi nhập lại chính file đó (round-trip). Frontend: dựng trang trong ngữ cảnh
+      NiceGUI giả lập — 204 dòng, 10 cột, phân trang 25, slot <code>body</code> có đủ
+      <code>rowEdit</code>/<code>rowDel</code>, sự kiện đã đăng ký. Toàn bộ data test đã xoá (user tạm,
+      session, audit, login log, 2 CN test).</p>
+
+      <p class="label">Thanh lọc cố định — vì sao không dùng <code>position: sticky</code></p>
+      <p><code>#app-content</code> đặt <code>overflow-x: auto</code>. Theo chuẩn CSS, một trục không
+      phải <code>visible</code> thì trục còn lại tự tính thành <code>auto</code> — nên hộp này là một
+      scroll container theo cả chiều dọc. Phần tử <code>sticky</code> bên trong sẽ neo vào hộp đó, mà
+      hộp đó cao theo nội dung nên không bao giờ tự cuộn; kết quả là thanh lọc vẫn trôi theo trang.
+      Cách dùng: <strong>giới hạn chiều cao thân bảng</strong> (<code>.q-table__middle</code>) để cả
+      trang vừa đúng một màn hình — không còn gì để trôi, và thanh cuộn duy nhất nằm trong bảng.</p>
+      <p>Chiều cao đó <strong>đo bằng JS</strong> (<code>innerHeight − getBoundingClientRect().top</code>),
+      CSS <code>calc(100vh - 290px)</code> chỉ là mức dự phòng. Trừ cứng một hằng số sẽ sai ngay trên
+      máy trạm 1366px: thanh lọc có 7 điều khiển nên xuống 2 dòng, phần dư đủ để cả trang cuộn lại được
+      — đúng thứ cần tránh. Đo lại khi cửa sổ đổi kích thước và khi DOM thay đổi
+      (<code>MutationObserver</code> + gộp qua <code>requestAnimationFrame</code>, vì chèn 218 dòng
+      sinh rất nhiều lần gọi).</p>
+      <p>Bỏ luôn phân trang (<code>rowsPerPage: 0</code>) — vùng cuộn đã có thì bấm sang trang chỉ thêm
+      thao tác thừa; 218 dòng là mức Quasar dựng thoải mái, chưa cần <code>virtual-scroll</code>.</p>
+
+      <p class="label">Ba lỗi lộ ra khi nhập thử file thật</p>
+      <p>Nhập file gốc trên giao diện: <strong>không phản hồi gì</strong>. Ba nguyên nhân độc lập, mỗi
+      cái đủ để tự nó gây ra triệu chứng đó.</p>
+      <table>
+        <tr><th>Lỗi</th><th>Nguyên nhân</th><th>Sửa</th></tr>
+        <tr><td><code>ui.notify</code> ném <code>RuntimeError: slot stack is empty</code>, NiceGUI nuốt
+            lỗi → nhập xong không có thông báo nào, bảng không tự tải lại</td>
+            <td><code>on_upload=lambda e: asyncio.create_task(do_import(e))</code>.
+            <code>Slot.stacks</code> của NiceGUI đánh khoá theo <strong>id của asyncio task</strong>
+            (<code>slot.py::get_stack</code>), không phải ContextVar — nên task mới luôn bắt đầu với
+            ngăn xếp slot <em>rỗng</em>; contextvars có được sao chép cũng vô ích.</td>
+            <td>Truyền thẳng hàm <code>async</code> vào <code>on_upload</code>.
+            <code>handle_event</code> nhận về coroutine rồi tự <code>await</code> nó
+            <em>bên trong</em> <code>with parent_slot</code>.</td></tr>
+        <tr><td>Nhập mất <strong>13&nbsp;giây</strong> chỉ để đọc file 218 dòng</td>
+            <td>Sheet khai vùng dữ liệu tới <code>max_row = 1.048.573</code> (cả cột được định dạng
+            sẵn). <code>iter_rows()</code> không giới hạn nên duyệt hết một triệu dòng rỗng.</td>
+            <td>Dừng sau 50 dòng trống liên tiếp. Đo lại: <strong>13,42s → 0,04s</strong>.</td></tr>
+        <tr><td>Trong 13 giây đó <strong>toàn bộ backend đứng im</strong> với mọi người dùng</td>
+            <td><code>_parse_workbook</code> gọi thẳng trong endpoint <code>async def</code>; openpyxl
+            là Python thuần, giữ GIL suốt và chặn event loop.</td>
+            <td>Bọc bằng <code>run_heavy()</code> như các endpoint sinh tài liệu khác.</td></tr>
+      </table>
+      <p>Thêm thông báo "Đang nhập…" và bật khung chờ ngay khi nhận file: kể cả sau khi sửa tốc độ,
+      im lặng trong lúc chờ vẫn khiến người dùng tưởng máy treo.</p>
+
+      <p class="label">Lỗi thứ tư — tìm theo tên CN không ra kết quả (phát hiện khi kiểm thử)</p>
+      <p>File Excel gốc ghi tiếng Việt ở dạng <strong>tổ hợp</strong>: "ế" nằm trong file là
+      <code>ê</code> + dấu sắc rời (U+0301), không phải một ký tự dựng sẵn. 11/218 tên chi nhánh ở dạng
+      này. Bộ gõ tiếng Việt thông thường sinh ra dạng dựng sẵn (NFC), nên gõ "bến thành" vào ô tìm kiếm
+      <strong>không ra chi nhánh nào</strong> — và không báo lỗi gì, chỉ hiện danh sách rỗng như thể
+      không có chi nhánh nào tên vậy. Đây là kiểu sai nguy hiểm nhất: người dùng kết luận sai mà không
+      có dấu hiệu nào cho biết hệ thống đang hỏng.</p>
+      <p><code>lower()</code> của SQLite chỉ hạ được chữ ASCII nên cũng không cứu được; hai chuỗi khác
+      nhau ở mức byte thì <code>LIKE</code> không khớp, bất kể trông giống hệt nhau trên màn hình.</p>
+      <p>Sửa: chuẩn hoá <strong>NFC</strong> ở cả ba cửa ngõ — <code>_cell_str()</code> (nhập Excel),
+      <code>_clean()</code> trong schema (thêm/sửa tay), và từ khoá tìm kiếm. Chuẩn hoá từ khoá là cần
+      thiết chứ không thừa: người dán tên từ nguồn khác vào ô tìm kiếm có thể mang theo dạng tổ hợp.
+      13 dòng đã lưu trong DB cũng được chuẩn hoá lại một lần.</p>
+      <p><em>Bài học:</em> dữ liệu tiếng Việt đến từ file người khác lập thì <strong>không mặc định
+      cùng dạng Unicode</strong> với dữ liệu người dùng gõ. Mọi cột dùng để tra cứu đều phải chuẩn hoá
+      lúc ghi, không phải lúc đọc.</p>
+
+      <p class="label">⚠ Cùng lỗi slot này còn ở khoảng 25 chỗ khác trong <code>frontend/pages/</code></p>
+      <p>Mẫu <code>on_click=lambda: asyncio.ensure_future(...)</code> /
+      <code>on_upload=lambda e: asyncio.create_task(...)</code> xuất hiện ở
+      <code>staff.py</code>, <code>leaves.py</code>, <code>audit_logs.py</code>, <code>logs.py</code>,
+      <code>login_logs.py</code>, <code>bundles.py</code>, <code>duty_schedule.py</code>. Đã dựng lại
+      cơ chế để xác nhận: coroutine chạy trong task mới → <code>ui.notify</code> và
+      <code>ui.download</code> (đều đi qua <code>context.client</code>) ném RuntimeError và bị nuốt.
+      Nơi nào chỉ dựng lại giao diện bên trong <code>with container:</code> thì vẫn chạy, vì khối
+      <code>with</code> tự tạo ngăn xếp slot mới cho task đó. Nơi gọi thẳng
+      <code>ui.notify</code>/<code>ui.download</code> — ví dụ nút <em>Xuất Excel</em> ở
+      <code>staff.py:185</code> — thì hỏng ngầm. <strong>Chưa sửa trong đợt này</strong>: nằm ngoài
+      phạm vi yêu cầu và phải kiểm lại từng chỗ một, không thay máy móc được.</p>
+
+      <p class="label">Chưa kiểm được</p>
+      <p>Chưa mở trang bằng trình duyệt thật — môi trường không có Playwright/Selenium và NiceGUI gửi
+      nội dung sau <code>await</code> qua websocket nên HTML lần tải đầu không chứa bảng. Phần đã xác
+      minh là <em>cây element phía Python</em>; phần chưa xác minh là cách Quasar render slot
+      <code>body</code> trên màn hình thật (căn cột, xuống dòng ô địa chỉ, vị trí nút sửa/xoá).</p>
+
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-05</footer>
 </div>
 </body>
 </html>

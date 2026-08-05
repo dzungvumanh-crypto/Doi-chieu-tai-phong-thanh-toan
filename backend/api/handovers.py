@@ -20,7 +20,7 @@ from backend.schemas.handovers import (
     EntryUpsertRequest, GridEntryOut, GridResponse, HandbackRequest,
     RejectRequest,
 )
-from backend.services.handover_report_service import SUBMIT_ACTIONS
+from backend.services.handover_report_service import submitted_at_from_logs
 
 # `log` là tên biến lặp trong get_entry_history → logger phải mang tên khác
 log_ = logging.getLogger(__name__)
@@ -621,14 +621,10 @@ def get_entry_history(
     tx_date = date.fromisoformat(entry["transaction_date"]).strftime("%d/%m/%Y") if entry["transaction_date"] else ""
 
     # ── Ngày nộp thật ──
-    # Log sớm nhất của hành động "nộp lần đầu". Không lấy log mới nhất (thao tác sau
-    # như xác nhận / mượn sẽ đẩy ngày trôi đi) và không lấy `handovers.handover_date`
-    # (luôn bằng transaction_date khi nhập qua lưới).
-    submit_ts = min(
-        (str(l["timestamp"]) for l in logs
-         if (l["action"] or "") in SUBMIT_ACTIONS and l["timestamp"]),
-        default=None,
-    )
+    # Log nộp sớm nhất còn hiệu lực (bỏ các lần đã bị từ chối). Không lấy log mới nhất
+    # (thao tác sau như xác nhận / mượn sẽ đẩy ngày trôi đi) và không lấy
+    # `handovers.handover_date` (luôn bằng transaction_date khi nhập qua lưới).
+    submit_ts = submitted_at_from_logs(logs)
     submit_date = None
     if submit_ts:
         try:
