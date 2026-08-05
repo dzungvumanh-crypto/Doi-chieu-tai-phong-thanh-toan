@@ -28,3 +28,23 @@ logs/
 # Report outputs
 BaoCaoHauKiem/
 MCB.xlsx
+
+# Offline standalone package (build output — regenerate via scripts/build_offline_package.ps1)
+dist_offline/
+
+# Dữ liệu tài chính thật / thư mục scratch verify — KHÔNG commit (audit 2026-08-05: ~50GB
+# nằm untracked ở gốc dự án, chưa có gitignore nào chặn, rủi ro commit nhầm toàn bộ).
+# Xóa/di chuyển các mục này CẦN quyết định riêng, không tự ý xóa — xem
+# feedback_ready_for_ux_handoff / project_scratch_cleanup_reminder trong memory.
+/Cham ILO1000/
+/Chấm 459901/
+/DoichieuSongphuong/
+/citad -hub/
+/Đối chiếu ACH/
+/Đối chiếu ACH.zip
+/_scratch_milestone_F1/
+/_scratch_verify_1112/
+/_scratch_verify_167/
+/_scratch_verify_22_07_session_null_br/
+/_scratch_verify_dien_rong_25_07/
+/_scratch_verify_session_null_br/
