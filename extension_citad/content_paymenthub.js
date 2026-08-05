@@ -31,6 +31,25 @@ function parseNum(s) {
   return parseInt((s || '').replace(/[^\d]/g, '')) || 0;
 }
 
+// Parse SỐ TIỀN (khác parseNum dùng cho SỐ MÓN) — USD/EUR có phần thập phân
+// (xu/cent), không thể xoá hết ký tự không phải chữ số như parseNum vì sẽ
+// xoá luôn dấu thập phân (vd "1.234,56" thành 123456 — sai gấp 100 lần).
+// Tự nhận diện dấu thập phân: dấu phân cách CUỐI CÙNG trong chuỗi chỉ là
+// thập phân khi theo sau đúng 1-2 chữ số (độ dài phần lẻ tiền tệ) — nhóm
+// nghìn luôn đúng 3 chữ số nên không nhầm lẫn được.
+function parseMoney(s) {
+  const cleaned = (s || '').replace(/[^\d.,]/g, '');
+  if (!cleaned) return 0;
+  const lastSep = Math.max(cleaned.lastIndexOf('.'), cleaned.lastIndexOf(','));
+  if (lastSep === -1) return parseFloat(cleaned) || 0;
+  const intPart = cleaned.slice(0, lastSep).replace(/[.,]/g, '');
+  const fracPart = cleaned.slice(lastSep + 1).replace(/[.,]/g, '');
+  if (fracPart.length === 0 || fracPart.length > 2) {
+    return parseFloat(intPart + fracPart) || 0; // dấu cuối vẫn là phân cách nghìn
+  }
+  return parseFloat(`${intPart}.${fracPart}`) || 0;
+}
+
 function showToast(msg, color='#10b981', duration=4000) {
   const old = document.getElementById('_ph_toast');
   if (old) old.remove();
@@ -171,14 +190,14 @@ function readBaoCaoData() {
     const ten = (tds[2]?.innerText || '').trim();
     if (ten.includes('CITAD cao')) {
       result.ih = {
-        den_m: parseNum(tds[3]?.innerText), den_t: parseNum(tds[4]?.innerText),
-        di_m:  parseNum(tds[5]?.innerText), di_t:  parseNum(tds[6]?.innerText),
+        den_m: parseNum(tds[3]?.innerText), den_t: parseMoney(tds[4]?.innerText),
+        di_m:  parseNum(tds[5]?.innerText), di_t:  parseMoney(tds[6]?.innerText),
       };
     }
     if (ten.includes('CITAD thấp')) {
       result.il = {
-        den_m: parseNum(tds[3]?.innerText), den_t: parseNum(tds[4]?.innerText),
-        di_m:  parseNum(tds[5]?.innerText), di_t:  parseNum(tds[6]?.innerText),
+        den_m: parseNum(tds[3]?.innerText), den_t: parseMoney(tds[4]?.innerText),
+        di_m:  parseNum(tds[5]?.innerText), di_t:  parseMoney(tds[6]?.innerText),
       };
     }
   }
@@ -318,7 +337,7 @@ function readTraCuuData() {
   const mTien = txt.match(/Tổng số tiền:\s*([\d.,]+)\s*(VND|USD|EUR)/i);
   return {
     soMon:   mMon  ? (parseInt(mMon[1].replace(/[^\d]/g,'')) || 0) : 0,
-    soTien:  mTien ? (parseInt(mTien[1].replace(/[^\d]/g,'')) || 0) : 0,
+    soTien:  mTien ? parseMoney(mTien[1]) : 0,
     loaiTien: mTien ? (mTien[2].toUpperCase() === 'VND' ? 'VNĐ' : mTien[2].toUpperCase()) : 'VNĐ',
   };
 }

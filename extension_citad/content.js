@@ -55,6 +55,26 @@ function isNgoaiTe() {
   return window.location.href.includes('BangKeGiaoDichNgoaiTeTrongNgay');
 }
 
+// Parse số tiền có thể kèm phần thập phân (USD/EUR có xu/cent) — không thể
+// chỉ replace(/[^\d]/g,'') như số món vì sẽ xoá luôn dấu thập phân, làm
+// "1.234,56" thành 123456 (sai gấp 100 lần). Không biết trước CITAD dùng
+// quy ước dấu nào (','/'.' làm thập phân) nên tự nhận diện: dấu phân cách
+// XUẤT HIỆN CUỐI CÙNG trong chuỗi là thập phân CHỈ KHI theo sau đúng 1-2
+// chữ số (đúng độ dài phần lẻ tiền tệ) — nhóm nghìn luôn đúng 3 chữ số nên
+// không nhầm lẫn được với trường hợp này.
+function parseMoney(s) {
+  const cleaned = (s || '').replace(/[^\d.,]/g, '');
+  if (!cleaned) return 0;
+  const lastSep = Math.max(cleaned.lastIndexOf('.'), cleaned.lastIndexOf(','));
+  if (lastSep === -1) return parseFloat(cleaned) || 0;
+  const intPart = cleaned.slice(0, lastSep).replace(/[.,]/g, '');
+  const fracPart = cleaned.slice(lastSep + 1).replace(/[.,]/g, '');
+  if (fracPart.length === 0 || fracPart.length > 2) {
+    return parseFloat(intPart + fracPart) || 0; // dấu cuối vẫn là phân cách nghìn
+  }
+  return parseFloat(`${intPart}.${fracPart}`) || 0;
+}
+
 // ── Đọc cấu hình hiện tại từ trang ──────────────────────────────────
 function readConfig() {
   const cfg = { cong: getCong(), loaiDV: '', chieu: '', loaiTien: '' };
@@ -93,8 +113,8 @@ function readResult() {
       if (m) res.soMon = parseInt(m[1].replace(/[^\d]/g,'')) || 0;
     }
     if (txt.includes('Tổng cộng') && tds.length >= 3) {
-      const no = parseInt((tds[1]?.innerText||'').replace(/[^\d]/g,'')) || 0;
-      const co = parseInt((tds[2]?.innerText||'').replace(/[^\d]/g,'')) || 0;
+      const no = parseMoney(tds[1]?.innerText);
+      const co = parseMoney(tds[2]?.innerText);
       res.soTien = no + co;
     }
   }
