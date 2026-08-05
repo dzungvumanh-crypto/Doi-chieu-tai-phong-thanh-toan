@@ -432,17 +432,19 @@ def export_month(
     ws = wb.active
     ws.title = f"Bang cong {month:02d}-{year}"
 
-    hdr_fill = PatternFill("solid", fgColor="C62828")
-    hdr_font = Font(bold=True, color="FFFFFF")
-    # Hoạ tiết gạch chéo (hatch) cho cột T7/CN — khớp đúng mẫu Excel thật của
-    # Phòng Kế toán (ảnh tham khảo), thay vì tô màu phẳng như bản trước.
-    weekend_fill = PatternFill(fill_type="lightUp", fgColor="FFFFFF", bgColor="FFF9C4")
+    # Font/màu khớp đúng mẫu giấy thật đang dùng ở Phòng Kế toán
+    # (file 5_BANG_CHAM_CONG_PHONG_KE_TOAN_2026.xlsx) — Times New Roman, header
+    # ngày thường nền trắng (không tô đỏ), T7/CN tô vàng trơn (không hoạ tiết).
+    FONT_NAME = "Times New Roman"
+    hdr_fill = PatternFill("solid", fgColor="FFFFFFFF")
+    hdr_font = Font(name=FONT_NAME, size=11, bold=True)
+    plain_hdr_font = Font(name=FONT_NAME, size=12, bold=False)
+    weekend_fill = PatternFill("solid", fgColor="FFFFFF00")
     holiday_fill = PatternFill("solid", fgColor="C8E6C9")
-    leave_fill = PatternFill("solid", fgColor="FFCDD2")
     thin = Side(style="thin", color="000000")
     cell_border = Border(left=thin, right=thin, top=thin, bottom=thin)
 
-    total_cols = 2 + days_in_month + 1  # STT + Họ tên + ngày + Tổng công
+    total_cols = 2 + days_in_month + 1  # STT + Họ tên + ngày + Số công
     last_col_letter = get_column_letter(total_cols)
     left_end = total_cols // 2       # chia đôi bề ngang cho khối tiêu đề trái/phải
     right_start = left_end + 1
@@ -452,33 +454,36 @@ def export_month(
     # (phải, căn giữa), dòng 5 tên phòng, dòng 7-8 tiêu đề "BẢNG CHẤM CÔNG" +
     # tháng/năm (căn giữa, merge hết bề ngang). Bảng dữ liệu bắt đầu từ dòng 10.
     ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=left_end)
-    ws.cell(row=2, column=1, value="NGÂN HÀNG NÔNG NGHIỆP").font = Font(bold=True)
+    ws.cell(row=2, column=1, value="NGÂN HÀNG NÔNG NGHIỆP").font = Font(name=FONT_NAME, size=12, bold=True)
     ws.merge_cells(start_row=2, start_column=right_start, end_row=2, end_column=total_cols)
     c = ws.cell(row=2, column=right_start, value="CỘNG HOÀ XÃ HỘI CHỦ NGHĨA VIỆT NAM")
-    c.font = Font(bold=True)
+    c.font = Font(name=FONT_NAME, size=12, bold=True)
     c.alignment = Alignment(horizontal="center")
 
     ws.merge_cells(start_row=3, start_column=1, end_row=3, end_column=left_end)
-    ws.cell(row=3, column=1, value="VÀ PHÁT TRIỂN NÔNG THÔN VIỆT NAM").font = Font(bold=True)
+    ws.cell(row=3, column=1, value="VÀ PHÁT TRIỂN NÔNG THÔN VIỆT NAM").font = Font(name=FONT_NAME, size=12, bold=True)
     ws.merge_cells(start_row=3, start_column=right_start, end_row=3, end_column=total_cols)
     c = ws.cell(row=3, column=right_start, value="Độc lập - Tự do - Hạnh phúc")
-    c.font = Font(bold=True)
+    c.font = Font(name=FONT_NAME, size=12, bold=True)
     c.alignment = Alignment(horizontal="center")
 
     ws.merge_cells(start_row=5, start_column=1, end_row=5, end_column=left_end)
-    ws.cell(row=5, column=1, value="Phòng Kế toán - TTTT").font = Font(bold=True)
+    c = ws.cell(row=5, column=1, value="Phòng Kế toán - TTTT")
+    c.font = Font(name=FONT_NAME, size=12, bold=True)
+    c.alignment = Alignment(horizontal="center")
 
     ws.merge_cells(start_row=7, start_column=1, end_row=7, end_column=total_cols)
     c = ws.cell(row=7, column=1, value="BẢNG CHẤM CÔNG")
-    c.font = Font(bold=True, size=14)
+    c.font = Font(name=FONT_NAME, bold=True, size=14)
     c.alignment = Alignment(horizontal="center")
 
     ws.merge_cells(start_row=8, start_column=1, end_row=8, end_column=total_cols)
     c = ws.cell(row=8, column=1, value=f"Tháng {month} năm {year}")
+    c.font = Font(name=FONT_NAME, size=14)
     c.alignment = Alignment(horizontal="center")
 
     header_row = 10
-    headers = ["STT", "Họ và tên"] + [str(d) for d in range(1, days_in_month + 1)] + ["Tổng công"]
+    headers = ["STT", "Họ và tên"] + [str(d) for d in range(1, days_in_month + 1)] + ["Số công"]
     for col_idx, val in enumerate(headers, start=1):
         ws.cell(row=header_row, column=col_idx, value=val)
     for col_idx, cell in enumerate(ws[header_row], start=1):
@@ -487,17 +492,27 @@ def export_month(
         if 3 <= col_idx <= 2 + days_in_month:
             d = date(year, month, col_idx - 2)
             if d.weekday() >= 5:
-                cell.fill, cell.font = weekend_fill, Font(bold=True)
+                cell.fill, cell.font = weekend_fill, hdr_font
                 continue
             if d in holiday_dates:
-                cell.fill, cell.font = holiday_fill, Font(bold=True)
+                cell.fill, cell.font = holiday_fill, hdr_font
                 continue
-        cell.fill, cell.font = hdr_fill, hdr_font
+            cell.fill, cell.font = hdr_fill, hdr_font
+            continue
+        # STT / Họ và tên: không tô nền, không đậm — khớp mẫu thật
+        cell.font = plain_hdr_font
+    ws.cell(row=header_row, column=total_cols).fill = hdr_fill
+    ws.cell(row=header_row, column=total_cols).font = hdr_font
     ws.column_dimensions["A"].width = 5
     ws.column_dimensions["B"].width = 25
     for col_idx in range(3, 3 + days_in_month):
         ws.column_dimensions[get_column_letter(col_idx)].width = 4
     ws.column_dimensions[get_column_letter(3 + days_in_month)].width = 10
+
+    name_font = Font(name=FONT_NAME, size=12)
+    symbol_font_normal = Font(name=FONT_NAME, size=11, bold=False)
+    symbol_font_special = Font(name=FONT_NAME, size=11, bold=True)  # ký hiệu khác 'x' in đậm — khớp mẫu thật
+    total_font = Font(name=FONT_NAME, size=12, bold=True)
 
     for idx, srow in enumerate(staff_rows, 1):
         sid = srow["id"]
@@ -517,33 +532,70 @@ def export_month(
         row_vals.append(total)
         ws.append(row_vals)
         r = ws.max_row
-        # Viền kẻ ô cho toàn bộ dòng (STT + Họ tên + từng ngày + Tổng công) —
+        # Viền kẻ ô cho toàn bộ dòng (STT + Họ tên + từng ngày + Số công) —
         # để giống bảng giấy thật, in ra rõ ràng từng ô thay vì chỉ có màu nền.
         for col_idx in range(1, total_cols + 1):
             ws.cell(row=r, column=col_idx).border = cell_border
+        ws.cell(row=r, column=1).font = name_font
+        ws.cell(row=r, column=2).font = name_font
+        ws.cell(row=r, column=total_cols).font = total_font
         for day_num in range(1, days_in_month + 1):
             d = date(year, month, day_num)
             cell = ws.cell(row=r, column=2 + day_num)
             cell.alignment = Alignment(horizontal="center")
-            if cell.value == "P":
-                cell.fill = leave_fill
-            elif d in holiday_dates:
+            # Không tô màu riêng cho ô nghỉ phép/nghỉ khác — mẫu thật chỉ in đậm,
+            # không có nền màu (chỉ T7/CN và ngày lễ mới có nền).
+            if d in holiday_dates:
                 cell.fill = holiday_fill
             elif d.weekday() >= 5:
                 cell.fill = weekend_fill
+            cell.font = symbol_font_normal if cell.value in (None, "", "x") else symbol_font_special
 
-    # 2 dòng ký tên: "Lập bảng" tự động = người đang thực hiện xuất (dù là GDV
-    # được cấp quyền hay trưởng/phó phòng), "Kiểm soát" = tên đã chọn ở dropdown
-    # frontend, đã validate lại phía trên. Tên ghi ngay dưới nhãn — khớp mẫu ảnh.
-    last_row = ws.max_row
-    sign_col_2 = max(3, 1 + days_in_month)
-    ws.cell(row=last_row + 2, column=2, value="Người lập bảng").font = Font(bold=True)
-    ws.cell(row=last_row + 3, column=2, value=current["full_name"])
-    ws.cell(row=last_row + 2, column=sign_col_2, value="Người kiểm soát").font = Font(bold=True)
-    ws.cell(row=last_row + 3, column=sign_col_2, value=kiem_soat["full_name"])
+    # Dòng chú thích ký hiệu — liệt kê động từ attendance_symbols đang active
+    # (trừ 'x' vì là công bình thường, không cần giải thích), khớp đúng câu chữ
+    # mẫu thật: "Ghi chú: P: Nghỉ phép. T: Nghỉ thai sản. ...".
+    sym_rows = db.execute(
+        "SELECT symbol, description FROM attendance_symbols WHERE is_active=1 AND symbol != 'x' ORDER BY rowid"
+    ).fetchall()
+    legend = "Ghi chú: " + ". ".join(f"{s['symbol']}: {s['description']}" for s in sym_rows)
+    note_row = ws.max_row + 1
+    ws.merge_cells(start_row=note_row, start_column=1, end_row=note_row, end_column=total_cols)
+    c = ws.cell(row=note_row, column=1, value=legend)
+    c.font = Font(name=FONT_NAME, size=11, bold=True)
+    c.alignment = Alignment(horizontal="left")
+
+    # 2 dòng ký tên, cách nhau nhiều dòng trống để ký tay khi in — khớp đúng
+    # khoảng cách ở mẫu thật (nhãn dòng note_row+1, tên dòng note_row+8).
+    # "Lập bảng" tự động = người đang thực hiện xuất (dù là GDV được cấp quyền
+    # hay trưởng/phó phòng), "Kiểm soát" = tên đã chọn ở dropdown frontend, đã
+    # validate lại phía trên.
+    label_row = note_row + 1
+    name_row = label_row + 7
+    # "Lập bảng" chiếm cột B-D, "Kiểm soát" chiếm từ cột E tới hết bảng — khớp
+    # đúng vùng merge ở mẫu thật (B23:D23 và E23:AH23), không phụ thuộc số ngày
+    # trong tháng như công thức cũ (từng đẩy "Kiểm soát" dồn sát mép phải).
+    sign_col_2 = 5
+    sign_label_font = Font(name=FONT_NAME, size=14, bold=True)
+    sign_name_font = Font(name=FONT_NAME, size=14, bold=True)
+    ws.merge_cells(start_row=label_row, start_column=2, end_row=label_row, end_column=4)
+    ws.cell(row=label_row, column=2, value="Lập bảng").font = sign_label_font
+    ws.cell(row=label_row, column=2).alignment = Alignment(horizontal="center")
+    ws.merge_cells(start_row=name_row, start_column=2, end_row=name_row, end_column=4)
+    c = ws.cell(row=name_row, column=2, value=current["full_name"])
+    c.font = sign_name_font
+    c.alignment = Alignment(horizontal="center")
+
+    ws.merge_cells(start_row=label_row, start_column=sign_col_2, end_row=label_row, end_column=total_cols)
+    c = ws.cell(row=label_row, column=sign_col_2, value="Kiểm soát")
+    c.font = sign_label_font
+    c.alignment = Alignment(horizontal="center")
+    ws.merge_cells(start_row=name_row, start_column=sign_col_2, end_row=name_row, end_column=total_cols)
+    c = ws.cell(row=name_row, column=sign_col_2, value=kiem_soat["full_name"])
+    c.font = sign_name_font
+    c.alignment = Alignment(horizontal="center")
 
     # ── Cấu hình khổ giấy A4 ngang để in trực tiếp — bảng có tới 34 cột (STT +
-    # Họ tên + tối đa 31 ngày + Tổng công) nên bắt buộc landscape mới vừa. fitToWidth=1
+    # Họ tên + tối đa 31 ngày + Số công) nên bắt buộc landscape mới vừa. fitToWidth=1
     # ép co vừa 1 trang theo bề ngang khi in; fitToHeight=0 cho phép nhiều trang dọc
     # nếu phòng đông người — mỗi trang tự lặp lại phần tiêu đề + header cột.
     ws.page_setup.orientation = "landscape"

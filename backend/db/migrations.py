@@ -853,6 +853,20 @@ def _ensure_indexes():
         # xoá/sửa lịch sử migration cũ, chỉ nối thêm bước dọn dẹp phía sau.
         "DROP TRIGGER IF EXISTS trg_login_sync_checkin",
         "DROP TABLE IF EXISTS attendance_checkin_logs",
+
+        # ── Bổ sung ký hiệu chấm công theo đúng mẫu giấy thật của Phòng Kế toán
+        # (file 5_BANG_CHAM_CONG_PHONG_KE_TOAN_2026.xlsx) — 2026-08-05. CT/H/HT vẫn
+        # tính đủ 1 công (công tác/đi học/hội thao vẫn là đi làm, không phải nghỉ);
+        # T/ND/O/S/C không tính công, giống 'P' — theo xác nhận của người dùng.
+        """INSERT OR IGNORE INTO attendance_symbols (symbol, description, work_value, color, is_active) VALUES
+            ('T',  'Nghỉ thai sản',    0.0, '#FDE68A', 1),
+            ('ND', 'Nghỉ dưỡng',       0.0, '#FBCFE8', 1),
+            ('CT', 'Công tác',         1.0, '#BFDBFE', 1),
+            ('O',  'Nghỉ ốm',          0.0, '#E5E7EB', 1),
+            ('H',  'Đi học',           1.0, '#C7D2FE', 1),
+            ('S',  'Nghỉ ốm dài ngày', 0.0, '#D1D5DB', 1),
+            ('C',  'Cưới',             0.0, '#FBCFE8', 1),
+            ('HT', 'Hội Thao',         1.0, '#A7F3D0', 1)""",
     ]
     _mig_log = logging.getLogger(__name__)
 
