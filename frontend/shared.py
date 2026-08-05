@@ -49,6 +49,7 @@ DEPARTMENTS = [
                 "items": [
                     ("cham_459901",           "Chấm 459901",            "task_alt"),
                     ("doi_chieu_song_phuong", "Đối chiếu Song phương",  "account_balance"),
+                    ("doi_chieu_ach",         "Đối chiếu ACH",          "sync_alt"),
                     ("doi_chieu_citad",       "Đối chiếu CITAD",        "account_balance_wallet"),
                     ("doi_soat_citad",        "Đối soát CITAD ↔ IPCAS", "fact_check"),
                 ],

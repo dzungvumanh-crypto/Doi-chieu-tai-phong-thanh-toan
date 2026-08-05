@@ -4,6 +4,18 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 05/08/2026 Phòng Thanh toán - Thêm màn hình **Đối chiếu ACH** (GL02 ↔ MIS):
+    + Menu *Phòng Thanh toán → Đối chiếu* có thêm **Đối chiếu ACH**. Công cụ trước đây chạy riêng trên một máy nay vào thẳng phần mềm, dùng chung tài khoản và phân quyền như mọi màn hình khác
+    + Cách dùng: chọn (hoặc kéo thả) đủ bộ file của một ngày — file GL02, file GW, 2 file MIS chiều ĐI, 2 file MIS chiều ĐẾN và file PDF sao kê. Màn hình có **bảng kiểm tra đã đủ file chưa**, thiếu loại nào báo ngay chứ không để chạy xong mới lỗi
+    + **Ngày đối chiếu để trống là được** — hệ thống tự lấy từ tên file PDF. Nếu tên file không đúng mẫu thì **báo lỗi rõ ràng**, không tự dùng một ngày khác
+    + Kết quả là 1 file Excel gồm bảng tổng kết, bảng phân tích có **cảnh báo tự động** (lệnh TPAY chưa xử lý, lệnh timeout không đi kênh, cặp chi nhánh + số tiền nghi sai số trace) và các sheet chi tiết khớp / chưa khớp từng chiều. Sheet nào **trên 15.000 dòng** được tách ra file CSV riêng, tải lẻ từng file hoặc bấm **Tải tất cả (ZIP)**
+    + ⚠️ **Mở file CSV bằng Excel → Data → Từ Văn bản/CSV, đừng double-click.** Double-click sẽ mất số 0 đứng đầu ở cột TRACE, MSGSEQ và sai định dạng số tiền
+    + Trong lúc chạy có **thanh tiến độ và nhật ký xử lý**; bấm **Dừng** thì hệ thống dừng ở bước gần nhất chứ không cắt ngang giữa chừng (cắt ngang dễ làm treo máy chủ). Dừng xong báo *"Đã dừng đối chiếu theo yêu cầu"* — không phải báo lỗi đỏ
+    + Bấm ✕ để bỏ file chọn nhầm: nếu máy chủ chưa xoá được (Windows đang khoá file vừa ghi) thì **báo rõ và giữ nguyên file trong danh sách**, không để màn hình nói đã xoá trong khi file vẫn còn
+    + Một lúc chỉ chạy **một lần đối chiếu**; người bấm sau sẽ thấy trạng thái đang xếp hàng. Kết quả giữ trên máy chủ **4 giờ** rồi tự xoá — cần thì tải về máy, không lưu lịch sử tra cứu lại
+    + Cần bật quyền trong *Phân quyền theo nhóm* (`menu.doi_chieu_ach`, `doi_chieu_ach.process`), nếu không chỉ admin nhìn thấy menu
+    + ⚠️ **Máy chủ phải chạy lại `pip install -r requirements.txt`** (thêm 2 thư viện `xlsxwriter`, `python-calamine`), nếu không backend không khởi động được
+
 - 05/08/2026 Đối chiếu CITAD - Extension lấy đúng số tiền lẻ và tự điền được mã kết nối:
     + ⚠️ **Số tiền USD/EUR lấy tự động từ Extension trước đây sai gấp 100 lần.** Phần xu bị nhập vào thành phần nguyên — `1.234,56` USD thành `123.456`. Nay lấy đúng cả phần lẻ
     + **Số món không dính lỗi này, và VNĐ cũng không** (không có đơn vị lẻ). Chỉ ảnh hưởng cột số tiền của USD và EUR
