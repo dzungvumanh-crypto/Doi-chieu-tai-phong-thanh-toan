@@ -77,6 +77,9 @@ FEATURES: dict[str, str] = {
     # Đối chiếu Song phương — Phòng Thanh toán
     "menu.doi_chieu_song_phuong":    "Đối chiếu Song phương — Định tuyến lệnh IPCAS (menu)",
     "doi_chieu_song_phuong.process": "Xử lý file ZIP Đối chiếu Song phương",
+    # Đối chiếu ACH — Phòng Thanh toán
+    "menu.doi_chieu_ach":       "Đối chiếu ACH — GL02 ↔ MIS (menu)",
+    "doi_chieu_ach.process":    "Chạy đối chiếu ACH",
     # Đối chiếu CITAD ↔ PaymentHub — Phòng Thanh toán
     "menu.doi_chieu_citad":     "Đối chiếu CITAD ↔ PaymentHub (menu)",
     # Đối soát CITAD ↔ IPCAS — Phòng Thanh toán
@@ -172,6 +175,10 @@ FEATURE_GROUPS: list[dict] = [
             {
                 "code": "menu.doi_chieu_song_phuong",
                 "actions": ["doi_chieu_song_phuong.process"],
+            },
+            {
+                "code": "menu.doi_chieu_ach",
+                "actions": ["doi_chieu_ach.process"],
             },
             {"code": "menu.doi_chieu_citad", "actions": []},
             {"code": "menu.doi_soat_citad", "actions": []},

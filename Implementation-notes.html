@@ -53,6 +53,107 @@
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
   <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-05</p>
 
+  <!-- M -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">M</span>
+      <span class="card-title">Tích hợp Đối chiếu ACH (GL02 ↔ MIS) vào menu Đối chiếu — Phòng Thanh toán</span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Nguồn gốc và nguyên tắc port</p>
+      <p>Code đến từ app rời <code>DOI-CHIEU-ACH</code> (CLI + Flask/SocketIO, chạy 1 máy 1 người).
+      Nguyên tắc: <strong>giữ nguyên 100% logic nghiệp vụ B1–B8</strong>, chỉ thay lớp vỏ. Đã kiểm chứng
+      bằng cách chạy song song bản gốc và bản port trên cùng bộ dữ liệu tổng hợp 270.310 dòng
+      (<code>create_test_data.py</code> của app gốc): 5 file CSV kết quả <strong>trùng md5</strong>, 11 sheet
+      Excel trùng từng ô, các mốc B2/B3/B4/B5/B7 khớp đúng số liệu kỳ vọng mà bộ sinh dữ liệu công bố.</p>
+
+      <table>
+        <tr><th>Điểm khác bản gốc</th><th>Quyết định</th><th>Lý do</th></tr>
+        <tr><td>Ngày đối chiếu</td><td>Bỏ <code>NGAY_DOI_CHIEU</code> khỏi config; lấy từ ô nhập hoặc suy từ tên file PDF, không suy được thì <strong>báo lỗi</strong></td>
+            <td>Bản gốc để cứng ngày trong <code>config.py</code> và âm thầm dùng lại khi không suy được — nhiều người dùng chung một server thì đây là đường thẳng tới một bản đối chiếu sai ngày mà không ai biết.</td></tr>
+        <tr><td>Mốc TPAY</td><td>Tính cục bộ trong engine, truyền tường minh xuống B4</td>
+            <td>Bản gốc đọc <code>config.TPAY_TU/TPAY_DEN</code> ở module level. Hai job chạy cùng lúc sẽ đọc nhầm mốc của nhau.</td></tr>
+        <tr><td>Luồng chạy</td><td><code>ThreadPoolExecutor(max_workers=1)</code> riêng, <strong>không</strong> dùng <code>BackgroundTasks</code> như <code>doi_chieu_song_phuong</code></td>
+            <td>Một lần chạy mất vài phút và tự mở thêm 4 luồng con. Đi qua bể chung anyio 40 token là đúng kịch bản làm nghẽn cả <code>/api/auth/me</code> đã mô tả ở <code>core/concurrency.py</code>. <code>max_workers=1</code>: chạy 2 job song song tốn RAM gấp đôi mà không nhanh hơn vì pandas giữ GIL — job thứ hai xếp hàng.</td></tr>
+        <tr><td>Tiến độ</td><td>Poll <code>/progress/{token}</code> thay cho SocketIO</td>
+            <td>Đồng bộ với các module đối chiếu sẵn có; không phải thêm websocket vào hệ thống.</td></tr>
+        <tr><td>Excel</td><td>Bỏ <code>tqdm</code>, thêm <code>xlsxwriter</code> + <code>python-calamine</code> vào requirements</td>
+            <td>tqdm chỉ để vẽ thanh tiến độ ở terminal. Hai gói kia là bắt buộc: <code>constant_memory</code> của xlsxwriter và tốc độ đọc GW của calamine (file GW có thể vài triệu dòng).</td></tr>
+      </table>
+
+      <p class="label">Tải từng file thay vì gửi một lần cả bộ</p>
+      <p>Bộ dữ liệu một ngày gồm ~6 file (2 ZIP MIS ĐI, 2 ZIP MIS ĐẾN, GL02, GW) thường 150–250 MB.
+      Gửi một request nghĩa là tiến trình NiceGUI giữ trọn số byte đó trong RAM rồi backend giữ thêm một
+      bản nữa — mà tiến trình NiceGUI phục vụ chung <em>mọi</em> màn hình khác. Nay mỗi file được đẩy sang
+      backend ngay khi chọn, ghi thẳng ra đĩa theo khối 1 MB, đỉnh RAM chỉ bằng đúng một file.</p>
+
+      <div class="caution"><strong>Bẫy của <code>ui.upload</code>:</strong> handler <strong>phải đồng bộ</strong>
+      và đọc <code>e.content</code> ngay dòng đầu. NiceGUI trả response cho trình duyệt xong mới chạy handler
+      bất đồng bộ (<code>asyncio.create_task</code>), lúc đó file tạm của request đã có thể bị đóng và đọc ra
+      rỗng — lỗi này không ném exception, chỉ cho ra file 0 byte. Byte đọc được giữ tạm trong entry rồi được
+      giải phóng ngay sau khi gửi xong; phần gửi chạy qua <code>ui.timer(0.01, once=True)</code> để vẫn có
+      client context cho <code>ui.notify</code>.</div>
+
+      <p class="label">Đường dẫn tạm nhận token từ URL — chặn hai lớp</p>
+      <p><code>token</code> đi thẳng từ URL vào đường dẫn thư mục. Chặn bằng: (1) token phải nằm trong
+      <code>_progress</code> (chỉ <code>tao_job()</code> phát ra, dạng uuid4); (2) sau <code>resolve()</code>,
+      thư mục job phải là con trực tiếp của <code>TEMP_DIR</code> và tên file phải nằm đúng trong
+      <code>output/</code>. Chỉ dựa vào <code>Path(filename).name</code> là không đủ trên Windows
+      (<code>%2f</code>, dấu <code>\</code>, tên 8.3).</p>
+
+      <p class="label">Hai lỗi do kiểm thử giao diện phát hiện — đã sửa</p>
+      <p>Kiểm thử chạy trên chính trang NiceGUI (mô phỏng người dùng bằng
+      <code>nicegui.testing</code>, không cần trình duyệt), nối vào backend thật và engine thật.
+      Hai lỗi dưới đây không thể lộ ra nếu chỉ kiểm thử ở tầng API:</p>
+      <table>
+        <tr><th>Lỗi</th><th>Biểu hiện</th><th>Cách sửa</th></tr>
+        <tr><td>Huỷ bị báo thành lỗi hệ thống</td>
+            <td>Bấm <strong>Dừng</strong> → hiện thông báo đỏ <em>"Lỗi xử lý: Đã huỷ theo yêu cầu
+            người dùng"</em>. Người dùng tự tay dừng lại tưởng phần mềm hỏng.</td>
+            <td>Thêm cờ <code>cancelled</code> riêng, không nhét vào <code>error</code>; giao diện
+            báo màu xanh thông tin.</td></tr>
+        <tr><td>Xoá file: giao diện nói dối</td>
+            <td>Bấm ✕ → file biến mất trên màn hình nhưng <strong>vẫn còn trên máy chủ</strong>.
+            Windows khoá file vừa ghi (WinError 5, do phần mềm diệt virus / bộ lập chỉ mục quét
+            file .zip mới) khiến <code>unlink</code> thất bại.</td>
+            <td><code>xoa_file_input</code> thử lại 4 nhịp × 0,3s; hết vẫn lỗi thì trả 409 kèm câu
+            hướng dẫn, giao diện giữ nguyên file trong danh sách. Thà báo thật còn hơn để người
+            dùng chạy đối chiếu với file họ tưởng đã bỏ.</td></tr>
+      </table>
+      <div class="note">Cùng nguyên nhân đó, <code>_xoa_thu_muc</code> trước đây dùng
+      <code>shutil.rmtree(ignore_errors=True)</code> — nuốt sạch lỗi. Mỗi lần chạy có thể để lại
+      vài trăm MB trong <code>data/</code> mà không ai biết cho tới lúc hết đĩa. Nay còn sót thì
+      ghi WARNING và dọn ở lần chạy sau.</div>
+
+      <p class="label">Vấn đề phát hiện nhưng không sửa</p>
+      <ul>
+        <li><strong>Bộ sinh dữ liệu test của app gốc đã lạc hậu:</strong> nó ghi <code>CUSTOMER='0'</code>
+        trong khi B2 lọc <code>CUSTOMER='1000-003526275'</code> (bộ lọc được thêm sau), nên chạy nguyên xi
+        sẽ ra <code>NPO_DI=0</code> ở <em>cả hai</em> bản. Không phải lỗi port. Không sửa vì file đó không
+        được đưa vào repo này — ghi lại ở đây để lần sau không mất công truy.</li>
+        <li><strong>Kết quả chỉ giữ 4 giờ</strong> (<code>CLEANUP_HOURS</code>) và mất khi backend khởi động
+        lại, vì tiến độ nằm trong RAM. Chấp nhận: đây là công cụ chạy–tải–xong trong ngày, không phải kho
+        lưu trữ. Nếu sau này cần tra cứu lịch sử thì phải thêm bảng như <code>doi_chieu_citad_history</code>.</li>
+        <li><strong>Nút "Dừng" không dừng tức thì:</strong> engine chỉ kiểm tra cờ huỷ ở 4 mốc giữa các pha.
+        Bấm dừng giữa lúc đang đọc ZIP thì phải chờ hết pha đó. Giữ nguyên thiết kế bản gốc — kill luồng
+        giữa chừng khi pandas đang giữ vài triệu dòng là cách chắc chắn nhất để rò bộ nhớ.</li>
+      </ul>
+
+      <p class="label">Ảnh hưởng tới phần khác</p>
+      <table>
+        <tr><th>File sửa</th><th>Thay đổi</th><th>Rủi ro</th></tr>
+        <tr><td><code>api/registry.py</code></td><td>Thêm 1 import + 1 tuple</td><td>Không — router mới, không đụng route cũ</td></tr>
+        <tr><td><code>core/features.py</code></td><td>Thêm 2 feature code + 1 menu vào nhóm Phòng Thanh toán</td><td>Không — code mới, không đổi code cũ nên quyền đã gán không mất. <strong>Phải vào Phân quyền theo nhóm bật cho nhóm cần dùng</strong>, nếu không chỉ admin thấy menu.</td></tr>
+        <tr><td><code>frontend/shared.py</code></td><td>Thêm 1 item vào submenu Đối chiếu</td><td>Không — breadcrumb tự dựng lại từ cây menu</td></tr>
+        <tr><td><code>services/audit_labels.py</code></td><td>Thêm nhãn + prefix module</td><td>Không — chỉ ảnh hưởng chữ hiển thị trong nhật ký</td></tr>
+        <tr><td><code>requirements.txt</code></td><td>+<code>xlsxwriter</code>, +<code>python-calamine</code></td><td><strong>Có:</strong> máy đã cài cũ phải chạy lại <code>pip install -r requirements.txt</code>, nếu không backend chết ngay lúc khởi động vì <code>registry.py</code> import module này.</td></tr>
+      </table>
+
+    </div>
+  </div>
+
   <!-- L -->
   <div class="card">
     <div class="card-header">
