@@ -4050,8 +4050,16 @@ async def leaves_page():
                                     {"filename": _qi_state["filename"], "rows": rows},
                                 )
                                 qi_preview_dialog.close()
-                                ui.notify(f"Đã áp dụng {res.get('applied', 0)} nhân viên. Có thể hoàn tác trong \"Lịch sử nhập\".",
-                                          type="positive")
+                                _capped = res.get("capped_staff") or []
+                                if _capped:
+                                    ui.notify(
+                                        f"Đã áp dụng {res.get('applied', 0)} nhân viên — nhưng {len(_capped)} người "
+                                        f"({', '.join(_capped[:5])}{'…' if len(_capped) > 5 else ''}) đã có số ngày "
+                                        f"đã dùng THẬT cao hơn số nhập, hệ thống giữ theo số thật, không giảm được.",
+                                        type="warning", timeout=8000)
+                                else:
+                                    ui.notify(f"Đã áp dụng {res.get('applied', 0)} nhân viên. Có thể hoàn tác trong \"Lịch sử nhập\".",
+                                              type="positive")
                                 await _reload_quota()
                             except Exception as ex:
                                 _handle_api_error(ex)

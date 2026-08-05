@@ -2149,7 +2149,25 @@ def import_quota_apply(
     )
     batch_id = cur.lastrowid
 
+    # Xoá TRƯỚC toàn bộ bản ghi tổng hợp cũ (import HOẶC sửa tay trước đó) của
+    # từng nhân viên trong đợt này, rồi mới tính _calc_used_days_bulk — để
+    # real_used_by_staff phản ánh đúng phần đơn THẬT còn lại, không lẫn số của
+    # lần import/sửa tay trước. Phải tách thành 2 lượt (xoá rồi mới tính hàng
+    # loạt) thay vì tính trong cùng vòng lặp per-row như update_used_days, vì ở
+    # đây xử lý nhiều nhân viên cùng lúc — tính bulk 1 lần rẻ hơn N lần gọi
+    # _calc_used_days đơn lẻ.
+    for staff_id in staff_ids:
+        if staff_id not in active_staff_ids:
+            continue
+        db.execute(
+            "DELETE FROM leave_records WHERE staff_id=? AND leave_type='bat_buoc' "
+            "AND strftime('%Y', start_date)=? AND (reason LIKE '[Import]%' OR reason LIKE '[Điều chỉnh]%')",
+            (staff_id, str(year)),
+        )
+    real_used_by_staff = _calc_used_days_bulk(staff_ids, year, db, include_pending=True)
+
     applied = 0
+    capped_staff: list = []
     for r in rows:
         staff_id = r["staff_id"]
         if staff_id not in active_staff_ids:
@@ -2167,17 +2185,19 @@ def import_quota_apply(
         )
 
         # ── "Đã nghỉ" → bản ghi nghỉ tổng hợp (để _calc_used_days đếm được) ──
-        # Xoá bản ghi tổng hợp cũ trong năm (import HOẶC sửa tay trước đó) để
-        # import lại không cộng dồn — 2 cách nhập luôn thay thế lẫn nhau.
-        db.execute(
-            "DELETE FROM leave_records WHERE staff_id=? AND leave_type='bat_buoc' "
-            "AND strftime('%Y', start_date)=? AND (reason LIKE '[Import]%' OR reason LIKE '[Điều chỉnh]%')",
-            (staff_id, str(year)),
-        )
-        created_leave_id = None
+        # new_used là TỔNG mong muốn (số trong file Excel), không phải số ngày
+        # cộng thêm — trừ đi phần đơn THẬT (real_used, đã tính ở trên sau khi
+        # xoá bản ghi tổng hợp cũ) rồi mới chèn đúng phần chênh lệch. Thiếu bước
+        # trừ này thì nhân viên đã có đơn thật trong năm sẽ bị cộng dồn sai
+        # ngay từ lần import đầu tiên (giống lỗi đã sửa ở update_used_days).
+        real_used = real_used_by_staff.get(staff_id, 0.0)
+        delta = new_used - real_used
         # int(round()) dùng banker's rounding (4.5→4, 5.5→6) — không nhất quán.
-        # new_used đã được chặn >= 0 ở trên nên round-half-up bằng +0.5 an toàn.
-        n_days = int(new_used + 0.5)
+        # delta có thể âm nên chặn >=0 trước khi +0.5 làm tròn half-up.
+        n_days = int(delta + 0.5) if delta > 0 else 0
+        if delta < 0:
+            capped_staff.append(r.get("matched_name") or r.get("ho_ten") or f"#{staff_id}")
+        created_leave_id = None
         if n_days >= 1:
             _sd = _import_spread_dates(n_days, year)
             if _sd:
@@ -2192,21 +2212,29 @@ def import_quota_apply(
                 )
                 created_leave_id = _c.lastrowid
 
+        final_used = real_used + n_days
+
         # ── Lưu item để hoàn tác (kèm id bản ghi vừa tạo) ──
         db.execute(
             """INSERT INTO quota_import_items
                    (batch_id, staff_id, old_quota_days, old_used_leave_days,
                     new_quota_days, new_used_leave_days, created_leave_id)
                VALUES (?,?,?,?,?,?,?)""",
-            (batch_id, staff_id, old_quota, old_used, new_quota, new_used, created_leave_id),
+            (batch_id, staff_id, old_quota, old_used, new_quota, final_used, created_leave_id),
         )
         # Trường cache — hiển thị hạn mức không đọc, giữ đồng bộ cho tương thích.
-        db.execute("UPDATE user_tttt SET used_leave_days=? WHERE id=?", (new_used, staff_id))
+        db.execute("UPDATE user_tttt SET used_leave_days=? WHERE id=?", (final_used, staff_id))
         applied += 1
 
     db.execute("UPDATE quota_import_batches SET matched_count=? WHERE id=?", (applied, batch_id))
     db.commit()
-    return {"batch_id": batch_id, "applied": applied}
+    return {
+        "batch_id": batch_id, "applied": applied,
+        # Nhân viên có "Đã nghỉ" trong file thấp hơn số ngày đơn thật đã ghi
+        # nhận — không thể trừ bớt đơn thật bằng bản ghi tổng hợp, kết quả bị
+        # giữ ở mức thật, báo cho frontend biết thay vì im lặng lệch số.
+        "capped_staff": capped_staff,
+    }
 
 
 @router.get("/quotas/import/history")
