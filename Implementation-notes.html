@@ -3571,6 +3571,65 @@ ui.on_exception(_on_exception)</pre>
     </div>
   </div>
 
+  <!-- 49 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">49</span>
+      <span class="card-title">Extension CITAD đọc sai số tiền có phần thập phân — và vì sao chỉ merge nửa PR #17</span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Lỗi: <code>parseInt</code> nuốt mất dấu thập phân</p>
+      <p>Extension đọc số tiền từ DOM bằng <code>parseInt(txt.replace(/[^\d]/g,''))</code>. Cách này
+      xoá <em>mọi</em> ký tự không phải chữ số — kể cả dấu ngăn phần lẻ. Nên
+      <code>"1.234,56"</code> USD thành <code>123456</code>, <strong>sai gấp 100 lần</strong>.
+      VNĐ không dính vì không có đơn vị lẻ, nên lỗi chỉ lộ ở USD/EUR.</p>
+
+      <p class="label">Vì sao không thể chỉ đổi dấu phân cách</p>
+      <p>CITAD và PaymentHub là hai hệ thống khác nhau, không có quy ước chung dấu nào là thập phân.
+      Nên <code>parseMoney()</code> tự nhận diện: <strong>dấu phân cách xuất hiện cuối cùng là dấu
+      thập phân chỉ khi theo sau đúng 1–2 chữ số</strong> — vì nhóm hàng nghìn luôn đúng 3 chữ số nên
+      không thể lẫn. <code>1.234</code> → 1234 (nhóm nghìn); <code>1.23</code> → 1.23 (thập phân, vì
+      2 chữ số không thể là nhóm nghìn).</p>
+      <p>Đã kiểm 15 trường hợp biên bằng cách port nguyên thuật toán sang Python (máy không có Node):
+      cả hai quy ước VN/US, số không dấu, dấu phân cách ở cuối chuỗi, chuỗi rỗng, chuỗi lẫn ký tự chữ
+      — đúng cả 15.</p>
+      <p><code>soMon</code> <strong>giữ nguyên <code>parseInt</code></strong> — đếm số món thì phải là
+      số nguyên, không được để lọt phần lẻ.</p>
+
+      <p class="label">Hệ quả dữ liệu — cần soát lại số cũ</p>
+      <p>Các bản đối chiếu đã lưu có USD/EUR <em>nạp bằng Extension</em> trước 05/08/2026 mang số sai.
+      Số gõ tay không dính. Đã ghi cảnh báo vào <code>Logs_update.md</code>.</p>
+
+      <p class="label">Mục C2 (<code>externally_connectable</code> kèm số cổng) — nghi ngờ không thành</p>
+      <p>Ở các vòng soát trước tôi cảnh báo match pattern của Chrome không chứa số cổng, nên khai
+      <code>http://localhost:8080/*</code> có thể làm manifest không hợp lệ. Commit này thêm ba địa chỉ
+      thật (<code>apc-portal:8080</code>, <code>10.1.3.89:8080</code>, <code>10.1.3.89:9090</code>) và
+      xác nhận nút "Tạo mã kết nối" đã tự đẩy được vào Extension — tức là Chrome <strong>có</strong>
+      chấp nhận dạng này. Ghi lại để không ai đi lại đường nghi ngờ cũ.</p>
+      <p>Đổi lại là chi phí vận hành: ba địa chỉ production nằm cứng trong file phát cho người dùng.
+      Đổi địa chỉ máy chủ là phải dựng lại <code>.zip</code> và cài lại trên từng máy.</p>
+
+      <p class="label">Vì sao PR #17 chỉ merge 1 trong 2 commit</p>
+      <p>Commit còn lại (<code>703d0c1</code>) thêm reverse-proxy <code>/api/*</code> ở
+      <code>frontend/api_proxy.py</code>, cho máy trạm gọi backend qua cổng frontend. Bản thân code
+      viết cẩn thận (httpx bất đồng bộ, lọc header hop-by-hop, <code>multi_items()</code> giữ query
+      lặp key, ghi đè <code>X-Client-IP</code> chống giả mạo IP trong audit).</p>
+      <p>Nhưng route khai <code>/api/{full_path:path}</code> nên <strong>toàn bộ API của mọi module</strong>
+      gọi được qua cổng 8080. Trên máy chủ thật, tường lửa chỉ mở 8080 và chặn 8000 — đó là một lớp
+      phòng thủ, và proxy này vô hiệu hoá nó. Xác thực vẫn nguyên (mọi endpoint qua
+      <code>require_feature</code>, login có <code>rate_limit</code>), nên <em>không phải lỗ hổng</em>,
+      nhưng là bỏ một lớp bảo vệ — phải là quyết định có chủ đích, không phải hệ quả phụ của việc sửa
+      cho Extension chạy được. Extension chỉ cần đúng 2 đường dẫn buffer.</p>
+      <p>Ba điểm kỹ thuật khác đã gửi cùng phản hồi: timeout 30s áp cho mọi endpoint (Chấm 459901 mất
+      ~65s), đệm toàn bộ body vào RAM của tiến trình frontend, và <code>content-encoding</code> được
+      forward nguyên trong khi httpx đã tự giải nén — chưa hỏng vì backend chưa có
+      <code>GZipMiddleware</code>, nhưng sẽ hỏng ngày nào thêm nén.</p>
+
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-05</footer>
 </div>
 </body>

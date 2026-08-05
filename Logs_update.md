@@ -4,6 +4,13 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 05/08/2026 Đối chiếu CITAD - Extension lấy đúng số tiền lẻ và tự điền được mã kết nối:
+    + ⚠️ **Số tiền USD/EUR lấy tự động từ Extension trước đây sai gấp 100 lần.** Phần xu bị nhập vào thành phần nguyên — `1.234,56` USD thành `123.456`. Nay lấy đúng cả phần lẻ
+    + **Số món không dính lỗi này, và VNĐ cũng không** (không có đơn vị lẻ). Chỉ ảnh hưởng cột số tiền của USD và EUR
+    + ⚠️ **Cần soát lại các bản đã lưu có USD/EUR nạp bằng Extension trước ngày 05/08.** Số liệu gõ tay không dính
+    + Nút **Tạo mã kết nối mới** nay đẩy mã thẳng vào Extension, không phải sao chép dán tay. Trước đây luôn rơi về cách dán tay vì địa chỉ máy chủ thật chưa khai trong Extension
+    + Extension lên **bản 2.5** — vào màn hình Đối chiếu CITAD tải lại file `.zip` rồi cập nhật để nhận thay đổi. Máy chưa cập nhật vẫn dùng được nhưng còn nguyên lỗi số tiền lẻ ở trên
+
 - 05/08/2026 Báo cáo bàn giao chứng từ - Thêm nút xuất file Word:
     + Nút **Xuất file Word** nằm ngay cạnh nút *Xem báo cáo*. File ra dạng **A4 ngang**, tiêu đề *"Báo cáo bàn giao chứng từ tháng xx năm xxxx"*
     + Nội dung: bảng tổng hợp theo phòng (tổng chứng từ, nộp đúng hạn, nộp quá hạn, tỷ lệ đúng hạn, có dòng **TỔNG CỘNG**) và phần chi tiết chứng từ nộp quá hạn tách theo từng phòng
