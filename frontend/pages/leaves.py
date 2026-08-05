@@ -1768,6 +1768,15 @@ async def leaves_page():
 
         _quota_sel:  set = set()  # cho xuất Excel hạn mức phép
 
+        # Mọi checkbox từng vẽ ra (gắn với _sel hoặc _export_sel, ở bất kỳ bảng
+        # nào — Dashboard/Chờ duyệt/Phòng tôi/Của tôi/Khai báo hộ) — để
+        # _on_leave_tab_change có thể bỏ tick TRỰC QUAN khi đổi tab. Từ khi bỏ
+        # full-reload lúc đổi tab, các checkbox này không tự vẽ lại nữa nên vẫn
+        # hiện đang tick dù _sel/_export_sel đã bị xoá — dễ hiểu lầm "đã chọn"
+        # trong khi thực ra rỗng (hoặc ngược lại, Xuất Excel/Phê duyệt lặng lẽ
+        # dùng nhầm phạm vi khác vì tưởng chưa chọn gì).
+        _all_sel_checkboxes: list = []
+
         _approve_btn: list = []
 
         _reject_btn:  list = []
@@ -2319,9 +2328,13 @@ async def leaves_page():
                                 for i in _ids: _s.discard(i)
 
                         if show_checkbox:
-                            ui.checkbox(value=False, on_change=_select_all).props("dense").classes("w-6 shrink-0 mr-2").tooltip("Chọn / Bỏ chọn tất cả")
+                            _all_sel_checkboxes.append(
+                                ui.checkbox(value=False, on_change=_select_all).props("dense").classes("w-6 shrink-0 mr-2").tooltip("Chọn / Bỏ chọn tất cả")
+                            )
                         elif export_sel is not None:
-                            ui.checkbox(value=False, on_change=_select_all_exp).props("dense").classes("w-6 shrink-0 mr-2").tooltip("Chọn / Bỏ chọn tất cả")
+                            _all_sel_checkboxes.append(
+                                ui.checkbox(value=False, on_change=_select_all_exp).props("dense").classes("w-6 shrink-0 mr-2").tooltip("Chọn / Bỏ chọn tất cả")
+                            )
 
                     ui.label("STT").classes(f"{_hdr_cls} w-8 text-center")
 
@@ -2377,6 +2390,7 @@ async def leaves_page():
 
                             _ck = ui.checkbox(value=False, on_change=_on_ck).props("dense").classes("w-6 shrink-0 mr-2")
                             _row_cks.append(_ck)
+                            _all_sel_checkboxes.append(_ck)
 
                         elif export_sel is not None:
 
@@ -2386,6 +2400,7 @@ async def leaves_page():
 
                             _ck = ui.checkbox(value=False, on_change=_on_exp_ck).props("dense").classes("w-6 shrink-0 mr-2")
                             _row_cks.append(_ck)
+                            _all_sel_checkboxes.append(_ck)
 
 
 
@@ -2605,11 +2620,17 @@ async def leaves_page():
                                 if fd and e < fd: continue
                                 if td and s > td: continue
                     filtered.append(lv)
+                # Bảng này show_checkbox=True mặc định (gắn với _sel, dùng cho Phê
+                # duyệt/Từ chối) — lọc xong các dòng bị ẩn phải bỏ khỏi _sel, nếu
+                # không Phê duyệt/Từ chối sau đó sẽ xử lý nhầm cả đơn không còn
+                # hiển thị trên màn hình.
+                _sel.clear()
                 _pf_body.clear()
                 with _pf_body:
                     _draw_table_paged(filtered, show_name=True)
 
             def _pf_reset():
+                _sel.clear()
                 _pf_name.value = ""
                 if _pf_dept: _pf_dept.value = ""
                 _pf_from.value = _pf_to.value = ""
@@ -2638,6 +2659,19 @@ async def leaves_page():
             # Phê duyệt/Từ chối ở tab khác (không tick gì) sẽ âm thầm tác động lên lựa
             # chọn cũ không còn hiển thị trên màn hình.
             _export_sel.clear()
+            # Trước đây đổi tab = reload cả trang nên checkbox tự về trạng thái
+            # chưa tick. Giờ trang không reload nữa — checkbox vẫn hiện đang tick
+            # dù _sel/_export_sel đã bị xoá ở trên, dễ hiểu lầm "đã chọn" (hoặc
+            # khiến Xuất Excel/Phê duyệt tưởng chưa chọn gì mà âm thầm dùng nhầm
+            # phạm vi khác). Bỏ tick trực quan tất cả checkbox từng vẽ ra để khớp
+            # với việc 2 set trên đã rỗng. Bọc try/except vì checkbox của 1 lần vẽ
+            # trước có thể đã bị gỡ khỏi DOM (sau khi lọc/vẽ lại) — lỗi 1 cái không
+            # được làm hỏng việc đổi tab.
+            for _ck in _all_sel_checkboxes:
+                try:
+                    _ck.set_value(False)
+                except Exception:
+                    pass
 
         leave_tabs.on_value_change(_on_leave_tab_change)
 
@@ -4589,6 +4623,10 @@ async def leaves_page():
 
                             t.set_text(f"Đơn đã khai báo hộ ({len(leaves)})")
 
+                        # Luôn xoá trước khi kiểm tra "không có đơn nào" — nếu không, lọc về
+                        # 0 dòng sẽ return sớm và bỏ sót lần xoá này (xem _all_sel_checkboxes).
+                        _export_sel.clear()
+
                         with c:
 
                             if not leaves:
@@ -4599,7 +4637,6 @@ async def leaves_page():
 
                             _hc = "font-semibold text-red-800 text-xs shrink-0 border-r border-red-400 pr-2 mr-1"
 
-                            _export_sel.clear()
                             _decl_row_cks: list = []
 
                             def _decl_select_all(e, _leaves=leaves):
@@ -4614,7 +4651,9 @@ async def leaves_page():
 
                                 with ui.row().classes("w-full bg-red-50 border-b-2 border-red-400 px-3 py-2 items-center gap-0"):
 
-                                    ui.checkbox(value=False, on_change=_decl_select_all).props("dense").classes("w-6 shrink-0 mr-2").tooltip("Chọn / Bỏ chọn tất cả")
+                                    _all_sel_checkboxes.append(
+                                        ui.checkbox(value=False, on_change=_decl_select_all).props("dense").classes("w-6 shrink-0 mr-2").tooltip("Chọn / Bỏ chọn tất cả")
+                                    )
 
                                     ui.label("STT").classes(f"{_hc} w-8 text-center")
 
@@ -4642,6 +4681,7 @@ async def leaves_page():
 
                                         _dck = ui.checkbox(value=False, on_change=_on_decl_ck).props("dense").classes("w-6 shrink-0 mr-2")
                                         _decl_row_cks.append(_dck)
+                                        _all_sel_checkboxes.append(_dck)
 
                                         ui.label(str(_di)).classes("text-xs w-8 shrink-0 text-center text-gray-500 border-r border-gray-400 pr-2 mr-1")
 
