@@ -19,6 +19,7 @@ FEATURES: dict[str, str] = {
     "menu.th_reports":         "Báo cáo dữ liệu thanh toán — Phòng TH (menu)",
     "menu.staff":              "Quản lý User (menu)",
     "menu.logs":               "Nhật ký hệ thống (menu)",
+    "menu.ttqt_branches":      "Danh sách CN TTQT (menu)",
 
     # Bàn giao chứng từ — thao tác
     "handovers.save_entry":    "Lưu số tờ chứng từ",
@@ -45,6 +46,13 @@ FEATURES: dict[str, str] = {
     "leaves.stats_export":     "Xuất báo cáo tổng hợp phép năm",
     "leaves.declare_direct":   "Khai báo hộ nghỉ phép",
     "leaves.recall":           "Rút đơn nhiều cấp",
+
+    # Danh sách CN TTQT — thao tác
+    "ttqt_branches.create":    "Thêm chi nhánh",
+    "ttqt_branches.edit":      "Sửa chi nhánh",
+    "ttqt_branches.delete":    "Xoá chi nhánh",
+    "ttqt_branches.import":    "Nhập danh sách từ Excel",
+    "ttqt_branches.export":    "Xuất danh sách ra Excel",
 
     # Quản lý User — thao tác
     "staff.create":            "Tạo tài khoản mới",
@@ -107,6 +115,16 @@ FEATURE_GROUPS: list[dict] = [
             {"code": "menu.storage",  "actions": []},
             {"code": "menu.reports",  "actions": []},
             {"code": "menu.handover_reports", "actions": []},
+            {
+                "code": "menu.ttqt_branches",
+                "actions": [
+                    "ttqt_branches.create",
+                    "ttqt_branches.edit",
+                    "ttqt_branches.delete",
+                    "ttqt_branches.import",
+                    "ttqt_branches.export",
+                ],
+            },
         ],
     },
     {

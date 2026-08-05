@@ -32,6 +32,7 @@ from backend.api.doi_chieu_song_phuong import router as doi_chieu_song_phuong_ro
 from backend.api.swift_recon import router as swift_recon_router
 from backend.api.doi_chieu_citad import router as doi_chieu_citad_router
 from backend.api.doi_soat_citad import router as doi_soat_citad_router
+from backend.api.ttqt_branches import router as ttqt_branches_router
 
 # Thêm router mới: 1 dòng import ở trên + 1 tuple ở đây
 # Format: (router_object, {"prefix": "/api/...", "tags": ["..."]})
@@ -61,6 +62,7 @@ _ROUTERS = [
     (swift_recon_router, {}),
     (doi_chieu_citad_router, {}),
     (doi_soat_citad_router, {}),
+    (ttqt_branches_router, {}),
 ]
 
 

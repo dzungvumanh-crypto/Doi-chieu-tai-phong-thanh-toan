@@ -245,6 +245,25 @@ def _create_tables(db_path: str):
             lech_json           TEXT,
             created_at          DATETIME
         )""",
+        # Danh mục chi nhánh thực hiện TTQT — nguồn gốc là file Excel do Phòng
+        # KSNB phát hành, nhập vào đây để tra cứu / sửa trực tiếp trên hệ thống.
+        # sort_order giữ đúng thứ tự dòng trong file gốc (mã CN không tăng dần).
+        """CREATE TABLE IF NOT EXISTS ttqt_branches (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            ma_cn        VARCHAR(20) NOT NULL UNIQUE,
+            ten_cn       VARCHAR(200) NOT NULL,
+            swift_bic    VARCHAR(20),
+            loai_cn      INTEGER,
+            duoc_phep    VARCHAR(100),
+            cn_quan_ly   VARCHAR(200),
+            ghi_chu      TEXT,
+            sdt          VARCHAR(100),
+            dia_chi      TEXT,
+            dia_chi_en   TEXT,
+            is_closed    INTEGER NOT NULL DEFAULT 0,
+            sort_order   INTEGER,
+            updated_at   DATETIME
+        )""",
     ]
     for s in statements:
         cur.execute(s)
@@ -270,7 +289,8 @@ def _ensure_indexes():
         "ALTER TABLE document_entries ADD COLUMN borrowed_at DATETIME",
         "ALTER TABLE document_entries ADD COLUMN borrow_reason TEXT",
         # Gán phòng KSNB cho staff cũ không có department_id (idempotent)
-        "UPDATE user_tttt SET department_id = (SELECT id FROM departments WHERE code = 'KSNB' LIMIT 1) WHERE department_id IS NULL AND role IN ('admin', 'hau_kiem_vien', 'controller', 'viewer')",
+        # KHÔNG gán cho 'admin': quản trị viên không thuộc phòng nào (xem migration cuối file).
+        "UPDATE user_tttt SET department_id = (SELECT id FROM departments WHERE code = 'KSNB' LIMIT 1) WHERE department_id IS NULL AND role IN ('hau_kiem_vien', 'controller', 'viewer')",
         # Quyền mới — migrate controller → pho_phong
         "ALTER TABLE user_tttt ADD COLUMN annual_leave_days INTEGER DEFAULT 12",
         "ALTER TABLE user_tttt ADD COLUMN used_leave_days INTEGER DEFAULT 0",
@@ -544,6 +564,34 @@ def _ensure_indexes():
            FROM user_tttt u
            WHERE u.department_id IS NOT NULL
              AND NOT EXISTS (SELECT 1 FROM staff_department_history h WHERE h.staff_id = u.id)""",
+
+        # ── Danh sách CN thực hiện TTQT — 2026-08-04 ──────────────────────────
+        # Lặp lại DDL của _create_tables() để DB đang chạy cũng có bảng này.
+        """CREATE TABLE IF NOT EXISTS ttqt_branches (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            ma_cn        VARCHAR(20) NOT NULL UNIQUE,
+            ten_cn       VARCHAR(200) NOT NULL,
+            swift_bic    VARCHAR(20),
+            loai_cn      INTEGER,
+            duoc_phep    VARCHAR(100),
+            cn_quan_ly   VARCHAR(200),
+            ghi_chu      TEXT,
+            sdt          VARCHAR(100),
+            dia_chi      TEXT,
+            dia_chi_en   TEXT,
+            is_closed    INTEGER NOT NULL DEFAULT 0,
+            sort_order   INTEGER,
+            updated_at   DATETIME
+        )""",
+
+        # ── Quản trị viên không thuộc phòng nào — 2026-08-05 ──────────────────
+        # Migration cũ (dòng ~292) từng gán KSNB cho role='admin'. Nghiệp vụ sau
+        # đó đổi: staff.py ép department_id = NULL cho admin/admin_l2. Hai bên
+        # đá nhau → sửa+lưu thì mất phòng, khởi động lại thì phòng hiện về.
+        # Dọn cả bảng lịch sử, nếu không admin vẫn bị tính là thành viên KSNB
+        # trong báo cáo bàn giao (truy vấn hist ở handovers.py).
+        "UPDATE user_tttt SET department_id = NULL WHERE role IN ('admin', 'admin_l2')",
+        "DELETE FROM staff_department_history WHERE staff_id IN (SELECT id FROM user_tttt WHERE role IN ('admin', 'admin_l2'))",
     ]
     _mig_log = logging.getLogger(__name__)
 
@@ -801,6 +849,8 @@ def _ensure_indexes():
         "CREATE INDEX IF NOT EXISTS ix_audit_logs_created    ON audit_logs(created_at)",
         "CREATE INDEX IF NOT EXISTS ix_user_tttt_dept        ON user_tttt(department_id)",
         "CREATE INDEX IF NOT EXISTS ix_staff_dept_hist       ON staff_department_history(staff_id, effective_from)",
+        "CREATE INDEX IF NOT EXISTS ix_ttqt_branches_bic      ON ttqt_branches(swift_bic)",
+        "CREATE INDEX IF NOT EXISTS ix_ttqt_branches_sort     ON ttqt_branches(is_closed, sort_order)",
     ]
     conn = sqlite3.connect(DB_PATH, timeout=30)
     try:
