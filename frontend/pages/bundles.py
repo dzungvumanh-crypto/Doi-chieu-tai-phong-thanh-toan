@@ -2,13 +2,11 @@
 import asyncio
 from nicegui import ui, app
 import frontend.api_client as api
-from frontend.shared import _sidebar, _content_area, _page_header, _require_auth, _redirect_if_cv, _handle_api_error
+from frontend.shared import _sidebar, _content_area, _page_header, _require_auth, _handle_api_error
 
 @ui.page("/bundles")
 async def bundles_page():
     if not _require_auth():
-        return
-    if _redirect_if_cv():
         return
     if not api.has_feature("menu.bundles"):
         ui.navigate.to("/home")
@@ -125,7 +123,7 @@ async def bundles_page():
                     with groups_container:
                         if not groups:
                             ui.label("Chưa có bìa chứng từ nào").classes(
-                                "text-gray-400 text-center py-8"
+                                "text-gray-500 text-center py-8"
                             )
                             return
 
@@ -321,7 +319,7 @@ async def bundles_page():
                                     pass
                         else:
                             ui.label("Không có chứng từ nào trong tháng này").classes(
-                                "text-gray-400 text-sm text-center py-4"
+                                "text-gray-500 text-sm text-center py-4"
                             )
 
                 async def load_entries_preview():

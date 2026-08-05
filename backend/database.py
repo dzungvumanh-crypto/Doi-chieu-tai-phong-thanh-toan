@@ -23,6 +23,13 @@ def write_audit(
     detail: str = None,
     ip: str = None,
 ) -> None:
+    # Không truyền ip → lấy IP thật đã lưu lúc đăng nhập (khớp Nhật ký đăng nhập)
+    if ip is None and actor_id:
+        try:
+            from backend.core.sessions import get_session_ip
+            ip = get_session_ip(db, actor_id)
+        except Exception:
+            pass
     db.execute(
         "INSERT INTO audit_logs (actor_id, action, target_type, target_id, detail, ip_address, created_at) VALUES (?,?,?,?,?,?,?)",
         (actor_id, action, target_type, target_id, detail, ip, _vn_now()),
@@ -72,19 +79,27 @@ def compute_carry_over(staff_id: int, year: int, db,
     )
     rows = db.execute(
         """SELECT start_date, end_date, spread_dates FROM leave_records
-           WHERE staff_id=? AND leave_type='annual' AND status='approved'
-             AND strftime('%Y', start_date)=?""",
-        (staff_id, str(prev_year)),
+           WHERE staff_id=? AND status='approved'
+             AND leave_type NOT IN ('thai_san','bao_hiem')
+             AND start_date <= ? AND end_date >= ?""",
+        (staff_id, f"{prev_year}-12-31", f"{prev_year}-01-01"),
     ).fetchall()
     used = 0.0
+    _holidays = None
     for row in rows:
         if row["spread_dates"]:
-            used += len(json.loads(row["spread_dates"]))
+            used += len([d for d in json.loads(row["spread_dates"]) if d.startswith(str(prev_year))])
         else:
+            if _holidays is None:
+                hrows = db.execute(
+                    "SELECT date FROM public_holidays WHERE date >= ? AND date <= ?",
+                    (f"{prev_year}-01-01", f"{prev_year}-12-31"),
+                ).fetchall()
+                _holidays = frozenset(_date.fromisoformat(r["date"]) for r in hrows)
             d = _date.fromisoformat(row["start_date"])
             end = _date.fromisoformat(row["end_date"])
             while d <= end:
-                if d.weekday() < 5:
+                if d.year == prev_year and d.weekday() < 5 and d not in _holidays:
                     used += 1
                 d += timedelta(days=1)
     return max(0.0, prev_quota - used)

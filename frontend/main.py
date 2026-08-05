@@ -1,9 +1,24 @@
 """
 NiceGUI Frontend Application — Entry point
-Truy cập: http://localhost:8080
+Truy cập: http://localhost:<FRONTEND_PORT> (mặc định 8080, xem .env)
 """
 import sys, os
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT_DIR)
+
+from dotenv import load_dotenv
+load_dotenv(os.path.join(ROOT_DIR, ".env"), override=True)
+
+# Fail fast — khoá ký cookie app.storage.user. Không fallback: giá trị đoán được
+# cho phép forge cookie phiên đăng nhập. Cùng lý do với SECRET_KEY ở backend/core/config.py
+STORAGE_SECRET = os.getenv("STORAGE_SECRET", "").strip()
+if not STORAGE_SECRET:
+    raise RuntimeError(
+        "Biến môi trường STORAGE_SECRET chưa được đặt.\n"
+        "Tạo key mạnh: python -c \"import secrets; print(secrets.token_hex(32))\"\n"
+        "Sau đó thêm vào file .env:  STORAGE_SECRET=<giá_trị_vừa_tạo>\n"
+        "Lưu ý: đổi giá trị này sẽ đăng xuất toàn bộ người dùng đang đăng nhập."
+    )
 
 from nicegui import ui, app
 
@@ -36,12 +51,12 @@ if __name__ in {"__main__", "__mp_main__"}:
         ui.on_exception(_on_exception)
     ui.run(
         host="0.0.0.0",
-        port=8080,
+        port=int(os.getenv("FRONTEND_PORT", "8080")),
         title="PAYMENT CENTER",
         favicon="🏦",
         dark=False,
         reload=False,
         show=False,
-        storage_secret="ksnb-htvh-agribank-2025",
+        storage_secret=STORAGE_SECRET,
         reconnect_timeout=30,
     )

@@ -12,11 +12,14 @@ FEATURES: dict[str, str] = {
     "menu.handovers":          "Bàn giao chứng từ (menu)",
     "menu.bundles":            "Đóng chứng từ (menu)",
     "menu.storage":            "Lưu trữ (menu)",
-    "menu.reports":            "Báo cáo (menu)",
+    # Giữ nguyên code "menu.reports" — đổi code sẽ mất quyền đã gán trong group_features
+    "menu.reports":            "Báo cáo hậu kiểm (menu)",
+    "menu.handover_reports":   "Báo cáo bàn giao chứng từ (menu)",
     "menu.leaves":             "Nghỉ phép (menu)",
     "menu.th_reports":         "Báo cáo dữ liệu thanh toán — Phòng TH (menu)",
     "menu.staff":              "Quản lý User (menu)",
     "menu.logs":               "Nhật ký hệ thống (menu)",
+    "menu.ttqt_branches":      "Danh sách CN TTQT (menu)",
 
     # Bàn giao chứng từ — thao tác
     "handovers.save_entry":    "Lưu số tờ chứng từ",
@@ -44,6 +47,13 @@ FEATURES: dict[str, str] = {
     "leaves.declare_direct":   "Khai báo hộ nghỉ phép",
     "leaves.recall":           "Rút đơn nhiều cấp",
 
+    # Danh sách CN TTQT — thao tác
+    "ttqt_branches.create":    "Thêm chi nhánh",
+    "ttqt_branches.edit":      "Sửa chi nhánh",
+    "ttqt_branches.delete":    "Xoá chi nhánh",
+    "ttqt_branches.import":    "Nhập danh sách từ Excel",
+    "ttqt_branches.export":    "Xuất danh sách ra Excel",
+
     # Quản lý User — thao tác
     "staff.create":            "Tạo tài khoản mới",
     "staff.edit":              "Chỉnh sửa nhân viên",
@@ -63,6 +73,16 @@ FEATURES: dict[str, str] = {
     # Chấm 459901 — Phòng Thanh toán
     "menu.cham_459901":    "Chấm 459901 — Phân loại bút toán TK 459901 (menu)",
     "cham_459901.process": "Xử lý file ZIP 459901",
+
+    # Đối chiếu Song phương — Phòng Thanh toán
+    "menu.doi_chieu_song_phuong":    "Đối chiếu Song phương — Định tuyến lệnh IPCAS (menu)",
+    "doi_chieu_song_phuong.process": "Xử lý file ZIP Đối chiếu Song phương",
+    # Đối chiếu CITAD ↔ PaymentHub — Phòng Thanh toán
+    "menu.doi_chieu_citad":     "Đối chiếu CITAD ↔ PaymentHub (menu)",
+    # Đối soát CITAD ↔ IPCAS — Phòng Thanh toán
+    "menu.doi_soat_citad":      "Đối soát CITAD ↔ IPCAS (menu)",
+    # Đối chiếu điện SWIFT — SWIFT
+    "menu.swift_recon":        "Đối chiếu điện SWIFT — Phòng Swift (menu)",
 }
 
 # ── Cấu trúc phân cấp: Phòng → Menu → Action ─────────────────────────────────
@@ -94,6 +114,17 @@ FEATURE_GROUPS: list[dict] = [
             },
             {"code": "menu.storage",  "actions": []},
             {"code": "menu.reports",  "actions": []},
+            {"code": "menu.handover_reports", "actions": []},
+            {
+                "code": "menu.ttqt_branches",
+                "actions": [
+                    "ttqt_branches.create",
+                    "ttqt_branches.edit",
+                    "ttqt_branches.delete",
+                    "ttqt_branches.import",
+                    "ttqt_branches.export",
+                ],
+            },
         ],
     },
     {
@@ -138,6 +169,12 @@ FEATURE_GROUPS: list[dict] = [
                 "code": "menu.cham_459901",
                 "actions": ["cham_459901.process"],
             },
+            {
+                "code": "menu.doi_chieu_song_phuong",
+                "actions": ["doi_chieu_song_phuong.process"],
+            },
+            {"code": "menu.doi_chieu_citad", "actions": []},
+            {"code": "menu.doi_soat_citad", "actions": []},
         ],
     },
     {
@@ -155,6 +192,13 @@ FEATURE_GROUPS: list[dict] = [
                 ],
             },
             {"code": "menu.logs", "actions": []},
+        ],
+    },
+    {
+        "dept": "Phòng Swift",
+        "icon": "swap_horiz",
+        "menus": [
+            {"code": "menu.swift_recon", "actions": []},
         ],
     },
 ]

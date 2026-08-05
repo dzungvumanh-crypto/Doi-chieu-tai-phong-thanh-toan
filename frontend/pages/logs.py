@@ -61,7 +61,7 @@ async def logs_page():
 
             with log_container:
                 if not entries:
-                    ui.label("Không có bản ghi nào.").classes("text-gray-400 text-sm mt-4")
+                    ui.label("Không có bản ghi nào.").classes("text-gray-500 text-sm mt-4")
                     return
 
                 with ui.row().classes("w-full bg-gray-100 border-b border-gray-200 px-3 py-2 items-center gap-2"):
@@ -124,7 +124,7 @@ async def logs_page():
                       on_click=_backup_db).classes("bg-orange-600 text-white text-sm").tooltip(
                 "Tải về bản sao cơ sở dữ liệu")
 
-            backup_info_label = ui.label("").classes("text-xs text-gray-400 ml-2")
+            backup_info_label = ui.label("").classes("text-xs text-gray-500 ml-2")
             try:
                 bk = await asyncio.to_thread(api.get, "/api/admin/logs/backup-info")
                 if isinstance(bk, dict) and bk.get("exists"):
@@ -133,6 +133,26 @@ async def logs_page():
                     )
                 else:
                     backup_info_label.set_text("Chưa có backup tự động")
+            except Exception:
+                pass
+
+            # ── Badge lệch giờ so với nguồn NTP ──────────────────────────────
+            drift_badge = ui.label("").classes("text-xs px-2 py-0.5 rounded border ml-2")
+            _base_cls = "text-xs px-2 py-0.5 rounded border ml-2"
+            try:
+                ts = await asyncio.to_thread(api.get, "/api/admin/logs/time-sync")
+                if not isinstance(ts, dict) or not ts.get("enabled"):
+                    txt, color = "Đồng bộ giờ: đã tắt", "bg-gray-100 text-gray-500 border-gray-300"
+                elif ts.get("error"):
+                    txt, color = f"Giờ chuẩn: không kiểm tra được ({ts['server']})", "bg-gray-100 text-gray-500 border-gray-300"
+                    drift_badge.tooltip(ts["error"])
+                elif ts.get("ok"):
+                    txt, color = f"Giờ máy khớp NTP (lệch {ts['drift_seconds']}s)", "bg-green-100 text-green-700 border-green-300"
+                else:
+                    txt, color = f"⚠ Đồng hồ lệch {ts['drift_seconds']}s so với NTP {ts['server']}", "bg-red-100 text-red-700 border-red-300"
+                    drift_badge.tooltip(f"Ngưỡng cho phép {ts.get('threshold')}s — kiểm tra đồng hồ máy chủ")
+                drift_badge.classes(replace=f"{_base_cls} {color}")
+                drift_badge.set_text(txt)
             except Exception:
                 pass
 

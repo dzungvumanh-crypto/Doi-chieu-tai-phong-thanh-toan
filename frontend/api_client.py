@@ -5,8 +5,14 @@ from typing import Optional, Any, Dict
 from nicegui import app
 from dotenv import load_dotenv
 
-load_dotenv()
-BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
+load_dotenv(override=True)
+# BACKEND_URL suy ra từ BACKEND_PORT nếu không set riêng — tránh quên đồng bộ
+# khi đổi cổng (vd. hệ thống test dùng .env khác với BACKEND_PORT=9000)
+# Dùng 127.0.0.1 chứ KHÔNG dùng localhost: trên Windows `localhost` phân giải ra
+# ::1 (IPv6) trước, mà uvicorn --host 0.0.0.0 chỉ lắng nghe IPv4. Mỗi lần httpx
+# mở kết nối MỚI (sau ~5s nhàn rỗi là pool hết hạn) sẽ chờ IPv6 thất bại ~2 giây
+# rồi mới quay sang IPv4. Đo được: localhost 2062ms vs 127.0.0.1 18ms.
+BACKEND_URL = os.getenv("BACKEND_URL", f"http://127.0.0.1:{os.getenv('BACKEND_PORT', '8000')}")
 
 
 class SessionExpiredError(Exception):
@@ -18,12 +24,6 @@ class DisplacedSessionError(Exception):
     """Raised khi phiên bị thay thế bởi đăng nhập mới từ thiết bị khác."""
     pass
 
-
-class ViolationError(Exception):
-    """Raised khi server trả 422 với danh sách user có name_5 ≠ 0."""
-    def __init__(self, message: str, violations: list):
-        super().__init__(message)
-        self.violations = violations  # [{"user_code", "name_5", "system"}]
 
 # Persistent client — tái dùng TCP connection, tránh overhead kết nối mỗi request
 _client = httpx.Client(timeout=httpx.Timeout(10.0))
@@ -142,15 +142,6 @@ def _raise_http_error(e: httpx.HTTPStatusError):
         if "__session_displaced__" in str(detail):
             raise DisplacedSessionError("Tài khoản này đang được đăng nhập từ thiết bị khác")
         raise SessionExpiredError("Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.")
-    if e.response.status_code == 422:
-        try:
-            detail = e.response.json().get("detail", "")
-            if isinstance(detail, dict) and "violations" in detail:
-                raise ViolationError(detail.get("message", "Vi phạm dữ liệu"), detail["violations"])
-        except ViolationError:
-            raise
-        except Exception:
-            pass
     raise Exception(_parse_error(e))
 
 
@@ -240,14 +231,9 @@ def post_upload_bytes(path: str, files: dict) -> bytes:
             body = e.response.json()
             detail = body.get("detail", "")
             if isinstance(detail, dict):
-                if "violations" in detail:
-                    raise ViolationError(
-                        detail.get("message", "Vi phạm dữ liệu"),
-                        detail["violations"],
-                    )
                 raise Exception(detail.get("message", str(detail)))
             raise Exception(str(detail) or e.response.text)
-        except (SessionExpiredError, ViolationError):
+        except SessionExpiredError:
             raise
         except Exception as inner:
             raise Exception(str(inner))

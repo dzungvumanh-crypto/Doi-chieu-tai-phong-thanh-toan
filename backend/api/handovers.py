@@ -1,25 +1,122 @@
 """Handover (Bàn giao chứng từ) endpoints"""
 import calendar
 import io
+import logging
 import sqlite3
 from datetime import date
-from typing import List, Optional
+from typing import Optional
 
 import openpyxl
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from openpyxl.styles import Alignment, Font, PatternFill
 
+from backend.core.concurrency import run_heavy
 from backend.core.deps import get_current_staff, require_feature
-from backend.core.enums import EntryStatus
+from backend.core.enums import EntryStatus, StaffRole
 from backend.database import get_db, _vn_now
 from backend.schemas.handovers import (
-    BorrowRequest, DocumentEntryIn, EntryHistoryItem, EntryHistoryOut,
+    BorrowRequest, EntryHistoryItem, EntryHistoryOut,
     EntryUpsertRequest, GridEntryOut, GridResponse, HandbackRequest,
-    HandoverCreate, RejectRequest,
+    RejectRequest,
 )
+from backend.services.handover_report_service import submitted_at_from_logs
+
+# `log` là tên biến lặp trong get_entry_history → logger phải mang tên khác
+log_ = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/handovers", tags=["Handovers"])
+
+
+# ─── Phạm vi phòng được truy cập ─────────────────────────────────────────────
+# Hai trục độc lập: XEM phòng nào, và CÓ được ghi hay không.
+#   Xem mọi phòng — admin, GĐ, PGĐ (giám sát toàn đơn vị) và người hậu kiểm
+#                   (có feature confirm_entry, nghiệp vụ chạy trên mọi phòng nguồn).
+#   Còn lại        — kể cả trưởng/phó phòng — chỉ phòng của chính mình.
+#   Ghi            — admin/GĐ/PGĐ bị cấm hoàn toàn; ai còn lại thì theo feature nhóm
+#                    và chỉ trong phòng mình (trừ hậu kiểm).
+_READ_ALL_DEPT_ROLES = (StaffRole.ADMIN.value, StaffRole.GIAM_DOC.value,
+                        StaffRole.PHO_GIAM_DOC.value)
+
+# Vai trò CHỈ ĐỌC ở màn bàn giao — chặn cứng ở tầng dependency, không qua feature.
+# Admin bypass toàn bộ require_feature() nên nếu không chặn riêng ở đây thì admin
+# vẫn ghi được mọi thứ. GĐ/PGĐ chỉ giám sát, không nhập liệu nghiệp vụ.
+_NO_WRITE_ROLES = (StaffRole.ADMIN.value, StaffRole.GIAM_DOC.value,
+                   StaffRole.PHO_GIAM_DOC.value)
+
+
+def _has_feature(db: sqlite3.Connection, staff_id: int, feature_code: str) -> bool:
+    return bool(db.execute(
+        """SELECT 1 FROM group_features gf
+           JOIN group_members gm ON gm.group_id = gf.group_id
+           JOIN user_groups g ON g.id = gm.group_id AND g.is_active = 1
+           WHERE gm.staff_id = ? AND gf.feature_code = ?
+           LIMIT 1""",
+        (staff_id, feature_code),
+    ).fetchone())
+
+
+def _can_view_all_depts(db: sqlite3.Connection, current: dict) -> bool:
+    return (current["role"] in _READ_ALL_DEPT_ROLES
+            or _has_feature(db, current["id"], "handovers.confirm_entry"))
+
+
+def _can_write_all_depts(db: sqlite3.Connection, current: dict) -> bool:
+    # Không còn vai trò nào được ghi xuyên phòng theo role — chỉ hậu kiểm (theo feature).
+    return _has_feature(db, current["id"], "handovers.confirm_entry")
+
+
+def require_handover_write(feature_code: str):
+    """require_feature + chặn cứng vai trò chỉ đọc. Dùng cho mọi endpoint ghi."""
+    def _check(current: dict = Depends(require_feature(feature_code))) -> dict:
+        if current["role"] in _NO_WRITE_ROLES:
+            raise HTTPException(403, "Vai trò của bạn chỉ được xem, không được thao tác trên chứng từ bàn giao")
+        return current
+    return _check
+
+
+def _assert_dept_allowed(db: sqlite3.Connection, current: dict, department_id: Optional[int]) -> None:
+    """Chặn user chỉ được XEM phòng mình khi đụng tới dữ liệu phòng khác."""
+    if _can_view_all_depts(db, current):
+        return
+    if current.get("department_id") is None:
+        raise HTTPException(403, "Tài khoản chưa được gán phòng — không thể xem chứng từ")
+    if department_id != current["department_id"]:
+        raise HTTPException(403, "Chỉ được xem chứng từ của phòng mình")
+
+
+def _assert_dept_write_allowed(db: sqlite3.Connection, current: dict, department_id: Optional[int]) -> None:
+    """Chặn thao tác (lưu / xác nhận / mượn / trả / từ chối) lên phòng khác."""
+    if _can_write_all_depts(db, current):
+        return
+    if current.get("department_id") is None:
+        raise HTTPException(403, "Tài khoản chưa được gán phòng — không thể thao tác chứng từ")
+    if department_id != current["department_id"]:
+        raise HTTPException(403, "Chỉ được thao tác trên chứng từ của phòng mình")
+
+
+def _entry_dept(db: sqlite3.Connection, entry_id: int) -> Optional[int]:
+    row = db.execute(
+        """SELECT h.department_id FROM document_entries de
+           JOIN handovers h ON h.id = de.handover_id WHERE de.id = ?""",
+        (entry_id,),
+    ).fetchone()
+    return row["department_id"] if row else None
+
+
+# ─── Phòng của cán bộ theo lịch sử đổi phòng ─────────────────────────────────
+def _dept_at(db: sqlite3.Connection, staff_id: int, date_iso: str):
+    """Phòng cán bộ thuộc về tại một ngày (dòng lịch sử mới nhất còn hiệu lực)."""
+    row = db.execute(
+        """SELECT department_id FROM staff_department_history
+           WHERE staff_id = ? AND effective_from <= ?
+           ORDER BY effective_from DESC, id DESC LIMIT 1""",
+        (staff_id, date_iso),
+    ).fetchone()
+    if row:
+        return row["department_id"]
+    u = db.execute("SELECT department_id FROM user_tttt WHERE id = ?", (staff_id,)).fetchone()
+    return u["department_id"] if u else None
 
 # ─── Mapping hiển thị lịch sử ────────────────────────────────────────────────
 _ACTION_LABEL = {
@@ -39,10 +136,12 @@ _STATUS_LABEL = {
     EntryStatus.PENDING:   "Chờ xác nhận",
     EntryStatus.CONFIRMED: "Đã xác nhận",
     EntryStatus.BORROWED:  "Đang mượn",
+    EntryStatus.REJECTED:  "Bị từ chối",
 }
 
 _ROLE_LABEL = {
-    "admin":         "Quản trị viên",
+    "admin":         "Quản trị viên cấp 1",
+    "admin_l2":      "Quản trị viên cấp 2",
     "hau_kiem_vien": "Hậu kiểm viên",
     "giam_doc":      "Giám đốc",
     "pho_giam_doc":  "Phó Giám đốc",
@@ -52,112 +151,83 @@ _ROLE_LABEL = {
 }
 
 
-def _handover_to_dict(h: dict, db: sqlite3.Connection) -> dict:
-    dept = db.execute("SELECT * FROM departments WHERE id = ?", (h["department_id"],)).fetchone()
-    rows = db.execute(
-        """SELECT de.id, de.handover_id, de.staff_id, de.transaction_date, de.sheet_count,
-                  de.notes, de.entry_status, de.borrow_reason, de.entered_by_id,
-                  de.confirmed_by_id, de.confirmed_at,
-                  ks.employee_code AS s_emp_code, ks.full_name AS s_full_name,
-                  ks.role AS s_role, ks.department_id AS s_dept_id, ks.username AS s_username,
-                  ks.phone AS s_phone, ks.email AS s_email, ks.start_date AS s_start_date,
-                  ks.ipcas_code AS s_ipcas_code, ks.payment_username AS s_pay_user,
-                  ks.is_active AS s_is_active
-           FROM document_entries de
-           LEFT JOIN user_tttt ks ON de.staff_id = ks.id
-           WHERE de.handover_id = ? ORDER BY de.transaction_date""",
-        (h["id"],),
-    ).fetchall()
-
-    entries = []
-    for e in rows:
-        staff = None
-        if e["staff_id"]:
-            staff = {
-                "id": e["staff_id"],
-                "employee_code": e["s_emp_code"] or "",
-                "full_name": e["s_full_name"] or "",
-                "role": e["s_role"] or "",
-                "department_id": e["s_dept_id"],
-                "username": e["s_username"] or "",
-                "phone": e["s_phone"],
-                "email": e["s_email"],
-                "start_date": e["s_start_date"],
-                "ipcas_code": e["s_ipcas_code"],
-                "payment_username": e["s_pay_user"],
-                "is_active": bool(e["s_is_active"]),
-            }
-        entries.append({
-            "id": e["id"],
-            "handover_id": e["handover_id"],
-            "staff_id": e["staff_id"],
-            "transaction_date": e["transaction_date"],
-            "sheet_count": e["sheet_count"],
-            "notes": e["notes"],
-            "entry_status": e["entry_status"] or EntryStatus.CONFIRMED,
-            "borrow_reason": e["borrow_reason"],
-            "entered_by_id": e["entered_by_id"],
-            "confirmed_by_id": e["confirmed_by_id"],
-            "confirmed_at": e["confirmed_at"],
-            "staff": staff,
-        })
-
-    return {
-        "id": h["id"],
-        "department_id": h["department_id"],
-        "handover_date": h["handover_date"],
-        "received_by_id": h["received_by_id"],
-        "delivered_by": h["delivered_by"],
-        "notes": h["notes"],
-        "status": h["status"] or "draft",
-        "created_at": h["created_at"],
-        "department": dict(dept) if dept else None,
-        "entries": entries,
-    }
-
-
 # ─── Grid ─────────────────────────────────────────────────────────────────────
 @router.get("/grid", response_model=GridResponse)
 def get_handover_grid(
     department_id: int,
-    year: int,
-    month: int,
+    # Chặn ở tầng khai báo: monthrange()/date() bên dưới ném IllegalMonthError
+    # và ValueError với giá trị ngoài khoảng → lọt lên thành HTTP 500.
+    year: int = Query(..., ge=2000, le=2100),
+    month: int = Query(..., ge=1, le=12),
     db: sqlite3.Connection = Depends(get_db),
     current: dict = Depends(require_feature("menu.handovers")),
 ):
+    _assert_dept_allowed(db, current, department_id)
+
     days_in_month = calendar.monthrange(year, month)[1]
     period_start = date(year, month, 1).isoformat()
     period_end = (date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)).isoformat()
 
-    # Entries trong tháng
+    # Entries trong tháng — lọc theo phòng ĐÓNG BĂNG trong phiếu bàn giao
+    # (handovers.department_id), KHÔNG theo phòng hiện tại của user. Nhờ vậy chứng
+    # từ của cán bộ đã chuyển phòng vẫn nằm ở phòng cũ cho các tháng trước khi chuyển.
     entry_rows = db.execute(
         """SELECT de.id, de.handover_id, de.staff_id, de.transaction_date, de.sheet_count,
                   de.entry_status, de.entered_by_id
            FROM document_entries de
-           JOIN user_tttt ks ON de.staff_id = ks.id
-           WHERE ks.department_id = ?
+           JOIN handovers h ON de.handover_id = h.id
+           WHERE h.department_id = ?
+             AND de.staff_id IS NOT NULL
              AND de.transaction_date >= ? AND de.transaction_date < ?""",
         (department_id, period_start, period_end),
     ).fetchall()
 
-    staff_ids_with_entries = {e["staff_id"] for e in entry_rows}
+    staff_ids_with_entries = {e["staff_id"] for e in entry_rows if e["staff_id"]}
     entered_by_ids = {e["entered_by_id"] for e in entry_rows if e["entered_by_id"]}
 
-    # Staff: đang active + có entries trong tháng này, bỏ truong_phong/pho_phong
-    _SKIP_ROLES = "('truong_phong','pho_phong')"
-    if staff_ids_with_entries:
-        ph = ",".join("?" * len(staff_ids_with_entries))
-        user_rows = db.execute(
-            f"SELECT * FROM user_tttt WHERE department_id = ? AND role NOT IN {_SKIP_ROLES}"
-            f" AND (is_active = 1 OR id IN ({ph})) ORDER BY ipcas_code",
-            [department_id] + list(staff_ids_with_entries),
-        ).fetchall()
+    # Cán bộ TỪNG thuộc phòng này trong bất kỳ ngày nào của tháng (theo lịch sử đổi
+    # phòng) → hiện dòng trống để có thể nhập bù. Khoảng của mỗi mốc lịch sử là
+    # [effective_from, mốc kế tiếp); giao với tháng ⇔ eff < period_end và (kế tiếp
+    # NULL hoặc kế tiếp > period_start).
+    overlap_rows = db.execute(
+        """WITH hist AS (
+               SELECT staff_id, department_id, effective_from,
+                      LEAD(effective_from) OVER (
+                          PARTITION BY staff_id ORDER BY effective_from, id
+                      ) AS next_from
+               FROM staff_department_history
+           )
+           SELECT DISTINCT staff_id FROM hist
+           WHERE department_id = ?
+             AND effective_from < ?
+             AND (next_from IS NULL OR next_from > ?)""",
+        (department_id, period_end, period_start),
+    ).fetchall()
+    overlap_ids = {r["staff_id"] for r in overlap_rows}
+
+    # Staff rows: (thuộc phòng tháng đó & active) HOẶC có chứng từ (bất kể active).
+    # CHỈ giao dịch viên (chuyen_vien) — trưởng/phó phòng, HKV, GĐ, admin không lên lưới.
+    _GRID_ROLE = StaffRole.CHUYEN_VIEN.value
+    eligible_ids = overlap_ids | staff_ids_with_entries
+    if eligible_ids:
+        ph = ",".join("?" * len(eligible_ids))
+        if staff_ids_with_entries:
+            ph2 = ",".join("?" * len(staff_ids_with_entries))
+            user_rows = db.execute(
+                f"SELECT * FROM user_tttt WHERE role = '{_GRID_ROLE}'"
+                f"   AND id IN ({ph})"
+                f"   AND (is_active = 1 OR id IN ({ph2}))"
+                f" ORDER BY ipcas_code",
+                list(eligible_ids) + list(staff_ids_with_entries),
+            ).fetchall()
+        else:
+            user_rows = db.execute(
+                f"SELECT * FROM user_tttt WHERE role = '{_GRID_ROLE}'"
+                f"   AND id IN ({ph}) AND is_active = 1 ORDER BY ipcas_code",
+                list(eligible_ids),
+            ).fetchall()
     else:
-        user_rows = db.execute(
-            f"SELECT * FROM user_tttt WHERE department_id = ? AND role NOT IN {_SKIP_ROLES}"
-            f" AND is_active = 1 ORDER BY ipcas_code",
-            (department_id,),
-        ).fetchall()
+        user_rows = []
 
     # Tên người nhập
     entered_by_map: dict = {}
@@ -187,23 +257,29 @@ def get_handover_grid(
 def upsert_entry(
     body: EntryUpsertRequest,
     db: sqlite3.Connection = Depends(get_db),
-    current: dict = Depends(require_feature("handovers.save_entry")),
+    current: dict = Depends(require_handover_write("handovers.save_entry")),
 ):
     staff_row = db.execute("SELECT * FROM user_tttt WHERE id = ?", (body.staff_id,)).fetchone()
     if not staff_row:
         raise HTTPException(404, "Không tìm thấy cán bộ")
 
-    # User có quyền confirm entry → tạo entry ở trạng thái CONFIRMED ngay
-    can_confirm = current["role"] == "admin" or bool(db.execute(
-        """SELECT 1 FROM group_features gf
-           JOIN group_members gm ON gm.group_id = gf.group_id
-           JOIN user_groups g ON g.id = gm.group_id AND g.is_active = 1
-           WHERE gm.staff_id = ? AND gf.feature_code = 'handovers.confirm_entry'
-           LIMIT 1""",
-        (current["id"],),
-    ).fetchone())
+    # Chỉ giao dịch viên mới có chứng từ bàn giao — chặn tận gốc, không để lọt entry rác
+    if staff_row["role"] != StaffRole.CHUYEN_VIEN.value:
+        raise HTTPException(400, "Chỉ giao dịch viên mới có chứng từ bàn giao")
 
-    dept_id = staff_row["department_id"]
+    # Người không phải hậu kiểm chỉ nhập cho cán bộ phòng mình. So theo phòng HIỆN TẠI
+    # của cán bộ (không phải phòng tại ngày giao dịch) để GDV vẫn nhập bù được cho
+    # tháng trước khi chính mình chuyển phòng.
+    if body.staff_id != current["id"]:
+        _assert_dept_write_allowed(db, current, staff_row["department_id"])
+
+    # User có quyền confirm entry → tạo entry ở trạng thái CONFIRMED ngay
+    can_confirm = (current["role"] == StaffRole.ADMIN.value
+                   or _has_feature(db, current["id"], "handovers.confirm_entry"))
+
+    # Phòng của chứng từ = phòng cán bộ thuộc về TẠI NGÀY GIAO DỊCH (không phải phòng
+    # hiện tại) → nhập bù cho cán bộ đã chuyển phòng vẫn vào đúng phòng cũ.
+    dept_id = _dept_at(db, body.staff_id, body.date.isoformat()) or staff_row["department_id"]
 
     # ── Get/create handover (INSERT OR IGNORE để chống race condition) ──
     db.execute(
@@ -270,7 +346,7 @@ def upsert_entry(
                 raise HTTPException(500, "Không thể lưu chứng từ — vui lòng thử lại")
     else:
         if entry_row:
-            if not can_confirm and entry_row["entry_status"] != EntryStatus.PENDING:
+            if not can_confirm and entry_row["entry_status"] not in (EntryStatus.PENDING, EntryStatus.REJECTED):
                 raise HTTPException(400, "Không thể xóa chứng từ đã được xác nhận. Vui lòng liên hệ HKV/KSV.")
             db.execute("DELETE FROM entry_change_logs WHERE entry_id = ?", (entry_row["id"],))
             db.execute("DELETE FROM document_entries WHERE id = ?", (entry_row["id"],))
@@ -284,11 +360,12 @@ def upsert_entry(
 def confirm_received(
     entry_id: int,
     db: sqlite3.Connection = Depends(get_db),
-    current: dict = Depends(require_feature("handovers.confirm_entry")),
+    current: dict = Depends(require_handover_write("handovers.confirm_entry")),
 ):
     entry = db.execute("SELECT * FROM document_entries WHERE id = ?", (entry_id,)).fetchone()
     if not entry:
         raise HTTPException(404, "Không tìm thấy chứng từ")
+    _assert_dept_write_allowed(db, current, _entry_dept(db, entry_id))
     if entry["entry_status"] != EntryStatus.PENDING:
         raise HTTPException(409, f"Trạng thái không hợp lệ: '{_STATUS_LABEL.get(entry['entry_status'], entry['entry_status'])}'. Chỉ xác nhận được khi đang chờ xác nhận.")
 
@@ -326,11 +403,12 @@ def borrow_entry(
     entry_id: int,
     body: BorrowRequest,
     db: sqlite3.Connection = Depends(get_db),
-    current: dict = Depends(require_feature("handovers.borrow")),
+    current: dict = Depends(require_handover_write("handovers.borrow")),
 ):
     entry = db.execute("SELECT * FROM document_entries WHERE id = ?", (entry_id,)).fetchone()
     if not entry:
         raise HTTPException(404, "Không tìm thấy chứng từ")
+    _assert_dept_write_allowed(db, current, _entry_dept(db, entry_id))
     if entry["entry_status"] != EntryStatus.CONFIRMED:
         raise HTTPException(409, f"Trạng thái không hợp lệ: '{_STATUS_LABEL.get(entry['entry_status'], entry['entry_status'])}'. Chỉ mượn được chứng từ đã xác nhận.")
 
@@ -356,11 +434,12 @@ def handback_entry(
     entry_id: int,
     body: HandbackRequest,
     db: sqlite3.Connection = Depends(get_db),
-    current: dict = Depends(require_feature("handovers.handback")),
+    current: dict = Depends(require_handover_write("handovers.handback")),
 ):
     entry = db.execute("SELECT * FROM document_entries WHERE id = ?", (entry_id,)).fetchone()
     if not entry:
         raise HTTPException(404, "Không tìm thấy chứng từ")
+    _assert_dept_write_allowed(db, current, _entry_dept(db, entry_id))
     if entry["entry_status"] != EntryStatus.BORROWED:
         raise HTTPException(409, f"Trạng thái không hợp lệ: '{_STATUS_LABEL.get(entry['entry_status'], entry['entry_status'])}'. Chỉ bàn giao lại được khi đang mượn.")
 
@@ -389,11 +468,12 @@ def reject_entry(
     entry_id: int,
     body: RejectRequest,
     db: sqlite3.Connection = Depends(get_db),
-    current: dict = Depends(require_feature("handovers.reject_entry")),
+    current: dict = Depends(require_handover_write("handovers.reject_entry")),
 ):
     entry = db.execute("SELECT * FROM document_entries WHERE id = ?", (entry_id,)).fetchone()
     if not entry:
         raise HTTPException(404, "Không tìm thấy chứng từ")
+    _assert_dept_write_allowed(db, current, _entry_dept(db, entry_id))
     if entry["entry_status"] != EntryStatus.PENDING:
         raise HTTPException(409, f"Trạng thái không hợp lệ: '{_STATUS_LABEL.get(entry['entry_status'], entry['entry_status'])}'. Chỉ từ chối được khi đang chờ xác nhận.")
 
@@ -435,11 +515,43 @@ def reject_entry(
         db.commit()
         return {"ok": True, "message": "Đã từ chối bàn giao lại. Chứng từ vẫn đang mượn."}
 
-    # Chứng từ mới chưa xác nhận → từ chối → xóa (manual cascade)
-    db.execute("DELETE FROM entry_change_logs WHERE entry_id = ?", (entry_id,))
-    db.execute("DELETE FROM document_entries WHERE id = ?", (entry_id,))
+    # Chứng từ mới chưa xác nhận → từ chối → giữ entry + log để lưu lịch sử
+    db.execute(
+        "UPDATE document_entries SET entry_status=? WHERE id=?",
+        (EntryStatus.REJECTED, entry_id),
+    )
+    db.execute(
+        "INSERT INTO entry_change_logs (entry_id, action, performed_by_id, new_sheet_count, notes, timestamp) VALUES (?,?,?,?,?,?)",
+        (entry_id, "rejected_handover", current["id"], entry["sheet_count"], reason, str(_vn_now())),
+    )
     db.commit()
-    return {"ok": True, "message": "Đã từ chối và xóa chứng từ"}
+    return {"ok": True, "message": "Đã từ chối chứng từ. Cán bộ có thể nộp lại."}
+
+
+# ─── Nộp lại chứng từ bị từ chối (GDV) ───────────────────────────────────────
+@router.post("/entries/{entry_id}/resubmit")
+def resubmit_entry(
+    entry_id: int,
+    db: sqlite3.Connection = Depends(get_db),
+    current: dict = Depends(require_handover_write("handovers.save_entry")),
+):
+    entry = db.execute("SELECT * FROM document_entries WHERE id = ?", (entry_id,)).fetchone()
+    if not entry:
+        raise HTTPException(404, "Không tìm thấy chứng từ")
+    _assert_dept_write_allowed(db, current, _entry_dept(db, entry_id))
+    if entry["entry_status"] != EntryStatus.REJECTED:
+        raise HTTPException(409, f"Trạng thái không hợp lệ: '{_STATUS_LABEL.get(entry['entry_status'], entry['entry_status'])}'. Chỉ nộp lại được chứng từ bị từ chối.")
+
+    db.execute(
+        "UPDATE document_entries SET entry_status=?, entered_by_id=? WHERE id=?",
+        (EntryStatus.PENDING, current["id"], entry_id),
+    )
+    db.execute(
+        "INSERT INTO entry_change_logs (entry_id, action, performed_by_id, new_sheet_count, timestamp) VALUES (?,?,?,?,?)",
+        (entry_id, "handover", current["id"], entry["sheet_count"], str(_vn_now())),
+    )
+    db.commit()
+    return {"ok": True, "message": "Đã nộp lại chứng từ, chờ HKV xác nhận"}
 
 
 # ─── Lịch sử thay đổi ────────────────────────────────────────────────────────
@@ -447,7 +559,7 @@ def reject_entry(
 def get_entry_history(
     entry_id: int,
     db: sqlite3.Connection = Depends(get_db),
-    current: dict = Depends(get_current_staff),
+    current: dict = Depends(require_feature("menu.handovers")),
 ):
     entry = db.execute(
         "SELECT de.*, ks.full_name AS s_name, ks.ipcas_code, ks.payment_username, ks.department_id AS s_dept_id "
@@ -456,6 +568,7 @@ def get_entry_history(
     ).fetchone()
     if not entry:
         raise HTTPException(404, "Không tìm thấy chứng từ")
+    _assert_dept_allowed(db, current, _entry_dept(db, entry_id))
 
     logs = db.execute(
         """SELECT ecl.*, ks.full_name AS p_name, ks.role AS p_role
@@ -507,10 +620,23 @@ def get_entry_history(
     current_status = entry["entry_status"] or EntryStatus.CONFIRMED
     tx_date = date.fromisoformat(entry["transaction_date"]).strftime("%d/%m/%Y") if entry["transaction_date"] else ""
 
+    # ── Ngày nộp thật ──
+    # Log nộp sớm nhất còn hiệu lực (bỏ các lần đã bị từ chối). Không lấy log mới nhất
+    # (thao tác sau như xác nhận / mượn sẽ đẩy ngày trôi đi) và không lấy
+    # `handovers.handover_date` (luôn bằng transaction_date khi nhập qua lưới).
+    submit_ts = submitted_at_from_logs(logs)
+    submit_date = None
+    if submit_ts:
+        try:
+            submit_date = date.fromisoformat(submit_ts[:10]).strftime("%d/%m/%Y")
+        except ValueError:
+            log_.warning("Timestamp nộp chứng từ không đọc được: entry=%s raw=%r", entry_id, submit_ts)
+
     return EntryHistoryOut(
         entry_id=entry_id,
         source_user_name=s_name,
         transaction_date=tx_date,
+        submit_date=submit_date,
         sheet_count=entry["sheet_count"],
         current_status=current_status,
         current_status_label=_STATUS_LABEL.get(current_status, current_status),
@@ -519,47 +645,22 @@ def get_entry_history(
     )
 
 
-# ─── Danh sách handover ──────────────────────────────────────────────────────
-@router.get("/")
-def list_handovers(
-    department_id: Optional[int] = None,
-    status: Optional[str] = None,
-    from_date: Optional[date] = None,
-    to_date: Optional[date] = None,
-    db: sqlite3.Connection = Depends(get_db),
-    current: dict = Depends(get_current_staff),
-):
-    clauses = []
-    params: list = []
-    if department_id:
-        clauses.append("department_id = ?")
-        params.append(department_id)
-    if status:
-        clauses.append("status = ?")
-        params.append(status)
-    if from_date:
-        clauses.append("handover_date >= ?")
-        params.append(from_date.isoformat())
-    if to_date:
-        clauses.append("handover_date <= ?")
-        params.append(to_date.isoformat())
-
-    where = "WHERE " + " AND ".join(clauses) if clauses else ""
-    rows = db.execute(
-        f"SELECT * FROM handovers {where} ORDER BY handover_date DESC", params
-    ).fetchall()
-    return [_handover_to_dict(dict(r), db) for r in rows]
-
-
 @router.get("/export")
-def export_handovers(
+async def export_handovers(
     from_date: Optional[date] = None,
     to_date: Optional[date] = None,
     department_id: Optional[int] = None,
     db: sqlite3.Connection = Depends(get_db),
-    current: dict = Depends(get_current_staff),
+    current: dict = Depends(require_feature("menu.handovers")),
 ):
     """Xuất danh sách chứng từ bàn giao ra Excel."""
+    # Không được xem mọi phòng → ép về phòng mình, bỏ qua department_id client gửi lên.
+    # (Không lọc = xuất toàn bộ chứng từ mọi phòng.)
+    if not _can_view_all_depts(db, current):
+        if current.get("department_id") is None:
+            raise HTTPException(403, "Tài khoản chưa được gán phòng — không thể xuất dữ liệu")
+        department_id = current["department_id"]
+
     clauses = []
     params: list = []
     if department_id:
@@ -573,189 +674,62 @@ def export_handovers(
         params.append(to_date.isoformat())
 
     where = "WHERE " + " AND ".join(clauses) if clauses else ""
-    entries = db.execute(
-        f"""SELECT de.id, de.transaction_date, de.sheet_count, de.entry_status,
-                   h.handover_date, h.delivered_by,
-                   d.name AS dept_name,
-                   ks.ipcas_code, ks.full_name, ks.payment_username
-            FROM document_entries de
-            JOIN handovers h ON de.handover_id = h.id
-            JOIN departments d ON h.department_id = d.id
-            LEFT JOIN user_tttt ks ON de.staff_id = ks.id
-            {where}
-            ORDER BY h.handover_date DESC, d.name""",
-        params,
-    ).fetchall()
 
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Bàn giao chứng từ"
+    def _work() -> io.BytesIO:
+        entries = db.execute(
+            f"""SELECT de.id, de.transaction_date, de.sheet_count, de.entry_status,
+                       h.handover_date, h.delivered_by,
+                       d.name AS dept_name,
+                       ks.ipcas_code, ks.full_name, ks.payment_username
+                FROM document_entries de
+                JOIN handovers h ON de.handover_id = h.id
+                JOIN departments d ON h.department_id = d.id
+                LEFT JOIN user_tttt ks ON de.staff_id = ks.id
+                {where}
+                ORDER BY h.handover_date DESC, d.name""",
+            params,
+        ).fetchall()
 
-    hdr_fill = PatternFill("solid", fgColor="1565C0")
-    hdr_font = Font(bold=True, color="FFFFFF")
-    headers = ["STT", "Phòng", "Ngày bàn giao", "Ngày giao dịch",
-               "User IPCAS", "Họ và tên", "Số tờ", "Trạng thái", "Người nộp"]
-    widths  = [6, 20, 14, 14, 16, 25, 9, 16, 22]
-    ws.append(headers)
-    for cell, w in zip(ws[1], widths):
-        cell.fill = hdr_fill
-        cell.font = hdr_font
-        cell.alignment = Alignment(horizontal="center")
-        ws.column_dimensions[cell.column_letter].width = w
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Bàn giao chứng từ"
 
-    for idx, e in enumerate(entries, 1):
-        ho_date = date.fromisoformat(e["handover_date"]).strftime("%d/%m/%Y") if e["handover_date"] else ""
-        tx_date = date.fromisoformat(e["transaction_date"]).strftime("%d/%m/%Y") if e["transaction_date"] else ""
-        display_name = e["full_name"] or e["payment_username"] or ""
-        ws.append([
-            idx,
-            e["dept_name"] or "",
-            ho_date,
-            tx_date,
-            e["ipcas_code"] or "",
-            display_name,
-            e["sheet_count"],
-            _STATUS_LABEL.get(e["entry_status"] or "confirmed", e["entry_status"] or ""),
-            e["delivered_by"] or "",
-        ])
+        hdr_fill = PatternFill("solid", fgColor="1565C0")
+        hdr_font = Font(bold=True, color="FFFFFF")
+        headers = ["STT", "Phòng", "Ngày bàn giao", "Ngày giao dịch",
+                   "User IPCAS", "Họ và tên", "Số tờ", "Trạng thái", "Người nộp"]
+        widths  = [6, 20, 14, 14, 16, 25, 9, 16, 22]
+        ws.append(headers)
+        for cell, w in zip(ws[1], widths):
+            cell.fill = hdr_fill
+            cell.font = hdr_font
+            cell.alignment = Alignment(horizontal="center")
+            ws.column_dimensions[cell.column_letter].width = w
 
-    buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
+        for idx, e in enumerate(entries, 1):
+            ho_date = date.fromisoformat(e["handover_date"]).strftime("%d/%m/%Y") if e["handover_date"] else ""
+            tx_date = date.fromisoformat(e["transaction_date"]).strftime("%d/%m/%Y") if e["transaction_date"] else ""
+            display_name = e["full_name"] or e["payment_username"] or ""
+            ws.append([
+                idx,
+                e["dept_name"] or "",
+                ho_date,
+                tx_date,
+                e["ipcas_code"] or "",
+                display_name,
+                e["sheet_count"],
+                _STATUS_LABEL.get(e["entry_status"] or "confirmed", e["entry_status"] or ""),
+                e["delivered_by"] or "",
+            ])
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return buf
+
+    buf = await run_heavy(_work)
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": "attachment; filename*=UTF-8''chung_tu_ban_giao.xlsx"},
     )
-
-
-@router.get("/{handover_id}")
-def get_handover(
-    handover_id: int,
-    db: sqlite3.Connection = Depends(get_db),
-    current: dict = Depends(get_current_staff),
-):
-    h = db.execute("SELECT * FROM handovers WHERE id = ?", (handover_id,)).fetchone()
-    if not h:
-        raise HTTPException(404, "Không tìm thấy phiếu bàn giao")
-    return _handover_to_dict(dict(h), db)
-
-
-@router.post("/")
-def create_handover(
-    body: HandoverCreate,
-    db: sqlite3.Connection = Depends(get_db),
-    current: dict = Depends(require_feature("handovers.save_entry")),
-):
-    dept = db.execute("SELECT id FROM departments WHERE id = ?", (body.department_id,)).fetchone()
-    if not dept:
-        raise HTTPException(404, "Không tìm thấy phòng")
-
-    cur = db.execute(
-        "INSERT INTO handovers (department_id, handover_date, received_by_id, delivered_by, notes, status, created_at) VALUES (?,?,?,?,?,?,?)",
-        (body.department_id, body.handover_date, current["id"], body.delivered_by, body.notes, "draft", str(_vn_now())),
-    )
-    h_id = cur.lastrowid
-
-    for e in body.entries:
-        s = db.execute("SELECT * FROM user_tttt WHERE id = ?", (e.staff_id,)).fetchone()
-        if not s or s["department_id"] != body.department_id:
-            s_code = s["ipcas_code"] if s else str(e.staff_id)
-            raise HTTPException(400, f"Cán bộ {s_code} không thuộc phòng này")
-        db.execute(
-            "INSERT INTO document_entries (handover_id, staff_id, transaction_date, sheet_count, notes, entry_status, entered_by_id, confirmed_by_id, confirmed_at) VALUES (?,?,?,?,?,?,?,?,?)",
-            (h_id, e.staff_id, e.transaction_date, e.sheet_count, e.notes, EntryStatus.CONFIRMED, current["id"], current["id"], str(_vn_now())),
-        )
-
-    db.commit()
-    h_row = db.execute("SELECT * FROM handovers WHERE id = ?", (h_id,)).fetchone()
-    return _handover_to_dict(dict(h_row), db)
-
-
-@router.post("/{handover_id}/entries")
-def add_entry(
-    handover_id: int,
-    body: DocumentEntryIn,
-    db: sqlite3.Connection = Depends(get_db),
-    current: dict = Depends(require_feature("handovers.save_entry")),
-):
-    h = db.execute("SELECT * FROM handovers WHERE id = ?", (handover_id,)).fetchone()
-    if not h:
-        raise HTTPException(404, "Không tìm thấy phiếu bàn giao")
-    if h["status"] == "confirmed":
-        raise HTTPException(400, "Phiếu đã xác nhận, không thể thêm")
-
-    s = db.execute("SELECT * FROM user_tttt WHERE id = ?", (body.staff_id,)).fetchone()
-    if not s or s["department_id"] != h["department_id"]:
-        s_code = s["ipcas_code"] if s else str(body.staff_id)
-        raise HTTPException(400, f"Cán bộ {s_code} không thuộc phòng của phiếu bàn giao này")
-
-    cur = db.execute(
-        "INSERT INTO document_entries (handover_id, staff_id, transaction_date, sheet_count, notes, entry_status, entered_by_id, confirmed_by_id, confirmed_at) VALUES (?,?,?,?,?,?,?,?,?)",
-        (handover_id, body.staff_id, body.transaction_date, body.sheet_count, body.notes, EntryStatus.CONFIRMED, current["id"], current["id"], str(_vn_now())),
-    )
-    db.commit()
-    entry_id = cur.lastrowid
-    row = db.execute("SELECT * FROM document_entries WHERE id = ?", (entry_id,)).fetchone()
-    return dict(row)
-
-
-@router.delete("/{handover_id}/entries/{entry_id}")
-def delete_entry(
-    handover_id: int,
-    entry_id: int,
-    db: sqlite3.Connection = Depends(get_db),
-    _: dict = Depends(require_feature("handovers.save_entry")),
-):
-    row = db.execute(
-        "SELECT id FROM document_entries WHERE id = ? AND handover_id = ?", (entry_id, handover_id)
-    ).fetchone()
-    if not row:
-        raise HTTPException(404, "Không tìm thấy")
-    db.execute("DELETE FROM entry_change_logs WHERE entry_id = ?", (entry_id,))
-    db.execute("DELETE FROM document_entries WHERE id = ?", (entry_id,))
-    db.commit()
-    return {"message": "Đã xóa"}
-
-
-@router.post("/{handover_id}/confirm")
-def confirm_handover(
-    handover_id: int,
-    db: sqlite3.Connection = Depends(get_db),
-    _: dict = Depends(require_feature("handovers.confirm_entry")),
-):
-    h = db.execute("SELECT * FROM handovers WHERE id = ?", (handover_id,)).fetchone()
-    if not h:
-        raise HTTPException(404, "Không tìm thấy phiếu bàn giao")
-    count = db.execute(
-        "SELECT COUNT(*) FROM document_entries WHERE handover_id = ?", (handover_id,)
-    ).fetchone()[0]
-    if not count:
-        raise HTTPException(400, "Phiếu chưa có chứng từ nào")
-    db.execute("UPDATE handovers SET status='confirmed' WHERE id=?", (handover_id,))
-    db.commit()
-    return {"message": "Đã xác nhận phiếu bàn giao"}
-
-
-@router.delete("/{handover_id}")
-def delete_handover(
-    handover_id: int,
-    db: sqlite3.Connection = Depends(get_db),
-    _: dict = Depends(require_feature("handovers.save_entry")),
-):
-    h = db.execute("SELECT * FROM handovers WHERE id = ?", (handover_id,)).fetchone()
-    if not h:
-        raise HTTPException(404, "Không tìm thấy")
-    if h["status"] == "confirmed":
-        raise HTTPException(400, "Không thể xóa phiếu đã xác nhận")
-
-    entry_ids = [r["id"] for r in db.execute(
-        "SELECT id FROM document_entries WHERE handover_id = ?", (handover_id,)
-    ).fetchall()]
-    if entry_ids:
-        ph = ",".join("?" * len(entry_ids))
-        db.execute(f"DELETE FROM entry_change_logs WHERE entry_id IN ({ph})", entry_ids)
-    db.execute("DELETE FROM document_entries WHERE handover_id = ?", (handover_id,))
-    db.execute("DELETE FROM handovers WHERE id = ?", (handover_id,))
-    db.commit()
-    return {"message": "Đã xóa phiếu bàn giao"}

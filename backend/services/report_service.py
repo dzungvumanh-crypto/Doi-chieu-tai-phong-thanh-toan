@@ -52,7 +52,6 @@ def _get_year_from_date(date_str: str) -> int:
 
 def parse_ipcas(file_bytes: bytes) -> tuple:
     df = pd.read_excel(io.BytesIO(file_bytes), engine='xlrd', header=0)
-    violations = []
     month, year = 0, 0
     aggregated: dict = {}
 
@@ -61,8 +60,6 @@ def parse_ipcas(file_bytes: bytes) -> tuple:
         if not user_code or user_code.lower() in ('nan', 'col_tellerid', ''):
             continue
         gd_sai = _to_int(row.get('name_5', 0))
-        if gd_sai != 0:
-            violations.append({'user_code': user_code, 'name_5': gd_sai, 'row_num': int(df_idx) + 2})
 
         date_val = str(row.get('name_1', '')).strip()
         if not month:
@@ -80,7 +77,7 @@ def parse_ipcas(file_bytes: bytes) -> tuple:
         agg['bt_huy']     += _to_int(row.get('name_10', 0))
 
     rows = list(aggregated.values())
-    return rows, violations, month, year
+    return rows, month, year
 
 
 # ── Parse Payment (Teller hoặc Backchecker) ───────────────────────────────────
@@ -97,7 +94,7 @@ def _parse_payment(file_bytes: bytes, header_row: int) -> tuple:
         'bt_huy': 'Tổng số GD Hủy',
     }
 
-    rows, violations = [], []
+    rows = []
     for hkv_username, grp in df.groupby('HKV'):
         username = str(hkv_username).strip()
         if not username or username.lower() == 'nan':
@@ -109,12 +106,9 @@ def _parse_payment(file_bytes: bytes, header_row: int) -> tuple:
             except Exception:
                 totals[key] = 0
 
-        if totals.get('gd_sai', 0) != 0:
-            violations.append({'user_code': username, 'name_5': totals['gd_sai']})
-
         rows.append({'user_code': username, **totals})
 
-    return rows, violations
+    return rows
 
 
 def parse_payment_teller(file_bytes: bytes) -> tuple:
@@ -348,26 +342,36 @@ def generate_dept_excel(dept_name: str, month: int, year: int,
     if ws.max_row >= 8:
         ws.delete_rows(8, ws.max_row - 7)
 
+    # Ghi thẳng giá trị đã tính (không dùng công thức Excel) — nếu ghi công thức,
+    # openpyxl để ô kết quả rỗng; máy nào không tự tính lại (Manual/WPS/xem nhanh)
+    # sẽ hiện trống cột TC (I)/TC (II) và cột tỷ lệ.
+    def _ratio(huy_cq, gd_dung):
+        return (huy_cq / gd_dung * 100) if gd_dung else 0
+
     def _write_data(r: int, stt: int, d: dict):
         _apply_row_styles(ws, r, data_styles, data_h)
+        gd_dung = d.get('gd_hk_dung', 0)
+        huy_cq  = d.get('huy_cq', 0)
         ws.cell(r, 1).value  = stt
         ws.cell(r, 2).value  = d.get('user_code_display', d.get('user_code', ''))
         ws.cell(r, 3).value  = d.get('vn_name', '')
         ws.cell(r, 4).value  = d.get('hkv_thuc_hien', '') or None
-        ws.cell(r, 5).value  = d.get('gd_hk_dung', 0) or None
+        ws.cell(r, 5).value  = gd_dung or None
         ws.cell(r, 6).value  = d.get('chua_hk', 0) or None
         ws.cell(r, 7).value  = d.get('bt_huy', 0) or None
         ws.cell(r, 8).value  = d.get('huy_kq', 0) or None
-        ws.cell(r, 9).value  = d.get('huy_cq', 0) or None
-        ws.cell(r, 10).value = f'=IFERROR({ws.cell(r,9).coordinate}/{ws.cell(r,5).coordinate}*100,0)'
+        ws.cell(r, 9).value  = huy_cq or None
+        ws.cell(r, 10).value = _ratio(huy_cq, gd_dung)
         ws.cell(r, 11).value = d.get('nguyen_nhan', '') or None
 
-    def _write_total(r: int, label: str, start: int, end: int):
+    def _write_total(r: int, label: str, rows: list):
         _apply_row_styles(ws, r, tot_styles, tot_h)
         ws.cell(r, 2).value = label
-        for ci, col in [(5,'E'),(6,'F'),(7,'G'),(8,'H'),(9,'I')]:
-            ws.cell(r, ci).value = f'=SUM({col}{start}:{col}{end})'
-        ws.cell(r, 10).value = f'=IFERROR({ws.cell(r,9).coordinate}/{ws.cell(r,5).coordinate}*100,0)'
+        sums = {ci: sum(x.get(k, 0) for x in rows)
+                for ci, k in [(5,'gd_hk_dung'),(6,'chua_hk'),(7,'bt_huy'),(8,'huy_kq'),(9,'huy_cq')]}
+        for ci, val in sums.items():
+            ws.cell(r, ci).value = val
+        ws.cell(r, 10).value = _ratio(sums[9], sums[5])
 
     r = 8
     ws.merge_cells(f'A{r}:K{r}')
@@ -375,22 +379,18 @@ def generate_dept_excel(dept_name: str, month: int, year: int,
     ws.cell(r, 1).value = 'I. HỆ THỐNG IPCAS'
     r += 1
 
-    ipcas_start = r
     for stt, d in enumerate(ipcas_rows, 1):
         _write_data(r, stt, d); r += 1
-    ipcas_end = r - 1
-    _write_total(r, 'TC (I)', ipcas_start, ipcas_end); r += 1
+    _write_total(r, 'TC (I)', ipcas_rows); r += 1
 
     ws.merge_cells(f'A{r}:K{r}')
     _apply_row_styles(ws, r, sec_styles, sec_h)
     ws.cell(r, 1).value = 'II. HỆ THỐNG THANH TOÁN TẬP TRUNG'
     r += 1
 
-    payment_start = r
     for stt, d in enumerate(payment_rows, 1):
         _write_data(r, stt, d); r += 1
-    payment_end = r - 1
-    _write_total(r, 'TC (II)', payment_start, payment_end); r += 2
+    _write_total(r, 'TC (II)', payment_rows); r += 2
 
     _apply_row_styles(ws, r, sign_styles, sign_h)
     ws.cell(r, 11).value = f'Hà Nội, ngày ... tháng {month:02d} năm {year}'

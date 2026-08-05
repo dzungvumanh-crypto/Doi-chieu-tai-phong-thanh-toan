@@ -1,3 +1,9 @@
+> ⚠️ **TÀI LIỆU LỊCH SỬ — KHÔNG DÙNG LÀM THAM CHIẾU KỸ THUẬT.**
+> Bảng `ksnb_staff` nhắc trong file này **nay tên là `user_tttt`**.
+> Các đoạn mẫu dùng SQLAlchemy ORM (`Column`, `relationship`) không phản ánh code hiện tại —
+> backend dùng raw SQL qua `sqlite3`.
+> Tham chiếu đang dùng: `CLAUDE.md`, `DESIGN.md`.
+
 # Kế hoạch: Xóa trang Danh sách GDV + Gộp SourceUser vào KSNBStaff
 
 ## Context

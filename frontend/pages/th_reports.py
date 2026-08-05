@@ -52,7 +52,7 @@ def th_reports_page():
                         max=2099,
                         format="%d",
                     ).classes("w-28")
-                    ui.label("(Kỳ báo cáo)").classes("text-xs text-gray-400 pb-2")
+                    ui.label("(Kỳ báo cáo)").classes("text-xs text-gray-500 pb-2")
 
                 ui.separator().classes("my-3")
 
@@ -60,7 +60,7 @@ def th_reports_page():
                 with ui.grid(columns=2).classes("w-full gap-6"):
                     with ui.column().classes("gap-1"):
                         ui.label("File Lệnh đến (IN)").classes("text-sm font-medium text-gray-700")
-                        ui.label("Sheet: Result — cột CTHED, STTLM_AMT, TOTAL").classes("text-xs text-gray-400")
+                        ui.label("Sheet: Result — cột CTHED, STTLM_AMT, TOTAL").classes("text-xs text-gray-500")
                         ui.upload(
                             on_upload=lambda e: state.update(
                                 in_file=e.content.read(), in_name=e.name
@@ -71,7 +71,7 @@ def th_reports_page():
 
                     with ui.column().classes("gap-1"):
                         ui.label("File Lệnh đi (OUT)").classes("text-sm font-medium text-gray-700")
-                        ui.label("Sheet: Result — cột CTHED, CUST_TYPE, TOTAL_AMT, TOTAL").classes("text-xs text-gray-400")
+                        ui.label("Sheet: Result — cột CTHED, CUST_TYPE, TOTAL_AMT, TOTAL").classes("text-xs text-gray-500")
                         ui.upload(
                             on_upload=lambda e: state.update(
                                 out_file=e.content.read(), out_name=e.name

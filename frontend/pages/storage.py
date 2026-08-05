@@ -1,14 +1,60 @@
 """Trang lưu trữ và tra cứu chứng từ."""
 import asyncio
+import html as _html
 from nicegui import ui, app
 import frontend.api_client as api
-from frontend.shared import _sidebar, _content_area, _page_header, _require_auth, _redirect_if_cv, _handle_api_error
+from frontend.shared import _sidebar, _content_area, _page_header, _require_auth, _handle_api_error
+
+
+def _dept_display(name: str) -> str:
+    # Rút gọn tên phòng QLTK Nostro Vostro cho bảng lưu trữ
+    if name and "nostro" in name.lower():
+        return "Phòng QLTK Nostro, Vostro"
+    return name
+
+
+def _build_summary_html(data: dict) -> str:
+    """Bảng tổng hợp cả năm: 1 cột Tháng + mỗi phòng 2 cột con + Tổng cộng 2 cột con."""
+    depts = data.get("departments", [])
+    rows  = data.get("rows", [])
+    year  = data.get("year", "")
+    if not depts:
+        return ""
+
+    C   = "border:1px solid #000;text-align:center;padding:5px 8px;font-size:13px"
+    CZ  = f"{C};color:#bbb"
+    CH  = f"{C};background:#dbeafe;font-weight:700"
+    CT  = f"{C};background:#fef9c3;font-weight:700"    # ô cột Tổng cộng
+    CTH = f"{C};background:#fde68a;font-weight:700"    # header cột Tổng cộng
+
+    n_total = 1 + len(depts) * 2 + 2
+    h = [
+        '<table id="sv-sum" style="border-collapse:collapse;width:100%;font-family:Arial,sans-serif">',
+        f'<tr><td colspan="{n_total}" style="{C};font-size:17px;font-weight:700;padding:10px">'
+        f'Tổng hợp lưu trữ năm {year}</td></tr>',
+        f'<tr><td rowspan="2" style="{CH}">Tháng</td>',
+    ]
+    for d in depts:
+        h.append(f'<td colspan="2" style="{CH}">{_html.escape(_dept_display(d["name"]))}</td>')
+    h.append(f'<td colspan="2" style="{CTH}">Tổng cộng</td></tr><tr>')
+    for _ in depts:
+        h.append(f'<td style="{CH}">Số chứng từ</td><td style="{CH}">Số tập</td>')
+    h.append(f'<td style="{CTH}">Số chứng từ</td><td style="{CTH}">Số tập</td></tr>')
+
+    for r in rows:
+        h.append(f'<tr><td style="{C};font-weight:700">Tháng {r["month"]:02d}</td>')
+        for c in r["cells"]:
+            for v in (c["total_sheets"], c["total_bundles"]):
+                h.append(f'<td style="{C if v else CZ}">{v:,}</td>')
+        h.append(f'<td style="{CT}">{r["total_sheets"]:,}</td>'
+                 f'<td style="{CT}">{r["total_bundles"]:,}</td></tr>')
+    h.append("</table>")
+    return "".join(h)
+
 
 @ui.page("/storage")
 async def storage_page():
     if not _require_auth():
-        return
-    if _redirect_if_cv():
         return
     if not api.has_feature("menu.storage"):
         ui.navigate.to("/home")
@@ -27,9 +73,13 @@ async def storage_page():
             _s_depts = [d for d in _s_depts_raw if d.get("is_source")]
         except Exception:
             _s_depts = []
-        _s_dept_opts  = {d["id"]: d["name"] for d in _s_depts}
+        _s_dept_opts  = {d["id"]: _dept_display(d["name"]) for d in _s_depts}
         _s_year_opts  = {y: str(y) for y in range(2023, _today_s.year + 3)}
         _s_month_opts = {m: f"Tháng {m:02d}" for m in range(1, 13)}
+
+        # Sentinel "Tất cả" — chỉ dùng ở tab tra cứu, không dùng ở tab bàn giao
+        _ALL_DEPTS = 0
+        _s_dept_opts_lookup = {_ALL_DEPTS: "Tất cả", **_s_dept_opts}
 
         with ui.tabs().classes("mb-2") as storage_tabs:
             t_lookup   = ui.tab("Tra cứu lưu trữ")
@@ -42,7 +92,7 @@ async def storage_page():
 
                 with ui.card().classes("w-full shadow-sm rounded-xl bg-white p-4 mb-4"):
                     with ui.row().classes("items-end gap-4 flex-wrap"):
-                        s_dept  = ui.select(_s_dept_opts, label="Phòng nghiệp vụ",
+                        s_dept  = ui.select(_s_dept_opts_lookup, label="Phòng nghiệp vụ",
                                             value=_s_depts[0]["id"] if _s_depts else None).classes("w-72")
                         s_year  = ui.select(_s_year_opts, label="Năm",
                                             value=_today_s.year).classes("w-28")
@@ -51,11 +101,38 @@ async def storage_page():
                         ui.button("Tải dữ liệu", icon="search",
                                   on_click=lambda: load_storage()).classes("bg-red-700 text-white px-4")
 
+                    # "Tất cả" = tổng hợp cả năm → không có ý nghĩa chọn tháng
+                    s_dept.on_value_change(
+                        lambda: s_month.set_visibility(s_dept.value != _ALL_DEPTS)
+                    )
+
                 storage_loading = ui.row().classes("w-full justify-center items-center py-6 hidden")
                 with storage_loading:
                     ui.spinner(size="2em", color="red")
                     ui.label("Đang tải...").classes("text-gray-500 ml-2 text-sm")
                 result_area = ui.column().classes("w-full")
+
+                def _print_table(html_table: str):
+                    print_html = f"""<!DOCTYPE html><html><head>
+<meta charset="utf-8">
+<style>
+  body{{font-family:Arial,sans-serif;margin:10mm}}
+  table{{border-collapse:collapse;width:100%}}
+  @page{{size:A4 landscape;margin:10mm}}
+  @media print{{button{{display:none}}}}
+</style>
+</head><body>
+<div style="text-align:right;margin-bottom:6px">
+  <button onclick="window.print()" style="padding:6px 16px;background:#1d4ed8;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px">🖨 In</button>
+</div>
+{html_table}
+</body></html>"""
+                    escaped = _json.dumps(print_html)
+                    ui.run_javascript(
+                        f"var w=window.open('','_blank');"
+                        f"w.document.write({escaped});"
+                        f"w.document.close();"
+                    )
 
                 def _build_html(data: dict) -> str:
                     rows       = data.get("rows", [])
@@ -70,7 +147,8 @@ async def storage_page():
                     n_day = max((len(r["days"]) for r in rows), default=1)
                     n_day = max(n_day, 2)
                     n_sh  = max((len(r["bundle_sheets"]) for r in rows), default=1)
-                    n_sh  = max(n_sh, 3)
+                    # +1 để mọi dòng luôn còn ít nhất 1 ô trống nhập thêm số chứng từ; tối thiểu 5 cột
+                    n_sh  = max(n_sh + 1, 5)
 
                     C  = "border:1px solid #000;text-align:center;padding:5px 8px;font-size:13px"
                     CE = "border:1px solid #000;text-align:center;padding:5px 8px;font-size:13px;color:#bbb"
@@ -81,7 +159,7 @@ async def storage_page():
                     n_total = n_day + n_sh + 1
                     html = f"""<table id="sv-table" style="border-collapse:collapse;width:100%;font-family:Arial,sans-serif">
 <tr><td colspan="{n_total}" style="{C};font-size:17px;font-weight:700;padding:10px">
-  Phòng {dept_name} {period}
+  {_dept_display(dept_name)} {period}
 </td></tr>
 <tr>
   <td colspan="{n_day}" style="{CH}">Ngày</td>
@@ -96,13 +174,13 @@ async def storage_page():
                         for i in range(n_day):
                             v = str(r["days"][i]) if i < len(r["days"]) else ""
                             s = C if v else CE
-                            html += f'<td contenteditable="true" style="{s};{ED}">{v}</td>'
+                            html += f'<td contenteditable="true" data-col="day" style="{s};{ED}">{v}</td>'
                         for i in range(n_sh):
                             bid = bids[i] if i < len(bids) else ""
                             v   = str(r["bundle_sheets"][i]) if i < len(r["bundle_sheets"]) else ""
                             s   = C if v else CE
                             da  = f' data-bid="{bid}"' if bid else ""
-                            html += f'<td contenteditable="true"{da} style="{s};{ED}">{v}</td>'
+                            html += f'<td contenteditable="true" data-col="sheet"{da} style="{s};{ED}">{v}</td>'
                         html += f'<td style="{C};font-weight:700">{r["n_bundles"]}</td>'
                         html += "</tr>\n"
 
@@ -114,9 +192,39 @@ async def storage_page():
 </table>"""
                     return html
 
+                async def load_summary():
+                    storage_loading.classes(remove="hidden")
+                    try:
+                        data = await asyncio.to_thread(api.get, "/api/bundles/storage-summary",
+                                                       {"year": s_year.value})
+                    except Exception as e:
+                        _handle_api_error(e)
+                        return
+                    finally:
+                        storage_loading.classes(add="hidden")
+
+                    html_table = _build_summary_html(data)
+                    with result_area:
+                        if not html_table:
+                            ui.label("Không có phòng nghiệp vụ nào").classes(
+                                "text-gray-500 text-center py-8 w-full"
+                            )
+                            return
+                        with ui.row().classes("w-full justify-end gap-2 mb-3"):
+                            ui.button("In danh sách (A4 ngang)", icon="print",
+                                      on_click=lambda: _print_table(html_table)
+                                      ).classes("bg-green-700 text-white px-4")
+                        with ui.card().classes("w-full shadow-sm rounded-xl bg-white p-4 overflow-x-auto"):
+                            ui.html(html_table)
+
                 async def load_storage():
                     result_area.clear()
-                    if not s_dept.value or not s_year.value or not s_month.value:
+                    if not s_year.value:
+                        return
+                    if s_dept.value == _ALL_DEPTS:
+                        await load_summary()
+                        return
+                    if not s_dept.value or not s_month.value:
                         return
                     storage_loading.classes(remove="hidden")
                     try:
@@ -138,22 +246,26 @@ async def storage_page():
                             ui.label(
                                 f"Không có dữ liệu cho {_s_dept_opts.get(s_dept.value,'')} "
                                 f"tháng {s_month.value:02d}/{s_year.value}"
-                            ).classes("text-gray-400 text-center py-8 w-full")
+                            ).classes("text-gray-500 text-center py-8 w-full")
                             return
 
                         async def do_save():
-                            # Đọc giá trị ô "Số chứng từ" từ DOM qua data-bid
+                            # Đọc ô "Số chứng từ": ô có data-bid = tập cũ (0 = xoá),
+                            # ô trống được nhập = tập mới (new_sheets)
                             result = await ui.run_javascript("""
                                 var rows = [];
                                 document.querySelectorAll('#sv-table tr[data-bids]').forEach(function(tr) {
-                                    var bids = JSON.parse(tr.getAttribute('data-bids'));
-                                    if (!bids.length) return;
-                                    var sheets = [];
-                                    tr.querySelectorAll('td[data-bid]').forEach(function(td) {
+                                    var bundle_ids = [], bundle_sheets = [], new_sheets = [];
+                                    tr.querySelectorAll('td[data-col="sheet"]').forEach(function(td) {
                                         var v = parseInt(td.innerText.trim().replace(/[^0-9]/g,''), 10);
-                                        sheets.push(isNaN(v) ? 0 : v);
+                                        if (isNaN(v)) v = 0;
+                                        var bid = td.getAttribute('data-bid');
+                                        if (bid) { bundle_ids.push(parseInt(bid, 10)); bundle_sheets.push(v); }
+                                        else if (v > 0) { new_sheets.push(v); }
                                     });
-                                    if (sheets.length) rows.push({bundle_ids: bids, bundle_sheets: sheets});
+                                    if (bundle_ids.length || new_sheets.length)
+                                        rows.push({bundle_ids: bundle_ids, bundle_sheets: bundle_sheets,
+                                                   new_sheets: new_sheets});
                                 });
                                 return rows;
                             """)
@@ -166,33 +278,15 @@ async def storage_page():
                                 ui.notify("Đã lưu thay đổi", type="positive")
                             except Exception as e:
                                 if _handle_api_error(e): return
+                            # Tải lại để Số tập + tổng cuối tự cập nhật theo
+                            await load_storage()
 
                         with ui.row().classes("w-full justify-end gap-2 mb-3"):
                             ui.button("Lưu thay đổi", icon="save",
                                       on_click=do_save).classes("bg-red-700 text-white px-4")
-                            def do_print():
-                                print_html = f"""<!DOCTYPE html><html><head>
-<meta charset="utf-8">
-<style>
-  body{{font-family:Arial,sans-serif;margin:10mm}}
-  table{{border-collapse:collapse;width:100%}}
-  @page{{size:A4 landscape;margin:10mm}}
-  @media print{{button{{display:none}}}}
-</style>
-</head><body>
-<div style="text-align:right;margin-bottom:6px">
-  <button onclick="window.print()" style="padding:6px 16px;background:#1d4ed8;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px">🖨 In</button>
-</div>
-{html_table}
-</body></html>"""
-                                escaped = _json.dumps(print_html)
-                                ui.run_javascript(
-                                    f"var w=window.open('','_blank');"
-                                    f"w.document.write({escaped});"
-                                    f"w.document.close();"
-                                )
                             ui.button("In danh sách (A4 ngang)", icon="print",
-                                      on_click=do_print).classes("bg-green-700 text-white px-4")
+                                      on_click=lambda: _print_table(html_table)
+                                      ).classes("bg-green-700 text-white px-4")
 
                         with ui.card().classes("w-full shadow-sm rounded-xl bg-white p-4 overflow-x-auto"):
                             ui.html(html_table)
@@ -252,7 +346,7 @@ async def storage_page():
                         if not records:
                             ui.label(
                                 f"Không có dữ liệu cho {dept_lbl} năm {ha_year.value}"
-                            ).classes("text-gray-400 text-sm text-center py-6 w-full")
+                            ).classes("text-gray-500 text-sm text-center py-6 w-full")
                             return
 
                         preview = records[:30]
@@ -277,7 +371,7 @@ async def storage_page():
                                     ui.label(rec["tieu_de"]).classes("flex-1 text-sm")
                         if total > 30:
                             ui.label(f"... và {total - 30} hồ sơ khác (xem đầy đủ trong file Excel)").classes(
-                                "text-gray-400 text-sm text-center py-2"
+                                "text-gray-500 text-sm text-center py-2"
                             )
 
                 async def download_archive():

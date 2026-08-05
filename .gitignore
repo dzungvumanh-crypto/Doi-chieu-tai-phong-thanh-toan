@@ -48,3 +48,16 @@ dist_offline/
 /_scratch_verify_22_07_session_null_br/
 /_scratch_verify_dien_rong_25_07/
 /_scratch_verify_session_null_br/
+
+# Local artifacts / dữ liệu test (không đẩy lên repo)
+/Dữ liệu test/
+/deploy-test.bat
+/KSNB - HDSD phan mem ban giao chung tu.docx
+/Bắt đầu trên máy mới.txt
+
+# Tên file tiếng Việt trên đĩa ở dạng Unicode TRỘN (ư + dấu rời), không khớp
+# dạng dựng sẵn viết ở trên → git bỏ qua luật. Ghi thêm đúng dạng thật:
+/Bắt đầu trên máy mới.txt
+/Bắt đầu trên máy mới.txt
+/Dữ liệu test
+/Dữ liệu test

@@ -1,18 +1,12 @@
-from datetime import date, datetime
+from datetime import date
 from typing import Optional, List
 from pydantic import BaseModel, Field
 
-from .common import DepartmentOut
 from .staff import StaffOut
 
 
 # ─── Document Entry ──────────────────────────────────────────────────────────
-class DocumentEntryIn(BaseModel):
-    staff_id: int
-    transaction_date: date
-    sheet_count: int = Field(gt=0)
-    notes: Optional[str] = None
-
+# Dùng bởi backend/schemas/bundles.py (BundleItemOut.entry)
 class DocumentEntryOut(BaseModel):
     id: int
     staff_id: Optional[int] = None
@@ -20,28 +14,6 @@ class DocumentEntryOut(BaseModel):
     sheet_count: int
     notes: Optional[str]
     staff: Optional[StaffOut] = None
-    class Config: from_attributes = True
-
-
-# ─── Handover ────────────────────────────────────────────────────────────────
-class HandoverCreate(BaseModel):
-    department_id: int
-    handover_date: date
-    delivered_by: Optional[str] = None
-    notes: Optional[str] = None
-    entries: List[DocumentEntryIn] = []
-
-class HandoverOut(BaseModel):
-    id: int
-    department_id: int
-    handover_date: date
-    received_by_id: Optional[int]
-    delivered_by: Optional[str]
-    notes: Optional[str]
-    status: str
-    created_at: datetime
-    department: Optional[DepartmentOut] = None
-    entries: List[DocumentEntryOut] = []
     class Config: from_attributes = True
 
 
@@ -90,6 +62,7 @@ class EntryHistoryOut(BaseModel):
     entry_id: int
     source_user_name: str
     transaction_date: str               # "DD/MM/YYYY"
+    submit_date: Optional[str] = None   # "DD/MM/YYYY" — ngày nộp thật, None nếu không có log
     sheet_count: int
     current_status: str
     current_status_label: str

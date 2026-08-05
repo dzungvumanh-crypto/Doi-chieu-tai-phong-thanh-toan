@@ -4,7 +4,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).parent.parent.parent
-load_dotenv(BASE_DIR / ".env")
+load_dotenv(BASE_DIR / ".env", override=True)
 
 # Fail fast — không dùng fallback để tránh JWT bị forge khi quên set env var
 _secret_key = os.getenv("SECRET_KEY", "")
@@ -22,9 +22,18 @@ class Settings:
     ACCESS_TOKEN_EXPIRE_HOURS: int = 8
 
     DATABASE_URL: str = f"sqlite:///{BASE_DIR}/data/ksnb.db"
-    BACKEND_HOST: str = "0.0.0.0"
-    BACKEND_PORT: int = 8000
-    FRONTEND_PORT: int = 8080
+
+    # Thư mục backup phụ (nên ở ổ/máy khác) — để trống nếu không dùng.
+    # Ví dụ: BACKUP_EXTRA_DIR=D:\Backup_KSNB  hoặc  \\192.168.1.50\backup
+    BACKUP_EXTRA_DIR: str = os.getenv("BACKUP_EXTRA_DIR", "").strip()
+    # Địa chỉ backend lắng nghe. `run.py` đọc chính biến này để truyền cho uvicorn,
+    # nên đổi ở .env là đổi thật — trước đây nó là hằng số cứng, ai sửa .env cũng
+    # không có tác dụng gì, mà cảnh báo khởi động lại dựa vào nó nên báo sai.
+    #   0.0.0.0   = nghe mọi giao diện (cần khi có máy khác gọi thẳng API)
+    #   127.0.0.1 = chỉ nghe nội bộ máy — kín hơn, đủ dùng khi frontend cùng máy
+    BACKEND_HOST: str = os.getenv("BACKEND_HOST", "0.0.0.0").strip() or "0.0.0.0"
+    BACKEND_PORT: int = int(os.getenv("BACKEND_PORT", "8000"))
+    FRONTEND_PORT: int = int(os.getenv("FRONTEND_PORT", "8080"))
 
     TEMPLATE_DIR: Path = BASE_DIR / "templates"
     MAX_SHEETS_PER_BUNDLE: int = 350
@@ -33,13 +42,22 @@ class Settings:
     ENV: str = os.getenv("ENV", "development")
 
     # Origins được phép — phân cách bằng dấu phẩy, ví dụ: http://localhost:8080,http://192.168.1.100:8080
+    # Mặc định suy ra từ FRONTEND_PORT nếu không set riêng
     ALLOWED_ORIGINS: list = [
         o.strip()
-        for o in os.getenv("ALLOWED_ORIGINS", "http://localhost:8080").split(",")
+        for o in os.getenv("ALLOWED_ORIGINS", f"http://localhost:{os.getenv('FRONTEND_PORT', '8080')}").split(",")
         if o.strip()
     ]
 
     # Bật /docs, /redoc — chỉ bật khi debug; mặc định tắt ở production
     ENABLE_API_DOCS: bool = os.getenv("ENABLE_API_DOCS", "").lower() in ("1", "true", "yes")
+
+    # Nguồn thời gian chuẩn (NTP) — chỉ dùng để CẢNH BÁO lệch giờ, không tự sửa.
+    # Mạng nội bộ bị cô lập: đặt NTP_SERVER về NTP nội bộ (vd domain controller)
+    # hoặc NTP_ENABLED=false để tắt hẳn.
+    NTP_ENABLED: bool = os.getenv("NTP_ENABLED", "true").lower() not in ("0", "false", "no")
+    NTP_SERVER: str = os.getenv("NTP_SERVER", "pool.ntp.org").strip()
+    NTP_TIMEOUT_SEC: float = float(os.getenv("NTP_TIMEOUT_SEC", "3"))
+    NTP_DRIFT_THRESHOLD_SEC: int = int(os.getenv("NTP_DRIFT_THRESHOLD_SEC", "5"))
 
 settings = Settings()

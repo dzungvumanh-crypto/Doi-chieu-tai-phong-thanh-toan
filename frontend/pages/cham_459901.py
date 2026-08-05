@@ -1,6 +1,7 @@
 """Trang Chấm 459901 — phân loại bút toán tài khoản trung gian 459901."""
 
 import asyncio
+import time
 
 from nicegui import ui
 import frontend.api_client as api
@@ -17,6 +18,11 @@ _KIND_LABELS = {
     "hub_den": ("HUB đến",            "bg-purple-100 text-purple-700"),
     None:      ("Không nhận diện",    "bg-gray-100 text-gray-500"),
 }
+
+# Tiến độ xử lý lưu trong bộ nhớ backend: backend restart là mất sạch, poll sẽ
+# 404 mãi mãi. Hai mốc dừng dưới đây để nút không kẹt "đang xử lý" vĩnh viễn.
+_MAX_POLL_SECONDS = 900   # 15 phút — dài hơn mọi file thực tế
+_MAX_POLL_FAILS = 10      # số lần lỗi liên tiếp thì bỏ cuộc
 
 
 @ui.page("/cham_459901")
@@ -217,15 +223,38 @@ async def cham_459901_page():
                         pass
 
                 # ── Poll progress cho đến khi done ─────────────────────────────
+                deadline = time.monotonic() + _MAX_POLL_SECONDS
+                fails = 0
                 while True:
                     await asyncio.sleep(_POLL_INTERVAL)
+
+                    if time.monotonic() > deadline:
+                        progress_bar.set_visibility(False)
+                        progress_label.set_visibility(False)
+                        ui.notify(
+                            "Quá thời gian chờ xử lý. File có thể quá lớn hoặc máy chủ đã "
+                            "khởi động lại — hãy thử lại.",
+                            type="negative", multi_line=True, close_button=True,
+                        )
+                        break
 
                     try:
                         prog = await asyncio.to_thread(
                             api.get, f'/api/cham459901/progress/{state["task_token"]}'
                         )
-                    except Exception:
-                        continue
+                        fails = 0
+                    except Exception as e:
+                        fails += 1
+                        if fails < _MAX_POLL_FAILS:
+                            continue
+                        progress_bar.set_visibility(False)
+                        progress_label.set_visibility(False)
+                        if not _handle_api_error(e):
+                            ui.notify(
+                                f"Mất liên lạc với máy chủ khi theo dõi tiến độ: {e}",
+                                type="negative", multi_line=True, close_button=True,
+                            )
+                        break
 
                     pct = prog.get("pct", 0)
                     progress_bar.set_value(pct / 100)

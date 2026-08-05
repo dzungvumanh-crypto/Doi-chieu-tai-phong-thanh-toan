@@ -1,0 +1,5 @@
+# Batch/PowerShell chay tren Windows -- BAT BUOC CRLF.
+# File .bat dung LF se bi cmd.exe doc lech byte va chay sai lenh (xem Implementation-notes.html, muc I).
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf

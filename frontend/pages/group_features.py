@@ -79,7 +79,7 @@ async def group_features_page():
             action_refs.clear()
 
             if not structure or selected_group_id["value"] is None:
-                ui.label("Chọn nhóm để xem và chỉnh sửa quyền").classes("text-gray-400 text-sm py-4")
+                ui.label("Chọn nhóm để xem và chỉnh sửa quyền").classes("text-gray-500 text-sm py-4")
                 return
 
             codes = current_codes[0]

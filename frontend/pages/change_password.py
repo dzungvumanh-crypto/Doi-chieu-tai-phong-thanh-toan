@@ -2,6 +2,7 @@
 import asyncio
 from nicegui import ui
 import frontend.api_client as api
+import frontend.ui_kit as ui_kit
 from frontend.shared import _require_auth, _handle_api_error
 
 # ─── CHANGE PASSWORD (bắt buộc lần đầu) ─────────────────────────────────────
@@ -10,7 +11,7 @@ async def change_password_page():
     if not _require_auth():
         return
 
-    ui.add_head_html('<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">')
+    ui_kit.install()          # trang này không có sidebar nên phải tự gọi
     with ui.column().classes("w-full min-h-screen items-center justify-center bg-gradient-to-br from-red-900 to-red-700"):
         with ui.card().classes("w-96 p-8 shadow-2xl rounded-2xl bg-white"):
             with ui.column().classes("w-full items-center mb-6"):
@@ -37,11 +38,7 @@ async def change_password_page():
                         "new_password": f_new.value,
                     })
                     ui.notify("Đổi mật khẩu thành công!", type="positive")
-                    user = api.get_current_user()
-                    if user and user.get("role") == "chuyen_vien":
-                        ui.navigate.to("/handovers")
-                    else:
-                        ui.navigate.to("/home")
+                    ui.navigate.to("/home")
                 except Exception as e:
                     if _handle_api_error(e):
                         return

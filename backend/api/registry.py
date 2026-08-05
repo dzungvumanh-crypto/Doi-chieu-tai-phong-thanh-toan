@@ -15,6 +15,7 @@ from backend.api.dashboard import router as dashboard_router
 from backend.api.delegations import router as delegations_router
 from backend.api.departments import dept_router
 from backend.api.handovers import router as handover_router
+from backend.api.handover_reports import router as handover_reports_router
 from backend.api.holidays import router as holidays_router
 from backend.api.leaves import router as leaves_router
 from backend.api.logs import router as logs_router
@@ -30,6 +31,11 @@ from backend.api.cham459901 import router as cham459901_router
 from backend.api.ach import router as ach_router
 from backend.api.ilo1000 import router as ilo1000_router
 from backend.api.fs import router as fs_router
+from backend.api.doi_chieu_song_phuong import router as doi_chieu_song_phuong_router
+from backend.api.swift_recon import router as swift_recon_router
+from backend.api.doi_chieu_citad import router as doi_chieu_citad_router
+from backend.api.doi_soat_citad import router as doi_soat_citad_router
+from backend.api.ttqt_branches import router as ttqt_branches_router
 
 # Thêm router mới: 1 dòng import ở trên + 1 tuple ở đây
 # Format: (router_object, {"prefix": "/api/...", "tags": ["..."]})
@@ -46,6 +52,7 @@ _ROUTERS = [
     (dashboard_router,   {"prefix": "/api/dashboard",      "tags": ["dashboard"]}),
     (holidays_router,    {"prefix": "/api/admin/holidays", "tags": ["holidays"]}),
     (reports_router,     {}),
+    (handover_reports_router, {}),
     (th_reports_router,  {}),
     (groups_router,          {}),
     (duty_staff_router,      {}),
@@ -57,6 +64,11 @@ _ROUTERS = [
     (ach_router,             {}),
     (ilo1000_router,         {}),
     (fs_router,              {}),
+    (doi_chieu_song_phuong_router, {}),
+    (swift_recon_router, {}),
+    (doi_chieu_citad_router, {}),
+    (doi_soat_citad_router, {}),
+    (ttqt_branches_router, {}),
 ]
 
 

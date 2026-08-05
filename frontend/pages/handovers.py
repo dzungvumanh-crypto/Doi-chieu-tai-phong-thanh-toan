@@ -2,23 +2,16 @@
 import asyncio
 from nicegui import ui, app
 import frontend.api_client as api
-from frontend.shared import _sidebar, _content_area, _page_header, _require_auth, _redirect_if_cv, _handle_api_error
+import frontend.ui_kit as ui_kit
+from frontend.shared import (_sidebar, _content_area, _page_header, _require_auth,
+                             _handle_api_error, _query_params, _qp_int)
 
-# Màu ô theo entry_status
+# Nhãn + màu trạng thái lấy từ ui_kit.STATUS — trước đây là 3 map song song ở đây.
+# Dựng lại đúng định dạng CSS mà lưới đang cần.
 _CELL_STATUS_STYLE = {
-    "pending_confirm": ("background:#FEF3C7", "2px solid #F59E0B"),  # vàng nhạt
-    "borrowed":        ("background:#FFEDD5", "2px solid #EA580C"),  # cam nhạt
-    "confirmed":       ("background:#DCFCE7", "2px solid #16A34A"),  # xanh lá nhạt
-}
-_STATUS_DOT_COLOR = {
-    "pending_confirm": "#D97706",
-    "confirmed":       "#16A34A",
-    "borrowed":        "#EA580C",
-}
-_STATUS_LABEL_MAP = {
-    "pending_confirm": "Chờ xác nhận",
-    "confirmed":       "Đã xác nhận",
-    "borrowed":        "Đang mượn",
+    code: (f"background:{bg}", f"2px solid {border}")
+    for code in ("pending_confirm", "borrowed", "confirmed", "rejected")
+    for bg, border in [ui_kit.status_cell(code)]
 }
 _ACTION_COLOR_MAP = {
     "blue":   "#2563EB",
@@ -33,12 +26,24 @@ async def handovers_page():
         return
     user_data = api.get_current_user()
     user_role = user_data.get("role", "") if user_data else ""
-    is_cv     = user_role == "chuyen_vien"
+    is_cv     = user_role == "chuyen_vien"   # chỉ GDV mới có nút Mượn / Bàn giao lại
+    # Xem mọi phòng nguồn: admin/GĐ/PGĐ và người hậu kiểm. Trưởng/phó phòng chỉ
+    # phòng của mình. Backend chặn y hệt — đây chỉ là UI.
+    can_view_all = (api.has_feature("handovers.confirm_entry")
+                    or user_role in ("giam_doc", "pho_giam_doc"))
+    # Admin và GĐ/PGĐ chỉ được xem, không ghi. Backend chặn cứng ở require_handover_write()
+    # — ở đây phải ẩn nút tương ứng, nếu không người dùng bấm vào chỉ nhận 403.
+    # Riêng admin: api.has_feature() luôn trả True nên mọi gate feature bên dưới phải AND
+    # thêm cờ này mới có tác dụng.
+    can_write = user_role not in ("admin", "giam_doc", "pho_giam_doc")
+    # Nhập được số tờ hay không = vai trò cho ghi VÀ nhóm được cấp feature. Tính một
+    # lần ở đây vì lưới gọi lại cho từng ô (30 ngày × N cán bộ).
+    can_save = can_write and api.has_feature("handovers.save_entry")
     if not api.has_feature("menu.handovers"):
         ui.navigate.to("/home")
         return
 
-    badge_refs = _sidebar("handovers")
+    _sidebar("handovers")
 
     # ── Right drawer panel ────────────────────────────────────────────────────
     with ui.right_drawer(value=False).props("width=360 overlay").classes(
@@ -53,38 +58,42 @@ async def handovers_page():
         today = _date.today()
 
         # ── Filter controls ───────────────────────────────────────────────────
+        # Badge sidebar do khối "Công việc chờ xử lý" trong shared.py tự nạp —
+        # trang này không còn phải gọi /pending-counts nữa.
         try:
-            _all_depts_raw, _pending = await asyncio.gather(
-                asyncio.to_thread(api.get, "/api/departments/"),
-                asyncio.to_thread(api.get, "/api/dashboard/pending-counts"),
-                return_exceptions=True,
-            )
+            _all_depts_raw = await asyncio.to_thread(api.get, "/api/departments/")
         except Exception:
-            _all_depts_raw, _pending = [], {}
+            _all_depts_raw = []
         if not isinstance(_all_depts_raw, list):
             _all_depts_raw = []
-        if isinstance(_pending, dict):
-            _hcnt = _pending.get("handovers", 0)
-            if "handovers" in badge_refs and _hcnt > 0:
-                badge_refs["handovers"].set_text(str(_hcnt))
-                badge_refs["handovers"].set_visibility(True)
         all_depts = [d for d in _all_depts_raw if d.get("is_source")]
+
+        # Không có quyền xem mọi phòng → danh sách chỉ còn phòng của mình
+        my_dept_id = user_data.get("department_id") if user_data else None
+        if not can_view_all:
+            all_depts = [d for d in all_depts if d["id"] == my_dept_id]
 
         dept_opts  = {d["id"]: d["name"] for d in all_depts}
         year_opts  = {y: str(y) for y in range(2023, today.year + 3)}
         month_opts = {m: f"Tháng {m:02d}" for m in range(1, 13)}
 
-        # Chuyên viên: tự động xác định phòng của mình
-        cv_dept_id = user_data.get("department_id") if is_cv else None
-        default_dept  = cv_dept_id if (is_cv and cv_dept_id) else (all_depts[0]["id"] if all_depts else None)
+        default_dept  = all_depts[0]["id"] if all_depts else None
         default_year  = today.year
         default_month = today.month
 
 
+        # Phòng của user không phải phòng nguồn (hoặc chưa được gán phòng) → không có
+        # chứng từ nào để hiển thị; nói rõ thay vì để lưới trống không lý do.
+        if not all_depts:
+            with ui.card().classes("w-full bg-amber-50 border border-amber-300 rounded-xl p-4 mb-4"):
+                ui.label("Phòng của bạn không có chứng từ bàn giao. "
+                         "Liên hệ quản trị nếu bạn cần xem phòng khác."
+                         ).classes("text-amber-800 text-sm")
+
         with ui.card().classes("w-full shadow-sm rounded-xl bg-white p-4 mb-4"):
             with ui.row().classes("items-end gap-4 flex-wrap"):
                 sel_dept = ui.select(dept_opts, label="Phòng", value=default_dept).classes("w-72")
-                if is_cv:
+                if not can_view_all:
                     sel_dept.props("disable")
                     sel_dept.tooltip("Phòng của bạn (không thể thay đổi)")
                 sel_year  = ui.select(year_opts,  label="Năm",   value=default_year).classes("w-28")
@@ -99,6 +108,7 @@ async def handovers_page():
                 ("confirmed",       "Đã xác nhận"),
                 ("pending_confirm", "Chờ xác nhận"),
                 ("borrowed",        "Đang mượn"),
+                ("rejected",        "Bị từ chối"),
             ]:
                 bg, border = _CELL_STATUS_STYLE[status_key]
                 with ui.row().classes("items-center gap-1"):
@@ -148,7 +158,7 @@ async def handovers_page():
             save_btn = ui.button("Lưu", icon="save",
                 on_click=save_pending
             ).classes("bg-green-700 text-white px-4").tooltip("Lưu tất cả thay đổi")
-            save_btn.set_visibility(api.has_feature("handovers.save_entry"))
+            save_btn.set_visibility(can_save)
 
             async def _export_handovers():
                 try:
@@ -178,6 +188,10 @@ async def handovers_page():
             ui.label("Đang tải dữ liệu...").classes("text-gray-500 ml-3 text-sm")
         grid_container = ui.column().classes("w-full")
 
+        # Ô chứng từ cần nhảy tới, đến từ ?entry=. Dùng list làm ô nhớ vì load_grid()
+        # được định nghĩa trước chỗ đọc query param, và phải xoá được sau khi dùng.
+        focus_entry: list = [None]
+
         def _save_filter_state():
             app.storage.tab["hv_dept"]  = sel_dept.value
             app.storage.tab["hv_year"]  = sel_year.value
@@ -194,27 +208,29 @@ async def handovers_page():
                 with panel_container:
                     with ui.row().classes("w-full justify-between items-center px-4 py-3 bg-red-50 border-b border-red-100"):
                         ui.label("Lỗi").classes("font-bold text-red-900")
-                        ui.button(icon="close", on_click=right_panel.hide).props("flat dense").classes("text-gray-400")
+                        ui.button(icon="close", on_click=right_panel.hide).props("flat dense").classes("text-gray-500")
                     ui.label(str(ex)).classes("text-red-500 p-4 text-sm")
                 right_panel.show()
                 return
 
             current_status = hist.get("current_status", "confirmed")
-            dot_color = _STATUS_DOT_COLOR.get(current_status, "#6B7280")
-            status_label_text = _STATUS_LABEL_MAP.get(current_status, current_status)
+            dot_color = ui_kit.status_dot(current_status)
+            status_label_text = ui_kit.status_label(current_status)
 
             with panel_container:
                 # Header
                 with ui.column().classes("w-full bg-red-50 px-4 py-3 border-b border-red-100 gap-1"):
                     with ui.row().classes("w-full justify-between items-center"):
                         ui.label(hist.get("source_user_name", user_name)).classes("font-bold text-red-900 text-base")
-                        ui.button(icon="close", on_click=right_panel.hide).props("flat dense").classes("text-gray-400")
-                    _logs = hist.get("logs", [])
-                    _last_ts = _logs[0].get("timestamp", "") if _logs else ""
-                    _parts = _last_ts.split() if _last_ts else []
-                    _disp_date = _parts[-1] if len(_parts) >= 2 else hist.get("transaction_date", "")
+                        ui.button(icon="close", on_click=right_panel.hide).props("flat dense").classes("text-gray-500")
+                    # Hai ngày khác nhau về nghĩa, phải ghi rõ nhãn: ngày chứng từ là
+                    # ngày phát sinh giao dịch, ngày nộp là lúc CV thực sự bàn giao.
                     ui.label(
-                        f"Ngày {_disp_date}  •  {hist.get('sheet_count', 0)} tờ"
+                        f"Ngày chứng từ {hist.get('transaction_date', '')}"
+                        f"  •  {hist.get('sheet_count', 0)} tờ"
+                    ).classes("text-sm text-gray-600")
+                    ui.label(
+                        f"Ngày bàn giao {hist.get('submit_date') or '—'}"
                     ).classes("text-sm text-gray-600")
                     with ui.row().classes("items-center gap-1 mt-1"):
                         ui.element("div").style(
@@ -226,12 +242,12 @@ async def handovers_page():
 
                 # Thao tác
                 with ui.column().classes("w-full px-4 py-3 border-b border-gray-100 gap-2"):
-                    ui.label("THAO TÁC").classes("text-xs font-bold text-gray-400 tracking-widest")
+                    ui.label("THAO TÁC").classes("text-xs font-bold text-gray-500 tracking-widest")
                     has_action = False
 
                     borrow_reason_val = hist.get("borrow_reason")
 
-                    if user_role in ("admin", "hau_kiem_vien", "pho_phong", "truong_phong"):
+                    if user_role in ("hau_kiem_vien", "pho_phong", "truong_phong"):
                         if current_status == "pending_confirm":
                             _can_confirm = api.has_feature("handovers.confirm_entry")
                             _can_reject  = api.has_feature("handovers.reject_entry")
@@ -274,6 +290,20 @@ async def handovers_page():
                                         ui.button("✗  Từ chối", on_click=reject_dialog.open).classes(
                                             "flex-1 bg-red-600 text-white rounded-lg text-sm font-semibold"
                                         )
+
+                    if current_status == "rejected" and can_save:
+                        has_action = True
+                        async def _do_resubmit(eid=entry_id, uname=user_name):
+                            try:
+                                await asyncio.to_thread(api.post, f"/api/handovers/entries/{eid}/resubmit", {})
+                                ui.notify("Đã nộp lại chứng từ", type="positive")
+                                right_panel.hide()
+                                await load_grid()
+                            except Exception as ex2:
+                                if _handle_api_error(ex2): return
+                        ui.button("↻  Nộp lại chứng từ", on_click=_do_resubmit).classes(
+                            "w-full bg-amber-600 text-white rounded-lg text-sm font-semibold"
+                        )
 
                     if is_cv and current_status == "confirmed" and api.has_feature("handovers.borrow"):
                         has_action = True
@@ -328,14 +358,14 @@ async def handovers_page():
                         )
 
                     if not has_action:
-                        ui.label("Không có thao tác khả dụng").classes("text-sm text-gray-400 italic")
+                        ui.label("Không có thao tác khả dụng").classes("text-sm text-gray-500 italic")
 
                 # Lịch sử
                 with ui.column().classes("w-full px-4 py-3 gap-4"):
-                    ui.label("LỊCH SỬ THAY ĐỔI").classes("text-xs font-bold text-gray-400 tracking-widest")
+                    ui.label("LỊCH SỬ THAY ĐỔI").classes("text-xs font-bold text-gray-500 tracking-widest")
                     logs = hist.get("logs", [])
                     if not logs:
-                        ui.label("Chưa có lịch sử").classes("text-sm text-gray-400 italic")
+                        ui.label("Chưa có lịch sử").classes("text-sm text-gray-500 italic")
                     else:
                         for log in logs:
                             dot_c = _ACTION_COLOR_MAP.get(log.get("action_color", "blue"), "#2563EB")
@@ -345,7 +375,7 @@ async def handovers_page():
                                     f"background:{dot_c};margin-top:5px;flex-shrink:0"
                                 )
                                 with ui.column().classes("flex-1 gap-0"):
-                                    ui.label(log.get("timestamp", "")).classes("text-xs text-gray-400 font-mono")
+                                    ui.label(log.get("timestamp", "")).classes("text-xs text-gray-500 font-mono")
                                     ui.label(log.get("performed_by_role", "")).classes("text-xs text-gray-500")
                                     ui.label(log.get("action_label", "")).classes("text-sm font-medium text-gray-800")
 
@@ -397,28 +427,37 @@ async def handovers_page():
             import html as _html
 
             # ── Build grid as single HTML string (much faster than NiceGUI widgets) ──
-            NW = 200   # name column width px
-            CW = 50    # cell width px
+            NW  = 200  # name column width px
+            CW  = 50   # cell width px — chiều rộng lý tưởng
+            MCW = 30   # cell width tối thiểu — co xuống mức này để vừa màn hình, hẹp hơn nữa mới cuộn ngang
+            # Bắt buộc: không có border-box thì padding/border của header (10px 2px + 1px)
+            # và của ô dữ liệu (chỉ border 1–2px) cộng thêm khác nhau → header lệch cột với ô nhập.
+            BB  = "box-sizing:border-box"
             _SB = {    # status → (bg, border)
                 "confirmed":       ("#DCFCE7", "2px solid #16A34A"),
                 "pending_confirm": ("#FEF3C7", "2px solid #F59E0B"),
-                "borrowed":        ("#FFEDD5", "2px solid #EA580C"),
+                "borrowed":        ("#EDE9FE", "2px solid #7C3AED"),
+                "rejected":        ("#FEE2E2", "2px solid #DC2626"),
             }
 
             if not users:
                 with grid_container:
                     ui.label("Không có cán bộ nào trong phòng này").classes(
-                        "text-gray-400 text-center py-8 w-full"
+                        "text-gray-500 text-center py-8 w-full"
                     )
             else:
                 p = [
                     '<div style="overflow-x:auto;width:100%;border:1px solid #bfdbfe;'
                     'border-radius:10px;box-shadow:0 2px 10px rgba(30,64,175,.10);">'
                 ]
+                # Chiều rộng tối thiểu của hàng: dưới mức này mới cho cuộn ngang
+                row_min = NW + days_in_month * MCW
+
                 # Header row
                 p.append(
-                    '<div style="display:flex;flex-wrap:nowrap;background:#dbeafe;border-bottom:2px solid #93c5fd;">'
-                    f'<div style="min-width:{NW}px;width:{NW}px;flex-shrink:0;font-size:14px;font-weight:700;'
+                    f'<div style="display:flex;flex-wrap:nowrap;min-width:{row_min}px;'
+                    'background:#dbeafe;border-bottom:2px solid #93c5fd;">'
+                    f'<div style="{BB};min-width:{NW}px;width:{NW}px;flex-shrink:0;font-size:14px;font-weight:700;'
                     f'color:#1e40af;padding:10px 14px;border-right:2px solid #93c5fd;'
                     f'position:sticky;left:0;z-index:3;background:#dbeafe;">Họ và tên</div>'
                 )
@@ -427,7 +466,7 @@ async def handovers_page():
                     hbg = "#fde68a" if dow >= 5 else "#dbeafe"
                     hcl = "#92400e" if dow >= 5 else "#1e40af"
                     p.append(
-                        f'<div style="min-width:{CW}px;width:{CW}px;flex-shrink:0;text-align:center;'
+                        f'<div style="{BB};flex:0 1 {CW}px;min-width:{MCW}px;text-align:center;'
                         f'font-size:13px;font-weight:700;color:{hcl};padding:10px 2px;'
                         f'border-right:1px solid #bfdbfe;background:{hbg};">{d:02d}</div>'
                     )
@@ -440,8 +479,9 @@ async def handovers_page():
                               or u.get("employee_code") or u.get("username") or "")
                     rbg    = "#ffffff" if row_idx % 2 == 0 else "#f0f9ff"
                     p.append(
-                        f'<div style="display:flex;flex-wrap:nowrap;border-bottom:1px solid #dbeafe;background:{rbg};">'
-                        f'<div style="min-width:{NW}px;width:{NW}px;flex-shrink:0;font-size:15px;font-weight:500;'
+                        f'<div style="display:flex;flex-wrap:nowrap;min-width:{row_min}px;'
+                        f'border-bottom:1px solid #dbeafe;background:{rbg};">'
+                        f'<div style="{BB};min-width:{NW}px;width:{NW}px;flex-shrink:0;font-size:15px;font-weight:500;'
                         f'padding:7px 14px;border-right:2px solid #dbeafe;white-space:nowrap;overflow:hidden;'
                         f'display:flex;align-items:center;position:sticky;left:0;z-index:2;background:{rbg};">'
                         f'{_html.escape(name)}</div>'
@@ -459,16 +499,20 @@ async def handovers_page():
                         else:
                             cbg, bdr = rbg, "1px solid #dbeafe"
                         eid_attr = f' data-eid="{eid}"' if eid else ""
-                        _locked = not api.has_feature("handovers.confirm_entry") and status in ("confirmed", "borrowed") and val
+                        # Không có quyền nhập → khoá mọi ô; có quyền thì chỉ khoá ô đã
+                        # chốt (hậu kiểm vẫn sửa được ô đã chốt).
+                        _locked = (not can_save
+                                   or (not api.has_feature("handovers.confirm_entry")
+                                       and status in ("confirmed", "borrowed") and val))
                         _ro_attr = " readonly" if _locked else ""
                         _cursor  = "cursor:not-allowed;opacity:0.7;" if _locked else ""
                         p.append(
-                            f'<div style="min-width:{CW}px;width:{CW}px;flex-shrink:0;background:{cbg};border-right:{bdr};">'
+                            f'<div style="{BB};flex:0 1 {CW}px;min-width:{MCW}px;background:{cbg};border-right:{bdr};">'
                             f'<input class="hv-inp" id="hv_{row_idx}_{d}" data-uid="{uid}" data-day="{d}"'
                             f' data-orig="{val}" data-uname="{_html.escape(name, quote=True)}"{eid_attr}{_ro_attr}'
                             f' value="{val if val else ""}"'
                             f' style="width:100%;border:none;outline:none;background:transparent;{_cursor}'
-                            f'font-size:15px;font-weight:600;color:#1e3a8a;text-align:center;'
+                            f'font-size:14px;font-weight:600;color:#1e3a8a;text-align:center;'
                             f'padding:7px 0;box-sizing:border-box;" /></div>'
                         )
                     p.append('</div>')
@@ -510,6 +554,26 @@ async def handovers_page():
                     }}
                 """)
 
+                # ── Nhảy tới ô được chỉ đích danh (?entry= từ màn hình theo dõi) ──
+                # Chạy sau khi lưới đã vào DOM. Chỉ dùng một lần: xoá cờ ngay để lần
+                # đổi phòng/tháng kế tiếp không kéo màn hình về ô cũ.
+                if focus_entry[0]:
+                    _eid = focus_entry[0]
+                    focus_entry[0] = None
+                    ui.run_javascript(f"""
+                        (function() {{
+                            var el = document.querySelector('.hv-inp[data-eid="{_eid}"]');
+                            if (!el) return;
+                            el.scrollIntoView({{behavior:'smooth', block:'center', inline:'center'}});
+                            el.focus(); el.select();
+                            var cell = el.parentElement;
+                            var keep = cell.style.boxShadow;
+                            cell.style.transition = 'box-shadow .3s';
+                            cell.style.boxShadow = '0 0 0 3px #dc2626';
+                            setTimeout(function() {{ cell.style.boxShadow = keep; }}, 2600);
+                        }})();
+                    """)
+
         # app.storage.tab chỉ khả dụng sau khi WebSocket kết nối
         try:
             await ui.context.client.connected()
@@ -520,10 +584,23 @@ async def handovers_page():
         init_dept  = saved.get("hv_dept",  default_dept)
         init_year  = saved.get("hv_year",  default_year)
         init_month = saved.get("hv_month", default_month)
+
+        # Deep-link từ màn hình theo dõi: ?dept=&year=&month=&entry=
+        # Ưu tiên hơn bộ lọc đã lưu — người dùng vừa chỉ đích danh chứng từ cần xem.
+        _qp = _query_params()
+        init_dept  = _qp_int(_qp, "dept")  or init_dept
+        init_year  = _qp_int(_qp, "year")  or init_year
+        init_month = _qp_int(_qp, "month") or init_month
+        focus_entry[0] = _qp_int(_qp, "entry")
+
         if init_dept not in dept_opts:
             init_dept = default_dept
+        if init_year not in year_opts:
+            init_year = default_year
+        if init_month not in month_opts:
+            init_month = default_month
 
-        if not is_cv:
+        if can_view_all:
             sel_dept.value  = init_dept
         sel_year.value  = init_year
         sel_month.value = init_month
@@ -533,270 +610,3 @@ async def handovers_page():
         ))
 
         await load_grid()
-
-
-@ui.page("/handovers/new")
-async def new_handover_page():
-    if not _require_auth():
-        return
-    if _redirect_if_cv():
-        return
-    _ = _sidebar("handovers")
-    with _content_area():
-        _page_header("Tạo phiếu bàn giao", "Nhập thông tin tiếp nhận chứng từ từ phòng nguồn")
-
-        try:
-            depts = [d for d in await asyncio.to_thread(api.get, "/api/departments/") if d.get("is_source")]
-        except:
-            depts = []
-
-        dept_options = {d["id"]: d["name"] for d in depts}
-        entries = []  # List of entry dicts
-
-        with ui.card().classes("w-full p-6 mb-4 bg-white rounded-xl shadow-sm"):
-            ui.label("Thông tin chung").classes("font-semibold text-red-800 mb-3")
-            with ui.row().classes("w-full gap-4"):
-                f_dept = ui.select(dept_options, label="Phòng nguồn *").classes("flex-1")
-                f_date = ui.input("Ngày bàn giao *", value=str(__import__('datetime').date.today())).classes("flex-1")
-                f_deliver = ui.input("Người giao").classes("flex-1")
-
-        # Entries section
-        entries_container = ui.column().classes("w-full")
-        source_users_cache = {}
-
-        async def refresh_users():
-            if f_dept.value and f_dept.value not in source_users_cache:
-                try:
-                    users = await asyncio.to_thread(api.get, "/api/staff/", {"department_id": f_dept.value})
-                    source_users_cache[f_dept.value] = {
-                        u["id"]: f"{u.get('full_name') or u.get('ipcas_code') or ''}"
-                                 f"{' (' + u['ipcas_code'] + ')' if u.get('ipcas_code') else ''}"
-                        for u in users
-                    }
-                except:
-                    source_users_cache[f_dept.value] = {}
-
-        async def render_entries():
-            entries_container.clear()
-            await refresh_users()
-            with entries_container:
-                with ui.card().classes("w-full p-4 bg-white rounded-xl shadow-sm"):
-                    with ui.row().classes("w-full justify-between items-center mb-3"):
-                        ui.label(f"Chứng từ ({len(entries)} dòng)").classes("font-semibold text-red-800")
-                        ui.button("+ Thêm dòng", on_click=add_entry_row).classes("bg-green-600 text-white text-sm")
-
-                    for idx, entry in enumerate(entries):
-                        with ui.row().classes("w-full items-center gap-2 mb-2"):
-                            users_for_dept = source_users_cache.get(f_dept.value or 0, {})
-                            user_sel = ui.select(users_for_dept, value=entry.get("staff_id"), label="User").classes("flex-1")
-                            date_inp = ui.input("Ngày GD", value=entry.get("transaction_date", "")).classes("w-36")
-                            count_inp = ui.number("Số tờ", value=entry.get("sheet_count", 0), min=1).classes("w-24")
-                            ui.button(icon="delete", on_click=lambda i=idx: remove_entry(i)).classes("text-red-400")
-
-                            def update_entry(i=idx, us=user_sel, d=date_inp, c=count_inp):
-                                if i < len(entries):
-                                    entries[i]["staff_id"] = us.value
-                                    entries[i]["transaction_date"] = d.value
-                                    entries[i]["sheet_count"] = int(c.value or 0)
-
-                            user_sel.on("update:model-value", update_entry)
-                            date_inp.on("blur", update_entry)
-                            count_inp.on("update:model-value", update_entry)
-
-        def add_entry_row():
-            entries.append({"staff_id": None, "transaction_date": str(__import__('datetime').date.today()), "sheet_count": 0})
-            ui.run_coroutine(render_entries())
-
-        def remove_entry(idx):
-            if idx < len(entries):
-                entries.pop(idx)
-                ui.run_coroutine(render_entries())
-
-        f_dept.on("update:model-value", lambda: ui.run_coroutine(render_entries()))
-        add_entry_row()
-
-        with ui.row().classes("w-full justify-end gap-3 mt-4"):
-            ui.button("Hủy", on_click=lambda: ui.navigate.to("/handovers")).classes("text-gray-500 border px-4 py-2 rounded")
-            async def save_handover():
-                try:
-                    await asyncio.to_thread(api.post, "/api/handovers/", {
-                        "department_id": f_dept.value,
-                        "handover_date": f_date.value,
-                        "delivered_by": f_deliver.value or None,
-                        "entries": [e for e in entries if e.get("staff_id") and e.get("sheet_count", 0) > 0],
-                    })
-                    ui.notify("Đã tạo phiếu bàn giao", type="positive")
-                    ui.navigate.to("/handovers")
-                except Exception as e:
-                    if _handle_api_error(e): return
-            ui.button("Lưu phiếu", on_click=save_handover).classes("bg-red-700 text-white px-6 py-2 rounded")
-
-
-@ui.page("/handovers/{handover_id}")
-async def handover_detail_page(handover_id: int):
-    if not _require_auth():
-        return
-    if _redirect_if_cv():
-        return
-    _ = _sidebar("handovers")
-    with _content_area():
-        with ui.row().classes("w-full items-center gap-3 mb-4"):
-            ui.button(icon="arrow_back", on_click=lambda: ui.navigate.to("/handovers")).props("flat").classes("text-red-700")
-            ui.label("Chi tiết phiếu bàn giao").classes("text-2xl font-bold text-red-900")
-
-        try:
-            h = await asyncio.to_thread(api.get, f"/api/handovers/{handover_id}")
-        except Exception as e:
-            if _handle_api_error(e): return
-            ui.label("Không tìm thấy phiếu bàn giao").classes("text-red-500")
-            return
-
-        is_draft = h.get("status") == "draft"
-        dept = h.get("department") or {}
-        dept_id = dept.get("id") or h.get("department_id")
-
-        # Info card
-        with ui.card().classes("w-full p-4 mb-4 bg-white rounded-xl shadow-sm"):
-            with ui.row().classes("w-full gap-8 flex-wrap"):
-                with ui.column().classes("gap-1"):
-                    ui.label("Phòng nguồn").classes("text-xs text-gray-500")
-                    ui.label(dept.get("name", "")).classes("font-semibold")
-                with ui.column().classes("gap-1"):
-                    ui.label("Ngày bàn giao").classes("text-xs text-gray-500")
-                    ui.label(str(h.get("handover_date", ""))).classes("font-semibold")
-                with ui.column().classes("gap-1"):
-                    ui.label("Người giao").classes("text-xs text-gray-500")
-                    ui.label(h.get("delivered_by") or "—").classes("font-semibold")
-                with ui.column().classes("gap-1"):
-                    ui.label("Trạng thái").classes("text-xs text-gray-500")
-                    if is_draft:
-                        ui.badge("Nháp").props('color="orange"')
-                    else:
-                        ui.badge("Đã xác nhận").props('color="positive"')
-
-        # Entries section
-        entries_container = ui.column().classes("w-full")
-        detail_loading = ui.row().classes("w-full justify-center items-center py-4 hidden")
-        with detail_loading:
-            ui.spinner(size="lg", color="red")
-            ui.label("Đang tải...").classes("text-gray-500 ml-2 text-sm")
-
-        source_users_detail_cache = {}
-
-        async def load_detail_users():
-            if dept_id and dept_id not in source_users_detail_cache:
-                try:
-                    users = await asyncio.to_thread(api.get, "/api/staff/", {"department_id": dept_id})
-                    source_users_detail_cache[dept_id] = users
-                except Exception:
-                    source_users_detail_cache[dept_id] = []
-
-        async def render_detail_entries():
-            detail_loading.classes(remove="hidden")
-            entries_container.clear()
-            try:
-                current_h = await asyncio.to_thread(api.get, f"/api/handovers/{handover_id}")
-            except Exception as ex:
-                detail_loading.classes(add="hidden")
-                if _handle_api_error(ex): return
-                return
-            finally:
-                detail_loading.classes(add="hidden")
-
-            entries = current_h.get("entries", [])
-            total_sheets = sum(e.get("sheet_count", 0) for e in entries)
-
-            with entries_container:
-                with ui.card().classes("w-full p-4 bg-white rounded-xl shadow-sm"):
-                    with ui.row().classes("w-full justify-between items-center mb-3"):
-                        ui.label(f"Danh sách chứng từ ({len(entries)} dòng – tổng {total_sheets} tờ)").classes("font-semibold text-red-800")
-                        if is_draft:
-                            ui.button("+ Thêm dòng", on_click=lambda: add_entry_dialog.open()).classes("bg-green-600 text-white text-sm")
-
-                    if entries:
-                        with ui.row().classes("w-full px-3 py-2 bg-red-50 font-semibold text-xs text-red-700 rounded"):
-                            ui.label("User").classes("flex-1")
-                            ui.label("Họ tên").classes("flex-1")
-                            ui.label("Ngày GD").classes("w-28 text-center")
-                            ui.label("Số tờ").classes("w-20 text-center")
-                            if is_draft:
-                                ui.label("").classes("w-10")
-
-                        for e in entries:
-                            s = e.get("staff") or {}
-                            eid = e["id"]
-                            with ui.row().classes("w-full px-3 py-2 border-b border-gray-100 items-center"):
-                                ui.label(s.get("ipcas_code", "")).classes("flex-1 text-sm")
-                                ui.label(s.get("full_name") or "—").classes("flex-1 text-sm text-gray-600")
-                                ui.label(str(e.get("transaction_date", ""))).classes("w-28 text-center text-sm")
-                                ui.label(str(e.get("sheet_count", 0))).classes("w-20 text-center text-sm font-semibold")
-                                if is_draft:
-                                    ui.button(icon="delete", on_click=lambda eid=eid: do_delete_entry(eid)).props("flat dense").classes("w-10 text-red-400").tooltip("Xóa dòng")
-                    else:
-                        ui.label("Chưa có chứng từ nào").classes("text-gray-400 text-sm text-center py-4")
-
-        async def do_delete_entry(entry_id: int):
-            try:
-                await asyncio.to_thread(api.delete, f"/api/handovers/{handover_id}/entries/{entry_id}")
-                ui.notify("Đã xóa dòng chứng từ", type="positive")
-                await render_detail_entries()
-            except Exception as ex:
-                if _handle_api_error(ex): return
-
-        # Dialog thêm dòng
-        await load_detail_users()
-        users_for_dept = source_users_detail_cache.get(dept_id, [])
-        user_opts = {
-            u["id"]: f"{u.get('full_name') or u.get('ipcas_code') or ''}"
-                     f"{' (' + u['ipcas_code'] + ')' if u.get('ipcas_code') else ''}"
-            for u in users_for_dept
-        }
-
-        with ui.dialog() as add_entry_dialog, ui.card().classes("w-96 p-6"):
-            ui.label("Thêm dòng chứng từ").classes("text-lg font-bold mb-4")
-            ae_user = ui.select(user_opts, label="User *").classes("w-full")
-            ae_date = ui.input("Ngày GD (YYYY-MM-DD) *", value=str(__import__('datetime').date.today())).classes("w-full mt-2")
-            ae_count = ui.number("Số tờ *", value=1, min=1).classes("w-full mt-2")
-
-            with ui.row().classes("w-full justify-end gap-2 mt-4"):
-                ui.button("Hủy", on_click=add_entry_dialog.close).classes("text-gray-500")
-                async def do_add_entry():
-                    if not ae_user.value or not ae_date.value or not ae_count.value:
-                        ui.notify("Vui lòng điền đầy đủ thông tin", type="warning")
-                        return
-                    try:
-                        await asyncio.to_thread(api.post, f"/api/handovers/{handover_id}/entries", {
-                            "staff_id": ae_user.value,
-                            "transaction_date": ae_date.value,
-                            "sheet_count": int(ae_count.value),
-                        })
-                        ui.notify("Đã thêm dòng chứng từ", type="positive")
-                        add_entry_dialog.close()
-                        await render_detail_entries()
-                    except Exception as ex:
-                        if _handle_api_error(ex): return
-                ui.button("Thêm", on_click=do_add_entry).classes("bg-red-700 text-white")
-
-        await render_detail_entries()
-
-        # Action buttons (draft only)
-        if is_draft:
-            with ui.row().classes("w-full justify-end gap-3 mt-4"):
-                async def do_confirm_detail():
-                    try:
-                        await asyncio.to_thread(api.post, f"/api/handovers/{handover_id}/confirm")
-                        ui.notify("Đã xác nhận phiếu bàn giao", type="positive")
-                        ui.navigate.to(f"/handovers/{handover_id}")
-                    except Exception as ex:
-                        if _handle_api_error(ex): return
-
-                async def do_delete_handover():
-                    try:
-                        await asyncio.to_thread(api.delete, f"/api/handovers/{handover_id}")
-                        ui.notify("Đã xóa phiếu bàn giao", type="positive")
-                        ui.navigate.to("/handovers")
-                    except Exception as ex:
-                        if _handle_api_error(ex): return
-
-                ui.button("Xóa phiếu", icon="delete", on_click=do_delete_handover).classes("border border-red-500 text-red-500 px-4 py-2 rounded")
-                ui.button("Xác nhận phiếu", icon="check_circle", on_click=do_confirm_detail).classes("bg-green-600 text-white px-6 py-2 rounded")

@@ -25,6 +25,34 @@ def _rotate(backup_dir: Path):
             pass
 
 
+def _verify(db_file: Path) -> bool:
+    """Kiểm tra bản backup vừa tạo có toàn vẹn không (chống đẻ ra bản hỏng)."""
+    try:
+        c = sqlite3.connect(str(db_file))
+        ok = c.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        c.close()
+        return ok
+    except Exception:
+        return False
+
+
+def _mirror(dst: Path):
+    """Sao chép bản backup sang thư mục phụ (ổ/máy khác) nếu được cấu hình."""
+    from backend.core.config import settings
+    extra = settings.BACKUP_EXTRA_DIR
+    if not extra:
+        return
+    try:
+        extra_dir = Path(extra)
+        extra_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(dst, extra_dir / dst.name)
+        _rotate(extra_dir)
+        _log.info("Backup phụ hoàn tất → %s", extra_dir / dst.name)
+    except Exception as exc:
+        # Thư mục phụ lỗi không được làm hỏng backup chính
+        _log.error("Backup phụ thất bại (%s): %s", extra, exc)
+
+
 def run_backup(db_path: str = "data/ksnb.db") -> Path:
     """Tạo một bản sao an toàn bằng SQLite online backup API."""
     _BACKUP_DIR.mkdir(parents=True, exist_ok=True)
@@ -36,7 +64,13 @@ def run_backup(db_path: str = "data/ksnb.db") -> Path:
         src.backup(bak)
         bak.close()
         src.close()
+
+        # Chống rủi ro backup ra bản hỏng — cảnh báo nhưng vẫn giữ file để điều tra
+        if not _verify(dst):
+            _log.error("Backup vừa tạo KHÔNG toàn vẹn: %s (file chính có thể đã hỏng)", dst)
+
         _rotate(_BACKUP_DIR)
+        _mirror(dst)
         _log.info("Backup hoàn tất → %s", dst)
         return dst
     except Exception as exc:

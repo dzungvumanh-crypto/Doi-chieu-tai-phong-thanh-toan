@@ -2,14 +2,12 @@
 import asyncio
 from nicegui import ui, app
 import frontend.api_client as api
-from frontend.shared import _sidebar, _content_area, _page_header, _require_auth, _redirect_if_cv, _handle_api_error
+from frontend.shared import _sidebar, _content_area, _page_header, _require_auth, _handle_api_error
 
 
 @ui.page("/staff")
 async def staff_page():
     if not _require_auth():
-        return
-    if _redirect_if_cv():
         return
     if not api.has_feature("menu.staff"):
         ui.navigate.to("/home")
@@ -27,7 +25,10 @@ async def staff_page():
         _page_header("Quản lý User", "Quản lý tài khoản đăng nhập hệ thống")
 
         current_user = api.get_current_user()
-        is_admin = current_user and current_user.get("role") == "admin"
+        # QTV cấp 1 + cấp 2 đều thấy công cụ quản lý; từng nút vẫn gated theo has_feature
+        _ADMIN_ROLES = ("admin", "admin_l2")
+        is_admin = current_user and current_user.get("role") in _ADMIN_ROLES
+        acting_is_l2 = bool(current_user and current_user.get("role") == "admin_l2")
 
         ROLE_OPTS = {
             "chuyen_vien":   "Chuyên viên",
@@ -36,10 +37,13 @@ async def staff_page():
             "hau_kiem_vien": "Hậu kiểm viên",
             "giam_doc":      "Giám đốc",
             "pho_giam_doc":  "Phó Giám đốc",
-            "admin":         "Quản trị viên",
+            "admin":         "Quản trị viên cấp 1",
+            "admin_l2":      "Quản trị viên cấp 2",
         }
-        # controller kept in display map cho JWT session cũ chưa expire
-        role_map = {**ROLE_OPTS, "controller": "Phó phòng"}
+        # Cấp 2 không được gán "Quản trị viên cấp 1" → ẩn khỏi dropdown
+        FORM_ROLE_OPTS = {k: v for k, v in ROLE_OPTS.items()
+                          if not (acting_is_l2 and k == "admin")}
+        role_map = dict(ROLE_OPTS)
 
         staff_cache = []
         edit_target = {"id": None}
@@ -50,8 +54,18 @@ async def staff_page():
             ui.label("Sửa tài khoản").classes("text-lg font-bold mb-4")
             ef_name        = ui.input("Họ tên *").classes("w-full")
             ef_empcode     = ui.input("Mã cán bộ").props('placeholder="VD: 201700886"').classes("w-full mt-2")
-            ef_role        = ui.select(ROLE_OPTS, label="Quyền *").classes("w-full mt-2")
+            ef_role        = ui.select(FORM_ROLE_OPTS, label="Quyền *").classes("w-full mt-2")
             ef_dept        = ui.select(all_dept_opts, label="Phòng *").classes("w-full mt-2")
+            ef_admin_note  = ui.label("Quản trị viên không thuộc phòng nào — thuộc nhóm Quản trị viên.").classes("text-xs text-purple-600 mt-1")
+
+            def _sync_edit_dept():
+                is_adm = ef_role.value in _ADMIN_ROLES
+                ef_dept.set_visibility(not is_adm)
+                ef_admin_note.set_visibility(is_adm)
+                if is_adm:
+                    ef_dept.set_value(None)
+            ef_role.on_value_change(lambda _e: _sync_edit_dept())
+
             ef_phone       = ui.input("Điện thoại").classes("w-full mt-2")
             ef_join_date   = ui.input("Ngày vào ngành").props('type="date"').classes("w-full mt-2")
             ef_ipcas       = ui.input("User IPCAS").props('placeholder="VD: HQNTHN"').classes("w-full mt-2")
@@ -62,7 +76,8 @@ async def staff_page():
                 async def do_edit():
                     if not edit_target["id"]:
                         return
-                    if not ef_dept.value:
+                    is_adm = ef_role.value in _ADMIN_ROLES
+                    if not is_adm and not ef_dept.value:
                         ui.notify("Vui lòng chọn Phòng", type="warning")
                         return
                     try:
@@ -72,7 +87,7 @@ async def staff_page():
                             "role": ef_role.value,
                             "phone": ef_phone.value or None,
                             "is_active": ef_active.value,
-                            "department_id": ef_dept.value,
+                            "department_id": None if is_adm else ef_dept.value,
                             "join_industry_date": ef_join_date.value or None,
                             "ipcas_code": ef_ipcas.value.strip().upper() or None,
                             "payment_username": ef_payment.value.strip() or None,
@@ -90,8 +105,19 @@ async def staff_page():
             ui.label("Thêm tài khoản").classes("text-lg font-bold mb-4")
             f_name       = ui.input("Họ tên *").classes("w-full")
             f_empcode    = ui.input("Mã cán bộ").props('placeholder="VD: 201700886"').classes("w-full mt-2")
-            f_role       = ui.select(ROLE_OPTS, label="Quyền *", value="chuyen_vien").classes("w-full mt-2")
+            f_role       = ui.select(FORM_ROLE_OPTS, label="Quyền *", value="chuyen_vien").classes("w-full mt-2")
             f_dept       = ui.select(all_dept_opts, label="Phòng *").classes("w-full mt-2")
+            f_admin_note = ui.label("Quản trị viên không thuộc phòng nào — thuộc nhóm Quản trị viên.").classes("text-xs text-purple-600 mt-1")
+
+            def _sync_add_dept():
+                is_adm = f_role.value in _ADMIN_ROLES
+                f_dept.set_visibility(not is_adm)
+                f_admin_note.set_visibility(is_adm)
+                if is_adm:
+                    f_dept.set_value(None)
+            f_role.on_value_change(lambda _e: _sync_add_dept())
+            _sync_add_dept()
+
             f_username   = ui.input("Username *").classes("w-full mt-2")
             f_password   = ui.input("Mật khẩu *", password=True).classes("w-full mt-2")
             f_phone      = ui.input("Điện thoại").classes("w-full mt-2")
@@ -104,7 +130,8 @@ async def staff_page():
                     if not f_name.value or not f_username.value or not f_password.value:
                         ui.notify("Vui lòng điền đầy đủ Họ tên, Username và Mật khẩu", type="warning")
                         return
-                    if not f_dept.value:
+                    is_adm = f_role.value in _ADMIN_ROLES
+                    if not is_adm and not f_dept.value:
                         ui.notify("Vui lòng chọn Phòng", type="warning")
                         return
                     try:
@@ -115,7 +142,7 @@ async def staff_page():
                             "username": f_username.value,
                             "password": f_password.value,
                             "phone": f_phone.value or None,
-                            "department_id": f_dept.value,
+                            "department_id": None if is_adm else f_dept.value,
                             "join_industry_date": f_join_date.value or None,
                             "ipcas_code": f_ipcas.value.strip().upper() or None,
                             "payment_username": f_payment.value.strip() or None,
@@ -194,6 +221,7 @@ async def staff_page():
             ef_ipcas.set_value(s.get("ipcas_code") or "")
             ef_payment.set_value(s.get("payment_username") or "")
             ef_active.set_value(s.get("is_active", True))
+            _sync_edit_dept()
             edit_dialog.open()
 
         def render_staff_rows():
@@ -207,10 +235,11 @@ async def staff_page():
                     or q in s.get("employee_code", "").lower())
                 and (sel_dept == 0 or s.get("department_id") == sel_dept)
             ]
-            # Phân loại: Ban GĐ / tất cả phòng còn lại
+            # Phân loại: Ban GĐ / Quản trị viên / tất cả phòng còn lại
             _BGD_ROLES = {"giam_doc", "pho_giam_doc"}
-            bgd_list  = [s for s in filtered if s.get("role") in _BGD_ROLES]
-            dept_list = [s for s in filtered if s.get("role") not in _BGD_ROLES]
+            bgd_list   = [s for s in filtered if s.get("role") in _BGD_ROLES]
+            admin_list = [s for s in filtered if s.get("role") in _ADMIN_ROLES]
+            dept_list  = [s for s in filtered if s.get("role") not in _BGD_ROLES and s.get("role") not in _ADMIN_ROLES]
 
             with rows_container:
                 # Header
@@ -253,11 +282,16 @@ async def staff_page():
                         else:
                             ui.badge("Tạm khóa").classes("w-16 text-center").props('color="grey"')
                         if is_admin:
+                            # Cấp 2 không được thao tác trên tài khoản cấp 1
+                            _locked = acting_is_l2 and s.get("role") == "admin"
                             with ui.row().classes("w-16 gap-0 justify-center"):
-                                if api.has_feature("staff.edit"):
-                                    ui.button(icon="edit", on_click=lambda s=s: open_edit(s)).props("flat dense").classes("text-red-600").tooltip("Sửa")
-                                if api.has_feature("staff.delete"):
-                                    ui.button(icon="delete", on_click=lambda sid=s["id"], nm=s["full_name"]: do_deactivate_staff(sid, nm)).props("flat dense").classes("text-red-500").tooltip("Xóa")
+                                if _locked:
+                                    ui.icon("lock").classes("text-gray-300 text-sm").tooltip("Chỉ QTV cấp 1 thao tác được")
+                                else:
+                                    if api.has_feature("staff.edit"):
+                                        ui.button(icon="edit", on_click=lambda s=s: open_edit(s)).props("flat dense").classes("text-red-600").tooltip("Sửa")
+                                    if api.has_feature("staff.delete"):
+                                        ui.button(icon="delete", on_click=lambda sid=s["id"], nm=s["full_name"]: do_deactivate_staff(sid, nm)).props("flat dense").classes("text-red-500").tooltip("Xóa")
 
                 # Nhóm Ban Giám đốc
                 if bgd_list:
@@ -265,6 +299,14 @@ async def staff_page():
                         ui.icon("star").classes("text-sm")
                         ui.label("Ban Giám đốc")
                     for s in bgd_list:
+                        _row(s)
+
+                # Nhóm Quản trị viên
+                if admin_list:
+                    with ui.row().classes("w-full px-3 py-1 bg-purple-50 text-xs text-purple-700 font-semibold border-b border-purple-100 items-center gap-1"):
+                        ui.icon("admin_panel_settings").classes("text-sm")
+                        ui.label("Quản trị viên")
+                    for s in admin_list:
                         _row(s)
 
                 # Nhóm theo phòng — Admin/HKV/TP/PP/CV gộp theo department_id
@@ -282,7 +324,7 @@ async def staff_page():
                             _row(s)
 
                 if not filtered:
-                    ui.label("Không có kết quả").classes("text-gray-400 text-center py-6 w-full")
+                    ui.label("Không có kết quả").classes("text-gray-500 text-center py-6 w-full")
 
         async def load_staff():
             nonlocal staff_cache

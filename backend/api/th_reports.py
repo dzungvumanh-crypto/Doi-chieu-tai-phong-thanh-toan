@@ -5,6 +5,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from fastapi.responses import Response
 
+from backend.core.concurrency import run_heavy
 from backend.core.deps import require_feature
 from backend.services.th_report_service import (
     parse_incoming, parse_outgoing, fill_template,
@@ -46,20 +47,20 @@ async def generate_payment_report(
 
     # ── Parse ─────────────────────────────────────────────────────────────────
     try:
-        incoming = parse_incoming(in_bytes)
+        incoming = await run_heavy(parse_incoming, in_bytes)
     except Exception as e:
         log.exception("Lỗi parse file Lệnh đến")
         raise HTTPException(status_code=400, detail=f"File Lệnh đến không hợp lệ: {e}")
 
     try:
-        outgoing = parse_outgoing(out_bytes)
+        outgoing = await run_heavy(parse_outgoing, out_bytes)
     except Exception as e:
         log.exception("Lỗi parse file Lệnh đi")
         raise HTTPException(status_code=400, detail=f"File Lệnh đi không hợp lệ: {e}")
 
     # ── Fill template ─────────────────────────────────────────────────────────
     try:
-        excel_bytes = fill_template(incoming, outgoing, period)
+        excel_bytes = await run_heavy(fill_template, incoming, outgoing, period)
     except FileNotFoundError:
         raise HTTPException(status_code=500, detail="Template báo cáo không tìm thấy trên server")
     except Exception as e:

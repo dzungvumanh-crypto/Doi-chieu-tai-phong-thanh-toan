@@ -19,8 +19,12 @@ import pandas as pd
 try:
     import pyzipper
     _ZipFile = pyzipper.AESZipFile
+    # pyzipper đóng gói bản zipfile riêng: pyzipper.BadZipFile KHÔNG phải lớp con
+    # của zipfile.BadZipFile. Bắt thiếu lớp này thì zip hỏng lọt thành lỗi 500.
+    _BAD_ZIP = (pyzipper.BadZipFile, zipfile.BadZipFile)
 except ImportError:
     _ZipFile = zipfile.ZipFile      # fallback nếu pyzipper chưa cài
+    _BAD_ZIP = (zipfile.BadZipFile,)
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 TEMP_DIR        = Path("data/temp_cham459901")
@@ -131,6 +135,10 @@ def _set_prog(task_token: str | None, pct: int, msg: str) -> None:
 
 # ─── Public API ───────────────────────────────────────────────────────────────
 
+class InputError(ValueError):
+    """Lỗi do chính file người dùng tải lên — thông báo hiển thị thẳng cho họ."""
+
+
 def run_process(
     zip_bytes: bytes,
     task_token: str,
@@ -145,6 +153,11 @@ def run_process(
             _progress[task_token].update({
                 "done": True, "cancelled": True, "msg": "Đã dừng theo yêu cầu.",
             })
+    except InputError as e:
+        # File sai — không phải lỗi hệ thống, người dùng tự sửa được.
+        log.warning("cham459901 file không hợp lệ [%s]: %s", task_token, e)
+        if task_token in _progress:
+            _progress[task_token].update({"done": True, "error": str(e), "msg": str(e)})
     except Exception as e:
         log.error("process_zip lỗi [%s]: %s", task_token, e, exc_info=True)
         if task_token in _progress:
@@ -245,20 +258,40 @@ def process_zip(
 def _load_data(zip_bytes: bytes) -> tuple[pd.DataFrame, int]:
     buf = io.BytesIO(zip_bytes)
     dfs = []
-    with _ZipFile(buf) as zf:
-        csv_names = [n for n in zf.namelist() if n.lower().endswith('.csv')]
-        for csv_name in csv_names:
-            raw = zf.read(csv_name, pwd=ZIP_PASSWORD)
-            dfs.append(pd.read_csv(
-                io.BytesIO(raw),
-                encoding='utf-8-sig',
-                dtype=str,
-                keep_default_na=False,
-            ))
+    try:
+        with _ZipFile(buf) as zf:
+            csv_names = [n for n in zf.namelist() if n.lower().endswith('.csv')]
+            for csv_name in csv_names:
+                raw = zf.read(csv_name, pwd=ZIP_PASSWORD)
+                dfs.append(pd.read_csv(
+                    io.BytesIO(raw),
+                    encoding='utf-8-sig',
+                    dtype=str,
+                    keep_default_na=False,
+                ))
+    except _BAD_ZIP as e:
+        raise InputError(
+            "File tải lên không phải file .zip hợp lệ — có thể tải bị lỗi, "
+            "bị cắt dở, hoặc chỉ được đổi đuôi tên thành .zip."
+        ) from e
+    except RuntimeError as e:
+        raise InputError(
+            "Không giải nén được file .zip — sai mật khẩu hoặc file dùng kiểu "
+            "mã hoá khác với file xuất từ IPCAS."
+        ) from e
+
+    # Trước đây dfs rỗng → dfs[0] ném IndexError('list index out of range'),
+    # người dùng chỉ thấy đúng câu đó, không biết phải sửa gì.
+    if not dfs:
+        raise InputError("File .zip không chứa file .csv nào — cần file dữ liệu xuất từ IPCAS.")
 
     df = pd.concat(dfs, ignore_index=True) if len(dfs) > 1 else dfs[0]
 
     df.columns = df.columns.str.strip()
+
+    missing = sorted({'LOCAC', 'CUSTOMER', 'CCY', 'REMARK', 'DRAMOUNT', 'CRAMOUNT'} - set(df.columns))
+    if missing:
+        raise InputError(f"File .csv thiếu cột bắt buộc: {', '.join(missing)}.")
 
     # Chỉ strip các cột cần thiết — tránh strip 17 cột × 645k dòng
     for col in _STRIP_COLS:

@@ -8,6 +8,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from backend.database import get_db
+from backend.core.concurrency import run_heavy
 from backend.core.deps import require_feature
 from backend.services.report_service import (
     parse_ipcas, parse_payment_teller, parse_payment_backchecker,
@@ -37,20 +38,16 @@ async def parse_gdv(
     db: sqlite3.Connection = Depends(get_db),
 ):
     result = {"ipcas": {}, "payment": {}, "month": 0, "year": 0}
-    violations = []
 
     if gdv_file and gdv_file.filename:
         try:
             raw = await gdv_file.read()
-            rows, viols, month, year = parse_ipcas(raw)
-            if viols:
-                violations.extend([{**v, "system": "IPCAS"} for v in viols])
-            else:
-                result["ipcas"] = enrich_and_group(rows, db, is_payment=False)
-                if month:
-                    result["month"] = month
-                if year:
-                    result["year"] = year
+            rows, month, year = await run_heavy(parse_ipcas, raw)
+            result["ipcas"] = await run_heavy(enrich_and_group, rows, db, is_payment=False)
+            if month:
+                result["month"] = month
+            if year:
+                result["year"] = year
         except Exception as e:
             log.error("parse_gdv IPCAS error: %s", e)
             raise HTTPException(status_code=400, detail=f"Lỗi đọc file GDV: {e}")
@@ -58,20 +55,12 @@ async def parse_gdv(
     if teller_file and teller_file.filename:
         try:
             raw = await teller_file.read()
-            rows, viols = parse_payment_teller(raw)
-            if viols:
-                violations.extend([{**v, "system": "Payment"} for v in viols])
-            else:
-                result["payment"] = enrich_and_group(rows, db, is_payment=True)
+            rows = await run_heavy(parse_payment_teller, raw)
+            result["payment"] = await run_heavy(enrich_and_group, rows, db, is_payment=True)
         except Exception as e:
             log.error("parse_gdv Payment error: %s", e)
             raise HTTPException(status_code=400, detail=f"Lỗi đọc file Teller: {e}")
 
-    if violations:
-        raise HTTPException(
-            status_code=422,
-            detail={"message": "GD Hậu kiểm sai đang lớn hơn 0. Đề nghị kiểm tra lại", "violations": violations},
-        )
     return result
 
 
@@ -83,18 +72,14 @@ async def parse_hkv(
     db: sqlite3.Connection = Depends(get_db),
 ):
     ipcas_rows, payment_rows = [], []
-    violations = []
     month, year = 0, 0
 
     if hkv_file and hkv_file.filename:
         try:
             raw = await hkv_file.read()
-            rows, viols, m, y = parse_ipcas(raw)
-            if viols:
-                violations.extend([{**v, "system": "IPCAS"} for v in viols])
-            else:
-                ipcas_rows = rows
-                month, year = m or month, y or year
+            rows, m, y = await run_heavy(parse_ipcas, raw)
+            ipcas_rows = rows
+            month, year = m or month, y or year
         except Exception as e:
             log.error("parse_hkv IPCAS error: %s", e)
             raise HTTPException(status_code=400, detail=f"Lỗi đọc file HKV: {e}")
@@ -102,22 +87,12 @@ async def parse_hkv(
     if checker_file and checker_file.filename:
         try:
             raw = await checker_file.read()
-            rows, viols = parse_payment_backchecker(raw)
-            if viols:
-                violations.extend([{**v, "system": "Payment"} for v in viols])
-            else:
-                payment_rows = rows
+            payment_rows = await run_heavy(parse_payment_backchecker, raw)
         except Exception as e:
             log.error("parse_hkv Payment error: %s", e)
             raise HTTPException(status_code=400, detail=f"Lỗi đọc file Backchecker: {e}")
 
-    if violations:
-        raise HTTPException(
-            status_code=422,
-            detail={"message": "GD Hậu kiểm sai đang lớn hơn 0. Đề nghị kiểm tra lại", "violations": violations},
-        )
-
-    merged = merge_hkv(ipcas_rows, payment_rows, db)
+    merged = await run_heavy(merge_hkv, ipcas_rows, payment_rows, db)
     return {"hkv_rows": merged, "month": month, "year": year}
 
 
@@ -195,7 +170,6 @@ async def generate_dept_zip(
     current: dict = Depends(require_feature("menu.reports")),
     db: sqlite3.Connection = Depends(get_db),
 ):
-    violations = []
     ipcas_grouped: dict = {}
     payment_grouped: dict = {}
     month, year = 0, 0
@@ -203,12 +177,9 @@ async def generate_dept_zip(
     if gdv_file and gdv_file.filename:
         try:
             raw = await gdv_file.read()
-            rows, viols, m, y = parse_ipcas(raw)
-            if viols:
-                violations.extend([{**v, "system": "IPCAS"} for v in viols])
-            else:
-                ipcas_grouped = enrich_and_group(rows, db, is_payment=False)
-                month, year = m or month, y or year
+            rows, m, y = await run_heavy(parse_ipcas, raw)
+            ipcas_grouped = await run_heavy(enrich_and_group, rows, db, is_payment=False)
+            month, year = m or month, y or year
         except Exception as e:
             log.error("generate_dept_zip IPCAS: %s", e)
             raise HTTPException(status_code=400, detail=f"Lỗi đọc file GDV: {e}")
@@ -216,20 +187,11 @@ async def generate_dept_zip(
     if teller_file and teller_file.filename:
         try:
             raw = await teller_file.read()
-            rows, viols = parse_payment_teller(raw)
-            if viols:
-                violations.extend([{**v, "system": "Payment"} for v in viols])
-            else:
-                payment_grouped = enrich_and_group(rows, db, is_payment=True)
+            rows = await run_heavy(parse_payment_teller, raw)
+            payment_grouped = await run_heavy(enrich_and_group, rows, db, is_payment=True)
         except Exception as e:
             log.error("generate_dept_zip Payment: %s", e)
             raise HTTPException(status_code=400, detail=f"Lỗi đọc file Teller: {e}")
-
-    if violations:
-        raise HTTPException(
-            status_code=422,
-            detail={"message": "GD Hậu kiểm sai đang lớn hơn 0. Đề nghị kiểm tra lại", "violations": violations},
-        )
 
     all_depts = set(ipcas_grouped.keys()) | set(payment_grouped.keys())
     if not all_depts:
@@ -238,19 +200,22 @@ async def generate_dept_zip(
     staff_name = current.get("full_name") or current.get("username", "")
     m_disp = month or 1
     y_disp = year or 2025
-    excels = {}
-    for dept in sorted(all_depts):
-        excel_bytes = generate_dept_excel(
-            dept_name=dept,
-            month=m_disp,
-            year=y_disp,
-            ipcas_rows=ipcas_grouped.get(dept, []),
-            payment_rows=payment_grouped.get(dept, []),
-            staff_name=staff_name,
-        )
-        excels[f"BC_HK_{dept}_T{m_disp:02d}{y_disp}.xlsx"] = excel_bytes
+    # Cả vòng lặp sinh Excel + nén ZIP gom vào 1 lần sang threadpool: đây là
+    # phần tốn thời gian nhất của endpoint, tỉ lệ thuận với số phòng.
+    def _build_all() -> bytes:
+        excels = {}
+        for dept in sorted(all_depts):
+            excels[f"BC_HK_{dept}_T{m_disp:02d}{y_disp}.xlsx"] = generate_dept_excel(
+                dept_name=dept,
+                month=m_disp,
+                year=y_disp,
+                ipcas_rows=ipcas_grouped.get(dept, []),
+                payment_rows=payment_grouped.get(dept, []),
+                staff_name=staff_name,
+            )
+        return build_zip(excels)
 
-    zip_bytes = build_zip(excels)
+    zip_bytes = await run_heavy(_build_all)
     zip_name = f"BC_HK_phong_T{m_disp:02d}{y_disp}.zip"
     return Response(
         content=zip_bytes,

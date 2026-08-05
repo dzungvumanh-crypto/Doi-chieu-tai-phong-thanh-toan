@@ -35,7 +35,46 @@ Tài khoản đăng nhập:
 ```
 > ⚠️ Đổi mật khẩu ngay sau lần đăng nhập đầu tiên.
 
-### 4. Chạy hệ thống
+### 4. Cấu hình `.env` (bắt buộc)
+
+Copy `.env.example` thành `.env` rồi điền hai khoá bí mật — **thiếu là hệ thống không khởi động**:
+
+```bash
+python -c "import secrets; print(secrets.token_hex(32))"   # chạy 2 lần, lấy 2 giá trị khác nhau
+```
+
+```ini
+SECRET_KEY=<giá trị 1>       # khoá ký JWT (backend)
+STORAGE_SECRET=<giá trị 2>   # khoá ký cookie phiên (frontend)
+```
+
+> Trên Windows, `start.bat` **tự sinh cả hai** nếu `.env` chưa có hoặc còn thiếu — không cần làm tay.
+> Đổi `STORAGE_SECRET` sẽ đăng xuất toàn bộ người dùng đang đăng nhập một lần.
+
+Chạy thật trên mạng nội bộ thì đặt thêm (xem mục [Truy cập LAN](#truy-cập-lan-nhiều-người-dùng)):
+
+```ini
+ENV=production                                  # tắt /docs, /redoc
+ALLOWED_ORIGINS=http://192.168.1.100:8080       # IP thật của máy chủ
+```
+
+Hai biến tuỳ chọn liên quan đến hiệu năng và mức độ kín của backend:
+
+```ini
+BACKEND_URL=http://127.0.0.1:8000   # frontend gọi backend — KHÔNG dùng localhost
+BACKEND_HOST=127.0.0.1              # địa chỉ backend lắng nghe
+```
+
+> **Đừng dùng `localhost` cho `BACKEND_URL`.** Trên Windows nó phân giải ra `::1` (IPv6)
+> trước, mà uvicorn chỉ lắng nghe IPv4 → mỗi kết nối mới tốn thêm ~2 giây chờ IPv6
+> thất bại. Đo được: `localhost` 2062 ms so với `127.0.0.1` 18 ms. Không đặt dòng này
+> cũng được — mặc định trong code đã là `127.0.0.1`.
+
+> `BACKEND_HOST=127.0.0.1` kín hơn: trình duyệt người dùng chỉ nói chuyện với frontend
+> cổng 8080, không bao giờ chạm cổng 8000. Chỉ đặt khi chắc chắn **không có máy nào khác
+> gọi thẳng API**. Mặc định `0.0.0.0` (nghe mọi giao diện).
+
+### 5. Chạy hệ thống
 
 ```bash
 python run.py
@@ -46,6 +85,13 @@ Truy cập:
 - **API docs**: http://localhost:8000/docs
 - **Từ máy khác trong LAN**: http://[IP-máy-chủ]:8080
 
+> **Windows — dùng `start.bat`.** Script tự kiểm tra `.venv` và **vá tại chỗ** (~2 giây) khi thư mục dự án
+> được mang sang máy khác (chạy từ USB), thay vì xoá và cài lại toàn bộ thư viện. Máy mới cần **Python 3.10.x**;
+> bản 3.11/3.12 sẽ buộc cài lại thư viện và **cần internet**.
+>
+> Sửa file `.bat` / `.ps1` phải giữ xuống dòng **CRLF** — `.gitattributes` đã ép sẵn khi clone/checkout,
+> nhưng công cụ ghi file thường mặc định LF và `cmd.exe` chạy sai file .bat dạng LF mà không báo lỗi rõ.
+
 ---
 
 ## Cấu trúc hệ thống
@@ -55,10 +101,13 @@ Truy cập:
 │   ├── main.py              # FastAPI app + schema migration khi khởi động
 │   ├── database.py          # SQLite engine (WAL mode, FK via PRAGMA)
 │   ├── core/
-│   │   ├── config.py        # Cấu hình (SECRET_KEY, DATABASE_URL...)
+│   │   ├── config.py        # Cấu hình (SECRET_KEY, DATABASE_URL, NTP...)
 │   │   ├── security.py      # JWT + bcrypt
 │   │   ├── deps.py          # FastAPI dependencies (RBAC)
-│   │   ├── sessions.py      # Session in-memory
+│   │   ├── sessions.py      # Session lưu DB (bảng login_sessions) — không mất khi restart
+│   │   ├── audit_middleware.py # Ghi nhật ký thao tác tập trung → audit_logs
+│   │   ├── audit_queue.py   # Hàng đợi + 1 luồng ghi audit, không chặn response
+│   │   ├── concurrency.py   # Giới hạn số việc nặng chạy đồng thời (sinh Word/Excel)
 │   │   └── rate_limit.py    # Rate limiting đăng nhập
 │   ├── api/
 │   │   ├── auth.py          # Đăng nhập / đăng xuất / đổi mật khẩu
@@ -71,42 +120,60 @@ Truy cập:
 │   │   ├── delegations.py   # Ủy quyền Giám đốc
 │   │   ├── dashboard.py     # Tổng quan thống kê
 │   │   ├── reports.py       # Báo cáo hậu kiểm
+│   │   ├── handover_reports.py # Báo cáo bàn giao chứng từ (đúng hạn/quá hạn)
 │   │   ├── th_reports.py    # Báo cáo tổng hợp (phòng TH)
+│   │   ├── swift_recon.py   # Đối chiếu điện SWIFT (phòng Swift)
 │   │   ├── duty_schedule.py # Lịch trực
 │   │   ├── duty_staff.py    # Cán bộ trực
 │   │   ├── duty_constraints.py # Ràng buộc lịch trực
 │   │   ├── duty_stats.py    # Thống kê lịch trực
 │   │   ├── duty_export.py   # Xuất lịch trực
 │   │   ├── cham459901.py    # Phân loại bút toán TK 459901
+│   │   ├── doi_chieu_song_phuong.py # Đối chiếu song phương (định tuyến lệnh IPCAS)
+│   │   ├── ttqt_branches.py # Danh mục CN thực hiện TTQT (CRUD + import/export Excel)
 │   │   ├── logs.py          # Nhật ký hệ thống (admin)
 │   │   └── holidays.py      # Quản lý ngày lễ (admin)
 │   └── services/
 │       ├── bundle_service.py       # Thuật toán gom tập (max 350 tờ)
 │       ├── cover_service.py        # Tạo bìa Word (docxtpl)
 │       ├── report_service.py       # Xuất báo cáo Excel
+│       ├── handover_report_service.py # Tính chứng từ nộp đúng hạn / quá hạn
+│       ├── th_report_service.py    # Xuất báo cáo tổng hợp (phòng TH)
 │       ├── backup_service.py       # Backup SQLite tự động
-│       └── cham459901_service.py   # Xử lý ZIP + phân loại bút toán 459901
+│       ├── log_cleanup_service.py  # Dọn login_logs / audit_logs quá hạn theo lịch
+│       ├── time_sync.py            # Cảnh báo lệch giờ máy chủ so NTP (không tự sửa, có cache)
+│       ├── cham459901_service.py   # Xử lý ZIP + phân loại bút toán 459901
+│       ├── doi_chieu_song_phuong_service.py # Định tuyến lệnh IPCAS theo NH + chiều → 8 CSV
+│       ├── swift_recon/            # Đối chiếu điện SWIFT (parse, so khớp, export Excel)
+│       └── duty_*                  # Xếp lịch trực, ràng buộc, thống kê, xuất file (6 module)
 ├── frontend/
 │   ├── main.py              # NiceGUI entry point
 │   ├── shared.py            # Layout chung (sidebar, header, helpers)
+│   ├── ui_kit.py            # Nguồn sự thật: màu, trạng thái, khung chờ, font
 │   ├── api_client.py        # httpx wrapper → backend
 │   └── pages/
 │       ├── login.py         # Đăng nhập
 │       ├── dashboard.py     # Tổng quan
+│       ├── pending_work.py  # Màn hình theo dõi việc chờ xử lý (/pending/<loại>)
 │       ├── staff.py         # Quản lý cán bộ
 │       ├── groups.py        # Quản lý nhóm
 │       ├── group_features.py # Phân quyền theo nhóm
 │       ├── handovers.py     # Bàn giao chứng từ
 │       ├── bundles.py       # Gom tập + in bìa
 │       ├── storage.py       # Lưu trữ tập (số hộp, vị trí kệ)
+│       ├── ttqt_branches.py # Danh sách CN thực hiện TTQT
 │       ├── leaves.py        # Nghỉ phép
 │       ├── duty_schedule.py # Lịch trực
 │       ├── cham_459901.py   # Phân loại bút toán TK 459901
+│       ├── doi_chieu_song_phuong.py # Đối chiếu song phương (định tuyến lệnh IPCAS)
 │       ├── reports.py       # Báo cáo hậu kiểm
+│       ├── handover_reports.py # Báo cáo bàn giao chứng từ (đúng hạn/quá hạn)
 │       ├── th_reports.py    # Báo cáo tổng hợp
+│       ├── swift_recon.py   # Đối chiếu điện SWIFT (phòng Swift)
 │       ├── user_management.py # Quản lý tài khoản (admin)
 │       ├── login_logs.py    # Nhật ký đăng nhập (admin)
-│       ├── logs.py          # Nhật ký hệ thống (admin)
+│       ├── audit_logs.py    # Nhật ký thao tác — lịch sử ghi dữ liệu (admin)
+│       ├── logs.py          # Nhật ký lỗi & cảnh báo (admin)
 │       └── change_password.py # Đổi mật khẩu
 ├── templates/
 │   ├── bia_mau_goc.docx             # Mẫu bìa tập chứng từ
@@ -117,6 +184,7 @@ Truy cập:
 │   └── app.log             # Log xoay vòng (5 MB × 3 file)
 ├── init_db.py               # Khởi tạo DB + seed data
 ├── run.py                   # Launcher (chạy backend + frontend song song)
+├── deploy_env_check.py      # Kiểm/sửa .env máy đích khi deploy (deploy.bat gọi)
 └── requirements.txt
 ```
 
@@ -125,30 +193,58 @@ Truy cập:
 ## Chức năng
 
 ### Module Nhân sự & Tài khoản
-- Quản lý cán bộ theo phòng ban, vai trò (7 vai trò — xem bảng RBAC)
+- Quản lý cán bộ theo phòng ban, vai trò (8 vai trò — xem bảng RBAC)
 - Quản lý nhóm cán bộ và phân quyền tính năng theo nhóm
-- Dashboard tổng quan: số liệu bàn giao, tập chứng từ, nghỉ phép
-- Nhật ký đăng nhập và nhật ký thao tác hệ thống (admin xem, lọc theo user/thời gian)
+- Dashboard tổng quan: KPI người dùng & phòng nghiệp vụ, bảng nghỉ phép hôm nay theo phòng, biểu đồ cột tỷ lệ nộp chứng từ đúng hạn/muộn theo 4 phòng (chọn tháng/năm để xem). **Mọi vai trò đều vào Trang chủ sau khi đăng nhập**
+- **Công việc chờ xử lý**: khối ở đầu sidebar, hiện trên mọi trang — số chứng từ chờ xác nhận và đơn nghỉ phép chờ duyệt của **chính người đang đăng nhập**; bấm vào mở màn hình theo dõi `/pending/<loại>` có đủ chi tiết và link nhảy thẳng tới ô cần xử lý
+- **Nhật ký thao tác** (audit log): middleware ghi tập trung mọi request thay đổi dữ liệu (POST/PUT/PATCH/DELETE) vào bảng `audit_logs` — ai, làm gì, kết quả HTTP, IP, thời gian; lọc theo phương thức, tìm kiếm, phân trang; tự dọn sau 365 ngày
+- Nhật ký đăng nhập và nhật ký lỗi/cảnh báo hệ thống (admin xem, lọc theo user/thời gian)
 
 ### Module Nghỉ phép
 - Cán bộ tạo đơn xin nghỉ (phép năm, ốm, việc riêng, khác)
 - Workflow duyệt 3 bước: **KSV → Tổng hợp → Giám đốc**
 - Ủy quyền Giám đốc: GĐ có thể ủy quyền cho PGĐ trong khoảng thời gian xác định
 - Tải phiếu nghỉ phép dạng `.docx` đúng mẫu
-- Theo dõi quota phép năm (hạn ngạch / đã dùng)
+- Theo dõi quota phép năm (hạn ngạch / đã dùng); chuyển tiếp ngày phép chưa dùng năm trước sang Q1
+- Banner "Phép còn lại" tính đủ hạn mức nhập tay + ngày chuyển kỳ, khớp đúng tab Hạn mức phép
+- Đơn nghỉ vắt qua ranh giới năm (vd 29/12 → 02/01) được chia đúng cho từng năm khi tính hạn mức
+- Nghỉ thai sản / bảo hiểm (không trừ vào hạn mức phép năm), chọn khoảng ngày bằng lịch cuộn
+- Nhập hạn mức phép hàng loạt từ file Excel (xem trước / áp dụng / hoàn tác)
+- Khai báo hộ; ngày nghỉ lẻ không liên tục (`spread_dates`)
+- Bảng nghỉ phép hôm nay trên Trang chủ theo từng phòng — **chỉ đếm đơn đã duyệt** (lịch tháng trong menu thì hiện cả đơn đang chờ, kèm nhãn trạng thái)
+- Chống duyệt trùng: hai người (hoặc hai tab) bấm duyệt cùng lúc thì chỉ lần đầu có hiệu lực, lần sau báo đơn đã được xử lý
 - Resubmit đơn bị từ chối; huỷ đơn đang chờ hoặc đã duyệt
 
 ### Module Chứng từ Hậu kiểm
 - **Bàn giao**: GDV nhập số tờ theo ngày, HKV/KSV xác nhận từng ô
+  - *Phạm vi xem*: `admin` / GĐ / PGĐ và người có quyền hậu kiểm (`handovers.confirm_entry`) xem được **mọi phòng nguồn**; các vai trò còn lại — kể cả trưởng/phó phòng — chỉ xem **phòng của chính mình**, dropdown chọn phòng cũng chỉ liệt kê phòng đó. Backend chặn ở `grid`, `history` và `export` (xuất Excel tự ép về phòng người gọi)
+  - *Phạm vi ghi*: `admin`, `giam_doc`, `pho_giam_doc` **chỉ đọc — bị cấm hoàn toàn** mọi thao tác ghi (`_NO_WRITE_ROLES`, chặn ở dependency `require_handover_write` nên `admin` không bypass được như với `require_feature`). Các vai trò còn lại ghi được **trong phòng mình** nếu nhóm được cấp feature tương ứng; riêng người có `handovers.confirm_entry` ghi được trên mọi phòng
+  - Vào được menu vẫn cần feature `menu.handovers` — vai trò không tự mở menu
+  - *Cán bộ chuyển phòng*: chứng từ hiển thị theo phòng tại **ngày giao dịch** — trước ngày chuyển ở phòng cũ, từ ngày chuyển ở phòng mới (lịch sử đổi phòng lưu ở bảng `staff_department_history`). Nhập bù chứng từ tháng cũ cho cán bộ đã chuyển vẫn vào đúng phòng cũ; do giới hạn phạm vi phòng ở trên, việc nhập bù này do người hậu kiểm thực hiện
 - **Gom tập tự động**:
   - Max 350 tờ/tập
   - (user, ngày) không bị tách sang tập khác
   - Nếu 1 ngày > 350 tờ → chia 2 tập cân bằng
 - **In bìa**: Tạo file `.docx` đúng format mẫu (2-column layout)
-- **Lưu trữ**: Ghi số hộp, vị trí kệ; tra cứu theo phòng/thời gian
-- **Báo cáo hậu kiểm**: Xuất Excel tổng hợp theo phòng
+- **Lưu trữ**: Ghi số hộp, vị trí kệ; tra cứu theo phòng/thời gian; bảng tổng hợp cả năm (số tờ/số tập theo phòng × 12 tháng); sửa số chứng từ ngay trên bảng — nhập vào ô trống để thêm tập, sửa về 0 để xoá tập, số tập/tổng tự cập nhật
+- **Báo cáo** (menu con):
+  - *Báo cáo hậu kiểm*: Xuất Excel tổng hợp theo phòng
+  - *Báo cáo bàn giao chứng từ*: Số chứng từ nộp đúng hạn / quá hạn theo phòng; chi tiết cán bộ nào nộp chậm chứng từ ngày nào, chậm bao nhiêu ngày làm việc. **Xuất Word A4 ngang** đúng kỳ đang xem (bảng tổng hợp theo phòng + chi tiết quá hạn, phần chi tiết chỉ ghi họ tên, không ghi User IPCAS)
 - **Báo cáo tổng hợp**: Báo cáo riêng cho phòng Tổng hợp
 - **Lịch sử thay đổi**: Ghi log mọi thao tác xác nhận, mượn, trả chứng từ
+
+### Module Danh sách CN TTQT
+- Danh mục chi nhánh thực hiện thanh toán quốc tế trực tiếp (mã CN, tên CN, SWIFT BIC, loại I/II,
+  CN loại I quản lý, SĐT, địa chỉ, ghi chú)
+- Menu: **Phòng KSNB & HTVH → Danh sách CN TTQT**
+- Tra cứu theo mã CN / tên CN / SWIFT BIC; lọc theo loại CN và trạng thái
+  (**Đang hoạt động** / **Đã đóng BIC** / Tất cả) — CN đã đóng BIC tô xám khi xem chung
+- Thêm / sửa / xoá từng CN ngay trên giao diện, mọi thao tác ghi audit log
+- **Nhập từ Excel**: đọc đúng file gốc do phòng KSNB phát hành — dòng đánh dấu `Đóng BICCODE` phân
+  tách nhóm CN còn hoạt động với nhóm đã đóng BIC. Mặc định chỉ **thêm mới + cập nhật**; tích ô
+  *"Xoá CN không có trong file"* nếu muốn đồng bộ hoàn toàn theo file
+- **Xuất Excel** theo đúng bộ lọc đang xem; file xuất ra nhập lại được (cùng định dạng file gốc)
+- Phân quyền riêng theo nhóm (`menu.ttqt_branches` + `ttqt_branches.create/edit/delete/import/export`)
 
 ### Module Lịch trực
 - Xếp lịch trực tự động cho phòng Thanh toán
@@ -156,11 +252,58 @@ Truy cập:
 - Thống kê số ca trực theo cán bộ, theo tháng
 - Xuất lịch trực ra file
 
+### Module Đối chiếu điện SWIFT (phòng Swift)
+- Đối chiếu điện SAA ↔ Màn hình quản lý điện, 2 chiều: **Điện đến** / **Điện đi**
+- Mỗi bên nhận **nhiều file** (SAA có thể xuất nhiều đợt trong ngày) — tự gộp
+  trước khi đối chiếu; giới hạn 10 file hoặc 100 MB mỗi ô
+- Xuất Excel 5 loại mỗi chiều: Tổng hợp, Chi tiết lệch, Bản ghi đang lọc,
+  **Tổng hợp theo biểu mẫu** và **Chi tiết lệch theo biểu mẫu** (Mẫu 04/05,
+  khung nền lấy từ `backend/services/swift_recon/templates/`)
+- Cột "Chênh lệch" đếm số bản ghi **không khớp khoá**, không phải hiệu số lượng
+- Tab **Lịch sử đối chiếu** — lưu vào bảng `swift_recon_history` trong DB chung
+- Phân quyền riêng theo nhóm (`menu.swift_recon`)
+
 ### Module Chấm 459901
 - Phân loại bút toán tài khoản trung gian 459901 dành cho phòng Thanh toán
+- Menu: **Phòng Thanh toán → Đối chiếu → Chấm 459901**
 - Upload file ZIP chứa dữ liệu giao dịch; xử lý bất đồng bộ (~65s)
 - Xuất 3 file Excel: **Huỷ**, **Đi**, **Khác** theo kết quả phân loại
 - Phân quyền riêng theo nhóm (`menu.cham_459901`, `cham_459901.process`)
+
+### Module Đối chiếu Song phương
+- Định tuyến lệnh IPCAS phục vụ đối chiếu song phương tại phòng Thanh toán
+- Menu: **Phòng Thanh toán → Đối chiếu → Đối chiếu Song phương**
+- Upload file ZIP (mã hóa AES-256) chứa dữ liệu IPCAS; xử lý bất đồng bộ, theo dõi tiến độ real-time
+- Phân loại mỗi dòng theo **4 ngân hàng** (Vietinbank 201, BIDV 202, Vietcombank 203, MBBank 311) × **2 chiều**: **ĐẾN** (`CRAMOUNT=0`) / **ĐI** (`DRAMOUNT=0`) → xuất **8 file CSV**
+- Phân quyền riêng theo nhóm (`menu.doi_chieu_song_phuong`, `doi_chieu_song_phuong.process`)
+
+### Module Đối chiếu CITAD ↔ PaymentHub
+- Đối chiếu số liệu tổng CITAD (NHNN) với PaymentHub (Agribank) theo từng ngày
+- Menu: **Phòng Thanh toán → Đối chiếu → Đối chiếu CITAD**
+- Nhập tay 5 cổng CITAD × 3 loại tiền × 8 trường; chênh lệch tính lại ngay khi gõ
+- Mỗi ngày là **một bản ghi chung cả phòng** (`doi_chieu_citad_sessions`, khoá theo `ngay`) —
+  ai lưu sau cùng là bản hiện hành; mỗi lần bấm Lưu ghi thêm 1 dòng vào
+  `doi_chieu_citad_history` để xem/tải lại từng bản cũ
+- Xuất Excel theo mẫu *"Báo cáo đối chiếu giao dịch hệ thống thanh toán điện tử liên ngân hàng"*
+  đã duyệt (`build_xlsx` — không đổi format/công thức khi sửa)
+- Kèm **Extension trình duyệt** (`extension_citad/`) tự lấy số liệu từ trang CITAD/PaymentHub:
+  tải `.zip` ngay trên màn hình, ghép nối bằng *mã kết nối* cá nhân
+  (`doi_chieu_citad_extension_tokens`, chỉ lưu hash SHA-256, tạo mã mới tự thu hồi mã cũ).
+  Chỉ chạy trên Chromium (Chrome/Edge/Cốc Cốc), phải cài tay từng máy
+- Phân quyền riêng theo nhóm (`menu.doi_chieu_citad`)
+
+### Module Đối soát CITAD ↔ IPCAS
+- Đối soát từng lệnh chuyển tiền giữa CITAD (NHNN) và IPCAS (Agribank) theo ngày chấm
+- Menu: **Phòng Thanh toán → Đối soát CITAD ↔ IPCAS**
+- Upload file CITAD (`.xls`/`.zip`), IPCAS (`.csv`/`.zip`) và Hub ngoại tệ (`.xls`); khớp trong RAM
+  theo `msgref` (Đi) / `txid` (Đến), phân loại lệch thành 4 nhóm: **Chỉ CITAD / Chỉ IPCAS / Chỉ Hub /
+  Lệch trạng thái**
+- Cảnh báo khi chọn **trùng nội dung file** (băm SHA-256 toàn bộ byte, không dựa vào tên file)
+- Xuất Excel 4 sheet; tab **Lịch sử** lưu `doi_soat_citad_history` kèm snapshot nguyên vẹn danh sách
+  lệch — xem lại/tải lại đúng số liệu của lần đối soát cũ, không tính lại từ file gốc
+- Phân quyền riêng theo nhóm (`menu.doi_soat_citad`)
+- ⚠️ **Lỗi đã biết:** file CITAD định dạng `.xlsx` bị đọc ra rỗng mà không báo lỗi
+  (`parsers.py` — `read_only=True` kèm `close()` trước khi đọc). **Dùng `.xls`** cho tới khi sửa xong
 
 ---
 
@@ -168,15 +311,41 @@ Truy cập:
 
 | Vai trò | Mô tả |
 |---|---|
-| `admin` | Toàn quyền hệ thống, quản lý tài khoản |
+| `admin` | **Quản trị viên cấp 1** — toàn quyền hệ thống, quản lý tài khoản & phân quyền nhóm. **Ngoại lệ: chỉ đọc ở Bàn giao chứng từ** |
+| `admin_l2` | **Quản trị viên cấp 2** — quyền theo nhóm chức năng được gán; không thuộc phòng nào; không được tạo/sửa/xóa tài khoản cấp 1 |
 | `hau_kiem_vien` | Quyền hậu kiểm (xác nhận, gom tập, in bìa) |
-| `giam_doc` | Duyệt nghỉ phép bước cuối; xem toàn bộ màn hình |
-| `pho_giam_doc` | Duyệt thay GĐ khi có ủy quyền còn hiệu lực |
-| `truong_phong` | Duyệt nghỉ phép bước KSV; nhập bàn giao |
-| `pho_phong` | Duyệt nghỉ phép bước KSV; nhập bàn giao |
+| `giam_doc` | Duyệt nghỉ phép bước cuối; xem toàn bộ màn hình. **Chỉ đọc ở Bàn giao chứng từ** (xem mọi phòng) |
+| `pho_giam_doc` | Duyệt thay GĐ khi có ủy quyền còn hiệu lực. **Chỉ đọc ở Bàn giao chứng từ** (xem mọi phòng) |
+| `truong_phong` | Duyệt nghỉ phép bước KSV; xem + nhập bàn giao **phòng mình** nếu nhóm được cấp feature (trừ khi có quyền hậu kiểm) |
+| `pho_phong` | Duyệt nghỉ phép bước KSV; xem + nhập bàn giao **phòng mình** nếu nhóm được cấp feature (trừ khi có quyền hậu kiểm) |
 | `chuyen_vien` | Nhập bàn giao, xem dữ liệu phòng mình |
 
-**Phân cấp**: `admin > hau_kiem_vien > giam_doc / pho_giam_doc > truong_phong > pho_phong > chuyen_vien`
+**Phân cấp**: `admin > admin_l2 > hau_kiem_vien > giam_doc / pho_giam_doc > truong_phong > pho_phong > chuyen_vien`
+
+> `admin_l2` (Quản trị viên cấp 2) hiển thị chung nhóm "Quản trị viên" như cấp 1, nhưng quyền hạn được cấu hình qua **Phân quyền theo nhóm** thay vì all-access.
+
+### Menu sidebar
+Menu nhóm theo phòng ban, hover để mở flyout bên phải. Một phòng **chỉ hiện khi user có ít nhất 1 chức năng** của phòng đó (`menu.<key>`) — phòng chưa có chức năng hoặc user không được cấp quyền nào thì ẩn hoàn toàn, không hiện tên phòng rỗng. Riêng `chuyen_vien` dùng menu phẳng (Bàn giao chứng từ, Nghỉ phép).
+
+Trên cùng là khối **Công việc chờ xử lý**, tự ẩn khi không có việc nào. Dưới nó là **Trang chủ** — hiện với mọi vai trò và mọi vai trò đều vào được.
+
+> **Phân quyền màn hình đi theo nhóm quyền, không theo vai trò.** Các trang Báo cáo, Lưu trữ, Báo cáo bàn giao, Nhân sự, Đóng tập chỉ kiểm `menu.<key>` — giống hệt luật mà backend (`require_feature`) và sidebar đang dùng. Trước đây các trang này còn một lớp chặn cứng theo vai trò chạy **trước** lớp nhóm quyền, khiến quyền admin cấp cho `chuyen_vien` qua nhóm không có tác dụng mà không báo gì. Lớp đó đã gỡ; chỉ `/user-management` còn giữ vì là trang duy nhất không gắn mã feature nào.
+
+**Thu gọn / mở rộng**: chỉ bằng nút ở góc trên cùng bên trái. Click vào mục menu chỉ điều hướng, không đổi trạng thái sidebar. Icon nút phản ánh trạng thái hiện tại (`menu_open` khi đang mở, `menu` khi đang thu gọn). Lựa chọn được lưu trong `localStorage` và giữ nguyên khi chuyển trang.
+
+Máy có màn hình rộng **≤ 1440px** (máy trạm 1366×768) mặc định vào đã thu gọn sẵn, nhường thêm ~184px cho vùng nội dung. Chỉ áp dụng khi user chưa từng bấm nút — đã bấm một lần thì lựa chọn đó được tôn trọng ở mọi màn hình.
+
+### Vùng nội dung
+Giao diện thiết kế cho **máy trạm desktop**, không có breakpoint mobile. Vùng nội dung rộng `calc(100% - 16rem)` (hoặc `- 4.5rem` khi sidebar thu gọn) và cho **cuộn ngang** khi bảng vượt khung — không cắt bớt nội dung.
+
+Đầu mỗi trang hiển thị **đường dẫn menu** dẫn tới trang đó, ví dụ *Phòng KSNB & HTVH / Báo cáo / **Báo cáo hậu kiểm***. Phần cha in nhỏ màu xám, tên trang giữ cỡ tiêu đề. Đường dẫn **suy ra từ route** rồi tra bảng dựng sẵn từ chính cây menu (`shared.BREADCRUMBS`) — đổi tên một mục trong `DEPARTMENTS` thì breadcrumb tự đổi theo, không có chỗ thứ hai phải sửa. Trang không nằm trong menu (`/home`, `/user-management`) không hiện phần cha.
+
+> Điều kiện: route của trang phải trùng khoá menu (`@ui.page("/reports")` ↔ khoá `reports`) — ràng buộc này vốn đã có sẵn vì sidebar điều hướng bằng `ui.navigate.to(f"/{key}")`.
+
+### Màn hình đăng nhập
+Hai bên ô đăng nhập là **các cụm đường dẫn nhanh** tới hệ thống nghiệp vụ (Thanh toán trong nước / Thanh toán quốc tế / Nội bộ), click mở tab mới. Danh sách để cứng trong `frontend/pages/login.py` chứ không nằm trong DB — cố ý, để trang login **không phụ thuộc backend**: backend chết thì người dùng vẫn mở được CITAD, mail, iOffice.
+
+Bố cục khoá bằng biến CSS (`--pc-row`, `--pc-head`, `--pc-pad`, `--pc-bd`) để các hàng trái/phải luôn ngang nhau. Khoảng cách giữa hai cụm bên phải **tính bằng Python** từ số link mỗi cụm (`_split_gap_css()`) — thêm hoặc bớt link ở cụm nào cũng tự khớp lại.
 
 ---
 
@@ -214,14 +383,27 @@ Database SQLite được backup tự động vào thư mục `data/backups/`. L�
 
 ## Truy cập LAN (nhiều người dùng)
 
-Mở firewall port 8080 và 8000:
+Mở firewall port 8080:
 
 ```bash
 # Windows
-netsh advfirewall firewall add rule name="TTTT" dir=in action=allow protocol=TCP localport=8080,8000
+netsh advfirewall firewall add rule name="TTTT" dir=in action=allow protocol=TCP localport=8080
 ```
 
+> Chỉ cần mở 8080. Trình duyệt người dùng **không bao giờ gọi thẳng cổng 8000** — frontend
+> gọi backend qua loopback trong cùng máy chủ. Mở thêm 8000 chỉ để lộ API ra mạng mà không
+> được lợi ích gì; nếu không có hệ thống nào khác cần, đặt luôn `BACKEND_HOST=127.0.0.1`.
+
 Người dùng khác truy cập: `http://[IP-máy-chủ]:8080`
+
+Đặt trong `.env` — quên là máy khác bị CORS chặn, và trang liệt kê toàn bộ endpoint bị mở công khai:
+
+```ini
+ALLOWED_ORIGINS=http://192.168.1.100:8080    # thay bằng IP thật, nhiều giá trị cách nhau dấu phẩy
+ENV=production                               # tắt /docs và /redoc
+```
+
+Backend tự **cảnh báo trong log khi khởi động** nếu đang lắng nghe trên mạng mà hai biến này chưa đặt đúng.
 
 ---
 

@@ -13,11 +13,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from openpyxl.styles import Alignment, Border, Font, Side
 
+from backend.core.concurrency import run_heavy
 from backend.core.deps import get_current_staff, require_feature
+from backend.core.enums import StaffRole
 from backend.database import get_db, _vn_now
 from backend.schemas.bundles import (
     BundleGenerateRequest, BundleUpdateRequest,
     StorageViewResponse, StorageViewRow, StorageViewUpdateRequest,
+    StorageSummaryCell, StorageSummaryDept, StorageSummaryResponse, StorageSummaryRow,
 )
 from backend.schemas.handovers import ArchiveRecord, HandoverArchiveResponse
 from backend.services.bundle_service import BundleResult, EntryUnit, generate_bundles_for_entries
@@ -469,7 +472,7 @@ def generate_bundles(
     ph = ",".join("?" * len(entry_ids))
     entries = db.execute(
         f"""SELECT de.id, de.handover_id, de.staff_id, de.transaction_date, de.sheet_count,
-                   de.entry_status, h.department_id AS h_dept_id,
+                   de.entry_status, h.department_id AS h_dept_id, ks.role AS staff_role,
                    ks.ipcas_code, ks.full_name, ks.payment_username
             FROM document_entries de
             JOIN handovers h ON de.handover_id = h.id
@@ -485,6 +488,11 @@ def generate_bundles(
     entries = [e for e in entries if (e["entry_status"] or "confirmed") == "confirmed"]
     if not entries:
         raise HTTPException(400, "Không có chứng từ đã xác nhận để gom tập")
+
+    # Chỉ gom chứng từ của giao dịch viên (chuyen_vien) — loại entry rác của trưởng/phó phòng
+    entries = [e for e in entries if e["staff_role"] == StaffRole.CHUYEN_VIEN.value]
+    if not entries:
+        raise HTTPException(400, "Không có chứng từ của giao dịch viên để gom tập")
 
     # Xóa bundle group cũ cùng phòng+tháng để regenerate
     if req.notes:
@@ -630,27 +638,31 @@ def download_cover(
 
 
 @router.get("/groups/{group_id}/cover-all")
-def download_all_covers(
+async def download_all_covers(
     group_id: int,
     db: sqlite3.Connection = Depends(get_db),
     _: dict = Depends(require_feature("bundles.download_cover")),
 ):
-    group = _load_bundle_group(db, group_id)
-    bundle_results = []
-    for bundle in sorted(group["bundles"], key=lambda b: b["sequence"]):
-        cust_name = bundle.get("custodian_name") or "..."
-        label_seq, label_total = _get_bundle_label(bundle, group["bundles"])
-        bundle_results.append(BundleResult(
-            sequence=bundle["sequence"],
-            total_bundles_in_group=group["total_bundles"],
-            total_sheets=bundle["total_sheets"],
-            units=_units_from_bundle(bundle),
-            label_seq=label_seq,
-            label_total=label_total,
-            custodian_name=cust_name,
-        ))
-    dept_name = group["department"]["name"] if group.get("department") else "Phòng"
-    docx_bytes = generate_covers_docx(dept_name, bundle_results)
+    # ~100ms mỗi tập (một lần render docxtpl) — nhóm 31 tập mất ~3,1s
+    def _work() -> bytes:
+        group = _load_bundle_group(db, group_id)
+        bundle_results = []
+        for bundle in sorted(group["bundles"], key=lambda b: b["sequence"]):
+            cust_name = bundle.get("custodian_name") or "..."
+            label_seq, label_total = _get_bundle_label(bundle, group["bundles"])
+            bundle_results.append(BundleResult(
+                sequence=bundle["sequence"],
+                total_bundles_in_group=group["total_bundles"],
+                total_sheets=bundle["total_sheets"],
+                units=_units_from_bundle(bundle),
+                label_seq=label_seq,
+                label_total=label_total,
+                custodian_name=cust_name,
+            ))
+        dept_name = group["department"]["name"] if group.get("department") else "Phòng"
+        return generate_covers_docx(dept_name, bundle_results)
+
+    docx_bytes = await run_heavy(_work)
     return Response(
         content=docx_bytes,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -693,42 +705,46 @@ def mark_group_printed(
 
 
 @router.get("/cover-bulk")
-def download_bulk_covers(
+async def download_bulk_covers(
     department_id: int,
     db: sqlite3.Connection = Depends(get_db),
     _: dict = Depends(require_feature("bundles.download_cover")),
 ):
-    dept = db.execute("SELECT * FROM departments WHERE id = ?", (department_id,)).fetchone()
-    if not dept:
-        raise HTTPException(404, "Không tìm thấy phòng")
+    # Cả phòng — nặng hơn cover-all vì gộp mọi nhóm tập
+    def _work() -> bytes:
+        dept = db.execute("SELECT * FROM departments WHERE id = ?", (department_id,)).fetchone()
+        if not dept:
+            raise HTTPException(404, "Không tìm thấy phòng")
 
-    group_rows = db.execute(
-        "SELECT id FROM bundle_groups WHERE department_id = ? ORDER BY created_at ASC",
-        (department_id,),
-    ).fetchall()
-    if not group_rows:
-        raise HTTPException(404, "Không có nhóm tập nào cho phòng này")
+        group_rows = db.execute(
+            "SELECT id FROM bundle_groups WHERE department_id = ? ORDER BY created_at ASC",
+            (department_id,),
+        ).fetchall()
+        if not group_rows:
+            raise HTTPException(404, "Không có nhóm tập nào cho phòng này")
 
-    all_bundle_results = []
-    for gr in group_rows:
-        group = _load_bundle_group(db, gr["id"])
-        for bundle in sorted(group["bundles"], key=lambda b: b["sequence"]):
-            cust_name = bundle.get("custodian_name") or "..."
-            label_seq, label_total = _get_bundle_label(bundle, group["bundles"])
-            all_bundle_results.append(BundleResult(
-                sequence=bundle["sequence"],
-                total_bundles_in_group=group["total_bundles"],
-                total_sheets=bundle["total_sheets"],
-                units=_units_from_bundle(bundle),
-                label_seq=label_seq,
-                label_total=label_total,
-                custodian_name=cust_name,
-            ))
+        all_bundle_results = []
+        for gr in group_rows:
+            group = _load_bundle_group(db, gr["id"])
+            for bundle in sorted(group["bundles"], key=lambda b: b["sequence"]):
+                cust_name = bundle.get("custodian_name") or "..."
+                label_seq, label_total = _get_bundle_label(bundle, group["bundles"])
+                all_bundle_results.append(BundleResult(
+                    sequence=bundle["sequence"],
+                    total_bundles_in_group=group["total_bundles"],
+                    total_sheets=bundle["total_sheets"],
+                    units=_units_from_bundle(bundle),
+                    label_seq=label_seq,
+                    label_total=label_total,
+                    custodian_name=cust_name,
+                ))
 
-    if not all_bundle_results:
-        raise HTTPException(404, "Không có tập nào để tải bìa")
+        if not all_bundle_results:
+            raise HTTPException(404, "Không có tập nào để tải bìa")
 
-    docx_bytes = generate_covers_docx(dept["name"], all_bundle_results)
+        return generate_covers_docx(dept["name"], all_bundle_results)
+
+    docx_bytes = await run_heavy(_work)
     return Response(
         content=docx_bytes,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -755,16 +771,119 @@ def storage_view(
     )
 
 
+@router.get("/storage-summary", response_model=StorageSummaryResponse)
+def storage_summary(
+    year: int,
+    db: sqlite3.Connection = Depends(get_db),
+    _: dict = Depends(require_feature("menu.storage")),
+):
+    depts = db.execute(
+        "SELECT id, name FROM departments WHERE is_source = 1 ORDER BY id"
+    ).fetchall()
+
+    # Dùng lại đúng hàm dựng bảng chi tiết để tổng hợp luôn khớp với /storage-view.
+    # Không gộp thành 1 câu SQL SUM/COUNT: "tập có ngày" phụ thuộc cover_units JSON
+    # (xem _get_dates_for_bundle), không diễn đạt được bằng SQL.
+    rows = []
+    for month in range(1, 13):
+        cells = []
+        for d in depts:
+            _, det_rows = _get_storage_rows_for_month(db, d["id"], year, month)
+            cells.append(StorageSummaryCell(
+                department_id=d["id"],
+                total_sheets=sum(sum(r.bundle_sheets) for r in det_rows),
+                total_bundles=sum(r.n_bundles for r in det_rows),
+            ))
+        rows.append(StorageSummaryRow(
+            month=month,
+            cells=cells,
+            total_sheets=sum(c.total_sheets for c in cells),
+            total_bundles=sum(c.total_bundles for c in cells),
+        ))
+
+    return StorageSummaryResponse(
+        year=year,
+        departments=[StorageSummaryDept(id=d["id"], name=d["name"]) for d in depts],
+        rows=rows,
+    )
+
+
+def _bundle_dates(db: sqlite3.Connection, bundle_id: int) -> list:
+    """Ngày của một bundle — dùng cover_units, fallback qua items (giống _get_dates_for_bundle)."""
+    b = db.execute("SELECT id, cover_units FROM bundles WHERE id = ?", (bundle_id,)).fetchone()
+    if not b:
+        return []
+    item_dates = db.execute(
+        "SELECT de.transaction_date FROM bundle_items bi "
+        "JOIN document_entries de ON bi.entry_id = de.id WHERE bi.bundle_id = ?",
+        (bundle_id,),
+    ).fetchall()
+    return sorted(_get_dates_for_bundle({
+        "id": b["id"],
+        "cover_units": b["cover_units"],
+        "items": [{"entry": {"transaction_date": r["transaction_date"]}} for r in item_dates],
+    }))
+
+
+def _delete_bundle(db: sqlite3.Connection, bundle_id: int):
+    db.execute("DELETE FROM bundle_items WHERE bundle_id = ?", (bundle_id,))
+    db.execute("DELETE FROM bundles WHERE id = ?", (bundle_id,))
+
+
 @router.patch("/storage-view")
 def update_storage_view(
     req: StorageViewUpdateRequest,
     db: sqlite3.Connection = Depends(get_db),
     _: dict = Depends(require_feature("menu.storage")),
 ):
+    touched_groups: set = set()
+
     for row in req.rows:
+        anchor_id = row.bundle_ids[0] if row.bundle_ids else None
+        anchor = (
+            db.execute("SELECT group_id FROM bundles WHERE id = ?", (anchor_id,)).fetchone()
+            if anchor_id else None
+        )
+        group_id = anchor["group_id"] if anchor else None
+        if group_id is not None:
+            touched_groups.add(group_id)
+
+        # ── Thêm tập mới cho các ô trống được nhập (dùng ngày của dòng) ──
+        adds = [s for s in row.new_sheets if s and s > 0]
+        if adds and anchor_id and group_id is not None:
+            dates = _bundle_dates(db, anchor_id)
+            seq = (db.execute(
+                "SELECT COALESCE(MAX(sequence), 0) FROM bundles WHERE group_id = ?", (group_id,)
+            ).fetchone()[0])
+            for sheets in adds:
+                seq += 1
+                cover_units_json = json.dumps(
+                    [{"user_code": "", "full_name": "", "date": d.isoformat(),
+                      "sheet_count": sheets if i == 0 else 0, "is_large": False}
+                     for i, d in enumerate(dates)],
+                    ensure_ascii=False,
+                ) if dates else None
+                db.execute(
+                    "INSERT INTO bundles (group_id, sequence, total_sheets, status, cover_units) "
+                    "VALUES (?,?,?,?,?)",
+                    (group_id, seq, sheets, "pending", cover_units_json),
+                )
+
+        # ── Cập nhật / xoá tập hiện có (0 = xoá) ──
         for i, bundle_id in enumerate(row.bundle_ids):
-            if i < len(row.bundle_sheets):
-                db.execute("UPDATE bundles SET total_sheets=? WHERE id=?", (row.bundle_sheets[i], bundle_id))
+            if i >= len(row.bundle_sheets):
+                continue
+            val = row.bundle_sheets[i]
+            if val <= 0:
+                _delete_bundle(db, bundle_id)
+            else:
+                db.execute("UPDATE bundles SET total_sheets=? WHERE id=?", (val, bundle_id))
+
+    # ── Tính lại tổng số tập của các group bị ảnh hưởng ──
+    for gid in touched_groups:
+        cnt = db.execute("SELECT COUNT(*) FROM bundles WHERE group_id = ?", (gid,)).fetchone()[0]
+        db.execute("UPDATE bundle_groups SET total_bundles=? WHERE id=?", (cnt, gid))
+
     db.commit()
     return {"ok": True}
 
@@ -783,7 +902,7 @@ def handover_archive_preview(
 
 
 @router.get("/handover-archive-excel")
-def handover_archive_excel(
+async def handover_archive_excel(
     department_id: int,
     year: int,
     tieu_de_dau: str = "Hồ sơ ngày",
@@ -791,48 +910,51 @@ def handover_archive_excel(
     db: sqlite3.Connection = Depends(get_db),
     _: dict = Depends(get_current_staff),
 ):
-    records = _generate_archive_records(db, department_id, year, tieu_de_dau, tu_tap)
-    dept = db.execute("SELECT name FROM departments WHERE id = ?", (department_id,)).fetchone()
-    dept_name = dept["name"] if dept else str(department_id)
+    def _work() -> tuple[bytes, str]:
+        records = _generate_archive_records(db, department_id, year, tieu_de_dau, tu_tap)
+        dept = db.execute("SELECT name FROM departments WHERE id = ?", (department_id,)).fetchone()
+        dept_name = dept["name"] if dept else str(department_id)
 
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Bàn giao lưu trữ"
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Bàn giao lưu trữ"
 
-    thin = Side(style="thin")
-    border = Border(left=thin, right=thin, top=thin, bottom=thin)
-    font_h = Font(name="Times New Roman", size=11, bold=True)
-    font_d = Font(name="Times New Roman", size=11)
-    align_c = Alignment(horizontal="center", vertical="center")
-    align_l = Alignment(horizontal="left", vertical="center", wrap_text=True)
+        thin = Side(style="thin")
+        border = Border(left=thin, right=thin, top=thin, bottom=thin)
+        font_h = Font(name="Times New Roman", size=11, bold=True)
+        font_d = Font(name="Times New Roman", size=11)
+        align_c = Alignment(horizontal="center", vertical="center")
+        align_l = Alignment(horizontal="left", vertical="center", wrap_text=True)
 
-    for col, hdr in enumerate(["NGAY_MO_HS", "NGAY_KT_HS", "TIEUDE_HS"], 1):
-        cell = ws.cell(row=1, column=col, value=hdr)
-        cell.font = font_h
-        cell.border = border
-        cell.alignment = align_c
-
-    ws.column_dimensions["A"].width = 14
-    ws.column_dimensions["B"].width = 14
-    ws.column_dimensions["C"].width = 75
-
-    for row_i, rec in enumerate(records, 2):
-        for col, (val, aln) in enumerate(
-            [(rec.ngay_mo, align_c), (rec.ngay_kt, align_c), (rec.tieu_de, align_l)], 1
-        ):
-            cell = ws.cell(row=row_i, column=col, value=val)
-            cell.font = font_d
+        for col, hdr in enumerate(["NGAY_MO_HS", "NGAY_KT_HS", "TIEUDE_HS"], 1):
+            cell = ws.cell(row=1, column=col, value=hdr)
+            cell.font = font_h
             cell.border = border
-            cell.alignment = aln
+            cell.alignment = align_c
 
-    buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
+        ws.column_dimensions["A"].width = 14
+        ws.column_dimensions["B"].width = 14
+        ws.column_dimensions["C"].width = 75
 
+        for row_i, rec in enumerate(records, 2):
+            for col, (val, aln) in enumerate(
+                [(rec.ngay_mo, align_c), (rec.ngay_kt, align_c), (rec.tieu_de, align_l)], 1
+            ):
+                cell = ws.cell(row=row_i, column=col, value=val)
+                cell.font = font_d
+                cell.border = border
+                cell.alignment = aln
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return buf.read(), dept_name
+
+    content, dept_name = await run_heavy(_work)
     safe_name = dept_name.replace("/", "-").replace("\\", "-")
     filename = f"ban_giao_luu_tru_{safe_name}_{year}.xlsx"
     return Response(
-        content=buf.read(),
+        content=content,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers=_download_headers(filename),
     )

@@ -21,8 +21,11 @@ python frontend/main.py            # Frontend riêng
 - `backend/db/migrations.py` — `_create_tables()` + `_ensure_indexes()`; **thêm migration tại đây**
 - `backend/api/registry.py` — Danh sách tất cả routers; **thêm router mới tại đây**
 - `backend/schemas/` — Pydantic request/response schemas (package)
-- `backend/database.py` — SQLite engine (WAL mode, FK via PRAGMA)
-- `backend/core/` — `deps.py` (RBAC), `security.py` (JWT), `sessions.py` (in-memory), `config.py`, `rate_limit.py`
+- `backend/database.py` — SQLite engine (WAL mode, FK via PRAGMA) + `_vn_now()`
+- `backend/core/` — `deps.py` (RBAC), `security.py` (JWT), `sessions.py` (DB-backed, bảng `login_sessions`), `config.py`, `rate_limit.py`
+
+**Bảng nhân sự tên là `user_tttt`** (tên cũ `ksnb_staff` đã đổi). Tài liệu trong `Plan/` và `Upgrade/`
+là lịch sử, vẫn dùng tên cũ — không copy tên bảng từ đó. Xem `DESIGN.md`.
 - `backend/api/` — Route handlers theo tính năng
 - `backend/services/` — Business logic (đóng tập, in bìa, phiếu nghỉ phép)
 
