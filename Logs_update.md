@@ -4,6 +4,24 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 05/08/2026 Báo cáo bàn giao chứng từ - Thêm nút xuất file Word:
+    + Nút **Xuất file Word** nằm ngay cạnh nút *Xem báo cáo*. File ra dạng **A4 ngang**, tiêu đề *"Báo cáo bàn giao chứng từ tháng xx năm xxxx"*
+    + Nội dung: bảng tổng hợp theo phòng (tổng chứng từ, nộp đúng hạn, nộp quá hạn, tỷ lệ đúng hạn, có dòng **TỔNG CỘNG**) và phần chi tiết chứng từ nộp quá hạn tách theo từng phòng
+    + Phần chi tiết chỉ ghi **họ và tên** cán bộ — không in User IPCAS (màn hình vẫn giữ cột này để tra cứu). Chứng từ của cùng một cán bộ được **xếp liền nhau và gộp ô họ tên thành một**, trong cụm sắp theo ngày giao dịch
+    + Xuất đúng **kỳ đang xem trên màn hình**: đổi ô Tháng/Năm mà chưa bấm *Xem báo cáo* thì file vẫn ra tháng đang hiển thị, không bị lệch âm thầm
+    + Số liệu trong file dùng chung một hàm tính với màn hình và Trang chủ — không có chuyện file Word lệch với bảng đang xem
+
+- 04/08/2026 Phòng KSNB & HTVH - Thêm màn hình Danh sách CN TTQT:
+    + Menu *Phòng KSNB & HTVH → **Danh sách CN TTQT*** — tra cứu danh sách chi nhánh thực hiện thanh toán quốc tế trực tiếp ngay trên hệ thống, không phải mở file Excel dùng chung nữa. Đã nạp sẵn **218 chi nhánh** theo file *Danh sách CN thực hiện TTQT* bản 06.01.26 (204 đang hoạt động, 14 đã đóng BIC)
+    + Tìm theo **mã CN, tên CN hoặc mã SWIFT BIC**; lọc thêm theo *loại CN* và *trạng thái*. Mặc định chỉ hiện CN **đang hoạt động** — muốn xem CN đã đóng BIC thì đổi ô *Trạng thái*, khi xem chung hai nhóm thì dòng đã đóng BIC được **tô xám**
+    + **Thêm / sửa / xoá từng chi nhánh** ngay trên màn hình. Mọi thao tác đều được ghi vào Nhật ký hệ thống
+    + **Nhập từ Excel**: chọn thẳng file gốc phòng KSNB phát hành, **không phải sửa gì trước khi nhập** — hệ thống hiểu dòng đánh dấu *Đóng BICCODE* và tự xếp các CN phía dưới vào nhóm đã đóng BIC
+    + **Xuất Excel** đúng phần đang lọc, định dạng giống file gốc nên **nhập lại được** — dùng để phát hành bản cập nhật cho các chi nhánh
+    + ⚠️ **Nhập Excel mặc định KHÔNG xoá chi nhánh nào** — chỉ thêm mới và cập nhật CN có trong file. Nếu file mới đã bỏ bớt chi nhánh và muốn hệ thống bỏ theo thì phải **tự tích ô *"Xoá CN không có trong file"*** trước khi chọn file. Không tích thì các CN cũ vẫn nằm nguyên trong danh sách
+    + ⚠️ Nhập nhầm file **không hoàn tác được** — chưa có lịch sử nhập như màn *Hạn mức phép*. Kiểm kỹ file trước khi chọn, nhất là khi đã tích ô xoá
+    + ⚠️ Menu này **phải được cấp quyền** ở màn *Phân quyền chức năng* (mục *Danh sách CN TTQT* trong nhóm Phòng KSNB & HTVH). Quyền xem, thêm, sửa, xoá, nhập, xuất cấp riêng từng loại — không cấp thì mục menu không hiện
+    + ⚠️ **Tên chi nhánh trong file gốc có 11 dòng gõ dấu kiểu cũ** (chữ và dấu tách rời). Hệ thống tự chuẩn hoá khi nhập nên tìm kiếm vẫn ra. Nếu sau này gõ tay tên CN từ nguồn khác dán vào mà tìm không ra, báo lại để kiểm tra
+
 - 04/08/2026 Tài khoản - Đặt lại mật khẩu cho người dùng khác:
     + Ô *Chọn người dùng* nay **gõ được để tìm**, không phải cuộn hết danh sách nhân sự. Cách dùng giống hệt ô *Thêm nhân viên* ở màn *Quản lý nhóm quyền*
 
