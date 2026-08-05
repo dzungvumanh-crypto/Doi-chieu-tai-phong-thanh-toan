@@ -62,6 +62,7 @@ class EntryHistoryOut(BaseModel):
     entry_id: int
     source_user_name: str
     transaction_date: str               # "DD/MM/YYYY"
+    submit_date: Optional[str] = None   # "DD/MM/YYYY" — ngày nộp thật, None nếu không có log
     sheet_count: int
     current_status: str
     current_status_label: str

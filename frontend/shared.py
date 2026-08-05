@@ -24,6 +24,7 @@ DEPARTMENTS = [
             ("handovers", "Bàn giao chứng từ", "receipt_long"),
             ("bundles",   "Đóng chứng từ",     "folder_zip"),
             ("storage",   "Lưu trữ",            "inventory_2"),
+            ("ttqt_branches", "Danh sách CN TTQT", "account_tree"),
             {
                 "label": "Báo cáo",
                 "icon": "assessment",

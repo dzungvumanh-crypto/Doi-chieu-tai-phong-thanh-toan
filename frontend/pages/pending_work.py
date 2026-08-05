@@ -45,9 +45,9 @@ def _render_row(kind: str, it: dict):
             (_dmy(it["transaction_date"]), "font-medium text-gray-900 whitespace-nowrap"),
             (it["dept_name"], ""),
             (f'{it["staff_name"]}' + (f' · {it["staff_code"]}' if it["staff_code"] else ""), ""),
-            (f'{it["sheet_count"]:,}', "text-right font-semibold text-blue-800"),
+            (f'{it["sheet_count"]:,}', "font-semibold text-blue-800"),
             (it["entered_by_name"] or "—", ""),
-            (_dmy(it["handover_date"]), "whitespace-nowrap"),
+            (_dmy(it.get("submit_date")) or "—", "whitespace-nowrap"),
             (it["notes"] or "—", "text-xs text-gray-500 max-w-[16rem] truncate"),
         ]
     else:

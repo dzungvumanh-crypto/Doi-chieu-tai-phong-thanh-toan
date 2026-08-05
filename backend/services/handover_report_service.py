@@ -1,14 +1,17 @@
 """Tính chứng từ nộp đúng hạn / quá hạn theo phòng.
 
 Ngày nộp thực tế lấy từ `entry_change_logs` — timestamp sớm nhất của action
-'handover' (chuyên viên nộp) hoặc 'edited_hkv' (HKV nhập trực tiếp).
+'handover' (chuyên viên nộp) hoặc 'edited_hkv' (HKV nhập trực tiếp), nhưng
+**chỉ xét các lần nộp sau lần bị từ chối gần nhất**: lần nộp đã bị HKV trả về
+(`rejected_handover`) không được tính là đã nộp.
 
 Không dùng `handovers.handover_date`: khi nhập qua lưới, cột này được gán bằng
 đúng `transaction_date`, nên khoảng cách giữa hai ngày luôn bằng 0 và mọi
 chứng từ đều bị coi là đúng hạn.
 
-Chứng từ không có log nộp (dữ liệu import cũ) không có ngày nộp ở bất kỳ đâu
-trong DB → bị loại khỏi báo cáo, đếm riêng ở `no_submit_date`.
+Hai nhóm bị loại khỏi báo cáo:
+- Không có log nộp nào (dữ liệu import cũ) → đếm riêng ở `no_submit_date`.
+- Bị từ chối và chưa nộp lại → không còn lần nộp hợp lệ nào, không tính.
 """
 import logging
 import sqlite3
@@ -21,11 +24,49 @@ log = logging.getLogger(__name__)
 # Hạn nộp: trong vòng 1 ngày làm việc kể từ ngày giao dịch
 DEADLINE_WORKING_DAYS = 1
 
-# Action đánh dấu chứng từ được nộp lần đầu
-_SUBMIT_ACTIONS = ("handover", "edited_hkv")
+# Action đánh dấu chứng từ được nộp
+SUBMIT_ACTIONS = ("handover", "edited_hkv")
+
+# Action huỷ hiệu lực lần nộp trước đó (chỉ từ chối chứng từ mới;
+# rejected_borrow / rejected_return thuộc luồng mượn - trả, không liên quan)
+REJECT_ACTION = "rejected_handover"
 
 # Nới ngày tra cứu lễ/phép ra trước kỳ báo cáo để phủ hết khoảng tx → nộp
 _LOOKUP_PAD_DAYS = 35
+
+
+def submitted_at_sql(alias: str = "de") -> str:
+    """Subquery trả ngày nộp còn hiệu lực của một dòng document_entries.
+
+    Dùng chung cho báo cáo, dashboard và lịch sử chứng từ — ba màn hình phải
+    nói cùng một con số. Tham số đi kèm: SUBMITTED_AT_PARAMS.
+    """
+    placeholders = ",".join("?" * len(SUBMIT_ACTIONS))
+    return f"""(SELECT MIN(sub.timestamp) FROM entry_change_logs sub
+                 WHERE sub.entry_id = {alias}.id
+                   AND sub.action IN ({placeholders})
+                   AND sub.timestamp > COALESCE(
+                         (SELECT MAX(rej.timestamp) FROM entry_change_logs rej
+                           WHERE rej.entry_id = {alias}.id
+                             AND rej.action = ?), ''))"""
+
+
+SUBMITTED_AT_PARAMS = (*SUBMIT_ACTIONS, REJECT_ACTION)
+
+
+def submitted_at_from_logs(logs) -> Optional[str]:
+    """Bản Python của submitted_at_sql, dùng khi đã có sẵn danh sách log của chứng từ."""
+    last_reject = max(
+        (str(l["timestamp"]) for l in logs
+         if (l["action"] or "") == REJECT_ACTION and l["timestamp"]),
+        default="",
+    )
+    return min(
+        (str(l["timestamp"]) for l in logs
+         if (l["action"] or "") in SUBMIT_ACTIONS and l["timestamp"]
+         and str(l["timestamp"]) > last_reject),
+        default=None,
+    )
 
 
 def working_days_between(
@@ -87,27 +128,24 @@ def _load_staff_leave(db: sqlite3.Connection, lo: date, hi: date) -> dict:
 
 
 def _fetch_entries(db: sqlite3.Connection, period_start: date, period_end: date) -> list:
-    """Chứng từ có ngày giao dịch trong kỳ VÀ có log nộp.
+    """Chứng từ có ngày giao dịch trong kỳ, kèm ngày nộp còn hiệu lực (có thể NULL).
 
-    INNER JOIN với entry_change_logs → chứng từ cũ không có log tự động bị loại.
+    Dòng có submitted_at NULL — chưa nộp lần nào, hoặc bị từ chối và chưa nộp lại —
+    bị compute_period bỏ qua.
     """
     return db.execute(
         f"""SELECT de.id, de.transaction_date, de.sheet_count, de.staff_id,
                    h.received_by_id,
                    d.id AS dept_id, d.name AS dept_name, d.code AS dept_code,
-                   MIN(ecl.timestamp) AS submitted_at,
+                   {submitted_at_sql()} AS submitted_at,
                    u.full_name, u.ipcas_code, u.username, u.payment_username
             FROM document_entries de
             JOIN handovers h ON de.handover_id = h.id
             JOIN departments d ON h.department_id = d.id
-            JOIN entry_change_logs ecl
-              ON ecl.entry_id = de.id
-             AND ecl.action IN ({','.join('?' * len(_SUBMIT_ACTIONS))})
             LEFT JOIN user_tttt u ON de.staff_id = u.id
             WHERE de.transaction_date >= ? AND de.transaction_date < ?
-            GROUP BY de.id
             ORDER BY d.name, de.transaction_date""",
-        (*_SUBMIT_ACTIONS, period_start.isoformat(), period_end.isoformat()),
+        (*SUBMITTED_AT_PARAMS, period_start.isoformat(), period_end.isoformat()),
     ).fetchall()
 
 
@@ -118,9 +156,9 @@ def _count_without_submit_log(db: sqlite3.Connection, period_start: date, period
               AND NOT EXISTS (
                   SELECT 1 FROM entry_change_logs ecl
                   WHERE ecl.entry_id = de.id
-                    AND ecl.action IN ({','.join('?' * len(_SUBMIT_ACTIONS))})
+                    AND ecl.action IN ({','.join('?' * len(SUBMIT_ACTIONS))})
               )""",
-        (period_start.isoformat(), period_end.isoformat(), *_SUBMIT_ACTIONS),
+        (period_start.isoformat(), period_end.isoformat(), *SUBMIT_ACTIONS),
     ).fetchone()[0] or 0
 
 

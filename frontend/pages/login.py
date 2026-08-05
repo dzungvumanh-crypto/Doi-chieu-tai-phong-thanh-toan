@@ -132,6 +132,8 @@ _GROUP_DOMESTIC = ("Thanh toán trong nước", "account_balance", [
     ("Hệ thống TTSP 247",               "http://10.0.0.16"),
     ("Hệ thống Song phương realtime",   "http://10.0.0.17"),
     ("Hệ thống Open SmartBank",         "https://osb.agribank.com.vn"),
+    ("Hệ thống Song phương Kho bạc",    "https://spkb.agribank.com.vn"),
+    ("Hệ thống Thu NSNN - AGRITAX",     "https://agritax.agribank.com.vn"),
 ])
 
 _GROUP_INTL = ("Thanh toán quốc tế", "public", [
@@ -144,6 +146,9 @@ _GROUP_INTERNAL = ("Nội bộ", "apartment", [
     ("Hệ thống Văn phòng điện tử - Ioffice", "https://ioffice.agribank.com.vn"),
     ("Hệ thống Quản lý công việc",          "http://qlcv.agribank.com.vn"),
     ("Hệ thống E-learning",                 "https://elearning.agribank.com.vn"),
+    ("Hệ thống Hóa đơn điện tử Agribank",   "https://einvoice.agribank.com.vn"),
+    ("Hệ thống Văn bản Định chế",           "https://vanbandinhche.agribank.com.vn"),
+    ("Hệ thống quản lý kết nối DN - ERP CONNECT", "https://erpconnect.agribank.com.vn"),
 ])
 
 

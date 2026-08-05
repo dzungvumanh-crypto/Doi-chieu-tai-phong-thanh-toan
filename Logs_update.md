@@ -4,6 +4,49 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 05/08/2026 Báo cáo bàn giao chứng từ - Thêm nút xuất file Word:
+    + Nút **Xuất file Word** nằm ngay cạnh nút *Xem báo cáo*. File ra dạng **A4 ngang**, tiêu đề *"Báo cáo bàn giao chứng từ tháng xx năm xxxx"*
+    + Nội dung: bảng tổng hợp theo phòng (tổng chứng từ, nộp đúng hạn, nộp quá hạn, tỷ lệ đúng hạn, có dòng **TỔNG CỘNG**) và phần chi tiết chứng từ nộp quá hạn tách theo từng phòng
+    + Phần chi tiết chỉ ghi **họ và tên** cán bộ — không in User IPCAS (màn hình vẫn giữ cột này để tra cứu). Chứng từ của cùng một cán bộ được **xếp liền nhau và gộp ô họ tên thành một**, trong cụm sắp theo ngày giao dịch
+    + Xuất đúng **kỳ đang xem trên màn hình**: đổi ô Tháng/Năm mà chưa bấm *Xem báo cáo* thì file vẫn ra tháng đang hiển thị, không bị lệch âm thầm
+    + Số liệu trong file dùng chung một hàm tính với màn hình và Trang chủ — không có chuyện file Word lệch với bảng đang xem
+
+- 04/08/2026 Phòng KSNB & HTVH - Thêm màn hình Danh sách CN TTQT:
+    + Menu *Phòng KSNB & HTVH → **Danh sách CN TTQT*** — tra cứu danh sách chi nhánh thực hiện thanh toán quốc tế trực tiếp ngay trên hệ thống, không phải mở file Excel dùng chung nữa. Đã nạp sẵn **218 chi nhánh** theo file *Danh sách CN thực hiện TTQT* bản 06.01.26 (204 đang hoạt động, 14 đã đóng BIC)
+    + Tìm theo **mã CN, tên CN hoặc mã SWIFT BIC**; lọc thêm theo *loại CN* và *trạng thái*. Mặc định chỉ hiện CN **đang hoạt động** — muốn xem CN đã đóng BIC thì đổi ô *Trạng thái*, khi xem chung hai nhóm thì dòng đã đóng BIC được **tô xám**
+    + **Thêm / sửa / xoá từng chi nhánh** ngay trên màn hình. Mọi thao tác đều được ghi vào Nhật ký hệ thống
+    + **Nhập từ Excel**: chọn thẳng file gốc phòng KSNB phát hành, **không phải sửa gì trước khi nhập** — hệ thống hiểu dòng đánh dấu *Đóng BICCODE* và tự xếp các CN phía dưới vào nhóm đã đóng BIC
+    + **Xuất Excel** đúng phần đang lọc, định dạng giống file gốc nên **nhập lại được** — dùng để phát hành bản cập nhật cho các chi nhánh
+    + ⚠️ **Nhập Excel mặc định KHÔNG xoá chi nhánh nào** — chỉ thêm mới và cập nhật CN có trong file. Nếu file mới đã bỏ bớt chi nhánh và muốn hệ thống bỏ theo thì phải **tự tích ô *"Xoá CN không có trong file"*** trước khi chọn file. Không tích thì các CN cũ vẫn nằm nguyên trong danh sách
+    + ⚠️ Nhập nhầm file **không hoàn tác được** — chưa có lịch sử nhập như màn *Hạn mức phép*. Kiểm kỹ file trước khi chọn, nhất là khi đã tích ô xoá
+    + ⚠️ Menu này **phải được cấp quyền** ở màn *Phân quyền chức năng* (mục *Danh sách CN TTQT* trong nhóm Phòng KSNB & HTVH). Quyền xem, thêm, sửa, xoá, nhập, xuất cấp riêng từng loại — không cấp thì mục menu không hiện
+    + ⚠️ **Tên chi nhánh trong file gốc có 11 dòng gõ dấu kiểu cũ** (chữ và dấu tách rời). Hệ thống tự chuẩn hoá khi nhập nên tìm kiếm vẫn ra. Nếu sau này gõ tay tên CN từ nguồn khác dán vào mà tìm không ra, báo lại để kiểm tra
+
+- 04/08/2026 Tài khoản - Đặt lại mật khẩu cho người dùng khác:
+    + Ô *Chọn người dùng* nay **gõ được để tìm**, không phải cuộn hết danh sách nhân sự. Cách dùng giống hệt ô *Thêm nhân viên* ở màn *Quản lý nhóm quyền*
+
+- 04/08/2026 Bàn giao chứng từ - Phân lại quyền xem và quyền nhập liệu:
+    + **Trưởng phòng, Phó phòng** nay vào được màn hình *Bàn giao chứng từ* — xem lưới **phòng của mình**. Cần quản trị cấp mục *Bàn giao chứng từ* trong màn *Phân quyền chức năng* cho nhóm của họ thì mới hiện menu
+    + **Quyền nhập/sửa số tờ của Trưởng phòng, Phó phòng vẫn theo nhóm quyền như mọi người khác** — không cấp *Lưu số tờ chứng từ* thì chỉ xem, không gõ được
+    + ⚠️ **Admin, Giám đốc, Phó giám đốc từ nay CHỈ XEM, không nhập/sửa/xác nhận được chứng từ.** Đổi lại các vị này xem được **tất cả các phòng** và xuất Excel toàn bộ. Trước đây tài khoản admin sửa được dữ liệu bàn giao — nay không còn. **Cần chữa số liệu nhập sai thì phải dùng tài khoản hậu kiểm hoặc tài khoản trong đúng phòng đó**, không nhờ admin được nữa
+    + Ô nhập trên lưới nay **khoá hẳn** với người không có quyền lưu. Trước đây vẫn gõ được vào ô nhưng bấm Lưu thì không có gì xảy ra — nhìn như hệ thống nuốt mất số vừa nhập
+
+- 04/08/2026 Phòng Thanh toán - Thêm 2 màn hình Đối chiếu CITAD và Đối soát CITAD ↔ IPCAS:
+    + Menu *Phòng Thanh toán → Đối chiếu* có thêm **Đối chiếu CITAD** (đối chiếu số liệu với PaymentHub) và **Đối soát CITAD ↔ IPCAS** (khớp từng lệnh chuyển tiền). Cả hai chuyển từ công cụ chạy riêng trên máy vào thẳng phần mềm, dùng chung tài khoản và phân quyền như mọi màn hình khác
+    + **Đối chiếu CITAD**: nhập số liệu 5 cổng × 3 loại tiền, chênh lệch tự tính ngay khi gõ. Mỗi ngày là **một bản ghi chung của cả phòng**, kèm tab *Lịch sử* xem lại từng lần lưu. Xuất Excel đúng mẫu báo cáo NHNN đã duyệt
+    + **Đối soát CITAD ↔ IPCAS**: tải file CITAD, IPCAS và Hub ngoại tệ lên, hệ thống khớp lệnh rồi liệt kê phần lệch theo 4 nhóm, xuất Excel 4 sheet. Có lưu lịch sử để xem lại đúng số liệu của lần đối soát cũ. Hệ thống **cảnh báo khi chọn trùng file** (so nội dung từng byte, không dựa vào tên file)
+    + Kèm **Extension trình duyệt** tự lấy số liệu từ trang CITAD và PaymentHub sang, khỏi chép tay. Tải ngay trên màn hình Đối chiếu CITAD, ghép nối bằng *mã kết nối* riêng của từng người
+    + ⚠️ **Đối soát CITAD: dùng file CITAD định dạng `.xls`, KHÔNG dùng `.xlsx`.** File `.xlsx` hiện bị đọc ra rỗng mà **không báo lỗi** — màn hình vẫn hiện "đối soát xong" nhưng số khớp bằng 0 và toàn bộ lệnh bị xếp vào "Chỉ IPCAS". Lỗi đã biết, đang chờ sửa. Trong lúc chờ, nếu kết quả ra như vậy thì kiểm lại định dạng file trước khi kết luận số liệu lệch
+    + ⚠️ **Đối chiếu CITAD lưu chung một bản cho cả phòng** — hai người cùng chấm một ngày thì ai bấm Lưu sau cùng là bản hiện hành. Bản của người trước không mất, xem lại ở tab *Lịch sử*
+    + ⚠️ Extension **phải cài tay trên từng máy** và chỉ chạy trên **Chrome, Edge, Cốc Cốc** (không có Firefox, Safari). Hướng dẫn cài nằm trong file tải về
+    + ⚠️ Nút *Tạo mã kết nối* có thể báo "đã tự động kết nối" nhưng Extension vẫn không gửi được — đang còn lỗi địa chỉ máy chủ. Nếu gặp, mở *Tuỳ chọn* của Extension điền tay địa chỉ và mã kết nối
+
+- 04/08/2026 Bàn giao chứng từ - Cột "Ngày bàn giao" hiện đúng ngày nộp thật:
+    + Trước đây cột **Ngày bàn giao** ở màn hình *Công việc chờ xử lý* luôn trùng khít cột *Ngày chứng từ* — chứng từ ngày 03/08 nộp ngày 04/08 vẫn báo bàn giao 03/08. Nay lấy đúng **thời điểm chuyên viên thực sự nộp** ghi trong lịch sử thao tác
+    + Ô chi tiết bên phải lưới nhập nay ghi rõ **hai dòng có nhãn**: *Ngày chứng từ* và *Ngày bàn giao*. Trước đây chỉ có một dòng "Ngày ..." lấy theo thao tác gần nhất — sau khi hậu kiểm xác nhận, ngày đó bị đổi theo ngày xác nhận, nhìn tưởng là ngày nộp
+    + ⚠️ Chứng từ nhập từ **trước khi hệ thống ghi lịch sử** không có ngày nộp ở bất kỳ đâu trong dữ liệu → hiện dấu `—` thay vì đoán bừa
+    + Cùng cách tính với báo cáo *Tỷ lệ nộp đúng hạn*, nên hai màn hình không còn nói hai con số khác nhau
+
 - 03/08/2026 Đối chiếu điện SWIFT - Nạp nhiều file một lúc và xuất Excel theo đúng biểu mẫu:
     + Mỗi ô chọn file nay **nhận nhiều file cùng lúc**. SAA phải xuất làm nhiều đợt trong ngày thì cứ thả hết vào đúng ô đó, hệ thống tự gộp lại trước khi đối chiếu — không phải đối chiếu từng đợt rồi tự cộng tay
     + Mỗi file vẫn báo riêng ✅/❌ và **số dòng đọc được ngay khi vừa chọn**, kèm dòng tổng cộng. Chọn nhầm thì bấm ✕ ở cạnh tên file để bỏ ra, không phải làm lại từ đầu
@@ -18,7 +61,6 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
     + Hai bên ô đăng nhập nay có **3 cụm đường dẫn**: *Thanh toán trong nước* (10 lối tắt), *Thanh toán quốc tế* (2), *Nội bộ* (4). Click là mở tab mới, không phải nhớ hay gõ lại địa chỉ
     + Mỗi lối tắt hiện **tên tiếng Việt** thay vì địa chỉ khó nhớ — ví dụ *"Hệ thống TT ĐTLNH - Cổng 12"* thay cho `http://10.0.85.100/CITAD9212`. Rê chuột lên vẫn xem được địa chỉ đầy đủ trước khi bấm
     + Các lối tắt **vẫn dùng được khi hệ thống đang lỗi** — chúng không phụ thuộc vào máy chủ của phần mềm này
-    + Đã bỏ đường dẫn `www.swift.com`
     + Sửa lỗi ô *Tên đăng nhập* và *Mật khẩu* bị **tô nền xanh** khi trình duyệt tự điền mật khẩu đã lưu
 
 - 31/07/2026 Toàn hệ thống - Đầu mỗi trang hiện rõ đang đứng ở đâu trong menu:
