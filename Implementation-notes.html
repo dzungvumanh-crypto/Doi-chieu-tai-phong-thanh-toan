@@ -3731,7 +3731,180 @@ ui.on_exception(_on_exception)</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-05</footer>
+  <!-- 50 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">50</span>
+      <span class="card-title">Nghỉ phép: đợt rà soát &amp; sửa lỗi lớn — reload/hạn mức/KPI theo ngày/GĐ bắt buộc</span>
+      <span class="badge badge-done">Đã fix</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Đổi tab bị trắng màn hình — nguyên nhân: reload cả trang, không phải chậm tải</p>
+      <p><code>frontend/pages/leaves.py</code> — <code>_on_leave_tab_change()</code> gọi
+      <code>ui.navigate.to("/leaves")</code> ở mọi lần bấm tab. Mọi panel đã được dựng + <code>await</code>
+      nạp dữ liệu xong ngay trong một lượt build trang, nên đổi tab thật ra không cần load lại gì —
+      Quasar <code>ui.tab_panels</code> chỉ cần ẩn/hiện panel đã có sẵn. Xoá lời gọi
+      <code>ui.navigate.to</code>. Dữ liệu vẫn tươi bình thường vì các thao tác duyệt/từ chối/khai báo
+      hộ vẫn tự <code>ui.navigate.to("/leaves")</code> riêng sau khi xong.</p>
+
+      <div class="caution">
+      <strong>Hệ quả không lường trước:</strong> vì trang không còn reload mỗi lần đổi tab, các biến
+      chọn dòng (<code>_sel</code>, <code>_export_sel</code>) không còn tự reset theo tab nữa — tick
+      chọn ở bảng tab này rồi bấm Phê duyệt/Từ chối ở tab khác (không tick gì) từng âm thầm tác động lên
+      lựa chọn cũ không còn hiển thị. Đã vá bằng cách xoá cả 2 set này trong
+      <code>_on_leave_tab_change</code> và ở mọi chỗ vẽ lại bảng lọc.
+      </div>
+
+      <p class="label">Sửa tay hạn mức "Đã dùng" — cộng dồn vô hạn qua mỗi lần Lưu</p>
+      <p>Thêm field "Đã dùng" vào dialog sửa hạn mức, ghi qua endpoint mới
+      <code>PATCH /api/leaves/quotas/staff/{staff_id}/used-days</code> — cơ chế giống hệt "Nhập file hạn
+      mức" (tạo 1 bản ghi <code>leave_records</code> loại <code>bat_buoc</code>/<code>approved</code>
+      tổng hợp, vì <code>_calc_used_days</code> — nguồn sự thật duy nhất — không đọc
+      <code>user_tttt.used_leave_days</code>). Dialog tự điền sẵn <strong>tổng hiện tại</strong> (đã gồm
+      cả đơn thật), nhưng bản đầu cứ chèn thẳng số nhập vào như 1 khối synthetic mới — lưu lại 3 lần
+      liên tiếp không đổi gì thì số tăng 2→4→6. Sửa: trừ đi phần đơn <strong>thật</strong>
+      (<code>_calc_used_days</code> sau khi đã xoá bản ghi tổng hợp cũ) rồi mới chèn đúng phần chênh
+      lệch — idempotent, lưu lại giá trị không đổi thì giữ nguyên. Nếu số nhập &lt; số thật, bị chặn ở
+      số thật, trả về <code>capped: true</code> để frontend báo.</p>
+      <p>Sửa tay và Nhập Excel luôn <strong>thay thế nhau</strong> (không cộng dồn) — cả 2 endpoint đều
+      xoá bản ghi tổng hợp gắn tag <code>[Import]</code> HOẶC <code>[Điều chỉnh]</code> trước khi tạo
+      bản ghi mới.</p>
+
+      <p class="label">Bản ghi hạn mức "giả" từng hiện ra như đơn nghỉ phép thật</p>
+      <p>Bản ghi tổng hợp ở trên (từ Nhập Excel hoặc sửa tay) là 1 dòng <code>leave_records</code> bình
+      thường — trước đây hiện lẫn trong Lịch nghỉ phép, "Đơn của tôi", danh sách toàn trung tâm, và còn
+      chặn nhầm khi tạo đơn thật trùng ngày với nó. Đã ẩn khỏi: <code>list_leaves()</code> (mọi scope),
+      <code>/api/leaves/export</code>, <code>/api/leaves/calendar</code>, kiểm tra trùng ngày ở
+      <code>create_leave</code>/<code>resubmit_leave</code>/<code>create_direct_leave</code>, và số liệu
+      <code>approved</code>/<code>direct</code>/<code>top_staff</code> trong <code>leader_dashboard()</code>
+      — lọc theo <code>reason LIKE '[Import]%' OR reason LIKE '[Điều chỉnh]%'</code>.
+      <strong>Không đụng</strong> <code>_calc_used_days</code>/<code>_calc_used_days_bulk</code>/
+      <code>_carry_over_bulk</code> — các hàm này bắt buộc vẫn phải đếm bản ghi giả để hạn mức tính đúng.</p>
+
+      <p class="label">5 ô KPI Dashboard — đổi theo khoảng ngày lọc, đúng phạm vi vai trò</p>
+      <p>5 ô tổng quan (Chờ KSV/Chờ Tổng hợp/Chờ Ban lãnh đạo duyệt/Hoàn thành/Khai báo hộ) giờ tính lại
+      theo khoảng "Ngày nghỉ từ/đến ngày" ở Bộ lọc tìm kiếm — không chọn ngày thì mặc định tính trên
+      toàn bộ đơn. Với admin/GĐ/PGĐ/Phòng Tổng hợp (<code>can_all</code>): tính từ <code>all_leaves</code>
+      (toàn trung tâm). Với KSV/chuyên viên thường: tính riêng từ <code>dept_leaves</code>/
+      <code>my_leaves</code> — <strong>chỉ phạm vi phòng/cá nhân họ</strong>, không lộ số liệu toàn
+      trung tâm. Tách logic khớp ngày thành <code>_matches_daterange</code>/<code>_sf_matches_daterange</code>
+      dùng chung với bộ lọc bảng, tránh lệch giữa 2 nơi.</p>
+      <p>Nhân tiện sửa 1 lỗi có sẵn: nhân viên Phòng Tổng hợp trước đây không được đếm
+      <code>pending_gd</code> toàn trung tâm trong <code>leader_dashboard()</code> dù đã được xem toàn
+      trung tâm cho <code>approved</code>/<code>top_staff</code> — ô "Chờ Ban lãnh đạo duyệt" của họ
+      luôn hiện 0 dù có đơn thật đang chờ (thấy được trong bảng danh sách bên dưới).</p>
+
+      <p class="label">Đồng bộ nhãn trạng thái — mỗi nơi từng ghi 1 kiểu</p>
+      <table>
+        <tr><th>Trạng thái</th><th>Trước (không đồng bộ)</th><th>Sau</th></tr>
+        <tr><td><code>pending_gd</code></td><td>"Chờ GĐ duyệt" / "Chờ Ban lãnh đạo" / "Chờ GĐ"</td>
+            <td><strong>"Chờ Ban lãnh đạo duyệt"</strong></td></tr>
+        <tr><td><code>approved</code></td><td>"Đã duyệt" / "Đã phê duyệt"</td>
+            <td><strong>"Hoàn thành"</strong></td></tr>
+      </table>
+      <p>Sửa ở 4 nguồn: <code>frontend/ui_kit.py</code> (<code>STATUS</code> — nguồn dùng chung cho
+      badge + dropdown lọc), <code>frontend/pages/leaves.py</code> (ô KPI Dashboard), và
+      <code>backend/api/leaves.py</code> (<code>_LEAVE_STATUS_VN</code> trả trong API, và
+      <code>_STATUS_VN</code> cục bộ khi xuất Excel).</p>
+
+      <p class="label">GĐ/PGĐ bắt buộc chọn khi tạo/nộp lại đơn</p>
+      <p>Trước đây field "Ban lãnh đạo phê duyệt" chỉ hiện khi tải được danh sách GĐ/PGĐ
+      (<code>gd_opts</code> khác rỗng) — tải lỗi thì field biến mất, validate bị bỏ qua hoàn toàn, đơn
+      tạo ra với <code>gd_approver_id=NULL</code>. Không có bước nào sau đó cho phép Tổng hợp chọn bù
+      (<code>tong_hop_review</code> chỉ dùng lại giá trị có sẵn trên đơn) — đơn kẹt vĩnh viễn ở
+      <code>pending_tong_hop</code>. Đã sửa: field luôn hiện cho vai trò không phải GĐ, validate bắt
+      buộc chọn (giống field KSV) ở cả dialog Tạo đơn lẫn Nộp lại — nếu <code>gd_opts</code> rỗng, form
+      chặn gửi thay vì âm thầm tạo đơn hỏng.</p>
+      <div class="caution">
+      <strong>Đánh đổi:</strong> nếu hệ thống không có bất kỳ tài khoản Giám đốc/Phó Giám đốc nào đang
+      hoạt động, không ai tạo được đơn nghỉ phép nào cả (chặn ngay từ đầu) — thay vì trước đây vẫn tạo
+      được nhưng đơn hỏng ở bước sau. Chấp nhận được vì hệ thống thật luôn có ít nhất 1 GĐ; chỉ ảnh hưởng
+      lúc mới cài đặt/thiếu cấu hình.
+      </div>
+
+      <p class="label">Các fix nhỏ khác trong cùng đợt</p>
+      <ul>
+        <li>Báo lỗi rõ ràng (thay vì âm thầm về 0) khi 1 trong các API tải dữ liệu trang Nghỉ phép thất
+        bại (403/500/timeout) — trước đây <code>return_exceptions=True</code> nuốt hết, 5 ô KPI/bảng chỉ
+        còn toàn số 0 không rõ nguyên nhân.</li>
+        <li>Khai báo hộ xong giờ tự <code>_nav_pending()</code> reload đúng tab đang đứng thay vì chỉ
+        refresh cục bộ bảng khai báo hộ (dữ liệu Dashboard/5 ô KPI trước đây bị cũ tới khi F5) — xoá luôn
+        hàm <code>_refresh_decl()</code> không còn dùng tới.</li>
+        <li>Nút Phê duyệt/Từ chối trên bảng Dashboard/Báo cáo (chỉ tick vào <code>_export_sel</code> dùng
+        cho Xuất Excel) giờ dùng dự phòng <code>_export_sel</code> khi <code>_sel</code> rỗng — trước đây
+        tick chọn ở đó rồi bấm 2 nút này không có phản hồi gì (im lặng không làm gì).</li>
+      </ul>
+
+      <table>
+        <tr><th>Chưa làm trong đợt này</th><th>Lý do / việc còn lại</th></tr>
+        <tr><td>Yêu cầu rút đơn (<code>recall</code>) không có cách từ chối, chỉ có huỷ</td>
+            <td>Cần thêm action mới ở <code>tong_hop_review</code>/endpoint riêng — để đợt sau.</td></tr>
+        <tr><td>Hoàn tác Nhập Excel có thể ghi đè nhầm lên 1 chỉnh sửa tay hạn mức làm sau đó</td>
+            <td><code>import_quota_rollback</code> chỉ so "superseded" với batch import khác, chưa so
+            với sửa tay qua dialog — để đợt sau.</td></tr>
+        <tr><td>Nhãn "Bị từ chối" (<code>_LEAVE_STATUS_VN</code>) vs "Từ chối" (nơi khác)</td>
+            <td>Sót lại khi đồng bộ nhãn ở trên — để đợt sau.</td></tr>
+        <tr><td><code>_upd_btns</code> (bật/tắt nút Phê duyệt/Từ chối theo có chọn hay chưa) không được
+            gắn vào nút thật</td>
+            <td>Nút luôn ở trạng thái bật — không nguy hiểm nhờ đã có cảnh báo khi bấm mà chưa chọn, chỉ
+            là UX chưa mượt — để đợt sau.</td></tr>
+      </table>
+
+      <p class="label">Bổ sung sau rà soát chéo (commit cb02ffd / e9f8b73 / 0e4e5cc)</p>
+      <p><strong>Nhập file hạn mức Excel dính đúng lỗi cộng dồn vừa sửa ở sửa tay.</strong>
+      <code>n_days</code> trước đây lấy thẳng con số "Đã nghỉ" trong file, nên nhân viên đã có đơn
+      nghỉ THẬT trong năm bị cộng dồn ngay từ lần nhập đầu. Sửa bằng cùng công thức delta như
+      <code>update_used_days</code>. Khác một điểm: lệnh <code>DELETE</code> bản ghi tổng hợp cũ phải
+      tách ra chạy TRƯỚC vòng lặp cho toàn bộ nhân viên trong file, rồi mới gọi
+      <code>_calc_used_days_bulk</code> một lần — nếu để trong vòng lặp như bản đơn lẻ thì phải gọi
+      <code>_calc_used_days</code> N lần. Phạm vi xoá chỉ gồm nhân viên có trong file
+      (<code>staff_ids</code> dựng từ <code>rows</code>), không đụng người ngoài danh sách.</p>
+
+      <div class="caution">
+        <p><strong>Đổi ý nghĩa cột trong "Lịch sử nhập".</strong>
+        <code>quota_import_items.new_used_leave_days</code> nay lưu <em>kết quả thật sau khi cộng đơn
+        thật</em>, không còn là con số trong file Excel. Với nhân viên có đơn thật trong năm, số ở màn
+        hình Lịch sử nhập sẽ không khớp file gốc — đúng về bản chất nhưng dễ bị hiểu là lỗi. Muốn giữ
+        khả năng truy nguyên file gốc thì phải lưu thêm cột riêng.</p>
+      </div>
+
+      <p><strong>Bỏ full-reload khi đổi tab kéo theo 2 lỗi phụ.</strong> Trước đây reload trang làm
+      checkbox tự về trạng thái chưa tick. Bỏ reload thì <code>_sel</code>/<code>_export_sel</code>
+      bị xoá nhưng checkbox vẫn hiện đang tick — phải gom mọi checkbox từng vẽ vào
+      <code>_all_sel_checkboxes</code> để bỏ tick thủ công khi đổi tab. Tương tự, bảng "Chờ duyệt" lọc
+      xong phải <code>_sel.clear()</code>, nếu không Phê duyệt/Từ chối xử lý nhầm cả đơn đã bị ẩn.</p>
+
+      <p class="label">Bản ghi tổng hợp rò ra ngoài module — 2 chỗ, và bài học</p>
+      <p>Bản ghi "[Import]"/"[Điều chỉnh]" là dòng <code>leave_records</code> bình thường với mọi truy
+      vấn khác trong hệ thống. Hai nơi ngoài module đọc bảng này mà không lọc:</p>
+      <table>
+        <tr><th>Nơi</th><th>Hậu quả nếu không lọc</th></tr>
+        <tr><td><code>handover_report_service._load_staff_leave</code> (Báo cáo bàn giao)</td>
+            <td>Bản ghi tổng hợp không có <code>spread_dates</code> nên hàm này bung liên tục
+            02/01→28/01. Người NHẬN bàn giao bị coi là nghỉ suốt tháng 1 ⇒ chứng từ nộp trễ được chấm
+            thành đúng hạn. <strong>Kiểm chứng:</strong> chèn 1 bản ghi giả cho người nhận có thật —
+            develop trả 19 ngày nghỉ, sau vá trả 0.</td></tr>
+        <tr><td><code>/api/leaves/today</code> (Trang chủ)</td>
+            <td>Đếm nhầm người đang nghỉ trong tháng 1. Đã lọc <code>/calendar</code> ngay cạnh nhưng
+            sót endpoint này.</td></tr>
+      </table>
+      <p>Không regression: so sánh sha256 toàn bộ kết quả <code>compute_period</code> trên 9 kỳ có dữ
+      liệu (2025-04, 2025-11, 2026-01 → 2026-08) giữa develop và bản vá — trùng khớp tuyệt đối.</p>
+
+      <div class="caution">
+        <p><strong>Mệnh đề lọc đang nằm ở 13 chỗ trên 2 file</strong> (12 trong
+        <code>backend/api/leaves.py</code>, 1 trong <code>backend/services/handover_report_service.py</code>).
+        Thêm tiền tố thứ ba sau này rất dễ sót — nhất là chỗ bên <code>services/</code>, ngoài module
+        nghỉ phép nên không ai nghĩ tới. Nên gom thành hằng số dùng chung.</p>
+        <p><code>POST /api/leaves/quotas/{year}/import/apply</code> và endpoint hoàn tác vẫn CHƯA có
+        nhãn trong <code>audit_labels.py</code> — nhật ký chỉ ghi "Thực hiện — nghỉ phép" cho một thao
+        tác xoá hàng loạt <code>leave_records</code>. Lưu ý <code>_norm()</code> đổi năm thành
+        <code>{id}</code>, khoá phải viết là <code>/api/leaves/quotas/{id}/import/apply</code>.</p>
+      </div>    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-06</footer>
 </div>
 </body>
 </html>

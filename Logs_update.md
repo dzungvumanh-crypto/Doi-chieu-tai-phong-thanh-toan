@@ -4,6 +4,23 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 06/08/2026 Nghỉ phép - Sửa loạt lỗi hạn mức, số liệu Dashboard và thao tác duyệt (PR #18):
+    + **Đổi tab trong màn Nghỉ phép không còn trắng màn hình** — chuyển tab tức thì thay vì tải lại cả trang
+    + ⚠️ **Ô "Đã dùng" ở tab Hạn mức phép trước đây cộng dồn mỗi lần bấm Lưu** — mở dialog rồi bấm Lưu mà không sửa gì cũng làm số ngày đã dùng tăng gấp đôi. Nay bấm Lưu bao nhiêu lần giá trị vẫn giữ nguyên. **Cần soát lại hạn mức của các nhân viên đã từng sửa tay trước ngày 06/08**
+    + ⚠️ **Nhập file hạn mức Excel dính đúng lỗi trên** — nhân viên đã có đơn nghỉ thật trong năm bị cộng dồn ngay từ lần nhập đầu tiên. Nay hệ thống trừ đúng phần đơn thật rồi mới ghi phần chênh lệch
+    + Nhập số "Đã nghỉ" **thấp hơn số ngày đã nghỉ thật** thì hệ thống giữ theo số thật và **báo rõ tên những người bị giữ**, không âm thầm để lệch số
+    + Số liệu nhập hạn mức (từ file Excel hoặc sửa tay) **không còn hiện lẫn như một đơn nghỉ thật** ở Lịch nghỉ phép, "Đơn của tôi", danh sách toàn trung tâm, kiểm tra trùng ngày và số liệu Dashboard
+    + **5 ô số liệu ở Dashboard đổi theo khoảng ngày** chọn ở Bộ lọc tìm kiếm, đúng phạm vi vai trò của từng người
+    + **Bắt buộc chọn Ban lãnh đạo phê duyệt** khi tạo đơn và khi nộp lại — trước đây bỏ trống được, đơn sẽ kẹt vĩnh viễn ở bước Tổng hợp
+    + Sửa nút **Phê duyệt / Từ chối** ở bảng Dashboard không phản hồi khi tick chọn; đổi tab nay tự bỏ tick để không xử lý nhầm đơn đã chọn ở tab khác
+    + Nhãn trạng thái thống nhất một kiểu ở mọi màn hình: **"Chờ Ban lãnh đạo duyệt"** và **"Hoàn thành"**
+    + Tải dữ liệu trang lỗi thì **báo rõ**, không âm thầm hiện số 0
+
+- 06/08/2026 Báo cáo bàn giao chứng từ - Sửa cách trừ ngày nghỉ phép của người nhận:
+    + Báo cáo chấm đúng hạn/quá hạn có **trừ những ngày người nhận bàn giao đi nghỉ phép** (người nhận vắng thì không thể trách người nộp). Nhưng số liệu hạn mức phép nhập từ Excel bị tính nhầm thành ngày nghỉ thật, khiến **chứng từ nộp quá hạn trong tháng 1 bị chấm thành đúng hạn**
+    + Nay báo cáo chỉ trừ đơn nghỉ phép thật. **Số liệu các kỳ đã xem trước đây không đổi** (hệ thống chưa có dữ liệu hạn mức nhập vào) — đây là vá phòng ngừa trước khi bắt đầu dùng thật
+    + Nhật ký hệ thống ghi rõ thao tác **"Sửa số ngày phép đã dùng"** thay vì mô tả chung chung
+
 - 05/08/2026 Phòng Thanh toán - Thêm màn hình **Đối chiếu ACH** (GL02 ↔ MIS):
     + Menu *Phòng Thanh toán → Đối chiếu* có thêm **Đối chiếu ACH**. Công cụ trước đây chạy riêng trên một máy nay vào thẳng phần mềm, dùng chung tài khoản và phân quyền như mọi màn hình khác
     + Cách dùng: chọn (hoặc kéo thả) đủ bộ file của một ngày — file GL02, file GW, 2 file MIS chiều ĐI, 2 file MIS chiều ĐẾN và file PDF sao kê. Màn hình có **bảng kiểm tra đã đủ file chưa**, thiếu loại nào báo ngay chứ không để chạy xong mới lỗi
