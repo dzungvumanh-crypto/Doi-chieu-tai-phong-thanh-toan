@@ -3487,19 +3487,33 @@ ui.on_exception(_on_exception)</pre>
             — đây là lý do test không phát hiện.</td>
             <td>Tách riêng để sửa gọn một chỗ, không trộn vào đợt merge kiến trúc. Đã ghi cảnh báo
             "dùng .xls, không dùng .xlsx" vào <code>Logs_update.md</code> cho người dùng.</td></tr>
-        <tr><td>Nút "Tạo mã kết nối" gửi <code>api.BACKEND_URL</code> (mặc định
+        <tr><td><s>Nút "Tạo mã kết nối" gửi <code>api.BACKEND_URL</code> (mặc định
             <code>http://localhost:8000</code>) sang Extension. Đó là địa chỉ nhìn từ <em>máy chủ</em>,
-            còn Extension chạy trên <em>máy trạm</em>. <code>background.js</code> chỉ lưu chuỗi nhận
-            được, không thử kết nối, nên giao diện báo "✓ đã tự động kết nối" trong khi địa chỉ sai.</td>
-            <td>Cần lấy địa chỉ từ <code>window.location</code> của trang đang mở, và cho service worker
-            thử gọi backend trước khi báo thành công — không phải sửa một dòng.</td></tr>
-        <tr><td><code>manifest.json</code> khai <code>externally_connectable</code> kèm số cổng
-            (<code>http://localhost:8080/*</code>). Match pattern của Chrome không chứa cổng; ngoài ra
-            địa chỉ frontend thật trên LAN cũng không nằm trong danh sách.</td>
-            <td>Chưa xác minh được — cần nạp Extension thật trên trình duyệt, môi trường phát triển
-            không lái được Chrome. Hai khả năng: manifest bị từ chối (Extension không nạp được) hoặc
-            tính năng tự kết nối im lặng không chạy.</td></tr>
+            còn Extension chạy trên <em>máy trạm</em>.</s></td>
+            <td><span class="badge badge-done">Đã sửa</span> — PR #17 (proxy /api/doi-chieu-citad/* qua
+            frontend). <code>server</code> giờ lấy từ <code>window.location.origin</code> ngay trong JS
+            chạy ở trình duyệt người dùng, đúng địa chỉ họ đã gõ để vào ứng dụng.</td></tr>
+        <tr><td><s><code>manifest.json</code> khai <code>externally_connectable</code> kèm số cổng.
+            Nghi ngờ match pattern của Chrome không chứa cổng.</s></td>
+            <td><span class="badge badge-done">Đã xác minh — không phải lỗi</span>. Tài liệu chính thức
+            Chrome (developer.chrome.com/docs/extensions/develop/concepts/match-patterns): cổng LÀ 1
+            phần hợp lệ của match pattern ("port (optional)... By default, this is treated as a
+            wildcard"), và địa chỉ IP literal hoạt động y hệt domain (<code>http://127.0.0.1/*</code>
+            là ví dụ chính thức). <code>http://apc-portal:8080/*</code>, <code>http://10.1.3.89:9090/*</code>
+            hợp lệ.</td></tr>
       </table>
+
+      <p class="label">Xác minh + sửa (2026-08-05): lỗi <code>parsers.py:74</code></p>
+      <p>Đã tái hiện trực tiếp bằng <code>openpyxl</code> thật: tạo file <code>.xlsx</code>, mở
+      <code>load_workbook(read_only=True)</code>, gọi <code>wb.close()</code>, rồi đọc 1 ô —
+      <strong>ném <code>ValueError: Attempt to use ZIP archive that was already closed</code></strong>.
+      <code>_OpenpyxlWs.cell_value()</code> bọc bằng <code>try/except Exception: return ''</code> nên
+      lỗi này bị nuốt hoàn toàn — xác nhận đúng như dự đoán ban đầu, không còn là suy đoán.</p>
+      <p><span class="badge badge-done">Đã sửa</span> — PR riêng, tách khỏi #17 (module
+      <code>doi_soat_citad</code>, khác với <code>doi_chieu_citad</code> mà PR #17 sửa). Chuyển
+      <code>wb.close()</code> ra SAU vòng lặp đọc ô (bọc <code>try/finally</code>), chỉ áp dụng cho
+      nhánh <code>openpyxl</code> — nhánh <code>xlrd</code> giữ nguyên. Đã kiểm chứng lại bằng
+      <code>openpyxl</code> thật: đọc đúng giá trị ô thật (không còn rỗng), 0 exception bị nuốt.</p>
 
       <p class="label">Bài học cho lần sau</p>
       <p>Ba lỗi trong đợt này cùng một gốc: tính năng được phát triển và kiểm thử trên <strong>một máy

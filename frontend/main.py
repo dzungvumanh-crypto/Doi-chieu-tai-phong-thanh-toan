@@ -25,6 +25,10 @@ from nicegui import ui, app
 # Serve static assets (logo, etc.)
 app.add_static_files('/static', os.path.join(os.path.dirname(__file__), 'static'))
 
+# Proxy /api/* sang backend nội bộ — máy trạm chỉ cần gọi đúng 1 cổng
+# frontend, không cần cổng backend được mở ra ngoài (xem api_proxy.py)
+import frontend.api_proxy  # noqa: E402,F401
+
 # Import page modules — @ui.page decorators tự đăng ký route khi import
 # Thêm page mới: chỉ cần tạo file frontend/pages/<tên>.py, không cần sửa file này
 import importlib

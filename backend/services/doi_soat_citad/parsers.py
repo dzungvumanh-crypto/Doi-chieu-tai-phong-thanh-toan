@@ -68,12 +68,12 @@ class _OpenpyxlWs:
 def parse_citad_xls(filepath):
     """Parse 1 file XLS/XLSX CITAD, trả về list lệnh"""
     ext = os.path.splitext(filepath)[1].lower()
+    is_openpyxl = ext == '.xlsx' or not _HAS_XLRD
     try:
-        if ext == '.xlsx' or not _HAS_XLRD:
+        if is_openpyxl:
             from openpyxl import load_workbook
             wb = load_workbook(filepath, read_only=True, data_only=True)
             sheets = [_OpenpyxlWs(wb[name]) for name in wb.sheetnames]
-            wb.close()
         else:
             wb = xlrd.open_workbook(filepath)
             sheets = [_XlrdWs(wb.sheet_by_index(i)) for i in range(wb.nsheets)]
@@ -82,9 +82,19 @@ def parse_citad_xls(filepath):
 
     rows_out = []
     chieu_ref = [None]  # truyen chieu tu sheet dau sang cac sheet sau
-    for shi, ws in enumerate(sheets):
-        rows = _parse_sheet(ws, filepath, shi == 0, chieu_ref)
-        rows_out += rows
+    try:
+        for shi, ws in enumerate(sheets):
+            rows = _parse_sheet(ws, filepath, shi == 0, chieu_ref)
+            rows_out += rows
+    finally:
+        # Đóng SAU khi đọc xong toàn bộ ô — read_only mode đọc trực tiếp
+        # từ ZIP archive theo luồng, đóng sớm (trước khi đọc, như code cũ)
+        # làm cell_value() ném ValueError, bị _OpenpyxlWs nuốt im lặng và
+        # trả '' cho mọi ô — kết quả: mọi file .xlsx parse ra 0 dòng, không
+        # báo lỗi. Đã tái hiện thực tế bằng openpyxl thật để xác nhận.
+        if is_openpyxl:
+            wb.close()
+
     return rows_out, None
 
 
