@@ -109,10 +109,21 @@ def _load_holidays(db: sqlite3.Connection, lo: date, hi: date) -> FrozenSet[date
 
 
 def _load_staff_leave(db: sqlite3.Connection, lo: date, hi: date) -> dict:
-    """Ngày nghỉ phép đã duyệt của từng nhân viên (chỉ ngày trong tuần)."""
+    """Ngày nghỉ phép đã duyệt của từng nhân viên (chỉ ngày trong tuần).
+
+    Loại bản ghi nghỉ "tổng hợp" (từ Nhập file hạn mức / sửa tay "Đã dùng" ở
+    module Nghỉ phép, xem update_used_days/import_quota_apply trong
+    backend/api/leaves.py) — đây chỉ là cách hệ thống lưu số ngày phép đã
+    dùng, không phải người thật sự vắng mặt những ngày đó. Bản ghi này luôn
+    trải dài start_date→end_date liên tục từ 02/01 (không có spread_dates),
+    nên nếu tính cả sẽ biến cả 1 khoảng ngày làm việc đầu năm của người đó
+    thành "đang nghỉ phép" — chứng từ nộp trễ trong khoảng đó bị tính nhầm
+    thành đúng hạn.
+    """
     rows = db.execute(
         """SELECT staff_id, start_date, end_date FROM leave_records
-           WHERE status = 'approved' AND end_date >= ? AND start_date <= ?""",
+           WHERE status = 'approved' AND end_date >= ? AND start_date <= ?
+             AND NOT (reason LIKE '[Import]%' OR reason LIKE '[Điều chỉnh]%')""",
         (lo.isoformat(), hi.isoformat()),
     ).fetchall()
 

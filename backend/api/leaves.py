@@ -727,6 +727,7 @@ def leaves_today(
            JOIN user_tttt u ON lr.staff_id = u.id
            LEFT JOIN departments d ON u.department_id = d.id
            WHERE lr.status = 'approved'
+             AND NOT (lr.reason LIKE '[Import]%' OR lr.reason LIKE '[Điều chỉnh]%')
              AND lr.start_date <= ? AND lr.end_date >= ?""",
         (today, today),
     ).fetchall()

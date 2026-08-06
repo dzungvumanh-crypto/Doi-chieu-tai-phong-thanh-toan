@@ -48,6 +48,7 @@ _WORK = {
     "PATCH /api/leaves/{id}/cancel":              "Hủy đơn nghỉ phép",
     "POST /api/leaves/quotas":                    "Đặt quỹ ngày phép",
     "PATCH /api/leaves/quotas/staff/{id}/join-date": "Sửa ngày vào ngành (quỹ phép)",
+    "PATCH /api/leaves/quotas/staff/{id}/used-days": "Sửa số ngày phép đã dùng",
     "POST /api/leaves/direct":                    "Tạo nghỉ phép trực tiếp",
     "POST /api/leaves/{id}/recall":               "Thu hồi đơn nghỉ phép",
     "PUT /api/leaves/{id}/recall-approve":        "Duyệt thu hồi nghỉ phép",
