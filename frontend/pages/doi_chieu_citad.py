@@ -722,7 +722,12 @@ def doi_chieu_citad_page():
         False (không throw) cho MỌI lý do thất bại — chưa cài extension,
         trình duyệt không phải Chromium (Chrome/Edge/Cốc Cốc/...), hoặc bị
         chặn — để luôn còn đường lùi là dán tay."""
-        payload = json.dumps({"type": "SET_CONFIG", "server": api.BACKEND_URL, "token": token})
+        # server LẤY ĐỘNG từ window.location.origin (chạy trong trình duyệt
+        # người dùng) — đó chính là địa chỉ họ gõ để vào ứng dụng, đúng cổng
+        # proxy phục vụ (api_proxy.py). KHÔNG dùng api.BACKEND_URL (địa chỉ
+        # backend NỘI BỘ máy chủ, vd 127.0.0.1:8000) — trên máy trạm không
+        # có gì lắng nghe ở đó, và nếu người dùng đã cấu hình tay đúng thì
+        # bấm nút này sẽ GHI ĐÈ sang giá trị sai. Xem review PR #17.
         js = f"""
             return await new Promise((resolve) => {{
                 if (!(window.chrome && chrome.runtime && chrome.runtime.sendMessage)) {{
@@ -730,7 +735,11 @@ def doi_chieu_citad_page():
                     return;
                 }}
                 try {{
-                    chrome.runtime.sendMessage({_EXTENSION_ID!r}, {payload}, (response) => {{
+                    chrome.runtime.sendMessage({_EXTENSION_ID!r}, {{
+                        type: 'SET_CONFIG',
+                        server: window.location.origin,
+                        token: {json.dumps(token)},
+                    }}, (response) => {{
                         if (chrome.runtime.lastError) {{
                             resolve({{ok: false, error: chrome.runtime.lastError.message}});
                         }} else {{

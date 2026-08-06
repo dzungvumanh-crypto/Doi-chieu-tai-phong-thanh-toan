@@ -55,12 +55,24 @@ async def _proxy_api(sub_path: str, request: Request) -> Response:
     # liệu, không phải nơi upload file lớn (đối soát CITAD/IPCAS upload qua
     # /api/doi-soat-citad/, KHÔNG nằm trong tiền tố proxy này). Nếu sau này
     # mở thêm tiền tố có upload file lớn, cần đổi sang stream ở đây trước.
-    headers = {k: v for k, v in request.headers.items() if k.lower() not in _HOP_BY_HOP}
+    # Phải LOẠI header x-client-ip client tự gửi trước khi lọc, không chỉ gán
+    # đè — dict Python phân biệt hoa/thường nhưng HTTP header thì không, nên
+    # "x-client-ip" (client gửi) và "X-Client-IP" (gán bên dưới) là 2 khoá
+    # khác nhau trong dict này, httpx gửi cả 2 header, backend đọc trúng cái
+    # đi trước (của client) — giả mạo được IP trong audit_logs. Đã đo thực
+    # tế xác nhận, xem review PR #17.
+    _strip = _HOP_BY_HOP | {"x-client-ip"}
+    headers = {k: v for k, v in request.headers.items() if k.lower() not in _strip}
     # Backend thấy request này tới từ tiến trình frontend (localhost) — mất
     # IP thật của máy trạm/Extension nếu không gắn thêm. X-Client-IP là cơ
     # chế đã có sẵn cho đúng tình huống này (xem frontend/api_client.py,
-    # backend/core/audit_queue.py::_real_ip) — GHI ĐÈ chứ không giữ giá trị
-    # client tự gửi lên, để không ai giả mạo được IP trong audit_logs.
+    # backend/core/audit_queue.py::_real_ip).
+    #
+    # request.client.host là IP của bên kết nối TRỰC TIẾP tới tiến trình
+    # frontend — đúng là máy trạm VÌ NiceGUI đang lắng nghe thẳng, không qua
+    # proxy nào khác. Nếu sau này đặt nginx/IIS trước cổng 8080, giá trị này
+    # sẽ thành IP của nginx/IIS đó, mọi dòng audit_logs mang cùng 1 IP — lúc
+    # đó phải đổi sang đọc X-Forwarded-For.
     headers["X-Client-IP"] = request.client.host if request.client else ""
     body = await request.body()
 
