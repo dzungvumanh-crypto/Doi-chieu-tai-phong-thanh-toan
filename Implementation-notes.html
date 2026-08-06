@@ -3503,6 +3503,18 @@ ui.on_exception(_on_exception)</pre>
             hợp lệ.</td></tr>
       </table>
 
+      <p class="label">Xác minh + sửa (2026-08-05): lỗi <code>parsers.py:74</code></p>
+      <p>Đã tái hiện trực tiếp bằng <code>openpyxl</code> thật: tạo file <code>.xlsx</code>, mở
+      <code>load_workbook(read_only=True)</code>, gọi <code>wb.close()</code>, rồi đọc 1 ô —
+      <strong>ném <code>ValueError: Attempt to use ZIP archive that was already closed</code></strong>.
+      <code>_OpenpyxlWs.cell_value()</code> bọc bằng <code>try/except Exception: return ''</code> nên
+      lỗi này bị nuốt hoàn toàn — xác nhận đúng như dự đoán ban đầu, không còn là suy đoán.</p>
+      <p><span class="badge badge-done">Đã sửa</span> — PR riêng, tách khỏi #17 (module
+      <code>doi_soat_citad</code>, khác với <code>doi_chieu_citad</code> mà PR #17 sửa). Chuyển
+      <code>wb.close()</code> ra SAU vòng lặp đọc ô (bọc <code>try/finally</code>), chỉ áp dụng cho
+      nhánh <code>openpyxl</code> — nhánh <code>xlrd</code> giữ nguyên. Đã kiểm chứng lại bằng
+      <code>openpyxl</code> thật: đọc đúng giá trị ô thật (không còn rỗng), 0 exception bị nuốt.</p>
+
       <p class="label">Bài học cho lần sau</p>
       <p>Ba lỗi trong đợt này cùng một gốc: tính năng được phát triển và kiểm thử trên <strong>một máy
       duy nhất</strong>, nơi máy chủ và trình duyệt là cùng một host — CORS chặn extension, địa chỉ
