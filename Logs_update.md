@@ -4,6 +4,13 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 06/08/2026 Đối soát CITAD - Đọc được file `.xlsx`, và Extension gọi được máy chủ thật (PR #20):
+    + ✅ **GỠ CẢNH BÁO NGÀY 04/08: file CITAD định dạng `.xlsx` nay đọc bình thường.** Trước đây mọi file `.xlsx` bị đọc ra rỗng mà không báo lỗi — màn hình vẫn hiện "đối soát xong" nhưng số khớp bằng 0 và toàn bộ lệnh bị xếp vào "Chỉ IPCAS". Từ nay dùng `.xls` hay `.xlsx` đều được
+    + ⚠️ **Ai đã đối soát bằng file `.xlsx` trước ngày 06/08 thì làm lại.** Kết quả cũ và bản đã lưu ở tab *Lịch sử* của những lần đó đều sai — không phải số liệu lệch thật
+    + **Extension nay gọi được máy chủ thật.** Trước đây máy chủ chỉ mở cổng giao diện ra máy trạm nên Extension luôn báo *"Không kết nối server"* dù cấu hình đúng. Nay đi chung một cổng với web, không phải mở thêm gì trên tường lửa
+    + Nút **Tạo mã kết nối mới** trước đây ghi vào Extension một địa chỉ chỉ đúng trên máy chủ, nên vừa không dùng được vừa **xoá mất cấu hình đúng ai đã điền tay**. Nay lấy đúng địa chỉ đang mở trên trình duyệt
+    + Vá một lỗ hổng: có thể giả mạo địa chỉ IP ghi vào Nhật ký hệ thống cho các thao tác Đối chiếu CITAD. **Nhật ký cũ vẫn đúng** — lỗ hổng chỉ mở đường cho ai cố tình, không làm sai dữ liệu đang có
+
 - 06/08/2026 Nghỉ phép - Sửa loạt lỗi hạn mức, số liệu Dashboard và thao tác duyệt (PR #18):
     + **Đổi tab trong màn Nghỉ phép không còn trắng màn hình** — chuyển tab tức thì thay vì tải lại cả trang
     + ⚠️ **Ô "Đã dùng" ở tab Hạn mức phép trước đây cộng dồn mỗi lần bấm Lưu** — mở dialog rồi bấm Lưu mà không sửa gì cũng làm số ngày đã dùng tăng gấp đôi. Nay bấm Lưu bao nhiêu lần giá trị vẫn giữ nguyên. **Cần soát lại hạn mức của các nhân viên đã từng sửa tay trước ngày 06/08**
@@ -72,7 +79,7 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
     + **Đối chiếu CITAD**: nhập số liệu 5 cổng × 3 loại tiền, chênh lệch tự tính ngay khi gõ. Mỗi ngày là **một bản ghi chung của cả phòng**, kèm tab *Lịch sử* xem lại từng lần lưu. Xuất Excel đúng mẫu báo cáo NHNN đã duyệt
     + **Đối soát CITAD ↔ IPCAS**: tải file CITAD, IPCAS và Hub ngoại tệ lên, hệ thống khớp lệnh rồi liệt kê phần lệch theo 4 nhóm, xuất Excel 4 sheet. Có lưu lịch sử để xem lại đúng số liệu của lần đối soát cũ. Hệ thống **cảnh báo khi chọn trùng file** (so nội dung từng byte, không dựa vào tên file)
     + Kèm **Extension trình duyệt** tự lấy số liệu từ trang CITAD và PaymentHub sang, khỏi chép tay. Tải ngay trên màn hình Đối chiếu CITAD, ghép nối bằng *mã kết nối* riêng của từng người
-    + ⚠️ **Đối soát CITAD: dùng file CITAD định dạng `.xls`, KHÔNG dùng `.xlsx`.** File `.xlsx` hiện bị đọc ra rỗng mà **không báo lỗi** — màn hình vẫn hiện "đối soát xong" nhưng số khớp bằng 0 và toàn bộ lệnh bị xếp vào "Chỉ IPCAS". Lỗi đã biết, đang chờ sửa. Trong lúc chờ, nếu kết quả ra như vậy thì kiểm lại định dạng file trước khi kết luận số liệu lệch
+    + ~~⚠️ **Đối soát CITAD: dùng file CITAD định dạng `.xls`, KHÔNG dùng `.xlsx`.** File `.xlsx` hiện bị đọc ra rỗng mà **không báo lỗi**~~ — **ĐÃ SỬA ngày 06/08, xem entry đầu trang.** Từ nay `.xls` và `.xlsx` đều dùng được
     + ⚠️ **Đối chiếu CITAD lưu chung một bản cho cả phòng** — hai người cùng chấm một ngày thì ai bấm Lưu sau cùng là bản hiện hành. Bản của người trước không mất, xem lại ở tab *Lịch sử*
     + ⚠️ Extension **phải cài tay trên từng máy** và chỉ chạy trên **Chrome, Edge, Cốc Cốc** (không có Firefox, Safari). Hướng dẫn cài nằm trong file tải về
     + ⚠️ Nút *Tạo mã kết nối* có thể báo "đã tự động kết nối" nhưng Extension vẫn không gửi được — đang còn lỗi địa chỉ máy chủ. Nếu gặp, mở *Tuỳ chọn* của Extension điền tay địa chỉ và mã kết nối

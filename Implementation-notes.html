@@ -3727,20 +3727,10 @@ ui.on_exception(_on_exception)</pre>
       Đổi địa chỉ máy chủ là phải dựng lại <code>.zip</code> và cài lại trên từng máy.</p>
 
       <p class="label">Vì sao PR #17 chỉ merge 1 trong 2 commit</p>
-      <p>Commit còn lại (<code>703d0c1</code>) thêm reverse-proxy <code>/api/*</code> ở
-      <code>frontend/api_proxy.py</code>, cho máy trạm gọi backend qua cổng frontend. Bản thân code
-      viết cẩn thận (httpx bất đồng bộ, lọc header hop-by-hop, <code>multi_items()</code> giữ query
-      lặp key, ghi đè <code>X-Client-IP</code> chống giả mạo IP trong audit).</p>
-      <p>Nhưng route khai <code>/api/{full_path:path}</code> nên <strong>toàn bộ API của mọi module</strong>
-      gọi được qua cổng 8080. Trên máy chủ thật, tường lửa chỉ mở 8080 và chặn 8000 — đó là một lớp
-      phòng thủ, và proxy này vô hiệu hoá nó. Xác thực vẫn nguyên (mọi endpoint qua
-      <code>require_feature</code>, login có <code>rate_limit</code>), nên <em>không phải lỗ hổng</em>,
-      nhưng là bỏ một lớp bảo vệ — phải là quyết định có chủ đích, không phải hệ quả phụ của việc sửa
-      cho Extension chạy được. Extension chỉ cần đúng 2 đường dẫn buffer.</p>
-      <p>Ba điểm kỹ thuật khác đã gửi cùng phản hồi: timeout 30s áp cho mọi endpoint (Chấm 459901 mất
-      ~65s), đệm toàn bộ body vào RAM của tiến trình frontend, và <code>content-encoding</code> được
-      forward nguyên trong khi httpx đã tự giải nén — chưa hỏng vì backend chưa có
-      <code>GZipMiddleware</code>, nhưng sẽ hỏng ngày nào thêm nén.</p>
+      <p>Chỉ merge <code>d1ca9b8</code> (parse thập phân). Commit reverse-proxy bị giữ lại vì khai
+      route <code>/api/{full_path:path}</code> — mở toàn bộ API của mọi module qua cổng 8080, vô hiệu
+      hoá lớp tường lửa chặn cổng 8000 trên máy chủ thật. PR #17 sau đó được đóng và thay bằng
+      <strong>PR #20</strong> với phạm vi đã thu hẹp — xem card 51.</p>
 
     </div>
   </div>
@@ -3916,6 +3906,91 @@ ui.on_exception(_on_exception)</pre>
         tác xoá hàng loạt <code>leave_records</code>. Lưu ý <code>_norm()</code> đổi năm thành
         <code>{id}</code>, khoá phải viết là <code>/api/leaves/quotas/{id}/import/apply</code>.</p>
       </div>    </div>
+  </div>
+
+  <!-- 51 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">51</span>
+      <span class="card-title">Reverse-proxy <code>/api/doi-chieu-citad/*</code> qua frontend (PR #20)</span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Vì sao cần</p>
+      <p>Máy chủ production chỉ mở tường lửa cổng <strong>frontend (8080)</strong> ra máy trạm, không
+      mở cổng backend (8000). Extension CITAD chạy trên máy trạm nên luôn "Không kết nối server" dù
+      cấu hình đúng địa chỉ. <code>frontend/api_proxy.py</code> cho tiến trình frontend tự chuyển tiếp
+      sang backend nội bộ — máy trạm chỉ cần biết đúng một cổng.</p>
+
+      <p class="label">Quyết định phạm vi: chỉ 1 tiền tố, KHÔNG wildcard</p>
+      <p>Bản đầu khai <code>/api/{full_path:path}</code>. Như thế mọi API của mọi module (nghỉ phép,
+      chấm công, bàn giao, quản lý user) gọi được qua cổng 8080 — <strong>vô hiệu hoá quy tắc tường
+      lửa chặn cổng 8000</strong>. Xác thực vẫn nguyên nên không phải lỗ hổng, nhưng là gỡ một lớp
+      phòng thủ theo chiều sâu để đổi lấy tiện ích của một module.</p>
+      <p>Đã thu hẹp về <code>/api/doi-chieu-citad/{sub_path:path}</code>. Đo lại sau khi sửa: đường dẫn
+      trong tiền tố proxy đúng (401 khi thiếu JWT, trả dữ liệu khi có), còn
+      <code>/api/staff</code>, <code>/api/leaves</code>, <code>/api/auth/me</code>,
+      <code>/api/doi-soat-citad/history</code> đều <strong>404 trên cổng 8080</strong> mà vẫn chạy
+      bình thường khi gọi thẳng cổng 8000.</p>
+      <p><strong>Cần thêm module khác dùng qua proxy thì thêm đúng tiền tố của module đó — không nới
+      thành wildcard.</strong></p>
+
+      <p class="label">Bài học đáng nhớ nhất: dict Python phân biệt hoa/thường, HTTP header thì không</p>
+      <p>Code chống giả mạo IP viết như sau và <em>trông</em> hoàn toàn đúng:</p>
+      <pre><code>headers = {k: v for k, v in request.headers.items() if k.lower() not in _HOP_BY_HOP}
+headers["X-Client-IP"] = request.client.host</code></pre>
+      <p>Nhưng Starlette chuẩn hoá tên header về <strong>chữ thường</strong> khi duyệt
+      <code>.items()</code>, nên dict đã chứa <code>'x-client-ip'</code> do client gửi. Dòng gán tiếp
+      theo tạo ra khoá <em>thứ hai</em> là <code>'X-Client-IP'</code>. httpx gửi <strong>cả hai</strong>
+      header; backend đọc trúng cái đi trước — của client. Phép "ghi đè" không hề ghi đè.</p>
+      <table>
+        <tr><th></th><th>Header gửi lên backend</th><th>Backend đọc ra</th></tr>
+        <tr><td>Trước</td><td><code>x-client-ip=9.9.9.9</code>, <code>X-Client-IP=10.1.3.181</code></td>
+            <td><code>9.9.9.9</code> (giả mạo)</td></tr>
+        <tr><td>Sau</td><td><code>X-Client-IP=10.1.3.181</code></td>
+            <td><code>10.1.3.181</code></td></tr>
+      </table>
+      <p>Sửa: loại <code>x-client-ip</code> ngay ở bước lọc thay vì trông cậy vào phép gán.
+      <strong>Quy tắc chung: muốn ghi đè một header khi forward thì phải LOẠI mọi biến thể hoa/thường
+      của nó ở bước lọc</strong> — không bao giờ chỉ gán đè.</p>
+      <p>Lưu ý mức độ: nhật ký <em>đang</em> ghi đúng, vì Extension không gửi
+      <code>X-Client-IP</code>. Đây là lỗ hổng cho ai cố tình, không phải dữ liệu đang sai — không cần
+      soát lại nhật ký cũ.</p>
+
+      <p class="label">Địa chỉ máy chủ gửi cho Extension: lấy từ trình duyệt, không lấy từ backend</p>
+      <p>Nút "Tạo mã kết nối" từng gửi <code>api.BACKEND_URL</code> vào Extension. Đó là địa chỉ backend
+      <em>nhìn từ máy chủ</em> (<code>127.0.0.1:8000</code>) — trên máy trạm không có gì ở đó. Nặng hơn:
+      nó <strong>ghi đè lên cấu hình tay đang đúng</strong>, nên ai đã tự điền địa chỉ chuẩn mà bấm nút
+      này là hỏng. Giao diện vẫn báo "✓ đã tự động kết nối" vì <code>background.js</code> chỉ lưu chuỗi
+      chứ không thử gọi.</p>
+      <p>Sửa: dựng object ngay trong JS và lấy <code>window.location.origin</code> — đúng địa chỉ người
+      dùng đã gõ để vào ứng dụng, tức đúng cổng proxy phục vụ. <strong>Nguyên tắc: giá trị cần đúng
+      theo góc nhìn của TRÌNH DUYỆT thì phải lấy ở trình duyệt, không suy từ cấu hình máy chủ.</strong></p>
+
+      <p class="label">Ràng buộc phải giữ</p>
+      <ul>
+        <li><strong>Không mở tiền tố có upload file lớn.</strong> Proxy đọc trọn body và response vào
+        RAM tiến trình frontend (dùng chung cho mọi người đang mở web). Chấp nhận được vì tiền tố hiện
+        tại chỉ có JSON nhỏ và file Excel một ngày; endpoint upload lớn nằm ở
+        <code>/api/doi-soat-citad/</code>, ngoài phạm vi. Mở thêm tiền tố có upload thì phải đổi sang
+        stream trước.</li>
+        <li><strong>Timeout 60s</strong> — endpoint export đi qua <code>run_heavy</code>
+        (<code>MAX_HEAVY=4</code>), bể đầy thì phải xếp hàng.</li>
+        <li><strong><code>content-encoding</code> nằm trong hop-by-hop</strong> — httpx tự giải nén
+        <code>.content</code> nhưng giữ nguyên header gốc; forward nguyên sẽ hỏng ngày nào backend bật
+        <code>GZipMiddleware</code>.</li>
+        <li><strong>Cổng 8080 không xử lý preflight CORS</strong> (route không khai
+        <code>OPTIONS</code>). Chưa ảnh hưởng vì Extension gọi từ service worker. Ai gỡ lỗi CORS qua
+        cổng này cần biết cổng 8000 mới là cửa có <code>CORSMiddleware</code>.</li>
+        <li><strong><code>request.client.host</code> đúng vì NiceGUI lắng nghe thẳng.</strong> Đặt
+        nginx/IIS trước cổng 8080 thì giá trị này thành IP của nginx và mọi dòng audit mang cùng một
+        địa chỉ — lúc đó phải đọc <code>X-Forwarded-For</code>.</li>
+        <li><strong>Chưa chặn:</strong> đặt <code>BACKEND_URL</code> thành địa chỉ frontend sẽ làm proxy
+        chuyển tiếp về chính nó, đệ quy tới khi hết timeout. Chưa thêm guard.</li>
+      </ul>
+
+    </div>
   </div>
 
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-06</footer>

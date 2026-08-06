@@ -314,15 +314,13 @@ Truy cập:
 ### Module Đối soát CITAD ↔ IPCAS
 - Đối soát từng lệnh chuyển tiền giữa CITAD (NHNN) và IPCAS (Agribank) theo ngày chấm
 - Menu: **Phòng Thanh toán → Đối soát CITAD ↔ IPCAS**
-- Upload file CITAD (`.xls`/`.zip`), IPCAS (`.csv`/`.zip`) và Hub ngoại tệ (`.xls`); khớp trong RAM
-  theo `msgref` (Đi) / `txid` (Đến), phân loại lệch thành 4 nhóm: **Chỉ CITAD / Chỉ IPCAS / Chỉ Hub /
-  Lệch trạng thái**
+- Upload file CITAD (`.xls`/`.xlsx`/`.zip`), IPCAS (`.csv`/`.zip`) và Hub ngoại tệ (`.xls`/`.xlsx`);
+  khớp trong RAM theo `msgref` (Đi) / `txid` (Đến), phân loại lệch thành 4 nhóm:
+  **Chỉ CITAD / Chỉ IPCAS / Chỉ Hub / Lệch trạng thái**
 - Cảnh báo khi chọn **trùng nội dung file** (băm SHA-256 toàn bộ byte, không dựa vào tên file)
 - Xuất Excel 4 sheet; tab **Lịch sử** lưu `doi_soat_citad_history` kèm snapshot nguyên vẹn danh sách
   lệch — xem lại/tải lại đúng số liệu của lần đối soát cũ, không tính lại từ file gốc
 - Phân quyền riêng theo nhóm (`menu.doi_soat_citad`)
-- ⚠️ **Lỗi đã biết:** file CITAD định dạng `.xlsx` bị đọc ra rỗng mà không báo lỗi
-  (`parsers.py` — `read_only=True` kèm `close()` trước khi đọc). **Dùng `.xls`** cho tới khi sửa xong
 
 ---
 
