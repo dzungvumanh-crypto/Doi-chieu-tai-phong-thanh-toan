@@ -253,6 +253,9 @@ class TestXuatExcelOsb:
 
 class TestGhiChuOsbTrenBaoCaoChinh:
     def test_dem_dung_so_luong_osb_trong_mis_thua(self, tmp_path):
+        """Số lệnh OSB nằm trong MIS_đi/đến thừa không còn tóm tắt trên TONG_KET
+        (mẫu mới 2026-08-07 không có dòng này) — vẫn đếm được đầy đủ từ cột
+        LOAI_LENH_OSB có sẵn trên chính sheet MIS_DI_THUA/MIS_DEN_THUA."""
         df_mis_di_thua = pd.DataFrame({
             'SO_TIEN': [100, 200, 300],
             'LOAI_LENH_OSB': ['O', '', 'O'],
@@ -272,7 +275,15 @@ class TestGhiChuOsbTrenBaoCaoChinh:
                           'PrcFlg': ['x'], 'KEY_GW': ['k']}),
         )
         wb = openpyxl.load_workbook(output_path)
-        ws = wb['TONG_KET']
-        rows = {row[0].value: row[1].value for row in ws.iter_rows(min_row=2) if row[0].value}
-        assert rows['  Trong đó: lệnh OSB (MIS_đi thừa) — xem file OSB riêng nếu có nạp file QT'] == 2
-        assert rows['  Trong đó: lệnh OSB (MIS_đến thừa) — xem file OSB riêng nếu có nạp file QT'] == 1
+
+        ws_di = wb['MIS_DI_THUA']
+        header_di = [c.value for c in next(ws_di.iter_rows(max_row=1))]
+        col_di = header_di.index('LOAI_LENH_OSB')
+        n_osb_di = sum(1 for row in ws_di.iter_rows(min_row=2) if row[col_di].value == 'O')
+        assert n_osb_di == 2
+
+        ws_den = wb['MIS_DEN_THUA']
+        header_den = [c.value for c in next(ws_den.iter_rows(max_row=1))]
+        col_den = header_den.index('LOAI_LENH_OSB')
+        n_osb_den = sum(1 for row in ws_den.iter_rows(min_row=2) if row[col_den].value == '1')
+        assert n_osb_den == 1

@@ -9,6 +9,9 @@ import pytest
 from backend.services.ach.b11_doi_chieu_cheo_ngay import (
     GHI_CHU_T2, danh_dau_da_can_di, danh_dau_da_can_den,
     doc_mis_di_thua_t2, doc_mis_den_thua_t2,
+    ket_qua_mis_di_thua_t2, ket_qua_mis_den_thua_t2,
+    KETQUA_OSB_DI_KHOP, KETQUA_OSB_DI_CHUA, KETQUA_OSB_DEN_KHOP, KETQUA_OSB_DEN_CHUA,
+    KETQUA_KHONG_CO_QT, KETQUA_THUONG_KHOP, KETQUA_THUONG_CHUA,
 )
 from backend.services.ach.pipeline import (
     _tim_file_ngoai_output, _tim_file_thua_t2, _tim_di_zip_ngay_khac, _tim_gw_xlsx,
@@ -36,6 +39,12 @@ def _mis_di_thua_t2_row(chi_nhanh, so_tien, trace, se_trace='', osb=''):
 
 def _mis_den_thua_t2_row(chi_nhanh, so_tien, trace, osb=''):
     return {'CHI_NHANH': chi_nhanh, 'SO_TIEN': str(so_tien), 'TRACE': trace, 'LOAI_LENH_OSB': osb}
+
+
+def _qt_row(chi_nhanh, so_trace, so_tien):
+    """QT (Quyết toán OSB) đã qua `xu_ly_qt()` — chỉ cần cột CN_TRACE_TIEN đã tính
+    sẵn (cùng công thức CHI_NHANH+SO_TRACE+SO_TIEN như KEY_HUB/KEY_DEN_HUB)."""
+    return {'CN_TRACE_TIEN': chi_nhanh.strip() + so_trace + str(so_tien)}
 
 
 # ── Chiều đi ─────────────────────────────────────────────────────────────────
@@ -146,6 +155,40 @@ class TestDocFileT2:
         pd.DataFrame([{'CHI_NHANH': '1240'}]).to_csv(path, index=False)
         with pytest.raises(ValueError, match='thiếu cột'):
             doc_mis_den_thua_t2(str(path))
+
+    def test_doc_mis_di_thua_t2_csv_dau_tab_do_excel_luu_lai(self, tmp_path):
+        """Bug thật 2026-08-07 (dữ liệu 03.08): người chấm mở file .csv chương
+        trình tự xuất bằng Excel rồi lưu lại (đuôi vẫn .csv) — Excel tự đổi dấu
+        phân cách phẩy → tab, khiến pd.read_csv() mặc định gộp cả dòng thành 1
+        cột, báo nhầm 'thiếu cột'. Phải tự dò được dấu phân cách."""
+        path = tmp_path / 'MIS_DI_THUA_20260802.csv'
+        pd.DataFrame([_mis_di_thua_t2_row('1240', 3_000_000, '000142755985')]).to_csv(
+            path, index=False, sep='\t',
+        )
+        df = doc_mis_di_thua_t2(str(path))
+        assert len(df) == 1
+        assert df.loc[0, 'CHI_NHANH'] == '1240'
+
+    def test_doc_mis_den_thua_t2_csv_dau_tab_do_excel_luu_lai(self, tmp_path):
+        path = tmp_path / 'MIS_DEN_THUA_20260802.csv'
+        pd.DataFrame([_mis_den_thua_t2_row('1240', 3_000_000, '000142755985')]).to_csv(
+            path, index=False, sep='\t',
+        )
+        df = doc_mis_den_thua_t2(str(path))
+        assert len(df) == 1
+        assert df.loc[0, 'CHI_NHANH'] == '1240'
+
+    def test_doc_mis_di_thua_t2_csv_dau_cham_phay_do_excel_luu_lai(self, tmp_path):
+        """Excel ở locale vi-VN (dấu phẩy = phân cách thập phân) mặc định lưu CSV
+        với dấu chấm phẩy, không phải dấu phẩy — cùng nhóm rủi ro với dấu tab,
+        phải tự dò được luôn."""
+        path = tmp_path / 'MIS_DI_THUA_20260802.csv'
+        pd.DataFrame([_mis_di_thua_t2_row('1240', 3_000_000, '000142755985')]).to_csv(
+            path, index=False, sep=';',
+        )
+        df = doc_mis_di_thua_t2(str(path))
+        assert len(df) == 1
+        assert df.loc[0, 'CHI_NHANH'] == '1240'
 
 
 # ── Dò file T-2, loại trừ thư mục Output/ của chính lần chạy trước ────────────
@@ -349,3 +392,159 @@ class TestTimGwXlsx:
         _tao_gw_xlsx_hop_le(f_dung)
         ket_qua = _tim_gw_xlsx(str(tmp_path))
         assert ket_qua == str(f_dung)
+
+
+# ── Báo cáo "KẾT QUẢ" đối chiếu MIS thừa T-2 (docx NGUYEN TAC DOI CHIEU DIEN
+# MIS THUA NGAY T-1, 2026-08-07) — góc nhìn ngược GHI_CHU_T2: gắn nhãn KET_QUA
+# lên chính MIS thừa T-2. Dòng OSB so QT ngày T-1, dòng thường so NPO thừa T-1.
+
+class TestKetQuaMisDiThuaT2:
+    def test_mis_t2_none_tra_ve_none(self):
+        df_npo = pd.DataFrame([_npo_di_thua_row('1240', '142755985', 3_000_000)])
+        assert ket_qua_mis_di_thua_t2(None, None, df_npo) is None
+
+    def test_osb_khop_qt(self):
+        mis_t2 = pd.DataFrame([_mis_di_thua_t2_row('1240', 3_000_000, '000142755985', osb='O')])
+        qt_di  = pd.DataFrame([_qt_row('1240', '142755985', 3_000_000)])
+        df_npo = pd.DataFrame([_npo_di_thua_row('9999', '1', 1)])  # không liên quan
+        ket_qua = ket_qua_mis_di_thua_t2(mis_t2, qt_di, df_npo)
+        assert ket_qua.loc[0, 'KET_QUA'] == KETQUA_OSB_DI_KHOP
+
+    def test_osb_khong_khop_qt(self):
+        mis_t2 = pd.DataFrame([_mis_di_thua_t2_row('1240', 3_000_000, '000142755985', osb='O')])
+        qt_di  = pd.DataFrame([_qt_row('9999', '1', 1)])
+        df_npo = pd.DataFrame([_npo_di_thua_row('9999', '1', 1)])
+        ket_qua = ket_qua_mis_di_thua_t2(mis_t2, qt_di, df_npo)
+        assert ket_qua.loc[0, 'KET_QUA'] == KETQUA_OSB_DI_CHUA
+
+    def test_osb_khong_co_file_qt(self):
+        mis_t2 = pd.DataFrame([_mis_di_thua_t2_row('1240', 3_000_000, '000142755985', osb='O')])
+        df_npo = pd.DataFrame([_npo_di_thua_row('9999', '1', 1)])
+        ket_qua = ket_qua_mis_di_thua_t2(mis_t2, None, df_npo)
+        assert ket_qua.loc[0, 'KET_QUA'] == KETQUA_KHONG_CO_QT
+
+    def test_thuong_khop_npo(self):
+        mis_t2 = pd.DataFrame([_mis_di_thua_t2_row('1240', 3_000_000, '000142755985')])
+        df_npo = pd.DataFrame([_npo_di_thua_row('1240', '142755985', 3_000_000)])
+        ket_qua = ket_qua_mis_di_thua_t2(mis_t2, None, df_npo)
+        assert ket_qua.loc[0, 'KET_QUA'] == KETQUA_THUONG_KHOP
+
+    def test_thuong_khong_khop_npo(self):
+        mis_t2 = pd.DataFrame([_mis_di_thua_t2_row('1240', 3_000_000, '000142755985')])
+        df_npo = pd.DataFrame([_npo_di_thua_row('9999', '1', 1)])
+        ket_qua = ket_qua_mis_di_thua_t2(mis_t2, None, df_npo)
+        assert ket_qua.loc[0, 'KET_QUA'] == KETQUA_THUONG_CHUA
+
+    def test_bao_toan_so_dong_ca_2_nhanh(self):
+        mis_t2 = pd.DataFrame([
+            _mis_di_thua_t2_row('1240', 3_000_000, '000142755985', osb='O'),
+            _mis_di_thua_t2_row('1300', 6_000_000, '000000111', osb='O'),
+            _mis_di_thua_t2_row('1400', 1_000_000, '000000222'),
+            _mis_di_thua_t2_row('1500', 2_000_000, '000000333'),
+        ])
+        qt_di  = pd.DataFrame([_qt_row('1240', '142755985', 3_000_000)])
+        df_npo = pd.DataFrame([_npo_di_thua_row('1400', '222', 1_000_000)])
+        ket_qua = ket_qua_mis_di_thua_t2(mis_t2, qt_di, df_npo)
+        assert len(ket_qua) == len(mis_t2)
+
+    def test_thuong_khop_khong_bi_lech_do_doc_excel(self, tmp_path):
+        """Rủi ro '.0' — người chấm nạp file T-2 dạng .xlsx (TRACE/SO_TIEN Excel tự
+        lưu thành SỐ, không phải chuỗi như .csv chương trình xuất). Nhánh thường
+        (so NPO) vẫn phải khớp đúng."""
+        path = tmp_path / 'MIS đi thừa ngày 26.07.xlsx'
+        pd.DataFrame([{
+            'CHI_NHANH': 1240, 'SO_TIEN': 3_000_000, 'TRACE': 142755985, 'SE_TRACE': None,
+            'NGAY_KENH_TRA': '26/07/2026 10:00:00', 'LOAI_LENH_OSB': '',
+        }]).to_excel(path, index=False)
+        mis_t2 = doc_mis_di_thua_t2(str(path))
+        df_npo = pd.DataFrame([_npo_di_thua_row('1240', '142755985', 3_000_000)])
+        ket_qua = ket_qua_mis_di_thua_t2(mis_t2, None, df_npo)
+        assert ket_qua.loc[0, 'KET_QUA'] == KETQUA_THUONG_KHOP
+
+    def test_osb_khop_khong_bi_lech_do_doc_excel(self, tmp_path):
+        """Giống test trên nhưng nhánh OSB (so QT) — khoá tính từ cùng file .xlsx
+        TRACE/SO_TIEN dạng số."""
+        path = tmp_path / 'MIS đi thừa ngày 26.07.xlsx'
+        pd.DataFrame([{
+            'CHI_NHANH': 1240, 'SO_TIEN': 3_000_000, 'TRACE': 142755985, 'SE_TRACE': None,
+            'NGAY_KENH_TRA': '26/07/2026 10:00:00', 'LOAI_LENH_OSB': 'O',
+        }]).to_excel(path, index=False)
+        mis_t2 = doc_mis_di_thua_t2(str(path))
+        qt_di  = pd.DataFrame([_qt_row('1240', '142755985', 3_000_000)])
+        df_npo = pd.DataFrame([_npo_di_thua_row('9999', '1', 1)])
+        ket_qua = ket_qua_mis_di_thua_t2(mis_t2, qt_di, df_npo)
+        assert ket_qua.loc[0, 'KET_QUA'] == KETQUA_OSB_DI_KHOP
+
+
+class TestKetQuaMisDenThuaT2:
+    def test_mis_t2_none_tra_ve_none(self):
+        df_npo = pd.DataFrame([_npo_den_thua_row('1240', '142755985', 3_000_000)])
+        assert ket_qua_mis_den_thua_t2(None, None, df_npo) is None
+
+    def test_osb_khop_qt(self):
+        mis_t2 = pd.DataFrame([_mis_den_thua_t2_row('1240', 3_000_000, '000142755985', osb='1')])
+        qt_den = pd.DataFrame([_qt_row('1240', '142755985', 3_000_000)])
+        df_npo = pd.DataFrame([_npo_den_thua_row('9999', '1', 1)])
+        ket_qua = ket_qua_mis_den_thua_t2(mis_t2, qt_den, df_npo)
+        assert ket_qua.loc[0, 'KET_QUA'] == KETQUA_OSB_DEN_KHOP
+
+    def test_osb_khong_khop_qt(self):
+        mis_t2 = pd.DataFrame([_mis_den_thua_t2_row('1240', 3_000_000, '000142755985', osb='1')])
+        qt_den = pd.DataFrame([_qt_row('9999', '1', 1)])
+        df_npo = pd.DataFrame([_npo_den_thua_row('9999', '1', 1)])
+        ket_qua = ket_qua_mis_den_thua_t2(mis_t2, qt_den, df_npo)
+        assert ket_qua.loc[0, 'KET_QUA'] == KETQUA_OSB_DEN_CHUA
+
+    def test_osb_khong_co_file_qt(self):
+        mis_t2 = pd.DataFrame([_mis_den_thua_t2_row('1240', 3_000_000, '000142755985', osb='1')])
+        df_npo = pd.DataFrame([_npo_den_thua_row('9999', '1', 1)])
+        ket_qua = ket_qua_mis_den_thua_t2(mis_t2, None, df_npo)
+        assert ket_qua.loc[0, 'KET_QUA'] == KETQUA_KHONG_CO_QT
+
+    def test_thuong_khop_npo(self):
+        mis_t2 = pd.DataFrame([_mis_den_thua_t2_row('1240', 3_000_000, '000142755985')])
+        df_npo = pd.DataFrame([_npo_den_thua_row('1240', '142755985', 3_000_000)])
+        ket_qua = ket_qua_mis_den_thua_t2(mis_t2, None, df_npo)
+        assert ket_qua.loc[0, 'KET_QUA'] == KETQUA_THUONG_KHOP
+
+    def test_thuong_khong_khop_npo(self):
+        mis_t2 = pd.DataFrame([_mis_den_thua_t2_row('1240', 3_000_000, '000142755985')])
+        df_npo = pd.DataFrame([_npo_den_thua_row('9999', '1', 1)])
+        ket_qua = ket_qua_mis_den_thua_t2(mis_t2, None, df_npo)
+        assert ket_qua.loc[0, 'KET_QUA'] == KETQUA_THUONG_CHUA
+
+    def test_bao_toan_so_dong_ca_2_nhanh(self):
+        mis_t2 = pd.DataFrame([
+            _mis_den_thua_t2_row('1240', 3_000_000, '000142755985', osb='1'),
+            _mis_den_thua_t2_row('1300', 6_000_000, '000000111', osb='1'),
+            _mis_den_thua_t2_row('1400', 1_000_000, '000000222'),
+            _mis_den_thua_t2_row('1500', 2_000_000, '000000333'),
+        ])
+        qt_den = pd.DataFrame([_qt_row('1240', '142755985', 3_000_000)])
+        df_npo = pd.DataFrame([_npo_den_thua_row('1400', '222', 1_000_000)])
+        ket_qua = ket_qua_mis_den_thua_t2(mis_t2, qt_den, df_npo)
+        assert len(ket_qua) == len(mis_t2)
+
+    def test_thuong_khop_khong_bi_lech_do_doc_excel(self, tmp_path):
+        """Rủi ro '.0' — file T-2 chiều đến dạng .xlsx (TRACE/SO_TIEN Excel tự lưu
+        thành SỐ). Nhánh thường (so NPO) vẫn phải khớp đúng."""
+        path = tmp_path / 'MIS đến thừa ngày 26.07.xlsx'
+        pd.DataFrame([{
+            'CHI_NHANH': 1240, 'SO_TIEN': 3_000_000, 'TRACE': 142755985, 'LOAI_LENH_OSB': '',
+        }]).to_excel(path, index=False)
+        mis_t2 = doc_mis_den_thua_t2(str(path))
+        df_npo = pd.DataFrame([_npo_den_thua_row('1240', '142755985', 3_000_000)])
+        ket_qua = ket_qua_mis_den_thua_t2(mis_t2, None, df_npo)
+        assert ket_qua.loc[0, 'KET_QUA'] == KETQUA_THUONG_KHOP
+
+    def test_osb_khop_khong_bi_lech_do_doc_excel(self, tmp_path):
+        """Giống test trên nhưng nhánh OSB (so QT), file T-2 chiều đến .xlsx."""
+        path = tmp_path / 'MIS đến thừa ngày 26.07.xlsx'
+        pd.DataFrame([{
+            'CHI_NHANH': 1240, 'SO_TIEN': 3_000_000, 'TRACE': 142755985, 'LOAI_LENH_OSB': '1',
+        }]).to_excel(path, index=False)
+        mis_t2 = doc_mis_den_thua_t2(str(path))
+        qt_den = pd.DataFrame([_qt_row('1240', '142755985', 3_000_000)])
+        df_npo = pd.DataFrame([_npo_den_thua_row('9999', '1', 1)])
+        ket_qua = ket_qua_mis_den_thua_t2(mis_t2, qt_den, df_npo)
+        assert ket_qua.loc[0, 'KET_QUA'] == KETQUA_OSB_DEN_KHOP

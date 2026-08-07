@@ -27,8 +27,9 @@ from .b9_doi_chieu_osb import xu_ly_qt, doi_chieu_osb_di, doi_chieu_osb_den
 from .b10_xu_ly_npo_di_thua import tach_dien_huy
 from .b11_doi_chieu_cheo_ngay import (
     danh_dau_da_can_di, danh_dau_da_can_den, doc_mis_di_thua_t2, doc_mis_den_thua_t2,
+    ket_qua_mis_di_thua_t2, ket_qua_mis_den_thua_t2,
+    KETQUA_THUONG_KHOP, KETQUA_OSB_DI_KHOP, KETQUA_OSB_DEN_KHOP,
 )
-from .osb_common import la_lenh_osb_di, la_lenh_osb_den
 
 _COLS_NPO = _cfg.COLS_NPO
 # Điểm 4 — thêm cột ghi chú đối chiếu chéo ngày CHỈ trên sheet NPO_DI_THUA/
@@ -346,79 +347,125 @@ def xuat_excel_confirm_mis_di(output_dir: str, session_id: str, ngay_dt: datetim
     return output_path
 
 
-def _viet_tong_ket(workbook, ws, session_id, ngay_str,
+def _viet_tong_ket(workbook, ws, session_id, ngay_display, ngay_display_t2,
                    n_di_khop, s_di_khop,
                    n_npo_di_thua, s_npo_di_thua,
                    n_huy_trong_ngay, s_huy_trong_ngay,
                    n_huy_khac_ngay, s_huy_khac_ngay,
                    n_mis_di_thua, s_mis_di_thua,
                    n_timeout, s_timeout,
-                   n_gw_thua_xac_dinh, s_gw_thua_xac_dinh,
-                   n_gw_can_doi_chieu,
                    n_den_khop, s_den_khop,
                    n_npo_den_thua, s_npo_den_thua,
                    n_mis_den_thua, s_mis_den_thua,
-                   n_osb_di_thua=0, n_osb_den_thua=0,
-                   n_session_null_bi_loai=0, s_session_null_bi_loai=0):
-    fmt_label  = workbook.add_format({'bold': True, 'font_size': 10})
-    fmt_header = workbook.add_format({'bold': True, 'font_size': 10,
-                                      'bg_color': '#DDEBF7', 'border': 1})
-    fmt_num    = workbook.add_format({'font_size': 10, 'num_format': '#,##0'})
-    fmt_val    = workbook.add_format({'font_size': 10})
+                   n_gw_di, s_gw_di,
+                   n_osb_di_khop_cn, s_osb_di_khop_cn,
+                   n_osb_den_khop_cn, s_osb_den_khop_cn,
+                   s_qt_di_tong, s_qt_den_tong,
+                   n_thuong_t2_di, s_thuong_t2_di,
+                   n_osb_t2_di, s_osb_t2_di,
+                   n_thuong_t2_den, s_thuong_t2_den,
+                   n_osb_t2_den, s_osb_t2_den):
+    """Bảng tổng kết TONG_KET — layout song song 2 khối (Chiều Đi | Chiều Đến),
+    theo mẫu Business Owner cung cấp (`G:\\NGUYEN TAC DOI CHIEU ACH\\Copy of chinh
+    sua man hinh tong hop doi chieu ACH hang ngay.xlsx`, 2026-08-07). Cột A-C =
+    chiều đi, cột E-G = chiều đến (cột D để trống làm khoảng cách). Nhãn ngày
+    trong từng dòng dùng NGÀY THẬT (không phải chữ "t-1"/"t-2" tĩnh như trong file
+    mẫu — Business Owner xác nhận rõ trong phiên). Các chỉ tiêu kỹ thuật không có
+    trong mẫu (GW thừa, NPO_DI/MIS_DI thừa, SESSION_NULL_BI_LOAI) KHÔNG còn hiển
+    thị ở đây — vẫn xem được ở sheet riêng cùng tên, không mất dữ liệu."""
+    fmt_label   = workbook.add_format({'bold': True, 'font_size': 10})
+    fmt_section = workbook.add_format({'bold': True, 'font_size': 10, 'bg_color': '#DDEBF7'})
+    fmt_header  = workbook.add_format({'bold': True, 'font_size': 10, 'bg_color': '#DDEBF7', 'border': 1})
+    fmt_num     = workbook.add_format({'font_size': 10, 'num_format': '#,##0'})
+    fmt_val     = workbook.add_format({'font_size': 10})
 
-    ws.write(0, 0, 'Chỉ tiêu',           fmt_header)
-    ws.write(0, 1, 'Số giao dịch',       fmt_header)
-    ws.write(0, 2, 'Tổng số tiền (VND)', fmt_header)
-    ws.set_column(0, 0, 30); ws.set_column(1, 1, 16); ws.set_column(2, 2, 22)
+    ws.set_column(0, 0, 55); ws.set_column(1, 1, 14); ws.set_column(2, 2, 20)
+    ws.set_column(3, 3, 3)
+    ws.set_column(4, 4, 55); ws.set_column(5, 5, 14); ws.set_column(6, 6, 20)
 
-    n_npo_di       = n_di_khop + n_npo_di_thua + n_huy_trong_ngay + n_huy_khac_ngay
-    n_npo_den      = n_den_khop + n_npo_den_thua
-    n_mis_di_total = n_di_khop + n_mis_di_thua + n_timeout
+    # "Mis đi/đến" và "IPCAS" (Tổng NPO cần đối) suy ra từ các khoản đã có, không
+    # cần DataFrame gốc mới.
+    n_mis_di_tong  = n_di_khop + n_mis_di_thua + n_timeout
+    s_mis_di_tong  = s_di_khop + s_mis_di_thua + s_timeout
+    n_mis_den_tong = n_den_khop + n_mis_den_thua
+    s_mis_den_tong = s_den_khop + s_mis_den_thua
 
-    data = [
-        ('Ngày đối chiếu', ngay_str, ''),
-        ('Session',         session_id, ''),
-        ('', '', ''),
-        ('=== CHIỀU ĐI ===', '', ''),
-        ('Số GD khớp (MIS)',      n_di_khop,      s_di_khop),
-        ('NPO_DI thừa (chưa giải thích được)', n_npo_di_thua, s_npo_di_thua),
-        ('  Điện đi huỷ trong ngày (đã tách khỏi NPO_DI thừa)', n_huy_trong_ngay, s_huy_trong_ngay),
-        ('  Điện đi huỷ khác ngày (đã tách khỏi NPO_DI thừa)',  n_huy_khac_ngay,  s_huy_khac_ngay),
-        ('MIS_DI thừa',           n_mis_di_thua,  s_mis_di_thua),
-        ('  Trong đó: lệnh OSB (MIS_đi thừa) — xem file OSB riêng nếu có nạp file QT', n_osb_di_thua, ''),
-        ('Điện MIS_đi timeout không đi kênh', n_timeout, s_timeout),
-        ('  Giao dịch SESSION=NULL bị loại khỏi MIS_đi (xem sheet SESSION_NULL_BI_LOAI)',
-            n_session_null_bi_loai, s_session_null_bi_loai),
-        ('GW thừa - xác định chắc chắn (C.1a)',    n_gw_thua_xac_dinh, s_gw_thua_xac_dinh),
-        ('GW thừa - cần đối chiếu thủ công (C.1a)', n_gw_can_doi_chieu,
-            'Gồm cả dòng GW lẫn MIS cùng nhóm — xem sheet GW_CAN_DOI_CHIEU'),
-        ('Tổng NPO_DI (cần đối)', n_npo_di,
-            f'{n_di_khop:,} khớp + {n_npo_di_thua:,} thừa + {n_huy_trong_ngay:,} huỷ trong ngày + '
-            f'{n_huy_khac_ngay:,} huỷ khác ngày'),
-        ('Tổng MIS_DI (cần đối)', n_mis_di_total,
-            f'{n_di_khop:,} khớp + {n_mis_di_thua:,} thừa + {n_timeout:,} timeout không đi kênh'),
-        ('', '', ''),
-        ('=== CHIỀU ĐẾN ===', '', ''),
-        ('Số GD khớp (MIS)',       n_den_khop,     s_den_khop),
-        ('NPO_DEN thừa',           n_npo_den_thua, s_npo_den_thua),
-        ('MIS_DEN thừa',           n_mis_den_thua, s_mis_den_thua),
-        ('  Trong đó: lệnh OSB (MIS_đến thừa) — xem file OSB riêng nếu có nạp file QT', n_osb_den_thua, ''),
-        ('Tổng NPO_DEN (cần đối)', n_npo_den,
-            f'{n_den_khop:,} khớp + {n_npo_den_thua:,} thừa'),
-        ('Tổng MIS_DEN (cần đối)', n_den_khop + n_mis_den_thua,
-            f'{n_den_khop:,} khớp + {n_mis_den_thua:,} thừa'),
+    n_npo_di_tong  = n_di_khop + n_npo_di_thua + n_huy_trong_ngay + n_huy_khac_ngay
+    s_npo_di_tong  = s_di_khop + s_npo_di_thua + s_huy_trong_ngay + s_huy_khac_ngay
+    n_npo_den_tong = n_den_khop + n_npo_den_thua
+    s_npo_den_tong = s_den_khop + s_npo_den_thua
+
+    lbl_di_khop_npo  = f'Lệnh đi ngày {ngay_display} hạch toán NPO ngày {ngay_display}'
+    lbl_den_khop_npo = f'Lệnh đến ngày {ngay_display} hạch toán NPO ngày {ngay_display}'
+    lbl_di_khop_qt   = f'Lệnh OSB đi ngày {ngay_display} hạch toán QT ngày {ngay_display}'
+    lbl_den_khop_qt  = f'Lệnh OSB đến ngày {ngay_display} hạch toán QT ngày {ngay_display}'
+
+    # Mỗi dòng: (label_di, n_di, s_di, label_den, n_den, s_den). label=None → ô
+    # trống.
+    rows = [
+        (f'GW đi ngày {ngay_display}', n_gw_di, s_gw_di, None, None, None),
+        (None, None, None, None, None, None),
+        (f'Mis đi ngày {ngay_display}',  n_mis_di_tong,  s_mis_di_tong,
+         f'Mis đến ngày {ngay_display}', n_mis_den_tong, s_mis_den_tong),
+        (None, None, None, None, None, None),
+        (lbl_di_khop_npo, n_di_khop, s_di_khop, lbl_den_khop_npo, n_den_khop, s_den_khop),
+        (None, None, None, None, None, None),
+        (lbl_di_khop_qt, n_osb_di_khop_cn, s_osb_di_khop_cn,
+         lbl_den_khop_qt, n_osb_den_khop_cn, s_osb_den_khop_cn),
+        (None, None, None, None, None, None),
+        ('IPCAS', n_npo_di_tong, s_npo_di_tong, 'IPCAS', n_npo_den_tong, s_npo_den_tong),
+        (None, None, None, None, None, None),
+        # 1 dòng duy nhất mang cả nhãn lẫn số liệu T-2 (khớp mẫu cập nhật
+        # 2026-08-07: công thức đặt ở CHÍNH dòng tiêu đề, không tách dòng phụ).
+        (f'Điện thanh toán thường đi (không phải OSB) ngày {ngay_display_t2} hạch toán ngày {ngay_display}',
+         n_thuong_t2_di, s_thuong_t2_di,
+         f'Điện thanh toán thường đến (không phải OSB) ngày {ngay_display_t2} hạch toán ngày {ngay_display}',
+         n_thuong_t2_den, s_thuong_t2_den),
+        # Lặp lại Y HỆT dòng "khớp NPO cùng ngày" phía trên (cùng nhãn, cùng số
+        # liệu n_di_khop/s_di_khop) — đúng mẫu (dòng 21, giống hệt dòng 10), làm
+        # mốc so sánh ngay cạnh số liệu T-2 — KHÔNG được xoá dòng này (đã xoá
+        # nhầm 1 lần, người dùng phản hồi lại 2026-08-07: "mong muốn có hai dòng
+        # giống nhau"). Đối xứng với dòng lặp lại lbl_di_khop_qt ở mục OSB bên
+        # dưới, đã làm đúng từ đầu.
+        (lbl_di_khop_npo, n_di_khop, s_di_khop, lbl_den_khop_npo, n_den_khop, s_den_khop),
+        (f'huỷ trong ngày {ngay_display}',     n_huy_trong_ngay, s_huy_trong_ngay, None, None, None),
+        (f'huỷ khác ngày {ngay_display}',      n_huy_khac_ngay,  s_huy_khac_ngay,  None, None, None),
+        (f'TO ko đi kênh ngày {ngay_display}', n_timeout,        s_timeout,        None, None, None),
+        (None, None, None, None, None, None),
+        ('OSB', None, s_qt_di_tong, 'OSB', None, s_qt_den_tong),
+        (None, None, None, None, None, None),
+        (f'Điện OSB đi ngày {ngay_display_t2} hạch toán QT ngày {ngay_display}', n_osb_t2_di, s_osb_t2_di,
+         f'Điện OSB đến ngày {ngay_display_t2} hạch toán QT ngày {ngay_display}', n_osb_t2_den, s_osb_t2_den),
+        (lbl_di_khop_qt, n_osb_di_khop_cn, s_osb_di_khop_cn,
+         lbl_den_khop_qt, n_osb_den_khop_cn, s_osb_den_khop_cn),
     ]
 
-    for row_idx, (label, val, tien) in enumerate(data, start=1):
-        ws.write_string(row_idx, 0, label, fmt_label)
-        if isinstance(val, int):
-            ws.write(row_idx, 1, val, fmt_num)
-        else:
-            ws.write(row_idx, 1, val, fmt_val)
-        if isinstance(tien, int) and tien > 0:
-            ws.write(row_idx, 2, tien, fmt_num)
-        elif tien:
-            ws.write(row_idx, 2, tien, fmt_val)
+    ws.write_string(0, 0, 'Ngày đối chiếu', fmt_label)
+    ws.write_string(0, 1, ngay_display, fmt_val)
+    ws.write_string(1, 0, 'Session', fmt_label)
+    ws.write_string(1, 1, str(session_id), fmt_val)
+
+    ws.write(3, 1, 'Số món',  fmt_header); ws.write(3, 2, 'Số tiền', fmt_header)
+    ws.write(3, 5, 'Số món',  fmt_header); ws.write(3, 6, 'Số tiền', fmt_header)
+    ws.write_string(4, 0, 'CHIỀU ĐI',  fmt_section)
+    ws.write_string(4, 4, 'CHIỀU ĐẾN', fmt_section)
+
+    def _ghi_so(row_idx, col, val):
+        if val is None or val == '':
+            return
+        ws.write(row_idx, col, val, fmt_num)
+
+    row_idx = 6
+    for label_di, n_di, s_di, label_den, n_den, s_den in rows:
+        if label_di is not None:
+            ws.write_string(row_idx, 0, label_di, fmt_label)
+            _ghi_so(row_idx, 1, n_di)
+            _ghi_so(row_idx, 2, s_di)
+        if label_den is not None:
+            ws.write_string(row_idx, 4, label_den, fmt_label)
+            _ghi_so(row_idx, 5, n_den)
+            _ghi_so(row_idx, 6, s_den)
+        row_idx += 1
 
 
 def xuat_excel(output_path: str, session_id: str,
@@ -429,26 +476,46 @@ def xuat_excel(output_path: str, session_id: str,
                df_gw_thua_xac_dinh=None, df_gw_can_doi_chieu=None,
                df_dien_huy_trong_ngay=None, df_dien_huy_khac_ngay=None,
                df_session_null_bi_loai=None,
+               df_osb_di_khop=None, df_osb_den_khop=None,
+               df_qt_di=None, df_qt_den=None,
+               df_ketqua_di_t2=None, df_ketqua_den_t2=None,
                log_callback=None):
 
-    output_dir   = os.path.dirname(os.path.abspath(output_path))
-    ngay_str     = os.path.basename(output_path).replace('doi_chieu_', '').replace('.xlsx', '')
-    ngay_display = datetime.strptime(ngay_str, '%Y%m%d').strftime('%d/%m/%Y')
+    output_dir      = os.path.dirname(os.path.abspath(output_path))
+    ngay_str        = os.path.basename(output_path).replace('doi_chieu_', '').replace('.xlsx', '')
+    ngay_dt_local   = datetime.strptime(ngay_str, '%Y%m%d')
+    ngay_display    = ngay_dt_local.strftime('%d/%m/%Y')
+    ngay_display_t2 = (ngay_dt_local - timedelta(days=1)).strftime('%d/%m/%Y')
     df_gw_clean  = df_gw_raw.drop(columns=['KEY_GW'], errors='ignore') if df_gw_raw is not None else None
     df_gw_thua_xac_dinh_clean = (
         df_gw_thua_xac_dinh.drop(columns=['KEY_GW'], errors='ignore')
         if df_gw_thua_xac_dinh is not None else None
     )
-    # C2 (sign-off mục 60) — chỉ ĐẾM lệnh OSB nằm trong MIS thừa, không đổi số liệu
-    # chính; đối chiếu OSB thật (khớp/thừa) nằm ở file riêng `xuat_excel_osb()`.
-    n_osb_di_thua  = (
-        int(la_lenh_osb_di(df_mis_di_thua).sum())
-        if df_mis_di_thua is not None and len(df_mis_di_thua) else 0
-    )
-    n_osb_den_thua = (
-        int(la_lenh_osb_den(df_mis_den_thua).sum())
-        if df_mis_den_thua is not None and len(df_mis_den_thua) else 0
-    )
+
+    # TONG_KET theo mẫu mới (2026-08-07) — số liệu OSB khớp cùng ngày, tổng QT, và
+    # kết quả đối chiếu chéo ngày T-2, tính từ DataFrame đã có sẵn ở nơi gọi.
+    n_gw_di = len(df_gw_raw) if df_gw_raw is not None else 0
+    s_gw_di = _tong_tien(df_gw_raw, 'STTLMAMT')
+
+    n_osb_di_khop_cn  = len(df_osb_di_khop)  if df_osb_di_khop  is not None else 0
+    s_osb_di_khop_cn  = _tong_tien(df_osb_di_khop,  'SO_TIEN')
+    n_osb_den_khop_cn = len(df_osb_den_khop) if df_osb_den_khop is not None else 0
+    s_osb_den_khop_cn = _tong_tien(df_osb_den_khop, 'SO_TIEN')
+
+    s_qt_di_tong  = _tong_tien(df_qt_di,  'SO_TIEN')
+    s_qt_den_tong = _tong_tien(df_qt_den, 'SO_TIEN')
+
+    def _dem_tong_ket_qua(df, nhan):
+        if df is None or len(df) == 0:
+            return 0, 0
+        m = df['KET_QUA'] == nhan
+        return int(m.sum()), _tong_tien(df[m], 'SO_TIEN')
+
+    n_thuong_t2_di,  s_thuong_t2_di  = _dem_tong_ket_qua(df_ketqua_di_t2,  KETQUA_THUONG_KHOP)
+    n_osb_t2_di,     s_osb_t2_di     = _dem_tong_ket_qua(df_ketqua_di_t2,  KETQUA_OSB_DI_KHOP)
+    n_thuong_t2_den, s_thuong_t2_den = _dem_tong_ket_qua(df_ketqua_den_t2, KETQUA_THUONG_KHOP)
+    n_osb_t2_den,    s_osb_t2_den    = _dem_tong_ket_qua(df_ketqua_den_t2, KETQUA_OSB_DEN_KHOP)
+
     df_gw_can_doi_chieu_clean = (
         df_gw_can_doi_chieu.drop(columns=['KEY_GW', 'CN tiền Hub'], errors='ignore')
         if df_gw_can_doi_chieu is not None else None
@@ -496,7 +563,7 @@ def xuat_excel(output_path: str, session_id: str,
             ws.set_tab_color(color)
             if sheet_name == 'TONG_KET':
                 _viet_tong_ket(
-                    workbook, ws, session_id, ngay_display,
+                    workbook, ws, session_id, ngay_display, ngay_display_t2,
                     len(df_mis_di_khop)  if df_mis_di_khop  is not None else 0,
                     _tong_tien(df_mis_di_khop,   'SO_TIEN'),
                     len(df_npo_di_thua)  if df_npo_di_thua  is not None else 0,
@@ -509,21 +576,20 @@ def xuat_excel(output_path: str, session_id: str,
                     _tong_tien(df_mis_di_thua,   'SO_TIEN'),
                     len(df_timeout)      if df_timeout      is not None else 0,
                     _tong_tien(df_timeout,        'SO_TIEN'),
-                    len(df_gw_thua_xac_dinh) if df_gw_thua_xac_dinh is not None else 0,
-                    _tong_tien(df_gw_thua_xac_dinh, 'STTLMAMT'),
-                    len(df_gw_can_doi_chieu) if df_gw_can_doi_chieu is not None else 0,
                     len(df_mis_den_khop) if df_mis_den_khop is not None else 0,
                     _tong_tien(df_mis_den_khop,  'SO_TIEN'),
                     len(df_npo_den_thua) if df_npo_den_thua is not None else 0,
                     _tong_tien(df_npo_den_thua,  'DRAMOUNT'),
                     len(df_mis_den_thua) if df_mis_den_thua is not None else 0,
                     _tong_tien(df_mis_den_thua,  'SO_TIEN'),
-                    n_osb_di_thua=n_osb_di_thua,
-                    n_osb_den_thua=n_osb_den_thua,
-                    n_session_null_bi_loai=(
-                        len(df_session_null_bi_loai) if df_session_null_bi_loai is not None else 0
-                    ),
-                    s_session_null_bi_loai=_tong_tien(df_session_null_bi_loai, 'SO_TIEN'),
+                    n_gw_di, s_gw_di,
+                    n_osb_di_khop_cn, s_osb_di_khop_cn,
+                    n_osb_den_khop_cn, s_osb_den_khop_cn,
+                    s_qt_di_tong, s_qt_den_tong,
+                    n_thuong_t2_di, s_thuong_t2_di,
+                    n_osb_t2_di, s_osb_t2_di,
+                    n_thuong_t2_den, s_thuong_t2_den,
+                    n_osb_t2_den, s_osb_t2_den,
                 )
             elif sheet_name == 'DIEN_DI_HUY_KHAC_NGAY':
                 _viet_sheet_co_tong(workbook, ws, df, color, 'CRAMOUNT')
@@ -634,6 +700,55 @@ def xuat_excel_osb(output_dir: str, session_id: str, ngay_dt: datetime,
 
     workbook.close()
     _log(f'[DONE] File OSB: {output_path}')
+    return output_path
+
+
+# ─── Báo cáo "KẾT QUẢ" đối chiếu MIS thừa T-2 (docx nghiệp vụ NGUYEN TAC DOI ──
+# CHIEU DIEN MIS THUA NGAY T-1, 2026-08-07) — xuất RIÊNG khỏi doi_chieu_<ngày>
+# .xlsx chính, giống Điểm 2/OSB. Góc nhìn NGƯỢC với cột GHI_CHU_T2 (Điểm 4): gắn
+# nhãn lên chính MIS thừa T-2, không phải lên NPO thừa T-1.
+
+def xuat_excel_mis_thua_t2(output_dir: str, ngay_dt: datetime,
+                           df_ketqua_di=None, df_ketqua_den=None,
+                           log_callback=None) -> str | None:
+    """Trả None nếu cả 2 df đều None/rỗng (không có gì để báo cáo, không tạo file
+    thừa — đối xứng cách `xuat_excel_osb()` chỉ gọi khi có QT)."""
+    _log = log_callback or print
+    sheets_data = [
+        ('MIS_DI_THUA_T2_KETQUA',  df_ketqua_di),
+        ('MIS_DEN_THUA_T2_KETQUA', df_ketqua_den),
+    ]
+    if all(df is None or len(df) == 0 for _, df in sheets_data):
+        return None
+
+    ngay_str    = ngay_dt.strftime('%Y%m%d')
+    output_path = os.path.join(output_dir, f'{ngay_str}_ACH_MISThuaT2.xlsx')
+
+    workbook   = xlsxwriter.Workbook(output_path, {'strings_to_numbers': False})
+    csv_writes = []
+
+    with ThreadPoolExecutor(max_workers=2) as csv_pool:
+        for sheet_name, df in sheets_data:
+            ws = workbook.add_worksheet(sheet_name)
+            ws.set_tab_color(_CAM)
+            if df is not None and len(df) > CSV_THRESHOLD:
+                csv_path = os.path.join(output_dir, f'{sheet_name}_{ngay_str}.csv')
+                fut      = csv_pool.submit(df.to_csv, csv_path, index=False, encoding='utf-8-sig')
+                csv_writes.append((sheet_name, csv_path, fut))
+                ws.write(0, 0, f'[Dữ liệu lớn - xem file: {os.path.basename(csv_path)}]')
+                ws.write(1, 0, f'Tổng số dòng: {len(df):,}')
+                ws.write(2, 0, 'LƯU Ý: Mở file CSV qua Excel > Data > Từ Văn bản/CSV (không double-click trực tiếp).')
+                _log(f'[CSV] {sheet_name}: {len(df):,} dòng → đang ghi nền...')
+                continue
+            _viet_sheet(workbook, ws, df, _CAM)
+
+        workbook.close()
+
+    for name, path, fut in csv_writes:
+        fut.result()
+        _log(f'       CSV  : {path}  ({name})')
+
+    _log(f'[DONE] File KẾT QUẢ MIS thừa T-2: {output_path}')
     return output_path
 
 
@@ -857,6 +972,13 @@ def main_from_dir(input_dir: str, output_dir: str,
     df_npo_di_thua  = danh_dau_da_can_di(df_npo_di_thua,  df_mis_di_thua_t2,  log_callback)
     df_npo_den_thua = danh_dau_da_can_den(df_npo_den_thua, df_mis_den_thua_t2, log_callback)
 
+    # Báo cáo "KẾT QUẢ" (docx NGUYEN TAC DOI CHIEU DIEN MIS THUA NGAY T-1,
+    # 2026-08-07) — góc nhìn ngược với GHI_CHU_T2: gắn nhãn lên chính MIS thừa T-2.
+    # Dòng OSB so QT ngày T-1 (df_qt_di/den đã đọc ở khối Điểm 2 bên dưới), dòng
+    # thường so NPO thừa ngày T-1 (df_npo_..._thua vừa tính xong ở trên, sau Điểm 3).
+    df_ketqua_di_t2  = ket_qua_mis_di_thua_t2(df_mis_di_thua_t2,  df_qt_di,  df_npo_di_thua,  log_callback)
+    df_ketqua_den_t2 = ket_qua_mis_den_thua_t2(df_mis_den_thua_t2, df_qt_den, df_npo_den_thua, log_callback)
+
     # Điểm 2 — đối chiếu lệnh OSB (đi & đến) qua QT, độc lập hoàn toàn với Điểm
     # 3/4 (dùng df_mis_di_thua/df_mis_den_thua, không đụng df_npo_..._thua). Không
     # có file QT nào → bỏ qua hẳn, không tạo file OSB.
@@ -887,6 +1009,9 @@ def main_from_dir(input_dir: str, output_dir: str,
         df_dien_huy_trong_ngay=df_dien_huy_trong_ngay,
         df_dien_huy_khac_ngay=df_dien_huy_khac_ngay,
         df_session_null_bi_loai=df_session_null_bi_loai,
+        df_osb_di_khop=df_osb_di_khop, df_osb_den_khop=df_osb_den_khop,
+        df_qt_di=df_qt_di, df_qt_den=df_qt_den,
+        df_ketqua_di_t2=df_ketqua_di_t2, df_ketqua_den_t2=df_ketqua_den_t2,
         log_callback=log_callback,
     )
 
@@ -895,6 +1020,11 @@ def main_from_dir(input_dir: str, output_dir: str,
             output_dir, session_id, ngay_dt,
             df_osb_di_khop, df_di_chua_khop, df_osb_den_khop, df_den_chua_khop,
             log_callback,
+        )
+
+    if df_ketqua_di_t2 is not None or df_ketqua_den_t2 is not None:
+        xuat_excel_mis_thua_t2(
+            output_dir, ngay_dt, df_ketqua_di_t2, df_ketqua_den_t2, log_callback,
         )
 
     log(f'[TIMING] Phase 3 Excel: {time.perf_counter()-_t2:.1f}s')

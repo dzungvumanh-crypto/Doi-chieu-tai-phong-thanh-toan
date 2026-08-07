@@ -11,6 +11,7 @@ import pandas as pd
 import openpyxl
 
 from backend.services.ach.pipeline import xuat_excel
+from backend.services.ach.b11_doi_chieu_cheo_ngay import KETQUA_THUONG_KHOP
 
 
 def _synthetic_dfs():
@@ -107,7 +108,9 @@ def test_gw_thua_sheets_drop_internal_key_columns(tmp_path):
 
 
 def test_tong_ket_reports_gw_thua_counts(tmp_path):
-    """TONG_KET phải hiển thị đúng số dòng GW thừa xác định + cần đối chiếu thủ công."""
+    """GW thừa xác định + cần đối chiếu thủ công không còn tóm tắt trên TONG_KET
+    (mẫu mới 2026-08-07 không có 2 dòng này) — vẫn phải đọc được đầy đủ số dòng ở
+    sheet riêng GW_THUA_XAC_DINH/GW_CAN_DOI_CHIEU (dữ liệu không mất)."""
     dfs = _synthetic_dfs()
     output_path = str(tmp_path / 'doi_chieu_20260723.xlsx')
 
@@ -118,11 +121,8 @@ def test_tong_ket_reports_gw_thua_counts(tmp_path):
                df_gw_can_doi_chieu=dfs['df_gw_can_doi_chieu'])
 
     wb = openpyxl.load_workbook(output_path)
-    ws = wb['TONG_KET']
-    rows = {row[0].value: row[1].value for row in ws.iter_rows(min_row=2) if row[0].value}
-
-    assert rows['GW thừa - xác định chắc chắn (C.1a)'] == len(dfs['df_gw_thua_xac_dinh'])
-    assert rows['GW thừa - cần đối chiếu thủ công (C.1a)'] == len(dfs['df_gw_can_doi_chieu'])
+    assert wb['GW_THUA_XAC_DINH'].max_row - 1 == len(dfs['df_gw_thua_xac_dinh'])
+    assert wb['GW_CAN_DOI_CHIEU'].max_row - 1 == len(dfs['df_gw_can_doi_chieu'])
 
 
 def test_xuat_excel_khong_co_gw_thua_van_chay_duoc(tmp_path):
@@ -138,10 +138,8 @@ def test_xuat_excel_khong_co_gw_thua_van_chay_duoc(tmp_path):
     wb = openpyxl.load_workbook(output_path)
     assert 'GW_THUA_XAC_DINH' in wb.sheetnames
     assert 'GW_CAN_DOI_CHIEU' in wb.sheetnames
-    ws = wb['TONG_KET']
-    rows = {row[0].value: row[1].value for row in ws.iter_rows(min_row=2) if row[0].value}
-    assert rows['GW thừa - xác định chắc chắn (C.1a)'] == 0
-    assert rows['GW thừa - cần đối chiếu thủ công (C.1a)'] == 0
+    assert wb['GW_THUA_XAC_DINH']['A1'].value == '(Không có dữ liệu)'
+    assert wb['GW_CAN_DOI_CHIEU']['A1'].value == '(Không có dữ liệu)'
 
 
 # ── Điểm 3 (2026-07-31) — sheet DIEN_DI_HUY_TRONG_NGAY / DIEN_DI_HUY_KHAC_NGAY ──
@@ -182,8 +180,9 @@ def test_dien_huy_khac_ngay_co_dong_tong(tmp_path):
 
 
 def test_tong_ket_tach_dien_huy_khoi_npo_di_thua(tmp_path):
-    """TONG_KET phải hiển thị đúng số dòng huỷ trong ngày/khác ngày, và Tổng NPO_DI
-    phải cộng đủ cả 2 khoản huỷ (bảo toàn số học)."""
+    """TONG_KET (mẫu mới) phải hiển thị đúng số dòng huỷ trong ngày/khác ngày dưới
+    nhãn có ngày thật, và dòng 'IPCAS' (thay cho 'Tổng NPO_DI (cần đối)' cũ) phải
+    cộng đủ cả 2 khoản huỷ (bảo toàn số học)."""
     dfs = _synthetic_dfs()
     output_path = str(tmp_path / 'doi_chieu_20260731.xlsx')
 
@@ -197,17 +196,16 @@ def test_tong_ket_tach_dien_huy_khoi_npo_di_thua(tmp_path):
     ws = wb['TONG_KET']
     rows = {row[0].value: row[1].value for row in ws.iter_rows(min_row=2) if row[0].value}
 
-    assert rows['  Điện đi huỷ trong ngày (đã tách khỏi NPO_DI thừa)'] == 2
-    assert rows['  Điện đi huỷ khác ngày (đã tách khỏi NPO_DI thừa)'] == 1
-    # NPO_DI thừa (1 dòng, CRAMOUNT=500_000 từ _synthetic_dfs) + 2 huỷ trong ngày
-    # + 1 huỷ khác ngày = 4, cộng thêm 0 dòng khớp (không truyền n_di_khop thật ở
-    # test này, df_mis_di_khop chỉ có cột CHI_NHANH/SO_TIEN không phải MSGREF khớp
-    # đúng nghĩa) — kiểm tra đúng phép cộng của Tổng NPO_DI theo giá trị hiện có.
+    ngay_display = '31/07/2026'
+    assert rows[f'huỷ trong ngày {ngay_display}'] == 2
+    assert rows[f'huỷ khác ngày {ngay_display}'] == 1
+    # IPCAS (đi) = n_di_khop + n_npo_di_thua + n_huy_trong_ngay + n_huy_khac_ngay —
+    # đúng công thức "Tổng NPO_DI (cần đối)" cũ, chỉ đổi tên hiển thị.
     n_di_khop = len(dfs['df_mis_di_khop'])
     n_npo_di_thua = len(dfs['df_npo_di_thua'])
     n_huy_trong_ngay = len(dfs['df_dien_huy_trong_ngay'])
     n_huy_khac_ngay = len(dfs['df_dien_huy_khac_ngay'])
-    assert rows['Tổng NPO_DI (cần đối)'] == n_di_khop + n_npo_di_thua + n_huy_trong_ngay + n_huy_khac_ngay
+    assert rows['IPCAS'] == n_di_khop + n_npo_di_thua + n_huy_trong_ngay + n_huy_khac_ngay
 
 
 # ── Điểm 4 (2026-07-31) — cột GHI_CHU_T2 trên NPO_DI_THUA/NPO_DEN_THUA ─────────
@@ -278,6 +276,9 @@ def test_session_null_bi_loai_sheet_xuat_hien_va_co_du_lieu(tmp_path):
 
 
 def test_tong_ket_bao_cao_so_luong_session_null_bi_loai(tmp_path):
+    """Số dòng SESSION=NULL bị loại không còn tóm tắt trên TONG_KET (mẫu mới
+    2026-08-07 không có dòng này) — vẫn đọc được đầy đủ ở sheet riêng
+    SESSION_NULL_BI_LOAI (dữ liệu không mất)."""
     dfs = _synthetic_dfs()
     df_bi_loai = pd.DataFrame({
         'REFHUB': ['R1', 'R2'], 'SO_TIEN': [999_000, 111_000],
@@ -291,14 +292,13 @@ def test_tong_ket_bao_cao_so_luong_session_null_bi_loai(tmp_path):
                df_session_null_bi_loai=df_bi_loai)
 
     wb = openpyxl.load_workbook(output_path)
-    ws = wb['TONG_KET']
-    rows = {row[0].value: row[1].value for row in ws.iter_rows(min_row=2) if row[0].value}
-    assert rows['  Giao dịch SESSION=NULL bị loại khỏi MIS_đi (xem sheet SESSION_NULL_BI_LOAI)'] == 2
+    assert wb['SESSION_NULL_BI_LOAI'].max_row - 1 == 2
 
 
 def test_khong_co_session_null_bi_loai_van_chay_duoc(tmp_path):
     """Không truyền df_session_null_bi_loai (None mặc định, hoặc DataFrame rỗng) —
-    Excel vẫn xuất được, TONG_KET hiện 0, không lỗi."""
+    Excel vẫn xuất được, sheet SESSION_NULL_BI_LOAI hiện '(Không có dữ liệu)',
+    không lỗi."""
     dfs = _synthetic_dfs()
     output_path = str(tmp_path / 'doi_chieu_20260804.xlsx')
 
@@ -308,6 +308,46 @@ def test_khong_co_session_null_bi_loai_van_chay_duoc(tmp_path):
 
     wb = openpyxl.load_workbook(output_path)
     assert 'SESSION_NULL_BI_LOAI' in wb.sheetnames
-    ws = wb['TONG_KET']
-    rows = {row[0].value: row[1].value for row in ws.iter_rows(min_row=2) if row[0].value}
-    assert rows['  Giao dịch SESSION=NULL bị loại khỏi MIS_đi (xem sheet SESSION_NULL_BI_LOAI)'] == 0
+    assert wb['SESSION_NULL_BI_LOAI']['A1'].value == '(Không có dữ liệu)'
+
+
+# ── TONG_KET mẫu mới (2026-08-07, đã cập nhật lại theo đúng file mẫu) ─────────
+# Cấu trúc đúng cho mục "Điện thường T-2 hạch toán T-1" (đối xứng hệt mục "Điện
+# OSB T-2" — đã làm đúng từ đầu):
+#   1. 1 dòng DUY NHẤT mang cả nhãn "Điện thanh toán thường đi... ngày T-2 hạch
+#      toán ngày T-1" lẫn số liệu T-2 thật (không tách dòng tiêu đề riêng).
+#   2. NGAY SAU đó là dòng LẶP LẠI y hệt dòng "khớp NPO cùng ngày" phía trên
+#      (cùng nhãn "Lệnh đi ngày T-1 hạch toán NPO ngày T-1", cùng số liệu
+#      n_di_khop/s_di_khop) — KHÔNG được xoá (đã xoá nhầm 1 lần trong phiên,
+#      người dùng phản hồi lại: "mong muốn có hai dòng giống nhau").
+
+def test_dong_dien_thuong_t2_gop_1_dong_va_lap_lai_dong_khop_npo(tmp_path):
+    dfs = _synthetic_dfs()
+    df_ketqua_di_t2 = pd.DataFrame({
+        'SO_TIEN': [100_000], 'KET_QUA': [KETQUA_THUONG_KHOP],
+    })
+    output_path = str(tmp_path / 'doi_chieu_20260803.xlsx')
+
+    xuat_excel(output_path, '16454', dfs['df_mis_di_khop'], dfs['df_npo_di_thua'],
+               dfs['df_mis_di_thua'], dfs['df_timeout'], dfs['df_mis_den_khop'],
+               dfs['df_npo_den_thua'], dfs['df_mis_den_thua'], dfs['df_gw_raw'],
+               df_ketqua_di_t2=df_ketqua_di_t2)
+
+    wb = openpyxl.load_workbook(output_path)
+    all_rows = [(row[0].value, row[1].value, row[2].value)
+                for row in wb['TONG_KET'].iter_rows(min_row=2) if row[0].value]
+
+    nhan_dien_thuong_t2 = ('Điện thanh toán thường đi (không phải OSB) ngày '
+                           '02/08/2026 hạch toán ngày 03/08/2026')
+    nhan_khop_cung_ngay = 'Lệnh đi ngày 03/08/2026 hạch toán NPO ngày 03/08/2026'
+    nhan_phu_cu_sai     = 'Lệnh đi ngày 02/08/2026 hạch toán NPO ngày 03/08/2026'
+
+    # Dòng "Điện thường T-2" mang đúng số liệu ngay trên chính nó.
+    assert (nhan_dien_thuong_t2, 1, 100_000) in all_rows
+    # Dòng "khớp NPO cùng ngày" xuất hiện ĐÚNG 2 LẦN — hai dòng giống nhau, cùng
+    # số liệu thật (n_di_khop=1, s_di_khop=1_000_000 theo _synthetic_dfs).
+    lan_xuat_hien = [r for r in all_rows if r[0] == nhan_khop_cung_ngay]
+    assert lan_xuat_hien == [(nhan_khop_cung_ngay, 1, 1_000_000)] * 2
+    # Nhãn sai đã xoá ở lần sửa trước (ngày T-2 lẫn vào vế "hạch toán NPO") —
+    # không được tái xuất hiện.
+    assert nhan_phu_cu_sai not in [r[0] for r in all_rows]
