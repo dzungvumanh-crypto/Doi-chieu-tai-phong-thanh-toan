@@ -54,9 +54,12 @@ STORAGE_SECRET=<giá trị 2>   # khoá ký cookie phiên (frontend)
 Chạy thật trên mạng nội bộ thì đặt thêm (xem mục [Truy cập LAN](#truy-cập-lan-nhiều-người-dùng)):
 
 ```ini
-ENV=production                                  # tắt /docs, /redoc
-ALLOWED_ORIGINS=http://192.168.1.100:8080       # IP thật của máy chủ
+ENV=production                                  # tắt /docs, /redoc, /openapi.json
 ```
+
+> `ALLOWED_ORIGINS` **chỉ cần khi có máy khác gọi thẳng cổng 8000 từ trình duyệt.** Với
+> `BACKEND_HOST=127.0.0.1` (mặc định `start.bat` sinh ra) thì không cần đặt: trình duyệt
+> chỉ nói chuyện với frontend cổng 8080, CORS không tham gia vào đường đi nào cả.
 
 Hai biến tuỳ chọn liên quan đến hiệu năng và mức độ kín của backend:
 
@@ -71,8 +74,13 @@ BACKEND_HOST=127.0.0.1              # địa chỉ backend lắng nghe
 > cũng được — mặc định trong code đã là `127.0.0.1`.
 
 > `BACKEND_HOST=127.0.0.1` kín hơn: trình duyệt người dùng chỉ nói chuyện với frontend
-> cổng 8080, không bao giờ chạm cổng 8000. Chỉ đặt khi chắc chắn **không có máy nào khác
-> gọi thẳng API**. Mặc định `0.0.0.0` (nghe mọi giao diện).
+> cổng 8080, không bao giờ chạm cổng 8000. Extension CITAD cũng đi qua proxy cổng 8080.
+> Chỉ đổi sang `0.0.0.0` khi chắc chắn **có máy khác gọi thẳng API** — và khi đó phải đặt
+> luôn `ALLOWED_ORIGINS`.
+>
+> `start.bat` sinh `.env` mới với `127.0.0.1`, và `deploy.bat` kiểm tra rồi hỏi sửa khi
+> máy đích đang để `0.0.0.0`. Mặc định trong code (khi `.env` không có dòng này) vẫn là
+> `0.0.0.0` — nên cứ ghi rõ ra `.env` thay vì dựa vào mặc định.
 
 ### 5. Chạy hệ thống
 
@@ -82,7 +90,9 @@ python run.py
 
 Truy cập:
 - **Giao diện web**: http://localhost:8080
-- **API docs**: http://localhost:8000/docs
+- **API docs**: http://localhost:8000/docs — chỉ khi `ENV=development`. Ở `production`
+  cả `/docs`, `/redoc` và `/openapi.json` đều trả 404; cần xem để gỡ lỗi thì đặt
+  `ENABLE_API_DOCS=1`, **không** hạ `ENV` xuống `development`
 - **Từ máy khác trong LAN**: http://[IP-máy-chủ]:8080
 
 > **Windows — dùng `start.bat`.** Script tự kiểm tra `.venv` và **vá tại chỗ** (~2 giây) khi thư mục dự án
@@ -413,14 +423,18 @@ netsh advfirewall firewall add rule name="TTTT" dir=in action=allow protocol=TCP
 
 Người dùng khác truy cập: `http://[IP-máy-chủ]:8080`
 
-Đặt trong `.env` — quên là máy khác bị CORS chặn, và trang liệt kê toàn bộ endpoint bị mở công khai:
+Đặt trong `.env` — quên là trang liệt kê toàn bộ endpoint bị mở công khai ra mạng:
 
 ```ini
-ALLOWED_ORIGINS=http://192.168.1.100:8080    # thay bằng IP thật, nhiều giá trị cách nhau dấu phẩy
-ENV=production                               # tắt /docs và /redoc
+BACKEND_HOST=127.0.0.1                       # cổng backend chỉ nghe trong máy chủ
+ENV=production                               # tắt /docs, /redoc, /openapi.json
 ```
 
+Chỉ thêm `ALLOWED_ORIGINS=http://192.168.1.100:8080` khi thật sự phải để `BACKEND_HOST=0.0.0.0`
+cho một hệ thống khác gọi thẳng API — nhiều giá trị cách nhau dấu phẩy.
+
 Backend tự **cảnh báo trong log khi khởi động** nếu đang lắng nghe trên mạng mà hai biến này chưa đặt đúng.
+`deploy.bat` cũng kiểm `.env` của máy đích ở bước 1/7 và hỏi trước khi sửa, nên không phải nhớ thủ công.
 
 ---
 

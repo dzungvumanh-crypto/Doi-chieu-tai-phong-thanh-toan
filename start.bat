@@ -9,6 +9,11 @@ set "VENV_PY=.venv\Scripts\python.exe"
 where py >nul 2>&1 && set "PY=py" || set "PY=python"
 
 :: ── Tao .env voi SECRET_KEY + STORAGE_SECRET ngau nhien neu chua co ──
+:: BACKEND_HOST=127.0.0.1: cong backend khong can lo ra mang -- trinh duyet chi
+:: vao cong frontend, Extension CITAD di qua proxy cung cong do. Doi 0.0.0.0 chi
+:: khi that su co may khac goi thang API, va khi do PHAI dat them ALLOWED_ORIGINS.
+:: ENV=production tat /docs, /redoc, /openapi.json -- can xem de go loi thi them
+:: ENABLE_API_DOCS=1, dung ha ENV xuong development.
 if not exist ".env" (
     echo [!] Khong tim thay file .env. Dang tao moi voi khoa ngau nhien...
     for /f "delims=" %%K in ('%PY% -c "import secrets; print(secrets.token_hex(32))"') do set "NEWKEY=%%K"
@@ -16,9 +21,10 @@ if not exist ".env" (
     (
         echo SECRET_KEY=!NEWKEY!
         echo STORAGE_SECRET=!NEWSS!
-        echo BACKEND_HOST=0.0.0.0
+        echo BACKEND_HOST=127.0.0.1
         echo BACKEND_PORT=8000
         echo FRONTEND_PORT=8080
+        echo ENV=production
     ) > ".env"
     echo [OK] Da tao .env. Giu file nay bi mat va KHONG commit len git.
     echo.

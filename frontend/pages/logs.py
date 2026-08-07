@@ -82,10 +82,14 @@ async def logs_page():
                             f"text-xs font-medium px-2 py-0.5 rounded border {badge_cls} w-24 shrink-0 text-center mt-0.5"
                         )
                         ui.label(e.get("logger", "")).classes("text-xs font-mono w-48 shrink-0 text-gray-500 truncate mt-0.5")
+                        # Log nhiều dòng (traceback) chỉ khác ở chỗ giữ nguyên xuống dòng —
+                        # `whitespace-pre-wrap` làm được việc đó trên chính ui.label, không cần
+                        # thẻ <pre>. Bản cũ dùng ui.element("pre").set_text(): Element không có
+                        # set_text (chỉ ui.label mới có) nên trang vỡ ĐÚNG LÚC có traceback để đọc.
                         if "\n" in msg:
-                            ui.element("pre").classes(
+                            ui.label(msg).classes(
                                 "text-xs font-mono flex-1 whitespace-pre-wrap break-all text-gray-800 leading-5"
-                            ).style("margin:0;background:transparent").set_text(msg)
+                            )
                         else:
                             ui.label(msg).classes("text-xs flex-1 break-all text-gray-800")
 
