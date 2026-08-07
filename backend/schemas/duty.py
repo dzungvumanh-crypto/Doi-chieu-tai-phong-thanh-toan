@@ -21,14 +21,12 @@ class DutyStaffOut(BaseModel):
     role: str            # user_tttt.role (truong_phong, pho_phong, chuyen_vien)
     duty_role: str       # LD | NV (derived)
     can_do_sp: int = 0
-    is_sp_backup: int = 0
     is_on_project: int = 0
     display_order: int = 999
 
 
 class DutyStaffMetaIn(BaseModel):
     can_do_sp: Optional[int] = None
-    is_sp_backup: Optional[int] = None
     is_on_project: Optional[int] = None
     display_order: Optional[int] = None
 

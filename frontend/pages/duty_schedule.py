@@ -5,18 +5,9 @@ from datetime import date, timedelta
 
 from nicegui import ui
 import frontend.api_client as api
-import frontend.ui_kit as ui_kit
 from frontend.shared import (
     _sidebar, _content_area, _page_header, _require_auth, _handle_api_error,
 )
-
-_SHIFT_TYPE_LABEL = {
-    "normal":          "Thường",
-    "friday":          "Thứ 6",
-    "cutoff":          "Cut-off",
-    "settlement_main": "Quyết toán (chính)",
-    "settlement_sub":  "Quyết toán (phụ)",
-}
 
 _TYPE_ROW_COLOR = {
     "normal":          "#EFF6FF",
@@ -36,6 +27,8 @@ _SPECIAL_COLOR = {
 _TH = "px-3 py-2 text-left font-medium border border-red-700 bg-red-800 text-white text-sm"
 _TD = "px-3 py-2 border border-gray-200 text-sm"
 
+_THU_VN = ["Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu"]
+
 
 def _week_start(d: date) -> date:
     return d - timedelta(days=d.weekday())
@@ -49,6 +42,25 @@ def _fmt_week_label(ws: date) -> str:
 def _h(s) -> str:
     """HTML-escape để tránh XSS khi render dữ liệu user."""
     return _html.escape(str(s or ""))
+
+
+def _ten_kem_sp(p: dict, la_sp: bool) -> str:
+    """Tên người trực; đánh dấu (SP) cho người xử lý song phương của ca.
+    Nhãn (SP) chỉ phục vụ giai đoạn đang phân lịch — gỡ khi chốt chương trình."""
+    ten = _h((p or {}).get("full_name", ""))
+    return f'{ten} <span class="text-blue-700 font-medium">(SP)</span>' if la_sp else ten
+
+
+def _nhan_trang_thai(shifts: list) -> str:
+    """Trạng thái tuần hiển thị cạnh tiêu đề — thay cho cột 'Trạng thái' đã bỏ khỏi bảng."""
+    if not shifts:
+        return ' <span class="text-gray-500 font-normal">— chưa có lịch</span>'
+    da_xn = sum(1 for s in shifts if s["status"] == "confirmed")
+    if da_xn == len(shifts):
+        return ' <span class="text-green-700">— đã xác nhận</span>'
+    if da_xn == 0:
+        return ' <span class="text-orange-600">— bản thảo</span>'
+    return f' <span class="text-orange-600">— đã xác nhận {da_xn}/{len(shifts)} ca</span>'
 
 
 @ui.page("/duty_schedule")
@@ -87,12 +99,12 @@ async def duty_schedule_page():
             # ════════════════════════════════════════════════════
             with ui.tab_panel(tab_schedule):
                 ws_ref = {"value": _week_start(date.today())}
-                week_label = ui.label("").classes("text-base font-semibold text-red-800 my-1")
+                week_label = ui.html("").classes("text-base font-semibold text-red-800 my-1")
                 schedule_area = ui.column().classes("w-full gap-1")
 
                 async def load_schedule():
                     ws = ws_ref["value"]
-                    week_label.set_text(_fmt_week_label(ws))
+                    week_label.set_content(_fmt_week_label(ws))
                     schedule_area.clear()
                     try:
                         shifts = await asyncio.to_thread(
@@ -104,36 +116,45 @@ async def duty_schedule_page():
                             return
                         return
 
+                    week_label.set_content(_fmt_week_label(ws) + _nhan_trang_thai(shifts))
+
                     with schedule_area:
-                        if not shifts:
-                            ui.label("Chưa có lịch trực tuần này. Nhấn 'Tạo lịch' để sinh tự động.").classes(
-                                "text-gray-500 italic py-4"
-                            )
-                            return
+                        # Gom ca theo ngày — bảng luôn dựng đủ 5 hàng T2→T6
+                        theo_ngay: dict = {}
+                        for s in shifts:
+                            theo_ngay.setdefault(s["shift_date"], []).append(s)
 
                         rows_html = ""
-                        for s in shifts:
-                            bg = _TYPE_ROW_COLOR.get(s["shift_type"], "#FFFFFF")
-                            leader_name = _h((s.get("leader") or {}).get("full_name", "—"))
-                            sp_name     = _h((s.get("sp") or {}).get("full_name", "—"))
-                            sp_warn     = s.get("sp_warning") or ""
-                            if sp_warn == "leader_sp":
-                                sp_name = f'<span class="text-orange-600">(LD kiêm)</span>'
-                            elif sp_warn == "no_sp":
-                                sp_name = '<span class="text-red-600">Thiếu SP!</span>'
-                            nv_names = "<br>".join(_h(nv["full_name"]) for nv in (s.get("nvs") or []))
-                            stype_label = _h(_SHIFT_TYPE_LABEL.get(s["shift_type"], s["shift_type"]))
-                            status_label = ui_kit.status_label(s["status"])
-                            status_cls = f'color:{ui_kit.status_dot(s["status"])}' + (
-                                ";font-weight:600" if s["status"] == "confirmed" else "")
+                        for i in range(5):
+                            ds = (ws + timedelta(days=i)).isoformat()
+                            ca_ngay = theo_ngay.get(ds, [])
+                            bg = _TYPE_ROW_COLOR.get(
+                                ca_ngay[0]["shift_type"], "#FFFFFF") if ca_ngay else "#FFFFFF"
+
+                            o_nv, o_ld = [], []
+                            for s in ca_ngay:
+                                warn = s.get("sp_warning") or ""
+                                sp   = s.get("sp")
+                                # sp=None kèm cảnh báo SP nghĩa là Lãnh đạo giữ vai song phương
+                                ld_giu_sp = sp is None and warn in ("leader_sp", "multi_sp")
+
+                                for p in ([sp] if sp else []) + (s.get("nvs") or []):
+                                    la_sp = bool(sp) and p["id"] == sp["id"]
+                                    o_nv.append(_ten_kem_sp(p, la_sp))
+                                if warn == "no_sp":
+                                    o_nv.append('<span class="text-red-600">Thiếu người song phương!</span>')
+                                elif warn == "multi_sp":
+                                    o_nv.append('<span class="text-red-600">⚠ Ca có 2 người song phương</span>')
+
+                                if s.get("leader"):
+                                    o_ld.append(_ten_kem_sp(s["leader"], ld_giu_sp))
+
+                            ngay_label = f'{_THU_VN[i]}<br><span class="text-gray-500">{ds[8:10]}/{ds[5:7]}/{ds[:4]}</span>'
                             rows_html += (
                                 f'<tr style="background:{bg}">'
-                                f'<td class="{_TD}">{_h(s["shift_date"])}</td>'
-                                f'<td class="{_TD}">{stype_label}</td>'
-                                f'<td class="{_TD}">{leader_name}</td>'
-                                f'<td class="{_TD}">{sp_name}</td>'
-                                f'<td class="{_TD}" style="white-space:pre-line">{nv_names or "—"}</td>'
-                                f'<td class="{_TD}" style="{status_cls}">{status_label}</td>'
+                                f'<td class="{_TD}">{ngay_label}</td>'
+                                f'<td class="{_TD}">{"<br>".join(o_nv) or "—"}</td>'
+                                f'<td class="{_TD}">{"<br>".join(o_ld) or "—"}</td>'
                                 f'</tr>'
                             )
 
@@ -141,17 +162,19 @@ async def duty_schedule_page():
                             '<div class="w-full overflow-x-auto">'
                             '<table class="w-full border-collapse text-sm">'
                             f'<thead><tr>'
-                            f'<th class="{_TH}">Ngày</th>'
-                            f'<th class="{_TH}">Loại ca</th>'
-                            f'<th class="{_TH}">Lãnh đạo</th>'
-                            f'<th class="{_TH}">Song Phương</th>'
+                            f'<th class="{_TH}">Ngày trực</th>'
                             f'<th class="{_TH}">Nhân viên</th>'
-                            f'<th class="{_TH}">Trạng thái</th>'
+                            f'<th class="{_TH}">Lãnh đạo</th>'
                             f'</tr></thead>'
                             f'<tbody>{rows_html}</tbody>'
                             '</table></div>'
                         )
                         ui.html(table_html)
+
+                        if not shifts:
+                            ui.label("Chưa có lịch trực tuần này. Nhấn 'Tạo lịch' để sinh tự động.").classes(
+                                "text-gray-500 italic py-2"
+                            )
 
                 # ── Week navigation ──────────────────────────────
                 with ui.row().classes("items-center gap-2 mb-2 flex-wrap"):
@@ -277,7 +300,6 @@ async def duty_schedule_page():
                                 ui.label("Họ tên").classes("flex-1 min-w-[160px]")
                                 ui.label("Chức vụ").classes("w-28")
                                 ui.label("Làm SP").classes("w-16 text-center")
-                                ui.label("Backup SP").classes("w-20 text-center")
                                 ui.label("Dự án").classes("w-16 text-center")
 
                             _ROLE_LABEL = {
@@ -320,13 +342,6 @@ async def duty_schedule_page():
                                     ).classes("w-16")
                                     cb_sp.props("dense")
                                     cb_sp.set_enabled(can_manage_staff)
-
-                                    cb_bk = ui.checkbox(
-                                        value=bool(p.get("is_sp_backup", 0)),
-                                        on_change=_make_toggle(p["id"], "is_sp_backup")
-                                    ).classes("w-20")
-                                    cb_bk.props("dense")
-                                    cb_bk.set_enabled(can_manage_staff and p["duty_role"] == "LD")
 
                                     cb_proj = ui.checkbox(
                                         value=bool(p.get("is_on_project", 0)),

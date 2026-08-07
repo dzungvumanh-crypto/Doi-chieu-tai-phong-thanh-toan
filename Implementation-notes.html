@@ -6072,7 +6072,174 @@ Bất biến MIS: 522.774 + 36.462 = 559.236 (khớp tổng gốc)</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-05</footer>
+  <!-- 67 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">67</span>
+      <span class="card-title">Phân lịch trực — viết lại thuật toán chọn người ca ngày thường / thứ 6</span>
+      <span class="badge badge-done">done · 2026-08-07</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Yêu cầu nghiệp vụ (Business Owner)</div>
+      <ul>
+        <li>Mỗi ca trực bắt buộc <b>1 Lãnh đạo + 2 nhân viên</b> — không hơn không kém.</li>
+        <li>Trong ca chỉ <b>đúng 1 người xử lý song phương</b>, có thể là Lãnh đạo hoặc nhân viên.</li>
+        <li>Hai chỗ còn lại chọn <b>ngẫu nhiên</b> trong những người không đi dự án.</li>
+        <li>Riêng <b>thứ 6 luân phiên</b> (tất định), vẫn phải đảm bảo có 1 người song phương.</li>
+      </ul>
+
+      <div class="label">Trước / sau</div>
+      <table>
+        <tr><th>Tiêu chí</th><th>Trước</th><th>Sau</th></tr>
+        <tr>
+          <td>Số người mỗi ca</td>
+          <td>Đọc <code>duty_shift_config.nv_count</code> (1–5); thiếu người vẫn sinh ca lặng lẽ</td>
+          <td>Hằng số <code>SHIFT_MEMBER_COUNT = 2</code> — cứng 1 LD + 2 NV. Thiếu người thì sinh cảnh báo <code>not_enough_staff</code></td>
+        </tr>
+        <tr>
+          <td>Ràng buộc song phương</td>
+          <td><code>_pick_nvs_prefer_non_sp()</code> — chỉ <b>ưu tiên</b> tránh 2 người SP cùng ca (mềm)</td>
+          <td><code>_compose_exact_one_sp()</code> — <b>bắt buộc</b> đúng 1 người SP; không thoả thì rơi sang best-effort + cảnh báo</td>
+        </tr>
+        <tr>
+          <td>Chọn người</td>
+          <td>Tất định theo khoá <code>(shift_count, lệch-thứ, last_used, position, id)</code></td>
+          <td>Ngày thường: bốc <b>ngẫu nhiên trong nhóm ít ca nhất</b>. Thứ 6: giữ nguyên tất định</td>
+        </tr>
+        <tr>
+          <td>Cờ song phương của Lãnh đạo</td>
+          <td>2 cờ song song: NV dùng <code>can_do_sp</code>, LD dùng <code>is_sp_backup</code></td>
+          <td>Thống nhất 1 cờ <code>can_do_sp</code> cho cả LD và NV</td>
+        </tr>
+        <tr>
+          <td>Ghi vòng xoay</td>
+          <td>Ghi ngay khi chọn từng vai trò</td>
+          <td>Ghi <b>sau khi chốt tổ hợp</b> — ứng viên bị loại trong lúc thử không bị cộng số ca</td>
+        </tr>
+      </table>
+
+      <div class="label">Phản biện đã nêu với BO — "ngẫu nhiên thuần" bị từ chối</div>
+      <p>Random đều trên toàn pool gây 4 hậu quả: (a) ~20 ngày trực / ~10 nhân viên vẫn cho ra người 7 ca
+        người 1 ca; (b) chạy lại ra kết quả khác nên không giải thích được với nhân sự; (c) làm hỏng cơ chế
+        <code>get_week_assignees()</code> tránh trực 2 lần/tuần; (d) thứ 6 luân phiên không bù được lệch của
+        ngày thường vì đếm ca ở kênh riêng. BO chốt phương án <b>ngẫu nhiên trong nhóm ít ca nhất</b> —
+        không đoán trước được nhưng vẫn cân bằng.</p>
+
+      <div class="label">Backtracking 1 tầng khi chọn Lãnh đạo</div>
+      <p>Ràng buộc "đúng 1 SP" khiến việc chọn LD và chọn NV không độc lập: LD được chọn có
+        <code>can_do_sp=1</code> thì 2 nhân viên còn lại <b>bắt buộc</b> non-SP; LD non-SP thì cần <b>1</b>
+        nhân viên SP + <b>1</b> non-SP. Nếu chốt LD trước rồi mới xếp NV thì dễ vào ngõ cụt.
+        <code>_compose_exact_one_sp()</code> duyệt LD theo đúng thứ tự vòng xoay và lấy LD <b>đầu tiên</b>
+        xếp được ca hợp lệ — trung lập, không thiên vị LD biết SP hay không biết SP.</p>
+
+      <div class="label">Khi không thoả được — ưu tiên đủ người</div>
+      <table>
+        <tr><th>Tình huống</th><th>Hành vi</th><th><code>sp_warning</code></th></tr>
+        <tr><td>Pool còn lại toàn người biết SP</td><td>Vẫn xếp đủ 3 người</td><td><code>multi_sp</code> (mới)</td></tr>
+        <tr><td>Không ai trong ca biết SP</td><td>Vẫn xếp đủ 3 người</td><td><code>no_sp</code></td></tr>
+        <tr><td>Lãnh đạo kiêm SP</td><td>Không gán <code>sp_id</code> riêng</td><td><code>leader_sp</code></td></tr>
+        <tr><td>Pool &lt; 3 người khả dụng</td><td>Xếp hết những gì có</td><td>—, kèm warning <code>not_enough_staff</code></td></tr>
+      </table>
+      <div class="note">Quyết định của BO: <b>đủ 3 người quan trọng hơn giữ đúng 1 SP</b>. Ca đỏ có cảnh báo
+        vẫn hữu ích hơn ca trống — người phân lịch nhìn thấy và tự điều người.</div>
+
+      <div class="label">Migration cờ <code>is_sp_backup</code></div>
+      <p>Chạy <code>UPDATE duty_staff_meta SET can_do_sp = 1 WHERE is_sp_backup = 1 AND can_do_sp = 0</code>
+        để Lãnh đạo đang được đánh dấu "Backup SP" không mất khả năng trực song phương sau khi đổi mô hình.
+        <b>Cột <code>is_sp_backup</code> giữ lại trong DB, không DROP</b> — SQLite drop column rủi ro và cột
+        vẫn là dấu vết dữ liệu cũ; engine/API/UI đã ngừng đọc.</p>
+
+      <div class="label">Tính tái lập cho test</div>
+      <p><code>generate_schedule()</code> / <code>generate_schedule_for_week()</code> nhận thêm tham số
+        <code>seed</code> tạo <code>random.Random(seed)</code>. Production luôn để <code>None</code>
+        (ngẫu nhiên thật); test truyền seed cố định để khẳng định hành vi.</p>
+
+      <div class="label">Phạm vi KHÔNG đổi</div>
+      <p>Ca <b>cut-off</b> và <b>quyết toán</b> giữ nguyên logic cũ (ca chính + ca phụ, số người theo
+        <code>nv_count</code>) — chỉ đổi cờ đọc từ <code>is_sp_backup</code> sang <code>can_do_sp</code>.</p>
+
+      <div class="label">Bảng lịch tuần — rút từ 6 cột xuống 3 (yêu cầu BO)</div>
+      <table>
+        <tr><th>Trước</th><th>Sau</th></tr>
+        <tr>
+          <td>6 cột: Ngày · Loại ca · Lãnh đạo · Song Phương · Nhân viên · Trạng thái.
+            Chỉ render những ca đã sinh — tuần chưa có lịch thì bảng biến mất, thay bằng một dòng chữ.</td>
+          <td>3 cột: <b>Ngày trực · Nhân viên · Lãnh đạo</b>. Luôn dựng đủ <b>5 hàng Thứ Hai→Thứ Sáu</b>,
+            ngày chưa có ca hiện <code>—</code>. Ngày hiển thị kèm tên thứ (thay cột "Loại ca" đã bỏ).</td>
+        </tr>
+      </table>
+      <p>Bỏ cột "Song Phương" làm mất chỗ hiển thị vai trò song phương và 2 cảnh báo vừa xây, nên người giữ
+        vai SP được đánh dấu hậu tố <code>(SP)</code> xanh ngay cạnh tên — ở cột Nhân viên hoặc cột Lãnh đạo
+        tuỳ ai giữ. Cảnh báo <code>no_sp</code> / <code>multi_sp</code> thành một dòng đỏ trong ô Nhân viên.
+        Nhiều ca cùng ngày (quyết toán chính + phụ) gộp chung một hàng.</p>
+      <p>Cột <b>Trạng thái</b> bỏ khỏi bảng, thông tin chuyển lên <b>tiêu đề tuần</b> (BO chốt):
+        <code>— chưa có lịch</code> (xám) · <code>— bản thảo</code> (cam) ·
+        <code>— đã xác nhận n/m ca</code> (cam) · <code>— đã xác nhận</code> (xanh).
+        <code>week_label</code> đổi từ <code>ui.label</code> sang <code>ui.html</code> để nhuộm màu, và
+        được set <b>hai lần</b>: ngay khi đổi tuần (chỉ tên tuần, tránh treo nhãn cũ trong lúc chờ API) rồi
+        set lại kèm trạng thái sau khi có dữ liệu.</p>
+      <div class="note"><b>Backlog — gỡ nhãn <code>(SP)</code> khi chốt chương trình.</b> BO xác nhận nhãn
+        này chỉ phục vụ giai đoạn đang phân lịch trực; khi chương trình hoàn thiện thì bỏ khỏi bảng.
+        Điểm sửa duy nhất: <code>_ten_kem_sp()</code> trong <code>frontend/pages/duty_schedule.py</code>
+        — trả thẳng tên là xong. Hai dòng cảnh báo <code>no_sp</code>/<code>multi_sp</code> nên giữ.</div>
+      <p>Dọn theo: <code>_SHIFT_TYPE_LABEL</code> và import <code>ui_kit</code> thành dead code sau khi bỏ
+        cột "Loại ca" và "Trạng thái" — đã xoá.</p>
+
+      <div class="label">Đã kiểm trên UI thật (click-through, không phải chỉ chạy test)</div>
+      <table>
+        <tr><th>Trường hợp</th><th>Kết quả</th></tr>
+        <tr><td>Tab Nhân viên</td><td>Chỉ còn 2 checkbox "Làm SP" / "Dự án"; ô "Làm SP" của Trưởng phòng nay bật được</td></tr>
+        <tr><td>Tuần chưa có lịch</td><td>Bảng vẫn đủ 5 hàng T2→T6, các ô hiện <code>—</code></td></tr>
+        <tr><td>Pool đầy đủ</td><td>5/5 ca đều 1 LD + 2 NV, đúng 1 người mang nhãn (SP)</td></tr>
+        <tr><td>Pool còn lại toàn người làm SP</td><td>Vẫn đủ 3 người + dòng đỏ "⚠ Ca có 2 người song phương"</td></tr>
+        <tr><td>Không ai làm SP</td><td>Vẫn đủ 3 người + dòng đỏ "Thiếu người song phương!"</td></tr>
+        <tr><td>Trạng thái trên tiêu đề</td><td>4/4 đúng: chưa có lịch → bản thảo → đã xác nhận 2/5 ca → đã xác nhận (bấm nút "Xác nhận tuần" thật)</td></tr>
+      </table>
+      <p><b>Chạy bản kiểm trên cổng riêng 8001/8091</b> vì cổng 8000/8080 đang là phiên làm việc ACH khác.
+        <code>.env</code> dùng <code>load_dotenv(override=True)</code> nên biến môi trường
+        <code>FRONTEND_PORT</code> đặt từ shell bị kéo ngược về 8080 — phải nạp <code>.env</code> thủ công
+        bằng <code>dotenv_values()</code>, ghi đè cổng, rồi vô hiệu hoá <code>load_dotenv</code> trước khi
+        <code>runpy</code> chạy <code>frontend/main.py</code>.</p>
+      <div class="note">Máy dev thiếu <code>STORAGE_SECRET</code> trong <code>.env</code> nên
+        <code>frontend/main.py</code> không khởi động được — đặt biến tạm cho phiên kiểm, không sửa
+        <code>.env</code>. Data test (1 admin tạm + 2 LD + 6 NV phòng PAYMENT) đã xoá sạch, đối chiếu
+        từng bảng với bản backup DB chụp trước khi test.</div>
+
+      <div class="label">Vấn đề còn tồn — chưa fix</div>
+      <table>
+        <tr><th>Vấn đề</th><th>Ghi chú</th></tr>
+        <tr>
+          <td>35 endpoint <code>duty_*</code> chỉ dùng <code>Depends(get_current_staff)</code>, không dùng
+            <code>require_feature</code></td>
+          <td>Feature codes <code>duty.generate/confirm/delete/...</code> đã có nhưng chỉ ẩn nút ở frontend.
+            Bất kỳ ai đăng nhập vẫn gọi thẳng API xoá được cả tuần lịch đã xác nhận. 17 module API khác đều
+            đã enforce — duty là nhóm duy nhất chưa.</td>
+        </tr>
+        <tr>
+          <td><code>duty_shift_config.nv_count</code> không còn tác dụng với ca ngày thường / thứ 6</td>
+          <td>Vẫn dùng cho cut-off / quyết toán. UI cấu hình chưa ghi chú điều này.</td>
+        </tr>
+      </table>
+
+      <div class="label">Files sửa</div>
+      <ul>
+        <li><code>backend/services/duty_scheduler_engine.py</code> — thêm <code>SHIFT_MEMBER_COUNT</code>,
+          <code>_rank_candidates()</code>, <code>_order_pool()</code>, <code>_compose_exact_one_sp()</code>,
+          <code>_compose_best_effort()</code>; viết lại <code>_generate_normal_or_friday()</code>;
+          luồng <code>rng</code> xuyên <code>_process_day()</code> → 2 entry point.</li>
+        <li><code>backend/services/duty_staff_service.py</code>, <code>backend/schemas/duty.py</code>,
+          <code>backend/api/duty_staff.py</code> — gỡ <code>is_sp_backup</code>.</li>
+        <li><code>backend/db/migrations.py</code> — migration chuyển cờ.</li>
+        <li><code>frontend/pages/duty_schedule.py</code> — bỏ cột "Backup SP", thêm hiển thị
+          cảnh báo <code>multi_sp</code>.</li>
+        <li><code>tests/test_duty_scheduler_algorithm.py</code> — <b>mới</b>, 19 test (module này trước đó
+          không có test nào).</li>
+      </ul>
+    </div>
+  </div>
+
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-07</footer>
 </div>
 </body>
 </html>

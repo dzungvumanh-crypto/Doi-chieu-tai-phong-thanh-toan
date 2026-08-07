@@ -502,6 +502,10 @@ def _ensure_indexes():
         "CREATE INDEX IF NOT EXISTS ix_duty_requests_staff    ON duty_requests(staff_id)",
         "CREATE INDEX IF NOT EXISTS ix_duty_rotation_year     ON duty_rotation_state(year, role)",
         "CREATE INDEX IF NOT EXISTS ix_duty_shifts_date       ON duty_shifts(shift_date)",
+        # 2026-08-07: thống nhất 1 cờ song phương duy nhất. Lãnh đạo từng được đánh dấu
+        # "Backup SP" nay chuyển thành can_do_sp để không mất khả năng trực song phương.
+        # Cột is_sp_backup giữ lại (không drop) nhưng engine/UI không còn đọc.
+        "UPDATE duty_staff_meta SET can_do_sp = 1 WHERE is_sp_backup = 1 AND can_do_sp = 0",
         # Popup thông báo carry-over hết hiệu lực sau Q1 — mỗi user chỉ xem 1 lần/năm
         "ALTER TABLE user_tttt ADD COLUMN carryover_notice_year INTEGER",
         # Nhập file hạn mức phép (Excel) — lưu lịch sử để có thể hoàn tác
