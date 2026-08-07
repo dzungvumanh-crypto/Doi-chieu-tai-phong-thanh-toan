@@ -3993,7 +3993,63 @@ headers["X-Client-IP"] = request.client.host</code></pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-06</footer>
+<!-- 54 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">54</span>
+      <span class="card-title">Extension MV3: cấu hình đến từ 2 đường, quyền chỉ xin được ở 1 (PR #23)</span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Triệu chứng</p>
+      <p>Trên máy trạm thật: <code>SERVER</code> cấu hình đúng
+      (<code>http://apc-portal:8080</code>), giao diện báo lưu thành công, nhưng
+      <code>edge://extensions</code> → Site access không hiện địa chỉ đó, và mọi request từ Extension
+      bị chặn với "Không kết nối server".</p>
+
+      <p class="label">Gốc rễ: hai đường ghi cấu hình, chỉ một đường xin được quyền</p>
+      <table>
+        <tr><th>Đường ghi <code>server</code></th><th>Có xin quyền host?</th></tr>
+        <tr><td><code>options.js</code> — người dùng tự điền rồi bấm Lưu</td>
+            <td><span class="badge badge-done">Có</span> <code>chrome.permissions.request()</code>
+            cho đúng origin vừa nhập</td></tr>
+        <tr><td><code>background.js</code> — nhận <code>SET_CONFIG</code> từ nút "Tạo mã kết nối"</td>
+            <td><strong>KHÔNG</strong> — chỉ <code>chrome.storage.local.set()</code></td></tr>
+      </table>
+      <p>Và service worker <strong>không thể</strong> gọi <code>chrome.permissions.request()</code>:
+      API đó đòi thao tác người dùng trong ngữ cảnh trang của extension, service worker không có.
+      Nên đường tự động <em>về nguyên tắc</em> không bao giờ xin được quyền, không phải lỗi cài đặt.</p>
+      <p>PR #20 làm nút tự kết nối chạy được (lấy <code>window.location.origin</code>) — và chính điều
+      đó phơi ra khoảng trống này: cấu hình đúng, quyền thiếu.</p>
+
+      <p class="label">Vì sao chọn khai tĩnh thay vì vá đường động</p>
+      <p>Khai 3 địa chỉ production vào <code>host_permissions</code> — trình duyệt cấp ngay lúc cài,
+      độc lập hoàn toàn với việc cấu hình đến từ đường nào. Đây là cách duy nhất bảo đảm quyền có mặt
+      cho cả hai đường.</p>
+      <p>Phương án đã cân nhắc rồi bỏ: giữ <code>optional_host_permissions</code> và cho
+      <code>background.js</code> gọi <code>chrome.permissions.contains()</code> sau khi nhận
+      <code>SET_CONFIG</code>, thiếu quyền thì báo "mở Tuỳ chọn bấm Lưu một lần". Ưu điểm: manifest
+      tổng quát, đổi địa chỉ máy chủ không phải dựng lại bản cài. Nhược: thêm một thao tác tay đúng
+      vào chỗ vừa bỏ công tự động hoá. Với một máy chủ cố định thì khai tĩnh gọn hơn.</p>
+
+      <p class="label">Ràng buộc phát sinh</p>
+      <ul>
+        <li><strong>Ba địa chỉ production nay nằm cứng ở HAI nơi</strong> —
+        <code>host_permissions</code> và <code>externally_connectable.matches</code>. Đổi địa chỉ máy
+        chủ phải sửa cả hai rồi dựng lại <code>.zip</code>. Lệch một chỗ là hỏng theo kiểu khó đoán:
+        một bên cho gửi <code>SET_CONFIG</code>, bên kia chặn request thật.</li>
+        <li><strong>Thêm <code>host_permissions</code> không có hiệu lực với extension đã cài.</strong>
+        Bắt buộc tải lại <code>.zip</code> và Load unpacked lại. Đây là lý do phải bump version và ghi
+        cảnh báo vào <code>Logs_update.md</code> — người dùng không tự biết.</li>
+        <li><code>http://localhost:8000/*</code> trong <code>host_permissions</code> là rác còn sót từ
+        thời chưa có proxy (Extension nay đi cổng 8080). Vô hại, dọn lúc nào cũng được.</li>
+      </ul>
+
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-07</footer>
 </div>
 </body>
 </html>

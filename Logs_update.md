@@ -4,6 +4,12 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 07/08/2026 Đối chiếu CITAD - Extension lên **bản 2.6**, bắt buộc cài lại:
+    + ⚠️ **PHẢI TẢI LẠI VÀ CÀI LẠI EXTENSION.** Bản 2.5 đang cài trên máy trạm sẽ tiếp tục báo *"Không kết nối server"* dù mọi thứ phía máy chủ đã đúng. Vào `/doi_chieu_citad` → **Tải Extension**, giải nén, rồi *Load unpacked* lại như lần đầu
+    + Nguyên nhân: từ bản trước, nút **Tạo mã kết nối mới** tự điền địa chỉ máy chủ vào Extension — nhưng đường tự động đó **không xin được quyền truy cập địa chỉ** cho trình duyệt, nên Extension bị chặn ngay ở tầng quyền. Chỉ khi tự vào Tuỳ chọn bấm Lưu mới xin được. Nay quyền được cấp sẵn ngay lúc cài, không phụ thuộc cách cấu hình nữa
+    + Sau khi cài lại, kiểm nhanh: mở `edge://extensions` (hoặc `chrome://extensions`) → phần **Site access** phải thấy `apc-portal:8080`. Không thấy nghĩa là chưa cài đúng bản mới
+    + Không cần làm gì thêm — mã kết nối cũ vẫn dùng được, không phải tạo lại
+
 - 06/08/2026 Đối soát CITAD - Đọc được file `.xlsx`, và Extension gọi được máy chủ thật (PR #20):
     + ✅ **GỠ CẢNH BÁO NGÀY 04/08: file CITAD định dạng `.xlsx` nay đọc bình thường.** Trước đây mọi file `.xlsx` bị đọc ra rỗng mà không báo lỗi — màn hình vẫn hiện "đối soát xong" nhưng số khớp bằng 0 và toàn bộ lệnh bị xếp vào "Chỉ IPCAS". Từ nay dùng `.xls` hay `.xlsx` đều được
     + ⚠️ **Ai đã đối soát bằng file `.xlsx` trước ngày 06/08 thì làm lại.** Kết quả cũ và bản đã lưu ở tab *Lịch sử* của những lần đó đều sai — không phải số liệu lệch thật
