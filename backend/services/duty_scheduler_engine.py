@@ -172,10 +172,11 @@ def _chon_to_hop(ld_order: List[dict], nv_order: List[dict],
     if len(ld_order) < so_ld or len(nv_order) < so_chinh + so_phu:
         return None
 
-    # Nếu trong tầm với của nhóm nhân viên không có ai biết song phương thì
-    # kéo Lãnh đạo biết song phương lên trước — mục tiêu là ca có người xử lý.
-    trong_tam = nv_order[:so_chinh + so_phu]
-    if not any(p.get("can_do_sp") for p in trong_tam):
+    # Chỉ khi CẢ pool nhân viên không có ai biết song phương mới kéo Lãnh đạo
+    # biết song phương lên trước. Xét theo top danh sách là sai: bên dưới vốn đã
+    # kéo được 1 nhân viên biết song phương lên đầu nhóm trực chính, nên xét top
+    # sẽ kéo Lãnh đạo lên gần như mỗi ngày và dồn hết ca cho vài người.
+    if not any(p.get("can_do_sp") for p in nv_order):
         ld_order = ([p for p in ld_order if p.get("can_do_sp")]
                     + [p for p in ld_order if not p.get("can_do_sp")])
 
