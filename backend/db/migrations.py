@@ -506,6 +506,23 @@ def _ensure_indexes():
         # "Backup SP" nay chuyển thành can_do_sp để không mất khả năng trực song phương.
         # Cột is_sp_backup giữ lại (không drop) nhưng engine/UI không còn đọc.
         "UPDATE duty_staff_meta SET can_do_sp = 1 WHERE is_sp_backup = 1 AND can_do_sp = 0",
+
+        # ── 2026-08-08: khai báo số người trực + ca quyết toán chính/phụ ────────
+        # Số người mỗi ca trước đây cứng trong code. Nay phòng tự khai, và số đã
+        # khai là bắt buộc — thiếu thì không hình thành ca trực.
+        "ALTER TABLE duty_shift_config ADD COLUMN ld_count INTEGER DEFAULT 1",
+        "ALTER TABLE duty_shift_config ADD COLUMN qt_ld_count INTEGER DEFAULT 1",
+        "ALTER TABLE duty_shift_config ADD COLUMN qt_nv_chinh_count INTEGER DEFAULT 3",
+        "ALTER TABLE duty_shift_config ADD COLUMN qt_nv_phu_count INTEGER DEFAULT 2",
+
+        # Một ca có thể có nhiều Lãnh đạo (nhất là ngày quyết toán) → leader_id đơn
+        # lẻ không đủ. Cột leader_id giữ lại nhưng engine/API ngừng đọc.
+        "ALTER TABLE duty_shifts ADD COLUMN leader_ids TEXT DEFAULT '[]'",
+        # Ca quyết toán: nhân viên chia 2 nhóm, nhóm phụ về sớm hơn
+        "ALTER TABLE duty_shifts ADD COLUMN nv_phu_ids TEXT DEFAULT '[]'",
+        "ALTER TABLE duty_shifts ADD COLUMN nv_phu_count INTEGER DEFAULT 0",
+        "UPDATE duty_shifts SET leader_ids = '[' || leader_id || ']' "
+        "WHERE leader_id IS NOT NULL AND COALESCE(leader_ids, '[]') = '[]'",
         # Popup thông báo carry-over hết hiệu lực sau Q1 — mỗi user chỉ xem 1 lần/năm
         "ALTER TABLE user_tttt ADD COLUMN carryover_notice_year INTEGER",
         # Nhập file hạn mức phép (Excel) — lưu lịch sử để có thể hoàn tác

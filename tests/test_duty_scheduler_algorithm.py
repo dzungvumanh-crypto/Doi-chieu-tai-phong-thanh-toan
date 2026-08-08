@@ -53,13 +53,17 @@ CREATE TABLE duty_rotation_state (
 );
 CREATE TABLE duty_shifts (
     id INTEGER PRIMARY KEY AUTOINCREMENT, shift_date DATE, shift_type TEXT,
-    leader_id INTEGER, sp_id INTEGER, sp_warning TEXT, nv_ids TEXT DEFAULT '[]',
-    nv_count INTEGER DEFAULT 0, is_auto INTEGER DEFAULT 1,
+    leader_id INTEGER, leader_ids TEXT DEFAULT '[]',
+    sp_id INTEGER, sp_warning TEXT, nv_ids TEXT DEFAULT '[]',
+    nv_count INTEGER DEFAULT 0, nv_phu_ids TEXT DEFAULT '[]', nv_phu_count INTEGER DEFAULT 0,
+    is_auto INTEGER DEFAULT 1,
     status TEXT DEFAULT 'draft', created_at DATETIME, UNIQUE(shift_date, shift_type)
 );
 CREATE TABLE duty_shift_config (
     id INTEGER PRIMARY KEY AUTOINCREMENT, year INTEGER UNIQUE,
-    nv_count INTEGER DEFAULT 2, signer_name TEXT
+    ld_count INTEGER DEFAULT 1, nv_count INTEGER DEFAULT 2,
+    qt_ld_count INTEGER DEFAULT 1, qt_nv_chinh_count INTEGER DEFAULT 3,
+    qt_nv_phu_count INTEGER DEFAULT 2, signer_name TEXT
 );
 """
 
@@ -69,8 +73,10 @@ FRIDAY = "2026-08-14"
 YEAR = 2026
 
 
-def _make_db(staff: list[tuple]) -> sqlite3.Connection:
-    """staff: (id, full_name, role, can_do_sp, is_on_project, display_order)"""
+def _make_db(staff: list[tuple], ld_count: int = 1, nv_count: int = 2,
+             qt_ld: int = 1, qt_chinh: int = 3, qt_phu: int = 2) -> sqlite3.Connection:
+    """staff: (id, full_name, role, can_do_sp, is_on_project, display_order)
+    Số người mỗi ca lấy từ cấu hình — mặc định 1 Lãnh đạo + 2 nhân viên."""
     db = sqlite3.connect(":memory:")
     db.row_factory = sqlite3.Row
     db.executescript(_SCHEMA)
@@ -84,7 +90,10 @@ def _make_db(staff: list[tuple]) -> sqlite3.Connection:
             "INSERT INTO duty_staff_meta (user_id, can_do_sp, is_on_project, display_order) VALUES (?,?,?,?)",
             (sid, can_sp, on_proj, order),
         )
-    db.execute("INSERT INTO duty_shift_config (year, nv_count) VALUES (?, 2)", (YEAR,))
+    db.execute(
+        "INSERT INTO duty_shift_config (year, ld_count, nv_count, qt_ld_count, "
+        "qt_nv_chinh_count, qt_nv_phu_count) VALUES (?,?,?,?,?,?)",
+        (YEAR, ld_count, nv_count, qt_ld, qt_chinh, qt_phu))
     db.commit()
     return db
 
@@ -104,15 +113,19 @@ def _standard_staff() -> list[tuple]:
 
 
 def _members(shift: dict) -> list[int]:
-    """Toàn bộ id người trong ca, kể cả Lãnh đạo."""
+    """Toàn bộ id người trong ca: Lãnh đạo + song phương + trực chính + trực phụ."""
     import json
-    ids = []
-    if shift["leader_id"]:
-        ids.append(shift["leader_id"])
+    ids = list(json.loads(shift["leader_ids"] or "[]"))
     if shift["sp_id"]:
         ids.append(shift["sp_id"])
-    ids.extend(json.loads(shift["nv_ids"]))
+    ids.extend(json.loads(shift["nv_ids"] or "[]"))
+    ids.extend(json.loads(shift.get("nv_phu_ids") or "[]"))
     return ids
+
+
+def _leaders(shift: dict) -> list[int]:
+    import json
+    return list(json.loads(shift["leader_ids"] or "[]"))
 
 
 def _sp_capable_ids(db) -> set:
@@ -138,7 +151,7 @@ def test_ca_ngay_thuong_luon_du_ba_nguoi():
         db = _make_db(_standard_staff())
         r = _gen_one(db, MONDAY, seed)
         assert len(_members(r["shift"])) == 3, f"seed={seed} không đủ 3 người"
-        assert r["shift"]["leader_id"] is not None
+        assert _leaders(r["shift"]), "ca phải có Lãnh đạo"
         assert r["warnings"] == []
 
 
@@ -147,6 +160,58 @@ def test_ca_thu_sau_luon_du_ba_nguoi():
     r = _gen_one(db, FRIDAY, 0, shift_type="friday")
     assert len(_members(r["shift"])) == 3
     assert r["shift"]["shift_type"] == "friday"
+
+
+# ══════════════════════════════════════════════════════════════
+# 1b. Số người đi theo khai báo ở tab Cài đặt
+# ══════════════════════════════════════════════════════════════
+
+def test_khai_hai_lanh_dao_ba_nhan_vien_thi_sinh_dung_the():
+    for seed in range(10):
+        db = _make_db(_standard_staff(), ld_count=2, nv_count=3)
+        r = _gen_one(db, MONDAY, seed)
+        assert len(_leaders(r["shift"])) == 2, f"seed={seed} không đủ 2 Lãnh đạo"
+        assert len(_members(r["shift"])) == 5, f"seed={seed} không đủ 5 người"
+
+
+def test_khong_vo_hai_lanh_dao_cung_biet_song_phuong():
+    """Có sẵn Lãnh đạo không biết song phương thì đừng xếp 2 người biết cùng ca."""
+    staff = [
+        (1, "LD Một", "truong_phong", 1, 0, 1),   # biết SP
+        (2, "LD Hai", "pho_phong",    1, 0, 2),   # biết SP
+        (9, "LD Ba",  "pho_phong",    0, 0, 9),   # không biết SP
+        (5, "NV Năm", "chuyen_vien",  0, 0, 5),
+        (6, "NV Sáu", "chuyen_vien",  0, 0, 6),
+        (7, "NV Bảy", "chuyen_vien",  0, 0, 7),
+    ]
+    for seed in range(15):
+        db = _make_db(staff, ld_count=2, nv_count=2)
+        r = _gen_one(db, MONDAY, seed)
+        ld_biet_sp = [i for i in _leaders(r["shift"]) if i in (1, 2)]
+        assert len(ld_biet_sp) <= 1, f"seed={seed} vơ 2 lãnh đạo cùng biết song phương"
+
+
+def test_doi_cau_hinh_thi_ca_sinh_ra_doi_theo():
+    db2 = _make_db(_standard_staff(), ld_count=1, nv_count=2)
+    db5 = _make_db(_standard_staff(), ld_count=2, nv_count=3)
+    assert len(_members(_gen_one(db2, MONDAY, 0)["shift"])) == 3
+    assert len(_members(_gen_one(db5, MONDAY, 0)["shift"])) == 5
+
+
+def test_khai_nhieu_hon_pool_thi_khong_lap_duoc_ca():
+    """2 Lãnh đạo trong pool mà khai 3 → luật cứng chặn, không có ca."""
+    db = _make_db(_standard_staff(), ld_count=3, nv_count=2)
+    r = _gen_one(db, MONDAY, 0)
+    assert r["shift"] is None
+    assert any(w["type"] == "khong_du_nguoi" for w in r["warnings"])
+    assert "3 Lãnh đạo" in r["warnings"][0]["msg"]
+
+
+def test_khai_bay_nhan_vien_qua_pool_thi_khong_lap_duoc_ca():
+    db = _make_db(_standard_staff(), ld_count=1, nv_count=7)   # pool chỉ 6 NV
+    r = _gen_one(db, MONDAY, 0)
+    assert r["shift"] is None
+    assert any(w["type"] == "khong_du_nguoi" for w in r["warnings"])
 
 
 # ══════════════════════════════════════════════════════════════
@@ -181,7 +246,7 @@ def test_lanh_dao_lam_sp_thi_hai_nguoi_con_lai_khong_lam_sp():
         db = _make_db(staff)
         r = _gen_one(db, MONDAY, seed)
         s = r["shift"]
-        assert s["leader_id"] == 1
+        assert _leaders(s) == [1]
         assert s["sp_id"] is None, "LD kiêm SP thì không gán SP riêng"
         assert s["sp_warning"] == "leader_sp"
         assert sorted(_members(s)) == [1, 5, 6], "hai người còn lại phải là NV không làm SP"
@@ -197,7 +262,7 @@ def test_nhan_vien_lam_sp_khi_lanh_dao_khong_lam_duoc():
     db = _make_db(staff)
     r = _gen_one(db, MONDAY, 0)
     s = r["shift"]
-    assert s["leader_id"] == 2
+    assert _leaders(s) == [2]
     assert s["sp_id"] == 3
     assert s["sp_warning"] is None
     assert len(_members(s)) == 3
@@ -289,8 +354,8 @@ def test_khong_ai_lam_sp_thi_canh_bao_no_sp():
     db = _make_db(staff)
     r = _gen_one(db, MONDAY, 0)
     assert len(_members(r["shift"])) == 3
-    assert r["shift"]["sp_warning"] == "no_sp"
-    assert any(w["type"] == "no_sp" for w in r["warnings"])
+    assert r["shift"]["sp_warning"] == "no_sp_chinh"
+    assert any(w["type"] == "no_sp_chinh" for w in r["warnings"])
 
 
 def test_thieu_nhan_vien_thi_khong_hinh_thanh_ca():

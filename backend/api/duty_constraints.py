@@ -209,4 +209,10 @@ def update_config(
     db: sqlite3.Connection = Depends(get_db),
     _=Depends(get_current_staff),
 ):
-    return upsert_shift_config(db, year, body.nv_count, body.signer_name)
+    return upsert_shift_config(
+        db, year, body.nv_count, body.signer_name,
+        ld_count=body.ld_count,
+        qt_ld_count=body.qt_ld_count,
+        qt_nv_chinh_count=body.qt_nv_chinh_count,
+        qt_nv_phu_count=body.qt_nv_phu_count,
+    )

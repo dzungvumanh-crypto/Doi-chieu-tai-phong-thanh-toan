@@ -22,7 +22,7 @@ from backend.services.duty_constraint_service import (
     get_shift_config, get_week_assignees,
 )
 from backend.services.duty_calendar_utils import get_week_dates, is_friday
-from backend.services.duty_rules import SHIFT_MEMBER_COUNT, resolve_sp_role
+from backend.services.duty_rules import get_cau_hinh_ca, resolve_sp_role
 
 _VN_TZ = timezone(timedelta(hours=7))
 DEFAULT_NV_COUNT = 2
@@ -266,81 +266,91 @@ def _order_pool(db: sqlite3.Connection, people: List[dict], requests: dict, kind
     return _rank(forced) + _layer(fresh) + _layer(repeat)
 
 
-def _compose_exact_one_sp(ld_order: List[dict],
-                          nv_order: List[dict]) -> Optional[Tuple]:
+def _chon_to_hop(ld_order: List[dict], nv_order: List[dict],
+                 so_ld: int, so_chinh: int, so_phu: int) -> Optional[Tuple]:
     """
-    Tìm tổ hợp 1 Lãnh đạo + 2 người sao cho ĐÚNG 1 người xử lý song phương.
-    Trả (leader, sp, nvs, sp_warning); sp=None nghĩa là Lãnh đạo kiêm SP.
-    Trả None nếu không tổ hợp nào thoả.
-    """
-    sp_nv     = [p for p in nv_order if p.get("can_do_sp")]
-    non_sp_nv = [p for p in nv_order if not p.get("can_do_sp")]
+    Chọn so_ld Lãnh đạo + so_chinh trực chính + so_phu trực phụ theo thứ tự
+    ưu tiên đã xếp sẵn.
 
-    for ld in ld_order:
-        if ld.get("can_do_sp"):
-            # Lãnh đạo giữ vai SP → 2 người còn lại đều không làm SP
-            if len(non_sp_nv) >= SHIFT_MEMBER_COUNT:
-                return ld, None, non_sp_nv[:SHIFT_MEMBER_COUNT], "leader_sp"
-        elif sp_nv and non_sp_nv:
-            # 1 nhân viên làm SP + 1 nhân viên không làm SP
-            return ld, sp_nv[0], [non_sp_nv[0]], None
-    return None
-
-
-def _compose_best_effort(ld_order: List[dict], nv_order: List[dict]) -> Optional[Tuple]:
+    Luật CỨNG: thiếu người so với số đã khai báo thì trả None — không hình
+    thành ca trực. Luật MỀM (ít nhất 1 người song phương ở Lãnh đạo hoặc trực
+    chính) chỉ cố gắng thoả, không thoả được thì vẫn lập ca kèm cảnh báo.
     """
-    Không tổ hợp nào thoả đúng-1-SP → vẫn xếp ca, chấp nhận lệch quy tắc song phương
-    (luật mềm). Nhưng luật CỨNG 1 Lãnh đạo + 2 nhân viên thì không nhân nhượng:
-    thiếu người là trả None, không hình thành ca trực.
-    """
-    if not ld_order or len(nv_order) < SHIFT_MEMBER_COUNT:
+    if len(ld_order) < so_ld or len(nv_order) < so_chinh + so_phu:
         return None
 
-    leader   = ld_order[0]
-    ld_la_sp = bool(leader.get("can_do_sp"))
+    # Nếu trong tầm với của nhóm nhân viên không có ai biết song phương thì
+    # kéo Lãnh đạo biết song phương lên trước — mục tiêu là ca có người xử lý.
+    trong_tam = nv_order[:so_chinh + so_phu]
+    if not any(p.get("can_do_sp") for p in trong_tam):
+        ld_order = ([p for p in ld_order if p.get("can_do_sp")]
+                    + [p for p in ld_order if not p.get("can_do_sp")])
 
-    sp_nv     = [p for p in nv_order if p.get("can_do_sp")]
-    non_sp_nv = [p for p in nv_order if not p.get("can_do_sp")]
+    leaders = ld_order[:so_ld]
+    # Khai nhiều Lãnh đạo mà vơ trúng 2 người cùng biết song phương là lãng phí.
+    # Thay người thứ hai trở đi bằng Lãnh đạo không biết song phương kế tiếp —
+    # chỉ thay khi có sẵn người ngoài top, để không phá thứ tự vòng xoay.
+    if sum(1 for p in leaders if p.get("can_do_sp")) > 1:
+        du_bi = [p for p in ld_order[so_ld:] if not p.get("can_do_sp")]
+        thay_the, da_co_sp = [], False
+        for p in leaders:
+            if p.get("can_do_sp"):
+                if da_co_sp and du_bi:
+                    thay_the.append(du_bi.pop(0))
+                    continue
+                da_co_sp = True
+            thay_the.append(p)
+        leaders = thay_the
 
-    if ld_la_sp:
-        # Lãnh đạo đã giữ vai SP → lấy người không làm SP trước cho đỡ lệch
-        picked = (non_sp_nv + sp_nv)[:SHIFT_MEMBER_COUNT]
+    ld_co_sp = any(p.get("can_do_sp") for p in leaders)
+
+    biet_sp  = [p for p in nv_order if p.get("can_do_sp")]
+    khong_sp = [p for p in nv_order if not p.get("can_do_sp")]
+
+    if ld_co_sp:
+        # Lãnh đạo đã giữ vai → ưu tiên người không biết song phương cho đỡ dư
+        uu_tien = khong_sp + biet_sp
     else:
-        # Cần 1 người làm SP, chỗ còn lại ưu tiên người không làm SP
-        picked = (sp_nv[:1] + non_sp_nv + sp_nv[1:])[:SHIFT_MEMBER_COUNT]
+        # Kéo đúng 1 người biết song phương lên đầu nhóm trực chính
+        uu_tien = biet_sp[:1] + khong_sp + biet_sp[1:]
 
-    sp, warning = resolve_sp_role(leader, picked)
-    nvs = [p for p in picked if sp is None or p["id"] != sp["id"]]
-    return leader, sp, nvs, warning
+    nv_chinh = uu_tien[:so_chinh]
+    nv_phu   = uu_tien[so_chinh:so_chinh + so_phu]
+    return leaders, nv_chinh, nv_phu
 
 
 # ══════════════════════════════════════════════════════════════
 # BUILD & SAVE SHIFT
 # ══════════════════════════════════════════════════════════════
 
-def _build_shift(shift_date: str, shift_type: str, leader: Optional[dict],
+def _build_shift(shift_date: str, shift_type: str, leaders: List[dict],
                  sp: Optional[dict], nvs: List[dict],
-                 sp_warning: Optional[str] = None) -> dict:
+                 sp_warning: Optional[str] = None,
+                 nv_phu: Optional[List[dict]] = None) -> dict:
     return {
         "shift_date":  shift_date,
-        "shift_type":  shift_type,
-        "leader_id":   leader["id"] if leader else None,
-        "sp_id":       sp["id"] if sp else None,
-        "sp_warning":  sp_warning,
-        "nv_ids":      json.dumps([p["id"] for p in nvs]),
-        "nv_count":    len(nvs),
-        "is_auto":     1,
-        "status":      "draft",
+        "shift_type":   shift_type,
+        "leader_ids":   json.dumps([p["id"] for p in leaders]),
+        "sp_id":        sp["id"] if sp else None,
+        "sp_warning":   sp_warning,
+        "nv_ids":       json.dumps([p["id"] for p in nvs]),
+        "nv_count":     len(nvs),
+        "nv_phu_ids":   json.dumps([p["id"] for p in (nv_phu or [])]),
+        "nv_phu_count": len(nv_phu or []),
+        "is_auto":      1,
+        "status":       "draft",
     }
 
 
 def _save_shift(db: sqlite3.Connection, data: dict) -> int:
     """Lưu 1 ca vào DB. Trả về shift_id mới."""
     cursor = db.execute(
-        "INSERT INTO duty_shifts (shift_date, shift_type, leader_id, sp_id, sp_warning, nv_ids, nv_count, is_auto, status, created_at) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?)",
-        (data["shift_date"], data["shift_type"], data["leader_id"], data["sp_id"],
+        "INSERT INTO duty_shifts (shift_date, shift_type, leader_ids, sp_id, sp_warning, "
+        "nv_ids, nv_count, nv_phu_ids, nv_phu_count, is_auto, status, created_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        (data["shift_date"], data["shift_type"], data["leader_ids"], data["sp_id"],
          data.get("sp_warning"), data["nv_ids"], data["nv_count"],
+         data.get("nv_phu_ids", "[]"), data.get("nv_phu_count", 0),
          data["is_auto"], data["status"], _now())
     )
     return cursor.lastrowid
@@ -353,9 +363,10 @@ def _save_shift(db: sqlite3.Connection, data: dict) -> int:
 def _generate_normal_or_friday(db: sqlite3.Connection, date_str: str, year: int,
                                 ld_role: str, nv_role: str, shift_type: str,
                                 rng: random.Random) -> Tuple[List[dict], List[dict]]:
-    """1 Lãnh đạo + 2 người, đúng 1 người xử lý song phương.
+    """Số người lấy từ khai báo ở tab Cài đặt, thiếu thì không lập ca.
     Ngày thường bốc ngẫu nhiên trong nhóm ít ca nhất; thứ 6 luân phiên tất định."""
     randomize = (shift_type == "normal")
+    so_ld, so_chinh, so_phu = get_cau_hinh_ca(db, year, shift_type)
 
     pool = get_available_pool(db, date_str)
     requests = get_requests_for_date(db, date_str, year)
@@ -364,38 +375,43 @@ def _generate_normal_or_friday(db: sqlite3.Connection, date_str: str, year: int,
     ld_order = _order_pool(db, pool["LD"], requests, "LD", year, ld_role, date_str, rng, randomize)
     nv_order = _order_pool(db, pool["NV"], requests, "NV", year, nv_role, date_str, rng, randomize)
 
-    plan = _compose_exact_one_sp(ld_order, nv_order) or _compose_best_effort(ld_order, nv_order)
+    plan = _chon_to_hop(ld_order, nv_order, so_ld, so_chinh, so_phu)
 
-    # ── Luật cứng: không đủ 1 Lãnh đạo + 2 nhân viên thì KHÔNG hình thành ca ──
+    # ── Luật cứng: thiếu người so với khai báo thì KHÔNG hình thành ca ──
     if plan is None:
-        if not ld_order:
-            ly_do = "không có Lãnh đạo khả dụng"
+        if len(ld_order) < so_ld:
+            ly_do = f"chỉ có {len(ld_order)}/{so_ld} Lãnh đạo khả dụng"
         else:
-            ly_do = f"chỉ có {len(nv_order)}/{SHIFT_MEMBER_COUNT} nhân viên khả dụng"
+            ly_do = f"chỉ có {len(nv_order)}/{so_chinh + so_phu} nhân viên khả dụng"
+        can_co = f"{so_ld} Lãnh đạo + {so_chinh} nhân viên"
+        if so_phu:
+            can_co += f" trực chính + {so_phu} trực phụ"
         return [], [{"date": date_str, "type": "khong_du_nguoi",
                      "msg": f"Ngày {date_str} không lập được ca trực — {ly_do}. "
-                            f"Ca trực bắt buộc 1 Lãnh đạo + {SHIFT_MEMBER_COUNT} nhân viên."}]
+                            f"Ca trực bắt buộc {can_co}."}]
 
-    leader, sp, nvs, sp_warn = plan
+    leaders, nv_chinh, nv_phu = plan
+    sp, sp_warn = resolve_sp_role(leaders, nv_chinh, nv_phu)
+    # sp tách khỏi nv_ids để hiển thị riêng, giống đường sửa tay
+    nvs = [p for p in nv_chinh if sp is None or p["id"] != sp["id"]]
 
     # ── Luật mềm: vẫn lập ca, chỉ cảnh báo ──
-    if sp_warn == "no_sp":
-        warnings.append({"date": date_str, "type": "no_sp",
-                         "msg": f"Ngày {date_str} không có ai xử lý song phương"})
+    if sp_warn == "no_sp_chinh":
+        warnings.append({"date": date_str, "type": "no_sp_chinh",
+                         "msg": f"Ngày {date_str}: Lãnh đạo và nhóm trực chính không có "
+                                f"ai xử lý song phương"})
     elif sp_warn == "multi_sp":
         warnings.append({"date": date_str, "type": "multi_sp",
-                         "msg": f"Ngày {date_str} có nhiều hơn 1 người xử lý song phương "
-                                f"— không đủ người để tách"})
+                         "msg": f"Ngày {date_str} có nhiều hơn 1 người xử lý song phương"})
 
     # ── Ghi vòng xoay sau khi đã chốt tổ hợp (tránh tính cho ứng viên bị loại) ──
-    if leader:
-        _update_rotation(db, leader["id"], year, ld_role, date_str)
-    if sp:
-        _update_rotation(db, sp["id"], year, nv_role, date_str)
-    for p in nvs:
+    for p in leaders:
+        _update_rotation(db, p["id"], year, ld_role, date_str)
+    for p in nv_chinh + nv_phu:
         _update_rotation(db, p["id"], year, nv_role, date_str)
 
-    shift = _build_shift(date_str, shift_type, leader, sp, nvs, sp_warning=sp_warn)
+    shift = _build_shift(date_str, shift_type, leaders, sp, nvs,
+                         sp_warning=sp_warn, nv_phu=nv_phu)
     return [shift], warnings
 
 
@@ -428,7 +444,8 @@ def _generate_cutoff(db: sqlite3.Connection, date_str: str, year: int,
         nvs = _pick_nvs_prefer_non_sp(db, nv_pool, requests, year, date_str,
                                       nv_count, "NV_cutoff")
 
-    shift = _build_shift(date_str, "cutoff", leader, sp, nvs, sp_warning=sp_warn)
+    shift = _build_shift(date_str, "cutoff", [leader] if leader else [], sp, nvs,
+                         sp_warning=sp_warn)
     return [shift], warnings
 
 
@@ -463,7 +480,8 @@ def _generate_settlement(db: sqlite3.Connection, date_str: str, year: int,
         nvs_main = _pick_nvs_prefer_non_sp(db, nv_pool_main, requests, year, date_str,
                                             nv_count, "NV")
 
-    shift_main = _build_shift(date_str, "settlement_main", leader, sp, nvs_main, sp_warning=sp_warn)
+    shift_main = _build_shift(date_str, "settlement_main", [leader] if leader else [],
+                              sp, nvs_main, sp_warning=sp_warn)
 
     # ─── Ca phụ ──────────────────────────────────────────────
     used_ids = {leader["id"]} if leader else set()
@@ -474,7 +492,7 @@ def _generate_settlement(db: sqlite3.Connection, date_str: str, year: int,
     sub_count = max(1, len(remaining_nv) // 2)
     nvs_sub = remaining_nv[:sub_count]  # không cập nhật rotation
 
-    shift_sub = _build_shift(date_str, "settlement_sub", None, None, nvs_sub)
+    shift_sub = _build_shift(date_str, "settlement_sub", [], None, nvs_sub)
 
     return [shift_main, shift_sub], warnings
 

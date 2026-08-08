@@ -102,19 +102,31 @@ async def duty_schedule_page():
                 week_label = ui.html("").classes("text-base font-semibold text-red-800 my-1")
                 schedule_area = ui.column().classes("w-full gap-1")
 
-                # Danh sách nhân sự + vắng mặt, nạp cùng lịch để hộp thoại sửa dùng lại
-                nhan_su_ref: dict = {"list": [], "vang_mat": set()}
+                # Nhân sự, vắng mặt và cấu hình số người — nạp cùng lịch để hộp thoại
+                # sửa và bảng dùng lại, khỏi gọi API mỗi lần bấm
+                nhan_su_ref: dict = {"list": [], "vang_mat": set(), "cfg": {}}
+
+                def _so_nguoi_can_co(shift_type: str) -> tuple:
+                    """Số người bắt buộc của loại ca, lấy từ khai báo ở tab Cài đặt."""
+                    cfg = nhan_su_ref["cfg"] or {}
+                    if shift_type in ("settlement_main", "settlement_sub"):
+                        return (cfg.get("qt_ld_count") or 1,
+                                cfg.get("qt_nv_chinh_count") or 3,
+                                cfg.get("qt_nv_phu_count") if cfg.get("qt_nv_phu_count") is not None else 2)
+                    return (cfg.get("ld_count") or 1, cfg.get("nv_count") or 2, 0)
 
                 async def load_schedule():
                     ws = ws_ref["value"]
                     week_label.set_content(_fmt_week_label(ws))
                     schedule_area.clear()
-                    shifts, staff_list, absences = await asyncio.gather(
+                    shifts, staff_list, absences, cfg = await asyncio.gather(
                         asyncio.to_thread(api.get, "/api/duty/schedule/week",
                                           {"week_start": ws.isoformat()}),
                         asyncio.to_thread(api.get, "/api/duty/staff"),
                         asyncio.to_thread(api.get, "/api/duty/constraints/absences",
                                           {"month": ws.month, "year": ws.year}),
+                        asyncio.to_thread(api.get,
+                                          f"/api/duty/constraints/shift-config/{ws.year}"),
                         return_exceptions=True,
                     )
                     # Chỉ bảng lịch là bắt buộc. Danh sách nhân sự / vắng mặt hỏng thì
@@ -131,9 +143,12 @@ async def duty_schedule_page():
                         ui.notify("Không tải được danh sách vắng mặt — hộp thoại sửa sẽ "
                                   "không ghi chú ai đang nghỉ phép.", type="warning")
                         absences = []
+                    if isinstance(cfg, Exception) or not cfg:
+                        cfg = {}   # rơi về mặc định 1 Lãnh đạo + 2 nhân viên
 
                     nhan_su_ref["list"] = staff_list
                     nhan_su_ref["vang_mat"] = {(a["staff_id"], a["absence_date"]) for a in absences}
+                    nhan_su_ref["cfg"] = cfg
 
                     week_label.set_content(_fmt_week_label(ws) + _nhan_trang_thai(shifts))
 
@@ -176,11 +191,13 @@ async def duty_schedule_page():
 
                         for p in ([sp] if sp else []) + (s.get("nvs") or []):
                             nguoi_nv.append(_ten_kem_sp(p, bool(sp) and p["id"] == sp["id"]))
-                        if s.get("leader"):
-                            nguoi_ld.append(_ten_kem_sp(s["leader"], ld_giu_sp))
+                        # Nhiều lãnh đạo thì chỉ đánh dấu (SP) đúng người biết song phương
+                        biet_sp = {q["id"] for q in nhan_su_ref["list"] if q.get("can_do_sp")}
+                        for p in (s.get("leaders") or []):
+                            nguoi_ld.append(_ten_kem_sp(p, ld_giu_sp and p["id"] in biet_sp))
 
-                        if warn == "no_sp":
-                            canh_bao.append("Ca không có ai xử lý song phương")
+                        if warn == "no_sp_chinh":
+                            canh_bao.append("Lãnh đạo và nhóm trực chính không có ai xử lý song phương")
                         elif warn == "multi_sp":
                             canh_bao.append("Ca có nhiều hơn 1 người xử lý song phương")
 
@@ -239,29 +256,43 @@ async def duty_schedule_page():
 
                     ds = ca["shift_date"]
                     ds_vn = f"{ds[8:10]}/{ds[5:7]}/{ds[:4]}"
-                    ds_nv = ([ca["sp"]["id"]] if ca.get("sp") else []) + [p["id"] for p in ca["nvs"]]
+                    # Người giữ vai song phương được tách khỏi nv_ids khi lưu — gộp lại
+                    ds_chinh = ([ca["sp"]["id"]] if ca.get("sp") else []) + [p["id"] for p in ca["nvs"]]
+                    ds_ld    = [p["id"] for p in (ca.get("leaders") or [])]
+                    ds_phu   = [p["id"] for p in (ca.get("nv_phu") or [])]
+
+                    so_ld, so_chinh, so_phu = _so_nguoi_can_co(ca["shift_type"])
 
                     opt_ld = {str(p["id"]): _nhan_chon(p, ds)
                               for p in nhan_su_ref["list"] if p["duty_role"] == "LD"}
                     opt_nv = {str(p["id"]): _nhan_chon(p, ds)
                               for p in nhan_su_ref["list"] if p["duty_role"] == "NV"}
 
+                    def _o_chon(nhan: str, opts: dict, gia_tri_cu: list, n: int) -> list:
+                        """Dựng n ô chọn, điền sẵn người đang có."""
+                        o = []
+                        for i in range(n):
+                            v = str(gia_tri_cu[i]) if i < len(gia_tri_cu) else None
+                            nhan_o = nhan if n == 1 else f"{nhan} {i + 1}"
+                            o.append(ui.select(label=nhan_o, options=opts, with_input=True,
+                                               value=v).classes("w-full"))
+                        return o
+
                     with ui.dialog() as dlg, ui.card().classes("w-[520px] max-w-full"):
                         ui.label(f"Sửa ca trực ngày {ds_vn}").classes(
                             "text-base font-semibold text-red-800")
-                        ui.label("Ca trực bắt buộc 1 Lãnh đạo và 2 nhân viên. "
+                        can_co = f"{so_ld} Lãnh đạo và {so_chinh} nhân viên"
+                        if so_phu:
+                            can_co = (f"{so_ld} Lãnh đạo, {so_chinh} nhân viên trực chính "
+                                      f"và {so_phu} trực phụ")
+                        ui.label(f"Ca trực bắt buộc {can_co}. "
                                  "Người xử lý song phương do hệ thống tự xác định.").classes(
                             "text-xs text-gray-500 mb-2")
 
-                        sel_ld = ui.select(label="Lãnh đạo", options=opt_ld, with_input=True,
-                                           value=str(ca["leader"]["id"]) if ca.get("leader") else None
-                                           ).classes("w-full")
-                        sel_nv1 = ui.select(label="Nhân viên 1", options=opt_nv, with_input=True,
-                                            value=str(ds_nv[0]) if len(ds_nv) > 0 else None
-                                            ).classes("w-full")
-                        sel_nv2 = ui.select(label="Nhân viên 2", options=opt_nv, with_input=True,
-                                            value=str(ds_nv[1]) if len(ds_nv) > 1 else None
-                                            ).classes("w-full")
+                        sel_ld    = _o_chon("Lãnh đạo", opt_ld, ds_ld, so_ld)
+                        sel_chinh = _o_chon("Nhân viên trực chính" if so_phu else "Nhân viên",
+                                            opt_nv, ds_chinh, so_chinh)
+                        sel_phu   = _o_chon("Nhân viên trực phụ", opt_nv, ds_phu, so_phu)
 
                         loi_box = ui.html("").classes("text-sm text-red-600 mt-2")
 
@@ -271,14 +302,15 @@ async def duty_schedule_page():
 
                         async def do_luu():
                             loi_box.set_content("")
-                            if not (sel_ld.value and sel_nv1.value and sel_nv2.value):
-                                loi_box.set_content("Phải chọn đủ 1 Lãnh đạo và 2 nhân viên.")
+                            if not all(o.value for o in sel_ld + sel_chinh + sel_phu):
+                                loi_box.set_content(f"Phải chọn đủ {can_co}.")
                                 return
                             try:
                                 kq = await asyncio.to_thread(
                                     api.put, f"/api/duty/schedule/{shift_id}",
-                                    {"leader_id": int(sel_ld.value),
-                                     "nv_ids": [int(sel_nv1.value), int(sel_nv2.value)]},
+                                    {"leader_ids":   [int(o.value) for o in sel_ld],
+                                     "nv_chinh_ids": [int(o.value) for o in sel_chinh],
+                                     "nv_phu_ids":   [int(o.value) for o in sel_phu]},
                                 )
                             except Exception as ex:
                                 if _handle_api_error(ex):
@@ -812,11 +844,40 @@ async def duty_schedule_page():
             with ui.tab_panel(tab_settings):
                 today_yr3 = date.today().year
 
-                with ui.card().classes("w-full max-w-md p-4 mt-2"):
-                    ui.label("Cấu hình ca trực").classes("text-base font-semibold text-red-800 mb-3")
-                    yr_cfg = ui.number(label="Năm", value=today_yr3, min=2020, max=2099, format="%d").classes("w-28 mb-2")
-                    nv_count_inp  = ui.number(label="Số NV mỗi ca", value=2, min=1, max=5, format="%d").classes("w-36")
-                    signer_inp    = ui.input(label="Tên người ký Excel").classes("w-64")
+                with ui.card().classes("w-full max-w-2xl p-4 mt-2"):
+                    ui.label("Số người bắt buộc mỗi ca trực").classes(
+                        "text-base font-semibold text-red-800")
+                    ui.label("Số đã khai là bắt buộc: thiếu người thì không lập được ca trực, "
+                             "và sửa tay cũng không lưu được.").classes(
+                        "text-xs text-gray-500 mb-3")
+                    yr_cfg = ui.number(label="Năm", value=today_yr3, min=2020, max=2099,
+                                       format="%d").classes("w-28 mb-3")
+
+                    with ui.row().classes("w-full bg-red-800 text-white px-2 py-2 "
+                                          "text-xs font-semibold gap-2 items-center rounded-t"):
+                        ui.label("Loại ca").classes("flex-1 min-w-[130px]")
+                        ui.label("Lãnh đạo").classes("w-28 text-center")
+                        ui.label("Trực chính").classes("w-28 text-center")
+                        ui.label("Trực phụ").classes("w-28 text-center")
+
+                    with ui.row().classes("w-full items-center px-2 py-2 border border-gray-200 gap-2"):
+                        ui.label("Ca thường").classes("flex-1 min-w-[130px] text-sm font-medium")
+                        ld_count_inp = ui.number(value=1, min=1, max=5, format="%d").classes("w-28")
+                        nv_count_inp = ui.number(value=2, min=1, max=10, format="%d").classes("w-28")
+                        ui.label("—").classes("w-28 text-center text-gray-400")
+
+                    with ui.row().classes("w-full items-center px-2 py-2 border border-gray-200 "
+                                          "border-t-0 gap-2 bg-purple-50"):
+                        ui.label("Ca quyết toán").classes("flex-1 min-w-[130px] text-sm font-medium")
+                        qt_ld_inp    = ui.number(value=1, min=1, max=5, format="%d").classes("w-28")
+                        qt_chinh_inp = ui.number(value=3, min=1, max=10, format="%d").classes("w-28")
+                        qt_phu_inp   = ui.number(value=2, min=0, max=10, format="%d").classes("w-28")
+
+                    ui.label("Thứ 6 và cut-off dùng chung cấu hình ca thường. "
+                             "Nhân viên trực phụ về sớm hơn trực chính.").classes(
+                        "text-xs text-gray-500 mt-2 mb-3")
+
+                    signer_inp = ui.input(label="Tên người ký Excel").classes("w-64")
 
                     async def load_cfg():
                         yr = int(yr_cfg.value or today_yr3)
@@ -824,7 +885,12 @@ async def duty_schedule_page():
                             cfg = await asyncio.to_thread(
                                 api.get, f"/api/duty/constraints/shift-config/{yr}"
                             )
-                            nv_count_inp.value = cfg.get("nv_count", 2)
+                            ld_count_inp.value = cfg.get("ld_count") or 1
+                            nv_count_inp.value = cfg.get("nv_count") or 2
+                            qt_ld_inp.value    = cfg.get("qt_ld_count") or 1
+                            qt_chinh_inp.value = cfg.get("qt_nv_chinh_count") or 3
+                            qt_phu_inp.value   = (cfg.get("qt_nv_phu_count")
+                                                  if cfg.get("qt_nv_phu_count") is not None else 2)
                             signer_inp.value   = cfg.get("signer_name") or ""
                         except Exception:
                             pass  # Không có config → giữ giá trị mặc định
@@ -837,10 +903,15 @@ async def duty_schedule_page():
                             try:
                                 await asyncio.to_thread(
                                     api.put, f"/api/duty/constraints/shift-config/{yr}",
-                                    {"nv_count": int(nv_count_inp.value or 2),
-                                     "signer_name": signer_inp.value or None}
+                                    {"ld_count":          int(ld_count_inp.value or 1),
+                                     "nv_count":          int(nv_count_inp.value or 2),
+                                     "qt_ld_count":       int(qt_ld_inp.value or 1),
+                                     "qt_nv_chinh_count": int(qt_chinh_inp.value or 3),
+                                     "qt_nv_phu_count":   int(qt_phu_inp.value or 0),
+                                     "signer_name":       signer_inp.value or None}
                                 )
-                                ui.notify("Đã lưu", type="positive")
+                                ui.notify("Đã lưu cài đặt. Lịch tạo mới sẽ theo số người này.",
+                                          type="positive")
                             except Exception as ex:
                                 _handle_api_error(ex)
 

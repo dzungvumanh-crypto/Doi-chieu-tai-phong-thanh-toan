@@ -107,12 +107,13 @@ def edit_shift(
         raise HTTPException(404, "Không tìm thấy ca trực")
 
     loi_cung, canh_bao, _ns = validate_shift_members(
-        db, shift["shift_date"], body.leader_id, body.nv_ids
+        db, shift["shift_date"], shift["shift_type"],
+        body.leader_ids, body.nv_chinh_ids, body.nv_phu_ids,
     )
     if loi_cung:
         raise HTTPException(400, " ".join(loi_cung))
 
-    result = update_shift(db, shift_id, body.leader_id, body.nv_ids)
+    result = update_shift(db, shift_id, body.leader_ids, body.nv_chinh_ids, body.nv_phu_ids)
     if not result:
         raise HTTPException(404, "Không tìm thấy ca trực")
     return {"shift": result, "warnings": canh_bao}

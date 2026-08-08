@@ -26,16 +26,25 @@ def _person_dict(row) -> Optional[dict]:
     return {"id": r["id"], "full_name": r["full_name"], "role": r.get("role", "")}
 
 
+def _lay_nguoi(db: sqlite3.Connection, ids: List[int]) -> List[dict]:
+    """Đọc thông tin nhiều người, giữ đúng thứ tự đã lưu."""
+    if not ids:
+        return []
+    placeholders = ",".join("?" * len(ids))
+    rows = db.execute(
+        f"SELECT id, full_name, role FROM user_tttt WHERE id IN ({placeholders})", ids
+    ).fetchall()
+    m = {r["id"]: _person_dict(r) for r in rows}
+    return [m[i] for i in ids if i in m]
+
+
 def _enrich_shift(db: sqlite3.Connection, shift_row) -> dict:
-    """Bổ sung thông tin leader, sp, nvs vào dict ca trực."""
+    """Bổ sung thông tin leaders, sp, nvs, nv_phu vào dict ca trực."""
     s = dict(shift_row)
 
-    leader = None
-    if s.get("leader_id"):
-        row = db.execute(
-            "SELECT id, full_name, role FROM user_tttt WHERE id=?", (s["leader_id"],)
-        ).fetchone()
-        leader = _person_dict(row)
+    leaders = _lay_nguoi(db, json.loads(s.get("leader_ids") or "[]"))
+    nvs     = _lay_nguoi(db, json.loads(s.get("nv_ids") or "[]"))
+    nv_phu  = _lay_nguoi(db, json.loads(s.get("nv_phu_ids") or "[]"))
 
     sp = None
     if s.get("sp_id"):
@@ -44,29 +53,22 @@ def _enrich_shift(db: sqlite3.Connection, shift_row) -> dict:
         ).fetchone()
         sp = _person_dict(row)
 
-    nv_id_list = json.loads(s.get("nv_ids") or "[]")
-    nvs = []
-    if nv_id_list:
-        placeholders = ",".join("?" * len(nv_id_list))
-        rows = db.execute(
-            f"SELECT id, full_name, role FROM user_tttt WHERE id IN ({placeholders})",
-            nv_id_list
-        ).fetchall()
-        nv_map = {r["id"]: _person_dict(r) for r in rows}
-        nvs = [nv_map[nid] for nid in nv_id_list if nid in nv_map]
-
     return {
-        "id":          s["id"],
-        "shift_date":  s["shift_date"],
-        "shift_type":  s["shift_type"],
-        "leader":      leader,
-        "sp":          sp,
-        "sp_warning":  s.get("sp_warning"),
-        "nvs":         nvs,
-        "nv_count":    s["nv_count"],
-        "is_auto":     bool(s["is_auto"]),
-        "status":      s["status"],
-        "created_at":  str(s.get("created_at") or ""),
+        "id":           s["id"],
+        "shift_date":   s["shift_date"],
+        "shift_type":   s["shift_type"],
+        "leaders":      leaders,
+        # Giữ `leader` (người đầu) cho các màn hình chỉ hiển thị một lãnh đạo
+        "leader":       leaders[0] if leaders else None,
+        "sp":           sp,
+        "sp_warning":   s.get("sp_warning"),
+        "nvs":          nvs,
+        "nv_count":     s["nv_count"],
+        "nv_phu":       nv_phu,
+        "nv_phu_count": s.get("nv_phu_count") or 0,
+        "is_auto":      bool(s["is_auto"]),
+        "status":       s["status"],
+        "created_at":   str(s.get("created_at") or ""),
     }
 
 
@@ -135,12 +137,22 @@ def _dieu_chinh_vong_xoay(db: sqlite3.Connection, year: int, role: Optional[str]
         _update_rotation(db, sid, year, role, date_str)
 
 
+def _nv_cua_ca(row: dict) -> set:
+    """Toàn bộ nhân viên của một ca — gồm cả người giữ vai song phương và nhóm phụ."""
+    ids = set(json.loads(row.get("nv_ids") or "[]"))
+    ids |= set(json.loads(row.get("nv_phu_ids") or "[]"))
+    if row.get("sp_id"):
+        ids.add(row["sp_id"])
+    return ids
+
+
 def update_shift(db: sqlite3.Connection, shift_id: int,
-                 leader_id: Optional[int] = None,
-                 nv_ids: Optional[List[int]] = None) -> Optional[dict]:
+                 leader_ids: Optional[List[int]] = None,
+                 nv_chinh_ids: Optional[List[int]] = None,
+                 nv_phu_ids: Optional[List[int]] = None) -> Optional[dict]:
     """
     Sửa tay thành phần ca trực.
-    Vai song phương tự suy từ can_do_sp — người dùng chỉ chọn 1 Lãnh đạo + 2 nhân viên.
+    Vai song phương tự suy từ can_do_sp — người dùng chỉ chọn người cho từng vị trí.
     Ca đã xác nhận sẽ quay về bản thảo, phải xác nhận lại.
 
     Caller (API) có trách nhiệm gọi validate_shift_members() trước và chặn nếu có
@@ -151,22 +163,26 @@ def update_shift(db: sqlite3.Connection, shift_id: int,
         return None
     cu = dict(row)
 
-    ld_moi = leader_id if leader_id is not None else cu["leader_id"]
-    nv_moi = nv_ids if nv_ids is not None else json.loads(cu["nv_ids"] or "[]")
+    ld_moi    = leader_ids   if leader_ids   is not None else json.loads(cu.get("leader_ids") or "[]")
+    chinh_moi = nv_chinh_ids if nv_chinh_ids is not None else list(_nv_cua_ca(cu) - set(json.loads(cu.get("nv_phu_ids") or "[]")))
+    phu_moi   = nv_phu_ids   if nv_phu_ids   is not None else json.loads(cu.get("nv_phu_ids") or "[]")
 
     # ── Xác định lại ai giữ vai song phương ──
-    nhan_su = {p["id"]: p for p in get_all_staff(db)}
-    leader  = nhan_su.get(ld_moi)
-    nvs     = [nhan_su[i] for i in nv_moi if i in nhan_su]
-    sp, sp_warning = resolve_sp_role(leader, nvs)
+    nhan_su  = {p["id"]: p for p in get_all_staff(db)}
+    leaders  = [nhan_su[i] for i in ld_moi if i in nhan_su]
+    nv_chinh = [nhan_su[i] for i in chinh_moi if i in nhan_su]
+    nv_phu   = [nhan_su[i] for i in phu_moi if i in nhan_su]
+
+    sp, sp_warning = resolve_sp_role(leaders, nv_chinh, nv_phu)
     sp_moi = sp["id"] if sp else None
     # sp_id tách khỏi nv_ids để UI hiển thị riêng, giống đường sinh tự động
-    nv_luu = [i for i in nv_moi if i != sp_moi]
+    nv_luu = [i for i in chinh_moi if i != sp_moi]
 
     db.execute(
-        "UPDATE duty_shifts SET leader_id=?, sp_id=?, sp_warning=?, nv_ids=?, nv_count=?, "
-        "is_auto=0, status='draft' WHERE id=?",
-        (ld_moi, sp_moi, sp_warning, json.dumps(nv_luu), len(nv_luu), shift_id),
+        "UPDATE duty_shifts SET leader_ids=?, sp_id=?, sp_warning=?, nv_ids=?, nv_count=?, "
+        "nv_phu_ids=?, nv_phu_count=?, is_auto=0, status='draft' WHERE id=?",
+        (json.dumps(list(ld_moi)), sp_moi, sp_warning, json.dumps(nv_luu), len(nv_luu),
+         json.dumps(list(phu_moi)), len(phu_moi), shift_id),
     )
 
     # ── Vòng xoay đi theo người, không đi theo vị trí ──
@@ -174,13 +190,11 @@ def update_shift(db: sqlite3.Connection, shift_id: int,
     ld_role, nv_role = _KENH_VONG_XOAY.get(cu["shift_type"], (None, None))
     _dieu_chinh_vong_xoay(
         db, year, ld_role,
-        {cu["leader_id"]} - {None}, {ld_moi} - {None}, cu["shift_date"],
+        set(json.loads(cu.get("leader_ids") or "[]")), set(ld_moi), cu["shift_date"],
     )
     _dieu_chinh_vong_xoay(
         db, year, nv_role,
-        set(json.loads(cu["nv_ids"] or "[]")) | ({cu["sp_id"]} - {None}),
-        set(nv_moi),
-        cu["shift_date"],
+        _nv_cua_ca(cu), set(chinh_moi) | set(phu_moi), cu["shift_date"],
     )
 
     db.commit()
@@ -261,36 +275,46 @@ def get_shift_count_by_person(db: sqlite3.Connection, year: int) -> List[dict]:
         "ORDER BY COALESCE(m.display_order,999), u.full_name"
     ).fetchall()
 
+    # Chỉ đếm ca đã xác nhận — và vì mọi lần sửa đều đẩy ca về draft nên đây
+    # chính là bản xác nhận cuối cùng, không cần bảng snapshot riêng.
     shift_rows = db.execute(
-        "SELECT shift_type, leader_id, sp_id, nv_ids FROM duty_shifts "
+        "SELECT shift_type, leader_ids, sp_id, nv_ids, nv_phu_ids FROM duty_shifts "
         "WHERE shift_date LIKE ? AND status='confirmed'",
         (f"{year}-%",)
     ).fetchall()
 
     counts: dict = {r["id"]: {"normal": 0, "friday": 0, "cutoff": 0,
-                               "settlement_main": 0, "settlement_sub": 0}
+                               "settlement_main": 0, "settlement_sub": 0,
+                               "truc_phu": 0}
                     for r in staff_rows}
 
     for shift in shift_rows:
         st = shift["shift_type"]
-        if shift["leader_id"] and shift["leader_id"] in counts:
-            counts[shift["leader_id"]][st] = counts[shift["leader_id"]].get(st, 0) + 1
-        if shift["sp_id"] and shift["sp_id"] in counts:
-            counts[shift["sp_id"]][st] = counts[shift["sp_id"]].get(st, 0) + 1
-        for nv_id in json.loads(shift["nv_ids"] or "[]"):
-            if nv_id in counts:
-                counts[nv_id][st] = counts[nv_id].get(st, 0) + 1
+        # Trực chính: lãnh đạo + người song phương + nhân viên trực chính
+        chinh = json.loads(shift["leader_ids"] or "[]") + json.loads(shift["nv_ids"] or "[]")
+        if shift["sp_id"]:
+            chinh.append(shift["sp_id"])
+        for sid in chinh:
+            if sid in counts:
+                counts[sid][st] = counts[sid].get(st, 0) + 1
+        # Trực phụ đếm riêng, không quy đổi sang ca chính
+        for sid in json.loads(shift["nv_phu_ids"] or "[]"):
+            if sid in counts:
+                counts[sid]["truc_phu"] = counts[sid].get("truc_phu", 0) + 1
 
     result = []
     for r in staff_rows:
         c = counts[r["id"]]
-        total = sum(c.values())
+        # Hai cột riêng, không quy đổi: trực phụ không cộng vào trực chính
+        total_chinh = sum(v for k, v in c.items() if k != "truc_phu")
         result.append({
             "staff_id":   r["id"],
             "full_name":  r["full_name"],
             "duty_role":  r["duty_role"],
             **c,
-            "total": total,
+            "total":       total_chinh,
+            "total_chinh": total_chinh,
+            "total_phu":   c["truc_phu"],
         })
     return result
 
