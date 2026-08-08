@@ -14,7 +14,7 @@ import pytest
 
 from backend.services import duty_scheduler_engine as eng
 from backend.services.duty_scheduler_engine import (
-    _generate_normal_or_friday, generate_schedule_for_week,
+    _generate_ca, _generate_ngay_dac_biet, generate_schedule_for_week,
 )
 
 # ── Schema tối thiểu ──────────────────────────────────────────────────────────
@@ -136,7 +136,7 @@ def _sp_capable_ids(db) -> set:
 def _gen_one(db, date_str: str, seed: int, shift_type: str = "normal") -> dict:
     """shift=None nghĩa là không lập được ca (vi phạm luật cứng 1 LD + 2 NV)."""
     ld_role, nv_role = ("LD", "NV") if shift_type == "normal" else ("LD_friday", "NV_friday")
-    shifts, warns = _generate_normal_or_friday(
+    shifts, warns = _generate_ca(
         db, date_str, YEAR, ld_role, nv_role, shift_type, random.Random(seed)
     )
     return {"shift": shifts[0] if shifts else None, "warnings": warns}
@@ -210,6 +210,69 @@ def test_khai_nhieu_hon_pool_thi_khong_lap_duoc_ca():
 def test_khai_bay_nhan_vien_qua_pool_thi_khong_lap_duoc_ca():
     db = _make_db(_standard_staff(), ld_count=1, nv_count=7)   # pool chỉ 6 NV
     r = _gen_one(db, MONDAY, 0)
+    assert r["shift"] is None
+    assert any(w["type"] == "khong_du_nguoi" for w in r["warnings"])
+
+
+# ══════════════════════════════════════════════════════════════
+# 1c. Ca quyết toán — MỘT ca, nhân viên chia trực chính / trực phụ
+# ══════════════════════════════════════════════════════════════
+
+def _gen_quyet_toan(db, date_str=MONDAY, seed=0):
+    db.execute("INSERT INTO duty_special_days (date, day_type, is_confirmed) "
+               "VALUES (?, 'settlement', 1)", (date_str,))
+    db.commit()
+    shifts, warns = _generate_ngay_dac_biet(
+        db, date_str, YEAR, "settlement_main", "LD", "NV", random.Random(seed))
+    return {"shift": shifts[0] if shifts else None, "warnings": warns, "shifts": shifts}
+
+
+def test_ca_quyet_toan_chi_sinh_mot_ban_ghi():
+    """Trước đây quyết toán là 2 dòng (main + sub); nay gộp thành 1 ca."""
+    db = _make_db(_standard_staff(), qt_ld=1, qt_chinh=3, qt_phu=2)
+    r = _gen_quyet_toan(db)
+    assert len(r["shifts"]) == 1, "ca quyết toán phải là MỘT bản ghi"
+    assert r["shift"]["shift_type"] == "settlement_main"
+
+
+def test_ca_quyet_toan_dung_so_truc_chinh_va_truc_phu():
+    import json
+    db = _make_db(_standard_staff(), qt_ld=1, qt_chinh=3, qt_phu=2)
+    s = _gen_quyet_toan(db)["shift"]
+    so_chinh = len(json.loads(s["nv_ids"])) + (1 if s["sp_id"] else 0)
+    assert len(_leaders(s)) == 1
+    assert so_chinh == 3, f"trực chính phải 3 người, đang {so_chinh}"
+    assert len(json.loads(s["nv_phu_ids"])) == 2
+    assert len(_members(s)) == 6, "tổng 1 lãnh đạo + 3 chính + 2 phụ"
+
+
+def test_ca_quyet_toan_lanh_dao_dung_chung_khong_phan_chinh_phu():
+    db = _make_db(_standard_staff(), qt_ld=2, qt_chinh=2, qt_phu=2)
+    s = _gen_quyet_toan(db)["shift"]
+    assert len(_leaders(s)) == 2, "lãnh đạo dùng chung cả ca, khai 2 thì phải đủ 2"
+
+
+def test_ca_quyet_toan_nguoi_song_phuong_nam_o_nhom_truc_chinh():
+    import json
+    db = _make_db(_standard_staff(), qt_ld=1, qt_chinh=3, qt_phu=2)
+    sp_ids = _sp_capable_ids(db)
+    s = _gen_quyet_toan(db)["shift"]
+    chinh = set(json.loads(s["nv_ids"])) | ({s["sp_id"]} - {None}) | set(_leaders(s))
+    assert chinh & sp_ids, "phải có người song phương trong lãnh đạo hoặc trực chính"
+
+
+def test_ngay_quyet_toan_chua_xac_nhan_thi_khong_sinh():
+    db = _make_db(_standard_staff())
+    shifts, warns = _generate_ngay_dac_biet(
+        db, MONDAY, YEAR, "settlement_main", "LD", "NV", random.Random(0))
+    assert shifts == []
+    assert any("chưa được xác nhận" in w["msg"] for w in warns)
+
+
+def test_ca_quyet_toan_thieu_nguoi_thi_khong_lap_duoc():
+    staff = _standard_staff()[:4]     # 2 LD + 2 NV
+    db = _make_db(staff, qt_ld=1, qt_chinh=3, qt_phu=2)
+    r = _gen_quyet_toan(db)
     assert r["shift"] is None
     assert any(w["type"] == "khong_du_nguoi" for w in r["warnings"])
 

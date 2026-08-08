@@ -523,6 +523,23 @@ def _ensure_indexes():
         "ALTER TABLE duty_shifts ADD COLUMN nv_phu_count INTEGER DEFAULT 0",
         "UPDATE duty_shifts SET leader_ids = '[' || leader_id || ']' "
         "WHERE leader_id IS NOT NULL AND COALESCE(leader_ids, '[]') = '[]'",
+
+        # Ca quyết toán từng lưu thành 2 dòng (settlement_main + settlement_sub);
+        # nay gộp thành 1 ca có nhóm trực phụ. Đổ người của ca phụ vào nv_phu_ids
+        # của ca chính cùng ngày rồi xoá dòng phụ.
+        """UPDATE duty_shifts SET
+               nv_phu_ids = (SELECT s.nv_ids FROM duty_shifts s
+                             WHERE s.shift_date = duty_shifts.shift_date
+                               AND s.shift_type = 'settlement_sub'),
+               nv_phu_count = (SELECT s.nv_count FROM duty_shifts s
+                               WHERE s.shift_date = duty_shifts.shift_date
+                                 AND s.shift_type = 'settlement_sub')
+           WHERE shift_type = 'settlement_main'
+             AND COALESCE(nv_phu_ids, '[]') = '[]'
+             AND EXISTS (SELECT 1 FROM duty_shifts s
+                         WHERE s.shift_date = duty_shifts.shift_date
+                           AND s.shift_type = 'settlement_sub')""",
+        "DELETE FROM duty_shifts WHERE shift_type = 'settlement_sub'",
         # Popup thông báo carry-over hết hiệu lực sau Q1 — mỗi user chỉ xem 1 lần/năm
         "ALTER TABLE user_tttt ADD COLUMN carryover_notice_year INTEGER",
         # Nhập file hạn mức phép (Excel) — lưu lịch sử để có thể hoàn tác

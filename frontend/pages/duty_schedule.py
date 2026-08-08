@@ -44,11 +44,24 @@ def _h(s) -> str:
     return _html.escape(str(s or ""))
 
 
-def _ten_kem_sp(p: dict, la_sp: bool) -> str:
-    """Tên người trực; đánh dấu (SP) cho người xử lý song phương của ca.
-    Nhãn (SP) chỉ phục vụ giai đoạn đang phân lịch — gỡ khi chốt chương trình."""
-    ten = _h((p or {}).get("full_name", ""))
-    return f'{ten} <span class="text-blue-700 font-medium">(SP)</span>' if la_sp else ten
+def _ten_kem_sp(p: dict, la_sp: bool, kieu: str = "thuong") -> str:
+    """
+    Tên người trực; đánh dấu (SP) cho người xử lý song phương của ca.
+
+    kieu='chinh' → IN HOA, đậm — người trực chính ngày quyết toán
+    kieu='phu'   → nghiêng, nhỏ hơn — người trực phụ, về sớm hơn
+    kieu='thuong'→ chữ thường, ca không chia chính/phụ
+
+    Nhãn (SP) chỉ phục vụ giai đoạn đang phân lịch — gỡ khi chốt chương trình.
+    """
+    ten = (p or {}).get("full_name", "")
+    if kieu == "chinh":
+        the = f'<span class="font-bold">{_h(ten.upper())}</span>'
+    elif kieu == "phu":
+        the = f'<span class="italic text-gray-600 text-xs">{_h(ten)}</span>'
+    else:
+        the = _h(ten)
+    return f'{the} <span class="text-blue-700 font-medium">(SP)</span>' if la_sp else the
 
 
 def _nhan_trang_thai(shifts: list) -> str:
@@ -182,7 +195,11 @@ async def duty_schedule_page():
                     """Một hàng = một ngày. Ngày quyết toán có 2 ca thì gộp người vào cùng hàng."""
                     bg = _TYPE_ROW_COLOR.get(ca_ngay[0]["shift_type"], "#FFFFFF") if ca_ngay else "#FFFFFF"
 
-                    nguoi_nv, nguoi_ld, canh_bao = [], [], []
+                    nguoi_chinh, nguoi_phu, nguoi_ld, canh_bao = [], [], [], []
+                    # Ca có nhóm phụ (quyết toán) mới cần phân biệt hai kiểu chữ
+                    co_phu = any(s.get("nv_phu") for s in ca_ngay)
+                    kieu_chinh = "chinh" if co_phu else "thuong"
+
                     for s in ca_ngay:
                         warn = s.get("sp_warning") or ""
                         sp   = s.get("sp")
@@ -190,7 +207,11 @@ async def duty_schedule_page():
                         ld_giu_sp = sp is None and warn in ("leader_sp", "multi_sp")
 
                         for p in ([sp] if sp else []) + (s.get("nvs") or []):
-                            nguoi_nv.append(_ten_kem_sp(p, bool(sp) and p["id"] == sp["id"]))
+                            nguoi_chinh.append(
+                                _ten_kem_sp(p, bool(sp) and p["id"] == sp["id"], kieu_chinh))
+                        for p in (s.get("nv_phu") or []):
+                            nguoi_phu.append(_ten_kem_sp(p, False, "phu"))
+
                         # Nhiều lãnh đạo thì chỉ đánh dấu (SP) đúng người biết song phương
                         biet_sp = {q["id"] for q in nhan_su_ref["list"] if q.get("can_do_sp")}
                         for p in (s.get("leaders") or []):
@@ -201,9 +222,12 @@ async def duty_schedule_page():
                         elif warn == "multi_sp":
                             canh_bao.append("Ca có nhiều hơn 1 người xử lý song phương")
 
-                    # Người thứ 3 trở đi (ca cut-off/quyết toán) dồn vào ô Nhân viên 2
-                    nv1 = nguoi_nv[0] if nguoi_nv else "—"
-                    nv2 = "<br>".join(nguoi_nv[1:]) if len(nguoi_nv) > 1 else "—"
+                    # Bảng giữ đúng 2 ô nhân viên: ô 1 nhận người đầu của mỗi nhóm,
+                    # ô 2 nhận toàn bộ phần còn lại. Trực phụ luôn nằm dưới trực chính.
+                    o1 = nguoi_chinh[:1] + nguoi_phu[:1]
+                    o2 = nguoi_chinh[1:] + nguoi_phu[1:]
+                    nv1 = "<br>".join(o1) or "—"
+                    nv2 = "<br>".join(o2) or "—"
 
                     with ui.column().classes("w-full gap-0"):
                         with ui.row().classes("w-full items-center px-2 py-2 border-t "
@@ -669,8 +693,10 @@ async def duty_schedule_page():
                     with stats_area:
                         rows_html = ""
                         for p in data:
-                            total = p.get("total", 0)
-                            bg = "background:#F0FDF4" if total > 0 else ""
+                            # Trực chính và trực phụ đếm riêng, không quy đổi
+                            tong_chinh = p.get("total_chinh", p.get("total", 0))
+                            tong_phu   = p.get("total_phu", 0)
+                            bg = "background:#F0FDF4" if (tong_chinh or tong_phu) else ""
                             rows_html += (
                                 f'<tr style="{bg}">'
                                 f'<td class="{_TD}">{_h(p["full_name"])}</td>'
@@ -679,8 +705,8 @@ async def duty_schedule_page():
                                 f'<td class="{_TD} text-center">{p.get("friday",0) or ""}</td>'
                                 f'<td class="{_TD} text-center">{p.get("cutoff",0) or ""}</td>'
                                 f'<td class="{_TD} text-center">{p.get("settlement_main",0) or ""}</td>'
-                                f'<td class="{_TD} text-center">{p.get("settlement_sub",0) or ""}</td>'
-                                f'<td class="{_TD} text-center font-bold">{total or ""}</td>'
+                                f'<td class="{_TD} text-center font-bold">{tong_chinh or ""}</td>'
+                                f'<td class="{_TD} text-center text-gray-600">{tong_phu or ""}</td>'
                                 f'</tr>'
                             )
                         ui.html(
@@ -692,13 +718,16 @@ async def duty_schedule_page():
                             f'<th class="{_TH}">Thường</th>'
                             f'<th class="{_TH}">Thứ 6</th>'
                             f'<th class="{_TH}">Cut-off</th>'
-                            f'<th class="{_TH}">QT Chính</th>'
-                            f'<th class="{_TH}">QT Phụ</th>'
-                            f'<th class="{_TH}">Tổng</th>'
+                            f'<th class="{_TH}">Quyết toán</th>'
+                            f'<th class="{_TH}">Tổng trực chính</th>'
+                            f'<th class="{_TH}">Trực phụ</th>'
                             f'</tr></thead>'
                             f'<tbody>{rows_html}</tbody>'
                             '</table></div>'
                         )
+                        ui.label("Trực chính và trực phụ đếm riêng, không quy đổi. "
+                                 "Chỉ tính ca đã xác nhận — sửa ca thì phải xác nhận lại "
+                                 "mới vào thống kê.").classes("text-xs text-gray-500 mt-2")
 
                 ui.button("Tải thống kê", icon="refresh",
                           on_click=load_stats).props("flat dense color=primary").classes("mb-1")

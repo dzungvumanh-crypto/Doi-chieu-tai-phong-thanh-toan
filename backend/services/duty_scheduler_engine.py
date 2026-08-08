@@ -2,12 +2,13 @@
 Duty Scheduler Engine — thuật toán phân lịch trực tự động.
 Raw SQLite3. Staff được biểu diễn dưới dạng dict (không ORM).
 
-Loại ca: normal | friday | cutoff | settlement_main | settlement_sub
+Loại ca: normal | friday | cutoff | settlement_main
 Rotation roles: LD | NV | LD_friday | NV_friday | LD_cutoff | NV_cutoff
 
-Ca ngày thường / thứ 6: bắt buộc 1 Lãnh đạo + 2 người, trong đó ĐÚNG 1 người
-xử lý song phương (can_do_sp) — có thể là Lãnh đạo hoặc nhân viên.
-Ngày thường bốc ngẫu nhiên trong nhóm ít ca nhất; thứ 6 luân phiên tất định.
+Số người mỗi ca lấy từ khai báo ở tab Cài đặt (duty_shift_config) — thiếu người
+thì KHÔNG hình thành ca trực. Ca quyết toán có thêm nhóm trực phụ (về sớm hơn).
+Cần ít nhất 1 người xử lý song phương trong Lãnh đạo hoặc nhóm trực chính.
+Chỉ thứ 6 luân phiên tất định; các loại ca khác bốc ngẫu nhiên trong nhóm ít ca nhất.
 """
 import json
 import random
@@ -112,115 +113,7 @@ def _pick_by_rotation(db: sqlite3.Connection, candidates: List[dict],
 
 
 # ══════════════════════════════════════════════════════════════
-# CHỌN TỪNG VAI TRÒ
-# ══════════════════════════════════════════════════════════════
-
-def _pick_leader(db: sqlite3.Connection, pool_ld: List[dict], requests: dict,
-                 year: int, date_str: str,
-                 rotation_role: str = "LD") -> Optional[dict]:
-    if not pool_ld:
-        return None
-
-    week_ids = get_week_assignees(db, date_str)
-    once_ids = set(requests.get("once_ids", set()))
-    requested_ids = set(requests.get("LD", []))
-
-    forced     = [p for p in pool_ld if p["id"] in once_ids]
-    fresh_ld   = [p for p in pool_ld if p["id"] not in week_ids and p["id"] not in once_ids]
-    repeat_ld  = [p for p in pool_ld if p["id"] in week_ids and p["id"] not in once_ids]
-
-    if forced:
-        candidates = forced
-    elif fresh_ld:
-        requested = [p for p in fresh_ld if p["id"] in requested_ids]
-        candidates = requested if requested else fresh_ld
-    else:
-        requested = [p for p in repeat_ld if p["id"] in requested_ids]
-        candidates = requested if requested else repeat_ld
-
-    if not candidates:
-        return None
-
-    winner = _pick_by_rotation(db, candidates, year, rotation_role, current_date=date_str)
-    if winner:
-        _update_rotation(db, winner["id"], year, rotation_role, date_str)
-    return winner
-
-
-def _pick_sp(db: sqlite3.Connection, pool: dict, requests: dict,
-             year: int, date_str: str,
-             rotation_role: str = "NV") -> Tuple[Optional[dict], Optional[str]]:
-    pool_sp = pool["SP"]
-    week_ids = get_week_assignees(db, date_str)
-
-    fresh_sp = [p for p in pool_sp if p["id"] not in week_ids]
-    if fresh_sp:
-        requested_ids = set(requests.get("SP", []))
-        requested = [p for p in fresh_sp if p["id"] in requested_ids]
-        candidates = requested if requested else fresh_sp
-        winner = _pick_by_rotation(db, candidates, year, rotation_role, current_date=date_str)
-        if winner:
-            _update_rotation(db, winner["id"], year, rotation_role, date_str)
-        return winner, None
-
-    if pool_sp:
-        requested_ids = set(requests.get("SP", []))
-        requested = [p for p in pool_sp if p["id"] in requested_ids]
-        candidates = requested if requested else pool_sp
-        winner = _pick_by_rotation(db, candidates, year, rotation_role, current_date=date_str)
-        if winner:
-            _update_rotation(db, winner["id"], year, rotation_role, date_str)
-        return winner, None
-
-    return None, "no_sp"
-
-
-def _pick_nvs(db: sqlite3.Connection, pool_nv: List[dict], requests: dict,
-              year: int, date_str: str, nv_slots: int,
-              rotation_role: str = "NV") -> List[dict]:
-    week_ids = get_week_assignees(db, date_str)
-    once_ids = set(requests.get("once_ids", set()))
-    requested_ids = set(requests.get("NV", []))
-
-    forced_nv   = [p for p in pool_nv if p["id"] in once_ids]
-    fresh_nv    = [p for p in pool_nv if p["id"] not in week_ids and p["id"] not in once_ids]
-    repeated_nv = [p for p in pool_nv if p["id"] in week_ids and p["id"] not in once_ids]
-
-    ordered_pool: List[dict] = (
-        forced_nv
-        + [p for p in fresh_nv if p["id"] in requested_ids]
-        + _sort_by_rotation(db, [p for p in fresh_nv if p["id"] not in requested_ids],
-                            year, rotation_role, current_date=date_str)
-        + [p for p in repeated_nv if p["id"] in requested_ids]
-        + _sort_by_rotation(db, [p for p in repeated_nv if p["id"] not in requested_ids],
-                            year, rotation_role, current_date=date_str)
-    )
-
-    selected: List[dict] = []
-    seen: set = set()
-    for p in ordered_pool:
-        if len(selected) >= nv_slots:
-            break
-        if p["id"] not in seen:
-            seen.add(p["id"])
-            selected.append(p)
-            _update_rotation(db, p["id"], year, rotation_role, date_str)
-
-    return selected
-
-
-def _pick_nvs_prefer_non_sp(db: sqlite3.Connection, pool_nv: List[dict], requests: dict,
-                             year: int, date_str: str,
-                             n_slots: int, nv_role: str) -> List[dict]:
-    """Ưu tiên NV không có can_do_sp để tránh 2 SP-capable cùng ca."""
-    non_sp = [p for p in pool_nv if not p.get("can_do_sp", 0)]
-    if len(non_sp) >= n_slots:
-        return _pick_nvs(db, non_sp, requests, year, date_str, n_slots, nv_role)
-    return _pick_nvs(db, pool_nv, requests, year, date_str, n_slots, nv_role)
-
-
-# ══════════════════════════════════════════════════════════════
-# CA NGÀY THƯỜNG / THỨ 6 — 1 LD + 2 người, đúng 1 người song phương
+# XẾP THỨ TỰ ƯU TIÊN & CHỌN TỔ HỢP
 # ══════════════════════════════════════════════════════════════
 
 def _rank_candidates(db: sqlite3.Connection, candidates: List[dict], year: int,
@@ -360,12 +253,19 @@ def _save_shift(db: sqlite3.Connection, data: dict) -> int:
 # GENERATE TỪNG LOẠI CA
 # ══════════════════════════════════════════════════════════════
 
-def _generate_normal_or_friday(db: sqlite3.Connection, date_str: str, year: int,
-                                ld_role: str, nv_role: str, shift_type: str,
-                                rng: random.Random) -> Tuple[List[dict], List[dict]]:
-    """Số người lấy từ khai báo ở tab Cài đặt, thiếu thì không lập ca.
-    Ngày thường bốc ngẫu nhiên trong nhóm ít ca nhất; thứ 6 luân phiên tất định."""
-    randomize = (shift_type == "normal")
+def _generate_ca(db: sqlite3.Connection, date_str: str, year: int,
+                 ld_role: str, nv_role: str, shift_type: str,
+                 rng: random.Random) -> Tuple[List[dict], List[dict]]:
+    """
+    Sinh MỘT ca trực cho mọi loại ca — ngày thường, thứ 6, cut-off, quyết toán.
+    Bốn loại chỉ khác nhau ở số người khai báo và kênh vòng xoay, nên dùng
+    chung một đường; ngày quyết toán thì có thêm nhóm trực phụ.
+
+    Số người lấy từ khai báo ở tab Cài đặt, thiếu thì không lập ca.
+    Chỉ thứ 6 luân phiên tất định, các loại còn lại bốc ngẫu nhiên trong
+    nhóm ít ca nhất.
+    """
+    randomize = (shift_type != "friday")
     so_ld, so_chinh, so_phu = get_cau_hinh_ca(db, year, shift_type)
 
     pool = get_available_pool(db, date_str)
@@ -415,86 +315,16 @@ def _generate_normal_or_friday(db: sqlite3.Connection, date_str: str, year: int,
     return [shift], warnings
 
 
-def _generate_cutoff(db: sqlite3.Connection, date_str: str, year: int,
-                     nv_count: int) -> Tuple[List[dict], List[dict]]:
+def _generate_ngay_dac_biet(db: sqlite3.Connection, date_str: str, year: int,
+                            shift_type: str, ld_role: str, nv_role: str,
+                            rng: random.Random) -> Tuple[List[dict], List[dict]]:
+    """Cut-off / quyết toán chỉ sinh khi ngày đó đã được xác nhận ở tab Ngày đặc biệt."""
     sd = get_special_day(db, date_str)
     if not sd or not sd["is_confirmed"]:
-        return [], [{"date": date_str, "type": "cutoff_unconfirmed",
-                     "msg": f"Ngày cut-off {date_str} chưa được xác nhận — bỏ qua"}]
-
-    pool = get_available_pool(db, date_str)
-    requests = get_requests_for_date(db, date_str, year)
-    warnings = []
-
-    leader = _pick_leader(db, pool["LD"], requests, year, date_str, "LD_cutoff")
-
-    if leader and leader.get("can_do_sp"):
-        sp, sp_warn = None, "leader_sp"
-    else:
-        sp, sp_warn = _pick_sp(db, pool, requests, year, date_str, rotation_role="NV_cutoff")
-        if not leader:
-            warnings.append({"date": date_str, "type": "no_leader",
-                             "msg": f"Không có Lãnh đạo khả dụng ngày cutoff {date_str}"})
-
-    nv_pool = [p for p in pool["NV"] if p["id"] != (sp["id"] if sp else None)]
-    if sp:
-        nvs = _pick_nvs_prefer_non_sp(db, nv_pool, requests, year, date_str,
-                                      max(0, nv_count - 1), "NV_cutoff")
-    else:
-        nvs = _pick_nvs_prefer_non_sp(db, nv_pool, requests, year, date_str,
-                                      nv_count, "NV_cutoff")
-
-    shift = _build_shift(date_str, "cutoff", [leader] if leader else [], sp, nvs,
-                         sp_warning=sp_warn)
-    return [shift], warnings
-
-
-def _generate_settlement(db: sqlite3.Connection, date_str: str, year: int,
-                          nv_count: int) -> Tuple[List[dict], List[dict]]:
-    """Ca quyết toán: 2 cụm cùng ngày (main + sub)."""
-    sd = get_special_day(db, date_str)
-    if not sd or not sd["is_confirmed"]:
-        return [], [{"date": date_str, "type": "settlement_unconfirmed",
-                     "msg": f"Ngày quyết toán {date_str} chưa được xác nhận — bỏ qua"}]
-
-    pool = get_available_pool(db, date_str)
-    requests = get_requests_for_date(db, date_str, year)
-    warnings = []
-
-    # ─── Ca chính ────────────────────────────────────────────
-    leader = _pick_leader(db, pool["LD"], requests, year, date_str, "LD")
-
-    if leader and leader.get("can_do_sp"):
-        sp, sp_warn = None, "leader_sp"
-    else:
-        sp, sp_warn = _pick_sp(db, pool, requests, year, date_str)
-        if not leader:
-            warnings.append({"date": date_str, "type": "no_leader",
-                             "msg": f"Không có Lãnh đạo khả dụng ngày quyết toán {date_str}"})
-
-    nv_pool_main = [p for p in pool["NV"] if p["id"] != (sp["id"] if sp else None)]
-    if sp:
-        nvs_main = _pick_nvs_prefer_non_sp(db, nv_pool_main, requests, year, date_str,
-                                            max(0, nv_count - 1), "NV")
-    else:
-        nvs_main = _pick_nvs_prefer_non_sp(db, nv_pool_main, requests, year, date_str,
-                                            nv_count, "NV")
-
-    shift_main = _build_shift(date_str, "settlement_main", [leader] if leader else [],
-                              sp, nvs_main, sp_warning=sp_warn)
-
-    # ─── Ca phụ ──────────────────────────────────────────────
-    used_ids = {leader["id"]} if leader else set()
-    if sp:
-        used_ids.add(sp["id"])
-    used_ids.update(p["id"] for p in nvs_main)
-    remaining_nv = [p for p in pool["NV"] if p["id"] not in used_ids]
-    sub_count = max(1, len(remaining_nv) // 2)
-    nvs_sub = remaining_nv[:sub_count]  # không cập nhật rotation
-
-    shift_sub = _build_shift(date_str, "settlement_sub", [], None, nvs_sub)
-
-    return [shift_main, shift_sub], warnings
+        ten = "cut-off" if shift_type == "cutoff" else "quyết toán"
+        return [], [{"date": date_str, "type": f"{shift_type}_unconfirmed",
+                     "msg": f"Ngày {ten} {date_str} chưa được xác nhận — bỏ qua"}]
+    return _generate_ca(db, date_str, year, ld_role, nv_role, shift_type, rng)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -504,22 +334,23 @@ def _generate_settlement(db: sqlite3.Connection, date_str: str, year: int,
 def _process_day(db: sqlite3.Connection, date_str: str, year: int, nv_count: int,
                  overwrite_draft: bool, overwrite_confirmed: bool,
                  confirmed_types: set, rng: random.Random) -> Tuple[int, int, List[dict]]:
-    """Sinh ca cho 1 ngày. Trả (created, skipped, warnings)."""
+    """Sinh ca cho 1 ngày. Trả (created, skipped, warnings).
+    Ngày đặc biệt được ưu tiên trước thứ 6 — quyết toán rơi vào thứ 6 vẫn là
+    ca quyết toán."""
     sd = get_special_day(db, date_str)
     day_type = sd["day_type"] if (sd and sd["is_confirmed"]) else None
 
     if day_type == "settlement":
-        shifts, warns = _generate_settlement(db, date_str, year, nv_count)
+        shifts, warns = _generate_ngay_dac_biet(
+            db, date_str, year, "settlement_main", "LD", "NV", rng)
     elif day_type == "cutoff":
-        shifts, warns = _generate_cutoff(db, date_str, year, nv_count)
+        shifts, warns = _generate_ngay_dac_biet(
+            db, date_str, year, "cutoff", "LD_cutoff", "NV_cutoff", rng)
     elif is_friday(date_str):
-        shifts, warns = _generate_normal_or_friday(
-            db, date_str, year, "LD_friday", "NV_friday", "friday", rng
-        )
+        shifts, warns = _generate_ca(db, date_str, year, "LD_friday", "NV_friday",
+                                     "friday", rng)
     else:
-        shifts, warns = _generate_normal_or_friday(
-            db, date_str, year, "LD", "NV", "normal", rng
-        )
+        shifts, warns = _generate_ca(db, date_str, year, "LD", "NV", "normal", rng)
 
     created = 0
     skipped = 0

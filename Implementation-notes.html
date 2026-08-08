@@ -6381,6 +6381,128 @@ Bất biến MIS: 522.774 + 36.462 = 559.236 (khớp tổng gốc)</pre>
     </div>
   </div>
 
+  <!-- 69 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">69</span>
+      <span class="card-title">Phân lịch trực — khai báo số người mỗi ca + ca quyết toán trực chính / trực phụ</span>
+      <span class="badge badge-done">done · 2026-08-08</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Vì sao</div>
+      <p>Số người mỗi ca đang <b>cứng trong code</b> (<code>SHIFT_MEMBER_COUNT = 2</code>), mỗi ca chỉ có
+        đúng 1 lãnh đạo vì <code>duty_shifts.leader_id</code> là một cột số nguyên, và
+        <code>duty_shift_config</code> chỉ có một ô <code>nv_count</code> mà engine ngày thường thậm chí
+        không đọc. Ca quyết toán thì lưu thành <b>hai bản ghi</b> (<code>settlement_main</code> +
+        <code>settlement_sub</code>), ca phụ không có lãnh đạo và số người tính tuỳ tiện:
+        <code>max(1, len(remaining_nv) // 2)</code> — phụ thuộc hôm đó còn dư bao nhiêu người,
+        không theo khai báo nào cả.</p>
+
+      <div class="label">Quyết định nghiệp vụ</div>
+      <table>
+        <tr><th>Mục</th><th>Chốt</th></tr>
+        <tr><td>Ca quyết toán</td><td><b>Một ca</b> 5–6 người, lãnh đạo dùng chung, nhân viên chia nhóm chính / phụ (phụ về sớm hơn)</td></tr>
+        <tr><td>Số lãnh đạo</td><td>Khai báo được, <b>có thể 2</b> — nhất là ngày quyết toán</td></tr>
+        <tr><td>Phạm vi khai báo</td><td><b>2 nhóm</b>: ca thường (dùng cho cả thứ 6 và cut-off) và ca quyết toán</td></tr>
+        <tr><td>Luật CỨNG</td><td>Đủ đúng số đã khai. Thiếu → <b>không hình thành ca trực</b></td></tr>
+        <tr><td>Song phương</td><td><b>Ít nhất 1</b> người trong (lãnh đạo + trực chính). Người ở nhóm phụ không tính vì họ về sớm</td></tr>
+        <tr><td>Cảnh báo dư song phương</td><td><b>Giữ</b> cho mọi loại ca</td></tr>
+        <tr><td>Đếm ca năm</td><td><b>Hai cột riêng</b>, không quy đổi</td></tr>
+        <tr><td>Hiển thị</td><td>Trực chính <b>IN HOA đậm</b>, trực phụ <i>nghiêng, nhỏ hơn</i>, cùng ô</td></tr>
+      </table>
+
+      <div class="label">Cấu hình — một chỗ duy nhất dịch loại ca sang số người</div>
+      <p><code>duty_shift_config</code> thêm <code>ld_count</code>, <code>qt_ld_count</code>,
+        <code>qt_nv_chinh_count</code>, <code>qt_nv_phu_count</code>.
+        <code>get_cau_hinh_ca(db, year, shift_type)</code> trong <code>duty_rules.py</code> là chỗ duy
+        nhất trả <code>(số LĐ, số trực chính, số trực phụ)</code> — engine và đường sửa tay cùng gọi nó,
+        nên không thể hiểu khác nhau về "ca này cần mấy người".</p>
+
+      <div class="label"><code>leader_id</code> → <code>leader_ids</code></div>
+      <p>Một cột số nguyên không chứa được 2 lãnh đạo. Thêm <code>leader_ids</code> (JSON) kèm migration
+        <code>UPDATE duty_shifts SET leader_ids = '[' || leader_id || ']'</code>. Cột
+        <code>leader_id</code> <b>giữ trong DB nhưng code ngừng đọc</b> — cùng cách đã xử lý
+        <code>is_sp_backup</code> ở mục 67. Giữ hai nguồn sự thật song song thì sớm muộn cũng lệch.</p>
+      <p>Kéo theo: <code>_enrich_shift()</code>, <code>get_week_assignees()</code>,
+        <code>update_shift()</code>, <code>get_shift_count_by_person()</code> và xuất Excel đều phải đổi.</p>
+
+      <div class="label">Ca quyết toán gộp thành một ca</div>
+      <p><code>duty_shifts</code> thêm <code>nv_phu_ids</code> + <code>nv_phu_count</code>.
+        <code>settlement_main</code> trở thành loại ca quyết toán duy nhất, mang cả nhóm phụ.
+        Migration gộp dữ liệu cũ: đổ <code>nv_ids</code> của <code>settlement_sub</code> vào
+        <code>nv_phu_ids</code> của ca chính cùng ngày rồi xoá dòng phụ. Ràng buộc CHECK của
+        <code>shift_type</code> giữ nguyên — SQLite không sửa CHECK dễ, và để nguyên thì dữ liệu lịch sử
+        vẫn đọc được.</p>
+
+      <div class="label">Bốn hàm sinh ca gộp còn một</div>
+      <table>
+        <tr><th>Trước</th><th>Sau</th></tr>
+        <tr>
+          <td><code>_generate_normal_or_friday()</code>, <code>_generate_cutoff()</code>,
+            <code>_generate_settlement()</code> — ba đường riêng, mỗi đường tự chọn người bằng
+            <code>_pick_leader()</code> / <code>_pick_sp()</code> / <code>_pick_nvs()</code> /
+            <code>_pick_nvs_prefer_non_sp()</code></td>
+          <td><code>_generate_ca()</code> dùng chung cho cả bốn loại — chúng chỉ khác nhau ở số người khai
+            báo và kênh vòng xoay. <code>_generate_ngay_dac_biet()</code> là lớp mỏng kiểm "ngày đã xác
+            nhận chưa" rồi gọi vào</td>
+        </tr>
+      </table>
+      <p>Bốn hàm <code>_pick_*</code> cũ thành mã chết sau khi gộp — đã xoá (≈95 dòng). Trước đây chúng là
+        nguồn phân kỳ: cùng một khái niệm "chọn người theo vòng xoay" nhưng ba đường cài đặt hơi khác nhau.</p>
+
+      <div class="label">Engine tự tránh cảnh báo mà chính nó tạo ra</div>
+      <p>Khi khai 2 lãnh đạo, click-through cho thấy lịch sinh ra <b>vơ trúng cả 2 người biết song phương</b>
+        rồi tự gắn cảnh báo <code>multi_sp</code> — trong khi phòng còn lãnh đạo khác không biết song phương.
+        <code>_chon_to_hop()</code> nay thay người thứ hai trở đi bằng lãnh đạo không biết song phương kế
+        tiếp, <b>chỉ thay khi có sẵn người ngoài top</b> để không phá thứ tự vòng xoay. Sau khi sửa, cảnh báo
+        biến mất khỏi lịch tuần mẫu.</p>
+
+      <div class="label">Đếm ca năm — không cần bảng snapshot</div>
+      <p>Business Owner yêu cầu "lấy xác nhận cuối cùng của ca trực để lưu đếm ca trực trong năm".
+        <code>get_shift_count_by_person()</code> vốn đã lọc <code>status='confirmed'</code>, và từ mục 68
+        mọi lần sửa đều đẩy ca về <code>draft</code> — nên cái nó đếm <b>chính là bản xác nhận cuối cùng</b>.
+        Thêm bảng snapshot chỉ tạo ra một nguồn sự thật thứ hai để lệch. Việc cần làm chỉ là tách
+        <code>truc_phu</code> thành cột đếm riêng, không cộng vào <code>total_chinh</code>.</p>
+
+      <div class="label">Kiểm chứng</div>
+      <p><b>66 test tự động</b> (31 thuật toán + 35 sửa tay), trong đó test mới cho: cấu hình mặc định và
+        theo năm, khai 2 lãnh đạo / 3 nhân viên, khai vượt pool thì không lập ca, ca quyết toán ra đúng 1 bản
+        ghi với đúng số chính/phụ, người song phương không bị đẩy xuống nhóm phụ, và không vơ 2 lãnh đạo cùng
+        biết song phương.</p>
+      <table>
+        <tr><th>Click-through trên UI thật</th><th>Kết quả</th></tr>
+        <tr><td>Khai 1 lãnh đạo + 2 nhân viên → tạo lịch</td><td>Mỗi ca 3 người</td></tr>
+        <tr><td>Đổi thành 2 lãnh đạo + 3 nhân viên → tạo lại</td><td>Mỗi ca 5 người, không còn cảnh báo dư song phương</td></tr>
+        <tr><td>Hộp thoại sửa</td><td>Dựng đúng 2 ô lãnh đạo + 3 ô nhân viên theo cấu hình</td></tr>
+        <tr><td>Ngày quyết toán</td><td>DB đúng <b>1 bản ghi</b>: lãnh đạo [30], SP 32, chính [5,46], phụ [38,39]</td></tr>
+        <tr><td>Bảng tuần ngày quyết toán</td><td><b>ĐẶNG VĂN HẢI (SP)</b> in hoa đậm, <i>Đỗ Thị Nga</i> nghiêng nhỏ bên dưới</td></tr>
+        <tr><td>Hộp thoại ngày quyết toán</td><td>Đủ 6 ô: 1 lãnh đạo + 3 trực chính + 2 trực phụ</td></tr>
+        <tr><td>Tab Thống kê</td><td>Cột "Tổng trực chính" và "Trực phụ" tách riêng, đúng người</td></tr>
+        <tr><td>Xuất Excel</td><td>Ngày quyết toán có dòng trực chính và dòng trực phụ riêng, lãnh đạo dùng chung</td></tr>
+      </table>
+      <div class="note">Lỗi bắt được khi click-through: tab Thống kê vẫn đọc <code>settlement_sub</code> —
+        trường không còn ai ghi vào — nên cột "QT Phụ" luôn trống dù DB có dữ liệu. Đổi sang
+        <code>total_chinh</code> / <code>total_phu</code>.</div>
+
+      <div class="label">Files sửa</div>
+      <ul>
+        <li><code>backend/db/migrations.py</code> — 4 cột cấu hình, 3 cột <code>duty_shifts</code>,
+          migration chuyển <code>leader_id</code> và gộp ca quyết toán</li>
+        <li><code>backend/services/duty_rules.py</code> — <code>get_cau_hinh_ca()</code>;
+          <code>resolve_sp_role()</code> và <code>validate_shift_members()</code> nhận danh sách;
+          bỏ <code>SHIFT_MEMBER_COUNT</code></li>
+        <li><code>backend/services/duty_scheduler_engine.py</code> — <code>_generate_ca()</code> dùng chung,
+          <code>_chon_to_hop()</code> theo N người, xoá 4 hàm <code>_pick_*</code></li>
+        <li><code>backend/services/duty_schedule_service.py</code>, <code>duty_constraint_service.py</code>,
+          <code>duty_export_service.py</code> — đọc <code>leader_ids</code> / <code>nv_phu_ids</code></li>
+        <li><code>backend/schemas/duty.py</code>, <code>backend/api/duty_*.py</code> — theo mô hình mới</li>
+        <li><code>frontend/pages/duty_schedule.py</code> — tab Cài đặt dạng bảng khai báo, hộp thoại số ô
+          động, hai kiểu chữ chính/phụ, thống kê 2 cột</li>
+        <li><code>tests/test_duty_scheduler_algorithm.py</code>, <code>test_duty_shift_update.py</code></li>
+      </ul>
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-08</footer>
 </div>
 </body>
