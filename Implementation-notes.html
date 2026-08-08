@@ -6239,7 +6239,149 @@ Bất biến MIS: 522.774 + 36.462 = 559.236 (khớp tổng gốc)</pre>
   </div>
 
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-07</footer>
+  <!-- 68 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">68</span>
+      <span class="card-title">Phân lịch trực — sửa tay ca trực + chu trình xác nhận nhiều vòng</span>
+      <span class="badge badge-done">done · 2026-08-08</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Vì sao</div>
+      <p>Thuật toán tự động chạy đúng (mục 67) nhưng vận hành thực tế luôn có tình huống máy không biết:
+        người bận đột xuất, lãnh đạo muốn đổi người. Trước thay đổi này <b>giao diện không có bất kỳ chỗ nào
+        để sửa ca</b> — API <code>PUT /api/duty/schedule/{shift_id}</code> có sẵn từ đầu nhưng frontend chưa
+        dùng, và bản thân nó <b>không kiểm tra gì cả</b>: ghi thẳng vào DB, cho phép tạo ra ca 5 nhân viên,
+        ca toàn lãnh đạo, hay ca có một người ngồi hai chỗ.</p>
+
+      <div class="label">Hai tầng luật — quyết định nghiệp vụ của Business Owner</div>
+      <table>
+        <tr><th>Tầng</th><th>Nội dung</th><th>Hành vi khi vi phạm</th></tr>
+        <tr>
+          <td><b>CỨNG</b></td>
+          <td>Đúng 1 Lãnh đạo + 2 nhân viên</td>
+          <td><b>Không hình thành ca trực.</b> Sửa tay → HTTP 400, không ghi gì. Sinh tự động → bỏ qua ngày đó</td>
+        </tr>
+        <tr>
+          <td><b>MỀM</b></td>
+          <td>Đúng 1 người song phương · Không xếp người đi dự án · Không xếp người đã khai vắng mặt</td>
+          <td><b>Vẫn ghi nhận</b>, chỉ hiện cảnh báo. BO nói rõ: "chỉ thông báo nhưng bắt buộc phải ghi nhận"</td>
+        </tr>
+        <tr>
+          <td>Không kiểm</td>
+          <td>Trực 2 lần trở lên trong tuần</td>
+          <td>Chấp nhận im lặng — phòng ít người thì việc này là bình thường</td>
+        </tr>
+      </table>
+      <div class="note">Vì <b>bắt buộc ghi nhận</b>, luồng lưu không hỏi lại "có chắc không" khi vi phạm luật
+        mềm — bấm Lưu là ghi, cảnh báo hiện sau. Kế hoạch ban đầu định chèn một bước xác nhận nữa; bỏ đi vì
+        trái với yêu cầu và thêm một cú bấm vô ích.</div>
+
+      <div class="label">Module luật dùng chung — <code>backend/services/duty_rules.py</code> (mới)</div>
+      <p>Trước đây quy ước "ai giữ vai song phương" nằm rải trong <code>_compose_exact_one_sp()</code> và
+        <code>_compose_best_effort()</code> của engine. Nếu đường sửa tay tự viết lại logic đó thì hai đường
+        sẽ trôi khỏi nhau theo thời gian — cùng một ca, sinh tự động cho ra <code>sp_id</code> này, sửa tay
+        cho ra <code>sp_id</code> khác. Tách <code>resolve_sp_role()</code> và
+        <code>validate_shift_members()</code> ra module riêng để chỉ có <b>một</b> định nghĩa.</p>
+
+      <div class="label">Vai song phương tính tự động, không bắt người dùng chọn</div>
+      <p>Hộp thoại sửa chỉ có 3 ô: Lãnh đạo, Nhân viên 1, Nhân viên 2. <code>sp_id</code> và
+        <code>sp_warning</code> do <code>resolve_sp_role()</code> suy ra từ cờ <code>can_do_sp</code> —
+        lãnh đạo biết song phương thì lãnh đạo kiêm; ngược lại nhân viên nào biết thì người đó giữ; không ai
+        biết → <code>no_sp</code>; từ hai người trở lên → <code>multi_sp</code>. Bắt người phân lịch tự chọn
+        vai SP là thừa, vì nó suy được hoàn toàn từ dữ liệu.</p>
+
+      <div class="label">Vòng xoay phải đi theo người — điểm dễ bỏ sót nhất</div>
+      <p><code>duty_rotation_state</code> quyết định lần sinh tự động sau chọn ai. Nếu sửa tay mà không đụng
+        vào nó, người <b>bị gỡ khỏi ca vẫn mang số ca đó</b>, người được thêm vào thì không được tính — lệch
+        tích luỹ qua từng tuần, và lịch tự động sẽ ngày càng thiên vị sai mà không ai nhận ra.
+        <code>update_shift()</code> trừ 1 cho người bị gỡ, cộng 1 cho người được thêm, trên đúng kênh vòng
+        xoay của loại ca (<code>_KENH_VONG_XOAY</code>), chặn không cho <code>shift_count</code> xuống âm
+        bằng <code>MAX(shift_count - 1, 0)</code>.</p>
+
+      <div class="label">Chu trình xác nhận nhiều vòng</div>
+      <p>Sửa ca → <code>status='draft'</code> và <code>is_auto=0</code>. Ca đã xác nhận mà sửa thì tự quay
+        về bản thảo, phải bấm xác nhận lại — đúng chu trình BO mô tả. Thống kê
+        (<code>get_shift_count_by_person()</code>) vốn đã lọc <code>status='confirmed'</code> nên tự động
+        chỉ tính bản xác nhận cuối, không phải sửa gì thêm.</p>
+      <p><b>Không lưu lịch sử sửa</b> — BO chốt chỉ cần bản cuối cùng. Đã cân nhắc bảng
+        <code>duty_shift_audit</code> và bị từ chối.</p>
+
+      <div class="label">Sinh tự động cũng phải theo luật cứng — đổi hành vi so với mục 67</div>
+      <table>
+        <tr><th>Trước (mục 67)</th><th>Sau</th></tr>
+        <tr>
+          <td>Pool thiếu người thì <code>_compose_best_effort()</code> vẫn tạo ca 2 người kèm cảnh báo
+            <code>not_enough_staff</code></td>
+          <td><code>_compose_best_effort()</code> trả <code>None</code> khi thiếu → <b>không tạo ca</b>,
+            cảnh báo <code>khong_du_nguoi</code>. Ngày đó hiện hàng trống trên bảng</td>
+        </tr>
+      </table>
+      <p>Ràng buộc song phương vẫn là luật mềm, nên ca có 2 người song phương vẫn được tạo bình thường —
+        chỉ thiếu <b>người</b> mới chặn.</p>
+
+      <div class="label">Bảng lịch tuần — 3 cột → 5 cột</div>
+      <table>
+        <tr><th>Trước</th><th>Sau</th></tr>
+        <tr>
+          <td>Ngày trực · Nhân viên · Lãnh đạo. Dựng bằng chuỗi HTML thuần qua <code>ui.html()</code></td>
+          <td>Ngày trực · Nhân viên 1 · Nhân viên 2 · Lãnh đạo · Tình trạng ✏️. Dựng bằng component
+            NiceGUI (<code>ui.row</code>/<code>ui.column</code>) theo đúng pattern tab Nhân viên</td>
+        </tr>
+      </table>
+      <p>Phải bỏ HTML thuần vì <code>ui.html()</code> không bắt được sự kiện bấm — không gắn được nút ✏️.
+        Cột Tình trạng hiện "Bản thảo" (cam) / "Đã xác nhận" (xanh) cho <b>từng ca</b>; nhãn trạng thái trên
+        tiêu đề giữ nguyên cho <b>cả tuần</b> — hai thứ bổ sung nhau. Ca có hơn 2 nhân viên (cut-off / quyết
+        toán) thì người thứ 3 trở đi dồn xuống ô Nhân viên 2.</p>
+      <p>Hộp thoại sửa vẫn liệt kê người đang đi dự án và nghỉ phép, có ghi chú <code>(dự án)</code> /
+        <code>(nghỉ phép)</code> cạnh tên — vì đó là luật mềm, người phân lịch có quyền chọn. Ô Lãnh đạo chỉ
+        liệt kê vai LD, ô Nhân viên chỉ liệt kê vai NV, chặn vi phạm luật cứng ngay từ giao diện.</p>
+
+      <div class="label">Lỗi phát hiện trong lúc kiểm — tab Phân lịch sập vì một ô rỗng</div>
+      <p>Tab Phân lịch nay gọi thêm <code>/api/duty/constraints/absences</code> để biết ai nghỉ phép. Trong
+        lúc click-through, endpoint đó trả <b>500</b> và <b>toàn bộ bảng lịch biến mất</b> — nguyên nhân:
+        <code>AbsenceOut.created_at</code> khai là <code>str</code> bắt buộc, gặp một bản ghi
+        <code>created_at</code> NULL là Pydantic ném lỗi, sập cả endpoint.</p>
+      <p>Sửa hai lớp: (a) <code>created_at</code> đổi thành <code>Optional[str]</code> — một ô rỗng không
+        được phép hạ cả danh sách; (b) <code>load_schedule()</code> tách mức độ quan trọng — chỉ dữ liệu ca
+        trực là bắt buộc, danh sách nhân sự và vắng mặt hỏng thì vẫn dựng bảng, chỉ báo cho người dùng biết
+        là hộp thoại sửa sẽ thiếu ghi chú. Trước đó mọi thứ dùng chung một <code>try</code>, nên một dịch vụ
+        phụ hỏng là mất luôn màn hình chính.</p>
+
+      <div class="label">Kiểm chứng</div>
+      <p><b>44 test tự động</b> (20 test thuật toán + 24 test đường sửa tay trong
+        <code>tests/test_duty_shift_update.py</code> mới). Test dùng lại fixture DB của
+        <code>test_duty_scheduler_algorithm.py</code> để hai bộ không lệch nhau về schema và nhân sự mẫu.</p>
+      <table>
+        <tr><th>Tình huống click-through trên UI thật</th><th>Kết quả</th></tr>
+        <tr><td>Sửa cả lãnh đạo và 2 nhân viên</td><td>"Đã cập nhật ca trực ngày 03/08/2026", bảng cập nhật đúng</td></tr>
+        <tr><td>Xếp 2 người song phương</td><td>Lưu được + "Lưu ý: Ca có nhiều hơn 1 người xử lý song phương" + dòng đỏ trong bảng</td></tr>
+        <tr><td>Xếp người đang nghỉ phép</td><td>Lưu được + "Ngô Văn Minh đã khai vắng mặt ngày 2026-08-03"</td></tr>
+        <tr><td>Xác nhận tuần → sửa 1 ca → xác nhận lại</td><td>Ca vừa sửa về "Bản thảo", 4 ca còn lại vẫn "Đã xác nhận"; xác nhận lại thì cả tuần xanh</td></tr>
+        <tr><td>5 kiểu vi phạm luật cứng (gọi thẳng API)</td><td>Cả 5 đều HTTP 400 với thông báo tiếng Việt rõ ràng, không ghi gì vào DB</td></tr>
+      </table>
+      <div class="note">Bản kiểm chạy trên cổng <b>8001/8091</b> vì 8000/8080 là phiên làm việc ACH song
+        song. Dữ liệu test dọn sạch sau khi xong, đối chiếu từng bảng với bản backup DB.</div>
+
+      <div class="label">Files sửa</div>
+      <ul>
+        <li><code>backend/services/duty_rules.py</code> — <b>mới</b>: <code>SHIFT_MEMBER_COUNT</code>,
+          <code>resolve_sp_role()</code>, <code>validate_shift_members()</code></li>
+        <li><code>backend/services/duty_schedule_service.py</code> — viết lại <code>update_shift()</code>,
+          thêm <code>_KENH_VONG_XOAY</code> và <code>_dieu_chinh_vong_xoay()</code></li>
+        <li><code>backend/services/duty_scheduler_engine.py</code> — dùng luật chung,
+          <code>_compose_best_effort()</code> trả None khi thiếu người</li>
+        <li><code>backend/schemas/duty.py</code> — <code>ShiftUpdate</code> bỏ <code>sp_id</code>,
+          thêm <code>ShiftUpdateResult</code>, <code>AbsenceOut.created_at</code> thành Optional</li>
+        <li><code>backend/api/duty_schedule.py</code> — <code>PUT</code> validate trước, 400 khi sai luật cứng</li>
+        <li><code>frontend/pages/duty_schedule.py</code> — bảng 5 cột bằng component, hộp thoại sửa,
+          tách mức độ quan trọng khi tải dữ liệu</li>
+        <li><code>tests/test_duty_shift_update.py</code> — <b>mới</b>, 24 test</li>
+      </ul>
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-08</footer>
 </div>
 </body>
 </html>

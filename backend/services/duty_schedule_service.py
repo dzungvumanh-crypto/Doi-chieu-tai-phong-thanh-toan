@@ -8,6 +8,9 @@ from datetime import datetime, timezone, timedelta
 from typing import List, Optional
 
 from backend.services.duty_calendar_utils import get_week_dates
+from backend.services.duty_staff_service import get_all_staff
+from backend.services.duty_rules import resolve_sp_role
+from backend.services.duty_scheduler_engine import _update_rotation
 
 _VN_TZ = timezone(timedelta(hours=7))
 
@@ -106,30 +109,80 @@ def get_shift_by_id(db: sqlite3.Connection, shift_id: int) -> Optional[dict]:
 
 # ── WRITE ─────────────────────────────────────────────────────────────────────
 
+# Kênh vòng xoay theo loại ca — ca phụ quyết toán không tính vòng xoay
+_KENH_VONG_XOAY = {
+    "normal":          ("LD", "NV"),
+    "friday":          ("LD_friday", "NV_friday"),
+    "cutoff":          ("LD_cutoff", "NV_cutoff"),
+    "settlement_main": ("LD", "NV"),
+    "settlement_sub":  (None, None),
+}
+
+
+def _dieu_chinh_vong_xoay(db: sqlite3.Connection, year: int, role: Optional[str],
+                          cu: set, moi: set, date_str: str) -> None:
+    """Sửa tay đổi người thì số ca phải đi theo, nếu không lịch tự động lần sau
+    sẽ thiên vị sai. Trừ người bị gỡ, cộng người được thêm."""
+    if not role:
+        return
+    for sid in cu - moi:
+        db.execute(
+            "UPDATE duty_rotation_state SET shift_count = MAX(shift_count - 1, 0) "
+            "WHERE year=? AND role=? AND staff_id=?",
+            (year, role, sid),
+        )
+    for sid in moi - cu:
+        _update_rotation(db, sid, year, role, date_str)
+
+
 def update_shift(db: sqlite3.Connection, shift_id: int,
                  leader_id: Optional[int] = None,
-                 sp_id: Optional[int] = None,
                  nv_ids: Optional[List[int]] = None) -> Optional[dict]:
-    row = db.execute("SELECT id FROM duty_shifts WHERE id=?", (shift_id,)).fetchone()
+    """
+    Sửa tay thành phần ca trực.
+    Vai song phương tự suy từ can_do_sp — người dùng chỉ chọn 1 Lãnh đạo + 2 nhân viên.
+    Ca đã xác nhận sẽ quay về bản thảo, phải xác nhận lại.
+
+    Caller (API) có trách nhiệm gọi validate_shift_members() trước và chặn nếu có
+    lỗi luật cứng.
+    """
+    row = db.execute("SELECT * FROM duty_shifts WHERE id=?", (shift_id,)).fetchone()
     if not row:
         return None
+    cu = dict(row)
 
-    sets = ["is_auto=0"]
-    params: list = []
+    ld_moi = leader_id if leader_id is not None else cu["leader_id"]
+    nv_moi = nv_ids if nv_ids is not None else json.loads(cu["nv_ids"] or "[]")
 
-    if leader_id is not None:
-        sets.append("leader_id=?")
-        params.append(leader_id)
-    if sp_id is not None:
-        sets.append("sp_id=?")
-        params.append(sp_id)
-    if nv_ids is not None:
-        sets.append("nv_ids=?")
-        sets.append("nv_count=?")
-        params.extend([json.dumps(nv_ids), len(nv_ids)])
+    # ── Xác định lại ai giữ vai song phương ──
+    nhan_su = {p["id"]: p for p in get_all_staff(db)}
+    leader  = nhan_su.get(ld_moi)
+    nvs     = [nhan_su[i] for i in nv_moi if i in nhan_su]
+    sp, sp_warning = resolve_sp_role(leader, nvs)
+    sp_moi = sp["id"] if sp else None
+    # sp_id tách khỏi nv_ids để UI hiển thị riêng, giống đường sinh tự động
+    nv_luu = [i for i in nv_moi if i != sp_moi]
 
-    params.append(shift_id)
-    db.execute(f"UPDATE duty_shifts SET {', '.join(sets)} WHERE id=?", params)
+    db.execute(
+        "UPDATE duty_shifts SET leader_id=?, sp_id=?, sp_warning=?, nv_ids=?, nv_count=?, "
+        "is_auto=0, status='draft' WHERE id=?",
+        (ld_moi, sp_moi, sp_warning, json.dumps(nv_luu), len(nv_luu), shift_id),
+    )
+
+    # ── Vòng xoay đi theo người, không đi theo vị trí ──
+    year = int(cu["shift_date"][:4])
+    ld_role, nv_role = _KENH_VONG_XOAY.get(cu["shift_type"], (None, None))
+    _dieu_chinh_vong_xoay(
+        db, year, ld_role,
+        {cu["leader_id"]} - {None}, {ld_moi} - {None}, cu["shift_date"],
+    )
+    _dieu_chinh_vong_xoay(
+        db, year, nv_role,
+        set(json.loads(cu["nv_ids"] or "[]")) | ({cu["sp_id"]} - {None}),
+        set(nv_moi),
+        cu["shift_date"],
+    )
+
     db.commit()
     return get_shift_by_id(db, shift_id)
 

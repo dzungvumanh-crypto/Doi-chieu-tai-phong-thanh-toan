@@ -65,7 +65,9 @@ class AbsenceOut(BaseModel):
     staff_id: int
     staff_name: Optional[str] = None
     absence_date: str
-    created_at: str
+    # Dữ liệu cũ có thể thiếu created_at — không để cả endpoint sập vì một ô rỗng,
+    # nhất là khi tab Phân lịch cũng đọc danh sách này.
+    created_at: Optional[str] = None
 
 
 # ── Duty Requests ─────────────────────────────────────────────────────────────
@@ -174,9 +176,15 @@ class ShiftOut(BaseModel):
 
 
 class ShiftUpdate(BaseModel):
-    leader_id: Optional[int] = None
-    sp_id: Optional[int] = None
-    nv_ids: List[int] = []
+    """Sửa tay ca trực. Không có sp_id — vai song phương do hệ thống tự suy
+    từ can_do_sp của 3 người trong ca."""
+    leader_id: int
+    nv_ids: List[int]
+
+
+class ShiftUpdateResult(BaseModel):
+    shift: ShiftOut
+    warnings: List[str] = []
 
 
 class GenerateRequest(BaseModel):

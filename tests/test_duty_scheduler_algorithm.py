@@ -121,11 +121,12 @@ def _sp_capable_ids(db) -> set:
 
 
 def _gen_one(db, date_str: str, seed: int, shift_type: str = "normal") -> dict:
+    """shift=None nghĩa là không lập được ca (vi phạm luật cứng 1 LD + 2 NV)."""
     ld_role, nv_role = ("LD", "NV") if shift_type == "normal" else ("LD_friday", "NV_friday")
     shifts, warns = _generate_normal_or_friday(
         db, date_str, YEAR, ld_role, nv_role, shift_type, random.Random(seed)
     )
-    return {"shift": shifts[0], "warnings": warns}
+    return {"shift": shifts[0] if shifts else None, "warnings": warns}
 
 
 # ══════════════════════════════════════════════════════════════
@@ -292,18 +293,19 @@ def test_khong_ai_lam_sp_thi_canh_bao_no_sp():
     assert any(w["type"] == "no_sp" for w in r["warnings"])
 
 
-def test_khong_du_ba_nguoi_thi_canh_bao_not_enough_staff():
+def test_thieu_nhan_vien_thi_khong_hinh_thanh_ca():
+    """Luật cứng: thà không có ca còn hơn có ca 2 người."""
     staff = [
         (2, "LD Hai", "pho_phong",   0, 0, 2),
         (3, "NV Ba",  "chuyen_vien", 1, 0, 3),
     ]
     db = _make_db(staff)
     r = _gen_one(db, MONDAY, 0)
-    assert len(_members(r["shift"])) == 2
-    assert any(w["type"] == "not_enough_staff" for w in r["warnings"])
+    assert r["shift"] is None, "không đủ 2 nhân viên thì không được lập ca"
+    assert any(w["type"] == "khong_du_nguoi" for w in r["warnings"])
 
 
-def test_khong_co_lanh_dao_thi_canh_bao_no_leader():
+def test_khong_co_lanh_dao_thi_khong_hinh_thanh_ca():
     staff = [
         (3, "NV Ba",  "chuyen_vien", 1, 0, 3),
         (5, "NV Năm", "chuyen_vien", 0, 0, 5),
@@ -311,8 +313,22 @@ def test_khong_co_lanh_dao_thi_canh_bao_no_leader():
     ]
     db = _make_db(staff)
     r = _gen_one(db, MONDAY, 0)
-    assert r["shift"]["leader_id"] is None
-    assert any(w["type"] == "no_leader" for w in r["warnings"])
+    assert r["shift"] is None, "không có Lãnh đạo thì không được lập ca"
+    assert any(w["type"] == "khong_du_nguoi" for w in r["warnings"])
+
+
+def test_thieu_nguoi_thi_khong_ghi_vong_xoay():
+    """Ca không hình thành thì không ai được tính số ca."""
+    staff = [
+        (2, "LD Hai", "pho_phong",   0, 0, 2),
+        (3, "NV Ba",  "chuyen_vien", 1, 0, 3),
+    ]
+    db = _make_db(staff)
+    _gen_one(db, MONDAY, 0)
+    tong = db.execute(
+        "SELECT COALESCE(SUM(shift_count),0) AS t FROM duty_rotation_state WHERE year=?", (YEAR,)
+    ).fetchone()["t"]
+    assert tong == 0, f"ca không lập được nhưng vẫn ghi {tong} lượt trực"
 
 
 # ══════════════════════════════════════════════════════════════

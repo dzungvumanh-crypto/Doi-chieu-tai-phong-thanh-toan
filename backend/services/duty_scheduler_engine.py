@@ -22,6 +22,7 @@ from backend.services.duty_constraint_service import (
     get_shift_config, get_week_assignees,
 )
 from backend.services.duty_calendar_utils import get_week_dates, is_friday
+from backend.services.duty_rules import SHIFT_MEMBER_COUNT, resolve_sp_role
 
 _VN_TZ = timezone(timedelta(hours=7))
 DEFAULT_NV_COUNT = 2
@@ -222,9 +223,6 @@ def _pick_nvs_prefer_non_sp(db: sqlite3.Connection, pool_nv: List[dict], request
 # CA NGÀY THƯỜNG / THỨ 6 — 1 LD + 2 người, đúng 1 người song phương
 # ══════════════════════════════════════════════════════════════
 
-SHIFT_MEMBER_COUNT = 2   # số người đi cùng Lãnh đạo trong 1 ca
-
-
 def _rank_candidates(db: sqlite3.Connection, candidates: List[dict], year: int,
                      role: str, date_str: str, rng: random.Random,
                      randomize: bool) -> List[dict]:
@@ -289,35 +287,30 @@ def _compose_exact_one_sp(ld_order: List[dict],
     return None
 
 
-def _compose_best_effort(ld_order: List[dict], nv_order: List[dict]) -> Tuple:
+def _compose_best_effort(ld_order: List[dict], nv_order: List[dict]) -> Optional[Tuple]:
     """
-    Không tổ hợp nào thoả đúng-1-SP → vẫn xếp đủ người nhất có thể, gắn cảnh báo.
-    Ưu tiên đủ 3 người hơn là giữ đúng 1 SP (quyết định nghiệp vụ).
+    Không tổ hợp nào thoả đúng-1-SP → vẫn xếp ca, chấp nhận lệch quy tắc song phương
+    (luật mềm). Nhưng luật CỨNG 1 Lãnh đạo + 2 nhân viên thì không nhân nhượng:
+    thiếu người là trả None, không hình thành ca trực.
     """
-    leader   = ld_order[0] if ld_order else None
-    ld_is_sp = bool(leader and leader.get("can_do_sp"))
+    if not ld_order or len(nv_order) < SHIFT_MEMBER_COUNT:
+        return None
+
+    leader   = ld_order[0]
+    ld_la_sp = bool(leader.get("can_do_sp"))
 
     sp_nv     = [p for p in nv_order if p.get("can_do_sp")]
     non_sp_nv = [p for p in nv_order if not p.get("can_do_sp")]
 
-    if ld_is_sp:
-        # Lãnh đạo đã giữ vai SP → lấy người không làm SP trước
-        picked  = (non_sp_nv + sp_nv)[:SHIFT_MEMBER_COUNT]
-        sp, nvs = None, picked
+    if ld_la_sp:
+        # Lãnh đạo đã giữ vai SP → lấy người không làm SP trước cho đỡ lệch
+        picked = (non_sp_nv + sp_nv)[:SHIFT_MEMBER_COUNT]
     else:
         # Cần 1 người làm SP, chỗ còn lại ưu tiên người không làm SP
         picked = (sp_nv[:1] + non_sp_nv + sp_nv[1:])[:SHIFT_MEMBER_COUNT]
-        sp  = picked[0] if (picked and picked[0].get("can_do_sp")) else None
-        nvs = [p for p in picked if p is not sp]
 
-    sp_headcount = (1 if ld_is_sp else 0) + sum(1 for p in picked if p.get("can_do_sp"))
-    if sp_headcount == 0:
-        warning = "no_sp"
-    elif sp_headcount > 1:
-        warning = "multi_sp"
-    else:
-        warning = "leader_sp" if ld_is_sp else None
-
+    sp, warning = resolve_sp_role(leader, picked)
+    nvs = [p for p in picked if sp is None or p["id"] != sp["id"]]
     return leader, sp, nvs, warning
 
 
@@ -371,22 +364,21 @@ def _generate_normal_or_friday(db: sqlite3.Connection, date_str: str, year: int,
     ld_order = _order_pool(db, pool["LD"], requests, "LD", year, ld_role, date_str, rng, randomize)
     nv_order = _order_pool(db, pool["NV"], requests, "NV", year, nv_role, date_str, rng, randomize)
 
-    plan = _compose_exact_one_sp(ld_order, nv_order)
+    plan = _compose_exact_one_sp(ld_order, nv_order) or _compose_best_effort(ld_order, nv_order)
+
+    # ── Luật cứng: không đủ 1 Lãnh đạo + 2 nhân viên thì KHÔNG hình thành ca ──
     if plan is None:
-        leader, sp, nvs, sp_warn = _compose_best_effort(ld_order, nv_order)
-    else:
-        leader, sp, nvs, sp_warn = plan
+        if not ld_order:
+            ly_do = "không có Lãnh đạo khả dụng"
+        else:
+            ly_do = f"chỉ có {len(nv_order)}/{SHIFT_MEMBER_COUNT} nhân viên khả dụng"
+        return [], [{"date": date_str, "type": "khong_du_nguoi",
+                     "msg": f"Ngày {date_str} không lập được ca trực — {ly_do}. "
+                            f"Ca trực bắt buộc 1 Lãnh đạo + {SHIFT_MEMBER_COUNT} nhân viên."}]
 
-    # ── Cảnh báo ──
-    if not leader:
-        warnings.append({"date": date_str, "type": "no_leader",
-                         "msg": f"Không có Lãnh đạo khả dụng ngày {date_str}"})
+    leader, sp, nvs, sp_warn = plan
 
-    headcount = (1 if leader else 0) + (1 if sp else 0) + len(nvs)
-    if headcount < 1 + SHIFT_MEMBER_COUNT:
-        warnings.append({"date": date_str, "type": "not_enough_staff",
-                         "msg": f"Ngày {date_str} không đủ người: ca chỉ có "
-                                f"{headcount}/{1 + SHIFT_MEMBER_COUNT} người"})
+    # ── Luật mềm: vẫn lập ca, chỉ cảnh báo ──
     if sp_warn == "no_sp":
         warnings.append({"date": date_str, "type": "no_sp",
                          "msg": f"Ngày {date_str} không có ai xử lý song phương"})
