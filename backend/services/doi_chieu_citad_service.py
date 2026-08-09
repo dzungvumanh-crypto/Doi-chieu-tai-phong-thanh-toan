@@ -362,6 +362,10 @@ def build_xlsx(data: ExportIn) -> bytes:
     # tự ý đổi vì ảnh hưởng trực tiếp số liệu báo cáo gửi NHNN.
     ci[4] += nv(data.nm)
     ci[5] += nv(data.nt)
+    # PSS - MDP: kênh mới thêm sau, theo yêu cầu Phòng Thanh toán — CÙNG
+    # nguyên lý với Napas (cộng vào tổng CITAD), khác Ebanking (không cộng).
+    ci[4] += nv(data.sm)
+    ci[5] += nv(data.st)
     ph = [0] * 8
     for u in CURS:
         src = (data.phD.get(u, {}) or {})
@@ -463,15 +467,9 @@ def build_xlsx(data: ExportIn) -> bytes:
             v = [nv((data.gD.get(str(cong), {}).get(cur, {}) or {}).get(f, 0)) for f in FK]
             wr(row, f'Cổng {cong}' if ci2 == 0 else '', cur, v, bold=(ci2 == 0))
             row += 1
-    for lbl in ['Waiting for AUTO', 'Waiting for manual']:
-        rh(row)
-        ws.cell(row, 1).value = lbl
-        ws.cell(row, 1).font = F(bold=True)
-        ws.cell(row, 1).alignment = AL()
-        for c in range(1, 11):
-            ws.cell(row, c).border = Bdr()
-        row += 1
     wr(row, 'Napas', '', [0, 0, 0, 0, data.nm, data.nt, 0, 0])
+    row += 1
+    wr(row, 'PSS - MDP', '', [0, 0, 0, 0, data.sm, data.st, 0, 0])
     row += 1
     wr(row, 'Ebanking', '', [0, 0, 0, 0, data.em, data.et, 0, 0])
     row += 1
