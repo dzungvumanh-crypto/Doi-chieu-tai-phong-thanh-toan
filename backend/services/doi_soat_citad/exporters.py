@@ -20,7 +20,13 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 HEADERS = ['STT', 'Kết quả', 'Loại GD', 'Chiều', 'Số GD (CITAD)', 'Key Agribank',
-           'Dịch vụ', 'Số tiền', 'Loại tiền', 'Ngày GD', 'Ngân hàng', 'Trạng thái']
+           'Dịch vụ', 'Số tiền', 'Loại tiền', 'Ngày GD', 'Ngân hàng', 'Trạng thái',
+           'Ghi chú']
+# Cột 13 "Ghi chú" — thêm sau (không có trong bản gốc): số cổng CITAD của
+# dòng chỉ có ở CITAD ('only_citad'/'lech_trang_thai', xem parsers.py::cong
+# và reconcile.py — chỉ 2 status này giữ nguyên dict gốc từ citad_rows nên
+# mới có field 'cong'). Rỗng ở dòng 'only_ipcas'/'only_hub' — hợp lý vì
+# không phải lệnh từ CITAD, không có cổng nào để ghi.
 
 CLR = {
     'title_bg': 'EFF6FF', 'title_fg': '1E3A5F',
@@ -35,13 +41,25 @@ CLR = {
 STATUS_LBL = {
     'only_citad': 'Chỉ CITAD', 'only_ipcas': 'Chỉ IPCAS',
     'only_hub': 'Chỉ Hub', 'lech_trang_thai': 'Lệch TT', 'both': 'Khớp',
+    'dup_citad': 'Trùng CITAD',
 }
 CLR_FG = {
     'only_citad': CLR['red_txt'], 'only_ipcas': CLR['blue_txt'],
     'only_hub': CLR['blue_txt'], 'lech_trang_thai': CLR['org_txt'], 'both': CLR['green_txt'],
+    'dup_citad': CLR['org_txt'],
 }
 
-_COL_WIDTHS = [5, 14, 8, 8, 18, 18, 28, 15, 10, 12, 28, 12]
+_COL_WIDTHS = [5, 14, 8, 8, 18, 18, 28, 15, 10, 12, 28, 12, 12]
+
+
+def _ghi_chu(r):
+    """Cột 13 — ưu tiên thông báo tường minh (vd. phát hiện dup) nếu có,
+    không thì mới rơi về "Cổng X" mặc định (xem parsers.py::cong)."""
+    if r.get('ghi_chu'):
+        return r['ghi_chu']
+    if r.get('cong'):
+        return f"Cổng {r['cong']}"
+    return ''
 
 
 def _style(bg='FFFFFF', fg='000000', bold=False, sz=10, h='left'):
@@ -68,13 +86,13 @@ def export_doiSoat(lech_rows, n_khop, ngay_cham, filepath):
     n_total = n_khop + n_lech
 
     # ── Row 1: tiêu đề ────────────────────────────────────────────
-    ws.merge_cells('A1:L1')
+    ws.merge_cells('A1:M1')
     c = ws['A1']
     c.value = f'KẾT QUẢ ĐỐI SOÁT LỆNH — CITAD (NHNN) vs AGRIBANK (IPCAS) — Ngày {ngay_cham}'
     _apply(c, **_style(bg=CLR['title_bg'], fg=CLR['title_fg'], bold=True, sz=13, h='center'))
 
     # ── Row 2: tổng kết ───────────────────────────────────────────
-    ws.merge_cells('A2:L2')
+    ws.merge_cells('A2:M2')
     c = ws['A2']
     c.value = (f'Tổng: {n_total:,} lệnh   |   ✓ Khớp: {n_khop:,}   |   '
                f'✗ Lệch: {n_lech:,}   |   Xuất lúc: {datetime.datetime.now().strftime("%H:%M %d/%m/%Y")}')
@@ -87,7 +105,8 @@ def export_doiSoat(lech_rows, n_khop, ngay_cham, filepath):
     ws.merge_cells('A4:D4'); ws['A4'].value = 'THÔNG TIN CHUNG'
     ws.merge_cells('E4:H4'); ws['E4'].value = 'CITAD (NHNN)'
     ws.merge_cells('I4:L4'); ws['I4'].value = 'AGRIBANK (IPCAS)'
-    for col, bg in [('A', CLR['hdr_dark']), ('E', CLR['hdr_dark']), ('I', CLR['hdr_med'])]:
+    ws['M4'].value = 'GHI CHÚ'  # cột mới, không thuộc nhóm nào — chỉ 1 cột, không cần merge
+    for col, bg in [('A', CLR['hdr_dark']), ('E', CLR['hdr_dark']), ('I', CLR['hdr_med']), ('M', CLR['hdr_dark'])]:
         cell = ws[col + '4']
         _apply(cell, **_style(bg=bg, fg='FFFFFF', bold=True, sz=10, h='center'))
     # fill merged cells
@@ -106,7 +125,7 @@ def export_doiSoat(lech_rows, n_khop, ngay_cham, filepath):
         row_num = ri + 6
         st = r.get('status', '')
         even = ri % 2 == 0
-        if st == 'lech_trang_thai':
+        if st in ('lech_trang_thai', 'dup_citad'):
             bg = CLR['org1'] if even else CLR['org2']
         elif st != 'both':
             bg = CLR['red1'] if even else CLR['red2']
@@ -115,7 +134,7 @@ def export_doiSoat(lech_rows, n_khop, ngay_cham, filepath):
         st_lbl = STATUS_LBL.get(st, st)
         st_fg = (CLR['red_txt'] if st == 'only_citad' else
                  CLR['blue_txt'] if st in ('only_ipcas', 'only_hub') else
-                 CLR['org_txt'] if st == 'lech_trang_thai' else
+                 CLR['org_txt'] if st in ('lech_trang_thai', 'dup_citad') else
                  CLR['green_txt'])
 
         so_tien = r.get('so_tien') or r.get('so_tien_agri') or ''
@@ -136,11 +155,12 @@ def export_doiSoat(lech_rows, n_khop, ngay_cham, filepath):
             r.get('ngay') or '',
             r.get('nh_nhan') or '',
             r.get('trang_thai') or '',
+            _ghi_chu(r),
         ]
 
         for ci, val in enumerate(vals, 1):
             cell = ws.cell(row_num, ci, val)
-            h = 'right' if ci == 8 else ('center' if ci in (1, 2, 3, 4, 9) else 'left')
+            h = 'right' if ci == 8 else ('center' if ci in (1, 2, 3, 4, 9, 13) else 'left')
             fg = st_fg if ci == 2 else '111827'
             bold = ci == 2
             _apply(cell, **_style(bg=bg, fg=fg, bold=bold, sz=10, h=h))
@@ -154,8 +174,8 @@ def export_doiSoat(lech_rows, n_khop, ngay_cham, filepath):
     # ── Freeze ────────────────────────────────────────────────────
     ws.freeze_panes = 'A6'
 
-    # ── Sheet 2-4: các sheet lọc ─────────────────────────────────
-    _add_filter_sheet(wb, lech_rows, n_khop, ngay_cham, 'Chỉ CITAD', 'only_citad')
+    # ── Sheet 2-5: các sheet lọc ─────────────────────────────────
+    _add_filter_sheet(wb, lech_rows, n_khop, ngay_cham, 'Chỉ CITAD', ('only_citad', 'dup_citad'))
     _add_filter_sheet(wb, lech_rows, n_khop, ngay_cham, 'Chỉ Agribank', ('only_ipcas', 'only_hub'))
     _add_filter_sheet(wb, lech_rows, n_khop, ngay_cham, 'Lệch trạng thái', 'lech_trang_thai')
 
@@ -169,7 +189,7 @@ def _add_filter_sheet(wb, rows, n_khop, ngay_cham, title, status_filter):
     else:
         filtered = [r for r in rows if r.get('status') == status_filter]
 
-    ws.merge_cells('A1:L1')
+    ws.merge_cells('A1:M1')
     ws['A1'].value = f'{title} — Ngày {ngay_cham} — {len(filtered):,} lệnh'
     _apply(ws['A1'], **_style(bg=CLR['title_bg'], fg=CLR['title_fg'], bold=True, sz=12, h='center'))
 
@@ -180,7 +200,7 @@ def _add_filter_sheet(wb, rows, n_khop, ngay_cham, title, status_filter):
     for ri, r in enumerate(filtered):
         row_num = ri + 3
         st = r.get('status', '')
-        bg = (CLR['org1'] if ri % 2 == 0 else CLR['org2']) if st == 'lech_trang_thai' else (
+        bg = (CLR['org1'] if ri % 2 == 0 else CLR['org2']) if st in ('lech_trang_thai', 'dup_citad') else (
             CLR['red1'] if ri % 2 == 0 else CLR['red2']
         )
         so_tien = r.get('so_tien') or ''
@@ -195,11 +215,12 @@ def _add_filter_sheet(wb, rows, n_khop, ngay_cham, title, status_filter):
                 r.get('so_gd') or '', r.get('key_agri') or '',
                 r.get('dich_vu') or '', so_tien,
                 r.get('loai_tien') or 'VNĐ', r.get('ngay') or '',
-                r.get('nh_nhan') or '', r.get('trang_thai') or '']
+                r.get('nh_nhan') or '', r.get('trang_thai') or '',
+                _ghi_chu(r)]
 
         for ci, val in enumerate(vals, 1):
             cell = ws.cell(row_num, ci, val)
-            h = 'right' if ci == 8 else ('center' if ci in (1, 2, 3, 4, 9) else 'left')
+            h = 'right' if ci == 8 else ('center' if ci in (1, 2, 3, 4, 9, 13) else 'left')
             fg = CLR_FG.get(st, '111827') if ci == 2 else '111827'
             _apply(cell, **_style(bg=bg, fg=fg, bold=(ci == 2), sz=10, h=h))
             if ci == 8 and isinstance(val, int):

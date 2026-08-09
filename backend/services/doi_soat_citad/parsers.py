@@ -82,9 +82,10 @@ def parse_citad_xls(filepath):
 
     rows_out = []
     chieu_ref = [None]  # truyen chieu tu sheet dau sang cac sheet sau
+    cong_ref = [None]   # truyen cong (tach tu header "Ngan hang:") sang cac sheet sau
     try:
         for shi, ws in enumerate(sheets):
-            rows = _parse_sheet(ws, filepath, shi == 0, chieu_ref)
+            rows = _parse_sheet(ws, filepath, shi == 0, chieu_ref, cong_ref)
             rows_out += rows
     finally:
         # Đóng SAU khi đọc xong toàn bộ ô — read_only mode đọc trực tiếp
@@ -98,11 +99,12 @@ def parse_citad_xls(filepath):
     return rows_out, None
 
 
-def _parse_sheet(ws, filepath, is_first, chieu_ref=None):
+def _parse_sheet(ws, filepath, is_first, chieu_ref=None, cong_ref=None):
     # Detect chiều + loaiTien từ 12 dòng đầu (chỉ sheet đầu có header)
     chieu = 'di'
     loai_tien = 'VND'
     loai_file = 'il'
+    cong = ''
 
     if is_first:
         for i in range(12):
@@ -119,10 +121,26 @@ def _parse_sheet(ws, filepath, is_first, chieu_ref=None):
                 loai_file = 'ih'
             if 'giá trị thấp' in txt:
                 loai_file = 'il'
+            # Dòng "Ngân hàng: 01204001 - NH No&PTNT..." — 3 số cuối của mã
+            # chính là số CỔNG CITAD (khớp đúng quy ước CONG_MAP dùng ở
+            # module Đối chiếu: 01204001→cổng 1, 01204009→cổng 9,
+            # 92204012→cổng 12, 79204017→cổng 17, 48204018→cổng 18 — đã
+            # xác nhận thực tế trên 5 file mẫu, không phải suy đoán).
+            m_cong = re.search(r'ngân hàng:\s*(\d{6,})', txt)
+            if m_cong:
+                try:
+                    cong = str(int(m_cong.group(1)[-3:]))
+                except ValueError:
+                    pass
         if chieu_ref is not None:
             chieu_ref[0] = chieu  # luu chieu de sheet sau dung
-    elif chieu_ref is not None and chieu_ref[0] is not None:
-        chieu = chieu_ref[0]  # sheet sau ke thua chieu tu sheet dau
+        if cong_ref is not None:
+            cong_ref[0] = cong  # luu cong de sheet sau dung
+    else:
+        if chieu_ref is not None and chieu_ref[0] is not None:
+            chieu = chieu_ref[0]  # sheet sau ke thua chieu tu sheet dau
+        if cong_ref is not None and cong_ref[0]:
+            cong = cong_ref[0]  # sheet sau ke thua cong tu sheet dau
 
     # Tìm header row
     h_row_idx = -1
@@ -227,6 +245,7 @@ def _parse_sheet(ws, filepath, is_first, chieu_ref=None):
             'loai_tien': loai_tien,
             'so_tien': int(so_tien),
             'ngay': ngay,
+            'cong': cong,
         })
     return result
 
@@ -365,9 +384,15 @@ def _parse_ipcas_text(text, filename, ngay_cham):
 
         # Filter theo chiều
         if chieu == 'di':
-            # Giu: SCNL (thanh cong) + WFPG/SBFL/RFED/SDEB (dang xu ly, co the lech TT)
-            # Bo: ERPO (loi xu ly), CALD (huy), rong
-            KEEP_DI = {'SCNL', 'WFPG', 'SBFL', 'RFED', 'SDEB', 'SBSC', 'RTSC'}
+            # Giu: SCNL (thanh cong) + WFPG/SBFL/RFED/SDEB/SBSC/RTSC (dang xu
+            # ly, co the lech TT) + ERPO/CALD (IPCAS bao that bai/huy - GIU
+            # lai de doi chieu voi CITAD: neu CITAD VAN CO lenh nay thi la
+            # bat thuong that su (IPCAS sai, lenh da di kenh thanh cong) ->
+            # 'lech_trang_thai', con neu CITAD khong co thi la that bai binh
+            # thuong (chua tung di kenh) -> reconcile.py tu bo qua o vong lap
+            # "IPCAS Di du", khong tinh vao "Chi Agribank".
+            # Bo: rong
+            KEEP_DI = {'SCNL', 'WFPG', 'SBFL', 'RFED', 'SDEB', 'SBSC', 'RTSC', 'ERPO', 'CALD'}
             if tt not in KEEP_DI:
                 continue
             if ngay_cham:
