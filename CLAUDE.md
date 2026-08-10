@@ -4,6 +4,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 See also: @DESIGN.md @SKILL.md
 
+**Bắt đầu phiên mới → đọc [`docs/BOI-CANH-DU-AN.md`](docs/BOI-CANH-DU-AN.md) TRƯỚC.**
+Đó là bối cảnh nghiệp vụ, luật ACH, bẫy đã dính và trạng thái việc đang dở — thứ không suy ra
+được từ code hay git log.
+
 ## Commands
 
 ```bash
@@ -79,3 +83,28 @@ Dùng format: card per topic, bảng cho so sánh trước/sau và đánh đổi
 ## Quy tắc làm việc
 
 - **Dọn data test:** Sau khi test bất kỳ tính năng nào, phải tự xóa toàn bộ data đã tạo để test (user, phòng ban, chứng từ, đơn nghỉ phép, v.v.) trước khi báo hoàn thành. Không chờ người dùng nhắc.
+
+## Làm việc từ điện thoại / phiên cloud
+
+Dự án chạy song song hai nơi: **laptop** (Claude Code trong VS Code, có ổ dữ liệu thật) và
+**phiên cloud** `claude.ai/code` (điều khiển từ app Claude trên điện thoại).
+
+```bash
+claude --cloud "mô tả việc"   # laptop → tạo phiên cloud, làm tiếp được trên điện thoại
+claude --teleport             # cloud → kéo cả hội thoại + nhánh code về terminal
+```
+
+**Máy ảo cloud KHÔNG có dữ liệu thật** — toàn bộ `data/`, `Cham ILO1000/`, `Đối chiếu ACH/`,
+`Chấm 459901/` (~50GB) đã gitignore. Trong phiên cloud:
+
+- **Được:** đọc/sửa code, viết + chạy test với dữ liệu tổng hợp nhỏ, viết tài liệu, phân tích
+  nghiệp vụ, lập kế hoạch, rà logic tìm bug.
+- **Không được:** chạy pipeline đối chiếu thật, đối chiếu golden sample, kiểm thử UI
+  click-through. **Đừng đề xuất "chạy thử để xác nhận"** — để dành cho phiên trên laptop.
+
+⚠️ Gói Pro/Max chỉ có 2 mức chia sẻ phiên: **Private** và **Public** (mọi người dùng claude.ai
+đều xem được). Phiên có thể chứa code và dữ liệu nghiệp vụ — **giữ Private, không bật share**.
+
+Cấu hình Claude Code tách 2 tầng: [`.claude/settings.json`](.claude/settings.json) dùng chung
+(commit, portable) — [`.claude/settings.local.json`](.claude/settings.local.json) riêng từng
+máy (gitignore: đường dẫn ổ mạng, thư mục temp, lệnh scratch).

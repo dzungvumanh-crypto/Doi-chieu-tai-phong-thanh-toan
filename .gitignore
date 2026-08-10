@@ -61,3 +61,16 @@ dist_offline/
 /Bắt đầu trên máy mới.txt
 /Dữ liệu test
 /Dữ liệu test
+
+# Cấu hình Claude Code riêng từng máy — chứa đường dẫn tuyệt đối ổ G:, thư mục temp
+# theo UUID phiên, lệnh scratch dùng một lần. Phần dùng chung nằm ở .claude/settings.json.
+.claude/settings.local.json
+
+# Scratch artifacts sinh trong lúc verify + file dữ liệu rời ở gốc.
+# Từ 2026-08-10 repo được commit thường xuyên hơn để đồng bộ phiên cloud/điện thoại
+# → phải chặn sẵn, tránh lọt dữ liệu thật lên remote.
+/scratch_*.txt
+/scratch_*.csv
+/scratch_*.json
+/nul
+/20260706.xlsx

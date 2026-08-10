@@ -1,0 +1,34 @@
+{
+  "$comment": [
+    "Cấu hình Claude Code DÙNG CHUNG cho dự án — commit lên repo, chạy được ở mọi máy",
+    "và trong phiên cloud (claude.ai/code). Chỉ để quyền portable ở đây.",
+    "Quyền riêng của từng máy (đường dẫn tuyệt đối ổ mạng, thư mục temp theo UUID phiên,",
+    "lệnh scratch dùng một lần) nằm ở .claude/settings.local.json — file đó đã gitignore."
+  ],
+  "permissions": {
+    "allow": [
+      "Bash(python *)",
+      "Bash(python3 *)",
+      "Bash(pytest *)",
+      "Bash(.venv/Scripts/python.exe *)",
+      "Bash(PYTHONIOENCODING=utf-8 python *)",
+      "Bash(PYTHONIOENCODING=utf-8 .venv/Scripts/python.exe *)",
+      "Bash(pip install -r requirements.txt)",
+      "Bash(ls *)",
+      "Bash(cat *)",
+      "Bash(wc *)",
+      "Bash(find *)",
+      "Bash(head *)",
+      "Bash(tail *)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git show *)",
+      "Bash(git branch *)",
+      "Bash(git add *)",
+      "Bash(git commit -m *)",
+      "Bash(git push *)",
+      "Bash(git merge *)"
+    ]
+  }
+}
