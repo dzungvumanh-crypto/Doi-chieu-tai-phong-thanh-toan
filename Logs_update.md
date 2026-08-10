@@ -10,14 +10,16 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
     + Máy nào đang vào bằng `apc-portal:8080` hoặc `10.1.3.89` và chạy bình thường thì **không bắt buộc** cập nhật ngay
 
 - 10/08/2026 Phân lịch trực - Khai số người mỗi ca, ca quyết toán chính/phụ, sửa tay được thành phần ca (PR #26):
-    + **Số người mỗi ca không còn cứng trong hệ thống** — vào tab *Cài đặt* khai riêng cho ca thường và ca quyết toán (số Lãnh đạo, số nhân viên trực chính, số trực phụ). Lịch tạo sau khi lưu sẽ theo số này
+    + **Số người mỗi ca không còn cứng trong hệ thống** — vào tab *Cài đặt* khai riêng cho ca thường và ca quyết toán (số Lãnh đạo, số nhân viên trực chính, số trực phụ). **Một ca có thể khai nhiều hơn một Lãnh đạo** (tối đa 5), nhất là ngày quyết toán. Lịch tạo sau khi lưu sẽ theo số này
     + ⚠️ **Thiếu người so với số đã khai thì hệ thống KHÔNG lập ca ngày đó**, kèm dòng cảnh báo nêu rõ thiếu ở đâu. Trước đây vẫn sinh ca thiếu người mà không báo gì
     + **Ngày quyết toán** nay là **một ca duy nhất** có nhóm trực chính và nhóm trực phụ (trực phụ về sớm hơn), thay vì hai dòng riêng như trước. Lịch cũ được gộp tự động khi khởi động
     + **Sửa tay được thành phần ca trực** — bấm biểu tượng bút ở cột phải. Chọn sai vai (xếp nhân viên vào chỗ Lãnh đạo) hoặc sai số người thì bị chặn; xếp người đang đi dự án / đã khai vắng mặt thì vẫn cho lưu nhưng có cảnh báo. **Sửa xong ca quay về bản thảo, phải xác nhận lại**
     + Người giữ vai **xử lý song phương** hệ thống tự xác định từ cờ *"biết song phương"* của cán bộ — không phải chọn tay nữa. Ca thiếu hoặc dư người song phương đều vẫn lập, chỉ hiện cảnh báo
     + **Bỏ cờ "Backup SP"** — nay chỉ còn một cờ *"biết song phương"* duy nhất. Ai đang được đánh dấu Backup SP sẽ tự chuyển sang cờ mới, không mất khả năng trực song phương
-    + Lịch ngày thường **bốc ngẫu nhiên trong nhóm ít ca nhất** nên không còn đoán trước được ai trực ngày nào, nhưng số ca vẫn chia đều. Thứ 6 giữ luân phiên cố định như cũ. Có thêm cơ chế **tránh hai người cứ đi trực cùng nhau mãi**
-    + Bảng lịch tuần gọn lại còn 3 cột (Ngày trực · Nhân viên · Lãnh đạo), luôn hiện đủ 5 hàng T2→T6. Trạng thái tuần chuyển lên tiêu đề
+    + Lịch ngày thường **bốc ngẫu nhiên trong nhóm ít ca nhất** nên không còn đoán trước được ai trực ngày nào, nhưng số ca vẫn chia đều. Thứ 6 giữ luân phiên cố định như cũ
+    + **Chia ca đều hơn hẳn.** Phân thử 2 tháng (49 ca) trên danh sách nhân sự thật cho thấy: các Lãnh đạo chênh nhau nhiều nhất 1 ca (9–10 ca mỗi người), và **không ai phải trực 2 lần trong cùng một tuần**. Trước đây có Lãnh đạo trực 15 ca trong khi người khác chỉ 6 ca, và 8 lượt phải trực từ 2 lần trở lên trong một tuần — có người 3 lần. *(Số đo trên danh sách hiện tại; phòng ít người đi hoặc nhiều người nghỉ cùng lúc thì vẫn có thể phải trực lặp trong tuần)*
+    + Thêm cơ chế **tránh hai người cứ đi trực cùng nhau mãi** — trước đây một Lãnh đạo và một nhân viên có thể bị ghép cặp cả 10/10 ca
+    + Bảng lịch tuần **5 cột** (Ngày trực · Nhân viên 1 · Nhân viên 2 · Lãnh đạo · Tình trạng), luôn hiện đủ 5 hàng T2→T6, và **trạng thái chung của cả tuần hiện ngay cạnh tiêu đề tuần**. Ngày quyết toán hiện tên người trực chính IN HOA đậm, trực phụ chữ nghiêng nhỏ bên dưới
     + Thống kê ca trực tách **2 cột riêng: trực chính và trực phụ** — không quy đổi lẫn nhau
     + Sửa lỗi: bỏ tick *"biết song phương"* cho một Lãnh đạo thì sau khi khởi động lại hệ thống **cờ tự bật lại**. Nay lựa chọn được giữ nguyên
     + Sửa lỗi: đổi *số nhân viên ca thường* rồi lưu có thể làm **cấu hình ca quyết toán bị trả về mặc định** mà không báo gì
