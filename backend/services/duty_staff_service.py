@@ -13,7 +13,6 @@ _STAFF_SQL = """
 SELECT u.id, u.full_name, u.role,
        CASE WHEN u.role IN ('truong_phong','pho_phong') THEN 'LD' ELSE 'NV' END AS duty_role,
        COALESCE(m.can_do_sp, 0)    AS can_do_sp,
-       COALESCE(m.is_sp_backup, 0) AS is_sp_backup,
        COALESCE(m.is_on_project, 0) AS is_on_project,
        COALESCE(m.display_order, 999) AS display_order
 FROM user_tttt u
@@ -79,7 +78,6 @@ def upsert_staff_meta(
     db: sqlite3.Connection,
     user_id: int,
     can_do_sp: Optional[int] = None,
-    is_sp_backup: Optional[int] = None,
     is_on_project: Optional[int] = None,
     display_order: Optional[int] = None,
 ) -> dict:
@@ -94,21 +92,19 @@ def upsert_staff_meta(
     if existing:
         cur = dict(existing)
         new_can_do_sp     = can_do_sp     if can_do_sp     is not None else cur["can_do_sp"]
-        new_is_sp_backup  = is_sp_backup  if is_sp_backup  is not None else cur["is_sp_backup"]
         new_is_on_project = is_on_project if is_on_project is not None else cur["is_on_project"]
         new_display_order = display_order if display_order is not None else cur["display_order"]
         db.execute(
-            "UPDATE duty_staff_meta SET can_do_sp=?, is_sp_backup=?, is_on_project=?, display_order=? WHERE user_id=?",
-            (new_can_do_sp, new_is_sp_backup, new_is_on_project, new_display_order, user_id),
+            "UPDATE duty_staff_meta SET can_do_sp=?, is_on_project=?, display_order=? WHERE user_id=?",
+            (new_can_do_sp, new_is_on_project, new_display_order, user_id),
         )
     else:
         new_can_do_sp     = can_do_sp     or 0
-        new_is_sp_backup  = is_sp_backup  or 0
         new_is_on_project = is_on_project or 0
         new_display_order = display_order or 999
         db.execute(
-            "INSERT INTO duty_staff_meta (user_id, can_do_sp, is_sp_backup, is_on_project, display_order, created_at) VALUES (?,?,?,?,?,?)",
-            (user_id, new_can_do_sp, new_is_sp_backup, new_is_on_project, new_display_order, now),
+            "INSERT INTO duty_staff_meta (user_id, can_do_sp, is_on_project, display_order, created_at) VALUES (?,?,?,?,?)",
+            (user_id, new_can_do_sp, new_is_on_project, new_display_order, now),
         )
 
     db.commit()

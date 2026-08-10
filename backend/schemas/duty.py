@@ -21,14 +21,12 @@ class DutyStaffOut(BaseModel):
     role: str            # user_tttt.role (truong_phong, pho_phong, chuyen_vien)
     duty_role: str       # LD | NV (derived)
     can_do_sp: int = 0
-    is_sp_backup: int = 0
     is_on_project: int = 0
     display_order: int = 999
 
 
 class DutyStaffMetaIn(BaseModel):
     can_do_sp: Optional[int] = None
-    is_sp_backup: Optional[int] = None
     is_on_project: Optional[int] = None
     display_order: Optional[int] = None
 
@@ -67,7 +65,9 @@ class AbsenceOut(BaseModel):
     staff_id: int
     staff_name: Optional[str] = None
     absence_date: str
-    created_at: str
+    # Dữ liệu cũ có thể thiếu created_at — không để cả endpoint sập vì một ô rỗng,
+    # nhất là khi tab Phân lịch cũng đọc danh sách này.
+    created_at: Optional[str] = None
 
 
 # ── Duty Requests ─────────────────────────────────────────────────────────────
@@ -144,12 +144,22 @@ class ComputeCutoffRequest(BaseModel):
 
 class ShiftConfigOut(BaseModel):
     year: int
-    nv_count: int
+    ld_count: int = 1              # số Lãnh đạo ca thường
+    nv_count: int                  # số nhân viên ca thường
+    qt_ld_count: int = 1           # số Lãnh đạo ca quyết toán
+    qt_nv_chinh_count: int = 3     # số nhân viên trực chính, ca quyết toán
+    qt_nv_phu_count: int = 2       # số nhân viên trực phụ, ca quyết toán
     signer_name: Optional[str] = None
 
 
 class ShiftConfigUpsert(BaseModel):
-    nv_count: int = Field(..., ge=1, le=5)
+    """Trường nào không gửi thì giữ nguyên giá trị đang có — KHÔNG có default ở đây,
+    vì default sẽ biến 'không gửi' thành 'ghi đè bằng số mặc định'."""
+    ld_count: Optional[int] = Field(None, ge=1, le=5)
+    nv_count: Optional[int] = Field(None, ge=1, le=10)
+    qt_ld_count: Optional[int] = Field(None, ge=1, le=5)
+    qt_nv_chinh_count: Optional[int] = Field(None, ge=1, le=10)
+    qt_nv_phu_count: Optional[int] = Field(None, ge=0, le=10)
     signer_name: Optional[str] = None
 
 
@@ -165,20 +175,31 @@ class ShiftOut(BaseModel):
     id: int
     shift_date: str
     shift_type: str
-    leader: Optional[DutyPersonOut] = None
+    leaders: List[DutyPersonOut] = []
+    leader: Optional[DutyPersonOut] = None   # người đầu, cho màn hình chỉ cần 1
     sp: Optional[DutyPersonOut] = None
     sp_warning: Optional[str] = None
     nvs: List[DutyPersonOut] = []
     nv_count: int
+    nv_phu: List[DutyPersonOut] = []
+    nv_phu_count: int = 0
     is_auto: bool
     status: str
     created_at: str
 
 
 class ShiftUpdate(BaseModel):
-    leader_id: Optional[int] = None
-    sp_id: Optional[int] = None
-    nv_ids: List[int] = []
+    """Sửa tay ca trực. Không có sp_id — vai song phương do hệ thống tự suy
+    từ can_do_sp của những người trong ca. Số người từng vị trí phải khớp
+    khai báo ở tab Cài đặt, backend kiểm lại."""
+    leader_ids: List[int]
+    nv_chinh_ids: List[int]
+    nv_phu_ids: List[int] = []
+
+
+class ShiftUpdateResult(BaseModel):
+    shift: ShiftOut
+    warnings: List[str] = []
 
 
 class GenerateRequest(BaseModel):
@@ -230,7 +251,10 @@ class PersonShiftCount(BaseModel):
     cutoff: int = 0
     settlement_main: int = 0
     settlement_sub: int = 0
+    truc_phu: int = 0        # ca trực phụ, đếm riêng — không quy đổi sang ca chính
     total: int = 0
+    total_chinh: int = 0
+    total_phu: int = 0
 
 
 class MonthlySummary(BaseModel):

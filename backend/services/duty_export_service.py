@@ -33,6 +33,14 @@ _SHIFT_SUFFIX = {
 }
 
 
+def _ten_lanh_dao(shift: dict) -> str:
+    """Một ca có thể có nhiều Lãnh đạo — xuống dòng trong cùng một ô."""
+    ten = [p.get("full_name", "") for p in (shift.get("leaders") or [])]
+    if not ten and shift.get("leader"):
+        ten = [shift["leader"].get("full_name", "")]
+    return "\n".join(ten)
+
+
 def _fill(hex_color: str) -> PatternFill:
     return PatternFill("solid", fgColor=hex_color)
 
@@ -94,7 +102,7 @@ def build_week_excel(shifts: list, week_start: date, week_end: date,
     ws.column_dimensions["H"].width = 4
 
     is_settlement_week = any(
-        s.get("shift_type") in ("settlement_main", "settlement_sub") for s in shifts
+        s.get("shift_type") == "settlement_main" for s in shifts
     )
 
     shift_by_date: dict = {}
@@ -143,12 +151,10 @@ def build_week_excel(shifts: list, week_start: date, week_end: date,
         thu_label  = base_thu + _SHIFT_SUFFIX.get(shift_type_day, "")
         date_label = current.strftime("%d/%m/%Y")
 
-        main_shift = next((s for s in day_shifts
-                           if s.get("shift_type") != "settlement_sub"), None)
-        sub_shift  = next((s for s in day_shifts
-                           if s.get("shift_type") == "settlement_sub"), None)
+        # Ca quyết toán nay là MỘT bản ghi, nhóm trực phụ nằm trong nv_phu
+        main_shift = day_shifts[0] if day_shifts else None
 
-        if main_shift is None and sub_shift is None:
+        if main_shift is None:
             if holiday_map and date_str in holiday_map:
                 label = holiday_map[date_str]
                 text  = f"(Nghỉ lễ: {label})" if label else "(Nghỉ lễ)"
@@ -166,7 +172,7 @@ def build_week_excel(shifts: list, week_start: date, week_end: date,
 
         if is_settlement_week and main_shift:
             main_row_idx = current_row
-            leader_name = (main_shift.get("leader") or {}).get("full_name", "")
+            leader_name = _ten_lanh_dao(main_shift)
             # SP hiển thị ở đầu danh sách NV
             sp_name = (main_shift.get("sp") or {}).get("full_name", "")
             nv_names = [nv.get("full_name", "") for nv in (main_shift.get("nvs") or [])]
@@ -181,8 +187,8 @@ def build_week_excel(shifts: list, week_start: date, week_end: date,
             ws.row_dimensions[current_row].height = max(30, 15 * max(1, len(nv_names)))
             current_row += 1
 
-            if sub_shift:
-                sub_nvs = sub_shift.get("nvs") or []
+            sub_nvs = main_shift.get("nv_phu") or []
+            if sub_nvs:
                 all_sub = [nv.get("full_name", "") for nv in sub_nvs]
                 mid = (len(all_sub) + 1) // 2
                 _apply_row(ws, current_row,
@@ -209,7 +215,7 @@ def build_week_excel(shifts: list, week_start: date, week_end: date,
             nv_names: List[str] = []
 
             if shift:
-                leader_name = (shift.get("leader") or {}).get("full_name", "")
+                leader_name = _ten_lanh_dao(shift)
                 sp_name     = (shift.get("sp") or {}).get("full_name", "")
                 nv_names    = [nv.get("full_name", "") for nv in (shift.get("nvs") or [])]
                 if sp_name:

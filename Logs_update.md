@@ -4,6 +4,22 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 10/08/2026 Phân lịch trực - Khai số người mỗi ca, ca quyết toán chính/phụ, sửa tay được thành phần ca (PR #26):
+    + **Số người mỗi ca không còn cứng trong hệ thống** — vào tab *Cài đặt* khai riêng cho ca thường và ca quyết toán (số Lãnh đạo, số nhân viên trực chính, số trực phụ). Lịch tạo sau khi lưu sẽ theo số này
+    + ⚠️ **Thiếu người so với số đã khai thì hệ thống KHÔNG lập ca ngày đó**, kèm dòng cảnh báo nêu rõ thiếu ở đâu. Trước đây vẫn sinh ca thiếu người mà không báo gì
+    + **Ngày quyết toán** nay là **một ca duy nhất** có nhóm trực chính và nhóm trực phụ (trực phụ về sớm hơn), thay vì hai dòng riêng như trước. Lịch cũ được gộp tự động khi khởi động
+    + **Sửa tay được thành phần ca trực** — bấm biểu tượng bút ở cột phải. Chọn sai vai (xếp nhân viên vào chỗ Lãnh đạo) hoặc sai số người thì bị chặn; xếp người đang đi dự án / đã khai vắng mặt thì vẫn cho lưu nhưng có cảnh báo. **Sửa xong ca quay về bản thảo, phải xác nhận lại**
+    + Người giữ vai **xử lý song phương** hệ thống tự xác định từ cờ *"biết song phương"* của cán bộ — không phải chọn tay nữa. Ca thiếu hoặc dư người song phương đều vẫn lập, chỉ hiện cảnh báo
+    + **Bỏ cờ "Backup SP"** — nay chỉ còn một cờ *"biết song phương"* duy nhất. Ai đang được đánh dấu Backup SP sẽ tự chuyển sang cờ mới, không mất khả năng trực song phương
+    + Lịch ngày thường **bốc ngẫu nhiên trong nhóm ít ca nhất** nên không còn đoán trước được ai trực ngày nào, nhưng số ca vẫn chia đều. Thứ 6 giữ luân phiên cố định như cũ. Có thêm cơ chế **tránh hai người cứ đi trực cùng nhau mãi**
+    + Bảng lịch tuần gọn lại còn 3 cột (Ngày trực · Nhân viên · Lãnh đạo), luôn hiện đủ 5 hàng T2→T6. Trạng thái tuần chuyển lên tiêu đề
+    + Thống kê ca trực tách **2 cột riêng: trực chính và trực phụ** — không quy đổi lẫn nhau
+    + Sửa lỗi: bỏ tick *"biết song phương"* cho một Lãnh đạo thì sau khi khởi động lại hệ thống **cờ tự bật lại**. Nay lựa chọn được giữ nguyên
+    + Sửa lỗi: đổi *số nhân viên ca thường* rồi lưu có thể làm **cấu hình ca quyết toán bị trả về mặc định** mà không báo gì
+    + Sửa lỗi: hết phiên đăng nhập trong lúc mở tab *Cài đặt* thì màn hình im lặng hiện số mặc định thay vì đưa về trang đăng nhập
+    + ⚠️ **Bịt lỗ hổng phân quyền — hãy soát lại quyền đã cấp cho từng nhóm.** Trước đây hệ thống chỉ *ẩn nút* trên màn hình, còn bên dưới thì **bất kỳ ai đăng nhập được cũng có thể xoá cả tuần lịch đã xác nhận** nếu biết cách gọi thẳng. Nay quyền được kiểm ở máy chủ. Hệ quả: ai trước giờ vẫn thao tác được nhờ lỗ hổng này mà **chưa được cấp quyền đúng** sẽ bắt đầu bị báo *"Không có quyền truy cập tính năng này"* — vào *Phân quyền theo nhóm* cấp bổ sung. Admin không bị ảnh hưởng
+    + Nút **sửa ca trực** nay yêu cầu quyền *Tạo lịch trực tự động* (`duty.generate`) thay vì hiện cho mọi người có bất kỳ quyền nào — sửa tay cũng là sửa lịch
+
 - 10/08/2026 Đối chiếu / Đối soát CITAD - Thêm kênh PSS-MDP, bắt lệnh gửi trùng, tự lọc file theo ngày (PR #25):
     + ⚠️ **Số "Khớp" và "Lệch" sẽ khác các lần chấm trước — số mới mới là số đúng.** Trước đây một lệnh CITAD bị gửi trùng N lần được tính khớp N lần, trong khi IPCAS chỉ có 1 bản ghi. Nay chỉ lần đầu tính khớp, các lần trùng tách riêng. Ai đang theo dõi bằng file Excel riêng sẽ thấy vênh với hệ thống
     + **Lệnh gửi trùng nay hiện rõ** trong nhóm *Chỉ CITAD*, ghi luôn *"bị dup mấy lần, cổng nào"* — trước đây trùng bao nhiêu lần cũng im lặng tính là khớp
