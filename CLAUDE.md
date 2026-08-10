@@ -4,9 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 See also: @DESIGN.md @SKILL.md
 
-**Bắt đầu phiên mới → đọc [`docs/BOI-CANH-DU-AN.md`](docs/BOI-CANH-DU-AN.md) TRƯỚC.**
-Đó là bối cảnh nghiệp vụ, luật ACH, bẫy đã dính và trạng thái việc đang dở — thứ không suy ra
-được từ code hay git log.
+**Bắt đầu phiên mới → đọc 2 file này TRƯỚC:**
+- [`docs/VIEC-CAN-LAM.md`](docs/VIEC-CAN-LAM.md) — sổ việc cần làm, ưu tiên, ai làm bước tiếp.
+- [`docs/BOI-CANH-DU-AN.md`](docs/BOI-CANH-DU-AN.md) — bối cảnh nghiệp vụ, bẫy đã dính, trạng thái.
+
+Đó là những thứ không suy ra được từ code hay git log.
 
 ## Commands
 
