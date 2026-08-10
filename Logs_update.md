@@ -4,6 +4,16 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 10/08/2026 Đối chiếu / Đối soát CITAD - Thêm kênh PSS-MDP, bắt lệnh gửi trùng, tự lọc file theo ngày (PR #25):
+    + ⚠️ **Số "Khớp" và "Lệch" sẽ khác các lần chấm trước — số mới mới là số đúng.** Trước đây một lệnh CITAD bị gửi trùng N lần được tính khớp N lần, trong khi IPCAS chỉ có 1 bản ghi. Nay chỉ lần đầu tính khớp, các lần trùng tách riêng. Ai đang theo dõi bằng file Excel riêng sẽ thấy vênh với hệ thống
+    + **Lệnh gửi trùng nay hiện rõ** trong nhóm *Chỉ CITAD*, ghi luôn *"bị dup mấy lần, cổng nào"* — trước đây trùng bao nhiêu lần cũng im lặng tính là khớp
+    + **Tải chung file CITAD của nhiều ngày cũng được** — hệ thống đọc dòng *"Ngày giao dịch"* trong từng file và tự bỏ file khác ngày chấm, không phải tự lọc tay nữa. File nào bị bỏ đều được liệt kê rõ dưới nút Đối soát
+    + **Bắt được trường hợp IPCAS báo lệnh lỗi/huỷ (ERPO, CALD) nhưng CITAD cho thấy lệnh đã đi kênh thành công** — xếp vào *Lệch trạng thái* kèm ghi chú, không lẫn vào *Chỉ Agribank*. Còn lệnh lỗi mà CITAD cũng không có thì là thất bại bình thường, không báo nữa
+    + Thêm nút **Reset** cạnh ô *Ngày chấm* (có hỏi lại trước khi xoá) để bắt đầu phiên chấm mới, khỏi phải tải lại trang
+    + **Đối chiếu CITAD**: thêm kênh **PSS - MDP**, cách tính giống Napas (cộng vào tổng CITAD). Bỏ 2 dòng *Waiting for AUTO* / *Waiting for manual* không còn dùng trên file Excel xuất ra
+    + Đổi tên menu cho rõ: *Đối chiếu CITAD* → **Đối chiếu CITAD cuối ngày**; *Đối soát CITAD ↔ IPCAS* → **Đối soát chênh lệch CITAD cuối ngày**
+    + Extension lên **bản 2.8** — vào màn hình Đối chiếu CITAD tải lại `.zip` rồi cài lại để nhận kênh PSS-MDP
+
 - 10/08/2026 Toàn hệ thống - Sửa lỗi log tiếng Việt bị hỏng chữ:
     + **File nhật ký kỹ thuật `logs\backend.log` và `logs\frontend.log` trước đây ghi sai chữ tiếng Việt.** Câu *"Backup hoàn tất"* bị ghi thành `Backup ho?n tất`, *"Đã xóa thành viên"* thành `Đ? x?a th?nh vi?n`. Lỗi có từ 11/05/2026, không ai để ý vì hệ thống vẫn chạy bình thường và không báo lỗi gì
     + **Không ảnh hưởng tới số liệu hay nghiệp vụ.** Chỉ hỏng phần chữ trong file nhật ký kỹ thuật dành cho người quản trị đọc khi có sự cố. Dữ liệu, báo cáo, file Excel xuất ra đều không liên quan

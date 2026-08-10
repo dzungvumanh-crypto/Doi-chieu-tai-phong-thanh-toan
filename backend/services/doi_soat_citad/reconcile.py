@@ -21,13 +21,30 @@ from __future__ import annotations
 
 PRIORITY_TT = {'PYED': 0, 'PYEK': 1, 'WFPG': 2, 'RFED': 3, 'SDEB': 4, 'SBFL': 5, 'SBSC': 6}
 VALID_DI = {'SCNL'}  # Đi: chỉ SCNL là thành công
+# ERPO/CALD = IPCAS báo lệnh Đi thất bại/huỷ. Nếu CITAD KHÔNG có lệnh này
+# thì đúng bản chất (chưa từng đi kênh) — không phải bất thường. Nhưng nếu
+# CITAD VẪN CÓ (đi kênh thành công thật) thì IPCAS đang sai — bất thường
+# thật, phải bắt vào 'lech_trang_thai' kèm ghi chú rõ (xem bên dưới và vòng
+# lặp "IPCAS Đi dư").
+ERR_DI = {'ERPO', 'CALD'}
+# Ưu tiên khi 1 msgref có NHIỀU dòng IPCAS Đi — số nhỏ thắng.
+# Cần từ khi ERR_DI được giữ lại khi parse: trước đó chỉ có trạng thái thành
+# công/đang xử lý nên "dòng đầu tiên thắng" vô hại, nay một msgref có thể có
+# cả ERPO/CALD lẫn SCNL và dòng đầu tiên là dòng nào thì phụ thuộc THỨ TỰ
+# DÒNG TRONG FILE — mà thứ tự đó đổi được thật (người dùng chọn file theo thứ
+# tự khác, hoặc thứ tự entry trong ZIP khác). Đã đo: cùng dữ liệu, ERPO đứng
+# trước cho n_khop=0, SCNL đứng trước cho n_khop=1. Một cỗ máy đối soát không
+# được phụ thuộc thứ tự đọc, nên cho SCNL luôn thắng. Cùng khuôn mẫu với
+# PRIORITY_TT của chiều Đến ngay bên dưới.
+PRIORITY_DI = {'SCNL': 0}
 
 
 def run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows):
     """Đối soát trong RAM bằng dict Python — xem docstring module để biết
     quy tắc khớp lệnh và ghi chú về nhánh dead-code đã bỏ khi chuẩn bị PR."""
-    # Build map IPCAS Đi/Đến — msgref/txid -> row (bản ghi đầu tiên thắng
-    # nếu trùng, trừ Đến ưu tiên theo PRIORITY_TT bên dưới)
+    # Build map IPCAS Đi/Đến — msgref/txid -> row. Đi ưu tiên theo PRIORITY_DI,
+    # Đến ưu tiên theo PRIORITY_TT (cả hai bên dưới) — không bên nào để "dòng
+    # đầu tiên thắng" thuần tuý, vì thứ tự dòng trong file không ổn định.
     ipcas_di_map = {}
     ipcas_den_map = {}
     for r in ipcas_rows:
@@ -36,6 +53,9 @@ def run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows):
             if not k:
                 continue
             if k not in ipcas_di_map:
+                ipcas_di_map[k] = r
+            elif (PRIORITY_DI.get(r['trang_thai'], 9)
+                  < PRIORITY_DI.get(ipcas_di_map[k]['trang_thai'], 9)):
                 ipcas_di_map[k] = r
         else:
             k = r['txid']
@@ -66,6 +86,24 @@ def run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows):
     citad_matched_di = set()
     citad_matched_den = set()
 
+    # Phát hiện CITAD gửi TRÙNG cùng 1 so_gd cho lệnh Đi VND — bug thật đã
+    # xác nhận qua test thực tế (và có sẵn trong bản gốc citad-fixed): vòng
+    # lặp bên dưới chạy theo TỪNG DÒNG CITAD, không loại trùng trước khi
+    # khớp, nên 1 so_gd trùng N lần mà IPCAS chỉ có 1 bản ghi sẽ bị tính
+    # "khớp" thêm N-1 lần một cách im lặng. Chỉ áp dụng lệnh Đi theo yêu cầu
+    # — đếm TRƯỚC vòng lặp chính, dùng `di_vnd_seen` để chỉ dòng ĐẦU TIÊN
+    # của mỗi so_gd trùng đi qua khớp lệnh bình thường (không đổi kết quả
+    # khớp/lệch cho trường hợp không trùng), các dòng trùng SAU đó tách
+    # riêng thành lệch 'dup_citad', không tính khớp.
+    di_vnd_count = {}
+    di_vnd_congs = {}
+    for r in citad_rows:
+        if r['chieu'] == 'di' and r['loai_tien'] == 'VND':
+            k = r['so_gd']
+            di_vnd_count[k] = di_vnd_count.get(k, 0) + 1
+            di_vnd_congs.setdefault(k, []).append(r.get('cong') or '?')
+    di_vnd_seen = set()
+
     for r in citad_rows:
         sogd = r['so_gd']
         chieu = r['chieu']
@@ -84,6 +122,16 @@ def run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows):
                 lech.append({**r, 'status': 'only_citad', 'key_agri': '', 'nh_nhan': '', 'trang_thai': ''})
 
         elif chieu == 'di':
+            if sogd in di_vnd_seen:
+                n_dup = di_vnd_count.get(sogd, 1)
+                congs = ', '.join(sorted(set(di_vnd_congs.get(sogd, [])), key=lambda x: (len(x), x)))
+                lech.append({
+                    **r,
+                    'status': 'dup_citad', 'key_agri': '', 'nh_nhan': '', 'trang_thai': '',
+                    'ghi_chu': f'Phát hiện lệnh đi kênh bị dup {n_dup} lần, cổng {congs}',
+                })
+                continue
+            di_vnd_seen.add(sogd)
             # VND Đi: tìm theo msgref
             m = ipcas_di_map.get(sogd)
             if m:
@@ -94,13 +142,19 @@ def run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows):
                     n_khop += 1
                 else:
                     # Có ở cả 2 bên nhưng IPCAS chưa SCNL → lệch trạng thái
-                    lech.append({
+                    row = {
                         **r,
                         'status': 'lech_trang_thai',
                         'key_agri': m.get('msgref', sogd),
                         'nh_nhan': m.get('nh_nhan', ''),
                         'trang_thai': tt,
-                    })
+                    }
+                    if tt in ERR_DI:
+                        row['ghi_chu'] = (
+                            f'IPCAS ghi nhận {tt} (thất bại) nhưng lệnh THỰC TẾ đã '
+                            f'đi kênh CITAD thành công — cần kiểm tra lại'
+                        )
+                    lech.append(row)
             else:
                 lech.append({**r, 'status': 'only_citad', 'key_agri': '', 'nh_nhan': '', 'trang_thai': ''})
 
@@ -113,8 +167,11 @@ def run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows):
             else:
                 lech.append({**r, 'status': 'only_citad', 'key_agri': '', 'nh_nhan': '', 'trang_thai': ''})
 
-    # IPCAS Đi dư
+    # IPCAS Đi dư - bỏ ERPO/CALD không khớp CITAD (thất bại bình thường,
+    # chưa từng đi kênh — không phải chênh lệch cần xử lý, xem ERR_DI)
     for k, r in ipcas_di_map.items():
+        if r.get('trang_thai') in ERR_DI:
+            continue
         if k not in citad_matched_di:
             lech.append({
                 'so_gd': k, 'dich_vu': r.get('kenh', ''), 'loai': r.get('loai', ''),

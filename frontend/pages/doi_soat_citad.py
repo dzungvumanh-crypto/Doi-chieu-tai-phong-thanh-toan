@@ -42,15 +42,17 @@ def _date_picker_input(label: str, initial: str = None):
 STATUS_LBL = {
     "only_citad": "Chỉ CITAD", "only_ipcas": "Chỉ IPCAS",
     "only_hub": "Chỉ Hub", "lech_trang_thai": "Lệch TT", "both": "Khớp",
+    "dup_citad": "Trùng CITAD",
 }
 STATUS_COLOR = {
     "only_citad": "text-red-600", "only_ipcas": "text-blue-600",
     "only_hub": "text-blue-600", "lech_trang_thai": "text-orange-600", "both": "text-green-700",
+    "dup_citad": "text-orange-600",
 }
 
 FILTERS = [
     ("Tất cả", None),
-    ("Chỉ CITAD", ("only_citad",)),
+    ("Chỉ CITAD", ("only_citad", "dup_citad")),
     ("Chỉ Agribank (IPCAS/Hub)", ("only_ipcas", "only_hub")),
     ("Lệch trạng thái", ("lech_trang_thai",)),
 ]
@@ -59,7 +61,7 @@ DISPLAY_COLS = [
     ("stt", "STT"), ("status_lbl", "Kết quả"), ("loai", "Loại GD"), ("chieu_lbl", "Chiều"),
     ("so_gd", "Số GD (CITAD)"), ("key_agri", "Key Agribank"), ("dich_vu", "Dịch vụ"),
     ("so_tien", "Số tiền"), ("loai_tien", "Loại tiền"), ("ngay", "Ngày GD"),
-    ("nh_nhan", "Ngân hàng"), ("trang_thai", "Trạng thái"),
+    ("nh_nhan", "Ngân hàng"), ("trang_thai", "Trạng thái"), ("cong", "Ghi chú"),
 ]
 
 
@@ -85,7 +87,7 @@ def doi_soat_citad_page():
         _sidebar("doi_soat_citad")
         with _content_area():
             _navy_header(
-                "ĐỐI SOÁT CITAD ↔ IPCAS",
+                "ĐỐI SOÁT CHÊNH LỆCH CITAD CUỐI NGÀY",
                 "Đối soát lệnh chuyển tiền giữa CITAD (NHNN) và IPCAS (Agribank) theo ngày chấm",
             )
 
@@ -103,14 +105,49 @@ def doi_soat_citad_page():
 def _build_input_panel(tab, state, tabs, result_tab, history_refresh):
     with ui.tab_panel(tab):
         with _card("Ngày chấm"):
-            with ui.row().classes("m-4"):
+            with ui.row().classes("m-4 items-center gap-3"):
                 ngay_input = _date_picker_input("Ngày chấm")
+
+                def do_reset():
+                    for clear_fn in upload_clears:
+                        clear_fn()
+                    ngay_input.value = datetime.date.today().strftime('%d/%m/%Y')
+                    state["lech"] = None
+                    state["n_khop"] = 0
+                    state["ngay_cham"] = ""
+                    msg_area.clear()
+                    if "render" in state:
+                        state["render"]()
+                    ui.notify("Đã reset — sẵn sàng phiên chấm mới", type="info")
+
+                def confirm_reset():
+                    with ui.dialog() as dlg, ui.card():
+                        ui.label("Xác nhận reset dữ liệu?").classes("text-lg font-bold text-red-600")
+                        ui.label(
+                            "Toàn bộ file đã chọn (CITAD/IPCAS/Hub) và kết quả đối soát hiện tại "
+                            "sẽ bị xoá để bắt đầu phiên chấm mới. Hành động này không hoàn tác được."
+                        ).classes("text-sm text-gray-700")
+                        with ui.row().classes("mt-3 gap-2 justify-end w-full"):
+                            ui.button("Huỷ", on_click=dlg.close).props("dense outline")
+
+                            def _confirm():
+                                dlg.close()
+                                do_reset()
+
+                            ui.button("Reset", on_click=_confirm).classes("bg-red-600 text-white").props("dense")
+                    dlg.open()
+
+                ui.button("Reset", icon="restart_alt", on_click=confirm_reset).props(
+                    "dense outline"
+                ).classes("text-red-600")
 
         with _card("Tải lên file"):
             with ui.grid(columns=3).classes("w-full gap-6 p-4"):
-                _upload_column("File CITAD (.xls/.xlsx/.zip)", ".xls,.xlsx,.zip", state, "citad_files")
-                _upload_column("File IPCAS (.csv/.txt/.zip)", ".csv,.txt,.zip", state, "ipcas_files")
-                _upload_column("File Hub ngoại tệ (.xls/.xlsx, tuỳ chọn)", ".xls,.xlsx", state, "hub_files")
+                upload_clears = [
+                    _upload_column("File CITAD (.xls/.xlsx/.zip)", ".xls,.xlsx,.zip", state, "citad_files"),
+                    _upload_column("File IPCAS (.csv/.txt/.zip)", ".csv,.txt,.zip", state, "ipcas_files"),
+                    _upload_column("File Hub ngoại tệ (.xls/.xlsx, tuỳ chọn)", ".xls,.xlsx", state, "hub_files"),
+                ]
 
         msg_area = ui.column().classes("px-4")
         btn = ui.button("Bắt đầu đối soát", icon="compare_arrows").classes("bg-red-800 text-white m-4")
@@ -251,6 +288,8 @@ def _upload_column(label, accept, state, key):
 
         ui.button("Xoá file đã chọn", on_click=clear).props("dense outline size=sm")
 
+        return clear
+
 
 def _build_result_panel(tab, state):
     with ui.tab_panel(tab):
@@ -285,7 +324,7 @@ def _build_result_panel(tab, state):
                     )
                     return
                 n_khop = state["n_khop"]
-                n_only_citad = sum(1 for r in lech if r.get("status") == "only_citad")
+                n_only_citad = sum(1 for r in lech if r.get("status") in ("only_citad", "dup_citad"))
                 n_only_agri = sum(1 for r in lech if r.get("status") in ("only_ipcas", "only_hub"))
                 n_lech_tt = sum(1 for r in lech if r.get("status") == "lech_trang_thai")
                 n_total = n_khop + len(lech)
@@ -361,6 +400,9 @@ def _build_result_panel(tab, state):
                         "ngay": r.get("ngay") or "",
                         "nh_nhan": r.get("nh_nhan") or "",
                         "trang_thai": r.get("trang_thai") or "",
+                        # Ưu tiên ghi_chu tường minh (vd. phát hiện dup) nếu có,
+                        # không thì mới rơi về "Cổng X" mặc định.
+                        "cong": r.get("ghi_chu") or (f"Cổng {r['cong']}" if r.get("cong") else ""),
                     }
                     if q and q not in " ".join(str(v).lower() for v in row.values()):
                         continue

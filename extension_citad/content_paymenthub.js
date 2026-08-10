@@ -346,6 +346,19 @@ function hasTraCuuResults() {
   return /Tổng số tiền:/.test(document.body?.innerText || '');
 }
 
+// PSS - MDP: cùng màn "Tra cứu giao dịch đến" như Napas, chỉ khác bộ lọc
+// "Ngân hàng gửi" đang chọn tài khoản Mobifone (mã 99991032) — người dùng
+// tự lọc đúng tài khoản trước khi bấm Tìm kiếm, ở đây chỉ đọc lại ô đang
+// hiện gì để tự gắn đúng nhãn, không đoán mò. Quét trong đoạn text ngay
+// sau nhãn (không quét cả trang) để tránh khớp nhầm nếu mã 99991032 vô
+// tình xuất hiện ở dòng kết quả khác.
+function isPssMdpFilter() {
+  const allText = document.body?.innerText || '';
+  const idx = allText.indexOf('Ngân hàng gửi');
+  if (idx === -1) return false;
+  return allText.slice(idx, idx + 200).includes('99991032');
+}
+
 let lastTraCuuKey = '';
 let _savingTraCuu = false; // đang có 1 lượt gửi dở chưa xong — chặn gửi trùng
 const _traCuuRetry = _makeRetryScheduler(() => { lastTraCuuKey = ''; });
@@ -365,7 +378,13 @@ async function saveTraCuu(source, manual=false) {
     return;
   }
 
-  const key = `${data.loaiTien}_${data.soTien}_${source}`;
+  // src: kênh THẬT theo bộ lọc đang chọn (napas/pssmdp) — khác `source`
+  // tham số truyền vào (paymenthub/payment, chỉ cho biết đang ở site nào,
+  // không nói lên kênh nghiệp vụ). Đưa vào khoá chống trùng để đổi bộ lọc
+  // (napas ↔ pssmdp) mà số tiền/loại tiền trùng ngẫu nhiên vẫn không bị
+  // coi là "đã lưu rồi" và bỏ qua.
+  const src = isPssMdpFilter() ? 'pssmdp' : 'napas';
+  const key = `${data.loaiTien}_${data.soTien}_${source}_${src}`;
   if (!manual && key === lastTraCuuKey) return;
   // Cùng lý do với saveBaoCao(): nút thủ công xoá khoá dedup rồi gọi lại
   // ngay — cần cờ đang-xử-lý riêng để double-click không gửi trùng.
@@ -374,20 +393,20 @@ async function saveTraCuu(source, manual=false) {
   _savingTraCuu = true;
 
   try {
-    await _doSaveTraCuu(data, source, manual);
+    await _doSaveTraCuu(data, src, manual);
   } finally {
     _savingTraCuu = false;
   }
 }
 
-async function _doSaveTraCuu(data, source, manual) {
+async function _doSaveTraCuu(data, src, manual) {
   const payload = {
-    key:    `napas_ih_den_${data.loaiTien}`,
+    key:    `${src}_ih_den_${data.loaiTien}`,
     loai:   'ih', chieu: 'den',
     tien:   data.loaiTien,
     soMon:  data.soMon,
     soTien: data.soTien,
-    source: 'napas',
+    source: src,
     ts: new Date().toLocaleTimeString('vi-VN')
   };
 
@@ -406,8 +425,9 @@ async function _doSaveTraCuu(data, source, manual) {
   });
 
   if (result.ok) {
+    const nhanLabel = src === 'pssmdp' ? 'PSS - MDP' : 'Napas';
     showToast(
-      `✓ ${manual?'Đã lưu':'Tự lưu'} Napas IH Đến – ${data.loaiTien}<br>` +
+      `✓ ${manual?'Đã lưu':'Tự lưu'} ${nhanLabel} IH Đến – ${data.loaiTien}<br>` +
       `<small style="color:#94a3b8">${data.soMon.toLocaleString('vi-VN')} món | ${data.soTien.toLocaleString('vi-VN')}</small>`,
       '#10b981', 5000
     );
@@ -423,7 +443,7 @@ async function _doSaveTraCuu(data, source, manual) {
 }
 
 function observeTraCuu(source) {
-  createManualBtn('Lưu lại Napas IH Đến', '#065f46', () => {
+  createManualBtn('Lưu lại Napas/PSS-MDP IH Đến', '#065f46', () => {
     _traCuuRetry.resetBackoff();
     lastTraCuuKey = '';
     saveTraCuu(source, true);
@@ -444,6 +464,156 @@ function observeTraCuu(source) {
 }
 
 /* ══════════════════════════════════════════════════════
+   3. PAYMENT — Chuyển tiền đến, lọc "Loại lệnh: Lệnh quyết toán"
+   ══════════════════════════════════════════════════════
+   Khác PaymentHub (1 số "Tổng số tiền" gộp sẵn): ở đây kết quả gộp CẢ
+   Napas lẫn PSS-MDP làm một, không tách được bằng cách đọc số tổng — phải
+   đọc TỪNG DÒNG bảng chi tiết, cột "NH gửi" ghi rõ mã từng dòng, tự cộng
+   dồn riêng theo mã. Mã ở đây KHÁC mã dùng trên PaymentHub (01401001 vẫn
+   là Napas — không đổi giữa 2 hệ thống — nhưng PSS-MDP ở đây là 01406001,
+   không phải 99991032 như PaymentHub) — 2 hằng số tách riêng, không dùng
+   chung, tránh nhầm hệ thống. */
+
+const NH_GUI_NAPAS = '01401001';
+const NH_GUI_PSSMDP = '01406001';
+
+function _findPaymentTable() {
+  for (const t of document.querySelectorAll('table')) {
+    const headCells = t.querySelectorAll('thead th, tr:first-child th, tr:first-child td');
+    for (const c of headCells) {
+      if ((c.innerText || '').trim() === 'NH gửi') return t;
+    }
+  }
+  return null;
+}
+
+function hasPaymentResults() {
+  const t = _findPaymentTable();
+  return !!(t && t.querySelectorAll('tbody tr').length > 0);
+}
+
+// Trả về { napas: {VNĐ: {soMon, soTien}, ...}, pssmdp: {...} } — cộng dồn
+// theo TỪNG dòng bảng, không đọc số tổng có sẵn (số đó gộp cả 2 kênh).
+function readPaymentDetailTotals() {
+  const table = _findPaymentTable();
+  const totals = { napas: {}, pssmdp: {} };
+  if (!table) return totals;
+
+  const headers = Array.from(table.querySelectorAll('thead th, tr:first-child th, tr:first-child td'))
+    .map(c => (c.innerText || '').trim());
+  const idxNH = headers.indexOf('NH gửi');
+  const idxTien = headers.indexOf('Số tiền');
+  const idxLoaiTien = headers.indexOf('Loại tiền');
+  if (idxNH === -1 || idxTien === -1) return totals;
+
+  for (const row of table.querySelectorAll('tbody tr')) {
+    const cells = row.querySelectorAll('td');
+    if (cells.length <= Math.max(idxNH, idxTien)) continue;
+    const nhGui = (cells[idxNH]?.innerText || '').trim();
+    let channel = null;
+    if (nhGui.startsWith(NH_GUI_NAPAS)) channel = 'napas';
+    else if (nhGui.startsWith(NH_GUI_PSSMDP)) channel = 'pssmdp';
+    if (!channel) continue; // dòng không thuộc 2 kênh này — bỏ qua, không đoán
+
+    const tien = parseMoney(cells[idxTien]?.innerText);
+    const loaiTienRaw = idxLoaiTien !== -1 ? (cells[idxLoaiTien]?.innerText || '').trim().toUpperCase() : 'VND';
+    const loaiTien = loaiTienRaw === 'VND' ? 'VNĐ' : loaiTienRaw;
+
+    totals[channel][loaiTien] = totals[channel][loaiTien] || { soMon: 0, soTien: 0 };
+    totals[channel][loaiTien].soMon += 1;
+    totals[channel][loaiTien].soTien += tien;
+  }
+  return totals;
+}
+
+let lastPaymentKey = '';
+let _savingPayment = false;
+const _paymentRetry = _makeRetryScheduler(() => { lastPaymentKey = ''; });
+
+async function savePaymentDetail(manual = false) {
+  if (!SERVER || !EXTENSION_TOKEN) {
+    if (manual) showToast('⚠️ Chưa cấu hình Extension — bấm icon Extension trên thanh công cụ → Tuỳ chọn', '#f59e0b', 6000);
+    return;
+  }
+  if (!hasPaymentResults()) {
+    if (manual) showToast('Chưa có kết quả, hãy Tìm kiếm trước', '#f59e0b');
+    return;
+  }
+  const totals = readPaymentDetailTotals();
+  const items = [];
+  for (const channel of ['napas', 'pssmdp']) {
+    for (const [tien, v] of Object.entries(totals[channel])) {
+      if (!v.soTien) continue;
+      items.push({
+        key: `${channel}_ih_den_${tien}`,
+        loai: 'ih', chieu: 'den', tien,
+        soMon: v.soMon, soTien: v.soTien,
+        source: channel,
+      });
+    }
+  }
+  if (items.length === 0) {
+    if (manual) showToast('Không có dòng Napas/PSS-MDP nào trong bảng (cột NH gửi)', '#f59e0b');
+    return;
+  }
+
+  const key = JSON.stringify(items.map(i => [i.key, i.soMon, i.soTien]));
+  if (!manual && key === lastPaymentKey) return;
+  if (_savingPayment) return;
+  lastPaymentKey = key;
+  _savingPayment = true;
+
+  try {
+    const ts = new Date().toLocaleTimeString('vi-VN');
+    const result = await new Promise((resolve) => {
+      chrome.runtime.sendMessage(
+        {
+          type: 'BUFFER_POST',
+          url: `${SERVER}/api/doi-chieu-citad/paymenthub-buffer`,
+          token: EXTENSION_TOKEN,
+          body: { items: items.map(i => ({ ...i, ts })), ts },
+        },
+        (response) => resolve(response || { ok: false, status: null })
+      );
+    });
+
+    if (result.ok) {
+      const parts = items.map(i =>
+        `${i.source === 'pssmdp' ? 'PSS-MDP' : 'Napas'} ${i.tien}: ${i.soMon.toLocaleString('vi-VN')} món | ${i.soTien.toLocaleString('vi-VN')}`
+      ).join('<br>');
+      showToast(`✓ ${manual ? 'Đã lưu' : 'Tự lưu'} từ bảng chi tiết<br><small style="color:#94a3b8">${parts}</small>`, '#10b981', 6000);
+      _paymentRetry.resetBackoff();
+    } else if (result.status === 403) {
+      showToast('✗ Mã kết nối không hợp lệ hoặc đã bị thu hồi — tạo mã mới ở /doi_chieu_citad', '#ef4444', 8000);
+    } else {
+      showToast(`✗ Lỗi server (${SERVER})`, '#ef4444');
+      _paymentRetry.scheduleRetry();
+    }
+  } finally {
+    _savingPayment = false;
+  }
+}
+
+function observePaymentDetail() {
+  createManualBtn('Lưu Napas + PSS-MDP (bảng chi tiết)', '#065f46', () => {
+    _paymentRetry.resetBackoff();
+    lastPaymentKey = '';
+    savePaymentDetail(true);
+  });
+
+  const startHref = window.location.href;
+  const observer = new MutationObserver(() => {
+    if (window.location.href !== startHref) { _stopWatching(observer, interval); return; }
+    savePaymentDetail(false);
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+  const interval = setInterval(() => {
+    if (window.location.href !== startHref) { _stopWatching(observer, interval); return; }
+    savePaymentDetail(false);
+  }, 1500);
+}
+
+/* ══════════════════════════════════════════════════════
    KHỞI CHẠY theo URL
    ══════════════════════════════════════════════════════ */
 (async () => {
@@ -455,6 +625,9 @@ if (_url.includes('paymenthub.agribank.com.vn/statistic')) {
 } else if (_url.includes('paymenthub.agribank.com.vn')) {
   observeTraCuu('paymenthub');
 } else if (_url.includes('payment.agribank.com.vn/payment-in')) {
-  observeTraCuu('payment');
+  // Trang này gộp Napas + PSS-MDP vào 1 số tổng — phải đọc bảng chi tiết
+  // (cột "NH gửi") để tách riêng, KHÔNG dùng observeTraCuu() (đọc số tổng
+  // có sẵn, đúng cho PaymentHub nhưng SAI ở đây vì gộp cả 2 kênh).
+  observePaymentDetail();
 }
 })();

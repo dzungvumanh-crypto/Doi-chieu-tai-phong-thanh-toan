@@ -4138,6 +4138,72 @@ headers["X-Client-IP"] = request.client.host</code></pre>
     </div>
   </div>
 
+  <!-- 55 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">55</span>
+      <span class="card-title">Đối soát CITAD: đếm lệnh trùng, giữ ERPO/CALD, và bỏ phụ thuộc thứ tự dòng (PR #25)</span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Ba thay đổi quy tắc nghiệp vụ — đều làm ĐỔI SỐ báo cáo</p>
+      <table>
+        <tr><th>Thay đổi</th><th>Trước</th><th>Sau</th></tr>
+        <tr><td>CITAD gửi trùng cùng <code>so_gd</code> (lệnh Đi VND)</td>
+            <td>N dòng trùng khớp với 1 bản ghi IPCAS → tính khớp <strong>N lần</strong>, im lặng</td>
+            <td>Dòng đầu tính khớp, các dòng sau vào <code>dup_citad</code> kèm số lần trùng + cổng</td></tr>
+        <tr><td>IPCAS trạng thái ERPO/CALD (lệnh Đi thất bại/huỷ)</td>
+            <td>Bị loại ngay khi parse → CITAD có lệnh thì rơi vào <code>only_citad</code> chung chung</td>
+            <td>Giữ lại. CITAD có lệnh → <code>lech_trang_thai</code> kèm ghi chú (IPCAS sai, lệnh đã đi
+            kênh thật). CITAD không có → bỏ qua ở vòng "IPCAS Đi dư" (thất bại bình thường)</td></tr>
+        <tr><td>File CITAD nhiều ngày tải chung</td>
+            <td>Đọc hết mọi dòng bất kể ngày, trong khi IPCAS/Hub đã lọc theo ngày chấm → lệch
+            "Chỉ CITAD" rất lớn</td>
+            <td>Đọc header <code>"Ngày giao dịch"</code> của từng file, bỏ cả file khác ngày chấm,
+            báo qua <code>parse_warnings</code></td></tr>
+      </table>
+      <p><strong>Hệ quả cần báo người dùng:</strong> số Khớp/Lệch đổi so với các lần chấm trước. Số mới
+      là số đúng, nhưng ai đối chiếu bằng file riêng sẽ thấy vênh — đã ghi vào
+      <code>Logs_update.md</code>.</p>
+
+      <p class="label">Sửa khi merge: bỏ phụ thuộc thứ tự dòng trong file</p>
+      <p>Giữ lại ERPO/CALD làm <code>ipcas_di_map</code> có thể nhận nhiều dòng cho cùng một
+      <code>msgref</code> — khoá chống trùng của parser gồm cả <code>trang_thai</code> nên một lệnh vừa
+      có dòng ERPO vừa có dòng SCNL là chuyện dựng được. Nhưng map này vẫn để <strong>"dòng đầu tiên
+      thắng"</strong>, không có quy tắc ưu tiên như <code>PRIORITY_TT</code> của chiều Đến.</p>
+      <p>Trước PR #25 điều đó vô hại vì tập chỉ có trạng thái thành công/đang xử lý. Nay thì dòng nào
+      đứng trước phụ thuộc <strong>thứ tự đọc file</strong> — mà thứ tự đó đổi được thật: người dùng
+      chọn file theo thứ tự khác, hoặc thứ tự entry trong ZIP khác.</p>
+      <p>Đo trước khi sửa, cùng một bộ dữ liệu:</p>
+      <table>
+        <tr><th>Thứ tự dòng IPCAS</th><th>Kết quả</th></tr>
+        <tr><td>ERPO đứng trước SCNL</td><td><code>n_khop=0</code>, 1 dòng <code>lech_trang_thai</code>
+            kèm ghi chú "IPCAS báo ERPO nhưng lệnh THỰC TẾ đã đi kênh thành công"</td></tr>
+        <tr><td>SCNL đứng trước ERPO</td><td><code>n_khop=1</code>, không lệch</td></tr>
+      </table>
+      <p>Đã thêm <code>PRIORITY_DI = {'SCNL': 0}</code> cho SCNL luôn thắng, cùng khuôn mẫu
+      <code>PRIORITY_TT</code>. Sau khi sửa hai thứ tự cho cùng kết quả.</p>
+      <p><strong>Nguyên tắc rút ra: một cỗ máy đối soát không được phụ thuộc thứ tự đọc dữ liệu.</strong>
+      Mỗi lần mở rộng tập trạng thái được giữ lại khi parse, phải kiểm luôn xem map khớp lệnh đã có quy
+      tắc ưu tiên tất định chưa — nếu chưa thì thêm, đừng chờ tới lúc dữ liệu thật kích hoạt.</p>
+      <p>Không hồi quy — đã kiểm 5 trường hợp: chỉ SCNL (khớp), chỉ ERPO (lệch trạng thái), ERPO dư
+      không có CITAD (bỏ qua), WFPG đang xử lý (lệch trạng thái), CITAD trùng 3 lần (1 khớp + 2
+      <code>dup_citad</code>). Tất cả giữ nguyên hành vi.</p>
+
+      <p class="label">Còn tồn: hai loại cảnh báo đi chung một kênh</p>
+      <p>File bỏ do khác ngày chấm và file <em>lỗi định dạng thật</em> cùng đổ vào
+      <code>parse_warnings</code>, hiện dưới cùng một dòng chữ <em>"N file bị lỗi khi đọc, kết quả có
+      thể THIẾU dữ liệu"</em>. Nhưng bỏ file khác ngày là <strong>quy trình bình thường</strong> —
+      chính tính năng này khuyến khích tải chung nhiều ngày — nên cảnh báo sẽ bật gần như mỗi lần chấm.
+      Dùng vài hôm là quen mắt bỏ qua, rồi hôm nào có file hỏng thật cũng bỏ qua nốt.</p>
+      <p>Nên tách hai danh sách: "Đã bỏ N file thuộc ngày khác" (thông tin) và "N file lỗi khi đọc"
+      (cảnh báo). Nội dung từng dòng đã phân biệt được, chỉ dòng tiêu đề gộp chung. Chưa sửa trong đợt
+      này.</p>
+      <p>Điểm nhỏ liên quan: không đọc được dòng <code>"Ngày giao dịch"</code> thì file được xử lý bình
+      thường và <strong>không có cảnh báo nào</strong> — chọn hướng an toàn (không bỏ nhầm) là đúng,
+      nhưng người dùng sẽ tưởng bộ lọc đã chạy trong khi nó không chạy.</p>
+
   <!-- 67 -->
   <div class="card">
     <div class="card-header">
@@ -4728,6 +4794,7 @@ headers["X-Client-IP"] = request.client.host</code></pre>
       <p>Ba nhân viên biết song phương vẫn trực 10 ca so với 5 ca của đồng nghiệp. Đây là giới hạn cơ cấu:
         49 ca đều cần một người song phương mà chỉ 5 người đảm nhận được. Business Owner sẽ đào tạo bổ sung
         sau khi vận hành thực tế. Mô phỏng ở mục 70 cho thấy thêm 2 người là đủ đưa lệch về 1.</p>
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-10</footer>
     </div>
   </div>
 

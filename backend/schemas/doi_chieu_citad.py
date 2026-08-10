@@ -11,6 +11,10 @@ vì giờ đã có `current["id"]`/`current["username"]` từ JWT.
 tương ứng 12 ô nhập liệu chết đã bỏ khỏi giao diện, xem
 `frontend/pages/doi_chieu_citad.py`).
 
+`pssmdp_m/t` (`sm/st` ở `ExportIn`) — kênh MỚI "PSS - MDP", thêm sau theo
+yêu cầu Phòng Thanh toán, nguyên lý tính giống Napas: CHỈ 2 field IH Đến,
+CÓ cộng vào tổng CITAD (khác Ebanking — không cộng), xem `build_xlsx()`.
+
 ## Xác thực Extension — đã thiết kế lại sau review bảo mật
 
 Bản trước dùng 1 khoá tĩnh dùng chung (`CITAD_EXTENSION_KEY`) cho mọi người
@@ -39,6 +43,8 @@ class SessionIn(BaseModel):
     napas_t: float = 0
     ebank_m: float = 0
     ebank_t: float = 0
+    pssmdp_m: float = 0
+    pssmdp_t: float = 0
 
 
 class CitadBufferIn(BaseModel):
@@ -73,6 +79,8 @@ class ExportIn(BaseModel):
     nt: float = 0
     em: float = 0
     et: float = 0
+    sm: float = 0  # PSS - MDP, số món
+    st: float = 0  # PSS - MDP, số tiền
 
 
 class ExtensionTokenOut(BaseModel):
