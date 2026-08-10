@@ -181,9 +181,11 @@ Truy cập:
 ├── data/
 │   └── ksnb.db             # SQLite database (tự tạo khi chạy lần đầu)
 ├── logs/
-│   └── app.log             # Log xoay vòng (5 MB × 3 file)
+│   ├── app.log             # Log xoay vòng (5 MB × 3 file) — nguồn của màn hình Nhật ký hệ thống
+│   ├── backend.log         # stdout/stderr tiến trình backend (run.py ghi) — không xoay vòng
+│   └── frontend.log        # stdout/stderr tiến trình frontend (run.py ghi) — không xoay vòng
 ├── init_db.py               # Khởi tạo DB + seed data
-├── run.py                   # Launcher (chạy backend + frontend song song)
+├── run.py                   # Launcher (chạy backend + frontend song song; ép UTF-8 cho tiến trình con)
 ├── deploy_env_check.py      # Kiểm/sửa .env máy đích khi deploy (deploy.bat gọi)
 └── requirements.txt
 ```
