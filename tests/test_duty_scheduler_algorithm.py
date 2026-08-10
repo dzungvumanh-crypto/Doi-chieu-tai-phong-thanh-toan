@@ -174,6 +174,49 @@ def test_khai_hai_lanh_dao_ba_nhan_vien_thi_sinh_dung_the():
         assert len(_members(r["shift"])) == 5, f"seed={seed} không đủ 5 người"
 
 
+def test_can_bang_theo_tong_so_ca_khong_theo_tung_loai_ca():
+    """Mỗi loại ca đếm một sổ riêng thì người đứng cuối cả ba sổ vẫn có thể có
+    tổng số ca cao nhất. Cân bằng phải xét tổng."""
+    db = _make_db(_standard_staff())
+    # NV Năm đã trực 3 ca thứ 6 và 2 ca cut-off, sổ ngày thường vẫn trắng
+    for role, n in (("NV_friday", 3), ("NV_cutoff", 2)):
+        db.execute("INSERT INTO duty_rotation_state (year, role, staff_id, shift_count, position) "
+                   "VALUES (?,?,5,?,0)", (YEAR, role, n))
+    db.commit()
+
+    # Xếp ca ngày thường 20 lần: NV Năm không được ưu tiên dù sổ 'NV' đang là 0
+    dem = 0
+    for seed in range(20):
+        d = _make_db(_standard_staff())
+        for role, n in (("NV_friday", 3), ("NV_cutoff", 2)):
+            d.execute("INSERT INTO duty_rotation_state (year, role, staff_id, shift_count, position) "
+                      "VALUES (?,?,5,?,0)", (YEAR, role, n))
+        d.commit()
+        if 5 in _members(_gen_one(d, MONDAY, seed)["shift"]):
+            dem += 1
+    assert dem == 0, f"NV Năm đã trực 5 ca ở loại khác nhưng vẫn được chọn {dem}/20 lần"
+
+
+def test_tranh_du_song_phuong_khong_duoc_de_len_can_bang():
+    """Lãnh đạo đã giữ vai song phương thì thích nhân viên không biết song phương
+    hơn — nhưng chỉ khi ngang số ca, không đẩy người ít ca xuống cuối."""
+    staff = [
+        (1, "LD Một", "truong_phong", 1, 0, 1),   # lãnh đạo biết SP
+        (3, "NV Ba",  "chuyen_vien",  1, 0, 3),   # biết SP nhưng chưa trực ca nào
+        (5, "NV Năm", "chuyen_vien",  0, 0, 5),
+        (6, "NV Sáu", "chuyen_vien",  0, 0, 6),
+    ]
+    db = _make_db(staff)
+    # Hai nhân viên không biết SP đã trực nhiều; NV Ba biết SP nhưng đang 0 ca
+    for sid in (5, 6):
+        db.execute("INSERT INTO duty_rotation_state (year, role, staff_id, shift_count, position) "
+                   "VALUES (?, 'NV', ?, 5, 0)", (YEAR, sid))
+    db.commit()
+    r = _gen_one(db, MONDAY, 0)
+    assert 3 in _members(r["shift"]), (
+        "NV Ba đang ít ca nhất mà bị bỏ qua chỉ vì biết song phương")
+
+
 def test_khong_vo_hai_lanh_dao_cung_biet_song_phuong():
     """Có sẵn Lãnh đạo không biết song phương thì đừng xếp 2 người biết cùng ca."""
     staff = [

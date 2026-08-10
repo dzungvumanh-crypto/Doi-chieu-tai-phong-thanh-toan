@@ -6503,7 +6503,104 @@ Bất biến MIS: 522.774 + 36.462 = 559.236 (khớp tổng gốc)</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-08</footer>
+  <!-- 70 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">70</span>
+      <span class="card-title">Phân lịch trực — phân thử 2 tháng và ba nâng cấp cân bằng ca</span>
+      <span class="badge badge-done">done · 2026-08-10</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Vì sao — 68 test không thay được một lần chạy thật</div>
+      <p>Phân thử 2 tháng (49 ca) bằng bộ dữ liệu 21 nhân sự lộ ra những vấn đề mà bộ test không bắt được,
+        vì chúng chỉ hiện khi chạy dài ngày với cơ cấu nhân sự thật: test kiểm <b>một ca</b> có đúng luật
+        không, còn cân bằng là tính chất của <b>chuỗi 49 ca</b>.</p>
+
+      <div class="label">Lỗi nặng nhất — dồn ca cho lãnh đạo biết song phương</div>
+      <table>
+        <tr><th>Chỉ tiêu</th><th>Trước</th><th>Sau</th></tr>
+        <tr><td>Lệch ca lãnh đạo</td><td><b>9</b> — một người 15 ca, người khác 6 ca</td><td><b>1</b></td></tr>
+        <tr><td>Lệch ca người song phương</td><td><b>9</b></td><td><b>1</b></td></tr>
+        <tr><td>Trực từ 2 lần trở lên trong tuần</td><td><b>8</b> lượt, có người 3 lần</td><td><b>0</b></td></tr>
+      </table>
+      <p>Điều kiện quyết định có kéo Lãnh đạo biết song phương lên trước hay không xét theo
+        <b>đầu danh sách</b> nhân viên (<code>nv_order[:so_chinh+so_phu]</code>). Nhưng ngay bên dưới,
+        <code>biet_sp[:1] + khong_sp + ...</code> vốn đã kéo được 1 nhân viên biết song phương lên đầu
+        nhóm trực chính. Vì chỉ 3/16 nhân viên biết song phương nên đầu danh sách hầu như ngày nào cũng
+        trống → Lãnh đạo bị kéo lên gần như mỗi ngày, phá vỡ cả vòng xoay lẫn tầng "chưa trực trong tuần".
+        Điều kiện đúng là xét <b>cả pool</b>. Sửa một dòng.</p>
+
+      <div class="label">Nâng cấp 1 — cân bằng theo TỔNG số ca, không theo từng loại ca</div>
+      <p>Mỗi vai có 3 kênh vòng xoay (<code>NV</code> / <code>NV_friday</code> / <code>NV_cutoff</code>) và
+        trước đây chọn người chỉ nhìn kênh của loại ca đang xếp. Hệ quả: một người đứng cuối cả ba sổ mà
+        <b>tổng</b> số ca vẫn cao nhất phòng. Thêm <code>_tong_ca()</code> cộng cả nhóm kênh, trả kèm ngày
+        trực gần nhất; <code>_rank_candidates()</code> và <code>_sort_by_rotation()</code> dùng tổng này.</p>
+
+      <div class="label">Nâng cấp 2 — "tránh dư song phương" hạ xuống tiêu chí phụ</div>
+      <p>Khi Lãnh đạo đã giữ vai song phương, code cũ đẩy <b>toàn bộ</b> nhân viên biết song phương xuống
+        cuối danh sách (<code>uu_tien = khong_sp + biet_sp</code>) để khỏi dư. Việc đó ghi đè lên thứ tự
+        vòng xoay — hy sinh cân bằng cho một luật mềm.</p>
+      <p>Hậu quả đo được rất phản trực giác: <b>tăng số người biết song phương lại làm lệch ca tăng</b>,
+        vì nhóm "không biết song phương" teo lại và bị dồn hết ca.</p>
+      <table>
+        <tr><th>Số nhân viên biết song phương</th><th>3</th><th>4</th><th>5</th><th>6</th><th>7</th><th>8</th></tr>
+        <tr><td>Lệch ca — trước</td><td>5</td><td>3</td><td>4</td><td>5</td><td>6</td><td>7</td></tr>
+        <tr><td>Lệch ca — sau</td><td>5</td><td>3</td><td><b>1</b></td><td><b>1</b></td><td>2</td><td><b>1</b></td></tr>
+      </table>
+      <p>Nay <code>tranh_sp</code> chỉ là khoá sắp xếp <b>phụ</b>, dùng để chọn giữa những người đang ngang
+        số ca. Đường cong đã đảo chiều: đào tạo thêm người biết song phương thì lệch ca giảm, đúng như kỳ vọng.</p>
+
+      <div class="label">Nâng cấp 3 — cân bằng cả theo thứ trong tuần</div>
+      <p><code>_preferred_day_mismatch()</code> đã có từ trước nhưng chỉ dùng ở nhánh luân phiên tất định
+        của thứ 6. Nay dùng cả ở nhánh bốc ngẫu nhiên, làm khoá sắp xếp ổn định sau khi đã xáo trong nhóm
+        cùng số ca — nên vẫn ngẫu nhiên nhưng không ai bị dồn mãi vào một thứ. Lệch thứ lớn nhất
+        <b>4 → 3</b>.</p>
+
+      <div class="label">Dọn theo</div>
+      <p>Sau khi số người mỗi ca chuyển sang <code>get_cau_hinh_ca()</code>, tham số <code>nv_count</code>
+        truyền xuyên <code>_process_day()</code> thành vô dụng; <code>_DUTY_ROLE_MAP</code> trùng chức năng
+        với <code>_NHOM_KENH</code> mới; <code>_pick_by_rotation()</code> mất người gọi cuối cùng. Đã gỡ cả
+        ba cùng hằng số <code>DEFAULT_NV_COUNT</code>. <code>_chon_to_hop()</code> tách thành
+        <code>_chon_lanh_dao()</code> + <code>_chia_nhan_vien()</code> — cần biết Lãnh đạo có giữ vai song
+        phương không <b>trước khi</b> xếp nhân viên thì mới truyền được <code>tranh_sp</code> đúng.</p>
+
+      <div class="label">Kết quả trên 2 tháng (49 ca), chạy lại 20 lần</div>
+      <table>
+        <tr><th>Chỉ tiêu</th><th>Đầu kỳ</th><th>Hiện tại</th></tr>
+        <tr><td>Lệch ca lãnh đạo</td><td>9</td><td><b>1</b> — ổn định 20/20 lần</td></tr>
+        <tr><td>Lệch ca nhân viên</td><td>6</td><td>5 — giới hạn cơ cấu, xem bên dưới</td></tr>
+        <tr><td>Lệch thứ trong tuần</td><td>4</td><td><b>3</b></td></tr>
+        <tr><td>Trực ≥2 lần/tuần</td><td>8</td><td><b>0</b></td></tr>
+        <tr><td>Trực 2 ngày liên tiếp</td><td>0</td><td><b>0</b></td></tr>
+        <tr><td>Ca có cảnh báo</td><td>0</td><td><b>0</b></td></tr>
+      </table>
+
+      <div class="note"><b>Lệch 5 của nhân viên không sửa được bằng code.</b> 49 ca cần 49 lượt người song
+        phương; 2 phó phòng biết nghiệp vụ gánh 19 lượt, 30 lượt còn lại chia đúng 3 nhân viên → mỗi người
+        10 ca trong khi đồng nghiệp 5 ca. Mô phỏng cho thấy đào tạo thêm 2 người là đủ đưa lệch về 1 —
+        và <b>chỉ đúng sau Nâng cấp 2</b>; làm trước thì càng thêm người càng lệch nặng.</div>
+
+      <div class="label">Test khoá lại</div>
+      <ul>
+        <li><code>test_can_bang_theo_tong_so_ca_khong_theo_tung_loai_ca</code> — người đã trực 5 ca ở loại
+          ca khác không được ưu tiên dù sổ ngày thường còn trắng (0/20 lần được chọn).</li>
+        <li><code>test_tranh_du_song_phuong_khong_duoc_de_len_can_bang</code> — người biết song phương đang
+          ít ca nhất vẫn phải được chọn, không bị đẩy xuống cuối.</li>
+      </ul>
+      <p>Tổng <b>68 test</b> cho module. Toàn suite 486 pass.</p>
+
+      <div class="label">Files sửa</div>
+      <ul>
+        <li><code>backend/services/duty_scheduler_engine.py</code> — <code>_tong_ca()</code>,
+          <code>_NHOM_KENH</code>, <code>tranh_sp</code> xuyên <code>_rank_candidates</code>/
+          <code>_order_pool</code>, tách <code>_chon_lanh_dao()</code> + <code>_chia_nhan_vien()</code>,
+          gỡ mã chết (còn 510 dòng)</li>
+        <li><code>tests/test_duty_scheduler_algorithm.py</code> — 2 test mới</li>
+      </ul>
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-10</footer>
 </div>
 </body>
 </html>

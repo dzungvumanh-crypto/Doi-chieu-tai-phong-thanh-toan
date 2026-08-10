@@ -19,14 +19,12 @@ from typing import List, Optional, Tuple
 
 from backend.services.duty_staff_service import get_available_pool
 from backend.services.duty_constraint_service import (
-    get_requests_for_date, get_special_day, get_holiday_dates,
-    get_shift_config, get_week_assignees,
+    get_requests_for_date, get_special_day, get_holiday_dates, get_week_assignees,
 )
 from backend.services.duty_calendar_utils import get_week_dates, is_friday
 from backend.services.duty_rules import get_cau_hinh_ca, resolve_sp_role
 
 _VN_TZ = timezone(timedelta(hours=7))
-DEFAULT_NV_COUNT = 2
 
 
 def _now():
@@ -90,26 +88,44 @@ def _preferred_day_mismatch(last_used: Optional[str], current_date: Optional[str
         return 5
 
 
+# Mỗi vai có nhiều kênh vòng xoay theo loại ca. Cân bằng phải xét TỔNG cả nhóm:
+# đếm riêng từng kênh thì một người đứng cuối cả ba sổ mà tổng số ca vẫn cao nhất.
+_NHOM_KENH = {
+    "LD": ("LD", "LD_friday", "LD_cutoff"),
+    "NV": ("NV", "NV_friday", "NV_cutoff"),
+}
+
+
+def _tong_ca(db: sqlite3.Connection, staff_id: int, year: int,
+             role: str) -> Tuple[int, str]:
+    """Tổng số ca trên mọi kênh cùng vai, kèm ngày trực gần nhất."""
+    _get_rotation_state(db, staff_id, year, role)   # lazy-init kênh đang dùng
+    kenh = _NHOM_KENH["LD" if role.startswith("LD") else "NV"]
+    row = db.execute(
+        f"SELECT COALESCE(SUM(shift_count), 0) AS tong, MAX(last_used) AS gan_nhat "
+        f"FROM duty_rotation_state WHERE year=? AND staff_id=? "
+        f"AND role IN ({','.join('?' * len(kenh))})",
+        (year, staff_id, *kenh),
+    ).fetchone()
+    return row["tong"], (row["gan_nhat"] or "")
+
+
 def _sort_by_rotation(db: sqlite3.Connection, candidates: List[dict],
-                      year: int, role: str, current_date: str = None) -> List[dict]:
+                      year: int, role: str, current_date: str = None,
+                      tranh_sp: bool = False) -> List[dict]:
     def sort_key(p: dict):
+        tong, gan_nhat = _tong_ca(db, p["id"], year, role)
         s = _get_rotation_state(db, p["id"], year, role)
-        day_miss = _preferred_day_mismatch(s.get("last_used"), current_date)
         return (
-            s["shift_count"],
-            day_miss,
-            s["last_used"] or "0000-00-00",
+            tong,
+            # Chỉ phân biệt người biết song phương khi đã ngang số ca
+            bool(p.get("can_do_sp")) if tranh_sp else False,
+            _preferred_day_mismatch(gan_nhat, current_date),
+            gan_nhat or "0000-00-00",
             s["position"],
             p["id"],
         )
     return sorted(candidates, key=sort_key)
-
-
-def _pick_by_rotation(db: sqlite3.Connection, candidates: List[dict],
-                      year: int, role: str, current_date: str = None) -> Optional[dict]:
-    if not candidates:
-        return None
-    return _sort_by_rotation(db, candidates, year, role, current_date)[0]
 
 
 # ══════════════════════════════════════════════════════════════
@@ -118,27 +134,38 @@ def _pick_by_rotation(db: sqlite3.Connection, candidates: List[dict],
 
 def _rank_candidates(db: sqlite3.Connection, candidates: List[dict], year: int,
                      role: str, date_str: str, rng: random.Random,
-                     randomize: bool) -> List[dict]:
-    """Xếp thứ tự ưu tiên trong 1 nhóm ứng viên. Thuần đọc — không ghi vòng xoay."""
+                     randomize: bool, tranh_sp: bool = False) -> List[dict]:
+    """
+    Xếp thứ tự ưu tiên trong 1 nhóm ứng viên. Thuần đọc — không ghi vòng xoay.
+
+    `tranh_sp` — Lãnh đạo đã giữ vai song phương nên ca không cần thêm người
+    biết song phương nữa. Đây chỉ là tiêu chí PHỤ: dùng để chọn giữa những người
+    đang ngang số ca, không được đẩy người ít ca xuống cuối chỉ vì họ biết song
+    phương. Hy sinh cân bằng cho một luật mềm là đánh đổi sai.
+    """
     if not candidates:
         return []
     if not randomize:
-        return _sort_by_rotation(db, candidates, year, role, date_str)
+        return _sort_by_rotation(db, candidates, year, role, date_str, tranh_sp)
 
     # Ngẫu nhiên trong nhóm ít ca nhất, rồi tới nhóm ít ca kế tiếp
-    counts = {p["id"]: _get_rotation_state(db, p["id"], year, role)["shift_count"]
-              for p in candidates}
+    bang = {p["id"]: _tong_ca(db, p["id"], year, role) for p in candidates}
     ordered: List[dict] = []
-    for c in sorted(set(counts.values())):
-        group = [p for p in candidates if counts[p["id"]] == c]
-        rng.shuffle(group)
-        ordered.extend(group)
+    for c in sorted({t for t, _ in bang.values()}):
+        nhom = [p for p in candidates if bang[p["id"]][0] == c]
+        rng.shuffle(nhom)
+        # sort ổn định — thứ tự ngẫu nhiên được giữ trong từng mức khoá
+        nhom.sort(key=lambda p: (
+            bool(p.get("can_do_sp")) if tranh_sp else False,
+            _preferred_day_mismatch(bang[p["id"]][1], date_str),
+        ))
+        ordered.extend(nhom)
     return ordered
 
 
 def _order_pool(db: sqlite3.Connection, people: List[dict], requests: dict, kind: str,
                 year: int, role: str, date_str: str, rng: random.Random,
-                randomize: bool) -> List[dict]:
+                randomize: bool, tranh_sp: bool = False) -> List[dict]:
     """Xếp pool theo tầng ưu tiên: đăng ký đích danh ngày > chưa trực trong tuần > đã trực."""
     week_ids = get_week_assignees(db, date_str)
     once_ids = set(requests.get("once_ids", set()))
@@ -150,7 +177,7 @@ def _order_pool(db: sqlite3.Connection, people: List[dict], requests: dict, kind
     repeat = [p for p in rest if p["id"] in week_ids]
 
     def _rank(group: List[dict]) -> List[dict]:
-        return _rank_candidates(db, group, year, role, date_str, rng, randomize)
+        return _rank_candidates(db, group, year, role, date_str, rng, randomize, tranh_sp)
 
     def _layer(group: List[dict]) -> List[dict]:
         return (_rank([p for p in group if p["id"] in req_ids])
@@ -159,31 +186,18 @@ def _order_pool(db: sqlite3.Connection, people: List[dict], requests: dict, kind
     return _rank(forced) + _layer(fresh) + _layer(repeat)
 
 
-def _chon_to_hop(ld_order: List[dict], nv_order: List[dict],
-                 so_ld: int, so_chinh: int, so_phu: int) -> Optional[Tuple]:
-    """
-    Chọn so_ld Lãnh đạo + so_chinh trực chính + so_phu trực phụ theo thứ tự
-    ưu tiên đã xếp sẵn.
-
-    Luật CỨNG: thiếu người so với số đã khai báo thì trả None — không hình
-    thành ca trực. Luật MỀM (ít nhất 1 người song phương ở Lãnh đạo hoặc trực
-    chính) chỉ cố gắng thoả, không thoả được thì vẫn lập ca kèm cảnh báo.
-    """
-    if len(ld_order) < so_ld or len(nv_order) < so_chinh + so_phu:
-        return None
-
-    # Chỉ khi CẢ pool nhân viên không có ai biết song phương mới kéo Lãnh đạo
-    # biết song phương lên trước. Xét theo top danh sách là sai: bên dưới vốn đã
-    # kéo được 1 nhân viên biết song phương lên đầu nhóm trực chính, nên xét top
-    # sẽ kéo Lãnh đạo lên gần như mỗi ngày và dồn hết ca cho vài người.
-    if not any(p.get("can_do_sp") for p in nv_order):
+def _chon_lanh_dao(ld_order: List[dict], so_ld: int, nv_co_sp: bool) -> List[dict]:
+    """Chọn so_ld Lãnh đạo theo thứ tự ưu tiên đã xếp sẵn."""
+    # Chỉ khi CẢ pool nhân viên không còn ai biết song phương mới kéo Lãnh đạo
+    # biết song phương lên trước — nếu không, việc kéo sẽ lặp lại gần như mỗi
+    # ngày và dồn hết ca cho vài người.
+    if not nv_co_sp:
         ld_order = ([p for p in ld_order if p.get("can_do_sp")]
                     + [p for p in ld_order if not p.get("can_do_sp")])
 
     leaders = ld_order[:so_ld]
     # Khai nhiều Lãnh đạo mà vơ trúng 2 người cùng biết song phương là lãng phí.
-    # Thay người thứ hai trở đi bằng Lãnh đạo không biết song phương kế tiếp —
-    # chỉ thay khi có sẵn người ngoài top, để không phá thứ tự vòng xoay.
+    # Chỉ thay khi có sẵn người ngoài top, để không phá thứ tự vòng xoay.
     if sum(1 for p in leaders if p.get("can_do_sp")) > 1:
         du_bi = [p for p in ld_order[so_ld:] if not p.get("can_do_sp")]
         thay_the, da_co_sp = [], False
@@ -195,22 +209,24 @@ def _chon_to_hop(ld_order: List[dict], nv_order: List[dict],
                 da_co_sp = True
             thay_the.append(p)
         leaders = thay_the
+    return leaders
 
-    ld_co_sp = any(p.get("can_do_sp") for p in leaders)
 
-    biet_sp  = [p for p in nv_order if p.get("can_do_sp")]
-    khong_sp = [p for p in nv_order if not p.get("can_do_sp")]
+def _chia_nhan_vien(nv_order: List[dict], so_chinh: int, so_phu: int,
+                    ld_co_sp: bool) -> Tuple[List[dict], List[dict]]:
+    """
+    Chia nhân viên thành nhóm trực chính và trực phụ.
 
-    if ld_co_sp:
-        # Lãnh đạo đã giữ vai → ưu tiên người không biết song phương cho đỡ dư
-        uu_tien = khong_sp + biet_sp
-    else:
-        # Kéo đúng 1 người biết song phương lên đầu nhóm trực chính
-        uu_tien = biet_sp[:1] + khong_sp + biet_sp[1:]
-
-    nv_chinh = uu_tien[:so_chinh]
-    nv_phu   = uu_tien[so_chinh:so_chinh + so_phu]
-    return leaders, nv_chinh, nv_phu
+    Nếu Lãnh đạo chưa giữ vai song phương thì kéo đúng 1 người biết song phương
+    lên đầu nhóm trực chính — người ở nhóm phụ về sớm nên không thay vai được.
+    Nếu Lãnh đạo đã giữ vai thì `nv_order` vốn đã xếp người không biết song
+    phương lên trước trong từng mức số ca (tham số `tranh_sp`), không cần đảo gì.
+    """
+    if not ld_co_sp:
+        biet_sp = [p for p in nv_order if p.get("can_do_sp")]
+        if biet_sp:
+            nv_order = biet_sp[:1] + [p for p in nv_order if p["id"] != biet_sp[0]["id"]]
+    return nv_order[:so_chinh], nv_order[so_chinh:so_chinh + so_phu]
 
 
 # ══════════════════════════════════════════════════════════════
@@ -274,16 +290,13 @@ def _generate_ca(db: sqlite3.Connection, date_str: str, year: int,
     warnings: List[dict] = []
 
     ld_order = _order_pool(db, pool["LD"], requests, "LD", year, ld_role, date_str, rng, randomize)
-    nv_order = _order_pool(db, pool["NV"], requests, "NV", year, nv_role, date_str, rng, randomize)
-
-    plan = _chon_to_hop(ld_order, nv_order, so_ld, so_chinh, so_phu)
 
     # ── Luật cứng: thiếu người so với khai báo thì KHÔNG hình thành ca ──
-    if plan is None:
+    if len(ld_order) < so_ld or len(pool["NV"]) < so_chinh + so_phu:
         if len(ld_order) < so_ld:
             ly_do = f"chỉ có {len(ld_order)}/{so_ld} Lãnh đạo khả dụng"
         else:
-            ly_do = f"chỉ có {len(nv_order)}/{so_chinh + so_phu} nhân viên khả dụng"
+            ly_do = f"chỉ có {len(pool['NV'])}/{so_chinh + so_phu} nhân viên khả dụng"
         can_co = f"{so_ld} Lãnh đạo + {so_chinh} nhân viên"
         if so_phu:
             can_co += f" trực chính + {so_phu} trực phụ"
@@ -291,7 +304,14 @@ def _generate_ca(db: sqlite3.Connection, date_str: str, year: int,
                      "msg": f"Ngày {date_str} không lập được ca trực — {ly_do}. "
                             f"Ca trực bắt buộc {can_co}."}]
 
-    leaders, nv_chinh, nv_phu = plan
+    # Chọn Lãnh đạo trước để biết ca đã có người song phương chưa, rồi mới xếp
+    # nhân viên — biết điều đó thì mới xếp được đúng thứ tự ưu tiên.
+    leaders  = _chon_lanh_dao(ld_order, so_ld,
+                              any(p.get("can_do_sp") for p in pool["NV"]))
+    ld_co_sp = any(p.get("can_do_sp") for p in leaders)
+    nv_order = _order_pool(db, pool["NV"], requests, "NV", year, nv_role, date_str,
+                           rng, randomize, tranh_sp=ld_co_sp)
+    nv_chinh, nv_phu = _chia_nhan_vien(nv_order, so_chinh, so_phu, ld_co_sp)
     sp, sp_warn = resolve_sp_role(leaders, nv_chinh, nv_phu)
     # sp tách khỏi nv_ids để hiển thị riêng, giống đường sửa tay
     nvs = [p for p in nv_chinh if sp is None or p["id"] != sp["id"]]
@@ -332,8 +352,7 @@ def _generate_ngay_dac_biet(db: sqlite3.Connection, date_str: str, year: int,
 # ENTRY POINTS
 # ══════════════════════════════════════════════════════════════
 
-def _process_day(db: sqlite3.Connection, date_str: str, year: int, nv_count: int,
-                 overwrite_draft: bool, overwrite_confirmed: bool,
+def _process_day(db: sqlite3.Connection, date_str: str, year: int,
                  confirmed_types: set, rng: random.Random) -> Tuple[int, int, List[dict]]:
     """Sinh ca cho 1 ngày. Trả (created, skipped, warnings).
     Ngày đặc biệt được ưu tiên trước thứ 6 — quyết toán rơi vào thứ 6 vẫn là
@@ -373,9 +392,6 @@ def generate_schedule_for_week(db: sqlite3.Connection, week_start_str: str,
     `seed` chỉ dùng cho test — production để None (bốc ngẫu nhiên thật)."""
     rng = random.Random(seed)
     year = int(week_start_str[:4])
-    config = get_shift_config(db, year)
-    nv_count = config["nv_count"] if config else DEFAULT_NV_COUNT
-
     holiday_dates = get_holiday_dates(db, year)
     week_dates = get_week_dates(week_start_str)
     working_days = [d for d in week_dates if d not in holiday_dates]
@@ -419,8 +435,7 @@ def generate_schedule_for_week(db: sqlite3.Connection, week_start_str: str,
                         (date_str,)
                     )
 
-        c, s, w = _process_day(db, date_str, year, nv_count,
-                                overwrite_draft, overwrite_confirmed, confirmed_types, rng)
+        c, s, w = _process_day(db, date_str, year, confirmed_types, rng)
         created += c
         skipped += s
         all_warnings.extend(w)
@@ -436,8 +451,6 @@ def generate_schedule(db: sqlite3.Connection, month: int, year: int,
     """Sinh lịch trực theo tuần cho tháng chỉ định.
     `seed` chỉ dùng cho test — production để None (bốc ngẫu nhiên thật)."""
     rng = random.Random(seed)
-    config = get_shift_config(db, year)
-    nv_count = config["nv_count"] if config else DEFAULT_NV_COUNT
     holiday_dates = get_holiday_dates(db, year)
 
     first_day = _date(year, month, 1)
@@ -474,7 +487,7 @@ def generate_schedule(db: sqlite3.Connection, month: int, year: int,
                 continue
             db.execute("DELETE FROM duty_shifts WHERE shift_date=?", (date_str,))
 
-        c, s, w = _process_day(db, date_str, year, nv_count, overwrite_draft, False, set(), rng)
+        c, s, w = _process_day(db, date_str, year, set(), rng)
         total_created += c
         total_skipped += s
         all_warnings.extend(w)
@@ -489,11 +502,6 @@ def generate_schedule(db: sqlite3.Connection, month: int, year: int,
 # ══════════════════════════════════════════════════════════════
 
 ALL_ROTATION_ROLES = ["LD", "NV", "LD_friday", "NV_friday", "LD_cutoff", "NV_cutoff"]
-
-_DUTY_ROLE_MAP = {
-    "LD": ["LD", "LD_friday", "LD_cutoff"],
-    "NV": ["NV", "NV_friday", "NV_cutoff"],
-}
 
 
 def reset_rotation(db: sqlite3.Connection, year: int) -> None:
