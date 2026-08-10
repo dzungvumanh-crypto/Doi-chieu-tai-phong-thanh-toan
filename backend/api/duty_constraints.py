@@ -4,7 +4,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.database import get_db
-from backend.core.deps import get_current_staff
+from backend.core.deps import require_feature
 from backend.schemas.duty import (
     AbsenceCreate, AbsenceRangeCreate, AbsenceOut,
     RequestCreate, RequestOut,
@@ -32,7 +32,7 @@ def get_absences(
     month: Optional[int] = Query(None, ge=1, le=12),
     year:  Optional[int] = None,
     db: sqlite3.Connection = Depends(get_db),
-    _=Depends(get_current_staff),
+    _=Depends(require_feature("menu.duty_schedule")),
 ):
     return list_absences(db, month, year)
 
@@ -41,7 +41,7 @@ def get_absences(
 def add_absence(
     body: AbsenceCreate,
     db: sqlite3.Connection = Depends(get_db),
-    _=Depends(get_current_staff),
+    _=Depends(require_feature("duty.manage_staff")),
 ):
     return create_absence(db, body.staff_id, body.absence_date)
 
@@ -50,7 +50,7 @@ def add_absence(
 def add_absence_range(
     body: AbsenceRangeCreate,
     db: sqlite3.Connection = Depends(get_db),
-    _=Depends(get_current_staff),
+    _=Depends(require_feature("duty.manage_staff")),
 ):
     return create_absence_range(db, body.staff_id, body.from_date, body.to_date)
 
@@ -61,7 +61,7 @@ def remove_absence_range(
     from_date: str,
     to_date: str,
     db: sqlite3.Connection = Depends(get_db),
-    _=Depends(get_current_staff),
+    _=Depends(require_feature("duty.manage_staff")),
 ):
     return delete_absence_range(db, staff_id, from_date, to_date)
 
@@ -70,7 +70,7 @@ def remove_absence_range(
 def remove_absence(
     absence_id: int,
     db: sqlite3.Connection = Depends(get_db),
-    _=Depends(get_current_staff),
+    _=Depends(require_feature("duty.manage_staff")),
 ):
     if not delete_absence(db, absence_id):
         raise HTTPException(404, "Không tìm thấy khai báo vắng")
@@ -84,7 +84,7 @@ def get_requests(
     year: Optional[int] = None,
     staff_id: Optional[int] = None,
     db: sqlite3.Connection = Depends(get_db),
-    _=Depends(get_current_staff),
+    _=Depends(require_feature("menu.duty_schedule")),
 ):
     return list_requests(db, year, staff_id)
 
@@ -93,7 +93,7 @@ def get_requests(
 def add_request(
     body: RequestCreate,
     db: sqlite3.Connection = Depends(get_db),
-    _=Depends(get_current_staff),
+    _=Depends(require_feature("duty.manage_staff")),
 ):
     try:
         return create_request(
@@ -108,7 +108,7 @@ def add_request(
 def remove_request(
     request_id: int,
     db: sqlite3.Connection = Depends(get_db),
-    _=Depends(get_current_staff),
+    _=Depends(require_feature("duty.manage_staff")),
 ):
     if not delete_request(db, request_id):
         raise HTTPException(404, "Không tìm thấy đăng ký")
@@ -123,7 +123,7 @@ def get_special_days(
     year:  Optional[int] = None,
     day_type: Optional[str] = None,
     db: sqlite3.Connection = Depends(get_db),
-    _=Depends(get_current_staff),
+    _=Depends(require_feature("menu.duty_schedule")),
 ):
     return list_special_days(db, month, year, day_type)
 
@@ -132,7 +132,7 @@ def get_special_days(
 def add_special_day(
     body: SpecialDayCreate,
     db: sqlite3.Connection = Depends(get_db),
-    _=Depends(get_current_staff),
+    _=Depends(require_feature("duty.manage_config")),
 ):
     return create_special_day(db, body.date, body.day_type, body.label)
 
@@ -141,7 +141,7 @@ def add_special_day(
 def confirm_day(
     special_day_id: int,
     db: sqlite3.Connection = Depends(get_db),
-    _=Depends(get_current_staff),
+    _=Depends(require_feature("duty.manage_config")),
 ):
     result = confirm_special_day(db, special_day_id)
     if not result:
@@ -153,7 +153,7 @@ def confirm_day(
 def remove_special_day(
     special_day_id: int,
     db: sqlite3.Connection = Depends(get_db),
-    _=Depends(get_current_staff),
+    _=Depends(require_feature("duty.manage_config")),
 ):
     return delete_special_day(db, special_day_id)
 
@@ -162,7 +162,7 @@ def remove_special_day(
 def compute_cutoff(
     body: ComputeCutoffRequest,
     db: sqlite3.Connection = Depends(get_db),
-    _=Depends(get_current_staff),
+    _=Depends(require_feature("duty.manage_config")),
 ):
     """Tính 2 ngày cut-off cuối tháng và lưu vào DB."""
     holiday_dates = get_holiday_dates(db, body.year)
@@ -178,7 +178,7 @@ def compute_cutoff(
 def seed_holidays(
     year: int,
     db: sqlite3.Connection = Depends(get_db),
-    _=Depends(get_current_staff),
+    _=Depends(require_feature("duty.manage_config")),
 ):
     """Seed ngày nghỉ lễ VN cho năm chỉ định."""
     holidays = get_vn_holidays(year)
@@ -195,7 +195,7 @@ def seed_holidays(
 def get_config(
     year: int,
     db: sqlite3.Connection = Depends(get_db),
-    _=Depends(get_current_staff),
+    _=Depends(require_feature("menu.duty_schedule")),
 ):
     """Năm chưa khai báo thì trả bộ mặc định nghiệp vụ, KHÔNG 404.
 
@@ -215,7 +215,7 @@ def update_config(
     year: int,
     body: ShiftConfigUpsert,
     db: sqlite3.Connection = Depends(get_db),
-    _=Depends(get_current_staff),
+    _=Depends(require_feature("duty.manage_config")),
 ):
     return upsert_shift_config(
         db, year, body.nv_count, body.signer_name,

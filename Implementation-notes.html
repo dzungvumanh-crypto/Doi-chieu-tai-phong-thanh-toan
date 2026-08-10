@@ -4879,7 +4879,8 @@ headers["X-Client-IP"] = request.client.host</code></pre>
         <tr><td><b>35 endpoint <code>duty_*</code> chỉ có <code>get_current_staff</code></b>, không enforce
             <code>require_feature</code>. Bất kỳ ai đăng nhập gọi được <code>DELETE /schedule/week</code>
             xoá cả tuần đã xác nhận. 17 module API khác đều đã enforce</td>
-            <td>Ngoài phạm vi đợt sửa này. Đây là <b>rủi ro còn tồn cao nhất</b> của module</td></tr>
+            <td><b>ĐÃ XỬ LÝ</b> ở mục 73 (cùng PR #26) — ban đầu để ngoài phạm vi đợt sửa này,
+            sau đó Business Owner quyết bịt luôn</td></tr>
         <tr><td>Migration <code>DELETE FROM duty_shifts WHERE shift_type='settlement_sub'</code> chỉ chép
             <code>nv_ids</code>/<code>nv_count</code> sang ca chính — <code>leader_ids</code> và
             <code>sp_id</code> của dòng phụ mất; dòng phụ không có ca chính cùng ngày bị xoá thẳng</td>
@@ -4894,6 +4895,69 @@ headers["X-Client-IP"] = request.client.host</code></pre>
             <td>Mô tả viết ở commit đầu, 6 commit sau đã đổi sang luật <b>mềm</b> "ít nhất 1"
             (<code>resolve_sp_role</code>). Code là bản đúng; đã ghi lại ở đây để khỏi tra nhầm</td></tr>
       </table>
+    </div>
+  </div>
+
+  <!-- 73 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">73</span>
+      <span class="card-title">Phân lịch trực — bịt lỗ hổng phân quyền 35 endpoint</span>
+      <span class="badge badge-done">done · 2026-08-10</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Vì sao</div>
+      <p>Toàn bộ 35 endpoint <code>duty_*</code> chỉ dùng <code>Depends(get_current_staff)</code> — nghĩa là
+        <b>xác thực có, phân quyền không</b>. Feature code (<code>duty.generate/confirm/delete/…</code>) đã
+        khai đủ trong <code>backend/core/features.py</code> và frontend đã dùng để ẩn nút, nhưng ẩn nút
+        <b>không phải rào chắn</b>: bất kỳ ai đăng nhập được đều gọi thẳng
+        <code>DELETE /api/duty/schedule/week</code> để xoá cả tuần lịch <b>đã xác nhận</b>. 17 module API
+        khác trong dự án đều đã enforce — chỉ module này bỏ sót.</p>
+
+      <div class="label">Ánh xạ endpoint → mã tính năng</div>
+      <table>
+        <tr><th>Nhóm</th><th>Mã</th><th>Số endpoint</th></tr>
+        <tr><td>Đọc lịch / nhân sự / thống kê / cấu hình</td><td><code>menu.duty_schedule</code></td><td>12</td></tr>
+        <tr><td>Sinh lịch tuần &amp; tháng, <b>sửa tay ca</b></td><td><code>duty.generate</code></td><td>3</td></tr>
+        <tr><td>Xác nhận / bỏ xác nhận / xác nhận cả tuần</td><td><code>duty.confirm</code></td><td>3</td></tr>
+        <tr><td>Xoá ca, xoá tuần</td><td><code>duty.delete</code></td><td>2</td></tr>
+        <tr><td>Xuất Excel</td><td><code>duty.export</code></td><td>1</td></tr>
+        <tr><td>Cờ nhân sự, vắng mặt, đăng ký xin trực</td><td><code>duty.manage_staff</code></td><td>7</td></tr>
+        <tr><td>Ngày đặc biệt, cấu hình ca, reset vòng xoay</td><td><code>duty.manage_config</code></td><td>7</td></tr>
+      </table>
+
+      <div class="label">Quyết định — <code>PUT /{shift_id}</code> dùng <code>duty.generate</code>, không phải quyền riêng</div>
+      <p>Sửa tay thành phần ca <b>là</b> sửa lịch, chỉ khác con đường. Cho nó quyền riêng thì phải thêm
+        feature code mới và bắt admin đi cấp lại cho mọi nhóm. Đánh đổi: frontend đang mở nút sửa cho
+        <code>can_write</code> (bất kỳ quyền duty nào), nay thu về <code>can_generate</code> — người chỉ có
+        <code>duty.confirm</code> sẽ mất nút sửa. <b>Có chủ đích</b>: để nguyên thì nút hiện ra rồi bấm vào
+        nhận 403, tệ hơn là không thấy nút.</p>
+
+      <div class="label">Test — chặn cả lỗi hôm nay lẫn lỗi ngày mai</div>
+      <table>
+        <tr><th>Lớp</th><th>Bắt được gì</th></tr>
+        <tr><td><b>Cấu trúc</b> — duyệt <code>app.routes</code>, moi feature code từ closure của
+            <code>require_feature()</code></td>
+            <td>Endpoint quên gắn quyền · gắn sai mã · <b>thêm endpoint mới mà quên khai</b> (bảng
+            <code>MONG_DOI</code> phải khớp tuyệt đối với route thực tế)</td></tr>
+        <tr><td><b>Hành vi</b> — <code>TestClient</code> + override <code>get_current_staff</code> /
+            <code>get_db</code>, bảng nhóm thật trong RAM</td>
+            <td>Không quyền → 403 · có <code>duty.confirm</code> vẫn <b>không</b> xoá được · đúng quyền thì
+            qua cửa · admin bypass</td></tr>
+      </table>
+      <p>Lớp cấu trúc quan trọng hơn lớp hành vi ở đây: lỗ hổng này sinh ra vì <b>không ai nhận thấy</b>
+        endpoint thiếu quyền, chứ không phải vì quyền viết sai. Test theo từng endpoint sẽ không bao giờ
+        bắt được endpoint thứ 36 quên gắn.</p>
+      <div class="note">Mẹo lấy mã tính năng: <code>require_feature()</code> là dependency factory, mã nằm
+        trong <code>__closure__</code> của hàm <code>_check</code> nó trả về. Đọc từ đó nên không cần đăng ký
+        thêm bảng tra nào ở tầng runtime.</div>
+      <p><b>5/8 test fail</b> trên code chưa bịt (đã stash bản sửa chạy lại để xác nhận). Toàn suite 83 pass.</p>
+
+      <div class="label">Ảnh hưởng vận hành — cần báo trước</div>
+      <p>Ai trước giờ vẫn thao tác được <b>nhờ lỗ hổng</b> mà chưa được cấp quyền đúng sẽ bắt đầu nhận
+        <i>"Không có quyền truy cập tính năng này"</i>. Đây là hành vi đúng, nhưng nó xuất hiện <b>ngay khi
+        cập nhật</b> — đã ghi cảnh báo vào <code>Logs_update.md</code> để phòng soát lại quyền từng nhóm
+        trước khi deploy. Admin không bị ảnh hưởng (<code>require_feature</code> cho admin đi thẳng).</p>
     </div>
   </div>
 

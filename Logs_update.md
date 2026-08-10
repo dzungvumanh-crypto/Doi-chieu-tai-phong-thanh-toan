@@ -17,6 +17,8 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
     + Sửa lỗi: bỏ tick *"biết song phương"* cho một Lãnh đạo thì sau khi khởi động lại hệ thống **cờ tự bật lại**. Nay lựa chọn được giữ nguyên
     + Sửa lỗi: đổi *số nhân viên ca thường* rồi lưu có thể làm **cấu hình ca quyết toán bị trả về mặc định** mà không báo gì
     + Sửa lỗi: hết phiên đăng nhập trong lúc mở tab *Cài đặt* thì màn hình im lặng hiện số mặc định thay vì đưa về trang đăng nhập
+    + ⚠️ **Bịt lỗ hổng phân quyền — hãy soát lại quyền đã cấp cho từng nhóm.** Trước đây hệ thống chỉ *ẩn nút* trên màn hình, còn bên dưới thì **bất kỳ ai đăng nhập được cũng có thể xoá cả tuần lịch đã xác nhận** nếu biết cách gọi thẳng. Nay quyền được kiểm ở máy chủ. Hệ quả: ai trước giờ vẫn thao tác được nhờ lỗ hổng này mà **chưa được cấp quyền đúng** sẽ bắt đầu bị báo *"Không có quyền truy cập tính năng này"* — vào *Phân quyền theo nhóm* cấp bổ sung. Admin không bị ảnh hưởng
+    + Nút **sửa ca trực** nay yêu cầu quyền *Tạo lịch trực tự động* (`duty.generate`) thay vì hiện cho mọi người có bất kỳ quyền nào — sửa tay cũng là sửa lịch
 
 - 10/08/2026 Đối chiếu / Đối soát CITAD - Thêm kênh PSS-MDP, bắt lệnh gửi trùng, tự lọc file theo ngày (PR #25):
     + ⚠️ **Số "Khớp" và "Lệch" sẽ khác các lần chấm trước — số mới mới là số đúng.** Trước đây một lệnh CITAD bị gửi trùng N lần được tính khớp N lần, trong khi IPCAS chỉ có 1 bản ghi. Nay chỉ lần đầu tính khớp, các lần trùng tách riêng. Ai đang theo dõi bằng file Excel riêng sẽ thấy vênh với hệ thống

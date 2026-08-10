@@ -246,7 +246,9 @@ async def duty_schedule_page():
                                         '<span class="text-green-700 font-medium">Đã xác nhận</span>'
                                         if da_xn else '<span class="text-orange-600">Bản thảo</span>'
                                     ).classes("text-xs")
-                                    if can_write:
+                                    # Sửa tay là sửa lịch, nên dùng chung quyền với tạo
+                                    # lịch — backend enforce duty.generate cho PUT.
+                                    if can_generate:
                                         ui.button(
                                             icon="edit",
                                             on_click=lambda sid=ca_ngay[0]["id"]: mo_hop_thoai_sua(sid),

@@ -264,6 +264,10 @@ Truy cập:
 - Quản lý cán bộ trực, ràng buộc lịch trực (ngày không trực, giới hạn ca)
 - Thống kê số ca trực theo cán bộ, theo tháng — **trực chính và trực phụ đếm 2 cột riêng**, không quy đổi
 - Xuất lịch trực ra file
+- **Phân quyền enforce ở backend**, không chỉ ẩn nút: cả 35 endpoint đều gắn `require_feature`
+  (`menu.duty_schedule` để đọc · `duty.generate` tạo & sửa lịch · `duty.confirm` · `duty.delete`
+  · `duty.export` · `duty.manage_staff` cờ nhân sự & vắng mặt · `duty.manage_config` cài đặt &
+  ngày đặc biệt & reset vòng xoay)
 
 ### Module Đối chiếu điện SWIFT (phòng Swift)
 - Đối chiếu điện SAA ↔ Màn hình quản lý điện, 2 chiều: **Điện đến** / **Điện đi**

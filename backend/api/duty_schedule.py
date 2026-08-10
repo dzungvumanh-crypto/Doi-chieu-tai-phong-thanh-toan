@@ -4,7 +4,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.database import get_db
-from backend.core.deps import get_current_staff
+from backend.core.deps import require_feature
 from backend.schemas.duty import (
     ShiftOut, ShiftUpdate, ShiftUpdateResult, MessageOut,
     GenerateRequest, GenerateResult,
@@ -31,7 +31,7 @@ def shifts_month(
     year:  int = Query(...),
     status: Optional[str] = None,
     db: sqlite3.Connection = Depends(get_db),
-    _=Depends(get_current_staff),
+    _=Depends(require_feature("menu.duty_schedule")),
 ):
     return get_shifts_for_month(db, month, year, status)
 
@@ -40,7 +40,7 @@ def shifts_month(
 def shifts_week(
     week_start: str = Query(...),
     db: sqlite3.Connection = Depends(get_db),
-    _=Depends(get_current_staff),
+    _=Depends(require_feature("menu.duty_schedule")),
 ):
     return get_shifts_for_week(db, week_start)
 
@@ -49,7 +49,7 @@ def shifts_week(
 def shifts_date(
     date_str: str,
     db: sqlite3.Connection = Depends(get_db),
-    _=Depends(get_current_staff),
+    _=Depends(require_feature("menu.duty_schedule")),
 ):
     return get_shifts_for_date(db, date_str)
 
@@ -58,7 +58,7 @@ def shifts_date(
 def shift_detail(
     shift_id: int,
     db: sqlite3.Connection = Depends(get_db),
-    _=Depends(get_current_staff),
+    _=Depends(require_feature("menu.duty_schedule")),
 ):
     shift = get_shift_by_id(db, shift_id)
     if not shift:
@@ -72,7 +72,7 @@ def shift_detail(
 def do_generate_week(
     body: GenerateWeekRequest,
     db: sqlite3.Connection = Depends(get_db),
-    _=Depends(get_current_staff),
+    _=Depends(require_feature("duty.generate")),
 ):
     return generate_schedule_for_week(
         db, body.week_start,
@@ -85,7 +85,7 @@ def do_generate_week(
 def do_generate_month(
     body: GenerateRequest,
     db: sqlite3.Connection = Depends(get_db),
-    _=Depends(get_current_staff),
+    _=Depends(require_feature("duty.generate")),
 ):
     return generate_schedule(db, body.month, body.year, body.overwrite_draft)
 
@@ -97,7 +97,7 @@ def edit_shift(
     shift_id: int,
     body: ShiftUpdate,
     db: sqlite3.Connection = Depends(get_db),
-    _=Depends(get_current_staff),
+    _=Depends(require_feature("duty.generate")),
 ):
     """Sửa tay ca trực.
     Vi phạm luật CỨNG (1 Lãnh đạo + 2 nhân viên) → 400, không ghi gì.
@@ -123,7 +123,7 @@ def edit_shift(
 def do_confirm(
     shift_id: int,
     db: sqlite3.Connection = Depends(get_db),
-    _=Depends(get_current_staff),
+    _=Depends(require_feature("duty.confirm")),
 ):
     result = confirm_shift(db, shift_id)
     if not result:
@@ -135,7 +135,7 @@ def do_confirm(
 def do_unconfirm(
     shift_id: int,
     db: sqlite3.Connection = Depends(get_db),
-    _=Depends(get_current_staff),
+    _=Depends(require_feature("duty.confirm")),
 ):
     result = unconfirm_shift(db, shift_id)
     if not result:
@@ -147,7 +147,7 @@ def do_unconfirm(
 def do_confirm_week(
     week_start: str = Query(...),
     db: sqlite3.Connection = Depends(get_db),
-    _=Depends(get_current_staff),
+    _=Depends(require_feature("duty.confirm")),
 ):
     count = confirm_shifts_for_week(db, week_start)
     return {"message": f"Đã xác nhận {count} ca"}
@@ -159,7 +159,7 @@ def do_confirm_week(
 def do_delete_week(
     week_start: str = Query(...),
     db: sqlite3.Connection = Depends(get_db),
-    _=Depends(get_current_staff),
+    _=Depends(require_feature("duty.delete")),
 ):
     count = delete_shifts_for_week(db, week_start)
     return {"message": f"Đã xóa {count} ca"}
@@ -169,7 +169,7 @@ def do_delete_week(
 def do_delete_shift(
     shift_id: int,
     db: sqlite3.Connection = Depends(get_db),
-    _=Depends(get_current_staff),
+    _=Depends(require_feature("duty.delete")),
 ):
     if not delete_shift(db, shift_id):
         raise HTTPException(404, "Không tìm thấy ca trực")
@@ -182,7 +182,7 @@ def do_delete_shift(
 def do_reset_rotation(
     year: int = Query(...),
     db: sqlite3.Connection = Depends(get_db),
-    _=Depends(get_current_staff),
+    _=Depends(require_feature("duty.manage_config")),
 ):
     reset_rotation(db, year)
     return {"message": f"Đã reset vòng xoay năm {year}"}

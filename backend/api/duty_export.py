@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
 
 from backend.database import get_db
-from backend.core.deps import get_current_staff
+from backend.core.deps import require_feature
 from backend.services.duty_schedule_service import get_shifts_for_week
 from backend.services.duty_constraint_service import (
     get_shift_config, list_special_days,
@@ -20,7 +20,7 @@ router = APIRouter(prefix="/api/duty/export", tags=["duty-export"])
 def export_week(
     week_start: str = Query(..., description="Ngày thứ 2 đầu tuần (YYYY-MM-DD)"),
     db: sqlite3.Connection = Depends(get_db),
-    _=Depends(get_current_staff),
+    _=Depends(require_feature("duty.export")),
 ):
     """Xuất lịch trực tuần ra file Excel (.xlsx)."""
     year = int(week_start[:4])
