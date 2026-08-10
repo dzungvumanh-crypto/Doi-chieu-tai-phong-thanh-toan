@@ -4,6 +4,11 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 10/08/2026 Đối chiếu CITAD - Extension lên **bản 2.9**, dùng được địa chỉ `apc-portal:9090`:
+    + Thêm địa chỉ `apc-portal:9090` (một địa chỉ khác cùng trỏ về trang web TTTT) vào danh sách Extension được phép gọi. Máy trạm nào vào hệ thống bằng địa chỉ này trước đây sẽ báo *"Không kết nối server"* dù cấu hình đúng
+    + ⚠️ **Phải tải lại `.zip` và cài lại Extension** thì mới có hiệu lực — bản đang cài không tự nhận. Vào `/doi_chieu_citad` → **Tải Extension**, giải nén, *Load unpacked* lại
+    + Máy nào đang vào bằng `apc-portal:8080` hoặc `10.1.3.89` và chạy bình thường thì **không bắt buộc** cập nhật ngay
+
 - 10/08/2026 Phân lịch trực - Khai số người mỗi ca, ca quyết toán chính/phụ, sửa tay được thành phần ca (PR #26):
     + **Số người mỗi ca không còn cứng trong hệ thống** — vào tab *Cài đặt* khai riêng cho ca thường và ca quyết toán (số Lãnh đạo, số nhân viên trực chính, số trực phụ). Lịch tạo sau khi lưu sẽ theo số này
     + ⚠️ **Thiếu người so với số đã khai thì hệ thống KHÔNG lập ca ngày đó**, kèm dòng cảnh báo nêu rõ thiếu ở đâu. Trước đây vẫn sinh ca thiếu người mà không báo gì
