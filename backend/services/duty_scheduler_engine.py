@@ -110,15 +110,45 @@ def _tong_ca(db: sqlite3.Connection, staff_id: int, year: int,
     return row["tong"], (row["gan_nhat"] or "")
 
 
+def _so_lan_di_cung(db: sqlite3.Connection, year: int,
+                    leader_ids: List[int]) -> dict:
+    """
+    Đếm số lần mỗi nhân viên đã trực cùng nhóm Lãnh đạo này trong năm.
+
+    Cân bằng số ca quá chặt lại sinh ra ê-kíp cố định: hai người cùng lúc là
+    "ít ca nhất" nên ngày nào cũng đi với nhau. Kiểm soát nội bộ muốn tránh
+    điều đó, nên dùng con số này làm tiêu chí phụ khi chọn nhân viên.
+    """
+    if not leader_ids:
+        return {}
+    can = set(leader_ids)
+    dem: dict = {}
+    for r in db.execute(
+        "SELECT leader_ids, sp_id, nv_ids, nv_phu_ids FROM duty_shifts "
+        "WHERE shift_date LIKE ?", (f"{year}-%",)
+    ):
+        if not (can & set(json.loads(r["leader_ids"] or "[]"))):
+            continue
+        cung = json.loads(r["nv_ids"] or "[]") + json.loads(r["nv_phu_ids"] or "[]")
+        if r["sp_id"]:
+            cung.append(r["sp_id"])
+        for i in cung:
+            dem[i] = dem.get(i, 0) + 1
+    return dem
+
+
 def _sort_by_rotation(db: sqlite3.Connection, candidates: List[dict],
                       year: int, role: str, current_date: str = None,
-                      tranh_sp: bool = False) -> List[dict]:
+                      tranh_sp: bool = False, di_cung: dict = None) -> List[dict]:
+    di_cung = di_cung or {}
+
     def sort_key(p: dict):
         tong, gan_nhat = _tong_ca(db, p["id"], year, role)
         s = _get_rotation_state(db, p["id"], year, role)
         return (
             tong,
-            # Chỉ phân biệt người biết song phương khi đã ngang số ca
+            # Ba tiêu chí phụ dưới đây chỉ tách được người khi đã ngang số ca
+            di_cung.get(p["id"], 0),
             bool(p.get("can_do_sp")) if tranh_sp else False,
             _preferred_day_mismatch(gan_nhat, current_date),
             gan_nhat or "0000-00-00",
@@ -134,19 +164,22 @@ def _sort_by_rotation(db: sqlite3.Connection, candidates: List[dict],
 
 def _rank_candidates(db: sqlite3.Connection, candidates: List[dict], year: int,
                      role: str, date_str: str, rng: random.Random,
-                     randomize: bool, tranh_sp: bool = False) -> List[dict]:
+                     randomize: bool, tranh_sp: bool = False,
+                     di_cung: dict = None) -> List[dict]:
     """
     Xếp thứ tự ưu tiên trong 1 nhóm ứng viên. Thuần đọc — không ghi vòng xoay.
 
-    `tranh_sp` — Lãnh đạo đã giữ vai song phương nên ca không cần thêm người
-    biết song phương nữa. Đây chỉ là tiêu chí PHỤ: dùng để chọn giữa những người
-    đang ngang số ca, không được đẩy người ít ca xuống cuối chỉ vì họ biết song
-    phương. Hy sinh cân bằng cho một luật mềm là đánh đổi sai.
+    Số ca luôn là tiêu chí chính. Hai tiêu chí phụ chỉ tách được người khi đã
+    ngang số ca, không bao giờ đẩy người ít ca xuống cuối:
+      `di_cung`  — số lần đã trực cùng nhóm Lãnh đạo này, để không thành ê-kíp cố định
+      `tranh_sp` — Lãnh đạo đã giữ vai song phương nên ca không cần thêm người biết
+                   song phương nữa
     """
     if not candidates:
         return []
+    di_cung = di_cung or {}
     if not randomize:
-        return _sort_by_rotation(db, candidates, year, role, date_str, tranh_sp)
+        return _sort_by_rotation(db, candidates, year, role, date_str, tranh_sp, di_cung)
 
     # Ngẫu nhiên trong nhóm ít ca nhất, rồi tới nhóm ít ca kế tiếp
     bang = {p["id"]: _tong_ca(db, p["id"], year, role) for p in candidates}
@@ -156,6 +189,7 @@ def _rank_candidates(db: sqlite3.Connection, candidates: List[dict], year: int,
         rng.shuffle(nhom)
         # sort ổn định — thứ tự ngẫu nhiên được giữ trong từng mức khoá
         nhom.sort(key=lambda p: (
+            di_cung.get(p["id"], 0),
             bool(p.get("can_do_sp")) if tranh_sp else False,
             _preferred_day_mismatch(bang[p["id"]][1], date_str),
         ))
@@ -165,7 +199,8 @@ def _rank_candidates(db: sqlite3.Connection, candidates: List[dict], year: int,
 
 def _order_pool(db: sqlite3.Connection, people: List[dict], requests: dict, kind: str,
                 year: int, role: str, date_str: str, rng: random.Random,
-                randomize: bool, tranh_sp: bool = False) -> List[dict]:
+                randomize: bool, tranh_sp: bool = False,
+                di_cung: dict = None) -> List[dict]:
     """Xếp pool theo tầng ưu tiên: đăng ký đích danh ngày > chưa trực trong tuần > đã trực."""
     week_ids = get_week_assignees(db, date_str)
     once_ids = set(requests.get("once_ids", set()))
@@ -177,7 +212,8 @@ def _order_pool(db: sqlite3.Connection, people: List[dict], requests: dict, kind
     repeat = [p for p in rest if p["id"] in week_ids]
 
     def _rank(group: List[dict]) -> List[dict]:
-        return _rank_candidates(db, group, year, role, date_str, rng, randomize, tranh_sp)
+        return _rank_candidates(db, group, year, role, date_str, rng, randomize,
+                                tranh_sp, di_cung)
 
     def _layer(group: List[dict]) -> List[dict]:
         return (_rank([p for p in group if p["id"] in req_ids])
@@ -310,7 +346,8 @@ def _generate_ca(db: sqlite3.Connection, date_str: str, year: int,
                               any(p.get("can_do_sp") for p in pool["NV"]))
     ld_co_sp = any(p.get("can_do_sp") for p in leaders)
     nv_order = _order_pool(db, pool["NV"], requests, "NV", year, nv_role, date_str,
-                           rng, randomize, tranh_sp=ld_co_sp)
+                           rng, randomize, tranh_sp=ld_co_sp,
+                           di_cung=_so_lan_di_cung(db, year, [p["id"] for p in leaders]))
     nv_chinh, nv_phu = _chia_nhan_vien(nv_order, so_chinh, so_phu, ld_co_sp)
     sp, sp_warn = resolve_sp_role(leaders, nv_chinh, nv_phu)
     # sp tách khỏi nv_ids để hiển thị riêng, giống đường sửa tay

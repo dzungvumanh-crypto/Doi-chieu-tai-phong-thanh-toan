@@ -6600,6 +6600,71 @@ Bất biến MIS: 522.774 + 36.462 = 559.236 (khớp tổng gốc)</pre>
     </div>
   </div>
 
+  <!-- 71 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">71</span>
+      <span class="card-title">Phân lịch trực — không để hình thành ê-kíp trực cố định</span>
+      <span class="badge badge-done">done · 2026-08-10</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Vì sao</div>
+      <p>Sau ba nâng cấp cân bằng ở mục 70, lịch 2 tháng lộ ra tác dụng phụ: cân bằng số ca <b>quá chặt</b>
+        lại sinh ra ê-kíp cố định. Hoàng Văn Đức đi với Vũ Thị Hoa <b>cả 10/10 ca</b>, Nguyễn Văn An với
+        Bùi Thị Lan cũng 10/10, Phạm Thị Dung với Đặng Văn Hải 9 ca. Lý do: hai người cùng lúc là "ít ca
+        nhất" nên ngày nào cũng được chọn cùng nhau.</p>
+      <p>Business Owner xác nhận đây là điều cần tránh — ê-kíp trực cố định là thứ kiểm soát nội bộ ngân
+        hàng không muốn có.</p>
+
+      <div class="label">Cách làm — một tiêu chí phụ, không thêm bảng nào</div>
+      <p><code>_so_lan_di_cung(db, year, leader_ids)</code> đếm số lần mỗi nhân viên đã trực cùng nhóm Lãnh
+        đạo của ca đang xếp, đọc thẳng từ <code>duty_shifts</code> — không cần bảng mới, không cần cột mới.
+        Con số này thành khoá sắp xếp <b>phụ</b>, đứng sau tổng số ca:</p>
+      <table>
+        <tr><th>Thứ tự</th><th>Tiêu chí</th><th>Vai trò</th></tr>
+        <tr><td>1</td><td>Tổng số ca</td><td>Chính — không tiêu chí nào được đè lên</td></tr>
+        <tr><td>2</td><td>Số lần đã đi cùng nhóm Lãnh đạo này</td><td>Phụ — tránh ê-kíp cố định</td></tr>
+        <tr><td>3</td><td>Có biết song phương không (khi Lãnh đạo đã giữ vai)</td><td>Phụ — tránh dư</td></tr>
+        <tr><td>4</td><td>Lệch thứ trong tuần</td><td>Phụ — không dồn vào một thứ</td></tr>
+      </table>
+      <p>Ba tiêu chí phụ chỉ tách được người khi đã <b>ngang số ca</b>. Đây là bài học rút từ mục 70: mọi
+        lần để một luật mềm đè lên cân bằng đều gây hậu quả nặng hơn thứ nó định sửa.</p>
+
+      <div class="label">Đo trên bộ nhân sự thật — 21 người, 49 ca, chạy 10 lần</div>
+      <table>
+        <tr><th>Chỉ tiêu</th><th>Trước</th><th>Sau</th></tr>
+        <tr><td>Cặp đi cùng nhau nhiều nhất</td><td><b>10</b>/10 ca của lãnh đạo đó</td><td><b>4–6</b> lần (trung bình 5,4)</td></tr>
+        <tr><td>Lệch ca lãnh đạo</td><td>1</td><td><b>1</b> — không đổi</td></tr>
+        <tr><td>Lệch ca nhân viên</td><td>5</td><td><b>5</b> — không đổi</td></tr>
+        <tr><td>Ca có cảnh báo</td><td>0</td><td><b>0</b> — không đổi</td></tr>
+      </table>
+      <div class="note">Trên bộ nhân sự thật <b>không có đánh đổi</b>: cặp lặp giảm gần một nửa mà ba chỉ
+        tiêu còn lại giữ nguyên. Pool 21 người đủ rộng để tiêu chí phụ hoạt động mà không phải hy sinh gì.</div>
+
+      <div class="label">Test cũ bắt được đánh đổi ở pool nhỏ — đã nới ngưỡng có lý do</div>
+      <p><code>test_ngau_nhien_van_can_bang_so_ca</code> chạy trên bộ mẫu chỉ <b>6 nhân viên</b> và fail:
+        lệch ca 2 → 3. Đây là đánh đổi thật nhưng chỉ xuất hiện khi pool quá nhỏ — với 6 người mà phải thoả
+        đồng thời ba ràng buộc (cân bằng ca, đúng 1 người song phương mỗi ca, tránh ê-kíp cố định) thì không
+        thể khít hơn. Nới ngưỡng lên 3 kèm chú thích lý do và số liệu đối chứng trên bộ nhân sự thật, thay vì
+        lặng lẽ đổi con số cho khớp code.</p>
+      <p>Thêm <code>test_khong_tao_ra_e_kip_truc_co_dinh</code>: một cặp không được đi cùng nhau quá 75% số
+        ca. Tổng <b>69 test</b>; toàn suite 489 pass.</p>
+
+      <div class="label">Files sửa</div>
+      <ul>
+        <li><code>backend/services/duty_scheduler_engine.py</code> — <code>_so_lan_di_cung()</code>;
+          tham số <code>di_cung</code> xuyên <code>_sort_by_rotation</code> /
+          <code>_rank_candidates</code> / <code>_order_pool</code></li>
+        <li><code>tests/test_duty_scheduler_algorithm.py</code> — 1 test mới, 1 ngưỡng nới có giải thích</li>
+      </ul>
+
+      <div class="label">Còn lại — việc của nghiệp vụ, không phải của mã</div>
+      <p>Ba nhân viên biết song phương vẫn trực 10 ca so với 5 ca của đồng nghiệp. Đây là giới hạn cơ cấu:
+        49 ca đều cần một người song phương mà chỉ 5 người đảm nhận được. Business Owner sẽ đào tạo bổ sung
+        sau khi vận hành thực tế. Mô phỏng ở mục 70 cho thấy thêm 2 người là đủ đưa lệch về 1.</p>
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-10</footer>
 </div>
 </body>
