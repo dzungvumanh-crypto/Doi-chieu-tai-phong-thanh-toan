@@ -27,13 +27,24 @@ VALID_DI = {'SCNL'}  # Đi: chỉ SCNL là thành công
 # thật, phải bắt vào 'lech_trang_thai' kèm ghi chú rõ (xem bên dưới và vòng
 # lặp "IPCAS Đi dư").
 ERR_DI = {'ERPO', 'CALD'}
+# Ưu tiên khi 1 msgref có NHIỀU dòng IPCAS Đi — số nhỏ thắng.
+# Cần từ khi ERR_DI được giữ lại khi parse: trước đó chỉ có trạng thái thành
+# công/đang xử lý nên "dòng đầu tiên thắng" vô hại, nay một msgref có thể có
+# cả ERPO/CALD lẫn SCNL và dòng đầu tiên là dòng nào thì phụ thuộc THỨ TỰ
+# DÒNG TRONG FILE — mà thứ tự đó đổi được thật (người dùng chọn file theo thứ
+# tự khác, hoặc thứ tự entry trong ZIP khác). Đã đo: cùng dữ liệu, ERPO đứng
+# trước cho n_khop=0, SCNL đứng trước cho n_khop=1. Một cỗ máy đối soát không
+# được phụ thuộc thứ tự đọc, nên cho SCNL luôn thắng. Cùng khuôn mẫu với
+# PRIORITY_TT của chiều Đến ngay bên dưới.
+PRIORITY_DI = {'SCNL': 0}
 
 
 def run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows):
     """Đối soát trong RAM bằng dict Python — xem docstring module để biết
     quy tắc khớp lệnh và ghi chú về nhánh dead-code đã bỏ khi chuẩn bị PR."""
-    # Build map IPCAS Đi/Đến — msgref/txid -> row (bản ghi đầu tiên thắng
-    # nếu trùng, trừ Đến ưu tiên theo PRIORITY_TT bên dưới)
+    # Build map IPCAS Đi/Đến — msgref/txid -> row. Đi ưu tiên theo PRIORITY_DI,
+    # Đến ưu tiên theo PRIORITY_TT (cả hai bên dưới) — không bên nào để "dòng
+    # đầu tiên thắng" thuần tuý, vì thứ tự dòng trong file không ổn định.
     ipcas_di_map = {}
     ipcas_den_map = {}
     for r in ipcas_rows:
@@ -42,6 +53,9 @@ def run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows):
             if not k:
                 continue
             if k not in ipcas_di_map:
+                ipcas_di_map[k] = r
+            elif (PRIORITY_DI.get(r['trang_thai'], 9)
+                  < PRIORITY_DI.get(ipcas_di_map[k]['trang_thai'], 9)):
                 ipcas_di_map[k] = r
         else:
             k = r['txid']
