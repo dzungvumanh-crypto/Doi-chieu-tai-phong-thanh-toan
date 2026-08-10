@@ -9,6 +9,19 @@ from contextlib import asynccontextmanager
 # Thêm root vào path
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
+# Console Windows mặc định dùng codepage hệ thống (cp1252/cp1258 — không đủ ký tự
+# tiếng Việt). `run.py` đã ép UTF-8 cho tiến trình con, nhưng nếu backend được khởi
+# động THẲNG (uvicorn ... chạy tay, systemd, IDE) thì không có bảo vệ đó: chỉ cần
+# một dòng log tiếng Việt là cả job chết giữa chừng với UnicodeEncodeError.
+# Ép ở đây để không phụ thuộc cách khởi động.
+for _s in (sys.stdout, sys.stderr):
+    # encoding có thể là None khi stdout bị thay bằng stream không phải text
+    if _s is not None and (getattr(_s, "encoding", "") or "").lower() not in ("utf-8", "utf8"):
+        try:
+            _s.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass   # stream bị thay thế/không hỗ trợ — bỏ qua, không đáng chặn khởi động
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse

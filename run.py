@@ -144,6 +144,20 @@ def _poll(url: str, timeout: int = POLL_TIMEOUT) -> bool:
     return False
 
 
+def _env_utf8() -> dict:
+    """Env cho tiến trình con, ép stdout/stderr về UTF-8.
+
+    Tiến trình con chỉ thừa kế file descriptor của log_file, KHÔNG thừa kế
+    đối tượng file đã mở với encoding="utf-8". Thấy stdout không phải console,
+    Python chọn ANSI codepage của máy (đo được: cp1252) — không có ký tự Việt
+    có dấu. Hậu quả đo trên logs/backend.log: 2.013 ký tự hỏng + 5.146 escape
+    \\uXXXX; print() tiếng Việt còn ném UnicodeEncodeError chết luồng.
+    `chcp 65001` trong start.bat KHÔNG cứu được: chcp đổi codepage console,
+    còn stream đã chuyển hướng ra file thì Python đọc ANSI codepage (GetACP).
+    Đặt ở đây để che cả backend lẫn frontend bằng một chỗ."""
+    return {**os.environ, "PYTHONIOENCODING": "utf-8"}
+
+
 def _run_with_restart(name: str, cmd: list, max_restarts: int = MAX_RESTARTS):
     """Vòng lặp restart subprocess. Ghi stdout+stderr vào logs/{name}.log."""
     restarts = 0
@@ -168,6 +182,7 @@ def _run_with_restart(name: str, cmd: list, max_restarts: int = MAX_RESTARTS):
             stdout=log_file,
             stderr=subprocess.STDOUT,
             cwd=ROOT,
+            env=_env_utf8(),
         )
 
         while proc.poll() is None:

@@ -51,7 +51,75 @@
 <div class="page">
 
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
-  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-05</p>
+  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-10</p>
+
+  <!-- N -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">N</span>
+      <span class="card-title">Log tiếng Việt của tiến trình con bị hỏng âm thầm — ép UTF-8 ở <code>run.py</code></span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Vì sao lỗi tồn tại lâu mà không ai phát hiện</p>
+      <p><code>run.py</code> mở file log bằng <code>_open_log()</code> với <code>encoding="utf-8"</code> rồi
+      truyền vào <code>Popen(stdout=log_file)</code>. Nhìn qua tưởng đã đủ — nhưng tiến trình con chỉ thừa kế
+      <strong>file descriptor</strong>, không thừa kế đối tượng file đã mở. Python trong tiến trình con thấy
+      stdout không phải console nên tự chọn ANSI codepage của máy. Đo được trên máy chạy thật:
+      <strong>cp1252</strong> — codepage Tây Âu, không có ký tự Việt có dấu.</p>
+
+      <table>
+        <tr><th>Cách ghi log</th><th>Hành vi khi gặp tiếng Việt</th><th>Vì sao khó phát hiện</th></tr>
+        <tr><td><code>print()</code></td><td><code>UnicodeEncodeError</code> — chết luồng ngay tại dòng đó</td>
+            <td>Chỉ nổ khi có chuỗi có dấu. Đường chạy qua API của <code>doi_chieu_ach</code> luôn truyền
+            <code>log_callback=emit</code> nên nhánh <code>or print</code> chưa bao giờ chạy trong vận hành
+            thật — lỗi nằm im chờ.</td></tr>
+        <tr><td><code>logging</code></td><td><strong>Không</strong> ném lỗi. <code>StreamHandler</code> có cơ chế
+            dự phòng tự đổi ký tự hỏng thành escape <code>\uXXXX</code></td>
+            <td>Không exception, không cảnh báo, job vẫn báo thành công. Đây là lý do lỗi sống sót từ 11/05/2026
+            tới nay.</td></tr>
+      </table>
+
+      <p class="label">Bằng chứng đo trên log thật trước khi sửa</p>
+      <table>
+        <tr><th>File</th><th>Nguồn ghi</th><th>Đọc bằng UTF-8</th><th>Ký tự hỏng</th><th>Escape <code>\uXXXX</code></th></tr>
+        <tr><td><code>logs/backend.log</code></td><td>tiến trình con</td><td>lỗi byte <code>0x97</code></td><td>2.013</td><td>5.146</td></tr>
+        <tr><td><code>logs/frontend.log</code></td><td>tiến trình con</td><td>lỗi byte <code>0xe3</code></td><td>160</td><td>509</td></tr>
+        <tr><td><code>logs/app.log</code></td><td><code>RotatingFileHandler(encoding="utf-8")</code></td><td>sạch</td><td>0</td><td>0</td></tr>
+      </table>
+      <p>Dòng thật trong <code>backend.log</code>: <code>Backup ho?n tất → data\backups\...</code> —
+      nguyên văn là <em>"Backup hoàn tất → data\backups\..."</em>.</p>
+
+      <p class="label">Vì sao sửa ở <code>run.py</code> chứ không vá từng entry point</p>
+      <p>Bản vá gốc từ PR #19 (<code>18ff8c0</code>) đặt <code>reconfigure()</code> trong
+      <code>backend/main.py</code>. Đúng nhưng chỉ che backend — <code>frontend/main.py</code> hỏng y hệt mà
+      không được che, và mỗi entry point mới sau này lại phải nhớ vá lại. Thêm
+      <code>_env_utf8()</code> đặt <code>PYTHONIOENCODING=utf-8</code> vào <code>Popen</code> che cả hai tiến
+      trình bằng một chỗ. Giữ luôn bản vá trong <code>backend/main.py</code> vì nó còn bảo vệ đường khởi động
+      thẳng <code>uvicorn backend.main:app</code> không qua <code>run.py</code> (chạy tay, IDE, systemd).</p>
+
+      <div class="caution"><strong><code>chcp 65001</code> trong <code>start.bat</code> không cứu được.</strong>
+      <code>chcp</code> đổi codepage <em>console</em>, còn stream đã chuyển hướng ra file thì Python đọc
+      <em>ANSI codepage</em> qua <code>GetACP()</code> — hai thứ khác nhau. Đừng nhầm cái này là đã xử lý rồi.</div>
+
+      <p class="label">Điều bản vá KHÔNG làm</p>
+      <ul>
+        <li><strong>Không sửa được log cũ.</strong> <code>backend.log</code> sau khi vá thành file trộn encoding:
+        phần cũ cp1252, phần mới UTF-8. Muốn sạch hẳn phải đổi tên file cũ lúc triển khai.</li>
+        <li><code>backend.log</code> / <code>frontend.log</code> <strong>không có rotation</strong> —
+        <code>log_cleanup_service</code> chỉ dọn bảng <code>login_logs</code> / <code>audit_logs</code> trong DB,
+        không đụng file. File hỗn hợp sẽ nằm đó vô thời hạn.</li>
+        <li>Màn hình <em>Nhật ký hệ thống</em> không bị ảnh hưởng: <code>backend/api/logs.py</code> đọc
+        <code>logs/app.log</code> — file này vốn đã đúng UTF-8, không phải <code>backend.log</code>.</li>
+      </ul>
+
+      <div class="note"><code>errors="replace"</code> trong <code>reconfigure()</code> gần như không bao giờ
+      kích hoạt vì đích là UTF-8 mã hoá được toàn bộ Unicode. Để đó cho trường hợp surrogate lẻ, không phải
+      chỗ nuốt lỗi.</div>
+
+    </div>
+  </div>
 
   <!-- M -->
   <div class="card">

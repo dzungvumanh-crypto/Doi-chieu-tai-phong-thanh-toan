@@ -4,6 +4,13 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 10/08/2026 Toàn hệ thống - Sửa lỗi log tiếng Việt bị hỏng chữ:
+    + **File nhật ký kỹ thuật `logs\backend.log` và `logs\frontend.log` trước đây ghi sai chữ tiếng Việt.** Câu *"Backup hoàn tất"* bị ghi thành `Backup ho?n tất`, *"Đã xóa thành viên"* thành `Đ? x?a th?nh vi?n`. Lỗi có từ 11/05/2026, không ai để ý vì hệ thống vẫn chạy bình thường và không báo lỗi gì
+    + **Không ảnh hưởng tới số liệu hay nghiệp vụ.** Chỉ hỏng phần chữ trong file nhật ký kỹ thuật dành cho người quản trị đọc khi có sự cố. Dữ liệu, báo cáo, file Excel xuất ra đều không liên quan
+    + **Màn hình *Nhật ký hệ thống* trên web vẫn luôn đúng** — màn hình đó đọc file khác (`logs\app.log`), file này không bị lỗi
+    + ⚠️ **Phần nhật ký cũ đã hỏng thì không khôi phục được.** Từ nay các dòng mới ghi đúng. Khi triển khai bản này, nên đổi tên `logs\backend.log` cũ thành `backend.log.old` để file mới sạch hoàn toàn
+    + Ngoài ra bịt luôn một lỗi tiềm ẩn: nếu chạy các chức năng đối chiếu bằng công cụ dòng lệnh thay vì qua web, chỉ một dòng chữ tiếng Việt là đủ làm dừng giữa chừng cả tiến trình đối chiếu
+
 - 07/08/2026 Đối chiếu CITAD - Extension lên **bản 2.6**, bắt buộc cài lại:
     + ⚠️ **PHẢI TẢI LẠI VÀ CÀI LẠI EXTENSION.** Bản 2.5 đang cài trên máy trạm sẽ tiếp tục báo *"Không kết nối server"* dù mọi thứ phía máy chủ đã đúng. Vào `/doi_chieu_citad` → **Tải Extension**, giải nén, rồi *Load unpacked* lại như lần đầu
     + Nguyên nhân: từ bản trước, nút **Tạo mã kết nối mới** tự điền địa chỉ máy chủ vào Extension — nhưng đường tự động đó **không xin được quyền truy cập địa chỉ** cho trình duyệt, nên Extension bị chặn ngay ở tầng quyền. Chỉ khi tự vào Tuỳ chọn bấm Lưu mới xin được. Nay quyền được cấp sẵn ngay lúc cài, không phụ thuộc cách cấu hình nữa
