@@ -252,8 +252,9 @@ Truy cập:
 
 ### Module Lịch trực
 - Xếp lịch trực tự động cho phòng Thanh toán
-- **Số người mỗi ca do phòng tự khai** ở tab Cài đặt (ca thường và ca quyết toán khai riêng).
-  Thiếu người so với số đã khai thì **không hình thành ca trực**, có cảnh báo nêu rõ lý do
+- **Số người mỗi ca do phòng tự khai** ở tab Cài đặt (ca thường và ca quyết toán khai riêng);
+  một ca có thể có **nhiều hơn một Lãnh đạo**. Thiếu người so với số đã khai thì
+  **không hình thành ca trực**, có cảnh báo nêu rõ lý do
 - **Ca quyết toán** chia nhóm trực chính / trực phụ (nhóm phụ về sớm hơn), lưu thành **một** bản ghi
 - Cần **ít nhất 1 người xử lý song phương** trong Lãnh đạo + nhóm trực chính — thiếu hoặc dư
   đều vẫn lập ca, chỉ cảnh báo. Người ở nhóm trực phụ không tính (về sớm)
