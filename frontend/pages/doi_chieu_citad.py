@@ -4,8 +4,9 @@ Port từ `citad-fixed/DoiChieuCITAD.py` (tkinter). Giữ nguyên mô hình dữ
 và công thức tính chênh lệch gốc:
   - gD[cong][cur][fk]  — 5 cổng CITAD × 3 loại tiền × 8 trường
   - phD[cur][fk]       — PaymentHub × 3 loại tiền × 8 trường
-  - napas[fk] / ebank[fk] — bổ sung Napas/Ebanking
-  - Tổng CITAD = tổng 5 cổng + Napas IH Đến (den_ih_m, den_ih_t)
+  - napas[fk] / ebank[fk] / pssmdp[fk] — bổ sung Napas/Ebanking/PSS-MDP
+  - Tổng CITAD = tổng 5 cổng + Napas IH Đến + PSS-MDP IH Đến (den_ih_m, den_ih_t)
+    (PSS-MDP thêm sau theo yêu cầu Phòng Thanh toán — cùng nguyên lý Napas)
   - Tổng PaymentHub = tổng 3 loại tiền của PaymentHub
   - Chênh lệch = Tổng CITAD − Tổng PaymentHub  (đúng theo `_calc()` gốc)
 
@@ -167,12 +168,14 @@ def doi_chieu_citad_page():
         "phD": {u: {f: 0.0 for f in FK} for u in CURS},
         "napas": {"den_ih_m": 0.0, "den_ih_t": 0.0},
         "ebank": {"den_ih_m": 0.0, "den_ih_t": 0.0},
+        "pssmdp": {"den_ih_m": 0.0, "den_ih_t": 0.0},
     }
     inputs = {
         "gE": {c: {u: {} for u in CURS} for c in CONGS},
         "phE": {u: {} for u in CURS},
         "napasE": {},
         "ebankE": {},
+        "pssmdpE": {},
     }
     diff_labels = {"citad": {}, "phub": {}, "diff": {}}
 
@@ -213,6 +216,9 @@ def doi_chieu_citad_page():
                     ci[f] += data["gD"][c][u][f]
         ci["den_ih_m"] += data["napas"]["den_ih_m"]
         ci["den_ih_t"] += data["napas"]["den_ih_t"]
+        # PSS - MDP: kênh mới, cùng nguyên lý Napas (cộng vào tổng CITAD).
+        ci["den_ih_m"] += data["pssmdp"]["den_ih_m"]
+        ci["den_ih_t"] += data["pssmdp"]["den_ih_t"]
 
         ph = {f: 0.0 for f in FK}
         for u in CURS:
@@ -275,7 +281,7 @@ def doi_chieu_citad_page():
         cột cùng tên ở các bảng khác, đọc xuống dễ đối chiếu hơn."""
         with container:
             n_cols = len(FK) + 1
-            n_rows = 3
+            n_rows = 4
             with ui.grid(columns=n_cols).classes("w-full gap-0 p-4"):
                 ui.label("Loại tiền").classes(
                     _grid_cell_cls(0, 0, n_rows, n_cols, "text-sm font-bold text-gray-500 text-center")
@@ -286,6 +292,7 @@ def doi_chieu_citad_page():
                     )
                 for row_idx, (label, store, entry_store) in enumerate([
                     ("Napas", data["napas"], inputs["napasE"]),
+                    ("PSS - MDP", data["pssmdp"], inputs["pssmdpE"]),
                     ("Ebanking", data["ebank"], inputs["ebankE"]),
                 ], start=1):
                     ui.label(label).classes(
@@ -340,6 +347,10 @@ def doi_chieu_citad_page():
         data["ebank"]["den_ih_t"] = nv(sess.get("ebank_t", 0))
         _set_input(inputs["ebankE"]["den_ih_m"], fmt(data["ebank"]["den_ih_m"]))
         _set_input(inputs["ebankE"]["den_ih_t"], fmt(data["ebank"]["den_ih_t"]))
+        data["pssmdp"]["den_ih_m"] = nv(sess.get("pssmdp_m", 0))
+        data["pssmdp"]["den_ih_t"] = nv(sess.get("pssmdp_t", 0))
+        _set_input(inputs["pssmdpE"]["den_ih_m"], fmt(data["pssmdp"]["den_ih_m"]))
+        _set_input(inputs["pssmdpE"]["den_ih_t"], fmt(data["pssmdp"]["den_ih_t"]))
         recalc()
 
     def get_session_payload() -> dict:
@@ -355,6 +366,8 @@ def doi_chieu_citad_page():
             "napas_t": data["napas"]["den_ih_t"],
             "ebank_m": data["ebank"]["den_ih_m"],
             "ebank_t": data["ebank"]["den_ih_t"],
+            "pssmdp_m": data["pssmdp"]["den_ih_m"],
+            "pssmdp_t": data["pssmdp"]["den_ih_t"],
         }
 
     async def load_citad_buffer():
@@ -414,6 +427,13 @@ def doi_chieu_citad_page():
                 data["napas"]["den_ih_t"] = nv(so_tien)
                 _set_input(inputs["napasE"]["den_ih_m"], fmt(so_mon))
                 _set_input(inputs["napasE"]["den_ih_t"], fmt(so_tien))
+                count += 1
+                continue
+            if src == "pssmdp":
+                data["pssmdp"]["den_ih_m"] = nv(so_mon)
+                data["pssmdp"]["den_ih_t"] = nv(so_tien)
+                _set_input(inputs["pssmdpE"]["den_ih_m"], fmt(so_mon))
+                _set_input(inputs["pssmdpE"]["den_ih_t"], fmt(so_tien))
                 count += 1
                 continue
             if tien not in CURS:
@@ -609,8 +629,10 @@ def doi_chieu_citad_page():
         for f in ("den_ih_m", "den_ih_t"):
             data["napas"][f] = 0.0
             data["ebank"][f] = 0.0
+            data["pssmdp"][f] = 0.0
             _set_input(inputs["napasE"][f], '')
             _set_input(inputs["ebankE"][f], '')
+            _set_input(inputs["pssmdpE"][f], '')
         recalc()
         ui.notify("Đã xoá toàn bộ dữ liệu", type="info")
 
@@ -628,6 +650,8 @@ def doi_chieu_citad_page():
             "nt": data["napas"]["den_ih_t"],
             "em": data["ebank"]["den_ih_m"],
             "et": data["ebank"]["den_ih_t"],
+            "sm": data["pssmdp"]["den_ih_m"],
+            "st": data["pssmdp"]["den_ih_t"],
         }
         try:
             content = await asyncio.to_thread(api.post_download, "/api/doi-chieu-citad/export", payload)
@@ -640,8 +664,8 @@ def doi_chieu_citad_page():
     def do_export():
         # Xem trước ĐẦY ĐỦ đúng các dòng sẽ có trong file Excel tải về (khớp
         # từng dòng với doi_chieu_citad_service.py::build_xlsx: Payment theo
-        # từng loại tiền, CITAD tổng, từng Cổng × loại tiền, Napas, Ebanking,
-        # Chênh lệch) — không chỉ 3 dòng tóm tắt như trước, để người dùng
+        # từng loại tiền, CITAD tổng, từng Cổng × loại tiền, Napas, PSS - MDP,
+        # Ebanking, Chênh lệch) — không chỉ 3 dòng tóm tắt như trước, để người dùng
         # soát được đúng số liệu chi tiết trước khi tải, giống hệt thứ tự
         # trong Excel (chỉ khác: header ở đây 1 tầng thay vì 3 tầng gộp ô
         # "LỆNH ĐI/LỆNH ĐẾN" như Excel — tên cột ĐI/ĐẾN IH/IL Món/Tiền đã
@@ -668,6 +692,7 @@ def doi_chieu_citad_page():
             for i, cur in enumerate(CURS):
                 _add_row(f"Cổng {cong}" if i == 0 else "", cur, [data["gD"][cong][cur][f] for f in FK])
         _add_row("Napas", "", [0, 0, 0, 0, data["napas"]["den_ih_m"], data["napas"]["den_ih_t"], 0, 0])
+        _add_row("PSS - MDP", "", [0, 0, 0, 0, data["pssmdp"]["den_ih_m"], data["pssmdp"]["den_ih_t"], 0, 0])
         _add_row("Ebanking", "", [0, 0, 0, 0, data["ebank"]["den_ih_m"], data["ebank"]["den_ih_t"], 0, 0])
         diff_row = {"id": len(rows), "label": "CHÊNH LỆCH", "cur": ""}
         for fk in FK:
@@ -908,7 +933,7 @@ def doi_chieu_citad_page():
         _sidebar("doi_chieu_citad")
         with _content_area():
             _navy_header(
-                "ĐỐI CHIẾU CITAD ↔ PAYMENTHUB",
+                "ĐỐI CHIẾU CITAD CUỐI NGÀY",
                 "Đối chiếu số liệu CITAD (NHNN) với PaymentHub (Agribank) theo từng ngày",
             )
 
@@ -973,7 +998,7 @@ def doi_chieu_citad_page():
                         ):
                             build_grid(ui.column().classes("w-full"), inputs["gE"][cong], data["gD"][cong], CURS)
 
-                    with _section_card("Napas / Ebanking (bổ sung)", icon="add_card", accent="amber"):
+                    with _section_card("Napas / PSS - MDP / Ebanking (bổ sung)", icon="add_card", accent="amber"):
                         build_napas_ebank_grid(ui.column().classes("w-full"))
 
                     with _section_card("Bảng chênh lệch (CITAD − PaymentHub)", icon="balance", accent="emerald"):

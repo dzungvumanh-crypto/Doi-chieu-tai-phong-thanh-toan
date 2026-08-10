@@ -102,7 +102,7 @@ async def do_reconcile(
         ipcas_paths, ipcas_names, cleanup_ipcas = _save_uploads(ipcas_files)
         hub_paths, hub_names, cleanup_hub = _save_uploads(hub_files)
         try:
-            citad_rows, citad_errors = parsers.parse_citad_files(citad_paths)
+            citad_rows, citad_errors = parsers.parse_citad_files(citad_paths, ngay_cham)
             ipcas_rows, ipcas_errors = parsers.parse_ipcas_files(ipcas_paths, ngay_cham)
             hub_rows, hub_errors = parsers.parse_hub_files(hub_paths, ngay_cham)
         finally:
