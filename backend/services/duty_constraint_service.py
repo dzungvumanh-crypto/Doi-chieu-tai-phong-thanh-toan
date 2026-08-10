@@ -332,19 +332,28 @@ def get_shift_config(db: sqlite3.Connection, year: int) -> Optional[dict]:
 
 
 def upsert_shift_config(db: sqlite3.Connection, year: int, nv_count: int,
-                        signer_name: Optional[str] = None) -> dict:
+                        signer_name: Optional[str] = None,
+                        ld_count: int = 1,
+                        qt_ld_count: int = 1,
+                        qt_nv_chinh_count: int = 3,
+                        qt_nv_phu_count: int = 2) -> dict:
     existing = db.execute(
         "SELECT * FROM duty_shift_config WHERE year=?", (year,)
     ).fetchone()
     if existing:
         db.execute(
-            "UPDATE duty_shift_config SET nv_count=?, signer_name=COALESCE(?, signer_name) WHERE year=?",
-            (nv_count, signer_name, year)
+            "UPDATE duty_shift_config SET ld_count=?, nv_count=?, qt_ld_count=?, "
+            "qt_nv_chinh_count=?, qt_nv_phu_count=?, signer_name=COALESCE(?, signer_name) "
+            "WHERE year=?",
+            (ld_count, nv_count, qt_ld_count, qt_nv_chinh_count, qt_nv_phu_count,
+             signer_name, year)
         )
     else:
         db.execute(
-            "INSERT INTO duty_shift_config (year, nv_count, signer_name) VALUES (?,?,?)",
-            (year, nv_count, signer_name)
+            "INSERT INTO duty_shift_config (year, ld_count, nv_count, qt_ld_count, "
+            "qt_nv_chinh_count, qt_nv_phu_count, signer_name) VALUES (?,?,?,?,?,?,?)",
+            (year, ld_count, nv_count, qt_ld_count, qt_nv_chinh_count,
+             qt_nv_phu_count, signer_name)
         )
     db.commit()
     row = db.execute("SELECT * FROM duty_shift_config WHERE year=?", (year,)).fetchone()
@@ -366,17 +375,15 @@ def get_week_assignees(db: sqlite3.Connection, date_str: str) -> set:
         return set()
 
     shifts = db.execute(
-        "SELECT leader_id, sp_id, nv_ids FROM duty_shifts "
+        "SELECT leader_ids, sp_id, nv_ids, nv_phu_ids FROM duty_shifts "
         "WHERE shift_date >= ? AND shift_date < ? AND status IN ('confirmed','draft')",
         (week_start.isoformat(), date_str)
     ).fetchall()
 
     ids: set = set()
     for s in shifts:
-        if s["leader_id"]:
-            ids.add(s["leader_id"])
         if s["sp_id"]:
             ids.add(s["sp_id"])
-        for nv_id in json.loads(s["nv_ids"] or "[]"):
-            ids.add(nv_id)
+        for cot in ("leader_ids", "nv_ids", "nv_phu_ids"):
+            ids.update(json.loads(s[cot] or "[]"))
     return ids
