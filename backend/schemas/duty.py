@@ -153,11 +153,13 @@ class ShiftConfigOut(BaseModel):
 
 
 class ShiftConfigUpsert(BaseModel):
-    ld_count: int = Field(1, ge=1, le=5)
-    nv_count: int = Field(..., ge=1, le=10)
-    qt_ld_count: int = Field(1, ge=1, le=5)
-    qt_nv_chinh_count: int = Field(3, ge=1, le=10)
-    qt_nv_phu_count: int = Field(2, ge=0, le=10)
+    """Trường nào không gửi thì giữ nguyên giá trị đang có — KHÔNG có default ở đây,
+    vì default sẽ biến 'không gửi' thành 'ghi đè bằng số mặc định'."""
+    ld_count: Optional[int] = Field(None, ge=1, le=5)
+    nv_count: Optional[int] = Field(None, ge=1, le=10)
+    qt_ld_count: Optional[int] = Field(None, ge=1, le=5)
+    qt_nv_chinh_count: Optional[int] = Field(None, ge=1, le=10)
+    qt_nv_phu_count: Optional[int] = Field(None, ge=0, le=10)
     signer_name: Optional[str] = None
 
 

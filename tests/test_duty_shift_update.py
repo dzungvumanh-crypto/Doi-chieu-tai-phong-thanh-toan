@@ -20,6 +20,10 @@ from backend.services.duty_rules import (
     resolve_sp_role, validate_shift_members, get_cau_hinh_ca,
 )
 from backend.services.duty_schedule_service import update_shift, confirm_shift
+from backend.services.duty_constraint_service import (
+    upsert_shift_config, get_shift_config,
+)
+from backend.api.duty_constraints import get_config
 
 # Nhân sự mẫu: 1=LD Một(SP) 2=LD Hai 3=NV Ba(SP) 4=NV Bốn(SP) 5..8=NV thường
 LD_SP, LD_THUONG   = 1, 2
@@ -86,6 +90,57 @@ def test_nam_chua_khai_bao_thi_dung_mac_dinh():
     db.commit()
     assert get_cau_hinh_ca(db, YEAR, "normal") == (1, 2, 0)
     assert get_cau_hinh_ca(db, YEAR, "settlement_main") == (1, 3, 2)
+
+
+# ── Ghi cấu hình: trường không gửi phải giữ nguyên ────────────────────────────
+
+def test_chi_sua_ca_thuong_thi_ca_quyet_toan_giu_nguyen():
+    db = _make_db(_standard_staff(), qt_ld=2, qt_chinh=4, qt_phu=3)
+    upsert_shift_config(db, YEAR, nv_count=3)
+    assert get_cau_hinh_ca(db, YEAR, "normal") == (1, 3, 0)
+    assert get_cau_hinh_ca(db, YEAR, "settlement_main") == (2, 4, 3)
+
+
+def test_chi_sua_ten_nguoi_ky_thi_so_nguoi_giu_nguyen():
+    db = _make_db(_standard_staff(), ld_count=2, nv_count=4)
+    upsert_shift_config(db, YEAR, signer_name="Nguyễn Văn A")
+    assert get_cau_hinh_ca(db, YEAR, "normal") == (2, 4, 0)
+    assert get_shift_config(db, YEAR)["signer_name"] == "Nguyễn Văn A"
+
+
+def test_nam_moi_thi_truong_khong_gui_lay_mac_dinh():
+    db = _make_db(_standard_staff())
+    db.execute("DELETE FROM duty_shift_config")
+    db.commit()
+    upsert_shift_config(db, YEAR + 1, nv_count=5)
+    assert get_cau_hinh_ca(db, YEAR + 1, "normal") == (1, 5, 0)
+    assert get_cau_hinh_ca(db, YEAR + 1, "settlement_main") == (1, 3, 2)
+
+
+def test_so_truc_phu_bang_khong_khong_bi_hieu_la_khong_gui():
+    """0 là giá trị hợp lệ — nếu code dùng `or` thay vì kiểm None thì test này gãy."""
+    db = _make_db(_standard_staff(), qt_phu=2)
+    upsert_shift_config(db, YEAR, qt_nv_phu_count=0)
+    assert get_cau_hinh_ca(db, YEAR, "settlement_main")[2] == 0
+
+
+def test_api_nam_chua_khai_bao_tra_mac_dinh_khong_404():
+    """Trả 404 thì frontend buộc phải nuốt lỗi để không hiện báo đỏ — và nuốt
+    luôn cả lỗi hết phiên đăng nhập. Trả mặc định thì không cần nuốt gì."""
+    db = _make_db(_standard_staff())
+    db.execute("DELETE FROM duty_shift_config")
+    db.commit()
+
+    cfg = get_config(YEAR, db)
+    assert (cfg["ld_count"], cfg["nv_count"]) == (1, 2)
+    assert (cfg["qt_ld_count"], cfg["qt_nv_chinh_count"], cfg["qt_nv_phu_count"]) == (1, 3, 2)
+
+
+def test_api_da_khai_bao_thi_tra_dung_so_da_khai():
+    db = _make_db(_standard_staff(), ld_count=2, nv_count=4, qt_phu=0)
+    cfg = get_config(YEAR, db)
+    assert (cfg["ld_count"], cfg["nv_count"]) == (2, 4)
+    assert cfg["qt_nv_phu_count"] == 0
 
 
 # ══════════════════════════════════════════════════════════════

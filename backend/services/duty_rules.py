@@ -21,6 +21,16 @@ _MAC_DINH = {
     "quyet_toan": {"ld": 1, "chinh": 3, "phu": 2},
 }
 
+# Cùng bộ số trên nhưng khoá theo tên cột của duty_shift_config — đường ghi cấu
+# hình dùng lại, để không sinh ra bộ mặc định thứ hai lệch với _MAC_DINH.
+MAC_DINH_COT = {
+    "ld_count":          _MAC_DINH["thuong"]["ld"],
+    "nv_count":          _MAC_DINH["thuong"]["chinh"],
+    "qt_ld_count":       _MAC_DINH["quyet_toan"]["ld"],
+    "qt_nv_chinh_count": _MAC_DINH["quyet_toan"]["chinh"],
+    "qt_nv_phu_count":   _MAC_DINH["quyet_toan"]["phu"],
+}
+
 # Thứ 6 và cut-off dùng chung cấu hình ca thường (quyết định của Business Owner)
 _NHOM_CA = {
     "normal":          "thuong",
