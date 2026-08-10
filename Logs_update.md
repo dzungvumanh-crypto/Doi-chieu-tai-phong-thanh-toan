@@ -4,6 +4,55 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 10/08/2026 Toàn hệ thống - Sửa lỗi log tiếng Việt bị hỏng chữ:
+    + **File nhật ký kỹ thuật `logs\backend.log` và `logs\frontend.log` trước đây ghi sai chữ tiếng Việt.** Câu *"Backup hoàn tất"* bị ghi thành `Backup ho?n tất`, *"Đã xóa thành viên"* thành `Đ? x?a th?nh vi?n`. Lỗi có từ 11/05/2026, không ai để ý vì hệ thống vẫn chạy bình thường và không báo lỗi gì
+    + **Không ảnh hưởng tới số liệu hay nghiệp vụ.** Chỉ hỏng phần chữ trong file nhật ký kỹ thuật dành cho người quản trị đọc khi có sự cố. Dữ liệu, báo cáo, file Excel xuất ra đều không liên quan
+    + **Màn hình *Nhật ký hệ thống* trên web vẫn luôn đúng** — màn hình đó đọc file khác (`logs\app.log`), file này không bị lỗi
+    + ⚠️ **Phần nhật ký cũ đã hỏng thì không khôi phục được.** Từ nay các dòng mới ghi đúng. **Không phải làm gì thủ công** — lần khởi động đầu tiên sau khi cập nhật, hệ thống tự chuyển phần nhật ký cũ sang `logs\backend.truoc-utf8.log` và `logs\frontend.truoc-utf8.log`, rồi ghi tiếp vào file mới sạch. Không xoá dòng nào, chỉ tách ra file bên cạnh
+    + Ngoài ra bịt luôn một lỗi tiềm ẩn: nếu chạy các chức năng đối chiếu bằng công cụ dòng lệnh thay vì qua web, chỉ một dòng chữ tiếng Việt là đủ làm dừng giữa chừng cả tiến trình đối chiếu
+
+- 07/08/2026 Đối chiếu CITAD - Extension lên **bản 2.6**, bắt buộc cài lại:
+    + ⚠️ **PHẢI TẢI LẠI VÀ CÀI LẠI EXTENSION.** Bản 2.5 đang cài trên máy trạm sẽ tiếp tục báo *"Không kết nối server"* dù mọi thứ phía máy chủ đã đúng. Vào `/doi_chieu_citad` → **Tải Extension**, giải nén, rồi *Load unpacked* lại như lần đầu
+    + Nguyên nhân: từ bản trước, nút **Tạo mã kết nối mới** tự điền địa chỉ máy chủ vào Extension — nhưng đường tự động đó **không xin được quyền truy cập địa chỉ** cho trình duyệt, nên Extension bị chặn ngay ở tầng quyền. Chỉ khi tự vào Tuỳ chọn bấm Lưu mới xin được. Nay quyền được cấp sẵn ngay lúc cài, không phụ thuộc cách cấu hình nữa
+    + Sau khi cài lại, kiểm nhanh: mở `edge://extensions` (hoặc `chrome://extensions`) → phần **Site access** phải thấy `apc-portal:8080`. Không thấy nghĩa là chưa cài đúng bản mới
+    + Không cần làm gì thêm — mã kết nối cũ vẫn dùng được, không phải tạo lại
+
+- 06/08/2026 Đối soát CITAD - Đọc được file `.xlsx`, và Extension gọi được máy chủ thật (PR #20):
+    + ✅ **GỠ CẢNH BÁO NGÀY 04/08: file CITAD định dạng `.xlsx` nay đọc bình thường.** Trước đây mọi file `.xlsx` bị đọc ra rỗng mà không báo lỗi — màn hình vẫn hiện "đối soát xong" nhưng số khớp bằng 0 và toàn bộ lệnh bị xếp vào "Chỉ IPCAS". Từ nay dùng `.xls` hay `.xlsx` đều được
+    + ⚠️ **Ai đã đối soát bằng file `.xlsx` trước ngày 06/08 thì làm lại.** Kết quả cũ và bản đã lưu ở tab *Lịch sử* của những lần đó đều sai — không phải số liệu lệch thật
+    + **Extension nay gọi được máy chủ thật.** Trước đây máy chủ chỉ mở cổng giao diện ra máy trạm nên Extension luôn báo *"Không kết nối server"* dù cấu hình đúng. Nay đi chung một cổng với web, không phải mở thêm gì trên tường lửa
+    + Nút **Tạo mã kết nối mới** trước đây ghi vào Extension một địa chỉ chỉ đúng trên máy chủ, nên vừa không dùng được vừa **xoá mất cấu hình đúng ai đã điền tay**. Nay lấy đúng địa chỉ đang mở trên trình duyệt
+    + Vá một lỗ hổng: có thể giả mạo địa chỉ IP ghi vào Nhật ký hệ thống cho các thao tác Đối chiếu CITAD. **Nhật ký cũ vẫn đúng** — lỗ hổng chỉ mở đường cho ai cố tình, không làm sai dữ liệu đang có
+
+- 06/08/2026 Nghỉ phép - Sửa loạt lỗi hạn mức, số liệu Dashboard và thao tác duyệt (PR #18):
+    + **Đổi tab trong màn Nghỉ phép không còn trắng màn hình** — chuyển tab tức thì thay vì tải lại cả trang
+    + ⚠️ **Ô "Đã dùng" ở tab Hạn mức phép trước đây cộng dồn mỗi lần bấm Lưu** — mở dialog rồi bấm Lưu mà không sửa gì cũng làm số ngày đã dùng tăng gấp đôi. Nay bấm Lưu bao nhiêu lần giá trị vẫn giữ nguyên. **Cần soát lại hạn mức của các nhân viên đã từng sửa tay trước ngày 06/08**
+    + ⚠️ **Nhập file hạn mức Excel dính đúng lỗi trên** — nhân viên đã có đơn nghỉ thật trong năm bị cộng dồn ngay từ lần nhập đầu tiên. Nay hệ thống trừ đúng phần đơn thật rồi mới ghi phần chênh lệch
+    + Nhập số "Đã nghỉ" **thấp hơn số ngày đã nghỉ thật** thì hệ thống giữ theo số thật và **báo rõ tên những người bị giữ**, không âm thầm để lệch số
+    + Số liệu nhập hạn mức (từ file Excel hoặc sửa tay) **không còn hiện lẫn như một đơn nghỉ thật** ở Lịch nghỉ phép, "Đơn của tôi", danh sách toàn trung tâm, kiểm tra trùng ngày và số liệu Dashboard
+    + **5 ô số liệu ở Dashboard đổi theo khoảng ngày** chọn ở Bộ lọc tìm kiếm, đúng phạm vi vai trò của từng người
+    + **Bắt buộc chọn Ban lãnh đạo phê duyệt** khi tạo đơn và khi nộp lại — trước đây bỏ trống được, đơn sẽ kẹt vĩnh viễn ở bước Tổng hợp
+    + Sửa nút **Phê duyệt / Từ chối** ở bảng Dashboard không phản hồi khi tick chọn; đổi tab nay tự bỏ tick để không xử lý nhầm đơn đã chọn ở tab khác
+    + Nhãn trạng thái thống nhất một kiểu ở mọi màn hình: **"Chờ Ban lãnh đạo duyệt"** và **"Hoàn thành"**
+    + Tải dữ liệu trang lỗi thì **báo rõ**, không âm thầm hiện số 0
+
+- 06/08/2026 Báo cáo bàn giao chứng từ - Sửa cách trừ ngày nghỉ phép của người nhận:
+    + Báo cáo chấm đúng hạn/quá hạn có **trừ những ngày người nhận bàn giao đi nghỉ phép** (người nhận vắng thì không thể trách người nộp). Nhưng số liệu hạn mức phép nhập từ Excel bị tính nhầm thành ngày nghỉ thật, khiến **chứng từ nộp quá hạn trong tháng 1 bị chấm thành đúng hạn**
+    + Nay báo cáo chỉ trừ đơn nghỉ phép thật. **Số liệu các kỳ đã xem trước đây không đổi** (hệ thống chưa có dữ liệu hạn mức nhập vào) — đây là vá phòng ngừa trước khi bắt đầu dùng thật
+    + Nhật ký hệ thống ghi rõ thao tác **"Sửa số ngày phép đã dùng"** thay vì mô tả chung chung
+
+- 05/08/2026 Phòng Thanh toán - Thêm màn hình **Đối chiếu ACH** (GL02 ↔ MIS):
+    + Menu *Phòng Thanh toán → Đối chiếu* có thêm **Đối chiếu ACH**. Công cụ trước đây chạy riêng trên một máy nay vào thẳng phần mềm, dùng chung tài khoản và phân quyền như mọi màn hình khác
+    + Cách dùng: chọn (hoặc kéo thả) đủ bộ file của một ngày — file GL02, file GW, 2 file MIS chiều ĐI, 2 file MIS chiều ĐẾN và file PDF sao kê. Màn hình có **bảng kiểm tra đã đủ file chưa**, thiếu loại nào báo ngay chứ không để chạy xong mới lỗi
+    + **Ngày đối chiếu để trống là được** — hệ thống tự lấy từ tên file PDF. Nếu tên file không đúng mẫu thì **báo lỗi rõ ràng**, không tự dùng một ngày khác
+    + Kết quả là 1 file Excel gồm bảng tổng kết, bảng phân tích có **cảnh báo tự động** (lệnh TPAY chưa xử lý, lệnh timeout không đi kênh, cặp chi nhánh + số tiền nghi sai số trace) và các sheet chi tiết khớp / chưa khớp từng chiều. Sheet nào **trên 15.000 dòng** được tách ra file CSV riêng, tải lẻ từng file hoặc bấm **Tải tất cả (ZIP)**
+    + ⚠️ **Mở file CSV bằng Excel → Data → Từ Văn bản/CSV, đừng double-click.** Double-click sẽ mất số 0 đứng đầu ở cột TRACE, MSGSEQ và sai định dạng số tiền
+    + Trong lúc chạy có **thanh tiến độ và nhật ký xử lý**; bấm **Dừng** thì hệ thống dừng ở bước gần nhất chứ không cắt ngang giữa chừng (cắt ngang dễ làm treo máy chủ). Dừng xong báo *"Đã dừng đối chiếu theo yêu cầu"* — không phải báo lỗi đỏ
+    + Bấm ✕ để bỏ file chọn nhầm: nếu máy chủ chưa xoá được (Windows đang khoá file vừa ghi) thì **báo rõ và giữ nguyên file trong danh sách**, không để màn hình nói đã xoá trong khi file vẫn còn
+    + Một lúc chỉ chạy **một lần đối chiếu**; người bấm sau sẽ thấy trạng thái đang xếp hàng. Kết quả giữ trên máy chủ **4 giờ** rồi tự xoá — cần thì tải về máy, không lưu lịch sử tra cứu lại
+    + Cần bật quyền trong *Phân quyền theo nhóm* (`menu.doi_chieu_ach`, `doi_chieu_ach.process`), nếu không chỉ admin nhìn thấy menu
+    + ⚠️ **Máy chủ phải chạy lại `pip install -r requirements.txt`** (thêm 2 thư viện `xlsxwriter`, `python-calamine`), nếu không backend không khởi động được
+
 - 05/08/2026 Đối chiếu CITAD - Extension lấy đúng số tiền lẻ và tự điền được mã kết nối:
     + ⚠️ **Số tiền USD/EUR lấy tự động từ Extension trước đây sai gấp 100 lần.** Phần xu bị nhập vào thành phần nguyên — `1.234,56` USD thành `123.456`. Nay lấy đúng cả phần lẻ
     + **Số món không dính lỗi này, và VNĐ cũng không** (không có đơn vị lẻ). Chỉ ảnh hưởng cột số tiền của USD và EUR
@@ -43,7 +92,7 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
     + **Đối chiếu CITAD**: nhập số liệu 5 cổng × 3 loại tiền, chênh lệch tự tính ngay khi gõ. Mỗi ngày là **một bản ghi chung của cả phòng**, kèm tab *Lịch sử* xem lại từng lần lưu. Xuất Excel đúng mẫu báo cáo NHNN đã duyệt
     + **Đối soát CITAD ↔ IPCAS**: tải file CITAD, IPCAS và Hub ngoại tệ lên, hệ thống khớp lệnh rồi liệt kê phần lệch theo 4 nhóm, xuất Excel 4 sheet. Có lưu lịch sử để xem lại đúng số liệu của lần đối soát cũ. Hệ thống **cảnh báo khi chọn trùng file** (so nội dung từng byte, không dựa vào tên file)
     + Kèm **Extension trình duyệt** tự lấy số liệu từ trang CITAD và PaymentHub sang, khỏi chép tay. Tải ngay trên màn hình Đối chiếu CITAD, ghép nối bằng *mã kết nối* riêng của từng người
-    + ⚠️ **Đối soát CITAD: dùng file CITAD định dạng `.xls`, KHÔNG dùng `.xlsx`.** File `.xlsx` hiện bị đọc ra rỗng mà **không báo lỗi** — màn hình vẫn hiện "đối soát xong" nhưng số khớp bằng 0 và toàn bộ lệnh bị xếp vào "Chỉ IPCAS". Lỗi đã biết, đang chờ sửa. Trong lúc chờ, nếu kết quả ra như vậy thì kiểm lại định dạng file trước khi kết luận số liệu lệch
+    + ~~⚠️ **Đối soát CITAD: dùng file CITAD định dạng `.xls`, KHÔNG dùng `.xlsx`.** File `.xlsx` hiện bị đọc ra rỗng mà **không báo lỗi**~~ — **ĐÃ SỬA ngày 06/08, xem entry đầu trang.** Từ nay `.xls` và `.xlsx` đều dùng được
     + ⚠️ **Đối chiếu CITAD lưu chung một bản cho cả phòng** — hai người cùng chấm một ngày thì ai bấm Lưu sau cùng là bản hiện hành. Bản của người trước không mất, xem lại ở tab *Lịch sử*
     + ⚠️ Extension **phải cài tay trên từng máy** và chỉ chạy trên **Chrome, Edge, Cốc Cốc** (không có Firefox, Safari). Hướng dẫn cài nằm trong file tải về
     + ⚠️ Nút *Tạo mã kết nối* có thể báo "đã tự động kết nối" nhưng Extension vẫn không gửi được — đang còn lỗi địa chỉ máy chủ. Nếu gặp, mở *Tuỳ chọn* của Extension điền tay địa chỉ và mã kết nối

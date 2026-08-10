@@ -8,6 +8,7 @@ Cách dùng:
   python run.py frontend # Chỉ frontend
   python run.py init     # Khởi tạo database
 """
+import codecs
 import os
 import signal
 import socket
@@ -85,6 +86,7 @@ def _err(msg: str):
 def _ensure_dirs():
     os.makedirs(os.path.join(ROOT, "data"), exist_ok=True)
     os.makedirs(LOGS_DIR, exist_ok=True)
+    _tach_log_cu_khong_utf8()
 
 
 def _log_path(name: str) -> str:
@@ -93,6 +95,58 @@ def _log_path(name: str) -> str:
 
 def _open_log(name: str):
     return open(_log_path(name), "a", encoding="utf-8", buffering=1)
+
+
+def _co_byte_hong_utf8(path: str) -> bool:
+    """True nếu file chứa byte không hợp lệ UTF-8 — dấu vết đã ghi bằng ANSI
+    codepage. Giải mã theo khối 1 MB thay vì nạp cả file: backend.log và
+    frontend.log KHÔNG có rotation (log_cleanup_service chỉ dọn bảng trong DB)
+    nên có thể phình rất lớn."""
+    dec = codecs.getincrementaldecoder("utf-8")()
+    try:
+        with open(path, "rb") as f:
+            while True:
+                chunk = f.read(1 << 20)
+                if not chunk:
+                    break
+                dec.decode(chunk)
+            dec.decode(b"", final=True)
+    except UnicodeDecodeError:
+        return True
+    except OSError:
+        return False    # không đọc được thì thôi, việc dọn dẹp không đáng chặn khởi động
+    return False
+
+
+def _tach_log_cu_khong_utf8():
+    """Tách phần nhật ký ghi TRƯỚC bản vá UTF-8 sang file riêng.
+
+    Log cũ do tiến trình con ghi bằng ANSI codepage của máy (đo được: cp1252).
+    Nối tiếp dòng UTF-8 mới vào cùng file thì không công cụ nào đọc đúng cả
+    file — mở bằng UTF-8 thì hỏng phần cũ, mở bằng cp1252 thì hỏng phần mới.
+    Chạy tự động ở đây thay vì bắt người deploy đổi tên tay: deploy.bat không
+    đụng tới logs/ nên mỗi máy đích đều cần, và việc phải-nhớ thì sẽ quên.
+
+    Tự tắt sau lần đầu: file mới thuần UTF-8 nên lần khởi động sau không còn
+    khớp điều kiện. Là đổi tên, không xoá — không mất dòng log nào."""
+    for name in ("backend", "frontend"):
+        path = _log_path(name)
+        if not os.path.exists(path) or not _co_byte_hong_utf8(path):
+            continue
+
+        dest = os.path.join(LOGS_DIR, f"{name}.truoc-utf8.log")
+        if os.path.exists(dest):      # đã tách lần trước — không đè lên bản cũ
+            dest = os.path.join(
+                LOGS_DIR, f"{name}.truoc-utf8.{time.strftime('%Y%m%d-%H%M%S')}.log"
+            )
+        try:
+            os.replace(path, dest)
+            _info(f"Nhật ký {name}.log cũ ghi sai mã tiếng Việt — đã tách sang "
+                  f"{os.path.basename(dest)}")
+        except OSError as e:
+            # Thường là file đang bị khoá bởi tiến trình cũ chưa tắt hẳn.
+            # Bỏ qua, lần khởi động sau thử lại; không chặn việc chạy hệ thống.
+            _warn(f"Chưa tách được {name}.log cũ ({e}) — sẽ thử lại lần sau")
 
 
 def _port_in_use(port, host: str = "127.0.0.1") -> bool:
@@ -144,6 +198,20 @@ def _poll(url: str, timeout: int = POLL_TIMEOUT) -> bool:
     return False
 
 
+def _env_utf8() -> dict:
+    """Env cho tiến trình con, ép stdout/stderr về UTF-8.
+
+    Tiến trình con chỉ thừa kế file descriptor của log_file, KHÔNG thừa kế
+    đối tượng file đã mở với encoding="utf-8". Thấy stdout không phải console,
+    Python chọn ANSI codepage của máy (đo được: cp1252) — không có ký tự Việt
+    có dấu. Hậu quả đo trên logs/backend.log: 2.013 ký tự hỏng + 5.146 escape
+    \\uXXXX; print() tiếng Việt còn ném UnicodeEncodeError chết luồng.
+    `chcp 65001` trong start.bat KHÔNG cứu được: chcp đổi codepage console,
+    còn stream đã chuyển hướng ra file thì Python đọc ANSI codepage (GetACP).
+    Đặt ở đây để che cả backend lẫn frontend bằng một chỗ."""
+    return {**os.environ, "PYTHONIOENCODING": "utf-8"}
+
+
 def _run_with_restart(name: str, cmd: list, max_restarts: int = MAX_RESTARTS):
     """Vòng lặp restart subprocess. Ghi stdout+stderr vào logs/{name}.log."""
     restarts = 0
@@ -168,6 +236,7 @@ def _run_with_restart(name: str, cmd: list, max_restarts: int = MAX_RESTARTS):
             stdout=log_file,
             stderr=subprocess.STDOUT,
             cwd=ROOT,
+            env=_env_utf8(),
         )
 
         while proc.poll() is None:

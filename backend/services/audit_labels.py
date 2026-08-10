@@ -48,6 +48,7 @@ _WORK = {
     "PATCH /api/leaves/{id}/cancel":              "Hủy đơn nghỉ phép",
     "POST /api/leaves/quotas":                    "Đặt quỹ ngày phép",
     "PATCH /api/leaves/quotas/staff/{id}/join-date": "Sửa ngày vào ngành (quỹ phép)",
+    "PATCH /api/leaves/quotas/staff/{id}/used-days": "Sửa số ngày phép đã dùng",
     "POST /api/leaves/direct":                    "Tạo nghỉ phép trực tiếp",
     "POST /api/leaves/{id}/recall":               "Thu hồi đơn nghỉ phép",
     "PUT /api/leaves/{id}/recall-approve":        "Duyệt thu hồi nghỉ phép",
@@ -98,6 +99,7 @@ _WORK = {
     # Đối chiếu
     "POST /api/cham459901/process":               "Chấm đối chiếu 459901",
     "POST /api/doi_chieu_song_phuong/process":    "Đối chiếu song phương",
+    "POST /api/doi_chieu_ach/process":            "Đối chiếu ACH (GL02 ↔ MIS)",
     "POST /api/swift-recon/parse-preview":        "Xem trước dữ liệu SWIFT",
     "POST /api/swift-recon/reconcile-den":        "Đối chiếu SWIFT (điện đến)",
     "POST /api/swift-recon/reconcile-di":         "Đối chiếu SWIFT (điện đi)",
@@ -118,6 +120,7 @@ _MODULE = [
     ("/api/duty",                  "phân ca trực"),
     ("/api/swift-recon",           "đối chiếu SWIFT"),
     ("/api/doi_chieu_song_phuong", "đối chiếu song phương"),
+    ("/api/doi_chieu_ach",         "đối chiếu ACH"),
     ("/api/cham459901",            "chấm 459901"),
     ("/api/th-reports",            "báo cáo Tổng hợp"),
     ("/api/reports",               "báo cáo hậu kiểm"),

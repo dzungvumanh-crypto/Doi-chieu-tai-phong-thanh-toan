@@ -37,7 +37,7 @@ _STATUS_GROUP = {
 
     "pending_tong_hop": ("Chờ Tổng hợp",      "bg-yellow-100 text-yellow-700"),
 
-    "pending_gd":       ("Chờ Ban lãnh đạo",  "bg-blue-100 text-blue-700"),
+    "pending_gd":       ("Chờ Ban lãnh đạo duyệt", "bg-blue-100 text-blue-700"),
 
     "approved":         ("Hoàn thành",         "bg-green-100 text-green-700"),
 
@@ -426,6 +426,29 @@ async def leaves_page():
 
                     return
 
+            # Lỗi khác (403/500/timeout...) bị return_exceptions=True nuốt thành giá
+            # trị Exception — nếu không báo, all_leaves/dept_leaves... biến thành []
+            # âm thầm và Dashboard/5 ô KPI/các bảng chỉ hiện toàn số 0 mà không ai
+            # biết vì sao (vd cấp quyền leaves.forward_th cho người không thuộc
+            # Phòng Tổng hợp → can_all=True ở frontend nhưng scope=all bị 403 ở
+            # backend).
+            _fetch_errors = [
+                _name for _name, _val in (
+                    ("Đơn của tôi", my_leaves), ("Chờ duyệt", pending_leaves),
+                    ("Toàn trung tâm", all_leaves), ("Phòng tôi", dept_leaves),
+                    ("Đã khai báo hộ", declared_leaves),
+                )
+                if isinstance(_val, Exception)
+            ]
+
+            if _fetch_errors:
+
+                ui.notify(
+
+                    f"Không tải được: {', '.join(_fetch_errors)} — số liệu có thể thiếu/sai, vui lòng tải lại trang.",
+
+                    type="negative", timeout=8000)
+
             my_leaves      = my_leaves       if isinstance(my_leaves, list)      else []
 
             pending_leaves = pending_leaves  if isinstance(pending_leaves, list)  else []
@@ -774,7 +797,13 @@ async def leaves_page():
 
             c_approver = ui.select(approver_opts, label="Người phê duyệt (KSV)").classes("w-full mt-2") if show_approver else None
 
-            c_gd       = ui.select(gd_opts, label="Ban lãnh đạo phê duyệt (GĐ/PGĐ)").classes("w-full mt-2") if (gd_opts and user_role != "giam_doc") else None
+            # Luôn hiện field này cho non-GĐ kể cả khi gd_opts rỗng (do tải lỗi) — để
+            # validation "if c_gd and not c_gd.value" bên dưới thật sự chặn được submit.
+            # Trước đây gd_opts rỗng thì c_gd = None, validation bị bỏ qua hoàn toàn,
+            # đơn tạo ra với gd_approver_id=NULL và kẹt vĩnh viễn ở bước Tổng hợp (TH
+            # không có chỗ nào để chọn GĐ thay, xem tong_hop_review — chỉ dùng lại
+            # gd_approver_id có sẵn trên đơn, không cho chọn mới).
+            c_gd       = ui.select(gd_opts, label="Ban lãnh đạo phê duyệt (GĐ/PGĐ)").classes("w-full mt-2") if user_role != "giam_doc" else None
 
 
 
@@ -978,17 +1007,24 @@ async def leaves_page():
 
                     ui.notify("Vui lòng chọn người phê duyệt", type="warning"); return
 
+                # Bắt buộc chọn GĐ/PGĐ giống dialog Tạo đơn — không được coi là tuỳ
+                # chọn: nộp lại mà bỏ trống sẽ xoá mất GĐ đã chọn trước đó (backend chỉ
+                # ghi đè khi có gd_approver_id gửi lên), và TH không có cách nào chọn
+                # bù ở bước sau — đơn sẽ kẹt vĩnh viễn ở pending_tong_hop.
+                if not r_gd_select.value:
+
+                    ui.notify("Vui lòng chọn Ban lãnh đạo phê duyệt", type="warning"); return
+
                 body = {"start_date": dates[0], "end_date": dates[-1],
 
                         "spread_dates": dates,
 
-                        "leave_type": r_type.value, "reason": r_reason.value or None}
+                        "leave_type": r_type.value, "reason": r_reason.value or None,
+
+                        "gd_approver_id": r_gd_select.value}
 
                 if show_approver:
                     body["ksv_approver_id"] = r_approver.value
-
-                if r_gd_select.value:
-                    body["gd_approver_id"] = r_gd_select.value
 
                 try:
 
@@ -1732,6 +1768,15 @@ async def leaves_page():
 
         _quota_sel:  set = set()  # cho xuất Excel hạn mức phép
 
+        # Mọi checkbox từng vẽ ra (gắn với _sel hoặc _export_sel, ở bất kỳ bảng
+        # nào — Dashboard/Chờ duyệt/Phòng tôi/Của tôi/Khai báo hộ) — để
+        # _on_leave_tab_change có thể bỏ tick TRỰC QUAN khi đổi tab. Từ khi bỏ
+        # full-reload lúc đổi tab, các checkbox này không tự vẽ lại nữa nên vẫn
+        # hiện đang tick dù _sel/_export_sel đã bị xoá — dễ hiểu lầm "đã chọn"
+        # trong khi thực ra rỗng (hoặc ngược lại, Xuất Excel/Phê duyệt lặng lẽ
+        # dùng nhầm phạm vi khác vì tưởng chưa chọn gì).
+        _all_sel_checkboxes: list = []
+
         _approve_btn: list = []
 
         _reject_btn:  list = []
@@ -1756,7 +1801,11 @@ async def leaves_page():
 
         async def _bulk_approve():
 
-            ids = list(_sel)
+            # Bảng ở tab Dashboard/Báo cáo chỉ tick vào _export_sel (dùng cho Xuất
+            # Excel), không phải _sel (dùng cho Phê duyệt/Từ chối) — dự phòng bằng
+            # _export_sel giống hệt cách Xuất Excel đã làm (xem _active_export_ids
+            # bên dưới), tránh bấm Phê duyệt/Từ chối ở đó mà im lặng không làm gì.
+            ids = list(_sel) if _sel else list(_export_sel)
 
             if not ids:
 
@@ -1816,6 +1865,7 @@ async def leaves_page():
                             pass
 
                 _sel.clear()
+                _export_sel.clear()
                 fail_count = len(_ids) - ok_count
                 if fail_count:
                     ui.notify(f"Phê duyệt {ok_count}/{len(_ids)} đơn — {fail_count} đơn lỗi (có thể đã bị xử lý trước đó), vui lòng kiểm tra lại.",
@@ -1838,7 +1888,8 @@ async def leaves_page():
 
         async def _bulk_reject_open():
 
-            ids = list(_sel)
+            # Xem chú thích tương tự ở _bulk_approve — dự phòng bằng _export_sel.
+            ids = list(_sel) if _sel else list(_export_sel)
 
             if not ids:
 
@@ -1887,6 +1938,8 @@ async def leaves_page():
                         pass
 
                 _sel.clear()
+
+                _export_sel.clear()
 
                 fail_count = len(ids) - ok_count
 
@@ -2275,9 +2328,13 @@ async def leaves_page():
                                 for i in _ids: _s.discard(i)
 
                         if show_checkbox:
-                            ui.checkbox(value=False, on_change=_select_all).props("dense").classes("w-6 shrink-0 mr-2").tooltip("Chọn / Bỏ chọn tất cả")
+                            _all_sel_checkboxes.append(
+                                ui.checkbox(value=False, on_change=_select_all).props("dense").classes("w-6 shrink-0 mr-2").tooltip("Chọn / Bỏ chọn tất cả")
+                            )
                         elif export_sel is not None:
-                            ui.checkbox(value=False, on_change=_select_all_exp).props("dense").classes("w-6 shrink-0 mr-2").tooltip("Chọn / Bỏ chọn tất cả")
+                            _all_sel_checkboxes.append(
+                                ui.checkbox(value=False, on_change=_select_all_exp).props("dense").classes("w-6 shrink-0 mr-2").tooltip("Chọn / Bỏ chọn tất cả")
+                            )
 
                     ui.label("STT").classes(f"{_hdr_cls} w-8 text-center")
 
@@ -2333,6 +2390,7 @@ async def leaves_page():
 
                             _ck = ui.checkbox(value=False, on_change=_on_ck).props("dense").classes("w-6 shrink-0 mr-2")
                             _row_cks.append(_ck)
+                            _all_sel_checkboxes.append(_ck)
 
                         elif export_sel is not None:
 
@@ -2342,6 +2400,7 @@ async def leaves_page():
 
                             _ck = ui.checkbox(value=False, on_change=_on_exp_ck).props("dense").classes("w-6 shrink-0 mr-2")
                             _row_cks.append(_ck)
+                            _all_sel_checkboxes.append(_ck)
 
 
 
@@ -2561,11 +2620,17 @@ async def leaves_page():
                                 if fd and e < fd: continue
                                 if td and s > td: continue
                     filtered.append(lv)
+                # Bảng này show_checkbox=True mặc định (gắn với _sel, dùng cho Phê
+                # duyệt/Từ chối) — lọc xong các dòng bị ẩn phải bỏ khỏi _sel, nếu
+                # không Phê duyệt/Từ chối sau đó sẽ xử lý nhầm cả đơn không còn
+                # hiển thị trên màn hình.
+                _sel.clear()
                 _pf_body.clear()
                 with _pf_body:
                     _draw_table_paged(filtered, show_name=True)
 
             def _pf_reset():
+                _sel.clear()
                 _pf_name.value = ""
                 if _pf_dept: _pf_dept.value = ""
                 _pf_from.value = _pf_to.value = ""
@@ -2580,23 +2645,33 @@ async def leaves_page():
             with _pf_body:
                 _draw_table_paged(src, show_name=True)
 
-        # Người dùng bấm sang tab nào thì tự nạp lại dữ liệu mới nhất của tab đó
-        # đúng 1 lần ngay sau cú bấm (toàn bộ dữ liệu trang chỉ fetch 1 lần lúc
-        # build, xem context ở trên) — dùng _leaves_goto_raw để reload xong quay
-        # lại đúng tab vừa chọn.
-        # Lưu ý: ui.tab_panels(leave_tabs, value=_default_tab) tự set value lúc
-        # MOUNT trang cũng kích hoạt on_value_change y hệt người dùng bấm — phải
-        # bỏ qua đúng 1 lần gọi đầu tiên đó, nếu không sẽ tạo vòng lặp reload vô
-        # hạn ngay từ lúc mở trang.
-        _tab_mounted = [False]
-
+        # Mọi panel đều đã được build + nạp dữ liệu (await) ngay trong lượt dựng
+        # trang này (xem _load_dashboard/_reload_cal/_reload_holidays/_reload_quota
+        # bên dưới), nên chuyển tab chỉ đơn thuần là Quasar ẩn/hiện panel đã có sẵn
+        # ở client — KHÔNG cần (và trước đây gây trắng màn hình vì) reload lại cả
+        # trang qua ui.navigate.to("/leaves"). Dữ liệu vẫn được làm mới bình thường
+        # mỗi khi có hành động duyệt/từ chối/... (các chỗ đó tự gọi lại reload riêng).
         def _on_leave_tab_change():
             _sel.clear()
-            if not _tab_mounted[0]:
-                _tab_mounted[0] = True
-                return
-            app.storage.user["_leaves_goto_raw"] = leave_tabs.value
-            ui.navigate.to("/leaves")
+            # _export_sel dùng chung cho mọi bảng (Dashboard/Chờ duyệt/Của tôi/Khai báo
+            # hộ...) và là nguồn dự phòng cho Phê duyệt/Từ chối khi _sel rỗng (xem
+            # _bulk_approve) — nếu không xoá theo tab, tick chọn ở tab này rồi bấm
+            # Phê duyệt/Từ chối ở tab khác (không tick gì) sẽ âm thầm tác động lên lựa
+            # chọn cũ không còn hiển thị trên màn hình.
+            _export_sel.clear()
+            # Trước đây đổi tab = reload cả trang nên checkbox tự về trạng thái
+            # chưa tick. Giờ trang không reload nữa — checkbox vẫn hiện đang tick
+            # dù _sel/_export_sel đã bị xoá ở trên, dễ hiểu lầm "đã chọn" (hoặc
+            # khiến Xuất Excel/Phê duyệt tưởng chưa chọn gì mà âm thầm dùng nhầm
+            # phạm vi khác). Bỏ tick trực quan tất cả checkbox từng vẽ ra để khớp
+            # với việc 2 set trên đã rỗng. Bọc try/except vì checkbox của 1 lần vẽ
+            # trước có thể đã bị gỡ khỏi DOM (sau khi lọc/vẽ lại) — lỗi 1 cái không
+            # được làm hỏng việc đổi tab.
+            for _ck in _all_sel_checkboxes:
+                try:
+                    _ck.set_value(False)
+                except Exception:
+                    pass
 
         leave_tabs.on_value_change(_on_leave_tab_change)
 
@@ -2605,6 +2680,35 @@ async def leaves_page():
             if t_dashboard:
 
                 with ui.tab_panel(t_dashboard):
+
+                    # Thẻ tổng quan tách khỏi _db_area — để có thể tính lại riêng theo
+                    # khoảng ngày ở Bộ lọc tìm kiếm mà không phải reload cả dashboard.
+                    _kpi_area = ui.column().classes("w-full")
+
+                    def _render_kpi_cards(counts: dict):
+                        """Vẽ lại 5 ô tổng quan từ counts = {status: số lượng}."""
+                        _kpi_area.clear()
+                        with _kpi_area:
+                            # Thẻ tổng quan — nền trắng, viền xám mảnh, vạch màu ở cạnh trên,
+                            # chữ căn trái — giống kiểu ô thống kê bên trang đối chiếu. Cả cụm
+                            # bọc trong 1 khung riêng viền đỏ/nền hồng để tách khỏi phần dưới.
+                            with ui.element("div").classes(
+                                "w-full p-3 rounded-lg border border-red-300 bg-red-50"
+                            ):
+                                with ui.row().classes("w-full gap-3 flex-nowrap"):
+                                    _cards = [
+                                        ("Chờ KSV", counts.get("pending_ksv", 0), "border-t-orange-400", "text-orange-600"),
+                                        ("Chờ Tổng hợp", counts.get("pending_tong_hop", 0), "border-t-yellow-400", "text-yellow-600"),
+                                        ("Chờ Ban lãnh đạo duyệt", counts.get("pending_gd", 0), "border-t-blue-400", "text-blue-600"),
+                                        ("Hoàn thành", counts.get("approved", 0), "border-t-green-400", "text-green-600"),
+                                        ("Khai báo hộ", counts.get("direct", 0), "border-t-purple-400", "text-purple-600"),
+                                    ]
+                                    for lbl, cnt, top_cls, num_cls in _cards:
+                                        with ui.element("div").classes(
+                                            f"flex-1 min-w-0 px-4 py-3 rounded-lg border border-gray-200 border-t-4 {top_cls} bg-white"
+                                        ):
+                                            ui.label(lbl).classes("text-xs font-semibold text-gray-500")
+                                            ui.label(str(cnt)).classes(f"text-2xl font-bold mt-1 {num_cls}")
 
                     _db_area = ui.column().classes("w-full gap-4")
 
@@ -2646,35 +2750,13 @@ async def leaves_page():
 
 
 
+                        # Mặc định (chưa lọc theo ngày): số liệu theo phạm vi vai trò từ
+                        # backend. Nếu có Bộ lọc tìm kiếm (can_all), khối filter bên dưới
+                        # sẽ tự tính lại theo khoảng ngày ngay sau khi dựng xong — đè lên
+                        # giá trị này (xem _apply_filter → _render_kpi_cards).
+                        _render_kpi_cards(by_status)
+
                         with _db_area:
-
-                            # Thẻ tổng quan
-
-                            with ui.row().classes("gap-3 flex-wrap"):
-
-                                _cards = [
-
-                                    ("Chờ KSV", by_status.get("pending_ksv", 0), "bg-orange-50 border-orange-200 text-orange-700"),
-
-                                    ("Chờ Tổng hợp", by_status.get("pending_tong_hop", 0), "bg-yellow-50 border-yellow-200 text-yellow-700"),
-
-                                    ("Chờ GĐ", by_status.get("pending_gd", 0), "bg-blue-50 border-blue-200 text-blue-700"),
-
-                                    ("Đã duyệt", by_status.get("approved", 0), "bg-green-50 border-green-200 text-green-700"),
-
-                                    ("Khai báo hộ", by_status.get("direct", 0), "bg-purple-50 border-purple-200 text-purple-700"),
-
-                                ]
-
-                                for lbl, cnt, cls in _cards:
-
-                                    with ui.card().classes(f"border p-4 rounded-xl min-w-36 {cls}"):
-
-                                        ui.label(lbl).classes("text-xs font-medium")
-
-                                        ui.label(str(cnt)).classes("text-2xl font-bold mt-1")
-
-
 
                             # Đơn đang ch??
 
@@ -2821,6 +2903,45 @@ async def leaves_page():
 
 
 
+                        def _matches_daterange(lv, from_d, to_d):
+                            """True nếu đơn có ít nhất 1 ngày nghỉ rơi vào [from_d, to_d].
+                            Không chọn ngày nào → luôn True. Tách ra từ _apply_filter để
+                            dùng chung với _status_counts_by_date (5 ô tổng quan)."""
+                            if not (from_d or to_d):
+                                return True
+                            sd = lv.get("spread_dates")
+                            _dates = [d for d in (_parse_date(x) for x in sd) if d] if sd else []
+                            if _dates:
+                                return any((not from_d or d >= from_d) and (not to_d or d <= to_d) for d in _dates)
+                            lv_start = _parse_date(lv.get("start_date", ""))
+                            lv_end   = _parse_date(lv.get("end_date", ""))
+                            if lv_start and lv_end:
+                                if from_d and lv_end < from_d:
+                                    return False
+                                if to_d and lv_start > to_d:
+                                    return False
+                            return True
+
+                        def _status_counts_by_date(from_d, to_d):
+                            """Đếm đơn theo trạng thái trong khoảng ngày — nguồn cho 5 ô
+                            tổng quan khi có Bộ lọc tìm kiếm (all_leaves = toàn trung tâm,
+                            không giới hạn theo vai trò như by_status của backend)."""
+                            counts = {"pending_ksv": 0, "pending_tong_hop": 0, "pending_gd": 0,
+                                      "approved": 0, "direct": 0}
+                            for lv in all_leaves:
+                                if not _matches_daterange(lv, from_d, to_d):
+                                    continue
+                                st = lv.get("status")
+                                if st in ("pending_ksv", "pending_tong_hop", "pending_gd"):
+                                    counts[st] += 1
+                                elif st == "approved":
+                                    counts["approved"] += 1
+                                    if lv.get("is_direct"):
+                                        counts["direct"] += 1
+                            return counts
+
+
+
                         def _apply_filter():
 
                             name_q  = (_f_name.value or "").strip().lower()
@@ -2870,33 +2991,9 @@ async def leaves_page():
                                 if ltype_q == "normal" and (lv.get("is_direct") or lv.get("is_resubmitted")):
                                     continue
 
-                                if from_d or to_d:
+                                if not _matches_daterange(lv, from_d, to_d):
 
-                                    sd = lv.get("spread_dates")
-
-                                    _dates = [d for d in (_parse_date(x) for x in sd) if d] if sd else []
-
-                                    if _dates:
-
-                                        if not any((not from_d or d >= from_d) and (not to_d or d <= to_d) for d in _dates):
-
-                                            continue
-
-                                    else:
-
-                                        lv_start = _parse_date(lv.get("start_date", ""))
-
-                                        lv_end   = _parse_date(lv.get("end_date", ""))
-
-                                        if lv_start and lv_end:
-
-                                            if from_d and lv_end < from_d:
-
-                                                continue
-
-                                            if to_d and lv_start > to_d:
-
-                                                continue
+                                    continue
 
                                 filtered.append(lv)
 
@@ -2911,6 +3008,11 @@ async def leaves_page():
                                 _draw_table_paged(filtered, show_name=True, show_checkbox=False,
 
                                             export_sel=_export_sel)
+
+                            # 5 ô tổng quan luôn theo đúng khoảng ngày đang lọc (không theo
+                            # tên/trạng thái/phòng/loại đơn — chỉ riêng ngày) — không chọn
+                            # ngày nào thì tính trên toàn bộ đơn (from_d=to_d=None).
+                            _render_kpi_cards(_status_counts_by_date(from_d, to_d))
 
 
 
@@ -3078,6 +3180,42 @@ async def leaves_page():
 
 
 
+                            def _sf_matches_daterange(lv, fd, td):
+                                """Giống _matches_daterange ở khối can_all — nhưng dùng
+                                _parse_sf_date riêng của section này (Phòng tôi/Của tôi)."""
+                                if not (fd or td):
+                                    return True
+                                sd = lv.get("spread_dates")
+                                _dates = [d for d in (_parse_sf_date(x) for x in sd) if d] if sd else []
+                                if _dates:
+                                    return any((not fd or d >= fd) and (not td or d <= td) for d in _dates)
+                                s = _parse_sf_date(lv.get("start_date", ""))
+                                e = _parse_sf_date(lv.get("end_date", ""))
+                                if s and e:
+                                    if fd and e < fd:
+                                        return False
+                                    if td and s > td:
+                                        return False
+                                return True
+
+                            def _sf_status_counts(fd, td):
+                                """Đếm theo trạng thái trong khoảng ngày — chỉ trong phạm vi
+                                src_leaves (đơn phòng mình / đơn của mình), KHÔNG phải toàn
+                                trung tâm — nguồn cho 5 ô tổng quan của KSV/chuyên viên."""
+                                counts = {"pending_ksv": 0, "pending_tong_hop": 0, "pending_gd": 0,
+                                          "approved": 0, "direct": 0}
+                                for lv in src_leaves:
+                                    if not _sf_matches_daterange(lv, fd, td):
+                                        continue
+                                    st = lv.get("status")
+                                    if st in ("pending_ksv", "pending_tong_hop", "pending_gd"):
+                                        counts[st] += 1
+                                    elif st == "approved":
+                                        counts["approved"] += 1
+                                        if lv.get("is_direct"):
+                                            counts["direct"] += 1
+                                return counts
+
                             def _sf_apply():
 
                                 nq = (_sf_name.value or "").strip().lower()
@@ -3108,29 +3246,7 @@ async def leaves_page():
 
                                     if dq and (lv.get("department_name") or lv.get("dept_name") or "") != dq: continue
 
-                                    if fd or td:
-
-                                        sd = lv.get("spread_dates")
-
-                                        _dates = [d for d in (_parse_sf_date(x) for x in sd) if d] if sd else []
-
-                                        if _dates:
-
-                                            if not any((not fd or d >= fd) and (not td or d <= td) for d in _dates):
-
-                                                continue
-
-                                        else:
-
-                                            s = _parse_sf_date(lv.get("start_date",""))
-
-                                            e = _parse_sf_date(lv.get("end_date",""))
-
-                                            if s and e:
-
-                                                if fd and e < fd: continue
-
-                                                if td and s > td: continue
+                                    if not _sf_matches_daterange(lv, fd, td): continue
 
                                     filtered.append(lv)
 
@@ -3138,9 +3254,18 @@ async def leaves_page():
 
                                 _sf_container.clear()
 
+                                _export_sel.clear()
+
                                 with _sf_container:
 
                                     _draw_table_paged(filtered, show_name=show_name_, show_checkbox=False, export_sel=_export_sel)
+
+                                # 5 ô tổng quan chỉ theo khoảng ngày (không theo tên/trạng
+                                # thái/phòng/loại) — không chọn ngày nào thì tính trên toàn
+                                # bộ đơn CỦA PHẠM VI NÀY (phòng mình / của mình), không phải
+                                # toàn trung tâm.
+
+                                _render_kpi_cards(_sf_status_counts(fd, td))
 
 
 
@@ -3160,9 +3285,13 @@ async def leaves_page():
 
                                 _sf_container.clear()
 
+                                _export_sel.clear()
+
                                 with _sf_container:
 
                                     _draw_table_paged(src_leaves, show_name=show_name_, show_checkbox=False, export_sel=_export_sel)
+
+                                _render_kpi_cards(_sf_status_counts(None, None))
 
 
 
@@ -3171,6 +3300,8 @@ async def leaves_page():
                             with _sf_container:
 
                                 _draw_table_paged(src_leaves, show_name=show_name_, show_checkbox=False, export_sel=_export_sel)
+
+                            _render_kpi_cards(_sf_status_counts(None, None))  # render lần đầu, chưa lọc ngày
 
 
 
@@ -3919,8 +4050,16 @@ async def leaves_page():
                                     {"filename": _qi_state["filename"], "rows": rows},
                                 )
                                 qi_preview_dialog.close()
-                                ui.notify(f"Đã áp dụng {res.get('applied', 0)} nhân viên. Có thể hoàn tác trong \"Lịch sử nhập\".",
-                                          type="positive")
+                                _capped = res.get("capped_staff") or []
+                                if _capped:
+                                    ui.notify(
+                                        f"Đã áp dụng {res.get('applied', 0)} nhân viên — nhưng {len(_capped)} người "
+                                        f"({', '.join(_capped[:5])}{'…' if len(_capped) > 5 else ''}) đã có số ngày "
+                                        f"đã dùng THẬT cao hơn số nhập, hệ thống giữ theo số thật, không giảm được.",
+                                        type="warning", timeout=8000)
+                                else:
+                                    ui.notify(f"Đã áp dụng {res.get('applied', 0)} nhân viên. Có thể hoàn tác trong \"Lịch sử nhập\".",
+                                              type="positive")
                                 await _reload_quota()
                             except Exception as ex:
                                 _handle_api_error(ex)
@@ -3987,6 +4126,7 @@ async def leaves_page():
                     # Dialog sửa hạn mức + ngày vào ngânh
 
                     _quota_cb: list = [None]
+                    _quota_carry: list = [0.0]  # carry-over hiệu lực của người đang sửa — dùng để tính "Còn lại" live
 
                     with ui.dialog() as quota_dialog, ui.card().classes("p-6 w-96"):
 
@@ -3997,6 +4137,17 @@ async def leaves_page():
                         _q_calc_lbl  = ui.label("").classes("text-xs text-blue-600 mb-1")
 
 
+
+                        def _update_q_remaining(e=None):
+                            try:
+                                q = float(q_days_input.value or 0)
+                                u = float(q_used_input.value or 0)
+                                c = float(_quota_carry[0] or 0)
+                                rem = max(0.0, q + c - u)
+                                _q_remaining_lbl.set_text(
+                                    f"Còn lại: {rem:g} ngày  (Hạn mức {q:g} + Chuyển kỳ {c:g} − Đã dùng {u:g})")
+                            except Exception:
+                                _q_remaining_lbl.set_text("")
 
                         def _auto_calc_quota(e=None):
 
@@ -4030,6 +4181,8 @@ async def leaves_page():
 
                                 _q_calc_lbl.set_text("")
 
+                            _update_q_remaining()
+
 
 
                         q_join_input = ui.input("Ngày vào ngânh (DD-MM-YYYY)",
@@ -4040,9 +4193,16 @@ async def leaves_page():
 
                         q_days_input = ui.number("Hạn mức ngày phép (tự động điền, có thể sửa thủ công)",
 
-                                                 value=12, min=0, max=365).classes("w-full mt-2")
+                                                 value=12, min=0, max=365,
+                                                 on_change=_update_q_remaining).classes("w-full mt-2")
 
                         ui.label("Công thức: 12 ngày + 1 ngày mỗi 4 năm công tác").classes("text-xs text-gray-500 mt-1 mb-4")
+
+                        q_used_input = ui.number("Đã dùng (có thể sửa thủ công)",
+                                                  value=0, min=0, max=365,
+                                                  on_change=_update_q_remaining).classes("w-full")
+
+                        _q_remaining_lbl = ui.label("").classes("text-xs text-green-700 font-semibold mt-1 mb-4")
 
 
 
@@ -4054,7 +4214,7 @@ async def leaves_page():
 
                             if cb:
 
-                                await cb(q_days_input.value, q_join_input.value)
+                                await cb(q_days_input.value, q_join_input.value, q_used_input.value)
 
 
 
@@ -4239,11 +4399,19 @@ async def leaves_page():
 
                                                                     cur_days=row["quota_days"],
 
-                                                                    cur_join=row.get("join_industry_date","")):
+                                                                    cur_join=row.get("join_industry_date",""),
+
+                                                                    cur_used=row.get("used_days", 0),
+
+                                                                    cur_carry=row.get("carry_over", 0)):
 
                                                     _q_staff_lbl.set_text(sname)
 
                                                     q_days_input.value = cur_days
+
+                                                    q_used_input.value = cur_used
+
+                                                    _quota_carry[0] = cur_carry
 
                                                     # Chuyển YYYY-MM-DD → DD-MM-YYYY để hiển thị
 
@@ -4255,15 +4423,33 @@ async def leaves_page():
 
                                                         q_join_input.value = ""
 
-                                                    async def _cb2(days, join_str, _sid=sid, _sname=sname, _yr=yr):
+                                                    _update_q_remaining()
+
+                                                    async def _cb2(days, join_str, used_days, _sid=sid, _sname=sname, _yr=yr):
 
                                                         errs = []
+
+                                                        _ud_capped = False
 
                                                         try:
 
                                                             await asyncio.to_thread(api.post, "/api/leaves/quotas",
 
                                                                 {"staff_id": _sid, "year": _yr, "quota_days": float(days)})
+
+                                                        except Exception as ex:
+
+                                                            errs.append(str(ex))
+
+                                                        try:
+
+                                                            _ud_resp = await asyncio.to_thread(api.patch,
+
+                                                                f"/api/leaves/quotas/staff/{_sid}/used-days",
+
+                                                                {"year": _yr, "used_days": float(used_days)})
+
+                                                            _ud_capped = isinstance(_ud_resp, dict) and _ud_resp.get("capped")
 
                                                         except Exception as ex:
 
@@ -4298,6 +4484,18 @@ async def leaves_page():
                                                         if errs:
 
                                                             ui.notify(f"Lỗi: {'; '.join(errs)}", type="negative", timeout=5000)
+
+                                                        elif _ud_capped:
+
+                                                            ui.notify(
+
+                                                                f"Đã cập nhật {_sname} — nhưng số ngày đã dùng thật (từ đơn nghỉ phép thật) "
+
+                                                                f"đã cao hơn giá trị bạn nhập, nên hệ thống giữ theo số thật, không giảm được.",
+
+                                                                type="warning", timeout=6000)
+
+                                                            await _reload_quota()
 
                                                         else:
 
@@ -4433,6 +4631,10 @@ async def leaves_page():
 
                             t.set_text(f"Đơn đã khai báo hộ ({len(leaves)})")
 
+                        # Luôn xoá trước khi kiểm tra "không có đơn nào" — nếu không, lọc về
+                        # 0 dòng sẽ return sớm và bỏ sót lần xoá này (xem _all_sel_checkboxes).
+                        _export_sel.clear()
+
                         with c:
 
                             if not leaves:
@@ -4443,7 +4645,6 @@ async def leaves_page():
 
                             _hc = "font-semibold text-red-800 text-xs shrink-0 border-r border-red-400 pr-2 mr-1"
 
-                            _export_sel.clear()
                             _decl_row_cks: list = []
 
                             def _decl_select_all(e, _leaves=leaves):
@@ -4458,7 +4659,9 @@ async def leaves_page():
 
                                 with ui.row().classes("w-full bg-red-50 border-b-2 border-red-400 px-3 py-2 items-center gap-0"):
 
-                                    ui.checkbox(value=False, on_change=_decl_select_all).props("dense").classes("w-6 shrink-0 mr-2").tooltip("Chọn / Bỏ chọn tất cả")
+                                    _all_sel_checkboxes.append(
+                                        ui.checkbox(value=False, on_change=_decl_select_all).props("dense").classes("w-6 shrink-0 mr-2").tooltip("Chọn / Bỏ chọn tất cả")
+                                    )
 
                                     ui.label("STT").classes(f"{_hc} w-8 text-center")
 
@@ -4486,6 +4689,7 @@ async def leaves_page():
 
                                         _dck = ui.checkbox(value=False, on_change=_on_decl_ck).props("dense").classes("w-6 shrink-0 mr-2")
                                         _decl_row_cks.append(_dck)
+                                        _all_sel_checkboxes.append(_dck)
 
                                         ui.label(str(_di)).classes("text-xs w-8 shrink-0 text-center text-gray-500 border-r border-gray-400 pr-2 mr-1")
 
@@ -4544,23 +4748,6 @@ async def leaves_page():
                                         ui.button(icon="delete", on_click=_del).props(
 
                                             "flat round dense size=sm").classes("text-red-500 shrink-0").tooltip("Xóa đơn")
-
-
-
-                    async def _refresh_decl():
-
-                        try:
-
-                            fresh = await asyncio.to_thread(api.get, "/api/leaves/", {"scope": "declared"})
-
-                            _render_decl_table(fresh if isinstance(fresh, list) else [])
-
-                        except Exception as e:
-
-                            _handle_api_error(e) or ui.notify(
-                                "Không tải lại được danh sách khai báo hộ — vui lòng F5 trang.",
-                                type="negative",
-                            )
 
 
 
@@ -4792,9 +4979,11 @@ async def leaves_page():
 
                                         ui.notify("✅ Khai báo hộ thành công!", type="positive", timeout=4000)
 
-                                        # Không cần tự đánh dấu/nhảy trang nữa — bấm sang tab nào (kể cả
-                                        # Dashboard) sau đó sẽ tự nạp lại dữ liệu mới nhất (xem
-                                        # _on_leave_tab_change), vẫn ở nguyên tab Khai báo hộ ngay bây giờ.
+                                        # Đơn mới tạo phải phản ánh vào Dashboard/5 ô KPI/"Đơn của tôi"...
+                                        # nhưng các dữ liệu đó chỉ fetch 1 lần lúc mở trang, không tự refetch
+                                        # khi đổi tab nữa (xem _on_leave_tab_change) — phải reload thật qua
+                                        # _nav_pending() giống hệt cơ chế duyệt/từ chối, quay lại đúng tab
+                                        # Khai báo hộ sau khi reload xong.
 
                                         d_staff.value = None
                                         if _rng:
@@ -4811,7 +5000,7 @@ async def leaves_page():
 
                                         d_reason.set_visibility(False)
 
-                                        await _refresh_decl()
+                                        _nav_pending()
 
                                     ui.button("Khai báo", icon="check",
 

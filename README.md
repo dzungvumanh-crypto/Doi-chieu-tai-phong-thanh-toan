@@ -181,9 +181,12 @@ Truy cập:
 ├── data/
 │   └── ksnb.db             # SQLite database (tự tạo khi chạy lần đầu)
 ├── logs/
-│   └── app.log             # Log xoay vòng (5 MB × 3 file)
+│   ├── app.log             # Log xoay vòng (5 MB × 3 file) — nguồn của màn hình Nhật ký hệ thống
+│   ├── backend.log         # stdout/stderr tiến trình backend (run.py ghi) — không xoay vòng
+│   ├── frontend.log        # stdout/stderr tiến trình frontend (run.py ghi) — không xoay vòng
+│   └── *.truoc-utf8.log    # Phần log ghi trước bản vá UTF-8, run.py tự tách ra một lần
 ├── init_db.py               # Khởi tạo DB + seed data
-├── run.py                   # Launcher (chạy backend + frontend song song)
+├── run.py                   # Launcher (chạy backend + frontend song song; ép UTF-8 cho tiến trình con)
 ├── deploy_env_check.py      # Kiểm/sửa .env máy đích khi deploy (deploy.bat gọi)
 └── requirements.txt
 ```
@@ -209,7 +212,8 @@ Truy cập:
 - Banner "Phép còn lại" tính đủ hạn mức nhập tay + ngày chuyển kỳ, khớp đúng tab Hạn mức phép
 - Đơn nghỉ vắt qua ranh giới năm (vd 29/12 → 02/01) được chia đúng cho từng năm khi tính hạn mức
 - Nghỉ thai sản / bảo hiểm (không trừ vào hạn mức phép năm), chọn khoảng ngày bằng lịch cuộn
-- Nhập hạn mức phép hàng loạt từ file Excel (xem trước / áp dụng / hoàn tác)
+- Nhập hạn mức phép hàng loạt từ file Excel (xem trước / áp dụng / hoàn tác); sửa tay số ngày "Đã dùng" của từng người — cả hai cách đều thay thế lẫn nhau, không cộng dồn
+- Bản ghi hạn mức nhập từ Excel / sửa tay không phải đơn nghỉ thật: bị ẩn khỏi danh sách đơn, lịch, kiểm tra trùng ngày, số liệu Dashboard, Trang chủ và Báo cáo bàn giao
 - Khai báo hộ; ngày nghỉ lẻ không liên tục (`spread_dates`)
 - Bảng nghỉ phép hôm nay trên Trang chủ theo từng phòng — **chỉ đếm đơn đã duyệt** (lịch tháng trong menu thì hiện cả đơn đang chờ, kèm nhãn trạng thái)
 - Chống duyệt trùng: hai người (hoặc hai tab) bấm duyệt cùng lúc thì chỉ lần đầu có hiệu lực, lần sau báo đơn đã được xử lý
@@ -277,6 +281,24 @@ Truy cập:
 - Phân loại mỗi dòng theo **4 ngân hàng** (Vietinbank 201, BIDV 202, Vietcombank 203, MBBank 311) × **2 chiều**: **ĐẾN** (`CRAMOUNT=0`) / **ĐI** (`DRAMOUNT=0`) → xuất **8 file CSV**
 - Phân quyền riêng theo nhóm (`menu.doi_chieu_song_phuong`, `doi_chieu_song_phuong.process`)
 
+### Module Đối chiếu ACH
+- Đối chiếu GL02 (IPCAS/NPO) với MIS PaymentHub theo phiên ACH, cả hai chiều ĐI và ĐẾN
+- Menu: **Phòng Thanh toán → Đối chiếu → Đối chiếu ACH**
+- Upload bộ file 1 ngày: `GL02*.zip`, file GW `.xlsx`, 2 file `*_DI_*.zip`, 2 file `*_DEN_*.zip`,
+  PDF sao kê ACH (lấy số session + suy ngày đối chiếu). Mỗi file gửi lên ngay khi chọn, ghi thẳng
+  ra đĩa theo khối 1 MB — không giữ cả bộ 150–250 MB trong RAM
+- Ngày đối chiếu suy từ tên file PDF (`ACH_YYYYMMDD_..._NRT_<session>_...` → ngày T-1), nhập tay được;
+  không suy được thì **báo lỗi**, không lặng lẽ dùng ngày khác
+- Khớp theo số lượng cặp khoá: chiều ĐI `TRBRCD+SO_TRACE+CRAMOUNT` ↔ `CHI_NHANH+SO_TRACE+SO_TIEN`,
+  chiều ĐẾN `SO_TRACE+DRAMOUNT` ↔ `TRACE+SO_TIEN`. Lệnh TPAY vượt số slot GW được tách ra sheet
+  **TIMEOUT_KHONG_KENH** (đánh dấu `CO_TRONG_GW` nếu MSGREF vẫn có trong GW → cần kiểm tra tay)
+- Kết quả: 1 file Excel 11 sheet (TONG_KET, PHAN_TICH có cảnh báo tự động, các sheet khớp/thừa,
+  CAP_CN_TIEN, RAW_GW); sheet trên **15.000 dòng** tự tách ra CSV riêng, tải lẻ hoặc tải gộp ZIP
+- Chạy nền trên **1 luồng riêng** (`max_workers=1`) — job thứ hai xếp hàng; theo dõi tiến độ + nhật ký
+  bằng poll, có nút Dừng (dừng ở mốc kiểm tra giữa các pha, không tức thì)
+- Kết quả giữ **4 giờ** trong `data/temp_doi_chieu_ach/` rồi tự xoá; không lưu lịch sử vào DB
+- Phân quyền riêng theo nhóm (`menu.doi_chieu_ach`, `doi_chieu_ach.process`)
+
 ### Module Đối chiếu CITAD ↔ PaymentHub
 - Đối chiếu số liệu tổng CITAD (NHNN) với PaymentHub (Agribank) theo từng ngày
 - Menu: **Phòng Thanh toán → Đối chiếu → Đối chiếu CITAD**
@@ -295,15 +317,13 @@ Truy cập:
 ### Module Đối soát CITAD ↔ IPCAS
 - Đối soát từng lệnh chuyển tiền giữa CITAD (NHNN) và IPCAS (Agribank) theo ngày chấm
 - Menu: **Phòng Thanh toán → Đối soát CITAD ↔ IPCAS**
-- Upload file CITAD (`.xls`/`.zip`), IPCAS (`.csv`/`.zip`) và Hub ngoại tệ (`.xls`); khớp trong RAM
-  theo `msgref` (Đi) / `txid` (Đến), phân loại lệch thành 4 nhóm: **Chỉ CITAD / Chỉ IPCAS / Chỉ Hub /
-  Lệch trạng thái**
+- Upload file CITAD (`.xls`/`.xlsx`/`.zip`), IPCAS (`.csv`/`.zip`) và Hub ngoại tệ (`.xls`/`.xlsx`);
+  khớp trong RAM theo `msgref` (Đi) / `txid` (Đến), phân loại lệch thành 4 nhóm:
+  **Chỉ CITAD / Chỉ IPCAS / Chỉ Hub / Lệch trạng thái**
 - Cảnh báo khi chọn **trùng nội dung file** (băm SHA-256 toàn bộ byte, không dựa vào tên file)
 - Xuất Excel 4 sheet; tab **Lịch sử** lưu `doi_soat_citad_history` kèm snapshot nguyên vẹn danh sách
   lệch — xem lại/tải lại đúng số liệu của lần đối soát cũ, không tính lại từ file gốc
 - Phân quyền riêng theo nhóm (`menu.doi_soat_citad`)
-- ⚠️ **Lỗi đã biết:** file CITAD định dạng `.xlsx` bị đọc ra rỗng mà không báo lỗi
-  (`parsers.py` — `read_only=True` kèm `close()` trước khi đọc). **Dùng `.xls`** cho tới khi sửa xong
 
 ---
 

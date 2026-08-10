@@ -51,7 +51,197 @@
 <div class="page">
 
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
-  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-05</p>
+  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-10</p>
+
+  <!-- N -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">N</span>
+      <span class="card-title">Log tiếng Việt của tiến trình con bị hỏng âm thầm — ép UTF-8 ở <code>run.py</code></span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Vì sao lỗi tồn tại lâu mà không ai phát hiện</p>
+      <p><code>run.py</code> mở file log bằng <code>_open_log()</code> với <code>encoding="utf-8"</code> rồi
+      truyền vào <code>Popen(stdout=log_file)</code>. Nhìn qua tưởng đã đủ — nhưng tiến trình con chỉ thừa kế
+      <strong>file descriptor</strong>, không thừa kế đối tượng file đã mở. Python trong tiến trình con thấy
+      stdout không phải console nên tự chọn ANSI codepage của máy. Đo được trên máy chạy thật:
+      <strong>cp1252</strong> — codepage Tây Âu, không có ký tự Việt có dấu.</p>
+
+      <table>
+        <tr><th>Cách ghi log</th><th>Hành vi khi gặp tiếng Việt</th><th>Vì sao khó phát hiện</th></tr>
+        <tr><td><code>print()</code></td><td><code>UnicodeEncodeError</code> — chết luồng ngay tại dòng đó</td>
+            <td>Chỉ nổ khi có chuỗi có dấu. Đường chạy qua API của <code>doi_chieu_ach</code> luôn truyền
+            <code>log_callback=emit</code> nên nhánh <code>or print</code> chưa bao giờ chạy trong vận hành
+            thật — lỗi nằm im chờ.</td></tr>
+        <tr><td><code>logging</code></td><td><strong>Không</strong> ném lỗi. <code>StreamHandler</code> có cơ chế
+            dự phòng tự đổi ký tự hỏng thành escape <code>\uXXXX</code></td>
+            <td>Không exception, không cảnh báo, job vẫn báo thành công. Đây là lý do lỗi sống sót từ 11/05/2026
+            tới nay.</td></tr>
+      </table>
+
+      <p class="label">Bằng chứng đo trên log thật trước khi sửa</p>
+      <table>
+        <tr><th>File</th><th>Nguồn ghi</th><th>Đọc bằng UTF-8</th><th>Ký tự hỏng</th><th>Escape <code>\uXXXX</code></th></tr>
+        <tr><td><code>logs/backend.log</code></td><td>tiến trình con</td><td>lỗi byte <code>0x97</code></td><td>2.013</td><td>5.146</td></tr>
+        <tr><td><code>logs/frontend.log</code></td><td>tiến trình con</td><td>lỗi byte <code>0xe3</code></td><td>160</td><td>509</td></tr>
+        <tr><td><code>logs/app.log</code></td><td><code>RotatingFileHandler(encoding="utf-8")</code></td><td>sạch</td><td>0</td><td>0</td></tr>
+      </table>
+      <p>Dòng thật trong <code>backend.log</code>: <code>Backup ho?n tất → data\backups\...</code> —
+      nguyên văn là <em>"Backup hoàn tất → data\backups\..."</em>.</p>
+
+      <p class="label">Vì sao sửa ở <code>run.py</code> chứ không vá từng entry point</p>
+      <p>Bản vá gốc từ PR #19 (<code>18ff8c0</code>) đặt <code>reconfigure()</code> trong
+      <code>backend/main.py</code>. Đúng nhưng chỉ che backend — <code>frontend/main.py</code> hỏng y hệt mà
+      không được che, và mỗi entry point mới sau này lại phải nhớ vá lại. Thêm
+      <code>_env_utf8()</code> đặt <code>PYTHONIOENCODING=utf-8</code> vào <code>Popen</code> che cả hai tiến
+      trình bằng một chỗ. Giữ luôn bản vá trong <code>backend/main.py</code> vì nó còn bảo vệ đường khởi động
+      thẳng <code>uvicorn backend.main:app</code> không qua <code>run.py</code> (chạy tay, IDE, systemd).</p>
+
+      <div class="caution"><strong><code>chcp 65001</code> trong <code>start.bat</code> không cứu được.</strong>
+      <code>chcp</code> đổi codepage <em>console</em>, còn stream đã chuyển hướng ra file thì Python đọc
+      <em>ANSI codepage</em> qua <code>GetACP()</code> — hai thứ khác nhau. Đừng nhầm cái này là đã xử lý rồi.</div>
+
+      <p class="label">Tự tách log cũ thay vì bắt người deploy đổi tên tay</p>
+      <p>Sau khi vá, <code>backend.log</code> thành file <strong>trộn hai encoding</strong>: phần cũ cp1252,
+      phần mới UTF-8 — mở bằng UTF-8 thì hỏng phần cũ, mở bằng cp1252 thì hỏng phần mới, không công cụ nào
+      đọc đúng cả file. <code>deploy.bat</code> không đụng tới <code>logs/</code> nên mỗi máy đích đều dính,
+      và việc phải-nhớ-đổi-tên thì sẽ quên. <code>_tach_log_cu_khong_utf8()</code> chạy trong
+      <code>_ensure_dirs()</code> tự xử lý.</p>
+      <table>
+        <tr><th>Quyết định</th><th>Lý do</th></tr>
+        <tr><td>Đặt trong <code>_ensure_dirs()</code>, <strong>không</strong> đặt trong <code>_open_log()</code></td>
+            <td><code>_open_log()</code> nằm trong vòng lặp restart của <code>_run_with_restart()</code> — gọi lại
+            mỗi lần tiến trình con restart, không phải một lần lúc khởi động.</td></tr>
+        <tr><td>Giải mã theo khối 1 MB bằng <code>IncrementalDecoder</code></td>
+            <td>Hai file này không có rotation nên có thể phình rất lớn; không nạp cả file vào RAM chỉ để kiểm tra.</td></tr>
+        <tr><td>Đổi tên, không xoá; đã có bản tách thì gắn thêm dấu thời gian</td>
+            <td>Không mất dòng log nào, và không đè lên bản tách của lần triển khai trước.</td></tr>
+        <tr><td>Bắt <code>OSError</code> → cảnh báo rồi chạy tiếp</td>
+            <td>File hay bị khoá bởi tiến trình cũ chưa tắt hẳn. Một việc dọn dẹp không đáng chặn cả hệ thống
+            khởi động; lần sau thử lại.</td></tr>
+      </table>
+      <p><strong>Tự tắt sau lần đầu</strong> — file mới thuần UTF-8 nên lần khởi động sau không còn khớp điều
+      kiện. Đã kiểm chứng trên bản sao log thật: lần 1 tách đúng 2 file (giữ nguyên 1.738.324 và 1.185.185
+      byte), <code>app.log</code> không bị đụng vì vốn đã sạch; lần 2 không làm gì.</p>
+
+      <p class="label">Điều bản vá KHÔNG làm</p>
+      <ul>
+        <li><code>backend.log</code> / <code>frontend.log</code> <strong>không có rotation</strong> —
+        <code>log_cleanup_service</code> chỉ dọn bảng <code>login_logs</code> / <code>audit_logs</code> trong DB,
+        không đụng file. File hỗn hợp sẽ nằm đó vô thời hạn.</li>
+        <li>Màn hình <em>Nhật ký hệ thống</em> không bị ảnh hưởng: <code>backend/api/logs.py</code> đọc
+        <code>logs/app.log</code> — file này vốn đã đúng UTF-8, không phải <code>backend.log</code>.</li>
+      </ul>
+
+      <div class="note"><code>errors="replace"</code> trong <code>reconfigure()</code> gần như không bao giờ
+      kích hoạt vì đích là UTF-8 mã hoá được toàn bộ Unicode. Để đó cho trường hợp surrogate lẻ, không phải
+      chỗ nuốt lỗi.</div>
+
+    </div>
+  </div>
+
+  <!-- M -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">M</span>
+      <span class="card-title">Tích hợp Đối chiếu ACH (GL02 ↔ MIS) vào menu Đối chiếu — Phòng Thanh toán</span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Nguồn gốc và nguyên tắc port</p>
+      <p>Code đến từ app rời <code>DOI-CHIEU-ACH</code> (CLI + Flask/SocketIO, chạy 1 máy 1 người).
+      Nguyên tắc: <strong>giữ nguyên 100% logic nghiệp vụ B1–B8</strong>, chỉ thay lớp vỏ. Đã kiểm chứng
+      bằng cách chạy song song bản gốc và bản port trên cùng bộ dữ liệu tổng hợp 270.310 dòng
+      (<code>create_test_data.py</code> của app gốc): 5 file CSV kết quả <strong>trùng md5</strong>, 11 sheet
+      Excel trùng từng ô, các mốc B2/B3/B4/B5/B7 khớp đúng số liệu kỳ vọng mà bộ sinh dữ liệu công bố.</p>
+
+      <table>
+        <tr><th>Điểm khác bản gốc</th><th>Quyết định</th><th>Lý do</th></tr>
+        <tr><td>Ngày đối chiếu</td><td>Bỏ <code>NGAY_DOI_CHIEU</code> khỏi config; lấy từ ô nhập hoặc suy từ tên file PDF, không suy được thì <strong>báo lỗi</strong></td>
+            <td>Bản gốc để cứng ngày trong <code>config.py</code> và âm thầm dùng lại khi không suy được — nhiều người dùng chung một server thì đây là đường thẳng tới một bản đối chiếu sai ngày mà không ai biết.</td></tr>
+        <tr><td>Mốc TPAY</td><td>Tính cục bộ trong engine, truyền tường minh xuống B4</td>
+            <td>Bản gốc đọc <code>config.TPAY_TU/TPAY_DEN</code> ở module level. Hai job chạy cùng lúc sẽ đọc nhầm mốc của nhau.</td></tr>
+        <tr><td>Luồng chạy</td><td><code>ThreadPoolExecutor(max_workers=1)</code> riêng, <strong>không</strong> dùng <code>BackgroundTasks</code> như <code>doi_chieu_song_phuong</code></td>
+            <td>Một lần chạy mất vài phút và tự mở thêm 4 luồng con. Đi qua bể chung anyio 40 token là đúng kịch bản làm nghẽn cả <code>/api/auth/me</code> đã mô tả ở <code>core/concurrency.py</code>. <code>max_workers=1</code>: chạy 2 job song song tốn RAM gấp đôi mà không nhanh hơn vì pandas giữ GIL — job thứ hai xếp hàng.</td></tr>
+        <tr><td>Tiến độ</td><td>Poll <code>/progress/{token}</code> thay cho SocketIO</td>
+            <td>Đồng bộ với các module đối chiếu sẵn có; không phải thêm websocket vào hệ thống.</td></tr>
+        <tr><td>Excel</td><td>Bỏ <code>tqdm</code>, thêm <code>xlsxwriter</code> + <code>python-calamine</code> vào requirements</td>
+            <td>tqdm chỉ để vẽ thanh tiến độ ở terminal. Hai gói kia là bắt buộc: <code>constant_memory</code> của xlsxwriter và tốc độ đọc GW của calamine (file GW có thể vài triệu dòng).</td></tr>
+      </table>
+
+      <p class="label">Tải từng file thay vì gửi một lần cả bộ</p>
+      <p>Bộ dữ liệu một ngày gồm ~6 file (2 ZIP MIS ĐI, 2 ZIP MIS ĐẾN, GL02, GW) thường 150–250 MB.
+      Gửi một request nghĩa là tiến trình NiceGUI giữ trọn số byte đó trong RAM rồi backend giữ thêm một
+      bản nữa — mà tiến trình NiceGUI phục vụ chung <em>mọi</em> màn hình khác. Nay mỗi file được đẩy sang
+      backend ngay khi chọn, ghi thẳng ra đĩa theo khối 1 MB, đỉnh RAM chỉ bằng đúng một file.</p>
+
+      <div class="caution"><strong>Bẫy của <code>ui.upload</code>:</strong> handler <strong>phải đồng bộ</strong>
+      và đọc <code>e.content</code> ngay dòng đầu. NiceGUI trả response cho trình duyệt xong mới chạy handler
+      bất đồng bộ (<code>asyncio.create_task</code>), lúc đó file tạm của request đã có thể bị đóng và đọc ra
+      rỗng — lỗi này không ném exception, chỉ cho ra file 0 byte. Byte đọc được giữ tạm trong entry rồi được
+      giải phóng ngay sau khi gửi xong; phần gửi chạy qua <code>ui.timer(0.01, once=True)</code> để vẫn có
+      client context cho <code>ui.notify</code>.</div>
+
+      <p class="label">Đường dẫn tạm nhận token từ URL — chặn hai lớp</p>
+      <p><code>token</code> đi thẳng từ URL vào đường dẫn thư mục. Chặn bằng: (1) token phải nằm trong
+      <code>_progress</code> (chỉ <code>tao_job()</code> phát ra, dạng uuid4); (2) sau <code>resolve()</code>,
+      thư mục job phải là con trực tiếp của <code>TEMP_DIR</code> và tên file phải nằm đúng trong
+      <code>output/</code>. Chỉ dựa vào <code>Path(filename).name</code> là không đủ trên Windows
+      (<code>%2f</code>, dấu <code>\</code>, tên 8.3).</p>
+
+      <p class="label">Hai lỗi do kiểm thử giao diện phát hiện — đã sửa</p>
+      <p>Kiểm thử chạy trên chính trang NiceGUI (mô phỏng người dùng bằng
+      <code>nicegui.testing</code>, không cần trình duyệt), nối vào backend thật và engine thật.
+      Hai lỗi dưới đây không thể lộ ra nếu chỉ kiểm thử ở tầng API:</p>
+      <table>
+        <tr><th>Lỗi</th><th>Biểu hiện</th><th>Cách sửa</th></tr>
+        <tr><td>Huỷ bị báo thành lỗi hệ thống</td>
+            <td>Bấm <strong>Dừng</strong> → hiện thông báo đỏ <em>"Lỗi xử lý: Đã huỷ theo yêu cầu
+            người dùng"</em>. Người dùng tự tay dừng lại tưởng phần mềm hỏng.</td>
+            <td>Thêm cờ <code>cancelled</code> riêng, không nhét vào <code>error</code>; giao diện
+            báo màu xanh thông tin.</td></tr>
+        <tr><td>Xoá file: giao diện nói dối</td>
+            <td>Bấm ✕ → file biến mất trên màn hình nhưng <strong>vẫn còn trên máy chủ</strong>.
+            Windows khoá file vừa ghi (WinError 5, do phần mềm diệt virus / bộ lập chỉ mục quét
+            file .zip mới) khiến <code>unlink</code> thất bại.</td>
+            <td><code>xoa_file_input</code> thử lại 4 nhịp × 0,3s; hết vẫn lỗi thì trả 409 kèm câu
+            hướng dẫn, giao diện giữ nguyên file trong danh sách. Thà báo thật còn hơn để người
+            dùng chạy đối chiếu với file họ tưởng đã bỏ.</td></tr>
+      </table>
+      <div class="note">Cùng nguyên nhân đó, <code>_xoa_thu_muc</code> trước đây dùng
+      <code>shutil.rmtree(ignore_errors=True)</code> — nuốt sạch lỗi. Mỗi lần chạy có thể để lại
+      vài trăm MB trong <code>data/</code> mà không ai biết cho tới lúc hết đĩa. Nay còn sót thì
+      ghi WARNING và dọn ở lần chạy sau.</div>
+
+      <p class="label">Vấn đề phát hiện nhưng không sửa</p>
+      <ul>
+        <li><strong>Bộ sinh dữ liệu test của app gốc đã lạc hậu:</strong> nó ghi <code>CUSTOMER='0'</code>
+        trong khi B2 lọc <code>CUSTOMER='1000-003526275'</code> (bộ lọc được thêm sau), nên chạy nguyên xi
+        sẽ ra <code>NPO_DI=0</code> ở <em>cả hai</em> bản. Không phải lỗi port. Không sửa vì file đó không
+        được đưa vào repo này — ghi lại ở đây để lần sau không mất công truy.</li>
+        <li><strong>Kết quả chỉ giữ 4 giờ</strong> (<code>CLEANUP_HOURS</code>) và mất khi backend khởi động
+        lại, vì tiến độ nằm trong RAM. Chấp nhận: đây là công cụ chạy–tải–xong trong ngày, không phải kho
+        lưu trữ. Nếu sau này cần tra cứu lịch sử thì phải thêm bảng như <code>doi_chieu_citad_history</code>.</li>
+        <li><strong>Nút "Dừng" không dừng tức thì:</strong> engine chỉ kiểm tra cờ huỷ ở 4 mốc giữa các pha.
+        Bấm dừng giữa lúc đang đọc ZIP thì phải chờ hết pha đó. Giữ nguyên thiết kế bản gốc — kill luồng
+        giữa chừng khi pandas đang giữ vài triệu dòng là cách chắc chắn nhất để rò bộ nhớ.</li>
+      </ul>
+
+      <p class="label">Ảnh hưởng tới phần khác</p>
+      <table>
+        <tr><th>File sửa</th><th>Thay đổi</th><th>Rủi ro</th></tr>
+        <tr><td><code>api/registry.py</code></td><td>Thêm 1 import + 1 tuple</td><td>Không — router mới, không đụng route cũ</td></tr>
+        <tr><td><code>core/features.py</code></td><td>Thêm 2 feature code + 1 menu vào nhóm Phòng Thanh toán</td><td>Không — code mới, không đổi code cũ nên quyền đã gán không mất. <strong>Phải vào Phân quyền theo nhóm bật cho nhóm cần dùng</strong>, nếu không chỉ admin thấy menu.</td></tr>
+        <tr><td><code>frontend/shared.py</code></td><td>Thêm 1 item vào submenu Đối chiếu</td><td>Không — breadcrumb tự dựng lại từ cây menu</td></tr>
+        <tr><td><code>services/audit_labels.py</code></td><td>Thêm nhãn + prefix module</td><td>Không — chỉ ảnh hưởng chữ hiển thị trong nhật ký</td></tr>
+        <tr><td><code>requirements.txt</code></td><td>+<code>xlsxwriter</code>, +<code>python-calamine</code></td><td><strong>Có:</strong> máy đã cài cũ phải chạy lại <code>pip install -r requirements.txt</code>, nếu không backend chết ngay lúc khởi động vì <code>registry.py</code> import module này.</td></tr>
+      </table>
+
+    </div>
+  </div>
 
   <!-- L -->
   <div class="card">
@@ -3386,19 +3576,33 @@ ui.on_exception(_on_exception)</pre>
             — đây là lý do test không phát hiện.</td>
             <td>Tách riêng để sửa gọn một chỗ, không trộn vào đợt merge kiến trúc. Đã ghi cảnh báo
             "dùng .xls, không dùng .xlsx" vào <code>Logs_update.md</code> cho người dùng.</td></tr>
-        <tr><td>Nút "Tạo mã kết nối" gửi <code>api.BACKEND_URL</code> (mặc định
+        <tr><td><s>Nút "Tạo mã kết nối" gửi <code>api.BACKEND_URL</code> (mặc định
             <code>http://localhost:8000</code>) sang Extension. Đó là địa chỉ nhìn từ <em>máy chủ</em>,
-            còn Extension chạy trên <em>máy trạm</em>. <code>background.js</code> chỉ lưu chuỗi nhận
-            được, không thử kết nối, nên giao diện báo "✓ đã tự động kết nối" trong khi địa chỉ sai.</td>
-            <td>Cần lấy địa chỉ từ <code>window.location</code> của trang đang mở, và cho service worker
-            thử gọi backend trước khi báo thành công — không phải sửa một dòng.</td></tr>
-        <tr><td><code>manifest.json</code> khai <code>externally_connectable</code> kèm số cổng
-            (<code>http://localhost:8080/*</code>). Match pattern của Chrome không chứa cổng; ngoài ra
-            địa chỉ frontend thật trên LAN cũng không nằm trong danh sách.</td>
-            <td>Chưa xác minh được — cần nạp Extension thật trên trình duyệt, môi trường phát triển
-            không lái được Chrome. Hai khả năng: manifest bị từ chối (Extension không nạp được) hoặc
-            tính năng tự kết nối im lặng không chạy.</td></tr>
+            còn Extension chạy trên <em>máy trạm</em>.</s></td>
+            <td><span class="badge badge-done">Đã sửa</span> — PR #17 (proxy /api/doi-chieu-citad/* qua
+            frontend). <code>server</code> giờ lấy từ <code>window.location.origin</code> ngay trong JS
+            chạy ở trình duyệt người dùng, đúng địa chỉ họ đã gõ để vào ứng dụng.</td></tr>
+        <tr><td><s><code>manifest.json</code> khai <code>externally_connectable</code> kèm số cổng.
+            Nghi ngờ match pattern của Chrome không chứa cổng.</s></td>
+            <td><span class="badge badge-done">Đã xác minh — không phải lỗi</span>. Tài liệu chính thức
+            Chrome (developer.chrome.com/docs/extensions/develop/concepts/match-patterns): cổng LÀ 1
+            phần hợp lệ của match pattern ("port (optional)... By default, this is treated as a
+            wildcard"), và địa chỉ IP literal hoạt động y hệt domain (<code>http://127.0.0.1/*</code>
+            là ví dụ chính thức). <code>http://apc-portal:8080/*</code>, <code>http://10.1.3.89:9090/*</code>
+            hợp lệ.</td></tr>
       </table>
+
+      <p class="label">Xác minh + sửa (2026-08-05): lỗi <code>parsers.py:74</code></p>
+      <p>Đã tái hiện trực tiếp bằng <code>openpyxl</code> thật: tạo file <code>.xlsx</code>, mở
+      <code>load_workbook(read_only=True)</code>, gọi <code>wb.close()</code>, rồi đọc 1 ô —
+      <strong>ném <code>ValueError: Attempt to use ZIP archive that was already closed</code></strong>.
+      <code>_OpenpyxlWs.cell_value()</code> bọc bằng <code>try/except Exception: return ''</code> nên
+      lỗi này bị nuốt hoàn toàn — xác nhận đúng như dự đoán ban đầu, không còn là suy đoán.</p>
+      <p><span class="badge badge-done">Đã sửa</span> — PR riêng, tách khỏi #17 (module
+      <code>doi_soat_citad</code>, khác với <code>doi_chieu_citad</code> mà PR #17 sửa). Chuyển
+      <code>wb.close()</code> ra SAU vòng lặp đọc ô (bọc <code>try/finally</code>), chỉ áp dụng cho
+      nhánh <code>openpyxl</code> — nhánh <code>xlrd</code> giữ nguyên. Đã kiểm chứng lại bằng
+      <code>openpyxl</code> thật: đọc đúng giá trị ô thật (không còn rỗng), 0 exception bị nuốt.</p>
 
       <p class="label">Bài học cho lần sau</p>
       <p>Ba lỗi trong đợt này cùng một gốc: tính năng được phát triển và kiểm thử trên <strong>một máy
@@ -3612,20 +3816,324 @@ ui.on_exception(_on_exception)</pre>
       Đổi địa chỉ máy chủ là phải dựng lại <code>.zip</code> và cài lại trên từng máy.</p>
 
       <p class="label">Vì sao PR #17 chỉ merge 1 trong 2 commit</p>
-      <p>Commit còn lại (<code>703d0c1</code>) thêm reverse-proxy <code>/api/*</code> ở
-      <code>frontend/api_proxy.py</code>, cho máy trạm gọi backend qua cổng frontend. Bản thân code
-      viết cẩn thận (httpx bất đồng bộ, lọc header hop-by-hop, <code>multi_items()</code> giữ query
-      lặp key, ghi đè <code>X-Client-IP</code> chống giả mạo IP trong audit).</p>
-      <p>Nhưng route khai <code>/api/{full_path:path}</code> nên <strong>toàn bộ API của mọi module</strong>
-      gọi được qua cổng 8080. Trên máy chủ thật, tường lửa chỉ mở 8080 và chặn 8000 — đó là một lớp
-      phòng thủ, và proxy này vô hiệu hoá nó. Xác thực vẫn nguyên (mọi endpoint qua
-      <code>require_feature</code>, login có <code>rate_limit</code>), nên <em>không phải lỗ hổng</em>,
-      nhưng là bỏ một lớp bảo vệ — phải là quyết định có chủ đích, không phải hệ quả phụ của việc sửa
-      cho Extension chạy được. Extension chỉ cần đúng 2 đường dẫn buffer.</p>
-      <p>Ba điểm kỹ thuật khác đã gửi cùng phản hồi: timeout 30s áp cho mọi endpoint (Chấm 459901 mất
-      ~65s), đệm toàn bộ body vào RAM của tiến trình frontend, và <code>content-encoding</code> được
-      forward nguyên trong khi httpx đã tự giải nén — chưa hỏng vì backend chưa có
-      <code>GZipMiddleware</code>, nhưng sẽ hỏng ngày nào thêm nén.</p>
+      <p>Chỉ merge <code>d1ca9b8</code> (parse thập phân). Commit reverse-proxy bị giữ lại vì khai
+      route <code>/api/{full_path:path}</code> — mở toàn bộ API của mọi module qua cổng 8080, vô hiệu
+      hoá lớp tường lửa chặn cổng 8000 trên máy chủ thật. PR #17 sau đó được đóng và thay bằng
+      <strong>PR #20</strong> với phạm vi đã thu hẹp — xem card 51.</p>
+
+    </div>
+  </div>
+
+  <!-- 50 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">50</span>
+      <span class="card-title">Nghỉ phép: đợt rà soát &amp; sửa lỗi lớn — reload/hạn mức/KPI theo ngày/GĐ bắt buộc</span>
+      <span class="badge badge-done">Đã fix</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Đổi tab bị trắng màn hình — nguyên nhân: reload cả trang, không phải chậm tải</p>
+      <p><code>frontend/pages/leaves.py</code> — <code>_on_leave_tab_change()</code> gọi
+      <code>ui.navigate.to("/leaves")</code> ở mọi lần bấm tab. Mọi panel đã được dựng + <code>await</code>
+      nạp dữ liệu xong ngay trong một lượt build trang, nên đổi tab thật ra không cần load lại gì —
+      Quasar <code>ui.tab_panels</code> chỉ cần ẩn/hiện panel đã có sẵn. Xoá lời gọi
+      <code>ui.navigate.to</code>. Dữ liệu vẫn tươi bình thường vì các thao tác duyệt/từ chối/khai báo
+      hộ vẫn tự <code>ui.navigate.to("/leaves")</code> riêng sau khi xong.</p>
+
+      <div class="caution">
+      <strong>Hệ quả không lường trước:</strong> vì trang không còn reload mỗi lần đổi tab, các biến
+      chọn dòng (<code>_sel</code>, <code>_export_sel</code>) không còn tự reset theo tab nữa — tick
+      chọn ở bảng tab này rồi bấm Phê duyệt/Từ chối ở tab khác (không tick gì) từng âm thầm tác động lên
+      lựa chọn cũ không còn hiển thị. Đã vá bằng cách xoá cả 2 set này trong
+      <code>_on_leave_tab_change</code> và ở mọi chỗ vẽ lại bảng lọc.
+      </div>
+
+      <p class="label">Sửa tay hạn mức "Đã dùng" — cộng dồn vô hạn qua mỗi lần Lưu</p>
+      <p>Thêm field "Đã dùng" vào dialog sửa hạn mức, ghi qua endpoint mới
+      <code>PATCH /api/leaves/quotas/staff/{staff_id}/used-days</code> — cơ chế giống hệt "Nhập file hạn
+      mức" (tạo 1 bản ghi <code>leave_records</code> loại <code>bat_buoc</code>/<code>approved</code>
+      tổng hợp, vì <code>_calc_used_days</code> — nguồn sự thật duy nhất — không đọc
+      <code>user_tttt.used_leave_days</code>). Dialog tự điền sẵn <strong>tổng hiện tại</strong> (đã gồm
+      cả đơn thật), nhưng bản đầu cứ chèn thẳng số nhập vào như 1 khối synthetic mới — lưu lại 3 lần
+      liên tiếp không đổi gì thì số tăng 2→4→6. Sửa: trừ đi phần đơn <strong>thật</strong>
+      (<code>_calc_used_days</code> sau khi đã xoá bản ghi tổng hợp cũ) rồi mới chèn đúng phần chênh
+      lệch — idempotent, lưu lại giá trị không đổi thì giữ nguyên. Nếu số nhập &lt; số thật, bị chặn ở
+      số thật, trả về <code>capped: true</code> để frontend báo.</p>
+      <p>Sửa tay và Nhập Excel luôn <strong>thay thế nhau</strong> (không cộng dồn) — cả 2 endpoint đều
+      xoá bản ghi tổng hợp gắn tag <code>[Import]</code> HOẶC <code>[Điều chỉnh]</code> trước khi tạo
+      bản ghi mới.</p>
+
+      <p class="label">Bản ghi hạn mức "giả" từng hiện ra như đơn nghỉ phép thật</p>
+      <p>Bản ghi tổng hợp ở trên (từ Nhập Excel hoặc sửa tay) là 1 dòng <code>leave_records</code> bình
+      thường — trước đây hiện lẫn trong Lịch nghỉ phép, "Đơn của tôi", danh sách toàn trung tâm, và còn
+      chặn nhầm khi tạo đơn thật trùng ngày với nó. Đã ẩn khỏi: <code>list_leaves()</code> (mọi scope),
+      <code>/api/leaves/export</code>, <code>/api/leaves/calendar</code>, kiểm tra trùng ngày ở
+      <code>create_leave</code>/<code>resubmit_leave</code>/<code>create_direct_leave</code>, và số liệu
+      <code>approved</code>/<code>direct</code>/<code>top_staff</code> trong <code>leader_dashboard()</code>
+      — lọc theo <code>reason LIKE '[Import]%' OR reason LIKE '[Điều chỉnh]%'</code>.
+      <strong>Không đụng</strong> <code>_calc_used_days</code>/<code>_calc_used_days_bulk</code>/
+      <code>_carry_over_bulk</code> — các hàm này bắt buộc vẫn phải đếm bản ghi giả để hạn mức tính đúng.</p>
+
+      <p class="label">5 ô KPI Dashboard — đổi theo khoảng ngày lọc, đúng phạm vi vai trò</p>
+      <p>5 ô tổng quan (Chờ KSV/Chờ Tổng hợp/Chờ Ban lãnh đạo duyệt/Hoàn thành/Khai báo hộ) giờ tính lại
+      theo khoảng "Ngày nghỉ từ/đến ngày" ở Bộ lọc tìm kiếm — không chọn ngày thì mặc định tính trên
+      toàn bộ đơn. Với admin/GĐ/PGĐ/Phòng Tổng hợp (<code>can_all</code>): tính từ <code>all_leaves</code>
+      (toàn trung tâm). Với KSV/chuyên viên thường: tính riêng từ <code>dept_leaves</code>/
+      <code>my_leaves</code> — <strong>chỉ phạm vi phòng/cá nhân họ</strong>, không lộ số liệu toàn
+      trung tâm. Tách logic khớp ngày thành <code>_matches_daterange</code>/<code>_sf_matches_daterange</code>
+      dùng chung với bộ lọc bảng, tránh lệch giữa 2 nơi.</p>
+      <p>Nhân tiện sửa 1 lỗi có sẵn: nhân viên Phòng Tổng hợp trước đây không được đếm
+      <code>pending_gd</code> toàn trung tâm trong <code>leader_dashboard()</code> dù đã được xem toàn
+      trung tâm cho <code>approved</code>/<code>top_staff</code> — ô "Chờ Ban lãnh đạo duyệt" của họ
+      luôn hiện 0 dù có đơn thật đang chờ (thấy được trong bảng danh sách bên dưới).</p>
+
+      <p class="label">Đồng bộ nhãn trạng thái — mỗi nơi từng ghi 1 kiểu</p>
+      <table>
+        <tr><th>Trạng thái</th><th>Trước (không đồng bộ)</th><th>Sau</th></tr>
+        <tr><td><code>pending_gd</code></td><td>"Chờ GĐ duyệt" / "Chờ Ban lãnh đạo" / "Chờ GĐ"</td>
+            <td><strong>"Chờ Ban lãnh đạo duyệt"</strong></td></tr>
+        <tr><td><code>approved</code></td><td>"Đã duyệt" / "Đã phê duyệt"</td>
+            <td><strong>"Hoàn thành"</strong></td></tr>
+      </table>
+      <p>Sửa ở 4 nguồn: <code>frontend/ui_kit.py</code> (<code>STATUS</code> — nguồn dùng chung cho
+      badge + dropdown lọc), <code>frontend/pages/leaves.py</code> (ô KPI Dashboard), và
+      <code>backend/api/leaves.py</code> (<code>_LEAVE_STATUS_VN</code> trả trong API, và
+      <code>_STATUS_VN</code> cục bộ khi xuất Excel).</p>
+
+      <p class="label">GĐ/PGĐ bắt buộc chọn khi tạo/nộp lại đơn</p>
+      <p>Trước đây field "Ban lãnh đạo phê duyệt" chỉ hiện khi tải được danh sách GĐ/PGĐ
+      (<code>gd_opts</code> khác rỗng) — tải lỗi thì field biến mất, validate bị bỏ qua hoàn toàn, đơn
+      tạo ra với <code>gd_approver_id=NULL</code>. Không có bước nào sau đó cho phép Tổng hợp chọn bù
+      (<code>tong_hop_review</code> chỉ dùng lại giá trị có sẵn trên đơn) — đơn kẹt vĩnh viễn ở
+      <code>pending_tong_hop</code>. Đã sửa: field luôn hiện cho vai trò không phải GĐ, validate bắt
+      buộc chọn (giống field KSV) ở cả dialog Tạo đơn lẫn Nộp lại — nếu <code>gd_opts</code> rỗng, form
+      chặn gửi thay vì âm thầm tạo đơn hỏng.</p>
+      <div class="caution">
+      <strong>Đánh đổi:</strong> nếu hệ thống không có bất kỳ tài khoản Giám đốc/Phó Giám đốc nào đang
+      hoạt động, không ai tạo được đơn nghỉ phép nào cả (chặn ngay từ đầu) — thay vì trước đây vẫn tạo
+      được nhưng đơn hỏng ở bước sau. Chấp nhận được vì hệ thống thật luôn có ít nhất 1 GĐ; chỉ ảnh hưởng
+      lúc mới cài đặt/thiếu cấu hình.
+      </div>
+
+      <p class="label">Các fix nhỏ khác trong cùng đợt</p>
+      <ul>
+        <li>Báo lỗi rõ ràng (thay vì âm thầm về 0) khi 1 trong các API tải dữ liệu trang Nghỉ phép thất
+        bại (403/500/timeout) — trước đây <code>return_exceptions=True</code> nuốt hết, 5 ô KPI/bảng chỉ
+        còn toàn số 0 không rõ nguyên nhân.</li>
+        <li>Khai báo hộ xong giờ tự <code>_nav_pending()</code> reload đúng tab đang đứng thay vì chỉ
+        refresh cục bộ bảng khai báo hộ (dữ liệu Dashboard/5 ô KPI trước đây bị cũ tới khi F5) — xoá luôn
+        hàm <code>_refresh_decl()</code> không còn dùng tới.</li>
+        <li>Nút Phê duyệt/Từ chối trên bảng Dashboard/Báo cáo (chỉ tick vào <code>_export_sel</code> dùng
+        cho Xuất Excel) giờ dùng dự phòng <code>_export_sel</code> khi <code>_sel</code> rỗng — trước đây
+        tick chọn ở đó rồi bấm 2 nút này không có phản hồi gì (im lặng không làm gì).</li>
+      </ul>
+
+      <table>
+        <tr><th>Chưa làm trong đợt này</th><th>Lý do / việc còn lại</th></tr>
+        <tr><td>Yêu cầu rút đơn (<code>recall</code>) không có cách từ chối, chỉ có huỷ</td>
+            <td>Cần thêm action mới ở <code>tong_hop_review</code>/endpoint riêng — để đợt sau.</td></tr>
+        <tr><td>Hoàn tác Nhập Excel có thể ghi đè nhầm lên 1 chỉnh sửa tay hạn mức làm sau đó</td>
+            <td><code>import_quota_rollback</code> chỉ so "superseded" với batch import khác, chưa so
+            với sửa tay qua dialog — để đợt sau.</td></tr>
+        <tr><td>Nhãn "Bị từ chối" (<code>_LEAVE_STATUS_VN</code>) vs "Từ chối" (nơi khác)</td>
+            <td>Sót lại khi đồng bộ nhãn ở trên — để đợt sau.</td></tr>
+        <tr><td><code>_upd_btns</code> (bật/tắt nút Phê duyệt/Từ chối theo có chọn hay chưa) không được
+            gắn vào nút thật</td>
+            <td>Nút luôn ở trạng thái bật — không nguy hiểm nhờ đã có cảnh báo khi bấm mà chưa chọn, chỉ
+            là UX chưa mượt — để đợt sau.</td></tr>
+      </table>
+
+      <p class="label">Bổ sung sau rà soát chéo (commit cb02ffd / e9f8b73 / 0e4e5cc)</p>
+      <p><strong>Nhập file hạn mức Excel dính đúng lỗi cộng dồn vừa sửa ở sửa tay.</strong>
+      <code>n_days</code> trước đây lấy thẳng con số "Đã nghỉ" trong file, nên nhân viên đã có đơn
+      nghỉ THẬT trong năm bị cộng dồn ngay từ lần nhập đầu. Sửa bằng cùng công thức delta như
+      <code>update_used_days</code>. Khác một điểm: lệnh <code>DELETE</code> bản ghi tổng hợp cũ phải
+      tách ra chạy TRƯỚC vòng lặp cho toàn bộ nhân viên trong file, rồi mới gọi
+      <code>_calc_used_days_bulk</code> một lần — nếu để trong vòng lặp như bản đơn lẻ thì phải gọi
+      <code>_calc_used_days</code> N lần. Phạm vi xoá chỉ gồm nhân viên có trong file
+      (<code>staff_ids</code> dựng từ <code>rows</code>), không đụng người ngoài danh sách.</p>
+
+      <div class="caution">
+        <p><strong>Đổi ý nghĩa cột trong "Lịch sử nhập".</strong>
+        <code>quota_import_items.new_used_leave_days</code> nay lưu <em>kết quả thật sau khi cộng đơn
+        thật</em>, không còn là con số trong file Excel. Với nhân viên có đơn thật trong năm, số ở màn
+        hình Lịch sử nhập sẽ không khớp file gốc — đúng về bản chất nhưng dễ bị hiểu là lỗi. Muốn giữ
+        khả năng truy nguyên file gốc thì phải lưu thêm cột riêng.</p>
+      </div>
+
+      <p><strong>Bỏ full-reload khi đổi tab kéo theo 2 lỗi phụ.</strong> Trước đây reload trang làm
+      checkbox tự về trạng thái chưa tick. Bỏ reload thì <code>_sel</code>/<code>_export_sel</code>
+      bị xoá nhưng checkbox vẫn hiện đang tick — phải gom mọi checkbox từng vẽ vào
+      <code>_all_sel_checkboxes</code> để bỏ tick thủ công khi đổi tab. Tương tự, bảng "Chờ duyệt" lọc
+      xong phải <code>_sel.clear()</code>, nếu không Phê duyệt/Từ chối xử lý nhầm cả đơn đã bị ẩn.</p>
+
+      <p class="label">Bản ghi tổng hợp rò ra ngoài module — 2 chỗ, và bài học</p>
+      <p>Bản ghi "[Import]"/"[Điều chỉnh]" là dòng <code>leave_records</code> bình thường với mọi truy
+      vấn khác trong hệ thống. Hai nơi ngoài module đọc bảng này mà không lọc:</p>
+      <table>
+        <tr><th>Nơi</th><th>Hậu quả nếu không lọc</th></tr>
+        <tr><td><code>handover_report_service._load_staff_leave</code> (Báo cáo bàn giao)</td>
+            <td>Bản ghi tổng hợp không có <code>spread_dates</code> nên hàm này bung liên tục
+            02/01→28/01. Người NHẬN bàn giao bị coi là nghỉ suốt tháng 1 ⇒ chứng từ nộp trễ được chấm
+            thành đúng hạn. <strong>Kiểm chứng:</strong> chèn 1 bản ghi giả cho người nhận có thật —
+            develop trả 19 ngày nghỉ, sau vá trả 0.</td></tr>
+        <tr><td><code>/api/leaves/today</code> (Trang chủ)</td>
+            <td>Đếm nhầm người đang nghỉ trong tháng 1. Đã lọc <code>/calendar</code> ngay cạnh nhưng
+            sót endpoint này.</td></tr>
+      </table>
+      <p>Không regression: so sánh sha256 toàn bộ kết quả <code>compute_period</code> trên 9 kỳ có dữ
+      liệu (2025-04, 2025-11, 2026-01 → 2026-08) giữa develop và bản vá — trùng khớp tuyệt đối.</p>
+
+      <div class="caution">
+        <p><strong>Mệnh đề lọc đang nằm ở 13 chỗ trên 2 file</strong> (12 trong
+        <code>backend/api/leaves.py</code>, 1 trong <code>backend/services/handover_report_service.py</code>).
+        Thêm tiền tố thứ ba sau này rất dễ sót — nhất là chỗ bên <code>services/</code>, ngoài module
+        nghỉ phép nên không ai nghĩ tới. Nên gom thành hằng số dùng chung.</p>
+        <p><code>POST /api/leaves/quotas/{year}/import/apply</code> và endpoint hoàn tác vẫn CHƯA có
+        nhãn trong <code>audit_labels.py</code> — nhật ký chỉ ghi "Thực hiện — nghỉ phép" cho một thao
+        tác xoá hàng loạt <code>leave_records</code>. Lưu ý <code>_norm()</code> đổi năm thành
+        <code>{id}</code>, khoá phải viết là <code>/api/leaves/quotas/{id}/import/apply</code>.</p>
+      </div>    </div>
+  </div>
+
+  <!-- 51 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">51</span>
+      <span class="card-title">Reverse-proxy <code>/api/doi-chieu-citad/*</code> qua frontend (PR #20)</span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Vì sao cần</p>
+      <p>Máy chủ production chỉ mở tường lửa cổng <strong>frontend (8080)</strong> ra máy trạm, không
+      mở cổng backend (8000). Extension CITAD chạy trên máy trạm nên luôn "Không kết nối server" dù
+      cấu hình đúng địa chỉ. <code>frontend/api_proxy.py</code> cho tiến trình frontend tự chuyển tiếp
+      sang backend nội bộ — máy trạm chỉ cần biết đúng một cổng.</p>
+
+      <p class="label">Quyết định phạm vi: chỉ 1 tiền tố, KHÔNG wildcard</p>
+      <p>Bản đầu khai <code>/api/{full_path:path}</code>. Như thế mọi API của mọi module (nghỉ phép,
+      chấm công, bàn giao, quản lý user) gọi được qua cổng 8080 — <strong>vô hiệu hoá quy tắc tường
+      lửa chặn cổng 8000</strong>. Xác thực vẫn nguyên nên không phải lỗ hổng, nhưng là gỡ một lớp
+      phòng thủ theo chiều sâu để đổi lấy tiện ích của một module.</p>
+      <p>Đã thu hẹp về <code>/api/doi-chieu-citad/{sub_path:path}</code>. Đo lại sau khi sửa: đường dẫn
+      trong tiền tố proxy đúng (401 khi thiếu JWT, trả dữ liệu khi có), còn
+      <code>/api/staff</code>, <code>/api/leaves</code>, <code>/api/auth/me</code>,
+      <code>/api/doi-soat-citad/history</code> đều <strong>404 trên cổng 8080</strong> mà vẫn chạy
+      bình thường khi gọi thẳng cổng 8000.</p>
+      <p><strong>Cần thêm module khác dùng qua proxy thì thêm đúng tiền tố của module đó — không nới
+      thành wildcard.</strong></p>
+
+      <p class="label">Bài học đáng nhớ nhất: dict Python phân biệt hoa/thường, HTTP header thì không</p>
+      <p>Code chống giả mạo IP viết như sau và <em>trông</em> hoàn toàn đúng:</p>
+      <pre><code>headers = {k: v for k, v in request.headers.items() if k.lower() not in _HOP_BY_HOP}
+headers["X-Client-IP"] = request.client.host</code></pre>
+      <p>Nhưng Starlette chuẩn hoá tên header về <strong>chữ thường</strong> khi duyệt
+      <code>.items()</code>, nên dict đã chứa <code>'x-client-ip'</code> do client gửi. Dòng gán tiếp
+      theo tạo ra khoá <em>thứ hai</em> là <code>'X-Client-IP'</code>. httpx gửi <strong>cả hai</strong>
+      header; backend đọc trúng cái đi trước — của client. Phép "ghi đè" không hề ghi đè.</p>
+      <table>
+        <tr><th></th><th>Header gửi lên backend</th><th>Backend đọc ra</th></tr>
+        <tr><td>Trước</td><td><code>x-client-ip=9.9.9.9</code>, <code>X-Client-IP=10.1.3.181</code></td>
+            <td><code>9.9.9.9</code> (giả mạo)</td></tr>
+        <tr><td>Sau</td><td><code>X-Client-IP=10.1.3.181</code></td>
+            <td><code>10.1.3.181</code></td></tr>
+      </table>
+      <p>Sửa: loại <code>x-client-ip</code> ngay ở bước lọc thay vì trông cậy vào phép gán.
+      <strong>Quy tắc chung: muốn ghi đè một header khi forward thì phải LOẠI mọi biến thể hoa/thường
+      của nó ở bước lọc</strong> — không bao giờ chỉ gán đè.</p>
+      <p>Lưu ý mức độ: nhật ký <em>đang</em> ghi đúng, vì Extension không gửi
+      <code>X-Client-IP</code>. Đây là lỗ hổng cho ai cố tình, không phải dữ liệu đang sai — không cần
+      soát lại nhật ký cũ.</p>
+
+      <p class="label">Địa chỉ máy chủ gửi cho Extension: lấy từ trình duyệt, không lấy từ backend</p>
+      <p>Nút "Tạo mã kết nối" từng gửi <code>api.BACKEND_URL</code> vào Extension. Đó là địa chỉ backend
+      <em>nhìn từ máy chủ</em> (<code>127.0.0.1:8000</code>) — trên máy trạm không có gì ở đó. Nặng hơn:
+      nó <strong>ghi đè lên cấu hình tay đang đúng</strong>, nên ai đã tự điền địa chỉ chuẩn mà bấm nút
+      này là hỏng. Giao diện vẫn báo "✓ đã tự động kết nối" vì <code>background.js</code> chỉ lưu chuỗi
+      chứ không thử gọi.</p>
+      <p>Sửa: dựng object ngay trong JS và lấy <code>window.location.origin</code> — đúng địa chỉ người
+      dùng đã gõ để vào ứng dụng, tức đúng cổng proxy phục vụ. <strong>Nguyên tắc: giá trị cần đúng
+      theo góc nhìn của TRÌNH DUYỆT thì phải lấy ở trình duyệt, không suy từ cấu hình máy chủ.</strong></p>
+
+      <p class="label">Ràng buộc phải giữ</p>
+      <ul>
+        <li><strong>Không mở tiền tố có upload file lớn.</strong> Proxy đọc trọn body và response vào
+        RAM tiến trình frontend (dùng chung cho mọi người đang mở web). Chấp nhận được vì tiền tố hiện
+        tại chỉ có JSON nhỏ và file Excel một ngày; endpoint upload lớn nằm ở
+        <code>/api/doi-soat-citad/</code>, ngoài phạm vi. Mở thêm tiền tố có upload thì phải đổi sang
+        stream trước.</li>
+        <li><strong>Timeout 60s</strong> — endpoint export đi qua <code>run_heavy</code>
+        (<code>MAX_HEAVY=4</code>), bể đầy thì phải xếp hàng.</li>
+        <li><strong><code>content-encoding</code> nằm trong hop-by-hop</strong> — httpx tự giải nén
+        <code>.content</code> nhưng giữ nguyên header gốc; forward nguyên sẽ hỏng ngày nào backend bật
+        <code>GZipMiddleware</code>.</li>
+        <li><strong>Cổng 8080 không xử lý preflight CORS</strong> (route không khai
+        <code>OPTIONS</code>). Chưa ảnh hưởng vì Extension gọi từ service worker. Ai gỡ lỗi CORS qua
+        cổng này cần biết cổng 8000 mới là cửa có <code>CORSMiddleware</code>.</li>
+        <li><strong><code>request.client.host</code> đúng vì NiceGUI lắng nghe thẳng.</strong> Đặt
+        nginx/IIS trước cổng 8080 thì giá trị này thành IP của nginx và mọi dòng audit mang cùng một
+        địa chỉ — lúc đó phải đọc <code>X-Forwarded-For</code>.</li>
+        <li><strong>Chưa chặn:</strong> đặt <code>BACKEND_URL</code> thành địa chỉ frontend sẽ làm proxy
+        chuyển tiếp về chính nó, đệ quy tới khi hết timeout. Chưa thêm guard.</li>
+      </ul>
+
+    </div>
+  </div>
+
+<!-- 54 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">54</span>
+      <span class="card-title">Extension MV3: cấu hình đến từ 2 đường, quyền chỉ xin được ở 1 (PR #23)</span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Triệu chứng</p>
+      <p>Trên máy trạm thật: <code>SERVER</code> cấu hình đúng
+      (<code>http://apc-portal:8080</code>), giao diện báo lưu thành công, nhưng
+      <code>edge://extensions</code> → Site access không hiện địa chỉ đó, và mọi request từ Extension
+      bị chặn với "Không kết nối server".</p>
+
+      <p class="label">Gốc rễ: hai đường ghi cấu hình, chỉ một đường xin được quyền</p>
+      <table>
+        <tr><th>Đường ghi <code>server</code></th><th>Có xin quyền host?</th></tr>
+        <tr><td><code>options.js</code> — người dùng tự điền rồi bấm Lưu</td>
+            <td><span class="badge badge-done">Có</span> <code>chrome.permissions.request()</code>
+            cho đúng origin vừa nhập</td></tr>
+        <tr><td><code>background.js</code> — nhận <code>SET_CONFIG</code> từ nút "Tạo mã kết nối"</td>
+            <td><strong>KHÔNG</strong> — chỉ <code>chrome.storage.local.set()</code></td></tr>
+      </table>
+      <p>Và service worker <strong>không thể</strong> gọi <code>chrome.permissions.request()</code>:
+      API đó đòi thao tác người dùng trong ngữ cảnh trang của extension, service worker không có.
+      Nên đường tự động <em>về nguyên tắc</em> không bao giờ xin được quyền, không phải lỗi cài đặt.</p>
+      <p>PR #20 làm nút tự kết nối chạy được (lấy <code>window.location.origin</code>) — và chính điều
+      đó phơi ra khoảng trống này: cấu hình đúng, quyền thiếu.</p>
+
+      <p class="label">Vì sao chọn khai tĩnh thay vì vá đường động</p>
+      <p>Khai 3 địa chỉ production vào <code>host_permissions</code> — trình duyệt cấp ngay lúc cài,
+      độc lập hoàn toàn với việc cấu hình đến từ đường nào. Đây là cách duy nhất bảo đảm quyền có mặt
+      cho cả hai đường.</p>
+      <p>Phương án đã cân nhắc rồi bỏ: giữ <code>optional_host_permissions</code> và cho
+      <code>background.js</code> gọi <code>chrome.permissions.contains()</code> sau khi nhận
+      <code>SET_CONFIG</code>, thiếu quyền thì báo "mở Tuỳ chọn bấm Lưu một lần". Ưu điểm: manifest
+      tổng quát, đổi địa chỉ máy chủ không phải dựng lại bản cài. Nhược: thêm một thao tác tay đúng
+      vào chỗ vừa bỏ công tự động hoá. Với một máy chủ cố định thì khai tĩnh gọn hơn.</p>
+
+      <p class="label">Ràng buộc phát sinh</p>
+      <ul>
+        <li><strong>Ba địa chỉ production nay nằm cứng ở HAI nơi</strong> —
+        <code>host_permissions</code> và <code>externally_connectable.matches</code>. Đổi địa chỉ máy
+        chủ phải sửa cả hai rồi dựng lại <code>.zip</code>. Lệch một chỗ là hỏng theo kiểu khó đoán:
+        một bên cho gửi <code>SET_CONFIG</code>, bên kia chặn request thật.</li>
+        <li><strong>Thêm <code>host_permissions</code> không có hiệu lực với extension đã cài.</strong>
+        Bắt buộc tải lại <code>.zip</code> và Load unpacked lại. Đây là lý do phải bump version và ghi
+        cảnh báo vào <code>Logs_update.md</code> — người dùng không tự biết.</li>
+        <li><code>http://localhost:8000/*</code> trong <code>host_permissions</code> là rác còn sót từ
+        thời chưa có proxy (Extension nay đi cổng 8080). Vô hại, dọn lúc nào cũng được.</li>
+      </ul>
 
     </div>
   </div>
