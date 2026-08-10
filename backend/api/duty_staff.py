@@ -31,7 +31,6 @@ def update_staff_meta(
     return upsert_staff_meta(
         db, user_id,
         can_do_sp=body.can_do_sp,
-        is_sp_backup=body.is_sp_backup,
         is_on_project=body.is_on_project,
         display_order=body.display_order,
     )

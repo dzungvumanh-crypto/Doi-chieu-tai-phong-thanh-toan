@@ -20,6 +20,7 @@ from backend.services.duty_constraint_service import (
     upsert_special_days_bulk, get_holiday_dates, get_shift_config, upsert_shift_config,
 )
 from backend.services.duty_calendar_utils import compute_cutoff_dates, get_vn_holidays
+from backend.services.duty_rules import MAC_DINH_COT
 
 router = APIRouter(prefix="/api/duty/constraints", tags=["duty-constraints"])
 
@@ -196,10 +197,17 @@ def get_config(
     db: sqlite3.Connection = Depends(get_db),
     _=Depends(get_current_staff),
 ):
-    config = get_shift_config(db, year)
-    if not config:
-        raise HTTPException(404, "Không có cấu hình cho năm này")
-    return config
+    """Năm chưa khai báo thì trả bộ mặc định nghiệp vụ, KHÔNG 404.
+
+    Engine (get_cau_hinh_ca) vẫn chạy bằng đúng bộ số này khi thiếu bản ghi, nên
+    404 chỉ buộc frontend chép lại một bản mặc định thứ hai — và phải nuốt lỗi để
+    404 không hiện thành thông báo đỏ, nuốt luôn cả lỗi hết phiên đăng nhập.
+    """
+    cfg = get_shift_config(db, year) or {}
+    ket_qua = {"year": year, "signer_name": cfg.get("signer_name")}
+    for cot, mac_dinh in MAC_DINH_COT.items():
+        ket_qua[cot] = mac_dinh if cfg.get(cot) is None else cfg[cot]
+    return ket_qua
 
 
 @router.put("/shift-config/{year}", response_model=ShiftConfigOut)
@@ -209,4 +217,10 @@ def update_config(
     db: sqlite3.Connection = Depends(get_db),
     _=Depends(get_current_staff),
 ):
-    return upsert_shift_config(db, year, body.nv_count, body.signer_name)
+    return upsert_shift_config(
+        db, year, body.nv_count, body.signer_name,
+        ld_count=body.ld_count,
+        qt_ld_count=body.qt_ld_count,
+        qt_nv_chinh_count=body.qt_nv_chinh_count,
+        qt_nv_phu_count=body.qt_nv_phu_count,
+    )

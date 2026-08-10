@@ -4,6 +4,20 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 10/08/2026 Phân lịch trực - Khai số người mỗi ca, ca quyết toán chính/phụ, sửa tay được thành phần ca:
+    + **Số người mỗi ca không còn cứng trong hệ thống** — vào tab *Cài đặt* khai riêng cho ca thường và ca quyết toán (số Lãnh đạo, số nhân viên trực chính, số trực phụ). Lịch tạo sau khi lưu sẽ theo số này
+    + ⚠️ **Thiếu người so với số đã khai thì hệ thống KHÔNG lập ca ngày đó**, kèm dòng cảnh báo nêu rõ thiếu ở đâu. Trước đây vẫn sinh ca thiếu người mà không báo gì
+    + **Ngày quyết toán** nay là **một ca duy nhất** có nhóm trực chính và nhóm trực phụ (trực phụ về sớm hơn), thay vì hai dòng riêng như trước. Lịch cũ được gộp tự động khi khởi động
+    + **Sửa tay được thành phần ca trực** — bấm biểu tượng bút ở cột phải. Chọn sai vai (xếp nhân viên vào chỗ Lãnh đạo) hoặc sai số người thì bị chặn; xếp người đang đi dự án / đã khai vắng mặt thì vẫn cho lưu nhưng có cảnh báo. **Sửa xong ca quay về bản thảo, phải xác nhận lại**
+    + Người giữ vai **xử lý song phương** hệ thống tự xác định từ cờ *"biết song phương"* của cán bộ — không phải chọn tay nữa. Ca thiếu hoặc dư người song phương đều vẫn lập, chỉ hiện cảnh báo
+    + **Bỏ cờ "Backup SP"** — nay chỉ còn một cờ *"biết song phương"* duy nhất. Ai đang được đánh dấu Backup SP sẽ tự chuyển sang cờ mới, không mất khả năng trực song phương
+    + Lịch ngày thường **bốc ngẫu nhiên trong nhóm ít ca nhất** nên không còn đoán trước được ai trực ngày nào, nhưng số ca vẫn chia đều. Thứ 6 giữ luân phiên cố định như cũ. Có thêm cơ chế **tránh hai người cứ đi trực cùng nhau mãi**
+    + Bảng lịch tuần gọn lại còn 3 cột (Ngày trực · Nhân viên · Lãnh đạo), luôn hiện đủ 5 hàng T2→T6. Trạng thái tuần chuyển lên tiêu đề
+    + Thống kê ca trực tách **2 cột riêng: trực chính và trực phụ** — không quy đổi lẫn nhau
+    + Sửa lỗi: bỏ tick *"biết song phương"* cho một Lãnh đạo thì sau khi khởi động lại hệ thống **cờ tự bật lại**. Nay lựa chọn được giữ nguyên
+    + Sửa lỗi: đổi *số nhân viên ca thường* rồi lưu có thể làm **cấu hình ca quyết toán bị trả về mặc định** mà không báo gì
+    + Sửa lỗi: hết phiên đăng nhập trong lúc mở tab *Cài đặt* thì màn hình im lặng hiện số mặc định thay vì đưa về trang đăng nhập
+
 - 05/08/2026 Đối chiếu CITAD - Extension lấy đúng số tiền lẻ và tự điền được mã kết nối:
     + ⚠️ **Số tiền USD/EUR lấy tự động từ Extension trước đây sai gấp 100 lần.** Phần xu bị nhập vào thành phần nguyên — `1.234,56` USD thành `123.456`. Nay lấy đúng cả phần lẻ
     + **Số món không dính lỗi này, và VNĐ cũng không** (không có đơn vị lẻ). Chỉ ảnh hưởng cột số tiền của USD và EUR
