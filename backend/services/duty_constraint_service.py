@@ -7,6 +7,8 @@ import sqlite3
 from datetime import datetime, date, timedelta, timezone
 from typing import List, Optional
 
+from backend.services.duty_rules import MAC_DINH_COT
+
 _VN_TZ = timezone(timedelta(hours=7))
 DEFAULT_NV_COUNT = 2
 
@@ -331,29 +333,38 @@ def get_shift_config(db: sqlite3.Connection, year: int) -> Optional[dict]:
     return dict(row) if row else None
 
 
-def upsert_shift_config(db: sqlite3.Connection, year: int, nv_count: int,
+def upsert_shift_config(db: sqlite3.Connection, year: int,
+                        nv_count: Optional[int] = None,
                         signer_name: Optional[str] = None,
-                        ld_count: int = 1,
-                        qt_ld_count: int = 1,
-                        qt_nv_chinh_count: int = 3,
-                        qt_nv_phu_count: int = 2) -> dict:
+                        ld_count: Optional[int] = None,
+                        qt_ld_count: Optional[int] = None,
+                        qt_nv_chinh_count: Optional[int] = None,
+                        qt_nv_phu_count: Optional[int] = None) -> dict:
+    """Ghi cấu hình số người mỗi ca. Trường nào không truyền thì GIỮ NGUYÊN.
+
+    Trước đây các tham số có giá trị mặc định và câu UPDATE ghi thẳng — client
+    chỉ gửi nv_count là cấu hình ca quyết toán bị reset về 1/3/2 mà không báo gì.
+    """
+    cot = {"ld_count": ld_count, "nv_count": nv_count, "qt_ld_count": qt_ld_count,
+           "qt_nv_chinh_count": qt_nv_chinh_count, "qt_nv_phu_count": qt_nv_phu_count}
+
     existing = db.execute(
         "SELECT * FROM duty_shift_config WHERE year=?", (year,)
     ).fetchone()
     if existing:
+        gan = ", ".join(f"{k}=COALESCE(?, {k})" for k in cot)
         db.execute(
-            "UPDATE duty_shift_config SET ld_count=?, nv_count=?, qt_ld_count=?, "
-            "qt_nv_chinh_count=?, qt_nv_phu_count=?, signer_name=COALESCE(?, signer_name) "
-            "WHERE year=?",
-            (ld_count, nv_count, qt_ld_count, qt_nv_chinh_count, qt_nv_phu_count,
-             signer_name, year)
+            f"UPDATE duty_shift_config SET {gan}, "
+            f"signer_name=COALESCE(?, signer_name) WHERE year=?",
+            (*cot.values(), signer_name, year)
         )
     else:
+        # Năm mới: trường không gửi lấy mặc định nghiệp vụ, không để NULL
+        gia_tri = [v if v is not None else MAC_DINH_COT[k] for k, v in cot.items()]
         db.execute(
-            "INSERT INTO duty_shift_config (year, ld_count, nv_count, qt_ld_count, "
-            "qt_nv_chinh_count, qt_nv_phu_count, signer_name) VALUES (?,?,?,?,?,?,?)",
-            (year, ld_count, nv_count, qt_ld_count, qt_nv_chinh_count,
-             qt_nv_phu_count, signer_name)
+            f"INSERT INTO duty_shift_config (year, {', '.join(cot)}, signer_name) "
+            f"VALUES (?,?,?,?,?,?,?)",
+            (year, *gia_tri, signer_name)
         )
     db.commit()
     row = db.execute("SELECT * FROM duty_shift_config WHERE year=?", (year,)).fetchone()

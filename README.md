@@ -252,8 +252,17 @@ Truy cập:
 
 ### Module Lịch trực
 - Xếp lịch trực tự động cho phòng Thanh toán
+- **Số người mỗi ca do phòng tự khai** ở tab Cài đặt (ca thường và ca quyết toán khai riêng).
+  Thiếu người so với số đã khai thì **không hình thành ca trực**, có cảnh báo nêu rõ lý do
+- **Ca quyết toán** chia nhóm trực chính / trực phụ (nhóm phụ về sớm hơn), lưu thành **một** bản ghi
+- Cần **ít nhất 1 người xử lý song phương** trong Lãnh đạo + nhóm trực chính — thiếu hoặc dư
+  đều vẫn lập ca, chỉ cảnh báo. Người ở nhóm trực phụ không tính (về sớm)
+- Ngày thường bốc **ngẫu nhiên trong nhóm ít ca nhất**; thứ 6 luân phiên **tất định**.
+  Có tiêu chí phụ tránh hình thành ê-kíp trực cố định
+- **Sửa tay** thành phần ca: vai song phương hệ thống tự suy từ cờ "biết song phương",
+  số ca trong vòng xoay đi theo người được đổi. Sửa xong ca quay về bản thảo, phải xác nhận lại
 - Quản lý cán bộ trực, ràng buộc lịch trực (ngày không trực, giới hạn ca)
-- Thống kê số ca trực theo cán bộ, theo tháng
+- Thống kê số ca trực theo cán bộ, theo tháng — **trực chính và trực phụ đếm 2 cột riêng**, không quy đổi
 - Xuất lịch trực ra file
 
 ### Module Đối chiếu điện SWIFT (phòng Swift)
