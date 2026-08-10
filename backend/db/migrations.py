@@ -505,7 +505,12 @@ def _ensure_indexes():
         # 2026-08-07: thống nhất 1 cờ song phương duy nhất. Lãnh đạo từng được đánh dấu
         # "Backup SP" nay chuyển thành can_do_sp để không mất khả năng trực song phương.
         # Cột is_sp_backup giữ lại (không drop) nhưng engine/UI không còn đọc.
+        #
+        # Hai câu này là một cặp: cả list chạy lại MỖI lần khởi động, nên nếu không
+        # xoá cờ nguồn thì admin bỏ tick "biết song phương" xong restart là cờ tự bật
+        # lại — im lặng, và UI đã gỡ is_sp_backup nên không có cách nào gỡ bằng tay.
         "UPDATE duty_staff_meta SET can_do_sp = 1 WHERE is_sp_backup = 1 AND can_do_sp = 0",
+        "UPDATE duty_staff_meta SET is_sp_backup = 0 WHERE is_sp_backup = 1",
 
         # ── 2026-08-08: khai báo số người trực + ca quyết toán chính/phụ ────────
         # Số người mỗi ca trước đây cứng trong code. Nay phòng tự khai, và số đã

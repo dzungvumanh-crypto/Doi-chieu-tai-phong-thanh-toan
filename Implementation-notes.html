@@ -6665,6 +6665,103 @@ Bất biến MIS: 522.774 + 36.462 = 559.236 (khớp tổng gốc)</pre>
     </div>
   </div>
 
+  <!-- 72 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">72</span>
+      <span class="card-title">Phân lịch trực — ba lỗi âm thầm phát hiện khi review PR #24</span>
+      <span class="badge badge-done">done · 2026-08-10</span>
+    </div>
+    <div class="card-body">
+      <p>Cả ba đều là loại lỗi <b>không có thông báo, không có log, không làm gãy test</b> — chỉ lộ ra
+        khi đọc kỹ đường đi của dữ liệu. Ghi lại vì cùng một khuôn: <i>giá trị mặc định bị dùng ở chỗ
+        lẽ ra phải là "không thay đổi"</i>.</p>
+
+      <div class="label">Lỗi 1 — Migration ghi đè lựa chọn của admin mỗi lần khởi động</div>
+      <p><code>_ensure_indexes()</code> chạy <b>toàn bộ</b> list mỗi lần khởi động. Câu chuyển cờ
+        <code>is_sp_backup → can_do_sp</code> không có gì làm nó dừng lại sau lần đầu:</p>
+      <table>
+        <tr><th></th><th>Diễn biến</th></tr>
+        <tr><td>Khởi động lần 1</td><td><code>can_do_sp</code> bật lên 1 — đúng ý đồ migration</td></tr>
+        <tr><td>Admin bỏ tick</td><td><code>can_do_sp</code> về 0 — đúng ý admin</td></tr>
+        <tr><td>Khởi động lần 2</td><td><code>can_do_sp</code> <b>tự bật lại</b> — không báo gì</td></tr>
+      </table>
+      <p>Nặng hơn bình thường vì PR này đã gỡ <code>is_sp_backup</code> khỏi schema và UI — admin
+        <b>không còn cách nào</b> gỡ cờ nguồn bằng tay. Sửa: thêm câu
+        <code>UPDATE duty_staff_meta SET is_sp_backup = 0 WHERE is_sp_backup = 1</code> ngay sau. Hai câu
+        thành một cặp — câu sau tắt ngòi câu trước.</p>
+      <div class="note">Quy tắc rút ra: migration dạng <code>UPDATE</code> (khác <code>ALTER</code> /
+        <code>CREATE IF NOT EXISTS</code>) không tự idempotent. Phải <b>tự tay</b> khử điều kiện kích hoạt,
+        nếu không nó là một câu lệnh chạy lại vô hạn.</div>
+
+      <div class="label">Lỗi 2 — Default trong schema biến "không gửi" thành "ghi đè bằng mặc định"</div>
+      <p><code>ShiftConfigUpsert</code> đặt default cho cả 5 cột số người, và <code>upsert_shift_config()</code>
+        ghi thẳng cả 5 cột (chỉ <code>signer_name</code> dùng <code>COALESCE</code>). Client gửi mỗi
+        <code>nv_count</code> thì Pydantic điền nốt <code>qt_* = 1/3/2</code> và cấu hình ca quyết toán
+        <b>bị reset</b> — không lỗi, không cảnh báo.</p>
+      <table>
+        <tr><th></th><th>Trước</th><th>Sau</th></tr>
+        <tr><td>Schema</td><td><code>qt_nv_chinh_count: int = Field(3, …)</code></td><td><code>Optional[int] = Field(None, …)</code></td></tr>
+        <tr><td>UPDATE</td><td><code>SET qt_nv_chinh_count=?</code></td><td><code>SET qt_nv_chinh_count=COALESCE(?, qt_nv_chinh_count)</code></td></tr>
+        <tr><td>Không gửi trường</td><td>Reset về mặc định</td><td>Giữ nguyên</td></tr>
+      </table>
+      <p>Frontend hiện gửi đủ 5 trường nên lỗi <b>chưa lộ</b> — nhưng nó nằm ở tầng API, chờ client thứ hai.
+        Mặc định nghiệp vụ dời về <code>duty_rules.MAC_DINH_COT</code>, khoá theo tên cột, dẫn xuất từ
+        <code>_MAC_DINH</code> sẵn có — <b>một</b> bộ số, không phải hai bộ chờ lệch nhau.</p>
+      <div class="note"><code>qt_nv_phu_count</code> hợp lệ khi bằng <b>0</b>, nên mọi chỗ điền mặc định đều
+        phải kiểm <code>is None</code>, không được dùng <code>or</code>. Đã có test riêng khoá điểm này lại.</div>
+
+      <div class="label">Lỗi 3 — <code>except Exception: pass</code> và nguyên nhân gốc của nó</div>
+      <p><code>load_cfg()</code> nuốt mọi lỗi, kể cả <code>SessionExpiredError</code>: hết phiên thì tab Cài
+        đặt <b>im lặng</b> hiện số mặc định thay vì đưa về <code>/login</code>. Nhưng lỗi thật không nằm ở
+        frontend — nó nằm ở <code>GET /shift-config/{year}</code> trả <b>404</b> cho năm chưa khai báo.</p>
+      <table>
+        <tr><th>Cách sửa</th><th>Đánh giá</th></tr>
+        <tr><td>Bắt lỗi theo nội dung chuỗi <code>"Không có cấu hình"</code></td>
+            <td>Bị loại — khớp chuỗi thông báo là mẹo, đổi câu chữ là gãy im lặng</td></tr>
+        <tr><td>Thêm mã lỗi HTTP vào exception của <code>api_client</code></td>
+            <td>Bị loại — sửa hạ tầng chung cho một màn hình, ảnh hưởng rộng</td></tr>
+        <tr><td><b>GET trả bộ mặc định thay vì 404 (đã chọn)</b></td>
+            <td>Bỏ hẳn trường hợp "lỗi mà không phải lỗi" — không còn gì để nuốt</td></tr>
+      </table>
+      <p>Đây mới là ngữ nghĩa đúng: <code>get_cau_hinh_ca()</code> <b>vốn đã</b> chạy bằng bộ mặc định khi
+        thiếu bản ghi, nên 404 mâu thuẫn với chính engine. Nó còn buộc <b>hai</b> chỗ ở frontend
+        (<code>load_cfg</code> và <code>_so_nguoi_can_co</code>) tự chép lại bộ mặc định thứ hai.</p>
+
+      <div class="label">Đánh đổi đã chấp nhận</div>
+      <p>Đổi 404 → 200 là <b>đổi hợp đồng API</b>. Đã rà: chỉ 2 nơi gọi, cả hai đều có sẵn nhánh fallback nên
+        vẫn chạy đúng. Đổi lấy việc xoá một <code>except: pass</code> và một bộ mặc định trùng lặp — đáng.</p>
+
+      <div class="label">Kiểm chứng</div>
+      <p>6 test mới; <b>4 test fail trên code cũ</b> (đã stash bản sửa chạy lại để xác nhận không phải test
+        trang trí), 2 test còn lại là chốt chặn hồi quy. Lỗi 1 không test bằng pytest được vì
+        <code>schema_migrations</code> là list cục bộ trong hàm — thay vào đó chạy
+        <code>_ensure_indexes()</code> <b>hai lần</b> trên DB tạm và kiểm cờ giữ nguyên. Toàn suite 433 pass.</p>
+
+      <div class="label">Chưa xử lý — có chủ đích</div>
+      <table>
+        <tr><th>Vấn đề</th><th>Vì sao để lại</th></tr>
+        <tr><td><b>35 endpoint <code>duty_*</code> chỉ có <code>get_current_staff</code></b>, không enforce
+            <code>require_feature</code>. Bất kỳ ai đăng nhập gọi được <code>DELETE /schedule/week</code>
+            xoá cả tuần đã xác nhận. 17 module API khác đều đã enforce</td>
+            <td>Ngoài phạm vi đợt sửa này. Đây là <b>rủi ro còn tồn cao nhất</b> của module</td></tr>
+        <tr><td>Migration <code>DELETE FROM duty_shifts WHERE shift_type='settlement_sub'</code> chỉ chép
+            <code>nv_ids</code>/<code>nv_count</code> sang ca chính — <code>leader_ids</code> và
+            <code>sp_id</code> của dòng phụ mất; dòng phụ không có ca chính cùng ngày bị xoá thẳng</td>
+            <td><code>data/ksnb.db</code> ở máy phát triển hiện có <b>0</b> dòng <code>settlement_sub</code>
+            — nhưng con số 0 <b>không chứng minh được</b> là chưa mất gì, vì migration có thể đã chạy và xoá
+            rồi. <b>Phải chạy câu đếm dòng mồ côi trên DB máy chính TRƯỚC khi deploy</b>:
+            <code>SELECT COUNT(*) FROM duty_shifts s WHERE s.shift_type='settlement_sub' AND NOT EXISTS
+            (SELECT 1 FROM duty_shifts m WHERE m.shift_date=s.shift_date AND
+            m.shift_type='settlement_main')</code></td></tr>
+        <tr><td>Mô tả PR #24 nói ràng buộc "đúng 1 người song phương" là luật <b>cứng</b> và nhắc hàm
+            <code>_compose_exact_one_sp()</code></td>
+            <td>Mô tả viết ở commit đầu, 6 commit sau đã đổi sang luật <b>mềm</b> "ít nhất 1"
+            (<code>resolve_sp_role</code>). Code là bản đúng; đã ghi lại ở đây để khỏi tra nhầm</td></tr>
+      </table>
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-10</footer>
 </div>
 </body>

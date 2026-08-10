@@ -921,8 +921,11 @@ async def duty_schedule_page():
                             qt_phu_inp.value   = (cfg.get("qt_nv_phu_count")
                                                   if cfg.get("qt_nv_phu_count") is not None else 2)
                             signer_inp.value   = cfg.get("signer_name") or ""
-                        except Exception:
-                            pass  # Không có config → giữ giá trị mặc định
+                        except Exception as ex:
+                            # Năm chưa khai báo không còn là lỗi (backend trả mặc
+                            # định), nên tới đây là hỏng thật — phải hiện ra, nhất
+                            # là lỗi hết phiên vì nó cần redirect về /login.
+                            _handle_api_error(ex)
 
                     yr_cfg.on("change", lambda: asyncio.ensure_future(load_cfg()))
 
