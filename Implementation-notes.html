@@ -103,10 +103,31 @@
       <code>chcp</code> đổi codepage <em>console</em>, còn stream đã chuyển hướng ra file thì Python đọc
       <em>ANSI codepage</em> qua <code>GetACP()</code> — hai thứ khác nhau. Đừng nhầm cái này là đã xử lý rồi.</div>
 
+      <p class="label">Tự tách log cũ thay vì bắt người deploy đổi tên tay</p>
+      <p>Sau khi vá, <code>backend.log</code> thành file <strong>trộn hai encoding</strong>: phần cũ cp1252,
+      phần mới UTF-8 — mở bằng UTF-8 thì hỏng phần cũ, mở bằng cp1252 thì hỏng phần mới, không công cụ nào
+      đọc đúng cả file. <code>deploy.bat</code> không đụng tới <code>logs/</code> nên mỗi máy đích đều dính,
+      và việc phải-nhớ-đổi-tên thì sẽ quên. <code>_tach_log_cu_khong_utf8()</code> chạy trong
+      <code>_ensure_dirs()</code> tự xử lý.</p>
+      <table>
+        <tr><th>Quyết định</th><th>Lý do</th></tr>
+        <tr><td>Đặt trong <code>_ensure_dirs()</code>, <strong>không</strong> đặt trong <code>_open_log()</code></td>
+            <td><code>_open_log()</code> nằm trong vòng lặp restart của <code>_run_with_restart()</code> — gọi lại
+            mỗi lần tiến trình con restart, không phải một lần lúc khởi động.</td></tr>
+        <tr><td>Giải mã theo khối 1 MB bằng <code>IncrementalDecoder</code></td>
+            <td>Hai file này không có rotation nên có thể phình rất lớn; không nạp cả file vào RAM chỉ để kiểm tra.</td></tr>
+        <tr><td>Đổi tên, không xoá; đã có bản tách thì gắn thêm dấu thời gian</td>
+            <td>Không mất dòng log nào, và không đè lên bản tách của lần triển khai trước.</td></tr>
+        <tr><td>Bắt <code>OSError</code> → cảnh báo rồi chạy tiếp</td>
+            <td>File hay bị khoá bởi tiến trình cũ chưa tắt hẳn. Một việc dọn dẹp không đáng chặn cả hệ thống
+            khởi động; lần sau thử lại.</td></tr>
+      </table>
+      <p><strong>Tự tắt sau lần đầu</strong> — file mới thuần UTF-8 nên lần khởi động sau không còn khớp điều
+      kiện. Đã kiểm chứng trên bản sao log thật: lần 1 tách đúng 2 file (giữ nguyên 1.738.324 và 1.185.185
+      byte), <code>app.log</code> không bị đụng vì vốn đã sạch; lần 2 không làm gì.</p>
+
       <p class="label">Điều bản vá KHÔNG làm</p>
       <ul>
-        <li><strong>Không sửa được log cũ.</strong> <code>backend.log</code> sau khi vá thành file trộn encoding:
-        phần cũ cp1252, phần mới UTF-8. Muốn sạch hẳn phải đổi tên file cũ lúc triển khai.</li>
         <li><code>backend.log</code> / <code>frontend.log</code> <strong>không có rotation</strong> —
         <code>log_cleanup_service</code> chỉ dọn bảng <code>login_logs</code> / <code>audit_logs</code> trong DB,
         không đụng file. File hỗn hợp sẽ nằm đó vô thời hạn.</li>
