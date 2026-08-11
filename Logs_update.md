@@ -4,6 +4,23 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 11/08/2026 Đối soát CITAD ↔ IPCAS - Sửa 2 lỗi làm sai lệch số liệu ngoại tệ (rà soát code, chưa có báo cáo thực tế):
+    + **File CITAD nhiều sheet đọc sai loại tiền từ sheet thứ 2 trở đi**: chỉ sheet đầu tiên được nhận diện VNĐ/USD/EUR, các sheet sau luôn bị coi mặc định là VNĐ — sai cả cột đọc số tiền lẫn nhãn loại tiền, khiến lệnh ngoại tệ ở sheet 2+ bị đẩy nhầm sang so khớp IPCAS (đáng lẽ phải so Hub ngoại tệ) và báo lệch "Chỉ CITAD" giả
+    + **File Hub ngoại tệ có cột ngày dạng Date thật bị lọc rớt hết, không báo lỗi**: cột ngày so với ngày chấm bằng so chuỗi, nhưng ô kiểu Date thật (phổ biến với file xuất chuẩn) đọc ra "yyyy-mm-dd" — không bao giờ khớp "dd/mm/yyyy" người dùng nhập → toàn bộ file Hub bị coi như rỗng, mọi lệnh ngoại tệ báo lệch "Chỉ CITAD" dù thực ra khớp đủ trong file đã tải lên
+    + Cả 2 lỗi đều **âm thầm, không cảnh báo trên giao diện** — người dùng có thể đã ký duyệt báo cáo với số lệch ngoại tệ giả mà không biết. Đã sửa, cần rà lại các lần đối soát ngoại tệ trước đó nếu nghi ngờ số liệu
+
+- 11/08/2026 Đối chiếu CITAD - Extension lên **bản 2.11**, thêm cách tách Napas/PSS-MDP khi đã lọc sẵn theo "NH gửi":
+    + Nếu tự lọc ở form tìm kiếm "NH gửi" = 01401001 (Napas) hoặc 01406001 (PSS-MDP) rồi mới Tìm kiếm — Extension nay đọc thẳng bảng kết quả (khỏi cần bấm "Xem chi tiết lệnh"), tự cộng dồn cột "Số tiền" của toàn bộ dòng vì trang không tự cộng sẵn tổng tiền kiểu lọc này (chỉ có "Tổng số giao dịch" đếm số món)
+    + **An toàn phân trang**: nếu số dòng quét được ít hơn "Tổng số giao dịch" trang báo (còn trang sau chưa xem), Extension **không lưu** số liệu thiếu — kể cả lượt tự động — tránh nạp nhầm số liệu hụt vào form Đối chiếu CITAD
+    + Cách tách cũ (không lọc "NH gửi", tự bung "Xem chi tiết lệnh" rồi đọc cột NH gửi theo từng dòng — bản 2.10) vẫn giữ nguyên, dùng khi không lọc theo NH gửi
+    + ⚠️ **Phải tải lại `.zip` và cài lại Extension** — vào `/doi_chieu_citad` → **Tải Extension**, giải nén, *Load unpacked* lại
+
+- 11/08/2026 Đối chiếu CITAD - Extension lên **bản 2.10**, tự tách Napas/PSS-MDP không cần bấm tay:
+    + Trang "Chuyển tiền đến" (payment.agribank.com.vn) sau khi Tìm kiếm chỉ hiện bảng tóm tắt — cột "NH gửi" (dùng để phân biệt Napas/PSS-MDP) chỉ có ở bảng **chi tiết lệnh**, phải tự tích chọn dòng + bấm "Xem chi tiết lệnh" mới hiện ra. Trước đây không ai biết bước này nên bấm "Lưu Napas + PSS-MDP" báo nhầm *"Chưa có kết quả, hãy Tìm kiếm trước"* dù đã tìm kiếm ra kết quả
+    + Nay Extension **tự tích "chọn tất cả" + tự bấm "Xem chi tiết lệnh"** ngay khi phát hiện có kết quả tìm kiếm mới — tách Napas/PSS-MDP theo mã NH gửi (01401001/01406001) hoàn toàn tự động, không cần thao tác tay nào ngoài bấm Tìm kiếm
+    + ⚠️ **Phải tải lại `.zip` và cài lại Extension** — vào `/doi_chieu_citad` → **Tải Extension**, giải nén, *Load unpacked* lại
+    + *Giới hạn biết trước*: nếu kết quả tìm kiếm trải nhiều trang, "chọn tất cả" chỉ chọn các dòng đang hiển thị trên trang hiện tại — giống hạn chế khi thao tác tay từ trước, không phải lỗi mới
+
 - 11/08/2026 Quản lý User - Sửa lỗi trang không hiện được tài khoản nào:
     + **Màn hình *Quản lý User* báo lỗi đỏ và hiện *"Không có kết quả"*** dù trong hệ thống có 79 tài khoản. Không sửa, không xoá, không khoá được ai qua giao diện. Ảnh hưởng **Quản trị viên cấp 1 và cấp 2, Giám đốc, Phó Giám đốc**. Trưởng phòng không bị nên lỗi dễ bị bỏ qua khi người này báo còn người kia bảo vẫn dùng được
     + Nguyên nhân: **một tài khoản có ô trạng thái bỏ trống** — không phải *Hoạt động*, cũng không phải *Tạm khoá*. Chỉ một dòng như vậy là đủ để hệ thống bỏ luôn **cả danh sách**, chứ không phải bỏ riêng dòng đó
