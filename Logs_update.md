@@ -13,6 +13,12 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
     + **Giao dịch viên không được cấp quyền này** — hệ thống chặn ở máy chủ kể cả khi lỡ tích nhầm. Nếu cho, cán bộ sẽ tự rút được chứng từ đã chốt của chính mình mà không qua bước duyệt của hậu kiểm
     + ⚠️ **Ô đã đóng tập chứng từ vẫn trả lại được** — bìa tập đã in sẽ không còn khớp thực tế. Chức năng *Mượn lại* sẵn có cũng đang như vậy, nên lần này giữ nguyên cho nhất quán. Cần chặn thì báo để sửa cả hai chỗ cùng lúc
 
+- 11/08/2026 Đối chiếu CITAD - Extension lên **bản 2.12**, sửa lỗi không đọc được cột "NH gửi" có sẵn trong bảng kết quả:
+    + Xác nhận lại thực tế: cột "NH gửi" (dùng tách Napas/PSS-MDP) **có sẵn ngay trong bảng kết quả mặc định** (Loại lệnh: Lệnh quyết toán, NH gửi để "Tất cả") — kéo bảng sang phải là thấy, **không cần** bấm "Xem chi tiết lệnh" như bản 2.10/2.11 từng giả định
+    + Lỗi thật: hàm bắt cột so khớp **tuyệt đối** tên cột ("NH gửi" phải khớp y hệt) — bảng có nút sắp xếp cột hay chèn icon/khoảng trắng phụ vào tiêu đề khiến so khớp trượt dù cột hiển thị đúng. Nay so khớp kiểu "chứa chuỗi" sau khi chuẩn hoá khoảng trắng, khoan dung hơn
+    + Sửa luôn đường lọc theo bộ lọc "NH gửi" cụ thể (bản 2.11): trước đọc giá trị đang chọn qua chữ hiển thị (`innerText`), không đọc được nếu ô lọc là `<input>` với giá trị nằm trong thuộc tính `value`. Nay tự dò cả `value` của input/select lẫn chữ hiển thị
+    + ⚠️ **Phải tải lại `.zip` và cài lại Extension** — vào `/doi_chieu_citad` → **Tải Extension**, giải nén, *Load unpacked* lại
+
 - 11/08/2026 Đối soát CITAD ↔ IPCAS - Sửa 2 lỗi làm sai lệch số liệu ngoại tệ (rà soát code, chưa có báo cáo thực tế):
     + **File CITAD nhiều sheet đọc sai loại tiền từ sheet thứ 2 trở đi**: chỉ sheet đầu tiên được nhận diện VNĐ/USD/EUR, các sheet sau luôn bị coi mặc định là VNĐ — sai cả cột đọc số tiền lẫn nhãn loại tiền, khiến lệnh ngoại tệ ở sheet 2+ bị đẩy nhầm sang so khớp IPCAS (đáng lẽ phải so Hub ngoại tệ) và báo lệch "Chỉ CITAD" giả
     + **File Hub ngoại tệ có cột ngày dạng Date thật bị lọc rớt hết, không báo lỗi**: cột ngày so với ngày chấm bằng so chuỗi, nhưng ô kiểu Date thật (phổ biến với file xuất chuẩn) đọc ra "yyyy-mm-dd" — không bao giờ khớp "dd/mm/yyyy" người dùng nhập → toàn bộ file Hub bị coi như rỗng, mọi lệnh ngoại tệ báo lệch "Chỉ CITAD" dù thực ra khớp đủ trong file đã tải lên
