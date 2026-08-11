@@ -53,6 +53,73 @@
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
   <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-10</p>
 
+  <!-- O -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">O</span>
+      <span class="card-title">Nút "Trả lại" ở panel lịch sử ô — đường tắt <code>đã xác nhận → đang mượn</code></span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Vì sao không tái dùng luồng "Mượn lại" đã có</p>
+      <p>Hệ thống đã có đường <code>confirmed <span class="arrow">→</span> pending_confirm (borrow_reason)
+      <span class="arrow">→</span> borrowed</code>: giao dịch viên <em>xin</em>, hậu kiểm <em>duyệt</em>.
+      Nút mới đi ngược chiều — bên <strong>đang giữ</strong> chứng từ chủ động đẩy thẳng
+      <code>confirmed <span class="arrow">→</span> borrowed</code>, không có bước xin phép vì chính người
+      duyệt là người bấm. Hai nghiệp vụ khác chiều nên tách endpoint
+      <code>POST /entries/{id}/return-to-staff</code> riêng, không nhồi thêm nhánh vào
+      <code>borrow_entry()</code>.</p>
+
+      <table>
+        <tr><th>Quyết định</th><th>Lý do</th></tr>
+        <tr><td>Lý do trả lại ghi vào <code>entry_change_logs.notes</code>, <strong>không</strong> ghi vào
+            <code>document_entries.borrow_reason</code></td>
+            <td><code>borrow_reason</code> không phải ô ghi chú — nó đang là <strong>cờ trạng thái ngầm</strong>
+            "có yêu cầu mượn chờ duyệt". <code>confirm_received()</code> và <code>reject_entry()</code> đều
+            <code>if entry["borrow_reason"]:</code> để rẽ nhánh. Ghi lý do trả lại vào đó sẽ làm hai endpoint kia
+            hiểu nhầm là đang có đơn xin mượn. Panel lịch sử vốn đã render <code>notes</code> thành
+            <em>"· Lý do: …"</em> nên không mất thông tin gì.</td></tr>
+        <tr><td>Feature code mới <code>handovers.return_entry</code> thay vì dùng lại
+            <code>handovers.confirm_entry</code></td>
+            <td>Trả lại là thao tác <em>rút chứng từ đã chốt</em> — nặng hơn xác nhận. Giữ riêng để có thể cấp
+            quyền xác nhận mà không cấp quyền rút. <strong>Đánh đổi:</strong> chưa nhóm nào có quyền này, admin
+            phải tự tích ở <em>Quản lý nhóm</em>, nếu không sẽ không thấy nút.</td></tr>
+        <tr><td>Chặn cứng <code>chuyen_vien</code> ở backend, không chỉ ẩn nút</td>
+            <td>Nếu admin lỡ gán feature cho nhóm có giao dịch viên, GDV sẽ tự rút được chứng từ đã chốt của chính
+            mình, bỏ qua hoàn toàn bước duyệt của hậu kiểm. Feature gate một mình không đủ.</td></tr>
+        <tr><td>Ghi <code>borrowed_at</code>, giống nhánh cho mượn trong <code>confirm_received()</code></td>
+            <td>Để hai đường vào trạng thái <code>borrowed</code> để lại cùng một dấu vết dữ liệu.</td></tr>
+      </table>
+
+      <p class="label">Ảnh hưởng lan sang chỗ khác</p>
+      <table>
+        <tr><th>Nơi bị chạm</th><th>Hệ quả</th><th>Đánh giá</th></tr>
+        <tr><td><code>bundles.py</code> — chỉ đóng tập chứng từ <code>confirmed</code></td>
+            <td>Ô vừa trả lại rơi khỏi danh sách đóng tập</td>
+            <td><span class="pill pill-green">Đúng nghiệp vụ</span> — chứng từ đang ở ngoài thì không đóng tập được.
+            Luồng "Mượn lại" cũ cũng vậy.</td></tr>
+        <tr><td><code>handover_report_service</code> — <code>SUBMIT_ACTIONS</code> /
+            <code>REJECT_ACTION</code></td>
+            <td>Không đổi: <code>returned_to_staff</code> không nằm trong hai tập đó</td>
+            <td><span class="pill pill-green">Không đổi</span> — báo cáo đúng hạn / quá hạn giữ nguyên số.</td></tr>
+        <tr><td><code>dashboard.py</code> — đếm việc chờ theo <code>pending_confirm</code></td>
+            <td>Không đổi</td><td><span class="pill pill-green">Không đổi</span></td></tr>
+      </table>
+
+      <div class="caution"><strong>Không kiểm tra ô đã nằm trong tập chứng từ hay chưa.</strong> Có thể trả lại
+      một ô đã được đóng tập, khiến bìa tập đã in không còn khớp thực tế. Cố ý giữ nguyên: luồng
+      <em>Mượn lại</em> hiện tại cũng không kiểm tra, thêm ràng buộc ở một đường mà không thêm ở đường kia sẽ
+      làm hành vi hệ thống mâu thuẫn. Nếu cần chặn thì phải chặn cả hai chỗ cùng lúc.</div>
+
+      <div class="note">Đã kiểm thử trên <strong>bản sao</strong> DB thật (không đụng <code>data/ksnb.db</code>):
+      lý do rỗng → 400; GDV gọi → 403; HKV gọi → <code>borrowed</code> + log có <code>notes</code> +
+      <code>borrowed_at</code> có giá trị + <code>borrow_reason</code> vẫn NULL; gọi lại → 409; <code>borrow</code>
+      khi đang mượn → 409; vòng đời tiếp <code>borrowed → pending_confirm → confirmed</code> chạy thông.</div>
+
+    </div>
+  </div>
+
   <!-- N -->
   <div class="card">
     <div class="card-header">

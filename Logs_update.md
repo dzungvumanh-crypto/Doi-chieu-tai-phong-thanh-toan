@@ -4,6 +4,15 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 11/08/2026 Bàn giao chứng từ - Thêm nút **Trả lại** để hậu kiểm chủ động trả chứng từ về cho cán bộ:
+    + **Trước đây chứng từ đã xác nhận chỉ ra khỏi kho được khi giao dịch viên chủ động xin mượn.** Hậu kiểm cầm chứng từ trên tay, thấy thiếu chữ ký hay sai sót, muốn trả về cho cán bộ thì không có nút nào — phải nhờ chính cán bộ đó vào bấm *Mượn lại* rồi mình duyệt, vòng vèo và sai bản chất sự việc
+    + Nay ở **bảng lịch sử của từng ô** (bấm vào ô trong lưới), phần *THAO TÁC* có thêm nút tím **"↪ Trả lại"**. Nút **chỉ hiện với ô đang ở trạng thái *Đã xác nhận*** — ô đang chờ, đang mượn hay bị từ chối đều không có
+    + **Bắt buộc nhập lý do trả lại**, không nhập thì không bấm được. Lý do hiện ngay trong dòng lịch sử của ô, ai cũng đọc được
+    + Bấm xong ô chuyển sang **Đang mượn** (ô tím). Từ đây cán bộ dùng nút *Bàn giao lại* như bình thường, hậu kiểm xác nhận lại là xong — giống hệt luồng mượn cũ
+    + ⚠️ **Phải cấp quyền thì nút mới hiện.** Vào *Phân quyền theo nhóm* → **Phòng KSNB & HTVH → Bàn giao chứng từ → "Trả lại chứng từ cho cán bộ"**, tích cho nhóm hậu kiểm / kiểm soát viên. Chưa tích thì không ai thấy nút, kể cả người đang có quyền xác nhận
+    + **Giao dịch viên không được cấp quyền này** — hệ thống chặn ở máy chủ kể cả khi lỡ tích nhầm. Nếu cho, cán bộ sẽ tự rút được chứng từ đã chốt của chính mình mà không qua bước duyệt của hậu kiểm
+    + ⚠️ **Ô đã đóng tập chứng từ vẫn trả lại được** — bìa tập đã in sẽ không còn khớp thực tế. Chức năng *Mượn lại* sẵn có cũng đang như vậy, nên lần này giữ nguyên cho nhất quán. Cần chặn thì báo để sửa cả hai chỗ cùng lúc
+
 - 11/08/2026 Quản lý User - Sửa lỗi trang không hiện được tài khoản nào:
     + **Màn hình *Quản lý User* báo lỗi đỏ và hiện *"Không có kết quả"*** dù trong hệ thống có 79 tài khoản. Không sửa, không xoá, không khoá được ai qua giao diện. Ảnh hưởng **Quản trị viên cấp 1 và cấp 2, Giám đốc, Phó Giám đốc**. Trưởng phòng không bị nên lỗi dễ bị bỏ qua khi người này báo còn người kia bảo vẫn dùng được
     + Nguyên nhân: **một tài khoản có ô trạng thái bỏ trống** — không phải *Hoạt động*, cũng không phải *Tạm khoá*. Chỉ một dòng như vậy là đủ để hệ thống bỏ luôn **cả danh sách**, chứ không phải bỏ riêng dòng đó

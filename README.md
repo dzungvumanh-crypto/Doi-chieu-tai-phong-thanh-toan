@@ -235,6 +235,10 @@ Truy cập:
   - *Phạm vi xem*: `admin` / GĐ / PGĐ và người có quyền hậu kiểm (`handovers.confirm_entry`) xem được **mọi phòng nguồn**; các vai trò còn lại — kể cả trưởng/phó phòng — chỉ xem **phòng của chính mình**, dropdown chọn phòng cũng chỉ liệt kê phòng đó. Backend chặn ở `grid`, `history` và `export` (xuất Excel tự ép về phòng người gọi)
   - *Phạm vi ghi*: `admin`, `giam_doc`, `pho_giam_doc` **chỉ đọc — bị cấm hoàn toàn** mọi thao tác ghi (`_NO_WRITE_ROLES`, chặn ở dependency `require_handover_write` nên `admin` không bypass được như với `require_feature`). Các vai trò còn lại ghi được **trong phòng mình** nếu nhóm được cấp feature tương ứng; riêng người có `handovers.confirm_entry` ghi được trên mọi phòng
   - Vào được menu vẫn cần feature `menu.handovers` — vai trò không tự mở menu
+  - *Vòng đời một ô*: `chờ xác nhận → đã xác nhận`; mượn - trả có hai đường vào trạng thái **đang mượn**:
+    GDV bấm **Mượn lại** (xin → HKV duyệt), hoặc HKV/KSV bấm **Trả lại** ở panel lịch sử để đẩy thẳng
+    `đã xác nhận → đang mượn` (bắt buộc nhập lý do, feature `handovers.return_entry`, chặn cứng `chuyen_vien`).
+    Cả hai đường đều kết thúc bằng GDV **Bàn giao lại** → HKV xác nhận
   - *Cán bộ chuyển phòng*: chứng từ hiển thị theo phòng tại **ngày giao dịch** — trước ngày chuyển ở phòng cũ, từ ngày chuyển ở phòng mới (lịch sử đổi phòng lưu ở bảng `staff_department_history`). Nhập bù chứng từ tháng cũ cho cán bộ đã chuyển vẫn vào đúng phòng cũ; do giới hạn phạm vi phòng ở trên, việc nhập bù này do người hậu kiểm thực hiện
 - **Gom tập tự động**:
   - Max 350 tờ/tập
