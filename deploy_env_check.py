@@ -14,9 +14,21 @@ phải sửa tay, và quên thì **im lặng không báo gì**:
 Viết bằng Python thay vì batch vì `for /f` của cmd nuốt dòng trống và vướng dấu
 ngoặc trong comment — sửa .env bằng batch thuần rất dễ làm hỏng file.
 
+Cờ `--siet-bao-mat` (chỉ `deploy.bat` dùng, KHÔNG dùng cho hệ thống test) thêm
+hai kiểm tra nữa, để cấu hình bảo mật của máy chính không phải sửa tay:
+
+* `BACKEND_HOST` phải là `127.0.0.1` — cổng backend không cần lộ ra mạng, mọi
+  request đều do chính máy chủ phát ra (đo trên log máy chính: 419/419 lượt
+  đăng nhập có `fastapi_client='127.0.0.1'`; Extension CITAD đi qua proxy cổng
+  frontend từ PR #20).
+* `ENV` phải là `production` — tắt `/docs`, `/redoc`, `/openapi.json`.
+
+Hệ thống test (`deploy-test.bat`, cổng 9000) KHÔNG truyền cờ này: nó auto-fix
+không hỏi, nên siết ở đó sẽ âm thầm tắt `/docs` đúng nơi cần `/docs` để gỡ lỗi.
+
 Dùng:
-    python deploy_env_check.py <đường-dẫn-.env> <cổng-backend> check
-    python deploy_env_check.py <đường-dẫn-.env> <cổng-backend> fix
+    python deploy_env_check.py <đường-dẫn-.env> <cổng-backend> check [--siet-bao-mat]
+    python deploy_env_check.py <đường-dẫn-.env> <cổng-backend> fix   [--siet-bao-mat]
 
 Mã thoát: 0 = không có gì phải sửa (hoặc đã sửa xong), 1 = cần sửa, 2 = lỗi.
 """
@@ -49,6 +61,7 @@ def main() -> int:
         print("  [LOI] Thieu tham so: <.env> <cong> <check|fix>")
         return 2
     path, cong, che_do = sys.argv[1], sys.argv[2], sys.argv[3].lower()
+    siet = "--siet-bao-mat" in [a.lower() for a in sys.argv[4:]]
 
     if not os.path.exists(path):
         # start.bat se tu tao .env khi chay lan dau — khong phai loi
@@ -76,14 +89,41 @@ def main() -> int:
         can_sua.append(("BACKEND_URL", v_url, dung_url, f"khong khop cong {cong}"))
 
     # ── BACKEND_HOST ─────────────────────────────────────────────────────────
-    # KHONG tu doi gia tri: 0.0.0.0 hay 127.0.0.1 tuy thuoc co may khac goi API
-    # hay khong -- day la quyet dinh cua nguoi van hanh, khong phai cua script.
+    # Khong siet: KHONG tu doi gia tri dang co -- 0.0.0.0 hay 127.0.0.1 tuy thuoc
+    # co may khac goi API hay khong, la quyet dinh cua nguoi van hanh.
+    # Co siet: da do bang log may chinh la khong may nao goi thang cong backend,
+    # nen dua ve 127.0.0.1. Van khong am tham: deploy.bat hoi Y/n truoc khi sua.
     i_host, v_host = _gia_tri(dong, "BACKEND_HOST")
     if v_host is None:
-        can_sua.append(("BACKEND_HOST", "(khong co)", "0.0.0.0", "them, giu nguyen hanh vi cu"))
+        mac_dinh = "127.0.0.1" if siet else "0.0.0.0"
+        ly_do = "them, dong cong backend khoi mang" if siet else "them, giu nguyen hanh vi cu"
+        can_sua.append(("BACKEND_HOST", "(khong co)", mac_dinh, ly_do))
+    elif siet and v_host.lower() == "localhost":
+        # Khong nhan "localhost" du no cung la loopback: tren Windows no ra ::1
+        # (IPv6) truoc, uvicorn bind vao ::1 con frontend goi 127.0.0.1 -> khong
+        # ket noi duoc. Cung cai bay IPv6 da ghi o phan BACKEND_URL ben tren.
+        can_sua.append(("BACKEND_HOST", v_host, "127.0.0.1",
+                        "localhost ra ::1 truoc -> frontend goi 127.0.0.1 se hong"))
+    elif siet and v_host != "127.0.0.1":
+        can_sua.append(("BACKEND_HOST", v_host, "127.0.0.1",
+                        "cong 8000 dang lo ra mang ma khong ai can"))
+
+    # ── ENV ──────────────────────────────────────────────────────────────────
+    # Chi kiem khi siet. development => /docs, /redoc, /openapi.json MO CONG KHAI.
+    v_env = None
+    if siet:
+        _, v_env = _gia_tri(dong, "ENV")
+        if v_env is None:
+            can_sua.append(("ENV", "(khong co)", "production",
+                            "thieu => mac dinh development => /docs mo"))
+        elif v_env.lower() != "production":
+            can_sua.append(("ENV", v_env, "production", "tat /docs, /redoc, /openapi.json"))
 
     if not can_sua:
-        print(f"  [OK] .env dung: BACKEND_URL={v_url}, BACKEND_HOST={v_host}")
+        thong_tin = f"BACKEND_URL={v_url}, BACKEND_HOST={v_host}"
+        if siet:
+            thong_tin += f", ENV={v_env}"
+        print(f"  [OK] .env dung: {thong_tin}")
         return 0
 
     print("  [CAN SUA] .env tren may dich:")
@@ -111,8 +151,11 @@ def main() -> int:
         return 2
 
     print("  [OK] Da sua .env. Cac dong khac (SECRET_KEY, STORAGE_SECRET...) giu nguyen.")
-    if v_host is not None:
+    if not siet and v_host is not None:
         print(f"      BACKEND_HOST giu nguyen = {v_host} (script khong tu doi gia tri nay)")
+    if siet:
+        print("      Cong backend chi con nghe trong may. Neu co may tram tro Extension CITAD")
+        print("      vao dia chi co :8000 thi vao /doi_chieu_citad bam 'Tao ma ket noi moi'.")
     return 0
 
 

@@ -50,6 +50,21 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
     + Sau khi cài lại, kiểm nhanh: mở `edge://extensions` (hoặc `chrome://extensions`) → phần **Site access** phải thấy `apc-portal:8080`. Không thấy nghĩa là chưa cài đúng bản mới
     + Không cần làm gì thêm — mã kết nối cũ vẫn dùng được, không phải tạo lại
 
+- 07/08/2026 Bảo mật - Đóng cổng backend khỏi mạng nội bộ, tắt trang liệt kê API *(chưa deploy — cần sửa `.env` trên máy chính rồi khởi động lại)*:
+    + **Gỡ 2 cảnh báo đỏ hiện mỗi lần khởi động hệ thống chính.** Cả hai đều báo đúng: cổng backend (8000) đang mở ra toàn mạng nội bộ dù không ai cần vào, và trang liệt kê toàn bộ API đang xem được công khai
+    + Nay cổng 8000 **chỉ nghe trong máy chủ**. Người dùng không bị ảnh hưởng gì — trình duyệt vẫn vào bằng đúng địa chỉ cũ (cổng 8080), Extension CITAD vẫn đi chung cổng đó như từ 06/08
+    + Đã đối chiếu nhật ký máy chính trước khi đổi: **419/419 lượt đăng nhập** và **toàn bộ** thao tác Đối chiếu CITAD đều đi qua đường trong máy chủ, **50 máy trạm** đang dùng đều vào bằng cổng 8080 — không máy nào phụ thuộc cổng vừa đóng
+    + Nếu có máy nào từng *tự gõ tay* địa chỉ có `:8000` vào trang Tuỳ chọn của Extension thì sẽ báo *"Không kết nối server"*. Cách sửa: vào `/doi_chieu_citad` bấm **Tạo mã kết nối mới** — hệ thống tự điền lại địa chỉ đúng
+    + Trang `/docs` (danh sách 180 đường dẫn API kèm cấu trúc dữ liệu) **không còn mở công khai**. Trước đây bất kỳ ai trong mạng gõ đúng địa chỉ đều xem được cả sơ đồ hệ thống. Không lấy được dữ liệu vì vẫn phải đăng nhập, nhưng là tấm bản đồ dâng sẵn cho người dò
+    + Vá thêm một lỗ liên quan: tắt `/docs` theo cách cũ **chưa tắt hết** — vẫn còn một đường dẫn phụ trả về nguyên danh sách 180 API đó ở dạng dữ liệu thô. Nay đóng cả hai
+    + **Không phải sửa tay gì trên máy chính** — chạy `deploy.bat` là nó tự hỏi và sửa `.env` giúp (bước 1/7). Hệ thống test giữ nguyên `/docs` để còn gỡ lỗi
+
+- 07/08/2026 Nhật ký hệ thống - Sửa lỗi trang trắng khi có thông báo nhiều dòng *(chưa deploy)*:
+    + ⚠️ **Trang *Nhật ký hệ thống* trước đây vỡ đúng lúc hệ thống có lỗi cần xem.** Bản ghi một dòng thì hiện bình thường, nhưng bản ghi nhiều dòng (mô tả lỗi chi tiết) làm trang không hiện được — đã xảy ra **94 lần** trên máy chính mà không ai báo
+    + Nay xem được mọi bản ghi, nội dung nhiều dòng giữ nguyên cách xuống dòng cho dễ đọc
+    + Không đổi gì về dữ liệu hay quyền xem — chỉ là cách hiển thị
+
+
 - 06/08/2026 Đối soát CITAD - Đọc được file `.xlsx`, và Extension gọi được máy chủ thật (PR #20):
     + ✅ **GỠ CẢNH BÁO NGÀY 04/08: file CITAD định dạng `.xlsx` nay đọc bình thường.** Trước đây mọi file `.xlsx` bị đọc ra rỗng mà không báo lỗi — màn hình vẫn hiện "đối soát xong" nhưng số khớp bằng 0 và toàn bộ lệnh bị xếp vào "Chỉ IPCAS". Từ nay dùng `.xls` hay `.xlsx` đều được
     + ⚠️ **Ai đã đối soát bằng file `.xlsx` trước ngày 06/08 thì làm lại.** Kết quả cũ và bản đã lưu ở tab *Lịch sử* của những lần đó đều sai — không phải số liệu lệch thật

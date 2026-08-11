@@ -4082,6 +4082,187 @@ headers["X-Client-IP"] = request.client.host</code></pre>
     </div>
   </div>
 
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">52</span>
+      <span class="card-title">Đóng cổng backend 8000 khỏi mạng — <code>BACKEND_HOST=127.0.0.1</code> + <code>ENV=production</code></span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Triệu chứng</p>
+      <p>Hai cảnh báo <code>startup.config</code> mỗi lần khởi động hệ thống chính: <code>/docs</code>
+      đang mở ra mạng, và <code>ALLOWED_ORIGINS</code> chỉ có localhost trong khi bind
+      <code>0.0.0.0</code>. Cả hai đều báo <strong>đúng</strong> một cấu hình thật, không phải cảnh báo
+      lỗi.</p>
+
+      <p class="label">Vì sao chọn đóng cổng thay vì nới ALLOWED_ORIGINS</p>
+      <p>Nới <code>ALLOWED_ORIGINS</code> là sửa triệu chứng sai chỗ: <strong>không có trình duyệt nào
+      gọi thẳng cổng 8000</strong>, nên CORS ở đó chưa từng chặn ai. Frontend gọi backend qua
+      <code>127.0.0.1</code> (server-to-server, CORS không áp dụng), còn Extension CITAD chỉ gọi
+      <code>/api/doi-chieu-citad/*</code> và đã đi qua proxy cổng 8080 từ PR #20 (card 51). Cổng 8000
+      mở ra mạng là <strong>thừa</strong> — đóng lại thì cả hai cảnh báo tự tắt mà không phải đụng tới
+      cấu hình CORS.</p>
+
+      <p class="label">Bằng chứng đã kiểm trước khi đóng — log lấy từ MÁY CHÍNH</p>
+      <p>Vòng kiểm đầu chạy trên log máy dev, chỉ đủ chứng minh <em>đường gọi trong code</em>. Đã đo
+      lại trên <code>backend.log</code> + <code>app.log</code> xuất từ máy chính (07/08/2026):</p>
+      <table>
+        <tr><th>Phép kiểm</th><th>Kết quả</th></tr>
+        <tr><td>Request tới cổng 8000 từ <code>127.0.0.1</code></td><td>82.106</td></tr>
+        <tr><td>Request tới cổng 8000 từ máy khác</td>
+            <td><strong>2</strong> — <code>GET /</code> + <code>GET /favicon.ico</code> từ
+            <code>10.1.3.229</code></td></tr>
+        <tr><td><code>fastapi_client</code> trong 419 lượt đăng nhập</td>
+            <td><strong>419/419 là <code>127.0.0.1</code></strong></td></tr>
+        <tr><td><code>/api/doi-chieu-citad/*</code> từ ngoài <code>127.0.0.1</code></td>
+            <td><strong>0</strong> / 87 request của module</td></tr>
+        <tr><td>Lượt mở <code>/docs</code>, <code>/redoc</code>, <code>/openapi.json</code></td>
+            <td><strong>0</strong> — kể cả từ trong máy</td></tr>
+        <tr><td>Máy trạm đang dùng app qua cổng 8080</td><td>50</td></tr>
+      </table>
+      <p>Dòng <code>x_client_ip='10.1.3.201' fastapi_client='127.0.0.1'</code> là bằng chứng trực tiếp:
+      người dùng ở máy trạm, nhưng thứ <em>gõ cửa</em> backend luôn là chính máy chủ. 2 request từ
+      <code>10.1.3.229</code> (<code>GET /</code> rồi <code>favicon.ico</code> — dấu vết người gõ địa
+      chỉ vào trình duyệt) chứng minh cổng 8000 <strong>thực sự chạm được từ máy khác</strong>. Chưa ai
+      gõ tiếp <code>/docs</code> — may, không phải nhờ thiết kế.</p>
+      <p><strong>0 lượt <code>POST citad-buffer</code></strong> (có 31 lượt kiểm tra kết nối, 10 lượt
+      tạo mã, 18 lượt tải bản cài) — Extension chưa từng ghi được số liệu lên máy chính. Nên rủi ro
+      "máy nào đó gõ tay <code>:8000</code>" <strong>không tồn tại trên thực tế</strong>, và đây là thời
+      điểm đóng rẻ nhất: đóng sau, khi 50 người đã cấu hình Extension, mới phải dò từng máy.</p>
+
+      <p class="label">Đánh đổi đã chấp nhận</p>
+      <table>
+        <tr><th>Mất</th><th>Vì sao chấp nhận</th></tr>
+        <tr><td>Máy nào <em>gõ tay</em> <code>SERVER=http://&lt;IP&gt;:8000</code> ở trang Tuỳ chọn
+            Extension sẽ mất kết nối</td>
+            <td>Không đi qua luồng chuẩn nên không đo được từ log. Triệu chứng hiện ngay (toast đỏ
+            "Không kết nối server"), sửa bằng cách bấm lại "Tạo mã kết nối mới" — 1 phút</td></tr>
+        <tr><td><code>/docs</code>, <code>/redoc</code> không vào được nữa</td>
+            <td>Cần gỡ lỗi thì đặt <code>ENABLE_API_DOCS=1</code>, <strong>không</strong> đổi
+            <code>ENV</code> về development</td></tr>
+      </table>
+
+      <p class="label">Kiểm tra tác động lan rộng</p>
+      <table>
+        <tr><th>Nơi đọc biến</th><th>Ảnh hưởng</th></tr>
+        <tr><td><code>run.py:47</code> — <code>_PROBE_HOST</code></td>
+            <td>Không đổi: chỉ ép <code>127.0.0.1</code> khi host là <code>0.0.0.0</code>/<code>::</code>,
+            nay lấy thẳng giá trị mới</td></tr>
+        <tr><td><code>frontend/api_client.py:15</code></td>
+            <td>Đã gọi <code>127.0.0.1:8000</code> từ trước — khớp với bind mới</td></tr>
+        <tr><td><code>init_db.py</code> (3 nhánh theo <code>ENV</code>)</td>
+            <td>Chỉ chạy lúc khởi tạo DB lần đầu; DB đã tồn tại nên không tác động. Lưu ý cho lần
+            khởi tạo sau: <code>ENV=production</code> sẽ <em>hỏi mật khẩu</em> thay vì dùng mặc định,
+            và không seed 3 tài khoản chuyên viên test</td></tr>
+      </table>
+
+      <p class="label">Lỗ phát hiện khi kiểm chứng: tắt <code>/docs</code> KHÔNG tắt <code>/openapi.json</code></p>
+      <p>Chạy thử với <code>ENV=production</code> thì <code>/docs</code> và <code>/redoc</code> trả 404
+      đúng như mong đợi — nhưng <code>/openapi.json</code> vẫn <strong>200</strong>, liệt kê đủ
+      <strong>180</strong> đường dẫn API kèm schema request/response. FastAPI xử lý
+      <code>openapi_url</code> <em>độc lập</em> với <code>docs_url</code>/<code>redoc_url</code>: đặt
+      hai cái sau bằng <code>None</code> chỉ gỡ <em>giao diện xem</em>, còn dữ liệu thô vẫn phục vụ.
+      Tức là cảnh báo <code>startup.config</code> bảo "đặt ENV=production để tắt" đang hứa nhiều hơn
+      thực tế làm được.</p>
+      <p>Đã thêm <code>openapi_url=_openapi_url</code> vào <code>FastAPI(...)</code>, dùng chung cờ
+      <code>_docs_open</code>. Kiểm lại: cả ba đều 404 khi <code>ENV=production</code>; đặt
+      <code>ENABLE_API_DOCS=1</code> thì cả ba trở lại 200 — đường lùi để gỡ lỗi còn nguyên. Không chỗ
+      nào trong codebase gọi <code>/openapi.json</code> (đã grep) nên không gãy client nào.</p>
+      <p><strong>Bài học:</strong> tắt một tính năng framework thì phải <em>đo</em> cái mình muốn giấu
+      đã thật sự biến mất chưa, đừng dừng ở chỗ trang UI không mở được.</p>
+
+      <p class="label">Áp dụng qua <code>deploy.bat</code>, không sửa tay máy chính</p>
+      <p><code>deploy.bat</code> cố tình <strong>không copy <code>.env</code></strong> (giữ
+      <code>SECRET_KEY</code> riêng của máy đích) — nên hai biến này không tự sang được. Thay vì bảo
+      người vận hành sửa tay (quên là im lặng không báo gì), đã mở rộng
+      <code>deploy_env_check.py</code> — script <em>đã</em> được <code>deploy.bat</code> gọi sẵn ở bước
+      1/7 với luồng hỏi <code>Y/n</code> trước khi sửa.</p>
+      <p>Thêm cờ <code>--siet-bao-mat</code>, <strong>chỉ <code>deploy.bat</code> truyền</strong>:</p>
+      <table>
+        <tr><th>Kiểm tra</th><th>Có cờ (máy chính)</th><th>Không cờ (hệ thống test, cổng 9000)</th></tr>
+        <tr><td><code>BACKEND_HOST</code> thiếu</td><td>thêm <code>127.0.0.1</code></td>
+            <td>thêm <code>0.0.0.0</code> (như cũ)</td></tr>
+        <tr><td><code>BACKEND_HOST</code> = <code>0.0.0.0</code>/IP thật</td><td>đổi
+            <code>127.0.0.1</code></td><td>giữ nguyên</td></tr>
+        <tr><td><code>ENV</code> ≠ <code>production</code></td><td>đổi <code>production</code></td>
+            <td>không kiểm</td></tr>
+      </table>
+      <p><strong>Vì sao hệ thống test không siết:</strong> <code>deploy-test.bat</code> gọi script ở chế
+      độ <code>fix</code> <em>không hỏi</em>. Siết ở đó sẽ âm thầm tắt <code>/docs</code> đúng nơi cần
+      <code>/docs</code> để gỡ lỗi. Đây là lý do dùng cờ tường minh thay vì suy theo số cổng.</p>
+      <p><code>BACKEND_HOST=localhost</code> <strong>cũng bị đổi</strong> về <code>127.0.0.1</code> dù
+      cũng là loopback: trên Windows <code>localhost</code> ra <code>::1</code> (IPv6) trước, uvicorn
+      bind vào <code>::1</code> còn frontend gọi <code>127.0.0.1</code> → không kết nối được. Đúng cái
+      bẫy IPv6 mà chính script này đã cảnh báo cho <code>BACKEND_URL</code>.</p>
+      <p><code>start.bat</code> (được deploy sang máy đích) tự sinh <code>.env</code> khi chưa có, trước
+      đây ghi <code>BACKEND_HOST=0.0.0.0</code> và không có <code>ENV</code> — cài mới là hở lại. Đã đổi
+      sang mặc định đóng.</p>
+      <p><strong>Bẫy batch đã vấp khi sửa <code>start.bat</code>:</strong> comment <code>::</code> đặt
+      <em>bên trong</em> khối ngoặc <code>if ... ( )</code> làm cmd.exe báo <em>"The system cannot find
+      the drive specified"</em> — cmd hiểu <code>::</code> là nhãn, mà nhãn trong ngoặc là không hợp lệ.
+      Đã chuyển khối comment ra ngoài <code>if</code>. Trong ngoặc chỉ được dùng <code>rem</code>.</p>
+
+      <p class="label">Ghi chú cho người sau</p>
+      <p>Ngày nào cần cho máy khác gọi thẳng cổng 8000, phải đổi <strong>cả hai</strong>:
+      <code>BACKEND_HOST=0.0.0.0</code> <em>và</em> thêm origin thật vào <code>ALLOWED_ORIGINS</code>.
+      Đổi mỗi cái đầu là cảnh báo cũ quay lại nguyên vẹn — đúng như thiết kế của
+      <code>_warn_deployment_config()</code>.</p>
+      <p><strong>Chưa sửa:</strong> phần comment tiếng Việt trong <code>.env</code> đã bị hỏng mã hoá
+      (double-encoded UTF-8) từ trước, đọc ra <code>â€"</code>, <code>Ä'á»‹a</code>… Không sửa trong
+      lần này để tránh trộn thay đổi cấu hình với thay đổi văn bản. Các dòng biến (ASCII) không bị
+      ảnh hưởng.</p>
+
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">53</span>
+      <span class="card-title">Trang Nhật ký hệ thống vỡ đúng lúc có traceback để đọc</span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Phát hiện thế nào</p>
+      <p>Không phải do báo lỗi từ người dùng — thấy khi soi <code>frontend.log</code> xuất từ máy chính
+      để xác thực việc đóng cổng 8000 (card 52). Cùng một traceback lặp <strong>94 lần</strong>:</p>
+      <pre><code>frontend/pages/logs.py:88
+AttributeError: 'Element' object has no attribute 'set_text'</code></pre>
+
+      <p class="label">Vì sao ẩn mình được lâu</p>
+      <p>Code chỉ đi vào nhánh hỏng khi nội dung log <strong>có xuống dòng</strong>:</p>
+      <pre><code>if "\n" in msg:
+    ui.element("pre").classes(...).style(...).set_text(msg)   # ← vỡ
+else:
+    ui.label(msg).classes(...)                                 # ← chạy tốt</code></pre>
+      <p>Log một dòng (đại đa số) rơi vào nhánh <code>ui.label</code> nên trang hiện bình thường. Chỉ
+      thông báo nhiều dòng — tức là <strong>traceback</strong> — mới chạm nhánh kia. Nói cách khác:
+      trang Nhật ký gãy đúng lúc có lỗi cần đọc, còn lúc bình yên thì trông hoàn hảo.</p>
+      <p>Nguyên nhân: <code>set_text()</code> là phương thức của <code>ui.label</code>, không có trên
+      <code>Element</code> chung. Kiểm trực tiếp trên NiceGUI 2.12.1:
+      <code>hasattr(ui.element('pre'), 'set_text')</code> → <code>False</code>;
+      <code>hasattr(ui.label('x'), 'set_text')</code> → <code>True</code>.</p>
+
+      <p class="label">Cách sửa: bỏ thẻ <code>&lt;pre&gt;</code> thay vì đi tìm API thay thế</p>
+      <p>Thứ duy nhất <code>&lt;pre&gt;</code> đem lại ở đây là giữ nguyên xuống dòng — mà class
+      <code>whitespace-pre-wrap</code> (đã có sẵn trong chuỗi class cũ) làm đúng việc đó trên chính
+      <code>ui.label</code>. Nên hai nhánh nay dùng cùng một loại element, chỉ khác class. Thêm một
+      cái được: <code>ui.label</code> escape HTML, còn nhồi chuỗi vào element thô thì phải tự lo.</p>
+      <p>Đã grep toàn bộ <code>frontend/</code>: mọi <code>.set_text()</code> khác đều gọi trên
+      <code>ui.label</code>, mọi <code>ui.element("div")</code> đều dùng làm container với
+      <code>with</code> — không còn chỗ nào lặp lại lỗi này.</p>
+
+      <p class="label">Đã kiểm tới đâu (nói rõ giới hạn)</p>
+      <p>Đã xác nhận: <code>ui.label</code> nhận chuỗi nhiều dòng và giữ nguyên
+      <code>\n</code>, class <code>whitespace-pre-wrap</code> gắn đúng, file parse sạch. <strong>Chưa
+      dựng trình duyệt đăng nhập rồi mở trang Nhật ký</strong> — cần phiên WebSocket có xác thực. Bằng
+      chứng ở mức "lời gọi gây lỗi đã bị xoá và thứ thay thế hoạt động", chưa phải "đã nhìn thấy trang
+      render".</p>
+
+    </div>
+  </div>
+
 <!-- 54 -->
   <div class="card">
     <div class="card-header">

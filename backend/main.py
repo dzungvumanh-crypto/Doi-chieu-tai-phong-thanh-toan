@@ -58,6 +58,10 @@ from backend.core.config import settings as _settings
 _docs_open = _settings.ENV != "production" or _settings.ENABLE_API_DOCS
 _docs_url = "/docs" if _docs_open else None
 _redoc_url = "/redoc" if _docs_open else None
+# Phải tắt cả /openapi.json: FastAPI KHÔNG tự tắt nó khi docs_url=None, mà đó
+# mới là file chứa trọn danh sách 180 endpoint — tắt mỗi /docs chỉ giấu giao
+# diện, ai gõ thẳng /openapi.json vẫn lấy được đủ bản đồ hệ thống.
+_openapi_url = "/openapi.json" if _docs_open else None
 
 
 # ── Cảnh báo cấu hình triển khai ───────────────────────────────────────────────
@@ -127,6 +131,7 @@ app = FastAPI(
     lifespan=lifespan,
     docs_url=_docs_url,
     redoc_url=_redoc_url,
+    openapi_url=_openapi_url,
 )
 
 from backend.core.audit_middleware import AuditMiddleware
