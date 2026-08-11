@@ -27,6 +27,7 @@ FEATURES: dict[str, str] = {
     "handovers.reject_entry":  "Từ chối bàn giao",
     "handovers.borrow":        "Mượn lại chứng từ",
     "handovers.handback":      "Bàn giao lại chứng từ",
+    "handovers.return_entry":  "Trả lại chứng từ cho cán bộ",
 
     # Đóng chứng từ — thao tác
     "bundles.generate":        "Tạo bìa chứng từ",
@@ -81,9 +82,11 @@ FEATURES: dict[str, str] = {
     "menu.doi_chieu_ach":       "Đối chiếu ACH — GL02 ↔ MIS (menu)",
     "doi_chieu_ach.process":    "Chạy đối chiếu ACH",
     # Đối chiếu CITAD ↔ PaymentHub — Phòng Thanh toán
-    "menu.doi_chieu_citad":     "Đối chiếu CITAD ↔ PaymentHub (menu)",
+    # Nhãn phải khớp tên menu ở frontend/shared.py, phần mô tả sau dấu — mới
+    # nói rõ đối chiếu/đối soát với hệ thống nào.
+    "menu.doi_chieu_citad":     "Đối chiếu CITAD cuối ngày — CITAD ↔ PaymentHub (menu)",
     # Đối soát CITAD ↔ IPCAS — Phòng Thanh toán
-    "menu.doi_soat_citad":      "Đối soát CITAD ↔ IPCAS (menu)",
+    "menu.doi_soat_citad":      "Đối soát chênh lệch CITAD cuối ngày — CITAD ↔ IPCAS (menu)",
     # Đối chiếu điện SWIFT — SWIFT
     "menu.swift_recon":        "Đối chiếu điện SWIFT — Phòng Swift (menu)",
 }
@@ -104,6 +107,7 @@ FEATURE_GROUPS: list[dict] = [
                     "handovers.reject_entry",
                     "handovers.borrow",
                     "handovers.handback",
+                    "handovers.return_entry",
                 ],
             },
             {

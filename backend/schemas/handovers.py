@@ -45,6 +45,9 @@ class HandbackRequest(BaseModel):
 class RejectRequest(BaseModel):
     reason: str
 
+class ReturnToStaffRequest(BaseModel):
+    reason: str
+
 
 # ─── Entry History ────────────────────────────────────────────────────────────
 class EntryHistoryItem(BaseModel):

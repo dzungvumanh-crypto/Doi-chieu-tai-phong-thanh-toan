@@ -38,6 +38,7 @@ _WORK = {
     "POST /api/handovers/entries/{id}/confirm-returned":     "Xác nhận chứng từ đã trả",
     "POST /api/handovers/entries/{id}/reject":               "Từ chối bàn giao chứng từ",
     "POST /api/handovers/entries/{id}/resubmit":             "Gửi lại bàn giao chứng từ",
+    "POST /api/handovers/entries/{id}/return-to-staff":      "Trả lại chứng từ cho cán bộ",
     # Nghỉ phép
     "POST /api/leaves/":                          "Tạo đơn nghỉ phép",
     "DELETE /api/leaves/{id}":                    "Xóa đơn nghỉ phép",
