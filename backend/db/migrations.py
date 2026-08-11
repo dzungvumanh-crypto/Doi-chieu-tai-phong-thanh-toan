@@ -635,6 +635,12 @@ def _ensure_indexes():
         # trong báo cáo bàn giao (truy vấn hist ở handovers.py).
         "UPDATE user_tttt SET department_id = NULL WHERE role IN ('admin', 'admin_l2')",
         "DELETE FROM staff_department_history WHERE staff_id IN (SELECT id FROM user_tttt WHERE role IN ('admin', 'admin_l2'))",
+
+        # ── Đồng bộ is_active NULL — 2026-08-11 ───────────────────────────────
+        # is_active không NOT NULL và không có DEFAULT nên NULL lọt vào được.
+        # Mọi truy vấn đọc đều so `is_active = 1` → NULL vốn đã là "không hoạt
+        # động"; ghi hẳn 0 để danh sách user không còn dòng làm hỏng response.
+        "UPDATE user_tttt SET is_active = 0 WHERE is_active IS NULL",
     ]
     _mig_log = logging.getLogger(__name__)
 
