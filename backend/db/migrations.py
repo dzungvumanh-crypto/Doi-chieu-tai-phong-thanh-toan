@@ -633,6 +633,13 @@ def _ensure_indexes():
         "ALTER TABLE leave_records ADD COLUMN is_direct BOOLEAN DEFAULT 0",
         "ALTER TABLE leave_records ADD COLUMN direct_by INTEGER REFERENCES user_tttt(id)",
         "ALTER TABLE leave_records ADD COLUMN recall_reason TEXT",
+        # Rà soát vòng 2 PR #22 — 2026-08-10: trước đây trigger revert (huỷ/xoá đơn
+        # nghỉ) xác định dòng attendances cần xoá bằng cách khớp lại "ký hiệu suy ra
+        # từ leave_type" — nếu 2 đơn nghỉ chồng ngày cùng ra 1 ký hiệu (leaves.py chặn
+        # trùng lịch bằng SELECT-rồi-INSERT, không atomic), huỷ đơn cũ có thể xoá nhầm
+        # dòng do đơn mới tạo. Thêm cột này để trigger revert khớp đúng theo ID đơn
+        # nghỉ đã tạo ra dòng đó, không đoán qua ký hiệu nữa.
+        "ALTER TABLE attendances ADD COLUMN source_leave_id INTEGER REFERENCES leave_records(id)",
         """CREATE TABLE IF NOT EXISTS leave_quotas (
             staff_id  INTEGER NOT NULL REFERENCES user_tttt(id),
             year      INTEGER NOT NULL,
@@ -748,6 +755,7 @@ def _ensure_indexes():
             confirmed_at DATETIME,
             created_at   DATETIME,
             updated_at   DATETIME,
+            source_leave_id INTEGER REFERENCES leave_records(id),
             UNIQUE(staff_id, date)
         )""",
         """CREATE TABLE IF NOT EXISTS attendance_adjustments (
@@ -765,29 +773,55 @@ def _ensure_indexes():
             reject_reason   TEXT,
             created_at      DATETIME
         )""",
-        # Trigger: đơn nghỉ phép chuyển sang 'approved' → tự ghi symbol 'P' vào attendances.
-        # Không sửa backend/api/leaves.py (module khác phụ trách) — dùng trigger SQL thuần,
-        # tự kích hoạt trên câu UPDATE status thật của leaves.py, không gọi code Python nào
-        # từ đó. spread_dates (nghỉ ngày lẻ không liên tục, cột JSON có sẵn trên
-        # leave_records): nếu có giá trị thì chỉ đánh dấu đúng các ngày trong JSON đó; nếu
-        # NULL thì đánh dấu toàn bộ ngày làm việc trong [start_date,end_date] (bỏ T7/CN +
-        # public_holidays). Chỉ ghi đè dòng đang status='auto' — không đụng dòng đã
+        # Trigger: đơn nghỉ phép chuyển sang 'approved' → tự ghi ký hiệu tương ứng vào
+        # attendances. Không sửa backend/api/leaves.py (module khác phụ trách) — dùng
+        # trigger SQL thuần, tự kích hoạt trên câu UPDATE status thật của leaves.py,
+        # không gọi code Python nào từ đó. spread_dates (nghỉ ngày lẻ không liên tục,
+        # cột JSON có sẵn trên leave_records): nếu có giá trị thì chỉ đánh dấu đúng các
+        # ngày trong JSON đó; nếu NULL thì đánh dấu toàn bộ ngày làm việc trong
+        # [start_date,end_date] (bỏ T7/CN + public_holidays — áp dụng cho MỌI leave_type,
+        # kể cả thai_san/bao_hiem: quyết định nghiệp vụ 2026-08-10 là lưới chấm công chỉ
+        # đánh ngày thường, số ngày phép tính đủ lịch vẫn đúng riêng ở leaves.py, không
+        # liên quan lưới này). Chỉ ghi đè dòng đang status='auto' — không đụng dòng đã
         # 'adjusted'/'confirmed' (kế toán đã tự xử lý ngày đó). datetime('now','+7 hours')
         # xấp xỉ _vn_now() vì trigger SQL thuần không gọi được hàm Python — trade-off này
         # được ghi trong Implementation-notes.html.
+        #
+        # Sửa theo review PR #22 (Người 1, 2026-08-10):
+        #  - 'bat_buoc' là leave_type CỦA BẢN GHI GIẢ (import hạn mức phép/đặt số ngày đã
+        #    dùng ở leaves.py::import_quota_apply, update_used_days — KHÔNG phải đơn nghỉ
+        #    thật) → loại hẳn khỏi trigger, không được đánh bất kỳ ký hiệu nào.
+        #  - Chỉ áp dụng cho nhân viên Phòng Kế toán (ACCT) — trước đây chạy cho toàn hệ
+        #    thống, phình bảng attendances vô ích cho các phòng không dùng tính năng này.
+        #  - Ký hiệu theo leave_type thay vì hardcode 'P': thai_san/bao_hiem→'T', sick→'O',
+        #    còn lại (annual/other/personal/dot_xuat...)→'P'.
+        # Rà soát vòng 2 PR #22: thêm is_active=1 vào EXISTS (đồng bộ đúng với
+        # _acct_staff_rows() ở attendance.py — nhân viên ACCT đã nghỉ việc không còn
+        # kích hoạt trigger); ghi thêm source_leave_id để trigger revert bên dưới khớp
+        # đúng đơn nghỉ, không đoán qua ký hiệu. DROP trước để đảm bảo DB đã chạy
+        # migration cũ (trigger cùng tên) cũng được thay bằng logic mới — CREATE
+        # TRIGGER IF NOT EXISTS sẽ bỏ qua nếu trigger cùng tên đã tồn tại.
+        "DROP TRIGGER IF EXISTS trg_leave_approved_sync_attendance",
         """CREATE TRIGGER IF NOT EXISTS trg_leave_approved_sync_attendance
             AFTER UPDATE OF status ON leave_records
             WHEN NEW.status = 'approved' AND OLD.status != 'approved'
+                 AND NEW.leave_type != 'bat_buoc'
+                 AND EXISTS (SELECT 1 FROM user_tttt u JOIN departments d ON d.id = u.department_id
+                             WHERE u.id = NEW.staff_id AND d.code = 'ACCT' AND u.is_active = 1)
             BEGIN
-                INSERT INTO attendances (staff_id, date, symbol, work_value, status, created_at, updated_at)
+                INSERT INTO attendances (staff_id, date, symbol, work_value, status, source_leave_id, created_at, updated_at)
                 WITH RECURSIVE d(day) AS (
                     SELECT NEW.start_date
                     UNION ALL
                     SELECT date(day, '+1 day') FROM d WHERE day < NEW.end_date
                 )
-                SELECT NEW.staff_id, day, 'P',
-                       (SELECT work_value FROM attendance_symbols WHERE symbol='P'),
-                       'auto', datetime('now','+7 hours'), datetime('now','+7 hours')
+                SELECT NEW.staff_id, day,
+                       CASE NEW.leave_type WHEN 'thai_san' THEN 'T' WHEN 'bao_hiem' THEN 'T'
+                            WHEN 'sick' THEN 'O' ELSE 'P' END,
+                       (SELECT work_value FROM attendance_symbols WHERE symbol =
+                           CASE NEW.leave_type WHEN 'thai_san' THEN 'T' WHEN 'bao_hiem' THEN 'T'
+                                WHEN 'sick' THEN 'O' ELSE 'P' END),
+                       'auto', NEW.id, datetime('now','+7 hours'), datetime('now','+7 hours')
                 FROM d
                 WHERE (
                     (NEW.spread_dates IS NOT NULL AND day IN (SELECT value FROM json_each(NEW.spread_dates)))
@@ -796,9 +830,10 @@ def _ensure_indexes():
                          AND day NOT IN (SELECT date FROM public_holidays))
                 )
                 ON CONFLICT(staff_id, date) DO UPDATE SET
-                    symbol = 'P',
-                    work_value = (SELECT work_value FROM attendance_symbols WHERE symbol='P'),
+                    symbol = excluded.symbol,
+                    work_value = excluded.work_value,
                     status = 'auto',
+                    source_leave_id = excluded.source_leave_id,
                     updated_at = datetime('now','+7 hours')
                 WHERE attendances.status = 'auto';
             END""",
@@ -806,19 +841,28 @@ def _ensure_indexes():
         # thẳng leave_records với status='approved' ngay từ đầu (không qua UPDATE) — trigger
         # AFTER UPDATE ở trên sẽ không kích hoạt cho trường hợp này. Thêm trigger AFTER INSERT
         # cùng logic để phủ đúng path này (phát hiện khi test thực tế qua API /api/leaves/direct).
+        # Cùng các fix bat_buoc/ACCT-only/ký hiệu theo leave_type như trigger UPDATE ở trên.
+        "DROP TRIGGER IF EXISTS trg_leave_direct_insert_sync_attendance",
         """CREATE TRIGGER IF NOT EXISTS trg_leave_direct_insert_sync_attendance
             AFTER INSERT ON leave_records
             WHEN NEW.status = 'approved'
+                 AND NEW.leave_type != 'bat_buoc'
+                 AND EXISTS (SELECT 1 FROM user_tttt u JOIN departments d ON d.id = u.department_id
+                             WHERE u.id = NEW.staff_id AND d.code = 'ACCT' AND u.is_active = 1)
             BEGIN
-                INSERT INTO attendances (staff_id, date, symbol, work_value, status, created_at, updated_at)
+                INSERT INTO attendances (staff_id, date, symbol, work_value, status, source_leave_id, created_at, updated_at)
                 WITH RECURSIVE d(day) AS (
                     SELECT NEW.start_date
                     UNION ALL
                     SELECT date(day, '+1 day') FROM d WHERE day < NEW.end_date
                 )
-                SELECT NEW.staff_id, day, 'P',
-                       (SELECT work_value FROM attendance_symbols WHERE symbol='P'),
-                       'auto', datetime('now','+7 hours'), datetime('now','+7 hours')
+                SELECT NEW.staff_id, day,
+                       CASE NEW.leave_type WHEN 'thai_san' THEN 'T' WHEN 'bao_hiem' THEN 'T'
+                            WHEN 'sick' THEN 'O' ELSE 'P' END,
+                       (SELECT work_value FROM attendance_symbols WHERE symbol =
+                           CASE NEW.leave_type WHEN 'thai_san' THEN 'T' WHEN 'bao_hiem' THEN 'T'
+                                WHEN 'sick' THEN 'O' ELSE 'P' END),
+                       'auto', NEW.id, datetime('now','+7 hours'), datetime('now','+7 hours')
                 FROM d
                 WHERE (
                     (NEW.spread_dates IS NOT NULL AND day IN (SELECT value FROM json_each(NEW.spread_dates)))
@@ -827,24 +871,49 @@ def _ensure_indexes():
                          AND day NOT IN (SELECT date FROM public_holidays))
                 )
                 ON CONFLICT(staff_id, date) DO UPDATE SET
-                    symbol = 'P',
-                    work_value = (SELECT work_value FROM attendance_symbols WHERE symbol='P'),
+                    symbol = excluded.symbol,
+                    work_value = excluded.work_value,
                     status = 'auto',
+                    source_leave_id = excluded.source_leave_id,
                     updated_at = datetime('now','+7 hours')
                 WHERE attendances.status = 'auto';
             END""",
-        # Trigger ngược: đơn đã 'approved' bị huỷ/từ chối lại → xoá dòng 'P' tự động tương
+        # Trigger ngược: đơn đã 'approved' bị huỷ/từ chối lại → xoá ký hiệu tự động tương
         # ứng (chỉ xoá nếu vẫn còn status='auto' — nếu đã bị chỉnh tay/duyệt điều chỉnh
         # thành 'adjusted'/'confirmed' thì giữ nguyên, không đụng).
+        # Sửa theo review PR #22: trước đây xoá theo cả khoảng BETWEEN start_date/end_date
+        # bất kể spread_dates — đơn nghỉ ngày lẻ (vd 2 ngày rời nhau) khi huỷ sẽ xoá lây
+        # sang "P"/"T"/"O" của ĐƠN KHÁC nằm lọt trong khoảng đó (đã test thực tế, xem PR).
+        # Giờ tôn trọng spread_dates + đúng ký hiệu theo leave_type y hệt trigger ghi, chỉ
+        # xoá đúng những ngày/ký hiệu mà trigger ghi từng thực sự tạo ra.
+        # Rà soát vòng 2 PR #22: trước đây xoá bằng cách khớp lại ký hiệu suy ra từ
+        # leave_type + khoảng ngày — nếu 2 đơn nghỉ chồng ngày cùng ra 1 ký hiệu (có
+        # thể xảy ra do leaves.py chặn trùng lịch không atomic), huỷ đơn cũ sẽ xoá
+        # nhầm dòng do đơn khác tạo ra. Giờ khớp thẳng theo source_leave_id — chỉ xoá
+        # đúng dòng do chính đơn nghỉ này tạo, không cần đoán qua ký hiệu/khoảng ngày nữa.
+        "DROP TRIGGER IF EXISTS trg_leave_unapprove_revert_attendance",
         """CREATE TRIGGER IF NOT EXISTS trg_leave_unapprove_revert_attendance
             AFTER UPDATE OF status ON leave_records
             WHEN OLD.status = 'approved' AND NEW.status IN ('cancelled','rejected')
             BEGIN
                 DELETE FROM attendances
                 WHERE staff_id = NEW.staff_id
-                  AND date BETWEEN NEW.start_date AND NEW.end_date
-                  AND symbol = 'P'
-                  AND status = 'auto';
+                  AND status = 'auto'
+                  AND source_leave_id = NEW.id;
+            END""",
+        # Trigger mới theo review PR #22: 3 chỗ trong leaves.py xoá thẳng bản ghi
+        # leave_records (xoá đơn khai báo hộ, rollback batch import) không có trigger dọn
+        # attendances tương ứng — để lại ký hiệu "mồ côi" vĩnh viễn. Logic xoá giống hệt
+        # trigger unapprove ở trên, chỉ khác sự kiện kích hoạt (DELETE thay vì UPDATE).
+        "DROP TRIGGER IF EXISTS trg_leave_delete_revert_attendance",
+        """CREATE TRIGGER IF NOT EXISTS trg_leave_delete_revert_attendance
+            AFTER DELETE ON leave_records
+            WHEN OLD.status = 'approved' AND OLD.leave_type != 'bat_buoc'
+            BEGIN
+                DELETE FROM attendances
+                WHERE staff_id = OLD.staff_id
+                  AND status = 'auto'
+                  AND source_leave_id = OLD.id;
             END""",
 
         # ── Gỡ bỏ Check-in/out tự động — 2026-07-29 (người dùng đổi ý, không dùng

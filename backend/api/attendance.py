@@ -67,13 +67,44 @@ def _load_holidays(db: sqlite3.Connection, start: date, end: date):
     return frozenset(date.fromisoformat(r["date"]) for r in rows)
 
 
+# Thứ hạng chức vụ để sắp bảng công — khớp đúng _ROLE_ORDER_SQL ở backend/api/staff.py:24-36
+# (viết lại dạng dict Python vì cần sort kèm "tên" tách ra, SQL thuần không tách gọn được).
+_ROLE_RANK = {
+    "giam_doc": 0, "pho_giam_doc": 1, "admin": 2, "admin_l2": 3,
+    "truong_phong": 4, "pho_phong": 5, "hau_kiem_vien": 6, "chuyen_vien": 7,
+}
+
+
+def _given_name(full_name: str) -> str:
+    """"Tên" (từ cuối cùng) để sắp theo kiểu roster VN — vd "Nguyễn Văn A" sắp theo "A".
+    Giới hạn đã biết: không xử lý collation dấu tiếng Việt (vd "Ánh" vs "Bình" có thể lệch
+    thứ tự) — cùng hạn chế đã có sẵn ở backend/api/staff.py, không mở rộng sửa ở đây."""
+    parts = (full_name or "").split()
+    return parts[-1] if parts else (full_name or "")
+
+
+def _require_staff_in_acct(staff_id: int, db: sqlite3.Connection) -> None:
+    """Chặn thao tác lên nhân viên KHÔNG thuộc Phòng Kế toán — vd trưởng phòng KT lỡ chấm
+    công/duyệt điều chỉnh cho staff_id phòng khác (phát hiện ở review PR #22)."""
+    row = db.execute(
+        """SELECT 1 FROM user_tttt u JOIN departments d ON d.id = u.department_id
+           WHERE u.id = ? AND d.code = 'ACCT' AND u.is_active = 1""",
+        (staff_id,),
+    ).fetchone()
+    if not row:
+        raise HTTPException(404, "Nhân viên không thuộc Phòng Kế toán")
+
+
 def _acct_staff_rows(db: sqlite3.Connection):
-    return db.execute(
-        """SELECT u.id, u.full_name, u.employee_code FROM user_tttt u
+    rows = db.execute(
+        """SELECT u.id, u.full_name, u.employee_code, u.role FROM user_tttt u
            JOIN departments d ON d.id = u.department_id
-           WHERE d.code = 'ACCT' AND u.is_active = 1 AND (u.is_deleted = 0 OR u.is_deleted IS NULL)
-           ORDER BY u.full_name"""
+           WHERE d.code = 'ACCT' AND u.is_active = 1 AND (u.is_deleted = 0 OR u.is_deleted IS NULL)"""
     ).fetchall()
+    return sorted(
+        rows,
+        key=lambda r: (_ROLE_RANK.get(r["role"], 9), _given_name(r["full_name"]), r["employee_code"] or ""),
+    )
 
 
 def _adjustment_to_out(db: sqlite3.Connection, adj_id: int) -> dict:
@@ -141,6 +172,10 @@ def get_month(
         for r in att_rows:
             att_map[(r["staff_id"], r["date"])] = r
 
+    # Ngày lễ và ngày chưa tới không mặc định tính công (quyết định nghiệp vụ 2026-08-10,
+    # review PR #22 — trước đây chỉ check thứ trong tuần, bỏ sót cả 2 trường hợp này).
+    today = _vn_now().date()
+
     result_staff = []
     for srow in staff_rows:
         sid = srow["id"]
@@ -156,7 +191,7 @@ def get_month(
                     "status": arow["status"], "note": arow["note"], "is_virtual": False,
                 }
                 total += arow["work_value"] or 0
-            elif d.weekday() < 5:
+            elif d.weekday() < 5 and d not in holiday_dates and d <= today:
                 days[d.isoformat()] = {
                     "attendance_id": None, "staff_id": sid, "date": d.isoformat(),
                     "symbol": "x", "work_value": 1.0,
@@ -198,8 +233,14 @@ def get_day(
     ).fetchone()
     if row:
         return dict(row)
-    d = date.fromisoformat(date_)
-    if d.weekday() < 5:
+    try:
+        d = date.fromisoformat(date_)
+    except ValueError:
+        raise HTTPException(400, f"Ngày '{date_}' không hợp lệ, định dạng phải là YYYY-MM-DD")
+    # Ngày lễ và ngày chưa tới không mặc định tính công — cùng fix với /month
+    # (review PR #22, trước đây chỗ này chỉ check thứ trong tuần).
+    is_holiday = bool(_load_holidays(db, d, d))
+    if d.weekday() < 5 and not is_holiday and d <= _vn_now().date():
         return {"staff_id": staff_id, "date": date_, "symbol": "x", "work_value": 1.0,
                 "status": None, "note": None, "is_virtual": True}
     return {"staff_id": staff_id, "date": date_, "symbol": None, "work_value": 0.0,
@@ -217,14 +258,21 @@ def put_day(
     _require_acct_scope(current, db)
     if not _is_manager(current):
         raise HTTPException(403, "Chỉ Trưởng/Phó phòng hoặc Admin được sửa công trực tiếp")
+    # Đồng bộ với create_adjustment (rà soát vòng 3 PR #22, theo quyết định của
+    # người dùng 2026-08-11): không ai — kể cả Trưởng/Phó phòng — được ghi công
+    # cho ngày chưa tới.
+    try:
+        d = date.fromisoformat(date_)
+    except ValueError:
+        raise HTTPException(400, f"Ngày '{date_}' không hợp lệ, định dạng phải là YYYY-MM-DD")
+    if d > _vn_now().date():
+        raise HTTPException(400, "Không thể ghi công cho ngày chưa tới")
     sym = db.execute(
         "SELECT work_value FROM attendance_symbols WHERE symbol=? AND is_active=1", (body.symbol,)
     ).fetchone()
     if not sym:
         raise HTTPException(400, f"Ký hiệu '{body.symbol}' không hợp lệ")
-    staff = db.execute("SELECT id FROM user_tttt WHERE id=?", (staff_id,)).fetchone()
-    if not staff:
-        raise HTTPException(404, "Không tìm thấy nhân viên")
+    _require_staff_in_acct(staff_id, db)
     now = str(_vn_now())
     db.execute(
         """INSERT INTO attendances
@@ -269,6 +317,19 @@ def create_adjustment(
     staff_id = body.staff_id or current["id"]
     if current["role"] == "chuyen_vien" and staff_id != current["id"]:
         raise HTTPException(403, "Chỉ được xin điều chỉnh công của chính mình")
+    # Quản lý xin điều chỉnh hộ cho staff_id tuỳ ý — chặn nếu người đó không thuộc ACCT
+    # (vd trưởng phòng KT lỡ chọn nhầm nhân viên phòng khác, phát hiện ở review PR #22).
+    if staff_id != current["id"]:
+        _require_staff_in_acct(staff_id, db)
+    # Ngày chưa tới không có công để điều chỉnh — nhất quán với quy tắc "ngày chưa
+    # tới không tính công mặc định" ở /month, /day, /export (rà soát vòng 2 PR #22).
+    if body.date > _vn_now().date():
+        raise HTTPException(400, "Không thể xin điều chỉnh công cho ngày chưa tới")
+    # Rà soát vòng 3 PR #22: reason trước đây chỉ được chặn rỗng ở frontend — gọi
+    # thẳng API sẽ tạo được yêu cầu không có lý do, ảnh hưởng dấu vết kiểm toán.
+    # review_adjustment (nhánh reject) đã có check tương tự cho reject_reason.
+    if not body.reason or not body.reason.strip():
+        raise HTTPException(400, "Cần nhập lý do xin điều chỉnh")
     sym = db.execute(
         "SELECT work_value FROM attendance_symbols WHERE symbol=? AND is_active=1", (body.new_symbol,)
     ).fetchone()
@@ -284,6 +345,8 @@ def create_adjustment(
     else:
         if body.date.weekday() >= 5:
             raise HTTPException(400, "Không thể xin điều chỉnh cho ngày nghỉ cuối tuần chưa có dữ liệu")
+        if _load_holidays(db, body.date, body.date):
+            raise HTTPException(400, "Không thể xin điều chỉnh cho ngày nghỉ lễ chưa có dữ liệu")
         init_symbol, init_value = "x", 1.0
         cur = db.execute(
             """INSERT INTO attendances (staff_id, date, symbol, work_value, status, created_at, updated_at)
@@ -365,7 +428,11 @@ def list_adjustments(
         params.append(current["id"])
     elif scope == "pending":
         clauses.append("a.status = 'pending'")
-    elif scope == "mine":
+    else:
+        # "mine" hoặc giá trị scope lạ/không nhận diện được — mặc định an toàn về
+        # đúng yêu cầu của người gọi, tránh trả toàn bộ hệ thống khi thiếu nhánh này
+        # (phát hiện ở review PR #22: scope lạ trước đây khiến clauses rỗng → không
+        # có WHERE → trả hết mọi yêu cầu điều chỉnh của cả phòng).
         clauses.append("a.requested_by = ?")
         params.append(current["id"])
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
@@ -514,6 +581,10 @@ def export_month(
     symbol_font_special = Font(name=FONT_NAME, size=11, bold=True)  # ký hiệu khác 'x' in đậm — khớp mẫu thật
     total_font = Font(name=FONT_NAME, size=12, bold=True)
 
+    # Ngày lễ và ngày chưa tới không mặc định tính công — cùng fix với /month, /day
+    # (review PR #22, trước đây chỗ này chỉ check thứ trong tuần).
+    today = _vn_now().date()
+
     for idx, srow in enumerate(staff_rows, 1):
         sid = srow["id"]
         row_vals = [idx, srow["full_name"]]
@@ -523,7 +594,7 @@ def export_month(
             arow = att_map.get((sid, d.isoformat()))
             if arow:
                 symbol, value = arow["symbol"], (arow["work_value"] or 0)
-            elif d.weekday() < 5:
+            elif d.weekday() < 5 and d not in holiday_dates and d <= today:
                 symbol, value = "x", 1.0
             else:
                 symbol, value = "", 0.0

@@ -1,21 +1,49 @@
 from datetime import date, datetime
 from typing import Optional, Literal, Dict, List
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 
 # ─── Ký hiệu công ─────────────────────────────────────────────────────────────
 class AttendanceSymbolCreate(BaseModel):
     symbol: str
     description: str
-    work_value: float
+    # 1 ngày không thể quá 1 công — khớp giới hạn min=0/max=1 đã có sẵn ở UI
+    # "Thêm ký hiệu mới" (frontend/pages/attendance.py), trước đây chỉ chặn phía
+    # client, gọi thẳng API vẫn tạo được giá trị âm/>1 (rà soát vòng 3 PR #22).
+    work_value: float = Field(ge=0, le=1)
     color: str = "#E5E7EB"
     is_active: bool = True
 
+    @field_validator("symbol")
+    @classmethod
+    def v_symbol(cls, v: str) -> str:
+        v = v.strip()
+        if not v or len(v) > 10:
+            raise ValueError("Ký hiệu không được để trống và tối đa 10 ký tự")
+        return v
+
+    @field_validator("description")
+    @classmethod
+    def v_description(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("Mô tả không được để trống")
+        return v
+
 class AttendanceSymbolUpdate(BaseModel):
     description: Optional[str] = None
-    work_value: Optional[float] = None
+    work_value: Optional[float] = Field(default=None, ge=0, le=1)
     color: Optional[str] = None
     is_active: Optional[bool] = None
+
+    @field_validator("description")
+    @classmethod
+    def v_description(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            v = v.strip()
+            if not v:
+                raise ValueError("Mô tả không được để trống")
+        return v
 
 class AttendanceSymbolOut(BaseModel):
     symbol: str

@@ -129,7 +129,17 @@ async def attendance_page(year: Optional[int] = None, month: Optional[int] = Non
                         d = date(year, month, day_num)
                         dinfo = srow["days"].get(d.isoformat()) or {}
                         symbol = dinfo.get("symbol")
-                        color = _color_for(symbol) if symbol else "#FFFFFF"
+                        if symbol:
+                            color = _color_for(symbol)
+                        elif d.isoformat() in holidays:
+                            # Ô ngày lễ trong lưới dữ liệu trước đây trắng trơn như ô chưa
+                            # chấm, khó phân biệt "nghỉ lễ" với "quên chấm" (rà soát vòng 2
+                            # PR #22) — tô cùng màu xanh nhạt với dòng tiêu đề.
+                            color = "#DCFCE7"
+                        elif d > today:
+                            color = "#F3F4F6"
+                        else:
+                            color = "#FFFFFF"
                         cell = ui.element("div").classes(
                             "text-xs flex items-center justify-center border-t h-7"
                             + (" cursor-pointer hover:opacity-70" if editable else "")
