@@ -4,6 +4,13 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 11/08/2026 Quản lý User - Sửa lỗi trang không hiện được tài khoản nào:
+    + **Màn hình *Quản lý User* báo lỗi đỏ và hiện *"Không có kết quả"*** dù trong hệ thống có 79 tài khoản. Không sửa, không xoá, không khoá được ai qua giao diện. Ảnh hưởng **Quản trị viên cấp 1 và cấp 2, Giám đốc, Phó Giám đốc**. Trưởng phòng không bị nên lỗi dễ bị bỏ qua khi người này báo còn người kia bảo vẫn dùng được
+    + Nguyên nhân: **một tài khoản có ô trạng thái bỏ trống** — không phải *Hoạt động*, cũng không phải *Tạm khoá*. Chỉ một dòng như vậy là đủ để hệ thống bỏ luôn **cả danh sách**, chứ không phải bỏ riêng dòng đó
+    + **Không phải làm gì thủ công.** Lần khởi động đầu tiên sau khi cập nhật, hệ thống tự đặt các tài khoản trạng thái trống thành **Tạm khoá** — đúng với cách nó vẫn đối xử với những tài khoản này từ trước (không đăng nhập được, không hiện trong danh sách đang hoạt động, xuất Excel cũng đã ghi *Tạm khoá*). Không tài khoản nào đang dùng bị đổi trạng thái
+    + Trạng thái trống nếu **phát sinh lại về sau** (thường qua chức năng *Nhập DB*) thì trang vẫn hiện bình thường thay vì sập, và không cần khởi động lại
+    + ⚠️ **Còn 2 tài khoản kiểm thử trong dữ liệu, nên xoá:** `u1` (*LD Một*, Trưởng phòng, **Phòng Thanh toán**) và `duty_mig_check` (*LD Kiểm Tra*, Trưởng phòng, Phòng QLTK Nostro Vostro). Đã kiểm: **chưa ai từng đăng nhập** vào hai tài khoản này và chúng **không dính chứng từ, bìa, đơn nghỉ phép hay ca trực nào** — xoá không mất dữ liệu. Đáng lưu ý là `u1` đang hiện **đầu danh sách** ô *Người phê duyệt (KSV)* khi chuyên viên phòng Thanh toán tạo đơn nghỉ phép, rất dễ bị chọn nhầm
+
 - 10/08/2026 Đối chiếu CITAD - Extension lên **bản 2.9**, dùng được địa chỉ `apc-portal:9090`:
     + Thêm địa chỉ `apc-portal:9090` (một địa chỉ khác cùng trỏ về trang web TTTT) vào danh sách Extension được phép gọi. Máy trạm nào vào hệ thống bằng địa chỉ này trước đây sẽ báo *"Không kết nối server"* dù cấu hình đúng
     + ⚠️ **Phải tải lại `.zip` và cài lại Extension** thì mới có hiệu lực — bản đang cài không tự nhận. Vào `/doi_chieu_citad` → **Tải Extension**, giải nén, *Load unpacked* lại

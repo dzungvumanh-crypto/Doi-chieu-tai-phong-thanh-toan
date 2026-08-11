@@ -5142,7 +5142,78 @@ else:
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-10</footer>
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">74</span>
+      <span class="card-title">Quản lý User trả 500 — một dòng <code>is_active = NULL</code> làm hỏng cả danh sách</span>
+      <span class="badge badge-done">done · 2026-08-11</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Triệu chứng</div>
+      <p>Trang <b>Quản lý User</b> hiện <i>"Không có kết quả"</i> kèm toast 500 với admin, QTV cấp 2, GĐ, PGĐ.
+        Không ai sửa/xoá được user nào qua giao diện. Trưởng phòng Thanh toán <b>không</b> bị — vì phạm vi xem
+        của họ không chạm dòng hỏng. Chính sự "tuỳ người" đó làm lỗi khó truy.</p>
+
+      <div class="label">Nguyên nhân</div>
+      <p><code>StaffOut.is_active: bool</code> không nhận <code>None</code>. Chỉ cần <b>một</b> dòng
+        <code>user_tttt.is_active IS NULL</code> (ở đây là <code>id=81 duty_mig_check</code>) là pydantic ném
+        <code>ResponseValidationError</code> và FastAPI <b>bỏ nguyên response</b> — không phải bỏ một dòng.
+        Cột khai <code>is_active BOOLEAN</code>, <b>không</b> NOT NULL, <b>không</b> DEFAULT, nên NULL lọt vào
+        được — rõ nhất qua đường "Nhập DB" (<code>staff.py:392</code> chèn theo danh sách cột tuỳ file .db ngoài).</p>
+      <p>Lỗi chỉ nổ khi <code>active_only=false</code>; frontend luôn gọi đúng nhánh đó
+        (<code>frontend/pages/staff.py:333</code>), còn <code>active_only=true</code> lọc <code>is_active = 1</code>
+        nên vô tình giấu dòng hỏng.</p>
+
+      <div class="label">Quyết định — NULL ánh xạ thành <code>False</code>, không phải <code>True</code></div>
+      <p>Không tự chọn: mọi chỗ <b>đọc</b> cột này đã coi NULL là không hoạt động từ trước —
+        <code>auth.py:56</code> (<code>WHERE username = ? AND is_active = 1</code>) chặn đăng nhập,
+        <code>list_staff</code> lọc bỏ, xuất Excel in "Tạm khóa", badge frontend cũng "Tạm khóa".
+        Ánh xạ <code>False</code> là <b>ghi lại đúng hành vi đang có</b>; chọn <code>True</code> mới là đổi
+        nghiệp vụ — sẽ hồi sinh những tài khoản xưa nay không đăng nhập được.</p>
+
+      <div class="label">Sửa hai lớp — vì một lớp không đủ</div>
+      <table>
+        <tr><th>Lớp</th><th>Ở đâu</th><th>Chặn được gì</th></tr>
+        <tr><td>Schema — <code>field_validator(mode="before")</code></td>
+            <td><code>backend/schemas/staff.py</code></td>
+            <td>NULL <b>phát sinh sau này</b> (nhập DB, sửa tay SQL) không làm sập API nữa. Có hiệu lực ngay
+                tại runtime, không cần khởi động lại.</td></tr>
+        <tr><td>Migration — <code>UPDATE … WHERE is_active IS NULL</code></td>
+            <td><code>backend/db/migrations.py</code></td>
+            <td>Dọn dữ liệu NULL đang tồn tại để DB tự nó nhất quán, không phụ thuộc tầng ứng dụng.</td></tr>
+      </table>
+      <p>Chỉ migration thì NULL mới chèn vào lúc 9h sáng vẫn làm sập trang tới tận lần khởi động sau.
+        Chỉ validator thì API sống nhưng DB vẫn ôm dữ liệu mập mờ, và mọi truy vấn raw SQL viết sau này lại
+        phải nhớ <code>COALESCE</code>. Giữ cả hai.</p>
+
+      <div class="label">Không làm — và vì sao</div>
+      <p><b>Không</b> thêm <code>NOT NULL</code> cho cột: SQLite không <code>ALTER COLUMN</code>, phải dựng bảng
+        mới rồi copy 81 dòng + 8 khoá ngoại trỏ vào <code>user_tttt</code> — rủi ro lớn hơn nhiều so với lợi ích,
+        trong khi hai lớp trên đã bịt đúng đường lỗi.</p>
+      <p><b>Không</b> chặn NULL ngay trong <code>import_users_db</code>: đó là nguồn sinh, nhưng sửa ở đó là mở
+        rộng phạm vi sang luồng nhập DB (còn nhiều cột khác cùng cảnh). Ghi lại đây để xử lý riêng.</p>
+      <p><b>Không</b> xoá 2 tài khoản test còn sót trong DB thật (<code>id=80 u1 "LD Một"</code>,
+        <code>id=81 duty_mig_check</code>) — là việc dọn dữ liệu, cần người dùng quyết.
+        Lưu ý <code>u1</code> đang hiện <b>đầu danh sách</b> dropdown "Người phê duyệt (KSV)" của chuyên viên
+        phòng Thanh toán.</p>
+
+      <div class="label">Kiểm chứng</div>
+      <p>Chạy trên bản sao DB thật (còn nguyên dòng NULL), cổng 8001/8081:</p>
+      <table>
+        <tr><th>Phép thử</th><th>Kết quả</th></tr>
+        <tr><td>Khởi động → migration dọn NULL</td><td>1 → 0 dòng; <code>id=81</code> thành <code>is_active=0</code></td></tr>
+        <tr><td><code>GET /api/staff/?active_only=false</code></td><td>200, 79 user (trước: 500)</td></tr>
+        <tr><td><b>Đặt lại NULL khi server đang chạy</b></td><td>vẫn 200, trả <code>is_active: false</code> — lớp schema đứng độc lập</td></tr>
+        <tr><td>Trang <b>Quản lý User</b> với admin / GĐ / QTV cấp 2</td><td>hiện đủ bảng, nút Sửa &amp; Xoá trở lại, không toast lỗi</td></tr>
+        <tr><td>Tài khoản <code>is_active</code> NULL đăng nhập</td><td>vẫn 401 — hành vi không đổi</td></tr>
+        <tr><td>Tạo / khoá / mở lại / xoá user, xuất Excel</td><td>200 cả 5; suite <b>83 pass</b></td></tr>
+      </table>
+      <div class="note">Bài học lặp lại: response model chặt hơn schema DB thì <b>một dòng bẩn xoá sổ cả API</b>.
+        Chỗ nào cột SQLite cho NULL mà pydantic khai kiểu không-Optional là còn quả mìn y hệt.</div>
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-11</footer>
 </div>
 </body>
 </html>

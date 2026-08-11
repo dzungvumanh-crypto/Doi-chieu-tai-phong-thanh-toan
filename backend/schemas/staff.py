@@ -1,6 +1,6 @@
 from datetime import date
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
 class StaffCreate(BaseModel):
@@ -44,4 +44,14 @@ class StaffOut(BaseModel):
     ipcas_code: Optional[str] = None
     payment_username: Optional[str] = None
     is_active: bool
+
+    # Cột user_tttt.is_active không NOT NULL, không DEFAULT → NULL lọt được vào
+    # (dữ liệu cũ, đường "Nhập DB"). Không ép ở đây thì CẢ danh sách /api/staff/
+    # trả 500 chỉ vì một dòng hỏng — pydantic bỏ nguyên response.
+    # NULL = không hoạt động, khớp `WHERE is_active = 1` ở auth.py và list_staff.
+    @field_validator("is_active", mode="before")
+    @classmethod
+    def _null_la_khoa(cls, v):
+        return False if v is None else v
+
     class Config: from_attributes = True
