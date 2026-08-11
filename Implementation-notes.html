@@ -5280,6 +5280,70 @@ else:
     </div>
   </div>
 
+  <!-- 75 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">75</span>
+      <span class="card-title">Hai bẫy khi đọc Excel: giá trị header không kế thừa, và so ngày bằng chuỗi (PR #29)</span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Cả hai đều làm sai số liệu ÂM THẦM — không lỗi, không cảnh báo</p>
+      <p>Điểm chung đáng nhớ: người dùng thấy màn hình báo "đối soát xong", có số liệu, có file Excel
+      xuất ra. Chỉ có điều số sai. Không có bất kỳ tín hiệu nào để nghi ngờ.</p>
+
+      <p class="label">Bẫy 1 — giá trị suy từ header sheet đầu mà không kế thừa sang sheet sau</p>
+      <p>File CITAD chỉ có header ở sheet ĐẦU. Code đã có <code>chieu_ref</code> và
+      <code>cong_ref</code> để truyền <code>chieu</code>/<code>cong</code> sang các sheet sau — nhưng
+      <strong>bỏ sót <code>loai_tien</code></strong>. Sheet 2+ luôn rơi về mặc định <code>'VND'</code>.</p>
+      <p>Hậu quả kép: sai cột đọc số tiền (<code>i_co_di</code> khác nhau giữa VND và ngoại tệ), và sai
+      nhãn — mà <code>reconcile.py</code> dùng chính nhãn đó để quyết định so với IPCAS hay với Hub
+      ngoại tệ. Lệnh ngoại tệ ở sheet sau bị đẩy sang nhánh IPCAS, không tìm thấy, báo lệch
+      <code>only_citad</code> giả.</p>
+      <p><strong>Quy tắc: mỗi khi thêm một giá trị suy từ header sheet đầu, phải thêm luôn cơ chế kế
+      thừa cho sheet sau.</strong> Ba giá trị đã có (<code>chieu</code>, <code>cong</code>,
+      <code>ngay</code>) mà quên cái thứ tư là dấu hiệu khuôn mẫu này dễ sót.</p>
+
+      <p class="label">Bẫy 2 — so ngày bằng chuỗi mà không chuẩn hoá kiểu ô</p>
+      <p><code>_parse_hub_xls</code> lọc theo ngày bằng <code>str(ws.cell_value(...))[:10] != ngay_cham</code>.
+      Ô Excel định dạng Date thật KHÔNG phải chuỗi: openpyxl trả <code>datetime</code>
+      (<code>str()</code> ra <code>"2026-08-11..."</code>), xlrd trả số serial. Không dạng nào khớp
+      <code>"dd/mm/yyyy"</code> người dùng nhập, nên <strong>toàn bộ file Hub bị lọc rớt</strong> —
+      trả về 0 dòng, không lỗi.</p>
+      <p>Đã thêm <code>_normalize_date_cell()</code> nhận cả ba dạng: chuỗi <code>dd/mm/yyyy</code>,
+      <code>datetime</code>/<code>date</code>, và serial Excel (khoảng 40000–60000 ứng với ~2009–2064).
+      Không nhận diện được thì giữ hành vi cũ thay vì đoán mò.</p>
+      <p><strong>Quy tắc: đọc ô ngày từ Excel thì phải chuẩn hoá theo KIỂU ô, không bao giờ
+      <code>str()</code> rồi cắt chuỗi.</strong> Cùng một file xuất ra hai cách (Date thật vs text) cho
+      hai kiểu ô khác nhau mà nhìn trên màn hình giống hệt.</p>
+
+      <p class="label">Đo hệ quả cuối — dựng file đúng bố cục thật, chạy đủ luồng</p>
+      <table>
+        <tr><th></th><th>CITAD đọc được</th><th>Hub đọc được</th><th>Kết quả đối soát</th></tr>
+        <tr><td>Trước</td><td>3 dòng (1 sai nhãn thành VND)</td><td><strong>0 dòng</strong></td>
+            <td>Khớp=0, Lệch=3 — cả 3 báo "Chỉ CITAD"</td></tr>
+        <tr><td>Sau</td><td>3 dòng, nhãn đúng USD</td><td>2 dòng</td>
+            <td>Khớp=2, Lệch=1 — đúng</td></tr>
+      </table>
+      <p><strong>Dấu hiệu nhận ra lần đối soát đã bị dính lỗi này:</strong> ra 0 lệnh ngoại tệ khớp và
+      toàn bộ rơi vào "Chỉ CITAD". Đã ghi vào <code>Logs_update.md</code> để người dùng tự soát lại các
+      lần chấm cũ.</p>
+
+      <p class="label">Phần Extension — chốt chống lặp khi tự bấm chuột</p>
+      <p>Bản 2.10/2.11 tự tích "chọn tất cả" rồi bấm "Xem chi tiết lệnh" trên trang ngân hàng. Ba chốt
+      để không thành vòng lặp như lỗi <code>lastSavedKey</code> ở card trước: thoát ngay nếu bảng chi
+      tiết đã có, chỉ chạy sau khi trang đã có kết quả tìm kiếm, và cooldown 4 giây. Chọn cooldown theo
+      thời gian thay vì khoá một-lần là có chủ ý — nút đó có thể là dạng bật/tắt, bấm dồn khi đang tải
+      dở sẽ ẩn lại bảng vừa hiện.</p>
+      <p>Khi người dùng đã lọc sẵn "NH gửi", Extension tự cộng dồn cột "Số tiền" (trang không cộng sẵn
+      kiểu lọc này) — nhưng <strong>đối chiếu số dòng quét được với "Tổng số giao dịch" trang báo và
+      KHÔNG lưu nếu ít hơn</strong>. Thất bại theo hướng an toàn: thà không có số còn hơn nạp số thiếu
+      vào form báo cáo NHNN.</p>
+
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-11</footer>
 </div>
 </body>

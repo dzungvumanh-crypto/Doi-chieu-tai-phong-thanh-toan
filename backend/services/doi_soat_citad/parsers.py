@@ -88,12 +88,15 @@ def parse_citad_xls(filepath, ngay_cham=None):
         return [], f"Lỗi đọc file: {e}"
 
     rows_out = []
-    chieu_ref = [None]  # truyen chieu tu sheet dau sang cac sheet sau
-    cong_ref = [None]   # truyen cong (tach tu header "Ngan hang:") sang cac sheet sau
-    ngay_ref = [None]   # truyen ngay giao dich (tach tu header) sang cac sheet sau
+    chieu_ref = [None]     # truyen chieu tu sheet dau sang cac sheet sau
+    cong_ref = [None]      # truyen cong (tach tu header "Ngan hang:") sang cac sheet sau
+    ngay_ref = [None]      # truyen ngay giao dich (tach tu header) sang cac sheet sau
+    loai_tien_ref = [None]  # truyen loai_tien (VND/USD/EUR) tu sheet dau sang cac sheet sau —
+                             # thieu truoc day (khac chieu_ref/cong_ref): sheet 2+ luon bi coi
+                             # la VND du sheet dau la ngoai te, sai ca cot doc so tien lan nhan
     try:
         for shi, ws in enumerate(sheets):
-            rows = _parse_sheet(ws, filepath, shi == 0, chieu_ref, cong_ref, ngay_ref)
+            rows = _parse_sheet(ws, filepath, shi == 0, chieu_ref, cong_ref, ngay_ref, loai_tien_ref)
             rows_out += rows
     finally:
         # Đóng SAU khi đọc xong toàn bộ ô — read_only mode đọc trực tiếp
@@ -110,7 +113,7 @@ def parse_citad_xls(filepath, ngay_cham=None):
     return rows_out, None
 
 
-def _parse_sheet(ws, filepath, is_first, chieu_ref=None, cong_ref=None, ngay_ref=None):
+def _parse_sheet(ws, filepath, is_first, chieu_ref=None, cong_ref=None, ngay_ref=None, loai_tien_ref=None):
     # Detect chiều + loaiTien từ 12 dòng đầu (chỉ sheet đầu có header)
     chieu = 'di'
     loai_tien = 'VND'
@@ -155,11 +158,16 @@ def _parse_sheet(ws, filepath, is_first, chieu_ref=None, cong_ref=None, ngay_ref
             chieu_ref[0] = chieu  # luu chieu de sheet sau dung
         if cong_ref is not None:
             cong_ref[0] = cong  # luu cong de sheet sau dung
+        if loai_tien_ref is not None:
+            loai_tien_ref[0] = loai_tien  # luu loai_tien de sheet sau dung
     else:
         if chieu_ref is not None and chieu_ref[0] is not None:
             chieu = chieu_ref[0]  # sheet sau ke thua chieu tu sheet dau
         if cong_ref is not None and cong_ref[0]:
             cong = cong_ref[0]  # sheet sau ke thua cong tu sheet dau
+        if loai_tien_ref is not None and loai_tien_ref[0] is not None:
+            loai_tien = loai_tien_ref[0]  # sheet sau ke thua loai_tien tu sheet dau —
+                                            # truoc day luon roi ve mac dinh 'VND' o day
 
     # Tìm header row
     h_row_idx = -1
@@ -316,6 +324,32 @@ def parse_citad_files(filepaths, ngay_cham=None, progress_cb=None):
 # ──────────────────────────────────────────────────────────────
 def _strip_apos(s):
     return s.lstrip("'").strip() if s else ''
+
+
+# Chuẩn hoá 1 ô "ngày" đọc từ Excel về "dd/mm/yyyy" để so được với
+# `ngay_cham` (luôn dd/mm/yyyy, nhập từ form) — ô ngày có thể ở 3 dạng tuỳ
+# nguồn file: (1) chuỗi "dd/mm/yyyy" sẵn có (IPCAS CSV), (2) object
+# datetime/date thật (openpyxl với ô định dạng Date), (3) số serial Excel
+# (xlrd không tự quy đổi ô Date, và cả 2 khi đọc qua text). Thiếu bước này,
+# `str(cell_value)[:10]` của ô kiểu Date ra "yyyy-mm-dd" — KHÔNG BAO GIỜ
+# khớp "dd/mm/yyyy", lọc rớt âm thầm toàn bộ dòng của file (xem
+# _parse_hub_xls) mà không báo lỗi gì.
+def _normalize_date_cell(v):
+    if isinstance(v, (datetime.datetime, datetime.date)):
+        return v.strftime('%d/%m/%Y')
+    s = str(v).strip() if v is not None else ''
+    m = re.match(r'^(\d{1,2})/(\d{1,2})/(\d{4})', s)
+    if m:
+        d, mo, y = m.group(1).zfill(2), m.group(2).zfill(2), m.group(3)
+        return f'{d}/{mo}/{y}'
+    try:
+        serial = float(s)
+        if 40000 < serial < 60000:  # khoảng năm ~2009-2064, loại số khác bị hiểu nhầm
+            base = datetime.date(1899, 12, 30)
+            return (base + datetime.timedelta(days=int(serial))).strftime('%d/%m/%Y')
+    except (ValueError, TypeError):
+        pass
+    return s[:10]  # không nhận diện được — giữ hành vi cũ, không đoán mò thêm
 
 
 def _parse_ipcas_text(text, filename, ngay_cham):
@@ -620,10 +654,13 @@ def _parse_hub_xls(filepath, ext, fname, ngay_cham):
                 if lt in ('USD', 'EUR', 'GBP', 'JPY', 'CNY'):
                     loai_tien = lt
 
-            # Ngày
+            # Ngày — cell_value() có thể trả object datetime thật (openpyxl,
+            # ô định dạng Date) hoặc số serial (xlrd), không phải chuỗi
+            # "dd/mm/yyyy" — phải chuẩn hoá mới so được với ngay_cham, xem
+            # _normalize_date_cell().
             ngay = ''
             if i_ngay >= 0:
-                ngay = str(ws.cell_value(i, i_ngay)).strip()[:10]
+                ngay = _normalize_date_cell(ws.cell_value(i, i_ngay))
 
             # Lọc ngày chấm
             if ngay_cham and ngay and ngay != ngay_cham:
