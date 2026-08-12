@@ -472,9 +472,20 @@ function observeTraCuu(source) {
    mã (readPaymentDetailTotals()). Cột "NH gửi" CÓ SẴN ngay trong bảng kết
    quả mặc định (Loại lệnh: Lệnh quyết toán, NH gửi để "Tất cả") — chỉ cần
    kéo bảng sang phải, KHÔNG cần bấm "Xem chi tiết lệnh" (đã xác nhận thực
-   tế) — quan trọng nhất là bắt đúng cột theo tên, xem _cleanHeader()/
-   _headerIndexOf() (bảng có nút sắp xếp cột hay chèn icon/khoảng trắng phụ
-   vào <th>, so khớp tuyệt đối dễ trượt dù cột hiển thị đúng).
+   tế nhiều lần).
+
+   NGUYÊN NHÂN THẬT khiến trước đây không đọc được cột này (đã xác nhận qua
+   console người dùng tự chạy: `[...t.querySelectorAll('th')].map(x=>x.
+   innerText)` liệt kê đủ "NH gửi"/"Số tiền", chữ sạch) — KHÔNG PHẢI do tên
+   cột lệch/có icon, mà do selector định vị <th> quá hẹp: bản cũ dùng
+   `'thead th, tr:first-child th, tr:first-child td'` (chỉ tìm trong
+   <thead> hoặc đúng dòng <tr> đầu tiên), nhưng bảng thật của trang này
+   không đặt <th> theo 1 trong 2 kiểu đó nên luôn trượt. Nay dùng đơn giản
+   `'th'` (mọi thẻ <th> trong bảng, không giới hạn vị trí) — xem
+   _findPaymentTable()/_findResultsTableWithAmount(). _cleanHeader()/
+   _headerIndexOf() (so khớp "chứa chuỗi" sau chuẩn hoá khoảng trắng) vẫn
+   giữ lại vì vô hại và có thể hữu ích cho biến thể khác, nhưng KHÔNG phải
+   nguyên nhân chính đã sửa.
 
    Có 2 cách tách, thử theo thứ tự (savePaymentDetail()):
      1. NGƯỜI DÙNG tự lọc theo bộ lọc "NH gửi" = 1 mã cụ thể ở form tìm
@@ -510,7 +521,7 @@ function _headerIndexOf(headers, name) {
 
 function _findPaymentTable() {
   for (const t of document.querySelectorAll('table')) {
-    const headCells = t.querySelectorAll('thead th, tr:first-child th, tr:first-child td');
+    const headCells = t.querySelectorAll('th');
     for (const c of headCells) {
       if (_cleanHeader(c.innerText).includes('NH gửi')) return t;
     }
@@ -524,13 +535,13 @@ function hasPaymentResults() {
 }
 
 // Lưới an toàn dự phòng: bảng kết quả mặc định ĐÃ CÓ SẴN cột "NH gửi" (xác
-// nhận thực tế), nên bình thường không cần hàm này. Chỉ chạy tới khi
-// hasPaymentResults() vẫn false sau khi đã sửa cách bắt tên cột (khoan dung
-// hơn, xem _cleanHeader()) — phòng trường hợp hiếm bảng thật sự ở dạng khác
-// (vd chưa tải xong). Cooldown theo thời gian (không phải khoá một-lần) để
-// tự thử lại nếu bảng tải chậm, nhưng không bấm dồn dập mỗi 1.5s — nút "Xem
-// chi tiết lệnh" có thể là dạng bật/tắt, bấm khi đang tải dở có thể vô tình
-// ẩn lại bảng vừa hiện.
+// nhận thực tế qua console), nên bình thường không cần hàm này — chỉ chạy
+// tới khi hasPaymentResults() vẫn false dù đã sửa đúng selector định vị
+// <th> (xem comment đầu mục "3. PAYMENT"), phòng trường hợp hiếm bảng thật
+// sự ở dạng khác (vd chưa tải xong). Cooldown theo thời gian (không phải
+// khoá một-lần) để tự thử lại nếu bảng tải chậm, nhưng không bấm dồn dập
+// mỗi 1.5s — nút "Xem chi tiết lệnh" có thể là dạng bật/tắt, bấm khi đang
+// tải dở có thể vô tình ẩn lại bảng vừa hiện.
 let _lastExpandAttempt = 0;
 function _tryExpandDetail() {
   if (_findPaymentTable()) return; // đã có cột "NH gửi" rồi, khỏi làm gì thêm
@@ -560,7 +571,7 @@ function readPaymentDetailTotals() {
   const totals = { napas: {}, pssmdp: {} };
   if (!table) return totals;
 
-  const headers = Array.from(table.querySelectorAll('thead th, tr:first-child th, tr:first-child td'))
+  const headers = Array.from(table.querySelectorAll('th'))
     .map(c => _cleanHeader(c.innerText));
   const idxNH = _headerIndexOf(headers, 'NH gửi');
   const idxTien = _headerIndexOf(headers, 'Số tiền');
@@ -621,7 +632,7 @@ function readNhGuiFilterChannel() {
 
 function _findResultsTableWithAmount() {
   for (const t of document.querySelectorAll('table')) {
-    const headCells = t.querySelectorAll('thead th, tr:first-child th, tr:first-child td');
+    const headCells = t.querySelectorAll('th');
     for (const c of headCells) {
       if (_cleanHeader(c.innerText).includes('Số tiền')) return t;
     }
@@ -641,7 +652,7 @@ function readFilteredChannelTotals() {
   const table = _findResultsTableWithAmount();
   const totals = {};
   if (!table) return totals;
-  const headers = Array.from(table.querySelectorAll('thead th, tr:first-child th, tr:first-child td'))
+  const headers = Array.from(table.querySelectorAll('th'))
     .map(c => _cleanHeader(c.innerText));
   const idxTien = _headerIndexOf(headers, 'Số tiền');
   const idxLoaiTien = _headerIndexOf(headers, 'Loại tiền');
