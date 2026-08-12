@@ -4,6 +4,11 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 11/08/2026 Đối chiếu CITAD - Extension lên **bản 2.13**, tìm ra nguyên nhân thật khiến không đọc được cột "NH gửi":
+    + Xác nhận qua lệnh kiểm tra trực tiếp trên trình duyệt (Console): cột "NH gửi" và "Số tiền" đều có sẵn trong bảng, chữ sạch — **không phải do tên cột lệch hay có icon** như 2 lần sửa trước (bản 2.11/2.12) từng đoán
+    + Nguyên nhân thật: hàm dò cột tiêu đề chỉ tìm trong `<thead>` hoặc đúng dòng đầu tiên của bảng, nhưng bảng thật của trang này không đặt tiêu đề cột theo 1 trong 2 kiểu đó — dò trượt dù cột vẫn tồn tại. Nay dò mọi thẻ tiêu đề trong bảng, không giới hạn vị trí
+    + ⚠️ **Phải tải lại `.zip` và cài lại Extension** — vào `/doi_chieu_citad` → **Tải Extension**, giải nén, *Load unpacked* lại
+
 - 11/08/2026 Bàn giao chứng từ - Thêm nút **Trả lại** để hậu kiểm chủ động trả chứng từ về cho cán bộ:
     + **Trước đây chứng từ đã xác nhận chỉ ra khỏi kho được khi giao dịch viên chủ động xin mượn.** Hậu kiểm cầm chứng từ trên tay, thấy thiếu chữ ký hay sai sót, muốn trả về cho cán bộ thì không có nút nào — phải nhờ chính cán bộ đó vào bấm *Mượn lại* rồi mình duyệt, vòng vèo và sai bản chất sự việc
     + Nay ở **bảng lịch sử của từng ô** (bấm vào ô trong lưới), phần *THAO TÁC* có thêm nút tím **"↪ Trả lại"**. Nút **chỉ hiện với ô đang ở trạng thái *Đã xác nhận*** — ô đang chờ, đang mượn hay bị từ chối đều không có
