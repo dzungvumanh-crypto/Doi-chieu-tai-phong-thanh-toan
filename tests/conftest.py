@@ -1,0 +1,45 @@
+"""Fixtures dùng chung cho toàn bộ test suite của dự án.
+
+Chạy test: .venv\\Scripts\\python.exe -m pytest tests/ -v
+(Lưu ý: dùng đúng .venv của dự án — Python hệ thống có thể thiếu dependency như
+python-jose; .venv có thể thiếu pytest nếu chưa `pip install pytest` — cài 1 lần.)
+"""
+
+import sqlite3
+
+import pytest
+from fastapi.testclient import TestClient
+
+from backend.core.deps import get_current_staff
+from backend.core.enums import StaffRole
+from backend.database import get_db
+from backend.main import app
+
+
+def _fake_admin() -> dict:
+    return {"id": 1, "role": StaffRole.ADMIN, "username": "test-admin", "full_name": "Test Admin"}
+
+
+def _fake_db():
+    """DB tạm trong RAM — không đụng tới data/*.db thật. Route nào thật sự cần
+    query DB (không chỉ auth) nên override get_db lại trong test riêng với schema cần thiết."""
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+@pytest.fixture
+def admin_client():
+    """TestClient đã "đăng nhập" sẵn với quyền admin — bypass JWT/session/DB thật bằng
+    FastAPI dependency_overrides, KHÔNG chạy lifespan (không migrate DB thật, không start
+    backup scheduler thread) vì không dùng `with TestClient(app) as client:`.
+
+    Dùng cho mọi test API-level trong dự án — không riêng module nào."""
+    app.dependency_overrides[get_current_staff] = _fake_admin
+    app.dependency_overrides[get_db] = _fake_db
+    client = TestClient(app)
+    yield client
+    app.dependency_overrides.clear()

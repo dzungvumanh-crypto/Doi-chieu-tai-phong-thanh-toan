@@ -1,5 +1,6 @@
 """Shared utilities, helpers và constants dùng chung cho tất cả pages."""
 import asyncio
+import inspect
 import logging
 import os
 from nicegui import ui, app
@@ -49,7 +50,7 @@ DEPARTMENTS = [
                 "items": [
                     ("cham_459901",           "Chấm 459901",            "task_alt"),
                     ("doi_chieu_song_phuong", "Đối chiếu Song phương",  "account_balance"),
-                    ("doi_chieu_ach",         "Đối chiếu ACH",          "sync_alt"),
+                    ("cham_ach",              "Chấm đối chiếu ACH",     "compare_arrows"),
                     ("doi_chieu_citad",       "Đối chiếu CITAD cuối ngày",        "account_balance_wallet"),
                     ("doi_soat_citad",        "Đối soát chênh lệch CITAD cuối ngày", "fact_check"),
                 ],
@@ -639,3 +640,140 @@ def _handle_api_error(e: Exception) -> bool:
         return True
     ui.notify(str(e), type="negative")
     return False
+
+
+async def open_folder_picker(on_select, *, initial_path: str = "") -> None:
+    """Dialog điều hướng cây thư mục qua GET /api/fs/browse — hoạt động đúng bất
+    kể trình duyệt mở ở máy nào (không dùng hộp thoại OS cục bộ, không dùng
+    <input webkitdirectory>, vì cả 2 thứ đó chỉ hoạt động đúng khi browser và
+    server cùng 1 máy hoặc không trả về đường dẫn tuyệt đối).
+
+    UX theo kiểu Windows Explorer: click 1 dòng = CHỌN (tô sáng, không rời khỏi
+    thư mục đang xem); double-click = MỞ vào thư mục đó. Thanh breadcrumb phía
+    trên (từ "Máy tính" → ổ đĩa → từng cấp) bấm 1 đoạn để nhảy thẳng tới đó,
+    thay vì chỉ có nút "lên 1 cấp". Nút "Chọn thư mục này" xác nhận đúng dòng
+    đang được tô sáng — nếu chưa chọn dòng nào thì xác nhận thư mục đang mở.
+    on_select(path) có thể là hàm sync hoặc async — mỗi trang gọi tự quyết định
+    làm gì với path (gán input, validate...)."""
+    state = {"path": None, "parent": None, "selected": None, "entries": []}
+    dialog = ui.dialog().props("persistent")
+
+    with dialog, ui.card().classes("p-4").style("min-width: 640px; max-width: 90vw"):
+        ui.label("Chọn thư mục").classes("text-base font-semibold text-red-800 mb-2")
+
+        with ui.row().classes("w-full items-center gap-1 mb-1"):
+            btn_up = ui.button(icon="arrow_upward").props("flat dense round").tooltip("Lên 1 cấp")
+            breadcrumb_row = ui.row().classes("items-center gap-0 flex-1 flex-nowrap overflow-x-auto")
+
+        error_label = ui.label("").classes("text-xs text-red-600 mb-1")
+        error_label.set_visibility(False)
+
+        spinner = ui.spinner("dots", size="md").classes("m-auto")
+
+        list_area = ui.column().classes(
+            "w-full max-h-96 overflow-y-auto border rounded gap-0"
+        )
+
+        with ui.row().classes("gap-2 justify-end w-full mt-3"):
+            ui.button("Hủy", color="grey-6").props("flat").on("click", dialog.close)
+            btn_select = ui.button("Chọn thư mục này", icon="check", color="red-8")
+
+        def _crumb_click(p):
+            return lambda: _load(p)
+
+        def _render_breadcrumb(crumbs):
+            breadcrumb_row.clear()
+            with breadcrumb_row:
+                is_root = state["path"] is None
+                ui.label("Máy tính").classes(
+                    "text-sm cursor-pointer px-1 rounded hover:bg-red-50 "
+                    + ("text-red-800 font-semibold" if is_root else "text-gray-500")
+                ).on("click", _crumb_click(None))
+                for i, c in enumerate(crumbs):
+                    ui.icon("chevron_right").classes("text-xs text-gray-300")
+                    is_last = i == len(crumbs) - 1
+                    ui.label(c["name"]).classes(
+                        "text-sm px-1 rounded truncate max-w-[160px] "
+                        + ("text-red-800 font-semibold" if is_last
+                           else "text-gray-500 cursor-pointer hover:bg-red-50")
+                    ).on("click", (lambda: None) if is_last else _crumb_click(c["path"]))
+
+        def _render_list():
+            list_area.clear()
+            with list_area:
+                if not state["entries"]:
+                    msg = "(Không có ổ đĩa nào khả dụng)" if state["path"] is None else "(Không có thư mục con)"
+                    ui.label(msg).classes("text-xs text-gray-400 italic p-3")
+                icon_name = "storage" if state["path"] is None else "folder"
+                icon_color = "text-gray-500" if state["path"] is None else "text-yellow-600"
+                for ent in state["entries"]:
+                    is_sel = state["selected"] == ent["path"]
+                    row = ui.row().classes(
+                        "w-full items-center gap-2 px-3 py-2 cursor-pointer border-b "
+                        + ("bg-red-100" if is_sel else "hover:bg-red-50")
+                    )
+                    with row:
+                        ui.icon(icon_name).classes(f"{icon_color} text-base")
+                        ui.label(ent["name"]).classes("text-sm flex-1 truncate")
+                        ui.icon("chevron_right").classes("text-xs text-gray-300")
+
+                    def _select(p=ent["path"]):
+                        state["selected"] = p
+                        _render_list()
+
+                    row.on("click", _select)
+                    row.on("dblclick", lambda p=ent["path"]: _load(p))
+
+        async def _load(path, *, is_initial: bool = False):
+            spinner.set_visibility(True)
+            error_label.set_visibility(False)
+            try:
+                res = await asyncio.to_thread(
+                    api.get, "/api/fs/browse", {"path": path} if path else None
+                )
+            except Exception as e:
+                spinner.set_visibility(False)
+                if _handle_api_error(e):
+                    dialog.close()
+                    return
+                if is_initial:
+                    error_label.set_text(
+                        f"Không mở được đường dẫn hiện tại ({e}) — bắt đầu từ danh sách ổ đĩa."
+                    )
+                    error_label.set_visibility(True)
+                    await _load(None)
+                    return
+                error_label.set_text(f"Không mở được thư mục: {e}")
+                error_label.set_visibility(True)
+                return
+
+            spinner.set_visibility(False)
+            state["path"] = res.get("path")
+            state["parent"] = res.get("parent")
+            state["selected"] = None
+            state["entries"] = res.get("entries", [])
+
+            if state["path"] is None:
+                btn_up.props("disable")
+                btn_select.props("disable")
+            else:
+                btn_up.props(remove="disable")
+                btn_select.props(remove="disable")
+
+            _render_breadcrumb(res.get("breadcrumbs", []))
+            _render_list()
+
+        async def _confirm():
+            target = state["selected"] or state["path"]
+            if not target:
+                return
+            dialog.close()
+            result = on_select(target)
+            if inspect.isawaitable(result):
+                await result
+
+        btn_up.on("click", lambda: _load(state["parent"]))
+        btn_select.on("click", _confirm)
+
+        dialog.open()
+        await _load(initial_path.strip() if initial_path else None, is_initial=True)
