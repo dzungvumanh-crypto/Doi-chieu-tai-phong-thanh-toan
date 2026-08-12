@@ -8,6 +8,20 @@ Bảng nhân sự tên là **`user_tttt`**. Tên cũ `ksnb_staff` đã bị đ�
 `backend/db/migrations.py`) — các file trong `Plan/` và `Upgrade/` là tài liệu lịch sử, vẫn ghi tên cũ.
 **Không copy tên bảng từ hai thư mục đó.**
 
+## Đường dẫn template có dấu tiếng Việt
+Dùng `template_path()` từ `backend/core/paths.py`, **không** `os.path.join(..., "templates", "Phòng ...")`.
+
+Tên thư mục trên đĩa và trong git ở dạng Unicode **NFD**; chuỗi gõ trong mã nguồn là **NFC**. Windows
+không chuẩn hoá tên file → hai chuỗi khác nhau về byte → `os.path.exists()` trả `False` dù thư mục vẫn ở
+đó, và `os.makedirs()` đẻ ra thư mục **thứ hai trùng tên**.
+
+Thư mục con (`Nghỉ phép`, `Bàn giao cho lưu trữ`) cũng NFD — đưa **toàn bộ** các đoạn vào
+`template_path()`, đừng resolve nửa chừng rồi `os.path.join` tiếp.
+
+> Đã xảy ra thật: `templates/` từng có hai thư mục "Phòng Tổng hợp" (một NFD có dữ liệu, một NFC rỗng).
+> `leaves.py` trỏ vào bản rỗng nên mẫu đơn riêng theo chức danh **không bao giờ được dùng** — không lỗi,
+> không log, chỉ lặng lẽ rơi về mẫu chung. `tests/test_paths.py` canh không cho tái diễn.
+
 ## Schema Migrations
 Thêm câu SQL vào list `schema_migrations` trong `backend/db/migrations.py::_ensure_indexes()`.
 Chạy idempotent khi khởi động.

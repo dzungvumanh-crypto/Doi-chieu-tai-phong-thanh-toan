@@ -13,6 +13,7 @@ from fastapi.responses import StreamingResponse
 
 from backend.core.deps import TONG_HOP_CODES, get_current_staff, require_feature
 from backend.core.enums import LeaveStatus
+from backend.core.paths import template_path
 from backend.database import get_db, _vn_now, compute_annual_leave, compute_carry_over
 from backend.schemas.leaves import (
     LeaveCreate, LeaveReview, TongHopReview,
@@ -1485,14 +1486,10 @@ _ROLE_VN = {
     "admin_l2":      "Quản trị viên cấp 2",
 }
 
-_TPL_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-    "templates", "Phòng Tổng hợp", "Nghỉ phép",
-)
-_TPL_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-    "templates", "don_xin_nghi_phep_tpl.docx",
-)
+# template_path() chứ không phải os.path.join(): tên thư mục có dấu trên đĩa đang
+# ở dạng NFD, ghép chuỗi NFC từ mã nguồn sẽ không khớp — xem backend/core/paths.py
+_TPL_DIR = template_path("Phòng Tổng hợp", "Nghỉ phép")
+_TPL_PATH = template_path("don_xin_nghi_phep_tpl.docx")
 
 def _pick_template(staff_role: str) -> str:
     """Chọn file docx theo role. Fallback về template gốc nếu chưa có."""
