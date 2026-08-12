@@ -31,6 +31,8 @@ async def group_features_page():
         current_codes: list      = [set()]     # mutable wrapper tránh rebinding issue
         menu_refs: dict          = {}          # menu_code → checkbox element
         action_refs: dict        = {}          # action_code → checkbox element
+        col_refs: dict           = {}          # menu_code → cột chứa action (để ẩn/hiện)
+        menu_actions: dict       = {}          # menu_code → list action_code
 
         group_selector = None
         save_btn       = None
@@ -72,11 +74,87 @@ async def group_features_page():
                     return
                 ui.notify(str(e), type="negative")
 
+        # ── Một menu + các action con ─────────────────────────────────────────
+        def _menu_block(menu: dict, codes: set, icon: str = "", standalone: bool = False):
+            """standalone=True: menu đứng một mình trong thẻ, ô tick đóng vai tiêu đề."""
+            mcode    = menu["code"]
+            actions  = menu.get("actions", [])
+            acodes   = [a["code"] for a in actions]
+            mchecked = mcode in codes
+            menu_actions[mcode] = acodes
+
+            def _on_menu_toggle(e, code=mcode):
+                col = col_refs.get(code)
+                if col is not None:
+                    col.set_visibility(e.value)
+                if not e.value:
+                    for c in menu_actions.get(code, []):
+                        if c in action_refs:
+                            action_refs[c].set_value(False)
+
+            row_cls = "w-full items-center py-2.5"
+            if not standalone:
+                row_cls += " border-b border-gray-100"
+            with ui.row().classes(row_cls):
+                if icon:
+                    ui.icon(icon).classes("text-red-800 text-lg")
+                menu_refs[mcode] = ui.checkbox(
+                    menu["label"],
+                    value=mchecked,
+                    on_change=_on_menu_toggle if acodes else None,
+                ).classes(
+                    "text-base font-semibold text-red-900" if standalone
+                    else "text-sm font-semibold text-gray-800"
+                )
+
+            if acodes:
+                with ui.column().classes("pl-7 pb-2 pt-1 gap-1 w-full") as action_col:
+                    col_refs[mcode] = action_col
+                    action_col.set_visibility(mchecked)
+                    for action in actions:
+                        action_refs[action["code"]] = ui.checkbox(
+                            action["label"],
+                            value=action["code"] in codes and mchecked,
+                        ).classes("text-sm text-gray-600")
+
+        # ── Dải nhãn phòng + nút chọn nhanh ───────────────────────────────────
+        def _section_header(label: str, menu_codes: list[str]):
+            """Nhãn phòng KHÔNG phải ô tick — luật "mỗi ô tick là một quyền" giữ nguyên.
+            Hai nút chỉ tác động lên MENU, không tự cấp ACTION.
+            """
+            def _set_all(value: bool):
+                for c in menu_codes:
+                    cb = menu_refs.get(c)
+                    if cb is None:
+                        continue
+                    cb.set_value(value)
+                    # Cập nhật thẳng, không dựa vào việc set_value có kích hoạt
+                    # on_change hay không — tránh phụ thuộc chi tiết nội bộ NiceGUI.
+                    col = col_refs.get(c)
+                    if col is not None:
+                        col.set_visibility(value)
+                    if not value:
+                        for a in menu_actions.get(c, []):
+                            if a in action_refs:
+                                action_refs[a].set_value(False)
+
+            with ui.row().classes("w-full items-center gap-2 pt-3 pb-1"):
+                ui.label(label).classes(
+                    "text-[11px] font-semibold uppercase tracking-wide text-gray-500"
+                )
+                ui.space()
+                ui.button("Chọn tất cả", on_click=lambda: _set_all(True)) \
+                    .props("flat dense no-caps size=sm color=red-8")
+                ui.button("Bỏ chọn", on_click=lambda: _set_all(False)) \
+                    .props("flat dense no-caps size=sm color=grey-7")
+
         # ── Render cây phân quyền (refreshable) ───────────────────────────────
         @ui.refreshable
         def _render_features():
             menu_refs.clear()
             action_refs.clear()
+            col_refs.clear()
+            menu_actions.clear()
 
             if not structure or selected_group_id["value"] is None:
                 ui.label("Chọn nhóm để xem và chỉnh sửa quyền").classes("text-gray-500 text-sm py-4")
@@ -84,49 +162,27 @@ async def group_features_page():
 
             codes = current_codes[0]
 
-            for dept_def in structure:
+            for node in structure:
                 with ui.card().classes("w-full shadow-sm rounded-xl overflow-hidden mb-3"):
+                    # Thẻ không header: bọc header vào sẽ ra "Nghỉ phép / Nghỉ phép"
+                    if node["kind"] == "menu":
+                        with ui.column().classes("px-4 py-2 gap-0 w-full"):
+                            _menu_block(node, codes, icon=node.get("icon", ""), standalone=True)
+                        continue
 
-                    # Header phòng
                     with ui.row().classes("w-full bg-red-800 px-4 py-2.5 items-center gap-2"):
-                        ui.icon(dept_def["icon"]).classes("text-white text-base")
-                        ui.label(dept_def["dept"]).classes("font-semibold text-white text-sm")
+                        ui.icon(node["icon"]).classes("text-white text-base")
+                        ui.label(node["dept"]).classes("font-semibold text-white text-sm")
 
                     with ui.column().classes("px-4 py-2 gap-0 w-full"):
-                        for menu in dept_def["menus"]:
-                            mcode    = menu["code"]
-                            actions  = menu.get("actions", [])
-                            acodes   = [a["code"] for a in actions]
-                            mchecked = mcode in codes
-
-                            col_ref = [None]
-
-                            def _on_menu_toggle(e, ref=col_ref, act_codes=acodes):
-                                if ref[0] is not None:
-                                    ref[0].set_visibility(e.value)
-                                if not e.value:
-                                    for c in act_codes:
-                                        if c in action_refs:
-                                            action_refs[c].set_value(False)
-
-                            with ui.row().classes("w-full items-center border-b border-gray-100 py-2.5"):
-                                menu_cb = ui.checkbox(
-                                    menu["label"],
-                                    value=mchecked,
-                                    on_change=_on_menu_toggle if acodes else None,
-                                ).classes("text-sm font-semibold text-gray-800")
-                            menu_refs[mcode] = menu_cb
-
-                            if acodes:
-                                with ui.column().classes("pl-7 pb-2 pt-1 gap-1 w-full") as action_col:
-                                    col_ref[0] = action_col
-                                    action_col.set_visibility(mchecked)
-                                    for action in actions:
-                                        achecked = action["code"] in codes and mchecked
-                                        acb = ui.checkbox(
-                                            action["label"], value=achecked
-                                        ).classes("text-sm text-gray-600")
-                                        action_refs[action["code"]] = acb
+                        for section in node["sections"]:
+                            if section["label"]:
+                                _section_header(
+                                    section["label"],
+                                    [m["code"] for m in section["menus"]],
+                                )
+                            for menu in section["menus"]:
+                                _menu_block(menu, codes)
 
         # ── Lưu phân quyền ────────────────────────────────────────────────────
         async def save_features():
@@ -134,16 +190,26 @@ async def group_features_page():
             if not gid:
                 return
             selected_codes: list[str] = []
-            for dept_def in structure:
-                for menu in dept_def["menus"]:
-                    mcb = menu_refs.get(menu["code"])
-                    if not mcb or not mcb.value:
-                        continue
-                    selected_codes.append(menu["code"])
-                    for action in menu.get("actions", []):
-                        acb = action_refs.get(action["code"])
-                        if acb and acb.value:
-                            selected_codes.append(action["code"])
+
+            def _collect(menu: dict):
+                mcb = menu_refs.get(menu["code"])
+                if not mcb or not mcb.value:
+                    return
+                selected_codes.append(menu["code"])
+                for action in menu.get("actions", []):
+                    acb = action_refs.get(action["code"])
+                    if acb and acb.value:
+                        selected_codes.append(action["code"])
+
+            # Phải duyệt đúng hai loại phần tử như _render_features — bỏ sót loại
+            # nào thì quyền của loại đó bị xoá khi lưu (PUT ghi đè toàn bộ).
+            for node in structure:
+                if node["kind"] == "menu":
+                    _collect(node)
+                    continue
+                for section in node["sections"]:
+                    for menu in section["menus"]:
+                        _collect(menu)
             try:
                 await asyncio.to_thread(
                     api.put, f"/api/groups/{gid}/features", {"codes": selected_codes}

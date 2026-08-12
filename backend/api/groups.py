@@ -207,31 +207,50 @@ def update_group_features(
 
 
 # ── Feature definitions ───────────────────────────────────────────────────────
+def _menu_payload(m: dict) -> dict | None:
+    """Menu + action kèm nhãn. None nếu mã không còn trong FEATURES."""
+    code = m["code"]
+    if code not in FEATURES:
+        return None
+    return {
+        "code": code,
+        # Bỏ hậu tố " (menu)" trong label để UI hiển thị gọn hơn
+        "label": FEATURES[code].replace(" (menu)", ""),
+        "actions": [
+            {"code": a, "label": FEATURES[a]}
+            for a in m["actions"]
+            if a in FEATURES
+        ],
+    }
+
+
 @router.get("/features/all")
 def get_all_features(_=Depends(get_current_staff)):
-    """Trả về cấu trúc phân cấp Phòng → Menu → Action — dùng cho UI phân quyền."""
+    """Cấu trúc màn phân quyền — dùng cho UI.
+
+    Hai loại phần tử, phân biệt bằng "kind" (xem FEATURE_GROUPS):
+      kind="group" → {"dept", "icon", "sections": [{"label", "menus"}]}
+      kind="menu"  → {"code", "label", "icon", "actions"}
+    Nhóm/section rỗng bị loại bỏ — không dựng thẻ trống.
+    """
     result = []
-    for dept_def in FEATURE_GROUPS:
-        menus = []
-        for m in dept_def["menus"]:
-            code = m["code"]
-            if code not in FEATURES:
-                continue
-            # Bỏ hậu tố " (menu)" trong label để UI hiển thị gọn hơn
-            label = FEATURES[code].replace(" (menu)", "")
-            menus.append({
-                "code":    code,
-                "label":   label,
-                "actions": [
-                    {"code": a, "label": FEATURES[a]}
-                    for a in m["actions"]
-                    if a in FEATURES
-                ],
-            })
-        if menus:
+    for node in FEATURE_GROUPS:
+        if node["kind"] == "menu":
+            payload = _menu_payload(node)
+            if payload:
+                result.append({"kind": "menu", "icon": node["icon"], **payload})
+            continue
+
+        sections = []
+        for sec in node["sections"]:
+            menus = [p for p in (_menu_payload(m) for m in sec["menus"]) if p]
+            if menus:
+                sections.append({"label": sec["label"], "menus": menus})
+        if sections:
             result.append({
-                "dept":  dept_def["dept"],
-                "icon":  dept_def["icon"],
-                "menus": menus,
+                "kind":     "group",
+                "dept":     node["dept"],
+                "icon":     node["icon"],
+                "sections": sections,
             })
     return result
