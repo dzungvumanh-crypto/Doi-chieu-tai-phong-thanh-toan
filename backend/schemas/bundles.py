@@ -93,3 +93,22 @@ class BundleUpdateRequest(BaseModel):
     custodian_id: Optional[int] = None
     storage_box: Optional[str] = None
     storage_location: Optional[str] = None
+
+
+# ─── In bìa hồ sơ lưu trữ (mẫu M01/LHS) ──────────────────────────────────────
+class ArchiveCoverRow(BaseModel):
+    stt: int
+    ma_vach: str
+    ngay_mo: str          # "DD/MM/YYYY" — ngày đầu tiên trong tiêu đề, "" nếu không có
+    tieu_de: str
+    ngay_cvkt: str        # "DD/MM/YYYY"
+    so_to: str
+
+class ArchiveCoverParseResponse(BaseModel):
+    rows: List[ArchiveCoverRow]
+    total: int
+    warnings: List[str] = []
+
+class ArchiveCoverPrintRequest(BaseModel):
+    rows: List[ArchiveCoverRow]
+    as_zip: bool = False   # True = mỗi hồ sơ một file .docx trong ZIP

@@ -52,6 +52,133 @@ def _build_summary_html(data: dict) -> str:
     return "".join(h)
 
 
+_COVER_COLS = [
+    {"name": "stt",       "label": "STT",         "field": "stt",       "align": "center", "sortable": True},
+    {"name": "ma_vach",   "label": "Mã vạch",     "field": "ma_vach",   "align": "left",   "sortable": True},
+    {"name": "ngay_mo",   "label": "Ngày mở",     "field": "ngay_mo",   "align": "center", "sortable": True},
+    {"name": "tieu_de",   "label": "Tên hồ sơ",   "field": "tieu_de",   "align": "left"},
+    {"name": "ngay_cvkt", "label": "Ngày CVKT",   "field": "ngay_cvkt", "align": "center", "sortable": True},
+    {"name": "so_to",     "label": "Số tờ",       "field": "so_to",     "align": "center"},
+]
+
+
+def _build_cover_panel():
+    """Tab 'In bìa hồ sơ': nạp Excel tra cứu → chọn hồ sơ → sinh bìa Word."""
+    state = {"rows": []}
+
+    with ui.card().classes("w-full shadow-sm rounded-xl bg-white p-4 mb-4"):
+        ui.label("In bìa hồ sơ lưu trữ (mẫu M01/LHS)").classes("font-semibold text-red-800")
+        ui.label(
+            "Nạp file Excel tra cứu hồ sơ tài liệu (LT_HS_TRACUU_*.xls) xuất từ chương trình "
+            "lưu trữ. Mã vạch, Ngày mở, Tên hồ sơ và Ngày CVKT được điền vào mẫu bìa Word."
+        ).classes("text-xs text-gray-500 mb-3")
+
+        uploader = ui.upload(
+            label="Chọn file Excel tra cứu (.xls / .xlsx)",
+            auto_upload=True,
+            max_files=1,
+            on_upload=lambda e: _on_file(e),
+        ).props('accept=".xls,.xlsx" flat bordered').classes("w-full max-w-xl")
+
+    cover_loading = ui.row().classes("w-full justify-center items-center py-6 hidden")
+    with cover_loading:
+        ui.spinner(size="2em", color="red")
+        ui.label("Đang xử lý...").classes("text-gray-500 ml-2 text-sm")
+
+    cover_result = ui.column().classes("w-full")
+
+    def _on_file(e):
+        raw = e.content.read()
+        uploader.reset()
+        asyncio.create_task(_parse(raw, e.name))
+
+    async def _parse(raw: bytes, name: str):
+        cover_result.clear()
+        state["rows"] = []
+        cover_loading.classes(remove="hidden")
+        try:
+            data = await asyncio.to_thread(
+                api.post_upload, "/api/bundles/archive-cover-parse",
+                {"file": (name, raw, "application/octet-stream")},
+            )
+        except Exception as ex:
+            if _handle_api_error(ex):
+                return
+            ui.notify(f"Lỗi đọc file: {ex}", type="negative", timeout=8000)
+            return
+        finally:
+            cover_loading.classes(add="hidden")
+
+        state["rows"] = data.get("rows", [])
+        _render(data.get("warnings", []), name)
+
+    def _render(warnings: list, name: str):
+        rows = state["rows"]
+        with cover_result:
+            ui.label(f"{name} — {len(rows)} hồ sơ").classes("font-semibold text-red-900")
+            for w in warnings:
+                with ui.row().classes(
+                    "w-full items-center gap-2 bg-amber-50 border border-amber-200 "
+                    "rounded-lg px-3 py-2 text-sm text-amber-800"
+                ):
+                    ui.icon("warning", color="amber-8")
+                    ui.label(w)
+
+            table = ui.table(
+                columns=_COVER_COLS, rows=rows, row_key="stt", selection="multiple",
+                pagination={"rowsPerPage": 25, "sortBy": "stt"},
+            ).props(
+                'bordered separator="cell" table-header-class="bg-red-800 text-white"'
+            ).classes("w-full")
+            table.selected = list(rows)   # mặc định in tất cả
+
+            sel_lbl = ui.label().classes("text-sm text-gray-600")
+
+            def _update_count():
+                sel_lbl.text = f"Đã chọn {len(table.selected)}/{len(rows)} hồ sơ"
+
+            _update_count()
+            table.on_select(lambda _: _update_count())
+
+            def _select(items: list):
+                table.selected = list(items)   # setter tự gọi update()
+                _update_count()
+
+            async def _download(as_zip: bool):
+                selected = list(table.selected)
+                if not selected:
+                    ui.notify("Chưa chọn hồ sơ nào", type="warning")
+                    return
+                # Giữ đúng thứ tự STT trong file Excel, không theo thứ tự người dùng tích
+                selected.sort(key=lambda r: r["stt"])
+                cover_loading.classes(remove="hidden")
+                try:
+                    content = await asyncio.to_thread(
+                        api.post_download, "/api/bundles/archive-cover-print",
+                        {"rows": selected, "as_zip": as_zip},
+                    )
+                    ui.download(content, "bia_ho_so.zip" if as_zip else "bia_ho_so.docx")
+                    ui.notify(f"Đã tạo bìa cho {len(selected)} hồ sơ", type="positive")
+                except Exception as ex:
+                    if _handle_api_error(ex):
+                        return
+                    ui.notify(f"Lỗi tạo bìa: {ex}", type="negative", timeout=8000)
+                finally:
+                    cover_loading.classes(add="hidden")
+
+            with ui.row().classes("w-full justify-end items-center gap-2 mt-3"):
+                ui.button("Chọn tất cả", icon="select_all",
+                          on_click=lambda: _select(rows)).props("flat").classes("text-red-800")
+                ui.button("Bỏ chọn", icon="deselect",
+                          on_click=lambda: _select([])).props("flat").classes("text-gray-600")
+                ui.button("Tải file Word (gộp)", icon="description",
+                          on_click=lambda: _download(False)
+                          ).classes("bg-red-700 text-white px-4")
+                ui.button("Tải ZIP (mỗi hồ sơ 1 file)", icon="folder_zip",
+                          on_click=lambda: _download(True)
+                          ).classes("bg-green-700 text-white px-4")
+
+
 @ui.page("/storage")
 async def storage_page():
     if not _require_auth():
@@ -84,6 +211,7 @@ async def storage_page():
         with ui.tabs().classes("mb-2") as storage_tabs:
             t_lookup   = ui.tab("Tra cứu lưu trữ")
             t_handover = ui.tab("Bàn giao cho lưu trữ")
+            t_cover    = ui.tab("In bìa hồ sơ")
 
         with ui.tab_panels(storage_tabs, value=t_lookup).classes("w-full"):
 
@@ -394,3 +522,7 @@ async def storage_page():
                         _handle_api_error(e)
                     finally:
                         ha_loading.classes(add="hidden")
+
+            # ── Tab 3: In bìa hồ sơ ──────────────────────────────────────────
+            with ui.tab_panel(t_cover):
+                _build_cover_panel()

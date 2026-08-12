@@ -9,7 +9,7 @@ from typing import List, Optional, Tuple
 from urllib.parse import quote
 
 import openpyxl
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import Response
 from openpyxl.styles import Alignment, Border, Font, Side
 
@@ -18,11 +18,13 @@ from backend.core.deps import get_current_staff, require_feature
 from backend.core.enums import StaffRole
 from backend.database import get_db, _vn_now
 from backend.schemas.bundles import (
+    ArchiveCoverParseResponse, ArchiveCoverPrintRequest, ArchiveCoverRow,
     BundleGenerateRequest, BundleUpdateRequest,
     StorageViewResponse, StorageViewRow, StorageViewUpdateRequest,
     StorageSummaryCell, StorageSummaryDept, StorageSummaryResponse, StorageSummaryRow,
 )
 from backend.schemas.handovers import ArchiveRecord, HandoverArchiveResponse
+from backend.services import archive_cover_service
 from backend.services.bundle_service import BundleResult, EntryUnit, generate_bundles_for_entries
 from backend.services.cover_service import generate_covers_docx
 
@@ -958,6 +960,104 @@ async def handover_archive_excel(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers=_download_headers(filename),
     )
+
+
+# ─── In bìa hồ sơ lưu trữ (mẫu M01/LHS) ──────────────────────────────────────
+
+_ARCHIVE_COVER_MAX_UPLOAD = 20 * 1024 * 1024
+_ARCHIVE_COVER_MAX_ROWS = 2000
+_DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+
+@router.post("/archive-cover-parse", response_model=ArchiveCoverParseResponse)
+async def archive_cover_parse(
+    file: UploadFile = File(...),
+    _: dict = Depends(require_feature("menu.storage")),
+):
+    """Đọc file Excel tra cứu hồ sơ → danh sách dữ liệu để in bìa."""
+    name = file.filename or ""
+    if not name.lower().endswith((".xls", ".xlsx")):
+        raise HTTPException(400, "Chỉ nhận file Excel (.xls hoặc .xlsx)")
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(400, "File rỗng")
+    if len(content) > _ARCHIVE_COVER_MAX_UPLOAD:
+        raise HTTPException(400, "File quá lớn (tối đa 20MB)")
+
+    def _work():
+        return archive_cover_service.parse_lookup_excel(content, name)
+
+    try:
+        records = await run_heavy(_work)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        _log.exception("archive-cover-parse: đọc file %s thất bại", name)
+        raise HTTPException(400, f"Không đọc được file Excel: {e}")
+
+    if not records:
+        raise HTTPException(400, "File không có dòng dữ liệu nào trong sheet 'Data'")
+
+    rows, warnings = [], []
+    for i, r in enumerate(records, 1):
+        rows.append(ArchiveCoverRow(
+            stt=i, ma_vach=r.ma_vach, ngay_mo=r.ngay_mo,
+            tieu_de=r.tieu_de, ngay_cvkt=r.ngay_cvkt, so_to=r.so_to,
+        ))
+    no_date = [r.stt for r in rows if not r.ngay_mo]
+    if no_date:
+        warnings.append(
+            f"{len(no_date)} dòng không tìm thấy ngày trong tên hồ sơ "
+            f"(STT {', '.join(map(str, no_date[:10]))}"
+            f"{'…' if len(no_date) > 10 else ''}) — ô Ngày mở sẽ để trống"
+        )
+    no_code = [r.stt for r in rows if not r.ma_vach]
+    if no_code:
+        warnings.append(
+            f"{len(no_code)} dòng thiếu mã vạch "
+            f"(STT {', '.join(map(str, no_code[:10]))}{'…' if len(no_code) > 10 else ''})"
+        )
+
+    return ArchiveCoverParseResponse(rows=rows, total=len(rows), warnings=warnings)
+
+
+@router.post("/archive-cover-print")
+async def archive_cover_print(
+    payload: ArchiveCoverPrintRequest,
+    _: dict = Depends(require_feature("menu.storage")),
+):
+    """Sinh bìa hồ sơ: 1 file Word nhiều trang, hoặc ZIP mỗi hồ sơ một file."""
+    if not payload.rows:
+        raise HTTPException(400, "Chưa chọn hồ sơ nào để in bìa")
+    if len(payload.rows) > _ARCHIVE_COVER_MAX_ROWS:
+        raise HTTPException(400, f"Tối đa {_ARCHIVE_COVER_MAX_ROWS} hồ sơ một lần in")
+
+    records = [
+        archive_cover_service.ArchiveCoverRecord(
+            ma_vach=r.ma_vach, ngay_mo=r.ngay_mo, tieu_de=r.tieu_de,
+            ngay_cvkt=r.ngay_cvkt, so_to=r.so_to or "1",
+        )
+        for r in payload.rows
+    ]
+    as_zip = payload.as_zip
+
+    def _work() -> bytes:
+        if as_zip:
+            return archive_cover_service.generate_covers_zip(records)
+        return archive_cover_service.generate_covers(records)
+
+    try:
+        content = await run_heavy(_work)
+    except (FileNotFoundError, archive_cover_service.TemplateMismatchError) as e:
+        _log.error("archive-cover-print: %s", e)
+        raise HTTPException(500, str(e))
+
+    if as_zip:
+        return Response(content=content, media_type="application/zip",
+                        headers=_download_headers("bia_ho_so.zip"))
+    return Response(content=content, media_type=_DOCX_MIME,
+                    headers=_download_headers("bia_ho_so.docx"))
 
 
 @router.delete("/groups/{group_id}")
