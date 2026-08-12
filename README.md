@@ -54,9 +54,12 @@ STORAGE_SECRET=<giá trị 2>   # khoá ký cookie phiên (frontend)
 Chạy thật trên mạng nội bộ thì đặt thêm (xem mục [Truy cập LAN](#truy-cập-lan-nhiều-người-dùng)):
 
 ```ini
-ENV=production                                  # tắt /docs, /redoc
-ALLOWED_ORIGINS=http://192.168.1.100:8080       # IP thật của máy chủ
+ENV=production                                  # tắt /docs, /redoc, /openapi.json
 ```
+
+> `ALLOWED_ORIGINS` **chỉ cần khi có máy khác gọi thẳng cổng 8000 từ trình duyệt.** Với
+> `BACKEND_HOST=127.0.0.1` (mặc định `start.bat` sinh ra) thì không cần đặt: trình duyệt
+> chỉ nói chuyện với frontend cổng 8080, CORS không tham gia vào đường đi nào cả.
 
 Hai biến tuỳ chọn liên quan đến hiệu năng và mức độ kín của backend:
 
@@ -71,8 +74,13 @@ BACKEND_HOST=127.0.0.1              # địa chỉ backend lắng nghe
 > cũng được — mặc định trong code đã là `127.0.0.1`.
 
 > `BACKEND_HOST=127.0.0.1` kín hơn: trình duyệt người dùng chỉ nói chuyện với frontend
-> cổng 8080, không bao giờ chạm cổng 8000. Chỉ đặt khi chắc chắn **không có máy nào khác
-> gọi thẳng API**. Mặc định `0.0.0.0` (nghe mọi giao diện).
+> cổng 8080, không bao giờ chạm cổng 8000. Extension CITAD cũng đi qua proxy cổng 8080.
+> Chỉ đổi sang `0.0.0.0` khi chắc chắn **có máy khác gọi thẳng API** — và khi đó phải đặt
+> luôn `ALLOWED_ORIGINS`.
+>
+> `start.bat` sinh `.env` mới với `127.0.0.1`, và `deploy.bat` kiểm tra rồi hỏi sửa khi
+> máy đích đang để `0.0.0.0`. Mặc định trong code (khi `.env` không có dòng này) vẫn là
+> `0.0.0.0` — nên cứ ghi rõ ra `.env` thay vì dựa vào mặc định.
 
 ### 5. Chạy hệ thống
 
@@ -82,7 +90,9 @@ python run.py
 
 Truy cập:
 - **Giao diện web**: http://localhost:8080
-- **API docs**: http://localhost:8000/docs
+- **API docs**: http://localhost:8000/docs — chỉ khi `ENV=development`. Ở `production`
+  cả `/docs`, `/redoc` và `/openapi.json` đều trả 404; cần xem để gỡ lỗi thì đặt
+  `ENABLE_API_DOCS=1`, **không** hạ `ENV` xuống `development`
 - **Từ máy khác trong LAN**: http://[IP-máy-chủ]:8080
 
 > **Windows — dùng `start.bat`.** Script tự kiểm tra `.venv` và **vá tại chỗ** (~2 giây) khi thư mục dự án
@@ -202,6 +212,7 @@ Truy cập:
 - **Công việc chờ xử lý**: khối ở đầu sidebar, hiện trên mọi trang — số chứng từ chờ xác nhận và đơn nghỉ phép chờ duyệt của **chính người đang đăng nhập**; bấm vào mở màn hình theo dõi `/pending/<loại>` có đủ chi tiết và link nhảy thẳng tới ô cần xử lý
 - **Nhật ký thao tác** (audit log): middleware ghi tập trung mọi request thay đổi dữ liệu (POST/PUT/PATCH/DELETE) vào bảng `audit_logs` — ai, làm gì, kết quả HTTP, IP, thời gian; lọc theo phương thức, tìm kiếm, phân trang; tự dọn sau 365 ngày
 - Nhật ký đăng nhập và nhật ký lỗi/cảnh báo hệ thống (admin xem, lọc theo user/thời gian)
+- **Trạng thái tài khoản** — cột `user_tttt.is_active` cho phép NULL (dữ liệu cũ, đường *Nhập DB*). **NULL = tạm khoá**, thống nhất với `WHERE is_active = 1` ở đăng nhập và danh sách cán bộ; migration lúc khởi động ghi hẳn về `0`, `StaffOut` cũng ép NULL → `False` để một dòng bỏ trống không làm hỏng cả response `/api/staff/`
 
 ### Module Nghỉ phép
 - Cán bộ tạo đơn xin nghỉ (phép năm, ốm, việc riêng, khác)
@@ -224,6 +235,10 @@ Truy cập:
   - *Phạm vi xem*: `admin` / GĐ / PGĐ và người có quyền hậu kiểm (`handovers.confirm_entry`) xem được **mọi phòng nguồn**; các vai trò còn lại — kể cả trưởng/phó phòng — chỉ xem **phòng của chính mình**, dropdown chọn phòng cũng chỉ liệt kê phòng đó. Backend chặn ở `grid`, `history` và `export` (xuất Excel tự ép về phòng người gọi)
   - *Phạm vi ghi*: `admin`, `giam_doc`, `pho_giam_doc` **chỉ đọc — bị cấm hoàn toàn** mọi thao tác ghi (`_NO_WRITE_ROLES`, chặn ở dependency `require_handover_write` nên `admin` không bypass được như với `require_feature`). Các vai trò còn lại ghi được **trong phòng mình** nếu nhóm được cấp feature tương ứng; riêng người có `handovers.confirm_entry` ghi được trên mọi phòng
   - Vào được menu vẫn cần feature `menu.handovers` — vai trò không tự mở menu
+  - *Vòng đời một ô*: `chờ xác nhận → đã xác nhận`; mượn - trả có hai đường vào trạng thái **đang mượn**:
+    GDV bấm **Mượn lại** (xin → HKV duyệt), hoặc HKV/KSV bấm **Trả lại** ở panel lịch sử để đẩy thẳng
+    `đã xác nhận → đang mượn` (bắt buộc nhập lý do, feature `handovers.return_entry`, chặn cứng `chuyen_vien`).
+    Cả hai đường đều kết thúc bằng GDV **Bàn giao lại** → HKV xác nhận
   - *Cán bộ chuyển phòng*: chứng từ hiển thị theo phòng tại **ngày giao dịch** — trước ngày chuyển ở phòng cũ, từ ngày chuyển ở phòng mới (lịch sử đổi phòng lưu ở bảng `staff_department_history`). Nhập bù chứng từ tháng cũ cho cán bộ đã chuyển vẫn vào đúng phòng cũ; do giới hạn phạm vi phòng ở trên, việc nhập bù này do người hậu kiểm thực hiện
 - **Gom tập tự động**:
   - Max 350 tờ/tập
@@ -252,8 +267,9 @@ Truy cập:
 
 ### Module Lịch trực
 - Xếp lịch trực tự động cho phòng Thanh toán
-- **Số người mỗi ca do phòng tự khai** ở tab Cài đặt (ca thường và ca quyết toán khai riêng).
-  Thiếu người so với số đã khai thì **không hình thành ca trực**, có cảnh báo nêu rõ lý do
+- **Số người mỗi ca do phòng tự khai** ở tab Cài đặt (ca thường và ca quyết toán khai riêng);
+  một ca có thể có **nhiều hơn một Lãnh đạo**. Thiếu người so với số đã khai thì
+  **không hình thành ca trực**, có cảnh báo nêu rõ lý do
 - **Ca quyết toán** chia nhóm trực chính / trực phụ (nhóm phụ về sớm hơn), lưu thành **một** bản ghi
 - Cần **ít nhất 1 người xử lý song phương** trong Lãnh đạo + nhóm trực chính — thiếu hoặc dư
   đều vẫn lập ca, chỉ cảnh báo. Người ở nhóm trực phụ không tính (về sớm)
@@ -429,14 +445,18 @@ netsh advfirewall firewall add rule name="TTTT" dir=in action=allow protocol=TCP
 
 Người dùng khác truy cập: `http://[IP-máy-chủ]:8080`
 
-Đặt trong `.env` — quên là máy khác bị CORS chặn, và trang liệt kê toàn bộ endpoint bị mở công khai:
+Đặt trong `.env` — quên là trang liệt kê toàn bộ endpoint bị mở công khai ra mạng:
 
 ```ini
-ALLOWED_ORIGINS=http://192.168.1.100:8080    # thay bằng IP thật, nhiều giá trị cách nhau dấu phẩy
-ENV=production                               # tắt /docs và /redoc
+BACKEND_HOST=127.0.0.1                       # cổng backend chỉ nghe trong máy chủ
+ENV=production                               # tắt /docs, /redoc, /openapi.json
 ```
 
+Chỉ thêm `ALLOWED_ORIGINS=http://192.168.1.100:8080` khi thật sự phải để `BACKEND_HOST=0.0.0.0`
+cho một hệ thống khác gọi thẳng API — nhiều giá trị cách nhau dấu phẩy.
+
 Backend tự **cảnh báo trong log khi khởi động** nếu đang lắng nghe trên mạng mà hai biến này chưa đặt đúng.
+`deploy.bat` cũng kiểm `.env` của máy đích ở bước 1/7 và hỏi trước khi sửa, nên không phải nhớ thủ công.
 
 ---
 

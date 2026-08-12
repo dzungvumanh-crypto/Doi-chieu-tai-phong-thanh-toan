@@ -330,6 +330,35 @@ async def handovers_page():
                             "w-full bg-orange-500 text-white rounded-lg text-sm font-semibold"
                         )
 
+                    # Trả lại — bên giữ chứng từ (HKV/KSV) đẩy thẳng về "đang mượn".
+                    # can_write đã loại admin/GĐ/PGĐ; not is_cv để GDV chỉ thấy "Mượn lại".
+                    if (not is_cv and can_write and current_status == "confirmed"
+                            and api.has_feature("handovers.return_entry")):
+                        has_action = True
+                        with ui.dialog() as return_dialog, ui.card().classes("w-96"):
+                            ui.label("Trả lại chứng từ").classes("font-bold text-lg mb-1")
+                            ui.label("Chứng từ sẽ chuyển sang trạng thái Đang mượn.").classes("text-sm text-gray-500 mb-2")
+                            return_reason_inp = ui.input("Lý do trả lại *").classes("w-full")
+                            with ui.row().classes("justify-end gap-2 mt-3"):
+                                ui.button("Huỷ", on_click=return_dialog.close).props("flat")
+                                async def _do_return_submit(eid=entry_id, uname=user_name):
+                                    reason = (return_reason_inp.value or "").strip()
+                                    if not reason:
+                                        ui.notify("Vui lòng nhập lý do trả lại", type="warning")
+                                        return
+                                    try:
+                                        await asyncio.to_thread(api.post, f"/api/handovers/entries/{eid}/return-to-staff", {"reason": reason})
+                                        return_dialog.close()
+                                        ui.notify("Đã trả lại chứng từ", type="positive")
+                                        await open_entry_panel(eid, uname)
+                                        await load_grid()
+                                    except Exception as ex2:
+                                        if _handle_api_error(ex2): return
+                                ui.button("Xác nhận trả lại", on_click=_do_return_submit).classes("bg-purple-600 text-white")
+                        ui.button("↪  Trả lại", on_click=return_dialog.open).classes(
+                            "w-full bg-purple-600 text-white rounded-lg text-sm font-semibold"
+                        )
+
                     if is_cv and current_status == "borrowed" and api.has_feature("handovers.handback"):
                         has_action = True
                         _current_count = hist.get("sheet_count", 1)

@@ -27,7 +27,7 @@ if not exist "%DEST%" (
 
 :: .env cua may dich KHONG bi copy de (giu SECRET_KEY va cau hinh rieng), nen hai
 :: bien duoi day phai sua tay -- va quen thi im lang khong bao gi. Kiem ho luon.
-echo [1/7] Kiem tra .env tren may dich (BACKEND_URL/BACKEND_HOST)...
+echo [1/7] Kiem tra .env tren may dich (BACKEND_URL/BACKEND_HOST/ENV)...
 :: Tim Python CHAY DUOC. Khong chi kiem tra file co ton tai: du an nam tren o USB,
 :: doi may la .venv hong (xem start.bat) -- file van con nhung chay la loi. Con
 :: `py` thi tren mot so may vuong ban Microsoft Store alias. Nen thu chay thu that.
@@ -37,7 +37,9 @@ if not defined PY py -c "pass" >nul 2>&1 && set "PY=py"
 if not defined PY python -c "pass" >nul 2>&1 && set "PY=python"
 if not defined PY goto envkhongpy
 
-"%PY%" "%~dp0deploy_env_check.py" "%DEST%\.env" 8000 check
+:: --siet-bao-mat: chi may CHINH moi siet (BACKEND_HOST=127.0.0.1, ENV=production).
+:: deploy-test.bat KHONG truyen co nay -- he thong test can /docs de go loi.
+"%PY%" "%~dp0deploy_env_check.py" "%DEST%\.env" 8000 check --siet-bao-mat
 if errorlevel 2 goto envloi
 if errorlevel 1 goto envsua
 goto envxong
@@ -55,7 +57,7 @@ goto envxong
 echo.
 set /p FIXENV=    Sua lai .env cho dung? (Y/n):
 if /i "%FIXENV%"=="n" goto envboqua
-"%PY%" "%~dp0deploy_env_check.py" "%DEST%\.env" 8000 fix
+"%PY%" "%~dp0deploy_env_check.py" "%DEST%\.env" 8000 fix --siet-bao-mat
 goto envxong
 
 :envboqua

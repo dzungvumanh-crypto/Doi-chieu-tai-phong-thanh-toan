@@ -467,12 +467,20 @@ function observeTraCuu(source) {
    3. PAYMENT — Chuyển tiền đến, lọc "Loại lệnh: Lệnh quyết toán"
    ══════════════════════════════════════════════════════
    Khác PaymentHub (1 số "Tổng số tiền" gộp sẵn): ở đây kết quả gộp CẢ
-   Napas lẫn PSS-MDP làm một, không tách được bằng cách đọc số tổng — phải
-   đọc TỪNG DÒNG bảng chi tiết, cột "NH gửi" ghi rõ mã từng dòng, tự cộng
-   dồn riêng theo mã. Mã ở đây KHÁC mã dùng trên PaymentHub (01401001 vẫn
-   là Napas — không đổi giữa 2 hệ thống — nhưng PSS-MDP ở đây là 01406001,
-   không phải 99991032 như PaymentHub) — 2 hằng số tách riêng, không dùng
-   chung, tránh nhầm hệ thống. */
+   Napas lẫn PSS-MDP làm một, không tách được bằng cách đọc số tổng.
+   Có 2 cách tách, thử theo thứ tự (savePaymentDetail()):
+     1. NGƯỜI DÙNG đã tự lọc theo bộ lọc "NH gửi" = 1 mã cụ thể ở form tìm
+        kiếm → cả bảng chỉ thuộc 1 kênh, chỉ cần cộng dồn cột "Số tiền" của
+        TẤT CẢ dòng (readNhGuiFilterChannel() + readFilteredChannelTotals()).
+        Không cần "Xem chi tiết lệnh".
+     2. Không lọc theo NH gửi (mặc định "Tất cả") → bảng gộp cả 2 kênh, phải
+        tự bung "Xem chi tiết lệnh" (_tryExpandDetail()) rồi đọc TỪNG DÒNG,
+        cột "NH gửi" ghi rõ mã từng dòng, tự cộng dồn riêng theo mã
+        (readPaymentDetailTotals()).
+   Mã NH gửi ở đây KHÁC mã dùng trên PaymentHub (01401001 vẫn là Napas —
+   không đổi giữa 2 hệ thống — nhưng PSS-MDP ở đây là 01406001, không phải
+   99991032 như PaymentHub) — 2 hằng số tách riêng, không dùng chung, tránh
+   nhầm hệ thống. */
 
 const NH_GUI_NAPAS = '01401001';
 const NH_GUI_PSSMDP = '01406001';
@@ -490,6 +498,37 @@ function _findPaymentTable() {
 function hasPaymentResults() {
   const t = _findPaymentTable();
   return !!(t && t.querySelectorAll('tbody tr').length > 0);
+}
+
+// Sau khi "Tìm kiếm", trang chỉ hiện BẢNG TÓM TẮT (không có cột "NH gửi")
+// — cột này chỉ xuất hiện ở bảng CHI TIẾT LỆNH, hiện ra sau khi (1) tích
+// chọn dòng ("Xem chi tiết lệnh" bị khoá nếu chưa tích dòng nào) và (2) bấm
+// nút "Xem chi tiết lệnh". Trước đây phải tự làm 2 bước này bằng tay thì
+// tách Napas/PSS-MDP mới chạy được — tự động hoá để "Tìm kiếm" xong là có
+// ngay, không cần thao tác thêm. Cooldown theo thời gian (không phải khoá
+// một-lần) để tự thử lại nếu bảng chi tiết tải chậm, nhưng không bấm dồn dập
+// mỗi 1.5s — nút "Xem chi tiết lệnh" có thể là dạng bật/tắt, bấm khi đang
+// tải dở có thể vô tình ẩn lại bảng vừa hiện.
+let _lastExpandAttempt = 0;
+function _tryExpandDetail() {
+  if (_findPaymentTable()) return; // đã có cột "NH gửi" rồi, khỏi làm gì thêm
+  if (!/Tổng số giao dịch:/.test(document.body?.innerText || '')) return; // chưa tìm kiếm gì cả
+
+  const now = Date.now();
+  if (now - _lastExpandAttempt < 4000) return;
+  _lastExpandAttempt = now;
+
+  // Tích "chọn tất cả" ở đầu bảng tóm tắt — "Xem chi tiết lệnh" cần tích ít
+  // nhất 1 dòng mới bấm được (đã xác nhận thực tế, nút bị khoá nếu bỏ trống).
+  const headCheckbox = document.querySelector('table thead input[type="checkbox"]');
+  if (headCheckbox && !headCheckbox.checked) headCheckbox.click();
+
+  for (const btn of document.querySelectorAll('button')) {
+    if ((btn.innerText || '').trim() === 'Xem chi tiết lệnh') {
+      btn.click();
+      return;
+    }
+  }
 }
 
 // Trả về { napas: {VNĐ: {soMon, soTien}, ...}, pssmdp: {...} } — cộng dồn
@@ -526,37 +565,73 @@ function readPaymentDetailTotals() {
   return totals;
 }
 
+// ── Lọc sẵn theo 1 mã "NH gửi" cụ thể ở bộ lọc tìm kiếm ─────────────────
+// Cách khác để tách Napas/PSS-MDP, KHÔNG cần "Xem chi tiết lệnh": người dùng
+// tự chọn bộ lọc "NH gửi" = 01401001 (Napas) hoặc 01406001 (PSS-MDP) rồi bấm
+// Tìm kiếm — cả bảng lúc đó chỉ thuộc 1 kênh, khỏi cần đọc cột "NH gửi" theo
+// từng dòng nữa. Khác PaymentHub: trang KHÔNG tự cộng sẵn "Tổng số tiền" khi
+// lọc kiểu này (chỉ có "Tổng số giao dịch" đếm SỐ MÓN) — phải tự quét cộng
+// dồn cột "Số tiền" của từng dòng mới ra tổng tiền.
+function readNhGuiFilterChannel() {
+  const allText = document.body?.innerText || '';
+  const idx = allText.indexOf('NH gửi');
+  if (idx === -1) return null;
+  const near = allText.slice(idx, idx + 60);
+  if (near.includes(NH_GUI_NAPAS)) return 'napas';
+  if (near.includes(NH_GUI_PSSMDP)) return 'pssmdp';
+  return null;
+}
+
+function _findResultsTableWithAmount() {
+  for (const t of document.querySelectorAll('table')) {
+    const headCells = t.querySelectorAll('thead th, tr:first-child th, tr:first-child td');
+    for (const c of headCells) {
+      if ((c.innerText || '').trim() === 'Số tiền') return t;
+    }
+  }
+  return null;
+}
+
+function _totalGiaoDichCount() {
+  const m = (document.body?.innerText || '').match(/Tổng số giao dịch:\s*([\d.,]+)/);
+  return m ? (parseInt(m[1].replace(/[^\d]/g, '')) || null) : null;
+}
+
+// Trả về { VNĐ: {soMon, soTien}, USD: {...}, ... } — cộng dồn TẤT CẢ dòng
+// đang hiển thị (đã lọc sẵn 1 kênh qua bộ lọc "NH gửi", không cần phân biệt
+// gì thêm theo dòng).
+function readFilteredChannelTotals() {
+  const table = _findResultsTableWithAmount();
+  const totals = {};
+  if (!table) return totals;
+  const headers = Array.from(table.querySelectorAll('thead th, tr:first-child th, tr:first-child td'))
+    .map(c => (c.innerText || '').trim());
+  const idxTien = headers.indexOf('Số tiền');
+  const idxLoaiTien = headers.indexOf('Loại tiền');
+  if (idxTien === -1) return totals;
+
+  for (const row of table.querySelectorAll('tbody tr')) {
+    const cells = row.querySelectorAll('td');
+    if (cells.length <= idxTien) continue;
+    const tien = parseMoney(cells[idxTien]?.innerText);
+    const loaiTienRaw = idxLoaiTien !== -1 ? (cells[idxLoaiTien]?.innerText || '').trim().toUpperCase() : 'VND';
+    const loaiTien = loaiTienRaw === 'VND' ? 'VNĐ' : loaiTienRaw;
+    totals[loaiTien] = totals[loaiTien] || { soMon: 0, soTien: 0 };
+    totals[loaiTien].soMon += 1;
+    totals[loaiTien].soTien += tien;
+  }
+  return totals;
+}
+
 let lastPaymentKey = '';
 let _savingPayment = false;
 const _paymentRetry = _makeRetryScheduler(() => { lastPaymentKey = ''; });
 
-async function savePaymentDetail(manual = false) {
-  if (!SERVER || !EXTENSION_TOKEN) {
-    if (manual) showToast('⚠️ Chưa cấu hình Extension — bấm icon Extension trên thanh công cụ → Tuỳ chọn', '#f59e0b', 6000);
-    return;
-  }
-  if (!hasPaymentResults()) {
-    if (manual) showToast('Chưa có kết quả, hãy Tìm kiếm trước', '#f59e0b');
-    return;
-  }
-  const totals = readPaymentDetailTotals();
-  const items = [];
-  for (const channel of ['napas', 'pssmdp']) {
-    for (const [tien, v] of Object.entries(totals[channel])) {
-      if (!v.soTien) continue;
-      items.push({
-        key: `${channel}_ih_den_${tien}`,
-        loai: 'ih', chieu: 'den', tien,
-        soMon: v.soMon, soTien: v.soTien,
-        source: channel,
-      });
-    }
-  }
-  if (items.length === 0) {
-    if (manual) showToast('Không có dòng Napas/PSS-MDP nào trong bảng (cột NH gửi)', '#f59e0b');
-    return;
-  }
-
+// Gửi buffer lên backend — dùng chung cho cả 2 đường lấy dữ liệu (đọc bảng
+// chi tiết theo cột "NH gửi" NGƯỜI DÙNG KHÔNG lọc, và đọc bảng đã lọc sẵn 1
+// kênh qua bộ lọc "NH gửi"). `sourceLabel` chỉ khác nhau ở dòng mô tả trên
+// toast, logic gửi/dedup/lùi thời gian thử lại giống hệt nhau.
+async function _postPaymentItems(items, manual, sourceLabel) {
   const key = JSON.stringify(items.map(i => [i.key, i.soMon, i.soTien]));
   if (!manual && key === lastPaymentKey) return;
   if (_savingPayment) return;
@@ -581,7 +656,7 @@ async function savePaymentDetail(manual = false) {
       const parts = items.map(i =>
         `${i.source === 'pssmdp' ? 'PSS-MDP' : 'Napas'} ${i.tien}: ${i.soMon.toLocaleString('vi-VN')} món | ${i.soTien.toLocaleString('vi-VN')}`
       ).join('<br>');
-      showToast(`✓ ${manual ? 'Đã lưu' : 'Tự lưu'} từ bảng chi tiết<br><small style="color:#94a3b8">${parts}</small>`, '#10b981', 6000);
+      showToast(`✓ ${manual ? 'Đã lưu' : 'Tự lưu'} ${sourceLabel}<br><small style="color:#94a3b8">${parts}</small>`, '#10b981', 6000);
       _paymentRetry.resetBackoff();
     } else if (result.status === 403) {
       showToast('✗ Mã kết nối không hợp lệ hoặc đã bị thu hồi — tạo mã mới ở /doi_chieu_citad', '#ef4444', 8000);
@@ -594,6 +669,88 @@ async function savePaymentDetail(manual = false) {
   }
 }
 
+// Đường lấy dữ liệu khi đã LỌC SẴN theo 1 mã "NH gửi" ở bộ lọc tìm kiếm —
+// khỏi cần "Xem chi tiết lệnh"/đọc cột "NH gửi" theo dòng, vì cả bảng chỉ
+// thuộc đúng 1 kênh rồi. Trang không tự cộng sẵn tổng tiền kiểu lọc này nên
+// phải tự quét cộng dồn — ĐỐI CHIẾU số dòng quét được với "Tổng số giao
+// dịch" trang báo: nếu ít hơn (bảng đang phân trang, chưa xem hết) thì
+// KHÔNG lưu (kể cả tự động) để tránh nạp nhầm số liệu thiếu vào form.
+async function _saveFilteredChannel(channel, manual) {
+  const totals = readFilteredChannelTotals();
+  const items = [];
+  for (const [tien, v] of Object.entries(totals)) {
+    if (!v.soTien) continue;
+    items.push({
+      key: `${channel}_ih_den_${tien}`,
+      loai: 'ih', chieu: 'den', tien,
+      soMon: v.soMon, soTien: v.soTien,
+      source: channel,
+    });
+  }
+  if (items.length === 0) {
+    if (manual) showToast('Đã lọc theo NH gửi nhưng chưa đọc được cột "Số tiền" — hãy Tìm kiếm trước', '#f59e0b');
+    return;
+  }
+
+  const totalCount = _totalGiaoDichCount();
+  const summedCount = items.reduce((s, i) => s + i.soMon, 0);
+  if (totalCount !== null && summedCount < totalCount) {
+    if (manual) {
+      showToast(
+        `⚠️ Bảng đang phân trang: chỉ quét được ${summedCount}/${totalCount} giao dịch hiển thị — ` +
+        `tăng số dòng/trang hoặc xem hết các trang rồi thử lại. KHÔNG lưu số liệu thiếu.`,
+        '#f59e0b', 8000
+      );
+    }
+    return;
+  }
+
+  const nhanLabel = channel === 'pssmdp' ? 'PSS-MDP' : 'Napas';
+  await _postPaymentItems(items, manual, `${nhanLabel} (lọc theo NH gửi)`);
+}
+
+async function savePaymentDetail(manual = false) {
+  if (!SERVER || !EXTENSION_TOKEN) {
+    if (manual) showToast('⚠️ Chưa cấu hình Extension — bấm icon Extension trên thanh công cụ → Tuỳ chọn', '#f59e0b', 6000);
+    return;
+  }
+
+  const filterChannel = readNhGuiFilterChannel();
+  if (filterChannel) {
+    await _saveFilteredChannel(filterChannel, manual);
+    return;
+  }
+
+  if (!hasPaymentResults()) {
+    _tryExpandDetail();
+    if (manual) {
+      const msg = /Tổng số giao dịch:/.test(document.body?.innerText || '')
+        ? 'Đang tự bung chi tiết lệnh để tách Napas/PSS-MDP, đợi vài giây rồi bấm lại'
+        : 'Chưa có kết quả, hãy Tìm kiếm trước';
+      showToast(msg, '#f59e0b');
+    }
+    return;
+  }
+  const totals = readPaymentDetailTotals();
+  const items = [];
+  for (const channel of ['napas', 'pssmdp']) {
+    for (const [tien, v] of Object.entries(totals[channel])) {
+      if (!v.soTien) continue;
+      items.push({
+        key: `${channel}_ih_den_${tien}`,
+        loai: 'ih', chieu: 'den', tien,
+        soMon: v.soMon, soTien: v.soTien,
+        source: channel,
+      });
+    }
+  }
+  if (items.length === 0) {
+    if (manual) showToast('Không có dòng Napas/PSS-MDP nào trong bảng (cột NH gửi)', '#f59e0b');
+    return;
+  }
+  await _postPaymentItems(items, manual, 'từ bảng chi tiết');
+}
+
 function observePaymentDetail() {
   createManualBtn('Lưu Napas + PSS-MDP (bảng chi tiết)', '#065f46', () => {
     _paymentRetry.resetBackoff();
@@ -604,11 +761,13 @@ function observePaymentDetail() {
   const startHref = window.location.href;
   const observer = new MutationObserver(() => {
     if (window.location.href !== startHref) { _stopWatching(observer, interval); return; }
+    if (!readNhGuiFilterChannel()) _tryExpandDetail();
     savePaymentDetail(false);
   });
   observer.observe(document.body, { childList: true, subtree: true });
   const interval = setInterval(() => {
     if (window.location.href !== startHref) { _stopWatching(observer, interval); return; }
+    if (!readNhGuiFilterChannel()) _tryExpandDetail();
     savePaymentDetail(false);
   }, 1500);
 }

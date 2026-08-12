@@ -53,6 +53,73 @@
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
   <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-10</p>
 
+  <!-- O -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">O</span>
+      <span class="card-title">Nút "Trả lại" ở panel lịch sử ô — đường tắt <code>đã xác nhận → đang mượn</code></span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Vì sao không tái dùng luồng "Mượn lại" đã có</p>
+      <p>Hệ thống đã có đường <code>confirmed <span class="arrow">→</span> pending_confirm (borrow_reason)
+      <span class="arrow">→</span> borrowed</code>: giao dịch viên <em>xin</em>, hậu kiểm <em>duyệt</em>.
+      Nút mới đi ngược chiều — bên <strong>đang giữ</strong> chứng từ chủ động đẩy thẳng
+      <code>confirmed <span class="arrow">→</span> borrowed</code>, không có bước xin phép vì chính người
+      duyệt là người bấm. Hai nghiệp vụ khác chiều nên tách endpoint
+      <code>POST /entries/{id}/return-to-staff</code> riêng, không nhồi thêm nhánh vào
+      <code>borrow_entry()</code>.</p>
+
+      <table>
+        <tr><th>Quyết định</th><th>Lý do</th></tr>
+        <tr><td>Lý do trả lại ghi vào <code>entry_change_logs.notes</code>, <strong>không</strong> ghi vào
+            <code>document_entries.borrow_reason</code></td>
+            <td><code>borrow_reason</code> không phải ô ghi chú — nó đang là <strong>cờ trạng thái ngầm</strong>
+            "có yêu cầu mượn chờ duyệt". <code>confirm_received()</code> và <code>reject_entry()</code> đều
+            <code>if entry["borrow_reason"]:</code> để rẽ nhánh. Ghi lý do trả lại vào đó sẽ làm hai endpoint kia
+            hiểu nhầm là đang có đơn xin mượn. Panel lịch sử vốn đã render <code>notes</code> thành
+            <em>"· Lý do: …"</em> nên không mất thông tin gì.</td></tr>
+        <tr><td>Feature code mới <code>handovers.return_entry</code> thay vì dùng lại
+            <code>handovers.confirm_entry</code></td>
+            <td>Trả lại là thao tác <em>rút chứng từ đã chốt</em> — nặng hơn xác nhận. Giữ riêng để có thể cấp
+            quyền xác nhận mà không cấp quyền rút. <strong>Đánh đổi:</strong> chưa nhóm nào có quyền này, admin
+            phải tự tích ở <em>Quản lý nhóm</em>, nếu không sẽ không thấy nút.</td></tr>
+        <tr><td>Chặn cứng <code>chuyen_vien</code> ở backend, không chỉ ẩn nút</td>
+            <td>Nếu admin lỡ gán feature cho nhóm có giao dịch viên, GDV sẽ tự rút được chứng từ đã chốt của chính
+            mình, bỏ qua hoàn toàn bước duyệt của hậu kiểm. Feature gate một mình không đủ.</td></tr>
+        <tr><td>Ghi <code>borrowed_at</code>, giống nhánh cho mượn trong <code>confirm_received()</code></td>
+            <td>Để hai đường vào trạng thái <code>borrowed</code> để lại cùng một dấu vết dữ liệu.</td></tr>
+      </table>
+
+      <p class="label">Ảnh hưởng lan sang chỗ khác</p>
+      <table>
+        <tr><th>Nơi bị chạm</th><th>Hệ quả</th><th>Đánh giá</th></tr>
+        <tr><td><code>bundles.py</code> — chỉ đóng tập chứng từ <code>confirmed</code></td>
+            <td>Ô vừa trả lại rơi khỏi danh sách đóng tập</td>
+            <td><span class="pill pill-green">Đúng nghiệp vụ</span> — chứng từ đang ở ngoài thì không đóng tập được.
+            Luồng "Mượn lại" cũ cũng vậy.</td></tr>
+        <tr><td><code>handover_report_service</code> — <code>SUBMIT_ACTIONS</code> /
+            <code>REJECT_ACTION</code></td>
+            <td>Không đổi: <code>returned_to_staff</code> không nằm trong hai tập đó</td>
+            <td><span class="pill pill-green">Không đổi</span> — báo cáo đúng hạn / quá hạn giữ nguyên số.</td></tr>
+        <tr><td><code>dashboard.py</code> — đếm việc chờ theo <code>pending_confirm</code></td>
+            <td>Không đổi</td><td><span class="pill pill-green">Không đổi</span></td></tr>
+      </table>
+
+      <div class="caution"><strong>Không kiểm tra ô đã nằm trong tập chứng từ hay chưa.</strong> Có thể trả lại
+      một ô đã được đóng tập, khiến bìa tập đã in không còn khớp thực tế. Cố ý giữ nguyên: luồng
+      <em>Mượn lại</em> hiện tại cũng không kiểm tra, thêm ràng buộc ở một đường mà không thêm ở đường kia sẽ
+      làm hành vi hệ thống mâu thuẫn. Nếu cần chặn thì phải chặn cả hai chỗ cùng lúc.</div>
+
+      <div class="note">Đã kiểm thử trên <strong>bản sao</strong> DB thật (không đụng <code>data/ksnb.db</code>):
+      lý do rỗng → 400; GDV gọi → 403; HKV gọi → <code>borrowed</code> + log có <code>notes</code> +
+      <code>borrowed_at</code> có giá trị + <code>borrow_reason</code> vẫn NULL; gọi lại → 409; <code>borrow</code>
+      khi đang mượn → 409; vòng đời tiếp <code>borrowed → pending_confirm → confirmed</code> chạy thông.</div>
+
+    </div>
+  </div>
+
   <!-- N -->
   <div class="card">
     <div class="card-header">
@@ -4082,6 +4149,187 @@ headers["X-Client-IP"] = request.client.host</code></pre>
     </div>
   </div>
 
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">52</span>
+      <span class="card-title">Đóng cổng backend 8000 khỏi mạng — <code>BACKEND_HOST=127.0.0.1</code> + <code>ENV=production</code></span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Triệu chứng</p>
+      <p>Hai cảnh báo <code>startup.config</code> mỗi lần khởi động hệ thống chính: <code>/docs</code>
+      đang mở ra mạng, và <code>ALLOWED_ORIGINS</code> chỉ có localhost trong khi bind
+      <code>0.0.0.0</code>. Cả hai đều báo <strong>đúng</strong> một cấu hình thật, không phải cảnh báo
+      lỗi.</p>
+
+      <p class="label">Vì sao chọn đóng cổng thay vì nới ALLOWED_ORIGINS</p>
+      <p>Nới <code>ALLOWED_ORIGINS</code> là sửa triệu chứng sai chỗ: <strong>không có trình duyệt nào
+      gọi thẳng cổng 8000</strong>, nên CORS ở đó chưa từng chặn ai. Frontend gọi backend qua
+      <code>127.0.0.1</code> (server-to-server, CORS không áp dụng), còn Extension CITAD chỉ gọi
+      <code>/api/doi-chieu-citad/*</code> và đã đi qua proxy cổng 8080 từ PR #20 (card 51). Cổng 8000
+      mở ra mạng là <strong>thừa</strong> — đóng lại thì cả hai cảnh báo tự tắt mà không phải đụng tới
+      cấu hình CORS.</p>
+
+      <p class="label">Bằng chứng đã kiểm trước khi đóng — log lấy từ MÁY CHÍNH</p>
+      <p>Vòng kiểm đầu chạy trên log máy dev, chỉ đủ chứng minh <em>đường gọi trong code</em>. Đã đo
+      lại trên <code>backend.log</code> + <code>app.log</code> xuất từ máy chính (07/08/2026):</p>
+      <table>
+        <tr><th>Phép kiểm</th><th>Kết quả</th></tr>
+        <tr><td>Request tới cổng 8000 từ <code>127.0.0.1</code></td><td>82.106</td></tr>
+        <tr><td>Request tới cổng 8000 từ máy khác</td>
+            <td><strong>2</strong> — <code>GET /</code> + <code>GET /favicon.ico</code> từ
+            <code>10.1.3.229</code></td></tr>
+        <tr><td><code>fastapi_client</code> trong 419 lượt đăng nhập</td>
+            <td><strong>419/419 là <code>127.0.0.1</code></strong></td></tr>
+        <tr><td><code>/api/doi-chieu-citad/*</code> từ ngoài <code>127.0.0.1</code></td>
+            <td><strong>0</strong> / 87 request của module</td></tr>
+        <tr><td>Lượt mở <code>/docs</code>, <code>/redoc</code>, <code>/openapi.json</code></td>
+            <td><strong>0</strong> — kể cả từ trong máy</td></tr>
+        <tr><td>Máy trạm đang dùng app qua cổng 8080</td><td>50</td></tr>
+      </table>
+      <p>Dòng <code>x_client_ip='10.1.3.201' fastapi_client='127.0.0.1'</code> là bằng chứng trực tiếp:
+      người dùng ở máy trạm, nhưng thứ <em>gõ cửa</em> backend luôn là chính máy chủ. 2 request từ
+      <code>10.1.3.229</code> (<code>GET /</code> rồi <code>favicon.ico</code> — dấu vết người gõ địa
+      chỉ vào trình duyệt) chứng minh cổng 8000 <strong>thực sự chạm được từ máy khác</strong>. Chưa ai
+      gõ tiếp <code>/docs</code> — may, không phải nhờ thiết kế.</p>
+      <p><strong>0 lượt <code>POST citad-buffer</code></strong> (có 31 lượt kiểm tra kết nối, 10 lượt
+      tạo mã, 18 lượt tải bản cài) — Extension chưa từng ghi được số liệu lên máy chính. Nên rủi ro
+      "máy nào đó gõ tay <code>:8000</code>" <strong>không tồn tại trên thực tế</strong>, và đây là thời
+      điểm đóng rẻ nhất: đóng sau, khi 50 người đã cấu hình Extension, mới phải dò từng máy.</p>
+
+      <p class="label">Đánh đổi đã chấp nhận</p>
+      <table>
+        <tr><th>Mất</th><th>Vì sao chấp nhận</th></tr>
+        <tr><td>Máy nào <em>gõ tay</em> <code>SERVER=http://&lt;IP&gt;:8000</code> ở trang Tuỳ chọn
+            Extension sẽ mất kết nối</td>
+            <td>Không đi qua luồng chuẩn nên không đo được từ log. Triệu chứng hiện ngay (toast đỏ
+            "Không kết nối server"), sửa bằng cách bấm lại "Tạo mã kết nối mới" — 1 phút</td></tr>
+        <tr><td><code>/docs</code>, <code>/redoc</code> không vào được nữa</td>
+            <td>Cần gỡ lỗi thì đặt <code>ENABLE_API_DOCS=1</code>, <strong>không</strong> đổi
+            <code>ENV</code> về development</td></tr>
+      </table>
+
+      <p class="label">Kiểm tra tác động lan rộng</p>
+      <table>
+        <tr><th>Nơi đọc biến</th><th>Ảnh hưởng</th></tr>
+        <tr><td><code>run.py:47</code> — <code>_PROBE_HOST</code></td>
+            <td>Không đổi: chỉ ép <code>127.0.0.1</code> khi host là <code>0.0.0.0</code>/<code>::</code>,
+            nay lấy thẳng giá trị mới</td></tr>
+        <tr><td><code>frontend/api_client.py:15</code></td>
+            <td>Đã gọi <code>127.0.0.1:8000</code> từ trước — khớp với bind mới</td></tr>
+        <tr><td><code>init_db.py</code> (3 nhánh theo <code>ENV</code>)</td>
+            <td>Chỉ chạy lúc khởi tạo DB lần đầu; DB đã tồn tại nên không tác động. Lưu ý cho lần
+            khởi tạo sau: <code>ENV=production</code> sẽ <em>hỏi mật khẩu</em> thay vì dùng mặc định,
+            và không seed 3 tài khoản chuyên viên test</td></tr>
+      </table>
+
+      <p class="label">Lỗ phát hiện khi kiểm chứng: tắt <code>/docs</code> KHÔNG tắt <code>/openapi.json</code></p>
+      <p>Chạy thử với <code>ENV=production</code> thì <code>/docs</code> và <code>/redoc</code> trả 404
+      đúng như mong đợi — nhưng <code>/openapi.json</code> vẫn <strong>200</strong>, liệt kê đủ
+      <strong>180</strong> đường dẫn API kèm schema request/response. FastAPI xử lý
+      <code>openapi_url</code> <em>độc lập</em> với <code>docs_url</code>/<code>redoc_url</code>: đặt
+      hai cái sau bằng <code>None</code> chỉ gỡ <em>giao diện xem</em>, còn dữ liệu thô vẫn phục vụ.
+      Tức là cảnh báo <code>startup.config</code> bảo "đặt ENV=production để tắt" đang hứa nhiều hơn
+      thực tế làm được.</p>
+      <p>Đã thêm <code>openapi_url=_openapi_url</code> vào <code>FastAPI(...)</code>, dùng chung cờ
+      <code>_docs_open</code>. Kiểm lại: cả ba đều 404 khi <code>ENV=production</code>; đặt
+      <code>ENABLE_API_DOCS=1</code> thì cả ba trở lại 200 — đường lùi để gỡ lỗi còn nguyên. Không chỗ
+      nào trong codebase gọi <code>/openapi.json</code> (đã grep) nên không gãy client nào.</p>
+      <p><strong>Bài học:</strong> tắt một tính năng framework thì phải <em>đo</em> cái mình muốn giấu
+      đã thật sự biến mất chưa, đừng dừng ở chỗ trang UI không mở được.</p>
+
+      <p class="label">Áp dụng qua <code>deploy.bat</code>, không sửa tay máy chính</p>
+      <p><code>deploy.bat</code> cố tình <strong>không copy <code>.env</code></strong> (giữ
+      <code>SECRET_KEY</code> riêng của máy đích) — nên hai biến này không tự sang được. Thay vì bảo
+      người vận hành sửa tay (quên là im lặng không báo gì), đã mở rộng
+      <code>deploy_env_check.py</code> — script <em>đã</em> được <code>deploy.bat</code> gọi sẵn ở bước
+      1/7 với luồng hỏi <code>Y/n</code> trước khi sửa.</p>
+      <p>Thêm cờ <code>--siet-bao-mat</code>, <strong>chỉ <code>deploy.bat</code> truyền</strong>:</p>
+      <table>
+        <tr><th>Kiểm tra</th><th>Có cờ (máy chính)</th><th>Không cờ (hệ thống test, cổng 9000)</th></tr>
+        <tr><td><code>BACKEND_HOST</code> thiếu</td><td>thêm <code>127.0.0.1</code></td>
+            <td>thêm <code>0.0.0.0</code> (như cũ)</td></tr>
+        <tr><td><code>BACKEND_HOST</code> = <code>0.0.0.0</code>/IP thật</td><td>đổi
+            <code>127.0.0.1</code></td><td>giữ nguyên</td></tr>
+        <tr><td><code>ENV</code> ≠ <code>production</code></td><td>đổi <code>production</code></td>
+            <td>không kiểm</td></tr>
+      </table>
+      <p><strong>Vì sao hệ thống test không siết:</strong> <code>deploy-test.bat</code> gọi script ở chế
+      độ <code>fix</code> <em>không hỏi</em>. Siết ở đó sẽ âm thầm tắt <code>/docs</code> đúng nơi cần
+      <code>/docs</code> để gỡ lỗi. Đây là lý do dùng cờ tường minh thay vì suy theo số cổng.</p>
+      <p><code>BACKEND_HOST=localhost</code> <strong>cũng bị đổi</strong> về <code>127.0.0.1</code> dù
+      cũng là loopback: trên Windows <code>localhost</code> ra <code>::1</code> (IPv6) trước, uvicorn
+      bind vào <code>::1</code> còn frontend gọi <code>127.0.0.1</code> → không kết nối được. Đúng cái
+      bẫy IPv6 mà chính script này đã cảnh báo cho <code>BACKEND_URL</code>.</p>
+      <p><code>start.bat</code> (được deploy sang máy đích) tự sinh <code>.env</code> khi chưa có, trước
+      đây ghi <code>BACKEND_HOST=0.0.0.0</code> và không có <code>ENV</code> — cài mới là hở lại. Đã đổi
+      sang mặc định đóng.</p>
+      <p><strong>Bẫy batch đã vấp khi sửa <code>start.bat</code>:</strong> comment <code>::</code> đặt
+      <em>bên trong</em> khối ngoặc <code>if ... ( )</code> làm cmd.exe báo <em>"The system cannot find
+      the drive specified"</em> — cmd hiểu <code>::</code> là nhãn, mà nhãn trong ngoặc là không hợp lệ.
+      Đã chuyển khối comment ra ngoài <code>if</code>. Trong ngoặc chỉ được dùng <code>rem</code>.</p>
+
+      <p class="label">Ghi chú cho người sau</p>
+      <p>Ngày nào cần cho máy khác gọi thẳng cổng 8000, phải đổi <strong>cả hai</strong>:
+      <code>BACKEND_HOST=0.0.0.0</code> <em>và</em> thêm origin thật vào <code>ALLOWED_ORIGINS</code>.
+      Đổi mỗi cái đầu là cảnh báo cũ quay lại nguyên vẹn — đúng như thiết kế của
+      <code>_warn_deployment_config()</code>.</p>
+      <p><strong>Chưa sửa:</strong> phần comment tiếng Việt trong <code>.env</code> đã bị hỏng mã hoá
+      (double-encoded UTF-8) từ trước, đọc ra <code>â€"</code>, <code>Ä'á»‹a</code>… Không sửa trong
+      lần này để tránh trộn thay đổi cấu hình với thay đổi văn bản. Các dòng biến (ASCII) không bị
+      ảnh hưởng.</p>
+
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">53</span>
+      <span class="card-title">Trang Nhật ký hệ thống vỡ đúng lúc có traceback để đọc</span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Phát hiện thế nào</p>
+      <p>Không phải do báo lỗi từ người dùng — thấy khi soi <code>frontend.log</code> xuất từ máy chính
+      để xác thực việc đóng cổng 8000 (card 52). Cùng một traceback lặp <strong>94 lần</strong>:</p>
+      <pre><code>frontend/pages/logs.py:88
+AttributeError: 'Element' object has no attribute 'set_text'</code></pre>
+
+      <p class="label">Vì sao ẩn mình được lâu</p>
+      <p>Code chỉ đi vào nhánh hỏng khi nội dung log <strong>có xuống dòng</strong>:</p>
+      <pre><code>if "\n" in msg:
+    ui.element("pre").classes(...).style(...).set_text(msg)   # ← vỡ
+else:
+    ui.label(msg).classes(...)                                 # ← chạy tốt</code></pre>
+      <p>Log một dòng (đại đa số) rơi vào nhánh <code>ui.label</code> nên trang hiện bình thường. Chỉ
+      thông báo nhiều dòng — tức là <strong>traceback</strong> — mới chạm nhánh kia. Nói cách khác:
+      trang Nhật ký gãy đúng lúc có lỗi cần đọc, còn lúc bình yên thì trông hoàn hảo.</p>
+      <p>Nguyên nhân: <code>set_text()</code> là phương thức của <code>ui.label</code>, không có trên
+      <code>Element</code> chung. Kiểm trực tiếp trên NiceGUI 2.12.1:
+      <code>hasattr(ui.element('pre'), 'set_text')</code> → <code>False</code>;
+      <code>hasattr(ui.label('x'), 'set_text')</code> → <code>True</code>.</p>
+
+      <p class="label">Cách sửa: bỏ thẻ <code>&lt;pre&gt;</code> thay vì đi tìm API thay thế</p>
+      <p>Thứ duy nhất <code>&lt;pre&gt;</code> đem lại ở đây là giữ nguyên xuống dòng — mà class
+      <code>whitespace-pre-wrap</code> (đã có sẵn trong chuỗi class cũ) làm đúng việc đó trên chính
+      <code>ui.label</code>. Nên hai nhánh nay dùng cùng một loại element, chỉ khác class. Thêm một
+      cái được: <code>ui.label</code> escape HTML, còn nhồi chuỗi vào element thô thì phải tự lo.</p>
+      <p>Đã grep toàn bộ <code>frontend/</code>: mọi <code>.set_text()</code> khác đều gọi trên
+      <code>ui.label</code>, mọi <code>ui.element("div")</code> đều dùng làm container với
+      <code>with</code> — không còn chỗ nào lặp lại lỗi này.</p>
+
+      <p class="label">Đã kiểm tới đâu (nói rõ giới hạn)</p>
+      <p>Đã xác nhận: <code>ui.label</code> nhận chuỗi nhiều dòng và giữ nguyên
+      <code>\n</code>, class <code>whitespace-pre-wrap</code> gắn đúng, file parse sạch. <strong>Chưa
+      dựng trình duyệt đăng nhập rồi mở trang Nhật ký</strong> — cần phiên WebSocket có xác thực. Bằng
+      chứng ở mức "lời gọi gây lỗi đã bị xoá và thứ thay thế hoạt động", chưa phải "đã nhìn thấy trang
+      render".</p>
+
+    </div>
+  </div>
+
 <!-- 54 -->
   <div class="card">
     <div class="card-header">
@@ -4961,7 +5209,142 @@ headers["X-Client-IP"] = request.client.host</code></pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-10</footer>
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">74</span>
+      <span class="card-title">Quản lý User trả 500 — một dòng <code>is_active = NULL</code> làm hỏng cả danh sách</span>
+      <span class="badge badge-done">done · 2026-08-11</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Triệu chứng</div>
+      <p>Trang <b>Quản lý User</b> hiện <i>"Không có kết quả"</i> kèm toast 500 với admin, QTV cấp 2, GĐ, PGĐ.
+        Không ai sửa/xoá được user nào qua giao diện. Trưởng phòng Thanh toán <b>không</b> bị — vì phạm vi xem
+        của họ không chạm dòng hỏng. Chính sự "tuỳ người" đó làm lỗi khó truy.</p>
+
+      <div class="label">Nguyên nhân</div>
+      <p><code>StaffOut.is_active: bool</code> không nhận <code>None</code>. Chỉ cần <b>một</b> dòng
+        <code>user_tttt.is_active IS NULL</code> (ở đây là <code>id=81 duty_mig_check</code>) là pydantic ném
+        <code>ResponseValidationError</code> và FastAPI <b>bỏ nguyên response</b> — không phải bỏ một dòng.
+        Cột khai <code>is_active BOOLEAN</code>, <b>không</b> NOT NULL, <b>không</b> DEFAULT, nên NULL lọt vào
+        được — rõ nhất qua đường "Nhập DB" (<code>staff.py:392</code> chèn theo danh sách cột tuỳ file .db ngoài).</p>
+      <p>Lỗi chỉ nổ khi <code>active_only=false</code>; frontend luôn gọi đúng nhánh đó
+        (<code>frontend/pages/staff.py:333</code>), còn <code>active_only=true</code> lọc <code>is_active = 1</code>
+        nên vô tình giấu dòng hỏng.</p>
+
+      <div class="label">Quyết định — NULL ánh xạ thành <code>False</code>, không phải <code>True</code></div>
+      <p>Không tự chọn: mọi chỗ <b>đọc</b> cột này đã coi NULL là không hoạt động từ trước —
+        <code>auth.py:56</code> (<code>WHERE username = ? AND is_active = 1</code>) chặn đăng nhập,
+        <code>list_staff</code> lọc bỏ, xuất Excel in "Tạm khóa", badge frontend cũng "Tạm khóa".
+        Ánh xạ <code>False</code> là <b>ghi lại đúng hành vi đang có</b>; chọn <code>True</code> mới là đổi
+        nghiệp vụ — sẽ hồi sinh những tài khoản xưa nay không đăng nhập được.</p>
+
+      <div class="label">Sửa hai lớp — vì một lớp không đủ</div>
+      <table>
+        <tr><th>Lớp</th><th>Ở đâu</th><th>Chặn được gì</th></tr>
+        <tr><td>Schema — <code>field_validator(mode="before")</code></td>
+            <td><code>backend/schemas/staff.py</code></td>
+            <td>NULL <b>phát sinh sau này</b> (nhập DB, sửa tay SQL) không làm sập API nữa. Có hiệu lực ngay
+                tại runtime, không cần khởi động lại.</td></tr>
+        <tr><td>Migration — <code>UPDATE … WHERE is_active IS NULL</code></td>
+            <td><code>backend/db/migrations.py</code></td>
+            <td>Dọn dữ liệu NULL đang tồn tại để DB tự nó nhất quán, không phụ thuộc tầng ứng dụng.</td></tr>
+      </table>
+      <p>Chỉ migration thì NULL mới chèn vào lúc 9h sáng vẫn làm sập trang tới tận lần khởi động sau.
+        Chỉ validator thì API sống nhưng DB vẫn ôm dữ liệu mập mờ, và mọi truy vấn raw SQL viết sau này lại
+        phải nhớ <code>COALESCE</code>. Giữ cả hai.</p>
+
+      <div class="label">Không làm — và vì sao</div>
+      <p><b>Không</b> thêm <code>NOT NULL</code> cho cột: SQLite không <code>ALTER COLUMN</code>, phải dựng bảng
+        mới rồi copy 81 dòng + 8 khoá ngoại trỏ vào <code>user_tttt</code> — rủi ro lớn hơn nhiều so với lợi ích,
+        trong khi hai lớp trên đã bịt đúng đường lỗi.</p>
+      <p><b>Không</b> chặn NULL ngay trong <code>import_users_db</code>: đó là nguồn sinh, nhưng sửa ở đó là mở
+        rộng phạm vi sang luồng nhập DB (còn nhiều cột khác cùng cảnh). Ghi lại đây để xử lý riêng.</p>
+      <p><b>Không</b> xoá 2 tài khoản test còn sót trong DB thật (<code>id=80 u1 "LD Một"</code>,
+        <code>id=81 duty_mig_check</code>) — là việc dọn dữ liệu, cần người dùng quyết.
+        Lưu ý <code>u1</code> đang hiện <b>đầu danh sách</b> dropdown "Người phê duyệt (KSV)" của chuyên viên
+        phòng Thanh toán.</p>
+
+      <div class="label">Kiểm chứng</div>
+      <p>Chạy trên bản sao DB thật (còn nguyên dòng NULL), cổng 8001/8081:</p>
+      <table>
+        <tr><th>Phép thử</th><th>Kết quả</th></tr>
+        <tr><td>Khởi động → migration dọn NULL</td><td>1 → 0 dòng; <code>id=81</code> thành <code>is_active=0</code></td></tr>
+        <tr><td><code>GET /api/staff/?active_only=false</code></td><td>200, 79 user (trước: 500)</td></tr>
+        <tr><td><b>Đặt lại NULL khi server đang chạy</b></td><td>vẫn 200, trả <code>is_active: false</code> — lớp schema đứng độc lập</td></tr>
+        <tr><td>Trang <b>Quản lý User</b> với admin / GĐ / QTV cấp 2</td><td>hiện đủ bảng, nút Sửa &amp; Xoá trở lại, không toast lỗi</td></tr>
+        <tr><td>Tài khoản <code>is_active</code> NULL đăng nhập</td><td>vẫn 401 — hành vi không đổi</td></tr>
+        <tr><td>Tạo / khoá / mở lại / xoá user, xuất Excel</td><td>200 cả 5; suite <b>83 pass</b></td></tr>
+      </table>
+      <div class="note">Bài học lặp lại: response model chặt hơn schema DB thì <b>một dòng bẩn xoá sổ cả API</b>.
+        Chỗ nào cột SQLite cho NULL mà pydantic khai kiểu không-Optional là còn quả mìn y hệt.</div>
+    </div>
+  </div>
+
+  <!-- 75 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">75</span>
+      <span class="card-title">Hai bẫy khi đọc Excel: giá trị header không kế thừa, và so ngày bằng chuỗi (PR #29)</span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Cả hai đều làm sai số liệu ÂM THẦM — không lỗi, không cảnh báo</p>
+      <p>Điểm chung đáng nhớ: người dùng thấy màn hình báo "đối soát xong", có số liệu, có file Excel
+      xuất ra. Chỉ có điều số sai. Không có bất kỳ tín hiệu nào để nghi ngờ.</p>
+
+      <p class="label">Bẫy 1 — giá trị suy từ header sheet đầu mà không kế thừa sang sheet sau</p>
+      <p>File CITAD chỉ có header ở sheet ĐẦU. Code đã có <code>chieu_ref</code> và
+      <code>cong_ref</code> để truyền <code>chieu</code>/<code>cong</code> sang các sheet sau — nhưng
+      <strong>bỏ sót <code>loai_tien</code></strong>. Sheet 2+ luôn rơi về mặc định <code>'VND'</code>.</p>
+      <p>Hậu quả kép: sai cột đọc số tiền (<code>i_co_di</code> khác nhau giữa VND và ngoại tệ), và sai
+      nhãn — mà <code>reconcile.py</code> dùng chính nhãn đó để quyết định so với IPCAS hay với Hub
+      ngoại tệ. Lệnh ngoại tệ ở sheet sau bị đẩy sang nhánh IPCAS, không tìm thấy, báo lệch
+      <code>only_citad</code> giả.</p>
+      <p><strong>Quy tắc: mỗi khi thêm một giá trị suy từ header sheet đầu, phải thêm luôn cơ chế kế
+      thừa cho sheet sau.</strong> Ba giá trị đã có (<code>chieu</code>, <code>cong</code>,
+      <code>ngay</code>) mà quên cái thứ tư là dấu hiệu khuôn mẫu này dễ sót.</p>
+
+      <p class="label">Bẫy 2 — so ngày bằng chuỗi mà không chuẩn hoá kiểu ô</p>
+      <p><code>_parse_hub_xls</code> lọc theo ngày bằng <code>str(ws.cell_value(...))[:10] != ngay_cham</code>.
+      Ô Excel định dạng Date thật KHÔNG phải chuỗi: openpyxl trả <code>datetime</code>
+      (<code>str()</code> ra <code>"2026-08-11..."</code>), xlrd trả số serial. Không dạng nào khớp
+      <code>"dd/mm/yyyy"</code> người dùng nhập, nên <strong>toàn bộ file Hub bị lọc rớt</strong> —
+      trả về 0 dòng, không lỗi.</p>
+      <p>Đã thêm <code>_normalize_date_cell()</code> nhận cả ba dạng: chuỗi <code>dd/mm/yyyy</code>,
+      <code>datetime</code>/<code>date</code>, và serial Excel (khoảng 40000–60000 ứng với ~2009–2064).
+      Không nhận diện được thì giữ hành vi cũ thay vì đoán mò.</p>
+      <p><strong>Quy tắc: đọc ô ngày từ Excel thì phải chuẩn hoá theo KIỂU ô, không bao giờ
+      <code>str()</code> rồi cắt chuỗi.</strong> Cùng một file xuất ra hai cách (Date thật vs text) cho
+      hai kiểu ô khác nhau mà nhìn trên màn hình giống hệt.</p>
+
+      <p class="label">Đo hệ quả cuối — dựng file đúng bố cục thật, chạy đủ luồng</p>
+      <table>
+        <tr><th></th><th>CITAD đọc được</th><th>Hub đọc được</th><th>Kết quả đối soát</th></tr>
+        <tr><td>Trước</td><td>3 dòng (1 sai nhãn thành VND)</td><td><strong>0 dòng</strong></td>
+            <td>Khớp=0, Lệch=3 — cả 3 báo "Chỉ CITAD"</td></tr>
+        <tr><td>Sau</td><td>3 dòng, nhãn đúng USD</td><td>2 dòng</td>
+            <td>Khớp=2, Lệch=1 — đúng</td></tr>
+      </table>
+      <p><strong>Dấu hiệu nhận ra lần đối soát đã bị dính lỗi này:</strong> ra 0 lệnh ngoại tệ khớp và
+      toàn bộ rơi vào "Chỉ CITAD". Đã ghi vào <code>Logs_update.md</code> để người dùng tự soát lại các
+      lần chấm cũ.</p>
+
+      <p class="label">Phần Extension — chốt chống lặp khi tự bấm chuột</p>
+      <p>Bản 2.10/2.11 tự tích "chọn tất cả" rồi bấm "Xem chi tiết lệnh" trên trang ngân hàng. Ba chốt
+      để không thành vòng lặp như lỗi <code>lastSavedKey</code> ở card trước: thoát ngay nếu bảng chi
+      tiết đã có, chỉ chạy sau khi trang đã có kết quả tìm kiếm, và cooldown 4 giây. Chọn cooldown theo
+      thời gian thay vì khoá một-lần là có chủ ý — nút đó có thể là dạng bật/tắt, bấm dồn khi đang tải
+      dở sẽ ẩn lại bảng vừa hiện.</p>
+      <p>Khi người dùng đã lọc sẵn "NH gửi", Extension tự cộng dồn cột "Số tiền" (trang không cộng sẵn
+      kiểu lọc này) — nhưng <strong>đối chiếu số dòng quét được với "Tổng số giao dịch" trang báo và
+      KHÔNG lưu nếu ít hơn</strong>. Thất bại theo hướng an toàn: thà không có số còn hơn nạp số thiếu
+      vào form báo cáo NHNN.</p>
+
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-11</footer>
 </div>
 </body>
 </html>

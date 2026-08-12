@@ -4,15 +4,56 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 11/08/2026 Bàn giao chứng từ - Thêm nút **Trả lại** để hậu kiểm chủ động trả chứng từ về cho cán bộ:
+    + **Trước đây chứng từ đã xác nhận chỉ ra khỏi kho được khi giao dịch viên chủ động xin mượn.** Hậu kiểm cầm chứng từ trên tay, thấy thiếu chữ ký hay sai sót, muốn trả về cho cán bộ thì không có nút nào — phải nhờ chính cán bộ đó vào bấm *Mượn lại* rồi mình duyệt, vòng vèo và sai bản chất sự việc
+    + Nay ở **bảng lịch sử của từng ô** (bấm vào ô trong lưới), phần *THAO TÁC* có thêm nút tím **"↪ Trả lại"**. Nút **chỉ hiện với ô đang ở trạng thái *Đã xác nhận*** — ô đang chờ, đang mượn hay bị từ chối đều không có
+    + **Bắt buộc nhập lý do trả lại**, không nhập thì không bấm được. Lý do hiện ngay trong dòng lịch sử của ô, ai cũng đọc được
+    + Bấm xong ô chuyển sang **Đang mượn** (ô tím). Từ đây cán bộ dùng nút *Bàn giao lại* như bình thường, hậu kiểm xác nhận lại là xong — giống hệt luồng mượn cũ
+    + ⚠️ **Phải cấp quyền thì nút mới hiện.** Vào *Phân quyền theo nhóm* → **Phòng KSNB & HTVH → Bàn giao chứng từ → "Trả lại chứng từ cho cán bộ"**, tích cho nhóm hậu kiểm / kiểm soát viên. Chưa tích thì không ai thấy nút, kể cả người đang có quyền xác nhận
+    + **Giao dịch viên không được cấp quyền này** — hệ thống chặn ở máy chủ kể cả khi lỡ tích nhầm. Nếu cho, cán bộ sẽ tự rút được chứng từ đã chốt của chính mình mà không qua bước duyệt của hậu kiểm
+    + ⚠️ **Ô đã đóng tập chứng từ vẫn trả lại được** — bìa tập đã in sẽ không còn khớp thực tế. Chức năng *Mượn lại* sẵn có cũng đang như vậy, nên lần này giữ nguyên cho nhất quán. Cần chặn thì báo để sửa cả hai chỗ cùng lúc
+
+- 11/08/2026 Đối soát CITAD ↔ IPCAS - Sửa 2 lỗi làm sai lệch số liệu ngoại tệ (rà soát code, chưa có báo cáo thực tế):
+    + **File CITAD nhiều sheet đọc sai loại tiền từ sheet thứ 2 trở đi**: chỉ sheet đầu tiên được nhận diện VNĐ/USD/EUR, các sheet sau luôn bị coi mặc định là VNĐ — sai cả cột đọc số tiền lẫn nhãn loại tiền, khiến lệnh ngoại tệ ở sheet 2+ bị đẩy nhầm sang so khớp IPCAS (đáng lẽ phải so Hub ngoại tệ) và báo lệch "Chỉ CITAD" giả
+    + **File Hub ngoại tệ có cột ngày dạng Date thật bị lọc rớt hết, không báo lỗi**: cột ngày so với ngày chấm bằng so chuỗi, nhưng ô kiểu Date thật (phổ biến với file xuất chuẩn) đọc ra "yyyy-mm-dd" — không bao giờ khớp "dd/mm/yyyy" người dùng nhập → toàn bộ file Hub bị coi như rỗng, mọi lệnh ngoại tệ báo lệch "Chỉ CITAD" dù thực ra khớp đủ trong file đã tải lên
+    + Cả 2 lỗi đều **âm thầm, không cảnh báo trên giao diện** — người dùng có thể đã ký duyệt báo cáo với số lệch ngoại tệ giả mà không biết. Đã sửa. **Dấu hiệu nhận ra lần đối soát bị dính lỗi: kết quả ra 0 lệnh ngoại tệ khớp và toàn bộ đều rơi vào "Chỉ CITAD"** — đó gần như chắc chắn là lỗi này chứ không phải số liệu lệch thật. Gặp vậy thì đối soát lại bằng bản mới
+
+- 11/08/2026 Đối chiếu CITAD - Extension lên **bản 2.11**, thêm cách tách Napas/PSS-MDP khi đã lọc sẵn theo "NH gửi":
+    + Nếu tự lọc ở form tìm kiếm "NH gửi" = 01401001 (Napas) hoặc 01406001 (PSS-MDP) rồi mới Tìm kiếm — Extension nay đọc thẳng bảng kết quả (khỏi cần bấm "Xem chi tiết lệnh"), tự cộng dồn cột "Số tiền" của toàn bộ dòng vì trang không tự cộng sẵn tổng tiền kiểu lọc này (chỉ có "Tổng số giao dịch" đếm số món)
+    + **An toàn phân trang**: nếu số dòng quét được ít hơn "Tổng số giao dịch" trang báo (còn trang sau chưa xem), Extension **không lưu** số liệu thiếu — kể cả lượt tự động — tránh nạp nhầm số liệu hụt vào form Đối chiếu CITAD
+    + Cách tách cũ (không lọc "NH gửi", tự bung "Xem chi tiết lệnh" rồi đọc cột NH gửi theo từng dòng — bản 2.10) vẫn giữ nguyên, dùng khi không lọc theo NH gửi
+    + ⚠️ **Phải tải lại `.zip` và cài lại Extension** — vào `/doi_chieu_citad` → **Tải Extension**, giải nén, *Load unpacked* lại
+
+- 11/08/2026 Đối chiếu CITAD - Extension lên **bản 2.10**, tự tách Napas/PSS-MDP không cần bấm tay:
+    + Trang "Chuyển tiền đến" (payment.agribank.com.vn) sau khi Tìm kiếm chỉ hiện bảng tóm tắt — cột "NH gửi" (dùng để phân biệt Napas/PSS-MDP) chỉ có ở bảng **chi tiết lệnh**, phải tự tích chọn dòng + bấm "Xem chi tiết lệnh" mới hiện ra. Trước đây không ai biết bước này nên bấm "Lưu Napas + PSS-MDP" báo nhầm *"Chưa có kết quả, hãy Tìm kiếm trước"* dù đã tìm kiếm ra kết quả
+    + Nay Extension **tự tích "chọn tất cả" + tự bấm "Xem chi tiết lệnh"** ngay khi phát hiện có kết quả tìm kiếm mới — tách Napas/PSS-MDP theo mã NH gửi (01401001/01406001) hoàn toàn tự động, không cần thao tác tay nào ngoài bấm Tìm kiếm
+    + ⚠️ **Phải tải lại `.zip` và cài lại Extension** — vào `/doi_chieu_citad` → **Tải Extension**, giải nén, *Load unpacked* lại
+    + *Giới hạn biết trước*: nếu kết quả tìm kiếm trải nhiều trang, "chọn tất cả" chỉ chọn các dòng đang hiển thị trên trang hiện tại — giống hạn chế khi thao tác tay từ trước, không phải lỗi mới
+
+
+- 11/08/2026 Quản lý User - Sửa lỗi trang không hiện được tài khoản nào:
+    + **Màn hình *Quản lý User* báo lỗi đỏ và hiện *"Không có kết quả"*** dù trong hệ thống có 79 tài khoản. Không sửa, không xoá, không khoá được ai qua giao diện. Ảnh hưởng **Quản trị viên cấp 1 và cấp 2, Giám đốc, Phó Giám đốc**. Trưởng phòng không bị nên lỗi dễ bị bỏ qua khi người này báo còn người kia bảo vẫn dùng được
+    + Nguyên nhân: **một tài khoản có ô trạng thái bỏ trống** — không phải *Hoạt động*, cũng không phải *Tạm khoá*. Chỉ một dòng như vậy là đủ để hệ thống bỏ luôn **cả danh sách**, chứ không phải bỏ riêng dòng đó
+    + **Không phải làm gì thủ công.** Lần khởi động đầu tiên sau khi cập nhật, hệ thống tự đặt các tài khoản trạng thái trống thành **Tạm khoá** — đúng với cách nó vẫn đối xử với những tài khoản này từ trước (không đăng nhập được, không hiện trong danh sách đang hoạt động, xuất Excel cũng đã ghi *Tạm khoá*). Không tài khoản nào đang dùng bị đổi trạng thái
+    + Trạng thái trống nếu **phát sinh lại về sau** (thường qua chức năng *Nhập DB*) thì trang vẫn hiện bình thường thay vì sập, và không cần khởi động lại
+    + ⚠️ **Còn 2 tài khoản kiểm thử trong dữ liệu, nên xoá:** `u1` (*LD Một*, Trưởng phòng, **Phòng Thanh toán**) và `duty_mig_check` (*LD Kiểm Tra*, Trưởng phòng, Phòng QLTK Nostro Vostro). Đã kiểm: **chưa ai từng đăng nhập** vào hai tài khoản này và chúng **không dính chứng từ, bìa, đơn nghỉ phép hay ca trực nào** — xoá không mất dữ liệu. Đáng lưu ý là `u1` đang hiện **đầu danh sách** ô *Người phê duyệt (KSV)* khi chuyên viên phòng Thanh toán tạo đơn nghỉ phép, rất dễ bị chọn nhầm
+
+- 10/08/2026 Đối chiếu CITAD - Extension lên **bản 2.9**, dùng được địa chỉ `apc-portal:9090`:
+    + Thêm địa chỉ `apc-portal:9090` (một địa chỉ khác cùng trỏ về trang web TTTT) vào danh sách Extension được phép gọi. Máy trạm nào vào hệ thống bằng địa chỉ này trước đây sẽ báo *"Không kết nối server"* dù cấu hình đúng
+    + ⚠️ **Phải tải lại `.zip` và cài lại Extension** thì mới có hiệu lực — bản đang cài không tự nhận. Vào `/doi_chieu_citad` → **Tải Extension**, giải nén, *Load unpacked* lại
+    + Máy nào đang vào bằng `apc-portal:8080` hoặc `10.1.3.89` và chạy bình thường thì **không bắt buộc** cập nhật ngay
+
 - 10/08/2026 Phân lịch trực - Khai số người mỗi ca, ca quyết toán chính/phụ, sửa tay được thành phần ca (PR #26):
-    + **Số người mỗi ca không còn cứng trong hệ thống** — vào tab *Cài đặt* khai riêng cho ca thường và ca quyết toán (số Lãnh đạo, số nhân viên trực chính, số trực phụ). Lịch tạo sau khi lưu sẽ theo số này
+    + **Số người mỗi ca không còn cứng trong hệ thống** — vào tab *Cài đặt* khai riêng cho ca thường và ca quyết toán (số Lãnh đạo, số nhân viên trực chính, số trực phụ). **Một ca có thể khai nhiều hơn một Lãnh đạo** (tối đa 5), nhất là ngày quyết toán. Lịch tạo sau khi lưu sẽ theo số này
     + ⚠️ **Thiếu người so với số đã khai thì hệ thống KHÔNG lập ca ngày đó**, kèm dòng cảnh báo nêu rõ thiếu ở đâu. Trước đây vẫn sinh ca thiếu người mà không báo gì
     + **Ngày quyết toán** nay là **một ca duy nhất** có nhóm trực chính và nhóm trực phụ (trực phụ về sớm hơn), thay vì hai dòng riêng như trước. Lịch cũ được gộp tự động khi khởi động
     + **Sửa tay được thành phần ca trực** — bấm biểu tượng bút ở cột phải. Chọn sai vai (xếp nhân viên vào chỗ Lãnh đạo) hoặc sai số người thì bị chặn; xếp người đang đi dự án / đã khai vắng mặt thì vẫn cho lưu nhưng có cảnh báo. **Sửa xong ca quay về bản thảo, phải xác nhận lại**
     + Người giữ vai **xử lý song phương** hệ thống tự xác định từ cờ *"biết song phương"* của cán bộ — không phải chọn tay nữa. Ca thiếu hoặc dư người song phương đều vẫn lập, chỉ hiện cảnh báo
     + **Bỏ cờ "Backup SP"** — nay chỉ còn một cờ *"biết song phương"* duy nhất. Ai đang được đánh dấu Backup SP sẽ tự chuyển sang cờ mới, không mất khả năng trực song phương
-    + Lịch ngày thường **bốc ngẫu nhiên trong nhóm ít ca nhất** nên không còn đoán trước được ai trực ngày nào, nhưng số ca vẫn chia đều. Thứ 6 giữ luân phiên cố định như cũ. Có thêm cơ chế **tránh hai người cứ đi trực cùng nhau mãi**
-    + Bảng lịch tuần gọn lại còn 3 cột (Ngày trực · Nhân viên · Lãnh đạo), luôn hiện đủ 5 hàng T2→T6. Trạng thái tuần chuyển lên tiêu đề
+    + Lịch ngày thường **bốc ngẫu nhiên trong nhóm ít ca nhất** nên không còn đoán trước được ai trực ngày nào, nhưng số ca vẫn chia đều. Thứ 6 giữ luân phiên cố định như cũ
+    + **Chia ca đều hơn hẳn.** Phân thử 2 tháng (49 ca) trên danh sách nhân sự thật cho thấy: các Lãnh đạo chênh nhau nhiều nhất 1 ca (9–10 ca mỗi người), và **không ai phải trực 2 lần trong cùng một tuần**. Trước đây có Lãnh đạo trực 15 ca trong khi người khác chỉ 6 ca, và 8 lượt phải trực từ 2 lần trở lên trong một tuần — có người 3 lần. *(Số đo trên danh sách hiện tại; phòng ít người đi hoặc nhiều người nghỉ cùng lúc thì vẫn có thể phải trực lặp trong tuần)*
+    + Thêm cơ chế **tránh hai người cứ đi trực cùng nhau mãi** — trước đây một Lãnh đạo và một nhân viên có thể bị ghép cặp cả 10/10 ca
+    + Bảng lịch tuần **5 cột** (Ngày trực · Nhân viên 1 · Nhân viên 2 · Lãnh đạo · Tình trạng), luôn hiện đủ 5 hàng T2→T6, và **trạng thái chung của cả tuần hiện ngay cạnh tiêu đề tuần**. Ngày quyết toán hiện tên người trực chính IN HOA đậm, trực phụ chữ nghiêng nhỏ bên dưới
     + Thống kê ca trực tách **2 cột riêng: trực chính và trực phụ** — không quy đổi lẫn nhau
     + Sửa lỗi: bỏ tick *"biết song phương"* cho một Lãnh đạo thì sau khi khởi động lại hệ thống **cờ tự bật lại**. Nay lựa chọn được giữ nguyên
     + Sửa lỗi: đổi *số nhân viên ca thường* rồi lưu có thể làm **cấu hình ca quyết toán bị trả về mặc định** mà không báo gì
@@ -42,6 +83,21 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
     + Nguyên nhân: từ bản trước, nút **Tạo mã kết nối mới** tự điền địa chỉ máy chủ vào Extension — nhưng đường tự động đó **không xin được quyền truy cập địa chỉ** cho trình duyệt, nên Extension bị chặn ngay ở tầng quyền. Chỉ khi tự vào Tuỳ chọn bấm Lưu mới xin được. Nay quyền được cấp sẵn ngay lúc cài, không phụ thuộc cách cấu hình nữa
     + Sau khi cài lại, kiểm nhanh: mở `edge://extensions` (hoặc `chrome://extensions`) → phần **Site access** phải thấy `apc-portal:8080`. Không thấy nghĩa là chưa cài đúng bản mới
     + Không cần làm gì thêm — mã kết nối cũ vẫn dùng được, không phải tạo lại
+
+- 07/08/2026 Bảo mật - Đóng cổng backend khỏi mạng nội bộ, tắt trang liệt kê API *(chưa deploy — cần sửa `.env` trên máy chính rồi khởi động lại)*:
+    + **Gỡ 2 cảnh báo đỏ hiện mỗi lần khởi động hệ thống chính.** Cả hai đều báo đúng: cổng backend (8000) đang mở ra toàn mạng nội bộ dù không ai cần vào, và trang liệt kê toàn bộ API đang xem được công khai
+    + Nay cổng 8000 **chỉ nghe trong máy chủ**. Người dùng không bị ảnh hưởng gì — trình duyệt vẫn vào bằng đúng địa chỉ cũ (cổng 8080), Extension CITAD vẫn đi chung cổng đó như từ 06/08
+    + Đã đối chiếu nhật ký máy chính trước khi đổi: **419/419 lượt đăng nhập** và **toàn bộ** thao tác Đối chiếu CITAD đều đi qua đường trong máy chủ, **50 máy trạm** đang dùng đều vào bằng cổng 8080 — không máy nào phụ thuộc cổng vừa đóng
+    + Nếu có máy nào từng *tự gõ tay* địa chỉ có `:8000` vào trang Tuỳ chọn của Extension thì sẽ báo *"Không kết nối server"*. Cách sửa: vào `/doi_chieu_citad` bấm **Tạo mã kết nối mới** — hệ thống tự điền lại địa chỉ đúng
+    + Trang `/docs` (danh sách 180 đường dẫn API kèm cấu trúc dữ liệu) **không còn mở công khai**. Trước đây bất kỳ ai trong mạng gõ đúng địa chỉ đều xem được cả sơ đồ hệ thống. Không lấy được dữ liệu vì vẫn phải đăng nhập, nhưng là tấm bản đồ dâng sẵn cho người dò
+    + Vá thêm một lỗ liên quan: tắt `/docs` theo cách cũ **chưa tắt hết** — vẫn còn một đường dẫn phụ trả về nguyên danh sách 180 API đó ở dạng dữ liệu thô. Nay đóng cả hai
+    + **Không phải sửa tay gì trên máy chính** — chạy `deploy.bat` là nó tự hỏi và sửa `.env` giúp (bước 1/7). Hệ thống test giữ nguyên `/docs` để còn gỡ lỗi
+
+- 07/08/2026 Nhật ký hệ thống - Sửa lỗi trang trắng khi có thông báo nhiều dòng *(chưa deploy)*:
+    + ⚠️ **Trang *Nhật ký hệ thống* trước đây vỡ đúng lúc hệ thống có lỗi cần xem.** Bản ghi một dòng thì hiện bình thường, nhưng bản ghi nhiều dòng (mô tả lỗi chi tiết) làm trang không hiện được — đã xảy ra **94 lần** trên máy chính mà không ai báo
+    + Nay xem được mọi bản ghi, nội dung nhiều dòng giữ nguyên cách xuống dòng cho dễ đọc
+    + Không đổi gì về dữ liệu hay quyền xem — chỉ là cách hiển thị
+
 
 - 06/08/2026 Đối soát CITAD - Đọc được file `.xlsx`, và Extension gọi được máy chủ thật (PR #20):
     + ✅ **GỠ CẢNH BÁO NGÀY 04/08: file CITAD định dạng `.xlsx` nay đọc bình thường.** Trước đây mọi file `.xlsx` bị đọc ra rỗng mà không báo lỗi — màn hình vẫn hiện "đối soát xong" nhưng số khớp bằng 0 và toàn bộ lệnh bị xếp vào "Chỉ IPCAS". Từ nay dùng `.xls` hay `.xlsx` đều được
