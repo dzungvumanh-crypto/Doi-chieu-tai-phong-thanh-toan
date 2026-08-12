@@ -2244,9 +2244,6 @@ async def leaves_page():
         def _draw_table_paged(leaves: list, show_name: bool = False, show_checkbox: bool = True,
                               export_sel: set = None):
             """Wrapper thêm pagination 50 dòng/trang cho _draw_table."""
-            if not leaves:
-                ui.label("Không có đơn nghỉ phép nào.").classes("text-gray-500 text-sm mt-4")
-                return
             total = len(leaves)
             total_pages = max(1, (total + _PAGE_SIZE - 1) // _PAGE_SIZE)
             state = {"page": 1}
@@ -2287,12 +2284,6 @@ async def leaves_page():
 
         def _draw_table(leaves: list, show_name: bool = False, show_checkbox: bool = True,
                         export_sel: set = None, _row_offset: int = 0):
-
-            if not leaves:
-
-                ui.label("Không có đơn nghỉ phép nào.").classes("text-gray-500 text-sm mt-4")
-
-                return
 
             # CSS border cho cột khi không có checkbox (dashboard view)
 
@@ -2362,7 +2353,9 @@ async def leaves_page():
 
                     ui.label("").classes("w-16 shrink-0")
 
-
+                if not leaves:
+                    with ui.row().classes("w-full bg-white px-3 py-4 justify-center"):
+                        ui.label("Không có đơn nghỉ phép nào.").classes("text-gray-400 text-sm italic")
 
                 for _row_idx, lv in enumerate(leaves, _row_offset + 1):
 
