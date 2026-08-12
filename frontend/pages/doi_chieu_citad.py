@@ -131,7 +131,18 @@ def nv(v):
 
 def fmt(v):
     v = nv(v)
-    return '' if v == 0 else f'{int(v):,}'
+    if v == 0:
+        return ''
+    # QUAN TRỌNG: KHÔNG được cắt bằng int(v) — VNĐ luôn là số nguyên nên vô
+    # hại, nhưng USD/EUR có phần xu (vd 2954592.79) sẽ bị cắt mất. Chữ hiển
+    # thị ở đây sau đó bị đọc ngược lại thành dữ liệu gốc (nv(e.value) trong
+    # on_change khi ô được set lại giá trị, kể cả set bằng code) — cắt ở đây
+    # là mất vĩnh viễn phần xu, gây lệch số liệu thật khi cộng dồn nhiều
+    # lệnh (đã xác nhận thực tế: lệch đúng 1 xu ở "Đối chiếu CITAD" ngày
+    # 06/08/2026 vì 3 khoản USD đều bị cắt xu trước khi cộng).
+    if v == int(v):
+        return f'{int(v):,}'
+    return f'{v:,.2f}'
 
 
 _CELL_DATA_BG = "bg-red-50"
@@ -161,6 +172,13 @@ def doi_chieu_citad_page():
     if not api.has_feature("menu.doi_chieu_citad"):
         ui.navigate.to("/home")
         return
+
+    # Tham chiếu hàm nạp lại tab "Lịch sử" — gán bên trong _build_history_panel()
+    # (khai báo hàm đó xong mới có), gọi lại ở _save_session_now() sau khi lưu
+    # thành công để danh sách Lịch sử tự cập nhật ngay, không cần F5 cả trang.
+    # Dùng dict (không phải biến thường) vì cả 2 hàm đều là closure lồng
+    # trong doi_chieu_citad_page() — gán qua dict tránh phải khai `nonlocal`.
+    history_refresh = {"fn": None}
 
     # Dữ liệu số (float) — nguồn sự thật để tính chênh lệch, tách khỏi text hiển thị trên ô nhập
     data = {
@@ -240,8 +258,13 @@ def doi_chieu_citad_page():
                 diff_labels["diff"][f].text = '✓ 0'
                 diff_labels["diff"][f].classes(remove='text-red-600', add='text-green-700')
             else:
+                # Dùng fmt() (không phải int() cắt xu trực tiếp) — âm đã tự
+                # có dấu "-" từ fmt(), chỉ cần tự thêm "+" cho dương. Trước
+                # đây dòng này tự cắt riêng bằng int(df_val), lệch USD/EUR
+                # kiểu 0.79 xu hiện thành "+0" dù vẫn bôi đỏ đúng — sai lệch
+                # y hệt lỗi đã sửa ở fmt()/ô nhập, chỉ khác là sót ở đây.
                 sign = '+' if df_val > 0 else ''
-                diff_labels["diff"][f].text = f'{sign}{int(df_val):,}'
+                diff_labels["diff"][f].text = f'{sign}{fmt(df_val)}'
                 diff_labels["diff"][f].classes(remove='text-green-700', add='text-red-600')
 
     def build_grid(container, entry_store: dict, data_store: dict, row_keys: list):
@@ -460,6 +483,9 @@ def doi_chieu_citad_page():
             if _handle_api_error(e):
                 return
             ui.notify(f"Lỗi lưu: {e}", type="negative")
+            return
+        if history_refresh.get("fn"):
+            await history_refresh["fn"]()
 
     def do_save_session():
         # Lưu giờ ghi đè bản CHUNG của cả phòng cho ngày này (xem docstring
@@ -533,11 +559,15 @@ def doi_chieu_citad_page():
         with ui.row().classes("w-full items-end gap-3 flex-wrap mb-2"):
             tu_input = _date_filter_input("Từ ngày")
             den_input = _date_filter_input("Đến ngày")
+            nguoi_input = ui.input("Tên người chấm", value="").props(
+                "dense outlined clearable"
+            ).classes("w-52")
             ui.button("Lọc", icon="filter_alt", on_click=lambda: load_days()).props("outline")
 
             async def clear_filter():
                 tu_input.value = ""
                 den_input.value = ""
+                nguoi_input.value = ""
                 await load_days()
 
             ui.button("Xoá lọc", icon="clear", on_click=clear_filter).props("outline color=grey dense")
@@ -552,6 +582,8 @@ def doi_chieu_citad_page():
                     params["tu_ngay"] = tu_input.value
                 if den_input.value:
                     params["den_ngay"] = den_input.value
+                if nguoi_input.value:
+                    params["nguoi_cham"] = nguoi_input.value
                 rows = await asyncio.to_thread(api.get, "/api/doi-chieu-citad/reconciliation-days", params)
             except Exception as e:
                 if _handle_api_error(e):
@@ -561,8 +593,8 @@ def doi_chieu_citad_page():
             with days_area:
                 if not rows:
                     msg = (
-                        "Không có ngày nào trong khoảng lọc này — thử bấm \"Xoá lọc\" để xem tất cả."
-                        if (tu_input.value or den_input.value)
+                        "Không có ngày nào khớp bộ lọc — thử bấm \"Xoá lọc\" để xem tất cả."
+                        if (tu_input.value or den_input.value or nguoi_input.value)
                         else "Chưa có ngày nào được chấm."
                     )
                     ui.label(msg).classes("text-gray-400 p-4")
@@ -581,13 +613,14 @@ def doi_chieu_citad_page():
 
         def _day_row(r: dict, is_last: bool):
             ngay = r["ngay"]
+            nguoi_hien_thi = r.get("updated_by_name") or r["updated_by_username"] or "—"
             expanded = {"open": False}
             with ui.column().classes("w-full" + ("" if is_last else " border-b border-gray-200")):
                 with ui.row().classes(
                     "w-full items-center gap-0 px-3 py-2 cursor-pointer hover:bg-gray-50"
                 ) as row:
                     ui.label(ngay).classes("w-28 font-bold border-r border-gray-200 pr-2 mr-2")
-                    ui.label(r["updated_by_username"] or "—").classes("w-44 border-r border-gray-200 pr-2 mr-2")
+                    ui.label(nguoi_hien_thi).classes("w-44 border-r border-gray-200 pr-2 mr-2")
                     ui.label(str(r["so_lan_luu"])).classes(
                         "w-24 text-center border-r border-gray-200 pr-2 mr-2"
                     )
@@ -614,6 +647,7 @@ def doi_chieu_citad_page():
 
                 row.on("click", toggle_detail)
 
+        history_refresh["fn"] = load_days
         ui.timer(0.1, load_days, once=True)
 
     def do_reset():
