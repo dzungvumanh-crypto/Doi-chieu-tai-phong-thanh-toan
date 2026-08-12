@@ -118,6 +118,7 @@ Truy cập:
 │   │   ├── audit_middleware.py # Ghi nhật ký thao tác tập trung → audit_logs
 │   │   ├── audit_queue.py   # Hàng đợi + 1 luồng ghi audit, không chặn response
 │   │   ├── concurrency.py   # Giới hạn số việc nặng chạy đồng thời (sinh Word/Excel)
+│   │   ├── paths.py         # Đường dẫn template có dấu — chống lệch chuẩn hoá Unicode NFC/NFD
 │   │   └── rate_limit.py    # Rate limiting đăng nhập
 │   ├── api/
 │   │   ├── auth.py          # Đăng nhập / đăng xuất / đổi mật khẩu
@@ -145,7 +146,8 @@ Truy cập:
 │   │   └── holidays.py      # Quản lý ngày lễ (admin)
 │   └── services/
 │       ├── bundle_service.py       # Thuật toán gom tập (max 350 tờ)
-│       ├── cover_service.py        # Tạo bìa Word (docxtpl)
+│       ├── cover_service.py        # Tạo bìa tập chứng từ (docxtpl)
+│       ├── archive_cover_service.py# Bìa hồ sơ lưu trữ M01/LHS (đọc Excel tra cứu → điền XML)
 │       ├── report_service.py       # Xuất báo cáo Excel
 │       ├── handover_report_service.py # Tính chứng từ nộp đúng hạn / quá hạn
 │       ├── th_report_service.py    # Xuất báo cáo tổng hợp (phòng TH)
@@ -170,7 +172,7 @@ Truy cập:
 │       ├── group_features.py # Phân quyền theo nhóm
 │       ├── handovers.py     # Bàn giao chứng từ
 │       ├── bundles.py       # Gom tập + in bìa
-│       ├── storage.py       # Lưu trữ tập (số hộp, vị trí kệ)
+│       ├── storage.py       # Lưu trữ tập (số hộp, vị trí kệ) + In bìa hồ sơ M01/LHS
 │       ├── ttqt_branches.py # Danh sách CN thực hiện TTQT
 │       ├── leaves.py        # Nghỉ phép
 │       ├── duty_schedule.py # Lịch trực
@@ -185,9 +187,15 @@ Truy cập:
 │       ├── audit_logs.py    # Nhật ký thao tác — lịch sử ghi dữ liệu (admin)
 │       ├── logs.py          # Nhật ký lỗi & cảnh báo (admin)
 │       └── change_password.py # Đổi mật khẩu
-├── templates/
+├── templates/                       # ⚠ Tên thư mục có dấu — xem ghi chú bên dưới
 │   ├── bia_mau_goc.docx             # Mẫu bìa tập chứng từ
-│   └── don_xin_nghi_phep_tpl.docx  # Template phiếu nghỉ phép
+│   ├── don_xin_nghi_phep_tpl.docx  # Template phiếu nghỉ phép (mẫu chung, dùng khi thiếu mẫu riêng)
+│   ├── Phòng Tổng hợp/
+│   │   └── Nghỉ phép/               # Mẫu đơn riêng theo chức danh (_nv/_tp/_gd/_pgd.docx)
+│   └── Phòng KSNB&HTVH/
+│       └── Bàn giao cho lưu trữ/
+│           ├── Bia_ho_so.doc        # Mẫu gốc do bên lưu trữ cấp (giữ để đối chiếu)
+│           └── Bia_ho_so.docx       # Bản dùng lúc chạy (chuyển từ .doc, render giống hệt)
 ├── data/
 │   └── ksnb.db             # SQLite database (tự tạo khi chạy lần đầu)
 ├── logs/
@@ -200,6 +208,11 @@ Truy cập:
 ├── deploy_env_check.py      # Kiểm/sửa .env máy đích khi deploy (deploy.bat gọi)
 └── requirements.txt
 ```
+
+> ⚠️ **Thư mục template có dấu tiếng Việt: luôn dùng `template_path()` trong `backend/core/paths.py`, không dùng `os.path.join`.**
+> Tên thư mục trên đĩa (và trong git) ở dạng Unicode **NFD**, còn chuỗi gõ trong mã nguồn là **NFC** — hai chuỗi khác nhau về byte, Windows không tự chuẩn hoá, nên `os.path.exists()` trả về `False` dù thư mục vẫn ở đó. Thư mục con (`Nghỉ phép`, `Bàn giao cho lưu trữ`) cũng NFD, nên phải đưa **toàn bộ** các đoạn vào `template_path()`, đừng resolve nửa chừng rồi `join` tiếp.
+>
+> Thêm file mẫu mới thì **copy/paste vào thư mục đang có sẵn**, **đừng gõ tay tên thư mục** để tạo mới — bộ gõ sinh NFC và sẽ đẻ ra thư mục thứ hai trùng tên (đã từng xảy ra với `Phòng Tổng hợp`, hậu quả là mẫu đơn riêng theo chức danh không bao giờ được dùng mà không báo lỗi gì). `tests/test_paths.py` canh việc này.
 
 ---
 
@@ -236,7 +249,7 @@ Truy cập:
   - *Phạm vi ghi*: `admin`, `giam_doc`, `pho_giam_doc` **chỉ đọc — bị cấm hoàn toàn** mọi thao tác ghi (`_NO_WRITE_ROLES`, chặn ở dependency `require_handover_write` nên `admin` không bypass được như với `require_feature`). Các vai trò còn lại ghi được **trong phòng mình** nếu nhóm được cấp feature tương ứng; riêng người có `handovers.confirm_entry` ghi được trên mọi phòng
   - Vào được menu vẫn cần feature `menu.handovers` — vai trò không tự mở menu
   - *Vòng đời một ô*: `chờ xác nhận → đã xác nhận`; mượn - trả có hai đường vào trạng thái **đang mượn**:
-    GDV bấm **Mượn lại** (xin → HKV duyệt), hoặc HKV/KSV bấm **Trả lại** ở panel lịch sử để đẩy thẳng
+    GDV bấm **Mượn lại** (xin → HKV duyệt), hoặc HKV/KSV bấm **Chuyển trả GDV** ở panel lịch sử để đẩy thẳng
     `đã xác nhận → đang mượn` (bắt buộc nhập lý do, feature `handovers.return_entry`, chặn cứng `chuyen_vien`).
     Cả hai đường đều kết thúc bằng GDV **Bàn giao lại** → HKV xác nhận
   - *Cán bộ chuyển phòng*: chứng từ hiển thị theo phòng tại **ngày giao dịch** — trước ngày chuyển ở phòng cũ, từ ngày chuyển ở phòng mới (lịch sử đổi phòng lưu ở bảng `staff_department_history`). Nhập bù chứng từ tháng cũ cho cán bộ đã chuyển vẫn vào đúng phòng cũ; do giới hạn phạm vi phòng ở trên, việc nhập bù này do người hậu kiểm thực hiện
@@ -246,6 +259,7 @@ Truy cập:
   - Nếu 1 ngày > 350 tờ → chia 2 tập cân bằng
 - **In bìa**: Tạo file `.docx` đúng format mẫu (2-column layout)
 - **Lưu trữ**: Ghi số hộp, vị trí kệ; tra cứu theo phòng/thời gian; bảng tổng hợp cả năm (số tờ/số tập theo phòng × 12 tháng); sửa số chứng từ ngay trên bảng — nhập vào ô trống để thêm tập, sửa về 0 để xoá tập, số tập/tổng tự cập nhật
+  - *Tab "In bìa hồ sơ"*: Nạp file Excel tra cứu hồ sơ (`LT_HS_TRACUU_*.xls`) xuất từ chương trình lưu trữ → điền vào mẫu bìa **M01/LHS** (`templates/Phòng KSNB&HTVH/Bàn giao cho lưu trữ/Bia_ho_so.docx`), giữ nguyên toàn bộ định dạng của mẫu. Lấy cột **I** *Mã vạch* (ký hiệu thông tin + chuỗi barcode), cột **C** *Tên hồ sơ* (dòng tiêu đề + **Ngày mở** = ngày **đầu tiên** xuất hiện trong tên), cột **F** *Ngày CVKT*, cột **G** *Số tờ*. Chọn hồ sơ cần in trên bảng rồi tải về **1 file Word nhiều trang** (mỗi hồ sơ 1 trang) hoặc **ZIP mỗi hồ sơ 1 file**. Máy in phải cài font **"3 of 9 Barcode"**, nếu không dòng mã vạch in ra thành chữ thường và máy quét không đọc được
 - **Báo cáo** (menu con):
   - *Báo cáo hậu kiểm*: Xuất Excel tổng hợp theo phòng
   - *Báo cáo bàn giao chứng từ*: Số chứng từ nộp đúng hạn / quá hạn theo phòng; chi tiết cán bộ nào nộp chậm chứng từ ngày nào, chậm bao nhiêu ngày làm việc. **Xuất Word A4 ngang** đúng kỳ đang xem (bảng tổng hợp theo phòng + chi tiết quá hạn, phần chi tiết chỉ ghi họ tên, không ghi User IPCAS)
@@ -374,11 +388,40 @@ Truy cập:
 > `admin_l2` (Quản trị viên cấp 2) hiển thị chung nhóm "Quản trị viên" như cấp 1, nhưng quyền hạn được cấu hình qua **Phân quyền theo nhóm** thay vì all-access.
 
 ### Menu sidebar
-Menu nhóm theo phòng ban, hover để mở flyout bên phải. Một phòng **chỉ hiện khi user có ít nhất 1 chức năng** của phòng đó (`menu.<key>`) — phòng chưa có chức năng hoặc user không được cấp quyền nào thì ẩn hoàn toàn, không hiện tên phòng rỗng. Riêng `chuyen_vien` dùng menu phẳng (Bàn giao chứng từ, Nghỉ phép).
+Menu nhóm theo **chức năng**, không theo phòng ban. Hover để mở flyout bên phải.
+
+```
+Quản lý chứng từ ─ Bàn giao chứng từ / Đóng chứng từ / Lưu trữ
+Đối chiếu ──────── Phòng Thanh toán ─ Chấm 459901 / Song phương / ACH / CITAD / Đối soát CITAD
+                   Phòng Swift ────── Đối chiếu điện SWIFT
+Báo cáo ────────── Phòng KSNB & HTVH ─ Báo cáo hậu kiểm / Báo cáo bàn giao chứng từ
+                   Phòng Tổng hợp ──── Báo cáo dữ liệu thanh toán
+Nghỉ phép                    ┐
+Phân lịch trực               ├ menu phẳng, không có nhóm cha
+Danh sách CN TTQT            ┘
+```
+
+Tầng "phòng" **chỉ còn ở cấp 2** của Đối chiếu và Báo cáo, và chỉ liệt kê phòng đang thực sự có tính năng. Trước đây menu chia theo phòng ở cấp 1; cách đó buộc người dùng phải biết chức năng mình cần thuộc phòng nào mới tìm ra.
+
+Một nhóm **chỉ hiện khi user có ít nhất 1 chức năng** bên trong (`menu.<key>`); nhóm con không còn mục nào hiển thị được cũng bị bỏ qua — không dựng mục menu hover ra rỗng. Menu phẳng cấp 1 kiểm feature giống hệt: không có `menu.leaves` thì không thấy "Nghỉ phép".
+
+Cây menu nằm ở `shared.MENU_TREE`. Phần tử cấp 1 là **tuple** `(key, label, icon)` cho menu phẳng, hoặc **dict** `{"id", "label", "icon", "items"}` cho nhóm. Sâu tối đa 3 tầng — `_dept_group()` không dựng được tầng thứ tư.
 
 Trên cùng là khối **Công việc chờ xử lý**, tự ẩn khi không có việc nào. Dưới nó là **Trang chủ** — hiện với mọi vai trò và mọi vai trò đều vào được.
 
 > **Phân quyền màn hình đi theo nhóm quyền, không theo vai trò.** Các trang Báo cáo, Lưu trữ, Báo cáo bàn giao, Nhân sự, Đóng tập chỉ kiểm `menu.<key>` — giống hệt luật mà backend (`require_feature`) và sidebar đang dùng. Trước đây các trang này còn một lớp chặn cứng theo vai trò chạy **trước** lớp nhóm quyền, khiến quyền admin cấp cho `chuyen_vien` qua nhóm không có tác dụng mà không báo gì. Lớp đó đã gỡ; chỉ `/user-management` còn giữ vì là trang duy nhất không gắn mã feature nào.
+
+### Màn hình Phân quyền theo nhóm
+Bố cục **soi gương cây menu sidebar** — admin tick quyền theo đúng thứ user sẽ nhìn thấy. Cấu trúc ở `backend/core/features.py::FEATURE_GROUPS`, hai loại thẻ phân biệt bằng khoá `kind`:
+
+| `kind` | Hình dạng | Dùng cho |
+|---|---|---|
+| `group` | Thẻ có header đỏ; `sections` gom menu theo phòng (`label=None` = không cần dải nhãn) | Quản lý chứng từ, Đối chiếu, Báo cáo, Quản lý hệ thống |
+| `menu` | Thẻ **không header**, chính ô tick là tiêu đề thẻ | Nghỉ phép, Phân lịch trực, Danh sách CN TTQT |
+
+Dải nhãn phòng **không phải ô tick** — luật *"mỗi ô tick là đúng một mã quyền"* được giữ nguyên, để không có hai loại ô nhìn giống nhau mà ý nghĩa khác nhau. Cạnh dải nhãn có nút **Chọn tất cả / Bỏ chọn**, chỉ tác động lên MENU chứ không tự cấp ACTION — tránh một cú bấm cấp luôn quyền chạy xử lý dữ liệu.
+
+> ⚠️ **`FEATURE_GROUPS` phải phủ kín `FEATURES`** — `_assert_feature_coverage()` kiểm lúc import và **chặn khởi động** nếu thiếu / trùng / thừa mã. Lý do: `PUT /api/groups/{id}/features` xoá sạch quyền của nhóm rồi ghi lại đúng các ô tick đang hiển thị. Mã không được vẽ ra sẽ không nằm trong danh sách gửi lên → lần bấm **Lưu** đầu tiên xoá nó khỏi mọi nhóm, không log, không báo. Vì vậy `_render_features()` và `save_features()` trong `frontend/pages/group_features.py` **phải sửa cùng lượt** — sửa một mà quên cái kia thì quyền mất im lặng.
 
 **Thu gọn / mở rộng**: chỉ bằng nút ở góc trên cùng bên trái. Click vào mục menu chỉ điều hướng, không đổi trạng thái sidebar. Icon nút phản ánh trạng thái hiện tại (`menu_open` khi đang mở, `menu` khi đang thu gọn). Lựa chọn được lưu trong `localStorage` và giữ nguyên khi chuyển trang.
 
@@ -387,7 +430,7 @@ Máy có màn hình rộng **≤ 1440px** (máy trạm 1366×768) mặc định 
 ### Vùng nội dung
 Giao diện thiết kế cho **máy trạm desktop**, không có breakpoint mobile. Vùng nội dung rộng `calc(100% - 16rem)` (hoặc `- 4.5rem` khi sidebar thu gọn) và cho **cuộn ngang** khi bảng vượt khung — không cắt bớt nội dung.
 
-Đầu mỗi trang hiển thị **đường dẫn menu** dẫn tới trang đó, ví dụ *Phòng KSNB & HTVH / Báo cáo / **Báo cáo hậu kiểm***. Phần cha in nhỏ màu xám, tên trang giữ cỡ tiêu đề. Đường dẫn **suy ra từ route** rồi tra bảng dựng sẵn từ chính cây menu (`shared.BREADCRUMBS`) — đổi tên một mục trong `DEPARTMENTS` thì breadcrumb tự đổi theo, không có chỗ thứ hai phải sửa. Trang không nằm trong menu (`/home`, `/user-management`) không hiện phần cha.
+Đầu mỗi trang hiển thị **đường dẫn menu** dẫn tới trang đó, ví dụ *Báo cáo / Phòng KSNB & HTVH / **Báo cáo hậu kiểm***. Phần cha in nhỏ màu xám, tên trang giữ cỡ tiêu đề. Đường dẫn **suy ra từ route** rồi tra bảng dựng sẵn từ chính cây menu (`shared.BREADCRUMBS`) — đổi tên một mục trong `MENU_TREE` thì breadcrumb tự đổi theo, không có chỗ thứ hai phải sửa. Trang không nằm trong menu (`/home`, `/user-management`) không hiện phần cha. Menu phẳng cấp 1 (Nghỉ phép, Phân lịch trực…) chỉ có 1 đoạn nên cũng không hiện phần cha — nếu hiện sẽ là chính tên trang lặp lại.
 
 > Điều kiện: route của trang phải trùng khoá menu (`@ui.page("/reports")` ↔ khoá `reports`) — ràng buộc này vốn đã có sẵn vì sidebar điều hướng bằng `ui.navigate.to(f"/{key}")`.
 

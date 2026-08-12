@@ -3820,6 +3820,23 @@ ui.on_exception(_on_exception)</pre>
       cùng dạng Unicode</strong> với dữ liệu người dùng gõ. Mọi cột dùng để tra cứu đều phải chuẩn hoá
       lúc ghi, không phải lúc đọc.</p>
 
+      <p class="label">Lỗi thứ năm — <code>LOWER()</code> của SQLite không hạ được chữ Việt hoa</p>
+      <p>Người dùng báo: tìm "Điện Biên" không ra, tìm "8900" thì ra đúng chi nhánh đó. Nguyên nhân:
+      <code>LOWER()</code> của SQLite <strong>chỉ hạ được A-Z</strong>. <code>Đ</code> (U+0110) và mọi
+      chữ hoa có dấu bị giữ nguyên, nên <code>LOWER("Điện Biên")</code> ra <code>"Điện biên"</code>
+      trong khi Python gửi lên <code>"điện biên"</code> — hai chuỗi khác nhau ở mức byte, LIKE không
+      khớp. <strong>43/218 chi nhánh</strong> dính lỗi này: Mỹ Đình, Đống Đa, Đà Nẵng, Nam Định…</p>
+      <p>Sửa: bỏ hẳn <code>LIKE</code> trong SQL, lọc từ khoá bằng Python với
+      <code>str.casefold()</code>. Bảng chỉ vài trăm dòng nên đọc hết rồi lọc rẻ hơn nhiều so với việc
+      phải đăng ký hàm so sánh Unicode riêng cho SQLite trên <em>mọi</em> kết nối. Nhân tiện thêm khớp
+      <strong>không dấu</strong> (<code>_no_tone</code>): gõ "dien bien" cũng ra — với danh mục chi
+      nhánh tiếng Việt thì đây là cách người dùng gõ nhiều nhất.</p>
+      <p><em>Vì sao bộ kiểm thử 108 phép trước đó không bắt được:</em> mọi tên CN đem ra thử đều bắt
+      đầu bằng chữ ASCII ("Bến Thành" — <code>B</code> và <code>T</code> hạ được, <code>ế</code> và
+      <code>à</code> vốn đã là chữ thường). Bài học: với dữ liệu tiếng Việt, chọn mẫu thử phải
+      <strong>cố ý lấy chữ hoa ngoài ASCII</strong>, không lấy dòng đầu bảng cho tiện. Bộ kiểm mới quét
+      cả 218 tên — có dấu và không dấu — thay vì vài trường hợp chọn tay.</p>
+
       <p class="label">⚠ Cùng lỗi slot này còn ở khoảng 25 chỗ khác trong <code>frontend/pages/</code></p>
       <p>Mẫu <code>on_click=lambda: asyncio.ensure_future(...)</code> /
       <code>on_upload=lambda e: asyncio.create_task(...)</code> xuất hiện ở
@@ -4458,7 +4475,7 @@ else:
   <!-- 67 -->
   <div class="card">
     <div class="card-header">
-      <span class="card-num">67</span>
+      <span class="card-num">56</span>
       <span class="card-title">Phân lịch trực — viết lại thuật toán chọn người ca ngày thường / thứ 6</span>
       <span class="badge badge-done">done · 2026-08-07</span>
     </div>
@@ -4624,7 +4641,7 @@ else:
   <!-- 68 -->
   <div class="card">
     <div class="card-header">
-      <span class="card-num">68</span>
+      <span class="card-num">57</span>
       <span class="card-title">Phân lịch trực — sửa tay ca trực + chu trình xác nhận nhiều vòng</span>
       <span class="badge badge-done">done · 2026-08-08</span>
     </div>
@@ -4766,7 +4783,7 @@ else:
   <!-- 69 -->
   <div class="card">
     <div class="card-header">
-      <span class="card-num">69</span>
+      <span class="card-num">58</span>
       <span class="card-title">Phân lịch trực — khai báo số người mỗi ca + ca quyết toán trực chính / trực phụ</span>
       <span class="badge badge-done">done · 2026-08-08</span>
     </div>
@@ -4888,7 +4905,7 @@ else:
   <!-- 70 -->
   <div class="card">
     <div class="card-header">
-      <span class="card-num">70</span>
+      <span class="card-num">59</span>
       <span class="card-title">Phân lịch trực — phân thử 2 tháng và ba nâng cấp cân bằng ca</span>
       <span class="badge badge-done">done · 2026-08-10</span>
     </div>
@@ -4985,7 +5002,7 @@ else:
   <!-- 71 -->
   <div class="card">
     <div class="card-header">
-      <span class="card-num">71</span>
+      <span class="card-num">60</span>
       <span class="card-title">Phân lịch trực — không để hình thành ê-kíp trực cố định</span>
       <span class="badge badge-done">done · 2026-08-10</span>
     </div>
@@ -5050,7 +5067,7 @@ else:
   <!-- 72 -->
   <div class="card">
     <div class="card-header">
-      <span class="card-num">72</span>
+      <span class="card-num">61</span>
       <span class="card-title">Phân lịch trực — ba lỗi âm thầm phát hiện khi review (PR #24 → #26)</span>
       <span class="badge badge-done">done · 2026-08-10</span>
     </div>
@@ -5149,7 +5166,7 @@ else:
   <!-- 73 -->
   <div class="card">
     <div class="card-header">
-      <span class="card-num">73</span>
+      <span class="card-num">62</span>
       <span class="card-title">Phân lịch trực — bịt lỗ hổng phân quyền 35 endpoint</span>
       <span class="badge badge-done">done · 2026-08-10</span>
     </div>
@@ -5211,7 +5228,7 @@ else:
 
   <div class="card">
     <div class="card-header">
-      <span class="card-num">74</span>
+      <span class="card-num">63</span>
       <span class="card-title">Quản lý User trả 500 — một dòng <code>is_active = NULL</code> làm hỏng cả danh sách</span>
       <span class="badge badge-done">done · 2026-08-11</span>
     </div>
@@ -5283,7 +5300,7 @@ else:
   <!-- 75 -->
   <div class="card">
     <div class="card-header">
-      <span class="card-num">75</span>
+      <span class="card-num">64</span>
       <span class="card-title">Hai bẫy khi đọc Excel: giá trị header không kế thừa, và so ngày bằng chuỗi (PR #29)</span>
       <span class="badge badge-done">Đã làm</span>
     </div>
@@ -5347,7 +5364,7 @@ else:
   <!-- 76 -->
   <div class="card">
     <div class="card-header">
-      <span class="card-num">76</span>
+      <span class="card-num">65</span>
       <span class="card-title">Cắt số ở tầng hiển thị = mất dữ liệu, và cái giá của việc đoán DOM (PR #33)</span>
       <span class="badge badge-done">Đã làm</span>
     </div>
@@ -5405,6 +5422,338 @@ else:
       chạy TRƯỚC <code>json.loads</code> nên không phí công phân tích dòng sẽ bị loại.</p>
       <p>Nếu sau này lịch sử tích lại hàng chục nghìn dòng thì cách gọn là thêm một cột ngày dạng chuẩn
       sắp xếp được (<code>yyyy-mm-dd</code>) để lọc thẳng bằng SQL.</p>
+
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">O</span>
+      <span class="card-title">Nút "Chuyển trả GDV" ở panel lịch sử ô — đường tắt <code>đã xác nhận → đang mượn</code></span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Vì sao không tái dùng luồng "Mượn lại" đã có</p>
+      <p>Hệ thống đã có đường <code>confirmed <span class="arrow">→</span> pending_confirm (borrow_reason)
+      <span class="arrow">→</span> borrowed</code>: giao dịch viên <em>xin</em>, hậu kiểm <em>duyệt</em>.
+      Nút mới đi ngược chiều — bên <strong>đang giữ</strong> chứng từ chủ động đẩy thẳng
+      <code>confirmed <span class="arrow">→</span> borrowed</code>, không có bước xin phép vì chính người
+      duyệt là người bấm. Hai nghiệp vụ khác chiều nên tách endpoint
+      <code>POST /entries/{id}/return-to-staff</code> riêng, không nhồi thêm nhánh vào
+      <code>borrow_entry()</code>.</p>
+
+      <table>
+        <tr><th>Quyết định</th><th>Lý do</th></tr>
+        <tr><td>Lý do chuyển trả ghi vào <code>entry_change_logs.notes</code>, <strong>không</strong> ghi vào
+            <code>document_entries.borrow_reason</code></td>
+            <td><code>borrow_reason</code> không phải ô ghi chú — nó đang là <strong>cờ trạng thái ngầm</strong>
+            "có yêu cầu mượn chờ duyệt". <code>confirm_received()</code> và <code>reject_entry()</code> đều
+            <code>if entry["borrow_reason"]:</code> để rẽ nhánh. Ghi lý do chuyển trả vào đó sẽ làm hai endpoint kia
+            hiểu nhầm là đang có đơn xin mượn. Panel lịch sử vốn đã render <code>notes</code> thành
+            <em>"· Lý do: …"</em> nên không mất thông tin gì.</td></tr>
+        <tr><td>Đổi tên nút thành <em>"Chuyển trả GDV"</em> nhưng <strong>giữ nguyên</strong> feature code
+            <code>handovers.return_entry</code>, action key <code>returned_to_staff</code> và đường dẫn
+            <code>/return-to-staff</code></td>
+            <td>Đổi feature code sẽ <strong>xoá sạch quyền đã tích</strong> cho các nhóm (cùng lý do đã ghi
+            cho <code>menu.reports</code>). Đổi action key sẽ làm các dòng lịch sử đã ghi trong
+            <code>entry_change_logs</code> không tra được nhãn nữa, hiện ra mã thô. Tên hiển thị và định danh
+            kỹ thuật là hai thứ khác nhau — chỉ đổi thứ nhất.</td></tr>
+        <tr><td>Feature code mới <code>handovers.return_entry</code> thay vì dùng lại
+            <code>handovers.confirm_entry</code></td>
+            <td>Chuyển trả là thao tác <em>rút chứng từ đã chốt</em> — nặng hơn xác nhận. Giữ riêng để có thể cấp
+            quyền xác nhận mà không cấp quyền rút. <strong>Đánh đổi:</strong> chưa nhóm nào có quyền này, admin
+            phải tự tích ở <em>Quản lý nhóm</em>, nếu không sẽ không thấy nút.</td></tr>
+        <tr><td>Chặn cứng <code>chuyen_vien</code> ở backend, không chỉ ẩn nút</td>
+            <td>Nếu admin lỡ gán feature cho nhóm có giao dịch viên, GDV sẽ tự rút được chứng từ đã chốt của chính
+            mình, bỏ qua hoàn toàn bước duyệt của hậu kiểm. Feature gate một mình không đủ.</td></tr>
+        <tr><td>Ghi <code>borrowed_at</code>, giống nhánh cho mượn trong <code>confirm_received()</code></td>
+            <td>Để hai đường vào trạng thái <code>borrowed</code> để lại cùng một dấu vết dữ liệu.</td></tr>
+      </table>
+
+      <p class="label">Ảnh hưởng lan sang chỗ khác</p>
+      <table>
+        <tr><th>Nơi bị chạm</th><th>Hệ quả</th><th>Đánh giá</th></tr>
+        <tr><td><code>bundles.py</code> — chỉ đóng tập chứng từ <code>confirmed</code></td>
+            <td>Ô vừa chuyển trả rơi khỏi danh sách đóng tập</td>
+            <td><span class="pill pill-green">Đúng nghiệp vụ</span> — chứng từ đang ở ngoài thì không đóng tập được.
+            Luồng "Mượn lại" cũ cũng vậy.</td></tr>
+        <tr><td><code>handover_report_service</code> — <code>SUBMIT_ACTIONS</code> /
+            <code>REJECT_ACTION</code></td>
+            <td>Không đổi: <code>returned_to_staff</code> không nằm trong hai tập đó</td>
+            <td><span class="pill pill-green">Không đổi</span> — báo cáo đúng hạn / quá hạn giữ nguyên số.</td></tr>
+        <tr><td><code>dashboard.py</code> — đếm việc chờ theo <code>pending_confirm</code></td>
+            <td>Không đổi</td><td><span class="pill pill-green">Không đổi</span></td></tr>
+      </table>
+
+      <div class="caution"><strong>Không kiểm tra ô đã nằm trong tập chứng từ hay chưa.</strong> Có thể chuyển trả
+      một ô đã được đóng tập, khiến bìa tập đã in không còn khớp thực tế. Cố ý giữ nguyên: luồng
+      <em>Mượn lại</em> hiện tại cũng không kiểm tra, thêm ràng buộc ở một đường mà không thêm ở đường kia sẽ
+      làm hành vi hệ thống mâu thuẫn. Nếu cần chặn thì phải chặn cả hai chỗ cùng lúc.</div>
+
+      <div class="note">Đã kiểm thử trên <strong>bản sao</strong> DB thật (không đụng <code>data/ksnb.db</code>):
+      lý do rỗng → 400; GDV gọi → 403; HKV gọi → <code>borrowed</code> + log có <code>notes</code> +
+      <code>borrowed_at</code> có giá trị + <code>borrow_reason</code> vẫn NULL; gọi lại → 409; <code>borrow</code>
+      khi đang mượn → 409; vòng đời tiếp <code>borrowed → pending_confirm → confirmed</code> chạy thông.</div>
+
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">66</span>
+      <span class="card-title">Menu gom theo chức năng thay vì theo phòng — và cái bẫy "Lưu = chép đè" ở màn phân quyền</span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Vì sao đổi: menu cũ bắt người dùng phải biết chức năng thuộc phòng nào</p>
+      <p>Cấp 1 trước đây là tên phòng. Muốn vào "Đối chiếu ACH" phải biết trước nó nằm ở Phòng Thanh
+      toán. Cấu trúc mới gom theo việc cần làm; tầng "phòng" chỉ còn ở cấp 2 của <em>Đối chiếu</em> và
+      <em>Báo cáo</em>, nơi cùng một loại việc thật sự do nhiều phòng làm theo cách khác nhau.</p>
+      <p><strong>Chỉ liệt kê phòng đang có tính năng.</strong> Không đặt sẵn slot cho Phòng Kế toán /
+      Nostro: <code>_dept_group()</code> vốn bỏ qua nhóm rỗng nên slot đó sẽ vô hình, còn nếu gỡ luật
+      bỏ qua thì sinh mục menu hover ra không có gì — đúng thứ luật đó sinh ra để chặn.</p>
+
+      <p class="label">Không đổi một mã <code>menu.*</code> nào — có chủ ý</p>
+      <p>Route không đổi thì mã quyền không đổi, nên toàn bộ quyền đã cấp trong <code>group_features</code>
+      giữ nguyên. Đây là ràng buộc cứng của cả thay đổi này: tổ chức lại <em>cách nhóm</em>, tuyệt đối
+      không đụng <em>định danh</em>.</p>
+
+      <p class="label">Bẫy chính: nút Lưu ở màn phân quyền là chép đè, không phải ghi thêm</p>
+      <p><code>PUT /api/groups/{id}/features</code> xoá sạch quyền của nhóm rồi ghi lại đúng những ô tick
+      đang hiển thị, mà danh sách ô tick lại được <code>save_features()</code> duyệt <strong>từ cấu trúc
+      API trả về</strong> chứ không phải từ DB. Hệ quả: bỏ sót một mã khỏi <code>FEATURE_GROUPS</code> thì
+      lần bấm Lưu đầu tiên <strong>xoá vĩnh viễn</strong> mã đó khỏi mọi nhóm — không log, không cảnh báo,
+      người dùng chỉ thấy menu biến mất.</p>
+      <p>Rủi ro này <em>có sẵn từ trước</em>, nhưng việc chép lại toàn bộ <code>FEATURE_GROUPS</code>
+      chính là thời điểm dễ làm rơi mã nhất. Vì vậy thêm <code>_assert_feature_coverage()</code> chạy lúc
+      import, <strong>chặn khởi động</strong> nếu thiếu / trùng / thừa mã. Chọn raise thay vì log cảnh báo
+      theo đúng triết lý migrations trong <code>DESIGN.md</code>: lỗi làm hỏng dữ liệu thì không được phép
+      thất bại im lặng.</p>
+      <div class="caution"><code>_render_features()</code> và <code>save_features()</code> phải sửa
+      <strong>cùng một lượt</strong>. Sửa cái vẽ mà quên cái lưu → admin tick xong, bấm Lưu, màn hình báo
+      thành công, quyền không được ghi.</div>
+
+      <p class="label">Vì sao dải nhãn phòng KHÔNG phải ô tick</p>
+      <p>Phương án ô tick cha "tick-tất-cả" nghe tiện hơn, đã cân nhắc và <span class="pill pill-red">loại</span>:</p>
+      <table>
+        <tr><th>Vấn đề</th><th>Ô tick cha</th><th>Nhãn + nút (đã chọn)</th></tr>
+        <tr><td>Trạng thái "một phần" khi tick 3/5 con</td><td>Phải có, kèm đồng bộ hai chiều cha↔con</td><td>Không tồn tại — nút không mang trạng thái</td></tr>
+        <tr><td>Vòng lặp cascade</td><td><code>set_value()</code> kích hoạt <code>on_change</code> → cha set con → con báo ngược lên cha; phải thêm cờ chống lặp</td><td>Bấm một lần, chạy một chiều xuống</td></tr>
+        <tr><td>Cấp quyền quá tay</td><td>Một cú bấm có thể cấp luôn quyền chạy xử lý dữ liệu</td><td>Nút chỉ tác động MENU, không đụng ACTION</td></tr>
+        <tr><td>Hai loại ô nhìn giống nhau</td><td>Có: ô lưu xuống DB và ô chỉ điều khiển màn hình</td><td>Không — mọi ô tick đều là một mã quyền</td></tr>
+      </table>
+      <p>Luật <em>"mỗi ô tick là đúng một mã quyền"</em> là thứ đáng giữ nhất ở màn này. Nút bấm không phá
+      luật đó vì người dùng đọc nút là <strong>thao tác</strong>, đọc ô tick là <strong>trạng thái</strong>.</p>
+      <p>Trong <code>_set_all()</code> vẫn cập nhật thẳng <code>col_refs</code> thay vì trông chờ
+      <code>on_change</code> tự chạy sau <code>set_value()</code> — không muốn hành vi màn hình phụ thuộc
+      vào chi tiết nội bộ NiceGUI có thể đổi giữa các bản.</p>
+
+      <p class="label">Thẻ không header cho menu đứng một mình</p>
+      <p>"Nghỉ phép" / "Phân lịch trực" / "Danh sách CN TTQT" ra cấp 1 sidebar, nên ở màn phân quyền cũng
+      là thẻ riêng ngang hàng với "Đối chiếu". Nếu bọc header thì đọc thành <em>"Nghỉ phép / Nghỉ phép"</em>
+      — đúng kiểu nhãn lặp mà <code>_clean()</code> trong <code>_build_breadcrumbs()</code> đã phải vá.
+      Giải: thẻ bỏ hẳn header, ô tick đóng vai tiêu đề. Đổi lại thẻ trông không đều tay với thẻ có header —
+      chấp nhận, vì header chỉ tồn tại để đặt tên cho một nhóm, mà một quyền đơn lẻ thì không phải nhóm.</p>
+
+      <p class="label">Hai nhãn phải sửa vì đã thừa</p>
+      <p><code>menu.swift_recon</code> và <code>menu.th_reports</code> mang hậu tố "— Phòng Swift" /
+      "— Phòng TH". Giờ chúng nằm ngay dưới dải nhãn phòng cùng tên nên đọc thành lặp. Đã bỏ hậu tố —
+      <span class="pill pill-green">chỉ sửa nhãn hiển thị</span>, mã quyền giữ nguyên.</p>
+
+      <p class="label">Cỡ chữ: nhóm và menu phẳng phải bằng nhau</p>
+      <p>Header nhóm trước dùng <code>text-xs</code> + icon <code>text-base</code> + <code>px-3</code>,
+      còn <code>_nav_item()</code> dùng <code>text-sm</code> + <code>text-lg</code> + <code>px-4</code>.
+      Trước đây không ai để ý vì nhóm là <em>tên phòng</em> — một loại nhãn khác hẳn mục menu. Giờ nhóm
+      và menu phẳng đứng <strong>cùng cấp</strong> trong sidebar nên chênh một nấc là nhìn ra ngay. Đã
+      cho khớp hoàn toàn; phân biệt nhóm với mục thường chỉ còn dựa vào mũi tên <code>chevron_right</code>.</p>
+
+      <p class="label">Bẫy: <code>ui.row()</code> có <code>gap: 1rem</code> mặc định</p>
+      <p>Icon và chữ trong nhóm sát nhau hơn hẳn so với menu phẳng, dù <strong>cả hai đều
+      <code>mr-3</code></strong>. Nguyên nhân: <code>.nicegui-row</code> kế thừa
+      <code>gap: var(--nicegui-default-gap)</code> = <code>1rem</code> từ <code>.nicegui-column</code>,
+      còn header nhóm dựng bằng <code>ui.element("div")</code> + <code>flex</code> nên không có gap.</p>
+      <table>
+        <tr><th>Dòng</th><th>Dựng bằng</th><th>Khoảng cách thật</th></tr>
+        <tr><td>Menu phẳng, item flyout, Đăng xuất</td><td><code>ui.row()</code></td><td><code>mr-3</code> 0.75rem + gap 1rem = <strong>1.75rem</strong></td></tr>
+        <tr><td>Header nhóm</td><td><code>ui.element("div")</code></td><td><code>mr-3</code> = <strong>0.75rem</strong></td></tr>
+      </table>
+      <p>Đã thêm <code>gap-0</code> cho mọi dòng menu dùng <code>ui.row()</code> để chỉ còn
+      <code>mr-3</code> quyết định, và đưa icon flyout từ <code>mr-2</code> về <code>mr-3</code>.
+      <span class="pill pill-gray">Không đụng</span> ba <code>ui.row()</code> còn lại trong sidebar
+      (nút thu gọn, logo, header <code>_card()</code>) — không phải dòng menu.</p>
+      <div class="caution">Bất kỳ dòng menu mới nào dựng bằng <code>ui.row()</code> mà quên
+      <code>gap-0</code> sẽ lệch 1rem so với phần còn lại. Lỗi này <strong>không lộ ra khi đọc code</strong>
+      vì class <code>mr-3</code> trông đã giống nhau rồi.</div>
+
+      <p class="label">Đã xoá: <code>MENU_ITEMS_CV</code></p>
+      <p>Menu phẳng riêng cho chuyên viên là code chết từ khi chuyển sang phân quyền theo feature — không
+      nơi nào dùng, chỉ còn được re-export ở <code>frontend/main.py</code>.</p>
+
+      <div class="note">Hai cây phải khớp nhau bằng tay: <code>MENU_TREE</code> (frontend) và
+      <code>FEATURE_GROUPS</code> (backend). Backend không import được frontend nên không sinh tự động
+      được. <code>_assert_feature_coverage()</code> chỉ canh được <em>đủ mã</em>, <strong>không</strong>
+      canh được <em>đúng nhóm</em> — đổi cấu trúc một bên mà quên bên kia thì màn phân quyền lệch với
+      thứ user nhìn thấy, và không có gì báo.</div>
+
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">67</span>
+      <span class="card-title">In bìa hồ sơ lưu trữ — điền vào .doc mà không được đụng một pixel định dạng</span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Bài toán: mẫu bìa là .doc nhị phân, yêu cầu giữ nguyên 100% định dạng</p>
+      <p>Mẫu <code>Bia_ho_so.doc</code> là định dạng Word 97 (OLE nhị phân), không phải OOXML. Ba hướng
+      khả dĩ:</p>
+      <table>
+        <tr><th>Hướng</th><th>Vì sao loại / chọn</th></tr>
+        <tr><td>Vá thẳng byte trong file .doc</td><td>Loại — chuỗi text nằm rải trong stream có bảng
+          offset đi kèm; đổi độ dài chuỗi là hỏng file. Mã vạch dài ngắn khác nhau nên chắc chắn đổi độ dài.</td></tr>
+        <tr><td>Gọi Word COM lúc chạy</td><td>Loại — <code>win32com</code> không có trong
+          <code>requirements.txt</code>, và một tiến trình Word treo là kẹt cả API. Đã dính đúng lỗi này
+          lúc kiểm thử: Word COM đứng im giữa vòng lặp, phải kill tiến trình rồi xoá khoá registry
+          <code>Word\Resiliency</code> mới chạy lại được.</td></tr>
+        <tr><td><strong>Chuyển .doc → .docx một lần, sau đó chỉ sửa XML</strong></td><td><strong>Chọn.</strong>
+          Lúc chạy không cần Word, không cần LibreOffice — chỉ <code>python-docx</code> đã có sẵn.</td></tr>
+      </table>
+      <p><strong>Đã đo, không đoán:</strong> render trang 1 của <code>Bia_ho_so.doc</code> gốc và của
+      <code>Bia_ho_so.docx</code> đã chuyển ra ảnh PNG qua Word — hai file ảnh
+      <span class="pill pill-green">trùng nhau từng byte</span> (md5 <code>ef57cef7…</code>). Chuyển đổi
+      không mất gì.</p>
+
+      <p class="label">Cái bẫy chính: nội dung bìa nằm trong textbox, không nằm ở body</p>
+      <p><code>Document(tpl).paragraphs</code> trả về <strong>rỗng</strong> và <code>.tables</code> cũng
+      rỗng, dù mở bằng Word thì thấy đầy chữ. Lý do: toàn bộ bìa nằm trong VML textbox
+      (<code>w:pict → v:textbox → w:txbxContent</code>) mà python-docx không duyệt vào. Phải đi bằng lxml.</p>
+      <p>Hệ quả thứ hai, kín hơn: <code>w:p</code> ngoài cùng <em>bọc</em> cả trang, nên
+      <code>p.iter(w:t)</code> trên nó trả về text của <strong>toàn bộ</strong> tài liệu. Bản đầu tiên
+      viết theo kiểu "tìm paragraph chứa nhãn X rồi sửa ô text cuối" đã ghi đè nhầm ô cuối cùng của cả
+      trang. Giải: <code>_paragraphs()</code> chỉ lấy <em>paragraph lá</em> — <code>w:p</code> không chứa
+      <code>w:p</code> con.</p>
+
+      <p class="label">Định vị bằng nhãn, không bằng chỉ số</p>
+      <p>Mỗi ô điền được tìm qua mốc ngữ nghĩa thay vì thứ tự: barcode = run có
+      <code>rFonts w:ascii="3 of 9 Barcode"</code>; Ngày CVKT = ô cùng cột, dòng ngay dưới nhãn "Ngày công
+      việc kết thúc"; tiêu đề = paragraph có nội dung đứng ngay trước dòng "Ngày bắt đầu". Chỉ số chạy
+      được nhưng vỡ im lặng khi ai đó thêm một dòng trống vào mẫu.</p>
+      <div class="note">Không tìm thấy mốc thì <strong>ném <code>TemplateMismatchError</code></strong>,
+      không bỏ qua. Bìa in ra thiếu mã vạch mà không báo gì là kiểu hỏng tệ nhất ở đây: người dùng chỉ
+      phát hiện sau khi đã in cả trăm tờ.</div>
+
+      <p class="label">Gộp nhiều bìa: <code>w:pageBreakBefore</code>, không dùng section break</p>
+      <p><code>cover_service.py</code> (bìa tập chứng từ) phải dùng section-break vì nội dung là bảng full
+      trang, kèm luật OOXML bắt buộc có paragraph sau bảng — dùng ngắt trang thường sinh trang trắng xen
+      kẽ. Ở đây nội dung là các shape neo vào paragraph đầu, nên chỉ cần đặt
+      <code>w:pageBreakBefore</code> vào paragraph đó: shape neo theo paragraph nên tự đi sang trang mới.
+      <strong>Đã kiểm bằng Word:</strong> 3 bản ghi → đúng 3 trang, 140 bản ghi → đúng 140 trang, không có
+      trang trắng.</p>
+
+      <p class="label">Đường dẫn template: thư mục trên đĩa đang ở dạng NFD</p>
+      <p><code>os.path.join(..., "Phòng KSNB&amp;HTVH", ...)</code> viết trong mã nguồn là NFC và
+      <strong>không khớp</strong> tên thư mục thật — Windows không chuẩn hoá tên file, còn thư mục này
+      được tạo ở dạng NFD. Đây không phải trường hợp cá biệt: <code>templates/</code> hiện có
+      <em>hai</em> thư mục "Phòng Tổng hợp", một NFD (đang trong git) và một NFC.
+      <code>_resolve_template()</code> quét theo tên file và so sau khi chuẩn hoá NFC nên miễn nhiễm.</p>
+      <div class="note">Hai thư mục "Phòng Tổng hợp" trùng tên <strong>đã được xử lý</strong> ở thẻ 78,
+      và <code>_resolve_template()</code> riêng của module này đã gộp vào helper dùng chung
+      <code>backend/core/paths.py</code>.</div>
+
+      <p class="label">Dò dòng tiêu đề theo nội dung, không theo số dòng</p>
+      <p>File mẫu có dòng 1 là tên báo cáo, dòng 2 là tiêu đề cột. Viết cứng <code>iloc[2:]</code> chạy
+      đúng với file này nhưng nếu chương trình lưu trữ chèn thêm một dòng đầu file thì <strong>mất đúng
+      một hồ sơ</strong> — không lỗi, không cảnh báo, chỉ thiếu một tờ bìa mà không ai biết. Nay quét 10
+      dòng đầu tìm dòng có đủ 4 tên cột cần dùng, rồi lấy chỉ số cột <em>theo tên</em>. Thiếu cột thì báo
+      lỗi nêu rõ thiếu cột nào.</p>
+
+      <p class="label">Điền cả "Số tờ" dù không có trong yêu cầu</p>
+      <p>Yêu cầu liệt kê 4 ô: mã vạch, ngày mở, tiêu đề, ngày CVKT. Nhưng mẫu còn dòng "Gồm: … tờ" và file
+      Excel có sẵn cột G "Số tờ" — để nguyên số 1 cứng của mẫu là sai ngay khi gặp hồ sơ nhiều tờ. Đã điền
+      từ cột G. <span class="pill pill-gray">Cả 140 dòng của file mẫu đều bằng 1</span> nên khác biệt chưa
+      quan sát được, nhưng hardcode ở đây không có lý do nghiệp vụ nào.</p>
+
+      <p class="label">Kiểm chứng bằng chính đầu ra của chương trình lưu trữ</p>
+      <p>File zip người dùng gửi có kèm 28 file <code>in_bia_*.doc</code> do chương trình lưu trữ tự sinh.
+      So text bìa mình sinh với bìa gốc cho <em>cùng một mã vạch</em>: trùng khít, kể cả ca khó là hồ sơ
+      3 ngày (<code>1000.P026.178068.1</code> — ngày mở 17/12, CVKT 19/12) đúng luật "lấy ngày đầu tiên
+      trong tiêu đề".</p>
+      <div class="note">Font <strong>"3 of 9 Barcode"</strong> phải được cài trên máy in. Không có font
+      thì dòng mã vạch in ra thành chữ <code>*1000.P026.178074.1*</code> — máy quét không đọc được. Đây là
+      hành vi sẵn có của mẫu gốc, không phải do chỗ này gây ra.</div>
+
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">68</span>
+      <span class="card-title">Hai thư mục "Phòng Tổng hợp" trùng tên — lệch chuẩn hoá Unicode NFC/NFD</span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Hiện tượng: thư mục nhìn thấy trong Explorer nhưng Python bảo không tồn tại</p>
+      <p>Chữ "ò" có <strong>hai</strong> cách mã hoá hợp lệ, khác nhau về byte:</p>
+      <table>
+        <tr><th>Dạng</th><th>Mã hoá "ò"</th><th>Ở đâu</th></tr>
+        <tr><td>NFC (dựng sẵn)</td><td>1 ký tự <code>U+00F2</code></td><td>Bộ gõ tiếng Việt, chuỗi gõ trong mã nguồn</td></tr>
+        <tr><td>NFD (tổ hợp)</td><td><code>U+006F</code> + dấu huyền rời <code>U+0300</code></td><td>Thư mục thật trên đĩa, và bản trong git</td></tr>
+      </table>
+      <p>Windows lưu tên file <strong>đúng y như lúc tạo</strong>, không chuẩn hoá. Nên
+      <code>os.path.join("templates", "Phòng Tổng hợp")</code> viết trong mã nguồn (NFC) không khớp thư
+      mục thật (NFD): <code>os.path.exists()</code> trả về <code>False</code>. Đã kiểm chứng bằng thư mục
+      tạm — tạo dạng NFD rồi tìm bằng chuỗi NFC cho ra <span class="pill pill-red">False</span>, tìm bằng
+      NFD cho <span class="pill pill-green">True</span>.</p>
+      <p>Hệ quả: ở đâu đó đã có lệnh tạo thư mục theo chuỗi NFC, đẻ ra <strong>thư mục thứ hai trùng
+      tên</strong> — bản NFC rỗng nằm cạnh bản NFD có dữ liệu, Explorer hiện hai dòng chữ y hệt nhau.</p>
+
+      <p class="label">Sửa sai một nhận định trước đó</p>
+      <p>Thẻ 77 ghi rằng máy chỉ checkout từ git sẽ <em>hỏng phiếu nghỉ phép</em>.
+      <strong>Không đúng.</strong> <code>_pick_template()</code> có sẵn fallback
+      <code>return path if os.path.exists(path) else _TPL_PATH</code>, mà <code>_TPL_PATH</code> trỏ tới
+      <code>templates/don_xin_nghi_phep_tpl.docx</code> ở thư mục gốc — file này có trong git và luôn tồn
+      tại. In đơn nghỉ phép <strong>không hỏng</strong>.</p>
+      <p>Lỗi thật nhẹ hơn nhưng kín hơn: <code>_TPL_DIR</code> trỏ vào bản NFC <em>rỗng</em>, nên
+      <strong>các mẫu đơn riêng theo chức danh</strong> (<code>don_xin_nghi_phep_nv.docx</code>,
+      <code>..._tp.docx</code>, <code>..._gd.docx</code>, <code>..._pgd.docx</code>) đặt vào thư mục thật
+      sẽ <strong>không bao giờ được dùng</strong> — hệ thống lặng lẽ quay về mẫu chung. Không lỗi, không
+      log, chỉ là in ra sai mẫu. Chưa ai gặp vì thư mục đó hiện đang rỗng ở cả hai bản.</p>
+
+      <p class="label">Cách sửa: xoá bản trùng + so tên sau khi chuẩn hoá</p>
+      <p>Bản NFC bị xoá (đã kiểm: <strong>0 file</strong>, không nằm trong git). Giữ bản NFD vì đó là bản
+      git đang theo dõi, chứa <code>Báo cáo giao dịch chuyển tiền qua Swift/D00054-…xlsx</code> — cũng là
+      thư mục người dùng chỉ định làm gốc.</p>
+      <p>Chỉ xoá thư mục trùng thì <strong>chưa đủ</strong>: chuỗi NFC trong mã nguồn vẫn không khớp tên
+      NFD trên đĩa. Thêm <code>backend/core/paths.py</code> —
+      <code>resolve_path()</code> đi <em>từng đoạn</em> đường dẫn, so tên sau khi chuẩn hoá NFC rồi trả về
+      tên thật trên đĩa.</p>
+      <div class="note">Đi từng đoạn chứ không quét toàn cây theo tên file: bản đầu của
+      <code>archive_cover_service</code> tìm <code>Bia_ho_so.docx</code> bằng <code>os.walk</code> toàn bộ
+      <code>templates/</code> — sẽ vớ nhầm nếu sau này có file trùng tên ở thư mục khác. Nay cả hai module
+      dùng chung một helper.</div>
+      <p>Đoạn không tìm thấy thì <strong>ghép thẳng rồi trả về</strong> thay vì ném lỗi — vì
+      <code>_pick_template()</code> dựa vào <code>os.path.exists()</code> để quyết định fallback, ném lỗi
+      ở đây sẽ phá logic đó.</p>
+
+      <p class="label">Cái bẫy còn lại: thư mục con cũng NFD</p>
+      <p><code>Nghỉ phép</code> và <code>Bàn giao cho lưu trữ</code> <strong>cũng</strong> ở dạng NFD.
+      Ghép tay <code>os.path.join(thu_muc_da_resolve, "Nghỉ phép")</code> vẫn hỏng — đã dính đúng lỗi này
+      lúc kiểm thử. Phải đưa <em>toàn bộ</em> các đoạn vào <code>template_path()</code>, đừng resolve nửa
+      chừng rồi join tiếp.</p>
+      <div class="caution">Thêm file mẫu mới phải bỏ vào <strong>thư mục đang có sẵn</strong> (copy/paste
+      trong Explorer), <strong>đừng gõ tay tên thư mục</strong> để tạo mới — bộ gõ sinh NFC và sẽ đẻ lại
+      đúng thư mục trùng vừa xoá. <code>test_khong_con_thu_muc_trung_ten_trong_templates</code> canh việc
+      này, nhưng chỉ chạy khi có ai chạy test.</div>
+
+      <p class="label">Đã kiểm bằng hành vi, không chỉ bằng test đơn vị</p>
+      <p>Thả thật một file <code>don_xin_nghi_phep_nv.docx</code> vào thư mục NFD →
+      <code>_pick_template("chuyen_vien")</code> <span class="pill pill-green">nhận đúng file theo chức
+      danh</span> (trước khi sửa thì không), xoá file đi thì quay lại mẫu chung. File thử đã xoá.</p>
 
     </div>
   </div>
