@@ -17,6 +17,7 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
     + Đã sửa kèm 1 lỗi hiệu năng tự phát sinh khi thêm bộ lọc: câu truy vấn lịch sử đối soát bị mất giới hạn số dòng, tải hết cả bảng mỗi lần gọi kể cả khi không lọc gì — đã thêm lại giới hạn cho trường hợp không lọc (phổ biến nhất)
 
 - 11/08/2026 Đối chiếu CITAD - Extension lên **bản 2.14**, sửa dứt điểm lỗi chọn nhầm bảng rỗng:
+    + ℹ️ Đây là **bản chốt** của chuỗi 2.11 → 2.14: ba bản trước chẩn đoán chưa đúng vì không có dữ liệu thật từ trang Agribank. Bản này sửa theo đúng nguyên nhân đã xác nhận qua lệnh kiểm tra chạy trực tiếp trên trang — không phải lại một lần đoán nữa
     + Xác nhận qua console: trang có **nhiều bảng trùng cấu trúc cột** (cùng có cột "NH gửi") — bảng **đầu tiên** khớp tên cột lại **rỗng** (0 dòng, khả năng là bảng mẫu/bản sao ẩn phục vụ mục đích khác), còn bảng có dữ liệu thật (13 dòng) nằm ở vị trí khác trong trang
     + Extension trước đây chọn đại bảng đầu tiên khớp tên cột mà không kiểm tra bảng đó có dữ liệu hay không, nên luôn vớ trúng bảng rỗng — dù bảng thật vẫn còn nguyên, tưởng "không có kết quả"
     + Nay bỏ qua mọi bảng rỗng trước khi so khớp tên cột, chỉ chọn bảng vừa đúng tên cột vừa có ít nhất 1 dòng dữ liệu

@@ -5344,7 +5344,72 @@ else:
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-11</footer>
+  <!-- 76 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">76</span>
+      <span class="card-title">Cắt số ở tầng hiển thị = mất dữ liệu, và cái giá của việc đoán DOM (PR #33)</span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Bài học 1 — hiển thị và lưu trữ là MỘT khi giá trị được đọc ngược lại</p>
+      <p><code>fmt()</code> định dạng số cho ô nhập bằng <code>f'{int(v):,}'</code>. Nhìn thì đây chỉ là
+      chuyện hiển thị. Nhưng ô nhập là hai chiều: chuỗi hiển thị bị <code>nv(e.value)</code> đọc
+      <strong>ngược lại</strong> thành dữ liệu gốc mỗi khi ô được gán giá trị, kể cả gán bằng code. Nên
+      cắt ở tầng hiển thị là <strong>mất vĩnh viễn</strong>.</p>
+      <table>
+        <tr><th>Giá trị</th><th>Trước: hiển thị → đọc lại</th><th>Sau</th></tr>
+        <tr><td><code>0.79</code></td><td><code>'0'</code> → <code>0.0</code> (mất trắng)</td>
+            <td><code>'0.79'</code> → <code>0.79</code></td></tr>
+        <tr><td><code>2954592.79</code></td><td><code>'2,954,592'</code> → <code>2954592.0</code></td>
+            <td><code>'2,954,592.79'</code> → <code>2954592.79</code></td></tr>
+        <tr><td><code>1000000</code> (VNĐ)</td><td><code>'1,000,000'</code> → không đổi</td>
+            <td>không đổi</td></tr>
+      </table>
+      <p>Vì sao lọt lâu: <strong>VNĐ luôn là số nguyên nên cắt xu vô hại</strong> — lỗi chỉ hiện ra ở
+      USD/EUR, mà cột ngoại tệ thường nhỏ, lệch vài xu dễ bị cho là làm tròn. Xác nhận thực tế: đối
+      chiếu ngày 06/08/2026 lệch đúng 1 đơn vị vì 3 khoản USD đều bị cắt trước khi cộng.</p>
+      <p>Bản vá giữ nguyên cách hiển thị số nguyên (<code>v == int(v)</code> → không có phần thập phân)
+      nên VNĐ không đổi một ly, chỉ số lẻ mới hiện <code>.2f</code>.</p>
+      <p><strong>Quy tắc: ô nhập hai chiều thì hàm định dạng KHÔNG được làm mất thông tin.</strong> Muốn
+      hiển thị gọn thì làm ở tầng chỉ-đọc (nhãn, báo cáo), đừng làm ở chỗ giá trị sẽ quay ngược vào dữ
+      liệu.</p>
+      <p>Sót lần đầu: dòng "CHÊNH LỆCH" có công thức cắt <em>riêng</em> (<code>int(df_val)</code>), không
+      dùng chung <code>fmt()</code>, nên vòng sửa đầu không chạm tới — lệch thật +0.79 hiện thành "+0",
+      vẫn bôi đỏ đúng nhưng số sai. Đây là lý do cần grep hết mọi chỗ cắt số chứ không chỉ sửa hàm dùng
+      chung.</p>
+
+      <p class="label">Bài học 2 — cái giá của việc đoán hành vi DOM khi không có dữ liệu thật</p>
+      <p>Extension đi qua <strong>4 bản (2.11 → 2.14) với 3 lần chẩn đoán sai</strong> cho cùng một triệu
+      chứng "không đọc được cột NH gửi". Mỗi bản đoán một kiểu vì môi trường phát triển không vào được
+      trang Agribank nội bộ (cần VPN + đăng nhập thật).</p>
+      <p>Nguyên nhân thật chỉ lộ ra khi người dùng chạy một lệnh Console trên trang đích và gửi kết quả
+      về: trang có <strong>nhiều bảng trùng cấu trúc cột</strong>, bảng ĐẦU TIÊN khớp tên cột "NH gửi"
+      lại <strong>rỗng</strong>, bảng có 13 dòng dữ liệu thật nằm ở vị trí khác. Code cũ chọn đại bảng
+      đầu tiên khớp tên cột. Bản vá: bỏ qua bảng rỗng trước khi so tên cột — 1 dòng.</p>
+      <p><strong>Quy tắc: không đoán cấu trúc DOM của trang bên thứ ba.</strong> Chi phí của 3 vòng đoán
+      sai là 3 lần bắt toàn bộ người dùng cài lại Extension. Rẻ hơn nhiều nếu ngay từ đầu xin một lệnh
+      Console để lấy dữ liệu thật.</p>
+
+      <p class="label">Ghi chú vận hành</p>
+      <p>Bản 2.14 là <strong>lần cài lại thứ tư trong tuần</strong> cho cùng một tính năng. Đã ghi rõ
+      trong <code>Logs_update.md</code> rằng đây là bản chốt của chuỗi chẩn đoán, để người dùng không
+      nghĩ lại thêm một lần đoán nữa.</p>
+
+      <p class="label">Lọc Lịch sử — đánh đổi đã chấp nhận</p>
+      <p>Không lọc thì <code>LIMIT</code> nằm trong SQL. Có lọc thì <strong>bắt buộc</strong> tải hết rồi
+      lọc bằng Python, vì <code>ngay_cham</code> lưu dạng text <code>dd/mm/yyyy</code> — so chuỗi sai thứ
+      tự thời gian (<code>"01/12/2026" &lt; "05/01/2026"</code> theo chuỗi nhưng đến sau). Chấp nhận được
+      vì bảng mỗi lần đối soát 1 dòng và câu SELECT không kèm <code>lech_json</code>; các phép lọc cũng
+      chạy TRƯỚC <code>json.loads</code> nên không phí công phân tích dòng sẽ bị loại.</p>
+      <p>Nếu sau này lịch sử tích lại hàng chục nghìn dòng thì cách gọn là thêm một cột ngày dạng chuẩn
+      sắp xếp được (<code>yyyy-mm-dd</code>) để lọc thẳng bằng SQL.</p>
+
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-12</footer>
 </div>
 </body>
 </html>
