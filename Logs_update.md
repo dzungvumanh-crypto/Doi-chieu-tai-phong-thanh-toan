@@ -4,6 +4,24 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 12/08/2026 Đối chiếu CITAD - Sửa lỗi lệch số liệu ngoại tệ do cắt xu USD/EUR:
+    + **Lỗi thật, gây sai số liệu**: ô nhập số liệu (5 cổng, Payment, Napas, PSS-MDP, Ebanking) hiển thị số theo kiểu số nguyên — USD/EUR có phần xu (vd 2.954.592,79) bị **cắt mất phần xu khi hiển thị**, và chữ đã cắt này sau đó bị đọc ngược lại thành số liệu gốc, mất vĩnh viễn phần xu. Xác nhận thực tế: ngày 06/08/2026 lệch đúng 1 xu vì 3 khoản USD đều bị cắt trước khi cộng
+    + Sửa để giữ nguyên phần xu khi hiển thị — áp dụng cho cả VNĐ (không đổi, luôn số nguyên) lẫn USD/EUR (giờ hiện đủ 2 chữ số thập phân nếu có)
+    + Sửa luôn 1 chỗ sót: dòng **"CHÊNH LỆCH"** trên màn hình (và bảng xem trước khi xuất Excel) vẫn còn 1 công thức riêng cắt xu độc lập, chưa được sửa cùng lần trước — lệch thật kiểu +0,79 từng hiện nhầm thành "+0" (vẫn bôi đỏ đúng nhưng số hiện sai). Đã test lại bằng số liệu thật, hiện đúng
+    + File Excel tải về không bị ảnh hưởng (backend luôn tính lại bằng số thực đầy đủ, độc lập với màn hình)
+
+- 12/08/2026 Đối chiếu / Đối soát CITAD - Thêm bộ lọc Lịch sử theo ngày + tên người chấm, tự động refresh:
+    + **Đối chiếu CITAD**: tab Lịch sử thêm ô lọc **"Tên người chấm"** (trước chỉ lọc được theo ngày). Cột "Người lưu sau cùng" đổi sang hiện tên đầy đủ thay vì tên đăng nhập
+    + **Đối soát CITAD ↔ IPCAS**: tab Lịch sử trước đây **không có bộ lọc nào** (chỉ hiện 100 lần gần nhất) — nay thêm đủ 3 ô lọc **"Từ ngày chấm"/"Đến ngày chấm"/"Tên người chấm"**
+    + **Tự động cập nhật Lịch sử**: trước đây phải bấm F5 tải lại cả trang thì tab Lịch sử mới thấy bản vừa lưu/đối soát. Nay ở **Đối chiếu CITAD**, ngay sau khi lưu thành công, Lịch sử tự nạp lại dữ liệu mới ở phía sau — **không tự chuyển tab**, đang ở tab nào vẫn ở nguyên tab đó. Bên **Đối soát CITAD ↔ IPCAS** cơ chế này vốn đã có sẵn từ trước, đã kiểm tra lại xác nhận vẫn hoạt động đúng
+    + Đã sửa kèm 1 lỗi hiệu năng tự phát sinh khi thêm bộ lọc: câu truy vấn lịch sử đối soát bị mất giới hạn số dòng, tải hết cả bảng mỗi lần gọi kể cả khi không lọc gì — đã thêm lại giới hạn cho trường hợp không lọc (phổ biến nhất)
+
+- 11/08/2026 Đối chiếu CITAD - Extension lên **bản 2.14**, sửa dứt điểm lỗi chọn nhầm bảng rỗng:
+    + Xác nhận qua console: trang có **nhiều bảng trùng cấu trúc cột** (cùng có cột "NH gửi") — bảng **đầu tiên** khớp tên cột lại **rỗng** (0 dòng, khả năng là bảng mẫu/bản sao ẩn phục vụ mục đích khác), còn bảng có dữ liệu thật (13 dòng) nằm ở vị trí khác trong trang
+    + Extension trước đây chọn đại bảng đầu tiên khớp tên cột mà không kiểm tra bảng đó có dữ liệu hay không, nên luôn vớ trúng bảng rỗng — dù bảng thật vẫn còn nguyên, tưởng "không có kết quả"
+    + Nay bỏ qua mọi bảng rỗng trước khi so khớp tên cột, chỉ chọn bảng vừa đúng tên cột vừa có ít nhất 1 dòng dữ liệu
+    + ⚠️ **Phải tải lại `.zip` và cài lại Extension** — vào `/doi_chieu_citad` → **Tải Extension**, giải nén, *Load unpacked* lại
+
 - 11/08/2026 Đối chiếu CITAD - Extension lên **bản 2.13**, tìm ra nguyên nhân thật khiến không đọc được cột "NH gửi":
     + Xác nhận qua lệnh kiểm tra trực tiếp trên trình duyệt (Console): cột "NH gửi" và "Số tiền" đều có sẵn trong bảng, chữ sạch — **không phải do tên cột lệch hay có icon** như 2 lần sửa trước (bản 2.11/2.12) từng đoán
     + Nguyên nhân thật: hàm dò cột tiêu đề chỉ tìm trong `<thead>` hoặc đúng dòng đầu tiên của bảng, nhưng bảng thật của trang này không đặt tiêu đề cột theo 1 trong 2 kiểu đó — dò trượt dù cột vẫn tồn tại. Nay dò mọi thẻ tiêu đề trong bảng, không giới hạn vị trí
