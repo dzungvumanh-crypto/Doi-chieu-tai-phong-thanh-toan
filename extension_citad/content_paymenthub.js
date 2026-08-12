@@ -474,18 +474,25 @@ function observeTraCuu(source) {
    kéo bảng sang phải, KHÔNG cần bấm "Xem chi tiết lệnh" (đã xác nhận thực
    tế nhiều lần).
 
-   NGUYÊN NHÂN THẬT khiến trước đây không đọc được cột này (đã xác nhận qua
-   console người dùng tự chạy: `[...t.querySelectorAll('th')].map(x=>x.
-   innerText)` liệt kê đủ "NH gửi"/"Số tiền", chữ sạch) — KHÔNG PHẢI do tên
-   cột lệch/có icon, mà do selector định vị <th> quá hẹp: bản cũ dùng
-   `'thead th, tr:first-child th, tr:first-child td'` (chỉ tìm trong
-   <thead> hoặc đúng dòng <tr> đầu tiên), nhưng bảng thật của trang này
-   không đặt <th> theo 1 trong 2 kiểu đó nên luôn trượt. Nay dùng đơn giản
-   `'th'` (mọi thẻ <th> trong bảng, không giới hạn vị trí) — xem
-   _findPaymentTable()/_findResultsTableWithAmount(). _cleanHeader()/
-   _headerIndexOf() (so khớp "chứa chuỗi" sau chuẩn hoá khoảng trắng) vẫn
-   giữ lại vì vô hại và có thể hữu ích cho biến thể khác, nhưng KHÔNG phải
-   nguyên nhân chính đã sửa.
+   NGUYÊN NHÂN THẬT (đã xác nhận qua console người dùng tự chạy — 2 vòng
+   chẩn đoán trước đều đoán sai vì không có dữ liệu DOM thật):
+     Vòng 1 (sai): tưởng do tên cột lệch/có icon → nới lỏng so khớp
+       (_cleanHeader()/_headerIndexOf(), so khớp "chứa chuỗi" thay vì tuyệt
+       đối). Vô hại, giữ lại, nhưng không phải nguyên nhân.
+     Vòng 2 (sai): tưởng do selector định vị <th> quá hẹp (bản cũ
+       `'thead th, tr:first-child th, tr:first-child td'` chỉ tìm trong
+       <thead>/dòng đầu) → đổi thành `'th'` (mọi thẻ <th> trong bảng). Đúng
+       một phần nhưng CHƯA ĐỦ.
+     Nguyên nhân thật: `document.querySelectorAll('table').forEach((t,i)=>
+     console.log(i, t.querySelectorAll('tbody tr').length, [...t.
+     querySelectorAll('th')].some(x=>x.innerText.includes('NH gửi'))))`
+     cho thấy trang có NHIỀU bảng trùng cấu trúc cột (cùng có "NH gửi") —
+     bảng ĐẦU TIÊN khớp tên cột lại RỖNG (0 dòng, có thể là bảng mẫu/bản
+     sao ẩn cho mục đích khác), còn bảng có dữ liệu thật (13 dòng) nằm ở vị
+     trí khác. `_findPaymentTable()` chọn đại bảng ĐẦU TIÊN khớp tên cột mà
+     không kiểm tra có dữ liệu hay không, nên luôn vớ trúng bảng rỗng. Sửa:
+     bỏ qua mọi bảng có `tbody tr` = 0 trước khi so khớp tên cột — xem
+     _findPaymentTable()/_findResultsTableWithAmount().
 
    Có 2 cách tách, thử theo thứ tự (savePaymentDetail()):
      1. NGƯỜI DÙNG tự lọc theo bộ lọc "NH gửi" = 1 mã cụ thể ở form tìm
@@ -521,6 +528,12 @@ function _headerIndexOf(headers, name) {
 
 function _findPaymentTable() {
   for (const t of document.querySelectorAll('table')) {
+    // Trang này có NHIỀU bảng trùng cấu trúc (cùng cột) nhưng chỉ 1 bảng có
+    // dữ liệu thật — các bảng còn lại rỗng (mẫu/bản sao ẩn cho mục đích
+    // khác). Đã xác nhận thực tế qua console: bảng đầu tiên khớp tên cột
+    // "NH gửi" lại là bảng RỖNG (0 dòng), trong khi bảng có 13 dòng dữ liệu
+    // thật nằm ở vị trí khác — bỏ qua bảng rỗng, không chỉ dựa vào tên cột.
+    if (t.querySelectorAll('tbody tr').length === 0) continue;
     const headCells = t.querySelectorAll('th');
     for (const c of headCells) {
       if (_cleanHeader(c.innerText).includes('NH gửi')) return t;
@@ -632,6 +645,9 @@ function readNhGuiFilterChannel() {
 
 function _findResultsTableWithAmount() {
   for (const t of document.querySelectorAll('table')) {
+    // Bỏ qua bảng rỗng — cùng lý do với _findPaymentTable() (nhiều bảng
+    // trùng cột nhưng chỉ 1 bảng có dữ liệu thật).
+    if (t.querySelectorAll('tbody tr').length === 0) continue;
     const headCells = t.querySelectorAll('th');
     for (const c of headCells) {
       if (_cleanHeader(c.innerText).includes('Số tiền')) return t;

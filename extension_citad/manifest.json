@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "CITAD – Lấy số liệu đối chiếu (TTTT)",
-  "version": "2.13",
+  "version": "2.14",
   "description": "Tự động lấy số liệu CITAD và PaymentHub vào module Đối chiếu CITAD của app TTTT",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAmeVTuernAkmE8a790OHIK/gG4D2E/oa4h3PdhRNyJIMDvEt0xnf757r2z/4wX5+XjJVyImDOMUx6HAj1TGQRff+JbF3+nDaawZwB6PrY56aedxy9Z412vs+1SmW9vqa7hOdwF3vlVjnofMK0SXP+5y3bw47FIfAeho7ZfM4nkhHLZOozg8Q2UJFV6AX1KgzaUPZaz0NonqCOJNHtcCj9OsyjdXhBinYlaz/UkqjwFkVCY+ZOj8m60Lxsa2LuufRTjqdjcsG+NN1Lok4KVi6vAxVs/bUKw9AYsEWE6Sex1ITp+CdP5/o/mxdjG3I3bnZSRT8QdnQ2whKVn1mm6fdfBwIDAQAB",
   "permissions": ["storage", "activeTab"],
