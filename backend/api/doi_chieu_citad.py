@@ -218,13 +218,15 @@ def list_sessions(db=Depends(get_db), current: dict = Depends(require_feature("m
 def get_reconciliation_days(
     tu_ngay: str | None = None,
     den_ngay: str | None = None,
+    nguoi_cham: str | None = None,
     db=Depends(get_db),
     current: dict = Depends(require_feature("menu.doi_chieu_citad")),
 ):
     """1 dòng/ngày đã có ai chấm — phục vụ tab "Lịch sử" (bảng nhiều ngày,
-    lọc theo khoảng ngày). tu_ngay/den_ngay dạng dd/mm/yyyy, để trống =
-    không giới hạn đầu/cuối."""
-    return svc.get_reconciliation_days(db, tu_ngay, den_ngay)
+    lọc theo khoảng ngày + tên người chấm). tu_ngay/den_ngay dạng
+    dd/mm/yyyy, để trống = không giới hạn đầu/cuối. nguoi_cham khớp gần
+    đúng (không phân biệt hoa/thường), theo cả tên đầy đủ lẫn username."""
+    return svc.get_reconciliation_days(db, tu_ngay, den_ngay, nguoi_cham)
 
 
 @router.get("/session/{ngay:path}/history")

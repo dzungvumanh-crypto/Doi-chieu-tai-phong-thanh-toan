@@ -242,15 +242,23 @@ def _parse_ngay(ngay: str) -> datetime | None:
 
 
 def get_reconciliation_days(
-    db: sqlite3.Connection, tu_ngay: str | None = None, den_ngay: str | None = None
+    db: sqlite3.Connection,
+    tu_ngay: str | None = None,
+    den_ngay: str | None = None,
+    nguoi_cham: str | None = None,
 ) -> list:
     """1 dòng/ngày đã có ai chấm — ngày, người lưu sau cùng, số lần lưu,
     cập nhật lúc — phục vụ tab "Lịch sử" (bảng nhiều ngày cùng lúc, lọc
-    theo khoảng ngày). Lọc/sắp xếp bằng Python vì cột `ngay` lưu dạng text
-    dd/mm/yyyy — so sánh chuỗi trực tiếp trong SQL sẽ SAI thứ tự thời gian
-    (ví dụ "01/12/2026" < "05/01/2026" theo string nhưng đến sau)."""
+    theo khoảng ngày + tên người chấm). Lọc/sắp xếp bằng Python vì cột
+    `ngay` lưu dạng text dd/mm/yyyy — so sánh chuỗi trực tiếp trong SQL sẽ
+    SAI thứ tự thời gian (ví dụ "01/12/2026" < "05/01/2026" theo string
+    nhưng đến sau). `nguoi_cham` so khớp KHÔNG phân biệt hoa/thường, khớp
+    theo cả tên đầy đủ lẫn username (người dùng có thể nhớ tên thật hoặc
+    tên đăng nhập) — "người lưu sau cùng" của ngày đó, không phải tìm
+    trong lịch sử từng lần lưu cũ hơn."""
     rows = db.execute(
         """SELECT s.ngay, s.updated_at, u.username AS updated_by_username,
+                  u.full_name AS updated_by_name,
                   (SELECT COUNT(*) FROM doi_chieu_citad_history h WHERE h.ngay = s.ngay) AS so_lan_luu
            FROM doi_chieu_citad_sessions s
            LEFT JOIN user_tttt u ON u.id = s.updated_by"""
@@ -258,6 +266,7 @@ def get_reconciliation_days(
 
     tu_dt = _parse_ngay(tu_ngay) if tu_ngay else None
     den_dt = _parse_ngay(den_ngay) if den_ngay else None
+    nguoi_kw = nguoi_cham.strip().lower() if nguoi_cham else None
 
     parsed = []
     for r in rows:
@@ -268,9 +277,14 @@ def get_reconciliation_days(
             continue
         if den_dt and d > den_dt:
             continue
+        if nguoi_kw:
+            hay = f"{r['updated_by_username'] or ''} {r['updated_by_name'] or ''}".lower()
+            if nguoi_kw not in hay:
+                continue
         parsed.append((d, {
             "ngay": r["ngay"],
             "updated_by_username": r["updated_by_username"],
+            "updated_by_name": r["updated_by_name"],
             "updated_at": str(r["updated_at"]) if r["updated_at"] else None,
             "so_lan_luu": r["so_lan_luu"],
         }))

@@ -199,12 +199,18 @@ async def export_excel(
 @router.get("/history", response_model=List[HistoryOut])
 async def get_history(
     limit: int = 100,
+    tu_ngay: str | None = None,
+    den_ngay: str | None = None,
+    nguoi_thuc_hien: str | None = None,
     db=Depends(get_db),
     current: dict = Depends(require_feature("menu.doi_soat_citad")),
 ):
+    """tu_ngay/den_ngay lọc theo "ngày chấm" (dd/mm/yyyy, để trống = không
+    giới hạn đầu/cuối). nguoi_thuc_hien khớp gần đúng theo tên đầy đủ,
+    không phân biệt hoa/thường."""
     # list_recon_history() json.loads() từng dòng lịch sử — đồng bộ, chặn
     # event loop chung nếu chạy thẳng. Xem ghi chú tương tự ở do_reconcile().
-    return await run_heavy(list_recon_history, db, limit)
+    return await run_heavy(list_recon_history, db, limit, tu_ngay, den_ngay, nguoi_thuc_hien)
 
 
 @router.get("/history/{history_id}")
