@@ -4,6 +4,29 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 12/08/2026 Đối chiếu CITAD - Sửa lỗi lệch số liệu ngoại tệ do cắt xu USD/EUR:
+    + **Lỗi thật, gây sai số liệu**: ô nhập số liệu (5 cổng, Payment, Napas, PSS-MDP, Ebanking) hiển thị số theo kiểu số nguyên — USD/EUR có phần xu (vd 2.954.592,79) bị **cắt mất phần xu khi hiển thị**, và chữ đã cắt này sau đó bị đọc ngược lại thành số liệu gốc, mất vĩnh viễn phần xu. Xác nhận thực tế: ngày 06/08/2026 lệch đúng 1 xu vì 3 khoản USD đều bị cắt trước khi cộng
+    + Sửa để giữ nguyên phần xu khi hiển thị — áp dụng cho cả VNĐ (không đổi, luôn số nguyên) lẫn USD/EUR (giờ hiện đủ 2 chữ số thập phân nếu có)
+    + Sửa luôn 1 chỗ sót: dòng **"CHÊNH LỆCH"** trên màn hình (và bảng xem trước khi xuất Excel) vẫn còn 1 công thức riêng cắt xu độc lập, chưa được sửa cùng lần trước — lệch thật kiểu +0,79 từng hiện nhầm thành "+0" (vẫn bôi đỏ đúng nhưng số hiện sai). Đã test lại bằng số liệu thật, hiện đúng
+    + File Excel tải về không bị ảnh hưởng (backend luôn tính lại bằng số thực đầy đủ, độc lập với màn hình)
+
+- 12/08/2026 Đối chiếu / Đối soát CITAD - Thêm bộ lọc Lịch sử theo ngày + tên người chấm, tự động refresh:
+    + **Đối chiếu CITAD**: tab Lịch sử thêm ô lọc **"Tên người chấm"** (trước chỉ lọc được theo ngày). Cột "Người lưu sau cùng" đổi sang hiện tên đầy đủ thay vì tên đăng nhập
+    + **Đối soát CITAD ↔ IPCAS**: tab Lịch sử trước đây **không có bộ lọc nào** (chỉ hiện 100 lần gần nhất) — nay thêm đủ 3 ô lọc **"Từ ngày chấm"/"Đến ngày chấm"/"Tên người chấm"**
+    + **Tự động cập nhật Lịch sử**: trước đây phải bấm F5 tải lại cả trang thì tab Lịch sử mới thấy bản vừa lưu/đối soát. Nay ở **Đối chiếu CITAD**, ngay sau khi lưu thành công, Lịch sử tự nạp lại dữ liệu mới ở phía sau — **không tự chuyển tab**, đang ở tab nào vẫn ở nguyên tab đó. Bên **Đối soát CITAD ↔ IPCAS** cơ chế này vốn đã có sẵn từ trước, đã kiểm tra lại xác nhận vẫn hoạt động đúng
+    + Đã sửa kèm 1 lỗi hiệu năng tự phát sinh khi thêm bộ lọc: câu truy vấn lịch sử đối soát bị mất giới hạn số dòng, tải hết cả bảng mỗi lần gọi kể cả khi không lọc gì — đã thêm lại giới hạn cho trường hợp không lọc (phổ biến nhất)
+
+- 11/08/2026 Đối chiếu CITAD - Extension lên **bản 2.14**, sửa dứt điểm lỗi chọn nhầm bảng rỗng:
+    + Xác nhận qua console: trang có **nhiều bảng trùng cấu trúc cột** (cùng có cột "NH gửi") — bảng **đầu tiên** khớp tên cột lại **rỗng** (0 dòng, khả năng là bảng mẫu/bản sao ẩn phục vụ mục đích khác), còn bảng có dữ liệu thật (13 dòng) nằm ở vị trí khác trong trang
+    + Extension trước đây chọn đại bảng đầu tiên khớp tên cột mà không kiểm tra bảng đó có dữ liệu hay không, nên luôn vớ trúng bảng rỗng — dù bảng thật vẫn còn nguyên, tưởng "không có kết quả"
+    + Nay bỏ qua mọi bảng rỗng trước khi so khớp tên cột, chỉ chọn bảng vừa đúng tên cột vừa có ít nhất 1 dòng dữ liệu
+    + ⚠️ **Phải tải lại `.zip` và cài lại Extension** — vào `/doi_chieu_citad` → **Tải Extension**, giải nén, *Load unpacked* lại
+
+- 11/08/2026 Đối chiếu CITAD - Extension lên **bản 2.13**, tìm ra nguyên nhân thật khiến không đọc được cột "NH gửi":
+    + Xác nhận qua lệnh kiểm tra trực tiếp trên trình duyệt (Console): cột "NH gửi" và "Số tiền" đều có sẵn trong bảng, chữ sạch — **không phải do tên cột lệch hay có icon** như 2 lần sửa trước (bản 2.11/2.12) từng đoán
+    + Nguyên nhân thật: hàm dò cột tiêu đề chỉ tìm trong `<thead>` hoặc đúng dòng đầu tiên của bảng, nhưng bảng thật của trang này không đặt tiêu đề cột theo 1 trong 2 kiểu đó — dò trượt dù cột vẫn tồn tại. Nay dò mọi thẻ tiêu đề trong bảng, không giới hạn vị trí
+    + ⚠️ **Phải tải lại `.zip` và cài lại Extension** — vào `/doi_chieu_citad` → **Tải Extension**, giải nén, *Load unpacked* lại
+
 - 11/08/2026 Bàn giao chứng từ - Thêm nút **Trả lại** để hậu kiểm chủ động trả chứng từ về cho cán bộ:
     + **Trước đây chứng từ đã xác nhận chỉ ra khỏi kho được khi giao dịch viên chủ động xin mượn.** Hậu kiểm cầm chứng từ trên tay, thấy thiếu chữ ký hay sai sót, muốn trả về cho cán bộ thì không có nút nào — phải nhờ chính cán bộ đó vào bấm *Mượn lại* rồi mình duyệt, vòng vèo và sai bản chất sự việc
     + Nay ở **bảng lịch sử của từng ô** (bấm vào ô trong lưới), phần *THAO TÁC* có thêm nút tím **"↪ Trả lại"**. Nút **chỉ hiện với ô đang ở trạng thái *Đã xác nhận*** — ô đang chờ, đang mượn hay bị từ chối đều không có
@@ -12,6 +35,12 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
     + ⚠️ **Phải cấp quyền thì nút mới hiện.** Vào *Phân quyền theo nhóm* → **Phòng KSNB & HTVH → Bàn giao chứng từ → "Trả lại chứng từ cho cán bộ"**, tích cho nhóm hậu kiểm / kiểm soát viên. Chưa tích thì không ai thấy nút, kể cả người đang có quyền xác nhận
     + **Giao dịch viên không được cấp quyền này** — hệ thống chặn ở máy chủ kể cả khi lỡ tích nhầm. Nếu cho, cán bộ sẽ tự rút được chứng từ đã chốt của chính mình mà không qua bước duyệt của hậu kiểm
     + ⚠️ **Ô đã đóng tập chứng từ vẫn trả lại được** — bìa tập đã in sẽ không còn khớp thực tế. Chức năng *Mượn lại* sẵn có cũng đang như vậy, nên lần này giữ nguyên cho nhất quán. Cần chặn thì báo để sửa cả hai chỗ cùng lúc
+
+- 11/08/2026 Đối chiếu CITAD - Extension lên **bản 2.12**, sửa lỗi không đọc được cột "NH gửi" có sẵn trong bảng kết quả:
+    + Xác nhận lại thực tế: cột "NH gửi" (dùng tách Napas/PSS-MDP) **có sẵn ngay trong bảng kết quả mặc định** (Loại lệnh: Lệnh quyết toán, NH gửi để "Tất cả") — kéo bảng sang phải là thấy, **không cần** bấm "Xem chi tiết lệnh" như bản 2.10/2.11 từng giả định
+    + Lỗi thật: hàm bắt cột so khớp **tuyệt đối** tên cột ("NH gửi" phải khớp y hệt) — bảng có nút sắp xếp cột hay chèn icon/khoảng trắng phụ vào tiêu đề khiến so khớp trượt dù cột hiển thị đúng. Nay so khớp kiểu "chứa chuỗi" sau khi chuẩn hoá khoảng trắng, khoan dung hơn
+    + Sửa luôn đường lọc theo bộ lọc "NH gửi" cụ thể (bản 2.11): trước đọc giá trị đang chọn qua chữ hiển thị (`innerText`), không đọc được nếu ô lọc là `<input>` với giá trị nằm trong thuộc tính `value`. Nay tự dò cả `value` của input/select lẫn chữ hiển thị
+    + ⚠️ **Phải tải lại `.zip` và cài lại Extension** — vào `/doi_chieu_citad` → **Tải Extension**, giải nén, *Load unpacked* lại
 
 - 11/08/2026 Đối soát CITAD ↔ IPCAS - Sửa 2 lỗi làm sai lệch số liệu ngoại tệ (rà soát code, chưa có báo cáo thực tế):
     + **File CITAD nhiều sheet đọc sai loại tiền từ sheet thứ 2 trở đi**: chỉ sheet đầu tiên được nhận diện VNĐ/USD/EUR, các sheet sau luôn bị coi mặc định là VNĐ — sai cả cột đọc số tiền lẫn nhãn loại tiền, khiến lệnh ngoại tệ ở sheet 2+ bị đẩy nhầm sang so khớp IPCAS (đáng lẽ phải so Hub ngoại tệ) và báo lệch "Chỉ CITAD" giả
