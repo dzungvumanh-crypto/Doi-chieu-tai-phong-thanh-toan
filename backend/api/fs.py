@@ -56,6 +56,10 @@ def _compute_parent(abs_path: str) -> str | None:
 
 def _list_dir(raw_path: str) -> dict:
     abs_path = os.path.abspath(raw_path)
+    # Người dùng hay copy đường dẫn của 1 FILE thay vì thư mục (VD copy từ cột
+    # đường dẫn trong Explorer) — mở thư mục chứa nó thay vì báo lỗi bế tắc.
+    if not os.path.isdir(abs_path) and os.path.isfile(abs_path):
+        abs_path = os.path.dirname(abs_path)
     if not os.path.isdir(abs_path):
         raise HTTPException(400, f'Thư mục không tồn tại: {abs_path}')
 
@@ -91,4 +95,5 @@ def browse(path: str | None = None, _staff: dict = Depends(get_current_staff)):
     """Liệt kê thư mục con của `path`. path rỗng/None → danh sách ổ đĩa."""
     if not path or not path.strip():
         return _list_drives()
-    return _list_dir(path.strip())
+    # Windows "Copy as path" bọc đường dẫn trong dấu nháy kép.
+    return _list_dir(path.strip().strip('"'))

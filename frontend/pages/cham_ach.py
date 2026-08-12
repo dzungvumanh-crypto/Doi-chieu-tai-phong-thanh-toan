@@ -142,7 +142,7 @@ async def cham_ach_page():
                                 _on_folder_selected, initial_path=folder_input.value or ''
                             )
 
-                        ui.button('Duyệt...', icon='folder_open', color='blue-7',
+                        ui.button('Chọn thư mục', icon='folder_open', color='blue-7',
                                   on_click=_on_pick_folder).props('outlined dense')
                     ui.label(_FILE_HINT).classes('text-xs text-gray-400')
                     ui.button('Kiểm tra thư mục', icon='fact_check', color='blue-7',
