@@ -126,7 +126,9 @@ _ACTION_LABEL = {
     "borrow_requested":   ("Yêu cầu mượn lại",          "orange"),
     "borrowed":           ("Xác nhận cho mượn",         "orange"),
     "returned":           ("Bàn giao lại",               "blue"),
-    "returned_to_staff":  ("Trả lại chứng từ cho cán bộ", "orange"),
+    # Key giữ nguyên "returned_to_staff" — đây là giá trị đã ghi vào entry_change_logs,
+    # đổi key sẽ làm các dòng lịch sử cũ mất nhãn. Chỉ đổi phần chữ hiển thị.
+    "returned_to_staff":  ("Chuyển trả GDV",              "orange"),
     "edited_hkv":         ("HKV sửa trực tiếp",          "purple"),
     "rejected_borrow":    ("Từ chối yêu cầu mượn",      "red"),
     "rejected_return":    ("Từ chối bàn giao lại",       "red"),
@@ -457,7 +459,7 @@ def handback_entry(
     return {"ok": True, "message": "Đã bàn giao lại chứng từ"}
 
 
-# ─── Trả lại chứng từ cho cán bộ (HKV/KSV chủ động) ──────────────────────────
+# ─── Chuyển trả chứng từ cho GDV (HKV/KSV chủ động) ──────────────────────────
 # Đường tắt của luồng mượn: bên đang giữ chứng từ đẩy thẳng đã xác nhận → đang mượn,
 # không qua bước GDV gửi yêu cầu + HKV duyệt.
 @router.post("/entries/{entry_id}/return-to-staff")
@@ -467,22 +469,22 @@ def return_entry_to_staff(
     db: sqlite3.Connection = Depends(get_db),
     current: dict = Depends(require_handover_write("handovers.return_entry")),
 ):
-    # Chỉ bên đang giữ chứng từ mới trả lại được. GDV muốn lấy chứng từ phải đi
+    # Chỉ bên đang giữ chứng từ mới chuyển trả được. GDV muốn lấy chứng từ phải đi
     # đường "Mượn lại" để còn bước xác nhận của hậu kiểm — nếu không, GDV tự cấp
     # cho mình quyền rút chứng từ đã chốt.
     if current["role"] == StaffRole.CHUYEN_VIEN.value:
-        raise HTTPException(403, "Giao dịch viên không trả lại được — hãy dùng chức năng Mượn lại")
+        raise HTTPException(403, "Giao dịch viên không dùng được chức năng này — hãy dùng Mượn lại")
 
     entry = db.execute("SELECT * FROM document_entries WHERE id = ?", (entry_id,)).fetchone()
     if not entry:
         raise HTTPException(404, "Không tìm thấy chứng từ")
     _assert_dept_write_allowed(db, current, _entry_dept(db, entry_id))
     if entry["entry_status"] != EntryStatus.CONFIRMED:
-        raise HTTPException(409, f"Trạng thái không hợp lệ: '{_STATUS_LABEL.get(entry['entry_status'], entry['entry_status'])}'. Chỉ trả lại được chứng từ đã xác nhận.")
+        raise HTTPException(409, f"Trạng thái không hợp lệ: '{_STATUS_LABEL.get(entry['entry_status'], entry['entry_status'])}'. Chỉ chuyển trả được chứng từ đã xác nhận.")
 
     reason = body.reason.strip()
     if not reason:
-        raise HTTPException(400, "Vui lòng nhập lý do trả lại")
+        raise HTTPException(400, "Vui lòng nhập lý do chuyển trả")
 
     # Lý do chỉ ghi vào log. KHÔNG ghi vào borrow_reason: cột đó đang là cờ
     # "có yêu cầu mượn chờ duyệt" mà confirm_received() và reject_entry() dựa vào
@@ -496,7 +498,7 @@ def return_entry_to_staff(
         (entry_id, "returned_to_staff", current["id"], entry["sheet_count"], reason, str(_vn_now())),
     )
     db.commit()
-    return {"ok": True, "message": "Đã trả lại chứng từ cho cán bộ"}
+    return {"ok": True, "message": "Đã chuyển trả chứng từ cho GDV"}
 
 
 # ─── Endpoint đã ngừng sử dụng ───────────────────────────────────────────────
