@@ -4,6 +4,48 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 13/08/2026 Nghỉ phép - Sửa **màn hình trắng khi chưa có đơn nghỉ phép nào** (PR #32):
+    + **Người dùng thật báo**: tài khoản Chuyên viên chưa tạo đơn nào, vào tab *Của tôi* chỉ thấy trơ một dòng chữ "Không có đơn nghỉ phép nào." — không khung bảng, không tiêu đề cột. Nhiều người tưởng phần mềm lỗi hoặc chưa tải xong nên bấm F5 nhiều lần
+    + Nay **khung bảng và tiêu đề cột luôn hiện** (STT, Ngày tạo, Loại, Trạng thái…), dòng "Không có đơn nghỉ phép nào." nằm gọn bên trong khung — nhìn ra ngay là "chưa có đơn", không phải "hỏng". Áp dụng cho mọi bảng đơn phép: *Của tôi*, *Chờ duyệt*, *Phòng tôi*, và cả kết quả lọc/tìm kiếm ở Dashboard trả về 0 dòng
+    + ⚠️ **Còn tồn**: tab *Khai báo hộ* vẫn giữ kiểu cũ (chỉ hiện dòng chữ trần "Chưa có đơn nào được khai báo.") — sẽ xử lý ở đợt sau
+    + Không đổi quyền, không đụng dữ liệu, không cần thao tác gì sau khi cập nhật
+
+- 12/08/2026 Danh sách CN TTQT - Sửa lỗi **gõ tên chi nhánh vào ô tìm kiếm không ra kết quả nào**:
+    + **Lỗi thật, đã ảnh hưởng 43/218 chi nhánh**: tên bắt đầu bằng chữ hoa có dấu — *Đống Đa, Mỹ Đình, Đà Nẵng, Nam Định…* — gõ vào ô tìm kiếm thì danh sách **trả về rỗng**, không một dòng cảnh báo nào, trông y như chi nhánh đó không có trong hệ thống. Các chi nhánh tên bắt đầu bằng chữ thường/không dấu vẫn tìm ra bình thường nên lỗi lọt lâu
+    + Nguyên nhân: phần so khớp cũ chỉ biết hạ chữ hoa **A–Z**, gặp *Đ, Ô, Ê…* thì để nguyên — máy đem "Điện Biên" so với "điện biên" và coi là hai tên khác nhau
+    + Nay so khớp đúng chữ tiếng Việt, **không phân biệt hoa thường**. Thêm luôn **tìm không dấu**: gõ `dien bien` hoặc `dong da` cũng ra kết quả
+    + Lúc **nhập Excel** và **thêm / sửa tay** hệ thống tự chuẩn hoá cách lưu chữ có dấu, để không còn cảnh cùng một tên mà máy lưu hai kiểu khác nhau
+    + **Không cần nhập lại dữ liệu, không cần thao tác gì** — 218 chi nhánh đang có tìm được ngay sau khi cập nhật. Chỉ đổi cách tìm, không đụng tới dữ liệu, giao diện hay quyền
+
+- 12/08/2026 Toàn hệ thống - **Sắp xếp lại menu theo chức năng thay vì theo phòng**:
+    + **Trước đây menu cấp 1 là tên phòng.** Muốn mở *Đối chiếu ACH* phải biết trước nó thuộc Phòng Thanh toán; người mới hoặc người kiêm nhiệm nhiều mảng phải mò từng phòng
+    + Nay menu cấp 1 là **việc cần làm**:
+        - **Quản lý chứng từ** → Bàn giao chứng từ / Đóng chứng từ / Lưu trữ
+        - **Đối chiếu** → *Phòng Thanh toán* (Chấm 459901, Song phương, ACH, Đối chiếu CITAD cuối ngày, Đối soát chênh lệch CITAD cuối ngày) và *Phòng Swift* (Đối chiếu điện SWIFT)
+        - **Báo cáo** → *Phòng KSNB & HTVH* (Báo cáo hậu kiểm, Báo cáo bàn giao chứng từ) và *Phòng Tổng hợp* (Báo cáo dữ liệu thanh toán)
+        - **Nghỉ phép**, **Phân lịch trực**, **Danh sách CN TTQT** đứng riêng ngoài cùng, không còn nằm trong phòng nào
+    + Tên phòng **chỉ còn ở tầng giữa** của hai menu Đối chiếu và Báo cáo — nơi cùng một loại việc nhưng mỗi phòng làm một kiểu. Chỉ hiện phòng đang thực sự có tính năng
+    + **Quyền của mọi nhóm giữ nguyên 100%** — chỉ đổi cách sắp xếp, không đổi tên chức năng nào. Không ai bị mất hay được thêm quyền sau lần cập nhật này
+    + ⚠️ **Màn *Phân quyền theo nhóm* đổi bố cục theo menu mới.** Đường đi cũ trong các log bên dưới không còn đúng — ví dụ quyền *Chuyển trả chứng từ cho GDV* trước ở *Phòng KSNB & HTVH → Bàn giao chứng từ*, **nay ở *Quản lý chứng từ* → Bàn giao chứng từ**. Quyền vẫn còn nguyên, chỉ nằm ở thẻ khác
+    + Màn phân quyền có thêm nút **"Chọn tất cả" / "Bỏ chọn"** cạnh mỗi tên phòng. Nút này **chỉ tích các màn hình**, không tự tích các thao tác bên trong (tạo / xoá / xử lý file…) — muốn cấp thao tác vẫn phải tự tích, tránh lỡ tay cấp quyền chạy dữ liệu
+
+- 12/08/2026 Lưu trữ - Thêm tab **"In bìa hồ sơ"** để in bìa hồ sơ lưu trữ (mẫu M01/LHS) hàng loạt từ file Excel tra cứu:
+    + **Trước đây phải vào chương trình lưu trữ bấm in từng hồ sơ một.** 140 hồ sơ là 140 lần bấm, mỗi lần ra một file Word riêng
+    + Nay vào *Quản lý chứng từ → Lưu trữ → tab **In bìa hồ sơ***, nạp file Excel tra cứu (`LT_HS_TRACUU_*.xls`) xuất thẳng từ chương trình lưu trữ. Phần mềm đọc file, hiện bảng để soát lại, tích chọn hồ sơ cần in rồi tải về **một file Word — mỗi hồ sơ một trang**, in một lượt. Ai muốn từng file riêng thì bấm nút **Tải ZIP (mỗi hồ sơ 1 file)**
+    + Dữ liệu lấy từ đâu: **Mã vạch** = cột I (điền vào dòng *Ký hiệu thông tin* và dòng mã vạch); **dòng tiêu đề** = cột C; **Ngày mở** = ngày **đầu tiên** xuất hiện trong cột C (ví dụ *"Nhật ký chứng từ ngày 04/02/2025, 05/02/2025, 06/02/2025"* → ngày mở là **04/02/2025**); **Ngày công việc kết thúc** = cột F; **Số tờ** = cột G
+    + **Bìa in ra giống hệt bìa của chương trình lưu trữ.** Đã đối chiếu với 2 file bìa gốc do chương trình lưu trữ tự sinh (kèm trong file zip người dùng gửi) — chữ trên bìa trùng khít từng ký tự, kể cả hồ sơ gộp nhiều ngày. Mẫu Word không bị đụng tới định dạng, căn lề, cỡ chữ hay font nào
+    + ⚠️ **Máy in phải cài font "3 of 9 Barcode".** Không có font thì dòng mã vạch in ra thành chữ thường `*1000.P026.178074.1*` và **máy quét không đọc được**. Đây là yêu cầu sẵn có của mẫu bìa, không phải phát sinh mới — nhưng giờ in hàng loạt nên lỡ thiếu font là hỏng cả tập
+    + Dòng nào trong Excel mà tên hồ sơ **không có ngày** thì ô *Ngày mở* để trống, và phần mềm **báo cảnh báo vàng kèm số thứ tự dòng** ngay trên bảng để soát lại trước khi in
+    + Quyền: dùng chung quyền màn hình *Lưu trữ* (`menu.storage`), **không cần cấp thêm gì**
+
+- 12/08/2026 Nghỉ phép / Kỹ thuật - Sửa lỗi **hai thư mục "Phòng Tổng hợp" trùng tên** trong `templates/` làm mẫu đơn theo chức danh không được dùng:
+    + **Trong `templates/` đang có hai thư mục tên y hệt nhau là "Phòng Tổng hợp"** — nhìn trong Explorer thấy hai dòng giống hệt. Nguyên nhân: chữ có dấu tiếng Việt có hai cách lưu khác nhau bên trong máy (dạng dựng sẵn và dạng ghép dấu rời), Windows coi là hai tên khác nhau nên tạo ra hai thư mục
+    + **Hậu quả**: chương trình tìm mẫu đơn nghỉ phép trong thư mục **rỗng**, nên các **mẫu đơn riêng theo chức danh** (nhân viên / trưởng phòng / giám đốc / phó giám đốc) nếu đặt vào thư mục thật sẽ **không bao giờ được dùng** — hệ thống lặng lẽ quay về mẫu chung, không báo lỗi gì. Hiện thư mục đó đang rỗng nên chưa ai gặp, nhưng cứ bỏ mẫu riêng vào là dính ngay
+    + ⚠️ **Đính chính**: lần báo trước có ghi *"máy chỉ checkout từ git sẽ hỏng phiếu nghỉ phép"* — **không đúng**. In đơn nghỉ phép vẫn chạy bình thường vì có sẵn mẫu chung ở thư mục gốc để dùng thay. Lỗi thật chỉ ảnh hưởng mẫu riêng theo chức danh
+    + **Đã xử lý**: xoá thư mục thừa (bản rỗng, không có file nào, không nằm trong git), **giữ thư mục đang chứa dữ liệu** (`Báo cáo giao dịch chuyển tiền qua Swift`). Đồng thời sửa cách chương trình dò đường dẫn để khớp được cả hai cách lưu, không phụ thuộc thư mục được tạo kiểu nào
+    + ⚠️ **Khi thêm file mẫu mới**: **copy/paste vào thư mục đang có sẵn**, **đừng gõ tay tên thư mục** để tạo thư mục mới — gõ tay sẽ đẻ lại đúng thư mục trùng vừa xoá và lỗi quay lại y như cũ
+    + Không đổi giao diện, không đổi quyền, không cần thao tác gì sau khi cập nhật
+
 - 12/08/2026 Đối chiếu CITAD - Sửa lỗi lệch số liệu ngoại tệ do cắt xu USD/EUR:
     + **Lỗi thật, gây sai số liệu**: ô nhập số liệu (5 cổng, Payment, Napas, PSS-MDP, Ebanking) hiển thị số theo kiểu số nguyên — USD/EUR có phần xu (vd 2.954.592,79) bị **cắt mất phần xu khi hiển thị**, và chữ đã cắt này sau đó bị đọc ngược lại thành số liệu gốc, mất vĩnh viễn phần xu. Xác nhận thực tế: ngày 06/08/2026 lệch đúng 1 xu vì 3 khoản USD đều bị cắt trước khi cộng
     + Sửa để giữ nguyên phần xu khi hiển thị — áp dụng cho cả VNĐ (không đổi, luôn số nguyên) lẫn USD/EUR (giờ hiện đủ 2 chữ số thập phân nếu có)
@@ -28,43 +70,13 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
     + Nguyên nhân thật: hàm dò cột tiêu đề chỉ tìm trong `<thead>` hoặc đúng dòng đầu tiên của bảng, nhưng bảng thật của trang này không đặt tiêu đề cột theo 1 trong 2 kiểu đó — dò trượt dù cột vẫn tồn tại. Nay dò mọi thẻ tiêu đề trong bảng, không giới hạn vị trí
     + ⚠️ **Phải tải lại `.zip` và cài lại Extension** — vào `/doi_chieu_citad` → **Tải Extension**, giải nén, *Load unpacked* lại
 
-- 11/08/2026 Bàn giao chứng từ - Thêm nút **Trả lại** để hậu kiểm chủ động trả chứng từ về cho cán bộ:
-
-- 12/08/2026 Nghỉ phép / Kỹ thuật - Sửa lỗi **hai thư mục "Phòng Tổng hợp" trùng tên** trong `templates/` làm mẫu đơn theo chức danh không được dùng:
-    + **Trong `templates/` đang có hai thư mục tên y hệt nhau là "Phòng Tổng hợp"** — nhìn trong Explorer thấy hai dòng giống hệt. Nguyên nhân: chữ có dấu tiếng Việt có hai cách lưu khác nhau bên trong máy (dạng dựng sẵn và dạng ghép dấu rời), Windows coi là hai tên khác nhau nên tạo ra hai thư mục
-    + **Hậu quả**: chương trình tìm mẫu đơn nghỉ phép trong thư mục **rỗng**, nên các **mẫu đơn riêng theo chức danh** (nhân viên / trưởng phòng / giám đốc / phó giám đốc) nếu đặt vào thư mục thật sẽ **không bao giờ được dùng** — hệ thống lặng lẽ quay về mẫu chung, không báo lỗi gì. Hiện thư mục đó đang rỗng nên chưa ai gặp, nhưng cứ bỏ mẫu riêng vào là dính ngay
-    + ⚠️ **Đính chính**: lần báo trước có ghi *"máy chỉ checkout từ git sẽ hỏng phiếu nghỉ phép"* — **không đúng**. In đơn nghỉ phép vẫn chạy bình thường vì có sẵn mẫu chung ở thư mục gốc để dùng thay. Lỗi thật chỉ ảnh hưởng mẫu riêng theo chức danh
-    + **Đã xử lý**: xoá thư mục thừa (bản rỗng, không có file nào, không nằm trong git), **giữ thư mục đang chứa dữ liệu** (`Báo cáo giao dịch chuyển tiền qua Swift`). Đồng thời sửa cách chương trình dò đường dẫn để khớp được cả hai cách lưu, không phụ thuộc thư mục được tạo kiểu nào
-    + ⚠️ **Khi thêm file mẫu mới**: **copy/paste vào thư mục đang có sẵn**, **đừng gõ tay tên thư mục** để tạo thư mục mới — gõ tay sẽ đẻ lại đúng thư mục trùng vừa xoá và lỗi quay lại y như cũ
-    + Không đổi giao diện, không đổi quyền, không cần thao tác gì sau khi cập nhật
-
-- 12/08/2026 Lưu trữ - Thêm tab **"In bìa hồ sơ"** để in bìa hồ sơ lưu trữ (mẫu M01/LHS) hàng loạt từ file Excel tra cứu:
-    + **Trước đây phải vào chương trình lưu trữ bấm in từng hồ sơ một.** 140 hồ sơ là 140 lần bấm, mỗi lần ra một file Word riêng
-    + Nay vào *Quản lý chứng từ → Lưu trữ → tab **In bìa hồ sơ***, nạp file Excel tra cứu (`LT_HS_TRACUU_*.xls`) xuất thẳng từ chương trình lưu trữ. Phần mềm đọc file, hiện bảng để soát lại, tích chọn hồ sơ cần in rồi tải về **một file Word — mỗi hồ sơ một trang**, in một lượt. Ai muốn từng file riêng thì bấm nút **Tải ZIP (mỗi hồ sơ 1 file)**
-    + Dữ liệu lấy từ đâu: **Mã vạch** = cột I (điền vào dòng *Ký hiệu thông tin* và dòng mã vạch); **dòng tiêu đề** = cột C; **Ngày mở** = ngày **đầu tiên** xuất hiện trong cột C (ví dụ *"Nhật ký chứng từ ngày 04/02/2025, 05/02/2025, 06/02/2025"* → ngày mở là **04/02/2025**); **Ngày công việc kết thúc** = cột F; **Số tờ** = cột G
-    + **Bìa in ra giống hệt bìa của chương trình lưu trữ.** Đã đối chiếu với 2 file bìa gốc do chương trình lưu trữ tự sinh (kèm trong file zip người dùng gửi) — chữ trên bìa trùng khít từng ký tự, kể cả hồ sơ gộp nhiều ngày. Mẫu Word không bị đụng tới định dạng, căn lề, cỡ chữ hay font nào
-    + ⚠️ **Máy in phải cài font "3 of 9 Barcode".** Không có font thì dòng mã vạch in ra thành chữ thường `*1000.P026.178074.1*` và **máy quét không đọc được**. Đây là yêu cầu sẵn có của mẫu bìa, không phải phát sinh mới — nhưng giờ in hàng loạt nên lỡ thiếu font là hỏng cả tập
-    + Dòng nào trong Excel mà tên hồ sơ **không có ngày** thì ô *Ngày mở* để trống, và phần mềm **báo cảnh báo vàng kèm số thứ tự dòng** ngay trên bảng để soát lại trước khi in
-    + Quyền: dùng chung quyền màn hình *Lưu trữ* (`menu.storage`), **không cần cấp thêm gì**
-
-- 12/08/2026 Toàn hệ thống - **Sắp xếp lại menu theo chức năng thay vì theo phòng**:
-    + **Trước đây menu cấp 1 là tên phòng.** Muốn mở *Đối chiếu ACH* phải biết trước nó thuộc Phòng Thanh toán; người mới hoặc người kiêm nhiệm nhiều mảng phải mò từng phòng
-    + Nay menu cấp 1 là **việc cần làm**:
-        - **Quản lý chứng từ** → Bàn giao chứng từ / Đóng chứng từ / Lưu trữ
-        - **Đối chiếu** → *Phòng Thanh toán* (Chấm 459901, Song phương, ACH, Đối chiếu CITAD cuối ngày, Đối soát chênh lệch CITAD cuối ngày) và *Phòng Swift* (Đối chiếu điện SWIFT)
-        - **Báo cáo** → *Phòng KSNB & HTVH* (Báo cáo hậu kiểm, Báo cáo bàn giao chứng từ) và *Phòng Tổng hợp* (Báo cáo dữ liệu thanh toán)
-        - **Nghỉ phép**, **Phân lịch trực**, **Danh sách CN TTQT** đứng riêng ngoài cùng, không còn nằm trong phòng nào
-    + Tên phòng **chỉ còn ở tầng giữa** của hai menu Đối chiếu và Báo cáo — nơi cùng một loại việc nhưng mỗi phòng làm một kiểu. Chỉ hiện phòng đang thực sự có tính năng
-    + **Quyền của mọi nhóm giữ nguyên 100%** — chỉ đổi cách sắp xếp, không đổi tên chức năng nào. Không ai bị mất hay được thêm quyền sau lần cập nhật này
-    + ⚠️ **Màn *Phân quyền theo nhóm* đổi bố cục theo menu mới.** Đường đi cũ trong các log bên dưới không còn đúng — ví dụ quyền *Chuyển trả chứng từ cho GDV* trước ở *Phòng KSNB & HTVH → Bàn giao chứng từ*, **nay ở *Quản lý chứng từ* → Bàn giao chứng từ**. Quyền vẫn còn nguyên, chỉ nằm ở thẻ khác
-    + Màn phân quyền có thêm nút **"Chọn tất cả" / "Bỏ chọn"** cạnh mỗi tên phòng. Nút này **chỉ tích các màn hình**, không tự tích các thao tác bên trong (tạo / xoá / xử lý file…) — muốn cấp thao tác vẫn phải tự tích, tránh lỡ tay cấp quyền chạy dữ liệu
-
 - 11/08/2026 Bàn giao chứng từ - Thêm nút **Chuyển trả GDV** để hậu kiểm chủ động trả chứng từ về cho giao dịch viên:
     + **Trước đây chứng từ đã xác nhận chỉ ra khỏi kho được khi giao dịch viên chủ động xin mượn.** Hậu kiểm cầm chứng từ trên tay, thấy thiếu chữ ký hay sai sót, muốn trả về cho cán bộ thì không có nút nào — phải nhờ chính cán bộ đó vào bấm *Mượn lại* rồi mình duyệt, vòng vèo và sai bản chất sự việc
     + Nay ở **bảng lịch sử của từng ô** (bấm vào ô trong lưới), phần *THAO TÁC* có thêm nút tím **"↪ Chuyển trả GDV"**. Nút **chỉ hiện với ô đang ở trạng thái *Đã xác nhận*** — ô đang chờ, đang mượn hay bị từ chối đều không có
     + **Bắt buộc nhập lý do chuyển trả**, không nhập thì không bấm được. Lý do hiện ngay trong dòng lịch sử của ô, ai cũng đọc được
     + Bấm xong ô chuyển sang **Đang mượn** (ô tím). Từ đây cán bộ dùng nút *Bàn giao lại* như bình thường, hậu kiểm xác nhận lại là xong — giống hệt luồng mượn cũ
-    + ⚠️ **Phải cấp quyền thì nút mới hiện.** Vào *Phân quyền theo nhóm* → **Phòng KSNB & HTVH → Bàn giao chứng từ → "Chuyển trả chứng từ cho GDV"**, tích cho nhóm hậu kiểm / kiểm soát viên. Chưa tích thì không ai thấy nút, kể cả người đang có quyền xác nhận
+    + ⚠️ **Phải cấp quyền thì nút mới hiện.** Vào *Phân quyền theo nhóm* → **Quản lý chứng từ → Bàn giao chứng từ → "Chuyển trả chứng từ cho GDV"**, tích cho nhóm hậu kiểm / kiểm soát viên. Chưa tích thì không ai thấy nút, kể cả người đang có quyền xác nhận
+    + ℹ️ **12/08/2026**: nút này ban đầu tên là **"Trả lại"**, đã đổi thành **"Chuyển trả GDV"** cho rõ là trả về cho giao dịch viên. Chỉ đổi chữ hiển thị — cách dùng, quyền và các dòng lịch sử đã ghi trước đó giữ nguyên
     + **Giao dịch viên không được cấp quyền này** — hệ thống chặn ở máy chủ kể cả khi lỡ tích nhầm. Nếu cho, cán bộ sẽ tự rút được chứng từ đã chốt của chính mình mà không qua bước duyệt của hậu kiểm
     + ⚠️ **Ô đã đóng tập chứng từ vẫn chuyển trả được** — bìa tập đã in sẽ không còn khớp thực tế. Chức năng *Mượn lại* sẵn có cũng đang như vậy, nên lần này giữ nguyên cho nhất quán. Cần chặn thì báo để sửa cả hai chỗ cùng lúc
 
