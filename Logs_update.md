@@ -11,6 +11,8 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
     + **Chỉ tự xoá file `.py` cũ trong `backend/` và `frontend/`**. File loại khác — kể cả mẫu Word trong `templates/` — chỉ liệt kê ra để xem bằng mắt, không đụng tới, phòng trường hợp người dùng tự thêm mẫu trên máy chính
     + Đã áp dụng cho cả `deploy-test.bat` (hệ thống test cổng 9000) vì `deploy.bat` gọi tiếp file này
     + Áp dụng ngay khi deploy PR #31: 12 file của module ACH cũ sẽ được dọn tự động
+    + Gom 3 file script phụ trợ ở thư mục gốc (`deploy_env_check.py`, `deploy_don_file_thua.py`, `import_users_csv.py`) vào thư mục **`scripts/`** cho gốc dự án gọn lại. `run.py` và `init_db.py` **giữ nguyên ở gốc** — lệnh `python run.py` / `python init_db.py` không đổi
+    + Sửa kèm 1 lỗi có sẵn: `import_users_csv.py` trỏ database vào `ksnb.db` cạnh file thay vì `data/ksnb.db`, nên chạy là dừng ngay ở "Không tìm thấy database"
 
 - 13/08/2026 Chấm đối chiếu ACH - Tách quyền "được chạy" khỏi quyền "được xem", bỏ chế độ chọn thư mục trên máy chủ:
     + **Lỗi phân quyền có thật**: ô tick **"Chạy đối chiếu ACH"** ở màn phân quyền nhóm trước đây **không có tác dụng gì** — tick hay bỏ tick, ai vào được menu ACH là chạy được. Nay tick vào mới được bấm Chạy / Chạy tiếp / Dừng; người không tick vẫn xem tiến độ và tải kết quả bình thường

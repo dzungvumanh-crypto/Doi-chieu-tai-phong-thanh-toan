@@ -15,18 +15,19 @@ mở được bằng địa chỉ cũ, và gọi vào API đã bị gỡ. Admin 
 > Đã xảy ra thật: PR #31 viết lại module ACH, xoá `frontend/pages/doi_chieu_ach.py`
 > cùng 11 file khác. Không có bước này thì trang cũ vẫn sống trên máy chính.
 
-Phạm vi quét = đúng 3 thư mục `deploy.bat` chép: `backend`, `frontend`, `templates`.
+Phạm vi quét = đúng 4 thư mục `deploy.bat` chép: `backend`, `frontend`, `templates`,
+`scripts`.
 
-Chỉ **tự xoá** file `.py` thừa trong `backend/` và `frontend/`, vì đó luôn là mã
-nguồn cũ. Mọi thứ khác (kể cả file trong `templates/`) chỉ **liệt kê ra**, không
+Chỉ **tự xoá** file `.py` thừa trong `backend/`, `frontend/` và `scripts/`, vì đó luôn
+là mã nguồn cũ. Mọi thứ khác (kể cả file trong `templates/`) chỉ **liệt kê ra**, không
 đụng tới: mẫu Word có thể do người dùng tự thêm trên máy chính, xoá là mất thật.
 
 Bỏ qua `__pycache__` và `*.pyc` — `deploy.bat` vốn không chép chúng, và bước xoá
 `__pycache__` sau đó đã dọn rồi.
 
 Dùng:
-    python deploy_don_file_thua.py <thư-mục-nguồn> <thư-mục-đích> check
-    python deploy_don_file_thua.py <thư-mục-nguồn> <thư-mục-đích> fix
+    python scripts/deploy_don_file_thua.py <thư-mục-nguồn> <thư-mục-đích> check
+    python scripts/deploy_don_file_thua.py <thư-mục-nguồn> <thư-mục-đích> fix
 
 Mã thoát: 0 = không có gì phải xoá, 1 = có file thừa, 2 = lỗi.
 """
@@ -34,10 +35,10 @@ import os
 import sys
 
 # Đúng 3 cây thư mục `deploy.bat` chép sang bằng robocopy /E
-CAY_QUET = ("backend", "frontend", "templates")
+CAY_QUET = ("backend", "frontend", "templates", "scripts")
 
 # Chỉ tự xoá mã nguồn cũ, và chỉ trong 2 cây này
-CAY_DUOC_XOA = ("backend", "frontend")
+CAY_DUOC_XOA = ("backend", "frontend", "scripts")
 DUOI_DUOC_XOA = ".py"
 
 

@@ -39,7 +39,7 @@ if not defined PY goto envkhongpy
 
 :: --siet-bao-mat: chi may CHINH moi siet (BACKEND_HOST=127.0.0.1, ENV=production).
 :: deploy-test.bat KHONG truyen co nay -- he thong test can /docs de go loi.
-"%PY%" "%~dp0deploy_env_check.py" "%DEST%\.env" 8000 check --siet-bao-mat
+"%PY%" "%~dp0scripts\deploy_env_check.py" "%DEST%\.env" 8000 check --siet-bao-mat
 if errorlevel 2 goto envloi
 if errorlevel 1 goto envsua
 goto envxong
@@ -57,7 +57,7 @@ goto envxong
 echo.
 set /p FIXENV=    Sua lai .env cho dung? (Y/n):
 if /i "%FIXENV%"=="n" goto envboqua
-"%PY%" "%~dp0deploy_env_check.py" "%DEST%\.env" 8000 fix --siet-bao-mat
+"%PY%" "%~dp0scripts\deploy_env_check.py" "%DEST%\.env" 8000 fix --siet-bao-mat
 goto envxong
 
 :envboqua
@@ -73,8 +73,9 @@ robocopy "%~dp0backend"    "%DEST%\backend"    /E /XD __pycache__ /XF *.pyc /NFL
 echo [3/8] Copy frontend...
 robocopy "%~dp0frontend"   "%DEST%\frontend"   /E /XD __pycache__ /XF *.pyc /NFL /NDL /NJH /NJS
 
-echo [4/8] Copy templates...
+echo [4/8] Copy templates + scripts...
 robocopy "%~dp0templates"  "%DEST%\templates"  /E /NFL /NDL /NJH /NJS
+robocopy "%~dp0scripts"    "%DEST%\scripts"    /E /XD __pycache__ /XF *.pyc /NFL /NDL /NJH /NJS
 
 echo [5/8] Copy file goc...
 copy /Y "%~dp0run.py"            "%DEST%\run.py"            >nul
@@ -82,15 +83,13 @@ copy /Y "%~dp0init_db.py"        "%DEST%\init_db.py"        >nul
 copy /Y "%~dp0requirements.txt"  "%DEST%\requirements.txt"  >nul
 if exist "%~dp0start.bat" copy /Y "%~dp0start.bat" "%DEST%\start.bat" >nul
 if exist "%~dp0Logs_update.md" copy /Y "%~dp0Logs_update.md" "%DEST%\Logs_update.md" >nul
-if exist "%~dp0deploy_env_check.py" copy /Y "%~dp0deploy_env_check.py" "%DEST%\deploy_env_check.py" >nul
-if exist "%~dp0deploy_don_file_thua.py" copy /Y "%~dp0deploy_don_file_thua.py" "%DEST%\deploy_don_file_thua.py" >nul
 
 echo [6/8] Do file thua tren may dich (code cu da bi xoa khoi du an)...
 :: robocopy /E chi them va ghi de, KHONG BAO GIO xoa. File .py da bo khoi du an
 :: van nam lai tren may dich -- va frontend/main.py nap trang bang cach QUET thu muc
-:: frontend/pages, nen mot trang da xoa van song o dia chi cu. Xem deploy_don_file_thua.py.
+:: frontend/pages, nen mot trang da xoa van song o dia chi cu. Xem scripts\deploy_don_file_thua.py.
 if not defined PY goto thuakhongpy
-"%PY%" "%~dp0deploy_don_file_thua.py" "%~dp0." "%DEST%" check
+"%PY%" "%~dp0scripts\deploy_don_file_thua.py" "%~dp0." "%DEST%" check
 if errorlevel 2 goto thualoi
 if errorlevel 1 goto thuahoi
 goto thuaxong
@@ -99,7 +98,7 @@ goto thuaxong
 echo.
 set /p XOATHUA=    Xoa cac file .py cu nay tren may dich? (Y/n): 
 if /i "%XOATHUA%"=="n" goto thuaboqua
-"%PY%" "%~dp0deploy_don_file_thua.py" "%~dp0." "%DEST%" fix
+"%PY%" "%~dp0scripts\deploy_don_file_thua.py" "%~dp0." "%DEST%" fix
 goto thuaxong
 
 :thuaboqua

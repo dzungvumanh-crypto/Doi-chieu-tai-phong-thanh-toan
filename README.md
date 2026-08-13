@@ -205,8 +205,10 @@ Truy cập:
 │   └── *.truoc-utf8.log    # Phần log ghi trước bản vá UTF-8, run.py tự tách ra một lần
 ├── init_db.py               # Khởi tạo DB + seed data
 ├── run.py                   # Launcher (chạy backend + frontend song song; ép UTF-8 cho tiến trình con)
-├── deploy_env_check.py      # Kiểm/sửa .env máy đích khi deploy (deploy.bat gọi)
-├── deploy_don_file_thua.py  # Dò file .py cũ còn sót trên máy đích (deploy.bat gọi)
+├── scripts/                 # Script phụ trợ chạy tay hoặc do deploy.bat gọi
+│   ├── deploy_env_check.py      # Kiểm/sửa .env máy đích khi deploy
+│   ├── deploy_don_file_thua.py  # Dò file .py cũ còn sót trên máy đích
+│   └── import_users_csv.py      # Nạp data/user_tttt.csv vào bảng user_tttt
 └── requirements.txt
 ```
 
