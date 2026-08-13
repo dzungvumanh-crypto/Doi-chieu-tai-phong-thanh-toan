@@ -81,9 +81,11 @@ FEATURES: dict[str, str] = {
     # Đối chiếu Song phương — Phòng Thanh toán
     "menu.doi_chieu_song_phuong":    "Đối chiếu Song phương — Định tuyến lệnh IPCAS (menu)",
     "doi_chieu_song_phuong.process": "Xử lý file ZIP Đối chiếu Song phương",
-    # Đối chiếu ACH — Phòng Thanh toán
-    "menu.doi_chieu_ach":       "Đối chiếu ACH — GL02 ↔ MIS (menu)",
-    "doi_chieu_ach.process":    "Chạy đối chiếu ACH",
+    # Chấm đối chiếu ACH — Phòng Thanh toán. Mã đổi từ `menu.doi_chieu_ach` khi
+    # module `doi_chieu_ach` cũ được thay bằng `backend/services/ach/` — code ACH
+    # (backend/api/ach.py, frontend/pages/cham_ach.py) đòi đúng mã `menu.cham_ach`.
+    "menu.cham_ach":            "Chấm đối chiếu ACH (menu)",
+    "cham_ach.process":         "Chạy đối chiếu ACH",
     # Đối chiếu CITAD ↔ PaymentHub — Phòng Thanh toán
     # Nhãn phải khớp tên menu ở frontend/shared.py, phần mô tả sau dấu — mới
     # nói rõ đối chiếu/đối soát với hệ thống nào.
@@ -153,7 +155,7 @@ FEATURE_GROUPS: list[dict] = [
                         "code": "menu.doi_chieu_song_phuong",
                         "actions": ["doi_chieu_song_phuong.process"],
                     },
-                    {"code": "menu.doi_chieu_ach", "actions": ["doi_chieu_ach.process"]},
+                    {"code": "menu.cham_ach", "actions": ["cham_ach.process"]},
                     {"code": "menu.doi_chieu_citad", "actions": []},
                     {"code": "menu.doi_soat_citad", "actions": []},
                 ],

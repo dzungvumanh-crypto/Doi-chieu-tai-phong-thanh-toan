@@ -2,15 +2,21 @@
 Import data/user_tttt.csv vào bảng user_tttt của database.
 Upsert theo employee_code: insert mới hoặc cập nhật nếu đã tồn tại.
 
-Chạy: python import_users_csv.py
+Chạy: python scripts/import_users_csv.py
 """
 import csv
 import sqlite3
 import sys
 import os
 
-CSV_PATH = os.path.join(os.path.dirname(__file__), "data", "user_tttt.csv")
-DB_PATH  = os.path.join(os.path.dirname(__file__), "ksnb.db")
+# File nằm trong scripts/ nên gốc dự án là thư mục cha
+GOC = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+CSV_PATH = os.path.join(GOC, "data", "user_tttt.csv")
+# DB nằm ở data/ksnb.db (khớp DATABASE_URL trong backend/core/config.py). Trước đây
+# dòng này trỏ ksnb.db ngay cạnh file — sai đường dẫn nên script luôn dừng ở
+# "Không tìm thấy database"; sửa luôn khi chuyển file thay vì bê nguyên lỗi sang.
+DB_PATH  = os.path.join(GOC, "data", "ksnb.db")
 
 # Các cột integer — rỗng → NULL
 INT_COLS = {"is_active", "department_id", "annual_leave_days",

@@ -47,7 +47,7 @@ MENU_TREE = [
                 "items": [
                     ("cham_459901",           "Chấm 459901",            "task_alt"),
                     ("doi_chieu_song_phuong", "Đối chiếu Song phương",  "account_balance"),
-                    ("doi_chieu_ach",         "Đối chiếu ACH",          "sync_alt"),
+                    ("cham_ach",              "Chấm đối chiếu ACH",     "compare_arrows"),
                     ("doi_chieu_citad",       "Đối chiếu CITAD cuối ngày",        "account_balance_wallet"),
                     ("doi_soat_citad",        "Đối soát chênh lệch CITAD cuối ngày", "fact_check"),
                 ],

@@ -1,0 +1,45 @@
+# Chạy pytest cho mọi push và pull request vào develop.
+#
+# Vì sao windows-latest chứ không phải ubuntu (rẻ và nhanh hơn): dự án chỉ chạy
+# trên Windows. Tên thư mục template tiếng Việt ở dạng NFD và `tests/test_paths.py`
+# canh đúng hành vi không chuẩn hoá của Windows — chạy trên Linux là kiểm sai môi
+# trường thật, xanh hay đỏ đều không nói lên điều gì.
+#
+# Python 3.10 cố định: README ghi rõ máy mới cần 3.10.x, bản 3.11/3.12 buộc cài
+# lại toàn bộ thư viện.
+name: Tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [develop]
+
+jobs:
+  pytest:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+
+      - name: Cài thư viện
+        # pytest cài riêng, KHÔNG thêm vào requirements.txt: file đó được
+        # `deploy.bat` pip install trên máy chính, không cần bộ chạy test ở đó.
+        run: |
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Chạy pytest
+        env:
+          # backend/core/config.py raise ngay khi khởi động nếu thiếu biến này.
+          # Giá trị chỉ dùng cho lần chạy test, không phải khoá thật.
+          SECRET_KEY: ci-chi-dung-de-chay-test-khong-phai-khoa-that
+          # Tắt gọi NTP: runner không cần, và tránh test treo khi mạng chặn UDP 123.
+          NTP_ENABLED: "false"
+          PYTHONIOENCODING: utf-8
+        run: python -m pytest -q

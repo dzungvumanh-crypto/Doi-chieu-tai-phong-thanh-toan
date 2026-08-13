@@ -53,6 +53,195 @@
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
   <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-10</p>
 
+  <!-- S -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">S</span>
+      <span class="card-title">Chốt chặn <code>/api/fs/browse</code> + CI chạy pytest</span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Vì sao xoá code không đủ để giữ nó biến mất</p>
+      <p>Đã thử gộp thật <code>Cham_ILO1000</code> và <code>phan-lich-truc</code> vào nhánh này:
+      15 file xung đột, nhưng <code>backend/api/fs.py</code> <strong>tự thêm lại</strong> và
+      <code>registry.py</code> <strong>auto-merge sạch</strong> — không một dấu hiệu nào để người
+      gộp nhìn thấy endpoint không kiểm quyền vừa sống lại.</p>
+
+      <p class="label">Điều kiện test — cố ý không viết cứng 404</p>
+      <table>
+        <tr><th>Tình huống</th><th>Mã trả về</th><th>Test</th></tr>
+        <tr><td>Hiện tại — endpoint đã xoá</td><td>404</td><td>xanh</td></tr>
+        <tr><td>Dựng lại, <strong>có</strong> kiểm quyền</td><td>403</td><td>xanh</td></tr>
+        <tr><td>Dựng lại, <strong>không</strong> kiểm quyền</td><td><strong>200</strong></td><td><strong>đỏ</strong></td></tr>
+      </table>
+      <p>Nếu viết <code>== 404</code> thì người dựng lại <em>đúng cách</em> cũng bị đỏ, và phản xạ tự
+      nhiên là xoá test — mất luôn lớp bảo vệ. Dùng <code>in (403, 404)</code> nên chỉ đúng một cách
+      làm khiến nó đỏ.</p>
+      <p>Chạy bằng <code>client_chi_xem</code> (chuyên viên) chứ không phải <code>admin_client</code>:
+      admin bypass mọi feature check, đó chính là lý do 8 test cũ trong
+      <code>test_fs_browse_api.py</code> không hề phát hiện lỗ hổng.</p>
+
+      <p class="label">Đã thử ngược</p>
+      <p>Khôi phục <code>fs.py</code> từ lịch sử + đăng ký lại router → test đỏ, kèm thông báo tự giải
+      thích. Gỡ ra → xanh lại. Chốt chặn không thử ngược được thì không biết nó có kêu hay không.</p>
+
+      <p class="label">CI — vì sao <code>windows-latest</code> chứ không phải ubuntu</p>
+      <p>Ubuntu rẻ và nhanh hơn, nhưng dự án chỉ chạy trên Windows: tên thư mục template tiếng Việt ở
+      dạng NFD và <code>tests/test_paths.py</code> canh đúng hành vi không chuẩn hoá của Windows.
+      Chạy trên Linux là kiểm sai môi trường thật — xanh hay đỏ đều không nói lên điều gì.</p>
+      <p>Đã mô phỏng trước bằng worktree sạch, chỉ đặt <code>SECRET_KEY</code> và
+      <code>NTP_ENABLED=false</code> như CI (không có <code>.env</code>): 356/356 pass.</p>
+
+      <p class="label">Giới hạn còn lại</p>
+      <p>CI chỉ báo, <strong>không chặn merge</strong> — chưa bật branch protection. Người gộp vẫn có
+      thể merge khi test đỏ. Bật cần quyền admin repo, để chủ dự án quyết.</p>
+
+    </div>
+  </div>
+
+  <!-- R -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">R</span>
+      <span class="card-title">Gom tài liệu vào <code>docs/</code>, script phụ trợ vào <code>scripts/</code></span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Cái gì được ở lại gốc, và vì sao</p>
+      <table>
+        <tr><th>File</th><th>Neo bởi</th></tr>
+        <tr><td><code>README.md</code></td><td>GitHub chỉ hiển thị README ở gốc repo</td></tr>
+        <tr><td><code>CLAUDE.md</code></td><td>Claude Code đọc từ gốc project</td></tr>
+        <tr><td><code>Logs_update.md</code></td><td><code>deploy.bat</code> chép sang máy chính để người vận hành đọc ngay sau deploy</td></tr>
+        <tr><td><code>run.py</code>, <code>init_db.py</code></td><td>Lệnh khởi động nằm trong README, CLAUDE.md, CONTRIBUTING.md, <code>start.bat</code></td></tr>
+      </table>
+
+      <p class="label">Hai chỗ dễ hỏng âm thầm khi chuyển</p>
+      <p><code>CLAUDE.md</code> nạp <code>@DESIGN.md @SKILL.md</code> vào mọi phiên làm việc — đường dẫn
+      sai thì không báo lỗi, chỉ là quy ước dự án lặng lẽ biến mất khỏi ngữ cảnh. Đã đổi thành
+      <code>@docs/DESIGN.md @docs/SKILL.md</code>.</p>
+      <p>Hướng dẫn global bắt <code>Implementation-notes.html</code> nằm ở root project. Chính file
+      global đó cho phép project ghi đè, nên đã ghi rõ ngoại lệ trong <code>CLAUDE.md</code> — nếu
+      không, phiên sau sẽ tạo một file thứ hai ở gốc và hai bản ghi chú lệch nhau.</p>
+
+      <p class="label">Sửa kèm</p>
+      <p><code>import_users_csv.py</code> trỏ DB vào <code>ksnb.db</code> cạnh file thay vì
+      <code>data/ksnb.db</code> — script luôn dừng ở "Không tìm thấy database". Lỗi có sẵn, sửa luôn
+      vì dù sao cũng phải sửa 2 dòng đường dẫn khi chuyển file.</p>
+
+      <p class="label">Không đụng tới</p>
+      <p>Hàng chục comment trong mã nguồn ghi "xem Implementation-notes.html mục N" — gọi theo
+      <strong>tên file</strong>, không phải đường dẫn, nên vẫn tìm ra. Các card cũ trong chính file
+      này vẫn ghi đường dẫn gốc: đây là nhật ký theo thời điểm, sửa lại thành đường dẫn mới là làm
+      sai lịch sử.</p>
+
+    </div>
+  </div>
+
+  <!-- Q -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">Q</span>
+      <span class="card-title"><code>deploy.bat</code> không bao giờ xoá — trang đã xoá vẫn sống trên máy chính</span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Cơ chế hỏng</p>
+      <p>Cả <code>deploy.bat</code> lẫn <code>deploy-test.bat</code> chép bằng
+      <code>robocopy /E</code> — chỉ thêm và ghi đè, <strong>không xoá</strong>. File bỏ khỏi dự án
+      nằm lại vĩnh viễn trên máy đích. Với hầu hết file đó chỉ là rác, nhưng
+      <code>frontend/main.py</code> nạp trang bằng <code>pkgutil.iter_modules(frontend/pages)</code>:
+      <strong>mọi file .py trong thư mục đó đều tự thành một trang</strong>. Nên một trang đã xoá
+      vẫn mở được bằng địa chỉ cũ và gọi vào API đã bị gỡ.</p>
+      <p>Lớp phân quyền không cứu được — <code>api_client.has_feature()</code> trả
+      <code>True</code> cho <em>mọi</em> mã quyền khi role là admin, kể cả mã đã bị xoá khỏi danh
+      mục. Người thường bị đá về <code>/home</code>, còn admin vào thẳng trang hỏng.</p>
+      <p>Phát hiện khi rà PR #31: PR xoá <code>frontend/pages/doi_chieu_ach.py</code> cùng 11 file
+      khác, cả 12 file đó sẽ nằm lại trên máy chính sau deploy.</p>
+
+      <p class="label">Vì sao không dùng <code>robocopy /MIR</code></p>
+      <p><code>/MIR</code> xoá sạch mọi thứ không có ở nguồn. Máy đích có <code>data/</code>,
+      <code>.env</code>, <code>.venv</code> và có thể cả mẫu Word người dùng tự thêm — một cờ gõ sai
+      chỗ là mất dữ liệu thật. Chọn hướng dò rồi hỏi thay vì đồng bộ mù.</p>
+
+      <p class="label">Phạm vi tự xoá — cố ý hẹp</p>
+      <table>
+        <tr><th>Loại</th><th>Xử lý</th><th>Vì sao</th></tr>
+        <tr><td><code>.py</code> thừa trong <code>backend/</code>, <code>frontend/</code>, <code>scripts/</code></td><td>Liệt kê + hỏi + xoá</td><td>Luôn là mã nguồn cũ, và là loại duy nhất tự chạy được</td></tr>
+        <tr><td>Mọi thứ khác, kể cả trong <code>templates/</code></td><td><strong>Chỉ liệt kê</strong></td><td>Mẫu Word có thể do người dùng tự thêm trên máy chính — xoá là mất thật</td></tr>
+        <tr><td><code>__pycache__</code>, <code>*.pyc</code></td><td>Bỏ qua</td><td><code>deploy.bat</code> vốn không chép, và bước sau đó đã dọn</td></tr>
+      </table>
+      <p>Bước dò đặt <strong>trước</strong> bước xoá <code>__pycache__</code> — thứ tự này có chủ ý,
+      để <code>.pyc</code> mồ côi của file vừa xoá cũng bị dọn luôn trong cùng lần chạy.</p>
+
+      <p class="label">Điểm cần biết khi bảo trì</p>
+      <p><code>deploy-test.bat</code> được <code>deploy.bat</code> gọi ở cuối, nên đã vá cùng lúc —
+      nhưng file này <strong>nằm trong <code>.gitignore</code></strong> (dòng 34), bản vá không đi
+      theo git. Máy nào có <code>deploy-test.bat</code> riêng thì phải vá lại tay.</p>
+
+    </div>
+  </div>
+
+  <!-- P -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">P</span>
+      <span class="card-title">ACH: tách quyền chạy khỏi quyền xem, bỏ hẳn chế độ chạy từ thư mục máy chủ</span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Checkbox "Chạy đối chiếu ACH" từng là đồ trang trí</p>
+      <p><code>cham_ach.process</code> có trong danh mục quyền và hiện ra thành ô tick ở màn phân
+      quyền nhóm, nhưng <strong>không một chỗ nào trong code kiểm mã đó</strong> — cả 8 endpoint lẫn
+      trang đều chỉ hỏi <code>menu.cham_ach</code>. Người cấp quyền tick vào tưởng đã giới hạn, thực
+      tế ai vào được menu là chạy được. Tệ hơn không có ô tick, vì nó nói dối.</p>
+      <p>Nay chia đôi đúng như <code>cham459901</code> và <code>doi_chieu_song_phuong</code> vẫn làm:</p>
+      <table>
+        <tr><th>Mã quyền</th><th>Cho phép</th></tr>
+        <tr><td><code>menu.cham_ach</code></td><td><code>/validate</code>, <code>/poll</code>, <code>/download</code> — xem trang, kiểm tra bộ file, theo dõi tiến độ, tải kết quả</td></tr>
+        <tr><td><code>cham_ach.process</code></td><td><code>/start</code>, <code>/continue</code>, <code>/cancel</code> — khởi động, chạy tiếp sau Checkpoint, dừng</td></tr>
+      </table>
+      <p>Đặt <code>_XEM</code>/<code>_CHAY</code> thành hai biến module-level thay vì gọi
+      <code>require_feature(...)</code> lặp ở từng route — đọc một chỗ là biết endpoint nào thuộc
+      nhóm nào, và không thể gõ nhầm chuỗi ở route thứ tám.</p>
+
+      <p class="label">Vì sao bỏ chế độ chọn thư mục trên máy chủ</p>
+      <p>Chế độ cũ cho gõ/duyệt tới một thư mục rồi chạy thẳng từ đó, kèm tiện ích copy kết quả về
+      <code>&lt;thư mục nguồn&gt;/Output/</code>. Nhưng thư mục đó nằm trên <strong>máy chạy
+      backend</strong>, không phải máy người dùng — <code>GetLogicalDrives()</code> và
+      <code>os.scandir()</code> chạy trong tiến trình server. Người dùng ngồi máy khác không thể trỏ
+      vào ổ D của chính mình, và để phục vụ nó phải mở <code>GET /api/fs/browse</code> liệt kê cây
+      thư mục máy chủ cho <em>mọi tài khoản đã đăng nhập</em>, không giới hạn thư mục gốc.</p>
+      <p>Business Owner chốt 2026-08-13: chỉ giữ đường chọn file từ máy người dùng
+      (Ctrl+A / Shift để chọn cả bộ trong hộp thoại Windows).</p>
+
+      <p class="label">Đánh đổi đã chấp nhận</p>
+      <table>
+        <tr><th>Mất đi</th><th>Vì sao chấp nhận</th></tr>
+        <tr><td>Kết quả tự ghi vào <code>&lt;thư mục nguồn&gt;/Output/</code></td><td>Không còn đường dẫn nguồn nào để ghi vào — máy chủ không biết file đến từ thư mục nào trên máy người dùng. Tải kết quả về từ trang vẫn nguyên vẹn.</td></tr>
+        <tr><td>Chọn 1 thư mục thay vì ~8 file</td><td>Ctrl+A trong hộp thoại chọn file cho cùng số thao tác. Đổi lại bộ file 150–250&nbsp;MB phải truyền qua mạng mỗi lần chạy thay vì đọc tại chỗ — <strong>đây là cái giá thật của quyết định này</strong>, cần theo dõi khi chạy qua LAN chậm.</td></tr>
+      </table>
+
+      <p class="label">Giữ lại có chủ đích</p>
+      <p><code>_tim_file_ngoai_output()</code> trong <code>pipeline.py</code> vốn sinh ra để tránh
+      quét nhầm vào <code>Output/</code> của lần chạy trước. Chế độ thư mục đã bỏ nhưng
+      <strong>không xoá hàm này</strong>: người dùng vẫn có thể giải nén sẵn một cây thư mục rồi
+      chọn cả lên, và Điểm 4 dò file MIS thừa T-2 bằng pattern trùng tên với file kết quả — bỏ lớp
+      lọc này là mở lại đúng cái bẫy cũ.</p>
+
+      <p class="label">Nợ để lại cho nhánh khác</p>
+      <p><code>open_folder_picker()</code> và <code>backend/api/fs.py</code> bị xoá khỏi nhánh này.
+      Nhánh <code>Cham_ILO1000</code> (chưa gộp) có dùng cả hai — khi gộp sẽ gãy import và phải
+      quyết định lại: hoặc dựng lại có <code>require_feature</code> đàng hoàng, hoặc chuyển ILO1000
+      sang chọn file như ACH.</p>
+
+    </div>
+  </div>
+
   <!-- O -->
   <div class="card">
     <div class="card-header">
@@ -5758,7 +5947,122 @@ else:
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-12</footer>
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">69</span>
+      <span class="card-title">Hộp thoại chọn thư mục — ngõ cụt ở màn hình ổ đĩa</span>
+      <span class="badge badge-done">ĐÃ SỬA · 2026-08-12 · người dùng báo "bấm vào ổ C không được"</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Lỗi thật, không phải cảm giác chủ quan</div>
+      <p>Cơ chế cũ trong <code>open_folder_picker()</code>: bấm 1 lần = <b>chọn</b> (tô sáng),
+        bấm đúp = <b>mở</b>. Nhưng ở màn hình danh sách ổ đĩa (<code>state["path"] is None</code>)
+        nút "Chọn thư mục này" bị <code>disable</code>, còn thao tác chọn <b>không hề mở khoá nó</b>.</p>
+      <div class="caution">Hậu quả: người dùng bấm ổ C → dòng sáng lên → bấm nút xanh thì nút chết.
+        <b>Ngõ cụt hoàn toàn.</b> Lối thoát duy nhất là bấm đúp — thao tác không ai đoán ra trên
+        trang web, nơi mọi thứ vốn chỉ cần bấm 1 lần.</div>
+
+      <div class="label">Sửa: một quy tắc duy nhất, không ngoại lệ</div>
+      <table>
+        <tr><th>Trước</th><th>Sau</th></tr>
+        <tr><td>Bấm 1 lần = chọn (tô sáng)<br>Bấm đúp = mở<br>Nút xanh = xác nhận dòng tô sáng</td>
+            <td><b>Bấm 1 lần = đi vào thư mục</b><br>Không còn bấm đúp<br>Nút xanh = luôn xác nhận
+              <b>thư mục đang mở</b>, tên hiện ngay cạnh nút ("Đang ở: …")</td></tr>
+      </table>
+      <p>Bỏ hẳn <code>state["selected"]</code>. Ở màn hình ổ đĩa nút xanh vẫn khoá (đúng — "Máy tính"
+        không phải thư mục) nhưng nay <b>nói rõ lý do</b>: "Hãy bấm vào một ổ đĩa để mở."</p>
+
+      <div class="label">Hai lối tắt cho người dùng hằng ngày</div>
+      <table>
+        <tr><th>Lối tắt</th><th>Vì sao</th></tr>
+        <tr><td>Ô <b>dán đường dẫn</b> + Enter</td>
+            <td>Nhanh nhất khi đã biết thư mục ở đâu. Tự bỏ dấu nháy kép do Windows
+              "Copy as path" thêm vào, và dán nhầm đường dẫn một <b>file</b> thì mở thư mục chứa nó
+              (<code>_list_dir()</code>) thay vì báo lỗi bế tắc.</td></tr>
+        <tr><td><b>Thư mục gần đây</b> (5 cái)</td>
+            <td>Lưu ở <code>app.storage.user</code>, riêng từng người đăng nhập — mỗi người đối chiếu
+              quen chạy trên một nhóm thư mục cố định, ngày nào cũng lặp lại.</td></tr>
+      </table>
+      <p>"Máy tính" đổi từ <code>ui.label</code> chữ nhỏ thành <code>ui.button</code> có biểu tượng —
+        trước đây nó nằm trong thanh breadcrumb <code>flex-nowrap overflow-x-auto</code> nên đường dẫn
+        sâu là <b>trôi ra ngoài màn hình, không bấm tới được</b>. Vùng bấm mỗi dòng tăng
+        <code>py-2</code> → <code>py-3</code>.</p>
+
+      <div class="label">Phát hiện phụ — test bị bỏ quên khi tách nhánh</div>
+      <p><code>backend/api/fs.py</code> đã được mang sang nhánh <code>ach-module</code> nhưng
+        <code>tests/test_fs_browse_api.py</code> thì <b>không</b>. Đã bổ sung (8 test cũ + 2 test mới cho
+        đường dẫn file và đường dẫn bọc nháy kép). Tổng 355 test pass.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">70</span>
+      <span class="card-title">Đổi mã quyền ACH khi thay module — và vì sao lần này không cần migration</span>
+      <span class="badge badge-done">ĐÃ LÀM · 2026-08-13 · gộp develop vào nhánh ach-module</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Vấn đề</div>
+      <p>Module ACH viết lại đòi mã quyền <code>menu.cham_ach</code> (8 endpoint trong
+        <code>backend/api/ach.py</code> và <code>frontend/pages/cham_ach.py</code>), nhưng danh mục
+        <code>backend/core/features.py</code> vẫn khai mã cũ <code>menu.doi_chieu_ach</code> trỏ vào module
+        đã bị xoá.</p>
+      <div class="caution">Hậu quả: <b>người không phải admin không bao giờ được cấp quyền vào ACH</b> —
+        mã <code>menu.cham_ach</code> không có trong danh mục nên không hiện ở màn Phân quyền, không ai
+        tick được. Admin thì vẫn vào bình thường vì <code>require_feature()</code> cho admin đi thẳng, nên
+        lỗi này <b>ẩn hoàn toàn</b> với người test bằng tài khoản admin.</div>
+
+      <div class="label">Vì sao phải sửa ngay, không hoãn được</div>
+      <p>Commit <code>76c96e8</code> trên develop (<i>refactor(menu): gom menu theo chức năng</i>) đổi
+        <code>DEPARTMENTS</code> → <code>MENU_TREE</code> và nêu rõ ràng buộc: <b>FEATURE_GROUPS phải soi
+        gương cây menu</b>, nếu không hai màn hình sẽ nói hai chuyện khác nhau. Sau khi gộp, menu hiện
+        "Chấm đối chiếu ACH" còn màn Phân quyền hiện "Đối chiếu ACH — GL02 ↔ MIS" — đúng cái mâu thuẫn
+        commit đó cảnh báo.</p>
+
+      <div class="label">Vì sao KHÔNG cần migration dữ liệu</div>
+      <p>Cũng commit <code>76c96e8</code> dặn: "đổi mã sẽ mất sạch quyền đã gán trong
+        <code>group_features</code>". Cảnh báo đúng về nguyên tắc, nhưng <b>không áp dụng ở đây</b> — đã
+        truy vấn DB thật trước khi đổi:</p>
+      <table>
+        <tr><th>Bảng</th><th>Số bản ghi</th></tr>
+        <tr><td><code>user_groups</code></td><td>0</td></tr>
+        <tr><td><code>group_features</code></td><td>0</td></tr>
+      </table>
+      <p>Chưa có nhóm quyền nào được lập nên đổi mã không làm ai mất quyền. <b>Kiểm tra bằng số liệu trước
+        khi kết luận</b>, thay vì viết migration phòng xa cho một bảng rỗng.</p>
+
+      <div class="label">Phạm vi đổi</div>
+      <table>
+        <tr><th>File</th><th>Đổi gì</th></tr>
+        <tr><td><code>backend/core/features.py</code></td>
+            <td><code>menu.doi_chieu_ach</code> → <code>menu.cham_ach</code>,
+                <code>doi_chieu_ach.process</code> → <code>cham_ach.process</code>, ở cả danh mục lẫn
+                FEATURE_GROUPS. Nhãn bỏ hậu tố tên phòng theo quy ước mới của <code>76c96e8</code>.</td></tr>
+        <tr><td><code>backend/services/audit_labels.py</code></td>
+            <td>Nhãn nhật ký trỏ endpoint cũ <code>/api/doi_chieu_ach/process</code> (không còn tồn tại) →
+                4 endpoint thật của module mới; prefix fallback đổi sang <code>/api/ach</code>.</td></tr>
+        <tr><td><code>README.md</code></td><td>Dòng ghi mã phân quyền ACH.</td></tr>
+      </table>
+
+      <div class="label">Ghi chú khi gộp develop</div>
+      <p><code>frontend/shared.py</code> <b>git tự gộp được</b> dù develop vừa đổi cấu trúc menu — đã kiểm
+        chứng kết quả gộp đúng về nghĩa (mục <code>cham_ach</code> nằm đúng nhóm <i>Đối chiếu → Phòng Thanh
+        toán</i>, <code>open_folder_picker</code> còn nguyên, nhãn CITAD của develop không bị đụng), không
+        sửa tay. Chỉ <code>Implementation-notes.html</code> xung đột vì hai nhánh cùng thêm thẻ trước
+        <code>&lt;footer&gt;</code> — giữ cả hai bên, đánh lại số thẻ ACH cho nối tiếp dãy của develop.</p>
+
+      <div class="label">Kiểm chứng</div>
+      <p>273 test ACH + fs pass. Gọi thật <code>GET /api/groups/features/all</code>: có
+        <code>menu.cham_ach</code>, có nhãn "Chấm đối chiếu ACH", <b>không còn</b>
+        <code>menu.doi_chieu_ach</code>. Toàn bộ 57 mã trong FEATURE_GROUPS đều tồn tại trong danh mục
+        FEATURES.</p>
+      <div class="caution">10 test <code>tests/test_archive_cover.py</code> fail — <b>không phải do lần gộp
+        này</b>. Đã dựng worktree sạch ở <code>origin/develop</code> chạy lại: fail y hệt 10 test. Nguyên
+        nhân là môi trường: <code>openpyxl 3.1.2</code> trong khi pandas đòi <code>&ge; 3.1.5</code>.</div>
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-13</footer>
 </div>
 </body>
 </html>

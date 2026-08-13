@@ -4,6 +4,28 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 13/08/2026 Kiểm thử tự động - Thêm CI chạy pytest trên GitHub + chốt chặn rò thư mục máy chủ:
+    + **Từ nay mỗi lần push hoặc mở PR, GitHub tự chạy toàn bộ 357 test** trên máy Windows sạch. Trước đây chỉ chạy tay trên máy người sửa — quên chạy là lỗi lọt qua mà không ai biết
+    + Thêm **chốt chặn** cho `/api/fs/browse` (API liệt kê cây thư mục máy chủ, đã gỡ ở bản này): nhánh `Cham_ILO1000` chưa gộp vẫn còn API đó và **không kiểm quyền**, ai đăng nhập cũng duyệt được ổ đĩa máy chủ. Khi gộp nhánh đó vào, hai file liên quan hoà nhau **không báo xung đột** — không ai có cơ hội thấy nó quay lại. Test này là dấu hiệu duy nhất
+    + Đã thử ngược: dựng lại đúng kịch bản lỗ hổng quay lại → test **đỏ** kèm thông báo giải thích tại chỗ. Gỡ ra → **xanh** lại
+
+- 13/08/2026 Deploy - Tự dò và dọn file code cũ còn sót trên máy đích:
+    + **Vấn đề âm thầm từ trước tới nay**: `deploy.bat` chép bằng `robocopy /E` — chỉ thêm và ghi đè, **không bao giờ xoá**. File nào bị xoá khỏi dự án vẫn nằm lại vĩnh viễn trên máy chính
+    + Nguy hiểm nhất là **trang giao diện**: chương trình nạp trang bằng cách quét thư mục `frontend/pages`, file nào còn trong đó là còn thành một trang. Một trang đã xoá vẫn mở được bằng địa chỉ cũ (bookmark, lịch sử trình duyệt) rồi vỡ vì API phía sau đã bị gỡ. Admin bị nặng nhất vì luôn qua mọi kiểm tra quyền
+    + Nay `deploy.bat` thêm **bước 6/8**: tự so danh sách file giữa máy nguồn và máy đích, liệt kê thứ chỉ có ở máy đích, **hỏi trước khi xoá**. Trả lời `n` là giữ nguyên
+    + **Chỉ tự xoá file `.py` cũ trong `backend/` và `frontend/`**. File loại khác — kể cả mẫu Word trong `templates/` — chỉ liệt kê ra để xem bằng mắt, không đụng tới, phòng trường hợp người dùng tự thêm mẫu trên máy chính
+    + Đã áp dụng cho cả `deploy-test.bat` (hệ thống test cổng 9000) vì `deploy.bat` gọi tiếp file này
+    + Áp dụng ngay khi deploy PR #31: 12 file của module ACH cũ sẽ được dọn tự động
+    + Gom 3 file script phụ trợ ở thư mục gốc (`deploy_env_check.py`, `deploy_don_file_thua.py`, `import_users_csv.py`) vào thư mục **`scripts/`** cho gốc dự án gọn lại. `run.py` và `init_db.py` **giữ nguyên ở gốc** — lệnh `python run.py` / `python init_db.py` không đổi
+    + Sửa kèm 1 lỗi có sẵn: `import_users_csv.py` trỏ database vào `ksnb.db` cạnh file thay vì `data/ksnb.db`, nên chạy là dừng ngay ở "Không tìm thấy database"
+    + Gom tiếp tài liệu vào thư mục **`docs/`** (`DESIGN.md`, `SKILL.md`, `CONTRIBUTING.md`, `Implementation-notes.html/.md`, spec SWIFT). Ba file ở lại gốc: `README.md` (GitHub đọc từ gốc), `CLAUDE.md` (công cụ đọc từ gốc), **`Logs_update.md`** (deploy.bat chép sang máy chính để đọc ngay)
+
+- 13/08/2026 Chấm đối chiếu ACH - Tách quyền "được chạy" khỏi quyền "được xem", bỏ chế độ chọn thư mục trên máy chủ:
+    + **Lỗi phân quyền có thật**: ô tick **"Chạy đối chiếu ACH"** ở màn phân quyền nhóm trước đây **không có tác dụng gì** — tick hay bỏ tick, ai vào được menu ACH là chạy được. Nay tick vào mới được bấm Chạy / Chạy tiếp / Dừng; người không tick vẫn xem tiến độ và tải kết quả bình thường
+    + **Bỏ nút "Chọn thư mục"**: nút này duyệt thư mục trên **máy chủ** chứ không phải máy người dùng — người ngồi máy khác không thể trỏ vào ổ đĩa của mình, và nó để lộ cây thư mục máy chủ cho mọi tài khoản đã đăng nhập. Nay chỉ còn một cách nạp dữ liệu: **mở thư mục trên máy mình, Ctrl+A (hoặc giữ Shift) chọn cả bộ file rồi kéo-thả / bấm Mở**
+    + ⚠️ **Thay đổi thói quen làm việc**: trước đây kết quả tự được ghi vào thư mục con `Output` ngay cạnh dữ liệu gốc. Nay **không còn** — phải bấm tải từng file kết quả từ trang về. Đổi lại bộ file (150–250 MB) được gửi lên qua mạng mỗi lần chạy, nếu đường truyền chậm sẽ thấy lâu hơn ở bước upload
+    + Đã chạy lại toàn bộ 356 test tự động, khởi động thật cả backend lẫn giao diện để xác nhận trang ACH không vỡ
+
 - 13/08/2026 Nghỉ phép - Sửa **màn hình trắng khi chưa có đơn nghỉ phép nào** (PR #32):
     + **Người dùng thật báo**: tài khoản Chuyên viên chưa tạo đơn nào, vào tab *Của tôi* chỉ thấy trơ một dòng chữ "Không có đơn nghỉ phép nào." — không khung bảng, không tiêu đề cột. Nhiều người tưởng phần mềm lỗi hoặc chưa tải xong nên bấm F5 nhiều lần
     + Nay **khung bảng và tiêu đề cột luôn hiện** (STT, Ngày tạo, Loại, Trạng thái…), dòng "Không có đơn nghỉ phép nào." nằm gọn bên trong khung — nhìn ra ngay là "chưa có đơn", không phải "hỏng". Áp dụng cho mọi bảng đơn phép: *Của tôi*, *Chờ duyệt*, *Phòng tôi*, và cả kết quả lọc/tìm kiếm ở Dashboard trả về 0 dòng

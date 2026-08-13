@@ -205,7 +205,17 @@ Truy cập:
 │   └── *.truoc-utf8.log    # Phần log ghi trước bản vá UTF-8, run.py tự tách ra một lần
 ├── init_db.py               # Khởi tạo DB + seed data
 ├── run.py                   # Launcher (chạy backend + frontend song song; ép UTF-8 cho tiến trình con)
-├── deploy_env_check.py      # Kiểm/sửa .env máy đích khi deploy (deploy.bat gọi)
+├── .github/workflows/       # CI — chạy pytest mỗi lần push / mở PR
+├── docs/                    # Tài liệu dự án (README.md, CLAUDE.md, Logs_update.md ở gốc)
+│   ├── DESIGN.md                # Patterns & business logic
+│   ├── SKILL.md                 # Nguyên tắc & quy ước làm việc
+│   ├── CONTRIBUTING.md          # Quy tắc đóng góp
+│   ├── Implementation-notes.html # Ghi chú kỹ thuật, quyết định thiết kế (bản đang dùng)
+│   └── Implementation-notes.md   # Bản cũ, giữ làm lịch sử
+├── scripts/                 # Script phụ trợ chạy tay hoặc do deploy.bat gọi
+│   ├── deploy_env_check.py      # Kiểm/sửa .env máy đích khi deploy
+│   ├── deploy_don_file_thua.py  # Dò file .py cũ còn sót trên máy đích
+│   └── import_users_csv.py      # Nạp data/user_tttt.csv vào bảng user_tttt
 └── requirements.txt
 ```
 
@@ -326,10 +336,11 @@ Truy cập:
 
 ### Module Đối chiếu ACH
 - Đối chiếu GL02 (IPCAS/NPO) với MIS PaymentHub theo phiên ACH, cả hai chiều ĐI và ĐẾN
-- Menu: **Đối chiếu → Phòng Thanh toán → Đối chiếu ACH**
-- Upload bộ file 1 ngày: `GL02*.zip`, file GW `.xlsx`, 2 file `*_DI_*.zip`, 2 file `*_DEN_*.zip`,
-  PDF sao kê ACH (lấy số session + suy ngày đối chiếu). Mỗi file gửi lên ngay khi chọn, ghi thẳng
-  ra đĩa theo khối 1 MB — không giữ cả bộ 150–250 MB trong RAM
+- Menu: **Đối chiếu → Phòng Thanh toán → Chấm đối chiếu ACH**
+- Chọn bộ file 1 ngày **từ máy người dùng**: `GL02*.zip`, file GW `.xlsx`, 2 file `*_DI_*.zip`,
+  2 file `*_DEN_*.zip`, PDF sao kê ACH (lấy số session + suy ngày đối chiếu). Mở thư mục chứa
+  bộ file rồi Ctrl+A để chọn cả loạt. Mỗi file gửi lên ngay khi chọn, ghi thẳng ra đĩa theo khối
+  1 MB — không giữ cả bộ 150–250 MB trong RAM
 - Ngày đối chiếu suy từ tên file PDF (`ACH_YYYYMMDD_..._NRT_<session>_...` → ngày T-1), nhập tay được;
   không suy được thì **báo lỗi**, không lặng lẽ dùng ngày khác
 - Khớp theo số lượng cặp khoá: chiều ĐI `TRBRCD+SO_TRACE+CRAMOUNT` ↔ `CHI_NHANH+SO_TRACE+SO_TIEN`,
@@ -339,8 +350,9 @@ Truy cập:
   CAP_CN_TIEN, RAW_GW); sheet trên **15.000 dòng** tự tách ra CSV riêng, tải lẻ hoặc tải gộp ZIP
 - Chạy nền trên **1 luồng riêng** (`max_workers=1`) — job thứ hai xếp hàng; theo dõi tiến độ + nhật ký
   bằng poll, có nút Dừng (dừng ở mốc kiểm tra giữa các pha, không tức thì)
-- Kết quả giữ **4 giờ** trong `data/temp_doi_chieu_ach/` rồi tự xoá; không lưu lịch sử vào DB
-- Phân quyền riêng theo nhóm (`menu.doi_chieu_ach`, `doi_chieu_ach.process`)
+- Kết quả giữ **4 giờ** trong `data/temp_ach/` rồi tự xoá; không lưu lịch sử vào DB
+- Phân quyền riêng theo nhóm: `menu.cham_ach` = xem trang / kiểm tra file / tải kết quả,
+  `cham_ach.process` = được bấm Chạy, Chạy tiếp sau Checkpoint và Dừng
 
 ### Module Đối chiếu CITAD ↔ PaymentHub
 - Đối chiếu số liệu tổng CITAD (NHNN) với PaymentHub (Agribank) theo từng ngày
@@ -499,7 +511,7 @@ Chỉ thêm `ALLOWED_ORIGINS=http://192.168.1.100:8080` khi thật sự phải �
 cho một hệ thống khác gọi thẳng API — nhiều giá trị cách nhau dấu phẩy.
 
 Backend tự **cảnh báo trong log khi khởi động** nếu đang lắng nghe trên mạng mà hai biến này chưa đặt đúng.
-`deploy.bat` cũng kiểm `.env` của máy đích ở bước 1/7 và hỏi trước khi sửa, nên không phải nhớ thủ công.
+`deploy.bat` cũng kiểm `.env` của máy đích ở bước 1/8 và hỏi trước khi sửa, nên không phải nhớ thủ công.
 
 ---
 
