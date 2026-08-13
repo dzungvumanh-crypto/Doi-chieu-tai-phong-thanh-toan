@@ -27,6 +27,19 @@ async function loadConfig() {
   }
 }
 
+// Trước đây chỉ đọc cấu hình 1 lần lúc trang CITAD tải xong (xem IIFE cuối
+// file) — mở nhiều tab CITAD RỒI MỚI bấm "Tạo mã kết nối mới" ở /doi_chieu_citad
+// (thứ tự rất hay gặp khi mở nhiều tab ẩn danh để đăng nhập nhiều cổng) thì
+// các tab đã mở từ trước bị kẹt với SERVER/token rỗng hoặc đã bị thu hồi mãi
+// mãi, phải tự tay reload từng tab mới nhận cấu hình mới. chrome.storage.local
+// dùng chung cho mọi tab (spanning, không tách incognito — xem README) nên chỉ
+// cần lắng nghe onChanged là mọi tab đang mở tự cập nhật ngay, không cần reload.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local') return;
+  if ('server' in changes) SERVER = changes.server.newValue || '';
+  if ('extensionToken' in changes) EXTENSION_TOKEN = changes.extensionToken.newValue || '';
+});
+
 const CONG_MAP = {
   'CITAD001':  '1',
   'CITAD':     '9',
@@ -277,11 +290,15 @@ async function autoSaveIfNew() {
       );
       _saveRetry.resetBackoff();
     } else {
-      showToast(`✗ Không kết nối server (${SERVER})`, '#ef4444', 4000);
-      // permanent (chưa cấu hình / mã kết nối sai-bị thu hồi): KHÔNG tự thử
-      // lại — chỉ nút thủ công mới xoá được khoá. Lỗi có thể tạm thời (mạng,
-      // server lỗi): lùi thời gian thử lại tăng dần thay vì thử lại ngay.
+      // permanent (chưa cấu hình / mã kết nối sai-bị thu hồi): saveToServer()
+      // đã tự hiện đúng toast lý do rồi (dòng '⚠️ Chưa cấu hình Extension...'
+      // hoặc lỗi 403) — KHÔNG đè thêm toast chung ở đây, nếu không
+      // showToast() (xoá toast cũ theo id cố định trước khi vẽ toast mới) sẽ
+      // luôn làm mất thông báo đúng, thay vào đó hiện "Không kết nối server
+      // ()" vô nghĩa (SERVER rỗng chính là lý do gây permanent). Chỉ hiện
+      // toast chung này khi lỗi THẬT là tạm thời (mạng, server lỗi).
       if (!permanent) {
+        showToast(`✗ Không kết nối server (${SERVER})`, '#ef4444', 4000);
         _saveRetry.scheduleRetry();
       }
     }
