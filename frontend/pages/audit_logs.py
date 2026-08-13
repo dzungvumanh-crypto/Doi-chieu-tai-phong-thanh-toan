@@ -109,19 +109,27 @@ async def audit_logs_page():
                 _handle_api_error(e)
 
         with toolbar_row:
-            for m, lbl in [("", "Tất cả"), ("POST", "Ghi/Thêm"), ("PUT", "Cập nhật"), ("DELETE", "Xóa")]:
+            # Nhãn nút = việc người dùng thấy, không phải tên phương thức HTTP.
+            # "Cập nhật" cũ bị hiểu nhầm là nút làm mới trang → đổi thành "Sửa".
+            ui.label("Lọc:").classes("text-sm text-gray-500")
+            for m, lbl, tip in [
+                ("",       "Tất cả",   "Xem mọi thao tác"),
+                ("POST",   "Thêm mới", "Chỉ xem thao tác tạo mới dữ liệu"),
+                ("PUT",    "Sửa",      "Chỉ xem thao tác sửa dữ liệu đã có"),
+                ("DELETE", "Xóa",      "Chỉ xem thao tác xóa dữ liệu"),
+            ]:
                 ui.button(lbl,
                           on_click=lambda mm=m: asyncio.ensure_future(_load(method=mm, page=1))).classes(
-                    "text-sm bg-gray-100 text-gray-700 hover:bg-gray-200")
+                    "text-sm bg-gray-100 text-gray-700 hover:bg-gray-200").tooltip(tip)
             search_in = ui.input(placeholder="Tìm người / đường dẫn...").props("dense outlined clearable").classes("w-64")
             search_in.on("keydown.enter",
                          lambda: asyncio.ensure_future(_load(q=search_in.value or "", page=1)))
             ui.button("Tìm", icon="search",
                       on_click=lambda: asyncio.ensure_future(_load(q=search_in.value or "", page=1))).classes(
                 "text-sm bg-gray-700 text-white")
-            ui.button("↻", icon="refresh",
+            ui.button("Làm mới", icon="refresh",
                       on_click=lambda: asyncio.ensure_future(_load(page=1))).classes(
-                "text-sm bg-gray-700 text-white")
+                "text-sm bg-gray-700 text-white").tooltip("Tải lại danh sách, giữ nguyên bộ lọc")
             ui.button("Xuất Excel", icon="download",
                       on_click=_export).classes(
                 "text-sm bg-green-700 text-white").tooltip("Tải Excel toàn bộ nhật ký (theo bộ lọc hiện tại)")

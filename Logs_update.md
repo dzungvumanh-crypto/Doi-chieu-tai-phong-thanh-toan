@@ -4,6 +4,13 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 13/08/2026 Nhật ký hệ thống - Đổi tên nút cho dễ hiểu, hết cảnh **bấm nút tưởng làm mới hoá ra lại lọc mất log**:
+    + **Người dùng thật báo**: "ấn *Cập nhật* thì tự ẩn một số log". Thực ra **không log nào bị ẩn hay bị xoá** — nút *Cập nhật* là **nút lọc**, nghĩa là "chỉ cho tôi xem những thao tác sửa dữ liệu". Bấm vào thì mọi dòng thêm mới / xoá đều tạm ẩn đi, nhìn như danh sách bị mất bớt. Bấm *Tất cả* là hiện lại đủ
+    + Nguyên nhân là cách đặt tên: nút làm mới trang lúc đó **chỉ có ký hiệu mũi tên tròn `↻`, không có chữ**, trong khi nút lọc lại mang đúng cái tên người ta quen hiểu là "tải lại"
+    + Nay đổi lại cho khỏi nhầm: **`Cập nhật` → `Sửa`**, **`Ghi/Thêm` → `Thêm mới`**, **`↻` → `Làm mới`** (có chữ, giống hệt màn *Lịch sử lỗi & cảnh báo* — trước đây hai màn cùng chức năng lại ghi hai kiểu). Thêm chữ **"Lọc:"** đứng trước nhóm nút lọc và chú thích hiện ra khi rê chuột vào từng nút
+    + **Chỉ đổi chữ trên nút.** Không đổi quyền, không đụng dữ liệu, không đổi file Excel xuất ra. Đã chạy lại toàn bộ **357 test**
+    + ⚠️ **Còn tồn**: bộ lọc *Sửa* hiện vẫn bỏ sót một nhóm thao tác sửa — **huỷ đơn nghỉ phép, sửa ngày vào làm, sửa số ngày phép đã dùng, ngừng uỷ quyền, sửa chi nhánh TTQT, sửa lượt xem kho**. Sáu việc này **chỉ hiện khi chọn *Tất cả***, lọc kiểu nào cũng không thấy. Đợt này chỉ đổi tên nút nên chưa động vào; sẽ xử lý riêng
+
 - 13/08/2026 Rà soát kỹ thuật - Sửa lệch múi giờ khi dọn nhật ký, gọn lại danh sách thư viện:
     + **Nhật ký cũ bị giữ lâu hơn hạn đúng 7 tiếng**: hệ thống ghi thời điểm vào nhật ký theo **giờ Việt Nam**, nhưng lúc dọn nhật ký quá hạn lại đem so với **giờ quốc tế** (chậm hơn 7 tiếng) — như hai cái đồng hồ lệch nhau. Không mất dữ liệu, không sai số liệu, chỉ là nhật ký đăng nhập (hạn 30 ngày) và nhật ký thao tác (hạn 365 ngày) sống dai hơn hạn 7 tiếng rồi mới bị xoá. Nay cả hai dùng chung một đồng hồ
     + Đã soi và **cố ý giữ nguyên** phần phiên đăng nhập với phần khoá tài khoản khi nhập sai mật khẩu: hai chỗ đó tuy cũng chạy theo giờ quốc tế nhưng ghi và so **cùng một loại giờ** nên không lệch. Sửa ẩu cho "đồng bộ" sẽ khiến mọi phiên đang đăng nhập được gia hạn thêm 7 tiếng và mọi tài khoản đang bị khoá được mở sớm 7 tiếng
