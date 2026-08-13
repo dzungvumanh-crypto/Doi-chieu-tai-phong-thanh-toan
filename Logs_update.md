@@ -4,6 +4,13 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 13/08/2026 Rà soát kỹ thuật - Sửa lệch múi giờ khi dọn nhật ký, gọn lại danh sách thư viện:
+    + **Nhật ký cũ bị giữ lâu hơn hạn đúng 7 tiếng**: hệ thống ghi thời điểm vào nhật ký theo **giờ Việt Nam**, nhưng lúc dọn nhật ký quá hạn lại đem so với **giờ quốc tế** (chậm hơn 7 tiếng) — như hai cái đồng hồ lệch nhau. Không mất dữ liệu, không sai số liệu, chỉ là nhật ký đăng nhập (hạn 30 ngày) và nhật ký thao tác (hạn 365 ngày) sống dai hơn hạn 7 tiếng rồi mới bị xoá. Nay cả hai dùng chung một đồng hồ
+    + Đã soi và **cố ý giữ nguyên** phần phiên đăng nhập với phần khoá tài khoản khi nhập sai mật khẩu: hai chỗ đó tuy cũng chạy theo giờ quốc tế nhưng ghi và so **cùng một loại giờ** nên không lệch. Sửa ẩu cho "đồng bộ" sẽ khiến mọi phiên đang đăng nhập được gia hạn thêm 7 tiếng và mọi tài khoản đang bị khoá được mở sớm 7 tiếng
+    + **Gỡ thư viện `sqlalchemy`** khỏi danh sách cài đặt — không một dòng code nào dùng tới (dự án dùng SQL thuần), nhưng máy chính vẫn phải tải nó về mỗi lần danh sách thư viện thay đổi
+    + **Thêm `requirements-dev.txt`** cho máy lập trình: máy chính giữ nguyên, chỉ cài đúng thứ cần để chạy; bộ chạy test (`pytest`) tách sang file riêng. Trước đây `pytest` không nằm trong danh sách nào cả, nên người mới cài theo đúng hướng dẫn rồi chạy test sẽ báo thiếu thư viện
+    + Không đổi gì ở giao diện hay nghiệp vụ. Đã chạy lại toàn bộ **357 test**
+
 - 13/08/2026 Kiểm thử tự động - Thêm CI chạy pytest trên GitHub + chốt chặn rò thư mục máy chủ:
     + **Từ nay mỗi lần push hoặc mở PR, GitHub tự chạy toàn bộ 357 test** trên máy Windows sạch. Trước đây chỉ chạy tay trên máy người sửa — quên chạy là lỗi lọt qua mà không ai biết
     + Thêm **chốt chặn** cho `/api/fs/browse` (API liệt kê cây thư mục máy chủ, đã gỡ ở bản này): nhánh `Cham_ILO1000` chưa gộp vẫn còn API đó và **không kiểm quyền**, ai đăng nhập cũng duyệt được ổ đĩa máy chủ. Khi gộp nhánh đó vào, hai file liên quan hoà nhau **không báo xung đột** — không ai có cơ hội thấy nó quay lại. Test này là dấu hiệu duy nhất

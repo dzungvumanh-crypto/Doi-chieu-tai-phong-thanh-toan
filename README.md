@@ -19,6 +19,10 @@ venv\Scripts\activate
 source venv/bin/activate
 
 pip install -r requirements.txt
+
+# Máy phát triển (muốn chạy pytest) dùng file này thay cho dòng trên —
+# nó đã bao gồm toàn bộ requirements.txt, chỉ thêm pytest
+pip install -r requirements-dev.txt
 ```
 
 ### 3. Khởi tạo database
@@ -518,8 +522,14 @@ Backend tự **cảnh báo trong log khi khởi động** nếu đang lắng ngh
 ## Lệnh thường dùng
 
 ```bash
-# Cài thư viện
+# Cài thư viện (đúng những gì máy chính cần)
 pip install -r requirements.txt
+
+# Máy phát triển: thêm pytest (đã gồm sẵn requirements.txt)
+pip install -r requirements-dev.txt
+
+# Chạy test
+python -m pytest -q
 
 # Khởi tạo DB lần đầu
 python init_db.py
