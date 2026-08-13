@@ -4,6 +4,12 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 13/08/2026 Chấm đối chiếu ACH - Tách quyền "được chạy" khỏi quyền "được xem", bỏ chế độ chọn thư mục trên máy chủ:
+    + **Lỗi phân quyền có thật**: ô tick **"Chạy đối chiếu ACH"** ở màn phân quyền nhóm trước đây **không có tác dụng gì** — tick hay bỏ tick, ai vào được menu ACH là chạy được. Nay tick vào mới được bấm Chạy / Chạy tiếp / Dừng; người không tick vẫn xem tiến độ và tải kết quả bình thường
+    + **Bỏ nút "Chọn thư mục"**: nút này duyệt thư mục trên **máy chủ** chứ không phải máy người dùng — người ngồi máy khác không thể trỏ vào ổ đĩa của mình, và nó để lộ cây thư mục máy chủ cho mọi tài khoản đã đăng nhập. Nay chỉ còn một cách nạp dữ liệu: **mở thư mục trên máy mình, Ctrl+A (hoặc giữ Shift) chọn cả bộ file rồi kéo-thả / bấm Mở**
+    + ⚠️ **Thay đổi thói quen làm việc**: trước đây kết quả tự được ghi vào thư mục con `Output` ngay cạnh dữ liệu gốc. Nay **không còn** — phải bấm tải từng file kết quả từ trang về. Đổi lại bộ file (150–250 MB) được gửi lên qua mạng mỗi lần chạy, nếu đường truyền chậm sẽ thấy lâu hơn ở bước upload
+    + Đã chạy lại toàn bộ 356 test tự động, khởi động thật cả backend lẫn giao diện để xác nhận trang ACH không vỡ
+
 - 12/08/2026 Đối chiếu CITAD - Sửa lỗi lệch số liệu ngoại tệ do cắt xu USD/EUR:
     + **Lỗi thật, gây sai số liệu**: ô nhập số liệu (5 cổng, Payment, Napas, PSS-MDP, Ebanking) hiển thị số theo kiểu số nguyên — USD/EUR có phần xu (vd 2.954.592,79) bị **cắt mất phần xu khi hiển thị**, và chữ đã cắt này sau đó bị đọc ngược lại thành số liệu gốc, mất vĩnh viễn phần xu. Xác nhận thực tế: ngày 06/08/2026 lệch đúng 1 xu vì 3 khoản USD đều bị cắt trước khi cộng
     + Sửa để giữ nguyên phần xu khi hiển thị — áp dụng cho cả VNĐ (không đổi, luôn số nguyên) lẫn USD/EUR (giờ hiện đủ 2 chữ số thập phân nếu có)

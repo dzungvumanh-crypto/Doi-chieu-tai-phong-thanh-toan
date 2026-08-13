@@ -100,8 +100,7 @@ _WORK = {
     # Đối chiếu
     "POST /api/cham459901/process":               "Chấm đối chiếu 459901",
     "POST /api/doi_chieu_song_phuong/process":    "Đối chiếu song phương",
-    "POST /api/ach/start":                        "Chạy đối chiếu ACH (tải file lên)",
-    "POST /api/ach/start_folder":                 "Chạy đối chiếu ACH (thư mục server)",
+    "POST /api/ach/start":                        "Chạy đối chiếu ACH",
     "POST /api/ach/continue/{job_id}":            "Tiếp tục ACH sau Checkpoint MIS_đi",
     "POST /api/ach/cancel/{job_id}":              "Dừng đối chiếu ACH",
     "POST /api/swift-recon/parse-preview":        "Xem trước dữ liệu SWIFT",

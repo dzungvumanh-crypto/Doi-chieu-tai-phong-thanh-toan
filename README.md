@@ -326,10 +326,11 @@ Truy cập:
 
 ### Module Đối chiếu ACH
 - Đối chiếu GL02 (IPCAS/NPO) với MIS PaymentHub theo phiên ACH, cả hai chiều ĐI và ĐẾN
-- Menu: **Phòng Thanh toán → Đối chiếu → Đối chiếu ACH**
-- Upload bộ file 1 ngày: `GL02*.zip`, file GW `.xlsx`, 2 file `*_DI_*.zip`, 2 file `*_DEN_*.zip`,
-  PDF sao kê ACH (lấy số session + suy ngày đối chiếu). Mỗi file gửi lên ngay khi chọn, ghi thẳng
-  ra đĩa theo khối 1 MB — không giữ cả bộ 150–250 MB trong RAM
+- Menu: **Đối chiếu → Phòng Thanh toán → Chấm đối chiếu ACH**
+- Chọn bộ file 1 ngày **từ máy người dùng**: `GL02*.zip`, file GW `.xlsx`, 2 file `*_DI_*.zip`,
+  2 file `*_DEN_*.zip`, PDF sao kê ACH (lấy số session + suy ngày đối chiếu). Mở thư mục chứa
+  bộ file rồi Ctrl+A để chọn cả loạt. Mỗi file gửi lên ngay khi chọn, ghi thẳng ra đĩa theo khối
+  1 MB — không giữ cả bộ 150–250 MB trong RAM
 - Ngày đối chiếu suy từ tên file PDF (`ACH_YYYYMMDD_..._NRT_<session>_...` → ngày T-1), nhập tay được;
   không suy được thì **báo lỗi**, không lặng lẽ dùng ngày khác
 - Khớp theo số lượng cặp khoá: chiều ĐI `TRBRCD+SO_TRACE+CRAMOUNT` ↔ `CHI_NHANH+SO_TRACE+SO_TIEN`,
@@ -339,8 +340,9 @@ Truy cập:
   CAP_CN_TIEN, RAW_GW); sheet trên **15.000 dòng** tự tách ra CSV riêng, tải lẻ hoặc tải gộp ZIP
 - Chạy nền trên **1 luồng riêng** (`max_workers=1`) — job thứ hai xếp hàng; theo dõi tiến độ + nhật ký
   bằng poll, có nút Dừng (dừng ở mốc kiểm tra giữa các pha, không tức thì)
-- Kết quả giữ **4 giờ** trong `data/temp_doi_chieu_ach/` rồi tự xoá; không lưu lịch sử vào DB
-- Phân quyền riêng theo nhóm (`menu.cham_ach`, `cham_ach.process`)
+- Kết quả giữ **4 giờ** trong `data/temp_ach/` rồi tự xoá; không lưu lịch sử vào DB
+- Phân quyền riêng theo nhóm: `menu.cham_ach` = xem trang / kiểm tra file / tải kết quả,
+  `cham_ach.process` = được bấm Chạy, Chạy tiếp sau Checkpoint và Dừng
 
 ### Module Đối chiếu CITAD ↔ PaymentHub
 - Đối chiếu số liệu tổng CITAD (NHNN) với PaymentHub (Agribank) theo từng ngày

@@ -134,12 +134,13 @@ def _tim_file(input_dir: str, pattern: str) -> list:
 
 
 def _tim_file_ngoai_output(input_dir: str, pattern: str) -> list:
-    """Giống `_tim_file()` nhưng loại các file nằm trong thư mục con 'Output'
-    (kết quả tự copy về của CHÍNH lần chạy trước cùng thư mục — xem
-    `ach_service.py::_OUTPUT_SUBFOLDER`). Điểm 4 dò file MIS thừa T-2 bằng
-    pattern trùng tên với file chương trình tự xuất — nếu không loại trừ, chạy
-    lại 1 thư mục đã có Output/ cũ sẽ tự khớp nhầm với kết quả của chính ngày
-    đang chạy thay vì file T-2 thật (khác thư mục ngày hôm trước)."""
+    """Giống `_tim_file()` nhưng loại các file nằm trong thư mục con 'Output'.
+    Điểm 4 dò file MIS thừa T-2 bằng pattern trùng tên với file chương trình tự
+    xuất — chạy trên một thư mục đã chứa kết quả cũ trong Output/ sẽ khớp nhầm
+    vào chính kết quả đó thay vì file T-2 thật.
+
+    Giữ lại sau khi bỏ chế độ chạy thẳng từ thư mục server (2026-08-13): người
+    dùng vẫn có thể giải nén sẵn một cây thư mục rồi tải cả lên."""
     return [
         f for f in _tim_file(input_dir, pattern)
         if 'output' not in {p.lower() for p in os.path.normpath(f).split(os.sep)}

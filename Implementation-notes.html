@@ -53,6 +53,63 @@
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
   <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-10</p>
 
+  <!-- P -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">P</span>
+      <span class="card-title">ACH: tách quyền chạy khỏi quyền xem, bỏ hẳn chế độ chạy từ thư mục máy chủ</span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Checkbox "Chạy đối chiếu ACH" từng là đồ trang trí</p>
+      <p><code>cham_ach.process</code> có trong danh mục quyền và hiện ra thành ô tick ở màn phân
+      quyền nhóm, nhưng <strong>không một chỗ nào trong code kiểm mã đó</strong> — cả 8 endpoint lẫn
+      trang đều chỉ hỏi <code>menu.cham_ach</code>. Người cấp quyền tick vào tưởng đã giới hạn, thực
+      tế ai vào được menu là chạy được. Tệ hơn không có ô tick, vì nó nói dối.</p>
+      <p>Nay chia đôi đúng như <code>cham459901</code> và <code>doi_chieu_song_phuong</code> vẫn làm:</p>
+      <table>
+        <tr><th>Mã quyền</th><th>Cho phép</th></tr>
+        <tr><td><code>menu.cham_ach</code></td><td><code>/validate</code>, <code>/poll</code>, <code>/download</code> — xem trang, kiểm tra bộ file, theo dõi tiến độ, tải kết quả</td></tr>
+        <tr><td><code>cham_ach.process</code></td><td><code>/start</code>, <code>/continue</code>, <code>/cancel</code> — khởi động, chạy tiếp sau Checkpoint, dừng</td></tr>
+      </table>
+      <p>Đặt <code>_XEM</code>/<code>_CHAY</code> thành hai biến module-level thay vì gọi
+      <code>require_feature(...)</code> lặp ở từng route — đọc một chỗ là biết endpoint nào thuộc
+      nhóm nào, và không thể gõ nhầm chuỗi ở route thứ tám.</p>
+
+      <p class="label">Vì sao bỏ chế độ chọn thư mục trên máy chủ</p>
+      <p>Chế độ cũ cho gõ/duyệt tới một thư mục rồi chạy thẳng từ đó, kèm tiện ích copy kết quả về
+      <code>&lt;thư mục nguồn&gt;/Output/</code>. Nhưng thư mục đó nằm trên <strong>máy chạy
+      backend</strong>, không phải máy người dùng — <code>GetLogicalDrives()</code> và
+      <code>os.scandir()</code> chạy trong tiến trình server. Người dùng ngồi máy khác không thể trỏ
+      vào ổ D của chính mình, và để phục vụ nó phải mở <code>GET /api/fs/browse</code> liệt kê cây
+      thư mục máy chủ cho <em>mọi tài khoản đã đăng nhập</em>, không giới hạn thư mục gốc.</p>
+      <p>Business Owner chốt 2026-08-13: chỉ giữ đường chọn file từ máy người dùng
+      (Ctrl+A / Shift để chọn cả bộ trong hộp thoại Windows).</p>
+
+      <p class="label">Đánh đổi đã chấp nhận</p>
+      <table>
+        <tr><th>Mất đi</th><th>Vì sao chấp nhận</th></tr>
+        <tr><td>Kết quả tự ghi vào <code>&lt;thư mục nguồn&gt;/Output/</code></td><td>Không còn đường dẫn nguồn nào để ghi vào — máy chủ không biết file đến từ thư mục nào trên máy người dùng. Tải kết quả về từ trang vẫn nguyên vẹn.</td></tr>
+        <tr><td>Chọn 1 thư mục thay vì ~8 file</td><td>Ctrl+A trong hộp thoại chọn file cho cùng số thao tác. Đổi lại bộ file 150–250&nbsp;MB phải truyền qua mạng mỗi lần chạy thay vì đọc tại chỗ — <strong>đây là cái giá thật của quyết định này</strong>, cần theo dõi khi chạy qua LAN chậm.</td></tr>
+      </table>
+
+      <p class="label">Giữ lại có chủ đích</p>
+      <p><code>_tim_file_ngoai_output()</code> trong <code>pipeline.py</code> vốn sinh ra để tránh
+      quét nhầm vào <code>Output/</code> của lần chạy trước. Chế độ thư mục đã bỏ nhưng
+      <strong>không xoá hàm này</strong>: người dùng vẫn có thể giải nén sẵn một cây thư mục rồi
+      chọn cả lên, và Điểm 4 dò file MIS thừa T-2 bằng pattern trùng tên với file kết quả — bỏ lớp
+      lọc này là mở lại đúng cái bẫy cũ.</p>
+
+      <p class="label">Nợ để lại cho nhánh khác</p>
+      <p><code>open_folder_picker()</code> và <code>backend/api/fs.py</code> bị xoá khỏi nhánh này.
+      Nhánh <code>Cham_ILO1000</code> (chưa gộp) có dùng cả hai — khi gộp sẽ gãy import và phải
+      quyết định lại: hoặc dựng lại có <code>require_feature</code> đàng hoàng, hoặc chuyển ILO1000
+      sang chọn file như ACH.</p>
+
+    </div>
+  </div>
+
   <!-- O -->
   <div class="card">
     <div class="card-header">

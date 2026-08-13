@@ -1,4 +1,4 @@
-"""Trang Chấm đối chiếu ACH — upload file (hoặc chọn thư mục server), chạy pipeline, download kết quả."""
+"""Trang Chấm đối chiếu ACH — chọn file từ máy người dùng, chạy pipeline, download kết quả."""
 
 import re
 import asyncio
@@ -7,7 +7,6 @@ from nicegui import ui
 import frontend.api_client as api
 from frontend.shared import (
     _sidebar, _content_area, _page_header, _require_auth, _handle_api_error,
-    open_folder_picker,
 )
 
 # ─── Hằng số ──────────────────────────────────────────────────────────────────
@@ -53,6 +52,10 @@ async def cham_ach_page():
         ui.navigate.to('/home')
         return
 
+    # Quyền chạy tách khỏi quyền xem — người chỉ có menu.cham_ach vẫn theo dõi
+    # tiến độ và tải kết quả được, nhưng không khởi động/tiếp tục được lần chạy.
+    co_quyen_chay = api.has_feature('cham_ach.process')
+
     # ── State ─────────────────────────────────────────────────────────────────
     state = {
         'files':       {},     # {filename: bytes}
@@ -60,7 +63,6 @@ async def cham_ach_page():
         'log_pos':     0,      # số log đã hiển thị
         'timer':       None,
         'running':     False,
-        'mode':        'folder',   # 'upload' | 'folder' — folder là luồng chính (chỉ chọn 1 thư mục)
         'progress':    0.0,
         'poll_fails':  0,      # số lần poll lỗi liên tiếp
         'xac_nhan_upload': None,   # (filename, bytes) file xác nhận đã điền, chờ upload
@@ -78,15 +80,13 @@ async def cham_ach_page():
             with ui.card().classes('w-full p-5 mb-4'):
                 ui.label('Nguồn dữ liệu').classes('text-base font-semibold text-red-800 mb-3')
 
-                mode_toggle = ui.toggle(
-                    {'folder': 'Chọn thư mục server', 'upload': 'Tải file lên'},
-                    value='folder',
-                ).props('dense')
-
-                # ── Chế độ Upload ─────────────────────────────────────────
-                upload_section = ui.column().classes('w-full mt-3 gap-1')
-                upload_section.set_visibility(False)
+                upload_section = ui.column().classes('w-full mt-1 gap-1')
                 with upload_section:
+                    ui.label(
+                        'Mở thư mục chứa đủ file ACH của 1 phiên/1 ngày trên máy bạn, '
+                        'chọn tất cả file bằng Ctrl+A (hoặc giữ Shift để chọn khoảng) '
+                        'rồi kéo-thả hoặc bấm Mở.'
+                    ).classes('text-xs text-gray-500 mb-1')
                     ui.label(_FILE_HINT).classes('text-xs text-gray-400 mb-1')
                     file_list_label = ui.label('Chưa chọn file nào').classes(
                         'text-xs text-gray-400 italic mb-2'
@@ -120,41 +120,6 @@ async def cham_ach_page():
 
                     ui.button('Xóa tất cả file', icon='delete_outline', color='grey-6',
                               on_click=on_clear).props('flat dense').classes('text-xs')
-
-                # ── Chế độ Folder ─────────────────────────────────────────
-                folder_section = ui.column().classes('w-full mt-3 gap-2')
-                with folder_section:
-                    ui.label(
-                        'Nhập đường dẫn 1 thư mục duy nhất chứa đủ file ACH của 1 phiên/1 ngày — '
-                        'chương trình tự nhận diện toàn bộ file cần thiết. Kết quả cuối sẽ được '
-                        'lưu lại ngay trong thư mục này (thư mục con "Output").'
-                    ).classes('text-xs text-gray-500')
-                    with ui.row().classes('w-full items-center gap-2'):
-                        folder_input = ui.input(
-                            placeholder='Ví dụ: D:\\Data\\ACH\\ngay16',
-                        ).props('outlined dense clearable').classes('flex-1')
-
-                        async def _on_pick_folder():
-                            async def _on_folder_selected(path: str):
-                                folder_input.value = path
-                                await _validate_now()
-                            await open_folder_picker(
-                                _on_folder_selected, initial_path=folder_input.value or ''
-                            )
-
-                        ui.button('Chọn thư mục', icon='folder_open', color='blue-7',
-                                  on_click=_on_pick_folder).props('outlined dense')
-                    ui.label(_FILE_HINT).classes('text-xs text-gray-400')
-                    ui.button('Kiểm tra thư mục', icon='fact_check', color='blue-7',
-                              on_click=lambda: _validate_now()).props('flat dense').classes('text-xs')
-
-                def on_mode_change(val):
-                    state['mode'] = val
-                    upload_section.set_visibility(val == 'upload')
-                    folder_section.set_visibility(val == 'folder')
-                    validate_card.set_visibility(False)
-
-                mode_toggle.on_value_change(lambda e: on_mode_change(e.value))
 
                 # Ngày đối chiếu — gõ tay hoặc bấm icon lịch để chọn ngày
                 with ui.row().classes('items-center gap-3 mt-3'):
@@ -210,6 +175,9 @@ async def cham_ach_page():
                     btn_cancel = ui.button('Dừng', icon='stop_circle',
                                            color='grey-6').classes('font-semibold')
                     btn_cancel.set_visibility(False)
+                    if not co_quyen_chay:
+                        btn_run.props('disable')
+                        btn_run.tooltip('Bạn không có quyền thực hiện thao tác này')
                     hint_chay_label = ui.label(
                         'Pipeline sẽ dừng lại ngay sau khi tạo xong MIS_đi để bạn xác nhận, '
                         'rồi mới chạy tiếp tới báo cáo cuối.'
@@ -295,7 +263,6 @@ async def cham_ach_page():
             result_card.set_visibility(False)
             with result_card:
                 ui.label('Kết quả').classes('text-base font-semibold text-red-800 mb-3')
-                result_location_label = ui.label('').classes('text-xs mb-3')
                 download_row = ui.row().classes('flex-wrap gap-3')
 
             # ── Logic ─────────────────────────────────────────────────────────
@@ -326,23 +293,13 @@ async def cham_ach_page():
             async def _validate_now() -> bool:
                 """Kiểm tra sớm bộ file theo tên — trả True nếu đủ, chặn chạy nếu thiếu."""
                 try:
-                    if state['mode'] == 'upload':
-                        if not state['files']:
-                            validate_card.set_visibility(False)
-                            return False
-                        res = await asyncio.to_thread(
-                            api.post, '/api/ach/validate',
-                            {'filenames': list(state['files'].keys())},
-                        )
-                    else:
-                        folder_path = (folder_input.value or '').strip()
-                        if not folder_path:
-                            validate_card.set_visibility(False)
-                            return False
-                        res = await asyncio.to_thread(
-                            api.post, '/api/ach/validate_folder',
-                            {'folder_path': folder_path},
-                        )
+                    if not state['files']:
+                        validate_card.set_visibility(False)
+                        return False
+                    res = await asyncio.to_thread(
+                        api.post, '/api/ach/validate',
+                        {'filenames': list(state['files'].keys())},
+                    )
                 except Exception as e:
                     if _handle_api_error(e):
                         return False
@@ -421,12 +378,8 @@ async def cham_ach_page():
                     if status == 'done':
                         progress_bar.set_value(1.0)
                         files = res.get('files', [])
-                        _show_results(files, res.get('final_output_dir'), res.get('copy_error'))
-                        if res.get('final_output_dir'):
-                            ui.notify(f'Đối chiếu hoàn thành. Kết quả đã lưu tại: {res["final_output_dir"]}',
-                                      type='positive', timeout=0)
-                        else:
-                            ui.notify('Hoàn thành! Tải file kết quả bên dưới.', type='positive')
+                        _show_results(files)
+                        ui.notify('Hoàn thành! Tải file kết quả bên dưới.', type='positive')
                     elif status == 'error':
                         progress_bar.set_visibility(False)
                         ui.notify(f'Lỗi: {res.get("error", "")}', type='negative', timeout=0)
@@ -514,9 +467,12 @@ async def cham_ach_page():
 
                     with ui.row().classes('gap-2 justify-end w-full'):
                         ui.button('Hủy', color='grey-6').props('flat').on('click', _huy_va_dong)
-                        ui.button('Đã xác nhận – Chạy tiếp', icon='play_arrow', color='red-8').classes(
-                            'font-semibold'
-                        ).on('click', on_continue)
+                        btn_chay_tiep = ui.button(
+                            'Đã xác nhận – Chạy tiếp', icon='play_arrow', color='red-8'
+                        ).classes('font-semibold').on('click', on_continue)
+                        if not co_quyen_chay:
+                            btn_chay_tiep.props('disable')
+                            btn_chay_tiep.tooltip('Bạn không có quyền thực hiện thao tác này')
 
                 checkpoint_dialog.open()
 
@@ -563,20 +519,8 @@ async def cham_ach_page():
                 btn_cancel.set_visibility(True)
                 state['timer'] = ui.timer(_POLL_INTERVAL, _poll)
 
-            def _show_results(files: list[str], final_output_dir: str | None = None,
-                              copy_error: str | None = None):
+            def _show_results(files: list[str]):
                 result_card.set_visibility(True)
-                if final_output_dir:
-                    result_location_label.set_text(f'Đã lưu tại: {final_output_dir}')
-                    result_location_label.classes(remove='text-red-600', add='text-green-700')
-                elif copy_error:
-                    result_location_label.set_text(
-                        f'Không copy được kết quả về thư mục dữ liệu ({copy_error}) — '
-                        f'vui lòng tải xuống thủ công bên dưới.'
-                    )
-                    result_location_label.classes(remove='text-green-700', add='text-red-600')
-                else:
-                    result_location_label.set_text('')
                 download_row.clear()
                 with download_row:
                     for fname in files:
@@ -614,27 +558,16 @@ async def cham_ach_page():
                 ngay = ngay_input.value.strip() if ngay_input.value else None
 
                 try:
-                    if state['mode'] == 'upload':
-                        _append_log('Đang upload file...')
-                        res = await asyncio.to_thread(
-                            api.post_multipart,
-                            '/api/ach/start',
-                            files=[(name, data) for name, data in state['files'].items()],
-                            data={
-                                'ngay_doi_chieu': ngay or '',
-                                'bo_qua_checkpoint': str(state['bo_qua_checkpoint']).lower(),
-                            },
-                        )
-                    else:
-                        folder_path = folder_input.value.strip()
-                        _append_log(f'Thư mục: {folder_path}')
-                        res = await asyncio.to_thread(
-                            api.post, '/api/ach/start_folder',
-                            {
-                                'folder_path': folder_path, 'ngay_doi_chieu': ngay or '',
-                                'bo_qua_checkpoint': state['bo_qua_checkpoint'],
-                            },
-                        )
+                    _append_log('Đang upload file...')
+                    res = await asyncio.to_thread(
+                        api.post_multipart,
+                        '/api/ach/start',
+                        files=[(name, data) for name, data in state['files'].items()],
+                        data={
+                            'ngay_doi_chieu': ngay or '',
+                            'bo_qua_checkpoint': str(state['bo_qua_checkpoint']).lower(),
+                        },
+                    )
                 except Exception as e:
                     spinner.set_visibility(False)
                     progress_bar.set_visibility(False)
@@ -655,11 +588,8 @@ async def cham_ach_page():
                 if state['running']:
                     return
 
-                if state['mode'] == 'upload' and not state['files']:
+                if not state['files']:
                     ui.notify('Chưa chọn file nào.', type='warning')
-                    return
-                if state['mode'] == 'folder' and not (folder_input.value or '').strip():
-                    ui.notify('Chưa nhập đường dẫn thư mục.', type='warning')
                     return
 
                 # Chốt kiểm tra ngay trước khi chạy — chặn nếu thiếu/sai file.

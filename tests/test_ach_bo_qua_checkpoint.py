@@ -75,7 +75,7 @@ def _stub_ghi_nhan_dung_sau_mis_di(cac_lan_goi: list):
     return _fn
 
 
-class TestBoQuaCheckpointUpload:
+class TestBoQuaCheckpoint:
     def test_mac_dinh_khong_truyen_co_van_dung_o_checkpoint(self, admin_client, monkeypatch, tmp_path):
         cac_lan_goi = []
         monkeypatch.setattr(svc, 'TEMP_DIR', tmp_path)
@@ -107,59 +107,3 @@ class TestBoQuaCheckpointUpload:
         assert job['status'] == 'done'
         assert 'doi_chieu_20260101.xlsx' in job['files']
         assert cac_lan_goi == [False]
-
-
-class TestBoQuaCheckpointFolder:
-    def test_mac_dinh_khong_truyen_co_van_dung_o_checkpoint(self, admin_client, monkeypatch, tmp_path):
-        cac_lan_goi = []
-        monkeypatch.setattr(svc, 'TEMP_DIR', tmp_path)
-        monkeypatch.setattr(svc, 'main_from_dir', _stub_ghi_nhan_dung_sau_mis_di(cac_lan_goi))
-        folder = tmp_path / 'server_folder'
-        folder.mkdir()
-
-        r = admin_client.post(
-            '/api/ach/start_folder',
-            json={'folder_path': str(folder), 'ngay_doi_chieu': ''},
-        )
-        job_id = r.json()['job_id']
-        job = _wait_status(job_id, 'awaiting_confirmation')
-        assert job['status'] == 'awaiting_confirmation'
-        assert cac_lan_goi == [True]
-
-    def test_bat_co_chay_thang_toi_done_ngay_lan_dau(self, admin_client, monkeypatch, tmp_path):
-        cac_lan_goi = []
-        monkeypatch.setattr(svc, 'TEMP_DIR', tmp_path)
-        monkeypatch.setattr(svc, 'main_from_dir', _stub_ghi_nhan_dung_sau_mis_di(cac_lan_goi))
-        folder = tmp_path / 'server_folder'
-        folder.mkdir()
-
-        r = admin_client.post(
-            '/api/ach/start_folder',
-            json={'folder_path': str(folder), 'ngay_doi_chieu': '', 'bo_qua_checkpoint': True},
-        )
-        assert r.status_code == 200
-        job_id = r.json()['job_id']
-        job = _wait_status(job_id, 'done')
-        assert job['status'] == 'done'
-        assert cac_lan_goi == [False]
-
-    def test_chay_thang_van_copy_ket_qua_ve_thu_muc_nguon(self, admin_client, monkeypatch, tmp_path):
-        """Bỏ qua Checkpoint không được phá vỡ tính năng copy kết quả về thư mục
-        nguồn (mode folder, Bước 4 UX cũ) — vẫn phải hoạt động như bình thường."""
-        cac_lan_goi = []
-        monkeypatch.setattr(svc, 'TEMP_DIR', tmp_path)
-        monkeypatch.setattr(svc, 'main_from_dir', _stub_ghi_nhan_dung_sau_mis_di(cac_lan_goi))
-        source_folder = tmp_path / 'du_lieu_nguon'
-        source_folder.mkdir()
-
-        r = admin_client.post(
-            '/api/ach/start_folder',
-            json={'folder_path': str(source_folder), 'ngay_doi_chieu': '', 'bo_qua_checkpoint': True},
-        )
-        job_id = r.json()['job_id']
-        job = _wait_status(job_id, 'done')
-
-        dest = source_folder / 'Output' / 'doi_chieu_20260101.xlsx'
-        assert dest.exists()
-        assert job['final_output_dir'] == str(source_folder / 'Output')
-        assert job['copy_error'] is None
