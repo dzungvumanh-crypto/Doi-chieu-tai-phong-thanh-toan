@@ -80,6 +80,13 @@ Không cần Reload extension, cũng không cần tải lại các tab CITAD/Pay
 TRƯỚC khi lưu cấu hình), tiện cho trường hợp mở sẵn nhiều tab ẩn danh đăng
 nhập nhiều cổng rồi mới bấm "Tạo mã kết nối mới".
 
+> **Dùng tab ẩn danh thì phải bật quyền trước — Chrome mặc định TẮT.**
+> Vào `chrome://extensions` → tìm extension này → **Chi tiết** → bật
+> **"Cho phép ở chế độ ẩn danh"**. Chưa bật thì extension **không chạy chút
+> nào** trong tab ẩn danh: không lưu được số liệu, không có toast báo lỗi,
+> nhìn y hệt như extension hỏng. Bật rồi thì cấu hình dùng chung với tab
+> thường (extension chạy ở chế độ *spanning*, không tách riêng bộ nhớ).
+
 ## ⚠️ Vì sao bắt buộc HTTPS khi dùng thật
 
 Extension gửi "Mã kết nối" trong mỗi request. Nếu `SERVER` là `http://`

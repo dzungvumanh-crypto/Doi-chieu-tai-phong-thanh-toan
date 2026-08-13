@@ -4,6 +4,13 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 13/08/2026 Đối chiếu CITAD - Extension **bản 2.15**: nhiều tab tự nhận mã mới, bớt rác Nhật ký:
+    + **Mở sẵn nhiều tab CITAD rồi mới tạo mã kết nối — nay chạy được.** Trước đây tab nào mở TRƯỚC lúc bấm *Tạo mã kết nối mới* sẽ kẹt với mã cũ, phải tự F5 từng tab. Nay mọi tab đang mở tự nhận mã mới ngay, không phải làm gì
+    + ⚠️ **Dùng tab ẩn danh thì phải bật quyền trước — Chrome mặc định TẮT.** Vào `chrome://extensions` → Chi tiết → bật **"Cho phép ở chế độ ẩn danh"**. Chưa bật thì Extension **không chạy chút nào** trong tab ẩn danh: không lưu được, cũng không báo lỗi gì, nhìn y như Extension hỏng
+    + Thông báo lỗi khi lưu thất bại nay **nói đúng lý do** (chưa cấu hình / mã bị thu hồi / lỗi mạng) thay vì luôn hiện *"Không kết nối server ()"* chung chung
+    + **Nhật ký hệ thống bớt rác**: mỗi lần Extension gửi số liệu thành công không còn ghi một dòng nhật ký nữa — thao tác này lặp hàng trăm lần mỗi ca, làm trôi mất các dòng nhật ký có ý nghĩa của những phần khác. Việc **lưu bản đối chiếu vẫn được ghi đầy đủ** như cũ, và lần gửi **thất bại** (mã sai/bị thu hồi) vẫn ghi — đó mới là thứ cần theo dõi
+    + ⚠️ **Phải tải lại `.zip` và cài lại Extension** — vào `/doi_chieu_citad` → **Tải Extension**, giải nén, *Load unpacked* lại
+
 - 13/08/2026 Giao diện - Ô chọn file: **bấm vào cả dải màu là mở được**, hết cảnh phải nhắm đúng dấu `+`:
     + **Trước đây**: ô chọn file có một dải màu rộng, nhưng chỉ đúng **dấu `+` bé xíu ở góc phải** là bấm được. Bấm vào phần còn lại — chiếm hơn 90% diện tích và trông y hệt một cái nút — thì không có gì xảy ra. Giống cánh cửa kính lớn mà chỉ có mỗi ô nhỏ ở mép là đẩy được
     + **Nay**: bấm chỗ nào trên dải màu cũng mở hộp thoại chọn file. Con trỏ chuột cũng đổi thành hình bàn tay khi rê qua, để nhìn là biết bấm được
