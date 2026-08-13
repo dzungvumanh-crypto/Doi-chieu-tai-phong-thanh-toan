@@ -27,6 +27,16 @@ async function loadConfig() {
   }
 }
 
+// Xem comment tương ứng trong content.js — mở nhiều tab RỒI MỚI cấu hình lại
+// Extension (hay gặp khi mở nhiều tab ẩn danh để đăng nhập nhiều cổng CITAD/
+// PaymentHub cùng lúc) khiến các tab mở trước bị kẹt cấu hình cũ mãi mãi nếu
+// không tự cập nhật khi storage đổi.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local') return;
+  if ('server' in changes) SERVER = changes.server.newValue || '';
+  if ('extensionToken' in changes) EXTENSION_TOKEN = changes.extensionToken.newValue || '';
+});
+
 function parseNum(s) {
   return parseInt((s || '').replace(/[^\d]/g, '')) || 0;
 }

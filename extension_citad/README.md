@@ -75,8 +75,10 @@ chuyển sang hiện mã kèm nút sao chép — làm theo:
 4. Bấm **Lưu cấu hình** — trình duyệt sẽ hỏi xác nhận quyền truy cập đúng
    domain SERVER, bấm **Cho phép**
 
-Không cần Reload extension sau khi lưu (dù tự động hay dán tay) — content
-script tự đọc cấu hình mới ở lần tải trang CITAD/PaymentHub tiếp theo.
+Không cần Reload extension, cũng không cần tải lại các tab CITAD/PaymentHub
+đang mở — mọi tab tự nhận cấu hình mới ngay lập tức (kể cả các tab đã mở
+TRƯỚC khi lưu cấu hình), tiện cho trường hợp mở sẵn nhiều tab ẩn danh đăng
+nhập nhiều cổng rồi mới bấm "Tạo mã kết nối mới".
 
 ## ⚠️ Vì sao bắt buộc HTTPS khi dùng thật
 

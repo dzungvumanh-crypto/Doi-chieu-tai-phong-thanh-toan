@@ -111,10 +111,11 @@ def _resolve_extension_owner(
             "vào /doi_chieu_citad, mục 'Kết nối Extension' để tạo mã mới.",
         )
     staff_id, owner = resolved
-    audit_queue.enqueue(
-        request.method, request.url.path, 200, "", ip_hdr, client_ip,
-        actor_id=staff_id, detail="qua Extension (X-Extension-Token)",
-    )
+    # KHÔNG ghi audit cho lượt gửi THÀNH CÔNG — đây là 2 endpoint tần suất cao
+    # nhất hệ thống (Extension tự gửi mỗi lần có số liệu mới), ghi mỗi lần chỉ
+    # tạo hàng nghìn dòng audit vô nghĩa (đều là cùng 1 hành vi lặp lại) làm
+    # trôi mất các dòng audit có ý nghĩa khác trong màn Nhật ký hệ thống. Lượt
+    # THẤT BẠI (token sai/thu hồi) vẫn ghi ở trên — đó mới là tín hiệu cần biết.
     return owner
 
 
