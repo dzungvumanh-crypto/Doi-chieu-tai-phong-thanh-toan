@@ -4,6 +4,14 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 13/08/2026 Deploy - Tự dò và dọn file code cũ còn sót trên máy đích:
+    + **Vấn đề âm thầm từ trước tới nay**: `deploy.bat` chép bằng `robocopy /E` — chỉ thêm và ghi đè, **không bao giờ xoá**. File nào bị xoá khỏi dự án vẫn nằm lại vĩnh viễn trên máy chính
+    + Nguy hiểm nhất là **trang giao diện**: chương trình nạp trang bằng cách quét thư mục `frontend/pages`, file nào còn trong đó là còn thành một trang. Một trang đã xoá vẫn mở được bằng địa chỉ cũ (bookmark, lịch sử trình duyệt) rồi vỡ vì API phía sau đã bị gỡ. Admin bị nặng nhất vì luôn qua mọi kiểm tra quyền
+    + Nay `deploy.bat` thêm **bước 6/8**: tự so danh sách file giữa máy nguồn và máy đích, liệt kê thứ chỉ có ở máy đích, **hỏi trước khi xoá**. Trả lời `n` là giữ nguyên
+    + **Chỉ tự xoá file `.py` cũ trong `backend/` và `frontend/`**. File loại khác — kể cả mẫu Word trong `templates/` — chỉ liệt kê ra để xem bằng mắt, không đụng tới, phòng trường hợp người dùng tự thêm mẫu trên máy chính
+    + Đã áp dụng cho cả `deploy-test.bat` (hệ thống test cổng 9000) vì `deploy.bat` gọi tiếp file này
+    + Áp dụng ngay khi deploy PR #31: 12 file của module ACH cũ sẽ được dọn tự động
+
 - 13/08/2026 Chấm đối chiếu ACH - Tách quyền "được chạy" khỏi quyền "được xem", bỏ chế độ chọn thư mục trên máy chủ:
     + **Lỗi phân quyền có thật**: ô tick **"Chạy đối chiếu ACH"** ở màn phân quyền nhóm trước đây **không có tác dụng gì** — tick hay bỏ tick, ai vào được menu ACH là chạy được. Nay tick vào mới được bấm Chạy / Chạy tiếp / Dừng; người không tick vẫn xem tiến độ và tải kết quả bình thường
     + **Bỏ nút "Chọn thư mục"**: nút này duyệt thư mục trên **máy chủ** chứ không phải máy người dùng — người ngồi máy khác không thể trỏ vào ổ đĩa của mình, và nó để lộ cây thư mục máy chủ cho mọi tài khoản đã đăng nhập. Nay chỉ còn một cách nạp dữ liệu: **mở thư mục trên máy mình, Ctrl+A (hoặc giữ Shift) chọn cả bộ file rồi kéo-thả / bấm Mở**

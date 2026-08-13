@@ -206,6 +206,7 @@ Truy cập:
 ├── init_db.py               # Khởi tạo DB + seed data
 ├── run.py                   # Launcher (chạy backend + frontend song song; ép UTF-8 cho tiến trình con)
 ├── deploy_env_check.py      # Kiểm/sửa .env máy đích khi deploy (deploy.bat gọi)
+├── deploy_don_file_thua.py  # Dò file .py cũ còn sót trên máy đích (deploy.bat gọi)
 └── requirements.txt
 ```
 
@@ -501,7 +502,7 @@ Chỉ thêm `ALLOWED_ORIGINS=http://192.168.1.100:8080` khi thật sự phải �
 cho một hệ thống khác gọi thẳng API — nhiều giá trị cách nhau dấu phẩy.
 
 Backend tự **cảnh báo trong log khi khởi động** nếu đang lắng nghe trên mạng mà hai biến này chưa đặt đúng.
-`deploy.bat` cũng kiểm `.env` của máy đích ở bước 1/7 và hỏi trước khi sửa, nên không phải nhớ thủ công.
+`deploy.bat` cũng kiểm `.env` của máy đích ở bước 1/8 và hỏi trước khi sửa, nên không phải nhớ thủ công.
 
 ---
 

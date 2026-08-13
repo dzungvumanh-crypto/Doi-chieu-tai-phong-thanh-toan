@@ -53,6 +53,51 @@
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
   <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-10</p>
 
+  <!-- Q -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">Q</span>
+      <span class="card-title"><code>deploy.bat</code> không bao giờ xoá — trang đã xoá vẫn sống trên máy chính</span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Cơ chế hỏng</p>
+      <p>Cả <code>deploy.bat</code> lẫn <code>deploy-test.bat</code> chép bằng
+      <code>robocopy /E</code> — chỉ thêm và ghi đè, <strong>không xoá</strong>. File bỏ khỏi dự án
+      nằm lại vĩnh viễn trên máy đích. Với hầu hết file đó chỉ là rác, nhưng
+      <code>frontend/main.py</code> nạp trang bằng <code>pkgutil.iter_modules(frontend/pages)</code>:
+      <strong>mọi file .py trong thư mục đó đều tự thành một trang</strong>. Nên một trang đã xoá
+      vẫn mở được bằng địa chỉ cũ và gọi vào API đã bị gỡ.</p>
+      <p>Lớp phân quyền không cứu được — <code>api_client.has_feature()</code> trả
+      <code>True</code> cho <em>mọi</em> mã quyền khi role là admin, kể cả mã đã bị xoá khỏi danh
+      mục. Người thường bị đá về <code>/home</code>, còn admin vào thẳng trang hỏng.</p>
+      <p>Phát hiện khi rà PR #31: PR xoá <code>frontend/pages/doi_chieu_ach.py</code> cùng 11 file
+      khác, cả 12 file đó sẽ nằm lại trên máy chính sau deploy.</p>
+
+      <p class="label">Vì sao không dùng <code>robocopy /MIR</code></p>
+      <p><code>/MIR</code> xoá sạch mọi thứ không có ở nguồn. Máy đích có <code>data/</code>,
+      <code>.env</code>, <code>.venv</code> và có thể cả mẫu Word người dùng tự thêm — một cờ gõ sai
+      chỗ là mất dữ liệu thật. Chọn hướng dò rồi hỏi thay vì đồng bộ mù.</p>
+
+      <p class="label">Phạm vi tự xoá — cố ý hẹp</p>
+      <table>
+        <tr><th>Loại</th><th>Xử lý</th><th>Vì sao</th></tr>
+        <tr><td><code>.py</code> thừa trong <code>backend/</code>, <code>frontend/</code></td><td>Liệt kê + hỏi + xoá</td><td>Luôn là mã nguồn cũ, và là loại duy nhất tự chạy được</td></tr>
+        <tr><td>Mọi thứ khác, kể cả trong <code>templates/</code></td><td><strong>Chỉ liệt kê</strong></td><td>Mẫu Word có thể do người dùng tự thêm trên máy chính — xoá là mất thật</td></tr>
+        <tr><td><code>__pycache__</code>, <code>*.pyc</code></td><td>Bỏ qua</td><td><code>deploy.bat</code> vốn không chép, và bước sau đó đã dọn</td></tr>
+      </table>
+      <p>Bước dò đặt <strong>trước</strong> bước xoá <code>__pycache__</code> — thứ tự này có chủ ý,
+      để <code>.pyc</code> mồ côi của file vừa xoá cũng bị dọn luôn trong cùng lần chạy.</p>
+
+      <p class="label">Điểm cần biết khi bảo trì</p>
+      <p><code>deploy-test.bat</code> được <code>deploy.bat</code> gọi ở cuối, nên đã vá cùng lúc —
+      nhưng file này <strong>nằm trong <code>.gitignore</code></strong> (dòng 34), bản vá không đi
+      theo git. Máy nào có <code>deploy-test.bat</code> riêng thì phải vá lại tay.</p>
+
+    </div>
+  </div>
+
   <!-- P -->
   <div class="card">
     <div class="card-header">
