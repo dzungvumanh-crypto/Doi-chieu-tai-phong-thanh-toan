@@ -278,7 +278,7 @@ Truy cập:
 ### Module Danh sách CN TTQT
 - Danh mục chi nhánh thực hiện thanh toán quốc tế trực tiếp (mã CN, tên CN, SWIFT BIC, loại I/II,
   CN loại I quản lý, SĐT, địa chỉ, ghi chú)
-- Menu: **Phòng KSNB & HTVH → Danh sách CN TTQT**
+- Menu: **Danh sách CN TTQT** (menu phẳng, cấp 1)
 - Tra cứu theo mã CN / tên CN / SWIFT BIC; lọc theo loại CN và trạng thái
   (**Đang hoạt động** / **Đã đóng BIC** / Tất cả) — CN đã đóng BIC tô xám khi xem chung
 - Thêm / sửa / xoá từng CN ngay trên giao diện, mọi thao tác ghi audit log
@@ -321,14 +321,14 @@ Truy cập:
 
 ### Module Chấm 459901
 - Phân loại bút toán tài khoản trung gian 459901 dành cho phòng Thanh toán
-- Menu: **Phòng Thanh toán → Đối chiếu → Chấm 459901**
+- Menu: **Đối chiếu → Phòng Thanh toán → Chấm 459901**
 - Upload file ZIP chứa dữ liệu giao dịch; xử lý bất đồng bộ (~65s)
 - Xuất 3 file Excel: **Huỷ**, **Đi**, **Khác** theo kết quả phân loại
 - Phân quyền riêng theo nhóm (`menu.cham_459901`, `cham_459901.process`)
 
 ### Module Đối chiếu Song phương
 - Định tuyến lệnh IPCAS phục vụ đối chiếu song phương tại phòng Thanh toán
-- Menu: **Phòng Thanh toán → Đối chiếu → Đối chiếu Song phương**
+- Menu: **Đối chiếu → Phòng Thanh toán → Đối chiếu Song phương**
 - Upload file ZIP (mã hóa AES-256) chứa dữ liệu IPCAS; xử lý bất đồng bộ, theo dõi tiến độ real-time
 - Phân loại mỗi dòng theo **4 ngân hàng** (Vietinbank 201, BIDV 202, Vietcombank 203, MBBank 311) × **2 chiều**: **ĐẾN** (`CRAMOUNT=0`) / **ĐI** (`DRAMOUNT=0`) → xuất **8 file CSV**
 - Phân quyền riêng theo nhóm (`menu.doi_chieu_song_phuong`, `doi_chieu_song_phuong.process`)
@@ -355,7 +355,7 @@ Truy cập:
 
 ### Module Đối chiếu CITAD ↔ PaymentHub
 - Đối chiếu số liệu tổng CITAD (NHNN) với PaymentHub (Agribank) theo từng ngày
-- Menu: **Phòng Thanh toán → Đối chiếu → Đối chiếu CITAD**
+- Menu: **Đối chiếu → Phòng Thanh toán → Đối chiếu CITAD**
 - Nhập tay 5 cổng CITAD × 3 loại tiền × 8 trường; chênh lệch tính lại ngay khi gõ
 - Mỗi ngày là **một bản ghi chung cả phòng** (`doi_chieu_citad_sessions`, khoá theo `ngay`) —
   ai lưu sau cùng là bản hiện hành; mỗi lần bấm Lưu ghi thêm 1 dòng vào
@@ -370,7 +370,7 @@ Truy cập:
 
 ### Module Đối soát CITAD ↔ IPCAS
 - Đối soát từng lệnh chuyển tiền giữa CITAD (NHNN) và IPCAS (Agribank) theo ngày chấm
-- Menu: **Phòng Thanh toán → Đối soát CITAD ↔ IPCAS**
+- Menu: **Đối chiếu → Phòng Thanh toán → Đối soát CITAD ↔ IPCAS**
 - Upload file CITAD (`.xls`/`.xlsx`/`.zip`), IPCAS (`.csv`/`.zip`) và Hub ngoại tệ (`.xls`/`.xlsx`);
   khớp trong RAM theo `msgref` (Đi) / `txid` (Đến), phân loại lệch thành 4 nhóm:
   **Chỉ CITAD / Chỉ IPCAS / Chỉ Hub / Lệch trạng thái**
