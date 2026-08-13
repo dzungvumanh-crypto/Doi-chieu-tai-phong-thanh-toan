@@ -241,11 +241,20 @@ def post_upload_bytes(path: str, files: dict) -> bytes:
         raise Exception(str(e))
 
 
-def post_upload(path: str, files: dict, data: dict = None) -> Any:
-    """Gửi multipart/form-data (file upload). files = {'field': (name, bytes, mime)}"""
+def post_upload(path: str, files, data: dict = None, timeout: float = None) -> Any:
+    """Gửi multipart/form-data (file upload). Hai dạng `files`:
+      - dict: {'field': (name, bytes, mime)} — mỗi field một file
+      - list: [('field', (name, bytes, mime)), ...] — BẮT BUỘC khi backend nhận
+        `list[UploadFile]`, vì khi đó nhiều part dùng CHUNG một tên field (dict
+        không thể có key trùng). Ví dụ: /api/ach/start.
+    timeout=None giữ mặc định 60s của _download_client; truyền số lớn hơn cho
+    endpoint upload nặng (ACH cho tới 500 MB, backend ghi hết ra đĩa mới trả lời).
+    """
     try:
         h = {k: v for k, v in _headers().items() if k != "Content-Type"}
-        r = _download_client.post(f"{BACKEND_URL}{path}", headers=h, files=files, data=data or {})
+        kw = {"timeout": timeout} if timeout is not None else {}
+        r = _download_client.post(f"{BACKEND_URL}{path}", headers=h, files=files,
+                                  data=data or {}, **kw)
         r.raise_for_status()
         return r.json()
     except httpx.HTTPStatusError as e:

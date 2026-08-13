@@ -53,6 +53,73 @@
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
   <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-13</p>
 
+  <!-- X -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">X</span>
+      <span class="card-title">ACH: nút "Chạy đối chiếu" chết vì gọi hàm không tồn tại <code>api.post_multipart</code></span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Triệu chứng</p>
+      <p>Trang <code>/cham_ach</code> chọn đủ file, thẻ kiểm tra xanh hết, bấm <strong>Chạy đối chiếu</strong>
+      thì hiện thông báo đỏ <em>module 'frontend.api_client' has no attribute 'post_multipart'</em>.
+      Không request nào tới được backend.</p>
+
+      <p class="label">Vì sao lỗi lập trình lại trông như lỗi mạng</p>
+      <p><code>frontend/pages/cham_ach.py</code> gọi <code>api.post_multipart(...)</code> — hàm
+      <strong>chưa bao giờ tồn tại</strong> trong <code>api_client.py</code>. Truy cập thuộc tính này nằm
+      <strong>bên trong khối <code>try:</code></strong> bọc lời gọi mạng, nên <code>AttributeError</code> bị
+      bắt chung với lỗi HTTP và đẩy ra <code>ui.notify</code> y như một sự cố kết nối. Cái đáng lẽ phải nổ
+      to ngay lần chạy đầu tiên thì lại nằm lẫn trong đám lỗi vận hành bình thường.</p>
+      <div class="caution">Bài học: khối <code>try/except Exception</code> quanh lời gọi mạng nên chỉ bọc
+      <strong>lời gọi</strong>, không bọc phần dựng tham số. Bọc rộng là biến lỗi code thành lỗi runtime câm.</div>
+
+      <p class="label">Vì sao 359 test vẫn xanh mà tính năng thì chết</p>
+      <p>Toàn bộ <code>tests/test_ach_*.py</code> gọi thẳng backend qua fixture <code>admin_client</code>.
+      Backend <code>/api/ach/start</code> hoàn toàn đúng và có test phủ kỹ. <strong>Không một test nào đi qua
+      tầng <code>frontend/api_client.py</code></strong> — đúng chỗ hỏng.</p>
+
+      <p class="label">Nới <code>post_upload</code> thay vì viết <code>post_multipart</code> mới</p>
+      <table>
+        <tr><th></th><th>Thêm hàm <code>post_multipart</code></th><th>Nới <code>post_upload</code> <span class="pill pill-green">đã chọn</span></th></tr>
+        <tr><td>Code mới</td><td>~15 dòng trùng lặp gần hết với <code>post_upload</code></td><td>Sửa 3 dòng</td></tr>
+        <tr><td>Cơ sở</td><td>—</td><td><code>httpx</code> nhận <code>files</code> ở <strong>cả</strong> dạng <code>dict</code> lẫn <code>list[tuple]</code>; <code>post_upload</code> vốn chuyển thẳng xuống httpx nên <em>đã</em> làm được, chỉ type hint ghi hẹp là <code>dict</code></td></tr>
+        <tr><td>Rủi ro 8 caller cũ</td><td>Không</td><td>Không — <code>timeout=None</code> mặc định giữ nguyên 60s</td></tr>
+      </table>
+
+      <p class="label">Vì sao phải là <code>list</code>, không thể là <code>dict</code></p>
+      <p><code>/api/ach/start</code> khai báo <code>files: list[UploadFile]</code> ⇒ mọi file là part
+      <strong>cùng chung một tên field <code>files</code></strong>. <code>dict</code> không thể có key trùng,
+      nên bắt buộc dùng <code>[('files', (tên, bytes, mime)), ...]</code>. Đây cũng chính là dạng mà
+      <code>tests/test_ach_bo_qua_checkpoint.py</code> đã dùng và chứng minh là chạy đúng.</p>
+
+      <p class="label"><code>timeout=600s</code> cho riêng lời gọi này</p>
+      <p><code>_download_client</code> để 60s. <code>/api/ach/start</code> cho phép tới <strong>500 MB</strong>
+      và backend đọc hết vào RAM rồi ghi ra đĩa <em>trước khi</em> trả <code>job_id</code> — 60s quá sát với
+      bộ file ACH thật. Thêm tham số <code>timeout</code> tuỳ chọn, mặc định <code>None</code> để 8 caller
+      hiện có không đổi hành vi.</p>
+
+      <p class="label">Test hồi quy: quét AST thay vì assert <code>hasattr</code></p>
+      <p><code>tests/test_frontend_api_client_calls.py</code> đọc mọi file <code>frontend/**/*.py</code> bằng
+      <code>ast.parse</code>, gom mọi truy cập <code>api.&lt;tên&gt;</code> rồi đối chiếu với tên top-level thật
+      trong <code>api_client.py</code>. Bắt được <strong>cả lớp lỗi này cho mọi trang</strong>, không riêng ACH.
+      Chỉ đọc file, <strong>không import nicegui</strong>, không cần server — chạy 0.7s.</p>
+      <p>Có kèm test thứ hai canh chính bộ quét: dựng một file giả gọi hàm không tồn tại và bắt buộc bộ quét
+      phải phát hiện. Không có nó, một bộ quét luôn trả rỗng vẫn "xanh" mà vô dụng.</p>
+      <p>Quét toàn frontend tại thời điểm sửa: <strong>đúng 1 chỗ sai</strong> là
+      <code>cham_ach.py:563</code>, không có nợ tồn đọng nào khác.</p>
+
+      <p class="label">Kiểm chứng runtime</p>
+      <p>Bug chỉ lộ khi chạy thật, nên ngoài <code>pytest</code> (359 passed) còn dựng một server mini có
+      <strong>đúng chữ ký</strong> <code>list[UploadFile] + 2 Form field</code>, rồi gọi bằng chính
+      <code>api_client.post_upload</code> với tham số y hệt trang <code>cham_ach.py</code>. Kết quả: 3 file
+      tới đủ và nguyên kích thước, <code>ngay_doi_chieu</code> và <code>bo_qua_checkpoint</code> tới đúng giá trị.</p>
+
+    </div>
+  </div>
+
   <!-- W -->
   <div class="card">
     <div class="card-header">
