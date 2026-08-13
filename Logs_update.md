@@ -4,6 +4,13 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 13/08/2026 Giao diện - Ô chọn file: **bấm vào cả dải màu là mở được**, hết cảnh phải nhắm đúng dấu `+`:
+    + **Trước đây**: ô chọn file có một dải màu rộng, nhưng chỉ đúng **dấu `+` bé xíu ở góc phải** là bấm được. Bấm vào phần còn lại — chiếm hơn 90% diện tích và trông y hệt một cái nút — thì không có gì xảy ra. Giống cánh cửa kính lớn mà chỉ có mỗi ô nhỏ ở mép là đẩy được
+    + **Nay**: bấm chỗ nào trên dải màu cũng mở hộp thoại chọn file. Con trỏ chuột cũng đổi thành hình bàn tay khi rê qua, để nhìn là biết bấm được
+    + Áp dụng **một lần cho toàn bộ hệ thống** — tất cả ô chọn file ở 11 màn hình (ACH, CITAD, Song phương, 459901, SWIFT, Lưu trữ, Báo cáo, Nhân sự, Nghỉ phép, Chi nhánh TTQT…) đều được, kể cả màn hình thêm mới sau này
+    + Các nút sẵn có trên dải màu (dấu `+`, nút tải lên, nút xoá danh sách) **giữ nguyên** cách dùng cũ. Không đổi quyền, không đụng dữ liệu. Đã chạy lại toàn bộ **361 test**
+    + ⚠️ Lần đầu vào sau khi cập nhật, nếu vẫn thấy như cũ thì bấm **Ctrl+F5** — trình duyệt đang giữ bản giao diện cũ trong bộ nhớ đệm
+
 - 13/08/2026 Nhật ký hệ thống - Đổi tên nút cho dễ hiểu, hết cảnh **bấm nút tưởng làm mới hoá ra lại lọc mất log**:
     + **Người dùng thật báo**: "ấn *Cập nhật* thì tự ẩn một số log". Thực ra **không log nào bị ẩn hay bị xoá** — nút *Cập nhật* là **nút lọc**, nghĩa là "chỉ cho tôi xem những thao tác sửa dữ liệu". Bấm vào thì mọi dòng thêm mới / xoá đều tạm ẩn đi, nhìn như danh sách bị mất bớt. Bấm *Tất cả* là hiện lại đủ
     + Nguyên nhân là cách đặt tên: nút làm mới trang lúc đó **chỉ có ký hiệu mũi tên tròn `↻`, không có chữ**, trong khi nút lọc lại mang đúng cái tên người ta quen hiểu là "tải lại"

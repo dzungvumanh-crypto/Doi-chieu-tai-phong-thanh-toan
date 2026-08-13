@@ -53,6 +53,61 @@
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
   <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-13</p>
 
+  <!-- W -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">W</span>
+      <span class="card-title">Ô chọn file: bấm cả dải màu là mở hộp thoại, không phải nhắm đúng dấu "+"</span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Vấn đề</p>
+      <p>Quasar <code>QUploader</code> chỉ gắn <code>&lt;input type="file"&gt;</code> vào riêng nút "+" ở
+      góc phải dải màu. Phần còn lại của dải — chiếm hơn 90% diện tích và trông y hệt một nút — bấm vào
+      không có gì xảy ra. Giống cánh cửa kính lớn nhưng chỉ có đúng một ô nhỏ ở mép là đẩy được.</p>
+
+      <p class="label">Cách làm và vì sao chọn nó</p>
+      <table>
+        <tr><th>Phương án</th><th>Đánh giá</th></tr>
+        <tr><td>Sửa từng trang, bọc uploader trong vùng có <code>on('click')</code></td>
+            <td>11 trang, ~15 chỗ <code>ui.upload</code> — sửa lặp, dễ sót khi thêm trang mới</td></tr>
+        <tr><td>CSS kéo giãn <code>input</code> phủ kín dải màu</td>
+            <td>Phải phá <code>position</code> của nút "+", vỡ layout khi Quasar đổi cấu trúc</td></tr>
+        <tr><td><strong>Đã chọn:</strong> một listener ở cấp <code>document</code>, nạp trong
+            <code>ui_kit.install()</code></td>
+            <td>Một chỗ duy nhất, tự phủ mọi uploader kể cả loại tạo động sau này. Cả 11 trang có upload
+            đều gọi <code>install()</code> (qua <code>_sidebar</code>)</td></tr>
+      </table>
+
+      <p class="label">Chi tiết dễ vấp — đã kiểm tra trong mã nguồn Quasar</p>
+      <p>Gọi <code>input.click()</code> bằng mã sinh ra sự kiện có <code>clientX/clientY = 0</code>.
+      Quasar bắt đúng trường hợp này trong <code>pickFiles</code> để chặn đệ quy — nhưng nó chỉ gọi
+      <code>stop(e)</code>, mà <code>stop</code> trong Quasar <strong>chỉ</strong> là
+      <code>stopPropagation()</code>, không có <code>preventDefault()</code>. Nên hộp thoại chọn file vẫn
+      mở bình thường, đồng thời cú click tổng hợp không nổi ngược lên listener của ta.</p>
+      <div class="note">Nếu Quasar đổi <code>stop</code> thành <code>stopAndPrevent</code> ở bản sau,
+      tính năng này sẽ <strong>chết lặng</strong>: bấm vào dải màu không mở gì, không lỗi, không log.
+      Dấu "+" vẫn chạy nên dễ tưởng "vẫn bình thường".</div>
+
+      <p class="label">Loại trừ để không phá nút sẵn có</p>
+      <p>Bỏ qua click rơi vào <code>.q-btn, button, label, input, a</code> — các nút thật trên dải màu
+      (tải lên, xoá hàng đợi, và chính nút "+") giữ nguyên hành vi cũ. Uploader ở trạng thái
+      <code>disabled</code> cũng bị bỏ qua, vì <code>input.click()</code> đi thẳng sẽ vượt mặt cờ
+      <code>editable</code> của Quasar.</p>
+
+      <p class="label">Không làm</p>
+      <p>Không mở rộng vùng bấm sang khu danh sách file (nền trắng) phía dưới — bấm nhầm ở đó khi đang
+      muốn xoá một file đã chọn sẽ gây khó chịu hơn là tiện.</p>
+
+      <p class="label">Không có test tự động</p>
+      <p>Đây là hành vi trình duyệt thuần (DOM + sự kiện chuột); dự án chưa có Playwright nên không viết
+      được test. Xác minh bằng đọc mã nguồn Quasar đi kèm NiceGUI
+      (<code>.venv/.../nicegui/static/quasar.umd.js</code>) và thử tay trên trình duyệt.</p>
+
+    </div>
+  </div>
+
   <!-- U -->
   <div class="card">
     <div class="card-header">
