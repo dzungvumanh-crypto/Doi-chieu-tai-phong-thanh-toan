@@ -53,6 +53,46 @@
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
   <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-10</p>
 
+  <!-- R -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">R</span>
+      <span class="card-title">Gom tài liệu vào <code>docs/</code>, script phụ trợ vào <code>scripts/</code></span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Cái gì được ở lại gốc, và vì sao</p>
+      <table>
+        <tr><th>File</th><th>Neo bởi</th></tr>
+        <tr><td><code>README.md</code></td><td>GitHub chỉ hiển thị README ở gốc repo</td></tr>
+        <tr><td><code>CLAUDE.md</code></td><td>Claude Code đọc từ gốc project</td></tr>
+        <tr><td><code>Logs_update.md</code></td><td><code>deploy.bat</code> chép sang máy chính để người vận hành đọc ngay sau deploy</td></tr>
+        <tr><td><code>run.py</code>, <code>init_db.py</code></td><td>Lệnh khởi động nằm trong README, CLAUDE.md, CONTRIBUTING.md, <code>start.bat</code></td></tr>
+      </table>
+
+      <p class="label">Hai chỗ dễ hỏng âm thầm khi chuyển</p>
+      <p><code>CLAUDE.md</code> nạp <code>@DESIGN.md @SKILL.md</code> vào mọi phiên làm việc — đường dẫn
+      sai thì không báo lỗi, chỉ là quy ước dự án lặng lẽ biến mất khỏi ngữ cảnh. Đã đổi thành
+      <code>@docs/DESIGN.md @docs/SKILL.md</code>.</p>
+      <p>Hướng dẫn global bắt <code>Implementation-notes.html</code> nằm ở root project. Chính file
+      global đó cho phép project ghi đè, nên đã ghi rõ ngoại lệ trong <code>CLAUDE.md</code> — nếu
+      không, phiên sau sẽ tạo một file thứ hai ở gốc và hai bản ghi chú lệch nhau.</p>
+
+      <p class="label">Sửa kèm</p>
+      <p><code>import_users_csv.py</code> trỏ DB vào <code>ksnb.db</code> cạnh file thay vì
+      <code>data/ksnb.db</code> — script luôn dừng ở "Không tìm thấy database". Lỗi có sẵn, sửa luôn
+      vì dù sao cũng phải sửa 2 dòng đường dẫn khi chuyển file.</p>
+
+      <p class="label">Không đụng tới</p>
+      <p>Hàng chục comment trong mã nguồn ghi "xem Implementation-notes.html mục N" — gọi theo
+      <strong>tên file</strong>, không phải đường dẫn, nên vẫn tìm ra. Các card cũ trong chính file
+      này vẫn ghi đường dẫn gốc: đây là nhật ký theo thời điểm, sửa lại thành đường dẫn mới là làm
+      sai lịch sử.</p>
+
+    </div>
+  </div>
+
   <!-- Q -->
   <div class="card">
     <div class="card-header">

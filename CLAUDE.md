@@ -2,7 +2,11 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-See also: @DESIGN.md @SKILL.md
+See also: @docs/DESIGN.md @docs/SKILL.md
+
+Tài liệu dự án nằm trong `docs/` (13/08/2026 gom vào cho gốc gọn). Ba file ở lại gốc:
+`README.md` (GitHub đọc từ gốc), `CLAUDE.md` (Claude Code đọc từ gốc), `Logs_update.md`
+(`deploy.bat` chép sang máy chính để người vận hành đọc ngay).
 
 ## Commands
 
@@ -25,7 +29,7 @@ python frontend/main.py            # Frontend riêng
 - `backend/core/` — `deps.py` (RBAC), `security.py` (JWT), `sessions.py` (DB-backed, bảng `login_sessions`), `config.py`, `rate_limit.py`
 
 **Bảng nhân sự tên là `user_tttt`** (tên cũ `ksnb_staff` đã đổi). Tài liệu trong `Plan/` và `Upgrade/`
-là lịch sử, vẫn dùng tên cũ — không copy tên bảng từ đó. Xem `DESIGN.md`.
+là lịch sử, vẫn dùng tên cũ — không copy tên bảng từ đó. Xem `docs/DESIGN.md`.
 - `backend/api/` — Route handlers theo tính năng
 - `backend/services/` — Business logic (đóng tập, in bìa, phiếu nghỉ phép)
 
@@ -43,9 +47,12 @@ là lịch sử, vẫn dùng tên cũ — không copy tên bảng từ đó. Xem
 
 ## Implementation Notes
 
-Mọi quyết định kỹ thuật không hiển nhiên, đánh đổi thiết kế, và vấn đề phát hiện trong quá trình implement **phải được ghi vào [`Implementation-notes.html`](Implementation-notes.html)** — cập nhật liên tục, không để sau.
+Mọi quyết định kỹ thuật không hiển nhiên, đánh đổi thiết kế, và vấn đề phát hiện trong quá trình implement **phải được ghi vào [`docs/Implementation-notes.html`](docs/Implementation-notes.html)** — cập nhật liên tục, không để sau.
 
 Dùng format: card per topic, bảng cho so sánh trước/sau và đánh đổi, badge màu cho trạng thái.
+
+> **Ghi đè quy tắc chung:** hướng dẫn global đặt file này ở root; dự án này để trong
+> `docs/`. Cập nhật đúng `docs/Implementation-notes.html`, **không** tạo file mới ở gốc.
 
 ## Quy tắc làm việc
 

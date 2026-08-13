@@ -205,6 +205,12 @@ Truy cập:
 │   └── *.truoc-utf8.log    # Phần log ghi trước bản vá UTF-8, run.py tự tách ra một lần
 ├── init_db.py               # Khởi tạo DB + seed data
 ├── run.py                   # Launcher (chạy backend + frontend song song; ép UTF-8 cho tiến trình con)
+├── docs/                    # Tài liệu dự án (README.md, CLAUDE.md, Logs_update.md ở gốc)
+│   ├── DESIGN.md                # Patterns & business logic
+│   ├── SKILL.md                 # Nguyên tắc & quy ước làm việc
+│   ├── CONTRIBUTING.md          # Quy tắc đóng góp
+│   ├── Implementation-notes.html # Ghi chú kỹ thuật, quyết định thiết kế (bản đang dùng)
+│   └── Implementation-notes.md   # Bản cũ, giữ làm lịch sử
 ├── scripts/                 # Script phụ trợ chạy tay hoặc do deploy.bat gọi
 │   ├── deploy_env_check.py      # Kiểm/sửa .env máy đích khi deploy
 │   ├── deploy_don_file_thua.py  # Dò file .py cũ còn sót trên máy đích
