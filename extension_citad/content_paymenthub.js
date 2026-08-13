@@ -467,16 +467,42 @@ function observeTraCuu(source) {
    3. PAYMENT — Chuyển tiền đến, lọc "Loại lệnh: Lệnh quyết toán"
    ══════════════════════════════════════════════════════
    Khác PaymentHub (1 số "Tổng số tiền" gộp sẵn): ở đây kết quả gộp CẢ
-   Napas lẫn PSS-MDP làm một, không tách được bằng cách đọc số tổng.
+   Napas lẫn PSS-MDP làm một, không tách được bằng cách đọc số tổng — phải
+   đọc TỪNG DÒNG, cột "NH gửi" ghi rõ mã từng dòng, tự cộng dồn riêng theo
+   mã (readPaymentDetailTotals()). Cột "NH gửi" CÓ SẴN ngay trong bảng kết
+   quả mặc định (Loại lệnh: Lệnh quyết toán, NH gửi để "Tất cả") — chỉ cần
+   kéo bảng sang phải, KHÔNG cần bấm "Xem chi tiết lệnh" (đã xác nhận thực
+   tế nhiều lần).
+
+   NGUYÊN NHÂN THẬT (đã xác nhận qua console người dùng tự chạy — 2 vòng
+   chẩn đoán trước đều đoán sai vì không có dữ liệu DOM thật):
+     Vòng 1 (sai): tưởng do tên cột lệch/có icon → nới lỏng so khớp
+       (_cleanHeader()/_headerIndexOf(), so khớp "chứa chuỗi" thay vì tuyệt
+       đối). Vô hại, giữ lại, nhưng không phải nguyên nhân.
+     Vòng 2 (sai): tưởng do selector định vị <th> quá hẹp (bản cũ
+       `'thead th, tr:first-child th, tr:first-child td'` chỉ tìm trong
+       <thead>/dòng đầu) → đổi thành `'th'` (mọi thẻ <th> trong bảng). Đúng
+       một phần nhưng CHƯA ĐỦ.
+     Nguyên nhân thật: `document.querySelectorAll('table').forEach((t,i)=>
+     console.log(i, t.querySelectorAll('tbody tr').length, [...t.
+     querySelectorAll('th')].some(x=>x.innerText.includes('NH gửi'))))`
+     cho thấy trang có NHIỀU bảng trùng cấu trúc cột (cùng có "NH gửi") —
+     bảng ĐẦU TIÊN khớp tên cột lại RỖNG (0 dòng, có thể là bảng mẫu/bản
+     sao ẩn cho mục đích khác), còn bảng có dữ liệu thật (13 dòng) nằm ở vị
+     trí khác. `_findPaymentTable()` chọn đại bảng ĐẦU TIÊN khớp tên cột mà
+     không kiểm tra có dữ liệu hay không, nên luôn vớ trúng bảng rỗng. Sửa:
+     bỏ qua mọi bảng có `tbody tr` = 0 trước khi so khớp tên cột — xem
+     _findPaymentTable()/_findResultsTableWithAmount().
+
    Có 2 cách tách, thử theo thứ tự (savePaymentDetail()):
-     1. NGƯỜI DÙNG đã tự lọc theo bộ lọc "NH gửi" = 1 mã cụ thể ở form tìm
+     1. NGƯỜI DÙNG tự lọc theo bộ lọc "NH gửi" = 1 mã cụ thể ở form tìm
         kiếm → cả bảng chỉ thuộc 1 kênh, chỉ cần cộng dồn cột "Số tiền" của
         TẤT CẢ dòng (readNhGuiFilterChannel() + readFilteredChannelTotals()).
-        Không cần "Xem chi tiết lệnh".
-     2. Không lọc theo NH gửi (mặc định "Tất cả") → bảng gộp cả 2 kênh, phải
-        tự bung "Xem chi tiết lệnh" (_tryExpandDetail()) rồi đọc TỪNG DÒNG,
-        cột "NH gửi" ghi rõ mã từng dòng, tự cộng dồn riêng theo mã
-        (readPaymentDetailTotals()).
+     2. Mặc định (đường chính, "Tất cả" các bộ lọc) → đọc cột "NH gửi" theo
+        từng dòng trong bảng kết quả có sẵn (readPaymentDetailTotals()).
+        _tryExpandDetail() chỉ là lưới an toàn dự phòng cho trường hợp bảng
+        thật sự chưa có cột "NH gửi" (hasPaymentResults() == false) —
+        thường sẽ không cần chạy tới vì cột đã có sẵn.
    Mã NH gửi ở đây KHÁC mã dùng trên PaymentHub (01401001 vẫn là Napas —
    không đổi giữa 2 hệ thống — nhưng PSS-MDP ở đây là 01406001, không phải
    99991032 như PaymentHub) — 2 hằng số tách riêng, không dùng chung, tránh
@@ -485,11 +511,32 @@ function observeTraCuu(source) {
 const NH_GUI_NAPAS = '01401001';
 const NH_GUI_PSSMDP = '01406001';
 
+// Chuẩn hoá text tiêu đề cột: gộp mọi khoảng trắng/xuống dòng liên tiếp
+// thành 1 dấu cách. Bảng có nút sắp xếp cột thường chèn icon/khoảng trắng
+// phụ vào trong <th> (vd icon mũi tên nằm trên dòng riêng) khiến innerText
+// ra "NH gửi\n" hoặc có khoảng trắng kép — so khớp TUYỆT ĐỐI (===) trước đây
+// trượt trong các trường hợp này dù cột "NH gửi" hiển thị đúng, có sẵn ngay
+// ở bảng kết quả mặc định (đã xác nhận thực tế, KHÔNG cần "Xem chi tiết
+// lệnh"). Nay so khớp kiểu "chứa chuỗi" sau khi chuẩn hoá, khoan dung hơn.
+function _cleanHeader(s) {
+  return (s || '').replace(/\s+/g, ' ').trim();
+}
+
+function _headerIndexOf(headers, name) {
+  return headers.findIndex(h => h.includes(name));
+}
+
 function _findPaymentTable() {
   for (const t of document.querySelectorAll('table')) {
-    const headCells = t.querySelectorAll('thead th, tr:first-child th, tr:first-child td');
+    // Trang này có NHIỀU bảng trùng cấu trúc (cùng cột) nhưng chỉ 1 bảng có
+    // dữ liệu thật — các bảng còn lại rỗng (mẫu/bản sao ẩn cho mục đích
+    // khác). Đã xác nhận thực tế qua console: bảng đầu tiên khớp tên cột
+    // "NH gửi" lại là bảng RỖNG (0 dòng), trong khi bảng có 13 dòng dữ liệu
+    // thật nằm ở vị trí khác — bỏ qua bảng rỗng, không chỉ dựa vào tên cột.
+    if (t.querySelectorAll('tbody tr').length === 0) continue;
+    const headCells = t.querySelectorAll('th');
     for (const c of headCells) {
-      if ((c.innerText || '').trim() === 'NH gửi') return t;
+      if (_cleanHeader(c.innerText).includes('NH gửi')) return t;
     }
   }
   return null;
@@ -500,13 +547,12 @@ function hasPaymentResults() {
   return !!(t && t.querySelectorAll('tbody tr').length > 0);
 }
 
-// Sau khi "Tìm kiếm", trang chỉ hiện BẢNG TÓM TẮT (không có cột "NH gửi")
-// — cột này chỉ xuất hiện ở bảng CHI TIẾT LỆNH, hiện ra sau khi (1) tích
-// chọn dòng ("Xem chi tiết lệnh" bị khoá nếu chưa tích dòng nào) và (2) bấm
-// nút "Xem chi tiết lệnh". Trước đây phải tự làm 2 bước này bằng tay thì
-// tách Napas/PSS-MDP mới chạy được — tự động hoá để "Tìm kiếm" xong là có
-// ngay, không cần thao tác thêm. Cooldown theo thời gian (không phải khoá
-// một-lần) để tự thử lại nếu bảng chi tiết tải chậm, nhưng không bấm dồn dập
+// Lưới an toàn dự phòng: bảng kết quả mặc định ĐÃ CÓ SẴN cột "NH gửi" (xác
+// nhận thực tế qua console), nên bình thường không cần hàm này — chỉ chạy
+// tới khi hasPaymentResults() vẫn false dù đã sửa đúng selector định vị
+// <th> (xem comment đầu mục "3. PAYMENT"), phòng trường hợp hiếm bảng thật
+// sự ở dạng khác (vd chưa tải xong). Cooldown theo thời gian (không phải
+// khoá một-lần) để tự thử lại nếu bảng tải chậm, nhưng không bấm dồn dập
 // mỗi 1.5s — nút "Xem chi tiết lệnh" có thể là dạng bật/tắt, bấm khi đang
 // tải dở có thể vô tình ẩn lại bảng vừa hiện.
 let _lastExpandAttempt = 0;
@@ -538,11 +584,11 @@ function readPaymentDetailTotals() {
   const totals = { napas: {}, pssmdp: {} };
   if (!table) return totals;
 
-  const headers = Array.from(table.querySelectorAll('thead th, tr:first-child th, tr:first-child td'))
-    .map(c => (c.innerText || '').trim());
-  const idxNH = headers.indexOf('NH gửi');
-  const idxTien = headers.indexOf('Số tiền');
-  const idxLoaiTien = headers.indexOf('Loại tiền');
+  const headers = Array.from(table.querySelectorAll('th'))
+    .map(c => _cleanHeader(c.innerText));
+  const idxNH = _headerIndexOf(headers, 'NH gửi');
+  const idxTien = _headerIndexOf(headers, 'Số tiền');
+  const idxLoaiTien = _headerIndexOf(headers, 'Loại tiền');
   if (idxNH === -1 || idxTien === -1) return totals;
 
   for (const row of table.querySelectorAll('tbody tr')) {
@@ -572,21 +618,39 @@ function readPaymentDetailTotals() {
 // từng dòng nữa. Khác PaymentHub: trang KHÔNG tự cộng sẵn "Tổng số tiền" khi
 // lọc kiểu này (chỉ có "Tổng số giao dịch" đếm SỐ MÓN) — phải tự quét cộng
 // dồn cột "Số tiền" của từng dòng mới ra tổng tiền.
+// Tìm đúng thẻ nhãn "NH gửi" trong form lọc rồi dò lên từng cấp cha để tìm
+// giá trị đang chọn — không đoán chỉ 1 kiểu hiển thị vì mỗi khung giao diện
+// khác nhau: có nơi hiện chữ ngay trong thẻ (span/div, đọc được qua
+// textContent), có nơi hiện qua ô <input readonly value="..."> (KHÔNG tính
+// vào textContent/innerText — lần trước lỗi chính là chỗ này). Dừng ở cấp
+// cha ĐẦU TIÊN tìm thấy mã, để không lỡ quét rộng sang các trường lọc khác.
 function readNhGuiFilterChannel() {
-  const allText = document.body?.innerText || '';
-  const idx = allText.indexOf('NH gửi');
-  if (idx === -1) return null;
-  const near = allText.slice(idx, idx + 60);
-  if (near.includes(NH_GUI_NAPAS)) return 'napas';
-  if (near.includes(NH_GUI_PSSMDP)) return 'pssmdp';
+  const labelEls = Array.from(document.querySelectorAll('label, span, div, td, th'))
+    .filter(el => el.children.length === 0 && (el.textContent || '').trim() === 'NH gửi');
+  for (const label of labelEls) {
+    let scope = label.parentElement;
+    for (let hop = 0; scope && hop < 4; hop++, scope = scope.parentElement) {
+      for (const c of scope.querySelectorAll('input, select')) {
+        const v = c.value || '';
+        if (v.includes(NH_GUI_NAPAS)) return 'napas';
+        if (v.includes(NH_GUI_PSSMDP)) return 'pssmdp';
+      }
+      const txt = scope.textContent || '';
+      if (txt.includes(NH_GUI_NAPAS)) return 'napas';
+      if (txt.includes(NH_GUI_PSSMDP)) return 'pssmdp';
+    }
+  }
   return null;
 }
 
 function _findResultsTableWithAmount() {
   for (const t of document.querySelectorAll('table')) {
-    const headCells = t.querySelectorAll('thead th, tr:first-child th, tr:first-child td');
+    // Bỏ qua bảng rỗng — cùng lý do với _findPaymentTable() (nhiều bảng
+    // trùng cột nhưng chỉ 1 bảng có dữ liệu thật).
+    if (t.querySelectorAll('tbody tr').length === 0) continue;
+    const headCells = t.querySelectorAll('th');
     for (const c of headCells) {
-      if ((c.innerText || '').trim() === 'Số tiền') return t;
+      if (_cleanHeader(c.innerText).includes('Số tiền')) return t;
     }
   }
   return null;
@@ -604,10 +668,10 @@ function readFilteredChannelTotals() {
   const table = _findResultsTableWithAmount();
   const totals = {};
   if (!table) return totals;
-  const headers = Array.from(table.querySelectorAll('thead th, tr:first-child th, tr:first-child td'))
-    .map(c => (c.innerText || '').trim());
-  const idxTien = headers.indexOf('Số tiền');
-  const idxLoaiTien = headers.indexOf('Loại tiền');
+  const headers = Array.from(table.querySelectorAll('th'))
+    .map(c => _cleanHeader(c.innerText));
+  const idxTien = _headerIndexOf(headers, 'Số tiền');
+  const idxLoaiTien = _headerIndexOf(headers, 'Loại tiền');
   if (idxTien === -1) return totals;
 
   for (const row of table.querySelectorAll('tbody tr')) {
@@ -722,10 +786,14 @@ async function savePaymentDetail(manual = false) {
   }
 
   if (!hasPaymentResults()) {
+    // Bình thường không tới đây — cột "NH gửi" đã có sẵn trong bảng kết quả
+    // mặc định. Chỉ rơi vào đây khi thật sự chưa tìm kiếm, hoặc bảng đang ở
+    // dạng khác không có cột này — thử bung "Xem chi tiết lệnh" như lưới an
+    // toàn dự phòng.
     _tryExpandDetail();
     if (manual) {
       const msg = /Tổng số giao dịch:/.test(document.body?.innerText || '')
-        ? 'Đang tự bung chi tiết lệnh để tách Napas/PSS-MDP, đợi vài giây rồi bấm lại'
+        ? 'Không đọc được cột "NH gửi" trong bảng — đang thử bung "Xem chi tiết lệnh", đợi vài giây rồi bấm lại'
         : 'Chưa có kết quả, hãy Tìm kiếm trước';
       showToast(msg, '#f59e0b');
     }

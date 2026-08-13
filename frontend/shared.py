@@ -15,38 +15,36 @@ _log = logging.getLogger(__name__)
 COLORS = ui_kit.COLORS
 
 # ─── Navigation structure ─────────────────────────────────────────────────────
-# Mỗi department có thể có items con. Thêm item mới: chèn vào "items" của phòng tương ứng.
-DEPARTMENTS = [
+# Menu gom theo CHỨC NĂNG, không theo phòng ban. Tầng "phòng" chỉ còn ở cấp 2 của
+# Đối chiếu và Báo cáo, và chỉ liệt kê phòng đang thực sự có tính năng.
+#
+# Hai loại phần tử cấp 1:
+#   tuple (key, label, icon)                → menu phẳng, kiểm feature "menu.<key>"
+#   dict  {"id", "label", "icon", "items"}  → nhóm, hover ra flyout
+# Trong "items": tuple = mục thường; dict {"label", "icon", "items"} = nhóm con
+# (flyout tầng 3). Sâu hơn 3 tầng thì _dept_group() không dựng được.
+#
+# `backend/core/features.py::FEATURE_GROUPS` soi gương cây này — đổi cấu trúc ở
+# đây thì sửa cả bên đó, nếu không màn phân quyền sẽ khác thứ user nhìn thấy.
+MENU_TREE = [
     {
-        "id": "ksnb",
-        "label": "Phòng KSNB & HTVH",
-        "icon": "manage_search",
+        "id": "chungtu",
+        "label": "Quản lý chứng từ",
+        "icon": "folder_copy",
         "items": [
             ("handovers", "Bàn giao chứng từ", "receipt_long"),
             ("bundles",   "Đóng chứng từ",     "folder_zip"),
             ("storage",   "Lưu trữ",            "inventory_2"),
-            ("ttqt_branches", "Danh sách CN TTQT", "account_tree"),
-            {
-                "label": "Báo cáo",
-                "icon": "assessment",
-                "items": [
-                    ("reports",          "Báo cáo hậu kiểm",          "fact_check"),
-                    ("handover_reports", "Báo cáo bàn giao chứng từ", "assignment_late"),
-                ],
-            },
         ],
     },
-    {"id": "swift", "label": "Phòng Swift", "icon": "swap_horiz",
-     "items": [
-         ("swift_recon", "Đối chiếu điện SWIFT", "compare_arrows"),
-     ]},
     {
-        "id": "payment", "label": "Phòng Thanh toán", "icon": "payments",
+        "id": "doichieu",
+        "label": "Đối chiếu",
+        "icon": "compare_arrows",
         "items": [
-            ("duty_schedule", "Phân lịch trực", "edit_calendar"),
             {
-                "label": "Đối chiếu",
-                "icon": "compare_arrows",
+                "label": "Phòng Thanh toán",
+                "icon": "payments",
                 "items": [
                     ("cham_459901",           "Chấm 459901",            "task_alt"),
                     ("doi_chieu_song_phuong", "Đối chiếu Song phương",  "account_balance"),
@@ -55,28 +53,40 @@ DEPARTMENTS = [
                     ("doi_soat_citad",        "Đối soát chênh lệch CITAD cuối ngày", "fact_check"),
                 ],
             },
+            {
+                "label": "Phòng Swift",
+                "icon": "swap_horiz",
+                "items": [
+                    ("swift_recon", "Đối chiếu điện SWIFT", "compare_arrows"),
+                ],
+            },
         ],
     },
-    # ── Phòng chưa có chức năng — giữ làm marker mở rộng, items rỗng nên không render ──
-    {"id": "ktoan",   "label": "Phòng Kế toán",             "icon": "calculate",       "items": []},
-    {"id": "nostro",  "label": "Phòng QLTK Nostro, Vostro", "icon": "account_balance", "items": []},
     {
-        "id": "tonghop",
-        "label": "Phòng Tổng hợp",
-        "icon": "summarize",
+        "id": "baocao",
+        "label": "Báo cáo",
+        "icon": "assessment",
         "items": [
-            ("leaves", "Nghỉ phép", "event_busy"),
             {
-                "label": "Báo cáo",
-                "icon": "assessment",
+                "label": "Phòng KSNB & HTVH",
+                "icon": "manage_search",
+                "items": [
+                    ("reports",          "Báo cáo hậu kiểm",          "fact_check"),
+                    ("handover_reports", "Báo cáo bàn giao chứng từ", "assignment_late"),
+                ],
+            },
+            {
+                "label": "Phòng Tổng hợp",
+                "icon": "summarize",
                 "items": [
                     ("th_reports", "Báo cáo dữ liệu thanh toán", "payments"),
                 ],
             },
         ],
     },
-    # ── Chưa có chức năng — xem ghi chú ở nhóm phòng rỗng phía trên ──
-    {"id": "bgd", "label": "Ban Giám đốc", "icon": "business_center", "items": []},
+    ("leaves",        "Nghỉ phép",         "event_busy"),
+    ("duty_schedule", "Phân lịch trực",    "edit_calendar"),
+    ("ttqt_branches", "Danh sách CN TTQT", "account_tree"),
 ]
 
 # Hai nhóm dưới đây trước nằm inline trong _sidebar(). Tách ra module-level để
@@ -103,13 +113,6 @@ DEPT_PHANQUYEN = {
     ],
 }
 
-# Chuyên viên chỉ thấy 2 mục này (flat, không theo phòng ban)
-MENU_ITEMS_CV = [
-    ("handovers", "Bàn giao chứng từ", "receipt_long"),
-    ("leaves",    "Nghỉ phép",          "event_busy"),
-]
-
-
 def _build_breadcrumbs() -> dict[str, list[str]]:
     """route key → đường dẫn menu. Dựng 1 lần lúc import từ chính cây menu."""
     def _clean(parts: list[str]) -> list[str]:
@@ -122,13 +125,18 @@ def _build_breadcrumbs() -> dict[str, list[str]]:
         return out
 
     paths: dict[str, list[str]] = {}
-    for dept in [*DEPARTMENTS, DEPT_NHATKY, DEPT_PHANQUYEN]:
-        for item in dept["items"]:
+    for node in [*MENU_TREE, DEPT_NHATKY, DEPT_PHANQUYEN]:
+        # Menu phẳng cấp 1: đường dẫn 1 đoạn → _current_breadcrumb() tự bỏ qua,
+        # tiêu đề trang không bị lặp lại chính nó.
+        if isinstance(node, tuple):
+            paths[node[0]] = [node[1]]
+            continue
+        for item in node["items"]:
             if isinstance(item, tuple):
-                paths[item[0]] = _clean([dept["label"], item[1]])
+                paths[item[0]] = _clean([node["label"], item[1]])
             else:
                 for k, lbl, _ in item["items"]:
-                    paths[k] = _clean([dept["label"], item["label"], lbl])
+                    paths[k] = _clean([node["label"], item["label"], lbl])
     return paths
 
 
@@ -290,7 +298,7 @@ def _pending_section():
         )
         for key, label, icon, _feat in _PENDING_DEFS:
             row = ui.row().classes(
-                "sidebar-row w-full items-center px-4 py-2 cursor-pointer hover:bg-red-800"
+                "sidebar-row w-full items-center gap-0 px-4 py-2 cursor-pointer hover:bg-red-800"
             ).on("click", lambda k=key: ui.navigate.to(f"/pending/{k}"))
             row.set_visibility(False)
             with row:
@@ -335,7 +343,7 @@ def _nav_item(key: str, label: str, icon: str, current_page: str):
     is_active = current_page == key
     bg = "bg-red-700" if is_active else "hover:bg-red-800"
     with ui.row().classes(
-        f"sidebar-row w-full items-center px-4 py-2.5 cursor-pointer {bg}"
+        f"sidebar-row w-full items-center gap-0 px-4 py-2.5 cursor-pointer {bg}"
     ).on("click", lambda k=key: ui.navigate.to(f"/{k}")):
         ui.icon(icon).classes("sidebar-icon text-lg mr-3 text-red-100 shrink-0")
         ui.label(label).classes("sidebar-label text-sm flex-1")
@@ -372,13 +380,15 @@ def _dept_group(dept: dict, current_page: str, check_features: bool = True):
     is_active_dept = current_page in dept_keys
 
     with ui.element("div").classes("dept-item w-full"):
-        # ── Header phòng (luôn hiển thị, không click) ──
+        # ── Header nhóm (luôn hiển thị, không click) ──
+        # Cỡ chữ / cỡ icon / padding phải khớp _nav_item() — nhóm và menu phẳng
+        # nay đứng cùng cấp trong sidebar, lệch một nấc là nhìn ra ngay.
         active_cls = " bg-red-800" if is_active_dept else ""
         with ui.element("div").classes(
-            f"sidebar-row flex items-center px-3 py-2.5 cursor-default select-none hover:bg-red-800 w-full{active_cls}"
+            f"sidebar-row flex items-center px-4 py-2.5 cursor-default select-none hover:bg-red-800 w-full{active_cls}"
         ):
-            ui.icon(dept["icon"]).classes("sidebar-icon text-base mr-2 text-red-200 shrink-0")
-            ui.label(dept["label"]).classes("sidebar-label text-xs font-semibold text-red-100 flex-1 leading-tight")
+            ui.icon(dept["icon"]).classes("sidebar-icon text-lg mr-3 text-red-100 shrink-0")
+            ui.label(dept["label"]).classes("sidebar-label text-sm flex-1")
             if visible_items:
                 ui.icon("chevron_right").classes("sidebar-label text-sm text-red-400 shrink-0")
 
@@ -394,9 +404,9 @@ def _dept_group(dept: dict, current_page: str, check_features: bool = True):
                         is_active = current_page == key
                         bg = "bg-red-700" if is_active else "hover:bg-red-800"
                         with ui.row().classes(
-                            f"w-full items-center px-4 py-2.5 cursor-pointer {bg}"
+                            f"w-full items-center gap-0 px-4 py-2.5 cursor-pointer {bg}"
                         ).on("click", lambda k=key: ui.navigate.to(f"/{k}")):
-                            ui.icon(icon).classes("text-base mr-2 text-red-100 shrink-0")
+                            ui.icon(icon).classes("text-base mr-3 text-red-100 shrink-0")
                             ui.label(label).classes("text-sm flex-1")
                     else:
                         # ── Sub-group (nested flyout) ──
@@ -410,9 +420,9 @@ def _dept_group(dept: dict, current_page: str, check_features: bool = True):
                         sub_bg = "bg-red-700" if is_active_sub else "hover:bg-red-800"
                         with ui.element("div").classes("flyout-group w-full"):
                             with ui.row().classes(
-                                f"w-full items-center px-4 py-2.5 cursor-default select-none {sub_bg}"
+                                f"w-full items-center gap-0 px-4 py-2.5 cursor-default select-none {sub_bg}"
                             ):
-                                ui.icon(item["icon"]).classes("text-base mr-2 text-red-100 shrink-0")
+                                ui.icon(item["icon"]).classes("text-base mr-3 text-red-100 shrink-0")
                                 ui.label(item["label"]).classes("text-sm flex-1")
                                 ui.icon("chevron_right").classes("text-sm text-red-400 shrink-0")
                             with ui.element("div").classes("sub-flyout"):
@@ -424,9 +434,9 @@ def _dept_group(dept: dict, current_page: str, check_features: bool = True):
                                     is_active = current_page == k
                                     bg = "bg-red-700" if is_active else "hover:bg-red-800"
                                     with ui.row().classes(
-                                        f"w-full items-center px-4 py-2.5 cursor-pointer {bg}"
+                                        f"w-full items-center gap-0 px-4 py-2.5 cursor-pointer {bg}"
                                     ).on("click", lambda kk=k: ui.navigate.to(f"/{kk}")):
-                                        ui.icon(ico).classes("text-base mr-2 text-red-100 shrink-0")
+                                        ui.icon(ico).classes("text-base mr-3 text-red-100 shrink-0")
                                         ui.label(lbl).classes("text-sm flex-1")
 
 
@@ -504,9 +514,13 @@ def _sidebar(current_page: str) -> dict:
             # Trang chủ — luôn hiển thị
             _nav_item("home", "Trang chủ", "home", current_page)
 
-            # Phân cấp theo phòng ban (flyout) — hiện theo feature
-            for dept in DEPARTMENTS:
-                _dept_group(dept, current_page, check_features=True)
+            # Menu chức năng — nhóm thì dựng flyout, mục phẳng thì dựng thẳng
+            for node in MENU_TREE:
+                if isinstance(node, tuple):
+                    if api.has_feature(f"menu.{node[0]}"):
+                        _nav_item(*node, current_page)
+                else:
+                    _dept_group(node, current_page, check_features=True)
 
             ui.separator().classes("border-red-700 my-1")
 
@@ -524,7 +538,7 @@ def _sidebar(current_page: str) -> dict:
 
         # ── Đăng xuất ──
         with ui.row().classes(
-            "sidebar-row w-full items-center px-4 py-3 cursor-pointer hover:bg-red-800 "
+            "sidebar-row w-full items-center gap-0 px-4 py-3 cursor-pointer hover:bg-red-800 "
             "border-t border-red-700 shrink-0"
         ).on("click", _logout):
             ui.icon("logout").classes("sidebar-icon text-xl mr-3 text-red-300")

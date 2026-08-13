@@ -16,7 +16,9 @@ FEATURES: dict[str, str] = {
     "menu.reports":            "Báo cáo hậu kiểm (menu)",
     "menu.handover_reports":   "Báo cáo bàn giao chứng từ (menu)",
     "menu.leaves":             "Nghỉ phép (menu)",
-    "menu.th_reports":         "Báo cáo dữ liệu thanh toán — Phòng TH (menu)",
+    # Hậu tố phòng đã bỏ: màn phân quyền có dải nhãn "Phòng Tổng hợp" ngay trên
+    # mục này rồi, để lại sẽ đọc thành "Phòng Tổng hợp / … — Phòng TH".
+    "menu.th_reports":         "Báo cáo dữ liệu thanh toán (menu)",
     "menu.staff":              "Quản lý User (menu)",
     "menu.logs":               "Nhật ký hệ thống (menu)",
     "menu.ttqt_branches":      "Danh sách CN TTQT (menu)",
@@ -27,7 +29,8 @@ FEATURES: dict[str, str] = {
     "handovers.reject_entry":  "Từ chối bàn giao",
     "handovers.borrow":        "Mượn lại chứng từ",
     "handovers.handback":      "Bàn giao lại chứng từ",
-    "handovers.return_entry":  "Trả lại chứng từ cho cán bộ",
+    # Giữ nguyên code "handovers.return_entry" — đổi code sẽ mất quyền đã gán trong group_features
+    "handovers.return_entry":  "Chuyển trả chứng từ cho GDV",
 
     # Đóng chứng từ — thao tác
     "bundles.generate":        "Tạo bìa chứng từ",
@@ -78,138 +81,214 @@ FEATURES: dict[str, str] = {
     # Đối chiếu Song phương — Phòng Thanh toán
     "menu.doi_chieu_song_phuong":    "Đối chiếu Song phương — Định tuyến lệnh IPCAS (menu)",
     "doi_chieu_song_phuong.process": "Xử lý file ZIP Đối chiếu Song phương",
-    # Đối chiếu ACH — Phòng Thanh toán
-    "menu.doi_chieu_ach":       "Đối chiếu ACH — GL02 ↔ MIS (menu)",
-    "doi_chieu_ach.process":    "Chạy đối chiếu ACH",
+    # Chấm đối chiếu ACH — Phòng Thanh toán. Mã đổi từ `menu.doi_chieu_ach` khi
+    # module `doi_chieu_ach` cũ được thay bằng `backend/services/ach/` — code ACH
+    # (backend/api/ach.py, frontend/pages/cham_ach.py) đòi đúng mã `menu.cham_ach`.
+    "menu.cham_ach":            "Chấm đối chiếu ACH (menu)",
+    "cham_ach.process":         "Chạy đối chiếu ACH",
     # Đối chiếu CITAD ↔ PaymentHub — Phòng Thanh toán
     # Nhãn phải khớp tên menu ở frontend/shared.py, phần mô tả sau dấu — mới
     # nói rõ đối chiếu/đối soát với hệ thống nào.
     "menu.doi_chieu_citad":     "Đối chiếu CITAD cuối ngày — CITAD ↔ PaymentHub (menu)",
     # Đối soát CITAD ↔ IPCAS — Phòng Thanh toán
     "menu.doi_soat_citad":      "Đối soát chênh lệch CITAD cuối ngày — CITAD ↔ IPCAS (menu)",
-    # Đối chiếu điện SWIFT — SWIFT
-    "menu.swift_recon":        "Đối chiếu điện SWIFT — Phòng Swift (menu)",
+    # Đối chiếu điện SWIFT — hậu tố phòng bỏ vì đã có dải nhãn "Phòng Swift"
+    "menu.swift_recon":        "Đối chiếu điện SWIFT (menu)",
 }
 
-# ── Cấu trúc phân cấp: Phòng → Menu → Action ─────────────────────────────────
-# Thêm phòng/menu/action mới tại đây — group_features.py tự render theo.
-# "actions": [] = menu hiển thị checkbox đơn, không có sub-items.
+# ── Cấu trúc màn hình phân quyền ──────────────────────────────────────────────
+# Gom theo CHỨC NĂNG, soi gương cây menu sidebar (`MENU_TREE` trong
+# frontend/shared.py) — admin nhìn màn phân quyền thấy đúng thứ user sẽ thấy.
+#
+# Hai loại phần tử cấp 1, phân biệt bằng khoá "kind":
+#   kind="group" → thẻ có header. "sections" gom menu theo phòng;
+#                  label=None nghĩa là không cần dải nhãn phòng.
+#   kind="menu"  → thẻ không header, chính ô tick là tiêu đề thẻ. Dùng cho menu
+#                  đứng một mình ở cấp 1 sidebar; nếu bọc header sẽ ra
+#                  "Nghỉ phép / Nghỉ phép" — nhãn lặp hai lần liền.
+#
+# "actions": [] = menu chỉ có một ô tick, không có mục con.
 FEATURE_GROUPS: list[dict] = [
     {
-        "dept": "Phòng KSNB & HTVH",
-        "icon": "account_balance",
-        "menus": [
+        "kind": "group",
+        "dept": "Quản lý chứng từ",
+        "icon": "folder_copy",
+        "sections": [
             {
-                "code": "menu.handovers",
-                "actions": [
-                    "handovers.save_entry",
-                    "handovers.confirm_entry",
-                    "handovers.reject_entry",
-                    "handovers.borrow",
-                    "handovers.handback",
-                    "handovers.return_entry",
-                ],
-            },
-            {
-                "code": "menu.bundles",
-                "actions": [
-                    "bundles.generate",
-                    "bundles.download_cover",
-                    "bundles.mark_printed",
-                    "bundles.delete",
-                ],
-            },
-            {"code": "menu.storage",  "actions": []},
-            {"code": "menu.reports",  "actions": []},
-            {"code": "menu.handover_reports", "actions": []},
-            {
-                "code": "menu.ttqt_branches",
-                "actions": [
-                    "ttqt_branches.create",
-                    "ttqt_branches.edit",
-                    "ttqt_branches.delete",
-                    "ttqt_branches.import",
-                    "ttqt_branches.export",
+                "label": None,
+                "menus": [
+                    {
+                        "code": "menu.handovers",
+                        "actions": [
+                            "handovers.save_entry",
+                            "handovers.confirm_entry",
+                            "handovers.reject_entry",
+                            "handovers.borrow",
+                            "handovers.handback",
+                            "handovers.return_entry",
+                        ],
+                    },
+                    {
+                        "code": "menu.bundles",
+                        "actions": [
+                            "bundles.generate",
+                            "bundles.download_cover",
+                            "bundles.mark_printed",
+                            "bundles.delete",
+                        ],
+                    },
+                    {"code": "menu.storage", "actions": []},
                 ],
             },
         ],
     },
     {
-        "dept": "Phòng Tổng hợp",
-        "icon": "summarize",
-        "menus": [
+        "kind": "group",
+        "dept": "Đối chiếu",
+        "icon": "compare_arrows",
+        "sections": [
             {
-                "code": "menu.leaves",
-                "actions": [
-                    "leaves.create",
-                    "leaves.cancel",
-                    "leaves.resubmit",
-                    "leaves.approve_ksv",
-                    "leaves.forward_th",
-                    "leaves.approve_gd",
-                    "leaves.dashboard",
-                    "leaves.quota_admin",
-                    "leaves.stats_export",
-                    "leaves.declare_direct",
-                    "leaves.recall",
-                ],
-            },
-            {"code": "menu.th_reports", "actions": []},
-        ],
-    },
-    {
-        "dept": "Phòng Thanh toán",
-        "icon": "payments",
-        "menus": [
-            {
-                "code": "menu.duty_schedule",
-                "actions": [
-                    "duty.generate",
-                    "duty.confirm",
-                    "duty.delete",
-                    "duty.export",
-                    "duty.manage_staff",
-                    "duty.manage_config",
+                "label": "Phòng Thanh toán",
+                "menus": [
+                    {"code": "menu.cham_459901", "actions": ["cham_459901.process"]},
+                    {
+                        "code": "menu.doi_chieu_song_phuong",
+                        "actions": ["doi_chieu_song_phuong.process"],
+                    },
+                    {"code": "menu.cham_ach", "actions": ["cham_ach.process"]},
+                    {"code": "menu.doi_chieu_citad", "actions": []},
+                    {"code": "menu.doi_soat_citad", "actions": []},
                 ],
             },
             {
-                "code": "menu.cham_459901",
-                "actions": ["cham_459901.process"],
+                "label": "Phòng Swift",
+                "menus": [
+                    {"code": "menu.swift_recon", "actions": []},
+                ],
             },
-            {
-                "code": "menu.doi_chieu_song_phuong",
-                "actions": ["doi_chieu_song_phuong.process"],
-            },
-            {
-                "code": "menu.doi_chieu_ach",
-                "actions": ["doi_chieu_ach.process"],
-            },
-            {"code": "menu.doi_chieu_citad", "actions": []},
-            {"code": "menu.doi_soat_citad", "actions": []},
         ],
     },
     {
+        "kind": "group",
+        "dept": "Báo cáo",
+        "icon": "assessment",
+        "sections": [
+            {
+                "label": "Phòng KSNB & HTVH",
+                "menus": [
+                    {"code": "menu.reports", "actions": []},
+                    {"code": "menu.handover_reports", "actions": []},
+                ],
+            },
+            {
+                "label": "Phòng Tổng hợp",
+                "menus": [
+                    {"code": "menu.th_reports", "actions": []},
+                ],
+            },
+        ],
+    },
+    {
+        "kind": "menu",
+        "code": "menu.leaves",
+        "icon": "event_busy",
+        "actions": [
+            "leaves.create",
+            "leaves.cancel",
+            "leaves.resubmit",
+            "leaves.approve_ksv",
+            "leaves.forward_th",
+            "leaves.approve_gd",
+            "leaves.dashboard",
+            "leaves.quota_admin",
+            "leaves.stats_export",
+            "leaves.declare_direct",
+            "leaves.recall",
+        ],
+    },
+    {
+        "kind": "menu",
+        "code": "menu.duty_schedule",
+        "icon": "edit_calendar",
+        "actions": [
+            "duty.generate",
+            "duty.confirm",
+            "duty.delete",
+            "duty.export",
+            "duty.manage_staff",
+            "duty.manage_config",
+        ],
+    },
+    {
+        "kind": "menu",
+        "code": "menu.ttqt_branches",
+        "icon": "account_tree",
+        "actions": [
+            "ttqt_branches.create",
+            "ttqt_branches.edit",
+            "ttqt_branches.delete",
+            "ttqt_branches.import",
+            "ttqt_branches.export",
+        ],
+    },
+    {
+        "kind": "group",
         "dept": "Quản lý hệ thống",
         "icon": "admin_panel_settings",
-        "menus": [
+        "sections": [
             {
-                "code": "menu.staff",
-                "actions": [
-                    "staff.create",
-                    "staff.edit",
-                    "staff.delete",
-                    "staff.export",
-                    "staff.import_db",
+                "label": None,
+                "menus": [
+                    {
+                        "code": "menu.staff",
+                        "actions": [
+                            "staff.create",
+                            "staff.edit",
+                            "staff.delete",
+                            "staff.export",
+                            "staff.import_db",
+                        ],
+                    },
+                    {"code": "menu.logs", "actions": []},
                 ],
             },
-            {"code": "menu.logs", "actions": []},
-        ],
-    },
-    {
-        "dept": "Phòng Swift",
-        "icon": "swap_horiz",
-        "menus": [
-            {"code": "menu.swift_recon", "actions": []},
         ],
     },
 ]
+
+
+# ── Chốt an toàn: FEATURE_GROUPS phải phủ kín FEATURES ────────────────────────
+def _iter_group_codes():
+    """Mọi mã quyền có mặt trong FEATURE_GROUPS, giữ nguyên phần trùng lặp."""
+    for node in FEATURE_GROUPS:
+        if node["kind"] == "menu":
+            yield node["code"]
+            yield from node["actions"]
+            continue
+        for section in node["sections"]:
+            for menu in section["menus"]:
+                yield menu["code"]
+                yield from menu["actions"]
+
+
+def _assert_feature_coverage() -> None:
+    """Mã thiếu ở đây = mất quyền vĩnh viễn, nên chặn khởi động chứ không cảnh báo.
+
+    PUT /api/groups/{id}/features xoá sạch quyền của nhóm rồi ghi lại đúng những
+    ô tick đang hiển thị. Mã không được vẽ ra thì không nằm trong danh sách gửi
+    lên → lần bấm Lưu đầu tiên xoá nó khỏi mọi nhóm, không log, không báo.
+    """
+    seen    = list(_iter_group_codes())
+    dup     = sorted({c for c in seen if seen.count(c) > 1})
+    missing = sorted(set(FEATURES) - set(seen))
+    unknown = sorted(set(seen) - set(FEATURES))
+    if dup or missing or unknown:
+        raise RuntimeError(
+            "FEATURE_GROUPS không khớp FEATURES — sửa backend/core/features.py.\n"
+            f"  Thiếu (không hiện trên màn phân quyền, sẽ bị xoá khi lưu): {missing}\n"
+            f"  Trùng lặp (một mã ở hai chỗ, ô tick sau đè ô trước): {dup}\n"
+            f"  Không có trong FEATURES: {unknown}"
+        )
+
+
+_assert_feature_coverage()

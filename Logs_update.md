@@ -4,14 +4,75 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 12/08/2026 Đối chiếu CITAD - Sửa lỗi lệch số liệu ngoại tệ do cắt xu USD/EUR:
+    + **Lỗi thật, gây sai số liệu**: ô nhập số liệu (5 cổng, Payment, Napas, PSS-MDP, Ebanking) hiển thị số theo kiểu số nguyên — USD/EUR có phần xu (vd 2.954.592,79) bị **cắt mất phần xu khi hiển thị**, và chữ đã cắt này sau đó bị đọc ngược lại thành số liệu gốc, mất vĩnh viễn phần xu. Xác nhận thực tế: ngày 06/08/2026 lệch đúng 1 xu vì 3 khoản USD đều bị cắt trước khi cộng
+    + Sửa để giữ nguyên phần xu khi hiển thị — áp dụng cho cả VNĐ (không đổi, luôn số nguyên) lẫn USD/EUR (giờ hiện đủ 2 chữ số thập phân nếu có)
+    + Sửa luôn 1 chỗ sót: dòng **"CHÊNH LỆCH"** trên màn hình (và bảng xem trước khi xuất Excel) vẫn còn 1 công thức riêng cắt xu độc lập, chưa được sửa cùng lần trước — lệch thật kiểu +0,79 từng hiện nhầm thành "+0" (vẫn bôi đỏ đúng nhưng số hiện sai). Đã test lại bằng số liệu thật, hiện đúng
+    + File Excel tải về không bị ảnh hưởng (backend luôn tính lại bằng số thực đầy đủ, độc lập với màn hình)
+
+- 12/08/2026 Đối chiếu / Đối soát CITAD - Thêm bộ lọc Lịch sử theo ngày + tên người chấm, tự động refresh:
+    + **Đối chiếu CITAD**: tab Lịch sử thêm ô lọc **"Tên người chấm"** (trước chỉ lọc được theo ngày). Cột "Người lưu sau cùng" đổi sang hiện tên đầy đủ thay vì tên đăng nhập
+    + **Đối soát CITAD ↔ IPCAS**: tab Lịch sử trước đây **không có bộ lọc nào** (chỉ hiện 100 lần gần nhất) — nay thêm đủ 3 ô lọc **"Từ ngày chấm"/"Đến ngày chấm"/"Tên người chấm"**
+    + **Tự động cập nhật Lịch sử**: trước đây phải bấm F5 tải lại cả trang thì tab Lịch sử mới thấy bản vừa lưu/đối soát. Nay ở **Đối chiếu CITAD**, ngay sau khi lưu thành công, Lịch sử tự nạp lại dữ liệu mới ở phía sau — **không tự chuyển tab**, đang ở tab nào vẫn ở nguyên tab đó. Bên **Đối soát CITAD ↔ IPCAS** cơ chế này vốn đã có sẵn từ trước, đã kiểm tra lại xác nhận vẫn hoạt động đúng
+    + Đã sửa kèm 1 lỗi hiệu năng tự phát sinh khi thêm bộ lọc: câu truy vấn lịch sử đối soát bị mất giới hạn số dòng, tải hết cả bảng mỗi lần gọi kể cả khi không lọc gì — đã thêm lại giới hạn cho trường hợp không lọc (phổ biến nhất)
+
+- 11/08/2026 Đối chiếu CITAD - Extension lên **bản 2.14**, sửa dứt điểm lỗi chọn nhầm bảng rỗng:
+    + ℹ️ Đây là **bản chốt** của chuỗi 2.11 → 2.14: ba bản trước chẩn đoán chưa đúng vì không có dữ liệu thật từ trang Agribank. Bản này sửa theo đúng nguyên nhân đã xác nhận qua lệnh kiểm tra chạy trực tiếp trên trang — không phải lại một lần đoán nữa
+    + Xác nhận qua console: trang có **nhiều bảng trùng cấu trúc cột** (cùng có cột "NH gửi") — bảng **đầu tiên** khớp tên cột lại **rỗng** (0 dòng, khả năng là bảng mẫu/bản sao ẩn phục vụ mục đích khác), còn bảng có dữ liệu thật (13 dòng) nằm ở vị trí khác trong trang
+    + Extension trước đây chọn đại bảng đầu tiên khớp tên cột mà không kiểm tra bảng đó có dữ liệu hay không, nên luôn vớ trúng bảng rỗng — dù bảng thật vẫn còn nguyên, tưởng "không có kết quả"
+    + Nay bỏ qua mọi bảng rỗng trước khi so khớp tên cột, chỉ chọn bảng vừa đúng tên cột vừa có ít nhất 1 dòng dữ liệu
+    + ⚠️ **Phải tải lại `.zip` và cài lại Extension** — vào `/doi_chieu_citad` → **Tải Extension**, giải nén, *Load unpacked* lại
+
+- 11/08/2026 Đối chiếu CITAD - Extension lên **bản 2.13**, tìm ra nguyên nhân thật khiến không đọc được cột "NH gửi":
+    + Xác nhận qua lệnh kiểm tra trực tiếp trên trình duyệt (Console): cột "NH gửi" và "Số tiền" đều có sẵn trong bảng, chữ sạch — **không phải do tên cột lệch hay có icon** như 2 lần sửa trước (bản 2.11/2.12) từng đoán
+    + Nguyên nhân thật: hàm dò cột tiêu đề chỉ tìm trong `<thead>` hoặc đúng dòng đầu tiên của bảng, nhưng bảng thật của trang này không đặt tiêu đề cột theo 1 trong 2 kiểu đó — dò trượt dù cột vẫn tồn tại. Nay dò mọi thẻ tiêu đề trong bảng, không giới hạn vị trí
+    + ⚠️ **Phải tải lại `.zip` và cài lại Extension** — vào `/doi_chieu_citad` → **Tải Extension**, giải nén, *Load unpacked* lại
+
 - 11/08/2026 Bàn giao chứng từ - Thêm nút **Trả lại** để hậu kiểm chủ động trả chứng từ về cho cán bộ:
+
+- 12/08/2026 Nghỉ phép / Kỹ thuật - Sửa lỗi **hai thư mục "Phòng Tổng hợp" trùng tên** trong `templates/` làm mẫu đơn theo chức danh không được dùng:
+    + **Trong `templates/` đang có hai thư mục tên y hệt nhau là "Phòng Tổng hợp"** — nhìn trong Explorer thấy hai dòng giống hệt. Nguyên nhân: chữ có dấu tiếng Việt có hai cách lưu khác nhau bên trong máy (dạng dựng sẵn và dạng ghép dấu rời), Windows coi là hai tên khác nhau nên tạo ra hai thư mục
+    + **Hậu quả**: chương trình tìm mẫu đơn nghỉ phép trong thư mục **rỗng**, nên các **mẫu đơn riêng theo chức danh** (nhân viên / trưởng phòng / giám đốc / phó giám đốc) nếu đặt vào thư mục thật sẽ **không bao giờ được dùng** — hệ thống lặng lẽ quay về mẫu chung, không báo lỗi gì. Hiện thư mục đó đang rỗng nên chưa ai gặp, nhưng cứ bỏ mẫu riêng vào là dính ngay
+    + ⚠️ **Đính chính**: lần báo trước có ghi *"máy chỉ checkout từ git sẽ hỏng phiếu nghỉ phép"* — **không đúng**. In đơn nghỉ phép vẫn chạy bình thường vì có sẵn mẫu chung ở thư mục gốc để dùng thay. Lỗi thật chỉ ảnh hưởng mẫu riêng theo chức danh
+    + **Đã xử lý**: xoá thư mục thừa (bản rỗng, không có file nào, không nằm trong git), **giữ thư mục đang chứa dữ liệu** (`Báo cáo giao dịch chuyển tiền qua Swift`). Đồng thời sửa cách chương trình dò đường dẫn để khớp được cả hai cách lưu, không phụ thuộc thư mục được tạo kiểu nào
+    + ⚠️ **Khi thêm file mẫu mới**: **copy/paste vào thư mục đang có sẵn**, **đừng gõ tay tên thư mục** để tạo thư mục mới — gõ tay sẽ đẻ lại đúng thư mục trùng vừa xoá và lỗi quay lại y như cũ
+    + Không đổi giao diện, không đổi quyền, không cần thao tác gì sau khi cập nhật
+
+- 12/08/2026 Lưu trữ - Thêm tab **"In bìa hồ sơ"** để in bìa hồ sơ lưu trữ (mẫu M01/LHS) hàng loạt từ file Excel tra cứu:
+    + **Trước đây phải vào chương trình lưu trữ bấm in từng hồ sơ một.** 140 hồ sơ là 140 lần bấm, mỗi lần ra một file Word riêng
+    + Nay vào *Quản lý chứng từ → Lưu trữ → tab **In bìa hồ sơ***, nạp file Excel tra cứu (`LT_HS_TRACUU_*.xls`) xuất thẳng từ chương trình lưu trữ. Phần mềm đọc file, hiện bảng để soát lại, tích chọn hồ sơ cần in rồi tải về **một file Word — mỗi hồ sơ một trang**, in một lượt. Ai muốn từng file riêng thì bấm nút **Tải ZIP (mỗi hồ sơ 1 file)**
+    + Dữ liệu lấy từ đâu: **Mã vạch** = cột I (điền vào dòng *Ký hiệu thông tin* và dòng mã vạch); **dòng tiêu đề** = cột C; **Ngày mở** = ngày **đầu tiên** xuất hiện trong cột C (ví dụ *"Nhật ký chứng từ ngày 04/02/2025, 05/02/2025, 06/02/2025"* → ngày mở là **04/02/2025**); **Ngày công việc kết thúc** = cột F; **Số tờ** = cột G
+    + **Bìa in ra giống hệt bìa của chương trình lưu trữ.** Đã đối chiếu với 2 file bìa gốc do chương trình lưu trữ tự sinh (kèm trong file zip người dùng gửi) — chữ trên bìa trùng khít từng ký tự, kể cả hồ sơ gộp nhiều ngày. Mẫu Word không bị đụng tới định dạng, căn lề, cỡ chữ hay font nào
+    + ⚠️ **Máy in phải cài font "3 of 9 Barcode".** Không có font thì dòng mã vạch in ra thành chữ thường `*1000.P026.178074.1*` và **máy quét không đọc được**. Đây là yêu cầu sẵn có của mẫu bìa, không phải phát sinh mới — nhưng giờ in hàng loạt nên lỡ thiếu font là hỏng cả tập
+    + Dòng nào trong Excel mà tên hồ sơ **không có ngày** thì ô *Ngày mở* để trống, và phần mềm **báo cảnh báo vàng kèm số thứ tự dòng** ngay trên bảng để soát lại trước khi in
+    + Quyền: dùng chung quyền màn hình *Lưu trữ* (`menu.storage`), **không cần cấp thêm gì**
+
+- 12/08/2026 Toàn hệ thống - **Sắp xếp lại menu theo chức năng thay vì theo phòng**:
+    + **Trước đây menu cấp 1 là tên phòng.** Muốn mở *Đối chiếu ACH* phải biết trước nó thuộc Phòng Thanh toán; người mới hoặc người kiêm nhiệm nhiều mảng phải mò từng phòng
+    + Nay menu cấp 1 là **việc cần làm**:
+        - **Quản lý chứng từ** → Bàn giao chứng từ / Đóng chứng từ / Lưu trữ
+        - **Đối chiếu** → *Phòng Thanh toán* (Chấm 459901, Song phương, ACH, Đối chiếu CITAD cuối ngày, Đối soát chênh lệch CITAD cuối ngày) và *Phòng Swift* (Đối chiếu điện SWIFT)
+        - **Báo cáo** → *Phòng KSNB & HTVH* (Báo cáo hậu kiểm, Báo cáo bàn giao chứng từ) và *Phòng Tổng hợp* (Báo cáo dữ liệu thanh toán)
+        - **Nghỉ phép**, **Phân lịch trực**, **Danh sách CN TTQT** đứng riêng ngoài cùng, không còn nằm trong phòng nào
+    + Tên phòng **chỉ còn ở tầng giữa** của hai menu Đối chiếu và Báo cáo — nơi cùng một loại việc nhưng mỗi phòng làm một kiểu. Chỉ hiện phòng đang thực sự có tính năng
+    + **Quyền của mọi nhóm giữ nguyên 100%** — chỉ đổi cách sắp xếp, không đổi tên chức năng nào. Không ai bị mất hay được thêm quyền sau lần cập nhật này
+    + ⚠️ **Màn *Phân quyền theo nhóm* đổi bố cục theo menu mới.** Đường đi cũ trong các log bên dưới không còn đúng — ví dụ quyền *Chuyển trả chứng từ cho GDV* trước ở *Phòng KSNB & HTVH → Bàn giao chứng từ*, **nay ở *Quản lý chứng từ* → Bàn giao chứng từ**. Quyền vẫn còn nguyên, chỉ nằm ở thẻ khác
+    + Màn phân quyền có thêm nút **"Chọn tất cả" / "Bỏ chọn"** cạnh mỗi tên phòng. Nút này **chỉ tích các màn hình**, không tự tích các thao tác bên trong (tạo / xoá / xử lý file…) — muốn cấp thao tác vẫn phải tự tích, tránh lỡ tay cấp quyền chạy dữ liệu
+
+- 11/08/2026 Bàn giao chứng từ - Thêm nút **Chuyển trả GDV** để hậu kiểm chủ động trả chứng từ về cho giao dịch viên:
     + **Trước đây chứng từ đã xác nhận chỉ ra khỏi kho được khi giao dịch viên chủ động xin mượn.** Hậu kiểm cầm chứng từ trên tay, thấy thiếu chữ ký hay sai sót, muốn trả về cho cán bộ thì không có nút nào — phải nhờ chính cán bộ đó vào bấm *Mượn lại* rồi mình duyệt, vòng vèo và sai bản chất sự việc
-    + Nay ở **bảng lịch sử của từng ô** (bấm vào ô trong lưới), phần *THAO TÁC* có thêm nút tím **"↪ Trả lại"**. Nút **chỉ hiện với ô đang ở trạng thái *Đã xác nhận*** — ô đang chờ, đang mượn hay bị từ chối đều không có
-    + **Bắt buộc nhập lý do trả lại**, không nhập thì không bấm được. Lý do hiện ngay trong dòng lịch sử của ô, ai cũng đọc được
+    + Nay ở **bảng lịch sử của từng ô** (bấm vào ô trong lưới), phần *THAO TÁC* có thêm nút tím **"↪ Chuyển trả GDV"**. Nút **chỉ hiện với ô đang ở trạng thái *Đã xác nhận*** — ô đang chờ, đang mượn hay bị từ chối đều không có
+    + **Bắt buộc nhập lý do chuyển trả**, không nhập thì không bấm được. Lý do hiện ngay trong dòng lịch sử của ô, ai cũng đọc được
     + Bấm xong ô chuyển sang **Đang mượn** (ô tím). Từ đây cán bộ dùng nút *Bàn giao lại* như bình thường, hậu kiểm xác nhận lại là xong — giống hệt luồng mượn cũ
-    + ⚠️ **Phải cấp quyền thì nút mới hiện.** Vào *Phân quyền theo nhóm* → **Phòng KSNB & HTVH → Bàn giao chứng từ → "Trả lại chứng từ cho cán bộ"**, tích cho nhóm hậu kiểm / kiểm soát viên. Chưa tích thì không ai thấy nút, kể cả người đang có quyền xác nhận
+    + ⚠️ **Phải cấp quyền thì nút mới hiện.** Vào *Phân quyền theo nhóm* → **Phòng KSNB & HTVH → Bàn giao chứng từ → "Chuyển trả chứng từ cho GDV"**, tích cho nhóm hậu kiểm / kiểm soát viên. Chưa tích thì không ai thấy nút, kể cả người đang có quyền xác nhận
     + **Giao dịch viên không được cấp quyền này** — hệ thống chặn ở máy chủ kể cả khi lỡ tích nhầm. Nếu cho, cán bộ sẽ tự rút được chứng từ đã chốt của chính mình mà không qua bước duyệt của hậu kiểm
-    + ⚠️ **Ô đã đóng tập chứng từ vẫn trả lại được** — bìa tập đã in sẽ không còn khớp thực tế. Chức năng *Mượn lại* sẵn có cũng đang như vậy, nên lần này giữ nguyên cho nhất quán. Cần chặn thì báo để sửa cả hai chỗ cùng lúc
+    + ⚠️ **Ô đã đóng tập chứng từ vẫn chuyển trả được** — bìa tập đã in sẽ không còn khớp thực tế. Chức năng *Mượn lại* sẵn có cũng đang như vậy, nên lần này giữ nguyên cho nhất quán. Cần chặn thì báo để sửa cả hai chỗ cùng lúc
+
+- 11/08/2026 Đối chiếu CITAD - Extension lên **bản 2.12**, sửa lỗi không đọc được cột "NH gửi" có sẵn trong bảng kết quả:
+    + Xác nhận lại thực tế: cột "NH gửi" (dùng tách Napas/PSS-MDP) **có sẵn ngay trong bảng kết quả mặc định** (Loại lệnh: Lệnh quyết toán, NH gửi để "Tất cả") — kéo bảng sang phải là thấy, **không cần** bấm "Xem chi tiết lệnh" như bản 2.10/2.11 từng giả định
+    + Lỗi thật: hàm bắt cột so khớp **tuyệt đối** tên cột ("NH gửi" phải khớp y hệt) — bảng có nút sắp xếp cột hay chèn icon/khoảng trắng phụ vào tiêu đề khiến so khớp trượt dù cột hiển thị đúng. Nay so khớp kiểu "chứa chuỗi" sau khi chuẩn hoá khoảng trắng, khoan dung hơn
+    + Sửa luôn đường lọc theo bộ lọc "NH gửi" cụ thể (bản 2.11): trước đọc giá trị đang chọn qua chữ hiển thị (`innerText`), không đọc được nếu ô lọc là `<input>` với giá trị nằm trong thuộc tính `value`. Nay tự dò cả `value` của input/select lẫn chữ hiển thị
+    + ⚠️ **Phải tải lại `.zip` và cài lại Extension** — vào `/doi_chieu_citad` → **Tải Extension**, giải nén, *Load unpacked* lại
 
 - 11/08/2026 Đối soát CITAD ↔ IPCAS - Sửa 2 lỗi làm sai lệch số liệu ngoại tệ (rà soát code, chưa có báo cáo thực tế):
     + **File CITAD nhiều sheet đọc sai loại tiền từ sheet thứ 2 trở đi**: chỉ sheet đầu tiên được nhận diện VNĐ/USD/EUR, các sheet sau luôn bị coi mặc định là VNĐ — sai cả cột đọc số tiền lẫn nhãn loại tiền, khiến lệnh ngoại tệ ở sheet 2+ bị đẩy nhầm sang so khớp IPCAS (đáng lẽ phải so Hub ngoại tệ) và báo lệch "Chỉ CITAD" giả
@@ -151,7 +212,7 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 - 04/08/2026 Phòng KSNB & HTVH - Thêm màn hình Danh sách CN TTQT:
     + Menu *Phòng KSNB & HTVH → **Danh sách CN TTQT*** — tra cứu danh sách chi nhánh thực hiện thanh toán quốc tế trực tiếp ngay trên hệ thống, không phải mở file Excel dùng chung nữa. Đã nạp sẵn **218 chi nhánh** theo file *Danh sách CN thực hiện TTQT* bản 06.01.26 (204 đang hoạt động, 14 đã đóng BIC)
-    + Tìm theo **mã CN, tên CN hoặc mã SWIFT BIC**; lọc thêm theo *loại CN* và *trạng thái*. Mặc định chỉ hiện CN **đang hoạt động** — muốn xem CN đã đóng BIC thì đổi ô *Trạng thái*, khi xem chung hai nhóm thì dòng đã đóng BIC được **tô xám**
+    + Tìm theo **mã CN, tên CN hoặc mã SWIFT BIC** — **gõ không dấu cũng ra** (`dien bien` ra *Điện Biên*), không phân biệt chữ hoa chữ thường; lọc thêm theo *loại CN* và *trạng thái*. Mặc định chỉ hiện CN **đang hoạt động** — muốn xem CN đã đóng BIC thì đổi ô *Trạng thái*, khi xem chung hai nhóm thì dòng đã đóng BIC được **tô xám**
     + **Thêm / sửa / xoá từng chi nhánh** ngay trên màn hình. Mọi thao tác đều được ghi vào Nhật ký hệ thống
     + **Nhập từ Excel**: chọn thẳng file gốc phòng KSNB phát hành, **không phải sửa gì trước khi nhập** — hệ thống hiểu dòng đánh dấu *Đóng BICCODE* và tự xếp các CN phía dưới vào nhóm đã đóng BIC
     + **Xuất Excel** đúng phần đang lọc, định dạng giống file gốc nên **nhập lại được** — dùng để phát hành bản cập nhật cho các chi nhánh

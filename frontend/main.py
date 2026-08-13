@@ -42,7 +42,7 @@ for _importer, _modname, _ispkg in pkgutil.iter_modules(_pages_pkg.__path__):
 from frontend.shared import (           # noqa: F401
     _sidebar, _content_area, _page_header, _card,
     _require_auth, _redirect_if_cv, _handle_api_error,
-    DEPARTMENTS, MENU_ITEMS_CV, COLORS,
+    MENU_TREE, COLORS,
 )
 
 def _on_exception(e: Exception):

@@ -18,6 +18,18 @@ import frontend.api_client as api
 from frontend.shared import _sidebar, _content_area, _card, _require_auth, _handle_api_error
 
 
+def _date_filter_input(label: str):
+    """Ô lọc theo ngày — RỖNG mặc định ("không giới hạn"). Cùng pattern với
+    `_date_filter_input` ở frontend/pages/doi_chieu_citad.py (không import
+    chung vì đó là hàm nội bộ module, không phải tiện ích trong shared.py)."""
+    with ui.input(label, value="").props("dense outlined clearable").classes("w-44") as date_input:
+        with date_input.add_slot("append"):
+            ui.icon("edit_calendar").on("click", lambda: menu.open()).classes("cursor-pointer")
+        with ui.menu() as menu:
+            ui.date(mask="DD/MM/YYYY", on_change=menu.close).bind_value(date_input)
+    return date_input
+
+
 def _navy_header(title: str, subtitle: str = ""):
     """Thanh tiêu đề nền xanh navy đậm, chữ trắng — theo mẫu banner người
     dùng gửi (ảnh Kanban Board), thay cho `_page_header()` dùng chung ở
@@ -480,12 +492,35 @@ def _build_result_panel(tab, state):
 
 def _build_history_panel(tab, history_refresh):
     with ui.tab_panel(tab):
+        with ui.row().classes("w-full items-end gap-3 flex-wrap mb-2"):
+            tu_input = _date_filter_input("Từ ngày chấm")
+            den_input = _date_filter_input("Đến ngày chấm")
+            nguoi_input = ui.input("Tên người chấm", value="").props(
+                "dense outlined clearable"
+            ).classes("w-52")
+            ui.button("Lọc", icon="filter_alt", on_click=lambda: load_history()).props("outline")
+
+            async def clear_filter():
+                tu_input.value = ""
+                den_input.value = ""
+                nguoi_input.value = ""
+                await load_history()
+
+            ui.button("Xoá lọc", icon="clear", on_click=clear_filter).props("outline color=grey dense")
+
         hist_area = ui.column().classes("w-full gap-2")
 
         async def load_history():
             hist_area.clear()
             try:
-                rows = await asyncio.to_thread(api.get, "/api/doi-soat-citad/history")
+                params = {}
+                if tu_input.value:
+                    params["tu_ngay"] = tu_input.value
+                if den_input.value:
+                    params["den_ngay"] = den_input.value
+                if nguoi_input.value:
+                    params["nguoi_thuc_hien"] = nguoi_input.value
+                rows = await asyncio.to_thread(api.get, "/api/doi-soat-citad/history", params)
             except Exception as e:
                 if _handle_api_error(e):
                     return
@@ -493,7 +528,12 @@ def _build_history_panel(tab, history_refresh):
                 return
             with hist_area:
                 if not rows:
-                    ui.label("Chưa có lịch sử đối soát nào").classes("text-gray-400 p-4")
+                    msg = (
+                        "Không có lần đối soát nào khớp bộ lọc — thử bấm \"Xoá lọc\" để xem tất cả."
+                        if (tu_input.value or den_input.value or nguoi_input.value)
+                        else "Chưa có lịch sử đối soát nào"
+                    )
+                    ui.label(msg).classes("text-gray-400 p-4")
                     return
                 with ui.row().classes(
                     "w-full items-center gap-3 px-3 py-2 bg-blue-900 rounded text-xs font-semibold text-white"

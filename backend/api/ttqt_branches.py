@@ -54,6 +54,25 @@ def _download_headers(filename: str) -> dict:
     }
 
 
+def _fold(s) -> str:
+    """Hạ chữ theo Unicode để so khớp.
+
+    KHÔNG dùng `LOWER()` của SQLite: hàm đó chỉ hạ được A-Z, để nguyên 'Đ'
+    (U+0110) và mọi chữ hoa có dấu. Hậu quả đã xảy ra thật: `LOWER(ten_cn)` ra
+    "Điện biên" trong khi từ khoá gửi lên là "điện biên" → 43/218 chi nhánh tìm
+    không ra, danh sách rỗng, không một dòng cảnh báo nào.
+    """
+    return unicodedata.normalize("NFC", str(s or "")).casefold()
+
+
+def _no_tone(s: str) -> str:
+    """Bỏ dấu để gõ không dấu vẫn tìm ra: 'điện biên' → 'dien bien'.
+    'đ'/'Đ' không có phân giải NFD nên phải thay tay."""
+    s = "".join(ch for ch in unicodedata.normalize("NFD", s)
+                if not unicodedata.combining(ch))
+    return s.replace("đ", "d").replace("Đ", "D")
+
+
 def _row_out(r: sqlite3.Row) -> dict:
     d = dict(r)
     d["is_closed"] = bool(d.get("is_closed"))
@@ -78,18 +97,26 @@ def list_branches(
     if loai_cn in (1, 2):
         where.append("loai_cn = ?")
         params.append(loai_cn)
-    if q and q.strip():
-        # Chuẩn hoá cùng dạng với dữ liệu đã lưu (xem _cell_str)
-        kw = f"%{unicodedata.normalize('NFC', q).strip().lower()}%"
-        where.append(
-            "(LOWER(ma_cn) LIKE ? OR LOWER(ten_cn) LIKE ? OR LOWER(IFNULL(swift_bic,'')) LIKE ?)"
-        )
-        params += [kw, kw, kw]
     sql = "SELECT * FROM ttqt_branches"
     if where:
         sql += " WHERE " + " AND ".join(where)
     sql += " ORDER BY is_closed, IFNULL(sort_order, 999999), ma_cn"
-    return [_row_out(r) for r in db.execute(sql, params).fetchall()]
+    rows = [_row_out(r) for r in db.execute(sql, params).fetchall()]
+
+    # Lọc từ khoá bằng Python, không bằng SQL LIKE — xem _fold(). Bảng chỉ vài
+    # trăm dòng nên đọc hết rồi lọc rẻ hơn nhiều so với việc phải cài hàm
+    # so-sánh Unicode riêng cho SQLite trên mọi kết nối.
+    if q and q.strip():
+        kw = _fold(q.strip())
+        kw_plain = _no_tone(kw)
+
+        def _hit(b: dict) -> bool:
+            hay = _fold(f"{b['ma_cn']} {b['ten_cn']} {b.get('swift_bic') or ''}")
+            # Khớp có dấu HOẶC khớp sau khi bỏ dấu — gõ "dien bien" cũng ra
+            return kw in hay or kw_plain in _no_tone(hay)
+
+        rows = [b for b in rows if _hit(b)]
+    return rows
 
 
 # ─── Thêm / sửa / xoá ────────────────────────────────────────────────────────
