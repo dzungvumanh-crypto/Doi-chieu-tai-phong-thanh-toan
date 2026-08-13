@@ -62,6 +62,23 @@ def _handover_filter(current: dict) -> tuple[str, list] | None:
     return None
 
 
+def _so_truc_filter(current: dict) -> tuple[str, list]:
+    """Sổ trực cuối ngày đang chờ CHÍNH người này thao tác — không theo role
+    (bất kỳ ai cũng có thể là 1 trong 2 GDV hoặc là KSV được chọn của 1 ngày,
+    xem NotAllowedError trong so_truc_service.py): đang chờ GDV còn lại đồng
+    ý xác nhận (mình là 1 trong 2 GDV, không phải người vừa khởi tạo), HOẶC
+    đang chờ đúng mình (KSV) xác nhận/từ chối."""
+    my_id = current["id"]
+    cond = (
+        "r.status != 'cancelled' AND ("
+        "(r.status='pending_gdv_confirm' AND (r.gdv1_id=? OR r.gdv2_id=?)"
+        " AND (r.initiated_by IS NULL OR r.initiated_by != ?))"
+        " OR (r.status='pending_ksv' AND r.ksv_id=?)"
+        ")"
+    )
+    return (cond, [my_id, my_id, my_id, my_id])
+
+
 @router.get("/pending-counts")
 def pending_counts(
     current: dict = Depends(get_current_staff),
@@ -95,7 +112,16 @@ def pending_counts(
         ).fetchall()
         handovers_by_dept = [{"dept_name": r["dept_name"], "count": r["cnt"]} for r in rows]
 
-    return {"leaves": leaves_count, "handovers": handovers_count, "handovers_by_dept": handovers_by_dept}
+    # ── Sổ trực cuối ngày đang chờ mình ──
+    sf_where, sf_params = _so_truc_filter(current)
+    so_truc_count = db.execute(
+        f"SELECT COUNT(*) FROM so_truc_records r WHERE {sf_where}", sf_params
+    ).fetchone()[0] or 0
+
+    return {
+        "leaves": leaves_count, "handovers": handovers_count, "handovers_by_dept": handovers_by_dept,
+        "so_truc": so_truc_count,
+    }
 
 
 # Trần cứng cho danh sách chi tiết. Màn hình theo dõi không phải chỗ duyệt hàng trăm
@@ -213,7 +239,31 @@ def pending_items(
                 "day":              dd,
             })
 
-    return {"leaves": leaves, "handovers": handovers}
+    # ── Sổ trực cuối ngày ──
+    so_truc: list = []
+    sf_where, sf_params = _so_truc_filter(current)
+    rows = db.execute(
+        f"""SELECT r.truc_date, r.status, r.ghi_chu,
+                   g1.full_name AS gdv1_name, g2.full_name AS gdv2_name, k.full_name AS ksv_name
+            FROM so_truc_records r
+            LEFT JOIN user_tttt g1 ON r.gdv1_id = g1.id
+            LEFT JOIN user_tttt g2 ON r.gdv2_id = g2.id
+            LEFT JOIN user_tttt k  ON r.ksv_id  = k.id
+            WHERE {sf_where}
+            ORDER BY r.truc_date DESC
+            LIMIT {_ITEMS_LIMIT}""",
+        sf_params,
+    ).fetchall()
+    so_truc = [
+        {
+            "truc_date": r["truc_date"], "status": r["status"], "ghi_chu": r["ghi_chu"] or "",
+            "gdv1_name": r["gdv1_name"] or "", "gdv2_name": r["gdv2_name"] or "",
+            "ksv_name": r["ksv_name"] or "",
+        }
+        for r in rows
+    ]
+
+    return {"leaves": leaves, "handovers": handovers, "so_truc": so_truc}
 
 
 @router.get("/leave-today")
@@ -267,11 +317,12 @@ def dashboard_summary(
     db: sqlite3.Connection = Depends(get_db),
 ):
     """KPI đúng hạn — dùng chung logic với Báo cáo bàn giao chứng từ."""
-    today = _vn_now().date()
-    result = compute_period(db, year or today.year, month or today.month)
+    now = _vn_now()
+    result = compute_period(db, year or now.year, month or now.month)
     return {
         "period":         result["period"],
         "overall":        result["overall"],
         "by_dept":        result["by_dept"],
         "no_submit_date": result["no_submit_date"],
+        "server_now":     now.isoformat(),
     }

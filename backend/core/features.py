@@ -92,6 +92,9 @@ FEATURES: dict[str, str] = {
     "menu.doi_chieu_citad":     "Đối chiếu CITAD cuối ngày — CITAD ↔ PaymentHub (menu)",
     # Đối soát CITAD ↔ IPCAS — Phòng Thanh toán
     "menu.doi_soat_citad":      "Đối soát chênh lệch CITAD cuối ngày — CITAD ↔ IPCAS (menu)",
+    # Sổ trực cuối ngày — Phòng Thanh toán
+    "menu.so_truc":             "Sổ trực cuối ngày (menu)",
+    "so_truc.ksv_confirm":      "Xác nhận / Từ chối sổ trực (vai KSV)",
     # Đối chiếu điện SWIFT — hậu tố phòng bỏ vì đã có dải nhãn "Phòng Swift"
     "menu.swift_recon":        "Đối chiếu điện SWIFT (menu)",
 }
@@ -158,6 +161,7 @@ FEATURE_GROUPS: list[dict] = [
                     {"code": "menu.cham_ach", "actions": ["cham_ach.process"]},
                     {"code": "menu.doi_chieu_citad", "actions": []},
                     {"code": "menu.doi_soat_citad", "actions": []},
+                    {"code": "menu.so_truc", "actions": ["so_truc.ksv_confirm"]},
                 ],
             },
             {

@@ -85,6 +85,7 @@ MENU_TREE = [
     },
     ("leaves",        "Nghỉ phép",         "event_busy"),
     ("duty_schedule", "Phân lịch trực",    "edit_calendar"),
+    ("so_truc",        "Sổ trực cuối ngày", "assignment_turned_in"),
     ("ttqt_branches", "Danh sách CN TTQT", "account_tree"),
 ]
 
@@ -275,6 +276,7 @@ def _dmy(iso: str) -> str:
 _PENDING_DEFS = [
     ("handovers", "Chứng từ chờ xác nhận",  "receipt_long", "menu.handovers"),
     ("leaves",    "Đơn nghỉ phép chờ duyệt", "event_busy",   "menu.leaves"),
+    ("so_truc",   "Sổ trực chờ xử lý",      "assignment_turned_in", "menu.so_truc"),
 ]
 
 

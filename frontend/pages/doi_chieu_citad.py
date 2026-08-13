@@ -29,6 +29,7 @@ import json
 from urllib.parse import quote
 
 from nicegui import ui
+from starlette.requests import Request as _StarletteRequest
 import frontend.api_client as api
 from frontend.shared import _sidebar, _content_area, _require_auth, _handle_api_error
 
@@ -166,12 +167,16 @@ def _set_input(inp, value):
 
 
 @ui.page("/doi_chieu_citad")
-def doi_chieu_citad_page():
+def doi_chieu_citad_page(request: _StarletteRequest):
     if not _require_auth():
         return
     if not api.has_feature("menu.doi_chieu_citad"):
         ui.navigate.to("/home")
         return
+
+    # Deep-link từ Sổ trực cuối ngày (/so_truc) — mở thẳng đúng ngày trong
+    # tab "Lịch sử" thay vì phải tự gõ lại bộ lọc.
+    deep_link_ngay = request.query_params.get("ngay")
 
     # Tham chiếu hàm nạp lại tab "Lịch sử" — gán bên trong _build_history_panel()
     # (khai báo hàm đó xong mới có), gọi lại ở _save_session_now() sau khi lưu
@@ -551,14 +556,19 @@ def doi_chieu_citad_page():
                             on_click=lambda _, hid=r["id"], ng=ngay: _load_history_entry(hid, ng),
                         ).props("outline dense round size=sm").tooltip("Tải bản này")
 
-    def _build_history_panel():
+    def _build_history_panel(initial_ngay: str | None = None):
         """Tab "Lịch sử" — bảng TẤT CẢ các ngày đã có người chấm, lọc theo
         khoảng ngày, bấm 1 dòng để mở rộng tại chỗ xem chi tiết từng lần lưu
         của ngày đó (không dùng dialog — đúng pattern _build_history_panel
-        của frontend/pages/swift_recon.py)."""
+        của frontend/pages/swift_recon.py). `initial_ngay` (dd/mm/yyyy) đến
+        từ deep-link ?ngay= của Sổ trực cuối ngày — set sẵn cả 2 ô lọc để
+        chỉ hiện đúng ngày đó."""
         with ui.row().classes("w-full items-end gap-3 flex-wrap mb-2"):
             tu_input = _date_filter_input("Từ ngày")
             den_input = _date_filter_input("Đến ngày")
+            if initial_ngay:
+                tu_input.value = initial_ngay
+                den_input.value = initial_ngay
             nguoi_input = ui.input("Tên người chấm", value="").props(
                 "dense outlined clearable"
             ).classes("w-52")
@@ -1069,4 +1079,7 @@ def doi_chieu_citad_page():
                         "Bấm vào 1 ngày để xem từng lần lưu, bấm \"Tải\" trên 1 lần lưu để xem/khôi phục "
                         "đúng số liệu của lần đó."
                     ).classes("text-xs text-gray-500 mb-2")
-                    _build_history_panel()
+                    _build_history_panel(deep_link_ngay)
+
+            if deep_link_ngay:
+                tabs.set_value(tab_lich_su)
