@@ -450,6 +450,8 @@ Giao diện thiết kế cho **máy trạm desktop**, không có breakpoint mobi
 
 > Điều kiện: route của trang phải trùng khoá menu (`@ui.page("/reports")` ↔ khoá `reports`) — ràng buộc này vốn đã có sẵn vì sidebar điều hướng bằng `ui.navigate.to(f"/{key}")`.
 
+**Ô chọn file**: bấm vào **cả dải màu** của ô là mở hộp thoại chọn file, không cần nhắm đúng dấu `+`. Mặc định Quasar chỉ gắn `<input type="file">` vào riêng nút `+`; `ui_kit.install()` nạp một listener ở cấp `document` chuyển tiếp click từ `.q-uploader__header` sang input đó. Áp dụng cho **mọi** `ui.upload` trong dự án, kể cả ô tạo động — không phải sửa gì ở từng trang. Click rơi trúng nút thật (`.q-btn, button, label, input, a`) vẫn giữ hành vi cũ.
+
 ### Màn hình đăng nhập
 Hai bên ô đăng nhập là **các cụm đường dẫn nhanh** tới hệ thống nghiệp vụ (Thanh toán trong nước / Thanh toán quốc tế / Nội bộ), click mở tab mới. Danh sách để cứng trong `frontend/pages/login.py` chứ không nằm trong DB — cố ý, để trang login **không phụ thuộc backend**: backend chết thì người dùng vẫn mở được CITAD, mail, iOffice.
 
