@@ -1,0 +1,20 @@
+# Thu vien CHI dung khi phat trien / chay test.
+#
+# KHONG go dau tieng Viet trong file nay: pip tren Windows doc file
+# requirements bang codec cua locale (cp1252), khong phai UTF-8 -- mot ky tu
+# co dau la pip chet ngay voi UnicodeDecodeError. Cung ly do .gitattributes
+# viet khong dau.
+#
+# Vi sao tach khoi requirements.txt: deploy.bat chep dung file
+# requirements.txt sang may chinh roi pip install o do. May van hanh khong
+# chay test, khong can pytest.
+#
+# Truoc day pytest chi duoc cai roi trong CI, nen nguoi moi lam theo CLAUDE.md
+# (pip install -r requirements.txt) roi chay pytest se vap "No module named
+# pytest". File nay la cho khai bao chinh thuc cho moi truong phat trien.
+#
+#   pip install -r requirements-dev.txt
+#
+-r requirements.txt
+
+pytest>=8.0

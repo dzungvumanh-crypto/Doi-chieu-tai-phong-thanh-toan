@@ -11,7 +11,9 @@ request nào cả.
 import logging
 import sqlite3
 import threading
-from datetime import datetime, timedelta
+from datetime import timedelta
+
+from backend.database import _vn_now
 
 _log = logging.getLogger(__name__)
 
@@ -26,7 +28,10 @@ _timer: threading.Timer | None = None
 def run_cleanup(db_path: str = "data/ksnb.db") -> dict:
     """Xoá nhật ký quá hạn. Trả về số dòng đã xoá theo từng bảng."""
     deleted = {"login_logs": 0, "audit_logs": 0}
-    now = datetime.utcnow()
+    # _vn_now() chứ không phải utcnow(): created_at của login_logs/audit_logs
+    # được ghi bằng _vn_now() (UTC+7). Lấy mốc cắt theo UTC là so hai đồng hồ
+    # lệch nhau 7 tiếng — nhật ký sống dai hơn hạn đúng 7 tiếng.
+    now = _vn_now()
     # Chờ khoá ngắn thôi: đây là việc nền, bận thì để lần sau dọn tiếp
     db = sqlite3.connect(db_path, timeout=10)
     try:

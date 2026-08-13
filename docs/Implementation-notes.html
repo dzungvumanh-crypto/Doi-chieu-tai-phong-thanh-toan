@@ -51,7 +51,78 @@
 <div class="page">
 
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
-  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-10</p>
+  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-13</p>
+
+  <!-- T -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">T</span>
+      <span class="card-title">Rà soát lỗi tồn đọng: lệch múi giờ khi dọn log, tách <code>requirements-dev.txt</code></span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Dọn nhật ký so hai đồng hồ lệch nhau 7 tiếng</p>
+      <p><code>log_cleanup_service.run_cleanup()</code> tính mốc cắt bằng <code>datetime.utcnow()</code>,
+      trong khi <code>created_at</code> của <code>login_logs</code>/<code>audit_logs</code> được ghi bằng
+      <code>_vn_now()</code> (UTC+7). Mốc cắt luôn sớm hơn thực tế 7 tiếng → nhật ký sống dai hơn hạn
+      đúng 7 tiếng. Không mất dữ liệu, không sai nghiệp vụ, nên chưa ai nhận ra.</p>
+
+      <p class="label">Vì sao KHÔNG sửa <code>sessions.py</code> và <code>rate_limit.py</code> cùng lúc</p>
+      <p>Hai file đó cũng dùng <code>datetime.utcnow()</code> và trông y hệt lỗi vừa sửa. Nhưng chúng
+      <strong>ghi UTC rồi so lại bằng UTC</strong> — nhất quán trong nội bộ, không có giá trị nào chảy
+      sang <code>_vn_now()</code>. Đổi sang <code>_vn_now()</code> mà quên dữ liệu <code>expires_at</code>
+      đang nằm sẵn trong bảng thì mọi phiên đăng nhập hiện hành bị đẩy hạn thêm 7 tiếng, và mọi tài khoản
+      đang bị khoá vì sai mật khẩu được mở sớm 7 tiếng.</p>
+      <table>
+        <tr><th>File</th><th>Ghi bằng</th><th>So bằng</th><th>Xử lý</th></tr>
+        <tr><td><code>log_cleanup_service.py</code></td><td><code>_vn_now()</code> (nơi khác ghi)</td><td><s><code>utcnow()</code></s> → <code>_vn_now()</code></td><td><strong>Đã sửa</strong></td></tr>
+        <tr><td><code>sessions.py</code></td><td><code>utcnow()</code></td><td><code>utcnow()</code></td><td>Giữ nguyên — đã nhất quán</td></tr>
+        <tr><td><code>rate_limit.py</code></td><td><code>utcnow()</code></td><td><code>utcnow()</code></td><td>Giữ nguyên — đã nhất quán</td></tr>
+      </table>
+      <p>Quy tắc rút ra: chỗ nguy hiểm không phải <code>utcnow()</code>, mà là <strong>ranh giới</strong>
+      nơi một giá trị do <code>_vn_now()</code> ghi ra bị đem so với <code>utcnow()</code>.</p>
+
+      <p class="label">Tách <code>requirements-dev.txt</code> thay vì nhét <code>pytest</code> vào <code>requirements.txt</code></p>
+      <p><code>deploy.bat</code> chép đúng file <code>requirements.txt</code> sang máy chính rồi
+      <code>pip install</code> ở đó — thêm <code>pytest</code> là bắt máy vận hành tải bộ chạy test nó không
+      dùng. Nhưng để nguyên thì người mới làm đúng theo CLAUDE.md
+      (<code>pip install -r requirements.txt</code>) rồi chạy <code>pytest</code> sẽ vấp
+      <em>No module named pytest</em>; trước đây CI vá riêng bằng một dòng <code>pip install pytest</code>,
+      tức chỉ CI biết, người thật thì không. File mới dùng <code>-r requirements.txt</code> nên không nhân
+      đôi danh sách, và CI nay cài đúng một lệnh.</p>
+
+      <p class="label">Bẫy: pip đọc file requirements bằng cp1252, không phải UTF-8</p>
+      <p>Bản đầu của <code>requirements-dev.txt</code> viết comment tiếng Việt <strong>có dấu</strong>.
+      Trên Windows, pip đọc file requirements bằng codec của locale (cp1252) — một ký tự có dấu là pip
+      chết ngay với <code>UnicodeDecodeError</code>, không cài được gì. CI chạy
+      <code>windows-latest</code> nên sẽ đỏ y hệt.</p>
+      <p>Đây là lý do <code>requirements.txt</code> hiện tại thuần ASCII và <code>.gitattributes</code>
+      viết tiếng Việt không dấu — quy ước có sẵn nhưng không ai ghi lại vì sao. Nay ghi ở đây, và ghi luôn
+      trong chính file đó. <strong>Mọi file pip/cmd đọc đều phải ASCII thuần.</strong></p>
+
+      <p class="label">Gỡ <code>sqlalchemy</code></p>
+      <p>Có trong <code>requirements.txt</code> từ đầu nhưng <strong>không một dòng code nào import</strong>
+      (grep toàn repo), trong khi <code>docs/CONTRIBUTING.md</code> điều 7 lại cấm dùng ORM. Gói nặng, cài
+      vô ích mỗi lần <code>deploy.bat</code> thấy <code>requirements.txt</code> đổi.
+      <code>pip show</code> xác nhận <code>Required-by:</code> rỗng — không gói nào kéo theo.</p>
+
+      <p class="label">Chưa làm</p>
+      <p>Cùng đợt rà soát còn 3 mục chưa xử lý, xem lại khi có thời gian:</p>
+      <ul>
+        <li><code>duty_calendar_utils.py</code> — danh sách lễ dự phòng <strong>chết cứng năm 2026</strong>.
+        Nếu <code>lunardate</code> không import được, từ 2027 hàm trả về đúng 4 lễ dương lịch,
+        <strong>không có Tết</strong>, im lặng. Rủi ro thật vì dự án chạy trên ổ USB và
+        <code>.venv</code> đã từng hỏng khi đổi máy.</li>
+        <li>Cùng file — <code>except Exception: pass</code> khi đổi âm sang dương lịch, một ngày Tết hỏng
+        là biến mất không log.</li>
+        <li><code>Logs_update.md</code> còn cảnh báo lỗi địa chỉ máy chủ của Extension CITAD, nhưng lỗi đó
+        <strong>đã sửa 06/08</strong> (commit <code>135f532</code>). Người vận hành đang được hướng dẫn
+        cấu hình tay một việc thừa.</li>
+      </ul>
+
+    </div>
+  </div>
 
   <!-- S -->
   <div class="card">

@@ -28,11 +28,10 @@ jobs:
           cache: pip
 
       - name: Cài thư viện
-        # pytest cài riêng, KHÔNG thêm vào requirements.txt: file đó được
-        # `deploy.bat` pip install trên máy chính, không cần bộ chạy test ở đó.
-        run: |
-          pip install -r requirements.txt
-          pip install pytest
+        # requirements-dev.txt = requirements.txt + pytest. pytest vẫn KHÔNG
+        # nằm trong requirements.txt: file đó được `deploy.bat` pip install
+        # trên máy chính, không cần bộ chạy test ở đó.
+        run: pip install -r requirements-dev.txt
 
       - name: Chạy pytest
         env:
