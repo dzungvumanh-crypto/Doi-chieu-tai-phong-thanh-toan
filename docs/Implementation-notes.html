@@ -53,6 +53,52 @@
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
   <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-13</p>
 
+  <!-- U -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">U</span>
+      <span class="card-title">Nhật ký hệ thống — nút lọc bị hiểu nhầm là nút làm mới</span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Triệu chứng người dùng báo</p>
+      <p>"Ấn <em>Cập nhật</em> thì tự ẩn một số log." Không có log nào bị ẩn hay bị xoá — nút
+      <em>Cập nhật</em> là <strong>bộ lọc theo loại thao tác</strong> (<code>method=PUT</code>), không phải
+      nút tải lại trang. Người dùng đọc "Cập nhật" theo nghĩa "refresh", bấm vào, và danh sách rút còn
+      vài dòng.</p>
+      <p>Nút làm mới thật khi đó chỉ có ký tự <code>↻</code>, không chữ — trong khi trang
+      <em>Lịch sử lỗi &amp; cảnh báo</em> ngay cạnh lại ghi rõ "↻ Làm mới". Hai trang cùng chức năng,
+      hai cách đặt nhãn.</p>
+
+      <table>
+        <tr><th>Nhãn cũ</th><th>Nhãn mới</th><th>Vì sao</th></tr>
+        <tr><td>Ghi/Thêm</td><td>Thêm mới</td><td>"Ghi" là từ của lập trình viên, không phải của người dùng</td></tr>
+        <tr><td><strong>Cập nhật</strong></td><td><strong>Sửa</strong></td><td>Chính là từ gây hiểu nhầm thành "refresh"</td></tr>
+        <tr><td><code>↻</code></td><td>Làm mới</td><td>Icon trần không nói được nó làm gì; đồng bộ với trang log ứng dụng</td></tr>
+      </table>
+      <p>Thêm nhãn "Lọc:" trước nhóm nút và tooltip cho từng nút — để nhóm <em>lọc</em> tách bạch khỏi
+      nhóm <em>hành động</em> (Tìm / Làm mới / Xuất Excel) nằm cùng một hàng.</p>
+
+      <p class="label">Không đổi <code>_VERB</code> trong <code>audit_labels.py</code></p>
+      <p>Cột "Công việc" vẫn in "Cập nhật ..." cho <code>PUT</code>/<code>PATCH</code>. Đó là câu mô tả
+      một thao tác đã xảy ra, đọc tự nhiên hơn "Sửa ..."; còn nhãn nút là một <em>lệnh</em> nên cần ngắn
+      và không trùng nghĩa với "làm mới". Hai chỗ khác từ nhưng không mâu thuẫn, và đổi
+      <code>_VERB</code> sẽ kéo theo cả file Excel xuất ra.</p>
+
+      <div class="caution">
+        <strong>Đã phát hiện, CHƯA sửa — bộ lọc bỏ sót <code>PATCH</code>.</strong>
+        <code>_audit_where()</code> (<code>backend/api/logs.py</code>) khớp <code>al.action = 'PUT'</code>,
+        nên 6 endpoint <code>PATCH</code> <strong>không bao giờ</strong> hiện ra ở bất kỳ bộ lọc nào,
+        chỉ thấy khi chọn "Tất cả": huỷ đơn nghỉ phép, sửa ngày vào làm, sửa số ngày phép đã dùng,
+        ngừng uỷ quyền, sửa chi nhánh TTQT, sửa lượt xem kho. Đúng nhóm thao tác nhạy cảm nhất về
+        kiểm soát nội bộ lại rơi vào điểm mù. Lần này chỉ đổi nhãn theo đúng phạm vi được yêu cầu —
+        sửa bộ lọc là thay đổi hành vi truy vấn, để riêng một đợt.
+      </div>
+
+    </div>
+  </div>
+
   <!-- T -->
   <div class="card">
     <div class="card-header">
