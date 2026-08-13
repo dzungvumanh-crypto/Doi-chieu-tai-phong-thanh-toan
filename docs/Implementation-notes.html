@@ -53,6 +53,53 @@
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
   <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-10</p>
 
+  <!-- S -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">S</span>
+      <span class="card-title">Chốt chặn <code>/api/fs/browse</code> + CI chạy pytest</span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p class="label">Vì sao xoá code không đủ để giữ nó biến mất</p>
+      <p>Đã thử gộp thật <code>Cham_ILO1000</code> và <code>phan-lich-truc</code> vào nhánh này:
+      15 file xung đột, nhưng <code>backend/api/fs.py</code> <strong>tự thêm lại</strong> và
+      <code>registry.py</code> <strong>auto-merge sạch</strong> — không một dấu hiệu nào để người
+      gộp nhìn thấy endpoint không kiểm quyền vừa sống lại.</p>
+
+      <p class="label">Điều kiện test — cố ý không viết cứng 404</p>
+      <table>
+        <tr><th>Tình huống</th><th>Mã trả về</th><th>Test</th></tr>
+        <tr><td>Hiện tại — endpoint đã xoá</td><td>404</td><td>xanh</td></tr>
+        <tr><td>Dựng lại, <strong>có</strong> kiểm quyền</td><td>403</td><td>xanh</td></tr>
+        <tr><td>Dựng lại, <strong>không</strong> kiểm quyền</td><td><strong>200</strong></td><td><strong>đỏ</strong></td></tr>
+      </table>
+      <p>Nếu viết <code>== 404</code> thì người dựng lại <em>đúng cách</em> cũng bị đỏ, và phản xạ tự
+      nhiên là xoá test — mất luôn lớp bảo vệ. Dùng <code>in (403, 404)</code> nên chỉ đúng một cách
+      làm khiến nó đỏ.</p>
+      <p>Chạy bằng <code>client_chi_xem</code> (chuyên viên) chứ không phải <code>admin_client</code>:
+      admin bypass mọi feature check, đó chính là lý do 8 test cũ trong
+      <code>test_fs_browse_api.py</code> không hề phát hiện lỗ hổng.</p>
+
+      <p class="label">Đã thử ngược</p>
+      <p>Khôi phục <code>fs.py</code> từ lịch sử + đăng ký lại router → test đỏ, kèm thông báo tự giải
+      thích. Gỡ ra → xanh lại. Chốt chặn không thử ngược được thì không biết nó có kêu hay không.</p>
+
+      <p class="label">CI — vì sao <code>windows-latest</code> chứ không phải ubuntu</p>
+      <p>Ubuntu rẻ và nhanh hơn, nhưng dự án chỉ chạy trên Windows: tên thư mục template tiếng Việt ở
+      dạng NFD và <code>tests/test_paths.py</code> canh đúng hành vi không chuẩn hoá của Windows.
+      Chạy trên Linux là kiểm sai môi trường thật — xanh hay đỏ đều không nói lên điều gì.</p>
+      <p>Đã mô phỏng trước bằng worktree sạch, chỉ đặt <code>SECRET_KEY</code> và
+      <code>NTP_ENABLED=false</code> như CI (không có <code>.env</code>): 356/356 pass.</p>
+
+      <p class="label">Giới hạn còn lại</p>
+      <p>CI chỉ báo, <strong>không chặn merge</strong> — chưa bật branch protection. Người gộp vẫn có
+      thể merge khi test đỏ. Bật cần quyền admin repo, để chủ dự án quyết.</p>
+
+    </div>
+  </div>
+
   <!-- R -->
   <div class="card">
     <div class="card-header">

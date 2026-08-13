@@ -4,6 +4,11 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 13/08/2026 Kiểm thử tự động - Thêm CI chạy pytest trên GitHub + chốt chặn rò thư mục máy chủ:
+    + **Từ nay mỗi lần push hoặc mở PR, GitHub tự chạy toàn bộ 357 test** trên máy Windows sạch. Trước đây chỉ chạy tay trên máy người sửa — quên chạy là lỗi lọt qua mà không ai biết
+    + Thêm **chốt chặn** cho `/api/fs/browse` (API liệt kê cây thư mục máy chủ, đã gỡ ở bản này): nhánh `Cham_ILO1000` chưa gộp vẫn còn API đó và **không kiểm quyền**, ai đăng nhập cũng duyệt được ổ đĩa máy chủ. Khi gộp nhánh đó vào, hai file liên quan hoà nhau **không báo xung đột** — không ai có cơ hội thấy nó quay lại. Test này là dấu hiệu duy nhất
+    + Đã thử ngược: dựng lại đúng kịch bản lỗ hổng quay lại → test **đỏ** kèm thông báo giải thích tại chỗ. Gỡ ra → **xanh** lại
+
 - 13/08/2026 Deploy - Tự dò và dọn file code cũ còn sót trên máy đích:
     + **Vấn đề âm thầm từ trước tới nay**: `deploy.bat` chép bằng `robocopy /E` — chỉ thêm và ghi đè, **không bao giờ xoá**. File nào bị xoá khỏi dự án vẫn nằm lại vĩnh viễn trên máy chính
     + Nguy hiểm nhất là **trang giao diện**: chương trình nạp trang bằng cách quét thư mục `frontend/pages`, file nào còn trong đó là còn thành một trang. Một trang đã xoá vẫn mở được bằng địa chỉ cũ (bookmark, lịch sử trình duyệt) rồi vỡ vì API phía sau đã bị gỡ. Admin bị nặng nhất vì luôn qua mọi kiểm tra quyền

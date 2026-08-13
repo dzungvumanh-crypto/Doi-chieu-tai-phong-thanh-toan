@@ -103,3 +103,33 @@ class TestCoQuyenChay:
 
     def test_cancel_qua_duoc_cua_quyen(self, client_duoc_chay):
         assert client_duoc_chay.post('/api/ach/cancel/job-khong-co').status_code == 404
+
+
+class TestFsBrowseKhongLoRaNgoai:
+    """Chốt chặn hồi quy — KHÔNG phải test tính năng.
+
+    `/api/fs/browse` (liệt kê cây thư mục máy chủ) đã bị xoá khỏi nhánh này.
+    Nhánh `Cham_ILO1000` chưa gộp vẫn còn nó và **không kiểm quyền** — chỉ cần
+    đăng nhập là duyệt được toàn bộ ổ đĩa máy chủ. Khi gộp nhánh đó vào,
+    `backend/api/fs.py` và `registry.py` merge SẠCH, KHÔNG báo xung đột, nghĩa là
+    không ai có cơ hội nhìn thấy nó quay lại. Test này là dấu hiệu duy nhất.
+
+    Đỏ ở đây KHÔNG có nghĩa là xoá test. Nghĩa là phải chọn một trong hai:
+      1. Gắn quyền cho endpoint — cần `require_any_feature` vì ACH và ILO1000 là
+         quan hệ HOẶC, mà `require_feature` chỉ nhận 1 mã; hoặc
+      2. Chuyển ILO1000 sang chọn file từ máy người dùng như ACH đã làm.
+
+    Chấp nhận cả 404 (endpoint đã xoá) lẫn 403 (đã dựng lại, có kiểm quyền) —
+    cố tình KHÔNG viết cứng `== 404`, để người dựng lại đúng cách không bị test
+    cản đường rồi xoá luôn chốt chặn này.
+    """
+
+    def test_tai_khoan_thuong_khong_liet_ke_duoc_thu_muc_may_chu(self, client_chi_xem):
+        # Không tham số = liệt kê toàn bộ ổ đĩa; có tham số = liệt kê thư mục con
+        for tham_so in ({}, {'path': 'C:\\'}):
+            r = client_chi_xem.get('/api/fs/browse', params=tham_so)
+            assert r.status_code in (403, 404), (
+                f'/api/fs/browse {tham_so} tra ve {r.status_code} cho tai khoan chuyen vien. '
+                f'404 = endpoint da xoa (dung), 403 = co kiem quyen (dung), '
+                f'200 = DANG LO CAY THU MUC MAY CHU cho moi tai khoan da dang nhap.'
+            )

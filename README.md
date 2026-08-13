@@ -205,6 +205,7 @@ Truy cập:
 │   └── *.truoc-utf8.log    # Phần log ghi trước bản vá UTF-8, run.py tự tách ra một lần
 ├── init_db.py               # Khởi tạo DB + seed data
 ├── run.py                   # Launcher (chạy backend + frontend song song; ép UTF-8 cho tiến trình con)
+├── .github/workflows/       # CI — chạy pytest mỗi lần push / mở PR
 ├── docs/                    # Tài liệu dự án (README.md, CLAUDE.md, Logs_update.md ở gốc)
 │   ├── DESIGN.md                # Patterns & business logic
 │   ├── SKILL.md                 # Nguyên tắc & quy ước làm việc
