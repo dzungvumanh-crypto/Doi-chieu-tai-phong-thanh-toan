@@ -475,7 +475,7 @@ def _sidebar(current_page: str) -> dict:
                 "sidebar-label font-semibold text-sm text-white ml-2 leading-snug"
             )
 
-        # ── User info (click → /user-management nếu không phải chuyen_vien) ──
+        # ── User info (click → /user-management) ──
         user = api.get_current_user()
         user_role = user.get("role", "") if user else ""
         if user:
@@ -489,18 +489,18 @@ def _sidebar(current_page: str) -> dict:
                 "pho_phong":     "Phó phòng",
                 "chuyen_vien":   "Chuyên viên",
             }
-            clickable = user_role != "chuyen_vien"
-            col_cls = "sidebar-label px-4 py-3 border-b border-red-700 w-full shrink-0"
-            if clickable:
-                col_cls += " cursor-pointer hover:bg-red-800"
-            col = ui.column().classes(col_cls)
-            if clickable:
-                col.on("click", lambda: ui.navigate.to("/user-management"))
+            # Mọi vai trò đều vào được: trang này chỉ có việc của chính mình
+            # (đổi mật khẩu, ảnh chữ ký). Khối "Đặt lại mật khẩu cho người khác"
+            # tự ẩn theo vai trò ngay trong trang.
+            col = ui.column().classes(
+                "sidebar-label px-4 py-3 border-b border-red-700 w-full shrink-0 "
+                "cursor-pointer hover:bg-red-800"
+            )
+            col.on("click", lambda: ui.navigate.to("/user-management"))
             with col:
                 with ui.row().classes("items-center gap-1"):
                     ui.label(user.get("full_name", "")).classes("font-semibold text-sm")
-                    if clickable:
-                        ui.icon("manage_accounts").classes("text-yellow-300 text-sm")
+                    ui.icon("manage_accounts").classes("text-yellow-300 text-sm")
                 ui.label(role_map.get(user.get("role"), "")).classes("text-yellow-300 text-xs")
 
         # ── Vùng menu (tự cuộn nội bộ nếu cao hơn màn hình) ──
@@ -625,20 +625,11 @@ def _require_auth():
     return True
 
 
-def _redirect_if_cv():
-    """Chặn chuyên viên theo VAI TRÒ — chỉ còn dùng cho /user-management.
-
-    Mọi trang khác đã chuyển sang `api.has_feature("menu.*")`, tức nhóm quyền.
-    Giữ hàm này ở trang Quản lý người dùng vì đó là trang duy nhất không có mã
-    feature nào để kiểm. Đừng gọi lại ở trang mới: chặn theo vai trò ở frontend
-    trong khi backend chặn theo feature nghĩa là admin cấp quyền qua nhóm nhưng
-    người dùng vẫn bị đá ra, không kèm thông báo nào.
-    """
-    user = api.get_current_user()
-    if user and user.get("role") == "chuyen_vien":
-        ui.navigate.to("/home")
-        return True
-    return False
+# `_redirect_if_cv()` đã gỡ (2026-08-14): trang cuối cùng còn dùng nó
+# (/user-management) nay mở cho mọi vai trò. Không dựng lại — chặn theo VAI TRÒ ở
+# frontend trong khi backend chặn theo FEATURE nghĩa là admin cấp quyền qua nhóm
+# nhưng người dùng vẫn bị đá ra, không kèm thông báo nào. Trang mới dùng
+# `api.has_feature("menu.*")`.
 
 
 def _handle_api_error(e: Exception) -> bool:

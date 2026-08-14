@@ -19,6 +19,8 @@ _SEMANTIC = {
     "staff_delete":    "Xóa tài khoản người dùng",
     "staff_import_db": "Nhập người dùng từ file",
     "password_reset":  "Đặt lại mật khẩu người dùng",
+    "signature_upload": "Tải lên ảnh chữ ký",
+    "signature_delete": "Xóa ảnh chữ ký",
 }
 
 # ── Ánh xạ "METHOD /path_chuẩn_hóa" → mô tả công việc ────────────────────────

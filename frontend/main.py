@@ -41,7 +41,7 @@ for _importer, _modname, _ispkg in pkgutil.iter_modules(_pages_pkg.__path__):
 # Re-export shared utilities để giữ backward compat với các import từ bên ngoài
 from frontend.shared import (           # noqa: F401
     _sidebar, _content_area, _page_header, _card,
-    _require_auth, _redirect_if_cv, _handle_api_error,
+    _require_auth, _handle_api_error,
     MENU_TREE, COLORS,
 )
 

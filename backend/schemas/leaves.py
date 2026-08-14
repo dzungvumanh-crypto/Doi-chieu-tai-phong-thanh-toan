@@ -4,6 +4,14 @@ from pydantic import BaseModel
 
 
 # ─── Leave ───────────────────────────────────────────────────────────────────
+class SignaturePlacement(BaseModel):
+    """Khung ảnh chữ ký trên trang đơn — mm, tính từ góc TRÊN-TRÁI trang."""
+    page: int = 0
+    x_mm: float
+    y_mm: float
+    w_mm: float
+    h_mm: float
+
 class LeaveCreate(BaseModel):
     start_date: date
     end_date: date
@@ -12,10 +20,12 @@ class LeaveCreate(BaseModel):
     ksv_approver_id: Optional[int] = None  # Bắt buộc với chuyen_vien/pho_phong/truong_phong
     gd_approver_id: Optional[int] = None   # Chọn trước Ban lãnh đạo phê duyệt
     spread_dates: Optional[List[str]] = None  # YYYY-MM-DD list khi nghỉ ngày lẻ không liên tục
+    signature: Optional[SignaturePlacement] = None  # Chữ ký người đề nghị đặt ở popup xem trước
 
 class LeaveReview(BaseModel):
     action: Literal["approve", "reject"]
     comment: Optional[str] = None
+    signature: Optional[SignaturePlacement] = None  # Chữ ký người duyệt (chỉ khi approve)
 
 class TongHopReview(BaseModel):
     action: Literal["forward", "reject"]
