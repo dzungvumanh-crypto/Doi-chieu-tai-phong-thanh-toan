@@ -4,6 +4,29 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 14/08/2026 Nghỉ phép - **Ký đơn ngay trên bản in, phiếu tải về đổi sang PDF**:
+    + **Tải lên ảnh chữ ký của mình trước đã**: vào tên mình ở góc trái → *Quản lý người dùng* → khung **Ảnh chữ ký**. Ảnh phải là **PNG nền trong suốt** (nền trắng sẽ che mất chữ trên đơn), tối đa 2 MB. Mỗi người tự tải ảnh của mình, không ai xem hay đặt hộ được
+    + **Lúc gửi đơn**: bấm *Gửi đơn* → hiện ra **tờ đơn thật, đúng như lúc in** (không phải bản mô phỏng) với chữ ký của bạn đặt sẵn dưới ô *NGƯỜI ĐỀ NGHỊ*. **Kéo để đổi chỗ, kéo 4 góc để phóng to/thu nhỏ**, ưng rồi bấm *Ký và gửi đơn*
+    + **Lúc phê duyệt** (Trưởng/Phó phòng và Ban lãnh đạo): y hệt như vậy — thấy cả chữ ký người trước đã ký, đặt chữ ký của mình vào ô của mình rồi bấm *Ký và phê duyệt*
+    + ⚠️ **Lần mở popup đầu tiên của mỗi đơn chờ khoảng 5–7 giây** — đó là lúc Word dựng bản in. Các lần sau của cùng đơn đó gần như tức thì. Sửa người duyệt hay số ngày nghỉ thì dựng lại từ đầu
+    + **Nút *Tải phiếu* nay ra file PDF** thay vì Word, chữ ký đã nằm sẵn trên đó. Máy chủ trục trặc không tạo được PDF thì hệ thống **tự tải bản Word không chữ ký** kèm thông báo, không để ai kẹt lại
+    + **Chưa tải ảnh chữ ký vẫn dùng bình thường** — popup báo chưa có ảnh, gửi/duyệt vẫn xong, chỉ là ô ký để trống như trước nay vẫn thế
+    + **Đổi hoặc xoá ảnh chữ ký cá nhân KHÔNG làm đổi các đơn đã ký** — mỗi đơn giữ bản sao ảnh tại đúng thời điểm ký. Nộp lại đơn bị từ chối thì chữ ký của người duyệt cũ bị xoá (tờ đơn đã khác ngày, khác số ngày phép)
+    + ⚠️ **Chưa ký được ở hai chỗ**: *duyệt hàng loạt* (chọn nhiều đơn duyệt một lượt — không thể đặt chữ ký cho từng tờ) và *bước Tổng hợp* (ô "XÁC NHẬN CỦA P. TỔNG HỢP" trên mẫu không có dòng tên người ký). Cần ký thì mở từng đơn ra duyệt
+    + ⚠️ **Máy chính phải có Microsoft Word** và phải chạy lại `deploy.bat`/`start.bat` để cài 2 thư viện mới. Chưa cài thì popup báo lỗi và lui về bản Word
+    + ⚠️ **Phần kéo–thả bằng chuột chưa được thử trên máy thật** — phần dựng file và đặt chữ ký đã chạy đúng đầu-cuối, nhưng thao tác kéo trên màn hình cần người dùng xác nhận giúp. Có gì lệch báo lại ngay
+
+- 14/08/2026 Tra cứu lưu trữ - **Sửa được cả cột Ngày ngay trên bảng**:
+    + Trước đây chỉ sửa được cột *Số chứng từ*; ngày ghi sai thì phải sửa từ khâu bàn giao. Nay **gõ thẳng vào ô Ngày** trên bảng rồi bấm *Lưu thay đổi*
+    + **Sửa ngày ở đây KHÔNG đụng tới số liệu bàn giao gốc của phòng nguồn** — chỉ đổi ngày ghi trên bìa tập. Báo cáo khối lượng bàn giao giữ nguyên
+    + ⚠️ **Mỗi dòng phải còn ít nhất một ngày.** Xoá sạch ngày của một dòng thì hệ thống báo lỗi và **giữ nguyên số đang nhập** để sửa lại — nếu cho lưu, tập đó sẽ biến mất khỏi bảng trong khi vẫn nằm trong dữ liệu
+    + Hai nút *Lưu thay đổi* / *In danh sách* chuyển sang **bên trái** bảng, kèm dòng nhắc cách sửa
+
+- 14/08/2026 Cài đặt - **Sửa lỗi cài thư viện báo nhầm thành "lỗi mạng"**:
+    + **Triệu chứng**: chạy `start.bat`/`deploy.bat` báo *"kiem tra ket noi internet"* trong khi mạng hoàn toàn bình thường
+    + **Nguyên nhân**: một dòng ghi chú **có dấu tiếng Việt** trong `requirements.txt`. Công cụ cài thư viện đọc file này theo bảng mã Windows, gặp chữ có dấu là chết ngay **trước khi** kịp gọi ra mạng — nên thông báo lỗi chỉ đoán mò
+    + Nay hai file `.bat` **nói đúng nguyên nhân**, và có **chốt chặn tự động** không cho lọt chữ có dấu vào `requirements.txt` nữa
+
 - 14/08/2026 Đối chiếu CITAD - **Khoá nhập tay 5 Cổng và PaymentHub**, thêm nguồn quét Napas/PSS-MDP:
     + ⚠️ **5 bảng Cổng CITAD và bảng PaymentHub từ nay KHÔNG gõ tay được nữa** — chỉ nạp bằng nút *Nạp CITAD* / *Nạp PaymentHub* qua Extension. Mục đích: không để sửa tay số liệu trên bản đang chấm
     + ⚠️ **Hệ quả cần biết trước: không còn cách nhập dự phòng cho hai bảng này.** Hôm nào Extension đọc sai hoặc không chạy thì phải xử lý ở Extension chứ không gõ đè lên được. Gặp trường hợp đó, báo ngay để xử lý trong ngày thay vì cố chấm tiếp

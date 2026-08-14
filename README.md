@@ -7,6 +7,9 @@
 ### 1. Yêu cầu
 - Python 3.10+
 - Windows / Linux / macOS
+- **Microsoft Word** trên máy chạy backend — chỉ cần cho việc xuất **đơn nghỉ phép bản PDF**
+  (Word chuyển `.docx` → `.pdf`). Không có Word thì hệ thống vẫn chạy đủ, riêng phần ký đơn
+  lui về tải bản `.docx` không chữ ký
 
 ### 2. Tạo môi trường ảo và cài thư viện
 
@@ -239,13 +242,22 @@ Truy cập:
 - **Công việc chờ xử lý**: khối ở đầu sidebar, hiện trên mọi trang — số chứng từ chờ xác nhận và đơn nghỉ phép chờ duyệt của **chính người đang đăng nhập**; bấm vào mở màn hình theo dõi `/pending/<loại>` có đủ chi tiết và link nhảy thẳng tới ô cần xử lý
 - **Nhật ký thao tác** (audit log): middleware ghi tập trung mọi request thay đổi dữ liệu (POST/PUT/PATCH/DELETE) vào bảng `audit_logs` — ai, làm gì, kết quả HTTP, IP, thời gian; lọc theo phương thức, tìm kiếm, phân trang; tự dọn sau 365 ngày
 - Nhật ký đăng nhập và nhật ký lỗi/cảnh báo hệ thống (admin xem, lọc theo user/thời gian)
+- **Ảnh chữ ký cá nhân** (menu *Quản lý người dùng*, mọi vai trò kể cả chuyên viên): tải lên ảnh
+  **PNG nền trong suốt**, tối đa 2 MB, mỗi người một ảnh. Ảnh lưu trong DB (bảng `user_signatures`)
+  nên đi cùng bản sao lưu `.db`; chỉ xem/sửa/xoá được ảnh **của chính mình**. Dùng để ký đơn nghỉ phép
 - **Trạng thái tài khoản** — cột `user_tttt.is_active` cho phép NULL (dữ liệu cũ, đường *Nhập DB*). **NULL = tạm khoá**, thống nhất với `WHERE is_active = 1` ở đăng nhập và danh sách cán bộ; migration lúc khởi động ghi hẳn về `0`, `StaffOut` cũng ép NULL → `False` để một dòng bỏ trống không làm hỏng cả response `/api/staff/`
 
 ### Module Nghỉ phép
 - Cán bộ tạo đơn xin nghỉ (phép năm, ốm, việc riêng, khác)
 - Workflow duyệt 3 bước: **KSV → Tổng hợp → Giám đốc**
 - Ủy quyền Giám đốc: GĐ có thể ủy quyền cho PGĐ trong khoảng thời gian xác định
-- Tải phiếu nghỉ phép dạng `.docx` đúng mẫu
+- Tải phiếu nghỉ phép dạng **`.pdf`** đúng mẫu (Word chuyển từ `.docx`; máy không có Word → lui về `.docx`)
+- **Ký đơn trên bản in**: lúc gửi đơn và lúc phê duyệt (KSV, Ban lãnh đạo) hiện popup xem trước
+  **chính bản in thật**, kéo/thu phóng ảnh chữ ký cá nhân vào đúng ô ký rồi mới gửi/duyệt.
+  Chữ ký được **sao lại vào đơn** tại thời điểm ký — sau này đổi hoặc xoá ảnh chữ ký cá nhân
+  thì đơn đã ký không đổi theo. Nộp lại đơn bị từ chối sẽ xoá chữ ký của người duyệt.
+  Chưa có ảnh chữ ký (Quản lý người dùng → Ảnh chữ ký) thì vẫn gửi/duyệt được, chỉ là phiếu trống ô ký.
+  *Duyệt hàng loạt và bước Tổng hợp không ký.*
 - Theo dõi quota phép năm (hạn ngạch / đã dùng); chuyển tiếp ngày phép chưa dùng năm trước sang Q1
 - Banner "Phép còn lại" tính đủ hạn mức nhập tay + ngày chuyển kỳ, khớp đúng tab Hạn mức phép
 - Đơn nghỉ vắt qua ranh giới năm (vd 29/12 → 02/01) được chia đúng cho từng năm khi tính hạn mức
@@ -272,7 +284,7 @@ Truy cập:
   - (user, ngày) không bị tách sang tập khác
   - Nếu 1 ngày > 350 tờ → chia 2 tập cân bằng
 - **In bìa**: Tạo file `.docx` đúng format mẫu (2-column layout)
-- **Lưu trữ**: Ghi số hộp, vị trí kệ; tra cứu theo phòng/thời gian; bảng tổng hợp cả năm (số tờ/số tập theo phòng × 12 tháng); sửa số chứng từ ngay trên bảng — nhập vào ô trống để thêm tập, sửa về 0 để xoá tập, số tập/tổng tự cập nhật
+- **Lưu trữ**: Ghi số hộp, vị trí kệ; tra cứu theo phòng/thời gian; bảng tổng hợp cả năm (số tờ/số tập theo phòng × 12 tháng); sửa **ngày** và **số chứng từ** ngay trên bảng — nhập vào ô trống để thêm tập, sửa về 0 để xoá tập, số tập/tổng tự cập nhật. Sửa ngày chỉ ghi lại `cover_units` của tập, **không đụng** số liệu bàn giao gốc của phòng nguồn (`document_entries`); mỗi dòng phải còn ít nhất một ngày, xoá hết ngày thì báo lỗi và giữ nguyên số đang nhập
   - *Tab "In bìa hồ sơ"*: Nạp file Excel tra cứu hồ sơ (`LT_HS_TRACUU_*.xls`) xuất từ chương trình lưu trữ → điền vào mẫu bìa **M01/LHS** (`templates/Phòng KSNB&HTVH/Bàn giao cho lưu trữ/Bia_ho_so.docx`), giữ nguyên toàn bộ định dạng của mẫu. Lấy cột **I** *Mã vạch* (ký hiệu thông tin + chuỗi barcode), cột **C** *Tên hồ sơ* (dòng tiêu đề + **Ngày mở** = ngày **đầu tiên** xuất hiện trong tên), cột **F** *Ngày CVKT*, cột **G** *Số tờ*. Chọn hồ sơ cần in trên bảng rồi tải về **1 file Word nhiều trang** (mỗi hồ sơ 1 trang) hoặc **ZIP mỗi hồ sơ 1 file**. Máy in phải cài font **"3 of 9 Barcode"**, nếu không dòng mã vạch in ra thành chữ thường và máy quét không đọc được
 - **Báo cáo** (menu con):
   - *Báo cáo hậu kiểm*: Xuất Excel tổng hợp theo phòng
