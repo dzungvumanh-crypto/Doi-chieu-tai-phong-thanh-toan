@@ -4,6 +4,16 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 14/08/2026 Đối chiếu CITAD - **Khoá nhập tay 5 Cổng và PaymentHub**, thêm nguồn quét Napas/PSS-MDP:
+    + ⚠️ **5 bảng Cổng CITAD và bảng PaymentHub từ nay KHÔNG gõ tay được nữa** — chỉ nạp bằng nút *Nạp CITAD* / *Nạp PaymentHub* qua Extension. Mục đích: không để sửa tay số liệu trên bản đang chấm
+    + ⚠️ **Hệ quả cần biết trước: không còn cách nhập dự phòng cho hai bảng này.** Hôm nào Extension đọc sai hoặc không chạy thì phải xử lý ở Extension chứ không gõ đè lên được. Gặp trường hợp đó, báo ngay để xử lý trong ngày thay vì cố chấm tiếp
+    + **Bảng Napas / PSS-MDP vẫn sửa tay bình thường** — không nằm trong diện khoá
+    + **Tab *Lịch sử* chuyển thành chỉ xem** — mở một bản đã chấm ra xem thì không sửa hay lưu đè được. Bấm *Quay lại chỉnh sửa* để thoát chế độ xem và nhập mới cho hôm nay
+    + **Thêm cách lấy Napas/PSS-MDP thứ hai**: quét thẳng từ trang CITAD *Kiểm soát yêu cầu quyết toán lô đến* (Cổng 1), song song cách cũ qua PaymentHub. Dùng nguồn nào cũng được, không xung đột
+    + **Ô nhập Ebanking đã bỏ khỏi màn hình** — số liệu Ebanking của các ngày đã lưu trước đây **vẫn giữ nguyên**, vẫn xuất ra Excel đầy đủ, chỉ là không nhập mới được nữa
+    + Giao diện: bảng chênh lệch đưa lên đầu trang, tách riêng hai khung *LỆNH ĐI* / *LỆNH ĐẾN*, ô đã có số liệu đậm nền hồng cho dễ nhìn, và một số chỉnh về viền/khoảng cách
+    + ⚠️ **Phải tải lại `.zip` và cài lại Extension (bản 2.17)** — vào `/doi_chieu_citad` → **Tải Extension**, giải nén, *Load unpacked* lại. Không cài lại thì nút *Nạp CITAD* không lấy được Napas/PSS-MDP từ nguồn mới
+
 - 14/08/2026 Đối chiếu ACH - **Sửa nút "Chạy đối chiếu" bấm vào là báo lỗi đỏ, không chạy được**:
     + **Triệu chứng**: chọn đủ bộ file, phần kiểm tra file báo xanh hết, nhưng bấm *Chạy đối chiếu* thì hiện thông báo đỏ và không có gì xảy ra. Giống gọi vào một số điện thoại in sẵn trên tờ rơi mà tổng đài chưa bao giờ đấu nối — mọi khâu trước đó vẫn bình thường vì chúng chạy xong **trước** cú gọi
     + **Nguyên nhân**: phần giao diện gọi tới một chức năng gửi file mà bên trong hệ thống **chưa bao giờ được viết ra**. Đây không phải lỗi mới phát sinh: tính năng chọn file từ máy rồi bấm Chạy **chưa từng chạy được** kể từ khi module ACH được viết lại
