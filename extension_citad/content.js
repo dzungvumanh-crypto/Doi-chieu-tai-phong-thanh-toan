@@ -48,6 +48,16 @@ const CONG_MAP = {
   'CITAD4818': '18',
 };
 
+// ── Napas/PSS-MDP quét từ trang "Kiểm soát yêu cầu quyết toán lô đến" ──
+// Cùng 2 mã "Mã ngân hàng gửi" đã dùng để tách kênh ở content_paymenthub.js
+// (mục "3. PAYMENT — Chuyển tiền đến, lọc Loại lệnh: Lệnh quyết toán") —
+// trang CITAD này chỉ có ở Cổng 1 (CITAD001), không lặp lại ở 4 cổng còn
+// lại (xem manifest.json — chỉ thêm 1 URL cho CITAD001), vì Napas/PSS-MDP
+// hiện chỉ có 1 tổng chung cho cả ngày, không tách theo cổng như 5 bảng
+// CITAD/PaymentHub kia — quét thêm ở cổng khác sẽ cộng trùng số liệu.
+const NH_GUI_NAPAS = '01401001';
+const NH_GUI_PSSMDP = '01406001';
+
 // ── Helpers ──────────────────────────────────────────────────────────
 function getEl(id1, id2, sel) {
   return document.getElementById(id1)
@@ -86,6 +96,16 @@ function parseMoney(s) {
     return parseFloat(intPart + fracPart) || 0; // dấu cuối vẫn là phân cách nghìn
   }
   return parseFloat(`${intPart}.${fracPart}`) || 0;
+}
+
+// Chuẩn hoá text tiêu đề cột — xem giải thích chi tiết ở _cleanHeader() của
+// content_paymenthub.js (bảng có nút sắp xếp cột hay chèn icon/khoảng
+// trắng phụ vào <th>, so khớp tuyệt đối dễ trượt).
+function _cleanHeader(s) {
+  return (s || '').replace(/\s+/g, ' ').trim();
+}
+function _headerIndexOf(headers, name) {
+  return headers.findIndex(h => h.includes(name));
 }
 
 // ── Đọc cấu hình hiện tại từ trang ──────────────────────────────────
@@ -138,6 +158,65 @@ function hasResults() {
   return document.querySelectorAll('tr.grid-footer').length > 0;
 }
 
+// ── Napas/PSS-MDP: trang "Kiểm soát yêu cầu quyết toán lô đến" ─────────
+// Đọc từng dòng bảng, cột "Mã ngân hàng gửi" cho biết dòng đó thuộc kênh
+// nào (01401001=Napas, 01406001=PSS-MDP) — KHÔNG dùng số "Tổng số"/"Tổng
+// số tiền" hiện sẵn đầu trang vì đó là tổng gộp CẢ 2 kênh, không tách được.
+// Cùng cách làm với readPaymentDetailTotals() ở content_paymenthub.js.
+function isQuyetToanLoDen() {
+  return window.location.pathname.includes('/KiemSoatQuyetToanLoDen/');
+}
+
+function _findQuyetToanTable() {
+  for (const t of document.querySelectorAll('table')) {
+    // Bỏ qua bảng rỗng — trang ASP.NET này có thể có nhiều bảng trùng cấu
+    // trúc cột (mẫu/bản sao ẩn), y hệt tình huống đã gặp ở content_paymenthub.js.
+    if (t.querySelectorAll('tbody tr').length === 0) continue;
+    const headCells = t.querySelectorAll('th');
+    for (const c of headCells) {
+      if (_cleanHeader(c.innerText).includes('Mã ngân hàng gửi')) return t;
+    }
+  }
+  return null;
+}
+
+function hasQuyetToanResults() {
+  if (!isQuyetToanLoDen()) return false;
+  return !!_findQuyetToanTable();
+}
+
+// Trả về { napas: {soMon, soTien}, pssmdp: {soMon, soTien} } — cộng dồn
+// theo TỪNG dòng, chỉ 2 field "ĐẾN IH" (trang này chỉ có "lô đến", đúng
+// đúng field duy nhất napas/pssmdp đang dùng ở doi_chieu_citad.py).
+function readQuyetToanLoDenTotals() {
+  const totals = { napas: { soMon: 0, soTien: 0 }, pssmdp: { soMon: 0, soTien: 0 } };
+  const table = _findQuyetToanTable();
+  if (!table) return totals;
+
+  const headers = Array.from(table.querySelectorAll('th')).map(c => _cleanHeader(c.innerText));
+  const idxNH = _headerIndexOf(headers, 'Mã ngân hàng gửi');
+  const idxTien = _headerIndexOf(headers, 'Số tiền');
+  if (idxNH === -1 || idxTien === -1) return totals;
+
+  for (const row of table.querySelectorAll('tbody tr')) {
+    const cells = row.querySelectorAll('td');
+    // Đã xác nhận thực tế (console trên trang thật, 14/08/2026): dòng ĐẦU
+    // TIÊN trong tbody không có <td> nào (0 cell) — chặn bằng điều kiện
+    // dưới, không phải đoán phòng hờ. idxNH/idxTien tra đúng vị trí với các
+    // dòng dữ liệu thật còn lại (đã đối chiếu khớp cả mã kênh lẫn số tiền).
+    if (cells.length <= Math.max(idxNH, idxTien)) continue;
+    const nhGui = (cells[idxNH]?.innerText || '').trim();
+    let channel = null;
+    if (nhGui.startsWith(NH_GUI_NAPAS)) channel = 'napas';
+    else if (nhGui.startsWith(NH_GUI_PSSMDP)) channel = 'pssmdp';
+    if (!channel) continue; // dòng không thuộc 2 kênh này — bỏ qua, không đoán
+
+    totals[channel].soMon += 1;
+    totals[channel].soTien += parseMoney(cells[idxTien]?.innerText);
+  }
+  return totals;
+}
+
 // ── Gửi lên server ───────────────────────────────────────────────────
 // Trả về { ok, permanent } thay vì chỉ true/false — "permanent" đánh dấu
 // lỗi KHÔNG phải sự cố tạm thời (chưa cấu hình, mã kết nối sai/bị thu hồi)
@@ -160,6 +239,42 @@ async function saveToServer(cfg, res) {
     soMon:  res.soMon,
     soTien: res.soTien,
     ts: new Date().toLocaleTimeString('vi-VN')
+  };
+  const result = await new Promise((resolve) => {
+    chrome.runtime.sendMessage(
+      {
+        type: 'BUFFER_POST',
+        url: `${SERVER}/api/doi-chieu-citad/citad-buffer`,
+        token: EXTENSION_TOKEN,
+        body: payload,
+      },
+      (response) => resolve(response || { ok: false, status: null })
+    );
+  });
+  if (result.status === 403) {
+    showToast('✗ Mã kết nối không hợp lệ hoặc đã bị thu hồi — tạo mã mới ở /doi_chieu_citad', '#ef4444', 8000);
+    return { ok: false, permanent: true };
+  }
+  return { ok: result.ok, permanent: false };
+}
+
+// Gửi 1 kênh (Napas hoặc PSS-MDP) — vẫn dùng chung endpoint /citad-buffer,
+// field `source` ('napas'/'pssmdp') để load_citad_buffer() (frontend) biết
+// rẽ nhánh đọc riêng thay vì hiểu nhầm thành số liệu 1 trong 5 Cổng CITAD.
+// cong/loai/chieu/tien điền cho đủ field bắt buộc của CitadBufferIn, không
+// mang ý nghĩa thật (frontend bỏ qua khi có `source`).
+async function saveQuyetToanChannelToServer(channel, totals) {
+  if (!SERVER || !EXTENSION_TOKEN) {
+    showToast('⚠️ Chưa cấu hình Extension — bấm icon Extension trên thanh công cụ → Tuỳ chọn', '#f59e0b', 6000);
+    return { ok: false, permanent: true };
+  }
+  const payload = {
+    key: `citad_${channel}_quyettoanloden`,
+    cong: '1', loai: 'ih', chieu: 'den', tien: 'VNĐ',
+    soMon: totals.soMon,
+    soTien: totals.soTien,
+    source: channel,
+    ts: new Date().toLocaleTimeString('vi-VN'),
   };
   const result = await new Promise((resolve) => {
     chrome.runtime.sendMessage(
@@ -307,24 +422,92 @@ async function autoSaveIfNew() {
   }
 }
 
+// ── Auto-save Napas/PSS-MDP (trang "Kiểm soát quyết toán lô đến") ──────
+// State tách riêng cho từng kênh — 1 kênh gửi xong không chặn/ảnh hưởng
+// kênh còn lại (dedupe theo `key` của autoSaveIfNew() ở trên vốn theo
+// TỔ HỢP cổng/loại tiền/chiều/loại DV, ở đây thay bằng theo TÊN KÊNH vì
+// mỗi kênh chỉ có đúng 1 tổ hợp — không cần phân biệt gì thêm).
+const _quyetToanState = {
+  napas:  { lastKey: '', saving: false, retry: null },
+  pssmdp: { lastKey: '', saving: false, retry: null },
+};
+_quyetToanState.napas.retry  = _makeRetryScheduler(() => { _quyetToanState.napas.lastKey = ''; });
+_quyetToanState.pssmdp.retry = _makeRetryScheduler(() => { _quyetToanState.pssmdp.lastKey = ''; });
+
+async function _autoSaveQuyetToanChannel(channel, tot) {
+  const st = _quyetToanState[channel];
+  if (tot.soMon === 0 && tot.soTien === 0) return; // chưa có giao dịch/trang chưa tải xong
+
+  // Key gồm cả SỐ LIỆU (giống autoSaveIfNew()) — tổ hợp cổng/kênh cố định
+  // nên chỉ cần soMon/soTien để biết có gì MỚI cần gửi lại hay không.
+  const key = `${tot.soMon}_${tot.soTien}`;
+  if (key === st.lastKey) return;
+  if (st.saving) return;
+  st.lastKey = key;
+  st.saving = true;
+
+  try {
+    const { ok, permanent } = await saveQuyetToanChannelToServer(channel, tot);
+    const label = channel === 'napas' ? 'Napas' : 'PSS-MDP';
+    if (ok) {
+      showToast(
+        `✓ Tự lưu: ${label} (quyết toán lô đến)<br>` +
+        `<small style="color:#94a3b8">${tot.soMon.toLocaleString('vi-VN')} món | ${tot.soTien.toLocaleString('vi-VN')}</small>`,
+        '#10b981', 4000
+      );
+      st.retry.resetBackoff();
+    } else if (!permanent) {
+      showToast(`✗ Không kết nối server (${SERVER})`, '#ef4444', 4000);
+      st.retry.scheduleRetry();
+    }
+  } finally {
+    st.saving = false;
+  }
+}
+
+async function autoSaveQuyetToanIfNew() {
+  if (!hasQuyetToanResults()) return;
+  const totals = readQuyetToanLoDenTotals();
+  await _autoSaveQuyetToanChannel('napas', totals.napas);
+  await _autoSaveQuyetToanChannel('pssmdp', totals.pssmdp);
+}
+
 // ── Nút thủ công (dự phòng) ─────────────────────────────────────────
 function createManualBtn() {
   if (document.getElementById('_citad_btn')) return;
   const btn = document.createElement('div');
   btn.id = '_citad_btn';
-  btn.innerHTML = '📥 Lưu lại tổ hợp này';
+  // Ô vuông nhỏ chỉ có ký hiệu — trước đây có chữ "Lưu lại tổ hợp này" che
+  // khá nhiều nội dung trang CITAD, đặc biệt khi zoom/màn hình nhỏ.
+  btn.innerHTML = '📥';
   btn.style.cssText = `
     position:fixed;bottom:70px;right:24px;
+    width:34px;height:34px;display:flex;align-items:center;justify-content:center;
     background:linear-gradient(135deg,#92400e,#78350f);
-    color:#fff;font-family:Arial,sans-serif;font-size:12px;font-weight:bold;
-    padding:9px 14px;border-radius:8px;cursor:pointer;z-index:999998;
+    font-size:15px;border-radius:8px;cursor:pointer;z-index:999998;
     box-shadow:0 4px 12px rgba(0,0,0,.4);border:1px solid rgba(255,255,255,.2);
     user-select:none;opacity:0.85;
   `;
-  btn.title = 'Nhấn để lưu thủ công nếu tự động không lưu';
+  // Tooltip đổi theo đúng loại trang đang đứng — "tổ hợp" chỉ có nghĩa ở
+  // trang Bảng kê (cổng/loại tiền/chiều/loại DV), không áp dụng cho trang
+  // Napas/PSS-MDP (chỉ 2 kênh cố định).
+  btn.title = isQuyetToanLoDen()
+    ? 'Lưu lại Napas/PSS-MDP — nhấn để lưu thủ công nếu tự động không lưu'
+    : 'Lưu lại tổ hợp này — nhấn để lưu thủ công nếu tự động không lưu';
   btn.onmouseover = () => { btn.style.opacity='1'; };
   btn.onmouseout  = () => { btn.style.opacity='0.85'; };
+  // 2 loại trang dùng chung 1 nút — tự nhận biết đang ở trang nào để bấm
+  // đúng đường lưu (hasQuyetToanResults() tự kiểm tra cả isQuyetToanLoDen()
+  // nên loại trừ lẫn nhau, không bao giờ cả 2 cùng đúng).
   btn.onclick = async () => {
+    if (hasQuyetToanResults()) {
+      _quyetToanState.napas.retry.resetBackoff();
+      _quyetToanState.pssmdp.retry.resetBackoff();
+      _quyetToanState.napas.lastKey = '';
+      _quyetToanState.pssmdp.lastKey = '';
+      await autoSaveQuyetToanIfNew();
+      return;
+    }
     if (!hasResults()) { showToast('Chưa có kết quả, hãy Truy vấn trước', '#f59e0b'); return; }
     _saveRetry.resetBackoff(); // bấm tay = thử ngay, không chờ backoff còn lại
     lastSavedKey = ''; // reset để cho phép lưu lại
@@ -339,23 +522,30 @@ function removeManualBtn() {
 }
 
 // ── Observer ─────────────────────────────────────────────────────────
+function _hasAnyResults() {
+  return hasResults() || hasQuyetToanResults();
+}
+
 function observe() {
   // Kiểm tra ngay lần đầu
-  if (hasResults()) {
+  if (_hasAnyResults()) {
     createManualBtn();
     autoSaveIfNew();
+    autoSaveQuyetToanIfNew();
   }
 
   const observer = new MutationObserver(() => {
-    if (hasResults()) {
+    if (_hasAnyResults()) {
       createManualBtn();
       autoSaveIfNew();
+      autoSaveQuyetToanIfNew();
     } else {
       removeManualBtn();
-      // KHÔNG reset lastSavedKey ở đây nữa — key giờ đã gồm cả số liệu (xem
-      // autoSaveIfNew), nên bảng biến mất rồi hiện lại với số liệu CŨ vẫn tự
-      // bị chặn gửi trùng; số liệu MỚI (khác) vẫn tính ra key khác, tự gửi
-      // bình thường, không cần reset.
+      // KHÔNG reset lastSavedKey/_quyetToanState ở đây nữa — key giờ đã gồm
+      // cả số liệu (xem autoSaveIfNew/_autoSaveQuyetToanChannel), nên bảng
+      // biến mất rồi hiện lại với số liệu CŨ vẫn tự bị chặn gửi trùng; số
+      // liệu MỚI (khác) vẫn tính ra key khác, tự gửi bình thường, không cần
+      // reset.
     }
   });
 
