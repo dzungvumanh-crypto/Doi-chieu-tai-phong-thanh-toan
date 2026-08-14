@@ -1,4 +1,5 @@
 """Quản lý nghỉ phép — đăng ký, phê duyệt, tải phiếu"""
+import base64
 import io
 import json
 import os
@@ -19,6 +20,7 @@ from backend.schemas.leaves import (
     LeaveCreate, LeaveReview, TongHopReview,
     DirectLeaveCreate, RecallCreate, LeaveQuotaUpsert,
 )
+from backend.services import leave_pdf
 
 router = APIRouter()
 
@@ -623,6 +625,8 @@ def create_leave(
          gd_approver_id, gd_approved_at, spread_json, str(_vn_now()), str(_vn_now())),
     )
     leave_id = cur.lastrowid
+    if body.signature:
+        _save_signature(db, leave_id, "nguoi_de_nghi", current["id"], body.signature)
     _log_action(db, leave_id, current["id"], "create", None, "", initial_status)
     if initial_status == LeaveStatus.APPROVED:
         _apply_status_transition(leave_id, LeaveStatus.APPROVED, LeaveStatus.APPROVED,
@@ -1119,6 +1123,8 @@ def ksv_review(
         "UPDATE leave_records SET ksv_approved_at=?, ksv_comment=? WHERE id=?",
         (str(_vn_now()), body.comment, leave_id),
     )
+    if body.action == "approve" and body.signature:
+        _save_signature(db, leave_id, "ksv", current["id"], body.signature)
     start = date.fromisoformat(leave["start_date"])
     end   = date.fromisoformat(leave["end_date"])
     _h    = _load_holidays(db, start, end)
@@ -1238,6 +1244,8 @@ def gd_review(
         "UPDATE leave_records SET gd_approved_at=?, gd_comment=?, gd_approver_id=? WHERE id=?",
         (str(_vn_now()), body.comment, current["id"], leave_id),
     )
+    if body.action == "approve" and body.signature:
+        _save_signature(db, leave_id, "gd", current["id"], body.signature)
     start = date.fromisoformat(leave["start_date"])
     end   = date.fromisoformat(leave["end_date"])
     _h    = _load_holidays(db, start, end)
@@ -1378,6 +1386,11 @@ def resubmit_leave(
         (ksv_approver_id, new_gd_approver_id, new_gd_approved_at, body.leave_type, eff_start.isoformat(),
          eff_end.isoformat(), body.reason, spread_json, leave_id),
     )
+    # Đơn quay lại từ đầu → chữ ký của người duyệt cũ không còn giá trị. Ngày tháng
+    # và số ngày phép trên phiếu đã đổi, giữ lại là để chữ ký thật nằm trên tờ đơn khác.
+    db.execute("DELETE FROM leave_signatures WHERE leave_id=? AND slot IN ('ksv','gd')", (leave_id,))
+    if body.signature:
+        _save_signature(db, leave_id, "nguoi_de_nghi", current["id"], body.signature)
     _apply_status_transition(leave_id, old, new_status, eff_start, eff_end, leave["staff_id"], _h, db)
     db.commit()
     return _leave_to_out(leave_id, db)
@@ -1545,40 +1558,81 @@ def _fmt_leave_period(start: date, end: date, days: int, spread_dates: list = No
     )
 
 
-@router.get("/{leave_id}/download")
-def download_leave_form(
-    leave_id: int,
-    db: sqlite3.Connection = Depends(get_db),
-    current: dict = Depends(get_current_staff),
-):
-    r = db.execute(
-        """SELECT lr.*,
-                  s.full_name AS staff_name, s.role AS staff_role,
-                  s.employee_code, s.annual_leave_days, s.used_leave_days,
-                  s.join_industry_date,
-                  d.name AS dept_name,
-                  kv.full_name AS ksv_name,
-                  gd.full_name AS gd_approver_name, gd.role AS gd_role
-           FROM leave_records lr
-           LEFT JOIN user_tttt s  ON lr.staff_id             = s.id
-           LEFT JOIN departments d ON s.department_id          = d.id
-           LEFT JOIN user_tttt kv ON lr.ksv_approver_id      = kv.id
-           LEFT JOIN user_tttt gd ON lr.gd_approver_id       = gd.id
-           WHERE lr.id = ?""",
-        (leave_id,),
-    ).fetchone()
+_FORM_ROW_SQL = """SELECT lr.*,
+          s.full_name AS staff_name, s.role AS staff_role,
+          s.employee_code, s.annual_leave_days, s.used_leave_days,
+          s.join_industry_date,
+          d.name AS dept_name,
+          kv.full_name AS ksv_name,
+          gd.full_name AS gd_approver_name, gd.role AS gd_role
+   FROM leave_records lr
+   LEFT JOIN user_tttt s  ON lr.staff_id             = s.id
+   LEFT JOIN departments d ON s.department_id          = d.id
+   LEFT JOIN user_tttt kv ON lr.ksv_approver_id      = kv.id
+   LEFT JOIN user_tttt gd ON lr.gd_approver_id       = gd.id
+   WHERE lr.id = ?"""
+
+
+def _load_form_row(leave_id: int, db: sqlite3.Connection):
+    r = db.execute(_FORM_ROW_SQL, (leave_id,)).fetchone()
     if not r:
         raise HTTPException(404, "Không tìm thấy đơn nghỉ phép")
+    return r
 
-    is_th = _is_tong_hop_staff(current, db)
-    if (r["staff_id"] != current["id"]
-            and r["ksv_approver_id"] != current["id"]
-            and r["gd_approver_id"] != current["id"]
-            and r["direct_by"] != current["id"]
-            and not is_th
-            and current["role"] not in ("admin", "hau_kiem_vien", "giam_doc", "pho_giam_doc")):
-        raise HTTPException(403, "Không có quyền tải đơn này")
 
+def _can_view_form(r, current: dict, db: sqlite3.Connection) -> bool:
+    return (r["staff_id"] == current["id"]
+            or r["ksv_approver_id"] == current["id"]
+            or r["gd_approver_id"] == current["id"]
+            or r["direct_by"] == current["id"]
+            or _is_tong_hop_staff(current, db)
+            or current["role"] in ("admin", "hau_kiem_vien", "giam_doc", "pho_giam_doc"))
+
+
+def _draft_form_row(body: LeaveCreate, current: dict, db: sqlite3.Connection) -> dict:
+    """Dòng dữ liệu giả lập cho đơn CHƯA tạo — để xem trước trước khi gửi.
+
+    Giữ đúng bộ khoá mà _build_form_ctx đọc; đơn thật thì các khoá này do câu
+    SELECT ở _FORM_ROW_SQL cấp.
+    """
+    s = db.execute(
+        """SELECT s.*, d.name AS dept_name
+           FROM user_tttt s LEFT JOIN departments d ON s.department_id = d.id
+           WHERE s.id = ?""",
+        (current["id"],),
+    ).fetchone()
+    if not s:
+        raise HTTPException(404, "Không tìm thấy hồ sơ nhân sự của bạn")
+
+    def _name_role(sid):
+        if not sid:
+            return None, None
+        row = db.execute("SELECT full_name, role FROM user_tttt WHERE id=?", (sid,)).fetchone()
+        return (row["full_name"], row["role"]) if row else (None, None)
+
+    ksv_name, _ = _name_role(body.ksv_approver_id)
+    gd_name, gd_role = _name_role(body.gd_approver_id)
+    if body.spread_dates:
+        spread = sorted(set(body.spread_dates))
+        eff_start, eff_end = spread[0], spread[-1]
+        spread_json = json.dumps(spread)
+    else:
+        eff_start, eff_end = body.start_date.isoformat(), body.end_date.isoformat()
+        spread_json = None
+    return {
+        "staff_id": current["id"], "staff_name": s["full_name"], "staff_role": s["role"],
+        "employee_code": s["employee_code"], "annual_leave_days": s["annual_leave_days"],
+        "used_leave_days": s["used_leave_days"], "join_industry_date": s["join_industry_date"],
+        "dept_name": s["dept_name"], "direct_by": None,
+        "start_date": eff_start, "end_date": eff_end, "spread_dates": spread_json,
+        "leave_type": body.leave_type, "reason": body.reason,
+        "ksv_approver_id": body.ksv_approver_id, "ksv_name": ksv_name,
+        "gd_approver_id": body.gd_approver_id, "gd_approver_name": gd_name, "gd_role": gd_role,
+    }
+
+
+def _build_form_ctx(r, leave_id: Optional[int], db: sqlite3.Connection) -> tuple:
+    """(ctx cho docxtpl, đường dẫn template). `r` là dòng thật hoặc dòng giả lập."""
     tpl_path = _pick_template(r["staff_role"])
     if not os.path.exists(tpl_path):
         raise HTTPException(500, "Chưa có template đơn nghỉ phép")
@@ -1732,21 +1786,242 @@ def download_leave_form(
             "con_lai_prev":      "",
             "con_lai_cur":       "",
         })
+    return ctx, tpl_path
+
+
+def _render_form_docx(ctx: dict, tpl_path: str) -> bytes:
     from docxtpl import DocxTemplate
     tpl = DocxTemplate(tpl_path)
     tpl.render(ctx)
     buf = io.BytesIO()
     tpl.save(buf)
-    buf.seek(0)
+    return buf.getvalue()
 
-    ec = r["employee_code"] or "staff"
-    safe_name = f"don_nghi_phep_{ec}_{r['start_date']}.docx"
-    return StreamingResponse(
-        buf,
-        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{safe_name}"},
+
+# ─── Bản PDF + chữ ký ────────────────────────────────────────────────────────
+# Nhãn để dò vị trí gợi ý cho từng ô ký. Dò PHÂN BIỆT HOA-THƯỜNG: chữ thường
+# "Trưởng phòng" còn nằm ở dòng "Chức vụ:" phía trên, khớp trúng dòng đó thì chữ
+# ký nhảy lên giữa trang.
+_SIG_SLOTS = {
+    "nguoi_de_nghi": "NGƯỜI ĐỀ NGHỊ",
+    "ksv":           "TRƯỞNG PHÒNG",
+    "gd":            "GIÁM ĐỐC TTTT",
+}
+_SIG_SLOT_VN = {"nguoi_de_nghi": "Người đề nghị", "ksv": "Trưởng phòng", "gd": "Ban lãnh đạo"}
+_SIG_W_MM = 38.0          # bề ngang mặc định của khung chữ ký
+_SIG_RATIO = 0.38         # cao/rộng khi không đọc được kích thước ảnh
+
+
+def _form_pdf(r, leave_id: Optional[int], db: sqlite3.Connection) -> bytes:
+    """PDF gốc (chưa có chữ ký). Word chỉ chạy khi cache trượt — khoá cache là
+    nội dung đơn nên sửa người duyệt / số ngày là tự dựng lại."""
+    ctx, tpl_path = _build_form_ctx(r, leave_id, db)
+    try:
+        mtime = os.path.getmtime(tpl_path)
+    except OSError:
+        mtime = 0
+    key = leave_pdf.cache_key(tpl_path, mtime, json.dumps(ctx, sort_keys=True, default=str))
+    return leave_pdf.base_pdf(key, lambda: _render_form_docx(ctx, tpl_path))
+
+
+def _sig_image(staff_id: Optional[int], db: sqlite3.Connection) -> Optional[bytes]:
+    if not staff_id:
+        return None
+    row = db.execute("SELECT image FROM user_signatures WHERE staff_id=?", (staff_id,)).fetchone()
+    return row["image"] if row else None
+
+
+def _suggest_sig_box(pdf: bytes, slot: str, image: Optional[bytes]) -> dict:
+    """Khung gợi ý: ngay dưới nhãn ô ký, giữa theo chiều ngang của nhãn."""
+    ratio = _SIG_RATIO
+    if image:
+        w_px, h_px = leave_pdf.png_size(image)
+        if w_px and h_px:
+            ratio = h_px / w_px
+    w = _SIG_W_MM
+    h = max(6.0, min(45.0, w * ratio))
+    anchor = None
+    needle = _SIG_SLOTS.get(slot)
+    if needle:
+        anchor = leave_pdf.find_text_box(pdf, needle, match_case=True)
+    if anchor:
+        x = anchor["x_mm"] + anchor["w_mm"] / 2 - w / 2
+        y = anchor["y_mm"] + anchor["h_mm"] + 1.5
+        page = anchor["page"]
+    else:
+        # Không dò được nhãn (mẫu đơn đổi chữ) — thả xuống giữa nửa dưới trang,
+        # người ký tự kéo. Thà lệch còn hơn không hiện chữ ký nào.
+        x, y, page = 85.0, 200.0, 0
+    return {"page": page, "x_mm": round(x, 2), "y_mm": round(y, 2),
+            "w_mm": round(w, 2), "h_mm": round(h, 2)}
+
+
+def _placed_signatures(leave_id: Optional[int], db: sqlite3.Connection) -> list:
+    if not leave_id:
+        return []
+    rows = db.execute(
+        """SELECT slot, page, x_mm, y_mm, w_mm, h_mm, image, signed_at
+           FROM leave_signatures WHERE leave_id=? ORDER BY id""",
+        (leave_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def _validate_placement(pl) -> dict:
+    """Chặn toạ độ vô lý trước khi ghi DB (khung ngoài trang, bé/to bất thường)."""
+    if pl is None:
+        return None
+    box = {"page": int(pl.page or 0), "x_mm": float(pl.x_mm), "y_mm": float(pl.y_mm),
+           "w_mm": float(pl.w_mm), "h_mm": float(pl.h_mm)}
+    if box["page"] < 0 or box["page"] > 20:
+        raise HTTPException(400, "Số trang đặt chữ ký không hợp lệ")
+    if not (5.0 <= box["w_mm"] <= 150.0 and 3.0 <= box["h_mm"] <= 150.0):
+        raise HTTPException(400, "Kích thước chữ ký không hợp lệ (rộng 5–150mm, cao 3–150mm)")
+    if not (-5.0 <= box["x_mm"] <= 420.0 and -5.0 <= box["y_mm"] <= 594.0):
+        raise HTTPException(400, "Vị trí chữ ký nằm ngoài trang")
+    return box
+
+
+def _save_signature(db: sqlite3.Connection, leave_id: int, slot: str,
+                    staff_id: int, pl) -> None:
+    """Ghi chữ ký vào đơn. Ảnh được SAO LẠI vào leave_signatures ngay lúc ký —
+    sau này người ký đổi hoặc xoá ảnh cá nhân thì đơn cũ không đổi theo."""
+    box = _validate_placement(pl)
+    if box is None:
+        return
+    image = _sig_image(staff_id, db)
+    if not image:
+        raise HTTPException(400, "Chưa có ảnh chữ ký — vào Quản lý người dùng để tải lên")
+    db.execute("DELETE FROM leave_signatures WHERE leave_id=? AND slot=?", (leave_id, slot))
+    db.execute(
+        """INSERT INTO leave_signatures
+               (leave_id, slot, staff_id, page, x_mm, y_mm, w_mm, h_mm, image, signed_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?)""",
+        (leave_id, slot, staff_id, box["page"], box["x_mm"], box["y_mm"],
+         box["w_mm"], box["h_mm"], image, str(_vn_now())),
     )
 
+
+def _data_url(image: bytes) -> str:
+    return "data:image/png;base64," + base64.b64encode(image).decode()
+
+
+def _preview_payload(r, leave_id: Optional[int], slot: str,
+                     signer_id: Optional[int], db: sqlite3.Connection) -> dict:
+    """Ảnh trang đơn + chữ ký đã có + khung gợi ý cho ô ký sắp tới."""
+    try:
+        pdf = _form_pdf(r, leave_id, db)
+    except leave_pdf.PdfConvertError as e:
+        raise HTTPException(503, f"Không dựng được bản xem trước: {e}")
+
+    all_sigs = _placed_signatures(leave_id, db)
+    placed = [p for p in all_sigs if p["slot"] != slot]
+    my_image = _sig_image(signer_id, db) if slot else None
+    # Ô này đã ký rồi (duyệt lại, xem lại) → mở đúng chỗ cũ, đừng kéo về chỗ gợi ý
+    earlier = next((p for p in all_sigs if p["slot"] == slot), None)
+    if not slot:
+        suggest = None
+    elif earlier:
+        suggest = {k: earlier[k] for k in ("page", "x_mm", "y_mm", "w_mm", "h_mm")}
+    else:
+        suggest = _suggest_sig_box(pdf, slot, my_image)
+    page_no = suggest["page"] if suggest else (placed[0]["page"] if placed else 0)
+    png, w_mm, h_mm, n_pages = leave_pdf.page_png(pdf, page_no)
+    return {
+        "page": page_no,
+        "pages": n_pages,
+        "page_png": _data_url(png),
+        "page_w_mm": round(w_mm, 2),
+        "page_h_mm": round(h_mm, 2),
+        "slot": slot or None,
+        "slot_label": _SIG_SLOT_VN.get(slot, ""),
+        "signature": ({"data_url": _data_url(my_image)} if my_image else None),
+        "suggest": suggest,
+        "placed": [
+            {"slot": p["slot"], "label": _SIG_SLOT_VN.get(p["slot"], p["slot"]),
+             "x_mm": p["x_mm"], "y_mm": p["y_mm"], "w_mm": p["w_mm"], "h_mm": p["h_mm"],
+             "data_url": _data_url(p["image"])}
+            for p in placed if p["page"] == page_no
+        ],
+    }
+
+
+def _sig_slot_for(r, current: dict, db: sqlite3.Connection) -> str:
+    """Ô ký mà người đang đăng nhập được quyền ký trên đơn này."""
+    if r["staff_id"] == current["id"]:
+        return "nguoi_de_nghi"
+    if r["status"] == LeaveStatus.PENDING_KSV and (
+            r["ksv_approver_id"] == current["id"] or current["role"] == "admin"):
+        return "ksv"
+    if r["status"] == LeaveStatus.PENDING_GD and (
+            r["gd_approver_id"] == current["id"] or current["role"] == "admin"):
+        return "gd"
+    return ""
+
+
+@router.post("/preview")
+def preview_draft_form(
+    body: LeaveCreate,
+    db: sqlite3.Connection = Depends(get_db),
+    current: dict = Depends(require_feature("leaves.create")),
+):
+    """Xem trước đơn CHƯA gửi — để người làm đơn đặt chữ ký rồi mới bấm gửi."""
+    if body.leave_type not in _VALID_LEAVE_TYPES:
+        raise HTTPException(400, f"Loại nghỉ phép không hợp lệ: {body.leave_type}")
+    r = _draft_form_row(body, current, db)
+    return _preview_payload(r, None, "nguoi_de_nghi", current["id"], db)
+
+
+@router.get("/{leave_id}/preview")
+def preview_leave_form(
+    leave_id: int,
+    slot: str = "",
+    db: sqlite3.Connection = Depends(get_db),
+    current: dict = Depends(get_current_staff),
+):
+    """Xem trước đơn đã có. `slot` để trống → tự chọn ô ký hợp lệ của người gọi."""
+    r = _load_form_row(leave_id, db)
+    if not _can_view_form(r, current, db):
+        raise HTTPException(403, "Không có quyền xem đơn này")
+    if slot and slot not in _SIG_SLOTS:
+        raise HTTPException(400, "Ô ký không hợp lệ")
+    slot = slot or _sig_slot_for(r, current, db)
+    return _preview_payload(r, leave_id, slot, current["id"] if slot else None, db)
+
+
+@router.get("/{leave_id}/download")
+def download_leave_form(
+    leave_id: int,
+    fmt: str = "pdf",
+    db: sqlite3.Connection = Depends(get_db),
+    current: dict = Depends(get_current_staff),
+):
+    r = _load_form_row(leave_id, db)
+    if not _can_view_form(r, current, db):
+        raise HTTPException(403, "Không có quyền tải đơn này")
+
+    ec = r["employee_code"] or "staff"
+    if fmt == "docx":
+        # Đường lui khi máy chủ không chuyển được PDF (chưa cài Word / Word treo).
+        ctx, tpl_path = _build_form_ctx(r, leave_id, db)
+        return StreamingResponse(
+            io.BytesIO(_render_form_docx(ctx, tpl_path)),
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition":
+                     f"attachment; filename*=UTF-8''don_nghi_phep_{ec}_{r['start_date']}.docx"},
+        )
+
+    try:
+        pdf = _form_pdf(r, leave_id, db)
+        pdf = leave_pdf.stamp(pdf, _placed_signatures(leave_id, db))
+    except leave_pdf.PdfConvertError as e:
+        raise HTTPException(503, f"Không tạo được PDF: {e}")
+    return StreamingResponse(
+        io.BytesIO(pdf),
+        media_type="application/pdf",
+        headers={"Content-Disposition":
+                 f"attachment; filename*=UTF-8''don_nghi_phep_{ec}_{r['start_date']}.pdf"},
+    )
 
 
 # ─── Hạn mức phép (quota) ──────────────────────────────────────────────────────

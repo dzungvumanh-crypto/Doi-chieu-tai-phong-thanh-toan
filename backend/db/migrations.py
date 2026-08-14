@@ -641,6 +641,36 @@ def _ensure_indexes():
         # Mọi truy vấn đọc đều so `is_active = 1` → NULL vốn đã là "không hoạt
         # động"; ghi hẳn 0 để danh sách user không còn dòng làm hỏng response.
         "UPDATE user_tttt SET is_active = 0 WHERE is_active IS NULL",
+
+        # ── Ảnh chữ ký cá nhân — 2026-08-14 ───────────────────────────────────
+        # Bảng riêng, KHÔNG thêm cột BLOB vào user_tttt: get_current_staff()
+        # dùng `SELECT *` nên mỗi request sẽ đọc cả ảnh vào bộ nhớ.
+        """CREATE TABLE IF NOT EXISTS user_signatures (
+            staff_id   INTEGER PRIMARY KEY REFERENCES user_tttt(id) ON DELETE CASCADE,
+            filename   TEXT,
+            image      BLOB NOT NULL,
+            updated_at DATETIME
+        )""",
+
+        # ── Chữ ký đã đặt trên đơn nghỉ phép — 2026-08-14 ─────────────────────
+        # Toạ độ tính bằng mm từ góc TRÊN-TRÁI trang (hệ của trình duyệt), lật trục
+        # y khi dán vào PDF. `image` là BẢN SAO ảnh chữ ký lúc ký, không phải khoá
+        # ngoại sang user_signatures: người ký đổi/xoá ảnh cá nhân về sau thì đơn
+        # đã ký vẫn phải giữ nguyên đúng thứ họ đã ký.
+        """CREATE TABLE IF NOT EXISTS leave_signatures (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            leave_id   INTEGER NOT NULL REFERENCES leave_records(id) ON DELETE CASCADE,
+            slot       TEXT    NOT NULL,
+            staff_id   INTEGER,
+            page       INTEGER NOT NULL DEFAULT 0,
+            x_mm       REAL    NOT NULL,
+            y_mm       REAL    NOT NULL,
+            w_mm       REAL    NOT NULL,
+            h_mm       REAL    NOT NULL,
+            image      BLOB    NOT NULL,
+            signed_at  DATETIME
+        )""",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_leave_sig_slot ON leave_signatures(leave_id, slot)",
     ]
     _mig_log = logging.getLogger(__name__)
 

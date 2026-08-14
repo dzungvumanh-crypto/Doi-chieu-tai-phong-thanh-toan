@@ -81,6 +81,21 @@ except Exception as e:
         return
 ```
 
+## Event handler async — đừng bọc `asyncio.create_task`
+```python
+ui.upload(on_upload=_upload_sig)          # ĐÚNG — truyền thẳng hàm async
+ui.button("Xóa", on_click=_delete_sig)    # ĐÚNG
+
+ui.upload(on_upload=lambda e: asyncio.create_task(_upload_sig(e)))   # SAI
+```
+NiceGUI nhớ "đang vẽ vào chỗ nào" bằng ngăn xếp slot gắn theo **asyncio task**
+(`Slot.stacks[id(current_task())]`). `create_task` / `ensure_future` sinh task mới → ngăn xếp rỗng →
+`ui.notify`, `ui.timer`, `ui.navigate.*` ném `RuntimeError: slot stack for this task is empty`, rơi vào
+handler ngoại lệ toàn cục → **màn hình không đổi gì, cũng không có thông báo lỗi**.
+
+Truyền thẳng thì `handle_event()` await coroutine bên trong `with parent_slot:` nên slot còn nguyên qua
+mọi `await`. Nếu buộc phải chạy trong task rời, mọi thao tác UI phải nằm trong `with element:`.
+
 ## Leave Approval Workflow
 ```
 pending_ksv → pending_tong_hop → pending_gd → approved | rejected | cancelled
@@ -92,6 +107,18 @@ pending_ksv → pending_tong_hop → pending_gd → approved | rejected | cancel
 - `cancel`: huỷ khi pending hoặc approved
 - `used_leave_days` điều chỉnh qua `_apply_status_transition()` (idempotent)
 
+## Ngày của tập chứng từ (`bundles.cover_units`)
+Ngày trên bảng "Tra cứu lưu trữ" **không** phải một cột trong `bundles`. `_get_dates_for_bundle()`
+đọc `cover_units` (JSON: mỗi unit = người nộp + ngày + số tờ), chỉ khi rỗng mới fallback sang
+`bundle_items → document_entries.transaction_date`.
+
+Sửa ngày (`PATCH /api/bundles/storage-view`) **ghi lại `cover_units`**, không bao giờ
+`UPDATE document_entries` — entry là số liệu bàn giao đã chốt của phòng nguồn, dùng chung cho báo
+cáo khối lượng. Tháng/năm lấy từ `bundle_groups.notes` ("Tháng MM/YYYY"), không nhận từ client.
+
+Tập không còn ngày nào sẽ **bị loại khỏi bảng** (`_decompose_bundles_to_rows` chỉ xét dòng có
+1 ngày hoặc >1 ngày) mà vẫn nằm trong DB → mọi đường ghi ngày phải chặn danh sách ngày rỗng.
+
 ## Word Template Generation
 ```python
 from docxtpl import DocxTemplate
@@ -100,3 +127,28 @@ tpl.render(context_dict)
 buf = io.BytesIO(); tpl.save(buf)
 ```
 Dùng `_download_headers(filename)` từ `backend/api/bundles.py` cho RFC 6266 Content-Disposition.
+
+## Đơn nghỉ phép bản PDF + chữ ký (`backend/services/leave_pdf.py`)
+```
+docx (docxtpl) → [Word COM qua PowerShell] → PDF gốc (cache RAM theo nội dung)
+                                              ├→ pypdfium2 render → PNG xem trước
+                                              └→ pypdfium2 dán ảnh chữ ký → PDF tải về
+```
+- **Word chỉ chạy khi cache trượt** (5–7 giây/lần). Khoá cache = template + mtime + toàn bộ
+  ctx → đổi người duyệt/số ngày là tự dựng lại. Dán chữ ký ~0,02 giây nên mỗi lần ký thêm
+  KHÔNG gọi Word.
+- `_word_lock` tuần tự hoá: hai request cùng lúc sẽ đẻ hai tiến trình WINWORD tranh nhau.
+- Toạ độ chữ ký tính bằng **mm từ góc TRÊN-TRÁI trang** (hệ của trình duyệt); `stamp()` lật
+  trục y khi ghi vào PDF.
+- `leave_signatures.image` là **bản sao** ảnh lúc ký, không phải khoá ngoại sang
+  `user_signatures`: người ký đổi/xoá ảnh cá nhân thì đơn đã ký không đổi theo.
+- Vị trí gợi ý dò bằng `find_text_box()` trên chính bản in (`match_case=True` — chữ thường
+  "Trưởng phòng" còn nằm ở dòng "Chức vụ:").
+
+> `stamp()` phải dùng **cùng một đối tượng trang** cho `insert_obj()` và `gen_content()`.
+> `doc[i]` nạp trang MỚI mỗi lần gọi → gen_content trên đối tượng khác thì ảnh vừa chèn bị
+> bỏ, PDF lưu ra y như chưa ký mà **không có lỗi nào**.
+
+Máy chủ không có Word → `PdfConvertError` → API trả 503; frontend tự lui về tải bản `.docx`
+(`/download?fmt=docx`) và vẫn cho duyệt đơn không kèm chữ ký. Quy trình nghỉ phép không được
+đứng lại vì không chuyển đổi được PDF.

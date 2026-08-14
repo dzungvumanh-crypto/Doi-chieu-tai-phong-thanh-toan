@@ -1,9 +1,10 @@
 """Authentication endpoints"""
+import base64
 import logging
 import re
 import sqlite3
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from backend.database import get_db, _vn_now, write_audit
 from backend.schemas.auth import LoginRequest, Token, PasswordChange, AdminPasswordReset
 from backend.core.security import verify_password, create_access_token, get_password_hash
@@ -168,6 +169,89 @@ def get_my_features(
         WHERE gm.staff_id = ?
     """, (current["id"],)).fetchall()
     return {"features": [r["feature_code"] for r in rows]}
+
+
+# ── Ảnh chữ ký cá nhân ───────────────────────────────────────────────────────
+# Ảnh nằm trong DB (bảng user_signatures) chứ không ghi ra đĩa: sao lưu/khôi phục
+# của hệ thống chỉ chép file .db (xem /api/staff/import-db) — ảnh để ngoài sẽ
+# thất lạc sau mỗi lần khôi phục. Bảng riêng chứ không thêm cột BLOB vào
+# user_tttt vì get_current_staff() dùng `SELECT *`, mỗi request sẽ kéo cả ảnh.
+_PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+_SIG_MAX_BYTES = 2 * 1024 * 1024
+
+
+def _fmt_dt(value) -> str:
+    """DATETIME đọc từ SQLite ra dạng chuỗi ISO → 'dd/mm/YYYY HH:MM'."""
+    s = str(value or "")
+    if len(s) < 16:
+        return s
+    return f"{s[8:10]}/{s[5:7]}/{s[0:4]} {s[11:16]}"
+
+
+@router.get("/signature")
+def get_my_signature(
+    current: dict = Depends(get_current_staff),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """Ảnh trả về dạng data URL — thẻ <img> của trình duyệt không gắn được token."""
+    row = db.execute(
+        "SELECT filename, image, updated_at FROM user_signatures WHERE staff_id = ?",
+        (current["id"],),
+    ).fetchone()
+    if not row:
+        return {"has_signature": False}
+    img = row["image"]
+    return {
+        "has_signature": True,
+        "filename": row["filename"],
+        "size": len(img),
+        "updated_at": _fmt_dt(row["updated_at"]),
+        "data_url": "data:image/png;base64," + base64.b64encode(img).decode(),
+    }
+
+
+@router.post("/signature")
+def upload_my_signature(
+    file: UploadFile = File(...),
+    current: dict = Depends(get_current_staff),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    content = file.file.read()
+    if not content:
+        raise HTTPException(400, "File rỗng — vui lòng chọn lại ảnh")
+    if len(content) > _SIG_MAX_BYTES:
+        raise HTTPException(400, f"Ảnh nặng {len(content) / 1024 / 1024:.1f} MB — tối đa 2 MB")
+    # Kiểm tra 8 byte đầu chứ không tin phần mở rộng: file .jpg đổi tên thành
+    # .png vẫn qua được bộ lọc của trình duyệt.
+    if not content.startswith(_PNG_MAGIC):
+        raise HTTPException(400, "Chỉ nhận ảnh định dạng PNG (.png)")
+
+    name = (file.filename or "chu_ky.png").strip()[:200]
+    db.execute(
+        """INSERT INTO user_signatures (staff_id, filename, image, updated_at)
+           VALUES (?,?,?,?)
+           ON CONFLICT(staff_id) DO UPDATE SET filename   = excluded.filename,
+                                               image      = excluded.image,
+                                               updated_at = excluded.updated_at""",
+        (current["id"], name, content, _vn_now()),
+    )
+    write_audit(db, current["id"], "signature_upload", "staff", current["id"],
+                f"Tải lên ảnh chữ ký ({name})")
+    db.commit()
+    return {"message": "Đã lưu ảnh chữ ký"}
+
+
+@router.delete("/signature")
+def delete_my_signature(
+    current: dict = Depends(get_current_staff),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    cur = db.execute("DELETE FROM user_signatures WHERE staff_id = ?", (current["id"],))
+    if not cur.rowcount:
+        raise HTTPException(404, "Chưa có ảnh chữ ký để xóa")
+    write_audit(db, current["id"], "signature_delete", "staff", current["id"], "Xóa ảnh chữ ký")
+    db.commit()
+    return {"message": "Đã xóa ảnh chữ ký"}
 
 
 @router.get("/me")

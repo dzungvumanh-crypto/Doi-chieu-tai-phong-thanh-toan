@@ -51,6 +51,180 @@ _STATUS_GROUP = {
 
 
 
+# ─── Popup xem trước đơn + đặt chữ ký ────────────────────────────────────────
+# Ảnh trang là bản in THẬT (Word đã dựng PDF, backend render ra PNG), nên chỗ thả
+# chữ ký trong popup chính là chỗ nó nằm trên file PDF tải về — không phải bản mô
+# phỏng bằng HTML.
+_SIGN_PAGE_W_PX = 640          # bề ngang ảnh trang trong popup
+
+
+def _sign_js(cid: str, ppm: float, ratio: float) -> str:
+    """Kéo để di chuyển, kéo 4 góc để phóng to/thu nhỏ (khoá tỉ lệ ảnh).
+
+    Nội dung q-dialog chỉ được gắn vào DOM khi popup mở, mà thứ tự tới nơi của
+    lệnh mở và lệnh chạy JS không đảm bảo → dò lại vài nhịp cho tới khi thấy.
+    """
+    return f"""
+(function attach(n) {{
+  const wrap = document.getElementById('wrap_{cid}');
+  const box  = document.getElementById('sig_{cid}');
+  if (!wrap || !box) {{ if (n < 60) setTimeout(() => attach(n + 1), 50); return; }}
+  const ppm = {ppm}, ratio = {ratio};
+  let mode = null, corner = null, sx = 0, sy = 0, ox = 0, oy = 0, ow = 0, oh = 0;
+  const lim = () => [wrap.clientWidth, wrap.clientHeight];
+  function down(e, m, c) {{
+    mode = m; corner = c; sx = e.clientX; sy = e.clientY;
+    ox = box.offsetLeft; oy = box.offsetTop; ow = box.offsetWidth; oh = box.offsetHeight;
+    e.preventDefault(); e.stopPropagation();
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  }}
+  function move(e) {{
+    const [W, H] = lim(), dx = e.clientX - sx, dy = e.clientY - sy;
+    if (mode === 'move') {{
+      box.style.left = Math.max(0, Math.min(W - ow, ox + dx)) + 'px';
+      box.style.top  = Math.max(0, Math.min(H - oh, oy + dy)) + 'px';
+    }} else {{
+      let nw = ow + (corner.indexOf('e') >= 0 ? dx : -dx);
+      nw = Math.max(18, Math.min(W, nw));
+      let nh = nw * ratio;
+      if (nh > H) {{ nh = H; nw = nh / ratio; }}
+      let nx = corner.indexOf('e') >= 0 ? ox : ox + ow - nw;
+      let ny = corner.indexOf('s') >= 0 ? oy : oy + oh - nh;
+      box.style.width  = nw + 'px'; box.style.height = nh + 'px';
+      box.style.left = Math.max(0, Math.min(W - nw, nx)) + 'px';
+      box.style.top  = Math.max(0, Math.min(H - nh, ny)) + 'px';
+    }}
+  }}
+  function up() {{
+    mode = null;
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', up);
+  }}
+  // Ô ký nằm quá nửa trang A4 — cuộn sẵn tới đó, đừng bắt người dùng tự tìm.
+  const sc = wrap.parentElement;
+  if (sc) sc.scrollTop = Math.max(0, box.offsetTop - 120);
+  box.addEventListener('pointerdown', e => down(e, 'move', null));
+  box.querySelectorAll('[data-c]').forEach(h =>
+      h.addEventListener('pointerdown', e => down(e, 'size', h.dataset.c)));
+  window.__sigbox_{cid} = () => ({{
+      x_mm: box.offsetLeft / ppm, y_mm: box.offsetTop / ppm,
+      w_mm: box.offsetWidth / ppm, h_mm: box.offsetHeight / ppm }});
+}})(0);
+"""
+
+
+def _sign_html(cid: str, pv: dict, ppm: float) -> str:
+    def _px(v):
+        return round(float(v) * ppm, 1)
+
+    w_px = _px(pv["page_w_mm"])
+    h_px = _px(pv["page_h_mm"])
+    parts = [
+        f'<div id="wrap_{cid}" style="position:relative;width:{w_px}px;height:{h_px}px;'
+        f'background:#fff;box-shadow:0 1px 6px rgba(0,0,0,.25);user-select:none;">',
+        f'<img src="{pv["page_png"]}" draggable="false" '
+        f'style="width:100%;height:100%;display:block;pointer-events:none;">',
+    ]
+    # Chữ ký của người khác đã ký trước — chỉ để nhìn, không kéo được
+    for p in pv.get("placed") or []:
+        parts.append(
+            f'<img src="{p["data_url"]}" draggable="false" title="{p["label"]}" '
+            f'style="position:absolute;left:{_px(p["x_mm"])}px;top:{_px(p["y_mm"])}px;'
+            f'width:{_px(p["w_mm"])}px;height:{_px(p["h_mm"])}px;pointer-events:none;">'
+        )
+    sig, box = pv.get("signature"), pv.get("suggest")
+    if sig and box:
+        hd = ("position:absolute;width:11px;height:11px;background:#fff;border:2px solid #dc2626;"
+              "border-radius:2px;")
+        parts.append(
+            f'<div id="sig_{cid}" style="position:absolute;left:{_px(box["x_mm"])}px;'
+            f'top:{_px(box["y_mm"])}px;width:{_px(box["w_mm"])}px;height:{_px(box["h_mm"])}px;'
+            f'outline:1px dashed #dc2626;cursor:move;touch-action:none;">'
+            f'<img src="{sig["data_url"]}" draggable="false" '
+            f'style="width:100%;height:100%;pointer-events:none;">'
+            f'<div data-c="nw" style="{hd}left:-6px;top:-6px;cursor:nwse-resize;"></div>'
+            f'<div data-c="ne" style="{hd}right:-6px;top:-6px;cursor:nesw-resize;"></div>'
+            f'<div data-c="sw" style="{hd}left:-6px;bottom:-6px;cursor:nesw-resize;"></div>'
+            f'<div data-c="se" style="{hd}right:-6px;bottom:-6px;cursor:nwse-resize;"></div>'
+            f'</div>'
+        )
+    parts.append("</div>")
+    return "".join(parts)
+
+
+async def _fetch_preview(call):
+    """Gọi API xem trước kèm chỉ báo chờ — lần dựng đầu Word mất khoảng 5–7 giây.
+
+    Trả về: payload nếu xong; None nếu phiên hết hạn (đã chuyển về đăng nhập);
+    False nếu lỗi khác (gọi xong tự quyết định làm gì tiếp).
+    """
+    note = ui.notification("Đang dựng bản xem trước…", spinner=True, timeout=None)
+    try:
+        return await asyncio.to_thread(call)
+    except Exception as e:
+        if _handle_api_error(e):
+            return None
+        ui.notify(f"Không xem trước được đơn: {e}", type="warning", timeout=6000)
+        return False
+    finally:
+        note.dismiss()
+
+
+async def _open_sign_dialog(pv: dict, title: str, ok_label: str, ok_cls: str = "bg-green-600"):
+    """Mở popup. Trả về None nếu huỷ, {} nếu xác nhận mà không ký,
+    hoặc dict toạ độ {page,x_mm,y_mm,w_mm,h_mm} nếu có đặt chữ ký."""
+    import uuid
+
+    cid = uuid.uuid4().hex[:8]
+    ppm = _SIGN_PAGE_W_PX / float(pv["page_w_mm"] or 210)
+    box = pv.get("suggest") or {}
+    has_sig = bool(pv.get("signature")) and bool(box)
+    ratio = (float(box.get("h_mm") or 1) / float(box.get("w_mm") or 1)) if has_sig else 1.0
+
+    # max-width inline + !important: Quasar đặt sẵn `.q-dialog__inner--minimized > div
+    # { max-width: 560px }` với độ ưu tiên cao hơn class của Tailwind → không ghi đè
+    # kiểu này thì ảnh trang A4 rộng 640px bị bóp lại.
+    with ui.dialog() as dlg, ui.card().classes("p-4").style("width:auto;max-width:none !important"):
+        with ui.row().classes("w-full items-center justify-between mb-1"):
+            ui.label(title).classes("text-base font-bold text-gray-800")
+            ui.button(icon="close", on_click=lambda: dlg.submit(None)).props("flat dense round")
+        if has_sig:
+            ui.label("Kéo chữ ký để đổi chỗ · kéo 4 góc để phóng to / thu nhỏ").classes(
+                "text-xs text-gray-500 mb-2")
+        else:
+            ui.label("Chưa có ảnh chữ ký — vào Quản lý người dùng để tải lên. "
+                     "Vẫn tiếp tục được nhưng phiếu sẽ không có chữ ký.").classes(
+                "text-xs text-orange-600 mb-2")
+        with ui.element("div").classes("overflow-auto").style("max-height:66vh"):
+            ui.html(_sign_html(cid, pv, ppm))
+
+        async def _ok():
+            if not has_sig:
+                dlg.submit({})
+                return
+            try:
+                res = await ui.run_javascript(
+                    f"window.__sigbox_{cid} ? window.__sigbox_{cid}() : null", timeout=5.0)
+            except Exception:
+                res = None
+            if not res:
+                ui.notify("Chưa đọc được vị trí chữ ký — thử lại sau giây lát", type="warning")
+                return
+            res["page"] = box.get("page", 0)
+            dlg.submit(res)
+
+        with ui.row().classes("w-full justify-end gap-2 mt-3"):
+            ui.button("Hủy", on_click=lambda: dlg.submit(None)).classes("text-gray-500")
+            ui.button(ok_label, icon="draw", on_click=_ok).classes(f"{ok_cls} text-white")
+
+    ui.run_javascript(_sign_js(cid, ppm, ratio))
+    try:
+        return await dlg
+    finally:
+        dlg.delete()
+
+
 def _leave_status_badge(status: str):
 
     label, cls = _LEAVE_STATUS.get(status, (status, "bg-gray-100 text-gray-500"))
@@ -280,6 +454,32 @@ async def leaves_page():
         _confirm_cb[0] = callback
 
         confirm_dialog.open()
+
+
+
+    # ── Duyệt kèm ký ──────────────────────────────────────────────────────────
+
+    async def _sign_then_approve(lid: int, slot: str, path: str, title: str, send):
+        """Mở popup xem trước để người duyệt đặt chữ ký rồi mới gọi `send(payload)`.
+
+        Không dựng được bản in thì vẫn cho duyệt (hỏi lại) — quy trình nghỉ phép
+        không được đứng lại chỉ vì máy chủ chưa chuyển đổi được PDF.
+        """
+        pv = await _fetch_preview(lambda: api.get(path, {"slot": slot}, 120))
+        if pv is None:
+            return
+        if pv is False:
+            _ask_confirm(title,
+                         "Không dựng được bản xem trước. Vẫn phê duyệt (phiếu sẽ không có chữ ký của bạn)?",
+                         lambda: send({"action": "approve"}), "Phê duyệt", "bg-green-600")
+            return
+        box = await _open_sign_dialog(pv, title, "Ký và phê duyệt")
+        if box is None:
+            return
+        payload = {"action": "approve"}
+        if box:
+            payload["signature"] = box
+        await send(payload)
 
 
 
@@ -876,26 +1076,46 @@ async def leaves_page():
                 if c_gd and c_gd.value:
                     body["gd_approver_id"] = c_gd.value
 
-                try:
+                async def _send(_body=body):
+                    try:
+                        await asyncio.to_thread(api.post, "/api/leaves/", _body)
 
-                    await asyncio.to_thread(api.post, "/api/leaves/", body)
+                        create_dialog.close()
 
-                    create_dialog.close()
+                        if user_role == "giam_doc":
+                            ui.notify("✅ Đơn nghỉ phép đã được ghi nhận và tự động duyệt.",
+                                      type="positive", timeout=4000)
+                        else:
+                            ui.notify("✅ Gửi đơn nghỉ phép thành công! Đơn đang chờ phê duyệt.",
+                                      type="positive", timeout=4000)
 
-                    if user_role == "giam_doc":
-                        ui.notify("✅ Đơn nghỉ phép đã được ghi nhận và tự động duyệt.",
-                                  type="positive", timeout=4000)
-                    else:
-                        ui.notify("✅ Gửi đơn nghỉ phép thành công! Đơn đang chờ phê duyệt.",
-                                  type="positive", timeout=4000)
+                        ui.timer(2.5, lambda: ui.navigate.to("/leaves"), once=True)
 
-                    ui.timer(2.5, lambda: ui.navigate.to("/leaves"), once=True)
+                    except Exception as e:
 
-                except Exception as e:
+                        if not _handle_api_error(e):
 
-                    if not _handle_api_error(e):
+                            ui.notify(f"Gửi đơn thất bại: {e}", type="negative", timeout=5000)
 
-                        ui.notify(f"Gửi đơn thất bại: {e}", type="negative", timeout=5000)
+                # Xem trước bản in thật rồi mới gửi — người làm đơn tự đặt chữ ký.
+                pv = await _fetch_preview(lambda: api.post("/api/leaves/preview", body, 120))
+                if pv is None:
+                    return
+                if pv is False:
+                    # Không dựng được bản xem trước — hỏi rồi gửi đơn không chữ ký,
+                    # chứ không chặn luôn việc nộp đơn.
+                    _ask_confirm("Không xem trước được đơn",
+                                 "Máy chủ chưa dựng được bản in. Vẫn gửi đơn (phiếu sẽ không có chữ ký)?",
+                                 _send, "Vẫn gửi", "bg-red-700")
+                    return
+
+                box = await _open_sign_dialog(pv, "Xem trước đơn xin nghỉ phép",
+                                              "Ký và gửi đơn", "bg-red-700")
+                if box is None:
+                    return
+                if box:
+                    body["signature"] = box
+                await _send(body)
 
 
 
@@ -1185,15 +1405,16 @@ async def leaves_page():
                                     if _is_admin and status == "pending_ksv":
                                         with ui.row().classes("gap-1"):
                                             async def _admin_ksv_approve(l=lid):
-                                                async def _do(_l=l):
+                                                async def _do(payload, _l=l):
                                                     try:
-                                                        await asyncio.to_thread(api.put, f"/api/leaves/{_l}/ksv-review", {"action": "approve"})
+                                                        await asyncio.to_thread(api.put, f"/api/leaves/{_l}/ksv-review", payload)
                                                         ui.notify("Đã duyệt bước KSV! Tiếp tục duyệt bước TH.", type="positive")
                                                         updated = await asyncio.to_thread(api.get, f"/api/leaves/{_l}")
                                                         if updated: await open_detail(updated)
                                                     except Exception as e:
                                                         _handle_api_error(e)
-                                                _ask_confirm("Duyệt bước KSV", "Xác nhận phê duyệt bước KSV?", _do, "Phê duyệt", "bg-green-600")
+                                                await _sign_then_approve(l, "ksv", f"/api/leaves/{l}/preview",
+                                                                         "Duyệt bước KSV", _do)
                                             ui.button(icon="check", on_click=_admin_ksv_approve).props("round dense flat").classes("text-green-600 bg-green-50").tooltip("Phê duyệt KSV")
                                             async def _admin_ksv_reject(l=lid):
                                                 async def _cb(reason, _l=l):
@@ -1279,13 +1500,14 @@ async def leaves_page():
                                 if _is_admin and status == "pending_gd":
                                     with ui.row().classes("gap-1"):
                                         async def _admin_gd_approve(l=lid):
-                                            async def _do(_l=l):
+                                            async def _do(payload, _l=l):
                                                 try:
-                                                    await asyncio.to_thread(api.put, f"/api/leaves/{_l}/gd-review", {"action": "approve"})
+                                                    await asyncio.to_thread(api.put, f"/api/leaves/{_l}/gd-review", payload)
                                                     detail_drawer.hide(); ui.notify("Đã duyệt GĐ!", type="positive"); _nav_pending()
                                                 except Exception as e:
                                                     _handle_api_error(e)
-                                            _ask_confirm("Duyệt bước GĐ", "Xác nhận phê duyệt bước Giám đốc?", _do, "Phê duyệt", "bg-green-600")
+                                            await _sign_then_approve(l, "gd", f"/api/leaves/{l}/preview",
+                                                                     "Duyệt bước Giám đốc", _do)
                                         ui.button(icon="check", on_click=_admin_gd_approve).props("round dense flat").classes("text-green-600 bg-green-50").tooltip("Phê duyệt GĐ")
                                         async def _admin_gd_reject(l=lid):
                                             async def _cb(reason, _l=l):
@@ -1318,11 +1540,23 @@ async def leaves_page():
 
                             content = await asyncio.to_thread(api.download, f"/api/leaves/{l}/download")
 
-                            ui.download(content, f"phieu_nghi_phep_{l}.docx")
+                            ui.download(content, f"phieu_nghi_phep_{l}.pdf")
 
                         except Exception as e:
 
-                            _handle_api_error(e)
+                            if _handle_api_error(e):
+                                return
+
+                            # Máy chủ không chuyển được PDF (chưa cài Word / Word treo)
+                            # → vẫn phải lấy được phiếu, tải bản Word không chữ ký.
+                            ui.notify(f"Không tạo được PDF — đang tải bản Word. ({e})",
+                                      type="warning", timeout=6000)
+                            try:
+                                content = await asyncio.to_thread(
+                                    api.download, f"/api/leaves/{l}/download", {"fmt": "docx"})
+                                ui.download(content, f"phieu_nghi_phep_{l}.docx")
+                            except Exception as e2:
+                                _handle_api_error(e2)
 
 
 
@@ -1337,13 +1571,13 @@ async def leaves_page():
 
                         if ksv_act and api.has_feature("leaves.approve_ksv"):
 
-                            def _ksv_approve(l=lid):
+                            async def _ksv_approve(l=lid):
 
-                                async def _do(_l=l):
+                                async def _do(payload, _l=l):
 
                                     try:
 
-                                        await asyncio.to_thread(api.put, f"/api/leaves/{_l}/ksv-review", {"action": "approve"})
+                                        await asyncio.to_thread(api.put, f"/api/leaves/{_l}/ksv-review", payload)
 
                                         detail_drawer.hide()
 
@@ -1355,7 +1589,8 @@ async def leaves_page():
 
                                         _handle_api_error(e)
 
-                                _ask_confirm("Xác nhận phê duyệt", "Bạn có chắc chắn muốn phê duyệt đơn này?", _do, "Phê duyệt", "bg-green-600")
+                                await _sign_then_approve(l, "ksv", f"/api/leaves/{l}/preview",
+                                                         "Xác nhận phê duyệt", _do)
 
 
 
@@ -1455,13 +1690,13 @@ async def leaves_page():
 
                         if gd_act and api.has_feature("leaves.approve_gd"):
 
-                            def _gd_approve(l=lid):
+                            async def _gd_approve(l=lid):
 
-                                async def _do(_l=l):
+                                async def _do(payload, _l=l):
 
                                     try:
 
-                                        await asyncio.to_thread(api.put, f"/api/leaves/{_l}/gd-review", {"action": "approve"})
+                                        await asyncio.to_thread(api.put, f"/api/leaves/{_l}/gd-review", payload)
 
                                         detail_drawer.hide()
 
@@ -1473,7 +1708,8 @@ async def leaves_page():
 
                                         _handle_api_error(e)
 
-                                _ask_confirm("Xác nhận phê duyệt", "Bạn có chắc chắn muốn phê duyệt đơn này?", _do, "Phê duyệt", "bg-green-600")
+                                await _sign_then_approve(l, "gd", f"/api/leaves/{l}/preview",
+                                                         "Xác nhận phê duyệt", _do)
 
 
 

@@ -145,9 +145,12 @@ def _raise_http_error(e: httpx.HTTPStatusError):
     raise Exception(_parse_error(e))
 
 
-def get(path: str, params: dict = None) -> Any:
+def get(path: str, params: dict = None, timeout: float = None) -> Any:
+    # timeout: chỉ truyền cho endpoint chậm bất thường (vd. xem trước đơn nghỉ phép
+    # phải chờ Word dựng PDF ~7s) — mặc định 10s của _client là đủ cho phần còn lại.
     try:
-        r = _client.get(f"{BACKEND_URL}{path}", headers=_headers(), params=params)
+        kw = {} if timeout is None else {"timeout": timeout}
+        r = _client.get(f"{BACKEND_URL}{path}", headers=_headers(), params=params, **kw)
         r.raise_for_status()
         return r.json()
     except httpx.HTTPStatusError as e:
@@ -166,9 +169,10 @@ def get_bytes(path: str, params: dict = None) -> bytes:
         raise Exception(str(e))
 
 
-def post(path: str, data: dict = None) -> Any:
+def post(path: str, data: dict = None, timeout: float = None) -> Any:
     try:
-        r = _client.post(f"{BACKEND_URL}{path}", headers=_headers(), json=data)
+        kw = {} if timeout is None else {"timeout": timeout}
+        r = _client.post(f"{BACKEND_URL}{path}", headers=_headers(), json=data, **kw)
         r.raise_for_status()
         return r.json()
     except httpx.HTTPStatusError as e:

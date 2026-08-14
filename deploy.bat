@@ -140,7 +140,8 @@ if "%NEED_PIP%"=="1" (
     )
     "%DEST_PY%" -m pip install -r "%DEST%\requirements.txt" --quiet
     if errorlevel 1 (
-        echo     [!] pip install that bai -- kiem tra ket noi internet tren may dich.
+        echo     [!] pip install that bai -- doc thong bao loi pip phia tren.
+        echo         UnicodeDecodeError = requirements.txt co ky tu co dau, khong phai loi mang.
     ) else (
         echo     [OK] Thu vien da cap nhat xong.
     )

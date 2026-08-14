@@ -6301,7 +6301,432 @@ else:
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-13</footer>
+  <!-- 71 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">71</span>
+      <span class="card-title">Ảnh chữ ký cá nhân trong Quản lý người dùng</span>
+      <span class="badge badge-done">done · 2026-08-14</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Ảnh nằm ở đâu — và vì sao không để ngoài đĩa</div>
+      <p>Ảnh lưu thẳng trong SQLite (bảng <code>user_signatures</code>, cột BLOB). Cân nhắc để ra thư mục
+        <code>data/signatures/</code> cho DB nhẹ, nhưng cơ chế sao lưu/khôi phục của hệ thống chỉ chép
+        <b>file <code>.db</code></b> (<code>backup_service</code>, <code>POST /api/staff/import-db</code>).
+        Ảnh để ngoài sẽ không đi cùng bản sao lưu: khôi phục xong, người dùng còn nguyên nhưng chữ ký
+        biến mất — mà không có lỗi nào báo. Mỗi người 1 ảnh vài chục KB, trần cứng 2 MB, vài chục cán bộ
+        → DB tăng không đáng kể.</p>
+
+      <table>
+        <tr><th>Phương án</th><th>Đánh đổi</th><th>Chọn</th></tr>
+        <tr><td>Cột BLOB thêm vào <code>user_tttt</code></td>
+            <td><code>get_current_staff()</code> dùng <code>SELECT *</code> → <b>mỗi request</b> của
+                <b>mọi</b> endpoint đều đọc cả ảnh vào bộ nhớ</td>
+            <td><span class="pill pill-red">không</span></td></tr>
+        <tr><td>Bảng riêng <code>user_signatures</code> (staff_id là khoá chính)</td>
+            <td>Thêm 1 bảng; đọc ảnh phải query riêng — nhưng chỉ query khi thật sự cần</td>
+            <td><span class="pill pill-green">chọn</span></td></tr>
+        <tr><td>File trong <code>data/signatures/</code></td>
+            <td>Không đi cùng bản sao lưu <code>.db</code>; phải tự dọn file mồ côi khi xoá user</td>
+            <td><span class="pill pill-red">không</span></td></tr>
+      </table>
+
+      <div class="label">Trả ảnh về frontend bằng data URL, không bằng URL ảnh</div>
+      <p><code>GET /api/auth/signature</code> trả chuỗi <code>data:image/png;base64,...</code> chứ không
+        trả đường dẫn ảnh. Lý do: thẻ <code>&lt;img&gt;</code> của trình duyệt không gắn được header
+        <code>Authorization</code>, mà mọi endpoint backend đều đòi JWT. Nếu trả URL thì phải mở một
+        đường ảnh <b>không cần xác thực</b> — chữ ký của người khác sẽ tải về được chỉ bằng cách đoán ID.
+        Frontend (NiceGUI chạy phía server) gọi API kèm token rồi nhúng thẳng chuỗi base64 vào
+        <code>ui.image</code>.</p>
+
+      <div class="label">Kiểm tra định dạng bằng 8 byte đầu, không tin đuôi file</div>
+      <p><code>accept=".png"</code> ở trình duyệt chỉ là bộ lọc hộp thoại chọn file — đổi tên
+        <code>anh.jpg</code> thành <code>anh.png</code> là qua. Backend so 8 byte đầu với chữ ký PNG
+        (<code>89 50 4E 47 0D 0A 1A 0A</code>). Không dùng Pillow để kiểm tra sâu hơn vì
+        <code>requirements.txt</code> chưa có Pillow, và thêm một thư viện ảnh chỉ để nhận diện file thì
+        không đáng — trần 2 MB + chữ ký PNG đã đủ chặn nhầm lẫn thường gặp.</p>
+
+      <div class="label">Nhật ký</div>
+      <p><code>AuditMiddleware</code> bỏ qua toàn bộ prefix <code>/api/auth</code> (các đường ở đó tự ghi
+        audit ngữ nghĩa), nên hai endpoint ghi phải tự gọi <code>write_audit</code>:
+        <code>signature_upload</code> / <code>signature_delete</code> — kèm nhãn tiếng Việt trong
+        <code>audit_labels._SEMANTIC</code>, nếu quên thì trang Nhật ký hiện tên hành động thô.</p>
+
+      <div class="label">Bố cục hai cột</div>
+      <p>Trang xếp lại thành một <code>ui.row</code> hai cột: mật khẩu bên trái, ảnh chữ ký bên phải —
+        thay vì các thẻ nối đuôi nhau theo chiều dọc. Cột đặt <code>flex-1 min-w-[340px]</code> và hàng
+        đặt <code>flex-wrap</code>: màn hẹp thì cột phải <b>tụt xuống dưới</b> chứ không bóp cả hai cột
+        đến mức ô nhập mật khẩu không còn đọc được. Khung xem ảnh bên trong cũng là một hàng — tên file,
+        thời điểm cập nhật, nút xoá ở trái; ảnh ở phải, <code>fit=contain</code> trong khung cố định để
+        chữ ký dài ngắn khác nhau không phá bố cục. Khối "Đặt lại mật khẩu cho người khác" giữ nguyên vị
+        trí cũ: nằm dưới, ngoài hai cột.</p>
+
+      <div class="label">🐞 Tải ảnh xong không thấy gì — <code>asyncio.create_task</code> làm mất slot</div>
+      <p>Ban đầu handler viết theo đúng khuôn có sẵn trong <code>leaves.py</code>:
+        <code>on_upload=lambda e: asyncio.create_task(_upload_sig(e))</code>. Kết quả: ảnh lưu vào DB
+        thành công nhưng màn hình <b>không đổi gì</b>, cũng không có thông báo lỗi.</p>
+      <p>NiceGUI theo dõi "đang vẽ vào chỗ nào" bằng ngăn xếp slot gắn theo <b>asyncio task</b>
+        (<code>Slot.stacks[id(asyncio.current_task())]</code> — <code>nicegui/slot.py</code>), không phải
+        ContextVar. <code>create_task</code> đẻ ra task mới ⇒ ngăn xếp <b>rỗng</b> ⇒ mọi thứ đi qua
+        <code>context.client</code> (<code>ui.notify</code>, <code>ui.timer</code>,
+        <code>ui.navigate.reload</code>) ném <code>RuntimeError: slot stack for this task is empty</code>.
+        Lỗi rơi vào handler ngoại lệ toàn cục nên người dùng chỉ thấy… không có gì.</p>
+      <p>Cách sửa: <b>truyền thẳng hàm async</b> cho <code>on_upload</code> / <code>on_click</code>.
+        <code>handle_event()</code> (<code>nicegui/events.py</code>) tự await coroutine <b>bên trong</b>
+        <code>with parent_slot:</code>, nên slot còn nguyên qua mọi <code>await</code>. Chỉ những đoạn vẽ
+        vào một container cụ thể bằng <code>with element:</code> mới sống sót được trong task rời — đó là
+        lý do khuôn ở <code>leaves.py</code> có vẻ vẫn chạy.</p>
+      <div class="caution">Cùng lỗi này còn nằm ở <code>frontend/pages/leaves.py</code>
+        (<code>_qi_on_upload</code>): nhánh thành công vẽ qua <code>with qi_rows_area:</code> nên không
+        sao, nhưng hai nhánh <code>ui.notify</code> (file không có dòng nào / lỗi API) sẽ ném
+        <code>RuntimeError</code> thay vì hiện thông báo. <b>Chưa sửa</b> — nằm ngoài phạm vi lần này,
+        ghi lại để không phải dò lại từ đầu.</div>
+
+      <div class="label">Tải lại trang sau khi lưu / xoá ảnh</div>
+      <p>Theo yêu cầu: xong việc thì <code>ui.navigate.reload()</code>, hoãn 0,8 giây bằng
+        <code>ui.timer(once=True)</code> cho kịp đọc toast (reload là mất toast). Đắt hơn vẽ lại tại chỗ
+        — dựng lại cả sidebar — nhưng đổi lại người dùng thấy đúng thứ backend đang giữ, không phải thứ
+        frontend đoán là đã lưu.</p>
+
+      <div class="label">Mở trang cho mọi vai trò — gỡ <code>_redirect_if_cv()</code></div>
+      <p>Trước đây <code>/user-management</code> chặn <code>chuyen_vien</code> ở hai lớp: khối tên người
+        dùng trên sidebar không gắn sự kiện click, và <code>_redirect_if_cv()</code> đá về
+        <code>/home</code> nếu gõ thẳng URL. Hệ quả ít ai để ý: <b>chuyên viên không có lối nào tự đổi
+        mật khẩu</b> — <code>/change-password</code> chỉ được điều hướng tới từ màn hình đăng nhập khi
+        <code>must_change_password = 1</code>, sau đó phải nhờ admin reset, tức mật khẩu mới do người
+        khác đặt và biết. Thêm ảnh chữ ký thì chuyên viên — người trực tiếp giao chứng từ — lại là nhóm
+        duy nhất không tải ảnh lên được.</p>
+      <p>Trang này chỉ thao tác trên tài khoản của <b>chính người đang đăng nhập</b>; khối "Đặt lại mật
+        khẩu cho người dùng khác" đã tự ẩn bằng <code>if is_admin</code> (và truy vấn
+        <code>/api/staff/</code> nằm trong đúng khối đó, chuyên viên không gọi tới). Nên bỏ chặn thay vì
+        giữ một lớp rào không bảo vệ thêm gì.</p>
+      <p><code>_redirect_if_cv()</code> <b>xoá hẳn</b> khỏi <code>shared.py</code> và khỏi danh sách
+        re-export ở <code>frontend/main.py</code> — sau thay đổi này nó không còn caller nào. Để lại một
+        hàm chặn theo vai trò đang nằm không là mời gọi trang mới gọi lại: chặn theo VAI TRÒ ở frontend
+        trong khi backend chặn theo FEATURE nghĩa là admin cấp quyền qua nhóm nhưng người dùng vẫn bị đá
+        ra, không kèm thông báo nào.</p>
+
+      <div class="label">Phạm vi cố ý bỏ ngỏ</div>
+      <ul>
+        <li>Chỉ thao tác được với chữ ký <b>của chính mình</b> — chưa có đường cho admin xem/đặt hộ người
+          khác. Chưa có yêu cầu, và mỗi endpoint thêm vào là một cửa đọc chữ ký người khác.</li>
+        <li>Ảnh <b>chưa được dùng ở đâu</b> ngoài việc lưu và xem lại: chưa chèn vào bìa tập chứng từ,
+          đơn nghỉ phép hay biểu mẫu Word nào. Yêu cầu hiện tại dừng ở chỗ "tải ảnh lên".</li>
+      </ul>
+
+      <div class="label">Ảnh hưởng lan ra chỗ khác</div>
+      <table>
+        <tr><th>Nơi bị chạm</th><th>Thay đổi thấy được</th><th>Rủi ro</th></tr>
+        <tr><td><code>_sidebar()</code> — 19 trang</td>
+            <td>Khối tên người dùng luôn bấm được, luôn có icon <code>manage_accounts</code>; chuyên viên
+                nay thấy thêm lối vào này</td>
+            <td><span class="pill pill-green">thấp</span> thuần hiển thị</td></tr>
+        <tr><td><code>frontend/main.py</code></td>
+            <td>Bỏ <code>_redirect_if_cv</code> khỏi danh sách re-export</td>
+            <td><span class="pill pill-green">thấp</span> grep toàn repo: không còn caller</td></tr>
+        <tr><td>Backend</td><td>Không đụng — <code>change-password</code> và 3 đường chữ ký vốn chỉ đòi
+                <code>get_current_staff</code>, không phân biệt vai trò</td>
+            <td><span class="pill pill-green">không</span></td></tr>
+      </table>
+
+      <div class="label">Kiểm chứng</div>
+      <p><code>tests/test_signature.py</code> — 6 test: chưa có ảnh, tải lên rồi đọc lại đúng byte, tải
+        lần hai ghi đè, chặn file JPEG đội lốt <code>.png</code>, chặn ảnh &gt; 2 MB, xoá rồi xoá lại ra
+        404. Toàn bộ 365 test của dự án pass. Migration đã chạy thật trên <code>data/ksnb.db</code>
+        (bảng được tạo, 0 dòng); 3 đường <code>/api/auth/signature</code> đều trả 401 khi không có token.</p>
+
+      <div class="note">Test dùng <code>sqlite3.connect(":memory:", check_same_thread=False)</code>:
+        <code>TestClient</code> chạy endpoint đồng bộ ở thread khác, mà các request trong cùng một test
+        phải dùng chung connection thì dữ liệu mới còn lại giữa các lượt gọi.</div>
+    </div>
+  </div>
+
+  <!-- 72 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">72</span>
+      <span class="card-title">Ký đơn nghỉ phép trên bản in — popup xem trước, xuất PDF</span>
+      <span class="badge badge-done">done · 2026-08-14</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Yêu cầu và ràng buộc thật của máy</div>
+      <p>Yêu cầu: lúc tạo đơn và lúc phê duyệt thì hiện popup có nội dung đơn, cho <b>kéo và
+        phóng to/thu nhỏ chữ ký</b> như trong Word; kết quả xuất ra <b>PDF</b> để cố định, không
+        ra file Word nữa. Máy chỉ có sẵn: <code>Microsoft Word</code> (Office16 x86). Không có
+        LibreOffice, không có thư viện PDF nào, không có <code>pywin32</code>.</p>
+
+      <div class="label">Vì sao xem trước phải là bản in THẬT, không phải bản mô phỏng HTML</div>
+      <p>Cách rẻ nhất là dựng lại tờ đơn bằng HTML rồi cho kéo chữ ký trên đó. Nhưng người ký
+        canh chữ ký theo thứ họ <b>nhìn thấy</b> ("ngay dưới chữ NGƯỜI ĐỀ NGHỊ") — nền xem trước
+        lệch bao nhiêu thì chữ ký trên file thật lệch bấy nhiêu, mà lệch kiểu này chỉ lộ ra khi
+        đơn đã in và ký xong. Nên chọn đường dài: Word dựng PDF thật → render trang đó thành ảnh
+        → thả chữ ký lên chính tấm ảnh đó. Chỗ thả trong popup <b>chính là</b> chỗ nó nằm trên
+        file tải về.</p>
+
+      <table>
+        <tr><th>Phương án tạo PDF</th><th>Đánh đổi</th><th>Chọn</th></tr>
+        <tr><td>Word (COM) chuyển .docx → .pdf</td>
+            <td>Giữ nguyên 4 biến thể mẫu theo chức danh; Phòng Tổng hợp vẫn sửa mẫu bằng Word.
+                Đổi lại: phụ thuộc Word trên máy chủ, 5–7 giây mỗi lần chuyển</td>
+            <td><span class="pill pill-green">chọn</span></td></tr>
+        <tr><td>Tự vẽ PDF bằng fpdf2/reportlab</td>
+            <td>Không cần Word, nhanh, khớp tuyệt đối. Nhưng phải <b>dựng lại mẫu đơn bằng code</b>
+                — 4 biến thể theo chức danh mất, sửa mẫu sau này phải sửa code</td>
+            <td><span class="pill pill-red">không</span></td></tr>
+        <tr><td>PyMuPDF (render + dán ảnh, một thư viện lo hết)</td>
+            <td>API gọn nhất nhưng giấy phép <b>AGPL</b> — thay bằng pypdfium2 (Apache-2.0)</td>
+            <td><span class="pill pill-red">không</span></td></tr>
+      </table>
+
+      <div class="label">Word chỉ chạy MỘT lần cho mỗi nội dung đơn</div>
+      <p>Đo thật: Word chuyển đổi mất <b>4,5–7 giây</b>; render trang ra PNG <b>0,08 giây</b>; dán
+        chữ ký <b>0,02 giây</b>. Nếu mỗi lần mở popup lại gọi Word thì tạo đơn + 2 bước duyệt +
+        mỗi lần tải phiếu là chừng ấy lần chờ 7 giây. Nên tách hẳn: <b>PDF gốc</b> (chưa chữ ký)
+        cache trong RAM theo khoá = đường dẫn template + mtime + toàn bộ ctx; chữ ký dán đè lên
+        PDF bằng pypdfium2. Đổi người duyệt hay số ngày phép → ctx đổi → khoá đổi → tự dựng lại,
+        không có chuyện xem phải bản cũ. Cache 24 bản, cơ chế LRU, mất khi khởi động lại (dựng
+        lại 7 giây, chấp nhận được — không đáng để ghi thêm bảng vào DB).</p>
+
+      <div class="label">Word là ứng dụng một thực thể — suýt đóng mất file của người vận hành</div>
+      <p><code>New-Object -ComObject Word.Application</code> có thể trả về <b>chính bản Word người
+        dùng đang mở</b>. Gọi <code>$word.Quit()</code> trên đó là đóng luôn tài liệu họ đang soạn.
+        <code>docx_to_pdf.ps1</code> vì thế chụp danh sách PID <code>winword</code> trước và sau khi
+        tạo COM, <b>chỉ Quit khi chính nó sinh ra tiến trình mới</b>, và ghi PID đó ra file để Python
+        diệt khi quá hạn (mặc định 150 giây) — Word treo vì một hộp thoại chờ trả lời là chuyện có
+        thật, không dọn thì WINWORD ẩn cứ tích tụ.</p>
+      <div class="note">Mở file bằng <code>Documents.Open(..., ReadOnly:=True, AddToRecentFiles:=False)</code>
+        để không làm bẩn danh sách "Recent" của người vận hành.</div>
+
+      <div class="label">🐞 Ký xong PDF trắng trơn — <code>doc[i]</code> nạp trang mới mỗi lần gọi</div>
+      <p>Bản đầu tiên dán ảnh xong lưu ra thì <b>không thấy chữ ký đâu</b>, cũng không có lỗi. Vì
+        code chèn ảnh vào <code>doc[pno]</code> rồi lát sau gọi <code>doc[pno].gen_content()</code> —
+        pypdfium2 <b>nạp một đối tượng trang MỚI</b> ở lần gọi thứ hai, sinh nội dung trên trang
+        không chứa ảnh vừa chèn, còn trang có ảnh thì bị huỷ. Sửa: giữ một <code>dict</code> trang đã
+        nạp, chèn và <code>gen_content()</code> trên cùng đối tượng. Kiểu lỗi lặng lẽ này chỉ bắt được
+        bằng cách render lại PDF và <b>đếm điểm ảnh</b> — <code>tests/test_leave_signature.py</code>
+        làm đúng thế, không tin vào việc "hàm chạy xong không ném lỗi".</p>
+
+      <div class="label">Ảnh chữ ký được SAO LẠI vào đơn, không tham chiếu</div>
+      <p><code>leave_signatures.image</code> giữ bản sao ảnh tại thời điểm ký thay vì khoá ngoại
+        sang <code>user_signatures</code>. Nếu tham chiếu, người ký đổi ảnh chữ ký cá nhân (hoặc
+        xoá đi) sẽ làm <b>mọi đơn đã duyệt từ trước đổi theo</b> — đơn đã ký là chứng từ, không
+        được biến đổi về sau. Tốn thêm vài chục KB mỗi chữ ký, đổi lấy tính bất biến.</p>
+
+      <div class="label">Vị trí gợi ý dò theo nhãn trên chính bản in</div>
+      <p>Không hardcode toạ độ: <code>find_text_box()</code> tìm chuỗi "NGƯỜI ĐỀ NGHỊ" /
+        "TRƯỞNG PHÒNG" / "GIÁM ĐỐC TTTT" trong PDF rồi đặt khung ngay dưới nhãn. Mẫu đơn đổi bố
+        cục thì gợi ý đi theo. Dò <b>phân biệt hoa–thường</b>: chữ thường "Trưởng phòng" còn nằm ở
+        dòng "Chức vụ:" phía trên, khớp trúng dòng đó là chữ ký nhảy lên giữa trang. Không dò được
+        nhãn (mẫu đổi chữ) thì thả xuống giữa nửa dưới trang cho người ký tự kéo — thà lệch còn
+        hơn không hiện chữ ký nào.</p>
+
+      <div class="label">Hỏng Word thì không được chặn quy trình nghỉ phép</div>
+      <table>
+        <tr><th>Tình huống</th><th>Backend</th><th>Người dùng thấy</th></tr>
+        <tr><td>Xem trước lúc tạo đơn thất bại</td><td>503 kèm nguyên nhân</td>
+            <td>Hỏi "vẫn gửi đơn (không chữ ký)?" — đồng ý là gửi bình thường</td></tr>
+        <tr><td>Xem trước lúc duyệt thất bại</td><td>503</td>
+            <td>Hỏi "vẫn phê duyệt?" — quy trình đi tiếp, phiếu không có chữ ký người duyệt</td></tr>
+        <tr><td>Tải phiếu thất bại</td><td>503 ở <code>fmt=pdf</code></td>
+            <td>Tự tải lại bằng <code>?fmt=docx</code> kèm thông báo — vẫn cầm được tờ đơn</td></tr>
+      </table>
+
+      <div class="label">Popup: kéo/thu phóng bằng JS thuần, khoá tỉ lệ ảnh</div>
+      <p>Bốn nút góc, kéo góc thì <b>giữ nguyên tỉ lệ</b> ảnh gốc (chữ ký bị bóp méo trông như giả).
+        Toạ độ đọc lại một lần duy nhất lúc bấm xác nhận bằng <code>ui.run_javascript</code>, không
+        đồng bộ liên tục về server. Hai điểm phải né:</p>
+      <ul>
+        <li>Nội dung <code>q-dialog</code> chỉ vào DOM khi popup mở, mà thứ tự tới nơi của lệnh mở và
+          lệnh chạy JS không đảm bảo → script tự dò lại tối đa 60 nhịp × 50ms rồi mới gắn sự kiện.</li>
+        <li>Quasar đặt sẵn <code>.q-dialog__inner--minimized &gt; div { max-width: 560px }</code>, độ ưu
+          tiên cao hơn class Tailwind → ảnh trang A4 rộng 640px bị bóp. Phải ghi
+          <code>max-width:none !important</code> thẳng vào thuộc tính <code>style</code>.</li>
+      </ul>
+
+      <div class="label">Phạm vi cố ý bỏ ngỏ</div>
+      <ul>
+        <li><b>Duyệt hàng loạt</b> (chọn nhiều đơn rồi duyệt một lượt) không ký — không thể đặt chữ
+          ký cho từng tờ trong một thao tác. Đơn duyệt kiểu này sẽ thiếu chữ ký người duyệt.</li>
+        <li><b>Bước Tổng hợp</b> không ký: ô "XÁC NHẬN CỦA P. TỔNG HỢP" trên mẫu không có dòng tên
+          người ký, chưa rõ nghiệp vụ muốn ai ký ở đó.</li>
+        <li><b>Nộp lại đơn</b> chưa mở popup — chữ ký người đề nghị cũ được giữ, chữ ký của người
+          duyệt bị xoá (ngày tháng và số ngày phép trên phiếu đã đổi, giữ lại là để chữ ký thật nằm
+          trên một tờ đơn khác).</li>
+        <li><b>Khai báo hộ</b> không ký (không có ai đứng tên đề nghị theo nghĩa thông thường).</li>
+        <li>PDF <b>không khoá</b> theo yêu cầu — bản thân PDF đã khó sửa hơn Word nhiều.</li>
+      </ul>
+
+      <div class="label">Ảnh hưởng lan ra chỗ khác</div>
+      <table>
+        <tr><th>Nơi bị chạm</th><th>Thay đổi thấy được</th><th>Rủi ro</th></tr>
+        <tr><td><code>GET /api/leaves/{id}/download</code></td>
+            <td>Mặc định trả <b>PDF</b> thay vì .docx; bản Word chuyển sang <code>?fmt=docx</code></td>
+            <td><span class="pill pill-amber">trung bình</span> grep toàn repo: chỉ nút "Tải phiếu"
+                gọi, đã sửa cả tên file lẫn đường lui</td></tr>
+        <tr><td><code>LeaveCreate</code> / <code>LeaveReview</code></td>
+            <td>Thêm trường <code>signature</code> không bắt buộc</td>
+            <td><span class="pill pill-green">thấp</span> client cũ không gửi thì như trước</td></tr>
+        <tr><td><code>requirements.txt</code></td>
+            <td>Thêm <code>pypdfium2</code>, <code>Pillow</code></td>
+            <td><span class="pill pill-amber">trung bình</span> máy chính phải chạy lại
+                <code>pip install -r requirements.txt</code>, nếu không thì popup báo 503</td></tr>
+        <tr><td><code>api_client.get/post</code></td>
+            <td>Thêm tham số <code>timeout</code> không bắt buộc (xem trước cần &gt; 10 giây)</td>
+            <td><span class="pill pill-green">thấp</span></td></tr>
+      </table>
+
+      <div class="label">Kiểm chứng</div>
+      <p><code>tests/test_leave_signature.py</code> — 16 test: dán đúng toạ độ/kích thước (đo điểm
+        ảnh sau khi render lại), nhiều chữ ký trên một trang, xem trước bản nháp, lưu bản sao ảnh
+        và không đổi khi người dùng thay ảnh cá nhân, chặn toạ độ vô lý (4 trường hợp), từ chối thì
+        không ký, nộp lại xoá chữ ký người duyệt, người ngoài cuộc không xem trước được, Word hỏng
+        thì 503 + lui về .docx. Toàn bộ <b>381 test</b> của dự án pass. Đã chạy thật đầu-cuối với
+        Word: 3 chữ ký (người đề nghị / trưởng phòng / giám đốc) nằm đúng ô trên PDF. Đã thử gọi
+        Word từ 3 luồng cùng lúc — khoá tuần tự hoá đúng, không sinh tiến trình rác.</p>
+      <div class="caution">Phần <b>kéo–thả bằng chuột trong trình duyệt chưa được test bằng mắt</b>
+        (môi trường không có công cụ điều khiển trình duyệt). Logic sinh HTML/JS đã đọc kỹ và kiểm
+        tra chuỗi sinh ra, nhưng thao tác thật trên màn hình cần người dùng xác nhận.</div>
+    </div>
+  </div>
+
+  <!-- 73 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">73</span>
+      <span class="card-title">Tra cứu lưu trữ — sửa được cả cột Ngày, không chỉ Số chứng từ</span>
+      <span class="badge badge-done">done · 2026-08-14</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Ngày của một tập nằm ở đâu (điều không đọc ra từ UI)</div>
+      <p>Ô "Ngày" trên bảng tra cứu <b>không</b> phải một cột trong bảng <code>bundles</code>. Ngày
+        được <i>suy ra</i> theo thứ tự ưu tiên của <code>_get_dates_for_bundle()</code>:
+        <code>bundles.cover_units</code> (JSON, mỗi phần tử là một "unit" gồm người nộp + ngày + số
+        tờ) → nếu rỗng thì mới nhìn sang <code>bundle_items → document_entries.transaction_date</code>.
+        Vì vậy "sửa ngày" không có câu <code>UPDATE ... SET ngay = ?</code> nào để viết.</p>
+
+      <table>
+        <tr><th>Phương án</th><th>Đánh đổi</th></tr>
+        <tr><td><b>Ghi lại <code>cover_units</code></b> (đã chọn)</td><td>Chỉ đổi cách <i>tập</i> tự
+          khai ngày. Số liệu bàn giao gốc của phòng nghiệp vụ nguyên vẹn. Tập kiểu cũ (chưa có
+          <code>cover_units</code>) được dựng JSON từ chính <code>bundle_items</code> rồi mới đổi ngày
+          — sau đó nó vĩnh viễn đi theo nhánh JSON.</td></tr>
+        <tr><td>Sửa <code>document_entries.transaction_date</code></td><td><b>Bác</b>: một entry có
+          thể được dùng ở nơi khác và là số liệu bàn giao đã chốt của phòng nguồn — sửa ngày trên màn
+          hình lưu trữ sẽ âm thầm đổi báo cáo chấm công/khối lượng.</td></tr>
+      </table>
+
+      <div class="label">Tháng/năm lấy từ server, không lấy từ client</div>
+      <p>Ô nhập chỉ có <b>số ngày</b> (1–31). Thay vì nhận <code>year</code>/<code>month</code> từ
+        dropdown của frontend, backend đọc <code>bundle_groups.notes</code> ("Tháng MM/YYYY") của
+        chính nhóm tập — đó là nguồn sự thật đã dùng để gom nhóm ở <code>_get_storage_rows_for_month</code>.
+        Vừa khỏi thêm tham số vào request, vừa không thể ghi một tập sang tháng khác do client gửi sai.</p>
+
+      <div class="label">Quy tắc ánh xạ unit khi số ngày thay đổi</div>
+      <p>Một dòng có thể có nhiều ngày (tập gộp nhiều ngày) và nhiều unit trên mỗi ngày. Khi người
+        dùng đổi danh sách ngày, ánh xạ <b>theo vị trí</b> ngày cũ thứ <i>i</i> → ngày mới thứ
+        <i>i</i>; ngày cũ dư (rút từ 3 ngày về 1) thì <b>dồn unit vào ngày mới cuối</b> để không mất
+        số tờ; ngày mới dư (thêm ngày) thì chèn <b>unit rỗng <code>sheet_count = 0</code></b> —
+        không có unit nào thì ngày đó biến mất khỏi bảng ở lần tải lại.</p>
+
+      <div class="label">Ràng buộc chặn im lặng</div>
+      <table>
+        <tr><th>Tình huống</th><th>Xử lý</th></tr>
+        <tr><td>Xoá hết ô ngày của một dòng</td><td>400 "Mỗi dòng phải có ít nhất một ngày". Nếu cho
+          qua, tập không còn ngày nào → <code>_decompose_bundles_to_rows</code> loại nó khỏi cả hai
+          nhánh single/multi-day → <b>tập biến mất khỏi màn hình mà vẫn nằm trong DB</b>.</td></tr>
+        <tr><td>Ngày không có trong tháng (31/02)</td><td>400 kèm số ngày sai</td></tr>
+        <tr><td><code>days</code> không được gửi (<code>null</code>)</td><td>Bỏ qua toàn bộ logic
+          ngày — tab đang mở từ trước lúc deploy vẫn lưu được số chứng từ</td></tr>
+      </table>
+
+      <div class="label">Thứ tự trong một lần lưu</div>
+      <p>Đổi ngày <b>trước</b> khi INSERT tập mới, để tập vừa thêm nhận ngày <i>mới</i> (cùng một
+        lần lưu người dùng có thể vừa sửa ngày vừa thêm tập). Tập sắp bị xoá (số chứng từ = 0) thì
+        không đổi ngày. Cả request là một giao dịch: một dòng sai ngày thì không dòng nào được ghi
+        (<code>get_db</code> rollback khi có exception).</p>
+
+      <div class="label">Frontend</div>
+      <p>Lỗi khi lưu <b>không</b> gọi lại <code>load_storage()</code> nữa — trước đây notify lỗi rồi
+        vẫn tải lại, xoá sạch số người dùng đang nhập dở. Hai nút "Lưu thay đổi" / "In danh sách"
+        chuyển sang <b>bên trái</b> (<code>justify-start</code>) theo yêu cầu, kèm dòng gợi ý sửa
+        trực tiếp trên bảng.</p>
+
+      <div class="label">Đánh đổi chấp nhận</div>
+      <p>Đổi ngày một dòng có <b>nhiều tập</b> thì mọi tập trong dòng nhận cùng danh sách ngày mới —
+        không có cách nào diễn đạt "chỉ tập thứ 2 đổi ngày" trên bảng này vì ô ngày thuộc dòng, không
+        thuộc tập. Dòng nhiều tập mà được thêm ngày sẽ tách thành nhiều dòng gộp-nhiều-ngày ở lần tải
+        lại (đúng quy tắc gom nhóm hiện có, nhưng trông "nhảy" với người dùng). Unit rỗng sinh ra khi
+        thêm ngày sẽ hiện thành dòng trống trên <b>bìa tập</b> — giống hệt hành vi của tập thêm tay ở
+        card 39.</p>
+
+      <div class="note">Kiểm chứng: <code>tests/test_storage_view_dates.py</code> — 12 test (đổi ngày
+        giữ nguyên số chứng từ; tập không có <code>cover_units</code> đổi ngày mà
+        <code>document_entries</code> không đổi; thêm/gộp ngày không mất số tờ; dòng nhiều tập; tập
+        mới nhận ngày mới; xoá tập + đổi ngày cùng lúc; không gửi <code>days</code>; 4 trường hợp
+        lỗi + rollback). Toàn bộ <b>394 test</b> của dự án pass. Test dùng DB in-memory riêng,
+        không đụng <code>data/*.db</code> nên không phát sinh data test phải dọn.</div>
+    </div>
+  </div>
+
+  <!-- 74 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">74</span>
+      <span class="card-title">pip chết vì comment tiếng Việt trong requirements.txt — báo sai thành "lỗi mạng"</span>
+      <span class="badge badge-done">done · 2026-08-14</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Triệu chứng và nguyên nhân thật</div>
+      <p><code>start.bat</code> in <code>[LOI] Cai thu vien that bai -- kiem tra ket noi internet</code>
+        trong khi mạng hoàn toàn bình thường. Đọc traceback: pip chết ở
+        <code>req_file.py → get_file_content → auto_decode</code> với
+        <code>UnicodeDecodeError: 'charmap' codec can't decode byte 0x90 in position 238</code> —
+        tức là chết <b>lúc đọc file <code>requirements.txt</code></b>, chưa hề mở kết nối nào.</p>
+      <p>pip <b>không</b> đọc <code>requirements.txt</code> bằng UTF-8. <code>auto_decode()</code> chỉ
+        dùng UTF-8 khi file có <b>BOM</b>; không BOM thì rơi về
+        <code>locale.getpreferredencoding()</code> = <code>cp1252</code> trên Windows tiếng Anh. Byte
+        238 là <code>0x90</code> — nửa sau của chữ <b>"Đ"</b> (U+0110 = <code>C4 90</code>) trong
+        comment "# Đơn nghỉ phép bản PDF..." thêm ở card 72. cp1252 không định nghĩa <code>0x90</code>
+        → nổ. Comment tiếng Việt trong file này <b>không bao giờ</b> an toàn.</p>
+
+      <table>
+        <tr><th>Phương án</th><th>Đánh đổi</th></tr>
+        <tr><td><b>Viết comment không dấu</b> (đã chọn)</td><td>Mất dấu tiếng Việt trong 4 dòng
+          comment. Đúng với mọi phiên bản pip và mọi locale máy đích.</td></tr>
+        <tr><td>Thêm BOM UTF-8 vào requirements.txt</td><td>Giữ được dấu, nhưng phụ thuộc vào chi tiết
+          nội bộ của <code>auto_decode</code>; BOM cũng dễ bị editor/git khác làm rụng, và
+          <code>fc /b</code> trong <code>deploy.bat</code> so sánh nhị phân nên một lần rụng BOM là
+          pip chạy lại rồi chết lại.</td></tr>
+        <tr><td>Xoá hẳn comment</td><td>Mất lý do tồn tại của <code>pypdfium2</code>/<code>Pillow</code>
+          — thông tin đáng giữ.</td></tr>
+      </table>
+
+      <div class="label">Sửa cả chẩn đoán sai, không chỉ sửa file</div>
+      <p>Ba file <code>start.bat</code> / <code>deploy.bat</code> / <code>deploy-test.bat</code> đều
+        quy mọi <code>errorlevel</code> của pip về "kiểm tra kết nối internet" — chính câu này làm mất
+        thời gian đi soi mạng. Đổi thành "đọc thông báo lỗi pip phía trên", nêu rõ
+        <code>UnicodeDecodeError</code> nghĩa là file có ký tự có dấu, mạng chỉ là khả năng còn lại.</p>
+
+      <div class="caution"><b>Bẫy đã sập ngay khi sửa thông báo này:</b> câu mới viết là
+        <code>echo ... co dau (khong phai loi mang).</code> — dấu <code>)</code> nằm trong khối
+        <code>if errorlevel 1 (</code> nên cmd.exe hiểu là <b>dấu đóng khối</b>, làm vỡ cấu trúc
+        khối và <code>start.bat</code> không chạy được nữa. Trong batch, mọi dấu ngoặc trong dòng
+        <code>echo</code> nằm trong khối đều phải escape <code>^(</code> <code>^)</code> — đúng như
+        các dòng 66/69/76/92 của chính file này vẫn làm. Đã sửa bằng cách bỏ hẳn dấu ngoặc, và kiểm
+        chứng bằng cách <b>chạy thật</b> một bản sao chỉ thay dòng khởi động cuối bằng
+        <code>echo</code> (giữ nguyên toàn bộ chú thích + cấu trúc khối) → parse hết file, exit 0.
+        Sau đó chạy <code>run.py</code> thật: backend 8000 + frontend 8080 đều lên, rồi tắt và
+        kiểm cổng đã nhả.</div>
+
+      <div class="note">Canh tái diễn: <code>tests/test_requirements_ascii.py</code> — quét mọi
+        <code>requirements*.txt</code> ở gốc, chặn mọi byte &gt; 127 (báo đúng vị trí + giá trị byte)
+        và decode thử bằng <code>cp1252</code> đúng như pip làm. Dòng cảnh báo "GIU FILE NAY THUAN
+        ASCII" nằm ngay đầu vùng comment của <code>requirements.txt</code>. Đã chạy thật
+        <code>pip install -r requirements.txt</code> → exit code 0. Toàn bộ <b>399 test</b> pass.</div>
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-14</footer>
 </div>
 </body>
 </html>

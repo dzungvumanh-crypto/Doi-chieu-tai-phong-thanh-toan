@@ -120,7 +120,9 @@ if not "!REQ_TIME!"=="!STAMP!" (
     echo [*] Dang cai/cap nhat thu vien...
     "!VENV_PY!" -m pip install -r requirements.txt --quiet --disable-pip-version-check
     if errorlevel 1 (
-        echo [LOI] Cai thu vien that bai -- kiem tra ket noi internet.
+        echo [LOI] Cai thu vien that bai -- doc ky thong bao loi pip ngay phia tren.
+        echo       UnicodeDecodeError = requirements.txt co ky tu co dau, khong phai loi mang.
+        echo       Con lai: kiem tra ket noi internet.
         pause
         exit /b 1
     )
