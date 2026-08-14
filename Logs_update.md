@@ -4,6 +4,15 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 14/08/2026 Đối chiếu ACH - **Sửa nút "Chạy đối chiếu" bấm vào là báo lỗi đỏ, không chạy được**:
+    + **Triệu chứng**: chọn đủ bộ file, phần kiểm tra file báo xanh hết, nhưng bấm *Chạy đối chiếu* thì hiện thông báo đỏ và không có gì xảy ra. Giống gọi vào một số điện thoại in sẵn trên tờ rơi mà tổng đài chưa bao giờ đấu nối — mọi khâu trước đó vẫn bình thường vì chúng chạy xong **trước** cú gọi
+    + **Nguyên nhân**: phần giao diện gọi tới một chức năng gửi file mà bên trong hệ thống **chưa bao giờ được viết ra**. Đây không phải lỗi mới phát sinh: tính năng chọn file từ máy rồi bấm Chạy **chưa từng chạy được** kể từ khi module ACH được viết lại
+    + **Vì sao không ai phát hiện sớm hơn**: toàn bộ bài kiểm tra tự động của module ACH đều gọi thẳng vào phần lõi, **không đi qua đúng khâu bị hỏng**. Càng nhiều bài kiểm tra xanh càng dễ tưởng là an toàn
+    + Nay đã nối đúng khâu đó, và **nới thời gian chờ lên 10 phút** riêng cho lần gửi này vì bộ file ACH một ngày có thể tới hàng trăm MB — các màn hình khác giữ nguyên 1 phút như cũ, không đổi gì
+    + Thêm **chốt chặn tự động** quét toàn bộ giao diện, bắt buộc mọi lời gọi tới phần lõi phải trỏ đúng chức năng có thật. Cùng loại lỗi này ở **bất kỳ màn hình nào** sẽ bị chặn ngay lúc lập trình, không đợi tới lúc người dùng bấm nút. Đã chạy lại toàn bộ **359 test**
+    + Sửa luôn một câu **sai trong README**: tài liệu ghi bộ file được "ghi thẳng ra đĩa, không giữ trong RAM", thực tế **cả frontend lẫn backend đều giữ trọn bộ trong RAM** rồi mới ghi ra đĩa. Không đổi code, chỉ ghi lại cho đúng để người vận hành liệu RAM máy chính
+    + ⚠️ **Còn tồn**: các bước SAU khi bấm Chạy (theo dõi tiến độ → dừng chờ xác nhận MIS_đi → tải file xác nhận → nộp lại → tải kết quả) **chưa một lần được chạy thật từ giao diện**, vì trước đây không ai tới được đó. Cần chạy thử trọn một phiên trước khi dùng chính thức
+
 - 13/08/2026 Đối chiếu CITAD - Extension **bản 2.15**: nhiều tab tự nhận mã mới, bớt rác Nhật ký:
     + **Mở sẵn nhiều tab CITAD rồi mới tạo mã kết nối — nay chạy được.** Trước đây tab nào mở TRƯỚC lúc bấm *Tạo mã kết nối mới* sẽ kẹt với mã cũ, phải tự F5 từng tab. Nay mọi tab đang mở tự nhận mã mới ngay, không phải làm gì
     + ⚠️ **Dùng tab ẩn danh thì phải bật quyền trước — Chrome mặc định TẮT.** Vào `chrome://extensions` → Chi tiết → bật **"Cho phép ở chế độ ẩn danh"**. Chưa bật thì Extension **không chạy chút nào** trong tab ẩn danh: không lưu được, cũng không báo lỗi gì, nhìn y như Extension hỏng

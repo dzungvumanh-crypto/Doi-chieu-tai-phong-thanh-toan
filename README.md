@@ -343,8 +343,11 @@ Truy cập:
 - Menu: **Đối chiếu → Phòng Thanh toán → Chấm đối chiếu ACH**
 - Chọn bộ file 1 ngày **từ máy người dùng**: `GL02*.zip`, file GW `.xlsx`, 2 file `*_DI_*.zip`,
   2 file `*_DEN_*.zip`, PDF sao kê ACH (lấy số session + suy ngày đối chiếu). Mở thư mục chứa
-  bộ file rồi Ctrl+A để chọn cả loạt. Mỗi file gửi lên ngay khi chọn, ghi thẳng ra đĩa theo khối
-  1 MB — không giữ cả bộ 150–250 MB trong RAM
+  bộ file rồi Ctrl+A để chọn cả loạt. Mỗi file gửi lên frontend ngay khi chọn (`auto_upload`) và
+  **nằm trong RAM** của tiến trình frontend cho tới lúc bấm Chạy; backend cũng `await f.read()`
+  trọn bộ vào RAM trước khi ghi ra `data/temp_ach/<job>/input/`. Trần 500 MB (`_MAX_UPLOAD`), bộ
+  file thật 150–250 MB → cần dư RAM tương ứng ở **cả hai** tiến trình. Timeout lần gửi này để
+  riêng 600s (`post_upload(..., timeout=600.0)`), các màn hình khác giữ mặc định 60s
 - Ngày đối chiếu suy từ tên file PDF (`ACH_YYYYMMDD_..._NRT_<session>_...` → ngày T-1), nhập tay được;
   không suy được thì **báo lỗi**, không lặng lẽ dùng ngày khác
 - Khớp theo số lượng cặp khoá: chiều ĐI `TRBRCD+SO_TRACE+CRAMOUNT` ↔ `CHI_NHANH+SO_TRACE+SO_TIEN`,
