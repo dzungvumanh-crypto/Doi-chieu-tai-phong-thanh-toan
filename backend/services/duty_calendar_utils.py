@@ -67,10 +67,25 @@ def is_friday(date_str: str) -> bool:
 
 
 def get_week_dates(start_date: str) -> List[str]:
-    """Trả 5 ngày Mon-Fri của tuần chứa start_date."""
+    """Trả 5 ngày Mon-Fri của tuần chứa start_date.
+
+    Đây là các ngày làm việc *cố định*. Thứ 7 / chủ nhật chỉ đi làm khi được khai
+    "Ngày bù" nên không nằm ở đây — muốn quét cả tuần thì dùng week_span()."""
     d = date.fromisoformat(start_date)
     d = d - timedelta(days=d.weekday())
     return [(d + timedelta(days=i)).isoformat() for i in range(5)]
+
+
+def week_span(start_date: str) -> tuple:
+    """Trả (thứ 2, chủ nhật) của tuần chứa start_date.
+
+    Dùng cho các truy vấn "theo tuần" (xem / xác nhận / xoá). Quét theo khoảng
+    thay vì theo danh sách ngày làm việc để ca thứ 7 / chủ nhật đã sinh vẫn luôn
+    tìm thấy, kể cả khi bản ghi "Ngày bù" của hôm đó bị xoá sau này — nếu không
+    ca ấy thành ca mồ côi: nằm trong DB mà màn hình không thấy, không xoá được."""
+    d = date.fromisoformat(start_date)
+    t2 = d - timedelta(days=d.weekday())
+    return t2.isoformat(), (t2 + timedelta(days=6)).isoformat()
 
 
 def get_month_dates(month: int, year: int) -> List[str]:
@@ -87,14 +102,20 @@ def get_month_working_days(month: int, year: int, holiday_dates: set) -> List[st
     return result
 
 
-def compute_cutoff_dates(month: int, year: int, holiday_dates: set) -> List[str]:
-    """Tính 2 ngày làm việc cuối tháng (cut-off)."""
+def compute_cutoff_dates(month: int, year: int, holiday_dates: set,
+                         makeup_dates: set = None) -> List[str]:
+    """Tính 2 ngày làm việc cuối tháng (cut-off).
+
+    `makeup_dates` là các ngày cuối tuần đã khai đi làm bù — chúng cũng là ngày
+    làm việc, nên nếu bỏ qua thì cut-off bị đẩy lùi lên nhầm ngày."""
+    makeup_dates = makeup_dates or set()
     last_day = calendar.monthrange(year, month)[1]
     found = []
     for day in range(last_day, 0, -1):
         ds = date(year, month, day).isoformat()
         d = date.fromisoformat(ds)
-        if not is_weekend(d) and ds not in holiday_dates:
+        la_ngay_lam = not is_weekend(d) or ds in makeup_dates
+        if la_ngay_lam and ds not in holiday_dates:
             found.append(ds)
         if len(found) == 2:
             break

@@ -37,7 +37,9 @@ _NHOM_CA = {
     "friday":          "thuong",
     "cutoff":          "thuong",
     "settlement_main": "quyet_toan",
-    "settlement_sub":  "quyet_toan",   # loại cũ, chỉ còn ở dữ liệu lịch sử
+    # Loại cũ, đã bị migration xoá sạch mỗi lần khởi động nên thực tế không còn
+    # bản ghi nào. Giữ khoá ở đây để tra cứu không nổ nếu gặp dữ liệu sót.
+    "settlement_sub":  "quyet_toan",
 }
 
 
@@ -84,19 +86,24 @@ def resolve_sp_role(leaders: List[dict], nv_chinh: List[dict],
     Trả (sp, sp_warning) — sp=None nghĩa là Lãnh đạo kiêm, hoặc không ai làm được.
 
     Luật: cần ÍT NHẤT 1 người biết song phương trong (Lãnh đạo + trực chính).
-    Người ở nhóm trực phụ không tính — họ về sớm.
+
+    `nv_phu` nhận vào nhưng CỐ Ý không dùng: người trực phụ về sớm hơn nên không
+    giữ được vai song phương, và cũng không bị tính là dư. Giữ tham số để chỗ gọi
+    truyền đủ thành phần ca, khỏi phải nhớ nhóm nào có ảnh hưởng nhóm nào không.
 
       leader_sp     Lãnh đạo kiêm song phương
-      multi_sp      Cả ca có nhiều hơn 1 người biết song phương (lãng phí nguồn lực)
+      multi_sp      Lãnh đạo + trực chính có nhiều hơn 1 người biết song phương
+                    (lãng phí nguồn lực)
       no_sp_chinh   Lãnh đạo và trực chính không có ai biết song phương
       None          Một nhân viên trực chính giữ vai, đúng 1 người trong ca
     """
-    nv_phu = nv_phu or []
     ld_la_sp   = [p for p in leaders if p.get("can_do_sp")]
     chinh_la_sp = [p for p in nv_chinh if p.get("can_do_sp")]
-    phu_la_sp   = [p for p in nv_phu if p.get("can_do_sp")]
 
-    tong_ca = len(ld_la_sp) + len(chinh_la_sp) + len(phu_la_sp)
+    # Từng cộng cả nhóm trực phụ vào đây. Hậu quả: ngày quyết toán nào có người
+    # trực phụ biết song phương cũng bị báo "dư người song phương", dù nhóm trực
+    # chính vẫn đúng một người — cảnh báo sai bật đều đặn thì thành quen mắt.
+    tong_ca = len(ld_la_sp) + len(chinh_la_sp)
     du_sp_chinh = bool(ld_la_sp or chinh_la_sp)
 
     if not du_sp_chinh:

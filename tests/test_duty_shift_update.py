@@ -173,6 +173,28 @@ def test_nguoi_song_phuong_o_nhom_phu_khong_tinh_la_du():
     assert warn == "no_sp_chinh"
 
 
+def test_nguoi_sp_o_nhom_phu_khong_bat_canh_bao_du_sp():
+    """
+    Nhóm trực chính đã đúng 1 người song phương thì thêm người song phương ở nhóm
+    PHỤ không phải là dư — họ về sớm, không giữ được vai.
+
+    Trước đây phép đếm cộng cả nhóm phụ nên ngày quyết toán nào có người phụ biết
+    song phương cũng bị cảnh báo đỏ sai; cảnh báo sai bật đều đặn thì thành quen
+    mắt, tới hôm cảnh báo thật cũng bỏ qua nốt.
+    """
+    # Lãnh đạo giữ vai, nhóm phụ cũng có người biết → vẫn là leader_sp, không cảnh báo
+    sp, warn = resolve_sp_role([{"id": 1, "can_do_sp": 1}],
+                               [{"id": 5, "can_do_sp": 0}],
+                               [{"id": 9, "can_do_sp": 1}])
+    assert (sp, warn) == (None, "leader_sp")
+
+    # Một nhân viên trực chính giữ vai, nhóm phụ có người biết → không cảnh báo
+    sp2, warn2 = resolve_sp_role([{"id": 2, "can_do_sp": 0}],
+                                 [{"id": 3, "can_do_sp": 1}],
+                                 [{"id": 9, "can_do_sp": 1}])
+    assert sp2["id"] == 3 and warn2 is None
+
+
 def test_hai_nguoi_biet_song_phuong_thi_canh_bao():
     sp, warn = resolve_sp_role([{"id": 2, "can_do_sp": 0}],
                                [{"id": 3, "can_do_sp": 1}, {"id": 4, "can_do_sp": 1}])
@@ -437,3 +459,113 @@ def test_ca_thu_sau_dung_kenh_vong_xoay_rieng():
     assert _so_ca(db, "LD_friday", LD_SP) == 1
     assert _so_ca(db, "LD", LD_SP) == 0, "không được đụng kênh ngày thường"
     assert _so_ca(db, "NV_friday", NV_B) == 1
+
+
+# ══════════════════════════════════════════════════════════════
+# 6. Màn hình không được nuốt thông tin
+#
+# Hai chỗ từng làm ngày "không lập được ca vì thiếu người" trông giống hệt ngày
+# nghỉ lễ — cùng là hàng trống, người phân lịch không có cách nào phân biệt.
+# ══════════════════════════════════════════════════════════════
+
+def test_tach_ngay_dac_biet_dung_loai():
+    from frontend.pages.duty_schedule import _tach_ngay_dac_biet
+
+    ngay_bu, ngay_le = _tach_ngay_dac_biet([
+        {"date": "2026-08-15", "day_type": "makeup",  "is_confirmed": True},
+        {"date": "2026-08-16", "day_type": "makeup",  "is_confirmed": False},
+        {"date": "2026-08-12", "day_type": "holiday", "label": "Quốc khánh",
+         "is_confirmed": False},
+        {"date": "2026-08-31", "day_type": "cutoff",  "is_confirmed": True},
+    ])
+    # Ngày bù chưa xác nhận thì engine không sinh ca → bảng cũng không dựng hàng
+    assert ngay_bu == {"2026-08-15"}
+    # Ngày lễ lấy cả khi chưa xác nhận, vì get_holiday_dates cũng không lọc
+    assert ngay_le == {"2026-08-12": "Quốc khánh"}
+    # Cut-off không thuộc hai nhóm này
+    assert "2026-08-31" not in ngay_bu and "2026-08-31" not in ngay_le
+
+
+def test_tach_ngay_dac_biet_chiu_duoc_danh_sach_rong():
+    from frontend.pages.duty_schedule import _tach_ngay_dac_biet
+    assert _tach_ngay_dac_biet([]) == (set(), {})
+    assert _tach_ngay_dac_biet(None) == (set(), {})
+
+
+def test_canh_bao_thieu_nguoi_len_dau():
+    """Lịch bị hổng là chuyện nặng nhất, phải đọc thấy trước."""
+    from frontend.pages.duty_schedule import _gom_canh_bao
+
+    gom = _gom_canh_bao([
+        {"type": "multi_sp",       "msg": "Ngày A có nhiều hơn 1 người song phương"},
+        {"type": "khong_du_nguoi", "msg": "Ngày B không lập được ca trực"},
+    ])
+    assert gom.index("không lập được ca") < gom.index("nhiều hơn 1 người")
+    assert "·" in gom, "nhiều cảnh báo phải gộp thành một dòng đọc được"
+
+
+def test_khong_co_canh_bao_thi_khong_hien_gi():
+    from frontend.pages.duty_schedule import _gom_canh_bao
+    assert _gom_canh_bao([]) == ""
+    assert _gom_canh_bao(None) == ""
+
+
+def test_nhan_nghi_le_co_va_khong_co_ten():
+    from frontend.pages.duty_schedule import _nhan_nghi_le
+    assert "Nghỉ lễ: Quốc khánh" in _nhan_nghi_le("Quốc khánh")
+    assert "Nghỉ lễ" in _nhan_nghi_le("")
+    assert ":" not in _nhan_nghi_le("").split("Nghỉ lễ")[1]
+
+
+def test_nhan_nghi_le_chan_xss_tu_ghi_chu():
+    """Nhãn ngày lễ do người dùng gõ — phải escape trước khi nhét vào HTML."""
+    from frontend.pages.duty_schedule import _nhan_nghi_le
+    ra = _nhan_nghi_le("<script>alert(1)</script>")
+    assert "<script>" not in ra
+    assert "&lt;script&gt;" in ra
+
+
+# ══════════════════════════════════════════════════════════════
+# 7. Ô chọn lịch — đổi dd/mm/yyyy sang ISO trước khi gửi API
+# ══════════════════════════════════════════════════════════════
+
+def test_iso_tu_dmy_doi_dung_chieu():
+    from frontend.shared import _iso_tu_dmy, _dmy
+
+    assert _iso_tu_dmy("01/08/2026") == "2026-08-01"
+    assert _iso_tu_dmy("31/12/2026") == "2026-12-31"
+    # Người dùng gõ tay thường bỏ số 0 đứng đầu
+    assert _iso_tu_dmy("1/8/2026") == "2026-08-01"
+    assert _iso_tu_dmy(" 5/9/2026 ") == "2026-09-05"
+
+    # Đi vòng với _dmy() phải về đúng chỗ cũ
+    for iso in ("2026-01-01", "2026-08-15", "2026-12-31"):
+        assert _iso_tu_dmy(_dmy(iso)) == iso
+
+
+def test_iso_tu_dmy_khong_nuot_chuoi_la():
+    """Trả nguyên để backend báo lỗi validate — nuốt thì thành gửi ngày rỗng."""
+    from frontend.shared import _iso_tu_dmy
+
+    for xau in ("", "linh tinh", "2026-08-01", "01-08-2026", "a/b/c", "01/08"):
+        assert _iso_tu_dmy(xau) == xau.strip()
+    assert _iso_tu_dmy(None) == ""
+
+
+def test_o_chon_ngay_trong_khong_tu_dien_hom_nay():
+    """
+    Bẫy đã dính một lần: tạo ô có value=hôm nay rồi gán rỗng thì `ui.date` bên
+    trong đồng bộ ngược, ô âm thầm quay lại hôm nay. Bản rỗng phải KHÔNG truyền
+    `value=` cho `ui.date` ngay từ đầu.
+
+    Kiểm ở mức mã nguồn vì hành vi đồng bộ chỉ xảy ra trong trình duyệt thật.
+    """
+    import inspect
+    from frontend import shared
+
+    src = inspect.getsource(shared._o_chon_ngay_trong)
+    assert "ui.date(mask=" in src, "ui.date bản rỗng không được nhận value="
+    assert "value=initial" not in src
+
+    # Bản mặc-định-hôm-nay thì ngược lại, phải có value=
+    assert "value=initial" in inspect.getsource(shared._o_chon_ngay)

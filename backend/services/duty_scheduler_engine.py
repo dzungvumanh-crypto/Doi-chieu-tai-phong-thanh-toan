@@ -20,8 +20,9 @@ from typing import List, Optional, Tuple
 from backend.services.duty_staff_service import get_available_pool
 from backend.services.duty_constraint_service import (
     get_requests_for_date, get_special_day, get_holiday_dates, get_week_assignees,
+    get_makeup_dates,
 )
-from backend.services.duty_calendar_utils import get_week_dates, is_friday
+from backend.services.duty_calendar_utils import get_week_dates, is_friday, week_span
 from backend.services.duty_rules import get_cau_hinh_ca, resolve_sp_role
 
 _VN_TZ = timezone(timedelta(hours=7))
@@ -70,6 +71,73 @@ def _update_rotation(db: sqlite3.Connection, staff_id: int, year: int,
         "WHERE year=? AND role=? AND staff_id=?",
         (date_str, year, role, staff_id)
     )
+
+
+# Kênh vòng xoay theo loại ca — ca phụ quyết toán không tính vòng xoay.
+# Một chỗ duy nhất: đường sinh tự động, đường sửa tay và đường hoàn số ca khi xoá
+# đều tra ở đây, để ba đường không thể hiểu khác nhau.
+KENH_VONG_XOAY = {
+    "normal":          ("LD", "NV"),
+    "friday":          ("LD_friday", "NV_friday"),
+    "cutoff":          ("LD_cutoff", "NV_cutoff"),
+    "settlement_main": ("LD", "NV"),
+    "settlement_sub":  (None, None),
+}
+
+
+def dieu_chinh_vong_xoay(db: sqlite3.Connection, year: int, role: Optional[str],
+                         cu: set, moi: set, date_str: str) -> None:
+    """Sửa tay đổi người thì số ca phải đi theo, nếu không lịch tự động lần sau
+    sẽ thiên vị sai. Trừ người bị gỡ, cộng người được thêm."""
+    if not role:
+        return
+    for sid in cu - moi:
+        db.execute(
+            "UPDATE duty_rotation_state SET shift_count = MAX(shift_count - 1, 0) "
+            "WHERE year=? AND role=? AND staff_id=?",
+            (year, role, sid),
+        )
+    for sid in moi - cu:
+        _update_rotation(db, sid, year, role, date_str)
+
+
+def nv_cua_ca(row) -> set:
+    """Toàn bộ nhân viên của một ca — gồm cả người giữ vai song phương và nhóm phụ."""
+    r = dict(row)
+    ids = set(json.loads(r.get("nv_ids") or "[]"))
+    ids |= set(json.loads(r.get("nv_phu_ids") or "[]"))
+    if r.get("sp_id"):
+        ids.add(r["sp_id"])
+    return ids
+
+
+def hoan_vong_xoay_cho_ca(db: sqlite3.Connection, row) -> None:
+    """
+    Trả lại số ca đã cộng cho mọi người trong một ca sắp bị xoá.
+
+    Sinh ca thì cộng vòng xoay, nên xoá ca mà không trừ lại là hệ thống vẫn nhớ
+    người đó đã trực. Tạo lại lịch một tuần vài lần là số ca phình lên vài lần;
+    cân bằng số ca lại là tiêu chí chính, nên người bị cộng oan bị đẩy xuống cuối
+    hàng ở mọi tuần sau đó.
+    """
+    r = dict(row)
+    year = int(r["shift_date"][:4])
+    ld_role, nv_role = KENH_VONG_XOAY.get(r["shift_type"], (None, None))
+    dieu_chinh_vong_xoay(
+        db, year, ld_role,
+        set(json.loads(r.get("leader_ids") or "[]")), set(), r["shift_date"],
+    )
+    dieu_chinh_vong_xoay(db, year, nv_role, nv_cua_ca(r), set(), r["shift_date"])
+
+
+def hoan_vong_xoay_cho_ngay(db: sqlite3.Connection, date_str: str,
+                            chi_draft: bool = False) -> None:
+    """Hoàn số ca cho mọi ca của một ngày trước khi xoá chúng."""
+    sql = "SELECT * FROM duty_shifts WHERE shift_date=?"
+    if chi_draft:
+        sql += " AND status='draft'"
+    for row in db.execute(sql, (date_str,)).fetchall():
+        hoan_vong_xoay_cho_ca(db, row)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -421,16 +489,37 @@ def _process_day(db: sqlite3.Connection, date_str: str, year: int,
     return created, skipped, warns
 
 
+def _ngay_lam_viec_trong_tuan(db: sqlite3.Connection, week_start_str: str) -> List[str]:
+    """
+    Các ngày phải phân ca trong tuần: 5 ngày T2→T6, cộng thứ 7 / chủ nhật nào
+    được khai "Ngày bù" và đã xác nhận.
+
+    Ngày bù rơi vào T7/CN không phải quyết toán, không phải cut-off, cũng không
+    phải thứ 6 — nên _process_day tự xếp nó vào ca thường, dùng đúng số người và
+    kênh vòng xoay của ca thường. Không cần loại ca mới.
+    """
+    ngay = list(get_week_dates(week_start_str))
+    t2, cn = week_span(week_start_str)
+    ngay_bu = get_makeup_dates(db, int(week_start_str[:4]))
+    # Ngày bù có thể rơi sang năm sau ở tuần vắt qua giao thừa
+    if cn[:4] != t2[:4]:
+        ngay_bu |= get_makeup_dates(db, int(cn[:4]))
+
+    ngay += [d for d in sorted(ngay_bu) if t2 <= d <= cn and d not in ngay]
+    return sorted(ngay)
+
+
 def generate_schedule_for_week(db: sqlite3.Connection, week_start_str: str,
                                 overwrite_draft: bool = False,
                                 overwrite_confirmed: bool = False,
                                 seed: Optional[int] = None) -> dict:
-    """Sinh lịch trực cho 1 tuần (Mon-Fri). Bỏ qua ngày lễ và ngày đã confirmed.
+    """Sinh lịch trực cho 1 tuần. Bỏ qua ngày lễ và ngày đã confirmed.
+    Thứ 7 / chủ nhật chỉ vào lịch khi được khai "Ngày bù" và đã xác nhận.
     `seed` chỉ dùng cho test — production để None (bốc ngẫu nhiên thật)."""
     rng = random.Random(seed)
     year = int(week_start_str[:4])
     holiday_dates = get_holiday_dates(db, year)
-    week_dates = get_week_dates(week_start_str)
+    week_dates = _ngay_lam_viec_trong_tuan(db, week_start_str)
     working_days = [d for d in week_dates if d not in holiday_dates]
 
     all_warnings: List[dict] = []
@@ -449,6 +538,7 @@ def generate_schedule_for_week(db: sqlite3.Connection, week_start_str: str,
         if existing:
             if confirmed_shifts and not overwrite_confirmed:
                 if draft_shifts and overwrite_draft:
+                    hoan_vong_xoay_cho_ngay(db, date_str, chi_draft=True)
                     db.execute(
                         "DELETE FROM duty_shifts WHERE shift_date=? AND status='draft'",
                         (date_str,)
@@ -464,9 +554,11 @@ def generate_schedule_for_week(db: sqlite3.Connection, week_start_str: str,
                 continue
             else:
                 if overwrite_confirmed:
+                    hoan_vong_xoay_cho_ngay(db, date_str)
                     db.execute("DELETE FROM duty_shifts WHERE shift_date=?", (date_str,))
                     confirmed_types = set()
                 else:
+                    hoan_vong_xoay_cho_ngay(db, date_str, chi_draft=True)
                     db.execute(
                         "DELETE FROM duty_shifts WHERE shift_date=? AND status='draft'",
                         (date_str,)
@@ -493,16 +585,21 @@ def generate_schedule(db: sqlite3.Connection, month: int, year: int,
     first_day = _date(year, month, 1)
     start_monday = first_day - timedelta(days=first_day.weekday())
     last_day = _date(year, month, _cal.monthrange(year, month)[1])
-    end_friday = last_day + timedelta(days=(4 - last_day.weekday()) % 7)
+    # Quét hết tuần cuối (tới chủ nhật), không dừng ở thứ 6 — nếu không thì ngày
+    # bù rơi vào T7/CN của tuần cuối tháng bị cắt mất
+    end_sunday = last_day + timedelta(days=(6 - last_day.weekday()) % 7)
 
-    if end_friday.year != year:
-        holiday_dates = holiday_dates | get_holiday_dates(db, end_friday.year)
+    makeup_dates = get_makeup_dates(db, year)
+    if end_sunday.year != year:
+        holiday_dates = holiday_dates | get_holiday_dates(db, end_sunday.year)
+        makeup_dates  = makeup_dates | get_makeup_dates(db, end_sunday.year)
 
     working_days = []
     cur = start_monday
-    while cur <= end_friday:
+    while cur <= end_sunday:
         ds = cur.isoformat()
-        if cur.weekday() < 5 and ds not in holiday_dates:
+        la_ngay_lam = cur.weekday() < 5 or ds in makeup_dates
+        if la_ngay_lam and ds not in holiday_dates:
             working_days.append(ds)
         cur += timedelta(days=1)
 
@@ -522,6 +619,7 @@ def generate_schedule(db: sqlite3.Connection, month: int, year: int,
             if not overwrite_draft:
                 total_skipped += len(existing)
                 continue
+            hoan_vong_xoay_cho_ngay(db, date_str)
             db.execute("DELETE FROM duty_shifts WHERE shift_date=?", (date_str,))
 
         c, s, w = _process_day(db, date_str, year, set(), rng)

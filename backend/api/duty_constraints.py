@@ -17,7 +17,8 @@ from backend.services.duty_constraint_service import (
     delete_absence_range, delete_absence,
     list_requests, create_request, delete_request,
     list_special_days, create_special_day, confirm_special_day, delete_special_day,
-    upsert_special_days_bulk, get_holiday_dates, get_shift_config, upsert_shift_config,
+    upsert_special_days_bulk, get_holiday_dates, get_makeup_dates,
+    get_shift_config, upsert_shift_config,
 )
 from backend.services.duty_calendar_utils import compute_cutoff_dates, get_vn_holidays
 from backend.services.duty_rules import MAC_DINH_COT
@@ -166,7 +167,8 @@ def compute_cutoff(
 ):
     """Tính 2 ngày cut-off cuối tháng và lưu vào DB."""
     holiday_dates = get_holiday_dates(db, body.year)
-    cutoffs = compute_cutoff_dates(body.month, body.year, holiday_dates)
+    makeup_dates  = get_makeup_dates(db, body.year)
+    cutoffs = compute_cutoff_dates(body.month, body.year, holiday_dates, makeup_dates)
     result = []
     for ds in cutoffs:
         obj = create_special_day(db, ds, "cutoff", f"Cutoff T{body.month}/{body.year}")
@@ -204,7 +206,9 @@ def get_config(
     404 không hiện thành thông báo đỏ, nuốt luôn cả lỗi hết phiên đăng nhập.
     """
     cfg = get_shift_config(db, year) or {}
-    ket_qua = {"year": year, "signer_name": cfg.get("signer_name")}
+    ket_qua = {"year": year,
+               "signer_name":  cfg.get("signer_name"),
+               "signer_title": cfg.get("signer_title")}
     for cot, mac_dinh in MAC_DINH_COT.items():
         ket_qua[cot] = mac_dinh if cfg.get(cot) is None else cfg[cot]
     return ket_qua
@@ -223,4 +227,5 @@ def update_config(
         qt_ld_count=body.qt_ld_count,
         qt_nv_chinh_count=body.qt_nv_chinh_count,
         qt_nv_phu_count=body.qt_nv_phu_count,
+        signer_title=body.signer_title,
     )
