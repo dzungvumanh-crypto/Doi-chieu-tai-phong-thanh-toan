@@ -29,6 +29,7 @@ import json
 from urllib.parse import quote
 
 from nicegui import ui
+from starlette.requests import Request as _StarletteRequest
 import frontend.api_client as api
 from frontend.shared import _sidebar, _content_area, _require_auth, _handle_api_error
 
@@ -63,10 +64,17 @@ def _navy_header(title: str, subtitle: str = ""):
             ui.label(subtitle).classes("text-blue-200 text-sm")
 
 
-def _section_card(title: str, icon: str = "table_chart", accent: str = "blue"):
+def _section_card(title: str, icon: str = "table_chart", accent: str = "blue", outer_border: str = "border border-gray-200"):
+    """`outer_border`: class viền KHUNG NGOÀI cả card (khác `border` bên
+    dưới — đó là viền dưới thanh tiêu đề). Mặc định giữ NGUYÊN Y HỆT như
+    trước ("border border-gray-200") cho mọi card khác trên trang; các
+    bảng đối chiếu (PaymentHub/Cổng/Napas/Bảng chênh lệch) truyền riêng
+    "border-2 border-red-800" theo đúng yêu cầu chỉ tô KHUNG NGOÀI đỏ đô,
+    không đụng viền lưới bên trong từng ô (xem _grid_cell_cls, vẫn giữ
+    nguyên màu xám cũ)."""
     bg, text, border, wash = _ACCENT.get(accent, _ACCENT["blue"])
     card = ui.card().classes(
-        "w-full rounded-2xl border border-gray-200 shadow-sm hover:shadow-md "
+        f"w-full rounded-2xl {outer_border} shadow-sm hover:shadow-md "
         f"transition-shadow duration-200 {wash} p-0 overflow-hidden"
     )
     with card:
@@ -145,12 +153,14 @@ def fmt(v):
     return f'{v:,.2f}'
 
 
-_CELL_DATA_BG = "bg-red-50"
+_CELL_DATA_BG = "bg-red-200"
 
 
 def _apply_cell_bg(inp):
-    """Tô nền hồng đỏ nhạt cho ô đã có dữ liệu — giúp nhìn lướt biết ngay ô
-    nào đã nhập, ô nào còn trống, đặc biệt hữu ích khi bảng có nhiều cột."""
+    """Tô nền hồng đỏ cho ô đã có dữ liệu — giúp nhìn lướt biết ngay ô nào
+    đã nhập, ô nào còn trống, đặc biệt hữu ích khi bảng có nhiều cột. Trước
+    dùng bg-red-50 (quá nhạt, dễ nhìn nhầm thành chưa tô) — đậm hơn hẳn để
+    không còn nhầm được nữa."""
     if inp.value:
         inp.classes(add=_CELL_DATA_BG)
     else:
@@ -166,12 +176,16 @@ def _set_input(inp, value):
 
 
 @ui.page("/doi_chieu_citad")
-def doi_chieu_citad_page():
+def doi_chieu_citad_page(request: _StarletteRequest):
     if not _require_auth():
         return
     if not api.has_feature("menu.doi_chieu_citad"):
         ui.navigate.to("/home")
         return
+
+    # Deep-link từ Sổ trực cuối ngày (/so_truc) — mở thẳng đúng ngày trong
+    # tab "Lịch sử" thay vì phải tự gõ lại bộ lọc.
+    deep_link_ngay = request.query_params.get("ngay")
 
     # Tham chiếu hàm nạp lại tab "Lịch sử" — gán bên trong _build_history_panel()
     # (khai báo hàm đó xong mới có), gọi lại ở _save_session_now() sau khi lưu
@@ -179,6 +193,11 @@ def doi_chieu_citad_page():
     # Dùng dict (không phải biến thường) vì cả 2 hàm đều là closure lồng
     # trong doi_chieu_citad_page() — gán qua dict tránh phải khai `nonlocal`.
     history_refresh = {"fn": None}
+
+    # True = đang xem 1 bản đã tải từ tab "Lịch sử" — chỉ xem, khoá sửa/lưu
+    # đè lên bản đã chấm (yêu cầu nghiệp vụ: lịch sử không được sửa được).
+    # Dict để mọi closure trong trang đọc/ghi được mà không cần `nonlocal`.
+    view_state = {"readonly": False}
 
     # Dữ liệu số (float) — nguồn sự thật để tính chênh lệch, tách khỏi text hiển thị trên ô nhập
     data = {
@@ -192,10 +211,10 @@ def doi_chieu_citad_page():
         "gE": {c: {u: {} for u in CURS} for c in CONGS},
         "phE": {u: {} for u in CURS},
         "napasE": {},
-        "ebankE": {},
         "pssmdpE": {},
     }
     diff_labels = {"citad": {}, "phub": {}, "diff": {}}
+    lech_cur_label = None  # ui.label ghi chú "Lệch: <loại tiền>" cuối trang — gán khi dựng UI
 
     ngay_input = None
     lap_bang_input = None
@@ -215,11 +234,52 @@ def doi_chieu_citad_page():
             cls = " ".join(tokens) + " bg-blue-600 text-white py-2"
         else:
             cls = extra + " py-1.5"
-        if col_idx < n_cols - 1:
+        # Ranh giới giữa nhóm "Lệnh đi" (4 cột FK đầu) và "Lệnh đến" (4 cột
+        # sau) — viền đậm + khoảng cách hở (mr/ml) để 2 khung tách bạch rõ
+        # thành 2 khối riêng nhìn là biết ngay, không chỉ đọc dò tiêu đề từng
+        # cột. col_idx=4 là cột cuối "Lệnh đi", col_idx=5 là cột đầu "Lệnh
+        # đến" (0=cột "Loại tiền", 1-4=Lệnh đi, 5-8=Lệnh đến). Chặn border-r
+        # thường bằng elif — 2 class border-r khác độ dày/màu cộng chung dễ
+        # bị Tailwind chọn sai class thắng (đã có tiền lệ lỗi này trong file).
+        if col_idx == 4:
+            cls += " border-r-2 border-gray-400 pr-2 mr-2"
+        elif col_idx < n_cols - 1:
             cls += " border-r border-gray-300 pr-2"
+        if col_idx == 5:
+            cls += " ml-2"
         if row_idx < n_rows - 1:
             cls += " border-b border-gray-300 pb-1"
+        # Bo tròn 2 góc dưới của khung to (cả bảng) — đúng 2 ô cuối cùng của
+        # dòng dữ liệu cuối. 2 góc trên do _group_header_row() tự lo (đứng
+        # trên hàng row_idx=0 này nên _grid_cell_cls không với tới được).
+        if row_idx == n_rows - 1:
+            if col_idx == 0:
+                cls += " rounded-bl-lg"
+            elif col_idx == n_cols - 1:
+                cls += " rounded-br-lg"
         return cls
+
+    def _group_header_row():
+        """Hàng gộp 2 nhóm cột 'LỆNH ĐI' / 'LỆNH ĐẾN', đặt TRÊN hàng tiêu đề
+        chi tiết (Loại tiền + 8 nhãn cột) — mỗi nhãn nhóm chiếm đúng 4 cột
+        FK (col-span-4) khớp ranh giới viền đậm + khoảng hở ở _grid_cell_cls().
+        Không dùng chung _grid_cell_cls() vì hàng này chỉ có 3 ô logic (trống
+        + 2 nhãn nhóm) trải trên 9 cột lưới — cách tính viền/nền viết tay
+        riêng cho đơn giản, không gượng ép vào công thức row_idx/col_idx.
+        Mỗi nhãn nhóm tự bo tròn 2 góc trên của CHÍNH NÓ (rounded-t-lg) —
+        vừa là góc trên của "khung nhỏ" (LỆNH ĐI/LỆNH ĐẾN đứng tách biệt nhờ
+        khoảng hở mr/ml) vừa đúng luôn là góc trên của "khung to" (cả bảng)
+        vì đây là hàng trên cùng. Không bo góc dưới của 2 ô này — đáy dính
+        liền hàng tiêu đề chi tiết bên dưới, bo sẽ hở ra tam giác nền trắng."""
+        ui.label("").classes("bg-blue-800 border-b border-blue-900 rounded-tl-lg")
+        ui.label("LỆNH ĐI").classes(
+            "col-span-4 text-center text-xs font-bold text-white bg-blue-800 "
+            "border-b border-r-2 border-blue-900 py-1 mr-2 rounded-t-lg"
+        )
+        ui.label("LỆNH ĐẾN").classes(
+            "col-span-4 text-center text-xs font-bold text-white bg-blue-800 "
+            "border-b border-blue-900 py-1 ml-2 rounded-t-lg"
+        )
 
     def _compute_totals():
         """Tổng CITAD (5 cổng + Napas IH Đến, KHÔNG cộng Ebanking) và tổng
@@ -267,11 +327,35 @@ def doi_chieu_citad_page():
                 diff_labels["diff"][f].text = f'{sign}{fmt(df_val)}'
                 diff_labels["diff"][f].classes(remove='text-green-700', add='text-red-600')
 
+        # Dòng "CHÊNH LỆCH" ở trên cộng gộp cả 3 loại tiền vào 1 cột (đúng
+        # _compute_totals()) nên không biết được lệch thật ra nằm ở VNĐ hay
+        # ngoại tệ — tính lại RIÊNG theo từng loại tiền chỉ để phát hiện có
+        # lệch hay không (không hiển thị số tiền lệch, chỉ nêu tên loại
+        # tiền). Napas/PSS-MDP là kênh trong nước, chỉ cộng vào VNĐ — khớp
+        # đúng cách chúng được gộp vào tổng CITAD hiện tại ở trên.
+        if lech_cur_label is not None:
+            lech_curs = []
+            for cur in CURS:
+                ci_cur = {f: sum(data["gD"][c][cur][f] for c in CONGS) for f in FK}
+                if cur == 'VNĐ':
+                    ci_cur["den_ih_m"] += data["napas"]["den_ih_m"] + data["pssmdp"]["den_ih_m"]
+                    ci_cur["den_ih_t"] += data["napas"]["den_ih_t"] + data["pssmdp"]["den_ih_t"]
+                ph_cur = {f: data["phD"][cur][f] for f in FK}
+                if any(ci_cur[f] != ph_cur[f] for f in FK):
+                    lech_curs.append(cur)
+            if lech_curs:
+                lech_cur_label.text = f"⚠ Lệch: {', '.join(lech_curs)}"
+                lech_cur_label.classes(remove='text-emerald-700', add='text-red-600')
+            else:
+                lech_cur_label.text = "✓ Không lệch loại tiền nào"
+                lech_cur_label.classes(remove='text-red-600', add='text-emerald-700')
+
     def build_grid(container, entry_store: dict, data_store: dict, row_keys: list):
         with container:
             n_cols = len(FK) + 1
             n_rows = len(row_keys) + 1
             with ui.grid(columns=n_cols).classes("w-full gap-0 p-4"):
+                _group_header_row()
                 ui.label("Loại tiền").classes(
                     _grid_cell_cls(0, 0, n_rows, n_cols, "text-sm font-bold text-gray-500 text-center")
                 )
@@ -280,8 +364,16 @@ def doi_chieu_citad_page():
                         _grid_cell_cls(0, col_idx, n_rows, n_cols, "text-sm font-bold text-gray-500 text-center")
                     )
                 for row_idx, cur in enumerate(row_keys, start=1):
+                    # flex items-center justify-center (KHÔNG self-center text-center):
+                    # ô nhãn cột "Loại tiền" cao tự nhiên THẤP hơn ô ui.input cùng hàng
+                    # (Quasar q-field cao hơn 1 dòng chữ thường). self-center chỉ canh
+                    # GIỮA cả ô (không cao hết hàng lưới) → viền dưới của ô nhãn nổi lơ
+                    # lửng giữa hàng thay vì chạm đáy như viền ô input — nhìn lệch hàng
+                    # rõ rệt khi đổi viền sang đỏ đậm. flex items-center giữ ô cao hết
+                    # hàng (mặc định stretch của CSS grid) rồi mới canh chữ vào giữa
+                    # BÊN TRONG ô đó — viền dưới lúc này chạm đáy đúng như ô input.
                     ui.label(cur).classes(
-                        _grid_cell_cls(row_idx, 0, n_rows, n_cols, "text-sm font-bold self-center text-center")
+                        _grid_cell_cls(row_idx, 0, n_rows, n_cols, "text-sm font-bold flex items-center justify-center")
                     )
                     entry_store[cur] = {}
                     for col_idx, fk in enumerate(FK, start=1):
@@ -289,8 +381,14 @@ def doi_chieu_citad_page():
                             _dd[_c][_f] = nv(e.value)
                             _apply_cell_bg(e.sender)
                             recalc()
+                        # readonly cố định — bảng CITAD/PaymentHub CHỈ nạp qua
+                        # Extension ("Nạp CITAD"/"Nạp PaymentHub"), không cho gõ
+                        # tay để tránh sửa số liệu thủ công trên bản đang chấm.
+                        # _set_input() (dùng trong load_citad_buffer/
+                        # load_phub_buffer) gán .value bằng code, không bị
+                        # readonly chặn — chỉ chặn gõ thật từ bàn phím.
                         inp = ui.input(value='', on_change=_on_change).props(
-                            'dense outlined input-class="text-right"'
+                            'dense outlined readonly input-class="text-right"'
                         ).classes(_grid_cell_cls(row_idx, col_idx, n_rows, n_cols, "w-full"))
                         inp.on('blur', lambda _, _i=inp: _set_input(_i, fmt(_i.value)))
                         entry_store[cur][fk] = inp
@@ -304,8 +402,9 @@ def doi_chieu_citad_page():
         cột cùng tên ở các bảng khác, đọc xuống dễ đối chiếu hơn."""
         with container:
             n_cols = len(FK) + 1
-            n_rows = 4
+            n_rows = 3
             with ui.grid(columns=n_cols).classes("w-full gap-0 p-4"):
+                _group_header_row()
                 ui.label("Loại tiền").classes(
                     _grid_cell_cls(0, 0, n_rows, n_cols, "text-sm font-bold text-gray-500 text-center")
                 )
@@ -313,13 +412,21 @@ def doi_chieu_citad_page():
                     ui.label(lbl).classes(
                         _grid_cell_cls(0, col_idx, n_rows, n_cols, "text-sm font-bold text-gray-500 text-center")
                     )
+                # Ebanking KHÔNG còn ô nhập trên màn hình (đã bỏ theo yêu cầu) —
+                # data["ebank"] vẫn giữ trong code (không xoá hẳn) để đọc lại
+                # đúng số liệu CŨ của session đã lưu trước đây (xem
+                # apply_session_data) và không làm hỏng dòng "Ebanking" trong
+                # Excel xuất ra (xem do_export/build_xlsx) — chỉ đơn thuần
+                # không cho NHẬP MỚI qua UI nữa.
                 for row_idx, (label, store, entry_store) in enumerate([
                     ("Napas", data["napas"], inputs["napasE"]),
                     ("PSS - MDP", data["pssmdp"], inputs["pssmdpE"]),
-                    ("Ebanking", data["ebank"], inputs["ebankE"]),
                 ], start=1):
+                    # Xem comment ở build_grid() — flex items-center justify-center
+                    # thay self-center text-center để viền dưới chạm đáy hàng đúng
+                    # như ô input bên cạnh, không nổi lơ lửng giữa hàng.
                     ui.label(label).classes(
-                        _grid_cell_cls(row_idx, 0, n_rows, n_cols, "text-sm font-bold self-center text-center")
+                        _grid_cell_cls(row_idx, 0, n_rows, n_cols, "text-sm font-bold flex items-center justify-center")
                     )
                     for col_idx, fk in enumerate(FK, start=1):
                         cell_cls = _grid_cell_cls(row_idx, col_idx, n_rows, n_cols, "w-full")
@@ -366,15 +473,55 @@ def doi_chieu_citad_page():
         data["napas"]["den_ih_t"] = nv(sess.get("napas_t", 0))
         _set_input(inputs["napasE"]["den_ih_m"], fmt(data["napas"]["den_ih_m"]))
         _set_input(inputs["napasE"]["den_ih_t"], fmt(data["napas"]["den_ih_t"]))
+        # Không còn ô nhập Ebanking trên UI (đã bỏ) — vẫn đọc lại đúng giá trị
+        # CŨ đã lưu (nếu có) vào data["ebank"] để giữ nguyên khi lưu lại/xuất
+        # Excel, chỉ là không hiện/sửa được trên màn hình nữa.
         data["ebank"]["den_ih_m"] = nv(sess.get("ebank_m", 0))
         data["ebank"]["den_ih_t"] = nv(sess.get("ebank_t", 0))
-        _set_input(inputs["ebankE"]["den_ih_m"], fmt(data["ebank"]["den_ih_m"]))
-        _set_input(inputs["ebankE"]["den_ih_t"], fmt(data["ebank"]["den_ih_t"]))
         data["pssmdp"]["den_ih_m"] = nv(sess.get("pssmdp_m", 0))
         data["pssmdp"]["den_ih_t"] = nv(sess.get("pssmdp_t", 0))
         _set_input(inputs["pssmdpE"]["den_ih_m"], fmt(data["pssmdp"]["den_ih_m"]))
         _set_input(inputs["pssmdpE"]["den_ih_t"], fmt(data["pssmdp"]["den_ih_t"]))
         recalc()
+
+    def _set_form_readonly(readonly: bool):
+        """Khoá/mở các ô còn cho sửa tay của tab "Đối chiếu" — dùng khi tải
+        1 bản từ tab "Lịch sử" (chỉ xem, KHÔNG cho sửa/lưu đè nội dung đã
+        chấm) và khi bấm "Quay lại chỉnh sửa" để thoát chế độ xem. Khoá
+        bằng prop `readonly` của Quasar trên TỪNG ô — chặn gõ thật ở phía
+        trình duyệt, không chỉ ẩn nút Lưu (phòng còn sót đường sửa nào
+        khác). KHÔNG gồm `inputs["gE"]`/`inputs["phE"]` (5 Cổng CITAD +
+        PaymentHub) — các ô đó readonly CỐ ĐỊNH ngay từ lúc dựng grid (chỉ
+        nạp qua Extension), việc bật/tắt ở đây không đụng tới nên không
+        cần lặp lại. Tham chiếu `btn_nap_citad`/`btn_nap_ph`/`btn_luu`/
+        `btn_xoa`/`readonly_banner` — các biến này gán SAU trong cùng hàm
+        doi_chieu_citad_page(), nhưng closure chỉ đọc lúc GỌI hàm này (sau
+        khi trang đã dựng xong), nên không cần khai báo trước."""
+        view_state["readonly"] = readonly
+        all_inputs = [ngay_input, lap_bang_input, kiem_soat_input]
+        for f in ("den_ih_m", "den_ih_t"):
+            all_inputs.append(inputs["napasE"][f])
+            all_inputs.append(inputs["pssmdpE"][f])
+        for inp in all_inputs:
+            if readonly:
+                inp.props("readonly")
+            else:
+                inp.props(remove="readonly")
+        for btn in (btn_nap_citad, btn_nap_ph, btn_luu, btn_xoa):
+            btn.set_visibility(not readonly)
+        readonly_banner.set_visibility(readonly)
+
+    def _exit_readonly_view():
+        """"Quay lại chỉnh sửa" trên banner chỉ-xem — xoá sạch form (giống
+        nút "Xoá") rồi mở khoá, sẵn sàng nhập mới cho hôm nay. do_reset()
+        không đụng ngay_input/lap_bang_input/kiem_soat_input nên tự set lại
+        3 ô đó ở đây."""
+        do_reset()
+        ngay_input.value = datetime.date.today().strftime('%d/%m/%Y')
+        lap_bang_input.value = ""
+        kiem_soat_input.value = ""
+        _set_form_readonly(False)
+        ui.notify("Đã thoát chế độ xem — sẵn sàng nhập mới", type="info")
 
     def get_session_payload() -> dict:
         gD = {str(c): {u: {f: data["gD"][c][u][f] for f in FK} for u in CURS} for c in CONGS}
@@ -406,12 +553,32 @@ def doi_chieu_citad_page():
             return
         count = 0
         for item in items:
+            src = item.get("source", "")
+            so_mon = item.get("soMon", 0)
+            so_tien = item.get("soTien", 0)
+            # Napas/PSS-MDP quét được từ trang CITAD "Kiểm soát yêu cầu quyết
+            # toán lô đến" (Cổng 1, khác nguồn Napas/PSS-MDP từ PaymentHub —
+            # xem load_phub_buffer) — cong/loai/chieu/tien của item này chỉ
+            # điền cho đủ field bắt buộc ở CitadBufferIn, không mang ý nghĩa
+            # thật, bỏ qua luôn không đọc.
+            if src == "napas":
+                data["napas"]["den_ih_m"] = nv(so_mon)
+                data["napas"]["den_ih_t"] = nv(so_tien)
+                _set_input(inputs["napasE"]["den_ih_m"], fmt(so_mon))
+                _set_input(inputs["napasE"]["den_ih_t"], fmt(so_tien))
+                count += 1
+                continue
+            if src == "pssmdp":
+                data["pssmdp"]["den_ih_m"] = nv(so_mon)
+                data["pssmdp"]["den_ih_t"] = nv(so_tien)
+                _set_input(inputs["pssmdpE"]["den_ih_m"], fmt(so_mon))
+                _set_input(inputs["pssmdpE"]["den_ih_t"], fmt(so_tien))
+                count += 1
+                continue
             cong = int(item.get("cong", 0) or 0)
             loai = item.get("loai", "")
             chieu = item.get("chieu", "")
             tien = item.get("tien", "VNĐ")
-            so_mon = item.get("soMon", 0)
-            so_tien = item.get("soTien", 0)
             if cong not in CONGS or tien not in CURS:
                 continue
             fk_m, fk_t = f"{chieu}_{loai}_m", f"{chieu}_{loai}_t"
@@ -488,6 +655,11 @@ def doi_chieu_citad_page():
             await history_refresh["fn"]()
 
     def do_save_session():
+        # Phòng vệ thêm — nút "Lưu" đã ẩn khi readonly (_set_form_readonly),
+        # chặn lại ở đây phòng còn đường nào bấm được nút ẩn (vd bàn phím).
+        if view_state["readonly"]:
+            ui.notify("Đang ở chế độ chỉ xem — bấm \"Quay lại chỉnh sửa\" trước khi lưu", type="warning")
+            return
         # Lưu giờ ghi đè bản CHUNG của cả phòng cho ngày này (xem docstring
         # session_save trong service) — xác nhận trước khi ghi đè, tránh bấm
         # nhầm mất số liệu người khác vừa nhập.
@@ -512,7 +684,10 @@ def doi_chieu_citad_page():
 
     async def _load_history_entry(history_id: int, ngay_hien_thi: str):
         """Tải đúng số liệu của 1 lần lưu cụ thể (không phải bản hiện hành)
-        vào form, rồi chuyển sang tab "Đối chiếu" để xem/sửa tiếp."""
+        vào form CHỈ ĐỂ XEM — khoá sửa/lưu ngay sau khi nạp (yêu cầu nghiệp
+        vụ: Lịch sử không được sửa nội dung đã chấm), rồi chuyển sang tab
+        "Đối chiếu" để xem. Bấm "Quay lại chỉnh sửa" trên banner mới mở
+        khoá lại được (xem _exit_readonly_view)."""
         try:
             sess = await asyncio.to_thread(api.get, f"/api/doi-chieu-citad/history-entry/{history_id}")
         except Exception as e:
@@ -521,8 +696,9 @@ def doi_chieu_citad_page():
             ui.notify(f"Lỗi tải bản lịch sử: {e}", type="negative")
             return
         apply_session_data(sess)
+        _set_form_readonly(True)
         tabs.set_value(tab_doi_chieu)
-        ui.notify(f"Đã tải bản lịch sử — ngày {ngay_hien_thi}", type="positive")
+        ui.notify(f"Đang xem bản lịch sử (chỉ đọc) — ngày {ngay_hien_thi}", type="positive")
 
     def _render_history_entries(container, ngay: str, entries: list):
         """Danh sách từng lần lưu của 1 ngày — dùng chung cho tab Lịch sử
@@ -551,14 +727,19 @@ def doi_chieu_citad_page():
                             on_click=lambda _, hid=r["id"], ng=ngay: _load_history_entry(hid, ng),
                         ).props("outline dense round size=sm").tooltip("Tải bản này")
 
-    def _build_history_panel():
+    def _build_history_panel(initial_ngay: str | None = None):
         """Tab "Lịch sử" — bảng TẤT CẢ các ngày đã có người chấm, lọc theo
         khoảng ngày, bấm 1 dòng để mở rộng tại chỗ xem chi tiết từng lần lưu
         của ngày đó (không dùng dialog — đúng pattern _build_history_panel
-        của frontend/pages/swift_recon.py)."""
+        của frontend/pages/swift_recon.py). `initial_ngay` (dd/mm/yyyy) đến
+        từ deep-link ?ngay= của Sổ trực cuối ngày — set sẵn cả 2 ô lọc để
+        chỉ hiện đúng ngày đó."""
         with ui.row().classes("w-full items-end gap-3 flex-wrap mb-2"):
             tu_input = _date_filter_input("Từ ngày")
             den_input = _date_filter_input("Đến ngày")
+            if initial_ngay:
+                tu_input.value = initial_ngay
+                den_input.value = initial_ngay
             nguoi_input = ui.input("Tên người chấm", value="").props(
                 "dense outlined clearable"
             ).classes("w-52")
@@ -665,7 +846,6 @@ def doi_chieu_citad_page():
             data["ebank"][f] = 0.0
             data["pssmdp"][f] = 0.0
             _set_input(inputs["napasE"][f], '')
-            _set_input(inputs["ebankE"][f], '')
             _set_input(inputs["pssmdpE"][f], '')
         recalc()
         ui.notify("Đã xoá toàn bộ dữ liệu", type="info")
@@ -1013,33 +1193,44 @@ def doi_chieu_citad_page():
                         ngay_input = _date_picker_input("Ngày")
                         lap_bang_input = ui.input("Lập bảng").props("dense outlined").classes("w-48")
                         kiem_soat_input = ui.input("Kiểm soát").props("dense outlined").classes("w-48")
-                        ui.button("Nạp CITAD", icon="cloud_download", on_click=load_citad_buffer).props("outline").classes("rounded-lg")
-                        ui.button("Nạp PaymentHub", icon="cloud_download", on_click=load_phub_buffer).props("outline").classes("rounded-lg")
-                        ui.button("Lưu", icon="save", on_click=do_save_session).classes(
+                        btn_nap_citad = ui.button("Nạp CITAD", icon="cloud_download", on_click=load_citad_buffer).props("outline").classes("rounded-lg")
+                        btn_nap_ph = ui.button("Nạp PaymentHub", icon="cloud_download", on_click=load_phub_buffer).props("outline").classes("rounded-lg")
+                        btn_luu = ui.button("Lưu", icon="save", on_click=do_save_session).classes(
                             "bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg"
                         )
-                        ui.button("Xoá", icon="delete", on_click=do_reset).props("outline color=red").classes("rounded-lg")
+                        btn_xoa = ui.button("Xoá", icon="delete", on_click=do_reset).props("outline color=red").classes("rounded-lg")
                         ui.button("Xuất Excel", icon="grid_on", on_click=do_export).classes(
                             "bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg"
                         )
 
-                    with _section_card("PaymentHub – Agribank", icon="account_balance", accent="blue"):
-                        build_grid(ui.column().classes("w-full"), inputs["phE"], data["phD"], CURS)
+                    # Banner "chỉ xem" — hiện khi đang xem 1 bản tải từ Lịch sử
+                    # (xem _load_history_entry/_set_form_readonly), ẩn mặc định.
+                    with ui.row().classes(
+                        "w-full items-center gap-2 px-4 py-2.5 rounded-xl border border-amber-300 "
+                        "bg-amber-50 mb-2"
+                    ) as readonly_banner:
+                        ui.icon("visibility", color="amber-700").classes("text-lg")
+                        ui.label(
+                            "Đang xem bản Lịch sử (chỉ đọc) — không sửa/lưu đè được nội dung đã chấm."
+                        ).classes("text-sm text-amber-800 flex-1")
+                        ui.button("Quay lại chỉnh sửa", icon="edit", on_click=_exit_readonly_view).props(
+                            "dense flat color=amber-8"
+                        )
+                    readonly_banner.set_visibility(False)
 
-                    for cong in CONGS:
-                        with _section_card(
-                            f"Cổng {cong} – CITAD (NHNN)", icon="swap_horiz", accent=CONG_ACCENT.get(cong, "blue")
-                        ):
-                            build_grid(ui.column().classes("w-full"), inputs["gE"][cong], data["gD"][cong], CURS)
-
-                    with _section_card("Napas / PSS - MDP / Ebanking (bổ sung)", icon="add_card", accent="amber"):
-                        build_napas_ebank_grid(ui.column().classes("w-full"))
-
-                    with _section_card("Bảng chênh lệch (CITAD − PaymentHub)", icon="balance", accent="emerald"):
+                    # "Bảng chênh lệch" đặt NGAY ĐẦU (trước PaymentHub/CITAD/Napas)
+                    # theo yêu cầu — đây là bảng người dùng cần nhìn trước tiên khi
+                    # mở lại 1 ngày đã chấm, không phải cuộn hết xuống dưới mới thấy.
+                    # Không ảnh hưởng logic: diff_labels/lech_cur_label chỉ cần tồn
+                    # tại TRƯỚC lúc recalc() chạy (ở cuối), không phụ thuộc thứ tự
+                    # dựng UI so với các bảng nhập liệu khác.
+                    with _section_card("Bảng chênh lệch (CITAD − PaymentHub)", icon="balance", accent="emerald",
+                                       outer_border="border-2 border-red-800"):
                         n_cols = len(FK) + 1
                         n_rows = 4  # 1 dòng tiêu đề + CITAD/PaymentHub/CHÊNH LỆCH
 
                         with ui.grid(columns=n_cols).classes("w-full gap-0 p-4"):
+                            _group_header_row()
                             ui.label("").classes(
                                 _grid_cell_cls(0, 0, n_rows, n_cols, "text-sm font-bold text-gray-500 text-center")
                             )
@@ -1061,6 +1252,25 @@ def doi_chieu_citad_page():
                                     )
                                     diff_labels[key][fk] = lbl
 
+                        lech_cur_label = ui.label("").classes(
+                            "text-sm font-semibold mt-2 px-1"
+                        )
+
+                    with _section_card("PaymentHub – Agribank", icon="account_balance", accent="blue",
+                                       outer_border="border-2 border-red-800"):
+                        build_grid(ui.column().classes("w-full"), inputs["phE"], data["phD"], CURS)
+
+                    for cong in CONGS:
+                        with _section_card(
+                            f"Cổng {cong} – CITAD (NHNN)", icon="swap_horiz", accent=CONG_ACCENT.get(cong, "blue"),
+                            outer_border="border-2 border-red-800"
+                        ):
+                            build_grid(ui.column().classes("w-full"), inputs["gE"][cong], data["gD"][cong], CURS)
+
+                    with _section_card("Napas / PSS - MDP (bổ sung)", icon="add_card", accent="amber",
+                                       outer_border="border-2 border-red-800"):
+                        build_napas_ebank_grid(ui.column().classes("w-full"))
+
                     recalc()
 
                 with ui.tab_panel(tab_lich_su):
@@ -1069,4 +1279,7 @@ def doi_chieu_citad_page():
                         "Bấm vào 1 ngày để xem từng lần lưu, bấm \"Tải\" trên 1 lần lưu để xem/khôi phục "
                         "đúng số liệu của lần đó."
                     ).classes("text-xs text-gray-500 mb-2")
-                    _build_history_panel()
+                    _build_history_panel(deep_link_ngay)
+
+            if deep_link_ngay:
+                tabs.set_value(tab_lich_su)
