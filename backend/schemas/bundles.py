@@ -25,6 +25,7 @@ class StorageViewUpdateRow(BaseModel):
     bundle_ids: List[int]
     bundle_sheets: List[int]
     new_sheets: List[int] = []   # số chứng từ nhập vào ô trống → tạo tập mới
+    days: Optional[List[int]] = None   # None = không sửa ngày; [] = xoá hết ngày → lỗi
 
 class StorageViewUpdateRequest(BaseModel):
     rows: List[StorageViewUpdateRow]
