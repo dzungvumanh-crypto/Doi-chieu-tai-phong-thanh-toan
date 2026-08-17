@@ -4,6 +4,20 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 17/08/2026 Phân lịch trực - **Sửa lỗi đếm số ca, cho thứ 7/CN đi làm, file Excel bám mẫu của phòng**:
+    + ⚠️ **Sửa lỗi nặng: tạo lại lịch làm số ca phình lên.** Trước đây bấm *Tạo lịch* xem thử rồi tạo lại lần nữa thì hệ thống vẫn nhớ cả hai lần — tạo lại 3 lần cho một tuần là nó tưởng mọi người đã trực 45 ca trong khi thật ra chỉ 15. Xoá lịch cũng không trả lại. Vì **chia đều số ca là tiêu chí chính** nên ai bị cộng oan sẽ bị đẩy xuống cuối hàng ở mọi tuần sau, mà lịch vẫn *trông hợp lệ* nên không ai nhìn ra. **Nay xoá hoặc tạo lại đều trả số ca về đúng.** Số ca đang lệch sẵn từ trước thì dùng nút *Reset vòng xoay* ở tab Cài đặt để đưa về mốc sạch
+    + **Sửa cảnh báo báo nhầm**: ngày quyết toán nào có người **trực phụ** biết song phương cũng bị báo *"dư người song phương"*, dù nhóm trực chính vẫn đúng một người. Người trực phụ về sớm nên không giữ vai này — nay không tính nữa
+    + **Thứ 7 / chủ nhật đi làm thì khai "Ngày bù"**: tab *Ngày đặc biệt* → chọn ngày → loại **Ngày bù** → nhớ bấm **Xác nhận** (khai xong mà chưa xác nhận thì không sinh ca). Hôm đó sẽ có ca như ngày thường, hiện thêm hàng T7/CN trên bảng tuần, lên file Excel, đăng ký nguyện vọng được, và được tính khi dò 2 ngày cut-off cuối tháng
+    + **Ba ô nhập ngày đổi thành ô chọn lịch** (Từ ngày / Đến ngày ở khai vắng mặt, và ô thêm ngày đặc biệt) — không phải gõ tay `YYYY-MM-DD` nữa, bấm biểu tượng lịch mà chọn, hiện theo dd/mm/yyyy
+    + **File Excel làm lại theo đúng tờ giấy phòng đang dùng**: 5 cột thay vì 8, bỏ hết màu nền (in đen trắng cho rõ), cỡ chữ 24/18/16, mỗi ngày đúng một hàng, bảng căn giữa tờ giấy. Ngày quyết toán để **trực chính IN HOA đậm**, trực phụ chữ nghiêng nhỏ hơn ngay bên dưới trong cùng ô. Ngày nghỉ lễ ghi rõ *"(Nghỉ lễ: ...)"*
+    + **Chức danh người ký khai được** ở tab Cài đặt (ô *Chức danh người ký*, cạnh ô tên) — đổi sang Phó Giám đốc không phải sửa phần mềm nữa. Để trống thì vẫn in "GIÁM ĐỐC"
+    + **Màn hình hết nuốt cảnh báo**: trước đây tạo lịch xong chỉ báo *"Tạo N ca"*, ngày nào không lập được ca vì thiếu người trông y hệt ngày nghỉ lễ — đều là hàng trống. Nay hiện rõ thiếu ai, và hàng nghỉ lễ ghi lý do thay cho dấu "—"
+    + ⚠️ **Ba chỗ còn hở, chưa sửa trong đợt này** (đều nằm trong menu Phân lịch trực, không lan sang tính năng khác):
+        + **Cut-off / quyết toán rơi đúng vào thứ 7 làm bù thì ngày đó không sinh ca** — nhãn "Ngày bù" bị nhãn "Cut-off" ghi đè lên, hệ thống mất dấu là hôm đó có đi làm. Gặp trường hợp này thì xếp tay ca cho ngày đó
+        + **Tuần vắt qua giao thừa (28/12 → 03/01)**: xoá lịch không trả hết số ca cho những ngày thuộc năm mới
+        + Ngày vừa có ca đã xác nhận vừa có ca bản thảo, tạo lại lịch thì ca bị bỏ qua vẫn bị cộng số ca
+    + Không đụng tới bất kỳ menu nào khác. Toàn bộ 429 test của hệ thống chạy đạt
+
 - 14/08/2026 Nghỉ phép - **Ký đơn ngay trên bản in, phiếu tải về đổi sang PDF**:
     + **Tải lên ảnh chữ ký của mình trước đã**: vào tên mình ở góc trái → *Quản lý người dùng* → khung **Ảnh chữ ký**. Ảnh phải là **PNG nền trong suốt** (nền trắng sẽ che mất chữ trên đơn), tối đa 2 MB. Mỗi người tự tải ảnh của mình, không ai xem hay đặt hộ được
     + **Lúc gửi đơn**: bấm *Gửi đơn* → hiện ra **tờ đơn thật, đúng như lúc in** (không phải bản mô phỏng) với chữ ký của bạn đặt sẵn dưới ô *NGƯỜI ĐỀ NGHỊ*. **Kéo để đổi chỗ, kéo 4 góc để phóng to/thu nhỏ**, ưng rồi bấm *Ký và gửi đơn*

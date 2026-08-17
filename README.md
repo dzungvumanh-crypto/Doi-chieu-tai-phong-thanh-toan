@@ -317,9 +317,16 @@ Truy cập:
   Có tiêu chí phụ tránh hình thành ê-kíp trực cố định
 - **Sửa tay** thành phần ca: vai song phương hệ thống tự suy từ cờ "biết song phương",
   số ca trong vòng xoay đi theo người được đổi. Sửa xong ca quay về bản thảo, phải xác nhận lại
+- **Xoá hoặc tạo lại lịch trả số ca về vòng xoay** — mọi đường ghi/xoá ca đều tra cùng
+  `KENH_VONG_XOAY` trong `duty_scheduler_engine.py`, không đường nào tự hiểu khác
+- **Thứ 7 / chủ nhật đi làm**: khai loại **"Ngày bù"** ở tab Ngày đặc biệt rồi xác nhận thì
+  hôm đó sinh ca thường, vào lịch tuần/tháng, lên file Excel, đăng ký nguyện vọng được,
+  và được tính khi dò 2 ngày cut-off cuối tháng
 - Quản lý cán bộ trực, ràng buộc lịch trực (ngày không trực, giới hạn ca)
 - Thống kê số ca trực theo cán bộ, theo tháng — **trực chính và trực phụ đếm 2 cột riêng**, không quy đổi
-- Xuất lịch trực ra file
+- **Xuất lịch trực ra Excel** bám mẫu giấy của phòng: 5 cột A–E, trắng đen, cỡ chữ 24/18/16,
+  mỗi ngày đúng một hàng; ngày quyết toán để trực chính IN HOA đậm và trực phụ nghiêng nhỏ
+  trong cùng ô. **Chức danh người ký khai được** ở tab Cài đặt (`signer_title`), mặc định "GIÁM ĐỐC"
 - **Phân quyền enforce ở backend**, không chỉ ẩn nút: cả 35 endpoint đều gắn `require_feature`
   (`menu.duty_schedule` để đọc · `duty.generate` tạo & sửa lịch · `duty.confirm` · `duty.delete`
   · `duty.export` · `duty.manage_staff` cờ nhân sự & vắng mặt · `duty.manage_config` cài đặt &
