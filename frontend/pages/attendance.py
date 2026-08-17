@@ -60,6 +60,24 @@ async def attendance_page(year: Optional[int] = None, month: Optional[int] = Non
             mine_month, dept_month, my_adjustments, pending_adjustments, symbols, managers = results
             if isinstance(mine_month, Exception):
                 raise mine_month
+            # Rà soát tiếp theo: return_exceptions=True nuốt lỗi (403/500/timeout) của
+            # 5 nguồn dữ liệu phụ thành Exception — nếu không báo, chúng âm thầm biến
+            # thành None/[] và UI hiện nhầm trạng thái "trống"/"chưa có nhân viên" thay
+            # vì báo lỗi thật (vd GDV được cấp attendance.view_dept nhưng scope=dept bị
+            # 403 ở backend vì lệch quyền). Cùng pattern đã fix ở frontend/pages/leaves.py.
+            _fetch_errors = [
+                _name for _name, _val in (
+                    ("Bảng công phòng", dept_month), ("Yêu cầu của tôi", my_adjustments),
+                    ("Yêu cầu chờ duyệt", pending_adjustments), ("Ký hiệu công", symbols),
+                    ("Danh sách kiểm soát", managers),
+                )
+                if isinstance(_val, Exception)
+            ]
+            if _fetch_errors:
+                ui.notify(
+                    f"Không tải được: {', '.join(_fetch_errors)} — số liệu có thể thiếu/sai, vui lòng tải lại trang.",
+                    type="negative", timeout=8000,
+                )
             dept_month = dept_month if isinstance(dept_month, dict) else None
             my_adjustments = my_adjustments if isinstance(my_adjustments, list) else []
             pending_adjustments = pending_adjustments if isinstance(pending_adjustments, list) else []

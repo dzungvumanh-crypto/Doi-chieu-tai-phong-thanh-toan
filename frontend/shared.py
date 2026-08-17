@@ -503,17 +503,23 @@ def _dept_group(dept: dict, current_page: str, check_features: bool = True):
 def _user_dept_code(user: dict) -> str | None:
     """Tra department_id của user ra code (vd 'ACCT'), cache trong app.storage.user
     để không gọi lại API mỗi lần chuyển trang. Dùng để giới hạn hiển thị menu
-    "Chấm công" (Phòng Kế toán) chỉ cho đúng nhân viên phòng đó."""
+    "Chấm công" (Phòng Kế toán) chỉ cho đúng nhân viên phòng đó.
+
+    Rà soát tiếp theo: trước đây cache cả khi gọi API lỗi (mạng chậm, backend
+    restart giữa chừng...) — `code=None` bị ghi cứng vào cache, nhân viên ACCT mất
+    hẳn menu "Chấm công" cho tới khi logout/login lại (chỉ `clear_auth()` mới xoá
+    được cache này). Giờ chỉ cache khi gọi API THÀNH CÔNG; lỗi thì trả None cho lần
+    gọi này nhưng để lần render sau (đổi trang) thử lại, không kẹt vĩnh viễn."""
     if "_dept_code" in app.storage.user:
         return app.storage.user["_dept_code"]
-    code = None
     dept_id = user.get("department_id") if user else None
-    if dept_id:
-        try:
-            row = api.get(f"/api/departments/{dept_id}")
-            code = row.get("code")
-        except Exception:
-            code = None
+    if not dept_id:
+        return None
+    try:
+        row = api.get(f"/api/departments/{dept_id}")
+        code = row.get("code")
+    except Exception:
+        return None
     app.storage.user["_dept_code"] = code
     return code
 

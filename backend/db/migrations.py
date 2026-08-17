@@ -821,11 +821,19 @@ def _ensure_indexes():
         # CẢNH BÁO: cách này dựa vào chuỗi text — nếu sau này ai đổi câu chữ reason ở
         # leaves.py (import_quota_apply/update_used_days) mà không cập nhật CASE này
         # thì sẽ hỏng ngầm (bản ghi giả lại bị chấm công, hoặc đơn thật lại bị bỏ qua).
+        #
+        # Rà soát tiếp theo: leave_records.reason NULLABLE (LeaveCreate.reason cũng
+        # optional) — đơn "bat_buoc" THẬT không nhập lý do sẽ có reason=NULL. SQLite:
+        # "NULL LIKE '...'" → NULL, không phải FALSE → cả biểu thức NOT (...) thành
+        # NULL → WHEN coi NULL là false → trigger KHÔNG chạy, đúng lỗi vừa sửa lại tái
+        # phát qua đường NULL. Thêm "reason IS NOT NULL AND" để khi NULL, vế
+        # "bat_buoc AND ..." chắc chắn là FALSE (không phải NULL) → NOT FALSE = TRUE
+        # → trigger chạy bình thường cho đơn thật.
         "DROP TRIGGER IF EXISTS trg_leave_approved_sync_attendance",
         """CREATE TRIGGER IF NOT EXISTS trg_leave_approved_sync_attendance
             AFTER UPDATE OF status ON leave_records
             WHEN NEW.status = 'approved' AND OLD.status != 'approved'
-                 AND NOT (NEW.leave_type = 'bat_buoc'
+                 AND NOT (NEW.leave_type = 'bat_buoc' AND NEW.reason IS NOT NULL
                           AND (NEW.reason LIKE '[Import]%' OR NEW.reason LIKE '[Điều chỉnh]%'))
                  AND EXISTS (SELECT 1 FROM user_tttt u JOIN departments d ON d.id = u.department_id
                              WHERE u.id = NEW.staff_id AND d.code = 'ACCT' AND u.is_active = 1)
@@ -869,7 +877,7 @@ def _ensure_indexes():
         """CREATE TRIGGER IF NOT EXISTS trg_leave_direct_insert_sync_attendance
             AFTER INSERT ON leave_records
             WHEN NEW.status = 'approved'
-                 AND NOT (NEW.leave_type = 'bat_buoc'
+                 AND NOT (NEW.leave_type = 'bat_buoc' AND NEW.reason IS NOT NULL
                           AND (NEW.reason LIKE '[Import]%' OR NEW.reason LIKE '[Điều chỉnh]%'))
                  AND EXISTS (SELECT 1 FROM user_tttt u JOIN departments d ON d.id = u.department_id
                              WHERE u.id = NEW.staff_id AND d.code = 'ACCT' AND u.is_active = 1)
@@ -938,7 +946,7 @@ def _ensure_indexes():
         """CREATE TRIGGER IF NOT EXISTS trg_leave_delete_revert_attendance
             AFTER DELETE ON leave_records
             WHEN OLD.status = 'approved'
-                 AND NOT (OLD.leave_type = 'bat_buoc'
+                 AND NOT (OLD.leave_type = 'bat_buoc' AND OLD.reason IS NOT NULL
                           AND (OLD.reason LIKE '[Import]%' OR OLD.reason LIKE '[Điều chỉnh]%'))
             BEGIN
                 DELETE FROM attendances

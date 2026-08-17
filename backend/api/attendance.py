@@ -67,6 +67,19 @@ def _load_holidays(db: sqlite3.Connection, start: date, end: date):
     return frozenset(date.fromisoformat(r["date"]) for r in rows)
 
 
+def _default_work_value(db: sqlite3.Connection) -> float:
+    """Số công của ký hiệu 'x' (ngày làm việc bình thường, chưa có dữ liệu ghi
+    nhận) — tra bảng thay vì hardcode 1.0, vì put_day/create_adjustment đều cho
+    admin đổi work_value của bất kỳ ký hiệu nào qua PUT /symbols/x (rà soát tiếp
+    theo: 3 chỗ dùng giá trị mặc định trước đây hardcode, không đồng bộ nếu admin
+    đổi số công của 'x'). Fallback 1.0 nếu ký hiệu 'x' vì lý do nào đó không còn
+    active/tồn tại — không để vỡ trang vì thiếu dữ liệu cấu hình."""
+    row = db.execute(
+        "SELECT work_value FROM attendance_symbols WHERE symbol='x' AND is_active=1"
+    ).fetchone()
+    return row["work_value"] if row else 1.0
+
+
 # Thứ hạng chức vụ để sắp bảng công — khớp đúng _ROLE_ORDER_SQL ở backend/api/staff.py:24-36
 # (viết lại dạng dict Python vì cần sort kèm "tên" tách ra, SQL thuần không tách gọn được).
 _ROLE_RANK = {
@@ -175,6 +188,7 @@ def get_month(
     # Ngày lễ và ngày chưa tới không mặc định tính công (quyết định nghiệp vụ 2026-08-10,
     # review PR #22 — trước đây chỉ check thứ trong tuần, bỏ sót cả 2 trường hợp này).
     today = _vn_now().date()
+    default_wv = _default_work_value(db)
 
     result_staff = []
     for srow in staff_rows:
@@ -194,10 +208,10 @@ def get_month(
             elif d.weekday() < 5 and d not in holiday_dates and d <= today:
                 days[d.isoformat()] = {
                     "attendance_id": None, "staff_id": sid, "date": d.isoformat(),
-                    "symbol": "x", "work_value": 1.0,
+                    "symbol": "x", "work_value": default_wv,
                     "status": None, "note": None, "is_virtual": True,
                 }
-                total += 1.0
+                total += default_wv
             else:
                 days[d.isoformat()] = {
                     "attendance_id": None, "staff_id": sid, "date": d.isoformat(),
@@ -226,7 +240,11 @@ def get_day(
     _require_acct_scope(current, db)
     # Đồng nhất với /month: chuyên viên được cấp attendance.view_dept cũng xem
     # được công của người khác qua endpoint tra 1 ngày này, không chỉ của mình.
-    if current["role"] == "chuyen_vien" and staff_id != current["id"] and not _can_view_dept(current, db):
+    # Rà soát tiếp theo: trước đây chỉ chặn đúng role "chuyen_vien" — vai trò khác
+    # không phải quản lý (vd hau_kiem_vien) nếu được gán vào ACCT sẽ lọt qua, xem
+    # được công bất kỳ ai. Đổi sang _is_manager() để chặn đúng MỌI vai trò không
+    # phải quản lý, khớp đúng cách get_month đang làm.
+    if not _is_manager(current) and staff_id != current["id"] and not _can_view_dept(current, db):
         raise HTTPException(403, "Chỉ được xem công của chính mình")
     row = db.execute(
         "SELECT * FROM attendances WHERE staff_id=? AND date=?", (staff_id, date_)
@@ -241,7 +259,7 @@ def get_day(
     # (review PR #22, trước đây chỗ này chỉ check thứ trong tuần).
     is_holiday = bool(_load_holidays(db, d, d))
     if d.weekday() < 5 and not is_holiday and d <= _vn_now().date():
-        return {"staff_id": staff_id, "date": date_, "symbol": "x", "work_value": 1.0,
+        return {"staff_id": staff_id, "date": date_, "symbol": "x", "work_value": _default_work_value(db),
                 "status": None, "note": None, "is_virtual": True}
     return {"staff_id": staff_id, "date": date_, "symbol": None, "work_value": 0.0,
             "status": None, "note": None, "is_virtual": True}
@@ -315,7 +333,10 @@ def create_adjustment(
 ):
     _require_acct_scope(current, db)
     staff_id = body.staff_id or current["id"]
-    if current["role"] == "chuyen_vien" and staff_id != current["id"]:
+    # Rà soát tiếp theo: chỉ chặn đúng role "chuyen_vien" trước đây bỏ sót vai trò
+    # khác không phải quản lý (vd hau_kiem_vien) — họ xin điều chỉnh hộ được tuỳ ý
+    # ai trong ACCT. Chỉ "Quản lý" (xem comment dưới) mới được làm hộ người khác.
+    if not _is_manager(current) and staff_id != current["id"]:
         raise HTTPException(403, "Chỉ được xin điều chỉnh công của chính mình")
     # Quản lý xin điều chỉnh hộ cho staff_id tuỳ ý — chặn nếu người đó không thuộc ACCT
     # (vd trưởng phòng KT lỡ chọn nhầm nhân viên phòng khác, phát hiện ở review PR #22).
@@ -423,7 +444,11 @@ def list_adjustments(
 ):
     _require_acct_scope(current, db)
     clauses, params = [], []
-    if current["role"] == "chuyen_vien":
+    # Rà soát tiếp theo: chỉ chặn đúng role "chuyen_vien" trước đây bỏ sót vai trò
+    # khác không phải quản lý (vd hau_kiem_vien) — họ xem được scope="pending" (toàn
+    # bộ yêu cầu đang chờ duyệt của cả phòng) mà không cần quyền gì. review_adjustment
+    # (duyệt/từ chối) cũng chỉ dành cho _is_manager() — dùng lại đúng điều kiện đó.
+    if not _is_manager(current):
         clauses.append("a.requested_by = ?")
         params.append(current["id"])
     elif scope == "pending":
@@ -584,6 +609,7 @@ def export_month(
     # Ngày lễ và ngày chưa tới không mặc định tính công — cùng fix với /month, /day
     # (review PR #22, trước đây chỗ này chỉ check thứ trong tuần).
     today = _vn_now().date()
+    default_wv = _default_work_value(db)
 
     for idx, srow in enumerate(staff_rows, 1):
         sid = srow["id"]
@@ -595,7 +621,7 @@ def export_month(
             if arow:
                 symbol, value = arow["symbol"], (arow["work_value"] or 0)
             elif d.weekday() < 5 and d not in holiday_dates and d <= today:
-                symbol, value = "x", 1.0
+                symbol, value = "x", default_wv
             else:
                 symbol, value = "", 0.0
             row_vals.append(symbol)
