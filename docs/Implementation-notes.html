@@ -6726,6 +6726,124 @@ else:
     </div>
   </div>
 
+  <!-- 75 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">75</span>
+      <span class="card-title">Phân lịch trực — vòng xoay không hoàn khi xoá lịch + T7/CN đi làm</span>
+      <span class="badge badge-done">done · 2026-08-14</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Lỗi 1 (nặng) — số ca phình lên mỗi lần tạo lại lịch</div>
+      <p>Sinh ca thì cộng <code>duty_rotation_state.shift_count</code>, nhưng <b>không đường nào trừ
+        lại khi ca bị xoá</b>. Đường sửa tay đã làm đúng (<code>_dieu_chinh_vong_xoay</code>) — 5 đường
+        còn lại thì không, chứng tỏ là sót chứ không phải quyết định thiết kế.</p>
+      <table>
+        <tr><th>Thao tác</th><th>Vòng xoay đếm</th><th>Số lượt trực thật</th></tr>
+        <tr><td>Sinh tuần lần 1</td><td>15</td><td>15 ✓</td></tr>
+        <tr><td>Sinh lại lần 2</td><td><b>30</b></td><td>15 ✗</td></tr>
+        <tr><td>Sinh lại lần 3</td><td><b>45</b></td><td>15 ✗</td></tr>
+        <tr><td>Xoá sạch cả tuần</td><td><b>15</b></td><td>0 ✗</td></tr>
+      </table>
+      <p>Cân bằng số ca là tiêu chí <b>CHÍNH</b> của thuật toán, nên người bị cộng oan bị đẩy xuống
+        cuối hàng ở mọi tuần sau — mà lịch vẫn "trông hợp lệ" nên không ai phát hiện. Thao tác gây lỗi
+        lại là thao tác thường nhất: xem thử → chưa ưng → tạo lại.</p>
+      <p>Sửa: gom <code>KENH_VONG_XOAY</code> / <code>nv_cua_ca</code> / <code>dieu_chinh_vong_xoay</code>
+        về <code>duty_scheduler_engine</code> (đúng ghi chú sẵn có <i>"write ở scheduler_engine"</i>,
+        bỏ luôn một bản trùng trong <code>_process_day</code>), thêm
+        <code>hoan_vong_xoay_cho_ca/_cho_ngay</code> gọi trước cả 5 lệnh <code>DELETE</code>.</p>
+
+      <div class="label">Lỗi 2 (vừa) — trực phụ bị tính là "dư người song phương"</div>
+      <p><code>resolve_sp_role</code> cộng cả nhóm trực phụ vào phép đếm <code>multi_sp</code>, trái
+        docstring ngay trên nó và trái luật đã chốt. Hậu quả: <b>ngày quyết toán nào có người trực phụ
+        biết song phương cũng bị cảnh báo đỏ sai</b>. Cảnh báo sai bật đều đặn thì thành quen mắt.</p>
+      <div class="note">Test cũ <code>test_nguoi_song_phuong_o_nhom_phu_khong_tinh_la_du</code> đặt tên
+        đúng ý định nhưng chỉ dựng trường hợp nhóm chính có <b>0</b> người SP — nhánh đó thoát sớm ở
+        <code>du_sp_chinh</code> nên không bao giờ chạm dòng lỗi. Tên test đúng không bảo đảm test phủ đúng.</div>
+
+      <div class="label">Thứ 7 / chủ nhật đi làm — nối nốt cơ chế đã có sẵn</div>
+      <p>Loại ngày <code>makeup</code> ("Ngày bù") đã có trong schema/migration/UI từ trước nhưng
+        <b>engine chưa dùng tới</b> — khai xong không sinh ra ca nào. Ngày bù rơi vào T7/CN không phải
+        quyết toán/cut-off/thứ 6 nên <b>tự rơi vào nhánh ca thường</b>: dùng đúng cấu hình và kênh vòng
+        xoay ca thường, không cần loại ca mới, không đụng CHECK constraint.</p>
+      <p>Các truy vấn "theo tuần" đổi từ <code>IN (5 ngày)</code> sang khoảng <b>T2→CN</b>. Lý do: ca T7
+        đã sinh phải xem/xác nhận/xoá được <b>kể cả khi bản ghi Ngày bù bị xoá sau đó</b> — nếu phụ thuộc
+        danh sách thì ca ấy thành <b>ca mồ côi</b>, nằm trong DB mà màn hình không thấy.</p>
+
+      <div class="label">Phân thử 2 tháng bằng cơ cấu nhân sự thật</div>
+      <p>Tuần 5 ngày: kết quả <b>giống hệt</b> bản trước khi sửa → bản sửa không xê dịch phân lịch.
+        Tuần có ngày bù: 54 ca, lệch số ca không tăng (LĐ 1 ca, NV 2 ca), vòng xoay khớp số lượt thật.</p>
+    </div>
+  </div>
+
+  <!-- 76 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">76</span>
+      <span class="card-title">Phân lịch trực — ô chọn lịch, file Excel bám mẫu thật, hết nuốt cảnh báo</span>
+      <span class="badge badge-done">done · 2026-08-14</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Màn hình nuốt hai loại thông tin</div>
+      <p><code>do_generate</code> chỉ hiện <i>"Tạo N ca, bỏ qua M"</i> rồi <b>vứt bỏ</b>
+        <code>result["warnings"]</code>. Backend báo rất rõ (<i>"Ngày … không lập được ca trực — chỉ có
+        0/1 Lãnh đạo khả dụng"</i>) nhưng không ai thấy. Cộng với việc hàng nghỉ lễ chỉ hiện dấu
+        <code>—</code>, hậu quả là <b>ngày nghỉ lễ và ngày lịch bị hổng vì thiếu người trông giống hệt
+        nhau</b>.</p>
+      <p>Sửa: gom cảnh báo hiện sau khi tạo lịch (<code>khong_du_nguoi</code> đưa lên đầu), và bỏ bộ lọc
+        <code>day_type</code> khỏi lời gọi <code>special-days</code> để một lượt lấy cả ngày bù lẫn ngày
+        lễ — không thêm request thứ hai cho cùng một bảng.</p>
+
+      <div class="label">Ô chọn lịch — tái dùng, và cái bẫy phải tránh</div>
+      <p>Ba ô ngày bắt gõ tay <code>YYYY-MM-DD</code>. Màn hình CITAD đã có sẵn ô chọn lịch nên đưa lên
+        <code>frontend/shared.py</code> dùng chung, kèm <code>_iso_tu_dmy()</code> — chiều ngược còn
+        thiếu của <code>_dmy()</code>.</p>
+      <div class="caution"><b>Bẫy đã dính một lần.</b> Tạo ô có <code>value=</code> hôm nay rồi gán
+        <code>.value = ""</code> thì <code>ui.date</code> bên trong vẫn giữ giá trị cũ và đồng bộ ngược
+        qua <code>bind_value</code>, làm ô <b>âm thầm quay lại hôm nay sau vài trăm ms</b>. Cả 3 ô của
+        module này đều bị gán rỗng sau khi lưu nên <b>phải</b> dùng bản không truyền <code>value=</code>
+        ngay từ đầu. Hành vi này chỉ lộ trong trình duyệt thật.</div>
+      <p>Sửa kèm một lỗi tiềm ẩn: ô dùng <code>clearable</code> nên <code>.value</code> có thể là
+        <code>None</code>, code cũ gọi thẳng <code>.strip()</code> sẽ nổ <code>AttributeError</code>.</p>
+
+      <div class="label">File Excel — đối chiếu mẫu thật của phòng</div>
+      <table>
+        <tr><th>Điểm</th><th>Mẫu thật</th><th>Trước đây</th></tr>
+        <tr><td>Số cột</td><td><b>5 (A–E)</b></td><td>8 (A–H), F/G/H rỗng</td></tr>
+        <tr><td>Màu nền</td><td><b>không có</b></td><td>tiêu đề xanh đậm, header xanh nhạt, QT tím, lễ xám</td></tr>
+        <tr><td>Cỡ chữ</td><td>24 / 18 / 16</td><td>13 / 11 / 11</td></tr>
+        <tr><td>Chức danh người ký</td><td><code>E11</code>, <b>mọi tuần</b></td><td>chỉ tuần quyết toán</td></tr>
+      </table>
+      <div class="caution"><b>Đổi <code>_NCOLS</code> KHÔNG đủ để bỏ cột F/G/H.</b>
+        <code>_apply_row</code> ghi đúng <code>len(values)</code> ô — <code>_NCOLS</code> chỉ dùng cho
+        vòng đặt độ rộng cột. Chính các <b>list literal 8 phần tử</b> mới tạo ra F/G/H có viền, làm
+        <code>max_column</code> vẫn là 8. Phải thu mọi list về 5 <i>và</i> sửa
+        <code>print_area</code> <code>"A1:H{n}"</code> → <code>"A1:E{n}"</code>.</div>
+      <p>Ngày quyết toán gộp <b>1 hàng</b>: ô nhân viên chứa trực chính IN HOA đậm, xuống dòng rồi tới
+        trực phụ nghiêng nhỏ — dùng <code>CellRichText</code> vì một ô Excel chỉ có một
+        <code>Font</code>. Chức danh người ký thành cột <code>signer_title</code> khai được ở tab Cài đặt.</p>
+
+      <div class="label">Ba lỗi hiển thị tìm ra khi người dùng soi file in</div>
+      <p><b>Ô "NHÂN VIÊN" nhìn như thiếu kẻ trên.</b> Giả thuyết đầu (gộp ô trước, kẻ sau) <b>sai</b>:
+        openpyxl <b>luôn</b> xoá cạnh bên trong vùng gộp dù ép lại — và đó là đúng, Excel không vẽ vạch
+        giữa một ô đã gộp; mẫu thật cũng y hệt. Nguyên nhân thật là <b>hàng thấp hơn cỡ chữ</b>: chữ
+        24pt cần hàng cao 31,9pt nhưng chỉ được 30; chữ 18pt cần 23,9pt nhưng chỉ được 22,8 — chữ bị ép
+        sát nên tràn đè lên vạch. Đã nới lên 34pt và 26pt.</p>
+      <p><b>Bảng lệch trên giấy.</b> Rộng 22,2cm trong khi vùng in A4 ngang là 27,2cm → thừa 5cm dồn về
+        một bên. Giãn 5 cột theo đúng tỉ lệ mẫu (hệ số 1,174) lên 26,0cm và bật
+        <code>horizontalCentered</code>.</p>
+      <div class="caution"><b>Ngày lễ không khai ghi chú thì mất hẳn chữ "Nghỉ lễ".</b> Tầng API dựng
+        <code>holiday_map</code> bằng <code>h.get("label", "")</code> — nhưng khoá <code>label</code>
+        LUÔN tồn tại, chỉ là giá trị <code>None</code> khi người dùng bỏ trống ghi chú. Giá trị mặc định
+        của <code>.get()</code> chỉ dùng khi khoá KHÔNG tồn tại, nên nó trả về <code>None</code>; hàm
+        dựng file lại suy "có phải ngày lễ không" từ chính giá trị đó → ô ra trắng. Sửa hai lớp:
+        <code>h.get("label") or ""</code>, và hỏi bằng chính <b>khoá</b>
+        (<code>date_str in holiday_map</code>) thay vì suy từ giá trị.</div>
+      <div class="note">Ngày lịch bị hổng vì thiếu người <b>không</b> được gán nhãn "Nghỉ lễ" — hôm đó
+        không phải ngày được nghỉ. Chỗ phân biệt là dòng cảnh báo trên màn hình lúc tạo lịch.</div>
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-14</footer>
 </div>
 </body>

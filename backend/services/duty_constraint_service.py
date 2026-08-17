@@ -129,7 +129,7 @@ def list_requests(db: sqlite3.Connection, year: Optional[int] = None,
 
 def get_requests_for_date(db: sqlite3.Connection, date_str: str, year: int) -> dict:
     """
-    Trả {'LD': [...], 'SP': [...], 'NV': [...], 'once_ids': set()}
+    Trả {'LD': [...], 'NV': [...], 'once_ids': set()}
     Kết hợp đăng ký 'once' và 'weekly'.
     """
     dow = date.fromisoformat(date_str).weekday()
@@ -147,27 +147,20 @@ def get_requests_for_date(db: sqlite3.Connection, date_str: str, year: int) -> d
         elif r["request_type"] == "weekly" and r["day_of_week"] == dow:
             staff_ids.add(r["staff_id"])
 
-    result: dict = {"LD": [], "SP": [], "NV": [], "once_ids": set()}
+    result: dict = {"LD": [], "NV": [], "once_ids": set()}
     if not staff_ids:
         return result
 
     placeholders = ",".join("?" * len(staff_ids))
     people = db.execute(
         f"SELECT u.id, "
-        f"CASE WHEN u.role IN ('truong_phong','pho_phong') THEN 'LD' ELSE 'NV' END AS duty_role, "
-        f"COALESCE(m.can_do_sp, 0) AS can_do_sp "
-        f"FROM user_tttt u LEFT JOIN duty_staff_meta m ON u.id=m.user_id "
-        f"WHERE u.id IN ({placeholders})",
+        f"CASE WHEN u.role IN ('truong_phong','pho_phong') THEN 'LD' ELSE 'NV' END AS duty_role "
+        f"FROM user_tttt u WHERE u.id IN ({placeholders})",
         list(staff_ids)
     ).fetchall()
 
     for p in people:
-        if p["duty_role"] == "LD":
-            result["LD"].append(p["id"])
-        else:
-            result["NV"].append(p["id"])
-            if p["can_do_sp"]:
-                result["SP"].append(p["id"])
+        result["LD" if p["duty_role"] == "LD" else "NV"].append(p["id"])
         if p["id"] in once_staff_ids:
             result["once_ids"].add(p["id"])
 
@@ -186,10 +179,11 @@ def create_request(db: sqlite3.Connection, staff_id: int, request_type: str,
     if existing:
         return dict(existing)
 
-    # Từ chối đăng ký T7/CN và ngày lễ
+    # Từ chối đăng ký T7/CN và ngày lễ. Riêng cuối tuần đã khai "Ngày bù" và xác
+    # nhận thì hôm đó là ngày đi làm — chặn thì nhân viên không đăng ký trực được.
     if request_type == "once" and specific_date:
         d = date.fromisoformat(specific_date)
-        if d.weekday() >= 5:
+        if d.weekday() >= 5 and specific_date not in get_makeup_dates(db, d.year):
             raise ValueError(f"Không thể đăng ký cuối tuần ({specific_date})")
         holiday = db.execute(
             "SELECT label FROM duty_special_days WHERE date=? AND day_type='holiday'",
@@ -244,6 +238,19 @@ def list_special_days(db: sqlite3.Connection, month: Optional[int] = None,
 def get_holiday_dates(db: sqlite3.Connection, year: int) -> set:
     rows = db.execute(
         "SELECT date FROM duty_special_days WHERE day_type='holiday' AND date LIKE ?",
+        (f"{year}%",)
+    ).fetchall()
+    return {r["date"] for r in rows}
+
+
+def get_makeup_dates(db: sqlite3.Connection, year: int) -> set:
+    """Ngày làm bù ĐÃ xác nhận trong năm — thường là thứ 7 / chủ nhật phải đi làm.
+
+    Chỉ lấy ngày đã xác nhận, giống cut-off và quyết toán: khai xong còn phải bấm
+    xác nhận ở tab Ngày đặc biệt thì mới sinh ca."""
+    rows = db.execute(
+        "SELECT date FROM duty_special_days "
+        "WHERE day_type='makeup' AND is_confirmed=1 AND date LIKE ?",
         (f"{year}%",)
     ).fetchall()
     return {r["date"] for r in rows}
@@ -339,7 +346,8 @@ def upsert_shift_config(db: sqlite3.Connection, year: int,
                         ld_count: Optional[int] = None,
                         qt_ld_count: Optional[int] = None,
                         qt_nv_chinh_count: Optional[int] = None,
-                        qt_nv_phu_count: Optional[int] = None) -> dict:
+                        qt_nv_phu_count: Optional[int] = None,
+                        signer_title: Optional[str] = None) -> dict:
     """Ghi cấu hình số người mỗi ca. Trường nào không truyền thì GIỮ NGUYÊN.
 
     Trước đây các tham số có giá trị mặc định và câu UPDATE ghi thẳng — client
@@ -347,24 +355,28 @@ def upsert_shift_config(db: sqlite3.Connection, year: int,
     """
     cot = {"ld_count": ld_count, "nv_count": nv_count, "qt_ld_count": qt_ld_count,
            "qt_nv_chinh_count": qt_nv_chinh_count, "qt_nv_phu_count": qt_nv_phu_count}
+    # Hai cột chuỗi để ngoài `cot`: nhánh INSERT lấy mặc định từ MAC_DINH_COT mà
+    # bảng đó chỉ chứa số người, không có chỗ cho chuỗi.
+    chu = {"signer_name": signer_name, "signer_title": signer_title}
 
     existing = db.execute(
         "SELECT * FROM duty_shift_config WHERE year=?", (year,)
     ).fetchone()
     if existing:
-        gan = ", ".join(f"{k}=COALESCE(?, {k})" for k in cot)
+        gan = ", ".join(f"{k}=COALESCE(?, {k})" for k in list(cot) + list(chu))
         db.execute(
-            f"UPDATE duty_shift_config SET {gan}, "
-            f"signer_name=COALESCE(?, signer_name) WHERE year=?",
-            (*cot.values(), signer_name, year)
+            f"UPDATE duty_shift_config SET {gan} WHERE year=?",
+            (*cot.values(), *chu.values(), year)
         )
     else:
         # Năm mới: trường không gửi lấy mặc định nghiệp vụ, không để NULL
         gia_tri = [v if v is not None else MAC_DINH_COT[k] for k, v in cot.items()]
+        ten_cot = ["year"] + list(cot) + list(chu)
+        # Sinh dấu ? theo số cột — đếm tay là thêm cột lần sau lại lệch
+        dau_hoi = ",".join("?" * len(ten_cot))
         db.execute(
-            f"INSERT INTO duty_shift_config (year, {', '.join(cot)}, signer_name) "
-            f"VALUES (?,?,?,?,?,?,?)",
-            (year, *gia_tri, signer_name)
+            f"INSERT INTO duty_shift_config ({', '.join(ten_cot)}) VALUES ({dau_hoi})",
+            (year, *gia_tri, *chu.values())
         )
     db.commit()
     row = db.execute("SELECT * FROM duty_shift_config WHERE year=?", (year,)).fetchone()

@@ -520,6 +520,11 @@ def _ensure_indexes():
         "ALTER TABLE duty_shift_config ADD COLUMN qt_nv_chinh_count INTEGER DEFAULT 3",
         "ALTER TABLE duty_shift_config ADD COLUMN qt_nv_phu_count INTEGER DEFAULT 2",
 
+        # ── 2026-08-13: chức danh người ký trên file lịch trực ─────────────────
+        # Chữ "GIÁM ĐỐC" trước đây nằm cứng trong hàm dựng file, đổi sang Phó Giám
+        # đốc là phải sửa code. Bản ghi cũ để NULL và rơi về mặc định lúc xuất.
+        "ALTER TABLE duty_shift_config ADD COLUMN signer_title VARCHAR(100)",
+
         # Một ca có thể có nhiều Lãnh đạo (nhất là ngày quyết toán) → leader_id đơn
         # lẻ không đủ. Cột leader_id giữ lại nhưng engine/API ngừng đọc.
         "ALTER TABLE duty_shifts ADD COLUMN leader_ids TEXT DEFAULT '[]'",
