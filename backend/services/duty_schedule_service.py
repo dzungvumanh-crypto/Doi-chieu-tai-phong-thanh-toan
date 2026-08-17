@@ -7,10 +7,13 @@ import sqlite3
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional
 
-from backend.services.duty_calendar_utils import get_week_dates
+from backend.services.duty_calendar_utils import week_span
 from backend.services.duty_staff_service import get_all_staff
 from backend.services.duty_rules import resolve_sp_role
-from backend.services.duty_scheduler_engine import _update_rotation
+from backend.services.duty_scheduler_engine import (
+    KENH_VONG_XOAY, dieu_chinh_vong_xoay, nv_cua_ca,
+    hoan_vong_xoay_cho_ca, hoan_vong_xoay_cho_ngay,
+)
 
 _VN_TZ = timezone(timedelta(hours=7))
 
@@ -88,11 +91,11 @@ def get_shifts_for_month(db: sqlite3.Connection, month: int, year: int,
 
 
 def get_shifts_for_week(db: sqlite3.Connection, start_date: str) -> List[dict]:
-    dates = get_week_dates(start_date)
-    placeholders = ",".join("?" * len(dates))
+    t2, cn = week_span(start_date)
     rows = db.execute(
-        f"SELECT * FROM duty_shifts WHERE shift_date IN ({placeholders}) ORDER BY shift_date, shift_type",
-        dates
+        "SELECT * FROM duty_shifts WHERE shift_date BETWEEN ? AND ? "
+        "ORDER BY shift_date, shift_type",
+        (t2, cn),
     ).fetchall()
     return [_enrich_shift(db, r) for r in rows]
 
@@ -110,41 +113,6 @@ def get_shift_by_id(db: sqlite3.Connection, shift_id: int) -> Optional[dict]:
 
 
 # ── WRITE ─────────────────────────────────────────────────────────────────────
-
-# Kênh vòng xoay theo loại ca — ca phụ quyết toán không tính vòng xoay
-_KENH_VONG_XOAY = {
-    "normal":          ("LD", "NV"),
-    "friday":          ("LD_friday", "NV_friday"),
-    "cutoff":          ("LD_cutoff", "NV_cutoff"),
-    "settlement_main": ("LD", "NV"),
-    "settlement_sub":  (None, None),
-}
-
-
-def _dieu_chinh_vong_xoay(db: sqlite3.Connection, year: int, role: Optional[str],
-                          cu: set, moi: set, date_str: str) -> None:
-    """Sửa tay đổi người thì số ca phải đi theo, nếu không lịch tự động lần sau
-    sẽ thiên vị sai. Trừ người bị gỡ, cộng người được thêm."""
-    if not role:
-        return
-    for sid in cu - moi:
-        db.execute(
-            "UPDATE duty_rotation_state SET shift_count = MAX(shift_count - 1, 0) "
-            "WHERE year=? AND role=? AND staff_id=?",
-            (year, role, sid),
-        )
-    for sid in moi - cu:
-        _update_rotation(db, sid, year, role, date_str)
-
-
-def _nv_cua_ca(row: dict) -> set:
-    """Toàn bộ nhân viên của một ca — gồm cả người giữ vai song phương và nhóm phụ."""
-    ids = set(json.loads(row.get("nv_ids") or "[]"))
-    ids |= set(json.loads(row.get("nv_phu_ids") or "[]"))
-    if row.get("sp_id"):
-        ids.add(row["sp_id"])
-    return ids
-
 
 def update_shift(db: sqlite3.Connection, shift_id: int,
                  leader_ids: Optional[List[int]] = None,
@@ -164,7 +132,7 @@ def update_shift(db: sqlite3.Connection, shift_id: int,
     cu = dict(row)
 
     ld_moi    = leader_ids   if leader_ids   is not None else json.loads(cu.get("leader_ids") or "[]")
-    chinh_moi = nv_chinh_ids if nv_chinh_ids is not None else list(_nv_cua_ca(cu) - set(json.loads(cu.get("nv_phu_ids") or "[]")))
+    chinh_moi = nv_chinh_ids if nv_chinh_ids is not None else list(nv_cua_ca(cu) - set(json.loads(cu.get("nv_phu_ids") or "[]")))
     phu_moi   = nv_phu_ids   if nv_phu_ids   is not None else json.loads(cu.get("nv_phu_ids") or "[]")
 
     # ── Xác định lại ai giữ vai song phương ──
@@ -187,14 +155,14 @@ def update_shift(db: sqlite3.Connection, shift_id: int,
 
     # ── Vòng xoay đi theo người, không đi theo vị trí ──
     year = int(cu["shift_date"][:4])
-    ld_role, nv_role = _KENH_VONG_XOAY.get(cu["shift_type"], (None, None))
-    _dieu_chinh_vong_xoay(
+    ld_role, nv_role = KENH_VONG_XOAY.get(cu["shift_type"], (None, None))
+    dieu_chinh_vong_xoay(
         db, year, ld_role,
         set(json.loads(cu.get("leader_ids") or "[]")), set(ld_moi), cu["shift_date"],
     )
-    _dieu_chinh_vong_xoay(
+    dieu_chinh_vong_xoay(
         db, year, nv_role,
-        _nv_cua_ca(cu), set(chinh_moi) | set(phu_moi), cu["shift_date"],
+        nv_cua_ca(cu), set(chinh_moi) | set(phu_moi), cu["shift_date"],
     )
 
     db.commit()
@@ -218,27 +186,37 @@ def unconfirm_shift(db: sqlite3.Connection, shift_id: int) -> Optional[dict]:
 
 
 def confirm_shifts_for_week(db: sqlite3.Connection, week_start_str: str) -> int:
-    dates = get_week_dates(week_start_str)
-    placeholders = ",".join("?" * len(dates))
+    t2, cn = week_span(week_start_str)
     cursor = db.execute(
-        f"UPDATE duty_shifts SET status='confirmed' WHERE shift_date IN ({placeholders}) AND status='draft'",
-        dates
+        "UPDATE duty_shifts SET status='confirmed' "
+        "WHERE shift_date BETWEEN ? AND ? AND status='draft'",
+        (t2, cn),
     )
     db.commit()
     return cursor.rowcount
 
 
 def delete_shifts_for_week(db: sqlite3.Connection, week_start_str: str) -> int:
-    dates = get_week_dates(week_start_str)
-    placeholders = ",".join("?" * len(dates))
+    t2, cn = week_span(week_start_str)
+    # Trả lại số ca đã cộng trước khi xoá, nếu không hệ thống vẫn nhớ những người
+    # này đã trực và sẽ đẩy họ xuống cuối hàng ở các tuần sau.
+    for row in db.execute(
+        "SELECT * FROM duty_shifts WHERE shift_date BETWEEN ? AND ?", (t2, cn)
+    ).fetchall():
+        hoan_vong_xoay_cho_ca(db, row)
+
     cursor = db.execute(
-        f"DELETE FROM duty_shifts WHERE shift_date IN ({placeholders})", dates
+        "DELETE FROM duty_shifts WHERE shift_date BETWEEN ? AND ?", (t2, cn)
     )
     db.commit()
     return cursor.rowcount
 
 
 def delete_shift(db: sqlite3.Connection, shift_id: int) -> bool:
+    row = db.execute("SELECT * FROM duty_shifts WHERE id=?", (shift_id,)).fetchone()
+    if not row:
+        return False
+    hoan_vong_xoay_cho_ca(db, row)
     cursor = db.execute("DELETE FROM duty_shifts WHERE id=?", (shift_id,))
     db.commit()
     return cursor.rowcount > 0

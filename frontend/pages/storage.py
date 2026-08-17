@@ -338,7 +338,7 @@ async def storage_page():
                                 "text-gray-500 text-center py-8 w-full"
                             )
                             return
-                        with ui.row().classes("w-full justify-end gap-2 mb-3"):
+                        with ui.row().classes("w-full justify-start gap-2 mb-3"):
                             ui.button("In danh sách (A4 ngang)", icon="print",
                                       on_click=lambda: _print_table(html_table)
                                       ).classes("bg-green-700 text-white px-4")
@@ -379,11 +379,16 @@ async def storage_page():
 
                         async def do_save():
                             # Đọc ô "Số chứng từ": ô có data-bid = tập cũ (0 = xoá),
-                            # ô trống được nhập = tập mới (new_sheets)
+                            # ô trống được nhập = tập mới (new_sheets).
+                            # Đọc ô "Ngày": days = toàn bộ ngày còn lại của dòng sau khi sửa.
                             result = await ui.run_javascript("""
                                 var rows = [];
                                 document.querySelectorAll('#sv-table tr[data-bids]').forEach(function(tr) {
-                                    var bundle_ids = [], bundle_sheets = [], new_sheets = [];
+                                    var bundle_ids = [], bundle_sheets = [], new_sheets = [], days = [];
+                                    tr.querySelectorAll('td[data-col="day"]').forEach(function(td) {
+                                        var d = parseInt(td.innerText.trim().replace(/[^0-9]/g,''), 10);
+                                        if (!isNaN(d) && d > 0) days.push(d);
+                                    });
                                     tr.querySelectorAll('td[data-col="sheet"]').forEach(function(td) {
                                         var v = parseInt(td.innerText.trim().replace(/[^0-9]/g,''), 10);
                                         if (isNaN(v)) v = 0;
@@ -393,7 +398,7 @@ async def storage_page():
                                     });
                                     if (bundle_ids.length || new_sheets.length)
                                         rows.push({bundle_ids: bundle_ids, bundle_sheets: bundle_sheets,
-                                                   new_sheets: new_sheets});
+                                                   new_sheets: new_sheets, days: days});
                                 });
                                 return rows;
                             """)
@@ -403,18 +408,23 @@ async def storage_page():
                             try:
                                 await asyncio.to_thread(api.patch, "/api/bundles/storage-view",
                                                         {"rows": result})
-                                ui.notify("Đã lưu thay đổi", type="positive")
                             except Exception as e:
-                                if _handle_api_error(e): return
-                            # Tải lại để Số tập + tổng cuối tự cập nhật theo
+                                # Lỗi (ngày không hợp lệ, hết phiên...) — giữ nguyên số đang nhập
+                                _handle_api_error(e)
+                                return
+                            ui.notify("Đã lưu thay đổi", type="positive")
+                            # Tải lại để Ngày + Số tập + tổng cuối tự cập nhật theo
                             await load_storage()
 
-                        with ui.row().classes("w-full justify-end gap-2 mb-3"):
+                        with ui.row().classes("w-full justify-start gap-2 mb-3"):
                             ui.button("Lưu thay đổi", icon="save",
                                       on_click=do_save).classes("bg-red-700 text-white px-4")
                             ui.button("In danh sách (A4 ngang)", icon="print",
                                       on_click=lambda: _print_table(html_table)
                                       ).classes("bg-green-700 text-white px-4")
+                            ui.label("Sửa trực tiếp trên bảng: ô Ngày và ô Số chứng từ "
+                                     "(số chứng từ = 0 để xoá tập)").classes(
+                                "text-xs text-gray-500 self-center ml-2")
 
                         with ui.card().classes("w-full shadow-sm rounded-xl bg-white p-4 overflow-x-auto"):
                             ui.html(html_table)

@@ -7,6 +7,7 @@ from nicegui import ui
 import frontend.api_client as api
 from frontend.shared import (
     _sidebar, _content_area, _page_header, _require_auth, _handle_api_error,
+    _o_chon_ngay_trong, _iso_tu_dmy,
 )
 
 _TYPE_ROW_COLOR = {
@@ -27,15 +28,17 @@ _SPECIAL_COLOR = {
 _TH = "px-3 py-2 text-left font-medium border border-red-700 bg-red-800 text-white text-sm"
 _TD = "px-3 py-2 border border-gray-200 text-sm"
 
-_THU_VN = ["Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu"]
+_THU_VN = ["Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu",
+           "Thứ Bảy", "Chủ Nhật"]
 
 
 def _week_start(d: date) -> date:
     return d - timedelta(days=d.weekday())
 
 
-def _fmt_week_label(ws: date) -> str:
-    we = ws + timedelta(days=4)
+def _fmt_week_label(ws: date, so_ngay: int = 5) -> str:
+    """Nhãn tuần chạy tới ngày làm việc cuối cùng — tuần có ngày bù thì dài hơn 5."""
+    we = ws + timedelta(days=so_ngay - 1)
     return f"Tuần {ws:%d/%m} – {we:%d/%m/%Y}"
 
 
@@ -44,24 +47,68 @@ def _h(s) -> str:
     return _html.escape(str(s or ""))
 
 
-def _ten_kem_sp(p: dict, la_sp: bool, kieu: str = "thuong") -> str:
+def _ten_hien_thi(p: dict, kieu: str = "thuong") -> str:
     """
-    Tên người trực; đánh dấu (SP) cho người xử lý song phương của ca.
+    Tên người trực trong bảng lịch.
 
     kieu='chinh' → IN HOA, đậm — người trực chính ngày quyết toán
     kieu='phu'   → nghiêng, nhỏ hơn — người trực phụ, về sớm hơn
     kieu='thuong'→ chữ thường, ca không chia chính/phụ
 
-    Nhãn (SP) chỉ phục vụ giai đoạn đang phân lịch — gỡ khi chốt chương trình.
+    Nhãn (SP) đã gỡ khi chốt chương trình (Business Owner chốt): nó chỉ phục vụ
+    giai đoạn đang phân lịch. Hai dòng cảnh báo thiếu/dư người song phương thì
+    giữ — đó là thông tin nghiệp vụ, không phải nhãn trang trí.
     """
     ten = (p or {}).get("full_name", "")
     if kieu == "chinh":
-        the = f'<span class="font-bold">{_h(ten.upper())}</span>'
-    elif kieu == "phu":
-        the = f'<span class="italic text-gray-600 text-xs">{_h(ten)}</span>'
-    else:
-        the = _h(ten)
-    return f'{the} <span class="text-blue-700 font-medium">(SP)</span>' if la_sp else the
+        return f'<span class="font-bold">{_h(ten.upper())}</span>'
+    if kieu == "phu":
+        return f'<span class="italic text-gray-600 text-xs">{_h(ten)}</span>'
+    return _h(ten)
+
+
+def _tach_ngay_dac_biet(items: list) -> tuple:
+    """
+    Tách danh sách ngày đặc biệt thành (ngày bù, ngày lễ).
+
+    Ngày bù chỉ tính khi ĐÃ xác nhận — giống luật bên engine, vì khai mà chưa xác
+    nhận thì hôm đó không sinh ca, dựng thêm hàng trống chỉ gây hiểu nhầm.
+    Ngày lễ thì lấy hết: engine loại ngày lễ khỏi lịch bất kể đã xác nhận hay chưa
+    (get_holiday_dates không lọc is_confirmed), nên bảng phải ghi lý do y như vậy.
+
+    Trả (set ngày bù, dict {ngày lễ: nhãn}).
+    """
+    ngay_bu, ngay_le = set(), {}
+    for d in (items or []):
+        loai = d.get("day_type")
+        if loai == "makeup" and d.get("is_confirmed"):
+            ngay_bu.add(d["date"])
+        elif loai == "holiday":
+            ngay_le[d["date"]] = (d.get("label") or "").strip()
+    return ngay_bu, ngay_le
+
+
+def _gom_canh_bao(warnings: list) -> str:
+    """
+    Gộp cảnh báo sinh lịch thành một dòng đọc được.
+
+    Backend trả list dict {date, type, msg}. Trước đây frontend vứt hết, nên ngày
+    không lập được ca vì thiếu người trông giống hệt ngày nghỉ lễ — cùng là hàng
+    trống. Ưu tiên đưa 'khong_du_nguoi' lên đầu vì đó là lịch bị hổng thật.
+    """
+    if not warnings:
+        return ""
+    nang = [w for w in warnings if w.get("type") == "khong_du_nguoi"]
+    con_lai = [w for w in warnings if w.get("type") != "khong_du_nguoi"]
+    dong = [w.get("msg", "") for w in (nang + con_lai) if w.get("msg")]
+    return " · ".join(dong)
+
+
+def _nhan_nghi_le(label: str = "") -> str:
+    """Nhãn hiển thị cho hàng nghỉ lễ, kèm tên ngày lễ nếu có khai."""
+    ten = (label or "").strip()
+    chu = f"Nghỉ lễ: {_h(ten)}" if ten else "Nghỉ lễ"
+    return f'<span class="text-gray-500 italic">{chu}</span>'
 
 
 def _nhan_trang_thai(shifts: list) -> str:
@@ -132,7 +179,7 @@ async def duty_schedule_page():
                     ws = ws_ref["value"]
                     week_label.set_content(_fmt_week_label(ws))
                     schedule_area.clear()
-                    shifts, staff_list, absences, cfg = await asyncio.gather(
+                    shifts, staff_list, absences, cfg, ngay_dac_biet = await asyncio.gather(
                         asyncio.to_thread(api.get, "/api/duty/schedule/week",
                                           {"week_start": ws.isoformat()}),
                         asyncio.to_thread(api.get, "/api/duty/staff"),
@@ -140,6 +187,11 @@ async def duty_schedule_page():
                                           {"month": ws.month, "year": ws.year}),
                         asyncio.to_thread(api.get,
                                           f"/api/duty/constraints/shift-config/{ws.year}"),
+                        # Lấy MỌI loại ngày đặc biệt trong một lượt rồi phân loại ở
+                        # đây: cần ngày bù để dựng hàng T7/CN, và ngày lễ để hàng
+                        # nghỉ ghi rõ lý do thay vì để trống
+                        asyncio.to_thread(api.get, "/api/duty/constraints/special-days",
+                                          {"year": ws.year}),
                         return_exceptions=True,
                     )
                     # Chỉ bảng lịch là bắt buộc. Danh sách nhân sự / vắng mặt hỏng thì
@@ -158,17 +210,34 @@ async def duty_schedule_page():
                         absences = []
                     if isinstance(cfg, Exception) or not cfg:
                         cfg = {}   # rơi về mặc định 1 Lãnh đạo + 2 nhân viên
+                    if isinstance(ngay_dac_biet, Exception):
+                        ui.notify("Không tải được danh sách ngày đặc biệt — bảng có thể "
+                                  "thiếu hàng thứ 7 / chủ nhật và không ghi rõ ngày nghỉ lễ.",
+                                  type="warning")
+                        ngay_dac_biet = []
 
                     nhan_su_ref["list"] = staff_list
                     nhan_su_ref["vang_mat"] = {(a["staff_id"], a["absence_date"]) for a in absences}
                     nhan_su_ref["cfg"] = cfg
 
-                    week_label.set_content(_fmt_week_label(ws) + _nhan_trang_thai(shifts))
-
-                    # Gom ca theo ngày — bảng luôn dựng đủ 5 hàng T2→T6
+                    # Gom ca theo ngày
                     theo_ngay: dict = {}
                     for s in shifts:
                         theo_ngay.setdefault(s["shift_date"], []).append(s)
+
+                    ngay_bu, ngay_le = _tach_ngay_dac_biet(ngay_dac_biet)
+
+                    # Bảng luôn có 5 hàng T2→T6, thêm hàng T7/CN khi hôm đó được khai
+                    # làm bù HOẶC đã có ca — điều kiện thứ hai để ca đã sinh không
+                    # biến mất khỏi màn hình nếu bản ghi ngày bù bị xoá sau đó
+                    so_ngay = 5
+                    for i in (5, 6):
+                        ds = (ws + timedelta(days=i)).isoformat()
+                        if ds in ngay_bu or ds in theo_ngay:
+                            so_ngay = i + 1
+
+                    week_label.set_content(_fmt_week_label(ws, so_ngay)
+                                           + _nhan_trang_thai(shifts))
 
                     with schedule_area:
                         with ui.column().classes("w-full gap-0 border border-gray-200 rounded overflow-hidden"):
@@ -181,18 +250,24 @@ async def duty_schedule_page():
                                 ui.label("Lãnh đạo").classes("flex-1 min-w-[130px]")
                                 ui.label("Tình trạng").classes("w-36 shrink-0")
 
-                            # ── 5 hàng T2 → T6 ──
-                            for i in range(5):
+                            # ── T2 → T6, kèm T7/CN nếu là ngày làm bù ──
+                            for i in range(so_ngay):
                                 ds = (ws + timedelta(days=i)).isoformat()
-                                _dung_hang(i, ds, theo_ngay.get(ds, []))
+                                _dung_hang(i, ds, theo_ngay.get(ds, []),
+                                           ngay_le.get(ds))
 
                         if not shifts:
                             ui.label("Chưa có lịch trực tuần này. Nhấn 'Tạo lịch' để sinh tự động.").classes(
                                 "text-gray-500 italic py-2"
                             )
 
-                def _dung_hang(i: int, ds: str, ca_ngay: list) -> None:
-                    """Một hàng = một ngày. Ngày quyết toán có 2 ca thì gộp người vào cùng hàng."""
+                def _dung_hang(i: int, ds: str, ca_ngay: list,
+                               nhan_le: str = None) -> None:
+                    """Một hàng = một ngày. Ngày quyết toán có 2 ca thì gộp người vào cùng hàng.
+
+                    `nhan_le` khác None nghĩa là hôm đó nghỉ lễ — phải ghi rõ, vì ô
+                    trống trơn không phân biệt được với ngày KHÔNG lập được ca do
+                    thiếu người, hai chuyện khác hẳn nhau."""
                     bg = _TYPE_ROW_COLOR.get(ca_ngay[0]["shift_type"], "#FFFFFF") if ca_ngay else "#FFFFFF"
 
                     nguoi_chinh, nguoi_phu, nguoi_ld, canh_bao = [], [], [], []
@@ -203,19 +278,15 @@ async def duty_schedule_page():
                     for s in ca_ngay:
                         warn = s.get("sp_warning") or ""
                         sp   = s.get("sp")
-                        # sp=None kèm cảnh báo SP nghĩa là Lãnh đạo giữ vai song phương
-                        ld_giu_sp = sp is None and warn in ("leader_sp", "multi_sp")
 
+                        # Người giữ vai song phương vẫn đứng đầu nhóm trực chính,
+                        # chỉ không còn nhãn (SP) đi kèm
                         for p in ([sp] if sp else []) + (s.get("nvs") or []):
-                            nguoi_chinh.append(
-                                _ten_kem_sp(p, bool(sp) and p["id"] == sp["id"], kieu_chinh))
+                            nguoi_chinh.append(_ten_hien_thi(p, kieu_chinh))
                         for p in (s.get("nv_phu") or []):
-                            nguoi_phu.append(_ten_kem_sp(p, False, "phu"))
-
-                        # Nhiều lãnh đạo thì chỉ đánh dấu (SP) đúng người biết song phương
-                        biet_sp = {q["id"] for q in nhan_su_ref["list"] if q.get("can_do_sp")}
+                            nguoi_phu.append(_ten_hien_thi(p, "phu"))
                         for p in (s.get("leaders") or []):
-                            nguoi_ld.append(_ten_kem_sp(p, ld_giu_sp and p["id"] in biet_sp))
+                            nguoi_ld.append(_ten_hien_thi(p))
 
                         if warn == "no_sp_chinh":
                             canh_bao.append("Lãnh đạo và nhóm trực chính không có ai xử lý song phương")
@@ -228,6 +299,15 @@ async def duty_schedule_page():
                     o2 = nguoi_chinh[1:] + nguoi_phu[1:]
                     nv1 = "<br>".join(o1) or "—"
                     nv2 = "<br>".join(o2) or "—"
+
+                    if nhan_le is not None:
+                        if ca_ngay:
+                            # Ngày lễ mà vẫn có ca là bất thường — giữ nguyên tên
+                            # người, chỉ thêm dòng cảnh báo để nhìn ra ngay
+                            canh_bao.append("Ngày này đã khai nghỉ lễ nhưng vẫn có ca trực")
+                        else:
+                            nv1 = _nhan_nghi_le(nhan_le)
+                            nv2 = ""
 
                     with ui.column().classes("w-full gap-0"):
                         with ui.row().classes("w-full items-center px-2 py-2 border-t "
@@ -394,6 +474,13 @@ async def duty_schedule_page():
                                     f"Tạo {result['created']} ca, bỏ qua {result['skipped']}",
                                     type="positive"
                                 )
+                                # Backend báo rõ ngày nào không lập được ca và thiếu
+                                # ai. Bỏ đi thì ngày hổng vì thiếu người trông y hệt
+                                # ngày nghỉ lễ — đều là hàng trống, không ai biết.
+                                loi_nhac = _gom_canh_bao(result.get("warnings"))
+                                if loi_nhac:
+                                    ui.notify(loi_nhac, type="warning",
+                                              multi_line=True, timeout=8000)
                                 await load_schedule()
                             except Exception as e:
                                 _handle_api_error(e)
@@ -578,22 +665,17 @@ async def duty_schedule_page():
                                         options=staff_opts,
                                         with_input=True,
                                     ).classes("w-48")
-                                    ab_from = ui.input(
-                                        label="Từ ngày (YYYY-MM-DD)",
-                                        placeholder=today_ab.isoformat(),
-                                    ).classes("w-40")
-                                    ab_to = ui.input(
-                                        label="Đến ngày (để trống = 1 ngày)",
-                                        placeholder=today_ab.isoformat(),
-                                    ).classes("w-40")
+                                    ab_from = _o_chon_ngay_trong("Từ ngày")
+                                    ab_to   = _o_chon_ngay_trong("Đến ngày (trống = 1 ngày)")
 
                                     async def do_add_absence():
                                         if not sel_staff.value or not ab_from.value:
-                                            ui.notify("Chọn nhân viên và nhập ngày bắt đầu", type="warning")
+                                            ui.notify("Chọn nhân viên và chọn ngày bắt đầu", type="warning")
                                             return
                                         try:
-                                            from_d = ab_from.value.strip()
-                                            to_d   = (ab_to.value.strip() or from_d)
+                                            # Ô có `clearable` nên value có thể là None
+                                            from_d = _iso_tu_dmy(ab_from.value or "")
+                                            to_d   = _iso_tu_dmy(ab_to.value or "") or from_d
                                             if from_d == to_d:
                                                 await asyncio.to_thread(
                                                     api.post, "/api/duty/constraints/absences",
@@ -815,7 +897,7 @@ async def duty_schedule_page():
                             ui.separator().classes("my-3")
                             ui.label("Thêm ngày đặc biệt").classes("text-sm font-semibold text-gray-700 mb-2")
                             with ui.row().classes("items-end gap-2 flex-wrap"):
-                                new_date = ui.input(label="Ngày (YYYY-MM-DD)", placeholder="2026-01-01").classes("w-40")
+                                new_date = _o_chon_ngay_trong("Ngày")
                                 new_type = ui.select(
                                     label="Loại",
                                     options={"holiday": "Nghỉ lễ", "cutoff": "Cut-off",
@@ -826,12 +908,13 @@ async def duty_schedule_page():
 
                                 async def do_add_special():
                                     if not new_date.value:
-                                        ui.notify("Nhập ngày trước", type="warning")
+                                        ui.notify("Chọn ngày trước", type="warning")
                                         return
                                     try:
                                         await asyncio.to_thread(
                                             api.post, "/api/duty/constraints/special-days",
-                                            {"date": new_date.value, "day_type": new_type.value,
+                                            {"date": _iso_tu_dmy(new_date.value or ""),
+                                             "day_type": new_type.value,
                                              "label": new_label.value or None}
                                         )
                                         new_date.value = ""
@@ -908,7 +991,10 @@ async def duty_schedule_page():
                              "Nhân viên trực phụ về sớm hơn trực chính.").classes(
                         "text-xs text-gray-500 mt-2 mb-3")
 
-                    signer_inp = ui.input(label="Tên người ký Excel").classes("w-64")
+                    with ui.row().classes("items-end gap-2 flex-wrap"):
+                        signer_inp = ui.input(label="Tên người ký Excel").classes("w-64")
+                        title_inp  = ui.input(label="Chức danh người ký",
+                                              placeholder="GIÁM ĐỐC").classes("w-48")
 
                     async def load_cfg():
                         yr = int(yr_cfg.value or today_yr3)
@@ -923,6 +1009,7 @@ async def duty_schedule_page():
                             qt_phu_inp.value   = (cfg.get("qt_nv_phu_count")
                                                   if cfg.get("qt_nv_phu_count") is not None else 2)
                             signer_inp.value   = cfg.get("signer_name") or ""
+                            title_inp.value    = cfg.get("signer_title") or ""
                         except Exception as ex:
                             # Năm chưa khai báo không còn là lỗi (backend trả mặc
                             # định), nên tới đây là hỏng thật — phải hiện ra, nhất
@@ -942,7 +1029,8 @@ async def duty_schedule_page():
                                      "qt_ld_count":       int(qt_ld_inp.value or 1),
                                      "qt_nv_chinh_count": int(qt_chinh_inp.value or 3),
                                      "qt_nv_phu_count":   int(qt_phu_inp.value or 0),
-                                     "signer_name":       signer_inp.value or None}
+                                     "signer_name":       signer_inp.value or None,
+                                     "signer_title":      title_inp.value or None}
                                 )
                                 ui.notify("Đã lưu cài đặt. Lịch tạo mới sẽ theo số người này.",
                                           type="positive")

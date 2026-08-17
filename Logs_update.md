@@ -4,6 +4,83 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 17/08/2026 Phân lịch trực - **Sửa lỗi đếm số ca, cho thứ 7/CN đi làm, file Excel bám mẫu của phòng**:
+    + ⚠️ **Sửa lỗi nặng: tạo lại lịch làm số ca phình lên.** Trước đây bấm *Tạo lịch* xem thử rồi tạo lại lần nữa thì hệ thống vẫn nhớ cả hai lần — tạo lại 3 lần cho một tuần là nó tưởng mọi người đã trực 45 ca trong khi thật ra chỉ 15. Xoá lịch cũng không trả lại. Vì **chia đều số ca là tiêu chí chính** nên ai bị cộng oan sẽ bị đẩy xuống cuối hàng ở mọi tuần sau, mà lịch vẫn *trông hợp lệ* nên không ai nhìn ra. **Nay xoá hoặc tạo lại đều trả số ca về đúng.** Số ca đang lệch sẵn từ trước thì dùng nút *Reset vòng xoay* ở tab Cài đặt để đưa về mốc sạch
+    + **Sửa cảnh báo báo nhầm**: ngày quyết toán nào có người **trực phụ** biết song phương cũng bị báo *"dư người song phương"*, dù nhóm trực chính vẫn đúng một người. Người trực phụ về sớm nên không giữ vai này — nay không tính nữa
+    + **Thứ 7 / chủ nhật đi làm thì khai "Ngày bù"**: tab *Ngày đặc biệt* → chọn ngày → loại **Ngày bù** → nhớ bấm **Xác nhận** (khai xong mà chưa xác nhận thì không sinh ca). Hôm đó sẽ có ca như ngày thường, hiện thêm hàng T7/CN trên bảng tuần, lên file Excel, đăng ký nguyện vọng được, và được tính khi dò 2 ngày cut-off cuối tháng
+    + **Ba ô nhập ngày đổi thành ô chọn lịch** (Từ ngày / Đến ngày ở khai vắng mặt, và ô thêm ngày đặc biệt) — không phải gõ tay `YYYY-MM-DD` nữa, bấm biểu tượng lịch mà chọn, hiện theo dd/mm/yyyy
+    + **File Excel làm lại theo đúng tờ giấy phòng đang dùng**: 5 cột thay vì 8, bỏ hết màu nền (in đen trắng cho rõ), cỡ chữ 24/18/16, mỗi ngày đúng một hàng, bảng căn giữa tờ giấy. Ngày quyết toán để **trực chính IN HOA đậm**, trực phụ chữ nghiêng nhỏ hơn ngay bên dưới trong cùng ô. Ngày nghỉ lễ ghi rõ *"(Nghỉ lễ: ...)"*
+    + **Chức danh người ký khai được** ở tab Cài đặt (ô *Chức danh người ký*, cạnh ô tên) — đổi sang Phó Giám đốc không phải sửa phần mềm nữa. Để trống thì vẫn in "GIÁM ĐỐC"
+    + **Màn hình hết nuốt cảnh báo**: trước đây tạo lịch xong chỉ báo *"Tạo N ca"*, ngày nào không lập được ca vì thiếu người trông y hệt ngày nghỉ lễ — đều là hàng trống. Nay hiện rõ thiếu ai, và hàng nghỉ lễ ghi lý do thay cho dấu "—"
+    + ⚠️ **Ba chỗ còn hở, chưa sửa trong đợt này** (đều nằm trong menu Phân lịch trực, không lan sang tính năng khác):
+        + **Cut-off / quyết toán rơi đúng vào thứ 7 làm bù thì ngày đó không sinh ca** — nhãn "Ngày bù" bị nhãn "Cut-off" ghi đè lên, hệ thống mất dấu là hôm đó có đi làm. Gặp trường hợp này thì xếp tay ca cho ngày đó
+        + **Tuần vắt qua giao thừa (28/12 → 03/01)**: xoá lịch không trả hết số ca cho những ngày thuộc năm mới
+        + Ngày vừa có ca đã xác nhận vừa có ca bản thảo, tạo lại lịch thì ca bị bỏ qua vẫn bị cộng số ca
+    + Không đụng tới bất kỳ menu nào khác. Toàn bộ 429 test của hệ thống chạy đạt
+
+- 14/08/2026 Nghỉ phép - **Ký đơn ngay trên bản in, phiếu tải về đổi sang PDF**:
+    + **Tải lên ảnh chữ ký của mình trước đã**: vào tên mình ở góc trái → *Quản lý người dùng* → khung **Ảnh chữ ký**. Ảnh phải là **PNG nền trong suốt** (nền trắng sẽ che mất chữ trên đơn), tối đa 2 MB. Mỗi người tự tải ảnh của mình, không ai xem hay đặt hộ được
+    + **Lúc gửi đơn**: bấm *Gửi đơn* → hiện ra **tờ đơn thật, đúng như lúc in** (không phải bản mô phỏng) với chữ ký của bạn đặt sẵn dưới ô *NGƯỜI ĐỀ NGHỊ*. **Kéo để đổi chỗ, kéo 4 góc để phóng to/thu nhỏ**, ưng rồi bấm *Ký và gửi đơn*
+    + **Lúc phê duyệt** (Trưởng/Phó phòng và Ban lãnh đạo): y hệt như vậy — thấy cả chữ ký người trước đã ký, đặt chữ ký của mình vào ô của mình rồi bấm *Ký và phê duyệt*
+    + ⚠️ **Lần mở popup đầu tiên của mỗi đơn chờ khoảng 5–7 giây** — đó là lúc Word dựng bản in. Các lần sau của cùng đơn đó gần như tức thì. Sửa người duyệt hay số ngày nghỉ thì dựng lại từ đầu
+    + **Nút *Tải phiếu* nay ra file PDF** thay vì Word, chữ ký đã nằm sẵn trên đó. Máy chủ trục trặc không tạo được PDF thì hệ thống **tự tải bản Word không chữ ký** kèm thông báo, không để ai kẹt lại
+    + **Chưa tải ảnh chữ ký vẫn dùng bình thường** — popup báo chưa có ảnh, gửi/duyệt vẫn xong, chỉ là ô ký để trống như trước nay vẫn thế
+    + **Đổi hoặc xoá ảnh chữ ký cá nhân KHÔNG làm đổi các đơn đã ký** — mỗi đơn giữ bản sao ảnh tại đúng thời điểm ký. Nộp lại đơn bị từ chối thì chữ ký của người duyệt cũ bị xoá (tờ đơn đã khác ngày, khác số ngày phép)
+    + ⚠️ **Chưa ký được ở hai chỗ**: *duyệt hàng loạt* (chọn nhiều đơn duyệt một lượt — không thể đặt chữ ký cho từng tờ) và *bước Tổng hợp* (ô "XÁC NHẬN CỦA P. TỔNG HỢP" trên mẫu không có dòng tên người ký). Cần ký thì mở từng đơn ra duyệt
+    + ⚠️ **Máy chính phải có Microsoft Word** và phải chạy lại `deploy.bat`/`start.bat` để cài 2 thư viện mới. Chưa cài thì popup báo lỗi và lui về bản Word
+    + ⚠️ **Phần kéo–thả bằng chuột chưa được thử trên máy thật** — phần dựng file và đặt chữ ký đã chạy đúng đầu-cuối, nhưng thao tác kéo trên màn hình cần người dùng xác nhận giúp. Có gì lệch báo lại ngay
+
+- 14/08/2026 Tra cứu lưu trữ - **Sửa được cả cột Ngày ngay trên bảng**:
+    + Trước đây chỉ sửa được cột *Số chứng từ*; ngày ghi sai thì phải sửa từ khâu bàn giao. Nay **gõ thẳng vào ô Ngày** trên bảng rồi bấm *Lưu thay đổi*
+    + **Sửa ngày ở đây KHÔNG đụng tới số liệu bàn giao gốc của phòng nguồn** — chỉ đổi ngày ghi trên bìa tập. Báo cáo khối lượng bàn giao giữ nguyên
+    + ⚠️ **Mỗi dòng phải còn ít nhất một ngày.** Xoá sạch ngày của một dòng thì hệ thống báo lỗi và **giữ nguyên số đang nhập** để sửa lại — nếu cho lưu, tập đó sẽ biến mất khỏi bảng trong khi vẫn nằm trong dữ liệu
+    + Hai nút *Lưu thay đổi* / *In danh sách* chuyển sang **bên trái** bảng, kèm dòng nhắc cách sửa
+
+- 14/08/2026 Cài đặt - **Sửa lỗi cài thư viện báo nhầm thành "lỗi mạng"**:
+    + **Triệu chứng**: chạy `start.bat`/`deploy.bat` báo *"kiem tra ket noi internet"* trong khi mạng hoàn toàn bình thường
+    + **Nguyên nhân**: một dòng ghi chú **có dấu tiếng Việt** trong `requirements.txt`. Công cụ cài thư viện đọc file này theo bảng mã Windows, gặp chữ có dấu là chết ngay **trước khi** kịp gọi ra mạng — nên thông báo lỗi chỉ đoán mò
+    + Nay hai file `.bat` **nói đúng nguyên nhân**, và có **chốt chặn tự động** không cho lọt chữ có dấu vào `requirements.txt` nữa
+
+- 14/08/2026 Đối chiếu CITAD - **Khoá nhập tay 5 Cổng và PaymentHub**, thêm nguồn quét Napas/PSS-MDP:
+    + ⚠️ **5 bảng Cổng CITAD và bảng PaymentHub từ nay KHÔNG gõ tay được nữa** — chỉ nạp bằng nút *Nạp CITAD* / *Nạp PaymentHub* qua Extension. Mục đích: không để sửa tay số liệu trên bản đang chấm
+    + ⚠️ **Hệ quả cần biết trước: không còn cách nhập dự phòng cho hai bảng này.** Hôm nào Extension đọc sai hoặc không chạy thì phải xử lý ở Extension chứ không gõ đè lên được. Gặp trường hợp đó, báo ngay để xử lý trong ngày thay vì cố chấm tiếp
+    + **Bảng Napas / PSS-MDP vẫn sửa tay bình thường** — không nằm trong diện khoá
+    + **Tab *Lịch sử* chuyển thành chỉ xem** — mở một bản đã chấm ra xem thì không sửa hay lưu đè được. Bấm *Quay lại chỉnh sửa* để thoát chế độ xem và nhập mới cho hôm nay
+    + **Thêm cách lấy Napas/PSS-MDP thứ hai**: quét thẳng từ trang CITAD *Kiểm soát yêu cầu quyết toán lô đến* (Cổng 1), song song cách cũ qua PaymentHub. Dùng nguồn nào cũng được, không xung đột
+    + **Ô nhập Ebanking đã bỏ khỏi màn hình** — số liệu Ebanking của các ngày đã lưu trước đây **vẫn giữ nguyên**, vẫn xuất ra Excel đầy đủ, chỉ là không nhập mới được nữa
+    + Giao diện: bảng chênh lệch đưa lên đầu trang, tách riêng hai khung *LỆNH ĐI* / *LỆNH ĐẾN*, ô đã có số liệu đậm nền hồng cho dễ nhìn, và một số chỉnh về viền/khoảng cách
+    + ⚠️ **Phải tải lại `.zip` và cài lại Extension (bản 2.17)** — vào `/doi_chieu_citad` → **Tải Extension**, giải nén, *Load unpacked* lại. Không cài lại thì nút *Nạp CITAD* không lấy được Napas/PSS-MDP từ nguồn mới
+
+- 14/08/2026 Đối chiếu ACH - **Sửa nút "Chạy đối chiếu" bấm vào là báo lỗi đỏ, không chạy được**:
+    + **Triệu chứng**: chọn đủ bộ file, phần kiểm tra file báo xanh hết, nhưng bấm *Chạy đối chiếu* thì hiện thông báo đỏ và không có gì xảy ra. Giống gọi vào một số điện thoại in sẵn trên tờ rơi mà tổng đài chưa bao giờ đấu nối — mọi khâu trước đó vẫn bình thường vì chúng chạy xong **trước** cú gọi
+    + **Nguyên nhân**: phần giao diện gọi tới một chức năng gửi file mà bên trong hệ thống **chưa bao giờ được viết ra**. Đây không phải lỗi mới phát sinh: tính năng chọn file từ máy rồi bấm Chạy **chưa từng chạy được** kể từ khi module ACH được viết lại
+    + **Vì sao không ai phát hiện sớm hơn**: toàn bộ bài kiểm tra tự động của module ACH đều gọi thẳng vào phần lõi, **không đi qua đúng khâu bị hỏng**. Càng nhiều bài kiểm tra xanh càng dễ tưởng là an toàn
+    + Nay đã nối đúng khâu đó, và **nới thời gian chờ lên 10 phút** riêng cho lần gửi này vì bộ file ACH một ngày có thể tới hàng trăm MB — các màn hình khác giữ nguyên 1 phút như cũ, không đổi gì
+    + Thêm **chốt chặn tự động** quét toàn bộ giao diện, bắt buộc mọi lời gọi tới phần lõi phải trỏ đúng chức năng có thật. Cùng loại lỗi này ở **bất kỳ màn hình nào** sẽ bị chặn ngay lúc lập trình, không đợi tới lúc người dùng bấm nút. Đã chạy lại toàn bộ **359 test**
+    + Sửa luôn một câu **sai trong README**: tài liệu ghi bộ file được "ghi thẳng ra đĩa, không giữ trong RAM", thực tế **cả frontend lẫn backend đều giữ trọn bộ trong RAM** rồi mới ghi ra đĩa. Không đổi code, chỉ ghi lại cho đúng để người vận hành liệu RAM máy chính
+    + ⚠️ **Còn tồn**: các bước SAU khi bấm Chạy (theo dõi tiến độ → dừng chờ xác nhận MIS_đi → tải file xác nhận → nộp lại → tải kết quả) **chưa một lần được chạy thật từ giao diện**, vì trước đây không ai tới được đó. Cần chạy thử trọn một phiên trước khi dùng chính thức
+
+- 13/08/2026 Đối chiếu CITAD - Extension **bản 2.15**: nhiều tab tự nhận mã mới, bớt rác Nhật ký:
+    + **Mở sẵn nhiều tab CITAD rồi mới tạo mã kết nối — nay chạy được.** Trước đây tab nào mở TRƯỚC lúc bấm *Tạo mã kết nối mới* sẽ kẹt với mã cũ, phải tự F5 từng tab. Nay mọi tab đang mở tự nhận mã mới ngay, không phải làm gì
+    + ⚠️ **Dùng tab ẩn danh thì phải bật quyền trước — Chrome mặc định TẮT.** Vào `chrome://extensions` → Chi tiết → bật **"Cho phép ở chế độ ẩn danh"**. Chưa bật thì Extension **không chạy chút nào** trong tab ẩn danh: không lưu được, cũng không báo lỗi gì, nhìn y như Extension hỏng
+    + Thông báo lỗi khi lưu thất bại nay **nói đúng lý do** (chưa cấu hình / mã bị thu hồi / lỗi mạng) thay vì luôn hiện *"Không kết nối server ()"* chung chung
+    + **Nhật ký hệ thống bớt rác**: mỗi lần Extension gửi số liệu thành công không còn ghi một dòng nhật ký nữa — thao tác này lặp hàng trăm lần mỗi ca, làm trôi mất các dòng nhật ký có ý nghĩa của những phần khác. Việc **lưu bản đối chiếu vẫn được ghi đầy đủ** như cũ, và lần gửi **thất bại** (mã sai/bị thu hồi) vẫn ghi — đó mới là thứ cần theo dõi
+    + ⚠️ **Phải tải lại `.zip` và cài lại Extension** — vào `/doi_chieu_citad` → **Tải Extension**, giải nén, *Load unpacked* lại
+
+- 13/08/2026 Giao diện - Ô chọn file: **bấm vào cả dải màu là mở được**, hết cảnh phải nhắm đúng dấu `+`:
+    + **Trước đây**: ô chọn file có một dải màu rộng, nhưng chỉ đúng **dấu `+` bé xíu ở góc phải** là bấm được. Bấm vào phần còn lại — chiếm hơn 90% diện tích và trông y hệt một cái nút — thì không có gì xảy ra. Giống cánh cửa kính lớn mà chỉ có mỗi ô nhỏ ở mép là đẩy được
+    + **Nay**: bấm chỗ nào trên dải màu cũng mở hộp thoại chọn file. Con trỏ chuột cũng đổi thành hình bàn tay khi rê qua, để nhìn là biết bấm được
+    + Áp dụng **một lần cho toàn bộ hệ thống** — tất cả ô chọn file ở 11 màn hình (ACH, CITAD, Song phương, 459901, SWIFT, Lưu trữ, Báo cáo, Nhân sự, Nghỉ phép, Chi nhánh TTQT…) đều được, kể cả màn hình thêm mới sau này
+    + Các nút sẵn có trên dải màu (dấu `+`, nút tải lên, nút xoá danh sách) **giữ nguyên** cách dùng cũ. Không đổi quyền, không đụng dữ liệu. Đã chạy lại toàn bộ **361 test**
+    + ⚠️ Lần đầu vào sau khi cập nhật, nếu vẫn thấy như cũ thì bấm **Ctrl+F5** — trình duyệt đang giữ bản giao diện cũ trong bộ nhớ đệm
+
+- 13/08/2026 Nhật ký hệ thống - Đổi tên nút cho dễ hiểu, hết cảnh **bấm nút tưởng làm mới hoá ra lại lọc mất log**:
+    + **Người dùng thật báo**: "ấn *Cập nhật* thì tự ẩn một số log". Thực ra **không log nào bị ẩn hay bị xoá** — nút *Cập nhật* là **nút lọc**, nghĩa là "chỉ cho tôi xem những thao tác sửa dữ liệu". Bấm vào thì mọi dòng thêm mới / xoá đều tạm ẩn đi, nhìn như danh sách bị mất bớt. Bấm *Tất cả* là hiện lại đủ
+    + Nguyên nhân là cách đặt tên: nút làm mới trang lúc đó **chỉ có ký hiệu mũi tên tròn `↻`, không có chữ**, trong khi nút lọc lại mang đúng cái tên người ta quen hiểu là "tải lại"
+    + Nay đổi lại cho khỏi nhầm: **`Cập nhật` → `Sửa`**, **`Ghi/Thêm` → `Thêm mới`**, **`↻` → `Làm mới`** (có chữ, giống hệt màn *Lịch sử lỗi & cảnh báo* — trước đây hai màn cùng chức năng lại ghi hai kiểu). Thêm chữ **"Lọc:"** đứng trước nhóm nút lọc và chú thích hiện ra khi rê chuột vào từng nút
+    + **Chỉ đổi chữ trên nút.** Không đổi quyền, không đụng dữ liệu, không đổi file Excel xuất ra. Đã chạy lại toàn bộ **357 test**
+    + ⚠️ **Còn tồn**: bộ lọc *Sửa* hiện vẫn bỏ sót một nhóm thao tác sửa — **huỷ đơn nghỉ phép, sửa ngày vào làm, sửa số ngày phép đã dùng, ngừng uỷ quyền, sửa chi nhánh TTQT, sửa lượt xem kho**. Sáu việc này **chỉ hiện khi chọn *Tất cả***, lọc kiểu nào cũng không thấy. Đợt này chỉ đổi tên nút nên chưa động vào; sẽ xử lý riêng
+
 - 13/08/2026 Rà soát kỹ thuật - Sửa lệch múi giờ khi dọn nhật ký, gọn lại danh sách thư viện:
     + **Nhật ký cũ bị giữ lâu hơn hạn đúng 7 tiếng**: hệ thống ghi thời điểm vào nhật ký theo **giờ Việt Nam**, nhưng lúc dọn nhật ký quá hạn lại đem so với **giờ quốc tế** (chậm hơn 7 tiếng) — như hai cái đồng hồ lệch nhau. Không mất dữ liệu, không sai số liệu, chỉ là nhật ký đăng nhập (hạn 30 ngày) và nhật ký thao tác (hạn 365 ngày) sống dai hơn hạn 7 tiếng rồi mới bị xoá. Nay cả hai dùng chung một đồng hồ
     + Đã soi và **cố ý giữ nguyên** phần phiên đăng nhập với phần khoá tài khoản khi nhập sai mật khẩu: hai chỗ đó tuy cũng chạy theo giờ quốc tế nhưng ghi và so **cùng một loại giờ** nên không lệch. Sửa ẩu cho "đồng bộ" sẽ khiến mọi phiên đang đăng nhập được gia hạn thêm 7 tiếng và mọi tài khoản đang bị khoá được mở sớm 7 tiếng

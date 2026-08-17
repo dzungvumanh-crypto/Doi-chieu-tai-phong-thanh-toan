@@ -559,14 +559,18 @@ async def cham_ach_page():
 
                 try:
                     _append_log('Đang upload file...')
+                    # /api/ach/start nhận `list[UploadFile]` → mọi file phải là part
+                    # CÙNG tên field 'files' ⇒ dùng dạng list, không dùng dict.
                     res = await asyncio.to_thread(
-                        api.post_multipart,
+                        api.post_upload,
                         '/api/ach/start',
-                        files=[(name, data) for name, data in state['files'].items()],
+                        files=[('files', (name, data, 'application/octet-stream'))
+                               for name, data in state['files'].items()],
                         data={
                             'ngay_doi_chieu': ngay or '',
                             'bo_qua_checkpoint': str(state['bo_qua_checkpoint']).lower(),
                         },
+                        timeout=600.0,   # bộ file ACH có thể tới hàng trăm MB
                     )
                 except Exception as e:
                     spinner.set_visibility(False)

@@ -64,19 +64,55 @@ def _handover_filter(current: dict) -> tuple[str, list] | None:
 
 def _so_truc_filter(current: dict) -> tuple[str, list]:
     """Sổ trực cuối ngày đang chờ CHÍNH người này thao tác — không theo role
-    (bất kỳ ai cũng có thể là 1 trong 2 GDV hoặc là KSV được chọn của 1 ngày,
-    xem NotAllowedError trong so_truc_service.py): đang chờ GDV còn lại đồng
-    ý xác nhận (mình là 1 trong 2 GDV, không phải người vừa khởi tạo), HOẶC
-    đang chờ đúng mình (KSV) xác nhận/từ chối."""
+    (bất kỳ ai cũng có thể là KSV được chọn của 1 ngày, xem NotAllowedError
+    trong so_truc_service.py). 3 nhánh:
+    - KSV được chọn: đang chờ mình xác nhận/từ chối (như cũ).
+    - GDV còn lại (locked vào gdv1_id/gdv2_id nhưng KHÔNG phải người vừa bấm
+      "Chuyển KSV xác nhận" — initiated_by khác mình): nhắc phiên đã chuyển
+      KSV, vào xem/bấm "Xác nhận phiên trực" cho biết đã xem.
+    - KSV VỪA từ chối (để sửa HAY để huỷ — cả 2 đều chỉ ĐỀ NGHỊ, không tự
+      đóng phiên, xem docstring ksv_cancel() trong so_truc_service.py nên
+      CẢ 2 đều quay về 'draft', không còn nhánh 'cancelled' do KSV gây ra
+      nữa) — status='draft' VÀ có reject_reason (phân biệt với 1 draft
+      trống chưa ai đụng vào, lúc đó reject_reason luôn NULL): báo CẢ 2 GDV
+      (không loại trừ initiated_by như nhánh trên — quyết định của KSV là
+      tin mới cho cả 2, kể cả người đã từng đẩy duyệt). GDV tự huỷ
+      (draft_cancel) chuyển thẳng 'cancelled' không qua reject_reason+
+      ksv_decided_by nên không rơi vào nhánh này — tự huỷ thì không cần tự
+      báo cho chính mình.
+    - GDV VỪA "Yêu cầu chỉnh sửa" 1 phiên đã "Hoàn thành" (request_edit(),
+      nhánh GDV, xem so_truc_service.py) — status='draft' + reject_reason
+      + gdv_decided_by có giá trị NHƯNG ksv_decided_by=NULL (tổ hợp CHỈ
+      nhánh này tạo ra — phân biệt với nhánh KSV từ chối ở trên, nhánh đó
+      luôn có ksv_decided_by). Chỉ báo GDV CÒN LẠI (loại trừ gdv_decided_by
+      — chính người vừa bấm), KHÔNG báo KSV ở bước này vì KSV chỉ cần biết
+      khi được forward lại (rơi vào nhánh 1 lúc đó).
+    CẢ 3 nhánh GDV đều THUẦN THÔNG BÁO — gdv_ack() không chặn gì (xem
+    docstring so_truc_service.py) — tự hết khi đã bấm "Xác nhận phiên trực"
+    (confirmed_by = mình), không nhắc lại nữa. ksv_reject()/ksv_cancel()/
+    request_edit() đều tự reset confirmed_by về NULL khi đổi trạng thái, nên
+    dấu tick cũ (cho 1 sự kiện trước đó) không bị hiểu nhầm là đã xem quyết
+    định MỚI này."""
     my_id = current["id"]
     cond = (
-        "r.status != 'cancelled' AND ("
-        "(r.status='pending_gdv_confirm' AND (r.gdv1_id=? OR r.gdv2_id=?)"
-        " AND (r.initiated_by IS NULL OR r.initiated_by != ?))"
-        " OR (r.status='pending_ksv' AND r.ksv_id=?)"
+        "("
+        "r.status='pending_ksv' AND r.ksv_id=?"
+        ") OR ("
+        "r.status='pending_ksv' AND (r.gdv1_id=? OR r.gdv2_id=?) AND r.initiated_by != ? "
+        "AND (r.confirmed_by IS NULL OR r.confirmed_by != ?)"
+        ") OR ("
+        "r.status='draft' AND r.reject_reason IS NOT NULL "
+        "AND r.ksv_decided_by IS NOT NULL AND (r.gdv1_id=? OR r.gdv2_id=?) "
+        "AND (r.confirmed_by IS NULL OR r.confirmed_by != ?)"
+        ") OR ("
+        "r.status='draft' AND r.reject_reason IS NOT NULL "
+        "AND r.gdv_decided_by IS NOT NULL AND r.ksv_decided_by IS NULL "
+        "AND (r.gdv1_id=? OR r.gdv2_id=?) AND r.gdv_decided_by != ? "
+        "AND (r.confirmed_by IS NULL OR r.confirmed_by != ?)"
         ")"
     )
-    return (cond, [my_id, my_id, my_id, my_id])
+    return (cond, [my_id, my_id, my_id, my_id, my_id, my_id, my_id, my_id,
+                    my_id, my_id, my_id, my_id])
 
 
 @router.get("/pending-counts")

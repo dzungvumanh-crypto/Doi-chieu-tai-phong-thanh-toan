@@ -75,8 +75,17 @@ chuyển sang hiện mã kèm nút sao chép — làm theo:
 4. Bấm **Lưu cấu hình** — trình duyệt sẽ hỏi xác nhận quyền truy cập đúng
    domain SERVER, bấm **Cho phép**
 
-Không cần Reload extension sau khi lưu (dù tự động hay dán tay) — content
-script tự đọc cấu hình mới ở lần tải trang CITAD/PaymentHub tiếp theo.
+Không cần Reload extension, cũng không cần tải lại các tab CITAD/PaymentHub
+đang mở — mọi tab tự nhận cấu hình mới ngay lập tức (kể cả các tab đã mở
+TRƯỚC khi lưu cấu hình), tiện cho trường hợp mở sẵn nhiều tab ẩn danh đăng
+nhập nhiều cổng rồi mới bấm "Tạo mã kết nối mới".
+
+> **Dùng tab ẩn danh thì phải bật quyền trước — Chrome mặc định TẮT.**
+> Vào `chrome://extensions` → tìm extension này → **Chi tiết** → bật
+> **"Cho phép ở chế độ ẩn danh"**. Chưa bật thì extension **không chạy chút
+> nào** trong tab ẩn danh: không lưu được số liệu, không có toast báo lỗi,
+> nhìn y hệt như extension hỏng. Bật rồi thì cấu hình dùng chung với tab
+> thường (extension chạy ở chế độ *spanning*, không tách riêng bộ nhớ).
 
 ## ⚠️ Vì sao bắt buộc HTTPS khi dùng thật
 

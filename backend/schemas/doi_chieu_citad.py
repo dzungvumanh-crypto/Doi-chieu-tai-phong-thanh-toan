@@ -50,7 +50,14 @@ class SessionIn(BaseModel):
 class CitadBufferIn(BaseModel):
     """Payload Extension gửi khi tự động lưu số liệu CITAD. Không còn field
     `owner` — chủ buffer được suy ra từ token hợp lệ (header
-    `X-Extension-Token`), không phải do client tự khai."""
+    `X-Extension-Token`), không phải do client tự khai.
+
+    `source`: None cho item CITAD 5-cổng bình thường (cong/loai/chieu/tien
+    dùng đúng nghĩa gốc). "napas"/"pssmdp" khi quét được từ trang CITAD
+    "Kiểm soát yêu cầu quyết toán lô đến" (KHÁC nguồn Napas/PSS-MDP đã có từ
+    PaymentHub — `PaymentHubBufferIn`/`source` riêng, không dùng chung) — lúc
+    đó cong/loai/chieu/tien chỉ điền cho đủ field bắt buộc, frontend
+    (`load_citad_buffer`) đọc `source` trước, bỏ qua 4 field kia."""
     key: str
     cong: str
     loai: str
@@ -61,6 +68,7 @@ class CitadBufferIn(BaseModel):
     fMon: str = ""
     fTien: str = ""
     ts: str = ""
+    source: Optional[str] = None
 
 
 class PaymentHubBufferIn(BaseModel):

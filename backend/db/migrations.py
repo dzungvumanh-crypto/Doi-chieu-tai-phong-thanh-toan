@@ -247,12 +247,27 @@ def _create_tables(db_path: str):
         )""",
         # Sổ trực cuối ngày Phòng Thanh toán — KHÔNG tách bảng lịch sử riêng
         # như doi_chieu_citad, bảng này tự thân là lịch sử. `truc_date` KHÔNG
-        # unique (khác bản đầu): "từ chối để sửa" ghi đè lên cùng 1 dòng như
-        # cũ, nhưng "từ chối để huỷ" (status='cancelled') là NGÕ CỤT — dòng đó
-        # đóng vĩnh viễn, phải tạo dòng MỚI (phiên trực khác) cho đúng ngày đó
-        # nên 1 ngày có thể có NHIỀU dòng. get_active_by_date() trong service
-        # luôn lấy dòng chưa 'cancelled' MỚI NHẤT làm phiên đang làm việc.
-        # Luồng: draft -> pending_gdv_confirm -> pending_ksv -> approved | draft (từ chối sửa) | cancelled (từ chối huỷ, ngõ cụt).
+        # unique (khác bản đầu): KSV "từ chối" (để sửa HAY để huỷ, cả 2 đều
+        # chỉ ĐỀ NGHỊ) ghi đè lên cùng 1 dòng như cũ (quay về draft), nhưng
+        # GDV tự bấm "Huỷ phiên trực" (draft_cancel, status='cancelled') mới
+        # là NGÕ CỤT thật — dòng đó đóng vĩnh viễn, phải tạo dòng MỚI (phiên
+        # trực khác) cho đúng ngày đó nên 1 ngày có thể có NHIỀU dòng.
+        # get_active_by_date() trong service luôn lấy dòng chưa 'cancelled'
+        # MỚI NHẤT làm phiên đang làm việc.
+        # `ksv_decision` ('reject_fix' | 'reject_cancel' | 'self_edit' | NULL):
+        # phân biệt KSV vừa từ chối để SỬA hay để HUỶ, hay đang TỰ chỉnh sửa
+        # lại 1 phiên đã "Hoàn thành" (request_edit(), nhánh KSV) —
+        # status='draft' giống hệt các trường hợp nên không suy ra được từ
+        # status. GDV cần biết để: (1) banner hiện đúng chữ "để sửa"/"để huỷ"/
+        # "tự chỉnh sửa", (2) nếu 'reject_cancel' thì KHOÁ hẳn form sửa, chỉ
+        # còn nút "Huỷ phiên trực". Reset về NULL khi forward_to_ksv()/
+        # ksv_finalize_edit() thành công. `gdv_decided_by`/`gdv_decided_at`
+        # dùng lại cho CẢ 2 việc: ai đã tự huỷ phiên (draft_cancel) VÀ GDV nào
+        # vừa "Yêu cầu chỉnh sửa" 1 phiên đã Hoàn thành (request_edit(), nhánh
+        # GDV) — phân biệt bằng status (cancelled vs draft).
+        # Luồng: draft -> pending_ksv -> approved -> draft (GDV/KSV yêu cầu
+        # chỉnh sửa lại) | draft (KSV từ chối — sửa hoặc huỷ) | cancelled
+        # (CHỈ GDV tự huỷ, ngõ cụt).
         """CREATE TABLE IF NOT EXISTS so_truc_records (
             id                INTEGER PRIMARY KEY AUTOINCREMENT,
             truc_date         TEXT    NOT NULL,
@@ -270,6 +285,10 @@ def _create_tables(db_path: str):
             ksv_decided_by    INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
             ksv_decided_at    DATETIME,
             reject_reason     TEXT,
+            ksv_decision      TEXT,
+            gdv_decided_by    INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+            gdv_decided_at    DATETIME,
+            truc_phu_ids      TEXT    DEFAULT '[]',
             created_at        DATETIME NOT NULL,
             updated_at        DATETIME NOT NULL
         )""",
@@ -548,6 +567,11 @@ def _ensure_indexes():
         "ALTER TABLE duty_shift_config ADD COLUMN qt_nv_chinh_count INTEGER DEFAULT 3",
         "ALTER TABLE duty_shift_config ADD COLUMN qt_nv_phu_count INTEGER DEFAULT 2",
 
+        # ── 2026-08-13: chức danh người ký trên file lịch trực ─────────────────
+        # Chữ "GIÁM ĐỐC" trước đây nằm cứng trong hàm dựng file, đổi sang Phó Giám
+        # đốc là phải sửa code. Bản ghi cũ để NULL và rơi về mặc định lúc xuất.
+        "ALTER TABLE duty_shift_config ADD COLUMN signer_title VARCHAR(100)",
+
         # Một ca có thể có nhiều Lãnh đạo (nhất là ngày quyết toán) → leader_id đơn
         # lẻ không đủ. Cột leader_id giữ lại nhưng engine/API ngừng đọc.
         "ALTER TABLE duty_shifts ADD COLUMN leader_ids TEXT DEFAULT '[]'",
@@ -670,12 +694,35 @@ def _ensure_indexes():
         # động"; ghi hẳn 0 để danh sách user không còn dòng làm hỏng response.
         "UPDATE user_tttt SET is_active = 0 WHERE is_active IS NULL",
 
-        # ── Sổ trực cuối ngày — khoá quyền sửa theo đúng 2 GDV — 2026-08-13 ────
-        # gdv1_id/gdv2_id là nguồn sự thật để kiểm tra quyền sửa (chỉ đúng 2
-        # người này mới sửa tiếp được) — cột gdv1_name/gdv2_name TEXT cũ không
-        # xoá (SQLite ADD COLUMN only) nhưng không còn dùng để đọc/ghi.
-        "ALTER TABLE so_truc_records ADD COLUMN gdv1_id INTEGER REFERENCES user_tttt(id)",
-        "ALTER TABLE so_truc_records ADD COLUMN gdv2_id INTEGER REFERENCES user_tttt(id)",
+        # ── Ảnh chữ ký cá nhân — 2026-08-14 ───────────────────────────────────
+        # Bảng riêng, KHÔNG thêm cột BLOB vào user_tttt: get_current_staff()
+        # dùng `SELECT *` nên mỗi request sẽ đọc cả ảnh vào bộ nhớ.
+        """CREATE TABLE IF NOT EXISTS user_signatures (
+            staff_id   INTEGER PRIMARY KEY REFERENCES user_tttt(id) ON DELETE CASCADE,
+            filename   TEXT,
+            image      BLOB NOT NULL,
+            updated_at DATETIME
+        )""",
+
+        # ── Chữ ký đã đặt trên đơn nghỉ phép — 2026-08-14 ─────────────────────
+        # Toạ độ tính bằng mm từ góc TRÊN-TRÁI trang (hệ của trình duyệt), lật trục
+        # y khi dán vào PDF. `image` là BẢN SAO ảnh chữ ký lúc ký, không phải khoá
+        # ngoại sang user_signatures: người ký đổi/xoá ảnh cá nhân về sau thì đơn
+        # đã ký vẫn phải giữ nguyên đúng thứ họ đã ký.
+        """CREATE TABLE IF NOT EXISTS leave_signatures (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            leave_id   INTEGER NOT NULL REFERENCES leave_records(id) ON DELETE CASCADE,
+            slot       TEXT    NOT NULL,
+            staff_id   INTEGER,
+            page       INTEGER NOT NULL DEFAULT 0,
+            x_mm       REAL    NOT NULL,
+            y_mm       REAL    NOT NULL,
+            w_mm       REAL    NOT NULL,
+            h_mm       REAL    NOT NULL,
+            image      BLOB    NOT NULL,
+            signed_at  DATETIME
+        )""",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_leave_sig_slot ON leave_signatures(leave_id, slot)",
     ]
     _mig_log = logging.getLogger(__name__)
 
@@ -897,72 +944,6 @@ def _ensure_indexes():
                     _cur_dc.execute("PRAGMA foreign_keys = ON")
     finally:
         _raw_dc.close()
-
-    # ── Rebuild so_truc_records: bỏ UNIQUE(truc_date) — "từ chối để huỷ" cần
-    # cho phép nhiều dòng/ngày (dòng cũ 'cancelled' đóng vĩnh viễn, phải tạo
-    # dòng mới cho cùng ngày) — xem comment ở _create_tables() phía trên.
-    _raw_st = sqlite3.connect(DB_PATH)
-    _raw_st.isolation_level = None
-    try:
-        _cur_st = _raw_st.cursor()
-        _cur_st.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='so_truc_records'")
-        if _cur_st.fetchone():
-            _cur_st.execute("PRAGMA index_list(so_truc_records)")
-            _st_uniq = any(r[2] and r[3] == 'u' for r in _cur_st.fetchall())
-            if _st_uniq:
-                _mig_log4 = logging.getLogger(__name__)
-                _mig_log4.info("Rebuilding so_truc_records (bỏ UNIQUE(truc_date))...")
-                _cur_st.execute("PRAGMA foreign_keys = OFF")
-                _cur_st.execute("PRAGMA legacy_alter_table = ON")
-                _cur_st.execute("BEGIN EXCLUSIVE")
-                try:
-                    _cur_st.execute(
-                        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='_so_truc_records_bak'"
-                    )
-                    if _cur_st.fetchone():
-                        _cur_st.execute("DROP TABLE _so_truc_records_bak")
-                    _cur_st.execute("ALTER TABLE so_truc_records RENAME TO _so_truc_records_bak")
-                    _cur_st.execute("""
-                        CREATE TABLE so_truc_records (
-                            id                INTEGER PRIMARY KEY AUTOINCREMENT,
-                            truc_date         TEXT    NOT NULL,
-                            gdv1_name         TEXT    DEFAULT '',
-                            gdv2_name         TEXT    DEFAULT '',
-                            gdv1_id           INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
-                            gdv2_id           INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
-                            ghi_chu           TEXT    DEFAULT '',
-                            status            TEXT    NOT NULL DEFAULT 'draft',
-                            initiated_by      INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
-                            initiated_at      DATETIME,
-                            ksv_id            INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
-                            confirmed_by      INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
-                            confirmed_at      DATETIME,
-                            ksv_decided_by    INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
-                            ksv_decided_at    DATETIME,
-                            reject_reason     TEXT,
-                            created_at        DATETIME NOT NULL,
-                            updated_at        DATETIME NOT NULL
-                        )
-                    """)
-                    _cur_st.execute("""
-                        INSERT INTO so_truc_records
-                        SELECT id, truc_date, gdv1_name, gdv2_name, gdv1_id, gdv2_id, ghi_chu, status,
-                               initiated_by, initiated_at, ksv_id, confirmed_by, confirmed_at,
-                               ksv_decided_by, ksv_decided_at, reject_reason, created_at, updated_at
-                        FROM _so_truc_records_bak
-                    """)
-                    _cur_st.execute("DROP TABLE _so_truc_records_bak")
-                    _cur_st.execute("COMMIT")
-                    _mig_log4.info("so_truc_records rebuild hoàn tất")
-                except Exception as _st_err:
-                    _cur_st.execute("ROLLBACK")
-                    logging.getLogger(__name__).error("so_truc_records rebuild thất bại: %s", _st_err)
-                    raise
-                finally:
-                    _cur_st.execute("PRAGMA legacy_alter_table = OFF")
-                    _cur_st.execute("PRAGMA foreign_keys = ON")
-    finally:
-        _raw_st.close()
 
     index_stmts = [
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_entry_staff_date ON document_entries(handover_id, staff_id, transaction_date)",

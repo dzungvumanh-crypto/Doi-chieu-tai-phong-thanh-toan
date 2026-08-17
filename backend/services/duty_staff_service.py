@@ -57,20 +57,20 @@ def get_available_pool(db: sqlite3.Connection, date_str: str) -> dict:
     """
     Pool nhân viên khả dụng ngày date_str.
     Loại: đang đi dự án (is_on_project=1) và có khai báo vắng mặt.
-    Trả: {'LD': [...], 'SP': [...], 'NV': [...]} — mỗi phần tử là dict nhân viên.
+    Trả: {'LD': [...], 'NV': [...]} — mỗi phần tử là dict nhân viên.
+
+    Không còn nhóm 'SP' riêng: vai song phương nay suy từ cờ can_do_sp của từng
+    người ngay lúc chọn tổ hợp, không bốc sẵn từ một pool tách rời.
     """
     absent_ids = get_absent_staff_ids(db, date_str)
     rows = db.execute(_STAFF_SQL).fetchall()
 
-    pool: dict = {"LD": [], "SP": [], "NV": []}
+    pool: dict = {"LD": [], "NV": []}
     for row in rows:
         p = dict(row)
         if p["is_on_project"] or p["id"] in absent_ids:
             continue
         pool[p["duty_role"]].append(p)
-
-    # SP pool = NV có can_do_sp=1
-    pool["SP"] = [p for p in pool["NV"] if p["can_do_sp"]]
     return pool
 
 
@@ -81,7 +81,7 @@ def upsert_staff_meta(
     is_on_project: Optional[int] = None,
     display_order: Optional[int] = None,
 ) -> dict:
-    """INSERT OR REPLACE duty_staff_meta, chỉ cập nhật fields được truyền vào."""
+    """Tạo mới hoặc cập nhật duty_staff_meta, chỉ đụng field được truyền vào."""
     now = datetime.now(_VN_TZ).replace(tzinfo=None)
 
     # Đọc giá trị hiện tại

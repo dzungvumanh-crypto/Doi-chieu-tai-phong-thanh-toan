@@ -25,10 +25,18 @@ _KINDS = {
                   "menu.so_truc"),
 }
 
-# so_truc.status → (nhãn, màu badge) — khớp _STATUS_LABEL trong frontend/pages/so_truc.py
+# so_truc.status → (nhãn, màu badge) — khớp _STATUS_LABEL trong frontend/pages/so_truc.py.
+# "draft" ở đây xuất hiện khi _so_truc_filter() trả về 1 trong 2 nhánh "draft +
+# reject_reason" (KSV vừa từ chối/đề nghị huỷ, HOẶC GDV vừa "Yêu cầu chỉnh sửa"
+# 1 phiên đã Hoàn thành) — không phải 1 draft trống thường, nên nhãn khác với
+# _STATUS_LABEL bên so_truc.py. Dùng chung 1 nhãn trung lập cho cả 2 tình huống
+# (chi tiết ai/vì sao đã có sẵn trong banner đỏ khi vào đúng trang /so_truc).
+# Không có "cancelled": ksv_reject()/ksv_cancel() giờ đều chỉ ĐỀ NGHỊ (quay về
+# draft), GDV mới là người thật sự đóng phiên (draft_cancel) — lúc đó không
+# cần tự báo cho chính người vừa bấm huỷ.
 _SO_TRUC_STATUS = {
-    "pending_gdv_confirm": ("Chờ GDV xác nhận", "amber-8"),
-    "pending_ksv":          ("Chờ KSV duyệt", "blue-7"),
+    "pending_ksv": ("Chờ KSV duyệt", "blue-7"),
+    "draft": ("Cần xử lý lại", "amber-7"),
 }
 
 # Viền ngang đặt trên HÀNG, không trên từng ô: ui.row() mặc định có gap 1rem
@@ -94,7 +102,7 @@ def _render_row(kind: str, it: dict):
                 f"{_TD} flex-1 min-w-0 text-xs text-gray-500 max-w-[16rem] truncate"
             )
         with ui.element("div").classes(f"{_TD} shrink-0 {_ACT_W} flex items-center"):
-            ui.button("Tới nơi xử lý", icon="open_in_new",
+            ui.button("Chuyển đến trang", icon="open_in_new",
                       on_click=lambda i=it: _goto(kind, i)
                       ).props("dense no-caps").classes("bg-red-700 text-white text-xs px-3")
 

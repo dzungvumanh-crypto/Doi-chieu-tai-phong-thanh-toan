@@ -832,6 +832,90 @@ def _delete_bundle(db: sqlite3.Connection, bundle_id: int):
     db.execute("DELETE FROM bundles WHERE id = ?", (bundle_id,))
 
 
+def _group_year_month(db: sqlite3.Connection, group_id: int) -> Tuple[int, int]:
+    """Tháng/năm của nhóm tập, đọc từ notes 'Tháng MM/YYYY' — không tin tham số client."""
+    g = db.execute("SELECT notes FROM bundle_groups WHERE id = ?", (group_id,)).fetchone()
+    try:
+        mm, yyyy = (g["notes"] or "").split(" ")[1].split("/")
+        return int(yyyy), int(mm)
+    except (TypeError, IndexError, ValueError):
+        raise HTTPException(400, "Không xác định được tháng của nhóm tập, không thể sửa ngày")
+
+
+def _row_dates(days: list, year: int, month: int) -> list:
+    """Ngày người dùng nhập (1–31) → list date đã sắp xếp, bỏ trùng."""
+    out = set()
+    for d in days:
+        try:
+            out.add(date_type(year, month, int(d)))
+        except (TypeError, ValueError):
+            raise HTTPException(400, f"Ngày {d} không hợp lệ trong tháng {month:02d}/{year}")
+    if not out:
+        raise HTTPException(400, "Mỗi dòng phải có ít nhất một ngày")
+    return sorted(out)
+
+
+def _bundle_units_raw(db: sqlite3.Connection, bundle_id: int, cover_units) -> list:
+    """Unit của tập dạng dict (date là object) — ưu tiên cover_units, fallback qua items."""
+    if cover_units:
+        try:
+            return [
+                {"user_code": u.get("user_code") or "", "full_name": u.get("full_name") or "",
+                 "date": date_type.fromisoformat(u["date"]),
+                 "sheet_count": u.get("sheet_count") or 0, "is_large": u.get("is_large", False)}
+                for u in json.loads(cover_units)
+            ]
+        except Exception:
+            _log.warning("bundle %s: cover_units JSON lỗi, dựng lại unit từ items", bundle_id)
+    rows = db.execute(
+        "SELECT de.transaction_date, de.sheet_count, ks.ipcas_code, ks.full_name "
+        "FROM bundle_items bi JOIN document_entries de ON bi.entry_id = de.id "
+        "LEFT JOIN user_tttt ks ON de.staff_id = ks.id WHERE bi.bundle_id = ?",
+        (bundle_id,),
+    ).fetchall()
+    return [
+        {"user_code": r["ipcas_code"] or "", "full_name": r["full_name"] or "",
+         "date": date_type.fromisoformat(r["transaction_date"]),
+         "sheet_count": r["sheet_count"] or 0, "is_large": False}
+        for r in rows
+    ]
+
+
+def _dump_units(units: list) -> str:
+    return json.dumps(
+        [{"user_code": u["user_code"], "full_name": u["full_name"], "date": u["date"].isoformat(),
+          "sheet_count": u["sheet_count"], "is_large": u["is_large"]} for u in units],
+        ensure_ascii=False,
+    )
+
+
+def _rewrite_bundle_dates(db: sqlite3.Connection, bundle_id: int, new_dates: list):
+    """Đổi ngày của tập bằng cách ghi lại cover_units — KHÔNG sửa document_entries."""
+    b = db.execute("SELECT id, total_sheets, cover_units FROM bundles WHERE id = ?", (bundle_id,)).fetchone()
+    if not b:
+        return
+    units = _bundle_units_raw(db, bundle_id, b["cover_units"])
+    old_dates = sorted({u["date"] for u in units})
+    if old_dates == new_dates:
+        return
+
+    if units:
+        # Ánh xạ theo vị trí: ngày cũ thứ i → ngày mới thứ i; ngày cũ dư dồn vào ngày mới cuối
+        remap = {d: new_dates[min(i, len(new_dates) - 1)] for i, d in enumerate(old_dates)}
+        units = [{**u, "date": remap[u["date"]]} for u in units]
+    else:
+        units = [{"user_code": "", "full_name": "", "date": new_dates[0],
+                  "sheet_count": b["total_sheets"], "is_large": False}]
+
+    # Ngày mới chưa có unit nào → thêm unit rỗng, nếu không ngày đó biến mất khỏi bảng
+    covered = {u["date"] for u in units}
+    units += [{"user_code": "", "full_name": "", "date": d, "sheet_count": 0, "is_large": False}
+              for d in new_dates if d not in covered]
+    units.sort(key=lambda u: u["date"])
+
+    db.execute("UPDATE bundles SET cover_units=? WHERE id=?", (_dump_units(units), bundle_id))
+
+
 @router.patch("/storage-view")
 def update_storage_view(
     req: StorageViewUpdateRequest,
@@ -850,10 +934,21 @@ def update_storage_view(
         if group_id is not None:
             touched_groups.add(group_id)
 
+        # ── Sửa ngày: ghi trước khi thêm tập mới để tập mới nhận ngày mới ──
+        new_dates = None
+        if row.days is not None and group_id is not None:
+            year, month = _group_year_month(db, group_id)
+            new_dates = _row_dates(row.days, year, month)
+            for i, bundle_id in enumerate(row.bundle_ids):
+                # Tập sắp bị xoá (số chứng từ = 0) thì không cần đổi ngày
+                if i < len(row.bundle_sheets) and row.bundle_sheets[i] <= 0:
+                    continue
+                _rewrite_bundle_dates(db, bundle_id, new_dates)
+
         # ── Thêm tập mới cho các ô trống được nhập (dùng ngày của dòng) ──
         adds = [s for s in row.new_sheets if s and s > 0]
         if adds and anchor_id and group_id is not None:
-            dates = _bundle_dates(db, anchor_id)
+            dates = new_dates or _bundle_dates(db, anchor_id)
             seq = (db.execute(
                 "SELECT COALESCE(MAX(sequence), 0) FROM bundles WHERE group_id = ?", (group_id,)
             ).fetchone()[0])

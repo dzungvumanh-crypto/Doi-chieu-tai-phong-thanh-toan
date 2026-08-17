@@ -20,9 +20,13 @@ _SKIP_PREFIXES = (
     "/api/staff",   # tạo/sửa/xóa/import User → write_audit ngữ nghĩa
     # Đối chiếu CITAD (Extension) — 2 endpoint này xác thực bằng header
     # X-Extension-Token, không phải JWT, nên _actor_id() ở dưới luôn trả
-    # None cho chúng dù backend tra được đúng người từ token. Đã tự ghi
-    # audit đúng actor_id trong _resolve_extension_owner()
-    # (backend/api/doi_chieu_citad.py) — bỏ qua ở đây để tránh ghi trùng.
+    # None cho chúng dù backend tra được đúng người từ token.
+    # _resolve_extension_owner() (backend/api/doi_chieu_citad.py) tự ghi audit
+    # với actor_id đúng — nhưng CHỈ cho lượt THẤT BẠI (token sai/bị thu hồi).
+    # Lượt THÀNH CÔNG cố ý không ghi ở đâu cả: đây là 2 endpoint tần suất cao
+    # nhất hệ thống, ghi mỗi lượt sẽ làm trôi mất dòng audit của mọi module
+    # khác (audit_logs dùng chung, dọn theo hạn lưu). Vết của việc lưu thật
+    # nằm ở POST /session — đường đó KHÔNG bị bỏ qua, vẫn ghi bình thường.
     "/api/doi-chieu-citad/citad-buffer",
     "/api/doi-chieu-citad/paymenthub-buffer",
 )

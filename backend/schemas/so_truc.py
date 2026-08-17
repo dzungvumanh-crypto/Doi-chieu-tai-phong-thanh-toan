@@ -1,6 +1,6 @@
 """Schemas Sổ trực cuối ngày — Phòng Thanh toán.
 
-Luồng: draft -> pending_gdv_confirm -> pending_ksv -> approved | rejected.
+Luồng: draft -> pending_ksv -> approved | draft (KSV từ chối) | cancelled (GDV tự huỷ).
 Xem docstring đầy đủ ở backend/services/so_truc_service.py.
 """
 from __future__ import annotations
@@ -14,6 +14,7 @@ class SaveDraftIn(BaseModel):
     gdv1_id: Optional[int] = None
     gdv2_id: Optional[int] = None
     ghi_chu: str = ""
+    truc_phu_ids: list[int] = []
 
 
 class ForwardKsvIn(BaseModel):
@@ -21,6 +22,7 @@ class ForwardKsvIn(BaseModel):
     gdv2_id: Optional[int] = None
     ghi_chu: str = ""
     ksv_id: int
+    truc_phu_ids: list[int] = []
 
 
 class RejectIn(BaseModel):
@@ -45,6 +47,12 @@ class SoTrucOut(BaseModel):
     ksv_decided_by_name: Optional[str] = None
     ksv_decided_at: Optional[str] = None
     reject_reason: Optional[str] = None
+    ksv_decision: Optional[str] = None
+    gdv_decided_by: Optional[int] = None
+    gdv_decided_by_name: Optional[str] = None
+    gdv_decided_at: Optional[str] = None
+    truc_phu_ids: list[int] = []
+    truc_phu_names: list[str] = []
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 

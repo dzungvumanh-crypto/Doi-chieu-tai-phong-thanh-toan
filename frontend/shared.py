@@ -1,5 +1,6 @@
 """Shared utilities, helpers và constants dùng chung cho tất cả pages."""
 import asyncio
+import datetime
 import logging
 import os
 from nicegui import ui, app
@@ -271,6 +272,58 @@ def _dmy(iso: str) -> str:
     return f"{parts[2]}/{parts[1]}/{parts[0]}" if len(parts) == 3 else (iso or "")
 
 
+def _iso_tu_dmy(dmy: str) -> str:
+    """
+    '01/08/2026' → '2026-08-01'. Chiều ngược của `_dmy()`.
+
+    Ô chọn lịch hiện dd/mm/yyyy cho hợp thói quen, còn API nhận YYYY-MM-DD, nên
+    phải đổi ngay trước khi gửi. Chuỗi không đúng khuôn thì **trả nguyên** để
+    backend tự báo lỗi validate — nuốt ở đây sẽ thành gửi ngày rỗng mà không ai
+    biết vì sao.
+    """
+    s = (dmy or "").strip()
+    parts = s.split("/")
+    if len(parts) != 3:
+        return s
+    d, m, y = (p.strip() for p in parts)
+    if not (d.isdigit() and m.isdigit() and y.isdigit()):
+        return s
+    return f"{int(y):04d}-{int(m):02d}-{int(d):02d}"
+
+
+def _o_chon_ngay(label: str, initial: str = None):
+    """
+    Ô nhập ngày dd/mm/yyyy kèm icon mở lịch chọn, mặc định hôm nay.
+
+    Lấy nguyên khuôn đang dùng ở màn hình CITAD (`doi_chieu_citad.py`) để cả hệ
+    thống chọn ngày giống nhau. Cần ô rỗng mặc định thì dùng `_o_chon_ngay_trong()`.
+    """
+    initial = initial or datetime.date.today().strftime("%d/%m/%Y")
+    with ui.input(label, value=initial).props("dense outlined").classes("w-44") as o:
+        with o.add_slot("append"):
+            ui.icon("edit_calendar").on("click", lambda: menu.open()).classes("cursor-pointer")
+        with ui.menu() as menu:
+            ui.date(value=initial, mask="DD/MM/YYYY", on_change=menu.close).bind_value(o)
+    return o
+
+
+def _o_chon_ngay_trong(label: str):
+    """
+    Ô chọn ngày **rỗng mặc định** — dùng cho ô bị xoá trắng sau khi lưu.
+
+    KHÔNG tạo `_o_chon_ngay()` rồi gán `.value = ""`: `ui.date` bên trong vẫn giữ
+    giá trị khởi tạo "hôm nay" và đồng bộ ngược qua `bind_value`, nên ô âm thầm
+    quay lại hôm nay sau vài trăm ms dù đã gán rỗng. Ở đây `ui.date` không nhận
+    `value=` ngay từ đầu nên cả hai phía cùng rỗng, không có gì để đồng bộ ngược.
+    """
+    with ui.input(label, value="").props("dense outlined clearable").classes("w-44") as o:
+        with o.add_slot("append"):
+            ui.icon("edit_calendar").on("click", lambda: menu.open()).classes("cursor-pointer")
+        with ui.menu() as menu:
+            ui.date(mask="DD/MM/YYYY", on_change=menu.close).bind_value(o)
+    return o
+
+
 # ─── Khối "Công việc chờ xử lý" ───────────────────────────────────────────────
 # key → (nhãn, icon, khoá đếm trong /pending-counts, feature cần có để mở được)
 _PENDING_DEFS = [
@@ -477,7 +530,7 @@ def _sidebar(current_page: str) -> dict:
                 "sidebar-label font-semibold text-sm text-white ml-2 leading-snug"
             )
 
-        # ── User info (click → /user-management nếu không phải chuyen_vien) ──
+        # ── User info (click → /user-management) ──
         user = api.get_current_user()
         user_role = user.get("role", "") if user else ""
         if user:
@@ -491,18 +544,18 @@ def _sidebar(current_page: str) -> dict:
                 "pho_phong":     "Phó phòng",
                 "chuyen_vien":   "Chuyên viên",
             }
-            clickable = user_role != "chuyen_vien"
-            col_cls = "sidebar-label px-4 py-3 border-b border-red-700 w-full shrink-0"
-            if clickable:
-                col_cls += " cursor-pointer hover:bg-red-800"
-            col = ui.column().classes(col_cls)
-            if clickable:
-                col.on("click", lambda: ui.navigate.to("/user-management"))
+            # Mọi vai trò đều vào được: trang này chỉ có việc của chính mình
+            # (đổi mật khẩu, ảnh chữ ký). Khối "Đặt lại mật khẩu cho người khác"
+            # tự ẩn theo vai trò ngay trong trang.
+            col = ui.column().classes(
+                "sidebar-label px-4 py-3 border-b border-red-700 w-full shrink-0 "
+                "cursor-pointer hover:bg-red-800"
+            )
+            col.on("click", lambda: ui.navigate.to("/user-management"))
             with col:
                 with ui.row().classes("items-center gap-1"):
                     ui.label(user.get("full_name", "")).classes("font-semibold text-sm")
-                    if clickable:
-                        ui.icon("manage_accounts").classes("text-yellow-300 text-sm")
+                    ui.icon("manage_accounts").classes("text-yellow-300 text-sm")
                 ui.label(role_map.get(user.get("role"), "")).classes("text-yellow-300 text-xs")
 
         # ── Vùng menu (tự cuộn nội bộ nếu cao hơn màn hình) ──
@@ -627,20 +680,11 @@ def _require_auth():
     return True
 
 
-def _redirect_if_cv():
-    """Chặn chuyên viên theo VAI TRÒ — chỉ còn dùng cho /user-management.
-
-    Mọi trang khác đã chuyển sang `api.has_feature("menu.*")`, tức nhóm quyền.
-    Giữ hàm này ở trang Quản lý người dùng vì đó là trang duy nhất không có mã
-    feature nào để kiểm. Đừng gọi lại ở trang mới: chặn theo vai trò ở frontend
-    trong khi backend chặn theo feature nghĩa là admin cấp quyền qua nhóm nhưng
-    người dùng vẫn bị đá ra, không kèm thông báo nào.
-    """
-    user = api.get_current_user()
-    if user and user.get("role") == "chuyen_vien":
-        ui.navigate.to("/home")
-        return True
-    return False
+# `_redirect_if_cv()` đã gỡ (2026-08-14): trang cuối cùng còn dùng nó
+# (/user-management) nay mở cho mọi vai trò. Không dựng lại — chặn theo VAI TRÒ ở
+# frontend trong khi backend chặn theo FEATURE nghĩa là admin cấp quyền qua nhóm
+# nhưng người dùng vẫn bị đá ra, không kèm thông báo nào. Trang mới dùng
+# `api.has_feature("menu.*")`.
 
 
 def _handle_api_error(e: Exception) -> bool:

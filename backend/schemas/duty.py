@@ -150,6 +150,7 @@ class ShiftConfigOut(BaseModel):
     qt_nv_chinh_count: int = 3     # số nhân viên trực chính, ca quyết toán
     qt_nv_phu_count: int = 2       # số nhân viên trực phụ, ca quyết toán
     signer_name: Optional[str] = None
+    signer_title: Optional[str] = None   # chức danh in trên file, vd "GIÁM ĐỐC"
 
 
 class ShiftConfigUpsert(BaseModel):
@@ -161,6 +162,7 @@ class ShiftConfigUpsert(BaseModel):
     qt_nv_chinh_count: Optional[int] = Field(None, ge=1, le=10)
     qt_nv_phu_count: Optional[int] = Field(None, ge=0, le=10)
     signer_name: Optional[str] = None
+    signer_title: Optional[str] = None
 
 
 # ── Duty Shifts ───────────────────────────────────────────────────────────────

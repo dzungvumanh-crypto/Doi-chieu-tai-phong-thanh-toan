@@ -63,7 +63,7 @@ CREATE TABLE duty_shift_config (
     id INTEGER PRIMARY KEY AUTOINCREMENT, year INTEGER UNIQUE,
     ld_count INTEGER DEFAULT 1, nv_count INTEGER DEFAULT 2,
     qt_ld_count INTEGER DEFAULT 1, qt_nv_chinh_count INTEGER DEFAULT 3,
-    qt_nv_phu_count INTEGER DEFAULT 2, signer_name TEXT
+    qt_nv_phu_count INTEGER DEFAULT 2, signer_name TEXT, signer_title TEXT
 );
 """
 
@@ -587,3 +587,471 @@ def test_ghi_vong_xoay_dung_so_nguoi_duoc_chon():
         "SELECT COALESCE(SUM(shift_count),0) AS t FROM duty_rotation_state WHERE year=?", (YEAR,)
     ).fetchone()["t"]
     assert tong == 3, f"1 ca = 3 lượt trực, nhưng ghi nhận {tong}"
+
+
+# ══════════════════════════════════════════════════════════════
+# 5. Vòng xoay phải hoàn lại khi ca bị xoá
+#
+# Sinh ca thì cộng số ca; xoá ca mà không trừ lại là hệ thống vẫn nhớ người đó
+# đã trực. Vì cân bằng số ca là tiêu chí CHÍNH, người bị cộng oan sẽ bị đẩy
+# xuống cuối hàng ở mọi tuần sau — lịch vẫn "trông hợp lệ" nên không ai thấy.
+# ══════════════════════════════════════════════════════════════
+
+def _tong_vong_xoay(db) -> int:
+    return db.execute(
+        "SELECT COALESCE(SUM(shift_count),0) AS t FROM duty_rotation_state WHERE year=?",
+        (YEAR,)
+    ).fetchone()["t"]
+
+
+def _tong_slot_that(db) -> int:
+    """Số lượt trực thật đang nằm trong bảng ca — mốc để đối chiếu vòng xoay."""
+    import json
+    n = 0
+    for r in db.execute("SELECT leader_ids, sp_id, nv_ids, nv_phu_ids FROM duty_shifts"):
+        n += len(json.loads(r["leader_ids"] or "[]"))
+        n += len(json.loads(r["nv_ids"] or "[]"))
+        n += len(json.loads(r["nv_phu_ids"] or "[]"))
+        if r["sp_id"]:
+            n += 1
+    return n
+
+
+def test_sinh_lai_cung_tuan_khong_lam_phinh_so_ca():
+    """Bất biến số học: vòng xoay luôn khớp số lượt trực thật, sinh lại bao nhiêu lần cũng vậy."""
+    db = _make_db(_standard_staff())
+    for lan, seed in enumerate([1, 2, 3], start=1):
+        generate_schedule_for_week(db, MONDAY, overwrite_draft=(lan > 1), seed=seed)
+        assert _tong_vong_xoay(db) == _tong_slot_that(db), (
+            f"sau lần sinh thứ {lan}: vòng xoay {_tong_vong_xoay(db)} "
+            f"nhưng chỉ có {_tong_slot_that(db)} lượt trực thật"
+        )
+
+
+def test_xoa_tuan_thi_tra_lai_so_ca_da_cong():
+    from backend.services.duty_schedule_service import delete_shifts_for_week
+    db = _make_db(_standard_staff())
+    generate_schedule_for_week(db, MONDAY, seed=1)
+    assert _tong_vong_xoay(db) > 0
+
+    delete_shifts_for_week(db, MONDAY)
+    assert db.execute("SELECT COUNT(*) c FROM duty_shifts").fetchone()["c"] == 0
+    assert _tong_vong_xoay(db) == 0, "xoá sạch lịch mà hệ thống vẫn nhớ người đã trực"
+
+
+def test_xoa_mot_ca_chi_tru_dung_nguoi_trong_ca_do():
+    from backend.services.duty_schedule_service import delete_shift
+    db = _make_db(_standard_staff())
+    generate_schedule_for_week(db, MONDAY, seed=1)
+    truoc = _tong_vong_xoay(db)
+
+    ca = db.execute("SELECT * FROM duty_shifts ORDER BY shift_date LIMIT 1").fetchone()
+    so_nguoi_trong_ca = len(_members(dict(ca)))
+    delete_shift(db, ca["id"])
+
+    assert _tong_vong_xoay(db) == truoc - so_nguoi_trong_ca
+    assert _tong_vong_xoay(db) == _tong_slot_that(db)
+
+
+# ══════════════════════════════════════════════════════════════
+# 6. Thứ 7 / chủ nhật đi làm — khai bằng "Ngày bù"
+# ══════════════════════════════════════════════════════════════
+
+SATURDAY = "2026-08-15"   # thứ 7 của tuần chứa MONDAY
+SUNDAY   = "2026-08-16"
+
+
+def _khai_ngay_bu(db, date_str: str, da_xac_nhan: bool = True) -> None:
+    db.execute("INSERT INTO duty_special_days (date, day_type, is_confirmed) "
+               "VALUES (?, 'makeup', ?)", (date_str, 1 if da_xac_nhan else 0))
+    db.commit()
+
+
+def test_thu_bay_khai_ngay_bu_thi_sinh_duoc_ca():
+    db = _make_db(_standard_staff())
+    _khai_ngay_bu(db, SATURDAY)
+    generate_schedule_for_week(db, MONDAY, seed=1)
+
+    ngay_co_ca = [r["shift_date"] for r in
+                  db.execute("SELECT shift_date FROM duty_shifts ORDER BY shift_date")]
+    assert SATURDAY in ngay_co_ca, "khai ngày bù thứ 7 mà không sinh ca"
+    assert len(ngay_co_ca) == 6, f"tuần phải có 6 ca, đang có {len(ngay_co_ca)}"
+
+
+def test_thu_bay_chua_xac_nhan_thi_khong_sinh_ca():
+    """Giống cut-off và quyết toán: khai xong còn phải bấm xác nhận."""
+    db = _make_db(_standard_staff())
+    _khai_ngay_bu(db, SATURDAY, da_xac_nhan=False)
+    generate_schedule_for_week(db, MONDAY, seed=1)
+
+    ngay_co_ca = [r["shift_date"] for r in db.execute("SELECT shift_date FROM duty_shifts")]
+    assert SATURDAY not in ngay_co_ca
+    assert len(ngay_co_ca) == 5
+
+
+def test_ngay_bu_dung_dung_cau_hinh_ca_thuong():
+    """BO chốt: T7/CN không khai số người riêng, dùng chung cấu hình ca thường."""
+    import json
+    db = _make_db(_standard_staff(), ld_count=2, nv_count=3)
+    _khai_ngay_bu(db, SATURDAY)
+    generate_schedule_for_week(db, MONDAY, seed=1)
+
+    ca = db.execute("SELECT * FROM duty_shifts WHERE shift_date=?", (SATURDAY,)).fetchone()
+    assert ca["shift_type"] == "normal", "ngày bù phải là ca thường, không phải loại ca mới"
+    so_ld = len(json.loads(ca["leader_ids"] or "[]"))
+    so_nv = len(json.loads(ca["nv_ids"] or "[]")) + (1 if ca["sp_id"] else 0)
+    assert (so_ld, so_nv) == (2, 3)
+
+
+def test_ca_thu_bay_xem_xac_nhan_xoa_duoc_theo_tuan():
+    """Chống ca mồ côi: ca T7 phải nằm trong cả 3 thao tác theo tuần."""
+    from backend.services.duty_schedule_service import (
+        get_shifts_for_week, confirm_shifts_for_week, delete_shifts_for_week,
+    )
+    db = _make_db(_standard_staff())
+    _khai_ngay_bu(db, SATURDAY)
+    generate_schedule_for_week(db, MONDAY, seed=1)
+
+    assert SATURDAY in [s["shift_date"] for s in get_shifts_for_week(db, MONDAY)]
+
+    confirm_shifts_for_week(db, MONDAY)
+    ca_t7 = db.execute("SELECT status FROM duty_shifts WHERE shift_date=?", (SATURDAY,)).fetchone()
+    assert ca_t7["status"] == "confirmed", "xác nhận cả tuần mà bỏ sót ca thứ 7"
+
+    delete_shifts_for_week(db, MONDAY)
+    assert db.execute("SELECT COUNT(*) c FROM duty_shifts").fetchone()["c"] == 0
+
+
+def test_khong_ai_truc_2_lan_trong_tuan_6_ngay():
+    """Luật tuần giữ nguyên khi tuần dài ra — BO đã chốt không nới."""
+    db = _make_db(_standard_staff())
+    _khai_ngay_bu(db, SATURDAY)
+    generate_schedule_for_week(db, MONDAY, seed=3)
+
+    dem: dict = {}
+    for r in db.execute("SELECT * FROM duty_shifts"):
+        for sid in _members(dict(r)):
+            dem[sid] = dem.get(sid, 0) + 1
+    # 8 người / 6 ca × 3 chỗ = 18 lượt → không tránh được lặp, nhưng phải chia đều
+    assert max(dem.values()) - min(dem.values()) <= 1, f"chia ca lệch quá 1: {dem}"
+
+
+def test_chu_nhat_cung_khai_ngay_bu_duoc():
+    db = _make_db(_standard_staff())
+    _khai_ngay_bu(db, SATURDAY)
+    _khai_ngay_bu(db, SUNDAY)
+    generate_schedule_for_week(db, MONDAY, seed=1)
+
+    ngay_co_ca = [r["shift_date"] for r in
+                  db.execute("SELECT shift_date FROM duty_shifts ORDER BY shift_date")]
+    assert ngay_co_ca[-2:] == [SATURDAY, SUNDAY]
+    assert len(ngay_co_ca) == 7, "tuần khai cả T7 lẫn CN phải có 7 ca"
+
+
+def test_file_excel_chi_them_dong_t7_khi_hom_do_co_ca():
+    """Tuần thường phải giữ nguyên hình dạng cũ: 5 dòng, đề đến thứ 6."""
+    import io
+    from datetime import date as _d
+    from openpyxl import load_workbook
+    from backend.services.duty_schedule_service import get_shifts_for_week
+    from backend.services.duty_export_service import build_week_excel
+    from backend.services.duty_calendar_utils import week_span
+
+    def _dung_file(db):
+        t2, cn = week_span(MONDAY)
+        data = build_week_excel(get_shifts_for_week(db, MONDAY),
+                                _d.fromisoformat(t2), _d.fromisoformat(cn))
+        ws = load_workbook(io.BytesIO(data)).active
+        cot_thu = [ws.cell(row=r, column=1).value for r in range(3, ws.max_row + 1)]
+        return ws["A1"].value, [t for t in cot_thu if t and t != "Ghi chú :"]
+
+    db = _make_db(_standard_staff())
+    generate_schedule_for_week(db, MONDAY, seed=1)
+    tieu_de, cot = _dung_file(db)
+    assert "ĐẾN NGÀY 14/08/2026" in tieu_de, "tuần thường không được đề tới cuối tuần"
+    assert not any(t.startswith("T7") or t.startswith("CN") for t in cot)
+
+    db2 = _make_db(_standard_staff())
+    _khai_ngay_bu(db2, SATURDAY)
+    generate_schedule_for_week(db2, MONDAY, seed=1)
+    tieu_de2, cot2 = _dung_file(db2)
+    assert "ĐẾN NGÀY 15/08/2026" in tieu_de2, "tuần có ngày bù phải đề tới thứ 7"
+    assert any(t.startswith("T7") for t in cot2), "file thiếu dòng thứ 7"
+
+
+def test_cutoff_tinh_ca_ngay_lam_bu_cuoi_thang():
+    """T7 làm bù cũng là ngày làm việc — bỏ qua thì cut-off bị đẩy lùi lên nhầm ngày."""
+    from backend.services.duty_calendar_utils import compute_cutoff_dates
+
+    # 31/10/2026 là thứ 7, 30/10 là thứ 6, 29/10 thứ 5
+    khong_bu = compute_cutoff_dates(10, 2026, set())
+    assert khong_bu == ["2026-10-29", "2026-10-30"]
+
+    co_bu = compute_cutoff_dates(10, 2026, set(), {"2026-10-31"})
+    assert co_bu == ["2026-10-30", "2026-10-31"], "cut-off phải tính cả ngày làm bù"
+
+
+# ══════════════════════════════════════════════════════════════
+# 7. File Excel bám mẫu thật "Lịch trực PTT.xlsx"
+#
+# Mẫu là 5 cột A–E, trắng đen, và LUÔN có chức danh người ký — kể cả tuần
+# thường. Bốn test dưới canh đúng những chỗ dễ trôi lại về bản cũ.
+# ══════════════════════════════════════════════════════════════
+
+def _mo_file(db, signer_title=None, holiday_map=None):
+    """Dựng file cho tuần chứa MONDAY rồi mở lại bằng openpyxl."""
+    import io
+    from datetime import date as _d
+    from openpyxl import load_workbook
+    from backend.services.duty_schedule_service import get_shifts_for_week
+    from backend.services.duty_export_service import build_week_excel
+    from backend.services.duty_calendar_utils import week_span
+
+    t2, cn = week_span(MONDAY)
+    kw = {}
+    if signer_title is not None:
+        kw["signer_title"] = signer_title
+    data = build_week_excel(get_shifts_for_week(db, MONDAY),
+                            _d.fromisoformat(t2), _d.fromisoformat(cn),
+                            holiday_map=holiday_map, **kw)
+    return load_workbook(io.BytesIO(data)).active
+
+
+def _chu_trong_o(cell) -> str:
+    """Ô có thể là chuỗi thường hoặc rich text (ngày quyết toán)."""
+    return "" if cell.value is None else str(cell.value)
+
+
+def test_file_excel_dung_5_cot_va_khong_mau():
+    """
+    Mẫu chỉ có A–E và không tô nền ô nào.
+
+    Đổi _NCOLS thôi KHÔNG đủ: _apply_row ghi đúng len(values), nên list 8 phần tử
+    sót lại vẫn tạo ô F/G/H có viền → max_column = 8. Test này canh đúng chỗ đó.
+    """
+    db = _make_db(_standard_staff())
+    generate_schedule_for_week(db, MONDAY, seed=1)
+    ws = _mo_file(db)
+
+    assert ws.max_column == 5, f"mẫu có 5 cột A–E, file đang có {ws.max_column}"
+
+    co_mau = [
+        f"{cell.coordinate}"
+        for row in ws.iter_rows()
+        for cell in row
+        if cell.fill is not None and cell.fill.patternType
+    ]
+    assert not co_mau, f"mẫu là trắng đen, các ô sau bị tô nền: {co_mau[:8]}"
+
+
+def test_file_excel_luon_co_chuc_danh_nguoi_ky():
+    """Trước đây "GIÁM ĐỐC" chỉ hiện ở tuần quyết toán — mẫu thì tuần nào cũng có."""
+    db = _make_db(_standard_staff())
+    generate_schedule_for_week(db, MONDAY, seed=1)          # tuần THƯỜNG
+    ws = _mo_file(db)
+
+    chu = [_chu_trong_o(ws.cell(r, 5)) for r in range(1, ws.max_row + 1)]
+    assert "GIÁM ĐỐC" in chu, "tuần thường cũng phải có chức danh người ký"
+
+    # Chức danh phải nằm TRÊN tên người ký, không phải ngược lại
+    assert chu.index("GIÁM ĐỐC") < chu.index("Nguyễn Quốc Hùng")
+
+
+def test_chuc_danh_nguoi_ky_khai_duoc():
+    """Đổi chức danh ở cấu hình thì file phải đổi theo, không còn literal trong code."""
+    db = _make_db(_standard_staff())
+    generate_schedule_for_week(db, MONDAY, seed=1)
+
+    ws = _mo_file(db, signer_title="PHÓ GIÁM ĐỐC")
+    chu = [_chu_trong_o(ws.cell(r, 5)) for r in range(1, ws.max_row + 1)]
+    assert "PHÓ GIÁM ĐỐC" in chu
+    assert "GIÁM ĐỐC" not in chu, "chức danh cũ không được sót lại"
+
+
+def test_ngay_quyet_toan_gop_mot_hang():
+    """
+    BO chốt: ngày quyết toán chỉ chiếm MỘT hàng, ô nhân viên chứa cả trực chính
+    lẫn trực phụ (chính IN HOA, phụ nghiêng nhỏ). Bản cũ dựng 2 hàng + merge dọc.
+    """
+    db = _make_db(_standard_staff(), qt_ld=1, qt_chinh=2, qt_phu=2)
+    db.execute("INSERT INTO duty_special_days (date, day_type, is_confirmed) "
+               "VALUES (?, 'settlement', 1)", (MONDAY,))
+    db.commit()
+    generate_schedule_for_week(db, MONDAY, seed=1)
+
+    ca = db.execute("SELECT * FROM duty_shifts WHERE shift_date=?", (MONDAY,)).fetchone()
+    assert ca["shift_type"] == "settlement_main"
+    assert ca["nv_phu_count"] == 2, "cần có nhóm trực phụ thì test mới có nghĩa"
+
+    ws = _mo_file(db)
+
+    # Đúng một hàng mang nhãn ngày quyết toán
+    hang_qt = [r for r in range(1, ws.max_row + 1)
+               if (ws.cell(r, 1).value or "") and "(QT)" in str(ws.cell(r, 1).value)]
+    assert len(hang_qt) == 1, f"ngày quyết toán phải gọn 1 hàng, đang có {len(hang_qt)}"
+
+    # Không còn merge dọc cột A/B (dấu vết của bố cục 2 hàng)
+    merge_doc = [str(m) for m in ws.merged_cells.ranges
+                 if m.min_col == m.max_col and m.min_row != m.max_row]
+    assert not merge_doc, f"không được merge dọc nữa: {merge_doc}"
+
+    # Ô nhân viên chứa CẢ trực chính lẫn trực phụ
+    r = hang_qt[0]
+    o_nv = _chu_trong_o(ws.cell(r, 3))
+    import json as _json
+    ten = {p["id"]: p["full_name"] for p in
+           [dict(x) for x in db.execute("SELECT id, full_name FROM user_tttt")]}
+    chinh = ([ten[ca["sp_id"]]] if ca["sp_id"] else []) + \
+            [ten[i] for i in _json.loads(ca["nv_ids"] or "[]")]
+    phu = [ten[i] for i in _json.loads(ca["nv_phu_ids"] or "[]")]
+
+    for t in chinh:
+        assert t.upper() in o_nv, f"thiếu trực chính {t} (phải IN HOA)"
+    for t in phu:
+        assert t in o_nv, f"thiếu trực phụ {t}"
+
+
+def test_moi_o_trong_bang_deu_du_bon_canh_vien():
+    """
+    Ô nằm trong vùng gộp cũng phải được kẻ đủ 4 cạnh.
+
+    Lỗi đã gặp: code gộp ô TRƯỚC rồi mới kẻ, mà ô đã gộp thì bị bỏ qua — nửa phải
+    của ô tiêu đề "NHÂN VIÊN" (C3:D3) không có cạnh nào nên Excel vẽ ra ô hở.
+    Test quét cả vùng bảng để lỗi không quay lại khi ai đó thêm vùng gộp mới.
+    """
+    db = _make_db(_standard_staff(), qt_ld=1, qt_chinh=2, qt_phu=2)
+    # Có đủ 3 kiểu hàng: thường, nghỉ lễ (gộp C:E) và quyết toán (gộp C:D)
+    db.execute("INSERT INTO duty_special_days (date, day_type, is_confirmed) "
+               "VALUES ('2026-08-11', 'settlement', 1)")
+    db.commit()
+    generate_schedule_for_week(db, MONDAY, seed=1)
+    ws = _mo_file(db, holiday_map={"2026-08-12": "Lễ thử"})
+
+    # Vùng bảng: từ hàng tiêu đề cột tới hàng ngay trước "Ghi chú :"
+    hang_ghi_chu = next(r for r in range(1, ws.max_row + 1)
+                        if str(ws.cell(r, 1).value or "").startswith("Ghi chú"))
+
+    # openpyxl cố ý xoá cạnh BÊN TRONG vùng gộp — Excel không vẽ vạch giữa một ô
+    # đã gộp. Nên chỉ đòi những cạnh thật sự nằm ở biên ngoài của ô người ta nhìn thấy.
+    gop = [m for m in ws.merged_cells.ranges if 3 <= m.min_row < hang_ghi_chu]
+
+    def canh_can_co(r: int, c: int) -> set:
+        for m in gop:
+            if m.min_row <= r <= m.max_row and m.min_col <= c <= m.max_col:
+                return {ten for ten, o_bien in (("left", c == m.min_col),
+                                                ("right", c == m.max_col),
+                                                ("top", r == m.min_row),
+                                                ("bottom", r == m.max_row)) if o_bien}
+        return {"left", "right", "top", "bottom"}
+
+    thieu = []
+    for r in range(3, hang_ghi_chu):
+        for c in range(1, 6):
+            b = ws.cell(r, c).border
+            co = {k for k in ("left", "right", "top", "bottom") if getattr(b, k).style}
+            can = canh_can_co(r, c)
+            if not can <= co:
+                thieu.append(f"{ws.cell(r, c).coordinate} thiếu {','.join(sorted(can - co))}")
+    assert not thieu, "ô hở cạnh viền: " + " · ".join(thieu)
+
+
+def test_bang_du_rong_va_can_giua_tren_a4_ngang():
+    """
+    Bảng phải lấp gần kín bề ngang A4 xoay ngang và nằm giữa trang.
+
+    Trước đây rộng 22,2cm trong khi vùng in là 27,2cm — thừa 5cm dồn hết về một
+    bên, in ra nhìn lệch hẳn.
+    """
+    db = _make_db(_standard_staff())
+    generate_schedule_for_week(db, MONDAY, seed=1)
+    ws = _mo_file(db)
+
+    tong = sum(ws.column_dimensions[c].width or 0 for c in "ABCDE")
+    rong_cm = ((tong * 7 + 5) / 96) * 2.54          # đơn vị width → px → inch → cm
+    vung_in_cm = 29.7 - 2 * 1.27                     # A4 ngang trừ lề 0,5 inch mỗi bên
+
+    assert 25.0 <= rong_cm <= vung_in_cm, (
+        f"bảng rộng {rong_cm:.1f}cm, cần nằm trong 25,0–{vung_in_cm:.1f}cm")
+    assert ws.print_options.horizontalCentered, "phải bật căn giữa ngang khi in"
+
+    # Tỉ lệ giữa các cột giữ nguyên như mẫu, chỉ phóng to đều
+    w = {c: ws.column_dimensions[c].width for c in "ABCDE"}
+    assert abs(w["C"] - w["E"]) < 0.5, "cột Nhân viên 1 và Lãnh đạo vốn bằng nhau"
+    assert w["C"] > w["D"] > w["A"] > w["B"], "thứ tự độ rộng cột phải như mẫu"
+
+
+def test_chieu_cao_hang_du_cho_co_chu_khong_de_len_vach():
+    """
+    Hàng phải cao hơn cỡ chữ × 1,33 (khoảng cách dòng của Excel).
+
+    Hàng thấp hơn thì chữ bị ép sát và tràn đè lên vạch kẻ — nhìn ra thành "ô
+    thiếu kẻ phía trên", đúng lỗi đã gặp ở ô tiêu đề "NHÂN VIÊN".
+    """
+    db = _make_db(_standard_staff())
+    generate_schedule_for_week(db, MONDAY, seed=1)
+    ws = _mo_file(db)
+
+    # (hàng, cỡ chữ dùng ở hàng đó)
+    for r, co_chu in ((1, 24), (3, 18)):
+        cao = ws.row_dimensions[r].height
+        can = co_chu * 1.33
+        assert cao is not None and cao >= can, (
+            f"hàng {r} cao {cao}pt nhưng chữ {co_chu}pt cần ít nhất {can:.1f}pt")
+
+
+def test_ngay_khai_nghi_le_thi_file_ghi_nhan_nghi_le():
+    """
+    Ngày ĐÃ KHAI nghỉ lễ thì file xuất ra phải ghi nhãn "Nghỉ lễ".
+
+    Ngày không có ca vì lý do khác (chưa xếp, thiếu người) thì để trống — không
+    được ghi "Nghỉ lễ" cho nó, vì hôm đó không phải ngày được nghỉ.
+    """
+    db = _make_db(_standard_staff())
+    # Thứ 3 hổng vì hết Lãnh đạo; thứ 4 nghỉ lễ (phải khai vào DB thì engine mới
+    # bỏ qua ngày đó, chỉ truyền holiday_map cho hàm dựng file là chưa đủ)
+    for sid in (1, 2):
+        db.execute("INSERT INTO duty_absences (staff_id, absence_date) VALUES (?, '2026-08-11')",
+                   (sid,))
+    db.execute("INSERT INTO duty_special_days (date, day_type, label, is_confirmed) "
+               "VALUES ('2026-08-12', 'holiday', 'Lễ thử', 1)")
+    db.commit()
+    generate_schedule_for_week(db, MONDAY, seed=1)
+    ws = _mo_file(db, holiday_map={"2026-08-12": "Lễ thử"})
+
+    hang_ghi_chu = next(r for r in range(1, ws.max_row + 1)
+                        if str(ws.cell(r, 1).value or "").startswith("Ghi chú"))
+
+    chu = {str(ws.cell(r, 2).value): str(ws.cell(r, 3).value or "")
+           for r in range(4, hang_ghi_chu) if ws.cell(r, 2).value}
+
+    # Ngày khai nghỉ lễ: có nhãn, kèm tên ngày lễ đã khai
+    assert chu.get("12/08/2026", "") == "(Nghỉ lễ: Lễ thử)"
+    # Ngày hổng lịch vì thiếu người: KHÔNG được gán nhãn nghỉ lễ
+    assert "Nghỉ lễ" not in chu.get("11/08/2026", "")
+
+
+def test_ngay_le_khong_khai_ghi_chu_van_co_chu_nghi_le():
+    """
+    Ngày lễ khai mà BỎ TRỐNG ô Ghi chú vẫn phải ghi "Nghỉ lễ".
+
+    Lỗi thật đã gặp: cột `label` trong DB là NULL khi người dùng không nhập ghi
+    chú. Tầng API dựng holiday_map bằng `h.get("label", "")` — nhưng khoá "label"
+    LUÔN tồn tại nên .get() trả về None chứ không phải "", và hàm dựng file lại
+    suy "có phải ngày lễ không" từ chính giá trị đó → ô ra trắng.
+    """
+    db = _make_db(_standard_staff())
+    db.execute("INSERT INTO duty_special_days (date, day_type, label, is_confirmed) "
+               "VALUES ('2026-08-12', 'holiday', NULL, 1)")
+    db.commit()
+    generate_schedule_for_week(db, MONDAY, seed=1)
+
+    # Dựng holiday_map y hệt tầng API để bắt được lỗi ở đúng chỗ nó xảy ra
+    from backend.services.duty_constraint_service import list_special_days
+    hmap = {h["date"]: (h.get("label") or "") for h in
+            list_special_days(db, day_type="holiday", year=YEAR)}
+    assert hmap["2026-08-12"] == "", "nhãn None phải quy về chuỗi rỗng"
+
+    ws = _mo_file(db, holiday_map=hmap)
+    o = next(str(ws.cell(r, 3).value or "") for r in range(4, ws.max_row + 1)
+             if str(ws.cell(r, 2).value or "") == "12/08/2026")
+    assert o == "(Nghỉ lễ)", f"ngày lễ không ghi chú phải ra '(Nghỉ lễ)', đang là {o!r}"

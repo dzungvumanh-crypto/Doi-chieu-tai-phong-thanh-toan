@@ -27,6 +27,16 @@ async function loadConfig() {
   }
 }
 
+// Xem comment tương ứng trong content.js — mở nhiều tab RỒI MỚI cấu hình lại
+// Extension (hay gặp khi mở nhiều tab ẩn danh để đăng nhập nhiều cổng CITAD/
+// PaymentHub cùng lúc) khiến các tab mở trước bị kẹt cấu hình cũ mãi mãi nếu
+// không tự cập nhật khi storage đổi.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local') return;
+  if ('server' in changes) SERVER = changes.server.newValue || '';
+  if ('extensionToken' in changes) EXTENSION_TOKEN = changes.extensionToken.newValue || '';
+});
+
 function parseNum(s) {
   return parseInt((s || '').replace(/[^\d]/g, '')) || 0;
 }
@@ -82,16 +92,19 @@ function createManualBtn(label, color, onClickFn) {
   if (document.getElementById(id)) return;
   const btn = document.createElement('div');
   btn.id = id;
-  btn.innerHTML = `📥 ${label}`;
+  // Ô vuông nhỏ chỉ có ký hiệu — trước đây có chữ (vd "Lưu lại PaymentHub")
+  // che khá nhiều nội dung trang, đặc biệt khi zoom/màn hình nhỏ. `label`
+  // vẫn giữ trong tooltip (title) để biết đúng nút này lưu cho trang nào.
+  btn.innerHTML = '📥';
   btn.style.cssText = `
     position:fixed;bottom:70px;right:24px;
+    width:34px;height:34px;display:flex;align-items:center;justify-content:center;
     background:${color};
-    color:#fff;font-family:Arial,sans-serif;font-size:12px;font-weight:bold;
-    padding:9px 14px;border-radius:8px;cursor:pointer;z-index:999998;
+    font-size:15px;border-radius:8px;cursor:pointer;z-index:999998;
     box-shadow:0 4px 12px rgba(0,0,0,.4);border:1px solid rgba(255,255,255,.2);
     user-select:none;opacity:0.85;
   `;
-  btn.title = 'Nhấn để lưu thủ công (dùng khi đổi điều kiện tìm kiếm)';
+  btn.title = `${label} — nhấn để lưu thủ công (dùng khi đổi điều kiện tìm kiếm)`;
   btn.onmouseover = () => { btn.style.opacity = '1'; };
   btn.onmouseout  = () => { btn.style.opacity = '0.85'; };
   btn.onclick = onClickFn;
@@ -227,13 +240,20 @@ async function saveBaoCao(manual=false) {
   const data = readBaoCaoData();
   if (!data.ih && !data.il) return;
 
-  const ih = data.ih || { den_m:0, den_t:0, di_m:0, di_t:0 };
-  const il = data.il || { den_m:0, den_t:0, di_m:0, di_t:0 };
+  // ih/il "rỗng" (0) ở đây CHỈ dùng để tính khoá dedupe + hiện toast — KHÔNG
+  // dùng để gửi lên server (xem _doSaveBaoCao, nhận đúng data.ih/data.il có
+  // thể null). Bộ lọc "Kênh thanh toán" trên trang chỉ hiện ĐÚNG 1 kênh/lần
+  // chạy báo cáo, nên kênh còn lại luôn là null (CHƯA TỪNG đọc được) chứ
+  // không phải "đọc được và bằng 0" — nếu default thành 0 rồi vẫn gửi, lần
+  // lưu "CITAD cao" sẽ gửi khống 0 cho "CITAD thấp", đè mất số liệu thật đã
+  // lưu từ lần trước đó (và ngược lại) — đúng lỗi người dùng gặp phải.
+  const ihShow = data.ih || { den_m:0, den_t:0, di_m:0, di_t:0 };
+  const ilShow = data.il || { den_m:0, den_t:0, di_m:0, di_t:0 };
   const tien = data.loaiTien;
-  const key = `${tien}_${ih.den_t}_${il.di_t}`;
+  const key = `${tien}_${ihShow.den_t}_${ilShow.di_t}`;
 
   if (!manual && key === lastBaoCaoKey) return;
-  if (ih.den_t === 0 && il.den_t === 0 && ih.di_t === 0 && il.di_t === 0) {
+  if (ihShow.den_t === 0 && ilShow.den_t === 0 && ihShow.di_t === 0 && ilShow.di_t === 0) {
     if (manual) showToast('Số liệu toàn 0, kiểm tra lại kết quả', '#f59e0b');
     return;
   }
@@ -246,19 +266,29 @@ async function saveBaoCao(manual=false) {
   _savingBaoCao = true;
 
   try {
-    await _doSaveBaoCao(ih, il, tien, manual);
+    await _doSaveBaoCao(data.ih, data.il, tien, manual);
   } finally {
     _savingBaoCao = false;
   }
 }
 
 async function _doSaveBaoCao(ih, il, tien, manual) {
-  const items = [
-    { key:`ph_${tien}_den_ih`, loai:'ih', chieu:'den', tien, soMon: ih.den_m, soTien: ih.den_t },
-    { key:`ph_${tien}_di_ih`,  loai:'ih', chieu:'di',  tien, soMon: ih.di_m,  soTien: ih.di_t  },
-    { key:`ph_${tien}_den_il`, loai:'il', chieu:'den', tien, soMon: il.den_m, soTien: il.den_t },
-    { key:`ph_${tien}_di_il`,  loai:'il', chieu:'di',  tien, soMon: il.di_m,  soTien: il.di_t  },
-  ];
+  // Chỉ đưa vào items 2 dòng của kênh THỰC SỰ đọc được (ih/il khác null) —
+  // không gửi = không đụng key đó trên buffer server, giữ nguyên số liệu
+  // thật kênh kia đã lưu từ lần trước (xem comment ở saveBaoCao()).
+  const items = [];
+  if (ih) {
+    items.push(
+      { key:`ph_${tien}_den_ih`, loai:'ih', chieu:'den', tien, soMon: ih.den_m, soTien: ih.den_t },
+      { key:`ph_${tien}_di_ih`,  loai:'ih', chieu:'di',  tien, soMon: ih.di_m,  soTien: ih.di_t  },
+    );
+  }
+  if (il) {
+    items.push(
+      { key:`ph_${tien}_den_il`, loai:'il', chieu:'den', tien, soMon: il.den_m, soTien: il.den_t },
+      { key:`ph_${tien}_di_il`,  loai:'il', chieu:'di',  tien, soMon: il.di_m,  soTien: il.di_t  },
+    );
+  }
 
   // fetch() thật chạy trong background.js (service worker) để né CORS —
   // fetch() từ content script mang Origin của trang PaymentHub, bị chặn
@@ -284,9 +314,15 @@ async function _doSaveBaoCao(ih, il, tien, manual) {
     return;
   }
   if (result.ok) {
+    // ih/il có thể null (kênh không hiện trên trang lần lưu này — xem
+    // saveBaoCao()) — chỉ hiện đúng phần thật sự vừa gửi, không giả định
+    // cả 2 luôn có giá trị.
+    const parts = [];
+    if (ih) parts.push(`IH Đến: ${ih.den_m.toLocaleString('vi-VN')} món`);
+    if (il) parts.push(`IL Đi: ${il.di_m.toLocaleString('vi-VN')} món`);
     showToast(
       `✓ ${manual?'Đã lưu':'Tự lưu'} PaymentHub – ${tien}<br>` +
-      `<small style="color:#94a3b8">IH Đến: ${ih.den_m.toLocaleString('vi-VN')} món | IL Đi: ${il.di_m.toLocaleString('vi-VN')} món</small>`,
+      `<small style="color:#94a3b8">${parts.join(' | ')}</small>`,
       '#10b981', 5000
     );
     _baoCaoRetry.resetBackoff();
