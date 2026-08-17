@@ -633,13 +633,6 @@ def _ensure_indexes():
         "ALTER TABLE leave_records ADD COLUMN is_direct BOOLEAN DEFAULT 0",
         "ALTER TABLE leave_records ADD COLUMN direct_by INTEGER REFERENCES user_tttt(id)",
         "ALTER TABLE leave_records ADD COLUMN recall_reason TEXT",
-        # Rà soát vòng 2 PR #22 — 2026-08-10: trước đây trigger revert (huỷ/xoá đơn
-        # nghỉ) xác định dòng attendances cần xoá bằng cách khớp lại "ký hiệu suy ra
-        # từ leave_type" — nếu 2 đơn nghỉ chồng ngày cùng ra 1 ký hiệu (leaves.py chặn
-        # trùng lịch bằng SELECT-rồi-INSERT, không atomic), huỷ đơn cũ có thể xoá nhầm
-        # dòng do đơn mới tạo. Thêm cột này để trigger revert khớp đúng theo ID đơn
-        # nghỉ đã tạo ra dòng đó, không đoán qua ký hiệu nữa.
-        "ALTER TABLE attendances ADD COLUMN source_leave_id INTEGER REFERENCES leave_records(id)",
         """CREATE TABLE IF NOT EXISTS leave_quotas (
             staff_id  INTEGER NOT NULL REFERENCES user_tttt(id),
             year      INTEGER NOT NULL,
@@ -758,6 +751,21 @@ def _ensure_indexes():
             source_leave_id INTEGER REFERENCES leave_records(id),
             UNIQUE(staff_id, date)
         )""",
+        # Rà soát vòng 2 PR #22 — 2026-08-10: trước đây trigger revert (huỷ/xoá đơn
+        # nghỉ) xác định dòng attendances cần xoá bằng cách khớp lại "ký hiệu suy ra
+        # từ leave_type" — nếu 2 đơn nghỉ chồng ngày cùng ra 1 ký hiệu (leaves.py chặn
+        # trùng lịch bằng SELECT-rồi-INSERT, không atomic), huỷ đơn cũ có thể xoá nhầm
+        # dòng do đơn mới tạo. Thêm cột này để trigger revert khớp đúng theo ID đơn
+        # nghỉ đã tạo ra dòng đó, không đoán qua ký hiệu nữa.
+        #
+        # Sửa theo review vòng 2 PR #22 (Người 1, 2026-08-12): câu ALTER này trước đây
+        # nằm ở dòng ~590 (TRƯỚC khối CREATE TABLE attendances) — cài mới trên DB trắng
+        # sẽ ALTER một bảng chưa tồn tại → "no such table: attendances", lỗi này KHÔNG
+        # nằm trong danh sách nuốt lỗi (cố ý, xem phần xử lý lỗi bên dưới) nên sẽ raise
+        # và chặn khởi động app. DB thật đang chạy không lộ vì bảng attendances đã có
+        # sẵn từ migration 2026-07-23. Chuyển câu ALTER xuống đây — ngay sau khi bảng
+        # chắc chắn đã tồn tại (từ CREATE TABLE IF NOT EXISTS ở trên, dù DB mới hay cũ).
+        "ALTER TABLE attendances ADD COLUMN source_leave_id INTEGER REFERENCES leave_records(id)",
         """CREATE TABLE IF NOT EXISTS attendance_adjustments (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             attendance_id   INTEGER NOT NULL REFERENCES attendances(id),
@@ -801,11 +809,24 @@ def _ensure_indexes():
         # đúng đơn nghỉ, không đoán qua ký hiệu. DROP trước để đảm bảo DB đã chạy
         # migration cũ (trigger cùng tên) cũng được thay bằng logic mới — CREATE
         # TRIGGER IF NOT EXISTS sẽ bỏ qua nếu trigger cùng tên đã tồn tại.
+        #
+        # Sửa theo review vòng 2 PR #22 (Người 1, 2026-08-12) — lỗi mới phát sinh từ
+        # fix trước: 'bat_buoc' KHÔNG CHỈ là leave_type của bản ghi giả (import hạn
+        # mức/đặt số ngày đã dùng) — nó còn là loại nghỉ THẬT nhân viên nộp được
+        # (leaves.py validate riêng: phải ≥5 ngày làm việc). Loại hẳn theo leave_type
+        # khiến đơn "nghỉ phép bắt buộc" thật của ACCT không được chấm công nghỉ, lưới
+        # rơi về mặc định 'x' = đủ công — sai ngược chiều so với lỗi gốc. Dấu hiệu
+        # đúng để nhận biết bản ghi giả là REASON (2 nơi tạo bản ghi giả ở leaves.py
+        # đều gắn tiền tố cố định "[Import]"/"[Điều chỉnh]"), không phải leave_type.
+        # CẢNH BÁO: cách này dựa vào chuỗi text — nếu sau này ai đổi câu chữ reason ở
+        # leaves.py (import_quota_apply/update_used_days) mà không cập nhật CASE này
+        # thì sẽ hỏng ngầm (bản ghi giả lại bị chấm công, hoặc đơn thật lại bị bỏ qua).
         "DROP TRIGGER IF EXISTS trg_leave_approved_sync_attendance",
         """CREATE TRIGGER IF NOT EXISTS trg_leave_approved_sync_attendance
             AFTER UPDATE OF status ON leave_records
             WHEN NEW.status = 'approved' AND OLD.status != 'approved'
-                 AND NEW.leave_type != 'bat_buoc'
+                 AND NOT (NEW.leave_type = 'bat_buoc'
+                          AND (NEW.reason LIKE '[Import]%' OR NEW.reason LIKE '[Điều chỉnh]%'))
                  AND EXISTS (SELECT 1 FROM user_tttt u JOIN departments d ON d.id = u.department_id
                              WHERE u.id = NEW.staff_id AND d.code = 'ACCT' AND u.is_active = 1)
             BEGIN
@@ -841,12 +862,15 @@ def _ensure_indexes():
         # thẳng leave_records với status='approved' ngay từ đầu (không qua UPDATE) — trigger
         # AFTER UPDATE ở trên sẽ không kích hoạt cho trường hợp này. Thêm trigger AFTER INSERT
         # cùng logic để phủ đúng path này (phát hiện khi test thực tế qua API /api/leaves/direct).
-        # Cùng các fix bat_buoc/ACCT-only/ký hiệu theo leave_type như trigger UPDATE ở trên.
+        # Cùng các fix bat_buoc/ACCT-only/ký hiệu theo leave_type như trigger UPDATE ở
+        # trên, kể cả fix vòng 2 (nhận biết bản ghi giả qua reason, xem comment ở trigger
+        # trg_leave_approved_sync_attendance phía trên — không lặp lại toàn bộ ở đây).
         "DROP TRIGGER IF EXISTS trg_leave_direct_insert_sync_attendance",
         """CREATE TRIGGER IF NOT EXISTS trg_leave_direct_insert_sync_attendance
             AFTER INSERT ON leave_records
             WHEN NEW.status = 'approved'
-                 AND NEW.leave_type != 'bat_buoc'
+                 AND NOT (NEW.leave_type = 'bat_buoc'
+                          AND (NEW.reason LIKE '[Import]%' OR NEW.reason LIKE '[Điều chỉnh]%'))
                  AND EXISTS (SELECT 1 FROM user_tttt u JOIN departments d ON d.id = u.department_id
                              WHERE u.id = NEW.staff_id AND d.code = 'ACCT' AND u.is_active = 1)
             BEGIN
@@ -905,10 +929,17 @@ def _ensure_indexes():
         # leave_records (xoá đơn khai báo hộ, rollback batch import) không có trigger dọn
         # attendances tương ứng — để lại ký hiệu "mồ côi" vĩnh viễn. Logic xoá giống hệt
         # trigger unapprove ở trên, chỉ khác sự kiện kích hoạt (DELETE thay vì UPDATE).
+        # Cùng fix vòng 2 nhận biết bản ghi giả qua reason (không phải leave_type) —
+        # xem comment đầy đủ ở trg_leave_approved_sync_attendance. Bắt buộc phải sửa
+        # trigger này theo cùng điều kiện: nếu chỉ trigger ghi cho phép đơn 'bat_buoc'
+        # thật đi qua mà trigger xoá này vẫn chặn theo leave_type cũ, huỷ/xoá đơn
+        # 'bat_buoc' thật sẽ không dọn được dòng attendances đã ghi — để lại mồ côi.
         "DROP TRIGGER IF EXISTS trg_leave_delete_revert_attendance",
         """CREATE TRIGGER IF NOT EXISTS trg_leave_delete_revert_attendance
             AFTER DELETE ON leave_records
-            WHEN OLD.status = 'approved' AND OLD.leave_type != 'bat_buoc'
+            WHEN OLD.status = 'approved'
+                 AND NOT (OLD.leave_type = 'bat_buoc'
+                          AND (OLD.reason LIKE '[Import]%' OR OLD.reason LIKE '[Điều chỉnh]%'))
             BEGIN
                 DELETE FROM attendances
                 WHERE staff_id = OLD.staff_id
