@@ -4,6 +4,22 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 17/08/2026 Phòng Thanh toán - **Menu mới: Sổ trực cuối ngày**:
+    + **Việc này để làm gì**: mỗi ngày hai giao dịch viên trực cuối ngày ghi lại tình hình ca trực, một kiểm soát viên xem và xác nhận. Trước nay ghi ra sổ giấy, không tra lại được và không ai biết hôm nào chưa ai ghi
+    + **Vào bằng menu *Sổ trực cuối ngày*** ở cột trái (nằm dưới *Phân lịch trực*)
+    + **Cách làm hằng ngày**:
+        1. Một trong hai người trực mở menu, chọn ngày, chọn tên **GDV 1** và **GDV 2**, gõ ghi chú ca trực, chọn **KSV** sẽ xác nhận
+        2. Bấm **Chuyển KSV xác nhận**. Người trực còn lại vào bấm **Xác nhận phiên trực** cho biết đã xem — bước này *không chặn gì*, KSV vẫn duyệt được ngay
+        3. KSV mở lên, xem, bấm **Xác nhận** là xong
+    + **KSV thấy chưa ổn thì có 2 nút**: *Yêu cầu sửa lại* (trả về cho 2 GDV sửa rồi đẩy lại) và *Đề nghị huỷ* (khoá luôn ô nhập, GDV chỉ còn nút *Huỷ phiên trực*). ⚠️ **Cả hai đều chỉ là đề nghị** — KSV không tự đóng được phiên, **chỉ GDV mới bấm huỷ thật**. Huỷ rồi thì mở phiên mới cho đúng ngày đó, sổ cũ vẫn lưu trong Lịch sử
+    + **Ghi sai đã duyệt xong vẫn sửa được** — bấm *Yêu cầu chỉnh sửa*. GDV bấm thì phải qua KSV duyệt lại; KSV tự bấm thì tự sửa tự chốt luôn
+    + ⚠️ **Khoá theo đúng người, không theo chức danh.** Đã chọn ai làm GDV 1 / GDV 2 thì **chỉ đúng hai người đó** sửa được, người thứ ba mở lên chỉ xem. KSV cũng vậy: chọn ai từ đầu thì đẩy lại sau khi bị từ chối vẫn phải đúng người đó, không đổi sang người khác được. Lý do: sổ trực là chứng từ nội bộ, phải biết chính xác ai ghi và ai duyệt
+    + **Không ai phải nhớ**: có việc chờ mình thì hiện ở khối *Công việc chờ xử lý* cột trái, gồm cả khi KSV vừa từ chối. Sau 16h mà chưa ai mở sổ hôm nay thì Trang chủ hiện dòng nhắc
+    + **Nhắc nhẹ nếu Đối chiếu CITAD ngày đó chưa khớp** — chỉ cảnh báo, vẫn bấm xác nhận được; có sẵn nút mở thẳng sang lịch sử chấm CITAD của đúng ngày
+    + Tab **Lịch sử** xem lại mọi ngày, **xuất Excel** theo khoảng ngày
+    + Cấp quyền ở *Phân quyền theo nhóm*: **Sổ trực cuối ngày** (vào được menu) và **Xác nhận / Từ chối sổ trực** (được chọn làm KSV)
+    + Không đụng tới menu nào khác — riêng nút ở màn *Công việc chờ xử lý* đổi chữ từ *Tới nơi xử lý* thành **Chuyển đến trang** cho cả 3 loại việc. Toàn bộ **461 test** chạy đạt (thêm 20 test mới)
+
 - 17/08/2026 Quản lý User - **Nạp Ngày vào ngành cho cả cơ quan bằng một file Excel**:
     + **Vì sao cần**: ô *Ngày vào ngành* đã có sẵn trong màn hình Thêm/Sửa tài khoản từ lâu, nhưng trên máy chính **cả 80 người đều đang để trống**. Số ngày phép năm được tính từ ngày này — trống thì ai cũng bị coi là 12 ngày, kể cả người đã công tác 25 năm. Gõ tay 72 người thì vừa lâu vừa không cách nào biết đã sót ai
     + **Nay có nút *Nhập Ngày vào ngành*** ở màn hình *Quản lý User*, cạnh nút *Xuất Excel*

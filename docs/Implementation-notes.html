@@ -6920,6 +6920,93 @@ else:
     </div>
   </div>
 
+  <!-- 78 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">78</span>
+      <span class="card-title">Sổ trực cuối ngày — khoá theo đúng người, và vì sao KSV không được tự đóng phiên</span>
+      <span class="badge badge-done">done · 2026-08-17</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Khoá theo <i>tài khoản cụ thể</i>, không theo vai trò</div>
+      <p>Mọi module trước đây phân quyền theo vai (<code>require_ksv</code>, <code>require_admin</code>…):
+        ai mang vai đó cũng thao tác được. Sổ trực làm khác — quyền chia <b>hai lớp</b>:</p>
+      <table>
+        <tr><th>Lớp</th><th>Kiểm ở đâu</th><th>Quyết định điều gì</th></tr>
+        <tr>
+          <td>Ngoài — <code>menu.so_truc</code> / <code>so_truc.ksv_confirm</code></td>
+          <td><code>require_feature()</code> ở API</td>
+          <td>Ai được <b>vào</b> module, ai được <b>xuất hiện trong danh sách chọn</b> KSV</td>
+        </tr>
+        <tr>
+          <td>Trong — <code>NotAllowedError</code> → 403</td>
+          <td>Service, so <code>staff_id</code> với <code>gdv1_id</code>/<code>gdv2_id</code>/<code>ksv_id</code> của <b>đúng bản ghi</b></td>
+          <td>Ai được <b>thao tác</b> lên phiên trực này</td>
+        </tr>
+      </table>
+      <p>Có <code>so_truc.ksv_confirm</code> <b>không</b> nghĩa là duyệt được mọi sổ — chỉ đúng người đã được
+        chọn làm <code>ksv_id</code> của ngày đó. Sổ trực là chứng từ nội bộ, phải truy được chính xác ai ghi
+        và ai duyệt; cho người cùng vai làm thay nhau là mất luôn giá trị đó.</p>
+
+      <div class="label">Không có bước "GDV còn lại phải đồng ý"</div>
+      <p>Bản đầu có trạng thái <code>pending_gdv_confirm</code> chặn giữa: một GDV đẩy, GDV kia phải bấm đồng ý
+        rồi mới tới KSV. <b>Đã bỏ</b> — một GDV đẩy là sang thẳng <code>pending_ksv</code>. <code>gdv_ack()</code>
+        còn lại thuần ghi nhận "đã xem" (<code>confirmed_by</code>), bấm lúc nào cũng được kể cả sau khi duyệt
+        xong, và <b>không chặn gì</b>. Lý do: người trực còn lại thường đã về, để bước chặn cứng thì sổ đứng
+        lại qua đêm trong khi KSV vẫn đang ngồi đó chờ duyệt.</p>
+
+      <div class="label">KSV từ chối chỉ là <i>đề nghị</i> — chỉ GDV đóng được phiên</div>
+      <p>Cả <code>ksv_reject()</code> lẫn <code>ksv_cancel()</code> đều đưa về <code>draft</code>, phân biệt bằng
+        <code>ksv_decision</code>:</p>
+      <table>
+        <tr><th><code>ksv_decision</code></th><th>Ai đặt</th><th>GDV còn làm được gì</th></tr>
+        <tr><td><code>reject_fix</code></td><td>KSV — yêu cầu sửa</td><td>Sửa rồi đẩy lại (đúng KSV cũ)</td></tr>
+        <tr><td><code>reject_cancel</code></td><td>KSV — đề nghị huỷ</td><td><b>Chỉ</b> <code>draft_cancel()</code>; <code>save_draft</code>/<code>forward_to_ksv</code> bị chặn</td></tr>
+        <tr><td><code>self_edit</code></td><td>KSV tự mở lại phiên đã duyệt</td><td>Không gì — form thuộc về KSV tới khi <code>ksv_finalize_edit()</code></td></tr>
+      </table>
+      <p><b>Chỉ <code>draft_cancel()</code> (GDV bấm) mới sinh <code>cancelled</code>.</b> KSV không tự xoá được
+        ca trực của người khác — họ nêu ý kiến, người trực chịu trách nhiệm nội dung là người đóng.</p>
+
+      <div class="label"><code>ksv_id</code> khoá cứng từ lần chọn đầu — và cái bẫy đi kèm</div>
+      <p>Đẩy lại sau khi bị từ chối <b>bắt buộc</b> giữ nguyên <code>ksv_id</code>, không cho đổi sang người dễ
+        tính hơn. Hệ quả: chọn nhầm một KSV rồi thì không gỡ được, nên <code>forward_to_ksv()</code> phải chặn
+        ngay từ đầu bằng <code>list_ksv_candidates()</code>.</p>
+      <div class="caution">Hàm đó lúc đầu chỉ lọc <code>is_active = 1</code>, thiếu <code>is_deleted = 0</code>
+        (khác <code>list_gdv_candidates()</code> ngay bên trên). Chọn phải người đã xoá → phiên chốt ở
+        <code>pending_ksv</code> <b>vĩnh viễn</b>: <code>save_draft</code> chặn vì sai trạng thái,
+        <code>forward_to_ksv</code> chặn vì không đổi được KSV, <code>draft_cancel</code> chặn vì không ở
+        <code>draft</code>, <code>request_edit</code> chặn vì chưa <code>approved</code> — và người duy nhất
+        gỡ được thì không đăng nhập được nữa. Hai điều kiện lọc phải giống nhau; đã bổ sung.</div>
+
+      <div class="label">Một ngày nhiều phiên — unique index <i>một phần</i></div>
+      <p>Huỷ rồi mở lại nghĩa là một <code>truc_date</code> có nhiều dòng, nên không thể
+        <code>UNIQUE(truc_date)</code>. Dùng
+        <code>ux_so_truc_active_date (truc_date) WHERE status != 'cancelled'</code>: vừa cho lưu lịch sử các
+        phiên đã huỷ, vừa bảo đảm mỗi ngày <b>đúng một</b> phiên đang hoạt động. Đây cũng là thứ chặn tranh chấp
+        khi hai GDV cùng mở một ngày chưa có dòng nào — người thua bắt <code>IntegrityError</code> rồi đọc lại
+        dòng của người thắng, không báo lỗi ra màn hình.</p>
+
+      <div class="label">Cách ly nhánh Sổ trực khỏi hai màn cũ</div>
+      <p><code>/pending-counts</code> và <code>/pending-items</code> là nguồn chung cho cả 3 badge và cả 3 màn
+        <code>/pending/*</code>, chạy cho <b>mọi</b> user kể cả người không dùng Sổ trực. Nhánh so_truc ban đầu
+        chạy trần: một lỗi SQL ở đó làm 500 cả response ⇒ mất luôn badge Chứng từ + Nghỉ phép, và
+        <code>/pending/handovers</code> báo "Không tải được danh sách" dù module đó vẫn khoẻ.</p>
+      <p>Nay bọc <code>try/except sqlite3.Error</code> riêng, trả <code>0</code>/<code>[]</code> + log ERROR.
+        Bắt <b>hẹp</b> ở <code>sqlite3.Error</code> chứ không <code>Exception</code> — lỗi thật của code
+        (vd <code>KeyError</code> trên <code>current</code>) vẫn phải nổi lên. <code>tests/test_pending_so_truc_cach_ly.py</code>
+        DROP bảng rồi kiểm hai endpoint vẫn 200 và hai module cũ vẫn đúng số liệu.</p>
+
+      <div class="label">Nợ kỹ thuật đã biết, chưa xử lý</div>
+      <p><code>doi_chieu_citad_service.is_reconciliation_matched()</code> <b>chép lại</b> công thức tính chênh
+        lệch từ <code>frontend/pages/doi_chieu_citad.py::_compute_totals()</code> (cùng
+        <code>CONGS</code>/<code>CURS</code>/8 <code>FK</code>, cùng cộng Napas + PSS-MDP vào <code>den_ih</code>,
+        cùng loại Ebanking). Lý do: frontend chạy tiến trình khác, không gọi service backend trực tiếp được.
+        Hiện <b>khớp chính xác</b>, nhưng không có gì ép đồng bộ — sửa một bên quên bên kia thì Sổ trực báo
+        "đã khớp" trong khi trang Đối chiếu hiện chênh lệch, <b>không lỗi, không log</b>. Cần một test so hai
+        bản trên cùng bộ dữ liệu mẫu, hoặc chuyển frontend sang gọi API để chỉ còn một nguồn.</p>
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-17</footer>
 </div>
 </body>

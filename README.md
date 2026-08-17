@@ -414,6 +414,30 @@ Truy cập:
   lệch — xem lại/tải lại đúng số liệu của lần đối soát cũ, không tính lại từ file gốc
 - Phân quyền riêng theo nhóm (`menu.doi_soat_citad`)
 
+### Module Sổ trực cuối ngày (Phòng Thanh toán)
+- Ghi nhận ca trực cuối ngày: **2 GDV chính** (+ trực phụ chỉ liệt kê, không tham gia duyệt)
+  nhập ghi chú, chọn **1 KSV** xác nhận. Menu cấp 1: **Sổ trực cuối ngày**
+- Luồng: `draft` → `pending_ksv` → `approved`. Một GDV đủ để chuyển KSV; GDV còn lại bấm
+  *Xác nhận phiên trực* chỉ để ghi nhận đã xem (`gdv_ack`, không chặn luồng)
+- KSV có hai lựa chọn từ chối, **cả hai đều chỉ là đề nghị và đều quay về `draft`** —
+  phân biệt bằng `ksv_decision`: `reject_fix` (yêu cầu sửa) và `reject_cancel` (đề nghị huỷ,
+  khoá form, GDV chỉ còn nút *Huỷ phiên trực*). **Chỉ GDV mới đóng được phiên thật**
+  (`draft_cancel` → `cancelled`, ngõ cụt — làm lại phải mở phiên mới cho cùng ngày)
+- Phiên đã **Hoàn thành** vẫn mở lại sửa được (`request_edit`): GDV mở lại thì phải đẩy KSV
+  duyệt lại từ đầu; KSV tự mở lại (`self_edit`) thì tự sửa rồi tự chốt (`ksv_finalize_edit`)
+- **Khoá theo đúng người, không theo vai**: một khi `gdv1_id`/`gdv2_id` đã chọn, chỉ đúng 2 tài
+  khoản đó sửa được; `ksv_id` khoá cứng từ lần chọn đầu, đẩy lại sau khi bị từ chối vẫn phải
+  đúng người đó. Sai người → `NotAllowedError` → HTTP 403
+- Một ngày có thể có **nhiều phiên** (đã huỷ rồi mở lại). Unique index một phần
+  `ux_so_truc_active_date (truc_date) WHERE status != 'cancelled'` bảo đảm mỗi ngày chỉ một
+  phiên đang hoạt động, đồng thời chặn tranh chấp khi hai GDV cùng mở một ngày
+- Cảnh báo (không chặn) khi **Đối chiếu CITAD cùng ngày chưa khớp**; link sang thẳng tab
+  Lịch sử của `/doi_chieu_citad?ngay=`
+- Badge **Sổ trực chờ xử lý** trên sidebar; trang chủ nhắc khi sau 16h (giờ máy chủ) chưa ai
+  mở sổ. Tab Lịch sử xuất Excel theo khoảng ngày
+- Phân quyền: `menu.so_truc` (vào module, xem lịch sử) + `so_truc.ksv_confirm`
+  (được xuất hiện trong danh sách chọn KSV)
+
 ---
 
 ## Phân quyền (RBAC)
