@@ -154,6 +154,92 @@ async def staff_page():
                         if _handle_api_error(e): return
                 ui.button("Lưu", on_click=do_add).classes("bg-red-700 text-white")
 
+        # ── Nhập Ngày vào ngành hàng loạt từ Excel ────────────────────────────
+        # Luôn xem trước (dry_run) rồi mới ghi: file danh sách cán bộ hay lệch mã
+        # với DB, ghi thẳng thì không ai biết ai bị bỏ sót.
+        join_file = {"name": None, "bytes": None}
+        join_import_dialog = ui.dialog()
+        with join_import_dialog, ui.card().classes("w-[34rem] p-6"):
+            ui.label("Nhập Ngày vào ngành từ Excel").classes("text-lg font-bold")
+            ui.label("Khớp theo cột Mã cán bộ. File cần có 2 cột: "
+                     "'Mã cán bộ' và 'Ngày vào ngành' (dd/mm/yyyy)."
+                     ).classes("text-xs text-gray-500 mb-3")
+
+            ji_overwrite = ui.checkbox("Ghi đè cả người đã có ngày vào ngành").classes("text-sm")
+            ji_result = ui.column().classes("w-full mt-2 gap-1")
+
+            def _render_preview(r: dict):
+                ji_result.clear()
+                with ji_result:
+                    ui.label(f"Đọc được {r['total_rows']} dòng").classes("text-sm font-semibold")
+                    ui.label(f"• Sẽ cập nhật: {r['updated']}").classes("text-sm text-green-700")
+                    ui.label(f"• Đã đúng, bỏ qua: {r['unchanged']}").classes("text-sm text-gray-600")
+                    for key, title, color in (
+                        ("kept_existing", "Đã có ngày khác — giữ nguyên", "text-amber-700"),
+                        ("not_found", "Không tìm thấy mã cán bộ trong hệ thống", "text-red-600"),
+                        ("bad_date", "Ô ngày trống hoặc không đọc được", "text-red-600"),
+                    ):
+                        lst = r.get(key) or []
+                        if not lst:
+                            continue
+                        with ui.expansion(f"{title}: {len(lst)}").classes(f"w-full text-sm {color}"):
+                            for line in lst[:60]:
+                                ui.label(line).classes("text-xs text-gray-600")
+                            if len(lst) > 60:
+                                ui.label(f"… và {len(lst) - 60} dòng nữa").classes("text-xs text-gray-400")
+
+            async def _join_preview():
+                if not join_file["bytes"]:
+                    return
+                qs = f"?dry_run=true&overwrite={'true' if ji_overwrite.value else 'false'}"
+                try:
+                    r = await asyncio.to_thread(
+                        api.post_upload, f"/api/staff/import-join-dates{qs}",
+                        {"file": (join_file["name"], join_file["bytes"],
+                                  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+                    )
+                except Exception as ex:
+                    if _handle_api_error(ex): return
+                    ji_result.clear()
+                    with ji_result:
+                        ui.label(str(ex)).classes("text-sm text-red-600")
+                    ji_apply.disable()
+                    return
+                _render_preview(r)
+                (ji_apply.enable if r["updated"] else ji_apply.disable)()
+
+            async def _join_upload(e):
+                join_file["name"] = e.name
+                join_file["bytes"] = e.content.read()
+                await _join_preview()
+
+            async def _join_apply():
+                if not join_file["bytes"]:
+                    ui.notify("Chưa chọn file", type="warning")
+                    return
+                qs = f"?overwrite={'true' if ji_overwrite.value else 'false'}"
+                try:
+                    r = await asyncio.to_thread(
+                        api.post_upload, f"/api/staff/import-join-dates{qs}",
+                        {"file": (join_file["name"], join_file["bytes"],
+                                  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+                    )
+                except Exception as ex:
+                    if _handle_api_error(ex): return
+                    ui.notify(str(ex), type="negative")
+                    return
+                ui.notify(f"Đã cập nhật {r['updated']} người", type="positive")
+                join_import_dialog.close()
+                await load_staff()
+
+            ui.upload(label="Chọn file Excel", on_upload=_join_upload, auto_upload=True
+                      ).props('accept=".xlsx,.xlsm" flat dense').classes("w-full")
+            ji_overwrite.on_value_change(lambda _e: _join_preview())
+            with ui.row().classes("w-full justify-end gap-2 mt-4"):
+                ui.button("Đóng", on_click=lambda: join_import_dialog.close()).classes("text-gray-500")
+                ji_apply = ui.button("Ghi vào hệ thống", on_click=_join_apply).classes("bg-red-700 text-white")
+            ji_apply.disable()
+
         # ── Controls ──────────────────────────────────────────────────────────
         with ui.row().classes("w-full justify-between items-center mb-4 gap-2 flex-wrap"):
             with ui.row().classes("items-center gap-2"):
@@ -184,6 +270,10 @@ async def staff_page():
                 if api.has_feature("staff.export"):
                     ui.button("Xuất Excel", icon="download", on_click=lambda: asyncio.ensure_future(_do_export_excel())).props("dense").classes("bg-green-700 text-white")
                     ui.button("Xuất DB", icon="download", on_click=do_export).props("dense outline").classes("text-gray-700")
+                if api.has_feature("staff.import_join_date"):
+                    ui.button("Nhập Ngày vào ngành", icon="event",
+                              on_click=lambda: join_import_dialog.open()
+                              ).props("dense outline").classes("text-blue-700")
                 if api.has_feature("staff.import_db"):
                     import_input = ui.upload(
                         label="Nhập DB",

@@ -1,11 +1,15 @@
 """KSNB Staff management endpoints"""
 import io
 import os
+import re
 import sqlite3
 import tempfile
+import unicodedata
+from datetime import date as _date_cls, datetime as _datetime_cls, timedelta as _timedelta
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File
 from fastapi.responses import StreamingResponse
+from backend.core.concurrency import run_heavy
 from backend.database import DB_PATH, get_db, write_audit, compute_annual_leave, _vn_now
 
 # Mốc hiệu lực gốc cho dòng lịch sử phòng đầu tiên của mỗi cán bộ
@@ -399,6 +403,166 @@ def import_users_db(
                 f"Import DB: +{inserted} mới, ~{updated} cập nhật", client_ip)
     db.commit()
     return {"inserted": inserted, "updated": updated}
+
+
+# ─── Nhập Ngày vào ngành hàng loạt từ Excel ─────────────────────────────────
+
+def _fold_hdr(s) -> str:
+    """Hạ chữ + bỏ dấu + gộp khoảng trắng để dò tên cột bất kể cách gõ."""
+    t = unicodedata.normalize("NFD", str(s or "")).replace("đ", "d").replace("Đ", "D")
+    t = "".join(ch for ch in t if not unicodedata.combining(ch))
+    return re.sub(r"\s+", " ", t).strip().lower()
+
+
+def _parse_join_date(v):
+    """Excel trả về datetime, date, chuỗi dd/mm/yyyy hoặc số serial — chuẩn hoá về ISO."""
+    if v is None or (isinstance(v, str) and not v.strip()):
+        return None
+    if isinstance(v, _datetime_cls):
+        d = v.date()
+    elif isinstance(v, _date_cls):
+        d = v
+    elif isinstance(v, (int, float)):
+        # Serial Excel (epoch 1899-12-30) — chỉ gặp khi ô không được định dạng ngày
+        try:
+            d = _date_cls(1899, 12, 30) + _timedelta(days=int(v))
+        except Exception:
+            return None
+    else:
+        s = str(v).strip().split()[0]
+        d = None
+        for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%d.%m.%Y", "%d/%m/%y"):
+            try:
+                d = _datetime_cls.strptime(s, fmt).date()
+                break
+            except ValueError:
+                continue
+        if d is None:
+            return None
+    # Chặn ngày vô lý: gõ nhầm năm làm số ngày phép sai suốt về sau
+    if not (1950 <= d.year <= _date_cls.today().year):
+        return None
+    return d.isoformat()
+
+
+def _parse_join_date_workbook(content: bytes):
+    """Đọc file Excel → [(ma_can_bo, ho_ten, ngay_iso|None, so_dong)]."""
+    import openpyxl
+
+    wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True, read_only=True)
+    ws = wb.active
+
+    # ── Dò dòng tiêu đề (file mẫu có dòng trống ở trên) ──
+    col_code = col_date = col_name = None
+    header_row = 0
+    for ri, row in enumerate(ws.iter_rows(min_row=1, max_row=15, values_only=True), 1):
+        found = {}
+        for ci, cell in enumerate(row):
+            h = _fold_hdr(cell)
+            if not h:
+                continue
+            if "ma can bo" in h or h in ("ma cb", "ma nhan vien"):
+                found["code"] = ci
+            elif "vao nganh" in h:
+                found["date"] = ci
+            elif "ho va ten" in h or h == "ho ten":
+                found["name"] = ci
+        if "code" in found and "date" in found:
+            col_code, col_date = found["code"], found["date"]
+            col_name = found.get("name")
+            header_row = ri
+            break
+    if col_code is None:
+        wb.close()
+        raise HTTPException(400, "Không tìm thấy cột 'Mã cán bộ' và 'Ngày vào ngành' trong file")
+
+    items = []
+    for ri, row in enumerate(ws.iter_rows(min_row=header_row + 1, values_only=True), header_row + 1):
+        code = row[col_code] if col_code < len(row) else None
+        if code is None or not str(code).strip():
+            continue  # dòng tiêu đề nhóm phòng (chỉ có tên phòng ở cột B)
+        # Mã cán bộ đọc từ ô số sẽ ra float ("2.00733664e+08") → ép về int trước
+        if isinstance(code, float) and code.is_integer():
+            code = int(code)
+        raw_date = row[col_date] if col_date < len(row) else None
+        name = row[col_name] if (col_name is not None and col_name < len(row)) else ""
+        items.append((str(code).strip(), str(name or "").strip(),
+                      _parse_join_date(raw_date), ri))
+    wb.close()
+    return items
+
+
+@router.post("/import-join-dates")
+async def import_join_dates(
+    file: UploadFile = File(...),
+    overwrite: bool = Query(False, description="Ghi đè cả những người đã có ngày vào ngành"),
+    dry_run: bool = Query(False, description="Chỉ xem trước, không ghi DB"),
+    request: Request = None,
+    db: sqlite3.Connection = Depends(get_db),
+    current: dict = Depends(require_feature("staff.import_join_date")),
+):
+    """Nhập hàng loạt Ngày vào ngành từ Excel, khớp theo Mã cán bộ.
+
+    Mặc định chỉ điền vào ô đang trống — người đã có ngày (sửa tay trên máy chính)
+    không bị file cũ đè lên. Muốn đè thì gọi với `overwrite=true`.
+    """
+    if not (file.filename or "").lower().endswith((".xlsx", ".xlsm")):
+        raise HTTPException(400, "Chỉ nhận file Excel .xlsx")
+
+    items = await run_heavy(_parse_join_date_workbook, await file.read())
+    if not items:
+        raise HTTPException(400, "Không đọc được dòng dữ liệu nào trong file")
+
+    existing = {
+        str(r["employee_code"] or "").strip(): r
+        for r in db.execute(
+            """SELECT id, employee_code, full_name, join_industry_date FROM user_tttt
+               WHERE is_deleted = 0 OR is_deleted IS NULL"""
+        )
+    }
+
+    updated = unchanged = 0
+    not_found, bad_date, kept = [], [], []
+    seen = set()
+    for code, name, iso, ri in items:
+        if code in seen:
+            continue  # trùng mã trong file — giữ dòng đầu
+        seen.add(code)
+        row = existing.get(code)
+        if row is None:
+            not_found.append(f"Dòng {ri}: {code} — {name}")
+            continue
+        if iso is None:
+            bad_date.append(f"Dòng {ri}: {code} — {name}")
+            continue
+        cur = (row["join_industry_date"] or "")[:10]
+        if cur == iso:
+            unchanged += 1
+            continue
+        if cur and not overwrite:
+            kept.append(f"{code} — {row['full_name']}: giữ {cur}, file ghi {iso}")
+            continue
+        if not dry_run:
+            db.execute("UPDATE user_tttt SET join_industry_date = ? WHERE id = ?", (iso, row["id"]))
+        updated += 1
+
+    if not dry_run:
+        db.commit()
+        client_ip = request.client.host if request and request.client else "unknown"
+        write_audit(db, current["id"], "staff_import_join_dates", "staff", None,
+                    f"{file.filename}: cập nhật {updated}, giữ nguyên {unchanged}, "
+                    f"không khớp {len(not_found)}", client_ip)
+        db.commit()
+
+    return {
+        "dry_run": dry_run,
+        "total_rows": len(items),
+        "updated": updated,
+        "unchanged": unchanged,
+        "not_found": not_found,
+        "bad_date": bad_date,
+        "kept_existing": kept,
+    }
 
 
 # ─── Leave records (DEPRECATED — dùng /api/leaves/ thay thế) ────────────────

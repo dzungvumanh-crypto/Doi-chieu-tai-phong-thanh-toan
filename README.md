@@ -246,6 +246,14 @@ Truy cập:
   **PNG nền trong suốt**, tối đa 2 MB, mỗi người một ảnh. Ảnh lưu trong DB (bảng `user_signatures`)
   nên đi cùng bản sao lưu `.db`; chỉ xem/sửa/xoá được ảnh **của chính mình**. Dùng để ký đơn nghỉ phép
 - **Trạng thái tài khoản** — cột `user_tttt.is_active` cho phép NULL (dữ liệu cũ, đường *Nhập DB*). **NULL = tạm khoá**, thống nhất với `WHERE is_active = 1` ở đăng nhập và danh sách cán bộ; migration lúc khởi động ghi hẳn về `0`, `StaffOut` cũng ép NULL → `False` để một dòng bỏ trống không làm hỏng cả response `/api/staff/`
+- **Nhập Ngày vào ngành hàng loạt từ Excel** (nút *Nhập Ngày vào ngành*, feature `staff.import_join_date`)
+  — `POST /api/staff/import-join-dates`, khớp theo **Mã cán bộ**, chỉ ghi cột `join_industry_date`.
+  Dòng tiêu đề cột được dò trong 15 dòng đầu (file thật có dòng trống ở trên); dòng nào ô Mã cán bộ
+  rỗng thì bỏ qua (tiêu đề nhóm phòng). Nhận ngày dạng `dd/mm/yyyy`, `yyyy-mm-dd`, ô định dạng Date,
+  và serial Excel; **loại mọi năm ngoài 1950 → năm hiện tại**. Mặc định `overwrite=false` — chỉ điền
+  vào ô đang trống, ai đã có ngày khác thì được liệt kê chứ không bị đè. Giao diện luôn chạy
+  `dry_run=true` trước để xem số dòng sẽ đổi / mã không khớp / ô ngày hỏng, chỉ mở nút ghi khi thật sự
+  có thay đổi. Người đã xoá (`is_deleted = 1`) không được khớp; endpoint **không tạo tài khoản mới**
 
 ### Module Nghỉ phép
 - Cán bộ tạo đơn xin nghỉ (phép năm, ốm, việc riêng, khác)

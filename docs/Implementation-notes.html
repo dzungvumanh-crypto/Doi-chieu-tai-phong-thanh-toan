@@ -6844,7 +6844,83 @@ else:
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-14</footer>
+  <!-- 77 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">77</span>
+      <span class="card-title">Nhập Ngày vào ngành hàng loạt từ Excel — vì sao không dùng lại "Nhập DB"</span>
+      <span class="badge badge-done">done · 2026-08-17</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Trường đã có sẵn — thiếu là đường nạp dữ liệu</div>
+      <p>Cột <code>user_tttt.join_industry_date</code>, ô nhập trong hai hộp thoại Thêm/Sửa, và cột
+        <i>"Vào ngành / Phép"</i> trên bảng đều đã có từ đợt tính ngày phép tự động (card 46). Nhưng
+        trên máy chính <b>cả 80 dòng đều rỗng</b> — nghĩa là số ngày phép của mọi người đang rơi về
+        fallback 12 ngày. Việc cần làm không phải thêm trường mà là <b>nạp 72 dòng dữ liệu một lượt</b>.</p>
+
+      <div class="label">Ba cách nạp — chọn cách nào</div>
+      <table>
+        <tr><th>Cách</th><th>Đánh đổi</th><th>Kết luận</th></tr>
+        <tr>
+          <td>Gõ tay 72 người qua hộp thoại Sửa</td>
+          <td>72 lần mở/đóng, không ai đối chiếu được đã sót ai</td>
+          <td><span class="pill pill-red">loại</span></td>
+        </tr>
+        <tr>
+          <td>Dùng lại <code>POST /import-db</code> sẵn có</td>
+          <td>Endpoint đó <b>ghi đè toàn bộ cột</b> của <code>user_tttt</code> theo file. Muốn dùng
+            phải dựng một file <code>.db</code> đầy đủ trên máy phát triển rồi mang sang — sai một
+            trường là mất mật khẩu / quyền / phòng của cả 80 người</td>
+          <td><span class="pill pill-red">loại</span></td>
+        </tr>
+        <tr>
+          <td>Endpoint riêng, chỉ chạm đúng một cột</td>
+          <td>Thêm ~120 LOC + 1 feature code</td>
+          <td><span class="pill pill-green">chọn</span></td>
+        </tr>
+      </table>
+
+      <div class="label">Mặc định KHÔNG ghi đè — và vì sao đó là mặc định đúng</div>
+      <p>File <code>MA CB.xlsx</code> là bản chụp nhân sự tại một thời điểm, không phải nguồn chân lý
+        sống. Người vận hành sẽ sửa tay trên máy chính khi có người mới, rồi vài tháng sau lại nhập lại
+        đúng file cũ đó. Nếu import mặc định ghi đè thì <b>mọi chỉnh tay đều bị nuốt lặng lẽ</b> — số
+        ngày phép đổi mà không dòng thông báo nào. Nên: mặc định chỉ điền vào ô đang trống, ô đã có giá
+        trị khác được liệt kê ra dưới mục <i>"Đã có ngày khác — giữ nguyên"</i>, muốn đè phải tự tick.</p>
+
+      <div class="label">Bắt buộc xem trước (<code>dry_run</code>) trước khi ghi</div>
+      <p>Khớp theo <b>Mã cán bộ</b>, không theo họ tên: tên trùng nhau và sai lệch NFC/NFD làm việc so
+        khớp tên không đáng tin. Đổi lại, mã lệch một ký tự là dòng đó rơi thẳng vào
+        <code>not_found</code> mà kết quả tổng vẫn <i>trông</i> thành công. Vì vậy giao diện luôn chạy
+        <code>dry_run=true</code> ngay khi chọn file và <b>chỉ mở nút <i>Ghi vào hệ thống</i> khi có
+        dòng thật sự sẽ đổi</b>; ba danh sách (không khớp mã / ngày hỏng / giữ nguyên) hiện đầy đủ để
+        đối chiếu trước.</p>
+      <p>Đo trên file thật: 72/72 dòng khớp mã, 70 dòng ghi được, 2 dòng
+        (<i>Nguyễn Thị Hà Dương</i>, <i>Nguyễn Thanh Minh</i>) <b>bỏ trống ô ngày ngay trong file nguồn</b>
+        — hai người này phải điền tay, không phải lỗi phần mềm.</p>
+
+      <div class="caution"><b>Chặn năm vô lý ngay ở tầng đọc file.</b> <code>_parse_join_date()</code>
+        loại mọi ngày ngoài khoảng 1950 → năm hiện tại. Gõ nhầm <code>2035</code> thay
+        <code>2005</code> không gây lỗi ở đâu cả: <code>compute_annual_leave()</code> vẫn trả về một
+        con số, chỉ là sai, và nó theo người đó suốt mọi kỳ nghỉ phép về sau. Một ô rỗng bị báo ra còn
+        hơn một con số sai lặng lẽ.</div>
+
+      <div class="note">Dòng tiêu đề nhóm phòng trong file (chỉ có tên phòng ở cột B, cột Mã cán bộ
+        rỗng) được bỏ qua bằng cách xét ô <b>Mã cán bộ</b> rỗng — không đếm dòng, không dò tên phòng.
+        Dòng tiêu đề cột cũng được dò trong 15 dòng đầu chứ không cố định ở dòng 1, vì file thật có một
+        dòng trống ở trên cùng.</div>
+
+      <div class="label">Việc phát hiện nhưng không sửa trong đợt này</div>
+      <p><code>Settings.DATABASE_URL</code> là <b>hằng số</b>, không đọc biến môi trường (khác với
+        <code>BACKUP_EXTRA_DIR</code>, <code>BACKEND_PORT</code>… ngay bên dưới nó trong cùng file).
+        Hệ quả: không có cách nào trỏ ứng dụng sang một DB khác để thử nghiệm — mọi thứ chạy qua
+        <code>backend.main</code> đều ghi thẳng vào <code>data/ksnb.db</code> thật. Không sửa ở đợt này
+        vì đổi nguồn DB là thay đổi lan sang <code>init_db.py</code>, <code>deploy.bat</code> và
+        backup service; test của endpoint này dùng sqlite <code>:memory:</code> qua
+        <code>dependency_overrides[get_db]</code> nên không bị vướng.</p>
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-17</footer>
 </div>
 </body>
 </html>

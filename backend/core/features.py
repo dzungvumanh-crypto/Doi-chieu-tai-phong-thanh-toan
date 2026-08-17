@@ -64,6 +64,7 @@ FEATURES: dict[str, str] = {
     "staff.delete":            "Xóa nhân viên",
     "staff.export":            "Xuất Excel / DB",
     "staff.import_db":         "Nhập DB",
+    "staff.import_join_date":  "Nhập Ngày vào ngành từ Excel",
 
     # Phân lịch trực — Phòng Thanh toán
     "menu.duty_schedule":      "Phân lịch trực — Phòng Thanh toán (menu)",
@@ -247,6 +248,7 @@ FEATURE_GROUPS: list[dict] = [
                             "staff.delete",
                             "staff.export",
                             "staff.import_db",
+                            "staff.import_join_date",
                         ],
                     },
                     {"code": "menu.logs", "actions": []},

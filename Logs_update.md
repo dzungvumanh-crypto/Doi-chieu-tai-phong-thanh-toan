@@ -4,6 +4,22 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 17/08/2026 Quản lý User - **Nạp Ngày vào ngành cho cả cơ quan bằng một file Excel**:
+    + **Vì sao cần**: ô *Ngày vào ngành* đã có sẵn trong màn hình Thêm/Sửa tài khoản từ lâu, nhưng trên máy chính **cả 80 người đều đang để trống**. Số ngày phép năm được tính từ ngày này — trống thì ai cũng bị coi là 12 ngày, kể cả người đã công tác 25 năm. Gõ tay 72 người thì vừa lâu vừa không cách nào biết đã sót ai
+    + **Nay có nút *Nhập Ngày vào ngành*** ở màn hình *Quản lý User*, cạnh nút *Xuất Excel*
+    + **Cách làm trên máy chính** (chỉ Quản trị viên):
+        1. Vào **Quản lý User** → bấm **Nhập Ngày vào ngành**
+        2. Bấm **Chọn file Excel** → chọn file `MA CB.xlsx`
+        3. Hệ thống **xem trước ngay, chưa ghi gì cả**: hiện sẽ cập nhật bao nhiêu người, ai không khớp mã, ai bỏ trống ô ngày
+        4. Xem xong thấy đúng thì bấm **Ghi vào hệ thống**. Thấy sai thì đóng lại, sửa file rồi chọn lại — chưa có gì bị đổi
+    + **File cần có 2 cột: *Mã cán bộ* và *Ngày vào ngành*** (dạng `dd/mm/yyyy`). Các cột khác (STT, Họ và tên, Phòng, Chức vụ) có cũng được, không có cũng được. Dòng tiêu đề nhóm phòng xen giữa danh sách được tự bỏ qua
+    + ⚠️ **Ghép người theo *Mã cán bộ*, không theo họ tên** — tên trùng nhau quá nhiều nên không tin được. Mã nào không có trong hệ thống thì phần xem trước liệt kê ra để kiểm, **hệ thống không tự tạo tài khoản mới**
+    + ⚠️ **Mặc định KHÔNG đè lên người đã có ngày.** Ai đã điền sẵn (hoặc bạn vừa sửa tay) thì được giữ nguyên và liệt kê ở mục *"Đã có ngày khác — giữ nguyên"* để bạn tự đối chiếu. Chỉ khi chắc chắn file mới đúng hơn thì mới tick ô **Ghi đè**. Lý do: vài tháng sau nhập lại đúng file cũ là mọi chỉnh tay bị xoá sạch mà không một dòng thông báo
+    + **Nhập lại nhiều lần vô hại** — lần thứ hai báo *"đã đúng, bỏ qua"* chứ không nhân đôi hay đổi gì
+    + ⚠️ **Riêng file `MA CB.xlsx` hiện tại: 2 người bỏ trống ô ngày ngay trong file** — *Nguyễn Thị Hà Dương* và *Nguyễn Thanh Minh*. Hai người này phải vào Sửa tài khoản điền tay, hoặc điền vào file rồi nhập lại
+    + Ngày nhập xong hiện luôn ở cột *Vào ngành / Phép* trên bảng danh sách, kèm số ngày phép được tính lại
+    + Không đụng tới menu nào khác. Toàn bộ **441 test** của hệ thống chạy đạt (thêm 12 test mới cho riêng phần này)
+
 - 17/08/2026 Phân lịch trực - **Sửa lỗi đếm số ca, cho thứ 7/CN đi làm, file Excel bám mẫu của phòng**:
     + ⚠️ **Sửa lỗi nặng: tạo lại lịch làm số ca phình lên.** Trước đây bấm *Tạo lịch* xem thử rồi tạo lại lần nữa thì hệ thống vẫn nhớ cả hai lần — tạo lại 3 lần cho một tuần là nó tưởng mọi người đã trực 45 ca trong khi thật ra chỉ 15. Xoá lịch cũng không trả lại. Vì **chia đều số ca là tiêu chí chính** nên ai bị cộng oan sẽ bị đẩy xuống cuối hàng ở mọi tuần sau, mà lịch vẫn *trông hợp lệ* nên không ai nhìn ra. **Nay xoá hoặc tạo lại đều trả số ca về đúng.** Số ca đang lệch sẵn từ trước thì dùng nút *Reset vòng xoay* ở tab Cài đặt để đưa về mốc sạch
     + **Sửa cảnh báo báo nhầm**: ngày quyết toán nào có người **trực phụ** biết song phương cũng bị báo *"dư người song phương"*, dù nhóm trực chính vẫn đúng một người. Người trực phụ về sớm nên không giữ vai này — nay không tính nữa
