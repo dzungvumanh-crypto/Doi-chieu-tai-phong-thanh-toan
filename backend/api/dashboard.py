@@ -1,4 +1,5 @@
 """Dashboard API — KPI tổng hợp và pending counts cho sidebar badge"""
+import logging
 import sqlite3
 from fastapi import APIRouter, Depends, Query
 from backend.database import get_db, _vn_now
@@ -8,6 +9,7 @@ from backend.services.handover_report_service import (
 )
 
 router = APIRouter()
+_log = logging.getLogger(__name__)
 
 
 def _is_tong_hop(staff: dict, db: sqlite3.Connection) -> bool:
@@ -149,10 +151,18 @@ def pending_counts(
         handovers_by_dept = [{"dept_name": r["dept_name"], "count": r["cnt"]} for r in rows]
 
     # ── Sổ trực cuối ngày đang chờ mình ──
-    sf_where, sf_params = _so_truc_filter(current)
-    so_truc_count = db.execute(
-        f"SELECT COUNT(*) FROM so_truc_records r WHERE {sf_where}", sf_params
-    ).fetchone()[0] or 0
+    # Bọc riêng: endpoint này là nguồn chung cho CẢ 3 badge và được gọi ở mọi
+    # trang, mọi user — kể cả người không dùng Sổ trực. Nhánh này hỏng (bảng
+    # chưa migrate, cột đổi tên) mà không chặn lại thì cả badge Chứng từ và
+    # Nghỉ phép biến mất theo. Trả 0 + ghi log, hai module cũ chạy tiếp.
+    try:
+        sf_where, sf_params = _so_truc_filter(current)
+        so_truc_count = db.execute(
+            f"SELECT COUNT(*) FROM so_truc_records r WHERE {sf_where}", sf_params
+        ).fetchone()[0] or 0
+    except sqlite3.Error as e:
+        _log.error("Không đếm được sổ trực chờ xử lý: %s", e)
+        so_truc_count = 0
 
     return {
         "leaves": leaves_count, "handovers": handovers_count, "handovers_by_dept": handovers_by_dept,
@@ -276,28 +286,34 @@ def pending_items(
             })
 
     # ── Sổ trực cuối ngày ──
+    # Bọc riêng, cùng lý do như ở /pending-counts: ba màn /pending/* ăn chung
+    # một response, nhánh này hỏng thì /pending/handovers và /pending/leaves
+    # cũng báo "Không tải được danh sách" dù hai module đó vẫn khoẻ.
     so_truc: list = []
-    sf_where, sf_params = _so_truc_filter(current)
-    rows = db.execute(
-        f"""SELECT r.truc_date, r.status, r.ghi_chu,
-                   g1.full_name AS gdv1_name, g2.full_name AS gdv2_name, k.full_name AS ksv_name
-            FROM so_truc_records r
-            LEFT JOIN user_tttt g1 ON r.gdv1_id = g1.id
-            LEFT JOIN user_tttt g2 ON r.gdv2_id = g2.id
-            LEFT JOIN user_tttt k  ON r.ksv_id  = k.id
-            WHERE {sf_where}
-            ORDER BY r.truc_date DESC
-            LIMIT {_ITEMS_LIMIT}""",
-        sf_params,
-    ).fetchall()
-    so_truc = [
-        {
-            "truc_date": r["truc_date"], "status": r["status"], "ghi_chu": r["ghi_chu"] or "",
-            "gdv1_name": r["gdv1_name"] or "", "gdv2_name": r["gdv2_name"] or "",
-            "ksv_name": r["ksv_name"] or "",
-        }
-        for r in rows
-    ]
+    try:
+        sf_where, sf_params = _so_truc_filter(current)
+        rows = db.execute(
+            f"""SELECT r.truc_date, r.status, r.ghi_chu,
+                       g1.full_name AS gdv1_name, g2.full_name AS gdv2_name, k.full_name AS ksv_name
+                FROM so_truc_records r
+                LEFT JOIN user_tttt g1 ON r.gdv1_id = g1.id
+                LEFT JOIN user_tttt g2 ON r.gdv2_id = g2.id
+                LEFT JOIN user_tttt k  ON r.ksv_id  = k.id
+                WHERE {sf_where}
+                ORDER BY r.truc_date DESC
+                LIMIT {_ITEMS_LIMIT}""",
+            sf_params,
+        ).fetchall()
+        so_truc = [
+            {
+                "truc_date": r["truc_date"], "status": r["status"], "ghi_chu": r["ghi_chu"] or "",
+                "gdv1_name": r["gdv1_name"] or "", "gdv2_name": r["gdv2_name"] or "",
+                "ksv_name": r["ksv_name"] or "",
+            }
+            for r in rows
+        ]
+    except sqlite3.Error as e:
+        _log.error("Không tải được danh sách sổ trực chờ xử lý: %s", e)
 
     return {"leaves": leaves, "handovers": handovers, "so_truc": so_truc}
 
