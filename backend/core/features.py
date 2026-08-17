@@ -279,10 +279,16 @@ FEATURE_GROUPS: list[dict] = [
         # cụ thể được giao theo dõi chấm công, không cần nâng role lên trưởng/phó
         # phòng — attendance.py sẽ check role trưởng/phó phòng/admin HOẶC 2 quyền
         # này (cộng thêm, không thay thế check role cũ).
+        "kind": "group",
         "dept": "Phòng Kế toán",
         "icon": "calculate",
-        "menus": [
-            {"code": "menu.attendance", "actions": ["attendance.view_dept", "attendance.export"]},
+        "sections": [
+            {
+                "label": None,
+                "menus": [
+                    {"code": "menu.attendance", "actions": ["attendance.view_dept", "attendance.export"]},
+                ],
+            },
         ],
     },
 ]
