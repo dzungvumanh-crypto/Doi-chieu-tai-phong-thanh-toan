@@ -97,21 +97,6 @@ class NotAllowedError(Exception):
 def _row_to_dict(db: sqlite3.Connection, row: sqlite3.Row) -> dict:
     d = dict(row)
 
-    def _name(uid):
-        if not uid:
-            return None
-        r = db.execute("SELECT full_name FROM user_tttt WHERE id=?", (uid,)).fetchone()
-        return r["full_name"] if r else None
-
-    # gdv1_name/gdv2_name luôn tính LẠI từ gdv1_id/gdv2_id (nguồn sự thật) —
-    # 2 cột TEXT cùng tên trong bảng là tàn dư bản cũ, không đọc nữa.
-    d["gdv1_name"] = _name(d.get("gdv1_id"))
-    d["gdv2_name"] = _name(d.get("gdv2_id"))
-    d["initiated_by_name"] = _name(d.get("initiated_by"))
-    d["ksv_name"] = _name(d.get("ksv_id"))
-    d["confirmed_by_name"] = _name(d.get("confirmed_by"))
-    d["ksv_decided_by_name"] = _name(d.get("ksv_decided_by"))
-    d["gdv_decided_by_name"] = _name(d.get("gdv_decided_by"))
     # Trực phụ — CHỈ liệt kê để biết, không tham gia luồng duyệt/khoá nào —
     # lưu dạng JSON list id trong 1 cột TEXT (không tách bảng riêng vì không
     # cần tra cứu/join gì thêm ngoài hiện tên). Tên tính lại từ id mỗi lần
@@ -122,7 +107,33 @@ def _row_to_dict(db: sqlite3.Connection, row: sqlite3.Row) -> dict:
     except (TypeError, ValueError):
         truc_phu_ids = []
     d["truc_phu_ids"] = truc_phu_ids
-    d["truc_phu_names"] = [n for uid in truc_phu_ids if (n := _name(uid))]
+
+    # gdv1_name/gdv2_name luôn tính LẠI từ gdv1_id/gdv2_id (nguồn sự thật) —
+    # 2 cột TEXT cùng tên trong bảng là tàn dư bản cũ, không đọc nữa. Gom hết
+    # mọi id cần tra tên (6 field cố định + N trực phụ) vào ĐÚNG 1 câu
+    # SELECT ... IN (...) — trước đó mỗi id 1 SELECT riêng (N+1), xuất Excel
+    # cả năm hàng trăm dòng thì thành hàng nghìn truy vấn không cần thiết.
+    _id_fields = ("gdv1_id", "gdv2_id", "initiated_by", "ksv_id",
+                  "confirmed_by", "ksv_decided_by", "gdv_decided_by")
+    _all_ids = {d.get(f) for f in _id_fields if d.get(f)} | set(truc_phu_ids)
+    _names: dict[int, str] = {}
+    if _all_ids:
+        _placeholders = ",".join("?" * len(_all_ids))
+        for r in db.execute(
+            f"SELECT id, full_name FROM user_tttt WHERE id IN ({_placeholders})",
+            tuple(_all_ids),
+        ):
+            _names[r["id"]] = r["full_name"]
+
+    d["gdv1_name"] = _names.get(d.get("gdv1_id"))
+    d["gdv2_name"] = _names.get(d.get("gdv2_id"))
+    d["initiated_by_name"] = _names.get(d.get("initiated_by"))
+    d["ksv_name"] = _names.get(d.get("ksv_id"))
+    d["confirmed_by_name"] = _names.get(d.get("confirmed_by"))
+    d["ksv_decided_by_name"] = _names.get(d.get("ksv_decided_by"))
+    d["gdv_decided_by_name"] = _names.get(d.get("gdv_decided_by"))
+    d["truc_phu_names"] = [_names[uid] for uid in truc_phu_ids if uid in _names]
+
     for k in ("initiated_at", "confirmed_at", "ksv_decided_at", "gdv_decided_at", "created_at", "updated_at"):
         if d.get(k) is not None:
             d[k] = str(d[k])
@@ -507,7 +518,7 @@ def list_ksv_candidates(db: sqlite3.Connection, feature_code: str = "so_truc.ksv
     rows = db.execute(
         """SELECT DISTINCT u.id, u.full_name
            FROM user_tttt u
-           WHERE u.is_active = 1 AND (
+           WHERE u.is_active = 1 AND u.is_deleted = 0 AND (
                u.role = 'admin'
                OR u.id IN (
                    SELECT gm.staff_id FROM group_features gf

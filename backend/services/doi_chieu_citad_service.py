@@ -227,6 +227,54 @@ def session_get(db: sqlite3.Connection, ngay: str) -> dict | None:
     return json.loads(row["data"]) if row else None
 
 
+_STATUS_CONGS = [1, 9, 18, 17, 12]
+_STATUS_CURS = ['VNĐ', 'USD', 'EUR']
+_STATUS_FK = ['di_ih_m', 'di_ih_t', 'di_il_m', 'di_il_t', 'den_ih_m', 'den_ih_t', 'den_il_m', 'den_il_t']
+
+
+def _status_nv(v) -> float:
+    try:
+        return float(v) if v not in (None, '') else 0.0
+    except Exception:
+        return 0.0
+
+
+def is_reconciliation_matched(sess: dict) -> bool:
+    """True nếu tổng CITAD (5 cổng + Napas/PSS-MDP IH Đến) == tổng
+    PaymentHub cho ĐỦ 8 trường — đúng công thức dòng "CHÊNH LỆCH" hiện trên
+    trang Đối chiếu CITAD (`_compute_totals()` ở
+    frontend/pages/doi_chieu_citad.py) — giữ đồng bộ công thức ở 2 nơi vì
+    frontend không gọi được service backend trực tiếp (khác tiến trình)."""
+    gD = sess.get("gD", {}) or {}
+    phD = sess.get("phD", {}) or {}
+    ci = {f: 0.0 for f in _STATUS_FK}
+    for c in _STATUS_CONGS:
+        for u in _STATUS_CURS:
+            src = (gD.get(str(c), {}) or {}).get(u, {}) or {}
+            for f in _STATUS_FK:
+                ci[f] += _status_nv(src.get(f, 0))
+    ci["den_ih_m"] += _status_nv(sess.get("napas_m", 0)) + _status_nv(sess.get("pssmdp_m", 0))
+    ci["den_ih_t"] += _status_nv(sess.get("napas_t", 0)) + _status_nv(sess.get("pssmdp_t", 0))
+    ph = {f: 0.0 for f in _STATUS_FK}
+    for u in _STATUS_CURS:
+        src = phD.get(u, {}) or {}
+        for f in _STATUS_FK:
+            ph[f] += _status_nv(src.get(f, 0))
+    return all(ci[f] == ph[f] for f in _STATUS_FK)
+
+
+def get_reconciliation_status(db: sqlite3.Connection, ngay: str) -> dict:
+    """Trạng thái đối chiếu của 1 ngày, dùng để cảnh báo ở module Sổ trực
+    (xem `so_truc_service.check_citad_status`) — KHÔNG phải endpoint hiển
+    thị số liệu, chỉ trả 2 cờ: có bản lưu chưa, và bản lưu hiện hành (mới
+    nhất) đã khớp (hết chênh lệch) chưa."""
+    sess = session_get(db, ngay)
+    return {
+        "exists": sess is not None,
+        "matched": bool(sess) and is_reconciliation_matched(sess),
+    }
+
+
 def session_list(db: sqlite3.Connection) -> list:
     rows = db.execute(
         "SELECT data FROM doi_chieu_citad_sessions ORDER BY ngay DESC",

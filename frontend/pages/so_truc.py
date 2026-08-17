@@ -235,19 +235,31 @@ def so_truc_page(request: _StarletteRequest):
     async def load_day(ngay: str, notify_if_exists: bool = False):
         state["ngay"] = ngay
         main_area.clear()
+        # `rec` là dữ liệu chính, thiếu thì không vẽ được gì — lỗi ở đây phải
+        # dừng hẳn. `citad_status` chỉ là cảnh báo PHỤ TRỢ (nhắc "chưa đối
+        # chiếu CITAD" trước khi xác nhận) — lỗi ở gọi này KHÔNG được phép
+        # làm chết cả trang, nên tách khỏi try/except chính bằng
+        # return_exceptions=True, lỗi thì coi như "chưa có bản đối chiếu"
+        # (an toàn hơn — vẫn cảnh báo, không im lặng bỏ qua).
         try:
-            # Nạp song song — trạng thái Đối chiếu CITAD ngày này cần cho CẢ 3
-            # bước (Chuyển phê duyệt/GDV xác nhận/KSV xác nhận) nên nạp 1 lần
-            # ở đây, truyền xuống thay vì mỗi bước tự gọi lại API riêng.
-            rec, citad_status = await asyncio.gather(
-                asyncio.to_thread(api.get, f"/api/so-truc/{ngay}"),
-                asyncio.to_thread(api.get, f"/api/so-truc/{ngay}/citad-status"),
-            )
+            rec = await asyncio.to_thread(api.get, f"/api/so-truc/{ngay}")
         except Exception as e:
             if _handle_api_error(e):
                 return
             ui.notify(f"Lỗi tải sổ trực: {e}", type="negative")
             return
+        citad_results = await asyncio.gather(
+            asyncio.to_thread(api.get, f"/api/so-truc/{ngay}/citad-status"),
+            return_exceptions=True,
+        )
+        citad_result = citad_results[0]
+        if isinstance(citad_result, Exception):
+            if isinstance(citad_result, api.SessionExpiredError):
+                _handle_api_error(citad_result)
+                return
+            citad_status = {"exists": False, "matched": False}
+        else:
+            citad_status = citad_result
         # `notify_if_exists` CHỈ bật khi gọi từ nút "Chọn ngày lập sổ trực"
         # (không bật ở lần tự nạp mặc định lúc mở trang, tránh toast thừa mỗi
         # lần vào trang) — nhắc NHẸ (toast tự tắt sau 5s, không cần bấm gì)

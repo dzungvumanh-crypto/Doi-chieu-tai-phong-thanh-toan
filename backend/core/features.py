@@ -161,7 +161,6 @@ FEATURE_GROUPS: list[dict] = [
                     {"code": "menu.cham_ach", "actions": ["cham_ach.process"]},
                     {"code": "menu.doi_chieu_citad", "actions": []},
                     {"code": "menu.doi_soat_citad", "actions": []},
-                    {"code": "menu.so_truc", "actions": ["so_truc.ksv_confirm"]},
                 ],
             },
             {
@@ -222,6 +221,12 @@ FEATURE_GROUPS: list[dict] = [
             "duty.manage_staff",
             "duty.manage_config",
         ],
+    },
+    {
+        "kind": "menu",
+        "code": "menu.so_truc",
+        "icon": "assignment_turned_in",
+        "actions": ["so_truc.ksv_confirm"],
     },
     {
         "kind": "menu",
