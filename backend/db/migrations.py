@@ -245,6 +245,53 @@ def _create_tables(db_path: str):
             lech_json           TEXT,
             created_at          DATETIME
         )""",
+        # Sổ trực cuối ngày Phòng Thanh toán — KHÔNG tách bảng lịch sử riêng
+        # như doi_chieu_citad, bảng này tự thân là lịch sử. `truc_date` KHÔNG
+        # unique (khác bản đầu): KSV "từ chối" (để sửa HAY để huỷ, cả 2 đều
+        # chỉ ĐỀ NGHỊ) ghi đè lên cùng 1 dòng như cũ (quay về draft), nhưng
+        # GDV tự bấm "Huỷ phiên trực" (draft_cancel, status='cancelled') mới
+        # là NGÕ CỤT thật — dòng đó đóng vĩnh viễn, phải tạo dòng MỚI (phiên
+        # trực khác) cho đúng ngày đó nên 1 ngày có thể có NHIỀU dòng.
+        # get_active_by_date() trong service luôn lấy dòng chưa 'cancelled'
+        # MỚI NHẤT làm phiên đang làm việc.
+        # `ksv_decision` ('reject_fix' | 'reject_cancel' | 'self_edit' | NULL):
+        # phân biệt KSV vừa từ chối để SỬA hay để HUỶ, hay đang TỰ chỉnh sửa
+        # lại 1 phiên đã "Hoàn thành" (request_edit(), nhánh KSV) —
+        # status='draft' giống hệt các trường hợp nên không suy ra được từ
+        # status. GDV cần biết để: (1) banner hiện đúng chữ "để sửa"/"để huỷ"/
+        # "tự chỉnh sửa", (2) nếu 'reject_cancel' thì KHOÁ hẳn form sửa, chỉ
+        # còn nút "Huỷ phiên trực". Reset về NULL khi forward_to_ksv()/
+        # ksv_finalize_edit() thành công. `gdv_decided_by`/`gdv_decided_at`
+        # dùng lại cho CẢ 2 việc: ai đã tự huỷ phiên (draft_cancel) VÀ GDV nào
+        # vừa "Yêu cầu chỉnh sửa" 1 phiên đã Hoàn thành (request_edit(), nhánh
+        # GDV) — phân biệt bằng status (cancelled vs draft).
+        # Luồng: draft -> pending_ksv -> approved -> draft (GDV/KSV yêu cầu
+        # chỉnh sửa lại) | draft (KSV từ chối — sửa hoặc huỷ) | cancelled
+        # (CHỈ GDV tự huỷ, ngõ cụt).
+        """CREATE TABLE IF NOT EXISTS so_truc_records (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            truc_date         TEXT    NOT NULL,
+            gdv1_name         TEXT    DEFAULT '',
+            gdv2_name         TEXT    DEFAULT '',
+            gdv1_id           INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+            gdv2_id           INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+            ghi_chu           TEXT    DEFAULT '',
+            status            TEXT    NOT NULL DEFAULT 'draft',
+            initiated_by      INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+            initiated_at      DATETIME,
+            ksv_id            INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+            confirmed_by      INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+            confirmed_at      DATETIME,
+            ksv_decided_by    INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+            ksv_decided_at    DATETIME,
+            reject_reason     TEXT,
+            ksv_decision      TEXT,
+            gdv_decided_by    INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+            gdv_decided_at    DATETIME,
+            truc_phu_ids      TEXT    DEFAULT '[]',
+            created_at        DATETIME NOT NULL,
+            updated_at        DATETIME NOT NULL
+        )""",
         # Danh mục chi nhánh thực hiện TTQT — nguồn gốc là file Excel do Phòng
         # KSNB phát hành, nhập vào đây để tra cứu / sửa trực tiếp trên hệ thống.
         # sort_order giữ đúng thứ tự dòng trong file gốc (mã CN không tăng dần).
@@ -935,6 +982,8 @@ def _ensure_indexes():
         "CREATE INDEX IF NOT EXISTS ix_staff_dept_hist       ON staff_department_history(staff_id, effective_from)",
         "CREATE INDEX IF NOT EXISTS ix_ttqt_branches_bic      ON ttqt_branches(swift_bic)",
         "CREATE INDEX IF NOT EXISTS ix_ttqt_branches_sort     ON ttqt_branches(is_closed, sort_order)",
+        "CREATE INDEX IF NOT EXISTS ix_so_truc_records_date ON so_truc_records(truc_date)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_so_truc_active_date ON so_truc_records(truc_date) WHERE status != 'cancelled'",
     ]
     conn = sqlite3.connect(DB_PATH, timeout=30)
     try:

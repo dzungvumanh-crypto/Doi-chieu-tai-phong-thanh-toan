@@ -1,4 +1,5 @@
 """Dashboard API — KPI tổng hợp và pending counts cho sidebar badge"""
+import logging
 import sqlite3
 from fastapi import APIRouter, Depends, Query
 from backend.database import get_db, _vn_now
@@ -8,6 +9,7 @@ from backend.services.handover_report_service import (
 )
 
 router = APIRouter()
+_log = logging.getLogger(__name__)
 
 
 def _is_tong_hop(staff: dict, db: sqlite3.Connection) -> bool:
@@ -62,6 +64,59 @@ def _handover_filter(current: dict) -> tuple[str, list] | None:
     return None
 
 
+def _so_truc_filter(current: dict) -> tuple[str, list]:
+    """Sổ trực cuối ngày đang chờ CHÍNH người này thao tác — không theo role
+    (bất kỳ ai cũng có thể là KSV được chọn của 1 ngày, xem NotAllowedError
+    trong so_truc_service.py). 3 nhánh:
+    - KSV được chọn: đang chờ mình xác nhận/từ chối (như cũ).
+    - GDV còn lại (locked vào gdv1_id/gdv2_id nhưng KHÔNG phải người vừa bấm
+      "Chuyển KSV xác nhận" — initiated_by khác mình): nhắc phiên đã chuyển
+      KSV, vào xem/bấm "Xác nhận phiên trực" cho biết đã xem.
+    - KSV VỪA từ chối (để sửa HAY để huỷ — cả 2 đều chỉ ĐỀ NGHỊ, không tự
+      đóng phiên, xem docstring ksv_cancel() trong so_truc_service.py nên
+      CẢ 2 đều quay về 'draft', không còn nhánh 'cancelled' do KSV gây ra
+      nữa) — status='draft' VÀ có reject_reason (phân biệt với 1 draft
+      trống chưa ai đụng vào, lúc đó reject_reason luôn NULL): báo CẢ 2 GDV
+      (không loại trừ initiated_by như nhánh trên — quyết định của KSV là
+      tin mới cho cả 2, kể cả người đã từng đẩy duyệt). GDV tự huỷ
+      (draft_cancel) chuyển thẳng 'cancelled' không qua reject_reason+
+      ksv_decided_by nên không rơi vào nhánh này — tự huỷ thì không cần tự
+      báo cho chính mình.
+    - GDV VỪA "Yêu cầu chỉnh sửa" 1 phiên đã "Hoàn thành" (request_edit(),
+      nhánh GDV, xem so_truc_service.py) — status='draft' + reject_reason
+      + gdv_decided_by có giá trị NHƯNG ksv_decided_by=NULL (tổ hợp CHỈ
+      nhánh này tạo ra — phân biệt với nhánh KSV từ chối ở trên, nhánh đó
+      luôn có ksv_decided_by). Chỉ báo GDV CÒN LẠI (loại trừ gdv_decided_by
+      — chính người vừa bấm), KHÔNG báo KSV ở bước này vì KSV chỉ cần biết
+      khi được forward lại (rơi vào nhánh 1 lúc đó).
+    CẢ 3 nhánh GDV đều THUẦN THÔNG BÁO — gdv_ack() không chặn gì (xem
+    docstring so_truc_service.py) — tự hết khi đã bấm "Xác nhận phiên trực"
+    (confirmed_by = mình), không nhắc lại nữa. ksv_reject()/ksv_cancel()/
+    request_edit() đều tự reset confirmed_by về NULL khi đổi trạng thái, nên
+    dấu tick cũ (cho 1 sự kiện trước đó) không bị hiểu nhầm là đã xem quyết
+    định MỚI này."""
+    my_id = current["id"]
+    cond = (
+        "("
+        "r.status='pending_ksv' AND r.ksv_id=?"
+        ") OR ("
+        "r.status='pending_ksv' AND (r.gdv1_id=? OR r.gdv2_id=?) AND r.initiated_by != ? "
+        "AND (r.confirmed_by IS NULL OR r.confirmed_by != ?)"
+        ") OR ("
+        "r.status='draft' AND r.reject_reason IS NOT NULL "
+        "AND r.ksv_decided_by IS NOT NULL AND (r.gdv1_id=? OR r.gdv2_id=?) "
+        "AND (r.confirmed_by IS NULL OR r.confirmed_by != ?)"
+        ") OR ("
+        "r.status='draft' AND r.reject_reason IS NOT NULL "
+        "AND r.gdv_decided_by IS NOT NULL AND r.ksv_decided_by IS NULL "
+        "AND (r.gdv1_id=? OR r.gdv2_id=?) AND r.gdv_decided_by != ? "
+        "AND (r.confirmed_by IS NULL OR r.confirmed_by != ?)"
+        ")"
+    )
+    return (cond, [my_id, my_id, my_id, my_id, my_id, my_id, my_id, my_id,
+                    my_id, my_id, my_id, my_id])
+
+
 @router.get("/pending-counts")
 def pending_counts(
     current: dict = Depends(get_current_staff),
@@ -95,7 +150,24 @@ def pending_counts(
         ).fetchall()
         handovers_by_dept = [{"dept_name": r["dept_name"], "count": r["cnt"]} for r in rows]
 
-    return {"leaves": leaves_count, "handovers": handovers_count, "handovers_by_dept": handovers_by_dept}
+    # ── Sổ trực cuối ngày đang chờ mình ──
+    # Bọc riêng: endpoint này là nguồn chung cho CẢ 3 badge và được gọi ở mọi
+    # trang, mọi user — kể cả người không dùng Sổ trực. Nhánh này hỏng (bảng
+    # chưa migrate, cột đổi tên) mà không chặn lại thì cả badge Chứng từ và
+    # Nghỉ phép biến mất theo. Trả 0 + ghi log, hai module cũ chạy tiếp.
+    try:
+        sf_where, sf_params = _so_truc_filter(current)
+        so_truc_count = db.execute(
+            f"SELECT COUNT(*) FROM so_truc_records r WHERE {sf_where}", sf_params
+        ).fetchone()[0] or 0
+    except sqlite3.Error as e:
+        _log.error("Không đếm được sổ trực chờ xử lý: %s", e)
+        so_truc_count = 0
+
+    return {
+        "leaves": leaves_count, "handovers": handovers_count, "handovers_by_dept": handovers_by_dept,
+        "so_truc": so_truc_count,
+    }
 
 
 # Trần cứng cho danh sách chi tiết. Màn hình theo dõi không phải chỗ duyệt hàng trăm
@@ -213,7 +285,37 @@ def pending_items(
                 "day":              dd,
             })
 
-    return {"leaves": leaves, "handovers": handovers}
+    # ── Sổ trực cuối ngày ──
+    # Bọc riêng, cùng lý do như ở /pending-counts: ba màn /pending/* ăn chung
+    # một response, nhánh này hỏng thì /pending/handovers và /pending/leaves
+    # cũng báo "Không tải được danh sách" dù hai module đó vẫn khoẻ.
+    so_truc: list = []
+    try:
+        sf_where, sf_params = _so_truc_filter(current)
+        rows = db.execute(
+            f"""SELECT r.truc_date, r.status, r.ghi_chu,
+                       g1.full_name AS gdv1_name, g2.full_name AS gdv2_name, k.full_name AS ksv_name
+                FROM so_truc_records r
+                LEFT JOIN user_tttt g1 ON r.gdv1_id = g1.id
+                LEFT JOIN user_tttt g2 ON r.gdv2_id = g2.id
+                LEFT JOIN user_tttt k  ON r.ksv_id  = k.id
+                WHERE {sf_where}
+                ORDER BY r.truc_date DESC
+                LIMIT {_ITEMS_LIMIT}""",
+            sf_params,
+        ).fetchall()
+        so_truc = [
+            {
+                "truc_date": r["truc_date"], "status": r["status"], "ghi_chu": r["ghi_chu"] or "",
+                "gdv1_name": r["gdv1_name"] or "", "gdv2_name": r["gdv2_name"] or "",
+                "ksv_name": r["ksv_name"] or "",
+            }
+            for r in rows
+        ]
+    except sqlite3.Error as e:
+        _log.error("Không tải được danh sách sổ trực chờ xử lý: %s", e)
+
+    return {"leaves": leaves, "handovers": handovers, "so_truc": so_truc}
 
 
 @router.get("/leave-today")
@@ -267,11 +369,12 @@ def dashboard_summary(
     db: sqlite3.Connection = Depends(get_db),
 ):
     """KPI đúng hạn — dùng chung logic với Báo cáo bàn giao chứng từ."""
-    today = _vn_now().date()
-    result = compute_period(db, year or today.year, month or today.month)
+    now = _vn_now()
+    result = compute_period(db, year or now.year, month or now.month)
     return {
         "period":         result["period"],
         "overall":        result["overall"],
         "by_dept":        result["by_dept"],
         "no_submit_date": result["no_submit_date"],
+        "server_now":     now.isoformat(),
     }

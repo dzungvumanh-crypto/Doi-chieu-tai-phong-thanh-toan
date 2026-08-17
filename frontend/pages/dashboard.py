@@ -1,9 +1,14 @@
 """Trang chủ — Dashboard KPI."""
 import asyncio
-from datetime import date as _date
+from datetime import date as _date, datetime as _datetime
 from nicegui import ui
 import frontend.api_client as api
 from frontend.shared import _sidebar, _content_area, _require_auth, _handle_api_error
+
+# Sau giờ này trong ngày mà Sổ trực cuối ngày (Phòng Thanh toán) vẫn chưa có
+# ai mở/chọn GDV thì nhắc trên trang chủ — ước lượng, chỉnh nếu không hợp
+# thực tế giờ làm việc. Không chặn/bắt buộc gì, chỉ nhắc nhẹ.
+_SO_TRUC_REMINDER_HOUR = 16
 
 
 # CSS chỉ áp cho trang chủ (add_head_html mặc định shared=False → per-client).
@@ -57,6 +62,7 @@ async def dashboard_page():
             pass
 
         _today = _date.today()
+        _has_so_truc = api.has_feature("menu.so_truc")
         try:
             # Bỏ /pending-counts: sidebar tự nạp số, Trang chủ không còn khối nào dùng
             results = await asyncio.gather(
@@ -64,6 +70,8 @@ async def dashboard_page():
                 asyncio.to_thread(api.get, "/api/departments/"),
                 asyncio.to_thread(api.get, "/api/dashboard/summary"),
                 asyncio.to_thread(api.get, "/api/leaves/today"),
+                asyncio.to_thread(api.get, f"/api/so-truc/{_today.isoformat()}")
+                if _has_so_truc else asyncio.sleep(0, result=None),
                 return_exceptions=True,
             )
         except Exception as e:
@@ -71,9 +79,9 @@ async def dashboard_page():
                 ui.notify(str(e), type="warning")
                 ui.navigate.to("/login")
                 return
-            results = [[], [], {}, {}]
+            results = [[], [], {}, {}, None]
 
-        staff_list, depts, summary, today_leaves = results
+        staff_list, depts, summary, today_leaves, so_truc_today = results
         for r in results:
             if isinstance(r, api.SessionExpiredError):
                 ui.notify(str(r), type="warning")
@@ -85,6 +93,18 @@ async def dashboard_page():
         today_leaves   = today_leaves if isinstance(today_leaves, dict) else {}
         leave_total    = today_leaves.get("total", 0)
         leave_by_dept  = today_leaves.get("by_dept", [])
+        so_truc_today  = so_truc_today if isinstance(so_truc_today, dict) else None
+        # Chưa có ai chọn GDV nào cho hôm nay → coi như "chưa mở sổ trực"
+        _so_truc_chua_mo = bool(
+            so_truc_today and so_truc_today.get("status") == "draft"
+            and not so_truc_today.get("gdv1_id") and not so_truc_today.get("gdv2_id")
+        )
+        # Giờ máy chủ chạy app có thể lệch múi giờ VN — lấy "server_now" (đã
+        # convert UTC+7 bởi _vn_now() phía backend) thay vì đồng hồ máy client.
+        try:
+            _server_hour = _datetime.fromisoformat(summary.get("server_now", "")).hour
+        except ValueError:
+            _server_hour = _datetime.now().hour
 
         loading_row.set_visibility(False)
 
@@ -160,6 +180,22 @@ async def dashboard_page():
                         with ui.element("div").classes(f"flex-1 min-w-0 px-2 py-2 rounded-xl border {_color} flex flex-col items-center justify-center").style("height:104px"):
                             ui.label(str(_cnt)).classes(f"text-4xl leading-none {_num_cls}")
                             ui.label(_label).classes("text-xs text-gray-600 mt-2 leading-tight text-center")
+
+            # ── Nhắc "chưa mở Sổ trực cuối ngày" — chỉ Phòng Thanh toán thấy,
+            # chỉ hiện sau 1 khung giờ nhất định, tự ẩn khi đã có người mở ──
+            if _has_so_truc and _so_truc_chua_mo and _server_hour >= _SO_TRUC_REMINDER_HOUR:
+                with ui.row().classes(
+                    "w-full flex-none items-center gap-2 px-4 py-2.5 rounded-xl "
+                    "border border-amber-300 bg-amber-50"
+                ):
+                    ui.icon("warning", color="amber-700").classes("text-lg")
+                    ui.label(
+                        f"Chưa có ai mở Sổ trực cuối ngày hôm nay ({_today.strftime('%d/%m/%Y')})."
+                    ).classes("text-sm text-amber-800 flex-1")
+                    ui.button(
+                        "Mở ngay", icon="arrow_forward",
+                        on_click=lambda: ui.navigate.to("/so_truc"),
+                    ).props("dense flat color=amber-8")
 
             # ── Biểu đồ nộp chứng từ đúng hạn — chọn Tháng/Năm để xem ──
             # Nhãn NOSTRO lấy từ _DEPT_SHORT để trục X và ô nghỉ phép không lệch chữ nhau

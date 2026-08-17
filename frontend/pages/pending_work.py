@@ -20,6 +20,23 @@ _KINDS = {
     "leaves":    ("Đơn nghỉ phép chờ duyệt",
                   "Danh sách đơn đang chờ đến lượt bạn xử lý",
                   "menu.leaves"),
+    "so_truc":   ("Sổ trực chờ xử lý",
+                  "Sổ trực cuối ngày đang chờ đến lượt bạn xác nhận",
+                  "menu.so_truc"),
+}
+
+# so_truc.status → (nhãn, màu badge) — khớp _STATUS_LABEL trong frontend/pages/so_truc.py.
+# "draft" ở đây xuất hiện khi _so_truc_filter() trả về 1 trong 2 nhánh "draft +
+# reject_reason" (KSV vừa từ chối/đề nghị huỷ, HOẶC GDV vừa "Yêu cầu chỉnh sửa"
+# 1 phiên đã Hoàn thành) — không phải 1 draft trống thường, nên nhãn khác với
+# _STATUS_LABEL bên so_truc.py. Dùng chung 1 nhãn trung lập cho cả 2 tình huống
+# (chi tiết ai/vì sao đã có sẵn trong banner đỏ khi vào đúng trang /so_truc).
+# Không có "cancelled": ksv_reject()/ksv_cancel() giờ đều chỉ ĐỀ NGHỊ (quay về
+# draft), GDV mới là người thật sự đóng phiên (draft_cancel) — lúc đó không
+# cần tự báo cho chính người vừa bấm huỷ.
+_SO_TRUC_STATUS = {
+    "pending_ksv": ("Chờ KSV duyệt", "blue-7"),
+    "draft": ("Cần xử lý lại", "amber-7"),
 }
 
 # Viền ngang đặt trên HÀNG, không trên từng ô: ui.row() mặc định có gap 1rem
@@ -34,6 +51,8 @@ def _cols(kind: str) -> list[str]:
     if kind == "handovers":
         return ["Ngày chứng từ", "Phòng nghiệp vụ", "Chứng từ của", "Số lượng",
                 "Người nộp", "Ngày bàn giao", "Ghi chú", ""]
+    if kind == "so_truc":
+        return ["Ngày trực", "GDV 1", "GDV 2", "KSV", "Trạng thái", "Ghi chú", ""]
     return ["Người xin nghỉ", "Phòng", "Loại phép", "Từ ngày", "Đến ngày",
             "Lý do", "Trạng thái", ""]
 
@@ -49,6 +68,13 @@ def _render_row(kind: str, it: dict):
             (it["entered_by_name"] or "—", ""),
             (_dmy(it.get("submit_date")) or "—", "whitespace-nowrap"),
             (it["notes"] or "—", "text-xs text-gray-500 max-w-[16rem] truncate"),
+        ]
+    elif kind == "so_truc":
+        cells = [
+            (_dmy(it["truc_date"]), "font-medium text-gray-900 whitespace-nowrap"),
+            (it["gdv1_name"] or "—", ""),
+            (it["gdv2_name"] or "—", ""),
+            (it["ksv_name"] or "—", ""),
         ]
     else:
         cells = [
@@ -68,8 +94,15 @@ def _render_row(kind: str, it: dict):
         if kind == "leaves":
             with ui.element("div").classes(f"{_TD} flex-1 min-w-0 flex items-center"):
                 ui_kit.status_chip(it["status"])
+        if kind == "so_truc":
+            with ui.element("div").classes(f"{_TD} flex-1 min-w-0 flex items-center"):
+                lbl, color = _SO_TRUC_STATUS.get(it["status"], (it["status"], "grey-6"))
+                ui.badge(lbl, color=color).classes("text-xs px-2 py-0.5")
+            ui.label(it.get("ghi_chu") or "—").classes(
+                f"{_TD} flex-1 min-w-0 text-xs text-gray-500 max-w-[16rem] truncate"
+            )
         with ui.element("div").classes(f"{_TD} shrink-0 {_ACT_W} flex items-center"):
-            ui.button("Tới nơi xử lý", icon="open_in_new",
+            ui.button("Chuyển đến trang", icon="open_in_new",
                       on_click=lambda i=it: _goto(kind, i)
                       ).props("dense no-caps").classes("bg-red-700 text-white text-xs px-3")
 
@@ -80,6 +113,8 @@ def _goto(kind: str, it: dict):
         # entry là chìa để lưới tự cuộn tới và tô sáng đúng ô (input mang data-eid)
         ui.navigate.to(f'/handovers?dept={it["dept_id"]}&year={it["year"]}'
                        f'&month={it["month"]}&entry={it["entry_id"]}')
+    elif kind == "so_truc":
+        ui.navigate.to(f'/so_truc?ngay={it["truc_date"]}')
     else:
         from nicegui import app
         app.storage.user["_leaves_goto"] = (
