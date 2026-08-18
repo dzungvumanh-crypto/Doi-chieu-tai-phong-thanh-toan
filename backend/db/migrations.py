@@ -984,6 +984,13 @@ def _ensure_indexes():
         "CREATE INDEX IF NOT EXISTS ix_ttqt_branches_sort     ON ttqt_branches(is_closed, sort_order)",
         "CREATE INDEX IF NOT EXISTS ix_so_truc_records_date ON so_truc_records(truc_date)",
         "CREATE UNIQUE INDEX IF NOT EXISTS ux_so_truc_active_date ON so_truc_records(truc_date) WHERE status != 'cancelled'",
+        # Rác còn lại sau lần đổi tên bảng ksnb_staff → user_tttt: index cũ vẫn
+        # nằm nguyên trên bảng mới. `ix_ksnb_staff_dept` trùng y hệt
+        # `ix_user_tttt_dept`, còn `ix_ksnb_staff_id` phủ lên chính khoá chính
+        # (rowid) nên không câu truy vấn nào dùng tới. Không sai kết quả, chỉ
+        # bắt SQLite ghi thừa mỗi lần thêm/sửa cán bộ.
+        "DROP INDEX IF EXISTS ix_ksnb_staff_dept",
+        "DROP INDEX IF EXISTS ix_ksnb_staff_id",
     ]
     conn = sqlite3.connect(DB_PATH, timeout=30)
     try:

@@ -7,6 +7,7 @@ Mỗi job:
   - Hỗ trợ cancel và download kết quả
 """
 
+import logging
 import os
 import shutil
 import threading
@@ -17,10 +18,13 @@ from typing import Any
 
 import pandas as pd
 
+from backend.core.uploads import safe_filename
 from backend.services.ach.pipeline import main_from_dir
 from backend.services.ach.b4_xu_ly_mis_di import _doc_sheet_confirm_mis_di
 
-TEMP_DIR    = Path('data/temp_ach')
+from backend.core.config import BASE_DIR
+
+TEMP_DIR    = BASE_DIR / 'data' / 'temp_ach'
 CLEANUP_TTL = 4 * 3600  # giữ file kết quả tối đa 4 giờ
 
 # ─── In-memory job store ─────────────────────────────────────────────────────
@@ -93,8 +97,10 @@ def start_job(saved_files: dict[str, bytes], ngay: str | None,
     input_dir.mkdir(parents=True, exist_ok=True)
     Path(job['output_dir']).mkdir(parents=True, exist_ok=True)
 
+    # safe_filename() lần hai: API đã lọc, nhưng hàm này là public và có thể
+    # được gọi từ chỗ khác — đường ghi ra đĩa tự bảo vệ lấy mình.
     for filename, data in saved_files.items():
-        (input_dir / filename).write_bytes(data)
+        (input_dir / safe_filename(filename)).write_bytes(data)
 
     job['input_dir'] = str(input_dir)
     job['ngay']      = ngay
@@ -122,7 +128,7 @@ def continue_job(job_id: str, xac_nhan_bytes: bytes, xac_nhan_filename: str) -> 
 
     xac_nhan_dir = TEMP_DIR / job_id / 'xac_nhan_in'
     xac_nhan_dir.mkdir(parents=True, exist_ok=True)
-    safe_name  = os.path.basename(xac_nhan_filename) or 'xac_nhan.xlsx'
+    safe_name  = safe_filename(xac_nhan_filename, 'xac_nhan.xlsx')
     saved_path = xac_nhan_dir / safe_name
     saved_path.write_bytes(xac_nhan_bytes)
 
@@ -238,7 +244,14 @@ def get_output_file(job_id: str, filename: str) -> Path | None:
 
 
 def _cleanup_old_jobs():
-    """Xóa job cũ hơn CLEANUP_TTL khỏi memory + disk."""
+    """Xóa job cũ hơn CLEANUP_TTL khỏi memory + disk, kèm thư mục mồ côi.
+
+    `_jobs` nằm trong RAM nên khởi động lại là mất sạch — mà thư mục trên đĩa thì
+    còn nguyên. Bản cũ chỉ xoá thư mục của job nó CÒN NHỚ, nên mọi job đang dở
+    lúc tắt máy đều để lại thư mục không ai xoá được nữa (đo được: hai thư mục
+    rỗng trong `data/temp_ach` từ lần chạy trước). Nay quét thêm theo thời gian
+    sửa đổi, giống cách `cham459901_service` vẫn làm.
+    """
     now = time.time()
     with _lock:
         expired = [jid for jid, j in _jobs.items()
@@ -246,7 +259,21 @@ def _cleanup_old_jobs():
                    and now - j['_ts'] > CLEANUP_TTL]
         for jid in expired:
             del _jobs[jid]
+        con_song = set(_jobs)
     for jid in expired:
         job_dir = TEMP_DIR / jid
         if job_dir.exists():
             shutil.rmtree(job_dir, ignore_errors=True)
+
+    # Thư mục mồ côi: không thuộc job nào đang chạy và đã quá hạn giữ
+    if not TEMP_DIR.exists():
+        return
+    for d in TEMP_DIR.iterdir():
+        if not d.is_dir() or d.name in con_song:
+            continue
+        try:
+            if now - d.stat().st_mtime > CLEANUP_TTL:
+                shutil.rmtree(d, ignore_errors=True)
+        except OSError as e:
+            log_orphan = f'Không xoá được thư mục ACH mồ côi {d}: {e}'
+            logging.getLogger(__name__).warning(log_orphan)

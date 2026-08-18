@@ -182,11 +182,25 @@ def seed_holidays(
     db: sqlite3.Connection = Depends(get_db),
     _=Depends(require_feature("duty.manage_config")),
 ):
-    """Seed ngày nghỉ lễ VN cho năm chỉ định."""
-    holidays = get_vn_holidays(year)
+    """Seed ngày nghỉ lễ VN cho năm chỉ định.
+
+    Hai nguồn: danh sách tính bằng lịch âm (`get_vn_holidays`) và danh mục ngày
+    lễ chung `public_holidays` do quản trị viên nhập ở màn hình Nghỉ phép. Ngày
+    lễ chung ưu tiên hơn vì đó là ngày đã được cơ quan công bố (gồm cả ngày nghỉ
+    hoán đổi mà thuật toán âm lịch không biết).
+
+    Việc seed nay chỉ để ngày lễ HIỆN RA ở tab Ngày đặc biệt cho dễ nhìn và sửa;
+    `get_holiday_dates()` đã tự hợp hai nguồn nên quên seed không còn làm lịch
+    trực sai nữa.
+    """
+    ngay_le = {h["date"]: h["label"] for h in get_vn_holidays(year)}
+    for r in db.execute(
+        "SELECT date, name FROM public_holidays WHERE date LIKE ?", (f"{year}%",)
+    ).fetchall():
+        ngay_le[r["date"]] = r["name"] or "Ngày lễ"
     result = upsert_special_days_bulk(
-        db, [{"date": h["date"], "day_type": "holiday",
-              "label": h["label"], "is_confirmed": 1} for h in holidays]
+        db, [{"date": d, "day_type": "holiday", "label": label, "is_confirmed": 1}
+             for d, label in sorted(ngay_le.items())]
     )
     return {"seeded": len(result)}
 

@@ -46,6 +46,7 @@ from fastapi.responses import Response, StreamingResponse
 
 from backend.database import get_db
 from backend.core import audit_queue
+from backend.core.net import header_ip_dang_tin
 from backend.core.concurrency import run_heavy
 from backend.core.deps import require_feature
 from backend.schemas.doi_chieu_citad import (
@@ -91,8 +92,10 @@ def _resolve_extension_owner(
     Hàng đợi cũng không bao giờ raise và ghi bằng kết nối riêng, nên không
     còn phải commit trước khi raise như bản đồng bộ trước đây."""
     resolved = svc.resolve_extension_token(db, x_extension_token)
-    ip_hdr = request.headers.get("X-Client-IP", "").strip() or None
     client_ip = request.client.host if request.client else None
+    # Header chỉ đáng tin khi bên gọi là proxy frontend chạy cùng máy — xem
+    # backend/core/net.py. Extension đi qua đúng đường đó (frontend/api_proxy.py).
+    ip_hdr = header_ip_dang_tin(client_ip, request.headers.get("X-Client-IP"))
     if not resolved:
         # Ghi audit CẢ khi token không hợp lệ/đã bị thu hồi — đây là tín hiệu
         # cần theo dõi (máy quên cập nhật token mới, hoặc có người đang dò

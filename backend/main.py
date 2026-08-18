@@ -114,6 +114,9 @@ async def lifespan(app: FastAPI):
     _start_backup(_db_file)
     from backend.services.log_cleanup_service import start_scheduler as _start_log_cleanup
     _start_log_cleanup(_db_file)
+    # Dọn data/temp_* theo lịch — trước đây chỉ dọn khi có người dùng tính năng
+    from backend.services.temp_cleanup_service import start_scheduler as _start_temp_cleanup
+    _start_temp_cleanup()
     from backend.core import audit_queue
     audit_queue.start()
     # Cảnh báo (không chặn khởi động) nếu đồng hồ máy lệch nguồn giờ chuẩn
@@ -136,6 +139,12 @@ app = FastAPI(
 
 from backend.core.audit_middleware import AuditMiddleware
 app.add_middleware(AuditMiddleware)
+
+# Thứ tự add_middleware là NGƯỢC với thứ tự chạy: cái thêm sau nằm ngoài cùng.
+# Muốn là CORS (ngoài cùng, để preflight vẫn có header) → chặn kích thước →
+# audit → route. Nên trần kích thước phải thêm SAU audit và TRƯỚC CORS.
+from backend.core.uploads import BodySizeLimitMiddleware, MAX_REQUEST_BYTES
+app.add_middleware(BodySizeLimitMiddleware, max_bytes=MAX_REQUEST_BYTES)
 
 app.add_middleware(
     CORSMiddleware,

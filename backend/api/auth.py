@@ -8,10 +8,12 @@ from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from backend.database import get_db, _vn_now, write_audit
 from backend.schemas.auth import LoginRequest, Token, PasswordChange, AdminPasswordReset
 from backend.core.security import verify_password, create_access_token, get_password_hash
+from backend.core.uploads import read_limited_sync
 from backend.core.deps import get_current_staff, require_admin
 from backend.core.sessions import set_session, get_session_ip, clear_session
 from backend.core.config import settings
 from backend.core import rate_limit
+from backend.core.net import client_ip as _client_ip
 
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
 _log = logging.getLogger("auth")
@@ -34,30 +36,28 @@ def _validate_password(pwd: str):
 
 @router.post("/login", response_model=Token)
 def login(req: LoginRequest, request: Request, db: sqlite3.Connection = Depends(get_db)):
-    # ── Rate limit ──
-    wait = rate_limit.seconds_locked(db, req.username)
-    if wait:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=f"Quá nhiều lần đăng nhập sai. Thử lại sau {wait} giây.",
-        )
-
-    # X-Client-IP do NiceGUI frontend chuyển tiếp — IP thật của browser
-    client_ip = (
-        request.headers.get("X-Client-IP", "").strip()
-        or (request.client.host if request.client else "unknown")
-    )
+    # X-Client-IP do NiceGUI frontend chuyển tiếp — IP thật của browser.
+    # CHỈ tin khi bên gọi là chính máy chủ này, xem backend/core/net.py.
+    client_ip = _client_ip(request)
     _log.info("login attempt user=%r x_client_ip=%r fastapi_client=%r → used=%r",
               req.username,
               request.headers.get("X-Client-IP", "(not set)"),
               request.client.host if request.client else None,
               client_ip)
 
+    # ── Chặn dò mật khẩu ── phải nằm SAU khi có client_ip vì nay đếm cả theo máy
+    wait = rate_limit.seconds_locked_any(db, req.username, client_ip)
+    if wait:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Quá nhiều lần đăng nhập sai. Thử lại sau {wait} giây.",
+        )
+
     row = db.execute(
         "SELECT * FROM user_tttt WHERE username = ? AND is_active = 1", (req.username,)
     ).fetchone()
     if not row or not verify_password(req.password, row["pwd_hash"]):
-        rate_limit.record_failed(db, req.username)
+        rate_limit.record_failed_any(db, req.username, client_ip)
         db.execute(
             "INSERT INTO login_logs (username, staff_id, ip_address, success, detail, created_at) VALUES (?,?,?,?,?,?)",
             (req.username, None, client_ip, 0, "Sai tên đăng nhập hoặc mật khẩu", _vn_now()),
@@ -81,7 +81,7 @@ def login(req: LoginRequest, request: Request, db: sqlite3.Connection = Depends(
             detail=f"Tài khoản đang được sử dụng tại {existing_ip}",
         )
 
-    rate_limit.clear(db, req.username)
+    rate_limit.clear_any(db, req.username, client_ip)
     session_key = str(uuid.uuid4())
     set_session(db, staff["id"], client_ip, session_key, ttl_hours=settings.ACCESS_TOKEN_EXPIRE_HOURS)
     token = create_access_token({"sub": str(staff["id"]), "sk": session_key})
@@ -216,7 +216,11 @@ def upload_my_signature(
     current: dict = Depends(get_current_staff),
     db: sqlite3.Connection = Depends(get_db),
 ):
-    content = file.file.read()
+    # Trần cứng để chặn tràn RAM đặt CAO hơn trần nghiệp vụ 2 MB, cốt để quy
+    # tắc 2 MB vẫn tự báo lỗi bằng thông điệp nêu đúng dung lượng ảnh — cái mà
+    # người dùng đọc xong là biết phải làm gì. Trên 20 MB thì không cần lịch sự
+    # nữa: chặn thẳng ở tầng đọc, không nạp vào bộ nhớ.
+    content = read_limited_sync(file, 20 * 1024 * 1024, "Ảnh chữ ký")
     if not content:
         raise HTTPException(400, "File rỗng — vui lòng chọn lại ảnh")
     if len(content) > _SIG_MAX_BYTES:

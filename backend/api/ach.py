@@ -7,6 +7,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from backend.core.deps import require_feature
+from backend.core.uploads import read_limited, safe_filename
 from backend.services import ach_service
 from backend.services.ach.validate import validate_required_files
 
@@ -60,11 +61,26 @@ async def start_job(
     saved: dict[str, bytes] = {}
     total_size = 0
     for f in files:
-        data = await f.read()
+        # Trần cho TỪNG file = phần dung lượng còn lại của cả lượt: đọc theo
+        # khối và dừng đúng lúc, thay vì nạp trọn file vào RAM rồi mới đo.
+        # Thông điệp phải tự viết: read_limited() nêu con số nó nhận được, mà ở
+        # đây con số đó là phần CÒN LẠI ("vượt quá 137 MB") — người đọc không
+        # hiểu 137 ở đâu ra.
+        try:
+            data = await read_limited(f, _MAX_UPLOAD - total_size)
+        except HTTPException:
+            raise HTTPException(
+                413, f'Tổng kích thước file vượt quá {_MAX_UPLOAD // (1024 * 1024)} MB.')
         total_size += len(data)
-        if total_size > _MAX_UPLOAD:
-            raise HTTPException(413, 'Tổng kích thước file vượt quá 500 MB.')
-        filename = f.filename or f'file_{len(saved)}'
+        # Tên file do client đặt — phải cắt hết thành phần đường dẫn trước khi
+        # ghép vào thư mục job, xem backend/core/uploads.py.
+        filename = safe_filename(f.filename, f'file_{len(saved)}.dat')
+        if filename in saved:
+            raise HTTPException(
+                400,
+                f"Có hai file cùng tên '{filename}' trong một lượt tải lên — "
+                "đổi tên hoặc bỏ bớt rồi thử lại.",
+            )
         saved[filename] = data
 
     ngay = ngay_doi_chieu.strip() or None
@@ -94,7 +110,7 @@ async def continue_job(
     """Checkpoint xác nhận thủ công tại MIS_đi (Bước 3) — nhận file
     <ngày>_ACH_ConfirmMISdi.xlsx đã điền cột LOAI_BO (và REFHUB bổ sung nếu có),
     chạy lại toàn bộ pipeline áp dụng MIS_đi chuẩn rồi tiếp tục tới báo cáo cuối."""
-    data = await file.read()
+    data = await read_limited(file, ten='File xác nhận')
     try:
         ach_service.continue_job(job_id, data, file.filename or 'xac_nhan.xlsx')
     except LookupError as e:

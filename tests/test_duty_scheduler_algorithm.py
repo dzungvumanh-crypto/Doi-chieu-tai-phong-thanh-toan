@@ -65,6 +65,16 @@ CREATE TABLE duty_shift_config (
     qt_ld_count INTEGER DEFAULT 1, qt_nv_chinh_count INTEGER DEFAULT 3,
     qt_nv_phu_count INTEGER DEFAULT 2, signer_name TEXT, signer_title TEXT
 );
+-- Hai bảng dưới KHÔNG thuộc Sổ trực, nhưng lịch trực đọc chúng: ngày lễ chung
+-- (nhập ở màn hình Nghỉ phép) và đơn nghỉ phép đã duyệt. Thiếu là mọi test xếp
+-- lịch đổ vì "no such table" — xem get_holiday_dates() và get_absences().
+CREATE TABLE public_holidays (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, date DATE UNIQUE, name TEXT
+);
+CREATE TABLE leave_records (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, staff_id INTEGER,
+    start_date DATE, end_date DATE, status TEXT DEFAULT 'pending_ksv'
+);
 """
 
 # Ngày mẫu: 2026-08-10 là thứ 2, 2026-08-14 là thứ 6

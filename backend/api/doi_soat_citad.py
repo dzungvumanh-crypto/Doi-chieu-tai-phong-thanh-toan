@@ -36,6 +36,7 @@ from fastapi.responses import Response
 
 from backend.database import get_db
 from backend.core.concurrency import run_heavy
+from backend.core.uploads import read_limited_sync
 from backend.core.deps import require_feature
 from backend.schemas.doi_soat_citad import ExportIn, HistoryOut, ReconcileResultOut
 from backend.services.doi_soat_citad import exporters, parsers, reconcile
@@ -64,7 +65,7 @@ def _save_uploads(files: Optional[List[UploadFile]]) -> tuple[list[str], list[st
     for f in files:
         suffix = os.path.splitext(f.filename or "")[1] or ".dat"
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-            tmp.write(f.file.read())
+            tmp.write(read_limited_sync(f))
             paths.append(tmp.name)
         names.append(f.filename or os.path.basename(paths[-1]))
 

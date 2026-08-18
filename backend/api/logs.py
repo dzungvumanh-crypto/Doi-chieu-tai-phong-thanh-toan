@@ -6,9 +6,10 @@ import sqlite3
 import tempfile
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
-from backend.database import get_db, _vn_now
+from backend.database import get_db, write_audit, _vn_now
 from backend.core.config import settings
 from backend.core.deps import require_admin, require_feature
+from backend.core.net import client_ip as _client_ip
 
 router = APIRouter()
 
@@ -93,12 +94,16 @@ def backup_db(
         except Exception:
             pass
 
-    client_ip = request.client.host if request.client else "unknown"
+    # Ghi vào audit_logs, KHÔNG phải login_logs: tải backup không phải sự kiện
+    # đăng nhập. Dòng cũ nằm trong login_logs với success=1 làm mọi thống kê
+    # "số lượt đăng nhập" đếm dôi, và đẩy nhật ký đăng nhập thật ra khỏi trang
+    # đầu. Đây là GET nên AuditMiddleware không đụng tới — phải tự ghi.
+    # _client_ip(): frontend gọi backend qua loopback nên request.client.host
+    # luôn là 127.0.0.1; IP thật của trình duyệt nằm ở X-Client-IP.
     stamp = _vn_now().strftime("%Y%m%d_%H%M%S")
-    db.execute(
-        "INSERT INTO login_logs (username, staff_id, ip_address, success, detail, created_at) VALUES (?,?,?,?,?,?)",
-        (current["username"], current["id"], client_ip, 1, f"backup_download:{stamp}", _vn_now()),
-    )
+    write_audit(db, current["id"], "db_backup_download", "system", None,
+                f"Tải bản sao cơ sở dữ liệu ({stamp}) — file chứa TOÀN BỘ dữ liệu, gồm cả mã băm mật khẩu",
+                _client_ip(request))
     db.commit()
 
     filename = f"ksnb_backup_{stamp}.db"

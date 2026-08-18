@@ -14,6 +14,7 @@ from fastapi.responses import Response
 from openpyxl.styles import Alignment, Border, Font, Side
 
 from backend.core.concurrency import run_heavy
+from backend.core.uploads import read_limited
 from backend.core.deps import get_current_staff, require_feature
 from backend.core.enums import StaffRole
 from backend.database import get_db, _vn_now
@@ -1074,11 +1075,9 @@ async def archive_cover_parse(
     if not name.lower().endswith((".xls", ".xlsx")):
         raise HTTPException(400, "Chỉ nhận file Excel (.xls hoặc .xlsx)")
 
-    content = await file.read()
+    content = await read_limited(file, _ARCHIVE_COVER_MAX_UPLOAD, "File Excel tra cứu")
     if not content:
         raise HTTPException(400, "File rỗng")
-    if len(content) > _ARCHIVE_COVER_MAX_UPLOAD:
-        raise HTTPException(400, "File quá lớn (tối đa 20MB)")
 
     def _work():
         return archive_cover_service.parse_lookup_excel(content, name)

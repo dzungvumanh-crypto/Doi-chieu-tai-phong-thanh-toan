@@ -1,12 +1,14 @@
 """API endpoints cho tính năng Chấm 459901 — phân loại bút toán TK 459901."""
 
 from datetime import datetime
-from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile
+import threading
+
+from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import Response
 
+from backend.core.uploads import read_limited, safe_filename
 from backend.core.deps import require_feature
 from backend.services import cham459901_service
 
@@ -27,14 +29,20 @@ def _dl_headers(filename: str) -> dict:
 
 @router.post("/process")
 async def process(
-    background_tasks: BackgroundTasks,
     file: UploadFile,
     _=Depends(require_feature("cham_459901.process")),
 ):
     """Nhận file ZIP, khởi chạy phân loại trong background, trả task_token ngay."""
-    zip_bytes = await file.read()
+    zip_bytes = await read_limited(file, ten="File ZIP dữ liệu")
     task_token = cham459901_service.init_progress()
-    background_tasks.add_task(cham459901_service.run_process, zip_bytes, task_token)
+    # Chạy trong luồng riêng, KHÔNG dùng BackgroundTasks: Starlette chạy hàm
+    # đồng bộ của BackgroundTasks trong threadpool CHUNG 40 token của anyio và
+    # giữ token đó suốt thời gian xử lý (phút, không phải giây). Vài lượt chạy
+    # cùng lúc là bể cạn, mọi endpoint `def` khác của hệ thống phải xếp hàng
+    # theo. Luồng riêng thì việc nặng chạy ngoài bể, đúng cách ACH đang làm
+    # (backend/services/ach_service.py). Tiến độ vẫn theo dõi qua /progress.
+    threading.Thread(target=cham459901_service.run_process, args=(zip_bytes, task_token),
+                     daemon=True).start()
     return {"task_token": task_token}
 
 
@@ -60,7 +68,12 @@ def download_result(
     if file_type not in VALID_TYPES:
         raise HTTPException(400, f"file_type phải là: {', '.join(sorted(VALID_TYPES))}")
 
-    path = Path("data/temp_cham459901") / token / f"{file_type}.xlsx"
+    # `token` là chuỗi client đặt và được ghép vào đường dẫn — cắt mọi thành
+    # phần thư mục trước, đừng dựa vào việc bộ định tuyến không khớp dấu "/".
+    # Lấy thư mục từ chính service, KHÔNG gõ lại đường dẫn: viết cứng ở đây thì
+    # đổi TEMP_DIR bên service là endpoint này lặng lẽ tìm sai chỗ, người dùng chỉ
+    # thấy "File không tồn tại hoặc đã hết hạn".
+    path = cham459901_service.TEMP_DIR / safe_filename(token, "_") / f"{file_type}.xlsx"
     if not path.exists():
         raise HTTPException(404, "File không tồn tại hoặc đã hết hạn")
 

@@ -48,6 +48,22 @@ async def staff_page():
         staff_cache = []
         edit_target = {"id": None}
 
+        # ── Lớp CSS của bảng danh sách ────────────────────────────────────────
+        # Mỗi cột phải có `shrink-0`: mặc định flex cho phép item CO LẠI
+        # (flex-shrink:1) khi tổng bề rộng vượt khung, nên w-28/w-36 bị bóp nhỏ
+        # hơn khai báo và chữ tràn ra đè lên cột bên cạnh. Cột nào chữ có thể dài
+        # thì thêm `truncate` để cắt bằng "…" thay vì tràn.
+        # `min-w-max` giữ hàng rộng đúng nội dung, để nền/viền hàng vẽ hết bảng
+        # khi rows_container cuộn ngang trên màn hình hẹp.
+        _ROW_BASE = "w-full min-w-max px-3 py-2"
+        _HDR_ROW  = (f"{_ROW_BASE} bg-red-50 font-semibold text-xs text-red-800 "
+                     "border border-red-100 rounded-t")
+        _DATA_ROW = f"{_ROW_BASE} border-b border-gray-100 hover:bg-gray-50"
+        # Inline style, KHÔNG dùng class: `.nicegui-row` tự đặt flex-wrap:wrap và
+        # gap:1rem trong stylesheet riêng của NiceGUI — class Tailwind cùng độ ưu
+        # tiên nên thắng/thua tuỳ thứ tự file CSS. Inline thì luôn thắng.
+        _ROW_STYLE = "flex-wrap:nowrap; gap:0.5rem; align-items:center"
+
         # ── Edit dialog ───────────────────────────────────────────────────────
         edit_dialog = ui.dialog()
         with edit_dialog, ui.card().classes("w-[28rem] p-6"):
@@ -275,9 +291,11 @@ async def staff_page():
                               on_click=lambda: join_import_dialog.open()
                               ).props("dense outline").classes("text-blue-700")
                 if api.has_feature("staff.import_db"):
+                    # Truyền THẲNG hàm async — bọc create_task làm rỗng ngăn xếp
+                    # slot của NiceGUI, ui.notify bên trong sẽ im lặng không hiện
                     import_input = ui.upload(
                         label="Nhập DB",
-                        on_upload=lambda e: asyncio.create_task(_do_import(e)),
+                        on_upload=lambda e: _do_import(e),
                         auto_upload=True,
                     ).props('accept=".db" dense flat').classes("text-gray-700")
 
@@ -288,7 +306,17 @@ async def staff_page():
                             "/api/staff/import-db",
                             {"file": (e.name, e.content.read(), "application/octet-stream")},
                         )
-                        ui.notify(f"Nhập xong: +{result['inserted']} mới, ~{result['updated']} cập nhật", type="positive")
+                        bo_qua = result.get("skipped") or []
+                        msg = f"Nhập xong: +{result['inserted']} mới, ~{result['updated']} cập nhật"
+                        if bo_qua:
+                            # Dòng bị bỏ phải hiện ra: im lặng bỏ qua là kiểu hỏng
+                            # tệ nhất — người nhập tưởng đã vào đủ
+                            msg += f", BỎ QUA {len(bo_qua)} dòng"
+                            ui.notify(msg, type="warning", timeout=0, close_button="Đóng")
+                            for d in bo_qua[:10]:
+                                ui.notify(d, type="warning", timeout=0, close_button="Đóng")
+                        else:
+                            ui.notify(msg, type="positive")
                         await load_staff()
                     except Exception as ex:
                         if _handle_api_error(ex): return
@@ -298,7 +326,8 @@ async def staff_page():
         with staff_loading:
             ui.spinner(size="2em", color="red")
             ui.label("Đang tải...").classes("text-gray-500 ml-2 text-sm")
-        rows_container = ui.column().classes("w-full")
+        # overflow-x-auto: màn hình hẹp thì cuộn ngang, KHÔNG bóp cột lại
+        rows_container = ui.column().classes("w-full overflow-x-auto")
 
         def open_edit(s: dict):
             edit_target["id"] = s["id"]
@@ -333,48 +362,48 @@ async def staff_page():
 
             with rows_container:
                 # Header
-                with ui.row().classes("w-full px-3 py-2 bg-red-50 font-semibold text-xs text-red-800 border border-red-100 rounded-t"):
-                    ui.label("Họ tên").classes("flex-1")
-                    ui.label("Mã cán bộ").classes("w-28")
-                    ui.label("Quyền").classes("w-28 text-center")
-                    ui.label("Phòng").classes("w-36")
-                    ui.label("Username").classes("w-24")
-                    ui.label("Vào ngành / Phép").classes("w-32 text-center")
-                    ui.label("User IPCAS").classes("w-24 text-center")
-                    ui.label("User Payment").classes("w-32")
-                    ui.label("TT").classes("w-16 text-center")
+                with ui.row().classes(_HDR_ROW).style(_ROW_STYLE):
+                    ui.label("Họ tên").classes("w-56 shrink-0 truncate")
+                    ui.label("Mã cán bộ").classes("w-28 shrink-0")
+                    ui.label("Ngày vào ngành").classes("w-28 shrink-0 text-center")
+                    ui.label("Quyền").classes("w-28 shrink-0 text-center")
+                    ui.label("Phòng").classes("w-36 shrink-0")
+                    ui.label("Username").classes("w-24 shrink-0")
+                    ui.label("User IPCAS").classes("w-24 shrink-0 text-center")
+                    ui.label("User Payment").classes("w-32 shrink-0")
+                    ui.label("TT").classes("w-16 shrink-0 text-center")
                     if is_admin:
-                        ui.label("Thao tác").classes("w-16 text-center")
+                        ui.label("Thao tác").classes("w-16 shrink-0 text-center")
+                    ui.space()   # hút chỗ thừa về cuối, không để cột Họ tên giãn ra
 
-                def _fmt_join(iso_str, leave_days):
+                def _fmt_join(iso_str):
                     if not iso_str:
                         return "—"
                     try:
                         from datetime import date as _date
-                        d = _date.fromisoformat(str(iso_str))
-                        return f"{d.strftime('%d/%m/%Y')} ({leave_days or 12}n)"
+                        return _date.fromisoformat(str(iso_str)[:10]).strftime("%d/%m/%Y")
                     except Exception:
                         return str(iso_str)
 
                 def _row(s: dict):
                     dname = dept_id_to_name.get(s.get("department_id"), "—")
-                    with ui.row().classes("w-full px-3 py-2 border-b border-gray-100 items-center hover:bg-gray-50"):
-                        ui.label(s["full_name"]).classes("flex-1 text-sm")
-                        ui.label(s.get("employee_code") or "—").classes("w-28 text-sm font-mono text-gray-500")
-                        ui.label(role_map.get(s["role"], s["role"])).classes("w-28 text-center text-sm")
-                        ui.label(dname).classes("w-36 text-sm text-gray-600")
-                        ui.label(s.get("username", "")).classes("w-24 text-sm text-gray-500")
-                        ui.label(_fmt_join(s.get("join_industry_date"), s.get("annual_leave_days"))).classes("w-32 text-center text-xs text-gray-600")
-                        ui.label(s.get("ipcas_code") or "—").classes("w-24 text-center text-sm font-mono text-gray-600")
-                        ui.label(s.get("payment_username") or "—").classes("w-32 text-sm text-gray-500")
+                    with ui.row().classes(_DATA_ROW).style(_ROW_STYLE):
+                        ui.label(s["full_name"]).classes("w-56 shrink-0 truncate text-sm")
+                        ui.label(s.get("employee_code") or "—").classes("w-28 shrink-0 text-sm font-mono text-gray-500")
+                        ui.label(_fmt_join(s.get("join_industry_date"))).classes("w-28 shrink-0 text-center text-sm text-gray-600")
+                        ui.label(role_map.get(s["role"], s["role"])).classes("w-28 shrink-0 truncate text-center text-sm")
+                        ui.label(dname).classes("w-36 shrink-0 truncate text-sm text-gray-600")
+                        ui.label(s.get("username", "")).classes("w-24 shrink-0 truncate text-sm text-gray-500")
+                        ui.label(s.get("ipcas_code") or "—").classes("w-24 shrink-0 truncate text-center text-sm font-mono text-gray-600")
+                        ui.label(s.get("payment_username") or "—").classes("w-32 shrink-0 truncate text-sm text-gray-500")
                         if s.get("is_active"):
-                            ui.badge("Hoạt động").classes("w-16 text-center").props('color="positive"')
+                            ui.badge("Hoạt động").classes("w-16 shrink-0 text-center").props('color="positive"')
                         else:
-                            ui.badge("Tạm khóa").classes("w-16 text-center").props('color="grey"')
+                            ui.badge("Tạm khóa").classes("w-16 shrink-0 text-center").props('color="grey"')
                         if is_admin:
                             # Cấp 2 không được thao tác trên tài khoản cấp 1
                             _locked = acting_is_l2 and s.get("role") == "admin"
-                            with ui.row().classes("w-16 gap-0 justify-center"):
+                            with ui.row().classes("w-16 shrink-0 gap-0 justify-center"):
                                 if _locked:
                                     ui.icon("lock").classes("text-gray-300 text-sm").tooltip("Chỉ QTV cấp 1 thao tác được")
                                 else:
@@ -382,10 +411,11 @@ async def staff_page():
                                         ui.button(icon="edit", on_click=lambda s=s: open_edit(s)).props("flat dense").classes("text-red-600").tooltip("Sửa")
                                     if api.has_feature("staff.delete"):
                                         ui.button(icon="delete", on_click=lambda sid=s["id"], nm=s["full_name"]: do_deactivate_staff(sid, nm)).props("flat dense").classes("text-red-500").tooltip("Xóa")
+                        ui.space()
 
                 # Nhóm Ban Giám đốc
                 if bgd_list:
-                    with ui.row().classes("w-full px-3 py-1 bg-red-50 text-xs text-red-700 font-semibold border-b border-red-100 items-center gap-1"):
+                    with ui.row().classes("w-full min-w-max px-3 py-1 bg-red-50 text-xs text-red-700 font-semibold border-b border-red-100 items-center gap-1"):
                         ui.icon("star").classes("text-sm")
                         ui.label("Ban Giám đốc")
                     for s in bgd_list:
@@ -393,7 +423,7 @@ async def staff_page():
 
                 # Nhóm Quản trị viên
                 if admin_list:
-                    with ui.row().classes("w-full px-3 py-1 bg-purple-50 text-xs text-purple-700 font-semibold border-b border-purple-100 items-center gap-1"):
+                    with ui.row().classes("w-full min-w-max px-3 py-1 bg-purple-50 text-xs text-purple-700 font-semibold border-b border-purple-100 items-center gap-1"):
                         ui.icon("admin_panel_settings").classes("text-sm")
                         ui.label("Quản trị viên")
                     for s in admin_list:
@@ -407,7 +437,7 @@ async def staff_page():
                     for dept_id, members in sorted(by_dept.items(),
                                                    key=lambda x: dept_id_to_name.get(x[0], "")):
                         dname = dept_id_to_name.get(dept_id, "Chưa phân phòng")
-                        with ui.row().classes("w-full px-3 py-1 bg-blue-50 text-xs text-blue-700 font-semibold border-b border-blue-100 items-center gap-1"):
+                        with ui.row().classes("w-full min-w-max px-3 py-1 bg-blue-50 text-xs text-blue-700 font-semibold border-b border-blue-100 items-center gap-1"):
                             ui.icon("badge").classes("text-sm")
                             ui.label(dname)
                         for s in members:

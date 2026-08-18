@@ -12,10 +12,12 @@ from typing import FrozenSet, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import StreamingResponse
 
+from backend.core.concurrency import run_heavy
+from backend.core.uploads import read_limited_sync
 from backend.core.deps import TONG_HOP_CODES, get_current_staff, require_feature
 from backend.core.enums import LeaveStatus
 from backend.core.paths import template_path
-from backend.database import get_db, _vn_now, compute_annual_leave, compute_carry_over
+from backend.database import get_db, write_audit, _vn_now, compute_annual_leave, compute_carry_over
 from backend.schemas.leaves import (
     LeaveCreate, LeaveReview, TongHopReview,
     DirectLeaveCreate, RecallCreate, LeaveQuotaUpsert,
@@ -1959,8 +1961,25 @@ def _sig_slot_for(r, current: dict, db: sqlite3.Connection) -> str:
     return ""
 
 
+# ── Ba endpoint dưới đây gọi Word qua PowerShell (5–7 giây khi cache lạnh, tối
+# đa 150 giây nếu Word treo) và tuần tự hoá trên `leave_pdf._word_lock`.
+#
+# Chúng PHẢI là `async def` + `await run_heavy(...)`. Để `def` thì FastAPI đẩy
+# vào threadpool CHUNG 40 token của anyio: mấy người cùng bấm "Xem trước" là
+# xếp hàng ở `_word_lock` mà vẫn mỗi người giữ một token, Word treo một lần là
+# bể cạn — và lúc đó MỌI endpoint khác của hệ thống (chấm công, bàn giao, sổ
+# trực... đều là `def`) cùng đứng chờ theo. Đo được trên hệ thống thật: 40 việc
+# nặng đồng thời làm `/api/auth/me` kẹt 38 giây.
+#
+# `run_heavy()` giới hạn ở MAX_HEAVY=4, phần token còn lại luôn dành cho request
+# nhẹ. Xem backend/core/concurrency.py.
+#
+# Kết nối SQLite dùng lại được trong luồng phụ vì `get_db()` mở với
+# `check_same_thread=False`, và ở đây chỉ có một luồng đụng vào tại một thời điểm.
+
+
 @router.post("/preview")
-def preview_draft_form(
+async def preview_draft_form(
     body: LeaveCreate,
     db: sqlite3.Connection = Depends(get_db),
     current: dict = Depends(require_feature("leaves.create")),
@@ -1968,59 +1987,67 @@ def preview_draft_form(
     """Xem trước đơn CHƯA gửi — để người làm đơn đặt chữ ký rồi mới bấm gửi."""
     if body.leave_type not in _VALID_LEAVE_TYPES:
         raise HTTPException(400, f"Loại nghỉ phép không hợp lệ: {body.leave_type}")
-    r = _draft_form_row(body, current, db)
-    return _preview_payload(r, None, "nguoi_de_nghi", current["id"], db)
+
+    def _work():
+        r = _draft_form_row(body, current, db)
+        return _preview_payload(r, None, "nguoi_de_nghi", current["id"], db)
+
+    return await run_heavy(_work)
 
 
 @router.get("/{leave_id}/preview")
-def preview_leave_form(
+async def preview_leave_form(
     leave_id: int,
     slot: str = "",
     db: sqlite3.Connection = Depends(get_db),
     current: dict = Depends(get_current_staff),
 ):
     """Xem trước đơn đã có. `slot` để trống → tự chọn ô ký hợp lệ của người gọi."""
-    r = _load_form_row(leave_id, db)
-    if not _can_view_form(r, current, db):
-        raise HTTPException(403, "Không có quyền xem đơn này")
     if slot and slot not in _SIG_SLOTS:
         raise HTTPException(400, "Ô ký không hợp lệ")
-    slot = slot or _sig_slot_for(r, current, db)
-    return _preview_payload(r, leave_id, slot, current["id"] if slot else None, db)
+
+    def _work():
+        r = _load_form_row(leave_id, db)
+        if not _can_view_form(r, current, db):
+            raise HTTPException(403, "Không có quyền xem đơn này")
+        o = slot or _sig_slot_for(r, current, db)
+        return _preview_payload(r, leave_id, o, current["id"] if o else None, db)
+
+    return await run_heavy(_work)
 
 
 @router.get("/{leave_id}/download")
-def download_leave_form(
+async def download_leave_form(
     leave_id: int,
     fmt: str = "pdf",
     db: sqlite3.Connection = Depends(get_db),
     current: dict = Depends(get_current_staff),
 ):
-    r = _load_form_row(leave_id, db)
-    if not _can_view_form(r, current, db):
-        raise HTTPException(403, "Không có quyền tải đơn này")
+    def _work():
+        r = _load_form_row(leave_id, db)
+        if not _can_view_form(r, current, db):
+            raise HTTPException(403, "Không có quyền tải đơn này")
 
-    ec = r["employee_code"] or "staff"
-    if fmt == "docx":
-        # Đường lui khi máy chủ không chuyển được PDF (chưa cài Word / Word treo).
-        ctx, tpl_path = _build_form_ctx(r, leave_id, db)
-        return StreamingResponse(
-            io.BytesIO(_render_form_docx(ctx, tpl_path)),
-            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            headers={"Content-Disposition":
-                     f"attachment; filename*=UTF-8''don_nghi_phep_{ec}_{r['start_date']}.docx"},
-        )
+        ec = r["employee_code"] or "staff"
+        if fmt == "docx":
+            # Đường lui khi máy chủ không chuyển được PDF (chưa cài Word / Word treo).
+            ctx, tpl_path = _build_form_ctx(r, leave_id, db)
+            return (_render_form_docx(ctx, tpl_path),
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    f"don_nghi_phep_{ec}_{r['start_date']}.docx")
 
-    try:
-        pdf = _form_pdf(r, leave_id, db)
-        pdf = leave_pdf.stamp(pdf, _placed_signatures(leave_id, db))
-    except leave_pdf.PdfConvertError as e:
-        raise HTTPException(503, f"Không tạo được PDF: {e}")
+        try:
+            pdf = _form_pdf(r, leave_id, db)
+            pdf = leave_pdf.stamp(pdf, _placed_signatures(leave_id, db))
+        except leave_pdf.PdfConvertError as e:
+            raise HTTPException(503, f"Không tạo được PDF: {e}")
+        return pdf, "application/pdf", f"don_nghi_phep_{ec}_{r['start_date']}.pdf"
+
+    noi_dung, kieu, ten_file = await run_heavy(_work)
     return StreamingResponse(
-        io.BytesIO(pdf),
-        media_type="application/pdf",
-        headers={"Content-Disposition":
-                 f"attachment; filename*=UTF-8''don_nghi_phep_{ec}_{r['start_date']}.pdf"},
+        io.BytesIO(noi_dung),
+        media_type=kieu,
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{ten_file}"},
     )
 
 
@@ -2111,14 +2138,43 @@ def update_join_date(
     db: sqlite3.Connection = Depends(get_db),
     current: dict = Depends(require_feature("leaves.quota_admin")),
 ):
-    """Cập nhật ngày vào ngành — chỉ dành cho quota admin."""
-    join_date = body.get("join_industry_date", "")
+    """Cập nhật ngày vào ngành — chỉ dành cho quota admin.
+
+    Đây là đường ghi thứ ba vào `user_tttt.join_industry_date` (hai đường kia ở
+    `backend/api/staff.py`: sửa cán bộ và nhập Excel hàng loạt). Cột này là hồ
+    sơ nhân sự chứ không phải số liệu phép, nên phải giữ hai thứ ngang bằng hai
+    đường kia:
+
+      - **Validate ISO.** Trước đây nhận thẳng chuỗi client gửi và ghi nguyên
+        vào cột DATE. Gõ "01/07/2020" hay "hôm qua" đều vào được, rồi
+        `compute_annual_leave()` và mọi chỗ `date.fromisoformat()` đọc cột này
+        sẽ vỡ — ở nơi khác, muộn hơn, không ai lần ra nguyên nhân.
+      - **Ghi nhật ký kèm giá trị cũ.** AuditMiddleware có ghi, nhưng chỉ ghi
+        được `PATCH <đường dẫn>` — không biết ai đổi từ ngày nào sang ngày nào.
+        Số ngày phép năm tính từ cột này, nên đổi nó là đổi hạn mức phép.
+    """
+    join_date = (body.get("join_industry_date") or "").strip()
     if not join_date:
         raise HTTPException(400, "join_industry_date không được để trống")
-    staff = db.execute("SELECT id FROM user_tttt WHERE id=? AND is_active=1", (staff_id,)).fetchone()
+    try:
+        join_date = date.fromisoformat(join_date).isoformat()
+    except ValueError:
+        raise HTTPException(400, "Ngày vào ngành phải theo định dạng YYYY-MM-DD")
+    if date.fromisoformat(join_date) > _vn_now().date():
+        raise HTTPException(400, "Ngày vào ngành không được ở tương lai")
+
+    staff = db.execute(
+        "SELECT id, full_name, join_industry_date FROM user_tttt WHERE id=? AND is_active=1",
+        (staff_id,),
+    ).fetchone()
     if not staff:
         raise HTTPException(404, "Không tìm thấy nhân viên")
+
     db.execute("UPDATE user_tttt SET join_industry_date=? WHERE id=?", (join_date, staff_id))
+    write_audit(
+        db, current["id"], "staff_join_date_update", "staff", staff_id,
+        f"{staff['full_name']}: ngày vào ngành {staff['join_industry_date'] or '(trống)'} → {join_date}",
+    )
     db.commit()
     return {"ok": True, "staff_id": staff_id, "join_industry_date": join_date}
 
@@ -2232,7 +2288,7 @@ def import_quota_preview(
 ):
     """Đọc file Excel hạn mức, khớp nhân viên theo Mã cán bộ / tên — KHÔNG ghi DB."""
     import openpyxl
-    content = file.file.read()
+    content = read_limited_sync(file, ten="File Excel hạn mức")
     try:
         wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
     except Exception:

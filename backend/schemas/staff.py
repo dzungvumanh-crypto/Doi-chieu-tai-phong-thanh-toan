@@ -1,6 +1,22 @@
 from datetime import date
 from typing import Optional
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator
+
+from backend.core.enums import VALID_ROLES
+
+
+def _kiem_tra_role(v):
+    """`role` là chuỗi tự do trong lược đồ nên gõ sai không ai chặn — mà sai một
+    ký tự ("truong_phong " thừa dấu cách) là tài khoản đó rớt KHỎI MỌI kiểm tra
+    quyền: không lỗi, không cảnh báo, chỉ là người dùng bấm gì cũng bị từ chối.
+    Chặn tại cửa vào thay vì đi tìm nguyên nhân sau."""
+    if v is None:
+        return v
+    if v not in VALID_ROLES:
+        raise ValueError(
+            f"Vai trò '{v}' không tồn tại. Giá trị hợp lệ: {', '.join(sorted(VALID_ROLES))}"
+        )
+    return v
 
 
 class StaffCreate(BaseModel):
@@ -17,6 +33,9 @@ class StaffCreate(BaseModel):
     ipcas_code: Optional[str] = None
     payment_username: Optional[str] = None
 
+    _role_hop_le = field_validator("role")(_kiem_tra_role)
+
+
 class StaffUpdate(BaseModel):
     employee_code: Optional[str] = None
     full_name: Optional[str] = None
@@ -28,6 +47,9 @@ class StaffUpdate(BaseModel):
     join_industry_date: Optional[date] = None
     ipcas_code: Optional[str] = None
     payment_username: Optional[str] = None
+
+    _role_hop_le = field_validator("role")(_kiem_tra_role)
+
 
 class StaffOut(BaseModel):
     id: int
@@ -54,4 +76,4 @@ class StaffOut(BaseModel):
     def _null_la_khoa(cls, v):
         return False if v is None else v
 
-    class Config: from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

@@ -19,6 +19,7 @@ from fastapi.responses import Response
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
 from backend.core.concurrency import run_heavy
+from backend.core.uploads import read_limited
 from backend.core.deps import require_feature
 from backend.database import get_db, write_audit, _vn_now
 from backend.schemas.ttqt_branches import BranchCreate, BranchOut, BranchUpdate, ImportResult
@@ -287,7 +288,8 @@ async def import_branches(
         raise HTTPException(400, "Chỉ nhận file Excel .xlsx")
     # openpyxl là Python thuần, giữ GIL suốt — gọi thẳng ở đây sẽ chặn event
     # loop và treo mọi request khác trong lúc đọc file.
-    items, warnings = await run_heavy(_parse_workbook, await file.read())
+    items, warnings = await run_heavy(_parse_workbook,
+                                      await read_limited(file, ten="File Excel chi nhánh"))
     if not items:
         raise HTTPException(400, "Không đọc được dòng dữ liệu nào trong file")
 

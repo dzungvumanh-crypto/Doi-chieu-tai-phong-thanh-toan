@@ -18,9 +18,14 @@ _SEMANTIC = {
     "staff_update":    "Cập nhật tài khoản người dùng",
     "staff_delete":    "Xóa tài khoản người dùng",
     "staff_import_db": "Nhập người dùng từ file",
+    "staff_export":    "Xuất danh sách cán bộ ra Excel",
+    "staff_export_db": "Xuất file DB người dùng (có mã băm mật khẩu)",
     "password_reset":  "Đặt lại mật khẩu người dùng",
     "signature_upload": "Tải lên ảnh chữ ký",
     "signature_delete": "Xóa ảnh chữ ký",
+    "staff_import_join_dates": "Nhập Ngày vào ngành từ Excel",
+    "staff_join_date_update":  "Sửa Ngày vào ngành (màn hình quỹ phép)",
+    "db_backup_download":      "Tải bản sao cơ sở dữ liệu",
 }
 
 # ── Ánh xạ "METHOD /path_chuẩn_hóa" → mô tả công việc ────────────────────────
@@ -50,6 +55,8 @@ _WORK = {
     "PUT /api/leaves/{id}/resubmit":              "Gửi lại đơn nghỉ phép",
     "PATCH /api/leaves/{id}/cancel":              "Hủy đơn nghỉ phép",
     "POST /api/leaves/quotas":                    "Đặt quỹ ngày phép",
+    # Giữ lại cho các dòng ghi TRƯỚC khi endpoint này có write_audit ngữ nghĩa
+    # riêng — từ nay AuditMiddleware bỏ qua nó, xem _SKIP_EXACT ở audit_middleware.
     "PATCH /api/leaves/quotas/staff/{id}/join-date": "Sửa ngày vào ngành (quỹ phép)",
     "PATCH /api/leaves/quotas/staff/{id}/used-days": "Sửa số ngày phép đã dùng",
     "POST /api/leaves/direct":                    "Tạo nghỉ phép trực tiếp",

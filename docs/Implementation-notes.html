@@ -51,7 +51,390 @@
 <div class="page">
 
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
-  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-13</p>
+  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-18</p>
+
+  <!-- Z -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">Z</span>
+      <span class="card-title">Rà soát 18/08/2026: tính năng này ghi đè dữ liệu của tính năng kia + đường ghi/xoá file trên máy chủ</span>
+      <span class="badge badge-done">Đã sửa</span>
+    </div>
+    <div class="card-body">
+
+      <p>Rà hai câu hỏi: (a) thao tác ở màn hình A có lặng lẽ đổi dữ liệu của tính năng B không, và
+        (b) chỗ nào đang ghi/tạo/xoá file trên đĩa máy chủ. Bản đồ sở hữu bảng nhìn chung sạch —
+        mỗi bảng chỉ có một module ghi, <b>trừ <code>user_tttt</code></b> (bị ghi từ
+        <code>staff.py</code>, <code>leaves.py</code>, <code>auth.py</code>). Vấn đề tụ ở đó.</p>
+      <div class="note"><b>Cố ý bỏ ngoài đợt này:</b> chuyện sửa số tờ ở màn hình Bàn giao chứng từ
+        làm lệch với Tra cứu lưu trữ (hai màn hình đọc hai nguồn: <code>document_entries.sheet_count</code>
+        sống vs <code>bundles.total_sheets</code> + <code>cover_units</code> ảnh chụp). Người dùng
+        quyết định để lại, không phải sót.</div>
+
+      <div class="label">1. <code>POST /api/staff/import-db</code> — một endpoint ghi đè cả 4 miền dữ liệu</div>
+      <p>Bản cũ lấy <b>mọi cột trừ <code>id</code></b> từ file tải lên rồi <code>UPDATE</code> theo
+        <code>employee_code</code>. Nghĩa là màn hình "Nhập DB nhân sự" ghi đè luôn:</p>
+      <table>
+        <tr><th>Cột bị đè</th><th>Thuộc tính năng</th><th>Đường ghi lẽ ra phải đi</th></tr>
+        <tr><td><code>used_leave_days</code>, <code>annual_leave_days</code></td><td>Nghỉ phép</td>
+            <td><code>/api/leaves/quotas/…</code> — có <code>quota_import_batches</code> lưu
+                <code>old_used_leave_days</code> để hoàn tác</td></tr>
+        <tr><td><code>role</code></td><td>Phân quyền</td><td><code>PUT /api/staff/{id}</code> — có <code>_chan_leo_thang_quyen</code></td></tr>
+        <tr><td><code>pwd_hash</code></td><td>Xác thực</td><td><code>/api/auth/reset-password</code></td></tr>
+      </table>
+      <p>Hai hệ quả nặng nhất: (a) nhập lại file cũ là <b>xoá sổ ngày phép đã dùng của cả cơ quan</b>,
+        không hoàn tác được vì không đi qua batch; (b) đây là <b>đường ghi <code>role</code> duy nhất
+        không gọi <code>_chan_leo_thang_quyen</code></b> — ai có feature <code>staff.import_db</code>
+        chỉ cần sửa file .db là tự nâng mình lên <code>admin</code>.</p>
+      <div class="note"><b>Không dùng danh sách cột trắng</b> dù đó là phản xạ đầu tiên.
+        <code>/export-db</code> ngay bên trên cố ý xuất <b>nguyên <code>pwd_hash</code></b>, có hẳn
+        docstring giải thích: mục đích của cặp export/import là di trú người dùng sang hệ thống khác
+        <i>mà không bắt ai đặt lại mật khẩu</i>. Bỏ <code>pwd_hash</code>/<code>role</code> khỏi
+        danh sách trắng là giết đúng tính năng đó. Nên vá theo bốn hướng khác.</div>
+      <table>
+        <tr><th>Rào</th><th>Vì sao</th></tr>
+        <tr><td>Chỉ <code>admin</code> / <code>admin_l2</code> gọi được, không chỉ xét feature</td>
+            <td>Đúng lập luận đã ghi ở <code>/export-db</code>: file này đặt được mật khẩu và vai trò
+                cho mọi tài khoản. Có feature thôi chưa đủ.</td></tr>
+        <tr><td>Cột miền Nghỉ phép không đè lên tài khoản <b>đã có</b></td>
+            <td>Tài khoản <b>mới</b> vẫn lấy — di trú người thì số liệu đi theo người. Chỉ chặn đúng
+                trường hợp gây mất mát: đè lên số liệu đang sống.</td></tr>
+        <tr><td>Dòng có <code>role</code> ngoài <code>VALID_ROLES</code> → bỏ, báo lại</td>
+            <td>Sai một dấu cách là tài khoản rớt khỏi <b>mọi</b> kiểm tra quyền — xem
+                <code>_kiem_tra_role</code> ở <code>schemas/staff.py</code>.</td></tr>
+        <tr><td>Dòng trỏ vào phòng ban không tồn tại → bỏ, báo lại; <b>bật lại</b> <code>foreign_keys</code></td>
+            <td>Bản cũ tắt FK rồi ghi bừa. Đó chính là nguồn của loại dữ liệu hỏng mà
+                <code>StaffOut._null_la_khoa</code> đang phải chữa cháy (<code>is_active = NULL</code>
+                làm cả danh sách <code>/api/staff/</code> trả 500).</td></tr>
+      </table>
+      <p><b>Đánh đổi:</b> dòng hỏng bị <b>bỏ chứ không làm hỏng cả mẻ</b>, và trả về danh sách
+        <code>skipped</code> để màn hình hiện ra. Im lặng bỏ qua là kiểu hỏng tệ nhất — người nhập
+        tưởng đã vào đủ. <code>id</code> phòng ban còn được <code>int()</code> ép kiểu: SQLite không ép
+        kiểu giúp, file người khác chỉnh tay có thể để <code>"1"</code> dạng chuỗi và <code>"1" != 1</code>
+        sẽ loại nhầm cả mẻ dữ liệu đúng.</p>
+
+      <div class="label">2. Ngày lễ và vắng mặt: hai cặp dữ liệu song song không biết nhau</div>
+      <p>Giao diện nhập ngày lễ <b>duy nhất</b> trong cả phần mềm nằm ở màn hình <b>Nghỉ phép</b> và ghi vào
+        <code>public_holidays</code>. Sổ trực thì chỉ đọc <code>duty_special_days</code>. Quản trị viên khai
+        ngày lễ xong yên tâm, còn lịch trực vẫn xếp người trực ngày đó và vẫn tính cut-off cuối tháng như
+        ngày làm việc — trừ khi có người nhớ bấm "Seed ngày lễ" bên tab Ngày đặc biệt. Không lỗi, không
+        cảnh báo, chỉ là lịch sai. Y hệt vậy với <code>duty_absences</code> và <code>leave_records</code>:
+        người được Giám đốc duyệt cho nghỉ vẫn bị máy xếp trực.</p>
+      <table>
+        <tr><th></th><th>Trước</th><th>Sau</th></tr>
+        <tr><td><code>get_holiday_dates()</code></td><td>chỉ <code>duty_special_days</code></td>
+            <td>hợp với <code>public_holidays</code>, <b>khai báo riêng của Sổ trực thắng</b></td></tr>
+        <tr><td><code>get_absences()</code></td><td>chỉ <code>duty_absences</code></td>
+            <td>hợp với <code>leave_records</code> <code>status='approved'</code> phủ ngày đó</td></tr>
+      </table>
+      <p><b>Vì sao "khai báo riêng thắng" chứ không hợp thẳng hai tập:</b> nhà nước hoán đổi ngày nghỉ thì
+        có ngày vừa là lễ chung vừa được cơ quan khai <code>makeup</code> (đi làm bù). Hợp thẳng thì engine
+        xếp lịch nhận hai câu trả lời trái nhau cho cùng một ngày. Nên: ngày nào đã có dòng trong
+        <code>duty_special_days</code> thì lấy nguyên <code>day_type</code> của dòng đó.</p>
+      <p><b>Vì sao đọc thẳng <code>leave_records</code> chứ không sinh dòng <code>duty_absences</code>
+        từ đơn phép:</b> đơn còn bị huỷ, bị thu hồi, bị sửa ngày. Bản sao sẽ lệch ngay lần đầu có người
+        huỷ đơn, mà không đường nào phát hiện ra. Đọc hợp lúc dùng thì không có gì để lệch.</p>
+      <p><code>get_absences()</code> trả <b>dict {id: lý do}</b> chứ không phải set, để cảnh báo ở
+        <code>duty_rules</code> nói đúng "có đơn nghỉ phép đã duyệt" thay vì "đã khai vắng mặt".
+        <code>get_absent_staff_ids()</code> giữ nguyên chữ ký cũ, gói lại thành <code>set()</code>.</p>
+      <div class="note">Hai bảng <code>public_holidays</code> và <code>leave_records</code> phải được thêm
+        vào <code>_SCHEMA</code> của <code>tests/test_duty_scheduler_algorithm.py</code> — 59 test đổ vì
+        <code>no such table</code>. <b>Không</b> bọc try/except cho qua: DESIGN.md đã ghi rõ vì sao
+        <code>no such table</code> không bao giờ được nuốt.</div>
+
+      <div class="label">3. Sửa "Ngày vào ngành" từ màn hình Nghỉ phép</div>
+      <p><code>join_industry_date</code> có <b>ba</b> đường ghi (sửa cán bộ, nhập Excel hàng loạt, và
+        <code>PATCH /api/leaves/quotas/staff/{id}/join-date</code>). Đường thứ ba nhận thẳng chuỗi client gửi
+        ghi nguyên vào cột DATE — <code>"01/07/2020"</code> hay <code>"hôm qua"</code> đều vào được, rồi
+        <code>compute_annual_leave()</code> vỡ <b>ở nơi khác, muộn hơn</b>. Nay validate ISO + chặn ngày
+        tương lai + <code>write_audit</code> kèm giá trị cũ (số ngày phép năm tính từ cột này).</p>
+      <p>Để tránh <b>hai dòng nhật ký</b> cho cùng một thao tác, <code>audit_middleware</code> có thêm
+        <code>_SKIP_EXACT</code> — chặn đúng một đường thay vì cả prefix <code>/api/leaves</code>
+        (bỏ cả prefix là mất nhật ký của toàn bộ nghỉ phép). So khớp trên path đã chuẩn hoá số → <code>/{id}</code>.</p>
+
+      <div class="label">4. Tải backup bị ghi vào Nhật ký <i>đăng nhập</i></div>
+      <p><code>GET /api/logs/backup</code> chèn một dòng <code>login_logs</code> với <code>success=1</code>.
+        Tải backup không phải sự kiện đăng nhập: nó làm mọi thống kê "số lượt đăng nhập" đếm dôi và đẩy
+        nhật ký đăng nhập thật ra khỏi trang đầu. Chuyển sang <code>audit_logs</code> qua
+        <code>write_audit</code> (đây là GET nên middleware không đụng tới — phải tự ghi).</p>
+
+      <div class="label">5. Tám chỗ rò rỉ file tạm trong SWIFT Recon</div>
+      <pre>with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as out:
+    out_path = out.name
+exporters.export_summary_excel(out_path, ...)   # &lt;- raise ở đây
+with open(out_path, "rb") as f: content = f.read()
+os.remove(out_path)                              # &lt;- không bao giờ chạy tới</pre>
+      <p>Lặp y hệt 8 lần. Mỗi lượt xuất Excel lỗi là một file <code>.xlsx</code> nằm lại <code>%TEMP%</code>
+        vĩnh viễn. Đáng chú ý: <code>doi_soat_citad.py::_build_doisoat_xlsx</code> ngay module bên cạnh
+        <b>đã</b> làm đúng và có hẳn comment giải thích — bài học đã rút ở đó nhưng chưa áp sang đây.</p>
+      <p>Gộp thành một helper <code>_xuat_xlsx(ghi)</code> nhận hàm ghi, có <code>try/finally</code>.
+        8 chỗ → 1 chỗ, thêm chỗ xuất mới không thể quên nữa.</p>
+
+      <div class="label">6. Thư mục trên máy chủ: đường dẫn tương đối + không ai dọn</div>
+      <table>
+        <tr><th>Vấn đề</th><th>Sửa</th></tr>
+        <tr><td><code>Path("data/temp_ach")</code>, <code>Path("data/backups")</code>… phụ thuộc thư mục
+                làm việc lúc khởi động — đổi cách chạy (Windows Service, Task Scheduler) là sinh thư mục
+                ở chỗ khác, mà <code>rmtree</code> thì quét thư mục mới đó</td>
+            <td>đi qua <code>BASE_DIR</code> cho cả 3 <code>TEMP_DIR</code> + <code>_BACKUP_DIR</code></td></tr>
+        <tr><td>Thư mục tạm chỉ được dọn <b>khi có người dùng tính năng</b> (<code>_cleanup_old_results()</code>
+                nằm ngay đầu <code>process_zip()</code>) — nghỉ dùng một tháng thì kết quả tháng trước nằm
+                nguyên trên đĩa</td>
+            <td><code>temp_cleanup_service</code> chạy nền mỗi 6h, gọi lại đúng hàm dọn sẵn có của từng
+                service. Đúng bài học đã rút ở <code>log_cleanup_service</code>.</td></tr>
+        <tr><td><code>logs/backend.log</code> + <code>frontend.log</code> <b>không có gì dọn cả</b> —
+                chính comment trong <code>run.py</code> đã ghi nhận điều này</td>
+            <td><code>_xoay_log_qua_han()</code> trong <code>run.py</code>: quá 20 MB thì xoay, giữ 3 đời</td></tr>
+        <tr><td><code>cham459901.py</code> gõ lại <code>Path("data/temp_cham459901")</code> thay vì dùng
+                hằng của service</td>
+            <td>dùng <code>cham459901_service.TEMP_DIR</code></td></tr>
+        <tr><td><code>_cleanup_old_jobs()</code> của ACH chỉ xoá thư mục của job nó <b>còn nhớ</b>, mà
+                <code>_jobs</code> nằm trong RAM — khởi động lại là mọi job đang dở để lại thư mục
+                <b>không ai xoá được nữa</b> (đo được: 2 thư mục mồ côi trong <code>data/temp_ach</code>)</td>
+            <td>quét thêm theo <code>mtime</code>, bỏ qua job đang chạy — giống cách
+                <code>cham459901_service</code> vẫn làm</td></tr>
+      </table>
+      <div class="caution"><b>Giới hạn phải biết:</b> log của <code>run.py</code> chỉ xoay được
+        <b>lúc khởi động</b>. Đang chạy thì file bị tiến trình con giữ mở, Windows không cho đổi tên. Máy
+        chạy liền mạch nhiều tháng không khởi động lại thì file vẫn phình quá ngưỡng cho tới lần khởi động
+        kế tiếp.</div>
+
+      <div class="label">7. Backup phụ tự xoá file trên ổ/máy khác</div>
+      <p><code>_mirror()</code> chép bản backup sang <code>BACKUP_EXTRA_DIR</code> rồi gọi luôn
+        <code>_rotate(extra_dir)</code> — phần mềm chủ động <b>xoá file trên thư mục/ổ mạng bên ngoài</b>.
+        Bộ lọc <code>^ksnb_\d{8}_\d{4}\.db$</code> là chốt chặn tốt, nhưng còn một kịch bản chưa che:
+        hai máy chủ cùng trỏ vào một thư mục backup chung thì tên file không phân biệt nguồn, mỗi máy sẽ
+        xoá bản của máy kia mà cả hai đều tưởng mình còn đủ 7 ngày lịch sử.</p>
+      <p><b>Không vá bằng mã.</b> Thêm hostname vào tên file sẽ làm <code>_TEN_TU_SINH</code> không khớp
+        các file cũ ⇒ chúng không bao giờ bị xoay nữa, đổi một rủi ro hiếm lấy một rò rỉ chắc chắn. Đây là
+        lỗi cấu hình, chữa ở chỗ cấu hình: cảnh báo đã ghi thẳng vào <code>.env.example</code> ngay trên
+        dòng <code>BACKUP_EXTRA_DIR=</code>.</p>
+
+      <div class="label">Test</div>
+      <p><code>tests/test_import_db_an_toan.py</code> (8) · <code>test_lien_thong_nghi_phep_so_truc.py</code> (8) ·
+        <code>test_sua_ngay_vao_nganh.py</code> (8) · <code>test_don_dep_file_tam.py</code> (3).
+        Toàn bộ 527 test xanh.</p>
+
+      <div class="label">Ảnh hưởng lan sang chỗ khác</div>
+      <table>
+        <tr><th>Caller / màn hình</th><th>Rủi ro</th></tr>
+        <tr><td>Màn hình Nhân sự → nút "Nhập DB"</td>
+            <td>Người không phải quản trị viên nay nhận 403 dù trước đó bấm được. Đúng chủ đích.
+                Frontend nay hiện danh sách dòng bị bỏ.</td></tr>
+        <tr><td>Lịch trực tự động</td>
+            <td>Kết quả xếp lịch <b>đổi</b> ở nơi có ngày lễ trong <code>public_holidays</code> hoặc có đơn
+                phép đã duyệt — đây chính là mục đích, nhưng lịch sinh lại sẽ khác lịch cũ.</td></tr>
+        <tr><td>Nhật ký đăng nhập</td>
+            <td>Không còn dòng <code>backup_download:…</code>. Dòng cũ vẫn nằm đó cho tới khi quá hạn lưu.</td></tr>
+        <tr><td><code>ui.upload</code> ở trang Nhân sự</td>
+            <td>Bỏ <code>asyncio.create_task</code> theo đúng DESIGN.md — bọc task rời làm rỗng ngăn xếp
+                slot, <code>ui.notify</code> bên trong im lặng không hiện. Các handler
+                <code>create_task</code>/<code>ensure_future</code> còn lại trong
+                <code>frontend/pages/staff.py</code> <b>chưa</b> đụng tới.</td></tr>
+      </table>
+
+    </div>
+  </div>
+
+  <!-- Y -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">Y</span>
+      <span class="card-title">Rà soát bảo mật + hiệu năng 18/08/2026: ghi đè file tuỳ ý, bể luồng cạn vì Word, leo thang quyền, backup bị cuốn trôi</span>
+      <span class="badge badge-done">Đã sửa</span>
+    </div>
+    <div class="card-body">
+
+      <p>Đợt rà soát toàn hệ thống. Ghi lại <b>lý do</b> của từng bản vá — phần đọc code là thấy thì bỏ qua.
+        Test hồi quy nằm ở <code>tests/test_ra_soat_bao_mat.py</code>; mỗi lớp khoá đúng một lỗ hổng và đã
+        được kiểm chứng là <b>đỏ khi gỡ bản vá ra</b> (không phải test xanh giả).</p>
+
+      <div class="label">1. Ghi đè file bất kỳ trên ổ đĩa qua tên file upload (ACH)</div>
+      <p>Điểm mấu chốt không nằm ở <code>..</code> mà ở ngữ nghĩa của <code>pathlib</code>: đoạn
+        <b>tuyệt đối nuốt trọn</b> đoạn đứng trước nó.</p>
+      <pre>Path('data/temp_ach/JOB/input') / 'C:/Windows/Temp/x.txt'  ->  C:\Windows\Temp\x.txt
+Path('data/temp_ach/JOB/input') / '../../../../../../pwned.txt'  ->  D:\pwned.txt</pre>
+      <p>Tên file trong multipart <b>không</b> đi qua chuẩn hoá URL — Starlette 0.35.1 truyền nguyên xi
+        (<code>formparsers.py</code> chỉ decode charset). Người có <code>cham_ach.process</code> ghi đè được
+        <code>backend/api/auth.py</code> ⇒ chạy mã của mình ở lần khởi động lại kế tiếp.</p>
+      <div class="note">Đáng chú ý: <code>continue_job()</code> và <code>get_output_file()</code> ngay bên
+        cạnh <b>đã</b> gọi <code>os.path.basename</code>. Chỉ sót đúng đường vào. Nay dùng
+        <code>safe_filename()</code> ở <b>cả hai tầng</b> (API và service) — service là hàm public, đường ghi
+        ra đĩa phải tự bảo vệ lấy mình chứ không dựa vào caller.</p>
+      <p><code>safe_filename()</code> cắt thêm ổ đĩa, luồng dữ liệu phụ NTFS (<code>a.xlsx:ẩn</code>) và tên
+        thiết bị Windows (<code>NUL</code>, <code>COM1</code>). Hai file cùng tên sau khi làm sạch nay trả
+        <b>400</b> thay vì âm thầm ghi đè lẫn nhau như trước.</p>
+
+      <div class="label">2. Ba endpoint nghỉ phép gọi Word nằm ngoài bể việc nặng</div>
+      <p><code>backend/core/concurrency.py</code> sinh ra chính để chống chuyện này và docstring của nó ghi số
+        đo thật (40 việc nặng ⇒ <code>/api/auth/me</code> kẹt 38 giây). Nhưng
+        <b>cả 37 endpoint của <code>leaves.py</code> đều là <code>def</code></b>, không gọi
+        <code>run_heavy</code> lần nào — kể cả 3 cái shell ra PowerShell + Word.</p>
+      <table>
+        <tr><th>Đường đi</th><th>Trước</th><th>Sau</th></tr>
+        <tr><td>Bể luồng</td><td>threadpool chung 40 token của anyio</td><td><code>run_heavy</code>, <code>MAX_HEAVY=4</code></td></tr>
+        <tr><td>Word treo (tối đa 150 s)</td><td>giữ 1 token suốt 150 s, cộng dồn với <code>_word_lock</code></td><td>tối đa 4 token, 36 token còn lại dành cho request nhẹ</td></tr>
+        <tr><td>Ảnh hưởng</td><td>chấm công, bàn giao, sổ trực cùng đứng chờ</td><td>chỉ người xem đơn phải chờ</td></tr>
+      </table>
+      <p>Kết nối SQLite dùng lại được trong luồng phụ vì <code>get_db()</code> mở với
+        <code>check_same_thread=False</code>, và tại một thời điểm chỉ một luồng đụng vào.</p>
+      <p>Cùng loại lỗi ở <code>cham459901</code> / <code>doi_chieu_song_phuong</code>: chúng dùng
+        <code>BackgroundTasks</code>, mà Starlette chạy hàm đồng bộ của <code>BackgroundTasks</code> trong
+        <b>đúng bể 40 token đó</b> và giữ token suốt vài phút xử lý. Đã đổi sang luồng riêng, giống cách
+        <code>ach_service</code> vẫn làm.</p>
+
+      <div class="label">3. Trần kích thước dữ liệu tải lên</div>
+      <p>Trước đây chỉ 2 endpoint có trần. Starlette 0.35.1 có đổ file xuống đĩa khi quá 1 MB, nhưng
+        <code>await file.read()</code> của app kéo ngược toàn bộ lên RAM — nên lớp spool đó
+        <b>không cứu được gì</b>. Bản này đọc theo khối 1 MB và dừng ngay khi vượt.</p>
+      <p>Ba tầng, cố ý không gộp:</p>
+      <ul>
+        <li><code>BodySizeLimitMiddleware</code> — ASGI thuần, chặn theo <code>Content-Length</code> trước khi
+          đọc byte nào. Không bắt được request kiểu <code>chunked</code>, nên là lưới an toàn chứ không phải
+          lớp duy nhất.</li>
+        <li><code>read_limited()</code> / <code>read_limited_sync()</code> — trần thật, ở từng endpoint.</li>
+        <li>Trần nghiệp vụ riêng nơi đã có (ảnh chữ ký 2 MB, bìa lưu trữ 20 MB).</li>
+      </ul>
+      <div class="note">Thứ tự <code>add_middleware</code> là <b>ngược</b> với thứ tự chạy. Trần kích thước
+        phải thêm SAU <code>AuditMiddleware</code> và TRƯỚC <code>CORSMiddleware</code>, để CORS vẫn ở ngoài
+        cùng (preflight còn header) mà body vẫn bị chặn trước khi tới route.</div>
+      <p><b>Đánh đổi:</b> trần mặc định 200 MB/file là <i>rộng tay</i>, không phải con số đo từ nghiệp vụ.
+        Siết chặt hơn cần biết khối lượng thật của từng module — đoán bừa thì gãy việc thật. Mục tiêu ở đây
+        chỉ là <b>hữu hạn</b>, chỉnh được qua <code>.env</code>.</p>
+      <p>Ảnh chữ ký giữ <b>400</b> + thông điệp nêu đúng dung lượng ("Ảnh nặng 3.1 MB — tối đa 2 MB") thay vì
+        đổi sang 413: người dùng đọc xong là biết phải làm gì. Trần cứng chống tràn RAM đặt riêng ở 20 MB.</p>
+
+      <div class="label">4. Leo thang quyền — vì sao không dùng thẳng bảng bậc quyền cho tất cả</div>
+      <p>Rào chắn cũ chỉ có một luật: "QTV cấp 2 không được đụng QTV cấp 1". Nghĩa là an toàn nằm ở
+        <b>chỗ ai đang được gán feature <code>staff.edit</code></b>, không nằm trong mã. Ai có feature đó — kể
+        cả chuyên viên — đều <code>PUT /api/staff/{id_của_chính_mình}</code> với <code>role: "admin"</code>.</p>
+      <p>Cách sạch nhất là áp bảng bậc quyền (<code>ROLE_RANK</code>) cho <b>mọi</b> vai trò. Đã <b>không</b>
+        làm vậy: luật "chỉ thao tác với bậc thấp hơn" sẽ chặn luôn QTV cấp 2 sửa QTV cấp 2 khác — mà hệ thống
+        đang có đúng 2 tài khoản như thế và việc đó vẫn chạy hằng ngày. Đổi là gãy việc quản trị.</p>
+      <table>
+        <tr><th>Vai trò người thao tác</th><th>Luật áp dụng</th></tr>
+        <tr><td><code>admin</code></td><td>toàn quyền — <b>giữ nguyên</b></td></tr>
+        <tr><td><code>admin_l2</code></td><td>hai luật cũ, không thêm không bớt — <b>giữ nguyên</b></td></tr>
+        <tr><td>còn lại</td><td><b>mới:</b> chỉ thao tác với bậc <i>thấp hơn</i> mình (bậc bằng nhau cũng chặn — đó chính là ca tự sửa vai trò mình)</td></tr>
+      </table>
+      <p>Kèm theo: <code>role</code> nay phải là giá trị có thật trong <code>StaffRole</code>. Trước đó nó là
+        <code>str</code> tự do — gõ thừa một dấu cách là tài khoản rớt khỏi <b>mọi</b> kiểm tra quyền: không
+        lỗi, không log, chỉ là người dùng bấm gì cũng bị từ chối.</p>
+
+      <div class="label">5. <code>X-Client-IP</code> — ranh giới tin cậy</div>
+      <p>Header này là cơ chế nội bộ đúng đắn (frontend chạy cùng máy nên <code>request.client.host</code>
+        luôn là 127.0.0.1). Vấn đề là backend nhận <b>vô điều kiện</b>. Máy này đang đặt
+        <code>BACKEND_HOST=127.0.0.1</code> nên chưa khai thác được, nhưng mặc định <i>trong mã</i> là
+        <code>0.0.0.0</code> — máy nào thiếu <code>.env</code> là lộ.</p>
+      <p>Nay chỉ đọc header khi bên kết nối trực tiếp nằm trong <code>TRUSTED_PEERS</code> (loopback, cộng
+        <code>TRUSTED_PROXY_IPS</code> nếu khai báo), và giá trị phải <b>trông như một địa chỉ IP</b> — nó đi
+        thẳng vào cột <code>ip_address</code> rồi hiện lên màn hình nhật ký, thả chuỗi tuỳ ý vào đó là mở
+        đường bơm chữ gây hiểu nhầm vào bằng chứng kiểm soát nội bộ.</p>
+
+      <div class="label">6. Chống dò mật khẩu theo địa chỉ máy — không cần migration</div>
+      <p>Đếm theo tên đăng nhập thôi thì đổi tên sau mỗi 4 lần thử là chạy mãi: thử một mật khẩu phổ biến lần
+        lượt trên cả 78 tài khoản không hề chạm ngưỡng nào.</p>
+      <p>Bộ đếm thứ hai dùng <b>chung bảng</b> <code>login_rate_limit</code>, khoá là chuỗi
+        <code>"ip:&lt;địa_chỉ&gt;"</code> — cột <code>username</code> là <code>TEXT PRIMARY KEY</code> và tên
+        đăng nhập không chứa dấu hai chấm, nên không đụng nhau và <b>không cần thêm bảng</b>.</p>
+
+      <div class="label">7. Xuất dữ liệu nhân sự — hai lớp, không phải một</div>
+      <p><code>GET /api/staff/export-db</code> xuất nguyên bảng <code>user_tttt</code> <b>gồm cột
+        <code>pwd_hash</code></b>. Giữ nguyên hành vi đó (mục đích của nó là chuyển người dùng sang hệ thống
+        khác mà không bắt ai đặt lại mật khẩu), nhưng siết hai chỗ:</p>
+      <ul>
+        <li>Chỉ quản trị viên gọi được, kể cả khi feature <code>staff.export</code> trót được gán cho nhóm khác.</li>
+        <li>Luôn ghi audit. Đây là <code>GET</code> nên <code>AuditMiddleware</code> không đụng tới, mà
+          <code>/api/staff</code> còn nằm trong <code>_SKIP_PREFIXES</code> — trước đây toàn bộ bảng nhân sự
+          bị mang đi mà <b>nhật ký trắng trơn</b>.</li>
+      </ul>
+
+      <div class="label">8. Tiêu chí xoá backup cũ — sắp theo tên là sai từ gốc</div>
+      <p>Luật cũ: <code>sorted(backup_dir.glob("ksnb_*.db"))[:-7]</code>. Hai chỗ hỏng, và chỗ thứ hai
+        nguy hiểm hơn nhiều so với vẻ ngoài của nó.</p>
+      <p><b>Sắp theo tên, không theo thời gian.</b> Trong bảng mã, <code>'2' &lt; 'b' &lt; 't'</code> —
+        nên bản người ta đặt tay trước khi làm việc nguy hiểm
+        (<code>ksnb_before_cleanup_537_20260720_134609.db</code>, <code>ksnb_truoc_nhomA_20260728.db</code>)
+        luôn nằm <b>cuối</b> danh sách và bị coi là "mới nhất". Đo trên thư mục thật:</p>
+      <pre>sorted()[-1]  ->  ksnb_truoc_nhomA_20260728.db      (mtime thật: 28/07)
+mới nhất thật ->  ksnb_20260818_0917.db             (hôm nay)</pre>
+      <p>Hệ quả kép:</p>
+      <ul>
+        <li><code>_rotate()</code> — hai file đặt tay vĩnh viễn chiếm 2 trong 7 chỗ, còn bản theo ngày thật
+          bị xoá trước. Số chỗ dùng được thực tế chỉ còn <b>5</b>.</li>
+        <li><code>last_backup_info()</code> lấy <code>backups[-1]</code> ⇒ màn hình Admin báo
+          <b>"Backup gần nhất: 28/07/2026"</b> trong khi vừa có bản của hôm nay. Người vận hành nhìn đúng
+          ô đó để biết backup còn sống hay đã chết — <b>báo sai ở đây nguy hiểm hơn không hiển thị gì</b>.</li>
+      </ul>
+
+      <div class="caution"><b>Đường mất dữ liệu thật sự.</b> <code>start_scheduler()</code> backup
+        <b>ngay</b> mỗi lần app khởi động, mà <code>run.py</code> tự khởi động lại tới 5 lần khi gặp sự cố
+        (<code>MAX_RESTARTS=5</code>). Với luật "giữ 7 file mới nhất" — thực chất 5 — <b>một vòng khởi động
+        lại là cả tuần lịch sử biến mất</b>, thay bằng 5 bản chụp cách nhau vài giây. Mà cơ sở dữ liệu này
+        <b>đã hỏng thật</b> (3 file <code>ksnb_corrupt*.db</code> trong <code>data/</code>), và hỏng thì
+        thường phát hiện muộn — thứ cứu được là <b>chiều sâu lịch sử</b>, không phải số lượng file.</div>
+
+      <div class="label">Tiêu chí mới — hợp của hai tập</div>
+      <table>
+        <tr><th>Tập giữ lại</th><th>Chống được gì</th></tr>
+        <tr><td>Bản <b>mới nhất của mỗi ngày</b>, cho <code>_GIU_NGAY = 7</code> ngày gần nhất</td>
+            <td>Chiều sâu — hỏng phát hiện muộn vẫn lùi được tới một tuần</td></tr>
+        <tr><td><code>_GIU_GAN_NHAT = 5</code> bản mới nhất, bất kể ngày</td>
+            <td>Một ngày backup nhiều lần thì bản vừa chụp không bị dọn ngay</td></tr>
+        <tr><td>Mọi file <b>không khớp mẫu</b> <code>ksnb_YYYYMMDD_HHMM.db</code></td>
+            <td>Bản người đặt tay — thứ cần nhất khi có sự cố, và là thứ duy nhất không tự tạo lại được.
+                <b>Không bao giờ bị xoá tự động.</b></td></tr>
+      </table>
+      <p>Mốc thời gian đọc từ <b>tên file</b>, không phải <code>mtime</code>: chép thư mục backup sang ổ khác
+        (<code>BACKUP_EXTRA_DIR</code> dùng <code>shutil.copy2</code>, hoặc người ta tự chép tay) có thể làm
+        mtime đổi hết, còn tên thì không.</p>
+      <p><b>Đánh đổi:</b> nhiều nhất ~12 file thay vì 7 (≈14 MB ở kích thước DB hiện tại) — đổi lấy việc
+        không bao giờ mất lịch sử vì khởi động lại. Chạy thử tiêu chí mới trên bản sao thư mục thật:
+        <b>không file nào bị xoá</b>, và màn hình Admin đổi từ <i>28/07</i> sang đúng <i>18/08 09:17</i>.</p>
+      <p><code>except Exception: pass</code> khi xoá nay thành <code>except OSError</code> + log WARNING —
+        file đang bị khoá (mở bằng công cụ xem DB) thì trước đây thư mục cứ phình mà không ai biết vì sao.</p>
+      <div class="note"><code>tests/test_backup_rotation.py</code> khoá lại 9 ca. Lưu ý khi đọc:
+        <code>test_giu_nguyen_ban_dat_tay_du_rat_cu</code> <b>cũng xanh với luật cũ</b> — vì đúng cái lỗi sắp
+        xếp kia vô tình bảo vệ chúng. Nó là rào chắn cho bản mới (đừng nới regex thành glob), không phải bằng
+        chứng luật cũ sai. 4 ca còn lại thì đỏ thật khi gỡ bản vá.</div>
+
+      <div class="label">Bẫy tự tạo, phát hiện ngay trong lúc làm</div>
+      <div class="caution"><code>.env.example</code> liệt kê biến với ô để <b>trống</b> cho người vận hành
+        điền. Ai copy nguyên xi sang <code>.env</code> sẽ có <code>MAX_UPLOAD_MB=</code> — chuỗi rỗng — và
+        <code>int("")</code> ném <code>ValueError</code> <b>ngay lúc import</b>: backend không khởi động nổi,
+        thông báo lỗi chẳng nhắc gì tới <code>.env</code>. Đã bọc bằng <code>_so_mb()</code> /
+        <code>_doc_so()</code>: ô trống hoặc giá trị vô nghĩa đều lui về mặc định.
+        <code>MAX_HEAVY_TASKS</code> dính đúng bẫy này từ trước, sửa luôn.</div>
+
+      <div class="label">Đã biết, cố ý chưa xử lý</div>
+      <table>
+        <tr><th>Vấn đề</th><th>Vì sao để lại</th></tr>
+        <tr><td>Khoá theo tên đăng nhập vẫn cho phép cố tình khoá tài khoản người khác 15 phút bằng 5 lần gõ sai</td>
+            <td>Bỏ luật đó là mất lớp chống dò vào một tài khoản cụ thể. Đánh đổi này cần quyết định nghiệp vụ
+                (vd. chỉ khoá theo cặp tên+máy), không tự ý đổi.</td></tr>
+        <tr><td>Số lượt chạy ACH / 459901 / song phương đồng thời không có trần</td>
+            <td>Đã ra khỏi bể 40 token nên không còn làm nghẽn hệ thống. Trần riêng cho các luồng nền là việc
+                khác, cần biết khối lượng thật.</td></tr>
+        <tr><td>ACH nạp trọn 500 MB vào RAM trước khi ghi đĩa</td>
+            <td>Sửa đúng cách là ghi thẳng từng khối xuống đĩa — đụng vào cấu trúc <code>start_job()</code>.
+                Nay ít nhất đã có trần chặn, không còn vô hạn.</td></tr>
+        <tr><td>N+1 ở <code>storage_summary</code> (12 tháng × số phòng × số tập)</td>
+            <td>Đo thật: <b>4 ms / 244 truy vấn</b> trên DB 1,17 MB. Chưa phải vấn đề. Tăng tuyến tính — khoảng
+                5 năm nữa mới đáng nhìn lại.</td></tr>
+        <tr><td>3 file <code>ksnb_corrupt*.db</code> trong <code>data/</code></td>
+            <td>Là dữ liệu của người dùng, không tự xoá.</td></tr>
+      </table>
+
+      <div class="label">Ghi chú cho người viết test sau này</div>
+      <p><code>TestClient</code> của Starlette 0.35.1 đặt <b>cứng</b> <code>scope["client"] = None</code>, nên
+        <code>request.client</code> luôn rỗng và không thể phân biệt "gọi từ chính máy chủ" với "gọi từ máy
+        khác". Test luồng đăng nhập phải đi thẳng qua <code>httpx.ASGITransport(app=..., client=(ip, port))</code>
+        — xem <code>_goi_login()</code>.</p>
+      <p><code>_create_tables()</code> <b>không</b> tạo <code>login_logs</code> và cột
+        <code>login_sessions.session_key</code>; hai thứ đó do <code>_ensure_indexes()</code> thêm, mà hàm này
+        chỉ chạy trên <code>DB_PATH</code> toàn cục. DB tạm trong test phải dựng tay phần đó.</p>
+    </div>
+  </div>
 
   <!-- X -->
   <div class="card">
@@ -6854,7 +7237,8 @@ else:
     <div class="card-body">
       <div class="label">Trường đã có sẵn — thiếu là đường nạp dữ liệu</div>
       <p>Cột <code>user_tttt.join_industry_date</code>, ô nhập trong hai hộp thoại Thêm/Sửa, và cột
-        <i>"Vào ngành / Phép"</i> trên bảng đều đã có từ đợt tính ngày phép tự động (card 46). Nhưng
+        <i>"Vào ngành / Phép"</i> trên bảng (nay tách thành cột <i>"Ngày vào ngành"</i>, xem card 79) đều
+        đã có từ đợt tính ngày phép tự động (card 46). Nhưng
         trên máy chính <b>cả 80 dòng đều rỗng</b> — nghĩa là số ngày phép của mọi người đang rơi về
         fallback 12 ngày. Việc cần làm không phải thêm trường mà là <b>nạp 72 dòng dữ liệu một lượt</b>.</p>
 
@@ -7007,7 +7391,66 @@ else:
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-17</footer>
+  <!-- 79 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">79</span>
+      <span class="card-title">Bảng Quản lý User bị chữ đè lên nhau — thủ phạm là <code>flex-shrink</code> mặc định</span>
+      <span class="badge badge-done">done · 2026-08-18</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Triệu chứng và nguyên nhân</div>
+      <p>Các cột khai bề rộng cố định (<code>w-28</code>, <code>w-36</code>…) nhưng chữ vẫn tràn sang ô
+        bên cạnh. Lý do: flex item mặc định là <code>flex-shrink: 1</code> — khi tổng bề rộng 9 cột vượt
+        khung chứa, trình duyệt <b>co mọi cột lại theo tỉ lệ</b>, <code>w-28</code> chỉ còn là gợi ý.
+        Chữ không co theo nên tràn ra ngoài ô. Càng nhiều cột càng dễ gặp, và nó chỉ lộ ra ở một số độ
+        rộng màn hình nhất định — nên trước đó không ai bắt được.</p>
+      <table>
+        <tr><th>Chỗ sửa</th><th>Trước</th><th>Sau</th></tr>
+        <tr><td>Từng cột</td><td><code>w-28</code></td>
+            <td><code>w-28 shrink-0</code> + <code>truncate</code> ở cột chữ có thể dài</td></tr>
+        <tr><td>Cột Họ tên</td><td><code>flex-1</code></td>
+            <td><code>w-56 shrink-0 truncate</code> + <code>ui.space()</code> ở cuối hàng</td></tr>
+        <tr><td>Hàng</td><td><code>w-full</code></td>
+            <td><code>w-full min-w-max</code> — để nền và viền hàng vẽ hết bảng khi cuộn ngang</td></tr>
+        <tr><td>Khung bảng</td><td><code>w-full</code></td>
+            <td><code>w-full overflow-x-auto</code> — màn hẹp thì cuộn, không bóp cột</td></tr>
+      </table>
+
+      <div class="caution"><b><code>flex-wrap</code> và <code>gap</code> phải đặt bằng inline style, không
+        bằng class.</b> <code>ui.row()</code> của NiceGUI gắn sẵn class <code>.nicegui-row</code> có
+        <code>flex-wrap: wrap; gap: 1rem</code> trong stylesheet riêng của nó. Class Tailwind
+        (<code>.flex-nowrap</code>, <code>.gap-2</code>) có <b>cùng độ ưu tiên</b> — bên nào thắng phụ
+        thuộc thứ tự nạp file CSS, tức là có thể đảo chiều sau một lần nâng cấp NiceGUI mà không ai đụng
+        vào code. Đặt qua <code>.style()</code> thì luôn thắng. Đây cũng là lý do <code>gap</code> hạ
+        xuống <code>0.5rem</code>: 9 khoảng cách × 1rem = 144px thừa, đủ để đẩy bảng vượt khung.</div>
+
+      <div class="label">Vì sao cột Họ tên không được để <code>flex-1</code></div>
+      <p>Để <code>flex-1</code>, cột Họ tên <b>nuốt toàn bộ chỗ trống còn lại</b> của hàng — trên màn
+        hình rộng nó phình ra 550px cho một cái tên 150px, đẩy 8 cột còn lại dạt sang mép phải. Bảng
+        nhìn như bị tách làm đôi.</p>
+      <p>Sửa bằng cách cho Họ tên bề rộng cố định <code>w-56</code> (14rem — dư cho tên dài nhất, dài
+        hơn thì <code>truncate</code> cắt) rồi đặt một <code>ui.space()</code> ở <b>cuối</b> hàng. Chỗ
+        thừa dồn hết về sau cột Thao tác, các cột dữ liệu nằm sát nhau. <code>ui.space()</code> render
+        ra <code>&lt;q-space&gt;</code> của Quasar với <code>flex-grow: 1 !important</code> nên không
+        vướng vụ tranh chấp độ ưu tiên CSS nói ở trên.</p>
+      <div class="note">Bỏ <code>flex-1</code> thì <code>min-w-0</code> cũng không cần nữa — nó chỉ tồn
+        tại để gỡ <code>min-width: auto</code> mặc định của flex item đang co giãn, thứ khiến
+        <code>truncate</code> vô hiệu.</div>
+
+      <div class="label">Bỏ số ngày phép khỏi cột</div>
+      <p>Cột cũ ghi <code>01/04/1999 (18n)</code> — gộp hai thứ khác bản chất: một cái là dữ liệu nhập
+        vào, một cái là kết quả tính ra. Số ngày phép đã có màn hình riêng và đổi theo từng năm, để ở
+        đây vừa làm ô chật vừa dễ bị hiểu là con số cố định của người đó. Nay chỉ còn ngày, và cột dời
+        lên <b>ngay sau Mã cán bộ</b> — hai trường này luôn được đối chiếu cùng nhau khi nhập từ Excel
+        (card 77).</p>
+      <div class="note"><code>annual_leave_days</code> vẫn được API trả về và <code>StaffOut</code> vẫn
+        giữ nguyên — chỉ bỏ chỗ <i>hiển thị</i> trên bảng này. Module Nghỉ phép đọc thẳng, không đi qua
+        đây, nên không bị ảnh hưởng.</div>
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-18</footer>
 </div>
 </body>
 </html>

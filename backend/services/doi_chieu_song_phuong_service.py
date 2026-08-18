@@ -20,6 +20,8 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
+from backend.core.config import BASE_DIR
+
 try:
     import pyzipper
     _open_zip = lambda buf: pyzipper.AESZipFile(buf)   # noqa: E731
@@ -27,7 +29,7 @@ except ImportError:
     _open_zip = lambda buf: zipfile.ZipFile(buf)       # noqa: E731
 
 # ─── Config ───────────────────────────────────────────────────────────────────
-TEMP_DIR      = Path("data/temp_doi_chieu_song_phuong")
+TEMP_DIR      = BASE_DIR / "data" / "temp_doi_chieu_song_phuong"
 ZIP_PASSWORD  = b"DACwLdHi"
 CLEANUP_HOURS = 2
 

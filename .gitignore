@@ -41,3 +41,12 @@ MCB.xlsx
 /Bắt đầu trên máy mới.txt
 /Dữ liệu test
 /Dữ liệu test
+
+# Cau hinh agent cuc bo
+/.claude/
+
+# Du lieu nhan su that + tai lieu HDSD ban dia (khong day len repo).
+# Luat cu ghi 'MCB.xlsx' va ten .docx khac voi ten file thuc te nen KHONG khop.
+# Dung ky tu dai dien cho phan co dau tieng Viet de tranh chuyen NFC/NFD o tren.
+/MA CB.xlsx
+/HDSD*.docx

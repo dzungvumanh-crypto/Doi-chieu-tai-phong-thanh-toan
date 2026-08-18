@@ -3,7 +3,7 @@ import sqlite3
 from datetime import date as _date
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from backend.database import get_db
 from backend.core.deps import get_current_staff, require_admin
 
@@ -19,7 +19,7 @@ class HolidayOut(BaseModel):
     id: int
     date: _date
     name: str
-    class Config: from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 @router.get("/", response_model=List[HolidayOut])

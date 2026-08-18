@@ -131,12 +131,19 @@ async def logs_page():
             backup_info_label = ui.label("").classes("text-xs text-gray-500 ml-2")
             try:
                 bk = await asyncio.to_thread(api.get, "/api/admin/logs/backup-info")
-                if isinstance(bk, dict) and bk.get("exists"):
-                    backup_info_label.set_text(
-                        f"Backup gần nhất: {bk['time']} ({bk.get('count',1)} bản)"
-                    )
-                else:
-                    backup_info_label.set_text("Chưa có backup tự động")
+                if isinstance(bk, dict):
+                    # Đếm riêng bản đặt tay: chúng KHÔNG bị dọn tự động nên nằm
+                    # đó mãi, gộp chung vào số "bản" làm người xem tưởng backup
+                    # tự động đang chạy dày hơn thực tế.
+                    tay = bk.get("count_thu_cong") or 0
+                    them = f" + {tay} bản đặt tay" if tay else ""
+                    if bk.get("exists"):
+                        backup_info_label.set_text(
+                            f"Backup tự động gần nhất: {bk['time']} "
+                            f"({bk.get('count', 1)} bản{them})"
+                        )
+                    else:
+                        backup_info_label.set_text(f"Chưa có backup tự động{them}")
             except Exception:
                 pass
 

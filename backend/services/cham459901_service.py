@@ -15,6 +15,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from backend.core.config import BASE_DIR
+
 try:
     import pyzipper
     _ZipFile = pyzipper.AESZipFile
@@ -26,7 +28,7 @@ except ImportError:
     _BAD_ZIP = (zipfile.BadZipFile,)
 
 # ─── Config ───────────────────────────────────────────────────────────────────
-TEMP_DIR        = Path("data/temp_cham459901")
+TEMP_DIR        = BASE_DIR / "data" / "temp_cham459901"
 ZIP_PASSWORD    = b"DACwLdHi"
 FILTER_LOCAC    = "459901"
 FILTER_CUSTOMER = "1000-000007709"

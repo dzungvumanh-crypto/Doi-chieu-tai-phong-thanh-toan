@@ -126,7 +126,9 @@ Truy cập:
 │   │   ├── audit_queue.py   # Hàng đợi + 1 luồng ghi audit, không chặn response
 │   │   ├── concurrency.py   # Giới hạn số việc nặng chạy đồng thời (sinh Word/Excel)
 │   │   ├── paths.py         # Đường dẫn template có dấu — chống lệch chuẩn hoá Unicode NFC/NFD
-│   │   └── rate_limit.py    # Rate limiting đăng nhập
+│   │   ├── net.py           # IP thật của người dùng — chỉ tin X-Client-IP từ máy đáng tin
+│   │   ├── uploads.py       # Trần kích thước upload + làm sạch tên file (chống ghi ra ngoài thư mục)
+│   │   └── rate_limit.py    # Chặn dò mật khẩu — đếm theo tên đăng nhập VÀ theo địa chỉ máy
 │   ├── api/
 │   │   ├── auth.py          # Đăng nhập / đăng xuất / đổi mật khẩu
 │   │   ├── staff.py         # Quản lý cán bộ
@@ -204,11 +206,14 @@ Truy cập:
 │           ├── Bia_ho_so.doc        # Mẫu gốc do bên lưu trữ cấp (giữ để đối chiếu)
 │           └── Bia_ho_so.docx       # Bản dùng lúc chạy (chuyển từ .doc, render giống hệt)
 ├── data/
-│   └── ksnb.db             # SQLite database (tự tạo khi chạy lần đầu)
+│   ├── ksnb.db             # SQLite database (tự tạo khi chạy lần đầu)
+│   ├── backups/            # Backup tự động — xem mục "Backup tự động"
+│   └── temp_*/             # Kết quả tạm của ACH / Chấm 459901 / Đối chiếu song phương;
+│                           #   temp_cleanup_service dọn nền mỗi 6h (không chờ ai mở menu)
 ├── logs/
 │   ├── app.log             # Log xoay vòng (5 MB × 3 file) — nguồn của màn hình Nhật ký hệ thống
-│   ├── backend.log         # stdout/stderr tiến trình backend (run.py ghi) — không xoay vòng
-│   ├── frontend.log        # stdout/stderr tiến trình frontend (run.py ghi) — không xoay vòng
+│   ├── backend.log         # stdout/stderr tiến trình backend (run.py ghi) — xoay khi >20 MB, giữ 3 đời
+│   ├── frontend.log        # stdout/stderr tiến trình frontend (run.py ghi) — xoay khi >20 MB, giữ 3 đời
 │   └── *.truoc-utf8.log    # Phần log ghi trước bản vá UTF-8, run.py tự tách ra một lần
 ├── init_db.py               # Khởi tạo DB + seed data
 ├── run.py                   # Launcher (chạy backend + frontend song song; ép UTF-8 cho tiến trình con)
@@ -254,6 +259,15 @@ Truy cập:
   vào ô đang trống, ai đã có ngày khác thì được liệt kê chứ không bị đè. Giao diện luôn chạy
   `dry_run=true` trước để xem số dòng sẽ đổi / mã không khớp / ô ngày hỏng, chỉ mở nút ghi khi thật sự
   có thay đổi. Người đã xoá (`is_deleted = 1`) không được khớp; endpoint **không tạo tài khoản mới**
+
+- **Xuất / Nhập file DB người dùng** (`staff.export` · `staff.import_db`) — dùng để di trú toàn bộ
+  tài khoản sang hệ thống khác **mà không phải đặt lại mật khẩu**, nên file mang theo nguyên
+  `pwd_hash` và `role`. Vì thế **cả hai đường đều chỉ Quản trị viên (cấp 1/2) gọi được**, xét theo
+  vai trò thật chứ không chỉ theo feature. Đường nhập còn bỏ qua — và báo lại danh sách bỏ qua —
+  các dòng có `role` sai chính tả, `department_id` không tồn tại, hoặc thiếu Mã cán bộ; khớp theo
+  **Mã cán bộ**. ⚠️ **Số liệu phép (`used_leave_days`, `annual_leave_days`, `carryover_notice_year`)
+  của tài khoản đã có thì KHÔNG bị đè** — đó là dữ liệu của module Nghỉ phép, nơi có batch nhập +
+  hoàn tác riêng; tài khoản mới thì vẫn lấy theo file. `tests/test_import_db_an_toan.py` canh việc này
 
 ### Module Nghỉ phép
 - Cán bộ tạo đơn xin nghỉ (phép năm, ốm, việc riêng, khác)
@@ -330,6 +344,13 @@ Truy cập:
 - **Thứ 7 / chủ nhật đi làm**: khai loại **"Ngày bù"** ở tab Ngày đặc biệt rồi xác nhận thì
   hôm đó sinh ca thường, vào lịch tuần/tháng, lên file Excel, đăng ký nguyện vọng được,
   và được tính khi dò 2 ngày cut-off cuối tháng
+- **Ngày lễ lấy từ hai nguồn**: danh mục ngày lễ chung `public_holidays` (nhập ở màn hình *Nghỉ phép*
+  — giao diện nhập ngày lễ duy nhất của phần mềm) hợp với khai báo riêng ở tab *Ngày đặc biệt*.
+  **Khai báo riêng thắng**: ngày đã có dòng trong `duty_special_days` thì lấy nguyên `day_type` của
+  nó, nhờ vậy ngày làm bù rơi trúng ngày lễ (nhà nước hoán đổi) vẫn đúng là ngày làm
+- **Đơn nghỉ phép đã duyệt tự loại người khỏi lịch** — không phải khai vắng mặt lần thứ hai.
+  Đọc thẳng `leave_records` lúc xếp lịch chứ không sao chép sang `duty_absences`: đơn còn bị huỷ,
+  thu hồi, sửa ngày. Chỉ đơn `approved` mới tính; đơn đang chờ duyệt vẫn xếp trực bình thường
 - Quản lý cán bộ trực, ràng buộc lịch trực (ngày không trực, giới hạn ca)
 - Thống kê số ca trực theo cán bộ, theo tháng — **trực chính và trực phụ đếm 2 cột riêng**, không quy đổi
 - **Xuất lịch trực ra Excel** bám mẫu giấy của phòng: 5 cột A–E, trắng đen, cỡ chữ 24/18/16,
@@ -371,8 +392,10 @@ Truy cập:
 - Chọn bộ file 1 ngày **từ máy người dùng**: `GL02*.zip`, file GW `.xlsx`, 2 file `*_DI_*.zip`,
   2 file `*_DEN_*.zip`, PDF sao kê ACH (lấy số session + suy ngày đối chiếu). Mở thư mục chứa
   bộ file rồi Ctrl+A để chọn cả loạt. Mỗi file gửi lên frontend ngay khi chọn (`auto_upload`) và
-  **nằm trong RAM** của tiến trình frontend cho tới lúc bấm Chạy; backend cũng `await f.read()`
-  trọn bộ vào RAM trước khi ghi ra `data/temp_ach/<job>/input/`. Trần 500 MB (`_MAX_UPLOAD`), bộ
+  **nằm trong RAM** của tiến trình frontend cho tới lúc bấm Chạy; backend cũng đọc trọn bộ vào
+  RAM (`read_limited`) trước khi ghi ra `data/temp_ach/<job>/input/`. Tên file được
+  `safe_filename()` cắt sạch phần đường dẫn trước khi ghi — tên client gửi lên là chuỗi tuỳ ý,
+  ghép thẳng vào `Path` thì đoạn tuyệt đối nuốt trọn thư mục đích. Trần 500 MB (`_MAX_UPLOAD`), bộ
   file thật 150–250 MB → cần dư RAM tương ứng ở **cả hai** tiến trình. Timeout lần gửi này để
   riêng 600s (`post_upload(..., timeout=600.0)`), các màn hình khác giữ mặc định 60s
 - Ngày đối chiếu suy từ tên file PDF (`ACH_YYYYMMDD_..._NRT_<session>_...` → ngày T-1), nhập tay được;
@@ -541,7 +564,28 @@ approved / rejected / cancelled
 
 ## Backup tự động
 
-Database SQLite được backup tự động vào thư mục `data/backups/`. Lịch backup cấu hình trong `backend/services/backup_service.py`.
+Database SQLite được backup vào `data/backups/` **mỗi lần app khởi động** và sau đó mỗi 24h.
+Cấu hình trong `backend/services/backup_service.py`.
+
+**Tiêu chí giữ lại** (hợp của hai tập, giữ cả hai):
+
+| Giữ | Vì sao |
+|---|---|
+| Bản mới nhất của **mỗi ngày**, trong `_GIU_NGAY = 7` ngày gần nhất | Chiều sâu lịch sử — hỏng DB thường phát hiện muộn |
+| `_GIU_GAN_NHAT = 5` bản mới nhất, bất kể ngày | Một ngày khởi động lại nhiều lần thì bản vừa chụp không bị dọn ngay |
+
+> ⚠️ **Chỉ file đúng mẫu `ksnb_YYYYMMDD_HHMM.db` mới bị xoá tự động.** Bản đặt tay
+> (`ksnb_truoc_nhomA_20260728.db`…) **không bao giờ** bị đụng tới — muốn bỏ thì xoá tay.
+> Trước đây luật dọn glob `ksnb_*.db` và sắp **theo tên**: `'2' < 'b' < 't'` nên bản đặt tay
+> luôn bị coi là "mới nhất", vừa chiếm chỗ vĩnh viễn vừa làm màn hình Admin báo sai ngày
+> backup gần nhất. `tests/test_backup_rotation.py` canh việc này.
+
+**Thư mục backup phụ** (`BACKUP_EXTRA_DIR` trong `.env`, nên đặt ở ổ/máy khác): mỗi bản backup được
+chép sang đó rồi **áp cùng luật dọn**. Tức là phần mềm chủ động xoá file trên ổ/máy ngoài — vẫn chỉ
+đụng đúng mẫu tên `ksnb_YYYYMMDD_HHMM.db`.
+
+> ⚠️ **Mỗi máy chủ một thư mục riêng.** Hai máy cùng trỏ vào một thư mục thì tên file không phân
+> biệt được nguồn, máy này sẽ xoá bản của máy kia mà cả hai đều tưởng mình còn đủ lịch sử.
 
 ---
 
@@ -569,6 +613,17 @@ ENV=production                               # tắt /docs, /redoc, /openapi.jso
 
 Chỉ thêm `ALLOWED_ORIGINS=http://192.168.1.100:8080` khi thật sự phải để `BACKEND_HOST=0.0.0.0`
 cho một hệ thống khác gọi thẳng API — nhiều giá trị cách nhau dấu phẩy.
+
+Hai biến nữa có mặc định an toàn, chỉ đặt khi cần đổi:
+
+```ini
+MAX_UPLOAD_MB=200          # trần MỘT file tải lên; MAX_REQUEST_MB=600 cho cả thân request
+TRUSTED_PROXY_IPS=         # máy được phép khai IP hộ qua X-Client-IP (loopback đã có sẵn)
+```
+
+> Chỉ điền `TRUSTED_PROXY_IPS` khi đặt nginx/IIS **trước cổng backend**. Máy không nằm trong danh
+> sách mà gửi `X-Client-IP` thì backend bỏ qua và ghi IP thật của kết nối — nếu không, nhật ký
+> truy vết có thể do chính người bị truy vết viết ra.
 
 Backend tự **cảnh báo trong log khi khởi động** nếu đang lắng nghe trên mạng mà hai biến này chưa đặt đúng.
 `deploy.bat` cũng kiểm `.env` của máy đích ở bước 1/8 và hỏi trước khi sửa, nên không phải nhớ thủ công.

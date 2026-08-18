@@ -46,17 +46,44 @@ def get_staff_by_id(db: sqlite3.Connection, user_id: int) -> Optional[dict]:
     return dict(row) if row else None
 
 
-def get_absent_staff_ids(db: sqlite3.Connection, date_str: str) -> set:
-    rows = db.execute(
+def get_absences(db: sqlite3.Connection, date_str: str) -> dict:
+    """{staff_id: lý do vắng} ngày `date_str` — hợp của hai nguồn.
+
+      - `duty_absences` — khai báo vắng mặt nhập tay ở tab Ngày đặc biệt;
+      - `leave_records` có `status='approved'` phủ ngày đó — đơn nghỉ phép ĐÃ
+        DUYỆT.
+
+    Trước đây chỉ đọc nguồn đầu, nên người đã được Giám đốc duyệt cho nghỉ vẫn
+    bị máy xếp trực. Muốn tránh thì phải nhớ vào Sổ trực khai vắng mặt lần thứ
+    hai cho đúng người, đúng từng ngày — không ai nhớ, và cũng không có gì nhắc.
+
+    Đọc thẳng `leave_records` chứ KHÔNG sinh dòng `duty_absences` từ đơn phép:
+    đơn còn bị huỷ, bị thu hồi, bị sửa ngày. Bản sao sẽ lệch ngay lần đầu có
+    người huỷ đơn, mà không đường nào phát hiện ra.
+    """
+    ra: dict[int, str] = {}
+    for r in db.execute(
         "SELECT staff_id FROM duty_absences WHERE absence_date = ?", (date_str,)
-    ).fetchall()
-    return {r["staff_id"] for r in rows}
+    ).fetchall():
+        ra[r["staff_id"]] = "đã khai vắng mặt"
+    for r in db.execute(
+        "SELECT staff_id FROM leave_records "
+        "WHERE status = 'approved' AND start_date <= ? AND end_date >= ?",
+        (date_str, date_str),
+    ).fetchall():
+        ra.setdefault(r["staff_id"], "có đơn nghỉ phép đã duyệt")
+    return ra
+
+
+def get_absent_staff_ids(db: sqlite3.Connection, date_str: str) -> set:
+    return set(get_absences(db, date_str))
 
 
 def get_available_pool(db: sqlite3.Connection, date_str: str) -> dict:
     """
     Pool nhân viên khả dụng ngày date_str.
-    Loại: đang đi dự án (is_on_project=1) và có khai báo vắng mặt.
+    Loại: đang đi dự án (is_on_project=1), có khai báo vắng mặt, hoặc có đơn
+    nghỉ phép đã duyệt phủ ngày đó — xem get_absences().
     Trả: {'LD': [...], 'NV': [...]} — mỗi phần tử là dict nhân viên.
 
     Không còn nhóm 'SP' riêng: vai song phương nay suy từ cờ can_do_sp của từng

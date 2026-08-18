@@ -13,7 +13,7 @@ Hai tầng luật:
 import sqlite3
 from typing import List, Optional, Tuple
 
-from backend.services.duty_staff_service import get_all_staff, get_absent_staff_ids
+from backend.services.duty_staff_service import get_all_staff, get_absences
 
 # Số người mặc định khi năm đó chưa có bản ghi cấu hình nào
 _MAC_DINH = {
@@ -187,12 +187,12 @@ def validate_shift_members(db: sqlite3.Connection, shift_date: str, shift_type: 
         return loi_cung, canh_bao, nhan_su
 
     # ── Luật mềm ──
-    vang_mat = get_absent_staff_ids(db, shift_date)
+    vang_mat = get_absences(db, shift_date)
     for p in leaders + nv_chinh + nv_phu:
         if p["is_on_project"]:
             canh_bao.append(f"{p['full_name']} đang đi dự án.")
         if p["id"] in vang_mat:
-            canh_bao.append(f"{p['full_name']} đã khai vắng mặt ngày {shift_date}.")
+            canh_bao.append(f"{p['full_name']} {vang_mat[p['id']]} ngày {shift_date}.")
 
     _, sp_warning = resolve_sp_role(leaders, nv_chinh, nv_phu)
     if sp_warning == "no_sp_chinh":
