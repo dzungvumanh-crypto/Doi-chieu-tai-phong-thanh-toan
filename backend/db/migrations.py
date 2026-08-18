@@ -766,9 +766,19 @@ def _ensure_indexes():
         # sẵn từ migration 2026-07-23. Chuyển câu ALTER xuống đây — ngay sau khi bảng
         # chắc chắn đã tồn tại (từ CREATE TABLE IF NOT EXISTS ở trên, dù DB mới hay cũ).
         "ALTER TABLE attendances ADD COLUMN source_leave_id INTEGER REFERENCES leave_records(id)",
+        # Rà soát review PR #22 (Người 1, 17/08): trigger revert xoá 'attendances'
+        # khi huỷ/xoá đơn nghỉ (trg_leave_unapprove_revert_attendance /
+        # trg_leave_delete_revert_attendance), nhưng attendance_adjustments.attendance_id
+        # trỏ vào đúng dòng đó mà KHÔNG có ON DELETE — nếu dòng công còn một yêu cầu
+        # điều chỉnh (đang chờ hoặc đã bị từ chối) tham chiếu tới, DELETE dính
+        # FOREIGN KEY constraint, đơn nghỉ kẹt lại không huỷ được. ON DELETE CASCADE:
+        # xoá dòng công thì dọn theo luôn yêu cầu điều chỉnh của chính nó — hợp lý vì
+        # yêu cầu điều chỉnh không còn ý nghĩa gì khi dòng công gốc không còn tồn tại.
+        # DB đã cài từ trước (bảng đã tạo, thiếu CASCADE) được vá bằng khối tạo lại
+        # bảng ngay dưới khối rename ksnb_staff — SQLite không cho ALTER constraint.
         """CREATE TABLE IF NOT EXISTS attendance_adjustments (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            attendance_id   INTEGER NOT NULL REFERENCES attendances(id),
+            attendance_id   INTEGER NOT NULL REFERENCES attendances(id) ON DELETE CASCADE,
             requested_by    INTEGER NOT NULL REFERENCES user_tttt(id),
             old_symbol      TEXT,
             new_symbol      TEXT NOT NULL,
@@ -923,10 +933,20 @@ def _ensure_indexes():
         # thể xảy ra do leaves.py chặn trùng lịch không atomic), huỷ đơn cũ sẽ xoá
         # nhầm dòng do đơn khác tạo ra. Giờ khớp thẳng theo source_leave_id — chỉ xoá
         # đúng dòng do chính đơn nghỉ này tạo, không cần đoán qua ký hiệu/khoảng ngày nữa.
+        # Sửa theo review PR #22 (Người 1, 17/08): luồng "thu hồi đơn đã duyệt"
+        # (leaves.py::request_recall/approve_recall) đi 2 bước — approved →
+        # pending_tong_hop (request_recall), rồi pending_tong_hop → cancelled
+        # (approve_recall). Ở bước UPDATE cuối cùng OLD.status đã là
+        # 'pending_tong_hop', không còn 'approved' → trigger cũ không chạy, "P" mồ
+        # côi ở lại vĩnh viễn. Thêm 'pending_tong_hop' vào WHEN để bắt cả 2 luồng.
+        # An toàn cho các đường pending_tong_hop khác (bị Tổng hợp từ chối trước khi
+        # từng được duyệt): DELETE chỉ xoá đúng dòng status='auto' khớp
+        # source_leave_id — đơn chưa từng approved thì chưa từng được trigger ghi
+        # sync tạo dòng nào, DELETE không khớp gì, vô hại.
         "DROP TRIGGER IF EXISTS trg_leave_unapprove_revert_attendance",
         """CREATE TRIGGER IF NOT EXISTS trg_leave_unapprove_revert_attendance
             AFTER UPDATE OF status ON leave_records
-            WHEN OLD.status = 'approved' AND NEW.status IN ('cancelled','rejected')
+            WHEN OLD.status IN ('approved','pending_tong_hop') AND NEW.status IN ('cancelled','rejected')
             BEGIN
                 DELETE FROM attendances
                 WHERE staff_id = NEW.staff_id
@@ -1001,6 +1021,41 @@ def _ensure_indexes():
             _mig_log.info("Đã đổi tên bảng ksnb_staff → user_tttt")
     finally:
         _rc.close()
+
+    # ── Vá attendance_adjustments.attendance_id thiếu ON DELETE CASCADE (one-time,
+    # idempotent) — 2026-08-18, theo review PR #22 (Người 1). SQLite không cho ALTER
+    # TABLE sửa ràng buộc FK, nên tạo bảng mới đúng schema, copy dữ liệu, xoá bảng
+    # cũ, đổi tên. Bảng cài mới đã có CASCADE sẵn từ CREATE TABLE IF NOT EXISTS ở
+    # trên nên khối này bỏ qua (điều kiện "ON DELETE CASCADE" not in sql không khớp).
+    _ac = sqlite3.connect(DB_PATH, timeout=30)
+    try:
+        _adj_row = _ac.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='attendance_adjustments'"
+        ).fetchone()
+        if _adj_row and _adj_row[0] and "ON DELETE CASCADE" not in _adj_row[0]:
+            _ac.execute("PRAGMA foreign_keys = OFF")
+            _ac.execute("""CREATE TABLE attendance_adjustments_new (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                attendance_id   INTEGER NOT NULL REFERENCES attendances(id) ON DELETE CASCADE,
+                requested_by    INTEGER NOT NULL REFERENCES user_tttt(id),
+                old_symbol      TEXT,
+                new_symbol      TEXT NOT NULL,
+                old_work_value  REAL,
+                new_work_value  REAL NOT NULL,
+                reason          TEXT NOT NULL,
+                status          TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected')),
+                reviewer_id     INTEGER REFERENCES user_tttt(id),
+                reviewed_at     DATETIME,
+                reject_reason   TEXT,
+                created_at      DATETIME
+            )""")
+            _ac.execute("INSERT INTO attendance_adjustments_new SELECT * FROM attendance_adjustments")
+            _ac.execute("DROP TABLE attendance_adjustments")
+            _ac.execute("ALTER TABLE attendance_adjustments_new RENAME TO attendance_adjustments")
+            _ac.commit()
+            _mig_log.info("Đã thêm ON DELETE CASCADE cho attendance_adjustments.attendance_id")
+    finally:
+        _ac.close()
 
     conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row

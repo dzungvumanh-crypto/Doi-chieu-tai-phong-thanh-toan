@@ -518,7 +518,15 @@ def _user_dept_code(user: dict) -> str | None:
     try:
         row = api.get(f"/api/departments/{dept_id}")
         code = row.get("code")
-    except Exception:
+    except (api.SessionExpiredError, api.DisplacedSessionError) as e:
+        # Rà soát review PR #22 (Người 1, 17/08): trước đây bắt tuốt Exception nên
+        # phiên hết hạn/bị đăng nhập nơi khác cũng lặng lẽ trả None — không redirect
+        # về /login như quy định ở DESIGN.md, không log gì. Dùng lại đúng
+        # _handle_api_error() đã có sẵn cho các chỗ gọi API khác trong file này.
+        _handle_api_error(e)
+        return None
+    except Exception as e:
+        _log.warning("_user_dept_code: lỗi tra department_id=%s: %s", dept_id, e)
         return None
     app.storage.user["_dept_code"] = code
     return code

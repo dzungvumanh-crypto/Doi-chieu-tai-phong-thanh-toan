@@ -292,6 +292,11 @@ def put_day(
         raise HTTPException(400, f"Ký hiệu '{body.symbol}' không hợp lệ")
     _require_staff_in_acct(staff_id, db)
     now = str(_vn_now())
+    # Rà soát review PR #22 (Người 1, 17/08): TP/PP ghi đè công trực tiếp lên một
+    # ngày do trigger đồng bộ nghỉ phép tự tạo (status='auto', source_leave_id trỏ
+    # về đơn nghỉ) — dòng công không còn "thuộc về" đơn nghỉ gốc nữa sau khi ghi đè
+    # tay. Không reset thì huỷ/xoá đơn nghỉ đó sau này sẽ dính FOREIGN KEY constraint
+    # (source_leave_id vẫn trỏ về đơn đã xoá).
     db.execute(
         """INSERT INTO attendances
                (staff_id, date, symbol, work_value, status, note, confirmed_by, confirmed_at, created_at, updated_at)
@@ -299,7 +304,7 @@ def put_day(
            ON CONFLICT(staff_id, date) DO UPDATE SET
                symbol=excluded.symbol, work_value=excluded.work_value, status='confirmed',
                note=excluded.note, confirmed_by=excluded.confirmed_by, confirmed_at=excluded.confirmed_at,
-               updated_at=excluded.updated_at""",
+               updated_at=excluded.updated_at, source_leave_id=NULL""",
         (staff_id, date_, body.symbol, sym["work_value"], body.note, current["id"], now, now, now),
     )
     db.commit()
@@ -417,8 +422,11 @@ def review_adjustment(
 
     now = str(_vn_now())
     if body.action == "approve":
+        # Cùng lý do như put_day: duyệt điều chỉnh ghi đè dòng công, dòng không còn
+        # là "auto" từ đồng bộ nghỉ phép nữa nên phải bỏ liên kết source_leave_id —
+        # tránh FOREIGN KEY constraint khi sau này huỷ/xoá đơn nghỉ gốc.
         db.execute(
-            "UPDATE attendances SET symbol=?, work_value=?, status='adjusted', updated_at=? WHERE id=?",
+            "UPDATE attendances SET symbol=?, work_value=?, status='adjusted', updated_at=?, source_leave_id=NULL WHERE id=?",
             (row["new_symbol"], row["new_work_value"], now, row["attendance_id"]),
         )
         db.execute(
