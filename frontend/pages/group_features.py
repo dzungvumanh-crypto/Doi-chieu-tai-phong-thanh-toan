@@ -20,7 +20,7 @@ async def group_features_page():
         ui.navigate.to("/home")
         return
 
-    _sidebar("group-features")
+    await _sidebar("group-features")
     with _content_area():
         _page_header("Phân quyền theo nhóm", "Chọn nhóm và tick các chức năng nhóm đó được phép dùng")
 

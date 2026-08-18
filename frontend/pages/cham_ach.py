@@ -72,7 +72,7 @@ async def cham_ach_page():
     }
 
     with ui.row().classes('w-full'):
-        _sidebar('cham_ach')
+        await _sidebar('cham_ach')
         with _content_area():
             _page_header('Chấm đối chiếu ACH', 'Đối chiếu GL02 (NPO) với MIS — Phòng Thanh toán')
 

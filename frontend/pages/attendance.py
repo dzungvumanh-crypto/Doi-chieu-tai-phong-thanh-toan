@@ -21,7 +21,7 @@ def _empty():
 async def attendance_page(year: Optional[int] = None, month: Optional[int] = None):
     if not _require_auth():
         return
-    _sidebar("attendance")
+    await _sidebar("attendance")
 
     current_user = api.get_current_user()
     role = current_user.get("role", "") if current_user else ""

@@ -30,7 +30,7 @@ def _build_dept_summaries(ipcas_grouped: dict, payment_grouped: dict) -> list:
 
 
 @ui.page("/reports")
-def reports_page():
+async def reports_page():
     if not _require_auth():
         return
     if not api.has_feature("menu.reports"):
@@ -69,7 +69,7 @@ def reports_page():
     }
 
     with ui.row().classes("w-full"):
-        _sidebar("reports")
+        await _sidebar("reports")
         with _content_area():
             _page_header(
                 "Báo cáo hậu kiểm",

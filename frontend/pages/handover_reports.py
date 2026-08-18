@@ -123,7 +123,7 @@ def _late_detail(late_entries: list):
 
 
 @ui.page("/handover_reports")
-def handover_reports_page():
+async def handover_reports_page():
     if not _require_auth():
         return
     if not api.has_feature("menu.handover_reports"):
@@ -133,7 +133,7 @@ def handover_reports_page():
     today = date.today()
 
     with ui.row().classes("w-full"):
-        _sidebar("handover_reports")
+        await _sidebar("handover_reports")
         with _content_area():
             _page_header(
                 "Báo cáo bàn giao chứng từ",

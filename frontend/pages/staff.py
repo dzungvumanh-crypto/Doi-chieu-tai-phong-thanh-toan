@@ -20,7 +20,7 @@ async def staff_page():
     dept_id_to_name = {d["id"]: d["name"] for d in all_depts}
     all_dept_opts   = {d["id"]: d["name"] for d in all_depts}
 
-    _ = _sidebar("staff")
+    _ = await _sidebar("staff")
     with _content_area():
         _page_header("Quản lý User", "Quản lý tài khoản đăng nhập hệ thống")
 

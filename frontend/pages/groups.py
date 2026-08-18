@@ -37,7 +37,7 @@ async def groups_page():
         ui.navigate.to("/home")
         return
 
-    _sidebar("groups")
+    await _sidebar("groups")
     with _content_area():
         _page_header("Nhóm user", "Tạo nhóm, quản lý thành viên và phân quyền chức năng")
 

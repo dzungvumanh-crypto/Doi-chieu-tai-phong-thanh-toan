@@ -130,7 +130,7 @@ def _date_filter_input(label: str):
 
 
 @ui.page("/so_truc")
-def so_truc_page(request: _StarletteRequest):
+async def so_truc_page(request: _StarletteRequest):
     if not _require_auth():
         return
     if not api.has_feature("menu.so_truc"):
@@ -1035,7 +1035,7 @@ def so_truc_page(request: _StarletteRequest):
         ui.timer(0.1, load_history, once=True)
 
     with ui.row().classes("w-full"):
-        _sidebar("so_truc")
+        await _sidebar("so_truc")
         with _content_area():
             _navy_header(
                 "SỔ TRỰC CUỐI NGÀY",
