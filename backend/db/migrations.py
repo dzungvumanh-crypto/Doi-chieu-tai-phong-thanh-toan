@@ -995,6 +995,15 @@ def _ensure_indexes():
             ('S',  'Nghỉ ốm dài ngày', 0.0, '#D1D5DB', 1),
             ('C',  'Cưới',             0.0, '#FBCFE8', 1),
             ('HT', 'Hội Thao',         1.0, '#A7F3D0', 1)""",
+        # Backfill theo review PR #22 (Người 1, 18/08): fix trước đó (put_day /
+        # review_adjustment reset source_leave_id=NULL khi ghi đè) chỉ áp dụng cho
+        # LƯỢT GHI MỚI kể từ lúc code chạy — dòng attendances đã ở trạng thái
+        # 'confirmed'/'adjusted' TỪ TRƯỚC bản vá vẫn còn source_leave_id trỏ về đơn
+        # nghỉ cũ, xoá đúng đơn đó vẫn dính FOREIGN KEY constraint y hệt lỗi gốc.
+        # Tự nhiên idempotent: sau lần chạy đầu dọn sạch, các lần sau WHERE không
+        # còn dòng nào khớp nên vô hại — không cần dò sqlite_master như khối vá bảng.
+        """UPDATE attendances SET source_leave_id = NULL
+           WHERE status IN ('confirmed','adjusted') AND source_leave_id IS NOT NULL""",
     ]
     _mig_log = logging.getLogger(__name__)
 
