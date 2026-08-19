@@ -6,6 +6,7 @@ from nicegui import ui
 import frontend.api_client as api
 from frontend.shared import (
     _sidebar, _content_area, _page_header, _require_auth, _handle_api_error,
+    open_folder_picker,
 )
 
 _POLL_INTERVAL = 1.5
@@ -91,9 +92,20 @@ async def cham_ilo1000_page():
                     ui.label(
                         'Nhập đường dẫn thư mục chứa file ILO1000 trên server.'
                     ).classes('text-xs text-gray-500')
-                    folder_input = ui.input(
-                        placeholder='Ví dụ: D:\\Data\\ILO1000\\ngay12',
-                    ).props('outlined dense clearable').classes('w-full')
+                    with ui.row().classes('w-full items-center gap-2'):
+                        folder_input = ui.input(
+                            placeholder='Ví dụ: D:\\Data\\ILO1000\\ngay12',
+                        ).props('outlined dense clearable').classes('flex-1')
+
+                        async def _on_pick_folder():
+                            def _on_folder_selected(path: str):
+                                folder_input.value = path
+                            await open_folder_picker(
+                                _on_folder_selected, initial_path=folder_input.value or ''
+                            )
+
+                        ui.button('Duyệt...', icon='folder_open', color='blue-7',
+                                  on_click=_on_pick_folder).props('outlined dense')
                     ui.label(
                         'Thư mục phải chứa đủ: pHub_*.xlsx · UUID.csv · eicp*.XLS · GL02_*.zip'
                     ).classes('text-xs text-gray-400')
@@ -187,8 +199,18 @@ async def cham_ilo1000_page():
                 with download_row:
                     for fname in files:
                         url = f'/api/ilo1000/download/{state["job_id"]}/{fname}'
+
+                        async def _tai_ket_qua(u=url, name=fname):
+                            try:
+                                content = await asyncio.to_thread(api.download, u)
+                            except Exception as e:
+                                if not _handle_api_error(e):
+                                    ui.notify(str(e), type='negative')
+                                return
+                            ui.download(content, name)
+
                         ui.button(fname, icon='table_chart', color='green-7').on(
-                            'click', lambda u=url: ui.navigate.to(u)
+                            'click', _tai_ket_qua
                         ).classes('text-xs')
 
             async def on_run():

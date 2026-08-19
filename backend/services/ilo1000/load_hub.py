@@ -29,7 +29,14 @@ def _load_one(path: Path) -> pd.DataFrame:
     for col in HUB_COLS_KEEP:
         result[col] = df[col].values if col in df.columns else pd.NA
 
-    return result.copy()
+    # Dòng "Tổng tiền" cuối file pHub (Excel tự thêm) không phải giao dịch —
+    # STT="Tổng tiền", mọi cột giao dịch (kể cả Số giao dịch) đều rỗng, chỉ có
+    # "Số tiền thực chuyển" = tổng cộng cả file → nếu không loại sẽ cộng dồn
+    # sai vào tổng Hub (xác nhận qua dữ liệu thật: lệch đúng bằng giá trị dòng
+    # tổng, 561.304.218.679 và 557.634.971.560 ở 2 file 04-06/7/2026).
+    result = result[result[HUB_COL_SO_GD].notna()].copy()
+
+    return result
 
 
 def load_hub(paths: list[Path] | Path) -> pd.DataFrame:

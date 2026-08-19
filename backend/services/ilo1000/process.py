@@ -3,7 +3,7 @@
 import pandas as pd
 
 from .config import (
-    HUB_COL_SO_GD, HUB_COL_STC, HUB_COL_TRACE,
+    HUB_COL_SO_GD, HUB_COL_STC, HUB_COL_TRACE, HUB_COL_TRACE2_RAW,
     HUB_COL_TRANG_THAI, HUB_COL_NGAY_GIO, HUB_COL_NOI_DUNG, HUB_COL_SO_TIEN,
 )
 
@@ -38,24 +38,50 @@ def process_hub(hub_df: pd.DataFrame, eicp_maps: dict, ngay_int: int) -> tuple[p
     hub_to_core: dict = eicp_maps.get('hub_to_core', {})
 
     # ── Tính Trace ──
+    # Theo tài liệu gốc: chỉ giao dịch có "Số giao dịch" chứa 'S' mới qua bước
+    # BFX/EICP. Giao dịch KHÔNG chứa 'S' (chủ yếu loại "OT" — hoàn trả lệnh gốc)
+    # dùng thẳng "Số Trace 2" — xác nhận qua đối chiếu dữ liệu thật 06/07/2026:
+    # nhóm không chứa 'S' khớp 96,5% qua Số Trace 2 (so với chỉ 50% qua Số Trace 1);
+    # riêng OT khớp 100% qua Số Trace 2.
+    so_gd = _safe_str(df[HUB_COL_SO_GD])
     noi_dung = _safe_str(df[HUB_COL_NOI_DUNG])
+    s_mask = so_gd.str.contains('S', case=False, na=False)
     bfx_mask = noi_dung.str.contains('BFX', case=False, na=False)
+    # "Số giao dịch" chứa 'SMF' → luôn giữ nguyên Số Trace 1 gốc, không VLOOKUP
+    # qua EICP dù thuộc nhóm 'S' không BFX (xác nhận từ người dùng 2026-07-16).
+    smf_mask = so_gd.str.contains('SMF', case=False, na=False)
 
-    # Giá trị Trace ban đầu (từ pHub)
-    trace = _safe_str(df[HUB_COL_TRACE])
+    # Giá trị Trace ban đầu (Số Trace 1, từ pHub)
+    trace = _safe_str(df[HUB_COL_TRACE]).copy()
 
-    # BFX: right(nội dung, 16)
-    trace.loc[bfx_mask] = noi_dung.loc[bfx_mask].str[-16:]
+    if HUB_COL_TRACE2_RAW in df.columns:
+        trace2_raw = _safe_str(df[HUB_COL_TRACE2_RAW])
+        use_trace2 = ~s_mask & (trace2_raw != '')
+        trace.loc[use_trace2] = trace2_raw.loc[use_trace2]
 
-    # Non-BFX: lookup qua EICP, giữ nguyên nếu không tìm thấy
-    # Map toàn bộ so_gd để tránh vấn đề index alignment khi df đã bị filter
-    not_bfx = ~bfx_mask
-    eicp_all = _safe_str(df[HUB_COL_SO_GD]).map(hub_to_core).fillna('')
-    update_mask = not_bfx & (eicp_all != '')
-    trace = trace.copy()
+    # BFX (chỉ trong nhóm "Số giao dịch" chứa 'S'): right(nội dung, 16)
+    bfx_apply_mask = s_mask & bfx_mask & ~smf_mask
+    trace.loc[bfx_apply_mask] = noi_dung.loc[bfx_apply_mask].str[-16:]
+
+    # Non-BFX trong nhóm 'S' (trừ SMF): lookup qua EICP, giữ nguyên Số Trace 1
+    # nếu không tìm thấy. Map toàn bộ so_gd để tránh vấn đề index alignment khi
+    # df đã bị filter.
+    eicp_apply_mask = s_mask & ~bfx_mask & ~smf_mask
+    eicp_all = so_gd.map(hub_to_core).fillna('')
+    update_mask = eicp_apply_mask & (eicp_all != '')
     trace.loc[update_mask] = eicp_all.loc[update_mask]
 
     df['Trace'] = trace.values
+
+    # Trace thuần chữ số có thể có số 0 thừa ở đầu tùy đợt export pHub (VD "063403118"
+    # vs "63403118" — cùng 1 giá trị nhưng khác text) — Core tính Trace độc lập từ
+    # REFERENCE không có số 0 đầu, khiến Map dc (ghép chuỗi) không khớp dù cùng giao dịch.
+    # Chỉ strip cho Trace toàn chữ số — không đụng Trace BFX/EICP (có ký tự chữ, có ý nghĩa).
+    numeric_mask = df['Trace'].str.match(r'^\d+$', na=False)
+    stripped = df['Trace'].str.lstrip('0')
+    stripped = stripped.mask(stripped == '', '0')
+    df.loc[numeric_mask, 'Trace'] = stripped[numeric_mask]
+
     df['Trace2'] = pd.to_numeric(df['Trace'], errors='coerce')
 
     # ── Ngày (ngày trong tháng) — parse đầy đủ vì ngày đơn digit "5/05/..." bị lỗi khi dùng str[:2] ──
@@ -97,6 +123,10 @@ def process_citad(citad_df: pd.DataFrame, hub_lookups: dict, ngay_int: int) -> t
     df = citad_df.copy()
 
     # ── Clean AMOUNT: "ltd" → lấy từ TRX_STATUS ──
+    # Fix chính đã chạy sớm hơn, ở load_citad.py::_load_one() (TRƯỚC khi gộp
+    # 5 cổng + dedup theo SERIAL_NO — bắt buộc theo đúng thứ tự nghiệp vụ, xem
+    # comment ở đó). Giữ lại ở đây làm lưới an toàn cho caller không qua
+    # load_citad() — no-op nếu AMOUNT đã sạch.
     amount_str = _safe_str(df['AMOUNT'])
     ltd_mask = amount_str.str.lower().str.contains('ltd', na=False)
     df.loc[ltd_mask, 'AMOUNT'] = _safe_str(df.loc[ltd_mask, 'TRX_STATUS'])
@@ -129,13 +159,69 @@ def process_citad(citad_df: pd.DataFrame, hub_lookups: dict, ngay_int: int) -> t
 
 # ── CORE ──────────────────────────────────────────────────────────────────────
 
+def detect_huy(df: pd.DataFrame) -> dict:
+    """
+    Phát hiện giao dịch Hủy: gom theo REFERENCE. Hai tín hiệu ĐỘC LẬP, kết hợp
+    OR (một mình tín hiệu (1) không đủ — xem lý do dưới):
+
+    1. Tổng Nợ = tổng Có trong batch (net-zero) — bắt được khi CẢ vế gốc lẫn vế
+       hủy cùng nằm trong batch đang xử lý (`df` nên là Core GỘP TOÀN BỘ các
+       ngày trong batch, không phải chỉ 1 ngày).
+    2. Có ít nhất 1 dòng CRAMOUNT < 0 — bản dịch trực tiếp quy tắc docx gốc
+       "nếu Số tiền (-) thì là hủy lệnh ngày cũ". Bắt được cả khi vế gốc (+X)
+       nằm ở một ngày KHÔNG được nạp trong batch hiện tại — Core (khác
+       Hub/Eicp) không có carryover T-1, nên khi đó net ≠ 0 và tín hiệu (1)
+       một mình bỏ sót ca này. Xác nhận qua dữ liệu thật 11-12/8/2026: 91
+       REFERENCE có CRAMOUNT âm, 47/91 (52%) không có vế gốc dương cùng
+       REFERENCE trong batch 2 ngày đó — đúng số ca tín hiệu (1) bỏ sót.
+
+    Xác nhận nghiệp vụ 2026-07-16: "Hủy" và "Đã hủy" là 2 trạng thái KHÁC NHAU
+    (không phải lỗi gõ tay như từng nhầm tưởng trước đó):
+    - 'Hủy'    — net-zero VÀ ngày lập/ngày hủy CÙNG 1 ngày (TRDATE)
+    - 'Đã hủy' — mọi trường hợp còn lại (khác ngày, hoặc thiếu vế gốc trong batch)
+
+    Trả về dict REFERENCE → 'Hủy' | 'Đã hủy'.
+    """
+    if df.empty or 'REFERENCE' not in df.columns:
+        return {}
+
+    ref    = _safe_str(df['REFERENCE'])
+    dr     = pd.to_numeric(df.get('DRAMOUNT', 0), errors='coerce').fillna(0)
+    cr     = pd.to_numeric(df.get('CRAMOUNT', 0), errors='coerce').fillna(0)
+    trdate = _safe_str(df.get('TRDATE', pd.Series('', index=df.index)))
+
+    tmp = pd.DataFrame({'REFERENCE': ref, '_DR': dr, '_CR': cr, '_TRDATE': trdate})
+    tmp = tmp[tmp['REFERENCE'] != '']
+
+    sums   = tmp.groupby('REFERENCE', sort=False)[['_DR', '_CR']].sum()
+    n_days = tmp.groupby('REFERENCE', sort=False)['_TRDATE'].nunique()
+
+    net_zero_refs = set(sums[sums['_CR'] - sums['_DR'] == 0].index)
+    neg_cr_refs   = set(tmp.loc[tmp['_CR'] < 0, 'REFERENCE'])
+    huy_refs      = net_zero_refs | neg_cr_refs
+
+    def _label(r: str) -> str:
+        if r in net_zero_refs and n_days.get(r, 1) <= 1:
+            return 'Hủy'
+        return 'Đã hủy'
+
+    return {r: _label(r) for r in huy_refs}
+
+
 def process_core(
     core_df: pd.DataFrame,
     citad_mapdc: dict,
     hub_lookups: dict,
     ngay_int: int,
+    huy_map: dict | None = None,
 ) -> pd.DataFrame:
-    """Điền Trace, Map dc, TT cho sheet Core."""
+    """
+    Điền Trace, Map dc, TT cho sheet Core.
+    `huy_map` (REFERENCE → 'Hủy'/'Đã hủy') nên được tính trước trên Core GỘP
+    toàn batch bằng detect_huy() rồi truyền vào, để bắt được cả Hủy khác ngày.
+    Nếu không truyền (VD gọi lẻ trong test), tự tính trên chính core_df này —
+    khi đó chỉ phát hiện được Hủy cùng ngày (đúng theo dữ liệu đang có).
+    """
     df = core_df.copy()
 
     ref  = _safe_str(df.get('REFERENCE', pd.Series('', index=df.index)))
@@ -161,28 +247,31 @@ def process_core(
     df['Map dc']  = brcd + trace + cramount.astype(str)
     df['Ngày']    = ngay_int
 
-    # ── Phát hiện "Hủy" (pivot: CRAMOUNT_sum - DRAMOUNT_sum == 0) ──
-    dr = pd.to_numeric(df.get('DRAMOUNT', 0), errors='coerce').fillna(0)
-    cr = pd.to_numeric(df.get('CRAMOUNT', 0), errors='coerce').fillna(0)
-    df['_DR'] = dr
-    df['_CR'] = cr
-
-    grp = df.groupby('REFERENCE', sort=False)[['_DR', '_CR']].sum()
-    huy_set = set(grp[grp['_CR'] - grp['_DR'] == 0].index)
-    df.drop(columns=['_DR', '_CR'], inplace=True)
+    if huy_map is None:
+        huy_map = detect_huy(df)
 
     # ── Tính TT theo thứ tự ưu tiên ──
     tt = pd.Series('', index=df.index)
 
-    # 1. Hủy
-    huy_mask = df['REFERENCE'].isin(huy_set)
-    tt[huy_mask] = 'Hủy'
+    # 1. Hủy / Đã hủy
+    huy_label = ref.map(huy_map)
+    huy_mask  = huy_label.notna()
+    tt[huy_mask] = huy_label[huy_mask]
 
     # 1.5. HI type (Quyết toán) — giao dịch quyết toán, không cần tra Hub/Citad
     qt_mask = (tt == '') & (df['Trace'] == 'Quyết toán')
     tt[qt_mask] = 'quyết toán'
 
-    # 2. Khớp CITAD qua Map dc
+    # 1.6. Kênh OSB — REMARK chứa "IBPSILO" là giao dịch kênh OSB, không thuộc
+    # phạm vi đối chiếu Citad/Hub của ILO1000 (sẽ có module Chấm TK OSB riêng
+    # sau này). Xác nhận qua dữ liệu thật 04-06/7/2026: 3/3 dòng IBPSILO đều
+    # được bài chấm tay ghi TT = "OSB", không dòng nào trùng điều kiện Hủy —
+    # nên chỉ gán cho dòng CHƯA có TT, không ghi đè Hủy/Quyết toán.
+    remark = _safe_str(df.get('REMARK', pd.Series('', index=df.index)))
+    osb_mask = (tt == '') & remark.str.contains('IBPSILO', case=False, na=False)
+    tt[osb_mask] = 'OSB'
+
+    # 2. Khớp CITAD qua Map dc (TRBRCD + Trace + AMOUNT)
     mask = tt == ''
     if mask.any():
         citad_result = df.loc[mask, 'Map dc'].astype(str).map(citad_mapdc)
@@ -207,4 +296,55 @@ def process_core(
         tt.loc[found_idx] = hub_result2.loc[found_idx].astype(str)
 
     df['TT'] = tt
+    return df
+
+
+def used_citad_keys(core_out: pd.DataFrame, citad_mapdc: dict) -> set:
+    """
+    Tập các `Map dc` Citad đã thực sự được ít nhất 1 dòng Core CHỌN TRÚNG để
+    gán TT — không phải mọi key có mặt trong `citad_mapdc` (dict chứa TOÀN BỘ
+    Citad, kể cả những dòng không có Core nào tra tới, hoặc có tra tới nhưng
+    bị ưu tiên cao hơn — Hủy/Quyết toán/OSB — ghi đè trước bước khớp Citad).
+
+    Chỉ dựa vào `core_out` (đã có TT) + `citad_mapdc`, không cần sửa
+    `process_core()` — tránh đổi chữ ký hàm đang được gọi ở rất nhiều test.
+    """
+    if core_out.empty or 'Map dc' not in core_out.columns:
+        return set()
+    map_dc = core_out['Map dc'].astype(str)
+    citad_label = map_dc.map(citad_mapdc)
+    really_used = core_out['TT'].astype(str) == citad_label.fillna('\0__none__')
+    return set(map_dc[really_used])
+
+
+def match_citad_leftover_with_osb(
+    citad_df: pd.DataFrame,
+    used_citad_mapdc: set,
+    osb_key: 'pd.Series | None' = None,
+) -> pd.DataFrame:
+    """
+    Với các dòng Citad CÒN THỪA (Map dc KHÔNG nằm trong `used_citad_mapdc` —
+    Core không khớp trúng), so trực tiếp với tập khóa OSB (`osb_key`, xem
+    `load_osb.build_osb_key()`). Thêm cột 'TT': 'OSB' nếu khớp; để RỖNG nếu
+    vẫn còn thừa sau cả Core lẫn OSB — không tự suy luận thêm, xuất cho người
+    chấm tay xem xét (đúng nguyên tắc "không có định danh đáng tin → xuất
+    toàn bộ nhóm cho người dùng chấm tay").
+
+    Dòng Citad ĐÃ khớp Core (Map dc nằm trong `used_citad_mapdc`) không đụng
+    tới cột 'TT' (giữ rỗng) — đã được coi là xử lý xong ở sheet Core.
+    """
+    df = citad_df.copy()
+    df['TT'] = ''
+
+    if df.empty or 'Map dc' not in df.columns:
+        return df
+
+    map_dc = df['Map dc'].astype(str)
+    leftover_mask = ~map_dc.isin(used_citad_mapdc)
+    if not leftover_mask.any() or osb_key is None or osb_key.empty:
+        return df
+
+    osb_key_set = set(osb_key.astype(str))
+    matched = leftover_mask & map_dc.isin(osb_key_set)
+    df.loc[matched, 'TT'] = 'OSB'
     return df
