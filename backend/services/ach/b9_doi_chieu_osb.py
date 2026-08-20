@@ -2,6 +2,7 @@ import pandas as pd
 
 from .b5_doi_chieu_di import _doi_chieu
 from .osb_common import la_lenh_osb_di, la_lenh_osb_den
+from .so_tien import doc_so_tien
 
 # Cột bắt buộc phải có trong file QT (Quyết toán OSB) — dò header theo nội dung,
 # không phụ thuộc vị trí cột (đã verify: số cột phụ không tên trước 'Seq' lệch
@@ -96,11 +97,8 @@ def xu_ly_qt(path: str, log_callback=None):
     if ma_cn.isna().any():
         raise ValueError(f"Cột 'CN thực hiện' có giá trị không đúng định dạng '<mã CN> - <tên>': {path}")
     trace   = df['Mã giao dịch'].astype(str).str.strip().str.lstrip('0')
-    so_tien = pd.to_numeric(df['Số tiền'], errors='coerce')
-    if so_tien.isna().any():
-        raise ValueError(f"Cột 'Số tiền' có giá trị không phải số: {path}")
 
-    df['SO_TIEN']       = so_tien.astype('int64')
+    df['SO_TIEN']       = doc_so_tien(df['Số tiền'], path, ten_cot="'Số tiền'")
     df['CN_TRACE_TIEN'] = ma_cn + trace + df['SO_TIEN'].astype(str)
 
     _log(f"[B9] QT {chieu}: {len(df):,} dòng ({path})")

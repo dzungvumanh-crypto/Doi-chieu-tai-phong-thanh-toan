@@ -104,7 +104,7 @@ một yêu cầu cụ thể nào.
 
 ---
 
-## 4. Bảy cái bẫy đã dính — đừng lặp lại
+## 4. Tám cái bẫy đã dính — đừng lặp lại
 
 ### 4.1 Không chọn bản ghi theo vị trí/thứ tự
 Nhóm trùng khóa (chi nhánh+số tiền, ngày+session…) cần xác định bản ghi nào chênh lệch:
@@ -148,6 +148,22 @@ Người dùng thường mở nhiều phiên, mỗi phiên một module. **Trư�
 `checkout`**, kiểm tra file dirty nằm ngoài phạm vi việc đang làm. Nghi ngờ thì hỏi thẳng,
 không tự ghi đè.
 
+### 4.8 `pd.to_numeric()` trên số tiền định dạng Việt Nam — sai 1000 lần, IM LẶNG
+Nguồn xuất file có thể **đổi định dạng bất cứ lúc nào** (thật: file QT đổi từ `180000` sang
+`180.000` kể từ 07/08/2026, giữa chuỗi 4 ngày).
+
+| Giá trị | `to_numeric()` | `.astype('int64')` | Hậu quả |
+|---|---|---|---|
+| `1.000.000` | `NaN` | — | Dừng, báo lỗi — **may mắn lộ ra** |
+| `180.000` | `180.0` | **`180`** | **Sai 1000 lần, không dấu hiệu nào** |
+
+**Luật:** với mọi cột tiền đọc từ file ngoài, **kiểm mẫu chuỗi TRƯỚC rồi mới ép kiểu** — đừng để
+`to_numeric()` tự "hiểu" dấu chấm. Chấp nhận đúng các mẫu đã biết, gặp mẫu lạ thì **raise**,
+không đoán. Mẫu chuẩn: `_doc_so_tien_qt()` trong `b9_doi_chieu_osb.py`.
+
+Phải nhận **cả hai** dạng, trộn lẫn trong cùng 1 file: file xuất nguyên bản (còn dấu chấm) và
+file người chấm đã mở ra sửa (Excel biến ô thành số thật).
+
 ---
 
 ## 5. Luật nghiệp vụ ACH — tra ở đâu
@@ -186,13 +202,54 @@ sample cũ: golden sample cũ đã từng dùng nhầm thuật toán.
 | **Chấm 459901** | `backend/api/cham459901.py`, `backend/services/cham459901_service.py`, `frontend/pages/cham_459901.py`, `tests/test_cham459901_algorithm.py` | Tính năng **ghép file "tồn tháng trước"** (`459_TON_Tx.xlsx`) vào GL02 tháng hiện tại. Đã có `classify_upload_filename()` loại `'ton'`, `_read_ton_file()`, `_TON_COLS`. **Chưa rõ đã xong hay còn dở — phải hỏi lại, không tự đoán.** |
 | **ILO1000** | `backend/services/ilo1000/*.py` (8 file), `frontend/pages/cham_ilo1000.py`, `tests/test_ilo1000_algorithm.py` | **Chưa rõ đang sửa gì.** |
 
-### ACH — kết quả gần nhất (chạy 2026-08-10, dữ liệu 04–05/08/2026)
-- Chế độ **chạy thẳng không Checkpoint** (`dung_sau_mis_di=False`). 04/08 mất 453s, 05/08 mất 424s.
-- **Đã cân khớp cả 2 ngày.** Bất biến số học tự kiểm: `MIS đi − GW đi` = đúng dòng "TO không đi
-  kênh" — 04/08: **6 món / 11.679.000**; 05/08: **11 món / 21.177.000**. `GW_CAN_DOI_CHIEU` = 0
-  dòng cả hai ngày.
-- **Cần người chấm xem:** `SESSION_NULL_BI_LOAI` ngày 04/08 có **445 dòng** so với 05/08 chỉ
-  **23 dòng** — chênh ~19 lần giữa 2 ngày liền kề, **chưa ai giải thích**.
+### ACH — kết quả gần nhất (chạy 2026-08-10, dữ liệu 06–09/08/2026)
+
+Chế độ **chạy thẳng không Checkpoint** (`dung_sau_mis_di=False`). Kết quả ghi vào
+`<thư mục ngày>\Output\`. File MIS thừa T-2 **nối chuỗi**: kết quả ngày N chép sang thư mục ngày
+N+1 (chỉ đúng `MIS_DI_THUA_<ngày>.csv` / `MIS_DEN_THUA_<ngày>.csv`, xem bẫy 4.6).
+
+| Ngày | Session | MIS đi − GW đi | TO không đi kênh | GW_CAN_DOI_CHIEU | SESSION_NULL_BI_LOAI | Thời gian |
+|---|---|---|---|---|---|---|
+| 06/08 | 16460 | 9 / 9.285.000 | 9 / 9.285.000 ✓ | 0 | 333 | 437s |
+| 07/08 | 16462 | 9 / 6.972.000 | 9 / 6.972.000 ✓ | 0 | 364 | 355s |
+| 08/08 | 16464 | 7 / 8.985.000 | 7 / 8.985.000 ✓ | 0 | 28 | 353s |
+| 09/08 | 16466 | 15 / 22.601.000 | 15 / 22.601.000 ✓ | 0 | 14 | 342s |
+
+**Đã cân khớp cả 4 ngày.**
+
+### ⚠️ 10/08/2026 — cân khớp về số học nhưng CẦN NGƯỜI CHẤM XEM TRƯỚC KHI DÙNG
+
+Chạy 2026-08-11, session 16468, 393s. `MIS đi 637.366 − GW đi 637.029 = 337` món /
+`2.021.991.506` đ — bất biến số học **đúng**, `GW_CAN_DOI_CHIEU` = 0.
+
+Nhưng **337 món / 2,02 tỷ** so với 9 / 9 / 7 / 15 món (~7–22 triệu) của 4 ngày trước —
+gấp 20–45 lần. Soi kỹ thì nguyên nhân rất tập trung:
+
+| Ngày | Số món TO | Giờ `NGAY_KENH_TRA` ≥ 20h |
+|---|---|---|
+| 06–09/08 | 9 / 9 / 7 / 15 | 2 / 2 / 1 / 1 |
+| **10/08** | **337** | **325** |
+
+325 dòng dồn vào **22:06–22:13 đêm 10/08**, toàn bộ `TPAY` / `ACH-NAPAS` / `SESSION`
+rỗng, MSGREF **có đủ** (không rỗng). Thuật toán chạy **đúng luật**: Bước 2 giữ session
+rỗng vì `NGAY_KENH_TRA` nằm trong `[23h T-1, 23h T)`; C.2 thấy MSGREF không có trên GW
+phiên 16468 → nhánh 1A.
+
+**Nghi vấn (độ tin cậy trung bình):** đây là cụm kênh trả lời rất muộn trong đêm, xác
+nhận GW nhiều khả năng nằm ở **file GW phiên sau (11/08)**, tức "đi kênh ở phiên kế
+tiếp" chứ không phải "không đi kênh". Nếu đúng vậy thì đây là lỗi **chọn THỪA** — hoàn
+tiền oan 2,02 tỷ, loại sai nghiêm trọng hơn hẳn (mục 2).
+
+**Chưa kết luận được từ dữ liệu một ngày.** Phải đối chiếu 325 MSGREF này với GW ngày
+11/08, hoặc chạy lại 10/08 **có Checkpoint** để người chấm soi tay — đúng lý do
+Checkpoint tồn tại. Lần chạy này theo yêu cầu là chế độ **không Checkpoint**.
+
+- **Bẫy mới đã sửa (xem mục 4.8):** nguồn xuất file QT đổi định dạng cột `Số tiền` từ 07/08.
+- **Cần người chấm xem:** `SESSION_NULL_BI_LOAI` nhảy **333 → 364 → 28 → 14** trong 4 ngày liền
+  kề. Cùng dạng chênh bất thường đã thấy ở 04/08 (445 dòng) so với 05/08 (23 dòng) —
+  **vẫn chưa ai giải thích**.
+- Kết quả cũ 04–05/08: đã cân khớp, TO không đi kênh 04/08 **6 món / 11.679.000**,
+  05/08 **11 món / 21.177.000**.
 
 ### Dữ liệu test
 - **ILO1000:** chỉ dùng golden sample **tháng 7/2026** (bộ 4–6.7 và 11–13.7). **Cả 2 bộ chưa

@@ -69,6 +69,63 @@ class TestXuLyQt:
         _, df = xu_ly_qt(str(path))
         assert df.loc[0, 'CN_TRACE_TIEN'] == '6360' + '92036658' + '10000000'
 
+    def test_so_tien_ngan_cach_dau_cham_khong_bi_hieu_la_thap_phan(self, tmp_path):
+        """Regression 2026-08-10 (dữ liệu thật 07-09/08): nguồn đổi định dạng sang
+        '180.000'. `pd.to_numeric()` đọc ra 180.0 rồi `.astype('int64')` cắt còn
+        180 — SAI 1000 lần mà không báo lỗi, khóa CN_TRACE_TIEN lệch hết."""
+        path = tmp_path / 'QT đi 08.08.xlsx'
+        _viet_file_qt(path, [
+            ('142088610', '5612 - CN A', '180.000',   'Normal'),
+            ('142088611', '5612 - CN A', '1.000.000', 'Normal'),
+            ('142088612', '5612 - CN A', '56.400',    'Normal'),
+        ], chieu_gd='GD đi')
+        _, df = xu_ly_qt(str(path))
+        assert df['SO_TIEN'].tolist() == [180000, 1000000, 56400]
+        assert df.loc[0, 'CN_TRACE_TIEN'] == '5612' + '142088610' + '180000'
+
+    def test_so_tien_am_co_ngan_cach_dau_cham(self, tmp_path):
+        """'Kiểu giao dịch'='Cancel' có số tiền âm — giữ nguyên dấu."""
+        path = tmp_path / 'QT đi 09.08.xlsx'
+        _viet_file_qt(path, [('142088610', '5612 - CN A', '-1.000.000', 'Cancel')],
+                      chieu_gd='GD đi')
+        _, df = xu_ly_qt(str(path))
+        assert df.loc[0, 'SO_TIEN'] == -1000000
+
+    def test_xu_ly_kep_ca_file_nguyen_ban_lan_file_nguoi_cham_da_sua(self, tmp_path):
+        """Xử lý KÉP (BO chốt 2026-08-10) — cùng 1 cột 'Số tiền' phải nhận cả:
+        (a) file xuất thẳng từ chương trình, còn nguyên dấu chấm ngăn nghìn
+            → ô CHUỖI '10.000.000';
+        (b) file người chấm đã mở ra bỏ dấu chấm rồi lưu lại — Excel biến ô thành
+            SỐ THẬT → ô numeric 10000000.
+        Trộn lẫn trong 1 file (người chấm sửa dở) vẫn phải ra cùng giá trị."""
+        path = tmp_path / 'QT đến 08.08.xlsx'
+        _viet_file_qt(path, [
+            ('092036658', '6360 - CN B', '10.000.000', 'Normal'),  # chuỗi, còn dấu chấm
+            ('092036659', '6360 - CN B', 10000000,     'Normal'),  # ô số thật
+            ('092036660', '6360 - CN B', '10000000',   'Normal'),  # chuỗi, đã bỏ chấm
+        ], chieu_gd='GD về')
+        _, df = xu_ly_qt(str(path))
+        assert df['SO_TIEN'].tolist() == [10000000, 10000000, 10000000]
+        assert df['CN_TRACE_TIEN'].nunique() == 3  # khóa khác nhau do Mã GD khác
+
+    def test_o_so_that_khong_bi_dinh_duoi_cham_khong(self, tmp_path):
+        """Ô Excel kiểu float (180000.0) đọc ra '180000' chứ không phải '180000.0'
+        — nếu dính '.0' thì mẫu số nguyên sẽ trượt và báo lỗi oan."""
+        path = tmp_path / 'QT đi 08.08.xlsx'
+        _viet_file_qt(path, [('142088610', '5612 - CN A', 180000.0, 'Normal')],
+                      chieu_gd='GD đi')
+        _, df = xu_ly_qt(str(path))
+        assert df.loc[0, 'SO_TIEN'] == 180000
+        assert df.loc[0, 'CN_TRACE_TIEN'] == '5612' + '142088610' + '180000'
+
+    def test_so_tien_khong_dung_mau_thi_bao_loi_khong_tu_doan(self, tmp_path):
+        """'1.5' không phải nhóm 3 chữ số — không đoán là 15 hay 1.5, phải dừng."""
+        path = tmp_path / 'QT đi 08.08.xlsx'
+        _viet_file_qt(path, [('142088610', '5612 - CN A', '1.5', 'Normal')],
+                      chieu_gd='GD đi')
+        with pytest.raises(ValueError, match='không đúng định dạng số nguyên'):
+            xu_ly_qt(str(path))
+
     def test_thieu_cot_bat_buoc_bao_loi(self, tmp_path):
         path = tmp_path / 'QT_thieu_cot.xlsx'
         wb = xlsxwriter.Workbook(str(path))

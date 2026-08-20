@@ -1,7 +1,6 @@
 """Trang Chấm 459901 — phân loại bút toán tài khoản trung gian 459901."""
 
 import asyncio
-import time
 
 from nicegui import ui
 import frontend.api_client as api
@@ -16,13 +15,9 @@ _KIND_LABELS = {
     "zip":     ("GL02 (chính)",       "bg-red-100 text-red-700"),
     "hub_di":  ("HUB đi",             "bg-blue-100 text-blue-700"),
     "hub_den": ("HUB đến",            "bg-purple-100 text-purple-700"),
+    "ton":     ("Tồn tháng trước",    "bg-yellow-100 text-yellow-700"),
     None:      ("Không nhận diện",    "bg-gray-100 text-gray-500"),
 }
-
-# Tiến độ xử lý lưu trong bộ nhớ backend: backend restart là mất sạch, poll sẽ
-# 404 mãi mãi. Hai mốc dừng dưới đây để nút không kẹt "đang xử lý" vĩnh viễn.
-_MAX_POLL_SECONDS = 900   # 15 phút — dài hơn mọi file thực tế
-_MAX_POLL_FAILS = 10      # số lần lỗi liên tiếp thì bỏ cuộc
 
 
 @ui.page("/cham_459901")
@@ -55,7 +50,8 @@ async def cham_459901_page():
                     "Kéo-thả hoặc chọn nhiều file cùng lúc — hệ thống tự nhận diện: "
                     "GL02*.zip (bắt buộc), file HUB đi (Quay_danh sach...), "
                     "file HUB đến (Danh_sach...den) — 2 file HUB tùy chọn, thiếu thì bỏ qua "
-                    "nhóm 1000 Hoàn trả."
+                    "nhóm 1000 Hoàn trả. File tồn tháng trước (459_TON_T<n>.xlsx) — tùy chọn, "
+                    "ghép vào dữ liệu tháng này để phân loại lại các giao dịch chưa xử lý xong."
                 ).classes("text-xs text-gray-400 mb-3")
 
                 file_list_area = ui.column().classes("w-full gap-0 mb-2")
@@ -223,38 +219,15 @@ async def cham_459901_page():
                         pass
 
                 # ── Poll progress cho đến khi done ─────────────────────────────
-                deadline = time.monotonic() + _MAX_POLL_SECONDS
-                fails = 0
                 while True:
                     await asyncio.sleep(_POLL_INTERVAL)
-
-                    if time.monotonic() > deadline:
-                        progress_bar.set_visibility(False)
-                        progress_label.set_visibility(False)
-                        ui.notify(
-                            "Quá thời gian chờ xử lý. File có thể quá lớn hoặc máy chủ đã "
-                            "khởi động lại — hãy thử lại.",
-                            type="negative", multi_line=True, close_button=True,
-                        )
-                        break
 
                     try:
                         prog = await asyncio.to_thread(
                             api.get, f'/api/cham459901/progress/{state["task_token"]}'
                         )
-                        fails = 0
-                    except Exception as e:
-                        fails += 1
-                        if fails < _MAX_POLL_FAILS:
-                            continue
-                        progress_bar.set_visibility(False)
-                        progress_label.set_visibility(False)
-                        if not _handle_api_error(e):
-                            ui.notify(
-                                f"Mất liên lạc với máy chủ khi theo dõi tiến độ: {e}",
-                                type="negative", multi_line=True, close_button=True,
-                            )
-                        break
+                    except Exception:
+                        continue
 
                     pct = prog.get("pct", 0)
                     progress_bar.set_value(pct / 100)
@@ -334,6 +307,14 @@ async def cham_459901_page():
                                 ui.label(
                                     "Chưa có file HUB đi/đến — nhóm 1000 Hoàn trả bỏ trống, "
                                     "các giao dịch đó nằm trong GD khác."
+                                ).classes("text-xs text-gray-600")
+
+                        if r.get("ton_rows_added", 0) > 0:
+                            with ui.row().classes("items-center gap-2 mb-2"):
+                                ui.icon("info", color="blue").classes("text-lg")
+                                ui.label(
+                                    f"Đã gộp {r['ton_rows_added']:,} dòng tồn tháng trước "
+                                    "vào dữ liệu chấm."
                                 ).classes("text-xs text-gray-600")
 
                         with ui.grid(columns=3).classes("w-full gap-4 my-4"):

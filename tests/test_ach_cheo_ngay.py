@@ -3,6 +3,8 @@ thừa T-2 ⟷ NPO thừa T-1, cả 2 chiều đi/đến).
 
 Chạy: .venv\\Scripts\\python.exe -m pytest tests/test_ach_cheo_ngay.py -v
 """
+import os
+
 import pandas as pd
 import pytest
 
@@ -155,6 +157,36 @@ class TestDocFileT2:
         pd.DataFrame([{'CHI_NHANH': '1240'}]).to_csv(path, index=False)
         with pytest.raises(ValueError, match='thiếu cột'):
             doc_mis_den_thua_t2(str(path))
+
+    def test_so_tien_ngan_nghin_trong_csv_khong_bi_hieu_la_thap_phan(self, tmp_path):
+        """Regression 2026-08-11 — SO_TIEN có thể mang định dạng ngăn nghìn.
+        `to_numeric().fillna(0)` cũ biến '3.000.000' thành 0 và '180.000' thành
+        180: khóa đối chiếu lệch, dòng lặng lẽ không khớp, KHÔNG báo lỗi."""
+        path = tmp_path / 'MIS_DI_THUA_20260809.csv'
+        pd.DataFrame([
+            _mis_di_thua_t2_row('1240', '3.000.000', '000142755985'),
+            _mis_di_thua_t2_row('1240', '180.000',   '000142755986'),
+            _mis_di_thua_t2_row('1240', '800000',    '000142755987'),
+        ]).to_csv(path, index=False)
+        df = doc_mis_di_thua_t2(str(path))
+        assert df['SO_TIEN'].tolist() == ['3000000', '180000', '800000']
+
+    def test_so_tien_ngan_nghin_trong_xlsx_nguoi_cham_sua_tay(self, tmp_path):
+        """Luật gắn theo NỘI DUNG ô, KHÔNG theo đuôi file (BO chốt 2026-08-11):
+        người chấm mở .csv bằng Excel rồi Save As .xlsx thì dấu chấm đi theo."""
+        path = tmp_path / 'MIS đến thừa 09.08.xlsx'
+        pd.DataFrame([
+            _mis_den_thua_t2_row('1240', '1.100.000', '000142755985'),
+            _mis_den_thua_t2_row('1240', '70000',     '000142755986'),
+        ]).to_excel(path, index=False)
+        df = doc_mis_den_thua_t2(str(path))
+        assert df['SO_TIEN'].tolist() == ['1100000', '70000']
+
+    def test_so_tien_mau_la_thi_bao_loi_khong_tu_doan(self, tmp_path):
+        path = tmp_path / 'MIS_DI_THUA_20260809.csv'
+        pd.DataFrame([_mis_di_thua_t2_row('1240', '1.5', '000142755985')]).to_csv(path, index=False)
+        with pytest.raises(ValueError, match='không đúng định dạng số nguyên'):
+            doc_mis_di_thua_t2(str(path))
 
     def test_doc_mis_di_thua_t2_csv_dau_tab_do_excel_luu_lai(self, tmp_path):
         """Bug thật 2026-08-07 (dữ liệu 03.08): người chấm mở file .csv chương
@@ -318,28 +350,55 @@ class TestDocFileT2Xlsx:
 # hệt nhưng KHÔNG phải input T-2) chỉ bằng TÊN file, không suy đoán nội dung.
 
 class TestTimFileThuaT2:
-    def test_khop_pattern_may_tu_xuat_csv(self, tmp_path):
+    def test_khop_ten_may_tu_xuat_csv(self, tmp_path):
         f = tmp_path / 'MIS_DI_THUA_20260726.csv'
         f.write_text('x')
-        ket_qua = _tim_file_thua_t2(str(tmp_path), ['MIS_DI_THUA*.csv', 'MIS đi thừa*.xlsx'])
-        assert ket_qua == [str(f)]
+        assert _tim_file_thua_t2(str(tmp_path), 'di') == [str(f)]
 
-    def test_khop_pattern_nguoi_cham_tu_dat_ten_xlsx(self, tmp_path):
+    def test_khop_ten_nguoi_cham_tu_dat_xlsx(self, tmp_path):
         f = tmp_path / 'MIS đi thừa (không bao gồm OSB) ngày 26.07.xlsx'
         f.write_text('x')
-        ket_qua = _tim_file_thua_t2(str(tmp_path), ['MIS_DI_THUA*.csv', 'MIS đi thừa*.xlsx'])
-        assert ket_qua == [str(f)]
+        assert _tim_file_thua_t2(str(tmp_path), 'di') == [str(f)]
 
     def test_khong_nham_voi_file_osb_thua_cung_thu_muc(self, tmp_path):
         (tmp_path / 'OSB đi thừa ngày 26.07.xlsx').write_text('x')
-        ket_qua = _tim_file_thua_t2(str(tmp_path), ['MIS_DI_THUA*.csv', 'MIS đi thừa*.xlsx'])
-        assert ket_qua == []
+        assert _tim_file_thua_t2(str(tmp_path), 'di') == []
 
-    def test_khong_trung_lap_khi_2_pattern_cung_khop_1_file(self, tmp_path):
+    def test_sai_dau_tieng_viet_van_nhan_ra(self, tmp_path):
+        """Dữ liệu thật 10.08: người chấm gõ 'thưa' (thiếu dấu huyền) — mẫu
+        fnmatch cũ trượt, chương trình bỏ qua IM LẶNG vì file này là tùy chọn."""
+        f = tmp_path / 'MIS đi thưa 09.08.xlsx'
+        f.write_text('x')
+        assert _tim_file_thua_t2(str(tmp_path), 'di') == [str(f)]
+
+    def test_khong_dau_chu_thuong_van_nhan_ra(self, tmp_path):
+        """Dữ liệu thật 10.08 chiều đến: 'Mis den thua 09.08.xlsx'."""
+        f = tmp_path / 'Mis den thua 09.08.xlsx'
+        f.write_text('x')
+        assert _tim_file_thua_t2(str(tmp_path), 'den') == [str(f)]
+
+    def test_di_va_den_khong_bat_nham_nhau(self, tmp_path):
+        (tmp_path / 'Mis den thua 09.08.xlsx').write_text('x')
+        (tmp_path / 'MIS đi thưa 09.08.xlsx').write_text('x')
+        di  = _tim_file_thua_t2(str(tmp_path), 'di')
+        den = _tim_file_thua_t2(str(tmp_path), 'den')
+        assert len(di) == 1 and 'đi' in os.path.basename(di[0])
+        assert len(den) == 1 and 'den' in os.path.basename(den[0])
+
+    def test_loai_tru_file_bao_cao_t2_ketqua(self, tmp_path):
+        """Bẫy 4.6 — `MIS_DI_THUA_T2_KETQUA_*.csv` là file BÁO CÁO chương trình
+        tự xuất, không bao giờ là input. Trước đây nó khớp mẫu và làm pipeline
+        dừng với 'Có nhiều hơn 1 file MIS_đi thừa T-2'."""
         f = tmp_path / 'MIS_DI_THUA_20260726.csv'
         f.write_text('x')
-        ket_qua = _tim_file_thua_t2(str(tmp_path), ['MIS_DI_THUA*.csv', 'MIS_DI_THUA*.csv'])
-        assert ket_qua == [str(f)]
+        (tmp_path / 'MIS_DI_THUA_T2_KETQUA_20260726.csv').write_text('x')
+        assert _tim_file_thua_t2(str(tmp_path), 'di') == [str(f)]
+
+    def test_bo_qua_file_trong_thu_muc_output(self, tmp_path):
+        out = tmp_path / 'Output'
+        out.mkdir()
+        (out / 'MIS_DI_THUA_20260726.csv').write_text('x')
+        assert _tim_file_thua_t2(str(tmp_path), 'di') == []
 
 
 # ── Dò file GW .xlsx — phân biệt "không tìm thấy" với "tìm thấy nhưng lỗi đọc" ──

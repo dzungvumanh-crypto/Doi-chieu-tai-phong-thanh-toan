@@ -4,7 +4,9 @@ Hàm chính: main_from_dir() — thread-safe, dùng cho Web UI.
 """
 import glob
 import os
+import re
 import time
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
@@ -144,19 +146,45 @@ def _tim_file_ngoai_output(input_dir: str, pattern: str) -> list:
     ]
 
 
-def _tim_file_thua_t2(input_dir: str, patterns: list) -> list:
-    """Điểm 4 (2026-08-03) — dò file MIS thừa T-2 theo NHIỀU pattern: file chương
-    trình tự xuất (`MIS_DI_THUA*.csv`) LẪN file người chấm tự sửa tay rồi lưu lại
-    (`MIS đi thừa*.xlsx`, đúng tên thật Business Owner đang dùng). Bám theo TÊN
-    file, không suy đoán theo nội dung cột — file `OSB đi thừa*.xlsx` (Điểm 2) có
-    cấu trúc cột giống hệt nhưng KHÔNG phải input T-2, chỉ tên file mới phân biệt
-    được chắc chắn."""
-    found, seen = [], set()
-    for pat in patterns:
-        for f in _tim_file_ngoai_output(input_dir, pat):
-            if f not in seen:
-                seen.add(f)
-                found.append(f)
+def _chuan_hoa_ten_file(ten: str) -> str:
+    """Bỏ dấu tiếng Việt, bỏ mọi ký tự không phải chữ/số, về chữ thường.
+    'MIS đi thừa 09.08' / 'MIS đi thưa 09.08' / 'MIS_DI_THUA_20260809' /
+    'Mis den thua 09.08' đều quy về cùng một dạng để so khớp."""
+    kd = unicodedata.normalize('NFD', ten)
+    kd = ''.join(c for c in kd if unicodedata.category(c) != 'Mn')
+    kd = kd.replace('đ', 'd').replace('Đ', 'd')
+    return re.sub(r'[^0-9a-z]', '', kd.lower())
+
+
+# Tiền tố đã chuẩn hoá của file MIS thừa T-2 theo chiều. Giữ tiền tố 'mis' để
+# KHÔNG bắt nhầm 'OSB đi thừa*.xlsx' (Điểm 2) — file đó cấu trúc cột giống hệt
+# nhưng không phải input T-2, chỉ tên file mới phân biệt được chắc chắn.
+_TIEN_TO_THUA_T2 = {'di': 'misdithua', 'den': 'misdenthua'}
+_DUOI_THUA_T2    = ('.csv', '.xlsx')
+
+
+def _tim_file_thua_t2(input_dir: str, chieu: str) -> list:
+    """Điểm 4 (2026-08-03) — dò file MIS thừa T-2, chấp nhận cả file chương trình
+    tự xuất (`MIS_DI_THUA_<ngày>.csv`) lẫn file người chấm tự đặt tên
+    (`MIS đi thừa 09.08.xlsx`).
+
+    2026-08-11 — chuyển từ so khớp `fnmatch` chính xác từng ký tự sang so khớp
+    theo TÊN ĐÃ CHUẨN HOÁ. Lý do: dữ liệu thật ngày 10.08 có `MIS đi thưa
+    09.08.xlsx` (thiếu dấu huyền) và `Mis den thua 09.08.xlsx` (không dấu) —
+    mẫu cũ trượt cả hai, chương trình **bỏ qua im lặng** vì file này là tùy chọn.
+    Người chấm gõ tên tay thì sai dấu là chuyện bình thường.
+
+    Loại trừ `*_T2_KETQUA_*` — đó là file BÁO CÁO chương trình tự xuất, không bao
+    giờ là input (bẫy 4.6 trong docs/BOI-CANH-DU-AN.md)."""
+    tien_to = _TIEN_TO_THUA_T2[chieu]
+    found = []
+    for f in _tim_file_ngoai_output(input_dir, '*'):
+        ten = os.path.basename(f)
+        if not ten.lower().endswith(_DUOI_THUA_T2):
+            continue
+        chuan = _chuan_hoa_ten_file(os.path.splitext(ten)[0])
+        if chuan.startswith(tien_to) and 't2ketqua' not in chuan:
+            found.append(f)
     return sorted(found)
 
 
@@ -833,12 +861,8 @@ def main_from_dir(input_dir: str, output_dir: str,
     # Điểm 4 (tùy chọn) — file MIS thừa T-2 do chương trình tự xuất ra lần chạy
     # trước, đính kèm để đối chiếu chéo ngày. Không có → bỏ qua, không chặn luồng
     # chính (đúng tinh thần file tùy chọn như Điểm 2/QT).
-    mis_di_thua_t2_files  = _tim_file_thua_t2(
-        input_dir, ['MIS_DI_THUA*.csv', 'MIS_DI_THUA*.xlsx', 'MIS đi thừa*.csv', 'MIS đi thừa*.xlsx'],
-    )
-    mis_den_thua_t2_files = _tim_file_thua_t2(
-        input_dir, ['MIS_DEN_THUA*.csv', 'MIS_DEN_THUA*.xlsx', 'MIS đến thừa*.csv', 'MIS đến thừa*.xlsx'],
-    )
+    mis_di_thua_t2_files  = _tim_file_thua_t2(input_dir, 'di')
+    mis_den_thua_t2_files = _tim_file_thua_t2(input_dir, 'den')
     if len(mis_di_thua_t2_files) > 1:
         raise FileNotFoundError(
             f'Có nhiều hơn 1 file MIS_đi thừa T-2 (MIS_DI_THUA*.csv/.xlsx hoặc "MIS đi thừa*") — '

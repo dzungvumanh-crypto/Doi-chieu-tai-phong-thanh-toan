@@ -69,8 +69,10 @@
 
 | # | Việc | Trạng thái |
 |---|---|---|
-| 18 | Tính năng **ghép file "tồn tháng trước"** (`459_TON_Tx.xlsx`) vào GL02 tháng hiện tại — đã có `classify_upload_filename()` loại `'ton'`, `_read_ton_file()`, `_TON_COLS` | **Chưa rõ đã xong hay còn dở** — phải hỏi, không tự đoán |
-| 19 | 3 tháng (5, 6, 7) đã đối chiếu với bản chấm tay — **chờ phản hồi người chấm** | 97–99% khớp |
+| 18 | Tính năng **ghép file "tồn tháng trước"** (`459_TON_Tx.xlsx`) vào GL02 tháng hiện tại | ✅ **Hoàn chỉnh end-to-end** (API + service + frontend + test, xác nhận 2026-08-17) |
+| 19 | 3 tháng (5, 6, 7) đã đối chiếu với bản chấm tay — Hà đã phản hồi 2.416 dòng lệch thật | ✅ **Đã sửa 3 bug + xác nhận bằng `process_zip()` thật cả 3 tháng** (2026-08-18, Implementation-notes.html card 72): khớp tăng 97,47→97,80% (T5), 99,23→99,53% (T6), 98,40→98,57% (T7). Khôi phục thêm `InputError` bị gỡ nhầm |
+| 20b | Phát hiện "Lệnh Đi cướp trước Chuyển chi nhánh/Cân CN" (1.346 dòng) — **đã điều tra kỹ, KHÔNG phải bug** | ✅ **Đóng** — thử đổi thứ tự gây hỏng ngầm 1,2 triệu dòng/tháng (đã đo thật, không áp dụng); Hà xác nhận 2026-08-18 giữ nguyên 7 cửa + 3 khóa ghép hiện tại đúng thiết kế |
+| 21 | **Module 459901 không còn việc tồn** — chỉ còn chờ merge vào `develop` sau này (bản develop rất cũ: 1 file/3 nhóm, phải thay toàn bộ chứ không patch từng phần) | Đã verify multi-file + dữ liệu thật chạy sạch trên `Cham_ILO1000` (2026-08-17) |
 
 ---
 
@@ -78,7 +80,10 @@
 
 | # | Việc | Trạng thái |
 |---|---|---|
-| 20 | PR **#24, #26, #28 đều đã MERGE** ngày 2026-08-10; data test đã dọn, worktree đã gỡ | Có vẻ đã xong — **xác nhận lại** xem còn tồn gì không |
+| 20 | PR **#24, #26, #28 đều đã MERGE** ngày 2026-08-10; data test đã dọn, worktree đã gỡ | Đã xong |
+| 25 | PR `duty/hoan-thien-phan-lich-truc` (commit `e9a705b`) **đã merge `develop`** 2026-08-14 — ô chọn lịch, file Excel bám mẫu thật, T7/CN đi làm, 2 bug cân bằng ca | Đã xong |
+| 26 | 2 luật mềm mới (không trực thứ 6 >1 lần/tháng; Lãnh đạo tối đa 2 ca/tuần) — code + test xong trên worktree `E:\Clause code\TTTT-duty`, nhánh `duty/them-2-luat-can-bang` (commit `7145b63`) | **Chờ bạn duyệt trước khi mở PR lên `develop`** |
+| 27 | Branch local `Cham_ILO1000` từng có ~830 dòng sửa dở CHƯA COMMIT trên `duty_*` — xác nhận là bản LỖI THỜI (trước cả `e9a705b`), đã `git checkout --` bỏ 2026-08-20 | Đã dọn — xem Implementation-notes.html card 73 |
 
 ---
 

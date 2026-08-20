@@ -30,9 +30,56 @@ def _tk_row(ref, dr=0, cr=0, trbrcd='1000', userid='1000API0', remark='',
     }
 
 
-def _hub_row(trace, amount, link):
-    """Hub đi/đến đã ở dạng chuẩn hóa (giống output của _read_hub_di/_read_hub_den)."""
-    return {'AMOUNT': float(amount), 'TRACE': float(trace), 'LINK': link}
+def _hub_row(trace, amount, link, trace2=None):
+    """Hub đi/đến đã ở dạng chuẩn hóa (giống output của _read_hub_di/_read_hub_den).
+    `trace2` chỉ áp dụng cho hub_đến ACH-NAPAS có 2 dãy số trace (xem _trace_candidates)."""
+    return {
+        'AMOUNT': float(amount), 'TRACE': float(trace), 'LINK': link,
+        'TRACE2': float(trace2) if trace2 is not None else float('nan'),
+    }
+
+
+# ── _trace_last9 (chuẩn hóa cột "Số trace" của hub_den) ────────────────────────
+
+class TestTraceLast9:
+    def test_exactly_9_digits_unchanged(self):
+        result = svc._trace_last9(pd.Series(['095864367']))
+        assert result.iloc[0] == 95864367
+
+    def test_two_sequences_takes_first_then_last9(self):
+        result = svc._trace_last9(pd.Series(['095864367;005869323']))
+        assert result.iloc[0] == 95864367
+
+    def test_longer_than_9_digits_truncated_to_last9(self):
+        # '1234567890123' (13 ký tự) -> lấy 9 ký tự cuối -> '567890123'
+        result = svc._trace_last9(pd.Series(['1234567890123']))
+        assert result.iloc[0] == 567890123
+
+    def test_shorter_than_9_digits_kept_as_is(self):
+        result = svc._trace_last9(pd.Series(['12345']))
+        assert result.iloc[0] == 12345
+
+    def test_unparseable_becomes_nan(self):
+        result = svc._trace_last9(pd.Series(['abc']))
+        assert pd.isna(result.iloc[0])
+
+
+class TestTraceCandidates:
+    def test_single_sequence_seg2_is_nan(self):
+        seg1, seg2 = svc._trace_candidates(pd.Series(['095864367']))
+        assert seg1.iloc[0] == 95864367
+        assert pd.isna(seg2.iloc[0])
+
+    def test_two_sequences_both_returned_last9_each(self):
+        """Dữ liệu thật Tháng 5 (ACH-NAPAS): '099419569;009423425' -> seg1=99419569,
+        seg2=9423425 — REFERENCE của TK459 có thể khớp SEG2, không chỉ seg1."""
+        seg1, seg2 = svc._trace_candidates(pd.Series(['099419569;009423425']))
+        assert seg1.iloc[0] == 99419569
+        assert seg2.iloc[0] == 9423425
+
+    def test_trace_last9_is_seg1_only(self):
+        result = svc._trace_last9(pd.Series(['099419569;009423425']))
+        assert result.iloc[0] == 99419569
 
 
 # ── classify_upload_filename ──────────────────────────────────────────────────
@@ -54,6 +101,13 @@ class TestClassifyUploadFilename:
     def test_hub_den(self):
         name = 'Danh_sach_giao_dich_den_202607071050463.xlsx'
         assert svc.classify_upload_filename(name) == 'hub_den'
+
+    def test_ton_file(self):
+        assert svc.classify_upload_filename('459_TON_T6.xlsx') == 'ton'
+
+    def test_ton_file_case_insensitive_and_variant_separators(self):
+        assert svc.classify_upload_filename('459-Ton-T7.xlsx') == 'ton'
+        assert svc.classify_upload_filename('459_ton_t12.XLSX') == 'ton'
 
     def test_unrelated_xlsx_not_recognized(self):
         assert svc.classify_upload_filename('bao_cao_thang_6.xlsx') is None
@@ -101,6 +155,26 @@ class TestMarkCCN:
         df = pd.DataFrame(columns=['DRAMOUNT', 'CRAMOUNT', 'REMARK'])
         mask = svc._mark_ccn(df)
         assert len(mask) == 0
+
+    def test_remark_case_insensitive_pairing(self):
+        """Regression — dữ liệu thật Tháng 5: 2 chân cùng 1 giao dịch Chuyển chi nhánh do 2
+        chi nhánh khác nhau gõ REMARK khác case ('chuyen tien' / 'CHUYEN TIEN') vẫn phải được
+        nhận diện cùng 1 nhóm — trước đây rơi xuống Cân CN và bị ghép nhầm với giao dịch khác
+        trùng số tiền tròn (xem Implementation-notes.html)."""
+        df = pd.DataFrame([
+            _tk_row('REF1', dr=450000000, trbrcd='2122', remark='chuyen tien'),
+            _tk_row('REF2', cr=450000000, trbrcd='3407', remark='CHUYEN TIEN'),
+        ])
+        mask = svc._mark_ccn(df)
+        assert mask.tolist() == [True, True]
+
+    def test_remark_leading_trailing_space_ignored(self):
+        df = pd.DataFrame([
+            _tk_row('REF1', dr=500000, remark=' Chuyen khoan A '),
+            _tk_row('REF2', cr=500000, remark='Chuyen khoan A'),
+        ])
+        mask = svc._mark_ccn(df)
+        assert mask.tolist() == [True, True]
 
 
 # ── _mark_can_cn ───────────────────────────────────────────────────────────────
@@ -232,6 +306,27 @@ class TestMarkKO:
         mask_confirmed, mask_candidate = svc._mark_ko(df)
         assert len(mask_confirmed) == 0 and len(mask_candidate) == 0
 
+    def test_userid_with_ko_substring_not_branch_pattern_not_marked(self):
+        """Regression — dữ liệu thật Tháng 5: USERID 'DTRLTKO' (tên đăng nhập giao dịch viên,
+        'KO' chỉ là hậu tố ngẫu nhiên) từng bị nhận nhầm Điện KO offline dù không phải mã chi
+        nhánh 4 số + 'KO'. Dù CRAMOUNT khớp đúng 1 dòng Nợ có marker Remitting Amount:VND,
+        vẫn KHÔNG được đánh dấu — vì USERID không đúng mẫu."""
+        df = pd.DataFrame([
+            _tk_row('REF1', dr=1000000, remark='Remitting Amount:VND1000000.000'),
+            _tk_row('REF2', cr=1000000, userid='DTRLTKO'),
+        ])
+        mask_confirmed, mask_candidate = svc._mark_ko(df)
+        assert not mask_confirmed.any()
+
+    def test_branch_code_ko_userid_other_than_1000_still_matched(self):
+        """Đối chứng: mã chi nhánh 4 số + 'KO' (VD '3511KO') vẫn phải hoạt động bình thường."""
+        df = pd.DataFrame([
+            _tk_row('REF1', dr=1000000, remark='Remitting Amount:VND1000000.000'),
+            _tk_row('REF2', cr=1000000, userid='3511KO'),
+        ])
+        mask_confirmed, mask_candidate = svc._mark_ko(df)
+        assert mask_confirmed.tolist() == [True, True]
+
 
 # ── _match_hub_1000ht (DK1: khớp hub đi ↔ hub đến) ──────────────────────────────
 
@@ -356,6 +451,35 @@ class TestMark1000HT:
         confirmed = df[mask_confirmed]
         assert confirmed['DRAMOUNT'].sum() == confirmed['CRAMOUNT'].sum() == 250000
         assert mask_confirmed.sum() == 2
+
+    def test_ach_napas_matches_via_second_trace_segment(self):
+        """Regression — dữ liệu thật Tháng 5 (REFERENCE=1000API9423425, chân Có): hub_đến
+        ACH-NAPAS có 'Số trace' 2 dãy số ('099419569;009423425') -> seg1=99419569,
+        seg2=9423425. REFERENCE[7:] của chân Có chỉ khớp SEG2, không khớp seg1 — trước đây bị
+        bỏ sót hoàn toàn (rơi vào GD khác không cả candidate). Nay phải được xác nhận 1000HT."""
+        df = pd.DataFrame([
+            _tk_row('1000API0006922690', dr=500000),   # chân Nợ, khớp hub_di TRACE=6922690
+            _tk_row('1000API9423425', cr=500000),       # chân Có, REFERENCE[7:]=9423425 = seg2
+        ])
+        hub_di  = pd.DataFrame([_hub_row(6922690, 500000, 'LINK_ACH')])
+        hub_den = pd.DataFrame([_hub_row(99419569, 500000, 'LINK_ACH', trace2=9423425)])
+
+        mask_confirmed, mask_candidate = svc._mark_1000ht(df, hub_di, hub_den)
+        assert mask_confirmed.tolist() == [True, True]
+        assert not mask_candidate.any()
+
+    def test_ach_napas_first_segment_match_still_works(self):
+        """Regression đối chứng: dòng khớp qua SEG1 (như trước khi có sửa) vẫn phải hoạt động
+        — không được để việc thêm khớp seg2 làm vỡ 49/97 dòng đang khớp đúng qua seg1."""
+        df = pd.DataFrame([
+            _tk_row('1000API0006922690', dr=500000),
+            _tk_row('1000API0099419569', cr=500000),   # REFERENCE[7:] -> 99419569 (= seg1)
+        ])
+        hub_di  = pd.DataFrame([_hub_row(6922690, 500000, 'LINK_ACH')])
+        hub_den = pd.DataFrame([_hub_row(99419569, 500000, 'LINK_ACH', trace2=9423425)])
+
+        mask_confirmed, mask_candidate = svc._mark_1000ht(df, hub_di, hub_den)
+        assert mask_confirmed.tolist() == [True, True]
 
 
 # ── _classify — tích hợp toàn bộ waterfall ──────────────────────────────────────
@@ -565,6 +689,64 @@ def _gl02_row(ref, dr='0', cr='0', locac='459901', customer='1000-000007709', cc
     }
 
 
+def _make_ton_xlsx(rows: list[dict]) -> bytes:
+    """Đóng gói xlsx giống định dạng file '459_TON_Tx.xlsx' thật (header ngay dòng 1,
+    có thêm 3 cột ghi chú thủ công 'chấm'/'Phong ban'/'refhub' mà _read_ton_file phải bỏ)."""
+    cols = ['TRDATE', 'TRBRCD', 'USERID', 'JOURSEQ', 'DYTRSEQ', 'LOCAC', 'CCY',
+            'BUSCD', 'UNIT', 'TRCD', 'CUSTOMER', 'TRTP', 'REFERENCE', 'REMARK',
+            'DRAMOUNT', 'CRAMOUNT', 'chấm', 'Phong ban', 'refhub']
+    df = pd.DataFrame(rows)[cols]
+    buf = io.BytesIO()
+    df.to_excel(buf, index=False, engine='openpyxl')
+    return buf.getvalue()
+
+
+def _ton_row(ref, dr=0, cr=0, trdate=20260601, trbrcd=1000, journseq=1, dytrseq=1,
+             locac=459901, customer='1000-000007709', ccy='VND', remark=''):
+    return {
+        'TRDATE': trdate, 'TRBRCD': trbrcd, 'USERID': '1000API1', 'JOURSEQ': journseq,
+        'DYTRSEQ': dytrseq, 'LOCAC': locac, 'CCY': ccy, 'BUSCD': 'EI', 'UNIT': 'AP',
+        'TRCD': None, 'CUSTOMER': customer, 'TRTP': 'Normal', 'REFERENCE': ref,
+        'REMARK': remark, 'DRAMOUNT': dr, 'CRAMOUNT': cr,
+        'chấm': None, 'Phong ban': 'TTTT', 'refhub': None,
+    }
+
+
+class TestReadTonFile:
+    def test_reads_16_common_columns_only(self):
+        xlsx_bytes = _make_ton_xlsx([_ton_row('REF1', dr=100000)])
+        df = svc._read_ton_file(xlsx_bytes)
+        assert list(df.columns) == svc._TON_COLS
+        assert 'refhub' not in df.columns
+
+    def test_integer_columns_no_dot_zero_suffix(self):
+        xlsx_bytes = _make_ton_xlsx([_ton_row('REF1', dr=100000, trdate=20251231)])
+        df = svc._read_ton_file(xlsx_bytes)
+        assert df.iloc[0]['TRDATE'] == '20251231'
+
+    def test_amounts_numeric(self):
+        xlsx_bytes = _make_ton_xlsx([_ton_row('REF1', dr=100000, cr=0)])
+        df = svc._read_ton_file(xlsx_bytes)
+        assert df.iloc[0]['DRAMOUNT'] == 100000.0
+        assert isinstance(df.iloc[0]['DRAMOUNT'], float)
+
+    def test_filters_by_locac_customer_ccy(self):
+        xlsx_bytes = _make_ton_xlsx([
+            _ton_row('REF1', dr=100000),                     # khớp filter
+            _ton_row('REF2', dr=200000, locac=999999),       # sai LOCAC -> bị lọc
+            _ton_row('REF3', dr=300000, customer='khac'),    # sai CUSTOMER -> bị lọc
+            _ton_row('REF4', dr=400000, ccy='USD'),          # sai CCY -> bị lọc
+        ])
+        df = svc._read_ton_file(xlsx_bytes)
+        assert len(df) == 1
+        assert df.iloc[0]['REFERENCE'] == 'REF1'
+
+    def test_blank_trcd_becomes_empty_string_not_none_literal(self):
+        xlsx_bytes = _make_ton_xlsx([_ton_row('REF1', dr=100000)])
+        df = svc._read_ton_file(xlsx_bytes)
+        assert df.iloc[0]['TRCD'] == ''
+
+
 class TestLoadData:
     def test_filters_by_locac_customer_ccy(self):
         zip_bytes = _make_gl02_zip([
@@ -585,14 +767,53 @@ class TestLoadData:
         assert isinstance(df.iloc[0]['DRAMOUNT'], float)
 
     def test_wrong_password_raises(self):
-        """File zip không đúng mật khẩu GL02 phải báo lỗi rõ ràng, không âm thầm trả rỗng."""
+        """File zip không đúng mật khẩu GL02 phải báo lỗi rõ ràng (InputError), không âm thầm
+        trả rỗng và không lộ lỗi hệ thống chung chung."""
         buf = io.BytesIO()
         with pyzipper.AESZipFile(buf, 'w', compression=pyzipper.ZIP_DEFLATED,
                                   encryption=pyzipper.WZ_AES) as zf:
             zf.setpassword(b'sai-mat-khau')
             zf.writestr('data.csv', 'a,b\n1,2\n')
-        with pytest.raises(Exception):
+        with pytest.raises(svc.InputError, match='mật khẩu'):
             svc._load_data(buf.getvalue())
+
+    def test_not_a_zip_file_raises_input_error(self):
+        with pytest.raises(svc.InputError, match=r'\.zip hợp lệ'):
+            svc._load_data(b'day khong phai file zip')
+
+    def test_zip_without_csv_raises_input_error(self):
+        buf = io.BytesIO()
+        with pyzipper.AESZipFile(buf, 'w', compression=pyzipper.ZIP_DEFLATED,
+                                  encryption=pyzipper.WZ_AES) as zf:
+            zf.setpassword(svc.ZIP_PASSWORD)
+            zf.writestr('readme.txt', 'khong co file csv nao')
+        with pytest.raises(svc.InputError, match='csv'):
+            svc._load_data(buf.getvalue())
+
+    def test_missing_required_column_raises_input_error(self):
+        buf = io.BytesIO()
+        with pyzipper.AESZipFile(buf, 'w', compression=pyzipper.ZIP_DEFLATED,
+                                  encryption=pyzipper.WZ_AES) as zf:
+            zf.setpassword(svc.ZIP_PASSWORD)
+            # thiếu cột CCY và DRAMOUNT bắt buộc
+            zf.writestr('data.csv', 'LOCAC,CUSTOMER,REMARK,CRAMOUNT\n459901,1000-000007709,x,0\n')
+        with pytest.raises(svc.InputError, match='CCY') as exc_info:
+            svc._load_data(buf.getvalue())
+        assert 'DRAMOUNT' in str(exc_info.value)
+
+
+class TestRunProcessInputError:
+    def test_input_error_stored_as_friendly_message_not_generic_500(self, tmp_path, monkeypatch):
+        """run_process phải bắt InputError TRƯỚC nhánh Exception chung — người dùng thấy đúng
+        lý do (file sai), không phải 'Lỗi xử lý — xem log server'."""
+        monkeypatch.setattr(svc, 'TEMP_DIR', tmp_path)
+        token = svc.init_progress()
+        svc.run_process(b'day khong phai file zip', token)
+        prog = svc.get_progress(token)
+        assert prog['done'] is True
+        assert prog['error'] is not None
+        assert 'xem log server' not in prog['msg']
+        assert '.zip hợp lệ' in prog['msg']
 
 
 # ── process_zip — bytes rỗng (b'') phải được coi là "có cung cấp" chứ không phải
@@ -612,3 +833,31 @@ class TestProcessZipHubBytesEdgeCase:
         result = svc.process_zip(zip_bytes, hub_di_bytes=None, hub_den_bytes=None)
         assert result['hub_provided'] is False
         assert result['ht1000_rows'] == 0
+
+
+# ── process_zip — ghép file tồn tháng trước (ton_bytes) trước khi phân loại ────
+
+def _group_row_sum(result: dict) -> int:
+    return (result['huy_rows'] + result['di_rows'] + result['ht1000_rows']
+            + result['ccn_rows'] + result['ko_rows'] + result['can_cn_rows']
+            + result['khac_rows'])
+
+
+class TestProcessZipTonFile:
+    def test_ton_rows_added_and_included_in_classification(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(svc, 'TEMP_DIR', tmp_path)
+        zip_bytes = _make_gl02_zip([_gl02_row('REF1', dr='100000')])
+        ton_bytes = _make_ton_xlsx([_ton_row('TONREF1', dr=50000, remark='tồn cũ')])
+
+        result = svc.process_zip(zip_bytes, ton_bytes=ton_bytes)
+        assert result['ton_rows_added'] == 1
+        # 1 dòng GL02 + 1 dòng tồn -> cả 2 phải được phân loại (bảo toàn dòng)
+        assert _group_row_sum(result) == 2
+
+    def test_missing_ton_bytes_behaves_like_before(self, tmp_path, monkeypatch):
+        """Bước 2 trong yêu cầu: không có file tồn -> chạy y hệt trước khi có tham số mới."""
+        monkeypatch.setattr(svc, 'TEMP_DIR', tmp_path)
+        zip_bytes = _make_gl02_zip([_gl02_row('REF1', dr='100000')])
+        result = svc.process_zip(zip_bytes)
+        assert result['ton_rows_added'] == 0
+        assert _group_row_sum(result) == 1

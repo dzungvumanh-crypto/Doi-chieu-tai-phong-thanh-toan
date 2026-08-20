@@ -33,7 +33,7 @@ async def process(
     """Nhận nhiều file cùng lúc (kéo-thả tự do) — tự nhận diện GL02*.zip + 2 file HUB đi/đến
     theo tên file, không cần đúng thứ tự/ô riêng. Thiếu CẢ 2 file HUB → bỏ qua bước
     1000 Hoàn trả. Trả task_token ngay, xử lý nền."""
-    by_kind: dict[str, list[str]] = {"zip": [], "hub_di": [], "hub_den": []}
+    by_kind: dict[str, list[str]] = {"zip": [], "hub_di": [], "hub_den": [], "ton": []}
     bytes_by_kind: dict[str, bytes] = {}
     unrecognized: list[str] = []
 
@@ -54,12 +54,13 @@ async def process(
 
     hub_di_bytes  = bytes_by_kind.get("hub_di")
     hub_den_bytes = bytes_by_kind.get("hub_den")
+    ton_bytes     = bytes_by_kind.get("ton")
     hub_partial = (hub_di_bytes is None) != (hub_den_bytes is None)  # có đúng 1/2 file HUB
 
     task_token = cham459901_service.init_progress()
     background_tasks.add_task(
         cham459901_service.run_process, bytes_by_kind["zip"], task_token,
-        hub_di_bytes, hub_den_bytes,
+        hub_di_bytes, hub_den_bytes, ton_bytes,
     )
     return {
         "task_token":   task_token,

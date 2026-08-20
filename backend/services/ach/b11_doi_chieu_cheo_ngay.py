@@ -3,6 +3,7 @@ import pandas as pd
 from .b4_xu_ly_mis_di import _chuan_hoa_co_ban, _them_cot_khoa
 from .b5_doi_chieu_di import _doi_chieu
 from .osb_common import la_lenh_osb_di, la_lenh_osb_den
+from .so_tien import doc_so_tien
 
 GHI_CHU_T2 = 'Hạch toán lệnh ngày T-2'
 
@@ -46,6 +47,14 @@ def _doc_file_thua_t2(path: str, cols_bat_buoc: list, nhan: str) -> pd.DataFrame
     missing = [c for c in cols_bat_buoc if c not in df.columns]
     if missing:
         raise ValueError(f'File {nhan} T-2 thiếu cột {missing} — có thể bị sửa cấu trúc: {path}')
+
+    # ── Chuẩn hoá SO_TIEN ngay tại ranh giới đọc file (2026-08-11) ──
+    # Cột này có thể mang định dạng ngăn nghìn ('180.000') tuỳ nguồn xuất và tuỳ
+    # người chấm có mở ra sửa hay không. Xử lý ở đây để mọi nhánh phía sau
+    # (`_chuan_hoa_co_ban()` chiều đi, `_them_key_den_hub_tu_thua()` chiều đến)
+    # nhận được chuỗi số thuần như cũ — KHÔNG đụng vào `b4`/`b6` của luồng chính.
+    df = df.copy()
+    df['SO_TIEN'] = doc_so_tien(df['SO_TIEN'], f'{nhan} T-2: {path}', ten_cot='SO_TIEN').astype(str)
     return df
 
 

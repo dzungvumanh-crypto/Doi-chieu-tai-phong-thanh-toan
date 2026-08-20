@@ -6016,7 +6016,6 @@ Bất biến MIS: 522.774 + 36.462 = 559.236 (khớp tổng gốc)</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-07-31</footer>
       <span class="card-title">Extension CITAD đọc sai số tiền có phần thập phân — và vì sao chỉ merge nửa PR #17</span>
       <span class="badge badge-done">Đã làm</span>
     </div>
@@ -6072,7 +6071,708 @@ Bất biến MIS: 522.774 + 36.462 = 559.236 (khớp tổng gốc)</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-05</footer>
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">66</span>
+      <span class="card-title">Chấm 459901 — chuẩn hoá Trace hub_den + ghép "tồn" tháng trước — ĐÃ CODE, ĐÃ TEST, ĐÃ VERIFY DỮ LIỆU THẬT</span>
+      <span class="badge badge-done">85/85 test module 459901 PASS (10 test mới) — verify pipeline thật Tháng 7 + 459_TON_T6.xlsx, bảo toàn dòng khớp tuyệt đối</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh</div>
+      <p>Sau khi chạy pipeline thật trên dữ liệu Tháng 7 và đối chiếu với bản chấm tay (98,03% khớp trên
+        4 nhóm có golden — xem <code>BaoCao_DoiChieu.md</code> tại
+        <code>G:\NGOC HA\459 file chấm gửi a Dũng\Tháng 7\Dữ liệu chấm\</code>), người chấm phản hồi 3 điểm.
+        2 điểm code được, 1 điểm không — quyết định rõ ràng khi hỏi lại, tránh viết logic chỉ đúng với 8 dòng
+        mẫu quan sát được (đúng nguyên tắc SKILL.md).</p>
+
+      <div class="label">1. Chuẩn hoá cột "Số trace" trong <code>_read_hub_den</code></div>
+      <p>Tách hàm <code>_trace_last9(raw: pd.Series)</code>: giữ nguyên bước lấy dãy số đầu tiên (trước
+        <code>;</code>), thêm bước lấy 9 ký tự cuối trước khi convert numeric — phòng trường hợp tháng khác
+        có trace dài hơn 9 số. Verify với dữ liệu Tháng 7 thật: toàn bộ 22.414 dòng "Số trace" vốn đã đúng 9
+        số/dòng → thay đổi này <b>không đổi kết quả tháng 7</b>, chỉ là rào chắn cho các tháng sau.</p>
+
+      <div class="label">2. Ghép "tồn" tháng T-1 vào dữ liệu tháng T trước khi phân loại lại</div>
+      <p>Hàm mới <code>_read_ton_file()</code> đọc file <code>459_TON_T&lt;n&gt;.xlsx</code> (mẫu thật đã có:
+        364 dòng, TRDATE trải dài từ 12/2025 — xác nhận đây là backlog GD khác dồn tích nhiều tháng do người
+        chấm tự quản lý thủ công). File có 19 cột, 16 cột đầu trùng schema GL02 gốc; 3 cột ghi chú thủ công
+        (<code>chấm</code>/<code>Phong ban</code>/<code>refhub</code>) bị bỏ theo xác nhận của người dùng —
+        chỉ ghép 16 cột chung vào pool, phân loại lại từ đầu (Huỷ → Đi → ... → GD khác) y hệt dòng tháng mới.
+        <code>process_zip()</code> nhận thêm <code>ton_bytes: bytes | None = None</code> — thiếu file tồn thì
+        chạy y hệt trước (đúng yêu cầu Bước 2). Nhận diện file qua tên: chứa <code>459</code> và
+        <code>ton</code> (không phân biệt hoa/thường) trong <code>classify_upload_filename()</code>.</p>
+      <p><b>Bẫy dtype khi đọc Excel</b>: cột số nguyên (TRDATE, TRBRCD...) đọc qua <code>pd.read_excel</code>
+        có thể ra <code>float64</code>/<code>Int64</code>; <code>.astype(str)</code> trực tiếp trên Series
+        toàn <code>NaN</code>/<code>pd.NA</code> cho kết quả không ổn định giữa các phiên bản pandas (có lúc
+        trả về float <code>nan</code> thay vì chuỗi rỗng, phát hiện qua test fail thật, không phải đoán) — sửa
+        bằng <code>.map()</code> tường minh (<code>'' if pd.isna(v) else str(int(v))</code>) thay vì
+        <code>.astype(str)</code> chuỗi lệnh, tránh phụ thuộc hành vi ngầm của dtype "string" mới trong pandas.</p>
+      <p><b>Verify dữ liệu thật</b>: chạy lại Tháng 7 + <code>459_TON_T6.xlsx</code> thật (363/364 dòng qua
+        filter) — bảo toàn dòng tuyệt đối: 1.354.541 (GL02 tháng 7) + 363 (tồn) = 1.354.904 = tổng 7 nhóm sau
+        phân loại. So với lần chạy không có tồn: GD khác giảm 969 → 640 dòng — nhiều giao dịch tồn cũ tìm được
+        đối tác (HUB/lệnh huỷ) trong dữ liệu tháng 7 mới và được phân loại lại thành công, đúng mục đích thiết
+        kế. Elapsed ~380s cho 5,17 triệu dòng gốc.</p>
+
+      <div class="label">3. "GD chỉ có ở chương trình, không có ở người chấm" — KHÔNG CODE</div>
+      <p>Phát hiện qua đối chiếu: 8 dòng chương trình xếp KO/Cân CN nhưng không có trong bản chấm tay (7/8
+        ngày cuối tháng 31/07). Hỏi lại người dùng quy tắc cụ thể để code tự động nhận diện "GD tồn của
+        tháng" — trả lời: <b>không có quy tắc ngày/điều kiện cố định</b>, đây là quyết định thủ công của
+        người chấm theo từng hồ sơ. Không code gì cho mục này — chỉ ghi nhận quy trình vận hành: người chấm tự
+        tay chuyển các dòng này sang GD khác khi rà soát, rồi đưa vào file <code>459_TON_T&lt;tháng&gt;.xlsx</code>
+        cho lần chạy tháng sau (dùng đúng cơ chế mục 2).</p>
+
+      <div class="label">Files sửa</div>
+      <ul>
+        <li><code>backend/services/cham459901_service.py</code>: <code>_trace_last9()</code>,
+          <code>_read_ton_file()</code>, <code>_TON_COLS</code>/<code>_TON_STR_COLS</code>,
+          <code>process_zip()</code>/<code>run_process()</code> thêm <code>ton_bytes</code>,
+          <code>classify_upload_filename()</code> thêm loại <code>'ton'</code>.</li>
+        <li><code>backend/api/cham459901.py</code>: <code>by_kind</code> thêm khoá <code>"ton"</code>, forward
+          <code>ton_bytes</code> xuống <code>run_process</code>.</li>
+        <li><code>frontend/pages/cham_459901.py</code>: nhãn "Tồn tháng trước", hiển thị số dòng đã gộp khi
+          <code>ton_rows_added &gt; 0</code>.</li>
+        <li><code>tests/test_cham459901_algorithm.py</code>: <code>TestTraceLast9</code>,
+          <code>TestReadTonFile</code>, <code>TestProcessZipTonFile</code>, test nhận diện tên file
+          <code>'ton'</code> — 10 test mới, tổng 85/85 PASS.</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- 67 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">67</span>
+      <span class="card-title">Phân lịch trực — viết lại thuật toán chọn người ca ngày thường / thứ 6</span>
+      <span class="badge badge-done">done · 2026-08-07</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Yêu cầu nghiệp vụ (Business Owner)</div>
+      <ul>
+        <li>Mỗi ca trực bắt buộc <b>1 Lãnh đạo + 2 nhân viên</b> — không hơn không kém.</li>
+        <li>Trong ca chỉ <b>đúng 1 người xử lý song phương</b>, có thể là Lãnh đạo hoặc nhân viên.</li>
+        <li>Hai chỗ còn lại chọn <b>ngẫu nhiên</b> trong những người không đi dự án.</li>
+        <li>Riêng <b>thứ 6 luân phiên</b> (tất định), vẫn phải đảm bảo có 1 người song phương.</li>
+      </ul>
+
+      <div class="label">Trước / sau</div>
+      <table>
+        <tr><th>Tiêu chí</th><th>Trước</th><th>Sau</th></tr>
+        <tr>
+          <td>Số người mỗi ca</td>
+          <td>Đọc <code>duty_shift_config.nv_count</code> (1–5); thiếu người vẫn sinh ca lặng lẽ</td>
+          <td>Hằng số <code>SHIFT_MEMBER_COUNT = 2</code> — cứng 1 LD + 2 NV. Thiếu người thì sinh cảnh báo <code>not_enough_staff</code></td>
+        </tr>
+        <tr>
+          <td>Ràng buộc song phương</td>
+          <td><code>_pick_nvs_prefer_non_sp()</code> — chỉ <b>ưu tiên</b> tránh 2 người SP cùng ca (mềm)</td>
+          <td><code>_compose_exact_one_sp()</code> — <b>bắt buộc</b> đúng 1 người SP; không thoả thì rơi sang best-effort + cảnh báo</td>
+        </tr>
+        <tr>
+          <td>Chọn người</td>
+          <td>Tất định theo khoá <code>(shift_count, lệch-thứ, last_used, position, id)</code></td>
+          <td>Ngày thường: bốc <b>ngẫu nhiên trong nhóm ít ca nhất</b>. Thứ 6: giữ nguyên tất định</td>
+        </tr>
+        <tr>
+          <td>Cờ song phương của Lãnh đạo</td>
+          <td>2 cờ song song: NV dùng <code>can_do_sp</code>, LD dùng <code>is_sp_backup</code></td>
+          <td>Thống nhất 1 cờ <code>can_do_sp</code> cho cả LD và NV</td>
+        </tr>
+        <tr>
+          <td>Ghi vòng xoay</td>
+          <td>Ghi ngay khi chọn từng vai trò</td>
+          <td>Ghi <b>sau khi chốt tổ hợp</b> — ứng viên bị loại trong lúc thử không bị cộng số ca</td>
+        </tr>
+      </table>
+
+      <div class="label">Phản biện đã nêu với BO — "ngẫu nhiên thuần" bị từ chối</div>
+      <p>Random đều trên toàn pool gây 4 hậu quả: (a) ~20 ngày trực / ~10 nhân viên vẫn cho ra người 7 ca
+        người 1 ca; (b) chạy lại ra kết quả khác nên không giải thích được với nhân sự; (c) làm hỏng cơ chế
+        <code>get_week_assignees()</code> tránh trực 2 lần/tuần; (d) thứ 6 luân phiên không bù được lệch của
+        ngày thường vì đếm ca ở kênh riêng. BO chốt phương án <b>ngẫu nhiên trong nhóm ít ca nhất</b> —
+        không đoán trước được nhưng vẫn cân bằng.</p>
+
+      <div class="label">Backtracking 1 tầng khi chọn Lãnh đạo</div>
+      <p>Ràng buộc "đúng 1 SP" khiến việc chọn LD và chọn NV không độc lập: LD được chọn có
+        <code>can_do_sp=1</code> thì 2 nhân viên còn lại <b>bắt buộc</b> non-SP; LD non-SP thì cần <b>1</b>
+        nhân viên SP + <b>1</b> non-SP. Nếu chốt LD trước rồi mới xếp NV thì dễ vào ngõ cụt.
+        <code>_compose_exact_one_sp()</code> duyệt LD theo đúng thứ tự vòng xoay và lấy LD <b>đầu tiên</b>
+        xếp được ca hợp lệ — trung lập, không thiên vị LD biết SP hay không biết SP.</p>
+
+      <div class="label">Khi không thoả được — ưu tiên đủ người</div>
+      <table>
+        <tr><th>Tình huống</th><th>Hành vi</th><th><code>sp_warning</code></th></tr>
+        <tr><td>Pool còn lại toàn người biết SP</td><td>Vẫn xếp đủ 3 người</td><td><code>multi_sp</code> (mới)</td></tr>
+        <tr><td>Không ai trong ca biết SP</td><td>Vẫn xếp đủ 3 người</td><td><code>no_sp</code></td></tr>
+        <tr><td>Lãnh đạo kiêm SP</td><td>Không gán <code>sp_id</code> riêng</td><td><code>leader_sp</code></td></tr>
+        <tr><td>Pool &lt; 3 người khả dụng</td><td>Xếp hết những gì có</td><td>—, kèm warning <code>not_enough_staff</code></td></tr>
+      </table>
+      <div class="note">Quyết định của BO: <b>đủ 3 người quan trọng hơn giữ đúng 1 SP</b>. Ca đỏ có cảnh báo
+        vẫn hữu ích hơn ca trống — người phân lịch nhìn thấy và tự điều người.</div>
+
+      <div class="label">Migration cờ <code>is_sp_backup</code></div>
+      <p>Chạy <code>UPDATE duty_staff_meta SET can_do_sp = 1 WHERE is_sp_backup = 1 AND can_do_sp = 0</code>
+        để Lãnh đạo đang được đánh dấu "Backup SP" không mất khả năng trực song phương sau khi đổi mô hình.
+        <b>Cột <code>is_sp_backup</code> giữ lại trong DB, không DROP</b> — SQLite drop column rủi ro và cột
+        vẫn là dấu vết dữ liệu cũ; engine/API/UI đã ngừng đọc.</p>
+
+      <div class="label">Tính tái lập cho test</div>
+      <p><code>generate_schedule()</code> / <code>generate_schedule_for_week()</code> nhận thêm tham số
+        <code>seed</code> tạo <code>random.Random(seed)</code>. Production luôn để <code>None</code>
+        (ngẫu nhiên thật); test truyền seed cố định để khẳng định hành vi.</p>
+
+      <div class="label">Phạm vi KHÔNG đổi</div>
+      <p>Ca <b>cut-off</b> và <b>quyết toán</b> giữ nguyên logic cũ (ca chính + ca phụ, số người theo
+        <code>nv_count</code>) — chỉ đổi cờ đọc từ <code>is_sp_backup</code> sang <code>can_do_sp</code>.</p>
+
+      <div class="label">Bảng lịch tuần — rút từ 6 cột xuống 3 (yêu cầu BO)</div>
+      <table>
+        <tr><th>Trước</th><th>Sau</th></tr>
+        <tr>
+          <td>6 cột: Ngày · Loại ca · Lãnh đạo · Song Phương · Nhân viên · Trạng thái.
+            Chỉ render những ca đã sinh — tuần chưa có lịch thì bảng biến mất, thay bằng một dòng chữ.</td>
+          <td>3 cột: <b>Ngày trực · Nhân viên · Lãnh đạo</b>. Luôn dựng đủ <b>5 hàng Thứ Hai→Thứ Sáu</b>,
+            ngày chưa có ca hiện <code>—</code>. Ngày hiển thị kèm tên thứ (thay cột "Loại ca" đã bỏ).</td>
+        </tr>
+      </table>
+      <p>Bỏ cột "Song Phương" làm mất chỗ hiển thị vai trò song phương và 2 cảnh báo vừa xây, nên người giữ
+        vai SP được đánh dấu hậu tố <code>(SP)</code> xanh ngay cạnh tên — ở cột Nhân viên hoặc cột Lãnh đạo
+        tuỳ ai giữ. Cảnh báo <code>no_sp</code> / <code>multi_sp</code> thành một dòng đỏ trong ô Nhân viên.
+        Nhiều ca cùng ngày (quyết toán chính + phụ) gộp chung một hàng.</p>
+      <p>Cột <b>Trạng thái</b> bỏ khỏi bảng, thông tin chuyển lên <b>tiêu đề tuần</b> (BO chốt):
+        <code>— chưa có lịch</code> (xám) · <code>— bản thảo</code> (cam) ·
+        <code>— đã xác nhận n/m ca</code> (cam) · <code>— đã xác nhận</code> (xanh).
+        <code>week_label</code> đổi từ <code>ui.label</code> sang <code>ui.html</code> để nhuộm màu, và
+        được set <b>hai lần</b>: ngay khi đổi tuần (chỉ tên tuần, tránh treo nhãn cũ trong lúc chờ API) rồi
+        set lại kèm trạng thái sau khi có dữ liệu.</p>
+      <div class="note"><b>Backlog — gỡ nhãn <code>(SP)</code> khi chốt chương trình.</b> BO xác nhận nhãn
+        này chỉ phục vụ giai đoạn đang phân lịch trực; khi chương trình hoàn thiện thì bỏ khỏi bảng.
+        Điểm sửa duy nhất: <code>_ten_kem_sp()</code> trong <code>frontend/pages/duty_schedule.py</code>
+        — trả thẳng tên là xong. Hai dòng cảnh báo <code>no_sp</code>/<code>multi_sp</code> nên giữ.</div>
+      <p>Dọn theo: <code>_SHIFT_TYPE_LABEL</code> và import <code>ui_kit</code> thành dead code sau khi bỏ
+        cột "Loại ca" và "Trạng thái" — đã xoá.</p>
+
+      <div class="label">Đã kiểm trên UI thật (click-through, không phải chỉ chạy test)</div>
+      <table>
+        <tr><th>Trường hợp</th><th>Kết quả</th></tr>
+        <tr><td>Tab Nhân viên</td><td>Chỉ còn 2 checkbox "Làm SP" / "Dự án"; ô "Làm SP" của Trưởng phòng nay bật được</td></tr>
+        <tr><td>Tuần chưa có lịch</td><td>Bảng vẫn đủ 5 hàng T2→T6, các ô hiện <code>—</code></td></tr>
+        <tr><td>Pool đầy đủ</td><td>5/5 ca đều 1 LD + 2 NV, đúng 1 người mang nhãn (SP)</td></tr>
+        <tr><td>Pool còn lại toàn người làm SP</td><td>Vẫn đủ 3 người + dòng đỏ "⚠ Ca có 2 người song phương"</td></tr>
+        <tr><td>Không ai làm SP</td><td>Vẫn đủ 3 người + dòng đỏ "Thiếu người song phương!"</td></tr>
+        <tr><td>Trạng thái trên tiêu đề</td><td>4/4 đúng: chưa có lịch → bản thảo → đã xác nhận 2/5 ca → đã xác nhận (bấm nút "Xác nhận tuần" thật)</td></tr>
+      </table>
+      <p><b>Chạy bản kiểm trên cổng riêng 8001/8091</b> vì cổng 8000/8080 đang là phiên làm việc ACH khác.
+        <code>.env</code> dùng <code>load_dotenv(override=True)</code> nên biến môi trường
+        <code>FRONTEND_PORT</code> đặt từ shell bị kéo ngược về 8080 — phải nạp <code>.env</code> thủ công
+        bằng <code>dotenv_values()</code>, ghi đè cổng, rồi vô hiệu hoá <code>load_dotenv</code> trước khi
+        <code>runpy</code> chạy <code>frontend/main.py</code>.</p>
+      <div class="note">Máy dev thiếu <code>STORAGE_SECRET</code> trong <code>.env</code> nên
+        <code>frontend/main.py</code> không khởi động được — đặt biến tạm cho phiên kiểm, không sửa
+        <code>.env</code>. Data test (1 admin tạm + 2 LD + 6 NV phòng PAYMENT) đã xoá sạch, đối chiếu
+        từng bảng với bản backup DB chụp trước khi test.</div>
+
+      <div class="label">Vấn đề còn tồn — chưa fix</div>
+      <table>
+        <tr><th>Vấn đề</th><th>Ghi chú</th></tr>
+        <tr>
+          <td>35 endpoint <code>duty_*</code> chỉ dùng <code>Depends(get_current_staff)</code>, không dùng
+            <code>require_feature</code></td>
+          <td>Feature codes <code>duty.generate/confirm/delete/...</code> đã có nhưng chỉ ẩn nút ở frontend.
+            Bất kỳ ai đăng nhập vẫn gọi thẳng API xoá được cả tuần lịch đã xác nhận. 17 module API khác đều
+            đã enforce — duty là nhóm duy nhất chưa.</td>
+        </tr>
+        <tr>
+          <td><code>duty_shift_config.nv_count</code> không còn tác dụng với ca ngày thường / thứ 6</td>
+          <td>Vẫn dùng cho cut-off / quyết toán. UI cấu hình chưa ghi chú điều này.</td>
+        </tr>
+      </table>
+
+      <div class="label">Files sửa</div>
+      <ul>
+        <li><code>backend/services/duty_scheduler_engine.py</code> — thêm <code>SHIFT_MEMBER_COUNT</code>,
+          <code>_rank_candidates()</code>, <code>_order_pool()</code>, <code>_compose_exact_one_sp()</code>,
+          <code>_compose_best_effort()</code>; viết lại <code>_generate_normal_or_friday()</code>;
+          luồng <code>rng</code> xuyên <code>_process_day()</code> → 2 entry point.</li>
+        <li><code>backend/services/duty_staff_service.py</code>, <code>backend/schemas/duty.py</code>,
+          <code>backend/api/duty_staff.py</code> — gỡ <code>is_sp_backup</code>.</li>
+        <li><code>backend/db/migrations.py</code> — migration chuyển cờ.</li>
+        <li><code>frontend/pages/duty_schedule.py</code> — bỏ cột "Backup SP", thêm hiển thị
+          cảnh báo <code>multi_sp</code>.</li>
+        <li><code>tests/test_duty_scheduler_algorithm.py</code> — <b>mới</b>, 19 test (module này trước đó
+          không có test nào).</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- 68 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">68</span>
+      <span class="card-title">ACH — báo cáo KẾT QUẢ đối chiếu MIS thừa T-2 + viết lại sheet TONG_KET theo mẫu nghiệp vụ</span>
+      <span class="badge badge-done">ĐÃ COMMIT 3cfa612 · verify dữ liệu thật 03.08 khớp tuyệt đối với file mẫu</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh</div>
+      <p>Business Owner cung cấp 2 tài liệu nghiệp vụ trong ngày 2026-08-07:
+        <code>NGUYEN TAC DOI CHIEU DIEN MIS THUA NGAY T-1.docx</code> và file mẫu
+        <code>Copy of chinh sua man hinh tong hop doi chieu ACH hang ngay.xlsx</code>. Mục 63 đã làm phần
+        <i>đối chiếu chéo</i> MIS thừa T-2 ⟷ NPO thừa T-1; phần còn thiếu là <b>kết luận</b> trên từng dòng và
+        một sheet TONG_KET đọc được theo đúng thói quen người chấm.</p>
+
+      <div class="label">1. Báo cáo KẾT QUẢ đối chiếu MIS thừa T-2</div>
+      <ul>
+        <li>Hàm mới <code>ket_qua_mis_di_thua_t2()</code> / <code>ket_qua_mis_den_thua_t2()</code> trong
+          <code>b11_doi_chieu_cheo_ngay.py</code>: gắn thêm cột <code>KET_QUA</code> lên chính file MIS thừa T-2.</li>
+        <li>Tách theo <code>LOAI_LENH_OSB</code>: dòng OSB (<code>'O'</code>/<code>'1'</code>) đối chiếu
+          <b>QT ngày T-1</b>; dòng thường (rỗng) đối chiếu <b>NPO thừa ngày T-1</b>.</li>
+        <li>Xuất file riêng <code>&lt;ngày&gt;_ACH_MISThuaT2.xlsx</code>, không đụng
+          <code>doi_chieu_&lt;ngày&gt;.xlsx</code>. Có ngưỡng tách CSV như các sheet lớn khác.</li>
+        <li>Thiếu file QT T-1 → nhãn riêng <code>"Không có QT ngày T-1 để đối chiếu"</code>, <b>không</b> gộp
+          nhầm vào nhãn "chưa hạch toán" — thiếu dữ liệu đầu vào và thật sự chưa hạch toán là hai kết luận
+          nghiệp vụ khác hẳn nhau.</li>
+      </ul>
+
+      <div class="label">2. Viết lại sheet TONG_KET</div>
+      <ul>
+        <li>Layout song song <b>Chiều Đi (cột A-C) | Chiều Đến (cột E-G)</b> theo đúng file mẫu.</li>
+        <li>Nhãn dùng <b>NGÀY THẬT</b> (VD "Điện OSB đi ngày 03/08/2026"), không dùng chữ "t-1"/"t-2" tĩnh như
+          trong file mẫu — Business Owner xác nhận rõ điểm này.</li>
+        <li>Bỏ hẳn khỏi TONG_KET (BO chốt): GW thừa x2, NPO_DI thừa, MIS_DI thừa, SESSION_NULL_BI_LOAI.
+          <b>Dữ liệu không mất</b> — vẫn xem đủ ở các sheet riêng cùng tên.</li>
+      </ul>
+
+      <div class="label">3 bài học thật trong phiên — đừng lặp lại</div>
+      <table>
+        <tr><th>Sai ở đâu</th><th>Bản chất</th></tr>
+        <tr>
+          <td>Mục "Điện thường T-2" bị tách thành dòng tiêu đề + dòng phụ (lần 1), rồi sửa quá tay xoá luôn
+            dòng lặp lại (lần 2)</td>
+          <td>File mẫu <b>cố ý</b> có 2 dòng trùng nhãn + trùng số (dòng 21 lặp dòng 10, dòng 30 lặp dòng 12)
+            làm mốc so sánh, đối xứng với mục OSB — không phải lỗi copy-paste như tôi suy đoán ban đầu. Đúng
+            là: 1 dòng mang cả nhãn lẫn số liệu, RỒI lặp lại y hệt dòng "khớp NPO cùng ngày" ngay sau.</td>
+        </tr>
+        <tr>
+          <td><code>_doc_file_thua_t2()</code> cố định dấu phân cách là dấu phẩy</td>
+          <td>File <code>.csv</code> do chương trình xuất có thể bị người chấm mở/lưu lại bằng Excel → dấu phẩy
+            thành tab (hoặc chấm phẩy ở locale vi-VN), mất dấu tiếng Việt ở cột không bắt buộc. Sửa dùng
+            <code>sep=None, engine='python'</code> để tự dò. <b>Áp dụng cho mọi chỗ đọc file người dùng có thể
+            mở lại bằng Excel.</b></td>
+        </tr>
+        <tr>
+          <td>Thư mục output đặt ngang hàng trong thư mục dữ liệu</td>
+          <td>Phải nằm LỒNG trong <code>Output\</code> (đúng tên segment "output" để
+            <code>_tim_file_ngoai_output()</code> loại trừ) — nếu không, file <code>MIS_DI_THUA*.csv</code> mới
+            ghi ra sẽ bị lần chạy sau nhặt nhầm làm file T-2 của chính ngày đang chạy.</td>
+        </tr>
+      </table>
+
+      <div class="label">Verify dữ liệu thật 03.08 — khớp tuyệt đối với file mẫu</div>
+      <p>Chạy qua Checkpoint thật (có 2 REFHUB bổ sung tra tự động từ thư mục anh em <code>31.07\</code>):
+        GW đi 587.811 / 2.997.972.684.461 · Mis đi 587.825 / 2.997.987.656.461 · Lệnh đi khớp NPO
+        526.172 / 2.888.686.495.217 · Lệnh OSB đi khớp QT 31.399 / 37.301.025.722 · huỷ trong ngày 402/0 ·
+        huỷ khác ngày 74/−155.078.000 · TO 14/14.972.000 — <b>tất cả khớp tuyệt đối</b>.</p>
+    </div>
+  </div>
+
+  <!-- 69 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">69</span>
+      <span class="card-title">Job ACH chết vì log tiếng Việt — chuyển lớp bảo vệ UTF-8 từ script khởi động vào trong backend</span>
+      <span class="badge badge-done">ĐÃ COMMIT 18ff8c0 · verify bằng cách ép môi trường về cp1252</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Triệu chứng</div>
+      <p>Bấm "Chạy đối chiếu" → job chết ngay dòng log ĐẦU TIÊN:
+        <code>UnicodeEncodeError: 'charmap' codec can't encode character 'ệ'</code> tại
+        <code>pipeline.py:787 print(msg)</code>, khi in
+        <code>[AUTO] Phát hiện ngày đối chiếu từ PDF: ...</code> (ký tự <code>ệ</code>).</p>
+
+      <div class="label">Nguyên nhân — không phải lỗi thuật toán, là lỗ hổng ở LỚP KHỞI ĐỘNG</div>
+      <p>Console Windows mặc định dùng codepage hệ thống (cp1252/cp1258), không đủ ký tự tiếng Việt.
+        <code>run.py</code> đã ép <code>PYTHONIOENCODING=utf-8</code>/<code>PYTHONUTF8=1</code> cho tiến trình
+        con từ 2026-07-31 — nhưng đó là bảo vệ ở <b>cách khởi động</b>. Lần này backend được khởi động THẲNG
+        bằng <code>uvicorn backend.main:app ...</code> (không qua <code>run.py</code>/<code>start.bat</code>)
+        nên mất sạch lớp đó. Chạy tay, chạy từ IDE, hay sau này chạy dịch vụ nền đều dính y hệt.</p>
+
+      <div class="label">Cách sửa — tối thiểu, 1 file</div>
+      <p>Ép UTF-8 cho <code>sys.stdout</code>/<code>sys.stderr</code> ngay lúc import trong
+        <code>backend/main.py</code>, TRƯỚC <code>_setup_logging()</code>. Bảo vệ chuyển từ script khởi động vào
+        trong chính chương trình → không còn phụ thuộc cách khởi động. Không sửa <code>pipeline.py</code>,
+        không đổi 1 dòng nào trong thuật toán đối chiếu.</p>
+      <p><code>reconfigure()</code> thay đổi tại chỗ chính đối tượng <code>TextIOWrapper</code> đang tồn tại,
+        nên các <code>StreamHandler</code> tạo sau đó (giữ tham chiếu tới cùng stream) cũng hưởng UTF-8.</p>
+
+      <div class="label">Verify — 2 tình huống, không phải suy đoán</div>
+      <table>
+        <tr><th>Tình huống</th><th>Kết quả</th></tr>
+        <tr>
+          <td>Ép môi trường <code>PYTHONIOENCODING=cp1252 PYTHONUTF8=0</code>, import
+            <code>backend.main</code></td>
+          <td><code>sys.stdout.encoding</code>: <code>cp1252</code> → <code>utf-8</code>, và đúng dòng log gây
+            crash in ra bình thường</td>
+        </tr>
+        <tr>
+          <td>Trường hợp biên: <code>sys.stdout</code> không phải luồng văn bản
+            (<code>BytesIO</code>, <code>encoding=None</code>)</td>
+          <td>Import không crash — điều kiện dùng <code>(getattr(...) or "")</code> và
+            <code>except (AttributeError, ValueError, OSError)</code></td>
+        </tr>
+      </table>
+
+      <div class="label">Ghi chú vận hành</div>
+      <p>Sự cố lộ ra vì có nhiều cửa sổ Claude Code chạy song song cùng thư mục, một cửa sổ khởi động dịch vụ
+        bằng lệnh trực tiếp. Hệ quả phụ khác của kiểu khởi động đó: frontend được cấp
+        <code>STORAGE_SECRET</code> ngẫu nhiên mỗi lần → <b>mọi phiên đăng nhập bị đăng xuất</b>. Nếu gặp hiện
+        tượng văng ra trang đăng nhập liên tục, kiểm tra cách khởi động trước khi nghi ngờ code phiên/JWT.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">70</span>
+      <span class="card-title">Làm việc liên thiết bị: đưa ngữ cảnh dự án từ bộ nhớ cục bộ vào repo</span>
+      <span class="badge badge-done">ĐÃ LÀM · phục vụ phiên cloud claude.ai/code + app điện thoại</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Vấn đề</div>
+      <p>Làm việc chính trên laptop (Claude Code trong VS Code), nhưng khi dùng điện thoại thì phải
+        <b>kể lại toàn bộ bối cảnh dự án từ đầu</b>. Nguyên nhân: ngữ cảnh nằm ngoài repo — 30 file bộ nhớ
+        (~200KB) ở <code>~/.claude/projects/</code>, 5 file <code>SESSION-SUMMARY-ACH-*.md</code> chưa commit,
+        và skill <code>doi-chieu</code> ở cấp người dùng. Phiên cloud clone repo từ GitHub nên
+        <b>chỉ thấy file đã commit</b>.</p>
+
+      <div class="label">Quyết định — tách cấu hình Claude Code thành 2 tầng</div>
+      <table>
+        <tr><th>Trước</th><th>Sau</th></tr>
+        <tr>
+          <td><code>.claude/settings.json</code> gộp tất cả, 19.2 KB, untracked. Chứa đường dẫn tuyệt đối ổ
+            <code>G:</code>, thư mục temp theo UUID phiên, và lệnh chạy script <code>_scratch_milestone_F1/*</code>
+            đã không còn tồn tại.</td>
+          <td><code>.claude/settings.json</code> — <b>1.1 KB, commit</b>, chỉ quyền portable (python, pytest,
+            git) chạy được cả trên Linux của máy ảo cloud.<br>
+            <code>.claude/settings.local.json</code> — <b>gitignore</b>, nhận toàn bộ 208 quyền + 7
+            <code>additionalDirectories</code> cũ nên trải nghiệm trên laptop không đổi.</td>
+        </tr>
+      </table>
+      <p>Gộp bằng union có thứ tự (local trước, shared sau), giữ lại mọi khoá khác nếu có — không ghi đè 29 mục
+        sẵn có của file local.</p>
+
+      <div class="label">Đánh đổi đã chấp nhận</div>
+      <table>
+        <tr><th>Đánh đổi</th><th>Lý do chọn</th></tr>
+        <tr>
+          <td>Skill <code>doi-chieu</code> tồn tại <b>2 bản</b>: <code>~/.claude/commands/</code> (mọi dự án) và
+            <code>.claude/commands/</code> (repo này) → có thể lệch bản theo thời gian.</td>
+          <td>Bản cấp người dùng phải giữ vì skill áp dụng cho <b>mọi</b> dự án; bản trong repo là điều kiện bắt
+            buộc để phiên cloud dùng được <code>/doi-chieu</code>. Chấp nhận nhân bản, ghi chú tại đây.</td>
+        </tr>
+        <tr>
+          <td>Bộ nhớ cục bộ <b>không đồng bộ được</b> lên cloud (nằm ngoài repo về mặt thiết kế).</td>
+          <td>Chắt lọc thủ công vào <code>docs/BOI-CANH-DU-AN.md</code> thay vì bê nguyên 200KB — file này thành
+            nguồn ngữ cảnh chung cho mọi thiết bị, phải cập nhật mục "Trạng thái hiện tại" cuối mỗi phiên.</td>
+        </tr>
+        <tr>
+          <td>Repo <code>personal</code> đang <b>PUBLIC</b>; người dùng đã cân nhắc và quyết định giữ nguyên.</td>
+          <td>Luật nghiệp vụ ACH vốn đã nằm trong code đã commit nên viết lại bằng văn xuôi không lộ thêm. Nhưng
+            <b>tham chiếu hạ tầng thì có</b> → đã lọc sạch 12 đường dẫn ổ <code>G:</code> khỏi 3 file
+            <code>SESSION-SUMMARY</code> và chặn sẵn <code>scratch_*</code>, <code>20260706.xlsx</code> trong
+            <code>.gitignore</code>.</td>
+        </tr>
+      </table>
+
+      <div class="label">Phát hiện phụ — memory ghi luật ACH đã lỗi thời</div>
+      <p>Khi chắt lọc, bộ nhớ còn ghi quy tắc <b>TPAY-only</b> ở C.2. Kiểm tra thẳng docstring
+        <code>khop_voi_gw()</code> trong <code>b4_xu_ly_mis_di.py</code> cho thấy quy tắc đó đã bị thay từ
+        2026-08-03: C.2 nay xét <b>toàn bộ</b> trạng thái còn lại trong nhóm thừa như nhau, vì
+        <code>CALD/ERPO/TPER</code> đã loại hẳn ở Bước 1 và sẽ còn trạng thái mới phát sinh (đã thấy
+        <code>TXPR</code>, <code>TXCA</code>). <b>Tài liệu ngữ cảnh viết theo code, không theo bộ nhớ</b> —
+        bộ nhớ là ảnh chụp thời điểm.</p>
+
+      <div class="label">Giới hạn phải nhớ</div>
+      <p>Máy ảo cloud <b>không có ~50GB dữ liệu thật</b> (đã gitignore). Phiên trên điện thoại đọc/sửa code,
+        viết test, viết tài liệu được — <b>không</b> chạy được pipeline đối chiếu thật, không đối chiếu golden
+        sample, không click-through UI. Đã ghi rõ trong <code>CLAUDE.md</code> để phiên cloud không đề xuất
+        "chạy thử để xác nhận".</p>
+      <p>Chiều bàn giao phiên là <b>một chiều</b>: <code>claude --teleport</code> kéo phiên cloud về terminal
+        được, nhưng <b>không</b> đẩy được phiên local đang dở lên web → muốn làm tiếp trên điện thoại thì phải
+        khởi đầu bằng <code>claude --cloud</code> ngay từ laptop.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">71</span>
+      <span class="card-title">Số tiền file QT đổi định dạng sang ngăn nghìn — lỗi sai 1000 lần, im lặng</span>
+      <span class="badge badge-done">ĐÃ SỬA · 2026-08-10 · phát hiện khi chạy dữ liệu 06–09/08/2026</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Triệu chứng</div>
+      <p>Pipeline dừng ở ngày 07/08 với <code>ValueError: Cột 'Số tiền' có giá trị không phải số</code>.
+        Nguồn xuất file Quyết toán OSB (QT) <b>đổi định dạng từ ngày 07.08</b>: cột <code>Số tiền</code>
+        chuyển từ số thuần (<code>180000</code>) sang chuỗi ngăn nghìn kiểu Việt Nam (<code>180.000</code>).
+        Ngày 06.08 và file <code>QT đi 07.08</code> vẫn định dạng cũ — nên 06.08 chạy trót lọt.</p>
+
+      <div class="label">Hai dạng hỏng — dạng thứ hai mới nguy hiểm</div>
+      <table>
+        <tr><th>Giá trị thô</th><th><code>pd.to_numeric()</code> cũ</th><th>Sau <code>.astype('int64')</code></th><th>Hậu quả</th></tr>
+        <tr><td><code>1.000.000</code></td><td><code>NaN</code></td><td>—</td>
+            <td>Chương trình <b>dừng, báo lỗi</b> → may mắn lộ ra</td></tr>
+        <tr><td><code>180.000</code></td><td><code>180.0</code> (rất "hợp lệ")</td><td><b>180</b></td>
+            <td><b>Sai 1000 lần, hoàn toàn im lặng</b></td></tr>
+      </table>
+      <div class="caution">Dạng 2 là dạng chết người: khóa <code>CN_TRACE_TIEN</code> = mã CN + trace +
+        số tiền sẽ lệch <b>toàn bộ</b> → đối chiếu OSB ra sai mà không một dấu hiệu nào. Nó chỉ chưa xảy ra
+        vì trong cùng file có lẫn giá trị nhiều nhóm làm chương trình dừng trước. Nếu người chấm lỡ sửa
+        file chỉ còn toàn giá trị &lt; 1 triệu thì lỗi này chạy êm ru.</div>
+
+      <div class="label">Cách sửa — <code>_doc_so_tien_qt()</code> trong <code>b9_doi_chieu_osb.py</code></div>
+      <p><b>Kiểm mẫu chuỗi TRƯỚC, bỏ dấu chấm SAU.</b> Không dùng <code>to_numeric()</code> thẳng nữa —
+        gốc lỗi là để <code>to_numeric()</code> tự "hiểu" dấu chấm. Chỉ chấp nhận đúng 2 mẫu:</p>
+      <table>
+        <tr><th>Mẫu</th><th>Tình huống thật</th></tr>
+        <tr><td><code>^-?\d+$</code> → <code>180000</code></td>
+            <td>File xuất cũ, <b>hoặc</b> người chấm đã mở file bỏ dấu chấm rồi lưu lại (ô thành số thật)</td></tr>
+        <tr><td><code>^-?\d{1,3}(\.\d{3})+$</code> → <code>180.000</code></td>
+            <td>File xuất thẳng từ chương trình, chưa ai đụng vào</td></tr>
+      </table>
+      <p><b>Xử lý kép</b> (Business Owner chốt 2026-08-10): 2 mẫu này được trộn lẫn trong cùng một file
+        (người chấm sửa dở) vẫn phải ra đúng. Giá trị không khớp mẫu nào (VD <code>1.5</code>) →
+        <b>raise, không tự đoán</b> là 15 hay 1,5.</p>
+      <p>Dấu âm giữ nguyên — <code>'Kiểu giao dịch'='Cancel'</code> có số tiền âm (BO xác nhận 2026-07-31),
+        thực tế 3–4 dòng mỗi file QT đi.</p>
+
+      <div class="label">Vì sao ô số thật không dính đuôi <code>.0</code></div>
+      <p>Đã probe thật: <code>calamine</code> + <code>dtype=str</code> đọc ô <code>180000.0</code>,
+        ô số có định dạng ngăn nghìn của Excel, và số rất lớn <code>12345678901</code> đều ra chuỗi số nguyên
+        sạch. Nếu engine khác trả <code>'180000.0'</code> thì mẫu số nguyên sẽ trượt và báo lỗi oan —
+        đã có test chặn.</p>
+
+      <div class="label">Không ảnh hưởng Checkpoint–Timeout</div>
+      <p><code>xu_ly_qt()</code> chỉ phục vụ nhánh OSB (Điểm 2), chạy <b>sau</b> <code>khop_voi_gw()</code>.
+        Xương sống Timeout không đụng tới.</p>
+
+      <div class="label">Bằng chứng độc lập xác nhận sửa đúng</div>
+      <p>Tổng OSB trên sheet <code>TONG_KET</code> khớp <b>chính xác đến từng đồng</b> với tổng cột
+        <code>Số tiền</code> của file QT tính theo quy tắc "chấm = ngăn nghìn", cả 6 file ×
+        2 chiều — VD 07/08: OSB đi <code>39.565.735.972</code>, OSB đến <code>47.644.898.933</code>.</p>
+
+      <div class="label">Kết quả chạy thật 06–09/08/2026 (chạy thẳng, không Checkpoint)</div>
+      <table>
+        <tr><th>Ngày</th><th>Session</th><th>MIS đi − GW đi</th><th>TO không đi kênh</th><th>GW_CAN_DOI_CHIEU</th><th>SESSION_NULL_BI_LOAI</th><th>Thời gian</th></tr>
+        <tr><td>06/08</td><td>16460</td><td>9 món / 9.285.000</td><td>9 / 9.285.000 ✓</td><td>0</td><td>333</td><td>437s</td></tr>
+        <tr><td>07/08</td><td>16462</td><td>9 món / 6.972.000</td><td>9 / 6.972.000 ✓</td><td>0</td><td>364</td><td>355s</td></tr>
+        <tr><td>08/08</td><td>16464</td><td>7 món / 8.985.000</td><td>7 / 8.985.000 ✓</td><td>0</td><td>28</td><td>353s</td></tr>
+        <tr><td>09/08</td><td>16466</td><td>15 món / 22.601.000</td><td>15 / 22.601.000 ✓</td><td>0</td><td>14</td><td>342s</td></tr>
+      </table>
+      <p><b>Đã cân khớp cả 4 ngày.</b> File MIS thừa T-2 nối chuỗi tự động: kết quả ngày N chép sang thư mục
+        ngày N+1 (chỉ đúng <code>MIS_DI_THUA_&lt;ngày&gt;.csv</code> / <code>MIS_DEN_THUA_&lt;ngày&gt;.csv</code>,
+        loại trừ <code>*_T2_KETQUA_*</code> — xem bẫy 4.6 trong <code>docs/BOI-CANH-DU-AN.md</code>).</p>
+
+      <div class="label">Test</div>
+      <p>6 test regression trong <code>tests/test_ach_osb_reconciliation.py</code>: đọc đúng ngăn nghìn,
+        số âm có ngăn nghìn, xử lý kép trộn lẫn 3 kiểu ô trong 1 file, ô float không dính <code>.0</code>,
+        và giá trị lạ phải raise. Toàn bộ 256 test ACH pass.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">72</span>
+      <span class="card-title">Chấm 459901 — đối chiếu 2.416 dòng lệch thật với bản chấm tay Hà, sửa 3 bug xác nhận</span>
+      <span class="badge badge-done">HOÀN THIỆN · 2026-08-17→18 · phản hồi thật 3 tháng (5/6/7-2026), xác nhận trên process_zip() thật + chốt với Hà</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh — lần đầu có phản hồi thủ công trên dữ liệu thật</div>
+      <p>Hà (người chấm thủ công) ghi chú xác nhận từng dòng "LỆCH NHÓM" vào cột 12 sheet
+        <code>Chi_lech</code> của 3 file <code>DoiChieu_Tháng{5,6,7}.xlsx</code> — chương trình sai hay
+        người chấm sai, và vì sao. Đọc toàn bộ 2.416 ghi chú, verify từng giả thuyết bằng cách chạy trực
+        tiếp các hàm gốc với dữ liệu thật Tháng 5 (không đoán, không mock).</p>
+
+      <table>
+        <tr><th>Nhóm</th><th>Số dòng</th><th>Kết luận</th></tr>
+        <tr><td>"Chương trình đúng"</td><td>2.024 (83,8%)</td><td>Bản chấm tay gốc của Hà sai — không phải bug code</td></tr>
+        <tr><td>"Chương trình đúng, cho vào GD khác đúng thiết kế"</td><td>174 (7,2%)</td><td>Đúng thiết kế (nghi ngờ chưa đủ điều kiện)</td></tr>
+        <tr><td><b>Nhóm A — ACH-NAPAS 1000HT bỏ sót do trace 2 dãy số</b></td><td>170 (7,0%)</td><td><b>Bug thật — đã sửa</b></td></tr>
+        <tr><td><b>Nhóm B — Cân CN cướp nhầm Chuyển chi nhánh</b></td><td>3 (0,1%)</td><td><b>Bug thật — đã sửa (gốc rễ ở gate CCN)</b></td></tr>
+        <tr><td><b>Nhóm C — Điện KO offline nhận nhầm USERID chứa "KO"</b></td><td>2 xác nhận</td><td><b>Bug thật — đã sửa</b></td></tr>
+        <tr><td>Cạnh biên hiếm (ghép theo REFERENCE cụ thể, artefact tồn tháng cũ)</td><td>7</td><td>Ghi nhận hạn chế, không code — quá hiếm để tổng quát hoá</td></tr>
+      </table>
+
+      <div class="label">Nhóm A — trace 2 dãy số của hub_đến ACH-NAPAS</div>
+      <p><code>_trace_last9()</code> cũ chỉ lấy dãy số ĐẦU khi cột "Số trace" có 2 dãy cách nhau bởi
+        <code>;</code> (VD <code>"099419569;009423425"</code>). Verify dữ liệu thật Tháng 5: 97 dòng
+        hub_đến ACH-NAPAS đều có định dạng này — <b>49 dòng khớp đúng qua dãy 1, 46 dòng CHỈ khớp qua dãy
+        2</b> (bị bỏ sót, biến mất vào GD khác không cả ghi chú nghi ngờ). Không thể đổi hẳn sang "luôn lấy
+        dãy 2" — sẽ vỡ 49 dòng đang đúng.</p>
+      <p><b>Cách sửa:</b> <code>_trace_candidates()</code> trả về cả 2 ứng viên <code>(seg1, seg2)</code>;
+        <code>_read_hub_den()</code> giữ thêm cột <code>TRACE2</code> (không nhân đôi dòng — tránh vỡ tổng
+        tiền theo LINK trong <code>_match_hub_1000ht()</code>); <code>_mark_1000ht()</code> merge chân Có
+        (CR) với cả <code>TRACE</code> lẫn <code>TRACE2</code> rồi gộp kết quả. <code>_trace_last9()</code>
+        giữ lại làm alias <code>seg1</code> cho nơi chỉ cần 1 giá trị.</p>
+
+      <div class="label">Nhóm B — Cân CN cướp nhầm Chuyển chi nhánh (chốt với Hà: sửa đúng gate, không thêm rule mới)</div>
+      <p><code>_mark_ccn()</code> so REMARK phân biệt hoa/thường — 2 chân thật của 1 giao dịch Chuyển chi
+        nhánh có REMARK khác case (<code>"chuyen tien"</code> / <code>"CHUYEN TIEN"</code>) không được gộp
+        ở bước 4 (CCN), rơi xuống bước 6 (Cân CN) và bị ghép nhầm với giao dịch khác trùng số tiền tròn
+        (450 triệu) hoàn toàn không liên quan.</p>
+      <div class="caution">Đã hỏi: có nên thêm điều kiện REMARK vào <code>_mark_can_cn()</code> để chặn
+        false-positive không? <b>Hà trả lời: không cần</b> — nếu hệ thống chạy tuần tự đúng từ gate 1 đến
+        gate 7 thì sẽ không xảy ra nhầm nhóm. Chỉ sửa REMARK case-insensitive (+ trim khoảng trắng) ở
+        <code>_mark_ccn()</code> — waterfall tuần tự tự nhiên chặn rò rỉ xuống Cân CN, không đụng
+        <code>_mark_can_cn()</code>.</div>
+
+      <div class="label">Nhóm C — USERID chứa "KO" không đúng mã chi nhánh</div>
+      <p><code>_mark_ko()</code> cũ dùng <code>USERID.str.contains('KO')</code> — bắt luôn
+        <code>DTRLTKO</code> (tên đăng nhập giao dịch viên, "KO" là hậu tố ngẫu nhiên). USERID KO offline
+        thật luôn đúng mẫu <code>&lt;mã chi nhánh 4 số&gt;KO</code> (verify 58/58 USERID hợp lệ khớp 100%).
+        Sửa: <code>USERID.str.match(r'^\d{4}KO$')</code>.</p>
+
+      <div class="label">Khôi phục InputError — ngoài phạm vi feedback Hà, người dùng duyệt đưa vào đợt này</div>
+      <p>Rà 4 file đang sửa dở phát hiện <code>class InputError</code> (thông báo lỗi thân thiện khi file
+        hỏng/sai mật khẩu/thiếu cột) đã bị gỡ hoàn toàn khỏi <code>_load_data()</code> và
+        <code>run_process()</code> trong phần chưa commit — lỗi file hỏng sẽ rơi về nhánh Exception chung
+        (500 chung chung). Khôi phục nguyên bản từ commit trước (<code>_BAD_ZIP</code>, validation zip
+        hỏng/sai mật khẩu/không có csv/thiếu cột bắt buộc, nhánh <code>except InputError</code> log WARNING
+        trước <code>except Exception</code>).</p>
+
+      <div class="label">Test</div>
+      <p>13 test mới trong <code>tests/test_cham459901_algorithm.py</code> (USERID KO đúng/sai mẫu, REMARK
+        case-insensitive CCN, trace seg1/seg2 cho 1000HT — cả khớp lẫn đối chứng không vỡ, 4 test
+        InputError). Toàn bộ 86/86 test module 459901 pass; suite dự án 514/515 pass (1 fail còn lại là
+        <code>test_ilo1000_algorithm.py::test_tong_hop_so_mon_so_tien</code>, đã biết từ trước, không liên
+        quan module này).</p>
+
+      <div class="label">Xác nhận thật — chạy lại process_zip() đầy đủ cả 3 tháng (2026-08-18)</div>
+      <p>Chạy <code>process_zip()</code> thật (không phải gọi hàm rời rạc) trên GL02 + 2 HUB + file tồn
+        thật của cả 3 tháng, so lại với đúng 5 file "hà chấm" mỗi tháng theo khóa
+        (TRDATE, TRBRCD, USERID, JOURSEQ, DYTRSEQ) — tính cả 7 nhóm (kể cả Lệnh Hủy/Lệnh Đi) để so được
+        với phương pháp đối chiếu gốc 2026-08-05.</p>
+      <table>
+        <tr><th>Tháng</th><th>Trước (08-05)</th><th>Sau (08-18, code đã sửa)</th><th>Chỉ có ở người chấm</th></tr>
+        <tr><td>5</td><td>97,47% (lệch 1.160)</td><td><b>97,80%</b> (lệch 1.048)</td><td>1 → 0</td></tr>
+        <tr><td>6</td><td>99,23% (lệch 304)</td><td><b>99,53%</b> (lệch 226)</td><td>? → 0</td></tr>
+        <tr><td>7</td><td>98,40% (lệch 839)</td><td><b>98,57%</b> (lệch 755)</td><td>? → 0</td></tr>
+      </table>
+      <p>3 bug A/B/C xác nhận có tác dụng thật trên cả 3 tháng: Nhóm A (ACH trace 2 dãy số) từ ~170 dòng/
+        3 tháng còn 2-18 dòng/tháng; Nhóm B (Cân CN cướp CCN) và Nhóm C (KO offline sai USERID) về 0 dòng
+        cả 3 tháng.</p>
+
+      <div class="label">Phát hiện thêm — "Lệnh Đi" cướp trước Chuyển chi nhánh/Cân CN: KHÔNG PHẢI BUG</div>
+      <p>Sau khi trừ 3 bug A/B/C, phần lệch còn lại (1.048+226+755 = 2.029 dòng) phần lớn rơi vào 1 mẫu
+        hình: chương trình xếp "Lệnh Đi" (bước 2) nhưng Hà chấm tay là Chuyển chi nhánh hoặc Cân CN (bước
+        4/6) — tổng <b>1.346 dòng</b> (Chuyển chi nhánh 1.150 + Cân CN 196), dao động mạnh theo tháng
+        (Tháng 5: 848, Tháng 6: 12, Tháng 7: 486).</p>
+      <p><b>Đã thử nghiệm đổi thứ tự</b> (Chuyển chi nhánh chạy trước Lệnh Đi) trên bản sao riêng, KHÔNG
+        đụng code chính — kết quả: nhóm Chuyển chi nhánh <b>nuốt từ ~600-2.200 dòng lên 1,18-1,28 TRIỆU
+        dòng/tháng</b> (gần như toàn bộ Lệnh Đi), vì điều kiện Chuyển chi nhánh (chỉ số tiền+nội dung,
+        không xét chi nhánh) quá lỏng khi chạy trên cả kho dữ liệu chưa lọc bớt bởi Lệnh Đi. Tỷ lệ khớp
+        so với Hà vẫn "trông có vẻ tăng" (vì Hà chưa từng chấm tay hơn 1 triệu dòng Lệnh Đi kia) — nhưng
+        thực chất hỏng ngầm trên diện rất rộng, không phát hiện được nếu chỉ nhìn tỷ lệ khớp.</p>
+      <div class="caution">Hà xác nhận lại rõ 2026-08-18: <b>giữ nguyên thứ tự 7 cửa</b> (Hủy→Đi→1000HT→
+        CCN→KO→CânCN→Khác) và đúng 3 khóa ghép đã code — <b>không đổi gì</b>:
+        <ul>
+          <li>Lệnh Đi = chi nhánh + số tiền + nội dung (khớp <code>_di_key</code> hiện tại)</li>
+          <li>Chuyển chi nhánh = số tiền + nội dung, CÓ THỂ khác chi nhánh vì chi nhánh này chuyển tiếp cho
+            chi nhánh khác (khớp <code>_mark_ccn()</code> hiện tại, không có TRBRCD trong khóa)</li>
+          <li>Cân chi nhánh = chi nhánh + số tiền, CÓ THỂ khác nội dung vì nghiệp vụ được phép sửa nội dung
+            (khớp <code>_mark_can_cn()</code> hiện tại, không có REMARK trong khóa)</li>
+        </ul>
+        Đã đối chiếu từng dòng code với 3 quy tắc này — khớp chính xác. <b>Kết luận: 1.346 dòng lệch này
+        không phải bug</b> — là giao dịch thoả đúng điều kiện cơ giới của Lệnh Đi (chi nhánh+tiền+nội dung
+        khớp, Nợ=Có) nên đúng luật phải thắng ở cửa 2, dù Hà dùng thêm ngữ cảnh nghiệp vụ (ngoài 3 khóa máy
+        móc) để chấm tay khác đi. Không code gì thêm cho việc này.</div>
+
+      <div class="label">Trạng thái cuối — module đã hoàn thiện theo đúng yêu cầu Hà</div>
+      <p>3 bug thật đã sửa và xác nhận trên dữ liệu thật 3 tháng. 1 phát hiện tưởng là bug (Lệnh Đi/CCN/
+        CânCN) đã điều tra kỹ, thử nghiệm đo tác động thật, và xác nhận với Hà là hành vi đúng thiết kế —
+        không sửa. Không còn việc tồn cho module này ngoài merge vào <code>develop</code> sau này (xem
+        card riêng về <code>E:\TTTT-develop</code> có bản cham459901 rất cũ, phải thay toàn bộ chứ không
+        patch từng phần).</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">73</span>
+      <span class="card-title">Phân lịch trực — phát hiện nhánh local đã lỗi thời + vá 2 luật công bằng mới</span>
+      <span class="badge badge-done">HOÀN THIỆN · 2026-08-20 · worktree TTTT-duty, branch duty/them-2-luat-can-bang</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Phát hiện — ~830 dòng sửa dở trên <code>Cham_ILO1000</code> đã lỗi thời</div>
+      <p>Vào việc module này thì phát hiện branch local <code>Cham_ILO1000</code> đang có nhiều file
+        <code>duty_*</code> sửa dở CHƯA COMMIT (bao gồm <code>duty_rules.py</code> mới, 2 file test mới).
+        Đối chiếu <code>git fetch origin</code> thì <code>origin/develop</code> đã có sẵn commit
+        <code>e9a705b</code> (14/08, PR <code>duty/hoan-thien-phan-lich-truc</code> đã merge) — làm TOÀN
+        BỘ phần việc đó rồi (ô chọn lịch, file Excel bám mẫu thật, T7/CN đi làm qua loại ngày "makeup",
+        2 bug cân bằng ca thật, 113 test), <b>và local <code>Cham_ILO1000</code> rẽ nhánh TRƯỚC khi PR đó
+        tồn tại</b> (<code>git merge-base --is-ancestor e9a705b HEAD</code> = NO). Đối chiếu trực tiếp
+        <code>duty_rules.py</code> local với bản develop: local vẫn còn nguyên lỗi B mà <code>e9a705b</code>
+        đã sửa (<code>resolve_sp_role()</code> cộng nhầm nhóm trực phụ vào đếm "dư song phương") — bằng
+        chứng kỹ thuật chắc chắn, không phải suy đoán. Đã <code>git checkout --</code> toàn bộ các file
+        <code>duty_*</code> lỗi thời trên cây làm việc chính (kể cả <code>backend/db/migrations.py</code> —
+        xác nhận từng dòng migration đó đã có sẵn trên develop), xoá 3 file mới. Các module khác đang sửa
+        dở trên cùng cây (459901, ACH) không đụng tới.</p>
+
+      <div class="label">Quy trình — cắt worktree sạch từ develop, đúng quy ước đã chốt</div>
+      <p><code>git worktree add "E:\Clause code\TTTT-duty" -b duty/them-2-luat-can-bang origin/develop</code>
+        — theo đúng convention 1 module = 1 nhánh = 1 worktree đã dùng cho ACH/ILO1000. Baseline xác nhận
+        113 test duty pass trước khi sửa gì.</p>
+
+      <div class="label">2 luật mềm mới — người dùng báo trực tiếp sau khi xem lịch thật</div>
+      <table>
+        <tr><th>#</th><th>Vấn đề</th><th>Trước</th><th>Sau</th></tr>
+        <tr><td>A</td><td>Một người trực thứ 6 &gt; 1 lần/tháng (nặng hơn nếu 2 thứ 6 liên tiếp)</td>
+          <td>Chỉ tránh lặp trong CÙNG 1 TUẦN (<code>get_week_assignees</code>) — không có khái niệm
+            "đã trực thứ 6 tháng này"</td>
+          <td>Hàm mới <code>nguoi_da_truc_thu6_thang()</code> — ưu tiên tránh, cảnh báo
+            <code>trung_thu6_thang</code> khi buộc phải lặp vì thiếu người</td></tr>
+        <tr><td>B</td><td>Một Lãnh đạo trực &gt; 2 ca/tuần</td>
+          <td>Chỉ có tiêu chí nhị phân "chưa trực trong tuần" — không phân biệt "đã trực 1 lần" (còn
+            được) với "đã trực 2 lần" (đã đủ)</td>
+          <td>Hàm mới <code>dem_ca_lanh_dao_trong_tuan()</code> — ưu tiên tránh, cảnh báo
+            <code>ld_qua_tai_tuan</code> khi buộc phải vượt vì không đủ Lãnh đạo khác</td></tr>
+      </table>
+
+      <div class="label">Thiết kế — vì sao không thể chỉ union vào tập "đã trực trong tuần"</div>
+      <p>Thử đầu tiên: gộp 2 tập id cần tránh vào thẳng <code>week_ids</code> hiện có của
+        <code>_order_pool()</code> (nhị phân fresh/repeat). <b>Sai</b> — bắt được nhờ tự viết test đối
+        chứng "2 Lãnh đạo, tuần 5 ngày" trước khi tin thiết kế: tầng "repeat" gộp chung người mới trực
+        1 lần với người đã trực 2 lần, nên đến ngày thứ 4 cả hai đều nằm trong <code>week_ids</code> và
+        mất hết ưu thế phân biệt — thuật toán vẫn có thể chọn nhầm người đã đủ 2 ca thay vì người mới có 1.
+        Sửa lại thành <code>tier_hint</code> (dict <code>{id: tầng}</code>, tầng càng lớn càng bị đẩy
+        xuống): tầng 0 = còn mới, tầng 1 = đã trực trong tuần (hành vi gốc), tầng 2 = vi phạm nặng hơn
+        (quá 2 ca/tuần hoặc đã trực thứ 6 tháng này) — chỉ chọn khi không còn ai ở tầng thấp hơn. Không
+        chặn cứng hình thành ca — dùng tiền lệ đã chốt "đủ người quan trọng hơn giữ đúng luật mềm" (card 67).</p>
+
+      <div class="label">Vị trí đặt — dùng chung engine tự động và sửa tay</div>
+      <p>2 hàm đếm đặt trong <code>duty_rules.py</code> (không phải <code>duty_scheduler_engine.py</code>)
+        để giữ đúng kiến trúc sẵn có "một chỗ hiểu luật" — <code>validate_shift_members()</code> (đường
+        sửa tay) gọi cùng 2 hàm này để cảnh báo mềm, không chặn.</p>
+
+      <div class="label">Test — bẫy lỗi persist khi viết test cô lập kênh thứ 6</div>
+      <p>4 test mới, 2 tình huống đủ người (chứng minh luật có hiệu lực) + 2 tình huống thiếu người
+        (chứng minh fallback + cảnh báo đúng khi về mặt toán học không thể tránh — 2 Lãnh đạo cho tuần
+        5 ngày không thể giữ cả hai ≤ 2 ca/tuần). Bẫy khi viết: gọi thẳng <code>_generate_ca()</code> để
+        cô lập kênh thứ 6 (theo đúng khuôn <code>_gen_one()</code> có sẵn) nhưng hàm này KHÔNG lưu ca
+        xuống <code>duty_shifts</code> — save là việc của <code>_process_day()</code>. Test đọc lịch sử
+        thứ 6 tháng qua truy vấn <code>duty_shifts</code> nên phải tự gọi thêm <code>_save_shift()</code>
+        sau mỗi lần sinh, nếu không bảng luôn rỗng và cả 2 test "buộc lặp" lẫn "tránh được lặp" đều pass
+        giả — pass vì luật chưa từng được kiểm tra thật, không phải vì luật đúng.</p>
+
+      <div class="label">Kiểm chứng</div>
+      <p>113 test duty cũ giữ nguyên xanh + 4 test mới. Full suite trong worktree: 525 pass, 10 fail ở
+        <code>test_archive_cover.py</code> — lỗi có sẵn trên <code>develop</code> sạch, không liên quan
+        module này (đã đối chiếu, đúng con số 10 fail mà commit <code>e9a705b</code> từng ghi nhận).</p>
+
+      <div class="label">Việc còn tồn</div>
+      <p>Commit <code>7145b63</code> mới nằm trên nhánh <code>duty/them-2-luat-can-bang</code>, CHƯA
+        mở PR / merge — chờ bạn xác nhận trước khi lên develop. Worktree mồ côi của phiên khác tại
+        <code>…3c0d8b53…/scratchpad/wt-pr</code> (checkout đúng <code>e9a705b</code>, hết tác dụng vì PR
+        đã merge) chưa dọn — hỏi bạn trước khi xoá.</p>
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-20</footer>
 </div>
 </body>
 </html>

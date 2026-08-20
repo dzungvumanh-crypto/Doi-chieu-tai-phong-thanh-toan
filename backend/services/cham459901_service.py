@@ -41,6 +41,17 @@ OUTPUT_COLS = [
     'DRAMOUNT', 'CRAMOUNT', 'CRTDTM', 'GHI_CHU',
 ]
 
+# Cột chung giữa dữ liệu GL02 gốc và file "tồn" tháng trước (459_TON_Tx.xlsx) — dùng khi
+# ghép nối tiếp file tồn vào dữ liệu tháng mới để phân loại lại (xem _read_ton_file).
+# Thiếu CRTDTM (không có trong file tồn); các cột str được ép kiểu để khớp dtype=str của
+# _load_data (đọc CSV dtype=str).
+_TON_COLS = [
+    'TRDATE', 'TRBRCD', 'USERID', 'JOURSEQ', 'DYTRSEQ', 'LOCAC', 'CCY',
+    'BUSCD', 'UNIT', 'TRCD', 'CUSTOMER', 'TRTP', 'REFERENCE', 'REMARK',
+    'DRAMOUNT', 'CRAMOUNT',
+]
+_TON_STR_COLS = [c for c in _TON_COLS if c not in ('DRAMOUNT', 'CRAMOUNT')]
+
 COL_WIDTHS = {
     'TRDATE': 12, 'TRBRCD': 8, 'USERID': 13, 'JOURSEQ': 10, 'DYTRSEQ': 9,
     'LOCAC': 8, 'CCY': 5, 'BUSCD': 7, 'UNIT': 6, 'TRCD': 6, 'CUSTOMER': 18,
@@ -64,6 +75,10 @@ log = logging.getLogger(__name__)
 
 class _Cancelled(Exception):
     """Sentinel nội bộ — báo hiệu người dùng đã bấm Dừng, thoát sớm khỏi xử lý."""
+
+
+class InputError(ValueError):
+    """Lỗi do chính file người dùng tải lên — thông báo hiển thị thẳng cho họ."""
 
 
 # ─── In-memory progress store ─────────────────────────────────────────────────
@@ -110,11 +125,13 @@ def delete_result(result_token: str) -> bool:
 
 def classify_upload_filename(filename: str) -> str | None:
     """Tự nhận diện loại file theo tên khi upload nhiều file cùng lúc (kéo-thả kiểu ACH).
-    Trả về 'zip' | 'hub_di' | 'hub_den' | None (không nhận diện được)."""
+    Trả về 'zip' | 'hub_di' | 'hub_den' | 'ton' | None (không nhận diện được)."""
     name = filename.lower()
     if name.endswith('.zip') and 'gl02' in name:
         return 'zip'
     if name.endswith('.xlsx'):
+        if '459' in name and 'ton' in name:
+            return 'ton'
         if 'quay' in name or 'chuyen tien di' in name or 'chuyen_tien_di' in name:
             return 'hub_di'
         if ('giao dich den' in name or 'giao_dich_den' in name
@@ -135,19 +152,16 @@ def _set_prog(task_token: str | None, pct: int, msg: str) -> None:
 
 # ─── Public API ───────────────────────────────────────────────────────────────
 
-class InputError(ValueError):
-    """Lỗi do chính file người dùng tải lên — thông báo hiển thị thẳng cho họ."""
-
-
 def run_process(
     zip_bytes: bytes,
     task_token: str,
     hub_di_bytes: bytes | None = None,
     hub_den_bytes: bytes | None = None,
+    ton_bytes: bytes | None = None,
 ) -> None:
     """Chạy process_zip trong background thread; cập nhật progress và bắt lỗi."""
     try:
-        process_zip(zip_bytes, hub_di_bytes, hub_den_bytes, task_token)
+        process_zip(zip_bytes, hub_di_bytes, hub_den_bytes, task_token, ton_bytes)
     except _Cancelled:
         if task_token in _progress:
             _progress[task_token].update({
@@ -172,10 +186,13 @@ def process_zip(
     hub_di_bytes: bytes | None = None,
     hub_den_bytes: bytes | None = None,
     task_token: str | None = None,
+    ton_bytes: bytes | None = None,
 ) -> dict:
-    """Nhận bytes ZIP (+ 2 file HUB đi/đến tùy chọn) → phân loại 7 nhóm → lưu 7 xlsx → trả metadata.
+    """Nhận bytes ZIP (+ 2 file HUB đi/đến, + file tồn tháng trước — đều tùy chọn) → phân
+    loại 7 nhóm → lưu 7 xlsx → trả metadata.
 
     Thiếu file HUB → bỏ qua bước 1000 Hoàn trả (các dòng đó rơi về GD khác chấm thủ công).
+    Thiếu file tồn → chạy như cũ, không ghép thêm dữ liệu tháng trước.
     """
     _cleanup_old_results()
     t0 = time.time()
@@ -183,6 +200,13 @@ def process_zip(
     _set_prog(task_token, 5, "Đang giải mã và đọc dữ liệu...")
     df, filtered_rows = _load_data(zip_bytes)
     total_before = len(df) + filtered_rows
+
+    ton_rows_added = 0
+    if ton_bytes is not None:
+        _set_prog(task_token, 8, "Đang đọc file tồn tháng trước...")
+        df_ton = _read_ton_file(ton_bytes)
+        ton_rows_added = len(df_ton)
+        df = pd.concat([df_ton, df], ignore_index=True)
 
     hub_di = hub_den = None
     if hub_di_bytes is not None and hub_den_bytes is not None:
@@ -239,6 +263,7 @@ def process_zip(
         "khac_rows":     len(df_khac),
         "total_rows":    total_before,
         "filtered_rows": filtered_rows,
+        "ton_rows_added": ton_rows_added,
         "hub_provided":  hub_di is not None,
         "elapsed_s":     round(time.time() - t0, 1),
         "process_date":  datetime.now().strftime("%Y%m%d"),
@@ -309,6 +334,37 @@ def _load_data(zip_bytes: bytes) -> tuple[pd.DataFrame, int]:
         (df['CCY']      == FILTER_CCY)
     ].copy()
     return df, before - len(df)
+
+
+def _read_ton_file(raw_bytes: bytes) -> pd.DataFrame:
+    """Đọc file 'tồn' tháng trước (459_TON_Tx.xlsx, header ngay dòng 1) — chỉ lấy 16 cột
+    chung với dữ liệu GL02 gốc (_TON_COLS), bỏ các cột ghi chú thủ công của người chấm
+    ('chấm', 'Phong ban', 'refhub') — dùng để ghép nối tiếp vào dữ liệu tháng mới rồi
+    phân loại lại từ đầu, không giữ trạng thái/ghi chú cũ."""
+    raw = pd.read_excel(io.BytesIO(raw_bytes), engine='calamine')
+    raw.columns = raw.columns.astype(str).str.strip()
+    df = raw[_TON_COLS].copy()
+
+    for col in _TON_STR_COLS:
+        s = df[col]
+        if pd.api.types.is_numeric_dtype(s):
+            # Cột số nguyên (TRDATE, TRBRCD, JOURSEQ, DYTRSEQ, LOCAC) đọc từ Excel có thể
+            # ra dtype float64 nếu có NaN xen kẽ — ép qua int() thủ công để tránh hậu tố
+            # ".0" (dùng .map thay vì .astype(str) để không dính quirk hiển thị NA của
+            # dtype "string" mới trong pandas gần đây, khiến NaN bị in ngược thành float).
+            df[col] = s.map(lambda v: '' if pd.isna(v) else str(int(v)))
+        else:
+            df[col] = s.map(lambda v: '' if pd.isna(v) else str(v).strip())
+
+    df['DRAMOUNT'] = pd.to_numeric(df['DRAMOUNT'], errors='coerce').fillna(0.0).astype(float)
+    df['CRAMOUNT'] = pd.to_numeric(df['CRAMOUNT'], errors='coerce').fillna(0.0).astype(float)
+
+    df = df[
+        (df['LOCAC']    == FILTER_LOCAC) &
+        (df['CUSTOMER'] == FILTER_CUSTOMER) &
+        (df['CCY']      == FILTER_CCY)
+    ].reset_index(drop=True)
+    return df
 
 
 def _classify(
@@ -419,6 +475,29 @@ def _read_hub_di(raw_bytes: bytes) -> pd.DataFrame:
     return pd.DataFrame({'AMOUNT': amt, 'TRACE': trace, 'LINK': link})
 
 
+def _trace_candidates(raw: pd.Series) -> tuple[pd.Series, pd.Series]:
+    """Chuẩn hoá cột 'Số trace' của hub_đến — trả về CẢ HAI ứng viên trace khi có 2 dãy số
+    cách nhau bởi ';' (gặp ở giao dịch kênh ACH-NAPAS). KHÔNG thể chỉ tin dãy đầu: verify dữ
+    liệu thật Tháng 5 cho thấy 49/97 dòng ACH-NAPAS khớp REFERENCE của TK459 với dãy ĐẦU,
+    46/97 dòng chỉ khớp với dãy THỨ HAI — bỏ sót dãy 2 khiến ~47% giao dịch 1000 Hoàn trả kênh
+    ACH biến mất vào GD khác (xem Implementation-notes.html). Mỗi dãy lấy 9 ký tự cuối (phòng
+    trace dài hơn 9 số — phần thừa phía trước không phải trace thật). seg2 là NaN nếu không
+    có ';'."""
+    parts = raw.astype(str).str.split(';')
+    # .astype(str) trước khi cắt 9 ký tự cuối — parts.str[1] toàn NaN (không dòng nào có ';')
+    # trả về dtype float64, .str[...] trên float64 ném AttributeError; ép về chuỗi ('nan' cho
+    # dòng thiếu) rồi mới cắt để đồng nhất dtype trước khi to_numeric coerce về NaN.
+    seg1 = pd.to_numeric(parts.str[0].astype(str).str[-9:], errors='coerce')
+    seg2 = pd.to_numeric(parts.str[1].astype(str).str[-9:], errors='coerce')
+    return seg1, seg2
+
+
+def _trace_last9(raw: pd.Series) -> pd.Series:
+    """Dãy trace ĐẦU TIÊN (xem _trace_candidates) — giữ cho nơi chỉ cần 1 giá trị/không cần
+    xét dãy thứ hai."""
+    return _trace_candidates(raw)[0]
+
+
 def _read_hub_den(raw_bytes: bytes) -> pd.DataFrame:
     """Đọc file 'Danh sach giao dich den' — tiêu đề ở dòng Excel thứ 3."""
     raw = pd.read_excel(io.BytesIO(raw_bytes), header=None, engine='calamine')
@@ -426,16 +505,15 @@ def _read_hub_den(raw_bytes: bytes) -> pd.DataFrame:
     df.columns = raw.iloc[2].tolist()
     df = df.dropna(subset=['Số trace']).reset_index(drop=True)
 
-    amt   = pd.to_numeric(df['Số tiền lệnh gốc'], errors='coerce').fillna(0.0).round(0)
-    # Số trace: nếu có 2 dãy số (phân cách bởi ';') thì chỉ lấy dãy đầu tiên
-    trace = pd.to_numeric(df['Số trace'].astype(str).str.split(';').str[0], errors='coerce')
+    amt = pd.to_numeric(df['Số tiền lệnh gốc'], errors='coerce').fillna(0.0).round(0)
+    trace, trace2 = _trace_candidates(df['Số trace'])
     is_napas = df['Hệ thống thanh toán'].astype(str).str.strip() == 'ACH-NAPAS'
     # ACH-NAPAS: lấy 6 số cuối của "Số thành công/MSGID"
     override = df['Số thành công/MSGID'].astype(str).str.strip().str[-6:]
     link = df['Số REF HUB'].astype(str).str.strip()
     link = link.where(~is_napas, override)
 
-    return pd.DataFrame({'AMOUNT': amt, 'TRACE': trace, 'LINK': link})
+    return pd.DataFrame({'AMOUNT': amt, 'TRACE': trace, 'TRACE2': trace2, 'LINK': link})
 
 
 _BLANK_LINK = frozenset({'', 'nan', 'none', 'nat'})
@@ -476,7 +554,7 @@ def _mark_1000ht(df: pd.DataFrame, hub_di: pd.DataFrame, hub_den: pd.DataFrame) 
     Trả về (mask_confirmed, mask_candidate)."""
     mask_di_1000ht, mask_den_1000ht = _match_hub_1000ht(hub_di, hub_den)
     di_ok  = hub_di.loc[mask_di_1000ht,  ['LINK', 'TRACE', 'AMOUNT']]
-    den_ok = hub_den.loc[mask_den_1000ht, ['LINK', 'TRACE', 'AMOUNT']]
+    den_ok = hub_den.loc[mask_den_1000ht, ['LINK', 'TRACE', 'TRACE2', 'AMOUNT']]
 
     ref_suffix = pd.to_numeric(df['REFERENCE'].str.slice(7), errors='coerce')
     dr = df['DRAMOUNT'].round(0)
@@ -484,7 +562,15 @@ def _mark_1000ht(df: pd.DataFrame, hub_di: pd.DataFrame, hub_den: pd.DataFrame) 
     tk = pd.DataFrame({'REF_SUFFIX': ref_suffix, 'DR': dr, 'CR': cr}, index=df.index).reset_index()
 
     dr_match = tk.merge(di_ok,  left_on=['REF_SUFFIX', 'DR'], right_on=['TRACE', 'AMOUNT'], how='inner')
-    cr_match = tk.merge(den_ok, left_on=['REF_SUFFIX', 'CR'], right_on=['TRACE', 'AMOUNT'], how='inner')
+    # Hub đến ACH-NAPAS có thể có 2 dãy trace (xem _trace_candidates) — REFERENCE của TK459
+    # có thể khớp dãy 1 HOẶC dãy 2, không đoán trước dãy nào đúng nên thử cả hai rồi gộp.
+    cr_match_seg1 = tk.merge(den_ok, left_on=['REF_SUFFIX', 'CR'], right_on=['TRACE', 'AMOUNT'], how='inner')
+    cr_match_seg2 = tk.merge(
+        den_ok[den_ok['TRACE2'].notna()],
+        left_on=['REF_SUFFIX', 'CR'], right_on=['TRACE2', 'AMOUNT'], how='inner',
+    )
+    cr_match = pd.concat([cr_match_seg1, cr_match_seg2], ignore_index=True) \
+                 .drop_duplicates(subset=['index', 'LINK'])
 
     links_confirmed = set(dr_match['LINK']) & set(cr_match['LINK'])
 
@@ -504,12 +590,16 @@ def _mark_1000ht(df: pd.DataFrame, hub_di: pd.DataFrame, hub_den: pd.DataFrame) 
 
 def _mark_ccn(df: pd.DataFrame) -> pd.Series:
     """Chuyển chi nhánh: ghép (số tiền + REMARK), khớp khi Tổng Nợ = Tổng Có của CẢ NHÓM.
+    REMARK so khớp KHÔNG phân biệt hoa/thường và bỏ khoảng trắng thừa — 2 chân cùng 1 giao dịch
+    do 2 chi nhánh khác nhau gõ tay REMARK khác case (VD 'chuyen tien' / 'CHUYEN TIEN') vẫn phải
+    được nhận diện cùng 1 nhóm (xem Implementation-notes.html) — nếu không, chân lẻ rơi xuống
+    bước Cân CN phía sau và có thể bị ghép nhầm với giao dịch không liên quan trùng số tiền tròn.
     Nhóm không cân bằng tuyệt đối (VD REMARK trùng lặp giữa nhiều giao dịch khác nhau)
     bị loại bỏ hoàn toàn — không tách một phần — để rơi về GD khác chấm thủ công."""
     if len(df) == 0:
         return pd.Series(dtype=bool)
     amt = df[['DRAMOUNT', 'CRAMOUNT']].abs().max(axis=1).round(0)
-    key = amt.astype('Int64').astype(str) + '|' + df['REMARK']
+    key = amt.astype('Int64').astype(str) + '|' + df['REMARK'].str.strip().str.lower()
 
     sum_dr  = df['DRAMOUNT'].groupby(key).transform('sum')
     sum_cr  = df['CRAMOUNT'].groupby(key).transform('sum')
@@ -540,17 +630,20 @@ def _mark_can_cn(df: pd.DataFrame) -> pd.Series:
 
 
 def _mark_ko(df: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
-    """Điện KO offline (DK1-DK3): DK1 — tập ứng viên Có = USERID chứa 'KO'. DK2 — tập ứng
-    viên Nợ = DRAMOUNT của các dòng có REMARK chứa marker 'Remitting Amount:VND'. DK3 — ghép
-    cặp N:N theo SỐ TIỀN bằng nhau giữa 1 dòng Nợ (DK2) và 1 dòng Có (DK1), bắt buộc Nợ=Có
-    từng cặp; dòng không tìm được đối tác cùng số tiền thì KHÔNG đánh dấu, rơi về GD khác
+    """Điện KO offline (DK1-DK3): DK1 — tập ứng viên Có = USERID đúng mẫu "<mã chi nhánh 4
+    số>KO" (VD '1000KO', '3511KO' — verify 58/58 USERID KO offline thật đều khớp mẫu này).
+    KHÔNG dùng contains('KO') đơn thuần — bắt nhầm USERID tên đăng nhập giao dịch viên tình cờ
+    có hậu tố "KO" (VD 'DTRLTKO') gây xếp nhầm Điện KO offline (xem Implementation-notes.html).
+    DK2 — tập ứng viên Nợ = DRAMOUNT của các dòng có REMARK chứa marker 'Remitting Amount:VND'.
+    DK3 — ghép cặp N:N theo SỐ TIỀN bằng nhau giữa 1 dòng Nợ (DK2) và 1 dòng Có (DK1), bắt buộc
+    Nợ=Có từng cặp; dòng không tìm được đối tác cùng số tiền thì KHÔNG đánh dấu, rơi về GD khác
     (đánh dấu nghi ngờ) thay vì đoán.
 
     Trả về (mask_confirmed, mask_candidate)."""
     if len(df) == 0:
         return pd.Series(dtype=bool), pd.Series(dtype=bool)
 
-    is_ko_user = df['USERID'].str.contains('KO', na=False)
+    is_ko_user = df['USERID'].str.match(r'^\d{4}KO$', na=False)
     is_remit   = df['REMARK'].str.contains('Remitting Amount:VND', na=False)
 
     dr = df['DRAMOUNT'].round(0)
@@ -632,8 +725,17 @@ def _styles_xml(header_argb: str) -> str:
     )
 
 
+_ROW_CHUNK = 5000  # dòng gộp mỗi lần ghi xuống stream — giới hạn đỉnh RAM ở mức 1 chunk
+
+
 def _write_excel(df: pd.DataFrame, path: Path, sheet_name: str, hex_color: str) -> None:
-    """Ghi XLSX bằng direct XML — 8x nhanh hơn xlsxwriter, giữ đủ formatting."""
+    """Ghi XLSX bằng direct XML — 8x nhanh hơn xlsxwriter, giữ đủ formatting.
+
+    sheet1.xml được STREAM trực tiếp vào ZIP theo từng lô _ROW_CHUNK dòng thay vì
+    dựng toàn bộ chuỗi XML trong RAM rồi mới ghi — bucket "Lệnh Đi" cả triệu dòng từng
+    gây MemoryError khi RAM máy trống thấp (xem Implementation-notes.html card 21) vì
+    cách cũ giữ đồng thời list các chuỗi row + chuỗi nối + bản encode UTF-8 trong bộ nhớ.
+    """
     df_out   = df[OUTPUT_COLS].reset_index(drop=True)
     n_data   = len(df_out)
     dr_total = float(df_out['DRAMOUNT'].sum())
@@ -647,37 +749,16 @@ def _write_excel(df: pd.DataFrame, path: Path, sheet_name: str, hex_color: str) 
     styles   = _styles_xml(f'FF{hex_color.upper()}')
     num_idx  = frozenset(i for i, c in enumerate(OUTPUT_COLS) if c in _NUM_COLS)
 
-    # ── Rows XML ──────────────────────────────────────────────────────────────
-    rows: list[str] = []
+    cols_xml = '<cols>' + ''.join(
+        f'<col min="{i+1}" max="{i+1}" width="{COL_WIDTHS.get(col, 12)}" customWidth="1"/>'
+        for i, col in enumerate(OUTPUT_COLS)
+    ) + '</cols>'
 
-    # Dòng 1: summary (merge toàn bộ, style 1)
-    rows.append(
-        f'<row r="1">'
-        f'<c r="A1" t="inlineStr" s="1"><is><t>{_xe(summary)}</t></is></c>'
-        f'</row>'
-    )
-
-    # Dòng 2: tên cột (style 2)
     hdr = ''.join(
         f'<c r="{_COL_LETTERS[i]}2" t="inlineStr" s="2"><is><t>{col}</t></is></c>'
         for i, col in enumerate(OUTPUT_COLS)
     )
-    rows.append(f'<row r="2">{hdr}</row>')
 
-    # Dòng 3..N+2: data
-    for row_0, row in enumerate(df_out.itertuples(index=False)):
-        r_num = row_0 + 3
-        cells: list[str] = []
-        for c_idx, val in enumerate(row):
-            cl = _COL_LETTERS[c_idx]
-            if c_idx in num_idx:
-                cells.append(f'<c r="{cl}{r_num}" s="3"><v>{val:.2f}</v></c>')
-            else:
-                v = str(val).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-                cells.append(f'<c r="{cl}{r_num}" t="inlineStr"><is><t>{v}</t></is></c>')
-        rows.append(f'<row r="{r_num}">{"".join(cells)}</row>')
-
-    # Dòng N+3: tổng cộng
     sum_row = n_data + 3
     total: list[str] = [
         f'<c r="A{sum_row}" t="inlineStr" s="4"><is><t>TỔNG CỘNG</t></is></c>'
@@ -690,29 +771,6 @@ def _write_excel(df: pd.DataFrame, path: Path, sheet_name: str, hex_color: str) 
             total.append(f'<c r="{cl}{sum_row}" s="5"><v>{cr_total:.2f}</v></c>')
         else:
             total.append(f'<c r="{cl}{sum_row}" t="inlineStr" s="4"><is><t></t></is></c>')
-    rows.append(f'<row r="{sum_row}">{"".join(total)}</row>')
-
-    # ── Sheet XML ─────────────────────────────────────────────────────────────
-    cols_xml = '<cols>' + ''.join(
-        f'<col min="{i+1}" max="{i+1}" width="{COL_WIDTHS.get(col, 12)}" customWidth="1"/>'
-        for i, col in enumerate(OUTPUT_COLS)
-    ) + '</cols>'
-
-    sheet_xml = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
-        ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
-        '<sheetViews><sheetView workbookViewId="0">'
-        '<pane ySplit="2" topLeftCell="A3" activePane="bottomLeft" state="frozen"/>'
-        '</sheetView></sheetViews>'
-        + cols_xml
-        + '<sheetData>' + ''.join(rows) + '</sheetData>'
-        # OOXML CT_Worksheet yêu cầu thứ tự cố định: autoFilter PHẢI đứng TRƯỚC mergeCells.
-        # Ghi sai thứ tự khiến Excel coi sheet1.xml là "unreadable content" và gỡ bỏ sheet.
-        + f'<autoFilter ref="A2:{last_col}{n_data + 2}"/>'
-        + f'<mergeCells count="1"><mergeCell ref="A1:{last_col}1"/></mergeCells>'
-        + '</worksheet>'
-    )
 
     # ── Bundle thành XLSX (ZIP) ───────────────────────────────────────────────
     workbook_xml = (
@@ -755,7 +813,45 @@ def _write_excel(df: pd.DataFrame, path: Path, sheet_name: str, hex_color: str) 
         zf.writestr('xl/workbook.xml',              workbook_xml)
         zf.writestr('xl/_rels/workbook.xml.rels',   wb_rels)
         zf.writestr('xl/styles.xml',                styles)
-        zf.writestr('xl/worksheets/sheet1.xml',     sheet_xml)
+
+        with zf.open('xl/worksheets/sheet1.xml', 'w') as fh:
+            w = lambda s: fh.write(s.encode('utf-8'))
+            w('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>')
+            w('<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+              ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">')
+            w('<sheetViews><sheetView workbookViewId="0">'
+              '<pane ySplit="2" topLeftCell="A3" activePane="bottomLeft" state="frozen"/>'
+              '</sheetView></sheetViews>')
+            w(cols_xml)
+            w('<sheetData>')
+            w(f'<row r="1"><c r="A1" t="inlineStr" s="1"><is><t>{_xe(summary)}</t></is></c></row>')
+            w(f'<row r="2">{hdr}</row>')
+
+            chunk: list[str] = []
+            for row_0, row in enumerate(df_out.itertuples(index=False)):
+                r_num = row_0 + 3
+                cells: list[str] = []
+                for c_idx, val in enumerate(row):
+                    cl = _COL_LETTERS[c_idx]
+                    if c_idx in num_idx:
+                        cells.append(f'<c r="{cl}{r_num}" s="3"><v>{val:.2f}</v></c>')
+                    else:
+                        v = str(val).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                        cells.append(f'<c r="{cl}{r_num}" t="inlineStr"><is><t>{v}</t></is></c>')
+                chunk.append(f'<row r="{r_num}">{"".join(cells)}</row>')
+                if len(chunk) >= _ROW_CHUNK:
+                    w(''.join(chunk))
+                    chunk = []
+            if chunk:
+                w(''.join(chunk))
+
+            w(f'<row r="{sum_row}">{"".join(total)}</row>')
+            w('</sheetData>')
+            # OOXML CT_Worksheet yêu cầu thứ tự cố định: autoFilter PHẢI đứng TRƯỚC mergeCells.
+            # Ghi sai thứ tự khiến Excel coi sheet1.xml là "unreadable content" và gỡ bỏ sheet.
+            w(f'<autoFilter ref="A2:{last_col}{n_data + 2}"/>')
+            w(f'<mergeCells count="1"><mergeCell ref="A1:{last_col}1"/></mergeCells>')
+            w('</worksheet>')
 
 
 def _cleanup_old_results() -> None:
