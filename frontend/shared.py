@@ -84,6 +84,12 @@ MENU_TREE = [
             },
         ],
     },
+    {
+        "id": "ktoan",
+        "label": "Phòng Kế toán",
+        "icon": "calculate",
+        "items": [("attendance", "Chấm công", "schedule")],
+    },
     ("leaves",        "Nghỉ phép",         "event_busy"),
     ("duty_schedule", "Phân lịch trực",    "edit_calendar"),
     ("so_truc",        "Sổ trực cuối ngày", "assignment_turned_in"),
@@ -494,9 +500,53 @@ def _dept_group(dept: dict, current_page: str, check_features: bool = True):
                                         ui.label(lbl).classes("text-sm flex-1")
 
 
-def _sidebar(current_page: str) -> dict:
+async def _user_dept_code(user: dict) -> str | None:
+    """Tra department_id của user ra code (vd 'ACCT'), cache trong app.storage.user
+    để không gọi lại API mỗi lần chuyển trang. Dùng để giới hạn hiển thị menu
+    "Chấm công" (Phòng Kế toán) chỉ cho đúng nhân viên phòng đó.
+
+    Rà soát tiếp theo: trước đây cache cả khi gọi API lỗi (mạng chậm, backend
+    restart giữa chừng...) — `code=None` bị ghi cứng vào cache, nhân viên ACCT mất
+    hẳn menu "Chấm công" cho tới khi logout/login lại (chỉ `clear_auth()` mới xoá
+    được cache này). Giờ chỉ cache khi gọi API THÀNH CÔNG; lỗi thì trả None cho lần
+    gọi này nhưng để lần render sau (đổi trang) thử lại, không kẹt vĩnh viễn.
+
+    Rà soát review PR #22 (Người 1, 17/08), phần 2/2: trước đây gọi api.get()
+    trần (không bọc asyncio.to_thread như mọi lượt gọi mạng khác trong file
+    này), mà _sidebar() — hàm gọi thẳng chỗ này — vốn là hàm sync được ~25 trang
+    gọi không qua to_thread. NiceGUI chạy một vòng lặp sự kiện duy nhất nên lượt
+    HTTP đó chặn cả server: lúc nó chờ phản hồi (bình thường vài mili-giây,
+    nhưng tới 10s nếu trúng lúc backend đang khởi động lại — timeout ở
+    api_client.py), trang của MỌI người dùng khác đứng im theo. Đổi hàm này (và
+    _sidebar) sang async + bọc to_thread để nhường lại vòng lặp sự kiện trong
+    lúc chờ mạng, giống 3 chỗ gọi khác trong file."""
+    if "_dept_code" in app.storage.user:
+        return app.storage.user["_dept_code"]
+    dept_id = user.get("department_id") if user else None
+    if not dept_id:
+        return None
+    try:
+        row = await asyncio.to_thread(api.get, f"/api/departments/{dept_id}")
+        code = row.get("code")
+    except (api.SessionExpiredError, api.DisplacedSessionError) as e:
+        # Rà soát review PR #22 (Người 1, 17/08): trước đây bắt tuốt Exception nên
+        # phiên hết hạn/bị đăng nhập nơi khác cũng lặng lẽ trả None — không redirect
+        # về /login như quy định ở DESIGN.md, không log gì. Dùng lại đúng
+        # _handle_api_error() đã có sẵn cho các chỗ gọi API khác trong file này.
+        _handle_api_error(e)
+        return None
+    except Exception as e:
+        _log.warning("_user_dept_code: lỗi tra department_id=%s: %s", dept_id, e)
+        return None
+    app.storage.user["_dept_code"] = code
+    return code
+
+
+async def _sidebar(current_page: str) -> dict:
     # Trả về dict rỗng — badge số đã chuyển hết vào khối "Công việc chờ xử lý".
-    # Giữ kiểu trả về để 19 trang đang gọi không phải sửa chữ ký.
+    # Giữ kiểu trả về để các trang đang gọi không phải sửa chữ ký.
+    # Đổi sang async theo review PR #22 (Người 1, 17/08) — xem docstring
+    # _user_dept_code() phía trên để biết lý do.
     badge_refs: dict = {}
     ui_kit.install()          # token màu + font Inter cho 19 trang có sidebar
     ui.add_head_html(_SIDEBAR_CSS)
@@ -573,6 +623,15 @@ def _sidebar(current_page: str) -> dict:
                 if isinstance(node, tuple):
                     if api.has_feature(f"menu.{node[0]}"):
                         _nav_item(*node, current_page)
+                elif node["id"] == "ktoan":
+                    # "Chấm công" không dùng feature-flag — chỉ hiện cho đúng
+                    # nhân viên Phòng Kế toán (code ACCT) hoặc admin.
+                    # Sửa theo review PR #22: trước đây user không thuộc ACCT vẫn rơi về
+                    # check_features=True — nếu lỡ được cấp nhầm feature menu.attendance
+                    # (qua Phân quyền theo nhóm) thì vẫn hiện menu rồi 403 khi bấm vào.
+                    # Giờ không thuộc ACCT/admin thì bỏ qua hẳn, không render.
+                    if user_role == "admin" or await _user_dept_code(user) == "ACCT":
+                        _dept_group(node, current_page, check_features=False)
                 else:
                     _dept_group(node, current_page, check_features=True)
 

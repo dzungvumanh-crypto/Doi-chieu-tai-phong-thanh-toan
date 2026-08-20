@@ -11,7 +11,7 @@ async def bundles_page():
     if not api.has_feature("menu.bundles"):
         ui.navigate.to("/home")
         return
-    _ = _sidebar("bundles")
+    _ = await _sidebar("bundles")
     with _content_area():
         _page_header("Đóng chứng từ", "Tạo bìa chứng từ và quản lý")
 

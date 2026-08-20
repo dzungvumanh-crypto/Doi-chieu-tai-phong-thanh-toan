@@ -43,7 +43,7 @@ async def handovers_page():
         ui.navigate.to("/home")
         return
 
-    _sidebar("handovers")
+    await _sidebar("handovers")
 
     # ── Right drawer panel ────────────────────────────────────────────────────
     with ui.right_drawer(value=False).props("width=360 overlay").classes(

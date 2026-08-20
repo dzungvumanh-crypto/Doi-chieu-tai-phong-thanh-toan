@@ -137,7 +137,7 @@ async def pending_work_page(kind: str):
         ui.navigate.to("/home")
         return
 
-    _sidebar(kind)      # giữ mục nghiệp vụ tương ứng ở trạng thái đang chọn
+    await _sidebar(kind)      # giữ mục nghiệp vụ tương ứng ở trạng thái đang chọn
     with _content_area():
         _page_header(title, subtitle)
 

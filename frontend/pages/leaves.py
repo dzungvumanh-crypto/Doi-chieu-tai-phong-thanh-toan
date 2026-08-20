@@ -313,7 +313,7 @@ async def leaves_page():
 
         return
 
-    _sidebar("leaves")
+    await _sidebar("leaves")
 
 
 

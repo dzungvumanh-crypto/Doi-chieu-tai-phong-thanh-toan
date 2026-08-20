@@ -113,7 +113,7 @@ async def ttqt_branches_page():
     can_import = api.has_feature("ttqt_branches.import")
     can_export = api.has_feature("ttqt_branches.export")
 
-    _sidebar("ttqt_branches")
+    await _sidebar("ttqt_branches")
     ui.add_head_html(_CSS)
 
     with _content_area():

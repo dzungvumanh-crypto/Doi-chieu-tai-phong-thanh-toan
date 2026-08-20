@@ -30,7 +30,7 @@ async def doi_chieu_song_phuong_page():
     state = {"file_bytes": None, "file_name": "", "result": None}
 
     with ui.row().classes("w-full"):
-        _sidebar("doi_chieu_song_phuong")
+        await _sidebar("doi_chieu_song_phuong")
         with _content_area():
             _page_header(
                 "Đối chiếu Song phương",

@@ -12,7 +12,7 @@ async def login_logs_page():
     if not api.has_feature("menu.logs"):
         ui.navigate.to("/home")
         return
-    _ = _sidebar("login-logs")
+    _ = await _sidebar("login-logs")
 
     with _content_area():
         _page_header("Nhật ký đăng nhập", "Lịch sử đăng nhập — tối đa 30 ngày gần nhất")

@@ -176,7 +176,7 @@ def _set_input(inp, value):
 
 
 @ui.page("/doi_chieu_citad")
-def doi_chieu_citad_page(request: _StarletteRequest):
+async def doi_chieu_citad_page(request: _StarletteRequest):
     if not _require_auth():
         return
     if not api.has_feature("menu.doi_chieu_citad"):
@@ -1144,7 +1144,7 @@ def doi_chieu_citad_page(request: _StarletteRequest):
         dialog.open()
 
     with ui.row().classes("w-full"):
-        _sidebar("doi_chieu_citad")
+        await _sidebar("doi_chieu_citad")
         with _content_area():
             _navy_header(
                 "ĐỐI CHIẾU CITAD CUỐI NGÀY",

@@ -15,6 +15,7 @@ data/
 # IDE
 .vscode/
 .idea/
+.claude/settings.local.json
 
 # Temp files
 tmp_*.txt

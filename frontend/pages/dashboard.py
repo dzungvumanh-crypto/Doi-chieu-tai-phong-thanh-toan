@@ -40,7 +40,7 @@ async def dashboard_page():
     # Không redirect chuyên viên sang /handovers nữa: mục "Trang chủ" luôn có trên
     # sidebar nên redirect làm nó thành mục bấm không bao giờ vào được. Việc đưa CV
     # đáp thẳng xuống Bàn giao chứng từ vẫn giữ, nhưng nằm ở trang login.
-    _sidebar("home")
+    await _sidebar("home")
     ui.add_head_html(_HOME_FIT_CSS)
     # Trang chủ khoá chiều cao đúng 1 viewport: 3 khối trên cùng cao cố định, biểu đồ
     # ăn hết phần còn lại. overflow-y-auto chỉ là lối thoát cho màn hình quá thấp.

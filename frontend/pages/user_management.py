@@ -11,7 +11,7 @@ async def user_management_page():
     # đăng nhập. Khối đặt lại mật khẩu hộ người khác vẫn chỉ admin thấy.
     if not _require_auth():
         return
-    _ = _sidebar("")
+    _ = await _sidebar("")
     with _content_area():
         _page_header("Quản lý người dùng", "Đổi mật khẩu và ảnh chữ ký")
 

@@ -19,7 +19,7 @@ async def logs_page():
     if not api.has_feature("menu.logs"):
         ui.navigate.to("/home")
         return
-    _ = _sidebar("logs")
+    _ = await _sidebar("logs")
 
     with _content_area():
         _page_header("Lịch sử lỗi & cảnh báo", "Nhật ký ứng dụng — tối đa 50 bản ghi mỗi trang")

@@ -16,7 +16,7 @@ async def audit_logs_page():
     if not api.has_feature("menu.logs"):
         ui.navigate.to("/home")
         return
-    _ = _sidebar("audit-logs")
+    _ = await _sidebar("audit-logs")
 
     with _content_area():
         _page_header("Nhật ký hệ thống", "Lịch sử thao tác ghi dữ liệu — giữ tối đa 365 ngày")

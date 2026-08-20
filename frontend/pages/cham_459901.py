@@ -31,7 +31,7 @@ async def cham_459901_page():
     }
 
     with ui.row().classes("w-full"):
-        _sidebar("cham_459901")
+        await _sidebar("cham_459901")
         with _content_area():
             _page_header("Chấm 459901", "Phân loại bút toán tài khoản trung gian 459901")
 
