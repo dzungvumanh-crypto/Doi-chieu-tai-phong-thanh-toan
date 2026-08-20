@@ -412,12 +412,11 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
                     ui.label(lbl).classes(
                         _grid_cell_cls(0, col_idx, n_rows, n_cols, "text-sm font-bold text-gray-500 text-center")
                     )
-                # Ebanking KHÔNG còn ô nhập trên màn hình (đã bỏ theo yêu cầu) —
-                # data["ebank"] vẫn giữ trong code (không xoá hẳn) để đọc lại
-                # đúng số liệu CŨ của session đã lưu trước đây (xem
-                # apply_session_data) và không làm hỏng dòng "Ebanking" trong
-                # Excel xuất ra (xem do_export/build_xlsx) — chỉ đơn thuần
-                # không cho NHẬP MỚI qua UI nữa.
+                # Ebanking KHÔNG còn ô nhập trên màn hình, và dòng "Ebanking"
+                # cũng đã bỏ khỏi Excel xuất ra (20/08/2026 — kênh này không
+                # còn dùng). data["ebank"] vẫn giữ trong code (không xoá hẳn)
+                # chỉ để đọc lại không lỗi session CŨ đã lưu trước đây (xem
+                # apply_session_data), không còn hiển thị hay xuất ra đâu nữa.
                 for row_idx, (label, store, entry_store) in enumerate([
                     ("Napas", data["napas"], inputs["napasE"]),
                     ("PSS - MDP", data["pssmdp"], inputs["pssmdpE"]),
@@ -473,9 +472,10 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
         data["napas"]["den_ih_t"] = nv(sess.get("napas_t", 0))
         _set_input(inputs["napasE"]["den_ih_m"], fmt(data["napas"]["den_ih_m"]))
         _set_input(inputs["napasE"]["den_ih_t"], fmt(data["napas"]["den_ih_t"]))
-        # Không còn ô nhập Ebanking trên UI (đã bỏ) — vẫn đọc lại đúng giá trị
-        # CŨ đã lưu (nếu có) vào data["ebank"] để giữ nguyên khi lưu lại/xuất
-        # Excel, chỉ là không hiện/sửa được trên màn hình nữa.
+        # Không còn ô nhập Ebanking trên UI, và dòng Ebanking cũng đã bỏ khỏi
+        # Excel xuất ra — vẫn đọc lại giá trị CŨ đã lưu (nếu có) vào
+        # data["ebank"] chỉ để không lỗi khi mở lại session cũ, không dùng gì
+        # thêm.
         data["ebank"]["den_ih_m"] = nv(sess.get("ebank_m", 0))
         data["ebank"]["den_ih_t"] = nv(sess.get("ebank_t", 0))
         data["pssmdp"]["den_ih_m"] = nv(sess.get("pssmdp_m", 0))
@@ -879,7 +879,7 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
         # Xem trước ĐẦY ĐỦ đúng các dòng sẽ có trong file Excel tải về (khớp
         # từng dòng với doi_chieu_citad_service.py::build_xlsx: Payment theo
         # từng loại tiền, CITAD tổng, từng Cổng × loại tiền, Napas, PSS - MDP,
-        # Ebanking, Chênh lệch) — không chỉ 3 dòng tóm tắt như trước, để người dùng
+        # Chênh lệch) — không chỉ 3 dòng tóm tắt như trước, để người dùng
         # soát được đúng số liệu chi tiết trước khi tải, giống hệt thứ tự
         # trong Excel (chỉ khác: header ở đây 1 tầng thay vì 3 tầng gộp ô
         # "LỆNH ĐI/LỆNH ĐẾN" như Excel — tên cột ĐI/ĐẾN IH/IL Món/Tiền đã
@@ -907,7 +907,6 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
                 _add_row(f"Cổng {cong}" if i == 0 else "", cur, [data["gD"][cong][cur][f] for f in FK])
         _add_row("Napas", "", [0, 0, 0, 0, data["napas"]["den_ih_m"], data["napas"]["den_ih_t"], 0, 0])
         _add_row("PSS - MDP", "", [0, 0, 0, 0, data["pssmdp"]["den_ih_m"], data["pssmdp"]["den_ih_t"], 0, 0])
-        _add_row("Ebanking", "", [0, 0, 0, 0, data["ebank"]["den_ih_m"], data["ebank"]["den_ih_t"], 0, 0])
         diff_row = {"id": len(rows), "label": "CHÊNH LỆCH", "cur": ""}
         for fk in FK:
             diff_row[fk] = diff_labels["diff"][fk].text  # tái dùng text đã tính sẵn, luôn khớp trang

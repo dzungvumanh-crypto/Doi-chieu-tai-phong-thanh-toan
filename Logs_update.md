@@ -4,6 +4,11 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 20/08/2026 Đối chiếu CITAD - **Bỏ nốt dòng "Ebanking" khỏi file Excel xuất ra**:
+    + Đợt 14/08 đã bỏ ô nhập Ebanking khỏi màn hình (kênh này không còn dùng) nhưng **sót**: dòng "Ebanking" vẫn được in ra trong file Excel tải về và trong bảng xem trước khi xuất — nay bỏ luôn cả hai chỗ, đồng bộ với màn hình
+    + Không đổi số liệu Chênh lệch — dòng Ebanking từ trước tới nay vốn **không được cộng** vào tổng CITAD (chỉ in ra tham khảo), nên bỏ dòng không ảnh hưởng con số báo cáo
+    + Số liệu Ebanking của các ngày đã chấm trước đây vẫn nằm nguyên trong dữ liệu đã lưu, chỉ không còn hiện/in ra đâu nữa
+
 - 18/08/2026 Toàn hệ thống - **Rà soát: chỗ nào sửa ở menu này lại đổi số liệu của menu khác; chỗ nào ghi/xoá file trên máy chủ**:
     + **Đợt này không thêm menu nào.** Nhưng có **một thay đổi làm lịch trực sinh ra khác trước** — đọc mục *Phân lịch trực* dưới đây trước khi tạo lịch tháng mới
     + ⚠️ **Nút *Nhập DB* (màn hình Quản lý User) trước đây ghi đè cả số ngày phép đã dùng của mọi người.** File .db nhập vào mang theo **toàn bộ** cột, kể cả *số ngày phép đã dùng*, *vai trò* và *mật khẩu*. Nhập lại một file cũ là **xoá sổ số ngày phép đã dùng của cả cơ quan**, mà không có cách nào hoàn tác — trong khi màn hình *Quỹ phép* có sẵn cơ chế nhập theo đợt và **hoàn tác được**. Nay: người đã có trong hệ thống thì **giữ nguyên số ngày phép**, chỉ tài khoản **mới** mới lấy theo file

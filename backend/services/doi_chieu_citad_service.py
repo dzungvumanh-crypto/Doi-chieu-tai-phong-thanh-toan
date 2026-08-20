@@ -417,11 +417,10 @@ def build_xlsx(data: ExportIn) -> bytes:
     # Đã đối chiếu với DoiChieuCITAD.py::_calc() của tool desktop gốc: gốc
     # CŨNG chỉ cộng napas.den_ih_m/t vào ci['den_ih_m'/'t'], không có dòng
     # tương ứng cho ebank — đây là hành vi gốc, KHÔNG phải sai sót khi port.
-    # Ebanking vẫn được in đúng vị trí cột trong Excel (dòng 'Ebanking' dùng
-    # data.em/et riêng) nhưng không tính vào dòng Chênh lệch. Nếu Phòng
-    # Thanh toán xác nhận đây là bug nghiệp vụ của bản gốc (không phải chủ
-    # ý), cần sửa ở đây (ci[4] += nv(data.em); ci[5] += nv(data.et)) — không
-    # tự ý đổi vì ảnh hưởng trực tiếp số liệu báo cáo gửi NHNN.
+    # 20/08/2026: dòng "Ebanking" đã bỏ khỏi Excel xuất ra (kênh này không
+    # còn dùng, đồng bộ với việc đã bỏ ô nhập Ebanking khỏi màn hình trước
+    # đó) — data.em/et không còn được dùng ở đâu trong build_xlsx nữa,
+    # vẫn giữ 2 field trong ExportIn để không phá payload cũ.
     ci[4] += nv(data.nm)
     ci[5] += nv(data.nt)
     # PSS - MDP: kênh mới thêm sau, theo yêu cầu Phòng Thanh toán — CÙNG
@@ -532,8 +531,6 @@ def build_xlsx(data: ExportIn) -> bytes:
     wr(row, 'Napas', '', [0, 0, 0, 0, data.nm, data.nt, 0, 0])
     row += 1
     wr(row, 'PSS - MDP', '', [0, 0, 0, 0, data.sm, data.st, 0, 0])
-    row += 1
-    wr(row, 'Ebanking', '', [0, 0, 0, 0, data.em, data.et, 0, 0])
     row += 1
     rh(row)
     ws.cell(row, 1).value = 'Chênh lệch'
