@@ -160,6 +160,32 @@ def group_files_by_date(paths: list[Path], log=None) -> dict[str, dict]:
         if ft in ('core_csv', 'core_zip'):
             g['core'].append(p)
 
+    # Gán TOÀN BỘ pool citad/osb/hub cho mọi nhóm ngày TRƯỚC — mỗi file citad/
+    # osb/hub có thể chứa dữ liệu nhiều ngày, nên không thể biết trước file nào
+    # cần cho ngày nào; load_citad()/load_osb()/load_hub() sẽ tự lọc đúng ngày
+    # (+ carryover) lúc xử lý. PHẢI làm trước phần EICP/merge bên dưới — cả 2
+    # đều dùng `len(groups[d]['citad'])` để biết ngày nào "thực sự chấm"; làm
+    # sau (như code cũ) khiến điều kiện đó LUÔN rỗng, EICP carryover T-1 không
+    # bao giờ thực sự kích hoạt (bug phát hiện 2026-08-20 lúc sửa Hub, tách
+    # riêng khỏi việc Hub — sửa luôn vì cùng gốc "citad rỗng lúc kiểm tra").
+    if citad_pool:
+        for g in groups.values():
+            g['citad'] = citad_pool
+        if log:
+            log(f'  [INFO] {len(citad_pool)} file citad — gán chung cho mọi ngày, lọc theo TRX_DATE lúc xử lý.')
+
+    if osb_pool:
+        for g in groups.values():
+            g['osb'] = osb_pool
+        if log:
+            log(f'  [INFO] {len(osb_pool)} file OSB — gán chung cho mọi ngày, lọc theo Ngày hạch toán lúc xử lý.')
+
+    if hub_pool:
+        for g in groups.values():
+            g['hub'] = hub_pool
+        if log:
+            log(f'  [INFO] {len(hub_pool)} file hub — gán chung cho mọi ngày, lọc theo Ngày giờ kênh trả lúc xử lý.')
+
     # Gán EICP vào ngày tương ứng (chỉ dùng day number, bỏ qua năm/tháng)
     eicp_unmatched: list[Path] = []
     for p, day_num in eicp_pending:
@@ -175,8 +201,7 @@ def group_files_by_date(paths: list[Path], log=None) -> dict[str, dict]:
     # EICP không khớp nhóm ngày nào có sẵn (VD tên file không theo công thức chuẩn,
     # hoặc ngày đó không có Citad/Core riêng — chỉ tồn tại qua carryover thứ 2)
     # → gán vào group có đủ citad+core nhất, không âm thầm bỏ dữ liệu. (Hub
-    # từng có cơ chế fallback tương tự — đã bỏ, Hub giờ là pool lọc theo dòng,
-    # xem cuối hàm.)
+    # từng có cơ chế fallback tương tự — đã bỏ, Hub giờ là pool lọc theo dòng.)
     if eicp_unmatched and groups:
         best_group = max(groups.keys(), key=lambda d: len(groups[d]['citad']) + len(groups[d]['core']))
         for p in eicp_unmatched:
@@ -192,32 +217,6 @@ def group_files_by_date(paths: list[Path], log=None) -> dict[str, dict]:
     # của thứ 2, không cần cả cuối tuần thứ 2 đã gộp thêm).
     merge_previous_day_eicp(groups, log)
     merge_monday_carryover(groups, log)
-
-    # Gán TOÀN BỘ pool citad cho mọi nhóm ngày — mỗi file citad có thể chứa
-    # dữ liệu nhiều ngày, nên không thể biết trước file nào cần cho ngày nào.
-    # load_citad() sẽ lọc đúng TRX_DATE của từng ngày khi xử lý.
-    if citad_pool:
-        for g in groups.values():
-            g['citad'] = citad_pool
-        if log:
-            log(f'  [INFO] {len(citad_pool)} file citad — gán chung cho mọi ngày, lọc theo TRX_DATE lúc xử lý.')
-
-    # Gán TOÀN BỘ pool OSB cho mọi nhóm ngày — cùng lý do như Citad. load_osb()
-    # sẽ lọc đúng 'Ngày hạch toán' của từng ngày (+ carryover) lúc xử lý.
-    if osb_pool:
-        for g in groups.values():
-            g['osb'] = osb_pool
-        if log:
-            log(f'  [INFO] {len(osb_pool)} file OSB — gán chung cho mọi ngày, lọc theo Ngày hạch toán lúc xử lý.')
-
-    # Gán TOÀN BỘ pool Hub cho mọi nhóm ngày — cùng lý do như Citad/OSB.
-    # load_hub() sẽ lọc đúng 'Ngày giờ kênh trả' + cửa sổ carryover T/T-1 của
-    # từng ngày lúc xử lý (xem pipeline.py::_run_one_day()).
-    if hub_pool:
-        for g in groups.values():
-            g['hub'] = hub_pool
-        if log:
-            log(f'  [INFO] {len(hub_pool)} file hub — gán chung cho mọi ngày, lọc theo Ngày giờ kênh trả lúc xử lý.')
 
     return groups
 

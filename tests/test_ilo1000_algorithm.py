@@ -978,6 +978,35 @@ class TestPreviousDayEicpCarryover:
         )
         assert set(groups['20260714']['eicp']) == {Path('mon_eicp.xls')}
 
+    def test_actually_fires_through_group_files_by_date(self, tmp_path):
+        """
+        Bug đã sửa 2026-08-20: gọi qua group_files_by_date() THẬT (không tự
+        dựng dict groups tay như các test trên) — trước đây citad_pool được
+        gán vào groups SAU khi merge_previous_day_eicp() chạy, nên điều kiện
+        `groups[d].get('citad')` trong hàm đó luôn rỗng và carryover T-1 không
+        bao giờ thực sự kích hoạt trên luồng thật, dù test đơn vị gọi thẳng
+        hàm (dựng sẵn groups có citad) vẫn xanh bình thường.
+        """
+        from backend.services.ilo1000.detect import group_files_by_date
+
+        # 2026-07-14 = thứ 3, T-1 = 13/7 (thứ 2)
+        citad_path = tmp_path / 'citad.csv'
+        citad_path.write_text(
+            'SERIAL_NO,RELATION_NO,TRX_DATE,AMOUNT,TRX_STATUS,extra\n1,2,20260714,100,OK,\n',
+            encoding='utf-8',
+        )
+        core14 = tmp_path / 'gl02_20260714.csv'
+        core14.write_text('TRDATE,TRBRCD\n20260714,1000\n', encoding='utf-8')
+        core13 = tmp_path / 'gl02_20260713.csv'
+        core13.write_text('TRDATE,TRBRCD\n20260713,1000\n', encoding='utf-8')
+        eicp13 = tmp_path / 'eicp 13.XLS'
+        eicp13.write_bytes(b'')
+
+        groups = group_files_by_date([citad_path, core14, core13, eicp13])
+        assert eicp13 in groups['20260714']['eicp'], (
+            "EICP T-1 (13/7) phải được gộp vào ngày T (14/7) qua group_files_by_date() thật"
+        )
+
 
 # ── Test 12: Chấm thứ 2 — gộp dữ liệu cuối tuần ─────────────────────────────
 
