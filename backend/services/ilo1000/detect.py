@@ -9,7 +9,6 @@ from pathlib import Path
 # ── Regex nhận dạng date từ tên file ─────────────────────────────────────────
 _RE_GL02_CSV = re.compile(r'gl02[_\s](\d{8})', re.IGNORECASE)
 _RE_GL02_ZIP = re.compile(r'GL02[_\s](\d{8})', re.IGNORECASE)
-_RE_PHUB     = re.compile(r'_(\d{8})\d{6}\.xlsx', re.IGNORECASE)
 _RE_EICP_DAY = re.compile(r'eicp\s+(\d+)', re.IGNORECASE)
 
 
@@ -46,9 +45,6 @@ def _is_citad_csv(path: Path) -> bool:
 def extract_date(path: Path, file_type: str) -> str | None:
     """Trích ngày YYYYMMDD từ tên file. Trả None nếu không nhận dạng được."""
     name = path.name
-    if file_type == 'hub':
-        m = _RE_PHUB.search(name)
-        return m.group(1) if m else None
     if file_type in ('core_csv',):
         m = _RE_GL02_CSV.search(name)
         return m.group(1) if m else None
@@ -104,6 +100,7 @@ def group_files_by_date(paths: list[Path], log=None) -> dict[str, dict]:
     eicp_pending: list[tuple[Path, int]] = []  # (path, day_num)
     citad_pool: list[Path] = []  # citad KHÔNG gán theo ngày ở đây — xem cuối hàm
     osb_pool:   list[Path] = []  # OSB cũng vậy — tên file không đáng tin về ngày
+    hub_pool:   list[Path] = []  # Hub cũng vậy — xem cuối hàm
 
     def _get_or_create(date_str: str) -> dict:
         if date_str not in groups:
@@ -134,6 +131,16 @@ def group_files_by_date(paths: list[Path], log=None) -> dict[str, dict]:
             osb_pool.append(p)
             continue
 
+        # Hub: cùng lý do như Citad/OSB — tên file không đáng tin (xác nhận
+        # thật 2026-08-19: 5 file pHub cùng tên ngày xuất 13/08 nhưng bên
+        # trong trộn lẫn dữ liệu 4 ngày khác nhau, 10-13/08). Cách cũ (đoán
+        # ngày theo tên, không khớp thì dồn HẾT vào 1 nhóm duy nhất) từng làm
+        # mất trắng Hub 1 ngày trong batch thật. Gom pool chung, lọc theo
+        # 'Ngày giờ kênh trả' + cửa sổ carryover khi load (xem load_hub()).
+        if ft == 'hub':
+            hub_pool.append(p)
+            continue
+
         date_str = extract_date(p, ft)
 
         if ft == 'eicp':
@@ -150,9 +157,7 @@ def group_files_by_date(paths: list[Path], log=None) -> dict[str, dict]:
             continue
 
         g = _get_or_create(date_str)
-        if ft == 'hub':
-            g['hub'].append(p)
-        elif ft in ('core_csv', 'core_zip'):
+        if ft in ('core_csv', 'core_zip'):
             g['core'].append(p)
 
     # Gán EICP vào ngày tương ứng (chỉ dùng day number, bỏ qua năm/tháng)
@@ -168,9 +173,10 @@ def group_files_by_date(paths: list[Path], log=None) -> dict[str, dict]:
             eicp_unmatched.append(p)
 
     # EICP không khớp nhóm ngày nào có sẵn (VD tên file không theo công thức chuẩn,
-    # hoặc ngày đó không có Hub/Citad/Core riêng — chỉ tồn tại qua carryover thứ 2)
-    # → gán vào group có đủ citad+core nhất, cùng cơ chế fallback với Hub bên dưới,
-    # không âm thầm bỏ dữ liệu.
+    # hoặc ngày đó không có Citad/Core riêng — chỉ tồn tại qua carryover thứ 2)
+    # → gán vào group có đủ citad+core nhất, không âm thầm bỏ dữ liệu. (Hub
+    # từng có cơ chế fallback tương tự — đã bỏ, Hub giờ là pool lọc theo dòng,
+    # xem cuối hàm.)
     if eicp_unmatched and groups:
         best_group = max(groups.keys(), key=lambda d: len(groups[d]['citad']) + len(groups[d]['core']))
         for p in eicp_unmatched:
@@ -181,28 +187,10 @@ def group_files_by_date(paths: list[Path], log=None) -> dict[str, dict]:
         for p in eicp_unmatched:
             log(f'  [WARN] Không gán được ngày cho EICP: {p.name}')
 
-    # Hub không khớp ngày → gán vào group nào có đủ citad+core nhất
-    if groups:
-        # Thu thập hub files từ các group không có citad/core
-        hub_only_groups = {d: g for d, g in groups.items() if g['hub'] and not g['citad'] and not g['core']}
-        full_groups = {d: g for d, g in groups.items() if not g['hub'] and (g['citad'] or g['core'])}
-
-        if hub_only_groups and full_groups:
-            # Lấy hub file(s) từ group hub-only, gán vào group có dữ liệu nhất
-            best_full = max(full_groups.keys(), key=lambda d: len(full_groups[d]['citad']) + len(full_groups[d]['core']))
-            for d, g in hub_only_groups.items():
-                groups[best_full]['hub'].extend(g['hub'])
-                if log:
-                    names = ', '.join(p.name for p in g['hub'])
-                    log(f'  [INFO] Gán hub ({names}) vào nhóm {best_full} (ngày hub khác: {d})')
-            # Xóa group hub-only rỗng
-            for d in hub_only_groups:
-                del groups[d]
-
     # Chạy trước merge_monday_carryover: khi thứ 2 tự gộp thêm dữ liệu cuối tuần,
-    # KHÔNG được để việc đó "lan" ngược vào ngày thứ 3 (thứ 3 chỉ cần Hub/EICP gốc
+    # KHÔNG được để việc đó "lan" ngược vào ngày thứ 3 (thứ 3 chỉ cần EICP gốc
     # của thứ 2, không cần cả cuối tuần thứ 2 đã gộp thêm).
-    merge_previous_day_hub_eicp(groups, log)
+    merge_previous_day_eicp(groups, log)
     merge_monday_carryover(groups, log)
 
     # Gán TOÀN BỘ pool citad cho mọi nhóm ngày — mỗi file citad có thể chứa
@@ -222,6 +210,15 @@ def group_files_by_date(paths: list[Path], log=None) -> dict[str, dict]:
         if log:
             log(f'  [INFO] {len(osb_pool)} file OSB — gán chung cho mọi ngày, lọc theo Ngày hạch toán lúc xử lý.')
 
+    # Gán TOÀN BỘ pool Hub cho mọi nhóm ngày — cùng lý do như Citad/OSB.
+    # load_hub() sẽ lọc đúng 'Ngày giờ kênh trả' + cửa sổ carryover T/T-1 của
+    # từng ngày lúc xử lý (xem pipeline.py::_run_one_day()).
+    if hub_pool:
+        for g in groups.values():
+            g['hub'] = hub_pool
+        if log:
+            log(f'  [INFO] {len(hub_pool)} file hub — gán chung cho mọi ngày, lọc theo Ngày giờ kênh trả lúc xử lý.')
+
     return groups
 
 
@@ -229,19 +226,23 @@ def _parse_date(date_str: str) -> date:
     return date(int(date_str[:4]), int(date_str[4:6]), int(date_str[6:8]))
 
 
-def merge_previous_day_hub_eicp(groups: dict, log=None) -> None:
+def merge_previous_day_eicp(groups: dict, log=None) -> None:
     """
     Ngày chấm bình thường (không phải thứ 2 — thứ 2 dùng merge_monday_carryover
-    riêng, phạm vi rộng hơn): gộp thêm Hub/EICP của T-1 vào nhóm ngày T, theo
-    đúng tài liệu gốc bước 1 ("Xuất dữ liệu hub gồm cần đối chiếu t và trước
-    ngày cần chấm đối chiếu 1 ngày t-1"). Lệnh vào hệ thống sau giờ cutoff T-1
-    chuyển "chờ đi kênh" sang T — Hub/EICP của lệnh đó vẫn nằm trong file T-1,
-    cần gộp vào để tra đúng Trace/EICP. Citad/Core giữ nguyên chỉ ngày T.
+    riêng, phạm vi rộng hơn): gộp thêm EICP của T-1 vào nhóm ngày T, theo đúng
+    tài liệu gốc bước 1 ("Xuất dữ liệu hub gồm cần đối chiếu t và trước ngày
+    cần chấm đối chiếu 1 ngày t-1"). Lệnh vào hệ thống sau giờ cutoff T-1
+    chuyển "chờ đi kênh" sang T — EICP của lệnh đó vẫn nằm trong file T-1, cần
+    gộp vào để tra đúng Trace. Citad/Core giữ nguyên chỉ ngày T.
     COPY (không xoá khỏi nhóm T-1 gốc) — T-1 vẫn tự ra báo cáo riêng bình thường.
+
+    (Hub trước đây cũng gộp ở đây theo file — đã bỏ 2026-08-19: Hub giờ là
+    pool lọc theo dòng "Ngày giờ kênh trả" + cửa sổ T/T-1 ngay lúc load_hub(),
+    xem pipeline.py::_run_one_day() và detect.py::group_files_by_date().)
     """
     # Chỉ áp dụng cho nhóm THỰC SỰ chấm (có Citad) — nhóm không có Citad (VD
-    # thứ 7/CN đơn thuần chỉ có Hub/Core rơi vào) sẽ bị SKIP ở bước xử lý sau,
-    # không cần áp T-1; quan trọng hơn: nếu vẫn áp cho chúng, danh sách hub/eicp
+    # thứ 7/CN đơn thuần chỉ có Core rơi vào) sẽ bị SKIP ở bước xử lý sau,
+    # không cần áp T-1; quan trọng hơn: nếu vẫn áp cho chúng, danh sách eicp
     # của nhóm đó bị nối dài trước khi merge_monday_carryover đọc lại (T-2/T-3),
     # khiến dữ liệu T-1-của-T-1 bị "lan" 2 lớp vào thứ 2 một cách dư thừa.
     target_keys = [d for d in groups if _parse_date(d).weekday() != 0 and groups[d].get('citad')]
@@ -252,35 +253,30 @@ def merge_previous_day_hub_eicp(groups: dict, log=None) -> None:
 
         g = groups[t_str]
         src = groups.get(prev_str, {})
-        missing: list[str] = []
-
-        if src.get('hub'):
-            g['hub'] = g['hub'] + src['hub']
-        else:
-            missing.append(f'Hub T-1 ({prev_str})')
 
         if src.get('eicp'):
             g['eicp'] = g['eicp'] + src['eicp']
-        else:
-            missing.append(f'EICP T-1 ({prev_str})')
-
-        if log:
-            if missing:
-                log(
-                    f'[{t_str}] CẢNH BÁO — thiếu: {", ".join(missing)}. '
-                    'Có thể sót giao dịch chờ đi kênh từ hôm trước (T-1).'
-                )
-            else:
-                log(f'[{t_str}] Gộp thêm Hub/EICP của T-1 ({prev_str}).')
+            if log:
+                log(f'[{t_str}] Gộp thêm EICP của T-1 ({prev_str}).')
+        elif log:
+            log(
+                f'[{t_str}] CẢNH BÁO — thiếu EICP T-1 ({prev_str}). '
+                'Có thể sót giao dịch chờ đi kênh từ hôm trước (T-1).'
+            )
 
 
 def merge_monday_carryover(groups: dict, log=None) -> None:
     """
     Chấm thứ 2: Citad không chạy phiên thứ 7/CN nên toàn bộ lệnh "chờ đi kênh"
     phát sinh sau giờ cutoff thứ 6 + cả thứ 7 + CN đều dồn sang phiên sáng thứ 2.
-    Gộp thêm Hub/EICP của thứ 6,7,CN (T-3,T-2,T-1) và Core của thứ 7,CN (T-2,T-1)
+    Gộp thêm EICP của thứ 6,7,CN (T-3,T-2,T-1) và Core của thứ 7,CN (T-2,T-1)
     vào nhóm thứ 2 để bắt được các lệnh này. Citad giữ nguyên chỉ ngày thứ 2 (T).
     Đây là COPY (không xoá khỏi nhóm gốc) — thứ 6 vẫn tự ra báo cáo riêng bình thường.
+
+    (Hub trước đây cũng gộp ở đây theo file — đã bỏ 2026-08-19, xem
+    merge_previous_day_eicp() để biết lý do: Hub giờ là pool lọc theo dòng,
+    cửa sổ carryover cho thứ 2 áp dụng ngay ở load_hub() qua
+    pipeline.py::_osb_carryover_days().)
     """
     monday_keys = [d for d in groups if _parse_date(d).weekday() == 0]
 
@@ -295,10 +291,6 @@ def merge_monday_carryover(groups: dict, log=None) -> None:
 
         for label, d_str in (('thứ 6', fri_str), ('thứ 7', sat_str), ('CN', sun_str)):
             src = groups.get(d_str, {})
-            if src.get('hub'):
-                g['hub'] = g['hub'] + src['hub']
-            else:
-                missing.append(f'Hub {label} ({d_str})')
             if src.get('eicp'):
                 g['eicp'] = g['eicp'] + src['eicp']
             else:
@@ -312,7 +304,7 @@ def merge_monday_carryover(groups: dict, log=None) -> None:
                 missing.append(f'Core {label} ({d_str})')
 
         if log:
-            log(f'[{mon_str}] Chấm thứ 2 — gộp thêm dữ liệu cuối tuần (Hub/EICP thứ 6-7-CN, Core thứ 7-CN).')
+            log(f'[{mon_str}] Chấm thứ 2 — gộp thêm dữ liệu cuối tuần (EICP thứ 6-7-CN, Core thứ 7-CN).')
             if missing:
                 log(
                     f'[{mon_str}] CẢNH BÁO — thiếu: {", ".join(missing)}. '

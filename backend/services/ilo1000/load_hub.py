@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from .config import HUB_COLS_KEEP, HUB_COL_RENAME, HUB_COL_SO_GD
+from .config import HUB_COLS_KEEP, HUB_COL_NGAY_GIO, HUB_COL_RENAME, HUB_COL_SO_GD
 
 
 def _load_one(path: Path) -> pd.DataFrame:
@@ -39,10 +39,17 @@ def _load_one(path: Path) -> pd.DataFrame:
     return result
 
 
-def load_hub(paths: list[Path] | Path) -> pd.DataFrame:
+def load_hub(paths: list[Path] | Path, ngay_ints: int | set[int] | None = None) -> pd.DataFrame:
     """
-    Đọc 1 hoặc nhiều file pHub XLSX cùng ngày và ghép lại (có thể export theo nhiều đợt/batch).
+    Đọc 1 hoặc nhiều file pHub XLSX và ghép lại (có thể export theo nhiều đợt/batch).
     Deduplicate theo Số giao dịch — phòng trường hợp cùng 1 giao dịch xuất hiện ở nhiều file.
+
+    `ngay_ints`: nếu truyền (1 ngày hoặc tập nhiều ngày — dùng cho carryover
+    "chờ đi kênh" T + T-1), chỉ giữ dòng có 'Ngày giờ kênh trả' khớp. TÊN FILE
+    pHub KHÔNG đáng tin để suy ngày — xác nhận thật 2026-08-19: 5 file pHub
+    cùng tên ngày xuất 13/08 nhưng bên trong trộn lẫn dữ liệu 4 ngày khác nhau
+    (10-13/08). Lọc theo NGÀY ĐẦY ĐỦ (năm-tháng-ngày), không chỉ số ngày trong
+    tháng như cờ "Chờ đi kênh" trong process_hub() đang dùng.
     """
     if isinstance(paths, (str, Path)):
         paths = [paths]
@@ -51,4 +58,12 @@ def load_hub(paths: list[Path] | Path) -> pd.DataFrame:
         return pd.DataFrame(columns=HUB_COLS_KEEP)
     df = pd.concat(frames, ignore_index=True)
     df = df.drop_duplicates(subset=[HUB_COL_SO_GD], keep='first')
+
+    if ngay_ints is not None:
+        if isinstance(ngay_ints, int):
+            ngay_ints = {ngay_ints}
+        parsed = pd.to_datetime(df[HUB_COL_NGAY_GIO], dayfirst=True, errors='coerce')
+        ngay_full = parsed.dt.year * 10000 + parsed.dt.month * 100 + parsed.dt.day
+        df = df[ngay_full.isin(ngay_ints)].copy()
+
     return df.reset_index(drop=True)

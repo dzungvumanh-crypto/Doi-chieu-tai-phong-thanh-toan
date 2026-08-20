@@ -21,9 +21,11 @@ from .process import (
 
 def _osb_carryover_days(ngay_int: int) -> set[int]:
     """
-    Ngày cần load OSB cho ngày T đang chấm: T + T-1 (ngày thường); T + thứ
-    6,7,CN nếu T là thứ 2 — "OSB cũ chưa đi" carry sang, cùng cửa sổ carryover
-    đã áp dụng cho Hub/Eicp ở `detect.py` (Citad không chạy phiên T7/CN).
+    Cửa sổ ngày cần nạp cho ngày T đang chấm: T + T-1 (ngày thường); T + thứ
+    6,7,CN nếu T là thứ 2 (Citad không chạy phiên T7/CN, dữ liệu "chưa đi
+    kênh"/"chưa đi" dồn sang thứ 2). Dùng chung cho cả OSB ("OSB cũ chưa đi")
+    và Hub (`load_hub(..., ngay_ints=...)`) — tên hàm giữ nguyên từ lúc chỉ
+    phục vụ OSB, logic đã tổng quát cho cả 2 nguồn (2026-08-19).
     """
     d = date(ngay_int // 10000, (ngay_int // 100) % 100, ngay_int % 100)
     days = {ngay_int}
@@ -100,7 +102,7 @@ def _run_one_day(
 
     log(f'[{date_str}] Đang đọc file song song...')
     with ThreadPoolExecutor(max_workers=4) as ex:
-        f_hub   = ex.submit(load_hub, files.get('hub', [])) if files.get('hub') else None
+        f_hub   = ex.submit(load_hub, files.get('hub', []), _osb_carryover_days(ngay_int)) if files.get('hub') else None
         f_citad = ex.submit(load_citad, files['citad'], ngay_int)
         f_eicp  = ex.submit(load_eicp,  files.get('eicp', []))
         f_osb   = ex.submit(load_osb, files.get('osb', []), _osb_carryover_days(ngay_int)) if files.get('osb') else None

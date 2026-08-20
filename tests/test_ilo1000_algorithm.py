@@ -758,6 +758,70 @@ class TestLoadHubMultiFile:
         assert result['Số tiền thực chuyển'].astype(float).sum() == 1_000_000
 
 
+# ── Test: load_hub lọc theo 'Ngày giờ kênh trả' — tên file Hub không đáng tin ──
+
+def _write_phub_rows(path, rows):
+    """Ghi file pHub đúng cấu trúc thật: title row0, header row1 (0-based)."""
+    df = pd.DataFrame(rows)
+    with pd.ExcelWriter(path) as writer:
+        df.to_excel(writer, index=False, header=True, startrow=1)
+
+
+def _hub_row_ngay(so_gd, ngay_gio):
+    return {
+        'Số giao dịch': so_gd, 'Số Ref Hub': 'REF' + so_gd,
+        'Số thành công': 'STC_' + so_gd, 'Số Trace 1': 'T_' + so_gd,
+        'Số tiền thực chuyển': '1000000', 'Trạng thái': 'Hoàn thành',
+        'Ngày giờ kênh trả': ngay_gio, 'Nội dung chuyển tiền': '',
+    }
+
+
+class TestLoadHubDateFilter:
+    """
+    1 file pHub thật có thể trộn lẫn dữ liệu NHIỀU ngày (xác nhận thật
+    2026-08-19: 5 file pHub cùng tên ngày xuất 13/08 nhưng bên trong trải dài
+    10-13/08). load_hub(paths, ngay_ints=...) phải lọc đúng theo cột 'Ngày giờ
+    kênh trả' của TỪNG DÒNG, không suy ngày từ tên file.
+    """
+
+    def test_filters_to_single_day(self, tmp_path):
+        from backend.services.ilo1000.load_hub import load_hub
+
+        p = tmp_path / 'phub_gop_nhieu_ngay.xlsx'
+        _write_phub_rows(p, [
+            _hub_row_ngay('A001', '10/08/2026 08:00'),
+            _hub_row_ngay('A002', '11/08/2026 08:00'),
+            _hub_row_ngay('A003', '12/08/2026 08:00'),
+        ])
+        result = load_hub([p], ngay_ints=20260811)
+        assert list(result[HUB_COL_SO_GD]) == ['A002']
+
+    def test_carryover_multiple_ngay_ints(self, tmp_path):
+        """Cửa sổ carryover T + T-1: truyền tập nhiều ngày cùng lúc."""
+        from backend.services.ilo1000.load_hub import load_hub
+
+        p = tmp_path / 'phub_gop_nhieu_ngay.xlsx'
+        _write_phub_rows(p, [
+            _hub_row_ngay('A001', '10/08/2026 08:00'),
+            _hub_row_ngay('A002', '11/08/2026 08:00'),
+            _hub_row_ngay('A003', '12/08/2026 08:00'),
+        ])
+        result = load_hub([p], ngay_ints={20260811, 20260812})
+        assert set(result[HUB_COL_SO_GD]) == {'A002', 'A003'}
+
+    def test_no_ngay_ints_keeps_all_days(self, tmp_path):
+        """Không truyền ngay_ints → giữ hành vi cũ, không lọc gì (backward compatible)."""
+        from backend.services.ilo1000.load_hub import load_hub
+
+        p = tmp_path / 'phub_gop_nhieu_ngay.xlsx'
+        _write_phub_rows(p, [
+            _hub_row_ngay('A001', '10/08/2026 08:00'),
+            _hub_row_ngay('A002', '11/08/2026 08:00'),
+        ])
+        result = load_hub([p])
+        assert len(result) == 2
+
+
 # ── Test 12a: EICP không khớp ngày nào — gán vào nhóm nhiều dữ liệu nhất ────
 
 class TestEicpUnmatchedFallback:
@@ -822,95 +886,97 @@ class TestEicpUnmatchedFallback:
 
 # ── Test 11b: Ngày thường trong tuần — gộp thêm Hub/EICP của T-1 ────────────
 
-class TestPreviousDayHubEicpCarryover:
+class TestPreviousDayEicpCarryover:
     """
     Theo tài liệu gốc bước 1: mọi ngày chấm bình thường (không phải thứ 2) đều
-    phải gộp thêm Hub/EICP của T-1 — lệnh vào hệ thống sau cutoff T-1 chờ đi
-    kênh sang T, Hub/EICP của lệnh đó vẫn nằm trong file T-1. Citad/Core giữ
-    nguyên chỉ ngày T. Thứ 2 dùng cơ chế riêng (merge_monday_carryover), không
-    áp dụng quy tắc T-1 đơn giản này (người dùng xác nhận 2026-07-16).
+    phải gộp thêm EICP của T-1 — lệnh vào hệ thống sau cutoff T-1 chờ đi kênh
+    sang T, EICP của lệnh đó vẫn nằm trong file T-1. Citad/Core giữ nguyên chỉ
+    ngày T. Thứ 2 dùng cơ chế riêng (merge_monday_carryover), không áp dụng
+    quy tắc T-1 đơn giản này (người dùng xác nhận 2026-07-16).
+
+    (Hub từng gộp cùng Eicp ở đây — đã bỏ 2026-08-19: Hub giờ là pool lọc
+    theo dòng "Ngày giờ kênh trả" ngay lúc load_hub(), xem
+    TestDetectHubPool/TestLoadHubDateFilter.)
     """
 
     def _empty_group(self):
         return {'hub': [], 'citad': [], 'eicp': [], 'core': []}
 
-    def test_regular_day_merges_prev_day_hub_and_eicp(self):
-        from backend.services.ilo1000.detect import merge_previous_day_hub_eicp
+    def test_regular_day_merges_prev_day_eicp(self):
+        from backend.services.ilo1000.detect import merge_previous_day_eicp
         from pathlib import Path
 
         # 2026-07-14 = thứ 3, T-1 = 13/7 (thứ 2)
         groups = {
-            '20260714': {**self._empty_group(), 'hub': [Path('tue_hub.xlsx')],
+            '20260714': {**self._empty_group(),
                          'citad': [Path('tue_citad.csv')], 'core': [Path('tue_core.csv')]},
-            '20260713': {**self._empty_group(), 'hub': [Path('mon_hub.xlsx')],
+            '20260713': {**self._empty_group(),
                          'eicp': [Path('mon_eicp.xls')], 'core': [Path('mon_core.csv')]},
         }
-        merge_previous_day_hub_eicp(groups)
+        merge_previous_day_eicp(groups)
         tue = groups['20260714']
 
-        assert set(tue['hub']) == {Path('tue_hub.xlsx'), Path('mon_hub.xlsx')}
         assert set(tue['eicp']) == {Path('mon_eicp.xls')}
-        assert tue['core'] == [Path('tue_core.csv')], "Core KHÔNG được gộp T-1, chỉ Hub/EICP"
+        assert tue['core'] == [Path('tue_core.csv')], "Core KHÔNG được gộp T-1, chỉ EICP"
         assert tue['citad'] == [Path('tue_citad.csv')], "Citad chỉ giữ ngày T"
 
     def test_monday_not_affected_by_this_rule(self):
         """Thứ 2 không áp dụng quy tắc T-1 đơn giản — dùng merge_monday_carryover riêng."""
-        from backend.services.ilo1000.detect import merge_previous_day_hub_eicp
+        from backend.services.ilo1000.detect import merge_previous_day_eicp
         from pathlib import Path
 
         # 2026-07-13 = thứ 2, T-1 = 12/7 (CN)
         groups = {
             '20260713': {**self._empty_group(), 'citad': [Path('mon_citad.csv')]},
-            '20260712': {**self._empty_group(), 'hub': [Path('sun_hub.xlsx')]},
+            '20260712': {**self._empty_group(), 'eicp': [Path('sun_eicp.xls')]},
         }
-        merge_previous_day_hub_eicp(groups)
-        assert groups['20260713']['hub'] == [], "Thứ 2 không được áp dụng quy tắc T-1 đơn giản"
+        merge_previous_day_eicp(groups)
+        assert groups['20260713']['eicp'] == [], "Thứ 2 không được áp dụng quy tắc T-1 đơn giản"
 
     def test_prev_day_own_group_unchanged_after_merge(self):
         """COPY, không phải move — nhóm T-1 gốc vẫn tự ra báo cáo riêng bình thường."""
-        from backend.services.ilo1000.detect import merge_previous_day_hub_eicp
+        from backend.services.ilo1000.detect import merge_previous_day_eicp
         from pathlib import Path
 
         groups = {
             '20260714': {**self._empty_group(), 'citad': [Path('tue_citad.csv')]},
-            '20260713': {**self._empty_group(), 'hub': [Path('mon_hub.xlsx')], 'citad': [Path('mon_citad.csv')]},
+            '20260713': {**self._empty_group(), 'eicp': [Path('mon_eicp.xls')], 'citad': [Path('mon_citad.csv')]},
         }
-        merge_previous_day_hub_eicp(groups)
-        assert groups['20260713']['hub'] == [Path('mon_hub.xlsx')]
+        merge_previous_day_eicp(groups)
+        assert groups['20260713']['eicp'] == [Path('mon_eicp.xls')]
         assert groups['20260713']['citad'] == [Path('mon_citad.csv')]
 
     def test_missing_prev_day_warns_but_still_runs(self):
-        from backend.services.ilo1000.detect import merge_previous_day_hub_eicp
+        from backend.services.ilo1000.detect import merge_previous_day_eicp
         from pathlib import Path
 
         groups = {'20260714': {**self._empty_group(), 'citad': [Path('tue_citad.csv')]}}
         logs = []
-        merge_previous_day_hub_eicp(groups, log=logs.append)
-        assert groups['20260714']['hub'] == []
+        merge_previous_day_eicp(groups, log=logs.append)
+        assert groups['20260714']['eicp'] == []
         assert any('CẢNH BÁO' in l and 'T-1' in l for l in logs)
 
     def test_does_not_leak_mondays_carryover_into_tuesday(self):
         """
-        Thứ 3 chỉ lấy Hub/EICP GỐC của thứ 2 (T-1), KHÔNG được kéo theo dữ liệu
+        Thứ 3 chỉ lấy EICP GỐC của thứ 2 (T-1), KHÔNG được kéo theo dữ liệu
         cuối tuần mà thứ 2 đã tự gộp thêm qua merge_monday_carryover — đây là lý
-        do merge_previous_day_hub_eicp phải chạy TRƯỚC merge_monday_carryover.
+        do merge_previous_day_eicp phải chạy TRƯỚC merge_monday_carryover.
         """
-        from backend.services.ilo1000.detect import group_files_by_date
         from pathlib import Path
         import backend.services.ilo1000.detect as detect_mod
 
         groups = {
             '20260714': {**self._empty_group(), 'citad': [Path('tue_citad.csv')]},
-            '20260713': {**self._empty_group(), 'hub': [Path('mon_hub.xlsx')], 'citad': [Path('mon_citad.csv')]},
-            '20260710': {**self._empty_group(), 'hub': [Path('fri_hub.xlsx')]},
+            '20260713': {**self._empty_group(), 'eicp': [Path('mon_eicp.xls')], 'citad': [Path('mon_citad.csv')]},
+            '20260710': {**self._empty_group(), 'eicp': [Path('fri_eicp.xls')]},
         }
-        detect_mod.merge_previous_day_hub_eicp(groups)
+        detect_mod.merge_previous_day_eicp(groups)
         detect_mod.merge_monday_carryover(groups)
 
-        assert Path('fri_hub.xlsx') not in groups['20260714']['hub'], (
-            "Thứ 3 không được kéo theo Hub cuối tuần mà thứ 2 tự gộp thêm"
+        assert Path('fri_eicp.xls') not in groups['20260714']['eicp'], (
+            "Thứ 3 không được kéo theo EICP cuối tuần mà thứ 2 tự gộp thêm"
         )
-        assert set(groups['20260714']['hub']) == {Path('mon_hub.xlsx')}
+        assert set(groups['20260714']['eicp']) == {Path('mon_eicp.xls')}
 
 
 # ── Test 12: Chấm thứ 2 — gộp dữ liệu cuối tuần ─────────────────────────────
@@ -919,31 +985,32 @@ class TestMondayCarryover:
     """
     Citad không chạy phiên thứ 7/CN → lệnh chờ đi kênh sau cutoff thứ 6 + cả
     thứ 7 + CN dồn sang phiên thứ 2. merge_monday_carryover phải gộp thêm
-    Hub/EICP (T-3,T-2,T-1) và Core (T-2,T-1) vào nhóm thứ 2; Citad giữ nguyên.
+    EICP (T-3,T-2,T-1) và Core (T-2,T-1) vào nhóm thứ 2; Citad giữ nguyên.
+
+    (Hub từng gộp cùng ở đây — đã bỏ 2026-08-19, xem TestPreviousDayEicpCarryover.)
     """
 
     def _empty_group(self):
         return {'hub': [], 'citad': [], 'eicp': [], 'core': []}
 
-    def test_merges_hub_eicp_from_fri_sat_sun_and_core_from_sat_sun_only(self):
+    def test_merges_eicp_from_fri_sat_sun_and_core_from_sat_sun_only(self):
         from backend.services.ilo1000.detect import merge_monday_carryover
         from pathlib import Path
 
         # 2026-07-13 = thứ 2. T-3=10/7 (T6), T-2=11/7 (T7), T-1=12/7 (CN)
         groups = {
-            '20260713': {**self._empty_group(), 'hub': [Path('mon_hub.xlsx')],
+            '20260713': {**self._empty_group(),
                          'citad': [Path('mon_citad.csv')], 'core': [Path('mon_core.csv')]},
-            '20260710': {**self._empty_group(), 'hub': [Path('fri_hub.xlsx')],
+            '20260710': {**self._empty_group(),
                          'eicp': [Path('fri_eicp.xls')], 'core': [Path('fri_core.csv')]},
-            '20260711': {**self._empty_group(), 'hub': [Path('sat_hub.xlsx')],
+            '20260711': {**self._empty_group(),
                          'eicp': [Path('sat_eicp.xls')], 'core': [Path('sat_core.csv')]},
-            '20260712': {**self._empty_group(), 'hub': [Path('sun_hub.xlsx')],
+            '20260712': {**self._empty_group(),
                          'eicp': [Path('sun_eicp.xls')], 'core': [Path('sun_core.csv')]},
         }
         merge_monday_carryover(groups)
         mon = groups['20260713']
 
-        assert set(mon['hub']) == {Path('mon_hub.xlsx'), Path('fri_hub.xlsx'), Path('sat_hub.xlsx'), Path('sun_hub.xlsx')}
         assert set(mon['eicp']) == {Path('fri_eicp.xls'), Path('sat_eicp.xls'), Path('sun_eicp.xls')}
         assert set(mon['core']) == {Path('mon_core.csv'), Path('sat_core.csv'), Path('sun_core.csv')}, (
             "Core KHÔNG được gộp thứ 6 — thứ 6 tự chấm bình thường trong ngày của nó"
@@ -957,10 +1024,10 @@ class TestMondayCarryover:
 
         groups = {
             '20260713': {**self._empty_group(), 'citad': [Path('mon_citad.csv')]},
-            '20260710': {**self._empty_group(), 'hub': [Path('fri_hub.xlsx')], 'citad': [Path('fri_citad.csv')]},
+            '20260710': {**self._empty_group(), 'eicp': [Path('fri_eicp.xls')], 'citad': [Path('fri_citad.csv')]},
         }
         merge_monday_carryover(groups)
-        assert groups['20260710']['hub'] == [Path('fri_hub.xlsx')], "Nhóm thứ 6 gốc không được thay đổi"
+        assert groups['20260710']['eicp'] == [Path('fri_eicp.xls')], "Nhóm thứ 6 gốc không được thay đổi"
         assert groups['20260710']['citad'] == [Path('fri_citad.csv')]
 
     def test_month_boundary_monday_is_first_of_month(self):
@@ -971,13 +1038,13 @@ class TestMondayCarryover:
         # 2026-06-01 = thứ 2. T-3=29/5 (T6), T-2=30/5 (T7), T-1=31/5 (CN)
         groups = {
             '20260601': {**self._empty_group(), 'citad': [Path('mon_citad.csv')]},
-            '20260529': {**self._empty_group(), 'hub': [Path('fri_hub.xlsx')]},
-            '20260530': {**self._empty_group(), 'hub': [Path('sat_hub.xlsx')], 'core': [Path('sat_core.csv')]},
-            '20260531': {**self._empty_group(), 'hub': [Path('sun_hub.xlsx')], 'core': [Path('sun_core.csv')]},
+            '20260529': {**self._empty_group(), 'eicp': [Path('fri_eicp.xls')]},
+            '20260530': {**self._empty_group(), 'eicp': [Path('sat_eicp.xls')], 'core': [Path('sat_core.csv')]},
+            '20260531': {**self._empty_group(), 'eicp': [Path('sun_eicp.xls')], 'core': [Path('sun_core.csv')]},
         }
         merge_monday_carryover(groups)
         mon = groups['20260601']
-        assert set(mon['hub']) == {Path('fri_hub.xlsx'), Path('sat_hub.xlsx'), Path('sun_hub.xlsx')}
+        assert set(mon['eicp']) == {Path('fri_eicp.xls'), Path('sat_eicp.xls'), Path('sun_eicp.xls')}
         assert set(mon['core']) == {Path('sat_core.csv'), Path('sun_core.csv')}
 
     def test_missing_weekend_files_warns_but_still_runs(self):
@@ -992,7 +1059,7 @@ class TestMondayCarryover:
         merge_monday_carryover(groups, log=logs.append)
 
         mon = groups['20260713']
-        assert mon['hub'] == [] and mon['core'] == [], "Không có gì để gộp → nhóm thứ 2 giữ nguyên rỗng"
+        assert mon['eicp'] == [] and mon['core'] == [], "Không có gì để gộp → nhóm thứ 2 giữ nguyên rỗng"
         warn_logs = [l for l in logs if 'CẢNH BÁO' in l]
         assert warn_logs, "Phải log cảnh báo khi thiếu dữ liệu bù cuối tuần"
         assert 'thứ 6' in warn_logs[0] and 'thứ 7' in warn_logs[0] and 'CN' in warn_logs[0]
@@ -1005,10 +1072,10 @@ class TestMondayCarryover:
         # 2026-07-14 = thứ 3
         groups = {
             '20260714': {**self._empty_group(), 'citad': [Path('tue_citad.csv')]},
-            '20260713': {**self._empty_group(), 'hub': [Path('mon_hub.xlsx')]},
+            '20260713': {**self._empty_group(), 'eicp': [Path('mon_eicp.xls')]},
         }
         merge_monday_carryover(groups)
-        assert groups['20260714']['hub'] == [], "Thứ 3 không được gộp thêm gì"
+        assert groups['20260714']['eicp'] == [], "Thứ 3 không được gộp thêm gì"
 
 
 # ── Test 13: load_core — ZIP GL02 mã hóa AES + dedup CSV rời trùng dữ liệu ──
@@ -1447,6 +1514,34 @@ class TestDetectOSBPool:
         groups = group_files_by_date([osb_file, core14, core15])
         assert groups['20260714']['osb'] == [osb_file]
         assert groups['20260715']['osb'] == [osb_file]
+
+
+# ── Test: nhận diện + pool Hub — tên file Hub không đáng tin về ngày ────────
+
+class TestDetectHubPool:
+    """detect.py không được đoán ngày theo tên file Hub (xác nhận thật
+    2026-08-19: 5 file pHub cùng tên ngày xuất 13/08 nhưng bên trong trải dài
+    dữ liệu 4 ngày khác nhau, 10-13/08 — cách cũ dồn HẾT vào 1 nhóm duy nhất,
+    làm mất trắng Hub ở ngày kia) — gán chung 1 pool cho mọi nhóm ngày, để
+    load_hub() tự lọc 'Ngày giờ kênh trả' + cửa sổ carryover T/T-1."""
+
+    def test_hub_pool_assigned_to_every_date_group(self, tmp_path):
+        from backend.services.ilo1000.detect import group_files_by_date
+
+        # Tên file mang ngày 13/08 (không khớp ngày nào trong batch 11-12/08)
+        # — trước đây sẽ dồn hết vào 1 nhóm qua nhánh dự phòng đã bỏ.
+        hub_file = tmp_path / 'pHub_Danh sach giao dich chuyen tien di_20260813092704.xlsx'
+        hub_file.write_text('placeholder', encoding='utf-8')  # nội dung không quan trọng ở bước nhóm ngày
+        core11 = tmp_path / 'gl02_20260811.csv'
+        core11.write_text('TRDATE,TRBRCD\n20260811,1000\n', encoding='utf-8')
+        core12 = tmp_path / 'gl02_20260812.csv'
+        core12.write_text('TRDATE,TRBRCD\n20260812,1000\n', encoding='utf-8')
+
+        groups = group_files_by_date([hub_file, core11, core12])
+        assert groups['20260811']['hub'] == [hub_file], (
+            "Hub phải có mặt ở CẢ 2 ngày trong batch, không chỉ 1 ngày"
+        )
+        assert groups['20260812']['hub'] == [hub_file]
 
 
 # ── Test: load_osb — đọc file OSB thật (title dòng 1, trống dòng 2, header dòng 3) ─
