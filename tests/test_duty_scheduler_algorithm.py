@@ -14,7 +14,7 @@ import pytest
 
 from backend.services import duty_scheduler_engine as eng
 from backend.services.duty_scheduler_engine import (
-    _generate_ca, _generate_ngay_dac_biet, generate_schedule_for_week,
+    _generate_ca, _generate_ngay_dac_biet, _save_shift, generate_schedule_for_week,
 )
 
 # ── Schema tối thiểu ──────────────────────────────────────────────────────────
@@ -1065,3 +1065,99 @@ def test_ngay_le_khong_khai_ghi_chu_van_co_chu_nghi_le():
     o = next(str(ws.cell(r, 3).value or "") for r in range(4, ws.max_row + 1)
              if str(ws.cell(r, 2).value or "") == "12/08/2026")
     assert o == "(Nghỉ lễ)", f"ngày lễ không ghi chú phải ra '(Nghỉ lễ)', đang là {o!r}"
+
+
+# ══════════════════════════════════════════════════════════════
+# 9. Hai luật mềm bổ sung: không trực thứ 6 2 lần/tháng,
+#    Lãnh đạo không trực quá 2 ca/tuần
+# ══════════════════════════════════════════════════════════════
+
+# 4 thứ 6 của tháng 8/2026 (14/08 là thứ 6 — xem hằng số FRIDAY ở đầu file)
+FRIDAYS_08_2026 = ["2026-08-07", "2026-08-14", "2026-08-21", "2026-08-28"]
+
+
+def _gen_friday_channel(db, date_str: str, seed: int) -> dict:
+    """Sinh + LƯU ca thứ 6 — luật tránh lặp trong tháng đọc lại từ duty_shifts,
+    nên phải ghi xuống DB mới thấy hiệu lực ở thứ 6 kế tiếp (khác _gen_one, vốn
+    chỉ dùng cho test 1 ca đơn lẻ không cần lịch sử)."""
+    shifts, warns = _generate_ca(
+        db, date_str, YEAR, "LD_friday", "NV_friday", "friday", random.Random(seed)
+    )
+    if shifts:
+        _save_shift(db, shifts[0])
+        db.commit()
+    return {"shift": shifts[0] if shifts else None, "warnings": warns}
+
+
+def test_khong_trung_thu6_trong_thang_khi_du_nguoi():
+    """Pool đủ rộng — ai cũng phải được ưu tiên trước người đã trực thứ 6 rồi,
+    nên trong 4 thứ 6 của tháng không ai bị lặp."""
+    staff = [(i, f"LD {i}", "truong_phong", 0, 0, i) for i in range(1, 5)]
+    staff += [(10 + i, f"NV {i}", "chuyen_vien", 1 if i % 2 == 0 else 0, 0, 10 + i)
+              for i in range(1, 13)]
+    db = _make_db(staff)
+
+    da_dung: dict = {}
+    for ds in FRIDAYS_08_2026:
+        r = _gen_friday_channel(db, ds, seed=1)
+        assert r["shift"] is not None
+        for sid in _members(r["shift"]):
+            da_dung[sid] = da_dung.get(sid, 0) + 1
+
+    trung = {sid: n for sid, n in da_dung.items() if n > 1}
+    assert not trung, f"đủ người mà vẫn có người trực thứ 6 2 lần/tháng: {trung}"
+
+
+def test_buoc_trung_thu6_khi_thieu_nguoi_van_len_canh_bao():
+    """Pool quá nhỏ so với số thứ 6 trong tháng — không tránh được thì vẫn phải
+    lập ca đủ người, kèm đúng loại cảnh báo để người phân lịch biết mà xử lý."""
+    staff = [
+        (1, "LD Một", "truong_phong", 1, 0, 1),
+        (2, "LD Hai", "pho_phong",    0, 0, 2),
+        (3, "NV Ba",   "chuyen_vien", 1, 0, 3),
+        (4, "NV Bốn",  "chuyen_vien", 0, 0, 4),
+        (5, "NV Năm",  "chuyen_vien", 0, 0, 5),
+    ]
+    db = _make_db(staff)
+
+    co_canh_bao_trung = False
+    for ds in FRIDAYS_08_2026:
+        r = _gen_friday_channel(db, ds, seed=1)
+        assert r["shift"] is not None, f"pool nhỏ vẫn phải đủ người ngày {ds}"
+        assert len(_members(r["shift"])) == 3
+        if any(w["type"] == "trung_thu6_thang" for w in r["warnings"]):
+            co_canh_bao_trung = True
+    assert co_canh_bao_trung, (
+        "pool chỉ 2 LD/3 NV cho 4 thứ 6 trong tháng phải buộc lặp lại ít nhất 1 lần")
+
+
+def test_lanh_dao_khong_qua_2_ca_tuan_khi_du_nguoi():
+    """3 Lãnh đạo cho 1 tuần 5 ngày — đủ người để không ai vượt tối đa 2 ca/tuần."""
+    staff = [
+        (1, "LD Một", "truong_phong", 0, 0, 1),
+        (2, "LD Hai", "pho_phong",    0, 0, 2),
+        (3, "LD Ba",  "pho_phong",    0, 0, 3),
+    ] + [(10 + i, f"NV {i}", "chuyen_vien", 1 if i <= 2 else 0, 0, 10 + i) for i in range(1, 5)]
+    db = _make_db(staff)
+    generate_schedule_for_week(db, MONDAY, seed=3)
+
+    dem: dict = {}
+    for r in db.execute("SELECT leader_ids FROM duty_shifts"):
+        for sid in _leaders(dict(r)):
+            dem[sid] = dem.get(sid, 0) + 1
+    assert all(n <= 2 for n in dem.values()), f"có Lãnh đạo vượt 2 ca/tuần: {dem}"
+
+
+def test_lanh_dao_qua_2_ca_tuan_khi_thieu_nguoi_van_len_canh_bao():
+    """Chỉ 2 Lãnh đạo cho tuần 5 ngày — về mặt toán học không thể tránh được (5
+    ngày ÷ 2 người), phải lập đủ ca và lên đúng cảnh báo thay vì âm thầm vượt."""
+    staff = [
+        (1, "LD Một", "truong_phong", 0, 0, 1),
+        (2, "LD Hai", "pho_phong",    0, 0, 2),
+    ] + [(10 + i, f"NV {i}", "chuyen_vien", 1 if i <= 2 else 0, 0, 10 + i) for i in range(1, 5)]
+    db = _make_db(staff)
+    result = generate_schedule_for_week(db, MONDAY, seed=3)
+
+    assert result["created"] == 5, "đủ 2 LD + 4 NV cho cả 5 ngày, không ngày nào bị bỏ"
+    assert any(w["type"] == "ld_qua_tai_tuan" for w in result["warnings"]), (
+        "chỉ 2 Lãnh đạo cho 5 ngày phải buộc ai đó vượt 2 ca/tuần, kèm cảnh báo")

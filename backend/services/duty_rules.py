@@ -10,7 +10,9 @@ Hai tầng luật:
 Đặt riêng ở đây để engine (duty_scheduler_engine) và đường sửa tay
 (duty_schedule_service) không thể lệch nhau về cách hiểu luật.
 """
+import json
 import sqlite3
+from datetime import date, timedelta
 from typing import List, Optional, Tuple
 
 from backend.services.duty_staff_service import get_all_staff, get_absences
@@ -117,6 +119,50 @@ def resolve_sp_role(leaders: List[dict], nv_chinh: List[dict],
 
 
 # ══════════════════════════════════════════════════════════════
+# CÔNG BẰNG THEO TUẦN / THÁNG
+# ══════════════════════════════════════════════════════════════
+
+def dem_ca_lanh_dao_trong_tuan(db: sqlite3.Connection, shift_date: str) -> dict:
+    """
+    Đếm số ca mỗi Lãnh đạo đã có trong tuần TRƯỚC ngày shift_date (không tính
+    chính ca đang xét). Dùng chung cho engine sinh tự động và validate sửa tay
+    để không thể hiểu khác nhau luật "Lãnh đạo tối đa 2 ca/tuần".
+    """
+    d = date.fromisoformat(shift_date)
+    week_start = d - timedelta(days=d.weekday())
+    if week_start >= d:
+        return {}
+    dem: dict = {}
+    for r in db.execute(
+        "SELECT leader_ids FROM duty_shifts WHERE shift_date >= ? AND shift_date < ? "
+        "AND status IN ('confirmed','draft')",
+        (week_start.isoformat(), shift_date)
+    ):
+        for sid in json.loads(r["leader_ids"] or "[]"):
+            dem[sid] = dem.get(sid, 0) + 1
+    return dem
+
+
+def nguoi_da_truc_thu6_thang(db: sqlite3.Connection, shift_date: str) -> set:
+    """
+    Ai đã trực ca thứ 6 trong CÙNG THÁNG với shift_date rồi (không tính chính ca
+    đang xét) — dùng để tránh xếp trực thứ 6 lần 2 trong tháng cho cùng một người.
+    """
+    thang = shift_date[:7]
+    ids: set = set()
+    for r in db.execute(
+        "SELECT leader_ids, sp_id, nv_ids, nv_phu_ids FROM duty_shifts "
+        "WHERE shift_type='friday' AND shift_date LIKE ? AND shift_date < ?",
+        (f"{thang}-%", shift_date)
+    ):
+        if r["sp_id"]:
+            ids.add(r["sp_id"])
+        for cot in ("leader_ids", "nv_ids", "nv_phu_ids"):
+            ids.update(json.loads(r[cot] or "[]"))
+    return ids
+
+
+# ══════════════════════════════════════════════════════════════
 # KIỂM TRA THÀNH PHẦN CA
 # ══════════════════════════════════════════════════════════════
 
@@ -199,5 +245,17 @@ def validate_shift_members(db: sqlite3.Connection, shift_date: str, shift_type: 
         canh_bao.append("Lãnh đạo và nhóm trực chính không có ai xử lý song phương.")
     elif sp_warning == "multi_sp":
         canh_bao.append("Ca có nhiều hơn 1 người xử lý song phương.")
+
+    so_ca_ld_tuan = dem_ca_lanh_dao_trong_tuan(db, shift_date)
+    for p in leaders:
+        if so_ca_ld_tuan.get(p["id"], 0) >= 2:
+            canh_bao.append(f"{p['full_name']} đã trực {so_ca_ld_tuan[p['id']]} ca trong "
+                            f"tuần này — vượt tối đa 2 ca/tuần cho Lãnh đạo.")
+
+    if shift_type == "friday":
+        da_truc_t6 = nguoi_da_truc_thu6_thang(db, shift_date)
+        for p in leaders + nv_chinh + nv_phu:
+            if p["id"] in da_truc_t6:
+                canh_bao.append(f"{p['full_name']} đã trực thứ 6 trong tháng này rồi.")
 
     return loi_cung, canh_bao, nhan_su
