@@ -9,6 +9,9 @@ class ReconcileResultOut(BaseModel):
     total_ipcas: int
     total_hub: int
     lech: List[Dict[str, Any]]
+    # Chi tiết từng dòng ĐÃ khớp — chỉ dùng cho nút "Xuất tất cả lệnh"
+    # (không lưu vào lịch sử, xem doi_soat_citad.py::do_reconcile()).
+    khop_rows: List[Dict[str, Any]] = []
     history_saved: bool = True
     history_error: Optional[str] = None
     # Lỗi parse ở TỪNG file riêng lẻ (VD 1/3 file CITAD hỏng định dạng) —
@@ -25,6 +28,14 @@ class ExportIn(BaseModel):
     ngay_cham: str = ""
     n_khop: int = 0
     lech: List[Dict[str, Any]] = []
+
+
+class ExportAllIn(BaseModel):
+    """Payload xuất "Tất cả lệnh" — gồm cả 2 danh sách khớp + lệch đang
+    giữ trong state (xem /reconcile::khop_rows)."""
+    ngay_cham: str = ""
+    lech: List[Dict[str, Any]] = []
+    khop_rows: List[Dict[str, Any]] = []
 
 
 class HistoryOut(BaseModel):

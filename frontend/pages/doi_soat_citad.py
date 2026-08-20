@@ -16,6 +16,7 @@ import hashlib
 from nicegui import ui
 import frontend.api_client as api
 from frontend.shared import _sidebar, _content_area, _card, _require_auth, _handle_api_error
+from backend.services.doi_soat_citad.exporters import STATUS_LBL
 
 
 def _date_filter_input(label: str):
@@ -51,11 +52,6 @@ def _date_picker_input(label: str, initial: str = None):
             ui.date(value=initial, mask='DD/MM/YYYY', on_change=menu.close).bind_value(date_input)
     return date_input
 
-STATUS_LBL = {
-    "only_citad": "Chỉ CITAD", "only_ipcas": "Chỉ IPCAS",
-    "only_hub": "Chỉ Hub", "lech_trang_thai": "Lệch TT", "both": "Khớp",
-    "dup_citad": "Trùng CITAD",
-}
 STATUS_COLOR = {
     "only_citad": "text-red-600", "only_ipcas": "text-blue-600",
     "only_hub": "text-blue-600", "lech_trang_thai": "text-orange-600", "both": "text-green-700",
@@ -71,14 +67,14 @@ FILTERS = [
 
 DISPLAY_COLS = [
     ("stt", "STT"), ("status_lbl", "Kết quả"), ("loai", "Loại GD"), ("chieu_lbl", "Chiều"),
-    ("so_gd", "Số GD (CITAD)"), ("key_agri", "Key Agribank"), ("dich_vu", "Dịch vụ"),
+    ("so_gd", "Số GD (CITAD)"), ("key_agri", "Số GD (Agribank)"), ("dich_vu", "Dịch vụ"),
     ("so_tien", "Số tiền"), ("loai_tien", "Loại tiền"), ("ngay", "Ngày GD"),
     ("nh_nhan", "Ngân hàng"), ("trang_thai", "Trạng thái"), ("cong", "Ghi chú"),
 ]
 
 
 @ui.page("/doi_soat_citad")
-async def doi_soat_citad_page():
+def doi_soat_citad_page():
     if not _require_auth():
         return
     if not api.has_feature("menu.doi_soat_citad"):
@@ -91,12 +87,13 @@ async def doi_soat_citad_page():
         "hub_files": [],
         "lech": None,        # list[dict] sau khi đối soát
         "n_khop": 0,
+        "khop_rows": [],     # chi tiết từng dòng đã khớp — chỉ để "Xuất tất cả lệnh"
         "ngay_cham": "",
     }
     history_refresh = {"fn": None}
 
     with ui.row().classes("w-full"):
-        await _sidebar("doi_soat_citad")
+        _sidebar("doi_soat_citad")
         with _content_area():
             _navy_header(
                 "ĐỐI SOÁT CHÊNH LỆCH CITAD CUỐI NGÀY",
@@ -126,6 +123,7 @@ def _build_input_panel(tab, state, tabs, result_tab, history_refresh):
                     ngay_input.value = datetime.date.today().strftime('%d/%m/%Y')
                     state["lech"] = None
                     state["n_khop"] = 0
+                    state["khop_rows"] = []
                     state["ngay_cham"] = ""
                     msg_area.clear()
                     if "render" in state:
@@ -186,6 +184,7 @@ def _build_input_panel(tab, state, tabs, result_tab, history_refresh):
                 )
                 state["lech"] = data["lech"]
                 state["n_khop"] = data["n_khop"]
+                state["khop_rows"] = data.get("khop_rows", [])
                 state["ngay_cham"] = ngay_input.value
                 with msg_area:
                     ui.label("Đối soát xong — xem kết quả ở tab tương ứng.").classes("text-green-700")
@@ -483,8 +482,28 @@ def _build_result_panel(tab, state):
                         return
                     ui.notify(f"Lỗi: {e}", type="negative")
 
+            async def do_export_all():
+                try:
+                    payload = {
+                        "ngay_cham": state["ngay_cham"],
+                        "lech": state["lech"],
+                        "khop_rows": state["khop_rows"],
+                    }
+                    content = await asyncio.to_thread(api.post_download, "/api/doi-soat-citad/export-all", payload)
+                    ui.download(content, f"DoiSoat_CITAD_IPCAS_TatCa_{state['ngay_cham'].replace('/', '-')}.xlsx")
+                except Exception as e:
+                    if _handle_api_error(e):
+                        return
+                    ui.notify(f"Lỗi: {e}", type="negative")
+
             with export_row:
-                ui.button("Xuất Excel", icon="grid_on", on_click=do_export).classes("bg-red-800 text-white")
+                ui.button("Xuất file Excel chênh lệch", icon="grid_on", on_click=do_export).classes("bg-red-800 text-white")
+                # Xuất ĐỦ mọi lệnh (khớp + lệch), không chỉ phần lệch như nút
+                # trên — lệch đẩy lên đầu bảng, bôi vàng (xem
+                # exporters.py::export_doiSoat_full).
+                ui.button("Xuất tất cả lệnh", icon="table_view", on_click=do_export_all).classes(
+                    "bg-slate-700 text-white"
+                )
 
         state["render"] = render
         render()
@@ -596,7 +615,7 @@ def _build_history_panel(tab, history_refresh):
                             "align": "center", "sortable": True,
                             **({":format": "val => val ? val.toLocaleString('en-US') : val"} if k == "so_tien" else {}),
                         }
-                        for k, lbl in [("status", "Trạng thái"), ("so_gd", "Số GD"), ("key_agri", "Key Agribank"),
+                        for k, lbl in [("status", "Trạng thái"), ("so_gd", "Số GD"), ("key_agri", "Số GD (Agribank)"),
                                        ("so_tien", "Số tiền"), ("ngay", "Ngày"), ("nh_nhan", "Ngân hàng")]
                     ]
                     rows = [
