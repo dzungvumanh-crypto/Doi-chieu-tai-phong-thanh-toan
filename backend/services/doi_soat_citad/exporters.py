@@ -101,12 +101,11 @@ def _style_cached(bg='FFFFFF', fg='000000', bold=False, sz=10, h='left'):
 
 @lru_cache(maxsize=None)
 def _align_cached(h='left'):
-    """Chỉ set alignment (không font/fill/border) — dùng riêng cho dòng
-    KHỚP ở export_doiSoat_full() để vẫn căn đúng theo cột mà không quay lại
-    chi phí full style đã đo ở _style_cached(). Đo thực tế: 400.000 ô chỉ
-    set alignment mất ~6 giây (so với ~18-30 giây nếu set đủ 4 thuộc tính,
-    hay ~2 giây nếu không set gì) — đủ rẻ để áp cho cả phần dòng khớp mà
-    tổng thời gian xuất vẫn ở mức vài giây, không quay lại ~1 phút."""
+    """Alignment dùng chung cho `column_dimensions[...].alignment` ở
+    export_doiSoat_full() — gán MỘT lần cho mỗi cột, không gán cho từng ô.
+    Trước đây hàm này gán cho cả 494.000 ô dòng khớp; cProfile cho thấy riêng
+    lớp gán style đó tốn 24,0 giây (5,9 triệu lượt băm/so khớp Alignment để
+    tra bảng style dùng chung của workbook). Xem nhánh dòng khớp bên dưới."""
     return Alignment(horizontal=h, vertical='center')
 
 
@@ -238,17 +237,27 @@ def export_doiSoat_full(lech_rows, khop_rows, ngay_cham, filepath):
     đã liệt kê hết trong 1 sheet duy nhất.
 
     Dùng `Workbook(write_only=True)` — khác export_doiSoat() (Workbook
-    thường). Đo thực tế trên dữ liệu 1 ngày chấm thật (~38.000 dòng khớp):
-    Workbook thường + tạo mới Font/Fill/... từng ô mất ~85 giây; đổi
-    sang cache style (_style_cached) chỉ còn ~58 giây — vẫn chiếm 1 trong
-    4 slot run_heavy() dùng chung cả backend gần 1 phút mỗi lượt xuất.
-    write_only ghi từng dòng tuần tự (append), không cho quay lại sửa ô
-    đã ghi và KHÔNG hỗ trợ merge_cells() (đã xác nhận bằng code thật, ném
-    AttributeError) — nên phần tiêu đề (dòng 1-4) không merge ô như
-    export_doiSoat() nữa, chỉ đặt nhãn ở ô đầu mỗi vùng, tô cùng màu nền
-    cho cả dải để vẫn đọc được thành từng khối, không phải hy sinh gì về
-    số liệu hay việc "map cặp" CITAD-Agribank mà chỉ đổi cách trình bày
-    tiêu đề."""
+    thường), ghi từng dòng tuần tự bằng append(), không quay lại sửa ô đã
+    ghi được. Tiện ích `ws.merge_cells()` không có ở chế độ này, nhưng
+    `ws.merged_cells.add(...)` cấp thấp vẫn dùng được (xem phần tiêu đề bên
+    dưới) nên bố cục không phải hy sinh gì.
+
+    Đo thực tế trên ~38.000 dòng khớp, cùng máy, cùng bộ dữ liệu:
+
+        Workbook thường, dựng Font/Fill/... mới từng ô      ~85 giây
+        + cache style theo tham số (_style_cached)          ~58 giây
+        + write_only, dòng khớp chỉ còn alignment/numfmt    20,7 giây
+        + đưa alignment/numfmt xuống CẤP CỘT (hiện tại)      5,8 giây
+
+    Bước cuối là bước lớn nhất và cũng rẻ nhất: cProfile chỉ ra chi phí
+    KHÔNG nằm ở việc tạo style object (đã cache) mà ở chính lượt gán
+    `cell.alignment = ...` — mỗi lượt phải băm/so khớp để tra bảng style
+    dùng chung của workbook. Bỏ 494.000 lượt gán đó, đặt style một lần cho
+    mỗi cột, Excel tự áp cho những ô không có style riêng.
+
+    Quan trọng vì hàm này chiếm 1 trong 4 suất `run_heavy()` dùng chung cho
+    11 module API — giữ suất 20,7 giây là làm nghẽn cả những việc không liên
+    quan (in bìa, sinh đơn nghỉ phép) của người khác."""
     wb = Workbook(write_only=True)
     ws = wb.create_sheet('Tất cả lệnh')
 
@@ -258,7 +267,16 @@ def export_doiSoat_full(lech_rows, khop_rows, ngay_cham, filepath):
     # không có tác dụng gì) — đã xác nhận thực tế bằng code thật cho cả 2
     # thuộc tính, không phải suy đoán.
     for i, w in enumerate(_COL_WIDTHS_FULL, 1):
-        ws.column_dimensions[get_column_letter(i)].width = w
+        cd = ws.column_dimensions[get_column_letter(i)]
+        cd.width = w
+        # Căn lề + định dạng số đặt Ở CẤP CỘT, không lặp lại cho từng ô. Ô ghi
+        # ra mà không gán style thì openpyxl không sinh thuộc tính `s=`, Excel
+        # tự lấy style của cột cho ô đó — đã xác nhận bằng cách mổ XML trong
+        # file .xlsx sinh ra, không phải suy đoán. Dòng LỆCH vẫn gán style
+        # riêng từng ô nên vẫn đè lên style cột như cũ.
+        cd.alignment = _align_cached('center' if i == 1 else 'left')
+        if i == 8:
+            cd.number_format = '#,##0'
     ws.freeze_panes = 'A6'
 
     n_khop = len(khop_rows)
@@ -369,17 +387,14 @@ def export_doiSoat_full(lech_rows, khop_rows, ngay_cham, filepath):
                 row_cells.append(cell)
             ws.append(row_cells)
         else:
-            # Dòng khớp: KHÔNG set font/fill/border (giữ tốc độ — xem
-            # docstring hàm) nhưng vẫn set alignment cho MỌI ô (rẻ, xem
-            # _align_cached()) để căn đúng như dòng lệch, đồng bộ cả bảng.
-            row_cells = []
-            for ci, val in enumerate(vals, 1):
-                cell = WriteOnlyCell(ws, value=val)
-                cell.alignment = _align_cached('center' if ci == 1 else 'left')
-                if ci == 8 and isinstance(val, int):
-                    cell.number_format = '#,##0'
-                row_cells.append(cell)
-            ws.append(row_cells)
+            # Dòng khớp: ghi GIÁ TRỊ THÔ, không gán style nào cho ô — căn lề và
+            # định dạng số đã đặt ở cấp cột phía trên. Đây là chỗ tốn nhất của
+            # hàm: cProfile trên 38.000 dòng cho thấy riêng `cell.alignment =`
+            # /`cell.number_format =` chiếm 24,0s (496.156 lượt gán, kéo theo
+            # 5,9 triệu lượt băm/so khớp style để tra bảng dùng chung của
+            # workbook). Bỏ hẳn đi: 20,7s -> 5,8s, file ra không đổi về hình
+            # thức.
+            ws.append(vals)
 
     wb.save(filepath)
 

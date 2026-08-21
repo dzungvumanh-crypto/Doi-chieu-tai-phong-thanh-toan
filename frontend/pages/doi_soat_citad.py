@@ -472,7 +472,12 @@ def _build_result_panel(tab, state):
 
             render_table()
 
+            # Cả 2 nút đều khoá lại + quay vòng trong lúc chờ: sinh Excel phải
+            # xếp hàng chờ suất run_heavy() dùng chung cả backend, người dùng
+            # không thấy gì nhúc nhích sẽ bấm lại, mỗi lượt bấm lại chiếm thêm
+            # một suất và tự làm chính mình chậm thêm.
             async def do_export():
+                btn_export.props("loading")
                 try:
                     payload = {"ngay_cham": state["ngay_cham"], "n_khop": state["n_khop"], "lech": state["lech"]}
                     content = await asyncio.to_thread(api.post_download, "/api/doi-soat-citad/export", payload)
@@ -481,29 +486,42 @@ def _build_result_panel(tab, state):
                     if _handle_api_error(e):
                         return
                     ui.notify(f"Lỗi: {e}", type="negative")
+                finally:
+                    btn_export.props(remove="loading")
 
             async def do_export_all():
+                btn_export_all.props("loading")
                 try:
                     payload = {
                         "ngay_cham": state["ngay_cham"],
                         "lech": state["lech"],
                         "khop_rows": state["khop_rows"],
                     }
-                    content = await asyncio.to_thread(api.post_download, "/api/doi-soat-citad/export-all", payload)
+                    # timeout 300s thay cho 60s mặc định: file "tất cả lệnh" có
+                    # thể tới ~38.000 dòng (~5,8 giây sinh file) và còn phải chờ
+                    # suất run_heavy() — 4 người bấm cùng lúc là nối đuôi nhau
+                    # vì openpyxl giữ GIL, không chạy song song thật.
+                    content = await asyncio.to_thread(
+                        api.post_download, "/api/doi-soat-citad/export-all", payload, 300
+                    )
                     ui.download(content, f"DoiSoat_CITAD_IPCAS_TatCa_{state['ngay_cham'].replace('/', '-')}.xlsx")
                 except Exception as e:
                     if _handle_api_error(e):
                         return
                     ui.notify(f"Lỗi: {e}", type="negative")
+                finally:
+                    btn_export_all.props(remove="loading")
 
             with export_row:
-                ui.button("Xuất file Excel chênh lệch", icon="grid_on", on_click=do_export).classes("bg-red-800 text-white")
+                btn_export = ui.button(
+                    "Xuất file Excel chênh lệch", icon="grid_on", on_click=do_export
+                ).classes("bg-red-800 text-white")
                 # Xuất ĐỦ mọi lệnh (khớp + lệch), không chỉ phần lệch như nút
                 # trên — lệch đẩy lên đầu bảng, bôi vàng (xem
                 # exporters.py::export_doiSoat_full).
-                ui.button("Xuất tất cả lệnh", icon="table_view", on_click=do_export_all).classes(
-                    "bg-slate-700 text-white"
-                )
+                btn_export_all = ui.button(
+                    "Xuất tất cả lệnh", icon="table_view", on_click=do_export_all
+                ).classes("bg-slate-700 text-white")
 
         state["render"] = render
         render()
