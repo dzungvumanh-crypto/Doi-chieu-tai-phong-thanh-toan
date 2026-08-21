@@ -120,3 +120,32 @@ def test_hau_kiem_vien_khong_nhan_don_cho_duyet(db):
     r = _client(db, _HKV).get("/api/leaves/", params={"scope": "pending"})
     assert r.status_code == 200
     assert r.json() == []
+
+
+# ── Lịch nghỉ phép cũng phải theo đúng phạm vi đó ────────────────────────────
+
+def test_hau_kiem_vien_khong_xem_duoc_lich_nghi_phong_khac(db):
+    """Chốt chặn ở /api/leaves/ mà quên /api/leaves/calendar thì HKV vẫn đọc được
+    tên cả trung tâm, chỉ khác cửa vào. Không có bài này thì lần sau ai thêm một
+    danh sách vai trò mới ở endpoint lịch cũng không có gì báo."""
+    from datetime import date
+    d = date.today().replace(day=15).isoformat()
+    db.executescript(
+        "INSERT INTO departments (id, code, name) VALUES (8, 'KT', 'Phòng Kế toán');"
+        "INSERT INTO user_tttt (id, full_name, role, department_id)"
+        " VALUES (9, 'Chuyên viên Kế toán', 'chuyen_vien', 8);"
+    )
+    for staff_id in (5, 9):
+        db.execute(
+            "INSERT INTO leave_records (status, staff_id, start_date, end_date,"
+            " leave_type, reason) VALUES ('approved', ?, ?, ?, 'annual', 'viec rieng')",
+            (staff_id, d, d),
+        )
+    db.commit()
+
+    r = _client(db, _HKV).get(
+        "/api/leaves/calendar", params={"year": date.today().year, "month": date.today().month}
+    )
+    assert r.status_code == 200
+    ten = sorted(p["staff_name"] for p in r.json()["days"][d])
+    assert ten == ["Chuyên viên KSNB"], f"HKV thấy cả phòng khác: {ten}"
