@@ -5,7 +5,8 @@ from pydantic import BaseModel
 from typing import Optional
 
 from backend.database import get_db, _vn_now
-from backend.core.deps import require_admin, get_current_staff
+from backend.core.deps import require_admin_any, get_current_staff
+from backend.core.enums import StaffRole
 from backend.core.features import FEATURES, FEATURE_GROUPS
 
 router = APIRouter(prefix="/api/groups", tags=["groups"])
@@ -33,6 +34,34 @@ class FeaturesUpdate(BaseModel):
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+def _chan_l2_tu_cap_quyen(
+    current: dict,
+    db: sqlite3.Connection,
+    group_id: int | None = None,
+    staff_id: int | None = None,
+) -> None:
+    """Chặn Quản trị viên cấp 2 tự nâng quyền cho chính mình.
+
+    Cấp 2 được vào màn Phân quyền chức năng như cấp 1, nhưng nếu không chặn thì
+    chỉ cần tick hết ô trong nhóm chứa chính mình là có gần đủ quyền cấp 1 —
+    vòng qua toàn bộ rào chắn ở `staff.py::_chan_leo_thang_quyen()`.
+
+    Hai luật, phải có CẢ HAI: chỉ cấm sửa nhóm chứa mình thì cấp 2 lập nhóm mới
+    full quyền rồi tự thêm mình vào (lúc thêm, nhóm chưa chứa mình).
+    """
+    if current["role"] != StaffRole.ADMIN_L2:
+        return
+    if staff_id is not None and staff_id == current["id"]:
+        raise HTTPException(
+            403, "Quản trị viên cấp 2 không được tự thêm mình vào nhóm")
+    if group_id is not None and db.execute(
+        "SELECT 1 FROM group_members WHERE group_id = ? AND staff_id = ?",
+        (group_id, current["id"]),
+    ).fetchone():
+        raise HTTPException(
+            403, "Quản trị viên cấp 2 không được sửa nhóm mà mình là thành viên")
+
+
 def _get_group_or_404(db: sqlite3.Connection, group_id: int) -> dict:
     row = db.execute("SELECT * FROM user_groups WHERE id = ?", (group_id,)).fetchone()
     if not row:
@@ -42,15 +71,20 @@ def _get_group_or_404(db: sqlite3.Connection, group_id: int) -> dict:
 
 # ── Group CRUD ────────────────────────────────────────────────────────────────
 @router.get("")
-def list_groups(db: sqlite3.Connection = Depends(get_db), _=Depends(require_admin)):
+def list_groups(
+    db: sqlite3.Connection = Depends(get_db),
+    current: dict = Depends(require_admin_any),
+):
     rows = db.execute("""
         SELECT g.id, g.name, g.description, g.is_active, g.created_at,
-               COUNT(DISTINCT gm.staff_id) AS member_count
+               COUNT(DISTINCT gm.staff_id) AS member_count,
+               EXISTS(SELECT 1 FROM group_members me
+                      WHERE me.group_id = g.id AND me.staff_id = ?) AS contains_me
         FROM user_groups g
         LEFT JOIN group_members gm ON gm.group_id = g.id
         GROUP BY g.id
         ORDER BY g.name
-    """).fetchall()
+    """, (current["id"],)).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -58,7 +92,7 @@ def list_groups(db: sqlite3.Connection = Depends(get_db), _=Depends(require_admi
 def create_group(
     body: GroupCreate,
     db: sqlite3.Connection = Depends(get_db),
-    _=Depends(require_admin),
+    current: dict = Depends(require_admin_any),
 ):
     existing = db.execute("SELECT id FROM user_groups WHERE name = ?", (body.name,)).fetchone()
     if existing:
@@ -76,8 +110,9 @@ def update_group(
     group_id: int,
     body: GroupUpdate,
     db: sqlite3.Connection = Depends(get_db),
-    _=Depends(require_admin),
+    current: dict = Depends(require_admin_any),
 ):
+    _chan_l2_tu_cap_quyen(current, db, group_id)
     _get_group_or_404(db, group_id)
     fields, vals = [], []
     if body.name is not None:
@@ -102,8 +137,9 @@ def update_group(
 def delete_group(
     group_id: int,
     db: sqlite3.Connection = Depends(get_db),
-    _=Depends(require_admin),
+    current: dict = Depends(require_admin_any),
 ):
+    _chan_l2_tu_cap_quyen(current, db, group_id)
     _get_group_or_404(db, group_id)
     db.execute("DELETE FROM user_groups WHERE id = ?", (group_id,))
     db.commit()
@@ -114,7 +150,7 @@ def delete_group(
 def list_members(
     group_id: int,
     db: sqlite3.Connection = Depends(get_db),
-    _=Depends(require_admin),
+    current: dict = Depends(require_admin_any),
 ):
     _get_group_or_404(db, group_id)
     rows = db.execute("""
@@ -134,8 +170,9 @@ def add_member(
     group_id: int,
     body: MemberAdd,
     db: sqlite3.Connection = Depends(get_db),
-    _=Depends(require_admin),
+    current: dict = Depends(require_admin_any),
 ):
+    _chan_l2_tu_cap_quyen(current, db, group_id, staff_id=body.staff_id)
     _get_group_or_404(db, group_id)
     staff = db.execute(
         "SELECT id FROM user_tttt WHERE id = ? AND is_active = 1 AND is_deleted = 0",
@@ -162,8 +199,9 @@ def remove_member(
     group_id: int,
     staff_id: int,
     db: sqlite3.Connection = Depends(get_db),
-    _=Depends(require_admin),
+    current: dict = Depends(require_admin_any),
 ):
+    _chan_l2_tu_cap_quyen(current, db, group_id)
     _get_group_or_404(db, group_id)
     db.execute(
         "DELETE FROM group_members WHERE group_id = ? AND staff_id = ?",
@@ -177,7 +215,7 @@ def remove_member(
 def get_group_features(
     group_id: int,
     db: sqlite3.Connection = Depends(get_db),
-    _=Depends(require_admin),
+    current: dict = Depends(require_admin_any),
 ):
     _get_group_or_404(db, group_id)
     rows = db.execute(
@@ -191,8 +229,9 @@ def update_group_features(
     group_id: int,
     body: FeaturesUpdate,
     db: sqlite3.Connection = Depends(get_db),
-    _=Depends(require_admin),
+    current: dict = Depends(require_admin_any),
 ):
+    _chan_l2_tu_cap_quyen(current, db, group_id)
     _get_group_or_404(db, group_id)
     # Chỉ giữ lại codes hợp lệ (có trong FEATURES dict)
     valid_codes = [c for c in body.codes if c in FEATURES]

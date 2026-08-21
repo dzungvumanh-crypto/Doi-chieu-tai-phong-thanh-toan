@@ -4,6 +4,69 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 21/08/2026 Nghỉ phép - **Bản xem trước đơn hiện gần như tức thì (từ ~5 giây xuống ~0,3 giây)**
+    + **Chỗ chậm nằm ở đâu**: mỗi lần bấm *Xem trước* / *Gửi đơn* / *Phê duyệt*, phần mềm **mở Word lên rồi đóng ngay** chỉ để chuyển một tờ đơn sang PDF. Bấm 10 lần là mở Word 10 lần. Đo trên máy thật: mở + đóng Word mất **3,6 giây**, còn việc chuyển tờ đơn chỉ mất **0,25 giây** — tức là gần hết thời gian ngồi chờ là dựng Word lên rồi phá đi
+    + **Từ nay**: phần mềm **giữ sẵn một bản Word chạy ngầm** và dùng lại cho mọi người, y như để sẵn cái máy in đã bật thay vì bật/tắt cho từng tờ
+
+    | Thao tác | Trước | Sau |
+    |---|---|---|
+    | Bấm *Xem trước* một đơn mới | 4–6,5 giây | **~0,3 giây** |
+    | Lượt đầu sau khi Word đã ngủ | 4–6,5 giây | ~1,1 giây |
+    | Xem lại đơn vừa xem | tức thì | tức thì |
+
+    + **Mở màn Nghỉ phép là phần mềm tự đánh thức Word** ở nền, trong lúc anh/chị còn đang xem danh sách hoặc điền đơn — nên đến khi bấm nút thì gần như không phải chờ
+    + **Ảnh tờ đơn gửi về nhẹ đi hơn hai lần** (107 KB → 43 KB): tờ đơn in đen trắng nên không cần gửi kèm thông tin màu. Mẫu đơn nào có logo hoặc dấu đỏ thì phần mềm tự nhận ra và giữ nguyên màu
+    + ⚠️ **Chỉ máy chủ mới có Word chạy ngầm — máy người dùng không có gì cả.** Người dùng vào bằng trình duyệt, máy họ không cài, không chạy, không cần Word
+    + ⚠️ **Trên máy chủ, trong Task Manager sẽ thấy một tiến trình WINWORD chạy ngầm** — đó là bản Word của phần mềm, **không phải Word ai đó quên tắt**. Nó ăn khoảng **130 MB RAM**, gần như không tốn CPU lúc rảnh, và **tự tắt sau 15 phút** không ai dùng
+    + ⚠️ **Nếu máy chủ cũng là máy có người ngồi làm việc** — điều này quan trọng: khi bản Word ngầm đang chạy mà anh/chị **mở một file Word trên chính máy đó**, Windows có thể đưa tài liệu vào đúng bản ngầm ấy (Word vốn chỉ chạy một bản). Phần mềm đã được vá để **nhận ra và tuyệt đối không đóng** bản Word đang có tài liệu mở: nó thà để Word chạy tiếp còn hơn đóng mất bài anh/chị đang gõ. Đã thử nghiệm và xác nhận: tài liệu **còn nguyên** sau khi phần mềm tắt Word ngầm
+    + 💡 **Khuyến nghị**: nếu được, đừng dùng chính máy chủ để soạn thảo Word. Không phải vì phần mềm sẽ làm hỏng — hàng rào đã dựng và đã thử — mà vì máy chủ nên làm mỗi việc chạy máy chủ
+    + 🚫 **Máy chủ PHẢI có một tài khoản đang đăng nhập** (màn hình console hoặc RDP) thì mới xuất được PDF. **Đừng** đưa hệ thống vào Windows Service, cũng **đừng** đặt Task Scheduler kiểu *"chạy cả khi không ai đăng nhập"* — Word không làm việc được ở đó. Khoá màn hình thì không sao (vẫn giữ phiên); **đăng xuất** hoặc khởi động lại máy thì phải đăng nhập rồi chạy lại `start.bat`
+    + Đã đo thật: ở phiên không người đăng nhập, Word **mở lên được** (nên nhìn qua tưởng chạy tốt) nhưng **không mở được tài liệu**. Nếu lỡ rơi vào tình huống này thì hệ thống **không đứng lại** — tự lui về tải bản `.docx` và vẫn duyệt đơn bình thường, đồng thời ghi log nói rõ nguyên nhân thay vì một câu lỗi kỹ thuật khó hiểu
+    + **Máy chủ chưa cài Word thì không đổi gì** — vẫn báo lỗi rõ và vẫn cho tải bản `.docx` như trước, quy trình duyệt đơn không đứng lại
+    + **Vẫn còn đường lui**: nếu bản Word chạy ngầm gặp trục trặc, phần mềm **tự động quay về cách cũ** (mở/đóng từng lần, chậm hơn nhưng chạy được) — không ai bị kẹt
+    + Ba nút chỉnh trong `.env` nếu cần: `WORD_SERVER=0` (tắt hẳn cách mới), `WORD_IDLE_SECONDS` (bao lâu không dùng thì tắt Word), `WORD_MAX_JOBS` (bao nhiêu lượt thì thay Word mới)
+    + Toàn bộ **630 test** chạy đạt (thêm 13 test mới canh các đường hỏng: Word trục trặc, Word báo lỗi, không đóng nhầm Word của người vận hành, không diệt nhầm tiến trình khác)
+
+- 21/08/2026 Phân quyền - **Quản trị viên cấp 2 nay thấy và dùng được menu *Phân quyền chức năng***
+    + **Việc đã sửa**: trước đây Quản trị viên **cấp 2** đăng nhập **không thấy** nhóm menu *Phân quyền chức năng* (hai mục *Nhóm user* và *Phân quyền theo nhóm*). Không phải lỗi hiển thị — phần mềm chỉ mở menu này cho cấp 1
+    + **Từ nay cấp 2 làm được như cấp 1**: tạo / sửa / xoá nhóm, thêm bớt thành viên, tick quyền cho nhóm
+    + ⚠️ **Trừ đúng hai việc, để cấp 2 không tự nâng quyền cho mình**:
+        - **Không sửa được nhóm mà chính mình đang ở trong** — mở ra vẫn xem được đầy đủ, nhưng các nút bị khoá và có dòng chữ giải thích ngay trên màn hình
+        - **Không tự thêm mình vào bất kỳ nhóm nào** — tên mình không xuất hiện trong ô *Thêm nhân viên*
+        - Lý do: nếu không chặn, chỉ cần mở nhóm của mình rồi tick hết ô là cấp 2 có gần đủ quyền của cấp 1, vòng qua toàn bộ hàng rào đã dựng ở màn *Quản lý User*
+    + **Cần một Quản trị viên cấp 1 đổi quyền cho nhóm của chính cấp 2** — cấp 2 không tự làm được, đó là chủ đích
+    + ⚠️ **Việc biết mà không chặn**: hai Quản trị viên cấp 2 vẫn có thể **cấp quyền chéo cho nhau** (người này sửa nhóm của người kia). Chặn nốt thì cấp 2 gần như không dùng được, vì hầu hết nhóm quản trị đều có cấp 2 trong đó. Đây là chuyện **chọn người giao vai**, hãy cân nhắc khi bổ nhiệm cấp 2
+    + **Cấp 1 và mọi vai trò khác không đổi gì.** Người không phải quản trị viên vẫn không thấy menu này
+    + Toàn bộ **612 test** chạy đạt (thêm 11 test mới khoá lại đúng các đường tự nâng quyền)
+
+- 21/08/2026 Toàn hệ thống - **Gọn lại menu bên trái: gộp Chấm công, Nghỉ phép, Phân lịch trực, Sổ trực vào một menu**
+    + **Không thêm, không bớt tính năng nào.** Chỉ đổi chỗ đứng của 4 menu cũ — mọi màn hình và quyền hạn giữ nguyên
+    + ***Phòng Kế toán* không còn là menu ngoài cùng** — nó lùi vào thành một mục bên trong menu mới
+    + **Bốn menu cũ nay nằm chung dưới menu *Chấm công & Lịch trực***:
+        - *Nghỉ phép* nằm ngay bên trong, vì cả cơ quan đều dùng
+        - *Chấm công* nằm trong mục **Phòng Kế toán**
+        - *Phân lịch trực* và *Sổ trực cuối ngày* nằm trong mục **Phòng Thanh toán**
+    + ⚠️ **Thao tác dài hơn trước một nhịp**: *Nghỉ phép* nay phải rê chuột một lần mới thấy (trước bấm thẳng ở ngoài); *Chấm công*, *Phân lịch trực*, *Sổ trực* phải rê qua tên phòng rồi mới tới
+    + **Ai thấy gì thì vẫn y như cũ**: *Chấm công* vẫn chỉ hiện với nhân viên Phòng Kế toán và Quản trị viên; ba mục kia vẫn theo quyền được cấp ở *Phân quyền theo nhóm*. Không có ai bỗng dưng thấy thêm hay mất đi menu nào
+    + **Màn hình *Phân quyền theo nhóm* đổi theo cho khớp** — bốn ô tick cũ nằm rải rác nay gom vào chung một thẻ *Chấm công & Lịch trực*. **Quyền đã cấp không đổi**, chỉ đổi chỗ hiển thị
+    + Dòng đường dẫn ở đầu mỗi trang tự đổi theo (ví dụ *Chấm công & Lịch trực / Phòng Thanh toán / **Sổ trực cuối ngày***)
+    + Toàn bộ **583 test** chạy đạt
+
+- 20/08/2026 Toàn hệ thống - **Rà soát bảo mật đợt 2 — vá 6 điểm hở, không đổi cách làm việc hằng ngày**
+    + **Đợt này không thêm menu nào.** Nhưng có **hai việc người vận hành phải làm ngay**, đọc hai gạch đầu dòng có ⚠️ đầu tiên
+    + ⚠️ **Mật khẩu file ZIP nguồn (ACH / Chấm 459901 / Đối chiếu Song phương) coi như đã lộ — cần đề nghị đơn vị cấp file đổi.** Mật khẩu này trước đây nằm **ngay trong mã nguồn** phần mềm, tức là ai từng có bản sao mã nguồn đều đọc được, và **xoá đi bây giờ cũng không xoá được khỏi lịch sử**. Nay nó nằm trong file cấu hình `.env` như các khoá bí mật khác. **Bạn không phải làm gì để phần mềm chạy tiếp** — giá trị cũ đã được điền sẵn; việc cần làm là đề nghị bên cấp file đổi mật khẩu, rồi sửa lại một dòng trong `.env`
+    + ⚠️ **Bản sao lưu tự động nay được mã hoá — hãy cất mật khẩu vào két.** File sao lưu `.db` chứa **mã băm mật khẩu của toàn bộ tài khoản**: ai chép được thư mục `data\backups` (hoặc thư mục backup phụ trên máy khác) là mang về dò mật khẩu ngoài tầm kiểm soát, không cần quyền gì trong phần mềm. Nay mỗi bản sao lưu ra file **`.zip` có mật khẩu (AES-256)**, mở được bằng **7-Zip / WinRAR** sẵn có, không cần công cụ riêng
+        - Mật khẩu do `start.bat` **tự sinh và in ra màn hình đúng một lần** khi chạy lần đầu sau bản cập nhật này. **Chép ngay vào két mật khẩu của đơn vị.** Nó cũng nằm ở dòng `BACKUP_PASSWORD` trong file `.env`
+        - **Mất mật khẩu này là không mở được bản sao lưu.** Đừng chỉ để nó trong `.env` trên đúng cái máy mà bản sao lưu dùng để cứu
+        - Bản sao lưu **cũ** (đuôi `.db`) vẫn dùng được bình thường và vẫn được dọn theo đúng luật cũ
+    + **Người bị bắt đổi mật khẩu nay không đi vòng được nữa.** Trước đây màn hình *Đổi mật khẩu* chỉ hiện lên rồi thôi — gõ thẳng địa chỉ trang khác lên thanh địa chỉ là dùng tiếp bình thường, **không bao giờ phải đổi**. Nay phần mềm chặn thật: người có mật khẩu mặc định `1`, hoặc vừa được Quản trị viên đặt lại mật khẩu, **chỉ vào được đúng màn hình đổi mật khẩu** cho tới khi đổi xong
+    + **Xem hồ sơ cán bộ nay đúng phạm vi như xem danh sách.** Danh sách nhân sự vốn chỉ cho xem người **cùng phòng**, nhưng đường xem **từng người** lại không kiểm — nghĩa là số điện thoại, email, mã IPCAS, tên đăng nhập Payment của **toàn cơ quan** vẫn lấy ra được. Nay hai đường dùng chung một luật. Quản trị viên, Hậu kiểm viên, Giám đốc / Phó Giám đốc và nhân viên phòng Tổng hợp **không đổi gì**
+    + **Trang web nay chống được kiểu lừa bấm nút.** Không có lớp bảo vệ này, kẻ xấu dựng một trang mồi và đặt trang thật của hệ thống **trong một khung trong suốt** đè lên; bạn tưởng mình bấm nút trên trang mồi nhưng thực ra đang bấm nút *Xoá* hoặc *Duyệt* trong phiên đăng nhập thật của chính mình. Không ảnh hưởng gì tới thao tác bình thường
+    + **Nhật ký đăng nhập nay giữ 12 tháng thay vì 30 ngày.** Một vụ dò mật khẩu bị phát hiện muộn hơn một tháng thì dấu vết đã bị chính hệ thống xoá mất — không còn gì để truy. Nhãn trên màn hình đã sửa theo
+    + **Chưa sửa trong đợt này — việc lớn nhất còn lại: hệ thống vẫn chạy HTTP, chưa có HTTPS.** Nghĩa là mật khẩu đăng nhập và dữ liệu đi qua mạng nội bộ ở dạng **đọc được** với ai có khả năng nghe trộm đường truyền. Sửa việc này **không nằm trong phần mềm** — cần dựng máy chủ web (IIS/nginx) đứng trước và xin chứng thư số nội bộ. Đây là việc nên đưa vào kế hoạch gần
+    + Chưa sửa (mức nhẹ, đã ghi lại): nâng cấp một số thư viện cũ; mã kết nối Extension CITAD chưa có hạn dùng; mật khẩu dài quá 72 ký tự bị cắt âm thầm
+    + Toàn bộ **583 test** chạy đạt (thêm 16 test mới khoá lại đúng các lỗ hổng vừa vá)
+
 - 20/08/2026 Đối soát CITAD↔IPCAS - **Sửa 2 lỗi làm mất/nhầm lệnh Napas-PSS_MDP khi đối soát, thêm nút "Xuất tất cả lệnh"**:
     + ⚠️ **Lỗi thật, gây sai số liệu**: file Hub (PaymentHub) chứa lệnh Napas/PSS-MDP bị **đọc ra 0 dòng hoàn toàn, không báo lỗi gì** — dòng "Tổng số giao dịch:N" đầu file bị nhận nhầm thành dòng tiêu đề cột, khiến cả sheet bị bỏ qua. Đã xác nhận thực tế bằng dữ liệu ngày 19/08/2026: 12 lệnh Napas/PSS-MDP đúng ra phải báo "chênh lệch" (vì cố tình không nạp vào CITAD) thì bị mất trắng, không hiện ở đâu cả trong báo cáo
     + ⚠️ **Lỗi thứ 2 liên quan**: khi sửa xong lỗi trên, phát hiện thêm — mã "Số thành công" (txid) bên IPCAS **dùng chung cho nhiều lệnh khác nhau** trong cùng 1 phiên (lệnh giá trị cao Napas trùng túi với hàng loạt lệnh giá trị thấp không liên quan). Trước đây chỉ so khớp theo txid nên lệnh giá trị thấp "đè mất" lệnh Napas thật khi trùng mã — đã sửa: so khớp thêm theo loại kênh (IH/IL) **và** số tiền, chỉ khi khớp đủ cả 3 mới coi là cùng 1 lệnh. Số lệnh khớp không đổi, chỉ những lệnh THẬT SỰ lệch mới hiện đúng, đủ
@@ -18,7 +81,17 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
     + Không đổi số liệu Chênh lệch — dòng Ebanking từ trước tới nay vốn **không được cộng** vào tổng CITAD (chỉ in ra tham khảo), nên bỏ dòng không ảnh hưởng con số báo cáo
     + Số liệu Ebanking của các ngày đã chấm trước đây vẫn nằm nguyên trong dữ liệu đã lưu, chỉ không còn hiện/in ra đâu nữa
 
-- 18/08/2026 Toàn hệ thống - **Rà soát: chỗ nào sửa ở menu này lại đổi số liệu của menu khác; chỗ nào ghi/xoá file trên máy chủ**:
+- 19/08/2026 Chấm đối chiếu ACH - **Sự cố "Mất kết nối tới máy chủ"**
+    + ⚠️ **Chạy lại khi lượt trước chưa dừng hẳn nay bị chặn.** Đây chính là lý do lần 2 không phản hồi: màn hình bỏ cuộc **không có nghĩa là máy chủ đã dừng** — lượt 1 vẫn chạy tiếp, bấm chạy lượt 2 là **hai lượt đối chiếu cùng lúc** trên một máy đã đuối. Nay phần mềm hỏi lại máy chủ trước, còn lượt cũ thì báo rõ và yêu cầu bấm **Dừng** trước
+    + **Nút *Dừng* nay ở lại trên màn hình khi mất liên lạc** (trước đây tự ẩn đi). Ẩn nút đó là cắt mất đường duy nhất để dừng lượt chạy cũ đang chiếm máy
+    + **Bước giải nén nay có báo cáo tiến độ**: đang giải nén file nào, bằng công cụ gì, mất bao lâu, đọc được bao nhiêu dòng. Trước đây từ lúc bắt đầu B4 tới lúc xong là một khoảng **lặng hoàn toàn** — không phân biệt được "đang chạy nặng" với "đã chết"
+    + ⚠️ **Cảnh báo mới: nếu máy chủ không cài 7-Zip (hoặc giải nén thất bại), phần mềm phải dùng cách dự phòng ngốn bộ nhớ gấp khoảng 7 lần kích thước file** — hai file cùng lúc có thể lên tới vài GB và làm máy chủ chậm hẳn. Trước đây việc rẽ sang cách này **không hiện ở đâu cả**, chỉ nằm trong file nhật ký kỹ thuật. Nay hiện ngay trên màn hình. **Nếu thấy cảnh báo này, hãy cài 7-Zip lên máy chủ**
+    + Cùng lúc áp cho cả bước đọc GL02 và MIS_đến, không riêng MIS_đi — ba bước dùng chung một cách giải nén
+    + **Chưa sửa trong đợt này**: cách dự phòng vẫn nạp trọn file vào bộ nhớ (chữa gốc cần bộ dữ liệu thật để đối chứng); và lúc nhận file tải lên, máy chủ vẫn ghi cả bộ file xuống đĩa theo cách làm mọi menu khác phải chờ. Xem *Implementation-notes* mục Z1
+    + **Nguyên nhân gốc chưa chốt.** Cần file `logs/backend.log` trên máy chính quanh 13:38 ngày 19/08 để biết chắc. Đợt này bảo đảm: lần sau tái diễn thì bằng chứng nằm ngay trên màn hình
+    + Toàn bộ **546 test** chạy đạt (thêm 19 test mới)
+
+- 18/08/2026 Toàn hệ thống - **Rà soát MENU và các tính năng**
     + **Đợt này không thêm menu nào.** Nhưng có **một thay đổi làm lịch trực sinh ra khác trước** — đọc mục *Phân lịch trực* dưới đây trước khi tạo lịch tháng mới
     + ⚠️ **Nút *Nhập DB* (màn hình Quản lý User) trước đây ghi đè cả số ngày phép đã dùng của mọi người.** File .db nhập vào mang theo **toàn bộ** cột, kể cả *số ngày phép đã dùng*, *vai trò* và *mật khẩu*. Nhập lại một file cũ là **xoá sổ số ngày phép đã dùng của cả cơ quan**, mà không có cách nào hoàn tác — trong khi màn hình *Quỹ phép* có sẵn cơ chế nhập theo đợt và **hoàn tác được**. Nay: người đã có trong hệ thống thì **giữ nguyên số ngày phép**, chỉ tài khoản **mới** mới lấy theo file
     + ⚠️ **Cũng nút đó: nay chỉ Quản trị viên bấm được** (như nút *Xuất DB*). Trước đây ai được cấp quyền *Nhập DB* đều bấm được, mà file .db đặt được **mật khẩu và vai trò cho bất kỳ ai** — tức là người đó **tự nâng mình lên Quản trị viên** bằng một file sửa tay. Không cần biết kỹ thuật, chỉ cần sửa file

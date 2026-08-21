@@ -60,4 +60,26 @@ class Settings:
     NTP_TIMEOUT_SEC: float = float(os.getenv("NTP_TIMEOUT_SEC", "3"))
     NTP_DRIFT_THRESHOLD_SEC: int = int(os.getenv("NTP_DRIFT_THRESHOLD_SEC", "5"))
 
+# ── Mật khẩu file ZIP do hệ thống nguồn cấp ──────────────────────────────────
+# Ba module dùng chung một mật khẩu: Đối chiếu ACH, Chấm 459901, Đối chiếu
+# Song phương. Trước đây nó nằm CỨNG trong mã (`ZIP_PASSWORD = b"..."`) ở cả ba
+# nơi, tức là đã đi vào lịch sử git — xoá khỏi mã hôm nay cũng không xoá được
+# khỏi lịch sử, ai từng clone repo là có.
+#
+# Cố ý KHÔNG fail-fast lúc khởi động như SECRET_KEY: ba module này là tính năng
+# tuỳ chọn, thiếu mật khẩu không phải lý do để cả hệ thống không lên. Đổi lại
+# phải nêu rõ nguyên nhân ĐÚNG LÚC dùng, nếu không người vận hành chỉ thấy
+# "giải nén thất bại" và đi tìm nhầm chỗ (file hỏng? sai đường dẫn?).
+def zip_password() -> bytes:
+    """Mật khẩu giải nén file nguồn. Raise nếu chưa cấu hình."""
+    raw = (os.getenv("DOI_CHIEU_ZIP_PASSWORD") or "").strip()
+    if not raw:
+        raise RuntimeError(
+            "Chưa đặt DOI_CHIEU_ZIP_PASSWORD trong file .env — không giải nén được "
+            "file nguồn của Đối chiếu ACH / Chấm 459901 / Đối chiếu Song phương. "
+            "Thêm vào .env:  DOI_CHIEU_ZIP_PASSWORD=<mật_khẩu_do_đơn_vị_cấp_file_cung_cấp>"
+        )
+    return raw.encode()
+
+
 settings = Settings()

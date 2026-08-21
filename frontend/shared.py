@@ -85,14 +85,34 @@ MENU_TREE = [
         ],
     },
     {
-        "id": "ktoan",
-        "label": "Phòng Kế toán",
-        "icon": "calculate",
-        "items": [("attendance", "Chấm công", "schedule")],
+        # Gom theo CHỨC NĂNG "thời gian làm việc". Chỉ Nghỉ phép ở tầng 2 vì cả
+        # cơ quan dùng; chấm công và lịch trực là việc của riêng một phòng nên
+        # tụt xuống tầng 3 dưới đúng tên phòng — giống Đối chiếu và Báo cáo.
+        "id": "cong_truc",
+        "label": "Chấm công & Lịch trực",
+        # date_range thuộc bộ Material Icons gốc — chắc chắn có trong font offline
+        # NiceGUI đóng gói sẵn. Icon mới (punch_clock) có thể thiếu glyph và bị
+        # font render ra nguyên chữ "punch_clock" trên sidebar.
+        "icon": "date_range",
+        "items": [
+            ("leaves", "Nghỉ phép", "event_busy"),
+            {
+                "label": "Phòng Kế toán",
+                "icon": "calculate",
+                "items": [
+                    ("attendance", "Chấm công", "schedule"),
+                ],
+            },
+            {
+                "label": "Phòng Thanh toán",
+                "icon": "payments",
+                "items": [
+                    ("duty_schedule", "Phân lịch trực",    "edit_calendar"),
+                    ("so_truc",       "Sổ trực cuối ngày", "assignment_turned_in"),
+                ],
+            },
+        ],
     },
-    ("leaves",        "Nghỉ phép",         "event_busy"),
-    ("duty_schedule", "Phân lịch trực",    "edit_calendar"),
-    ("so_truc",        "Sổ trực cuối ngày", "assignment_turned_in"),
     ("ttqt_branches", "Danh sách CN TTQT", "account_tree"),
 ]
 
@@ -409,24 +429,39 @@ def _nav_item(key: str, label: str, icon: str, current_page: str):
         ui.label(label).classes("sidebar-label text-sm flex-1")
 
 
-def _item_visible(item, check_features: bool) -> bool:
+def _key_visible(k: str, check_features: bool, overrides: dict[str, bool]) -> bool:
+    """Một route key có được hiện không.
+
+    `overrides` cho phép đè kết quả của từng key riêng lẻ — dùng cho mục không
+    gate bằng feature-flag (vd "Chấm công" gate theo phòng ACCT) khi nó nằm
+    chung nhóm với các mục gate bằng feature-flag bình thường.
+    """
+    if k in overrides:
+        return overrides[k]
+    return not check_features or api.has_feature(f"menu.{k}")
+
+
+def _item_visible(item, check_features: bool, overrides: dict[str, bool]) -> bool:
     """Kiểm tra một item (tuple hoặc sub-group dict) có visible không."""
     if isinstance(item, tuple):
         k, _, _ = item
-        return not check_features or api.has_feature(f"menu.{k}")
+        return _key_visible(k, check_features, overrides)
     # dict = sub-group: visible nếu ít nhất 1 child visible
     return any(
-        not check_features or api.has_feature(f"menu.{k}")
+        _key_visible(k, check_features, overrides)
         for k, _, _ in item["items"]
     )
 
 
-def _dept_group(dept: dict, current_page: str, check_features: bool = True):
+def _dept_group(dept: dict, current_page: str, check_features: bool = True,
+                overrides: dict[str, bool] | None = None):
     """Nhóm phòng ban — hover để xem flyout menu bên phải (không đẩy các mục dưới xuống).
     check_features=True: lọc items theo api.has_feature(); False: hiện tất cả (dùng cho admin menu cứng).
+    overrides: {route_key: True/False} đè kết quả kiểm tra cho từng mục riêng.
     Item có thể là tuple (key, label, icon) hoặc dict sub-group {"label", "icon", "items"}.
     """
-    visible_items = [i for i in dept["items"] if _item_visible(i, check_features)]
+    overrides = overrides or {}
+    visible_items = [i for i in dept["items"] if _item_visible(i, check_features, overrides)]
     if not visible_items:
         return  # gồm cả phòng chưa có chức năng (items rỗng) — không render header chết
 
@@ -472,7 +507,7 @@ def _dept_group(dept: dict, current_page: str, check_features: bool = True):
                         # ── Sub-group (nested flyout) ──
                         sub_children = [
                             (k, lbl, ico) for k, lbl, ico in item["items"]
-                            if not check_features or api.has_feature(f"menu.{k}")
+                            if _key_visible(k, check_features, overrides)
                         ]
                         if not sub_children:
                             continue
@@ -618,22 +653,24 @@ async def _sidebar(current_page: str) -> dict:
             # Trang chủ — luôn hiển thị
             _nav_item("home", "Trang chủ", "home", current_page)
 
+            # "Chấm công" không dùng feature-flag — chỉ hiện cho đúng nhân viên
+            # Phòng Kế toán (code ACCT) hoặc admin. Trước đây cả nhóm "Phòng Kế
+            # toán" được render riêng với check_features=False; nay mục này nằm
+            # chung nhóm với Nghỉ phép / lịch trực (vốn gate bằng feature-flag)
+            # nên phải đè riêng đúng một key, không đổi cách lọc của cả nhóm.
+            # Giữ nguyên kết luận review PR #22: không thuộc ACCT/admin thì ẩn
+            # hẳn, kể cả khi lỡ được cấp feature menu.attendance qua Phân quyền
+            # theo nhóm — nếu không sẽ hiện menu rồi 403 khi bấm vào.
+            show_attendance = user_role == "admin" or await _user_dept_code(user) == "ACCT"
+
             # Menu chức năng — nhóm thì dựng flyout, mục phẳng thì dựng thẳng
             for node in MENU_TREE:
                 if isinstance(node, tuple):
                     if api.has_feature(f"menu.{node[0]}"):
                         _nav_item(*node, current_page)
-                elif node["id"] == "ktoan":
-                    # "Chấm công" không dùng feature-flag — chỉ hiện cho đúng
-                    # nhân viên Phòng Kế toán (code ACCT) hoặc admin.
-                    # Sửa theo review PR #22: trước đây user không thuộc ACCT vẫn rơi về
-                    # check_features=True — nếu lỡ được cấp nhầm feature menu.attendance
-                    # (qua Phân quyền theo nhóm) thì vẫn hiện menu rồi 403 khi bấm vào.
-                    # Giờ không thuộc ACCT/admin thì bỏ qua hẳn, không render.
-                    if user_role == "admin" or await _user_dept_code(user) == "ACCT":
-                        _dept_group(node, current_page, check_features=False)
                 else:
-                    _dept_group(node, current_page, check_features=True)
+                    _dept_group(node, current_page, check_features=True,
+                                overrides={"attendance": show_attendance})
 
             ui.separator().classes("border-red-700 my-1")
 
@@ -645,8 +682,11 @@ async def _sidebar(current_page: str) -> dict:
             if user_role == "admin" or api.has_feature("menu.logs"):
                 _dept_group(DEPT_NHATKY, current_page, check_features=False)
 
-            # Phân quyền chức năng — chỉ admin (hard-coded, không phải feature)
-            if user_role == "admin":
+            # Phân quyền chức năng — hai cấp quản trị, hard-coded (không phải
+            # feature): nếu gate bằng feature thì ai được cấp feature đó sẽ tự
+            # cấp thêm cho mình, quyền tự nhân bản. Cấp 2 bị chặn thao tác lên
+            # nhóm chứa chính mình — xem groups.py::_chan_l2_tu_cap_quyen().
+            if user_role in ("admin", "admin_l2"):
                 _dept_group(DEPT_PHANQUYEN, current_page, check_features=False)
 
         # ── Đăng xuất ──
@@ -755,6 +795,10 @@ def _handle_api_error(e: Exception) -> bool:
     if isinstance(e, api.SessionExpiredError):
         ui.notify(str(e), type="warning")
         ui.navigate.to("/login")
+        return True
+    if isinstance(e, api.MustChangePasswordError):
+        ui.notify(str(e), type="warning", timeout=4000)
+        ui.navigate.to("/change-password")
         return True
     ui.notify(str(e), type="negative")
     return False

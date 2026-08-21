@@ -18,6 +18,7 @@ if not exist ".env" (
     echo [!] Khong tim thay file .env. Dang tao moi voi khoa ngau nhien...
     for /f "delims=" %%K in ('%PY% -c "import secrets; print(secrets.token_hex(32))"') do set "NEWKEY=%%K"
     for /f "delims=" %%K in ('%PY% -c "import secrets; print(secrets.token_hex(32))"') do set "NEWSS=%%K"
+    for /f "delims=" %%K in ('%PY% -c "import secrets; print(secrets.token_urlsafe(24))"') do set "NEWBK=%%K"
     (
         echo SECRET_KEY=!NEWKEY!
         echo STORAGE_SECRET=!NEWSS!
@@ -25,6 +26,7 @@ if not exist ".env" (
         echo BACKEND_PORT=8000
         echo FRONTEND_PORT=8080
         echo ENV=production
+        echo BACKUP_PASSWORD=!NEWBK!
     ) > ".env"
     echo [OK] Da tao .env. Giu file nay bi mat va KHONG commit len git.
     echo.
@@ -41,6 +43,27 @@ if errorlevel 1 (
     >>".env" echo STORAGE_SECRET=!NEWSS!
     echo [OK] Da them STORAGE_SECRET vao .env.
     echo     LUU Y: nguoi dung dang dang nhap se bi dang xuat mot lan.
+    echo.
+)
+
+:: Bo sung BACKUP_PASSWORD (them 08/2026). File .db sao luu chua NGUYEN cot
+:: pwd_hash cua toan bo tai khoan -- ai doc duoc thu muc data\backups la mang ma
+:: bam ve do ngoai tuyen. Co bien nay thi ban sao luu ra .zip ma hoa AES-256.
+:: Sinh tu dong de may moi khong lang le sao luu o dang tran.
+findstr /b /c:"BACKUP_PASSWORD=" ".env" >nul 2>&1
+if errorlevel 1 (
+    echo [!] .env chua co BACKUP_PASSWORD. Dang sinh mat khau ma hoa ban sao luu...
+    for /f "delims=" %%K in ('%PY% -c "import secrets; print(secrets.token_urlsafe(24))"') do set "NEWBK=%%K"
+    >>".env" echo.
+    >>".env" echo # Mat khau nen file sao luu ^(AES-256^) -- sinh tu dong khi nang cap
+    >>".env" echo BACKUP_PASSWORD=!NEWBK!
+    echo [OK] Da them BACKUP_PASSWORD vao .env:
+    echo.
+    echo         !NEWBK!
+    echo.
+    echo     MAT MAT KHAU NAY = KHONG MO DUOC BAN SAO LUU.
+    echo     Chep ngay vao ket mat khau cua don vi, dung chi de trong .env
+    echo     tren dung cai may ma ban sao luu dung de cuu.
     echo.
 )
 

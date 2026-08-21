@@ -53,6 +53,321 @@
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
   <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-18</p>
 
+  <!-- Z3 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">Z3</span>
+      <span class="card-title">Nghỉ phép: PGĐ "không có nút" ở bước Giám đốc — lần này KHÔNG phải lỗi phân quyền</span>
+      <span class="badge badge-done">Đã sửa phần im lặng</span>
+    </div>
+    <div class="card-body">
+
+      <p>Triệu chứng giống hệt <b>Z2</b> nên rất dễ chẩn đoán nhầm. Thực tế nguyên nhân khác hẳn:
+        <code>anhnhutuan</code> (<code>pho_giam_doc</code>, id 10) có đủ <code>leaves.approve_gd</code>,
+        nhưng <code>delegation_records</code> chỉ có một dòng <b>14/08/2026 → 14/08/2026</b>. Hôm nay 21/08.
+        Ủy quyền hết hạn ⇒ <code>_can_gd_review()</code> trả <code>False</code> ⇒ hệ thống chặn <b>đúng</b>.</p>
+
+      <div class="label">Nhưng chặn theo kiểu tệ nhất: im lặng ba tầng</div>
+      <table>
+        <tr><th>Tầng</th><th>Hành vi khi PGĐ hết ủy quyền</th></tr>
+        <tr><td><code>GET /api/leaves/?scope=pending</code></td><td><code>return []</code> — tab "Chờ duyệt" trống trơn</td></tr>
+        <tr><td>Drawer chi tiết</td><td><code>in_pend</code> False ⇒ không dựng nút nào, không chữ nào</td></tr>
+        <tr><td><code>PUT /gd-review</code></td><td>Có báo 403 "chưa được ủy quyền" — nhưng không ai bấm tới được để đọc</td></tr>
+      </table>
+      <p>Ba tầng đều đúng luật, cộng lại thành một màn hình <b>không phân biệt được với lỗi phần mềm</b>.</p>
+
+      <div class="label">Không ai kiểm tra ủy quyền ở lúc GIAO việc</div>
+      <table>
+        <tr><th>Điểm gán <code>gd_approver_id</code></th><th>Có kiểm tra ủy quyền không?</th></tr>
+        <tr><td><code>/api/delegations/staff/pho-giam-doc</code> (dropdown lúc tạo đơn)</td><td>Không — liệt kê mọi PGĐ</td></tr>
+        <tr><td><code>create_leave</code> / <code>resubmit</code></td><td>Không — chỉ kiểm role</td></tr>
+        <tr><td><code>tong_hop_review</code> (bước TH chuyển lên)</td><td>Không — chỉ kiểm <code>role in (giam_doc, pho_giam_doc)</code></td></tr>
+        <tr><td><code>gd_review</code></td><td><b>Có</b> — nhưng đã quá muộn, đơn đứng rồi</td></tr>
+      </table>
+      <p>Đơn rơi vào ngõ cụt thật sự: PGĐ bị 403 vì hết ủy quyền, còn Giám đốc bị 403 vì
+        <code>leave["gd_approver_id"] != current["id"]</code>. <b>Chỉ Quản trị viên gỡ được</b>
+        (nút ✓/✗ ở Bước 3 trong drawer, chỉ hiện với admin).</p>
+
+      <div class="label">Đã làm: cho hệ thống nói ra lý do</div>
+      <p><code>_leave_to_out()</code> trả thêm cờ <code>gd_can_review</code> — tính bằng một scalar subquery
+        ngay trong câu SELECT sẵn có (GĐ luôn <code>1</code>; PGĐ đếm <code>delegation_records</code> còn
+        hiệu lực hôm nay), <b>không thêm round-trip DB nào</b> dù <code>_leave_to_out</code> chạy một lần cho
+        mỗi đơn trong danh sách.</p>
+      <table>
+        <tr><th>Nơi dùng cờ</th><th>Hiển thị</th></tr>
+        <tr><td>Drawer, Bước 3, khi <code>pending_gd</code></td><td>Khối vàng giải thích ủy quyền hết hiệu lực + hai đường gỡ</td></tr>
+        <tr><td>Hộp xác nhận lúc TH bấm "Chuyển lên Ban lãnh đạo"</td><td>Cảnh báo đơn sẽ đứng lại nếu vẫn chuyển</td></tr>
+      </table>
+
+      <div class="label">Cố ý KHÔNG làm — và vì sao</div>
+      <table>
+        <tr><th>Phương án</th><th>Lý do chưa làm</th></tr>
+        <tr><td>Chặn cứng: không cho chọn/chuyển cho PGĐ chưa có ủy quyền</td>
+            <td>Đơn nộp hôm nay cho kỳ nghỉ tháng sau là bình thường; ủy quyền hoàn toàn có thể cấp sau.
+                Chặn cứng sẽ khoá nhầm một luồng hợp lệ. Chọn cảnh báo thay vì cấm.</td></tr>
+        <tr><td>Cho Giám đốc duyệt mọi đơn ở bước GĐ, kể cả đơn chỉ định PGĐ</td>
+            <td>Gỡ được ngõ cụt vĩnh viễn và hợp lý về nghiệp vụ (ủy quyền là để PGĐ làm THAY GĐ, không phải
+                để tước quyền của GĐ). Đã đề xuất — <b>người dùng quyết KHÔNG đổi</b> (21/08/2026): giữ nguyên
+                chính sách "đúng người được chỉ định mới duyệt", gỡ từng ca bằng cách gia hạn ủy quyền.</td></tr>
+        <tr><td>Tự gia hạn ủy quyền trong DB để gỡ đơn 267</td>
+            <td>Ủy quyền là chứng từ hành chính. Không tự ý ghi.</td></tr>
+      </table>
+
+      <div class="label">Phát hiện thêm → đã xử lý ở Z4</div>
+      <p><code>POST /api/delegations/</code> cho phép <b>admin HOẶC phòng Tổng hợp</b>, nhưng frontend
+        <code>can_delegation = user_role == "admin"</code> nên tab "Ủy quyền GĐ" chỉ admin thấy — đúng y
+        khuôn lỗi Z2. Xem <b>Z4</b>.</p>
+
+      <div class="caution">Bẫy chẩn đoán: hai lỗi liên tiếp cùng triệu chứng "không có nút" nhưng một cái là
+        <b>gate frontend sai</b> (Z2), một cái là <b>dữ liệu hết hạn</b> (Z3). Trước khi sửa code, luôn tra
+        <code>delegation_records</code> và <code>group_features</code> của chính user đó — mất 10 giây,
+        tránh sửa nhầm chỗ.</div>
+
+    </div>
+  </div>
+
+  <!-- Z4 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">Z4</span>
+      <span class="card-title">"Ủy quyền GĐ" chuyển sang phân quyền theo nhóm — và cái bẫy biến dùng chung</span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p>Trước: quyền tạo/hủy ủy quyền là <b>role cứng</b> ở cả hai tầng, và hai tầng không khớp nhau.</p>
+      <table>
+        <tr><th>Tầng</th><th>Điều kiện cũ</th><th>Kết quả thực tế</th></tr>
+        <tr><td><code>POST /api/delegations/</code>, <code>PATCH /deactivate</code></td>
+            <td>admin <b>HOẶC</b> bất kỳ ai thuộc phòng Tổng hợp</td>
+            <td>Nhánh Tổng hợp là <b>quyền chết</b> — không có màn hình nào gọi tới</td></tr>
+        <tr><td><code>can_delegation</code> (frontend)</td><td><code>user_role == "admin"</code></td>
+            <td>Tab "Ủy quyền GĐ" chỉ admin thấy</td></tr>
+      </table>
+      <p>Nay gộp về một ô tick <code>leaves.delegation_admin</code> ("Quản lý ủy quyền GĐ/PGĐ") trong
+        <b>Phân quyền theo nhóm → Nghỉ phép</b>. Admin vẫn bypass mọi feature check nên không mất gì.</p>
+
+      <div class="label">Bỏ nhánh "ai thuộc phòng Tổng hợp cũng được" — có phải thu hẹp quyền không?</div>
+      <p><b>Không.</b> Nhánh đó chưa từng dùng được qua giao diện: tab duy nhất gọi hai endpoint này bị
+        <code>can_delegation</code> khoá ở admin. Giữ lại thì ô tick mới thành vô nghĩa với đúng nhóm người
+        cần nó nhất (phòng TH luôn có quyền bất kể tick hay không). Xoá đi thì ô tick là <b>nguồn sự thật duy
+        nhất</b>. Muốn phòng TH làm được như trước: tick một ô.</p>
+
+      <div class="label">Cái bẫy: một biến gánh hai tab</div>
+      <table>
+        <tr><th></th><th>Trước</th><th>Sau</th></tr>
+        <tr><td>Tab "Ủy quyền GĐ"</td><td rowspan="2"><code>can_delegation</code> (admin-only)</td>
+            <td><code>can_delegation</code> = <code>has_feature("leaves.delegation_admin")</code></td></tr>
+        <tr><td>Tab "Ngày lễ"</td><td><code>can_holiday</code> = <code>user_role == "admin"</code></td></tr>
+      </table>
+      <div class="caution">Nếu chỉ đổi <code>can_delegation</code> mà không tách, mọi người được cấp quyền ủy
+        quyền sẽ <b>mở được luôn màn sửa ngày lễ toàn hệ thống</b> — ngày lễ ảnh hưởng cách tính số ngày phép
+        của tất cả đơn. Đây là kiểu lỗi không test nào bắt được nếu chỉ test đúng tính năng vừa sửa;
+        <code>test_o_tick_khong_mo_nham_tab_ngay_le</code> khoá lại.</div>
+
+      <div class="label">Đọc danh sách ủy quyền</div>
+      <p><code>GET /api/delegations/</code> vốn chỉ trả bản ghi <code>is_active = 1</code> cho người thường.
+        Người được giao quản lý phải thấy <b>cả bản ghi đã hủy</b>, nếu không màn quản lý mất nửa lịch sử
+        (không biết ai từng bị thu hồi ủy quyền) — đã thêm feature vào điều kiện xem đầy đủ.</p>
+
+    </div>
+  </div>
+
+  <!-- Z2 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">Z2</span>
+      <span class="card-title">Nghỉ phép: chuyên viên Phòng Tổng hợp có quyền "Chuyển GĐ/PGĐ" nhưng màn hình không có nút nào</span>
+      <span class="badge badge-done">Đã sửa</span>
+    </div>
+    <div class="card-body">
+
+      <p>Hiện trường: <code>trangtranthi7</code> (role <code>chuyen_vien</code>, phòng <code>TH</code>) được gán
+        feature <code>leaves.forward_th</code>. Mở đơn đang ở <code>pending_tong_hop</code> thì thấy đầy đủ
+        thông tin, nhưng cuối drawer chỉ có nút <b>Tải phiếu</b> — không có "Xác nhận &amp; chuyển" hay "Từ chối".</p>
+
+      <div class="label">Backend và frontend phân quyền theo hai hệ khác nhau</div>
+      <table>
+        <tr><th>Tầng</th><th>Điều kiện được thao tác bước TH</th></tr>
+        <tr><td><code>backend/api/leaves.py::tong_hop_review</code></td>
+            <td><code>_is_tong_hop_staff(current)</code> — chỉ xét <b>phòng</b>, không xét role</td></tr>
+        <tr><td><code>frontend/pages/leaves.py</code> (trước khi sửa)</td>
+            <td><code>user_role in ("truong_phong","pho_phong","hau_kiem_vien","giam_doc","pho_giam_doc","admin")</code></td></tr>
+      </table>
+      <p>Backend cho phép, frontend chặn. Đơn vẫn <b>hiện ra</b> vì <code>GET /api/leaves/?scope=pending</code>
+        cũng chỉ xét phòng — nên người dùng thấy việc của mình mà không có đường làm.</p>
+
+      <div class="label">Bốn chốt chặn cùng một lỗi, không phải một</div>
+      <table>
+        <tr><th>Vị trí</th><th>Hậu quả riêng</th></tr>
+        <tr><td><code>th_act</code> (drawer chi tiết)</td><td>Mất 2 nút thao tác — triệu chứng người dùng báo</td></tr>
+        <tr><td><code>_can_approve</code> (dựng tab)</td><td>Ẩn luôn <b>cả tab "Chờ duyệt"</b></td></tr>
+        <tr><td><code>_has_any_approve</code> (toolbar)</td><td>Mất nút Phê duyệt/Từ chối hàng loạt</td></tr>
+        <tr><td><code>_needs_action</code> (tô nền dòng)</td><td>Dòng cần xử lý không được tô đỏ nhạt</td></tr>
+      </table>
+      <p>Sửa từng chỗ một sẽ ra bốn lần "vẫn chưa được". Gom về một biến duy nhất
+        <code>can_forward_th = api.has_feature("leaves.forward_th")</code> khai báo cạnh
+        <code>can_all</code>, bốn chốt cùng OR với nó.</p>
+
+      <div class="label">Vì sao OR thêm chứ không thay hẳn bằng feature</div>
+      <p>Thay hẳn thì trưởng/phó phòng TH nào <b>chưa</b> được tick <code>leaves.forward_th</code> sẽ mất
+        quyền đang có — đổi hành vi ngoài phạm vi lỗi được báo. OR chỉ nới thêm, không thu hẹp của ai.</p>
+
+      <div class="label">Cố ý không đụng</div>
+      <table>
+        <tr><th>Chỗ</th><th>Lý do giữ nguyên</th></tr>
+        <tr><td><code>_is_dual_role</code> (tách 2 tab "Chờ duyệt" / "Chờ xác nhận TT")</td>
+            <td>Hai tab chỉ có nghĩa với người kiêm <b>cả</b> bước KSV. Chuyên viên không phải KSV của ai —
+                <code>_pending_ksv_list</code> luôn rỗng, tách ra thành một tab trống vô nghĩa. Để
+                <code>False</code> thì một tab "Chờ duyệt" hiển thị đúng toàn bộ đơn TH.</td></tr>
+        <tr><td>Chặn tự duyệt đơn của chính mình ở bước TH</td>
+            <td>Đang bị comment out từ 18/07/2026 theo yêu cầu vận hành. Mở rộng quyền cho chuyên viên
+                <b>làm chốt chặn này đáng chú ý hơn</b> (nhiều người thao tác được bước TH hơn trước),
+                nhưng bật lại là quyết định nghiệp vụ, không phải phạm vi bản vá này.</td></tr>
+      </table>
+
+      <div class="caution">Bài học lặp lại: khi một tính năng có ô tick trong "Phân quyền theo nhóm",
+        mọi gate frontend của tính năng đó phải hỏi <code>api.has_feature()</code>. Một
+        <code>user_role not in ("chuyen_vien",)</code> sót lại đủ làm ô tick đó thành vô hiệu — và
+        <b>không có lỗi nào</b>: chỉ là màn hình thiếu nút.</div>
+
+    </div>
+  </div>
+
+  <!-- Z1 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">Z1</span>
+      <span class="card-title">ACH 19/08/2026: "mất kết nối" ở B4 là frontend bỏ cuộc, không phải pipeline lỗi — và vì sao lần 2 không phản hồi</span>
+      <span class="badge badge-done">Đợt 1 đã sửa</span>
+    </div>
+    <div class="card-body">
+
+      <p>Hiện trường: log dừng ở <code>[B4] Đọc MIS_DI từ 2 ZIP...</code> rồi
+        <code>[LỖI] Mất kết nối tới máy chủ khi theo dõi tiến trình: timed out</code>. Chạy lại lần hai:
+        không phản hồi gì.</p>
+
+      <div class="label">Dòng lỗi đó do ai sinh ra</div>
+      <p>Không phải backend. Chuỗi <code>"timed out"</code> là <code>str()</code> của
+        <code>httpx.ReadTimeout</code> — <code>api_client.get()</code> không bọc
+        <code>except Exception</code> nên nó lọt nguyên ra màn hình. Nghĩa là backend <b>không trả lời một
+        GET đọc bộ nhớ trong 10 giây</b>, chứ không phải pipeline ném lỗi.</p>
+
+      <div class="label">Ngưỡng bỏ cuộc sai, và comment còn ghi sai hơn</div>
+      <table>
+        <tr><th></th><th>Trước</th><th>Sau</th></tr>
+        <tr><td>Số lần lỗi liên tiếp</td><td>4</td><td>10</td></tr>
+        <tr><td>Timeout mỗi lần poll</td><td>10s (mặc định <code>_client</code>)</td><td>30s</td></tr>
+        <tr><td>Thời gian chịu đựng thật</td><td>40s</td><td>5 phút</td></tr>
+        <tr><td>Comment trong code ghi</td><td>"~6s"</td><td>giải thích đúng phép nhân</td></tr>
+      </table>
+      <p>Comment cũ nhân nhầm với <code>_POLL_INTERVAL</code> (1,5s). NiceGUI <code>Timer._run_in_loop</code>
+        <code>await</code> callback rồi mới ngủ, nên một lần poll lỗi ngốn trọn timeout của nó —
+        4 × 10s = 40 giây, không phải 6. Hai trang chấm cùng loại
+        (<code>cham_459901</code>, <code>doi_chieu_song_phuong</code>) đều để trần 900 giây;
+        <code>cham_ach</code> là ngoại lệ duy nhất.</p>
+
+      <div class="label">Vì sao lần 2 không phản hồi</div>
+      <p>Khi polling bỏ cuộc, <code>_stop_running()</code> chỉ tắt timer và hiện lại nút — <b>không ai huỷ
+        job</b>. Pipeline lần 1 chạy tiếp B4→B11 trong backend. Bấm chạy lần 2 đè
+        <code>state[job_id]</code> bằng job mới ⇒ <b>hai lượt đối chiếu song song</b>, cộng thêm một lượt
+        upload vài trăm MB nữa, trên máy đã đuối. Job cũ thành mồ côi: không còn ai dừng được nó.</p>
+      <table>
+        <tr><th>Sửa</th><th>Vì sao chọn cách này</th></tr>
+        <tr><td><code>_stop_running(giu_nut_dung=True)</code> khi mất liên lạc</td>
+            <td>Giấu nút "Dừng" lúc đó là cắt mất đường duy nhất để dừng job mồ côi. Các trường hợp kết
+                thúc thật (<code>done/error/cancelled</code>) vẫn giấu nút như cũ.</td></tr>
+        <tr><td><code>_trang_thai_job_cu()</code> hỏi MÁY CHỦ trước mỗi lượt chạy mới</td>
+            <td>Không tin <code>state[running]</code>: nó bị đặt <code>False</code> lúc bỏ cuộc trong khi
+                pipeline vẫn sống. Chỉ máy chủ mới biết sự thật.</td></tr>
+        <tr><td>Máy chủ im lặng ⇒ <b>chặn</b> chạy mới, không cho qua</td>
+            <td>Im lặng chính là dấu hiệu máy chủ còn đang gánh job cũ. Đoán "chắc nó chết rồi" rồi chạy
+                tiếp là đúng cách sinh ra sự cố lần 2.</td></tr>
+        <tr><td><code>api_client.la_loi_mang()</code> tách "máy chủ im lặng" khỏi "máy chủ trả lời
+                rằng hỏng"</td>
+            <td>Hai thứ đòi xử lý ngược nhau: im lặng ⇒ coi job VẪN CHẠY, giữ nút Dừng, chặn lượt mới;
+                404 "job đã hết hạn" ⇒ câu trả lời dứt khoát, dừng thử lại ngay và cho chạy tiếp. Không
+                tách thì một job hết hạn cũng phải chờ hết 10 × 30s rồi nhận thông báo <b>sai sự thật</b>
+                rằng nó đang chạy. Nhận dạng bằng <code>isinstance(e, httpx.HTTPError)</code>:
+                <code>get()</code> để nguyên kiểu lỗi httpx, còn lỗi trạng thái thì đã bị gói thành
+                <code>Exception</code> thường.</td></tr>
+        <tr><td>Phép dò trạng thái gửi <code>since=10**9</code></td>
+            <td>Trả về danh sách log rỗng. Nếu dùng <code>since</code> thật thì phép dò sẽ <b>đọc rồi vứt
+                đi</b> log mới của job cũ — mất luôn, vì <code>poll</code> không gửi lại dòng đã gửi.</td></tr>
+      </table>
+
+      <div class="caution"><b>Chỗ dễ vỡ của <code>la_loi_mang()</code>:</b> <code>get()</code> để nguyên
+        kiểu lỗi httpx, nhưng <code>post()/put()/patch()</code> ngay bên cạnh lại gói mọi thứ thành
+        <code>Exception</code> thường. Ai "dọn cho đồng bộ" bằng cách thêm <code>except Exception</code>
+        vào <code>get()</code> sẽ làm hàm này <b>luôn trả False</b> — bảo vệ ở trên lặng lẽ đảo ngược,
+        không có lỗi nào. <code>tests/test_ach_mat_lien_lac.py</code> canh đúng chỗ đó (đã kiểm chứng:
+        đỏ khi gỡ bản vá ra).</div>
+
+      <div class="label">Điểm mù thật sự: nhánh giải nén dự phòng vô hình</div>
+      <p>B2/B4/B6 đều thử 7-Zip/WinRAR trước, thất bại (hoặc máy không cài) thì lui về
+        <code>pyzipper</code>. Hai nhánh <b>không tương đương về bộ nhớ</b>:</p>
+      <table>
+        <tr><th>Nhánh</th><th>Cách đọc</th><th>Bộ nhớ</th></tr>
+        <tr><td>7z / WinRAR</td><td>giải nén ra đĩa, <code>read_csv(chunksize=...)</code>, lọc từng khối</td>
+            <td>có trần</td></tr>
+        <tr><td><b>pyzipper</b></td><td><code>z.read(name)</code> nạp <b>trọn</b> CSV vào RAM, rồi
+                <code>read_csv</code> <b>không chunksize</b></td><td><b>không trần</b></td></tr>
+      </table>
+      <p>Đo được trên đúng 17 cột của <code>_COLS</code>: CSV 77 MB (500.000 dòng) →
+        DataFrame <b>552 MB</b>, tức <b>hệ số ×7,2</b> vì <code>dtype=str</code>. File giải nén 500 MB →
+        ~3,6 GB; mà <code>ThreadPoolExecutor(max_workers=2)</code> chạy <b>hai ZIP cùng lúc</b> → ~7 GB.
+        Máy 8–16 GB sẽ đổ sang bộ nhớ ảo: backend không chết, chỉ chậm tới mức mọi request hết giờ chờ.
+        Khớp triệu chứng.</p>
+      <div class="caution"><b>Chuỗi rơi vào nhánh này âm thầm hơn tưởng:</b> ổ đĩa gần đầy → 7z trả
+        <code>rc != 0</code> → <code>RuntimeError</code> → <code>except Exception</code> nuốt → lui về
+        pyzipper → vỡ bộ nhớ. Toàn bộ chuỗi đó trước đây chỉ để lại <b>một dòng <code>print()</code></b>
+        trong <code>logs/backend.log</code>. Người bấm nút không hề biết lượt chạy của mình vừa rẽ sang
+        đường nguy hiểm — họ chỉ thấy một khoảng lặng dài rồi mất kết nối.</div>
+      <p>Nay các dòng chẩn đoán đi qua <code>zip_utils.bao_dung_cong_cu / bao_giai_nen_xong /
+        bao_lui_ve_pyzipper</code>: in <b>cả hai chỗ</b> — <code>backend.log</code> giữ nguyên cho người kỹ
+        thuật, log của job hiện thẳng lên màn hình cho người vận hành. Cảnh báo nói <b>hậu quả</b>
+        ("nạp trọn file vào bộ nhớ, gấp khoảng 7 lần… cài 7-Zip để tránh") chứ không nói
+        "dùng pyzipper" — người vận hành không biết pyzipper là gì.</p>
+
+      <div class="label">Vì sao sửa cả B2 và B6 khi sự cố chỉ xảy ra ở B4</div>
+      <p>Ba bản sao gần như giống hệt nhau của cùng một nhánh dự phòng. Chữa mỗi B4 thì hai bước còn lại
+        vẫn mù đúng kiểu cũ, và lần sau sự cố nổ ở B2 sẽ mất đúng ngần này thời gian để dò lại. Helper đặt
+        ở <code>zip_utils.py</code> — nơi ba bước vốn đã dùng chung.</p>
+
+      <div class="label">Giả thuyết đã LOẠI TRỪ (đo, không đoán)</div>
+      <p>"pandas giữ GIL làm nghẽn event loop của uvicorn" — nghe hợp lý, nhưng đo thì sai: độ trễ event
+        loop tệ nhất chỉ <b>47ms</b> khi <code>read_csv</code> 800.000 dòng và <b>132ms</b> khi
+        <code>.str.strip()</code>/<code>.isin()</code> trên 2 triệu dòng. Không cách nào gây timeout 10
+        giây. pandas nhả GIL nhiều hơn giả định thông thường.</p>
+
+      <div class="label">Còn nợ — đợt 2</div>
+      <table>
+        <tr><th>Việc</th><th>Vì sao chưa làm trong đợt này</th></tr>
+        <tr><td><code>_doc_zip_pyzipper</code> đọc theo chunk như nhánh 7z</td>
+            <td>Đây mới là <b>cách chữa gốc</b> của việc vỡ bộ nhớ. Đợt 1 chỉ làm cho nó <i>nhìn thấy
+                được</i>. Đụng vào đường đọc dữ liệu thật của cả 3 bước nên cần bộ dữ liệu thật để đối
+                chứng số liệu trước/sau.</td></tr>
+        <tr><td><code>start_job()</code> ghi tới 500 MB xuống đĩa <b>bên trong route <code>async def</code></b>
+                (<code>backend/api/ach.py:87</code>) — chặn cứng event loop, mọi người dùng của mọi tính năng
+                cùng timeout</td>
+            <td>Lỗi có thật, chứng minh được bằng đọc code, nhưng không phải thủ phạm của sự cố này (nó xảy
+                ra <i>trước</i> khi có <code>job_id</code> để poll). Sửa đúng cách là ghi thẳng từng khối
+                xuống đĩa — đúng món nợ đã ghi ở mục "Đã biết, cố ý chưa xử lý".</td></tr>
+        <tr><td>Nhập lại <code>job_id</code> để bám lại job đang chạy</td>
+            <td><code>job_id</code> chỉ nằm trong <code>state</code> của trang. Mất polling = mất đường quay
+                lại, dù <code>/api/ach/poll/{job_id}</code> vẫn phục vụ bình thường.</td></tr>
+      </table>
+
+      <div class="note"><b>Chưa chốt được nguyên nhân gốc.</b> Bằng chứng quyết định nằm ở
+        <code>logs/backend.log</code> trên máy chính quanh 13:38 ngày 19/08: dòng <code>[B4][DIAG]</code>
+        cho biết đã dùng 7z/WinRAR hay pyzipper và giải nén mất bao lâu; access log của uvicorn trong
+        khoảng lặng cho biết backend có thật sự đứng hay không. Đợt 1 làm hai việc: không để frontend bỏ
+        cuộc oan, và <b>lần sau sự cố tái diễn thì bằng chứng nằm ngay trên màn hình</b>, không phải đi
+        moi log máy chủ.</div>
+
+    </div>
+  </div>
+
   <!-- Z -->
   <div class="card">
     <div class="card-header">
@@ -3354,7 +3669,7 @@ ui.on_exception(_on_exception)</pre>
     </div>
     <div class="card-body">
       <div class="label">Bối cảnh</div>
-      <p>Yêu cầu tích hợp app standalone <code>Doi_Chieu_Song_Phuong</code> (FastAPI + HTML thuần) thành menu trong hệ thống. App gốc nhận ZIP IPCAS (mã hóa AES, mật khẩu <code>DACwLdHi</code>) rồi định tuyến mỗi dòng lệnh theo 4 ngân hàng (theo <code>CUSTOMER</code>) × 2 chiều (ĐẾN nếu <code>CRAMOUNT=0</code>, ĐI nếu <code>DRAMOUNT=0</code>) → 8 file CSV.</p>
+      <p>Yêu cầu tích hợp app standalone <code>Doi_Chieu_Song_Phuong</code> (FastAPI + HTML thuần) thành menu trong hệ thống. App gốc nhận ZIP IPCAS (mã hóa AES, mật khẩu do đơn vị cấp file đặt — nay đọc từ <code>DOI_CHIEU_ZIP_PASSWORD</code> trong <code>.env</code>, xem card 80) rồi định tuyến mỗi dòng lệnh theo 4 ngân hàng (theo <code>CUSTOMER</code>) × 2 chiều (ĐẾN nếu <code>CRAMOUNT=0</code>, ĐI nếu <code>DRAMOUNT=0</code>) → 8 file CSV.</p>
 
       <div class="label">Quyết định thiết kế: port lõi, KHÔNG bê nguyên app</div>
       <p>App gốc và module <code>Chấm 459901</code> có sẵn <strong>trùng kiến trúc gần như hoàn toàn</strong> (upload ZIP → xử lý nền → poll tiến độ → tải kết quả, cùng mật khẩu, cùng cột IPCAS). Nên tái dùng đúng khuôn <code>cham459901</code> (service + api + page + feature + menu) thay vì nhúng app gốc. Chỉ khác phần lõi: định tuyến theo NH+chiều thay vì phân loại hủy/đi/khác.</p>
@@ -7662,11 +7977,545 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
-
-  <!-- 80 -->
   <div class="card">
     <div class="card-header">
       <span class="card-num">80</span>
+      <span class="card-title">Rà soát bảo mật 20/08/2026 — 6 mục đã vá</span>
+      <span class="badge badge-done">Đã sửa</span>
+    </div>
+    <div class="card-body">
+      <p>Rà soát toàn hệ thống theo OWASP ASVS / ISO 27001 / TT 09-2020-NHNN. Nền tảng vốn tốt
+        (242 route thì 238 có JWT, không có SQL injection, zip-slip và tên file upload đã chặn) nên
+        phần lớn phát hiện là <b>thiếu lớp phòng thủ</b> chứ không phải lỗ hổng khai thác trực tiếp.
+        Card này ghi các quyết định không hiển nhiên; danh sách file sửa xem git diff.</p>
+
+      <div class="label">Vì sao KHÔNG làm mục số 1 (HTTPS) trong đợt này</div>
+      <p>Toàn hệ thống chạy HTTP trần — đây là rủi ro lớn nhất, nhưng cách sửa nằm <b>ngoài mã nguồn</b>
+        (dựng IIS/nginx làm reverse proxy TLS, xin chứng thư CA nội bộ). Khi làm phải đặt luôn
+        <code>TRUSTED_PROXY_IPS</code> và đổi <code>api_proxy.py</code> sang đọc
+        <code>X-Forwarded-For</code>, nếu không mọi dòng <code>audit_logs</code> sẽ mang cùng một IP
+        của proxy — đúng cảnh báo đã ghi sẵn trong <code>frontend/api_proxy.py</code>.</p>
+
+      <div class="label">Mật khẩu ZIP: vì sao không fail-fast như <code>SECRET_KEY</code></div>
+      <p><code>SECRET_KEY</code> thiếu thì chặn khởi động, vì không có nó thì JWT giả được — cả hệ
+        thống mất an toàn. <code>DOI_CHIEU_ZIP_PASSWORD</code> thì khác: nó chỉ phục vụ 3 module tuỳ
+        chọn (ACH, Chấm 459901, Đối chiếu Song phương). Chặn khởi động vì thiếu nó là để một tính năng
+        phụ hạ cả hệ thống. Đổi lại phải báo lỗi <b>đúng lúc giải nén</b> và nêu thẳng tên biến — nếu
+        không người vận hành chỉ thấy "giải nén thất bại" rồi đi tìm nhầm chỗ (file hỏng? sai đường
+        dẫn?).</p>
+      <div class="note">Đọc <code>os.getenv</code> trong <b>hàm</b> chứ không phải hằng số module:
+        <code>b2/b4/b6</code> <code>import</code> từ <code>ach/config.py</code> ngay lúc nạp router, nên
+        hằng số fail-fast sẽ nổ ở thời điểm khởi động — đúng cái vừa nói là không muốn.</div>
+      <div class="note"><b>Chưa xử:</b> mật khẩu cũ đã nằm trong lịch sử git từ commit
+        <code>5c6d1f4</code>. Xoá khỏi mã không xoá khỏi lịch sử — phải đề nghị đơn vị cấp file
+        <b>đổi mật khẩu</b> thì mới thật sự hết rủi ro. Ngoài ra 7-Zip/WinRAR vẫn nhận mật khẩu qua
+        tham số dòng lệnh <code>-p</code>, tức là hiện trong danh sách tiến trình của máy chủ; bỏ được
+        thì phải bỏ luôn nhánh gọi công cụ ngoài, đánh đổi bằng bộ nhớ (xem card ACH).</div>
+
+      <div class="label">Bắt buộc đổi mật khẩu: chốt chặn phải ở <code>get_current_staff</code></div>
+      <p>Trước đây <code>must_change_password</code> chỉ là một lần chuyển trang ở màn hình đăng nhập —
+        gõ thẳng <code>/home</code> lên thanh địa chỉ là đi tiếp được, mà gọi API bằng token thì càng
+        không ai chặn. Nay chặn trong dependency dùng chung, nghĩa là <b>toàn bộ 238 route có JWT</b>
+        được bảo vệ bằng một chỗ sửa duy nhất.</p>
+      <table>
+        <tr><th>Đường</th><th>Vì sao vẫn phải mở</th></tr>
+        <tr><td><code>/api/auth/change-password</code></td><td>Chính việc cần làm</td></tr>
+        <tr><td><code>/api/auth/me</code></td><td>Nhịp kiểm tra phiên 60 giây trong <code>_require_auth()</code></td></tr>
+        <tr><td><code>/api/auth/my-features</code></td><td><code>login.py</code> gọi ngay sau đăng nhập, TRƯỚC khi chuyển trang</td></tr>
+        <tr><td><code>/api/auth/logout</code></td><td>Không cho thoát ra là nhốt người dùng trong màn hình không lối</td></tr>
+      </table>
+      <p>Phía frontend dùng <code>MustChangePasswordError</code> riêng chứ không dùng lại
+        <code>SessionExpiredError</code>: kiểu lỗi đó gọi <code>clear_auth()</code>, mà xoá token đi thì
+        người dùng không còn gì để gọi <code>/change-password</code> — đăng nhập lại cũng vấp đúng chỗ
+        này, thành vòng lặp không lối ra.</p>
+      <div class="note">Login nay <b>ghi cờ xuống DB</b> khi mật khẩu là "1", không chỉ trả về cho
+        frontend. Chốt chặn đọc DB, không đọc phản hồi đăng nhập — không ghi thì người dùng mật khẩu
+        mặc định vẫn lọt qua đúng cái chốt vừa dựng.</div>
+
+      <div class="label">Phạm vi xem hồ sơ cán bộ</div>
+      <p><code>GET /api/staff/</code> lọc theo phòng nhưng <code>GET /api/staff/{id}</code> chỉ cần đăng
+        nhập — đếm id từ 1 đến N là gom được SĐT, email, mã IPCAS, tên đăng nhập Payment của toàn cơ
+        quan. Tách <code>_pham_vi_rong()</code> ra dùng chung cho cả hai đường thay vì chép luật sang,
+        để lần sau đổi luật không sót một nửa. Không có rủi ro hồi quy giao diện: đã rà, frontend
+        <b>không gọi</b> <code>GET /api/staff/{id}</code> ở đâu cả (chỉ PUT và DELETE).</p>
+
+      <div class="label">Security headers: chỉ đặt cái không thể gãy</div>
+      <table>
+        <tr><th>Header</th><th>Quyết định</th></tr>
+        <tr><td><code>X-Frame-Options</code> + <code>frame-ancestors</code></td><td><b>Có.</b> Đã rà: không chỗ nào tự nhúng trang của mình vào iframe → DENY không làm hỏng gì</td></tr>
+        <tr><td><code>Content-Security-Policy</code> đầy đủ</td><td><b>Không.</b> NiceGUI dựng giao diện bằng script/style nội tuyến, <code>/docs</code> nạp Swagger từ CDN — siết <code>script-src</code> là trắng màn hình, mà công duy trì danh sách nguồn lớn hơn lợi ích</td></tr>
+        <tr><td><code>Strict-Transport-Security</code></td><td><b>Không — có chủ đích.</b> Hệ thống đang chạy HTTP. Nếu HSTS lỡ có hiệu lực, trình duyệt <b>nhớ vĩnh viễn</b> và từ chối mọi kết nối HTTP tới máy chủ này, không gỡ được từ phía máy chủ. Thêm CÙNG LÚC với TLS, không sớm hơn</td></tr>
+      </table>
+      <div class="note">Middleware đặt trong <code>backend/core/</code> nhưng <b>không import gì khác
+        trong <code>backend/</code></b>, nhờ vậy tiến trình frontend dùng lại được mà không kéo theo
+        <code>SECRET_KEY</code>/DB — vẫn độc lập như trước. Chỉ thêm header <b>chưa có</b>, để route
+        nào cần nhúng iframe sau này tự đặt đè được.</div>
+
+      <div class="label">Mã hoá bản sao lưu: ZIP-AES chứ không phải thư viện mã hoá</div>
+      <p>Lúc cần khôi phục thường là lúc hệ thống đang hỏng. Người vận hành phải mở được file bằng
+        <b>7-Zip/WinRAR có sẵn trên máy</b>, không phụ thuộc vào chính phần mềm vừa chết hay một script
+        giải mã nằm đâu đó trong repo. Vì thế chọn <code>pyzipper</code> (đã là dependency sẵn) thay vì
+        <code>cryptography</code>.</p>
+      <table>
+        <tr><th>Tình huống</th><th>Hành xử</th><th>Vì sao</th></tr>
+        <tr><td>Thiếu <code>BACKUP_PASSWORD</code></td><td>Vẫn backup ra <code>.db</code> + cảnh báo</td><td><b>Mất bản sao lưu nặng hơn hẳn bản sao lưu chưa mã hoá.</b> Thiếu cấu hình không được làm dừng việc backup</td></tr>
+        <tr><td>Nén/mã hoá lỗi</td><td>Giữ bản <code>.db</code>, log ERROR</td><td>Thà có bản chưa mã hoá còn hơn không có bản nào</td></tr>
+        <tr><td>Xoá bản <code>.db</code> trần thất bại</td><td>Log ERROR, không raise</td><td>Mất trắng ý nghĩa mã hoá — phải kêu; nhưng bản <code>.zip</code> vẫn dùng được nên không chặn</td></tr>
+      </table>
+      <div class="note"><code>_verify()</code> phải chạy <b>trước</b> khi nén — sau khi nén thì không mở
+        bằng <code>sqlite3</code> được nữa. Và luật xoay vòng phải nhận cả hai đuôi: đổi sang
+        <code>.zip</code> mà quên sửa <code>_TEN_TU_SINH</code> thì thư mục backup phình mãi không ai
+        dọn, còn màn hình Admin báo "chưa có backup" trong khi vừa chạy xong.</div>
+      <div class="note"><code>start.bat</code> tự sinh <code>BACKUP_PASSWORD</code> và in ra <b>đúng một
+        lần</b>: máy mới mà để trống thì lặng lẽ sao lưu ở dạng trần, coi như chưa vá gì.</div>
+
+      <div class="label">Hạn lưu nhật ký đăng nhập 30 ngày → 365</div>
+      <p>Một vụ dò mật khẩu bị phát hiện muộn hơn một tháng thì dấu vết đã bị chính hệ thống xoá hộ kẻ
+        tấn công. Đặt bằng <code>audit_logs</code> cho khớp thông lệ lưu vết ngành ngân hàng. Nhãn trên
+        màn hình <code>login_logs.py</code> sửa theo — nhãn nói 30 ngày mà thực tế giữ 365 thì người
+        dùng không đi tìm dữ liệu vốn vẫn còn đó.</p>
+
+      <div class="label">Còn tồn tại — biết mà chưa xử</div>
+      <table>
+        <tr><th>Việc</th><th>Vì sao chưa làm</th></tr>
+        <tr><td>HTTPS</td><td>Ngoài phạm vi mã nguồn — xem đầu card</td></tr>
+        <tr><td><code>starlette 0.35.1</code> (CVE-2024-47874)</td><td>Nâng phải kéo theo FastAPI; cần một đợt kiểm thử riêng, không gộp vào đợt vá này</td></tr>
+        <tr><td><code>python-jose 3.3.0</code></td><td>Thư viện gần như bỏ hoang. Chỉ dùng HS256 nên hai CVE của nó không chạm tới; chuyển sang PyJWT là việc đổi thư viện, cần PR riêng</td></tr>
+        <tr><td><code>setuptools 57.4.0</code> trong <code>.venv</code></td><td>CVE chỉ chạm lúc pip cài đặt, không chạm lúc chạy — nâng bằng <code>pip install -U setuptools</code>, không phải sửa mã</td></tr>
+        <tr><td>Không giới hạn độ dài mật khẩu</td><td>bcrypt chỉ tính 72 byte đầu → mật khẩu dài hơn bị cắt âm thầm</td></tr>
+        <tr><td>Mã kết nối Extension không có hạn dùng</td><td>Bảng <code>doi_chieu_citad_extension_tokens</code> không có cột <code>expires_at</code>, chỉ thu hồi tay được</td></tr>
+        <tr><td>Băng-rôn uỷ quyền <code>leaves.py:551</code> ghép <code>full_name</code> vào <code>ui.html</code> không escape</td><td>Cần quyền <code>staff.create</code> mới cấy được nên rủi ro thấp — nhưng 3 chỗ <code>ui.html</code> khác đều đã escape, chỗ này là sót</td></tr>
+        <tr><td><code>PUT /api/leaves/{id}/resubmit</code> không kiểm <code>leave_type</code></td><td>3 đường ghi khác đều kiểm <code>_VALID_LEAVE_TYPES</code>; nghiêng về lỗi dữ liệu hơn bảo mật</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">81</span>
+      <span class="card-title">start.bat chết ngay từ dòng đầu — một cặp ngoặc trong lời chú thích</span>
+      <span class="badge badge-done">Đã sửa</span>
+    </div>
+    <div class="card-body">
+      <p>Khối tự sinh <code>BACKUP_PASSWORD</code> (card 80) có dòng ghi chú vào <code>.env</code>:
+        <code>echo # Mat khau nen file sao luu (AES-256) -- ...</code>. Dòng này nằm <b>bên trong</b>
+        <code>if errorlevel 1 (&nbsp;...&nbsp;)</code>. <code>cmd.exe</code> ghép cả khối
+        <code>if</code> thành một câu lệnh <b>trước khi chạy</b>, nên dấu <code>)</code> giữa
+        <code>(AES-256)</code> bị coi là dấu đóng khối — khối <code>if</code> kết thúc sớm, phần còn lại
+        của file bị đọc lệch và cmd bắt đầu chạy những mẩu chữ cụt đầu như lệnh
+        (<code>'RAGE_SECRET' is not recognized</code>). Sửa: <code>^(AES-256^)</code>.</p>
+      <div class="note">Triệu chứng đánh lừa: lỗi đầu tiên in ra là ở <b>dòng 3</b>
+        (<code>'enabledelayedexpansion' is not recognized</code>) — trước chỗ sai hàng chục dòng.
+        Đừng đi tìm lỗi ở nơi thông báo trỏ tới.</div>
+
+      <div class="label">Vì sao dòng cùng loại ở khối STORAGE_SECRET vẫn chạy</div>
+      <p>Nó không có dấu ngoặc. Các <code>echo</code> cũ trong file đều đã escape đúng
+        (<code>^(lenh: %PY%^)</code>, <code>^(mat vai phut^)</code>) — dòng mới thêm là chỗ sót duy nhất.
+        Luật: <b>mọi <code>(</code> <code>)</code> trong <code>echo</code> nằm trong khối ngoặc đều phải
+        có <code>^</code></b>; grep kiểm được bằng
+        <code>grep -n 'echo' start.bat | grep -P '(?&lt;!\^)[()]'</code>.</p>
+
+      <div class="label">Hai cái bẫy gặp khi dò lỗi — ghi lại để khỏi mất công lần nữa</div>
+      <table>
+        <tr><th>Bẫy</th><th>Hậu quả</th></tr>
+        <tr><td>Copy <code>.bat</code> bằng <code>sed</code> để dựng bản thử</td><td><code>sed</code> ghi ra <b>LF</b>. cmd.exe đọc file LF thì cũng cụt lệnh y hệt lỗi thật → tưởng đã tái hiện được lỗi, thực ra đang xem lỗi của chính bản thử. Nhân bản <code>.bat</code> phải sao <b>nguyên byte</b></td></tr>
+        <tr><td>Chạy thử trong shell đang bật venv</td><td><code>py.exe</code> ưu tiên <code>VIRTUAL_ENV</code> → dùng luôn cái venv hỏng và báo <i>No Python at ...</i>, trong khi máy vẫn có Python tốt. Phải xoá <code>VIRTUAL_ENV</code> trước khi thử</td></tr>
+      </table>
+
+      <div class="label">Ký tự vô hình trong chú thích</div>
+      <p>Dòng chú thích <code>thu muc data\backups</code> chứa <b>một byte 0x08</b> (backspace) thay cho
+        <code>\b</code> — dấu vết của một lần soạn thảo có escape sai. Vô hại với cmd nhưng làm câu chú
+        thích sai nghĩa và khiến <code>file</code> báo <i>with overstriking</i>. Đã trả lại
+        <code>data\backups</code>. File nay thuần ASCII trở lại (trừ ba dòng kẻ <code>──</code> đã kiểm
+        chứng là không gây lỗi).</p>
+
+      <div class="label">Còn tồn tại</div>
+      <div class="note">Các dòng <code>echo [!] ...</code> in ra thành <code>[]</code>: dưới
+        <code>enabledelayedexpansion</code>, <code>!</code> là ký tự mở rộng biến nên bị nuốt. Lỗi có sẵn
+        từ trước, chỉ ảnh hưởng thẩm mỹ thông báo — muốn giữ dấu phải viết <code>[^^!]</code>.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">82</span>
+      <span class="card-title">Gộp menu "Chấm công & Lịch trực" — bỏ nhóm một-mục "Phòng Kế toán"</span>
+      <span class="badge badge-done">Đã sửa</span>
+    </div>
+    <div class="card-body">
+      <p>Nhóm cấp 1 <b>Phòng Kế toán</b> chỉ chứa đúng một mục (Chấm công) — người dùng phải hover
+        thêm một tầng để tới một chỗ duy nhất, và cái tên "Phòng Kế toán" đi ngược nguyên tắc
+        <i>menu gom theo chức năng, không theo phòng</i> mà cây menu đang theo. Bỏ nhóm đó; gom
+        <b>Chấm công</b>, <b>Nghỉ phép</b>, <b>Phân lịch trực</b>, <b>Sổ trực cuối ngày</b> vào một
+        nhóm chức năng mới.</p>
+
+      <table>
+        <tr><th>Trước</th><th>Sau</th></tr>
+        <tr>
+          <td>Phòng Kế toán ─ Chấm công<br>Nghỉ phép <i>(menu phẳng)</i><br>Phân lịch trực <i>(menu phẳng)</i><br>Sổ trực cuối ngày <i>(menu phẳng)</i></td>
+          <td>Chấm công &amp; Lịch trực ─ Nghỉ phép<br>&nbsp;&nbsp;&nbsp;&nbsp;├─ Phòng Kế toán ─ Chấm công<br>&nbsp;&nbsp;&nbsp;&nbsp;└─ Phòng Thanh toán ─ Phân lịch trực / Sổ trực cuối ngày</td>
+        </tr>
+      </table>
+
+      <div class="label">Vì sao chỉ Nghỉ phép ở tầng 2</div>
+      <p>Tiêu chí xếp tầng là <b>phạm vi áp dụng</b>, không phải mức độ hay dùng. Nghỉ phép áp cho
+        <b>cả cơ quan</b> nên đứng thẳng ở tầng 2; chấm công là việc của <b>Phòng Kế toán</b>, phân
+        lịch trực / sổ trực là việc của <b>Phòng Thanh toán</b> — cả ba tụt xuống tầng 3 dưới đúng
+        tên phòng, giống cách Đối chiếu và Báo cáo đang làm. Để bốn mục ngang hàng ở tầng 2 sẽ ngụ ý
+        chúng cùng phạm vi, trong khi ba trong bốn chỉ liên quan tới một phòng.</p>
+      <div class="note">Bản đầu tiên đặt Chấm công ở tầng 2 cạnh Nghỉ phép; đổi lại theo yêu cầu.
+        Đổi này còn <b>xoá luôn chỗ breadcrumb lặp</b> — trước là <i>Chấm công &amp; Lịch trực /
+        Chấm công</i>, nay là <i>Chấm công &amp; Lịch trực / Phòng Kế toán / Chấm công</i>.</div>
+
+      <div class="label">Đánh đổi đã chấp nhận</div>
+      <table>
+        <tr><th>Được</th><th>Mất</th></tr>
+        <tr><td>Cấp 1 sidebar bớt 3 dòng; không còn nhóm chỉ có một mục</td><td>Nghỉ phép từ menu phẳng (bấm 1 lần) tụt xuống cấp 2 (phải hover)</td></tr>
+        <tr><td>Tên nhóm cấp 1 nói đúng chức năng; tên phòng lùi xuống tầng 2 đúng vai trò của nó</td><td>Cả ba mục theo phòng nay ở tầng 3 — sâu nhất mà <code>_dept_group()</code> dựng được, không còn chỗ mở rộng</td></tr>
+        <tr><td>Breadcrumb tự đổi theo (dựng từ <code>MENU_TREE</code>), không phải sửa chỗ thứ hai</td><td>Chấm công từ 2 lần bấm (nhóm → mục) thành 3 lần rê chuột (nhóm → phòng → mục)</td></tr>
+      </table>
+
+      <div class="label">Chỗ khó thật sự: hai cơ chế ẩn/hiện trong cùng một nhóm</div>
+      <p><code>_dept_group()</code> vốn chỉ có một cờ <code>check_features</code> cho <b>cả nhóm</b>:
+        bật thì mọi mục lọc bằng <code>api.has_feature("menu.&lt;key&gt;")</code>, tắt thì hiện tất
+        cả. Nhóm cũ "Phòng Kế toán" render với <code>check_features=False</code> vì
+        <b>Chấm công không gate bằng feature-flag</b> mà theo phòng (<code>ACCT</code>) — mọi nhân viên
+        phòng đó đều cần xem "Công của tôi", không riêng người được cấp quyền.</p>
+      <p>Nay Chấm công đứng chung nhóm (dù ở nhánh con "Phòng Kế toán") với ba mục gate bằng
+        feature-flag. Dùng
+        <code>check_features=False</code> sẽ hiện cả Nghỉ phép / lịch trực cho người không có quyền;
+        dùng <code>True</code> sẽ ẩn Chấm công của nhân viên ACCT chưa được tick
+        <code>menu.attendance</code>. Giải pháp: thêm tham số
+        <code>overrides: dict[str, bool]</code> — đè kết quả kiểm tra của <b>đúng một khoá</b>, các
+        khoá còn lại vẫn theo <code>check_features</code>. Áp ở cả ba chỗ lọc
+        (<code>_item_visible</code> cho mục thường, cho nhóm con, và <code>sub_children</code>) nên
+        nhánh "Phòng Kế toán" chỉ có Chấm công cũng <b>biến mất cả dải nhãn phòng</b> với người ngoài
+        ACCT, không để lại mục hover ra rỗng.</p>
+      <div class="note">Giữ nguyên kết luận review PR #22: người <b>không</b> thuộc ACCT/admin thì
+        <code>overrides["attendance"]=False</code> → ẩn hẳn, kể cả khi lỡ được cấp
+        <code>menu.attendance</code> qua Phân quyền theo nhóm. Nếu để rơi về feature-flag thì menu
+        hiện ra rồi bấm vào nhận 403 — tệ hơn là không thấy gì.</div>
+
+      <div class="label">Ô tick <code>menu.attendance</code> vẫn còn — và vẫn không điều khiển menu</div>
+      <p>Nó tồn tại để admin gán 2 quyền con (<code>attendance.view_dept</code>,
+        <code>attendance.export</code>) cho một GDV được giao theo dõi chấm công, khỏi phải nâng role
+        lên trưởng/phó phòng. Tick hay không <b>không</b> làm menu hiện ra với người ngoài phòng ACCT.
+        Đây là mã quyền duy nhất trong <code>FEATURES</code> có tên <code>menu.*</code> mà sidebar
+        không đọc — đọc code mà không biết điều này rất dễ "sửa cho nhất quán" rồi làm hỏng.</p>
+
+      <div class="label">Icon: không dùng glyph mới</div>
+      <div class="note">Icon hợp nghĩa nhất là <code>punch_clock</code>, nhưng NiceGUI đóng gói
+        <b>bộ font Material Icons offline</b> (<code>static/fonts/</code>) — glyph thêm sau ngày đóng
+        gói thì font không có, và font ligature render ra <b>nguyên chuỗi chữ</b>
+        <code>punch_clock</code> giữa sidebar chứ không báo lỗi. Máy chủ chạy nội bộ không tải font
+        từ Google được để bù. Chọn <code>date_range</code> — thuộc bộ gốc, chắc chắn có.</div>
+
+      <div class="label">Hai cây phải sửa cùng lượt</div>
+      <p><code>FEATURE_GROUPS</code> (<code>backend/core/features.py</code>) soi gương
+        <code>MENU_TREE</code> (<code>frontend/shared.py</code>). Ba thẻ <code>kind="menu"</code>
+        (Nghỉ phép, Phân lịch trực, Sổ trực) đã gộp thành một thẻ <code>kind="group"</code> hai
+        section. <code>_assert_feature_coverage()</code> chỉ kiểm <b>đủ mã quyền</b>, <b>không</b>
+        kiểm hai cây có cùng hình dạng — lệch cấu trúc thì không có gì báo, màn Phân quyền chỉ đơn
+        giản hiển thị khác thứ user nhìn thấy.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">83</span>
+      <span class="card-title">Hậu kiểm viên ra khỏi quy trình Nghỉ phép — ngang chuyên viên</span>
+      <span class="badge badge-done">Đã sửa</span>
+    </div>
+    <div class="card-body">
+      <p>Báo lỗi ban đầu là "chọn người phê duyệt không thấy Hậu kiểm viên". Điều tra ra
+        <b>hai tầng phân quyền đang nói ngược nhau</b>, và quyết định nghiệp vụ là bỏ hẳn vai trò
+        duyệt của Hậu kiểm viên ở module này.</p>
+
+      <table>
+        <tr><th>Tầng</th><th>Nói gì về Hậu kiểm viên</th></tr>
+        <tr><td>Phân quyền theo nhóm (<code>group_features</code>)</td>
+            <td>Cả 5 HKV nằm ở nhóm <i>"Chuyên viên Phòng KSNB&amp;HTVH"</i> + <i>"All user"</i>, chỉ có
+                <code>leaves.create / cancel / resubmit / dashboard</code>. <b>Không</b> có
+                <code>leaves.approve_ksv</code>.</td></tr>
+        <tr><td>Code (<code>backend/api/leaves.py</code>)</td>
+            <td>Hardcode <code>"hau_kiem_vien"</code> vào ~15 danh sách vai trò người duyệt — hiện trong
+                dropdown KSV, nhận đơn <code>pending_ksv</code>, xem đơn toàn trung tâm.</td></tr>
+      </table>
+
+      <div class="label">Quả mìn mà mâu thuẫn này tạo ra</div>
+      <div class="note">Nhân viên phòng KSNB chọn một Hậu kiểm viên làm KSV → đơn về đúng người, hiện đúng
+        ở tab "Chờ duyệt", nhưng bấm <b>Duyệt</b> thì <code>require_feature("leaves.approve_ksv")</code>
+        trả <b>403</b>. Đơn <b>kẹt vĩnh viễn</b> ở <code>pending_ksv</code> — người nộp không rút được,
+        người duyệt không duyệt được, chỉ admin gỡ. Chưa xảy ra lần nào (kiểm DB thật: 0 đơn), thuần túy
+        là may.</div>
+
+      <div class="label">Đã cân nhắc và bác bỏ</div>
+      <p>Hướng ngược lại — cho HKV hiện ra cho mọi phòng (khôi phục hành vi trước commit
+        <code>3df3f9b</code>, khi câu truy vấn còn là <code>… OR role = 'hau_kiem_vien'</code>) — có lý lẽ
+        đỡ được: theo <code>Role Hierarchy</code> thì HKV đứng <b>trên</b> trưởng phòng, và phòng KSNB kiểm
+        soát toàn trung tâm. Bác vì <b>nghiệp vụ thực tế: HKV chỉ ngang giao dịch viên</b>, việc hậu kiểm
+        của họ là ở chứng từ, không phải nhân sự. Cho duyệt liên phòng còn mở đường cho nhân viên "né"
+        trưởng phòng của mình.</p>
+
+      <div class="label">Phạm vi đã gỡ — và phạm vi cố ý KHÔNG đụng</div>
+      <table>
+        <tr><th>Gỡ</th><th>Giữ nguyên</th></tr>
+        <tr><td>Dropdown "Người phê duyệt (KSV)"; <code>_validate_ksv()</code>; nhận đơn
+                <code>scope=pending</code>; badge "Công việc chờ xử lý"; tab "Chờ duyệt"</td>
+            <td><code>_handover_filter()</code> — hậu kiểm <b>chứng từ</b> là việc thật của họ
+                (<code>dashboard.py</code>)</td></tr>
+        <tr><td>Xem đơn người khác: <code>scope=all</code>, <code>scope=dept</code>, xuất Excel toàn bộ,
+                chi tiết / lịch sử / bản in đơn người khác, danh sách Ủy quyền GĐ</td>
+            <td><code>_BROAD_VIEW_ROLES</code> ở <code>staff.py</code>, quyền ở Chấm công, Chứng từ,
+                Bàn giao — module khác, ngoài phạm vi yêu cầu</td></tr>
+        <tr><td>Bản in: bỏ dòng chức vụ kiểu lãnh đạo <i>"Hậu kiểm viên &lt;phòng&gt; - Trung tâm Thanh
+                toán Agribank"</i>, rơi về <code>_ROLE_VN</code> = "Hậu kiểm viên", giống cách chuyên viên
+                được in</td>
+            <td><code>_ROLE_VN</code> vẫn có nhãn "Hậu kiểm viên" — đó là <b>chức danh</b>, không phải
+                quyền</td></tr>
+      </table>
+
+      <div class="label">Đổi mẫu docx nhưng hiện chưa có tác dụng thật</div>
+      <div class="note"><code>_pick_template()</code> đã trỏ HKV sang <code>don_xin_nghi_phep_nv.docx</code>
+        thay vì <code>_tp.docx</code>. Nhưng thư mục <code>templates/Phòng Tổng hợp/Nghỉ phép/</code>
+        <b>đang rỗng</b> — không có file mẫu riêng theo chức danh nào cả, nên mọi role đều fallback về
+        <code>templates/don_xin_nghi_phep_tpl.docx</code>. Ánh xạ mới chỉ có hiệu lực khi ai đó bỏ file mẫu
+        vào thư mục đó. <b>Không</b> tự tạo file — đó là tài liệu nghiệp vụ, không phải việc của code.</div>
+
+      <div class="label">Test cũ phải sửa vì nó khẳng định đúng hành vi vừa gỡ</div>
+      <p><code>tests/test_pending_so_truc_cach_ly.py</code> dựng user giả lập vai
+        <code>hau_kiem_vien</code> vì đó là vai duy nhất thoả <b>cả</b> <code>_leave_filter</code> lẫn
+        <code>_handover_filter</code> — tiện, nhưng nay sai nghiệp vụ. Thay bằng <b>chuyên viên phòng Tổng
+        hợp</b>: <code>_leave_filter</code> khớp qua <code>_is_tong_hop()</code> (gác cửa bước TH — gate
+        theo <b>phòng</b> chứ không theo role, nên chuyên viên vẫn hợp lệ), <code>_handover_filter</code>
+        khớp qua nhánh chứng từ do chính mình nhập. Bài test giữ nguyên mục đích gốc: sổ trực hỏng không
+        được kéo sập badge Chứng từ và Nghỉ phép.</p>
+      <div class="note">Bộ mới <code>tests/test_nghi_phep_hau_kiem_vien.py</code> (7 ca) khoá lại: không
+        hiện trong dropdown, không gán được kể cả gọi thẳng API, <code>scope=all/dept</code> trả 403, và
+        đơn <code>pending_ksv</code> trỏ vào HKV thì họ vẫn <b>không</b> nhận được — chặn đường lách còn
+        sót từ dữ liệu cũ.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">84</span>
+      <span class="card-title">Quản trị viên cấp 2 không thấy menu Phân quyền chức năng — mở ra, kèm hai chốt chống tự nâng quyền</span>
+      <span class="badge badge-done">Hoàn thành</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Hiện tượng và bản chất</div>
+      <p>Cấp 2 (<code>admin_l2</code>) đăng nhập không thấy nhóm menu <b>Phân quyền chức năng</b>. Không
+        phải lỗi render: menu bị chặn cứng ở <b>ba lớp</b> — sidebar (<code>if user_role == "admin"</code>,
+        hard-coded chứ không phải feature-flag), hai trang <code>groups.py</code> /
+        <code>group_features.py</code> (đá về <code>/home</code>), và toàn bộ endpoint
+        <code>/api/groups</code> dùng <code>require_admin</code>. Trong <code>features.py</code> cũng
+        <b>không tồn tại</b> mã feature nào cho hai màn này, nên không có đường cấp quyền qua nhóm.</p>
+
+      <div class="label">Vì sao trước đây chặn — và vì sao vẫn không gate bằng feature</div>
+      <p>Màn Phân quyền là màn <b>tự sinh quyền</b>: ai vào được thì tự tick cho nhóm của mình. Nếu gate
+        bằng feature (<code>menu.groups</code>), người được cấp feature đó sẽ tự cấp tiếp cho người khác
+        và cho chính nhóm mình — quyền tự nhân bản, và cấp 1 mất khả năng kiểm soát. Vì vậy giữ nguyên
+        <b>hard-code theo vai trò</b>, chỉ nới từ một vai thành hai vai quản trị.</p>
+
+      <div class="label">Hai chốt chặn, phải có CẢ HAI</div>
+      <table>
+        <tr><th>Đường tự nâng quyền</th><th>Chặn</th></tr>
+        <tr><td>Cấp 2 mở nhóm mình đang ở trong, tick hết ô → có gần đủ quyền cấp 1</td><td>403 với mọi thao tác ghi lên nhóm chứa chính mình (sửa tên, xoá, thêm/bớt thành viên, ghi ma trận quyền)</td></tr>
+        <tr><td>Cấp 2 lập nhóm mới full quyền rồi <i>tự thêm mình vào</i> — lúc thêm, nhóm chưa chứa mình nên luật trên không bắt được</td><td>403 khi <code>staff_id == current["id"]</code>, bất kể nhóm nào</td></tr>
+      </table>
+      <p>Cả hai nằm trong <code>backend/api/groups.py::_chan_l2_tu_cap_quyen()</code> — <b>backend là nơi
+        chặn thật</b>; frontend chỉ khoá nút và hiện dòng giải thích để người dùng không bấm rồi ăn 403.
+        Dependency mới <code>require_admin_any</code> (cấp 1 + cấp 2) chỉ dùng cho router này;
+        <code>require_admin</code> ở <code>auth.py</code>, <code>logs.py</code>, <code>holidays.py</code>,
+        <code>attendance.py</code> giữ nguyên nghĩa "chỉ cấp 1".</p>
+
+      <div class="label">Quyết định phụ</div>
+      <p><code>GET /api/groups</code> trả thêm cờ <code>contains_me</code> (EXISTS trên
+        <code>group_members</code>). Frontend cần biết nhóm nào khoá <b>trước khi</b> người dùng bấm; nếu
+        không có cờ này thì phải gọi thêm một vòng <code>/members</code> cho từng nhóm chỉ để dựng UI.</p>
+
+      <div class="label">Vấn đề biết mà không chặn</div>
+      <p>Hai QTV cấp 2 vẫn có thể <b>cấp quyền chéo</b> cho nhau (A sửa nhóm của B và ngược lại). Chặn được
+        về mặt kỹ thuật (cấm cấp 2 đụng nhóm có thành viên là cấp 2 khác) nhưng sẽ làm cấp 2 gần như vô
+        dụng: hầu hết nhóm quản trị đều có cấp 2 trong đó. Đây là rủi ro <b>chọn người</b>, không phải rủi
+        ro mã — ghi ra để người vận hành biết mà cân nhắc khi giao vai cấp 2.</p>
+
+      <div class="note">Kiểm chứng: <code>tests/test_qtv_cap_2_phan_quyen.py</code> — 11 ca (vào được màn,
+        cờ <code>contains_me</code> đúng, sửa nhóm khác OK; 5 đường ghi lên nhóm chứa mình đều 403; tự thêm
+        mình 403; chuyên viên vẫn 403). Toàn bộ suite 612 test pass. Phần giao diện (menu hiện ra, nút bị
+        khoá) <b>chưa chạy thử trên trình duyệt</b> — máy không có công cụ tự động hoá trình duyệt.</div>
+    </div>
+  </div>
+
+
+  <!-- 85 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">85</span>
+      <span class="card-title">Nghỉ phép: bản xem trước chậm 4–6 giây — 85% thời gian đó là mở rồi đóng Word</span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <p>Mỗi lần bấm <b>Xem trước</b> / <b>Gửi đơn</b> / <b>Phê duyệt</b>, hệ thống chạy
+        <code>docx_to_pdf.ps1</code>: mở Word qua COM → chuyển một file → đóng Word. Đo trên máy thật, tách
+        từng phần ra mới thấy phần chuyển đổi gần như không tốn gì:</p>
+
+      <table>
+        <tr><th>Việc</th><th>Thời gian</th><th>Ghi chú</th></tr>
+        <tr><td>Khởi động PowerShell</td><td>0,23 s</td><td></td></tr>
+        <tr><td><b>Mở + đóng Word (COM)</b></td><td><b>~3,6 s</b></td><td>~85% tổng thời gian chờ</td></tr>
+        <tr><td>Chuyển 1 file docx → pdf</td><td>0,22–0,72 s</td><td>lần đầu chậm hơn do nạp mẫu</td></tr>
+        <tr><td>Dựng ảnh trang + nén PNG</td><td>~0,04 s</td><td></td></tr>
+        <tr><td><b>Tổng mỗi lượt</b></td><td><b>4,1–6,5 s</b></td><td></td></tr>
+      </table>
+
+      <p>Nói cách khác: gần như toàn bộ thời gian người dùng ngồi chờ là dựng lên một bản Word rồi phá đi,
+        để lần sau lại dựng lại từ đầu. Cache PDF trong RAM (đã có từ trước) không cứu được vì
+        <b>mỗi đơn mới là một nội dung mới</b> — người gửi đơn luôn trượt cache.</p>
+
+      <div class="label">Cách sửa: giữ MỘT bản Word sống giữa các lần gọi</div>
+      <p><code>backend/services/docx_pdf_server.ps1</code> là một tiến trình PowerShell thường trú: mở Word
+        một lần, rồi đọc từng dòng việc từ stdin (<code>&lt;in&gt;|&lt;out&gt;</code>) và trả về một dòng
+        <code>OK</code> / <code>ERR ...</code>. Phía Python là <code>leave_pdf._WordServer</code>.</p>
+
+      <table>
+        <tr><th>Tình huống</th><th>Trước</th><th>Sau</th></tr>
+        <tr><td>Bấm xem trước (đơn mới)</td><td>4,1–6,5 s</td><td><b>0,32–0,39 s</b></td></tr>
+        <tr><td>Lượt đầu sau khi Word ngủ</td><td>4,1–6,5 s</td><td>~1,1 s</td></tr>
+        <tr><td>Xem lại đơn cũ (trúng cache PDF)</td><td>~0 s</td><td>~0 s</td></tr>
+        <tr><td>Ảnh trang gửi về trình duyệt</td><td>107 KB (base64 146 KB)</td><td><b>43 KB (base64 61 KB)</b></td></tr>
+      </table>
+
+      <div class="label">Bốn cái bẫy đã phải né</div>
+      <table>
+        <tr><th>Bẫy</th><th>Xử lý</th></tr>
+        <tr><td><code>Write-Output</code> nằm lại trong bộ đệm của PowerShell</td>
+            <td>Viết thẳng <code>[Console]::Out.WriteLine()</code> + <code>Flush()</code>. Dùng
+                <code>Write-Output</code> thì Python đọc dòng sẽ chờ mãi — treo im lặng, không lỗi.</td></tr>
+        <tr><td><code>readline()</code> trên Windows không có hạn giờ</td>
+            <td>Một luồng riêng bơm stdout vào <code>queue.Queue</code>; luồng phục vụ request chỉ
+                <code>get(timeout=...)</code>. Không có nó, Word treo là kẹt luôn cả luồng đó.</td></tr>
+        <tr><td>Backend bị tắt cứng (<code>taskkill /F</code>, mất điện) → WINWORD mồ côi</td>
+            <td>Ghi PID ra <code>data/word_server.pid</code>; lần khởi động sau diệt bản cũ trước khi mở bản
+                mới. Không có bước này thì mỗi lần khởi động lại thêm một WINWORD vô hình.</td></tr>
+        <tr><td>PID cũ có thể đã được Windows cấp lại cho tiến trình khác</td>
+            <td><code>_kiem_truoc_khi_diet()</code> hỏi Windows xem đúng là WINWORD.EXE mới diệt.
+                <code>taskkill /F /PID</code> không kiểm gì cả — bắn nhầm là mất việc của người khác.</td></tr>
+        <tr><td><b>Bản Word ngầm nuốt mất tài liệu của người vận hành</b> — xem khung đỏ bên dưới</td>
+            <td>Chỉ <code>Quit()</code> khi <code>Documents.Count = 0</code> <b>và</b>
+                <code>MainWindowHandle = 0</code>; <code>DisplayAlerts</code> chỉ tắt quanh
+                <code>Open</code>/<code>SaveAs</code> của mình.</td></tr>
+      </table>
+
+      <div class="label">⚠ Lỗi mất dữ liệu suýt lọt — do chính thay đổi này gây ra</div>
+      <p>Đường cũ (mở/đóng Word từng lần) cũng có lỗ này, nhưng cửa sổ nguy hiểm chỉ rộng ~4 giây mỗi
+        lượt. Giữ Word sống 15 phút biến nó thành <b>cửa sổ mở gần như suốt ngày</b> — tức là thay đổi
+        này <b>khuếch đại</b> một rủi ro sẵn có chứ không phải tạo mới, nhưng hậu quả thì như nhau.</p>
+      <p>Kịch bản: backend chạy suốt ngày nên bản Word ngầm thường là WINWORD <b>duy nhất</b> trên máy.
+        Người vận hành double-click một file <code>.docx</code> → Windows <b>không tạo tiến trình mới</b>
+        mà điều tài liệu vào đúng bản ngầm. 15 phút sau, hẹn giờ rảnh gọi <code>Quit()</code> →
+        tài liệu của họ đóng sập, <code>DisplayAlerts=0</code> nên <b>không có hộp thoại "có lưu không"</b>.</p>
+
+      <table>
+        <tr><th>Đo được</th><th>Bản Word ngầm rỗng</th><th>Sau khi người vận hành mở tài liệu</th></tr>
+        <tr><td>PID</td><td>10496</td><td>10496 — <b>không đổi</b></td></tr>
+        <tr><td><code>MainWindowHandle</code></td><td><code>0</code></td><td><code>1639180</code></td></tr>
+        <tr><td><code>MainWindowTitle</code></td><td>(rỗng)</td><td><code>cua_nguoi_dung.docx … - Word</code></td></tr>
+        <tr><td>Sau <code>shutdown()</code> — <b>trước khi vá</b></td><td>—</td><td>Word tắt, file khoá
+            <code>~$</code> biến mất ⇒ <b>tài liệu của họ bị đóng</b></td></tr>
+        <tr><td>Sau <code>shutdown()</code> — <b>sau khi vá</b></td><td>—</td><td>Word <b>còn sống</b>,
+            file khoá còn nguyên ⇒ để yên cho họ</td></tr>
+      </table>
+
+      <p><code>MainWindowHandle</code> là dấu hiệu phân biệt sạch: bản ngầm rỗng luôn <code>0</code>, bản
+        đã ôm tài liệu người dùng luôn khác <code>0</code>. Dùng nó ở <b>cả hai phía</b> — trong PS lúc
+        thoát, và trong Python trước mọi <code>taskkill</code>.</p>
+
+      <div class="label">Đánh đổi của bản vá</div>
+      <p>Nghi ngờ thì <b>không diệt</b>. Hệ quả: một bản Word ngầm treo thật <b>mà đang hiện hộp thoại</b>
+        sẽ không được dọn tự động — hệ thống ghi WARNING kèm PID và tiêu đề cửa sổ để người vận hành tự
+        quyết. Chọn thế vì bỏ mặc một tiến trình thừa thì nhìn thấy được và sửa được, còn dữ liệu người
+        ta gõ dở mà mất thì không lấy lại được.</p>
+      <p>Thứ tự ngược lại — người vận hành mở Word <b>trước</b>, backend bật sau — đã thử 1 lượt: hai tiến
+        trình <b>tách rời</b>, <code>Quit()</code> của backend không đụng tới bản của họ. An toàn sẵn,
+        nhưng đó không phải thứ tự thường gặp vì backend chạy suốt ngày.</p>
+
+      <div class="label">Đánh đổi đã chấp nhận</div>
+      <table>
+        <tr><th>Chọn</th><th>Vì sao</th><th>Giá phải trả</th></tr>
+        <tr><td>Giữ luôn đường cũ (<code>_docx_to_pdf_mot_lan</code>) làm đường lui</td>
+            <td>Word thường trú có thể không dựng được (chính sách chạy script, quyền COM, bản Word lạ).
+                Thà chậm 4 giây còn hơn tính năng chết hẳn.</td>
+            <td>Hai đường chuyển đổi cùng tồn tại — phải sửa cả hai khi đổi cách gọi Word.</td></tr>
+        <tr><td>Word báo <code>ERR</code> thì <b>không</b> chạy lại đường cũ</td>
+            <td><code>ERR</code> nghĩa là Word đã mở được, lỗi nằm ở chính file đơn. Chạy lại cũng hỏng y
+                hệt, chỉ tốn thêm ~4 giây rồi báo đúng một lỗi đó.</td>
+            <td>Nếu sau này có lỗi <code>ERR</code> chỉ xảy ra ở bản thường trú thì sẽ không tự lành.</td></tr>
+        <tr><td>Tắt Word khi rảnh 15 phút (<code>WORD_IDLE_SECONDS</code>)</td>
+            <td>Word ngồi không vẫn ăn ~100 MB RAM của máy chủ.</td>
+            <td>Người đầu tiên sau giờ nghỉ trưa chờ ~1,1 s thay vì 0,35 s.</td></tr>
+        <tr><td>Thay Word mới sau 100 lượt (<code>WORD_MAX_JOBS</code>)</td>
+            <td>Word chạy lâu phình bộ nhớ và thỉnh thoảng dở chứng.</td>
+            <td>Cứ 100 lượt có một người chờ thêm ~0,8 s.</td></tr>
+        <tr><td>Ảnh xem trước bỏ kênh màu <b>khi ảnh thật sự không có màu</b></td>
+            <td>Phiếu in đen trắng nhưng pdfium luôn trả RGB — ba kênh giống hệt nhau. So từng kênh tốn
+                &lt;1 ms, mẫu nào có logo/dấu đỏ vẫn giữ nguyên màu.</td>
+            <td>Thêm một bước có thể đoán sai nếu mẫu đơn có màu quá nhạt (chênh 0 tuyệt đối mới bỏ).</td></tr>
+      </table>
+
+      <div class="label">Bật sẵn Word lúc mở trang</div>
+      <p><code>POST /api/leaves/preview/warmup</code> đánh thức Word ở nền ngay khi người dùng mở màn Nghỉ
+        phép — họ còn xem danh sách / điền đơn vài chục giây, thừa đủ để Word sẵn sàng. Endpoint
+        <b>trả lời ngay</b> (đo được 0,013 s), không đợi Word lên: bắt chờ ở đây thì đúng bằng không làm gì.
+        Máy chủ không có Word thì mỗi lượt bật sẵn vẫn đẻ một PowerShell vô ích, nên hỏng một lần là nghỉ
+        60 giây mới thử lại.</p>
+
+      <div class="label">Vấn đề biết mà không sửa</div>
+      <p><b>Không đụng tới thời gian dựng bản xem trước lần đầu của một đơn.</b> Vẫn phải qua Word thật
+        (~0,35 s) vì mỗi đơn một nội dung. Muốn về 0 thì phải bỏ Word, dựng PDF thẳng từ Python — nhưng
+        bố cục phiếu sẽ lệch so với bản Word mà phòng Tổng hợp đang dùng để in, không đáng đổi.</p>
+      <p><code>_word_lock</code> vẫn tuần tự hoá mọi lượt gọi Word (Word vốn không chạy song song tốt).
+        Với 0,35 s/lượt thì 4 người bấm cùng lúc, người cuối chờ ~1,4 s — trước đây là ~16 s. Chưa đủ đau
+        để phải nuôi nhiều bản Word.</p>
+
+      <div class="label">⚠ Word không làm việc ở phiên 0 — giới hạn triển khai, không sửa được bằng mã</div>
+      <p>Máy chủ dành riêng, không ai dùng ⇒ rất dễ nảy ý cho hệ thống tự chạy không cần đăng nhập
+        (Windows Service, hoặc Task Scheduler <i>"Run whether user is logged on or not"</i>). Làm thế là
+        <b>tính năng xuất PDF chết</b>. Đo trên chính máy này dưới <code>NT AUTHORITY\SYSTEM</code>, phiên 0:</p>
+      <table>
+        <tr><th>Bước</th><th>Phiên có người đăng nhập</th><th>Phiên 0</th></tr>
+        <tr><td><code>New-Object -ComObject Word.Application</code></td><td>✅ ~0,85 s</td>
+            <td>✅ <b>0,59 s — vẫn chạy được</b></td></tr>
+        <tr><td><code>Documents.Open(...)</code></td><td>✅</td>
+            <td>❌ trả <code>null</code>, <b>không ném lỗi</b></td></tr>
+        <tr><td>Chuyển sang PDF</td><td>✅ ~0,25 s</td><td>❌</td></tr>
+      </table>
+      <p>Bẫy nằm ở chỗ bước tạo COM <b>thành công</b> — thử nông là kết luận nhầm "Word chạy tốt ở phiên 0".
+        Tôi đã kết luận nhầm đúng như vậy ở lần đo đầu, phải chạy trọn cả phép chuyển đổi mới lòi ra.</p>
+      <p>Không vá được bằng mã (Microsoft không hỗ trợ tự động hoá Office phía máy chủ). Chỉ làm được hai
+        việc: <code>docx_pdf_server.ps1</code> bắt riêng <code>$doc -eq $null</code> và ném thông báo nói
+        thẳng nguyên nhân — không có nó thì lỗi tới tay người vận hành là <i>"You cannot call a method on a
+        null-valued expression"</i>; và ghi rõ ràng buộc này trong README. Đã kiểm: chạy đúng đường
+        <code>leave_pdf.docx_to_pdf()</code> ở phiên 0 trả về <code>PdfConvertError</code> mang thông báo
+        mới ⇒ API 503 ⇒ giao diện tự lui về <code>.docx</code>, quy trình duyệt đơn không đứng lại.</p>
+
+      <div class="note">Kiểm chứng: <code>tests/test_nghi_phep_toc_do_xem_truoc.py</code> — 10 ca (lui về
+        đường cũ khi Word thường trú hỏng; <b>không</b> chạy lại khi Word báo lỗi nội dung;
+        <code>WORD_SERVER=0</code>; thời gian nghỉ sau khi bật sẵn hỏng; không diệt nhầm PID; bỏ/giữ màu;
+        route <code>/preview/warmup</code> không rơi vào tay <code>/{leave_id}/preview</code>;
+        <b>không diệt WINWORD đang có cửa sổ</b> và vẫn ghi log cho người vận hành; vẫn dọn được bản ngầm
+        treo thật; tra không được thì không bắn).
+        Toàn bộ suite 630 test pass. Đã chạy thật đầu-cuối với Word thật: bật sẵn 0,013 s → xem trước bản
+        nháp 0,77 s → xem trước để duyệt 0,03 s → tải PDF 0,17 s; sau đó không còn WINWORD mồ côi.</div>
+    </div>
+  </div>
+
+  <!-- 86 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">86</span>
       <span class="card-title">Đối chiếu CITAD: đảo ngược quyết định "giữ dòng Ebanking trong Excel" (PR #44)</span>
       <span class="badge badge-done">done · 2026-08-20</span>
     </div>
@@ -7746,7 +8595,7 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-20</footer>
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-21</footer>
 </div>
 </body>
 </html>

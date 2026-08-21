@@ -30,12 +30,12 @@ def _leave_filter(current: dict, db: sqlite3.Connection) -> tuple[str, list] | N
     role = current["role"]
     is_th = _is_tong_hop(current, db)
 
-    if is_th and role in ("truong_phong", "pho_phong", "hau_kiem_vien"):
+    if is_th and role in ("truong_phong", "pho_phong"):
         # PP/TP Tổng hợp: vừa duyệt KSV phòng mình, vừa gác cửa TH toàn trung tâm
         return ("((lr.ksv_approver_id = ? AND lr.status = 'pending_ksv')"
                 " OR lr.status = 'pending_tong_hop')", [current["id"]])
 
-    if role in ("truong_phong", "pho_phong", "hau_kiem_vien"):
+    if role in ("truong_phong", "pho_phong"):
         return ("lr.ksv_approver_id = ? AND lr.status = 'pending_ksv'", [current["id"]])
 
     if is_th:
