@@ -4,6 +4,15 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 21/08/2026 Nghỉ phép - **Lịch nghỉ chỉ còn hiện người CÙNG PHÒNG; banner uỷ quyền ghi đủ chức danh**
+    + ⚠️ **Đây là thay đổi ai-thấy-gì, đọc kỹ**: trước đây mở màn *Nghỉ phép*, **bất kỳ ai** cũng thấy tên toàn bộ người nghỉ của **cả trung tâm** trên lịch tháng. Nay mỗi người **chỉ thấy người cùng phòng mình**
+    + **Vẫn xem được toàn trung tâm**: Quản trị viên, Giám đốc / Phó Giám đốc, và nhân viên **phòng Tổng hợp** — đúng những vai vốn đã được xem toàn bộ danh sách đơn
+    + ⚠️ **Hậu kiểm viên nay cũng chỉ thấy phòng mình.** Cùng đợt này Hậu kiểm viên đã ra khỏi quy trình duyệt nghỉ phép, nên để họ đọc tên cả trung tâm trên lịch là hở đúng cái cửa vừa đóng. Đã thêm bài kiểm tự động canh việc này
+    + **Rê chuột vào một ô ngày** trên lịch nay hiện **đủ danh sách** người nghỉ hôm đó (ô ngày chỉ đủ chỗ hiện 3 tên đầu rồi "+N"). Ai đang xem nhiều phòng thì có kèm tên phòng
+    + **Banner uỷ quyền ghi đủ chức danh và ngày kiểu Việt Nam**: trước là *"Nguyễn Văn A ủy quyền cho Trần Thị B từ 2026-08-01 đến 2026-08-05"*, nay là *"**Giám đốc** Nguyễn Văn A ủy quyền cho **Phó Giám đốc** Trần Thị B từ **01/08/2026** đến **05/08/2026**"*
+    + **Không đổi gì về quy trình duyệt, hạn mức phép hay số liệu báo cáo** — chỉ đổi ai nhìn thấy gì trên lịch
+    + Toàn bộ **636 test** chạy đạt
+
 - 21/08/2026 Nghỉ phép - **Bản xem trước đơn hiện gần như tức thì (từ ~5 giây xuống ~0,3 giây)**
     + **Chỗ chậm nằm ở đâu**: mỗi lần bấm *Xem trước* / *Gửi đơn* / *Phê duyệt*, phần mềm **mở Word lên rồi đóng ngay** chỉ để chuyển một tờ đơn sang PDF. Bấm 10 lần là mở Word 10 lần. Đo trên máy thật: mở + đóng Word mất **3,6 giây**, còn việc chuyển tờ đơn chỉ mất **0,25 giây** — tức là gần hết thời gian ngồi chờ là dựng Word lên rồi phá đi
     + **Từ nay**: phần mềm **giữ sẵn một bản Word chạy ngầm** và dùng lại cho mọi người, y như để sẵn cái máy in đã bật thay vì bật/tắt cho từng tờ

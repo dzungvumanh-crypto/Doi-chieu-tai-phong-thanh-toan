@@ -8595,6 +8595,62 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
+  <!-- 87 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">87</span>
+      <span class="card-title">Lịch nghỉ phép: một dòng mới thêm vào đã vô hiệu hoá bản vá ở nhánh khác — không xung đột, không cảnh báo</span>
+      <span class="badge badge-done">Đã sửa</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label">Chuyện đã xảy ra</div>
+      <p>Hai nhánh chạy song song. Nhánh <code>develop</code> gỡ <code>hau_kiem_vien</code> khỏi <b>mọi</b>
+        danh sách vai trò duyệt/xem đơn nghỉ phép (8 chỗ trong <code>leaves.py</code> + <code>dashboard.py</code>).
+        Nhánh PR #47 cùng lúc thêm phạm vi phòng ban cho <code>leave_calendar()</code> bằng một dòng
+        <b>hoàn toàn mới</b>:</p>
+
+      <pre><code>sees_all = (current["role"] in ("admin", "hau_kiem_vien", "giam_doc", "pho_giam_doc")
+            or _is_tong_hop_staff(current, db))</code></pre>
+
+      <p>Git hoà hai nhánh <b>sạch sẽ</b>. Dòng mới không có dòng tương ứng bên kia để tranh chấp, nên không
+        có xung đột, không có cảnh báo, và <code>hau_kiem_vien</code> sống sót nguyên vẹn. Kết quả: Hậu kiểm
+        viên bị 403 ở <code>scope="all"</code> và <code>scope="dept"</code>, biến mất khỏi dropdown KSV,
+        không nhận đơn — nhưng <b>vẫn đọc được tên toàn trung tâm trên lịch tháng</b>. Toàn bộ test vẫn xanh.</p>
+
+      <div class="label">Vì sao không có gì báo động</div>
+      <table>
+        <tr><th>Lớp bảo vệ</th><th>Vì sao im lặng</th></tr>
+        <tr><td>Git merge</td><td>Dòng thêm mới ở vùng không ai đụng → không xung đột</td></tr>
+        <tr><td>Bộ test HKV</td><td>Chỉ chốt <code>/api/leaves/</code>, không có bài nào chạm <code>/api/leaves/calendar</code></td></tr>
+        <tr><td>Comment trong code</td><td>Ghi <i>"cùng tiêu chí đã dùng cho scope=all"</i> — <b>sai</b>, nên người đọc review tin theo</td></tr>
+      </table>
+
+      <p>Điểm đáng nhớ: <b>comment mô tả sai lý do thiết kế nguy hiểm hơn một bug</b>. Bug thì test bắt được,
+        còn comment sai thì người bảo trì sau đọc và tin, rồi nhân bản cái sai đó sang chỗ khác.</p>
+
+      <div class="label">Đã làm</div>
+      <p>Gỡ <code>hau_kiem_vien</code> khỏi <code>sees_all</code>, viết lại comment cho khớp thứ code thật sự
+        làm, và thêm <code>test_hau_kiem_vien_khong_xem_duoc_lich_nghi_phong_khac</code> vào
+        <code>tests/test_nghi_phep_hau_kiem_vien.py</code>. Đã kiểm chứng bài test đỏ khi đưa
+        <code>hau_kiem_vien</code> trở lại — test không đỏ được thì không phải test.</p>
+
+      <div class="label">Việc biết mà chưa làm</div>
+      <p>Tiêu chí "ai xem được toàn trung tâm" vẫn còn <b>chép tay hai nơi</b>: <code>list_leaves()</code>
+        (<code>scope="all"</code>), <code>export_leaves()</code> và <code>leave_calendar()</code> mỗi chỗ tự
+        liệt kê danh sách vai trò. Nên rút thành một helper <code>_xem_toan_trung_tam(current, db)</code>.
+        Chưa làm vì nằm ngoài phạm vi đợt này.</p>
+
+      <div class="label">Lỗ có sẵn, chưa vá, không liên quan đợt này</div>
+      <p><code>GET /api/leaves/export?scope=dept</code> gắn thẳng <code>clauses.append("1=1")</code> với chú
+        thích <i>"scope already handled by client"</i>. Nghĩa là <b>bất kỳ ai đăng nhập</b> cũng tải được file
+        Excel chứa họ tên, phòng, loại nghỉ, ngày và người duyệt của <b>toàn trung tâm</b>. Quyền canh ở
+        frontend thì không phải hàng rào. Việc thu hẹp phạm vi lịch ở trên chỉ khoá cửa trước — cửa sau này
+        vẫn mở, cần tách issue riêng.</p>
+
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-21</footer>
 </div>
 </body>
