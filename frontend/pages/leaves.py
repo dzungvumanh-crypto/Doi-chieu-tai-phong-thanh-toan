@@ -280,6 +280,24 @@ def _fmt_leave_dates(start_str: str, end_str: str, spread_dates=None) -> str:
         return start_str[:10]
 
 
+def _fmt_ngay_vn(iso_str: str) -> str:
+
+    """YYYY-MM-DD (hoặc có phần giờ) → DD/MM/YYYY, giữ nguyên chuỗi gốc nếu không parse được."""
+
+    if not iso_str:
+
+        return ""
+
+    try:
+
+        from datetime import date as _date
+
+        return _date.fromisoformat(iso_str[:10]).strftime("%d/%m/%Y")
+
+    except Exception:
+
+        return iso_str
+
 
 
 
@@ -543,9 +561,9 @@ async def leaves_page():
             _deleg_texts = []
             for d in _active_deleg:
                 _deleg_texts.append(
-                    f"📋 {d.get('giam_doc_name','GĐ')} ủy quyền cho "
-                    f"{d.get('pho_giam_doc_name','PGĐ')} "
-                    f"từ {d.get('start_date','')[:10]} đến {d.get('end_date','')[:10]}"
+                    f"📋 {d.get('giam_doc_role_label','')} {d.get('giam_doc_name','GĐ')} ủy quyền cho "
+                    f"{d.get('pho_giam_doc_role_label','')} {d.get('pho_giam_doc_name','PGĐ')} "
+                    f"từ {_fmt_ngay_vn(d.get('start_date',''))} đến {_fmt_ngay_vn(d.get('end_date',''))}"
                 )
             _banner_text = "   ·   ".join(_deleg_texts) + "   " * 5
             ui.html(f"""
@@ -3763,6 +3781,26 @@ async def leaves_page():
 
                                             "text-[9px] text-gray-500 leading-tight")
 
+                                    # Di chuột vào ô ngày → hiện đủ danh sách (không cắt bớt như
+                                    # trên) — dữ liệu đã theo đúng phạm vi phòng ban BE trả về
+                                    # (xem leave_calendar()), nên chỉ cần liệt kê nguyên `people`.
+                                    if people:
+                                        _n_dept = len({p.get("dept_name") for p in people if p.get("dept_name")})
+                                        with ui.tooltip().classes(
+                                                "bg-white text-gray-800 shadow-lg border border-gray-200 p-2"):
+                                            with ui.column().classes("gap-0.5"):
+                                                ui.label(f"Ngày {day:02d}/{m:02d} — {len(people)} người nghỉ").classes(
+                                                    "text-xs font-bold text-gray-700 mb-1")
+                                                for p in people:
+                                                    _lt   = p.get("leave_type", "other")
+                                                    _cls  = _CAL_TYPE_COLOR.get(_lt, "bg-gray-100 text-gray-600")
+                                                    _name = p.get("staff_name", "")
+                                                    _line = _name
+                                                    if _n_dept > 1 and p.get("dept_name"):
+                                                        _line += f" — {p['dept_name']}"
+                                                    ui.label(_line).classes(
+                                                        f"text-xs px-1.5 py-0.5 rounded {_cls} whitespace-nowrap")
+
 
 
                 cal_year.on("update:model-value",  lambda: asyncio.ensure_future(_reload_cal()))
@@ -3879,8 +3917,9 @@ async def leaves_page():
                                 from datetime import datetime as _dt_bc
                                 gd_name  = gd_opts.get(d_gd.value, "Giám đốc")
                                 pgd_name = pgd_opts.get(d_pgd.value, "Phó Giám đốc")
-                                _msg = (f"📋 ỦY QUYỀN MỚI: {gd_name} ủy quyền cho "
-                                        f"{pgd_name} từ {start_date} đến {end_date}")
+                                _msg = (f"📋 ỦY QUYỀN MỚI: Giám đốc {gd_name} ủy quyền cho "
+                                        f"Phó Giám đốc {pgd_name} từ {_fmt_ngay_vn(start_date)} "
+                                        f"đến {_fmt_ngay_vn(end_date)}")
                                 if d_note.value:
                                     _msg += f" — {d_note.value}"
                                 app.storage.general["_deleg_broadcast"] = {
