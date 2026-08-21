@@ -74,7 +74,7 @@ DISPLAY_COLS = [
 
 
 @ui.page("/doi_soat_citad")
-def doi_soat_citad_page():
+async def doi_soat_citad_page():
     if not _require_auth():
         return
     if not api.has_feature("menu.doi_soat_citad"):
@@ -93,7 +93,7 @@ def doi_soat_citad_page():
     history_refresh = {"fn": None}
 
     with ui.row().classes("w-full"):
-        _sidebar("doi_soat_citad")
+        await _sidebar("doi_soat_citad")
         with _content_area():
             _navy_header(
                 "ĐỐI SOÁT CHÊNH LỆCH CITAD CUỐI NGÀY",
