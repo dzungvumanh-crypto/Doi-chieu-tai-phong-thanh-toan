@@ -56,6 +56,87 @@
   <!-- Z -->
   <div class="card">
     <div class="card-header">
+      <span class="card-num">AA</span>
+      <span class="card-title">&#272;&#7889;i so&#225;t CITAD &#8212; n&#250;t "Xu&#7845;t t&#7845;t c&#7843; l&#7879;nh" timeout: n&#226;ng tr&#7847;n ch&#7901; KH&#212;NG ph&#7843;i c&#225;ch s&#7917;a</span>
+      <span class="badge badge-done">&#272;&#227; s&#7917;a</span>
+    </div>
+    <div class="card-body">
+
+      <p>N&#250;t m&#7899;i xu&#7845;t t&#7899;i ~38.000 d&#242;ng, m&#7845;t <b>20,7 gi&#226;y</b> m&#7895;i l&#432;&#7907;t, trong khi
+        <code>post_download()</code> &#7903; <code>frontend/api_client.py</code> l&#224; h&#224;m duy nh&#7845;t trong
+        module &#273;&#243; <b>kh&#244;ng nh&#7853;n tham s&#7889; <code>timeout</code></b> &#8212; d&#249;ng c&#7913;ng 60 gi&#226;y c&#7911;a
+        <code>_download_client</code>. B&#7889;n ng&#432;&#7901;i b&#7845;m c&#249;ng l&#250;c l&#224; ch&#7841;m tr&#7847;n.</p>
+
+      <div class="note"><b>V&#236; sao kh&#244;ng ch&#7881; n&#226;ng tr&#7847;n l&#234;n 300 gi&#226;y:</b> <code>run_heavy()</code> ch&#7881;
+        c&#243; 4 su&#7845;t v&#224; <b>11 module API d&#249;ng chung</b> (bundles, reports, leaves, handovers, staff,
+        doi_chieu_citad, swift_recon, doi_soat_citad, th_reports, handover_reports, ttqt_branches).
+        Theo &#273;&#250;ng docstring c&#7911;a <code>concurrency.py</code>, h&#7871;t su&#7845;t th&#236; c&#7843; request nh&#7865; c&#361;ng x&#7871;p
+        h&#224;ng &#8212; <b>k&#7875; c&#7843; <code>/api/auth/me</code></b>. Gi&#7919; m&#7897;t su&#7845;t 21 gi&#226;y l&#224; l&#224;m ngh&#7869;n vi&#7879;c c&#7911;a
+        ng&#432;&#7901;i kh&#244;ng li&#234;n quan. N&#226;ng tr&#7847;n ch&#7881; gi&#7845;u tri&#7879;u ch&#7913;ng &#273;i.</div>
+
+      <div class="label">Chi ph&#237; n&#7857;m &#7903; &#273;&#226;u &#8212; &#273;o, kh&#244;ng &#273;o&#225;n</div>
+      <p><code>cProfile</code> tr&#234;n &#273;&#250;ng 38.000 d&#242;ng ch&#7881; ra m&#7897;t th&#7911; ph&#7841;m duy nh&#7845;t:</p>
+      <table>
+        <tr><th>Hotspot</th><th>S&#7889; l&#7847;n g&#7885;i</th><th>Th&#7901;i gian</th></tr>
+        <tr><td><code>cell.alignment = ...</code> / <code>cell.number_format = ...</code></td><td>496.156</td><td><b>24,0s</b></td></tr>
+        <tr><td>&#8627; <code>Alignment.__iter__</code> (b&#259;m + so kh&#7899;p &#273;&#7875; tra b&#7843;ng style)</td><td>5.934.273</td><td>11,6s</td></tr>
+        <tr><td>Ghi XML thu&#7847;n</td><td>&#8212;</td><td>~8s</td></tr>
+      </table>
+      <p>B&#7843;n PR &#273;&#227; b&#7887; <code>font</code>/<code>fill</code>/<code>border</code> cho d&#242;ng kh&#7899;p nh&#432;ng
+        v&#7851;n gi&#7919; <code>alignment</code> cho c&#7843; 494.000 &#244; &#8212; &#273;&#243; ch&#237;nh l&#224; 24 gi&#226;y tr&#234;n. Chi ph&#237;
+        <b>kh&#244;ng</b> &#7903; vi&#7879;c t&#7841;o style object (&#273;&#227; cache b&#7857;ng <code>lru_cache</code>) m&#224; &#7903; m&#7895;i
+        <i>l&#432;&#7907;t g&#225;n</i>: openpyxl ph&#7843;i b&#259;m v&#224; so kh&#7899;p &#273;&#7875; tra b&#7843;ng style d&#249;ng chung c&#7911;a workbook.</p>
+
+      <div class="label">C&#225;ch s&#7917;a: &#273;&#7863;t style &#7903; C&#7844;P C&#7896;T</div>
+      <p><code>column_dimensions[...].alignment</code> v&#224; <code>.number_format</code> g&#225;n
+        <b>m&#7897;t l&#7847;n cho m&#7895;i c&#7897;t</b> thay v&#236; cho t&#7915;ng &#244;. &#212; ghi ra m&#224; kh&#244;ng g&#225;n style th&#236; openpyxl
+        kh&#244;ng sinh thu&#7897;c t&#237;nh <code>s=</code>, v&#224; Excel t&#7921; l&#7845;y style c&#7911;a c&#7897;t cho &#244; &#273;&#243;. &#272;&#227; m&#7893; XML
+        b&#234;n trong file <code>.xlsx</code> sinh ra &#273;&#7875; x&#225;c nh&#7853;n, kh&#244;ng ph&#7843;i suy &#273;o&#225;n:</p>
+      <table>
+        <tr><th>&#212;</th><th>XML sinh ra</th><th>Ngh&#297;a</th></tr>
+        <tr><td>H6 (d&#242;ng l&#7879;ch)</td><td><code>&lt;c r="H6" s="13" t="n"&gt;</code></td><td>c&#243; <code>s=</code> &#8594; style ri&#234;ng, n&#7873;n v&#224;ng v&#7851;n &#273;&#232; l&#234;n style c&#7897;t</td></tr>
+        <tr><td>H46 (d&#242;ng kh&#7899;p)</td><td><code>&lt;c r="H46" t="n"&gt;</code></td><td>kh&#244;ng <code>s=</code> &#8594; th&#7915;a k&#7871; <code>&lt;col style="3"&gt;</code> = <code>#,##0</code></td></tr>
+      </table>
+
+      <div class="label">K&#7871;t qu&#7843;</div>
+      <table>
+        <tr><th>B&#432;&#7899;c</th><th>38.000 d&#242;ng</th></tr>
+        <tr><td>Workbook th&#432;&#7901;ng, d&#7921;ng Font/Fill m&#7899;i t&#7915;ng &#244;</td><td>~85s</td></tr>
+        <tr><td>+ cache style theo tham s&#7889;</td><td>~58s</td></tr>
+        <tr><td>+ write_only, d&#242;ng kh&#7899;p ch&#7881; c&#242;n alignment/numfmt</td><td>20,7s</td></tr>
+        <tr><td>+ alignment/numfmt xu&#7889;ng c&#7845;p c&#7897;t (hi&#7879;n t&#7841;i)</td><td><b>5,8s</b></td></tr>
+      </table>
+      <p>&#272;o 3 l&#432;&#7907;t li&#234;n ti&#7871;p c&#249;ng ti&#7871;n tr&#236;nh, l&#7845;y l&#432;&#7907;t t&#7889;t nh&#7845;t; openpyxl ghim
+        <code>==3.1.2</code> n&#234;n s&#7889; n&#224;y &#7893;n &#273;&#7883;nh. File ra <b>kh&#244;ng &#273;&#7893;i v&#7873; h&#236;nh th&#7913;c</b> &#8212; merge ti&#234;u
+        &#273;&#7873;, freeze <code>A6</code>, n&#7873;n v&#224;ng d&#242;ng l&#7879;ch, d&#7845;u ph&#226;n c&#225;ch h&#224;ng ngh&#236;n &#273;&#7873;u c&#242;n nguy&#234;n
+        (ki&#7875;m ch&#7913;ng b&#7857;ng <code>load_workbook</code> &#273;&#7885;c l&#7841;i).</p>
+
+      <div class="label">Hai th&#7913; &#273;i k&#232;m</div>
+      <p><code>post_download()</code> nay nh&#7853;n <code>timeout</code> &#8212; &#273;&#250;ng khu&#244;n m&#7851;u
+        <code>post_upload()</code> &#273;&#227; c&#243; s&#7861;n ngay b&#234;n tr&#234;n. M&#7863;c &#273;&#7883;nh <code>None</code> n&#234;n
+        <b>5 ch&#7895; g&#7885;i &#7903; 4 t&#237;nh n&#259;ng kh&#225;c</b> (storage, reports, swift_recon, doi_chieu_citad) &#273;i qua
+        code m&#7899;i m&#224; h&#224;nh vi kh&#244;ng &#273;&#7893;i m&#7897;t byte: nh&#225;nh <code>kw = {}</code> khi&#7871;n httpx kh&#244;ng nh&#7853;n
+        tham s&#7889; n&#224;o, d&#249;ng &#273;&#250;ng client 60s nh&#432; c&#361;.</p>
+      <p>C&#7843; hai n&#250;t xu&#7845;t nay kho&#225; l&#7841;i + quay v&#242;ng trong l&#250;c ch&#7901;. Tr&#432;&#7899;c &#273;&#243; kh&#244;ng c&#243; ph&#7843;n h&#7891;i n&#224;o
+        trong 6-20 gi&#226;y, ng&#432;&#7901;i d&#249;ng s&#7869; b&#7845;m l&#7841;i &#8212; m&#7895;i l&#432;&#7907;t b&#7845;m l&#7841;i chi&#7871;m th&#234;m m&#7897;t su&#7845;t
+        <code>run_heavy()</code> v&#224; t&#7921; l&#224;m ch&#237;nh m&#236;nh ch&#7853;m th&#234;m.</p>
+
+      <div class="note"><b>&#272;&#227; c&#226;n nh&#7855;c v&#224; b&#7887;:</b> h&#224;ng &#273;&#7907;i job b&#7845;t &#273;&#7891;ng b&#7897; + polling tr&#7841;ng th&#225;i. &#272;&#243;
+        l&#224; c&#226;u tr&#7843; l&#7901;i &#273;&#250;ng khi th&#7901;i gian xu&#7845;t t&#237;nh b&#7857;ng ph&#250;t v&#224; kh&#244;ng n&#233;n xu&#7889;ng &#273;&#432;&#7907;c. &#7902; &#273;&#226;y n&#233;n
+        &#273;&#432;&#7907;c xu&#7889;ng 5,8 gi&#226;y b&#7857;ng ~10 d&#242;ng, n&#234;n d&#7921;ng th&#234;m b&#7843;ng job, endpoint tra tr&#7841;ng th&#225;i v&#224; v&#242;ng
+        l&#7863;p polling &#7903; frontend l&#224; &#273;&#7893;i m&#7897;t v&#7845;n &#273;&#7873; nh&#7887; l&#7845;y ba v&#7845;n &#273;&#7873; m&#7899;i.</div>
+
+      <div class="note"><b>S&#7917;a lu&#244;n docstring sai s&#7861;n c&#243;:</b> docstring
+        <code>export_doiSoat_full()</code> khai "write_only KH&#212;NG h&#7895; tr&#7907; merge_cells() n&#234;n ph&#7847;n
+        ti&#234;u &#273;&#7873; kh&#244;ng merge &#244; n&#7919;a", trong khi th&#226;n h&#224;m <b>c&#243;</b> merge th&#7853;t b&#7857;ng
+        <code>ws.merged_cells.add(...)</code>. T&#225;c gi&#7843; ph&#225;t hi&#7879;n ra gi&#7919;a ch&#7915;ng, s&#7917;a code nh&#432;ng qu&#234;n
+        s&#7917;a docstring.</div>
+
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
       <span class="card-num">Z</span>
       <span class="card-title">Rà soát 18/08/2026: tính năng này ghi đè dữ liệu của tính năng kia + đường ghi/xoá file trên máy chủ</span>
       <span class="badge badge-done">Đã sửa</span>

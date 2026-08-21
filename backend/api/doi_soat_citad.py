@@ -38,7 +38,7 @@ from backend.database import get_db
 from backend.core.concurrency import run_heavy
 from backend.core.uploads import read_limited_sync
 from backend.core.deps import require_feature
-from backend.schemas.doi_soat_citad import ExportIn, HistoryOut, ReconcileResultOut
+from backend.schemas.doi_soat_citad import ExportAllIn, ExportIn, HistoryOut, ReconcileResultOut
 from backend.services.doi_soat_citad import exporters, parsers, reconcile
 from backend.services.doi_soat_citad.history_service import (
     get_recon_detail,
@@ -111,15 +111,15 @@ async def do_reconcile(
             cleanup_ipcas()
             cleanup_hub()
         errors = citad_errors + ipcas_errors + hub_errors
-        n_khop, lech = reconcile.run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows)
+        n_khop, lech, khop = reconcile.run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows)
         return (
             citad_rows, ipcas_rows, hub_rows, citad_names, ipcas_names, hub_names,
-            errors, n_khop, lech,
+            errors, n_khop, lech, khop,
         )
 
     (
         citad_rows, ipcas_rows, hub_rows, citad_names, ipcas_names, hub_names,
-        errors, n_khop, lech,
+        errors, n_khop, lech, khop,
     ) = await run_heavy(_blocking_parse_and_reconcile)
 
     if errors and not (citad_rows or ipcas_rows or hub_rows):
@@ -149,6 +149,12 @@ async def do_reconcile(
         "total_ipcas": len(ipcas_rows),
         "total_hub": len(hub_rows),
         "lech": lech,
+        # Chi tiết từng dòng ĐÃ khớp — chỉ để phục vụ nút "Xuất tất cả lệnh"
+        # (frontend giữ trong state, gửi lại /export-all, KHÔNG lưu vào lịch
+        # sử — bảng doi_soat_citad_history vẫn chỉ lưu `lech`, tránh phình
+        # dung lượng DB thêm ~1000 lần mỗi lượt chấm chỉ để phục vụ 1 nút
+        # xuất tùy chọn ít dùng).
+        "khop_rows": khop,
         "history_saved": history_saved,
         "history_error": history_error,
         # Vẫn còn rows đọc được nên không rơi vào nhánh 422 ở trên, nhưng
@@ -190,6 +196,44 @@ async def export_excel(
     content = await run_heavy(_build_doisoat_xlsx, lech, n_khop, ngay_cham)
 
     fname = _safe_filename(f"DoiSoat_CITAD_IPCAS_{ngay_cham.replace('/', '-')}.xlsx")
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+def _build_doisoat_xlsx_full(lech, khop_rows, ngay_cham) -> bytes:
+    """Như _build_doisoat_xlsx() nhưng gọi export_doiSoat_full() — xem
+    docstring hàm đó (lech.py::exporters) để biết khác biệt."""
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as out:
+        out_path = out.name
+    try:
+        exporters.export_doiSoat_full(lech, khop_rows, ngay_cham, out_path)
+        with open(out_path, "rb") as f:
+            return f.read()
+    finally:
+        os.remove(out_path)
+
+
+@router.post("/export-all")
+async def export_excel_all(
+    payload: ExportAllIn,
+    current: dict = Depends(require_feature("menu.doi_soat_citad")),
+):
+    """"Xuất tất cả lệnh" — cùng cơ chế với /export (frontend gửi lại đúng
+    kết quả /reconcile gần nhất đang giữ trong state, không upload lại
+    file), nhưng gồm ĐỦ cả 2 danh sách khớp + lệch (xem
+    ReconcileResultOut.khop_rows) thay vì chỉ lệch."""
+    ngay_cham = payload.ngay_cham
+    lech = payload.lech
+    khop_rows = payload.khop_rows
+    if not lech and not khop_rows:
+        raise HTTPException(400, "Chưa có dữ liệu đối soát để xuất")
+
+    content = await run_heavy(_build_doisoat_xlsx_full, lech, khop_rows, ngay_cham)
+
+    fname = _safe_filename(f"DoiSoat_CITAD_IPCAS_TatCa_{ngay_cham.replace('/', '-')}.xlsx")
     return Response(
         content=content,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

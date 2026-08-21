@@ -438,6 +438,9 @@ Truy cập:
 - Cảnh báo khi chọn **trùng nội dung file** (băm SHA-256 toàn bộ byte, không dựa vào tên file)
 - Xuất Excel 4 sheet; tab **Lịch sử** lưu `doi_soat_citad_history` kèm snapshot nguyên vẹn danh sách
   lệch — xem lại/tải lại đúng số liệu của lần đối soát cũ, không tính lại từ file gốc
+- Nút **"Xuất tất cả lệnh"** xuất đủ cả khớp lẫn lệch trong 1 sheet (lệch đẩy lên đầu, bôi vàng);
+  ~38.000 dòng mất ~6 giây nhờ đặt style ở cấp cột thay vì từng ô — xem
+  `docs/Implementation-notes.html`. Danh sách khớp **không** lưu vào lịch sử, chỉ giữ trong phiên
 - Phân quyền riêng theo nhóm (`menu.doi_soat_citad`)
 
 ### Module Sổ trực cuối ngày (Phòng Thanh toán)
