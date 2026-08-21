@@ -778,11 +778,15 @@ def leave_calendar(
     start = date(year, month, 1)
     end   = date(year, month, last_day)
 
-    # Xem toàn trung tâm: Admin/Hậu kiểm viên/Ban Giám đốc/Phòng Tổng hợp — cùng
-    # tiêu chí đã dùng cho scope="all" của list_leaves() phía trên, để không tạo
-    # ra 2 định nghĩa "ai xem được toàn trung tâm" khác nhau trong cùng module.
+    # Xem toàn trung tâm: Admin/Ban Giám đốc/Phòng Tổng hợp — đúng tiêu chí của
+    # scope="all" trong list_leaves() phía trên, để không tạo ra 2 định nghĩa
+    # "ai xem được toàn trung tâm" khác nhau trong cùng module.
+    # Hậu kiểm viên KHÔNG nằm trong danh sách: họ ngang chuyên viên ở quy trình
+    # nghỉ phép, scope="all" và scope="dept" đều trả 403 cho họ
+    # (tests/test_nghi_phep_hau_kiem_vien.py). Cho họ xem cả lịch là mở lại đúng
+    # đường vừa bịt, chỉ khác cửa.
     # Phòng khác chỉ thấy người CÙNG PHÒNG nghỉ ngày nào — theo yêu cầu nghiệp vụ.
-    sees_all = (current["role"] in ("admin", "hau_kiem_vien", "giam_doc", "pho_giam_doc")
+    sees_all = (current["role"] in ("admin", "giam_doc", "pho_giam_doc")
                 or _is_tong_hop_staff(current, db))
 
     clauses = ["lr.status NOT IN ('rejected','cancelled')",
