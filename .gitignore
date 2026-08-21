@@ -51,3 +51,6 @@ MCB.xlsx
 # Dung ky tu dai dien cho phan co dau tieng Viet de tranh chuyen NFC/NFD o tren.
 /MA CB.xlsx
 /HDSD*.docx
+
+# Mat khau bo sao luu do start.bat sinh ra - TUYET DOI khong day len repo
+/Backup_password.txt
