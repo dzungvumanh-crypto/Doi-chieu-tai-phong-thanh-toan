@@ -8,12 +8,15 @@ import time
 import pyzipper
 import pandas as pd
 
-from .config import ZIP_PASSWORD, COLS_NPO as _COLS_NPO
+from .config import zip_password, COLS_NPO as _COLS_NPO
 from .zip_utils import (
     find_zip_tool as _find_zip_tool,
     build_extract_cmd as _build_extract_cmd,
     detect_encoding_path as _detect_encoding_path,
     detect_encoding_from_bytes as _detect_encoding_from_bytes,
+    bao_dung_cong_cu as _bao_dung_cong_cu,
+    bao_giai_nen_xong as _bao_giai_nen_xong,
+    bao_lui_ve_pyzipper as _bao_lui_ve_pyzipper,
 )
 
 _COLS_REQUIRED = ['TRBRCD', 'REFERENCE', 'DRAMOUNT', 'CRAMOUNT']
@@ -39,13 +42,13 @@ def _doc_zip(zip_path: str, log_callback=None) -> pd.DataFrame:
     result = _find_zip_tool()
     if result:
         tool_path, tool_type = result
-        print(f'[B2][DIAG] {tool_type}: {tool_path} | {os.path.basename(zip_path)}')
+        _bao_dung_cong_cu('B2', zip_path, tool_type, tool_path, log_callback)
         try:
             return _doc_zip_tool(zip_path, tool_path, tool_type, log_callback)
         except Exception as e:
-            print(f'[B2][WARN] {tool_type} lỗi ({e}), dùng pyzipper...')
+            _bao_lui_ve_pyzipper('B2', zip_path, str(e), log_callback)
     else:
-        print(f'[B2][DIAG] 7z/WinRAR NOT found — pyzipper | {os.path.basename(zip_path)}')
+        _bao_lui_ve_pyzipper('B2', zip_path, '', log_callback)
     return _doc_zip_pyzipper(zip_path, log_callback)
 
 
@@ -53,9 +56,9 @@ def _doc_zip_tool(zip_path: str, tool_path: str, tool_type: str, log_callback=No
     tmp_dir = tempfile.mkdtemp(prefix='ach_b2_')
     try:
         _t  = time.perf_counter()
-        cmd = _build_extract_cmd(tool_path, tool_type, zip_path, tmp_dir, ZIP_PASSWORD.decode())
+        cmd = _build_extract_cmd(tool_path, tool_type, zip_path, tmp_dir, zip_password().decode())
         r   = subprocess.run(cmd, capture_output=True, timeout=300)
-        print(f'[B2][DIAG] extract {os.path.basename(zip_path)}: {time.perf_counter()-_t:.1f}s rc={r.returncode}')
+        _bao_giai_nen_xong('B2', zip_path, time.perf_counter() - _t, r.returncode, log_callback)
         if r.returncode != 0:
             raise RuntimeError(r.stderr.decode(errors='replace'))
         frames = []
@@ -93,10 +96,12 @@ def _doc_zip_tool(zip_path: str, tool_path: str, tool_type: str, log_callback=No
 def _doc_zip_pyzipper(zip_path: str, log_callback=None) -> pd.DataFrame:
     frames = []
     with pyzipper.AESZipFile(zip_path, 'r') as z:
-        z.setpassword(ZIP_PASSWORD)
+        z.setpassword(zip_password())
         for name in sorted(z.namelist()):
             if not name.lower().endswith('.csv'):
                 continue
+            if log_callback:
+                log_callback(f'[B2] Đang nạp {name} vào bộ nhớ (cách dự phòng)...')
             data = z.read(name)
             enc  = _detect_encoding_from_bytes(data[:512])
             df   = pd.read_csv(

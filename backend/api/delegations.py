@@ -3,7 +3,7 @@ import sqlite3
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from backend.database import get_db, _vn_now
-from backend.core.deps import get_current_staff, TONG_HOP_CODES
+from backend.core.deps import get_current_staff, require_feature
 from backend.schemas.leaves import DelegationCreate, DelegationOut
 
 router = APIRouter()
@@ -31,22 +31,19 @@ def _deleg_to_out(d: dict, db: sqlite3.Connection) -> dict:
     }
 
 
-def _is_tong_hop(staff_dict: dict, db: sqlite3.Connection) -> bool:
-    dept_id = staff_dict.get("department_id")
-    if not dept_id:
-        return False
-    r = db.execute("SELECT code FROM departments WHERE id = ?", (dept_id,)).fetchone()
-    return bool(r and r["code"].upper() in TONG_HOP_CODES)
+# Trước đây: "admin HOẶC bất kỳ ai thuộc phòng Tổng hợp". Nhưng tab "Ủy quyền GĐ"
+# ở frontend lại chỉ hiện cho admin, nên nhánh Tổng hợp KHÔNG BAO GIỜ tới được qua
+# giao diện — quyền chết. Nay gộp về một ô tick "leaves.delegation_admin" trong
+# "Phân quyền theo nhóm" để admin tự giao cho ai cần (admin luôn bypass).
+_require_deleg_admin = require_feature("leaves.delegation_admin")
 
 
 @router.post("/", response_model=DelegationOut)
 def create_delegation(
     body: DelegationCreate,
     db: sqlite3.Connection = Depends(get_db),
-    current: dict = Depends(get_current_staff),
+    current: dict = Depends(_require_deleg_admin),
 ):
-    if current["role"] != "admin" and not _is_tong_hop(current, db):
-        raise HTTPException(403, "Chỉ Admin hoặc phòng Tổng hợp mới được tạo ủy quyền")
 
     gd = db.execute(
         "SELECT id FROM user_tttt WHERE id = ? AND role = 'giam_doc' AND is_active = 1",
@@ -122,7 +119,17 @@ def list_delegations(
     db: sqlite3.Connection = Depends(get_db),
     current: dict = Depends(get_current_staff),
 ):
-    if current["role"] in ("admin", "hau_kiem_vien", "giam_doc", "pho_giam_doc"):
+    # Người được giao quản lý ủy quyền phải thấy CẢ bản ghi đã hủy — không thấy
+    # lịch sử thì màn quản lý chỉ còn một nửa (không biết ai từng bị thu hồi).
+    _co_quyen_quan_ly = current["role"] in ("admin", "giam_doc", "pho_giam_doc") or db.execute(
+        """SELECT 1 FROM group_features gf
+           JOIN group_members gm ON gm.group_id = gf.group_id
+           JOIN user_groups g ON g.id = gm.group_id AND g.is_active = 1
+           WHERE gm.staff_id = ? AND gf.feature_code = 'leaves.delegation_admin'
+           LIMIT 1""",
+        (current["id"],),
+    ).fetchone() is not None
+    if _co_quyen_quan_ly:
         rows = db.execute(
             "SELECT * FROM delegation_records ORDER BY created_at DESC"
         ).fetchall()
@@ -137,10 +144,8 @@ def list_delegations(
 def deactivate_delegation(
     deleg_id: int,
     db: sqlite3.Connection = Depends(get_db),
-    current: dict = Depends(get_current_staff),
+    current: dict = Depends(_require_deleg_admin),
 ):
-    if current["role"] != "admin" and not _is_tong_hop(current, db):
-        raise HTTPException(403, "Chỉ Admin hoặc phòng Tổng hợp mới được hủy ủy quyền")
 
     row = db.execute("SELECT * FROM delegation_records WHERE id = ?", (deleg_id,)).fetchone()
     if not row:

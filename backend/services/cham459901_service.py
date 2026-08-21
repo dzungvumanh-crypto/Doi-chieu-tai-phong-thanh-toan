@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from backend.core.config import BASE_DIR
+from backend.core.config import BASE_DIR, zip_password   # mật khẩu ZIP đọc từ .env
 
 try:
     import pyzipper
@@ -29,7 +29,6 @@ except ImportError:
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 TEMP_DIR        = BASE_DIR / "data" / "temp_cham459901"
-ZIP_PASSWORD    = b"DACwLdHi"
 FILTER_LOCAC    = "459901"
 FILTER_CUSTOMER = "1000-000007709"
 FILTER_CCY      = "VND"
@@ -169,7 +168,7 @@ def _load_data(zip_bytes: bytes) -> tuple[pd.DataFrame, int]:
         with _ZipFile(buf) as zf:
             csv_names = [n for n in zf.namelist() if n.lower().endswith('.csv')]
             for csv_name in csv_names:
-                raw = zf.read(csv_name, pwd=ZIP_PASSWORD)
+                raw = zf.read(csv_name, pwd=zip_password())
                 dfs.append(pd.read_csv(
                     io.BytesIO(raw),
                     encoding='utf-8-sig',

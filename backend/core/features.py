@@ -47,6 +47,7 @@ FEATURES: dict[str, str] = {
     "leaves.approve_gd":       "Duyệt / Từ chối (bước Giám đốc)",
     "leaves.dashboard":        "Dashboard nghỉ phép (tổng quan + thống kê)",
     "leaves.quota_admin":      "Quản lý hạn mức phép theo năm",
+    "leaves.delegation_admin": "Quản lý ủy quyền GĐ/PGĐ",
     "leaves.stats_export":     "Xuất báo cáo tổng hợp phép năm",
     "leaves.declare_direct":   "Khai báo hộ nghỉ phép",
     "leaves.recall":           "Rút đơn nhiều cấp",
@@ -67,7 +68,7 @@ FEATURES: dict[str, str] = {
     "staff.import_join_date":  "Nhập Ngày vào ngành từ Excel",
 
     # Phân lịch trực — Phòng Thanh toán
-    "menu.duty_schedule":      "Phân lịch trực — Phòng Thanh toán (menu)",
+    "menu.duty_schedule":      "Phân lịch trực (menu)",   # dải nhãn "Phòng Thanh toán" đã nói phòng
     "duty.generate":           "Tạo lịch trực tự động",
     "duty.confirm":            "Xác nhận lịch trực",
     "duty.delete":             "Xóa lịch trực",
@@ -118,7 +119,7 @@ FEATURES: dict[str, str] = {
 #                  label=None nghĩa là không cần dải nhãn phòng.
 #   kind="menu"  → thẻ không header, chính ô tick là tiêu đề thẻ. Dùng cho menu
 #                  đứng một mình ở cấp 1 sidebar; nếu bọc header sẽ ra
-#                  "Nghỉ phép / Nghỉ phép" — nhãn lặp hai lần liền.
+#                  "Danh sách CN TTQT / Danh sách CN TTQT" — nhãn lặp hai lần.
 #
 # "actions": [] = menu chỉ có một ô tick, không có mục con.
 FEATURE_GROUPS: list[dict] = [
@@ -202,41 +203,62 @@ FEATURE_GROUPS: list[dict] = [
         ],
     },
     {
-        "kind": "menu",
-        "code": "menu.leaves",
-        "icon": "event_busy",
-        "actions": [
-            "leaves.create",
-            "leaves.cancel",
-            "leaves.resubmit",
-            "leaves.approve_ksv",
-            "leaves.forward_th",
-            "leaves.approve_gd",
-            "leaves.dashboard",
-            "leaves.quota_admin",
-            "leaves.stats_export",
-            "leaves.declare_direct",
-            "leaves.recall",
+        # Soi gương nhóm "cong_truc" trong MENU_TREE. Ô tick "menu.attendance"
+        # KHÔNG điều khiển việc hiện menu Chấm công (sidebar gate theo phòng
+        # ACCT) — nó ở đây để admin gán "xem bảng công cả phòng + xuất Excel"
+        # cho một GDV được giao theo dõi chấm công, khỏi phải nâng role lên
+        # trưởng/phó phòng. attendance.py check role trưởng/phó phòng/admin
+        # HOẶC 2 quyền này (cộng thêm, không thay thế check role cũ).
+        "kind": "group",
+        "dept": "Chấm công & Lịch trực",
+        "icon": "date_range",
+        "sections": [
+            {
+                "label": None,
+                "menus": [
+                    {
+                        "code": "menu.leaves",
+                        "actions": [
+                            "leaves.create",
+                            "leaves.cancel",
+                            "leaves.resubmit",
+                            "leaves.approve_ksv",
+                            "leaves.forward_th",
+                            "leaves.approve_gd",
+                            "leaves.dashboard",
+                            "leaves.quota_admin",
+                            "leaves.delegation_admin",
+                            "leaves.stats_export",
+                            "leaves.declare_direct",
+                            "leaves.recall",
+                        ],
+                    },
+                ],
+            },
+            {
+                "label": "Phòng Kế toán",
+                "menus": [
+                    {"code": "menu.attendance", "actions": ["attendance.view_dept", "attendance.export"]},
+                ],
+            },
+            {
+                "label": "Phòng Thanh toán",
+                "menus": [
+                    {
+                        "code": "menu.duty_schedule",
+                        "actions": [
+                            "duty.generate",
+                            "duty.confirm",
+                            "duty.delete",
+                            "duty.export",
+                            "duty.manage_staff",
+                            "duty.manage_config",
+                        ],
+                    },
+                    {"code": "menu.so_truc", "actions": ["so_truc.ksv_confirm"]},
+                ],
+            },
         ],
-    },
-    {
-        "kind": "menu",
-        "code": "menu.duty_schedule",
-        "icon": "edit_calendar",
-        "actions": [
-            "duty.generate",
-            "duty.confirm",
-            "duty.delete",
-            "duty.export",
-            "duty.manage_staff",
-            "duty.manage_config",
-        ],
-    },
-    {
-        "kind": "menu",
-        "code": "menu.so_truc",
-        "icon": "assignment_turned_in",
-        "actions": ["so_truc.ksv_confirm"],
     },
     {
         "kind": "menu",
@@ -270,23 +292,6 @@ FEATURE_GROUPS: list[dict] = [
                         ],
                     },
                     {"code": "menu.logs", "actions": []},
-                ],
-            },
-        ],
-    },
-    {
-        # Cho phép admin gán quyền "xem bảng công cả phòng + xuất Excel" cho 1 GDV
-        # cụ thể được giao theo dõi chấm công, không cần nâng role lên trưởng/phó
-        # phòng — attendance.py sẽ check role trưởng/phó phòng/admin HOẶC 2 quyền
-        # này (cộng thêm, không thay thế check role cũ).
-        "kind": "group",
-        "dept": "Phòng Kế toán",
-        "icon": "calculate",
-        "sections": [
-            {
-                "label": None,
-                "menus": [
-                    {"code": "menu.attendance", "actions": ["attendance.view_dept", "attendance.export"]},
                 ],
             },
         ],

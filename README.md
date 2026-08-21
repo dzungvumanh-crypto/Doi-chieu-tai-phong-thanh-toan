@@ -9,7 +9,14 @@
 - Windows / Linux / macOS
 - **Microsoft Word** trên máy chạy backend — chỉ cần cho việc xuất **đơn nghỉ phép bản PDF**
   (Word chuyển `.docx` → `.pdf`). Không có Word thì hệ thống vẫn chạy đủ, riêng phần ký đơn
-  lui về tải bản `.docx` không chữ ký
+  lui về tải bản `.docx` không chữ ký.
+  Backend **giữ sẵn một bản Word chạy ngầm** để không phải mở/đóng Word cho từng tờ đơn
+  (~0,3 giây thay vì ~5 giây mỗi lần xem trước). Bản này chiếm ~130 MB RAM và tự tắt sau
+  15 phút không ai dùng. Chỉnh bằng `WORD_SERVER`, `WORD_IDLE_SECONDS`, `WORD_MAX_JOBS`
+  trong `.env` — xem `.env.example`.
+  **Máy người dùng không cần Word** — họ chỉ dùng trình duyệt.
+  > ⚠️ **Word đòi một phiên có người đăng nhập trên máy chủ** — xem
+  > [mục riêng bên dưới](#word-đòi-phiên-đăng-nhập-trên-máy-chủ)
 
 ### 2. Tạo môi trường ảo và cài thư viện
 
@@ -67,6 +74,22 @@ ENV=production                                  # tắt /docs, /redoc, /openapi.
 > `ALLOWED_ORIGINS` **chỉ cần khi có máy khác gọi thẳng cổng 8000 từ trình duyệt.** Với
 > `BACKEND_HOST=127.0.0.1` (mặc định `start.bat` sinh ra) thì không cần đặt: trình duyệt
 > chỉ nói chuyện với frontend cổng 8080, CORS không tham gia vào đường đi nào cả.
+
+Hai mật khẩu nghiệp vụ — không bắt buộc để khởi động, nhưng thiếu là mất tính năng hoặc mất lớp bảo vệ:
+
+```ini
+DOI_CHIEU_ZIP_PASSWORD=<mật khẩu file ZIP do đơn vị cấp file đặt>
+BACKUP_PASSWORD=<mật khẩu nén bản sao lưu>
+```
+
+| Biến | Thiếu thì sao |
+|---|---|
+| `DOI_CHIEU_ZIP_PASSWORD` | Đối chiếu ACH / Chấm 459901 / Đối chiếu Song phương báo lỗi rõ khi giải nén; phần còn lại chạy bình thường. Trước 20/08/2026 mật khẩu này nằm cứng trong mã nguồn nên **đã đi vào lịch sử git** — nếu chưa đổi thì coi như đã lộ. |
+| `BACKUP_PASSWORD` | Bản sao lưu ghi ra `.db` **không mã hoá** (chứa mã băm mật khẩu toàn bộ tài khoản), kèm cảnh báo trong log mỗi lần backup. Xem mục [Backup tự động](#backup-tự-động). |
+
+> `start.bat` **tự sinh `BACKUP_PASSWORD`** nếu `.env` chưa có, và in ra màn hình đúng một lần —
+> chép ngay vào két mật khẩu của đơn vị. `DOI_CHIEU_ZIP_PASSWORD` phải điền tay vì đó là mật khẩu
+> của bên cấp file, không phải của phần mềm này.
 
 Hai biến tuỳ chọn liên quan đến hiệu năng và mức độ kín của backend:
 
@@ -276,6 +299,7 @@ Truy cập:
 - Tải phiếu nghỉ phép dạng **`.pdf`** đúng mẫu (Word chuyển từ `.docx`; máy không có Word → lui về `.docx`)
 - **Ký đơn trên bản in**: lúc gửi đơn và lúc phê duyệt (KSV, Ban lãnh đạo) hiện popup xem trước
   **chính bản in thật**, kéo/thu phóng ảnh chữ ký cá nhân vào đúng ô ký rồi mới gửi/duyệt.
+  Mở màn Nghỉ phép là backend tự đánh thức Word ở nền, nên đến lúc bấm nút gần như không phải chờ.
   Chữ ký được **sao lại vào đơn** tại thời điểm ký — sau này đổi hoặc xoá ảnh chữ ký cá nhân
   thì đơn đã ký không đổi theo. Nộp lại đơn bị từ chối sẽ xoá chữ ký của người duyệt.
   Chưa có ảnh chữ ký (Quản lý người dùng → Ảnh chữ ký) thì vẫn gửi/duyệt được, chỉ là phiếu trống ô ký.
@@ -474,7 +498,7 @@ Truy cập:
 | Vai trò | Mô tả |
 |---|---|
 | `admin` | **Quản trị viên cấp 1** — toàn quyền hệ thống, quản lý tài khoản & phân quyền nhóm. **Ngoại lệ: chỉ đọc ở Bàn giao chứng từ** |
-| `admin_l2` | **Quản trị viên cấp 2** — quyền theo nhóm chức năng được gán; không thuộc phòng nào; không được tạo/sửa/xóa tài khoản cấp 1 |
+| `admin_l2` | **Quản trị viên cấp 2** — quyền theo nhóm chức năng được gán; không thuộc phòng nào; không được tạo/sửa/xóa tài khoản cấp 1; **dùng được màn Phân quyền chức năng, trừ nhóm chứa chính mình** |
 | `hau_kiem_vien` | Quyền hậu kiểm (xác nhận, gom tập, in bìa) |
 | `giam_doc` | Duyệt nghỉ phép bước cuối; xem toàn bộ màn hình. **Chỉ đọc ở Bàn giao chứng từ** (xem mọi phòng) |
 | `pho_giam_doc` | Duyệt thay GĐ khi có ủy quyền còn hiệu lực. **Chỉ đọc ở Bàn giao chứng từ** (xem mọi phòng) |
@@ -486,6 +510,21 @@ Truy cập:
 
 > `admin_l2` (Quản trị viên cấp 2) hiển thị chung nhóm "Quản trị viên" như cấp 1, nhưng quyền hạn được cấu hình qua **Phân quyền theo nhóm** thay vì all-access.
 
+**Cấp 2 và màn Phân quyền chức năng** — cấp 2 thấy menu *Phân quyền chức năng* và thao tác như cấp 1
+(tạo/sửa/xoá nhóm, thêm bớt thành viên, tick ma trận quyền), trừ hai đường có thể dùng để tự nâng mình
+lên gần bằng cấp 1:
+
+| Thao tác | Cấp 1 | Cấp 2 |
+|---|---|---|
+| Nhóm **không** chứa mình | ✔ | ✔ |
+| Nhóm **có** chứa mình (sửa tên, xoá, thành viên, quyền) | ✔ | ✘ 403 — chỉ xem |
+| Tự thêm mình vào một nhóm bất kỳ | ✔ | ✘ 403 |
+
+Chặn ở backend (`groups.py::_chan_l2_tu_cap_quyen`), frontend chỉ khoá nút cho khỏi bấm rồi nhận 403.
+Hai luật phải đi cùng nhau: nếu chỉ cấm sửa nhóm chứa mình thì cấp 2 lập nhóm mới full quyền rồi tự
+thêm mình vào — lúc thêm, nhóm chưa chứa mình. Vẫn còn một đường **không** chặn: hai cấp 2 cấp quyền
+chéo cho nhau; đó là chuyện chọn người, không phải chuyện mã.
+
 ### Menu sidebar
 Menu nhóm theo **chức năng**, không theo phòng ban. Hover để mở flyout bên phải.
 
@@ -495,14 +534,17 @@ Quản lý chứng từ ─ Bàn giao chứng từ / Đóng chứng từ / Lưu 
                    Phòng Swift ────── Đối chiếu điện SWIFT
 Báo cáo ────────── Phòng KSNB & HTVH ─ Báo cáo hậu kiểm / Báo cáo bàn giao chứng từ
                    Phòng Tổng hợp ──── Báo cáo dữ liệu thanh toán
-Nghỉ phép                    ┐
-Phân lịch trực               ├ menu phẳng, không có nhóm cha
-Danh sách CN TTQT            ┘
+Chấm công & Lịch trực ─ Nghỉ phép
+                   Phòng Kế toán ───── Chấm công
+                   Phòng Thanh toán ── Phân lịch trực / Sổ trực cuối ngày
+Danh sách CN TTQT ─ menu phẳng, không có nhóm cha
 ```
 
-Tầng "phòng" **chỉ còn ở cấp 2** của Đối chiếu và Báo cáo, và chỉ liệt kê phòng đang thực sự có tính năng. Trước đây menu chia theo phòng ở cấp 1; cách đó buộc người dùng phải biết chức năng mình cần thuộc phòng nào mới tìm ra.
+Tầng "phòng" **chỉ còn ở cấp 2** của Đối chiếu, Báo cáo và Chấm công & Lịch trực, và chỉ liệt kê phòng đang thực sự có tính năng. Trước đây menu chia theo phòng ở cấp 1; cách đó buộc người dùng phải biết chức năng mình cần thuộc phòng nào mới tìm ra.
 
-Một nhóm **chỉ hiện khi user có ít nhất 1 chức năng** bên trong (`menu.<key>`); nhóm con không còn mục nào hiển thị được cũng bị bỏ qua — không dựng mục menu hover ra rỗng. Menu phẳng cấp 1 kiểm feature giống hệt: không có `menu.leaves` thì không thấy "Nghỉ phép".
+Một nhóm **chỉ hiện khi user có ít nhất 1 chức năng** bên trong (`menu.<key>`); nhóm con không còn mục nào hiển thị được cũng bị bỏ qua — không dựng mục menu hover ra rỗng. Menu phẳng cấp 1 kiểm feature giống hệt: không có `menu.ttqt_branches` thì không thấy "Danh sách CN TTQT".
+
+Một ngoại lệ: **Chấm công** không gate bằng feature-flag mà theo **phòng** — chỉ nhân viên Phòng Kế toán (`ACCT`) và admin thấy, vì mọi nhân viên phòng đó đều cần xem "Công của tôi" chứ không riêng người được cấp quyền. Nó nằm chung nhóm với các mục gate bằng feature-flag, nên `_dept_group()` nhận thêm tham số `overrides={"attendance": ...}` để đè kết quả kiểm tra của **đúng một khoá** thay vì đổi cách lọc cả nhóm. Ô tick `menu.attendance` ở màn Phân quyền vẫn tồn tại nhưng chỉ để gán 2 quyền con (xem bảng công cả phòng / xuất Excel) — tick hay không **không** làm menu hiện ra với người ngoài phòng ACCT.
 
 Cây menu nằm ở `shared.MENU_TREE`. Phần tử cấp 1 là **tuple** `(key, label, icon)` cho menu phẳng, hoặc **dict** `{"id", "label", "icon", "items"}` cho nhóm. Sâu tối đa 3 tầng — `_dept_group()` không dựng được tầng thứ tư.
 
@@ -515,8 +557,8 @@ Bố cục **soi gương cây menu sidebar** — admin tick quyền theo đúng 
 
 | `kind` | Hình dạng | Dùng cho |
 |---|---|---|
-| `group` | Thẻ có header đỏ; `sections` gom menu theo phòng (`label=None` = không cần dải nhãn) | Quản lý chứng từ, Đối chiếu, Báo cáo, Quản lý hệ thống |
-| `menu` | Thẻ **không header**, chính ô tick là tiêu đề thẻ | Nghỉ phép, Phân lịch trực, Danh sách CN TTQT |
+| `group` | Thẻ có header đỏ; `sections` gom menu theo phòng (`label=None` = không cần dải nhãn) | Quản lý chứng từ, Đối chiếu, Báo cáo, Chấm công & Lịch trực, Quản lý hệ thống |
+| `menu` | Thẻ **không header**, chính ô tick là tiêu đề thẻ | Danh sách CN TTQT |
 
 Dải nhãn phòng **không phải ô tick** — luật *"mỗi ô tick là đúng một mã quyền"* được giữ nguyên, để không có hai loại ô nhìn giống nhau mà ý nghĩa khác nhau. Cạnh dải nhãn có nút **Chọn tất cả / Bỏ chọn**, chỉ tác động lên MENU chứ không tự cấp ACTION — tránh một cú bấm cấp luôn quyền chạy xử lý dữ liệu.
 
@@ -529,7 +571,7 @@ Máy có màn hình rộng **≤ 1440px** (máy trạm 1366×768) mặc định 
 ### Vùng nội dung
 Giao diện thiết kế cho **máy trạm desktop**, không có breakpoint mobile. Vùng nội dung rộng `calc(100% - 16rem)` (hoặc `- 4.5rem` khi sidebar thu gọn) và cho **cuộn ngang** khi bảng vượt khung — không cắt bớt nội dung.
 
-Đầu mỗi trang hiển thị **đường dẫn menu** dẫn tới trang đó, ví dụ *Báo cáo / Phòng KSNB & HTVH / **Báo cáo hậu kiểm***. Phần cha in nhỏ màu xám, tên trang giữ cỡ tiêu đề. Đường dẫn **suy ra từ route** rồi tra bảng dựng sẵn từ chính cây menu (`shared.BREADCRUMBS`) — đổi tên một mục trong `MENU_TREE` thì breadcrumb tự đổi theo, không có chỗ thứ hai phải sửa. Trang không nằm trong menu (`/home`, `/user-management`) không hiện phần cha. Menu phẳng cấp 1 (Nghỉ phép, Phân lịch trực…) chỉ có 1 đoạn nên cũng không hiện phần cha — nếu hiện sẽ là chính tên trang lặp lại.
+Đầu mỗi trang hiển thị **đường dẫn menu** dẫn tới trang đó, ví dụ *Báo cáo / Phòng KSNB & HTVH / **Báo cáo hậu kiểm***. Phần cha in nhỏ màu xám, tên trang giữ cỡ tiêu đề. Đường dẫn **suy ra từ route** rồi tra bảng dựng sẵn từ chính cây menu (`shared.BREADCRUMBS`) — đổi tên một mục trong `MENU_TREE` thì breadcrumb tự đổi theo, không có chỗ thứ hai phải sửa. Trang không nằm trong menu (`/home`, `/user-management`) không hiện phần cha. Menu phẳng cấp 1 (Danh sách CN TTQT) chỉ có 1 đoạn nên cũng không hiện phần cha — nếu hiện sẽ là chính tên trang lặp lại.
 
 > Điều kiện: route của trang phải trùng khoá menu (`@ui.page("/reports")` ↔ khoá `reports`) — ràng buộc này vốn đã có sẵn vì sidebar điều hướng bằng `ui.navigate.to(f"/{key}")`.
 
@@ -580,7 +622,7 @@ Cấu hình trong `backend/services/backup_service.py`.
 | Bản mới nhất của **mỗi ngày**, trong `_GIU_NGAY = 7` ngày gần nhất | Chiều sâu lịch sử — hỏng DB thường phát hiện muộn |
 | `_GIU_GAN_NHAT = 5` bản mới nhất, bất kể ngày | Một ngày khởi động lại nhiều lần thì bản vừa chụp không bị dọn ngay |
 
-> ⚠️ **Chỉ file đúng mẫu `ksnb_YYYYMMDD_HHMM.db` mới bị xoá tự động.** Bản đặt tay
+> ⚠️ **Chỉ file đúng mẫu `ksnb_YYYYMMDD_HHMM.db` (hoặc `.zip`) mới bị xoá tự động.** Bản đặt tay
 > (`ksnb_truoc_nhomA_20260728.db`…) **không bao giờ** bị đụng tới — muốn bỏ thì xoá tay.
 > Trước đây luật dọn glob `ksnb_*.db` và sắp **theo tên**: `'2' < 'b' < 't'` nên bản đặt tay
 > luôn bị coi là "mới nhất", vừa chiếm chỗ vĩnh viễn vừa làm màn hình Admin báo sai ngày
@@ -588,12 +630,59 @@ Cấu hình trong `backend/services/backup_service.py`.
 
 **Thư mục backup phụ** (`BACKUP_EXTRA_DIR` trong `.env`, nên đặt ở ổ/máy khác): mỗi bản backup được
 chép sang đó rồi **áp cùng luật dọn**. Tức là phần mềm chủ động xoá file trên ổ/máy ngoài — vẫn chỉ
-đụng đúng mẫu tên `ksnb_YYYYMMDD_HHMM.db`.
+đụng đúng mẫu tên `ksnb_YYYYMMDD_HHMM.db` / `.zip`.
 
 > ⚠️ **Mỗi máy chủ một thư mục riêng.** Hai máy cùng trỏ vào một thư mục thì tên file không phân
 > biệt được nguồn, máy này sẽ xoá bản của máy kia mà cả hai đều tưởng mình còn đủ lịch sử.
 
+### Mã hoá bản sao lưu (`BACKUP_PASSWORD`)
+
+Đặt `BACKUP_PASSWORD` trong `.env` thì mỗi bản sao lưu được nén thành `.zip` **mã hoá AES-256**
+(mở được bằng 7-Zip/WinRAR sẵn có, không cần công cụ riêng của phần mềm), bản `.db` trần bị xoá
+ngay sau đó.
+
+Vì sao cần: file `.db` chứa **nguyên cột `pwd_hash` của toàn bộ tài khoản**. Ai đọc được thư mục
+`data/backups` — hoặc share mạng `BACKUP_EXTRA_DIR` — là mang mã băm về dò ngoại tuyến, không cần
+quyền gì trong phần mềm.
+
+> ⚠️ **Mất mật khẩu này = không mở được bản sao lưu.** Cất vào két mật khẩu của đơn vị, đừng chỉ để
+> trong `.env` trên đúng cái máy mà bản sao lưu dùng để cứu.
+
+Để trống thì **vẫn backup** nhưng ra `.db` không mã hoá, kèm một dòng cảnh báo trong log mỗi lần
+chạy — mất bản sao lưu nặng hơn hẳn việc bản sao lưu chưa được mã hoá, nên thiếu cấu hình không
+làm dừng việc backup. `tests/test_backup_ma_hoa.py` canh cả hai nhánh.
+
 ---
+
+## Word đòi phiên đăng nhập trên máy chủ
+
+**Máy chủ phải có một tài khoản đang đăng nhập** (console hoặc RDP) thì việc xuất đơn nghỉ
+phép bản PDF mới chạy. Chạy `start.bat` bằng tay trong phiên đó là đúng cách.
+
+**Không** đưa hệ thống vào Windows Service, cũng không dùng Task Scheduler với tuỳ chọn
+*"Run whether user is logged on or not"*. Cả hai đều chạy ở **phiên 0** — phiên không có
+màn hình — và Word không làm việc được ở đó.
+
+Đã đo trên chính máy này (chạy dưới `NT AUTHORITY\SYSTEM`, phiên 0):
+
+| Bước | Kết quả ở phiên 0 |
+|---|---|
+| `New-Object -ComObject Word.Application` | ✅ tạo được, mất 0,59 s |
+| `Documents.Open(...)` | ❌ trả về `null` — **không ném lỗi, chỉ trả rỗng** |
+| Chuyển sang PDF | ❌ không thực hiện được |
+
+Chỗ khó chịu là bước 1 **thành công**, nên nhìn qua tưởng Word chạy tốt. Chỉ tới lúc mở tài
+liệu mới hỏng, mà lại hỏng kiểu trả `null` chứ không báo lỗi.
+
+**Hỏng thì hệ thống không đứng lại**: API trả 503, giao diện tự lui về tải bản `.docx` và vẫn
+duyệt đơn được, chỉ là không có chữ ký trên bản in. Trong log sẽ thấy nguyên văn:
+
+> Word mo len duoc nhung KHONG mo duoc tai lieu. Thuong gap khi backend chay o phien khong co
+> nguoi dang nhap...
+
+> 💡 Máy chủ hay bị khoá màn hình hoặc mất phiên RDP: khoá màn hình **vẫn giữ phiên**, không
+> sao. Nhưng *đăng xuất* (Sign out) thì mất phiên — sau khi khởi động lại máy, phải đăng nhập
+> rồi chạy lại `start.bat`.
 
 ## Truy cập LAN (nhiều người dùng)
 

@@ -30,6 +30,7 @@ CREATE TABLE departments (id INTEGER PRIMARY KEY, code TEXT, name TEXT);
 CREATE TABLE user_tttt (
     id INTEGER PRIMARY KEY,
     full_name TEXT,
+    username TEXT,
     role TEXT DEFAULT 'chuyen_vien',
     department_id INTEGER,
     is_active INTEGER DEFAULT 1,
@@ -38,7 +39,10 @@ CREATE TABLE user_tttt (
 CREATE TABLE user_groups   (id INTEGER PRIMARY KEY, name TEXT, is_active INTEGER DEFAULT 1);
 CREATE TABLE group_members (group_id INTEGER, staff_id INTEGER);
 CREATE TABLE group_features(group_id INTEGER, feature_code TEXT);
-CREATE TABLE doi_chieu_citad_sessions (ngay TEXT PRIMARY KEY, data TEXT, updated_at DATETIME);
+CREATE TABLE doi_chieu_citad_sessions (
+    ngay TEXT PRIMARY KEY, data TEXT, updated_at DATETIME, updated_by INTEGER,
+    status TEXT NOT NULL DEFAULT 'final', created_by INTEGER
+);
 CREATE TABLE so_truc_records (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     truc_date         TEXT    NOT NULL,

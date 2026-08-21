@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sqlite3
+import threading
 import unicodedata
 from datetime import date, timedelta
 from typing import FrozenSet, List, Optional
@@ -359,8 +360,8 @@ def _validate_ksv(ksv_id: Optional[int], current: dict, db: sqlite3.Connection) 
     ksv = db.execute("SELECT * FROM user_tttt WHERE id = ? AND is_active = 1", (ksv_id,)).fetchone()
     if not ksv:
         raise HTTPException(400, "Người phê duyệt không tồn tại hoặc đã bị vô hiệu")
-    if ksv["role"] not in ("truong_phong", "pho_phong", "hau_kiem_vien", "admin"):
-        raise HTTPException(400, "Người phê duyệt phải là Trưởng phòng, Phó phòng hoặc Hậu kiểm viên")
+    if ksv["role"] not in ("truong_phong", "pho_phong", "admin"):
+        raise HTTPException(400, "Người phê duyệt phải là Trưởng phòng hoặc Phó phòng")
     if ksv_id == current["id"]:
         raise HTTPException(400, "Không thể tự phê duyệt")
     # KSV phải cùng phòng — khớp đúng get_approvers() (đã sửa: Hậu kiểm viên
@@ -374,6 +375,7 @@ def _validate_ksv(ksv_id: Optional[int], current: dict, db: sqlite3.Connection) 
 
 
 def _leave_to_out(leave_id: int, db: sqlite3.Connection) -> dict:
+    today = _vn_now().date().isoformat()
     r = db.execute(
         """SELECT lr.*,
                   s.full_name AS staff_name, s.department_id AS s_dept_id, s.role AS staff_role,
@@ -381,7 +383,15 @@ def _leave_to_out(leave_id: int, db: sqlite3.Connection) -> dict:
                   th.full_name AS th_name,
                   gd.full_name AS gd_approver_name, gd.role AS gd_role,
                   d.name AS dept_name,
-                  db_user.full_name AS declarer_name
+                  db_user.full_name AS declarer_name,
+                  -- PGĐ chỉ duyệt được khi còn ủy quyền hiệu lực HÔM NAY. Tính sẵn ở
+                  -- đây (không phải chỉ trong gd_review) để màn hình nói được lý do
+                  -- vì sao người duyệt không có nút, thay vì im lặng.
+                  CASE WHEN gd.role = 'pho_giam_doc' THEN
+                       (SELECT COUNT(*) FROM delegation_records dr
+                         WHERE dr.pho_giam_doc_id = gd.id AND dr.is_active = 1
+                           AND dr.start_date <= ? AND dr.end_date >= ?)
+                       ELSE 1 END AS gd_can_review
            FROM leave_records lr
            LEFT JOIN user_tttt s       ON lr.staff_id             = s.id
            LEFT JOIN user_tttt kv      ON lr.ksv_approver_id      = kv.id
@@ -390,7 +400,7 @@ def _leave_to_out(leave_id: int, db: sqlite3.Connection) -> dict:
            LEFT JOIN departments d     ON s.department_id          = d.id
            LEFT JOIN user_tttt db_user ON lr.direct_by             = db_user.id
            WHERE lr.id = ?""",
-        (leave_id,),
+        (today, today, leave_id),
     ).fetchone()
     if not r:
         return {}
@@ -423,6 +433,7 @@ def _leave_to_out(leave_id: int, db: sqlite3.Connection) -> dict:
         "gd_approver_id":         r["gd_approver_id"],
         "gd_approver_name":       r["gd_approver_name"],
         "gd_is_pgd":              (r["gd_role"] == "pho_giam_doc") if r["gd_role"] else False,
+        "gd_can_review":          bool(r["gd_can_review"]),
         "gd_approved_at":         r["gd_approved_at"],
         "gd_comment":             r["gd_comment"],
         "is_direct":              bool(r["is_direct"]) if r["is_direct"] is not None else False,
@@ -453,16 +464,16 @@ def get_approvers(
     _ROLE_LABEL = {
         "truong_phong":  "Trưởng phòng",
         "pho_phong":     "Phó phòng",
-        "hau_kiem_vien": "Hậu kiểm viên",
         "admin":         "Quản trị viên cấp 1",
     }
     dept_id = current.get("department_id")
     if dept_id:
-        # Chỉ lấy KSV cùng phòng (Trưởng/Phó phòng + Hậu kiểm viên) với người tạo đơn
+        # Chỉ lấy KSV cùng phòng (Trưởng/Phó phòng) với người tạo đơn. Hậu kiểm viên
+        # KHÔNG duyệt nghỉ phép — ngang chuyên viên ở quy trình này.
         rows = db.execute(
             """SELECT id, full_name, role FROM user_tttt
                WHERE is_active = 1 AND id != ?
-                 AND role IN ('truong_phong','pho_phong','hau_kiem_vien')
+                 AND role IN ('truong_phong','pho_phong')
                  AND department_id = ?
                ORDER BY full_name""",
             (current["id"], dept_id),
@@ -470,7 +481,7 @@ def get_approvers(
     else:
         rows = db.execute(
             """SELECT id, full_name, role FROM user_tttt
-               WHERE is_active = 1 AND role IN ('truong_phong','pho_phong','hau_kiem_vien','admin')
+               WHERE is_active = 1 AND role IN ('truong_phong','pho_phong','admin')
                  AND id != ? ORDER BY full_name""",
             (current["id"],),
         ).fetchall()
@@ -670,7 +681,7 @@ def list_leaves(
             clauses.append("gd_approver_id = ? AND status = 'pending_gd'")
             params.append(current["id"])
         elif _is_tong_hop_staff(current, db):
-            if role in ("truong_phong", "pho_phong", "hau_kiem_vien"):
+            if role in ("truong_phong", "pho_phong"):
                 # PP/TP Tổng hợp: duyệt bước TH cho toàn trung tâm
                 # VÀ duyệt bước KSV cho nhân viên phòng mình
                 clauses.append(
@@ -680,7 +691,7 @@ def list_leaves(
                 params.append(current["id"])
             else:
                 clauses.append(f"(status = 'pending_tong_hop' OR {_gd_unack})")
-        elif role in ("truong_phong", "pho_phong", "hau_kiem_vien"):
+        elif role in ("truong_phong", "pho_phong"):
             clauses.append("ksv_approver_id = ? AND status = 'pending_ksv'")
             params.append(current["id"])
         else:
@@ -693,7 +704,7 @@ def list_leaves(
 
     elif scope == "dept":
         # Phó phòng / Trưởng phòng xem tất cả đơn của nhân viên trong phòng mình
-        if role not in ("truong_phong", "pho_phong", "hau_kiem_vien", "admin"):
+        if role not in ("truong_phong", "pho_phong", "admin"):
             raise HTTPException(403, "Không có quyền xem đơn phòng")
         dept_id = current.get("department_id")
         if not dept_id:
@@ -702,7 +713,7 @@ def list_leaves(
         params.append(dept_id)
 
     elif scope == "all":
-        if role not in ("admin", "hau_kiem_vien", "giam_doc", "pho_giam_doc"):
+        if role not in ("admin", "giam_doc", "pho_giam_doc"):
             if not _is_tong_hop_staff(current, db):
                 raise HTTPException(403, "Không có quyền xem tất cả đơn")
 
@@ -866,17 +877,17 @@ def export_leaves(
         clauses.append("lr.staff_id = ?")
         params.append(current["id"])
     elif scope == "all":
-        if role not in ("admin", "hau_kiem_vien", "giam_doc", "pho_giam_doc"):
+        if role not in ("admin", "giam_doc", "pho_giam_doc"):
             if not _is_tong_hop_staff(current, db):
                 raise HTTPException(403, "Không có quyền xuất tất cả đơn")
     elif scope == "pending":
-        if _is_tong_hop_staff(current, db) and role in ("truong_phong", "pho_phong", "hau_kiem_vien"):
+        if _is_tong_hop_staff(current, db) and role in ("truong_phong", "pho_phong"):
             clauses.append(
                 "(lr.status = 'pending_tong_hop' OR "
                 "(lr.ksv_approver_id = ? AND lr.status = 'pending_ksv'))"
             )
             params.append(current["id"])
-        elif role in ("truong_phong", "pho_phong", "hau_kiem_vien"):
+        elif role in ("truong_phong", "pho_phong"):
             clauses.append("lr.ksv_approver_id = ? AND lr.status = 'pending_ksv'")
             params.append(current["id"])
         elif _is_tong_hop_staff(current, db):
@@ -1086,7 +1097,7 @@ def get_leave(
             and r["gd_approver_id"] != current["id"]
             and r["direct_by"] != current["id"]
             and not is_th
-            and current["role"] not in ("admin", "hau_kiem_vien", "giam_doc", "pho_giam_doc")):
+            and current["role"] not in ("admin", "giam_doc", "pho_giam_doc")):
         raise HTTPException(403, "Không có quyền xem đơn này")
     return _leave_to_out(leave_id, db)
 
@@ -1487,7 +1498,7 @@ def get_leave_history(
             and leave["gd_approver_id"] != current["id"]
             and leave["direct_by"] != current["id"]
             and not is_th
-            and current["role"] not in ("admin", "hau_kiem_vien", "giam_doc", "pho_giam_doc")):
+            and current["role"] not in ("admin", "giam_doc", "pho_giam_doc")):
         raise HTTPException(403)
 
     logs = db.execute(
@@ -1540,7 +1551,7 @@ def _pick_template(staff_role: str) -> str:
         "truong_phong":  "don_xin_nghi_phep_tp.docx",
         "giam_doc":      "don_xin_nghi_phep_gd.docx",
         "pho_giam_doc":  "don_xin_nghi_phep_pgd.docx",
-        "hau_kiem_vien": "don_xin_nghi_phep_tp.docx",
+        "hau_kiem_vien": "don_xin_nghi_phep_nv.docx",
         "admin":         "don_xin_nghi_phep_tp.docx",
     }
     fname = _map.get(staff_role or "", "don_xin_nghi_phep_tp.docx")
@@ -1614,7 +1625,7 @@ def _can_view_form(r, current: dict, db: sqlite3.Connection) -> bool:
             or r["gd_approver_id"] == current["id"]
             or r["direct_by"] == current["id"]
             or _is_tong_hop_staff(current, db)
-            or current["role"] in ("admin", "hau_kiem_vien", "giam_doc", "pho_giam_doc"))
+            or current["role"] in ("admin", "giam_doc", "pho_giam_doc"))
 
 
 def _draft_form_row(body: LeaveCreate, current: dict, db: sqlite3.Connection) -> dict:
@@ -1785,7 +1796,7 @@ def _build_form_ctx(r, leave_id: Optional[int], db: sqlite3.Connection) -> tuple
     ctx["ksv_dept_label_line2"] = ksv_dept_label_line2 if ksv_sign else ""
 
     # Override chuc_vu để thêm phòng + tên ngân hàng cho các role cấp trung
-    if r["staff_role"] in ("truong_phong", "pho_phong", "hau_kiem_vien"):
+    if r["staff_role"] in ("truong_phong", "pho_phong"):
         role_prefix = _ROLE_VN.get(r["staff_role"], "")
         dept_suffix = (r["dept_name"] or "").replace("Phòng ", "")
         if dept_suffix:
@@ -2002,6 +2013,20 @@ def _sig_slot_for(r, current: dict, db: sqlite3.Connection) -> str:
 #
 # Kết nối SQLite dùng lại được trong luồng phụ vì `get_db()` mở với
 # `check_same_thread=False`, và ở đây chỉ có một luồng đụng vào tại một thời điểm.
+
+
+@router.post("/preview/warmup")
+def warm_up_preview(current: dict = Depends(get_current_staff)):
+    """Bật sẵn Word ở nền — gọi ngay khi mở màn nghỉ phép.
+
+    Mở Word tốn ~1,5 giây, chuyển một file chỉ tốn ~0,35 giây. Bật trước lúc người
+    dùng còn đang điền đơn thì đến khi bấm "Xem trước" gần như không phải chờ.
+
+    Trả lời ngay, không đợi Word lên: đây là việc dọn đường, hỏng cũng không sao
+    (đường xem trước thật vẫn tự bật Word khi cần).
+    """
+    threading.Thread(target=leave_pdf.warm_up, name="word-warmup", daemon=True).start()
+    return {"ok": True}
 
 
 @router.post("/preview")
@@ -3007,7 +3032,7 @@ def leader_dashboard(
         if _can_gd_review(current, db):
             p_where = "lr.gd_approver_id = ? AND lr.status = 'pending_gd'"
             p_params.append(current["id"])
-    elif _is_tong_hop_staff(current, db) and role in ("truong_phong", "pho_phong", "hau_kiem_vien"):
+    elif _is_tong_hop_staff(current, db) and role in ("truong_phong", "pho_phong"):
         # PP/TP Tổng hợp: xem cả KSV phòng mình + TH/GĐ toàn trung tâm — khớp đúng
         # phạm vi "toàn trung tâm" đã áp dụng cho approved/top_staff bên dưới
         # (_scope_required). Thiếu pending_gd ở đây khiến ô "Chờ GĐ" luôn hiện 0
@@ -3017,7 +3042,7 @@ def leader_dashboard(
         p_params.append(current["id"])
     elif _is_tong_hop_staff(current, db):
         p_where = f"(lr.status IN ('pending_tong_hop', 'pending_gd') OR {_gd_unack})"
-    elif role in ("truong_phong", "pho_phong", "hau_kiem_vien"):
+    elif role in ("truong_phong", "pho_phong"):
         p_where = "lr.ksv_approver_id = ? AND lr.status = 'pending_ksv'"
         p_params.append(current["id"])
 

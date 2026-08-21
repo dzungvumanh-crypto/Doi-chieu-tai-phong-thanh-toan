@@ -37,7 +37,7 @@ def _make_zip(rows: list[dict], cols: list[str]) -> bytes:
     buf = io.BytesIO()
     with pyzipper.AESZipFile(buf, 'w', compression=pyzipper.ZIP_DEFLATED,
                               encryption=pyzipper.WZ_AES) as zf:
-        zf.setpassword(_cfg.ZIP_PASSWORD)
+        zf.setpassword(_cfg.zip_password())
         zf.writestr('data.csv', csv_bytes)
     return buf.getvalue()
 

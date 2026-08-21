@@ -17,7 +17,7 @@ _DEPT_HISTORY_EPOCH = "2000-01-01"
 from backend.schemas.staff import StaffCreate, StaffUpdate, StaffOut
 from backend.core.security import get_password_hash
 from backend.core.uploads import read_limited, read_limited_sync
-from backend.core.deps import get_current_staff, require_feature
+from backend.core.deps import get_current_staff, require_feature, TONG_HOP_CODES
 from backend.core.enums import ROLE_RANK, VALID_ROLES
 from backend.core.net import client_ip as _client_ip
 
@@ -103,6 +103,26 @@ def _validate_dept(db: sqlite3.Connection, role: str, department_id):
         raise HTTPException(400, "Giám đốc / Phó Giám đốc phải thuộc Ban Giám đốc")
 
 
+def _pham_vi_rong(current: dict, db: sqlite3.Connection) -> bool:
+    """Người này có được xem hồ sơ cán bộ NGOÀI phòng mình không?
+
+    Tách khỏi `list_staff()` vì `get_staff()` cần đúng luật ấy: trước đây
+    danh sách thì lọc theo phòng, còn lấy từng người chỉ cần đăng nhập — đếm
+    id từ 1 đến N là gom được số điện thoại, email, mã IPCAS, tên đăng nhập
+    Payment của toàn cơ quan, đi vòng qua đúng cái lọc vừa đặt.
+    """
+    if current["role"] in _BROAD_VIEW_ROLES:
+        return True
+    # Nhân viên phòng Tổng hợp cần xem GĐ/PGĐ để chọn người duyệt tiếp
+    dept_id = current.get("department_id")
+    if not dept_id:
+        return False
+    dept_row = db.execute(
+        "SELECT code FROM departments WHERE id = ?", (dept_id,)
+    ).fetchone()
+    return bool(dept_row and dept_row["code"].upper() in TONG_HOP_CODES)
+
+
 @router.get("/", response_model=List[StaffOut])
 def list_staff(
     active_only: bool = True,
@@ -116,13 +136,7 @@ def list_staff(
         clauses.append("is_active = 1")
 
     # ── Scope theo role ──
-    is_broad = current["role"] in _BROAD_VIEW_ROLES
-    if not is_broad:
-        # Kiểm tra có phải nhân viên phòng Tổng hợp không (cần xem GĐ/PGĐ để chọn approver)
-        dept_row = db.execute(
-            "SELECT code FROM departments WHERE id = ?", (current.get("department_id"),)
-        ).fetchone() if current.get("department_id") else None
-        is_broad = bool(dept_row and dept_row["code"].upper() in ("TH", "TONGHOP", "TONG_HOP"))
+    is_broad = _pham_vi_rong(current, db)
 
     if not is_broad:
         # truong_phong / pho_phong / chuyen_vien: chỉ xem phòng mình
@@ -303,11 +317,18 @@ def _enrich(row: dict) -> dict:
 def get_staff(
     staff_id: int,
     db: sqlite3.Connection = Depends(get_db),
-    _: dict = Depends(get_current_staff),
+    current: dict = Depends(get_current_staff),
 ):
     row = db.execute("SELECT * FROM user_tttt WHERE id = ?", (staff_id,)).fetchone()
     if not row:
         raise HTTPException(404, "Không tìm thấy cán bộ")
+    # Cùng luật với GET /api/staff/ — xem _pham_vi_rong(). Người không có phạm
+    # vi rộng chỉ xem được người cùng phòng (và chính mình).
+    if (row["id"] != current["id"]
+            and current.get("department_id")
+            and row["department_id"] != current["department_id"]
+            and not _pham_vi_rong(current, db)):
+        raise HTTPException(403, "Không có quyền xem thông tin cán bộ ngoài phòng mình")
     return _enrich(dict(row))
 
 

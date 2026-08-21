@@ -47,9 +47,12 @@ _GIU_GAN_NHAT = 5
 
 _INTERVAL_HOURS = 24
 
-# Đúng mẫu tên do run_backup() sinh: ksnb_YYYYMMDD_HHMM.db — và CHỈ mẫu này mới
-# bị xoá tự động. File tên khác trong cùng thư mục là do người đặt, không đụng.
-_TEN_TU_SINH = re.compile(r"^ksnb_(\d{8})_(\d{4})\.db$")
+# Đúng mẫu tên do run_backup() sinh: ksnb_YYYYMMDD_HHMM.db (hoặc .zip khi có mã
+# hoá) — và CHỈ mẫu này mới bị xoá tự động. File tên khác trong cùng thư mục là
+# do người đặt, không đụng.
+_TEN_TU_SINH = re.compile(r"^ksnb_(\d{8})_(\d{4})\.(?:db|zip)$")
+# Dùng cho glob: phải quét cả hai đuôi, thư mục có thể lẫn bản cũ chưa mã hoá.
+_DUOI_TU_SINH = ("ksnb_*.db", "ksnb_*.zip")
 
 # Ref timer toàn cục để có thể hủy khi test
 _timer: threading.Timer | None = None
@@ -63,10 +66,11 @@ def _ban_tu_sinh(backup_dir: Path) -> list[tuple[str, str, Path]]:
     làm mtime đổi hết, còn tên thì không.
     """
     ra = []
-    for p in backup_dir.glob("ksnb_*.db"):
-        m = _TEN_TU_SINH.match(p.name)
-        if m:
-            ra.append((m.group(1) + m.group(2), m.group(1), p))
+    for mau in _DUOI_TU_SINH:
+        for p in backup_dir.glob(mau):
+            m = _TEN_TU_SINH.match(p.name)
+            if m:
+                ra.append((m.group(1) + m.group(2), m.group(1), p))
     ra.sort(key=lambda t: t[0])
     return ra
 
@@ -109,6 +113,67 @@ def _verify(db_file: Path) -> bool:
         return False
 
 
+def _mat_khau() -> bytes | None:
+    """Mật khẩu nén bản sao lưu, None nếu chưa cấu hình."""
+    import os
+    raw = (os.getenv("BACKUP_PASSWORD") or "").strip()
+    return raw.encode() if raw else None
+
+
+def _ma_hoa(db_file: Path) -> Path:
+    """Nén `db_file` thành .zip AES-256 rồi xoá bản .db trần.
+
+    Vì sao ZIP-AES chứ không mã hoá thẳng bằng `cryptography`: khi cần khôi phục
+    thì thường là lúc hệ thống đang hỏng — người vận hành phải mở được file bằng
+    7-Zip/WinRAR có sẵn trên máy, không phụ thuộc vào chính phần mềm vừa chết
+    hay một script giải mã nằm đâu đó trong repo.
+
+    File .db trần chứa NGUYÊN cột pwd_hash của toàn bộ tài khoản: ai đọc được
+    thư mục backup (hoặc share mạng BACKUP_EXTRA_DIR) là mang mã băm về dò
+    ngoại tuyến, không cần quyền gì trong phần mềm.
+
+    Không đặt mật khẩu thì vẫn backup — chỉ cảnh báo. Mất bản sao lưu là mất
+    dữ liệu thật, nặng hơn hẳn việc bản sao lưu chưa được mã hoá.
+    """
+    pwd = _mat_khau()
+    if not pwd:
+        _log.warning(
+            "BACKUP_PASSWORD chưa đặt trong .env — bản sao lưu %s ghi ra dạng KHÔNG "
+            "mã hoá, trong đó có mã băm mật khẩu của toàn bộ tài khoản. Ai đọc được "
+            "thư mục này là mang về dò ngoại tuyến được.", db_file.name,
+        )
+        return db_file
+
+    zip_file = db_file.with_suffix(".zip")
+    try:
+        import pyzipper
+        with pyzipper.AESZipFile(
+            zip_file, "w", compression=pyzipper.ZIP_DEFLATED,
+            encryption=pyzipper.WZ_AES,
+        ) as zf:
+            zf.setpassword(pwd)
+            zf.write(db_file, arcname=db_file.name)
+    except Exception as exc:
+        # Nén hỏng thì GIỮ bản .db: thà có bản sao lưu chưa mã hoá còn hơn không
+        # có bản nào. Nhưng phải kêu to, đây là lỗi cấu hình cần người xử lý.
+        _log.error("Không nén/mã hoá được bản sao lưu %s: %s — giữ nguyên bản .db "
+                   "chưa mã hoá", db_file.name, exc)
+        try:
+            zip_file.unlink()          # dọn file .zip dở dang
+        except OSError:
+            pass
+        return db_file
+
+    try:
+        db_file.unlink()
+    except OSError as exc:
+        # Xoá hụt bản trần là mất trắng ý nghĩa của việc mã hoá → báo lỗi, không
+        # nuốt. Bản .zip vẫn dùng được nên không raise.
+        _log.error("Đã tạo %s nhưng KHÔNG xoá được bản .db chưa mã hoá %s: %s",
+                   zip_file.name, db_file.name, exc)
+    return zip_file
+
+
 def _mirror(dst: Path):
     """Sao chép bản backup sang thư mục phụ (ổ/máy khác) nếu được cấu hình."""
     from backend.core.config import settings
@@ -138,10 +203,12 @@ def run_backup(db_path: str = "data/ksnb.db") -> Path:
         bak.close()
         src.close()
 
-        # Chống rủi ro backup ra bản hỏng — cảnh báo nhưng vẫn giữ file để điều tra
+        # Chống rủi ro backup ra bản hỏng — cảnh báo nhưng vẫn giữ file để điều tra.
+        # Phải kiểm TRƯỚC khi nén: sau khi nén thì không mở bằng sqlite3 được nữa.
         if not _verify(dst):
             _log.error("Backup vừa tạo KHÔNG toàn vẹn: %s (file chính có thể đã hỏng)", dst)
 
+        dst = _ma_hoa(dst)
         _rotate(_BACKUP_DIR)
         _mirror(dst)
         _log.info("Backup hoàn tất → %s", dst)
@@ -189,7 +256,8 @@ def last_backup_info() -> dict:
     if not _BACKUP_DIR.exists():
         return {"exists": False, "path": None, "time": None}
     ban = _ban_tu_sinh(_BACKUP_DIR)
-    so_thu_cong = len(list(_BACKUP_DIR.glob("ksnb_*.db"))) - len(ban)
+    tat_ca = sum(len(list(_BACKUP_DIR.glob(mau))) for mau in _DUOI_TU_SINH)
+    so_thu_cong = tat_ca - len(ban)
     if not ban:
         return {"exists": False, "path": None, "time": None,
                 "count_thu_cong": so_thu_cong}

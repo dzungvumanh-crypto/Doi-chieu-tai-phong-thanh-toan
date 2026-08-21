@@ -40,5 +40,9 @@ jobs:
           SECRET_KEY: ci-chi-dung-de-chay-test-khong-phai-khoa-that
           # Tắt gọi NTP: runner không cần, và tránh test treo khi mạng chặn UDP 123.
           NTP_ENABLED: "false"
+          # Mật khẩu ZIP nay đọc từ .env (không còn nằm cứng trong mã). Runner
+          # không có .env — test tự nén file mẫu bằng đúng giá trị này rồi giải
+          # nén lại, nên giá trị gì cũng được, miễn có đặt.
+          DOI_CHIEU_ZIP_PASSWORD: ci-mat-khau-zip-gia-lap
           PYTHONIOENCODING: utf-8
         run: python -m pytest -q

@@ -22,6 +22,13 @@ if not STORAGE_SECRET:
 
 from nicegui import ui, app
 
+# Header an toàn (chống nhúng iframe, chống đoán lại kiểu file) — đây mới là
+# cổng người dùng thật sự mở bằng trình duyệt, nên quan trọng hơn ở backend.
+# Module này cố ý không import gì khác trong `backend/` (không kéo theo
+# SECRET_KEY/DB) nên tiến trình frontend vẫn độc lập như trước.
+from backend.core.security_headers import SecurityHeadersMiddleware
+app.add_middleware(SecurityHeadersMiddleware)
+
 # Serve static assets (logo, etc.)
 app.add_static_files('/static', os.path.join(os.path.dirname(__file__), 'static'))
 
