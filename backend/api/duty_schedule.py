@@ -6,10 +6,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from backend.database import get_db
 from backend.core.deps import get_current_staff
 from backend.schemas.duty import (
-    ShiftOut, ShiftUpdate, MessageOut,
+    ShiftOut, ShiftUpdate, ShiftUpdateResult, MessageOut,
     GenerateRequest, GenerateResult,
     GenerateWeekRequest, GenerateWeekResult,
 )
+from backend.services.duty_rules import validate_shift_members
 from backend.services.duty_schedule_service import (
     get_shifts_for_month, get_shifts_for_week, get_shifts_for_date,
     get_shift_by_id, update_shift, confirm_shift, unconfirm_shift,
@@ -91,17 +92,31 @@ def do_generate_month(
 
 # ── Update ────────────────────────────────────────────────────────────────────
 
-@router.put("/{shift_id}", response_model=ShiftOut)
+@router.put("/{shift_id}", response_model=ShiftUpdateResult)
 def edit_shift(
     shift_id: int,
     body: ShiftUpdate,
     db: sqlite3.Connection = Depends(get_db),
     _=Depends(get_current_staff),
 ):
-    result = update_shift(db, shift_id, body.leader_id, body.sp_id, body.nv_ids)
+    """Sửa tay ca trực.
+    Vi phạm luật CỨNG (1 Lãnh đạo + 2 nhân viên) → 400, không ghi gì.
+    Vi phạm luật MỀM → vẫn ghi, trả kèm cảnh báo để người dùng biết."""
+    shift = get_shift_by_id(db, shift_id)
+    if not shift:
+        raise HTTPException(404, "Không tìm thấy ca trực")
+
+    loi_cung, canh_bao, _ns = validate_shift_members(
+        db, shift["shift_date"], shift["shift_type"],
+        body.leader_ids, body.nv_chinh_ids, body.nv_phu_ids,
+    )
+    if loi_cung:
+        raise HTTPException(400, " ".join(loi_cung))
+
+    result = update_shift(db, shift_id, body.leader_ids, body.nv_chinh_ids, body.nv_phu_ids)
     if not result:
         raise HTTPException(404, "Không tìm thấy ca trực")
-    return result
+    return {"shift": result, "warnings": canh_bao}
 
 
 @router.post("/{shift_id}/confirm", response_model=ShiftOut)

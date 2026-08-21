@@ -5,18 +5,9 @@ from datetime import date, timedelta
 
 from nicegui import ui
 import frontend.api_client as api
-import frontend.ui_kit as ui_kit
 from frontend.shared import (
     _sidebar, _content_area, _page_header, _require_auth, _handle_api_error,
 )
-
-_SHIFT_TYPE_LABEL = {
-    "normal":          "Thường",
-    "friday":          "Thứ 6",
-    "cutoff":          "Cut-off",
-    "settlement_main": "Quyết toán (chính)",
-    "settlement_sub":  "Quyết toán (phụ)",
-}
 
 _TYPE_ROW_COLOR = {
     "normal":          "#EFF6FF",
@@ -36,6 +27,8 @@ _SPECIAL_COLOR = {
 _TH = "px-3 py-2 text-left font-medium border border-red-700 bg-red-800 text-white text-sm"
 _TD = "px-3 py-2 border border-gray-200 text-sm"
 
+_THU_VN = ["Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu"]
+
 
 def _week_start(d: date) -> date:
     return d - timedelta(days=d.weekday())
@@ -49,6 +42,38 @@ def _fmt_week_label(ws: date) -> str:
 def _h(s) -> str:
     """HTML-escape để tránh XSS khi render dữ liệu user."""
     return _html.escape(str(s or ""))
+
+
+def _ten_kem_sp(p: dict, la_sp: bool, kieu: str = "thuong") -> str:
+    """
+    Tên người trực; đánh dấu (SP) cho người xử lý song phương của ca.
+
+    kieu='chinh' → IN HOA, đậm — người trực chính ngày quyết toán
+    kieu='phu'   → nghiêng, nhỏ hơn — người trực phụ, về sớm hơn
+    kieu='thuong'→ chữ thường, ca không chia chính/phụ
+
+    Nhãn (SP) chỉ phục vụ giai đoạn đang phân lịch — gỡ khi chốt chương trình.
+    """
+    ten = (p or {}).get("full_name", "")
+    if kieu == "chinh":
+        the = f'<span class="font-bold">{_h(ten.upper())}</span>'
+    elif kieu == "phu":
+        the = f'<span class="italic text-gray-600 text-xs">{_h(ten)}</span>'
+    else:
+        the = _h(ten)
+    return f'{the} <span class="text-blue-700 font-medium">(SP)</span>' if la_sp else the
+
+
+def _nhan_trang_thai(shifts: list) -> str:
+    """Trạng thái tuần hiển thị cạnh tiêu đề — thay cho cột 'Trạng thái' đã bỏ khỏi bảng."""
+    if not shifts:
+        return ' <span class="text-gray-500 font-normal">— chưa có lịch</span>'
+    da_xn = sum(1 for s in shifts if s["status"] == "confirmed")
+    if da_xn == len(shifts):
+        return ' <span class="text-green-700">— đã xác nhận</span>'
+    if da_xn == 0:
+        return ' <span class="text-orange-600">— bản thảo</span>'
+    return f' <span class="text-orange-600">— đã xác nhận {da_xn}/{len(shifts)} ca</span>'
 
 
 @ui.page("/duty_schedule")
@@ -87,71 +112,251 @@ async def duty_schedule_page():
             # ════════════════════════════════════════════════════
             with ui.tab_panel(tab_schedule):
                 ws_ref = {"value": _week_start(date.today())}
-                week_label = ui.label("").classes("text-base font-semibold text-red-800 my-1")
+                week_label = ui.html("").classes("text-base font-semibold text-red-800 my-1")
                 schedule_area = ui.column().classes("w-full gap-1")
+
+                # Nhân sự, vắng mặt và cấu hình số người — nạp cùng lịch để hộp thoại
+                # sửa và bảng dùng lại, khỏi gọi API mỗi lần bấm
+                nhan_su_ref: dict = {"list": [], "vang_mat": set(), "cfg": {}}
+
+                def _so_nguoi_can_co(shift_type: str) -> tuple:
+                    """Số người bắt buộc của loại ca, lấy từ khai báo ở tab Cài đặt."""
+                    cfg = nhan_su_ref["cfg"] or {}
+                    if shift_type in ("settlement_main", "settlement_sub"):
+                        return (cfg.get("qt_ld_count") or 1,
+                                cfg.get("qt_nv_chinh_count") or 3,
+                                cfg.get("qt_nv_phu_count") if cfg.get("qt_nv_phu_count") is not None else 2)
+                    return (cfg.get("ld_count") or 1, cfg.get("nv_count") or 2, 0)
 
                 async def load_schedule():
                     ws = ws_ref["value"]
-                    week_label.set_text(_fmt_week_label(ws))
+                    week_label.set_content(_fmt_week_label(ws))
                     schedule_area.clear()
-                    try:
-                        shifts = await asyncio.to_thread(
-                            api.get, "/api/duty/schedule/week",
-                            {"week_start": ws.isoformat()}
-                        )
-                    except Exception as e:
-                        if _handle_api_error(e):
+                    shifts, staff_list, absences, cfg = await asyncio.gather(
+                        asyncio.to_thread(api.get, "/api/duty/schedule/week",
+                                          {"week_start": ws.isoformat()}),
+                        asyncio.to_thread(api.get, "/api/duty/staff"),
+                        asyncio.to_thread(api.get, "/api/duty/constraints/absences",
+                                          {"month": ws.month, "year": ws.year}),
+                        asyncio.to_thread(api.get,
+                                          f"/api/duty/constraints/shift-config/{ws.year}"),
+                        return_exceptions=True,
+                    )
+                    # Chỉ bảng lịch là bắt buộc. Danh sách nhân sự / vắng mặt hỏng thì
+                    # vẫn phải xem được lịch — chỉ mất ghi chú trong hộp thoại sửa.
+                    if isinstance(shifts, Exception):
+                        if _handle_api_error(shifts):
                             return
                         return
+                    if isinstance(staff_list, Exception):
+                        ui.notify("Không tải được danh sách nhân sự — tạm thời chưa sửa được ca.",
+                                  type="warning")
+                        staff_list = []
+                    if isinstance(absences, Exception):
+                        ui.notify("Không tải được danh sách vắng mặt — hộp thoại sửa sẽ "
+                                  "không ghi chú ai đang nghỉ phép.", type="warning")
+                        absences = []
+                    if isinstance(cfg, Exception) or not cfg:
+                        cfg = {}   # rơi về mặc định 1 Lãnh đạo + 2 nhân viên
+
+                    nhan_su_ref["list"] = staff_list
+                    nhan_su_ref["vang_mat"] = {(a["staff_id"], a["absence_date"]) for a in absences}
+                    nhan_su_ref["cfg"] = cfg
+
+                    week_label.set_content(_fmt_week_label(ws) + _nhan_trang_thai(shifts))
+
+                    # Gom ca theo ngày — bảng luôn dựng đủ 5 hàng T2→T6
+                    theo_ngay: dict = {}
+                    for s in shifts:
+                        theo_ngay.setdefault(s["shift_date"], []).append(s)
 
                     with schedule_area:
+                        with ui.column().classes("w-full gap-0 border border-gray-200 rounded overflow-hidden"):
+                            # ── Tiêu đề cột ──
+                            with ui.row().classes("w-full bg-red-800 text-white px-2 py-2 "
+                                                  "text-xs font-semibold gap-2 items-center"):
+                                ui.label("Ngày trực").classes("w-28 shrink-0")
+                                ui.label("Nhân viên 1").classes("flex-1 min-w-[130px]")
+                                ui.label("Nhân viên 2").classes("flex-1 min-w-[130px]")
+                                ui.label("Lãnh đạo").classes("flex-1 min-w-[130px]")
+                                ui.label("Tình trạng").classes("w-36 shrink-0")
+
+                            # ── 5 hàng T2 → T6 ──
+                            for i in range(5):
+                                ds = (ws + timedelta(days=i)).isoformat()
+                                _dung_hang(i, ds, theo_ngay.get(ds, []))
+
                         if not shifts:
                             ui.label("Chưa có lịch trực tuần này. Nhấn 'Tạo lịch' để sinh tự động.").classes(
-                                "text-gray-500 italic py-4"
-                            )
-                            return
-
-                        rows_html = ""
-                        for s in shifts:
-                            bg = _TYPE_ROW_COLOR.get(s["shift_type"], "#FFFFFF")
-                            leader_name = _h((s.get("leader") or {}).get("full_name", "—"))
-                            sp_name     = _h((s.get("sp") or {}).get("full_name", "—"))
-                            sp_warn     = s.get("sp_warning") or ""
-                            if sp_warn == "leader_sp":
-                                sp_name = f'<span class="text-orange-600">(LD kiêm)</span>'
-                            elif sp_warn == "no_sp":
-                                sp_name = '<span class="text-red-600">Thiếu SP!</span>'
-                            nv_names = "<br>".join(_h(nv["full_name"]) for nv in (s.get("nvs") or []))
-                            stype_label = _h(_SHIFT_TYPE_LABEL.get(s["shift_type"], s["shift_type"]))
-                            status_label = ui_kit.status_label(s["status"])
-                            status_cls = f'color:{ui_kit.status_dot(s["status"])}' + (
-                                ";font-weight:600" if s["status"] == "confirmed" else "")
-                            rows_html += (
-                                f'<tr style="background:{bg}">'
-                                f'<td class="{_TD}">{_h(s["shift_date"])}</td>'
-                                f'<td class="{_TD}">{stype_label}</td>'
-                                f'<td class="{_TD}">{leader_name}</td>'
-                                f'<td class="{_TD}">{sp_name}</td>'
-                                f'<td class="{_TD}" style="white-space:pre-line">{nv_names or "—"}</td>'
-                                f'<td class="{_TD}" style="{status_cls}">{status_label}</td>'
-                                f'</tr>'
+                                "text-gray-500 italic py-2"
                             )
 
-                        table_html = (
-                            '<div class="w-full overflow-x-auto">'
-                            '<table class="w-full border-collapse text-sm">'
-                            f'<thead><tr>'
-                            f'<th class="{_TH}">Ngày</th>'
-                            f'<th class="{_TH}">Loại ca</th>'
-                            f'<th class="{_TH}">Lãnh đạo</th>'
-                            f'<th class="{_TH}">Song Phương</th>'
-                            f'<th class="{_TH}">Nhân viên</th>'
-                            f'<th class="{_TH}">Trạng thái</th>'
-                            f'</tr></thead>'
-                            f'<tbody>{rows_html}</tbody>'
-                            '</table></div>'
-                        )
-                        ui.html(table_html)
+                def _dung_hang(i: int, ds: str, ca_ngay: list) -> None:
+                    """Một hàng = một ngày. Ngày quyết toán có 2 ca thì gộp người vào cùng hàng."""
+                    bg = _TYPE_ROW_COLOR.get(ca_ngay[0]["shift_type"], "#FFFFFF") if ca_ngay else "#FFFFFF"
+
+                    nguoi_chinh, nguoi_phu, nguoi_ld, canh_bao = [], [], [], []
+                    # Ca có nhóm phụ (quyết toán) mới cần phân biệt hai kiểu chữ
+                    co_phu = any(s.get("nv_phu") for s in ca_ngay)
+                    kieu_chinh = "chinh" if co_phu else "thuong"
+
+                    for s in ca_ngay:
+                        warn = s.get("sp_warning") or ""
+                        sp   = s.get("sp")
+                        # sp=None kèm cảnh báo SP nghĩa là Lãnh đạo giữ vai song phương
+                        ld_giu_sp = sp is None and warn in ("leader_sp", "multi_sp")
+
+                        for p in ([sp] if sp else []) + (s.get("nvs") or []):
+                            nguoi_chinh.append(
+                                _ten_kem_sp(p, bool(sp) and p["id"] == sp["id"], kieu_chinh))
+                        for p in (s.get("nv_phu") or []):
+                            nguoi_phu.append(_ten_kem_sp(p, False, "phu"))
+
+                        # Nhiều lãnh đạo thì chỉ đánh dấu (SP) đúng người biết song phương
+                        biet_sp = {q["id"] for q in nhan_su_ref["list"] if q.get("can_do_sp")}
+                        for p in (s.get("leaders") or []):
+                            nguoi_ld.append(_ten_kem_sp(p, ld_giu_sp and p["id"] in biet_sp))
+
+                        if warn == "no_sp_chinh":
+                            canh_bao.append("Lãnh đạo và nhóm trực chính không có ai xử lý song phương")
+                        elif warn == "multi_sp":
+                            canh_bao.append("Ca có nhiều hơn 1 người xử lý song phương")
+
+                    # Bảng giữ đúng 2 ô nhân viên: ô 1 nhận người đầu của mỗi nhóm,
+                    # ô 2 nhận toàn bộ phần còn lại. Trực phụ luôn nằm dưới trực chính.
+                    o1 = nguoi_chinh[:1] + nguoi_phu[:1]
+                    o2 = nguoi_chinh[1:] + nguoi_phu[1:]
+                    nv1 = "<br>".join(o1) or "—"
+                    nv2 = "<br>".join(o2) or "—"
+
+                    with ui.column().classes("w-full gap-0"):
+                        with ui.row().classes("w-full items-center px-2 py-2 border-t "
+                                              "border-gray-200 gap-2 text-sm").style(f"background:{bg}"):
+                            ui.html(f'<span class="font-medium">{_THU_VN[i]}</span><br>'
+                                    f'<span class="text-gray-500 text-xs">'
+                                    f'{ds[8:10]}/{ds[5:7]}/{ds[:4]}</span>').classes("w-28 shrink-0")
+                            ui.html(nv1).classes("flex-1 min-w-[130px]")
+                            ui.html(nv2).classes("flex-1 min-w-[130px]")
+                            ui.html("<br>".join(nguoi_ld) or "—").classes("flex-1 min-w-[130px]")
+
+                            with ui.row().classes("w-36 shrink-0 items-center gap-1"):
+                                if ca_ngay:
+                                    da_xn = all(s["status"] == "confirmed" for s in ca_ngay)
+                                    ui.html(
+                                        '<span class="text-green-700 font-medium">Đã xác nhận</span>'
+                                        if da_xn else '<span class="text-orange-600">Bản thảo</span>'
+                                    ).classes("text-xs")
+                                    if can_write:
+                                        ui.button(
+                                            icon="edit",
+                                            on_click=lambda sid=ca_ngay[0]["id"]: mo_hop_thoai_sua(sid),
+                                        ).props("flat dense round size=sm color=primary").tooltip("Sửa ca trực")
+                                else:
+                                    ui.html('<span class="text-gray-400">—</span>').classes("text-xs")
+
+                        if canh_bao:
+                            ui.html("⚠ " + " · ".join(canh_bao)).classes(
+                                "w-full px-2 pb-1 text-xs text-red-600"
+                            ).style(f"background:{bg}")
+
+                def _nhan_chon(p: dict, ds: str) -> str:
+                    """Tên kèm ghi chú để người phân lịch biết mình đang chọn ai.
+                    Vẫn cho chọn — đi dự án / nghỉ phép chỉ là luật mềm."""
+                    ghi_chu = []
+                    if p.get("can_do_sp"):
+                        ghi_chu.append("SP")
+                    if p.get("is_on_project"):
+                        ghi_chu.append("dự án")
+                    if (p["id"], ds) in nhan_su_ref["vang_mat"]:
+                        ghi_chu.append("nghỉ phép")
+                    return f"{p['full_name']} ({', '.join(ghi_chu)})" if ghi_chu else p["full_name"]
+
+                async def mo_hop_thoai_sua(shift_id: int) -> None:
+                    try:
+                        ca = await asyncio.to_thread(api.get, f"/api/duty/schedule/{shift_id}")
+                    except Exception as e:
+                        _handle_api_error(e)
+                        return
+
+                    ds = ca["shift_date"]
+                    ds_vn = f"{ds[8:10]}/{ds[5:7]}/{ds[:4]}"
+                    # Người giữ vai song phương được tách khỏi nv_ids khi lưu — gộp lại
+                    ds_chinh = ([ca["sp"]["id"]] if ca.get("sp") else []) + [p["id"] for p in ca["nvs"]]
+                    ds_ld    = [p["id"] for p in (ca.get("leaders") or [])]
+                    ds_phu   = [p["id"] for p in (ca.get("nv_phu") or [])]
+
+                    so_ld, so_chinh, so_phu = _so_nguoi_can_co(ca["shift_type"])
+
+                    opt_ld = {str(p["id"]): _nhan_chon(p, ds)
+                              for p in nhan_su_ref["list"] if p["duty_role"] == "LD"}
+                    opt_nv = {str(p["id"]): _nhan_chon(p, ds)
+                              for p in nhan_su_ref["list"] if p["duty_role"] == "NV"}
+
+                    def _o_chon(nhan: str, opts: dict, gia_tri_cu: list, n: int) -> list:
+                        """Dựng n ô chọn, điền sẵn người đang có."""
+                        o = []
+                        for i in range(n):
+                            v = str(gia_tri_cu[i]) if i < len(gia_tri_cu) else None
+                            nhan_o = nhan if n == 1 else f"{nhan} {i + 1}"
+                            o.append(ui.select(label=nhan_o, options=opts, with_input=True,
+                                               value=v).classes("w-full"))
+                        return o
+
+                    with ui.dialog() as dlg, ui.card().classes("w-[520px] max-w-full"):
+                        ui.label(f"Sửa ca trực ngày {ds_vn}").classes(
+                            "text-base font-semibold text-red-800")
+                        can_co = f"{so_ld} Lãnh đạo và {so_chinh} nhân viên"
+                        if so_phu:
+                            can_co = (f"{so_ld} Lãnh đạo, {so_chinh} nhân viên trực chính "
+                                      f"và {so_phu} trực phụ")
+                        ui.label(f"Ca trực bắt buộc {can_co}. "
+                                 "Người xử lý song phương do hệ thống tự xác định.").classes(
+                            "text-xs text-gray-500 mb-2")
+
+                        sel_ld    = _o_chon("Lãnh đạo", opt_ld, ds_ld, so_ld)
+                        sel_chinh = _o_chon("Nhân viên trực chính" if so_phu else "Nhân viên",
+                                            opt_nv, ds_chinh, so_chinh)
+                        sel_phu   = _o_chon("Nhân viên trực phụ", opt_nv, ds_phu, so_phu)
+
+                        loi_box = ui.html("").classes("text-sm text-red-600 mt-2")
+
+                        if ca["status"] == "confirmed":
+                            ui.label("Ca này đã xác nhận — sửa xong sẽ quay về bản thảo, "
+                                     "cần xác nhận lại.").classes("text-xs text-orange-600 mt-2")
+
+                        async def do_luu():
+                            loi_box.set_content("")
+                            if not all(o.value for o in sel_ld + sel_chinh + sel_phu):
+                                loi_box.set_content(f"Phải chọn đủ {can_co}.")
+                                return
+                            try:
+                                kq = await asyncio.to_thread(
+                                    api.put, f"/api/duty/schedule/{shift_id}",
+                                    {"leader_ids":   [int(o.value) for o in sel_ld],
+                                     "nv_chinh_ids": [int(o.value) for o in sel_chinh],
+                                     "nv_phu_ids":   [int(o.value) for o in sel_phu]},
+                                )
+                            except Exception as ex:
+                                if _handle_api_error(ex):
+                                    return
+                                loi_box.set_content(_h(str(ex)))
+                                return
+
+                            dlg.close()
+                            canh_bao = kq.get("warnings") or []
+                            if canh_bao:
+                                # Vi phạm luật mềm vẫn ghi nhận — chỉ báo cho biết
+                                ui.notify("Đã lưu. Lưu ý: " + " · ".join(canh_bao),
+                                          type="warning", multi_line=True, timeout=8000)
+                            else:
+                                ui.notify(f"Đã cập nhật ca trực ngày {ds_vn}", type="positive")
+                            await load_schedule()
+
+                        with ui.row().classes("justify-end gap-2 mt-4 w-full"):
+                            ui.button("Hủy", on_click=dlg.close).props("flat")
+                            ui.button("Lưu", icon="save", on_click=do_luu).props("color=primary")
+
+                    dlg.open()
 
                 # ── Week navigation ──────────────────────────────
                 with ui.row().classes("items-center gap-2 mb-2 flex-wrap"):
@@ -277,7 +482,6 @@ async def duty_schedule_page():
                                 ui.label("Họ tên").classes("flex-1 min-w-[160px]")
                                 ui.label("Chức vụ").classes("w-28")
                                 ui.label("Làm SP").classes("w-16 text-center")
-                                ui.label("Backup SP").classes("w-20 text-center")
                                 ui.label("Dự án").classes("w-16 text-center")
 
                             _ROLE_LABEL = {
@@ -320,13 +524,6 @@ async def duty_schedule_page():
                                     ).classes("w-16")
                                     cb_sp.props("dense")
                                     cb_sp.set_enabled(can_manage_staff)
-
-                                    cb_bk = ui.checkbox(
-                                        value=bool(p.get("is_sp_backup", 0)),
-                                        on_change=_make_toggle(p["id"], "is_sp_backup")
-                                    ).classes("w-20")
-                                    cb_bk.props("dense")
-                                    cb_bk.set_enabled(can_manage_staff and p["duty_role"] == "LD")
 
                                     cb_proj = ui.checkbox(
                                         value=bool(p.get("is_on_project", 0)),
@@ -496,8 +693,10 @@ async def duty_schedule_page():
                     with stats_area:
                         rows_html = ""
                         for p in data:
-                            total = p.get("total", 0)
-                            bg = "background:#F0FDF4" if total > 0 else ""
+                            # Trực chính và trực phụ đếm riêng, không quy đổi
+                            tong_chinh = p.get("total_chinh", p.get("total", 0))
+                            tong_phu   = p.get("total_phu", 0)
+                            bg = "background:#F0FDF4" if (tong_chinh or tong_phu) else ""
                             rows_html += (
                                 f'<tr style="{bg}">'
                                 f'<td class="{_TD}">{_h(p["full_name"])}</td>'
@@ -506,8 +705,8 @@ async def duty_schedule_page():
                                 f'<td class="{_TD} text-center">{p.get("friday",0) or ""}</td>'
                                 f'<td class="{_TD} text-center">{p.get("cutoff",0) or ""}</td>'
                                 f'<td class="{_TD} text-center">{p.get("settlement_main",0) or ""}</td>'
-                                f'<td class="{_TD} text-center">{p.get("settlement_sub",0) or ""}</td>'
-                                f'<td class="{_TD} text-center font-bold">{total or ""}</td>'
+                                f'<td class="{_TD} text-center font-bold">{tong_chinh or ""}</td>'
+                                f'<td class="{_TD} text-center text-gray-600">{tong_phu or ""}</td>'
                                 f'</tr>'
                             )
                         ui.html(
@@ -519,13 +718,16 @@ async def duty_schedule_page():
                             f'<th class="{_TH}">Thường</th>'
                             f'<th class="{_TH}">Thứ 6</th>'
                             f'<th class="{_TH}">Cut-off</th>'
-                            f'<th class="{_TH}">QT Chính</th>'
-                            f'<th class="{_TH}">QT Phụ</th>'
-                            f'<th class="{_TH}">Tổng</th>'
+                            f'<th class="{_TH}">Quyết toán</th>'
+                            f'<th class="{_TH}">Tổng trực chính</th>'
+                            f'<th class="{_TH}">Trực phụ</th>'
                             f'</tr></thead>'
                             f'<tbody>{rows_html}</tbody>'
                             '</table></div>'
                         )
+                        ui.label("Trực chính và trực phụ đếm riêng, không quy đổi. "
+                                 "Chỉ tính ca đã xác nhận — sửa ca thì phải xác nhận lại "
+                                 "mới vào thống kê.").classes("text-xs text-gray-500 mt-2")
 
                 ui.button("Tải thống kê", icon="refresh",
                           on_click=load_stats).props("flat dense color=primary").classes("mb-1")
@@ -671,11 +873,40 @@ async def duty_schedule_page():
             with ui.tab_panel(tab_settings):
                 today_yr3 = date.today().year
 
-                with ui.card().classes("w-full max-w-md p-4 mt-2"):
-                    ui.label("Cấu hình ca trực").classes("text-base font-semibold text-red-800 mb-3")
-                    yr_cfg = ui.number(label="Năm", value=today_yr3, min=2020, max=2099, format="%d").classes("w-28 mb-2")
-                    nv_count_inp  = ui.number(label="Số NV mỗi ca", value=2, min=1, max=5, format="%d").classes("w-36")
-                    signer_inp    = ui.input(label="Tên người ký Excel").classes("w-64")
+                with ui.card().classes("w-full max-w-2xl p-4 mt-2"):
+                    ui.label("Số người bắt buộc mỗi ca trực").classes(
+                        "text-base font-semibold text-red-800")
+                    ui.label("Số đã khai là bắt buộc: thiếu người thì không lập được ca trực, "
+                             "và sửa tay cũng không lưu được.").classes(
+                        "text-xs text-gray-500 mb-3")
+                    yr_cfg = ui.number(label="Năm", value=today_yr3, min=2020, max=2099,
+                                       format="%d").classes("w-28 mb-3")
+
+                    with ui.row().classes("w-full bg-red-800 text-white px-2 py-2 "
+                                          "text-xs font-semibold gap-2 items-center rounded-t"):
+                        ui.label("Loại ca").classes("flex-1 min-w-[130px]")
+                        ui.label("Lãnh đạo").classes("w-28 text-center")
+                        ui.label("Trực chính").classes("w-28 text-center")
+                        ui.label("Trực phụ").classes("w-28 text-center")
+
+                    with ui.row().classes("w-full items-center px-2 py-2 border border-gray-200 gap-2"):
+                        ui.label("Ca thường").classes("flex-1 min-w-[130px] text-sm font-medium")
+                        ld_count_inp = ui.number(value=1, min=1, max=5, format="%d").classes("w-28")
+                        nv_count_inp = ui.number(value=2, min=1, max=10, format="%d").classes("w-28")
+                        ui.label("—").classes("w-28 text-center text-gray-400")
+
+                    with ui.row().classes("w-full items-center px-2 py-2 border border-gray-200 "
+                                          "border-t-0 gap-2 bg-purple-50"):
+                        ui.label("Ca quyết toán").classes("flex-1 min-w-[130px] text-sm font-medium")
+                        qt_ld_inp    = ui.number(value=1, min=1, max=5, format="%d").classes("w-28")
+                        qt_chinh_inp = ui.number(value=3, min=1, max=10, format="%d").classes("w-28")
+                        qt_phu_inp   = ui.number(value=2, min=0, max=10, format="%d").classes("w-28")
+
+                    ui.label("Thứ 6 và cut-off dùng chung cấu hình ca thường. "
+                             "Nhân viên trực phụ về sớm hơn trực chính.").classes(
+                        "text-xs text-gray-500 mt-2 mb-3")
+
+                    signer_inp = ui.input(label="Tên người ký Excel").classes("w-64")
 
                     async def load_cfg():
                         yr = int(yr_cfg.value or today_yr3)
@@ -683,10 +914,18 @@ async def duty_schedule_page():
                             cfg = await asyncio.to_thread(
                                 api.get, f"/api/duty/constraints/shift-config/{yr}"
                             )
-                            nv_count_inp.value = cfg.get("nv_count", 2)
+                            ld_count_inp.value = cfg.get("ld_count") or 1
+                            nv_count_inp.value = cfg.get("nv_count") or 2
+                            qt_ld_inp.value    = cfg.get("qt_ld_count") or 1
+                            qt_chinh_inp.value = cfg.get("qt_nv_chinh_count") or 3
+                            qt_phu_inp.value   = (cfg.get("qt_nv_phu_count")
+                                                  if cfg.get("qt_nv_phu_count") is not None else 2)
                             signer_inp.value   = cfg.get("signer_name") or ""
-                        except Exception:
-                            pass  # Không có config → giữ giá trị mặc định
+                        except Exception as ex:
+                            # Năm chưa khai báo không còn là lỗi (backend trả mặc
+                            # định), nên tới đây là hỏng thật — phải hiện ra, nhất
+                            # là lỗi hết phiên vì nó cần redirect về /login.
+                            _handle_api_error(ex)
 
                     yr_cfg.on("change", lambda: asyncio.ensure_future(load_cfg()))
 
@@ -696,10 +935,15 @@ async def duty_schedule_page():
                             try:
                                 await asyncio.to_thread(
                                     api.put, f"/api/duty/constraints/shift-config/{yr}",
-                                    {"nv_count": int(nv_count_inp.value or 2),
-                                     "signer_name": signer_inp.value or None}
+                                    {"ld_count":          int(ld_count_inp.value or 1),
+                                     "nv_count":          int(nv_count_inp.value or 2),
+                                     "qt_ld_count":       int(qt_ld_inp.value or 1),
+                                     "qt_nv_chinh_count": int(qt_chinh_inp.value or 3),
+                                     "qt_nv_phu_count":   int(qt_phu_inp.value or 0),
+                                     "signer_name":       signer_inp.value or None}
                                 )
-                                ui.notify("Đã lưu", type="positive")
+                                ui.notify("Đã lưu cài đặt. Lịch tạo mới sẽ theo số người này.",
+                                          type="positive")
                             except Exception as ex:
                                 _handle_api_error(ex)
 
