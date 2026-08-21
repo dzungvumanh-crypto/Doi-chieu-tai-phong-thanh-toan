@@ -1,4 +1,4 @@
-"""Trang quản lý nhóm user — chỉ admin."""
+"""Trang quản lý nhóm user — Quản trị viên cấp 1 và cấp 2."""
 import asyncio
 from nicegui import ui
 import frontend.api_client as api
@@ -33,9 +33,13 @@ async def groups_page():
     if not _require_auth():
         return
     user = api.get_current_user()
-    if not user or user.get("role") != "admin":
+    if not user or user.get("role") not in ("admin", "admin_l2"):
         ui.navigate.to("/home")
         return
+    # Cấp 2 không được thao tác lên nhóm chứa chính mình (tự nâng quyền).
+    # Backend chặn thật; đây chỉ là lớp hiển thị để không bấm rồi nhận 403.
+    la_cap_2 = user.get("role") == "admin_l2"
+    my_id = user.get("id")
 
     await _sidebar("groups")
     with _content_area():
@@ -57,6 +61,8 @@ async def groups_page():
         no_selection_label = None
         detail_card = None
         add_user_select = None
+        save_btn = delete_btn = add_member_btn = None
+        locked_note = None
 
         # ── Load helpers ───────────────────────────────────────────────────────
         async def load_groups():
@@ -75,6 +81,7 @@ async def groups_page():
                 str(s["id"]): f"{s['full_name']} — {_ROLE_LABEL.get(s['role'], s['role'])}"
                 for s in all_staff
                 if s["id"] not in current_member_ids and s["role"] != "admin"
+                and not (la_cap_2 and s["id"] == my_id)
             }
             add_user_select.update()
 
@@ -128,9 +135,18 @@ async def groups_page():
             await load_members(group_id)
 
         # ── Detail panel ───────────────────────────────────────────────────────
+        def _bi_khoa() -> bool:
+            """Cấp 2 mở nhóm mà chính mình là thành viên → chỉ được xem."""
+            return la_cap_2 and bool(selected_group.get("contains_me"))
+
         def _show_detail():
             no_selection_label.set_visibility(False)
             detail_card.set_visibility(True)
+            khoa = _bi_khoa()
+            locked_note.set_visibility(khoa)
+            for el in (save_btn, delete_btn, add_member_btn, add_user_select,
+                       group_name_input, group_desc_input, group_active_checkbox):
+                el.set_enabled(not khoa)
             group_name_input.set_value(selected_group.get("name", ""))
             group_desc_input.set_value(selected_group.get("description") or "")
             group_active_checkbox.set_value(bool(selected_group.get("is_active", True)))
@@ -170,7 +186,7 @@ async def groups_page():
                         ui.button(
                             icon="person_remove",
                             on_click=_remove_cb(m["id"])
-                        ).props("flat dense color=red-6")
+                        ).props("flat dense color=red-6").set_enabled(not _bi_khoa())
 
         # ── Actions ────────────────────────────────────────────────────────────
         async def save_group():
@@ -305,13 +321,18 @@ async def groups_page():
                             group_name_input = ui.input("Tên nhóm *").classes("w-full")
                             group_desc_input = ui.input("Mô tả").classes("w-full")
                             group_active_checkbox = ui.checkbox("Đang hoạt động")
+                            locked_note = ui.label(
+                                "Bạn là thành viên của nhóm này — Quản trị viên cấp 2 "
+                                "chỉ được xem, không sửa được nhóm của chính mình."
+                            ).classes("text-sm text-amber-700 bg-amber-50 rounded px-3 py-2 w-full")
+                            locked_note.set_visibility(False)
                             with ui.row().classes("gap-2"):
-                                ui.button("Lưu thay đổi", icon="save", on_click=save_group).classes(
-                                    "bg-red-700 text-white"
-                                )
-                                ui.button("Xóa nhóm", icon="delete", on_click=delete_group).props("flat").classes(
-                                    "text-red-500"
-                                )
+                                save_btn = ui.button(
+                                    "Lưu thay đổi", icon="save", on_click=save_group
+                                ).classes("bg-red-700 text-white")
+                                delete_btn = ui.button(
+                                    "Xóa nhóm", icon="delete", on_click=delete_group
+                                ).props("flat").classes("text-red-500")
 
                     # Card thành viên
                     with ui.card().classes("w-full shadow-sm rounded-xl overflow-hidden"):
@@ -324,9 +345,9 @@ async def groups_page():
                                     label="Thêm nhân viên",
                                     with_input=True,
                                 ).classes("flex-1")
-                                ui.button("Thêm", icon="person_add", on_click=add_member).classes(
-                                    "bg-red-700 text-white"
-                                )
+                                add_member_btn = ui.button(
+                                    "Thêm", icon="person_add", on_click=add_member
+                                ).classes("bg-red-700 text-white")
 
                             with ui.column().classes(
                                 "w-full rounded border border-gray-100 overflow-hidden"
