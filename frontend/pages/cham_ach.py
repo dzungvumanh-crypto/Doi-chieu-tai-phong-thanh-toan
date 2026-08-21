@@ -11,6 +11,18 @@ from frontend.shared import (
 
 # ─── Hằng số ──────────────────────────────────────────────────────────────────
 _POLL_INTERVAL = 1.5   # giây
+
+# Sức chịu đựng khi máy chủ im lặng = _MAX_POLL_FAILS × _POLL_TIMEOUT, KHÔNG phải
+# × _POLL_INTERVAL: NiceGUI Timer gọi callback tuần tự rồi mới ngủ, nên một lần
+# poll lỗi ngốn trọn timeout của nó. Bản cũ (4 lần × 10s mặc định của api_client)
+# bỏ cuộc sau 40 giây và ghi nhầm trong comment là "~6s".
+#
+# 40 giây là quá ngắn: bước B4 giải nén 2 file MIS_DI rồi đọc CSV, và trong suốt
+# quãng đó pipeline KHÔNG in dòng log nào — một lần giải nén nặng trông y hệt
+# máy chủ đã chết. Nay chịu tới 10 × 30s = 5 phút, ngang các trang chấm khác
+# (cham_459901, doi_chieu_song_phuong đều để trần 900 giây).
+_POLL_TIMEOUT   = 30.0
+_MAX_POLL_FAILS = 10
 _FILE_HINT = (
     'PDF (session) · GL02*.zip · GW*.xlsx · '
     '2× *_DI_*.zip · 2× *_DEN_*.zip · '
@@ -312,19 +324,44 @@ async def cham_ach_page():
                 _render_validate_result(res)
                 return bool(res.get('ok'))
 
-            _MAX_POLL_FAILS = 4  # ~6s liên tiếp lỗi mới báo — tránh báo nhầm khi mạng chập chờn
-
             def _stop_timer():
                 if state['timer']:
                     state['timer'].cancel()
                     state['timer'] = None
 
-            def _stop_running():
+            def _stop_running(giu_nut_dung: bool = False):
+                """giu_nut_dung=True khi ngừng THEO DÕI mà job phía máy chủ vẫn còn
+                sống (mất liên lạc). Giấu nút Dừng lúc đó là cắt mất đường duy nhất
+                để dừng job mồ côi — mà job đó vẫn đang ăn RAM/CPU/đĩa của máy chủ."""
                 spinner.set_visibility(False)
-                btn_cancel.set_visibility(False)
+                btn_cancel.set_visibility(giu_nut_dung)
                 btn_run.set_visibility(True)
                 state['running'] = False
                 _stop_timer()
+
+            async def _trang_thai_job_cu() -> str | None:
+                """Trạng thái job lần chạy trước theo MÁY CHỦ, hoặc None nếu không
+                còn/không hỏi được. Không tin `state['running']`: khi polling bỏ cuộc
+                nó bị đặt False trong khi pipeline phía máy chủ vẫn chạy tiếp."""
+                if not state['job_id']:
+                    return None
+                try:
+                    res = await asyncio.to_thread(
+                        api.get, f'/api/ach/poll/{state["job_id"]}',
+                        # since lớn hơn mọi số dòng log thật → máy chủ trả về danh
+                        # sách log rỗng. Đây là phép dò TRẠNG THÁI, không được nuốt
+                        # mất log của job cũ bằng cách đọc rồi vứt đi.
+                        params={'since': 10 ** 9}, timeout=_POLL_TIMEOUT,
+                    )
+                except Exception as e:
+                    if not api.la_loi_mang(e):
+                        # Máy chủ TRẢ LỜI rằng job không còn (404 hết hạn) — câu trả
+                        # lời dứt khoát, cho chạy lượt mới.
+                        return None
+                    # Im lặng: KHÔNG kết luận job đã chết. Bản thân việc im lặng
+                    # này là dấu hiệu máy chủ còn đang gánh job cũ.
+                    return 'khong_hoi_duoc'
+                return res.get('status')
 
             async def _poll():
                 if not state['job_id']:
@@ -335,20 +372,36 @@ async def cham_ach_page():
                         api.get,
                         f'/api/ach/poll/{state["job_id"]}',
                         params={'since': state['log_pos']},
+                        timeout=_POLL_TIMEOUT,
                     )
                 except Exception as e:
                     if _handle_api_error(e):
                         _stop_running()
                         return
+                    if not api.la_loi_mang(e):
+                        # Máy chủ có trả lời, chỉ là trả lời hỏng (thường là 404
+                        # "job đã hết hạn"). Thử lại 10 lần nữa vừa vô ích vừa dẫn
+                        # tới báo sai "job vẫn đang chạy" ở dưới.
+                        progress_bar.set_visibility(False)
+                        _stop_running()
+                        state['job_id'] = None
+                        _append_log(f'[LỖI] Máy chủ từ chối theo dõi tiến trình: {e}')
+                        ui.notify(str(e), type='negative', timeout=0)
+                        return
                     state['poll_fails'] += 1
                     if state['poll_fails'] >= _MAX_POLL_FAILS:
                         progress_bar.set_visibility(False)
-                        _stop_running()
-                        _append_log(f'[LỖI] Mất kết nối tới máy chủ khi theo dõi tiến trình: {e}')
+                        _stop_running(giu_nut_dung=True)
+                        _append_log(
+                            f'[LỖI] Mất liên lạc với máy chủ sau '
+                            f'{_MAX_POLL_FAILS} lần thử ({_MAX_POLL_FAILS * int(_POLL_TIMEOUT)}s): {e}')
+                        _append_log(f'[LỖI] Job {state["job_id"]} RẤT CÓ THỂ VẪN ĐANG CHẠY '
+                                    'trên máy chủ — bấm "Dừng" trước khi chạy lại.')
                         ui.notify(
-                            'Mất kết nối tới máy chủ hoặc job đã hết hạn (có thể do backend '
-                            'khởi động lại) — không rõ pipeline đã chạy xong hay chưa. '
-                            'Vui lòng kiểm tra lại và chạy lại nếu cần.',
+                            'Mất liên lạc với máy chủ khi theo dõi tiến trình. Job nhiều khả '
+                            'năng VẪN ĐANG CHẠY — chạy lại ngay lúc này sẽ có hai lượt đối '
+                            'chiếu cùng lúc và máy chủ càng nghẽn. Bấm "Dừng" để huỷ job cũ, '
+                            'rồi xem logs/backend.log trên máy chủ trước khi chạy lại.',
                             type='negative', timeout=0,
                         )
                     return
@@ -542,6 +595,30 @@ async def cham_ach_page():
                         ).classes('text-xs')
 
             async def _thuc_hien_chay():
+                # Chặn hai lượt đối chiếu chồng nhau. `state['running']` không đủ:
+                # sau khi polling bỏ cuộc nó là False dù pipeline cũ còn chạy, và
+                # `_thuc_hien_chay()` sẽ đè `state['job_id']` — job cũ thành mồ côi,
+                # không còn ai dừng được, trong khi vẫn chiếm RAM/CPU/đĩa. Đúng
+                # cảnh đã xảy ra 19/08/2026: lần 1 mất liên lạc, lần 2 không phản hồi.
+                trang_thai = await _trang_thai_job_cu()
+                if trang_thai in ('pending', 'running', 'awaiting_confirmation'):
+                    ui.notify(
+                        f'Lượt chạy trước (job {state["job_id"]}) vẫn đang ở trạng thái '
+                        f'"{trang_thai}". Bấm "Dừng" để huỷ nó trước khi chạy lượt mới.',
+                        type='negative', timeout=0,
+                    )
+                    btn_cancel.set_visibility(True)
+                    return
+                if trang_thai == 'khong_hoi_duoc':
+                    ui.notify(
+                        'Máy chủ chưa trả lời về lượt chạy trước nên không rõ nó đã dừng hay '
+                        'chưa. Chạy lúc này có thể thành hai lượt cùng lúc. Bấm "Dừng" rồi '
+                        'thử lại sau ít phút.',
+                        type='negative', timeout=0,
+                    )
+                    btn_cancel.set_visibility(True)
+                    return
+
                 _clear_log()
                 result_card.set_visibility(False)
                 checkpoint_dialog.close()
@@ -622,7 +699,8 @@ async def cham_ach_page():
                     return
                 try:
                     await asyncio.to_thread(
-                        api.post, f'/api/ach/cancel/{state["job_id"]}'
+                        api.post, f'/api/ach/cancel/{state["job_id"]}',
+                        timeout=_POLL_TIMEOUT,
                     )
                     _append_log('[Yêu cầu dừng đã gửi — chờ pipeline kết thúc...]')
                     if not state['timer']:

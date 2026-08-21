@@ -25,6 +25,15 @@ class DisplacedSessionError(Exception):
     pass
 
 
+class MustChangePasswordError(Exception):
+    """Raised khi backend chặn vì tài khoản chưa đổi mật khẩu bắt buộc.
+
+    Trước đây việc bắt đổi mật khẩu chỉ là một lần chuyển trang ở màn hình đăng
+    nhập — gõ thẳng /home lên thanh địa chỉ là đi tiếp được. Nay backend chặn
+    thật, nên frontend phải nhận ra và đưa người dùng về đúng chỗ."""
+    pass
+
+
 # Persistent client — tái dùng TCP connection, tránh overhead kết nối mỗi request
 _client = httpx.Client(timeout=httpx.Timeout(10.0))
 _download_client = httpx.Client(timeout=httpx.Timeout(60.0))
@@ -119,6 +128,20 @@ def _headers():
     return h
 
 
+def la_loi_mang(e: Exception) -> bool:
+    """True khi máy chủ KHÔNG trả lời (hết giờ chờ, không nối được, đứt giữa chừng);
+    False khi nó có trả lời nhưng là mã lỗi (404, 500...).
+
+    Hai thứ này đòi hai cách xử lý ngược nhau ở phía gọi: im lặng thì phải thử lại
+    và phải coi việc đang chạy là VẪN CÒN; còn trả lời 404 là câu trả lời dứt khoát,
+    thử lại chỉ tổ mất thời gian và báo sai cho người dùng.
+
+    `get()`/`post()` gói HTTPStatusError thành `Exception` thường (mất kiểu), còn
+    lỗi mạng thì để nguyên kiểu httpx — nên chỉ cần hỏi "có phải httpx.HTTPError không".
+    """
+    return isinstance(e, httpx.HTTPError)
+
+
 def _parse_error(e: "httpx.HTTPStatusError") -> str:
     try:
         body = e.response.json()
@@ -145,6 +168,18 @@ def _raise_http_error(e: httpx.HTTPStatusError):
         if "__session_displaced__" in str(detail):
             raise DisplacedSessionError("Tài khoản này đang được đăng nhập từ thiết bị khác")
         raise SessionExpiredError("Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.")
+    if e.response.status_code == 403:
+        try:
+            detail = e.response.json().get("detail", "")
+        except Exception:
+            detail = ""
+        if "__must_change_password__" in str(detail):
+            # KHÔNG clear_auth(): token vẫn hợp lệ, người dùng cần nó để gọi
+            # /api/auth/change-password. Xoá đi là đá họ về màn hình đăng nhập,
+            # đăng nhập lại cũng vấp đúng chỗ này — vòng lặp không lối ra.
+            raise MustChangePasswordError(
+                "Bạn phải đổi mật khẩu trước khi sử dụng hệ thống"
+            )
     raise Exception(_parse_error(e))
 
 
