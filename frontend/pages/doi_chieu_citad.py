@@ -194,10 +194,14 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
     # trong doi_chieu_citad_page() — gán qua dict tránh phải khai `nonlocal`.
     history_refresh = {"fn": None}
 
-    # True = đang xem 1 bản đã tải từ tab "Lịch sử" — chỉ xem, khoá sửa/lưu
-    # đè lên bản đã chấm (yêu cầu nghiệp vụ: lịch sử không được sửa được).
-    # Dict để mọi closure trong trang đọc/ghi được mà không cần `nonlocal`.
-    view_state = {"readonly": False}
+    # "mode": 'edit' (sửa đủ mọi field — form mới hoặc đang xem bản tạm CỦA
+    # CHÍNH MÌNH) | 'napas_only' (đang xem bản tạm của NGƯỜI KHÁC — chỉ 4 ô
+    # Napas/PSS-MDP sửa được, phần còn lại khoá) | 'locked' (bản CUỐI đã
+    # chốt — khoá hết, không ai sửa/lưu được nữa qua đây, kể cả người lập
+    # bảng). Dict để mọi closure trong trang đọc/ghi được mà không cần
+    # `nonlocal`. Xem _apply_view_mode().
+    view_state = {"mode": "edit", "ngay_dang_xem": "", "created_by": None, "created_by_name": ""}
+    current_user = api.get_current_user() or {}
 
     # Dữ liệu số (float) — nguồn sự thật để tính chênh lệch, tách khỏi text hiển thị trên ô nhập
     data = {
@@ -393,7 +397,7 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
                         inp.on('blur', lambda _, _i=inp: _set_input(_i, fmt(_i.value)))
                         entry_store[cur][fk] = inp
 
-    def build_napas_ebank_grid(container):
+    def build_napas_pssmdp_grid(container):
         """Chỉ 2 field IH Đến (Món/Tiền) — DUY NHẤT được dùng trong recalc()/
         session/export (xem docstring đầu file). 6 field còn lại của mỗi
         dòng KHÔNG có ô nhập (tránh ô "chết" không có tác dụng gì), nhưng
@@ -412,12 +416,11 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
                     ui.label(lbl).classes(
                         _grid_cell_cls(0, col_idx, n_rows, n_cols, "text-sm font-bold text-gray-500 text-center")
                     )
-                # Ebanking KHÔNG còn ô nhập trên màn hình (đã bỏ theo yêu cầu) —
-                # data["ebank"] vẫn giữ trong code (không xoá hẳn) để đọc lại
-                # đúng số liệu CŨ của session đã lưu trước đây (xem
-                # apply_session_data) và không làm hỏng dòng "Ebanking" trong
-                # Excel xuất ra (xem do_export/build_xlsx) — chỉ đơn thuần
-                # không cho NHẬP MỚI qua UI nữa.
+                # Ebanking KHÔNG còn ô nhập trên màn hình, và dòng "Ebanking"
+                # cũng đã bỏ khỏi Excel xuất ra (20/08/2026 — kênh này không
+                # còn dùng). data["ebank"] vẫn giữ trong code (không xoá hẳn)
+                # chỉ để đọc lại không lỗi session CŨ đã lưu trước đây (xem
+                # apply_session_data), không còn hiển thị hay xuất ra đâu nữa.
                 for row_idx, (label, store, entry_store) in enumerate([
                     ("Napas", data["napas"], inputs["napasE"]),
                     ("PSS - MDP", data["pssmdp"], inputs["pssmdpE"]),
@@ -473,9 +476,10 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
         data["napas"]["den_ih_t"] = nv(sess.get("napas_t", 0))
         _set_input(inputs["napasE"]["den_ih_m"], fmt(data["napas"]["den_ih_m"]))
         _set_input(inputs["napasE"]["den_ih_t"], fmt(data["napas"]["den_ih_t"]))
-        # Không còn ô nhập Ebanking trên UI (đã bỏ) — vẫn đọc lại đúng giá trị
-        # CŨ đã lưu (nếu có) vào data["ebank"] để giữ nguyên khi lưu lại/xuất
-        # Excel, chỉ là không hiện/sửa được trên màn hình nữa.
+        # Không còn ô nhập Ebanking trên UI, và dòng Ebanking cũng đã bỏ khỏi
+        # Excel xuất ra — vẫn đọc lại giá trị CŨ đã lưu (nếu có) vào
+        # data["ebank"] chỉ để không lỗi khi mở lại session cũ, không dùng gì
+        # thêm.
         data["ebank"]["den_ih_m"] = nv(sess.get("ebank_m", 0))
         data["ebank"]["den_ih_t"] = nv(sess.get("ebank_t", 0))
         data["pssmdp"]["den_ih_m"] = nv(sess.get("pssmdp_m", 0))
@@ -484,43 +488,117 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
         _set_input(inputs["pssmdpE"]["den_ih_t"], fmt(data["pssmdp"]["den_ih_t"]))
         recalc()
 
-    def _set_form_readonly(readonly: bool):
-        """Khoá/mở các ô còn cho sửa tay của tab "Đối chiếu" — dùng khi tải
-        1 bản từ tab "Lịch sử" (chỉ xem, KHÔNG cho sửa/lưu đè nội dung đã
-        chấm) và khi bấm "Quay lại chỉnh sửa" để thoát chế độ xem. Khoá
-        bằng prop `readonly` của Quasar trên TỪNG ô — chặn gõ thật ở phía
-        trình duyệt, không chỉ ẩn nút Lưu (phòng còn sót đường sửa nào
-        khác). KHÔNG gồm `inputs["gE"]`/`inputs["phE"]` (5 Cổng CITAD +
-        PaymentHub) — các ô đó readonly CỐ ĐỊNH ngay từ lúc dựng grid (chỉ
-        nạp qua Extension), việc bật/tắt ở đây không đụng tới nên không
-        cần lặp lại. Tham chiếu `btn_nap_citad`/`btn_nap_ph`/`btn_luu`/
-        `btn_xoa`/`readonly_banner` — các biến này gán SAU trong cùng hàm
-        doi_chieu_citad_page(), nhưng closure chỉ đọc lúc GỌI hàm này (sau
-        khi trang đã dựng xong), nên không cần khai báo trước."""
-        view_state["readonly"] = readonly
-        all_inputs = [ngay_input, lap_bang_input, kiem_soat_input]
-        for f in ("den_ih_m", "den_ih_t"):
-            all_inputs.append(inputs["napasE"][f])
-            all_inputs.append(inputs["pssmdpE"][f])
-        for inp in all_inputs:
-            if readonly:
-                inp.props("readonly")
-            else:
-                inp.props(remove="readonly")
-        for btn in (btn_nap_citad, btn_nap_ph, btn_luu, btn_xoa):
-            btn.set_visibility(not readonly)
-        readonly_banner.set_visibility(readonly)
+    def _apply_view_mode(mode: str, created_by: int | None = None, created_by_name: str = ""):
+        """Khoá/mở form theo 3 chế độ — xem giải thích ở khai báo `view_state`
+        đầu hàm doi_chieu_citad_page(). Khoá bằng prop `readonly` của Quasar
+        trên TỪNG ô — chặn gõ thật ở phía trình duyệt, không chỉ ẩn nút (phòng
+        còn sót đường sửa nào khác). KHÔNG đụng `inputs["gE"]`/`inputs["phE"]`
+        (5 Cổng CITAD + PaymentHub) — các ô đó readonly CỐ ĐỊNH ngay từ lúc
+        dựng grid (chỉ nạp qua Extension). Tham chiếu `btn_nap_citad`/
+        `btn_nap_ph`/`btn_luu_tam`/`btn_luu_cuoi`/`btn_xoa`/`banner_area` —
+        các biến này gán SAU trong cùng hàm doi_chieu_citad_page(), nhưng
+        closure chỉ đọc lúc GỌI hàm này (sau khi trang đã dựng xong)."""
+        view_state["mode"] = mode
+        view_state["created_by"] = created_by
+        view_state["created_by_name"] = created_by_name
+
+        napas_inputs = [inputs["napasE"][f] for f in ("den_ih_m", "den_ih_t")]
+        napas_inputs += [inputs["pssmdpE"][f] for f in ("den_ih_m", "den_ih_t")]
+        other_inputs = [ngay_input, lap_bang_input, kiem_soat_input]
+
+        napas_lock = mode == "locked"
+        other_lock = mode != "edit"
+        for inp in napas_inputs:
+            inp.props("readonly") if napas_lock else inp.props(remove="readonly")
+        for inp in other_inputs:
+            inp.props("readonly") if other_lock else inp.props(remove="readonly")
+
+        # "Nạp CITAD"/"Nạp PaymentHub" vẫn hiện ở napas_only — 2 nút này là
+        # đường DUY NHẤT nạp Napas/PSS-MDP từ buffer Extension vào form (xem
+        # load_citad_buffer()/load_phub_buffer(), đã tự lọc chỉ áp 2 field
+        # đó khi mode='napas_only', bỏ qua phần 5 Cổng/PaymentHub thường).
+        btn_nap_citad.set_visibility(mode in ("edit", "napas_only"))
+        btn_nap_ph.set_visibility(mode in ("edit", "napas_only"))
+        btn_xoa.set_visibility(mode == "edit")
+        btn_luu_tam.set_visibility(mode in ("edit", "napas_only"))
+        btn_luu_cuoi.set_visibility(mode == "edit")
+
+        banner_area.clear()
+        is_admin = current_user.get("role") == "admin"
+        with banner_area:
+            if mode == "napas_only":
+                with ui.row().classes(
+                    "w-full items-center gap-2 px-4 py-2.5 rounded-xl border border-blue-300 bg-blue-50 mb-2"
+                ):
+                    ui.icon("edit_note", color="blue-700").classes("text-lg")
+                    ui.label(
+                        f"Bảng TẠM của {created_by_name or 'người khác'} — bạn chỉ bổ sung được "
+                        "Napas/PSS-MDP, các bảng khác đã khoá (chỉ người lập bảng sửa được)."
+                    ).classes("text-sm text-blue-800 flex-1")
+                    ui.button("Bỏ xem, làm bảng mới", icon="edit", on_click=_exit_readonly_view).props(
+                        "dense flat color=blue-8"
+                    )
+            elif mode == "locked":
+                with ui.row().classes(
+                    "w-full items-center gap-2 px-4 py-2.5 rounded-xl border border-amber-300 bg-amber-50 mb-2"
+                ):
+                    ui.icon("lock", color="amber-700").classes("text-lg")
+                    ui.label(
+                        "Ngày này đã \"Lưu bảng cuối\" — CHỐT, không ai sửa được nữa."
+                        + (f" Người lập bảng: {created_by_name}." if created_by_name else "")
+                    ).classes("text-sm text-amber-800 flex-1")
+                    ui.button("Bỏ xem, làm bảng mới", icon="edit", on_click=_exit_readonly_view).props(
+                        "dense flat color=amber-8"
+                    )
+                    if is_admin:
+                        ui.button("Mở khoá (Admin)", icon="lock_open", on_click=_admin_unlock).props(
+                            "dense outline color=red"
+                        )
+
+    async def _admin_unlock():
+        ngay = view_state["ngay_dang_xem"] or ngay_input.value
+        with ui.dialog() as dialog, ui.card():
+            ui.label(f"Mở khoá ngày {ngay}?").classes("text-base font-bold text-red-700")
+            ui.label(
+                "Ngày này sẽ về lại trạng thái BẢN TẠM — người lập bảng sửa/lưu tiếp được. "
+                "Chỉ dùng khi thật sự cần sửa lỗi nhập liệu sau khi đã chốt."
+            ).classes("text-sm text-gray-500")
+            with ui.row().classes("w-full justify-end gap-2 mt-3"):
+                ui.button("Huỷ", on_click=dialog.close).props("outline")
+
+                async def _confirm():
+                    dialog.close()
+                    try:
+                        await asyncio.to_thread(
+                            api.post, f"/api/doi-chieu-citad/session/{quote(ngay, safe='')}/unlock", {}
+                        )
+                    except Exception as e:
+                        if _handle_api_error(e):
+                            return
+                        ui.notify(f"Lỗi mở khoá: {e}", type="negative")
+                        return
+                    ui.notify(f"Đã mở khoá ngày {ngay}", type="positive")
+                    await _load_ngay_hien_hanh(ngay)
+                    if history_refresh.get("fn"):
+                        await history_refresh["fn"]()
+
+                ui.button("Xác nhận mở khoá", icon="lock_open", on_click=_confirm).classes(
+                    "bg-red-600 hover:bg-red-700 text-white rounded-lg"
+                )
+        dialog.open()
 
     def _exit_readonly_view():
-        """"Quay lại chỉnh sửa" trên banner chỉ-xem — xoá sạch form (giống
-        nút "Xoá") rồi mở khoá, sẵn sàng nhập mới cho hôm nay. do_reset()
-        không đụng ngay_input/lap_bang_input/kiem_soat_input nên tự set lại
-        3 ô đó ở đây."""
+        """Nút trên banner chỉ-xem/napas — xoá sạch form (giống nút "Xoá")
+        rồi chuyển hẳn sang chế độ 'edit' cho hôm nay, KHÔNG động gì tới bản
+        đang xem (bản tạm/bản cuối của người khác vẫn nguyên vẹn trong DB —
+        đây chỉ là xoá màn hình, không phải sửa/lưu đè). do_reset() không
+        đụng ngay_input/lap_bang_input/kiem_soat_input nên tự set lại 3 ô
+        đó ở đây."""
         do_reset()
         ngay_input.value = datetime.date.today().strftime('%d/%m/%Y')
         lap_bang_input.value = ""
         kiem_soat_input.value = ""
-        _set_form_readonly(False)
+        _apply_view_mode("edit")
         ui.notify("Đã thoát chế độ xem — sẵn sàng nhập mới", type="info")
 
     def get_session_payload() -> dict:
@@ -551,7 +629,17 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
         if not items:
             ui.notify("Chưa có dữ liệu CITAD. Dùng Extension trên trang CITAD!", type="warning")
             return
+        # napas_only (đang bổ sung vào bản tạm của NGƯỜI KHÁC): CHỈ được áp
+        # 2 item Napas/PSS-MDP — item 5 Cổng dù có trong buffer (vd người
+        # này lỡ quét nhầm trang cổng khác) cũng bỏ qua, không ghi vào
+        # data["gD"] (field đó bị khoá, có ghi cũng bị backend bỏ khi lưu —
+        # nhưng ghi ra màn hình rồi lại không lưu được thì gây hiểu nhầm).
+        # KHÔNG xoá buffer nếu còn item bị bỏ qua — người quét nhầm cổng vẫn
+        # còn nguyên item đó trong buffer của họ để dùng đúng lúc (creator),
+        # không mất trắng vì 1 lượt nạp Napas.
+        napas_only = view_state["mode"] == "napas_only"
         count = 0
+        skipped = 0
         for item in items:
             src = item.get("source", "")
             so_mon = item.get("soMon", 0)
@@ -575,6 +663,9 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
                 _set_input(inputs["pssmdpE"]["den_ih_t"], fmt(so_tien))
                 count += 1
                 continue
+            if napas_only:
+                skipped += 1
+                continue
             cong = int(item.get("cong", 0) or 0)
             loai = item.get("loai", "")
             chieu = item.get("chieu", "")
@@ -588,12 +679,16 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
                 _set_input(inputs["gE"][cong][tien][fk_m], fmt(so_mon))
                 _set_input(inputs["gE"][cong][tien][fk_t], fmt(so_tien))
                 count += 1
-        try:
-            await asyncio.to_thread(api.delete, "/api/doi-chieu-citad/citad-buffer")
-        except Exception:
-            pass
+        if skipped == 0:
+            try:
+                await asyncio.to_thread(api.delete, "/api/doi-chieu-citad/citad-buffer")
+            except Exception:
+                pass
         recalc()
-        ui.notify(f"Đã nạp {count} mục từ CITAD", type="positive")
+        msg = f"Đã nạp {count} mục từ CITAD"
+        if skipped:
+            msg += f" — bỏ qua {skipped} mục 5 Cổng (chỉ nạp được Napas/PSS-MDP ở đây)"
+        ui.notify(msg, type="positive" if count else "warning")
 
     async def load_phub_buffer():
         try:
@@ -606,7 +701,12 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
         if not items:
             ui.notify("Chưa có dữ liệu PaymentHub. Dùng Extension!", type="warning")
             return
+        # Xem ghi chú tương tự ở load_citad_buffer() — napas_only chỉ được
+        # áp 2 item Napas/PSS-MDP, item PaymentHub thường (dù có trong
+        # buffer) bỏ qua, không xoá buffer nếu còn item bị bỏ qua.
+        napas_only = view_state["mode"] == "napas_only"
         count = 0
+        skipped = 0
         for item in items:
             loai, chieu = item.get("loai", ""), item.get("chieu", "")
             tien = item.get("tien", "VNĐ")
@@ -626,6 +726,9 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
                 _set_input(inputs["pssmdpE"]["den_ih_t"], fmt(so_tien))
                 count += 1
                 continue
+            if napas_only:
+                skipped += 1
+                continue
             if tien not in CURS:
                 continue
             fk_m, fk_t = f"{chieu}_{loai}_m", f"{chieu}_{loai}_t"
@@ -635,59 +738,118 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
                 _set_input(inputs["phE"][tien][fk_m], fmt(so_mon))
                 _set_input(inputs["phE"][tien][fk_t], fmt(so_tien))
                 count += 1
-        try:
-            await asyncio.to_thread(api.delete, "/api/doi-chieu-citad/paymenthub-buffer")
-        except Exception:
-            pass
+        if skipped == 0:
+            try:
+                await asyncio.to_thread(api.delete, "/api/doi-chieu-citad/paymenthub-buffer")
+            except Exception:
+                pass
         recalc()
-        ui.notify(f"Đã nạp {count} mục từ PaymentHub", type="positive")
+        msg = f"Đã nạp {count} mục từ PaymentHub"
+        if skipped:
+            msg += f" — bỏ qua {skipped} mục (chỉ nạp được Napas/PSS-MDP ở đây)"
+        ui.notify(msg, type="positive" if count else "warning")
 
-    async def _save_session_now():
+    def _mode_for_meta(sess: dict) -> tuple[str, int | None, str]:
+        """Suy ra mode xem/sửa từ _meta_status/_meta_created_by(_username) —
+        xem session_get()/get_history_entry_data() trong service. Trả
+        (mode, created_by, created_by_name)."""
+        status = sess.get("_meta_status")
+        created_by = sess.get("_meta_created_by")
+        created_by_name = sess.get("_meta_created_by_username") or ""
+        if status == "final":
+            return "locked", created_by, created_by_name
+        if created_by and created_by != current_user.get("id"):
+            return "napas_only", created_by, created_by_name
+        return "edit", created_by, created_by_name
+
+    async def _load_ngay_hien_hanh(ngay: str):
+        """Tải bản HIỆN HÀNH (session_get — khác _load_history_entry() luôn
+        lấy đúng 1 dòng lịch sử cụ thể) của 1 ngày vào form, áp đúng mode
+        theo _meta_* — gọi sau khi Lưu hoặc sau khi Admin mở khoá để form
+        phản ánh đúng trạng thái mới nhất, không cần F5."""
         try:
-            await asyncio.to_thread(api.post, "/api/doi-chieu-citad/session", get_session_payload())
-            ui.notify(f"Đã lưu ngày {ngay_input.value}", type="positive")
+            sess = await asyncio.to_thread(api.get, f"/api/doi-chieu-citad/session/{quote(ngay, safe='')}")
+        except Exception as e:
+            if _handle_api_error(e):
+                return
+            ui.notify(f"Lỗi tải: {e}", type="negative")
+            return
+        if not sess:
+            _apply_view_mode("edit")
+            return
+        apply_session_data(sess)
+        view_state["ngay_dang_xem"] = ngay
+        mode, created_by, created_by_name = _mode_for_meta(sess)
+        _apply_view_mode(mode, created_by, created_by_name)
+
+    async def _save_session_now(status: str):
+        payload = get_session_payload()
+        payload["status"] = status
+        try:
+            await asyncio.to_thread(api.post, "/api/doi-chieu-citad/session", payload)
         except Exception as e:
             if _handle_api_error(e):
                 return
             ui.notify(f"Lỗi lưu: {e}", type="negative")
             return
+        ui.notify(
+            f"Đã lưu bản {'CUỐI' if status == 'final' else 'tạm'} ngày {ngay_input.value}", type="positive"
+        )
         if history_refresh.get("fn"):
             await history_refresh["fn"]()
+        # Tải lại đúng mode hiện hành — người lập bảng lưu tạm vẫn ở 'edit',
+        # người khác lưu tạm Napas vẫn ở 'napas_only', lưu bản cuối -> 'locked'.
+        await _load_ngay_hien_hanh(ngay_input.value)
 
-    def do_save_session():
-        # Phòng vệ thêm — nút "Lưu" đã ẩn khi readonly (_set_form_readonly),
+    def do_save_session(status: str):
+        # Phòng vệ thêm — nút tương ứng đã ẩn theo mode (_apply_view_mode),
         # chặn lại ở đây phòng còn đường nào bấm được nút ẩn (vd bàn phím).
-        if view_state["readonly"]:
-            ui.notify("Đang ở chế độ chỉ xem — bấm \"Quay lại chỉnh sửa\" trước khi lưu", type="warning")
+        if view_state["mode"] == "locked":
+            ui.notify("Ngày này đã chốt bảng cuối — không lưu được nữa", type="warning")
             return
-        # Lưu giờ ghi đè bản CHUNG của cả phòng cho ngày này (xem docstring
-        # session_save trong service) — xác nhận trước khi ghi đè, tránh bấm
-        # nhầm mất số liệu người khác vừa nhập.
+        if status == "final" and view_state["mode"] == "napas_only":
+            ui.notify("Chỉ người lập bảng mới được \"Lưu bảng cuối\"", type="warning")
+            return
+        is_final = status == "final"
         with ui.dialog() as dialog, ui.card():
-            ui.label(f"Xác nhận lưu đối chiếu ngày {ngay_input.value}?").classes("text-base font-bold")
-            ui.label(
-                "Đây là bản CHUNG của cả phòng cho ngày này — lưu sẽ GHI ĐÈ số liệu hiện "
-                "có (nếu người khác đã lưu trước). Bản cũ vẫn xem lại được trong \"Lịch sử "
-                "đối chiếu\"."
-            ).classes("text-sm text-gray-500")
+            if is_final:
+                ui.label(f"CHỐT bảng cuối ngày {ngay_input.value}?").classes(
+                    "text-base font-bold text-red-700"
+                )
+                ui.label(
+                    "Sau khi chốt, KHÔNG AI sửa được nữa (kể cả bạn) — chỉ Admin mở khoá lại "
+                    "được. Kiểm tra kỹ số liệu trước khi xác nhận."
+                ).classes("text-sm text-gray-500")
+            else:
+                ui.label(f"Lưu bảng tạm ngày {ngay_input.value}?").classes("text-base font-bold")
+                ui.label(
+                    "Bảng tạm — người khác trong phòng vẫn vào được (qua tab \"Lịch sử\") để bổ "
+                    "sung riêng Napas/PSS-MDP. Bấm \"Lưu bảng cuối\" khi đã chấm xong hẳn để chốt."
+                ).classes("text-sm text-gray-500")
             with ui.row().classes("w-full justify-end gap-2 mt-3"):
                 ui.button("Huỷ", on_click=dialog.close).props("outline")
 
                 async def _confirm():
                     dialog.close()
-                    await _save_session_now()
+                    await _save_session_now(status)
 
-                ui.button("Xác nhận lưu", icon="save", on_click=_confirm).classes(
-                    "bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg"
+                ui.button(
+                    "Xác nhận chốt bảng cuối" if is_final else "Xác nhận lưu bảng tạm",
+                    icon="save",
+                    on_click=_confirm,
+                ).classes(
+                    ("bg-red-600 hover:bg-red-700" if is_final else "bg-emerald-600 hover:bg-emerald-700")
+                    + " text-white rounded-lg"
                 )
         dialog.open()
 
     async def _load_history_entry(history_id: int, ngay_hien_thi: str):
         """Tải đúng số liệu của 1 lần lưu cụ thể (không phải bản hiện hành)
-        vào form CHỈ ĐỂ XEM — khoá sửa/lưu ngay sau khi nạp (yêu cầu nghiệp
-        vụ: Lịch sử không được sửa nội dung đã chấm), rồi chuyển sang tab
-        "Đối chiếu" để xem. Bấm "Quay lại chỉnh sửa" trên banner mới mở
-        khoá lại được (xem _exit_readonly_view)."""
+        vào form, áp đúng mode theo _meta_* của bản đó (xem _mode_for_meta):
+        bản CUỐI luôn 'locked' (chỉ xem); bản TẠM thì 'edit' nếu đúng người
+        lập bảng, 'napas_only' nếu người khác — không còn ép readonly toàn
+        bộ như trước, để đúng yêu cầu cho phép người khác bổ sung Napas/
+        PSS-MDP vào bản tạm qua Lịch sử."""
         try:
             sess = await asyncio.to_thread(api.get, f"/api/doi-chieu-citad/history-entry/{history_id}")
         except Exception as e:
@@ -696,9 +858,49 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
             ui.notify(f"Lỗi tải bản lịch sử: {e}", type="negative")
             return
         apply_session_data(sess)
-        _set_form_readonly(True)
+        view_state["ngay_dang_xem"] = ngay_hien_thi
+        mode, created_by, created_by_name = _mode_for_meta(sess)
+        _apply_view_mode(mode, created_by, created_by_name)
         tabs.set_value(tab_doi_chieu)
-        ui.notify(f"Đang xem bản lịch sử (chỉ đọc) — ngày {ngay_hien_thi}", type="positive")
+        msg = {
+            "edit": "Đang xem bảng tạm của bạn — sửa/lưu tiếp được",
+            "napas_only": f"Đang xem bảng tạm của {created_by_name} — chỉ bổ sung được Napas/PSS-MDP",
+            "locked": "Đang xem bảng đã chốt (chỉ đọc)",
+        }.get(mode, "Đang xem")
+        ui.notify(f"{msg} — ngày {ngay_hien_thi}", type="positive")
+
+    async def _show_edit_log(history_id: int):
+        """Dialog liệt kê MỌI người đã lưu góp phần vào dòng lịch sử này, kèm
+        thời gian — kể cả những lần lưu tạm bị gộp không có dòng lịch sử
+        riêng (xem get_history_edits() ở service)."""
+        try:
+            edits = await asyncio.to_thread(
+                api.get, f"/api/doi-chieu-citad/history-entry/{history_id}/edits"
+            )
+        except Exception as e:
+            if _handle_api_error(e):
+                return
+            ui.notify(f"Lỗi tải nhật ký sửa: {e}", type="negative")
+            return
+        with ui.dialog() as dialog, ui.card().classes("w-full max-w-md"):
+            ui.label("Nhật ký sửa bảng tạm").classes("text-lg font-bold text-red-900")
+            if not edits:
+                ui.label("Chưa có dữ liệu.").classes("text-sm text-gray-500 py-2")
+            else:
+                with ui.column().classes("w-full gap-0 border border-gray-200 rounded-lg overflow-hidden mt-2"):
+                    for i, e in enumerate(edits, start=1):
+                        with ui.row().classes(
+                            "w-full items-center gap-2 px-3 py-2"
+                            + ("" if i == len(edits) else " border-b border-gray-100")
+                        ):
+                            ui.label(str(i)).classes("text-xs text-gray-400 w-5")
+                            with ui.column().classes("flex-grow gap-0"):
+                                ui.label(e.get("full_name") or e["username"]).classes("text-sm font-medium")
+                                ui.label(e["username"]).classes("text-xs text-gray-400")
+                            ui.label(e["created_at"]).classes("text-xs text-gray-500")
+            with ui.row().classes("w-full justify-end mt-3"):
+                ui.button("Đóng", on_click=dialog.close).props("flat")
+        dialog.open()
 
     def _render_history_entries(container, ngay: str, entries: list):
         """Danh sách từng lần lưu của 1 ngày — dùng chung cho tab Lịch sử
@@ -720,8 +922,16 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
                             "text-sm font-bold flex-grow border-r border-gray-200 pr-2 mr-2"
                         )
                         ui.label(r["created_at"]).classes("text-xs text-gray-400 border-r border-gray-200 pr-2 mr-2")
+                        if r.get("status") == "final":
+                            ui.badge("Chính thức").props('color="positive"').classes("mr-2")
+                        else:
+                            ui.badge("Tạm").props('color="grey-7"').classes("mr-2")
                         if is_last:
-                            ui.badge("Bản hiện hành").props('color="positive"').classes("mr-2")
+                            ui.badge("Bản hiện hành").props('color="primary"').classes("mr-2")
+                        ui.button(
+                            icon="group",
+                            on_click=lambda _, hid=r["id"]: _show_edit_log(hid),
+                        ).props("flat dense round size=sm color=red-8").tooltip("Ai đã sửa bảng tạm này")
                         ui.button(
                             icon="download",
                             on_click=lambda _, hid=r["id"], ng=ngay: _load_history_entry(hid, ng),
@@ -786,7 +996,7 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
                         "text-xs font-semibold text-white"
                     ):
                         ui.label("Ngày").classes("w-28 border-r border-white/30 pr-2 mr-2")
-                        ui.label("Người lưu sau cùng").classes("w-44 border-r border-white/30 pr-2 mr-2")
+                        ui.label("User chấm đối chiếu").classes("w-44 border-r border-white/30 pr-2 mr-2")
                         ui.label("Số lần lưu").classes("w-24 text-center border-r border-white/30 pr-2 mr-2")
                         ui.label("Cập nhật lúc").classes("flex-1")
                     for i, r in enumerate(rows, start=1):
@@ -794,7 +1004,7 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
 
         def _day_row(r: dict, is_last: bool):
             ngay = r["ngay"]
-            nguoi_hien_thi = r.get("updated_by_name") or r["updated_by_username"] or "—"
+            nguoi_hien_thi = r.get("created_by_name") or r["created_by_username"] or "—"
             expanded = {"open": False}
             with ui.column().classes("w-full" + ("" if is_last else " border-b border-gray-200")):
                 with ui.row().classes(
@@ -879,7 +1089,7 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
         # Xem trước ĐẦY ĐỦ đúng các dòng sẽ có trong file Excel tải về (khớp
         # từng dòng với doi_chieu_citad_service.py::build_xlsx: Payment theo
         # từng loại tiền, CITAD tổng, từng Cổng × loại tiền, Napas, PSS - MDP,
-        # Ebanking, Chênh lệch) — không chỉ 3 dòng tóm tắt như trước, để người dùng
+        # Chênh lệch) — không chỉ 3 dòng tóm tắt như trước, để người dùng
         # soát được đúng số liệu chi tiết trước khi tải, giống hệt thứ tự
         # trong Excel (chỉ khác: header ở đây 1 tầng thay vì 3 tầng gộp ô
         # "LỆNH ĐI/LỆNH ĐẾN" như Excel — tên cột ĐI/ĐẾN IH/IL Món/Tiền đã
@@ -907,7 +1117,6 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
                 _add_row(f"Cổng {cong}" if i == 0 else "", cur, [data["gD"][cong][cur][f] for f in FK])
         _add_row("Napas", "", [0, 0, 0, 0, data["napas"]["den_ih_m"], data["napas"]["den_ih_t"], 0, 0])
         _add_row("PSS - MDP", "", [0, 0, 0, 0, data["pssmdp"]["den_ih_m"], data["pssmdp"]["den_ih_t"], 0, 0])
-        _add_row("Ebanking", "", [0, 0, 0, 0, data["ebank"]["den_ih_m"], data["ebank"]["den_ih_t"], 0, 0])
         diff_row = {"id": len(rows), "label": "CHÊNH LỆCH", "cur": ""}
         for fk in FK:
             diff_row[fk] = diff_labels["diff"][fk].text  # tái dùng text đã tính sẵn, luôn khớp trang
@@ -1187,36 +1396,40 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
                         ui.timer(0.1, _check_extension_update, once=True)
 
                     with ui.row().classes(
-                        "w-full items-end gap-3 flex-wrap mb-2 bg-white rounded-2xl "
-                        "border border-gray-200 shadow-sm p-4"
+                        "w-full items-end gap-3 flex-wrap mb-2 bg-red-50 rounded-2xl "
+                        "border-2 border-red-800 shadow-sm p-4"
                     ):
                         ngay_input = _date_picker_input("Ngày")
                         lap_bang_input = ui.input("Lập bảng").props("dense outlined").classes("w-48")
                         kiem_soat_input = ui.input("Kiểm soát").props("dense outlined").classes("w-48")
                         btn_nap_citad = ui.button("Nạp CITAD", icon="cloud_download", on_click=load_citad_buffer).props("outline").classes("rounded-lg")
                         btn_nap_ph = ui.button("Nạp PaymentHub", icon="cloud_download", on_click=load_phub_buffer).props("outline").classes("rounded-lg")
-                        btn_luu = ui.button("Lưu", icon="save", on_click=do_save_session).classes(
-                            "bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg"
-                        )
+                        btn_luu_tam = ui.button(
+                            "Lưu bảng tạm", icon="save", on_click=lambda: do_save_session("draft")
+                        ).classes("bg-sky-600 hover:bg-sky-700 text-white rounded-lg")
+                        # `.classes("bg-red-600 ...")` KHÔNG đủ — xác nhận thực tế bằng
+                        # devtools: NiceGUI/Quasar tự thêm sẵn "bg-primary" cho MỌI
+                        # ui.button() không khai color/flat/outline, mà `.bg-primary
+                        # { background: var(--q-primary) !important; }` — !important
+                        # luôn thắng class Tailwind thường bất kể thứ tự, nên trước đây
+                        # nút này (và hoá ra CẢ những nút màu khác cùng kiểu trong
+                        # trang, kể cả nút "Xuất Excel" có sẵn từ trước) đều hiện màu
+                        # xanh mặc định của Quasar chứ không phải màu Tailwind đã khai.
+                        # Dùng prop `color` CỦA QUASAR thay vì Tailwind class — đổi
+                        # hẳn class Quasar tự thêm (bg-red thay vì bg-primary) nên
+                        # không còn gì để !important đọ nữa.
+                        btn_luu_cuoi = ui.button(
+                            "Lưu bảng cuối", icon="lock", on_click=lambda: do_save_session("final")
+                        ).props("color=red").classes("rounded-lg")
                         btn_xoa = ui.button("Xoá", icon="delete", on_click=do_reset).props("outline color=red").classes("rounded-lg")
                         ui.button("Xuất Excel", icon="grid_on", on_click=do_export).classes(
                             "bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg"
                         )
 
-                    # Banner "chỉ xem" — hiện khi đang xem 1 bản tải từ Lịch sử
-                    # (xem _load_history_entry/_set_form_readonly), ẩn mặc định.
-                    with ui.row().classes(
-                        "w-full items-center gap-2 px-4 py-2.5 rounded-xl border border-amber-300 "
-                        "bg-amber-50 mb-2"
-                    ) as readonly_banner:
-                        ui.icon("visibility", color="amber-700").classes("text-lg")
-                        ui.label(
-                            "Đang xem bản Lịch sử (chỉ đọc) — không sửa/lưu đè được nội dung đã chấm."
-                        ).classes("text-sm text-amber-800 flex-1")
-                        ui.button("Quay lại chỉnh sửa", icon="edit", on_click=_exit_readonly_view).props(
-                            "dense flat color=amber-8"
-                        )
-                    readonly_banner.set_visibility(False)
+                    # Banner trạng thái — nội dung dựng ĐỘNG theo mode trong
+                    # _apply_view_mode() (rỗng/ẩn khi mode='edit' của chính
+                    # mình), thay cho banner tĩnh cố định trước đây.
+                    banner_area = ui.column().classes("w-full gap-0")
 
                     # "Bảng chênh lệch" đặt NGAY ĐẦU (trước PaymentHub/CITAD/Napas)
                     # theo yêu cầu — đây là bảng người dùng cần nhìn trước tiên khi
@@ -1269,7 +1482,7 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
 
                     with _section_card("Napas / PSS - MDP (bổ sung)", icon="add_card", accent="amber",
                                        outer_border="border-2 border-red-800"):
-                        build_napas_ebank_grid(ui.column().classes("w-full"))
+                        build_napas_pssmdp_grid(ui.column().classes("w-full"))
 
                     recalc()
 

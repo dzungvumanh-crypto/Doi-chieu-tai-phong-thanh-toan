@@ -58,8 +58,29 @@ def run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows):
                   < PRIORITY_DI.get(ipcas_di_map[k]['trang_thai'], 9)):
                 ipcas_di_map[k] = r
         else:
-            k = r['txid']
-            if not k:
+            # Khoá (txid, loai, so_tien) chứ KHÔNG chỉ txid — xác nhận thực
+            # tế (dữ liệu thật 19/08/2026): IPCAS dùng CHUNG 1 txid cho
+            # nhiều dòng KHÁC NHAU trong cùng phiên/lô (vd lệnh IH giá trị
+            # cao Napas/PSS-MDP trùng túi với hàng loạt dòng IL giá trị
+            # thấp không liên quan). Trước đây chỉ khoá theo txid: dòng IL
+            # trạng thái PYED/PYEK (ưu tiên PRIORITY_TT cao hơn SBSC) ĐÈ MẤT
+            # dòng IH SBSC thật, rồi dòng IL "thắng" đó lại bị vòng lặp
+            # "IPCAS Đến dư" loại vì đúng PYED/PYEK — hậu quả: lệnh
+            # Napas/PSS-MDP thật biến mất khỏi báo cáo lệch dù CITAD hoàn
+            # toàn không có, không phải "khớp" thật.
+            #
+            # Thêm `loai` vẫn CHƯA đủ: đã gặp thật 2 dòng CÙNG txid CÙNG
+            # loai (vd mã 10006020 — 1 dòng SBSC số tiền thật, 1 dòng PYED
+            # số tiền khác hẳn, không liên quan) — PYED vẫn thắng theo
+            # PRIORITY_TT, đè mất dòng SBSC đúng. Thêm `so_tien` vào khoá để
+            # AN TOÀN HƠN: 2 dòng chỉ thật sự "cùng 1 lệnh" khi khớp CẢ 3
+            # (txid, loai, so_tien) — khác số tiền thì tách thành 2 lệnh độc
+            # lập, không còn đè lẫn nhau nữa. Tác dụng phụ có lợi: CITAD và
+            # IPCAS cùng txid+loai nhưng LỆCH số tiền (dữ liệu sai thật) giờ
+            # không còn bị tính nhầm là "khớp" — sẽ tự hiện ra ở cả 2 nhóm
+            # "chỉ CITAD"/"chỉ IPCAS" thay vì bị nuốt im lặng.
+            k = (r['txid'], r['loai'], r['so_tien'])
+            if not r['txid']:
                 continue
             if k not in ipcas_den_map:
                 ipcas_den_map[k] = r
@@ -83,6 +104,12 @@ def run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows):
 
     n_khop = 0
     lech = []
+    # Dòng lệnh ĐÃ khớp — trước đây chỉ đếm (n_khop), không giữ chi tiết
+    # từng dòng, vì màn hình chỉ cần hiện SỐ khớp. Giữ lại đây để phục vụ
+    # "Xuất tất cả lệnh" (xem doi_soat_citad.py API/frontend) — cùng cấu
+    # trúc dict với `lech` (status='both') để exporters.py dùng chung 1
+    # hàm vẽ Excel cho cả 2 loại dòng.
+    khop = []
     citad_matched_di = set()
     citad_matched_den = set()
 
@@ -114,6 +141,10 @@ def run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows):
             m = hub_di_map.get(sogd) if chieu == 'di' else hub_den_map.get(sogd)
             if m:
                 n_khop += 1
+                khop.append({
+                    **r, 'status': 'both', 'key_agri': m.get('so_gd', sogd),
+                    'nh_nhan': m.get('nh_nhan', ''), 'trang_thai': '',
+                })
                 if chieu == 'di':
                     citad_matched_di.add(sogd)
                 else:
@@ -140,6 +171,10 @@ def run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows):
                 if tt in VALID_DI:
                     # Khớp hoàn toàn
                     n_khop += 1
+                    khop.append({
+                        **r, 'status': 'both', 'key_agri': m.get('msgref', sogd),
+                        'nh_nhan': m.get('nh_nhan', ''), 'trang_thai': tt,
+                    })
                 else:
                     # Có ở cả 2 bên nhưng IPCAS chưa SCNL → lệch trạng thái
                     row = {
@@ -159,11 +194,20 @@ def run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows):
                 lech.append({**r, 'status': 'only_citad', 'key_agri': '', 'nh_nhan': '', 'trang_thai': ''})
 
         else:
-            # VND Đến: giữ nguyên như cũ, không check trạng thái
-            m = ipcas_den_map.get(sogd)
+            # VND Đến: giữ nguyên như cũ, không check trạng thái — khoá tra
+            # cứu (sogd, loai, so_tien) khớp đúng cách build ipcas_den_map()
+            # ở trên. Lệch số tiền dù trùng so_gd/txid+loai giờ KHÔNG còn
+            # tính khớp nhầm — rơi xuống nhánh else, tự hiện ra ở nhóm "chỉ
+            # CITAD" (và phía IPCAS tương ứng hiện ở "chỉ IPCAS" vì không
+            # dòng CITAD nào khớp đúng khoá của nó).
+            m = ipcas_den_map.get((sogd, r['loai'], r['so_tien']))
             if m:
                 n_khop += 1
-                citad_matched_den.add(sogd)
+                khop.append({
+                    **r, 'status': 'both', 'key_agri': m.get('txid', sogd),
+                    'nh_nhan': m.get('nh_nhan', ''), 'trang_thai': m.get('trang_thai', ''),
+                })
+                citad_matched_den.add((sogd, r['loai'], r['so_tien']))
             else:
                 lech.append({**r, 'status': 'only_citad', 'key_agri': '', 'nh_nhan': '', 'trang_thai': ''})
 
@@ -180,16 +224,19 @@ def run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows):
                 'key_agri': k, 'nh_nhan': r.get('nh_nhan', ''), 'trang_thai': r.get('trang_thai', ''),
             })
 
-    # IPCAS Đến dư - bỏ PYED/PYEK
+    # IPCAS Đến dư - bỏ PYED/PYEK — k giờ là tuple (txid, loai, so_tien),
+    # xem ghi_chú build ipcas_den_map() ở trên; 'so_gd'/'key_agri' xuất ra
+    # báo cáo vẫn chỉ cần phần txid (k[0]), 'loai'/'so_tien' lấy thẳng từ r
+    # cho đúng.
     for k, r in ipcas_den_map.items():
         if r.get('trang_thai') in ('PYED', 'PYEK'):
             continue
         if k not in citad_matched_den:
             lech.append({
-                'so_gd': k, 'dich_vu': r.get('kenh', ''), 'loai': r.get('loai', ''),
+                'so_gd': k[0], 'dich_vu': r.get('kenh', ''), 'loai': r.get('loai', ''),
                 'chieu': 'den', 'loai_tien': 'VND', 'so_tien': r.get('so_tien', 0),
                 'ngay': r.get('ngay', ''), 'status': 'only_ipcas',
-                'key_agri': k, 'nh_nhan': r.get('nh_nhan', ''), 'trang_thai': r.get('trang_thai', ''),
+                'key_agri': k[0], 'nh_nhan': r.get('nh_nhan', ''), 'trang_thai': r.get('trang_thai', ''),
             })
 
     # Hub dư
@@ -200,4 +247,4 @@ def run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows):
         if k not in citad_matched_den:
             lech.append({**r, 'so_gd': k, 'status': 'only_hub', 'key_agri': k, 'trang_thai': ''})
 
-    return n_khop, lech
+    return n_khop, lech, khop

@@ -1004,6 +1004,39 @@ def _ensure_indexes():
         # còn dòng nào khớp nên vô hại — không cần dò sqlite_master như khối vá bảng.
         """UPDATE attendances SET source_leave_id = NULL
            WHERE status IN ('confirmed','adjusted') AND source_leave_id IS NOT NULL""",
+
+        # ── Đối chiếu CITAD — Lưu bản tạm / Lưu bản cuối — 2026-08-20 ─────────
+        # `status`: 'draft' (bản tạm — người KHÁC người lập bảng vẫn vào được để
+        # nạp riêng Napas/PSS-MDP qua Extension) | 'final' (bản cuối — CHỐT,
+        # không ai sửa được nữa kể cả người lập bảng, chỉ Admin mở khoá qua
+        # endpoint riêng). Default 'final' để dữ liệu CŨ (lưu trước khi có tính
+        # năng này, qua nút "Lưu" duy nhất) coi như đã chốt sẵn — không tự
+        # nhiên biến thành bản tạm ai cũng sửa Napas được.
+        # `created_by`: người lập bảng — người ĐẦU TIÊN lưu ngày đó, cố định
+        # suốt vòng đời bản ghi (không đổi theo `updated_by`, vốn là người lưu
+        # SAU CÙNG — 2 khái niệm khác nhau, cần tách riêng để biết ai được sửa
+        # đủ mọi trường, ai chỉ được nạp Napas/PSS-MDP). Backfill từ
+        # `updated_by` cho dữ liệu cũ — không có thông tin ai lập bảng thật sự
+        # trước đây, đây là ước lượng hợp lý nhất có thể.
+        "ALTER TABLE doi_chieu_citad_sessions ADD COLUMN status TEXT NOT NULL DEFAULT 'final'",
+        "ALTER TABLE doi_chieu_citad_sessions ADD COLUMN created_by INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL",
+        "UPDATE doi_chieu_citad_sessions SET created_by = updated_by WHERE created_by IS NULL",
+        "ALTER TABLE doi_chieu_citad_history ADD COLUMN status TEXT NOT NULL DEFAULT 'final'",
+
+        # ── Đối chiếu CITAD — nhật ký từng lượt sửa bảng tạm — 2026-08-21 ─────
+        # Các lần "Lưu bảng tạm" LIÊN TIẾP gộp vào CHUNG 1 dòng
+        # doi_chieu_citad_history (UPDATE tại chỗ, tránh phình Lịch sử — xem
+        # docstring session_save()), nên dòng lịch sử đó không còn giữ dấu vết
+        # từng người đã góp phần sửa. Bảng riêng này ghi lại MỌI lần lưu,
+        # không gộp, gắn theo history_id của dòng đang đại diện cho bản ghi đó
+        # — phục vụ icon "Ai đã sửa bảng tạm này" trên tab Lịch sử.
+        """CREATE TABLE IF NOT EXISTS doi_chieu_citad_history_edits (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            history_id  INTEGER NOT NULL REFERENCES doi_chieu_citad_history(id) ON DELETE CASCADE,
+            staff_id    INTEGER NOT NULL REFERENCES user_tttt(id) ON DELETE CASCADE,
+            created_at  DATETIME NOT NULL
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_doi_chieu_citad_history_edits_history_id ON doi_chieu_citad_history_edits(history_id)",
     ]
     _mig_log = logging.getLogger(__name__)
 

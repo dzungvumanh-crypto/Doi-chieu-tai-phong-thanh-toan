@@ -67,6 +67,20 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
     + Chưa sửa (mức nhẹ, đã ghi lại): nâng cấp một số thư viện cũ; mã kết nối Extension CITAD chưa có hạn dùng; mật khẩu dài quá 72 ký tự bị cắt âm thầm
     + Toàn bộ **583 test** chạy đạt (thêm 16 test mới khoá lại đúng các lỗ hổng vừa vá)
 
+- 20/08/2026 Đối soát CITAD↔IPCAS - **Sửa 2 lỗi làm mất/nhầm lệnh Napas-PSS_MDP khi đối soát, thêm nút "Xuất tất cả lệnh"**:
+    + ⚠️ **Lỗi thật, gây sai số liệu**: file Hub (PaymentHub) chứa lệnh Napas/PSS-MDP bị **đọc ra 0 dòng hoàn toàn, không báo lỗi gì** — dòng "Tổng số giao dịch:N" đầu file bị nhận nhầm thành dòng tiêu đề cột, khiến cả sheet bị bỏ qua. Đã xác nhận thực tế bằng dữ liệu ngày 19/08/2026: 12 lệnh Napas/PSS-MDP đúng ra phải báo "chênh lệch" (vì cố tình không nạp vào CITAD) thì bị mất trắng, không hiện ở đâu cả trong báo cáo
+    + ⚠️ **Lỗi thứ 2 liên quan**: khi sửa xong lỗi trên, phát hiện thêm — mã "Số thành công" (txid) bên IPCAS **dùng chung cho nhiều lệnh khác nhau** trong cùng 1 phiên (lệnh giá trị cao Napas trùng túi với hàng loạt lệnh giá trị thấp không liên quan). Trước đây chỉ so khớp theo txid nên lệnh giá trị thấp "đè mất" lệnh Napas thật khi trùng mã — đã sửa: so khớp thêm theo loại kênh (IH/IL) **và** số tiền, chỉ khi khớp đủ cả 3 mới coi là cùng 1 lệnh. Số lệnh khớp không đổi, chỉ những lệnh THẬT SỰ lệch mới hiện đúng, đủ
+    + **Xuất Excel giờ có thêm nút "Xuất tất cả lệnh"** — trước đây chỉ xuất được các lệnh lệch, nay xuất được ĐỦ cả lệnh khớp lẫn lệch trong 1 file, map đúng từng cặp CITAD ↔ Agribank theo hàng, lệch đẩy lên đầu bảng và bôi vàng để dễ nhìn. File có thể tới ~38.000 dòng nhưng xuất chỉ mất khoảng 6 giây (đã tối ưu riêng, không ảnh hưởng gì tới nút "Xuất Excel" chênh lệch cũ)
+    + **Chống treo khi xuất file lớn**: nút xuất nay **khoá lại và quay vòng** trong lúc chờ, không còn cảnh bấm xong không thấy gì nhúc nhích rồi bấm lại nhiều lần (mỗi lượt bấm lại chiếm thêm một suất xử lý nặng của máy chủ, tự làm chính mình chậm thêm). Thời gian chờ tối đa cho nút "Xuất tất cả lệnh" nâng từ 1 phút lên 5 phút để phòng lúc nhiều người cùng xuất. Riêng phần sinh file đã rút từ **21 giây xuống ~6 giây**, nên cũng đỡ chiếm chỗ của các việc nặng khác đang chạy cùng lúc (in bìa, sinh đơn nghỉ phép...)
+    + Đổi tên cột "Key Agribank" thành **"Số GD (Agribank)"** cho rõ nghĩa — cả màn hình chấm, tab Lịch sử, lẫn file Excel xuất ra
+    + **5 lỗi nhỏ khác phát hiện khi rà soát cùng đợt, đã sửa**: file CITAD đuôi lạ nay báo lỗi rõ thay vì bỏ qua im lặng; cột ngày IPCAS đọc sai khi tên ngân hàng có dấu phẩy; khoá so khớp file Hub-CITAD không khớp được nếu mã có lẫn chữ cái; lỗi đọc ô Excel nay có ghi log thay vì nuốt hoàn toàn; nhãn trạng thái ở màn hình và file Excel dùng chung 1 nguồn thay vì 2 bản chép tay dễ lệch nhau
+    + Toàn bộ thay đổi đã kiểm chứng lại bằng đúng bộ dữ liệu thật (CITAD + IPCAS + Hub ngày 19/08/2026) — số liệu khớp/lệch không đổi so với trước khi sửa các lỗi nhỏ, chỉ có 2 lỗi lớn ở trên là thay đổi số liệu (theo hướng ĐÚNG hơn — hiện ra chênh lệch thật trước đây bị giấu mất)
+
+- 20/08/2026 Đối chiếu CITAD - **Bỏ nốt dòng "Ebanking" khỏi file Excel xuất ra**:
+    + Đợt 14/08 đã bỏ ô nhập Ebanking khỏi màn hình (kênh này không còn dùng) nhưng **sót**: dòng "Ebanking" vẫn được in ra trong file Excel tải về và trong bảng xem trước khi xuất — nay bỏ luôn cả hai chỗ, đồng bộ với màn hình
+    + Không đổi số liệu Chênh lệch — dòng Ebanking từ trước tới nay vốn **không được cộng** vào tổng CITAD (chỉ in ra tham khảo), nên bỏ dòng không ảnh hưởng con số báo cáo
+    + Số liệu Ebanking của các ngày đã chấm trước đây vẫn nằm nguyên trong dữ liệu đã lưu, chỉ không còn hiện/in ra đâu nữa
+
 - 19/08/2026 Chấm đối chiếu ACH - **Sự cố "Mất kết nối tới máy chủ"**
     + ⚠️ **Chạy lại khi lượt trước chưa dừng hẳn nay bị chặn.** Đây chính là lý do lần 2 không phản hồi: màn hình bỏ cuộc **không có nghĩa là máy chủ đã dừng** — lượt 1 vẫn chạy tiếp, bấm chạy lượt 2 là **hai lượt đối chiếu cùng lúc** trên một máy đã đuối. Nay phần mềm hỏi lại máy chủ trước, còn lượt cũ thì báo rõ và yêu cầu bấm **Dừng** trước
     + **Nút *Dừng* nay ở lại trên màn hình khi mất liên lạc** (trước đây tự ẩn đi). Ẩn nút đó là cắt mất đường duy nhất để dừng lượt chạy cũ đang chiếm máy
@@ -187,7 +201,7 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
     + **Bảng Napas / PSS-MDP vẫn sửa tay bình thường** — không nằm trong diện khoá
     + **Tab *Lịch sử* chuyển thành chỉ xem** — mở một bản đã chấm ra xem thì không sửa hay lưu đè được. Bấm *Quay lại chỉnh sửa* để thoát chế độ xem và nhập mới cho hôm nay
     + **Thêm cách lấy Napas/PSS-MDP thứ hai**: quét thẳng từ trang CITAD *Kiểm soát yêu cầu quyết toán lô đến* (Cổng 1), song song cách cũ qua PaymentHub. Dùng nguồn nào cũng được, không xung đột
-    + **Ô nhập Ebanking đã bỏ khỏi màn hình** — số liệu Ebanking của các ngày đã lưu trước đây **vẫn giữ nguyên**, vẫn xuất ra Excel đầy đủ, chỉ là không nhập mới được nữa
+    + **Ô nhập Ebanking đã bỏ khỏi màn hình** — số liệu Ebanking của các ngày đã lưu trước đây **vẫn giữ nguyên**, vẫn xuất ra Excel đầy đủ, chỉ là không nhập mới được nữa. ⚠️ **Phần "vẫn xuất ra Excel" nay không còn đúng**: dòng Ebanking đã bỏ nốt khỏi file Excel ngày 20/08/2026 — xem entry đầu file
     + Giao diện: bảng chênh lệch đưa lên đầu trang, tách riêng hai khung *LỆNH ĐI* / *LỆNH ĐẾN*, ô đã có số liệu đậm nền hồng cho dễ nhìn, và một số chỉnh về viền/khoảng cách
     + ⚠️ **Phải tải lại `.zip` và cài lại Extension (bản 2.17)** — vào `/doi_chieu_citad` → **Tải Extension**, giải nén, *Load unpacked* lại. Không cài lại thì nút *Nạp CITAD* không lấy được Napas/PSS-MDP từ nguồn mới
 

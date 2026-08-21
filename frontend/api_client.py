@@ -305,10 +305,19 @@ def post_upload(path: str, files, data: dict = None, timeout: float = None) -> A
         raise Exception(str(e))
 
 
-def post_download(path: str, data: dict = None) -> bytes:
-    """POST với JSON body, nhận bytes (Excel/Word)."""
+def post_download(path: str, data: dict = None, timeout: float = None) -> bytes:
+    """POST với JSON body, nhận bytes (Excel/Word).
+
+    timeout=None giữ mặc định 60s của _download_client; truyền số lớn hơn cho
+    endpoint sinh file rất lớn. Cùng khuôn mẫu với post_upload() phía trên —
+    nút "Xuất tất cả lệnh" (doi_soat_citad) có thể xuất tới ~38.000 dòng và
+    còn phải xếp hàng chờ suất run_heavy() dùng chung cả backend, nên 60s
+    mặc định là quá sát.
+    """
     try:
-        r = _download_client.post(f"{BACKEND_URL}{path}", headers=_headers(), json=data or {})
+        kw = {"timeout": timeout} if timeout is not None else {}
+        r = _download_client.post(f"{BACKEND_URL}{path}", headers=_headers(),
+                                  json=data or {}, **kw)
         r.raise_for_status()
         return r.content
     except httpx.HTTPStatusError as e:

@@ -15,11 +15,14 @@ from __future__ import annotations
 
 import csv
 import datetime
+import logging
 import os
 import re
 import shutil
 import tempfile
 import zipfile
+
+logger = logging.getLogger(__name__)
 
 try:
     import xlrd
@@ -43,7 +46,13 @@ class _XlrdWs:
         try:
             v = self._ws.cell_value(row, col)
             return v if v is not None else ''
-        except Exception:
+        except Exception as e:
+            # Nuốt lỗi CÓ CHỦ Ý (parse không được phép chết vì 1 ô lỗi) —
+            # nhưng phải log, không im lặng hoàn toàn: đúng lớp lỗi mà
+            # docstring đầu file kể lại đã từng gây "mọi file .xlsx ra 0
+            # dòng, không báo lỗi gì" (nguyên nhân cụ thể đã sửa, nhưng cơ
+            # chế nuốt lỗi này có thể che giấu nguyên nhân KHÁC y hệt).
+            logger.warning("Lỗi đọc ô CITAD (dòng %s, cột %s): %s", row, col, e)
             return ''
 
 
@@ -58,7 +67,10 @@ class _OpenpyxlWs:
         try:
             v = self._ws.cell(row=row + 1, column=col + 1).value
             return v if v is not None else ''
-        except Exception:
+        except Exception as e:
+            # Xem ghi chú ở _XlrdWs.cell_value() — nuốt lỗi có chủ ý nhưng
+            # phải log để không tái diễn lớp lỗi "0 dòng không rõ lý do".
+            logger.warning("Lỗi đọc ô CITAD (dòng %s, cột %s): %s", row, col, e)
             return ''
 
 
@@ -316,6 +328,8 @@ def parse_citad_files(filepaths, ngay_cham=None, progress_cb=None):
             all_rows += rows
             if err:
                 errors.append(f"{os.path.basename(fp)}: {err}")
+        else:
+            errors.append(f"{os.path.basename(fp)}: định dạng không hỗ trợ (cần XLS/XLSX hoặc ZIP)")
     return all_rows, errors
 
 
@@ -349,6 +363,17 @@ def _normalize_date_cell(v):
             return (base + datetime.timedelta(days=int(serial))).strftime('%d/%m/%Y')
     except (ValueError, TypeError):
         pass
+    # Dạng "yyyymmdd" liền không dấu phân cách (vd cột "Ngày GD" của file Hub
+    # PaymentHub, khác với "Ngày quyết toán"/"Ngày hạch toán" dd/mm/yyyy cùng
+    # file) — xác nhận thực tế trên file Danh_sach_giao_dich_den thật, KHÔNG
+    # phải suy đoán: thiếu bước này khiến _parse_hub_xls() lọc rớt ÂM THẦM
+    # toàn bộ dòng của cột này khi có ngay_cham (không bao giờ khớp chuỗi
+    # "20260819" != "19/08/2026"), y hệt lớp lỗi ô kiểu Date mô tả ở trên.
+    m2 = re.match(r'^(\d{4})(\d{2})(\d{2})$', s)
+    if m2:
+        y, mo, d = m2.group(1), m2.group(2), m2.group(3)
+        if 1 <= int(mo) <= 12 and 1 <= int(d) <= 31:
+            return f'{d}/{mo}/{y}'
     return s[:10]  # không nhận diện được — giữ hành vi cũ, không đoán mò thêm
 
 
@@ -413,10 +438,14 @@ def _parse_ipcas_text(text, filename, ngay_cham):
                 return ''
             return _strip_apos(vals[idx])
 
-        # NGAY_KENH_TRA: doc theo index cot, khong dung vals[-1] vi NOI_DUNG co dau ;
+        # NGAY_KENH_TRA: đọc qua gv() (không dùng thẳng vals[i_nkt] như trước
+        # — thiếu cộng `shift` khi NH_NHAN chứa dấu phẩy làm lệch cột, đọc
+        # sai ngày cho các dòng đó; gv() đã xử lý đúng shift này cho mọi
+        # trường khác, dùng chung cho nkt luôn thay vì lặp lại logic).
+        # Không dùng vals[-1] vì NOI_DUNG có dấu ;.
         nkt = ''
-        if i_nkt >= 0 and i_nkt < len(vals):
-            last = _strip_apos(vals[i_nkt]).strip()
+        if i_nkt >= 0:
+            last = gv('NGAY_KENH_TRA').strip()
             # Dang chuan: 4/6/2026 hoac 04/06/2026
             m = re.match(r'(\d{1,2})/(\d{1,2})/(\d{4})', last)
             if m:
@@ -611,24 +640,40 @@ def _parse_hub_xls(filepath, ext, fname, ngay_cham):
         for i in range(min(10, ws.nrows)):
             row_txt = ' '.join(str(ws.cell_value(i, j)).lower() for j in range(ws.ncols))
             if any(k in row_txt for k in ['số thành công', 'so thanh cong', 'số giao dịch', 'msgid', 'msg_key']):
-                h_row = i
+                # Dòng ứng viên — có thể là dòng tiêu đề THẬT, nhưng cũng có thể
+                # là dòng tổng kết đầu file kiểu "Tổng số giao dịch:12" (cũng
+                # chứa cụm "số giao dịch" nên khớp nhầm điều kiện trên). Quét
+                # cột vào biến CỤC BỘ trước — chỉ nhận dòng này làm h_row nếu
+                # thực sự tìm được cột i_so_tc, nếu không thì bỏ qua và quét
+                # tiếp dòng sau thay vì `break` sớm rồi bỏ luôn cả sheet (bug
+                # thật đã xác nhận: dòng tổng kết khiến sheet bị bỏ 100%, mất
+                # trắng dữ liệu Napas/PSS-MDP mà không báo lỗi gì).
+                cand_so_tc = -1
+                cand_so_tien = -1
+                cand_loai_tien = -1
+                cand_ngay = -1
+                cand_nh = -1
                 for j in range(ws.ncols):
                     hdr = str(ws.cell_value(i, j)).strip().lower()
                     # Uu tien 'so thanh cong' truoc, sau moi den msgid
                     if any(k in hdr for k in ['thành công', 'so tc', 'số tc']):
-                        i_so_tc = j
-                    elif any(k in hdr for k in ['msgid', 'msg_key']) and i_so_tc < 0:
-                        i_so_tc = j
+                        cand_so_tc = j
+                    elif any(k in hdr for k in ['msgid', 'msg_key']) and cand_so_tc < 0:
+                        cand_so_tc = j
                     if 'số tiền' in hdr or 'so tien' in hdr or 'amount' in hdr:
-                        i_so_tien = j
+                        cand_so_tien = j
                     if 'loại tiền' in hdr or 'currency' in hdr or 'loai tien' in hdr:
-                        i_loai_tien = j
+                        cand_loai_tien = j
                     if 'kênh trả' in hdr or 'kenh tra' in hdr:
-                        i_ngay = j  # uu tien ngay kenh tra
-                    elif 'ngày' in hdr and ('nhận' in hdr or 'gd' in hdr or 'giao' in hdr) and i_ngay < 0:
-                        i_ngay = j  # fallback ngay nhan
+                        cand_ngay = j  # uu tien ngay kenh tra
+                    elif 'ngày' in hdr and ('nhận' in hdr or 'gd' in hdr or 'giao' in hdr) and cand_ngay < 0:
+                        cand_ngay = j  # fallback ngay nhan
                     if 'ngân hàng' in hdr or 'nh ' in hdr:
-                        i_nh = j
+                        cand_nh = j
+                if cand_so_tc < 0:
+                    continue  # dòng khớp từ khoá nhưng không có cột thật — thử dòng sau
+                h_row, i_so_tc, i_so_tien = i, cand_so_tc, cand_so_tien
+                i_loai_tien, i_ngay, i_nh = cand_loai_tien, cand_ngay, cand_nh
                 break
 
         if h_row < 0 or i_so_tc < 0:
@@ -637,7 +682,12 @@ def _parse_hub_xls(filepath, ext, fname, ngay_cham):
         data_start = h_row + 1
         for i in range(data_start, ws.nrows):
             so_tc = str(ws.cell_value(i, i_so_tc)).strip().replace("'", "")
-            so_tc_clean = ''.join(ch for ch in so_tc if ch.isdigit() or ch.isalpha())
+            # Chỉ giữ số — khớp đúng cách so_gd bên CITAD được làm sạch
+            # (parse_citad_xls(), chỉ isdigit()). Trước đây giữ cả chữ
+            # (isalpha()) khiến khoá 2 bên KHÔNG BAO GIỜ khớp được nếu MSGID
+            # Hub có lẫn chữ cái — báo nhầm "chỉ CITAD"/"chỉ Hub" dù cùng 1
+            # lệnh thật.
+            so_tc_clean = ''.join(ch for ch in so_tc if ch.isdigit())
             if not so_tc_clean or len(so_tc_clean) < 4:
                 continue
 
