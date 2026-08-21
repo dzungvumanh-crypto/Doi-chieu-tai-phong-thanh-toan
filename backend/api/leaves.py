@@ -777,7 +777,7 @@ def leave_calendar(
     year: int,
     month: int,
     db: sqlite3.Connection = Depends(get_db),
-    _: dict = Depends(get_current_staff),
+    current: dict = Depends(get_current_staff),
 ):
     import calendar as _cal
     if not (1 <= month <= 12):
@@ -789,15 +789,40 @@ def leave_calendar(
     start = date(year, month, 1)
     end   = date(year, month, last_day)
 
+    # Xem toàn trung tâm: Admin/Ban Giám đốc/Phòng Tổng hợp — đúng tiêu chí của
+    # scope="all" trong list_leaves() phía trên, để không tạo ra 2 định nghĩa
+    # "ai xem được toàn trung tâm" khác nhau trong cùng module.
+    # Hậu kiểm viên KHÔNG nằm trong danh sách: họ ngang chuyên viên ở quy trình
+    # nghỉ phép, scope="all" và scope="dept" đều trả 403 cho họ
+    # (tests/test_nghi_phep_hau_kiem_vien.py). Cho họ xem cả lịch là mở lại đúng
+    # đường vừa bịt, chỉ khác cửa.
+    # Phòng khác chỉ thấy người CÙNG PHÒNG nghỉ ngày nào — theo yêu cầu nghiệp vụ.
+    sees_all = (current["role"] in ("admin", "giam_doc", "pho_giam_doc")
+                or _is_tong_hop_staff(current, db))
+
+    clauses = ["lr.status NOT IN ('rejected','cancelled')",
+               "NOT (lr.reason LIKE '[Import]%' OR lr.reason LIKE '[Điều chỉnh]%')",
+               "lr.start_date <= ?", "lr.end_date >= ?"]
+    params: list = [end.isoformat(), start.isoformat()]
+    if not sees_all:
+        dept_id = current.get("department_id")
+        if dept_id:
+            clauses.append("ks.department_id = ?")
+            params.append(dept_id)
+        else:
+            # Không thuộc phòng nào (hiếm gặp) — chỉ thấy đơn của chính mình,
+            # không trả lỗi/để trống cả lịch.
+            clauses.append("lr.staff_id = ?")
+            params.append(current["id"])
+
     leaves = db.execute(
-        """SELECT lr.id, lr.start_date, lr.end_date, lr.leave_type, lr.status,
-                  ks.full_name
-           FROM leave_records lr
-           LEFT JOIN user_tttt ks ON lr.staff_id = ks.id
-           WHERE lr.status NOT IN ('rejected','cancelled')
-             AND NOT (lr.reason LIKE '[Import]%' OR lr.reason LIKE '[Điều chỉnh]%')
-             AND lr.start_date <= ? AND lr.end_date >= ?""",
-        (end.isoformat(), start.isoformat()),
+        f"""SELECT lr.id, lr.start_date, lr.end_date, lr.leave_type, lr.status,
+                   ks.full_name, d.name AS dept_name
+            FROM leave_records lr
+            LEFT JOIN user_tttt ks ON lr.staff_id = ks.id
+            LEFT JOIN departments d ON ks.department_id = d.id
+            WHERE {' AND '.join(clauses)}""",
+        params,
     ).fetchall()
 
     day_map: dict = {}
@@ -812,6 +837,7 @@ def leave_calendar(
         while cur <= lv_end:
             day_map[cur.isoformat()].append({
                 "staff_name": lv["full_name"] or "",
+                "dept_name":  lv["dept_name"] or "",
                 "leave_type": lv["leave_type"],
                 "status":     lv["status"],
                 "leave_id":   lv["id"],

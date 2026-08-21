@@ -93,8 +93,8 @@ def list_active_delegations(
     today = date.today().isoformat()
     rows = db.execute(
         """SELECT dr.*,
-                  gd.full_name  AS giam_doc_name,
-                  pgd.full_name AS pho_giam_doc_name
+                  gd.full_name  AS giam_doc_name,  gd.role  AS giam_doc_role,
+                  pgd.full_name AS pho_giam_doc_name, pgd.role AS pho_giam_doc_role
            FROM delegation_records dr
            JOIN user_tttt gd  ON dr.giam_doc_id     = gd.id
            JOIN user_tttt pgd ON dr.pho_giam_doc_id = pgd.id
@@ -102,8 +102,14 @@ def list_active_delegations(
            ORDER BY dr.start_date""",
         (today,)
     ).fetchall()
+    # Chức danh lấy từ role hiện tại của user (bảng Quản lý User) — không hardcode
+    # "Giám đốc"/"Phó Giám đốc" cố định, để nếu ai đó đổi vai trò sau này thì banner
+    # tự phản ánh đúng, không nói sai chức danh của bản ghi ủy quyền cũ.
+    _ROLE_LABEL = {"giam_doc": "Giám đốc", "pho_giam_doc": "Phó Giám đốc"}
     return [{"id": r["id"], "giam_doc_name": r["giam_doc_name"],
+             "giam_doc_role_label": _ROLE_LABEL.get(r["giam_doc_role"], ""),
              "pho_giam_doc_name": r["pho_giam_doc_name"],
+             "pho_giam_doc_role_label": _ROLE_LABEL.get(r["pho_giam_doc_role"], ""),
              "start_date": r["start_date"], "end_date": r["end_date"],
              "note": r["note"] if r["note"] else ""} for r in rows]
 
