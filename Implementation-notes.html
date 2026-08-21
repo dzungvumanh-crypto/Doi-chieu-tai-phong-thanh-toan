@@ -7161,8 +7161,8 @@ Bất biến MIS: 522.774 + 36.462 = 559.236 (khớp tổng gốc)</pre>
   <div class="card">
     <div class="card-header">
       <span class="card-num">73</span>
-      <span class="card-title">Phân lịch trực — phát hiện nhánh local đã lỗi thời + vá 2 luật công bằng mới</span>
-      <span class="badge badge-done">HOÀN THIỆN · 2026-08-20 · worktree TTTT-duty, branch duty/them-2-luat-can-bang</span>
+      <span class="card-title">Phân lịch trực — phát hiện nhánh local đã lỗi thời + vá 3 luật công bằng mới</span>
+      <span class="badge badge-done">HOÀN THIỆN · 2026-08-20→21 · worktree TTTT-duty, branch duty/them-2-luat-can-bang</span>
     </div>
     <div class="card-body">
       <div class="label">Phát hiện — ~830 dòng sửa dở trên <code>Cham_ILO1000</code> đã lỗi thời</div>
@@ -7185,19 +7185,29 @@ Bất biến MIS: 522.774 + 36.462 = 559.236 (khớp tổng gốc)</pre>
         — theo đúng convention 1 module = 1 nhánh = 1 worktree đã dùng cho ACH/ILO1000. Baseline xác nhận
         113 test duty pass trước khi sửa gì.</p>
 
-      <div class="label">2 luật mềm mới — người dùng báo trực tiếp sau khi xem lịch thật</div>
+      <div class="label">3 luật mềm mới — áp dụng như nhau cho Lãnh đạo lẫn nhân viên</div>
+      <p><b>Đợt 1 (20/08)</b> hiểu chưa đúng 2 điểm, người dùng chỉnh lại sau khi xem lịch mô phỏng
+        thật (21/08): trần thứ 6/tháng là <b>2 lần</b> chứ không phải 1; trần 2 ca/tuần áp dụng cho
+        <b>cả nhân viên</b>, không riêng Lãnh đạo. Bảng dưới là bản đã sửa đúng.</p>
       <table>
         <tr><th>#</th><th>Vấn đề</th><th>Trước</th><th>Sau</th></tr>
-        <tr><td>A</td><td>Một người trực thứ 6 &gt; 1 lần/tháng (nặng hơn nếu 2 thứ 6 liên tiếp)</td>
-          <td>Chỉ tránh lặp trong CÙNG 1 TUẦN (<code>get_week_assignees</code>) — không có khái niệm
-            "đã trực thứ 6 tháng này"</td>
-          <td>Hàm mới <code>nguoi_da_truc_thu6_thang()</code> — ưu tiên tránh, cảnh báo
-            <code>trung_thu6_thang</code> khi buộc phải lặp vì thiếu người</td></tr>
-        <tr><td>B</td><td>Một Lãnh đạo trực &gt; 2 ca/tuần</td>
+        <tr><td>A</td><td>Một người (LD hoặc NV) trực &gt; 2 ca/tuần</td>
           <td>Chỉ có tiêu chí nhị phân "chưa trực trong tuần" — không phân biệt "đã trực 1 lần" (còn
-            được) với "đã trực 2 lần" (đã đủ)</td>
-          <td>Hàm mới <code>dem_ca_lanh_dao_trong_tuan()</code> — ưu tiên tránh, cảnh báo
-            <code>ld_qua_tai_tuan</code> khi buộc phải vượt vì không đủ Lãnh đạo khác</td></tr>
+            được) với "đã trực 2 lần" (đã đủ). Đợt 1 còn giới hạn sai — chỉ tính riêng Lãnh đạo</td>
+          <td>Hàm <code>dem_ca_trong_tuan()</code> đếm mọi vai (leader_ids + sp_id + nv_ids +
+            nv_phu_ids) — ưu tiên tránh, cảnh báo <code>qua_tai_tuan</code> khi buộc vượt vì không
+            đủ người khác</td></tr>
+        <tr><td>B</td><td>Một người trực thứ 6 &gt; 2 lần/tháng</td>
+          <td>Chỉ tránh lặp trong CÙNG 1 TUẦN (<code>get_week_assignees</code>) — không có khái niệm
+            "đã trực thứ 6 tháng này". Đợt 1 hiểu nhầm trần là 1 lần, không phải 2</td>
+          <td>Hàm <code>dem_thu6_trong_thang()</code> trả về SỐ LẦN (không chỉ có/không) — ưu tiên
+            tránh, cảnh báo <code>qua_2_thu6_thang</code> khi buộc vượt 2 lần</td></tr>
+        <tr><td>C</td><td>Một người trực thứ 6 ở 2 tuần LIÊN TIẾP (dù chưa chạm trần 2 lần/tháng)</td>
+          <td>Không có — đợt 1 gộp lẫn với luật B, tưởng "tránh trùng tháng" là đủ bao luôn "tránh
+            liên tiếp"</td>
+          <td>Hàm riêng <code>nguoi_truc_thu6_tuan_truoc()</code> — đọc đúng ca thứ 6 <b>7 ngày
+            trước</b>, độc lập với luật B vì người mới trực 1 lần/tháng vẫn phải tránh nếu là tuần
+            liền trước. Cảnh báo <code>thu6_lien_tiep</code></td></tr>
       </table>
 
       <div class="label">Thiết kế — vì sao không thể chỉ union vào tập "đã trực trong tuần"</div>
@@ -7216,30 +7226,136 @@ Bất biến MIS: 522.774 + 36.462 = 559.236 (khớp tổng gốc)</pre>
         để giữ đúng kiến trúc sẵn có "một chỗ hiểu luật" — <code>validate_shift_members()</code> (đường
         sửa tay) gọi cùng 2 hàm này để cảnh báo mềm, không chặn.</p>
 
-      <div class="label">Test — bẫy lỗi persist khi viết test cô lập kênh thứ 6</div>
-      <p>4 test mới, 2 tình huống đủ người (chứng minh luật có hiệu lực) + 2 tình huống thiếu người
-        (chứng minh fallback + cảnh báo đúng khi về mặt toán học không thể tránh — 2 Lãnh đạo cho tuần
-        5 ngày không thể giữ cả hai ≤ 2 ca/tuần). Bẫy khi viết: gọi thẳng <code>_generate_ca()</code> để
-        cô lập kênh thứ 6 (theo đúng khuôn <code>_gen_one()</code> có sẵn) nhưng hàm này KHÔNG lưu ca
-        xuống <code>duty_shifts</code> — save là việc của <code>_process_day()</code>. Test đọc lịch sử
-        thứ 6 tháng qua truy vấn <code>duty_shifts</code> nên phải tự gọi thêm <code>_save_shift()</code>
-        sau mỗi lần sinh, nếu không bảng luôn rỗng và cả 2 test "buộc lặp" lẫn "tránh được lặp" đều pass
-        giả — pass vì luật chưa từng được kiểm tra thật, không phải vì luật đúng.</p>
+      <div class="label">Test — bẫy lỗi persist + bẫy ràng buộc song phương che khuất luật cân bằng</div>
+      <p>Bẫy 1: gọi thẳng <code>_generate_ca()</code> để cô lập kênh thứ 6 (theo đúng khuôn
+        <code>_gen_one()</code> có sẵn) nhưng hàm này KHÔNG lưu ca xuống <code>duty_shifts</code> — save
+        là việc của <code>_process_day()</code>. Test đọc lịch sử thứ 6 tháng qua truy vấn
+        <code>duty_shifts</code> nên phải tự gọi thêm <code>_save_shift()</code> sau mỗi lần sinh, nếu
+        không bảng luôn rỗng và test pass giả.</p>
+      <p>Bẫy 2 (phát hiện lúc viết lại test cho luật A áp dụng cả NV): pool 5 NV mà chỉ 2 người biết
+        song phương thì tự bản thân ràng buộc song phương (bắt buộc 1 người biết SP mỗi ca) đã dồn hết
+        vào nhóm 2 người đó và vượt trần 2 ca/tuần — <b>trước cả khi luật cân bằng mới kịp can thiệp</b>.
+        Không phải lỗi code, mà test dựng sai (trộn 2 ràng buộc độc lập vào cùng 1 kịch bản). Sửa: cho cả
+        5 NV biết song phương để tách rõ luật đang kiểm.</p>
 
       <div class="label">Kiểm chứng</div>
-      <p>113 test duty cũ giữ nguyên xanh + 4 test mới. Full suite trong worktree: 525 pass, 10 fail ở
-        <code>test_archive_cover.py</code> — lỗi có sẵn trên <code>develop</code> sạch, không liên quan
-        module này (đã đối chiếu, đúng con số 10 fail mà commit <code>e9a705b</code> từng ghi nhận).</p>
+      <p>113 test duty cũ + 9 test mới (5 test tình huống đủ/thiếu người cho từng luật, xem bảng trên) —
+        tất cả xanh. <b>Test mô phỏng 3 tháng liên tục</b> theo đúng yêu cầu người dùng — 4 Lãnh đạo +
+        12 nhân viên, sinh lịch ~13 tuần liền (6, 7, 8/2026) — xác nhận đồng thời cả 3 luật không bị vi
+        phạm và <b>không phát sinh một cảnh báo buộc-vi-phạm nào</b> với cơ cấu nhân sự đủ rộng — khớp
+        bài học cũ "kiểm 1 ca không thay được test cả chuỗi ca dài ngày" (card 67). Full suite trong
+        worktree: 526 pass, 10 fail ở <code>test_archive_cover.py</code> — lỗi có sẵn trên
+        <code>develop</code> sạch, không liên quan module này.</p>
 
       <div class="label">Việc còn tồn</div>
-      <p>Commit <code>7145b63</code> mới nằm trên nhánh <code>duty/them-2-luat-can-bang</code>, CHƯA
-        mở PR / merge — chờ bạn xác nhận trước khi lên develop. Worktree mồ côi của phiên khác tại
-        <code>…3c0d8b53…/scratchpad/wt-pr</code> (checkout đúng <code>e9a705b</code>, hết tác dụng vì PR
-        đã merge) chưa dọn — hỏi bạn trước khi xoá.</p>
+      <p>Commit <code>d0fb781</code> (sửa lại đúng 3 luật) nằm trên <code>7145b63</code>, cả hai trên
+        nhánh <code>duty/them-2-luat-can-bang</code>, CHƯA mở PR / merge — chờ bạn xác nhận trước khi lên
+        develop. Worktree mồ côi của phiên khác tại <code>…3c0d8b53…/scratchpad/wt-pr</code> (checkout
+        đúng <code>e9a705b</code>, hết tác dụng vì PR đã merge) chưa dọn — hỏi bạn trước khi xoá.</p>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-20</footer>
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">74</span>
+      <span class="card-title">ILO1000 — rà "lỗi người chấm không nhìn ra", sửa 5 lỗi im lặng</span>
+      <span class="badge badge-done">HOÀN THIỆN · 2026-08-21 · 144/144 test module + 597/597 toàn dự án</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh — rà soát chủ động, không phải bugfix theo báo cáo</div>
+      <p>Yêu cầu: tìm lỗi trong module ILO1000 mà báo cáo Excel không lộ dấu hiệu bất thường — không
+        crash, số liệu tổng vẫn hợp lý, nhưng phân loại/số tiền sai hoặc dữ liệu mất mà người chấm tay
+        không phát hiện được. Dùng 3 agent Explore độc lập (đối chiếu tài liệu gốc, quét mẫu lỗi im lặng,
+        kiểm cấu hình cột + frontend) rồi tự đọc code xác minh, verify 1 phát hiện bằng script thật trước
+        khi lập plan. Business Owner chọn 5/6 phát hiện đưa vào đợt sửa — mục F (xem dưới) hoãn.</p>
+
+      <div class="label">A — Nhóm ngày cuối tuần/lẻ không bị SKIP dù Citad rỗng sau lọc TRX_DATE</div>
+      <p><code>detect.py::group_files_by_date()</code> gán TOÀN BỘ <code>citad_pool</code> (chưa lọc
+        ngày) cho MỌI nhóm có Core — kể cả nhóm chỉ tồn tại để carryover cho thứ 2
+        (<code>merge_monday_carryover()</code>). Check <code>missing</code> đầu
+        <code>_run_one_day()</code> vì vậy luôn thấy citad "có" dù sau khi <code>load_citad()</code> lọc
+        TRX_DATE sẽ rỗng — verify thật bằng script: nhóm thứ 7 vẫn <code>missing: []</code>. Hậu quả:
+        pipeline xuất 1 file <code>.xlsx</code> riêng cho thứ 7 với sheet Citad trống, phần lớn Core TT
+        rỗng — báo động giả "chưa cân khớp" dù dữ liệu đúng đã nằm trong file thứ 2 (carryover COPY,
+        không MOVE). Sửa: thêm check <code>citad_raw.empty</code> sau khi <code>load_citad()</code> lọc
+        xong trong <code>_run_one_day()</code> — SKIP xuất file, không đụng <code>detect.py</code>. Core
+        của ngày skip vẫn vào <code>detect_huy()</code> xuyên batch bình thường vì
+        <code>core_raw_by_date</code> nạp ở <code>main_from_dir()</code> TRƯỚC vòng lặp, độc lập thay
+        đổi này — chứng minh bằng test dựng REF hủy có 1 vế ở ngày bị skip.</p>
+
+      <div class="label">B — DRAMOUNT lỗi parse bị coi ngang hàng DRAMOUNT=0 hợp lệ</div>
+      <p><code>load_core.py</code>: filter chính của Core là <code>DRAMOUNT==0</code>; dòng DRAMOUNT
+        text lỗi → <code>coerce</code> ra NaN → <code>fillna(0)</code> → bị coi hợp lệ, lọt qua y hệt
+        dòng thật sự =0. Sửa: tách "ô trống thật" (giữ, coi =0 như cũ) khỏi "có nội dung nhưng không
+        parse được" (loại dòng + log CẢNH BÁO đếm + mẫu lỗi, dùng tham số <code>log</code> có sẵn).</p>
+
+      <div class="label">C (bước 1) — AMOUNT (Citad) / CRAMOUNT (Core) chưa qua <code>doc_so_tien()</code></div>
+      <p>Dự án đã có <code>doc_so_tien()</code> (<code>backend/services/ach/so_tien.py</code>) — validate
+        mẫu trước, raise nếu lạ, đúng bẫy "180.000" bị hiểu thành 180 đã xảy ra thật (mục 4.8
+        <code>BOI-CANH-DU-AN.md</code>). <code>load_osb.py</code> đã dùng cho 'Số tiền' OSB, nhưng AMOUNT
+        (Citad, build khóa <code>Map dc</code>) và CRAMOUNT (Core, build <code>Map dc</code> + phát hiện
+        Hủy) vẫn <code>pd.to_numeric()</code> trần — sai khóa đối chiếu khiến TT gán sai mà số liệu vẫn
+        "trông hợp lý". Khác mục B: đây là thành phần khóa trên DataFrame hiển thị nguyên vẹn cho người
+        chấm tay — <b>không được drop dòng</b>. Thêm <code>doc_so_tien_mem()</code> cạnh
+        <code>doc_so_tien()</code> — biến thể KHÔNG raise, dòng lạ → gán 0 + log, thay vì làm gián đoạn
+        cả ngày đang chấm. Áp dụng ở <code>process_citad()</code>, <code>process_core()</code>,
+        <code>detect_huy()</code> (đều thêm tham số <code>log=None</code>, backward-compatible).</p>
+      <p><b>Bước 2 (chưa làm — cần Business Owner)</b>: nếu xác minh dữ liệu Citad/Core thật (3-5 batch
+        gần nhất) không có định dạng lạ ngoài 2 mẫu <code>doc_so_tien()</code> chấp nhận, xin chốt riêng
+        cho 2 nguồn này (như đã chốt cho QT/MIS 2026-08-10/11) rồi đổi sang <code>doc_so_tien()</code>
+        raise cứng — an toàn hơn nhưng đổi 1 dòng lạ thành crash cả ngày, cần cân nhắc trước khi đổi.</p>
+
+      <div class="label">D — export.py hardcode tên cột tiếng Việt, không import config.py</div>
+      <p><code>export.py</code> tự gõ lại chuỗi (<code>'Trạng thái'</code>, <code>'Mã giao dịch'</code>...)
+        thay vì import hằng số <code>HUB_COL_*</code>/<code>OSB_COL_*</code> từ <code>config.py</code> —
+        đổi 1 tên cột ở config.py mà quên sửa export.py, <code>_safe_df()</code> âm thầm điền cột rỗng
+        thay vì lỗi. Refactor an toàn (giá trị hằng số trùng hệt literal cũ) — cột citad/core (tên tiếng
+        Anh cố định từ hệ thống nguồn) và cột pipeline tự sinh (Trace/Map dc/Ngày/TT) giữ literal, rủi ro
+        thấp hơn nhiều.</p>
+
+      <div class="label">E — thông báo "Hoàn thành" không phân biệt có ngày bị SKIP</div>
+      <p>Phụ thuộc A (nếu A chưa sửa, SKIP gần như không bao giờ xảy ra). <code>main_from_dir()</code>
+        đổi kiểu trả về từ <code>Path|None</code> sang <code>RunSummary</code> (NamedTuple:
+        <code>output_paths</code>, <code>total_days</code>, <code>skipped_dates</code>) — 2 nhánh
+        <code>return None</code> sớm (không nhóm được file, cancel) giữ nguyên, KHÔNG trả RunSummary rỗng,
+        để phân biệt "chạy xong nhưng skip hết" khỏi "bị dừng theo yêu cầu". Truyền
+        <code>skipped_dates</code> qua <code>ilo1000_service.py</code> → <code>api/ilo1000.py</code> →
+        frontend. Thông báo mới CỐ Ý không dùng nhãn "chưa cân khớp"/"đã cân khớp" (mục 4.5
+        <code>BOI-CANH-DU-AN.md</code> chỉ áp cho KẾT QUẢ ĐỐI CHIẾU trong Excel, không áp cho TRẠNG THÁI
+        CHẠY JOB) — chỉ nêu số ngày + lý do SKIP, để người dùng tự xem log thay vì tự kết luận đối chiếu
+        thay họ. Chỉ tầng <code>pipeline.py</code> có test tự động (4 test); tầng service/API/frontend
+        cần kiểm UI thật trước khi coi module "Ready for User Experience" — <b>chưa làm trong phiên
+        này</b> (không có dữ liệu thật ở đây).</p>
+
+      <div class="label">F — chưa sửa, cần xác minh dữ liệu thật trước</div>
+      <p><code>detect.py</code>: GL02 1 file có thể gộp nhiều ngày (đã xác nhận thật:
+        "1000_gl02_2026081120260812.csv" chứa cả TRDATE 11 và 12/08), nhưng regex trích ngày
+        (<code>_RE_GL02_CSV</code>) chỉ lấy NGÀY ĐẦU TIÊN trong tên file. Nếu 1 ngày trong khoảng không
+        có file nào khác "neo" đúng ngày đó, toàn bộ Core ngày đó biến mất khỏi output, không log. Chưa
+        rõ có thực sự xảy ra trên dữ liệu thật hay không (batch thật có thể luôn có file neo riêng cho
+        mỗi ngày) — cần xác minh trên laptop với batch thật trước khi quyết định sửa gì.</p>
+
+      <div class="label">Phát hiện phụ — bug tiền tồn tại, ngoài phạm vi đợt này</div>
+      <p><code>process_core()</code>/<code>detect_huy()</code>: nếu <code>core_df</code> thiếu hẳn cột
+        CRAMOUNT, <code>df.get('CRAMOUNT', 0)</code> trả về <code>int</code> chứ không phải Series rỗng
+        → <code>.fillna()</code>/doc_so_tien_mem() crash ngay (gặp phải lúc viết fixture test cho mục A,
+        né bằng cách luôn có cột CRAMOUNT trong fixture, không sửa hàm). Rủi ro thấp trong thực tế (GL02
+        thật luôn có cột này) nhưng đáng ghi nhận nếu sau này có caller khác truyền core_df tối giản.</p>
+
+      <div class="label">Lưu ý — bản copy dist_offline chưa đồng bộ</div>
+      <p><code>dist_offline/PAYMENT_CENTER_Offline/app/backend/services/ilo1000_service.py</code> là bản
+        đóng gói tĩnh, KHÔNG được sửa trong đợt này (ngoài phạm vi, không caller nào trong repo chính
+        import nó) — cần nhớ đồng bộ khi build lại bản offline.</p>
+
+      <div class="label">Kiểm chứng</div>
+      <p>144 test (116 cũ trong test_ilo1000_algorithm.py + 18 mới cùng file + 10 mới trong
+        test_so_tien.py — file mới, chưa từng có test cho so_tien.py) + toàn bộ 597 test dự án đều đạt,
+        không có test cũ nào phải sửa. Chưa chạy trên dữ liệu thật/golden sample (giới hạn phiên) — phần
+        E (frontend) và bước 2 của C cần xác nhận trên laptop có dữ liệu thật.</p>
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-21</footer>
 </div>
 </body>
 </html>
