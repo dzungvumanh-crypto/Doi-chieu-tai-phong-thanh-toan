@@ -119,7 +119,7 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
     + **Bảng Napas / PSS-MDP vẫn sửa tay bình thường** — không nằm trong diện khoá
     + **Tab *Lịch sử* chuyển thành chỉ xem** — mở một bản đã chấm ra xem thì không sửa hay lưu đè được. Bấm *Quay lại chỉnh sửa* để thoát chế độ xem và nhập mới cho hôm nay
     + **Thêm cách lấy Napas/PSS-MDP thứ hai**: quét thẳng từ trang CITAD *Kiểm soát yêu cầu quyết toán lô đến* (Cổng 1), song song cách cũ qua PaymentHub. Dùng nguồn nào cũng được, không xung đột
-    + **Ô nhập Ebanking đã bỏ khỏi màn hình** — số liệu Ebanking của các ngày đã lưu trước đây **vẫn giữ nguyên**, vẫn xuất ra Excel đầy đủ, chỉ là không nhập mới được nữa
+    + **Ô nhập Ebanking đã bỏ khỏi màn hình** — số liệu Ebanking của các ngày đã lưu trước đây **vẫn giữ nguyên**, vẫn xuất ra Excel đầy đủ, chỉ là không nhập mới được nữa. ⚠️ **Phần "vẫn xuất ra Excel" nay không còn đúng**: dòng Ebanking đã bỏ nốt khỏi file Excel ngày 20/08/2026 — xem entry đầu file
     + Giao diện: bảng chênh lệch đưa lên đầu trang, tách riêng hai khung *LỆNH ĐI* / *LỆNH ĐẾN*, ô đã có số liệu đậm nền hồng cho dễ nhìn, và một số chỉnh về viền/khoảng cách
     + ⚠️ **Phải tải lại `.zip` và cài lại Extension (bản 2.17)** — vào `/doi_chieu_citad` → **Tải Extension**, giải nén, *Load unpacked* lại. Không cài lại thì nút *Nạp CITAD* không lấy được Napas/PSS-MDP từ nguồn mới
 

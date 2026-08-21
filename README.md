@@ -415,6 +415,9 @@ Truy cập:
 - Đối chiếu số liệu tổng CITAD (NHNN) với PaymentHub (Agribank) theo từng ngày
 - Menu: **Đối chiếu → Phòng Thanh toán → Đối chiếu CITAD**
 - Nhập tay 5 cổng CITAD × 3 loại tiền × 8 trường; chênh lệch tính lại ngay khi gõ
+- Ngoài 5 cổng còn 2 kênh cộng vào tổng CITAD: **Napas** và **PSS - MDP** (chỉ 2 ô *IH Đến —
+  Món/Tiền*). Kênh **Ebanking** đã ngừng: bỏ khỏi màn hình 14/08/2026, bỏ nốt khỏi file Excel
+  20/08/2026 — số liệu các ngày đã chấm vẫn nằm nguyên trong DB, chỉ không hiện/in ra nữa
 - Mỗi ngày là **một bản ghi chung cả phòng** (`doi_chieu_citad_sessions`, khoá theo `ngay`) —
   ai lưu sau cùng là bản hiện hành; mỗi lần bấm Lưu ghi thêm 1 dòng vào
   `doi_chieu_citad_history` để xem/tải lại từng bản cũ

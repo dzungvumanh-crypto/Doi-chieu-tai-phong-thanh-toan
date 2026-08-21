@@ -7581,7 +7581,91 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-18</footer>
+
+  <!-- 80 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">80</span>
+      <span class="card-title">Đối chiếu CITAD: đảo ngược quyết định "giữ dòng Ebanking trong Excel" (PR #44)</span>
+      <span class="badge badge-done">done · 2026-08-20</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Vì sao 14/08 giữ lại, vì sao 20/08 bỏ</div>
+      <p>Đợt 14/08 bỏ ô <b>nhập</b> Ebanking khỏi màn hình nhưng <b>cố ý</b> giữ dòng "Ebanking" trong file
+        Excel, lý do ghi trong code lúc đó: để những ngày đã chấm trước đây in lại vẫn ra đúng tờ giấy như
+        bản đã in. Dùng thật một tuần cho thấy lập luận đó sai chỗ nào: kênh Ebanking <b>không còn phát sinh
+        giao dịch</b>, nên dòng ấy luôn bằng 0 trên mọi bản in mới — nó không bảo tồn cái gì, chỉ làm bản in
+        lệch với màn hình và khiến người dùng tưởng còn phải đối chiếu một kênh đã ngừng.</p>
+      <table>
+        <tr><th>&nbsp;</th><th>14/08/2026</th><th>20/08/2026</th></tr>
+        <tr><td>Ô nhập trên màn hình</td><td>Đã bỏ</td><td>Đã bỏ</td></tr>
+        <tr><td>Dòng trong Excel xuất ra</td><td><b>Giữ</b> (có chủ đích)</td><td><b>Bỏ</b></td></tr>
+        <tr><td>Bảng xem trước trước khi tải</td><td>Giữ</td><td>Bỏ — khớp 1-1 với file thật</td></tr>
+        <tr><td><code>em</code>/<code>et</code> trong <code>ExportIn</code></td><td>Được đọc</td>
+            <td>Giữ field, <b>không đọc nữa</b></td></tr>
+      </table>
+
+      <div class="label">Vì sao KHÔNG xoá luôn <code>em</code>/<code>et</code> và <code>ebank_m</code>/<code>ebank_t</code></div>
+      <p>Hai cặp field này nằm ở hai tầng khác nhau và giữ lại vì hai lý do khác nhau. <code>em</code>/<code>et</code>
+        (<code>ExportIn</code>) giữ để frontend bản cũ còn nằm trong cache trình duyệt gửi lên không bị
+        <code>422</code>. <code>ebank_m</code>/<code>ebank_t</code> (<code>SessionIn</code> + bảng
+        <code>doi_chieu_citad_sessions</code>) giữ vì đó là <b>số liệu đã chấm có thật</b> của những ngày trước
+        14/08 — <code>apply_session_data()</code> vẫn đọc và hàm lưu vẫn ghi lại, nên mở một session cũ rồi lưu
+        lại <b>không</b> xoá trắng con số đó. Xoá field là mất dữ liệu lịch sử, không phải dọn dẹp.</p>
+
+      <div class="label">Bỏ dòng in không đổi số — nhưng phải chứng minh, không phải tin</div>
+      <p>Ebanking <b>chưa bao giờ</b> được cộng vào tổng CITAD: <code>build_xlsx()</code> chỉ cộng
+        Napas + PSS-MDP vào <code>den_ih</code>, đúng như <code>_calc()</code> của tool desktop gốc. Nên bỏ dòng
+        in ra không đụng tới con số "Chênh lệch" của báo cáo gửi NHNN. Module Sổ trực cũng không bị ảnh hưởng:
+        <code>is_reconciliation_matched()</code> tính lại từ session và vốn không đọc <code>ebank</code>.</p>
+      <div class="note">Hệ quả đã cân nhắc và chấp nhận: in lại một ngày đã chấm <i>trước</i> 14/08 nay ra tờ
+        thiếu dòng Ebanking, các dòng dưới lùi lên một hàng. Con số giống hệt bản cũ, chỉ khác bố cục.</div>
+
+      <div class="label">Chỗ dễ vỡ thật sự: bố cục Excel không có gì canh</div>
+      <p>Từ dòng 12 trở xuống, <code>build_xlsx()</code> đặt mọi thứ bằng biến <code>row</code> tăng dần — thêm
+        hoặc bớt một kênh là <b>dịch cả dòng Chênh lệch lẫn khối chữ ký</b> LẬP BẢNG / KIỂM SOÁT. Sai kiểu này
+        <b>không ném lỗi</b>: file mở lên vẫn bình thường, chỉ lệch so với tờ Phòng Thanh toán vẫn in. Đây là
+        lần thứ hai trong một tuần sửa bố cục đúng hàm này, mà <code>pytest -k citad</code> lúc đó chỉ khớp
+        <b>đúng một</b> test không liên quan gì tới Excel (<code>test_citad_status_endpoint_khong_500</code>) —
+        nghĩa là "test pass" không chứng minh được gì.</p>
+      <p><code>tests/test_citad_export_layout.py</code> khoá lại: ghi <code>.xlsx</code> thật vào bộ nhớ rồi đọc
+        lại bằng openpyxl, so <b>toàn bộ danh sách nhãn cột A</b> theo đúng thứ tự, kiểm khối chữ ký nằm đúng
+        khoảng cách dưới dòng Chênh lệch, và kiểm <code>em</code>/<code>et</code> khác 0 <b>không rò</b> ra bất
+        kỳ ô nào. Đã xác nhận test này <b>fail</b> khi chèn lại dòng Ebanking cũ — không phải test luôn-xanh.</p>
+
+      <div class="label">Nợ kỹ thuật phát hiện khi review, KHÔNG sửa trong PR này</div>
+      <p>Người viết PR báo 34 test fail ở <code>test_ach_osb_reconciliation.py</code> /
+        <code>test_archive_cover.py</code> với <code>ImportError: Pandas requires version '3.1.5' or newer of
+        'openpyxl'</code>, và kết luận là "lỗi môi trường máy đang dùng". Đã truy tới cùng, kết luận đó
+        <b>đúng</b> nhưng vì lý do khác với những gì ai cũng đoán:</p>
+      <table>
+        <tr><th>Giả thuyết</th><th>Kiểm chứng</th></tr>
+        <tr><td>Do PR gây ra</td>
+            <td><span class="badge badge-skip">Sai</span> — diff không đụng tới hai module đó</td></tr>
+        <tr><td>Do <code>requirements.txt</code> ghim <code>openpyxl==3.1.2</code> mà thả
+            <code>pandas&gt;=2.0.0</code> ⇒ cài mới là gãy</td>
+            <td><span class="badge badge-skip">Sai</span> — CI cài sạch từ <code>requirements.txt</code>:
+            pip <b>tự lùi</b> về <code>pandas 2.3.3</code> (bản còn chấp nhận
+            <code>openpyxl&gt;=3.1.0</code>) ⇒ <b>553/553 pass</b></td></tr>
+        <tr><td>Venv của người đó có pandas mới hơn được nâng lên bởi việc khác, rồi
+            <code>pip install -r</code> chạy sau <b>không</b> hạ pandas xuống vì
+            <code>&gt;=2.0.0</code> đã thoả</td>
+            <td><span class="badge badge-done">Khớp</span> — máy build (cùng
+            <code>openpyxl 3.1.2</code> + <code>pandas 2.3.3</code>) cũng 553/553 pass</td></tr>
+      </table>
+      <p>Nói cách khác: <code>pip install -r requirements.txt</code> <b>không</b> đưa venv về đúng trạng thái
+        đã khai — nó chỉ kiểm "có thoả không", không kéo ngược bản đã cài quá mới xuống. Cách chữa cho máy đang
+        hỏng là <code>pip install -r requirements.txt --upgrade --force-reinstall</code> (hoặc dựng lại venv),
+        chứ không phải sửa file.</p>
+      <div class="note">Không sửa <code>requirements.txt</code> trong PR này, và cũng <b>không nên</b> sửa
+        theo phản xạ: file đang đúng, CI chứng minh rồi. Nếu muốn chặn hẳn kiểu lệch này thì phải ghim
+        <i>toàn bộ</i> cây phụ thuộc (lock file), là một quyết định riêng cho cả hệ thống. Điều đáng nhớ:
+        "test đỏ trên máy tôi, xanh trên CI" ở dự án này gần như luôn là venv lệch chứ không phải file khai
+        báo sai — nhưng phải đi kiểm mới được nói vậy, không được mặc định.</div>
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-20</footer>
 </div>
 </body>
 </html>

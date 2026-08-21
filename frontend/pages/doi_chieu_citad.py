@@ -4,7 +4,9 @@ Port từ `citad-fixed/DoiChieuCITAD.py` (tkinter). Giữ nguyên mô hình dữ
 và công thức tính chênh lệch gốc:
   - gD[cong][cur][fk]  — 5 cổng CITAD × 3 loại tiền × 8 trường
   - phD[cur][fk]       — PaymentHub × 3 loại tiền × 8 trường
-  - napas[fk] / ebank[fk] / pssmdp[fk] — bổ sung Napas/Ebanking/PSS-MDP
+  - napas[fk] / pssmdp[fk] — bổ sung Napas/PSS-MDP
+  - ebank[fk] — kênh CŨ, đã bỏ khỏi cả màn hình lẫn Excel (20/08/2026);
+    chỉ còn đọc/ghi lại để mở session cũ không lỗi, không dùng vào đâu
   - Tổng CITAD = tổng 5 cổng + Napas IH Đến + PSS-MDP IH Đến (den_ih_m, den_ih_t)
     (PSS-MDP thêm sau theo yêu cầu Phòng Thanh toán — cùng nguyên lý Napas)
   - Tổng PaymentHub = tổng 3 loại tiền của PaymentHub
@@ -393,7 +395,7 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
                         inp.on('blur', lambda _, _i=inp: _set_input(_i, fmt(_i.value)))
                         entry_store[cur][fk] = inp
 
-    def build_napas_ebank_grid(container):
+    def build_napas_pssmdp_grid(container):
         """Chỉ 2 field IH Đến (Món/Tiền) — DUY NHẤT được dùng trong recalc()/
         session/export (xem docstring đầu file). 6 field còn lại của mỗi
         dòng KHÔNG có ô nhập (tránh ô "chết" không có tác dụng gì), nhưng
@@ -1268,7 +1270,7 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
 
                     with _section_card("Napas / PSS - MDP (bổ sung)", icon="add_card", accent="amber",
                                        outer_border="border-2 border-red-800"):
-                        build_napas_ebank_grid(ui.column().classes("w-full"))
+                        build_napas_pssmdp_grid(ui.column().classes("w-full"))
 
                     recalc()
 
