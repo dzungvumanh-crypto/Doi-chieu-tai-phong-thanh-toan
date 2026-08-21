@@ -120,13 +120,30 @@ def resolve_sp_role(leaders: List[dict], nv_chinh: List[dict],
 
 # ══════════════════════════════════════════════════════════════
 # CÔNG BẰNG THEO TUẦN / THÁNG
+#
+# Ba luật mềm, áp dụng như nhau cho CẢ Lãnh đạo lẫn nhân viên:
+#   1. Một người không trực quá 2 ca/tuần (mọi loại ca cộng lại).
+#   2. Một người không trực thứ 6 quá 2 lần/tháng.
+#   3. Một người không trực thứ 6 ở 2 tuần liên tiếp.
 # ══════════════════════════════════════════════════════════════
 
-def dem_ca_lanh_dao_trong_tuan(db: sqlite3.Connection, shift_date: str) -> dict:
+def _nguoi_trong_ca(row) -> set:
+    """Toàn bộ người có mặt trong một ca — Lãnh đạo, song phương, trực chính,
+    trực phụ. Một chỗ duy nhất đọc 4 cột id của `duty_shifts`."""
+    r = dict(row)
+    ids = set(json.loads(r.get("leader_ids") or "[]"))
+    ids |= set(json.loads(r.get("nv_ids") or "[]"))
+    ids |= set(json.loads(r.get("nv_phu_ids") or "[]"))
+    if r.get("sp_id"):
+        ids.add(r["sp_id"])
+    return ids
+
+
+def dem_ca_trong_tuan(db: sqlite3.Connection, shift_date: str) -> dict:
     """
-    Đếm số ca mỗi Lãnh đạo đã có trong tuần TRƯỚC ngày shift_date (không tính
-    chính ca đang xét). Dùng chung cho engine sinh tự động và validate sửa tay
-    để không thể hiểu khác nhau luật "Lãnh đạo tối đa 2 ca/tuần".
+    Đếm số ca mỗi người (Lãnh đạo lẫn nhân viên) đã có trong tuần TRƯỚC ngày
+    shift_date (không tính chính ca đang xét). Dùng chung cho engine sinh tự
+    động và validate sửa tay để không thể hiểu khác nhau luật "tối đa 2 ca/tuần".
     """
     d = date.fromisoformat(shift_date)
     week_start = d - timedelta(days=d.weekday())
@@ -134,32 +151,47 @@ def dem_ca_lanh_dao_trong_tuan(db: sqlite3.Connection, shift_date: str) -> dict:
         return {}
     dem: dict = {}
     for r in db.execute(
-        "SELECT leader_ids FROM duty_shifts WHERE shift_date >= ? AND shift_date < ? "
-        "AND status IN ('confirmed','draft')",
+        "SELECT leader_ids, sp_id, nv_ids, nv_phu_ids FROM duty_shifts "
+        "WHERE shift_date >= ? AND shift_date < ? AND status IN ('confirmed','draft')",
         (week_start.isoformat(), shift_date)
     ):
-        for sid in json.loads(r["leader_ids"] or "[]"):
+        for sid in _nguoi_trong_ca(r):
             dem[sid] = dem.get(sid, 0) + 1
     return dem
 
 
-def nguoi_da_truc_thu6_thang(db: sqlite3.Connection, shift_date: str) -> set:
+def dem_thu6_trong_thang(db: sqlite3.Connection, shift_date: str) -> dict:
     """
-    Ai đã trực ca thứ 6 trong CÙNG THÁNG với shift_date rồi (không tính chính ca
-    đang xét) — dùng để tránh xếp trực thứ 6 lần 2 trong tháng cho cùng một người.
+    Đếm số ca thứ 6 mỗi người đã có trong CÙNG THÁNG với shift_date (không tính
+    chính ca đang xét) — dùng cho luật "tối đa 2 lần thứ 6/tháng".
     """
     thang = shift_date[:7]
-    ids: set = set()
+    dem: dict = {}
     for r in db.execute(
         "SELECT leader_ids, sp_id, nv_ids, nv_phu_ids FROM duty_shifts "
         "WHERE shift_type='friday' AND shift_date LIKE ? AND shift_date < ?",
         (f"{thang}-%", shift_date)
     ):
-        if r["sp_id"]:
-            ids.add(r["sp_id"])
-        for cot in ("leader_ids", "nv_ids", "nv_phu_ids"):
-            ids.update(json.loads(r[cot] or "[]"))
-    return ids
+        for sid in _nguoi_trong_ca(r):
+            dem[sid] = dem.get(sid, 0) + 1
+    return dem
+
+
+def nguoi_truc_thu6_tuan_truoc(db: sqlite3.Connection, shift_date: str) -> set:
+    """
+    Ai đã trực thứ 6 đúng 1 TUẦN TRƯỚC (7 ngày trước shift_date) — dùng riêng
+    cho luật "không trực thứ 6 2 tuần liên tiếp". Tách khỏi
+    `dem_thu6_trong_thang()` vì đây là luật về ĐỘ LIỀN KỀ, không phải tổng số
+    lần — một người mới trực 1 thứ 6 trong tháng (chưa chạm mức tối đa 2) vẫn
+    phải tránh nếu đó là thứ 6 ngay tuần trước.
+    """
+    d = date.fromisoformat(shift_date)
+    prev = (d - timedelta(days=7)).isoformat()
+    row = db.execute(
+        "SELECT leader_ids, sp_id, nv_ids, nv_phu_ids FROM duty_shifts "
+        "WHERE shift_type='friday' AND shift_date=?", (prev,)
+    ).fetchone()
+    return _nguoi_trong_ca(row) if row else set()
 
 
 # ══════════════════════════════════════════════════════════════
@@ -246,16 +278,20 @@ def validate_shift_members(db: sqlite3.Connection, shift_date: str, shift_type: 
     elif sp_warning == "multi_sp":
         canh_bao.append("Ca có nhiều hơn 1 người xử lý song phương.")
 
-    so_ca_ld_tuan = dem_ca_lanh_dao_trong_tuan(db, shift_date)
-    for p in leaders:
-        if so_ca_ld_tuan.get(p["id"], 0) >= 2:
-            canh_bao.append(f"{p['full_name']} đã trực {so_ca_ld_tuan[p['id']]} ca trong "
-                            f"tuần này — vượt tối đa 2 ca/tuần cho Lãnh đạo.")
+    so_ca_tuan = dem_ca_trong_tuan(db, shift_date)
+    for p in leaders + nv_chinh + nv_phu:
+        if so_ca_tuan.get(p["id"], 0) >= 2:
+            canh_bao.append(f"{p['full_name']} đã trực {so_ca_tuan[p['id']]} ca trong "
+                            f"tuần này — vượt tối đa 2 ca/tuần.")
 
     if shift_type == "friday":
-        da_truc_t6 = nguoi_da_truc_thu6_thang(db, shift_date)
+        so_thu6_thang = dem_thu6_trong_thang(db, shift_date)
+        thu6_tuan_truoc = nguoi_truc_thu6_tuan_truoc(db, shift_date)
         for p in leaders + nv_chinh + nv_phu:
-            if p["id"] in da_truc_t6:
-                canh_bao.append(f"{p['full_name']} đã trực thứ 6 trong tháng này rồi.")
+            if so_thu6_thang.get(p["id"], 0) >= 2:
+                canh_bao.append(f"{p['full_name']} đã trực thứ 6 {so_thu6_thang[p['id']]} "
+                                f"lần trong tháng này — vượt tối đa 2 lần/tháng.")
+            if p["id"] in thu6_tuan_truoc:
+                canh_bao.append(f"{p['full_name']} trực thứ 6 2 tuần liên tiếp.")
 
     return loi_cung, canh_bao, nhan_su

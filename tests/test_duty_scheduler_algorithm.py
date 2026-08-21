@@ -1068,8 +1068,9 @@ def test_ngay_le_khong_khai_ghi_chu_van_co_chu_nghi_le():
 
 
 # ══════════════════════════════════════════════════════════════
-# 9. Hai luật mềm bổ sung: không trực thứ 6 2 lần/tháng,
-#    Lãnh đạo không trực quá 2 ca/tuần
+# 9. Ba luật mềm bổ sung (áp dụng như nhau cho Lãnh đạo lẫn nhân viên):
+#    (a) không trực quá 2 ca/tuần, (b) không trực thứ 6 quá 2 lần/tháng,
+#    (c) không trực thứ 6 ở 2 tuần liên tiếp
 # ══════════════════════════════════════════════════════════════
 
 # 4 thứ 6 của tháng 8/2026 (14/08 là thứ 6 — xem hằng số FRIDAY ở đầu file)
@@ -1089,75 +1090,173 @@ def _gen_friday_channel(db, date_str: str, seed: int) -> dict:
     return {"shift": shifts[0] if shifts else None, "warnings": warns}
 
 
-def test_khong_trung_thu6_trong_thang_khi_du_nguoi():
-    """Pool đủ rộng — ai cũng phải được ưu tiên trước người đã trực thứ 6 rồi,
-    nên trong 4 thứ 6 của tháng không ai bị lặp."""
-    staff = [(i, f"LD {i}", "truong_phong", 0, 0, i) for i in range(1, 5)]
-    staff += [(10 + i, f"NV {i}", "chuyen_vien", 1 if i % 2 == 0 else 0, 0, 10 + i)
-              for i in range(1, 13)]
-    db = _make_db(staff)
-
-    da_dung: dict = {}
-    for ds in FRIDAYS_08_2026:
-        r = _gen_friday_channel(db, ds, seed=1)
-        assert r["shift"] is not None
-        for sid in _members(r["shift"]):
-            da_dung[sid] = da_dung.get(sid, 0) + 1
-
-    trung = {sid: n for sid, n in da_dung.items() if n > 1}
-    assert not trung, f"đủ người mà vẫn có người trực thứ 6 2 lần/tháng: {trung}"
-
-
-def test_buoc_trung_thu6_khi_thieu_nguoi_van_len_canh_bao():
-    """Pool quá nhỏ so với số thứ 6 trong tháng — không tránh được thì vẫn phải
-    lập ca đủ người, kèm đúng loại cảnh báo để người phân lịch biết mà xử lý."""
+def test_thu6_khong_qua_2_lan_thang_va_khong_lien_tiep_khi_du_nguoi():
+    """2 LD / 4 NV cho 4 thứ 6 — đúng khít mức trần (LD: 4 slot/2 người = 2 mỗi
+    người; NV: 8 slot/4 người = 2 mỗi người). Phải giữ được CẢ hai luật cùng lúc:
+    không ai vượt 2 lần/tháng, và không ai dính 2 thứ 6 liên tiếp — chứng minh
+    thuật toán tìm được lời giải xen kẽ (A,B,A,B), không chỉ né được lượt gần nhất."""
     staff = [
-        (1, "LD Một", "truong_phong", 1, 0, 1),
+        (1, "LD Một", "truong_phong", 0, 0, 1),
         (2, "LD Hai", "pho_phong",    0, 0, 2),
-        (3, "NV Ba",   "chuyen_vien", 1, 0, 3),
-        (4, "NV Bốn",  "chuyen_vien", 0, 0, 4),
-        (5, "NV Năm",  "chuyen_vien", 0, 0, 5),
+        (11, "NV 1", "chuyen_vien", 1, 0, 11),
+        (12, "NV 2", "chuyen_vien", 0, 0, 12),
+        (13, "NV 3", "chuyen_vien", 1, 0, 13),
+        (14, "NV 4", "chuyen_vien", 0, 0, 14),
     ]
     db = _make_db(staff)
 
-    co_canh_bao_trung = False
+    ca_theo_ngay = {}
+    for ds in FRIDAYS_08_2026:
+        r = _gen_friday_channel(db, ds, seed=1)
+        assert r["shift"] is not None
+        assert not r["warnings"], f"đủ người mà vẫn cảnh báo: {r['warnings']}"
+        ca_theo_ngay[ds] = set(_members(r["shift"]))
+
+    dem: dict = {}
+    for members in ca_theo_ngay.values():
+        for sid in members:
+            dem[sid] = dem.get(sid, 0) + 1
+    vuot = {sid: n for sid, n in dem.items() if n > 2}
+    assert not vuot, f"vượt 2 lần thứ 6/tháng dù đủ người: {vuot}"
+
+    for a, b in zip(FRIDAYS_08_2026, FRIDAYS_08_2026[1:]):
+        trung = ca_theo_ngay[a] & ca_theo_ngay[b]
+        assert not trung, f"trực thứ 6 liên tiếp {a}→{b}: {trung}"
+
+
+def test_buoc_vuot_thu6_khi_thieu_nguoi_len_dung_2_loai_canh_bao():
+    """Chỉ 1 LD cho 4 thứ 6/tháng — không thể tránh vừa vượt 2 lần/tháng vừa
+    liên tiếp. Vẫn phải lập đủ ca, kèm đúng 2 loại cảnh báo để người phân lịch
+    biết mà xử lý, không âm thầm vượt luật."""
+    staff = [
+        (1, "LD Một", "truong_phong", 1, 0, 1),
+        (11, "NV 1", "chuyen_vien", 1, 0, 11),
+        (12, "NV 2", "chuyen_vien", 0, 0, 12),
+        (13, "NV 3", "chuyen_vien", 0, 0, 13),
+    ]
+    db = _make_db(staff)
+
+    loai_canh_bao = set()
     for ds in FRIDAYS_08_2026:
         r = _gen_friday_channel(db, ds, seed=1)
         assert r["shift"] is not None, f"pool nhỏ vẫn phải đủ người ngày {ds}"
         assert len(_members(r["shift"])) == 3
-        if any(w["type"] == "trung_thu6_thang" for w in r["warnings"]):
-            co_canh_bao_trung = True
-    assert co_canh_bao_trung, (
-        "pool chỉ 2 LD/3 NV cho 4 thứ 6 trong tháng phải buộc lặp lại ít nhất 1 lần")
+        loai_canh_bao.update(w["type"] for w in r["warnings"])
+    assert "qua_2_thu6_thang" in loai_canh_bao, (
+        "chỉ 1 LD cho 4 thứ 6/tháng phải buộc vượt 2 lần/tháng, kèm cảnh báo")
+    assert "thu6_lien_tiep" in loai_canh_bao, (
+        "chỉ 1 LD cho 4 thứ 6/tháng chắc chắn dính liên tiếp, kèm cảnh báo")
 
 
-def test_lanh_dao_khong_qua_2_ca_tuan_khi_du_nguoi():
-    """3 Lãnh đạo cho 1 tuần 5 ngày — đủ người để không ai vượt tối đa 2 ca/tuần."""
+def _dem_ca_theo_nguoi(db) -> dict:
+    """Đếm tổng số ca (mọi vai) của từng người trên toàn bộ duty_shifts hiện có."""
+    dem: dict = {}
+    for r in db.execute("SELECT leader_ids, sp_id, nv_ids, nv_phu_ids FROM duty_shifts"):
+        for sid in _members(dict(r)):
+            dem[sid] = dem.get(sid, 0) + 1
+    return dem
+
+
+def test_khong_ai_qua_2_ca_tuan_khi_du_nguoi_ca_ld_va_nv():
+    """3 LD + 5 NV cho tuần 5 ngày (LD: 5 slot/3 người; NV: 10 slot/5 người —
+    cả hai đều đúng khít mức trần) — luật áp dụng CHO CẢ nhân viên, không riêng
+    Lãnh đạo, nên NV cũng không được vượt 2 ca/tuần.
+
+    Cả 5 NV đều khai biết song phương — nếu chỉ 1-2 người biết, vai song
+    phương (bắt buộc mỗi ca) sẽ dồn vào đúng nhóm nhỏ đó và tự nó đã vượt trần
+    2 ca/tuần trước khi luật mới kịp can thiệp; test này chỉ nhắm luật cân bằng
+    theo tuần, không nhắm ràng buộc song phương."""
     staff = [
         (1, "LD Một", "truong_phong", 0, 0, 1),
         (2, "LD Hai", "pho_phong",    0, 0, 2),
         (3, "LD Ba",  "pho_phong",    0, 0, 3),
-    ] + [(10 + i, f"NV {i}", "chuyen_vien", 1 if i <= 2 else 0, 0, 10 + i) for i in range(1, 5)]
-    db = _make_db(staff)
-    generate_schedule_for_week(db, MONDAY, seed=3)
-
-    dem: dict = {}
-    for r in db.execute("SELECT leader_ids FROM duty_shifts"):
-        for sid in _leaders(dict(r)):
-            dem[sid] = dem.get(sid, 0) + 1
-    assert all(n <= 2 for n in dem.values()), f"có Lãnh đạo vượt 2 ca/tuần: {dem}"
-
-
-def test_lanh_dao_qua_2_ca_tuan_khi_thieu_nguoi_van_len_canh_bao():
-    """Chỉ 2 Lãnh đạo cho tuần 5 ngày — về mặt toán học không thể tránh được (5
-    ngày ÷ 2 người), phải lập đủ ca và lên đúng cảnh báo thay vì âm thầm vượt."""
-    staff = [
-        (1, "LD Một", "truong_phong", 0, 0, 1),
-        (2, "LD Hai", "pho_phong",    0, 0, 2),
-    ] + [(10 + i, f"NV {i}", "chuyen_vien", 1 if i <= 2 else 0, 0, 10 + i) for i in range(1, 5)]
+    ] + [(10 + i, f"NV {i}", "chuyen_vien", 1, 0, 10 + i) for i in range(1, 6)]
     db = _make_db(staff)
     result = generate_schedule_for_week(db, MONDAY, seed=3)
 
-    assert result["created"] == 5, "đủ 2 LD + 4 NV cho cả 5 ngày, không ngày nào bị bỏ"
-    assert any(w["type"] == "ld_qua_tai_tuan" for w in result["warnings"]), (
-        "chỉ 2 Lãnh đạo cho 5 ngày phải buộc ai đó vượt 2 ca/tuần, kèm cảnh báo")
+    vi_pham = [w for w in result["warnings"] if w["type"] == "qua_tai_tuan"]
+    assert not vi_pham, f"đủ người mà vẫn cảnh báo vượt trần: {vi_pham}"
+    dem = _dem_ca_theo_nguoi(db)
+    assert all(n <= 2 for n in dem.values()), f"có người vượt 2 ca/tuần: {dem}"
+
+
+def test_buoc_vuot_2_ca_tuan_khi_thieu_nguoi_len_canh_bao_khong_rieng_ld():
+    """Chỉ 2 LD (5 ngày ÷ 2 người) VÀ chỉ 3 NV (10 slot ÷ 3 người) — cả hai vai
+    đều không đủ để giữ trần 2 ca/tuần. Cảnh báo phải lên cho CẢ hai, không chỉ
+    Lãnh đạo."""
+    staff = [
+        (1, "LD Một", "truong_phong", 0, 0, 1),
+        (2, "LD Hai", "pho_phong",    0, 0, 2),
+    ] + [(10 + i, f"NV {i}", "chuyen_vien", 1 if i <= 2 else 0, 0, 10 + i) for i in range(1, 4)]
+    db = _make_db(staff)
+    result = generate_schedule_for_week(db, MONDAY, seed=3)
+
+    assert result["created"] == 5, "đủ 2 LD + 3 NV cho cả 5 ngày, không ngày nào bị bỏ"
+    assert any(w["type"] == "qua_tai_tuan" for w in result["warnings"]), (
+        "thiếu cả LD lẫn NV cho 5 ngày phải buộc ai đó vượt 2 ca/tuần, kèm cảnh báo")
+
+    dem = _dem_ca_theo_nguoi(db)
+    vai = {1: "LD", 2: "LD", 11: "NV", 12: "NV", 13: "NV"}
+    vuot_ld = any(n > 2 for sid, n in dem.items() if vai.get(sid) == "LD")
+    vuot_nv = any(n > 2 for sid, n in dem.items() if vai.get(sid) == "NV")
+    assert vuot_ld, "toán học: 5 ngày ÷ 2 LD chắc chắn có người vượt 2 ca"
+    assert vuot_nv, "toán học: 10 slot NV ÷ 3 người chắc chắn có người vượt 2 ca"
+
+
+def test_mo_phong_3_thang_giu_dong_thoi_ca_3_luat():
+    """Mô phỏng phân lịch 3 tháng liên tiếp (~13 tuần) trên cơ cấu nhân sự vừa
+    phải — bài học cũ: kiểm 1 ca đơn lẻ không bắt được lỗi cân bằng, cân bằng
+    là tính chất của cả CHUỖI ca dài ngày. Xác nhận đồng thời cả 3 luật mềm
+    không bị vi phạm và không phát sinh cảnh báo buộc-vi-phạm nào."""
+    from datetime import date, timedelta
+
+    staff = [(i, f"LD {i}", "truong_phong", 0, 0, i) for i in range(1, 5)]        # 4 LD
+    staff += [(10 + i, f"NV {i}", "chuyen_vien", 1 if i % 3 == 0 else 0, 0, 10 + i)
+              for i in range(1, 13)]                                              # 12 NV, 4 biết SP
+    db = _make_db(staff)
+
+    start = date(2026, 6, 1)
+    start -= timedelta(days=start.weekday())
+    all_warnings = []
+    for i in range(13):  # ~3 tháng (6, 7, 8/2026)
+        ws = (start + timedelta(weeks=i)).isoformat()
+        result = generate_schedule_for_week(db, ws, seed=i)
+        all_warnings.extend(result["warnings"])
+
+    # (a) không ai vượt 2 ca/ISO-tuần
+    theo_tuan: dict = {}
+    for r in db.execute("SELECT shift_date, leader_ids, sp_id, nv_ids, nv_phu_ids FROM duty_shifts"):
+        d = date.fromisoformat(r["shift_date"])
+        wk = (d - timedelta(days=d.weekday())).isoformat()
+        cho_tuan = theo_tuan.setdefault(wk, {})
+        for sid in _members(dict(r)):
+            cho_tuan[sid] = cho_tuan.get(sid, 0) + 1
+    vuot_tuan = {(wk, sid): n for wk, m in theo_tuan.items() for sid, n in m.items() if n > 2}
+    assert not vuot_tuan, f"vượt 2 ca/tuần trong 3 tháng mô phỏng: {vuot_tuan}"
+
+    # (b) không ai vượt 2 lần thứ 6/tháng
+    theo_thang: dict = {}
+    thu6_rows = []
+    for row in db.execute("SELECT * FROM duty_shifts WHERE shift_type='friday' ORDER BY shift_date"):
+        r = dict(row)
+        thu6_rows.append(r)
+        thang = r["shift_date"][:7]
+        cho_thang = theo_thang.setdefault(thang, {})
+        for sid in _members(r):
+            cho_thang[sid] = cho_thang.get(sid, 0) + 1
+    vuot_thang = {(th, sid): n for th, m in theo_thang.items() for sid, n in m.items() if n > 2}
+    assert not vuot_thang, f"vượt 2 lần thứ 6/tháng trong 3 tháng mô phỏng: {vuot_thang}"
+
+    # (c) không ai trực thứ 6 2 tuần liên tiếp
+    for prev, cur in zip(thu6_rows, thu6_rows[1:]):
+        if (date.fromisoformat(cur["shift_date"]) - date.fromisoformat(prev["shift_date"])).days != 7:
+            continue
+        trung = set(_members(prev)) & set(_members(cur))
+        assert not trung, (
+            f"trực thứ 6 liên tiếp {prev['shift_date']}→{cur['shift_date']}: {trung}")
+
+    canh_bao_vi_pham = [w for w in all_warnings if w["type"] in
+                        ("qua_tai_tuan", "qua_2_thu6_thang", "thu6_lien_tiep")]
+    assert not canh_bao_vi_pham, (
+        f"cơ cấu 4 LD/12 NV đủ rộng cho 3 tháng mà vẫn phải cảnh báo vi phạm: "
+        f"{canh_bao_vi_pham}")
