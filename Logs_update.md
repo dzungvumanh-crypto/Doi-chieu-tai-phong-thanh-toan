@@ -13,6 +13,11 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
     + **5 lỗi nhỏ khác phát hiện khi rà soát cùng đợt, đã sửa**: file CITAD đuôi lạ nay báo lỗi rõ thay vì bỏ qua im lặng; cột ngày IPCAS đọc sai khi tên ngân hàng có dấu phẩy; khoá so khớp file Hub-CITAD không khớp được nếu mã có lẫn chữ cái; lỗi đọc ô Excel nay có ghi log thay vì nuốt hoàn toàn; nhãn trạng thái ở màn hình và file Excel dùng chung 1 nguồn thay vì 2 bản chép tay dễ lệch nhau
     + Toàn bộ thay đổi đã kiểm chứng lại bằng đúng bộ dữ liệu thật (CITAD + IPCAS + Hub ngày 19/08/2026) — số liệu khớp/lệch không đổi so với trước khi sửa các lỗi nhỏ, chỉ có 2 lỗi lớn ở trên là thay đổi số liệu (theo hướng ĐÚNG hơn — hiện ra chênh lệch thật trước đây bị giấu mất)
 
+- 20/08/2026 Đối chiếu CITAD - **Bỏ nốt dòng "Ebanking" khỏi file Excel xuất ra**:
+    + Đợt 14/08 đã bỏ ô nhập Ebanking khỏi màn hình (kênh này không còn dùng) nhưng **sót**: dòng "Ebanking" vẫn được in ra trong file Excel tải về và trong bảng xem trước khi xuất — nay bỏ luôn cả hai chỗ, đồng bộ với màn hình
+    + Không đổi số liệu Chênh lệch — dòng Ebanking từ trước tới nay vốn **không được cộng** vào tổng CITAD (chỉ in ra tham khảo), nên bỏ dòng không ảnh hưởng con số báo cáo
+    + Số liệu Ebanking của các ngày đã chấm trước đây vẫn nằm nguyên trong dữ liệu đã lưu, chỉ không còn hiện/in ra đâu nữa
+
 - 18/08/2026 Toàn hệ thống - **Rà soát: chỗ nào sửa ở menu này lại đổi số liệu của menu khác; chỗ nào ghi/xoá file trên máy chủ**:
     + **Đợt này không thêm menu nào.** Nhưng có **một thay đổi làm lịch trực sinh ra khác trước** — đọc mục *Phân lịch trực* dưới đây trước khi tạo lịch tháng mới
     + ⚠️ **Nút *Nhập DB* (màn hình Quản lý User) trước đây ghi đè cả số ngày phép đã dùng của mọi người.** File .db nhập vào mang theo **toàn bộ** cột, kể cả *số ngày phép đã dùng*, *vai trò* và *mật khẩu*. Nhập lại một file cũ là **xoá sổ số ngày phép đã dùng của cả cơ quan**, mà không có cách nào hoàn tác — trong khi màn hình *Quỹ phép* có sẵn cơ chế nhập theo đợt và **hoàn tác được**. Nay: người đã có trong hệ thống thì **giữ nguyên số ngày phép**, chỉ tài khoản **mới** mới lấy theo file
@@ -123,7 +128,7 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
     + **Bảng Napas / PSS-MDP vẫn sửa tay bình thường** — không nằm trong diện khoá
     + **Tab *Lịch sử* chuyển thành chỉ xem** — mở một bản đã chấm ra xem thì không sửa hay lưu đè được. Bấm *Quay lại chỉnh sửa* để thoát chế độ xem và nhập mới cho hôm nay
     + **Thêm cách lấy Napas/PSS-MDP thứ hai**: quét thẳng từ trang CITAD *Kiểm soát yêu cầu quyết toán lô đến* (Cổng 1), song song cách cũ qua PaymentHub. Dùng nguồn nào cũng được, không xung đột
-    + **Ô nhập Ebanking đã bỏ khỏi màn hình** — số liệu Ebanking của các ngày đã lưu trước đây **vẫn giữ nguyên**, vẫn xuất ra Excel đầy đủ, chỉ là không nhập mới được nữa
+    + **Ô nhập Ebanking đã bỏ khỏi màn hình** — số liệu Ebanking của các ngày đã lưu trước đây **vẫn giữ nguyên**, vẫn xuất ra Excel đầy đủ, chỉ là không nhập mới được nữa. ⚠️ **Phần "vẫn xuất ra Excel" nay không còn đúng**: dòng Ebanking đã bỏ nốt khỏi file Excel ngày 20/08/2026 — xem entry đầu file
     + Giao diện: bảng chênh lệch đưa lên đầu trang, tách riêng hai khung *LỆNH ĐI* / *LỆNH ĐẾN*, ô đã có số liệu đậm nền hồng cho dễ nhìn, và một số chỉnh về viền/khoảng cách
     + ⚠️ **Phải tải lại `.zip` và cài lại Extension (bản 2.17)** — vào `/doi_chieu_citad` → **Tải Extension**, giải nén, *Load unpacked* lại. Không cài lại thì nút *Nạp CITAD* không lấy được Napas/PSS-MDP từ nguồn mới
 
