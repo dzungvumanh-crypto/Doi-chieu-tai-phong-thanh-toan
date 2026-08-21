@@ -338,6 +338,18 @@ async def leaves_page():
                 ui.button("Đã hiểu", on_click=_dp.close).classes("bg-red-700 text-white mt-4 w-full")
         ui.timer(0.5, _show_deleg_popup, once=True)
 
+    # ── Bật sẵn Word ở máy chủ ────────────────────────────────────────────────
+    # Bản xem trước do Word dựng. Mở Word tốn ~1,5 giây, chuyển một đơn chỉ tốn
+    # ~0,35 giây — nên đánh thức nó ngay lúc mở trang, trong khi người dùng còn
+    # đang xem danh sách / điền đơn. Gọi xong quên luôn: hỏng cũng không ảnh hưởng
+    # gì, đường xem trước thật vẫn tự bật Word khi cần.
+    async def _warm_up_word():
+        try:
+            await asyncio.to_thread(api.post, "/api/leaves/preview/warmup", {})
+        except Exception:
+            pass        # dọn đường thôi, im lặng bỏ qua — không làm phiền người dùng
+    ui.timer(0.2, _warm_up_word, once=True)
+
     # ── Popup thông báo carry-over hết hiệu lực sau Q1 (1 lần/năm/user) ──────
     async def _check_carryover_notice():
         try:
@@ -363,11 +375,21 @@ async def leaves_page():
 
 
 
-    can_all        = (user_role in ("admin", "hau_kiem_vien", "giam_doc", "pho_giam_doc")
+    can_all        = (user_role in ("admin", "giam_doc", "pho_giam_doc")
 
                       or api.has_feature("leaves.forward_th"))  # Phòng TH xem toàn bộ
 
-    can_delegation = user_role == "admin"
+    # Bước Tổng hợp phân quyền theo FEATURE, không theo role: chuyên viên phòng TH
+    # được cấp "leaves.forward_th" vẫn phải thao tác được. Backend (tong_hop_review)
+    # chỉ kiểm tra _is_tong_hop_staff — các gate role cứng ở frontend chặn nhầm
+    # khiến đơn hiện ra nhưng không có nút nào.
+    can_forward_th = api.has_feature("leaves.forward_th")
+
+    # Tab "Ủy quyền GĐ" giao được qua "Phân quyền theo nhóm" (admin luôn có).
+    # Tab "Ngày lễ" vẫn admin-only — trước đây hai tab dùng CHUNG một biến, nới
+    # quyền ủy quyền mà không tách thì mở nhầm luôn màn sửa ngày lễ toàn hệ thống.
+    can_delegation = api.has_feature("leaves.delegation_admin")
+    can_holiday    = user_role == "admin"
 
     show_approver  = user_role not in ("giam_doc", "pho_giam_doc", "admin", "truong_phong")
 
@@ -572,7 +594,7 @@ async def leaves_page():
 
 
 
-        can_dept     = user_role in ("truong_phong", "pho_phong", "hau_kiem_vien")
+        can_dept     = user_role in ("truong_phong", "pho_phong")
 
         can_declared = api.has_feature("leaves.declare_direct")
 
@@ -1288,13 +1310,13 @@ async def leaves_page():
 
                 in_pend  = lid in pending_ids
 
-                _approver_roles = ("truong_phong", "pho_phong", "hau_kiem_vien",
+                _approver_roles = ("truong_phong", "pho_phong",
                                    "giam_doc", "pho_giam_doc", "admin")
                 _can_act = user_role in _approver_roles
 
-                ksv_act  = status == "pending_ksv" and in_pend and user_role in ("truong_phong", "pho_phong", "hau_kiem_vien")
+                ksv_act  = status == "pending_ksv" and in_pend and user_role in ("truong_phong", "pho_phong")
 
-                th_act   = status == "pending_tong_hop" and in_pend and _can_act
+                th_act   = status == "pending_tong_hop" and in_pend and (_can_act or can_forward_th)
 
                 gd_act   = status == "pending_gd" and in_pend and user_role in ("giam_doc", "pho_giam_doc")
 
@@ -1521,6 +1543,17 @@ async def leaves_page():
 
                             _info("Người duyệt:", _gd_display(leave) or "Chưa xác định")
 
+                            # Đơn đứng ở bước GĐ mà người được chỉ định là PGĐ hết ủy quyền:
+                            # backend trả danh sách "chờ duyệt" RỖNG cho họ nên drawer không
+                            # dựng nút nào — không nói ra thì màn hình trông y như bị lỗi.
+                            if status == "pending_gd" and not leave.get("gd_can_review", True):
+                                with ui.column().classes("w-full bg-amber-50 border-l-4 border-amber-500 rounded p-2 gap-0 mt-1"):
+                                    ui.label("⚠ Ủy quyền của Phó Giám đốc đã hết hiệu lực").classes("text-xs font-bold text-amber-800")
+                                    ui.label("Đơn đang đứng lại: người được chỉ định duyệt là Phó Giám đốc, "
+                                             "nhưng giấy ủy quyền không còn hiệu lực cho ngày hôm nay nên hệ thống "
+                                             "không cho bấm duyệt. Cần gia hạn ủy quyền ở tab \"Ủy quyền GĐ\", "
+                                             "hoặc nhờ Quản trị viên duyệt thay.").classes("text-xs text-amber-900 leading-snug")
+
                             if leave.get("gd_approved_at"):
                                 _info("Ngày duyệt:", leave["gd_approved_at"][:10])
                                 _info("Ý kiến:", leave.get("gd_comment") or "→")
@@ -1643,9 +1676,15 @@ async def leaves_page():
                                     except Exception as e:
                                         _handle_api_error(e)
 
+                                # Chuyển cho PGĐ hết ủy quyền = đơn kẹt, chỉ Quản trị viên gỡ được.
+                                # Không chặn (ủy quyền có thể được cấp sau) nhưng phải báo trước.
+                                _warn = ("" if lv.get("gd_can_review", True) else
+                                         " ⚠ Người duyệt là Phó Giám đốc nhưng giấy ủy quyền chưa/không còn "
+                                         "hiệu lực hôm nay — chuyển lên bây giờ thì đơn sẽ đứng lại cho tới khi "
+                                         "ủy quyền được gia hạn.")
                                 _ask_confirm(
                                     "Xác nhận phê duyệt",
-                                    f"Xác nhận đơn của {lv.get('staff_name','')} và chuyển lên Ban lãnh đạo?",
+                                    f"Xác nhận đơn của {lv.get('staff_name','')} và chuyển lên Ban lãnh đạo?{_warn}",
                                     _do_forward,
                                     ok_label="Xác nhận",
                                     ok_cls="bg-green-600"
@@ -2201,7 +2240,7 @@ async def leaves_page():
         # ── Toolbar ───────────────────────────────────────────────────────────
 
         _has_any_approve = (
-            user_role not in ("chuyen_vien",)
+            (user_role not in ("chuyen_vien",) or can_forward_th)
             and any(api.has_feature(f) for f in (
                 "leaves.approve_ksv", "leaves.forward_th", "leaves.approve_gd"
             ))
@@ -2600,9 +2639,9 @@ async def leaves_page():
                     # Highlight đỏ nhạt nếu dòng này cần user hiện tại xử lý
                     _needs_action = (
                         (lv.get("status") == "rejected" and lv.get("staff_id") == user_id)
-                        or (lv.get("status") == "pending_ksv"      and user_role in ("truong_phong", "pho_phong", "hau_kiem_vien") and lv.get("ksv_approver_id") == user_id)
-                        or (lv.get("status") == "pending_tong_hop" and user_role not in ("chuyen_vien",) and lv.get("tong_hop_approver_id") == user_id)
-                        or (lv.get("status") == "pending_tong_hop" and user_role not in ("chuyen_vien",) and not lv.get("tong_hop_approver_id"))
+                        or (lv.get("status") == "pending_ksv"      and user_role in ("truong_phong", "pho_phong") and lv.get("ksv_approver_id") == user_id)
+                        or (lv.get("status") == "pending_tong_hop" and (user_role not in ("chuyen_vien",) or can_forward_th) and lv.get("tong_hop_approver_id") == user_id)
+                        or (lv.get("status") == "pending_tong_hop" and (user_role not in ("chuyen_vien",) or can_forward_th) and not lv.get("tong_hop_approver_id"))
                         or (lv.get("status") == "pending_gd"      and user_role in ("giam_doc", "pho_giam_doc") and lv.get("gd_approver_id") == user_id)
                     )
                     _row_bg = "bg-red-50 border-red-300" if _needs_action else "bg-white border-gray-300"
@@ -2708,7 +2747,9 @@ async def leaves_page():
 
             t_mine    = ui.tab("Của tôi") if not _has_dash else None
 
-            _can_approve = user_role not in ("chuyen_vien",)
+            # Hậu kiểm viên ngang chuyên viên ở quy trình nghỉ phép — không duyệt bước
+            # nào, nên đừng dựng tab "Chờ duyệt" rỗng cho họ.
+            _can_approve = user_role not in ("chuyen_vien", "hau_kiem_vien") or can_forward_th
 
             # Tách pending thành 2 danh sách: duyệt phòng (KSV) và xác nhận TT (TH)
             # Đơn của GĐ đã tự động approved cũng hiện ở đây để TH "xác nhận đã biết"
@@ -2717,7 +2758,7 @@ async def leaves_page():
             _pending_th_list  = [lv for lv in pending_leaves if lv.get("status") == "pending_tong_hop"
                                  or (lv.get("status") == "approved" and lv.get("staff_role") == "giam_doc"
                                      and not lv.get("tong_hop_approver_id"))]
-            _is_dual_role     = api.has_feature("leaves.forward_th") and user_role in ("truong_phong", "pho_phong", "hau_kiem_vien")
+            _is_dual_role     = api.has_feature("leaves.forward_th") and user_role in ("truong_phong", "pho_phong")
 
             # name= cố định tách khỏi label= động — leave_tabs.value chính là "name"
             # (Quasar QTabs v-model), nếu để label động làm luôn name thì mỗi lần số
@@ -2747,7 +2788,7 @@ async def leaves_page():
 
             t_deleg   = ui.tab("Ủy quyền GĐ") if can_delegation else None
 
-            t_holiday = ui.tab("Ngày lễ") if can_delegation else None
+            t_holiday = ui.tab("Ngày lễ") if can_holiday else None
 
             t_quota   = ui.tab("Hạn mức phép") if api.has_feature("leaves.quota_admin") else None
 
@@ -3997,7 +4038,7 @@ async def leaves_page():
 
 
 
-            if can_delegation and t_holiday:
+            if can_holiday and t_holiday:
 
                 with ui.tab_panel(t_holiday):
 
