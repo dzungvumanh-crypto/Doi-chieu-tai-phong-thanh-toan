@@ -20,7 +20,7 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-from backend.core.config import BASE_DIR
+from backend.core.config import BASE_DIR, zip_password   # mật khẩu ZIP đọc từ .env
 
 try:
     import pyzipper
@@ -30,7 +30,6 @@ except ImportError:
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 TEMP_DIR      = BASE_DIR / "data" / "temp_doi_chieu_song_phuong"
-ZIP_PASSWORD  = b"DACwLdHi"
 CLEANUP_HOURS = 2
 
 # Cột chuẩn IPCAS — đảm bảo mọi file xuất ra luôn có đủ 10 cột này
@@ -124,7 +123,7 @@ def process_zip(zip_bytes: bytes, task_token: str | None = None) -> dict:
 
     with zf:
         try:
-            zf.setpassword(ZIP_PASSWORD)
+            zf.setpassword(zip_password())
         except AttributeError:
             pass  # zipfile thường không cần setpassword riêng
         csv_names = sorted(n for n in zf.namelist() if n.lower().endswith(".csv"))
@@ -134,7 +133,7 @@ def process_zip(zip_bytes: bytes, task_token: str | None = None) -> dict:
         n = len(csv_names)
         for i, name in enumerate(csv_names):
             try:
-                raw = zf.read(name, pwd=ZIP_PASSWORD)
+                raw = zf.read(name, pwd=zip_password())
             except Exception as e:
                 raise ValueError(
                     f"Không giải mã được '{name}' — sai mật khẩu hoặc file hỏng ({e})."

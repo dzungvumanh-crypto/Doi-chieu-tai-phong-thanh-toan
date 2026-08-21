@@ -89,9 +89,14 @@ def login(req: LoginRequest, request: Request, db: sqlite3.Connection = Depends(
         "INSERT INTO login_logs (username, staff_id, ip_address, success, detail, created_at) VALUES (?,?,?,?,?,?)",
         (req.username, staff["id"], client_ip, 1, None, _vn_now()),
     )
-    db.commit()
     # Mật khẩu mặc định "1" → bắt buộc đổi ngay
     must_change = bool(staff.get("must_change_password", 0)) or req.password == "1"
+    # Ghi cờ xuống DB chứ không chỉ trả về cho frontend: chốt chặn thật nằm ở
+    # get_current_staff() (backend/core/deps.py) và nó đọc DB, không đọc phản hồi
+    # đăng nhập. Không ghi thì người dùng mật khẩu "1" vẫn qua được chốt đó.
+    if must_change and not staff.get("must_change_password"):
+        db.execute("UPDATE user_tttt SET must_change_password = 1 WHERE id = ?", (staff["id"],))
+    db.commit()
     return Token(
         access_token=token,
         staff_id=staff["id"],

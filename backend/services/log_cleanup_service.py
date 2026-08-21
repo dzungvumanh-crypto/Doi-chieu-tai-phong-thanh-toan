@@ -17,7 +17,11 @@ from backend.database import _vn_now
 
 _log = logging.getLogger(__name__)
 
-LOGIN_RETENTION_DAYS = 30
+# Nhật ký đăng nhập là bằng chứng an ninh (ai vào, từ máy nào, thành công hay
+# không) — giữ 30 ngày là quá ngắn: một vụ dò mật khẩu bị phát hiện muộn hơn
+# một tháng thì dấu vết đã bị chính hệ thống xoá hộ kẻ tấn công. Đặt bằng
+# audit_logs (1 năm) cho khớp thông lệ lưu vết của ngành ngân hàng.
+LOGIN_RETENTION_DAYS = 365
 AUDIT_RETENTION_DAYS = 365
 _INTERVAL_HOURS = 12
 

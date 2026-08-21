@@ -15,7 +15,7 @@ async def login_logs_page():
     _ = await _sidebar("login-logs")
 
     with _content_area():
-        _page_header("Nhật ký đăng nhập", "Lịch sử đăng nhập — tối đa 30 ngày gần nhất")
+        _page_header("Nhật ký đăng nhập", "Lịch sử đăng nhập — lưu 12 tháng gần nhất")
 
         _filter: list = [""]
         _page:   list = [1]

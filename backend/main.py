@@ -146,6 +146,11 @@ app.add_middleware(AuditMiddleware)
 from backend.core.uploads import BodySizeLimitMiddleware, MAX_REQUEST_BYTES
 app.add_middleware(BodySizeLimitMiddleware, max_bytes=MAX_REQUEST_BYTES)
 
+# Ngoài cùng (thêm sau cùng trước CORS) để header có mặt cả trên phản hồi lỗi
+# do middleware bên trong sinh ra — vd 413 của BodySizeLimitMiddleware.
+from backend.core.security_headers import SecurityHeadersMiddleware
+app.add_middleware(SecurityHeadersMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_settings.ALLOWED_ORIGINS,
