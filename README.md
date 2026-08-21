@@ -304,6 +304,9 @@ Truy cập:
   thì đơn đã ký không đổi theo. Nộp lại đơn bị từ chối sẽ xoá chữ ký của người duyệt.
   Chưa có ảnh chữ ký (Quản lý người dùng → Ảnh chữ ký) thì vẫn gửi/duyệt được, chỉ là phiếu trống ô ký.
   *Duyệt hàng loạt và bước Tổng hợp không ký.*
+- **Lịch nghỉ tháng chỉ hiện người cùng phòng.** Xem được toàn trung tâm: admin, GĐ/PGĐ, nhân viên
+  phòng Tổng hợp — đúng tiêu chí `scope="all"` của `list_leaves()`. Hậu kiểm viên **không** nằm trong
+  danh sách này (họ ngang chuyên viên ở quy trình nghỉ phép). Rê chuột vào ô ngày để xem đủ danh sách
 - Theo dõi quota phép năm (hạn ngạch / đã dùng); chuyển tiếp ngày phép chưa dùng năm trước sang Q1
 - Banner "Phép còn lại" tính đủ hạn mức nhập tay + ngày chuyển kỳ, khớp đúng tab Hạn mức phép
 - Đơn nghỉ vắt qua ranh giới năm (vd 29/12 → 02/01) được chia đúng cho từng năm khi tính hạn mức
