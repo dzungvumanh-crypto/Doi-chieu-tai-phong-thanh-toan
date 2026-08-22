@@ -53,6 +53,9 @@ _STRIP_COLS = {'LOCAC', 'CUSTOMER', 'CCY', 'TRTP', 'REFERENCE', 'TRBRCD', 'DYTRS
 
 _NUM_COLS = frozenset({'DRAMOUNT', 'CRAMOUNT'})
 
+# Không có đủ các cột này thì không lọc/phân loại được — kiểm từng file một
+_COT_BAT_BUOC = frozenset({'LOCAC', 'CUSTOMER', 'CCY', 'REMARK', 'DRAMOUNT', 'CRAMOUNT'})
+
 # A–Z rồi AA, AB, … (đủ cho 30 cột)
 _COL_LETTERS = [
     (chr(65 + i) if i < 26 else chr(64 + i // 26) + chr(65 + i % 26))
@@ -96,17 +99,17 @@ class InputError(ValueError):
     """Lỗi do chính file người dùng tải lên — thông báo hiển thị thẳng cho họ."""
 
 
-def run_process(zip_bytes: bytes, task_token: str) -> None:
-    """Chạy process_zip trong background thread; cập nhật progress và bắt lỗi."""
+def run_process(zips: list[tuple[str, bytes]], task_token: str) -> None:
+    """Chạy process_zips trong background thread; cập nhật progress và bắt lỗi."""
     try:
-        process_zip(zip_bytes, task_token)
+        process_zips(zips, task_token)
     except InputError as e:
         # File sai — không phải lỗi hệ thống, người dùng tự sửa được.
         log.warning("cham459901 file không hợp lệ [%s]: %s", task_token, e)
         if task_token in _progress:
             _progress[task_token].update({"done": True, "error": str(e), "msg": str(e)})
     except Exception as e:
-        log.error("process_zip lỗi [%s]: %s", task_token, e, exc_info=True)
+        log.error("process_zips lỗi [%s]: %s", task_token, e, exc_info=True)
         if task_token in _progress:
             _progress[task_token].update({
                 "done": True, "error": str(e),
@@ -114,13 +117,20 @@ def run_process(zip_bytes: bytes, task_token: str) -> None:
             })
 
 
-def process_zip(zip_bytes: bytes, task_token: str | None = None) -> dict:
-    """Nhận bytes của file ZIP → phân loại → lưu 3 xlsx → trả metadata."""
+def process_zips(zips: list[tuple[str, bytes]], task_token: str | None = None) -> dict:
+    """Nhận nhiều file ZIP [(tên, bytes)] → gộp → phân loại → lưu 3 xlsx → trả metadata.
+
+    Gộp TRƯỚC rồi mới phân loại, không chạy riêng từng file: cặp Cancel/Normal
+    của một lệnh hủy có thể nằm ở hai file khác nhau (xuất theo ngày/theo chi
+    nhánh). Chạy tách ra thì cả hai vế đều rơi vào "Lệnh Khác".
+    """
+    if not zips:
+        raise InputError("Chưa chọn file ZIP nào.")
+
     _cleanup_old_results()
     t0 = time.time()
 
-    _set_prog(task_token, 5, "Đang giải mã và đọc dữ liệu...")
-    df, filtered_rows = _load_data(zip_bytes)
+    df, filtered_rows = _load_data(zips, task_token)
     total_before = len(df) + filtered_rows
 
     _set_prog(task_token, 30, "Bước 1 — Xác định lệnh hủy...")
@@ -146,6 +156,7 @@ def process_zip(zip_bytes: bytes, task_token: str | None = None) -> dict:
         "khac_rows":     len(df_khac),
         "total_rows":    total_before,
         "filtered_rows": filtered_rows,
+        "n_files":       len(zips),
         "elapsed_s":     round(time.time() - t0, 1),
         "process_date":  datetime.now().strftime("%Y%m%d"),
     }
@@ -161,43 +172,69 @@ def process_zip(zip_bytes: bytes, task_token: str | None = None) -> dict:
 
 # ─── Internal ─────────────────────────────────────────────────────────────────
 
-def _load_data(zip_bytes: bytes) -> tuple[pd.DataFrame, int]:
-    buf = io.BytesIO(zip_bytes)
+def _doc_zip(ten: str, zip_bytes: bytes) -> list[pd.DataFrame]:
+    """Giải nén 1 file ZIP → danh sách DataFrame (mỗi .csv bên trong một cái).
+
+    Mọi thông báo lỗi đều kèm TÊN FILE: người dùng chọn cả chục file một lượt,
+    câu "file .zip không hợp lệ" trơ trọi thì không biết phải bỏ file nào ra.
+    """
     dfs = []
     try:
-        with _ZipFile(buf) as zf:
+        with _ZipFile(io.BytesIO(zip_bytes)) as zf:
             csv_names = [n for n in zf.namelist() if n.lower().endswith('.csv')]
             for csv_name in csv_names:
                 raw = zf.read(csv_name, pwd=zip_password())
-                dfs.append(pd.read_csv(
+                d = pd.read_csv(
                     io.BytesIO(raw),
                     encoding='utf-8-sig',
                     dtype=str,
                     keep_default_na=False,
-                ))
+                )
+                d.columns = d.columns.str.strip()
+                # Kiểm cột NGAY TỪNG FILE, không đợi gộp xong: pd.concat lấy hợp
+                # các cột, file thiếu cột chỉ thành ô rỗng — gộp rồi mới kiểm thì
+                # một file sai định dạng lọt qua và làm lệch kết quả phân loại.
+                missing = sorted(_COT_BAT_BUOC - set(d.columns))
+                if missing:
+                    raise InputError(
+                        f"File '{ten}' → '{csv_name}' thiếu cột bắt buộc: {', '.join(missing)}."
+                    )
+                dfs.append(d)
     except _BAD_ZIP as e:
         raise InputError(
-            "File tải lên không phải file .zip hợp lệ — có thể tải bị lỗi, "
+            f"File '{ten}' không phải file .zip hợp lệ — có thể tải bị lỗi, "
             "bị cắt dở, hoặc chỉ được đổi đuôi tên thành .zip."
         ) from e
     except RuntimeError as e:
         raise InputError(
-            "Không giải nén được file .zip — sai mật khẩu hoặc file dùng kiểu "
+            f"Không giải nén được file '{ten}' — sai mật khẩu hoặc file dùng kiểu "
             "mã hoá khác với file xuất từ IPCAS."
         ) from e
 
     # Trước đây dfs rỗng → dfs[0] ném IndexError('list index out of range'),
     # người dùng chỉ thấy đúng câu đó, không biết phải sửa gì.
     if not dfs:
-        raise InputError("File .zip không chứa file .csv nào — cần file dữ liệu xuất từ IPCAS.")
+        raise InputError(
+            f"File '{ten}' không chứa file .csv nào — cần file dữ liệu xuất từ IPCAS."
+        )
+    return dfs
 
+
+def _load_data(
+    zips: list[tuple[str, bytes]],
+    task_token: str | None = None,
+) -> tuple[pd.DataFrame, int]:
+    """Đọc tất cả ZIP, gộp thành một DataFrame, lọc theo TK 459901."""
+    dfs: list[pd.DataFrame] = []
+    n = len(zips)
+    for i, (ten, zip_bytes) in enumerate(zips, 1):
+        # 5% → 25%: phần đọc file chiếm khoảng đó trong thanh tiến độ chung
+        _set_prog(task_token, 5 + (20 * (i - 1)) // n,
+                  f"Đang giải mã và đọc dữ liệu ({i}/{n}): {ten}...")
+        dfs.extend(_doc_zip(ten, zip_bytes))
+
+    _set_prog(task_token, 25, f"Đang gộp dữ liệu {n} file...")
     df = pd.concat(dfs, ignore_index=True) if len(dfs) > 1 else dfs[0]
-
-    df.columns = df.columns.str.strip()
-
-    missing = sorted({'LOCAC', 'CUSTOMER', 'CCY', 'REMARK', 'DRAMOUNT', 'CRAMOUNT'} - set(df.columns))
-    if missing:
-        raise InputError(f"File .csv thiếu cột bắt buộc: {', '.join(missing)}.")
 
     # Chỉ strip các cột cần thiết — tránh strip 17 cột × 645k dòng
     for col in _STRIP_COLS:

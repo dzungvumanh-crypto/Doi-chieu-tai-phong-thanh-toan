@@ -414,7 +414,10 @@ Truy cập:
 ### Module Chấm 459901
 - Phân loại bút toán tài khoản trung gian 459901 dành cho phòng Thanh toán
 - Menu: **Đối chiếu → Phòng Thanh toán → Chấm 459901**
-- Upload file ZIP chứa dữ liệu giao dịch; xử lý bất đồng bộ (~65s)
+- Upload **một hoặc nhiều** file ZIP chứa dữ liệu giao dịch; xử lý bất đồng bộ (~65s)
+- Nhiều ZIP được **gộp** rồi mới phân loại — cặp Cancel/Normal của một lệnh hủy có thể nằm ở
+  hai file khác ngày, chạy tách từng file thì cả hai vế rơi nhầm vào *Khác*. Chọn trùng tên
+  file trong cùng một lượt bị chặn (400) vì dữ liệu nhân đôi không sinh lỗi nào
 - Xuất 3 file Excel: **Huỷ**, **Đi**, **Khác** theo kết quả phân loại
 - Phân quyền riêng theo nhóm (`menu.cham_459901`, `cham_459901.process`)
 

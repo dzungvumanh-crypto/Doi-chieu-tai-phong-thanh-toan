@@ -53,6 +53,119 @@
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
   <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-18</p>
 
+  <!-- Z6 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">Z6</span>
+      <span class="card-title">Chấm 459901 — chọn nhiều ZIP một lượt: gộp trước, phân loại sau</span>
+      <span class="badge badge-done">Xong</span>
+    </div>
+    <div class="card-body">
+
+      <p>Yêu cầu chỉ là "khỏi phải chọn từng file", nhưng có <b>hai cách hiểu hoàn toàn khác nhau
+        về kết quả</b>, và chọn sai thì không có lỗi nào báo — chỉ ra số liệu khác:</p>
+
+      <table>
+        <tr><th>Cách làm</th><th>Kết quả với cặp Cancel/Normal nằm ở 2 file</th></tr>
+        <tr><td>Chạy lần lượt từng ZIP rồi cộng kết quả</td>
+            <td><b>Sai:</b> mỗi vế đứng một mình, không tìm được vế kia
+            <span class="arrow">→</span> cả hai rơi vào "Lệnh Khác"</td></tr>
+        <tr><td><b>Gộp hết rồi mới phân loại</b> (đã chọn)</td>
+            <td>Đúng: khớp key <code>REFERENCE|TRBRCD|DYTRSEQ|số tiền</code> qua ranh giới file</td></tr>
+      </table>
+
+      <p>GL02 xuất theo ngày / theo chi nhánh, nên cặp hủy nằm khác file là chuyện thường. Thuật toán
+        phân loại (3 bước) <b>không đổi một dòng</b> — chỉ tầng đọc dữ liệu nhận danh sách ZIP thay vì
+        một ZIP. <code>_load_data()</code> vốn đã <code>pd.concat</code> nhiều <code>.csv</code> trong
+        cùng một ZIP; đây đúng là mở rộng tự nhiên của việc đó.
+        <code>tests/test_cham459901_nhieu_zip.py</code> canh đúng điểm này: chạy tách ra thì
+        <code>huy_rows == 0</code>, gộp lại thì <code>== 2</code>.</p>
+
+      <div class="label">Kiểm cột theo TỪNG file, không đợi gộp xong</div>
+      <p><code>pd.concat</code> lấy <b>hợp</b> các cột: một file thiếu <code>CCY</code> thì sau khi gộp
+        cột đó vẫn tồn tại (do file kia có), chỉ là ô rỗng. Kiểm sau khi gộp <span class="arrow">→</span>
+        file sai định dạng lọt lưới, mọi dòng của nó bị bộ lọc <code>CCY == "VND"</code> loại âm thầm
+        và người dùng thấy "thiếu dữ liệu" mà không hiểu vì sao. Nay <code>_doc_zip()</code> kiểm ngay
+        lúc đọc từng <code>.csv</code>.</p>
+
+      <div class="label">Mọi thông báo lỗi phải kèm TÊN FILE</div>
+      <p>Với một file thì "File .zip không hợp lệ" là đủ. Với mười file thì câu đó vô dụng — người dùng
+        không biết bỏ file nào ra. Tất cả <code>InputError</code> trong <code>_doc_zip()</code> đều mở
+        đầu bằng <code>File 'xxx.zip'</code>.</p>
+
+      <div class="note"><b>Chặn chọn trùng một file hai lần (400).</b> Đây là lỗi <b>im lặng nguy hiểm
+        nhất</b> của tính năng này: dữ liệu nhân đôi thì cặp Cancel/Normal <i>vẫn khớp</i>, không sinh
+        lỗi nào, chỉ là mọi con số gấp đôi. Backend so theo <code>safe_filename()</code>; frontend
+        thêm một lớp nữa bằng <code>dict</code> tên → bytes (chọn lại cùng tên thì ghi đè).
+        Không chống được người đổi tên bản sao của cùng một file — chấp nhận, vì so nội dung
+        thì phải băm cả trăm MB và vẫn không phân biệt nổi hai lần xuất trùng nhau.</div>
+
+      <div class="label">Trần dung lượng</div>
+      <p>Giữ trần <b>từng file</b> = <code>MAX_UPLOAD_BYTES</code> (200 MB) như cũ, thêm trần
+        <b>tổng lượt</b> = <code>MAX_REQUEST_BYTES</code> (600 MB) cộng dồn trong vòng lặp.
+        <code>BodySizeLimitMiddleware</code> đã chặn theo <code>Content-Length</code>, nhưng nó bó tay
+        với request kiểu <code>chunked</code> — nên vẫn cần lớp đếm ở đây.
+        Frontend nâng <code>timeout</code> lên 600 giây: mặc định 60 giây của
+        <code>_download_client</code> quá sát khi đẩy vài trăm MB.</p>
+
+      <table>
+        <tr><th>Đổi chữ ký</th><th>Nơi gọi</th><th>Rủi ro lan sang chỗ khác</th></tr>
+        <tr><td><code>process_zip(bytes)</code> <span class="arrow">→</span>
+                <code>process_zips(list[(tên, bytes)])</code></td>
+            <td>1 chỗ: <code>run_process()</code></td>
+            <td>Không. <b>Chú ý:</b> <code>doi_chieu_song_phuong_service.py</code> có hàm
+                <code>process_zip()</code> <i>trùng tên</i> nhưng là module khác — không đụng tới</td></tr>
+        <tr><td>Field multipart <code>file</code> <span class="arrow">→</span> <code>files</code></td>
+            <td>1 chỗ: <code>frontend/pages/cham_459901.py</code></td>
+            <td>Không có client nào khác gọi endpoint này</td></tr>
+      </table>
+
+      <p>Full suite <b>666 passed, 0 failed</b> (thêm 7 test mới).</p>
+
+    </div>
+  </div>
+
+  <!-- Z5 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">Z5</span>
+      <span class="card-title">Ô "Người dùng" trên Trang chủ đếm nhầm Quản trị viên cấp 2</span>
+      <span class="badge badge-done">Đã sửa</span>
+    </div>
+    <div class="card-body">
+
+      <p>Thêm một tài khoản <b>Quản trị viên cấp 2</b> thì con số trong ô "Người dùng" nhảy
+        <b>72 → 73</b>, dù đó không phải người dùng nghiệp vụ. Số đúng phải đứng yên ở 72
+        (và tổng tài khoản quản trị là 4: 3 <code>admin</code> + 1 <code>admin_l2</code>).</p>
+
+      <div class="label">Nguyên nhân</div>
+      <p>Bộ lọc chỉ loại đúng một chuỗi:</p>
+      <table>
+        <tr><th>Trước</th><th>Sau</th></tr>
+        <tr>
+          <td><code>[s for s in staff_list if s.get("role") != "admin"]</code></td>
+          <td><code>[s for s in staff_list if s.get("role") not in _ADMIN_ROLES]</code></td>
+        </tr>
+      </table>
+      <p>Vai trò <code>admin_l2</code> ra đời sau ô thống kê này. Ở mọi nơi khác trong mã
+        (<code>backend/api/staff.py::_ADMIN_ROLES</code>, <code>frontend/pages/staff.py</code>,
+        <code>groups.py</code>, <code>shared.py</code>) hai cấp quản trị luôn đi thành cặp
+        <code>("admin", "admin_l2")</code>; riêng chỗ đếm này bị bỏ sót.</p>
+
+      <div class="note">Kiểm chứng trên DB thật: 78 tài khoản, 76 đang hoạt động, trừ 4 quản trị
+        (3 + 1) còn <b>72</b> — khớp đúng con số người vận hành mong đợi. Ô này đếm trên
+        <code>GET /api/staff/</code> vốn đã mặc định <code>active_only=True</code>, nên tài khoản
+        đã khoá không tính vào.</p>
+
+      <div class="label">Chỗ CỐ Ý không sửa theo</div>
+      <p><code>frontend/pages/groups.py</code> (dòng 83 và 156) cũng lọc <code>role != "admin"</code>
+        nhưng mục đích khác hẳn: admin cấp 1 toàn quyền nên không cần vào nhóm, còn
+        <b>admin_l2 lấy quyền theo nhóm</b> — loại họ khỏi danh sách chọn thành viên là làm hỏng
+        màn Phân quyền chức năng. Giữ nguyên.</p>
+
+    </div>
+  </div>
+
   <!-- Z3 -->
   <div class="card">
     <div class="card-header">
@@ -9043,6 +9156,85 @@ This may happen if you try to create UI from a background task.</pre>
         <code>menu.leaves</code> vẫn thấy menu ở vị trí mới; ai không có thì như cũ.
         Full suite <b>659 passed, 0 failed</b>.</p>
 
+    </div>
+  </div>
+
+  <!-- 93 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">93</span>
+      <span class="card-title">Tra cứu lưu trữ — thôi tự nối 5 dòng trống sau mỗi lần lưu</span>
+      <span class="badge badge-done">done · 2026-08-22</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Triệu chứng</div>
+      <p>Điền hết (hoặc gần hết) các dòng trống rồi bấm Lưu — bảng tải lại và <b>lại mọc thêm 5 dòng trống nữa</b> ở dưới.
+        Lưu lần hai thì lại thêm 5 dòng nữa. Bảng dài ra mãi bằng đúng thứ người dùng không cần.</p>
+
+      <div class="label">Nguyên nhân</div>
+      <p><code>_build_html()</code> nối <code>blank * _N_BLANK_ROWS</code> <b>vô điều kiện</b> ở cuối mọi lần dựng bảng.
+        Mà <code>do_save()</code> luôn gọi <code>load_storage()</code> sau khi lưu — nên mỗi lần lưu là một lần
+        dựng lại, và là một lần đẻ thêm 5 dòng.</p>
+
+      <div class="label">Quyết định</div>
+      <table>
+        <tr><th>Phương án</th><th>Đánh đổi</th></tr>
+        <tr><td><b>Chỉ dựng dòng trống khi bảng chưa có dữ liệu</b> (đã chọn)</td>
+            <td>Tháng mới tinh vẫn có chỗ gõ ngay. Tháng đã có dữ liệu thì bảng đúng bằng số dòng thật.
+                Đổi lại: muốn thêm ngày mới phải bấm "Thêm dòng" — tốn một cú bấm, nhưng là việc có chủ đích.</td></tr>
+        <tr><td>Giảm <code>_N_BLANK_ROWS</code> xuống 1–2</td>
+            <td>Chỉ làm triệu chứng nhẹ đi, bảng vẫn dài thêm sau mỗi lần lưu.</td></tr>
+        <tr><td>Sau khi lưu thì không tải lại bảng</td>
+            <td><b>Bác</b>: cột "Số tập", dòng "Cộng tổng" và <code>bundle_id</code> của tập vừa tạo đều do backend
+                tính lại — không tải lại thì bảng hiển thị số cũ và lần lưu sau ghi trượt.</td></tr>
+      </table>
+
+      <div class="caution">Kéo theo một sửa bắt buộc: nút <b>"Thêm dòng"</b> trước đây <b>nhân bản</b> dòng
+        <code>tr.sv-new</code> có sẵn trong DOM. Bảng đã có dữ liệu giờ không còn dòng nào như thế →
+        <code>querySelector</code> trả <code>null</code> → <b>bấm nút không ra gì, không báo lỗi</b>. Đã đổi sang
+        chèn thẳng chuỗi HTML dòng trống (Python dựng sẵn, <code>json.dumps</code> nhúng vào JS) qua
+        <code>insertAdjacentHTML('beforebegin')</code> trước <code>#sv-foot</code> — không phụ thuộc vào việc
+        DOM còn dòng mẫu hay không.</div>
+
+      <div class="note">Kiểm chứng bằng kịch bản thật qua API (DB in-memory): tháng trống → 0 dòng dữ liệu
+        + 5 dòng trống; điền hết 5 dòng rồi lưu → <b>5 dòng dữ liệu + 0 dòng trống</b> (trước khi sửa: 10 dòng);
+        lưu tiếp 5 dòng nữa → 10 dòng dữ liệu + 0 dòng trống (trước khi sửa: 15 dòng). Chuỗi JS của nút
+        "Thêm dòng" đã kiểm: JSON hợp lệ, đúng 16 ô/dòng, còn <code>class="sv-new"</code> để ẩn khi in.
+        Toàn bộ <b>666 test</b> pass. <b>Riêng cú bấm "Thêm dòng" trên trình duyệt cần người dùng xác nhận</b>
+        — môi trường không có công cụ điều khiển trình duyệt.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">TĐ</span>
+      <span class="card-title">Định dạng cột TIEUDE_HS — bàn giao cho lưu trữ</span>
+      <span class="badge badge-done">Đã sửa</span>
+    </div>
+    <div class="card-body">
+      <p>Tiêu đề hồ sơ nộp lưu trữ đổi sang mẫu
+      <code>Nhật ký chứng từ ngày &lt;ngày&gt; của &lt;tên phòng&gt;[ tập i/n]</code>.</p>
+      <table>
+        <tr><th>Trước</th><th>Sau</th></tr>
+        <tr><td>Hồ sơ ngày 27/02/2025 Phòng Kế toán tháng 02/2025 tập 1/2</td>
+            <td>Nhật ký chứng từ ngày 27/02/2025 của Phòng Kế toán tập 1/2</td></tr>
+      </table>
+      <p><strong>Hai quyết định không đọc ra được từ code:</strong></p>
+      <table>
+        <tr><th>Quyết định</th><th>Lý do</th></tr>
+        <tr><td>Bỏ hẳn đuôi <code>tháng MM/YYYY</code></td>
+            <td>Danh sách ngày ngay phía trước đã mang đủ tháng và năm
+            (<code>27/02/2025</code>) — nhắc lại là thừa và làm ô C dài thêm vô ích.</td></tr>
+        <tr><td>Không tự chèn chữ "Phòng" trước tên phòng</td>
+            <td><code>departments.name</code> trong DB <b>đã có sẵn</b> chữ đó
+            ("Phòng Kế toán", "Phòng Swift"). Chèn thêm sẽ ra "của Phòng Phòng Kế toán".
+            Đổi lại: phòng nào đặt tên thiếu chữ "Phòng" thì tiêu đề cũng thiếu theo —
+            chấp nhận, vì sửa ở dữ liệu đúng chỗ hơn sửa ở chỗ in.</td></tr>
+      </table>
+      <div class="note"><code>tieu_de_dau</code> và <code>tu_tap</code> vẫn là tham số của
+      <code>/api/bundles/handover-archive[-excel]</code>; chỉ giá trị mặc định đổi. Frontend không truyền
+      hai tham số này nên đổi mặc định là đủ. Kiểm bằng dữ liệu thật trong DB: đủ cả ba dạng
+      (một ngày, nhiều ngày gộp, một ngày nhiều tập). 666 test pass.</div>
     </div>
   </div>
 

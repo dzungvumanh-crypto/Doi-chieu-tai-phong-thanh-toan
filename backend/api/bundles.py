@@ -324,7 +324,9 @@ def _generate_archive_records(
             bundles_data = _load_bundles_for_storage(db, gid)
             all_rows.extend(_decompose_bundles_to_rows(bundles_data))
 
-        tieu_de_cuoi = f"{dept_name} tháng {month:02d}/{year}"
+        # Tên phòng trong DB đã có sẵn chữ "Phòng" (vd "Phòng Kế toán") — không thêm nữa.
+        # Không ghi "tháng MM/YYYY": danh sách ngày phía trước đã nói rõ tháng và năm.
+        tieu_de_cuoi = f"của {dept_name}"
         for r in all_rows:
             days = r.days
             ds_ngay_full = ", ".join(f"{d:02d}/{month:02d}/{year}" for d in days)
@@ -1028,7 +1030,7 @@ def update_storage_view(
 def handover_archive_preview(
     department_id: int,
     year: int,
-    tieu_de_dau: str = "Hồ sơ ngày",
+    tieu_de_dau: str = "Nhật ký chứng từ ngày",
     tu_tap: str = "tập",
     db: sqlite3.Connection = Depends(get_db),
     _: dict = Depends(get_current_staff),
@@ -1041,7 +1043,7 @@ def handover_archive_preview(
 async def handover_archive_excel(
     department_id: int,
     year: int,
-    tieu_de_dau: str = "Hồ sơ ngày",
+    tieu_de_dau: str = "Nhật ký chứng từ ngày",
     tu_tap: str = "tập",
     db: sqlite3.Connection = Depends(get_db),
     _: dict = Depends(get_current_staff),

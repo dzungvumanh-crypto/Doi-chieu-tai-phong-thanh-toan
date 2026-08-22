@@ -4,6 +4,32 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 22/08/2026 Bàn giao cho lưu trữ - **Cột TIEUDE_HS đổi sang mẫu "Nhật ký chứng từ ngày ... của Phòng ..."**
+    + **Đổi gì**: tiêu đề hồ sơ nộp lưu trữ trước đây in ra là *"Hồ sơ ngày 27/02/2025 Phòng Kế toán tháng 02/2025 tập 1/2"*, nay là **"Nhật ký chứng từ ngày 27/02/2025 của Phòng Kế toán tập 1/2"**
+    + **Bỏ hẳn đuôi "tháng 02/2025"**: ngày ghi ngay phía trước đã có đủ tháng và năm rồi, nhắc lại chỉ làm ô dài thêm
+    + Ba dạng đều đúng: một ngày (*... ngày 26/02/2025 của Phòng NosVos*), nhiều ngày gộp một tập (*... ngày 03/03/2025, 04/03/2025 của ...*), một ngày chia nhiều tập (*... tập 1/2*, *... tập 2/2*)
+    + ⚠️ **Máy in đúng tên phòng đang lưu trong hệ thống, không tự viết tắt.** Phòng QLTK Nostro Vostro sẽ in ra đủ chữ *"của Phòng Quản lý Tài khoản Nostro Vostro"*. Muốn in gọn hơn thì phải sửa tên phòng ở màn Quản lý phòng ban
+    + Áp dụng cho **cả bảng xem trước lẫn file Excel tải về** — không phải làm gì thêm, mở lại màn *Bàn giao cho lưu trữ* là thấy
+
+- 22/08/2026 Tra cứu lưu trữ - **Bảng thôi tự dài thêm 5 dòng trống sau mỗi lần lưu**
+    + **Đổi gì**: trước đây cứ lưu một lần là bảng mọc thêm 5 dòng trống ở cuối, lưu vài lần thì phải cuộn qua cả chục dòng rỗng mới tới nút bấm. Nay **tháng chưa có dữ liệu mới có sẵn 5 dòng trống**; tháng đã có dữ liệu thì bảng đúng bằng số dòng thật
+    + **Cần nhập thêm ngày mới thì bấm nút *Thêm dòng*** — tốn một cú bấm, đổi lại bảng luôn sạch
+    + Dòng trống không in ra giấy, như cũ
+
+- 22/08/2026 Trang chủ - **Ô "Người dùng" thôi đếm nhầm Quản trị viên cấp 2**
+    + **Đổi gì**: ô *Người dùng* ở Trang chủ vốn đã bỏ qua tài khoản quản trị, nhưng chỉ bỏ qua cấp 1. Thêm một **Quản trị viên cấp 2** là con số nhảy lên một, dù đó không phải người dùng nghiệp vụ
+    + Nay **cả hai cấp quản trị đều không được đếm**. Con số có thể giảm 1–2 so với hôm qua — đó là số đúng, không phải mất người
+
+- 22/08/2026 Chấm 459901 - **Chọn được nhiều file ZIP trong một lần, không phải chọn từng cái**
+    + **Đổi gì**: bấm *Chọn file ZIP* nay giữ **Ctrl** (chọn từng file rời) hoặc **Shift** (chọn cả dải) để lấy nhiều file một lượt, hoặc kéo-thả cả nhóm file vào ô. Tên các file đã chọn hiện ngay bên dưới kèm số lượng
+    + **Quan trọng — nhiều file được GỘP thành một lần chấm, không phải chấm riêng từng file rồi cộng lại.** Cố ý làm vậy: một lệnh hủy gồm hai vế (bút toán gốc và bút toán hủy), hai vế đó có thể nằm ở hai file khác ngày. Chấm riêng từng file thì không vế nào tìm được vế kia, cả hai bị xếp nhầm sang *Lệnh Khác* — **không có lỗi nào báo, chỉ là số liệu sai**
+    + **Vẫn chọn một file như cũ thì không có gì đổi** — kết quả y hệt trước đây
+    + ⚠️ **Lỡ chọn trùng một file hai lần thì máy báo lỗi và không chạy.** Cố ý chặn: dữ liệu bị nhân đôi vẫn khớp cặp hủy như thường, không sinh lỗi nào, chỉ là **mọi con số gấp đôi** mà không ai nhận ra. Máy so theo tên file — nếu bạn đổi tên bản sao thành tên khác thì máy **không** phát hiện được, xin tự kiểm trước khi bấm *Xử lý*
+    + **Bấm nhầm thì có nút *Xóa danh sách file*** để chọn lại từ đầu
+    + **Nếu một file trong nhóm bị hỏng hoặc sai định dạng**, thông báo lỗi nay **nói rõ tên file nào** — trước đây chỉ báo chung chung, chọn cả chục file thì không biết bỏ cái nào ra
+    + **Giới hạn**: mỗi file tối đa 200 MB, tổng cả lượt tối đa 600 MB. Vượt thì chia làm nhiều lượt
+    + Không đổi cơ sở dữ liệu, không phải khai báo quyền lại. Toàn bộ **666 test** chạy đạt (thêm 7 test mới, trong đó có bài canh đúng việc cặp lệnh hủy nằm ở hai file khác nhau)
+
 - 22/08/2026 Giao diện - **Menu "Nghỉ phép" ra ngoài, không còn nằm trong "Chấm công & Lịch trực"**
     + **Đổi gì**: trước đây muốn vào *Nghỉ phép* phải rê chuột vào *Chấm công & Lịch trực* rồi mới thấy. Nay **Nghỉ phép nằm thẳng ngoài menu bên trái**, bấm một lần là vào, ngang hàng với *Chấm công & Lịch trực*
     + **Vì sao**: cả cơ quan dùng nghỉ phép hằng ngày, còn chấm công và lịch trực là việc của riêng hai phòng — bắt mọi người đi qua một nhóm mang tên hai phòng đó là ngược

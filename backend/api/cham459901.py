@@ -8,7 +8,7 @@ import threading
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import Response
 
-from backend.core.uploads import read_limited, safe_filename
+from backend.core.uploads import MAX_REQUEST_BYTES, read_limited, safe_filename
 from backend.core.deps import require_feature
 from backend.services import cham459901_service
 
@@ -29,11 +29,38 @@ def _dl_headers(filename: str) -> dict:
 
 @router.post("/process")
 async def process(
-    file: UploadFile,
+    files: list[UploadFile],
     _=Depends(require_feature("cham_459901.process")),
 ):
-    """Nhận file ZIP, khởi chạy phân loại trong background, trả task_token ngay."""
-    zip_bytes = await read_limited(file, ten="File ZIP dữ liệu")
+    """Nhận một hoặc nhiều file ZIP, chạy phân loại nền, trả task_token ngay.
+
+    Nhiều file được GỘP thành một lượt phân loại (xem `process_zips`).
+    """
+    if not files:
+        raise HTTPException(400, "Cần chọn ít nhất 1 file ZIP.")
+
+    zips: list[tuple[str, bytes]] = []
+    da_co: set[str] = set()
+    tong = 0
+    for f in files:
+        ten = safe_filename(f.filename, "file.zip")
+        # Chọn trùng một file hai lần thì mọi bút toán bị nhân đôi: cặp
+        # Cancel/Normal vẫn khớp nên KHÔNG có lỗi nào, chỉ là số dòng gấp đôi
+        # và người dùng không hiểu vì sao. Chặn thẳng, đừng lặng lẽ bỏ qua.
+        if ten in da_co:
+            raise HTTPException(400, f"File '{ten}' bị chọn hai lần — mỗi file chỉ chọn một lần.")
+        da_co.add(ten)
+
+        data = await read_limited(f, ten=f"File ZIP '{ten}'")
+        tong += len(data)
+        if tong > MAX_REQUEST_BYTES:
+            raise HTTPException(
+                413,
+                f"Tổng dung lượng các file ZIP vượt quá "
+                f"{MAX_REQUEST_BYTES // (1024 * 1024)} MB. Hãy chia làm nhiều lượt.",
+            )
+        zips.append((ten, data))
+
     task_token = cham459901_service.init_progress()
     # Chạy trong luồng riêng, KHÔNG dùng BackgroundTasks: Starlette chạy hàm
     # đồng bộ của BackgroundTasks trong threadpool CHUNG 40 token của anyio và
@@ -41,7 +68,7 @@ async def process(
     # cùng lúc là bể cạn, mọi endpoint `def` khác của hệ thống phải xếp hàng
     # theo. Luồng riêng thì việc nặng chạy ngoài bể, đúng cách ACH đang làm
     # (backend/services/ach_service.py). Tiến độ vẫn theo dõi qua /progress.
-    threading.Thread(target=cham459901_service.run_process, args=(zip_bytes, task_token),
+    threading.Thread(target=cham459901_service.run_process, args=(zips, task_token),
                      daemon=True).start()
     return {"task_token": task_token}
 
