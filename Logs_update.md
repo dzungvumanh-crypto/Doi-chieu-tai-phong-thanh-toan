@@ -4,6 +4,44 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 22/08/2026 Giao diện - **Menu "Nghỉ phép" ra ngoài, không còn nằm trong "Chấm công & Lịch trực"**
+    + **Đổi gì**: trước đây muốn vào *Nghỉ phép* phải rê chuột vào *Chấm công & Lịch trực* rồi mới thấy. Nay **Nghỉ phép nằm thẳng ngoài menu bên trái**, bấm một lần là vào, ngang hàng với *Chấm công & Lịch trực*
+    + **Vì sao**: cả cơ quan dùng nghỉ phép hằng ngày, còn chấm công và lịch trực là việc của riêng hai phòng — bắt mọi người đi qua một nhóm mang tên hai phòng đó là ngược
+    + **Màn *Phân quyền theo nhóm* cũng đổi theo**: ô tick *Nghỉ phép* nay là **một thẻ riêng**, không còn nằm trong thẻ *Chấm công & Lịch trực*. Các ô tick con (tạo đơn, duyệt, uỷ quyền, hạn mức...) **giữ nguyên không thiếu ô nào**
+    + **Không phải làm gì thêm**: ai đang được cấp quyền nghỉ phép thì vẫn thấy menu, chỉ đổi chỗ. Không đổi cơ sở dữ liệu, không đổi đường dẫn trang, không cần khai báo lại quyền
+    + Toàn bộ **659 test** chạy đạt
+
+- 22/08/2026 Lịch trực - **Phân lịch nay tự giãn ca: tối đa 2 ca/tuần, 2 thứ 6/tháng, không thứ 6 hai tuần liền**
+    + **Vì sao có mục này**: máy xếp lịch trước đây chỉ biết *"tuần này đã trực chưa"* — trả lời xong là hết. Một người trực thứ Hai rồi thì thứ Ba vẫn có thể bị gọi tiếp, và người trực thứ 6 tuần này tuần sau lại thứ 6, vì với máy thì "đã trực 1 lần" hay "đã trực 3 lần" đều chỉ là *đã trực*
+    + **Từ nay máy tránh ba việc**: xếp một người **quá 2 ca trong một tuần**; xếp một người **trực thứ 6 quá 2 lần trong tháng**; xếp một người **trực thứ 6 hai tuần liên tiếp**. Ba luật áp dụng **như nhau cho Lãnh đạo và nhân viên**
+    + ⚠️ **Đây là luật mềm, không phải luật cấm.** Hôm nào nghỉ phép nhiều, không còn ai khác để gọi thì máy **vẫn lập đủ ca** — nhưng ghi rõ *"ông A phải trực quá 2 ca/tuần vì không đủ người khác"* ngay dòng cảnh báo sau khi sinh lịch. Cố ý làm vậy: thà có ca trực kèm lời nhắc còn hơn để trống một ngày
+    + **Với quân số hiện nay của phòng (7 Lãnh đạo, 18 nhân viên) thì rất dư** — 5 ca/tuần chia cho 7 Lãnh đạo, 4 thứ 6/tháng chia cho 7 người. Bình thường sẽ không thấy cảnh báo nào; thấy là dấu hiệu hôm đó vắng nhiều thật
+    + ⚠️ **Lịch sinh ra sẽ khác lịch cũ.** Thứ tự chọn người đã đổi, nên bấm *tạo lại lịch* cho một tuần đã sinh trước hôm nay sẽ ra kết quả khác. Lịch **đã xác nhận** thì không bị đụng
+    + ⚠️ **Khi sửa tay ca trực, lời nhắc chưa đầy đủ**: hiện phần mềm chỉ soi các ca **trước** ngày đang sửa. Sửa ca thứ Hai mà người đó đã có ca thứ Tư, thứ Năm, thứ Sáu thì **không có lời nhắc nào**. Chỗ này đã ghi nhận, sẽ sửa ở đợt sau — trong lúc chờ, khi sửa tay xin nhìn cả tuần trên màn hình thay vì tin vào lời nhắc
+    + Không đổi cơ sở dữ liệu, không phải khai báo gì thêm. Toàn bộ **553 test** chạy đạt (thêm 9 test mới, trong đó có bài mô phỏng phân lịch **3 tháng liên tục** để chắc ba luật giữ được đồng thời)
+
+- 22/08/2026 Vận hành - **`deploy.bat` nay cảnh báo khi `.env` máy chính thiếu mật khẩu phải gõ tay**
+    + **Vì sao có mục này**: chiều 21/08, máy chính chạy *Đối chiếu ACH* — chờ hơn một phút rồi dừng, báo *"Chưa đặt DOI_CHIEU_ZIP_PASSWORD trong file .env"*. Không ai xoá dòng đó cả: nó **chưa bao giờ** có trên máy chính. `deploy.bat` **cố ý không chép đè `.env`** của máy chính (chép đè là mất `SECRET_KEY`, đăng xuất toàn bộ), nên mọi dòng cấu hình mới đều phải có người gõ vào
+    + Hai lần trước (`STORAGE_SECRET` 07/2026, `BACKUP_PASSWORD` 08/2026) `start.bat` **tự sinh hộ** nên không ai để ý khoảng trống này. Nó tự sinh được vì đó là mật khẩu **của phần mềm**; còn mật khẩu file ZIP là **của đơn vị cấp file**, không đoán được, buộc phải gõ
+    + **Từ nay khi chạy `deploy.bat`**: nếu `.env` máy đích thiếu dòng nào thuộc loại phải gõ tay, deploy in cảnh báo ở **bước 1/8** và **nhắc lại lần nữa** trong khung tổng kết cuối cùng (chỗ thực sự có người đọc). Cảnh báo bắt cả trường hợp *có dòng nhưng để trống*
+    + **Deploy không tự điền giá trị** — không đoán bừa mật khẩu của bên ngoài. Việc phải làm vẫn là mở `.env` trên máy đó, thêm dòng, rồi **tắt hẳn và chạy lại `start.bat`**
+    + **Không đổi gì trong phần mềm** — chỉ đổi công cụ cập nhật của người vận hành. Hệ thống test cũng được nhắc như vậy
+    + ⚠️ Đã **đính chính** mục *20/08/2026 Rà soát bảo mật đợt 2* phía dưới: câu *"bạn không phải làm gì, giá trị cũ đã được điền sẵn"* là **sai** — đó là trạng thái của máy phát triển, không phải máy chính
+
+- 21/08/2026 Lưu trữ - **Tháng chưa có dữ liệu nay vẫn nhập được số liệu vào bảng Tra cứu lưu trữ**
+    + **Việc đã sửa**: các tháng đầu năm chưa triển khai chương trình nên trong máy không có tập nào. Trước đây chọn những tháng đó, bảng chỉ hiện dòng chữ *"Không có dữ liệu"* — **không có ô nào để gõ**, muốn đưa số cũ vào phải nhập lại từ màn bàn giao rồi gom tập từ đầu
+    + **Từ nay**: chọn tháng nào cũng có bảng, cuối bảng luôn sẵn **5 dòng trống** (nền xám nhạt) để gõ **Ngày** và **Số chứng từ**. Gõ xong bấm **Lưu thay đổi** như bình thường
+    + **Cần nhập nhiều hơn 5 ngày một lượt**: bấm nút **Thêm dòng** (cạnh nút Lưu) để có thêm dòng trống — số đang gõ dở không bị mất
+    + **Bản in không có các dòng trống này** — bấm *In danh sách* vẫn ra đúng bảng như trước
+    + ⚠️ **Gõ ngày mà quên số chứng từ thì phần mềm báo lỗi và không lưu gì cả** (cả lần lưu đó). Cố ý làm vậy: thà báo rõ còn hơn hiện chữ "Đã lưu" trong khi thực tế không ghi được gì
+    + ⚠️ **Số nhập tay không vào báo cáo khối lượng theo giao dịch viên** — báo cáo đó đếm chứng từ do từng người bàn giao, còn nhập tay thì không biết ai nộp. Bảng *Tra cứu lưu trữ*, *Tổng hợp cả năm* và file *Bàn giao cho lưu trữ* thì có đủ
+    + ⚠️ **In bìa cho tập nhập tay sẽ trống phần người nộp**, vì phần mềm không biết ai nộp
+    + 🚫 **Đừng bấm gom tập lại cho tháng đã nhập tay.** Nút gom tập dựng lại toàn bộ tập của tháng đó từ dữ liệu bàn giao, phần nhập tay sẽ mất và không lấy lại được. Tháng thuần nhập tay (không có bàn giao nào) thì an toàn — gom tập sẽ báo "không có chứng từ" và dừng lại, không xoá gì
+    + **Cột Ngày nay có sẵn 10 ô** (trước là 2) — một hồ sơ nhập bù thường gộp cả tuần
+    + 🔧 **Đã sửa lỗi tách dòng**: gõ Ngày *1 2* với Số chứng từ *12 34* trên **một** dòng, lưu xong lại thành **hai** dòng giống hệt nhau, mỗi dòng Số tập = 1. Nguyên nhân là lỗi có sẵn từ trước: phần mềm chỉ biết gộp các tập **cùng một ngày**, còn tập **gộp nhiều ngày** thì mỗi tập bị tách một dòng. Nay gộp đúng: một dòng = một hồ sơ, Số tập đếm đủ
+    + ⚠️ **Kèm theo, bìa tập nhiều ngày nay được đánh số**: hai tập của cùng hồ sơ *"ngày 01, 02"* trước in **1/1 cả hai** (hai bìa giống hệt nhau), nay in **1/2** và **2/2**. File *Bàn giao cho lưu trữ* cũng ghi thêm *"tập 1/2"*. Tổng số tập và tổng số tờ **không đổi** — chỉ đổi cách gộp và cách đánh số. Ai đã in bìa trước đó thì in lại cho khớp
+    + Toàn bộ **654 test** chạy đạt (thêm 20 test mới: nhập cho tháng trống, gộp dòng nhiều ngày, đánh số bìa)
+
 - 21/08/2026 Nghỉ phép - **Lịch nghỉ chỉ còn hiện người CÙNG PHÒNG; banner uỷ quyền ghi đủ chức danh**
     + ⚠️ **Đây là thay đổi ai-thấy-gì, đọc kỹ**: trước đây mở màn *Nghỉ phép*, **bất kỳ ai** cũng thấy tên toàn bộ người nghỉ của **cả trung tâm** trên lịch tháng. Nay mỗi người **chỉ thấy người cùng phòng mình**
     + **Vẫn xem được toàn trung tâm**: Quản trị viên, Giám đốc / Phó Giám đốc, và nhân viên **phòng Tổng hợp** — đúng những vai vốn đã được xem toàn bộ danh sách đơn
@@ -63,7 +101,10 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 - 20/08/2026 Toàn hệ thống - **Rà soát bảo mật đợt 2 — vá 6 điểm hở, không đổi cách làm việc hằng ngày**
     + **Đợt này không thêm menu nào.** Nhưng có **hai việc người vận hành phải làm ngay**, đọc hai gạch đầu dòng có ⚠️ đầu tiên
-    + ⚠️ **Mật khẩu file ZIP nguồn (ACH / Chấm 459901 / Đối chiếu Song phương) coi như đã lộ — cần đề nghị đơn vị cấp file đổi.** Mật khẩu này trước đây nằm **ngay trong mã nguồn** phần mềm, tức là ai từng có bản sao mã nguồn đều đọc được, và **xoá đi bây giờ cũng không xoá được khỏi lịch sử**. Nay nó nằm trong file cấu hình `.env` như các khoá bí mật khác. **Bạn không phải làm gì để phần mềm chạy tiếp** — giá trị cũ đã được điền sẵn; việc cần làm là đề nghị bên cấp file đổi mật khẩu, rồi sửa lại một dòng trong `.env`
+    + ⚠️ **Mật khẩu file ZIP nguồn (ACH / Chấm 459901 / Đối chiếu Song phương) coi như đã lộ — cần đề nghị đơn vị cấp file đổi.** Mật khẩu này trước đây nằm **ngay trong mã nguồn** phần mềm, tức là ai từng có bản sao mã nguồn đều đọc được, và **xoá đi bây giờ cũng không xoá được khỏi lịch sử**. Nay nó nằm trong file cấu hình `.env` như các khoá bí mật khác
+        - 🔧 **Đính chính 21/08/2026** — dòng này trước đây ghi *"bạn không phải làm gì, giá trị cũ đã được điền sẵn"*. **Sai.** `deploy.bat` cố ý **không bao giờ** chép đè `.env` của máy chính (để khỏi mất `SECRET_KEY`), nên dòng mật khẩu mới **không tự có mặt** ở đó. Ngày 21/08 máy chính chạy Đối chiếu ACH thì dừng ở bước giải nén, báo *"Chưa đặt DOI_CHIEU_ZIP_PASSWORD trong file .env"*
+        - **Việc phải làm trên máy chính**: mở file `.env`, thêm vào cuối một dòng `DOI_CHIEU_ZIP_PASSWORD=<mật khẩu do đơn vị cấp file đặt>`, lưu lại rồi **tắt hẳn và chạy lại `start.bat`** (file `.env` chỉ được đọc lúc khởi động). Không có dòng này thì ba chức năng Đối chiếu ACH / Chấm 459901 / Đối chiếu Song phương báo lỗi ở bước giải nén; phần còn lại của phần mềm vẫn chạy bình thường
+        - Chạy được rồi thì việc tiếp theo là đề nghị bên cấp file **đổi mật khẩu**, sau đó sửa lại đúng dòng đó trong `.env`
     + ⚠️ **Bản sao lưu tự động nay được mã hoá — hãy cất mật khẩu vào két.** File sao lưu `.db` chứa **mã băm mật khẩu của toàn bộ tài khoản**: ai chép được thư mục `data\backups` (hoặc thư mục backup phụ trên máy khác) là mang về dò mật khẩu ngoài tầm kiểm soát, không cần quyền gì trong phần mềm. Nay mỗi bản sao lưu ra file **`.zip` có mật khẩu (AES-256)**, mở được bằng **7-Zip / WinRAR** sẵn có, không cần công cụ riêng
         - Mật khẩu do `start.bat` **tự sinh và in ra màn hình đúng một lần** khi chạy lần đầu sau bản cập nhật này. **Chép ngay vào két mật khẩu của đơn vị.** Nó cũng nằm ở dòng `BACKUP_PASSWORD` trong file `.env`
         - **Mất mật khẩu này là không mở được bản sao lưu.** Đừng chỉ để nó trong `.env` trên đúng cái máy mà bản sao lưu dùng để cứu

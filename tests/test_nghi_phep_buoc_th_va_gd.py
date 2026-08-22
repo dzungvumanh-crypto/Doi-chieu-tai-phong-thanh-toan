@@ -228,9 +228,15 @@ def _body_uy_quyen():
 def test_feature_uy_quyen_co_trong_danh_muc_va_cay_phan_quyen():
     from backend.core.features import FEATURES, FEATURE_GROUPS
     assert "leaves.delegation_admin" in FEATURES
-    actions = [a for g in FEATURE_GROUPS for s in g.get("sections", [])
-               for m in s.get("menus", []) if m["code"] == "menu.leaves"
-               for a in m["actions"]]
+    # menu.leaves nay dung o cap 1 (kind="menu"), khong con nam trong "sections" —
+    # duyet ca hai dang node de test khong gay khi cay menu doi hinh.
+    def _menus(g):
+        if g["kind"] == "menu":
+            return [g]
+        return [m for s in g["sections"] for m in s["menus"]]
+
+    actions = [a for g in FEATURE_GROUPS for m in _menus(g)
+               if m["code"] == "menu.leaves" for a in m["actions"]]
     assert "leaves.delegation_admin" in actions, "ô tick không hiện trên màn Phân quyền theo nhóm"
 
 

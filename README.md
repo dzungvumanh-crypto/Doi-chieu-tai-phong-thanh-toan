@@ -89,7 +89,14 @@ BACKUP_PASSWORD=<mật khẩu nén bản sao lưu>
 
 > `start.bat` **tự sinh `BACKUP_PASSWORD`** nếu `.env` chưa có, và in ra màn hình đúng một lần —
 > chép ngay vào két mật khẩu của đơn vị. `DOI_CHIEU_ZIP_PASSWORD` phải điền tay vì đó là mật khẩu
-> của bên cấp file, không phải của phần mềm này.
+> của bên cấp file, không phải của phần mềm này — không có cách nào tự sinh hộ.
+
+> **Nâng cấp máy đang chạy:** `deploy.bat` không chép đè `.env` của máy đích, nên biến mới thêm vào
+> giữa vòng đời hệ thống **không tự sang**. Từ 22/08/2026 `deploy.bat` in cảnh báo (bước 1/8, nhắc lại
+> ở khung tổng kết cuối) khi `.env` máy đích còn thiếu biến thuộc loại phải gõ tay — hiện là
+> `DOI_CHIEU_ZIP_PASSWORD`. Biến mới cùng loại thì thêm vào bảng `CHI_CANH_BAO` trong
+> `scripts/deploy_env_check.py`; chỉ đưa vào đó thứ mà **thiếu là gãy tính năng**, không thì bảng
+> thành danh sách dài ai cũng bỏ qua.
 
 Hai biến tuỳ chọn liên quan đến hiệu năng và mức độ kín của backend:
 
@@ -364,6 +371,11 @@ Truy cập:
   đều vẫn lập ca, chỉ cảnh báo. Người ở nhóm trực phụ không tính (về sớm)
 - Ngày thường bốc **ngẫu nhiên trong nhóm ít ca nhất**; thứ 6 luân phiên **tất định**.
   Có tiêu chí phụ tránh hình thành ê-kíp trực cố định
+- **Ba luật công bằng (mềm)**, áp dụng như nhau cho Lãnh đạo lẫn nhân viên: không quá
+  **2 ca/tuần**, không quá **2 thứ 6/tháng**, không trực thứ 6 ở **2 tuần liên tiếp**.
+  Thuật toán ưu tiên tránh; pool cạn thì **vẫn lập ca** kèm cảnh báo nêu đích danh người bị
+  phá luật — đủ người quan trọng hơn giữ đúng luật mềm. Đường **sửa tay** cũng cảnh báo,
+  nhưng hiện chỉ soi các ca **trước** ngày đang sửa (xem card 91 trong Implementation-notes)
 - **Sửa tay** thành phần ca: vai song phương hệ thống tự suy từ cờ "biết song phương",
   số ca trong vòng xoay đi theo người được đổi. Sửa xong ca quay về bản thảo, phải xác nhận lại
 - **Xoá hoặc tạo lại lịch trả số ca về vòng xoay** — mọi đường ghi/xoá ca đều tra cùng
@@ -537,13 +549,15 @@ Quản lý chứng từ ─ Bàn giao chứng từ / Đóng chứng từ / Lưu 
                    Phòng Swift ────── Đối chiếu điện SWIFT
 Báo cáo ────────── Phòng KSNB & HTVH ─ Báo cáo hậu kiểm / Báo cáo bàn giao chứng từ
                    Phòng Tổng hợp ──── Báo cáo dữ liệu thanh toán
-Chấm công & Lịch trực ─ Nghỉ phép
-                   Phòng Kế toán ───── Chấm công
+Nghỉ phép ──────── menu phẳng, không có nhóm cha
+Chấm công & Lịch trực ─ Phòng Kế toán ───── Chấm công
                    Phòng Thanh toán ── Phân lịch trực / Sổ trực cuối ngày
 Danh sách CN TTQT ─ menu phẳng, không có nhóm cha
 ```
 
 Tầng "phòng" **chỉ còn ở cấp 2** của Đối chiếu, Báo cáo và Chấm công & Lịch trực, và chỉ liệt kê phòng đang thực sự có tính năng. Trước đây menu chia theo phòng ở cấp 1; cách đó buộc người dùng phải biết chức năng mình cần thuộc phòng nào mới tìm ra.
+
+**Nghỉ phép** đứng riêng ở cấp 1 (22/08/2026), ngang hàng với *Chấm công & Lịch trực*: cả cơ quan dùng hằng ngày nên không bắt người dùng hover qua một nhóm mới tới. Nhóm *Chấm công & Lịch trực* giờ thuần các mục của riêng một phòng.
 
 Một nhóm **chỉ hiện khi user có ít nhất 1 chức năng** bên trong (`menu.<key>`); nhóm con không còn mục nào hiển thị được cũng bị bỏ qua — không dựng mục menu hover ra rỗng. Menu phẳng cấp 1 kiểm feature giống hệt: không có `menu.ttqt_branches` thì không thấy "Danh sách CN TTQT".
 
@@ -561,7 +575,7 @@ Bố cục **soi gương cây menu sidebar** — admin tick quyền theo đúng 
 | `kind` | Hình dạng | Dùng cho |
 |---|---|---|
 | `group` | Thẻ có header đỏ; `sections` gom menu theo phòng (`label=None` = không cần dải nhãn) | Quản lý chứng từ, Đối chiếu, Báo cáo, Chấm công & Lịch trực, Quản lý hệ thống |
-| `menu` | Thẻ **không header**, chính ô tick là tiêu đề thẻ | Danh sách CN TTQT |
+| `menu` | Thẻ **không header**, chính ô tick là tiêu đề thẻ | Nghỉ phép, Danh sách CN TTQT |
 
 Dải nhãn phòng **không phải ô tick** — luật *"mỗi ô tick là đúng một mã quyền"* được giữ nguyên, để không có hai loại ô nhìn giống nhau mà ý nghĩa khác nhau. Cạnh dải nhãn có nút **Chọn tất cả / Bỏ chọn**, chỉ tác động lên MENU chứ không tự cấp ACTION — tránh một cú bấm cấp luôn quyền chạy xử lý dữ liệu.
 

@@ -84,10 +84,13 @@ MENU_TREE = [
             },
         ],
     },
+    # Nghỉ phép đứng riêng ở cấp 1, ngang hàng với "Chấm công & Lịch trực": cả cơ
+    # quan dùng hằng ngày nên không bắt người dùng hover qua một nhóm mới tới.
+    ("leaves", "Nghỉ phép", "event_busy"),
     {
-        # Gom theo CHỨC NĂNG "thời gian làm việc". Chỉ Nghỉ phép ở tầng 2 vì cả
-        # cơ quan dùng; chấm công và lịch trực là việc của riêng một phòng nên
-        # tụt xuống tầng 3 dưới đúng tên phòng — giống Đối chiếu và Báo cáo.
+        # Gom theo CHỨC NĂNG "thời gian làm việc" — chấm công và lịch trực là việc
+        # của riêng một phòng nên nằm ở tầng dưới đúng tên phòng, giống Đối chiếu
+        # và Báo cáo.
         "id": "cong_truc",
         "label": "Chấm công & Lịch trực",
         # date_range thuộc bộ Material Icons gốc — chắc chắn có trong font offline
@@ -95,7 +98,6 @@ MENU_TREE = [
         # font render ra nguyên chữ "punch_clock" trên sidebar.
         "icon": "date_range",
         "items": [
-            ("leaves", "Nghỉ phép", "event_busy"),
             {
                 "label": "Phòng Kế toán",
                 "icon": "calculate",

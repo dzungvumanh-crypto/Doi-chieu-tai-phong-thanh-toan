@@ -93,19 +93,20 @@ def _units_from_bundle(bundle: dict) -> List[EntryUnit]:
 
 
 def _get_bundle_label(bundle: dict, all_bundles: list) -> Tuple[int, int]:
+    """Nhãn "tập i/N" — gom các tập có CÙNG tập hợp ngày, kể cả tập nhiều ngày.
+    Chỉ gom tập một ngày thì hai tập của cùng hồ sơ "ngày 01, 02" đều in 1/1,
+    hai bìa giống hệt nhau, không phân biệt được tập nào là tập nào."""
     bundle_dates = {b["id"]: _get_dates_for_bundle(b) for b in all_bundles}
-    single_date_groups: dict = defaultdict(list)
-    for b in all_bundles:
-        dates = bundle_dates[b["id"]]
-        if len(dates) == 1:
-            single_date_groups[next(iter(dates))].append(b)
     my_dates = bundle_dates.get(bundle["id"], frozenset())
-    if len(my_dates) == 1:
-        day = next(iter(my_dates))
-        same = sorted(single_date_groups[day], key=lambda b: b["sequence"])
-        if len(same) > 1:
-            idx = next(i + 1 for i, b in enumerate(same) if b["id"] == bundle["id"])
-            return idx, len(same)
+    if not my_dates:
+        return 1, 1
+    same = sorted(
+        (b for b in all_bundles if bundle_dates[b["id"]] == my_dates),
+        key=lambda b: b["sequence"],
+    )
+    if len(same) > 1:
+        idx = next(i + 1 for i, b in enumerate(same) if b["id"] == bundle["id"])
+        return idx, len(same)
     return 1, 1
 
 
@@ -230,33 +231,25 @@ def _delete_group_cascade(db: sqlite3.Connection, group_id: int):
 
 def _decompose_bundles_to_rows(bundles_data: list) -> list:
     """Shared logic: bundles_data là list dict có id, sequence, total_sheets, cover_units, items."""
-    bundle_dates = {b["id"]: sorted(_get_dates_for_bundle(b)) for b in bundles_data}
-    single_day: dict = defaultdict(list)
-    multi_day: list = []
+    # Một dòng = một TẬP HỢP NGÀY. Tập nhiều ngày trước đây mỗi cái một dòng nên
+    # hai tập của cùng hồ sơ "ngày 01, 02" bị tách thành hai dòng giống hệt nhau.
+    by_dates: dict = defaultdict(list)
     for b in bundles_data:
-        dates = bundle_dates[b["id"]]
-        if len(dates) == 1:
-            single_day[dates[0]].append(b)
-        elif len(dates) > 1:
-            multi_day.append((dates, b))
+        dates = tuple(sorted(_get_dates_for_bundle(b)))
+        if dates:
+            by_dates[dates].append(b)
 
     rows = []
-    for dates, b in multi_day:
-        rows.append(StorageViewRow(
-            days=sorted(d.day for d in dates),
-            bundle_ids=[b["id"]],
-            bundle_sheets=[b["total_sheets"]],
-            n_bundles=1,
-        ))
-    for d, date_bundles in single_day.items():
+    for dates, date_bundles in by_dates.items():
         date_bundles = sorted(date_bundles, key=lambda b: b["sequence"])
         rows.append(StorageViewRow(
-            days=[d.day],
+            days=[d.day for d in dates],
             bundle_ids=[b["id"] for b in date_bundles],
             bundle_sheets=[b["total_sheets"] for b in date_bundles],
             n_bundles=len(date_bundles),
         ))
-    rows.sort(key=lambda r: min(r.days) if r.days else 0)
+    # Cùng ngày đầu thì dòng ít ngày lên trước — thứ tự phải ổn định giữa các lần tải
+    rows.sort(key=lambda r: (r.days[0], r.days))
     return rows
 
 
@@ -917,11 +910,45 @@ def _rewrite_bundle_dates(db: sqlite3.Connection, bundle_id: int, new_dates: lis
     db.execute("UPDATE bundles SET cover_units=? WHERE id=?", (_dump_units(units), bundle_id))
 
 
+def _period_from_request(db: sqlite3.Connection, req: StorageViewUpdateRequest) -> Tuple[int, int, int]:
+    """Phòng/năm/tháng cho dòng mới hoàn toàn — chỉ tin client ở đúng chỗ này vì
+    tháng chưa có tập nào thì không có nguồn nào khác để suy ra."""
+    if not req.department_id or not req.year or not req.month:
+        raise HTTPException(400, "Thiếu phòng/năm/tháng, không thêm được dòng mới")
+    if not 1 <= req.month <= 12:
+        raise HTTPException(400, f"Tháng {req.month} không hợp lệ")
+    if not 2000 <= req.year <= 2100:
+        raise HTTPException(400, f"Năm {req.year} không hợp lệ")
+    if not db.execute("SELECT 1 FROM departments WHERE id = ?", (req.department_id,)).fetchone():
+        raise HTTPException(404, "Không tìm thấy phòng nghiệp vụ")
+    return req.department_id, req.year, req.month
+
+
+def _find_or_create_group(db: sqlite3.Connection, department_id: int, year: int,
+                          month: int, creator_id: int) -> int:
+    """Nhóm tập của tháng — dùng lại nhóm cũ nếu có, chỉ tạo khi tháng trống trơn.
+    Nhiều nhóm cùng tháng thì lấy nhóm sớm nhất, đúng thứ tự _get_storage_rows_for_month đọc."""
+    notes_key = f"Tháng {month:02d}/{year}"
+    g = db.execute(
+        "SELECT id FROM bundle_groups WHERE department_id = ? AND notes = ? "
+        "ORDER BY created_at LIMIT 1",
+        (department_id, notes_key),
+    ).fetchone()
+    if g:
+        return g["id"]
+    cur = db.execute(
+        "INSERT INTO bundle_groups (department_id, total_bundles, created_by_id, created_at, notes) "
+        "VALUES (?,?,?,?,?)",
+        (department_id, 0, creator_id, str(_vn_now()), notes_key),
+    )
+    return cur.lastrowid
+
+
 @router.patch("/storage-view")
 def update_storage_view(
     req: StorageViewUpdateRequest,
     db: sqlite3.Connection = Depends(get_db),
-    _: dict = Depends(require_feature("menu.storage")),
+    current: dict = Depends(require_feature("menu.storage")),
 ):
     touched_groups: set = set()
 
@@ -932,13 +959,25 @@ def update_storage_view(
             if anchor_id else None
         )
         group_id = anchor["group_id"] if anchor else None
-        if group_id is not None:
-            touched_groups.add(group_id)
+        adds = [s for s in row.new_sheets if s and s > 0]
+        year = month = None
+
+        # ── Dòng mới hoàn toàn (tháng chưa có tập nào) ──
+        if group_id is None:
+            if not adds:
+                if row.days:
+                    raise HTTPException(400, "Đã nhập ngày nhưng chưa nhập số chứng từ")
+                continue                      # dòng để trống — bỏ qua
+            dept_id, year, month = _period_from_request(db, req)
+            group_id = _find_or_create_group(db, dept_id, year, month, current["id"])
+
+        touched_groups.add(group_id)
 
         # ── Sửa ngày: ghi trước khi thêm tập mới để tập mới nhận ngày mới ──
         new_dates = None
-        if row.days is not None and group_id is not None:
-            year, month = _group_year_month(db, group_id)
+        if row.days is not None:
+            if year is None:
+                year, month = _group_year_month(db, group_id)
             new_dates = _row_dates(row.days, year, month)
             for i, bundle_id in enumerate(row.bundle_ids):
                 # Tập sắp bị xoá (số chứng từ = 0) thì không cần đổi ngày
@@ -947,9 +986,8 @@ def update_storage_view(
                 _rewrite_bundle_dates(db, bundle_id, new_dates)
 
         # ── Thêm tập mới cho các ô trống được nhập (dùng ngày của dòng) ──
-        adds = [s for s in row.new_sheets if s and s > 0]
-        if adds and anchor_id and group_id is not None:
-            dates = new_dates or _bundle_dates(db, anchor_id)
+        if adds:
+            dates = new_dates or (_bundle_dates(db, anchor_id) if anchor_id else [])
             seq = (db.execute(
                 "SELECT COALESCE(MAX(sequence), 0) FROM bundles WHERE group_id = ?", (group_id,)
             ).fetchone()[0])
