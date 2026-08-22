@@ -6,6 +6,7 @@ from nicegui import ui
 import frontend.api_client as api
 from frontend.shared import (
     _sidebar, _content_area, _page_header, _require_auth, _handle_api_error,
+    open_folder_picker,
 )
 from backend.services.cham459901_service import classify_upload_filename
 
@@ -31,6 +32,7 @@ async def cham_459901_page():
     # ── State ─────────────────────────────────────────────────────────────────
     state = {
         "files":            {},     # {filename: bytes}
+        "mode":             "upload",   # 'upload' | 'folder'
         "task_token":       None,
         "result":           None,
         "cancel_requested": False,  # bấm Dừng trong lúc đang tải file lên (chưa có task_token)
@@ -43,63 +45,107 @@ async def cham_459901_page():
 
             # ── Upload card ───────────────────────────────────────────────────
             with ui.card().classes("w-full p-5 mb-4"):
-                ui.label("Tải lên file dữ liệu").classes(
+                ui.label("Nguồn dữ liệu").classes(
                     "text-base font-semibold text-red-800 mb-1"
                 )
-                ui.label(
-                    "Kéo-thả hoặc chọn nhiều file cùng lúc — hệ thống tự nhận diện: "
-                    "GL02*.zip (bắt buộc), file HUB đi (Quay_danh sach...), "
-                    "file HUB đến (Danh_sach...den) — 2 file HUB tùy chọn, thiếu thì bỏ qua "
-                    "nhóm 1000 Hoàn trả. File tồn tháng trước (459_TON_T<n>.xlsx) — tùy chọn, "
-                    "ghép vào dữ liệu tháng này để phân loại lại các giao dịch chưa xử lý xong."
-                ).classes("text-xs text-gray-400 mb-3")
 
-                file_list_area = ui.column().classes("w-full gap-0 mb-2")
+                mode_toggle = ui.toggle(
+                    {"upload": "Tải file lên", "folder": "Chọn thư mục server"},
+                    value="upload",
+                ).props("dense").classes("mb-2")
 
-                def _render_file_list():
-                    file_list_area.clear()
-                    with file_list_area:
-                        if not state["files"]:
-                            ui.label("Chưa chọn file nào").classes(
-                                "text-xs text-gray-400 italic"
-                            )
-                            return
-                        for fname in list(state["files"].keys()):
-                            kind = classify_upload_filename(fname)
-                            label, cls = _KIND_LABELS[kind]
-                            with ui.row().classes(
-                                "items-center gap-2 py-1 border-b border-gray-100 w-full"
-                            ):
-                                ui.label(label).classes(
-                                    f"text-xs font-medium px-2 py-0.5 rounded {cls}"
+                _CLASSIFY_HINT = (
+                    "Hệ thống tự nhận diện: GL02*.zip (bắt buộc), file HUB đi "
+                    "(Quay_danh sach...), file HUB đến (Danh_sach...den) — 2 file HUB tùy "
+                    "chọn, thiếu thì bỏ qua nhóm 1000 Hoàn trả. File tồn tháng trước "
+                    "(459_TON_T<n>.xlsx) — tùy chọn, ghép vào dữ liệu tháng này để phân "
+                    "loại lại các giao dịch chưa xử lý xong."
+                )
+
+                # ── Chế độ Upload ───────────────────────────────────────────
+                upload_section = ui.column().classes("w-full gap-1")
+                with upload_section:
+                    ui.label(
+                        "Kéo-thả hoặc chọn nhiều file cùng lúc — " + _CLASSIFY_HINT
+                    ).classes("text-xs text-gray-400 mb-3")
+
+                    file_list_area = ui.column().classes("w-full gap-0 mb-2")
+
+                    def _render_file_list():
+                        file_list_area.clear()
+                        with file_list_area:
+                            if not state["files"]:
+                                ui.label("Chưa chọn file nào").classes(
+                                    "text-xs text-gray-400 italic"
                                 )
-                                ui.label(fname).classes("text-xs text-gray-700 flex-grow truncate")
+                                return
+                            for fname in list(state["files"].keys()):
+                                kind = classify_upload_filename(fname)
+                                label, cls = _KIND_LABELS[kind]
+                                with ui.row().classes(
+                                    "items-center gap-2 py-1 border-b border-gray-100 w-full"
+                                ):
+                                    ui.label(label).classes(
+                                        f"text-xs font-medium px-2 py-0.5 rounded {cls}"
+                                    )
+                                    ui.label(fname).classes(
+                                        "text-xs text-gray-700 flex-grow truncate"
+                                    )
 
-                                def _make_del(fn: str):
-                                    def _handler():
-                                        state["files"].pop(fn, None)
-                                        _render_file_list()
-                                    return _handler
+                                    def _make_del(fn: str):
+                                        def _handler():
+                                            state["files"].pop(fn, None)
+                                            _render_file_list()
+                                        return _handler
 
-                                ui.button(icon="close").props(
-                                    "flat dense round size=sm"
-                                ).classes("text-red-400").tooltip("Bỏ file này").on(
-                                    "click", _make_del(fname)
-                                )
+                                    ui.button(icon="close").props(
+                                        "flat dense round size=sm"
+                                    ).classes("text-red-400").tooltip("Bỏ file này").on(
+                                        "click", _make_del(fname)
+                                    )
 
-                _render_file_list()
-
-                def on_upload(e):
-                    state["files"][e.name] = e.content.read()
                     _render_file_list()
 
-                uploader = ui.upload(
-                    on_upload=on_upload,
-                    auto_upload=True,
-                    multiple=True,
-                ).props(
-                    'accept=".zip,.xlsx" flat dense label="Kéo-thả hoặc chọn file..."'
-                ).classes("w-full mb-3")
+                    def on_upload(e):
+                        state["files"][e.name] = e.content.read()
+                        _render_file_list()
+
+                    uploader = ui.upload(
+                        on_upload=on_upload,
+                        auto_upload=True,
+                        multiple=True,
+                    ).props(
+                        'accept=".zip,.xlsx" flat dense label="Kéo-thả hoặc chọn file..."'
+                    ).classes("w-full mb-3")
+
+                # ── Chế độ Folder ───────────────────────────────────────────
+                folder_section = ui.column().classes("w-full gap-2")
+                folder_section.set_visibility(False)
+                with folder_section:
+                    ui.label(
+                        "Nhập đường dẫn 1 thư mục duy nhất trên server. " + _CLASSIFY_HINT
+                    ).classes("text-xs text-gray-400 mb-1")
+                    with ui.row().classes("w-full items-center gap-2"):
+                        folder_input = ui.input(
+                            placeholder="Ví dụ: D:\\Data\\459901\\thang8",
+                        ).props("outlined dense clearable").classes("flex-1")
+
+                        async def _on_pick_folder():
+                            def _on_folder_selected(path: str):
+                                folder_input.value = path
+                            await open_folder_picker(
+                                _on_folder_selected, initial_path=folder_input.value or ""
+                            )
+
+                        ui.button("Duyệt...", icon="folder_open", color="blue-7",
+                                  on_click=_on_pick_folder).props("outlined dense")
+
+                def on_mode_change(val):
+                    state["mode"] = val
+                    upload_section.set_visibility(val == "upload")
+                    folder_section.set_visibility(val == "folder")
+
+                mode_toggle.on_value_change(lambda e: on_mode_change(e.value))
 
                 # ── Thanh tiến độ ─────────────────────────────────────────────
                 progress_bar = ui.linear_progress(value=0).classes("w-full mb-1")
@@ -132,6 +178,7 @@ async def cham_459901_page():
                 state["task_token"] = None
                 state["result"]     = None
                 uploader.reset()
+                folder_input.value = ""
                 _render_file_list()
                 result_area.clear()
 
@@ -156,12 +203,18 @@ async def cham_459901_page():
             cancel_btn.on("click", on_cancel_click)
 
             async def do_process():
-                if not state["files"]:
-                    ui.notify("Vui lòng chọn file trước", type="warning")
-                    return
-                if not any(classify_upload_filename(f) == "zip" for f in state["files"]):
-                    ui.notify("Chưa có file GL02*.zip trong danh sách đã chọn", type="warning")
-                    return
+                if state["mode"] == "upload":
+                    if not state["files"]:
+                        ui.notify("Vui lòng chọn file trước", type="warning")
+                        return
+                    if not any(classify_upload_filename(f) == "zip" for f in state["files"]):
+                        ui.notify("Chưa có file GL02*.zip trong danh sách đã chọn", type="warning")
+                        return
+                else:
+                    folder_path = (folder_input.value or "").strip()
+                    if not folder_path:
+                        ui.notify("Vui lòng nhập đường dẫn thư mục", type="warning")
+                        return
 
                 state["cancel_requested"] = False
                 process_btn.props("loading disable")
@@ -169,16 +222,23 @@ async def cham_459901_page():
                 result_area.clear()
 
                 progress_bar.set_value(0)
-                progress_label.set_text("0% — Đang tải file lên...")
+                progress_label.set_text(
+                    "0% — Đang tải file lên..." if state["mode"] == "upload" else "0% — Đang xử lý..."
+                )
                 progress_bar.set_visibility(True)
                 progress_label.set_visibility(True)
 
-                files_payload = [(name, data) for name, data in state["files"].items()]
-
                 try:
-                    resp = await asyncio.to_thread(
-                        api.post_multipart, "/api/cham459901/process", files_payload,
-                    )
+                    if state["mode"] == "upload":
+                        files_payload = [(name, data) for name, data in state["files"].items()]
+                        resp = await asyncio.to_thread(
+                            api.post_multipart, "/api/cham459901/process", files_payload,
+                        )
+                    else:
+                        resp = await asyncio.to_thread(
+                            api.post, "/api/cham459901/process_folder",
+                            {"folder_path": folder_path},
+                        )
                     state["task_token"] = resp["task_token"]
                     unrecognized = resp.get("unrecognized") or []
                     if unrecognized:
