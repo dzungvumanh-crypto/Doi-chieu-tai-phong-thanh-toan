@@ -55,9 +55,9 @@ STATUS = {
                          "dot": "#D97706"},
     "pending_tong_hop": {"label": "Chờ Tổng hợp",  "chip": "bg-yellow-100 text-yellow-700 border-yellow-300",
                          "dot": "#CA8A04"},
-    "pending_gd":       {"label": "Chờ Ban lãnh đạo duyệt", "chip": "bg-blue-100 text-blue-700 border-blue-300",
+    "pending_gd":       {"label": "Chờ GĐ duyệt",  "chip": "bg-blue-100 text-blue-700 border-blue-300",
                          "dot": "#2563EB"},
-    "approved":         {"label": "Hoàn thành",    "chip": "bg-green-100 text-green-700 border-green-300",
+    "approved":         {"label": "Đã duyệt",      "chip": "bg-green-100 text-green-700 border-green-300",
                          "dot": "#16A34A"},
     "rejected":         {"label": "Từ chối",       "chip": "bg-red-100 text-red-700 border-red-300",
                          "dot": "#DC2626", "cell": ("#FEE2E2", "#DC2626")},
@@ -148,37 +148,55 @@ def card(title: str = "", padding: str = "p-4"):
     return outer, body
 
 
+# ── Stepper ngang ─────────────────────────────────────────────────────────────
+def stepper(labels: list[str], current: int):
+    """Thanh bước ngang cho tiến trình nhiều giai đoạn (VD chạy job nền).
+
+    `current` = index (0-based) của bước đang chạy; các bước < current coi là đã
+    xong (tick xanh); == current tô đỏ Agribank (đang chạy); > current xám nhạt.
+    Gọi lại (rebuild) mỗi khi `current` đổi — không tự bind, do NiceGUI không có
+    binding 2 chiều tiện cho layout dạng này.
+    """
+    with ui.row().classes("w-full items-start gap-0") as box:
+        for i, label in enumerate(labels):
+            done   = i < current
+            active = i == current
+            with ui.column().classes("items-center flex-1 gap-1"):
+                with ui.row().classes("w-full items-center gap-0"):
+                    if i > 0:
+                        ui.element("div").classes(
+                            "flex-1 h-0.5 " + ("bg-green-500" if i <= current else "bg-gray-200")
+                        )
+                    circle_cls = (
+                        "bg-green-500 text-white" if done else
+                        "bg-red-700 text-white" if active else
+                        "bg-gray-200 text-gray-500"
+                    )
+                    with ui.element("div").classes(
+                        f"w-7 h-7 rounded-full flex items-center justify-center "
+                        f"text-xs font-bold shrink-0 {circle_cls}"
+                    ):
+                        if done:
+                            ui.icon("check").classes("text-sm")
+                        else:
+                            ui.label(str(i + 1))
+                    if i < len(labels) - 1:
+                        ui.element("div").classes(
+                            "flex-1 h-0.5 " + ("bg-green-500" if i < current else "bg-gray-200")
+                        )
+                ui.label(label).classes(
+                    "text-xs text-center " + (
+                        "text-green-700 font-medium" if done else
+                        "text-red-800 font-semibold" if active else
+                        "text-gray-400"
+                    )
+                )
+    return box
+
+
 # ── Nạp một lần cho mỗi trang ─────────────────────────────────────────────────
 _FONT_HREF = ("https://fonts.googleapis.com/css2?"
               "family=Inter:wght@400;500;600;700&display=swap")
-
-# Bấm vào cả dải màu (header) của ô chọn file là mở hộp thoại chọn file, không
-# bắt người dùng nhắm đúng dấu "+". Quasar chỉ gắn <input type=file> vào riêng
-# nút "+", nên phải bắt click ở cấp document rồi chuyển tiếp sang input đó.
-# Dùng bắt sự kiện nổi bọt (không capture) + loại trừ nút thật để các nút khác
-# trên header (tải lên, xoá hàng đợi) vẫn hoạt động như cũ.
-# Gọi input.click() an toàn: handler của chính Quasar trên input chỉ gọi
-# stopPropagation (không preventDefault) nên hộp thoại vẫn mở, và cú click tổng
-# hợp cũng không nổi ngược lên listener này.
-_UPLOADER_CLICK_JS = """<script>
-if (!window.__uploaderHeaderClickInstalled) {
-  window.__uploaderHeaderClickInstalled = true;
-  document.addEventListener('click', function (ev) {
-    const header = ev.target.closest && ev.target.closest('.q-uploader__header');
-    if (!header) return;
-    if (ev.target.closest('.q-btn, button, label, input, a')) return;
-    const box = header.closest('.q-uploader') || header.parentElement;
-    if (!box || box.classList.contains('disabled')) return;
-    const input = box.querySelector('input[type="file"]');
-    if (input && !input.disabled) input.click();
-  });
-}
-</script>"""
-
-_UPLOADER_CSS = """
-.q-uploader__header { cursor: pointer; }
-.q-uploader__header .q-btn, .q-uploader__header button, .q-uploader__header label { cursor: pointer; }
-"""
 
 
 def install():
@@ -191,7 +209,5 @@ def install():
     ui.add_head_html(
         f"<style>{_css_vars()}\n"
         "body, .q-app { font-family: 'Inter', -apple-system, 'Segoe UI', sans-serif; }"
-        f"{_UPLOADER_CSS}"
         "</style>"
     )
-    ui.add_head_html(_UPLOADER_CLICK_JS)

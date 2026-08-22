@@ -67,7 +67,8 @@ def _stub_main_from_dir(*, xac_nhan_ket_qua='ok', loi_msg='Giá trị LOAI_BO kh
                    hoặc REFHUB bổ sung không tìm thấy — xem `loi_msg`).
     """
     def _fn(input_dir, output_dir, ngay=None, log_callback=None, cancel_event=None,
-           dung_sau_mis_di=False, xac_nhan_path=None):
+           dung_sau_mis_di=False, xac_nhan_path=None, summary_callback=None,
+           chi_tim_timeout=False):
         import os
         os.makedirs(output_dir, exist_ok=True)
         if dung_sau_mis_di:
@@ -109,6 +110,21 @@ class TestStartLuonDungCheckpoint:
         assert poll.status_code == 200
         assert poll.json()['status'] == 'awaiting_confirmation'
         assert poll.json()['files'] == ['20260101_ACH_ConfirmMISdi.xlsx']
+
+    def test_start_folder_cung_dung_o_checkpoint(self, admin_client, monkeypatch, tmp_path):
+        monkeypatch.setattr(svc, 'TEMP_DIR', tmp_path)
+        monkeypatch.setattr(svc, 'main_from_dir', _stub_main_from_dir())
+        folder = tmp_path / 'server_folder'
+        folder.mkdir()
+
+        r = admin_client.post(
+            '/api/ach/start_folder',
+            json={'folder_path': str(folder), 'ngay_doi_chieu': ''},
+        )
+        assert r.status_code == 200
+        job_id = r.json()['job_id']
+        job = _wait_status(job_id, 'awaiting_confirmation')
+        assert job['status'] == 'awaiting_confirmation'
 
 
 class TestContinueSauCheckpoint:
@@ -285,7 +301,8 @@ def _stub_main_from_dir_dem_that(so_dong_xac_nhan=3, so_tien_moi_dong=100000):
     """Stub sinh file ConfirmMISdi.xlsx THẬT (không phải bytes giả) để test toàn bộ
     đường đi API → xac_nhan_count/xac_nhan_tong_tien trong poll response."""
     def _fn(input_dir, output_dir, ngay=None, log_callback=None, cancel_event=None,
-           dung_sau_mis_di=False, xac_nhan_path=None):
+           dung_sau_mis_di=False, xac_nhan_path=None, summary_callback=None,
+           chi_tim_timeout=False):
         import os
         os.makedirs(output_dir, exist_ok=True)
         if dung_sau_mis_di:
@@ -318,3 +335,96 @@ class TestPollTraVeXacNhanCount:
         body = poll.json()
         assert body['xac_nhan_count'] == 7
         assert body['xac_nhan_tong_tien'] == 700000
+        assert body['mode'] == 'upload'
+        assert body['final_output_dir'] is None
+        assert body['copy_error'] is None
+
+
+# ── UX Bước 4 (2026-07-27) — copy kết quả về thư mục nguồn (chỉ mode folder) ────
+
+class TestCopyKetQuaVeThuMucNguon:
+    def test_mode_folder_copy_thanh_cong(self, admin_client, monkeypatch, tmp_path):
+        monkeypatch.setattr(svc, 'TEMP_DIR', tmp_path)
+        monkeypatch.setattr(svc, 'main_from_dir', _stub_main_from_dir(xac_nhan_ket_qua='ok'))
+        source_folder = tmp_path / 'du_lieu_nguon'
+        source_folder.mkdir()
+
+        r = admin_client.post(
+            '/api/ach/start_folder',
+            json={'folder_path': str(source_folder), 'ngay_doi_chieu': ''},
+        )
+        job_id = r.json()['job_id']
+        _wait_status(job_id, 'awaiting_confirmation')
+
+        r2 = admin_client.post(
+            f'/api/ach/continue/{job_id}',
+            files=[('file', ('20260101_ACH_ConfirmMISdi.xlsx', b'da-dien', _XLSX_MIME))],
+        )
+        assert r2.status_code == 200
+        job = _wait_status(job_id, 'done')
+
+        dest = source_folder / 'Output' / 'doi_chieu_20260101.xlsx'
+        assert dest.exists()
+        assert job['final_output_dir'] == str(source_folder / 'Output')
+        assert job['copy_error'] is None
+
+        poll = admin_client.get(f'/api/ach/poll/{job_id}')
+        body = poll.json()
+        assert body['mode'] == 'folder'
+        assert body['final_output_dir'] == str(source_folder / 'Output')
+
+    def test_mode_upload_khong_copy_gi_ca(self, admin_client, monkeypatch, tmp_path):
+        monkeypatch.setattr(svc, 'TEMP_DIR', tmp_path)
+        monkeypatch.setattr(svc, 'main_from_dir', _stub_main_from_dir(xac_nhan_ket_qua='ok'))
+
+        r = admin_client.post(
+            '/api/ach/start',
+            files=[('files', ('GW.xlsx', b'fake', _XLSX_MIME))],
+            data={'ngay_doi_chieu': ''},
+        )
+        job_id = r.json()['job_id']
+        _wait_status(job_id, 'awaiting_confirmation')
+
+        r2 = admin_client.post(
+            f'/api/ach/continue/{job_id}',
+            files=[('file', ('20260101_ACH_ConfirmMISdi.xlsx', b'da-dien', _XLSX_MIME))],
+        )
+        assert r2.status_code == 200
+        job = _wait_status(job_id, 'done')
+
+        assert job['final_output_dir'] is None
+        assert job['copy_error'] is None
+
+    def test_copy_loi_van_giu_duoc_ket_qua_qua_download(self, admin_client, monkeypatch, tmp_path):
+        """Giả lập ổ đĩa mất kết nối/không ghi được — job vẫn 'done', file gốc vẫn
+        tải được qua /api/ach/download, chỉ final_output_dir rỗng + copy_error có nội dung."""
+        monkeypatch.setattr(svc, 'TEMP_DIR', tmp_path)
+        monkeypatch.setattr(svc, 'main_from_dir', _stub_main_from_dir(xac_nhan_ket_qua='ok'))
+        # Đường dẫn nguồn trỏ tới 1 FILE (không phải thư mục) để mkdir(parents=True) lỗi chắc chắn
+        bad_source = tmp_path / 'khong_phai_thu_muc'
+        bad_source.write_text('x')
+
+        r = admin_client.post(
+            '/api/ach/start_folder',
+            json={'folder_path': str(tmp_path), 'ngay_doi_chieu': ''},
+        )
+        job_id = r.json()['job_id']
+        # Ép source_folder trỏ vào 1 file để buộc copy thất bại — mô phỏng ổ mất
+        # kết nối giữa lúc chạy (khó dựng thật trong unit test).
+        _wait_status(job_id, 'awaiting_confirmation')
+        svc._jobs[job_id]['source_folder'] = str(bad_source)
+
+        r2 = admin_client.post(
+            f'/api/ach/continue/{job_id}',
+            files=[('file', ('20260101_ACH_ConfirmMISdi.xlsx', b'da-dien', _XLSX_MIME))],
+        )
+        assert r2.status_code == 200
+        job = _wait_status(job_id, 'done')
+
+        assert job['final_output_dir'] is None
+        assert job['copy_error']  # có nội dung lỗi, không rỗng
+        assert 'doi_chieu_20260101.xlsx' in job['files']
+
+        dl = admin_client.get(f'/api/ach/download/{job_id}/doi_chieu_20260101.xlsx')
+        assert dl.status_code == 200
+        assert dl.content == b'fake-final'

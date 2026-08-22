@@ -1,28 +1,17 @@
-"""Trang Chấm đối chiếu ACH — chọn file từ máy người dùng, chạy pipeline, download kết quả."""
+"""Trang Chấm đối chiếu ACH — upload file (hoặc chọn thư mục server), chạy pipeline, download kết quả."""
 
-import re
 import asyncio
 
 from nicegui import ui
 import frontend.api_client as api
+import frontend.ui_kit as ui_kit
 from frontend.shared import (
     _sidebar, _content_area, _page_header, _require_auth, _handle_api_error,
+    open_folder_picker,
 )
 
 # ─── Hằng số ──────────────────────────────────────────────────────────────────
 _POLL_INTERVAL = 1.5   # giây
-
-# Sức chịu đựng khi máy chủ im lặng = _MAX_POLL_FAILS × _POLL_TIMEOUT, KHÔNG phải
-# × _POLL_INTERVAL: NiceGUI Timer gọi callback tuần tự rồi mới ngủ, nên một lần
-# poll lỗi ngốn trọn timeout của nó. Bản cũ (4 lần × 10s mặc định của api_client)
-# bỏ cuộc sau 40 giây và ghi nhầm trong comment là "~6s".
-#
-# 40 giây là quá ngắn: bước B4 giải nén 2 file MIS_DI rồi đọc CSV, và trong suốt
-# quãng đó pipeline KHÔNG in dòng log nào — một lần giải nén nặng trông y hệt
-# máy chủ đã chết. Nay chịu tới 10 × 30s = 5 phút, ngang các trang chấm khác
-# (cham_459901, doi_chieu_song_phuong đều để trần 900 giây).
-_POLL_TIMEOUT   = 30.0
-_MAX_POLL_FAILS = 10
 _FILE_HINT = (
     'PDF (session) · GL02*.zip · GW*.xlsx · '
     '2× *_DI_*.zip · 2× *_DEN_*.zip · '
@@ -30,30 +19,30 @@ _FILE_HINT = (
     '(tùy chọn, Điểm 2) QT*.xlsx (Quyết toán OSB đi/đến)'
 )
 
-# Mốc log → % tiến trình (tăng dần, không lùi lại)
-_PROGRESS_MARKERS = [
-    (re.compile(r'^Ngày đối chiếu:'),               0.05),
-    (re.compile(r'^\[B1\] Session:'),                0.10),
-    (re.compile(r'^Tìm thấy: GL02='),                0.15),
-    (re.compile(r'\[TIMING\] Phase 1 IO:'),          0.45),
-    (re.compile(r'^\[JOB\] Đang chờ xác nhận'),      0.50),
-    (re.compile(r'\[TIMING\] Phase 2 đối chiếu:'),   0.65),
-    (re.compile(r'\[TIMING\] Phase 3 Excel:'),       0.97),
-    (re.compile(r'^Hoàn thành:'),                    1.0),
+# Khớp đúng thứ tự backend/services/ach_service.py::STAGE_LABELS — stage/% tiến
+# trình tính ở server, trang này chỉ hiển thị.
+_STAGE_LABELS = [
+    'Đọc dữ liệu',
+    'Chuẩn hoá & xử lý',
+    'Đối chiếu & phân loại',
+    'Tổng hợp báo cáo',
+    'Hoàn tất',
 ]
-_EXCEL_STEP_RE = re.compile(r'\[EXCEL\] \((\d+)/(\d+)\)')
 
-
-def _bump_progress(current: float, line: str) -> float:
-    m = _EXCEL_STEP_RE.search(line)
-    if m:
-        i, total = int(m.group(1)), int(m.group(2))
-        if total > 0:
-            current = max(current, 0.65 + 0.30 * (i / total))
-    for pattern, pct in _PROGRESS_MARKERS:
-        if pattern.search(line):
-            current = max(current, pct)
-    return current
+# "Kết quả tạm thời" — nhóm nghiệp vụ ACH thật (khớp đúng dict summary_callback
+# ở backend/services/ach/pipeline.py::xuat_excel), không dùng nhãn đối chiếu
+# ngân hàng chung chung. (n_key, s_key, nhãn, icon, class khung, class chữ)
+_SUMMARY_CARDS = [
+    ('khop_npo_di',    'tien_khop_npo_di',    'Khớp NPO — đi',        'call_made',     'bg-green-50 border-green-200', 'text-green-700'),
+    ('khop_npo_den',   'tien_khop_npo_den',   'Khớp NPO — đến',       'call_received', 'bg-green-50 border-green-200', 'text-green-700'),
+    ('khop_osb_di',    'tien_khop_osb_di',    'Khớp OSB — đi',        'call_made',     'bg-blue-50 border-blue-200',   'text-blue-700'),
+    ('khop_osb_den',   'tien_khop_osb_den',   'Khớp OSB — đến',       'call_received', 'bg-blue-50 border-blue-200',   'text-blue-700'),
+    ('timeout',        'tien_timeout',        'Timeout không đi kênh', 'schedule',     'bg-orange-50 border-orange-200', 'text-orange-700'),
+    ('huy_trong_ngay', 'tien_huy_trong_ngay', 'Huỷ trong ngày',       'block',         'bg-gray-50 border-gray-200',   'text-gray-700'),
+    ('huy_khac_ngay',  'tien_huy_khac_ngay',  'Huỷ khác ngày',        'block',         'bg-gray-50 border-gray-200',   'text-gray-700'),
+    ('thua_di',        'tien_thua_di',        'Thừa chưa khớp — đi',   'warning',      'bg-red-50 border-red-200',     'text-red-700'),
+    ('thua_den',       'tien_thua_den',       'Thừa chưa khớp — đến',  'warning',      'bg-red-50 border-red-200',     'text-red-700'),
+]
 
 
 @ui.page('/cham_ach')
@@ -64,10 +53,6 @@ async def cham_ach_page():
         ui.navigate.to('/home')
         return
 
-    # Quyền chạy tách khỏi quyền xem — người chỉ có menu.cham_ach vẫn theo dõi
-    # tiến độ và tải kết quả được, nhưng không khởi động/tiếp tục được lần chạy.
-    co_quyen_chay = api.has_feature('cham_ach.process')
-
     # ── State ─────────────────────────────────────────────────────────────────
     state = {
         'files':       {},     # {filename: bytes}
@@ -75,16 +60,23 @@ async def cham_ach_page():
         'log_pos':     0,      # số log đã hiển thị
         'timer':       None,
         'running':     False,
+        'mode':        'folder',   # 'upload' | 'folder' — folder là luồng chính (chỉ chọn 1 thư mục)
         'progress':    0.0,
+        'stage':       0,
         'poll_fails':  0,      # số lần poll lỗi liên tiếp
         'xac_nhan_upload': None,   # (filename, bytes) file xác nhận đã điền, chờ upload
         'checkpoint_mode': 'inline',   # 'inline' | 'deferred' — cách xử lý khi tới Checkpoint
         'pending_checkpoint_res': None,   # kết quả poll lúc tới Checkpoint (mode deferred, chờ mở)
         'bo_qua_checkpoint': False,   # True = chạy thẳng, coi MIS_đi đúng 100%, không dừng chờ xác nhận
+        # 2026-08-21 (xem project_ach_gl02_optional_tiered_deps) — thiếu GL02/MIS_đến
+        # nhưng đủ PDF+GW+MIS_đi (Tầng 0) thì validate trả tang0_ok=True; người dùng
+        # phải tự tick chi_tim_timeout mới được chạy thiếu (không tự động hạ cấp).
+        'tang0_ok':        False,
+        'chi_tim_timeout': False,
     }
 
     with ui.row().classes('w-full'):
-        await _sidebar('cham_ach')
+        _sidebar('cham_ach')
         with _content_area():
             _page_header('Chấm đối chiếu ACH', 'Đối chiếu GL02 (NPO) với MIS — Phòng Thanh toán')
 
@@ -92,13 +84,15 @@ async def cham_ach_page():
             with ui.card().classes('w-full p-5 mb-4'):
                 ui.label('Nguồn dữ liệu').classes('text-base font-semibold text-red-800 mb-3')
 
-                upload_section = ui.column().classes('w-full mt-1 gap-1')
+                mode_toggle = ui.toggle(
+                    {'folder': 'Chọn thư mục server', 'upload': 'Tải file lên'},
+                    value='folder',
+                ).props('dense')
+
+                # ── Chế độ Upload ─────────────────────────────────────────
+                upload_section = ui.column().classes('w-full mt-3 gap-1')
+                upload_section.set_visibility(False)
                 with upload_section:
-                    ui.label(
-                        'Mở thư mục chứa đủ file ACH của 1 phiên/1 ngày trên máy bạn, '
-                        'chọn tất cả file bằng Ctrl+A (hoặc giữ Shift để chọn khoảng) '
-                        'rồi kéo-thả hoặc bấm Mở.'
-                    ).classes('text-xs text-gray-500 mb-1')
                     ui.label(_FILE_HINT).classes('text-xs text-gray-400 mb-1')
                     file_list_label = ui.label('Chưa chọn file nào').classes(
                         'text-xs text-gray-400 italic mb-2'
@@ -132,6 +126,41 @@ async def cham_ach_page():
 
                     ui.button('Xóa tất cả file', icon='delete_outline', color='grey-6',
                               on_click=on_clear).props('flat dense').classes('text-xs')
+
+                # ── Chế độ Folder ─────────────────────────────────────────
+                folder_section = ui.column().classes('w-full mt-3 gap-2')
+                with folder_section:
+                    ui.label(
+                        'Nhập đường dẫn 1 thư mục duy nhất chứa đủ file ACH của 1 phiên/1 ngày — '
+                        'chương trình tự nhận diện toàn bộ file cần thiết. Kết quả cuối sẽ được '
+                        'lưu lại ngay trong thư mục này (thư mục con "Output").'
+                    ).classes('text-xs text-gray-500')
+                    with ui.row().classes('w-full items-center gap-2'):
+                        folder_input = ui.input(
+                            placeholder='Ví dụ: D:\\Data\\ACH\\ngay16',
+                        ).props('outlined dense clearable').classes('flex-1')
+
+                        async def _on_pick_folder():
+                            async def _on_folder_selected(path: str):
+                                folder_input.value = path
+                                await _validate_now()
+                            await open_folder_picker(
+                                _on_folder_selected, initial_path=folder_input.value or ''
+                            )
+
+                        ui.button('Duyệt...', icon='folder_open', color='blue-7',
+                                  on_click=_on_pick_folder).props('outlined dense')
+                    ui.label(_FILE_HINT).classes('text-xs text-gray-400')
+                    ui.button('Kiểm tra thư mục', icon='fact_check', color='blue-7',
+                              on_click=lambda: _validate_now()).props('flat dense').classes('text-xs')
+
+                def on_mode_change(val):
+                    state['mode'] = val
+                    upload_section.set_visibility(val == 'upload')
+                    folder_section.set_visibility(val == 'folder')
+                    validate_card.set_visibility(False)
+
+                mode_toggle.on_value_change(lambda e: on_mode_change(e.value))
 
                 # Ngày đối chiếu — gõ tay hoặc bấm icon lịch để chọn ngày
                 with ui.row().classes('items-center gap-3 mt-3'):
@@ -187,9 +216,6 @@ async def cham_ach_page():
                     btn_cancel = ui.button('Dừng', icon='stop_circle',
                                            color='grey-6').classes('font-semibold')
                     btn_cancel.set_visibility(False)
-                    if not co_quyen_chay:
-                        btn_run.props('disable')
-                        btn_run.tooltip('Bạn không có quyền thực hiện thao tác này')
                     hint_chay_label = ui.label(
                         'Pipeline sẽ dừng lại ngay sau khi tạo xong MIS_đi để bạn xác nhận, '
                         'rồi mới chạy tiếp tới báo cáo cuối.'
@@ -238,16 +264,33 @@ async def cham_ach_page():
                             'Tôi hiểu, chạy thẳng luôn', icon='play_arrow', color='orange-8',
                         ).classes('font-semibold')
 
+            # ── Tiến trình ────────────────────────────────────────────────────
+            progress_card = ui.card().classes('w-full p-4 mb-4')
+            progress_card.set_visibility(False)
+            with progress_card:
+                stepper_box = ui.column().classes('w-full')
+                with stepper_box:
+                    ui_kit.stepper(_STAGE_LABELS, 0)
+                with ui.row().classes('w-full items-center gap-3 mt-3'):
+                    progress_bar = ui.linear_progress(value=0, show_value=False).classes('flex-1')
+                    progress_pct_label = ui.label('0%').classes(
+                        'text-sm font-semibold text-red-800 w-10 text-right'
+                    )
+
+            # ── Kết quả tạm thời ──────────────────────────────────────────────
+            summary_card = ui.card().classes('w-full p-4 mb-4')
+            summary_card.set_visibility(False)
+            with summary_card:
+                ui.label('Kết quả tạm thời').classes('text-base font-semibold text-red-800 mb-3')
+                summary_body = ui.row().classes('w-full gap-3 flex-wrap')
+
             # ── Log card ──────────────────────────────────────────────────────
             with ui.card().classes('w-full p-0 mb-4'):
                 with ui.row().classes('w-full bg-gray-800 px-4 py-2 rounded-t items-center gap-2'):
                     ui.icon('terminal').classes('text-green-400 text-sm')
-                    ui.label('Log xử lý').classes('text-xs font-semibold text-green-300')
+                    ui.label('Nhật ký hoạt động').classes('text-xs font-semibold text-green-300')
                     spinner = ui.spinner('dots', size='xs', color='green')
                     spinner.set_visibility(False)
-
-                progress_bar = ui.linear_progress(value=0, show_value=False).classes('w-full')
-                progress_bar.set_visibility(False)
 
                 log_area = ui.column().classes(
                     'w-full bg-gray-900 font-mono text-xs text-green-200 '
@@ -275,6 +318,7 @@ async def cham_ach_page():
             result_card.set_visibility(False)
             with result_card:
                 ui.label('Kết quả').classes('text-base font-semibold text-red-800 mb-3')
+                result_location_label = ui.label('').classes('text-xs mb-3')
                 download_row = ui.row().classes('flex-wrap gap-3')
 
             # ── Logic ─────────────────────────────────────────────────────────
@@ -282,17 +326,49 @@ async def cham_ach_page():
             def _append_log(msg: str):
                 with log_area:
                     ui.label(msg).classes('leading-tight')
-                state['progress'] = _bump_progress(state['progress'], msg)
-                progress_bar.set_value(state['progress'])
+
+            def _update_progress(stage: int, progress: float):
+                state['stage']    = stage
+                state['progress'] = progress
+                progress_bar.set_value(progress)
+                progress_pct_label.set_text(f'{int(progress * 100)}%')
+                stepper_box.clear()
+                with stepper_box:
+                    ui_kit.stepper(_STAGE_LABELS, stage)
+
+            def _render_summary(summary: dict | None):
+                if not summary:
+                    return
+                summary_card.set_visibility(True)
+                summary_body.clear()
+                with summary_body:
+                    for n_key, s_key, label, icon, box_cls, txt_cls in _SUMMARY_CARDS:
+                        n = summary.get(n_key, 0)
+                        s = summary.get(s_key, 0)
+                        with ui.column().classes(
+                            f'flex-1 min-w-[11rem] p-3 rounded-lg border gap-0 {box_cls}'
+                        ):
+                            with ui.row().classes('items-center gap-1'):
+                                ui.icon(icon).classes(f'text-sm {txt_cls}')
+                                ui.label(label).classes(f'text-xs font-medium {txt_cls}')
+                            ui.label(f'{n:,}').classes(f'text-xl font-bold {txt_cls}')
+                            ui.label(f'{s:,} VND').classes('text-xs text-gray-500')
 
             def _clear_log():
                 log_area.clear()
-                state['progress'] = 0.0
-                progress_bar.set_value(0)
+                summary_card.set_visibility(False)
+                summary_body.clear()
+                _update_progress(0, 0.0)
 
             def _render_validate_result(res: dict):
                 validate_card.set_visibility(True)
                 validate_card.clear()
+                # Chỉ tắt cờ khi checkbox không còn liên quan (đủ file, hoặc thiếu cả
+                # Tầng 0) — KHÔNG reset khi vẫn đang ở đúng tình huống thiếu GL02/
+                # MIS_đến, vì on_run() gọi lại _validate_now() ngay trước khi chạy
+                # ("chốt kiểm tra") và không được xoá tick của người dùng lúc đó.
+                if res.get('ok') or not res.get('tang0_ok'):
+                    state['chi_tim_timeout'] = False
                 with validate_card:
                     for chk in res.get('checks', []):
                         icon  = 'check_circle' if chk['ok'] else 'cancel'
@@ -302,16 +378,56 @@ async def cham_ach_page():
                             ui.label(chk['label']).classes('text-xs font-medium')
                         ui.label(chk['detail']).classes('text-xs text-gray-500 ml-6 -mt-1')
 
+                    # Thiếu GL02/MIS_đến nhưng đủ Tầng 0 (PDF+GW+MIS_đi) — đề nghị chế
+                    # độ chạy thiếu, CHỈ tìm Timeout không đi kênh (2026-08-21).
+                    if not res.get('ok') and res.get('tang0_ok'):
+                        thieu = ', '.join(chk['label'] for chk in res.get('checks', []) if not chk['ok'])
+                        with ui.row().classes(
+                            'w-full items-start gap-2 mt-3 p-3 rounded bg-orange-50 border border-orange-200'
+                        ):
+                            ui.icon('warning').classes('text-orange-700 mt-1')
+                            with ui.column().classes('gap-0'):
+                                chi_tim_timeout_checkbox = ui.checkbox(
+                                    'Tôi biết đang thiếu file trên — chỉ chạy tìm '
+                                    '"Timeout không đi kênh"',
+                                    value=state['chi_tim_timeout'],
+                                ).props('dense').classes('text-orange-900 font-medium')
+                                ui.label(
+                                    f'Đủ PDF + GW + MIS_đi để tính Timeout không đi kênh, nhưng '
+                                    f'thiếu {thieu} — các phần đối chiếu khác (NPO/MIS thừa, huỷ, '
+                                    f'OSB...) sẽ ghi "CHƯA ĐỐI CHIẾU ĐƯỢC" thay vì số liệu thật.'
+                                ).classes('text-xs text-orange-700')
+
+                        def _on_chi_tim_timeout_change(val: bool):
+                            state['chi_tim_timeout'] = val
+
+                        chi_tim_timeout_checkbox.on_value_change(
+                            lambda e: _on_chi_tim_timeout_change(e.value)
+                        )
+
             async def _validate_now() -> bool:
-                """Kiểm tra sớm bộ file theo tên — trả True nếu đủ, chặn chạy nếu thiếu."""
+                """Kiểm tra sớm bộ file theo tên — trả True nếu đủ, chặn chạy nếu thiếu.
+                Luôn cập nhật state['tang0_ok'] (đủ PDF+GW+MIS_đi cho Timeout không đi
+                kênh) — dùng bởi on_run() để biết có được đề nghị chạy thiếu hay không."""
+                state['tang0_ok'] = False
                 try:
-                    if not state['files']:
-                        validate_card.set_visibility(False)
-                        return False
-                    res = await asyncio.to_thread(
-                        api.post, '/api/ach/validate',
-                        {'filenames': list(state['files'].keys())},
-                    )
+                    if state['mode'] == 'upload':
+                        if not state['files']:
+                            validate_card.set_visibility(False)
+                            return False
+                        res = await asyncio.to_thread(
+                            api.post, '/api/ach/validate',
+                            {'filenames': list(state['files'].keys())},
+                        )
+                    else:
+                        folder_path = (folder_input.value or '').strip()
+                        if not folder_path:
+                            validate_card.set_visibility(False)
+                            return False
+                        res = await asyncio.to_thread(
+                            api.post, '/api/ach/validate_folder',
+                            {'folder_path': folder_path},
+                        )
                 except Exception as e:
                     if _handle_api_error(e):
                         return False
@@ -321,47 +437,23 @@ async def cham_ach_page():
                         ui.label(f'Không kiểm tra được: {e}').classes('text-xs text-red-600')
                     return False
 
+                state['tang0_ok'] = bool(res.get('tang0_ok'))
                 _render_validate_result(res)
                 return bool(res.get('ok'))
+
+            _MAX_POLL_FAILS = 4  # ~6s liên tiếp lỗi mới báo — tránh báo nhầm khi mạng chập chờn
 
             def _stop_timer():
                 if state['timer']:
                     state['timer'].cancel()
                     state['timer'] = None
 
-            def _stop_running(giu_nut_dung: bool = False):
-                """giu_nut_dung=True khi ngừng THEO DÕI mà job phía máy chủ vẫn còn
-                sống (mất liên lạc). Giấu nút Dừng lúc đó là cắt mất đường duy nhất
-                để dừng job mồ côi — mà job đó vẫn đang ăn RAM/CPU/đĩa của máy chủ."""
+            def _stop_running():
                 spinner.set_visibility(False)
-                btn_cancel.set_visibility(giu_nut_dung)
+                btn_cancel.set_visibility(False)
                 btn_run.set_visibility(True)
                 state['running'] = False
                 _stop_timer()
-
-            async def _trang_thai_job_cu() -> str | None:
-                """Trạng thái job lần chạy trước theo MÁY CHỦ, hoặc None nếu không
-                còn/không hỏi được. Không tin `state['running']`: khi polling bỏ cuộc
-                nó bị đặt False trong khi pipeline phía máy chủ vẫn chạy tiếp."""
-                if not state['job_id']:
-                    return None
-                try:
-                    res = await asyncio.to_thread(
-                        api.get, f'/api/ach/poll/{state["job_id"]}',
-                        # since lớn hơn mọi số dòng log thật → máy chủ trả về danh
-                        # sách log rỗng. Đây là phép dò TRẠNG THÁI, không được nuốt
-                        # mất log của job cũ bằng cách đọc rồi vứt đi.
-                        params={'since': 10 ** 9}, timeout=_POLL_TIMEOUT,
-                    )
-                except Exception as e:
-                    if not api.la_loi_mang(e):
-                        # Máy chủ TRẢ LỜI rằng job không còn (404 hết hạn) — câu trả
-                        # lời dứt khoát, cho chạy lượt mới.
-                        return None
-                    # Im lặng: KHÔNG kết luận job đã chết. Bản thân việc im lặng
-                    # này là dấu hiệu máy chủ còn đang gánh job cũ.
-                    return 'khong_hoi_duoc'
-                return res.get('status')
 
             async def _poll():
                 if not state['job_id']:
@@ -372,37 +464,21 @@ async def cham_ach_page():
                         api.get,
                         f'/api/ach/poll/{state["job_id"]}',
                         params={'since': state['log_pos']},
-                        timeout=_POLL_TIMEOUT,
                     )
                 except Exception as e:
                     if _handle_api_error(e):
                         _stop_running()
                         return
-                    if not api.la_loi_mang(e):
-                        # Máy chủ có trả lời, chỉ là trả lời hỏng (thường là 404
-                        # "job đã hết hạn"). Thử lại 10 lần nữa vừa vô ích vừa dẫn
-                        # tới báo sai "job vẫn đang chạy" ở dưới.
-                        progress_bar.set_visibility(False)
-                        _stop_running()
-                        state['job_id'] = None
-                        _append_log(f'[LỖI] Máy chủ từ chối theo dõi tiến trình: {e}')
-                        ui.notify(str(e), type='negative', timeout=0)
-                        return
                     state['poll_fails'] += 1
                     if state['poll_fails'] >= _MAX_POLL_FAILS:
-                        progress_bar.set_visibility(False)
-                        _stop_running(giu_nut_dung=True)
-                        _append_log(
-                            f'[LỖI] Mất liên lạc với máy chủ sau '
-                            f'{_MAX_POLL_FAILS} lần thử ({_MAX_POLL_FAILS * int(_POLL_TIMEOUT)}s): {e}')
-                        _append_log(f'[LỖI] Job {state["job_id"]} RẤT CÓ THỂ VẪN ĐANG CHẠY '
-                                    'trên máy chủ — bấm "Dừng" trước khi chạy lại.')
+                        progress_card.set_visibility(False)
+                        _stop_running()
+                        _append_log(f'[LỖI] Mất kết nối tới máy chủ khi theo dõi tiến trình: {e}')
                         ui.notify(
-                            'Mất liên lạc với máy chủ khi theo dõi tiến trình. Job nhiều khả '
-                            'năng VẪN ĐANG CHẠY — chạy lại ngay lúc này sẽ có hai lượt đối '
-                            'chiếu cùng lúc và máy chủ càng nghẽn. Bấm "Dừng" để huỷ job cũ, '
-                            'rồi xem logs/backend.log trên máy chủ trước khi chạy lại.',
-                            type='negative', timeout=0,
+                            'Mất kết nối tới máy chủ hoặc job đã hết hạn (có thể do backend '
+                            'khởi động lại) — không rõ pipeline đã chạy xong hay chưa. '
+                            'Vui lòng kiểm tra lại và chạy lại nếu cần.',
+                            type='negative', timeout=0, close_button='Đóng',
                         )
                     return
 
@@ -412,6 +488,9 @@ async def cham_ach_page():
                 for line in new_logs:
                     _append_log(line)
                 state['log_pos'] += len(new_logs)
+
+                _update_progress(res.get('stage', state['stage']), res.get('progress', state['progress']))
+                _render_summary(res.get('summary'))
 
                 status = res.get('status', '')
 
@@ -429,15 +508,19 @@ async def cham_ach_page():
                     _stop_running()
 
                     if status == 'done':
-                        progress_bar.set_value(1.0)
+                        _update_progress(len(_STAGE_LABELS) - 1, 1.0)
                         files = res.get('files', [])
-                        _show_results(files)
-                        ui.notify('Hoàn thành! Tải file kết quả bên dưới.', type='positive')
+                        _show_results(files, res.get('final_output_dir'), res.get('copy_error'))
+                        if res.get('final_output_dir'):
+                            ui.notify(f'Đối chiếu hoàn thành. Kết quả đã lưu tại: {res["final_output_dir"]}',
+                                      type='positive', timeout=0, close_button='Đóng')
+                        else:
+                            ui.notify('Hoàn thành! Tải file kết quả bên dưới.', type='positive')
                     elif status == 'error':
-                        progress_bar.set_visibility(False)
-                        ui.notify(f'Lỗi: {res.get("error", "")}', type='negative', timeout=0)
+                        progress_card.set_visibility(False)
+                        ui.notify(f'Lỗi: {res.get("error", "")}', type='negative', timeout=0, close_button='Đóng')
                     elif status == 'cancelled':
-                        progress_bar.set_visibility(False)
+                        progress_card.set_visibility(False)
                         checkpoint_dialog.close()
                         ui.notify('Đã dừng theo yêu cầu.', type='warning')
 
@@ -520,12 +603,9 @@ async def cham_ach_page():
 
                     with ui.row().classes('gap-2 justify-end w-full'):
                         ui.button('Hủy', color='grey-6').props('flat').on('click', _huy_va_dong)
-                        btn_chay_tiep = ui.button(
-                            'Đã xác nhận – Chạy tiếp', icon='play_arrow', color='red-8'
-                        ).classes('font-semibold').on('click', on_continue)
-                        if not co_quyen_chay:
-                            btn_chay_tiep.props('disable')
-                            btn_chay_tiep.tooltip('Bạn không có quyền thực hiện thao tác này')
+                        ui.button('Đã xác nhận – Chạy tiếp', icon='play_arrow', color='red-8').classes(
+                            'font-semibold'
+                        ).on('click', on_continue)
 
                 checkpoint_dialog.open()
 
@@ -550,9 +630,8 @@ async def cham_ach_page():
                 name, data = state['xac_nhan_upload']
                 checkpoint_dialog.close()
                 spinner.set_visibility(True)
-                progress_bar.set_visibility(True)
-                state['progress'] = 0.0
-                progress_bar.set_value(0)
+                progress_card.set_visibility(True)
+                _update_progress(2, 0.50)   # tiếp tục từ sau checkpoint (stage "Đối chiếu & phân loại")
                 _append_log(f'[Chạy tiếp] Đang nộp file xác nhận: {name}...')
 
                 try:
@@ -562,7 +641,7 @@ async def cham_ach_page():
                     )
                 except Exception as e:
                     spinner.set_visibility(False)
-                    progress_bar.set_visibility(False)
+                    progress_card.set_visibility(False)
                     checkpoint_dialog.open()
                     if not _handle_api_error(e):
                         ui.notify(str(e), type='negative')
@@ -572,8 +651,20 @@ async def cham_ach_page():
                 btn_cancel.set_visibility(True)
                 state['timer'] = ui.timer(_POLL_INTERVAL, _poll)
 
-            def _show_results(files: list[str]):
+            def _show_results(files: list[str], final_output_dir: str | None = None,
+                              copy_error: str | None = None):
                 result_card.set_visibility(True)
+                if final_output_dir:
+                    result_location_label.set_text(f'Đã lưu tại: {final_output_dir}')
+                    result_location_label.classes(remove='text-red-600', add='text-green-700')
+                elif copy_error:
+                    result_location_label.set_text(
+                        f'Không copy được kết quả về thư mục dữ liệu ({copy_error}) — '
+                        f'vui lòng tải xuống thủ công bên dưới.'
+                    )
+                    result_location_label.classes(remove='text-green-700', add='text-red-600')
+                else:
+                    result_location_label.set_text('')
                 download_row.clear()
                 with download_row:
                     for fname in files:
@@ -595,30 +686,6 @@ async def cham_ach_page():
                         ).classes('text-xs')
 
             async def _thuc_hien_chay():
-                # Chặn hai lượt đối chiếu chồng nhau. `state['running']` không đủ:
-                # sau khi polling bỏ cuộc nó là False dù pipeline cũ còn chạy, và
-                # `_thuc_hien_chay()` sẽ đè `state['job_id']` — job cũ thành mồ côi,
-                # không còn ai dừng được, trong khi vẫn chiếm RAM/CPU/đĩa. Đúng
-                # cảnh đã xảy ra 19/08/2026: lần 1 mất liên lạc, lần 2 không phản hồi.
-                trang_thai = await _trang_thai_job_cu()
-                if trang_thai in ('pending', 'running', 'awaiting_confirmation'):
-                    ui.notify(
-                        f'Lượt chạy trước (job {state["job_id"]}) vẫn đang ở trạng thái '
-                        f'"{trang_thai}". Bấm "Dừng" để huỷ nó trước khi chạy lượt mới.',
-                        type='negative', timeout=0,
-                    )
-                    btn_cancel.set_visibility(True)
-                    return
-                if trang_thai == 'khong_hoi_duoc':
-                    ui.notify(
-                        'Máy chủ chưa trả lời về lượt chạy trước nên không rõ nó đã dừng hay '
-                        'chưa. Chạy lúc này có thể thành hai lượt cùng lúc. Bấm "Dừng" rồi '
-                        'thử lại sau ít phút.',
-                        type='negative', timeout=0,
-                    )
-                    btn_cancel.set_visibility(True)
-                    return
-
                 _clear_log()
                 result_card.set_visibility(False)
                 checkpoint_dialog.close()
@@ -628,30 +695,39 @@ async def cham_ach_page():
                 btn_run.set_visibility(False)
                 btn_cancel.set_visibility(True)
                 spinner.set_visibility(True)
-                progress_bar.set_visibility(True)
+                progress_card.set_visibility(True)
                 state['running'] = True
                 state['log_pos'] = 0
 
                 ngay = ngay_input.value.strip() if ngay_input.value else None
 
                 try:
-                    _append_log('Đang upload file...')
-                    # /api/ach/start nhận `list[UploadFile]` → mọi file phải là part
-                    # CÙNG tên field 'files' ⇒ dùng dạng list, không dùng dict.
-                    res = await asyncio.to_thread(
-                        api.post_upload,
-                        '/api/ach/start',
-                        files=[('files', (name, data, 'application/octet-stream'))
-                               for name, data in state['files'].items()],
-                        data={
-                            'ngay_doi_chieu': ngay or '',
-                            'bo_qua_checkpoint': str(state['bo_qua_checkpoint']).lower(),
-                        },
-                        timeout=600.0,   # bộ file ACH có thể tới hàng trăm MB
-                    )
+                    if state['mode'] == 'upload':
+                        _append_log('Đang upload file...')
+                        res = await asyncio.to_thread(
+                            api.post_multipart,
+                            '/api/ach/start',
+                            files=[(name, data) for name, data in state['files'].items()],
+                            data={
+                                'ngay_doi_chieu': ngay or '',
+                                'bo_qua_checkpoint': str(state['bo_qua_checkpoint']).lower(),
+                                'chi_tim_timeout': str(state['chi_tim_timeout']).lower(),
+                            },
+                        )
+                    else:
+                        folder_path = folder_input.value.strip()
+                        _append_log(f'Thư mục: {folder_path}')
+                        res = await asyncio.to_thread(
+                            api.post, '/api/ach/start_folder',
+                            {
+                                'folder_path': folder_path, 'ngay_doi_chieu': ngay or '',
+                                'bo_qua_checkpoint': state['bo_qua_checkpoint'],
+                                'chi_tim_timeout': state['chi_tim_timeout'],
+                            },
+                        )
                 except Exception as e:
                     spinner.set_visibility(False)
-                    progress_bar.set_visibility(False)
+                    progress_card.set_visibility(False)
                     btn_cancel.set_visibility(False)
                     btn_run.set_visibility(True)
                     state['running'] = False
@@ -669,13 +745,19 @@ async def cham_ach_page():
                 if state['running']:
                     return
 
-                if not state['files']:
+                if state['mode'] == 'upload' and not state['files']:
                     ui.notify('Chưa chọn file nào.', type='warning')
                     return
+                if state['mode'] == 'folder' and not (folder_input.value or '').strip():
+                    ui.notify('Chưa nhập đường dẫn thư mục.', type='warning')
+                    return
 
-                # Chốt kiểm tra ngay trước khi chạy — chặn nếu thiếu/sai file.
+                # Chốt kiểm tra ngay trước khi chạy — chặn nếu thiếu/sai file. Ngoại
+                # lệ (2026-08-21): thiếu GL02/MIS_đến nhưng đủ Tầng 0 (tang0_ok) VÀ
+                # người dùng đã tick "chỉ chạy tìm Timeout" — cho qua, chạy chế độ
+                # chi_tim_timeout thay vì chặn cứng.
                 ok = await _validate_now()
-                if not ok:
+                if not ok and not (state['tang0_ok'] and state['chi_tim_timeout']):
                     ui.notify('Bộ file chưa đủ/đúng — xem chi tiết bên trên trước khi chạy.',
                               type='negative')
                     return
@@ -699,8 +781,7 @@ async def cham_ach_page():
                     return
                 try:
                     await asyncio.to_thread(
-                        api.post, f'/api/ach/cancel/{state["job_id"]}',
-                        timeout=_POLL_TIMEOUT,
+                        api.post, f'/api/ach/cancel/{state["job_id"]}'
                     )
                     _append_log('[Yêu cầu dừng đã gửi — chờ pipeline kết thúc...]')
                     if not state['timer']:

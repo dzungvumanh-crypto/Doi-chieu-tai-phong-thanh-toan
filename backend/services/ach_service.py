@@ -7,8 +7,8 @@ Mỗi job:
   - Hỗ trợ cancel và download kết quả
 """
 
-import logging
 import os
+import re
 import shutil
 import threading
 import time
@@ -18,14 +18,48 @@ from typing import Any
 
 import pandas as pd
 
-from backend.core.uploads import safe_filename
 from backend.services.ach.pipeline import main_from_dir
 from backend.services.ach.b4_xu_ly_mis_di import _doc_sheet_confirm_mis_di
 
-from backend.core.config import BASE_DIR
-
-TEMP_DIR    = BASE_DIR / 'data' / 'temp_ach'
+TEMP_DIR    = Path('data/temp_ach')
 CLEANUP_TTL = 4 * 3600  # giữ file kết quả tối đa 4 giờ
+_OUTPUT_SUBFOLDER = 'Output'  # tên thư mục con khi copy kết quả về thư mục dữ liệu (mode folder)
+
+# ─── Stage/progress — 5 giai đoạn thật của pipeline (không phải 6 bước UI chung
+# chung) — mốc log → (stage, %), tăng dần, không lùi lại. `stage` là index nhãn
+# trong STAGE_LABELS, dùng cho stepper phía UI.
+STAGE_LABELS = [
+    'Đọc dữ liệu',
+    'Chuẩn hoá & xử lý',
+    'Đối chiếu & phân loại',
+    'Tổng hợp báo cáo',
+    'Hoàn tất',
+]
+_STAGE_MARKERS = [
+    (re.compile(r'^Ngày đối chiếu:'),               0, 0.05),
+    (re.compile(r'^\[B1\] Session:'),                0, 0.10),
+    (re.compile(r'^Tìm thấy: GL02='),                0, 0.15),
+    (re.compile(r'\[TIMING\] Phase 1 IO:'),          1, 0.45),
+    (re.compile(r'^\[JOB\] Đang chờ xác nhận'),      2, 0.50),
+    (re.compile(r'\[TIMING\] Phase 2 đối chiếu:'),   2, 0.65),
+    (re.compile(r'\[TIMING\] Phase 3 Excel:'),       3, 0.97),
+    (re.compile(r'^Hoàn thành:'),                    4, 1.0),
+]
+_EXCEL_STEP_RE = re.compile(r'\[EXCEL\] \((\d+)/(\d+)\)')
+
+
+def _bump_stage(stage: int, progress: float, line: str) -> tuple[int, float]:
+    m = _EXCEL_STEP_RE.search(line)
+    if m:
+        i, total = int(m.group(1)), int(m.group(2))
+        if total > 0:
+            progress = max(progress, 0.65 + 0.30 * (i / total))
+            stage    = max(stage, 3)
+    for pattern, st, pct in _STAGE_MARKERS:
+        if pattern.search(line):
+            stage    = max(stage, st)
+            progress = max(progress, pct)
+    return stage, progress
 
 # ─── In-memory job store ─────────────────────────────────────────────────────
 # {job_id: {status, logs, files, error, cancel_event, _ts, output_dir}}
@@ -41,6 +75,9 @@ def _new_job() -> tuple[str, dict]:
         'logs':          [],
         'files':         [],
         'error':         None,
+        'stage':         0,      # index trong STAGE_LABELS
+        'progress':      0.0,    # 0.0 - 1.0
+        'summary':       None,   # dict số liệu nhóm nghiệp vụ — có từ cuối stage 2
         'cancel_event':  threading.Event(),
         '_ts':           time.time(),
         'output_dir':    str(TEMP_DIR / job_id / 'output'),
@@ -49,6 +86,10 @@ def _new_job() -> tuple[str, dict]:
         'xac_nhan_file':  None,   # tên file <ngày>_ACH_ConfirmMISdi.xlsx khi đang chờ xác nhận
         'xac_nhan_count': None,   # số giao dịch MIS_đi cần chấm (đọc từ sheet MIS_DI_CONFIRM) — None nếu không đếm được
         'xac_nhan_tong_tien': None,  # tổng SO_TIEN các giao dịch cần chấm — None nếu không đếm được
+        'mode':           'upload',  # 'upload' | 'folder' — quyết định có copy kết quả về thư mục nguồn hay không
+        'source_folder':  None,   # đường dẫn thư mục người dùng chọn (chỉ có ở mode folder)
+        'final_output_dir': None,  # nơi kết quả cuối THỰC SỰ nằm sau khi copy (mode folder, copy thành công)
+        'copy_error':     None,   # lý do copy về thư mục nguồn thất bại (nếu có)
     }
     with _lock:
         _jobs[job_id] = job
@@ -76,7 +117,7 @@ def cancel_job(job_id: str) -> bool:
 
 
 def start_job(saved_files: dict[str, bytes], ngay: str | None,
-             bo_qua_checkpoint: bool = False) -> str:
+             bo_qua_checkpoint: bool = False, chi_tim_timeout: bool = False) -> str:
     """
     Tạo job mới, lưu file vào disk, chạy pipeline trong background thread.
     saved_files: {filename: bytes}
@@ -90,6 +131,9 @@ def start_job(saved_files: dict[str, bytes], ngay: str | None,
     nhánh code ĐÃ CHẠY THẬT hàng ngày (giống hệt `_run()` khi `continue_job()`
     gọi lại không truyền `dung_sau_mis_di`, mặc định `False`) — chỉ khác là được
     phép chọn ngay từ lần chạy đầu tiên, không phải chờ qua Checkpoint trước.
+
+    chi_tim_timeout=True (2026-08-21, xem project_ach_gl02_optional_tiered_deps)
+    — cho phép chạy khi thiếu GL02/MIS_đến, xem docstring `main_from_dir()`.
     """
     job_id, job = _new_job()
 
@@ -97,18 +141,43 @@ def start_job(saved_files: dict[str, bytes], ngay: str | None,
     input_dir.mkdir(parents=True, exist_ok=True)
     Path(job['output_dir']).mkdir(parents=True, exist_ok=True)
 
-    # safe_filename() lần hai: API đã lọc, nhưng hàm này là public và có thể
-    # được gọi từ chỗ khác — đường ghi ra đĩa tự bảo vệ lấy mình.
     for filename, data in saved_files.items():
-        (input_dir / safe_filename(filename)).write_bytes(data)
+        (input_dir / filename).write_bytes(data)
 
-    job['input_dir'] = str(input_dir)
-    job['ngay']      = ngay
+    job['input_dir']      = str(input_dir)
+    job['ngay']           = ngay
+    job['mode']           = 'upload'
+    job['chi_tim_timeout'] = chi_tim_timeout
 
     thread = threading.Thread(
         target=_run,
         args=(job_id, str(input_dir), job['output_dir'], ngay),
-        kwargs={'dung_sau_mis_di': not bo_qua_checkpoint},
+        kwargs={'dung_sau_mis_di': not bo_qua_checkpoint, 'chi_tim_timeout': chi_tim_timeout},
+        daemon=True,
+    )
+    thread.start()
+    return job_id
+
+
+def start_from_folder(folder_path: str, ngay: str | None,
+                      bo_qua_checkpoint: bool = False, chi_tim_timeout: bool = False) -> str:
+    """Chạy pipeline trực tiếp từ thư mục server (không cần upload file). Trả job_id.
+    Mặc định chạy ở chế độ Checkpoint — xem `start_job()` (bo_qua_checkpoint,
+    chi_tim_timeout tương tự). Kết quả cuối sẽ được copy về lại `folder_path` (xem
+    `_copy_results_to_source()`)."""
+    job_id, job = _new_job()
+    Path(job['output_dir']).mkdir(parents=True, exist_ok=True)
+
+    job['input_dir']      = folder_path
+    job['ngay']            = ngay
+    job['mode']            = 'folder'
+    job['source_folder']   = folder_path
+    job['chi_tim_timeout'] = chi_tim_timeout
+
+    thread = threading.Thread(
+        target=_run,
+        args=(job_id, folder_path, job['output_dir'], ngay),
+        kwargs={'dung_sau_mis_di': not bo_qua_checkpoint, 'chi_tim_timeout': chi_tim_timeout},
         daemon=True,
     )
     thread.start()
@@ -128,7 +197,7 @@ def continue_job(job_id: str, xac_nhan_bytes: bytes, xac_nhan_filename: str) -> 
 
     xac_nhan_dir = TEMP_DIR / job_id / 'xac_nhan_in'
     xac_nhan_dir.mkdir(parents=True, exist_ok=True)
-    safe_name  = safe_filename(xac_nhan_filename, 'xac_nhan.xlsx')
+    safe_name  = os.path.basename(xac_nhan_filename) or 'xac_nhan.xlsx'
     saved_path = xac_nhan_dir / safe_name
     saved_path.write_bytes(xac_nhan_bytes)
 
@@ -138,7 +207,13 @@ def continue_job(job_id: str, xac_nhan_bytes: bytes, xac_nhan_filename: str) -> 
     thread = threading.Thread(
         target=_run,
         args=(job_id, job['input_dir'], job['output_dir'], job['ngay']),
-        kwargs={'xac_nhan_path': str(saved_path)},
+        kwargs={
+            'xac_nhan_path': str(saved_path),
+            # Giữ đúng chi_tim_timeout của lần chạy đầu (2026-08-21) — nếu không
+            # truyền lại, _run() mặc định False sẽ khiến lần chạy tiếp raise lại
+            # FileNotFoundError dù lần đầu đã được người dùng xác nhận chạy thiếu.
+            'chi_tim_timeout': job.get('chi_tim_timeout', False),
+        },
         daemon=True,
     )
     thread.start()
@@ -160,8 +235,30 @@ def _thong_ke_mis_di_can_confirm(xac_nhan_path: str) -> tuple[int | None, int | 
         return None, None
 
 
+def _copy_results_to_source(job: dict, output_dir: str, result_files: list[str], log) -> None:
+    """Bước 4 (UX) — copy toàn bộ file kết quả cuối về `<source_folder>/Output/` để
+    người dùng không phải tìm trong `data/temp_ach/...`. CHỈ áp dụng mode folder.
+    Không ảnh hưởng `job['files']`/`job['status']` đã có — nút tải trong
+    `data/temp_ach` (qua `/api/ach/download/...`) vẫn luôn hoạt động độc lập, dùng
+    làm phương án dự phòng nếu copy lỗi (VD ổ mạng mất kết nối)."""
+    dest_dir = Path(job['source_folder']) / _OUTPUT_SUBFOLDER
+    try:
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        for fname in result_files:
+            shutil.copy2(Path(output_dir) / fname, dest_dir / fname)
+        job['final_output_dir'] = str(dest_dir)
+        job['copy_error']       = None
+        log(f'[JOB] Đã copy {len(result_files):,} file kết quả về: {dest_dir}')
+    except Exception as e:
+        job['final_output_dir'] = None
+        job['copy_error']       = str(e)
+        log(f'[JOB][LỖI] Không copy được kết quả về {dest_dir}: {e} — '
+            f'vẫn tải được qua nút bên dưới.')
+
+
 def _run(job_id: str, input_dir: str, output_dir: str, ngay: str | None,
-        dung_sau_mis_di: bool = False, xac_nhan_path: str | None = None):
+        dung_sau_mis_di: bool = False, xac_nhan_path: str | None = None,
+        chi_tim_timeout: bool = False):
     job = get_job(job_id)
     if job is None:
         return
@@ -171,6 +268,10 @@ def _run(job_id: str, input_dir: str, output_dir: str, ngay: str | None,
     def log(msg: str):
         with _lock:
             job['logs'].append(msg)
+            job['stage'], job['progress'] = _bump_stage(job['stage'], job['progress'], msg)
+
+    def on_summary(summary: dict):
+        job['summary'] = summary
 
     try:
         log(f'[JOB {job_id}] Bắt đầu xử lý...')
@@ -179,9 +280,11 @@ def _run(job_id: str, input_dir: str, output_dir: str, ngay: str | None,
             output_dir=output_dir,
             ngay=ngay,
             log_callback=log,
+            summary_callback=on_summary,
             cancel_event=job['cancel_event'],
             dung_sau_mis_di=dung_sau_mis_di,
             xac_nhan_path=xac_nhan_path,
+            chi_tim_timeout=chi_tim_timeout,
         )
 
         if output_path is None:
@@ -210,6 +313,12 @@ def _run(job_id: str, input_dir: str, output_dir: str, ngay: str | None,
         result_files.sort()
 
         job['files'] = result_files
+
+        # LƯU Ý: copy TRƯỚC khi đổi status='done' — polling có thể dừng lại ngay khi
+        # thấy 'done' (xem frontend `_stop_timer()`), không được để race làm mất
+        # thông tin final_output_dir/copy_error ở lần poll đầu tiên bắt được 'done'.
+        if job['mode'] == 'folder' and job['source_folder']:
+            _copy_results_to_source(job, output_dir, result_files, log)
 
         job['status'] = 'done'
 
@@ -244,14 +353,7 @@ def get_output_file(job_id: str, filename: str) -> Path | None:
 
 
 def _cleanup_old_jobs():
-    """Xóa job cũ hơn CLEANUP_TTL khỏi memory + disk, kèm thư mục mồ côi.
-
-    `_jobs` nằm trong RAM nên khởi động lại là mất sạch — mà thư mục trên đĩa thì
-    còn nguyên. Bản cũ chỉ xoá thư mục của job nó CÒN NHỚ, nên mọi job đang dở
-    lúc tắt máy đều để lại thư mục không ai xoá được nữa (đo được: hai thư mục
-    rỗng trong `data/temp_ach` từ lần chạy trước). Nay quét thêm theo thời gian
-    sửa đổi, giống cách `cham459901_service` vẫn làm.
-    """
+    """Xóa job cũ hơn CLEANUP_TTL khỏi memory + disk."""
     now = time.time()
     with _lock:
         expired = [jid for jid, j in _jobs.items()
@@ -259,21 +361,7 @@ def _cleanup_old_jobs():
                    and now - j['_ts'] > CLEANUP_TTL]
         for jid in expired:
             del _jobs[jid]
-        con_song = set(_jobs)
     for jid in expired:
         job_dir = TEMP_DIR / jid
         if job_dir.exists():
             shutil.rmtree(job_dir, ignore_errors=True)
-
-    # Thư mục mồ côi: không thuộc job nào đang chạy và đã quá hạn giữ
-    if not TEMP_DIR.exists():
-        return
-    for d in TEMP_DIR.iterdir():
-        if not d.is_dir() or d.name in con_song:
-            continue
-        try:
-            if now - d.stat().st_mtime > CLEANUP_TTL:
-                shutil.rmtree(d, ignore_errors=True)
-        except OSError as e:
-            log_orphan = f'Không xoá được thư mục ACH mồ côi {d}: {e}'
-            logging.getLogger(__name__).warning(log_orphan)
