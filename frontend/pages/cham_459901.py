@@ -24,10 +24,10 @@ async def cham_459901_page():
         return
 
     # ── State ─────────────────────────────────────────────────────────────────
+    # files: {tên file: bytes} — dict giữ nguyên thứ tự chọn và tự loại trùng tên
     state = {
-        "file_bytes": None,
-        "file_name":  "",
-        "result":     None,
+        "files":  {},
+        "result": None,
     }
 
     with ui.row().classes("w-full"):
@@ -41,23 +41,48 @@ async def cham_459901_page():
                     "text-base font-semibold text-red-800 mb-3"
                 )
                 ui.label(
-                    "File ZIP được mã hóa AES-256 — xuất từ hệ thống GL02."
+                    "File ZIP được mã hóa AES-256 — xuất từ hệ thống GL02. "
+                    "Có thể chọn nhiều file một lượt (giữ Ctrl hoặc Shift khi chọn); "
+                    "tất cả được gộp lại thành MỘT lần phân loại."
                 ).classes("text-xs text-gray-500 mb-4")
 
                 file_label = ui.label("Chưa chọn file").classes(
                     "text-xs text-gray-500 italic mb-2"
                 )
 
+                def _ve_danh_sach():
+                    n = len(state["files"])
+                    if not n:
+                        file_label.set_text("Chưa chọn file")
+                        file_label.classes(
+                            remove="text-green-700 font-medium", add="text-gray-500 italic"
+                        )
+                        return
+                    file_label.set_text(f"Đã chọn ({n} file): " + ", ".join(state["files"]))
+                    file_label.classes(
+                        remove="text-gray-500 italic", add="text-green-700 font-medium"
+                    )
+
                 def on_upload(e):
-                    state["file_bytes"] = e.content.read()
-                    state["file_name"]  = e.name
-                    file_label.set_text(f"Đã chọn: {e.name}")
-                    file_label.classes(remove="text-gray-500 italic", add="text-green-700 font-medium")
+                    # Chọn lại cùng tên file thì ghi đè, không cộng thêm dòng trùng.
+                    state["files"][e.name] = e.content.read()
+                    _ve_danh_sach()
 
                 uploader = ui.upload(
                     on_upload=on_upload,
                     auto_upload=True,
-                ).props('accept=".zip" flat dense label="Chọn file ZIP..."').classes("w-full mb-3")
+                    multiple=True,
+                ).props(
+                    'accept=".zip" flat dense label="Chọn file ZIP (có thể chọn nhiều)..."'
+                ).classes("w-full mb-1")
+
+                def _xoa_danh_sach():
+                    state["files"].clear()
+                    uploader.reset()          # xoá cả danh sách q-uploader đang hiện
+                    _ve_danh_sach()
+
+                ui.button("Xóa danh sách file", icon="delete_outline", color="grey-6",
+                          on_click=_xoa_danh_sach).props("flat dense").classes("text-xs mb-3")
 
                 # ── Thanh tiến độ ─────────────────────────────────────────────
                 progress_bar = ui.linear_progress(value=0).classes("w-full mb-1")
@@ -79,8 +104,8 @@ async def cham_459901_page():
 
             # ── Handlers ──────────────────────────────────────────────────────
             async def do_process():
-                if not state["file_bytes"]:
-                    ui.notify("Vui lòng chọn file ZIP trước", type="warning")
+                if not state["files"]:
+                    ui.notify("Vui lòng chọn ít nhất 1 file ZIP", type="warning")
                     return
 
                 process_btn.props("loading disable")
@@ -88,7 +113,11 @@ async def cham_459901_page():
 
                 # Hiện thanh tiến độ
                 progress_bar.set_value(0)
-                progress_label.set_text("0% — Đang tải file lên...")
+                n_files = len(state["files"])
+                progress_label.set_text(
+                    f"0% — Đang tải {n_files} file lên..." if n_files > 1
+                    else "0% — Đang tải file lên..."
+                )
                 progress_bar.set_visibility(True)
                 progress_label.set_visibility(True)
 
@@ -97,7 +126,10 @@ async def cham_459901_page():
                     resp = await asyncio.to_thread(
                         api.post_upload,
                         "/api/cham459901/process",
-                        {"file": (state["file_name"], state["file_bytes"], "application/zip")},
+                        # list (không phải dict): nhiều part dùng chung field "files"
+                        [("files", (ten, data, "application/zip"))
+                         for ten, data in state["files"].items()],
+                        timeout=600.0,   # nhiều ZIP GL02 có thể tới hàng trăm MB
                     )
                     task_token = resp["task_token"]
                 except Exception as e:
@@ -210,6 +242,8 @@ async def cham_459901_page():
                         with ui.row().classes("gap-6 text-sm text-gray-600"):
                             ui.label(f"Tổng cộng: {r.get('total_rows', 0):,} dòng")
                             ui.label(f"Đã lọc bỏ: {r.get('filtered_rows', 0):,} dòng")
+                            if r.get("n_files", 1) > 1:
+                                ui.label(f"Gộp từ {r['n_files']} file ZIP")
 
             process_btn.on("click", do_process)
 
