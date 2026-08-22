@@ -4,6 +4,13 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 22/08/2026 Giao diện - **Menu "Nghỉ phép" ra ngoài, không còn nằm trong "Chấm công & Lịch trực"**
+    + **Đổi gì**: trước đây muốn vào *Nghỉ phép* phải rê chuột vào *Chấm công & Lịch trực* rồi mới thấy. Nay **Nghỉ phép nằm thẳng ngoài menu bên trái**, bấm một lần là vào, ngang hàng với *Chấm công & Lịch trực*
+    + **Vì sao**: cả cơ quan dùng nghỉ phép hằng ngày, còn chấm công và lịch trực là việc của riêng hai phòng — bắt mọi người đi qua một nhóm mang tên hai phòng đó là ngược
+    + **Màn *Phân quyền theo nhóm* cũng đổi theo**: ô tick *Nghỉ phép* nay là **một thẻ riêng**, không còn nằm trong thẻ *Chấm công & Lịch trực*. Các ô tick con (tạo đơn, duyệt, uỷ quyền, hạn mức...) **giữ nguyên không thiếu ô nào**
+    + **Không phải làm gì thêm**: ai đang được cấp quyền nghỉ phép thì vẫn thấy menu, chỉ đổi chỗ. Không đổi cơ sở dữ liệu, không đổi đường dẫn trang, không cần khai báo lại quyền
+    + Toàn bộ **659 test** chạy đạt
+
 - 22/08/2026 Lịch trực - **Phân lịch nay tự giãn ca: tối đa 2 ca/tuần, 2 thứ 6/tháng, không thứ 6 hai tuần liền**
     + **Vì sao có mục này**: máy xếp lịch trước đây chỉ biết *"tuần này đã trực chưa"* — trả lời xong là hết. Một người trực thứ Hai rồi thì thứ Ba vẫn có thể bị gọi tiếp, và người trực thứ 6 tuần này tuần sau lại thứ 6, vì với máy thì "đã trực 1 lần" hay "đã trực 3 lần" đều chỉ là *đã trực*
     + **Từ nay máy tránh ba việc**: xếp một người **quá 2 ca trong một tuần**; xếp một người **trực thứ 6 quá 2 lần trong tháng**; xếp một người **trực thứ 6 hai tuần liên tiếp**. Ba luật áp dụng **như nhau cho Lãnh đạo và nhân viên**

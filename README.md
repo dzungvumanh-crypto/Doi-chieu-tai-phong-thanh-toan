@@ -549,13 +549,15 @@ Quản lý chứng từ ─ Bàn giao chứng từ / Đóng chứng từ / Lưu 
                    Phòng Swift ────── Đối chiếu điện SWIFT
 Báo cáo ────────── Phòng KSNB & HTVH ─ Báo cáo hậu kiểm / Báo cáo bàn giao chứng từ
                    Phòng Tổng hợp ──── Báo cáo dữ liệu thanh toán
-Chấm công & Lịch trực ─ Nghỉ phép
-                   Phòng Kế toán ───── Chấm công
+Nghỉ phép ──────── menu phẳng, không có nhóm cha
+Chấm công & Lịch trực ─ Phòng Kế toán ───── Chấm công
                    Phòng Thanh toán ── Phân lịch trực / Sổ trực cuối ngày
 Danh sách CN TTQT ─ menu phẳng, không có nhóm cha
 ```
 
 Tầng "phòng" **chỉ còn ở cấp 2** của Đối chiếu, Báo cáo và Chấm công & Lịch trực, và chỉ liệt kê phòng đang thực sự có tính năng. Trước đây menu chia theo phòng ở cấp 1; cách đó buộc người dùng phải biết chức năng mình cần thuộc phòng nào mới tìm ra.
+
+**Nghỉ phép** đứng riêng ở cấp 1 (22/08/2026), ngang hàng với *Chấm công & Lịch trực*: cả cơ quan dùng hằng ngày nên không bắt người dùng hover qua một nhóm mới tới. Nhóm *Chấm công & Lịch trực* giờ thuần các mục của riêng một phòng.
 
 Một nhóm **chỉ hiện khi user có ít nhất 1 chức năng** bên trong (`menu.<key>`); nhóm con không còn mục nào hiển thị được cũng bị bỏ qua — không dựng mục menu hover ra rỗng. Menu phẳng cấp 1 kiểm feature giống hệt: không có `menu.ttqt_branches` thì không thấy "Danh sách CN TTQT".
 
@@ -573,7 +575,7 @@ Bố cục **soi gương cây menu sidebar** — admin tick quyền theo đúng 
 | `kind` | Hình dạng | Dùng cho |
 |---|---|---|
 | `group` | Thẻ có header đỏ; `sections` gom menu theo phòng (`label=None` = không cần dải nhãn) | Quản lý chứng từ, Đối chiếu, Báo cáo, Chấm công & Lịch trực, Quản lý hệ thống |
-| `menu` | Thẻ **không header**, chính ô tick là tiêu đề thẻ | Danh sách CN TTQT |
+| `menu` | Thẻ **không header**, chính ô tick là tiêu đề thẻ | Nghỉ phép, Danh sách CN TTQT |
 
 Dải nhãn phòng **không phải ô tick** — luật *"mỗi ô tick là đúng một mã quyền"* được giữ nguyên, để không có hai loại ô nhìn giống nhau mà ý nghĩa khác nhau. Cạnh dải nhãn có nút **Chọn tất cả / Bỏ chọn**, chỉ tác động lên MENU chứ không tự cấp ACTION — tránh một cú bấm cấp luôn quyền chạy xử lý dữ liệu.
 

@@ -9003,6 +9003,49 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
+  <!-- 92 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">92</span>
+      <span class="card-title">"Nghỉ phép" ra cấp 1 — kéo theo cả cây phân quyền, không chỉ sidebar</span>
+      <span class="badge badge-done">Xong</span>
+    </div>
+    <div class="card-body">
+
+      <p><code>MENU_TREE</code> (frontend) và <code>FEATURE_GROUPS</code> (backend) là <b>hai bản chép
+        tay của cùng một cây</b>. Đổi một bên thì màn "Phân quyền chức năng" hiện khác hẳn thứ người
+        dùng nhìn thấy trên sidebar. Đưa <code>leaves</code> lên cấp 1 nên phải đổi cả hai:
+        <code>{"kind": "group"}</code> có <code>sections</code> <span class="arrow">→</span>
+        <code>{"kind": "menu", "code": "menu.leaves", "actions": [...]}</code> đứng riêng.</p>
+
+      <table>
+        <tr><th>Chỗ bị đụng</th><th>Hệ quả</th></tr>
+        <tr><td><code>BREADCRUMBS</code></td><td>Đường dẫn <code>leaves</code> rút từ 2 đoạn còn 1
+          <span class="arrow">→</span> <code>_current_breadcrumb()</code> tự bỏ qua, tiêu đề trang
+          không còn lặp "Chấm công &amp; Lịch trực / Nghỉ phép"</td></tr>
+        <tr><td><code>_sidebar()</code></td><td>Không sửa: nhánh <code>isinstance(node, tuple)</code>
+          đã có sẵn, gate bằng <code>menu.leaves</code> y như cũ</td></tr>
+        <tr><td><code>overrides={"attendance": ...}</code></td><td>Không đổi — nhóm
+          <code>cong_truc</code> vẫn còn, chỉ mất một mục con</td></tr>
+        <tr><td><code>group_features.py</code></td><td>Không sửa: cả <code>_render_features</code> lẫn
+          <code>save_features</code> vốn đã xử lý <code>kind == "menu"</code></td></tr>
+      </table>
+
+      <div class="note"><b>Test cứng theo hình dạng cây thì gãy khi cây đổi hình.</b>
+        <code>test_feature_uy_quyen_co_trong_danh_muc_va_cay_phan_quyen</code> tìm
+        <code>menu.leaves</code> bằng <code>g.get("sections", [])</code> — node cấp 1 không có
+        <code>sections</code> nên actions ra rỗng và test đỏ, dù quyền vẫn nguyên. Đã sửa test duyệt
+        cả hai dạng node. Đây là <b>đúng loại cảnh báo mình muốn có</b>: nếu quên đổi
+        <code>FEATURE_GROUPS</code> thì <code>_assert_feature_coverage()</code> chặn ngay lúc khởi
+        động backend, không âm thầm xoá quyền.</div>
+
+      <p>Không có migration, không đổi mã quyền, không đổi route. Người dùng đang có
+        <code>menu.leaves</code> vẫn thấy menu ở vị trí mới; ai không có thì như cũ.
+        Full suite <b>659 passed, 0 failed</b>.</p>
+
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-22</footer>
 </div>
 </body>

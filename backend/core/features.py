@@ -203,6 +203,26 @@ FEATURE_GROUPS: list[dict] = [
         ],
     },
     {
+        # Soi gương mục phẳng "leaves" ở cấp 1 của MENU_TREE.
+        "kind": "menu",
+        "code": "menu.leaves",
+        "icon": "event_busy",
+        "actions": [
+            "leaves.create",
+            "leaves.cancel",
+            "leaves.resubmit",
+            "leaves.approve_ksv",
+            "leaves.forward_th",
+            "leaves.approve_gd",
+            "leaves.dashboard",
+            "leaves.quota_admin",
+            "leaves.delegation_admin",
+            "leaves.stats_export",
+            "leaves.declare_direct",
+            "leaves.recall",
+        ],
+    },
+    {
         # Soi gương nhóm "cong_truc" trong MENU_TREE. Ô tick "menu.attendance"
         # KHÔNG điều khiển việc hiện menu Chấm công (sidebar gate theo phòng
         # ACCT) — nó ở đây để admin gán "xem bảng công cả phòng + xuất Excel"
@@ -213,28 +233,6 @@ FEATURE_GROUPS: list[dict] = [
         "dept": "Chấm công & Lịch trực",
         "icon": "date_range",
         "sections": [
-            {
-                "label": None,
-                "menus": [
-                    {
-                        "code": "menu.leaves",
-                        "actions": [
-                            "leaves.create",
-                            "leaves.cancel",
-                            "leaves.resubmit",
-                            "leaves.approve_ksv",
-                            "leaves.forward_th",
-                            "leaves.approve_gd",
-                            "leaves.dashboard",
-                            "leaves.quota_admin",
-                            "leaves.delegation_admin",
-                            "leaves.stats_export",
-                            "leaves.declare_direct",
-                            "leaves.recall",
-                        ],
-                    },
-                ],
-            },
             {
                 "label": "Phòng Kế toán",
                 "menus": [
