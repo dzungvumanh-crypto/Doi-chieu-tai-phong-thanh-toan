@@ -33,6 +33,7 @@ async def start_job(
     files: list[UploadFile],
     ngay_doi_chieu: str = Form(''),
     bo_qua_checkpoint: bool = Form(False),
+    chi_tim_timeout: bool = Form(False),
     _=Depends(require_feature('menu.cham_ach')),
 ):
     """
@@ -43,6 +44,11 @@ async def start_job(
     MIS_đi mặc định đúng, KHÔNG dừng lại chờ xác nhận thủ công (tính năng mới
     2026-07-31, xem project_ach_chay_thang_bo_qua_checkpoint). Mặc định False —
     hành vi Checkpoint bắt buộc như từ trước tới nay không đổi.
+
+    chi_tim_timeout=True (2026-08-21, xem project_ach_gl02_optional_tiered_deps)
+    — người dùng xác nhận tay (checkbox) đang thiếu GL02/MIS_đến, chỉ muốn chạy
+    để tìm "Timeout không đi kênh" (Tầng 0). Mặc định False — vẫn bắt buộc đủ
+    file như cũ, không đổi hành vi.
 
     LƯU Ý (bug thật phát hiện 2026-07-31, sửa cùng lúc): `ngay_doi_chieu`/
     `bo_qua_checkpoint` PHẢI khai báo `Form(...)` tường minh — khi route có
@@ -64,7 +70,9 @@ async def start_job(
         saved[filename] = data
 
     ngay = ngay_doi_chieu.strip() or None
-    job_id = ach_service.start_job(saved, ngay, bo_qua_checkpoint=bo_qua_checkpoint)
+    job_id = ach_service.start_job(
+        saved, ngay, bo_qua_checkpoint=bo_qua_checkpoint, chi_tim_timeout=chi_tim_timeout,
+    )
     return {'job_id': job_id}
 
 
@@ -85,6 +93,7 @@ class FolderRequest(BaseModel):
     folder_path: str
     ngay_doi_chieu: str = ''
     bo_qua_checkpoint: bool = False
+    chi_tim_timeout: bool = False
 
 
 @router.post('/validate_folder')
@@ -117,7 +126,9 @@ def start_from_folder(
         raise HTTPException(400, f'Thư mục không tồn tại: {req.folder_path}')
 
     ngay = req.ngay_doi_chieu.strip() or None
-    job_id = ach_service.start_from_folder(str(p), ngay, bo_qua_checkpoint=req.bo_qua_checkpoint)
+    job_id = ach_service.start_from_folder(
+        str(p), ngay, bo_qua_checkpoint=req.bo_qua_checkpoint, chi_tim_timeout=req.chi_tim_timeout,
+    )
     return {'job_id': job_id}
 
 
@@ -165,6 +176,9 @@ def poll_job(
         'mode':             job.get('mode'),
         'final_output_dir': job.get('final_output_dir'),
         'copy_error':       job.get('copy_error'),
+        'stage':            job.get('stage', 0),
+        'progress':         job.get('progress', 0.0),
+        'summary':          job.get('summary'),
     }
 
 

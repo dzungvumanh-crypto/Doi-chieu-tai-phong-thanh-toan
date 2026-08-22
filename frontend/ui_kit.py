@@ -148,6 +148,52 @@ def card(title: str = "", padding: str = "p-4"):
     return outer, body
 
 
+# ── Stepper ngang ─────────────────────────────────────────────────────────────
+def stepper(labels: list[str], current: int):
+    """Thanh bước ngang cho tiến trình nhiều giai đoạn (VD chạy job nền).
+
+    `current` = index (0-based) của bước đang chạy; các bước < current coi là đã
+    xong (tick xanh); == current tô đỏ Agribank (đang chạy); > current xám nhạt.
+    Gọi lại (rebuild) mỗi khi `current` đổi — không tự bind, do NiceGUI không có
+    binding 2 chiều tiện cho layout dạng này.
+    """
+    with ui.row().classes("w-full items-start gap-0") as box:
+        for i, label in enumerate(labels):
+            done   = i < current
+            active = i == current
+            with ui.column().classes("items-center flex-1 gap-1"):
+                with ui.row().classes("w-full items-center gap-0"):
+                    if i > 0:
+                        ui.element("div").classes(
+                            "flex-1 h-0.5 " + ("bg-green-500" if i <= current else "bg-gray-200")
+                        )
+                    circle_cls = (
+                        "bg-green-500 text-white" if done else
+                        "bg-red-700 text-white" if active else
+                        "bg-gray-200 text-gray-500"
+                    )
+                    with ui.element("div").classes(
+                        f"w-7 h-7 rounded-full flex items-center justify-center "
+                        f"text-xs font-bold shrink-0 {circle_cls}"
+                    ):
+                        if done:
+                            ui.icon("check").classes("text-sm")
+                        else:
+                            ui.label(str(i + 1))
+                    if i < len(labels) - 1:
+                        ui.element("div").classes(
+                            "flex-1 h-0.5 " + ("bg-green-500" if i < current else "bg-gray-200")
+                        )
+                ui.label(label).classes(
+                    "text-xs text-center " + (
+                        "text-green-700 font-medium" if done else
+                        "text-red-800 font-semibold" if active else
+                        "text-gray-400"
+                    )
+                )
+    return box
+
+
 # ── Nạp một lần cho mỗi trang ─────────────────────────────────────────────────
 _FONT_HREF = ("https://fonts.googleapis.com/css2?"
               "family=Inter:wght@400;500;600;700&display=swap")

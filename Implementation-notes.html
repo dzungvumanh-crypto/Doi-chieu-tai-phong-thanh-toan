@@ -7355,6 +7355,175 @@ Bất biến MIS: 522.774 + 36.462 = 559.236 (khớp tổng gốc)</pre>
     </div>
   </div>
 
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">75</span>
+      <span class="card-title">ACH — cho phép chạy tìm "Timeout không đi kênh" khi thiếu GL02/MIS_đến</span>
+      <span class="badge badge-done">HOÀN THIỆN · 2026-08-21 · 15 test mới + 611/611 test toàn dự án</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh — hồi sinh ý tưởng đã hoãn 03/08, thu hẹp phạm vi</div>
+      <p>Ý tưởng "GL02/MIS_đến tùy chọn" từng bàn dở 31/07–03/08/2026 rồi chủ động hoãn (xem
+        <code>project_ach_gl02_optional_tiered_deps</code>) — lúc đó chỉ dừng ở thảo luận, chưa code. Hôm
+        nay Business Owner quay lại đúng câu hỏi, nhưng chốt phạm vi hẹp hơn nhiều so với phương án đầy đủ
+        theo tầng đã thiết kế sẵn: <b>chỉ mở khóa Tầng 0</b> (Timeout không đi kênh + MIS_đi khớp GW +
+        GW-thừa + Checkpoint) khi thiếu GL02/MIS_đến, không cố mở từng phần Tầng 1a/1b theo kiểu "có gì
+        chạy nấy" — giữ đúng tinh thần "không mở rộng module, chỉ tìm timeout" mà Business Owner đã nói rõ
+        hồi 03/08.</p>
+
+      <div class="label">Thiết kế — nhị phân, không tiering từng phần</div>
+      <p><code>main_from_dir()</code> nhận thêm <code>chi_tim_timeout: bool = False</code>. Mặc định giữ
+        nguyên hành vi cũ (raise <code>FileNotFoundError</code> nếu thiếu GL02 hoặc &lt;2 file MIS_đến) —
+        không regression cho luồng hằng ngày. Khi <code>True</code> và thiếu GL02 và/hoặc MIS_đến: Phase 1
+        chỉ submit <code>xu_ly_gl02</code>/<code>xu_ly_mis_den</code> nếu file tồn tại (tránh IndexError khi
+        <code>gl02_files</code> rỗng), Phase 2 chỉ gọi <code>doi_chieu_di</code>/<code>doi_chieu_den</code>
+        khi input tương ứng có; Điểm 3 (huỷ)/Điểm 4 (T-2) dẫn xuất theo, Điểm 2 (OSB) tắt hẳn — đúng quyết
+        định cũ của Business Owner "tắt hẳn Điểm 2 khi thiếu GL02, không chạy kèm cảnh báo". Mức tối thiểu
+        thật (PDF+GW+MIS_đi×2) KHÔNG được miễn trừ bởi cờ này — thiếu 1 trong 3 vẫn raise dù
+        <code>chi_tim_timeout=True</code>.</p>
+
+      <div class="label">Trạng thái thứ 3 "CHƯA ĐỐI CHIẾU ĐƯỢC" — tránh đọc nhầm 0 = đã khớp hết</div>
+      <p>Đúng tinh thần <code>feedback_binary_match_status</code> (không làm nhẹ sai lệch tài chính) nhưng
+        đây là case khác: "chưa kiểm tra vì thiếu file" phải hiện khác hẳn "đã kiểm tra, khớp 100%" — cả
+        hai trước đây đều ra "(Không có dữ liệu)"/số 0. <code>_viet_sheet()</code> thêm tham số
+        <code>msg_khi_thieu</code> — chỉ áp dụng khi <code>df is None</code> (sheet bị bỏ qua), KHÔNG áp
+        cho DataFrame rỗng thật (0 dòng vì đã đối chiếu xong, đúng là 0). TONG_KET: <code>_viet_tong_ket()</code>
+        nhận <code>ly_do_thieu_tang1</code>, khi có sẽ ép TOÀN BỘ số liệu Tầng 1 về <code>None</code> (không
+        phải 0) rồi lan qua các tổng dẫn xuất qua helper <code>_tong_an_toan()</code> (trả <code>None</code>
+        nếu bất kỳ input nào <code>None</code> — tránh cộng nhầm 0-giả với số thật ra tổng thấp hơn thực
+        tế mà không có dấu hiệu gì báo lỗi), thêm banner cảnh báo đỏ ở dòng đầu sheet. Chỉ 2 dòng "GW đi"
+        và "TO ko đi kênh" (Tầng 0) giữ nguyên số liệu thật.</p>
+
+      <div class="label">Bug thật bắt được nhờ test — đếm sai số biến khi gán None hàng loạt</div>
+      <p>Dòng <code>(...) = (None,) * 28</code> trong <code>_viet_tong_ket()</code> ban đầu đếm thiếu 2
+        phần tử (thực tế 30 biến ở vế trái) — <code>ValueError: not enough values to unpack (expected 30,
+        got 28)</code>, phát hiện ngay khi chạy 3 test Excel-level đầu tiên viết cho tính năng này. Bài học
+        lặp lại đúng nguyên tắc SKILL.md "không hardcode, phải verify" — đếm tay danh sách biến dài dễ sai,
+        test tự động bắt được ngay trước khi chạy dữ liệu thật.</p>
+
+      <div class="label">UI — checkbox xác nhận tay, không tự động hạ cấp</div>
+      <p><code>validate_required_files()</code> thêm <code>tang0_ok</code> (PDF+GW+MIS_DI≥2, tách biệt
+        <code>ok</code> tổng — không phá API contract cũ). Frontend <code>cham_ach.py</code>: khi
+        <code>tang0_ok=True</code> nhưng <code>ok=False</code>, hiện banner cam + checkbox "Tôi biết đang
+        thiếu file trên — chỉ chạy tìm Timeout không đi kênh"; giữ nguyên giá trị tick qua lần
+        <code>_validate_now()</code> "chốt kiểm tra" gọi lại ngay trước khi chạy (tạo checkbox với
+        <code>value=state['chi_tim_timeout']</code> thay vì mặc định unchecked, chỉ reset về False khi
+        checkbox không còn liên quan — đủ file hoặc thiếu cả Tầng 0). Cờ thread qua
+        <code>/api/ach/start</code> (Form field) và <code>/api/ach/start_folder</code>
+        (<code>FolderRequest</code>) → <code>ach_service.start_job/start_from_folder</code> →
+        <code>_run()</code> → <code>main_from_dir()</code>; <code>continue_job()</code> (Checkpoint bước 3)
+        đọc lại <code>job['chi_tim_timeout']</code> đã lưu ở lần chạy đầu — nếu không, lần chạy tiếp sau
+        Checkpoint sẽ mặc định <code>False</code> và raise lại dù người dùng đã xác nhận từ đầu.</p>
+
+      <div class="label">Phát hiện ngoài phạm vi câu hỏi gốc — <code>menu.cham_ach</code> chưa từng khai báo</div>
+      <p><code>require_feature('menu.cham_ach')</code> gate toàn bộ API/frontend ACH nhưng
+        <code>menu.cham_ach</code> KHÔNG có trong <code>FEATURES</code>/<code>FEATURE_GROUPS</code>
+        (<code>backend/core/features.py</code>) — admin không có cách nào cấp quyền này cho nhóm khác qua
+        UI quản lý nhóm, người dùng thường luôn 403 dù tính năng Tầng 0 có hoàn thiện đến đâu. Khớp đúng
+        cảnh báo cũ trong <code>project_ach_pr_len_develop_tam_dung</code>. Business Owner xác nhận đưa fix
+        vào cùng đợt — thêm 2 dòng dict, không đụng schema DB. <b>Ghi nhận riêng, chưa sửa</b>:
+        <code>menu.cham_ilo1000</code> có cùng lỗi y hệt, ngoài phạm vi module ACH.</p>
+
+      <div class="label">Việc KHÔNG làm đợt này</div>
+      <p>Không tự động hạ cấp (luôn cần tick checkbox). Không mở khóa Tầng 1a/1b kiểu "có gì chạy nấy" —
+        quyết định hôm nay là nhị phân: đủ hết hoặc chỉ Tầng 0. Không đụng logic Checkpoint/
+        <code>bo_qua_checkpoint</code>/<code>khop_voi_gw()</code> hiện có. Không sửa
+        <code>menu.cham_ilo1000</code>. Không đụng diff <code>so_tien.py</code>/stage-progress đang làm dở
+        song song (không liên quan).</p>
+
+      <div class="label">Kiểm chứng</div>
+      <p>15 test mới trong <code>tests/test_ach_chi_tim_timeout.py</code> — 7 test <code>tang0_ok</code>
+        thuần (không cần file), 5 test Excel-level (<code>xuat_excel()</code> với DataFrame tổng hợp, đúng
+        pattern <code>test_ach_excel_export.py</code>, phát hiện bug đếm None ở trên), 3 test end-to-end
+        <code>main_from_dir()</code> với PDF/GW/MIS_đi thật (zip AES thu nhỏ) KHÔNG có GL02/MIS_đến — xác
+        nhận đúng cả 2 chiều: mặc định vẫn raise (regression), <code>chi_tim_timeout=True</code> chạy xong
+        không lỗi và sheet đúng nhãn. Cập nhật 4 stub <code>main_from_dir</code> có sẵn trong
+        <code>test_ach_checkpoint_api.py</code>/<code>test_ach_bo_qua_checkpoint.py</code>/
+        <code>test_ach_stage_progress_api.py</code> thêm tham số <code>chi_tim_timeout=False</code> (nếu
+        không, <code>_run()</code> luôn truyền kwarg này xuống sẽ vỡ mọi test cũ gọi qua stub). Toàn bộ
+        611/611 test dự án xanh. Chưa chạy trên dữ liệu ACH thật thiếu GL02 (không có sẵn trong phiên này)
+        — để dành kiểm UI thật khi có tình huống thật.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">76</span>
+      <span class="card-title">ACH — chạy dữ liệu 20.08 thật, vỡ ở dấu phẩy trong MIS_đi thừa T-2</span>
+      <span class="badge badge-done">HOÀN THIỆN · 2026-08-21 · chạy thành công F:\ACH doi chieu ngay 20.08\Output</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Sự cố — dữ liệu, không phải thuật toán</div>
+      <p>Chạy đối chiếu <code>F:\ACH doi chieu ngay 20.08</code> (chế độ bỏ qua Checkpoint theo yêu cầu) vỡ
+        ngay ở bước đọc <code>MIS_DI_THUA_20260819.csv</code>: <code>doc_so_tien()</code> raise vì 3/60.596
+        dòng cột <code>SO_TIEN</code> dùng dấu phẩy ngăn nghìn (<code>839,000</code>,
+        <code>122,568,332</code>, <code>123,407,332</code>) thay vì dấu chấm/số thuần như phần còn lại của
+        file — đúng thiết kế "mẫu lạ → raise, không đoán" của <code>so_tien.py</code>, không phải bug.</p>
+
+      <div class="label">Xử lý — sửa dữ liệu nguồn sau khi xác nhận giá trị đúng</div>
+      <p>Không tự sửa parser/dữ liệu khi chưa rõ ý nghĩa (theo <code>feedback_no_infer_column_semantics</code>).
+        Hỏi Business Owner xác nhận 3 giá trị đúng là <code>839.000</code>/<code>122.568.332</code>/
+        <code>123.407.332</code> (chỉ đổi dấu phân cách, không đổi số) rồi sửa trực tiếp 3 ô trong file CSV
+        gốc (thay <code>,</code> → <code>.</code>, giữ nguyên UTF-8 BOM + toàn bộ dòng khác) trước khi chạy
+        lại. Xem thêm <a href="#card-77">card 77</a> — cùng ngày, sửa thêm code để lần sau không cần sửa tay.</p>
+
+      <div class="label">Va chạm với cửa sổ Claude Code khác — cùng sửa <code>pipeline.py</code></div>
+      <p>Lần chạy thứ 2 vỡ với traceback khó hiểu (<code>xuat_excel() got an unexpected keyword argument
+        'ly_do_thieu_tang1'</code>) dù đọc lại source thấy chữ ký hàm và nơi gọi khớp nhau — dấu hiệu
+        <code>pipeline.py</code> bị ghi đè giữa lúc tiến trình đang import (mtime đổi đúng lúc script chạy).
+        Xác nhận với Business Owner: đúng là cửa sổ khác đang chạy UI thật, dính đúng lỗi dấu phẩy này và bị
+        treo (thông báo lỗi che mất nút — xem <a href="#card-77">card 77</a> phần sửa UI), phải tắt thủ
+        công. Không tự ý kill process của cửa sổ khác — theo <code>feedback_concurrent_session_file_conflict</code>,
+        chờ xác nhận rồi mới chạy lại.</p>
+
+      <div class="label">Kết quả</div>
+      <p>Chạy lại thành công, ~20 phút (1217.9s). Output đầy đủ trong
+        <code>F:\ACH doi chieu ngay 20.08\Output\</code>: <code>doi_chieu_20260820.xlsx</code> (15 sheet),
+        <code>20260820_ACH_OSB.xlsx</code>, <code>20260820_ACH_MISThuaT2.xlsx</code>, 8 CSV chi tiết. Số liệu
+        tổng hợp xem sheet <code>TONG_KET</code> — không tự kết luận "Đã cân khớp" thay người đối chiếu
+        (theo <code>feedback_binary_match_status</code>).</p>
+    </div>
+  </div>
+
+  <div class="card" id="card-77">
+    <div class="card-header">
+      <span class="card-num">77</span>
+      <span class="card-title">so_tien.py — chấp nhận thêm dấu phẩy ngăn nghìn (VND luôn số nguyên)</span>
+      <span class="badge badge-done">HOÀN THIỆN · 2026-08-21 · 2 test mới, 226/226 test ACH liên quan xanh</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh</div>
+      <p>Card 76 dừng lại ở sửa tay 3 ô dữ liệu — Business Owner xác nhận thêm luật tổng quát: VND luôn là
+        số nguyên, không bao giờ có phần thập phân, nên dấu phẩy (<code>180,000</code>) an toàn để coi là
+        ngăn nghìn giống hệt dấu chấm, không có rủi ro nhầm với kiểu thập phân châu Âu (khác USD/EUR — nơi
+        dấu phẩy có thể là phần thập phân, đây là lý do gốc <code>so_tien.py</code> trước đó cố tình raise
+        thay vì đoán). Đã ghi vào <code>docs/TU-DIEN-LENH-THANH-TOAN.md</code> mục 1.10 và memory
+        <code>project_ach_so_tien_ngan_nghin</code>.</p>
+
+      <div class="label">Thay đổi</div>
+      <p>Thêm <code>_RE_NGAN_NGHIN_PHAY = r'^-?\d{1,3}(,\d{3})+$'</code> song song
+        <code>_RE_NGAN_NGHIN</code> (dấu chấm) trong <code>doc_so_tien()</code> và <code>doc_so_tien_mem()</code>
+        — cùng coi là hợp lệ, cùng bị strip khỏi chuỗi trước khi <code>pd.to_numeric()</code>. Một giá trị
+        chỉ khớp đúng 1 trong 3 mẫu (số thuần / chấm / phẩy) nên strip cả hai ký tự luôn an toàn — không có
+        giá trị hợp lệ nào lẫn cả chấm lẫn phẩy. Thông báo lỗi cập nhật liệt kê đủ 3 mẫu chấp nhận.</p>
+
+      <div class="label">Kiểm chứng</div>
+      <p>2 test mới trong <code>tests/test_so_tien.py</code> (<code>test_comma_grouped_parsed_correctly</code>
+        cho cả <code>doc_so_tien</code>/<code>doc_so_tien_mem</code>, dùng đúng 3 giá trị thật từ
+        <code>MIS_DI_THUA_20260819.csv</code>) — 12/12 test file này xanh. Chạy thêm toàn bộ 7 file test ACH
+        có import <code>so_tien</code> (<code>test_ach_algorithm</code>, <code>test_ach_checkpoint_api</code>,
+        <code>test_ach_cheo_ngay</code>, <code>test_ach_chi_tim_timeout</code>,
+        <code>test_ach_gl02_misden_algorithm</code>, <code>test_ach_osb_reconciliation</code>,
+        <code>test_ach_summary_callback</code>) — 226/226 xanh, không regression.</p>
+
+      <div class="label">Việc còn treo — chưa git add</div>
+      <p><code>backend/services/ach/so_tien.py</code> được <code>pipeline.py</code>/<code>b11_doi_chieu_cheo_ngay.py</code>
+        import từ trước nhưng chưa từng nằm trong bất kỳ commit nào — clone sạch sẽ <code>ImportError</code>
+        ngay khi chạy đối chiếu OSB/chéo-ngày. Cần gộp vào lần commit ACH tới cùng
+        <code>tests/test_so_tien.py</code>.</p>
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-21</footer>
 </div>
 </body>

@@ -8,6 +8,7 @@ Mỗi job:
 """
 
 import os
+import re
 import shutil
 import threading
 import time
@@ -24,6 +25,42 @@ TEMP_DIR    = Path('data/temp_ach')
 CLEANUP_TTL = 4 * 3600  # giữ file kết quả tối đa 4 giờ
 _OUTPUT_SUBFOLDER = 'Output'  # tên thư mục con khi copy kết quả về thư mục dữ liệu (mode folder)
 
+# ─── Stage/progress — 5 giai đoạn thật của pipeline (không phải 6 bước UI chung
+# chung) — mốc log → (stage, %), tăng dần, không lùi lại. `stage` là index nhãn
+# trong STAGE_LABELS, dùng cho stepper phía UI.
+STAGE_LABELS = [
+    'Đọc dữ liệu',
+    'Chuẩn hoá & xử lý',
+    'Đối chiếu & phân loại',
+    'Tổng hợp báo cáo',
+    'Hoàn tất',
+]
+_STAGE_MARKERS = [
+    (re.compile(r'^Ngày đối chiếu:'),               0, 0.05),
+    (re.compile(r'^\[B1\] Session:'),                0, 0.10),
+    (re.compile(r'^Tìm thấy: GL02='),                0, 0.15),
+    (re.compile(r'\[TIMING\] Phase 1 IO:'),          1, 0.45),
+    (re.compile(r'^\[JOB\] Đang chờ xác nhận'),      2, 0.50),
+    (re.compile(r'\[TIMING\] Phase 2 đối chiếu:'),   2, 0.65),
+    (re.compile(r'\[TIMING\] Phase 3 Excel:'),       3, 0.97),
+    (re.compile(r'^Hoàn thành:'),                    4, 1.0),
+]
+_EXCEL_STEP_RE = re.compile(r'\[EXCEL\] \((\d+)/(\d+)\)')
+
+
+def _bump_stage(stage: int, progress: float, line: str) -> tuple[int, float]:
+    m = _EXCEL_STEP_RE.search(line)
+    if m:
+        i, total = int(m.group(1)), int(m.group(2))
+        if total > 0:
+            progress = max(progress, 0.65 + 0.30 * (i / total))
+            stage    = max(stage, 3)
+    for pattern, st, pct in _STAGE_MARKERS:
+        if pattern.search(line):
+            stage    = max(stage, st)
+            progress = max(progress, pct)
+    return stage, progress
+
 # ─── In-memory job store ─────────────────────────────────────────────────────
 # {job_id: {status, logs, files, error, cancel_event, _ts, output_dir}}
 _jobs: dict[str, dict[str, Any]] = {}
@@ -38,6 +75,9 @@ def _new_job() -> tuple[str, dict]:
         'logs':          [],
         'files':         [],
         'error':         None,
+        'stage':         0,      # index trong STAGE_LABELS
+        'progress':      0.0,    # 0.0 - 1.0
+        'summary':       None,   # dict số liệu nhóm nghiệp vụ — có từ cuối stage 2
         'cancel_event':  threading.Event(),
         '_ts':           time.time(),
         'output_dir':    str(TEMP_DIR / job_id / 'output'),
@@ -77,7 +117,7 @@ def cancel_job(job_id: str) -> bool:
 
 
 def start_job(saved_files: dict[str, bytes], ngay: str | None,
-             bo_qua_checkpoint: bool = False) -> str:
+             bo_qua_checkpoint: bool = False, chi_tim_timeout: bool = False) -> str:
     """
     Tạo job mới, lưu file vào disk, chạy pipeline trong background thread.
     saved_files: {filename: bytes}
@@ -91,6 +131,9 @@ def start_job(saved_files: dict[str, bytes], ngay: str | None,
     nhánh code ĐÃ CHẠY THẬT hàng ngày (giống hệt `_run()` khi `continue_job()`
     gọi lại không truyền `dung_sau_mis_di`, mặc định `False`) — chỉ khác là được
     phép chọn ngay từ lần chạy đầu tiên, không phải chờ qua Checkpoint trước.
+
+    chi_tim_timeout=True (2026-08-21, xem project_ach_gl02_optional_tiered_deps)
+    — cho phép chạy khi thiếu GL02/MIS_đến, xem docstring `main_from_dir()`.
     """
     job_id, job = _new_job()
 
@@ -101,14 +144,15 @@ def start_job(saved_files: dict[str, bytes], ngay: str | None,
     for filename, data in saved_files.items():
         (input_dir / filename).write_bytes(data)
 
-    job['input_dir'] = str(input_dir)
-    job['ngay']      = ngay
-    job['mode']      = 'upload'
+    job['input_dir']      = str(input_dir)
+    job['ngay']           = ngay
+    job['mode']           = 'upload'
+    job['chi_tim_timeout'] = chi_tim_timeout
 
     thread = threading.Thread(
         target=_run,
         args=(job_id, str(input_dir), job['output_dir'], ngay),
-        kwargs={'dung_sau_mis_di': not bo_qua_checkpoint},
+        kwargs={'dung_sau_mis_di': not bo_qua_checkpoint, 'chi_tim_timeout': chi_tim_timeout},
         daemon=True,
     )
     thread.start()
@@ -116,23 +160,24 @@ def start_job(saved_files: dict[str, bytes], ngay: str | None,
 
 
 def start_from_folder(folder_path: str, ngay: str | None,
-                      bo_qua_checkpoint: bool = False) -> str:
+                      bo_qua_checkpoint: bool = False, chi_tim_timeout: bool = False) -> str:
     """Chạy pipeline trực tiếp từ thư mục server (không cần upload file). Trả job_id.
-    Mặc định chạy ở chế độ Checkpoint — xem `start_job()` (bo_qua_checkpoint tương
-    tự). Kết quả cuối sẽ được copy về lại `folder_path` (xem
+    Mặc định chạy ở chế độ Checkpoint — xem `start_job()` (bo_qua_checkpoint,
+    chi_tim_timeout tương tự). Kết quả cuối sẽ được copy về lại `folder_path` (xem
     `_copy_results_to_source()`)."""
     job_id, job = _new_job()
     Path(job['output_dir']).mkdir(parents=True, exist_ok=True)
 
-    job['input_dir']     = folder_path
-    job['ngay']           = ngay
-    job['mode']           = 'folder'
-    job['source_folder']  = folder_path
+    job['input_dir']      = folder_path
+    job['ngay']            = ngay
+    job['mode']            = 'folder'
+    job['source_folder']   = folder_path
+    job['chi_tim_timeout'] = chi_tim_timeout
 
     thread = threading.Thread(
         target=_run,
         args=(job_id, folder_path, job['output_dir'], ngay),
-        kwargs={'dung_sau_mis_di': not bo_qua_checkpoint},
+        kwargs={'dung_sau_mis_di': not bo_qua_checkpoint, 'chi_tim_timeout': chi_tim_timeout},
         daemon=True,
     )
     thread.start()
@@ -162,7 +207,13 @@ def continue_job(job_id: str, xac_nhan_bytes: bytes, xac_nhan_filename: str) -> 
     thread = threading.Thread(
         target=_run,
         args=(job_id, job['input_dir'], job['output_dir'], job['ngay']),
-        kwargs={'xac_nhan_path': str(saved_path)},
+        kwargs={
+            'xac_nhan_path': str(saved_path),
+            # Giữ đúng chi_tim_timeout của lần chạy đầu (2026-08-21) — nếu không
+            # truyền lại, _run() mặc định False sẽ khiến lần chạy tiếp raise lại
+            # FileNotFoundError dù lần đầu đã được người dùng xác nhận chạy thiếu.
+            'chi_tim_timeout': job.get('chi_tim_timeout', False),
+        },
         daemon=True,
     )
     thread.start()
@@ -206,7 +257,8 @@ def _copy_results_to_source(job: dict, output_dir: str, result_files: list[str],
 
 
 def _run(job_id: str, input_dir: str, output_dir: str, ngay: str | None,
-        dung_sau_mis_di: bool = False, xac_nhan_path: str | None = None):
+        dung_sau_mis_di: bool = False, xac_nhan_path: str | None = None,
+        chi_tim_timeout: bool = False):
     job = get_job(job_id)
     if job is None:
         return
@@ -216,6 +268,10 @@ def _run(job_id: str, input_dir: str, output_dir: str, ngay: str | None,
     def log(msg: str):
         with _lock:
             job['logs'].append(msg)
+            job['stage'], job['progress'] = _bump_stage(job['stage'], job['progress'], msg)
+
+    def on_summary(summary: dict):
+        job['summary'] = summary
 
     try:
         log(f'[JOB {job_id}] Bắt đầu xử lý...')
@@ -224,9 +280,11 @@ def _run(job_id: str, input_dir: str, output_dir: str, ngay: str | None,
             output_dir=output_dir,
             ngay=ngay,
             log_callback=log,
+            summary_callback=on_summary,
             cancel_event=job['cancel_event'],
             dung_sau_mis_di=dung_sau_mis_di,
             xac_nhan_path=xac_nhan_path,
+            chi_tim_timeout=chi_tim_timeout,
         )
 
         if output_path is None:
