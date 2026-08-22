@@ -29,6 +29,11 @@ class StorageViewUpdateRow(BaseModel):
 
 class StorageViewUpdateRequest(BaseModel):
     rows: List[StorageViewUpdateRow]
+    # Chỉ cần cho dòng mới hoàn toàn (không có bundle_ids) — tháng chưa có tập nào
+    # thì không suy ra được phòng/tháng từ tập nào cả.
+    department_id: Optional[int] = None
+    year: Optional[int] = None
+    month: Optional[int] = None
 
 
 # ─── Storage Summary (toàn bộ phòng theo năm) ────────────────────────────────
