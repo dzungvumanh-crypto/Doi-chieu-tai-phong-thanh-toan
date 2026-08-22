@@ -540,11 +540,8 @@ def get_history(db: sqlite3.Connection, tu_ngay: Optional[str] = None, den_ngay:
     bị huỷ rồi mở phiên mới — sắp `id DESC` phụ để dòng mới nhất lên trước
     trong cùng 1 ngày.
 
-    KHÔNG lọc gì (tu_ngay/den_ngay đều trống) → chỉ trả về ĐÚNG 1 dòng gần
-    nhất (yêu cầu người dùng: mặc định chỉ hiện phiên chấm gần nhất, bấm lọc
-    theo ngày mới hiện đầy đủ lịch sử) — cùng tinh thần LIMIT-khi-không-lọc
-    đã dùng ở doi_soat_citad/history_service.py::list_recon_history."""
-    no_filter = not (tu_ngay or den_ngay)
+    KHÔNG lọc gì (tu_ngay/den_ngay đều trống) → trả về TOÀN BỘ phiên trực
+    đang có (yêu cầu người dùng), không giới hạn số dòng."""
     sql = "SELECT * FROM so_truc_records WHERE 1=1"
     params: list = []
     if tu_ngay:
@@ -554,7 +551,5 @@ def get_history(db: sqlite3.Connection, tu_ngay: Optional[str] = None, den_ngay:
         sql += " AND truc_date <= ?"
         params.append(den_ngay)
     sql += " ORDER BY truc_date DESC, id DESC"
-    if no_filter:
-        sql += " LIMIT 1"
     rows = db.execute(sql, params).fetchall()
     return [_row_to_dict(db, r) for r in rows]

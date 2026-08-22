@@ -221,7 +221,7 @@ def _build_input_panel(tab, state, tabs, result_tab, history_refresh):
 
 
 def _upload_column(label, accept, state, key):
-    with ui.column().classes("gap-1"):
+    with ui.column().classes("gap-1 border-2 border-red-800 rounded-2xl p-4"):
         ui.label(label).classes("text-sm font-medium")
         status = ui.label("Chưa chọn file nào").classes("text-gray-500 text-xs")
         file_rows_area = ui.column().classes("gap-0.5 mt-1")

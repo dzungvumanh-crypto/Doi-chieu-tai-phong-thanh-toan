@@ -372,12 +372,18 @@ def is_reconciliation_matched(sess: dict) -> bool:
 def get_reconciliation_status(db: sqlite3.Connection, ngay: str) -> dict:
     """Trạng thái đối chiếu của 1 ngày, dùng để cảnh báo ở module Sổ trực
     (xem `so_truc_service.check_citad_status`) — KHÔNG phải endpoint hiển
-    thị số liệu, chỉ trả 2 cờ: có bản lưu chưa, và bản lưu hiện hành (mới
-    nhất) đã khớp (hết chênh lệch) chưa."""
+    thị số liệu, chỉ trả 2 cờ: có bản LƯU BẢNG CUỐI chưa, và bản đó đã khớp
+    (hết chênh lệch) chưa.
+
+    Chỉ tính bản đã "Lưu bảng cuối" (status='final') là "đã có đối chiếu" —
+    bảng tạm (status='draft') vẫn có thể còn đang chấm dở/chưa đủ người góp
+    Napas-PSS-MDP, coi như CHƯA CÓ để Sổ trực vẫn cảnh báo, không để lọt bản
+    tạm chưa hoàn chỉnh."""
     sess = session_get(db, ngay)
+    is_final = bool(sess) and sess.get("_meta_status") == "final"
     return {
-        "exists": sess is not None,
-        "matched": bool(sess) and is_reconciliation_matched(sess),
+        "exists": is_final,
+        "matched": is_final and is_reconciliation_matched(sess),
     }
 
 
