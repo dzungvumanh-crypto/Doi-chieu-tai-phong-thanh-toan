@@ -21,6 +21,9 @@ _SO_TRUC_REMINDER_HOUR = 16
 # Tra theo code chứ không theo tên: đổi tên phòng không làm mất mapping.
 _DEPT_SHORT = {"NOSTRO": "Phòng QLTK Nostro, Vostro"}
 
+# Tài khoản quản trị — không phải người dùng nghiệp vụ, không đếm vào ô "Người dùng".
+_ADMIN_ROLES = ("admin", "admin_l2")
+
 _HOME_FIT_CSS = """
 <style>
 .nicegui-content { padding: 0 !important; gap: 0 !important; }
@@ -110,13 +113,16 @@ async def dashboard_page():
 
         # Badge sidebar do khối "Công việc chờ xử lý" trong shared.py tự nạp.
 
-        # Số người dùng không tính quản trị viên (admin).
+        # Số người dùng không tính quản trị viên — CẢ hai cấp (admin, admin_l2).
+        # Cấp 2 cũng là tài khoản quản trị, đếm vào đây thì con số nhảy lên mỗi
+        # lần thêm một quản trị viên, trong khi ô này để nói "có bao nhiêu người
+        # dùng nghiệp vụ".
         # /api/staff/ chỉ trả nhân sự phòng mình cho CV/TP/PP — nhãn phải nói đúng
         # phạm vi của con số, nếu không CV sẽ đọc "Người dùng: 8" là toàn trung tâm.
         _role = (api.get_current_user() or {}).get("role", "")
         _users_label = "Người dùng" if _role not in ("chuyen_vien", "truong_phong", "pho_phong") \
                        else "Nhân sự phòng"
-        n_users = len([s for s in staff_list if s.get("role") != "admin"])
+        n_users = len([s for s in staff_list if s.get("role") not in _ADMIN_ROLES])
         stats = [
             (_users_label,      n_users,                                           "people",   "bg-red-50 border-red-200"),
             ("Phòng nghiệp vụ", len([d for d in depts if d.get("code") != "BGD"]), "business", "bg-blue-50 border-blue-200"),
