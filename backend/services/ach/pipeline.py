@@ -46,6 +46,12 @@ _COLS_MIS_DI = [
     'LY_DO_GIU_SESSION_NULL', 'PHAN_LOAI_TIMEOUT',
 ]
 
+# Sheet TIMEOUT_KHONG_KENH dùng riêng — MATCH_TYPE bị xoá có chủ đích khỏi
+# df_timeout ở b4_xu_ly_mis_di.py (luôn rỗng cho đúng nhóm dòng này, xem
+# docstring `khop_voi_gw()`), không phải cột thiếu do lỗi. Dùng chung
+# _COLS_MIS_DI ở đây sẽ luôn ra warning vô hại — tách riêng để log sạch.
+_COLS_TIMEOUT = [c for c in _COLS_MIS_DI if c != 'MATCH_TYPE']
+
 _COLS_MIS_DI_CONFIRM = [
     'NGAY_GIAO_DICH', 'CHI_NHANH', 'CN tiền Hub', 'REFHUB', 'MSGREF',
     'MSGSEQ', 'TXID', 'KENH_THANH_TOAN', 'TRANG_THAI_LENH', 'SO_TIEN',
@@ -646,7 +652,7 @@ def xuat_excel(output_path: str, session_id: str,
         ('DIEN_DI_HUY_TRONG_NGAY', _clean(df_dien_huy_trong_ngay, _COLS_NPO, 'DIEN_DI_HUY_TRONG_NGAY'), _XANH_LAM, _msg_thieu_tang1),
         ('DIEN_DI_HUY_KHAC_NGAY',  _clean(df_dien_huy_khac_ngay,  _COLS_NPO, 'DIEN_DI_HUY_KHAC_NGAY'),  _XANH_LAM, _msg_thieu_tang1),
         ('MIS_DI_THUA',        _clean(df_mis_di_thua,  _COLS_MIS_DI, 'MIS_DI_THUA'),   _DO, _msg_thieu_tang1),
-        ('TIMEOUT_KHONG_KENH', _clean(df_timeout, _COLS_MIS_DI, 'TIMEOUT'),              _CAM, None),
+        ('TIMEOUT_KHONG_KENH', _clean(df_timeout, _COLS_TIMEOUT, 'TIMEOUT'),             _CAM, None),
         ('SESSION_NULL_BI_LOAI', df_session_null_bi_loai,                                _CAM, None),
         ('CAP_CN_TIEN',        df_cap_cn_tien,                                           _CAM, None),
         ('GW_THUA_XAC_DINH',   df_gw_thua_xac_dinh_clean,                                _DO, None),
