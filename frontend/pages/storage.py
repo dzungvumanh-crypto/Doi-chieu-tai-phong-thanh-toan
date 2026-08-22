@@ -271,6 +271,10 @@ async def storage_page():
                         f"w.document.close();"
                     )
 
+                # Mẫu dòng trống của lần dựng bảng gần nhất — nút "Thêm dòng" chèn thẳng
+                # chuỗi này, không nhân bản DOM (bảng có thể không còn dòng trống nào).
+                _tbl = {"blank": ""}
+
                 def _build_html(data: dict) -> str:
                     rows       = data.get("rows", [])
                     dept_name  = data.get("department_name", "")
@@ -323,12 +327,18 @@ async def storage_page():
                         html += "</tr>\n"
 
                     # Dòng trống để nhập ngày/số chứng từ chưa có trong máy.
-                    # class sv-new: ẩn khi in, và là mẫu để nút "Thêm dòng" nhân bản.
+                    # class sv-new: ẩn khi in.
                     blank = '<tr class="sv-new" data-bids="[]" data-ncols="0">'
                     blank += f'<td contenteditable="true" data-col="day" style="{CE};{ED}"></td>' * n_day
                     blank += f'<td contenteditable="true" data-col="sheet" style="{CE};{ED}"></td>' * n_sh
                     blank += f'<td style="{CE}"></td></tr>'
-                    html += blank * _N_BLANK_ROWS
+                    _tbl["blank"] = blank
+
+                    # Chỉ tự dựng dòng trống khi bảng CHƯA có dữ liệu — tháng mới cần chỗ gõ
+                    # đầu tiên. Tháng đã có dữ liệu mà vẫn tự nối 5 dòng thì mỗi lần lưu xong
+                    # bảng lại dài thêm 5 dòng thừa; cần thêm thì bấm nút "Thêm dòng".
+                    if not rows:
+                        html += blank * _N_BLANK_ROWS
 
                     html += f"""<tr id="sv-foot">
   <td colspan="{n_day}" style="{CF};text-align:right">Cộng tổng:</td>
@@ -438,16 +448,15 @@ async def storage_page():
                             # Tải lại để Ngày + Số tập + tổng cuối tự cập nhật theo
                             await load_storage()
 
+                        _blank_js = _json.dumps(_tbl["blank"])
+
                         async def add_blank_row():
-                            # Nhân bản ngay trên DOM — không tải lại bảng để giữ số đang gõ dở
-                            await ui.run_javascript("""
-                                var tpl  = document.querySelector('#sv-table tr.sv-new');
+                            # Chèn thẳng vào DOM — không tải lại bảng để giữ số đang gõ dở.
+                            # Không nhân bản dòng có sẵn: bảng đã có dữ liệu thì không còn
+                            # dòng trống nào để làm mẫu.
+                            await ui.run_javascript(f"""
                                 var foot = document.getElementById('sv-foot');
-                                if (tpl && foot) {
-                                    var c = tpl.cloneNode(true);
-                                    c.querySelectorAll('td').forEach(function(td){ td.innerHTML = ''; });
-                                    foot.parentNode.insertBefore(c, foot);
-                                }
+                                if (foot) foot.insertAdjacentHTML('beforebegin', {_blank_js});
                             """)
 
                         with ui.row().classes("w-full justify-start gap-2 mb-3"):
@@ -459,8 +468,8 @@ async def storage_page():
                                       on_click=lambda: _print_table(html_table)
                                       ).classes("bg-green-700 text-white px-4")
                             ui.label("Sửa trực tiếp trên bảng: ô Ngày và ô Số chứng từ "
-                                     "(số chứng từ = 0 để xoá tập). Các dòng trống cuối bảng "
-                                     "dùng để nhập bổ sung ngày chưa có — không in ra.").classes(
+                                     "(số chứng từ = 0 để xoá tập). Cần nhập ngày chưa có thì "
+                                     "bấm \"Thêm dòng\" — dòng trống không in ra.").classes(
                                 "text-xs text-gray-500 self-center ml-2")
 
                         with ui.card().classes("w-full shadow-sm rounded-xl bg-white p-4 overflow-x-auto"):
