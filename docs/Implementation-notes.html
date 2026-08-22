@@ -8651,7 +8651,359 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-21</footer>
+  <!-- 88 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">88</span>
+      <span class="card-title">Tra cứu lưu trữ: tháng chưa có dữ liệu vẫn phải nhập được — nhập tay lại đi ngược đường dữ liệu bình thường</span>
+      <span class="badge badge-done">Đã làm</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label">Vì sao cần</div>
+      <p>Các tháng đầu năm chưa triển khai chương trình nên trong máy không có tập nào. Bảng
+        <b>Lưu trữ &rarr; Tra cứu lưu trữ</b> trước đây trả về <code>""</code> khi
+        <code>rows</code> rỗng, màn hình chỉ còn dòng chữ <i>"Không có dữ liệu"</i> — không có ô nào
+        để gõ, tức là <b>không có đường nào</b> đưa số liệu cũ vào phần mềm ngoài việc nhập từ màn
+        bàn giao rồi gom tập lại từ đầu.</p>
+
+      <div class="label">Chỗ khó: dòng mới không có gì để bám vào</div>
+      <p>Mọi thao tác sửa trên bảng này đều neo vào một tập có sẵn: <code>bundle_ids[0]</code> cho biết
+        <code>group_id</code>, <code>group_id</code> cho biết tháng (đọc từ <code>bundle_groups.notes</code>).
+        Tháng trống thì không có tập nào &rArr; không có neo nào &rArr; backend không biết ghi vào đâu.</p>
+
+      <table>
+        <tr><th>Phương án</th><th>Vì sao chọn / bỏ</th></tr>
+        <tr>
+          <td>Cho client gửi kèm <code>department_id</code> + <code>year</code> + <code>month</code></td>
+          <td><b>Đã chọn.</b> Chỉ dùng cho dòng <b>không có</b> <code>bundle_ids</code>. Dòng có sẵn tập
+            vẫn đọc tháng từ <code>notes</code> như cũ.</td>
+        </tr>
+        <tr>
+          <td>Tự tạo sẵn nhóm tập rỗng cho cả 12 tháng</td>
+          <td>Bỏ. Đẻ ra hàng trăm <code>bundle_groups</code> rỗng làm bẩn màn "Danh sách nhóm tập" và
+            báo cáo, chỉ để phục vụ vài tháng nhập bù.</td>
+        </tr>
+        <tr>
+          <td>Thêm endpoint riêng <code>POST /storage-view/row</code></td>
+          <td>Bỏ. Một lần bấm "Lưu thay đổi" sẽ thành hai request, mất tính "một lần lưu là một giao dịch"
+            mà bộ test hiện có đang chốt.</td>
+        </tr>
+      </table>
+
+      <div class="caution">
+        <b>Đây là chỗ duy nhất trong luồng này tin tháng do client gửi lên.</b>
+        <code>_group_year_month()</code> cố tình không nhận tháng từ client — sửa nhầm tháng là ghi đè
+        dữ liệu tháng khác. Với dòng mới thì không còn nguồn nào khác, nên bù lại bằng
+        <code>_period_from_request()</code>: chặn tháng ngoài 1–12, năm ngoài 2000–2100, phòng không tồn tại
+        (404), và <code>_row_dates()</code> vẫn chặn ngày không có thật trong tháng. Rủi ro còn lại chỉ là
+        người dùng ghi vào tháng khác tháng đang xem — mà chính họ cũng xem được tháng đó bằng dropdown,
+        nên không phải leo thang quyền.
+      </div>
+
+      <div class="label">Nhập ngày mà quên số chứng từ: báo lỗi, không bỏ qua</div>
+      <p>Điều kiện gom dòng bên JS đổi từ <code>bundle_ids.length || new_sheets.length</code> thành có thêm
+        <code>|| days.length</code>. Cố ý: nếu không gửi lên, người dùng gõ ngày rồi bấm Lưu sẽ thấy
+        "Đã lưu thay đổi" trong khi <b>không có gì được ghi</b> — đúng kiểu hỏng im lặng. Nay backend
+        trả 400 <i>"Đã nhập ngày nhưng chưa nhập số chứng từ"</i> và cả lần lưu bị huỷ.</p>
+
+      <div class="label">Đánh đổi đã chấp nhận</div>
+      <table>
+        <tr><th>Quyết định</th><th>Đánh đổi</th></tr>
+        <tr>
+          <td>Luôn thêm 5 dòng trống, kể cả tháng đã có dữ liệu</td>
+          <td>Bảng dài thêm 5 dòng xám. Đổi lại chỉ có <b>một</b> đường nhập cho cả hai trường hợp —
+            không phải nhớ "tháng trống thì khác". Nút <b>Thêm dòng</b> lo phần nhập nhiều ngày một lượt.</td>
+        </tr>
+        <tr>
+          <td>Ẩn dòng trống khi in bằng CSS <code>.sv-new{display:none}</code></td>
+          <td>Bản in dùng đúng chuỗi HTML đang hiển thị, không phải dựng lại bảng lần hai —
+            hai bản không thể lệch nhau. Đổi lại: ai copy chuỗi HTML này đi chỗ khác mà quên CSS
+            sẽ thấy 5 dòng trống.</td>
+        </tr>
+        <tr>
+          <td>Nút "Thêm dòng" nhân bản <code>tr.sv-new</code> ngay trên DOM</td>
+          <td>Không gọi lại API, giữ nguyên số người dùng đang gõ dở. Đổi lại dòng mới không có trong
+            chuỗi <code>html_table</code> phía Python — không sao vì lúc lưu JS đọc thẳng từ DOM.</td>
+        </tr>
+      </table>
+
+      <div class="label">Thứ người bảo trì cần biết</div>
+      <p>Tập nhập tay <b>không có</b> <code>bundle_items</code> và <code>document_entries</code>. Hệ quả:</p>
+      <table>
+        <tr><th>Nơi dùng</th><th>Hành vi với tập nhập tay</th></tr>
+        <tr><td>Tra cứu lưu trữ, Tổng hợp cả năm</td><td>Đúng — đọc <code>cover_units</code>/<code>total_sheets</code></td></tr>
+        <tr><td>Bàn giao cho lưu trữ (Excel)</td><td>Đúng — dựng từ cùng <code>_decompose_bundles_to_rows()</code></td></tr>
+        <tr><td>In bìa tập</td><td>Ra bìa trống phần người nộp: <code>cover_units</code> có
+          <code>user_code</code>/<code>full_name</code> rỗng vì không biết ai nộp</td></tr>
+        <tr><td>Báo cáo khối lượng theo giao dịch viên</td><td>Không thấy — báo cáo đếm
+          <code>document_entries</code>, tháng nhập bù không có bản ghi nào</td></tr>
+      </table>
+
+      <div class="label">Việc biết mà chưa làm</div>
+      <p><b>Gom tập lại sẽ xoá mất số liệu nhập tay.</b> <code>POST /api/bundles/generate</code> xoá sạch
+        nhóm cũ cùng phòng+tháng (<code>_delete_group_cascade</code>) rồi dựng lại từ
+        <code>document_entries</code>. Tháng nhập bù thuần tuý thì <b>an toàn</b> — không có entry nào nên
+        hàm dừng ở lỗi 400 <i>trước</i> bước xoá. Nhưng tháng <b>vừa có entry vừa có dòng nhập tay</b> thì
+        gom lại là mất phần nhập tay, không lấy lại được. Chưa chặn vì "gom lại = dựng lại từ đầu" là hợp
+        đồng có sẵn của nút đó; sửa cho đúng phải phân biệt tập sinh tự động với tập nhập tay
+        (thêm cờ vào <code>bundles</code>) — nằm ngoài phạm vi đợt này, cần issue riêng.</p>
+
+    </div>
+  </div>
+
+  <!-- 89 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">89</span>
+      <span class="card-title">Tập <b>nhiều ngày</b> chưa bao giờ được gom nhóm — một dòng nhập vào ra thành hai dòng</span>
+      <span class="badge badge-done">Đã sửa</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label">Triệu chứng</div>
+      <p>Gõ vào một dòng: Ngày <code>1</code> <code>2</code>, Số chứng từ <code>12</code> <code>34</code>.
+        Lưu xong bảng hiện <b>hai dòng</b> giống hệt nhau (<i>1 2 | 12</i> và <i>1 2 | 34</i>), mỗi dòng
+        Số tập = 1. Gõ thêm <code>34</code> nữa thì ra dòng thứ ba.</p>
+
+      <div class="label">Gốc lỗi — có sẵn từ trước, không phải do phần nhập tay</div>
+      <p><code>_decompose_bundles_to_rows()</code> gom tập theo hai đường khác hẳn nhau:</p>
+      <table>
+        <tr><th>Loại tập</th><th>Cách gom (cũ)</th><th>Hệ quả</th></tr>
+        <tr><td>Tập <b>một</b> ngày</td><td><code>single_day[dates[0]].append(b)</code> — gom theo ngày</td>
+            <td>Nhiều tập cùng ngày &rarr; một dòng, Số tập = N ✔</td></tr>
+        <tr><td>Tập <b>nhiều</b> ngày</td><td><code>multi_day.append((dates, b))</code> — mỗi tập một phần tử</td>
+            <td>Mỗi tập <b>một dòng riêng</b>, Số tập luôn = 1 ✘</td></tr>
+      </table>
+      <p>Trước đây lỗi này không lộ ra vì gom tập tự động hiếm khi đẻ hai tập <b>trùng đúng</b> tập hợp
+        ngày. Nhập tay thì đó lại là thao tác thường nhất: một hồ sơ gộp vài ngày, chia làm mấy tập.</p>
+
+      <div class="label">Đã sửa</div>
+      <p>Gom tất cả theo <b>tuple ngày đã sắp xếp</b> — một dòng = một tập hợp ngày, không phân biệt một
+        hay nhiều ngày. Xoá hẳn nhánh <code>multi_day</code>.</p>
+      <pre><code>by_dates[tuple(sorted(_get_dates_for_bundle(b)))].append(b)</code></pre>
+      <p>Thứ tự dòng đổi từ <code>min(r.days)</code> sang <code>(r.days[0], r.days)</code>: hai dòng cùng
+        ngày đầu (<i>[1]</i> và <i>[1, 2]</i>) trước đây xếp theo thứ tự chèn vào list — tức là
+        <b>không ổn định</b> giữa các lần tải.</p>
+
+      <div class="label">Kéo theo: nhãn "tập i/N" trên bìa</div>
+      <p><code>_get_bundle_label()</code> mắc <b>đúng lỗi ấy</b> ở chỗ khác: chỉ dựng
+        <code>single_date_groups</code>, tập nhiều ngày luôn nhận nhãn <code>1/1</code>. Nếu chỉ sửa bảng
+        mà bỏ qua chỗ này thì bảng ghi "Số tập 2" còn hai bìa in ra <b>giống hệt nhau</b>, không phân biệt
+        được tập nào là tập nào — đúng thứ nhãn tập sinh ra để tránh. Nay gom theo cùng tiêu chí
+        (so sánh <code>frozenset</code> ngày).</p>
+
+      <div class="caution">
+        <b>Thay đổi này đụng dữ liệu cũ.</b> Nếu trong máy đang có hai tập <b>trùng đúng</b> tập hợp ngày
+        (nhiều ngày), thì từ nay: bảng gộp chúng vào một dòng, bìa in <code>1/2</code> và <code>2/2</code>
+        thay vì <code>1/1</code>, và file <i>Bàn giao cho lưu trữ</i> ghi thêm hậu tố <i>"tập 1/2"</i>.
+        Tổng số tập và tổng số tờ <b>không đổi</b> — chỉ đổi cách nhóm và cách đánh nhãn. Đây là hành vi
+        đúng, nhưng ai đã in bìa hoặc nộp file bàn giao trước đó cần biết để không hoang mang.
+      </div>
+
+      <div class="label">Cột Ngày: 2 &rarr; 10</div>
+      <p>Số cột Ngày tối thiểu (<code>_N_DAY_COLS</code>) nâng từ 2 lên 10 — một hồ sơ nhập bù thường gộp
+        cả tuần hoặc nửa tháng. Đánh đổi: bảng rộng thêm 8 cột, bản in A4 ngang chật hơn. Chấp nhận vì
+        không có cách nào thêm cột ngày ngay trên màn hình, còn cột thừa thì chỉ tốn chỗ.</p>
+
+    </div>
+  </div>
+
+  <!-- 90 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">90</span>
+      <span class="card-title">Máy chính thiếu <code>DOI_CHIEU_ZIP_PASSWORD</code> — không ai xoá cả, nó <b>chưa bao giờ</b> ở đó</span>
+      <span class="badge badge-done">Đã sửa + đính chính tài liệu</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label">Triệu chứng</div>
+      <p>21/08/2026 16:43, máy chính chạy Đối chiếu ACH. Ba bước B2/B4/B6 cảnh báo thiếu 7-Zip, bước B3
+        đọc Excel hết 67,8 giây, rồi <b>dừng</b>: <i>"Chưa đặt DOI_CHIEU_ZIP_PASSWORD trong file .env"</i>.
+        Phản xạ đầu tiên là đi tìm ai đã xoá dòng đó. Không ai xoá.</p>
+
+      <div class="label">Vì sao dòng đó không thể tự có mặt</div>
+      <table>
+        <tr><th>Đường đưa cấu hình sang máy chính</th><th>Có mang <code>DOI_CHIEU_ZIP_PASSWORD</code> đi không</th></tr>
+        <tr><td>git</td><td><b>Không</b> — <code>.env</code> nằm trong <code>.gitignore</code> (dòng 10)</td></tr>
+        <tr><td><code>deploy.bat</code></td><td><b>Không</b>, và đây là <b>cố ý</b>: chép đè <code>.env</code> là xoá mất <code>SECRET_KEY</code> của máy chính. Cả <code>.env.example</code> cũng không được chép — nghĩa là ở máy chính <b>không có chỗ nào</b> nhìn thấy tên biến mới</td></tr>
+        <tr><td><code>start.bat</code> tự vá</td><td><b>Không thể</b> — xem đoạn dưới</td></tr>
+        <tr><td><code>deploy_env_check.py</code></td><td><b>Không</b> — chỉ biết <code>BACKEND_URL</code>, <code>BACKEND_HOST</code>, <code>ENV</code>. Biến lạ thì nó im lặng</td></tr>
+      </table>
+
+      <div class="label">Cái bẫy: hai lần trước tự vá được nên tưởng lần này cũng thế</div>
+      <p><code>STORAGE_SECRET</code> (07/2026) và <code>BACKUP_PASSWORD</code> (08/2026) đều là biến mới
+        thêm vào giữa vòng đời hệ thống, và cả hai <b>tự xuất hiện</b> trên máy chính — vì
+        <code>start.bat</code> có nhánh <code>findstr</code> phát hiện thiếu rồi
+        <code>secrets.token_hex()</code> sinh ra. Mẫu đó chạy được <b>chỉ vì giá trị do chính phần mềm
+        đặt ra</b>. <code>DOI_CHIEU_ZIP_PASSWORD</code> là mật khẩu của <b>bên ngoài</b> — không sinh
+        được, không đoán được, bắt buộc có người gõ vào. Khoảng trống này không ai nhận ra, vì hai lần
+        trước quy trình đã lặng lẽ tự lo.</p>
+
+      <div class="caution">
+        <b>Gốc rễ thật nằm ở tài liệu, không nằm ở code.</b> <code>Logs_update.md</code> — đúng cái file
+        <code>deploy.bat</code> chép sang cho người vận hành đọc — viết:
+        <i>"Bạn không phải làm gì để phần mềm chạy tiếp — giá trị cũ đã được điền sẵn"</i>.
+        Câu đó đúng với <b>máy phát triển</b> (nơi <code>.env</code> vừa được điền tay lúc sửa code) và
+        sai với <b>máy chính</b>. Người viết nhìn vào máy mình rồi mô tả nó như trạng thái chung.
+        Đã đính chính tại chỗ trong <code>Logs_update.md</code> (mục 20/08/2026).
+      </div>
+
+      <div class="label">Luật rút ra cho mọi biến <code>.env</code> thêm sau này</div>
+      <p>Trước khi viết vào nhật ký cập nhật rằng người vận hành <b>không phải làm gì</b>, hỏi đúng một
+        câu: <i>giá trị này đi vào <code>.env</code> của máy chính bằng đường nào?</i> Chỉ có ba câu trả
+        lời hợp lệ — (1) <code>start.bat</code> tự sinh được, (2) <code>deploy_env_check.py</code> tự
+        thêm được, (3) <b>người vận hành gõ tay</b>. Không rơi vào (1) hay (2) thì mặc định là (3), và
+        phải ghi thành việc-phải-làm chứ không phải ghi chú bên lề.</p>
+
+      <div class="label">Đã thêm: nhóm biến "cảnh báo được nhưng không sửa được"</div>
+      <p><code>deploy_env_check.py</code> nay có bảng <code>CHI_CANH_BAO</code> tách khỏi <code>can_sua</code>.
+        Ba biến cũ (<code>BACKEND_URL</code>, <code>BACKEND_HOST</code>, <code>ENV</code>) script tự điền
+        được vì giá trị đúng là hằng số của hệ thống. Mật khẩu của bên ngoài thì không — nên nó phải nằm
+        ở nhóm riêng, <b>không bao giờ</b> được script tự đặt bừa một giá trị.</p>
+      <table>
+        <tr><th>Mã thoát</th><th>Nghĩa</th></tr>
+        <tr><td><code>0</code></td><td>Sạch</td></tr>
+        <tr><td><code>1</code></td><td>Cần sửa (có thể kèm cảnh báo — cảnh báo đã in ra rồi)</td></tr>
+        <tr><td><code>2</code></td><td>Lỗi đọc/ghi <code>.env</code></td></tr>
+        <tr><td><code>3</code></td><td><b>Mới</b> — không phải sửa gì nhưng thiếu biến phải gõ tay</td></tr>
+      </table>
+      <div class="caution">
+        <b>Batch so sánh <code>errorlevel</code> theo kiểu ≥, nên thứ tự xét là bắt buộc:</b> phải
+        <code>if errorlevel 3</code> <b>trước</b> <code>2</code> và <code>2</code> trước <code>1</code>.
+        Đặt sai thứ tự thì mã 3 rơi vào nhánh <code>errorlevel 2</code> và báo thành
+        <i>"Không kiểm tra được .env"</i> — một cảnh báo đúng biến thành một thông báo lỗi sai.
+        Đã sửa cả <code>deploy.bat</code> và <code>deploy-test.bat</code> (chỗ này vốn chỉ có
+        <code>if errorlevel 2</code>).
+      </div>
+      <p>Cảnh báo in <b>sau cùng</b>, sau cả dòng <code>[OK] .env dung</code>. Thứ tự này có chủ đích:
+        thứ cuối cùng đọng lại trên màn hình không được là chữ "OK" trong khi vẫn còn việc phải làm.
+        <code>deploy.bat</code> giữ cờ <code>ENVWARN</code> và nhắc lại lần nữa trong khối tổng kết cuối —
+        bước 1/8 trôi qua từ lâu trước khi người vận hành đọc tới đó.</p>
+      <div class="note">Bắt cả hai trường hợp: <b>thiếu hẳn dòng</b> và <b>có dòng nhưng để trống</b>
+        (<code>DOI_CHIEU_ZIP_PASSWORD=</code>). Trường hợp thứ hai là thật, vì
+        <code>.env.example</code> ghi sẵn khoá với giá trị rỗng — chép nguyên mẫu sang là rơi đúng vào đó.
+        Kiểm ở <b>cả</b> chế độ siết và không siết: hệ thống test cũng chạy ba chức năng đối chiếu, việc
+        này không liên quan gì tới bảo mật.</div>
+      <div class="note"><b>Chưa làm:</b> <code>BACKUP_EXTRA_DIR</code> và các hạn mức tải file cũng là biến
+        gõ tay, nhưng thiếu chúng thì hệ thống chạy đúng theo mặc định — không có gì hỏng để mà cảnh báo.
+        Chỉ đưa vào <code>CHI_CANH_BAO</code> thứ mà <b>thiếu là gãy tính năng</b>, nếu không bảng này
+        thành một danh sách dài ai cũng bỏ qua.</div>
+
+      <div class="label">Hai việc phụ lộ ra trong cùng log</div>
+      <p><b>Máy chính chưa cài 7-Zip lẫn WinRAR</b> — cả ba bước rơi vào nhánh dự phòng, nạp trọn file nén
+        vào bộ nhớ (~7 lần dung lượng). Hôm đó GW có 1,15 triệu dòng; gặp ngày file lớn hơn là hết RAM.
+        Cài 7-Zip là xong, không đụng mã.</p>
+      <p><b>Lỗi cấu hình nổ ra sau 67,8 giây xử lý.</b> Thiếu mật khẩu là thứ biết được từ giây đầu, nhưng
+        <code>zip_password()</code> chỉ được gọi đúng lúc giải nén — hệ quả trực tiếp của quyết định
+        "không fail-fast lúc khởi động" ở <b>card 80</b>. Quyết định đó vẫn đúng ở mức <i>khởi động hệ
+        thống</i>; chỗ nên siết là <i>đầu mỗi lượt chạy đối chiếu</i>, không phải lúc bật máy.</p>
+
+    </div>
+  </div>
+
+  <!-- 91 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">91</span>
+      <span class="card-title">Ba luật công bằng lịch trực — hệ <b>tầng</b> thay cho cờ nhị phân, và một lỗ hổng cố ý để lại ở đường sửa tay</span>
+      <span class="badge badge-warn">Merge PR #50, còn nợ 1 lỗi</span>
+    </div>
+    <div class="card-body">
+
+      <p>PR #50 thêm ba luật <b>mềm</b> vào <code>duty_scheduler_engine</code>: tối đa 2 ca/tuần,
+        tối đa 2 thứ 6/tháng, không trực thứ 6 hai tuần liên tiếp. Áp dụng như nhau cho Lãnh đạo
+        lẫn nhân viên.</p>
+
+      <div class="label">Vì sao phải bỏ cơ chế fresh / repeat cũ</div>
+      <p><code>_order_pool()</code> trước đây chia pool làm hai bằng
+        <code>get_week_assignees()</code>: <i>chưa trực trong tuần</i> và <i>đã trực</i>. Cơ chế
+        union-vào-set này <b>không phân biệt được</b> "đã dùng 1 lần" (vẫn còn được gọi) với
+        "đã đủ 2 lần" (phải tránh mạnh hơn) — cả hai đều nằm chung rổ <i>repeat</i>.
+        Nên tham số đổi thành <code>tier_hint: {staff_id: tầng}</code>, số càng lớn càng bị đẩy
+        xuống sau.</p>
+      <table>
+        <tr><th>Tầng</th><th>Ai vào</th><th>Ý nghĩa</th></tr>
+        <tr><td>0</td><td>Chưa trực trong tuần</td><td>Ưu tiên cao nhất (mặc định)</td></tr>
+        <tr><td>1</td><td>Đã trực trong tuần</td><td>Hành vi gốc, <b>vẫn hợp lệ</b></td></tr>
+        <tr><td>2</td><td>Vi phạm 1 trong 3 luật mới</td><td>Chỉ chọn khi tầng dưới đã cạn</td></tr>
+      </table>
+      <p><b>Không loại hẳn ai khỏi pool.</b> Đây là điểm cốt lõi: pool cạn thì vẫn phải chọn để có
+        đủ người — nhất quán với tiền lệ <i>"đủ người quan trọng hơn giữ đúng 1 song phương"</i>.
+        Nếu loại cứng, một tuần nghỉ phép nhiều sẽ có ngày <b>không hình thành ca trực</b>, tệ hơn
+        hẳn so với một ca kèm cảnh báo.</p>
+
+      <div class="label">Ba hàm đếm đặt ở <code>duty_rules.py</code>, không ở engine</div>
+      <p><code>dem_ca_trong_tuan()</code>, <code>dem_thu6_trong_thang()</code>,
+        <code>nguoi_truc_thu6_tuan_truoc()</code> — đúng kiến trúc sẵn có "một chỗ hiểu luật" cho
+        cả engine tự động lẫn đường sửa tay <code>validate_shift_members()</code>.</p>
+      <p>Luật 3 <b>tách riêng</b> khỏi luật 2 chứ không gộp: luật 2 nói về <i>tổng số lần</i>, luật 3
+        nói về <i>độ liền kề</i>. Người mới trực 1 thứ 6 trong tháng (chưa chạm trần 2) vẫn phải
+        tránh nếu đó là thứ 6 ngay tuần trước — gộp hai luật thì mất hẳn trường hợp này.</p>
+
+      <div class="caution"><b>Lỗi đã biết, CHƯA sửa — đường sửa tay hầu như không bao giờ cảnh báo.</b>
+        Cả ba hàm đếm chỉ tính ca <b>trước</b> ngày đang xét (<code>shift_date &lt; ?</code>). Đúng
+        cho engine (điền tuần theo thứ tự thời gian), <b>sai cho validator</b> — người sửa tay bấm
+        vào ca khi cả tuần đã có lịch sẵn. Đã dựng probe xác nhận: NV có ca thứ Tư + Năm + Sáu, sửa
+        ca <b>thứ Hai</b> thêm đúng người đó ⇒ <code>dem_ca_trong_tuan</code> trả <code>{}</code>,
+        <code>canh_bao</code> rỗng. Với thứ Hai thì <code>week_start &gt;= d</code> nên hàm
+        <b>luôn</b> trả rỗng — cảnh báo vĩnh viễn câm.
+        <br><b>Cách sửa:</b> validator phải đếm toàn tuần và loại trừ chính ca đang sửa theo
+        <code>shift_id</code> (không phải theo ngày); engine giữ nguyên cửa sổ hiện tại.
+        <br><b>Vì sao merge mà chưa sửa:</b> phần sinh tự động — thứ chạy hằng tuần — đã đúng và có
+        test chặt; cảnh báo sửa tay là lớp nhắc phụ, không chặn và không ghi sai dữ liệu.</div>
+
+      <div class="note"><b>Nửa sửa tay không có test nào.</b> Cả 9 test mới nằm ở
+        <code>test_duty_scheduler_algorithm.py</code>; <code>test_duty_shift_update.py</code> không
+        đổi một dòng. Đó đúng là chỗ chứa lỗi trên.</div>
+
+      <div class="label">Ba việc phát hiện khi review, chấp nhận để lại</div>
+      <table>
+        <tr><th>Việc</th><th>Vì sao chưa đụng</th></tr>
+        <tr><td><code>dem_ca_trong_tuan()</code> là <b>bản sao</b> của
+          <code>get_week_assignees()</code> (<code>duty_constraint_service.py:417</code>) — cùng SQL,
+          cùng mốc tuần, chỉ khác đếm vs. gom set. Quan hệ chính xác:
+          <code>get_week_assignees(db,d) == set(dem_ca_trong_tuan(db,d))</code>. Mỗi ca nay chạy
+          <b>3 lần cùng một query</b> (engine 1 + <code>_order_pool</code> 2).
+          <code>_nguoi_trong_ca()</code> là bản <b>thứ ba</b> của logic bóc id, sau
+          <code>nv_cua_ca()</code> và vòng lặp inline trong <code>get_week_assignees</code>.</td>
+          <td>Gộp được nhưng đụng hàm dùng chung đang chạy ổn; để riêng một lượt dọn</td></tr>
+        <tr><td><b>Lọc <code>status</code> không nhất quán</b>: <code>dem_ca_trong_tuan</code> có
+          <code>status IN ('confirmed','draft')</code>, hai hàm thứ 6 <b>không có</b>.</td>
+          <td>DB hiện chỉ tồn tại đúng hai status đó ⇒ vô hại. Thêm status thứ ba thì ba hàm hiểu
+          khác nhau — đúng thứ <code>duty_rules.py</code> sinh ra để ngăn</td></tr>
+        <tr><td><b>Ca quyết toán rơi vào thứ 6 vô hình với luật 2 &amp; 3</b>:
+          <code>_process_day</code> ưu tiên ngày đặc biệt ⇒ <code>shift_type='settlement_main'</code>,
+          mà cả hai hàm đếm đều lọc <code>shift_type='friday'</code>. Probe xác nhận: thứ 6 tuần
+          trước là ca quyết toán ⇒ không cảnh báo liên tiếp.</td>
+          <td>Chưa chốt được là cố ý hay bỏ sót — ca quyết toán khác hẳn ca thứ 6 về thành phần
+          (có nhóm trực phụ), gộp vào cùng hạn mức chưa chắc đúng nghiệp vụ</td></tr>
+      </table>
+
+      <div class="note"><b>Câu chữ cảnh báo sai với người đăng ký đích danh.</b> Nhóm
+        <code>forced</code> (<code>once_ids</code>) bỏ qua hoàn toàn hệ tầng. Người tự đăng ký ngày
+        đó dù đã đủ 2 ca vẫn được chọn, rồi nhận thông báo <i>"phải trực quá 2 ca/tuần
+        <b>vì không đủ người khác</b>"</i> — lý do thật là họ đăng ký.</div>
+
+      <div class="label">Ảnh hưởng ra ngoài: không có</div>
+      <table>
+        <tr><th>Chỗ bị đụng</th><th>Ai gọi</th><th>Rủi ro</th></tr>
+        <tr><td><code>_order_pool</code> (+ <code>tier_hint</code>)</td><td>2 chỗ, đều trong chính engine</td><td>Không — private, tham số mặc định <code>None</code></td></tr>
+        <tr><td><code>validate_shift_members</code> (thêm phần tử <code>canh_bao</code>)</td><td>1 chỗ: <code>api/duty_schedule.py:109</code></td><td>Không — chỉ <code>loi_cung</code> raise 400; <code>canh_bao</code> vào <code>ShiftUpdateResult.warnings: List[str]</code></td></tr>
+        <tr><td>3 loại warning mới</td><td><code>_gom_canh_bao</code> (frontend)</td><td>Không — gom theo <code>msg</code>, không đối chiếu <code>type</code> với danh sách cứng</td></tr>
+        <tr><td>Bảng <code>duty_shifts</code></td><td>Chỉ đọc thêm</td><td>Không migration, không cột mới, không thư viện mới</td></tr>
+      </table>
+      <p><b>Đã đo trên quân số thật</b> (7 Lãnh đạo, 18 nhân viên; cấu hình 1 LD + 2 NV mỗi ca):
+        5 suất LD/tuần ÷ 7 người, 4 suất thứ 6/tháng ÷ 7 người ⇒ dư sức giữ cả ba luật,
+        <b>không có nguy cơ ngập cảnh báo</b>. Full suite <b>553 passed, 0 failed</b>.</p>
+      <div class="note"><b>Hệ quả vận hành:</b> thứ tự chọn người đã đổi ⇒ tạo lại lịch cho tuần sinh
+        trước khi merge sẽ ra kết quả khác. Không phải lỗi, nhưng lịch nháp cũ không tái lập y hệt.</div>
+
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-22</footer>
 </div>
 </body>
 </html>

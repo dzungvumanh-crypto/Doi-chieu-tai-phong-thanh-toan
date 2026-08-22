@@ -89,7 +89,14 @@ BACKUP_PASSWORD=<mật khẩu nén bản sao lưu>
 
 > `start.bat` **tự sinh `BACKUP_PASSWORD`** nếu `.env` chưa có, và in ra màn hình đúng một lần —
 > chép ngay vào két mật khẩu của đơn vị. `DOI_CHIEU_ZIP_PASSWORD` phải điền tay vì đó là mật khẩu
-> của bên cấp file, không phải của phần mềm này.
+> của bên cấp file, không phải của phần mềm này — không có cách nào tự sinh hộ.
+
+> **Nâng cấp máy đang chạy:** `deploy.bat` không chép đè `.env` của máy đích, nên biến mới thêm vào
+> giữa vòng đời hệ thống **không tự sang**. Từ 22/08/2026 `deploy.bat` in cảnh báo (bước 1/8, nhắc lại
+> ở khung tổng kết cuối) khi `.env` máy đích còn thiếu biến thuộc loại phải gõ tay — hiện là
+> `DOI_CHIEU_ZIP_PASSWORD`. Biến mới cùng loại thì thêm vào bảng `CHI_CANH_BAO` trong
+> `scripts/deploy_env_check.py`; chỉ đưa vào đó thứ mà **thiếu là gãy tính năng**, không thì bảng
+> thành danh sách dài ai cũng bỏ qua.
 
 Hai biến tuỳ chọn liên quan đến hiệu năng và mức độ kín của backend:
 
@@ -364,6 +371,11 @@ Truy cập:
   đều vẫn lập ca, chỉ cảnh báo. Người ở nhóm trực phụ không tính (về sớm)
 - Ngày thường bốc **ngẫu nhiên trong nhóm ít ca nhất**; thứ 6 luân phiên **tất định**.
   Có tiêu chí phụ tránh hình thành ê-kíp trực cố định
+- **Ba luật công bằng (mềm)**, áp dụng như nhau cho Lãnh đạo lẫn nhân viên: không quá
+  **2 ca/tuần**, không quá **2 thứ 6/tháng**, không trực thứ 6 ở **2 tuần liên tiếp**.
+  Thuật toán ưu tiên tránh; pool cạn thì **vẫn lập ca** kèm cảnh báo nêu đích danh người bị
+  phá luật — đủ người quan trọng hơn giữ đúng luật mềm. Đường **sửa tay** cũng cảnh báo,
+  nhưng hiện chỉ soi các ca **trước** ngày đang sửa (xem card 91 trong Implementation-notes)
 - **Sửa tay** thành phần ca: vai song phương hệ thống tự suy từ cờ "biết song phương",
   số ca trong vòng xoay đi theo người được đổi. Sửa xong ca quay về bản thảo, phải xác nhận lại
 - **Xoá hoặc tạo lại lịch trả số ca về vòng xoay** — mọi đường ghi/xoá ca đều tra cùng
