@@ -54,3 +54,6 @@ MCB.xlsx
 
 # Mat khau bo sao luu do start.bat sinh ra - TUYET DOI khong day len repo
 /Backup_password.txt
+
+# Du lieu nghiep vu that tai ve de doi chieu (Excel co ten nguoi that) - khong day len repo
+/lt/
