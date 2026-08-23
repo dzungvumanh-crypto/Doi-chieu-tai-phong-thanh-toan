@@ -4,6 +4,19 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 23/08/2026 Sổ trực + Đối chiếu CITAD - **5 sửa nhỏ theo phản hồi dùng thật (PR#53)**
+    + **Sổ trực nay chỉ coi là "đã đối chiếu CITAD" khi ngày đó đã bấm *Lưu bảng cuối***. Bảng mới *Lưu tạm* vẫn bị tính là **chưa có**, nên lời nhắc trước khi chuyển KSV / xác nhận vẫn hiện. Cố ý làm vậy: số Napas và PSS - MDP thường do người khác điền sau, một bảng tạm "khớp" chỉ khớp trên phần đã nhập
+    + ⚠️ **Sẽ thấy lời nhắc thường xuyên hơn trước.** Ngày nào chuyển KSV trước khi có người chốt bảng cuối là có hộp thoại nhắc. Vẫn **không chặn** — bấm *Vẫn xác nhận* là đi tiếp
+    + ⚠️ **Câu chữ trong hộp thoại đó chưa chỉnh theo**: nó vẫn viết *"Chưa có bản đối chiếu CITAD nào được lưu"* trong khi thực tế có thể **đang có bảng tạm**. Bảng tạm không mất đi đâu cả — mở màn Đối chiếu CITAD vẫn còn nguyên. Sẽ sửa lại câu chữ ở đợt sau
+    + **Tab *Lịch sử* của Sổ trực: không chọn ngày thì hiện TOÀN BỘ phiên trực**, trước đây chỉ hiện đúng 1 phiên gần nhất. Danh sách dài nhiều tháng có **dòng ngăn cách màu xanh mint ghi tháng/năm** để dễ dò. Muốn thu hẹp thì chọn khoảng ngày rồi bấm *Lọc*
+    + **Ô *Lập bảng* / *Kiểm soát* ở Đối chiếu CITAD nay bấm chọn được tên** từ danh sách nhân viên Phòng Thanh toán, vẫn gõ tay tự do như cũ
+    + 🔴 **Hai lỗi đã biết ở hai ô này, chưa vá — xin đọc kỹ**:
+        * **Xuất Excel sẽ báo lỗi nếu để trống cả hai ô.** Cách tránh: điền tên (hoặc gõ một dấu gạch) trước khi bấm *Xuất Excel*
+        * **Mở lại bảng cũ mà tên người ký không có trong danh sách Phòng Thanh toán** (người đã nghỉ, đã chuyển phòng, hoặc tên gõ tay kiểu khác) thì **ô đó hiện trống**. Nguy hiểm hơn: lúc đó bấm *Lưu* sẽ **ghi đè mất tên cũ trong máy**. Trong lúc chờ vá: nếu mở bảng của ngày cũ mà thấy hai ô này trống bất thường thì **đừng bấm Lưu**, báo lại để khôi phục
+    + **Bấm *Bỏ xem, làm bảng mới* nay chỉ hiện 1 thông báo** (*"Đã chuyển sang phiên chấm đối chiếu mới"*) thay vì 2 thông báo chồng nhau. Nút *Xoá* riêng vẫn báo như cũ
+    + **Đối soát CITAD ↔ IPCAS: 3 khung tải file** (CITAD / IPCAS / Hub ngoại tệ) nay **có viền đỏ đô bo góc riêng** cho dễ phân biệt
+    + Không đổi cơ sở dữ liệu, không phải khai báo quyền lại. Toàn bộ **666 test** chạy đạt
+
 - 22/08/2026 Bàn giao cho lưu trữ - **Cột TIEUDE_HS đổi sang mẫu "Nhật ký chứng từ ngày ... của Phòng ..."**
     + **Đổi gì**: tiêu đề hồ sơ nộp lưu trữ trước đây in ra là *"Hồ sơ ngày 27/02/2025 Phòng Kế toán tháng 02/2025 tập 1/2"*, nay là **"Nhật ký chứng từ ngày 27/02/2025 của Phòng Kế toán tập 1/2"**
     + **Bỏ hẳn đuôi "tháng 02/2025"**: ngày ghi ngay phía trước đã có đủ tháng và năm rồi, nhắc lại chỉ làm ô dài thêm

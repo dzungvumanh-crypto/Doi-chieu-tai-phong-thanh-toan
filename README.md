@@ -469,6 +469,11 @@ Truy cập:
   tải `.zip` ngay trên màn hình, ghép nối bằng *mã kết nối* cá nhân
   (`doi_chieu_citad_extension_tokens`, chỉ lưu hash SHA-256, tạo mã mới tự thu hồi mã cũ).
   Chỉ chạy trên Chromium (Chrome/Edge/Cốc Cốc), phải cài tay từng máy
+- Hai ô **Lập bảng** / **Kiểm soát** vừa gõ tay tự do, vừa bấm chọn từ danh sách nhân viên
+  **Phòng Thanh toán** (tra theo `code='PAYMENT'`, không phụ thuộc id phòng).
+  ⚠️ **Đang có lỗi (23/08/2026, chưa vá)**: tên không nằm trong danh sách đó bị xoá âm thầm khi
+  mở lại bảng cũ, và **Xuất Excel báo lỗi 422 nếu để trống cả hai ô** — xem
+  `docs/Implementation-notes.html` mục Z7
 - Phân quyền riêng theo nhóm (`menu.doi_chieu_citad`)
 
 ### Module Đối soát CITAD ↔ IPCAS
@@ -503,9 +508,12 @@ Truy cập:
   `ux_so_truc_active_date (truc_date) WHERE status != 'cancelled'` bảo đảm mỗi ngày chỉ một
   phiên đang hoạt động, đồng thời chặn tranh chấp khi hai GDV cùng mở một ngày
 - Cảnh báo (không chặn) khi **Đối chiếu CITAD cùng ngày chưa khớp**; link sang thẳng tab
-  Lịch sử của `/doi_chieu_citad?ngay=`
+  Lịch sử của `/doi_chieu_citad?ngay=`. Từ 23/08/2026 **chỉ bản đã "Lưu bảng cuối"
+  (`status='final'`) mới tính là đã đối chiếu** — bảng tạm coi như chưa có, vì Napas/PSS-MDP
+  thường do người khác bổ sung sau nên bản tạm "khớp" chỉ khớp trên phần đã nhập
 - Badge **Sổ trực chờ xử lý** trên sidebar; trang chủ nhắc khi sau 16h (giờ máy chủ) chưa ai
-  mở sổ. Tab Lịch sử xuất Excel theo khoảng ngày
+  mở sổ. Tab **Lịch sử** không lọc thì hiện **toàn bộ** phiên trực (trước 23/08/2026 chỉ hiện
+  1 phiên gần nhất), có dòng ngăn cách khi sang tháng khác; xuất Excel vẫn bắt buộc chọn khoảng ngày
 - Phân quyền: `menu.so_truc` (vào module, xem lịch sử) + `so_truc.ksv_confirm`
   (được xuất hiện trong danh sách chọn KSV)
 

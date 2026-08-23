@@ -51,7 +51,84 @@
 <div class="page">
 
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
-  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-18</p>
+  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-23</p>
+
+  <!-- Z7 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">Z7</span>
+      <span class="card-title">PR#53 — bảng tạm CITAD không còn tính là "đã đối chiếu"; 2 ô ký tên đổi sang ui.select (còn lỗi)</span>
+      <span class="badge badge-warn">Đã merge — còn 2 lỗi chưa vá</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label">1. Vì sao <code>status='draft'</code> bị coi là CHƯA có đối chiếu</div>
+      <p><code>get_reconciliation_status()</code> trước đây chỉ hỏi "ngày này có bản lưu nào không".
+        Nhưng bảng tạm là trạng thái <b>đang chấm dở</b>: Napas/PSS-MDP thường do người khác bổ sung
+        sau, nên một bản tạm "khớp" chỉ khớp trên phần số liệu đã có. Sổ trực đọc cờ đó để cảnh báo
+        GDV/KSV trước khi xác nhận — cảnh báo tắt sớm còn tệ hơn không có cảnh báo.</p>
+      <table>
+        <tr><th>Trạng thái CITAD của ngày</th><th>Trước</th><th>Sau</th></tr>
+        <tr><td>Chưa lưu gì</td><td>exists=False</td><td>exists=False</td></tr>
+        <tr><td>Đã "Lưu tạm", số liệu khớp</td><td><b>exists=True, matched=True</b> → im lặng</td><td>exists=False → vẫn cảnh báo</td></tr>
+        <tr><td>Đã "Lưu bảng cuối", khớp</td><td>exists=True, matched=True</td><td>exists=True, matched=True</td></tr>
+      </table>
+      <div class="note">Hệ quả chưa ai lường: <code>session_admin_unlock()</code> đưa một ngày đã chốt
+        về lại <code>draft</code>. Suốt thời gian Admin mở khoá sửa, Sổ trực sẽ báo ngày đó
+        <b>"chưa có bản đối chiếu nào"</b> — đúng logic, nhưng là hiện tượng mới.</div>
+      <div class="caution">Câu cảnh báo ở <code>frontend/pages/so_truc.py::_citad_warning_msg</code>
+        <b>chưa đổi theo</b>: vẫn ghi "Chưa có bản đối chiếu CITAD nào được lưu" trong khi bảng tạm
+        có tồn tại → GDV dễ tưởng bảng mình chấm đã mất. Phải sửa thành "chưa Lưu bảng cuối".</div>
+
+      <div class="label">2. Bỏ <code>LIMIT 1</code> ở <code>so_truc_service.get_history()</code></div>
+      <p>Mặc định cũ (không lọc → đúng 1 dòng gần nhất) là yêu cầu của người dùng, nay họ đổi ý.
+        Chỉ 1 nơi gọi (<code>GET /api/so-truc/history</code> ← tab Lịch sử); <code>GET /export</code>
+        luôn truyền đủ khoảng ngày nên không đụng tới nhánh này.</p>
+      <div class="note">Giờ không còn trần nào. Mỗi dòng lịch sử dựng ~12 element NiceGUI; vài trăm
+        ngày trực mỗi năm thì tab này sẽ chậm dần thấy rõ. Nên đặt <code>LIMIT 500</code> + dòng
+        "đang hiện 500 phiên gần nhất" trước khi dữ liệu qua một năm.</div>
+
+      <div class="label">3. <span class="pill pill-red">Lỗi</span> Đổi 2 ô "Lập bảng"/"Kiểm soát" sang <code>ui.select</code></div>
+      <p>Mục đích: vừa gõ tay tự do, vừa bấm chọn từ danh sách nhân viên Phòng Thanh toán. Nhưng
+        <code>new_value_mode="add-unique"</code> <b>chỉ có tác dụng khi NGƯỜI DÙNG gõ</b> —
+        NiceGUI ghi thẳng trong docstring: <i>"ineffective when setting the value property
+        programmatically"</i>. Đo thật với nicegui trong <code>.venv</code>:</p>
+      <table>
+        <tr><th>Thao tác</th><th><code>.value</code> nhận lại</th></tr>
+        <tr><td><code>sel.value = "Nguyễn Văn A"</code> (không có trong options)</td><td><b>None</b></td></tr>
+        <tr><td><code>sel.value = "Trần B"</code> (có trong options)</td><td>'Trần B'</td></tr>
+        <tr><td><code>sel.value = ""</code></td><td><b>None</b></td></tr>
+      </table>
+      <p>Đường đi: <code>_handle_value_change</code> <span class="arrow">→</span> <code>update()</code>
+        <span class="arrow">→</span> <code>ChoiceElement._update_options()</code> chạy
+        <code>self.value = before_value if before_value in self._values else None</code>. Giá trị bị
+        nuốt ở phía Python, không chỉ ở phần hiển thị.</p>
+      <div class="caution"><b>Hai lỗi đang có trên develop:</b>
+        <ol style="margin:6px 0 0 18px">
+          <li><b>Mất tên người ký.</b> Mở lại bảng đã lưu mà tên không nằm trong danh sách Phòng
+            Thanh toán đang hoạt động (người đã nghỉ/chuyển phòng, tên gõ tay trước đây, hoặc
+            <code>_load_payment_staff_names</code> lỗi → options rỗng) thì ô trống. Nặng hơn: người
+            khác mở bảng tạm ở mode <code>napas_only</code> rồi bấm Lưu sẽ ghi <code>None</code>
+            <b>đè lên tên người lập trong DB</b> — không lỗi, không log.</li>
+          <li><b>Xuất Excel 422</b> khi để trống 2 ô: <code>ExportIn.lb/ks</code> khai
+            <code>str</code> (không Optional), select rỗng gửi <code>None</code> → pydantic từ chối.
+            Trước đây <code>ui.input</code> luôn cho <code>""</code> nên chưa từng dính.</li>
+        </ol>
+        Hướng vá: bơm giá trị vào <code>options</code> trước khi gán, và gửi
+        <code>lap_bang_input.value or ""</code> ở payload xuất Excel.</div>
+      <div class="note"><code>except Exception: return</code> trong <code>_load_payment_staff_names</code>
+        nuốt lỗi không ghi log — trái quy ước dự án, và chính là thứ biến lỗi 1 thành hỏng lặng lẽ
+        toàn màn hình.</div>
+
+      <div class="label">Chỗ tưởng hỏng mà KHÔNG hỏng</div>
+      <p>Đổi <code>do_reset()</code> thành <code>do_reset(notify=True)</code> trong khi nút "Xoá" vẫn
+        truyền thẳng <code>on_click=do_reset</code>: an toàn, vì
+        <code>nicegui/events.py::handle_event</code> chỉ truyền event khi hàm có tham số
+        <b>không</b> mang giá trị mặc định. Nếu ai đó sau này bỏ default đi thì nút Xoá sẽ nhận
+        event object vào chỗ <code>notify</code>.</p>
+
+    </div>
+  </div>
 
   <!-- Z6 -->
   <div class="card">
