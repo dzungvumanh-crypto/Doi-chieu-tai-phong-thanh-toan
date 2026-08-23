@@ -594,12 +594,12 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
         đây chỉ là xoá màn hình, không phải sửa/lưu đè). do_reset() không
         đụng ngay_input/lap_bang_input/kiem_soat_input nên tự set lại 3 ô
         đó ở đây."""
-        do_reset()
+        do_reset(notify=False)
         ngay_input.value = datetime.date.today().strftime('%d/%m/%Y')
         lap_bang_input.value = ""
         kiem_soat_input.value = ""
         _apply_view_mode("edit")
-        ui.notify("Đã thoát chế độ xem — sẵn sàng nhập mới", type="info")
+        ui.notify("Đã chuyển sang phiên chấm đối chiếu mới", type="info")
 
     def get_session_payload() -> dict:
         gD = {str(c): {u: {f: data["gD"][c][u][f] for f in FK} for u in CURS} for c in CONGS}
@@ -1041,7 +1041,7 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
         history_refresh["fn"] = load_days
         ui.timer(0.1, load_days, once=True)
 
-    def do_reset():
+    def do_reset(notify: bool = True):
         for c in CONGS:
             for u in CURS:
                 for f in FK:
@@ -1058,7 +1058,8 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
             _set_input(inputs["napasE"][f], '')
             _set_input(inputs["pssmdpE"][f], '')
         recalc()
-        ui.notify("Đã xoá toàn bộ dữ liệu", type="info")
+        if notify:
+            ui.notify("Đã xoá toàn bộ dữ liệu", type="info")
 
     async def _do_download_export():
         gD = {str(c): {u: {f: data["gD"][c][u][f] for f in FK} for u in CURS} for c in CONGS}
@@ -1145,6 +1146,28 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
                     "bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg"
                 )
         dialog.open()
+
+    # ── Danh sách tên Phòng Thanh toán cho ô "Lập bảng"/"Kiểm soát" ───────────
+    # ui.select(with_input, new_value_mode="add-unique") — vẫn gõ tay tự do
+    # được như ui.input cũ (giá trị gõ không có trong danh sách vẫn nhận),
+    # thêm được bấm chọn từ danh sách có sẵn. Tra department theo CODE
+    # "PAYMENT" thay vì hardcode id — tránh phụ thuộc thứ tự tạo phòng ban.
+    async def _load_payment_staff_names():
+        try:
+            depts = await asyncio.to_thread(api.get, "/api/departments/")
+            dept = next((d for d in depts if d.get("code") == "PAYMENT"), None)
+            if not dept:
+                return
+            staff = await asyncio.to_thread(
+                api.get, "/api/staff/", {"department_id": dept["id"], "active_only": True}
+            )
+        except Exception:
+            return  # danh sách gợi ý — lỗi ở đây không được chặn cả trang
+        names = sorted({s["full_name"] for s in staff if s.get("full_name")})
+        lap_bang_input.options = names
+        lap_bang_input.update()
+        kiem_soat_input.options = names
+        kiem_soat_input.update()
 
     # ── Kết nối Extension (mã kết nối cá nhân — xem docstring api/doi_chieu_citad.py) ──
     ext_status_label = None
@@ -1400,8 +1423,12 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
                         "border-2 border-red-800 shadow-sm p-4"
                     ):
                         ngay_input = _date_picker_input("Ngày")
-                        lap_bang_input = ui.input("Lập bảng").props("dense outlined").classes("w-48")
-                        kiem_soat_input = ui.input("Kiểm soát").props("dense outlined").classes("w-48")
+                        lap_bang_input = ui.select(
+                            [], label="Lập bảng", with_input=True, new_value_mode="add-unique"
+                        ).props("dense outlined").classes("w-48")
+                        kiem_soat_input = ui.select(
+                            [], label="Kiểm soát", with_input=True, new_value_mode="add-unique"
+                        ).props("dense outlined").classes("w-48")
                         btn_nap_citad = ui.button("Nạp CITAD", icon="cloud_download", on_click=load_citad_buffer).props("outline").classes("rounded-lg")
                         btn_nap_ph = ui.button("Nạp PaymentHub", icon="cloud_download", on_click=load_phub_buffer).props("outline").classes("rounded-lg")
                         btn_luu_tam = ui.button(
@@ -1425,6 +1452,7 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
                         ui.button("Xuất Excel", icon="grid_on", on_click=do_export).classes(
                             "bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg"
                         )
+                    ui.timer(0.1, _load_payment_staff_names, once=True)
 
                     # Banner trạng thái — nội dung dựng ĐỘNG theo mode trong
                     # _apply_view_mode() (rỗng/ẩn khi mode='edit' của chính
