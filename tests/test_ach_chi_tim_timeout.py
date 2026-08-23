@@ -192,7 +192,7 @@ def _make_mis_di_zip(tmp_path, name: str, rows: list[dict]):
     path = tmp_path / name
     with pyzipper.AESZipFile(str(path), 'w', compression=pyzipper.ZIP_DEFLATED,
                               encryption=pyzipper.WZ_AES) as zf:
-        zf.setpassword(_cfg.ZIP_PASSWORD)
+        zf.setpassword(_cfg.zip_password())
         zf.writestr('data.csv', csv_bytes)
     return str(path)
 
@@ -218,9 +218,10 @@ def _make_pdf(tmp_path, name='ACH_20260711_VBAAVNVN_NRT_16362_N03_1.pdf'):
 
 
 class TestMainFromDirChiTimTimeout:
-    def test_mac_dinh_thieu_gl02_van_raise(self, tmp_path):
+    def test_mac_dinh_thieu_gl02_van_raise(self, tmp_path, monkeypatch):
         """Regression — không truyền chi_tim_timeout (mặc định False) phải giữ
         đúng hành vi cũ: raise ngay khi thiếu GL02, không chạy gì thêm."""
+        monkeypatch.setenv('DOI_CHIEU_ZIP_PASSWORD', 'test_password')
         _make_pdf(tmp_path)
         _make_gw_xlsx(tmp_path)
         _make_mis_di_zip(tmp_path, 'doichieugd_20260711__01_DI_9999_N.zip', [_mis_di_row()])
@@ -229,9 +230,10 @@ class TestMainFromDirChiTimTimeout:
         with pytest.raises(FileNotFoundError, match='GL02'):
             main_from_dir(str(tmp_path), str(tmp_path / 'out'))
 
-    def test_thieu_mis_di_van_raise_du_chi_tim_timeout_true(self, tmp_path):
+    def test_thieu_mis_di_van_raise_du_chi_tim_timeout_true(self, tmp_path, monkeypatch):
         """chi_tim_timeout=True KHÔNG miễn trừ mức tối thiểu Tầng 0 thật sự — chỉ
         1 file MIS_đi (cần 2) vẫn phải raise."""
+        monkeypatch.setenv('DOI_CHIEU_ZIP_PASSWORD', 'test_password')
         _make_pdf(tmp_path)
         _make_gw_xlsx(tmp_path)
         _make_mis_di_zip(tmp_path, 'doichieugd_20260711__01_DI_9999_N.zip', [_mis_di_row()])
@@ -239,10 +241,11 @@ class TestMainFromDirChiTimTimeout:
         with pytest.raises(FileNotFoundError, match='MIS_DI'):
             main_from_dir(str(tmp_path), str(tmp_path / 'out'), chi_tim_timeout=True)
 
-    def test_thieu_gl02_va_mis_den_chi_tim_timeout_true_chay_thanh_cong(self, tmp_path):
+    def test_thieu_gl02_va_mis_den_chi_tim_timeout_true_chay_thanh_cong(self, tmp_path, monkeypatch):
         """Kịch bản chính của tính năng: đủ PDF+GW+MIS_đi×2, KHÔNG GL02/MIS_đến,
         chi_tim_timeout=True — chạy xong không raise, sheet Tầng 0 có dữ liệu
         thật, sheet Tầng 1 ghi rõ CHƯA ĐỐI CHIẾU ĐƯỢC."""
+        monkeypatch.setenv('DOI_CHIEU_ZIP_PASSWORD', 'test_password')
         _make_pdf(tmp_path)
         _make_gw_xlsx(tmp_path)
         _make_mis_di_zip(tmp_path, 'doichieugd_20260711__01_DI_9999_N.zip', [_mis_di_row()])
