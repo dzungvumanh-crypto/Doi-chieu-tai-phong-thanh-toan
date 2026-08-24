@@ -74,6 +74,20 @@ def _ghi_chu(r):
     return ''
 
 
+def _ngay(r, ngay_cham):
+    """Cột 'Ngày GD' — CITAD KHÔNG có cột ngày riêng từng dòng (chỉ 1 dòng
+    header "Ngày giao dịch: dd/mm/yyyy" áp dụng cho CẢ FILE, xem
+    parsers.py::parse_citad_xls) nên field `ngay` LUÔN rỗng cho mọi dòng có
+    gốc CITAD (status 'both'/'only_citad'/'lech_trang_thai'/'dup_citad') —
+    phát hiện 23/08/2026 qua câu hỏi trực tiếp của người dùng khi thấy cột
+    này trống hẳn ở phần "Khớp" của báo cáo "Tất cả lệnh". Rơi về đúng
+    `ngay_cham` — mọi dòng trong 1 lần đối soát luôn thuộc cùng 1 ngày
+    chấm, không có gì mơ hồ khi điền vào chỗ trống này. Dòng gốc IPCAS/Hub
+    ('only_ipcas'/'only_hub') có ngày riêng thật (có thể khác ngay_cham —
+    lệnh lập ngày khác ngày đi kênh) nên GIỮ NGUYÊN, không ghi đè."""
+    return r.get('ngay') or ngay_cham or ''
+
+
 def _style(bg='FFFFFF', fg='000000', bold=False, sz=10, h='left'):
     thin = Side(style='thin', color='CCCCCC')
     return {
@@ -189,7 +203,7 @@ def export_doiSoat(lech_rows, n_khop, ngay_cham, filepath):
             r.get('dich_vu') or '',
             so_tien,
             r.get('loai_tien') or 'VNĐ',
-            r.get('ngay') or '',
+            _ngay(r, ngay_cham),
             r.get('nh_nhan') or '',
             r.get('trang_thai') or '',
             _ghi_chu(r),
@@ -365,7 +379,7 @@ def export_doiSoat_full(lech_rows, khop_rows, ngay_cham, filepath):
             r.get('dich_vu') or '',
             so_tien,
             r.get('loai_tien') or 'VNĐ',
-            r.get('ngay') or '',
+            _ngay(r, ngay_cham),
             r.get('nh_nhan') or '',
             r.get('trang_thai') or '',
             _ghi_chu(r),
@@ -387,14 +401,43 @@ def export_doiSoat_full(lech_rows, khop_rows, ngay_cham, filepath):
                 row_cells.append(cell)
             ws.append(row_cells)
         else:
-            # Dòng khớp: ghi GIÁ TRỊ THÔ, không gán style nào cho ô — căn lề và
-            # định dạng số đã đặt ở cấp cột phía trên. Đây là chỗ tốn nhất của
-            # hàm: cProfile trên 38.000 dòng cho thấy riêng `cell.alignment =`
-            # /`cell.number_format =` chiếm 24,0s (496.156 lượt gán, kéo theo
-            # 5,9 triệu lượt băm/so khớp style để tra bảng dùng chung của
-            # workbook). Bỏ hẳn đi: 20,7s -> 5,8s, file ra không đổi về hình
-            # thức.
-            ws.append(vals)
+            # Dòng khớp: ghi GIÁ TRỊ THÔ cho hầu hết cột — căn lề/định dạng
+            # số đặt Ở CẤP CỘT phía trên KHÔNG thực sự được Excel áp dụng
+            # cho ô ĐÃ ghi giá trị. Bug thật (phát hiện 23/08/2026 qua câu
+            # hỏi trực tiếp của người dùng, xác nhận bằng cách mổ XML file
+            # xuất thật): ô có giá trị nhưng không tự đặt `s=` thì Excel
+            # dùng style MẶC ĐỊNH (số căn PHẢI, chữ căn TRÁI), không kế
+            # thừa style của `<col>` — 2 cột SỐ ở đây (STT, Số tiền) vì
+            # vậy bị lệch: STT căn phải thay vì giữa (do là số nguyên,
+            # General tự căn phải), Số tiền căn phải + không dấu phẩy
+            # thay vì trái + dấu phẩy như dòng lệch. Chỉ style RIÊNG 2 ô
+            # này cho khớp cấu trúc dòng lệch — các cột chữ còn lại GIỮ
+            # NGUYÊN cách nhanh cũ (vốn đã căn trái đúng ý vì đó là hành
+            # vi General mặc định cho text — không cần sửa).
+            #
+            # CHỈ gán alignment/number_format cho 2 ô này — KHÔNG gọi
+            # _wo_cell()/_style_cached() (gán thêm font+fill+border, 4
+            # thuộc tính thay vì 1-2). Review thật (Người 1, PR#55): đo lại
+            # bằng cProfile phát hiện _wo_cell() cho 2 cột này làm xuất
+            # "Tất cả lệnh" chậm gấp 3,1 lần (6,19s → 18,94s / 38.000 dòng)
+            # — mỗi lượt gán font/fill/border là 1 lượt openpyxl băm/so
+            # khớp object với bảng style dùng chung của workbook (đúng lớp
+            # chi phí `_align_cached()` đã mô tả ở trên, chỉ nhỏ hơn quy
+            # mô). Hàm này chiếm 1 trong 4 slot run_heavy() dùng chung cả
+            # backend (xem `_style_cached()`), chậm hơn 3 lần là giữ slot
+            # đó lâu hơn 3 lần, ảnh hưởng trực tiếp người khác đang làm
+            # việc nặng khác (nghỉ phép, in bìa...). Bỏ font/fill/border
+            # cho riêng 2 ô này: 7,22s — chỉ đắt hơn develop ~1 giây.
+            row_cells = list(vals)
+            c0 = WriteOnlyCell(ws, value=vals[0])
+            c0.alignment = _align_cached('center')
+            c7 = WriteOnlyCell(ws, value=vals[7])
+            c7.alignment = _align_cached('left')
+            if isinstance(vals[7], int):
+                c7.number_format = '#,##0'
+            row_cells[0] = c0
+            row_cells[7] = c7
+            ws.append(row_cells)
 
     wb.save(filepath)
 
@@ -431,7 +474,7 @@ def _add_filter_sheet(wb, rows, n_khop, ngay_cham, title, status_filter):
                 'Đi' if r.get('chieu') == 'di' else 'Đến',
                 r.get('so_gd') or '', r.get('key_agri') or '',
                 r.get('dich_vu') or '', so_tien,
-                r.get('loai_tien') or 'VNĐ', r.get('ngay') or '',
+                r.get('loai_tien') or 'VNĐ', _ngay(r, ngay_cham),
                 r.get('nh_nhan') or '', r.get('trang_thai') or '',
                 _ghi_chu(r)]
 

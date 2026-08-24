@@ -408,7 +408,15 @@ def _parse_ipcas_text(text, filename, ngay_cham):
     i_nh = hmap.get('NH_NHAN', hmap.get('NH_GUI', -1))
     i_nkt = hmap.get('NGAY_KENH_TRA', -1)
 
-    seen = set()
+    # Trước đây có 1 bước lọc bỏ ÂM THẦM dòng trùng y hệt (cùng ngày/chi
+    # nhánh/txid/số tiền/trace/trạng thái) ngay ở đây — xác nhận thật: IPCAS
+    # có thể hạch toán CÙNG 1 lệnh nhiều lần (nghi ngờ lỗi hệ thống lõi),
+    # trong khi CITAD chỉ nhận đúng 1 lần; bỏ ngay lúc đọc file khiến
+    # reconcile.py không bao giờ thấy để phát hiện, đối soát báo "khớp" bình
+    # thường như không có gì. Đã BỎ HẲN bước lọc này — giữ nguyên MỌI dòng
+    # kể cả trùng y hệt, để reconcile.py::run_doiSoat_ram() tự đếm số lần
+    # trùng theo đúng khoá khớp lệnh (msgref/txid+loai+so_tien) và sinh
+    # đúng số dòng "Chỉ Agribank" phản ánh số dư thật — xem ghi chú ở đó.
     result = []
 
     for line in lines[1:]:
@@ -511,12 +519,6 @@ def _parse_ipcas_text(text, filename, ngay_cham):
         nh_nhan = gv('NH_NHAN') or gv('NH_GUI')
         loai = 'ih' if 'cao' in kenh else 'il'
 
-        # Dedup
-        key = f"{ngay_gd}|{gv('CHI_NHANH')}|{txid_raw}|{so_tien}|{gv('TRACE')}|{tt}"
-        if key in seen:
-            continue
-        seen.add(key)
-
         result.append({
             'txid': txid,
             'msgref': msgref,
@@ -528,6 +530,33 @@ def _parse_ipcas_text(text, filename, ngay_cham):
             'kenh': gv('KENH_THANH_TOAN'),
             'nh_nhan': nh_nhan,
             'ngay': ngay_gd,
+            # `chi_nhanh` — CHỈ để reconcile.py so khớp "có phải cùng 1 bản
+            # ghi IPCAS bị lặp lại y hệt hay không" (khoá mịn), KHÔNG dùng để
+            # khớp lệnh với CITAD (khoá khớp lệnh vẫn là txid/msgref+loai+
+            # so_tien như cũ, xem run_doiSoat_ram()). Cần field này vì
+            # (txid, loai, so_tien) là khoá CỐ Ý làm thô để khớp lệnh linh
+            # hoạt — IPCAS xác nhận thật dùng CHUNG 1 txid cho nhiều lệnh
+            # KHÁC NHAU (khác nh_nhan), nên không thể dùng đúng khoá đó để
+            # kết luận "IPCAS ghi trùng" (regression thật 23/08/2026: 2 lệnh
+            # Đến khác ngân hàng nhận, trùng ngẫu nhiên txid+loai+so_tien, bị
+            # hiểu nhầm hàng loạt thành hạch toán trùng — xem ghi chú
+            # `_ghi_chu_khop_du_nguon` trong reconcile.py).
+            #
+            # `trace` giữ lại để tham khảo/audit (không tốn gì thêm, đã đọc
+            # sẵn cột này) nhưng KHÔNG đưa vào khoá mịn ở reconcile.py —
+            # xác nhận thật (23/08/2026, cùng ngày): 3 dòng cùng 1 lệnh
+            # trùng lặp có thể mang 2-3 giá trị trace KHÁC NHAU (IPCAS cấp
+            # trace mới mỗi lần ghi sổ) dù mọi trường khác giống hệt — đưa
+            # trace vào khoá làm dòng trùng thứ 3 rơi ra khoá riêng, biến
+            # mất khỏi báo cáo hoàn toàn (không khớp, không "Chỉ IPCAS").
+            'chi_nhanh': gv('CHI_NHANH'),
+            'trace': gv('TRACE'),
+            # `refhub` — mã tham chiếu gốc của điện đến, phải DUY NHẤT cho
+            # mỗi bản ghi thật (khác hẳn txid — có thể trùng giữa nhiều lệnh
+            # không liên quan, xem ghi chú `chi_nhanh` ở trên). Dùng để xác
+            # nhận chắc chắn "cùng 1 lệnh gốc" khi phát hiện hạch toán nhầm
+            # rồi huỷ (xem reconcile.py — GDV xác nhận 23/08/2026).
+            'refhub': gv('REFHUB'),
         })
     return result
 
@@ -636,6 +665,7 @@ def _parse_hub_xls(filepath, ext, fname, ngay_cham):
         i_loai_tien = -1
         i_ngay = -1
         i_nh = -1
+        i_trang_thai = -1
 
         for i in range(min(10, ws.nrows)):
             row_txt = ' '.join(str(ws.cell_value(i, j)).lower() for j in range(ws.ncols))
@@ -653,6 +683,7 @@ def _parse_hub_xls(filepath, ext, fname, ngay_cham):
                 cand_loai_tien = -1
                 cand_ngay = -1
                 cand_nh = -1
+                cand_trang_thai = -1
                 for j in range(ws.ncols):
                     hdr = str(ws.cell_value(i, j)).strip().lower()
                     # Uu tien 'so thanh cong' truoc, sau moi den msgid
@@ -670,10 +701,13 @@ def _parse_hub_xls(filepath, ext, fname, ngay_cham):
                         cand_ngay = j  # fallback ngay nhan
                     if 'ngân hàng' in hdr or 'nh ' in hdr:
                         cand_nh = j
+                    if 'trạng thái' in hdr or 'trang thai' in hdr:
+                        cand_trang_thai = j
                 if cand_so_tc < 0:
                     continue  # dòng khớp từ khoá nhưng không có cột thật — thử dòng sau
                 h_row, i_so_tc, i_so_tien = i, cand_so_tc, cand_so_tien
                 i_loai_tien, i_ngay, i_nh = cand_loai_tien, cand_ngay, cand_nh
+                i_trang_thai = cand_trang_thai
                 break
 
         if h_row < 0 or i_so_tc < 0:
@@ -717,6 +751,14 @@ def _parse_hub_xls(filepath, ext, fname, ngay_cham):
                 continue
 
             nh = str(ws.cell_value(i, i_nh)).strip() if i_nh >= 0 else ''
+            # Trạng thái — CHỈ để reconcile.py chọn đúng "dòng gốc" khi 1 lệnh
+            # chuyển chi nhánh sinh nhiều dòng cùng Số thành công (khác chi
+            # nhánh) — xác nhận nghiệp vụ 23/08/2026 (Phòng Thanh toán), cùng
+            # hiện tượng đã xử lý cho IPCAS (xem PRIORITY_TT/CGBR trong
+            # reconcile.py): "Đã trả KH" là dòng gốc, các trạng thái khác là
+            # dòng con (chi nhánh trung gian). KHÔNG dùng để lọc/loại bỏ dòng
+            # nào ở đây — chỉ mang theo để chọn ưu tiên lúc khớp lệnh.
+            trang_thai = str(ws.cell_value(i, i_trang_thai)).strip() if i_trang_thai >= 0 else ''
 
             result.append({
                 'so_gd': so_tc_clean,   # Số thành công = key ghép với CITAD
@@ -726,5 +768,6 @@ def _parse_hub_xls(filepath, ext, fname, ngay_cham):
                 'so_tien': int(so_tien),
                 'nh_nhan': nh,
                 'ngay': ngay,
+                'trang_thai': trang_thai,
             })
     return result
