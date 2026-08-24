@@ -482,12 +482,24 @@ Truy cập:
 - Upload file CITAD (`.xls`/`.xlsx`/`.zip`), IPCAS (`.csv`/`.zip`) và Hub ngoại tệ (`.xls`/`.xlsx`);
   khớp trong RAM theo `msgref` (Đi) / `txid` (Đến), phân loại lệch thành 4 nhóm:
   **Chỉ CITAD / Chỉ IPCAS / Chỉ Hub / Lệch trạng thái**
-- Cảnh báo khi chọn **trùng nội dung file** (băm SHA-256 toàn bộ byte, không dựa vào tên file)
+- **Phát hiện IPCAS/Hub hạch toán trùng**: cùng 1 lệnh ghi nhiều lần sẽ hiện thành từng dòng
+  **Chỉ Agribank** riêng (đúng số lần dư), kèm ghi chú "N lần" trên dòng đã khớp — không gộp lại
+  thành 1 dòng như trước
+- **Cặp "hạch toán nhầm rồi huỷ"** (GDV hạch toán tay sai chi nhánh rồi huỷ, hạch toán lại) được
+  nhận ra qua `REFHUB` và **loại khỏi đối soát** — không tính khớp, không tính lệch
+- ⚠️ **Lệnh Đến trạng thái PYED/PYEK nay VẪN hiện nếu không khớp CITAD.** Trước 24/08/2026 hai
+  trạng thái này được bỏ qua khi tính dư. Hệ quả: **báo cáo có thể nhiều dòng lệch hơn trước** một
+  cách hợp lệ — số liệu trước/sau mốc này không so sánh trực tiếp được
+- Cảnh báo khi chọn **trùng nội dung file** (băm SHA-256 toàn bộ byte, không dựa vào tên file).
+  ⚠️ Chỉ là cảnh báo, bấm qua được — nhưng chọn nhầm trùng file nay khiến **mỗi dòng đẻ 1 dòng
+  lệch giả**, không còn bị lọc âm thầm như trước
 - Xuất Excel 4 sheet; tab **Lịch sử** lưu `doi_soat_citad_history` kèm snapshot nguyên vẹn danh sách
   lệch — xem lại/tải lại đúng số liệu của lần đối soát cũ, không tính lại từ file gốc
 - Nút **"Xuất tất cả lệnh"** xuất đủ cả khớp lẫn lệch trong 1 sheet (lệch đẩy lên đầu, bôi vàng);
-  ~38.000 dòng mất ~6 giây nhờ đặt style ở cấp cột thay vì từng ô — xem
-  `docs/Implementation-notes.html`. Danh sách khớp **không** lưu vào lịch sử, chỉ giữ trong phiên
+  ~38.000 dòng mất ~6 giây nhờ đặt style ở cấp cột thay vì từng ô, riêng 2 cột số (STT, Số tiền)
+  phải gán căn lề từng ô vì Excel **không** áp style cột cho ô đã ghi giá trị — xem
+  `docs/Implementation-notes.html` (card 105). Danh sách khớp **không** lưu vào lịch sử, chỉ giữ
+  trong phiên
 - Phân quyền riêng theo nhóm (`menu.doi_soat_citad`)
 
 ### Module Sổ trực cuối ngày (Phòng Thanh toán)

@@ -9831,6 +9831,85 @@ This may happen if you try to create UI from a background task.</pre>
 
   <div class="card">
     <div class="card-header">
+      <span class="card-num">106</span>
+      <span class="card-title">Review PR#55 (Người 1): 6 phát hiện — 1 đã sửa trong PR, 5 CHƯA sửa, cố ý merge trước</span>
+      <span class="badge badge-warn">chưa sửa · 2026-08-24</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Vì sao ghi lại: merge khi biết còn lỗi — phải có chỗ tra lại</div>
+      <p>PR#55 được merge ngày 24/08/2026 <b>khi đang biết còn 5 điểm chưa sửa</b>. Quyết định của người
+      dùng: điểm ảnh hưởng ra ngoài module (chiếm slot <code>run_heavy()</code> dùng chung) đã vá ở
+      <code>e6a050b</code>, phần còn lại giao cho người phát triển xử lý ở PR sau. Card này giữ nguyên số
+      đo để PR sau không phải dò lại từ đầu.</p>
+
+      <table>
+        <tr><th>#</th><th>Chỗ</th><th>Hậu quả</th><th>Trạng thái</th></tr>
+        <tr><td>1</td><td><code>_ipcas_identity_key()</code> chiều <b>Đi</b> dùng <code>txid</code></td>
+            <td>Đẻ dòng "Chỉ IPCAS" GIẢ trong file gửi Phòng Thanh toán</td>
+            <td><b>CHƯA — nặng nhất</b></td></tr>
+        <tr><td>2</td><td>Hub: <code>_hub_identity_key()</code> phụ thuộc cột "Trạng thái"</td>
+            <td>File Hub không dò được cột đó → mọi lệnh chuyển chi nhánh thành dòng "Chỉ Hub" giả</td>
+            <td>CHƯA</td></tr>
+        <tr><td>3</td><td>Comment vòng "IPCAS Đi dư" + <code>excluded = False</code></td>
+            <td>Comment nói sai sự thật; biến chết</td><td>CHƯA</td></tr>
+        <tr><td>4</td><td><code>row_key="so_gd"</code> bảng chi tiết Lịch sử (frontend)</td>
+            <td><code>so_gd</code> nay rỗng ở mọi dòng Chỉ IPCAS/Hub → trùng khoá hàng loạt trong QTable</td>
+            <td>CHƯA</td></tr>
+        <tr><td>5</td><td><code>_ngay()</code> áp cho cả snapshot lịch sử CŨ</td>
+            <td>Xuất lại bản ghi cũ ra file KHÁC bản đã tải lần đầu, trong khi docstring route hứa "đúng y
+            hệt dữ liệu audit"</td><td>CHƯA — cần quyết định nghiệp vụ</td></tr>
+        <tr><td>6</td><td>Tốc độ xuất "Tất cả lệnh"</td><td>6,19s → 18,94s</td>
+            <td><b>ĐÃ SỬA</b> ở <code>e6a050b</code> (xem card 105)</td></tr>
+      </table>
+
+      <div class="caution">
+      <p><b>#1 — chi tiết, vì đây là cái phải sửa trước.</b> Chiều Đi khớp lệnh theo <code>msgref</code>,
+      nhưng khoá đếm trùng lại là <code>(chieu, txid, loai, so_tien, nh_nhan, chi_nhanh, trang_thai,
+      ngay)</code> — <b>không có <code>msgref</code></b>. Hai lệnh Đi THẬT SỰ khác nhau, mỗi lệnh khớp đúng
+      CITAD của nó, mà tình cờ cùng <code>txid</code> + trùng mọi trường còn lại sẽ bị đếm là "IPCAS ghi 2
+      lần" và mỗi lệnh đẻ thêm 1 dòng "Chỉ IPCAS".</p>
+      <p>Dựng tay kiểm chứng (2 lệnh, msgref M1/M2, cùng txid TX9): <b>develop cho <code>n_khop=2,
+      n_lech=0</code>; PR cho <code>n_khop=2, n_lech=2</code></b> — 2 dòng bịa ra. Nguy hiểm hơn: nếu file
+      IPCAS Đi <b>thiếu cột TXID</b>, <code>gv('TXID')</code> trả rỗng cho mọi dòng → khoá còn lại chỉ là
+      ngân hàng + số tiền + trạng thái + ngày + chi nhánh, mọi cặp lệnh Đi cùng số tiền tới cùng ngân hàng
+      trong ngày thành "trùng" → dòng giả hàng loạt. Đúng lớp hỏng mà PR đã sửa cho chiều Đến (n_lech nhảy
+      12 → 1.556) nhưng chiều Đi bỏ sót.</p>
+      <p><b>Cách sửa đã thử, 41 test mới vẫn pass, dòng giả biến mất</b> — thêm <code>msgref</code> vào
+      khoá:</p>
+      <pre><code>return (
+    r['chieu'], r.get('msgref', ''), r['txid'], r['loai'], r['so_tien'],
+    r.get('nh_nhan', ''), r.get('chi_nhanh', ''), r['trang_thai'], r['ngay'],
+)</code></pre>
+      <p>Test <code>test_ipcas_dup_ma_citad_khong_co_lenh_van_ra_2_dong_chi_ipcas</code> vẫn đúng vì 2 dòng
+      ở đó cùng <code>msgref</code>. Bộ test hiện KHÔNG có ca "2 lệnh Đi khác msgref" — cần thêm.</p>
+      </div>
+
+      <div class="note"><b>#2 — vì sao không chỉ là "thiếu cột thì thôi".</b> Comment trong code viết
+      <i>"File không có cột Trạng thái thì... không đổi hành vi"</i>. Câu đó đúng cho việc CHỌN dòng thắng
+      map, sai cho phần ĐẾM TRÙNG mới thêm: dòng Hub không mang <code>chi_nhanh</code>, nên
+      <code>trang_thai</code> là thứ DUY NHẤT phân biệt dòng gốc với dòng chuyển chi nhánh. Dựng tay: 1
+      lệnh gốc + 1 dòng chuyển chi nhánh, file không có cột Trạng thái → <b>develop 0 dòng lệch, PR 1 dòng
+      "Chỉ Hub"</b>. Cách dò cột hiện tại là <code>'trạng thái' in hdr or 'trang thai' in hdr</code> — trượt
+      nếu tiêu đề là "TrangThai"/"Tình trạng"/"Status", và trượt cả khi chuỗi trong file ở dạng Unicode
+      <b>NFD</b> còn chuỗi trong mã nguồn là NFC (đúng lớp lỗi đã ghi trong DESIGN.md về
+      <code>template_path()</code>). Nên chuẩn hoá NFC trước khi so, và báo lỗi rõ vào <code>errors</code>
+      khi không tìm thấy cột — thay vì lặng lẽ đi tiếp rồi báo lệch giả.</div>
+
+      <div class="note"><b>Vì sao dòng giả không phải chuyện nhỏ.</b> Soi <code>data/ksnb.db</code> thật:
+      ngày bình thường chỉ lệch <b>1–17 dòng</b> trên ~77.000 lệnh. Nhưng 2 lần chấm sai file đã sinh
+      93.781 và 21.957 dòng lệch → <b>19,34 MB và 4,76 MB</b> JSON. 9 bản ghi lịch sử đang chiếm
+      <b>25,3 MB trong tổng 28,5 MB</b> toàn bộ DB, và <b>không có cơ chế dọn</b>. Mọi cơ chế đẻ dòng giả
+      hàng loạt đều đi thẳng vào đây.</div>
+
+      <div class="note"><b>Không bị ảnh hưởng</b> (đã kiểm, để PR sau khỏi lo): <code>parsers.py</code> và
+      <code>reconcile.py</code> chỉ được <code>backend/api/doi_soat_citad.py</code> dùng — ACH / Chấm
+      459901 / Song phương / SWIFT có parser riêng. Không có migration, không đụng RBAC/session/bảng khác.
+      702 test pass sau merge.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
       <span class="card-num">TĐ</span>
       <span class="card-title">Định dạng cột TIEUDE_HS — bàn giao cho lưu trữ</span>
       <span class="badge badge-done">Đã sửa</span>

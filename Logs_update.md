@@ -4,6 +4,16 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 24/08/2026 Đối soát CITAD ↔ IPCAS - **Đã merge PR#55 vào develop (các mục 23/08 bên dưới nay đã lên bản chính)**
+    + **Gộp chung 6 đợt sửa ghi ở dưới**: bắt được IPCAS/Hub hạch toán trùng, loại cặp hạch toán nhầm-huỷ theo REFHUB, lệnh chuyển chi nhánh chỉ tính dòng gốc, sửa cột Ngày GD / STT / Số tiền trong file "Tất cả lệnh", thêm 41 test tự động cho phần đối soát (trước đây không có test nào)
+    + ⚠️ **Từ hôm nay báo cáo có thể NHIỀU dòng lệch hơn trước, và đó là đúng.** Lệnh Đến trạng thái **PYED/PYEK** trước đây được bỏ qua khi tính dư, nay không khớp CITAD là **vẫn hiện**. Vì vậy **số liệu trước và sau mốc 24/08/2026 không so sánh trực tiếp được** — không phải hệ thống hỏng
+    + ⚠️ **Chọn nhầm trùng file nay hậu quả nặng hơn nhiều.** Hộp cảnh báo "trùng nội dung file" vẫn chỉ là cảnh báo, bấm qua được — nhưng nếu bấm qua, **mỗi dòng trong file sẽ đẻ 1 dòng lệch giả** (trước đây bị lọc âm thầm). Thấy hộp cảnh báo đỏ thì nên xoá bớt file rồi chọn lại từ đầu
+    + 🔴 **Hai lỗi đã biết khi merge, CHƯA vá — đọc kỹ trước khi tin dòng lệch**:
+        * **Có thể hiện dòng "Chỉ IPCAS" GIẢ ở lệnh ĐI**, khi hai lệnh Đi khác nhau tình cờ trùng mã TXID và trùng cả số tiền / ngân hàng nhận / trạng thái / ngày. Dấu hiệu nhận ra: dòng lệch ghi *"1 trong 2 lần IPCAS ghi nhận lệnh này"* nhưng tra lại IPCAS chỉ thấy đúng 1 bút toán
+        * **Có thể hiện dòng "Chỉ Hub" GIẢ** nếu file Hub ngoại tệ không có cột *Trạng thái* (hoặc cột đó đổi tên) — lúc đó lệnh chuyển chi nhánh bị hiểu nhầm thành ghi trùng
+        * Cả hai chờ người phát triển vá ở đợt sau. Trong lúc chờ: **gặp dòng "Chỉ IPCAS"/"Chỉ Hub" kèm ghi chú "N lần" thì tra lại IPCAS/Hub trước khi báo lệch cho đối tác**. Chi tiết kỹ thuật + cách sửa đã đo ở `docs/Implementation-notes.html` card 106
+    + Không đổi cơ sở dữ liệu, không phải khai báo quyền lại. Toàn bộ **702 test** chạy đạt sau khi merge
+
 - 23/08/2026 Đối soát CITAD↔IPCAS - **Sửa lại theo review PR#55 (Người 1): fix căn lề STT/Số tiền hôm qua làm xuất "Tất cả lệnh" chậm gấp 3 lần**:
     + ⚠️ **Người 1 đo lại bằng cProfile trên PR**: cách sửa căn lề 2 cột STT/Số tiền (đợt trước) làm xuất "Tất cả lệnh" chậm từ 6,19 giây lên **18,94 giây (gấp 3,1 lần)** — comment lúc đó viết "không đánh đổi tốc độ xuất" nhưng chưa đo lại thật
     + **Nguyên nhân**: cách sửa cũ gán CẢ font+nền+viền+căn lề (4 thuộc tính) cho 2 ô đó, trong khi chỉ cần đúng căn lề + dấu phẩy — mỗi lượt gán thêm là 1 lượt máy phải so khớp kiểu dáng với bảng kiểu dùng chung của cả file, tốn thời gian
