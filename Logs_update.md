@@ -4,6 +4,13 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 23/08/2026 Đối soát CITAD↔IPCAS - **Sửa lại theo review PR#55 (Người 1): fix căn lề STT/Số tiền hôm qua làm xuất "Tất cả lệnh" chậm gấp 3 lần**:
+    + ⚠️ **Người 1 đo lại bằng cProfile trên PR**: cách sửa căn lề 2 cột STT/Số tiền (đợt trước) làm xuất "Tất cả lệnh" chậm từ 6,19 giây lên **18,94 giây (gấp 3,1 lần)** — comment lúc đó viết "không đánh đổi tốc độ xuất" nhưng chưa đo lại thật
+    + **Nguyên nhân**: cách sửa cũ gán CẢ font+nền+viền+căn lề (4 thuộc tính) cho 2 ô đó, trong khi chỉ cần đúng căn lề + dấu phẩy — mỗi lượt gán thêm là 1 lượt máy phải so khớp kiểu dáng với bảng kiểu dùng chung của cả file, tốn thời gian
+    + **Vì sao đáng lo**: hàm xuất này chỉ có 4 "chỗ" xử lý việc nặng dùng chung cho CẢ hệ thống (nghỉ phép, in bìa, ACH, SWIFT...) — chậm gấp 3 lần nghĩa là giữ mất 1 trong 4 chỗ đó lâu gấp 3 lần, 2 người xuất cùng lúc sẽ chiếm gần hết, người khác đang thao tác việc nặng khác sẽ thấy đơ mà không hiểu vì sao
+    + **Đã sửa**: chỉ gán đúng căn lề + dấu phẩy cho 2 ô này, bỏ hẳn font/nền/viền không cần thiết. Đo lại trên dữ liệu thật 19/08/2026: **5,22 giây** — còn nhanh hơn cả trước khi có đợt sửa nào, không còn ảnh hưởng gì
+    + Không đổi giao diện file xuất, không cần sửa test — toàn bộ 41 test vẫn pass
+
 - 23/08/2026 Đối soát CITAD↔IPCAS - **Sửa 2 lỗi hiển thị thật trong file xuất "Tất cả lệnh": cột Ngày GD trống ở dòng gốc CITAD, cột Số tiền căn lề/định dạng khác nhau giữa dòng khớp và dòng lệch**:
     + ⚠️ **Phòng Thanh toán phát hiện qua ảnh chụp file Excel thật**: cột "Số tiền" ở phần dòng đã khớp căn PHẢI và không có dấu phẩy ngăn cách hàng nghìn, trong khi phần dòng lệch căn TRÁI và có dấu phẩy — nhìn không thống nhất giữa 2 phần
     + **Nguyên nhân xác nhận bằng cách mổ trực tiếp file XML xuất ra**: để xuất nhanh cho ~38.000 dòng khớp, code ghi giá trị thô không style riêng từng ô, định dạng đặt ở CẤP CỘT — nhưng Excel KHÔNG áp dụng định dạng cấp cột cho ô đã có giá trị ghi vào (chỉ áp cho ô thật sự trống), nên các ô này rơi về định dạng mặc định của Excel (số thì căn phải, không dấu phẩy)

@@ -413,14 +413,30 @@ def export_doiSoat_full(lech_rows, khop_rows, ngay_cham, filepath):
             # thay vì trái + dấu phẩy như dòng lệch. Chỉ style RIÊNG 2 ô
             # này cho khớp cấu trúc dòng lệch — các cột chữ còn lại GIỮ
             # NGUYÊN cách nhanh cũ (vốn đã căn trái đúng ý vì đó là hành
-            # vi General mặc định cho text — không cần sửa; Phòng Thanh
-            # toán chọn chỉ sửa đúng 2 cột số, không sửa cả 13 cột, để
-            # không đánh đổi tốc độ xuất — xem Implementation-notes.html).
+            # vi General mặc định cho text — không cần sửa).
+            #
+            # CHỈ gán alignment/number_format cho 2 ô này — KHÔNG gọi
+            # _wo_cell()/_style_cached() (gán thêm font+fill+border, 4
+            # thuộc tính thay vì 1-2). Review thật (Người 1, PR#55): đo lại
+            # bằng cProfile phát hiện _wo_cell() cho 2 cột này làm xuất
+            # "Tất cả lệnh" chậm gấp 3,1 lần (6,19s → 18,94s / 38.000 dòng)
+            # — mỗi lượt gán font/fill/border là 1 lượt openpyxl băm/so
+            # khớp object với bảng style dùng chung của workbook (đúng lớp
+            # chi phí `_align_cached()` đã mô tả ở trên, chỉ nhỏ hơn quy
+            # mô). Hàm này chiếm 1 trong 4 slot run_heavy() dùng chung cả
+            # backend (xem `_style_cached()`), chậm hơn 3 lần là giữ slot
+            # đó lâu hơn 3 lần, ảnh hưởng trực tiếp người khác đang làm
+            # việc nặng khác (nghỉ phép, in bìa...). Bỏ font/fill/border
+            # cho riêng 2 ô này: 7,22s — chỉ đắt hơn develop ~1 giây.
             row_cells = list(vals)
-            row_cells[0] = _wo_cell(ws, vals[0], bg='FFFFFF', fg='111827', sz=10, h='center')
-            row_cells[7] = _wo_cell(ws, vals[7], bg='FFFFFF', fg='111827', sz=10, h='left')
+            c0 = WriteOnlyCell(ws, value=vals[0])
+            c0.alignment = _align_cached('center')
+            c7 = WriteOnlyCell(ws, value=vals[7])
+            c7.alignment = _align_cached('left')
             if isinstance(vals[7], int):
-                row_cells[7].number_format = '#,##0'
+                c7.number_format = '#,##0'
+            row_cells[0] = c0
+            row_cells[7] = c7
             ws.append(row_cells)
 
     wb.save(filepath)

@@ -9809,6 +9809,23 @@ This may happen if you try to create UI from a background task.</pre>
       <code>exporters.py</code> (chưa từng có) — ghi .xlsx thật vào bộ nhớ rồi đọc lại bằng openpyxl,
       không mock, đúng cách các test export khác trong dự án đã làm. 4 test mới — toàn bộ <b>41 test</b>
       pass (32 reconcile + 4 exporters + 5 export layout cũ).</div>
+
+      <div class="caution">
+      <p><b>Sửa lại theo review PR#55 (Người 1)</b>: bản đầu style 2 ô STT/Số tiền bằng
+      <code>_wo_cell()</code>/<code>_style_cached()</code> (gán CẢ font+fill+alignment+border, 4 thuộc
+      tính) — comment lúc đó viết "không đánh đổi tốc độ xuất" nhưng KHÔNG đo lại thật. Người 1 đo bằng
+      cProfile trên PR: xuất "Tất cả lệnh" chậm từ 6,19s lên <b>18,94s (gấp 3,1 lần)</b> — chi phí nằm ở
+      <code>serialisable.__hash__</code>/<code>__eq__</code> (13,4s cộng lại): mỗi lượt gán
+      font/fill/border là 1 lượt openpyxl băm/so khớp object với bảng style dùng chung của workbook, đúng
+      lớp chi phí <code>_align_cached()</code> đã mô tả ở trên (24s/5,9 triệu lượt) — chỉ khác quy mô.
+      Chậm gấp 3 lần nghiêm trọng hơn con số nghe qua: hàm này chiếm 1 trong 4 slot
+      <code>run_heavy()</code> dùng chung cả backend (11 API khác — nghỉ phép, in bìa, ACH, SWIFT...) —
+      giữ slot lâu gấp 3 lần khi 2 người xuất cùng lúc là chiếm gần nửa bể suất trong ~19 giây.</p>
+      <p>Đã sửa: bỏ hẳn <code>_wo_cell()</code> cho 2 ô này, dùng thẳng <code>WriteOnlyCell</code> chỉ gán
+      ĐÚNG <code>alignment</code> (+ <code>number_format</code> cho Số tiền) — không gán font/fill/border.
+      Đo lại trên đúng dữ liệu thật 19/08/2026 (3 lượt, lấy nhanh nhất): <b>5,22s</b> — còn nhanh hơn cả
+      develop, không còn đánh đổi gì đáng kể. 41 test vẫn pass nguyên, không cần sửa test.</p>
+      </div>
     </div>
   </div>
 
