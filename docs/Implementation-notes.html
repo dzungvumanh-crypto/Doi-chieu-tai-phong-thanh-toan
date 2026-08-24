@@ -9282,6 +9282,536 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
+  <!-- 94 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">94</span>
+      <span class="card-title">Đối soát CITAD: THỬ mở rộng chốt chặn "CITAD gửi trùng" sang VND Đến + ngoại tệ, rồi RÚT LẠI trong ngày — dữ liệu thật cho thấy sai</span>
+      <span class="badge badge-warn">reverted · 2026-08-22</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Ý định ban đầu (không phải yêu cầu nghiệp vụ — tự rà soát thêm)</div>
+      <p>PR #25 (card 55) đã sửa bug "CITAD gửi trùng 1 <code>so_gd</code> N lần → tự tính khớp thêm N-1
+      lần một cách im lặng" — nhưng chỉ áp dụng cho nhánh <b>VND Đi</b>. Ba nhánh còn lại của
+      <code>run_doiSoat_ram()</code> — VND Đến, ngoại tệ Đi, ngoại tệ Đến (Hub) — không có chốt chặn nào.
+      Đã thử mở rộng cùng cơ chế sang cả 3 nhánh, cho rằng cùng 1 lớp lỗi thì cũng cần chặn giống nhau.</p>
+
+      <div class="caution"><b>Sai lầm: suy luận "cùng lớp lỗi nên chặn giống nhau" không kiểm chứng được
+      bằng dữ liệu thật trước khi áp dụng.</b> Ca Đi (card 55) được duyệt vì có bằng chứng dữ liệu thật cụ
+      thể (lệnh huỷ 2 vế bị gộp 1 lượt tải). Ca Đến/ngoại tệ chỉ là suy đoán "không có gì ngăn nó xảy ra" —
+      không phải bằng chứng nó THẬT SỰ xảy ra, và càng không phải bằng chứng rằng khi nó trông giống trùng
+      lặp thì đó THẬT SỰ là lỗi cần gạt bỏ.</div>
+
+      <div class="label">Kiểm bằng đúng dữ liệu thật 19/08/2026 (10 file CITAD + 2 file IPCAS) trước khi chốt</div>
+      <table>
+        <tr><th></th><th>Khớp</th><th>Lệch</th></tr>
+        <tr><td>Trước khi mở rộng (chỉ VND Đi, đã duyệt)</td><td>38.130</td><td>12</td></tr>
+        <tr><td>Sau khi mở rộng sang Đến + ngoại tệ</td><td><b>36.715–36.720</b></td><td><b>1.422–1.427</b></td></tr>
+      </table>
+      <p>Soi trực tiếp các dòng bị gạt: <b>1.154 nhóm</b> VND Đến có cùng <code>(so_gd, loai, so_tien)</code>
+      xuất hiện ≥2 lần thật trong ngày — <b>942 nhóm cùng 1 cổng CITAD</b>, <b>212 nhóm khác cổng</b> (cổng 1
+      và cổng 9 cùng đánh số <code>so_gd</code> trùng nhau — CITAD đánh số RIÊNG theo từng cổng, trùng số
+      giữa 2 cổng không phải trùng thật). Thử thêm <code>dich_vu</code> vào khoá đếm trùng (dựa theo 1 ca
+      quan sát được ở nơi khác: lệnh Đến có thu NSNN, CITAD tách 2 dòng thật khác <code>dich_vu</code>) —
+      <b>không giải quyết được</b> vì phần lớn 942 nhóm cùng cổng có <code>dich_vu</code> giống hệt nhau
+      ("Chuyển có giá trị cao"), không phải ca NSNN.</p>
+
+      <div class="caution">Không đủ căn cứ nghiệp vụ để biết 942 nhóm "cùng cổng, trùng so_gd/so_tien" là
+      CITAD gửi trùng thật hay một đặc điểm cấu trúc báo cáo Đến (ví dụ điện báo Có + điện xác nhận riêng
+      cho cùng 1 lệnh, tương tự cách 1 lệnh Đi có thể có nhiều bút toán). Khác ca Đi: ở đây không có bằng
+      chứng cụ thể nào về NGUYÊN NHÂN nghiệp vụ, chỉ có hiện tượng thống kê trên 1 ngày dữ liệu.</div>
+
+      <div class="label">Quyết định: rút lại hoàn toàn phần mở rộng, quay về đúng bản đã duyệt (chỉ VND Đi)</div>
+      <p><code>reconcile.py</code> đã revert về đúng logic <code>di_vnd_seen</code>/<code>di_vnd_count</code>
+      gốc (đã diff byte-by-byte với bản trước khi sửa để xác nhận không còn khác biệt hành vi). Muốn thêm
+      chốt chặn dup cho Đến/ngoại tệ trong tương lai thì bắt buộc phải có Phòng Thanh toán xác nhận quy tắc
+      đúng bằng dữ liệu thật trước — giống hệt cách ca Đi đã được xác nhận ở card 55, không suy luận suông.</p>
+
+      <div class="note">Bộ test <code>tests/test_doi_soat_citad_reconcile.py</code> (15 test, module này TRƯỚC
+      ĐÓ không có test tự động nào) vẫn được giữ lại — có 2 test khoá lại đúng 2 phát hiện ở trên để không ai
+      vô tình thêm lại chốt chặn dup cho Đến mà chưa xác nhận: <code>test_vnd_den_cap_nsnn_khac_dich_vu_khong_bi_coi_la_dup</code>
+      và <code>test_vnd_den_trung_so_gd_khac_cong_khong_bi_coi_la_dup</code>. Đã chạy lại đúng dữ liệu thật
+      19/08/2026 qua bản đã revert: khớp <b>38.130</b>, lệch <b>12</b> — khôi phục đúng số liệu trước khi
+      mở rộng.</div>
+    </div>
+  </div>
+
+  <!-- 95 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">95</span>
+      <span class="card-title">Đối soát CITAD: phát hiện IPCAS/Hub hạch toán trùng lệnh (đối xứng ca CITAD gửi trùng lệnh Đi ở card 55) — 2 lần sửa lại trong ngày sau khi kiểm bằng dữ liệu thật</span>
+      <span class="badge badge-done">done · 2026-08-23</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Phát hiện qua kiểm thử thủ công (Phòng Thanh toán)</div>
+      <p>Copy thêm 1 dòng y hệt vào file IPCAS nguồn (mô phỏng IPCAS hạch toán trùng 1 lệnh Đến) rồi chạy đối
+      soát — máy <b>không báo gì cả</b>. Nguyên nhân: <code>parsers.py::_parse_ipcas_text()</code> có sẵn 1
+      bước lọc dòng trùng y hệt (cùng ngày/chi nhánh/txid/số tiền/trace/trạng thái) NGAY LÚC ĐỌC FILE, trước
+      khi tới bước đối soát — dòng trùng bị <b>bỏ hẳn</b>. Kiểm bằng đúng dữ liệu thật 19/08/2026: bước lọc
+      này đang âm thầm bỏ đi <b>5 dòng trùng thật</b> — hiện tượng này đã và đang xảy ra thật, không phải
+      giả thuyết.</p>
+
+      <p>Đây là chiều <b>NGƯỢC LẠI</b> của bug đã sửa ở card 55 (CITAD gửi trùng lệnh Đi, IPCAS chỉ có 1
+      dòng): ở đây CITAD chỉ có đúng 1 dòng, nhưng <b>IPCAS/Hub mới là bên có nhiều dòng</b> cho cùng 1 lệnh
+      đó. Người dùng yêu cầu thêm: (n-1) dòng thừa phải tự hiện thành dòng <b>"Chỉ IPCAS"/"Chỉ Hub" RIÊNG</b>
+      (không chỉ 1 câu ghi chú trên dòng khớp — CITAD chỉ xác nhận 1 lệnh, phần dư là số liệu không có gì
+      đối chứng, đúng bản chất "Chỉ Agribank"), và áp dụng nhất quán cho cả VND (IPCAS) lẫn ngoại tệ (Hub).</p>
+
+      <div class="caution"><b>Lần sửa đầu tiên trong ngày SAI — đã tự phát hiện và sửa lại trước khi ship,
+      không phải do người dùng báo.</b> Đếm "trùng" theo đúng khoá KHỚP LỆNH (msgref, hoặc
+      <code>(txid, loai, so_tien)</code>) — tưởng hợp lý vì đó vốn là khoá đã có sẵn. Kiểm lại bằng dữ liệu
+      thật 19/08/2026 trước khi báo xong: <code>n_lech</code> nhảy từ 12 lên <b>1.556</b>! Nguyên nhân: đúng
+      như ghi chú build <code>ipcas_den_map()</code> (card 94/55) đã cảnh báo — <b>IPCAS dùng CHUNG 1 txid
+      cho nhiều lệnh THẬT khác nhau</b> (khác <code>nh_nhan</code> — ngân hàng nhận). Soi trực tiếp: txid
+      <code>10002343</code> có 4 dòng IPCAS, 2 trong số đó CÙNG <code>(loai, so_tien)</code> nhưng KHÁC
+      <code>nh_nhan</code> (2 ngân hàng nhận khác nhau) — 2 lệnh thật độc lập, không phải trùng. Khoá khớp
+      lệnh vốn CỐ Ý làm thô để khớp linh hoạt (đúng mục đích của nó); dùng lại khoá đó để đếm "trùng" là sai
+      mục đích.</div>
+
+      <div class="label">Sửa lại: tách riêng khoá MỊN để đếm trùng, khác khoá khớp lệnh</div>
+      <p>Thêm <code>_ipcas_identity_key()</code> / <code>_hub_identity_key()</code> — gồm thêm
+      <code>nh_nhan</code>, <code>chi_nhanh</code>, <code>trace</code> (2 field sau MỚI thêm vào field trả về
+      của <code>_parse_ipcas_text()</code>, trước đây chỉ dùng nội bộ cho bước lọc đã bỏ). 2 dòng chỉ tính
+      "trùng nhau thật" khi khớp ĐỦ mọi trường này — đúng bản chất "bị lặp lại y hệt", không phải chỉ trùng
+      vài trường nhận dạng dùng để khớp lệnh.</p>
+      <table>
+        <tr><th></th><th>Khoá KHỚP LỆNH (giữ nguyên, không đổi)</th><th>Khoá ĐẾM TRÙNG (mới, tách riêng)</th></tr>
+        <tr><td>IPCAS Đi</td><td><code>msgref</code></td><td><code>(chieu, txid, loai, so_tien, nh_nhan, chi_nhanh, trace, trang_thai, ngay)</code></td></tr>
+        <tr><td>IPCAS Đến</td><td><code>(txid, loai, so_tien)</code></td><td>như trên</td></tr>
+        <tr><td>Hub (ngoại tệ)</td><td><code>so_gd</code></td><td><code>(chieu, so_gd, loai_tien, so_tien, nh_nhan, ngay)</code></td></tr>
+      </table>
+      <p>Kiểm lại đúng ví dụ txid <code>10001076</code>: có 3 dòng cùng <code>so_tien=399.800</code>, cùng
+      <code>nh_nhan</code>/<code>chi_nhanh</code> — 2 dòng cùng <code>trace=519472</code> (trùng thật, y hệt
+      từng field) được nhận đúng là 1 cặp trùng; dòng thứ 3 <code>trace=581138</code> KHÔNG bị gộp vào (khác
+      trace = lệnh thật khác, dù trùng số tiền) — đúng ý nghiệp vụ.</p>
+
+      <div class="label">Thiết kế cuối cùng</div>
+      <table>
+        <tr><th></th><th>Trước</th><th>Sau</th></tr>
+        <tr><td><code>_parse_ipcas_text()</code></td><td>Dòng trùng y hệt bị <code>continue</code> bỏ hẳn, im lặng</td>
+            <td>Bỏ HẲN bước lọc — giữ nguyên MỌI dòng kể cả trùng y hệt, để reconcile.py tự đếm đúng theo
+            khoá mịn</td></tr>
+        <tr><td>Dòng đã khớp ('both')</td><td>Không biết nguồn đối ứng có trùng hay không</td>
+            <td>Ghi <code>ghi_chu</code>: <em>"IPCAS/Hub ghi nhận lệnh này N lần (chỉ tính khớp 1 lần — xem
+            thêm N-1 dòng ở nhóm Chỉ IPCAS/Hub), cổng CITAD X"</em></td></tr>
+        <tr><td>(N-1) dòng thừa</td><td>Không tồn tại — bị nuốt mất</td>
+            <td>Sinh thêm (N-1) dòng <code>only_ipcas</code>/<code>only_hub</code> RIÊNG, mỗi dòng ghi rõ
+            "1 trong N lần ... — CITAD chỉ có 1 lệnh, cổng X — cần kiểm tra lại IPCAS/Hub"</td></tr>
+      </table>
+
+      <div class="note">Đã kiểm lại đúng dữ liệu thật 19/08/2026 sau khi sửa lại bằng khoá mịn: khớp
+      <b>38.130</b> (không đổi), lệch <b>18</b> (12 gốc + 6 dòng "Chỉ IPCAS" mới, đúng 6 lệnh trùng thật đã
+      xác nhận — không phải 1.556 như lần sửa sai). Thêm/sửa lại bộ test (21 test, tăng từ 19): dựng nhiều
+      dòng IPCAS/Hub y hệt thay vì 1 field đếm sẵn, kiểm cả 2 chiều Đi/Đến, cả IPCAS lẫn Hub, và ca "trùng
+      ngẫu nhiên khoá khớp lệnh nhưng không phải trùng thật" không bị báo sai. Toàn bộ 21 test pass.</div>
+    </div>
+  </div>
+
+  <!-- 96 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">96</span>
+      <span class="card-title">Đối soát CITAD: dòng "Chỉ IPCAS"/"Chỉ Hub" hiện nhầm số ở cột "Số GD (CITAD)" — bug có sẵn từ trước, phát hiện qua câu hỏi trực tiếp của người dùng</span>
+      <span class="badge badge-done">done · 2026-08-23</span>
+    </div>
+    <div class="card-body">
+      <p>Người dùng hỏi thẳng: vì sao 1 dòng báo "Chỉ IPCAS" (nghĩa là CITAD KHÔNG có lệnh này) lại vẫn hiện
+      1 số ở cột "Số GD (CITAD)"? Soi code: đúng là có, và là bug có sẵn từ trước hôm nay (đã diff với bản
+      gốc chưa sửa — giống hệt, không phải do các thay đổi trong ngày).</p>
+      <table>
+        <tr><th>Trạng thái</th><th>Cột "Số GD (CITAD)" (<code>so_gd</code>)</th><th>Cột "Số GD (Agribank)" (<code>key_agri</code>)</th></tr>
+        <tr><td>Chỉ CITAD</td><td>Số CITAD thật</td><td>Để trống ✓ (đúng — Agribank không có)</td></tr>
+        <tr><td>Chỉ IPCAS / Chỉ Hub (trước khi sửa)</td><td>Lấy tạm mã của IPCAS/Hub nhét vào ✗</td><td>Cùng mã đó</td></tr>
+      </table>
+      <p>Cột "Số GD (CITAD)" của dòng "Chỉ IPCAS"/"Chỉ Hub" bị điền tạm mã tham chiếu riêng của IPCAS/Hub
+      (msgref/txid/so_gd) — khiến người xem tưởng CITAD cũng có số đó, trong khi bản chất của "Chỉ IPCAS" là
+      <b>CITAD không hề có lệnh này</b>. Sai đối xứng với "Chỉ CITAD" (đã để trống đúng cột Agribank).</p>
+      <p><b>Sửa</b>: để trống <code>so_gd</code> ở cả 4 chỗ sinh dòng "Chỉ IPCAS"/"Chỉ Hub" (Đi/Đến × IPCAS/Hub)
+      và ở <code>_dong_thua_nguon()</code> (dòng thừa của card 95) — giữ nguyên <code>key_agri</code> có mã
+      tham chiếu như cũ. Chỉ đổi cách hiển thị, không đổi số Khớp/Lệch nào.</p>
+      <div class="note">Thêm 2 test khoá lại: <code>so_gd == ''</code> cho cả dòng "Chỉ IPCAS" và "Chỉ Hub".
+      Đã kiểm lại dữ liệu thật 19/08/2026: khớp 38.130, lệch 18 — không đổi so với card 95. Toàn bộ 23 test
+      pass.</div>
+    </div>
+  </div>
+
+  <!-- 97 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">97</span>
+      <span class="card-title">Đối soát CITAD: cài đặt đúng TODO "Lệnh chuyển chi nhánh Đến — chỉ tính dòng gốc" từ tài liệu bàn giao gốc</span>
+      <span class="badge badge-done">done · 2026-08-23</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Phát hiện qua trao đổi trực tiếp với Phòng Thanh toán khi xem dòng "Chỉ IPCAS"</div>
+      <p>Người dùng chỉ ra: một số lệnh IPCAS Đến có TXID dạng
+      <code>"số gốc-dãy số dài"</code> (vd <code>10001705-260819000000004736345251</code>) — đây là
+      <b>lệnh chuyển chi nhánh</b>, không phải chênh lệch thật. Tra lại <code>HANDOFF_DoiSoat_CITAD_Agribank.md</code>
+      (tài liệu bàn giao gốc của dự án) thì thấy mục này đã được ghi nhận từ trước nhưng đánh dấu
+      <b>chưa cài đặt</b>: <em>"Lệnh chuyển chi nhánh Đến: 1 lệnh gốc → nhiều dòng con IPCAS → chỉ tính
+      dòng gốc (chưa implement — TODO)"</em>.</p>
+
+      <p>Soi đúng dữ liệu thật 19/08/2026: tìm được <b>45 nhóm</b> TXID dạng này có ≥2 dòng. Mẫu nhất quán:
+      dòng <b>GỐC</b> luôn ở <b>chi nhánh <code>1000</code></b>, trạng thái <b>CGBR</b> (56/58 dòng); dòng
+      <b>CON</b> (bị chuyển sang chi nhánh khác xử lý) cùng số tiền, khác chi nhánh, trạng thái
+      RFED/WFPG/WTBR/PYED tuỳ trường hợp.</p>
+
+      <div class="caution"><b>Phát hiện thêm, quan trọng hơn câu hỏi ban đầu:</b> dòng gốc và dòng con dùng
+      CHUNG khoá khớp lệnh <code>(txid, loai, so_tien)</code> — nên đã tự va chạm ở
+      <code>build ipcas_den_map()</code> từ trước (từ đợt 20/08, không phải lỗi mới). Bảng ưu tiên
+      <code>PRIORITY_TT</code> lúc đó KHÔNG có <code>CGBR</code>, nên nó bị mặc định coi ưu tiên thấp nhất
+      (99) — dòng CON (vd <code>RFED</code>=3) luôn thắng NHẦM dòng GỐC mỗi khi va chạm, ngược hẳn với
+      nguyên tắc "chỉ tính dòng gốc". Hậu quả: ngân hàng nhận/trạng thái hiển thị cho những lệnh này là của
+      dòng con, không phải dòng gốc.</div>
+
+      <p><b>Nguyên tắc nghiệp vụ được xác nhận (Phòng Thanh toán, 23/08/2026):</b> "dòng chuyển chi nhánh
+      không phải chênh lệch vì đó là hoạt động nội bộ — 1 lệnh CITAD cân với 1 lệnh GỐC IPCAS là được".</p>
+
+      <p><b>Sửa:</b> thêm <code>CGBR</code> vào <code>PRIORITY_TT</code> với độ ưu tiên CAO NHẤT (0, các mã
+      còn lại dịch xuống 1 bậc). Dòng gốc giờ luôn thắng khi va chạm; dòng con thua bị loại khỏi map hoàn
+      toàn — không tạo dòng "Chỉ IPCAS" giả, đúng ý "không phải chênh lệch, chỉ là hoạt động nội bộ".</p>
+
+      <div class="note">Kiểm bằng đúng dữ liệu thật 19/08/2026 (so sánh cùng 1 lượt chạy, chỉ đổi
+      <code>PRIORITY_TT</code>): khớp/lệch <b>không đổi</b> (38.130/18) ở cả 2 bản — chỉ đổi ĐÚNG trường
+      cần đổi (trạng thái/ngân hàng nhận của các lệnh có va chạm gốc/con, vd <code>10001705</code>: từ
+      hiện <code>RFED</code> sang đúng <code>CGBR</code>). Thêm 1 test khoá lại đúng ca này — toàn bộ 24
+      test pass.</div>
+    </div>
+  </div>
+
+  <!-- 98 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">98</span>
+      <span class="card-title">Đối soát CITAD: bỏ ngoại lệ PYED/PYEK ở "IPCAS Đến dư" — lệnh giả/bất thường mang trạng thái này trước đây biến mất hoàn toàn, không báo gì</span>
+      <span class="badge badge-done">done · 2026-08-23</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Phát hiện qua tự kiểm thử của Phòng Thanh toán</div>
+      <p>Thêm 1 lệnh KHÔNG CÓ THẬT (không khớp CITAD nào, tự chế mã <code>10005134</code>/số tiền
+      <code>6.200.000</code>) vào file IPCAS Đến, mang trạng thái <code>PYED</code>, rồi chạy đối soát —
+      máy không báo gì cả, tổng số dòng còn <b>giảm đi</b> so với kỳ vọng. Nguyên nhân: ngoại lệ có từ
+      card 55 (20/08) — "bỏ PYED/PYEK khi tính dư IPCAS Đến", với lý do PYED/PYEK là lệnh đang xử lý, CITAD
+      chưa kịp có nên không tính là chênh lệch. Ngoại lệ này áp dụng cho MỌI lệnh mang trạng thái đó, kể cả
+      lệnh không hề tồn tại/bất thường — không có cách nào phân biệt "PYED thật đang chờ" với "PYED giả sẽ
+      không bao giờ khớp".</p>
+
+      <p><b>Nguyên tắc nghiệp vụ được xác nhận (Phòng Thanh toán, 23/08/2026):</b> "chênh lệch SỐ LƯỢNG
+      lệnh áp dụng cho MỌI trạng thái, không riêng gì trạng thái nào" — không có CITAD khớp thì luôn phải
+      hiện ra, bất kể PYED/PYEK/RFED/SBSC hay gì khác.</p>
+
+      <p><b>Sửa:</b> bỏ hẳn ngoại lệ PYED/PYEK trong vòng lặp "IPCAS Đến dư" — lệnh Đến không khớp CITAD
+      nào giờ luôn hiện "Chỉ IPCAS", không phân biệt trạng thái.</p>
+
+      <div class="note">Kiểm bằng đúng dữ liệu thật 19/08/2026 (đã có sẵn lệnh giả người dùng thêm tay):
+      lệch tăng ĐÚNG <b>+1</b> (17 → 18, đúng bằng 1 lệnh giả vừa thêm), khớp không đổi (38.130) — không
+      có bùng nổ số lượng dù PYED là trạng thái khá phổ biến trong dữ liệu thật, nghĩa là tuyệt đại đa số
+      lệnh PYED thật đã có CITAD khớp sẵn, chỉ đúng lệnh bất thường mới lộ ra. Sửa lại 2 test đã khoá hành
+      vi CŨ (giờ khoá đúng hành vi MỚI) — toàn bộ 24 test pass.</div>
+    </div>
+  </div>
+
+  <!-- 99 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">99</span>
+      <span class="card-title">Đối soát CITAD: mở rộng "chuyển chi nhánh — chỉ tính dòng gốc" (card 97) sang ngoại tệ (Hub) — nhất quán VND/ngoại tệ</span>
+      <span class="badge badge-done">done · 2026-08-23</span>
+    </div>
+    <div class="card-body">
+      <p>Xác nhận nghiệp vụ 23/08/2026 (Phòng Thanh toán): ngoại tệ (USD/EUR qua Hub) cũng có hiện tượng
+      "chuyển chi nhánh" như IPCAS (card 97) — 1 lệnh Đến/Đi sinh nhiều dòng CÙNG "Số thành công" nhưng
+      khác chi nhánh. Khác IPCAS (gộp gốc/con vào 1 cột TXID dạng "gốc-dãy số dài"), file Hub tách riêng
+      thành các cột: <b>Số thành công</b>, <b>Số Ref HUB</b>, <b>Số Trace</b>, <b>Trạng thái</b> — dòng
+      GỐC xác nhận mang trạng thái <b>"Đã trả KH"</b>, dòng còn lại là chi nhánh trung gian.</p>
+
+      <div class="caution">Trước bản sửa này, <code>_parse_hub_xls()</code> <b>không hề đọc cột "Trạng
+      thái"</b> — hoàn toàn không có field này trong dữ liệu Hub trả về. Và <code>hub_di_map</code>/
+      <code>hub_den_map</code> dựng theo kiểu "dòng đầu tiên trong file thắng", KHÔNG có ưu tiên gì — kém
+      tin cậy hơn cả IPCAS trước khi sửa CGBR (IPCAS ít nhất còn có <code>PRIORITY_TT</code>, dù thiếu đúng
+      mã gốc). Nghĩa là dòng nào thắng phụ thuộc thứ tự dòng trong file Hub — không tất định.</p>
+
+      <p><b>Sửa:</b></p>
+      <table>
+        <tr><th></th><th>Trước</th><th>Sau</th></tr>
+        <tr><td><code>parsers.py::_parse_hub_xls()</code></td><td>Không đọc cột Trạng thái</td>
+            <td>Thêm nhận diện cột "Trạng thái", trả về field <code>trang_thai</code> (chỉ để chọn ưu
+            tiên, KHÔNG lọc/loại bỏ dòng nào)</td></tr>
+        <tr><td><code>hub_di_map</code>/<code>hub_den_map</code></td><td>Dòng đầu tiên trong file thắng
+            (không tất định)</td>
+            <td><code>HUB_ROOT_STATUS = 'Đã trả KH'</code> luôn thắng khi trùng Số thành công — file không
+            có cột Trạng thái thì mọi dòng cùng ưu tiên, giữ nguyên "dòng đầu thắng" như cũ (không đổi
+            hành vi khi thiếu cột)</td></tr>
+        <tr><td><code>_hub_identity_key()</code> (đếm trùng, card 95/96)</td>
+            <td>Không có <code>trang_thai</code> trong khoá</td>
+            <td>Thêm <code>trang_thai</code> vào khoá — <b>bắt buộc</b>, nếu không cặp gốc/con (khác trạng
+            thái) sẽ bị hiểu nhầm thành "Hub ghi nhận trùng", tái diễn đúng lỗi vừa sửa cho IPCAS</td></tr>
+      </table>
+
+      <div class="note">Xác nhận bằng file Hub thật (<code>Hub_GDDen_USD_03062026.xlsx</code>): parser đọc
+      đúng field <code>trang_thai</code> = "Đã trả KH" cho toàn bộ 21 dòng, không lỗi. File mẫu chưa có ví
+      dụ trùng Số thành công thật để kiểm end-to-end quy mô lớn (khác IPCAS — có sẵn dữ liệu 19/08/2026 với
+      45+ nhóm chuyển chi nhánh thật) — hành vi được khoá bằng test dựng tay
+      (<code>test_ngoai_te_lenh_chuyen_chi_nhanh_dong_goc_da_tra_kh_luon_thang</code>). Toàn bộ 25 test
+      pass.</div>
+    </div>
+  </div>
+
+  <!-- 100 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">100</span>
+      <span class="card-title">Đối soát CITAD: bỏ `trace` khỏi khoá nhận dạng IPCAS trùng — 5/5 nhóm đã phát hiện thực ra bị đếm THIẾU, không phải chỉ trùng 2 lần</span>
+      <span class="badge badge-done">done · 2026-08-23</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Phát hiện qua tự kiểm thử của Phòng Thanh toán</div>
+      <p>Người dùng xoá thử 1 dòng trong nhóm trùng IPCAS (<code>10002289</code>) để kiểm tra — kiểm lại
+      thấy có tới <b>3 dòng</b> cho khoá này, không phải 2 như báo cáo trước đó. Soi kỹ: cả <b>5/5 nhóm</b>
+      đã phát hiện ở card 95/96 đều thực ra có <b>3 dòng</b> — 2 dòng trùng y hệt CẢ <code>trace</code>,
+      dòng thứ 3 giống hệt mọi trường khác (chi nhánh, ngân hàng, trạng thái, ngày, số tiền) nhưng
+      <b>khác trace</b>. Dòng thứ 3 này trước đây rơi vào 1 khoá nhận dạng riêng (do <code>trace</code>
+      có trong khoá mịn <code>_ipcas_identity_key()</code>) và <b>biến mất hoàn toàn</b> khỏi báo cáo —
+      không khớp, không "Chỉ IPCAS", không ở đâu cả.</p>
+
+      <div class="caution">Nguyên nhân gốc: <code>ipcas_den_map</code> (khoá khớp lệnh thô) chỉ giữ ĐÚNG 1
+      dòng thắng cho mỗi khoá <code>(txid, loai, so_tien)</code> — dòng thua hoàn toàn không được nhắc tới
+      ở đâu khác trong <code>reconcile.py</code>. Cơ chế đếm trùng (card 95/96) chỉ đếm những dòng CÙNG khoá
+      mịn với dòng THẮNG — nếu khoá mịn quá chặt (có trace), dòng thua với trace khác bị bỏ sót hoàn toàn,
+      không phải chỉ "đếm thiếu 1" mà là "biến mất không dấu vết".</p>
+
+      <p><b>Sửa:</b> bỏ <code>trace</code> khỏi <code>_ipcas_identity_key()</code>. Lý do trace không phải
+      tín hiệu phân biệt "gốc/con" hay "2 lệnh thật khác nhau": IPCAS có thể cấp trace MỚI mỗi lần ghi sổ,
+      kể cả khi ghi trùng lặp cùng 1 bút toán — 2 dòng giống hệt mọi trường định danh khác (chi nhánh, ngân
+      hàng, trạng thái, ngày, số tiền) mà chỉ khác trace gần như chắc chắn là CÙNG 1 bút toán bị ghi nhiều
+      lần, không phải 2 giao dịch thật trùng hợp mọi thứ. Việc phân biệt "chuyển chi nhánh" (card 97) đã có
+      <code>chi_nhanh</code> + <code>trang_thai</code> đảm nhiệm, không cần đến trace.</div>
+
+      <div class="note">Kiểm bằng đúng dữ liệu thật 19/08/2026: cả 5/5 nhóm trùng đã phát hiện đều lộ ra
+      đúng 3 lần (không phải 2) sau khi sửa. Kiểm thêm bằng cách xoá NGẪU NHIÊN 20 lệnh IPCAS bất kỳ (không
+      liên quan gì tới các nhóm trùng/chuyển chi nhánh): <b>cả 20/20 hiện đúng "Chỉ CITAD"</b>, số Khớp
+      giảm đúng 20 — xác nhận cơ chế phát hiện "lệnh CITAD không có gì đối ứng" hoạt động đúng và tổng quát,
+      không riêng ca cụ thể vừa test. Thêm 1 test khoá lại đúng ca "khác trace nhưng vẫn là trùng thật" —
+      toàn bộ 26 test pass.</div>
+    </div>
+  </div>
+
+  <!-- 101 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">101</span>
+      <span class="card-title">Đối soát CITAD: rà soát cuối ngày — tách tập theo dõi "đã khớp" cho VND/ngoại tệ (bug thật, có từ trước hôm nay) + nhất quán ghi_chú trùng ở nhánh lệch trạng thái Đi</span>
+      <span class="badge badge-done">done · 2026-08-23</span>
+    </div>
+    <div class="card-body">
+      <div class="label">1. Bug thật, có TỪ TRƯỚC hôm nay — không liên quan các fix trong ngày</div>
+      <p>Người dùng yêu cầu rà soát tổng thể sau một loạt sửa lỗi trong ngày. Đọc lại toàn bộ
+      <code>run_doiSoat_ram()</code> phát hiện: <code>citad_matched_di</code>/<code>citad_matched_den</code>
+      là 2 tập DÙNG CHUNG cho cả nhánh VND (khớp IPCAS) và ngoại tệ (khớp Hub), chỉ phân biệt theo khoá
+      <code>so_gd</code>. so_gd VND và so_gd ngoại tệ là <b>2 hệ đánh số hoàn toàn độc lập</b> — hoàn toàn
+      có thể trùng số ngẫu nhiên trong cùng 1 ngày.</p>
+
+      <div class="caution">Hậu quả xác nhận bằng test dựng tay: CITAD ngoại tệ <code>so_gd='999'</code>
+      khớp Hub bình thường → tự thêm <code>'999'</code> vào tập "đã khớp" DÙNG CHUNG. Nếu IPCAS VND CŨNG có
+      1 dòng <code>msgref='999'</code> (không hề có CITAD VND nào tương ứng — 2 lệnh hoàn toàn không liên
+      quan, chỉ trùng SỐ), vòng lặp "IPCAS Đi dư" tra thấy <code>'999' in citad_matched_di</code> = True
+      (do lệnh ngoại tệ) nên BỎ QUA — lệnh IPCAS VND thật <b>biến mất hoàn toàn</b> khỏi báo cáo, không khớp
+      cũng không "Chỉ IPCAS". Đây là bug có sẵn trong kiến trúc TRƯỚC cả hôm nay, chỉ chưa bị phát hiện vì
+      bộ dữ liệu thật dùng để kiểm suốt ngày hôm nay (19/08/2026) không có dòng CITAD ngoại tệ nào.</p>
+
+      <p><b>Sửa:</b> tách thành 4 tập riêng — <code>citad_matched_di_ipcas</code> /
+      <code>citad_matched_den_ipcas</code> (VND) và <code>citad_matched_di_hub</code> /
+      <code>citad_matched_den_hub</code> (ngoại tệ) — không còn chia sẻ khoá giữa 2 hệ đánh số độc lập.</p>
+
+      <div class="label">2. Nhất quán ghi_chú "trùng" ở nhánh lệch trạng thái (Đi)</div>
+      <p>Nhánh khớp SCNL ('both') đã gắn <code>ghi_chu</code> khi IPCAS trùng (card 95/96), nhưng nhánh
+      <code>lech_trang_thai</code> (IPCAS khớp msgref nhưng chưa SCNL) thì KHÔNG — dòng "Chỉ IPCAS" thừa vẫn
+      tự hiện riêng đúng (2 vòng lặp độc lập nhau), chỉ là dòng <code>lech_trang_thai</code> chính không có
+      gì báo cho người xem biết IPCAS cũng đang trùng. Đã thêm ghi_chu tương tự, gộp chung với ghi chú
+      ERPO/CALD nếu cả 2 cùng áp dụng (nối bằng " | ").</p>
+
+      <div class="note">Kiểm lại đúng dữ liệu thật 19/08/2026 sau cả 2 sửa: khớp <b>38.129</b>, lệch
+      <b>24</b> — không đổi (đúng như dự đoán, dataset không có dòng ngoại tệ nên bug #1 không có cơ hội
+      biểu hiện ở đây, chỉ xác nhận bằng test dựng tay). Thêm 2 test khoá lại — toàn bộ <b>28 test</b> pass.
+      <br><br>
+      <b>Thống kê cuối cùng của module sau cả ngày rà soát (19/08/2026):</b> 38.130 dòng CITAD, 38.269 dòng
+      IPCAS, 0 lỗi parse → 38.129 khớp / 24 lệch (1 Chỉ CITAD + 23 Chỉ IPCAS, không còn lệch trạng thái hay
+      dup_citad nào trong ngày này).</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">102</span>
+      <span class="card-title">Đối soát CITAD: sửa tính SAI số dòng "IPCAS/Hub ghi nhận trùng" khi CITAD cũng tự trùng khoá thật</span>
+      <span class="badge badge-done">done · 2026-08-23</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Câu hỏi trực tiếp của Phòng Thanh toán làm lộ ra lỗi</div>
+      <p>"Lệnh lệch kia có chắc chắn ở file CITAD không có đúng không, vì nếu các lệnh giống hệt nhau
+      nhưng các lệnh đó có đủ ở CITAD và IPCAS thì không phải lệch". Đọc lại
+      <code>_dong_thua_nguon()</code> và các vòng lặp "IPCAS/Hub dư" (card 100) phát hiện: chữ ghi chú
+      <code>f' — CITAD chỉ có 1 lệnh, cổng {cong}'</code> là <b>viết cứng số 1</b> — không hề đếm lại
+      CITAD thực có bao nhiêu dòng cho khoá đó, chỉ cần "có khớp" (<code>cong</code> khác None) là in y
+      nguyên "chỉ có 1 lệnh". Số dòng thừa sinh ra cũng luôn tính <code>n_dup - 1</code>, ngầm giả định
+      CITAD chỉ có 1.</p>
+
+      <div class="caution">Giả định "CITAD luôn 1 dòng/khoá" ĐÚNG với VND Đi (dòng CITAD trùng đã bị lọc
+      riêng thành <code>dup_citad</code> từ trước — card gốc 20/08) nhưng <b>SAI với VND Đến và ngoại tệ
+      (Hub)</b> — 2 nhánh này CITAD được phép tự trùng khoá thật, đã tự xác nhận có <b>1.154 nhóm</b> VND
+      Đến trùng thật riêng ngày 19/08/2026 (xem card 94/95, lý do rút lại việc chặn dup Đến).<br><br>
+      Ví dụ lỗi cụ thể: CITAD trùng 2 dòng thật + IPCAS trùng 3 dòng cho cùng 1 khoá → code cũ báo dư
+      SAI <b>2</b> dòng (3-1, coi CITAD chỉ có 1) thay vì ĐÚNG <b>1</b> dòng (3-2), kèm ghi chú sai "CITAD
+      chỉ có 1 lệnh" dù CITAD thật có 2.</div>
+
+      <p><b>Đã sửa:</b> thêm 3 bộ đếm số dòng CITAD thật theo khoá (<code>citad_den_vnd_count</code>,
+      <code>citad_hub_di_count</code>, <code>citad_hub_den_count</code>), dùng số đếm THẬT (<code>n_citad</code>)
+      thay cho giả định 1 trong cả công thức tính số dòng thừa lẫn câu ghi chú. VND Đi giữ nguyên hành vi
+      cũ (n_citad luôn đúng là 1 khi matched, do đã lọc trùng từ trước) — không có test nào bị đổi.</p>
+
+      <div class="note">Kiểm bằng dữ liệu thật 19/08/2026 (parse lại từ đầu, độc lập với logic đối soát):
+      trong 24 dòng lệch hôm nay, không dòng nào rơi vào đúng tình huống lỗi (CITAD chỉ có 0 hoặc 1 dòng
+      cho mỗi khoá bị báo lệch) — số liệu báo cáo <b>không đổi</b> (38.129 khớp / 24 lệch) sau khi sửa,
+      nhưng lỗi có thật và sẽ biểu hiện sai nếu gặp đúng tình huống (CITAD Đến/Hub trùng ≥2 + nguồn đối
+      ứng trùng nhiều hơn số đó) ở dữ liệu ngày khác. Thêm 1 test dựng tay khoá đúng ca lỗi (CITAD trùng 2,
+      IPCAS trùng 3 → dư đúng 1, không phải 2) — toàn bộ <b>29 test</b> pass.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">103</span>
+      <span class="card-title">Đối soát CITAD: tìm ra nguyên nhân thật của phần lớn "Chỉ IPCAS" — GDV hạch toán thủ công nhầm chi nhánh, phải huỷ rồi hạch toán lại</span>
+      <span class="badge badge-done">done · 2026-08-23</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Phòng Thanh toán tự tìm ra nguyên nhân nghiệp vụ</div>
+      <p>Soi lại 1 trong 5 nhóm "Chỉ IPCAS" đang bị báo (card 100) trực tiếp trong file Excel gốc: lệnh
+      Đến được GDV hạch toán thủ công <b>NHẦM chi nhánh</b>, phải <b>HUỶ</b> bút toán đó rồi hạch toán lại
+      thủ công đúng nơi. Bút toán HUỶ dùng LẠI đúng số <code>TRACE</code> của bút toán bị huỷ (2 dòng CÙNG
+      chi nhánh + CÙNG trace), còn bút toán hạch toán lại ĐÚNG luôn được cấp trace MỚI — và có thể ở
+      <b>chi nhánh khác</b> với cặp nhầm/huỷ đó.</p>
+
+      <div class="note">Đây là lời giải thích ĐÚNG cho hiện tượng "trùng trace" đã phát hiện ở card 100 —
+      không phải "IPCAS ngẫu nhiên cấp trace khác nhau mỗi lần ghi sổ" như suy đoán ban đầu, mà là dấu vết
+      của 1 quy trình sửa sai CÓ CHỦ ĐÍCH của GDV. Kiểm lại cả 5 nhóm đang bị báo lệch: cả 5/5 đều đúng
+      mẫu này (2 dòng trùng chi nhánh+trace, 1 dòng trace riêng) — không phải chênh lệch thật.</div>
+
+      <p><b>Đã thêm</b> <code>_loc_hach_toan_nham_huy()</code> trong <code>reconcile.py</code>, chạy TRƯỚC
+      khi dựng bất kỳ map/đếm nào: nhóm dòng IPCAS Đến theo <code>refhub</code> (mã tham chiếu điện đến
+      gốc — parse mới, xem <code>parsers.py</code>) — dùng refhub thay vì (txid, loại, số tiền) vì refhub
+      DUY NHẤT cho mỗi lệnh thật (100% dòng Đến có refhub, không dòng nào lặp >3 lần trên dữ liệu
+      19/08/2026), trong khi txid có thể trùng ngẫu nhiên giữa nhiều lệnh không liên quan (xem ghi chú
+      build <code>ipcas_den_map()</code>). Trong mỗi nhóm refhub, cặp dòng CÙNG chi nhánh + CÙNG trace bị
+      loại HOÀN TOÀN khỏi đối soát (không tính khớp, không tính lệch) — chỉ dòng trace riêng còn lại được
+      dùng để đối chiếu CITAD.</p>
+
+      <div class="caution">An toàn: chỉ loại khi trong CÙNG 1 refhub còn sót lại ít nhất 1 dòng sau khi
+      loại. Nếu TOÀN BỘ dòng cùng refhub đều trùng chi nhánh+trace (không có dòng nào trace riêng) thì
+      GIỮ NGUYÊN, không loại gì — theo Phòng Thanh toán, trường hợp này không xảy ra trong thực tế, chỉ
+      là chốt an toàn phòng khi dữ liệu bất thường.</div>
+
+      <table>
+        <tr><th></th><th>Trước</th><th>Sau</th></tr>
+        <tr><td>Cặp nhầm/huỷ trùng chi nhánh+trace</td><td>Tính là 2 lần IPCAS ghi trùng, sinh dòng
+        "Chỉ IPCAS" cần kiểm tra lại</td><td>Loại hoàn toàn, không hiện gì — đúng bản chất "không phải
+        chênh lệch"</td></tr>
+        <tr><td>Dòng trace riêng (bút toán đúng)</td><td>Có thể bị dòng nhầm/huỷ che khuất trong cách đếm
+        cũ (ưu tiên theo <code>PRIORITY_TT</code>)</td><td>Luôn là dòng dùng để khớp CITAD</td></tr>
+      </table>
+
+      <div class="note">Kiểm bằng dữ liệu thật 19/08/2026: <b>n_khop giữ nguyên 38.129</b> (5 lệnh này vẫn
+      khớp CITAD như cũ), <b>n_lech giảm từ 24 xuống 14</b> (13 Chỉ IPCAS + 1 Chỉ CITAD) — đúng 10 dòng
+      vừa loại là 5 nhóm × 2 dòng thừa/nhóm, không đổi gì khác. Thêm 3 test khoá lại (ca thường, ca dòng
+      đúng ở chi nhánh khác, ca an toàn không có dòng đúng) — toàn bộ <b>32 test</b> pass.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">104</span>
+      <span class="card-title">Đối soát CITAD: rà soát lại toàn bộ sau các sửa hôm nay — sửa câu ghi chú viết cứng sai khi CITAD tự trùng khoá thật</span>
+      <span class="badge badge-done">done · 2026-08-23</span>
+    </div>
+    <div class="card-body">
+      <p>Người dùng yêu cầu rà soát lại toàn bộ đối soát sau một loạt sửa lỗi trong ngày (card 100-103).
+      Đọc lại <code>_ghi_chu_khop_du_nguon()</code> — hàm gắn ghi chú lên dòng ĐÃ khớp khi nguồn đối ứng
+      (IPCAS/Hub) ghi nhận trùng — phát hiện câu chữ vẫn <b>viết cứng "chỉ tính khớp 1 lần"</b>, y hệt kiểu
+      giả định đã sửa ở <code>_dong_thua_nguon()</code> (card 102) nhưng KHÔNG được sửa theo ở đây.</p>
+
+      <div class="caution">Đúng với VND Đi (CITAD trùng đã lọc riêng thành <code>dup_citad</code>, luôn
+      chỉ còn 1 dòng khớp) nhưng SAI với VND Đến/Hub — nơi CITAD được phép tự trùng khoá thật (1.154 nhóm
+      xác nhận ngày 19/08/2026). Ví dụ: CITAD trùng 2 dòng thật + IPCAS trùng 3 dòng → 2 dòng "khớp" sẽ
+      hiện sai <i>"chỉ tính khớp 1 lần — xem thêm 2 dòng"</i> thay vì đúng <i>"khớp 2 lần — xem thêm 1
+      dòng"</i>. Chỉ sai CÂU CHỮ giải thích — <code>n_khop</code>/<code>n_lech</code> đã đúng từ card 102,
+      không đổi gì thêm ở đây.</div>
+
+      <p><b>Đã sửa:</b> thêm tham số <code>n_citad</code> vào <code>_ghi_chu_khop_du_nguon()</code>, dùng
+      đúng số dòng CITAD thật khớp được ở cả 5 nơi gọi (VND Đi/Đến, Hub Đi/Đến) thay vì giả định cứng là 1
+      — VND Đi truyền thẳng <code>1</code> (đúng do đã lọc từ trước), Đến/Hub truyền
+      <code>citad_den_vnd_count</code>/<code>citad_hub_*_count</code> (đã có sẵn từ card 102).</p>
+
+      <div class="note">Kiểm bằng dữ liệu thật 19/08/2026: không có nhóm nào rơi đúng vào tình huống này
+      (CITAD trùng thật ĐỒNG THỜI IPCAS/Hub cũng trùng) — số liệu và câu chữ đều không đổi hôm nay, chỉ là
+      lỗi tiềm ẩn cho ngày khác. Mở rộng test card 102 để khoá thêm câu ghi chú đúng ("khớp 2 lần — xem
+      thêm 1 dòng") — toàn bộ <b>32 test</b> pass, không thêm test mới (dùng lại đúng ca đã có).</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">105</span>
+      <span class="card-title">Đối soát CITAD: sửa 2 lỗi hiển thị thật trong file xuất "Tất cả lệnh" — cột Ngày GD trống ở dòng gốc CITAD, cột Số tiền căn lề/định dạng khác dòng lệch</span>
+      <span class="badge badge-done">done · 2026-08-23</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Phòng Thanh toán phát hiện qua ảnh chụp file Excel thật</div>
+      <p>Người dùng gửi ảnh chụp file "Tất cả lệnh" thật: cột <b>Số tiền</b> ở phần dòng đã khớp căn PHẢI
+      và không có dấu phẩy ngăn cách hàng nghìn, trong khi phần dòng lệch (đẩy lên đầu bảng) căn TRÁI và
+      có dấu phẩy — nhìn không thống nhất giữa 2 phần ("căn chỉnh... không thống nhất").</p>
+
+      <div class="caution">Xác nhận nguyên nhân bằng cách mổ TRỰC TIẾP file XML xuất ra từ dữ liệu thật:
+      để xuất nhanh cho ~38.000 dòng khớp, <code>export_doiSoat_full()</code> ghi giá trị thô, không style
+      riêng từng ô — định dạng/căn lề đặt ở CẤP CỘT (<code>column_dimensions[...].alignment/number_format</code>)
+      với giả định "Excel tự áp style cột cho ô không style riêng". Giả định đó SAI cho ô ĐÃ CÓ GIÁ TRỊ: ô
+      loại này ghi ra XML KHÔNG có thuộc tính <code>s=</code>, Excel dùng style style-index 0 (mặc định)
+      thay vì style của cột — số thì căn phải, không dấu phẩy. Chỉ style THẬT SỰ áp dụng cho ô hoàn toàn
+      trống (chưa từng ghi) — điều kiện không xảy ra ở đây vì mọi ô đều được <code>ws.append(vals)</code>
+      ghi giá trị (kể cả rỗng).</div>
+
+      <p><b>Cùng lúc phát hiện thêm</b> (cùng ảnh chụp): cột "Ngày GD" luôn TRỐNG ở mọi dòng có gốc CITAD
+      (status <code>both</code>/<code>only_citad</code>) — kiểm tra toàn bộ 38.130 dòng CITAD ngày
+      19/08/2026: <b>100% rỗng field <code>ngay</code></b>. Nguyên nhân: file CITAD không có cột ngày
+      riêng từng dòng, chỉ 1 dòng header "Ngày giao dịch: dd/mm/yyyy" áp dụng cho CẢ FILE (xem
+      <code>parse_citad_xls()</code>) — khác dòng "Chỉ IPCAS" có ngày riêng thật từng dòng nên hiện bình
+      thường, tạo cảm giác 2 phần "lệch cột" khi cuộn từ phần lệch (có ngày) xuống phần khớp (trống).</p>
+
+      <table>
+        <tr><th>Lỗi</th><th>Trước</th><th>Sau</th></tr>
+        <tr><td>Ngày GD (dòng gốc CITAD)</td><td>Để trống</td>
+            <td>Hiện đúng <code>ngay_cham</code> — mọi dòng 1 lần chấm luôn cùng 1 ngày</td></tr>
+        <tr><td>Số tiền (dòng khớp)</td><td>Căn phải, không dấu phẩy</td>
+            <td>Style riêng ĐÚNG 1 ô này: căn trái + dấu phẩy, giống hệt dòng lệch</td></tr>
+        <tr><td>STT (dòng khớp)</td><td>Căn PHẢI (số nguyên, Excel General tự căn phải)</td>
+            <td>Style riêng ĐÚNG 1 ô này: căn GIỮA, giống hệt dòng lệch — phát hiện tiếp qua câu hỏi
+            trực tiếp của người dùng ("cột STT chưa khớp"), cùng gốc lỗi với Số tiền</td></tr>
+      </table>
+
+      <div class="note">Đã cân nhắc sửa CẢ 13 cột cho khớp cấu trúc dòng lệch tuyệt đối, nhưng chi phí đo
+      được (comment sẵn trong code): cache style vẫn mất ~58 giây/lần xuất cho ~38.000 dòng, so với ~5,8
+      giây hiện tại — hàm này dùng chung 1 trong 4 suất xử lý nặng của backend, chậm sẽ nghẽn cả việc
+      không liên quan (in bìa, đơn nghỉ phép). Phòng Thanh toán chọn CHỈ style đúng 2 cột SỐ (Số tiền, STT
+      — 2 cột duy nhất mang giá trị số nguyên nên bị Excel General tự căn lệch ý định), giữ nguyên tốc độ
+      cho 11 cột chữ còn lại (vốn đã căn trái đúng ý vì đó là hành vi General mặc định cho text).</div>
+
+      <div class="note">Thêm file test riêng <code>tests/test_doi_soat_citad_exporters.py</code> cho
+      <code>exporters.py</code> (chưa từng có) — ghi .xlsx thật vào bộ nhớ rồi đọc lại bằng openpyxl,
+      không mock, đúng cách các test export khác trong dự án đã làm. 4 test mới — toàn bộ <b>41 test</b>
+      pass (32 reconcile + 4 exporters + 5 export layout cũ).</div>
+    </div>
+  </div>
+
   <div class="card">
     <div class="card-header">
       <span class="card-num">TĐ</span>

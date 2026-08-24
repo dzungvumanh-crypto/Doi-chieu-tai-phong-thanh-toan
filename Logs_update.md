@@ -4,6 +4,89 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 23/08/2026 Đối soát CITAD↔IPCAS - **Sửa 2 lỗi hiển thị thật trong file xuất "Tất cả lệnh": cột Ngày GD trống ở dòng gốc CITAD, cột Số tiền căn lề/định dạng khác nhau giữa dòng khớp và dòng lệch**:
+    + ⚠️ **Phòng Thanh toán phát hiện qua ảnh chụp file Excel thật**: cột "Số tiền" ở phần dòng đã khớp căn PHẢI và không có dấu phẩy ngăn cách hàng nghìn, trong khi phần dòng lệch căn TRÁI và có dấu phẩy — nhìn không thống nhất giữa 2 phần
+    + **Nguyên nhân xác nhận bằng cách mổ trực tiếp file XML xuất ra**: để xuất nhanh cho ~38.000 dòng khớp, code ghi giá trị thô không style riêng từng ô, định dạng đặt ở CẤP CỘT — nhưng Excel KHÔNG áp dụng định dạng cấp cột cho ô đã có giá trị ghi vào (chỉ áp cho ô thật sự trống), nên các ô này rơi về định dạng mặc định của Excel (số thì căn phải, không dấu phẩy)
+    + **Cùng lúc phát hiện thêm**: cột "Ngày GD" luôn TRỐNG ở mọi dòng có gốc CITAD (dòng khớp, dòng Chỉ CITAD) — vì file CITAD không có cột ngày riêng cho từng dòng (chỉ ghi 1 lần ở đầu file, áp dụng chung), khác dòng Chỉ IPCAS có ngày riêng nên hiện bình thường — tạo cảm giác 2 phần "lệch cột" khi xem
+    + **Đã sửa**: cột Ngày GD nay hiện đúng ngày đang chấm khi CITAD không có ngày riêng (mọi dòng trong 1 lần chấm luôn cùng 1 ngày, không mơ hồ); cột Số tiền ở dòng khớp được style riêng (căn trái + dấu phẩy) giống hệt dòng lệch — chỉ đúng 1 cột này, KHÔNG style lại cả 13 cột để giữ tốc độ xuất (đổi tốc độ ~10 lần chỉ để đồng bộ toàn bộ cột là không đáng, theo lựa chọn của Phòng Thanh toán)
+    + **Phát hiện tiếp cùng gốc lỗi**: cột "STT" ở dòng khớp cũng bị y hệt vấn đề trên (là số nguyên nên Excel tự căn PHẢI thay vì GIỮA như ý định) — sửa cùng cách, style riêng đúng ô STT cho dòng khớp
+    + Thêm 4 test mới (file test riêng cho `exporters.py`, ghi file Excel thật rồi đọc lại kiểm tra, không mock) — toàn bộ **41 test** pass
+
+- 23/08/2026 Đối soát CITAD↔IPCAS - **Rà soát lại toàn bộ sau các sửa hôm nay: sửa 1 câu ghi chú viết cứng sai khi CITAD tự trùng khoá thật, chưa từng ảnh hưởng dữ liệu đã chấm**:
+    + ⚠️ **Phát hiện qua tự rà soát** (theo yêu cầu kiểm tra lại toàn bộ đối soát): câu ghi chú trên dòng ĐÃ khớp khi báo "nguồn đối ứng ghi nhận trùng" luôn viết cứng "chỉ tính khớp 1 lần" — đúng với lệnh Đi nhưng SAI với lệnh Đến/ngoại tệ khi CITAD cũng tự trùng khoá thật (đã xác nhận có thật, xem mục sửa lỗi tính dòng thừa phía dưới): ví dụ CITAD trùng 2 dòng thật + IPCAS trùng 3 dòng sẽ hiện sai "chỉ tính khớp 1 lần — xem thêm 2 dòng" thay vì đúng "khớp 2 lần — xem thêm 1 dòng"
+    + **Không ảnh hưởng số liệu tổng** (khớp/lệch vẫn đúng, chỉ câu chữ giải thích sai) — kiểm dữ liệu thật 19/08/2026: không có trường hợp nào rơi đúng vào tình huống này nên báo cáo hôm nay không sai
+    + **Đã sửa**: câu ghi chú giờ dùng đúng số dòng CITAD thật khớp được, không còn viết cứng là 1
+    + Thêm 1 test khoá lại — toàn bộ **32 test** pass, số liệu thật không đổi (38.129 khớp / 14 lệch)
+
+- 23/08/2026 Đối soát CITAD↔IPCAS - **Tìm ra và loại đúng nguyên nhân của phần lớn dòng "Chỉ IPCAS" đang bị báo hôm nay: GDV hạch toán thủ công nhầm chi nhánh, phải huỷ rồi hạch toán lại**:
+    + ⚠️ **Phòng Thanh toán tự tìm ra nguyên nhân** khi soi lại 1 trong các nhóm bị báo lệch bằng Excel: lệnh Đến được GDV hạch toán thủ công NHẦM chi nhánh, phải HUỶ bút toán đó rồi hạch toán lại thủ công đúng nơi — bút toán HUỶ dùng LẠI đúng số phiếu ghi sổ (trace) của bút toán bị huỷ (2 dòng cùng chi nhánh, cùng trace), còn bút toán hạch toán lại ĐÚNG luôn có số trace MỚI (có thể ở chi nhánh khác). Đây chính là nguyên nhân thật của hiện tượng "trùng trace" đã phát hiện hôm qua — không phải IPCAS ngẫu nhiên cấp trace khác nhau, mà là 1 quy trình sửa sai có chủ đích của GDV
+    + **Kiểm lại cả 5 nhóm đang bị báo "Chỉ IPCAS" hôm nay**: cả 5/5 đều đúng mẫu này (2 dòng trùng chi nhánh+trace, 1 dòng trace riêng) — nghĩa là cả 5 nhóm không phải chênh lệch thật, chỉ là dấu vết của việc sửa sai thao tác, không cần Phòng Thanh toán kiểm tra lại nữa
+    + **Đã thêm**: đọc thêm cột "REFHUB" (mã tham chiếu điện đến gốc, duy nhất cho mỗi lệnh thật, không bị trùng lặp giữa các lệnh khác nhau như TXID) để xác định chắc chắn nhiều dòng có phải cùng 1 lệnh gốc hay không, trước khi áp dụng quy tắc loại cặp trùng chi nhánh+trace
+    + **An toàn**: nếu 1 lệnh có TẤT CẢ các dòng đều trùng chi nhánh+trace (không tìm được dòng nào là bút toán đúng cuối cùng) thì KHÔNG loại gì cả, vẫn báo lệch như trước — theo xác nhận của Phòng Thanh toán, trường hợp này không xảy ra trong thực tế, chỉ là chốt an toàn
+    + **Kết quả trên dữ liệu thật 19/08/2026**: số lệch giảm từ 24 xuống còn **14** (13 Chỉ IPCAS + 1 Chỉ CITAD), số khớp giữ nguyên 38.129 — đúng 10 dòng vừa loại là 5 nhóm × 2 dòng thừa mỗi nhóm
+    + Thêm 3 test khoá lại (kể cả ca dòng đúng ở chi nhánh khác, và ca an toàn không có dòng nào đúng) — toàn bộ **32 test** pass
+
+- 23/08/2026 Đối soát CITAD↔IPCAS - **Sửa lỗi tính SAI số dòng "IPCAS/Hub ghi nhận trùng" khi CITAD cũng tự trùng khoá thật (chưa từng xảy ra trên dữ liệu đã chấm, nhưng có thể xảy ra)**:
+    + ⚠️ **Phát hiện qua câu hỏi trực tiếp của Phòng Thanh toán**: "lệnh lệch có chắc CITAD không có không, nếu các lệnh giống hệt nhau nhưng có đủ ở cả CITAD và IPCAS thì không phải lệch". Kiểm tra lại code phát hiện: khi tính số dòng "Chỉ IPCAS"/"Chỉ Hub" do nguồn đối ứng ghi nhận trùng, phần mềm LUÔN giả định CITAD chỉ có đúng 1 lệnh cho mỗi mã giao dịch — đúng với lệnh Đi (VNĐ) nhưng KHÔNG đúng với lệnh Đến (VNĐ) và ngoại tệ (Hub), 2 loại này CITAD được phép tự trùng mã thật (đã xác nhận 1.154 nhóm trùng thật riêng ngày 19/08/2026)
+    + **Ví dụ cụ thể lỗi cũ**: CITAD trùng 2 dòng thật + IPCAS trùng 3 dòng cho cùng 1 lệnh → phần mềm cũ báo dư SAI 2 dòng (3-1, coi CITAD chỉ có 1) thay vì ĐÚNG 1 dòng (3-2), kèm ghi chú sai "CITAD chỉ có 1 lệnh" dù CITAD thật có 2
+    + **Đã kiểm lại toàn bộ dữ liệu 19/08/2026**: không có ca nào rơi vào đúng tình huống lỗi (24 dòng lệch hôm nay đều ứng với CITAD có 0 hoặc 1 dòng, không có dòng nào CITAD có ≥2) — số liệu báo cáo hôm nay KHÔNG đổi (38.129 khớp / 24 lệch), nhưng lỗi có thật và cần sửa trước khi gặp phải trong dữ liệu ngày khác
+    + **Đã sửa**: đếm đúng số dòng CITAD thật theo từng mã giao dịch thay vì giả định luôn là 1, áp dụng cho cả VNĐ Đến lẫn ngoại tệ (Hub)
+    + Thêm 1 test khoá lại đúng ca lỗi (CITAD trùng 2, IPCAS trùng 3 → dư đúng 1) — toàn bộ 29 test pass
+
+- 23/08/2026 Đối soát CITAD↔IPCAS - **Rà soát cuối ngày: sửa 1 lỗi có sẵn từ trước (không phải do các sửa hôm nay), không ảnh hưởng ngày nào đã chấm bằng VNĐ thuần tuý**:
+    + ⚠️ **Lỗi tìm được**: khi 1 ngày chấm có CẢ lệnh VNĐ lẫn lệnh ngoại tệ (USD/EUR), nếu 1 mã số giao dịch VNĐ trùng ngẫu nhiên với 1 mã số giao dịch ngoại tệ (2 hệ đánh số hoàn toàn độc lập với nhau, trùng số là chuyện ngẫu nhiên có thể xảy ra), lệnh IPCAS thật của bên VNĐ có thể **biến mất hoàn toàn khỏi báo cáo** — không khớp, không "Chỉ IPCAS". Lỗi này có sẵn trong phần mềm từ trước, không phải do các lần sửa trong ngày hôm nay gây ra — chỉ tình cờ chưa gặp phải vì dữ liệu dùng để kiểm tra suốt hôm nay chỉ có lệnh VNĐ, không có lệnh ngoại tệ
+    + **Đã sửa**: tách riêng việc theo dõi "lệnh nào đã khớp" cho VNĐ và ngoại tệ, không dùng chung nữa
+    + **Đồng thời sửa cho nhất quán**: dòng "lệch trạng thái" (khớp được số hiệu nhưng IPCAS chưa xác nhận thành công) giờ cũng ghi rõ khi IPCAS có dữ liệu trùng, giống như dòng đã khớp hoàn toàn — trước đây chỉ dòng khớp hoàn toàn mới có ghi chú này
+    + Thêm 2 test khoá lại — toàn bộ 28 test pass. Đã kiểm lại dữ liệu thật 19/08/2026: số liệu không đổi (38.129 khớp / 24 lệch), đúng như dự kiến vì ngày này chỉ có lệnh VNĐ
+
+- 23/08/2026 Đối soát CITAD↔IPCAS - **Sửa tiếp: các lệnh "IPCAS hạch toán trùng" phát hiện hôm nay thực ra bị đếm THIẾU (trùng 3 lần, báo có 2)**:
+    + ⚠️ **Phát hiện qua tự kiểm thử của Phòng Thanh toán**: xoá thử 1 dòng trong 1 nhóm trùng IPCAS để kiểm tra lại, phát hiện nhóm đó thực ra có 3 dòng, không phải 2. Kiểm lại toàn bộ: **cả 5 nhóm đã báo trùng hôm nay đều bị thiếu đúng 1 dòng** — dòng thứ 3 giống hệt mọi thông tin (chi nhánh, ngân hàng, trạng thái, ngày, số tiền) nhưng có 1 số phiếu ghi sổ (trace) khác, nên bị máy hiểu nhầm là "khác nhau" và **biến mất hoàn toàn** khỏi báo cáo — không khớp, không "Chỉ IPCAS", không hiện ở đâu cả
+    + **Đã sửa**: số phiếu ghi sổ không còn được dùng để phân biệt "trùng hay không trùng" nữa — chỉ cần giống hệt các thông tin định danh khác (chi nhánh, ngân hàng, trạng thái, ngày, số tiền) là tính là trùng, bất kể số phiếu ghi sổ khác nhau
+    + **Đã kiểm chứng thêm bằng cách xoá NGẪU NHIÊN 20 lệnh IPCAS bất kỳ** (không liên quan gì tới các nhóm trùng) — cả 20/20 đều hiện đúng "Chỉ CITAD" ngay, xác nhận việc phát hiện "lệnh CITAD không có gì đối ứng" hoạt động đúng cho mọi trường hợp, không riêng ca cụ thể vừa test
+    + Thêm 1 test khoá lại — toàn bộ 26 test pass
+
+- 23/08/2026 Đối soát CITAD↔IPCAS - **"Chuyển chi nhánh — chỉ tính dòng gốc" nay áp dụng cho cả ngoại tệ (USD/EUR qua Hub), không riêng VNĐ**:
+    + Xác nhận nghiệp vụ Phòng Thanh toán: ngoại tệ cũng có lệnh chuyển chi nhánh giống VNĐ (IPCAS) — 1 lệnh sinh nhiều dòng cùng "Số thành công" nhưng khác chi nhánh; dòng gốc là dòng mang trạng thái **"Đã trả KH"**
+- 23/08/2026 Đối soát CITAD↔IPCAS - **"Chuyển chi nhánh — chỉ tính dòng gốc" nay áp dụng cho cả ngoại tệ (USD/EUR qua Hub), không riêng VNĐ**:
+    + Xác nhận nghiệp vụ Phòng Thanh toán: ngoại tệ cũng có lệnh chuyển chi nhánh giống VNĐ (IPCAS) — 1 lệnh sinh nhiều dòng cùng "Số thành công" nhưng khác chi nhánh; dòng gốc là dòng mang trạng thái **"Đã trả KH"**
+    + **Trước bản sửa này, phần mềm hoàn toàn chưa đọc cột "Trạng thái" của file Hub ngoại tệ** — và khi trùng "Số thành công", dòng nào thắng phụ thuộc thứ tự dòng trong file (không cố định, có thể đổi kết quả giữa các lần chấm cùng 1 file). Nay dòng "Đã trả KH" luôn thắng, đúng dòng gốc
+    + **Không đổi cách làm hằng ngày.** File Hub không có cột Trạng thái thì mọi thứ giữ nguyên như trước (không có gì để ưu tiên)
+    + Thêm 1 test khoá lại hành vi này — toàn bộ 25 test pass
+
+- 23/08/2026 Đối soát CITAD↔IPCAS - **Bắt được thêm ca "IPCAS/Hub hạch toán trùng lệnh" — trước đây bị bỏ qua âm thầm, ra thành dòng "Chỉ Agribank"/"Chỉ Hub" riêng**:
+    + ⚠️ **Phát hiện qua tự kiểm thử của Phòng Thanh toán**: dán thêm 1 dòng y hệt vào file IPCAS để mô phỏng việc IPCAS ghi nhận trùng 1 lệnh Đến, chạy đối soát thì máy không báo gì — vì bước đọc file IPCAS có sẵn 1 khâu âm thầm bỏ dòng trùng y hệt trước khi đối soát kịp thấy
+    + **Đây là chiều ngược lại của tính năng đã có** (CITAD gửi trùng 1 lệnh Đi, IPCAS chỉ ghi 1 lần — phát hiện từ 20/08): nay thêm chiều IPCAS/Hub ghi trùng 1 lệnh, trong khi CITAD chỉ có đúng 1 lệnh — áp dụng cho **cả VND (IPCAS) lẫn ngoại tệ (Hub)**
+    + **Dòng trùng dư ra nay hiện thành dòng "Chỉ IPCAS"/"Chỉ Hub" RIÊNG** (không chỉ 1 câu ghi chú trên dòng đã khớp) — đúng bản chất CITAD chỉ xác nhận đúng 1 lệnh, phần dư ra là số liệu không có gì đối chứng. Dòng khớp và các dòng dư đều ghi rõ số lần trùng và đúng cổng CITAD của lệnh đó để tra thẳng ra
+    + 🔧 **Đính chính trong ngày — bản sửa đầu tiên tự phát hiện sai trước khi báo xong, đã sửa lại ngay**: lần đầu đếm "trùng" theo đúng mã giao dịch IPCAS dùng để khớp lệnh — tưởng hợp lý nhưng kiểm lại bằng dữ liệu thật thì số Lệch nhảy vọt từ 12 lên 1.556, vì IPCAS có thể dùng CHUNG 1 mã cho nhiều lệnh THẬT khác nhau (khác ngân hàng nhận) — bị hiểu nhầm hàng loạt thành "hạch toán trùng". Đã sửa: chỉ tính là trùng thật khi khớp đủ MỌI thông tin nhận dạng (thêm mã chi nhánh, số trace), không chỉ mã giao dịch. Đã kiểm lại đúng dữ liệu thật: về đúng **12 lệch gốc + 6 lệnh trùng thật đã xác nhận = 18**, không còn sai lệch lớn
+    + **Không đổi số Khớp của bất kỳ ngày nào đã chấm trước đây** — chỉ thêm dòng "Chỉ IPCAS"/"Chỉ Hub" mới cho đúng số lượng dư ra thật, không đổi lệnh nào đã khớp thành lệch
+    + Bộ test tự động của module tăng lên 21 bài, trong đó có bài canh riêng ca "trùng ngẫu nhiên mã giao dịch nhưng không phải trùng thật" để không tái diễn lỗi vừa đính chính
+
+- 23/08/2026 Đối soát CITAD↔IPCAS - **Lệnh Đến bất thường mang trạng thái PYED/PYEK không còn biến mất khỏi báo cáo**:
+    + ⚠️ **Phát hiện qua tự kiểm thử của Phòng Thanh toán**: thêm 1 lệnh KHÔNG CÓ THẬT (không khớp CITAD nào) mang trạng thái PYED vào file IPCAS Đến, chạy đối soát thì máy không báo gì — vì có sẵn 1 luật từ 20/08 bỏ qua mọi lệnh Đến trạng thái PYED/PYEK khi tính "Chỉ IPCAS" (lý do ban đầu: PYED/PYEK là đang xử lý, CITAD chưa kịp có). Luật đó không phân biệt được "PYED thật đang chờ CITAD" với "PYED giả sẽ không bao giờ khớp" — cả hai đều bị bỏ qua như nhau, im lặng
+    + **Nguyên tắc đúng đã xác nhận**: chênh lệch SỐ LƯỢNG lệnh áp dụng cho MỌI trạng thái, không riêng gì trạng thái nào. Từ nay lệnh Đến không khớp CITAD nào luôn hiện "Chỉ IPCAS", bất kể mang trạng thái gì
+    + **Không gây bùng nổ số liệu** dù PYED là trạng thái khá phổ biến — kiểm bằng dữ liệu thật: số Lệch chỉ tăng đúng 1 (đúng bằng lệnh giả vừa thêm để test), nghĩa là tuyệt đại đa số lệnh PYED thật vốn đã khớp sẵn với CITAD, chỉ đúng lệnh bất thường mới lộ ra
+    + Sửa lại 2 test đã khoá hành vi cũ, giờ khoá đúng hành vi mới — toàn bộ 24 test pass
+
+- 23/08/2026 Đối soát CITAD↔IPCAS - **Cài đặt đúng việc còn dang dở từ tài liệu bàn giao gốc: "Lệnh chuyển chi nhánh Đến — chỉ tính dòng gốc"**:
+    + ⚠️ **Phát hiện qua trao đổi với Phòng Thanh toán**: một số lệnh IPCAS Đến có mã dạng "số gốc-dãy số dài" — đây là lệnh CHUYỂN CHI NHÁNH (IPCAS chuyển 1 lệnh sang chi nhánh khác xử lý), không phải chênh lệch thật. Việc này đã được ghi chú từ trước trong tài liệu bàn giao gốc của dự án nhưng đánh dấu "chưa cài đặt"
+    + **Phát hiện thêm, quan trọng hơn**: dòng gốc (luôn ở 1 chi nhánh cố định, trạng thái CGBR) và dòng con (chuyển sang chi nhánh khác) đang dùng CHUNG 1 khoá để khớp lệnh — nên từ trước tới nay khi 2 dòng này trùng nhau, hệ thống **tự chọn NHẦM dòng con** để hiện kết quả đối soát (vì bảng độ ưu tiên trạng thái thiếu đúng mã của dòng gốc). Hậu quả: ngân hàng nhận và trạng thái hiển thị cho những lệnh này trước nay là của dòng con, không phải dòng gốc
+    + **Từ nay dòng gốc luôn được chọn đúng** khi có va chạm — dòng con (chỉ là thao tác nội bộ IPCAS) bị loại hẳn, không còn hiện sai thông tin ngân hàng nhận/trạng thái nữa. Đúng nguyên tắc Phòng Thanh toán xác nhận: "1 lệnh CITAD cân với 1 lệnh gốc IPCAS là được"
+    + **Không đổi số Khớp/Lệch của bất kỳ ngày nào** — đã kiểm chứng bằng đúng dữ liệu thật, chỉ đổi đúng thông tin hiển thị (ngân hàng nhận/trạng thái) cho các lệnh từng bị chọn nhầm
+    + Thêm 1 test khoá lại đúng hành vi này — toàn bộ 24 test pass
+
+- 23/08/2026 Đối soát CITAD↔IPCAS - **Dòng "Chỉ IPCAS"/"Chỉ Hub" thôi hiện nhầm số ở cột "Số GD (CITAD)"**:
+    + ⚠️ **Phát hiện qua câu hỏi trực tiếp của người dùng khi xem bảng kết quả**: dòng báo "Chỉ IPCAS" (nghĩa là CITAD không hề có lệnh này) nhưng cột "Số GD (CITAD)" vẫn hiện 1 số — gây hiểu lầm là CITAD cũng có lệnh đó. Đây là lỗi hiển thị **có sẵn từ trước**, không phải do các thay đổi trong ngày, chỉ là được để ý ra khi đang xem kỹ các dòng liên quan tới mục ở trên
+    + **Từ nay dòng "Chỉ IPCAS"/"Chỉ Hub" để trống đúng cột "Số GD (CITAD)"** — giống hệt cách dòng "Chỉ CITAD" từ trước tới nay vẫn để trống đúng cột "Số GD (Agribank)". Áp dụng cho cả màn hình xem lẫn file Excel xuất ra
+    + **Không đổi số Khớp/Lệch của bất kỳ ngày nào** — chỉ đổi cách hiển thị 1 cột, không đổi lệnh nào từ khớp thành lệch hay ngược lại
+    + Thêm 2 test khoá lại đúng hành vi này (cột CITAD để trống ở cả dòng "Chỉ IPCAS" và "Chỉ Hub") — toàn bộ 23 test pass
+
+- 22/08/2026 Đối soát CITAD↔IPCAS - **Thử mở rộng chốt chặn "CITAD gửi trùng" sang lệnh Đến/ngoại tệ — RÚT LẠI trong ngày vì làm sai số liệu thật**:
+    + 🚫 **Đã thử rồi bỏ, không phải tính năng mới.** Có ý định mở rộng chốt chặn "CITAD gửi trùng" (sửa 20/08, khi đó chỉ áp cho lệnh Đi VND) sang cả lệnh Đến VND và ngoại tệ. Khi kiểm lại bằng đúng dữ liệu CITAD/IPCAS thật ngày 19/08/2026 thì phát hiện **số Khớp tụt từ 38.130 xuống còn 36.715** — mất hơn 1.400 lệnh khớp THẬT một cách oan uổng
+    + **Nguyên nhân**: CITAD đánh số "Số GD" **riêng theo từng cổng** (cổng 1, 9, 12, 17, 18) — một mã số hoàn toàn có thể trùng giữa 2 cổng khác nhau mà KHÔNG phải là gửi trùng, chỉ là trùng số ngẫu nhiên vì 2 cổng đếm độc lập. Máy không phân biệt được việc này với CITAD gửi trùng thật, nên gạt nhầm hàng loạt lệnh Đến khớp đúng thành "Trùng CITAD"
+    + ✅ **Đã trả lại đúng như cũ — chỉ VND Đi mới có chốt chặn "gửi trùng", như từ 20/08 tới nay.** Đã kiểm lại bằng đúng dữ liệu 19/08/2026: số Khớp/Lệch về đúng 38.130/12 như trước. **Không ai cần làm gì, màn hình và số liệu không đổi so với trước ngày hôm nay**
+    + Thêm bộ test tự động đầu tiên cho module Đối soát CITAD (15 test, trước đây module này không có test nào) — trong đó có 2 bài khoá lại đúng phát hiện ở trên, để lần sau có ai định mở rộng chốt chặn này thì phải tự chứng minh bằng dữ liệu thật trước, không suy luận suông
+
+
 - 23/08/2026 Sổ trực + Đối chiếu CITAD - **5 sửa nhỏ theo phản hồi dùng thật (PR#53)**
     + **Sổ trực nay chỉ coi là "đã đối chiếu CITAD" khi ngày đó đã bấm *Lưu bảng cuối***. Bảng mới *Lưu tạm* vẫn bị tính là **chưa có**, nên lời nhắc trước khi chuyển KSV / xác nhận vẫn hiện. Cố ý làm vậy: số Napas và PSS - MDP thường do người khác điền sau, một bảng tạm "khớp" chỉ khớp trên phần đã nhập
     + ⚠️ **Sẽ thấy lời nhắc thường xuyên hơn trước.** Ngày nào chuyển KSV trước khi có người chốt bảng cuối là có hộp thoại nhắc. Vẫn **không chặn** — bấm *Vẫn xác nhận* là đi tiếp
