@@ -268,8 +268,8 @@ def _parse_sheet(ws, filepath, is_first, chieu_ref=None, cong_ref=None, ngay_ref
             col_tien = i_no_den
 
         tien_raw = str(ws.cell_value(i, col_tien)).strip().replace("'", "")
-        so_tien = ''.join(c for c in tien_raw if c.isdigit())
-        if not so_tien or so_tien == '0':
+        so_tien = _parse_so_tien(tien_raw)
+        if not so_tien:
             continue
 
         ngay = str(ws.cell_value(i, i_ngay)).strip()
@@ -282,7 +282,7 @@ def _parse_sheet(ws, filepath, is_first, chieu_ref=None, cong_ref=None, ngay_ref
             'loai': loai,
             'chieu': chieu,
             'loai_tien': loai_tien,
-            'so_tien': int(so_tien),
+            'so_tien': so_tien,
             'ngay': ngay,
             'cong': cong,
         })
@@ -338,6 +338,48 @@ def parse_citad_files(filepaths, ngay_cham=None, progress_cb=None):
 # ──────────────────────────────────────────────────────────────
 def _strip_apos(s):
     return s.lstrip("'").strip() if s else ''
+
+
+def _parse_so_tien(raw) -> int:
+    """Đọc số tiền dạng chuỗi/số — chịu được cả định dạng thường
+    ("553,722,000,000") lẫn định dạng KHOA HỌC ("5.53722E+11").
+
+    Bug thật (xác nhận 25/08/2026, Phòng Thanh toán tự phát hiện): GDV mở
+    file CSV IPCAS trong Excel để xoá thử 1 dòng rồi lưu lại — Excel TỰ ĐỘNG
+    đổi mọi số tiền ĐỦ LỚN (nhóm "cao"/IH — hàng trăm tỷ trở lên) sang định
+    dạng khoa học khi lưu CSV, số nhỏ (nhóm "thấp"/IL) không đủ lớn nên
+    không bị đổi — đúng khớp quan sát thực tế "chỉ cao mới lỗi, thấp thì
+    không". Cách đọc cũ (xoá mọi ký tự không phải chữ số) xử lý SAI hoàn
+    toàn với dạng khoa học: "5.53722E+11" bị xoá mất dấu chấm/E/dấu cộng,
+    ghép chữ số còn lại thành "55372211" — SAI HẲN so với giá trị thật
+    553.722.000.000, và cái đuôi "11" chính là số mũ "E+11" dính vào. Không
+    phải lỗi do việc xoá dòng — chỉ cần Excel lưu lại CSV có cột số tiền lớn
+    là dính, xoá dòng chỉ là thao tác tình cờ kích hoạt Excel lưu lại file.
+
+    CHỈ bắt theo dấu hiệu 'E'/'e' của khoa học — KHÔNG bắt theo dấu chấm
+    nói chung. Bug thật khi sửa lần đầu (tự phát hiện ngay khi kiểm lại):
+    số tiền CITAD dùng DẤU CHẤM làm dấu phân cách HÀNG NGHÌN kiểu Việt Nam
+    (vd "252.121.572" = 252.121.572 đồng, không phải số thập phân
+    252,121572) — bắt theo cả dấu chấm sẽ hiểu "790.840" (790.840 đồng)
+    thành số thập phân 790,84 rồi làm tròn ra 791, sai gấp cả nghìn lần.
+    Dấu chấm nhiều lần ("252.121.572") thì `float()` tự ném lỗi nên vô
+    tình không sao — nhưng đúng 1 dấu chấm ("790.840") thì `float()` CHẤP
+    NHẬN được, âm thầm ra số sai. Định dạng khoa học không bao giờ có 'E'
+    trong số Việt Nam nên chỉ bắt theo 'E'/'e' là an toàn, không đụng gì
+    tới cách đọc số CITAD."""
+    if raw is None:
+        return 0
+    s = str(raw).strip()
+    if not s:
+        return 0
+    cleaned = s.replace(',', '').replace("'", '').replace(' ', '')
+    if re.search(r'[Ee]', cleaned):
+        try:
+            return int(round(float(cleaned)))
+        except (ValueError, TypeError):
+            pass
+    digits = re.sub(r'[^0-9]', '', s)
+    return int(digits) if digits else 0
 
 
 # Chuẩn hoá 1 ô "ngày" đọc từ Excel về "dd/mm/yyyy" để so được với
@@ -475,7 +517,7 @@ def _parse_ipcas_text(text, filename, ngay_cham):
         # Chuan hoa ngay_gd: 4/6/2026 -> 04/06/2026
         _m = re.match(r'(\d{1,2})/(\d{1,2})/(\d{4})', ngay_gd_raw)
         ngay_gd = f'{_m.group(1).zfill(2)}/{_m.group(2).zfill(2)}/{_m.group(3)}' if _m else ngay_gd_raw[:10]
-        so_tien = re.sub(r'[^0-9]', '', gv('SO_TIEN'))
+        so_tien = _parse_so_tien(gv('SO_TIEN'))
         kenh = gv('KENH_THANH_TOAN').lower()
 
         # Filter theo chiều
@@ -524,7 +566,7 @@ def _parse_ipcas_text(text, filename, ngay_cham):
             'msgref': msgref,
             'loai': loai,
             'chieu': chieu,
-            'so_tien': int(so_tien) if so_tien else 0,
+            'so_tien': so_tien,
             'trang_thai': tt,
             'nkt': nkt,
             'kenh': gv('KENH_THANH_TOAN'),
@@ -727,7 +769,7 @@ def _parse_hub_xls(filepath, ext, fname, ngay_cham):
 
             # Số tiền
             tien_raw = str(ws.cell_value(i, i_so_tien)).strip() if i_so_tien >= 0 else ''
-            so_tien = ''.join(ch for ch in tien_raw if ch.isdigit())
+            so_tien = _parse_so_tien(tien_raw)
             if not so_tien:
                 continue
 
@@ -765,7 +807,7 @@ def _parse_hub_xls(filepath, ext, fname, ngay_cham):
                 'loai': 'ih',            # Hub ngoại tệ luôn là IH
                 'chieu': chieu,
                 'loai_tien': loai_tien,
-                'so_tien': int(so_tien),
+                'so_tien': so_tien,
                 'nh_nhan': nh,
                 'ngay': ngay,
                 'trang_thai': trang_thai,
