@@ -278,13 +278,21 @@ def session_save(db: sqlite3.Connection, ngay: str, staff_id: int, data: dict, s
         (ngay, data_json, now, staff_id, status, created_by),
     )
 
+    # Gộp lưu tạm liên tiếp vào CÙNG 1 dòng lịch sử — nhưng CHỈ khi cùng 1
+    # người lưu liên tiếp (thêm điều kiện staff_id, xác nhận yêu cầu Phòng
+    # Thanh toán 25/08/2026). TRƯỚC ĐÂY chỉ xét status=='draft', không xét
+    # ai lưu — 2 người khác nhau lưu tạm nối tiếp nhau (vd A lưu tạm, B bổ
+    # sung Napas rồi lưu tạm tiếp) sẽ bị gộp chung 1 dòng, đè mất dấu vết
+    # dòng riêng của A, chỉ còn thấy B trong Lịch sử dù cả 2 đều đã lưu
+    # thật. Khác người thì tách dòng MỚI — mỗi người 1 dòng riêng cho lần
+    # họ lưu, đúng ý "mỗi người chấm là 1 dòng".
     last_hist = db.execute(
-        "SELECT id, status FROM doi_chieu_citad_history WHERE ngay=? ORDER BY id DESC LIMIT 1", (ngay,)
+        "SELECT id, status, staff_id FROM doi_chieu_citad_history WHERE ngay=? ORDER BY id DESC LIMIT 1", (ngay,)
     ).fetchone()
-    if last_hist and last_hist["status"] == "draft":
+    if last_hist and last_hist["status"] == "draft" and last_hist["staff_id"] == staff_id:
         db.execute(
-            "UPDATE doi_chieu_citad_history SET staff_id=?, data=?, created_at=?, status=? WHERE id=?",
-            (staff_id, data_json, now, status, last_hist["id"]),
+            "UPDATE doi_chieu_citad_history SET data=?, created_at=?, status=? WHERE id=?",
+            (data_json, now, status, last_hist["id"]),
         )
         hist_id = last_hist["id"]
     else:
@@ -462,22 +470,19 @@ def get_reconciliation_history(db: sqlite3.Connection, ngay: str) -> list:
     tự thời gian đã lưu (cũ -> mới) — KHÔNG trả kèm số liệu (có thể nặng nếu
     nhiều dòng) — xem từng bản cụ thể qua get_history_entry_data(id).
 
-    `username` mỗi dòng lấy từ `created_by` của bảng `doi_chieu_citad_sessions`
-    (người lập bảng, CỐ ĐỊNH suốt vòng đời ngày đó) — KHÔNG lấy `h.staff_id`
-    (người thực sự bấm Lưu ra dòng lịch sử này): với bản tạm, nhiều lần lưu
-    liên tiếp gộp chung 1 dòng (`session_save()`), mỗi lần gộp lại ghi đè
-    `h.staff_id` thành người lưu sau cùng — dùng thẳng cột đó khiến danh sách
-    "ai đang phụ trách ngày này" nhảy lung tung theo mỗi lượt ai đó chỉ nạp
-    Napas/PSS-MDP. COALESCE về `h.staff_id` chỉ khi session đã bị xoá (không
-    còn `created_by` để tra) — tránh dòng lịch sử cũ mất trắng tên hiển thị.
-    Ai đã sửa từng dòng lúc nào xem qua get_history_edits()."""
+    `username` mỗi dòng lấy đúng `h.staff_id` — người THỰC SỰ bấm Lưu ra
+    đúng dòng lịch sử này (xác nhận yêu cầu Phòng Thanh toán 25/08/2026:
+    mỗi dòng bung ra phải hiện đúng người đã lưu dòng đó, không gộp về 1
+    tên duy nhất của cả ngày). TRƯỚC ĐÂY override bằng `created_by` của
+    `doi_chieu_citad_sessions` (người lập bảng gốc, cố định suốt ngày) với
+    lý do tránh "nhảy lung tung" khi bản tạm bị gộp nhiều lần lưu vào cùng
+    1 dòng — nhưng đó chính xác lại là điều Phòng Thanh toán muốn THẤY:
+    dòng lịch sử nào do ai lưu sau cùng thì hiện đúng người đó, không che
+    đi. Ai đã sửa TỪNG PHẦN dữ liệu trong 1 dòng (không chỉ ai bấm Lưu sau
+    cùng) xem chi tiết hơn qua get_history_edits()."""
     rows = db.execute(
-        """SELECT h.id, h.status, h.created_at,
-                  COALESCE(s.created_by, h.staff_id) AS staff_id,
-                  COALESCE(cu.username, hu.username) AS username
+        """SELECT h.id, h.status, h.created_at, h.staff_id, hu.username
            FROM doi_chieu_citad_history h
-           LEFT JOIN doi_chieu_citad_sessions s ON s.ngay = h.ngay
-           LEFT JOIN user_tttt cu ON cu.id = s.created_by
            JOIN user_tttt hu ON hu.id = h.staff_id
            WHERE h.ngay = ?
            ORDER BY h.created_at ASC, h.id ASC""",

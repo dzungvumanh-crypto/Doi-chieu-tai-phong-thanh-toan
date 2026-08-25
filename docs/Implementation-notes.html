@@ -169,8 +169,8 @@ tu_dt = datetime.strptime(tu_ngay.strip(), "%d/%m/%Y") if tu_ngay else None   # 
   <div class="card">
     <div class="card-header">
       <span class="card-num">Z7</span>
-      <span class="card-title">PR#53 — bảng tạm CITAD không còn tính là "đã đối chiếu"; 2 ô ký tên đổi sang ui.select (còn lỗi)</span>
-      <span class="badge badge-warn">Đã merge — còn 2 lỗi chưa vá</span>
+      <span class="card-title">PR#53 — bảng tạm CITAD không còn tính là "đã đối chiếu"; 2 ô ký tên đổi sang ui.select</span>
+      <span class="badge badge-done">2 lỗi đã vá ở PR#56 — xem card Z8</span>
     </div>
     <div class="card-body">
 
@@ -238,6 +238,96 @@ tu_dt = datetime.strptime(tu_ngay.strip(), "%d/%m/%Y") if tu_ngay else None   # 
         <code>nicegui/events.py::handle_event</code> chỉ truyền event khi hàm có tham số
         <b>không</b> mang giá trị mặc định. Nếu ai đó sau này bỏ default đi thì nút Xoá sẽ nhận
         event object vào chỗ <code>notify</code>.</p>
+
+    </div>
+  </div>
+
+  <!-- Z8 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">Z8</span>
+      <span class="card-title">PR#56 — vá 2 lỗi ui.select của PR#53; lịch sử CITAD hiện đúng người lưu từng dòng</span>
+      <span class="badge badge-warn">Đã merge — còn 4 điểm chưa sửa</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label">1. Vá gốc: bơm giá trị vào <code>options</code> TRƯỚC khi gán <code>.value</code></div>
+      <p>Card Z7 đã mô tả cơ chế nuốt giá trị. Cách vá đúng chỉ có một: <code>options</code> phải chứa
+        sẵn giá trị thì <code>ChoiceElement._update_options()</code> mới giữ lại. Kèm theo <b>bắt buộc</b>
+        gọi <code>.update()</code> ngay sau khi đổi <code>.options</code> — <code>_values</code>/<code>_labels</code>
+        (danh sách dùng để đối chiếu) chỉ được tính lại bên trong <code>update()</code>, gán
+        <code>.options</code> không tự kích hoạt gì cả.</p>
+      <p>Payload gửi đi dùng <code>.value or ""</code>: <code>ExportIn.lb/ks</code> khai <code>str</code>
+        (không <code>Optional</code>) nên <code>None</code> làm pydantic trả 422 — trước đây
+        <code>ui.input</code> luôn cho <code>""</code> nên chưa từng dính.</p>
+
+      <div class="label">2. <span class="pill pill-red">Lỗi</span> Lỗ hổng cũ quay lại qua đường khác — phát hiện khi review PR#56</div>
+      <p><code>_load_payment_staff_names()</code> vẫn <b>ghi đè</b> cả danh sách:
+        <code>sel.options = names</code>. Hàm này chạy bằng <code>ui.timer(0.1, once=True)</code> rồi gọi
+        <b>2 API nối tiếp</b> (<code>/api/departments/</code> → <code>/api/staff/</code>). Trong lúc chờ,
+        nếu người dùng đã gõ tay một cái tên (<code>add-unique</code> đã thêm vào options) hoặc đã bấm
+        "Tải" một bảng cũ (<code>apply_session_data()</code> vừa bơm tên vào options), thì lúc danh sách
+        nhân viên về sẽ quét sạch options → <code>.value</code> thành <code>None</code>. Đúng lỗi vừa vá,
+        chỉ khác đường đi. Đo trên <code>nicegui 2.12.1</code>:</p>
+      <table>
+        <tr><th>Cách nạp danh sách gợi ý</th><th><code>.value</code> còn lại sau khi nạp</th></tr>
+        <tr><td><code>sel.options = names</code> (ghi đè — bản PR#56 gốc)</td><td><b>None</b> — mất tên</td></tr>
+        <tr><td><code>sel.options = sorted({*sel.options, *names})</code> (gộp — đã vá)</td><td>'Người Đã Nghỉ Việc' — giữ nguyên</td></tr>
+      </table>
+      <div class="note">Cùng lúc bỏ <code>except Exception: return</code> nuốt lỗi không ghi log (trái
+        <code>docs/SKILL.md</code>). Options rỗng nhìn <b>y hệt</b> "phòng không có ai" — không có log thì
+        không có đường nào lần ra vì sao ô gợi ý trống.</div>
+
+      <div class="label">3. Lịch sử đổi từ "người lập bảng" sang "người thực sự bấm Lưu"</div>
+      <p>Theo yêu cầu Phòng Thanh toán 25/08/2026. Hai thay đổi đi kèm nhau: <code>session_save()</code>
+        chỉ gộp lưu tạm liên tiếp khi <b>cùng một người</b>, và <code>get_reconciliation_history()</code>
+        lấy thẳng <code>h.staff_id</code> thay vì <code>COALESCE(s.created_by, h.staff_id)</code>.
+        Kịch bản đo thật — A lập bảng, B chỉ bổ sung Napas:</p>
+      <table>
+        <tr><th>A lưu tạm ×2 → B lưu tạm → A lưu bản cuối</th><th>Trước</th><th>Sau</th></tr>
+        <tr><td>Số dòng lịch sử</td><td>1 dòng <code>final/a</code></td><td>3 dòng: <code>draft/a</code> + <code>draft/b</code> + <code>final/a</code></td></tr>
+        <tr><td>Cột "Số lần lưu"</td><td>1</td><td>3</td></tr>
+      </table>
+      <div class="caution">Hệ quả chưa ai lường: <b>2 dòng <code>draft</code> đó không bao giờ được đóng
+        lại</b>. Ngày đã chốt bản cuối xong vẫn hiện 2 badge "Tạm" nằm trên dòng "Chính thức". Đúng ý
+        "mỗi người 1 dòng", nhưng ngược hẳn yêu cầu cũ ("nhảy ra thêm 1 dòng gây hiểu lầm") — nếu Phòng
+        Thanh toán phản hồi lại lần nữa thì đây là chỗ sửa.</div>
+
+      <div class="label">Phát hiện nhưng CHƯA sửa — và vì sao</div>
+      <table>
+        <tr><th>Điểm</th><th>Vì sao chưa sửa</th></tr>
+        <tr>
+          <td>Block comment <code>doi_chieu_citad_service.py:228-243</code> nay <b>nói ngược</b> với code
+            ("lưu tạm liên tiếp không đẻ dòng mới", "1 lần chấm chỉ nên là 1 dòng")</td>
+          <td>Ngoài phạm vi được duyệt của đợt sửa này. <b>Phải sửa ở lần đụng vào file đó gần nhất</b> —
+            người đọc sau sẽ tin comment thay vì đọc code.</td>
+        </tr>
+        <tr>
+          <td>Bộ lọc "Tên người chấm" + cột "User chấm đối chiếu" vẫn so khớp <code>s.created_by</code>.
+            Đo được: lọc tên <code>b</code> trả về <b>0 ngày</b> dù bung dòng ra thấy rõ <code>b</code> có lưu</td>
+          <td>Là thay đổi nghiệp vụ (đổi cả ngữ nghĩa cột tổng), cần Phòng Thanh toán xác nhận trước —
+            không tự quyết.</td>
+        </tr>
+        <tr>
+          <td><code>GET /api/staff/?department_id=</code> bị <b>bỏ qua</b> với
+            <code>truong_phong</code>/<code>pho_phong</code>/<code>chuyen_vien</code> (xem
+            <code>backend/api/staff.py</code>) → người phòng khác được cấp quyền
+            <code>menu.doi_chieu_citad</code> thấy danh sách tên <b>phòng mình</b></td>
+          <td>Vô hại với người Phòng Thanh toán (phòng mình trùng phòng cần tra). Vá đúng phải thêm
+            endpoint riêng dưới <code>doi-chieu-citad</code> giống <code>list_gdv_candidates()</code> —
+            đổi backend, tách PR sau.</td>
+        </tr>
+        <tr>
+          <td><code>session_save()</code> và <code>get_reconciliation_history()</code>
+            <b>không có test nào</b> chạm tới (grep toàn <code>tests/</code>: 0 kết quả)</td>
+          <td>71 test <code>citad</code>/<code>so_truc</code> pass <b>không nói lên gì</b> về thay đổi này.
+            Quy tắc gộp/không gộp dòng theo <code>staff_id</code> là logic nghiệp vụ thuần, viết test rẻ —
+            nợ kỹ thuật đã biết, không phải chưa thấy.</td>
+        </tr>
+      </table>
+      <div class="note">Tên người ký gõ tay <b>không</b> tự dọn khỏi <code>options</code>: mỗi lần mở một
+        bảng cũ lại bơm thêm 1 tên. Trong 1 phiên làm việc dài, danh sách gợi ý sẽ dài dần. Chấp nhận —
+        đổi lại là không bao giờ mất tên, mà mất tên mới là thứ ghi sai vào DB.</div>
 
     </div>
   </div>

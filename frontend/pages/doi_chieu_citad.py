@@ -26,12 +26,15 @@ Napas/Ebanking chỉ có 2 field "IH Đến — Món/Tiền" thực sự đượ
 import asyncio
 import datetime
 import json
+import logging
 from urllib.parse import quote
 
 from nicegui import ui
 from starlette.requests import Request as _StarletteRequest
 import frontend.api_client as api
 from frontend.shared import _sidebar, _content_area, _require_auth, _handle_api_error
+
+_log = logging.getLogger(__name__)
 
 # Card kiểu "modern SaaS" RIÊNG cho trang này (icon trong khung màu + tiêu đề,
 # không dùng banner phủ màu như `_card()` dùng chung ở frontend/shared.py —
@@ -456,8 +459,34 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
             return
         if sess.get("ngay"):
             ngay_input.value = sess["ngay"]
-        lap_bang_input.value = sess.get("lap_bang", "")
-        kiem_soat_input.value = sess.get("kiem_soat", "")
+        # ui.select(new_value_mode="add-unique") chỉ tự thêm giá trị lạ vào
+        # options khi NGƯỜI DÙNG gõ — gán .value bằng code không kích hoạt
+        # cơ chế đó (NiceGUI docstring: "ineffective when setting the value
+        # property programmatically"). Tên không có sẵn trong options (đã
+        # nghỉ/chuyển phòng, hoặc options chưa kịp tải) sẽ bị ChoiceElement
+        # tự đổi thành None — mất tên khi mở lại bảng cũ, và nếu bấm Lưu sẽ
+        # ghi đè None đè lên tên đã lưu trong DB (bug thật, ghi ở PR#53).
+        # Tự bơm giá trị vào options trước khi gán để giữ nguyên tên cũ.
+        #
+        # PHẢI gọi .update() ngay sau khi đổi .options — đọc thẳng
+        # docstring ui.select(): "After manipulating the options, call
+        # update()". .options chỉ là thuộc tính thường, không tự kích hoạt
+        # gì cả; ChoiceElement._values/._labels (dùng để đối chiếu khi đổi
+        # .value) chỉ được tính lại bên trong update()/_update_options().
+        # Thiếu bước này thì self._values vẫn CŨ, có thể khiến lần gán
+        # .value tiếp theo tính sai index — hoặc lần .update() nào khác gọi
+        # sau đó (không phải do mình) đọc lại self._values cũ, đúng bug
+        # cần sửa lại xảy ra lần nữa.
+        lap_bang = sess.get("lap_bang", "")
+        if lap_bang and lap_bang not in (lap_bang_input.options or []):
+            lap_bang_input.options = [*(lap_bang_input.options or []), lap_bang]
+            lap_bang_input.update()
+        lap_bang_input.value = lap_bang
+        kiem_soat = sess.get("kiem_soat", "")
+        if kiem_soat and kiem_soat not in (kiem_soat_input.options or []):
+            kiem_soat_input.options = [*(kiem_soat_input.options or []), kiem_soat]
+            kiem_soat_input.update()
+        kiem_soat_input.value = kiem_soat
         gD = sess.get("gD", {})
         for c in CONGS:
             for u in CURS:
@@ -606,8 +635,8 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
         phD = {u: {f: data["phD"][u][f] for f in FK} for u in CURS}
         return {
             "ngay": ngay_input.value,
-            "lap_bang": lap_bang_input.value,
-            "kiem_soat": kiem_soat_input.value,
+            "lap_bang": lap_bang_input.value or "",
+            "kiem_soat": kiem_soat_input.value or "",
             "gD": gD,
             "phD": phD,
             "napas_m": data["napas"]["den_ih_m"],
@@ -1067,8 +1096,8 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
         payload = {
             "day_str": ngay_input.value,
             "sheet_name": (ngay_input.value or "Sheet1").replace("/", "_"),
-            "lb": lap_bang_input.value,
-            "ks": kiem_soat_input.value,
+            "lb": lap_bang_input.value or "",
+            "ks": kiem_soat_input.value or "",
             "gD": gD,
             "phD": phD,
             "nm": data["napas"]["den_ih_m"],
@@ -1157,17 +1186,29 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
             depts = await asyncio.to_thread(api.get, "/api/departments/")
             dept = next((d for d in depts if d.get("code") == "PAYMENT"), None)
             if not dept:
+                _log.warning(
+                    "Không tìm thấy phòng ban code='PAYMENT' — 2 ô Lập bảng/Kiểm soát không có gợi ý tên"
+                )
                 return
             staff = await asyncio.to_thread(
                 api.get, "/api/staff/", {"department_id": dept["id"], "active_only": True}
             )
-        except Exception:
-            return  # danh sách gợi ý — lỗi ở đây không được chặn cả trang
-        names = sorted({s["full_name"] for s in staff if s.get("full_name")})
-        lap_bang_input.options = names
-        lap_bang_input.update()
-        kiem_soat_input.options = names
-        kiem_soat_input.update()
+        except Exception as e:
+            # Danh sách gợi ý — lỗi ở đây không được chặn cả trang, nhưng PHẢI
+            # ghi log: options rỗng nhìn y hệt "phòng không có ai", không có log
+            # thì không có đường nào biết vì sao tên biến mất.
+            _log.warning("Không tải được danh sách nhân viên Phòng Thanh toán: %s", e)
+            return
+        names = {s["full_name"] for s in staff if s.get("full_name")}
+        # GỘP vào options đang có, KHÔNG ghi đè. apply_session_data() tự bơm tên
+        # người ký cũ (đã nghỉ/chuyển phòng) vào options để giữ được giá trị, và
+        # new_value_mode="add-unique" cũng thêm tên người dùng vừa gõ tay vào đó.
+        # Gán đè cả danh sách thì ChoiceElement._update_options() thấy .value
+        # không còn trong options nữa và đổi ngay thành None — đúng lại lỗ hổng
+        # vừa vá ở PR#53, chỉ khác đường đi.
+        for sel in (lap_bang_input, kiem_soat_input):
+            sel.options = sorted({*(sel.options or []), *names})
+            sel.update()
 
     # ── Kết nối Extension (mã kết nối cá nhân — xem docstring api/doi_chieu_citad.py) ──
     ext_status_label = None

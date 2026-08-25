@@ -4,6 +4,23 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 25/08/2026 Đối chiếu CITAD - **Đã vá 2 lỗi ở ô *Lập bảng* / *Kiểm soát* cảnh báo hôm 23/08 (PR#56)**:
+    + ✅ **Mở lại bảng cũ không còn mất tên người ký nữa.** Tên của người đã nghỉ, đã chuyển phòng, hay
+      gõ tay kiểu khác đều hiện đúng như lúc lưu. **Bấm *Lưu* lúc này đã an toàn** — cảnh báo "thấy ô
+      trống bất thường thì đừng bấm Lưu" ở mục 23/08 bên dưới **không còn hiệu lực**
+    + ✅ **Xuất Excel không còn báo lỗi khi để trống cả hai ô.** Không phải gõ dấu gạch để lách nữa
+    + **Tab *Lịch sử* nay hiện đúng người đã bấm Lưu ở từng dòng.** Trước đây mọi dòng của một ngày đều
+      mang tên người lập bảng, ai vào bổ sung Napas / PSS - MDP cũng không thấy tên mình. Nay **mỗi
+      người bấm Lưu là một dòng riêng**, nên **số dòng và cột *Số lần lưu* sẽ nhiều hơn trước** — không
+      phải hệ thống đếm nhầm
+    + ⚠️ **Ngày đã chốt bản cuối vẫn có thể còn vài dòng ghi "Tạm" nằm phía trên dòng "Chính thức".**
+      Đó là các lần lưu tạm của từng người, được giữ lại làm dấu vết — dòng cuối cùng mới là bản đang
+      dùng, có nhãn *Bản hiện hành*
+    + ⚠️ **Ô lọc *Tên người chấm* vẫn chỉ tìm theo người lập bảng.** Gõ tên người chỉ bổ sung Napas /
+      PSS - MDP sẽ **không ra ngày nào** — phải bấm vào ngày để bung danh sách ra mới thấy tên họ.
+      Chưa sửa vì đổi cách tìm là đổi nghiệp vụ, cần Phòng Thanh toán chốt trước
+    + Không đổi cơ sở dữ liệu, không phải khai báo quyền lại
+
 - 25/08/2026 Đối soát CITAD ↔ IPCAS - **Sửa lỗi đọc SAI số tiền khi file IPCAS đã bị Excel lưu đè (đã merge PR#58)**
     + 🔴 **Nguyên nhân — Phòng Thanh toán tự phát hiện**: mở file CSV của IPCAS bằng Excel (chỉ để xoá thử 1 dòng) rồi lưu lại. Excel **tự động** đổi mọi số tiền đủ lớn — từ khoảng 100 tỷ trở lên, đúng nhóm giá trị **cao** (IH) — sang kiểu viết tắt `5.53722E+11`. Số nhỏ (nhóm **thấp**/IL) không đủ lớn nên không bị đổi, đúng khớp hiện tượng quan sát được *"chỉ nhóm cao mới lệch, nhóm thấp thì không"*
     + **Chương trình đọc sai hoàn toàn**: cách đọc cũ gom hết chữ số lại, `5.53722E+11` thành **55.372.211 đồng** thay vì **553.722.000.000 đồng** — cái đuôi `11` chính là phần `E+11` bị dính vào. Nay đọc đúng
