@@ -60,6 +60,13 @@ MENU_TREE = [
                     ("swift_recon", "Đối chiếu điện SWIFT", "compare_arrows"),
                 ],
             },
+            {
+                "label": "Phòng QLTK Nostro, Vostro",
+                "icon": "account_balance",
+                "items": [
+                    ("doi_chieu_citad_nostro", "Đối chiếu CITAD - PaymentHub", "account_balance_wallet"),
+                ],
+            },
         ],
     },
     {

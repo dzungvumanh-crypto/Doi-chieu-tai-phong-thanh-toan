@@ -229,6 +229,25 @@ def _create_tables(db_path: str):
             created_at   DATETIME,
             last_used_at DATETIME
         )""",
+        # Đối chiếu CITAD ↔ PaymentHub — Phòng QLTK Nostro, Vostro. Song song
+        # với doi_chieu_citad_sessions/_history (Phòng Thanh toán), khoá theo
+        # `ky` (kỳ đối chiếu "dd/mm/yyyy-dd/mm/yyyy", có thể gộp nhiều ngày)
+        # thay vì `ngay` đơn — xem doi_chieu_citad_nostro_service.py. Dùng
+        # CHUNG bảng doi_chieu_citad_extension_tokens ở trên (mã kết nối
+        # Extension trung lập, không tạo bảng token riêng cho module này).
+        """CREATE TABLE IF NOT EXISTS doi_chieu_citad_nostro_sessions (
+            ky          TEXT    PRIMARY KEY,
+            data        TEXT    NOT NULL,
+            updated_at  DATETIME,
+            updated_by  INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL
+        )""",
+        """CREATE TABLE IF NOT EXISTS doi_chieu_citad_nostro_history (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            ky          TEXT    NOT NULL,
+            staff_id    INTEGER NOT NULL REFERENCES user_tttt(id) ON DELETE CASCADE,
+            data        TEXT    NOT NULL,
+            created_at  DATETIME NOT NULL
+        )""",
         """CREATE TABLE IF NOT EXISTS doi_soat_citad_history (
             id                  INTEGER PRIMARY KEY AUTOINCREMENT,
             ngay_cham           VARCHAR(10) NOT NULL,

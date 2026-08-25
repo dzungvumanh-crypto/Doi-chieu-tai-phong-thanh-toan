@@ -1,0 +1,54 @@
+{
+  "manifest_version": 3,
+  "name": "CITAD - PaymentHub N&V | Lấy số liệu đối chiếu (TTTT)",
+  "version": "1.0",
+  "description": "Tự động lấy số liệu CITAD (Tra cứu dữ liệu) và PaymentHub (Lập bảng kê phí chia sẻ CITAD) vào module Đối chiếu CITAD - PaymentHub N&V của app TTTT — Extension RIÊNG cho Phòng QLTK Nostro, Vostro, không dùng chung với Extension của Phòng Thanh toán.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApt76DWH2+N/44qvTMqc+/DxBC9G9s8ci5LSh65ZYLc9Qg6lfApw7wGZObM2Ojqo94mHNqWhegmOVX7sfj9wfHsSkzfZozijIu1ejy4DftqDbYNqjYpDpOMNFLXoPudY6Boq6XLoK7AcsPKawge3MhIJo6RFnMRFJ9GOcSA5hrtebd7bvYKVc9GsqtDbE+sSHdQ/8qRjiT+hMWuSPFm6V2pCT4NZFvXbuHimGPiywZ6nVyzvIgaKGBkmwYRxI70W/oY97dRSayOZupVEAR5rEoYvu2CZJUxpzWBLRHVcHqrBUZWTzjNHsUM6eq4c3hJNwkN3nh9QnAT6ShZfqmXQD7wIDAQAB",
+  "permissions": ["storage", "activeTab"],
+  "host_permissions": [
+    "http://10.0.85.100/*",
+    "http://localhost:8000/*",
+    "https://paymenthub.agribank.com.vn/*",
+    "http://apc-portal:8080/*",
+    "http://apc-portal:9090/*",
+    "http://10.1.3.89:8080/*",
+    "http://10.1.3.89:9090/*"
+  ],
+  "optional_host_permissions": ["http://*/*", "https://*/*"],
+  "options_page": "options.html",
+  "background": { "service_worker": "background.js" },
+  "externally_connectable": {
+    "matches": [
+      "http://localhost:8080/*",
+      "http://127.0.0.1:8080/*",
+      "http://apc-portal:8080/*",
+      "http://apc-portal:9090/*",
+      "http://10.1.3.89:8080/*",
+      "http://10.1.3.89:9090/*"
+    ]
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://10.0.85.100/CITAD001/Modules/TraCuuDuLieu/*",
+        "http://10.0.85.100/CITAD/Modules/TraCuuDuLieu/*",
+        "http://10.0.85.100/CITAD9212/Modules/TraCuuDuLieu/*",
+        "http://10.0.85.100/CITAD7917/Modules/TraCuuDuLieu/*",
+        "http://10.0.85.100/CITAD4818/Modules/TraCuuDuLieu/*"
+      ],
+      "js": ["content_citad_nostro.js"],
+      "run_at": "document_end"
+    },
+    {
+      "matches": [
+        "https://paymenthub.agribank.com.vn/final-settlement-citad/charges*"
+      ],
+      "js": ["content_paymenthub_nostro.js"],
+      "run_at": "document_end"
+    }
+  ],
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png"
+  }
+}
