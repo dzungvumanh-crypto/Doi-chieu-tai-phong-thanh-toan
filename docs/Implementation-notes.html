@@ -51,7 +51,110 @@
 <div class="page">
 
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
-  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-23</p>
+  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-25</p>
+
+  <!-- Z8 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">Z8</span>
+      <span class="card-title">Xoá ô chứng từ đã xác nhận — bắt lý do + ghi vết; thêm cột "Chi tiết" cho Nhật ký thao tác</span>
+      <span class="badge badge-done">Đã làm — 709 test pass</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label">1. Vấn đề: xoá số liệu đã chốt mà không để lại dấu vết ở đâu cả</div>
+      <p>Người vận hành hỏi cách xoá một ô GDV nhập nhầm ngày. Đường có sẵn: người có
+        <code>handovers.confirm_entry</code> xoá trắng ô rồi bấm Lưu → <code>upsert_entry</code> nhận
+        <code>sheet_count=0</code> → <code>DELETE document_entries</code> <b>kèm cả
+        <code>entry_change_logs</code> của ô đó</b>. Lịch sử riêng của ô đi theo ô.</p>
+      <p>Thứ còn lại duy nhất là dòng của <code>AuditMiddleware</code> — mà middleware chỉ ghi
+        method + path + mã HTTP, <b>không đọc body</b>:</p>
+      <table>
+        <tr><th>Thao tác thật</th><th>Nhật ký thao tác hiện ra</th></tr>
+        <tr><td>Sửa số tờ 20 → 21</td><td>Nhập/cập nhật bàn giao chứng từ — Thành công</td></tr>
+        <tr><td><b>Xoá ô 500 tờ đã xác nhận</b></td><td>Nhập/cập nhật bàn giao chứng từ — Thành công</td></tr>
+      </table>
+      <p>Hai dòng y hệt nhau. Không có tên GDV, không ngày, không số tờ, không phân biệt được
+        thêm/sửa/xoá.</p>
+
+      <div class="label">2. Vì sao KHÔNG chuyển quyền xoá sang quản trị viên cấp 1</div>
+      <p>Đề xuất ban đầu của người vận hành. Đã phản biện và họ chọn hướng khác:</p>
+      <table>
+        <tr><th>Lập luận</th><th>Nội dung</th></tr>
+        <tr><td>Sai người chịu trách nhiệm</td><td>HKV <i>là</i> chức năng kiểm soát nghiệp vụ. QTV cấp 1
+          là vai kỹ thuật, không ký vào số liệu chứng từ. Đẩy việc sửa số liệu cho họ = người không
+          chịu trách nhiệm nghiệp vụ lại quyết định số liệu.</td></tr>
+        <tr><td>Siết quyền đẩy lỗi vào chỗ tối</td><td>HKV vẫn còn đường vòng bằng quyền hiện có:
+          <b>để nguyên ô sai, bù trừ số tờ sang ô ngày khác cho khớp tổng</b>. Nhật ký ghi là "sửa số
+          tờ" hoàn toàn bình thường → sai vĩnh viễn không ai biết. (Suy luận về hành vi, chưa đo được.)</td></tr>
+        <tr><td>Gốc vấn đề nằm chỗ khác</td><td>Đổi người mà vẫn không ghi vết thì QTV cấp 1 xoá cũng
+          chẳng ai kiểm được — chỉ đổi tên người không bị kiểm soát.</td></tr>
+      </table>
+      <div class="caution"><b>Vấn đề phát hiện nhưng CHƯA sửa:</b> quyền xoá đang <b>đi ké</b> quyền
+        xác nhận. Điều kiện mở cửa cho xoá ô đã chốt là <code>can_confirm</code> ←
+        <code>handovers.confirm_entry</code>, mã quyền có nhãn <i>"Xác nhận cho mượn / đã nhận"</i>.
+        Người phân quyền tick ô đó đang cấp quyền xác nhận, <b>không biết mình cấp kèm quyền xoá vĩnh
+        viễn</b>. Cách vá đúng là tách mã quyền riêng <code>handovers.delete_entry</code>, mặc định
+        không gán cho nhóm nào. Người vận hành chọn <b>vá nhật ký trước, theo dõi vài tháng xem thực
+        tế ai xoá và bao nhiêu lần rồi mới quyết siết quyền</b> — nên tách quyền còn để đó.</div>
+
+      <div class="label">3. Ranh giới bắt lý do: theo TRẠNG THÁI Ô, không theo vai trò người xoá</div>
+      <table>
+        <tr><th>Trạng thái ô khi xoá</th><th>Hỏi lý do?</th><th>Vì sao</th></tr>
+        <tr><td><code>confirmed</code> / <code>borrowed</code></td><td><span class="pill pill-red">Có</span></td>
+          <td>Số liệu bàn giao đã chốt — gỡ ra là sửa số liệu</td></tr>
+        <tr><td><code>pending_confirm</code> / <code>rejected</code></td><td><span class="pill pill-gray">Không</span></td>
+          <td>Ô GDV vừa nhập, hậu kiểm chưa nhận. Xoá là sửa nháp bình thường — bắt lý do ở đây chỉ
+            làm phiền người nhập và đẻ ra nhật ký rác</td></tr>
+      </table>
+      <p>Chọn theo trạng thái chứ không theo vai trò vì cùng một người (HKV) có thể làm cả hai việc:
+        xoá ô nháp của GDV và gỡ số liệu đã chốt. Chỉ việc thứ hai mới đáng ghi.</p>
+
+      <div class="label">4. Vì sao phải thêm cột "Chi tiết" mới xong việc</div>
+      <p>Phát hiện giữa chừng: cột <code>audit_logs.detail</code> <b>chưa từng được hiển thị ở đâu</b>
+        — không trên màn Nhật ký thao tác, không trong Excel xuất ra. Nó chỉ nằm trong mệnh đề
+        <code>LIKE</code> của ô tìm kiếm. Nghĩa là ghi <code>detail</code> thật đẹp cũng vô hình.</p>
+      <p>Nên thêm cột "Chi tiết" vào cả hai chỗ. <code>describe_detail()</code> lọc bỏ dòng chỉ có
+        <code>"HTTP 200"</code> (dòng của middleware) — đó là mã kết quả, đã nằm ở cột Kết quả rồi.</p>
+      <div class="note">Lợi ké: mọi <code>write_audit</code> ngữ nghĩa có sẵn (tạo/xoá tài khoản, đặt
+        lại mật khẩu, tải bản sao DB…) từ nay cũng hiện được nội dung chi tiết. Trước đó chúng ghi vào
+        cột không ai nhìn thấy.</div>
+
+      <div class="label">5. Chấp nhận: một lần xoá đẻ ra HAI dòng nhật ký</div>
+      <p>Dòng ngữ nghĩa của <code>write_audit</code> + dòng thô của middleware. Bỏ trùng bằng cách
+        thêm <code>("PUT", "/api/handovers/entry-upsert")</code> vào <code>_SKIP_EXACT</code> thì
+        <b>mất luôn nhật ký của mọi lần nhập/sửa số tờ bình thường</b> — đắt hơn nhiều so với một dòng
+        thừa khi xoá. Giữ cả hai.</p>
+
+      <div class="label">6. Đánh đổi ở hộp thoại: MỘT lý do cho cả lượt xoá</div>
+      <p>Lưới cho sửa nhiều ô rồi bấm Lưu một lần, nên một lượt Lưu có thể xoá nhiều ô. Hộp thoại liệt
+        kê đủ các ô sắp xoá (tên GDV — ngày — số tờ) nhưng chỉ nhận <b>một</b> lý do dùng chung, ghi
+        lặp vào từng dòng nhật ký. Bắt nhập lý do riêng từng ô đúng hơn về lý thuyết nhưng trường hợp
+        thực tế gần như luôn là <i>một</i> ô nhầm — bắt gõ n lần chỉ tổ đẩy người dùng gõ cho xong.</p>
+      <div class="note">Backend vẫn tự chặn nếu thiếu lý do (400). Hộp thoại chỉ để người dùng khỏi
+        bấm Lưu rồi mới ăn lỗi — không phải hàng rào duy nhất.</div>
+
+      <div class="label">7. Thứ tự trong <code>upsert_entry</code>: ghi audit TRƯỚC khi xoá</div>
+      <p>Bắt buộc — sau <code>DELETE</code> thì không còn <code>sheet_count</code>, <code>entry_status</code>
+        hay <code>transaction_date</code> để dựng câu mô tả. Cả hai nằm chung một
+        <code>db.commit()</code> ở cuối, nên nếu <code>DELETE</code> hỏng thì dòng audit cũng bị cuốn
+        theo — không có chuyện nhật ký ghi "đã xoá" mà ô vẫn còn.</p>
+
+      <div class="label">8. Lưu ý cho người review</div>
+      <ul style="margin:6px 0 0 18px">
+        <li><code>data-status</code> mới thêm vào ô <code>&lt;input&gt;</code> của lưới. Ô trống cố ý để
+          rỗng (<code>status if val else ""</code>) — mặc định <code>"confirmed"</code> của
+          <code>cell_data</code> nếu lọt ra sẽ khiến ô trống bị coi là ô đã chốt.</li>
+        <li>Python 3.10 <b>không</b> cho lồng nháy cùng loại trong f-string (3.12 mới cho). Câu mô tả
+          trong <code>_ghi_audit_xoa_o()</code> phải tách biến ra trước, không viết
+          <code>f"{dept['name']}"</code> bên trong f-string nháy kép.</li>
+        <li><code>describe_result()</code> trả "Thành công" cho mọi action ngữ nghĩa và <b>bỏ qua</b>
+          <code>detail</code> — nên đừng nhét thông tin quan trọng vào <code>detail</code> mà mong nó
+          hiện ở cột Kết quả.</li>
+      </ul>
+
+    </div>
+  </div>
 
   <!-- Z9 -->
   <div class="card">
@@ -10110,7 +10213,6 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
-
   <!-- 107 -->
   <div class="card">
     <div class="card-header">
@@ -10217,6 +10319,7 @@ This may happen if you try to create UI from a background task.</pre>
       </table>
     </div>
   </div>
+
   <div class="card">
     <div class="card-header">
       <span class="card-num">TĐ</span>
@@ -10250,7 +10353,7 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-22</footer>
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-25</footer>
 </div>
 </body>
 </html>

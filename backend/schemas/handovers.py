@@ -35,6 +35,8 @@ class EntryUpsertRequest(BaseModel):
     staff_id: int
     date: date
     sheet_count: int = Field(ge=0)
+    # Chỉ bắt buộc khi xoá ô đã chốt (sheet_count=0 trên ô confirmed/borrowed)
+    reason: Optional[str] = None
 
 class BorrowRequest(BaseModel):
     reason: str

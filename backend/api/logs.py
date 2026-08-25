@@ -264,7 +264,7 @@ def get_audit_logs(
         params + [PAGE_SIZE, offset],
     ).fetchall()
 
-    from backend.services.audit_labels import describe_work, describe_result, result_ok
+    from backend.services.audit_labels import describe_work, describe_result, describe_detail, result_ok
     return {
         "entries": [
             {
@@ -273,6 +273,7 @@ def get_audit_logs(
                 "work":        describe_work(r["action"], r["target_type"]),
                 "result":      describe_result(r["detail"], r["action"]),
                 "result_ok":   result_ok(r["detail"], r["action"]),
+                "detail":      describe_detail(r["detail"]),
                 "target_type": r["target_type"],   # path thô — cho tooltip tra cứu
                 "ip_address":  r["ip_address"],
                 "username":    r["username"],
@@ -297,7 +298,7 @@ def export_audit_logs(
     import openpyxl
     from openpyxl.styles import Alignment, Font, PatternFill
     from datetime import date
-    from backend.services.audit_labels import describe_work, describe_result
+    from backend.services.audit_labels import describe_work, describe_result, describe_detail
 
     where, params = _audit_where(method, q)
     rows = db.execute(
@@ -314,8 +315,8 @@ def export_audit_logs(
     ws.title = "Nhật ký hệ thống"
     hdr_fill = PatternFill("solid", fgColor="37474F")
     hdr_font = Font(bold=True, color="FFFFFF")
-    headers = ["STT", "Thời gian", "Người thao tác", "Username", "Công việc", "Kết quả", "IP", "Đường dẫn kỹ thuật"]
-    widths  = [6, 18, 26, 18, 40, 20, 18, 40]
+    headers = ["STT", "Thời gian", "Người thao tác", "Username", "Công việc", "Chi tiết", "Kết quả", "IP", "Đường dẫn kỹ thuật"]
+    widths  = [6, 18, 26, 18, 40, 70, 20, 18, 40]
     ws.append(headers)
     for cell, w in zip(ws[1], widths):
         cell.fill = hdr_fill
@@ -329,6 +330,7 @@ def export_audit_logs(
             idx, ts,
             r["full_name"] or "", r["username"] or "",
             describe_work(r["action"], r["target_type"]),
+            describe_detail(r["detail"]),
             describe_result(r["detail"], r["action"]),
             r["ip_address"] or "", r["target_type"] or "",
         ])

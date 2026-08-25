@@ -4,6 +4,12 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 25/08/2026 Bàn giao chứng từ - **Xoá ô chứng từ đã xác nhận: bắt nhập lý do và ghi lại vào Nhật ký thao tác**
+    + **Trước đây xoá một ô đã xác nhận không để lại dấu vết ở đâu cả**: người có quyền xác nhận chỉ cần xoá trắng ô rồi bấm Lưu — số liệu và cả lịch sử sửa đổi riêng của ô đó biến mất cùng lúc. Nhật ký thao tác vẫn có một dòng, nhưng nội dung y hệt một lần sửa số tờ bình thường, không phân biệt được
+    + **Nay bắt buộc nhập lý do** khi xoá ô đang ở trạng thái *Đã xác nhận* hoặc *Đang mượn*. Ô chưa xác nhận (hoặc bị trả lại) vẫn xoá bình thường như cũ, không hỏi gì
+    + **Nhật ký thao tác ghi lại đủ**: ai xoá, xoá ô của giao dịch viên nào, ngày nào, bao nhiêu tờ, phòng nào, trạng thái trước khi xoá, và lý do — đọc một dòng là hiểu chuyện gì đã xảy ra
+    + **Màn Nhật ký thao tác có thêm cột "Chi tiết"**: hiện nội dung của những thao tác có ghi chi tiết. Các dòng máy tự ghi (chỉ có mã kết quả HTTP) để trống cột này cho khỏi rối mắt
+    + Không đụng cơ sở dữ liệu, không phải khai báo quyền lại
 - 25/08/2026 Đối chiếu CITAD - **Đã vá 2 lỗi ở ô *Lập bảng* / *Kiểm soát* cảnh báo hôm 23/08 (PR#56)**:
     + ✅ **Mở lại bảng cũ không còn mất tên người ký nữa.** Tên của người đã nghỉ, đã chuyển phòng, hay
       gõ tay kiểu khác đều hiện đúng như lúc lưu. **Bấm *Lưu* lúc này đã an toàn** — cảnh báo "thấy ô
