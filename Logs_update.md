@@ -4,6 +4,17 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 25/08/2026 Đối soát CITAD ↔ IPCAS - **Sửa lỗi đọc SAI số tiền khi file IPCAS đã bị Excel lưu đè (đã merge PR#58)**
+    + 🔴 **Nguyên nhân — Phòng Thanh toán tự phát hiện**: mở file CSV của IPCAS bằng Excel (chỉ để xoá thử 1 dòng) rồi lưu lại. Excel **tự động** đổi mọi số tiền đủ lớn — từ khoảng 100 tỷ trở lên, đúng nhóm giá trị **cao** (IH) — sang kiểu viết tắt `5.53722E+11`. Số nhỏ (nhóm **thấp**/IL) không đủ lớn nên không bị đổi, đúng khớp hiện tượng quan sát được *"chỉ nhóm cao mới lệch, nhóm thấp thì không"*
+    + **Chương trình đọc sai hoàn toàn**: cách đọc cũ gom hết chữ số lại, `5.53722E+11` thành **55.372.211 đồng** thay vì **553.722.000.000 đồng** — cái đuôi `11` chính là phần `E+11` bị dính vào. Nay đọc đúng
+    + **Đo trên dữ liệu thật**: file gốc ngày 19/08 (chưa ai mở bằng Excel) **không đổi gì** — vẫn 38.129 khớp / 14 lệch, đúng như cũ. File ngày 24/08 đã bị Excel lưu đè: **42.549 khớp / 120 lệch → 42.563 khớp / 92 lệch**
+    + 🔴 **92 dòng lệch còn lại KHÔNG phải lỗi chương trình và không sửa được**: lúc Excel đổi sang kiểu viết tắt, nó **chỉ giữ khoảng 6 chữ số đầu**, các chữ số sau bị làm tròn thành 0 **ngay trong file** — đã xác nhận bằng cách đọc thẳng nội dung file. Số tiền thật đã mất, chương trình đọc kiểu gì cũng không lấy lại được
+    + ⚠️ **Việc cần làm từ nay — quan trọng hơn cả bản vá**: **không mở file CSV của IPCAS bằng Excel rồi bấm lưu**, kể cả chỉ mở ra xem. Cần xem thì mở bằng Notepad, hoặc mở bằng Excel nhưng **thoát ra không lưu**. Lỡ lưu rồi thì **tải lại file gốc từ IPCAS**, đừng chấm bằng file đó
+    + ⚠️ **Chương trình chưa biết tự cảnh báo** khi gặp file đã bị hỏng kiểu này — nó vẫn chấm bình thường và cho ra vài chục dòng lệch không giải thích được. Gặp tình huống "tự nhiên nhiều dòng lệch ở nhóm giá trị cao" thì nghĩ ngay tới nguyên nhân này trước. Đã ghi lại để người phát triển vá đợt sau
+    + **Không đụng cơ sở dữ liệu, không phải khai báo quyền lại.** Lưu ý: các lần chấm **đã lưu trong tab Lịch sử trước hôm nay vẫn giữ nguyên số cũ (sai)** — lịch sử là ảnh chụp tại thời điểm chấm, không tính lại. Cần số đúng thì chấm lại bằng file gốc
+    + Thêm 4 test tự động. Toàn bộ **725 test** chạy đạt sau khi merge (đo lại trên đúng bản đã merge, không có test nào lỗi)
+    + 🟡 **5 điểm review CHƯA sửa, để người phát triển xử lý sau** (chi tiết + cách sửa đã đo ở `docs/Implementation-notes.html` card 107): ô Excel kiểu số cho ra số **sai gấp 10 lần**; số tiền lẫn đơn vị (`5.53722E+11 VND`) rơi lại về lỗi cũ; số âm dạng viết tắt nay đi lọt; codebase đang có **3 luật đọc số tiền khác nhau** ở 3 module; và thiếu cảnh báo file hỏng nói trên
+
 - 25/08/2026 Đối chiếu CITAD - PaymentHub - **Màn hình MỚI cho Phòng QLTK Nostro, Vostro (đã merge PR#57)**
     + **Vào bằng**: Đối chiếu → Phòng QLTK Nostro, Vostro → Đối chiếu CITAD - PaymentHub. **Phải được cấp quyền mới thấy menu** — báo quản trị viên thêm vào nhóm quyền tương ứng
     + **Đây là màn hình riêng, không liên quan gì tới màn "Đối chiếu CITAD" của Phòng Thanh toán**: số liệu lấy từ trang khác (CITAD lấy ở **"Tra cứu dữ liệu"**, chỉ chiều **Đi**, chỉ **giao dịch thành công**; PaymentHub lấy dòng **Tổng cộng** ở trang "Lập bảng kê phí chia sẻ CITAD"). Hai phòng không nhìn thấy và không ghi đè số liệu của nhau

@@ -523,6 +523,15 @@ Truy cập:
   phải gán căn lề từng ô vì Excel **không** áp style cột cho ô đã ghi giá trị — xem
   `docs/Implementation-notes.html` (card 105). Danh sách khớp **không** lưu vào lịch sử, chỉ giữ
   trong phiên
+- 🔴 **KHÔNG mở file CSV IPCAS bằng Excel rồi lưu lại** — kể cả chỉ mở ra xem rồi bấm Ctrl+S.
+  Excel tự đổi mọi số tiền đủ lớn (từ ~100 tỷ, đúng nhóm giá trị **cao**/IH) sang ký hiệu khoa
+  học (`5.53722E+11`) và **chỉ giữ ~6 chữ số có nghĩa** — 6 chữ số cuối bị làm tròn thành 0
+  **vĩnh viễn trong file**, không cách nào lấy lại. Từ 25/08/2026 chương trình đọc đúng độ lớn
+  của dạng khoa học (trước đó cho ra `55372211`, sai hẳn), nhưng **phần chính xác đã mất thì
+  không cứu được** — gặp file nghi bị Excel lưu đè thì tải lại bản gốc từ IPCAS
+- ⚠️ Chương trình **chưa cảnh báo** khi gặp file đã bị Excel làm hỏng kiểu trên — vẫn chấm bình
+  thường và ra vài chục dòng lệch không giải thích được. Đang chờ vá; xem
+  `docs/Implementation-notes.html` (card 107)
 - Phân quyền riêng theo nhóm (`menu.doi_soat_citad`)
 
 ### Module Sổ trực cuối ngày (Phòng Thanh toán)

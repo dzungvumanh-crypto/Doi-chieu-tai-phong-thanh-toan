@@ -10020,6 +10020,113 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
+
+  <!-- 107 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">107</span>
+      <span class="card-title">Review PR#58 (số tiền IPCAS dạng khoa học): 5 điểm CHƯA sửa, cố ý merge trước</span>
+      <span class="badge badge-warn">chưa sửa · 2026-08-25</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Vì sao merge khi biết còn lỗi</div>
+      <p>Bản vá <b>đúng và cần gấp</b>: <code>_parse_so_tien()</code> chữa được lỗi đọc
+      <code>5.53722E+11</code> thành <code>55372211</code>. Đã kiểm trước khi merge — 4 test mới pass,
+      toàn bộ <b>725 test pass</b> trên đúng bản đã merge, không regression. Năm điểm dưới đây
+      <b>không chặn nghiệp vụ hôm nay</b> nên người dùng chọn merge trước, giao người phát triển xử lý
+      sau. Card này giữ nguyên <b>số đo thật</b> để PR sau không phải dò lại từ đầu.</p>
+
+      <div class="label">1. Năm điểm chưa sửa</div>
+      <table>
+        <tr><th>#</th><th>Đầu vào</th><th><code>_parse_so_tien()</code> trả về</th><th>Đúng ra phải là</th><th>Trạng thái</th></tr>
+        <tr><td>1</td><td><code>'553722000000.0'</code><br><i>(ô Excel kiểu SỐ — xlrd trả float, code <code>str()</code> nó)</i></td>
+            <td><code>5537220000000</code></td><td><code>553722000000</code></td>
+            <td><b>CHƯA — nặng nhất, sai gấp 10 lần</b></td></tr>
+        <tr><td>2</td><td><code>'5,53722E+11'</code><br><i>(Excel máy đặt vùng Việt Nam — dấu phẩy là dấu thập phân)</i></td>
+            <td><code>55372200000000000</code></td><td><code>553722000000</code></td>
+            <td>CHƯA — sai 100.000 lần</td></tr>
+        <tr><td>3</td><td><code>'5.53722E+11 VND'</code><br><i>(lẫn đơn vị)</i></td>
+            <td><code>55372211</code></td><td><code>553722000000</code></td>
+            <td>CHƯA — rơi lại đúng lỗi vừa sửa</td></tr>
+        <tr><td>4</td><td><code>'-5.53722E+11'</code></td>
+            <td><code>-553722000000</code> (đi lọt vào kết quả)</td><td>trước đây bị <code>continue</code> bỏ qua</td>
+            <td>CHƯA — đổi hành vi âm thầm</td></tr>
+        <tr><td>5</td><td colspan="3">Không module nào cảnh báo người dùng <b>"file này đã bị Excel làm hỏng"</b></td>
+            <td>CHƯA — xem mục 5</td></tr>
+      </table>
+      <div class="note">Điểm 1 <b>không phải PR#58 gây ra</b> (code cũ y hệt), nhưng bằng chứng nó có thật
+      nằm ngay trong cùng vòng lặp: dòng đọc <code>so_gd</code> phía trên phải tự vá bằng
+      <code>.replace(".0", "")</code> — nghĩa là file CITAD <b>đã từng</b> có ô kiểu số. Cột số tiền hôm nay
+      may mắn là ô chữ (nếu là ô số thì mọi lệnh lệch 10 lần, không thể khớp 38.129/14 như đã đo).</div>
+
+      <div class="label">2. Cách sửa điểm 1 — KHÔNG được cắt đuôi chuỗi</div>
+      <p><code>re.sub(r'[.,]0+$', '', s)</code> nhìn thì gọn nhưng biến <code>'1.000'</code> (1000 đồng)
+      thành <code>1</code> — đúng cái bẫy dấu chấm hàng nghìn mà tác giả PR vừa thoát ra. Phải xử ở
+      <b>mức kiểu dữ liệu</b>, trước khi <code>str()</code>:</p>
+      <pre><code>if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+    return int(round(raw))          # ô Excel kiểu số — không đi qua chuỗi</code></pre>
+      <p>rồi đổi 2 chỗ gọi truyền thẳng giá trị gốc thay vì chuỗi đã <code>str()</code>:
+      <code>_parse_sheet()</code> (cột tiền CITAD) và <code>_parse_hub_xls()</code>. An toàn:
+      <code>tien_raw</code> không được dùng lại ở đâu khác (đã grep), và <code>_parse_so_tien</code> vốn
+      đã tự <code>strip()</code> + bỏ dấu nháy.</p>
+
+      <div class="label">3. Cách sửa điểm 2 + 3 — siết nhánh khoa học</div>
+      <p>Hiện tại là <i>"thấy chữ E thì bỏ hết dấu phẩy rồi thử <code>float()</code>"</i> — quá dễ dãi.
+      Đổi sang khớp đúng mẫu khoa học thật thì chữa được cả hai:</p>
+      <pre><code>if re.fullmatch(r'-?\d+(?:[.,]\d+)?[Ee][+-]?\d+', cleaned):</code></pre>
+      <p>Lưu ý dùng <code>cleaned</code> <b>chưa</b> bỏ dấu phẩy, và chỉ đổi <code>,</code>&rarr;<code>.</code>
+      <i>sau khi</i> đã khớp mẫu.</p>
+
+      <div class="label">4. Phát hiện quan trọng nhất: repo đang có BA luật đọc số tiền</div>
+      <p><code>backend/services/ach/so_tien.py</code> đã tồn tại từ <b>10–11/08/2026</b>, Business Owner
+      chốt luật, docstring kể <b>đúng</b> tình huống PR#58 vừa gặp (<i>"người chấm hay mở .csv bằng Excel
+      rồi lưu lại"</i>) và chốt <i>"mẫu lạ → <b>raise</b>, không đoán"</i>. Tác giả PR#58 đi lại toàn bộ
+      con đường đó mà không biết module này có sẵn. Số đo thật:</p>
+      <table>
+        <tr><th>Cách đọc</th><th>Nơi dùng</th><th><code>"5.53722E+11"</code></th><th><code>"180.000"</code></th></tr>
+        <tr><td><code>doc_so_tien()</code></td><td>ACH b9, b11</td>
+            <td><b>raise</b>, chặn cả lượt chạy</td><td><code>180000</code> ✓</td></tr>
+        <tr><td><code>pd.to_numeric()</code> trần</td><td>ACH b4, b6, <code>ach_service:157</code></td>
+            <td><code>553722000000</code> ✓</td><td><b><code>180</code> ✗ sai 1000 lần</b></td></tr>
+        <tr><td><code>_parse_so_tien()</code> (PR#58)</td><td>doi_soat_citad</td>
+            <td><code>553722000000</code> ✓</td><td><code>180000</code> ✓</td></tr>
+      </table>
+      <div class="note"><b>Nếu sau này gộp về một hàm dùng chung thì lấy <code>_parse_so_tien()</code> làm
+      gốc</b> — nó là bản duy nhất đúng cả hai ca. Nhưng <b>đừng</b> gọi thẳng <code>doc_so_tien()</code> từ
+      <code>doi_soat_citad</code>: nó <code>raise</code> khi gặp 1 ô lạ, sẽ giết cả lượt đối soát, trái hẳn
+      thiết kế "nuốt lỗi từng ô + log" của module này (xem <code>_XlrdWs.cell_value()</code>).
+      <br>Chưa kiểm chứng bằng file MIS thật xem cột <code>SO_TIEN</code> bên ACH có dùng dấu chấm hàng
+      nghìn không — nếu có thì b4/b6 đang sai 1000 lần. Đó là chuyện ngoài PR#58, cần file thật mới kết luận.</div>
+
+      <div class="label">5. Thiếu cảnh báo "file đã bị Excel làm hỏng" — dùng ống có sẵn</div>
+      <p>Cùng một file IPCAS bị Excel lưu đè, ba module phản ứng ba kiểu: <code>doi_soat_citad</code> và
+      ACH b4/b6 <b>âm thầm</b> nhận số đã mất 6 chữ số cuối; ACH b9/b11 <b>raise</b> dừng cả lượt. Không
+      chỗ nào nói câu quan trọng nhất với người dùng: <i>"đi lấy lại bản gốc từ IPCAS"</i>. 92 dòng lệch
+      còn lại của ngày 24/08 chính là hậu quả.</p>
+      <p><b>Không phải dựng gì mới</b>: khi <code>_parse_so_tien()</code> rơi vào nhánh <code>E</code> thì
+      đếm lại và cho <code>parse_ipcas_files()</code> đẩy một dòng vào <code>errors</code> — cơ chế
+      <code>parse_warnings</code> đã chạy suốt từ <code>api/doi_soat_citad.py</code> ra tới banner cam ở
+      frontend. Chỉ cần sửa lại chữ ở frontend: hiện ghi <i>"file bị lỗi khi đọc"</i>, ca này phải là
+      <i>"file đã bị Excel làm mất chính xác — kết quả có thể còn lệch"</i>.</p>
+
+      <div class="label">6. Đường ảnh hưởng đã kiểm trước khi merge</div>
+      <table>
+        <tr><th>Nơi tiêu thụ <code>so_tien</code></th><th>Kết luận</th></tr>
+        <tr><td><code>reconcile.py</code> — khoá khớp lệnh <code>(txid, loai, so_tien)</code> /
+            <code>(so_gd, loai, so_tien)</code></td>
+            <td><b>Đây chính là mục đích PR.</b> Cả 3 nguồn (CITAD/IPCAS/Hub) đều đi qua <b>cùng một</b>
+            <code>_parse_so_tien</code> → vẫn nhất quán như trước. An toàn</td></tr>
+        <tr><td><code>exporters.py</code> → <code>int(so_tien)</code> vào ô Excel (3 chỗ)</td>
+            <td>Vô hại — <code>int</code> thuần, dưới 2<sup>53</sup> rất xa</td></tr>
+        <tr><td><code>doi_soat_citad_history</code></td>
+            <td><code>lech_json TEXT</code>, không cột số. Vô hại — <b>nhưng bản ghi lịch sử cũ vẫn giữ số
+            SAI</b>, không ai tính lại</td></tr>
+        <tr><td>Frontend <code>toLocaleString</code>, thống kê lịch sử</td>
+            <td>Vô hại — thống kê chỉ <code>sum(1 for r ...)</code>, <b>đếm dòng, không cộng tiền</b></td></tr>
+        <tr><td>Module khác <code>import parsers</code></td><td><b>Không có ai</b> (đã grep toàn repo)</td></tr>
+      </table>
+    </div>
+  </div>
   <div class="card">
     <div class="card-header">
       <span class="card-num">TĐ</span>
