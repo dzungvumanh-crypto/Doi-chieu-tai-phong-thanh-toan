@@ -32,6 +32,11 @@ _SKIP_PREFIXES = (
     # nằm ở POST /session — đường đó KHÔNG bị bỏ qua, vẫn ghi bình thường.
     "/api/doi-chieu-citad/citad-buffer",
     "/api/doi-chieu-citad/paymenthub-buffer",
+    # Đối chiếu CITAD - PaymentHub Phòng QLTK Nostro, Vostro — cùng lý do
+    # như 2 dòng trên, xem _resolve_extension_owner() trong
+    # backend/api/doi_chieu_citad_nostro.py.
+    "/api/doi-chieu-citad-nostro/citad-buffer",
+    "/api/doi-chieu-citad-nostro/paymenthub-buffer",
 )
 
 _ID_RE = re.compile(r"/\d+")

@@ -92,6 +92,10 @@ FEATURES: dict[str, str] = {
     # Nhãn phải khớp tên menu ở frontend/shared.py, phần mô tả sau dấu — mới
     # nói rõ đối chiếu/đối soát với hệ thống nào.
     "menu.doi_chieu_citad":     "Đối chiếu CITAD cuối ngày — CITAD ↔ PaymentHub (menu)",
+    # Đối chiếu CITAD ↔ PaymentHub — Phòng QLTK Nostro, Vostro. Module SONG
+    # SONG với menu.doi_chieu_citad ở trên, không phải phân hệ con của nó —
+    # nghiệp vụ/nguồn dữ liệu khác hẳn (xem doi_chieu_citad_nostro_service.py).
+    "menu.doi_chieu_citad_nostro": "Đối chiếu CITAD - PaymentHub — Phòng QLTK Nostro, Vostro (menu)",
     # Đối soát CITAD ↔ IPCAS — Phòng Thanh toán
     "menu.doi_soat_citad":      "Đối soát chênh lệch CITAD cuối ngày — CITAD ↔ IPCAS (menu)",
     # Sổ trực cuối ngày — Phòng Thanh toán
@@ -178,6 +182,12 @@ FEATURE_GROUPS: list[dict] = [
                 "label": "Phòng Swift",
                 "menus": [
                     {"code": "menu.swift_recon", "actions": []},
+                ],
+            },
+            {
+                "label": "Phòng QLTK Nostro, Vostro",
+                "menus": [
+                    {"code": "menu.doi_chieu_citad_nostro", "actions": []},
                 ],
             },
         ],

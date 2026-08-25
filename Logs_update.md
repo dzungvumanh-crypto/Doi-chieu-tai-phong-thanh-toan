@@ -4,6 +4,21 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 25/08/2026 Đối chiếu CITAD - PaymentHub - **Màn hình MỚI cho Phòng QLTK Nostro, Vostro (đã merge PR#57)**
+    + **Vào bằng**: Đối chiếu → Phòng QLTK Nostro, Vostro → Đối chiếu CITAD - PaymentHub. **Phải được cấp quyền mới thấy menu** — báo quản trị viên thêm vào nhóm quyền tương ứng
+    + **Đây là màn hình riêng, không liên quan gì tới màn "Đối chiếu CITAD" của Phòng Thanh toán**: số liệu lấy từ trang khác (CITAD lấy ở **"Tra cứu dữ liệu"**, chỉ chiều **Đi**, chỉ **giao dịch thành công**; PaymentHub lấy dòng **Tổng cộng** ở trang "Lập bảng kê phí chia sẻ CITAD"). Hai phòng không nhìn thấy và không ghi đè số liệu của nhau
+    + **Chấm gộp được nhiều ngày**: chọn Từ ngày – Đến ngày thay vì mỗi ngày một bản. Khi bấm Lưu, máy **cảnh báo** nếu kỳ vừa chọn trùng ngày với kỳ đã chấm trước đó, hoặc bỏ sót ngày ở giữa — **chỉ cảnh báo, vẫn cho lưu**, quyết định là ở người chấm
+    + **Tiện ích lấy số liệu tự động (Extension) là bản RIÊNG**, tải ngay trên màn hình ở tab "Kết nối Extension". ⚠️ **Không dùng chung với Extension của Phòng Thanh toán** — ai đang dùng bản kia thì cài thêm bản này, hai bản chạy song song được, không phải gỡ bản cũ
+    + **Cột "người chấm" trong tab Lịch sử là người LẬP BẢNG** (người lưu đầu tiên của kỳ đó), không đổi khi người khác lưu đè sau — để biết ai phụ trách kỳ đó, không phải ai bấm Lưu gần nhất
+    + Thêm 2 bảng mới trong cơ sở dữ liệu, **không sửa/xoá bảng cũ nào** — các màn hình đang dùng không bị ảnh hưởng
+    + ⚠️ **Chưa thử được trên máy trong mạng nội bộ Agribank**: phần tự động lấy số liệu từ trang CITAD/PaymentHub thật chưa chạy thử lần nào (môi trường phát triển không vào được mạng nội bộ). **Lần đầu dùng nên đối chiếu lại vài số với bản chấm tay** trước khi tin hoàn toàn. Nếu số không lên, vẫn **gõ tay bình thường** được — mọi ô đều nhập tay được
+    + **6 lỗi đã tìm ra và vá trước khi merge** (chi tiết kỹ thuật ở `docs/Implementation-notes.html` mục Z9), trong đó đáng chú ý với người dùng:
+        * **Tab Lịch sử bị sập** (trang trắng) nếu gõ ngày sai kiểu vào ô lọc — ví dụ gõ dở `01/08` rồi bấm Tìm. Nay gõ sai chỉ là không lọc, không sập
+        * **Tiện ích lấy số liệu gửi hỏng mà không báo gì**: mã kết nối hết hạn / mất mạng thì im lặng hoàn toàn, người dùng tưởng đã lưu xong. Nay **luôn hiện thông báo** — đỏ nghĩa là mã kết nối hỏng phải tạo lại, vàng nghĩa là mạng lỗi và máy sẽ tự thử lại
+        * **Lưu được kỳ trống** (xoá trắng ô ngày rồi bấm Lưu) tạo ra bản ghi không hiện ra ở đâu mà cũng không xoá được. Nay bắt buộc nhập đủ Từ ngày – Đến ngày
+        * **File Excel xuất ra gọi tên cổng khác với màn hình** (Excel ghi "Cổng 1", màn hình ghi "Cổng 001"). Nay hai nơi gọi giống nhau
+    + Thêm **19 test tự động** cho module này (PR gửi lên ban đầu không có test nào). Toàn bộ **732 test** chạy đạt sau khi merge
+
 - 24/08/2026 Đối soát CITAD ↔ IPCAS - **Đã merge PR#55 vào develop (các mục 23/08 bên dưới nay đã lên bản chính)**
     + **Gộp chung 6 đợt sửa ghi ở dưới**: bắt được IPCAS/Hub hạch toán trùng, loại cặp hạch toán nhầm-huỷ theo REFHUB, lệnh chuyển chi nhánh chỉ tính dòng gốc, sửa cột Ngày GD / STT / Số tiền trong file "Tất cả lệnh", thêm 41 test tự động cho phần đối soát (trước đây không có test nào)
     + ⚠️ **Từ hôm nay báo cáo có thể NHIỀU dòng lệch hơn trước, và đó là đúng.** Lệnh Đến trạng thái **PYED/PYEK** trước đây được bỏ qua khi tính dư, nay không khớp CITAD là **vẫn hiện**. Vì vậy **số liệu trước và sau mốc 24/08/2026 không so sánh trực tiếp được** — không phải hệ thống hỏng
