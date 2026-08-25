@@ -4,6 +4,7 @@ from datetime import date as _date, datetime as _datetime
 from nicegui import ui
 import frontend.api_client as api
 from frontend.shared import _sidebar, _content_area, _require_auth, _handle_api_error
+import frontend.le_29 as le_29
 
 # Sau giờ này trong ngày mà Sổ trực cuối ngày (Phòng Thanh toán) vẫn chưa có
 # ai mở/chọn GDV thì nhắc trên trang chủ — ước lượng, chỉnh nếu không hợp
@@ -45,6 +46,8 @@ async def dashboard_page():
     # đáp thẳng xuống Bàn giao chứng từ vẫn giữ, nhưng nằm ở trang login.
     await _sidebar("home")
     ui.add_head_html(_HOME_FIT_CSS)
+    le_29.css_trang_chu()     # dịp 2-9; ngoài dịp không nạp gì
+    le_29.css_trang_chu()     # dịp 2-9; ngoài dịp không nạp gì
     # Trang chủ khoá chiều cao đúng 1 viewport: 3 khối trên cùng cao cố định, biểu đồ
     # ăn hết phần còn lại. overflow-y-auto chỉ là lối thoát cho màn hình quá thấp.
     with _content_area() as _ca:
@@ -144,6 +147,8 @@ async def dashboard_page():
                         ui.label(lbl).classes("text-xs text-gray-500")
 
         with content:
+            le_29.dai_trang_chu()
+
             # Khối "Công việc đang chờ" đã chuyển hẳn về sidebar + trang /pending/<loại>.
             # Để lại đây sẽ là nơi thứ hai hiển thị cùng một thông tin, và là nơi duy nhất
             # người dùng phải quay về Trang chủ mới thấy được.

@@ -53,6 +53,138 @@
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
   <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-25</p>
 
+  <!-- L29 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">L29</span>
+      <span class="card-title">Trang trí chủ đề Quốc khánh 2-9 cho trang Đăng nhập và Trang chủ</span>
+      <span class="badge badge-done">Đã làm — 713 test pass</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label">1. Nền — đổi, nhưng không tô đỏ cờ phẳng</div>
+      <p>Trang login <b>đã</b> đỏ sẫm <code>#6E0F14</code> + vàng <code>#C9A227</code> (nhận diện
+      Agribank), nên bản đầu giữ nguyên nền và chỉ thêm sao + dải cờ. Theo yêu cầu, nền được đổi hẳn:
+      đỏ cờ <b>bừng sáng quanh card rồi sẫm dần ra rìa</b>
+      (<code>radial-gradient</code> chồng lên <code>linear-gradient</code> #8E1219 → #520A0F).</p>
+      <p>Không tô <code>#DA251D</code> phẳng toàn trang vì <b>tương phản chữ</b>, đo bằng công thức
+      WCAG chứ không ước lượng bằng mắt:</p>
+      <table>
+        <tr><th>Nền</th><th>Chữ</th><th>Tỷ lệ</th><th>Kết luận</th></tr>
+        <tr><td>#DA251D phẳng</td><td>trắng 100%</td><td>4,92:1</td>
+            <td>Đạt, nhưng panel đường dẫn phủ thêm lớp trắng 9% lên nền → tụt xuống sát ngưỡng</td></tr>
+        <tr><td>#B81C1B (chỗ sáng nhất của nền mới)</td><td>trắng 100%</td><td><b>6,52:1</b></td><td>Thoải mái</td></tr>
+        <tr><td>nền panel trên chỗ sáng nhất</td><td>chữ link 85% trắng</td><td>4,53:1</td>
+            <td>Sát ngưỡng AA (4,5) → <b>nâng lên 92%</b> = 5,06:1</td></tr>
+        <tr><td>nền panel lúc rê chuột (trắng 13%)</td><td>chữ link 92%</td><td>4,75:1</td><td>Đạt</td></tr>
+        <tr><td>#B81C1B</td><td>câu chúc #F3D46A</td><td>4,48:1</td>
+            <td><b>Trượt</b> → đổi sang #FFE08A = 5,06:1</td></tr>
+      </table>
+      <p>Nền sáng lên cũng làm sao vàng mờ chìm đi, nên <code>opacity</code> hai ngôi sao nâng từ
+      0,055/0,05 lên 0,085/0,075.</p>
+      <p>Màu cờ đặt riêng trong <code>le_29.py</code>, <b>không</b> lấy từ
+      <code>ui_kit.COLORS</code>: đổi tông đỏ Agribank không được kéo theo đổi màu cờ.</p>
+      <div class="caution"><b>Vì sao nền login phải <code>!important</code>:</b> container nội dung đặt
+      <code>background: #6E0F14</code> thẳng vào thuộc tính <code>style</code> của thẻ. Khai báo trong
+      stylesheet không đè được inline style, trừ khi có <code>!important</code>. Cách sạch hơn là gỡ
+      inline style đó, nhưng nó đang là hàng rào chống lớp bọc của NiceGUI/Quasar phủ nền riêng lên
+      <code>&lt;body&gt;</code> — bỏ đi là mở lại lỗi cũ, nên giữ và đè.</div>
+
+      <div class="label">1b. Nền Trang chủ — ấm ở trên, trả về xám ở đáy</div>
+      <p><code>#app-content</code>: <code>#FFF0DE → #FFF7EC → #FCFBF7 → #F9FAFB</code>. Đáy trở lại
+      đúng <code>bg-gray-50</code> cũ để card trắng và nền biểu đồ echart vẫn tách bạch — nếu tô kem
+      đều cả trang thì card trắng và nền gần như dính vào nhau, số liệu khó đọc.</p>
+      <div class="note"><b>Không đụng sidebar.</b> Sidebar dùng chung cho 19 trang; đổi màu ở đó là đổi
+      toàn hệ thống chứ không còn là "trang chủ + login" nữa. Đánh đổi đã chấp nhận: trong dịp lễ, rời
+      Trang chủ sang trang khác sẽ thấy nền trở lại xám.</div>
+
+      <div class="label">2. Ràng buộc cứng của Trang chủ: đúng 1 viewport</div>
+      <p><code>dashboard.py</code> khoá <code>h-screen</code> + <code>html,body{overflow:hidden}</code>;
+      biểu đồ là khối <code>flex-1 min-h-0</code> duy nhất co giãn. Mọi pixel thêm vào phía trên là pixel
+      lấy đi của biểu đồ (echart còn <code>min-height:180px</code> mới đọc được). Dải chúc mừng vì thế
+      là <b>một dòng cao 34px</b> — không banner nhiều dòng, không viền dày.</p>
+      <div class="caution"><b>Chữ căn giữa + <code>overflow:hidden</code> là một cái bẫy.</b> Nhãn phải
+      có <code>min-width: 0</code> mới co được; thiếu nó, câu chúc dài hơn dải trên màn hẹp sẽ bị cắt
+      cụt ở <b>cả hai đầu</b> (vì đang căn giữa) thay vì cắt ở cuối kèm dấu "…".</div>
+      <table>
+        <tr><th>Ý tưởng ban đầu</th><th>Đã đổi thành</th><th>Lý do</th></tr>
+        <tr><td>Sao mờ watermark ở góc phải vùng nội dung</td>
+            <td>Sao mờ lặp trong <b>nền của chính dải chúc mừng</b></td>
+            <td>Vùng nội dung bị card trắng (Nghỉ phép, Biểu đồ) phủ gần kín — watermark đặt ở đó
+            sẽ nằm dưới card, không ai nhìn thấy.</td></tr>
+        <tr><td>Sao nền 46px</td><td>20px, khoảng trống nằm trong chính viewBox (30×20)</td>
+            <td>Dải thấp + <code>overflow:hidden</code>: sao 46px bị cắt mất cánh, ra hình thù lạ chứ
+            không ra ngôi sao. Bản giữa chừng dùng <code>background-size: 26px 18px</code> cho một SVG
+            <b>vuông</b> — sai: SVG giãn theo size nên sao <b>béo ngang</b>. Muốn tile thưa thì khoảng
+            trống phải nằm trong viewBox, không phải nong bằng background-size.</td></tr>
+        <tr><td>Dải cao 24px, chữ 12px, căn trái, viền trái</td>
+            <td>Cao 44px, chữ 14px đậm <b>hai dòng</b>, <b>căn giữa</b>, viền cả hai bên, sao ở hai
+            đầu chữ</td>
+            <td>Theo yêu cầu cho nổi bật hơn. Đổi 20px chiều cao của biểu đồ lấy khẩu hiệu đọc được từ
+            xa. Căn giữa buộc mọi thứ phải đối xứng: viền trái đơn độc và gradient một chiều đều thành
+            lệch, nên đổi thành viền hai bên + gradient đậm hai đầu, nhạt giữa.</td></tr>
+      </table>
+
+      <div class="label">2b. Khẩu hiệu — ngắt dòng bằng tay, không để trình duyệt tự ngắt</div>
+      <p>Khẩu hiệu chính thức dài ~156 ký tự <b>chữ hoa</b>: một dòng 15px cần ~1.400px, tràn cả màn
+      1366 (vùng nội dung trang chủ chỉ còn ~1.078px sau khi trừ sidebar 256px). <code>hai_dong()</code>
+      cắt sẵn tại chữ "VÀ" → 82 và 76 ký tự.</p>
+      <table>
+        <tr><th>Cách khác</th><th>Vì sao không</th></tr>
+        <tr><td>Để trình duyệt tự xuống dòng</td>
+            <td>Điểm ngắt đổi theo bề rộng cửa sổ — rơi vào giữa cụm "(19/8/1945 - 19/8/2026)" hoặc
+            giữa tên nước.</td></tr>
+        <tr><td>Cắt cuối kèm "…"</td><td>Mất chữ của khẩu hiệu chính thức.</td></tr>
+        <tr><td>Thu nhỏ chữ cho vừa một dòng</td>
+            <td>Phải xuống ~10px mới vừa — ngược hẳn yêu cầu "tăng cỡ chữ cho nổi bật".</td></tr>
+      </table>
+      <div class="note">Số năm và cả 4 mốc ngày đều suy từ <code>_NAM_KHAI_SINH = 1945</code> và năm
+      hiện tại — không có số cứng nào phải nhớ sửa sang năm sau. <code>tests/test_le_29.py</code> chặn
+      mỗi dòng ở 100 ký tự để lần sửa câu chữ sau không âm thầm làm tràn dải.</div>
+
+      <div class="label">3. Tự bật/tắt theo ngày — và vì sao không dùng bảng <code>public_holidays</code></div>
+      <p>Khoảng hiển thị 25/8 – 3/9 so bằng cặp <code>(tháng, ngày)</code>, <b>không</b> chứa năm →
+      sang 2027 tự bật lại, không phải sửa code để gỡ sau lễ. Số năm kỷ niệm tính từ 1945 nên cũng
+      không có số cứng nào phải nhớ cập nhật.</p>
+      <div class="note"><b>Không</b> nối vào bảng <code>public_holidays</code>. Bảng đó là dữ liệu
+      nghiệp vụ để tính ngày làm việc cho nghỉ phép và hạn nộp chứng từ; mượn nó điều khiển giao diện
+      thì người quản trị sửa một ngày lễ trong danh mục sẽ vô tình bật/tắt trang trí, và ngược lại
+      không ai đoán được trang trí phụ thuộc vào đâu.</div>
+
+      <div class="label">4. Ràng buộc môi trường</div>
+      <table>
+        <tr><th>Ràng buộc</th><th>Hệ quả trong code</th></tr>
+        <tr><td>Máy trạm trong mạng nội bộ có thể không ra internet</td>
+            <td>Toàn bộ hoạ tiết là CSS <code>clip-path</code> + SVG data-URI nội tuyến. Không ảnh,
+            không CDN — tải ảnh ngoài sẽ hỏng <b>lặng lẽ</b> (font Google ở <code>ui_kit.py</code>
+            đã là điểm yếu sẵn, chặn thì rơi về Segoe UI mà không báo gì).</td></tr>
+        <tr><td>Máy trạm cấu hình yếu</td>
+            <td>Không animation chạy vô hạn (cờ bay, pháo hoa) — chúng ăn CPU liên tục suốt thời gian
+            trang mở. Chỉ giữ <code>pc-rise</code> 0,5 giây sẵn có.</td></tr>
+        <tr><td>Nghi thức Quốc kỳ <span class="pill pill-gray">tin cậy: trung bình</span></td>
+            <td>Không dùng ảnh Quốc kỳ làm nền rồi phủ mờ / đặt ô nhập đè lên. Chỉ dùng
+            <b>sao vàng cách điệu</b> trên nền đỏ và dải màu — không có hình cờ nào bị che hay cắt xén.</td></tr>
+        <tr><td>Độ tương phản chữ trắng trên nền đỏ</td>
+            <td>Sao nền để <code>opacity</code> 0,05–0,055 và nằm trong <code>.pc-bg</code>
+            (<code>z-index:0</code>, <code>pointer-events:none</code>) — không chạm vào ô nhập,
+            không hạ tương phản chữ.</td></tr>
+      </table>
+
+      <div class="caution"><b>Bẫy đã tránh:</b> <code>ui.add_head_html()</code> gọi <b>sau</b>
+      <code>await client.connected()</code> vẫn chạy, nhưng NiceGUI chèn bằng JavaScript qua websocket →
+      dải chúc mừng sẽ hiện một nhịp <b>chưa có kiểu</b> rồi mới đổi. Vì thế tách
+      <code>css_trang_chu()</code> (gọi sớm, cạnh <code>_HOME_FIT_CSS</code>) khỏi
+      <code>dai_trang_chu()</code> (vẽ trong <code>with content:</code>).</div>
+
+      <div class="note"><b>Phạm vi ảnh hưởng đã kiểm:</b> ngoài khoảng 25/8–3/9 cả hai hàm
+      <code>css_*</code> <b>không nạp CSS nào</b> và hàm vẽ trả về ngay — hai trang y hệt trước.
+      Trong dịp lễ, CSS mới chỉ đè <code>.pc-topbar</code> và thêm lớp mới
+      (<code>.pc-sao</code>, <code>.pc-le-chuc</code>, <code>.hm-le</code>); không đụng
+      <code>.pc-card</code>, <code>.pc-panel</code>, <code>.pc-link</code> nên bố cục hai cột đường dẫn
+      (công thức <code>_split_gap_css()</code>) không đổi. Không có endpoint, migration, RBAC nào liên quan.</div>
+    </div>
+  </div>
+
   <!-- Z8 -->
   <div class="card">
     <div class="card-header">

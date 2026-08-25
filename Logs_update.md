@@ -4,6 +4,14 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 25/08/2026 Giao diện - **Trang Đăng nhập và Trang chủ đổi sang chủ đề kỷ niệm 2-9**
+    + **Tự bật từ 25/8, tự tắt sau ngày 3/9** — không ai phải làm gì để gỡ sau lễ, và sang năm tự bật lại. Ngoài khoảng ngày này hai trang y hệt như cũ
+    + **Trang Đăng nhập**: nền đỏ cờ bừng sáng quanh ô đăng nhập rồi sẫm dần ra rìa, dải cờ đỏ - vàng trên đỉnh trang, ngôi sao vàng lớn mờ làm hoạ tiết, khẩu hiệu chào mừng đặt phía trên ô đăng nhập
+    + **Trang chủ**: nền ấm dần lên phía trên (đáy vẫn giữ màu cũ để bảng số và biểu đồ dễ đọc), thêm dải khẩu hiệu hai dòng ngay dưới tiêu đề
+    + **Khẩu hiệu**: *NHIỆT LIỆT CHÀO MỪNG 81 NĂM CÁCH MẠNG THÁNG TÁM THÀNH CÔNG (19/8/1945 - 19/8/2026) VÀ QUỐC KHÁNH NƯỚC CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM (2/9/1945 - 2/9/2026)!* — số năm tự tính, sang năm không phải sửa
+    + **Chỉ đổi hai trang này.** Các màn hình khác và thanh menu bên trái giữ nguyên màu — trong dịp lễ, rời Trang chủ sang màn khác sẽ thấy nền trở lại như thường
+    + **Không đụng cơ sở dữ liệu, không đổi quyền, không đổi thao tác nào.** Máy không vào được internet vẫn hiển thị đủ: mọi hoạ tiết đều vẽ tại chỗ, không tải ảnh từ ngoài
+
 - 25/08/2026 Bàn giao chứng từ - **Xoá ô chứng từ đã xác nhận: bắt nhập lý do và ghi lại vào Nhật ký thao tác**
     + **Trước đây xoá một ô đã xác nhận không để lại dấu vết ở đâu cả**: người có quyền xác nhận chỉ cần xoá trắng ô rồi bấm Lưu — số liệu và cả lịch sử sửa đổi riêng của ô đó biến mất cùng lúc. Nhật ký thao tác vẫn có một dòng, nhưng nội dung y hệt một lần sửa số tờ bình thường, không phân biệt được
     + **Nay bắt buộc nhập lý do** khi xoá ô đang ở trạng thái *Đã xác nhận* hoặc *Đang mượn*. Ô chưa xác nhận (hoặc bị trả lại) vẫn xoá bình thường như cũ, không hỏi gì
