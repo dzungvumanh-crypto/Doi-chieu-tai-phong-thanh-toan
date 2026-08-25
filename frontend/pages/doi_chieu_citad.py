@@ -464,13 +464,25 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
         # tự đổi thành None — mất tên khi mở lại bảng cũ, và nếu bấm Lưu sẽ
         # ghi đè None đè lên tên đã lưu trong DB (bug thật, ghi ở PR#53).
         # Tự bơm giá trị vào options trước khi gán để giữ nguyên tên cũ.
+        #
+        # PHẢI gọi .update() ngay sau khi đổi .options — đọc thẳng
+        # docstring ui.select(): "After manipulating the options, call
+        # update()". .options chỉ là thuộc tính thường, không tự kích hoạt
+        # gì cả; ChoiceElement._values/._labels (dùng để đối chiếu khi đổi
+        # .value) chỉ được tính lại bên trong update()/_update_options().
+        # Thiếu bước này thì self._values vẫn CŨ, có thể khiến lần gán
+        # .value tiếp theo tính sai index — hoặc lần .update() nào khác gọi
+        # sau đó (không phải do mình) đọc lại self._values cũ, đúng bug
+        # cần sửa lại xảy ra lần nữa.
         lap_bang = sess.get("lap_bang", "")
         if lap_bang and lap_bang not in (lap_bang_input.options or []):
             lap_bang_input.options = [*(lap_bang_input.options or []), lap_bang]
+            lap_bang_input.update()
         lap_bang_input.value = lap_bang
         kiem_soat = sess.get("kiem_soat", "")
         if kiem_soat and kiem_soat not in (kiem_soat_input.options or []):
             kiem_soat_input.options = [*(kiem_soat_input.options or []), kiem_soat]
+            kiem_soat_input.update()
         kiem_soat_input.value = kiem_soat
         gD = sess.get("gD", {})
         for c in CONGS:
