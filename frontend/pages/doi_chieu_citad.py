@@ -26,12 +26,15 @@ Napas/Ebanking chỉ có 2 field "IH Đến — Món/Tiền" thực sự đượ
 import asyncio
 import datetime
 import json
+import logging
 from urllib.parse import quote
 
 from nicegui import ui
 from starlette.requests import Request as _StarletteRequest
 import frontend.api_client as api
 from frontend.shared import _sidebar, _content_area, _require_auth, _handle_api_error
+
+_log = logging.getLogger(__name__)
 
 # Card kiểu "modern SaaS" RIÊNG cho trang này (icon trong khung màu + tiêu đề,
 # không dùng banner phủ màu như `_card()` dùng chung ở frontend/shared.py —
@@ -1183,17 +1186,29 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
             depts = await asyncio.to_thread(api.get, "/api/departments/")
             dept = next((d for d in depts if d.get("code") == "PAYMENT"), None)
             if not dept:
+                _log.warning(
+                    "Không tìm thấy phòng ban code='PAYMENT' — 2 ô Lập bảng/Kiểm soát không có gợi ý tên"
+                )
                 return
             staff = await asyncio.to_thread(
                 api.get, "/api/staff/", {"department_id": dept["id"], "active_only": True}
             )
-        except Exception:
-            return  # danh sách gợi ý — lỗi ở đây không được chặn cả trang
-        names = sorted({s["full_name"] for s in staff if s.get("full_name")})
-        lap_bang_input.options = names
-        lap_bang_input.update()
-        kiem_soat_input.options = names
-        kiem_soat_input.update()
+        except Exception as e:
+            # Danh sách gợi ý — lỗi ở đây không được chặn cả trang, nhưng PHẢI
+            # ghi log: options rỗng nhìn y hệt "phòng không có ai", không có log
+            # thì không có đường nào biết vì sao tên biến mất.
+            _log.warning("Không tải được danh sách nhân viên Phòng Thanh toán: %s", e)
+            return
+        names = {s["full_name"] for s in staff if s.get("full_name")}
+        # GỘP vào options đang có, KHÔNG ghi đè. apply_session_data() tự bơm tên
+        # người ký cũ (đã nghỉ/chuyển phòng) vào options để giữ được giá trị, và
+        # new_value_mode="add-unique" cũng thêm tên người dùng vừa gõ tay vào đó.
+        # Gán đè cả danh sách thì ChoiceElement._update_options() thấy .value
+        # không còn trong options nữa và đổi ngay thành None — đúng lại lỗ hổng
+        # vừa vá ở PR#53, chỉ khác đường đi.
+        for sel in (lap_bang_input, kiem_soat_input):
+            sel.options = sorted({*(sel.options or []), *names})
+            sel.update()
 
     # ── Kết nối Extension (mã kết nối cá nhân — xem docstring api/doi_chieu_citad.py) ──
     ext_status_label = None

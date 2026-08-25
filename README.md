@@ -471,9 +471,13 @@ Truy cập:
   Chỉ chạy trên Chromium (Chrome/Edge/Cốc Cốc), phải cài tay từng máy
 - Hai ô **Lập bảng** / **Kiểm soát** vừa gõ tay tự do, vừa bấm chọn từ danh sách nhân viên
   **Phòng Thanh toán** (tra theo `code='PAYMENT'`, không phụ thuộc id phòng).
-  ⚠️ **Đang có lỗi (23/08/2026, chưa vá)**: tên không nằm trong danh sách đó bị xoá âm thầm khi
-  mở lại bảng cũ, và **Xuất Excel báo lỗi 422 nếu để trống cả hai ô** — xem
-  `docs/Implementation-notes.html` mục Z7
+  Tên không nằm trong danh sách (người đã nghỉ / chuyển phòng / gõ tay kiểu khác) vẫn được giữ
+  nguyên khi mở lại bảng cũ — hai lỗi mất tên và **Xuất Excel 422** của 23/08/2026 đã vá
+  25/08/2026, xem `docs/Implementation-notes.html` mục Z8
+- Tab **Lịch sử** (từ 25/08/2026): mỗi người bấm *Lưu* là **một dòng riêng** mang đúng tên người
+  đó, không còn gộp các lần lưu tạm của nhiều người vào một dòng mang tên người lập bảng.
+  ⚠️ Ô lọc **Tên người chấm** và cột *User chấm đối chiếu* vẫn chỉ tìm theo **người lập bảng** —
+  tìm tên người chỉ bổ sung Napas/PSS-MDP sẽ không ra ngày nào, phải bung dòng ra mới thấy
 - Phân quyền riêng theo nhóm (`menu.doi_chieu_citad`)
 
 ### Module Đối soát CITAD ↔ IPCAS
