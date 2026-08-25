@@ -456,8 +456,22 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
             return
         if sess.get("ngay"):
             ngay_input.value = sess["ngay"]
-        lap_bang_input.value = sess.get("lap_bang", "")
-        kiem_soat_input.value = sess.get("kiem_soat", "")
+        # ui.select(new_value_mode="add-unique") chỉ tự thêm giá trị lạ vào
+        # options khi NGƯỜI DÙNG gõ — gán .value bằng code không kích hoạt
+        # cơ chế đó (NiceGUI docstring: "ineffective when setting the value
+        # property programmatically"). Tên không có sẵn trong options (đã
+        # nghỉ/chuyển phòng, hoặc options chưa kịp tải) sẽ bị ChoiceElement
+        # tự đổi thành None — mất tên khi mở lại bảng cũ, và nếu bấm Lưu sẽ
+        # ghi đè None đè lên tên đã lưu trong DB (bug thật, ghi ở PR#53).
+        # Tự bơm giá trị vào options trước khi gán để giữ nguyên tên cũ.
+        lap_bang = sess.get("lap_bang", "")
+        if lap_bang and lap_bang not in (lap_bang_input.options or []):
+            lap_bang_input.options = [*(lap_bang_input.options or []), lap_bang]
+        lap_bang_input.value = lap_bang
+        kiem_soat = sess.get("kiem_soat", "")
+        if kiem_soat and kiem_soat not in (kiem_soat_input.options or []):
+            kiem_soat_input.options = [*(kiem_soat_input.options or []), kiem_soat]
+        kiem_soat_input.value = kiem_soat
         gD = sess.get("gD", {})
         for c in CONGS:
             for u in CURS:
@@ -606,8 +620,8 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
         phD = {u: {f: data["phD"][u][f] for f in FK} for u in CURS}
         return {
             "ngay": ngay_input.value,
-            "lap_bang": lap_bang_input.value,
-            "kiem_soat": kiem_soat_input.value,
+            "lap_bang": lap_bang_input.value or "",
+            "kiem_soat": kiem_soat_input.value or "",
             "gD": gD,
             "phD": phD,
             "napas_m": data["napas"]["den_ih_m"],
@@ -1067,8 +1081,8 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
         payload = {
             "day_str": ngay_input.value,
             "sheet_name": (ngay_input.value or "Sheet1").replace("/", "_"),
-            "lb": lap_bang_input.value,
-            "ks": kiem_soat_input.value,
+            "lb": lap_bang_input.value or "",
+            "ks": kiem_soat_input.value or "",
             "gD": gD,
             "phD": phD,
             "nm": data["napas"]["den_ih_m"],
