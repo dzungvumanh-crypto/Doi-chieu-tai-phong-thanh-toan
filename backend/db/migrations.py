@@ -235,11 +235,18 @@ def _create_tables(db_path: str):
         # thay vì `ngay` đơn — xem doi_chieu_citad_nostro_service.py. Dùng
         # CHUNG bảng doi_chieu_citad_extension_tokens ở trên (mã kết nối
         # Extension trung lập, không tạo bảng token riêng cho module này).
+        # `created_by` = người LẬP BẢNG (người đầu tiên lưu kỳ đó), cố định
+        # suốt vòng đời bản ghi; `updated_by` = người lưu SAU CÙNG. Tab "Lịch
+        # sử" hiển thị created_by — bản chung của cả phòng, nếu hiển thị
+        # updated_by thì ai lưu đè sau cũng chiếm mất tên người lập bảng
+        # (đúng lỗi đã sửa ở module Phòng Thanh toán, xem ALTER tương ứng
+        # trong _ensure_indexes()).
         """CREATE TABLE IF NOT EXISTS doi_chieu_citad_nostro_sessions (
             ky          TEXT    PRIMARY KEY,
             data        TEXT    NOT NULL,
             updated_at  DATETIME,
-            updated_by  INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL
+            updated_by  INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+            created_by  INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL
         )""",
         """CREATE TABLE IF NOT EXISTS doi_chieu_citad_nostro_history (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1041,6 +1048,14 @@ def _ensure_indexes():
         "ALTER TABLE doi_chieu_citad_sessions ADD COLUMN created_by INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL",
         "UPDATE doi_chieu_citad_sessions SET created_by = updated_by WHERE created_by IS NULL",
         "ALTER TABLE doi_chieu_citad_history ADD COLUMN status TEXT NOT NULL DEFAULT 'final'",
+
+        # ── Đối chiếu CITAD - PaymentHub (Nostro, Vostro) — người lập bảng ──
+        # Bảng đã có `created_by` ngay trong _create_tables(); ALTER này chỉ
+        # vá DB đã tạo bảng ở bản nhánh trước đó (lỗi "duplicate column" được
+        # nuốt có chủ đích). Backfill từ `updated_by` vì bản ghi cũ không có
+        # thông tin ai lập bảng thật sự.
+        "ALTER TABLE doi_chieu_citad_nostro_sessions ADD COLUMN created_by INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL",
+        "UPDATE doi_chieu_citad_nostro_sessions SET created_by = updated_by WHERE created_by IS NULL",
 
         # ── Đối chiếu CITAD — nhật ký từng lượt sửa bảng tạm — 2026-08-21 ─────
         # Các lần "Lưu bảng tạm" LIÊN TIẾP gộp vào CHUNG 1 dòng

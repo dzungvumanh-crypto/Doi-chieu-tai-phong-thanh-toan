@@ -74,7 +74,7 @@ def _resolve_extension_owner(
             detail="Mã kết nối Extension không hợp lệ hoặc đã bị thu hồi — "
             "vào /doi_chieu_citad_nostro, mục 'Kết nối Extension' để tạo mã mới.",
         )
-    staff_id, owner = resolved
+    _staff_id, owner = resolved
     return owner
 
 
@@ -146,7 +146,9 @@ def download_extension(current: dict = Depends(require_feature("menu.doi_chieu_c
     return Response(
         content=content,
         media_type="application/zip",
-        headers={"Content-Disposition": 'attachment; filename="extension_citad.zip"'},
+        # Tên KHÁC gói của Phòng Thanh toán ("extension_citad.zip") — 2 gói
+        # Extension riêng, tải về cùng thư mục mà trùng tên là cài nhầm.
+        headers={"Content-Disposition": 'attachment; filename="extension_citad_nv.zip"'},
     )
 
 
@@ -209,7 +211,16 @@ def get_session(
 def save_session(
     data: SessionIn, db=Depends(get_db), current: dict = Depends(require_feature("menu.doi_chieu_citad_nostro"))
 ):
-    svc.session_save(db, data.ky, current["id"], data.model_dump())
+    # Chặn `ky` rỗng/sai định dạng ngay tại đây — lưu được rồi thì bản ghi
+    # vừa vô hình ở tab Lịch sử vừa không xoá được qua UI (xem normalize_ky).
+    # Ghi lại `ky` đã chuẩn hoá vào cả JSON để bản lưu và khoá bảng khớp nhau.
+    try:
+        ky = svc.normalize_ky(data.ky)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    payload = data.model_dump()
+    payload["ky"] = ky
+    svc.session_save(db, ky, current["id"], payload)
     return {"ok": True}
 
 

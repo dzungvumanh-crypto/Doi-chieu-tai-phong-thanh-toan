@@ -82,6 +82,24 @@
     return !!(monEl && monEl.innerText.trim() !== '');
   }
 
+  // ── Lùi thời gian thử lại khi gửi thất bại ───────────────────────────
+  function _makeRetryScheduler(resetFn) {
+    let failCount = 0;
+    let timer = null;
+    return {
+      scheduleRetry() {
+        failCount++;
+        const delay = Math.min(5000 * (2 ** (failCount - 1)), 300000); // 5s → tối đa 5 phút
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(resetFn, delay);
+      },
+      resetBackoff() {
+        failCount = 0;
+        if (timer) { clearTimeout(timer); timer = null; }
+      },
+    };
+  }
+
   function run(server, token) {
     const cong = getCong();
     if (!cong) return;
@@ -112,22 +130,46 @@
         { type: 'BUFFER_POST', url: `${server}/api/doi-chieu-citad-nostro/citad-buffer`, token, body },
         (resp) => {
           if (resp && resp.ok) {
+            retry.resetBackoff();
             _toast(`✓ Tự lưu: Cổng ${cong} – ${loai.toUpperCase()} – Số món ${res.soMon}, Số tiền ${res.soTien}`);
+          } else if (resp && resp.status === 403) {
+            // Lỗi VĨNH VIỄN — thử lại bao nhiêu lần cũng vẫn 403, mỗi lần
+            // còn tốn 1 dòng audit_logs. Dừng hẳn, giữ nguyên lastKey để
+            // MutationObserver không kích lại; người dùng phải tạo mã mới.
+            _toast('✗ Mã kết nối không hợp lệ hoặc đã bị thu hồi — tạo mã mới ở trang Đối chiếu CITAD - PaymentHub', '#dc2626', 8000);
           } else {
-            lastKey = null; // cho phép thử lại lượt sau nếu gửi thất bại
+            // Lỗi CÓ THỂ tạm thời (mất mạng, máy chủ lỗi) — báo cho người
+            // dùng biết là CHƯA lưu được, rồi tự thử lại với độ trễ tăng dần.
+            _toast('⚠ Chưa gửi được số liệu về máy chủ — sẽ tự thử lại', '#f59e0b', 6000);
+            retry.scheduleRetry();
           }
         }
       );
     }
 
-    function _toast(msg) {
+    // Đặt lại khoá chặn trùng NGAY sau khi gửi lỗi là vòng lặp không độ trễ:
+    // _toast() cũng là một thay đổi trên document.body — đúng thứ
+    // MutationObserver bên dưới đang theo dõi — nên observer kích trySave()
+    // lại tức thì, chỉ bị chặn bởi round-trip của request đang lỗi. Lùi thời
+    // gian tăng dần (5s → tối đa 5 phút) và chỉ áp dụng cho lỗi có thể tạm
+    // thời; lỗi vĩnh viễn (403) không tự thử lại.
+    const retry = _makeRetryScheduler(() => {
+      lastKey = null;
+      trySave();
+    });
+
+    function _toast(msg, color, ms) {
+      const old = document.getElementById('_citad_nv_toast');
+      if (old) old.remove();
       const el = document.createElement('div');
+      el.id = '_citad_nv_toast';
       el.textContent = msg;
       el.style.cssText =
-        'position:fixed;bottom:16px;right:16px;z-index:999999;background:#059669;color:#fff;' +
-        'padding:10px 14px;border-radius:8px;font:13px sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.2);';
+        'position:fixed;bottom:16px;right:16px;z-index:999999;color:#fff;' +
+        'padding:10px 14px;border-radius:8px;font:13px sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.2);' +
+        `background:${color || '#059669'};`;
       document.body.appendChild(el);
-      setTimeout(() => el.remove(), 3000);
+      setTimeout(() => el.remove(), ms || 3000);
     }
 
     const observer = new MutationObserver(() => trySave());

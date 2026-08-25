@@ -86,6 +86,8 @@ def _date_filter_input(label: str):
 
 
 CONGS = ["1", "9", "12", "17", "18"]
+# Giữ ĐỒNG BỘ với CONG_LABEL trong backend/schemas/doi_chieu_citad_nostro.py
+# (báo cáo Excel dùng bản bên đó) — frontend không import được schema backend.
 CONG_LABEL = {"1": "Cổng 001", "9": "Cổng CITAD (9)", "12": "Cổng 9212", "17": "Cổng 7917", "18": "Cổng 4818"}
 LOAI_CITAD = ["gtt", "gtc"]
 LOAI_LBL = {"gtt": "Giá trị Thấp", "gtc": "Giá trị Cao"}
@@ -418,6 +420,11 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
         if view_state["readonly"]:
             ui.notify("Đang ở chế độ chỉ xem — bấm \"Quay lại chỉnh sửa\" trước khi lưu", type="warning")
             return
+        # Chặn sớm ở đây cho người dùng thấy lỗi ngay tại ô ngày; backend vẫn
+        # kiểm lại lần nữa (svc.normalize_ky) vì đây chỉ là lớp tiện dụng.
+        if not (tu_ngay_input.value or "").strip() or not (den_ngay_input.value or "").strip():
+            ui.notify("Chưa nhập đủ Từ ngày và Đến ngày của kỳ đối chiếu", type="warning")
+            return
         ky = f"{tu_ngay_input.value}-{den_ngay_input.value}"
         try:
             check = await asyncio.to_thread(
@@ -531,7 +538,7 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
                     ui.label("Chưa có kỳ đối chiếu nào được lưu.").classes("text-sm text-gray-500 p-2")
                 for d in days:
                     with ui.expansion(
-                        f"{d['ky']} — {d['updated_by_name'] or d['updated_by_username']} "
+                        f"{d['ky']} — {d['created_by_name'] or d['created_by_username'] or '(không rõ)'} "
                         f"({d['so_lan_luu']} lần lưu)"
                     ).classes("w-full border border-gray-200 rounded-xl"):
                         entries_container = ui.column().classes("w-full p-2")

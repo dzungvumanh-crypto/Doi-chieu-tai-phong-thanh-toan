@@ -53,6 +53,118 @@
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
   <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-23</p>
 
+  <!-- Z9 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">Z9</span>
+      <span class="card-title">PR#57 — Đối chiếu CITAD ↔ PaymentHub (Phòng QLTK Nostro, Vostro): 6 lỗi sửa trước khi merge</span>
+      <span class="badge badge-ok">Đã sửa — đã merge</span>
+    </div>
+    <div class="card-body">
+
+      <p>Module mới được viết bằng cách <b>chép khung từ <code>doi_chieu_citad_*</code> (Phòng Thanh
+        toán)</b> rồi thay dữ liệu/công thức. Cách làm đó đúng về kiến trúc — 2 phòng thật sự cần 2
+        bảng, 2 buffer, 2 Extension riêng — nhưng nó chép từ <b>khối <code>CREATE TABLE</code> gốc</b>
+        chứ không phải từ trạng thái hiện tại của module gốc, nên <b>3 trong 6 lỗi dưới đây là lỗi
+        module gốc đã sửa rồi và bị tái lập</b>. Đây là rủi ro chính của kiểu nhân bản module, đáng
+        ghi lại cho lần sau.</p>
+
+      <div class="label">1. <span class="pill pill-red">Blocker</span> Hai dòng gán đè nhau làm sập tab Lịch sử</div>
+      <pre>tu_dt = _parse_ky_start(tu_ngay) if tu_ngay else None            # an toàn — trả None
+tu_dt = datetime.strptime(tu_ngay.strip(), "%d/%m/%Y") if tu_ngay else None   # GHI ĐÈ — ném ValueError</pre>
+      <p>Dòng an toàn thành code chết. Ô lọc "Từ ngày"/"Đến ngày" là <code>ui.input</code> gõ tự do,
+        <b>không</b> readonly — gõ dở <code>01/08</code> rồi bấm Tìm là <code>ValueError</code> không
+        ai bắt → <b>500</b>. Module gốc dùng đúng <code>_parse_ngay()</code> trả <code>None</code>, kèm
+        comment <i>"bỏ qua dòng ngày lỗi định dạng, không để sập cả danh sách"</i>.</p>
+      <div class="note">Bài học đo được: bản gốc có <b>ô lọc y hệt</b> và đã chọn kiểu parse an toàn từ
+        đầu. Khi chép một hàm, thứ đáng chép nhất lại chính là <b>lý do</b> nó không dùng cách hiển
+        nhiên hơn.</div>
+
+      <div class="label">2. Cột "người chấm" hiển thị nhầm người lưu sau cùng</div>
+      <table>
+        <tr><th></th><th>Bảng Nostro (PR gửi lên)</th><th>Bảng gốc Phòng Thanh toán</th></tr>
+        <tr><td>Cột có trong bảng</td><td><code>updated_by</code></td><td><code>updated_by</code> + <code>created_by</code></td></tr>
+        <tr><td>Tab Lịch sử hiển thị</td><td><code>updated_by</code> — <b>ai lưu đè sau cũng chiếm chỗ</b></td><td><code>created_by</code> — người lập bảng, cố định</td></tr>
+      </table>
+      <p>Bản ghi là <b>bản chung của cả phòng</b>, ai cũng lưu đè được, nên hiển thị người lưu sau cùng
+        làm mất dấu người phụ trách. Module gốc đã <code>ALTER TABLE ... ADD COLUMN created_by</code>
+        đúng vì lý do này (xem <code>_ensure_indexes()</code>), kèm nguyên văn <i>"gây hiểu lầm đổi cả
+        người phụ trách"</i>.</p>
+      <p><b>Đã sửa:</b> thêm <code>created_by</code> vào cả <code>_create_tables()</code> (DB mới) lẫn
+        một <code>ALTER</code> idempotent + backfill (DB đã chạy bản nhánh trước). Nhánh
+        <code>ON CONFLICT DO UPDATE</code> của <code>session_save()</code> <b>cố ý không đụng</b> cột
+        này — đó là chỗ duy nhất giữ cho "người lập bảng" bất biến.</p>
+
+      <div class="label">3. Extension: gửi thất bại là <b>im lặng tuyệt đối</b>, và không có độ trễ thử lại</div>
+      <p>Hai content-script mới xử lý lỗi bằng đúng một dòng <code>lastKey = null;</code> — không toast,
+        không đếm lần, không delay. Thiếu <b>cả hai</b> hàng rào module gốc đã có:</p>
+      <table>
+        <tr><th>Tình huống</th><th>Trước khi sửa</th><th>Sau khi sửa</th></tr>
+        <tr><td>Mã kết nối bị thu hồi (403)</td><td>Không hiện gì — người dùng tưởng đã lưu, số liệu không bao giờ vào buffer</td><td>Toast đỏ 8 giây, dừng hẳn, không tự thử lại</td></tr>
+        <tr><td>Mất mạng / máy chủ lỗi</td><td>Mỗi lần DOM đổi là 1 POST mới, không độ trễ</td><td>Toast vàng + lùi 5s → tối đa 5 phút</td></tr>
+      </table>
+      <p>Cái bẫy nằm ở chỗ <code>MutationObserver</code> theo dõi <code>document.body</code> với
+        <code>subtree:true</code>. Trang PaymentHub là <code>bootstrap-table</code>, DOM đổi liên tục;
+        mỗi vòng lỗi còn tốn <b>1 dòng <code>audit_logs</code></b> vì
+        <code>_resolve_extension_owner()</code> ghi audit cho mọi 403. Module gốc có nguyên một đoạn
+        comment 8 dòng cảnh báo đúng vòng lặp này — <code>_makeRetryScheduler()</code> sinh ra để chặn nó.</p>
+      <div class="caution"><b>Giới hạn còn lại, cố ý giữ:</b> lỗi 403 <b>không tự thử lại</b> kể cả sau
+        khi người dùng đã tạo mã mới — phải bấm Truy vấn với số liệu <i>khác</i> mới gửi lại (số liệu
+        cũ vẫn bị <code>lastKey</code> chặn). Đây là đánh đổi của module gốc, giữ nguyên cho nhất quán:
+        thà không gửi còn hơn đẻ vòng lặp 403 không bao giờ tắt.</div>
+
+      <div class="label">4. Kỳ đối chiếu rỗng lưu được → bản ghi <b>vô hình mà không xoá được</b></div>
+      <p><code>ky</code> ghép thẳng từ 2 ô ngày, không ai kiểm. Xoá trắng ô ngày rồi Lưu thì
+        <code>ky = "-"</code>: <code>_parse_ky_start()</code> trả <code>None</code> nên dòng đó bị
+        <code>continue</code> ở tab Lịch sử — <b>không hiện ra để mà xoá</b>, nhưng vẫn chiếm PRIMARY
+        KEY trong bảng. Thêm <code>normalize_ky()</code> chặn ở backend (400) và một lớp chặn sớm ở
+        frontend cho người dùng thấy lỗi ngay tại ô ngày.</p>
+      <div class="note">Chuẩn hoá luôn thứ tự 2 vế: <code>05/08-01/08</code> và <code>01/08-05/08</code>
+        trước đây thành <b>2 bản ghi rời của cùng một kỳ</b>, mà cảnh báo chồng ngày lại không bắt được
+        vì nó so theo khoảng đã sắp xếp.</div>
+
+      <div class="label">5. Sắp xếp theo chuỗi ngày — đúng cái lỗi <code>_parse_ky_start()</code> sinh ra để tránh</div>
+      <p><code>session_list()</code> dùng <code>ORDER BY ky DESC</code> trong SQL. <code>ky</code> là text
+        <code>"dd/mm/yyyy-..."</code> nên <code>"01/12/2026"</code> đứng trước <code>"05/01/2027"</code>
+        theo chuỗi dù đến sau. Cùng file, cách đó 40 dòng, đã có sẵn hàm parse viết ra đúng để tránh
+        chuyện này. Chuyển sang sắp xếp bằng Python.</p>
+
+      <div class="label">6. Excel và màn hình gọi cùng một cổng bằng hai tên khác nhau</div>
+      <p>Báo cáo xuất ra ghi <code>Cổng 1 / 9 / 12 / 17 / 18</code> (dùng thẳng mã nội bộ) trong khi màn
+        hình hiển thị <code>Cổng 001 / Cổng CITAD (9) / Cổng 9212 / Cổng 7917 / Cổng 4818</code>. Đưa
+        <code>CONG_LABEL</code> vào <code>backend/schemas/</code> làm bản chuẩn cho Excel; bản ở frontend
+        giữ lại (khác tiến trình, không import được) kèm comment buộc giữ đồng bộ.</p>
+
+      <div class="label">Code chết đã dọn</div>
+      <p>Một vòng <code>for label, mon, tien in [...]: pass</code> tính 4 giá trị rồi vứt; biến
+        <code>tong_row</code> không ai dùng; <code>import io</code> lặp lại trong hàm.
+        <code>get_reconciliation_status()</code>/<code>is_reconciliation_matched()</code> <b>giữ lại</b>
+        dù chưa endpoint nào gọi — ở module gốc chúng phục vụ Sổ trực, và
+        <code>compute_totals()</code> là công thức dùng chung với xuất Excel.</p>
+      <div class="note"><code>GET /extension-version</code> cũng chưa có ai gọi: frontend module này
+        <b>không</b> so version Extension như bản gốc (không gửi <code>GET_VERSION</code>), dù
+        <code>background.js</code> đã hỗ trợ sẵn. Giữ nguyên endpoint — thiếu là bước so version ở
+        frontend, không phải endpoint thừa.</div>
+
+      <div class="label">Test</div>
+      <p>PR gửi lên: <b>2182 dòng thêm, 0 test</b>. Thêm <code>tests/test_doi_chieu_citad_nostro.py</code>
+        — 19 test ở tầng service, mỗi test gắn với đúng một lỗi trên. Riêng test lọc ngày sai định dạng
+        (<code>2026-08-01</code>, <code>01/08</code>, chuỗi rỗng, chữ tiếng Việt) là đủ bắt blocker
+        mục 1 ngay từ đầu. Tổng: <b>732 test pass</b>.</p>
+
+      <div class="label">Đã kiểm và đúng — không sửa</div>
+      <table>
+        <tr><th>Hạng mục</th><th>Kết quả kiểm</th></tr>
+        <tr><td>Khoá <code>key</code> trong <code>extension_citad_nv/manifest.json</code></td><td>DER RSA hợp lệ; ID tính lại (SHA-256, 16 byte đầu, nibble → 'a'-'p') = <code>khkonpnidmecnmmhohlmjamfolkpaeko</code>, <b>khớp</b> hằng <code>_EXTENSION_ID</code> ở frontend và <b>khác</b> ID gói Phòng Thanh toán</td></tr>
+        <tr><td>Thứ tự route <code>{ky:path}</code></td><td><code>/session/{ky}/history</code> đăng ký TRƯỚC <code>/session/{ky}</code> — đúng</td></tr>
+        <tr><td>Mapping cột dòng "Tổng cộng" PaymentHub</td><td><code>tds[1,2,4,5,7,8]</code> khớp field 6-14 theo <code>colspan=6</code> — đúng</td></tr>
+        <tr><td><code>_SKIP_PREFIXES</code> của audit middleware</td><td>Không prefix-match nhầm sang đường của Phòng Thanh toán</td></tr>
+        <tr><td>So sánh <code>float</code> bằng <code>==</code> trong <code>is_reconciliation_matched()</code></td><td>Số tiền VNĐ là số nguyên, dưới 2^53 nên <code>float</code> biểu diễn chính xác — <b>không</b> đổi sang <code>Decimal</code></td></tr>
+      </table>
+
+    </div>
+  </div>
+
   <!-- Z7 -->
   <div class="card">
     <div class="card-header">

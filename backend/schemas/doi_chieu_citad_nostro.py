@@ -22,6 +22,16 @@ from pydantic import BaseModel
 LOAI_CITAD = ("gtt", "gtc")
 LOAI_HUB = ("gtt", "gtc_truoc", "gtc_tu")
 CONGS = ("1", "9", "12", "17", "18")  # giống hệt CONG_MAP trong extension_citad/content.js
+# Tên cổng hiển thị — phải khớp CONG_LABEL ở frontend/pages/doi_chieu_citad_nostro.py:
+# báo cáo Excel và màn hình gọi cùng một cổng bằng cùng một tên, không thể
+# trên màn là "Cổng 4818" mà xuất ra Excel thành "Cổng 18".
+CONG_LABEL = {
+    "1": "Cổng 001",
+    "9": "Cổng CITAD (9)",
+    "12": "Cổng 9212",
+    "17": "Cổng 7917",
+    "18": "Cổng 4818",
+}
 
 
 class SessionIn(BaseModel):

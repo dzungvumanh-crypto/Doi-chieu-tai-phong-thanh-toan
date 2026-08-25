@@ -33,7 +33,7 @@ from datetime import datetime, timedelta
 
 from backend.core.config import BASE_DIR
 from backend.database import _vn_now
-from backend.schemas.doi_chieu_citad_nostro import ExportIn, CONGS, LOAI_CITAD
+from backend.schemas.doi_chieu_citad_nostro import ExportIn, CONGS, CONG_LABEL, LOAI_CITAD
 # Tái dùng nguyên vẹn cơ chế mã kết nối — trung lập, không gắn riêng Phòng
 # Thanh toán (xem docstring đầu file).
 from backend.services.doi_chieu_citad_service import (  # noqa: F401
@@ -113,14 +113,20 @@ def buffer_clear_ph(owner: str) -> None:
 # ── Session theo kỳ đối chiếu — 1 bản CHUNG cho cả phòng (không tách theo
 # người) ────────────────────────────────────────────────────────────────
 def session_save(db: sqlite3.Connection, ky: str, staff_id: int, data: dict) -> None:
+    """`created_by` chỉ ghi ở lần lưu ĐẦU TIÊN của kỳ — nhánh DO UPDATE cố ý
+    KHÔNG đụng tới cột này, nên người lập bảng giữ nguyên dù người khác lưu
+    đè sau đó (`updated_by` mới là người lưu sau cùng). COALESCE để vá cả
+    bản ghi cũ lỡ tạo trước khi có cột này, tránh dòng mất tên người chấm."""
     now = _vn_now()
     data_json = json.dumps(data)
     db.execute(
-        """INSERT INTO doi_chieu_citad_nostro_sessions (ky, data, updated_at, updated_by)
-           VALUES (?,?,?,?)
+        """INSERT INTO doi_chieu_citad_nostro_sessions (ky, data, updated_at, updated_by, created_by)
+           VALUES (?,?,?,?,?)
            ON CONFLICT(ky) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at,
-                                          updated_by=excluded.updated_by""",
-        (ky, data_json, now, staff_id),
+                                          updated_by=excluded.updated_by,
+                                          created_by=COALESCE(doi_chieu_citad_nostro_sessions.created_by,
+                                                              excluded.created_by)""",
+        (ky, data_json, now, staff_id, staff_id),
     )
     db.execute(
         "INSERT INTO doi_chieu_citad_nostro_history (ky, staff_id, data, created_at) VALUES (?,?,?,?)",
@@ -142,10 +148,16 @@ def session_delete(db: sqlite3.Connection, ky: str) -> None:
 
 
 def session_list(db: sqlite3.Connection) -> list:
+    """Sắp xếp bằng Python theo NGÀY BẮT ĐẦU của kỳ. `ORDER BY ky DESC` trong
+    SQL là so sánh CHUỖI "dd/mm/yyyy-..." nên sai thứ tự thời gian
+    ("01/12/2026" < "05/01/2026" theo chuỗi nhưng đến sau) — đúng lý do
+    `_parse_ky_start()` tồn tại."""
     rows = db.execute(
-        "SELECT data FROM doi_chieu_citad_nostro_sessions ORDER BY ky DESC",
+        "SELECT ky, data FROM doi_chieu_citad_nostro_sessions",
     ).fetchall()
-    return [json.loads(r["data"]) for r in rows]
+    parsed = [(_parse_ky_start(r["ky"]) or datetime.min, json.loads(r["data"])) for r in rows]
+    parsed.sort(key=lambda t: t[0], reverse=True)
+    return [data for _, data in parsed]
 
 
 def _nv(v) -> float:
@@ -229,6 +241,22 @@ def _parse_ky_range(ky: str) -> tuple[datetime, datetime] | None:
     return (start, end) if start <= end else (end, start)
 
 
+def normalize_ky(ky: str) -> str:
+    """Chuẩn hoá + kiểm tra `ky` trước khi lưu, ném ValueError nếu sai.
+
+    Không kiểm thì ô ngày bị xoá trắng sẽ lưu thành `ky = "-"`: dòng đó
+    VÔ HÌNH ở tab Lịch sử (`_parse_ky_start()` trả None nên bị `continue`)
+    nhưng vẫn chiếm PRIMARY KEY trong bảng, và UI không còn đường nào xoá.
+    Chuẩn hoá luôn thứ tự 2 vế để "05/08/2026-01/08/2026" và
+    "01/08/2026-05/08/2026" không thành 2 bản ghi rời của cùng một kỳ."""
+    rng = _parse_ky_range(ky or "")
+    if not rng:
+        raise ValueError(
+            "Kỳ đối chiếu không hợp lệ — cần đủ Từ ngày và Đến ngày dạng dd/mm/yyyy."
+        )
+    return f"{rng[0].strftime('%d/%m/%Y')}-{rng[1].strftime('%d/%m/%Y')}"
+
+
 def check_period_overlap(db: sqlite3.Connection, tu_ngay: str, den_ngay: str, exclude_ky: str | None = None) -> dict:
     """Kiểm tra kỳ [tu_ngay, den_ngay] SẮP lưu có CHỒNG lên kỳ nào đã lưu
     trước đó không, và có HỞ khoảng trống giữa kỳ liền trước gần nhất với kỳ
@@ -274,17 +302,27 @@ def get_reconciliation_days(
     den_ngay: str | None = None,
     nguoi_cham: str | None = None,
 ) -> list:
+    """1 dòng/kỳ đã có ai chấm, phục vụ tab "Lịch sử" (lọc theo khoảng ngày +
+    tên người chấm). Cột người chấm lấy `created_by` — NGƯỜI LẬP BẢNG, cố
+    định suốt vòng đời bản ghi — KHÔNG lấy `updated_by` (người lưu sau cùng):
+    bản chung của cả phòng, ai lưu đè sau cũng sẽ chiếm mất tên người lập
+    bảng, đúng lỗi đã sửa ở module Phòng Thanh toán (xem `created_by` trong
+    _ensure_indexes()).
+
+    Lọc/sắp xếp bằng Python vì `ky` lưu dạng text — so sánh chuỗi trong SQL
+    sai thứ tự thời gian. Ngày lọc do người dùng GÕ TAY (ô lọc là input tự
+    do) nên phải parse bằng `_parse_ddmmyyyy()` trả None, KHÔNG dùng thẳng
+    `strptime` — gõ dở "01/08" mà ném ValueError là sập cả trang lịch sử."""
     rows = db.execute(
-        """SELECT s.ky, s.updated_at, u.username AS updated_by_username,
-                  u.full_name AS updated_by_name,
+        """SELECT s.ky, s.updated_at, u.username AS created_by_username,
+                  u.full_name AS created_by_name,
                   (SELECT COUNT(*) FROM doi_chieu_citad_nostro_history h WHERE h.ky = s.ky) AS so_lan_luu
            FROM doi_chieu_citad_nostro_sessions s
-           LEFT JOIN user_tttt u ON u.id = s.updated_by"""
+           LEFT JOIN user_tttt u ON u.id = s.created_by"""
     ).fetchall()
 
-    tu_dt = _parse_ky_start(tu_ngay) if tu_ngay else None
-    tu_dt = datetime.strptime(tu_ngay.strip(), "%d/%m/%Y") if tu_ngay else None
-    den_dt = datetime.strptime(den_ngay.strip(), "%d/%m/%Y") if den_ngay else None
+    tu_dt = _parse_ddmmyyyy(tu_ngay) if tu_ngay else None
+    den_dt = _parse_ddmmyyyy(den_ngay) if den_ngay else None
     nguoi_kw = nguoi_cham.strip().lower() if nguoi_cham else None
 
     parsed = []
@@ -297,13 +335,13 @@ def get_reconciliation_days(
         if den_dt and d > den_dt:
             continue
         if nguoi_kw:
-            hay = f"{r['updated_by_username'] or ''} {r['updated_by_name'] or ''}".lower()
+            hay = f"{r['created_by_username'] or ''} {r['created_by_name'] or ''}".lower()
             if nguoi_kw not in hay:
                 continue
         parsed.append((d, {
             "ky": r["ky"],
-            "updated_by_username": r["updated_by_username"],
-            "updated_by_name": r["updated_by_name"],
+            "created_by_username": r["created_by_username"],
+            "created_by_name": r["created_by_name"],
             "updated_at": str(r["updated_at"]) if r["updated_at"] else None,
             "so_lan_luu": r["so_lan_luu"],
         }))
@@ -397,7 +435,7 @@ def build_xlsx_nostro(data: ExportIn) -> bytes:
         c = cD.get(cong, {}) or {}
         gtt = c.get('gtt', {}) or {}
         gtc = c.get('gtc', {}) or {}
-        vals = [f'Cổng {cong}', _nv(gtt.get('soMon', 0)), _nv(gtt.get('soTien', 0)),
+        vals = [CONG_LABEL.get(cong, f'Cổng {cong}'), _nv(gtt.get('soMon', 0)), _nv(gtt.get('soTien', 0)),
                 _nv(gtc.get('soMon', 0)), _nv(gtc.get('soTien', 0))]
         for ci2, v in enumerate(vals, start=1):
             cell = ws.cell(row, ci2)
@@ -407,7 +445,6 @@ def build_xlsx_nostro(data: ExportIn) -> bytes:
             if ci2 > 1:
                 cell.number_format = NUM
         row += 1
-    tong_row = row
     ws.cell(row, 1).value = 'Tổng cộng 5 cổng'
     ws.cell(row, 1).font = F(bold=True)
     ws.cell(row, 1).border = Bdr()
@@ -432,11 +469,6 @@ def build_xlsx_nostro(data: ExportIn) -> bytes:
     gtt_h = phD.get('gtt', {}) or {}
     gtc_truoc = phD.get('gtc_truoc', {}) or {}
     gtc_tu = phD.get('gtc_tu', {}) or {}
-    for label, mon, tien in [
-        ('Trước 15h30 (GTC)', _nv(gtc_truoc.get('soMon', 0)), _nv(gtc_truoc.get('soTien', 0))),
-        ('Từ 15h30 (GTC)', _nv(gtc_tu.get('soMon', 0)), _nv(gtc_tu.get('soTien', 0))),
-    ]:
-        pass
     ws.cell(row, 1).value = 'GTT'
     ws.cell(row, 1).border = Bdr()
     ws.cell(row, 2).value = _nv(gtt_h.get('soMon', 0))
@@ -536,7 +568,6 @@ def build_xlsx_nostro(data: ExportIn) -> bytes:
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     ws.page_margins = PageMargins(left=0.3, right=0.3, top=0.3, bottom=0.3, header=0.1, footer=0.1)
 
-    import io
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()

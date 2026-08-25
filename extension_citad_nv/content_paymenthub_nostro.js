@@ -21,7 +21,12 @@
   });
 
   function _num(s) {
-    return parseInt((s || '').replace(/[^\d]/g, ''), 10) || 0;
+    // Giữ dấu âm: strip sạch mọi ký tự không phải chữ số sẽ biến -1.234
+    // thành 1.234 — sai số liệu (đảo dấu), không phải làm tròn.
+    const t = (s || '').trim();
+    const am = t.startsWith('-') || /^\(.*\)$/.test(t); // "-1.234" hoặc "(1.234)"
+    const n = parseInt(t.replace(/[^\d]/g, ''), 10) || 0;
+    return am ? -n : n;
   }
 
   // Bảng có thể có nhiều <table> khác trên cùng trang — chọn đúng bảng có
@@ -51,6 +56,25 @@
     };
   }
 
+  // ── Lùi thời gian thử lại khi gửi thất bại ───────────────────────────
+  // Giống content_citad_nostro.js — xem comment giải thích đầy đủ ở đó.
+  function _makeRetryScheduler(resetFn) {
+    let failCount = 0;
+    let timer = null;
+    return {
+      scheduleRetry() {
+        failCount++;
+        const delay = Math.min(5000 * (2 ** (failCount - 1)), 300000); // 5s → tối đa 5 phút
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(resetFn, delay);
+      },
+      resetBackoff() {
+        failCount = 0;
+        if (timer) { clearTimeout(timer); timer = null; }
+      },
+    };
+  }
+
   function run(server, token) {
     let lastKey = null;
 
@@ -72,22 +96,38 @@
         { type: 'BUFFER_POST', url: `${server}/api/doi-chieu-citad-nostro/paymenthub-buffer`, token, body },
         (resp) => {
           if (resp && resp.ok) {
+            retry.resetBackoff();
             _toast(`✓ Tự lưu PaymentHub: GTT ${totals.gtt.soMon} món, GTC Trước15h30 ${totals.gtc_truoc.soMon} món, Từ15h30 ${totals.gtc_tu.soMon} món`);
+          } else if (resp && resp.status === 403) {
+            // Lỗi VĨNH VIỄN — dừng hẳn, giữ nguyên lastKey (xem giải thích ở
+            // content_citad_nostro.js). Trang này là bootstrap-table, DOM đổi
+            // liên tục nên nếu tự thử lại thì mỗi lần đổi là 1 dòng audit_logs.
+            _toast('✗ Mã kết nối không hợp lệ hoặc đã bị thu hồi — tạo mã mới ở trang Đối chiếu CITAD - PaymentHub', '#dc2626', 8000);
           } else {
-            lastKey = null;
+            _toast('⚠ Chưa gửi được số liệu về máy chủ — sẽ tự thử lại', '#f59e0b', 6000);
+            retry.scheduleRetry();
           }
         }
       );
     }
 
-    function _toast(msg) {
+    const retry = _makeRetryScheduler(() => {
+      lastKey = null;
+      trySave();
+    });
+
+    function _toast(msg, color, ms) {
+      const old = document.getElementById('_citad_nv_toast');
+      if (old) old.remove();
       const el = document.createElement('div');
+      el.id = '_citad_nv_toast';
       el.textContent = msg;
       el.style.cssText =
-        'position:fixed;bottom:16px;right:16px;z-index:999999;background:#059669;color:#fff;' +
-        'padding:10px 14px;border-radius:8px;font:13px sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.2);';
+        'position:fixed;bottom:16px;right:16px;z-index:999999;color:#fff;' +
+        'padding:10px 14px;border-radius:8px;font:13px sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.2);' +
+        `background:${color || '#059669'};`;
       document.body.appendChild(el);
-      setTimeout(() => el.remove(), 3000);
+      setTimeout(() => el.remove(), ms || 3000);
     }
 
     const observer = new MutationObserver(() => trySave());

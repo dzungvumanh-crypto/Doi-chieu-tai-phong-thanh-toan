@@ -476,6 +476,29 @@ Truy cập:
   `docs/Implementation-notes.html` mục Z7
 - Phân quyền riêng theo nhóm (`menu.doi_chieu_citad`)
 
+### Module Đối chiếu CITAD - PaymentHub (Phòng QLTK Nostro, Vostro)
+- Module **song song, độc lập hoàn toàn** với "Đối chiếu CITAD ↔ PaymentHub" của Phòng Thanh toán ở
+  trên — bảng riêng, buffer riêng, route riêng, Extension riêng. Không dùng chung gì ngoài **cơ chế
+  mã kết nối Extension** (bảng `doi_chieu_citad_extension_tokens` trung lập theo người dùng)
+- Menu: **Đối chiếu → Phòng QLTK Nostro, Vostro → Đối chiếu CITAD - PaymentHub**
+- Nguồn số liệu khác hẳn: CITAD lấy ở trang **"Tra cứu dữ liệu"** (không phải "Bảng kê giao dịch"),
+  chỉ chiều **Đi**, chỉ **giao dịch thành công**, chỉ VNĐ, đủ 5 cổng; PaymentHub lấy dòng
+  **Tổng cộng** ở trang "Lập bảng kê phí chia sẻ CITAD"
+- Công thức: Tổng CITAD (GTT/GTC) = cộng 5 cổng; Tổng HUB (GTC) = Trước 15h30 + Từ 15h30;
+  Chênh lệch = Tổng CITAD − Tổng HUB
+- **Kỳ đối chiếu linh hoạt** (Từ ngày – Đến ngày, gộp được nhiều ngày) thay vì 1 dòng/ngày cố định.
+  Trước khi lưu có **cảnh báo (không chặn)** nếu kỳ mới chồng ngày với kỳ đã lưu, hoặc bỏ hở ngày so
+  với kỳ liền trước
+- Mỗi kỳ là **một bản ghi chung cả phòng** (`doi_chieu_citad_nostro_sessions`, khoá theo `ky`) — ai
+  lưu sau cùng là bản hiện hành, nhưng cột **người chấm** ở tab Lịch sử luôn hiển thị **người lập
+  bảng** (người lưu đầu tiên), không đổi theo người lưu sau. Mỗi lần bấm Lưu ghi thêm 1 dòng vào
+  `doi_chieu_citad_nostro_history` để xem/tải lại từng bản cũ
+- Kèm **Extension trình duyệt riêng** (`extension_citad_nv/`) — **không** dùng chung
+  `extension_citad/` của Phòng Thanh toán, 2 gói có 2 ID khác nhau, cài song song được. Một mã kết
+  nối dùng được cho cả 2 gói nếu một người làm cả 2 module
+- Phân quyền riêng theo nhóm (`menu.doi_chieu_citad_nostro`) — user Nostro **không** có
+  `menu.doi_chieu_citad` nên không vào được màn hình của Phòng Thanh toán và ngược lại
+
 ### Module Đối soát CITAD ↔ IPCAS
 - Đối soát từng lệnh chuyển tiền giữa CITAD (NHNN) và IPCAS (Agribank) theo ngày chấm
 - Menu: **Đối chiếu → Phòng Thanh toán → Đối soát CITAD ↔ IPCAS**
@@ -570,6 +593,7 @@ Menu nhóm theo **chức năng**, không theo phòng ban. Hover để mở flyou
 Quản lý chứng từ ─ Bàn giao chứng từ / Đóng chứng từ / Lưu trữ
 Đối chiếu ──────── Phòng Thanh toán ─ Chấm 459901 / Song phương / ACH / CITAD / Đối soát CITAD
                    Phòng Swift ────── Đối chiếu điện SWIFT
+                   Phòng QLTK Nostro, Vostro ─ Đối chiếu CITAD - PaymentHub
 Báo cáo ────────── Phòng KSNB & HTVH ─ Báo cáo hậu kiểm / Báo cáo bàn giao chứng từ
                    Phòng Tổng hợp ──── Báo cáo dữ liệu thanh toán
 Nghỉ phép ──────── menu phẳng, không có nhóm cha
