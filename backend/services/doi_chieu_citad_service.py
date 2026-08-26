@@ -374,7 +374,13 @@ def is_reconciliation_matched(sess: dict) -> bool:
         src = phD.get(u, {}) or {}
         for f in _STATUS_FK:
             ph[f] += _status_nv(src.get(f, 0))
-    return all(ci[f] == ph[f] for f in _STATUS_FK)
+    # Làm tròn về số nguyên trước khi so — cùng lý do đã sửa ở dòng "Chênh
+    # lệch" của build_xlsx() và ở recalc() (frontend/pages/doi_chieu_citad.py):
+    # ci/ph gộp cả 3 loại tiền vào 1 số thực nên cộng dồn nhiều dòng (5 Cổng +
+    # Napas + PSS-MDP) có thể sinh dư nhị phân dù về bản chất đã khớp tuyệt
+    # đối — so `==` trên số thực thô sẽ báo "chưa khớp" giả, khiến Sổ trực
+    # cảnh báo nhầm dù Phòng Thanh toán đã chấm đúng.
+    return all(round(ci[f]) == round(ph[f]) for f in _STATUS_FK)
 
 
 def get_reconciliation_status(db: sqlite3.Connection, ngay: str) -> dict:
@@ -736,9 +742,17 @@ def build_xlsx(data: ExportIn) -> bytes:
     ws.cell(row, 2).border = Bdr('thin', 'medium')
     for i, v in enumerate(diff):
         c = ws.cell(row, 3 + i)
-        c.value = v if v else None
+        # Làm tròn về số nguyên trước khi so sánh/hiển thị: ci/ph cộng dồn
+        # bằng float (nv()) qua rất nhiều dòng nên phần dư nhị phân kiểu
+        # 0.0078125 xuất hiện dù về bản chất đã khớp — số tiền/số món ở đây
+        # luôn là số nguyên, không có phần thập phân thật. Nếu vẫn dùng `v`
+        # gốc: (1) `v if v else None` để trống ô khi khớp (0 là falsy) thay
+        # vì hiện "0" như người dùng cần thấy để biết đã cân khớp; (2) phần
+        # dư float có thể khiến ô hiện lệch giả dù không có chênh lệch thật.
+        vr = round(v)
+        c.value = vr
         c.number_format = NUM
-        c.font = Font(name=TNR, bold=True, size=14, color='006100' if v == 0 else 'FF0000')
+        c.font = Font(name=TNR, bold=True, size=14, color='006100' if vr == 0 else 'FF0000')
         c.alignment = AL('right')
         c.fill = Fill('FFE699')
         c.border = Bdr('thin', 'medium')
