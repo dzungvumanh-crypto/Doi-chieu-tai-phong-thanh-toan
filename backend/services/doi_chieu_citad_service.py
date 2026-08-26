@@ -374,7 +374,13 @@ def is_reconciliation_matched(sess: dict) -> bool:
         src = phD.get(u, {}) or {}
         for f in _STATUS_FK:
             ph[f] += _status_nv(src.get(f, 0))
-    return all(ci[f] == ph[f] for f in _STATUS_FK)
+    # Làm tròn về số nguyên trước khi so — cùng lý do đã sửa ở dòng "Chênh
+    # lệch" của build_xlsx() và ở recalc() (frontend/pages/doi_chieu_citad.py):
+    # ci/ph gộp cả 3 loại tiền vào 1 số thực nên cộng dồn nhiều dòng (5 Cổng +
+    # Napas + PSS-MDP) có thể sinh dư nhị phân dù về bản chất đã khớp tuyệt
+    # đối — so `==` trên số thực thô sẽ báo "chưa khớp" giả, khiến Sổ trực
+    # cảnh báo nhầm dù Phòng Thanh toán đã chấm đúng.
+    return all(round(ci[f]) == round(ph[f]) for f in _STATUS_FK)
 
 
 def get_reconciliation_status(db: sqlite3.Connection, ngay: str) -> dict:
