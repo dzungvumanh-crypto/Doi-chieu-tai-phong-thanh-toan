@@ -156,28 +156,6 @@ def fmt(v):
     return f'{v:,.2f}'
 
 
-def diff_rounded(ci_val, ph_val):
-    """Chênh lệch CITAD-PaymentHub cho 1 cột đã gộp cả 3 loại tiền, làm tròn
-    về số nguyên trước khi so 0/hiển thị — dùng trong `recalc()`.
-
-    Số VNĐ hàng nghìn tỷ nuốt mất độ chính xác của phần USD/EUR rất nhỏ khi
-    cộng bằng số thực, sinh dư nhị phân kiểu 0,0078125 dù về bản chất đã
-    khớp tuyệt đối (bug thật 25/08/2026: CITAD gốc cộng đúng bằng PaymentHub
-    — xác nhận bằng số liệu chụp trực tiếp từ CITAD — nhưng màn hình vẫn
-    hiện "+0,01" vì so `== 0` bằng số thực thô). Cùng nguyên nhân, cùng cách
-    sửa đã áp dụng ở `build_xlsx()` (backend/services/doi_chieu_citad_service.py)."""
-    return round(ci_val - ph_val)
-
-
-def cur_mismatch(ci_cur: dict, ph_cur: dict) -> bool:
-    """Có lệch thật giữa CITAD/PaymentHub cho 1 loại tiền không — so sau khi
-    làm tròn 2 số lẻ (đơn vị xu, nhỏ nhất có ý nghĩa thật với USD/EUR).
-
-    So `!=` trên số thực thô sẽ bắt cả dư nhị phân dưới mức xu (không phải
-    lệch tiền thật) thành "lệch", y hệt lý do làm tròn ở `diff_rounded()`."""
-    return any(round(ci_cur[f], 2) != round(ph_cur[f], 2) for f in FK)
-
-
 _CELL_DATA_BG = "bg-red-200"
 
 
@@ -337,7 +315,7 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
         ci, ph = _compute_totals()
         for f in FK:
             ci_val, ph_val = ci[f], ph[f]
-            df_val = diff_rounded(ci_val, ph_val)
+            df_val = ci_val - ph_val
             diff_labels["citad"][f].text = fmt(ci_val) if ci_val else '—'
             diff_labels["phub"][f].text = fmt(ph_val) if ph_val else '—'
             if df_val == 0 and ci_val == 0 and ph_val == 0:
@@ -370,7 +348,7 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
                     ci_cur["den_ih_m"] += data["napas"]["den_ih_m"] + data["pssmdp"]["den_ih_m"]
                     ci_cur["den_ih_t"] += data["napas"]["den_ih_t"] + data["pssmdp"]["den_ih_t"]
                 ph_cur = {f: data["phD"][cur][f] for f in FK}
-                if cur_mismatch(ci_cur, ph_cur):
+                if any(ci_cur[f] != ph_cur[f] for f in FK):
                     lech_curs.append(cur)
             if lech_curs:
                 lech_cur_label.text = f"⚠ Lệch: {', '.join(lech_curs)}"
