@@ -736,9 +736,17 @@ def build_xlsx(data: ExportIn) -> bytes:
     ws.cell(row, 2).border = Bdr('thin', 'medium')
     for i, v in enumerate(diff):
         c = ws.cell(row, 3 + i)
-        c.value = v if v else None
+        # Làm tròn về số nguyên trước khi so sánh/hiển thị: ci/ph cộng dồn
+        # bằng float (nv()) qua rất nhiều dòng nên phần dư nhị phân kiểu
+        # 0.0078125 xuất hiện dù về bản chất đã khớp — số tiền/số món ở đây
+        # luôn là số nguyên, không có phần thập phân thật. Nếu vẫn dùng `v`
+        # gốc: (1) `v if v else None` để trống ô khi khớp (0 là falsy) thay
+        # vì hiện "0" như người dùng cần thấy để biết đã cân khớp; (2) phần
+        # dư float có thể khiến ô hiện lệch giả dù không có chênh lệch thật.
+        vr = round(v)
+        c.value = vr
         c.number_format = NUM
-        c.font = Font(name=TNR, bold=True, size=14, color='006100' if v == 0 else 'FF0000')
+        c.font = Font(name=TNR, bold=True, size=14, color='006100' if vr == 0 else 'FF0000')
         c.alignment = AL('right')
         c.fill = Fill('FFE699')
         c.border = Bdr('thin', 'medium')
