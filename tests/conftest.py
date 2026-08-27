@@ -31,6 +31,20 @@ def _fake_db():
         conn.close()
 
 
+@pytest.fixture(autouse=True)
+def _don_job_ach():
+    """Xoá sổ job ACH trước/sau mỗi test.
+
+    `ach_service._jobs` là dict toàn cục trong RAM, sống suốt phiên pytest. Từ khi
+    `/api/ach/start` chặn "một phiên tại một thời điểm" (409), một job do test trước
+    để lại ở trạng thái awaiting_confirmation sẽ làm test sau bị từ chối — lỗi hiện
+    ra ở file test hoàn toàn khác, rất khó lần."""
+    from backend.services import ach_service
+    ach_service._jobs.clear()
+    yield
+    ach_service._jobs.clear()
+
+
 @pytest.fixture
 def admin_client():
     """TestClient đã "đăng nhập" sẵn với quyền admin — bypass JWT/session/DB thật bằng

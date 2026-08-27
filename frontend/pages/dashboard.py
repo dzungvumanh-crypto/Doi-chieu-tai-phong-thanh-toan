@@ -47,7 +47,6 @@ async def dashboard_page():
     await _sidebar("home")
     ui.add_head_html(_HOME_FIT_CSS)
     le_29.css_trang_chu()     # dịp 2-9; ngoài dịp không nạp gì
-    le_29.css_trang_chu()     # dịp 2-9; ngoài dịp không nạp gì
     # Trang chủ khoá chiều cao đúng 1 viewport: 3 khối trên cùng cao cố định, biểu đồ
     # ăn hết phần còn lại. overflow-y-auto chỉ là lối thoát cho màn hình quá thấp.
     with _content_area() as _ca:

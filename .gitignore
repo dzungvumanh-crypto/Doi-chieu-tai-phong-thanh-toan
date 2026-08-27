@@ -52,6 +52,10 @@ MCB.xlsx
 /MA CB.xlsx
 /HDSD*.docx
 
+# Ngan hang cau hoi that tai len de thu module On tap trac nghiem - khong day len repo.
+# Dung dai dien cho phan co dau tieng Viet, cung ly do da ghi o muc 'MA CB.xlsx' tren.
+/1. Ki*n th*c chung*.xlsx
+
 # Mat khau bo sao luu do start.bat sinh ra - TUYET DOI khong day len repo
 /Backup_password.txt
 

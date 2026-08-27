@@ -7,6 +7,7 @@ Mỗi job:
   - Hỗ trợ cancel và download kết quả
 """
 
+import gc
 import logging
 import os
 import shutil
@@ -23,9 +24,15 @@ from backend.services.ach.pipeline import main_from_dir
 from backend.services.ach.b4_xu_ly_mis_di import _doc_sheet_confirm_mis_di
 
 from backend.core.config import BASE_DIR
+from backend.core.don_dep import moc_don_gan_nhat
 
 TEMP_DIR    = BASE_DIR / 'data' / 'temp_ach'
-CLEANUP_TTL = 4 * 3600  # giữ file kết quả tối đa 4 giờ
+
+# Sau bao lâu thì một job bỏ dở coi như đã chết và KHÔNG còn chiếm máy chủ nữa.
+# Đây KHÔNG phải hạn giữ file: file sống tới 23h theo `moc_don_gan_nhat()`
+# (backend/core/don_dep.py). Hai con số này từng là một, nên nới hạn giữ file
+# lên hết ngày sẽ vô tình khoá chết tính năng cả ngày vì một phiên ai đó bỏ dở.
+CLEANUP_TTL = 4 * 3600
 
 # ─── In-memory job store ─────────────────────────────────────────────────────
 # {job_id: {status, logs, files, error, cancel_event, _ts, output_dir}}
@@ -75,6 +82,81 @@ def cancel_job(job_id: str) -> bool:
     return False
 
 
+# Job còn ở một trong các trạng thái này là còn CHIẾM máy chủ: hoặc thread pipeline
+# đang chạy, hoặc file đầu vào vẫn nằm chờ để chạy tiếp sau xác nhận MIS_đi.
+_DANG_CHIEM = ('pending', 'running', 'awaiting_confirmation')
+
+
+def job_dang_chay() -> dict | None:
+    """Job ACH đang chiếm máy chủ, None nếu rảnh.
+
+    Chỉ chỗ này biết được câu trả lời: `_jobs` nằm trong RAM của backend, còn
+    frontend chỉ nhớ job của RIÊNG tab trình duyệt đang mở — F5 một cái là quên
+    sạch, người khác chạy thì lại càng không biết. Thiếu nó, hai pipeline pandas
+    cùng ôm vài trăm MB chạy song song, backend hết RAM và chết giữa lúc đang
+    nhận file của lượt thứ hai (26/08/2026).
+    """
+    with _lock:
+        for job_id, job in _jobs.items():
+            if job['status'] not in _DANG_CHIEM:
+                continue
+            # Job quá cũ coi như đã chết: `_cleanup_old_jobs()` cũng sẽ xoá file của
+            # nó theo đúng mốc này. Không có ngoại lệ này thì một phiên bị bỏ dở ở
+            # bước chờ xác nhận (người dùng đóng trình duyệt rồi đi) khoá chết tính
+            # năng cho tới khi ai đó restart backend — không ai đoán ra vì sao.
+            if time.time() - job['_ts'] > CLEANUP_TTL:
+                continue
+            return {
+                'job_id':    job_id,
+                'status':    job['status'],
+                'tuoi_giay': max(0, int(time.time() - job['_ts'])),
+            }
+    return None
+
+
+def tao_job() -> tuple[str, Path]:
+    """Đăng ký một job mới ở trạng thái 'pending' và trả về (job_id, input_dir).
+
+    Tách khỏi `chay_job()` để lớp API ghi THẲNG từng khối file tải lên vào
+    `input_dir`, thay vì gom trọn vài trăm MB vào RAM rồi mới đưa xuống đây.
+
+    Job có mặt trong `_jobs` NGAY từ lúc bắt đầu nhận file, nên `job_dang_chay()`
+    chặn được người thứ hai bấm chạy trong lúc người thứ nhất còn đang upload —
+    trước đây khoảng thời gian đó là một lỗ hổng: hai lượt upload lớn cùng lúc
+    vẫn lọt qua cửa kiểm tra rồi mới tranh nhau RAM.
+
+    Upload hỏng giữa chừng thì lớp API phải gọi `bo_job()` để trả lại chỗ.
+    """
+    job_id, job = _new_job()
+    input_dir = TEMP_DIR / job_id / 'input'
+    input_dir.mkdir(parents=True, exist_ok=True)
+    Path(job['output_dir']).mkdir(parents=True, exist_ok=True)
+    job['input_dir'] = str(input_dir)
+    return job_id, input_dir
+
+
+def bo_job(job_id: str) -> None:
+    """Huỷ một job chưa chạy (upload lỗi/đứt) — xoá khỏi store và xoá thư mục."""
+    with _lock:
+        _jobs.pop(job_id, None)
+    shutil.rmtree(TEMP_DIR / job_id, ignore_errors=True)
+
+
+def chay_job(job_id: str, ngay: str | None, bo_qua_checkpoint: bool = False) -> None:
+    """Khởi chạy pipeline cho job đã nhận đủ file (xem `tao_job()`)."""
+    job = get_job(job_id)
+    if job is None:
+        raise LookupError('Job không tồn tại.')
+    job['ngay'] = ngay
+    thread = threading.Thread(
+        target=_run,
+        args=(job_id, job['input_dir'], job['output_dir'], ngay),
+        kwargs={'dung_sau_mis_di': not bo_qua_checkpoint},
+        daemon=True,
+    )
+    thread.start()
+
+
 def start_job(saved_files: dict[str, bytes], ngay: str | None,
              bo_qua_checkpoint: bool = False) -> str:
     """
@@ -91,27 +173,14 @@ def start_job(saved_files: dict[str, bytes], ngay: str | None,
     gọi lại không truyền `dung_sau_mis_di`, mặc định `False`) — chỉ khác là được
     phép chọn ngay từ lần chạy đầu tiên, không phải chờ qua Checkpoint trước.
     """
-    job_id, job = _new_job()
-
-    input_dir = TEMP_DIR / job_id / 'input'
-    input_dir.mkdir(parents=True, exist_ok=True)
-    Path(job['output_dir']).mkdir(parents=True, exist_ok=True)
+    job_id, input_dir = tao_job()
 
     # safe_filename() lần hai: API đã lọc, nhưng hàm này là public và có thể
     # được gọi từ chỗ khác — đường ghi ra đĩa tự bảo vệ lấy mình.
     for filename, data in saved_files.items():
         (input_dir / safe_filename(filename)).write_bytes(data)
 
-    job['input_dir'] = str(input_dir)
-    job['ngay']      = ngay
-
-    thread = threading.Thread(
-        target=_run,
-        args=(job_id, str(input_dir), job['output_dir'], ngay),
-        kwargs={'dung_sau_mis_di': not bo_qua_checkpoint},
-        daemon=True,
-    )
-    thread.start()
+    chay_job(job_id, ngay, bo_qua_checkpoint=bo_qua_checkpoint)
     return job_id
 
 
@@ -229,6 +298,12 @@ def _run(job_id: str, input_dir: str, output_dir: str, ngay: str | None,
 
     finally:
         job['_ts'] = time.time()
+        # Trả RAM lại NGAY, không đợi CPython tự thấy. Các DataFrame lớn của pandas
+        # thường nằm trong vòng tham chiếu nên đếm tham chiếu không thu hồi được —
+        # phải gọi bộ thu gom. Cả tính năng này chặn "một phiên một lúc" cũng chỉ vì
+        # RAM, nên người bấm Dừng xong phải nhận lại bộ nhớ thật, không phải trên
+        # giấy tờ.
+        gc.collect()
         _cleanup_old_jobs()
 
 
@@ -243,8 +318,17 @@ def get_output_file(job_id: str, filename: str) -> Path | None:
     return path if path.exists() else None
 
 
-def _cleanup_old_jobs():
-    """Xóa job cũ hơn CLEANUP_TTL khỏi memory + disk, kèm thư mục mồ côi.
+def _cleanup_old_jobs(cutoff: float | None = None):
+    """Xóa job cũ hơn `cutoff` khỏi memory + disk, kèm thư mục mồ côi.
+
+    `cutoff` mặc định là mốc 23h gần nhất đã trôi qua (backend/core/don_dep.py):
+    kết quả sống hết ngày làm việc, 23h dọn sạch. Trước đây là TTL 4 giờ — người
+    chạy ACH lúc 8h sáng quay lại tải báo cáo lúc 2h chiều thì file đã bị hệ
+    thống xoá mất, không có thông báo nào.
+
+    Vì `cutoff` không bao giờ rơi vào trong ngày đang chạy, hàm này gọi được ngay
+    trong `finally` của một job mà không thể xoá nhầm kết quả của phiên khác vừa
+    xong cùng ngày.
 
     `_jobs` nằm trong RAM nên khởi động lại là mất sạch — mà thư mục trên đĩa thì
     còn nguyên. Bản cũ chỉ xoá thư mục của job nó CÒN NHỚ, nên mọi job đang dở
@@ -252,11 +336,11 @@ def _cleanup_old_jobs():
     rỗng trong `data/temp_ach` từ lần chạy trước). Nay quét thêm theo thời gian
     sửa đổi, giống cách `cham459901_service` vẫn làm.
     """
-    now = time.time()
+    cutoff = moc_don_gan_nhat() if cutoff is None else cutoff
     with _lock:
         expired = [jid for jid, j in _jobs.items()
                    if j['status'] in ('done', 'error', 'cancelled', 'awaiting_confirmation')
-                   and now - j['_ts'] > CLEANUP_TTL]
+                   and j['_ts'] < cutoff]
         for jid in expired:
             del _jobs[jid]
         con_song = set(_jobs)
@@ -272,7 +356,7 @@ def _cleanup_old_jobs():
         if not d.is_dir() or d.name in con_song:
             continue
         try:
-            if now - d.stat().st_mtime > CLEANUP_TTL:
+            if d.stat().st_mtime < cutoff:
                 shutil.rmtree(d, ignore_errors=True)
         except OSError as e:
             log_orphan = f'Không xoá được thư mục ACH mồ côi {d}: {e}'

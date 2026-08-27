@@ -148,6 +148,10 @@ def _parse_error(e: "httpx.HTTPStatusError") -> str:
     except Exception:
         return str(e)
     detail = body.get("detail", "")
+    # detail kiểu dict là quy ước sẵn có cho lỗi cần kèm dữ liệu (xem
+    # post_upload_bytes): lấy 'message' ra, đừng in nguyên cái dict cho người dùng đọc.
+    if isinstance(detail, dict):
+        return str(detail.get("message") or detail)
     if isinstance(detail, list):
         parts = []
         for err in detail:

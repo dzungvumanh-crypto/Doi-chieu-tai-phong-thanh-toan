@@ -970,6 +970,11 @@ def main_from_dir(input_dir: str, output_dir: str,
     df_mis_di_khop_gw, df_timeout = khop_voi_gw(df_mis_di, dict_gw_count, df_gw_raw, log_callback)
 
     df_cap_cn_tien = _tao_cap_cn_tien(df_mis_di, df_timeout, dict_gw_count)
+
+    if _cancelled(cancel_event):
+        log('[CANCELLED] Người dùng đã dừng trước Phase 2.')
+        return None
+
     _t1 = time.perf_counter()
 
     # Phase 2: B5 + B7 + C.1a (GW-thừa) song song. Mục 4 — đối chiếu NPO_đi với
@@ -982,6 +987,10 @@ def main_from_dir(input_dir: str, output_dir: str,
         df_mis_di_khop, df_npo_di_thua, df_mis_di_thua    = f_di.result()
         df_mis_den_khop, df_npo_den_thua, df_mis_den_thua = f_den.result()
         df_gw_thua_xac_dinh, df_gw_can_doi_chieu           = f_gwthua.result()
+
+    if _cancelled(cancel_event):
+        log('[CANCELLED] Người dùng đã dừng sau Phase 2.')
+        return None
 
     # Điểm 3 — tách "điện đi huỷ trong ngày/khác ngày" khỏi NPO_đi thừa TRƯỚC khi
     # ghi báo cáo (df_npo_di_thua sau dòng này chỉ còn phần thật sự chưa giải

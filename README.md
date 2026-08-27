@@ -193,7 +193,7 @@ Truy cập:
 │       ├── backup_service.py       # Backup SQLite tự động
 │       ├── log_cleanup_service.py  # Dọn login_logs / audit_logs quá hạn theo lịch
 │       ├── time_sync.py            # Cảnh báo lệch giờ máy chủ so NTP (không tự sửa, có cache)
-│       ├── cham459901_service.py   # Xử lý ZIP + phân loại bút toán 459901
+│       ├── cham459901_service.py   # Xử lý ZIP/Excel + phân loại bút toán 459901
 │       ├── doi_chieu_song_phuong_service.py # Định tuyến lệnh IPCAS theo NH + chiều → 8 CSV
 │       ├── swift_recon/            # Đối chiếu điện SWIFT (parse, so khớp, export Excel)
 │       └── duty_*                  # Xếp lịch trực, ràng buộc, thống kê, xuất file (6 module)
@@ -239,8 +239,10 @@ Truy cập:
 ├── data/
 │   ├── ksnb.db             # SQLite database (tự tạo khi chạy lần đầu)
 │   ├── backups/            # Backup tự động — xem mục "Backup tự động"
-│   └── temp_*/             # Kết quả tạm của ACH / Chấm 459901 / Đối chiếu song phương;
-│                           #   temp_cleanup_service dọn nền mỗi 6h (không chờ ai mở menu)
+│   └── temp_*/             # File tải lên + kết quả tạm của ACH / Chấm 459901 /
+│                           #   Đối chiếu song phương / Đối soát CITAD. Sống hết ngày làm
+│                           #   việc, temp_cleanup_service xoá sạch lúc 23h (không chờ ai
+│                           #   mở menu). Backend bật giữa ngày chỉ dọn rác của hôm trước
 ├── logs/
 │   ├── app.log             # Log xoay vòng (5 MB × 3 file) — nguồn của màn hình Nhật ký hệ thống
 │   ├── backend.log         # stdout/stderr tiến trình backend (run.py ghi) — xoay khi >20 MB, giữ 3 đời
@@ -416,17 +418,31 @@ Truy cập:
 ### Module Chấm 459901
 - Phân loại bút toán tài khoản trung gian 459901 dành cho phòng Thanh toán
 - Menu: **Đối chiếu → Phòng Thanh toán → Chấm 459901**
-- Upload **một hoặc nhiều** file ZIP chứa dữ liệu giao dịch; xử lý bất đồng bộ (~65s)
-- Nhiều ZIP được **gộp** rồi mới phân loại — cặp Cancel/Normal của một lệnh hủy có thể nằm ở
+- Upload **một hoặc nhiều** file chứa dữ liệu giao dịch; xử lý bất đồng bộ (~65s)
+- Nhận **ZIP** (bản xuất gốc GL02, mã hoá AES-256; bên trong là `.csv` hoặc Excel) và **Excel
+  rời** (`.xlsx/.xlsm/.xlsb/.xls`) — trộn hai loại trong một lượt cũng được. Đuôi khác bị chặn
+  ngay ở bước tải lên (400). Với Excel: đọc **mọi sheet**, tự dò hàng tiêu đề trong 10 dòng đầu
+  (bản người dùng lưu lại hay có dòng tiêu đề báo cáo ở trên cùng), sheet nào thiếu cột bắt buộc
+  thì báo lỗi kèm tên sheet chứ không lặng lẽ bỏ qua
+- Nhiều file được **gộp** rồi mới phân loại — cặp Cancel/Normal của một lệnh hủy có thể nằm ở
   hai file khác ngày, chạy tách từng file thì cả hai vế rơi nhầm vào *Khác*. Chọn trùng tên
   file trong cùng một lượt bị chặn (400) vì dữ liệu nhân đôi không sinh lỗi nào
 - Xuất 3 file Excel: **Huỷ**, **Đi**, **Khác** theo kết quả phân loại
+- File tải lên được ghi **thẳng từng khối** xuống `data/temp_cham459901/upload_<token>/`
+  (`save_upload_to`), `process_files()` nhận **đường dẫn** chứ không nhận bytes. CSV bên trong
+  ZIP đọc qua `zf.open()` — luồng giải nén, không có lúc nào cả file nằm trong RAM (đo: CSV
+  114 MB → đỉnh 0,1 MB thay vì 256 MB). Workbook Excel trong ZIP vẫn phải qua RAM: calamine
+  đọc nhảy vị trí nên không nhận luồng tuần tự
 - Phân quyền riêng theo nhóm (`menu.cham_459901`, `cham_459901.process`)
 
 ### Module Đối chiếu Song phương
 - Định tuyến lệnh IPCAS phục vụ đối chiếu song phương tại phòng Thanh toán
 - Menu: **Đối chiếu → Phòng Thanh toán → Đối chiếu Song phương**
 - Upload file ZIP (mã hóa AES-256) chứa dữ liệu IPCAS; xử lý bất đồng bộ, theo dõi tiến độ real-time
+- File tải lên được ghi **thẳng từng khối** xuống `data/temp_doi_chieu_song_phuong/upload_<token>/`;
+  `process_zip()` nhận **đường dẫn**, kiểm magic bytes bằng 4 byte đầu đọc từ file, và duyệt CSV
+  bên trong ZIP theo luồng (`zf.open()`) — `_route_file()` đi tuần tự từng dòng nên không bao giờ
+  cần nhìn lại dòng đã qua
 - Phân loại mỗi dòng theo **4 ngân hàng** (Vietinbank 201, BIDV 202, Vietcombank 203, MBBank 311) × **2 chiều**: **ĐẾN** (`CRAMOUNT=0`) / **ĐI** (`DRAMOUNT=0`) → xuất **8 file CSV**
 - Phân quyền riêng theo nhóm (`menu.doi_chieu_song_phuong`, `doi_chieu_song_phuong.process`)
 
@@ -436,8 +452,9 @@ Truy cập:
 - Chọn bộ file 1 ngày **từ máy người dùng**: `GL02*.zip`, file GW `.xlsx`, 2 file `*_DI_*.zip`,
   2 file `*_DEN_*.zip`, PDF sao kê ACH (lấy số session + suy ngày đối chiếu). Mở thư mục chứa
   bộ file rồi Ctrl+A để chọn cả loạt. Mỗi file gửi lên frontend ngay khi chọn (`auto_upload`) và
-  **nằm trong RAM** của tiến trình frontend cho tới lúc bấm Chạy; backend cũng đọc trọn bộ vào
-  RAM (`read_limited`) trước khi ghi ra `data/temp_ach/<job>/input/`. Tên file được
+  **nằm trong RAM** của tiến trình frontend cho tới lúc bấm Chạy; backend thì ghi **thẳng từng
+  khối** xuống `data/temp_ach/<job>/input/` (`save_upload_to`), không gom vào RAM trước — đo với
+  file 200 MB: đỉnh bộ nhớ 400 MB (cách cũ `read_limited` rồi mới ghi) → **2 MB**. Tên file được
   `safe_filename()` cắt sạch phần đường dẫn trước khi ghi — tên client gửi lên là chuỗi tuỳ ý,
   ghép thẳng vào `Path` thì đoạn tuyệt đối nuốt trọn thư mục đích. Trần 500 MB (`_MAX_UPLOAD`), bộ
   file thật 150–250 MB → cần dư RAM tương ứng ở **cả hai** tiến trình. Timeout lần gửi này để
@@ -451,7 +468,8 @@ Truy cập:
   CAP_CN_TIEN, RAW_GW); sheet trên **15.000 dòng** tự tách ra CSV riêng, tải lẻ hoặc tải gộp ZIP
 - Chạy nền trên **1 luồng riêng** (`max_workers=1`) — job thứ hai xếp hàng; theo dõi tiến độ + nhật ký
   bằng poll, có nút Dừng (dừng ở mốc kiểm tra giữa các pha, không tức thì)
-- Kết quả giữ **4 giờ** trong `data/temp_ach/` rồi tự xoá; không lưu lịch sử vào DB
+- Kết quả nằm trong `data/temp_ach/` **hết ngày làm việc**, 23h xoá sạch; không lưu lịch sử vào DB.
+  Cần giữ lâu hơn thì tải về máy trong ngày
 - Phân quyền riêng theo nhóm: `menu.cham_ach` = xem trang / kiểm tra file / tải kết quả,
   `cham_ach.process` = được bấm Chạy, Chạy tiếp sau Checkpoint và Dừng
 
@@ -567,6 +585,37 @@ Truy cập:
 - Phân quyền: `menu.so_truc` (vào module, xem lịch sử) + `so_truc.ksv_confirm`
   (được xuất hiện trong danh sách chọn KSV)
 
+### Module Ôn tập trắc nghiệm (Quizz)
+- Menu phẳng cấp 1: **Ôn tập trắc nghiệm** (`/quiz`). Dùng chung cho cả cơ quan, không thuộc phòng nào
+- **Bộ câu hỏi chỉ tải lên một lần** — người sau chọn bộ có sẵn để ôn, không phải nhập lại.
+  File Excel, cột theo thứ tự: `Câu hỏi | Đáp án 1 | Đáp án 2 | Đáp án 3 | Đáp án 4 | Đáp án đúng`
+  (đáp án đúng ghi **số 1-4**). Bỏ trống *Đáp án 4* nếu câu chỉ có 3 lựa chọn. Nút *Tải file mẫu*
+  xuất đúng khuôn này. Dòng 1 được nhận là tiêu đề nếu ô A chứa chữ "câu hỏi"
+- Dòng sai (đáp án đúng không phải số, trỏ vào ô trống, dưới 2 lựa chọn) **bị bỏ qua kèm số dòng**
+  để người nhập mở Excel sửa; cả file không có dòng nào hợp lệ thì bị từ chối. Không bao giờ đoán
+  đáp án — đoán sai là người học nhớ sai
+- Chặn tải lên trùng: **trùng tên** (`UNIQUE`) và **trùng nội dung câu hỏi**, báo rõ bộ cũ tên gì.
+  Vân tay lấy từ **nội dung đã đọc**, không phải từ byte của file — mở file ra xem rồi bấm lưu là
+  Excel đổi dấu thời gian bên trong, băm theo file sẽ không nhận ra bản sao
+- **Cài đặt trước khi làm bài**: chế độ (*Ôn tập* — hiện đáp án ngay sau mỗi câu / *Thi thử* — chỉ chấm
+  khi nộp), số câu (10/20/30/50/100 hoặc tất cả), **trộn thứ tự câu hỏi**, **trộn thứ tự đáp án**,
+  **thời gian mỗi câu** (10-90 giây hoặc không giới hạn), **tổng thời gian làm bài** (5-90 phút hoặc
+  không giới hạn). Hết giờ câu thì tự sang câu kế; hết tổng giờ thì hệ thống tự nộp bài
+- Màn làm bài `/quiz/play` chiếm **toàn màn hình** (không sidebar): 4 ô đáp án màu + hình khối, thanh
+  tiến trình, hai đồng hồ. Nộp xong hiện điểm, số câu **đúng / sai / bỏ trống**, thời gian làm và phần
+  **Xem lại bài** từng câu (tô xanh đáp án đúng, tô đỏ ô đã chọn sai)
+- **Lịch sử của tôi** (30 lượt gần nhất, bấm để xem lại bài) và **Bảng xếp hạng** theo từng bộ — mỗi
+  người lấy lượt tốt nhất, cùng điểm thì ai nhanh hơn đứng trên. Bảng xếp hạng **chỉ tính bài Thi thử**;
+  chế độ Ôn tập hiện sẵn đáp án nên điểm không có ý nghĩa so sánh
+- Chấm điểm **luôn ở backend**, đọc đáp án đúng từ DB — client chỉ gửi "tôi chọn ô số mấy"
+- Đề được cố định ngay lúc bắt đầu (thứ tự câu + thứ tự đáp án lưu vào `quiz_attempt_items`): F5 giữa
+  bài không sinh đề mới, và màn xem lại hiển thị đúng đề đã làm
+- ⚠️ **Xoá một bộ là xoá luôn** toàn bộ câu hỏi, mọi lượt làm bài của mọi người và bảng xếp hạng của bộ
+  đó (`ON DELETE CASCADE`) — không hoàn tác được
+- Bảng DB: `quiz_sets`, `quiz_questions`, `quiz_attempts`, `quiz_attempt_items`
+- Phân quyền riêng theo nhóm: `menu.quiz` (vào module, ôn tập, xem xếp hạng) +
+  `quiz.upload` (tải bộ mới / đổi tên) + `quiz.delete` (xoá bộ)
+
 ---
 
 ## Phân quyền (RBAC)
@@ -615,6 +664,7 @@ Nghỉ phép ──────── menu phẳng, không có nhóm cha
 Chấm công & Lịch trực ─ Phòng Kế toán ───── Chấm công
                    Phòng Thanh toán ── Phân lịch trực / Sổ trực cuối ngày
 Danh sách CN TTQT ─ menu phẳng, không có nhóm cha
+Ôn tập trắc nghiệm ─ menu phẳng, không có nhóm cha
 ```
 
 Tầng "phòng" **chỉ còn ở cấp 2** của Đối chiếu, Báo cáo và Chấm công & Lịch trực, và chỉ liệt kê phòng đang thực sự có tính năng. Trước đây menu chia theo phòng ở cấp 1; cách đó buộc người dùng phải biết chức năng mình cần thuộc phòng nào mới tìm ra.

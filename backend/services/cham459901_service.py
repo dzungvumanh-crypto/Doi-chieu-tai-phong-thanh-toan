@@ -1,7 +1,11 @@
 """Service phân loại bút toán tài khoản 459901.
 
 Logic phân loại (3 phase) port nguyên từ phan_loai_459901.py — KHÔNG THAY ĐỔI.
-I/O được điều chỉnh để hoạt động với bytes (từ HTTP upload) thay vì file path.
+I/O làm việc với ĐƯỜNG DẪN file đã nằm trên máy chủ (`backend/api/cham459901.py`
+ghi thẳng từng khối xuống `data/temp_cham459901/upload_<token>/`), không nhận bytes:
+một lượt có thể là nhiều ZIP vài trăm MB, ôm hết vào RAM rồi mới đọc là trả giá
+gấp đôi bộ nhớ cho cùng một kết quả. Chỉ file con BÊN TRONG ZIP mới đi qua bytes,
+và cũng chỉ khi buộc phải thế (xem `_doc_zip`).
 """
 
 import io
@@ -16,6 +20,7 @@ from pathlib import Path
 import pandas as pd
 
 from backend.core.config import BASE_DIR, zip_password   # mật khẩu ZIP đọc từ .env
+from backend.core.don_dep import moc_don_gan_nhat
 
 try:
     import pyzipper
@@ -32,7 +37,6 @@ TEMP_DIR        = BASE_DIR / "data" / "temp_cham459901"
 FILTER_LOCAC    = "459901"
 FILTER_CUSTOMER = "1000-000007709"
 FILTER_CCY      = "VND"
-CLEANUP_HOURS   = 2
 # ─────────────────────────────────────────────────────────────────────────────
 
 OUTPUT_COLS = [
@@ -47,6 +51,18 @@ COL_WIDTHS = {
     'TRTP': 8, 'REFERENCE': 22, 'REMARK': 52, 'DRAMOUNT': 18, 'CRAMOUNT': 18,
     'CRTDTM': 20,
 }
+
+# Định dạng nhận được. ZIP là bản xuất gốc từ GL02 (bên trong là .csv, đôi khi là
+# Excel); Excel rời dành cho người đã mở ZIP ra, cắt bớt rồi lưu lại.
+DUOI_ZIP    = '.zip'
+DUOI_EXCEL  = ('.xlsx', '.xlsm', '.xlsb', '.xls')
+DUOI_HOP_LE = (DUOI_ZIP,) + DUOI_EXCEL
+
+# Số dòng đầu mỗi sheet dùng để dò hàng tiêu đề (xem _dat_tieu_de)
+_MAX_DONG_DO_TIEU_DE = 10
+
+# Cột ngày: Excel trả về kiểu ngày-giờ, cần cắt đuôi giờ 0 cho giống bản CSV
+_COT_NGAY = ('TRDATE', 'CRTDTM')
 
 # Chỉ strip các cột dùng trong filter và xây key — không strip tất cả string cols
 _STRIP_COLS = {'LOCAC', 'CUSTOMER', 'CCY', 'TRTP', 'REFERENCE', 'TRBRCD', 'DYTRSEQ', 'REMARK'}
@@ -80,6 +96,24 @@ def init_progress() -> str:
     return task_token
 
 
+def tao_thu_muc_upload(task_token: str) -> Path:
+    """Thư mục nhận file tải lên của một lượt: `data/temp_cham459901/upload_<token>/`.
+
+    Nằm cùng chỗ với thư mục kết quả nên `_cleanup_old_results()` trông coi luôn,
+    không phải thêm đường dọn thứ hai. Tiền tố `upload_` để người vận hành mở ra
+    là phân biệt được đâu là file người dùng gửi lên, đâu là 3 file Excel sinh ra.
+    """
+    d = TEMP_DIR / f"upload_{task_token}"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def bo_luot(task_token: str) -> None:
+    """Huỷ một lượt chưa chạy (upload lỗi/đứt): xoá thư mục và entry tiến độ."""
+    shutil.rmtree(TEMP_DIR / f"upload_{task_token}", ignore_errors=True)
+    _progress.pop(task_token, None)
+
+
 def get_progress(task_token: str) -> dict | None:
     p = _progress.get(task_token)
     if p is None:
@@ -99,17 +133,17 @@ class InputError(ValueError):
     """Lỗi do chính file người dùng tải lên — thông báo hiển thị thẳng cho họ."""
 
 
-def run_process(zips: list[tuple[str, bytes]], task_token: str) -> None:
-    """Chạy process_zips trong background thread; cập nhật progress và bắt lỗi."""
+def run_process(tep: list[tuple[str, Path]], task_token: str) -> None:
+    """Chạy process_files trong background thread; cập nhật progress và bắt lỗi."""
     try:
-        process_zips(zips, task_token)
+        process_files(tep, task_token)
     except InputError as e:
         # File sai — không phải lỗi hệ thống, người dùng tự sửa được.
         log.warning("cham459901 file không hợp lệ [%s]: %s", task_token, e)
         if task_token in _progress:
             _progress[task_token].update({"done": True, "error": str(e), "msg": str(e)})
     except Exception as e:
-        log.error("process_zips lỗi [%s]: %s", task_token, e, exc_info=True)
+        log.error("process_files lỗi [%s]: %s", task_token, e, exc_info=True)
         if task_token in _progress:
             _progress[task_token].update({
                 "done": True, "error": str(e),
@@ -117,20 +151,27 @@ def run_process(zips: list[tuple[str, bytes]], task_token: str) -> None:
             })
 
 
-def process_zips(zips: list[tuple[str, bytes]], task_token: str | None = None) -> dict:
-    """Nhận nhiều file ZIP [(tên, bytes)] → gộp → phân loại → lưu 3 xlsx → trả metadata.
+def process_files(tep: list[tuple[str, Path]], task_token: str | None = None) -> dict:
+    """Nhận nhiều file ZIP/Excel [(tên hiển thị, đường dẫn)] → gộp → phân loại → lưu 3 xlsx.
+
+    `tên hiển thị` là tên gốc người dùng chọn, chỉ dùng để viết thông báo lỗi;
+    `đường dẫn` là file đã được ghi xuống máy chủ. Hai thứ tách nhau vì tên trên
+    đĩa đã qua `safe_filename()` nên có thể khác tên người dùng nhìn thấy — báo
+    lỗi bằng tên đã bị cắt là bắt họ đi tìm một file không tồn tại.
 
     Gộp TRƯỚC rồi mới phân loại, không chạy riêng từng file: cặp Cancel/Normal
     của một lệnh hủy có thể nằm ở hai file khác nhau (xuất theo ngày/theo chi
-    nhánh). Chạy tách ra thì cả hai vế đều rơi vào "Lệnh Khác".
+    nhánh). Chạy tách ra thì cả hai vế đều rơi vào "Lệnh Khác". Trộn ZIP với
+    Excel trong cùng một lượt cũng vậy — nguồn nào không quan trọng, sau khi
+    đọc lên đều là cùng một bảng.
     """
-    if not zips:
-        raise InputError("Chưa chọn file ZIP nào.")
+    if not tep:
+        raise InputError("Chưa chọn file nào.")
 
     _cleanup_old_results()
     t0 = time.time()
 
-    df, filtered_rows = _load_data(zips, task_token)
+    df, filtered_rows = _load_data(tep, task_token)
     total_before = len(df) + filtered_rows
 
     _set_prog(task_token, 30, "Bước 1 — Xác định lệnh hủy...")
@@ -156,7 +197,7 @@ def process_zips(zips: list[tuple[str, bytes]], task_token: str | None = None) -
         "khac_rows":     len(df_khac),
         "total_rows":    total_before,
         "filtered_rows": filtered_rows,
-        "n_files":       len(zips),
+        "n_files":       len(tep),
         "elapsed_s":     round(time.time() - t0, 1),
         "process_date":  datetime.now().strftime("%Y%m%d"),
     }
@@ -172,34 +213,147 @@ def process_zips(zips: list[tuple[str, bytes]], task_token: str | None = None) -
 
 # ─── Internal ─────────────────────────────────────────────────────────────────
 
-def _doc_zip(ten: str, zip_bytes: bytes) -> list[pd.DataFrame]:
-    """Giải nén 1 file ZIP → danh sách DataFrame (mỗi .csv bên trong một cái).
+def _kiem_cot(d: pd.DataFrame, nhan: str) -> None:
+    """Kiểm cột NGAY TỪNG BẢNG, không đợi gộp xong.
+
+    `pd.concat` lấy hợp các cột: bảng thiếu cột chỉ thành ô rỗng. Gộp rồi mới
+    kiểm thì một file sai định dạng lọt qua và làm lệch kết quả phân loại.
+    """
+    missing = sorted(_COT_BAT_BUOC - set(d.columns))
+    if missing:
+        raise InputError(f"{nhan} thiếu cột bắt buộc: {', '.join(missing)}.")
+
+
+def _doc_csv(nguon) -> pd.DataFrame:
+    """`nguon`: đường dẫn file, hoặc luồng đọc của một file con trong ZIP."""
+    d = pd.read_csv(nguon, encoding='utf-8-sig', dtype=str, keep_default_na=False)
+    d.columns = d.columns.str.strip()
+    return d
+
+
+def _dat_tieu_de(raw: pd.DataFrame) -> pd.DataFrame | None:
+    """Dò hàng tiêu đề trong vài dòng đầu sheet → bảng đã đặt tên cột (None nếu trống).
+
+    Đọc `header=None` rồi tự dò, không đọc thẳng `header=0`: bản Excel người
+    dùng tự lưu lại thường có thêm dòng tiêu đề báo cáo / ngày xuất ở trên
+    cùng. Đọc cứng dòng đầu thì những file đó báo "thiếu cột bắt buộc" dù dữ
+    liệu bên dưới vẫn đủ.
+    """
+    raw = raw.dropna(how='all')
+    if raw.empty:
+        return None
+
+    dong = 0
+    for i in range(min(_MAX_DONG_DO_TIEU_DE, len(raw))):
+        ten_cot = {str(v).strip() for v in raw.iloc[i]}
+        # 3 cột bắt buộc trên cùng một dòng là đủ chắc đây là hàng tiêu đề,
+        # không phải một dòng dữ liệu tình cờ có chữ giống tên cột.
+        if len(_COT_BAT_BUOC & ten_cot) >= 3:
+            dong = i
+            break
+    # Dò không ra thì vẫn lấy dòng đầu làm tiêu đề: _kiem_cot() ngay sau đó nói
+    # rõ thiếu những cột nào — sát vấn đề hơn câu "không tìm thấy dòng tiêu đề".
+
+    d = raw.iloc[dong + 1:].copy()
+    d.columns = [str(v).strip() for v in raw.iloc[dong]]
+    d = d.dropna(how='all')
+    if d.empty:
+        return None
+
+    # Bỏ cột không có tên (ô tiêu đề trống → pandas trả 'nan'); giữ theo vị trí
+    # để không vấp khi workbook có hai cột trùng tên.
+    giu = [i for i, c in enumerate(d.columns) if c and c.lower() != 'nan']
+    d = d.iloc[:, giu]
+
+    # Ô trống trong Excel là NaN. Để nguyên thì `.str.strip()` và phép ghép khoá
+    # phân loại đều cho NaN, mà NaN != NaN → dòng đó lặng lẽ rơi vào "Lệnh Khác".
+    d = d.fillna('')
+
+    # Excel lưu ngày ở kiểu ngày-giờ, pandas đổi ra "2026-08-01 00:00:00"; bản
+    # CSV gốc không có đuôi giờ đó — cắt đi để hai nguồn ra cùng một dạng.
+    for col in _COT_NGAY:
+        if col in d.columns:
+            d[col] = d[col].astype(str).str.replace(r' 00:00:00$', '', regex=True)
+
+    return d.reset_index(drop=True)
+
+
+def _doc_excel(nguon, nhan: str) -> list[pd.DataFrame]:
+    """Đọc 1 workbook Excel → mỗi sheet có dữ liệu là một DataFrame.
+
+    `nguon` là đường dẫn file trên đĩa (đường thường), hoặc bytes khi workbook
+    nằm bên trong ZIP — calamine cần đọc nhảy vị trí nên không nhận luồng giải
+    nén tuần tự, đó là chỗ duy nhất còn phải qua RAM.
+
+    Đọc TẤT CẢ sheet chứ không chỉ sheet đầu, và bắt sheet nào cũng phải đủ cột.
+    Bỏ qua sheet thiếu cột là im lặng đánh rơi dữ liệu — người dùng không có
+    cách nào biết một phần bút toán đã không được tính.
+    """
+    try:
+        sheets = pd.read_excel(io.BytesIO(nguon) if isinstance(nguon, bytes) else nguon,
+                               sheet_name=None, header=None,
+                               dtype=str, engine='calamine')
+    except Exception as e:
+        log.warning("%s: không đọc được Excel: %s", nhan, e, exc_info=True)
+        raise InputError(
+            f"{nhan} không đọc được như file Excel — có thể file hỏng, bị cắt dở, "
+            "hoặc chỉ được đổi đuôi tên thành .xlsx."
+        ) from e
+
+    dfs = []
+    for ten_sheet, raw in sheets.items():
+        d = _dat_tieu_de(raw)
+        if d is None:
+            continue                      # sheet trống — bỏ qua, không phải lỗi
+        _kiem_cot(d, f"{nhan} → sheet '{ten_sheet}'")
+        dfs.append(d)
+
+    if not dfs:
+        raise InputError(f"{nhan} không có sheet nào chứa dữ liệu.")
+    return dfs
+
+
+def _doc_tep(ten: str, duong_dan: Path) -> list[pd.DataFrame]:
+    """Đọc 1 file người dùng tải lên → danh sách DataFrame, theo đuôi tên file.
+
+    Đuôi lấy từ TÊN NGƯỜI DÙNG CHỌN, không từ tên trên đĩa: hai cái có thể khác
+    nhau sau `safe_filename()`, và đây là thứ quyết định file được đọc kiểu gì.
+    """
+    duoi = Path(ten).suffix.lower()
+    if duoi == DUOI_ZIP:
+        return _doc_zip(ten, duong_dan)
+    if duoi in DUOI_EXCEL:
+        return _doc_excel(duong_dan, f"File '{ten}'")
+    raise InputError(
+        f"File '{ten}' không thuộc định dạng nhận được — chỉ nhận "
+        f"{', '.join(DUOI_HOP_LE)}."
+    )
+
+
+def _doc_zip(ten: str, duong_dan: Path) -> list[pd.DataFrame]:
+    """Giải nén 1 file ZIP trên đĩa → danh sách DataFrame (mỗi .csv/Excel bên trong một cái).
+
+    CSV bên trong được đọc qua `zf.open()` — pandas kéo dữ liệu giải nén theo
+    luồng, không có lúc nào cả file CSV nằm nguyên trong RAM. Workbook Excel thì
+    vẫn phải `zf.read()` vì calamine đọc nhảy vị trí (xem `_doc_excel`).
 
     Mọi thông báo lỗi đều kèm TÊN FILE: người dùng chọn cả chục file một lượt,
     câu "file .zip không hợp lệ" trơ trọi thì không biết phải bỏ file nào ra.
     """
     dfs = []
     try:
-        with _ZipFile(io.BytesIO(zip_bytes)) as zf:
-            csv_names = [n for n in zf.namelist() if n.lower().endswith('.csv')]
-            for csv_name in csv_names:
-                raw = zf.read(csv_name, pwd=zip_password())
-                d = pd.read_csv(
-                    io.BytesIO(raw),
-                    encoding='utf-8-sig',
-                    dtype=str,
-                    keep_default_na=False,
-                )
-                d.columns = d.columns.str.strip()
-                # Kiểm cột NGAY TỪNG FILE, không đợi gộp xong: pd.concat lấy hợp
-                # các cột, file thiếu cột chỉ thành ô rỗng — gộp rồi mới kiểm thì
-                # một file sai định dạng lọt qua và làm lệch kết quả phân loại.
-                missing = sorted(_COT_BAT_BUOC - set(d.columns))
-                if missing:
-                    raise InputError(
-                        f"File '{ten}' → '{csv_name}' thiếu cột bắt buộc: {', '.join(missing)}."
-                    )
-                dfs.append(d)
+        with _ZipFile(str(duong_dan)) as zf:
+            ten_con = [n for n in zf.namelist()
+                       if n.lower().endswith(('.csv',) + DUOI_EXCEL)]
+            for ten_trong in ten_con:
+                nhan = f"File '{ten}' → '{ten_trong}'"
+                if ten_trong.lower().endswith('.csv'):
+                    with zf.open(ten_trong, pwd=zip_password()) as luong:
+                        d = _doc_csv(luong)
+                    _kiem_cot(d, nhan)
+                    dfs.append(d)
+                else:
+                    dfs.extend(_doc_excel(zf.read(ten_trong, pwd=zip_password()), nhan))
     except _BAD_ZIP as e:
         raise InputError(
             f"File '{ten}' không phải file .zip hợp lệ — có thể tải bị lỗi, "
@@ -215,23 +369,24 @@ def _doc_zip(ten: str, zip_bytes: bytes) -> list[pd.DataFrame]:
     # người dùng chỉ thấy đúng câu đó, không biết phải sửa gì.
     if not dfs:
         raise InputError(
-            f"File '{ten}' không chứa file .csv nào — cần file dữ liệu xuất từ IPCAS."
+            f"File '{ten}' không chứa file .csv hay Excel nào — cần file dữ liệu "
+            "xuất từ IPCAS."
         )
     return dfs
 
 
 def _load_data(
-    zips: list[tuple[str, bytes]],
+    tep: list[tuple[str, Path]],
     task_token: str | None = None,
 ) -> tuple[pd.DataFrame, int]:
-    """Đọc tất cả ZIP, gộp thành một DataFrame, lọc theo TK 459901."""
+    """Đọc tất cả file, gộp thành một DataFrame, lọc theo TK 459901."""
     dfs: list[pd.DataFrame] = []
-    n = len(zips)
-    for i, (ten, zip_bytes) in enumerate(zips, 1):
+    n = len(tep)
+    for i, (ten, duong_dan) in enumerate(tep, 1):
         # 5% → 25%: phần đọc file chiếm khoảng đó trong thanh tiến độ chung
         _set_prog(task_token, 5 + (20 * (i - 1)) // n,
-                  f"Đang giải mã và đọc dữ liệu ({i}/{n}): {ten}...")
-        dfs.extend(_doc_zip(ten, zip_bytes))
+                  f"Đang đọc dữ liệu ({i}/{n}): {ten}...")
+        dfs.extend(_doc_tep(ten, duong_dan))
 
     _set_prog(task_token, 25, f"Đang gộp dữ liệu {n} file...")
     df = pd.concat(dfs, ignore_index=True) if len(dfs) > 1 else dfs[0]
@@ -481,17 +636,29 @@ def _write_excel(df: pd.DataFrame, path: Path, sheet_name: str, hex_color: str) 
         zf.writestr('xl/worksheets/sheet1.xml',     sheet_xml)
 
 
-def _cleanup_old_results() -> None:
-    """Xóa thư mục kết quả và progress entry cũ hơn CLEANUP_HOURS giờ."""
-    cutoff = time.time() - CLEANUP_HOURS * 3600
+def _cleanup_old_results(cutoff: float | None = None) -> None:
+    """Xóa thư mục kết quả và progress entry cũ hơn `cutoff`.
+
+    Mặc định là mốc 23h gần nhất đã trôi qua (backend/core/don_dep.py) — kết quả
+    sống hết ngày làm việc thay vì tự bốc hơi sau 2 giờ như trước. Vì mốc đó
+    không bao giờ rơi vào trong ngày đang chạy, hàm này vẫn gọi được ngay đầu
+    một lượt xử lý mới mà không xoá mất kết quả người khác vừa chạy sáng nay.
+    """
+    cutoff = moc_don_gan_nhat() if cutoff is None else cutoff
 
     if TEMP_DIR.exists():
         for sub in TEMP_DIR.iterdir():
-            if sub.is_dir() and sub.stat().st_mtime < cutoff:
-                try:
+            # stat() nằm TRONG try, dù `is_dir()` đã chặn phần lớn: hai lượt dọn
+            # chạy sát nhau (mỗi lượt xử lý mới đều gọi hàm này) vẫn có kẽ hở
+            # giữa is_dir() và stat() để lượt kia xoá xong thư mục. Rơi vào kẽ
+            # đó thì OSError ném thẳng ra giữa `process_files()` và người dùng
+            # nhận lỗi 500 chẳng liên quan gì tới file họ vừa tải lên. Phòng xa,
+            # chưa gặp thật — cùng cách `ach_service._cleanup_old_jobs()` làm.
+            try:
+                if sub.is_dir() and sub.stat().st_mtime < cutoff:
                     shutil.rmtree(sub)
-                except Exception as e:
-                    log.warning("Không xóa được %s: %s", sub, e)
+            except OSError as e:
+                log.warning("Không xóa được %s: %s", sub, e)
 
     stale = [k for k, v in _progress.items() if v.get("_ts", 0) < cutoff]
     for k in stale:

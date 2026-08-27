@@ -337,6 +337,59 @@ def _create_tables(db_path: str):
             sort_order   INTEGER,
             updated_at   DATETIME
         )""",
+        # ── Ôn tập trắc nghiệm (Quizz) ────────────────────────────────────
+        # Bộ câu hỏi nhập MỘT LẦN từ Excel rồi dùng chung cho cả cơ quan —
+        # `content_hash` để nhận ra ai đó tải lại đúng file cũ dưới tên khác.
+        """CREATE TABLE IF NOT EXISTS quiz_sets (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            name           VARCHAR(200) NOT NULL UNIQUE,
+            description    TEXT,
+            source_file    TEXT,
+            content_hash   VARCHAR(64),
+            question_count INTEGER NOT NULL DEFAULT 0,
+            created_by     INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+            created_at     DATETIME NOT NULL,
+            is_active      INTEGER NOT NULL DEFAULT 1
+        )""",
+        # opt4 để trống được: file mẫu có cả câu 3 lựa chọn.
+        """CREATE TABLE IF NOT EXISTS quiz_questions (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            set_id     INTEGER NOT NULL REFERENCES quiz_sets(id) ON DELETE CASCADE,
+            order_no   INTEGER NOT NULL,
+            content    TEXT NOT NULL,
+            opt1       TEXT,
+            opt2       TEXT,
+            opt3       TEXT,
+            opt4       TEXT,
+            correct_no INTEGER NOT NULL
+        )""",
+        """CREATE TABLE IF NOT EXISTS quiz_attempts (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            set_id          INTEGER NOT NULL REFERENCES quiz_sets(id) ON DELETE CASCADE,
+            staff_id        INTEGER NOT NULL REFERENCES user_tttt(id) ON DELETE CASCADE,
+            mode            TEXT NOT NULL DEFAULT 'practice',
+            settings        TEXT,
+            total_questions INTEGER NOT NULL DEFAULT 0,
+            correct_count   INTEGER,
+            score           REAL,
+            duration_ms     INTEGER,
+            status          TEXT NOT NULL DEFAULT 'in_progress',
+            started_at      DATETIME NOT NULL,
+            finished_at     DATETIME
+        )""",
+        # Sinh sẵn đủ N dòng lúc tạo lượt: thứ tự câu và thứ tự đáp án đã trộn
+        # phải lưu lại, nếu không màn "Xem lại bài" sẽ dựng ra một đề khác hẳn
+        # với đề người dùng vừa làm.
+        """CREATE TABLE IF NOT EXISTS quiz_attempt_items (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            attempt_id   INTEGER NOT NULL REFERENCES quiz_attempts(id) ON DELETE CASCADE,
+            question_id  INTEGER NOT NULL REFERENCES quiz_questions(id) ON DELETE CASCADE,
+            order_no     INTEGER NOT NULL,
+            option_order TEXT NOT NULL,
+            chosen_no    INTEGER,
+            is_correct   INTEGER,
+            time_ms      INTEGER
+        )""",
     ]
     for s in statements:
         cur.execute(s)
@@ -1071,6 +1124,66 @@ def _ensure_indexes():
             created_at  DATETIME NOT NULL
         )""",
         "CREATE INDEX IF NOT EXISTS ix_doi_chieu_citad_history_edits_history_id ON doi_chieu_citad_history_edits(history_id)",
+        # ── Ôn tập trắc nghiệm (Quizz) — 2026-08-26 ───────────────────────
+        # Bản sao của khối trong _create_tables(): DB đã cài từ trước không
+        # chạy lại _create_tables cho bảng mới thêm sau này.
+        # ── Ôn tập trắc nghiệm (Quizz) ────────────────────────────────────
+        # Bộ câu hỏi nhập MỘT LẦN từ Excel rồi dùng chung cho cả cơ quan —
+        # `content_hash` để nhận ra ai đó tải lại đúng file cũ dưới tên khác.
+        """CREATE TABLE IF NOT EXISTS quiz_sets (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            name           VARCHAR(200) NOT NULL UNIQUE,
+            description    TEXT,
+            source_file    TEXT,
+            content_hash   VARCHAR(64),
+            question_count INTEGER NOT NULL DEFAULT 0,
+            created_by     INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+            created_at     DATETIME NOT NULL,
+            is_active      INTEGER NOT NULL DEFAULT 1
+        )""",
+        # opt4 để trống được: file mẫu có cả câu 3 lựa chọn.
+        """CREATE TABLE IF NOT EXISTS quiz_questions (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            set_id     INTEGER NOT NULL REFERENCES quiz_sets(id) ON DELETE CASCADE,
+            order_no   INTEGER NOT NULL,
+            content    TEXT NOT NULL,
+            opt1       TEXT,
+            opt2       TEXT,
+            opt3       TEXT,
+            opt4       TEXT,
+            correct_no INTEGER NOT NULL
+        )""",
+        """CREATE TABLE IF NOT EXISTS quiz_attempts (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            set_id          INTEGER NOT NULL REFERENCES quiz_sets(id) ON DELETE CASCADE,
+            staff_id        INTEGER NOT NULL REFERENCES user_tttt(id) ON DELETE CASCADE,
+            mode            TEXT NOT NULL DEFAULT 'practice',
+            settings        TEXT,
+            total_questions INTEGER NOT NULL DEFAULT 0,
+            correct_count   INTEGER,
+            score           REAL,
+            duration_ms     INTEGER,
+            status          TEXT NOT NULL DEFAULT 'in_progress',
+            started_at      DATETIME NOT NULL,
+            finished_at     DATETIME
+        )""",
+        # Sinh sẵn đủ N dòng lúc tạo lượt: thứ tự câu và thứ tự đáp án đã trộn
+        # phải lưu lại, nếu không màn "Xem lại bài" sẽ dựng ra một đề khác hẳn
+        # với đề người dùng vừa làm.
+        """CREATE TABLE IF NOT EXISTS quiz_attempt_items (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            attempt_id   INTEGER NOT NULL REFERENCES quiz_attempts(id) ON DELETE CASCADE,
+            question_id  INTEGER NOT NULL REFERENCES quiz_questions(id) ON DELETE CASCADE,
+            order_no     INTEGER NOT NULL,
+            option_order TEXT NOT NULL,
+            chosen_no    INTEGER,
+            is_correct   INTEGER,
+            time_ms      INTEGER
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_quiz_questions_set      ON quiz_questions(set_id, order_no)",
+        "CREATE INDEX IF NOT EXISTS ix_quiz_attempts_staff     ON quiz_attempts(staff_id, started_at)",
+        "CREATE INDEX IF NOT EXISTS ix_quiz_attempts_set       ON quiz_attempts(set_id, status)",
+        "CREATE INDEX IF NOT EXISTS ix_quiz_attempt_items_att  ON quiz_attempt_items(attempt_id, order_no)",
     ]
     _mig_log = logging.getLogger(__name__)
 
@@ -1378,6 +1491,10 @@ def _ensure_indexes():
         "CREATE INDEX IF NOT EXISTS ix_attendance_adj_attendance  ON attendance_adjustments(attendance_id)",
         "CREATE INDEX IF NOT EXISTS ix_attendance_adj_status      ON attendance_adjustments(status)",
         "CREATE INDEX IF NOT EXISTS ix_attendance_adj_requested_by ON attendance_adjustments(requested_by)",
+        "CREATE INDEX IF NOT EXISTS ix_quiz_questions_set      ON quiz_questions(set_id, order_no)",
+        "CREATE INDEX IF NOT EXISTS ix_quiz_attempts_staff     ON quiz_attempts(staff_id, started_at)",
+        "CREATE INDEX IF NOT EXISTS ix_quiz_attempts_set       ON quiz_attempts(set_id, status)",
+        "CREATE INDEX IF NOT EXISTS ix_quiz_attempt_items_att  ON quiz_attempt_items(attempt_id, order_no)",
     ]
     conn = sqlite3.connect(DB_PATH, timeout=30)
     try:

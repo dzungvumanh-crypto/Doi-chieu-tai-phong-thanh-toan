@@ -123,6 +123,10 @@ MENU_TREE = [
         ],
     },
     ("ttqt_branches", "Danh sách CN TTQT", "account_tree"),
+    # Ôn tập trắc nghiệm — đứng riêng cấp 1: không thuộc phòng nào, cả cơ quan
+    # dùng. Icon "school" thuộc bộ Material Icons gốc (chắc chắn có glyph trong
+    # font offline NiceGUI đóng gói) — cùng lý do đã chọn "date_range" ở trên.
+    ("quiz", "Ôn tập trắc nghiệm", "school"),
 ]
 
 # Hai nhóm dưới đây trước nằm inline trong _sidebar(). Tách ra module-level để

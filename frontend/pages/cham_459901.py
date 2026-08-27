@@ -14,6 +14,22 @@ from frontend.shared import (
 _MAX_POLL_SECONDS = 900   # 15 phút — dài hơn mọi file thực tế
 _MAX_POLL_FAILS = 10      # số lần lỗi liên tiếp thì bỏ cuộc
 
+# Kiểu MIME gửi kèm mỗi phần multipart. Backend phân loại theo ĐUÔI TÊN FILE,
+# đây chỉ để phía nhận không phải đoán mò; đuôi lạ thì gửi octet-stream và để
+# backend trả lỗi 400 có nội dung rõ ràng.
+_MIME = {
+    ".zip":  "application/zip",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".xlsm": "application/vnd.ms-excel.sheet.macroEnabled.12",
+    ".xlsb": "application/vnd.ms-excel.sheet.binary.macroEnabled.12",
+    ".xls":  "application/vnd.ms-excel",
+}
+
+
+def _kieu_mime(ten: str) -> str:
+    duoi = ten[ten.rfind("."):].lower() if "." in ten else ""
+    return _MIME.get(duoi, "application/octet-stream")
+
 
 @ui.page("/cham_459901")
 async def cham_459901_page():
@@ -37,12 +53,13 @@ async def cham_459901_page():
 
             # ── Upload card ───────────────────────────────────────────────────
             with ui.card().classes("w-full p-5 mb-4"):
-                ui.label("Tải lên file ZIP dữ liệu").classes(
+                ui.label("Tải lên file dữ liệu (ZIP hoặc Excel)").classes(
                     "text-base font-semibold text-red-800 mb-3"
                 )
                 ui.label(
-                    "File ZIP được mã hóa AES-256 — xuất từ hệ thống GL02. "
-                    "Có thể chọn nhiều file một lượt (giữ Ctrl hoặc Shift khi chọn); "
+                    "File ZIP mã hóa AES-256 xuất từ hệ thống GL02, hoặc file Excel "
+                    "(.xlsx/.xlsm/.xlsb/.xls) đã mở sẵn từ ZIP đó. Có thể chọn nhiều file "
+                    "một lượt (giữ Ctrl hoặc Shift khi chọn), trộn ZIP với Excel cũng được; "
                     "tất cả được gộp lại thành MỘT lần phân loại."
                 ).classes("text-xs text-gray-500 mb-4")
 
@@ -73,7 +90,8 @@ async def cham_459901_page():
                     auto_upload=True,
                     multiple=True,
                 ).props(
-                    'accept=".zip" flat dense label="Chọn file ZIP (có thể chọn nhiều)..."'
+                    'accept=".zip,.xlsx,.xlsm,.xlsb,.xls" flat dense '
+                    'label="Chọn file ZIP hoặc Excel (có thể chọn nhiều)..."'
                 ).classes("w-full mb-1")
 
                 def _xoa_danh_sach():
@@ -105,7 +123,7 @@ async def cham_459901_page():
             # ── Handlers ──────────────────────────────────────────────────────
             async def do_process():
                 if not state["files"]:
-                    ui.notify("Vui lòng chọn ít nhất 1 file ZIP", type="warning")
+                    ui.notify("Vui lòng chọn ít nhất 1 file", type="warning")
                     return
 
                 process_btn.props("loading disable")
@@ -127,7 +145,7 @@ async def cham_459901_page():
                         api.post_upload,
                         "/api/cham459901/process",
                         # list (không phải dict): nhiều part dùng chung field "files"
-                        [("files", (ten, data, "application/zip"))
+                        [("files", (ten, data, _kieu_mime(ten)))
                          for ten, data in state["files"].items()],
                         timeout=600.0,   # nhiều ZIP GL02 có thể tới hàng trăm MB
                     )

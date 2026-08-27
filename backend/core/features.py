@@ -78,7 +78,7 @@ FEATURES: dict[str, str] = {
 
     # Chấm 459901 — Phòng Thanh toán
     "menu.cham_459901":    "Chấm 459901 — Phân loại bút toán TK 459901 (menu)",
-    "cham_459901.process": "Xử lý file ZIP 459901",
+    "cham_459901.process": "Xử lý file 459901 (ZIP hoặc Excel)",
 
     # Đối chiếu Song phương — Phòng Thanh toán
     "menu.doi_chieu_song_phuong":    "Đối chiếu Song phương — Định tuyến lệnh IPCAS (menu)",
@@ -112,6 +112,14 @@ FEATURES: dict[str, str] = {
     "menu.attendance":       "Chấm công (menu)",
     "attendance.view_dept":  "Xem bảng công cả phòng + lịch sử các tháng",
     "attendance.export":     "Xuất Excel bảng công",
+
+    # Ôn tập trắc nghiệm (Quizz) — bộ câu hỏi dùng chung cho cả cơ quan.
+    # Xem/làm bài mở cho mọi người được cấp `menu.quiz`; tải bộ mới và xoá bộ
+    # là hai quyền riêng vì chúng động tới dữ liệu dùng chung: xoá một bộ kéo
+    # theo toàn bộ lượt làm bài và bảng xếp hạng của bộ đó.
+    "menu.quiz":             "Ôn tập trắc nghiệm (menu)",
+    "quiz.upload":           "Tải bộ câu hỏi lên / đổi tên bộ",
+    "quiz.delete":           "Xoá bộ câu hỏi",
 }
 
 # ── Cấu trúc màn hình phân quyền ──────────────────────────────────────────────
@@ -267,6 +275,13 @@ FEATURE_GROUPS: list[dict] = [
                 ],
             },
         ],
+    },
+    {
+        # Soi gương mục phẳng "quiz" ở cấp 1 của MENU_TREE.
+        "kind": "menu",
+        "code": "menu.quiz",
+        "icon": "school",
+        "actions": ["quiz.upload", "quiz.delete"],
     },
     {
         "kind": "menu",

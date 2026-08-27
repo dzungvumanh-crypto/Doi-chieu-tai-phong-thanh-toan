@@ -23,6 +23,12 @@ _POLL_INTERVAL = 1.5   # giây
 # (cham_459901, doi_chieu_song_phuong đều để trần 900 giây).
 _POLL_TIMEOUT   = 30.0
 _MAX_POLL_FAILS = 10
+
+# Bấm "Dừng" chỉ ĐẶT CỜ. Pipeline ngó tới cờ đó ở ranh giới giữa các bước, nên
+# đang giải nén 2 file MIS_DI thì phải xong chỗ đó mới dừng — cùng lý do khiến
+# _MAX_POLL_FAILS phải chịu tới 5 phút. Chờ ngắn hơn là báo "chưa dừng được" oan.
+_HAN_CHO_DUNG  = 300   # giây — tối đa chờ phiên cũ thật sự kết thúc
+_NHIP_CHO_DUNG = 2.0   # giây — nhịp hỏi lại
 _FILE_HINT = (
     'PDF (session) · GL02*.zip · GW*.xlsx · '
     '2× *_DI_*.zip · 2× *_DEN_*.zip · '
@@ -81,6 +87,8 @@ async def cham_ach_page():
         'checkpoint_mode': 'inline',   # 'inline' | 'deferred' — cách xử lý khi tới Checkpoint
         'pending_checkpoint_res': None,   # kết quả poll lúc tới Checkpoint (mode deferred, chờ mở)
         'bo_qua_checkpoint': False,   # True = chạy thẳng, coi MIS_đi đúng 100%, không dừng chờ xác nhận
+        'max_total_mb': None,  # trần tổng dung lượng 1 lượt upload, do /api/ach/validate trả về
+        'dang_cho_dung': False,  # đang chờ phiên cũ dừng hẳn — để _poll() không báo trùng
     }
 
     with ui.row().classes('w-full'):
@@ -108,7 +116,10 @@ async def cham_ach_page():
                         data = e.content.read()
                         state['files'][e.name] = data
                         names = ', '.join(state['files'].keys())
-                        file_list_label.set_text(f'Đã chọn ({len(state["files"])} file): {names}')
+                        # Kèm tổng dung lượng: trần máy chủ tính theo MB, người dùng phải
+                        # thấy con số đó TRƯỚC khi bấm chạy mới biết mình đang vượt.
+                        file_list_label.set_text(
+                            f'Đã chọn ({len(state["files"])} file, {_tong_mb():.0f} MB): {names}')
                         file_list_label.classes(
                             remove='text-gray-400 italic', add='text-green-700 font-medium'
                         )
@@ -321,6 +332,8 @@ async def cham_ach_page():
                         ui.label(f'Không kiểm tra được: {e}').classes('text-xs text-red-600')
                     return False
 
+                if res.get('max_total_mb'):
+                    state['max_total_mb'] = res['max_total_mb']
                 _render_validate_result(res)
                 return bool(res.get('ok'))
 
@@ -339,29 +352,39 @@ async def cham_ach_page():
                 state['running'] = False
                 _stop_timer()
 
-            async def _trang_thai_job_cu() -> str | None:
-                """Trạng thái job lần chạy trước theo MÁY CHỦ, hoặc None nếu không
-                còn/không hỏi được. Không tin `state['running']`: khi polling bỏ cuộc
-                nó bị đặt False trong khi pipeline phía máy chủ vẫn chạy tiếp."""
-                if not state['job_id']:
-                    return None
+            async def _may_chu_dang_ban():
+                """Hỏi MÁY CHỦ xem có phiên nào đang chạy dở không.
+
+                Trả dict job / 'khong_hoi_duoc' / None.
+
+                Thay cho cách hỏi cũ (đã bỏ): poll đúng `state['job_id']` của TAB
+                này — F5 một cái là quên, người khác chạy thì không thấy.
+                Đây mới là câu hỏi đúng, và phải hỏi TRƯỚC khi gửi file — gửi rồi mới
+                bị từ chối thì đã tốn vài trăm MB và đúng lúc máy chủ yếu nhất.
+                """
                 try:
                     res = await asyncio.to_thread(
-                        api.get, f'/api/ach/poll/{state["job_id"]}',
-                        # since lớn hơn mọi số dòng log thật → máy chủ trả về danh
-                        # sách log rỗng. Đây là phép dò TRẠNG THÁI, không được nuốt
-                        # mất log của job cũ bằng cách đọc rồi vứt đi.
-                        params={'since': 10 ** 9}, timeout=_POLL_TIMEOUT,
+                        api.get, '/api/ach/dang-chay', timeout=_POLL_TIMEOUT,
                     )
                 except Exception as e:
-                    if not api.la_loi_mang(e):
-                        # Máy chủ TRẢ LỜI rằng job không còn (404 hết hạn) — câu trả
-                        # lời dứt khoát, cho chạy lượt mới.
-                        return None
-                    # Im lặng: KHÔNG kết luận job đã chết. Bản thân việc im lặng
-                    # này là dấu hiệu máy chủ còn đang gánh job cũ.
-                    return 'khong_hoi_duoc'
-                return res.get('status')
+                    if api.la_loi_mang(e):
+                        return 'khong_hoi_duoc'
+                    raise
+                return res.get('job')
+
+            def _mo_ta_phien_dang_chay(job: dict) -> str:
+                phut = job.get('tuoi_giay', 0) // 60
+                da_lau = f', đã {phut} phút' if phut else ''
+                if job.get('status') == 'awaiting_confirmation':
+                    viec = 'đang giữ một phiên chờ xác nhận MIS_đi'
+                    cach = ('Xử lý nốt phiên đó (tải file xác nhận, điền, nộp lại), '
+                            'hoặc bấm "Dừng" rồi chạy lại.')
+                else:
+                    viec = 'đang chạy dở một phiên đối chiếu'
+                    cach = 'Chờ nó chạy xong, hoặc bấm "Dừng" rồi chạy lại.'
+                return (f'Máy chủ {viec} (job {job.get("job_id")}{da_lau}) — chưa gửi file đi. '
+                        f'Chạy chồng hai phiên là máy chủ ôm hai bộ dữ liệu cùng lúc, '
+                        f'thường đứt kết nối giữa chừng. {cach}')
 
             async def _poll():
                 if not state['job_id']:
@@ -439,7 +462,10 @@ async def cham_ach_page():
                     elif status == 'cancelled':
                         progress_bar.set_visibility(False)
                         checkpoint_dialog.close()
-                        ui.notify('Đã dừng theo yêu cầu.', type='warning')
+                        # Đang chờ dừng hẳn thì on_cancel() sẽ tự báo, và báo đúng
+                        # hơn ("đã nhả bộ nhớ") — hai thông báo chồng nhau chỉ gây rối.
+                        if not state['dang_cho_dung']:
+                            ui.notify('Đã dừng theo yêu cầu.', type='warning')
 
             def _mo_ta_can_xac_nhan(res: dict) -> str:
                 so_luong  = res.get('xac_nhan_count')
@@ -594,22 +620,74 @@ async def cham_ach_page():
                             'click', _tai_ket_qua
                         ).classes('text-xs')
 
+            def _tong_mb() -> float:
+                return sum(len(d) for d in state['files'].values()) / (1024 * 1024)
+
+            def _qua_tran_dung_luong() -> str | None:
+                """Thông báo nếu bộ file vượt trần máy chủ; None nếu còn trong ngưỡng.
+
+                Phải chặn ở ĐÂY chứ không để máy chủ chặn: máy chủ trả 413 rồi đóng
+                kết nối trong khi trình duyệt còn đang gửi, nên phía gửi không bao giờ
+                đọc được cái 413 đó — nó chỉ thấy socket đứt và hiện
+                "[WinError 10054] An existing connection was forcibly closed...".
+                """
+                tran = state['max_total_mb']
+                tong = _tong_mb()
+                if not tran or tong <= tran:
+                    return None
+                nang = sorted(state['files'].items(), key=lambda kv: -len(kv[1]))[:3]
+                chi_tiet = ', '.join(f'{n} ({len(d) / (1024 * 1024):.0f} MB)' for n, d in nang)
+                return (f'Bộ file tổng {tong:.0f} MB, vượt trần {tran} MB của máy chủ — '
+                        f'chưa gửi đi gì cả. Nặng nhất: {chi_tiet}. Bỏ bớt file không thuộc '
+                        'phiên đối chiếu này rồi thử lại, hoặc nhờ quản trị nâng '
+                        'ACH_MAX_UPLOAD_MB / MAX_REQUEST_MB trong .env.')
+
+            def _giai_thich_loi_upload(e: Exception) -> str:
+                """Kết nối đứt giữa lúc upload gần như luôn là máy chủ từ chối vì bộ file
+                quá lớn — nói ra bằng tiếng người, đừng để nguyên mã lỗi Windows."""
+                msg = str(e)
+                if not any(k in msg for k in
+                           ('10054', '10053', 'ConnectionReset', 'RemoteProtocol',
+                            'ReadError', 'WriteError')):
+                    return msg
+                tran = state['max_total_mb']
+                return (f'{msg} — Máy chủ cắt kết nối khi đang nhận file (bộ file '
+                        f'{_tong_mb():.0f} MB'
+                        + (f', trần {tran} MB' if tran else '') + '). Thường là do bộ file '
+                        'quá lớn; cũng có thể backend vừa khởi động lại. Bỏ bớt file rồi thử lại.')
+
             async def _thuc_hien_chay():
+                # Hai cửa ải trước khi gửi một byte nào — cả hai đều là bài học từ
+                # lỗi thật, không phải phòng xa: quá dung lượng, và chạy chồng phiên.
+                loi_dung_luong = _qua_tran_dung_luong()
+                if loi_dung_luong:
+                    ui.notify(loi_dung_luong, type='negative', timeout=0)
+                    return
+
                 # Chặn hai lượt đối chiếu chồng nhau. `state['running']` không đủ:
                 # sau khi polling bỏ cuộc nó là False dù pipeline cũ còn chạy, và
                 # `_thuc_hien_chay()` sẽ đè `state['job_id']` — job cũ thành mồ côi,
                 # không còn ai dừng được, trong khi vẫn chiếm RAM/CPU/đĩa. Đúng
                 # cảnh đã xảy ra 19/08/2026: lần 1 mất liên lạc, lần 2 không phản hồi.
-                trang_thai = await _trang_thai_job_cu()
-                if trang_thai in ('pending', 'running', 'awaiting_confirmation'):
-                    ui.notify(
-                        f'Lượt chạy trước (job {state["job_id"]}) vẫn đang ở trạng thái '
-                        f'"{trang_thai}". Bấm "Dừng" để huỷ nó trước khi chạy lượt mới.',
-                        type='negative', timeout=0,
-                    )
+                try:
+                    dang = await _may_chu_dang_ban()
+                except Exception as e:
+                    # Không để lỗi lọt lên handler toàn cục: NiceGUI sẽ nuốt im,
+                    # màn hình đứng yên không báo gì (xem docs/DESIGN.md).
+                    if not _handle_api_error(e):
+                        ui.notify(str(e), type='negative')
+                    return
+
+                if isinstance(dang, dict):
+                    # Nhận lại job mồ côi (F5 mất state, hoặc người khác khởi động):
+                    # không có job_id thì nút "Dừng" bấm cũng không làm gì được.
+                    if not state['job_id']:
+                        state['job_id'] = dang.get('job_id')
+                    ui.notify(_mo_ta_phien_dang_chay(dang), type='negative', timeout=0)
                     btn_cancel.set_visibility(True)
                     return
-                if trang_thai == 'khong_hoi_duoc':
+
+                if dang == 'khong_hoi_duoc':
                     ui.notify(
                         'Máy chủ chưa trả lời về lượt chạy trước nên không rõ nó đã dừng hay '
                         'chưa. Chạy lúc này có thể thành hai lượt cùng lúc. Bấm "Dừng" rồi '
@@ -656,7 +734,7 @@ async def cham_ach_page():
                     btn_run.set_visibility(True)
                     state['running'] = False
                     if not _handle_api_error(e):
-                        ui.notify(str(e), type='negative')
+                        ui.notify(_giai_thich_loi_upload(e), type='negative', timeout=0)
                     return
 
                 state['job_id'] = res.get('job_id')
@@ -694,6 +772,26 @@ async def cham_ach_page():
 
             btn_xac_nhan_chay_thang.on('click', _on_xac_nhan_chay_thang)
 
+            async def _cho_may_chu_ranh() -> bool:
+                """Chờ tới khi máy chủ thật sự rảnh. True = đã rảnh hẳn.
+
+                Gửi lệnh dừng xong mà báo luôn "đã dừng" là nói dối: cờ dừng chỉ được
+                pipeline ngó tới ở ranh giới giữa các bước, nên bước đang chạy vẫn ôm
+                nguyên vài trăm MB cho tới khi nó xong. Chạy phiên mới đúng lúc đó là
+                hai bộ dữ liệu cùng nằm trong RAM — đúng cảnh làm backend chết.
+
+                Hỏi `/dang-chay` chứ không hỏi `/poll`: câu cần trả lời là "máy chủ
+                rảnh chưa", không phải "job của tôi tới đâu rồi".
+                """
+                for _ in range(int(_HAN_CHO_DUNG / _NHIP_CHO_DUNG)):
+                    await asyncio.sleep(_NHIP_CHO_DUNG)
+                    try:
+                        if await _may_chu_dang_ban() is None:
+                            return True
+                    except Exception:
+                        pass   # hỏi lại ở nhịp sau — im lặng ở đây KHÔNG kết luận gì
+                return False
+
             async def on_cancel():
                 if not state['job_id']:
                     return
@@ -702,13 +800,37 @@ async def cham_ach_page():
                         api.post, f'/api/ach/cancel/{state["job_id"]}',
                         timeout=_POLL_TIMEOUT,
                     )
-                    _append_log('[Yêu cầu dừng đã gửi — chờ pipeline kết thúc...]')
-                    if not state['timer']:
-                        # Không có polling đang chạy (vd đang ở Checkpoint chờ xác
-                        # nhận) — huỷ có hiệu lực ngay, poll 1 lần để cập nhật UI.
-                        await _poll()
                 except Exception as e:
-                    ui.notify(str(e), type='negative')
+                    if not _handle_api_error(e):
+                        ui.notify(str(e), type='negative')
+                    return
+
+                btn_cancel.disable()
+                state['dang_cho_dung'] = True
+                _append_log('[Đã gửi yêu cầu dừng — chờ bước đang chạy kết thúc...]')
+                ui.notify('Đang dừng phiên cũ — chờ bước đang chạy kết thúc...', type='ongoing')
+                try:
+                    da_ranh = await _cho_may_chu_ranh()
+                finally:
+                    state['dang_cho_dung'] = False
+                    btn_cancel.enable()
+
+                if da_ranh:
+                    _stop_timer()
+                    _stop_running()
+                    progress_bar.set_visibility(False)
+                    state['job_id'] = None
+                    _append_log('[Đã dừng hẳn — máy chủ đã nhả bộ nhớ, chạy phiên mới được rồi.]')
+                    ui.notify('Đã dừng hẳn phiên cũ. Bộ nhớ đã được giải phóng — '
+                              'chạy phiên mới được rồi.', type='positive', timeout=0)
+                else:
+                    _append_log(f'[Chưa dừng được sau {_HAN_CHO_DUNG // 60} phút.]')
+                    ui.notify(
+                        f'Đã gửi lệnh dừng nhưng sau {_HAN_CHO_DUNG // 60} phút máy chủ vẫn báo '
+                        'bận. Bước đang chạy có thể còn dài. ĐỪNG chạy phiên mới lúc này — '
+                        'chờ thêm rồi bấm "Dừng" lại để kiểm tra.',
+                        type='negative', timeout=0,
+                    )
 
             btn_run.on('click', on_run)
             btn_cancel.on('click', on_cancel)

@@ -51,7 +51,518 @@
 <div class="page">
 
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
-  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-25</p>
+  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-27</p>
+
+  <!-- E460 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">E460</span>
+      <span class="card-title">File tải lên: ghi thẳng ra đĩa, và một mốc 23h thay cho bốn cái TTL</span>
+      <span class="badge badge-done">Xong — 792 test pass (18 test mới)</span>
+    </div>
+    <div class="card-body">
+
+      <p>Yêu cầu: <i>upload là tải file lên folder của máy chủ, 23h hằng ngày xoá file trong folder đó</i>.
+        Khảo sát trước khi sửa cho thấy phần lớn đã có sẵn — bốn tính năng đã ghi ra
+        <code>data/temp_*</code>, đã có <code>temp_cleanup_service</code> chạy nền. Cái đáng viết ra là
+        <b>vì sao đổi lịch dọn lại là việc dễ làm hỏng</b>, và chỗ RAM bị trả giá gấp đôi mà không ai để ý.
+        Mục 7 là vòng hai: người dùng yêu cầu áp cùng cách cho <i>Chấm 459901</i> và <i>Đối chiếu song
+        phương</i> — hai chỗ mà vòng một đã cố ý bỏ lại.</p>
+
+      <div class="label">1. Một mốc, không phải một TTL — chi tiết quyết định mọi thứ còn lại</div>
+      <p>Người dùng chốt bỏ hẳn TTL: file sống tới 23h. Cài đặt ngây thơ là "23h thì xoá sạch thư mục",
+        nhưng các hàm dọn đang được gọi <b>ngay giữa request</b> (đầu <code>process_zip()</code>,
+        <code>finally</code> của pipeline ACH). Xoá-sạch-bất-kể-tuổi ở những chỗ đó là người A vừa bấm chạy
+        đã xoá mất kết quả người B đang tải dở.</p>
+      <p>Thay bằng <code>moc_don_gan_nhat()</code> (<code>backend/core/don_dep.py</code>): <b>mốc 23h gần
+        nhất đã trôi qua</b>. Mọi hàm dọn xoá "cái gì cũ hơn mốc đó". Một công thức, ba tình huống đều đúng:</p>
+      <table>
+        <tr><th>Gọi lúc</th><th>Mốc</th><th>Kết quả</th></tr>
+        <tr><td>23:00:05 hôm nay (lịch)</td><td>23:00 hôm nay</td><td>Xoá sạch mọi thứ của ngày vừa qua <span class="pill pill-green">đúng ý</span></td></tr>
+        <tr><td>Giữa một request lúc 14h</td><td>23:00 hôm qua</td><td>Không đụng được file nào của hôm nay <span class="pill pill-green">an toàn</span></td></tr>
+        <tr><td>Backend khởi động lúc 9h sáng</td><td>23:00 hôm qua</td><td>Dọn rác đêm qua, giữ file người ta vừa tải sáng nay</td></tr>
+      </table>
+      <p>Nhờ vậy <b>không phải gỡ lời gọi dọn nào trong đường đi của request</b> — chúng trở nên vô hại
+        thay vì phải xoá đi và mất luôn lớp dọn cơ hội đó.</p>
+
+      <div class="label">2. Đọc trọn vào RAM rồi mới ghi xuống đĩa: trả giá gấp đôi</div>
+      <p><code>read_limited()</code> gom mọi khối vào list rồi <code>join</code> — đỉnh bộ nhớ bằng
+        <b>hai lần</b> dung lượng file, ngay trước khi ghi xuống đúng cái đĩa đó. Với trần ACH 500 MB thì
+        đỉnh khoảng 1 GB cho một lượt. Thêm <code>save_upload_to()</code> ghi thẳng từng khối 1 MB. Đo bằng
+        <code>tracemalloc</code>, file 200 MB:</p>
+      <table>
+        <tr><th>Cách</th><th>Đỉnh RAM</th></tr>
+        <tr><td><code>read_limited()</code> rồi <code>write_bytes()</code> (cũ)</td><td><b>400,4 MB</b></td></tr>
+        <tr><td><code>save_upload_to()</code> (mới)</td><td><b>2,0 MB</b></td></tr>
+      </table>
+      <p>Đây đúng là nguyên nhân gốc của <code>[WinError 10054]</code> đã ghi ở card ACH trước đó: backend
+        chết vì RAM giữa lúc đang nhận, client chỉ thấy socket đứt.</p>
+
+      <div class="label">3. Job ACH phải được đăng ký TRƯỚC khi đọc byte đầu tiên</div>
+      <p>Streaming buộc phải biết thư mục đích trước, nên <code>start_job()</code> tách thành
+        <code>tao_job()</code> <span class="arrow">→</span> nhận file <span class="arrow">→</span>
+        <code>chay_job()</code>. Tác dụng phụ <b>đáng giá hơn cả mục đích ban đầu</b>: cửa "một phiên một
+        lúc" trước đây bỏ trống suốt mấy phút upload — hai bộ file vài trăm MB vẫn cùng lọt qua rồi mới
+        tranh nhau RAM. Nay job có mặt trong <code>_jobs</code> từ giây đầu tiên.</p>
+      <div class="caution"><b>Cái giá:</b> mọi đường lỗi khi nhận file <b>bắt buộc</b> phải gọi
+        <code>bo_job()</code>, nếu không một job <code>pending</code> ma sẽ khoá chết tính năng cho tới khi
+        hết <code>CLEANUP_TTL</code>. Vì thế cả vòng nhận file nằm trong <code>except BaseException</code> —
+        <code>test_upload_qua_tran_khong_de_lai_job_ma_khoa_tinh_nang</code> canh đúng chỗ này.</div>
+
+      <div class="label">4. Tách <code>CLEANUP_TTL</code> khỏi hạn giữ file</div>
+      <p>Một hằng số đang gánh hai nghĩa: "bao lâu thì xoá file" và "bao lâu thì coi một phiên bỏ dở là đã
+        chết". Nới nghĩa thứ nhất lên hết ngày mà không tách thì nghĩa thứ hai đi theo — một người đóng
+        trình duyệt lúc chờ xác nhận MIS_đi sẽ <b>khoá tính năng cả ngày</b>. <code>CLEANUP_TTL</code> nay
+        chỉ còn nghĩa thứ hai (vẫn 4 giờ), việc xoá file do <code>moc_don_gan_nhat()</code> quyết.</p>
+
+      <div class="label">5. Lịch: không hẹn thẳng một Timer 24 tiếng</div>
+      <p><code>threading.Timer</code> đếm theo thời gian trôi của tiến trình — máy chủ ngủ vài tiếng là mốc
+        trôi theo, mỗi ngày lệch một ít khỏi 23h. Timer nay đặt tối đa 30 phút một lần và <b>giờ dọn thì
+        tính lại từ đồng hồ</b> mỗi lần thức: sát 23h thì hẹn đúng số giây còn lại. Bỏ lỡ một mốc (máy tắt
+        qua đêm) cũng không mất — lần thức đầu tiên sau đó thấy mốc mới hơn mốc đã dọn là dọn bù ngay.</p>
+      <p>Dùng <b>giờ local của máy</b> (<code>time.time()</code>), không <code>_vn_now()</code>: vế còn lại
+        của phép so sánh là <code>st_mtime</code> của file — đồng hồ hệ thống. Trộn UTC+7 vào là so hai đồng
+        hồ lệch nhau đúng 7 tiếng, đúng lỗi đã mắc một lần ở <code>log_cleanup_service</code> (13/08/2026).</p>
+
+      <div class="label">6. CITAD: đổi chỗ chứ không đổi vòng đời</div>
+      <p>File CITAD chuyển từ <code>%TEMP%</code> của Windows sang <code>data/temp_citad/&lt;lượt&gt;/</code>
+        (ba thư mục con citad/ipcas/hub, giữ tên file gốc — mở ra là biết lượt đó gồm gì, khác hẳn tên ngẫu
+        nhiên của <code>tempfile</code>). <b>Vẫn xoá ngay trong <code>finally</code></b> như trước: file này
+        chỉ dùng trong đúng một request, giữ tới 23h là giữ vô ích. Lịch 23h ở đây chỉ là lưới hứng những
+        lượt chết giữa chừng — thư mục này rỗng gần như mọi lúc mới là bình thường.</p>
+
+      <div class="label">7. Chấm 459901 và Đối chiếu song phương: đổi cả lõi đọc file</div>
+      <p>Vòng hai (cùng ngày, sau khi người dùng yêu cầu mở rộng). Hai tính năng này khác ACH/CITAD ở
+        chỗ pipeline của chúng <b>nhận bytes</b>, nên đổi chỗ chứa file thôi là không đủ — phải đổi cả
+        chữ ký hàm xuống tới chỗ mở ZIP.</p>
+      <table>
+        <tr><th>Chỗ</th><th>Trước</th><th>Sau</th></tr>
+        <tr><td>API nhận file</td><td><code>read_limited()</code> → dict bytes</td>
+            <td><code>save_upload_to()</code> → <code>upload_&lt;token&gt;/</code>, truyền đường dẫn</td></tr>
+        <tr><td><code>process_files()</code> / <code>process_zip()</code></td><td><code>bytes</code></td>
+            <td><code>Path</code></td></tr>
+        <tr><td>CSV bên trong ZIP</td><td><code>zf.read()</code> → cả file giải nén vào RAM</td>
+            <td><code>zf.open()</code> → luồng, pandas/csv kéo từng phần</td></tr>
+        <tr><td>Kiểm "có phải ZIP không"</td><td><code>zip_bytes[:4]</code></td>
+            <td>Đọc đúng 4 byte đầu từ file</td></tr>
+      </table>
+      <p>Khoản thứ ba mới là khoản lớn nhất và <b>không nằm trong yêu cầu ban đầu</b>: file nén nhỏ nhưng
+        bung ra rất to. Đo với CSV 114 MB sau giải nén, cùng 900.000 dòng:</p>
+      <table>
+        <tr><th>Cách đọc file con trong ZIP</th><th>Đỉnh RAM</th></tr>
+        <tr><td><code>zf.read()</code> rồi bọc <code>BytesIO</code> (cũ)</td><td><b>256,0 MB</b></td></tr>
+        <tr><td><code>zf.open()</code> đọc theo luồng (mới)</td><td><b>0,1 MB</b></td></tr>
+      </table>
+      <div class="note"><b>Chỉ CSV được hưởng.</b> Workbook Excel bên trong ZIP vẫn phải
+        <code>zf.read()</code>: calamine đọc nhảy vị trí trong file, không nhận luồng giải nén tuần tự.
+        Ép nó dùng luồng là phải tự đệm lại toàn bộ — quay về đúng chỗ vừa bỏ đi.</div>
+      <div class="caution"><b>Test kiểu "đọc mã nguồn" đã bị vứt đi.</b> Bản đầu kiểm bằng
+        <code>'zf.read(' not in inspect.getsource(...)</code> và <b>đỏ vì trúng một dòng comment</b> nhắc
+        tới chính cái tên đó. Thay bằng fixture làm <code>AESZipFile.read</code> ném lỗi rồi chạy thật cả
+        lượt: đọc theo luồng thì qua, ai đổi về <code>zf.read()</code> thì đỏ ngay. Đã kiểm ngược lại là
+        fixture thật sự bắt được (nhánh Excel-trong-ZIP, vốn còn dùng <code>read</code>, đỏ đúng như mong
+        đợi) — một test canh RAM mà không tự chứng minh được là test trang trí.</div>
+
+      <div class="label">Phát hiện nhưng KHÔNG sửa</div>
+      <table>
+        <tr><th>Chuyện</th><th>Vì sao để lại</th></tr>
+        <tr><td><code>continue_job()</code> (file xác nhận MIS_đi) vẫn đi qua <code>read_limited()</code></td>
+            <td>Phải kiểm tra job tồn tại + đúng trạng thái <b>trước</b> khi ghi, mà file này là một sheet
+            Excel vài MB — streaming ở đây chỉ đổi lấy thêm một đường lỗi phải dọn</td></tr>
+        <tr><td>Đỉnh RAM ở tiến trình <b>frontend</b> vẫn nguyên: NiceGUI giữ cả bộ file trong RAM tới lúc
+            bấm Chạy</td>
+            <td>Nằm ở tầng khác (trình duyệt <span class="arrow">→</span> frontend), không thuộc đường
+            upload của backend vừa sửa. Đã ghi rõ ở README để không ai tưởng 500 MB nay là miễn phí</td></tr>
+      </table>
+
+      <div class="note"><b>Đánh đổi đã chấp nhận (người dùng chốt sau khi nghe phản biện):</b> file sống cả
+        ngày nghĩa là ổ đĩa máy chủ giữ nhiều hơn hẳn — mỗi lượt ACH 150–250 MB đầu vào cộng kết quả, chạy
+        vài lượt một ngày là vài GB tồn tới 23h. TTL 2–4 giờ cũ giữ đĩa gọn hơn nhưng lấy mất khả năng tải
+        lại kết quả của buổi sáng. Hạ giờ dọn hoặc quay lại TTL đều chỉ là đổi <code>GIO_DON</code> hoặc
+        truyền <code>cutoff</code> khác — không phải sửa lại cấu trúc.</div>
+
+    </div>
+  </div>
+
+  <!-- E459 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">E459</span>
+      <span class="card-title">Chấm 459901 nhận thêm file Excel: cái bẫy không nằm ở việc đọc file</span>
+      <span class="badge badge-done">Xong — 785 test pass (10 test mới)</span>
+    </div>
+    <div class="card-body">
+
+      <p>Yêu cầu: cho tải lên cả Excel, không chỉ ZIP. Phần đọc file là 3 dòng
+        <code>pd.read_excel</code>. Phần đáng viết ra ở đây là những chỗ <b>làm sai thì không có lỗi
+        nào báo</b>, chỉ ra số liệu khác.</p>
+
+      <div class="label">1. Chọn thư viện đọc: cả bảng kết quả treo trên một dấu chấm</div>
+      <p>Cột <code>LOCAC</code> trong ZIP là <code>.csv</code> nên luôn là chuỗi <code>"459901"</code>.
+        Người dùng mở file đó bằng Excel rồi lưu lại thì Excel đổi ô thành <b>kiểu số</b>. Đọc lại bằng
+        <code>dtype=str</code>, mỗi engine cho ra một thứ khác nhau:</p>
+      <table>
+        <tr><th>Engine</th><th>Ô số 459901 đọc ra</th><th>Hệ quả với bộ lọc <code>LOCAC == "459901"</code></th></tr>
+        <tr><td><code>xlrd</code> / <code>openpyxl</code></td><td><code>"459901.0"</code></td>
+            <td><b>Loại sạch mọi dòng.</b> Không lỗi, không cảnh báo — kết quả 3 file Excel rỗng,
+            người dùng tưởng hôm đó không có bút toán nào</td></tr>
+        <tr><td><b><code>calamine</code></b> (đã chọn)</td><td><code>"459901"</code></td>
+            <td>Đúng. Số nguyên được giữ nguyên dạng, không đi qua <code>float</code></td></tr>
+      </table>
+      <p>Đã đo tại chỗ trước khi chọn, không đoán theo tài liệu. <code>python-calamine</code> vốn đã nằm
+        trong <code>requirements.txt</code> (pipeline ACH dùng) và đọc được cả <code>.xls</code> cũ nên
+        không phải thêm thư viện nào. <code>tests/test_cham459901_excel.py::test_o_kieu_so_khong_bien_thanh_459901_cham_0</code>
+        canh đúng cái bẫy này — nó là test dễ mất nhất khi có người đổi engine.</p>
+
+      <div class="label">2. Ô trống của Excel là NaN, không phải chuỗi rỗng</div>
+      <p>Đường CSV dùng <code>keep_default_na=False</code> nên ô trống là <code>""</code>. Excel trả
+        <code>NaN</code>. Để nguyên thì khoá phân loại
+        <code>REFERENCE + "|" + TRBRCD + …</code> thành <code>NaN</code>, mà <code>NaN != NaN</code>
+        <span class="arrow">→</span> dòng đó <b>không bao giờ khớp cặp Cancel/Normal</b> và lặng lẽ rơi
+        vào "Lệnh Khác". Vì thế <code>_dat_tieu_de()</code> <code>fillna('')</code> trước khi trả về.</p>
+
+      <div class="label">3. Đọc mọi sheet, và bắt sheet nào cũng đủ cột</div>
+      <table>
+        <tr><th>Cách làm</th><th>Đánh đổi</th></tr>
+        <tr><td>Chỉ đọc sheet đầu</td><td>Workbook nhiều sheet mất dữ liệu, không ai biết</td></tr>
+        <tr><td>Đọc mọi sheet, <b>bỏ qua</b> sheet thiếu cột</td>
+            <td>Sheet gõ sai một tên cột bị đánh rơi im lặng — đúng kiểu lỗi mà
+            <code>docs/DESIGN.md</code> cấm</td></tr>
+        <tr><td><b>Đọc mọi sheet, sheet nào thiếu cột thì báo lỗi kèm tên sheet</b> (đã chọn)</td>
+            <td>Workbook có sheet ghi chú lẫn vào sẽ bị từ chối, người dùng phải xoá sheet đó.
+            Chấp nhận: từ chối ồn ào hơn là tính thiếu im lặng</td></tr>
+      </table>
+      <p>Sheet <b>rỗng hoàn toàn</b> vẫn được bỏ qua không kêu — Excel hay để lại "Sheet2" trống.</p>
+
+      <div class="label">4. Tự dò hàng tiêu đề trong 10 dòng đầu</div>
+      <p>Bản Excel người dùng tự lưu thường có thêm dòng tiêu đề báo cáo / ngày xuất ở trên cùng.
+        Đọc cứng <code>header=0</code> thì những file đó báo "thiếu cột bắt buộc" dù dữ liệu bên dưới
+        vẫn đủ. <code>_dat_tieu_de()</code> nhận một dòng là tiêu đề khi nó chứa <b>≥ 3</b> cột bắt buộc
+        — một dòng dữ liệu khó mà trùng 3 tên cột cùng lúc. Dò không ra thì <b>vẫn lấy dòng đầu</b> làm
+        tiêu đề để <code>_kiem_cot()</code> nói rõ thiếu cột nào; câu "không tìm thấy dòng tiêu đề" sát
+        vấn đề kém hơn.</p>
+
+      <div class="label">5. Phân loại theo ĐUÔI TÊN FILE, không ngửi nội dung</div>
+      <p>Danh sách đuôi nằm ở <code>cham459901_service.DUOI_HOP_LE</code>, tầng API
+        <code>import</code> lại chứ không gõ lại — hai chỗ gõ tay thì sớm muộn lệch nhau. API chặn đuôi
+        lạ <b>ngay khi nhận</b> (400) thay vì để chạy nền rồi báo qua <code>/progress</code>: người dùng
+        biết liền, không chờ vô ích.</p>
+      <div class="note">File Excel đổi đuôi thành <code>.zip</code> (hoặc ngược lại) sẽ báo lỗi
+        "không phải file .zip hợp lệ" chứ không tự nhận ra. Không thêm bước ngửi magic bytes: thông báo
+        hiện tại đã nói đúng việc phải làm (đổi lại đuôi), thêm nhánh đoán định dạng là thêm chỗ sai.</div>
+
+      <div class="label">Vấn đề thấy nhưng không sửa</div>
+      <table>
+        <tr><th>Chỗ</th><th>Vì sao để lại</th></tr>
+        <tr><td>Workbook Excel vẫn được <code>pd.read_excel</code> nạp trọn vào RAM, kể cả khi
+            file đã nằm trên đĩa</td>
+            <td>Không có API đọc Excel theo dòng như <code>zipfile</code>+<code>csv</code>. Trần
+            <code>MAX_REQUEST_MB</code> vẫn chặn ở cửa; bản Excel do người dùng cắt ra thường nhỏ hơn
+            hẳn ZIP gốc nên chưa phải chỗ đau</td></tr>
+        <tr><td>Workbook có hai cột trùng tên</td>
+            <td>pandas giữ cả hai, phép <code>df['LOCAC']</code> sẽ trả DataFrame và ném lỗi khó hiểu.
+            Chưa gặp file thật nào như vậy — không thêm nhánh xử lý cho tình huống tưởng tượng</td></tr>
+        <tr><td>Vẫn không nhận <code>.csv</code> rời</td>
+            <td>Không có trong yêu cầu. Thêm được trong 2 dòng nếu cần</td></tr>
+      </table>
+
+      <div class="label">Đổi tên có ảnh hưởng</div>
+      <p><code>process_zips()</code> <span class="arrow">→</span> <code>process_files()</code> (tên cũ nói
+        sai việc; cùng đợt này nó cũng đổi từ nhận <code>bytes</code> sang nhận <b>đường dẫn</b> — xem thẻ
+        về mốc dọn 23h / ghi upload thẳng ra đĩa). Chỉ 2 nơi gọi: <code>backend/api/cham459901.py</code> và
+        <code>tests/test_cham459901_nhieu_zip.py</code> — đã sửa cả hai, grep toàn dự án không còn tham
+        chiếu cũ. Thuật toán phân loại 3 bước <b>không đổi một dòng</b>.</p>
+
+    </div>
+  </div>
+
+  <!-- U413 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">U413</span>
+      <span class="card-title">ACH báo "[WinError 10054]": hai nguyên nhân khác nhau, cùng một thông báo vô nghĩa</span>
+      <span class="badge badge-done">Đã sửa — 771 test pass (9 test mới)</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label">1. Hiện tượng: log máy chủ và màn hình người dùng nói hai chuyện khác nhau</div>
+      <p>Ngày 26/08/2026, người vận hành bấm <b>CHẠY ĐỐI CHIẾU</b> ở màn ACH và nhận
+      <code>[WinError 10054] An existing connection was forcibly closed by the remote host</code>.
+      Cùng lúc đó log backend ghi <code>POST /api/ach/start 413 Request Entity Too Large</code> —
+      lặp lại nhiều lần. Nhìn từ màn hình thì tưởng mạng chập chờn; nhìn từ log thì thấy rõ là
+      <b>bộ file vượt trần dung lượng</b>. Không ai ghép được hai đầu đó với nhau.</p>
+
+      <div class="label">2. Nguyên nhân: từ chối trước khi đọc hết thân request thì client không đọc nổi câu trả lời</div>
+      <p><code>BodySizeLimitMiddleware</code> chặn theo <code>Content-Length</code> <b>trước khi</b>
+      đọc một byte thân request nào — đúng ý đồ, đó là cách duy nhất để không nạp 600 MB vào RAM chỉ
+      để rồi vứt đi. Nhưng nó trả 413 kèm <code>connection: close</code> trong lúc client <b>vẫn đang
+      gửi</b>. Máy chủ đóng socket, phía gửi ăn RST giữa chừng và không bao giờ đọc tới byte đầu tiên
+      của phản hồi.</p>
+      <div class="note"><b>Đo thật</b> (26/08/2026, uvicorn + httpx, trần 1 MB, gửi 60 MB):
+      client nhận <code>ReadError - [WinError 10053]</code>, <b>không</b> nhận 413; gửi 0,5 MB thì
+      nhận <code>200</code> bình thường. Trên LAN cùng cảnh này hiện ra là 10054.</div>
+      <table>
+        <tr><th>Tầng</th><th>Trần cũ</th><th>Ai chặn trước</th></tr>
+        <tr><td><code>BodySizeLimitMiddleware</code> (MAX_REQUEST_MB)</td><td>600 MB</td>
+            <td>Chặn ngay từ header — người dùng chỉ thấy socket đứt</td></tr>
+        <tr><td><code>_MAX_UPLOAD</code> trong <code>ach.py</code></td><td>500 MB, <b>hardcode</b></td>
+            <td>Đọc tới 500 MB rồi mới ném 413 — vẫn đứt socket y hệt</td></tr>
+      </table>
+
+      <div class="label">3. Đã chọn: chặn ở phía gửi, không sửa cách máy chủ từ chối</div>
+      <p>Cách "đúng chuẩn HTTP" là máy chủ đọc cạn thân request rồi mới trả 413 — nhưng như thế là
+      <b>vẫn nhận đủ 600 MB</b> qua mạng chỉ để vứt đi, tức là tự bỏ mất lý do tồn tại của middleware.
+      Nên giữ nguyên cách từ chối, chuyển việc phòng ngừa sang phía gửi:</p>
+      <table>
+        <tr><th>Thay đổi</th><th>Ở đâu</th><th>Được gì</th></tr>
+        <tr><td><code>/api/ach/validate</code> trả thêm <code>max_total_mb</code></td>
+            <td><code>backend/api/ach.py</code></td>
+            <td>Trần là <b>một nguồn sự thật duy nhất</b> — frontend không hardcode lại con số 500</td></tr>
+        <tr><td>Cân tổng dung lượng trước khi gửi, quá trần thì báo và <b>không gửi gì cả</b></td>
+            <td><code>frontend/pages/cham_ach.py</code></td>
+            <td>Thông báo nêu tổng MB, trần MB và <b>3 file nặng nhất</b> — đủ để tự xử lý</td></tr>
+        <tr><td>Nhãn "Đã chọn (N file, X MB)"</td><td>nt</td>
+            <td>Thấy con số cùng đơn vị với trần <b>ngay lúc chọn file</b>, không đợi tới lúc bấm chạy</td></tr>
+        <tr><td>Lỗi socket đứt được diễn giải lại</td><td>nt</td>
+            <td>Còn đường đứt khác (backend restart giữa chừng) — vẫn phải nói được thành tiếng người</td></tr>
+        <tr><td><code>ACH_MAX_UPLOAD_MB</code> trong <code>.env</code></td>
+            <td><code>backend/api/ach.py</code></td>
+            <td>Nới trần không cần sửa code; bị kẹp <code>min(..., MAX_REQUEST_BYTES - 8 MB)</code></td></tr>
+      </table>
+      <div class="caution"><b>Bất biến phải giữ:</b> trần ACH luôn nhỏ hơn trần thân request. Nếu để
+      ngược lại, middleware chặn trước và mọi công sức diễn giải lỗi ở trên thành vô nghĩa — quay lại
+      đúng cảnh 10054. <code>tests/test_ach_tran_upload.py</code> canh chỗ này.</div>
+
+      <div class="label">4. Nguyên nhân thứ hai, do người vận hành chỉ ra: chạy chồng phiên</div>
+      <p>Quá dung lượng không phải đường duy nhất dẫn tới <code>10054</code>. Người vận hành cho biết
+      lỗi <b>thường xảy ra khi phiên cũ chưa chạy xong đã upload bộ file phiên mới</b>. Kiểm lại code
+      thì đúng — và chỗ hổng còn rộng hơn tưởng:</p>
+      <table>
+        <tr><th>Chỗ hổng</th><th>Hậu quả</th></tr>
+        <tr><td><code>start_job()</code> chỉ <code>threading.Thread(...).start()</code>,
+            <b>không có bất kỳ chốt chặn nào</b> về số job chạy đồng thời</td>
+            <td>Hai pipeline pandas cùng ôm vài trăm MB → backend hết RAM, chết đúng lúc đang nhận
+            file của lượt thứ hai → socket đứt → <code>10054</code></td></tr>
+        <tr><td>Chốt duy nhất (<code>_trang_thai_job_cu()</code>) nằm ở <b>frontend</b> và chỉ biết
+            <code>state['job_id']</code> của <b>tab đang mở</b></td>
+            <td>F5 một cái là quên sạch; người khác bấm chạy thì không thấy gì. Chốt không bắn.</td></tr>
+      </table>
+      <p>Đã thêm <code>ach_service.job_dang_chay()</code> làm nguồn sự thật (đọc <code>_jobs</code> —
+      thứ duy nhất biết toàn cảnh), dùng ở hai chỗ:</p>
+      <table>
+        <tr><th>Nơi</th><th>Vai trò</th></tr>
+        <tr><td><code>GET /api/ach/dang-chay</code>, frontend gọi <b>trước khi upload</b></td>
+            <td>Ngăn từ đầu — không gửi vài trăm MB rồi mới biết bị từ chối. Thông báo nêu job id,
+            trạng thái, đã bao nhiêu phút, và cách xử lý</td></tr>
+        <tr><td><code>POST /api/ach/start</code> trả <b>409</b></td>
+            <td>Chốt thật, không phụ thuộc frontend. Đặt <b>trước</b> <code>read_limited()</code>:
+            lúc đó Starlette đã nhận xong thân request (spool ra đĩa) nên client đọc được 409 tử tế,
+            mà file thì chưa bị kéo lên RAM</td></tr>
+      </table>
+      <div class="note">Sau F5, frontend không còn <code>job_id</code> để bấm "Dừng". Nên khi máy chủ
+      báo bận, frontend <b>nhận lại job mồ côi</b> đó vào <code>state['job_id']</code> — nếu không, nút
+      Dừng hiện ra mà bấm không có tác dụng gì.</div>
+      <div class="caution"><b>Bẫy đã tránh:</b> job ở <code>awaiting_confirmation</code> mà người dùng
+      bỏ đi luôn sẽ khoá chết tính năng — <code>_cleanup_old_jobs()</code> chỉ chạy ở
+      <code>finally</code> của một job KHÁC, nên không ai dọn nó. Vì vậy
+      <code>job_dang_chay()</code> bỏ qua job cũ hơn <code>CLEANUP_TTL</code> (4 giờ), đúng mốc mà
+      module này vốn đã coi file của job là vứt đi được.</div>
+      <div class="note"><b>Test bị vạ lây — và đó là tin tốt:</b> 9 test ACH sẵn có lập tức đỏ vì
+      <code>_jobs</code> là biến toàn cục sống suốt phiên pytest, job của test trước làm test sau ăn
+      409. Đã thêm fixture <code>autouse</code> dọn <code>_jobs</code> trong
+      <code>tests/conftest.py</code>. Nếu không, lỗi sẽ hiện ra ở một file test hoàn toàn khác.</div>
+
+      <div class="label">5. "Bấm Dừng là phiên cũ ngừng hẳn, nhả RAM" — đúng ý, nhưng phải làm thật</div>
+      <p>Câu hỏi của người vận hành: <i>chạy phiên mới có ngắt phiên cũ đang chạy ẩn không?</i>
+      Không, và <b>ngắt tự động là ý tồi</b> — phiên ở <code>awaiting_confirmation</code> thường có
+      nghĩa là ai đó <b>đang mở file xác nhận ra điền trong Excel ngay lúc đó</b>. Chốt lại: giữ phần
+      hỏi ý, nhưng nút "Dừng" phải dừng cho ra dừng.</p>
+      <div class="caution"><b>Sự thật khó chịu:</b> <code>cancel_job()</code> chỉ
+      <b>đặt cờ</b>. Pipeline ngó tới cờ đó ở <b>ranh giới giữa các bước</b> — mà Phase 1 còn
+      <code>f_gl02.result(); f_mis_den.result()</code>, tức là <b>đợi đủ 4 luồng xong</b> mới chịu
+      thoát. Gửi lệnh dừng xong mà báo ngay "đã dừng" là <b>nói dối</b>: bộ nhớ vẫn đang bị giữ
+      nguyên, và chạy phiên mới đúng lúc đó là tái tạo lại y hệt cảnh backend chết.</div>
+      <table>
+        <tr><th>Việc</th><th>Ở đâu</th><th>Vì sao</th></tr>
+        <tr><td>Nút Dừng <b>chờ máy chủ báo rảnh</b> rồi mới nói "đã dừng hẳn"</td>
+            <td><code>_cho_may_chu_ranh()</code></td>
+            <td>Hỏi <code>/dang-chay</code> theo nhịp 2s, tối đa 5 phút. Câu cần trả lời là
+            <i>"máy chủ rảnh chưa"</i>, không phải <i>"job của tôi tới đâu"</i></td></tr>
+        <tr><td>Không rảnh sau 5 phút → <b>nói thẳng là chưa dừng được</b>, kèm lời khuyên đừng chạy</td>
+            <td>nt</td><td>Im lặng ở đây là đẩy người dùng vào đúng cái bẫy vừa vá</td></tr>
+        <tr><td>Thêm <b>2 chốt dừng</b> trong Phase 2 (4 → 6)</td>
+            <td><code>pipeline.py</code></td>
+            <td>Trước đây cả Phase 2 không có chốt nào: dừng giữa chặng đó phải chờ tới lúc ghi Excel</td></tr>
+        <tr><td><code>gc.collect()</code> khi job kết thúc</td>
+            <td><code>_run()</code> finally</td>
+            <td>DataFrame lớn hay nằm trong vòng tham chiếu → đếm tham chiếu không thu hồi được.
+            Người bấm Dừng phải nhận lại bộ nhớ thật, không phải trên giấy</td></tr>
+      </table>
+      <div class="note"><b>Không đụng</b> 4 hàm đọc file của Phase 1 (<code>b2/b3/b6</code>) để cấy
+      thêm chốt dừng: chúng gần như là một lệnh đọc pandas liền mạch, cắt vào giữa cũng không dừng
+      được sớm hơn bao nhiêu, mà lại phải đổi chữ ký của cả 4 module. Giới hạn này được <b>nói ra ở
+      giao diện</b> ("chờ bước đang chạy kết thúc") thay vì giấu đi.</div>
+
+      <div class="label">6. Chưa làm — nới trần bao nhiêu là chuyện của nghiệp vụ, không phải của code</div>
+      <p>Không tự nâng trần 500 MB, vì nâng là <b>đắt hơn vẻ ngoài</b>: cùng một bộ file tồn tại
+      <b>ba bản trong RAM</b> cùng lúc — <code>state['files']</code> ở tiến trình frontend, bộ đệm
+      multipart của Starlette, và <code>saved: dict[str, bytes]</code> ở <code>start_job()</code>.
+      Bộ 600 MB tức là ~1,8 GB RAM ở đỉnh, trên máy chủ đang chạy cả Word ngầm lẫn SQLite.</p>
+      <p>Nếu nghiệp vụ thật sự cần bộ file lớn hơn, hướng đúng là <b>đọc thẳng từ thư mục trên máy
+      chủ</b> (<code>validate_required_files()</code> đã viết sẵn cho cả "mode folder") chứ không
+      phải nâng trần upload.</p>
+
+    </div>
+  </div>
+
+  <!-- QZ -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">QZ</span>
+      <span class="card-title">Ôn tập trắc nghiệm (Quizz) — bộ câu hỏi dùng chung, thi thử, xếp hạng</span>
+      <span class="badge badge-done">Đã làm — 755 test pass (19 test mới)</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label">1. Chấm điểm ở backend, đọc đáp án từ DB — không nhận từ client</div>
+      <p><code>POST /api/quiz/attempts/{id}/submit</code> chỉ nhận <i>"tôi chọn ô số mấy"</i>
+      (<code>item_id</code> + <code>chosen_no</code>). Đáp án đúng luôn được JOIN lại từ
+      <code>quiz_questions.correct_no</code>. Gửi kèm <code>item_id</code> của lượt khác thì bị bỏ qua,
+      không cộng điểm sang bài này (<code>test_item_cua_luot_khac_bi_bo_qua</code>).</p>
+      <p><code>correct_no</code> <b>chỉ</b> theo phản hồi về ở chế độ <b>Ôn tập</b> — nơi người học cần
+      thấy đúng/sai ngay sau mỗi câu. Chế độ <b>Thi thử</b> trả <code>null</code> cho tới khi nộp bài.</p>
+      <div class="note">Frontend là NiceGUI chạy <b>phía máy chủ</b> nên trên thực tế giá trị này không
+      bao giờ rời khỏi server. Vẫn giữ ranh giới ở tầng API để sau này có client khác (app điện thoại,
+      script) thì không phải sửa lại luật chơi.</div>
+
+      <div class="label">2. Đề được "đóng băng" ngay lúc tạo lượt, không sinh lại</div>
+      <p><code>POST /attempts</code> trộn câu + trộn đáp án <b>một lần</b> rồi ghi đủ N dòng
+      <code>quiz_attempt_items</code>, mỗi dòng mang <code>option_order</code> (JSON, ví dụ
+      <code>[3,1,4,2]</code>). Mọi lần đọc sau đó — F5 giữa bài, màn "Xem lại bài" — đều dựng lại từ
+      chính các dòng đó.</p>
+      <table>
+        <tr><th>Nếu trộn lại mỗi lần đọc</th><th>Hậu quả</th></tr>
+        <tr><td>F5 giữa bài</td><td>Người làm nhận một đề <b>khác hẳn</b>, câu đã trả lời biến mất</td></tr>
+        <tr><td>Màn xem lại</td><td>Thứ tự đáp án khác lúc làm → <i>"tôi đâu có chọn ô đó"</i></td></tr>
+      </table>
+      <p><b>Trộn chỉ đổi CHỖ HIỂN THỊ.</b> Trường <code>no</code> của mỗi lựa chọn vẫn là số thứ tự
+      <b>gốc</b> 1-4 trong DB, nên chấm điểm không phụ thuộc thứ tự nhìn thấy — đây là mấu chốt khiến
+      "trộn đáp án" không kéo theo bất kỳ phép quy đổi nào ở khâu chấm.</p>
+
+      <div class="label">3. Bỏ trống ≠ trả lời sai</div>
+      <p>Câu không có trong <code>answers</code> (hết giờ, thoát giữa chừng) được ghi
+      <code>is_correct = 0</code> nhưng <code>chosen_no</code> vẫn <code>NULL</code>. Màn kết quả tách
+      ba con số <b>đúng / sai / bỏ trống</b>. Cả sai lẫn bỏ trống đều 0 điểm — tách ra là để người ôn
+      biết mình <i>không kịp</i> hay <i>không biết</i>, hai vấn đề cần hai cách khắc phục khác nhau.</p>
+
+      <div class="label">4. File Excel hỏng dòng nào bỏ dòng đó, nhưng không bao giờ "đoán" đáp án</div>
+      <p>Bộ thật đang dùng có 550 câu. Bắt sửa xong toàn bộ file mới cho nhập là quá đắt khi hỏng đúng
+      một dòng ở giữa, nên dòng sai bị bỏ qua kèm thông báo <b>chỉ đúng số dòng trong Excel</b>
+      (tính cả dòng tiêu đề, để người nhập mở file ra là thấy ngay). Ngược lại:</p>
+      <table>
+        <tr><th>Tình huống</th><th>Xử lý</th><th>Lý do</th></tr>
+        <tr><td>Cột "Đáp án đúng" không phải số 1-4</td><td>Bỏ dòng</td>
+            <td>Đoán bừa là người học <b>nhớ sai kiến thức</b> — hỏng nặng hơn thiếu một câu</td></tr>
+        <tr><td>Đáp án đúng trỏ vào ô trống</td><td>Bỏ dòng</td><td>Như trên</td></tr>
+        <tr><td>Cả file không có dòng nào hợp lệ</td><td><b>Từ chối, 400</b></td>
+            <td>Gần như chắc chắn sai thứ tự cột — tạo ra bộ rỗng chỉ làm rối danh sách</td></tr>
+        <tr><td>Chỉ có 3 đáp án (ô "Đáp án 4" trống)</td><td>Nhận bình thường</td>
+            <td>File mẫu có sẵn dạng này; <code>opt4</code> để <code>NULL</code>, đề chỉ vẽ 3 ô</td></tr>
+      </table>
+
+      <div class="label">5. Mỗi bộ chỉ được tải lên một lần — chặn cả trùng tên lẫn trùng nội dung</div>
+      <p>Yêu cầu gốc là <i>"người sau không phải tải lại"</i>. Chặn trùng tên (<code>UNIQUE</code>) là
+      chưa đủ: đổi tên file rồi tải lại vẫn ra hai bộ y hệt, và bảng xếp hạng bị tách đôi thành hai bảng
+      vô nghĩa. Nên lưu thêm <code>content_hash</code> và trả 409 kèm <b>tên bộ đã có</b> để người dùng
+      biết đi đâu tìm.</p>
+      <div class="caution"><b>Bản đầu băm byte của file — sai, và test tự bắt được.</b>
+      <code>test_chan_tai_len_trung_ten_va_trung_noi_dung</code> lúc đạt lúc trượt: hai lần
+      <code>openpyxl</code> lưu cùng một bộ câu hỏi cho ra hai chuỗi byte khác nhau vì dấu thời gian
+      nhúng trong <code>docProps/core.xml</code>. Excel cũng vậy — chỉ cần mở file ra xem rồi bấm lưu là
+      mã băm đổi, tức là chặn trùng lặp <b>coi như không tồn tại</b> ở đúng ca thường gặp nhất.
+      Nay băm <b>nội dung câu hỏi đã đọc</b> (<code>_hash_questions()</code>): đổi tên file, lưu lại,
+      thêm cột trống ở cuối đều không ảnh hưởng.</div>
+
+      <div class="label">6. Bảng xếp hạng chỉ tính bài Thi thử</div>
+      <p>Chế độ Ôn tập hiện đáp án đúng ngay sau mỗi câu, nên 100% là chuyện đương nhiên. Trộn chung hai
+      chế độ thì bảng xếp hạng mất sạch ý nghĩa. Mỗi người chỉ lấy <b>lượt tốt nhất</b>; cùng điểm thì ai
+      làm nhanh hơn đứng trên.</p>
+
+      <div class="label">7. Xoá bộ câu hỏi kéo theo mọi lượt làm bài — đánh đổi có chủ ý</div>
+      <p><code>quiz_questions</code> / <code>quiz_attempts</code> đều
+      <code>REFERENCES quiz_sets(id) ON DELETE CASCADE</code>. Xoá một bộ là mất luôn lịch sử và bảng
+      xếp hạng của bộ đó.</p>
+      <table>
+        <tr><th>Phương án</th><th>Vì sao không chọn</th></tr>
+        <tr><td>Ẩn mềm (<code>is_active = 0</code>) thay vì xoá</td>
+            <td>Cột <code>is_active</code> vẫn có và <code>GET /sets</code> đã lọc theo nó, nhưng nút trên
+            giao diện gọi <code>DELETE</code> thật: bộ tải nhầm/tải sai đáp án cần biến mất hẳn, để lại
+            trong DB thì lần sau tải đúng file đó lại vướng <code>content_hash</code> trùng</td></tr>
+      </table>
+      <div class="caution">Hộp xác nhận nói thẳng "xoá cả lượt làm bài của mọi người". Quyền
+      <code>quiz.delete</code> tách riêng khỏi <code>quiz.upload</code> vì lý do này.</div>
+
+      <div class="label">8. Bài làm giữ trong RAM của phiên, chỉ gửi lên khi nộp</div>
+      <p>Câu trả lời nằm trong <code>st["answers"]</code> phía frontend, gửi lên máy chủ <b>một lần duy
+      nhất</b> lúc nộp bài.</p>
+      <table>
+        <tr><th>Được</th><th>Mất</th></tr>
+        <tr><td>Mạng chập chờn giữa bài không làm mất câu đã chọn; không có 550 lượt gọi API cho một bài
+            550 câu</td>
+            <td>Đóng trình duyệt / mất điện giữa chừng là <b>mất cả bài</b> — lượt đó nằm lại DB ở trạng
+            thái <code>in_progress</code>, không tính điểm, không lên bảng xếp hạng</td></tr>
+      </table>
+
+      <div class="label">9. Màn làm bài là route riêng, không sidebar</div>
+      <p><code>/quiz/play</code> tách khỏi <code>/quiz</code>: giữ sidebar 16rem thì ô đáp án bị bóp còn
+      hai phần ba, chữ dài phải xuống 4-5 dòng. Ô đáp án dựng bằng <code>q-btn</code> nên phải chỉnh cả
+      <code>.q-btn__content</code> — Quasar canh giữa và viết hoa chữ ở lớp trong, sửa mỗi lớp ngoài
+      không ăn thua.</p>
+      <p>Đồng hồ dùng <b>một</b> <code>ui.timer</code> ở cấp trang (không nằm trong vùng bị
+      <code>clear()</code> mỗi lần sang câu). Khi cần nộp bài, <code>tick()</code> <b>trả về</b>
+      coroutine cho NiceGUI await hộ — <code>asyncio.create_task</code> ở đây sẽ chạy ngoài slot và
+      <code>ui.notify</code> ném <i>"slot stack is empty"</i> (xem DESIGN.md).</p>
+      <div class="note">Đã chốt câu ở chế độ ôn tập thì <b>dừng</b> đồng hồ câu: khoảng thời gian đó là
+      để trả lời, không phải để đọc đáp án đúng — đang đọc mà bị nhảy câu là mất công.</div>
+
+      <div class="label">10. Phát hiện nhưng KHÔNG sửa trong lần này</div>
+      <table>
+        <tr><th>Vấn đề</th><th>Vì sao để lại</th></tr>
+        <tr><td>Lượt <code>in_progress</code> bỏ dở nằm lại DB vĩnh viễn, không có job dọn</td>
+            <td>Mỗi lượt là ~N dòng <code>quiz_attempt_items</code> rất nhẹ, và bỏ dở là chuyện hiếm.
+            Khi nào thấy phình thì thêm vào <code>log_cleanup_service</code> — chỗ đã có sẵn lịch chạy</td></tr>
+        <tr><td>Chọn N câu = lấy N câu đầu <b>sau khi trộn</b>, không phân bổ đều theo chủ đề</td>
+            <td>File Excel hiện <b>không có cột chủ đề</b>. Thêm cột là đổi khuôn file mà cả cơ quan đang
+            dùng — cần chốt nghiệp vụ trước, không tự quyết</td></tr>
+        <tr><td>Không có chống gian lận (chuyển tab, mở bộ câu hỏi ở cửa sổ khác)</td>
+            <td>Đây là công cụ <b>tự ôn</b>, không phải kỳ thi có giám sát. Bảng xếp hạng là để tạo động
+            lực, không phải để xét thi đua</td></tr>
+      </table>
+
+      <div class="label">11. Đường ảnh hưởng đã kiểm trước khi báo xong</div>
+      <table>
+        <tr><th>Nơi đụng tới</th><th>Kết luận</th></tr>
+        <tr><td><code>frontend/shared.py::MENU_TREE</code></td>
+            <td>Thêm mục phẳng cấp 1. <code>BREADCRUMBS</code> dựng từ chính cây này nên tự có
+            đường dẫn, không phải khai thêm chỗ nào</td></tr>
+        <tr><td><code>backend/core/features.py</code></td>
+            <td><code>FEATURE_GROUPS</code> soi gương <code>MENU_TREE</code>; thiếu là
+            <code>_assert_feature_coverage()</code> chặn khởi động. Đã thêm thẻ
+            <code>kind="menu"</code> — <b>68 mã, coverage pass</b></td></tr>
+        <tr><td><code>backend/db/migrations.py</code></td>
+            <td>4 bảng phải khai <b>ba</b> chỗ: <code>_create_tables</code> (cài mới),
+            <code>schema_migrations</code> (DB đã chạy từ trước) và <code>index_stmts</code>.
+            Thiếu chỗ thứ hai thì máy đang chạy không bao giờ có bảng mới</td></tr>
+        <tr><td>Helper dùng chung</td><td><b>Không sửa cái nào</b> — chỉ thêm file mới, nên không có
+            caller nào phải rà lại</td></tr>
+      </table>
+
+      <div class="note">Đã chạy thử với đúng file <code>1. Kiến thức chung Đợt II.2026.xlsx</code>:
+      <b>550/550 câu nhập sạch, 0 dòng lỗi</b>. Hai trang <code>/quiz</code> và <code>/quiz/play</code>
+      đã dựng thật trên máy chủ đang chạy (danh sách bộ, đề 5 câu có trộn, màn kết quả + xem lại).
+      Toàn bộ dữ liệu thử — bộ câu hỏi, lượt làm bài, tài khoản tạm — đã xoá khỏi DB sau khi kiểm.</div>
+    </div>
+  </div>
 
   <!-- L29 -->
   <div class="card">
@@ -182,6 +693,17 @@
       (<code>.pc-sao</code>, <code>.pc-le-chuc</code>, <code>.hm-le</code>); không đụng
       <code>.pc-card</code>, <code>.pc-panel</code>, <code>.pc-link</code> nên bố cục hai cột đường dẫn
       (công thức <code>_split_gap_css()</code>) không đổi. Không có endpoint, migration, RBAC nào liên quan.</div>
+
+      <div class="label">5. Đã sửa 26/08/2026 — khẩu hiệu hiện hai lần</div>
+      <p>Bản commit đầu gọi lặp <b>từng cặp</b> lời gọi <code>le_29</code>: <code>css_login()</code>,
+      <code>trang_tri_login()</code>, <code>dong_chuc_login()</code> ở <code>login.py</code> và
+      <code>css_trang_chu()</code> ở <code>dashboard.py</code> đều nằm hai dòng liền nhau. Trang Đăng nhập
+      vì thế in <b>hai dải khẩu hiệu chồng nhau</b>. Đã xoá dòng thừa, mỗi hàm gọi đúng một lần.</p>
+      <div class="caution"><b>Vì sao lọt qua:</b> ba trong bốn hàm lặp <b>không để lại dấu vết</b> —
+      <code>add_head_html</code> chèn thẻ <code>&lt;style&gt;</code> thứ hai y hệt (CSS trùng nhau thì bản
+      sau thắng, hiển thị không đổi), <code>trang_tri_login()</code> chỉ làm hai ngôi sao mờ nằm đè khít
+      lên nhau nên chỉ đậm hơn chút. <b>Chỉ hàm vẽ chữ mới lộ ra bằng mắt.</b> Hàm trang trí gọi lặp
+      không ném lỗi, không cảnh báo, không hỏng test — cách duy nhất bắt được là nhìn màn hình thật.</div>
     </div>
   </div>
 
@@ -10452,6 +10974,42 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
+  <!-- 108 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">108</span>
+      <span class="card-title">Tra c&#7913;u l&#432;u tr&#7919;: c&#7897;t &quot;S&#7889; ch&#7913;ng t&#7915;&quot; t&#7889;i thi&#7875;u 5 &rarr; 10</span>
+      <span class="badge badge-done">&#272;&#227; s&#7917;a &middot; 2026-08-26</span>
+    </div>
+    <div class="card-body">
+      <p>M&#7897;t ng&#224;y c&#243; th&#7875; t&#225;ch th&#224;nh nhi&#7873;u t&#7853;p; m&#7895;i t&#7853;p chi&#7871;m m&#7897;t &#244; &quot;S&#7889; ch&#7913;ng t&#7915;&quot;.
+        S&#224;n c&#361; l&#224; 5 &#244; n&#234;n ng&#224;y n&#224;o nhi&#7873;u h&#417;n 4 t&#7853;p ph&#7843;i l&#432;u m&#7897;t l&#432;&#7907;t r&#7891;i t&#7843;i l&#7841;i b&#7843;ng m&#7899;i c&#243; th&#234;m &#244; tr&#7889;ng &#273;&#7875; g&#245; ti&#7871;p &mdash;
+        tr&#234;n m&#224;n h&#236;nh <b>kh&#244;ng c&#243; n&#250;t th&#234;m c&#7897;t</b>. Nay t&#225;ch th&#224;nh h&#7857;ng s&#7889; ri&#234;ng
+        <code>_N_SHEET_COLS = 10</code> (song song v&#7899;i <code>_N_DAY_COLS</code>), thay cho s&#7889; 5 vi&#7871;t th&#7859;ng trong h&#224;m d&#7921;ng b&#7843;ng.</p>
+
+      <table>
+        <tr><th>&nbsp;</th><th>Tr&#432;&#7899;c</th><th>Sau</th></tr>
+        <tr><td>S&#224;n s&#7889; c&#7897;t &quot;S&#7889; ch&#7913;ng t&#7915;&quot;</td><td>5</td><td>10</td></tr>
+        <tr><td>T&#7893;ng c&#7897;t b&#7843;ng (Ng&#224;y + S&#7889; CT + S&#7889; t&#7853;p)</td><td>10 + 5 + 1 = 16</td><td>10 + 10 + 1 = 21</td></tr>
+      </table>
+
+      <p><b>Quy t&#7855;c <code>n_sh = max(n_sh + 1, _N_SHEET_COLS)</code> gi&#7919; nguy&#234;n</b>: d&#242;ng nhi&#7873;u t&#7853;p nh&#7845;t v&#7851;n
+        &#273;&#432;&#7907;c d&#432; ra 1 &#244; tr&#7889;ng, n&#234;n th&#225;ng n&#224;o &#273;&#227; c&#243; s&#7861;n h&#417;n 10 t&#7853;p tr&#234;n m&#7897;t ng&#224;y th&#236; b&#7843;ng v&#7851;n t&#7921; n&#7899;i r&#7897;ng, kh&#244;ng b&#7883; ch&#7863;n &#7903; 10.</p>
+
+      <div class="label">&#272;&#225;nh &#273;&#7893;i &#273;&#227; ch&#7845;p nh&#7853;n</div>
+      <p>B&#7843;ng r&#7897;ng th&#234;m 5 c&#7897;t. B&#7843;n in v&#7851;n A4 ngang, <code>width:100%</code> &rarr; 21 c&#7897;t chia nhau b&#7873; ngang,
+        m&#7895;i c&#7897;t c&#242;n kho&#7843;ng 13&nbsp;mm &mdash; &#273;&#7911; cho s&#7889; 3&ndash;4 ch&#7919; s&#7889; &#7903; c&#7905; ch&#7919; 13&nbsp;px, nh&#432;ng c&#7897;t th&#7915;a th&#236; r&#7895;ng
+        v&#224; t&#7889;n ch&#7895; tr&#234;n gi&#7845;y. Ch&#7845;p nh&#7853;n v&#236; l&#253; do gi&#7889;ng h&#7879;t l&#253; do &#273;&#227; n&#226;ng c&#7897;t Ng&#224;y l&#234;n 10 (th&#7867; 89):
+        thi&#7871;u &#244; th&#236; <b>kh&#244;ng g&#245; &#273;&#432;&#7907;c</b>, th&#7915;a &#244; th&#236; ch&#7881; x&#7845;u.</p>
+
+      <div class="label">Ph&#7841;m vi &#7843;nh h&#432;&#7903;ng</div>
+      <p>Ch&#7881; l&#224; s&#7889; &#244; tr&#7889;ng &#273;&#432;&#7907;c v&#7869;. Backend <code>PATCH /api/bundles/storage-view</code>
+        <b>kh&#244;ng gi&#7899;i h&#7841;n</b> &#273;&#7897; d&#224;i <code>new_sheets</code>, JS thu &#244; b&#7857;ng
+        <code>td[data-col=&quot;sheet&quot;]</code> n&#234;n kh&#244;ng &#273;&#7871;m c&#7913;ng, &#244; r&#7895;ng b&#7883; b&#7887; qua khi l&#432;u.
+        30 test storage view pass, kh&#244;ng s&#7917;a test n&#224;o.</p>
+    </div>
+  </div>
+
   <div class="card">
     <div class="card-header">
       <span class="card-num">TĐ</span>
@@ -10485,7 +11043,7 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-25</footer>
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-26</footer>
 </div>
 </body>
 </html>

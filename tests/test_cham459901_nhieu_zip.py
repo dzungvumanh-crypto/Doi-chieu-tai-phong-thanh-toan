@@ -47,11 +47,27 @@ def _zip(rows: list[dict], ten_csv: str = 'gl02.csv') -> bytes:
     return buf.getvalue()
 
 
+# `process_files()` nhận ĐƯỜNG DẪN file đã nằm trên máy chủ, không nhận bytes —
+# API ghi thẳng từng khối xuống `data/temp_cham459901/upload_<token>/` rồi mới
+# gọi xử lý. Helper này dựng đúng cảnh đó: đổ bytes ra file rồi đưa đường dẫn.
+_thu_muc = None      # đặt bởi fixture _moi_truong
+
+
+def _tep(ten: str, data: bytes):
+    """(tên người dùng chọn, đường dẫn trên đĩa) — đúng dạng process_files() nhận."""
+    p = _thu_muc / ten
+    p.write_bytes(data)
+    return ten, p
+
+
 @pytest.fixture(autouse=True)
 def _moi_truong(tmp_path, monkeypatch):
     """Mật khẩu ZIP giả + thư mục kết quả nằm trong tmp_path (test tự dọn)."""
+    global _thu_muc
     monkeypatch.setenv('DOI_CHIEU_ZIP_PASSWORD', _MK)
     monkeypatch.setattr(svc, 'TEMP_DIR', tmp_path / 'temp_cham459901')
+    _thu_muc = tmp_path / 'upload'
+    _thu_muc.mkdir()
     svc._progress.clear()
     yield
     svc._progress.clear()
@@ -66,11 +82,11 @@ def test_gop_nhieu_zip_moi_bat_duoc_lenh_huy_nam_o_hai_file():
                     DRAMOUNT='50', CRAMOUNT='0')])
 
     # Từng file một: không file nào có đủ cả hai vế → không có lệnh hủy nào
-    assert svc.process_zips([('a.zip', a)])['huy_rows'] == 0
-    assert svc.process_zips([('b.zip', b)])['huy_rows'] == 0
+    assert svc.process_files([_tep('a.zip', a)])['huy_rows'] == 0
+    assert svc.process_files([_tep('b.zip', b)])['huy_rows'] == 0
 
     # Gộp một lượt: cặp Cancel/Normal khớp key → 2 dòng vào Lệnh Hủy
-    r = svc.process_zips([('a.zip', a), ('b.zip', b)])
+    r = svc.process_files([_tep('a.zip', a), _tep('b.zip', b)])
     assert r['huy_rows'] == 2
     assert r['n_files'] == 2
     assert r['total_rows'] == 3
@@ -79,7 +95,7 @@ def test_gop_nhieu_zip_moi_bat_duoc_lenh_huy_nam_o_hai_file():
 def test_loi_kem_ten_file_de_biet_bo_file_nao_ra():
     tot = _zip([_dong()])
     with pytest.raises(svc.InputError, match=r"hong\.zip"):
-        svc.process_zips([('tot.zip', tot), ('hong.zip', b'khong phai zip')])
+        svc.process_files([_tep('tot.zip', tot), _tep('hong.zip', b'khong phai zip')])
 
 
 def test_zip_khong_co_csv_bao_dung_ten_file():
@@ -87,7 +103,7 @@ def test_zip_khong_co_csv_bao_dung_ten_file():
     with pyzipper.AESZipFile(buf, 'w') as zf:
         zf.writestr('doc.txt', b'x')
     with pytest.raises(svc.InputError, match=r"rong\.zip.*\.csv"):
-        svc.process_zips([('rong.zip', buf.getvalue())])
+        svc.process_files([_tep('rong.zip', buf.getvalue())])
 
 
 def test_thieu_cot_o_mot_file_bi_bat_thay_vi_thanh_o_rong():
@@ -101,7 +117,7 @@ def test_thieu_cot_o_mot_file_bi_bat_thay_vi_thanh_o_rong():
     thieu = buf.getvalue()
 
     with pytest.raises(svc.InputError, match=r"thieu\.zip.*thiếu cột bắt buộc"):
-        svc.process_zips([('day_du.zip', _zip([_dong()])), ('thieu.zip', thieu)])
+        svc.process_files([_tep('day_du.zip', _zip([_dong()])), _tep('thieu.zip', thieu)])
 
 
 # ── API ───────────────────────────────────────────────────────────────────────

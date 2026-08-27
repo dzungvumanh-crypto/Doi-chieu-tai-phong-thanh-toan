@@ -4,6 +4,66 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 27/08/2026 Chấm 459901 - **Tải lên được cả file Excel, không chỉ file ZIP**
+    + **Nhận thêm Excel** (`.xlsx`, `.xlsm`, `.xlsb`, `.xls`) bên cạnh file ZIP xuất từ GL02. Ai đã mở ZIP ra, cắt bớt hay lọc lại rồi lưu thành Excel thì tải thẳng file đó lên, khỏi nén lại
+    + **Trộn ZIP với Excel trong cùng một lượt cũng được** — tất cả vẫn được gộp lại rồi mới phân loại, nên cặp lệnh hủy nằm ở hai file khác nhau vẫn bắt được như trước
+    + **File Excel có dòng tiêu đề báo cáo ở trên cùng vẫn đọc được**: hệ thống tự tìm dòng tên cột trong 10 dòng đầu, không bắt phải xoá cho sạch mới tải lên
+    + **Workbook nhiều sheet thì đọc hết mọi sheet.** Sheet nào thiếu cột bắt buộc sẽ **báo lỗi kèm tên sheet** chứ không âm thầm bỏ qua — thà bị từ chối còn hơn tính thiếu bút toán mà không ai biết. Sheet trống hoàn toàn thì bỏ qua, không kêu
+    + **Chọn nhầm file kiểu khác** (PDF, Word, ảnh...) bị chặn **ngay khi bấm chọn**, báo rõ chỉ nhận những đuôi nào — không phải chờ tải lên xong mới biết
+    + **Lưu ý khi lưu Excel**: mở file CSV bằng Excel rồi lưu lại thì Excel đổi các ô mã số thành kiểu số. Hệ thống đã xử lý đúng trường hợp này, số tài khoản 459901 không bị đọc thành "459901.0" nữa
+    + Cách phân loại Hủy / Đi / Khác **không đổi**, kết quả xuất ra vẫn 3 file Excel như cũ
+    + Không đụng cơ sở dữ liệu, không đổi quyền
+
+- 27/08/2026 File tải lên - **File để trên máy chủ hết ngày làm việc, 23h tự xoá sạch**
+    + **Trước đây file biến mất giữa giờ làm**: kết quả *Chấm đối chiếu ACH* chỉ sống **4 giờ**, *Chấm 459901* và *Đối chiếu song phương* chỉ **2 giờ**. Chạy buổi sáng, chiều quay lại tải báo cáo thì không còn gì — không thông báo, không dấu vết, người dùng tưởng hệ thống lỗi
+    + **Nay giữ hết ngày**: mọi file tải lên và kết quả sinh ra nằm trên máy chủ tới **23h hằng ngày** rồi mới bị xoá sạch. Trong ngày tải lại bao nhiêu lần cũng được. **Cần giữ lâu hơn thì tải về máy mình trong ngày** — hệ thống không lưu lịch sử các lượt chạy này
+    + **Máy chủ khởi động lại giữa ngày không làm mất file của ngày hôm đó** — lúc bật lên nó chỉ dọn rác còn sót của những ngày trước
+    + **Máy chủ tắt qua đêm cũng không bỏ sót**: lần bật đầu tiên sau đó dọn bù ngay, không đợi tới 23h hôm sau
+    + **Nhận file nhẹ hơn hẳn cho máy chủ**: trước đây máy chủ phải ôm trọn bộ file trong bộ nhớ rồi mới ghi xuống ổ đĩa — bộ file 200 MB chiếm tới **400 MB bộ nhớ**. Nay ghi thẳng xuống ổ đĩa từng phần, cùng bộ file đó chỉ còn **2 MB**. Đây chính là nguyên nhân gốc của những lần *"[WinError 10054]"* khi tải bộ file nặng
+    + **Đã chặn được cảnh hai người cùng upload đè nhau ở ACH**: máy chủ nay coi là "đang bận" ngay từ giây đầu tiên nhận file, không phải đợi tới lúc bắt đầu chạy. Trước đó suốt vài phút upload là khoảng trống, hai bộ file vài trăm MB cùng lọt vào
+    + **Chấm 459901 và Đối chiếu song phương cũng đã chuyển sang cách này** — file tải lên nằm trong `data/temp_cham459901/upload_.../` và `data/temp_doi_chieu_song_phuong/upload_.../` rồi mới được xử lý. Thêm một khoản tiết kiệm nữa: dữ liệu bên trong file ZIP trước đây được **bung hết ra bộ nhớ** rồi mới đọc — một file CSV nén nhỏ nhưng bung ra 114 MB thì chiếm tới **256 MB bộ nhớ**; nay đọc lần lượt từng dòng, chỉ còn **0,1 MB**
+    + **Đối soát CITAD**: file tải lên nay nằm trong `data/temp_citad/` của phần mềm thay vì thư mục tạm của Windows — tra lại được khi cần đối chiếu; vẫn xoá ngay sau khi đối soát xong như trước
+    + **Đổi lại**: ổ đĩa máy chủ giữ nhiều file hơn trước trong ngày (mỗi lượt ACH khoảng 150–250 MB). Nếu ổ đĩa chật, báo người phát triển để hạ giờ dọn xuống sớm hơn
+    + Không đụng cơ sở dữ liệu, không đổi quyền, không đổi cách chạy đối chiếu
+
+- 26/08/2026 Chấm đối chiếu ACH - **Hết lỗi khó hiểu "[WinError 10054]" khi bấm Chạy đối chiếu**
+    + **Chuyện gì đã xảy ra**: bộ file ACH chọn lên quá nặng, máy chủ từ chối nhận và **cắt kết nối ngay lúc file đang gửi dở**. Vì bị cắt giữa chừng nên lời từ chối ("file vượt quá dung lượng cho phép") không bao giờ tới được màn hình — trình duyệt chỉ kịp báo một mã lỗi mạng của Windows. Log máy chủ thì vẫn ghi đúng là *vượt dung lượng*, nhưng người dùng không thấy được
+    + **Nay chặn ngay trên máy mình, trước khi gửi**: nếu bộ file vượt trần thì hiện thẳng *tổng bao nhiêu MB, trần bao nhiêu MB, và 3 file nặng nhất là file nào* — chưa gửi đi byte nào, không phải ngồi chờ
+    + **Dòng "Đã chọn (... file)" nay có thêm tổng dung lượng**, ví dụ *Đã chọn (7 file, 512 MB)* — nhìn là biết mình đang ở đâu so với trần
+    + **Trần hiện tại là 500 MB cho cả một lượt.** Bộ file thật vượt mức này thì báo người phát triển — nâng được bằng cấu hình, nhưng cần cân nhắc vì máy chủ phải giữ toàn bộ bộ file trong bộ nhớ khi chạy
+    + **Không cho chạy chồng hai phiên nữa** — đây mới là nguyên nhân hay gặp nhất: phiên cũ chưa chạy xong (kể cả đang **chờ xác nhận MIS_đi**) mà upload bộ file phiên mới thì máy chủ phải ôm hai bộ dữ liệu cùng lúc, hết bộ nhớ và **chết ngay giữa lúc đang nhận file**
+    + Nay bấm *Chạy đối chiếu* lúc máy chủ còn bận sẽ hiện: **đang chạy phiên nào, mã phiên, bận bao lâu rồi, và phải làm gì** — chưa gửi file đi. Muốn chạy đè thì bấm **Dừng** cho phiên cũ trước
+    + **Chốt này nằm ở máy chủ**, không phải ở trình duyệt — nên **F5 hay mở tab mới cũng không lách được**, và người khác đang chạy dở thì mình cũng bị chặn (trước đây trình duyệt chỉ nhớ phiên của chính tab đang mở)
+    + **Nút "Dừng" nay dừng cho ra dừng**: bấm xong màn hình báo *đang dừng*, chờ bước đang chạy kết thúc, rồi mới báo **"Đã dừng hẳn. Bộ nhớ đã được giải phóng — chạy phiên mới được rồi"**. Trước đây nó chỉ báo *đã gửi yêu cầu dừng* rồi im, không ai biết dừng thật chưa
+    + **Vì sao phải chờ**: lệnh dừng chỉ có hiệu lực ở **ranh giới giữa các bước**. Đang giải nén file MIS thì phải xong chỗ đó mới dừng được — chạy phiên mới lúc đang chờ là máy chủ vẫn ôm hai bộ dữ liệu, đúng cảnh vừa sửa. Hệ thống chờ tối đa **5 phút**; quá đó nó **nói thẳng là chưa dừng được** và khuyên đừng chạy tiếp
+    + Máy chủ **thu hồi bộ nhớ ngay** khi phiên kết thúc (dù dừng giữa chừng hay chạy xong), không đợi hệ thống tự dọn
+    + **Không tự động ngắt phiên cũ** khi bấm Chạy — phiên đang *chờ xác nhận MIS_đi* thường là có người đang mở file ra điền dở, ngắt ngang là mất công họ
+    + Lỡ đóng trình duyệt giữa chừng thì phiên cũ **tự hết hiệu lực sau 4 giờ**, không khoá máy vĩnh viễn
+    + Nếu kết nối vẫn đứt vì lý do khác (máy chủ vừa khởi động lại), thông báo cũng được viết lại bằng tiếng Việt thay vì để nguyên mã lỗi
+    + Không đụng cơ sở dữ liệu, không đổi quyền, không đổi cách chạy đối chiếu
+
+- 26/08/2026 Menu MỚI - **Ôn tập trắc nghiệm (Quizz)** — ôn thi nghiệp vụ ngay trên hệ thống
+    + **Vào bằng**: menu **Ôn tập trắc nghiệm** ở thanh bên trái (nằm dưới *Danh sách CN TTQT*). **Phải được cấp quyền mới thấy menu** — báo quản trị viên thêm vào nhóm quyền tương ứng
+    + **Bộ câu hỏi chỉ cần tải lên MỘT lần cho cả cơ quan.** Người vào sau chỉ việc chọn bộ có sẵn rồi bấm *Bắt đầu*, không phải tải lại file lần nào nữa
+    + **File Excel để tải lên** phải đúng thứ tự cột: *Câu hỏi | Đáp án 1 | Đáp án 2 | Đáp án 3 | Đáp án 4 | Đáp án đúng*. Ô *Đáp án đúng* ghi **số 1, 2, 3 hoặc 4** (không ghi A/B/C/D). Câu chỉ có 3 lựa chọn thì **bỏ trống ô Đáp án 4**. Có sẵn nút **Tải file mẫu** để lấy đúng khuôn
+    + **Dòng nào sai thì bỏ dòng đó và báo rõ số dòng** để mở Excel sửa, phần còn lại vẫn nhập bình thường. Hệ thống **không tự đoán đáp án** — thà thiếu một câu còn hơn để người ôn nhớ sai
+    + **Không tải lên trùng được**: trùng tên bộ, hoặc trùng **nội dung câu hỏi** với bộ đã có, đều bị chặn và báo tên bộ cũ để đi tìm. Đổi tên file, hay mở file ra xem rồi bấm lưu, đều không lách được — hệ thống so nội dung chứ không so file
+    + **Cài đặt trước mỗi lần làm bài**:
+        - **Chế độ** — *Ôn tập* (hiện đáp án đúng ngay sau khi chọn, để học) hoặc *Thi thử* (chỉ chấm khi nộp bài)
+        - **Số câu** — 10 / 20 / 30 / 50 / 100 hoặc lấy hết bộ
+        - **Trộn thứ tự câu hỏi** và **trộn thứ tự đáp án** — bật/tắt riêng
+        - **Thời gian mỗi câu** — 10 đến 90 giây, hoặc không giới hạn. Hết giờ tự sang câu kế
+        - **Tổng thời gian làm bài** — 5 đến 90 phút, hoặc không giới hạn. Hết giờ hệ thống **tự nộp bài**
+    + **Màn làm bài chiếm cả màn hình** (không có thanh menu bên trái): câu hỏi ở giữa, 4 ô đáp án màu to bên dưới, thanh tiến trình và hai đồng hồ ở trên. Có nút *Bỏ qua câu này* và nút thoát (hỏi lại trước khi thoát)
+    + **Nộp bài xong hiện ngay**: điểm phần trăm, số câu **đúng / sai / bỏ trống** (bỏ trống tách riêng khỏi sai, để biết mình *không kịp* hay *không biết*), thời gian làm bài, và phần **Xem lại bài** từng câu — tô xanh đáp án đúng, tô đỏ ô mình đã chọn sai
+    + **Lịch sử của tôi**: 30 lượt gần nhất, bấm vào xem lại nguyên bài đã làm
+    + **Bảng xếp hạng** theo từng bộ (biểu tượng cúp trên thẻ bộ câu hỏi): mỗi người lấy lượt tốt nhất, cùng điểm thì ai làm nhanh hơn đứng trên. **Chỉ tính bài Thi thử** — chế độ Ôn tập hiện sẵn đáp án nên ai cũng 100%, đưa vào bảng thì bảng mất ý nghĩa
+    + ⚠️ **Xoá một bộ câu hỏi là xoá luôn toàn bộ lượt làm bài của mọi người và bảng xếp hạng của bộ đó**, không lấy lại được. Vì vậy quyền *Xoá bộ câu hỏi* tách riêng, không đi kèm quyền tải lên
+    + ⚠️ **Đóng trình duyệt / mất điện giữa bài là mất bài đang làm** — bài chỉ được chấm khi bấm *Nộp bài*. Bài bỏ dở không tính điểm, không lên bảng xếp hạng
+    + **Ba quyền cần khai báo cho nhóm**: *Ôn tập trắc nghiệm (menu)* — vào module và làm bài; *Tải bộ câu hỏi lên / đổi tên bộ*; *Xoá bộ câu hỏi*
+    + **Cơ sở dữ liệu có thêm 4 bảng mới**, tự tạo lúc khởi động — không phải làm gì thêm. Không đụng tới dữ liệu sẵn có
+    + Thêm 19 test tự động. Toàn bộ **755 test** chạy đạt. Đã thử nhập đúng file *1. Kiến thức chung Đợt II.2026.xlsx*: **550/550 câu vào sạch, không dòng nào lỗi**
+
 - 25/08/2026 Giao diện - **Trang Đăng nhập và Trang chủ đổi sang chủ đề kỷ niệm 2-9**
     + **Tự bật từ 25/8, tự tắt sau ngày 3/9** — không ai phải làm gì để gỡ sau lễ, và sang năm tự bật lại. Ngoài khoảng ngày này hai trang y hệt như cũ
     + **Trang Đăng nhập**: nền đỏ cờ bừng sáng quanh ô đăng nhập rồi sẫm dần ra rìa, dải cờ đỏ - vàng trên đỉnh trang, ngôi sao vàng lớn mờ làm hoạ tiết, khẩu hiệu chào mừng đặt phía trên ô đăng nhập
