@@ -106,6 +106,10 @@ async def quiz_page():
             ui.label(
                 "Bài ở chế độ Thi thử mới được tính vào bảng xếp hạng."
             ).classes("text-xs text-gray-500 mt-1")
+            cfg_warn = ui.label("").classes(
+                "text-xs text-amber-800 bg-amber-50 border border-amber-300 "
+                "rounded px-2 py-1 mt-1")
+            cfg_warn.set_visibility(False)
 
             with ui.row().classes("w-full justify-end gap-2 mt-3"):
                 ui.button("Huỷ", on_click=cfg_dialog.close).props("flat").classes("text-gray-600")
@@ -136,8 +140,39 @@ async def quiz_page():
                 ui.button("Bắt đầu", icon="play_arrow", on_click=do_start).classes(
                     "bg-red-700 text-white")
 
+        async def bo_bai_do(s: dict):
+            with ui.dialog() as confirm, ui.card():
+                ui.label(f"Bỏ bài đang làm dở của «{s['name']}»?").classes("font-semibold")
+                ui.label(
+                    f"Đã trả lời {s.get('resume_answered', 0)}/"
+                    f"{s.get('resume_total', 0)} câu. Bỏ đi là mất, không tính điểm."
+                ).classes("text-sm text-gray-600 max-w-md")
+                with ui.row().classes("w-full justify-end gap-2 mt-3"):
+                    ui.button("Giữ lại", on_click=lambda: confirm.submit(False)).props("flat")
+                    ui.button("Bỏ bài", on_click=lambda: confirm.submit(True)).classes(
+                        "bg-red-700 text-white")
+            if not await confirm:
+                return
+            try:
+                await asyncio.to_thread(
+                    api.delete, f"/api/quiz/attempts/{s['resume_attempt_id']}")
+            except Exception as e:
+                if _handle_api_error(e):
+                    return
+                ui.notify(str(e), type="negative")
+                return
+            ui.notify("Đã bỏ bài làm dở", type="positive")
+            await load()
+
         def open_cfg(s: dict):
             picked.update(id=s["id"], name=s["name"], count=s["question_count"])
+            # Bắt đầu bài mới sẽ XOÁ bài dở của cùng bộ (backend làm việc đó, xem
+            # start_attempt). Nói trước ở đây, đừng để người dùng biết sau khi mất.
+            cfg_warn.set_visibility(bool(s.get("resume_attempt_id")))
+            cfg_warn.text = (
+                f"Bạn đang có bài dở ở bộ này ({s.get('resume_answered', 0)}/"
+                f"{s.get('resume_total', 0)} câu). Bắt đầu bài mới sẽ bỏ bài đó."
+            )
             cfg_title.text = s["name"]
             cfg_sub.text = f"{s['question_count']} câu hỏi trong bộ"
             # Đề dài hơn bộ thì backend tự cắt, nhưng để lựa chọn vô nghĩa trong
@@ -442,6 +477,7 @@ async def quiz_page():
                     if s.get("description"):
                         ui.label(s["description"]).classes(
                             "text-xs text-gray-500 line-clamp-2")
+                    dang_do = s.get("resume_attempt_id")
                     with ui.row().classes("items-center gap-2"):
                         if s.get("my_attempts"):
                             ui.label(f"Đã làm {s['my_attempts']} lần").classes(
@@ -454,19 +490,47 @@ async def quiz_page():
                                     "bg-orange-100 text-orange-700 border-orange-300")
                             ui.label(f"Tốt nhất {best:.1f}%").classes(
                                 f"text-xs px-2 py-0.5 rounded border {tone}")
+                    if dang_do:
+                        with ui.row().classes(
+                            "w-full items-center gap-1 px-2 py-1 rounded border "
+                            "bg-amber-50 border-amber-300"
+                        ):
+                            ui.icon("pause_circle").classes("text-amber-700 text-sm")
+                            ui.label(
+                                f"Đang dở — đã trả lời {s.get('resume_answered', 0)}/"
+                                f"{s.get('resume_total', 0)} câu"
+                            ).classes("text-xs text-amber-800")
                     with ui.row().classes("w-full items-center gap-1 mt-1"):
-                        ui.button("Bắt đầu", icon="play_arrow",
-                                  on_click=lambda _=None, s=s: open_cfg(s)).props(
-                            "dense no-caps").classes("bg-red-700 text-white px-3 flex-grow")
+                        if dang_do:
+                            # Nút chính đổi thành "Làm tiếp": người có bài dở gần
+                            # như luôn muốn học tiếp, bắt đầu lại là việc hiếm nên
+                            # đẩy xuống menu ⋮ chứ không chiếm chỗ ngang hàng.
+                            ui.button("Làm tiếp", icon="play_arrow",
+                                      on_click=lambda _=None, i=dang_do:
+                                          ui.navigate.to(f"/quiz/play?attempt={i}")).props(
+                                "dense no-caps").classes(
+                                "bg-amber-600 text-white px-3 flex-grow")
+                        else:
+                            ui.button("Bắt đầu", icon="play_arrow",
+                                      on_click=lambda _=None, s=s: open_cfg(s)).props(
+                                "dense no-caps").classes("bg-red-700 text-white px-3 flex-grow")
                         ui.button(icon="leaderboard",
                                   on_click=lambda _=None, s=s: open_leaderboard(s)).props(
                             "dense flat round size=sm").classes("text-gray-600").tooltip(
                             "Bảng xếp hạng")
-                        if can_upload or can_delete:
+                        if dang_do or can_upload or can_delete:
                             with ui.button(icon="more_vert").props(
                                 "dense flat round size=sm"
                             ).classes("text-gray-600"):
                                 with ui.menu():
+                                    if dang_do:
+                                        ui.menu_item(
+                                            "Bắt đầu bài mới",
+                                            lambda _=None, s=s: open_cfg(s))
+                                        ui.menu_item(
+                                            "Bỏ bài đang làm dở",
+                                            lambda _=None, s=s: bo_bai_do(s))
+                                        ui.separator()
                                     if can_upload:
                                         ui.menu_item(
                                             "Đổi tên / sửa mô tả",
@@ -490,7 +554,11 @@ async def quiz_page():
             sets_cache.clear()
             sets_cache.extend(data)
             total_q = sum(s["question_count"] for s in data)
-            count_label.text = f"{len(data)} bộ câu hỏi — tổng {total_q} câu"
+            n_do = sum(1 for s in data if s.get("resume_attempt_id"))
+            count_label.text = (
+                f"{len(data)} bộ câu hỏi — tổng {total_q} câu"
+                + (f"  ·  {n_do} bài đang làm dở" if n_do else "")
+            )
             _render(data)
 
         await load()

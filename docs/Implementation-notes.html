@@ -420,7 +420,7 @@
     <div class="card-header">
       <span class="card-num">QZ</span>
       <span class="card-title">Ôn tập trắc nghiệm (Quizz) — bộ câu hỏi dùng chung, thi thử, xếp hạng</span>
-      <span class="badge badge-done">Đã làm — 755 test pass (19 test mới)</span>
+      <span class="badge badge-done">Đã làm — 804 test pass (31 test cho Quizz)</span>
     </div>
     <div class="card-body">
 
@@ -512,6 +512,8 @@
             <td>Đóng trình duyệt / mất điện giữa chừng là <b>mất cả bài</b> — lượt đó nằm lại DB ở trạng
             thái <code>in_progress</code>, không tính điểm, không lên bảng xếp hạng</td></tr>
       </table>
+      <div class="caution"><b>Mục này đã lỗi thời — đọc mục 11.</b> Cột "Mất" ở trên chính là thứ
+      khiến cách làm này bị thay: bài chỉ giữ trong RAM nay được lưu dần lên máy chủ sau mỗi câu.</div>
 
       <div class="label">9. Màn làm bài là route riêng, không sidebar</div>
       <p><code>/quiz/play</code> tách khỏi <code>/quiz</code>: giữ sidebar 16rem thì ô đáp án bị bóp còn
@@ -525,12 +527,166 @@
       <div class="note">Đã chốt câu ở chế độ ôn tập thì <b>dừng</b> đồng hồ câu: khoảng thời gian đó là
       để trả lời, không phải để đọc đáp án đúng — đang đọc mà bị nhảy câu là mất công.</div>
 
-      <div class="label">10. Phát hiện nhưng KHÔNG sửa trong lần này</div>
+      <div class="label">10. Ba lỗi giao diện lộ ra ở lần dùng thử đầu tiên — đã sửa</div>
+      <table>
+        <tr><th>Hiện tượng</th><th>Nguyên nhân thật</th><th>Cách chữa</th></tr>
+        <tr><td>Bốn ô đáp án xô lệch: 3 ô hàng trên, 1 ô rơi xuống hàng dưới, cao thấp khác nhau</td>
+            <td><code>repeat(auto-fit, minmax(280px, 1fr))</code> — số cột phụ thuộc bề ngang cửa sổ,
+            và không có <code>grid-auto-rows</code> nên mỗi hàng cao theo ô dài nhất của hàng đó</td>
+            <td>Lưới <b>2×2 cố định</b> + <code>grid-auto-rows: 1fr</code>. Bốn cột trên một hàng thì
+            với câu trả lời 25 chữ (có thật trong bộ đang dùng) mỗi ô chỉ còn ~240px</td></tr>
+        <tr><td>Không nhìn ra đâu là đáp án đúng</td>
+            <td>Ô "đúng" tô <code>#16A34A</code>, mà ô ở <b>vị trí 4</b> vốn đã là
+            <code>#26890C</code> — hai màu xanh lá cạnh nhau. Các ô còn lại chỉ giảm
+            <code>opacity</code> xuống .35 nên trên nền tối <b>vẫn giữ nguyên màu</b></td>
+            <td>Ô không liên quan <b>xám hẳn</b> (<code>#38334D</code>) → cả màn hình chỉ còn hai ô có
+            màu. Thêm <b>viền trắng dày</b> và <b>nhãn chữ</b> "ĐÁP ÁN ĐÚNG" / "BẠN CHỌN": phân biệt
+            bằng ba thứ cùng lúc, không riêng màu — 8% nam giới mù màu đỏ-lục</td></tr>
+        <tr><td>Nút "Câu tiếp theo" trắng trơn, không thấy chữ</td>
+            <td><code>ui.button()</code> mặc định gắn <code>color="primary"</code> → Quasar thêm
+            <code>bg-primary text-white</code>. Trong dự án này Tailwind nạp SAU Quasar nên
+            <code>bg-white</code> thắng (nền trắng ✓), nhưng <code>.text-red-900</code> của Tailwind
+            <b>không có</b> <code>!important</code> còn <code>.text-white</code> của Quasar <b>có</b> →
+            chữ trắng trên nền trắng</td>
+            <td>Truyền <code>color=None</code> để Quasar đừng gắn hai lớp đó, <b>và</b> đặt màu thẳng
+            lên <code>.q-btn__content</code> — khai báo trực tiếp luôn thắng màu kế thừa</td></tr>
+      </table>
+      <div class="caution"><b>Bẫy đã vấp khi sửa:</b> định để lớp <code>.qp-mute</code> lo phần nền
+      xám. Không chạy — nền màu của ô đặt bằng <b>style inline</b> có <code>!important</code>, mà
+      inline <code>!important</code> thắng mọi <code>!important</code> trong stylesheet. Màu xám phải
+      đặt vào chính style inline đó.</div>
+      <div class="note"><b>Đã kiểm bằng cú bấm thật, không phải bằng suy luận.</b> Máy không có trình
+      duyệt nên script nối thẳng vào socket.io của NiceGUI (transport <code>polling</code>), handshake
+      rồi phát sự kiện <code>click</code> lên đúng <code>listener_id</code> của ô đáp án sai — đúng
+      đường mà trình duyệt đi. DOM trả về sau khi bấm:
+      <code>qp-wrong</code> #9F1239 "BẠN CHỌN" · <code>qp-mute</code> #38334D · <code>qp-mute</code>
+      #38334D · <code>qp-correct</code> #15803D "ĐÁP ÁN ĐÚNG".</div>
+
+      <div class="label">11. Tạm dừng &amp; làm tiếp — bỏ hẳn cách giữ bài trong RAM</div>
+      <p>Mục 8 ở trên mô tả cách cũ: câu trả lời nằm trong <code>st["answers"]</code> phía trình
+      duyệt, chỉ gửi lên một lần lúc nộp. <b>Cách đó đã bỏ.</b> Đóng máy giữa bài là mất cả bài, mà
+      đó lại là chuyện thường ngày — hết giờ làm, máy ngủ, mạng rớt.</p>
+      <table>
+        <tr><th>Cách cũ</th><th>Cách mới</th></tr>
+        <tr><td>Gửi 1 lần lúc nộp</td>
+            <td><code>PATCH /attempts/{id}/progress</code> sau <b>mỗi câu</b>, cộng một nhịp nền
+            10 giây một lần để cập nhật đồng hồ</td></tr>
+        <tr><td>Bài dở = mất trắng</td>
+            <td>Bài dở nằm trong DB, vào lại bấm <b>Làm tiếp</b> là nối đúng câu đang đứng</td></tr>
+      </table>
+      <p><b>Vì sao lưu sau mỗi câu chứ không lưu định kỳ:</b> máy ngủ hoặc mất điện thì không có sự
+      kiện nào để bám vào mà lưu. Muốn không mất thì phải lưu <i>trước</i> khi sự cố xảy ra. Đổi lại
+      là số lời gọi API — bài 550 câu thành 550 lượt <code>PATCH</code>, mỗi lượt một
+      <code>UPDATE</code>. Người ta trả lời 5-20 giây một câu nên tần suất thật rất thấp.</p>
+
+      <div class="label">11.1. Ba cột giữ chỗ, và luật "đồng hồ chỉ được tăng"</div>
+      <table>
+        <tr><th>Cột mới trong <code>quiz_attempts</code></th><th>Giữ gì</th></tr>
+        <tr><td><code>current_idx</code></td><td>Câu đang đứng. Máy chủ <b>kẹp</b> vào khoảng hợp lệ
+            — client gửi số ngoài đề thì lần vào sau sẽ rơi vào chỗ không có câu nào và màn hình
+            trắng</td></tr>
+        <tr><td><code>elapsed_ms</code></td><td>Thời gian đã tiêu, cộng dồn qua các phiên</td></tr>
+        <tr><td><code>saved_at</code></td><td>Lần lưu gần nhất — dùng để sắp thứ tự bài dở</td></tr>
+      </table>
+      <div class="caution"><code>elapsed_ms</code> ghi bằng <code>MAX(elapsed_ms, ?)</code>,
+      <b>chỉ được tăng</b>. Hướng nguy hiểm là hướng lùi: lùi được nghĩa là bài có giới hạn giờ trở
+      thành vô thời hạn — chỉ cần gửi lại một gói cũ. Cùng luật đó áp cho
+      <code>duration_ms</code> lúc nộp bài.</div>
+      <p><b>Đồng hồ dừng khi tạm dừng</b> — đếm thời gian <i>làm bài</i>, không phải thời gian thực.
+      Tạm dừng 2 tiếng rồi vào lại thì đồng hồ tiếp tục từ chỗ cũ. Đây là kẽ hở nếu coi đây là kỳ
+      thi; nhưng đúng như mục 10 đã ghi, đây là công cụ <b>tự ôn</b>, và bắt người ta mất giờ vì máy
+      ngủ mới là cái sai thấy ngay.</p>
+
+      <div class="label">11.2. Nộp bài phải chấm từ DB, không chấm từ gói client gửi lên</div>
+      <p>Bản đầu của <code>submit</code> duyệt <code>body.answers</code> để tính điểm. Với autosave
+      thì <b>sai ngay</b>: phần lớn câu trả lời đã nằm trong DB từ trước lúc tạm dừng, phiên mới chỉ
+      còn vài câu cuối trong tay — bài làm dở rồi vào lại nộp sẽ mất sạch điểm của phần đã làm.</p>
+      <p>Nay <code>submit</code> ghi nốt phần client còn giữ, rồi chấm <b>toàn bộ</b> bằng một câu
+      <code>UPDATE ... CASE WHEN chosen_no = (SELECT correct_no ...)</code> trên cả lượt. Gọn hơn
+      bản cũ và không còn phụ thuộc client gửi đủ hay thiếu.</p>
+
+      <div class="label">11.3. Mỗi người mỗi bộ nhiều nhất MỘT bài dở</div>
+      <p>Mở bài mới cho cùng một bộ sẽ <b>xoá</b> bài dở cũ của bộ đó (người dùng được cảnh báo
+      trước trong hộp cài đặt). Nếu để tích lại thì nút "Làm tiếp" không biết nối vào bài nào, và
+      bài bỏ quên nằm lại DB mãi — đúng thứ mục 10 của bản trước đã ghi là "chưa có job dọn".</p>
+      <div class="caution">DB đã chạy từ trước tính năng này <b>vẫn có thể</b> có nhiều bài dở cùng
+      bộ (đã gặp thật: hai bài của <code>admin</code> trên cùng bộ). Nên chỗ chọn bài để "Làm tiếp"
+      dùng <code>setdefault</code> trên danh sách sắp mới-trước — dict comprehension
+      <code>{r["set_id"]: r for r in ...}</code> giữ dòng CUỐI, tức bài <b>cũ nhất</b>, ngược hẳn ý
+      định. Không viết migration xoá bớt: đó là dữ liệu người dùng, và lần bấm "Bắt đầu bài mới"
+      đầu tiên sẽ tự dọn.</div>
+
+      <div class="label">11.4. Phiên hết hạn phải DỪNG nhịp đồng hồ</div>
+      <p>Đo được trong lúc kiểm thử: một trang bỏ quên với phiên đã hết hạn bắn <b>683 lượt</b>
+      <code>PATCH</code> trả 401, mỗi giây một lượt, cho tới khi tab bị đóng. Nay gặp
+      <code>SessionExpiredError</code> / <code>DisplacedSessionError</code> là tắt hẳn
+      <code>ui.timer</code> chứ không chỉ bỏ qua lỗi.</p>
+
+      <div class="label">11.5. Vì sao không kiểm được bằng cú bấm mô phỏng</div>
+      <p>Lần trước (mục 10) cú bấm qua socket.io kiểm được phần vẽ lại DOM. Lần này <b>không dùng
+      được</b> cho luồng lưu tiến độ, và đã mất thời gian mới nhận ra:</p>
+      <p>NiceGUI đặt ngữ cảnh phiên (<code>request_contextvar</code>) <b>một lần lúc handshake</b>.
+      Trình duyệt thật giữ một task websocket duy nhất nên ngữ cảnh còn nguyên khi xử lý sự kiện
+      sau đó; client <code>python-socketio</code> thì mỗi gói tin là một task khác, ngữ cảnh mất,
+      <code>api_client._headers()</code> không đọc được token và <b>mọi lời gọi API trong handler
+      đều trả 401</b>.</p>
+      <div class="note"><b>Cách phân định đúng sai:</b> bấm thử nút "Tìm" trên
+      <code>/ttqt_branches</code> — một trang có sẵn từ lâu, đang chạy sản xuất. Nó cũng 401. Vậy
+      lỗi ở cách mô phỏng, không ở code mới. Bài học: khi công cụ kiểm thử báo hỏng, hãy chạy nó
+      trên một phần <b>đã biết là chạy tốt</b> trước khi đi sửa phần vừa viết.</div>
+      <p>Thay vào đó, phần "làm tiếp" được kiểm bằng cách dựng sẵn tiến độ qua API rồi <b>mở trang
+      thật</b>: máy chủ dựng ra "Câu 3 / 4", đúng nội dung câu 3, đồng hồ <b>9:15</b> (10 phút trừ
+      45 giây đã tiêu), thẻ bộ hiện "Làm tiếp — đã trả lời 2/4 câu". Nộp bài sau đó ra
+      <b>4/4</b> dù hai câu đầu chỉ nằm trong DB từ lần lưu lúc tạm dừng.</p>
+
+      <div class="label">11.6. Ảnh hưởng lên hệ thống — đo, không ước lượng</div>
+      <p>Lưu sau mỗi câu biến Quizz thành nguồn ghi DB đông nhất hệ thống. Đo trên <b>bản sao</b>
+      DB thật (27,7 MB), cùng PRAGMA với backend (WAL, <code>busy_timeout=30s</code>), 20 người ôn
+      tập song song:</p>
+      <table>
+        <tr><th>Nghiệp vụ khác đang chạy</th><th>Không ai ôn tập</th>
+            <th>20 người, nhịp thật (1 câu/10 giây)</th><th>20 người, ghi liên tục hết sức</th></tr>
+        <tr><td>Một truy vấn báo cáo (JOIN <code>document_entries</code>)</td>
+            <td>0,2 ms</td><td>0,2 ms</td><td>0,3 ms (p95 0,6)</td></tr>
+        <tr><td>Một thao tác ghi nhẹ</td>
+            <td>&lt;0,1 ms</td><td>&lt;0,1 ms</td><td>&lt;0,1 ms — <b>nhưng tệ nhất 103 ms</b></td></tr>
+      </table>
+      <p>Trần ghi của SQLite trên máy này: <b>30.000 lượt lưu tiến độ mỗi giây</b>. Nhịp thật của
+      20 người là <b>2 lượt/giây</b> — dùng hết 0,007%. Con số 103 ms là lần chờ khoá dài nhất
+      trong kịch bản <i>ghi nhanh nhất có thể</i>, một tình huống không tồn tại: nó tương đương
+      20 người mỗi người bấm 1.500 câu mỗi giây.</p>
+      <table>
+        <tr><th>Dung lượng</th><th>Đo được</th></tr>
+        <tr><td>Một bộ 550 câu</td><td>280 KB (nhập một lần, dùng mãi)</td></tr>
+        <tr><td>Một lượt làm bài 550 câu</td><td>20 KB</td></tr>
+        <tr><td>78 người × 200 lượt/năm, bài 20 câu</td><td>~11 MB/năm</td></tr>
+      </table>
+
+      <div class="caution"><b>Một ảnh hưởng THẬT đã suýt lọt: nhật ký hệ thống bị ngập.</b>
+      <code>AuditMiddleware</code> ghi một dòng cho mọi <code>POST/PUT/PATCH/DELETE</code>, mà
+      <code>PATCH .../progress</code> chạy sau <b>mỗi câu</b> — một bài 550 câu để lại 550 dòng.
+      Đo trên máy thật: vài giờ chạy thử sinh <b>1.634 dòng</b>, trong khi cả bảng
+      <code>audit_logs</code> tích luỹ từ trước tới nay chỉ có 4.515. Tức một buổi ôn tập của cả
+      cơ quan là đủ đẩy trôi nhật ký của mọi module khác, vì bảng dùng chung và dọn theo cùng hạn
+      lưu 365 ngày.
+      <br><br>Đã thêm <code>"/api/quiz"</code> vào <code>_SKIP_PREFIXES</code> — đúng tiền lệ của
+      <code>citad-buffer</code>, hai endpoint tần suất cao đã được xử lý y hệt trước đây. Bỏ cả
+      nhánh là an toàn vì mọi thao tác cần tra soát (tải bộ lên, đổi tên, xoá bộ, nộp bài) đều đã
+      tự gọi <code>write_audit</code> ngữ nghĩa. <code>test_luu_tien_do_khong_lam_ngap_nhat_ky_he_thong</code>
+      canh không cho tái diễn.</div>
+      <div class="note"><b>Bài học lặp lại lần thứ hai trong chính module này:</b> một tính năng
+      nhìn thì "chỉ thêm bảng mới, không đụng gì" vẫn có thể làm hỏng thứ khác qua đường dùng
+      chung — lần trước là bảng xếp hạng, lần này là bảng nhật ký. Thêm endpoint tần suất cao thì
+      phải hỏi ngay: nó đi qua middleware nào, ghi vào bảng dùng chung nào.</div>
+
+      <div class="label">12. Phát hiện nhưng KHÔNG sửa trong lần này</div>
       <table>
         <tr><th>Vấn đề</th><th>Vì sao để lại</th></tr>
-        <tr><td>Lượt <code>in_progress</code> bỏ dở nằm lại DB vĩnh viễn, không có job dọn</td>
-            <td>Mỗi lượt là ~N dòng <code>quiz_attempt_items</code> rất nhẹ, và bỏ dở là chuyện hiếm.
-            Khi nào thấy phình thì thêm vào <code>log_cleanup_service</code> — chỗ đã có sẵn lịch chạy</td></tr>
+        <tr><td>Lượt <code>in_progress</code> của bộ đã <b>xoá</b> khỏi hệ thống thì không còn
+            đường nào dọn tự động</td>
+            <td>Trường hợp thường gặp đã tự giải quyết: mỗi người mỗi bộ chỉ một bài dở, và mở bài
+            mới là xoá bài cũ (mục 11.3). Còn lại chỉ là bài của bộ bị xoá — mà xoá bộ đã
+            <code>CASCADE</code> luôn, nên trên thực tế không còn gì đọng lại. Chưa cần job dọn</td></tr>
         <tr><td>Chọn N câu = lấy N câu đầu <b>sau khi trộn</b>, không phân bổ đều theo chủ đề</td>
             <td>File Excel hiện <b>không có cột chủ đề</b>. Thêm cột là đổi khuôn file mà cả cơ quan đang
             dùng — cần chốt nghiệp vụ trước, không tự quyết</td></tr>
@@ -539,7 +695,7 @@
             lực, không phải để xét thi đua</td></tr>
       </table>
 
-      <div class="label">11. Đường ảnh hưởng đã kiểm trước khi báo xong</div>
+      <div class="label">13. Đường ảnh hưởng đã kiểm trước khi báo xong</div>
       <table>
         <tr><th>Nơi đụng tới</th><th>Kết luận</th></tr>
         <tr><td><code>frontend/shared.py::MENU_TREE</code></td>
@@ -11043,7 +11199,7 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-26</footer>
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-27</footer>
 </div>
 </body>
 </html>

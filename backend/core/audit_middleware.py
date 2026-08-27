@@ -37,6 +37,18 @@ _SKIP_PREFIXES = (
     # backend/api/doi_chieu_citad_nostro.py.
     "/api/doi-chieu-citad-nostro/citad-buffer",
     "/api/doi-chieu-citad-nostro/paymenthub-buffer",
+    # Ôn tập trắc nghiệm — cùng lý do với 4 dòng trên, nhưng gay hơn nhiều:
+    # `PATCH /attempts/{id}/progress` chạy sau MỖI CÂU trả lời, tức một bài 550
+    # câu để lại 550 dòng. Đo trên máy thật: vài giờ chạy thử sinh 1.634 dòng,
+    # bằng 36% toàn bộ bảng audit_logs tích luỹ từ trước tới nay — nhật ký của
+    # mọi module khác sẽ bị trôi mất trong lúc bảng vẫn dọn theo cùng hạn lưu.
+    #
+    # Bỏ cả nhánh là an toàn: những thao tác thực sự cần tra sau này đều đã tự
+    # ghi `write_audit` ngữ nghĩa trong backend/api/quiz.py — tải bộ câu hỏi
+    # lên, đổi tên bộ, xoá bộ, và nộp bài. Phần bị bỏ chỉ là tạo lượt làm bài,
+    # lưu tiến độ và bỏ bài dở: đều là thao tác của một người trên bài của
+    # chính họ, không ai cần tra soát.
+    "/api/quiz",
 )
 
 _ID_RE = re.compile(r"/\d+")

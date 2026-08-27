@@ -59,10 +59,21 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
     + **Lịch sử của tôi**: 30 lượt gần nhất, bấm vào xem lại nguyên bài đã làm
     + **Bảng xếp hạng** theo từng bộ (biểu tượng cúp trên thẻ bộ câu hỏi): mỗi người lấy lượt tốt nhất, cùng điểm thì ai làm nhanh hơn đứng trên. **Chỉ tính bài Thi thử** — chế độ Ôn tập hiện sẵn đáp án nên ai cũng 100%, đưa vào bảng thì bảng mất ý nghĩa
     + ⚠️ **Xoá một bộ câu hỏi là xoá luôn toàn bộ lượt làm bài của mọi người và bảng xếp hạng của bộ đó**, không lấy lại được. Vì vậy quyền *Xoá bộ câu hỏi* tách riêng, không đi kèm quyền tải lên
-    + ⚠️ **Đóng trình duyệt / mất điện giữa bài là mất bài đang làm** — bài chỉ được chấm khi bấm *Nộp bài*. Bài bỏ dở không tính điểm, không lên bảng xếp hạng
+    + **Tạm dừng và làm tiếp** — *bổ sung 27/08*:
+        - **Bài làm được lưu tự động sau mỗi câu trả lời**, không đợi tới lúc bấm *Nộp bài*. Mất mạng, máy ngủ, tắt máy giữa chừng hay lỡ đóng tab đều **không mất bài**
+        - Vào lại menu *Ôn tập trắc nghiệm*, thẻ của bộ đó hiện nút **Làm tiếp** kèm dòng *"Đang dở — đã trả lời X/Y câu"*. Bấm vào là quay lại **đúng câu đang làm**, giữ nguyên các đáp án đã chọn và thời gian đã dùng
+        - Nút **Tạm dừng** ở góc trên bên phải màn làm bài: lưu lại rồi về danh sách. Cạnh đồng hồ có chỉ báo nhỏ *✓ đã lưu* / *⚠ chưa lưu* để biết bài mình có đang được giữ hay không
+        - **Đồng hồ dừng khi tạm dừng** — nó đếm thời gian *làm bài*, không phải thời gian trôi ngoài đời. Nghỉ trưa hai tiếng rồi vào làm tiếp không bị mất giờ
+        - **Mỗi người mỗi bộ chỉ giữ một bài dở.** Muốn làm lại từ đầu thì vào menu ⋮ trên thẻ, chọn *Bắt đầu bài mới* — hệ thống báo trước là bài dở cũ sẽ bị bỏ. Cũng ở menu đó có *Bỏ bài đang làm dở*
+        - ⚠️ Bài bỏ dở **không tính điểm và không lên bảng xếp hạng** cho tới khi bấm *Nộp bài*
+    + **Cơ sở dữ liệu thêm 3 cột** vào bảng lượt làm bài, tự thêm lúc khởi động — không phải làm gì thêm, dữ liệu cũ giữ nguyên
+    + **Không làm chậm hệ thống, không làm ngập Nhật ký thao tác** — đã đo trên bản sao cơ sở dữ liệu thật:
+        - 20 người ôn tập cùng lúc: các màn hình khác vẫn chạy như cũ (truy vấn báo cáo 0,2 ms trước và sau, không đổi)
+        - Dung lượng: một bộ 550 câu tốn 280 KB (nhập một lần); mỗi lượt làm bài cỡ 20 câu tốn dưới 1 KB
+        - **Việc lưu tiến độ KHÔNG ghi vào Nhật ký thao tác.** Nếu ghi thì một bài 550 câu để lại 550 dòng và nhật ký của các phần khác bị đẩy trôi. Những việc cần tra sau này — ai tải bộ câu hỏi lên, ai đổi tên, ai xoá bộ, ai nộp bài — thì **vẫn ghi đầy đủ**
     + **Ba quyền cần khai báo cho nhóm**: *Ôn tập trắc nghiệm (menu)* — vào module và làm bài; *Tải bộ câu hỏi lên / đổi tên bộ*; *Xoá bộ câu hỏi*
     + **Cơ sở dữ liệu có thêm 4 bảng mới**, tự tạo lúc khởi động — không phải làm gì thêm. Không đụng tới dữ liệu sẵn có
-    + Thêm 19 test tự động. Toàn bộ **755 test** chạy đạt. Đã thử nhập đúng file *1. Kiến thức chung Đợt II.2026.xlsx*: **550/550 câu vào sạch, không dòng nào lỗi**
+    + Thêm 31 test tự động cho phần này. Toàn bộ **804 test** chạy đạt. Đã thử nhập đúng file *1. Kiến thức chung Đợt II.2026.xlsx*: **550/550 câu vào sạch, không dòng nào lỗi**
 
 - 25/08/2026 Giao diện - **Trang Đăng nhập và Trang chủ đổi sang chủ đề kỷ niệm 2-9**
     + **Tự bật từ 25/8, tự tắt sau ngày 3/9** — không ai phải làm gì để gỡ sau lễ, và sang năm tự bật lại. Ngoài khoảng ngày này hai trang y hệt như cũ

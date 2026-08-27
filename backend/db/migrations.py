@@ -374,6 +374,9 @@ def _create_tables(db_path: str):
             score           REAL,
             duration_ms     INTEGER,
             status          TEXT NOT NULL DEFAULT 'in_progress',
+            elapsed_ms      INTEGER NOT NULL DEFAULT 0,
+            current_idx     INTEGER NOT NULL DEFAULT 0,
+            saved_at        DATETIME,
             started_at      DATETIME NOT NULL,
             finished_at     DATETIME
         )""",
@@ -1164,6 +1167,9 @@ def _ensure_indexes():
             score           REAL,
             duration_ms     INTEGER,
             status          TEXT NOT NULL DEFAULT 'in_progress',
+            elapsed_ms      INTEGER NOT NULL DEFAULT 0,
+            current_idx     INTEGER NOT NULL DEFAULT 0,
+            saved_at        DATETIME,
             started_at      DATETIME NOT NULL,
             finished_at     DATETIME
         )""",
@@ -1184,6 +1190,12 @@ def _ensure_indexes():
         "CREATE INDEX IF NOT EXISTS ix_quiz_attempts_staff     ON quiz_attempts(staff_id, started_at)",
         "CREATE INDEX IF NOT EXISTS ix_quiz_attempts_set       ON quiz_attempts(set_id, status)",
         "CREATE INDEX IF NOT EXISTS ix_quiz_attempt_items_att  ON quiz_attempt_items(attempt_id, order_no)",
+        # ── Quizz: tạm dừng & làm tiếp — 2026-08-27 ───────────────────────
+        # Ba cột giữ chỗ người làm đang đứng, để lần vào sau nối tiếp đúng chỗ.
+        # NOT NULL kèm DEFAULT hằng số nên ALTER TABLE của SQLite chấp nhận được.
+        "ALTER TABLE quiz_attempts ADD COLUMN elapsed_ms INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE quiz_attempts ADD COLUMN current_idx INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE quiz_attempts ADD COLUMN saved_at DATETIME",
     ]
     _mig_log = logging.getLogger(__name__)
 

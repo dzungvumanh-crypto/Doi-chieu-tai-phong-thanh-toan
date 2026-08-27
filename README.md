@@ -601,9 +601,18 @@ Truy cập:
   khi nộp), số câu (10/20/30/50/100 hoặc tất cả), **trộn thứ tự câu hỏi**, **trộn thứ tự đáp án**,
   **thời gian mỗi câu** (10-90 giây hoặc không giới hạn), **tổng thời gian làm bài** (5-90 phút hoặc
   không giới hạn). Hết giờ câu thì tự sang câu kế; hết tổng giờ thì hệ thống tự nộp bài
-- Màn làm bài `/quiz/play` chiếm **toàn màn hình** (không sidebar): 4 ô đáp án màu + hình khối, thanh
-  tiến trình, hai đồng hồ. Nộp xong hiện điểm, số câu **đúng / sai / bỏ trống**, thời gian làm và phần
-  **Xem lại bài** từng câu (tô xanh đáp án đúng, tô đỏ ô đã chọn sai)
+- Màn làm bài `/quiz/play` chiếm **toàn màn hình** (không sidebar): 4 ô đáp án màu + hình khối xếp
+  lưới 2×2 bằng nhau, thanh tiến trình, hai đồng hồ. Nộp xong hiện điểm, số câu
+  **đúng / sai / bỏ trống**, thời gian làm và phần **Xem lại bài** từng câu (đáp án đúng gắn nhãn
+  *ĐÁP ÁN ĐÚNG* + viền trắng, ô chọn sai gắn nhãn *BẠN CHỌN*, các ô còn lại xám hẳn)
+- **Tạm dừng & làm tiếp**: tiến độ được **lưu lên máy chủ sau mỗi câu trả lời**, không đợi nộp bài.
+  Mất kết nối, máy ngủ, tắt máy hay đóng nhầm tab đều không mất bài — vào lại bộ câu hỏi đó, thẻ hiện
+  **Làm tiếp** và nối đúng câu đang đứng, kèm đáp án đã chọn và thời gian đã tiêu. Nút **Tạm dừng**
+  trên thanh trên lưu rồi thoát; chỉ báo nhỏ cạnh đồng hồ cho biết đã lưu hay còn câu chưa gửi được
+- **Đồng hồ đếm thời gian làm bài, không phải thời gian thực** — tạm dừng thì đồng hồ dừng theo. Máy
+  chủ chỉ cho thời gian **tăng**, gửi lại gói cũ không kéo dài thêm được
+- **Mỗi người mỗi bộ nhiều nhất một bài dở.** Bấm *Bắt đầu bài mới* trên bộ đang có bài dở sẽ bỏ bài
+  đó (có cảnh báo trước); menu ⋮ còn có *Bỏ bài đang làm dở*
 - **Lịch sử của tôi** (30 lượt gần nhất, bấm để xem lại bài) và **Bảng xếp hạng** theo từng bộ — mỗi
   người lấy lượt tốt nhất, cùng điểm thì ai nhanh hơn đứng trên. Bảng xếp hạng **chỉ tính bài Thi thử**;
   chế độ Ôn tập hiện sẵn đáp án nên điểm không có ý nghĩa so sánh

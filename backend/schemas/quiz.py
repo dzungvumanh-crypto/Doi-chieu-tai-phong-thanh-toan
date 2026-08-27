@@ -24,6 +24,11 @@ class QuizSetOut(BaseModel):
     created_at: Optional[str] = None
     my_attempts: int = 0
     my_best_score: Optional[float] = None
+    # Bài đang làm dở của CHÍNH người gọi (mỗi người mỗi bộ nhiều nhất một bài)
+    resume_attempt_id: Optional[int] = None
+    resume_answered: int = 0
+    resume_total: int = 0
+    resume_saved_at: Optional[str] = None
 
 
 class QuizSetUpdate(BaseModel):
@@ -98,6 +103,9 @@ class AttemptOut(BaseModel):
     status: str
     settings: AttemptSettings
     total_questions: int
+    # Chỗ người làm đang đứng, để lần vào sau nối tiếp đúng câu đó
+    current_idx: int = 0
+    elapsed_ms: int = 0
     started_at: Optional[str] = None
     questions: list[QuestionOut] = []
 
@@ -111,6 +119,31 @@ class AnswerIn(BaseModel):
 class AttemptSubmit(BaseModel):
     answers: list[AnswerIn] = []
     duration_ms: int = Field(0, ge=0)
+
+
+class ProgressIn(BaseModel):
+    """Một lần lưu tiến độ giữa chừng.
+
+    `answers` chỉ mang phần THAY ĐỔI kể từ lần lưu trước, không phải cả bài —
+    bài 550 câu mà lần nào cũng gửi hết thì mỗi câu trả lời kéo theo ~20 KB.
+    """
+    answers: list[AnswerIn] = []
+    current_idx: int = Field(0, ge=0)
+    elapsed_ms: int = Field(0, ge=0)
+
+
+class ResumeRow(BaseModel):
+    """Một bài đang làm dở, dùng cho nút *Làm tiếp*."""
+    id: int
+    set_id: int
+    set_name: str
+    mode: str
+    total_questions: int
+    answered: int
+    current_idx: int
+    elapsed_ms: int
+    started_at: Optional[str] = None
+    saved_at: Optional[str] = None
 
 
 class ReviewItem(BaseModel):

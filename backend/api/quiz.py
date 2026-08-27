@@ -27,7 +27,8 @@ from backend.core.uploads import read_limited
 from backend.database import get_db, write_audit, _vn_now
 from backend.schemas.quiz import (
     AttemptCreate, AttemptOut, AttemptResult, AttemptRow, AttemptSettings,
-    AttemptSubmit, ImportResult, QuestionOut, QuizSetOut, QuizSetUpdate, ReviewItem,
+    AttemptSubmit, ImportResult, ProgressIn, QuestionOut, QuizSetOut, QuizSetUpdate,
+    ResumeRow, ReviewItem,
 )
 
 _log = logging.getLogger(__name__)
@@ -135,6 +136,26 @@ def _parse_xlsx(raw: bytes) -> tuple[list[tuple], list[str], int]:
     return rows, errors, skipped
 
 
+def _resumable_rows(db, staff_id: int) -> list[sqlite3.Row]:
+    """Các bài đang làm dở của một người — mới lưu trước, cũ sau.
+
+    "Dở" = `status = 'in_progress'`, không phân biệt tạm dừng chủ động với rớt
+    mạng: với người dùng cả hai đều là "bài còn đó, vào làm tiếp". Phân biệt
+    được cũng không tin nổi — máy tắt đột ngột thì không ai kịp ghi cờ nào.
+    """
+    return db.execute(
+        """SELECT a.id, a.set_id, s.name AS set_name, a.mode, a.total_questions,
+                  a.current_idx, a.elapsed_ms, a.started_at, a.saved_at,
+                  (SELECT COUNT(*) FROM quiz_attempt_items i
+                    WHERE i.attempt_id = a.id AND i.chosen_no IS NOT NULL) AS answered
+             FROM quiz_attempts a
+             JOIN quiz_sets s ON s.id = a.set_id AND s.is_active = 1
+            WHERE a.staff_id = ? AND a.status = 'in_progress'
+            ORDER BY IFNULL(a.saved_at, a.started_at) DESC""",
+        (staff_id,),
+    ).fetchall()
+
+
 # ─── Danh sách bộ câu hỏi ────────────────────────────────────────────────────
 @router.get("/sets", response_model=list[QuizSetOut])
 def list_sets(
@@ -155,10 +176,28 @@ def list_sets(
             ORDER BY s.created_at DESC""",
         (current["id"], current["id"]),
     ).fetchall()
+    # Bài đang làm dở — truy vấn riêng, không nhét thêm vào SELECT ở trên:
+    # gộp vào sẽ cần ba truy vấn con nữa cho MỖI bộ, trong khi số bài dở của
+    # một người luôn đếm trên đầu ngón tay (mỗi bộ nhiều nhất một bài).
+    #
+    # `setdefault` chứ không phải `{r["set_id"]: r for r in ...}`: dict
+    # comprehension giữ dòng CUỐI, mà truy vấn sắp mới-trước-cũ-sau nên dòng
+    # cuối là bài cũ nhất — nút "Làm tiếp" sẽ nối vào đúng bài người dùng đã
+    # bỏ lâu nhất. Bất biến "mỗi bộ một bài dở" chỉ đúng với bài tạo từ khi có
+    # tính năng này; DB đã chạy từ trước có thể còn nhiều bài dở cùng bộ.
+    resume: dict[int, sqlite3.Row] = {}
+    for r in _resumable_rows(db, current["id"]):
+        resume.setdefault(r["set_id"], r)
     out = []
     for r in rows:
         d = dict(r)
         d["created_at"] = str(d["created_at"]) if d.get("created_at") else None
+        rs = resume.get(d["id"])
+        if rs:
+            d["resume_attempt_id"] = rs["id"]
+            d["resume_answered"] = rs["answered"]
+            d["resume_total"] = rs["total_questions"]
+            d["resume_saved_at"] = rs["saved_at"]
         out.append(d)
     return out
 
@@ -351,12 +390,20 @@ def start_attempt(
     if cfg.num_questions:
         picked = picked[: cfg.num_questions]
 
+    # Bắt đầu bài mới cho cùng một bộ = người dùng đã quyết định bỏ bài dở cũ.
+    # Xoá luôn, để mỗi người mỗi bộ nhiều nhất MỘT bài dở: nếu tích lại thì nút
+    # "Làm tiếp" không biết nối vào bài nào, và bài dở bỏ quên nằm lại DB mãi.
+    db.execute(
+        "DELETE FROM quiz_attempts WHERE staff_id = ? AND set_id = ? AND status = 'in_progress'",
+        (current["id"], body.set_id),
+    )
+
     now = _vn_now()
     cur = db.execute(
         """INSERT INTO quiz_attempts (set_id, staff_id, mode, settings, total_questions,
-                                      status, started_at)
-           VALUES (?,?,?,?,?, 'in_progress', ?)""",
-        (body.set_id, current["id"], cfg.mode, cfg.model_dump_json(), len(picked), now),
+                                      status, started_at, saved_at)
+           VALUES (?,?,?,?,?, 'in_progress', ?, ?)""",
+        (body.set_id, current["id"], cfg.mode, cfg.model_dump_json(), len(picked), now, now),
     )
     attempt_id = cur.lastrowid
 
@@ -381,6 +428,24 @@ def start_attempt(
     )
 
 
+# ─── Tạm dừng & làm tiếp ─────────────────────────────────────────────────────
+# `/attempts/resumable` PHẢI đứng trên `/attempts/{attempt_id}`: FastAPI khớp
+# route theo thứ tự đăng ký, để sau thì chữ "resumable" rơi vào {attempt_id},
+# ép sang int thất bại và trả 422 — nút *Làm tiếp* chết mà không rõ vì sao.
+@router.get("/attempts/resumable", response_model=list[ResumeRow])
+def list_resumable(
+    current: dict = Depends(require_feature("menu.quiz")),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """Bài đang làm dở của tôi — nguồn cho nút *Làm tiếp*."""
+    return [
+        {**dict(r),
+         "started_at": str(r["started_at"]) if r["started_at"] else None,
+         "saved_at": str(r["saved_at"]) if r["saved_at"] else None}
+        for r in _resumable_rows(db, current["id"])
+    ]
+
+
 @router.get("/attempts/{attempt_id}", response_model=AttemptOut)
 def get_attempt(
     attempt_id: int,
@@ -402,9 +467,80 @@ def get_attempt(
     return AttemptOut(
         id=a["id"], set_id=a["set_id"], set_name=a["set_name"], mode=a["mode"],
         status=a["status"], settings=cfg, total_questions=a["total_questions"],
+        current_idx=a["current_idx"] or 0, elapsed_ms=a["elapsed_ms"] or 0,
         started_at=str(a["started_at"]) if a["started_at"] else None,
         questions=_questions_of_attempt(db, attempt_id, reveal=reveal),
     )
+
+
+@router.patch("/attempts/{attempt_id}/progress")
+def save_progress(
+    attempt_id: int,
+    body: ProgressIn,
+    current: dict = Depends(require_feature("menu.quiz")),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """Ghi lại tiến độ giữa chừng — gọi sau MỖI câu trả lời, không đợi nộp bài.
+
+    KHÔNG chấm điểm ở đây: `is_correct` để nguyên NULL, chỉ ghi `chosen_no`.
+    Chấm là việc của lúc nộp bài, và chỉ ở đó mới đọc `correct_no` — giữ đúng
+    một chỗ duy nhất quyết định đúng/sai.
+
+    `elapsed_ms` nhận từ client và chỉ ĐƯỢC PHÉP TĂNG. Client tính sai hoặc gửi
+    lại gói cũ thì cũng không làm đồng hồ chạy lùi, mà đó mới là hướng nguy
+    hiểm: lùi được nghĩa là làm bài có giới hạn giờ vô thời hạn.
+    """
+    a = db.execute(
+        "SELECT staff_id, status, elapsed_ms, total_questions FROM quiz_attempts WHERE id = ?",
+        (attempt_id,),
+    ).fetchone()
+    if not a:
+        raise HTTPException(404, "Không tìm thấy lượt làm bài")
+    if a["staff_id"] != current["id"]:
+        raise HTTPException(403, "Đây không phải bài làm của bạn")
+    if a["status"] == "finished":
+        raise HTTPException(409, "Bài này đã nộp rồi")
+
+    if body.answers:
+        hop_le = {
+            r["id"] for r in db.execute(
+                "SELECT id FROM quiz_attempt_items WHERE attempt_id = ?", (attempt_id,)
+            ).fetchall()
+        }
+        db.executemany(
+            "UPDATE quiz_attempt_items SET chosen_no = ?, time_ms = ? WHERE id = ?",
+            [(x.chosen_no, x.time_ms, x.item_id) for x in body.answers if x.item_id in hop_le],
+        )
+    idx = min(max(body.current_idx, 0), max((a["total_questions"] or 1) - 1, 0))
+    db.execute(
+        """UPDATE quiz_attempts
+              SET current_idx = ?, elapsed_ms = MAX(elapsed_ms, ?), saved_at = ?
+            WHERE id = ?""",
+        (idx, body.elapsed_ms, _vn_now(), attempt_id),
+    )
+    db.commit()
+    return {"ok": True, "saved": len(body.answers)}
+
+
+@router.delete("/attempts/{attempt_id}")
+def abandon_attempt(
+    attempt_id: int,
+    current: dict = Depends(require_feature("menu.quiz")),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """Bỏ hẳn một bài đang làm dở. Bài ĐÃ NỘP thì không xoá được — đó là lịch sử."""
+    a = db.execute(
+        "SELECT staff_id, status FROM quiz_attempts WHERE id = ?", (attempt_id,)
+    ).fetchone()
+    if not a:
+        raise HTTPException(404, "Không tìm thấy lượt làm bài")
+    if a["staff_id"] != current["id"]:
+        raise HTTPException(403, "Đây không phải bài làm của bạn")
+    if a["status"] == "finished":
+        raise HTTPException(409, "Bài đã nộp không xoá được")
+    db.execute("DELETE FROM quiz_attempts WHERE id = ?", (attempt_id,))
+    db.commit()
+    return {"ok": True}
 
 
 @router.post("/attempts/{attempt_id}/submit", response_model=AttemptResult)
@@ -426,42 +562,42 @@ def submit_attempt(
     if a["status"] == "finished":
         raise HTTPException(409, "Bài này đã nộp rồi")
 
-    # Chấm bằng correct_no đọc từ DB — client chỉ nói "tôi chọn ô số mấy".
-    keys = {
-        r["id"]: r["correct_no"]
-        for r in db.execute(
-            """SELECT i.id, q.correct_no FROM quiz_attempt_items i
-                 JOIN quiz_questions q ON q.id = i.question_id
-                WHERE i.attempt_id = ?""",
-            (attempt_id,),
-        ).fetchall()
-    }
-    correct = 0
-    for ans in body.answers:
-        if ans.item_id not in keys:
-            continue                                   # item của lượt khác — bỏ qua
-        is_correct = ans.chosen_no is not None and ans.chosen_no == keys[ans.item_id]
-        correct += int(is_correct)
-        db.execute(
-            "UPDATE quiz_attempt_items SET chosen_no = ?, is_correct = ?, time_ms = ? WHERE id = ?",
-            (ans.chosen_no, int(is_correct), ans.time_ms, ans.item_id),
-        )
-    # Câu không có trong `answers` = hết giờ / thoát giữa chừng → tính là bỏ trống,
-    # không phải sai; hai con số này hiện tách nhau trên màn kết quả.
+    # Ghi nốt những câu client còn giữ trong tay mà chưa kịp lưu. Ràng buộc
+    # `attempt_id = ?` khiến item của lượt khác gửi nhầm vào đây không ăn thua.
+    db.executemany(
+        "UPDATE quiz_attempt_items SET chosen_no = ?, time_ms = ? WHERE id = ? AND attempt_id = ?",
+        [(x.chosen_no, x.time_ms, x.item_id, attempt_id) for x in body.answers],
+    )
+
+    # Chấm TOÀN BỘ bài từ DB, không chấm theo những gì client vừa gửi: phần lớn
+    # câu trả lời đã được lưu dần trong lúc làm (xem save_progress), nên nếu chỉ
+    # xét `body.answers` thì bài làm dở rồi vào lại nộp sẽ mất sạch điểm của các
+    # câu trả lời trước lúc tạm dừng.
     db.execute(
-        "UPDATE quiz_attempt_items SET is_correct = 0 WHERE attempt_id = ? AND is_correct IS NULL",
+        """UPDATE quiz_attempt_items
+              SET is_correct = CASE
+                    WHEN chosen_no IS NOT NULL AND chosen_no =
+                         (SELECT q.correct_no FROM quiz_questions q WHERE q.id = question_id)
+                    THEN 1 ELSE 0 END
+            WHERE attempt_id = ?""",
         (attempt_id,),
     )
+    correct = db.execute(
+        "SELECT IFNULL(SUM(is_correct), 0) c FROM quiz_attempt_items WHERE attempt_id = ?",
+        (attempt_id,),
+    ).fetchone()["c"]
 
     total = a["total_questions"] or 1
     score = round(correct * 100.0 / total, 1)
+    # Đồng hồ chỉ được tăng — cùng lý do với save_progress.
+    duration = max(body.duration_ms, a["elapsed_ms"] or 0)
     now = _vn_now()
     db.execute(
         """UPDATE quiz_attempts
-              SET correct_count = ?, score = ?, duration_ms = ?, status = 'finished',
-                  finished_at = ?
+              SET correct_count = ?, score = ?, duration_ms = ?, elapsed_ms = ?,
+                  status = 'finished', finished_at = ?
             WHERE id = ?""",
-        (correct, score, body.duration_ms, now, attempt_id),
+        (correct, score, duration, duration, now, attempt_id),
     )
     write_audit(db, current["id"], "quiz.submit", "quiz_attempt", attempt_id,
                 f"{a['set_name']} — {correct}/{total} ({score}%)")

@@ -257,12 +257,18 @@ def test_khong_xem_duoc_bai_cua_nguoi_khac(quiz_client):
 
 
 def test_item_cua_luot_khac_bi_bo_qua(quiz_client):
-    """Gửi item_id của bài khác không được cộng điểm sang bài này."""
-    set_id = _upload(quiz_client).json()["set_id"]
+    """Gửi item_id của bài khác không được cộng điểm sang bài này.
+
+    Hai bài phải thuộc hai BỘ khác nhau: mở bài mới cho cùng một bộ sẽ xoá bài
+    dở cũ của bộ đó (xem test_bai_moi_thay_the_bai_do_cua_cung_bo).
+    """
+    s1 = _upload(quiz_client, name="Bộ A").json()["set_id"]
+    s2 = _upload(quiz_client, [["Câu bộ B", "A", "B", "C", "D", 1]],
+                 name="Bộ B").json()["set_id"]
     a1 = quiz_client.post("/api/quiz/attempts",
-                          json={"set_id": set_id, "settings": {}}).json()
+                          json={"set_id": s1, "settings": {}}).json()
     a2 = quiz_client.post("/api/quiz/attempts",
-                          json={"set_id": set_id, "settings": {}}).json()
+                          json={"set_id": s2, "settings": {}}).json()
     lac = a2["questions"][0]
     res = quiz_client.post(f"/api/quiz/attempts/{a1['id']}/submit", json={
         "answers": [{"item_id": lac["item_id"],
@@ -270,6 +276,234 @@ def test_item_cua_luot_khac_bi_bo_qua(quiz_client):
     }).json()
     assert res["correct_count"] == 0
     assert res["skipped_count"] == 3
+    # Bài kia không bị đụng tới
+    assert quiz_client.db.execute(
+        "SELECT chosen_no FROM quiz_attempt_items WHERE id = ?",
+        (lac["item_id"],)).fetchone()["chosen_no"] is None
+
+
+# ── Tạm dừng & làm tiếp ───────────────────────────────────────────────────────
+def test_luu_tien_do_roi_nap_lai_dung_cho_dang_dung(quiz_client):
+    set_id = _upload(quiz_client).json()["set_id"]
+    att = quiz_client.post("/api/quiz/attempts", json={
+        "set_id": set_id, "settings": {"shuffle_questions": False}}).json()
+    q0, q1 = att["questions"][0], att["questions"][1]
+
+    r = quiz_client.patch(f"/api/quiz/attempts/{att['id']}/progress", json={
+        "answers": [{"item_id": q0["item_id"], "chosen_no": 2, "time_ms": 4000},
+                    {"item_id": q1["item_id"], "chosen_no": 1, "time_ms": 3000}],
+        "current_idx": 2, "elapsed_ms": 7000,
+    })
+    assert r.status_code == 200 and r.json()["saved"] == 2
+
+    lai = quiz_client.get(f"/api/quiz/attempts/{att['id']}").json()
+    assert lai["current_idx"] == 2
+    assert lai["elapsed_ms"] == 7000
+    assert [q["chosen_no"] for q in lai["questions"]] == [2, 1, None]
+    # Đề giữ nguyên, không sinh lại
+    assert [q["question_id"] for q in lai["questions"]] == \
+           [q["question_id"] for q in att["questions"]]
+
+
+def test_luu_tien_do_khong_cham_diem_som(quiz_client):
+    """save_progress chỉ ghi lựa chọn; đúng/sai vẫn để trống tới lúc nộp."""
+    set_id = _upload(quiz_client).json()["set_id"]
+    att = quiz_client.post("/api/quiz/attempts",
+                           json={"set_id": set_id, "settings": {}}).json()
+    q0 = att["questions"][0]
+    quiz_client.patch(f"/api/quiz/attempts/{att['id']}/progress", json={
+        "answers": [{"item_id": q0["item_id"],
+                     "chosen_no": _dap_an_dung(quiz_client, q0), "time_ms": 100}],
+        "current_idx": 1, "elapsed_ms": 100})
+    row = quiz_client.db.execute(
+        "SELECT chosen_no, is_correct FROM quiz_attempt_items WHERE id = ?",
+        (q0["item_id"],)).fetchone()
+    assert row["chosen_no"] is not None
+    assert row["is_correct"] is None
+    # Điểm chưa được tính vào lượt
+    a = quiz_client.db.execute(
+        "SELECT correct_count, score, status FROM quiz_attempts WHERE id = ?",
+        (att["id"],)).fetchone()
+    assert (a["correct_count"], a["score"], a["status"]) == (None, None, "in_progress")
+
+
+def test_nop_bai_giu_nguyen_diem_cua_phan_da_luu_truoc_khi_tam_dung(quiz_client):
+    """Ca chính của tính năng: trả lời 2 câu, tạm dừng, vào lại nộp mà KHÔNG
+    gửi lại 2 câu cũ — điểm vẫn phải đủ."""
+    set_id = _upload(quiz_client).json()["set_id"]
+    att = quiz_client.post("/api/quiz/attempts", json={
+        "set_id": set_id, "settings": {"shuffle_questions": False}}).json()
+    qs = att["questions"]
+    quiz_client.patch(f"/api/quiz/attempts/{att['id']}/progress", json={
+        "answers": [{"item_id": q["item_id"], "chosen_no": _dap_an_dung(quiz_client, q),
+                     "time_ms": 2000} for q in qs[:2]],
+        "current_idx": 2, "elapsed_ms": 4000})
+
+    # Phiên mới chỉ còn câu cuối trong tay
+    res = quiz_client.post(f"/api/quiz/attempts/{att['id']}/submit", json={
+        "answers": [{"item_id": qs[2]["item_id"],
+                     "chosen_no": _dap_an_dung(quiz_client, qs[2]), "time_ms": 1000}],
+        "duration_ms": 6000,
+    }).json()
+    assert res["correct_count"] == 3
+    assert res["skipped_count"] == 0
+    assert res["score"] == 100.0
+
+
+def test_dong_ho_khong_chay_lui(quiz_client):
+    """elapsed_ms chỉ được tăng — gói cũ đến muộn không làm bài dài thêm giờ."""
+    set_id = _upload(quiz_client).json()["set_id"]
+    att = quiz_client.post("/api/quiz/attempts",
+                           json={"set_id": set_id, "settings": {}}).json()
+    for gui in (9000, 3000, 5000):
+        quiz_client.patch(f"/api/quiz/attempts/{att['id']}/progress",
+                          json={"answers": [], "current_idx": 0, "elapsed_ms": gui})
+    assert quiz_client.get(f"/api/quiz/attempts/{att['id']}").json()["elapsed_ms"] == 9000
+    # Nộp bài với duration nhỏ hơn cũng không xoá được thời gian đã tích
+    res = quiz_client.post(f"/api/quiz/attempts/{att['id']}/submit",
+                           json={"answers": [], "duration_ms": 100}).json()
+    assert res["duration_ms"] == 9000
+
+
+def test_danh_sach_bai_dang_lam_do(quiz_client):
+    set_id = _upload(quiz_client).json()["set_id"]
+    assert quiz_client.get("/api/quiz/attempts/resumable").json() == []
+
+    att = quiz_client.post("/api/quiz/attempts", json={
+        "set_id": set_id, "settings": {"shuffle_questions": False}}).json()
+    quiz_client.patch(f"/api/quiz/attempts/{att['id']}/progress", json={
+        "answers": [{"item_id": att["questions"][0]["item_id"], "chosen_no": 1,
+                     "time_ms": 500}],
+        "current_idx": 1, "elapsed_ms": 500})
+
+    rows = quiz_client.get("/api/quiz/attempts/resumable").json()
+    assert len(rows) == 1
+    assert (rows[0]["id"], rows[0]["answered"], rows[0]["current_idx"],
+            rows[0]["total_questions"]) == (att["id"], 1, 1, 3)
+
+    # Thẻ bộ câu hỏi cũng phải mang thông tin này để vẽ nút "Làm tiếp"
+    s = quiz_client.get("/api/quiz/sets").json()[0]
+    assert s["resume_attempt_id"] == att["id"]
+    assert s["resume_answered"] == 1
+    assert s["resume_total"] == 3
+
+    # Nộp xong thì không còn là bài dở nữa
+    quiz_client.post(f"/api/quiz/attempts/{att['id']}/submit", json={"answers": []})
+    assert quiz_client.get("/api/quiz/attempts/resumable").json() == []
+    assert quiz_client.get("/api/quiz/sets").json()[0]["resume_attempt_id"] is None
+
+
+def test_bai_moi_thay_the_bai_do_cua_cung_bo(quiz_client):
+    """Mỗi người mỗi bộ nhiều nhất MỘT bài dở — nếu không, nút Làm tiếp không
+    biết nối vào bài nào và bài bỏ quên nằm lại DB mãi."""
+    set_id = _upload(quiz_client).json()["set_id"]
+    cu = quiz_client.post("/api/quiz/attempts",
+                          json={"set_id": set_id, "settings": {}}).json()
+    moi = quiz_client.post("/api/quiz/attempts",
+                           json={"set_id": set_id, "settings": {}}).json()
+    assert cu["id"] != moi["id"]
+    assert quiz_client.get(f"/api/quiz/attempts/{cu['id']}").status_code == 404
+    assert [r["id"] for r in quiz_client.get("/api/quiz/attempts/resumable").json()] == [moi["id"]]
+    # Bài đã NỘP thì không bị xoá theo
+    quiz_client.post(f"/api/quiz/attempts/{moi['id']}/submit", json={"answers": []})
+    quiz_client.post("/api/quiz/attempts", json={"set_id": set_id, "settings": {}})
+    assert quiz_client.db.execute(
+        "SELECT COUNT(*) c FROM quiz_attempts WHERE status = 'finished'").fetchone()["c"] == 1
+
+
+def test_bo_bai_dang_lam_do(quiz_client):
+    set_id = _upload(quiz_client).json()["set_id"]
+    att = quiz_client.post("/api/quiz/attempts",
+                           json={"set_id": set_id, "settings": {}}).json()
+    assert quiz_client.delete(f"/api/quiz/attempts/{att['id']}").status_code == 200
+    assert quiz_client.get("/api/quiz/attempts/resumable").json() == []
+    # Bài đã nộp là lịch sử, không xoá được
+    att2 = quiz_client.post("/api/quiz/attempts",
+                            json={"set_id": set_id, "settings": {}}).json()
+    quiz_client.post(f"/api/quiz/attempts/{att2['id']}/submit", json={"answers": []})
+    assert quiz_client.delete(f"/api/quiz/attempts/{att2['id']}").status_code == 409
+
+
+def test_khong_luu_tien_do_len_bai_nguoi_khac(quiz_client):
+    set_id = _upload(quiz_client).json()["set_id"]
+    att = quiz_client.post("/api/quiz/attempts",
+                           json={"set_id": set_id, "settings": {}}).json()
+    quiz_client.db.execute("UPDATE quiz_attempts SET staff_id = 2 WHERE id = ?", (att["id"],))
+    quiz_client.db.commit()
+    r = quiz_client.patch(f"/api/quiz/attempts/{att['id']}/progress",
+                          json={"answers": [], "current_idx": 1, "elapsed_ms": 1})
+    assert r.status_code == 403
+    assert quiz_client.delete(f"/api/quiz/attempts/{att['id']}").status_code == 403
+
+
+def test_khong_luu_tien_do_sau_khi_da_nop(quiz_client):
+    set_id = _upload(quiz_client).json()["set_id"]
+    att = quiz_client.post("/api/quiz/attempts",
+                           json={"set_id": set_id, "settings": {}}).json()
+    quiz_client.post(f"/api/quiz/attempts/{att['id']}/submit", json={"answers": []})
+    r = quiz_client.patch(f"/api/quiz/attempts/{att['id']}/progress",
+                          json={"answers": [], "current_idx": 1, "elapsed_ms": 999})
+    assert r.status_code == 409
+
+
+def test_current_idx_bi_kep_trong_khoang_hop_le(quiz_client):
+    """Client gửi số câu ngoài đề (lỗi, hoặc sửa tay) thì kẹp lại, không để
+    lần vào sau nhảy vào chỗ không có câu nào rồi trắng màn hình."""
+    set_id = _upload(quiz_client).json()["set_id"]
+    att = quiz_client.post("/api/quiz/attempts",
+                           json={"set_id": set_id, "settings": {}}).json()
+    quiz_client.patch(f"/api/quiz/attempts/{att['id']}/progress",
+                      json={"answers": [], "current_idx": 999, "elapsed_ms": 0})
+    assert quiz_client.get(f"/api/quiz/attempts/{att['id']}").json()["current_idx"] == 2
+
+
+def test_nhieu_bai_do_cung_bo_thi_lay_bai_moi_nhat(quiz_client):
+    """DB đã chạy từ trước tính năng này có thể còn nhiều bài dở cùng một bộ.
+    Nút *Làm tiếp* phải nối vào bài MỚI NHẤT, không phải bài bỏ lâu nhất."""
+    set_id = _upload(quiz_client).json()["set_id"]
+    cu = quiz_client.post("/api/quiz/attempts",
+                          json={"set_id": set_id, "settings": {}}).json()
+    # Dựng lại tình huống cũ: hai bài dở song song (start_attempt nay không
+    # cho phép, nên phải chèn thẳng vào DB).
+    quiz_client.db.execute(
+        """INSERT INTO quiz_attempts (set_id, staff_id, mode, settings, total_questions,
+                                      status, started_at, saved_at)
+           SELECT set_id, staff_id, mode, settings, total_questions, 'in_progress',
+                  '2026-01-01 00:00:00', '2026-01-01 00:00:00'
+             FROM quiz_attempts WHERE id = ?""",
+        (cu["id"],))
+    quiz_client.db.commit()
+    quiz_client.db.execute(
+        "UPDATE quiz_attempts SET saved_at = '2026-12-31 23:59:59' WHERE id = ?", (cu["id"],))
+    quiz_client.db.commit()
+
+    assert len(quiz_client.get("/api/quiz/attempts/resumable").json()) == 2
+    assert quiz_client.get("/api/quiz/sets").json()[0]["resume_attempt_id"] == cu["id"]
+
+
+def test_luu_tien_do_khong_lam_ngap_nhat_ky_he_thong(quiz_client):
+    """`PATCH .../progress` chạy sau MỖI câu — nếu middleware ghi nhật ký thì
+    một bài 550 câu để lại 550 dòng và nhật ký của mọi module khác bị trôi.
+
+    Ngược lại, những thao tác cần tra soát (tải bộ lên, xoá bộ, nộp bài) vẫn
+    phải có dấu vết.
+    """
+    from backend.core.audit_middleware import _SKIP_PREFIXES
+    assert any("/api/quiz".startswith(p) or p == "/api/quiz" for p in _SKIP_PREFIXES),         "Thiếu /api/quiz trong _SKIP_PREFIXES — nhật ký sẽ ngập dòng lưu tiến độ"
+
+    set_id = _upload(quiz_client).json()["set_id"]
+    att = quiz_client.post("/api/quiz/attempts",
+                           json={"set_id": set_id, "settings": {}}).json()
+    for i in range(5):
+        quiz_client.patch(f"/api/quiz/attempts/{att['id']}/progress",
+                          json={"answers": [], "current_idx": i, "elapsed_ms": i * 1000})
+    quiz_client.post(f"/api/quiz/attempts/{att['id']}/submit", json={"answers": []})
+
+    hanh_dong = [r["action"] for r in quiz_client.db.execute(
+        "SELECT action FROM audit_logs").fetchall()]
+    assert "quiz.upload_set" in hanh_dong          # tải bộ lên: có dấu vết
+    assert "quiz.submit" in hanh_dong              # nộp bài: có dấu vết
+    assert "PATCH" not in hanh_dong                # lưu tiến độ: không ghi
 
 
 # ── Xếp hạng & lịch sử ────────────────────────────────────────────────────────

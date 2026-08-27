@@ -234,9 +234,13 @@ def put(path: str, data: dict = None) -> Any:
         raise Exception(str(e))
 
 
-def patch(path: str, data: dict = None) -> Any:
+def patch(path: str, data: dict = None, timeout: float = None) -> Any:
+    # timeout: cho lời gọi chạy trong nhịp đồng hồ (vd. lưu tiến độ bài trắc
+    # nghiệm mỗi mấy giây) — 10s mặc định của _client là quá dài ở đó, mạng
+    # chập chờn sẽ làm đồng hồ đứng hình chờ một lần lưu.
     try:
-        r = _client.patch(f"{BACKEND_URL}{path}", headers=_headers(), json=data)
+        kw = {} if timeout is None else {"timeout": timeout}
+        r = _client.patch(f"{BACKEND_URL}{path}", headers=_headers(), json=data, **kw)
         r.raise_for_status()
         try:
             return r.json()
