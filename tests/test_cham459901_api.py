@@ -132,6 +132,48 @@ class TestProcessEndpoint:
         assert r.json()["hub_partial"] is True
 
 
+class TestProcessFolderEndpoint:
+    def test_folder_with_gl02_zip_processes_successfully(self, admin_client, monkeypatch, tmp_path):
+        monkeypatch.setattr(svc, "TEMP_DIR", tmp_path / "out")
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        zip_bytes = _make_gl02_zip([_gl02_row("REF1", dr="100000")])
+        (src_dir / "GL02_20260601_1000.zip").write_bytes(zip_bytes)
+
+        r = admin_client.post(
+            "/api/cham459901/process_folder",
+            json={"folder_path": str(src_dir)},
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["unrecognized"] == []
+        assert body["hub_partial"] is False
+
+        prog = _wait_done(admin_client, body["task_token"])
+        assert prog["error"] is None
+        assert prog["result"]["hub_provided"] is False
+
+    def test_nonexistent_folder_returns_400(self, admin_client, tmp_path):
+        r = admin_client.post(
+            "/api/cham459901/process_folder",
+            json={"folder_path": str(tmp_path / "khong-ton-tai")},
+        )
+        assert r.status_code == 400
+        assert "không tồn tại" in r.json()["detail"]
+
+    def test_folder_without_zip_returns_400(self, admin_client, tmp_path):
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        (src_dir / "bao_cao.xlsx").write_bytes(b"khong-phai-hub")
+
+        r = admin_client.post(
+            "/api/cham459901/process_folder",
+            json={"folder_path": str(src_dir)},
+        )
+        assert r.status_code == 400
+        assert "GL02" in r.json()["detail"]
+
+
 class TestCancelEndpoint:
     def test_cancel_unknown_token_404(self, admin_client):
         r = admin_client.post("/api/cham459901/cancel/khong-ton-tai")
