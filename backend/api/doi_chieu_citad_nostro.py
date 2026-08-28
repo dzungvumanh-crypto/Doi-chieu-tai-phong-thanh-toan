@@ -5,10 +5,11 @@ Thanh toán) — không sửa router đó, không dùng chung bảng/buffer/sess
 
 Extension Chrome là gói RIÊNG (`extension_citad_nv/`) — KHÔNG dùng chung
 `extension_citad/` của Phòng Thanh toán (theo đúng yêu cầu nghiệp vụ: 2
-phòng không trùng Extension). Chỉ tái dùng CHUNG cơ chế "mã kết nối" (bảng
-`doi_chieu_citad_extension_tokens`, trung lập theo staff_id — xem
-`doi_chieu_citad_nostro_service.py`) nên 1 mã tạo ra vẫn dán được vào CẢ 2
-Extension nếu 1 người dùng cả 2 module.
+phòng không trùng Extension). Mã kết nối CŨNG tách RIÊNG (bảng
+`doi_chieu_citad_nostro_extension_tokens`, xem `doi_chieu_citad_nostro_service.py`)
+— trước dùng chung bảng token với Phòng Thanh toán, tạo mã ở module này
+vô tình thu hồi mã module kia của cùng 1 người, gây 403 khi dùng song song
+2 Extension. Giờ 2 phòng tạo/thu hồi độc lập hoàn toàn.
 
 Endpoint `/extension-token*`, `/extension-download`, `/extension-version`
 bên dưới khai báo RIÊNG (không gọi sang router `/api/doi-chieu-citad/...`

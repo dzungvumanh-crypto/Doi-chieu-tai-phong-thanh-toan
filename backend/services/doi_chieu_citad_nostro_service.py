@@ -1,16 +1,18 @@
 """Business logic Đối chiếu CITAD ↔ PaymentHub — Phòng QLTK Nostro, Vostro.
 
 Song song với `doi_chieu_citad_service.py` (Phòng Thanh toán), KHÔNG sửa file
-đó. Extension Chrome là gói RIÊNG (`extension_citad_nv/`, không chung với
-`extension_citad/` của Phòng Thanh toán — theo đúng yêu cầu "không trùng với
-Phòng Thanh toán") nên `build_extension_zip`/`get_extension_latest_version`
-bên dưới đóng gói thư mục riêng đó, KHÔNG import từ `doi_chieu_citad_service`.
+đó, KHÔNG import bất kỳ hàm nào từ đó nữa. Extension Chrome là gói RIÊNG
+(`extension_citad_nv/`, không chung với `extension_citad/` của Phòng Thanh
+toán) nên `build_extension_zip`/`get_extension_latest_version` đóng gói thư
+mục riêng đó.
 
-Chỉ tái dùng CHUNG duy nhất cơ chế "mã kết nối" (`resolve_extension_token`,
-`generate_extension_token`, `revoke_extension_token`,
-`get_extension_token_status`) — bảng `doi_chieu_citad_extension_tokens`
-trung lập theo staff_id, không có cột phân biệt module/gói Extension nào,
-nên 1 mã vẫn xác thực được cho cả 2 Extension riêng biệt.
+Mã kết nối Extension CŨNG đã tách RIÊNG hoàn toàn (bảng
+`doi_chieu_citad_nostro_extension_tokens`, không còn dùng chung
+`doi_chieu_citad_extension_tokens`) — bản đầu dùng chung 1 bảng theo
+staff_id, hoá ra tạo mã mới ở module này (INSERT ... ON CONFLICT(staff_id)
+DO UPDATE) sẽ ÂM THẦM THU HỒI mã module kia của cùng 1 người, gây 403 khi 1
+người dùng song song cả 2 Extension (phát hiện thực tế lúc test). Từ nay 2
+phòng tạo/thu hồi mã độc lập, không ảnh hưởng lẫn nhau.
 
 Buffer CITAD/PaymentHub và bảng session/history đều là bản sao RIÊNG (khoá
 theo `ky` — kỳ đối chiếu Từ ngày-Đến ngày, không phải `ngay` đơn — vì Phòng
@@ -24,8 +26,10 @@ chiều Đến, không có ngoại tệ, chỉ 1 nguồn HUB nên chỉ 1 cặp 
 """
 from __future__ import annotations
 
+import hashlib
 import io
 import json
+import secrets
 import threading
 import sqlite3
 import zipfile
@@ -34,16 +38,83 @@ from datetime import datetime, timedelta
 from backend.core.config import BASE_DIR
 from backend.database import _vn_now
 from backend.schemas.doi_chieu_citad_nostro import ExportIn, CONGS, CONG_LABEL, LOAI_CITAD
-# Tái dùng nguyên vẹn cơ chế mã kết nối — trung lập, không gắn riêng Phòng
-# Thanh toán (xem docstring đầu file).
-from backend.services.doi_chieu_citad_service import (  # noqa: F401
-    resolve_extension_token,
-    generate_extension_token,
-    revoke_extension_token,
-    get_extension_token_status,
-)
 
 EXTENSION_DIR = BASE_DIR / "extension_citad_nv"
+
+
+# ── Mã kết nối Extension — RIÊNG cho Phòng QLTK Nostro, Vostro (bảng
+# doi_chieu_citad_nostro_extension_tokens, tách hẳn khỏi bảng của Phòng
+# Thanh toán — xem docstring đầu file) ─────────────────────────────────────
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def generate_extension_token(db: sqlite3.Connection, staff_id: int) -> str:
+    """Tạo token mới cho staff_id, GHI ĐÈ token cũ nếu có (thu hồi tự động,
+    CHỈ ảnh hưởng module N&V — không đụng token của Phòng Thanh toán vì
+    khác bảng hoàn toàn). Trả về token PLAINTEXT — CHỈ lần này."""
+    token = secrets.token_urlsafe(32)
+    now = _vn_now()
+    db.execute(
+        """INSERT INTO doi_chieu_citad_nostro_extension_tokens (staff_id, token_hash, created_at, last_used_at)
+           VALUES (?,?,?,NULL)
+           ON CONFLICT(staff_id) DO UPDATE SET token_hash=excluded.token_hash,
+                                                created_at=excluded.created_at,
+                                                last_used_at=NULL""",
+        (staff_id, _hash_token(token), now),
+    )
+    db.commit()
+    return token
+
+
+_LAST_USED_THROTTLE_SECONDS = 300
+
+
+def resolve_extension_token(db: sqlite3.Connection, token: str) -> tuple[int, str] | None:
+    """Token hợp lệ -> (staff_id, username). Token sai/rỗng/đã bị thu hồi ->
+    None. Chỉ ghi lại last_used_at nếu đã "cũ" hơn _LAST_USED_THROTTLE_SECONDS
+    (giảm ghi DB — cùng lý do với bản gốc của Phòng Thanh toán)."""
+    if not token:
+        return None
+    row = db.execute(
+        """SELECT t.staff_id, t.last_used_at, u.username FROM doi_chieu_citad_nostro_extension_tokens t
+           JOIN user_tttt u ON u.id = t.staff_id AND u.is_active = 1
+           WHERE t.token_hash = ?""",
+        (_hash_token(token),),
+    ).fetchone()
+    if not row:
+        return None
+    now = _vn_now()
+    last_used = row["last_used_at"]
+    stale = last_used is None or (
+        now - datetime.fromisoformat(str(last_used))
+    ).total_seconds() >= _LAST_USED_THROTTLE_SECONDS
+    if stale:
+        db.execute(
+            "UPDATE doi_chieu_citad_nostro_extension_tokens SET last_used_at=? WHERE staff_id=?",
+            (now, row["staff_id"]),
+        )
+        db.commit()
+    return row["staff_id"], row["username"]
+
+
+def revoke_extension_token(db: sqlite3.Connection, staff_id: int) -> None:
+    db.execute("DELETE FROM doi_chieu_citad_nostro_extension_tokens WHERE staff_id=?", (staff_id,))
+    db.commit()
+
+
+def get_extension_token_status(db: sqlite3.Connection, staff_id: int) -> dict:
+    row = db.execute(
+        "SELECT created_at, last_used_at FROM doi_chieu_citad_nostro_extension_tokens WHERE staff_id=?",
+        (staff_id,),
+    ).fetchone()
+    if not row:
+        return {"connected": False, "created_at": None, "last_used_at": None}
+    return {
+        "connected": True,
+        "created_at": str(row["created_at"]) if row["created_at"] else None,
+        "last_used_at": str(row["last_used_at"]) if row["last_used_at"] else None,
+    }
 
 
 def build_extension_zip() -> bytes:

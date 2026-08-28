@@ -255,6 +255,20 @@ def _create_tables(db_path: str):
             data        TEXT    NOT NULL,
             created_at  DATETIME NOT NULL
         )""",
+        # Mã kết nối Extension RIÊNG của Phòng QLTK Nostro, Vostro — TÁCH HẲN
+        # khỏi doi_chieu_citad_extension_tokens (Phòng Thanh toán). Lý do: 2
+        # bảng ban đầu dùng CHUNG 1 bảng token theo staff_id — tạo mã mới ở
+        # module này (INSERT ... ON CONFLICT(staff_id) DO UPDATE) vô tình
+        # THU HỒI LUÔN mã của module kia cho cùng 1 người, gây lỗi 403 âm
+        # thầm khi 1 người dùng cả 2 Extension song song (phát hiện thực tế
+        # khi test). Từ nay 2 phòng dùng 2 mã hoàn toàn độc lập, tạo/thu hồi
+        # ở phòng nào chỉ ảnh hưởng đúng phòng đó.
+        """CREATE TABLE IF NOT EXISTS doi_chieu_citad_nostro_extension_tokens (
+            staff_id     INTEGER PRIMARY KEY REFERENCES user_tttt(id) ON DELETE CASCADE,
+            token_hash   TEXT NOT NULL UNIQUE,
+            created_at   DATETIME,
+            last_used_at DATETIME
+        )""",
         """CREATE TABLE IF NOT EXISTS doi_soat_citad_history (
             id                  INTEGER PRIMARY KEY AUTOINCREMENT,
             ngay_cham           VARCHAR(10) NOT NULL,

@@ -750,9 +750,10 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
                         with ui.column().classes("w-full gap-3 p-4"):
                             ui.label(
                                 "Extension \"CITAD - PaymentHub N&V\" — gói RIÊNG của Phòng QLTK Nostro, "
-                                "Vostro, không chung với Extension của Phòng Thanh toán. Cần tải và cài "
-                                "đặt (Load unpacked) riêng, nhưng có thể dùng lại cùng 1 mã kết nối nếu "
-                                "đã tạo cho module kia (mã xác thực theo người dùng, không theo Extension)."
+                                "Vostro, không chung với Extension của Phòng Thanh toán. Cần tải, cài đặt "
+                                "(Load unpacked) VÀ tạo mã kết nối RIÊNG cho Extension này — mã này độc lập "
+                                "hoàn toàn với mã của Phòng Thanh toán, dùng song song cả 2 Extension không "
+                                "ảnh hưởng gì đến nhau."
                             ).classes("text-sm text-gray-500")
                             token_status_label = ui.label("Đang kiểm tra...").classes("font-bold")
                             with ui.row().classes("gap-2"):
