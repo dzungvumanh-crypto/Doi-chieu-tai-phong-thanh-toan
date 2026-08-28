@@ -27,6 +27,7 @@ import asyncio
 import datetime
 import json
 import logging
+from decimal import Decimal
 from urllib.parse import quote
 
 from nicegui import ui
@@ -131,6 +132,13 @@ CURS = ['VNĐ', 'USD', 'EUR']
 FK = ['di_ih_m', 'di_ih_t', 'di_il_m', 'di_il_t', 'den_ih_m', 'den_ih_t', 'den_il_m', 'den_il_t']
 FK_LBL = ['ĐI IH Món', 'ĐI IH Tiền', 'ĐI IL Món', 'ĐI IL Tiền',
           'ĐẾN IH Món', 'ĐẾN IH Tiền', 'ĐẾN IL Món', 'ĐẾN IL Tiền']
+# ui.grid(columns=9) mặc định chia đều 9 cột (1fr mỗi cột) — cột "Tiền" VNĐ
+# dài tới 21 ký tự (vd "43,462,772,025,396.47") bị cắt cụt vì chia bằng cột
+# "Món" chỉ 5-6 ký tự (vd "22,888"). Dùng template tuỳ ý (ui.grid nhận string
+# CSS grid-template-columns) thay vì số cột thường — cột Tiền rộng gấp ~2,4
+# lần cột Món. Dùng chung ở CẢ 3 lưới (Bảng chênh lệch, build_grid,
+# build_napas_pssmdp_grid) để cột vẫn thẳng hàng giữa các bảng như thiết kế.
+_MONEY_GRID_TEMPLATE = '1fr 0.7fr 1.7fr 0.7fr 1.7fr 0.7fr 1.7fr 0.7fr 1.7fr'
 
 
 def nv(v):
@@ -154,6 +162,40 @@ def fmt(v):
     if v == int(v):
         return f'{int(v):,}'
     return f'{v:,.2f}'
+
+
+def _dec(v) -> Decimal:
+    """Chuyển sang Decimal CHÍNH XÁC TUYỆT ĐỐI, không qua số thực nhị phân.
+
+    `Decimal(v)` trên 1 float sẽ mở ra đúng dạng nhị phân của nó (vd
+    `Decimal(516.6)` ra `Decimal('516.59999999999999...')`) — phải đi qua
+    `str(v)` trước: `str()` của float là chuỗi thập phân NGẮN NHẤT vẫn ra
+    đúng float đó (thuật toán repr của Python), nên `Decimal(str(516.6))`
+    ra đúng `Decimal('516.6')`. Dùng cho MỌI phép cộng dồn tiền (`_compute_totals()`,
+    `cur_mismatch()`) — cộng nhiều số thực rồi so sánh trực tiếp có thể sinh
+    dư nhị phân (bug thật 25/08/2026: 0,0078125 dù CITAD gốc cộng đúng khớp
+    PaymentHub, khiến màn hình báo "+0,01" giả); cộng bằng Decimal thì không
+    có dư nào — kết quả đúng tuyệt đối với số liệu gốc, khớp thật ra đúng 0,
+    lệch thật dù nhỏ đến đâu vẫn hiện đúng, không đánh đổi độ chính xác lấy
+    gọn màn hình."""
+    try:
+        return Decimal(str(v)) if v not in (None, '') else Decimal(0)
+    except Exception:
+        return Decimal(0)
+
+
+def diff_exact(ci_val: Decimal, ph_val: Decimal) -> Decimal:
+    """Chênh lệch CITAD-PaymentHub cho 1 cột — `ci_val`/`ph_val` phải là
+    Decimal đã cộng dồn qua `_dec()` (xem `_compute_totals()`), nên phép trừ
+    này chính xác tuyệt đối, không cần và không được làm tròn gì thêm."""
+    return ci_val - ph_val
+
+
+def cur_mismatch(ci_cur: dict, ph_cur: dict) -> bool:
+    """Có lệch thật giữa CITAD/PaymentHub cho 1 loại tiền không — `ci_cur`/
+    `ph_cur` phải là dict giá trị Decimal (cộng dồn qua `_dec()`), nên so
+    `!=` ở đây chính xác tuyệt đối, không lẫn dư nhị phân nào."""
+    return any(ci_cur[f] != ph_cur[f] for f in FK)
 
 
 _CELL_DATA_BG = "bg-red-200"
@@ -294,28 +336,34 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
         trong `doi_chieu_citad_service.py::build_xlsx`. Dùng chung cho cả
         `recalc()` (hiện trên trang) và preview trước khi xuất Excel — luôn
         khớp nhau, tính 1 nơi duy nhất."""
-        ci = {f: 0.0 for f in FK}
+        # Cộng dồn bằng Decimal (qua _dec()) — KHÔNG cộng bằng float trực
+        # tiếp. Cộng nhiều số thực (5 Cổng × 3 loại tiền + Napas + PSS-MDP)
+        # có thể sinh dư nhị phân dù về bản chất đã khớp tuyệt đối (bug thật
+        # 25/08/2026: 0,0078125 dù CITAD gốc cộng đúng khớp PaymentHub) —
+        # Decimal cộng đúng tuyệt đối với số liệu gốc, không có dư nào phải
+        # làm tròn/che đi, nên lệch thật dù chỉ 1 xu vẫn hiện đúng.
+        ci = {f: Decimal(0) for f in FK}
         for c in CONGS:
             for u in CURS:
                 for f in FK:
-                    ci[f] += data["gD"][c][u][f]
-        ci["den_ih_m"] += data["napas"]["den_ih_m"]
-        ci["den_ih_t"] += data["napas"]["den_ih_t"]
+                    ci[f] += _dec(data["gD"][c][u][f])
+        ci["den_ih_m"] += _dec(data["napas"]["den_ih_m"])
+        ci["den_ih_t"] += _dec(data["napas"]["den_ih_t"])
         # PSS - MDP: kênh mới, cùng nguyên lý Napas (cộng vào tổng CITAD).
-        ci["den_ih_m"] += data["pssmdp"]["den_ih_m"]
-        ci["den_ih_t"] += data["pssmdp"]["den_ih_t"]
+        ci["den_ih_m"] += _dec(data["pssmdp"]["den_ih_m"])
+        ci["den_ih_t"] += _dec(data["pssmdp"]["den_ih_t"])
 
-        ph = {f: 0.0 for f in FK}
+        ph = {f: Decimal(0) for f in FK}
         for u in CURS:
             for f in FK:
-                ph[f] += data["phD"][u][f]
+                ph[f] += _dec(data["phD"][u][f])
         return ci, ph
 
     def recalc():
         ci, ph = _compute_totals()
         for f in FK:
             ci_val, ph_val = ci[f], ph[f]
-            df_val = ci_val - ph_val
+            df_val = diff_exact(ci_val, ph_val)
             diff_labels["citad"][f].text = fmt(ci_val) if ci_val else '—'
             diff_labels["phub"][f].text = fmt(ph_val) if ph_val else '—'
             if df_val == 0 and ci_val == 0 and ph_val == 0:
@@ -343,12 +391,12 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
         if lech_cur_label is not None:
             lech_curs = []
             for cur in CURS:
-                ci_cur = {f: sum(data["gD"][c][cur][f] for c in CONGS) for f in FK}
+                ci_cur = {f: sum((_dec(data["gD"][c][cur][f]) for c in CONGS), Decimal(0)) for f in FK}
                 if cur == 'VNĐ':
-                    ci_cur["den_ih_m"] += data["napas"]["den_ih_m"] + data["pssmdp"]["den_ih_m"]
-                    ci_cur["den_ih_t"] += data["napas"]["den_ih_t"] + data["pssmdp"]["den_ih_t"]
-                ph_cur = {f: data["phD"][cur][f] for f in FK}
-                if any(ci_cur[f] != ph_cur[f] for f in FK):
+                    ci_cur["den_ih_m"] += _dec(data["napas"]["den_ih_m"]) + _dec(data["pssmdp"]["den_ih_m"])
+                    ci_cur["den_ih_t"] += _dec(data["napas"]["den_ih_t"]) + _dec(data["pssmdp"]["den_ih_t"])
+                ph_cur = {f: _dec(data["phD"][cur][f]) for f in FK}
+                if cur_mismatch(ci_cur, ph_cur):
                     lech_curs.append(cur)
             if lech_curs:
                 lech_cur_label.text = f"⚠ Lệch: {', '.join(lech_curs)}"
@@ -361,7 +409,7 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
         with container:
             n_cols = len(FK) + 1
             n_rows = len(row_keys) + 1
-            with ui.grid(columns=n_cols).classes("w-full gap-0 p-4"):
+            with ui.grid(columns=_MONEY_GRID_TEMPLATE).classes("w-full gap-0 p-4"):
                 _group_header_row()
                 ui.label("Loại tiền").classes(
                     _grid_cell_cls(0, 0, n_rows, n_cols, "text-sm font-bold text-gray-500 text-center")
@@ -410,7 +458,7 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
         with container:
             n_cols = len(FK) + 1
             n_rows = 3
-            with ui.grid(columns=n_cols).classes("w-full gap-0 p-4"):
+            with ui.grid(columns=_MONEY_GRID_TEMPLATE).classes("w-full gap-0 p-4"):
                 _group_header_row()
                 ui.label("Loại tiền").classes(
                     _grid_cell_cls(0, 0, n_rows, n_cols, "text-sm font-bold text-gray-500 text-center")
@@ -1511,7 +1559,7 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
                         n_cols = len(FK) + 1
                         n_rows = 4  # 1 dòng tiêu đề + CITAD/PaymentHub/CHÊNH LỆCH
 
-                        with ui.grid(columns=n_cols).classes("w-full gap-0 p-4"):
+                        with ui.grid(columns=_MONEY_GRID_TEMPLATE).classes("w-full gap-0 p-4"):
                             _group_header_row()
                             ui.label("").classes(
                                 _grid_cell_cls(0, 0, n_rows, n_cols, "text-sm font-bold text-gray-500 text-center")

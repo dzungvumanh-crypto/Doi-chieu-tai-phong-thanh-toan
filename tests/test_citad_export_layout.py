@@ -110,7 +110,7 @@ def test_em_et_khong_lam_doi_chenh_lech():
         r = next(r for r in range(8, ws.max_row + 1) if ws.cell(r, 1).value == 'Chênh lệch')
         return [ws.cell(r, c).value for c in range(3, 11)]
 
-    assert _diff(ws0) == _diff(ws1) == [None] * 8  # 0 được ghi thành ô trống
+    assert _diff(ws0) == _diff(ws1) == [0] * 8  # cân khớp phải hiện "0", không để trống
 
 
 def test_chenh_lech_van_bat_duoc_sai_lech():
@@ -119,3 +119,35 @@ def test_chenh_lech_van_bat_duoc_sai_lech():
     ws = _sheet(_export(nm=5))  # Napas dư 2 món so với PaymentHub
     r = next(r for r in range(8, ws.max_row + 1) if ws.cell(r, 1).value == 'Chênh lệch')
     assert ws.cell(r, 7).value == 2
+
+
+def test_chenh_lech_bo_du_thap_phan_float_khi_thuc_su_can_khop():
+    """Bug thật 25/08/2026: ci/ph cộng dồn bằng float qua nhiều dòng (Cổng x
+    Loại tiền) nên dù về bản chất đã khớp, phép trừ có thể ra một số cực nhỏ
+    khác 0 (kiểu 0.1 + 0.2 - 0.3 == 5.5e-17 chứ không phải 0 tuyệt đối) — file
+    thật từng hiện "0.0078125" ở một ô lẽ ra phải là "0". Dựng lại đúng kiểu
+    dư float cổ điển: cộng 0.1 và 0.2 ở hai Cổng khác nhau rồi so với PaymentHub
+    ghi thẳng 0.3 — về bản chất bằng nhau, không được hiện lệch giả."""
+    gD = {str(c): {u: {f: 0.0 for f in FK} for u in CURS} for c in CONGS}
+    gD['1']['VNĐ']['den_ih_t'] = 0.1
+    gD['9']['VNĐ']['den_ih_t'] = 0.2
+    phD = {u: {f: 0.0 for f in FK} for u in CURS}
+    phD['VNĐ']['den_ih_t'] = 0.3
+    ws = _sheet(_export(gD=gD, phD=phD, nm=0, nt=0, sm=0, st=0))
+    r = next(r for r in range(8, ws.max_row + 1) if ws.cell(r, 1).value == 'Chênh lệch')
+    assert ws.cell(r, 8).value == 0  # cột 'den_ih_t' = 3 + index 5
+
+
+def test_chenh_lech_khong_che_mat_lech_that_du_nho_hon_1_don_vi():
+    """Đối chứng bắt buộc của test trên: không được lấy làm tròn số nguyên
+    làm cách sửa (như bản đầu tiên đã làm) — cách đó sẽ CHE MẤT lệch thật
+    nếu nó nhỏ hơn 1 đơn vị (đúng ca tự phát hiện khi tự nhập tay dữ liệu
+    test 26/08/2026: thiếu 0,30 USD, round() nuốt mất không hiện). Bản sửa
+    bằng Decimal không được phép nuốt trường hợp này."""
+    gD = {str(c): {u: {f: 0.0 for f in FK} for u in CURS} for c in CONGS}
+    gD['1']['VNĐ']['den_ih_t'] = 100
+    phD = {u: {f: 0.0 for f in FK} for u in CURS}
+    phD['VNĐ']['den_ih_t'] = 100.3  # lệch thật 0,3 — nhỏ hơn 1 đơn vị
+    ws = _sheet(_export(gD=gD, phD=phD, nm=0, nt=0, sm=0, st=0))
+    r = next(r for r in range(8, ws.max_row + 1) if ws.cell(r, 1).value == 'Chênh lệch')
+    assert abs(ws.cell(r, 8).value - (-0.3)) < 1e-9
