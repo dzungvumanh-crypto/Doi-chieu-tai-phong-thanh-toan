@@ -93,3 +93,16 @@ class TestBatBienSoHoc:
         assert len(huy_trong_ngay) == 0
         assert len(huy_khac_ngay) == 0
         assert len(con_lai) == 0
+
+    def test_cramount_ngan_nghin_khong_lam_sai_nhom_huy(self):
+        """Regression: CRAMOUNT dạng chuỗi ngăn-nghìn ('180.000'/'-180.000') phải
+        vẫn nhóm đúng thành huỷ-trong-ngày, không bị to_numeric() cắt sai (180)
+        khiến tổng nhóm != 0."""
+        df = pd.DataFrame([
+            _row('1240', '999', '180.000', 'Normal'),
+            _row('1240', '999', '-180.000', 'Cancel'),
+        ])
+        huy_trong_ngay, huy_khac_ngay, con_lai = tach_dien_huy(df)
+        assert len(huy_trong_ngay) == 2
+        assert len(huy_khac_ngay) == 0
+        assert len(con_lai) == 0

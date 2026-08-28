@@ -116,6 +116,35 @@ class TestGl02PhanLoaiDiDen:
         _, npo_den = xu_ly_gl02(zpath)
         assert npo_den.loc[0, 'KEY_DEN'] == '6320' + '123456789' + '400000'
 
+    def test_cramount_ngan_nghin_khong_bi_cat_khi_build_key(self, tmp_path):
+        """Regression: '180.000' phải ra 180000 khi build KEY_DI, không bị
+        to_numeric() cắt còn 180 (xem backend/services/ach/so_tien.py)."""
+        zpath = _write_gl02_zip(tmp_path, [
+            _gl02_row(reference=_REF_NORMAL, cramount='180.000', dramount='0'),
+        ])
+        npo_di, _ = xu_ly_gl02(zpath)
+        assert npo_di.loc[0, 'CRAMOUNT'] == 180_000
+        assert npo_di.loc[0, 'KEY_DI'].endswith('180000')
+
+    def test_dramount_ngan_nghin_phay_khong_bi_mat_ve_0(self, tmp_path):
+        """'400,000' (dấu phẩy ngăn nghìn) phải ra 400000, không bị to_numeric()
+        coerce về 0 (chuỗi có dấu phẩy không phải float hợp lệ)."""
+        zpath = _write_gl02_zip(tmp_path, [
+            _gl02_row(reference=_REF_NORMAL, cramount='0', dramount='400,000'),
+        ])
+        _, npo_den = xu_ly_gl02(zpath)
+        assert npo_den.loc[0, 'DRAMOUNT'] == 400_000
+
+    def test_cramount_khong_hop_le_raise(self, tmp_path):
+        zpath = _write_gl02_zip(tmp_path, [
+            _gl02_row(reference=_REF_NORMAL, cramount='1.5', dramount='0'),
+        ])
+        try:
+            xu_ly_gl02(zpath)
+            assert False, "Phải raise ValueError khi CRAMOUNT không đúng định dạng"
+        except ValueError as e:
+            assert 'không đúng định dạng' in str(e)
+
 
 class TestGl02LocLocacCustomer:
     def test_loai_dong_sai_locac(self, tmp_path):
@@ -241,3 +270,13 @@ class TestMisDenKeyDenHub:
         df = xu_ly_mis_den([zpath], _SID, _NGAY)
         assert len(df) == 0
         assert 'KEY_DEN_HUB' in df.columns
+
+    def test_key_den_hub_so_tien_ngan_nghin_khong_bi_cat(self, tmp_path):
+        """Regression: '180.000' phải ra 180000 khi build KEY_DEN_HUB, không bị
+        to_numeric() cắt còn 180."""
+        zpath = _write_mis_den_zip(tmp_path, [
+            _mis_den_row(chi_nhanh='6320', trace="'0000123456", so_tien='180.000', session=_SID),
+        ])
+        df = xu_ly_mis_den([zpath], _SID, _NGAY)
+        assert df.loc[0, 'SO_TIEN'] == 180_000
+        assert df.loc[0, 'KEY_DEN_HUB'].endswith('180000')

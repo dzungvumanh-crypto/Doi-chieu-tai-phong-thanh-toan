@@ -11,6 +11,7 @@ mục 36-37.
 Chạy: python -m pytest tests/test_ach_gw_reading.py -v
 """
 
+import openpyxl
 import pandas as pd
 import pytest
 
@@ -19,7 +20,21 @@ from backend.services.ach.b3_xu_ly_gw import (
     _gop_gw_goc,
     _loai_trung_msgref,
     _phan_loai_sheet_theo_session,
+    xu_ly_gw,
 )
+
+_SID = '16282'
+
+
+def _make_gw_xlsx(tmp_path, sttlmamt: str, name: str = 'di GW 11.07.xlsx'):
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = 'đi GW 11.07'
+    ws.append(['BRCD', 'STTLMAMT', 'MSGREF', 'SessionId', 'PrcFlg'])
+    ws.append(['1000', sttlmamt, 'MSGREF1', _SID, 'Lệnh Hoàn thành'])
+    path = tmp_path / name
+    wb.save(str(path))
+    return str(path)
 
 
 def _sheet(session_ids, msgrefs=None, **extra_cols):
@@ -161,3 +176,26 @@ class TestLoaiTrungMsgref:
         df = pd.DataFrame({'MSGREF': []})
         ket_qua = _loai_trung_msgref(df, lambda *_: None)
         assert len(ket_qua) == 0
+
+
+# ── xu_ly_gw() — STTLMAMT ngăn-nghìn (dấu chấm/phẩy) ─────────────────────────
+
+class TestXuLyGwSoTien:
+    def test_sttlmamt_ngan_nghin_cham_khong_bi_cat(self, tmp_path):
+        """'1.000.000 VND' phải ra 1000000, không bị to_numeric() trần cắt còn 1."""
+        zpath = _make_gw_xlsx(tmp_path, sttlmamt='1.000.000 VND')
+        dict_gw, df, _ = xu_ly_gw(zpath, _SID)
+        assert df.loc[0, 'STTLMAMT'] == 1_000_000
+        assert df.loc[0, 'KEY_GW'] == '1000' + '1000000'
+        assert dict_gw == {'10001000000': 1}
+
+    def test_sttlmamt_ngan_nghin_phay_khong_mat_ve_0(self, tmp_path):
+        """'1,000,000' (dấu phẩy) không được coerce về 0."""
+        zpath = _make_gw_xlsx(tmp_path, sttlmamt='1,000,000 VND')
+        _, df, _ = xu_ly_gw(zpath, _SID)
+        assert df.loc[0, 'STTLMAMT'] == 1_000_000
+
+    def test_sttlmamt_khong_hop_le_raise(self, tmp_path):
+        zpath = _make_gw_xlsx(tmp_path, sttlmamt='1.5 VND')
+        with pytest.raises(ValueError, match='không đúng định dạng'):
+            xu_ly_gw(zpath, _SID)

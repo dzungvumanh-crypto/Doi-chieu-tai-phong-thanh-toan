@@ -1,5 +1,7 @@
 import pandas as pd
 
+from .so_tien import doc_so_tien
+
 
 def tach_dien_huy(df_npo_di_thua: pd.DataFrame, log_callback=None):
     """Điểm 3 (2026-07-31, rà soát + sign-off ở Implementation-notes.html mục 57/60)
@@ -34,7 +36,7 @@ def tach_dien_huy(df_npo_di_thua: pd.DataFrame, log_callback=None):
     _log = log_callback or print
 
     df = df_npo_di_thua.copy()
-    df['CRAMOUNT'] = pd.to_numeric(df['CRAMOUNT'], errors='coerce').fillna(0).astype('int64')
+    df['CRAMOUNT'] = doc_so_tien(df['CRAMOUNT'], nguon='NPO_DI_THUA', ten_cot='CRAMOUNT')
     df['_CHECK_TRUNG'] = df['TRBRCD'].astype(str).str.strip() + df['SO_TRACE'].astype(str)
 
     tong_nhom     = df.groupby('_CHECK_TRUNG')['CRAMOUNT'].transform('sum')

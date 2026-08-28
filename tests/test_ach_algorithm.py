@@ -135,6 +135,19 @@ class TestMisDiBuoc2SessionKhacNull:
         df_mis_di = _mis_di([_row('R1', '1000', 'SCNL', '111', session='99999')])
         assert len(df_mis_di) == 0
 
+    def test_so_tien_ngan_nghin_cham_khong_bi_cat_trong_key_hub(self):
+        """Regression: '180.000' phải ra 180000 khi build KEY_HUB, không bị
+        to_numeric() trần cắt còn 180 (xem backend/services/ach/so_tien.py)."""
+        df_mis_di = _mis_di([
+            _row('R1', '1000', 'SCNL', '111', so_tien='180.000', session=SID),
+        ])
+        assert df_mis_di.iloc[0]['SO_TIEN'] == 180_000
+        assert df_mis_di.iloc[0]['KEY_HUB'] == '1000111180000'
+
+    def test_so_tien_khong_hop_le_raise(self):
+        with pytest.raises(ValueError, match='không đúng định dạng'):
+            _mis_di([_row('R1', '1000', 'SCNL', '111', so_tien='1.5', session=SID)])
+
 
 # ── Mục 2 bước 2 — SESSION=NULL: BR mới 2026-07-23 (tra GW gốc, bỏ khung giờ) ───
 
