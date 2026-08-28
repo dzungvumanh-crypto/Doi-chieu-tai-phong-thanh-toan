@@ -533,6 +533,15 @@ def _parse_ipcas_text(text, filename, ngay_cham):
             KEEP_DI = {'SCNL', 'WFPG', 'SBFL', 'RFED', 'SDEB', 'SBSC', 'RTSC', 'ERPO', 'CALD'}
             if tt not in KEEP_DI:
                 continue
+            # Yêu cầu Phòng Thanh toán 27/08/2026: SCNL báo lệnh đã sang kênh
+            # thành công, nhưng NGAY_KENH_TRA vẫn trống nghĩa là kênh CHƯA
+            # THỰC SỰ xác nhận ngày trả — giữ nguyên coi là khớp (VALID_DI ở
+            # reconcile.py) sẽ khớp "khống" với CITAD dù chưa có xác nhận
+            # thật. Bỏ khỏi kết quả IPCAS (không chỉ khỏi diện SCNL=khớp) để
+            # lệnh CITAD tương ứng (nếu có) rơi đúng vào "Chỉ CITAD" — cần
+            # người dùng tự xác minh, không tự động khớp.
+            if has_nkt and tt == 'SCNL' and not nkt:
+                continue
             if ngay_cham:
                 if has_nkt:
                     if nkt and nkt != ngay_cham:

@@ -556,3 +556,40 @@ def test_parse_ipcas_khong_con_loc_bo_dong_trung():
     )
     rows = parsers._parse_ipcas_text(text, "test.csv", None)
     assert len(rows) == 2
+
+
+def test_parse_ipcas_scnl_khong_co_ngay_kenh_tra_bi_loai():
+    """Yêu cầu Phòng Thanh toán 27/08/2026: SCNL báo đã sang kênh thành công
+    nhưng NGAY_KENH_TRA vẫn trống — kênh CHƯA THỰC SỰ xác nhận, không được
+    coi là khớp IPCAS thật nữa. Dòng này phải bị loại khỏi kết quả (để lệnh
+    CITAD tương ứng, nếu có, rơi vào "Chỉ CITAD" thay vì khớp khống)."""
+    text = (
+        "NGAY_GIAO_DICH,CHI_NHANH,TXID,SO_TIEN,TRACE,TRANG_THAI_LENH,MSGREF,KENH_THANH_TOAN,NH_NHAN,NGAY_KENH_TRA\n"
+        "19/08/2026,1000,900123,50000,TR001,SCNL,MSG900123,IL,NH TEST,\n"
+    )
+    rows = parsers._parse_ipcas_text(text, "test.csv", None)
+    assert rows == []
+
+
+def test_parse_ipcas_scnl_co_ngay_kenh_tra_van_giu():
+    """Đối chứng: SCNL có đủ NGAY_KENH_TRA vẫn phải giữ nguyên như cũ (chỉ
+    loại đúng ca thiếu NGAY_KENH_TRA, không phải loại hết mọi dòng SCNL)."""
+    text = (
+        "NGAY_GIAO_DICH,CHI_NHANH,TXID,SO_TIEN,TRACE,TRANG_THAI_LENH,MSGREF,KENH_THANH_TOAN,NH_NHAN,NGAY_KENH_TRA\n"
+        "19/08/2026,1000,900124,50000,TR002,SCNL,MSG900124,IL,NH TEST,19/08/2026\n"
+    )
+    rows = parsers._parse_ipcas_text(text, "test.csv", None)
+    assert len(rows) == 1
+    assert rows[0]['msgref'] == 'MSG900124'
+
+
+def test_parse_ipcas_khong_co_cot_ngay_kenh_tra_khong_bi_loai_nham():
+    """File KHÔNG có cột NGAY_KENH_TRA (has_nkt=False) — không đủ căn cứ để
+    kết luận "trống", không được áp quy tắc loại SCNL mới ở trên (khác hẳn
+    trường hợp có cột nhưng để trống)."""
+    text = (
+        "NGAY_GIAO_DICH,CHI_NHANH,TXID,SO_TIEN,TRACE,TRANG_THAI_LENH,MSGREF,KENH_THANH_TOAN,NH_NHAN\n"
+        "19/08/2026,1000,900125,50000,TR003,SCNL,MSG900125,IL,NH TEST\n"
+    )
+    rows = parsers._parse_ipcas_text(text, "test.csv", None)
+    assert len(rows) == 1
