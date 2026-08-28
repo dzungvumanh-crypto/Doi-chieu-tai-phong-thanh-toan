@@ -11282,7 +11282,138 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-27</footer>
+  <!-- 109 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">109</span>
+      <span class="card-title">Review PR#63 (Chấm 459901, khanhbq693): PR thay đè bản cũ hơn, xoá mất
+      toàn bộ vá bảo mật upload của develop — đã sửa bằng cách ghép lại, không vá từng chỗ</span>
+      <span class="badge badge-done">đã sửa · 2026-08-28</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Vì sao ghi lại: bài học "PR thay nguyên file" xoá mất việc đã merge</div>
+      <p>PR#63 không sửa trên <code>develop</code> mà thay nguyên <code>backend/api/cham459901.py</code> +
+      <code>backend/services/cham459901_service.py</code> bằng một nhánh code cũ hơn (rẽ ra từ lịch sử
+      <code>Cham_ILO1000</code>, viết trước khi <code>develop</code> được vá bảo mật upload ở PR#62).
+      Hậu quả: 22/129 test fail, và PR tái tạo hẳn 6 vấn đề mà <code>develop</code> đã vá xong.</p>
+
+      <table>
+        <tr><th>Vấn đề</th><th>develop có gì</th><th>PR#63 làm mất</th></tr>
+        <tr><td>Mật khẩu ZIP</td><td><code>zip_password()</code> đọc từ <code>.env</code></td>
+            <td>Viết cứng mật khẩu thật vào <code>ZIP_PASSWORD</code> — lọt vào git history</td></tr>
+        <tr><td>Đường dẫn <code>token</code></td><td><code>safe_filename(token)</code> trước khi ghép path</td>
+            <td>Ghép thẳng — <code>DELETE /result/..%2Fx</code> xoá được thư mục ngoài <code>TEMP_DIR</code></td></tr>
+        <tr><td>Chạy nền</td><td><code>threading.Thread</code></td>
+            <td><code>BackgroundTasks</code> — treo threadpool 40 token dùng chung của anyio</td></tr>
+        <tr><td>Nhận Excel rời + gộp nhiều ZIP</td><td>Có (PR#62, PR nhiều-zip trước đó)</td>
+            <td>Biến mất — <code>_doc_excel/_doc_zip</code> theo luồng bị thay bằng <code>zf.read()</code>
+            nạp cả file vào RAM</td></tr>
+        <tr><td>Chọn trùng file</td><td>Chặn cứng, báo lỗi ngay</td>
+            <td>Lặng lẽ "giữ file cuối cùng"</td></tr>
+        <tr><td>Dọn rác 23h</td><td><code>_cleanup_old_results(cutoff)</code></td>
+            <td>Bỏ tham số <code>cutoff</code> — <code>temp_cleanup_service.py</code> gọi
+            <code>ham(cutoff)</code> vẫn y nguyên → <code>TypeError</code> bị <code>except Exception</code>
+            nuốt, lịch dọn 23h không bao giờ chạy cho module này</td></tr>
+      </table>
+
+      <div class="caution">
+      <p><b>Đã tự kiểm chứng độc lập trước khi tin review</b> (đúng nguyên tắc "phản biện trước, ủng hộ
+      sau"): fetch nhánh PR, đọc trực tiếp code, và chạy test suite thật (không chỉ đọc lời review) —
+      22 fail đúng như review nêu, cùng bộ test trên <code>develop</code> xanh 100%. Cả 6 điểm trong bảng
+      trên đều xác nhận bằng đọc code, không suy đoán từ mô tả.</p>
+      </div>
+
+      <div class="note"><b>Cách sửa — ghép, không vá từng dòng.</b> Dựng lại nhánh trên
+      <code>origin/develop</code> mới nhất: giữ nguyên toàn bộ khung an toàn của <code>develop</code>
+      (I/O theo đường dẫn, <code>zip_password()</code>, <code>threading.Thread</code>,
+      <code>safe_filename</code>, chặn trùng file, <code>_cleanup_old_results(cutoff)</code>), ghép thêm
+      đúng phần giá trị thật của PR#63 (phân loại 7 nhóm, đọc HUB đi/đến, ghép file tồn tháng trước,
+      route <code>/process_folder</code>). <code>classify_upload_filename()</code> đổi phạm vi: chỉ còn
+      nhận diện 3 loại phụ trợ (HUB đi/đến, tồn) theo tên — file GL02 chính không cần đặt tên theo mẫu,
+      nhận theo đuôi file và nhiều file vẫn được GỘP trước khi phân loại như <code>develop</code> đang làm
+      (khác PR#63: PR coi 2 file zip khác tên là "trùng loại, chỉ dùng file cuối").</p></div>
+
+      <div class="note"><b><code>/process_folder</code> — vá RAM/DoS ở commit này.</b> Lọc tên trước,
+      chỉ đọc byte file khớp mẫu GL02/HUB/tồn, thay vì đọc byte MỌI file trong thư mục rồi mới lọc
+      (thư mục nặng → hết RAM). Phần <i>giới hạn thư mục gốc</i> ban đầu quyết định không làm — xem
+      <b>card 110</b>, quyết định đó đã bị đảo lại trước khi merge.</div>
+
+      <div class="caution"><p><b>⚠️ Cần đổi mật khẩu ZIP thật.</b> Mật khẩu viết cứng trong
+      <code>ZIP_PASSWORD</code> đã lọt vào git history ở cả 2 nhánh (<code>Cham_ILO1000</code> và <code>cham459901/module-moi</code>) trước khi
+      commit này. Đổi source ở đầu chuỗi (nơi tạo file GL02) rồi cập nhật lại
+      <code>DOI_CHIEU_ZIP_PASSWORD</code> trong <code>.env</code> mọi máy — việc này ngoài phạm vi code,
+      cần Business Owner quyết định và thực hiện.</p></div>
+
+      <div class="note">129 test pass (127 cũ khôi phục xanh + thêm 5 test mới: chặn path traversal
+      <code>delete_result</code>/<code>download_result</code>, <code>process_folder</code> không đọc byte
+      file lạ, gộp nhiều ZIP qua <code>process_folder</code>, và khoá lại chữ ký
+      <code>_cleanup_old_results(cutoff)</code> đúng như <code>temp_cleanup_service.py</code> gọi). Chạy
+      toàn bộ <code>tests/</code> xác nhận không lan sang module khác.</div>
+    </div>
+  </div>
+
+  <!-- 110 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">110</span>
+      <span class="card-title">Đảo lại quyết định của card 109: <code>/process_folder</code> phải có
+      thư mục gốc — "chỉ staff nội bộ dùng" không phải một hàng rào</span>
+      <span class="badge badge-done">đã sửa · 2026-08-28</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Vì sao đảo lại</div>
+      <p>Card 109 kết luận giữ tự do chọn thư mục vì endpoint đã sau RBAC. Lập luận đó trả lời câu
+      "ai gọi được?" nhưng không trả lời câu "gọi được thì đọc được tới đâu?". Với đường dẫn tự do,
+      route làm được hai việc không nằm trong ý định của nó:</p>
+      <table>
+        <tr><th>Việc ngoài ý định</th><th>Cơ chế</th></tr>
+        <tr><td>Dò cây thư mục của máy chủ</td>
+            <td>"Thư mục không tồn tại" và "không tìm thấy file GL02" là <b>hai câu khác nhau</b> —
+            đủ để hỏi từng đường dẫn một và biết chỗ nào có thật.</td></tr>
+        <tr><td>Đọc tên file trong thư mục bất kỳ</td>
+            <td>Thư mục chỉ cần tình cờ có <b>một</b> file <code>.zip</code>/<code>.xlsx</code> là
+            lượt chạy được chấp nhận, và danh sách <code>unrecognized</code> trả về <b>tên toàn bộ
+            file còn lại</b> trong đó.</td></tr>
+      </table>
+      <p>Cả hai đều rẻ để chặn, nên "chấp nhận vì người dùng nội bộ" là đổi một hàng rào lấy con số
+      không.</p>
+
+      <div class="label">Cách chặn</div>
+      <table>
+        <tr><th>Quyết định</th><th>Lý do</th></tr>
+        <tr><td>Danh sách thư mục gốc trong <code>.env</code>
+            (<code>CHAM459901_FOLDER_ROOTS</code>, ngăn bằng <code>;</code>)</td>
+            <td>Cùng kiểu với <code>zip_password()</code>: giá trị phụ thuộc từng máy, không hằng số
+            hoá được trong mã.</td></tr>
+        <tr><td><b>Kiểm phạm vi TRƯỚC khi kiểm tồn tại</b></td>
+            <td>Thứ tự ngược lại giữ nguyên máy dò thư mục: chỉ cần hai câu lỗi khác nhau là lộ.
+            Nay ngoài phạm vi thì thư mục có thật và không có thật trả về <b>cùng một câu</b> —
+            có test khoá lại đúng điều này.</td></tr>
+        <tr><td><code>.resolve()</code> rồi mới so</td>
+            <td>Bắt luôn <code>gốc_hợp_lệ/../../Windows</code> và symlink trỏ ra ngoài.</td></tr>
+        <tr><td>Fail-closed, <b>không</b> mặc định về <code>BASE_DIR</code></td>
+            <td>Mặc định "cho tạm một chỗ" là hàng rào mà người vận hành không biết mình đang dựa
+            vào cho tới lúc nó không đủ. Đổi lại: chưa khai biến thì nút <i>Chọn thư mục server</i>
+            báo lỗi — nên câu lỗi phải nói thẳng cần thêm dòng gì vào <code>.env</code>.</td></tr>
+      </table>
+
+      <div class="note"><b>Biết mà không chặn:</b> symlink <i>nằm trong</i> thư mục hợp lệ trỏ ra
+      ngoài vẫn đọc được. Ai đặt được symlink vào thư mục đó thì cũng đặt được file thật vào đó —
+      hàng rào này không phải chỗ giải quyết chuyện ấy.</div>
+
+      <div class="note"><b>Cũng ở commit này:</b> gỡ mật khẩu ZIP thật ra khỏi chính file tài liệu
+      này. Card 109 chép nguyên văn nó vào 2 chỗ để minh hoạ — nhưng như thế là sau khi merge,
+      <code>develop</code> lại có secret dạng chữ thường trong cây làm việc. Nói "mật khẩu viết cứng
+      trong <code>ZIP_PASSWORD</code>" là đủ nghĩa. Việc này <b>không</b> thu hồi được thứ đã nằm
+      trong git history — cảnh báo phải đổi mật khẩu ở đầu nguồn vẫn nguyên giá trị.</div>
+
+      <div class="note">926 test pass (921 + 5 test mới cho phạm vi thư mục: ngoài phạm vi bị 403 và
+      không lộ tên file, thư mục có thật/không có thật trả lời giống nhau, đi ngược ra khỏi gốc bị
+      chặn, thư mục con của gốc vẫn chạy, chưa cấu hình thì khoá và nói rõ phải làm gì).</div>
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-28</footer>
 </div>
 </body>
 </html>
