@@ -51,7 +51,90 @@
 <div class="page">
 
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
-  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-27</p>
+  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-28</p>
+
+  <!-- Z10 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">Z10</span>
+      <span class="card-title">PR#64 — Mã kết nối Extension: 2 module dùng chung 1 bảng khoá theo staff_id</span>
+      <span class="badge badge-ok">Đã sửa — đã merge (squash a4d1ca7)</span>
+    </div>
+    <div class="card-body">
+
+      <p>Nối tiếp <b>Z9</b>. Khi nhân bản module CITAD cho Phòng QLTK Nostro, Vostro, thứ duy nhất
+        được <i>cố ý</i> dùng chung là cơ chế mã kết nối — lập luận lúc đó ghi thẳng trong docstring:
+        bảng <code>doi_chieu_citad_extension_tokens</code> <i>"trung lập theo <code>staff_id</code>,
+        không có cột phân biệt module nào, nên 1 mã vẫn xác thực được cho cả 2 Extension"</i>. Lập luận
+        đó đúng về phần <b>đọc</b> và sai về phần <b>ghi</b>.</p>
+
+      <div class="label"><span class="pill pill-red">Gốc rễ</span> Khoá chính là <code>staff_id</code>, nên "cấp mã" cũng là "thu hồi mã"</div>
+      <pre>INSERT INTO doi_chieu_citad_extension_tokens (staff_id, token_hash, ...)
+VALUES (?,?,...)
+ON CONFLICT(staff_id) DO UPDATE SET token_hash=excluded.token_hash, ...</pre>
+      <p>Một người = một dòng = <b>một mã</b>. Bấm <i>Tạo mã kết nối mới</i> ở module N&amp;V ghi đè
+        đúng cái dòng mà Extension Phòng Thanh toán đang dùng. Người dùng thấy: tiện ích bên kia đột
+        nhiên <b>403</b>; tạo lại bên đó thì bên này chết — vòng lặp không lối ra, và
+        <b>không màn hình nào báo gì</b> vì với mỗi module riêng lẻ mọi thứ đều "đúng".</p>
+
+      <table>
+        <tr><th>Tầng</th><th>Dùng chung có sao không?</th></tr>
+        <tr><td>Đọc (<code>resolve</code>)</td><td>Không sao — tra theo <code>token_hash</code>, mã nào cũng ra đúng người</td></tr>
+        <tr><td>Ghi (<code>generate</code> / <code>revoke</code>)</td><td><b>Hỏng</b> — <code>staff_id</code> là khoá chính, ghi là đè, đè là thu hồi</td></tr>
+      </table>
+
+      <div class="note">Bài học: một bảng "trung lập" chỉ trung lập ở <b>chiều đọc</b>. Muốn biết chia sẻ
+        được hay không, phải hỏi <b>khoá chính là gì</b> và <b>ai ghi vào nó</b> — không phải hỏi bảng
+        có cột phân biệt module hay không.</div>
+
+      <div class="label">Cách sửa và những lựa chọn đã bỏ</div>
+      <table>
+        <tr><th>Phương án</th><th>Vì sao chọn / bỏ</th></tr>
+        <tr><td><b>Bảng riêng <code>doi_chieu_citad_nostro_extension_tokens</code></b> (đã chọn)</td>
+            <td>Không đụng một dòng nào của Phòng Thanh toán — module đang chạy thật, rủi ro bằng 0.
+                Cái giá: 4 hàm token bị nhân đôi gần như y hệt</td></tr>
+        <tr><td>Đổi khoá chính bảng chung thành <code>(staff_id, module)</code></td>
+            <td>Bỏ. Không nhân đôi code, nhưng phải sửa <code>doi_chieu_citad_service.py</code> đang
+                phục vụ Phòng Thanh toán và phải rebuild bảng (SQLite không đổi khoá chính tại chỗ) —
+                đổi rủi ro lấy chút gọn gàng, không đáng</td></tr>
+      </table>
+
+      <div class="caution"><b>Không có bước chuyển mã cũ sang bảng mới — cố ý.</b> Dòng còn lại trong
+        bảng chung nay thuộc về Phòng Thanh toán; nó là mã của module nào là chuyện <b>không suy ra
+        được</b> (ai tạo sau cùng thì là của người đó). Đoán bừa rồi chép sang sẽ cấp cho N&amp;V một
+        mã mà chủ nhân tưởng đã bị thu hồi. Chấp nhận: sau khi cập nhật, người dùng N&amp;V phải tự tạo
+        mã mới một lần — tab "Kết nối Extension" hiện "Chưa kết nối" nên tự phát hiện được.</div>
+
+      <div class="label">Đã kiểm chứng bằng tay trước khi merge (DB scratch)</div>
+      <table>
+        <tr><th>Kiểm tra</th><th>Kết quả</th></tr>
+        <tr><td>Cùng 1 <code>staff_id</code> tạo mã ở cả 2 module, resolve lại cả 2</td><td>Cả 2 đều đúng — lỗi cũ đã hết</td></tr>
+        <tr><td>Mã module này đem resolve ở module kia</td><td><code>None</code> — đúng ý đồ, 2 mã độc lập</td></tr>
+        <tr><td><code>revoke</code> bên N&amp;V</td><td>Trạng thái bên Phòng Thanh toán không đổi</td></tr>
+        <tr><td>Xoá user → <code>ON DELETE CASCADE</code></td><td>Bảng mới sạch</td></tr>
+        <tr><td>Nút "tự đẩy mã vào Extension"</td><td>2 trang dùng 2 <code>_EXTENSION_ID</code> khác nhau (sinh từ 2 <code>key</code> trong manifest) → không bắn nhầm gói</td></tr>
+      </table>
+
+      <div class="label">Migration: vì sao chỉ thêm vào <code>_create_tables()</code> là đủ</div>
+      <p><code>_create_tables()</code> được gọi <b>vô điều kiện mỗi lần khởi động</b>
+        (<code>backend/main.py</code>, lifespan) và toàn bộ câu lệnh là
+        <code>CREATE TABLE IF NOT EXISTS</code> — DB đang chạy sẽ có bảng mới ngay lần restart đầu.
+        Bảng token của Phòng Thanh toán cũng chỉ khai ở đúng chỗ đó, nên PR này <b>nhất quán</b> với
+        tiền lệ.</p>
+      <div class="note">Trong <code>migrations.py</code> có vài comment ghi <i>"DB đã cài từ trước không
+        chạy lại <code>_create_tables</code> cho bảng mới thêm sau này"</i> (chỗ Quizz, chỗ
+        <code>ttqt_branches</code>) rồi chép lại DDL sang <code>_ensure_indexes()</code>. <b>Câu đó
+        không đúng</b> — nó có từ trước, vô hại vì DDL idempotent, nhưng đừng lấy nó làm căn cứ bắt
+        PR sau phải chép DDL hai lần.</div>
+
+      <div class="label"><span class="pill pill-gray">Nợ còn lại</span> Phần token không có test nào canh</div>
+      <p>19 test của <code>tests/test_doi_chieu_citad_nostro.py</code> pass, nhưng cả 19 đều là test
+        công thức đối chiếu / lọc ngày — <b>không test nào gọi <code>generate_extension_token</code></b>,
+        cả trước lẫn sau PR. Đúng cái lỗi vừa sửa vẫn chưa có gì chặn tái diễn. Test cần có: cùng 1
+        <code>staff_id</code> tạo mã ở cả 2 module, khẳng định cả 2 vẫn resolve được.</p>
+
+    </div>
+  </div>
 
   <!-- E460 -->
   <div class="card">

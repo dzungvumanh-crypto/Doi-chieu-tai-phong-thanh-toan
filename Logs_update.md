@@ -4,6 +4,13 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 28/08/2026 Đối chiếu CITAD - PaymentHub (Phòng QLTK Nostro, Vostro) - **Dùng song song 2 tiện ích không còn đá nhau**
+    + **Lỗi gặp phải**: ai dùng cả tiện ích của *Phòng Thanh toán* lẫn tiện ích của *Phòng QLTK Nostro, Vostro* thì **chỉ một bên chạy được**, bên còn lại báo lỗi không có quyền. Tạo lại mã bên này thì bên kia hỏng, và ngược lại — quay vòng mãi không thoát
+    + **Nguyên nhân**: hai tiện ích tuy là hai gói riêng nhưng lại **dùng chung một ô đựng mã kết nối** theo từng người. Mã mới tạo ra ghi đè lên mã cũ, nên bấm *Tạo mã kết nối mới* ở màn hình này là **tự thu hồi mã của màn hình kia** — không có thông báo nào báo cho biết
+    + **Nay mỗi phòng có ô đựng mã riêng.** Tạo hay thu hồi mã ở phòng nào chỉ ảnh hưởng đúng phòng đó. Dùng song song cả 2 tiện ích hoàn toàn bình thường
+    + ⚠️ **Việc cần làm sau khi cập nhật**: ai đang dùng tiện ích *CITAD - PaymentHub N&V* phải vào màn hình đó, tab **Kết nối Extension**, bấm **Tạo mã kết nối mới** một lần nữa. Mã cũ không tự chuyển sang được — tab sẽ hiện "Chưa kết nối" cho dễ nhận ra. Mã của Phòng Thanh toán **không phải làm gì**, vẫn dùng như cũ
+    + Có thêm một bảng mới trong cơ sở dữ liệu (tự tạo lúc khởi động), không sửa hay xoá bảng nào đang có. Không đổi quyền, không đổi cách đối chiếu
+
 - 27/08/2026 Chấm 459901 - **Tải lên được cả file Excel, không chỉ file ZIP**
     + **Nhận thêm Excel** (`.xlsx`, `.xlsm`, `.xlsb`, `.xls`) bên cạnh file ZIP xuất từ GL02. Ai đã mở ZIP ra, cắt bớt hay lọc lại rồi lưu thành Excel thì tải thẳng file đó lên, khỏi nén lại
     + **Trộn ZIP với Excel trong cùng một lượt cũng được** — tất cả vẫn được gộp lại rồi mới phân loại, nên cặp lệnh hủy nằm ở hai file khác nhau vẫn bắt được như trước

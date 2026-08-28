@@ -502,8 +502,12 @@ Truy cập:
 
 ### Module Đối chiếu CITAD - PaymentHub (Phòng QLTK Nostro, Vostro)
 - Module **song song, độc lập hoàn toàn** với "Đối chiếu CITAD ↔ PaymentHub" của Phòng Thanh toán ở
-  trên — bảng riêng, buffer riêng, route riêng, Extension riêng. Không dùng chung gì ngoài **cơ chế
-  mã kết nối Extension** (bảng `doi_chieu_citad_extension_tokens` trung lập theo người dùng)
+  trên — bảng riêng, buffer riêng, route riêng, Extension riêng, **mã kết nối riêng**
+  (`doi_chieu_citad_nostro_extension_tokens`). Không dùng chung gì cả
+- ⚠️ **Mã kết nối phải tạo riêng cho từng Extension** (27/08/2026, PR#64). Trước đó 2 module dùng
+  chung bảng `doi_chieu_citad_extension_tokens` khoá theo `staff_id`, nên ai tạo mã ở module này
+  là **âm thầm thu hồi mã module kia của chính mình** → 1 trong 2 Extension bị 403. Nay tách hẳn 2
+  bảng, tạo/thu hồi ở phòng nào chỉ ảnh hưởng đúng phòng đó
 - Menu: **Đối chiếu → Phòng QLTK Nostro, Vostro → Đối chiếu CITAD - PaymentHub**
 - Nguồn số liệu khác hẳn: CITAD lấy ở trang **"Tra cứu dữ liệu"** (không phải "Bảng kê giao dịch"),
   chỉ chiều **Đi**, chỉ **giao dịch thành công**, chỉ VNĐ, đủ 5 cổng; PaymentHub lấy dòng
