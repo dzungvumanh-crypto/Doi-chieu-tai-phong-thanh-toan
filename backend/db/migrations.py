@@ -784,6 +784,51 @@ def _ensure_indexes():
         "UPDATE user_tttt SET department_id = NULL WHERE role IN ('admin', 'admin_l2')",
         "DELETE FROM staff_department_history WHERE staff_id IN (SELECT id FROM user_tttt WHERE role IN ('admin', 'admin_l2'))",
 
+        # ── Đối chiếu số liệu DTBB — Phòng Kế toán — 2026-08-07 ─────────────────
+        # 1 dòng/kỳ/chi nhánh (report_date = ngày cuối kỳ suy từ tên file upload, vd
+        # 2026-07-31; branch_code = mã chi nhánh suy từ tên file, '9999' = toàn hệ
+        # thống/TSC khi tên file không mang mã chi nhánh — xem
+        # reader.py::extract_report_date_and_branch()). UNIQUE(report_date,
+        # branch_code) đặt ở khối constraint bảng, không inline theo cột, để 1 ngày
+        # có nhiều chi nhánh cùng lưu được.
+        # created_by/updated_by để phân biệt lần lưu đầu vs lần ghi đè (FE hỏi xác
+        # nhận ghi đè trước khi gọi lại /save — xem dtbb_report_details bên dưới).
+        # status: 'pending' (vàng, mới lưu/ghi đè) → 'confirmed' (xanh, đã được
+        # Trưởng/Phó phòng Kế toán xác nhận — không phải chính created_by/updated_by).
+        # Kỳ đã 'confirmed' bị chặn ghi đè ở API cho tới khi bị 'unconfirm' về pending.
+        """CREATE TABLE IF NOT EXISTS dtbb_reports (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            report_date     DATE NOT NULL,
+            branch_code     VARCHAR(10) NOT NULL DEFAULT '9999',
+            vnd_duoi12      REAL NOT NULL DEFAULT 0,
+            vnd_tu12        REAL NOT NULL DEFAULT 0,
+            usd_duoi12      REAL NOT NULL DEFAULT 0,
+            usd_tu12        REAL NOT NULL DEFAULT 0,
+            tk413_usd       REAL NOT NULL DEFAULT 0,
+            rate_usd_to_vnd REAL NOT NULL DEFAULT 0,
+            file_count      INTEGER NOT NULL DEFAULT 0,
+            status          VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','confirmed')),
+            confirmed_by    INTEGER REFERENCES user_tttt(id),
+            confirmed_at    DATETIME,
+            created_by      INTEGER NOT NULL REFERENCES user_tttt(id),
+            created_at      DATETIME NOT NULL,
+            updated_by      INTEGER REFERENCES user_tttt(id),
+            updated_at      DATETIME,
+            UNIQUE(report_date, branch_code)
+        )""",
+        # 1 dòng/loại tiền/kỳ — lưu số dư nguyên tệ (chưa quy đổi) + tỷ giá đã dùng,
+        # phục vụ truy vết/kiểm toán lại từng mã tiền thay vì chỉ có tổng cuối cùng.
+        """CREATE TABLE IF NOT EXISTS dtbb_report_details (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            report_id       INTEGER NOT NULL REFERENCES dtbb_reports(id) ON DELETE CASCADE,
+            ccy             TEXT NOT NULL,
+            rate_to_vnd     REAL,
+            group1_native   REAL NOT NULL DEFAULT 0,
+            group2_native   REAL NOT NULL DEFAULT 0,
+            tk413_native    REAL NOT NULL DEFAULT 0,
+            UNIQUE(report_id, ccy)
+        )""",
+
         # ── Đồng bộ is_active NULL — 2026-08-11 ───────────────────────────────
         # is_active không NOT NULL và không có DEFAULT nên NULL lọt vào được.
         # Mọi truy vấn đọc đều so `is_active = 1` → NULL vốn đã là "không hoạt
@@ -1210,6 +1255,14 @@ def _ensure_indexes():
         "ALTER TABLE quiz_attempts ADD COLUMN elapsed_ms INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE quiz_attempts ADD COLUMN current_idx INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE quiz_attempts ADD COLUMN saved_at DATETIME",
+
+        # ── dtbb_reports.rate_usd_to_vnd — 2026-08-27 ─────────────────────────
+        # Lưu lại tỷ giá VND/USD (ttbuyrt/taxrt fallback) đã dùng lúc tính, để FE
+        # tính "USD quy đổi" theo từng mã tiền khi xem lại kỳ đã lưu — mỗi mã tiền
+        # chỉ lưu tỷ giá riêng của nó (rate_to_vnd), không lưu tỷ giá USD dùng làm
+        # mẫu số nên không tái tạo được nếu thiếu cột này. Kỳ lưu trước bản vá có
+        # giá trị mặc định 0 — FE nhận biết 0 để ẩn hẳn cột thay vì hiện số sai.
+        "ALTER TABLE dtbb_reports ADD COLUMN rate_usd_to_vnd REAL NOT NULL DEFAULT 0",
     ]
     _mig_log = logging.getLogger(__name__)
 
@@ -1271,6 +1324,53 @@ def _ensure_indexes():
             _mig_log.info("Đã thêm ON DELETE CASCADE cho attendance_adjustments.attendance_id")
     finally:
         _ac.close()
+
+    # ── Vá dtbb_reports: thêm branch_code + status xác nhận, đổi UNIQUE từ
+    # report_date đơn sang (report_date, branch_code) — one-time, idempotent.
+    # 2026-08-27. SQLite không cho ALTER TABLE sửa ràng buộc UNIQUE nên phải tạo
+    # bảng mới đúng schema, copy dữ liệu cũ (branch_code mặc định '9999', status
+    # mặc định 'pending' — kỳ đã lưu trước bản vá này coi như chưa được xác nhận),
+    # xoá bảng cũ, đổi tên. Bảng cài mới đã đúng schema từ CREATE TABLE IF NOT
+    # EXISTS ở trên nên khối này bỏ qua (điều kiện "branch_code" not in sql không khớp).
+    _db = sqlite3.connect(DB_PATH, timeout=30)
+    try:
+        _dtbb_row = _db.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='dtbb_reports'"
+        ).fetchone()
+        if _dtbb_row and _dtbb_row[0] and "branch_code" not in _dtbb_row[0]:
+            _db.execute("PRAGMA foreign_keys = OFF")
+            _db.execute("""CREATE TABLE dtbb_reports_new (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                report_date     DATE NOT NULL,
+                branch_code     VARCHAR(10) NOT NULL DEFAULT '9999',
+                vnd_duoi12      REAL NOT NULL DEFAULT 0,
+                vnd_tu12        REAL NOT NULL DEFAULT 0,
+                usd_duoi12      REAL NOT NULL DEFAULT 0,
+                usd_tu12        REAL NOT NULL DEFAULT 0,
+                tk413_usd       REAL NOT NULL DEFAULT 0,
+                rate_usd_to_vnd REAL NOT NULL DEFAULT 0,
+                file_count      INTEGER NOT NULL DEFAULT 0,
+                status          VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','confirmed')),
+                confirmed_by    INTEGER REFERENCES user_tttt(id),
+                confirmed_at    DATETIME,
+                created_by      INTEGER NOT NULL REFERENCES user_tttt(id),
+                created_at      DATETIME NOT NULL,
+                updated_by      INTEGER REFERENCES user_tttt(id),
+                updated_at      DATETIME,
+                UNIQUE(report_date, branch_code)
+            )""")
+            _db.execute("""INSERT INTO dtbb_reports_new
+                (id, report_date, vnd_duoi12, vnd_tu12, usd_duoi12, usd_tu12, tk413_usd,
+                 file_count, created_by, created_at, updated_by, updated_at)
+                SELECT id, report_date, vnd_duoi12, vnd_tu12, usd_duoi12, usd_tu12, tk413_usd,
+                       file_count, created_by, created_at, updated_by, updated_at
+                FROM dtbb_reports""")
+            _db.execute("DROP TABLE dtbb_reports")
+            _db.execute("ALTER TABLE dtbb_reports_new RENAME TO dtbb_reports")
+            _db.commit()
+            _mig_log.info("Đã thêm branch_code/status cho dtbb_reports (UNIQUE report_date,branch_code)")
+    finally:
+        _db.close()
 
     conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
@@ -1504,6 +1604,10 @@ def _ensure_indexes():
         "CREATE INDEX IF NOT EXISTS ix_staff_dept_hist       ON staff_department_history(staff_id, effective_from)",
         "CREATE INDEX IF NOT EXISTS ix_ttqt_branches_bic      ON ttqt_branches(swift_bic)",
         "CREATE INDEX IF NOT EXISTS ix_ttqt_branches_sort     ON ttqt_branches(is_closed, sort_order)",
+        "CREATE INDEX IF NOT EXISTS ix_dtbb_reports_date       ON dtbb_reports(report_date)",
+        "CREATE INDEX IF NOT EXISTS ix_dtbb_reports_status     ON dtbb_reports(status)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_dtbb_reports_date_branch ON dtbb_reports(report_date, branch_code)",
+        "CREATE INDEX IF NOT EXISTS ix_dtbb_report_details_rpt ON dtbb_report_details(report_id)",
         "CREATE INDEX IF NOT EXISTS ix_so_truc_records_date ON so_truc_records(truc_date)",
         "CREATE UNIQUE INDEX IF NOT EXISTS ux_so_truc_active_date ON so_truc_records(truc_date) WHERE status != 'cancelled'",
         # Rác còn lại sau lần đổi tên bảng ksnb_staff → user_tttt: index cũ vẫn

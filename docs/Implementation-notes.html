@@ -11413,6 +11413,92 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
+  <!-- 111 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">111</span>
+      <span class="card-title">DTBB — công thức tỷ giá sai từ lúc tạo module, phát hiện bằng cách dò ngược số liệu tay + chi nhánh/xác nhận vàng-xanh</span>
+      <span class="badge badge-done">Đã sửa</span>
+    </div>
+    <div class="card-body">
+
+      <p>Module DTBB (<code>backend/services/dtbb/</code>) tạo ngày 10/08/2026, chưa từng có card
+        nào ở đây — vi phạm quy tắc CLAUDE.md. Bù lại toàn bộ trong đợt sửa công thức này.</p>
+
+      <div class="caution"><b>Công thức quy đổi gốc sai với nghiệp vụ thật.</b> Bản đầu dùng
+        <code>taxrt(ngoại tệ) / taxrt(USD)</code> cho mọi mã tiền — một cột tỷ giá duy nhất
+        (<i>tỷ giá hạch toán/tính thuế</i>), chọn vì nó luôn có vẻ "ổn định". Khi đối chiếu với số
+        liệu tay thật của Kế toán (chi nhánh 1200, kỳ 20/07/2026), dò ngược qua 9 tổ hợp
+        mua/bán/bình quân chuyển khoản mới lộ ra công thức đúng đang dùng là
+        <code>bsrt(ngoại tệ) / ttbuyrt(USD)</code> — tỷ giá <b>bình quân mua-bán</b> của ngoại tệ,
+        chia cho tỷ giá <b>mua chuyển khoản</b> của USD. Khớp sát <b>0,0007–0,0013%</b> (tổ hợp
+        gần nhì lệch xa hơn <b>13 lần</b> — không phải trùng hợp). Không kiểm bằng số liệu tay thật
+        thì sẽ không bao giờ lộ ra, vì cả hai công thức đều "chạy được", chỉ số ra khác nhau vài
+        phần vạn đến vài phần trăm tuỳ kỳ.</div>
+
+      <table>
+        <tr><th>Cột</th><th>Ý nghĩa</th><th>Vai trò trong công thức mới</th></tr>
+        <tr><td><code>bsrt</code></td><td>Bình quân mua-bán chuyển khoản</td><td>Tử số — quy đổi ngoại tệ → VND</td></tr>
+        <tr><td><code>ttbuyrt</code></td><td>Mua chuyển khoản</td><td>Mẫu số — chỉ dùng riêng cho USD, quy đổi VND → USD</td></tr>
+        <tr><td><code>taxrt</code></td><td>Hạch toán/tính thuế</td><td>Fallback khi 1 trong 2 cột trên = 0</td></tr>
+      </table>
+
+      <div class="note"><b>Vì sao cần fallback:</b> có kỳ <code>taxrt</code> = 0 cho <b>toàn bộ</b>
+        mã tiền trong file (gặp thật ở kỳ 20/07/2026 — kể cả <code>USD</code>), trong khi
+        <code>bsrt</code>/<code>ttbuyrt</code> vẫn đầy đủ. Bản cũ chỉ đọc <code>taxrt</code> nên
+        raise lỗi, không tính được gì. Riêng <code>KHR</code> nhiều kỳ <b>cả 3 cột đều = 0</b>
+        (Riel không niêm yết giá mua/bán, cũng không có tỷ giá hạch toán) — trường hợp này không
+        còn cột nào để fallback, đưa vào <code>unconverted_ccy</code> thay vì chặn cả phép tính.</div>
+
+      <div class="caution"><b>Lỗi thật bắt được lúc code lại công thức (chưa kịp lên production):</b>
+        viết nhầm — thiếu nhánh riêng cho <code>USD</code> trong vòng lặp <code>calculate()</code>.
+        Vì công thức mới dùng <b>2 cột khác nhau</b> cho tử/mẫu số (không như bản cũ cùng dùng
+        <code>taxrt</code> nên tỷ số USD/USD tự nhiên = 1), USD bị chạy qua công thức chung và tự
+        nhân với <code>bsrt(USD)/ttbuyrt(USD)</code> ≈ 1,0073 — sai ~0,73%, không phải sai số làm
+        tròn. Bắt được nhờ so kết quả code với script tay đã verify trước đó lệch hẳn (553,8 triệu
+        so với 550,0 triệu USD) thay vì tin ngay số code trả về. Đã thêm
+        <code>test_usd_khong_bi_tu_nhan_voi_ty_gia_cua_chinh_no</code> khoá lại.</div>
+
+      <div class="label">Chi nhánh: mã suy từ tên file, không nhập tay</div>
+      <p>Tên file cân đối giờ có thể mang tiền tố mã chi nhánh, ví dụ
+        <code>1200USD20260720.XLS</code> = chi nhánh <code>1200</code>. Thuật toán tách
+        (<code>reader.py::extract_report_date_and_branch()</code>): bỏ 8 số ngày + <code>.XLS</code>
+        ở cuối, rồi bỏ tiếp đúng độ dài mã tiền — mã tiền đọc từ <b>nội dung</b> file (cột
+        <code>ccy</code>), không đoán từ tên — phần dư trước đó là mã chi nhánh; rỗng thì mặc định
+        <code>9999</code> (toàn hệ thống/TSC). Tên file không khớp mã tiền thật → báo lỗi rõ ràng,
+        không đoán liều. 1 lượt tính trộn nhiều chi nhánh khác nhau cũng bị chặn (giống cách đã
+        chặn ngày không khớp giữa file cân đối và file tỷ giá).</p>
+
+      <div class="label">Luồng xác nhận vàng/xanh</div>
+      <p>Khoá lưu trữ đổi từ <code>report_date</code> đơn sang <code>(report_date, branch_code)</code>
+        — 1 ngày nhiều chi nhánh cùng lưu được. Kỳ mới lưu/ghi đè luôn ở trạng thái
+        <code>pending</code> (vàng). Trưởng/Phó phòng Kế toán (<b>không phải chính người vừa
+        tạo/sửa gần nhất</b> — kiểm bằng so <code>current.id</code> với
+        <code>created_by</code>/<code>updated_by</code>) xác nhận → <code>confirmed</code> (xanh).
+        Kỳ đã xanh <b>chặn hẳn</b> việc ghi đè (400, không đi qua flow "hỏi xác nhận ghi đè" cũ) —
+        phải bỏ xác nhận (<code>POST /{id}/unconfirm</code>) đưa về vàng trước. Admin bypass cả hai
+        chiều, theo đúng quy ước "admin luôn qua" dùng khắp hệ thống.</p>
+
+      <div class="label">Đổi UNIQUE constraint trên SQLite — phải rebuild bảng</div>
+      <p>SQLite không cho <code>ALTER TABLE</code> sửa ràng buộc <code>UNIQUE</code>. Vá
+        <code>dtbb_reports</code> cho DB đang chạy theo đúng pattern đã dùng cho
+        <code>attendance_adjustments</code> (card trước): dò <code>sqlite_master.sql</code> xem có
+        cột <code>branch_code</code> chưa, chưa có thì tạo bảng <code>_new</code> đúng schema, copy
+        dữ liệu cũ (<code>branch_code='9999'</code>, <code>status='pending'</code> mặc định cho
+        toàn bộ kỳ đã lưu trước bản vá), xoá bảng cũ, đổi tên.</p>
+      <div class="note"><b>Rủi ro suýt gặp khi tự kiểm tra:</b> lúc viết test cho migration, set
+        biến môi trường <code>DATABASE_URL</code> trước khi import tưởng sẽ trỏ DB sang file tạm —
+        nhưng <code>Settings.DATABASE_URL</code> ở <code>config.py</code> là <b>hằng số class,
+        không đọc qua <code>os.getenv</code></b>. Migration test chạy thẳng vào
+        <code>data/ksnb.db</code> thật. May mắn bảng <code>dtbb_reports</code> lúc đó đang 0 dòng
+        (chưa ai lưu kỳ nào qua UI) nên không mất dữ liệu — tương đương khởi động lại server 1 lần.
+        Bài học: muốn đổi <code>DB_PATH</code> khi test, phải patch trực tiếp biến đã import
+        (<code>backend.database.DB_PATH</code> / <code>backend.db.migrations.DB_PATH</code>), set
+        env var không có tác dụng gì với module này.</div>
+
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-28</footer>
 </div>
 </body>
