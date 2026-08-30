@@ -1,7 +1,7 @@
 """Dọn thư mục file tạm theo lịch — 23h hằng ngày.
 
-Bốn tính năng có file nằm trên đĩa: ACH, Chấm 459901, Đối chiếu song phương,
-Đối soát CITAD. Cả bốn đều tự dọn rác của mình, nhưng chỉ dọn KHI CÓ NGƯỜI DÙNG
+Năm tính năng có file nằm trên đĩa: ACH, Chấm 459901, Đối chiếu song phương,
+Đối soát CITAD, Chuẩn hoá văn bản. Cả bốn đều tự dọn rác của mình, nhưng chỉ dọn KHI CÓ NGƯỜI DÙNG
 TÍNH NĂNG: `_cleanup_old_results()` nằm ngay đầu `process_zip()`,
 `_cleanup_old_jobs()` nằm trong `finally` của một lượt chạy. Nghỉ dùng một tháng
 thì kết quả của tháng trước nằm nguyên trên đĩa — mà đây là file Excel/CSV của cả
@@ -53,6 +53,7 @@ def run_cleanup(cutoff: float | None = None) -> None:
     from backend.services import ach_service, cham459901_service
     from backend.services import doi_chieu_song_phuong_service as sp
     from backend.services.doi_soat_citad import temp_files as citad_tmp
+    from backend.api import vb_format as vb_format_api
 
     cutoff = moc_don_gan_nhat() if cutoff is None else cutoff
     for ten, ham in (
@@ -60,6 +61,7 @@ def run_cleanup(cutoff: float | None = None) -> None:
         ("Chấm 459901", cham459901_service._cleanup_old_results),
         ("Đối chiếu song phương", sp._cleanup_old_results),
         ("Đối soát CITAD", citad_tmp._cleanup_old_results),
+        ("Chuẩn hoá văn bản", vb_format_api._don_file_cu),
     ):
         try:
             ham(cutoff)
