@@ -9,6 +9,8 @@ import threading
 from pathlib import Path
 from typing import Callable
 
+from backend.services.doi_chieu_song_phuong_common import do_thoi_gian
+
 from .config import RECONCILE_UNITS
 from .load_hub import filter_before_reconcile, hub_filename, load_hub_zip
 from .load_kenh import find_kenh_path, kenh_filename, load_kenh_file
@@ -35,12 +37,19 @@ def main_from_dir(
     ma_nh: str | None = None,
     log_callback: Callable[[str], None] | None = None,
     cancel_event: threading.Event | None = None,
+    hub_path_override: Path | None = None,
 ) -> dict | None:
     """Đối chiếu 1 ngày, các đơn vị trong `RECONCILE_UNITS`.
 
     `ma_nh`: lọc chỉ chạy đơn vị của 1 ngân hàng (VD dùng bởi service điều phối
     Kênh↔Hub + Hub↔Core hợp nhất, quyết định 2026-08-28 — mỗi lần chạy 1 NH). Mặc định
     `None` giữ nguyên hành vi cũ — chạy toàn bộ `RECONCILE_UNITS`.
+
+    `hub_path_override`: dùng thẳng đường dẫn HUB đã resolve sẵn ở tầng gọi (glob-tolerant, xem
+    `doi_chieu_song_phuong_kenh_core_service.py`) thay vì tự dò lại bằng tên chính xác — tránh 2
+    lần resolve HUB lệch nhau khi file HUB không đúng tên chuẩn (đã dính lỗi CSV CORE/OSB cùng
+    dạng). Chỉ có ý nghĩa khi `ma_nh` đã lọc còn 1 giá trị (mọi đơn vị của NH đó dùng chung 1 file
+    HUB); mặc định `None` giữ nguyên hành vi tự dò cũ cho caller độc lập/test hiện có.
 
     Trả `{"ngay": ..., "don_vi": [...]}` — mỗi phần tử `don_vi` có `trang_thai`
     ("ok" | "thieu_file_hub" | "thieu_file_kenh"). Khi "ok", kèm `match_result`
@@ -71,7 +80,7 @@ def main_from_dir(
         ma_nh, loai = unit["ma_nh"], unit["loai"]
         nhan = f"[{ma_nh}-{loai}]"
 
-        hub_path = input_dir / hub_filename(ngay, ma_nh)
+        hub_path = hub_path_override or (input_dir / hub_filename(ngay, ma_nh))
         if not hub_path.exists():
             log(f"{nhan} BỎ QUA — thiếu file HUB: {hub_path.name}")
             don_vi_results.append({"ma_nh": ma_nh, "loai": loai, "ngay": ngay, "trang_thai": "thieu_file_hub"})
@@ -85,13 +94,15 @@ def main_from_dir(
             continue
 
         log(f"{nhan} Đang đọc HUB ({hub_path.name})...")
-        hub_raw = load_hub_zip(hub_path.read_bytes(), log=lambda msg, nhan=nhan: log(f"{nhan} {msg}"))
-        hub = filter_before_reconcile(hub_raw, log=lambda msg, nhan=nhan: log(f"{nhan} {msg}"))
+        with do_thoi_gian(log, f"{nhan} đọc+parse HUB"):
+            hub_raw = load_hub_zip(hub_path.read_bytes(), log=lambda msg, nhan=nhan: log(f"{nhan} {msg}"))
+            hub = filter_before_reconcile(hub_raw, log=lambda msg, nhan=nhan: log(f"{nhan} {msg}"))
         if cancel.is_set():
             return None
 
         log(f"{nhan} Đang đọc kênh ({kenh_path.name})...")
-        kenh_df = load_kenh_file(str(kenh_path), ma_nh, loai)
+        with do_thoi_gian(log, f"{nhan} đọc file kênh"):
+            kenh_df = load_kenh_file(str(kenh_path), ma_nh, loai)
         if cancel.is_set():
             return None
 
