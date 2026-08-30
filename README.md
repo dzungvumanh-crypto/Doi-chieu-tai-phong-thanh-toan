@@ -345,6 +345,12 @@ Truy cập:
   - (user, ngày) không bị tách sang tập khác
   - Nếu 1 ngày > 350 tờ → chia 2 tập cân bằng
 - **In bìa**: Tạo file `.docx` đúng format mẫu (2-column layout)
+  - Danh sách bìa (`GET /api/bundles/groups`) **chỉ trả dòng tiêu đề** — tên phòng, kỳ, ngày tạo,
+    người tạo, số bìa — **không kèm tập và mục bên trong**. Ba ô lọc mặc định "tất cả" nên lần mở
+    trang đầu tiên kéo về toàn bộ kho; kèm cả tập/mục thì mỗi tập là thêm một câu SQL (283 câu,
+    315 KB cho kho 1 năm; đo trên dữ liệu nhân theo năm, 5 năm là 513 ms / 5,1 MB và còn tăng
+    tiếp) trong khi giao diện không đọc tới. Chi tiết tập lấy ở `GET /api/bundles/groups/{id}` —
+    mọi đường in bìa / tải bìa đều đi qua đó, không đổi
 - **Lưu trữ**: Ghi số hộp, vị trí kệ; tra cứu theo phòng/thời gian; bảng tổng hợp cả năm (số tờ/số tập theo phòng × 12 tháng); sửa **ngày** và **số chứng từ** ngay trên bảng — nhập vào ô trống để thêm tập, sửa về 0 để xoá tập, số tập/tổng tự cập nhật. Sửa ngày chỉ ghi lại `cover_units` của tập, **không đụng** số liệu bàn giao gốc của phòng nguồn (`document_entries`); mỗi dòng phải còn ít nhất một ngày, xoá hết ngày thì báo lỗi và giữ nguyên số đang nhập
   - *Tab "In bìa hồ sơ"*: Nạp file Excel tra cứu hồ sơ (`LT_HS_TRACUU_*.xls`) xuất từ chương trình lưu trữ → điền vào mẫu bìa **M01/LHS** (`templates/Phòng KSNB&HTVH/Bàn giao cho lưu trữ/Bia_ho_so.docx`), giữ nguyên toàn bộ định dạng của mẫu. Lấy cột **I** *Mã vạch* (ký hiệu thông tin + chuỗi barcode), cột **C** *Tên hồ sơ* (dòng tiêu đề + **Ngày mở** = ngày **đầu tiên** xuất hiện trong tên), cột **F** *Ngày CVKT*, cột **G** *Số tờ*. Chọn hồ sơ cần in trên bảng rồi tải về **1 file Word nhiều trang** (mỗi hồ sơ 1 trang) hoặc **ZIP mỗi hồ sơ 1 file**. Máy in phải cài font **"3 of 9 Barcode"**, nếu không dòng mã vạch in ra thành chữ thường và máy quét không đọc được
 - **Báo cáo** (menu con):
@@ -432,6 +438,13 @@ Truy cập:
   **1000 Hoàn trả**, **Chuyển chi nhánh**, **Điện KO offline**, **Cân CN**, **GD khác**.
   Dòng chỉ khớp được một chân (chưa đủ cặp Nợ/Có) không bị đoán bừa — rơi về *GD khác*
   kèm ghi chú "nghi ngờ, cần chấm tay"
+- Nhóm nào quá **1.048.573 dòng** thì **tự tách sang sheet thứ hai trong cùng file** (`Lệnh Đi
+  (1/2)`, `Lệnh Đi (2/2)`…) — vẫn đúng 7 file như cũ, chỉ nhiều sheet hơn. Một file GL02 một
+  ngày đã cho ~617.000 dòng *Lệnh Đi*, nên gộp 2 ngày là vượt trần 1.048.576 dòng của định dạng
+  Excel; trước đây phần mềm cứ ghi tiếp qua trần, báo "Hoàn thành!" rồi Excel **từ chối mở file**
+  mà không có lỗi nào ở cả hai đầu. Dòng **TỔNG CỘNG** cuối mỗi sheet là tổng **của sheet đó**
+  (nhãn ghi rõ `TỔNG CỘNG PHẦN 2/2`), tổng cả nhóm nằm ở dòng tiêu đề trên cùng. Lượt chạy chỉ
+  có một sheet — tức gần như mọi lượt — hiển thị y hệt trước, không đổi gì
 - Nhận thêm **3 file phụ trợ tuỳ chọn**, tự nhận diện theo tên: HUB đi (`Quay_...`),
   HUB đến (`Danh sach...den`) để chấm nhóm *1000 Hoàn trả*, và file tồn tháng trước
   (`459_TON_T<n>.xlsx`) ghép nối tiếp vào dữ liệu tháng này. Thiếu **cả 2** file HUB thì

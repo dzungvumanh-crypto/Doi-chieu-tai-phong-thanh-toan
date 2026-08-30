@@ -961,6 +961,19 @@ def _styles_xml(header_argb: str) -> str:
 
 _ROW_CHUNK = 5000  # dòng gộp mỗi lần ghi xuống stream — giới hạn đỉnh RAM ở mức 1 chunk
 
+# Định dạng XLSX chỉ có đúng 1.048.576 dòng. Mỗi sheet tiêu tốn 3 dòng ngoài dữ liệu:
+# dòng 1 tiêu đề gộp, dòng 2 tên cột, dòng cuối TỔNG CỘNG.
+_XLSX_MAX_ROWS = 1_048_576
+_MAX_DATA_ROWS = _XLSX_MAX_ROWS - 3
+
+
+def _ten_sheet(goc: str, phan: int, tong_phan: int) -> str:
+    """Tên sheet cho từng phần; Excel giới hạn 31 ký tự."""
+    if tong_phan == 1:
+        return goc[:31]
+    hau_to = f" ({phan}/{tong_phan})"
+    return goc[:31 - len(hau_to)] + hau_to
+
 
 def _write_excel(df: pd.DataFrame, path: Path, sheet_name: str, hex_color: str) -> None:
     """Ghi XLSX bằng direct XML — 8x nhanh hơn xlsxwriter, giữ đủ formatting.
@@ -969,6 +982,10 @@ def _write_excel(df: pd.DataFrame, path: Path, sheet_name: str, hex_color: str) 
     dựng toàn bộ chuỗi XML trong RAM rồi mới ghi — bucket "Lệnh Đi" cả triệu dòng từng
     gây MemoryError khi RAM máy trống thấp (xem Implementation-notes.html card 21) vì
     cách cũ giữ đồng thời list các chuỗi row + chuỗi nối + bản encode UTF-8 trong bộ nhớ.
+
+    Quá _MAX_DATA_ROWS dòng thì CẮT SANG SHEET MỚI trong cùng file. Trước đây cứ ghi
+    thẳng qua dòng 1.048.576 — Excel từ chối mở file mà server không hề báo lỗi
+    (gộp 2 file GL02 một ngày là đã 1,23 triệu dòng).
     """
     df_out   = df[OUTPUT_COLS].reset_index(drop=True)
     n_data   = len(df_out)
@@ -976,9 +993,6 @@ def _write_excel(df: pd.DataFrame, path: Path, sheet_name: str, hex_color: str) 
     cr_total = float(df_out['CRAMOUNT'].sum())
     ncols    = len(OUTPUT_COLS)
     last_col = _COL_LETTERS[ncols - 1]
-
-    summary = (f"{sheet_name}: {n_data:,} dòng  |  "
-               f"Tổng Nợ: {dr_total:,.0f}  |  Tổng Có: {cr_total:,.0f}")
 
     styles   = _styles_xml(f'FF{hex_color.upper()}')
     num_idx  = frozenset(i for i, c in enumerate(OUTPUT_COLS) if c in _NUM_COLS)
@@ -993,32 +1007,44 @@ def _write_excel(df: pd.DataFrame, path: Path, sheet_name: str, hex_color: str) 
         for i, col in enumerate(OUTPUT_COLS)
     )
 
-    sum_row = n_data + 3
-    total: list[str] = [
-        f'<c r="A{sum_row}" t="inlineStr" s="4"><is><t>TỔNG CỘNG</t></is></c>'
-    ]
-    for c_idx, col in enumerate(OUTPUT_COLS[1:], start=1):
-        cl = _COL_LETTERS[c_idx]
-        if col == 'DRAMOUNT':
-            total.append(f'<c r="{cl}{sum_row}" s="5"><v>{dr_total:.2f}</v></c>')
-        elif col == 'CRAMOUNT':
-            total.append(f'<c r="{cl}{sum_row}" s="5"><v>{cr_total:.2f}</v></c>')
-        else:
-            total.append(f'<c r="{cl}{sum_row}" t="inlineStr" s="4"><is><t></t></is></c>')
+    # ── Chia phần ─────────────────────────────────────────────────────────────
+    # max(1, ...) để bucket rỗng vẫn có đúng 1 sheet như trước.
+    tong_phan = max(1, -(-n_data // _MAX_DATA_ROWS))
+    if tong_phan > 1:
+        log.warning(
+            "cham459901: '%s' có %s dòng, vượt giới hạn %s của một sheet Excel "
+            "→ tách thành %d sheet trong cùng file %s",
+            sheet_name, f"{n_data:,}", f"{_MAX_DATA_ROWS:,}", tong_phan, path.name,
+        )
+    lat_cat = [(k * _MAX_DATA_ROWS, min((k + 1) * _MAX_DATA_ROWS, n_data))
+               for k in range(tong_phan)]
 
     # ── Bundle thành XLSX (ZIP) ───────────────────────────────────────────────
+    sheets_xml = ''.join(
+        f'<sheet name="{_xe(_ten_sheet(sheet_name, k + 1, tong_phan))}"'
+        f' sheetId="{k + 1}" r:id="rId{k + 1}"/>'
+        for k in range(tong_phan)
+    )
     workbook_xml = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
         ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
-        f'<sheets><sheet name="{_xe(sheet_name)}" sheetId="1" r:id="rId1"/></sheets>'
+        f'<sheets>{sheets_xml}</sheets>'
         '</workbook>'
+    )
+    rel_sheets = ''.join(
+        f'<Relationship Id="rId{k + 1}"'
+        ' Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet"'
+        f' Target="worksheets/sheet{k + 1}.xml"/>'
+        for k in range(tong_phan)
     )
     wb_rels = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
-        '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'
+        f'{rel_sheets}'
+        f'<Relationship Id="rId{tong_phan + 1}"'
+        ' Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles"'
+        ' Target="styles.xml"/>'
         '</Relationships>'
     )
     pkg_rels = (
@@ -1027,6 +1053,11 @@ def _write_excel(df: pd.DataFrame, path: Path, sheet_name: str, hex_color: str) 
         '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
         '</Relationships>'
     )
+    override_sheets = ''.join(
+        f'<Override PartName="/xl/worksheets/sheet{k + 1}.xml"'
+        ' ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+        for k in range(tong_phan)
+    )
     content_types = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
@@ -1034,8 +1065,7 @@ def _write_excel(df: pd.DataFrame, path: Path, sheet_name: str, hex_color: str) 
         '<Default Extension="xml" ContentType="application/xml"/>'
         '<Override PartName="/xl/workbook.xml"'
         ' ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
-        '<Override PartName="/xl/worksheets/sheet1.xml"'
-        ' ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+        f'{override_sheets}'
         '<Override PartName="/xl/styles.xml"'
         ' ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
         '</Types>'
@@ -1048,44 +1078,76 @@ def _write_excel(df: pd.DataFrame, path: Path, sheet_name: str, hex_color: str) 
         zf.writestr('xl/_rels/workbook.xml.rels',   wb_rels)
         zf.writestr('xl/styles.xml',                styles)
 
-        with zf.open('xl/worksheets/sheet1.xml', 'w') as fh:
-            w = lambda s: fh.write(s.encode('utf-8'))
-            w('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>')
-            w('<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
-              ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">')
-            w('<sheetViews><sheetView workbookViewId="0">'
-              '<pane ySplit="2" topLeftCell="A3" activePane="bottomLeft" state="frozen"/>'
-              '</sheetView></sheetViews>')
-            w(cols_xml)
-            w('<sheetData>')
-            w(f'<row r="1"><c r="A1" t="inlineStr" s="1"><is><t>{_xe(summary)}</t></is></c></row>')
-            w(f'<row r="2">{hdr}</row>')
+        for k, (dau, cuoi) in enumerate(lat_cat):
+            phan_df = df_out.iloc[dau:cuoi]
+            n_part  = len(phan_df)
+            dr_part = float(phan_df['DRAMOUNT'].sum())
+            cr_part = float(phan_df['CRAMOUNT'].sum())
 
-            chunk: list[str] = []
-            for row_0, row in enumerate(df_out.itertuples(index=False)):
-                r_num = row_0 + 3
-                cells: list[str] = []
-                for c_idx, val in enumerate(row):
-                    cl = _COL_LETTERS[c_idx]
-                    if c_idx in num_idx:
-                        cells.append(f'<c r="{cl}{r_num}" s="3"><v>{val:.2f}</v></c>')
-                    else:
-                        v = str(val).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-                        cells.append(f'<c r="{cl}{r_num}" t="inlineStr"><is><t>{v}</t></is></c>')
-                chunk.append(f'<row r="{r_num}">{"".join(cells)}</row>')
-                if len(chunk) >= _ROW_CHUNK:
+            # Một phần thì giữ nguyên câu chữ cũ; nhiều phần thì nói rõ phần nào,
+            # và tổng ở cuối sheet là tổng CỦA PHẦN ĐÓ, không phải tổng cả nhóm.
+            if tong_phan == 1:
+                summary   = (f"{sheet_name}: {n_data:,} dòng  |  "
+                             f"Tổng Nợ: {dr_total:,.0f}  |  Tổng Có: {cr_total:,.0f}")
+                nhan_tong = "TỔNG CỘNG"
+            else:
+                summary   = (f"{sheet_name} — phần {k + 1}/{tong_phan}: dòng "
+                             f"{dau + 1:,}–{cuoi:,} trong tổng {n_data:,} dòng  |  "
+                             f"Tổng Nợ cả nhóm: {dr_total:,.0f}  |  "
+                             f"Tổng Có cả nhóm: {cr_total:,.0f}")
+                nhan_tong = f"TỔNG CỘNG PHẦN {k + 1}/{tong_phan}"
+
+            sum_row = n_part + 3
+            total: list[str] = [
+                f'<c r="A{sum_row}" t="inlineStr" s="4"><is><t>{_xe(nhan_tong)}</t></is></c>'
+            ]
+            for c_idx, col in enumerate(OUTPUT_COLS[1:], start=1):
+                cl = _COL_LETTERS[c_idx]
+                if col == 'DRAMOUNT':
+                    total.append(f'<c r="{cl}{sum_row}" s="5"><v>{dr_part:.2f}</v></c>')
+                elif col == 'CRAMOUNT':
+                    total.append(f'<c r="{cl}{sum_row}" s="5"><v>{cr_part:.2f}</v></c>')
+                else:
+                    total.append(f'<c r="{cl}{sum_row}" t="inlineStr" s="4"><is><t></t></is></c>')
+
+            with zf.open(f'xl/worksheets/sheet{k + 1}.xml', 'w') as fh:
+                w = lambda s: fh.write(s.encode('utf-8'))
+                w('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>')
+                w('<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+                  ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">')
+                w('<sheetViews><sheetView workbookViewId="0">'
+                  '<pane ySplit="2" topLeftCell="A3" activePane="bottomLeft" state="frozen"/>'
+                  '</sheetView></sheetViews>')
+                w(cols_xml)
+                w('<sheetData>')
+                w(f'<row r="1"><c r="A1" t="inlineStr" s="1"><is><t>{_xe(summary)}</t></is></c></row>')
+                w(f'<row r="2">{hdr}</row>')
+
+                chunk: list[str] = []
+                for row_0, row in enumerate(phan_df.itertuples(index=False)):
+                    r_num = row_0 + 3
+                    cells: list[str] = []
+                    for c_idx, val in enumerate(row):
+                        cl = _COL_LETTERS[c_idx]
+                        if c_idx in num_idx:
+                            cells.append(f'<c r="{cl}{r_num}" s="3"><v>{val:.2f}</v></c>')
+                        else:
+                            v = str(val).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                            cells.append(f'<c r="{cl}{r_num}" t="inlineStr"><is><t>{v}</t></is></c>')
+                    chunk.append(f'<row r="{r_num}">{"".join(cells)}</row>')
+                    if len(chunk) >= _ROW_CHUNK:
+                        w(''.join(chunk))
+                        chunk = []
+                if chunk:
                     w(''.join(chunk))
-                    chunk = []
-            if chunk:
-                w(''.join(chunk))
 
-            w(f'<row r="{sum_row}">{"".join(total)}</row>')
-            w('</sheetData>')
-            # OOXML CT_Worksheet yêu cầu thứ tự cố định: autoFilter PHẢI đứng TRƯỚC mergeCells.
-            # Ghi sai thứ tự khiến Excel coi sheet1.xml là "unreadable content" và gỡ bỏ sheet.
-            w(f'<autoFilter ref="A2:{last_col}{n_data + 2}"/>')
-            w(f'<mergeCells count="1"><mergeCell ref="A1:{last_col}1"/></mergeCells>')
-            w('</worksheet>')
+                w(f'<row r="{sum_row}">{"".join(total)}</row>')
+                w('</sheetData>')
+                # OOXML CT_Worksheet yêu cầu thứ tự cố định: autoFilter PHẢI đứng TRƯỚC mergeCells.
+                # Ghi sai thứ tự khiến Excel coi sheet là "unreadable content" và gỡ bỏ sheet.
+                w(f'<autoFilter ref="A2:{last_col}{n_part + 2}"/>')
+                w(f'<mergeCells count="1"><mergeCell ref="A1:{last_col}1"/></mergeCells>')
+                w('</worksheet>')
 
 
 def _cleanup_old_results(cutoff: float | None = None) -> None:
