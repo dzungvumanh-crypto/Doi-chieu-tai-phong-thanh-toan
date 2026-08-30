@@ -332,7 +332,22 @@ def _tab_doi_chieu_den():
                 label="Ngân hàng", value="202",
             ).props("outlined dense").classes("w-52")
 
+        readiness_box = ui.column().classes("w-full mt-3 gap-1")
+        readiness_box.set_visibility(False)
+
+        def _hide_readiness(_=None):
+            """Banner Phần 2 dễ trở nên sai lệch khi người dùng đổi ngày/NH/thư mục sau khi đã
+            kiểm tra — ẩn đi để tránh hiểu nhầm "đã đủ" với dữ liệu khác, không tự động kiểm tra
+            lại (tránh gọi API dồn dập mỗi lần gõ phím)."""
+            readiness_box.set_visibility(False)
+
+        ngay_input.on_value_change(_hide_readiness)
+        ma_nh_select.on_value_change(_hide_readiness)
+        folder_input.on_value_change(_hide_readiness)
+
         with ui.row().classes("gap-3 mt-4"):
+            btn_check = ui.button("Kiểm tra dữ liệu", icon="fact_check",
+                                  color="blue-7").props("outlined").classes("font-semibold")
             btn_run = ui.button("Chạy đối chiếu", icon="play_arrow",
                                 color="red-8").classes("font-semibold")
             if not api.has_feature("doi_chieu_song_phuong_kenh_core.process"):
@@ -379,12 +394,25 @@ def _tab_doi_chieu_den():
         with stepper_box:
             ui_kit.stepper(_STAGE_LABELS, stage)
 
-    def _render_kenh_hub(kq: dict | None):
-        with ui.expansion("Kênh ↔ Hub", value=True).classes("w-full border rounded mb-2"):
-            if kq is None:
-                ui.label("Không có kết quả — xem log (thiếu file, hoặc lỗi riêng bước này).").classes(
-                    "text-sm text-orange-700"
+    def _render_trang_thai_banner(trang_thai: dict | None):
+        """Banner "Chưa đối chiếu được" cấp job (Phần 3, 2026-08-30) — tách khỏi bảng số liệu
+        "Đã cân khớp/Chưa cân khớp" bên dưới (đó là chênh lệch THẬT, không đổi)."""
+        if trang_thai and trang_thai.get("trang_thai") == "chua_doi_chieu":
+            ly_do = trang_thai.get("ly_do") or "không rõ lý do"
+            with ui.row().classes(
+                "items-center gap-2 p-2 mb-2 bg-orange-50 border border-orange-300 rounded"
+            ):
+                ui.icon("warning", color="orange-8").classes("text-lg")
+                ui.label(f"CHƯA ĐỐI CHIẾU ĐƯỢC — thiếu dữ liệu ({ly_do})").classes(
+                    "text-sm font-semibold text-orange-800"
                 )
+
+    def _render_kenh_hub(kq: dict | None, trang_thai: dict | None = None):
+        with ui.expansion("Kênh ↔ Hub", value=True).classes("w-full border rounded mb-2"):
+            _render_trang_thai_banner(trang_thai)
+            if kq is None:
+                if not trang_thai:
+                    ui.label("Không có kết quả — xem log.").classes("text-sm text-orange-700")
                 return
             chenh_lech = kq.get("chenh_lech", {})
             if chenh_lech:
@@ -415,12 +443,12 @@ def _tab_doi_chieu_den():
                             "text-xs text-red-700"
                         )
 
-    def _render_hub_core(kq: dict | None):
+    def _render_hub_core(kq: dict | None, trang_thai: dict | None = None):
         with ui.expansion("Hub ↔ Core", value=True).classes("w-full border rounded mb-2"):
+            _render_trang_thai_banner(trang_thai)
             if kq is None:
-                ui.label("Không có kết quả — xem log (thiếu file, hoặc lỗi riêng bước này).").classes(
-                    "text-sm text-orange-700"
-                )
+                if not trang_thai:
+                    ui.label("Không có kết quả — xem log.").classes("text-sm text-orange-700")
                 return
             ui.label(
                 f"CORE: {kq.get('so_dong_core', 0):,} dòng — HUB: {kq.get('so_dong_hub', 0):,} dòng"
@@ -451,8 +479,9 @@ def _tab_doi_chieu_den():
                 ).classes("font-semibold text-green-700")
 
             ket_qua = res.get("ket_qua", {})
-            _render_kenh_hub(ket_qua.get("kenh_hub"))
-            _render_hub_core(ket_qua.get("hub_core"))
+            trang_thai = ket_qua.get("trang_thai") or {}
+            _render_kenh_hub(ket_qua.get("kenh_hub"), trang_thai.get("kenh_hub"))
+            _render_hub_core(ket_qua.get("hub_core"), trang_thai.get("hub_core"))
 
             ui.label("Tải file kết quả").classes("font-semibold text-red-800 mb-2 mt-2")
             with ui.row().classes("flex-wrap gap-3"):
@@ -519,6 +548,52 @@ def _tab_doi_chieu_den():
             return None
         return f"{y}{m.zfill(2)}{d.zfill(2)}"
 
+    def _render_readiness_line(nhan: str, trang_thai: str):
+        if trang_thai == "du":
+            ui.label(f"✅ Đủ dữ liệu {nhan}").classes("text-sm text-green-700")
+        else:
+            ly_do = trang_thai.split(":", 1)[1] if ":" in trang_thai else trang_thai
+            ui.label(f"⚠️ {nhan}: thiếu {ly_do}").classes("text-sm text-orange-700")
+
+    async def _check_readiness():
+        """Dò TÊN file TRƯỚC khi bấm "Chạy" — chỉ để biết trước đủ/thiếu, KHÔNG chặn nút Chạy
+        (2026-08-30, banner cảnh báo, hành vi chạy-rồi-tự-bỏ-qua-bước-thiếu giữ nguyên)."""
+        ngay = _yyyymmdd_tu_dmy(ngay_input.value or "")
+        ma_nh = ma_nh_select.value
+        if not ngay:
+            ui.notify("Ngày đối chiếu chưa hợp lệ — bấm icon lịch để chọn.", type="warning")
+            return
+        if not ma_nh:
+            ui.notify("Chưa chọn ngân hàng.", type="warning")
+            return
+        body: dict = {"ngay": ngay, "ma_nh": ma_nh}
+        if state["mode"] == "upload":
+            if not state["files"]:
+                ui.notify("Chưa chọn file nào.", type="warning")
+                return
+            body["file_names"] = list(state["files"].keys())
+        else:
+            folder_path = (folder_input.value or "").strip()
+            if not folder_path:
+                ui.notify("Chưa nhập đường dẫn thư mục.", type="warning")
+                return
+            body["folder_path"] = folder_path
+
+        try:
+            res = await asyncio.to_thread(
+                api.post, "/api/doi_chieu_song_phuong_kenh_core/check_readiness", body,
+            )
+        except Exception as e:
+            if not _handle_api_error(e):
+                ui.notify(str(e), type="negative")
+            return
+
+        readiness_box.set_visibility(True)
+        readiness_box.clear()
+        with readiness_box:
+            _render_readiness_line("Kênh↔Hub", res.get("kenh_hub", ""))
+            _render_readiness_line("Hub↔Core", res.get("hub_core", ""))
+
     async def on_run():
         if state["running"]:
             return
@@ -539,6 +614,7 @@ def _tab_doi_chieu_den():
 
         _clear_log()
         result_card.set_visibility(False)
+        readiness_box.set_visibility(False)
         btn_run.set_visibility(False)
         btn_cancel.set_visibility(True)
         spinner.set_visibility(True)
@@ -587,6 +663,7 @@ def _tab_doi_chieu_den():
         except Exception as e:
             ui.notify(str(e), type="negative")
 
+    btn_check.on("click", _check_readiness)
     btn_run.on("click", on_run)
     btn_cancel.on("click", on_cancel)
 

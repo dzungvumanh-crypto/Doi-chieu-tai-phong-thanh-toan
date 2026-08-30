@@ -7259,7 +7259,7 @@ Bất biến MIS: 522.774 + 36.462 = 559.236 (khớp tổng gốc)</pre>
     <div class="card-header">
       <span class="card-num">74</span>
       <span class="card-title">ILO1000 — rà "lỗi người chấm không nhìn ra", sửa 5 lỗi im lặng</span>
-      <span class="badge badge-done">HOÀN THIỆN · 2026-08-21 · 144/144 test module + 597/597 toàn dự án</span>
+      <span class="badge badge-done">HOÀN THIỆN · 2026-08-21 · 596/596 test toàn dự án · verify dữ liệu thật 18-19/8/2026</span>
     </div>
     <div class="card-body">
       <div class="label">Bối cảnh — rà soát chủ động, không phải bugfix theo báo cáo</div>
@@ -7305,6 +7305,37 @@ Bất biến MIS: 522.774 + 36.462 = 559.236 (khớp tổng gốc)</pre>
         cho 2 nguồn này (như đã chốt cho QT/MIS 2026-08-10/11) rồi đổi sang <code>doc_so_tien()</code>
         raise cứng — an toàn hơn nhưng đổi 1 dòng lạ thành crash cả ngày, cần cân nhắc trước khi đổi.</p>
 
+      <div class="label">⚠️ Sự cố thật — mục C (AMOUNT Citad) PHẢI REVERT ngay trong buổi chạy dữ liệu thật đầu tiên</div>
+      <p>Chạy pipeline thật lần đầu trên <code>G:\Cham ILO1000\18-19.8.2026</code> (2026-08-21, ngay sau
+        khi merge 5 việc A-E) lộ ra: <code>doc_so_tien_mem()</code> áp cho AMOUNT (Citad) dựa trên giả
+        định SAI — AMOUNT thật của Citad luôn ở dạng <b>thập phân cố định 2 số lẻ</b> (VD
+        <code>"3795000.00"</code>), hoàn toàn khác định dạng ngăn-nghìn của QT (<code>"180.000"</code>)
+        mà hàm này được thiết kế để xử lý. Log in ra <code>[WARN] Cột AMOUNT (CITAD) có 51.241 giá trị
+        không đúng định dạng...</code> — <b>100% dòng Citad của cả 2 ngày (51.241 + 52.691 dòng) bị gán
+        AMOUNT=0 hàng loạt</b>, phá vỡ khóa <code>'Map dc'</code>.</p>
+      <p><b>Nguy hiểm thật sự — không chỉ là bug, mà đúng kiểu "người chấm không nhìn ra":</b> tổng số
+        "Khớp citad/hub" và "Chưa khớp" trong log KHÔNG hề đổi so với chạy đúng (35.020/13.715 và
+        38.985/14.837 — giống hệt cả 2 lần). Lý do: khi Citad-match (bước 2 trong
+        <code>process_core()</code>) thất bại do AMOUNT=0, giao dịch rơi xuống bước 3 (Hub 'Trạng thái'
+        qua Trace) — với dữ liệu thật, hầu hết giao dịch Citad CŨNG có mặt đúng trong Hub qua cùng Trace,
+        nên vẫn được gán "matched", chỉ đổi NHÃN từ đúng <code>"citad D.M"</code> sang nhãn Hub chung
+        chung <code>"Hoàn thành"</code>. Verify trực tiếp bằng script đối chứng 2 phiên bản code trên
+        cùng dữ liệu thật (không chỉ tin log): <b>34.839/48.735 dòng đổi nhãn</b>, tổng số "khớp" giữ
+        nguyên tuyệt đối — nếu chỉ nhìn sheet Tóm tắt (không đọc kỹ log WARN), người chấm sẽ KHÔNG BAO
+        GIỜ phát hiện ra vì số liệu tổng trông hoàn toàn bình thường.</p>
+      <p><b>Đã sửa ngay</b>: revert <code>process_citad()</code>'s AMOUNT về <code>pd.to_numeric()</code>
+        trần (đúng với định dạng thật) — CHƯA có bằng chứng Citad từng bị lỗi ngăn-nghìn như QT, nên
+        không áp <code>doc_so_tien_mem()</code> cho cột này nữa. CRAMOUNT (Core) không bị ảnh hưởng — xác
+        nhận riêng dữ liệu thật CRAMOUNT luôn số nguyên thuần, giữ nguyên <code>doc_so_tien_mem()</code>
+        cho cột đó. 2 test sai giả định ("dot-grouped AMOUNT") đã thay bằng 1 test khóa đúng hành vi thập
+        phân thật. Toàn bộ 596/596 test lại xanh. Chạy lại pipeline thật lần 2 — log không còn WARN
+        AMOUNT, sheet Tóm tắt đã đúng <code>"citad 18.8": 34.837</code> / <code>"citad 19.8": 38.854</code>.</p>
+      <p><b>Bài học</b>: sửa 1 bug đã biết (bẫy 4.8, ngăn-nghìn QT) không được áp máy móc sang nguồn dữ
+        liệu KHÁC (Citad) chỉ vì cùng là "cột tiền" — mỗi hệ thống nguồn có quy ước export riêng, phải
+        kiểm mẫu dữ liệu thật của CHÍNH nguồn đó trước khi áp lại 1 fix đã đúng ở nơi khác. Không có
+        <code>[WARN]</code> log rõ ràng + đối chiếu trực tiếp 2 phiên bản, lỗi này đã lọt qua vì số liệu
+        tổng "trông hợp lý" — đúng bản chất loại lỗi cả module này đang được rà soát để tìm.</p>
+
       <div class="label">D — export.py hardcode tên cột tiếng Việt, không import config.py</div>
       <p><code>export.py</code> tự gõ lại chuỗi (<code>'Trạng thái'</code>, <code>'Mã giao dịch'</code>...)
         thay vì import hằng số <code>HUB_COL_*</code>/<code>OSB_COL_*</code> từ <code>config.py</code> —
@@ -7348,10 +7379,14 @@ Bất biến MIS: 522.774 + 36.462 = 559.236 (khớp tổng gốc)</pre>
         import nó) — cần nhớ đồng bộ khi build lại bản offline.</p>
 
       <div class="label">Kiểm chứng</div>
-      <p>144 test (116 cũ trong test_ilo1000_algorithm.py + 18 mới cùng file + 10 mới trong
-        test_so_tien.py — file mới, chưa từng có test cho so_tien.py) + toàn bộ 597 test dự án đều đạt,
-        không có test cũ nào phải sửa. Chưa chạy trên dữ liệu thật/golden sample (giới hạn phiên) — phần
-        E (frontend) và bước 2 của C cần xác nhận trên laptop có dữ liệu thật.</p>
+      <p>143 test (116 cũ trong test_ilo1000_algorithm.py + 17 mới cùng file + 10 mới trong
+        test_so_tien.py — file mới, chưa từng có test cho so_tien.py) + toàn bộ 596 test dự án đều đạt,
+        không có test cũ nào phải sửa (số liệu sau khi thay 2 test AMOUNT sai giả định bằng 1 test đúng,
+        xem sự cố C ở trên). Đã chạy trên dữ liệu thật <code>G:\Cham ILO1000\18-19.8.2026</code> (2 lần —
+        lần 1 lộ sự cố C, lần 2 sau khi sửa cho kết quả đúng), xuất vào <code>...\Output\</code>: 18/8
+        48.735 dòng Core (34.837 khớp Citad, 98 Hủy, 83 Đã hủy, 1 OSB, 1 quyết toán, 13.715 chưa khớp),
+        19/8 53.822 dòng (38.854 khớp Citad, 30 Hủy, 99 Đã hủy, 1 OSB, 1 Hoàn thành/Hub, 14.837 chưa
+        khớp) — số dòng chưa khớp để nguyên cho người chấm phản hồi, không tự suy diễn. Phần E (frontend) và bước 2 của C vẫn chưa kiểm UI thật.</p>
     </div>
   </div>
 
@@ -7524,7 +7559,1312 @@ Bất biến MIS: 522.774 + 36.462 = 559.236 (khớp tổng gốc)</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-21</footer>
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">78</span>
+      <span class="card-title">ILO1000 — mở rộng cửa sổ khớp Citad sang T+1 ("chờ đi kênh")</span>
+      <span class="badge badge-done">HOÀN THIỆN · 2026-08-22 · 163/163 test + verify dữ liệu thật: CITAD mismatch giảm 98%</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh — phát hiện qua đối chiếu thật với người chấm tay</div>
+      <p>Sau khi hoàn thiện card 74 (5 lỗi im lặng A-E), chạy pipeline thật trên
+        <code>G:\Cham ILO1000\18-19.8.2026</code> và đối chiếu TT theo REFERENCE với file người
+        chấm tay VLOOKUP thủ công (<code>...\KET QUA 18-19\18-19.8.xlsx</code>). Trong 74.301
+        REFERENCE so được: 20.460 lệch. Đào nhóm lớn nhất (10.251 dòng "pipeline chưa khớp,
+        người chấm đã khớp Citad") — <b>98,2% (10.071 dòng)</b> là do lệnh vào Core ngày T nhưng
+        thực tế "đi kênh" ở phiên Citad ngày <b>T+1</b> (nghiệp vụ "chờ đi kênh"). Pipeline
+        (<code>load_citad(files['citad'], ngay_int)</code>) chỉ so Citad đúng ngày T, không nhìn
+        sang T+1.</p>
+
+      <div class="label">Thiết kế — đối xứng với cơ chế carryover ngược đã có</div>
+      <p>Thêm <code>_citad_forward_days(ngay_int)</code> trong <code>pipeline.py</code>, đối
+        xứng chiều xuôi với <code>_osb_carryover_days()</code> đã có (dùng cho Hub/OSB): Thứ 2-5
+        → hôm sau (+1); Thứ 6 → Thứ 2 tuần sau (+3, nhảy T7+CN vì Citad không chạy phiên cuối
+        tuần); <b>Thứ 7/CN → KHÔNG mở rộng</b> (2 ngày này không phải "ngày đang chấm" thật, chỉ
+        là nguồn carryover Core cho Hủy xuyên ngày — mở rộng sẽ "nhặt nhầm" Citad thật của Thứ 2
+        kế tiếp, phá SKIP logic của card 74 mục A). <code>load_citad()</code> đổi chữ ký
+        <code>ngay_int</code>→<code>ngay_ints: int|set[int]</code>, lọc bằng <code>.isin()</code>
+        — giống hệt pattern đã có ở <code>load_hub.py</code>.</p>
+      <p>Nhãn TT giữ <b>hằng số cho cả cửa sổ</b>, dùng dữ liệu TRX_DATE THỰC TẾ sau lọc (không
+        dùng cửa sổ lý thuyết) để quyết định format: 1 ngày thực → giữ nguyên
+        <code>'citad {D}.{M}'</code> cũ; ≥2 ngày thực → <code>'citad {D1}-{D2}.{M}'</code> — khớp
+        đúng bằng chứng thật: 100% (87.538/87.538) dòng khớp Citad trong file người chấm tay dùng
+        ĐÚNG 1 nhãn <code>'citad 18-19.8'</code>, không tách theo ngày. Thêm log CẢNH BÁO (không
+        chặn) khi phát hiện 2 <code>Map dc</code> trùng khóa nhưng khác TRX_DATE trong cửa sổ mở
+        rộng (rủi ro Core khớp nhầm ngày cụ thể dù nhãn vẫn đúng — 0 va chạm thực tế trên
+        10.251 dòng 18-19/8/2026).</p>
+
+      <div class="label">⚠️ Sự cố thật thứ 2 — Hub thiếu cửa sổ T+1, phát hiện SAU khi code xong</div>
+      <p>Code + 22 test đơn vị đều xanh, nhưng chạy lại dữ liệu thật thì <b>số dòng khớp Citad
+        không đổi</b> (vẫn 34.837/38.854, y hệt trước fix) — chỉ đổi tên nhãn thành
+        <code>'citad 18-19.8'</code>, không có REFERENCE mới nào được khớp thêm. Kiểm tra trực
+        tiếp 1 REFERENCE đã biết cần khớp T+1 (<code>1000API6489634</code>): <code>Map dc</code>
+        trùng khớp tuyệt đối với người chấm nhưng <b>TT vẫn rỗng</b>.</p>
+      <p><b>Nguyên nhân gốc</b>: <code>process_citad()</code> tính <code>Trace</code> của Citad
+        qua <code>stc_to_trace</code> — map dựng TỪ chính dữ liệu Hub (<code>process_hub()</code>).
+        1 dòng Citad dated T+1 có STC chỉ xuất hiện trong Hub CŨNG dated T+1 — nhưng lời gọi
+        <code>load_hub()</code> vẫn dùng nguyên <code>_osb_carryover_days(ngay_int)</code> (chỉ
+        lùi T-1), <b>không được mở rộng cùng cửa sổ với Citad</b>. Kết quả: Trace của citad row
+        T+1 luôn resolve rỗng (<code>.fillna('')</code>) thay vì đúng giá trị → <code>Map dc</code>
+        sai → Core không khớp được dù <code>citad_raw</code> đã đúng cửa sổ. 21/22 test đơn vị
+        không bắt được lỗi này vì đều tránh dùng Hub thật (để đơn giản hóa, cho Trace='' cả 2
+        phía) — vô tình che giấu đúng lỗi phụ thuộc Hub này.</p>
+      <p><b>Đã sửa</b>: <code>hub_window = _osb_carryover_days(ngay_int) | _citad_forward_days(ngay_int)</code>
+        — Hub giờ dùng HỢP của cả 2 cửa sổ (lùi cho OSB/Hub carryover cũ, xuôi cho Trace-lookup
+        Citad mới). Thêm test <code>test_citad_trace_via_hub_stc_resolves_when_hub_row_dated_forward_day</code>
+        dựng Hub thật (STC → Trace dated T+1) — xác nhận bằng tay: test FAIL đúng như dự đoán khi
+        tạm bỏ cửa sổ xuôi khỏi Hub, PASS sau khi khôi phục — chứng minh test thật sự bắt được
+        lỗi, không phải test giả xanh.</p>
+      <p><b>Bài học</b>: mở rộng cửa sổ ngày cho 1 nguồn dữ liệu (Citad) phải rà toàn bộ CÁC NGUỒN
+        PHỤ THUỘC (Hub, qua <code>stc_to_trace</code>) cùng lúc — không chỉ sửa chỗ lọc ngày trực
+        tiếp. Unit test dùng dữ liệu tối giản (Trace='' cả 2 phía) tuy nhanh nhưng có thể che giấu
+        đúng lớp phụ thuộc quan trọng nhất — luôn cần ít nhất 1 test tích hợp dùng ĐẦY ĐỦ Hub thật
+        trước khi tin fix đã đúng trên dữ liệu thật.</p>
+
+      <div class="label">Sự cố hạ tầng — ổ mạng G: rớt kết nối giữa lúc verify (đã qua)</div>
+      <p>Trong lúc đang đọc lại file kết quả trên <code>G:\Cham ILO1000\...</code> để xác nhận
+        bug Hub ở trên, toàn bộ ổ <code>G:</code> đột ngột không truy cập được vài phút (không
+        phải do xoá — đứt kết nối mạng tạm thời, dữ liệu vẫn nguyên vẹn khi ổ về). Đã chạy lại
+        pipeline + đối chiếu lại sau khi ổ kết nối trở lại — xem kết quả cuối bên dưới.</p>
+
+      <div class="label">✅ Kết quả đối chiếu cuối cùng với người chấm tay (sau khi sửa cả 2 sự cố)</div>
+      <p>Chạy lại pipeline thật lần 3 (<code>Output_co_T1_hub\</code>) và đối chiếu lại toàn bộ
+        74.301 REFERENCE với <code>18-19.8.xlsx</code>:</p>
+      <table>
+        <tr><th></th><th>Trước fix (card này)</th><th>Sau fix Citad+Hub</th></tr>
+        <tr><td>Khớp đúng nhóm TT</td><td>53.841</td><td><b>64.604</b> (+10.763)</td></tr>
+        <tr><td>Lệch tổng</td><td>20.460</td><td><b>9.697</b> (-52,6%)</td></tr>
+        <tr><td>Nhóm "pipeline chưa khớp, người chấm=CITAD"</td><td>10.251</td>
+          <td><b>205</b> (giảm 98,0% — đúng khớp dự đoán định lượng ban đầu 98,2%)</td></tr>
+        <tr><td>Nhóm "Chờ đi kênh" (nhãn tự do người chấm)</td><td>7.373</td>
+          <td>6.656 (giảm phụ, không phải mục tiêu chính của fix này)</td></tr>
+      </table>
+      <p>Ngày 18/8 cụ thể: tỷ lệ khớp Core từ 71,8% (35.020/48.735) lên <b>99,8%
+        (48.622/48.735, chỉ còn 113 dòng chưa khớp)</b>. Log chạy thật:
+        <code>TT: Hủy=98 · Đã hủy=83 · Khớp citad/hub=48.622 · Chưa khớp=113/48.735 · Citad khớp
+        OSB=72</code>.</p>
+      <p>205 dòng CITAD còn lệch + 6.656 "Chờ đi kênh" + 2.804 "Đã gửi chờ phản hồi" + 28 "Chờ
+        duyệt chi trả" (tổng 9.697) — KHÔNG thuộc phạm vi việc này (xem mục F card 74 và ghi chú
+        "3 nhóm nhãn tự do" ở lần đối chiếu đầu) — để lại cho lần sau, cần Business Owner xác nhận
+        trước khi coi là bug.</p>
+
+      <div class="label">Kiểm chứng</div>
+      <p>163/163 test module ILO1000+so_tien đều đạt (152 cũ + hơn 20 mới: 6 test
+        <code>_citad_forward_days()</code>, 2 test <code>load_citad</code> multi-day, 5 test nhãn
+        TT, 4 test matching + collision warning, 2 test tích hợp pipeline — trong đó 1 test dùng
+        Hub thật, bắt đúng sự cố Hub). 1 fail
+        <code>TestBuildOsbKey::test_raises_on_unknown_amount_format</code> — KHÔNG liên quan việc
+        này, do 1 cửa sổ Claude Code khác sửa <code>backend/services/ach/so_tien.py</code> (file
+        dùng chung) thêm hỗ trợ dấu phẩy ngăn nghìn, chưa cập nhật test tương ứng — không đụng
+        vào, để phiên đó tự xử lý. <b>Đã verify đầy đủ trên dữ liệu thật</b> — xem bảng kết quả ở
+        trên.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">79</span>
+      <span class="card-title">ILO1000 — verify fix T+1 trên batch thứ 2 (20-21/8) + 2 phát hiện mới, nhỏ</span>
+      <span class="badge badge-done">HOÀN THIỆN VERIFY · 2026-08-22 · fix T+1 tổng quát hoá đúng trên dữ liệu mới</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Chạy batch mới — xác nhận fix card 78 tổng quát hoá đúng</div>
+      <p>Chạy pipeline thật trên <code>G:\Cham ILO1000\20-21.8.2026</code> (dữ liệu hoàn toàn mới,
+        chưa từng dùng để thiết kế/test fix T+1). Kết quả log thật: 20/8 —
+        <code>Khớp citad/hub=42.471 · Chưa khớp=141/42.612 (99,7%)</code>; 21/8 —
+        <code>Khớp citad/hub=35.557 · Chưa khớp=14.458/50.015 (71,1%, thấp hơn vì cửa sổ xuôi của
+        21/8 trỏ sang 22/8 — ngày không có trong batch này, hiệu ứng biên đã dự đoán trước, không
+        phải bug)</code>. Đối chiếu 71.613 REFERENCE với file người chấm
+        (<code>20-21.8.xlsx</code>, đã loại 11.523 REFERENCE trùng lặp): 59.496 khớp đúng nhóm TT,
+        12.117 lệch — <b>chỉ 188 dòng còn thuộc nhóm "CITAD" (0,26%)</b>, phần còn lại là 2 nhãn tự
+        do người chấm gõ tay ("Chờ đi kênh" 6.004 + "Đã gửi, chờ phản hồi" 5.915).</p>
+
+      <div class="label">Phát hiện phụ #1 — file OSB thật không phải lúc nào cũng đặt tên bắt đầu "osb"</div>
+      <p><code>detect_file_type()</code> nhận diện OSB chỉ qua
+        <code>low.startswith('osb')</code>. Batch 20-21/8 có file OSB thật tên tự sinh từ IPCAS
+        (<code>DULIEUCHITIETHACHTOAN_22082026_160034_...xlsx</code>) — cùng nội dung/sheet
+        "DỮ LIỆU CHI TIẾT HẠCH TOÁN" y hệt file OSB batch trước, nhưng bị <code>[SKIP] Không nhận
+        dạng được</code> vì tên không khớp quy ước. Phải copy thủ công 1 bản đổi tên
+        (<code>osb_20-21.xlsx</code>) mới chạy được — giống hệt cách né đã làm cho batch 18-19.
+        <b>Đây là lỗ hổng robustness thật</b> (không phải bug logic) — nên nhận diện OSB qua NỘI
+        DUNG (sheet "Sheet 1" + dòng tiêu đề "DỮ LIỆU CHI TIẾT HẠCH TOÁN") giống cách
+        <code>_is_citad_csv()</code> đã làm cho Citad, thay vì chỉ dựa tên file.</p>
+
+      <div class="label">Phát hiện phụ #2 — 188 dòng CITAD lệch: quy tắc SMF-bypass-EICP có thể cần xác nhận lại</div>
+      <p>Đào sâu 1 mẫu cụ thể (REFERENCE <code>1000API208409150</code>): Core tự tính Trace='208409150'
+        (qua pattern API); Hub CHỈ có đúng 1 dòng cho STC tương ứng
+        (<code>Số giao dịch='1303SMF2608200000039'</code>), Trace gốc='208275257' — <b>2 giá trị
+        hoàn toàn khác nhau</b>, không phải lỗi làm tròn/format. Đã xác nhận không có dòng Hub nào
+        khác trùng STC (không phải lỗi <code>_first_match()</code> chọn nhầm — chỉ có 1 ứng viên
+        duy nhất). Nguyên nhân: <code>process_hub()</code> có quy tắc "'Số giao dịch' chứa 'SMF' →
+        luôn giữ nguyên Số Trace 1 gốc, không VLOOKUP qua EICP" (xác nhận nghiệp vụ 2026-07-16) —
+        pipeline đang làm ĐÚNG theo quy tắc đã chốt, nhưng người chấm tay dùng Trace khác cho đúng
+        cùng giao dịch này. <b>Chưa kết luận đây là bug hay quy tắc SMF cần xác nhận lại</b> — cần
+        Business Owner xem lại, khối lượng nhỏ (0,26%) nên ưu tiên thấp.</p>
+
+      <div class="label">Đã loại — nhóm "Đã gửi, chờ phản hồi" KHÔNG liên quan OSB</div>
+      <p>Nghi ngờ ban đầu: đây là bug OSB thiếu cửa sổ xuôi giống Citad. Kiểm tra 2.000 mẫu:
+        <b>0/2.000 có REMARK chứa "IBPSILO"</b> (dấu hiệu kênh OSB) — toàn bộ là giao dịch API
+        thường, tập trung ở ngày cuối batch (21/8). Kết luận: đây nhiều khả năng là trạng thái
+        theo dõi thủ công (người chấm tự gán khi đã gửi yêu cầu tra soát, không suy ra được từ dữ
+        liệu đầu vào có sẵn) — cùng bản chất với "Chờ đi kênh", không phải bug pipeline.</p>
+
+      <div class="label">Đã xuất kết quả cho người chấm</div>
+      <p>Copy kết quả cuối vào <code>G:\Cham ILO1000\18-19.8.2026\Output\</code> (ghi đè bản cũ,
+        khớp quy ước 1 folder <code>Output\</code> mỗi đợt) và dọn sạch 3 thư mục scratch tạo ra
+        lúc debug (<code>Output_co_OSB</code>, <code>Output_co_T1</code>, <code>Output_co_T1_hub</code>).
+        Batch 20-21/8 xuất thẳng vào <code>Output\</code> ngay từ đầu, không cần dọn.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">80</span>
+      <span class="card-title">ILO1000 — rà lại docx gốc "CÁC BƯỚC LÀM ĐỐI CHIẾU ILO2", vá 2 khoảng trống: "điện đúp" + carryover "bảng giải trình"</span>
+      <span class="badge badge-done">HOÀN THIỆN · 2026-08-24 · 174 test pass (173 mới + 1 fail cũ ngoài phạm vi)</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh — rà lại tài liệu nghiệp vụ gốc so với code</div>
+      <p>Đọc <code>G:\Cham ILO1000\CÁC BƯỚC LÀM ĐỐI CHIẾU ILO2..docx</code>, đối chiếu từng bước với
+        <code>backend/services/ilo1000/*.py</code>. Phần lớn quy trình đã code hóa đầy đủ, nhiều chỗ
+        đã tinh chỉnh vượt docx gốc dựa trên xác nhận nghiệp vụ + dữ liệu thật (cửa sổ T-1/T+1/T+3,
+        "Hủy" vs "Đã hủy", Trace2 cho nhóm không-BFX...). Chỉ 2 khoảng trống thật, đã hỏi lại Business
+        Owner (2026-08-24) trước khi code.</p>
+
+      <div class="label">Gap 1 — "Điện đúp" (docx mục III): Citad còn thừa, không thấy trên Hub</div>
+      <p>Docx: Citad thừa sau khi khớp Core+OSB → tra STC trên Hub; không thấy → "điện đúp". Code cũ
+        để <code>TT</code> rỗng, không phân biệt được với các dòng thừa khác. BO chốt: đánh dấu rõ cho
+        người chấm tự xác nhận, KHÔNG tự loại bỏ. <code>match_citad_leftover_with_osb()</code>
+        (<code>process.py</code>) nay gán <code>TT = 'Nghi điện đúp'</code> khi còn thừa VÀ
+        <code>Trace == ''</code> (STC không tra được trên Hub) — dòng còn thừa nhưng có Trace vẫn để
+        rỗng (docx không cho quy tắc tự động ở case này). <code>export.py</code> tô nền đỏ
+        (<code>#FFC7CE</code> — dùng đúng mã màu module ACH dùng cho "thừa", nhất quán quy ước màu
+        giữa các module) cho dòng Core <code>TT==''</code> và Citad <code>TT in ('', 'Nghi điện đúp')</code>
+        qua <code>conditional_format</code> (formula-based, không cần ghi lại từng ô), + thêm bảng đếm
+        TT riêng cho Citad vào sheet "Tóm tắt" (trước chỉ có Core).</p>
+
+      <div class="label">Gap 2 — "Bảng giải trình" (docx mục III.B2): tồn đọng xuyên NHIỀU lần chạy</div>
+      <p>Docx mô tả khớp Citad ngày mới với sổ tồn đọng từ CÁC ĐỢT CHẤM TRƯỚC (không chỉ T-1 trong
+        cùng batch). Pipeline không lưu DB xuyên lần chạy (mỗi job dọn sau 4h,
+        <code>ilo1000_service.py</code>) — cửa sổ T-1/T+1/T+3 hiện có chỉ mở rộng TRONG một lần chạy.
+        BO chốt: mô phỏng đúng cơ chế "MIS thừa T-2" đã có sẵn ở module ACH
+        (<code>backend/services/ach/pipeline.py::_tim_file_thua_t2()</code>) — <b>KHÔNG phát minh
+        thiết kế mới</b>. Khác biệt đơn giản hoá so với ACH: file carryover ILO1000 do <i>chính pipeline
+        xuất ra</i> với <code>Map dc</code>/<code>Trace</code> đã tính sẵn, nên đọc lại KHÔNG cần tính
+        lại khóa (ACH phải tính lại vì input T-2 là MIS thô).</p>
+      <table>
+        <tr><th>Thành phần</th><th>File</th><th>Việc làm</th></tr>
+        <tr><td>Xuất carryover mỗi lần chạy</td><td><code>export.py::export_carryover()</code></td>
+          <td>2 CSV riêng — <code>ILO1000_CORE_THUA_&lt;ngày&gt;.csv</code> (Core <code>TT==''</code>),
+            <code>ILO1000_CITAD_THUA_&lt;ngày&gt;.csv</code> (Citad <code>TT in ('','Nghi điện đúp')</code>).
+            Không tạo file nếu rỗng.</td></tr>
+        <tr><td>Nhận diện lần chạy sau</td><td><code>detect.py::detect_file_type()</code>,
+            <code>find_carryover_files()</code></td>
+          <td>Chuẩn hoá tên (bỏ dấu/case, cùng kỹ thuật ACH's <code>_chuan_hoa_ten_file()</code> —
+            viết lại độc lập, không import cross-module) — chấp nhận cả file người chấm đổi tên tay.</td></tr>
+        <tr><td>Khớp chéo</td><td><code>process.py::apply_carryover_to_citad/core()</code>,
+            gọi từ <code>pipeline.py::_run_one_day()</code></td>
+          <td>So trực tiếp <code>Map dc</code> (tái dùng <code>_first_match()</code> — VLOOKUP-style
+            có sẵn, không viết thuật toán khóa mới). Khớp → gán
+            <code>TT = 'Khớp Core/Citad thừa kỳ trước (&lt;ngày cũ&gt;)'</code>, không đụng dòng đã có
+            TT khác (Hủy/OSB/khớp trong-batch ưu tiên hơn).</td></tr>
+      </table>
+      <p><b>Cố ý CHỈ 1 hop</b> (không tự re-xuất phần carryover vẫn chưa khớp để dồn tiếp lần sau) —
+        giống đúng cách ACH làm; người chấm tự quyết định có mang file cũ đi thêm lần nữa hay không.
+        Không tạo báo cáo "KẾT QUẢ" tách riêng như ACH — ILO1000 mỗi ngày đã có sẵn đúng 1 file
+        <code>.xlsx</code> với cột <code>TT</code>, gắn nhãn carryover trực tiếp vào đó là đủ.</p>
+
+      <div class="label">Test — round-trip thật qua <code>main_from_dir()</code></div>
+      <p>Ngoài test đơn vị cho từng hàm, có test tích hợp gọi <code>main_from_dir()</code> 2 lần liên
+        tiếp (lần 1 → xuất carryover thật ra đĩa; lần 2 → copy file đó vào input mới, ngày khác, xác
+        nhận Core được gán đúng nhãn) — chứng minh dây chuyền đầy đủ, không chỉ đúng ở mức hàm lẻ.
+        173 test mới pass; 1 test cũ fail không liên quan (<code>TestBuildOsbKey::
+        test_raises_on_unknown_amount_format</code>, lỗi thời so với luật ngăn-nghìn chốt 2026-08-21
+        cho module khác — để riêng, không thuộc phạm vi đợt này).</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">81</span>
+      <span class="card-title">ILO1000 — Hub 86.053 vs 91.708 (người chấm tay): 5.655 dòng "chưa có kết quả kênh trả" bị load_hub() loại vĩnh viễn, kéo theo 4.684/4.706 dòng "Chưa khớp" báo sai</span>
+      <span class="badge badge-done">HOÀN THIỆN · 2026-08-25 · 178 test pass (5 test mới) · verify dữ liệu thật 22/8/2026, khớp đúng số người chấm tay</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh — chạy batch <code>G:\Cham ILO1000\23.8.2026</code>, người dùng báo lệch với đếm tay</div>
+      <p>Chạy pipeline lần đầu (2026-08-24) ra Hub = 86.053 dòng. Người chấm tay đếm trực tiếp 2 file
+        pHub gốc ra 91.708 dòng — lệch 5.655. Yêu cầu: điều tra bằng số liệu, không suy diễn.</p>
+
+      <div class="label">Nguyên nhân gốc — <code>load_hub()</code> loại dòng "Ngày giờ kênh trả" RỖNG</div>
+      <p><code>load_hub(paths, ngay_ints)</code> lọc theo cửa sổ ngày bằng
+        <code>pd.to_datetime(..., errors='coerce').isin(ngay_ints)</code>. 5.655/91.708 dòng Hub có cột
+        "Ngày giờ kênh trả" RỖNG HOÀN TOÀN (không phải lỗi định dạng) — vì kênh CHƯA trả kết quả:</p>
+      <table>
+        <tr><th>Trạng thái (5.655 dòng rỗng ngày)</th><th>Số dòng</th></tr>
+        <tr><td>Chờ đi kênh</td><td>4.601</td></tr>
+        <tr><td>HT lỗi</td><td>638</td></tr>
+        <tr><td>Đã gửi, chờ phản hồi</td><td>260</td></tr>
+        <tr><td>Đã hủy</td><td>99</td></tr>
+        <tr><td>Đã treo</td><td>50</td></tr>
+        <tr><td>Chờ duyệt chi trả</td><td>6</td></tr>
+        <tr><td>Chờ hủy</td><td>1</td></tr>
+      </table>
+      <p><code>NaT</code> không bao giờ khớp <code>.isin()</code> → các dòng này bị loại ở MỌI ngày,
+        vĩnh viễn (không có cơ chế nào khác nạp lại). 91.708 − 5.655 = 86.053, khớp chính xác số lệch
+        quan sát được.</p>
+
+      <div class="label">Hệ quả nghiêm trọng hơn con số Hub — lây sang "Chưa khớp" của Core</div>
+      <p>Đối chiếu Trace của 5.655 dòng bị loại với 4.706 dòng Core "Chưa khớp" (đã báo cáo trước đó
+        là "chênh lệch thật cần rà soát", ≈38,8 tỷ đồng): <b>4.684/4.706 dòng (99,5%) khớp thẳng Trace</b>
+        với đúng các dòng Hub bị loại này. Dựng lại <code>process_hub()</code>/<code>process_core()</code>
+        với Hub mở rộng (không lọc rỗng ngày) xác nhận: "Chưa khớp" thật giảm từ 4.706 xuống còn
+        <b>22 dòng</b> — số 4.706 báo cáo lượt trước là SAI, gần như toàn bộ là do bug lọc Hub, không
+        phải chênh lệch tài chính thật.</p>
+
+      <div class="label">Fix — giữ dòng rỗng ngày, nhưng CHỈ gán cho 1 ngày để tránh đếm trùng</div>
+      <p>Không thể đơn giản "bỏ lọc ngày" — Hub pool dùng CHUNG cho mọi nhóm ngày trong batch
+        (<code>detect.py::group_files_by_date()</code>), nếu dòng rỗng ngày được giữ ở MỌI lời gọi
+        <code>load_hub()</code> thì 1 giao dịch sẽ xuất hiện trùng ở nhiều báo cáo ngày khác nhau
+        (batch 2 ngày trở lên). Giải pháp:</p>
+      <table>
+        <tr><th>Thành phần</th><th>File</th><th>Việc làm</th></tr>
+        <tr><td>Tham số mới</td><td><code>load_hub.py::load_hub(..., include_undated=False)</code></td>
+          <td>Khi <code>True</code>, giữ thêm dòng <code>NaT</code> (rỗng ngày) bên cạnh dòng khớp
+            cửa sổ — mặc định <code>False</code>, backward-compatible.</td></tr>
+        <tr><td>Chọn đúng 1 ngày/batch</td><td><code>pipeline.py::main_from_dir()</code></td>
+          <td>Tính <code>latest_date_int = max(day_groups)</code>, chỉ bật
+            <code>include_undated_hub=True</code> cho ngày LỚN NHẤT batch (giao dịch "chờ" tính đến
+            thời điểm xuất file thuộc về phiên chấm gần nhất) — mọi ngày khác giữ hành vi cũ.</td></tr>
+      </table>
+      <p><b>Giới hạn đã biết</b> (ghi rõ, không giấu): nếu đúng ngày lớn nhất batch bị SKIP (không có
+        giao dịch Citad khớp TRX_DATE ngày đó — carryover-only), dòng Hub rỗng ngày sẽ không được ngày
+        nào khác "nhận" trong lần chạy đó, quay lại hành vi cũ (loại mất). Batch thực tế hiện có (1-2
+        ngày liên tiếp, luôn có Citad thật) không rơi vào case này; nếu phát sinh sau này cần xử lý
+        thêm bằng cách xác định "ngày cuối THỰC SỰ được xử lý" thay vì chỉ lấy max ngày trong nhóm.</p>
+
+      <div class="label">Verify — chạy lại dữ liệu thật</div>
+      <p><code>G:\Cham ILO1000\23.8.2026</code>, ngày 22/8: Hub 86.053 → <b>91.708</b> (khớp đúng người
+        chấm tay). "Chưa khớp" 4.706 → <b>22</b>. 5 test mới (3 unit <code>load_hub()</code> +
+        2 tích hợp <code>main_from_dir()</code> — 1 batch-1-ngày giữ dòng rỗng ngày, 1 batch-2-ngày
+        xác nhận CHỈ ngày lớn nhất nhận, ngày còn lại không đếm trùng). 178/179 test toàn bộ
+        <code>test_ilo1000_algorithm.py</code> pass — 1 fail còn lại là lỗi cũ đã biết
+        (<code>TestBuildOsbKey::test_raises_on_unknown_amount_format</code>, ngoài phạm vi, xem card 80).</p>
+
+      <div class="label">Lưu ý — phát hiện trong lúc sửa: 2 cửa sổ Claude Code cùng sửa <code>backend/services/ilo1000/</code></div>
+      <p>Trong lúc điều tra, <code>pipeline.py</code>/<code>detect.py</code>/<code>export.py</code>/
+        <code>process.py</code>/<code>config.py</code>/<code>load_citad.py</code>/<code>load_core.py</code>
+        bị 1 phiên khác sửa (card 80 — tính năng "điện đúp" + carryover "bảng giải trình", 2026-08-24
+        14h50-15h03). Đã đọc lại bản mới nhất trước khi vá — chỉ thêm tham số mới
+        (<code>include_undated_hub</code>), không đụng/ghi đè logic carryover đã có.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">82</span>
+      <span class="card-title">ILO1000 — tổng quát hoá nhận diện file qua NỘI DUNG cho cả 5 nguồn (trước chỉ Citad/OSB có dự phòng)</span>
+      <span class="badge badge-done">HOÀN THIỆN · 2026-08-25 · 6 test mới, 185/185 test <code>test_ilo1000_algorithm.py</code> pass</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Yêu cầu — người dùng chủ động đề nghị sau khi thấy OSB/EICP gãy tên</div>
+      <p>Sau các lần gặp OSB (card 79, file IPCAS tự đặt tên không theo quy ước) và EICP (batch
+        23-24/8, "eicp 23-24.8.XLS" chỉ trích được số 23 từ tên), người dùng yêu cầu tổng quát hoá:
+        nhận diện file KHÔNG phụ thuộc tên, dùng nội dung (header/sheet) cho cả 5 nguồn — đúng cách
+        <code>_is_citad_csv()</code>/<code>_is_osb_xlsx()</code> đã làm.</p>
+
+      <div class="label">Thêm 4 hàm dự phòng nội dung — CHỈ chạy khi tên file không khớp quy ước cũ</div>
+      <table>
+        <tr><th>Nguồn</th><th>Hàm</th><th>Tiêu chí nhận diện</th></tr>
+        <tr><td>Hub</td><td><code>_is_hub_xlsx()</code></td>
+          <td>Header row 2 (row 1 là title) chứa đủ {'Số giao dịch','Số Ref Hub','Ngày giờ kênh trả'}</td></tr>
+        <tr><td>EICP</td><td><code>_is_eicp_file()</code></td>
+          <td>Header row 0 chứa đủ {'BRCD','MSGKEY','TRSEQ'} — tổ hợp không trùng Hub/Citad/Core</td></tr>
+        <tr><td>Core CSV</td><td><code>_is_core_csv()</code></td>
+          <td>Header dòng 1 chứa 'TRDATE'+'TRBRCD'+'REFERENCE'</td></tr>
+        <tr><td>Core ZIP</td><td><code>_is_core_zip()</code></td>
+          <td>Mở bằng <code>ZIP_PASSWORD</code> chung (pyzipper), đọc header entry .csv đầu tiên,
+            cùng tiêu chí Core CSV — chấp nhận chi phí giải mã vì chỉ chạy khi tên file đã trượt
+            nhánh theo tên</td></tr>
+      </table>
+      <p>Không đổi thứ tự/hành vi nhánh theo TÊN FILE hiện có (giữ nguyên để không phá test cũ) — 4
+        hàm trên chỉ là nhánh dự phòng cuối, giống hệt vị trí <code>_is_osb_xlsx()</code> đang đứng.</p>
+
+      <div class="label">Đã biết nhưng CHƯA làm — EICP có cột ngày đầy đủ trong nội dung (TRADATE)</div>
+      <p>Trong lúc soát dữ liệu thật <code>eicp 23-24.8.XLS</code>, phát hiện cột <code>TRADATE</code>
+        (giá trị đầy đủ, VD <code>2026-08-24 00:00:00</code>) — mâu thuẫn với comment cũ trong code
+        "EICP chỉ có ngày (DD), không có năm/tháng". Nếu đúng vậy, kiến trúc gán EICP theo NGÀY hiện
+        tại (số DD trích từ TÊN FILE, xem <code>_eicp_day()</code> + fallback gán nhóm nhiều dữ liệu
+        nhất) có thể tổng quát hoá thành pool lọc theo nội dung như Hub/Citad/OSB đã làm — sửa đúng
+        gốc thay vì đoán qua tên. <b>CHƯA làm</b> vì đây là thay đổi kiến trúc (không chỉ nhận diện
+        loại file) — đụng <code>load_eicp()</code>, <code>group_files_by_date()</code>,
+        <code>merge_previous_day_eicp()</code>/<code>merge_monday_carryover()</code>, và nhiều test đã
+        có (<code>TestEicpUnmatchedFallback</code>, <code>TestPreviousDayEicpCarryover</code>) — cần
+        xác nhận riêng trước khi động vào, không tự ý mở rộng phạm vi đợt này.</p>
+
+      <div class="label">Giới hạn đã biết — dự phòng type không tự cứu được thiếu NGÀY trong tên</div>
+      <p>4 hàm trên chỉ giúp NHẬN DIỆN LOẠI file đúng khi tên không theo quy ước — file Core/EICP vẫn
+        cần tên chứa ngày hợp lệ để <code>extract_date()</code>/<code>_eicp_day()</code> gán đúng
+        nhóm, nếu không sẽ vẫn bị bỏ qua (nay với log rõ hơn: <code>[WARN] Không trích được ngày</code>
+        thay vì <code>[SKIP] Không nhận dạng được</code> — ít nhất biết ĐÚNG loại file, chỉ thiếu
+        ngày). Hub/Citad/OSB không bị giới hạn này vì đã là pool lọc theo nội dung, không cần ngày
+        trong tên.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">83</span>
+      <span class="card-title">ILO1000 — sửa quy tắc Trace cho giao dịch SMF: dùng "Số Trace 2" (trace giao dịch gốc) thay vì giữ nguyên Số Trace 1</span>
+      <span class="badge badge-done">HOÀN THIỆN CODE+TEST · 2026-08-25 · 187/187 test <code>test_ilo1000_algorithm.py</code> pass · CHƯA verify dữ liệu thật</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Đóng lại "Phát hiện phụ #2" (card 79) — quy tắc SMF cũ SAI, không phải cần "xác nhận lại"</div>
+      <p>Card 79 nghi vấn: dòng Hub SMF (<code>Số giao dịch='1303SMF2608200000039'</code>) có Số
+        Trace 1 gốc = <code>'208275257'</code>, trong khi Core tự tính độc lập từ REFERENCE
+        (<code>1000API208409150</code>) ra <code>'208409150'</code> — 2 giá trị khác hẳn nhau,
+        188 dòng CITAD lệch batch 20-21/8 (+ 205 dòng batch 18-19/8 = 393 dòng, xem
+        <code>Danh_sach_188_lech_CITAD_can_xac_nhan.xlsx</code>). Quy tắc cũ (chốt 2026-07-16):
+        "'Số giao dịch' chứa 'SMF' → giữ nguyên Số Trace 1 gốc, không VLOOKUP EICP".</p>
+      <p>Người dùng xác nhận 2026-08-25: quy tắc đúng là <b>Trace của dòng SMF phải lấy từ cột
+        "Số Trace 2" của chính dòng Hub gốc</b> — "Số Trace 2" là trace của GIAO DỊCH GỐC (đúng
+        cách đã dùng cho nhóm OT — giao dịch không chứa 'S' trong "Số giao dịch"), không phải Số
+        Trace 1 của bản thân dòng SMF, và không tra EICP/BFX.</p>
+
+      <div class="label">Thay đổi — <code>process.py::process_hub()</code></div>
+      <p>Dòng <code>use_trace2 = ~s_mask & (trace2_raw != '')</code> chỉ áp Số Trace 2 cho nhóm
+        KHÔNG chứa 'S'; vì <code>'SMF'</code> chứa ký tự <code>'S'</code> nên nhóm SMF trước đây bị
+        loại khỏi nhánh này. Sửa thành
+        <code>use_trace2 = (~s_mask | smf_mask) & (trace2_raw != '')</code> — áp cả nhóm SMF.
+        <code>bfx_apply_mask</code>/<code>eicp_apply_mask</code> đã có sẵn <code>~smf_mask</code>
+        nên không ghi đè lại giá trị vừa gán. Cột output <code>Trace2</code> vốn đã =
+        <code>pd.to_numeric(Trace)</code> nên tự động đúng theo, không cần sửa riêng.</p>
+      <p>Thêm tham số <code>log=None</code> cho <code>process_hub()</code> (theo đúng pattern đã có
+        ở <code>process_citad(..., log=None)</code>): log <code>[WARN]</code> khi 1 dòng SMF thiếu
+        "Số Trace 2" (rỗng hoặc cả cột không tồn tại trong file) — trường hợp này fallback im lặng
+        về Số Trace 1 cũ, cần lộ ra qua log nếu xảy ra thật trên dữ liệu 22-24/8, không được nuốt
+        lỗi. Cập nhật lời gọi ở <code>pipeline.py</code> truyền <code>log=log</code>.</p>
+
+      <div class="label">Test — viết lại lớp khoá quy tắc cũ (SAI)</div>
+      <p><code>TestHubSmfSkipsVlookup</code> (khoá "SMF giữ nguyên Số Trace 1") đổi thành
+        <code>TestHubSmfUsesTrace2</code>, 5 test: SMF dùng đúng Số Trace 2 (không phải Trace 1,
+        không phải EICP), case-insensitive, fallback + WARN khi thiếu Số Trace 2 (cả 2 trường hợp:
+        cột rỗng và cả cột không tồn tại), và giữ nguyên test nhóm 'S' không SMF vẫn qua EICP bình
+        thường. 187/187 test toàn suite pass, không regression.</p>
+
+      <div class="label">CHƯA làm — verify dữ liệu thật 22-24/8/2026</div>
+      <p>Phiên sửa code này chạy trên máy KHÔNG có ổ dữ liệu thật (không truy cập được
+        <code>G:\Cham ILO1000\</code>) — chỉ xác nhận bằng test tổng hợp. Bước tiếp theo, thực hiện
+        ở phiên có ổ dữ liệu thật: chạy lại pipeline trên batch 22-24/8/2026, đối chiếu 393 dòng
+        CITAD từng lệch (205 batch 18-19/8 + 188 batch 20-21/8) xem có giảm về 0 không.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">84</span>
+      <span class="card-title">Đối chiếu Song phương Kênh↔Hub — guard nhận diện ngân hàng qua prefix <code>MtId/MsgId</code> (chỉ SP REALTIME)</span>
+      <span class="badge badge-done">HOÀN THIỆN CODE+TEST · 2026-08-25 · 30/30 test module pass · verify 100% trên 6 file thật (202+203 × 21.8/22.8/23.8/24.8, ~2,9 triệu dòng, 0 lệch)</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Nguồn — <code>lyxink.txt</code>, ghi chú Business Owner (2026-08-25)</div>
+      <p>10 ký tự đầu <code>MtId/MsgId</code> (kênh) là mã cố định theo ngân hàng: <code>0200970415</code>
+        → 201, <code>0200970488</code> → 202, <code>0200970436</code> → 203, <code>0200970422</code> →
+        311. Vì <code>MSGREF</code> (HUB SP REALTIME, sau strip <code>'</code>) = <code>MtId/MsgId</code>
+        khi khớp tuyệt đối, quy tắc áp dụng được cho cả 2 phía. <b>Chỉ SP REALTIME</b> — SP THUONG dùng
+        khoá số tuần tự 16 chữ số, không có cấu trúc prefix theo NH quan sát được. 201/311 chưa verify
+        được (chưa có file kênh SPRT thật của 2 NH này).</p>
+
+      <div class="label">3 phương án đề xuất trong kế hoạch, chủ dự án chọn A</div>
+      <table>
+        <tr><th>Phương án</th><th>Mô tả</th><th>Quyết định</th></tr>
+        <tr><td>A</td><td>Guard validate: file kênh SPRT đã đọc theo tên file như cũ, kiểm tra 100% <code>MtId/MsgId</code> đúng prefix NH đã khai báo qua tên — raise rõ ràng nếu lệch</td><td><b>ĐÃ CHỌN, đã code</b></td></tr>
+        <tr><td>B</td><td>Auto-routing hoàn toàn theo nội dung, bỏ định tuyến theo tên file</td><td>Không chọn (để dành nếu định dạng file đổi mạnh hơn nữa)</td></tr>
+        <tr><td>C</td><td>Không dùng</td><td>Không chọn</td></tr>
+      </table>
+
+      <div class="label">Thay đổi — <code>config.py</code> / <code>load_kenh.py</code> / <code>pipeline.py</code></div>
+      <p>Thêm <code>KENH_MTID_PREFIX: dict[str, str]</code> vào <code>config.py</code>.
+        <code>load_kenh_file(source, ma_nh, loai)</code> nhận thêm 2 tham số bắt buộc (trước đây chỉ
+        có <code>source</code>) — nếu <code>loai == "SPRT"</code>, kiểm tra 100% dòng
+        <code>MtId/MsgId[:10] == KENH_MTID_PREFIX[ma_nh]</code>, raise <code>ValueError</code> liệt kê
+        số dòng lệch + tối đa 5 giá trị mẫu nếu có lệch. <code>pipeline.py::main_from_dir()</code> cập
+        nhật lời gọi truyền <code>ma_nh, loai</code>.</p>
+
+      <div class="label">Vì sao đây là guard hữu ích thật, không phải phòng thủ thừa</div>
+      <p>Trong cùng phiên làm việc, ngày 24.8 từng có 1 file kênh (<code>SPRT 202.xlsx</code>) hỏng
+        thật (toàn byte <code>0x00</code>, phát hiện bằng đọc byte trực tiếp, không phải đoán) — guard
+        này bắt một dạng lỗi KHÁC: file lành nhưng dữ liệu bên trong thuộc nhầm ngân hàng (đặt sai tên,
+        copy nhầm file). Nếu không có guard, kết quả sẽ chỉ là tỉ lệ khớp sụt bất thường mà không rõ
+        nguyên nhân — guard trả lỗi trỏ thẳng vào nguyên nhân.</p>
+
+      <div class="label">Test</div>
+      <p><code>test_doi_chieu_song_phuong_kenh_algorithm.py</code>: 2 test mới —
+        <code>test_sprt_sai_prefix_ngan_hang_raise</code> (MtId mang prefix NH khác → raise) và
+        <code>test_spt_khong_ap_dung_guard_prefix</code> (SPT không bị guard chặn dù prefix không khớp
+        NH nào). Cập nhật 2 test cũ + fixture API test (<code>_setup_day_folder</code>) dùng MtId/MSGREF
+        có prefix thật hợp lệ thay vì chuỗi test tuỳ ý. 30/30 test module pass.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">85</span>
+      <span class="card-title">Đối chiếu Song phương Kênh↔Hub — 3 bổ sung nhỏ: loại cặp TXID+TRACE trùng (giao dịch huỷ), tên file kênh đảo thứ tự, bỏ dòng N/A cho SPT không áp dụng</span>
+      <span class="badge badge-done">HOÀN THIỆN CODE+TEST · 2026-08-26 · 37/37 test module pass · verify dữ liệu thật 25.8 (chênh 0 cả 3 đơn vị)</span>
+    </div>
+    <div class="card-body">
+      <div class="label">1. Loại cặp (TXID, TRACE) trùng — giao dịch huỷ</div>
+      <p>Đối chiếu lại tài liệu Word gốc mục 1.2/2.2 phát hiện code Phase 9 còn thiếu 1 điều kiện:
+        "các GD có số TXID + số trace giống nhau" cũng phải loại trước khi đối chiếu (cả Bảng 1 lẫn
+        đối chiếu chi tiết — dùng chung 1 điểm lọc <code>filter_before_reconcile()</code>, sửa 1
+        chỗ áp dụng cho cả 2). Business Owner xác nhận (2026-08-26): "giống nhau" = 2 dòng CÙNG
+        TXID VÀ CÙNG TRACE. Verify: 21.8/23.8 có 0 trường hợp; 25.8 có đúng 2 cặp/4 dòng (NH 202,
+        trạng thái <code>RFED</code>, cùng số tiền) — khớp thiết kế. TXID/TRACE rỗng bị loại khỏi
+        bước gom nhóm trước (nhiều dòng <code>RJCT</code> có TRACE rỗng, group thẳng sẽ ra cặp
+        "trùng" giả) — người dùng chủ động yêu cầu thêm guard này. Nhóm &gt;2 dòng cùng cặp → log
+        cảnh báo riêng, không âm thầm coi là bình thường.</p>
+
+      <div class="label">2. Tên file kênh đảo thứ tự (dữ liệu 25.8)</div>
+      <p>File kênh 25.8 đặt tên <code>kênh đến {mã_nh} {loại}.xlsx</code> (mã NH trước) thay vì quy
+        ước cũ <code>kênh đến {loại} {mã_nh}.xlsx</code>. Thêm <code>load_kenh.find_kenh_path()</code>
+        thử cả 2 thứ tự tên, giữ nguyên <code>kenh_filename()</code> (tên chuẩn) không đổi hành vi
+        cũ. Chưa rõ đây là quy ước mới lâu dài hay chỉ 1 lần — độ tin cậy trung bình.</p>
+
+      <div class="label">3. Bỏ dòng "N/A" cho SPT ở ngân hàng không có nghiệp vụ này</div>
+      <p>Trước đây <code>FULL_MATRIX_NOTE</code> tạo dòng N/A tường minh cho (203, SPT) trong Bảng 1.
+        Quyết định 2026-08-26 (chủ dự án): bỏ hẳn dòng này khỏi báo cáo — quy luật cấu trúc đã xác
+        nhận chắc chắn (203/311 không có nghiệp vụ SPT), không còn nguy cơ hiểu nhầm "0 giao dịch"
+        như lo ngại ban đầu. Xoá <code>FULL_MATRIX_NOTE</code> khỏi <code>config.py</code>,
+        <code>export.py::build_bang1_rows()</code> giờ lặp thẳng qua <code>RECONCILE_UNITS</code>
+        (loại bỏ cơ chế ma trận N/A vì không còn entry nào cần dùng).</p>
+
+      <div class="label">Verify dữ liệu thật + test</div>
+      <p>Chạy pipeline thật trên 25.8 (NH 202-SPRT/203-SPRT/202-SPT): cả 3 đơn vị chênh số món/số
+        tiền = 0, tỉ lệ khớp 99,98-100%. Thêm 6 test mới (huỷ TXID+TRACE ×3, <code>find_kenh_path</code>
+        ×3) + 1 test mới cho <code>build_bang1_rows</code> không còn dòng SPT của NH không áp dụng.
+        37/37 test toàn module pass.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">86</span>
+      <span class="card-title">Đối chiếu Song phương — module mới Hub↔Core chiều ĐẾN (chân thứ 3, theo hướng dẫn chính thức "người chấm")</span>
+      <span class="badge badge-done">HOÀN THIỆN CODE+TEST+VERIFY · 2026-08-26 · 71/71 test pass · chạy thật 24.8 (NH 202+203, ~1,7 triệu dòng): 0 dòng CORE/HUB THỪA, bất biến khớp tuyệt đối cả 2 NH</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Nguồn — <code>đối chiếu Song phương.docx</code> mục "Đối chiếu kênh – core"</div>
+      <p>Tài liệu gọi tên mục hơi lệch — nội dung thực chất là <b>HUB ↔ CORE</b> (không bước nào
+        dùng file kênh). Đây là chân thứ 3 (hạch toán) của mô hình kênh-hub-core, khảo sát sơ bộ
+        trước đó (không có spec) đã bị thay thế hoàn toàn. Khảo sát + lập plan trước khi code, đã
+        verify nhiều điểm bằng dữ liệu thật 21-25/08/2026 trước khi viết bất kỳ dòng code nào.</p>
+
+      <div class="label">Phát hiện quan trọng — tài liệu không nói rõ nhưng dữ liệu thật đòi hỏi</div>
+      <table>
+        <tr><th>Điểm</th><th>Tài liệu viết</th><th>Thực tế xác nhận bằng dữ liệu thật</th></tr>
+        <tr><td>SO_TRACE core</td><td>"Bỏ 1000API, giữ phần còn lại"</td><td>Phải <code>lstrip('0')</code> CẢ 2 bên (core lẫn TRACE hub) mới khớp — raw 0/18.952, sau lstrip 18.029/18.952</td></tr>
+        <tr><td>Khoá OSB↔HUB</td><td>"CHI_NHANH&amp;TRACE" hub so "CN thực hiện&amp;Mã giao dịch" OSB</td><td>Khớp RAW hoàn toàn, KHÔNG cần lstrip — khác hẳn khoá core↔hub (ngược trực giác nếu chỉ đọc tài liệu)</td></tr>
+        <tr><td>"GD QT vốn" (REMARK "Quyet toan von")</td><td>Bước 1.9, không có ví dụ</td><td>Chính là dòng 180 tỷ từng tưởng là bất thường ở khảo sát trước — verify 3 dòng thật 21.8 (VCB/MB/VietinBank↔Agribank)</td></tr>
+      </table>
+
+      <div class="label">Kiến trúc — module mới, không sửa 2 module đã có</div>
+      <p><code>backend/services/doi_chieu_song_phuong_core/</code>: <code>load_core.py</code> (SO_TRACE,
+        KEY_DEN, nhóm huỷ cùng ngày/QT OSB/QT vốn), <code>load_osb.py</code> (đọc <code>osb
+        {mã_nh}.xlsx</code> sheet <code>Sheet 1</code> <code>header=2</code>, 2 khoá riêng: khớp
+        core dùng <code>build_key_osb</code>, khớp hub dùng <code>build_key_hub_osb</code> — RAW,
+        không kèm số tiền), <code>match.py</code> (thuật toán tuần tự top-down đúng Bước 1.x/2.x,
+        dùng chung <code>_khop_min_count()</code> kiểu ACH <code>_doi_chieu</code>),
+        <code>pipeline.py</code> (dò file HUB T/T-1/T-2/T-3 + CORE T/T+1/T+2/T+3 trong cả thư mục
+        ngày lẫn thư mục cha — quyết định người dùng 2026-08-26 vì file <code>GL02_20260820</code>
+        để rời không có thư mục riêng), <code>export.py</code> (3 sheet: TongHop + Core_ChiTiet +
+        Hub_ChiTiet — quyết định người dùng: cần cả chi tiết lẫn tổng hợp). Module <code>doi_chieu_song_phuong_kenh</code>
+        chỉ thêm 2 hàm tái dùng (<code>filter_before_reconcile_core</code>,
+        <code>build_key_hub_core</code>), không đổi hành vi hàm cũ.</p>
+
+      <div class="label">Bất biến kiểm tra chéo</div>
+      <p>Tài liệu yêu cầu bước 2.2 (hub khớp core T) phải cho đúng số món/tiền như bước 1.4 (core
+        khớp hub T) — <code>pipeline.py</code> tự assert + log cảnh báo nếu 2 số lệch nhau, đúng
+        tinh thần bất biến "matched+thừa=tổng" đã dùng ở các module khác.</p>
+
+      <div class="label">Đầy đủ stack — service/API/frontend, không chỉ engine</div>
+      <p><code>doi_chieu_song_phuong_core_service.py</code> (job pattern giống module kênh↔hub,
+        input thêm <code>ngay</code> vì không tự nhận diện được như module kia; lặp 4 ngân hàng,
+        bỏ qua ngân hàng thiếu dữ liệu thay vì crash cả job), API
+        <code>backend/api/doi_chieu_song_phuong_core.py</code> (đăng ký <code>registry.py</code>),
+        2 feature flag mới (<code>menu.doi_chieu_song_phuong_core</code>,
+        <code>doi_chieu_song_phuong_core.process</code>), trang
+        <code>frontend/pages/doi_chieu_song_phuong_core.py</code> (thêm sidebar).</p>
+
+      <div class="label">Test</div>
+      <p>27 test thuật toán (<code>test_doi_chieu_song_phuong_core_algorithm.py</code>) + 7 test API
+        (<code>test_doi_chieu_song_phuong_core_api.py</code>, dùng GL02 test mã hoá AES thật giống
+        sản xuất) — 34 test mới, 71/71 test toàn nhóm song phương (kênh↔hub + hub↔core) pass.</p>
+
+      <div class="label">Kết quả chạy thật ngày 24.8 — NH 202 + 203, đủ cửa sổ T-3..T+1</div>
+      <table>
+        <tr><th></th><th>NH 202</th><th>NH 203</th></tr>
+        <tr><td>CORE — hub T core T / T-1 / T-2 / QT OSB / QT vốn</td><td>377.651 / 12.941 / 26 / 1 / —</td><td>470.120 / 17.948 / — / 1 / 1</td></tr>
+        <tr><td>HUB — hub T core T / core T+1 / OSB(24.8) / OSB(25.8)</td><td>377.651 / 8.566 / 7.673 / 258</td><td>470.120 / 21.596 / 10.785 / 797</td></tr>
+        <tr><td>CORE THỪA / HUB THỪA</td><td><b>0 / 0</b></td><td><b>0 / 0</b></td></tr>
+        <tr><td>Bất biến "hub T core T" core=hub</td><td>377.651 = 377.651 ✓</td><td>470.120 = 470.120 ✓</td></tr>
+      </table>
+      <p>Toàn bộ ~1,7 triệu dòng (2 ngân hàng, cả core lẫn hub) phân loại được hết — không dòng nào
+        rơi vào "thừa" (không phân loại được), bất biến 2 chiều khớp tuyệt đối. Cột "GD QT vốn" /
+        "core T hủy T" tần suất rất thấp trên dữ liệu thật (đúng dự đoán từ khảo sát — QT vốn chỉ
+        ~1 dòng/ngân hàng/ngày, huỷ cùng ngày trong tập ĐẾN gần như không xảy ra) nhưng logic vẫn
+        cần giữ vì tài liệu yêu cầu và đã xảy ra thật ở NH 203. Xuất file thật:
+        <code>hub_core_202_20260824.xlsx</code>, <code>hub_core_203_20260824.xlsx</code> tại
+        thư mục dữ liệu gốc.</p>
+
+      <div class="label">Còn lại — chưa làm (cập nhật 2026-08-27: 201/311 ĐÃ test, xem card 87)</div>
+      <p>Trạng thái "GD QT vốn"/"core T hủy T" chỉ verify được số lượng ít trên dữ liệu thật hiện
+        có — nếu tần suất tăng ở dữ liệu ngày khác, nên rà lại logic phân loại trước khi coi là ổn
+        định lâu dài.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">87</span>
+      <span class="card-title">Đối chiếu Song phương — mở rộng NH 201 + 311, dò file linh hoạt + phục hồi dòng CSV lỗi</span>
+      <span class="badge badge-done">HOÀN THIỆN CODE+TEST+VERIFY · 2026-08-27 · 75/75 test pass · chạy thật 4 ngày (21-24.8) NH 201, 3/4 ngày NH 311 (Kênh↔Hub) + 1 ngày Hub↔Core cả 2 NH</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh — bộ dữ liệu thật thứ 3, quy ước đặt tên lại khác</div>
+      <p>Người dùng cung cấp dữ liệu đầy đủ NH 201+311 (HUB, GL02, OSB, kênh, 21-24.8.2026) tại
+        thư mục <code>dữ liệu/TRANG/</code>. Đây là bộ dữ liệu thật thứ 3 (sau bộ gốc 21-25.8 và
+        bộ 25.8 đảo tên) — và lại dùng <b>quy ước đặt tên khác cả 2 quy ước trước</b>:</p>
+      <table>
+        <tr><th>Loại</th><th>Quy ước cũ</th><th>Quy ước mới (`TRANG/`)</th></tr>
+        <tr><td>Thư mục ngày</td><td><code>23.8</code></td><td><code>23.8.2026</code> (thêm hậu tố năm)</td></tr>
+        <tr><td>File kênh</td><td><code>kênh đến SPRT 202.xlsx</code> / <code>kênh đến 202 SPRT.xlsx</code></td><td><code>kenh SPRT den 201 24.8.xlsx</code> (không dấu, kèm ngày, thứ tự khác)</td></tr>
+        <tr><td>File OSB</td><td><code>osb 202.xlsx</code></td><td><code>osb den 201 23.8.xlsx</code> / <code>OSB den 311 21.8.xlsx</code> (kèm ngày, hoa/thường lẫn)</td></tr>
+      </table>
+      <p><b>Quyết định kiến trúc:</b> thay vì thêm 1 hàm biến thể mỗi lần dữ liệu đổi tên (đã làm 2
+        lần trước, không bền), chuyển hẳn sang <b>so khớp theo TỪ KHOÁ trong tên file</b> (bỏ dấu
+        tiếng Việt + hạ chữ thường + tách token, yêu cầu đủ tập từ khoá cần thiết — VD kênh cần
+        {`kenh`, mã NH, loại}, OSB cần {`osb`, mã NH}) thay vì so khớp chuỗi cố định. Thư mục ngày
+        tương tự: thử tên chuẩn `D.M` trước, rồi glob mọi thư mục con bắt đầu đúng tiền tố đó.
+        Cách này chịu được biến thể đặt tên tương lai mà không cần sửa code mỗi lần nguồn đổi cách
+        đặt tên. Thay đổi ở <code>doi_chieu_song_phuong_kenh/load_kenh.py::find_kenh_path()</code>
+        và <code>doi_chieu_song_phuong_core/pipeline.py::_thu_muc_ngay_ung_vien()/_tim_file_osb()</code>.</p>
+
+      <div class="label">Phát hiện + phục hồi lỗi CSV thật — dòng NOI_DUNG chứa dấu " chưa escape</div>
+      <p>File HUB NH 311 (22.8 và 24.8) có ≥1 dòng cột <code>NOI_DUNG</code> chứa dấu <code>"</code>
+        chưa escape đúng chuẩn CSV (tên công ty ghi ngoặc kép lồng trong nội dung, VD dự án
+        <i>"Kinh doanh vật liệu xây dựng..."</i>) — khiến <code>pd.read_csv</code> raise
+        <code>ParserError</code> ("Expected 14 fields, saw 15/18"), sẽ làm hỏng toàn bộ ngày nếu
+        không xử lý. Thêm <code>load_hub.py::_doc_csv_hub_thu_cong()</code> — khi
+        <code>pd.read_csv</code> raise, tách dòng thủ công theo đúng 13 dấu phẩy đầu tiên (13 cột
+        đầu chưa từng thấy chứa dấu phẩy/ngoặc kép trên toàn bộ dữ liệu thật quan sát được), phần
+        còn lại luôn là <code>NOI_DUNG</code> nguyên vẹn — không phụ thuộc ngoặc kép cột này có
+        cân bằng hay không (không có lời giải "đúng" duy nhất bằng luật CSV thuần tuý khi ngoặc
+        kép lệch cân). Chỉ dùng khi phương án nhanh (<code>pd.read_csv</code>) thất bại, không đổi
+        đường xử lý cho toàn bộ dữ liệu lành (đã chạy đúng cho 202/203 + phần lớn 201/311 không
+        cần fallback này) — verify: kết quả đối chiếu 22.8 và 24.8 (NH 311, có dùng fallback) vẫn
+        cho <b>chênh_mon=0 chênh_tiền=0</b>, xác nhận phục hồi đúng, không mất/sai dữ liệu.</p>
+
+      <div class="label">Đính chính nghiệp vụ — NH 201 CÓ nghiệp vụ SPT</div>
+      <p>Quy tắc cũ (chốt 2026-08-25) "SPT chỉ áp dụng NH 202" hoá ra ngoại suy quá rộng — lúc đó
+        chỉ mới có dữ liệu 202/203. Dữ liệu thật <code>kenh SPT den 201 24.8.xlsx</code> (15.781
+        dòng, đúng cấu trúc <code>KENH_COLS</code>) xác nhận <b>201 CÓ SPT</b>; 311 vẫn KHÔNG có
+        (không có file `kenh SPT ... 311` trong bộ dữ liệu, đúng như 203 — xử lý bằng đúng 1 cơ
+        chế cho cả 2 NH: đơn giản là không có mặt trong <code>RECONCILE_UNITS</code>, không cần
+        code case riêng). <code>RECONCILE_UNITS</code> nay có 6 đơn vị: 201-SPRT, 201-SPT,
+        202-SPRT, 202-SPT, 203-SPRT, 311-SPRT.</p>
+
+      <div class="label">Kết quả chạy thật — Kênh↔Hub, 4 ngày 21-24.8, NH 201+311</div>
+      <table>
+        <tr><th>Ngày</th><th>201-SPRT</th><th>201-SPT</th><th>311-SPRT</th></tr>
+        <tr><td>21.8</td><td>99,98% (chênh 0)</td><td>100% (chênh 0)</td><td>99,97% (<b>chênh 2 món/100.000đ — chỉ-kênh</b>)</td></tr>
+        <tr><td>22.8</td><td>99,99% (chênh 0)</td><td>100% (chênh 0)</td><td>99,99% (chênh 0, có dùng fallback CSV)</td></tr>
+        <tr><td>23.8</td><td>99,99% (chênh 0)</td><td>100% (chênh 0)</td><td>99,99% (chênh 0)</td></tr>
+        <tr><td>24.8</td><td>99,98% (chênh 0)</td><td>100% (chênh 0)</td><td>99,98% (chênh 0, có dùng fallback CSV)</td></tr>
+      </table>
+      <p>Guard <code>KENH_MTID_PREFIX</code> cho 201/311 (trước đây "chưa verify") — không raise
+        lỗi ở bất kỳ ngày nào trong 4 ngày ⇒ <b>lần đầu xác nhận đúng bằng dữ liệu thật</b>. Riêng
+        21.8/NH 311 có 2 giao dịch chỉ-kênh thật (không phải lỗi code) — báo đúng theo nguyên tắc
+        "2 trạng thái nhị phân", không làm tròn thành "coi như khớp".</p>
+
+      <div class="label">Kết quả chạy thật — Hub↔Core, ngày 23.8 (cửa sổ đầy đủ nhất trong 4 ngày), NH 201+311</div>
+      <table>
+        <tr><th></th><th>NH 201</th><th>NH 311</th></tr>
+        <tr><td>CORE — hub T core T / T-1 / QT OSB</td><td>338.489 / 16.221 / 1</td><td>634.011 / 37.379 / 1</td></tr>
+        <tr><td>HUB — hub T core T / core T+1 / OSB</td><td>338.489 / 13.351 / 7.099</td><td>634.011 / 30.678 / 17.766</td></tr>
+        <tr><td>CORE THỪA</td><td><b>0</b></td><td><b>0</b></td></tr>
+        <tr><td>HUB THỪA</td><td>388 (0,11%)</td><td>1.556 (0,23%)</td></tr>
+        <tr><td>Bất biến "hub T core T" core=hub</td><td>338.489 = 338.489 ✓</td><td>634.011 = 634.011 ✓</td></tr>
+      </table>
+      <p>Khác 202/203 (0 HUB THỪA tuyệt đối) — 201/311 còn 0,1-0,23% HUB THỪA thật, KHÔNG che
+        giấu. Chưa rõ nguyên nhân: có thể cần core T+2/T+3 (không có trong 4 ngày dữ liệu hiện có)
+        mới khớp hết, hoặc là chênh lệch thật cần điều tra riêng — để nguyên trong báo cáo xuất
+        ra, không tự ý gộp/ẩn. Core THỪA = 0 cả 2 NH — toàn bộ giao dịch core phân loại được hết.</p>
+
+      <div class="label">Test</div>
+      <p>4 test mới (dò tên file linh hoạt ×2, phục hồi CSV lỗi ×1, thư mục ngày có hậu tố năm ×1)
+        + sửa 1 test cũ theo <code>RECONCILE_UNITS</code> mở rộng — 75/75 test toàn nhóm song
+        phương pass.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">88</span>
+      <span class="card-title">Đối chiếu Song phương — Kênh↔Hub: rà soát theo tài liệu v3, thay hẳn "Bảng 3" cũ bằng file chi tiết row-level</span>
+      <span class="badge badge-done">HOÀN THIỆN CODE+TEST · 2026-08-27 · 77/77 test pass (kênh+core) · 747/747 toàn dự án</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh — người chấm gửi <code>đối chiếu Song phương v3.docx</code>, yêu cầu rà soát toàn bộ codebase</div>
+      <p>Đối chiếu v1 (22.8) → v2 (26.8) → v3 (27.8) bằng <code>diff</code> từng đoạn để xác định
+        chính xác phần nào mới/đổi, tránh làm lại việc đã xong. Kết luận: module
+        <code>doi_chieu_song_phuong_core</code> (Hub↔Core, card 86/87) được code theo v2 —
+        <b>v2→v3 không đổi gì ở mục này</b>, xác nhận bằng diff, không cần sửa. Module
+        <code>doi_chieu_song_phuong_kenh</code> (Kênh↔Hub) được code theo v1 — Bảng 1 tổng hợp vẫn
+        đúng, nhưng phần "Đối chiếu chi tiết" đã bị v3 thay đổi thiết kế hoàn toàn.</p>
+
+      <div class="label">3 quyết định phạm vi (hỏi người dùng trước khi code, xem <code>SKILL.md</code>)</div>
+      <table>
+        <tr><th>Việc</th><th>Quyết định</th></tr>
+        <tr><td>Bảng chi tiết chiều ĐẾN ("Bảng 3" cũ, đã duyệt Phase 9)</td><td><b>Thay hẳn</b> bằng thiết kế v3 (gắn cột trạng thái từng dòng, xuất nguyên file) — không giữ song song</td></tr>
+        <tr><td>Chiều ĐI (đặc tả đủ từ v1: Bảng 1 theo trạng thái SCNL + đối chiếu chi tiết 2 bước)</td><td>Không làm đợt này — vẫn backlog như quyết định 2026-08-25</td></tr>
+        <tr><td>"Nguyên nhân chênh lệch" nhập tay + lưu lịch sử (có từ v1, đè Bảng 1)</td><td>Không làm đợt này — backlog, cần bảng DB + API + UI riêng, quy mô 1 tính năng nhỏ độc lập</td></tr>
+      </table>
+
+      <div class="label">Thiết kế mới — <code>process.classify_kenh_hub_den()</code></div>
+      <p>Chạy trên <code>hub_raw</code> NGUYÊN VẸN (chưa qua <code>filter_before_reconcile</code> —
+        khác Bảng 1, vẫn dùng bản đã lọc, không đổi). Bước 1 (file kênh, cột "TRẠNG THÁI TẠI HUB"):
+        khớp khoá → lấy <code>TRANG_THAI_LENH</code> hub; không khớp → "KÊNH THỪA". Bước 2 (file
+        hub, cột "TRẠNG THÁI KÊNH") — waterfall trên-xuống kiểu <code>_phan_loai_chuoi_khoa</code>
+        đã dùng ở module Hub↔Core (nhất quán codebase):</p>
+      <table>
+        <tr><th>Bước</th><th>Điều kiện</th><th>Nhãn</th></tr>
+        <tr><td>2.1</td><td>Cặp (TXID, TRACE) trùng dòng khác</td><td>"GD có trace hủy"</td></tr>
+        <tr><td>2.2</td><td>"-" trong TXID</td><td>"GD chuyển tiếp"</td></tr>
+        <tr><td>2.3</td><td>RJCT và khoá không có ở kênh</td><td>"GD Đã từ chối-kênh không thành công"</td></tr>
+        <tr><td>2.4</td><td>Khoá có ở kênh</td><td>"KÊNH THÀNH CÔNG"</td></tr>
+        <tr><td>2.5</td><td>Còn lại</td><td>"HUB THỪA"</td></tr>
+      </table>
+      <p>⚠️ Bước 2.3 trong tài liệu chỉ ghi "không trùng với MSGREF" (không nhắc lại "TXID đối với
+        SP THƯỜNG" như các bước khác) — code hiểu là viết tắt, dùng khoá <b>nhất quán theo loại</b>
+        (<code>LOAI_KHOA_HUB[loai]</code>), độ tin cậy trung bình, cần verify dữ liệu SPT thật
+        (đơn vị 202-SPT) khi có.</p>
+
+      <div class="label">Output đổi từ 1 sheet gộp sang file riêng mỗi đơn vị</div>
+      <p>Bảng 1 tổng hợp tách ra file riêng <code>doi_chieu_song_phuong_kenh_tonghop.xlsx</code>
+        (không đổi nội dung). Chi tiết row-level xuất <b>2 file/đơn vị/ngày</b>:
+        <code>hub_{ma_nh}_{loai}_{ngay}.csv</code> (đúng định dạng nguồn) +
+        <code>kenh_{ma_nh}_{loai}_{ngay}.xlsx</code> — tránh gộp nhiều trăm nghìn dòng nhiều đơn vị
+        vào 1 sheet. Cơ chế tải nhiều file đã có sẵn (<code>job["files"]</code> là list, endpoint
+        tải theo tên tổng quát) — không cần đổi frontend, chỉ sửa
+        <code>doi_chieu_song_phuong_kenh_service.py::_run()</code> đẩy đủ tên file. API tải file
+        thêm bảng chọn <code>media_type</code> theo phần mở rộng (trước đây hardcode xlsx cho mọi
+        file, sai với CSV mới).</p>
+
+      <div class="label">Xoá code chết</div>
+      <p><code>process.build_bang_chi_tiet()</code> và <code>export.build_bang3_rows()</code>
+        (thiết kế "Bảng 3" cũ) đã xoá hẳn — không giữ song song, đúng quyết định thay hẳn ở trên.</p>
+
+      <div class="label">Test</div>
+      <p>3 test mới thay 1 test cũ (<code>TestClassifyKenhHubDen</code>: đủ 5 nhãn + thứ tự
+        waterfall + khoá theo loại SPT) trong <code>test_doi_chieu_song_phuong_kenh_algorithm.py</code>;
+        cập nhật <code>test_doi_chieu_song_phuong_kenh_api.py</code> theo danh sách file mới (7 file:
+        1 tổng hợp + 3 đơn vị × 2 file chi tiết) — 77/77 test song phương pass, 747/747 toàn dự án
+        pass (không regression module khác).</p>
+
+      <div class="label">Chưa làm — backlog rõ ràng cho lần sau</div>
+      <p>1) Chiều ĐI (Kênh↔Hub) — khi làm: thêm "DI" vào <code>CHIEU_DA_HO_TRO</code>, Bảng 1 theo
+        trạng thái SCNL (khác đến — không phải loại trừ RJCT), đối chiếu chi tiết 2 bước đơn giản
+        hơn (không filter trace-hủy/"-" trước). 2) "Nguyên nhân chênh lệch" nhập tay + lưu lịch sử —
+        cần bảng DB mới (mẫu tham khảo <code>doi_chieu_citad_history</code>/<code>swift_recon_history</code>
+        trong <code>backend/db/migrations.py</code>), API CRUD, UI nhập trực tiếp trên bảng kết quả.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">89</span>
+      <span class="card-title">Số tiền ngăn-nghìn (dấu "," / ".") — retrofit <code>doc_so_tien()</code> ra toàn hệ thống + vá bug đọc Excel</span>
+      <span class="badge badge-done">HOÀN THIỆN CODE+TEST · 2026-08-28 · 776/776 test pass</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh — audit theo yêu cầu người dùng, không phải 1 bug lẻ</div>
+      <p>Người dùng báo hệ thống lỗi khi load file có cột số tiền dạng ngăn-nghìn kiểu Việt Nam
+        (<code>180.000</code> hoặc <code>180,000</code>). Đã có sẵn <code>doc_so_tien()</code>/
+        <code>doc_so_tien_mem()</code> (<code>backend/services/ach/so_tien.py</code>) xử lý đúng luật
+        (BO chốt 2026-08-21: VND luôn số nguyên, <code>.</code>/<code>,</code> chỉ là ngăn-nghìn) —
+        nhưng audit cho thấy <b>nhiều nơi khác trong cùng hệ thống vẫn tự parse thẳng bằng
+        <code>pd.to_numeric()</code></b>, gặp định dạng này sẽ sai âm thầm 1000 lần hoặc mất trắng về
+        0, không phải lúc nào cũng crash rõ ràng. Phạm vi sửa (người dùng chọn "sửa toàn bộ" thay vì
+        chỉ riêng module có báo cáo): ACH lõi (b2/b3/b4/b6/b10), Đối chiếu Song phương (Core+Kênh),
+        Chấm 459901, ILO1000 (phòng vệ), và 1 bug tự thân trong chính <code>so_tien.py</code>.</p>
+
+      <div class="label">Bug tự thân — dtype float64 khiến <code>doc_so_tien()</code> raise NHẦM</div>
+      <p>Cột dtype <code>float64</code> (input hợp lệ, pandas tự nâng kiểu do có ô trống xen kẽ)
+        khiến <code>.astype(str)</code> ra đuôi <code>".0"</code> (<code>"1000000.0"</code>) — không
+        khớp cả 3 regex, raise sai dù input đúng. Vá bằng <code>_chuan_hoa_chuoi()</code>: chỉ bỏ đuôi
+        <code>.0</code> khi phần thập phân đúng bằng 0; giá trị có phần thập phân khác 0 (VD
+        <code>"1000000.5"</code>) vẫn raise như cũ — không làm yếu khả năng bắt lỗi thật.</p>
+
+      <div class="label">Phát hiện quan trọng hơn cả plan ban đầu — calamine tự "hiểu" TEXT thành số ngay tại tầng đọc Excel</div>
+      <p>Khi retrofit <code>cham459901_service.py</code> (<code>_read_ton_file</code>,
+        <code>_read_hub_di</code>, <code>_read_hub_den</code> — đều đọc <code>.xlsx</code> qua
+        <code>pd.read_excel(engine='calamine')</code> KHÔNG ép <code>dtype=str</code>), test regression
+        đầu tiên vẫn FAIL sau khi đổi sang <code>doc_so_tien()</code>. Verify thực nghiệm: nếu ô Excel
+        là <b>TEXT</b> dạng ngăn-nghìn <b>1 nhóm</b> (<code>"180.000"</code>) — cú pháp hợp lệ của
+        <code>float</code> — calamine tự động "hiểu" và trả về <code>float64 180.0</code> NGAY TẠI
+        TẦNG ĐỌC, xoá mất 3 số 0 trước khi bất kỳ code Python nào (kể cả <code>doc_so_tien()</code>)
+        kịp thấy chuỗi gốc. Không xảy ra với nhiều nhóm (<code>"1.234.567"</code>) hay dấu phẩy
+        (<code>"839,000"</code>) — cả hai không phải cú pháp <code>float</code> hợp lệ nên calamine tự
+        giữ nguyên dạng text. Đây là lỗi ở TẦNG ĐỌC, không cách nào sửa được ở tầng parse phía sau.</p>
+      <p><b>Fix:</b> ép <code>dtype=str</code> tại chính lời gọi <code>pd.read_excel()</code> —
+        <code>_read_ton_file</code> ép riêng 2 cột (<code>dtype={'DRAMOUNT': str, 'CRAMOUNT': str}</code>,
+        biết tên cột trước khi đọc); <code>_read_hub_di</code>/<code>_read_hub_den</code> ép cả bảng
+        (<code>dtype=str</code>, vì <code>header=None</code> nên chưa có tên cột lúc đọc) — vô hại với
+        cột khác, mọi cột còn lại vốn đã tự <code>.astype(str)</code>/<code>pd.to_numeric()</code>
+        (dtype-agnostic) ngay sau đó.</p>
+
+      <div class="label">Thay đổi hành vi có chủ đích trong 459901 (không phải regression)</div>
+      <p>2 test cũ (<code>test_amounts_numeric</code>, <code>test_amounts_converted_to_numeric</code>)
+        đang codify đúng bug: chấp nhận <code>DRAMOUNT</code> dạng <code>float</code> có phần thập
+        phân khác 0 (<code>150000.5</code>) là hợp lệ — sai theo luật nghiệp vụ (VND không có phần
+        thập phân). Sửa lại: dtype kỳ vọng đổi <code>float→int64</code>, input <code>150000.5</code>
+        giờ phải <code>raise</code> (test mới <code>test_dramount_thap_phan_khac_0_raise</code>).</p>
+
+      <div class="label">Nguyên tắc raise vs mem áp dụng xuyên suốt</div>
+      <table>
+        <tr><th>Biến thể</th><th>Dùng khi</th><th>Áp dụng</th></tr>
+        <tr><td><code>doc_so_tien</code> (raise)</td><td>Cột build KEY đối chiếu/khoá phân loại trực tiếp — sai 1 dòng lệch toàn bộ khoá</td><td>Tất cả cột đã liệt kê ở ACH/Song phương/459901</td></tr>
+        <tr><td><code>doc_so_tien_mem</code> (gán 0 + log)</td><td>Cột không được phép làm gián đoạn cả phiên chấm</td><td>ILO1000 <code>detect_huy()</code> DRAMOUNT (đối xứng CRAMOUNT)</td></tr>
+      </table>
+
+      <div class="label">Ngoại lệ giữ nguyên, không đụng (đã xác nhận từ trước)</div>
+      <p>CITAD <code>AMOUNT</code> (ILO1000) — số ngoại tệ thập phân cố định 2 số lẻ, không phải số
+        nguyên VND ngăn-nghìn, từng bị áp nhầm 2026-08-21 phải revert. <code>ilo1000/load_core.py</code>
+        DRAMOUNT — cơ chế <code>bad_mask</code> (loại hẳn dòng lỗi, không fillna) là hành vi có chủ
+        đích khác ngữ nghĩa, không refactor ngoài phạm vi audit.</p>
+
+      <div class="label">Test</div>
+      <p>23 test mới trải đều: <code>test_so_tien.py</code> (float64 ×4), ACH lõi
+        (<code>test_ach_gl02_misden_algorithm.py</code>, <code>test_ach_gw_reading.py</code>,
+        <code>test_ach_algorithm.py</code>, <code>test_ach_dien_huy.py</code>), Song phương Core+Kênh
+        (2 file trước đây 0 test cho case này), 459901 (<code>TestReadHubDi</code>/
+        <code>TestReadHubDen</code> mới toanh — trước đây 0 test cho 2 hàm này), ILO1000 phòng vệ.
+        776/776 toàn dự án pass, không regression.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">90</span>
+      <span class="card-title">Đối chiếu Song phương — gộp 3 trang thành 1 trang, 3 thẻ (khắc phục "trang vô hình" cho admin cấp 2)</span>
+      <span class="badge badge-done">HOÀN THIỆN + TEST · 2026-08-28 · 776/776 pass</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Nguyên nhân gốc — role <code>admin_l2</code> không được RBAC bypass như <code>admin</code></div>
+      <p><code>backend/core/deps.py::require_feature()</code> chỉ bỏ qua check khi
+        <code>role == StaffRole.ADMIN</code> (cấp 1) — mọi role khác, kể cả <code>admin_l2</code>
+        ("Quản trị viên cấp 2"), phải được cấp thủ công từng <code>menu.*</code> qua
+        <code>group_features</code>. Module Đối chiếu Song phương từng có <b>3 trang, 3
+        <code>menu.*</code> riêng</b> — 2 trang ra đời sau (Kênh↔Hub, Hub↔Core) không được gán
+        thêm quyền nên <b>vô hình</b> với người dùng dù họ đã có <code>menu.doi_chieu_song_phuong</code>
+        gốc từ trước. <code>frontend/shared.py</code> từng có sẵn comment dự đoán đúng cách gộp
+        này ("(1) phân loại — xong, (2) đối chiếu ĐẾN kênh↔hub+hub↔core — xong, (3) đối chiếu ĐI —
+        chưa làm") — nay hiện thực hoá.</p>
+
+      <div class="label">Thiết kế — 1 file, 4 hàm dựng UI, tái dùng nguyên vẹn pattern tab đã có</div>
+      <p><code>frontend/pages/doi_chieu_song_phuong.py</code> viết lại: page shell dùng
+        <code>ui.tabs()</code>/<code>ui.tab_panels()</code> (đúng convention đã có ở
+        <code>doi_chieu_citad.py</code>), 3 thẻ <b>Phân loại dữ liệu | Đối chiếu đến | Đối chiếu
+        đi</b>. Thẻ "Đối chiếu đến" xếp <code>_section_kenh_hub()</code> +
+        <code>_section_hub_core()</code> chung (đúng bản chất đối chiếu 3 chân kênh-hub-core,
+        không phải 2 tính năng độc lập — quyết định người dùng 2026-08-27/28). Toàn bộ thân hàm
+        2 trang cũ chuyển nguyên vào làm 2 hàm cục bộ — mỗi hàm giữ state/closure riêng
+        (<code>state</code>, <code>_STAGE_LABELS</code>...) nên không đụng độ dù trước đây 2 file
+        định nghĩa trùng tên ở module-level. Thẻ "Đối chiếu đi" — placeholder, backend chưa code
+        (đã hoãn 2 lần), không nằm trong phạm vi đợt này.</p>
+
+      <div class="label">Xoá code chết + gộp quyền</div>
+      <table>
+        <tr><th>Trước</th><th>Sau</th></tr>
+        <tr><td>3 file trang (<code>doi_chieu_song_phuong.py</code>, <code>_kenh.py</code>, <code>_core.py</code>)</td><td>1 file, xoá 2 file cũ</td></tr>
+        <tr><td>3 sidebar item lồng dưới nhóm cha</td><td>1 item phẳng, giống <code>duty_schedule</code></td></tr>
+        <tr><td>3 <code>menu.*</code> feature-code</td><td>1 <code>menu.doi_chieu_song_phuong</code>, gộp cả 3 action (<code>.process</code>) vào chung 1 mục trong <code>FEATURE_GROUPS</code></td></tr>
+        <tr><td><code>poll_job</code>/<code>download_file</code> 2 router kenh/core check <code>menu.*</code> riêng</td><td>Đổi sang check chung <code>menu.doi_chieu_song_phuong</code></td></tr>
+      </table>
+      <p>Quyền <b>BẤM CHẠY từng chân giữ nguyên tách riêng</b>
+        (<code>doi_chieu_song_phuong_kenh.process</code> / <code>_core.process</code>) — chỉ gộp
+        quyền XEM trang, không gộp quyền thao tác, đúng mức độ người dùng yêu cầu. Router backend
+        (<code>registry.py</code>, 2 router prefix riêng) và toàn bộ service/pipeline
+        (<code>doi_chieu_song_phuong_kenh/</code>, <code>doi_chieu_song_phuong_core/</code>)
+        <b>không đổi gì</b> — thuần refactor UI + quyền xem.</p>
+
+      <div class="label">Dữ liệu cũ trong <code>group_features</code></div>
+      <p>2 feature-code <code>menu.doi_chieu_song_phuong_kenh</code>/<code>_core</code> xoá khỏi
+        <code>FEATURES</code>/<code>FEATURE_GROUPS</code> — hàng cũ trong DB (nếu nhóm nào từng
+        được gán) trở thành mồ côi vô hại, không cần migration dọn vì không còn chỗ nào check
+        2 mã này nữa.</p>
+
+      <div class="label">Test</div>
+      <p>Không thêm test mới (thuần đổi UI/quyền, business logic không đổi) — chạy lại toàn bộ
+        776/776 test pass, xác nhận <code>admin_client</code> (bypass RBAC qua role thật, không
+        qua feature-code) không bị ảnh hưởng bởi đổi tên feature-code ở 2 API kenh/core.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">91</span>
+      <span class="card-title">Đối chiếu Song phương — phản hồi trải nghiệm thật: nhiều file/thư mục cho Phân loại + giới hạn 1 ngân hàng/lần cho Hub↔Core</span>
+      <span class="badge badge-done">HOÀN THIỆN CODE+TEST · 2026-08-28 · 785/785 pass</span>
+    </div>
+    <div class="card-body">
+      <div class="label">2 phản hồi từ người dùng khi tự trải nghiệm bản gộp 3 thẻ (card 90)</div>
+      <table>
+        <tr><th>Phản hồi</th><th>Nguyên nhân</th><th>Hướng sửa</th></tr>
+        <tr><td>"Upload rất khó — muốn nhiều file hoặc cả thư mục"</td><td>Thẻ Phân loại dữ liệu chỉ nhận đúng 1 file ZIP/lần (code gốc từ trước, không phải lỗi phát sinh do gộp trang)</td><td>Thêm 2 chế độ giống module Chấm ACH: tải nhiều file cùng lúc, hoặc chỉ 1 thư mục server chứa nhiều ZIP</td></tr>
+        <tr><td>"Chỉ cho chạy 1 ngân hàng/lần vì RAM máy"</td><td>Hub↔Core tự lặp cả 4 NH (201/202/203/311) trong 1 job — mỗi NH giải mã lại GL02 AES ~150-160MB từ đầu; đúng lúc test dữ liệu thật 25.8 hôm nay đã dính <code>MemoryError</code> khi chạy NH 203 ngay sau NH 202</td><td>Thêm ô chọn ngân hàng, mỗi lần bấm chạy chỉ xử lý đúng 1 NH được chọn</td></tr>
+      </table>
+
+      <div class="label">Phân loại dữ liệu — batch job thay hẳn model progress-token cũ</div>
+      <p><code>doi_chieu_song_phuong_service.py</code>: xoá <code>_progress</code>/<code>init_progress</code>/
+        <code>get_progress</code>/<code>run_process</code> (model cũ 1-file, poll theo %) — thay bằng
+        job in-memory + thread nền + log list, đúng pattern <code>doi_chieu_song_phuong_kenh_service.py</code>/
+        <code>_core_service.py</code> đã có (nhất quán codebase, không bịa cơ chế mới).
+        <code>process_zip(zip_bytes, log_callback=...)</code> — đổi tham số <code>task_token</code>+
+        <code>_set_prog()</code> (%) sang <code>log_callback(msg)</code> (dòng log), business logic
+        định tuyến IPCAS <b>không đổi 1 dòng</b>. Thêm <code>start_batch()</code> (nhiều file upload)
+        và <code>start_batch_folder()</code> (glob <code>*.zip</code> trong 1 thư mục, đọc bytes lười
+        trong luồng nền — tránh load hết nhiều trăm MB cùng lúc) — cả 2 gọi <code>process_zip()</code>
+        tuần tự, <b>lỗi 1 file không chặn các file còn lại</b> (giống triết lý ACH/kênh↔hub). Mỗi ZIP
+        vẫn ra 1 <code>token</code> kết quả độc lập — endpoint tải file cũ
+        <code>/download/{token}/{file_key}</code> không đổi.</p>
+      <p>API: bỏ <code>/process</code> + <code>/progress/{token}</code>, thêm
+        <code>/start_batch</code> (multipart nhiều field <code>files</code>, cap 800MB tổng — mỗi
+        GL02 zip thật ~150-160MB), <code>/start_folder</code>, <code>/poll/{job_id}</code>,
+        <code>/cancel/{job_id}</code> — đúng bộ 4 endpoint chuẩn đã dùng ở kênh/core.</p>
+      <p>Frontend: bỏ hẳn mẹo JS "click bất kỳ đâu để mở file dialog" (ACH — pattern đã chứng minh
+        hoạt động tốt — không cần mẹo này, Quasar uploader tự đủ). Thêm <code>ui.toggle</code>
+        chuyển chế độ, kết quả hiển thị theo dạng danh sách <code>ui.expansion</code> (1 khối/ngày),
+        lỗi từng ngày hiện thẻ đỏ riêng thay vì chặn cả lô.</p>
+
+      <div class="label">Hub↔Core — bỏ vòng lặp tự động 4 ngân hàng</div>
+      <p><code>doi_chieu_song_phuong_core_service.py::start_hub_core(folder_path, ngay, ma_nh)</code>
+        — thêm tham số <code>ma_nh</code> bắt buộc, validate nằm trong <code>CAC_NGAN_HANG</code>.
+        <code>_run()</code> gọi <code>doi_chieu_hub_core()</code> đúng 1 lần (trước đây
+        <code>for ma_nh in CAC_NGAN_HANG</code>) — lỗi thiếu dữ liệu NH đã chọn báo lỗi job ngay
+        (trước đây âm thầm "bỏ qua NH thiếu" rồi báo lỗi chung nếu cả 4 đều thiếu, dễ gây hiểu nhầm
+        khi giờ chỉ còn 1 NH). API <code>FolderRequest</code> thêm field <code>ma_nh: str</code>.
+        Frontend thêm <code>ui.select</code> 4 ngân hàng cạnh ô ngày, mặc định 202, banner cảnh báo
+        ghi rõ lý do giới hạn RAM.</p>
+
+      <div class="label">Test</div>
+      <p>8 test mới (<code>test_doi_chieu_song_phuong_batch_api.py</code>): nhiều file xử lý tuần
+        tự, 1 file lỗi không chặn file lành, thư mục nhiều ZIP, thư mục rỗng/không tồn tại báo lỗi
+        rõ, poll/cancel job lạ trả 404. Cập nhật 4 test cũ của Hub↔Core theo tham số
+        <code>ma_nh</code> mới + thêm test mã NH không hợp lệ. 785/785 test toàn dự án pass.</p>
+
+      <div class="label">Xác minh trình duyệt thật</div>
+      <p>Khởi động lại <code>run.py</code> (đổi code backend cần restart — uvicorn không chạy
+        <code>--reload</code>), dùng Playwright: thẻ Phân loại dữ liệu hiện đủ 2 nút gạt, chế độ
+        upload có nút "Chọn file ZIP (có thể chọn nhiều)…" với thuộc tính <code>multiple</code>
+        thật trên input; thẻ Đối chiếu đến — khối Hub↔Core hiện đủ ô "Ngân hàng" (mặc định
+        202 — BIDV) cạnh ô ngày, banner đúng ghi chú giới hạn RAM. Không lỗi console.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">93</span>
+      <span class="card-title">Đối chiếu Song phương — "Đối chiếu đến" hợp nhất Kênh↔Hub + Hub↔Core thành 1 chu trình khép kín</span>
+      <span class="badge badge-done">HOÀN THIỆN CODE+TEST · 2026-08-28 · 786/786 pass</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Làm rõ lại ý ban đầu — không phải 2 tính năng, là 1 chu trình</div>
+      <p>Sau card 90 (gộp UI thành 2 khối riêng, 2 nút chạy riêng), người dùng chỉnh lại: "Đối
+        chiếu đến" đúng bản chất là 1 chu trình khép kín — đưa dữ liệu 1 lần, hệ thống tự chạy
+        Kênh↔Hub <b>rồi</b> Hub↔Core nối tiếp, chỉ báo 1 kết quả cuối. Đúng model module ACH
+        (<code>ach_service.py</code>: nhiều pha IO/đối chiếu/Excel bên trong nhưng 1 job/1 báo
+        cáo cuối cho người dùng).</p>
+
+      <div class="label">3 quyết định chốt trước khi code</div>
+      <table>
+        <tr><th>Câu hỏi</th><th>Chốt</th></tr>
+        <tr><td>Đầu vào 1 lần chạy</td><td>1 thư mục GỐC (chứa thư mục con theo ngày) + ngày (gõ tay) + ngân hàng (chọn 1/4) — hệ thống tự tìm đúng thư mục con cho Kênh↔Hub, tự dò T-3..T+3 cho Hub↔Core từ cùng gốc</td></tr>
+        <tr><td>Nguồn CORE</td><td>Tự động — có <code>{ma_nh}_DEN.csv</code> (đúng file Phân loại dữ liệu xuất ra) thì dùng thẳng, không có mới giải mã GL02 zip</td></tr>
+        <tr><td>Hình thức kết quả</td><td>Vẫn nhiều file tải về, chỉ gộp chung 1 khu kết quả (2 khối con Kênh↔Hub/Hub↔Core)</td></tr>
+      </table>
+
+      <div class="label">Business logic — sửa tối thiểu, tái dùng nguyên vẹn</div>
+      <p>Tách <code>_thu_muc_ngay_ung_vien()</code>/<code>_cong_ngay()</code>/<code>_tim_file()</code>
+        (trước ở riêng <code>doi_chieu_song_phuong_core/pipeline.py</code>) ra module dùng chung
+        mới <code>backend/services/doi_chieu_song_phuong_common.py</code> — cả Hub↔Core (đổi
+        import) và service điều phối mới đều dùng, không reach vào hàm private gói khác.
+        <code>doi_chieu_song_phuong_kenh/pipeline.py::main_from_dir()</code> thêm 1 tham số tuỳ
+        chọn <code>ma_nh=None</code> (lọc <code>RECONCILE_UNITS</code>, mặc định giữ nguyên hành
+        vi cũ — không phá test cũ). <code>doi_chieu_song_phuong_core/pipeline.py</code> thêm
+        <code>_tim_file_core_hoac_csv()</code> — ưu tiên CSV, fallback GL02 zip, áp dụng thống
+        nhất cho mọi offset T/T+1/T+2/T+3.</p>
+
+      <div class="label">Service điều phối mới thay hẳn 2 service riêng</div>
+      <p><code>doi_chieu_song_phuong_kenh_core_service.py</code> (đặt tên <code>kenh_core</code>,
+        KHÔNG dùng lại <code>_den</code> — tránh trùng tên module <code>doi_chieu_song_phuong_den*</code>
+        đã xoá 2026-08-25 vì thiết kế sai, dễ nhầm khi tra lịch sử). 1 job chạy tuần tự 2 bước,
+        gộp log (tiền tố <code>[Kênh↔Hub]</code>/<code>[Hub↔Core]</code>) + danh sách file. <b>Lỗi
+        1 bước không chặn bước còn lại</b> — chỉ khi cả 2 đều không có kết quả mới đánh dấu job
+        lỗi (đúng triết lý "báo đủ, không crash cả job" toàn dự án). API mới
+        <code>backend/api/doi_chieu_song_phuong_kenh_core.py</code>
+        (<code>/api/doi_chieu_song_phuong_kenh_core/*</code>) thay hẳn 2 router cũ.</p>
+
+      <div class="label">Xoá code cũ, gộp quyền</div>
+      <p>Xoá 4 file: 2 API router (<code>_kenh.py</code>, <code>_core.py</code>) + 2 service
+        (<code>_kenh_service.py</code>, <code>_core_service.py</code>) + 2 file test API tương
+        ứng. <code>backend/core/features.py</code>: gộp
+        <code>doi_chieu_song_phuong_kenh.process</code> + <code>doi_chieu_song_phuong_core.process</code>
+        thành 1 <code>doi_chieu_song_phuong_kenh_core.process</code> (không còn cách bấm chạy
+        riêng từng chân nên tách quyền không còn ý nghĩa) — <code>menu.doi_chieu_song_phuong</code>
+        không đổi. Frontend: <code>_section_kenh_hub()</code> + <code>_section_hub_core()</code>
+        (card 90/91) gộp thành 1 hàm <code>_tab_doi_chieu_den()</code> — 1 form, 1 nút, 1 log
+        console, 1 khu kết quả 2 khối con.</p>
+
+      <div class="label">Test</div>
+      <p>Xoá 2 file test API cũ (qua router đã xoá), viết mới
+        <code>test_doi_chieu_song_phuong_kenh_core_api.py</code> (10 test): cả 2 bước ra kết quả,
+        thiếu CORE không chặn Kênh↔Hub, cả 2 bước thiếu dữ liệu mới báo job lỗi, <b>có CSV thì
+        <code>process_zip()</code> chắc chắn KHÔNG bị gọi</b> (assert bằng monkeypatch raise nếu
+        gọi), ngân hàng/ngày không hợp lệ báo lỗi rõ. Thêm 1 test mới vào
+        <code>test_doi_chieu_song_phuong_core_algorithm.py</code> (ưu tiên CSV hơn zip khi cả 2
+        cùng tồn tại). 786/786 test toàn dự án pass, không regression.</p>
+
+      <div class="label">Xác minh trình duyệt thật</div>
+      <p>Restart <code>run.py</code>, Playwright xác nhận: thẻ "Đối chiếu đến" chỉ còn đúng 1 ô
+        thư mục gốc + ngày + ngân hàng + 1 nút "CHẠY ĐỐI CHIẾU" (không còn 2 khối/2 nút của card
+        90/91), banner giải thích đúng chu trình 2 bước + lý do giới hạn RAM. Không lỗi console.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">92</span>
+      <span class="card-title">Chấm ILO1000 — chuẩn bị ghép develop lần đầu: vá lỗ hổng 403, tách widget "Job Runner" dùng chung với ACH</span>
+      <span class="badge badge-done">HOÀN THIỆN CODE+TEST · 2026-08-28 · 786/786 pass · CHƯA click-through UI thật (phiên không có ổ G:)</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh</div>
+      <p>Người dùng muốn ghép module Chấm ILO1000 vào <code>develop</code> (của khanhbq693) và than
+        phiền: mỗi lần ghép module mới đều phải sửa lại "phần upload dữ liệu" cho giống module ACH,
+        vì không có gì dùng chung — mỗi trang tự chép tay. <code>git fetch</code> xác nhận
+        <code>origin/develop</code> đi trước local <b>193 commit</b> và <b>ILO1000 chưa từng có mặt
+        trên develop</b> — đây là lần ghép đầu tiên, không phải merge lại.</p>
+
+      <div class="label">Lỗ hổng thật tìm thấy — cùng loại đã biết ở ACH</div>
+      <p><code>menu.cham_ilo1000</code> hoàn toàn chưa khai báo trong <code>backend/core/features.py</code>
+        (không có trong <code>FEATURES</code> lẫn <code>FEATURE_GROUPS</code>) trong khi
+        <code>backend/api/ilo1000.py</code> đã dùng <code>require_feature('menu.cham_ilo1000')</code>
+        ở mọi endpoint — người dùng thật (không phải admin) sẽ bị 403 toàn trang. Đúng lỗi cùng loại
+        đã ghi ở <code>docs/VIEC-CAN-LAM.md</code> mục 1 cho <code>menu.cham_ach</code>. Đã thêm feature
+        code, không cần migration (feature mới hoàn toàn, không có quyền cũ nào cần giữ lại).</p>
+
+      <div class="label">Backend — dùng lại 2 helper đã có nhưng không ai theo</div>
+      <p><code>DESIGN.md</code> đã ghi rõ "dùng <code>_download_headers()</code> từ
+        <code>backend/api/bundles.py</code>" nhưng <code>ach.py</code>/<code>ilo1000.py</code> mỗi file
+        tự định nghĩa lại <code>_dl_headers()</code> y hệt — đổi sang import thẳng. Gộp
+        <code>FolderRequest</code> (định nghĩa lặp lại ở cả 2 file) vào
+        <code>backend/schemas/jobs.py</code> dùng chung — ACH có thêm field riêng
+        (<code>ngay_doi_chieu</code>/<code>bo_qua_checkpoint</code>/<code>chi_tim_timeout</code>) nên kế
+        thừa thành <code>AchFolderRequest</code> thay vì sửa model chung. Thêm
+        <code>backend/core/uploads.py::collect_uploaded_files()</code> gộp đúng đoạn đọc
+        <code>list[UploadFile]</code> → <code>dict[str, bytes]</code> kèm giới hạn dung lượng, trước
+        chép tay giống hệt ở 2 file (tiện phát hiện thêm: <code>cham459901.py::process()</code> hiện
+        <b>không có giới hạn dung lượng nào</b> — chưa sửa, ngoài phạm vi lần này).</p>
+
+      <div class="label">Frontend — widget "Job Runner" dùng chung, chỉ áp cho ILO1000 lần này</div>
+      <p>File mới <code>frontend/job_runner.py::build_job_runner_card()</code> — gộp đúng phần đã xác
+        minh chép tay gần như y hệt giữa <code>cham_ach.py</code> và <code>cham_ilo1000.py</code>: toggle
+        "Tải file lên/Chọn thư mục server" (nút "Duyệt..." vẫn gọi <code>open_folder_picker()</code> có
+        sẵn trong <code>frontend/shared.py</code> — component ĐÃ dùng chung từ trước, bằng chứng hướng
+        này khả thi), widget <code>ui.upload</code>, cặp nút Chạy/Dừng + spinner, khu Log, vòng lặp poll
+        <code>ui.timer</code> theo đúng hợp đồng JSON hiện có
+        (<code>status/logs/files/error</code>), khu Kết quả + tải file. Hook <code>on_done(res) -&gt;
+        bool</code> cho phép trang gọi tự thay thông báo "Hoàn thành!" mặc định (ILO1000 dùng để báo
+        riêng số ngày bị bỏ qua do thiếu Citad khớp ngày — <code>skipped_dates</code>).
+        <code>frontend/pages/cham_ilo1000.py</code> từ 293 dòng còn 46 dòng, hành vi giữ nguyên 100%.</p>
+
+      <div class="label">Cố ý KHÔNG đụng cham_ach.py lần này</div>
+      <p>Đọc kỹ toàn bộ <code>cham_ach.py</code> mới thấy "bước 1" (upload/folder→chạy→poll→tải) khớp
+        nối chặt với bước Checkpoint riêng (<code>on_cancel()</code> phải kiểm tra
+        <code>state['timer']</code> để biết đang chờ Checkpoint hay đang chạy nền) — nhét vừa cả hai vào
+        widget dùng chung rủi ro cao hơn ước lượng ban đầu. Thêm nữa: <code>cham_ach.py</code> đang nằm
+        trong <b>PR #54</b> (nhánh <code>ach-chi-tim-timeout-2026-08-22</code>, gồm đúng phần
+        stage-progress UI) <b>đang mở chờ khanhbq693 duyệt</b> — sửa lúc này sẽ làm loãng review và tạo
+        xung đột khi PR merge. Người dùng đồng ý bỏ qua ACH lần này, dành lại làm sau khi PR #54 merge.</p>
+
+      <div class="label">Ghi chú thêm — bằng chứng cùng hướng, không phải suy đoán</div>
+      <p>Card 91 (cùng ngày, phiên khác) khi làm Đối chiếu Song phương ghi thẳng: mẹo JS "click bất kỳ
+        đâu để mở file dialog" học từ ACH — "pattern đã chứng minh hoạt động tốt" — và module
+        kênh/core/song-phương-batch giờ cả 3 đều tự hội tụ về đúng bộ 4 endpoint
+        <code>start/start_folder/poll/cancel</code> giống ACH/ILO1000, dù không có gì dùng chung ở tầng
+        code. Càng củng cố lý do nên có widget dùng chung — nhưng không mở rộng sang song phương ngay
+        (đang có phiên khác sửa cùng lúc, xem cảnh báo file-dirty lúc làm việc này).</p>
+
+      <div class="label">Test</div>
+      <p>4 test mới <code>tests/test_uploads_helper.py</code> cho <code>collect_uploaded_files()</code>
+        (rỗng→400, vượt dung lượng→413, đúng hạn→dict đúng, file không tên→đặt tên mặc định). Toàn bộ
+        <code>pytest tests/ -q</code>: <b>786/786 pass</b>, không regression.</p>
+
+      <div class="label">Việc còn treo</div>
+      <ul>
+        <li>Chưa click-through UI thật (không có ổ <code>G:</code> ở phiên này) — để dành phiên laptop,
+          gộp chung việc verify dữ liệu thật 22-24/8 đang treo (mục 28 <code>docs/VIEC-CAN-LAM.md</code>).</li>
+        <li>Áp <code>build_job_runner_card()</code> cho ACH sau khi PR #54 merge.</li>
+        <li>Áp cho 459901 + Đối chiếu Song phương khi 2 module đó được đụng tới lần sau (không tự làm
+          bây giờ).</li>
+        <li>Nhánh PR ILO1000 phải cắt từ <code>origin/develop</code> sau khi fetch — không cắt từ local
+          <code>develop</code> (cũ 193 commit).</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">94</span>
+      <span class="card-title">Đối chiếu Song phương — "Đối chiếu đến" thêm chế độ tải file + ô chọn ngày kiểu lịch; rà soát bảo mật theo PR#63 cham459901</span>
+      <span class="badge badge-done">HOÀN THIỆN CODE+TEST · 2026-08-28 · 793/793 pass</span>
+    </div>
+    <div class="card-body">
+      <div class="label">2 yêu cầu UX — chọn thư mục server "rất khó khăn"</div>
+      <p>Thêm <code>ui.toggle</code> "Chọn thư mục server" / "Tải file lên" cho thẻ Đối chiếu đến
+        (đúng pattern ACH/Phân loại dữ liệu, card 91) — chế độ tải file nhận nhiều loại cùng lúc
+        (HUB .zip, kênh .xlsx, GL02 .zip hoặc CSV, OSB .xlsx). Ô "Ngày đối chiếu" đổi từ gõ tay
+        YYYYMMDD sang chọn lịch (icon + <code>ui.date</code>, đúng pattern có sẵn ở
+        <code>cham_ach.py</code>) — hiển thị dd/mm/yyyy, tự đổi sang YYYYMMDD ngay trước khi gọi
+        API (<code>_yyyymmdd_tu_dmy()</code> cục bộ trong trang, không đụng <code>shared.py</code>).</p>
+
+      <div class="label">Backend — tái dùng nguyên vẹn pipeline thư mục, không nhân đôi logic</div>
+      <p><code>doi_chieu_song_phuong_kenh_core_service.py::start_upload()</code> — ghi file tải
+        lên (giữ tên gốc, qua <code>os.path.basename()</code> chống dò đường dẫn qua tên file)
+        vào <code>{output_dir}/_upload/</code> rồi gọi thẳng <code>_run()</code> y hệt chế độ thư
+        mục — do <code>common.tim_file()</code> luôn thử đúng thư mục GỐC khi không thấy thư mục
+        con theo ngày, 1 thư mục phẳng chứa đủ file vẫn hoạt động đúng, không cần sửa gì ở tầng
+        pipeline. Thư mục tạm nằm trong đúng <code>TEMP_DIR/{job_id}</code> nên được dọn cùng lúc
+        với kết quả job (TTL có sẵn), không tạo lỗ hổng dọn dẹp mới. API thêm
+        <code>POST /start_upload</code> (<code>files: list[UploadFile]</code> +
+        <code>ngay</code>/<code>ma_nh</code> khai báo <code>Form(...)</code> tường minh — đúng bẫy
+        đã dính ở <code>ach.py::start_job</code>, khai thiếu sẽ luôn nhận giá trị rỗng).</p>
+
+      <div class="label">Rà soát bảo mật theo PR#63 cham459901 (người dùng yêu cầu, tránh lặp lỗi)</div>
+      <p>PR#63 (đang chờ duyệt trên <code>develop</code>) phát hiện 6 lỗi khi viết lại module
+        Chấm 459901: mật khẩu ZIP viết cứng, 2 lỗ dò đường dẫn qua <code>token</code> không kiểm
+        tra, đọc hết byte thư mục trước khi lọc tên, <code>BackgroundTasks</code> thay
+        <code>threading.Thread</code>, chữ ký hàm dọn dẹp đổi ngầm làm hỏng lịch 23h. Đối chiếu
+        từng điểm với code Đối chiếu Song phương:</p>
+      <table>
+        <tr><th>Điểm PR#63</th><th>Đối chiếu Song phương</th></tr>
+        <tr><td>Mật khẩu ZIP viết cứng vào source</td><td>⚠️ <b>CÙNG một mật khẩu thật bị lộ</b> (<code>ZIP_PASSWORD = b"DACwLdHi"</code>, <code>doi_chieu_song_phuong_service.py</code>) — có sẵn từ trước, không phải lỗi mới hôm nay nhưng CHƯA từng được báo — xem mục riêng bên dưới</td></tr>
+        <tr><td>Dò đường dẫn qua <code>token</code> không kiểm tra (<code>delete_result</code>/<code>download_result</code>)</td><td><b>Đã vá</b>: <code>download_result()</code> (Phân loại dữ liệu) nhận <code>token</code> thẳng từ URL, ghép <code>TEMP_DIR / token / ...</code> không qua kiểm tra — thêm <code>uuid.UUID(token)</code> validate nghiêm, sai định dạng trả 400 trước khi chạm tới đường dẫn. Các endpoint job-based (kênh/core/kenh_core) AN TOÀN sẵn — luôn tra `job_id` qua dict `_jobs` trước, path chỉ dựng từ `job["output_dir"]` do server tự sinh, không phải trực tiếp từ input</td></tr>
+        <tr><td>Đọc hết byte mọi file trong thư mục trước khi lọc tên</td><td>Không có — mọi hàm dò file (<code>tim_file</code>, <code>find_kenh_path</code>, <code>_tim_file_osb</code>) chỉ đọc TÊN qua <code>glob</code>/<code>exists()</code>, chỉ đọc byte đúng 1 file đã khớp tên</td></tr>
+        <tr><td><code>BackgroundTasks</code> thay <code>threading.Thread</code></td><td>Không có — mọi service Song phương (Phân loại/kênh/core/kenh_core) đều dùng <code>threading.Thread</code> nhất quán từ đầu</td></tr>
+        <tr><td>Đọc hết file tải lên vào RAM không giới hạn</td><td>Có trần <code>_MAX_UPLOAD</code> (800MB), nhưng vẫn đọc trọn từng file bằng <code>await f.read()</code> trước khi kiểm dung lượng cộng dồn — CÙNG mức độ với <code>ach.py::start_job</code> (500MB, đã chạy thật ổn định) và <code>cham459901.py</code> hiện có trên nhánh này. Không phải bug mới, là quy ước đang dùng cả dự án — chưa đổi sang ghi-đĩa-theo-luồng vì vượt phạm vi đợt này</td></tr>
+        <tr><td>Chữ ký hàm dọn dẹp đổi ngầm, lỗi bị nuốt</td><td>Không áp dụng — không có scheduler trung tâm nào gọi vào hàm dọn dẹp Song phương trên nhánh này (mỗi module tự gọi cleanup của chính nó, không phụ thuộc chữ ký chung)</td></tr>
+      </table>
+
+      <div class="label">⚠️ Phát hiện cần Business Owner quyết định — không tự sửa</div>
+      <p>Mật khẩu ZIP thật <code>DACwLdHi</code> đã nằm trong git history của
+        <code>doi_chieu_song_phuong_service.py</code> (module Phân loại dữ liệu) — đúng loại lộ
+        bí mật PR#63 đã báo cho cham459901, khả năng cùng nguồn hệ thống sinh file GL02. Cần đổi
+        mật khẩu ở đầu nguồn + chuyển sang đọc từ <code>.env</code> (giống hướng PR#63 đã làm:
+        <code>zip_password()</code>) — ngoài phạm vi code nên không tự làm, y hệt khuyến nghị của
+        PR#63.</p>
+
+      <div class="label">Test</div>
+      <p>Thêm test upload thật qua multipart (đủ chu trình 2 bước), test tên file chứa
+        <code>../</code> bị cắt về tên thuần không ghi ra ngoài thư mục job, 2 test khoá lại lỗ
+        hổng token (không phải UUID → 400; token giả dạng UUID hợp lệ nhưng không tồn tại → 404,
+        không phải 500). 793/793 test toàn dự án pass.</p>
+
+      <div class="label">Xác minh trình duyệt thật</div>
+      <p>Playwright: nút gạt 2 chế độ hiện đúng, chế độ tải file hiện input <code>accept=".zip,.xlsx,.csv"</code>
+        + <code>multiple</code>, ô ngày mở lịch chọn đúng tháng/năm hiện tại khi bấm icon. Không
+        lỗi console.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">95</span>
+      <span class="card-title">Đối chiếu Song phương — timing instrumentation (đo, chưa sửa tốc độ) + banner "đủ dữ liệu" trước khi Chạy + nhãn "Chưa đối chiếu" cấp job</span>
+      <span class="badge badge-done">HOÀN THIỆN CODE+TEST · 2026-08-30 · 809/809 pass</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh — yêu cầu BO theo template "người thực thi code"</div>
+      <p>3 phần: (1) đo hiệu năng đọc/giải mã/ghi trước khi tối ưu — không đoán điểm nghẽn;
+        (2) banner cảnh báo đủ/thiếu dữ liệu TRƯỚC khi bấm "Chạy" — không chặn nút; (3) tách nhãn
+        "chênh lệch thật" (đủ dữ liệu 2 bên, số khác nhau — giữ nguyên logic/nhãn per-row hiện có)
+        khỏi "chưa đối chiếu được" (thiếu nguyên 1 loại file — nhãn MỚI, chỉ cấp JOB). Phạm vi
+        Phần 3 đã thu hẹp theo quyết định BO: KHÔNG đổi khoá đối chiếu Hub↔Core (vốn đang gộp
+        "khớp nhưng lệch tiền" vào nhãn <code>HUB_THUA</code>/<code>CORE_THUA</code> — để lại làm
+        đợt sau nếu BO quyết định, vì đổi khoá match ảnh hưởng số liệu tài chính xuất ra).</p>
+
+      <div class="label">Phần 1 — <code>do_thoi_gian()</code> dùng chung, chỉ log, không đổi hành vi</div>
+      <p>Context manager mới trong <code>doi_chieu_song_phuong_common.py</code>, bọc quanh mọi
+        bước đọc/giải mã/ghi đã nghi ngờ chậm qua đọc code (không đoán mù): đọc+parse HUB (cả 2
+        tác vụ — <b>cố ý tách riêng theo offset T/T-1/T-2/T-3 ở Hub↔Core để lộ rõ HUB T bị đọc
+        trùng 2 lần/job</b>, Kênh↔Hub đọc 1 lần lúc Bước 1, Hub↔Core đọc lại từ đầu lúc Bước 2 —
+        chưa sửa, chờ số đo thật xác nhận trước khi thêm cache chia sẻ), đọc file kênh, giải mã+
+        định tuyến GL02 và ghi 8 CSV (<code>doi_chieu_song_phuong_service.py::process_zip</code>),
+        đọc CSV/OSB, <code>classify_core</code>/<code>classify_hub</code>, ghi từng file Excel +
+        báo cáo tổng, tổng thời gian job. Log ra đúng cơ chế <code>job["logs"]</code> có sẵn, dạng
+        <code>[TIMING] &lt;bước&gt;: X.Xs</code> — người dùng chạy trên dữ liệu thật rồi gửi lại
+        log, không cần thêm công cụ profiling ngoài.</p>
+
+      <div class="label">Phần 2 — <code>kiem_tra_du_lieu()</code> dò TÊN file, endpoint + banner</div>
+      <p>Hàm mới trong <code>common.py</code> tái dùng nguyên luật dò tên đã có
+        (<code>hub_filename_glob</code>, <code>_tu_khoa_ten_file</code>, pattern CSV/GL02 của
+        <code>core/pipeline.py</code>) — chỉ đổi input từ "thư mục trên đĩa" sang "danh sách tên
+        file" để dùng chung được cả chế độ thư mục server lẫn tải file lên (chưa upload nội dung).
+        Endpoint mới <code>POST check_readiness</code> (nhận <code>folder_path</code> HOẶC
+        <code>file_names</code>) + nút "Kiểm tra dữ liệu" thủ công trên trang (không tự động theo
+        dõi thay đổi input — đơn giản/an toàn hơn, tránh phải sửa <code>job_runner.py</code> dùng
+        chung nhiều module chỉ để thêm hook). Banner 2 dòng "✅ Đủ dữ liệu"/"⚠️ thiếu: ..." —
+        KHÔNG chặn nút "Chạy", hệ thống vẫn tự bỏ qua bước thiếu như hành vi hiện có.</p>
+
+      <div class="label">Phần 3 — <code>job["ket_qua"]["trang_thai"]</code> + sheet TrangThai</div>
+      <p>Thêm khoá <code>trang_thai</code> ngang hàng <code>kenh_hub</code>/<code>hub_core</code>
+        trong <code>job["ket_qua"]</code> (không đổi 2 khoá cũ — tương thích ngược với mọi nơi
+        đang đọc chúng), giá trị <code>{"trang_thai": "da_doi_chieu"|"chua_doi_chieu", "ly_do":
+        ...}</code> gắn song song đúng chỗ <code>loi.append(...)</code> đã có trong
+        <code>_run()</code> — không suy luận lại. Sheet <code>TrangThai</code> mới trong
+        <code>bao_cao_tong_hop_*.xlsx</code> (đặt ĐẦU workbook) — người nhận file qua email/không
+        xem UI vẫn biết ngay bước nào "CHƯA ĐỐI CHIẾU" thay vì đọc nhầm thành "không có chênh
+        lệch". Frontend thay dòng hint mờ "Không có kết quả — xem log" bằng banner cam rõ ràng
+        tách hẳn khỏi bảng "Đã cân khớp/Chưa cân khớp" (chênh lệch thật, không đổi).</p>
+
+      <div class="label">Hoàn thiện sau khi các cửa sổ khác báo xong (toàn quyền kỹ thuật)</div>
+      <p>2 việc polish thuần kỹ thuật, rủi ro thấp: (1) banner Phần 2 tự ẩn khi người dùng đổi
+        ngày/ngân hàng/đường dẫn thư mục sau khi đã kiểm tra — tránh hiểu nhầm "đã đủ" với dữ liệu
+        đã đổi, không tự động kiểm tra lại (tránh gọi API dồn dập mỗi lần gõ phím); (2)
+        <code>_export_bao_cao_tong_hop()</code> đổi <code>engine="openpyxl"</code> →
+        <code>"xlsxwriter"</code> — đồng bộ quyết định hiệu năng đã áp dụng ở
+        <code>core/export.py</code>/<code>kenh/export.py</code> (nhanh hơn ~30%, sheet nhỏ nên tác
+        động thấp nhưng nhất quán quy ước module).</p>
+      <p><b>Việc 1, 2 — KHÔNG tự làm, quyết định có chủ đích (BO xác nhận trực tiếp
+        2026-08-30, không phải bỏ sót)</b> — vì là quyết định nghiệp vụ/rủi ro cao chứ không phải
+        lỗi/quyết định kỹ thuật thuần tuý (<code>feedback_broad_permission_grant</code>: "chỉ
+        quyết định con người"):</p>
+      <table>
+        <tr><th>Việc</th><th>Vì sao không tự quyết — nguyên văn hướng dẫn BO</th></tr>
+        <tr><td><b>Việc 1</b> — Đổi khoá đối chiếu Hub↔Core để tách "khớp nhưng lệch tiền" khỏi
+          nhãn <code>HUB_THUA</code>/<code>CORE_THUA</code></td>
+          <td>Đổi thuật toán match — "sẽ làm THAY ĐỔI SỐ LIỆU TÀI CHÍNH xuất ra... phải theo đúng
+          hướng dẫn của người chấm thủ công. Hiện CHƯA có hướng dẫn đó." Giữ nguyên hiện trạng
+          (phương án an toàn đã chọn 2026-08-30), đánh dấu ĐANG CHỜ hướng dẫn thủ công.</td></tr>
+        <tr><td><b>Việc 2</b> — Đổi mật khẩu ZIP hardcode <code>DACwLdHi</code></td>
+          <td>"Mật khẩu ZIP cố định đang giải mã ĐÚNG dữ liệu thật từ hệ thống nguồn. Đổi hoặc dời
+          đi mà không có lý do rõ chỉ tạo rủi ro hỏng giải mã ở production." Giữ nguyên — KHÔNG
+          coi đây là lỗi cần sửa.</td></tr>
+      </table>
+      <p>Sau polish: 806/806 test vẫn pass.</p>
+
+      <div class="label">Việc 3 — sửa thao tác chọn đường dẫn (2026-08-30, BO yêu cầu thực thi ngay)</div>
+      <p>Hiện tượng BO báo: dán đường dẫn vào ô nhập thì được, nhưng bấm "Duyệt..." để CHỌN qua
+        dialog thì khó thao tác, có thể phải kích đúp. Yêu cầu: tham khảo cơ chế chọn đường dẫn ở
+        module Chấm ACH (đã nghiệm thu) và áp dụng đúng cách đó, không sửa mò.</p>
+      <p><b>Phát hiện: không có gì để "port" — ACH và Đối chiếu Song phương đã dùng CHUNG đúng 1
+        hàm</b> <code>frontend/shared.py::open_folder_picker()</code> (cả 2 trang cùng gọi thẳng
+        hàm này — ACH gọi trực tiếp trong <code>cham_ach.py</code>, Đối chiếu Song phương gọi qua
+        <code>frontend/job_runner.py::build_source_input()</code>). Không có code chọn-đường-dẫn
+        nào riêng của module này để sửa khác đi.</p>
+      <p>Đọc kỹ <code>open_folder_picker()</code> phát hiện hàm này ĐÃ CÓ SẴN 1 bản sửa —
+        <b>chưa từng commit</b> (docstring ghi rõ "đổi 2026-08-28, đợt 4 — sau phản hồi 'khó kích
+        vào ổ đĩa'") — đổi từ mô hình Windows Explorer cũ (click = tô sáng, double-click = mở)
+        sang <b>click 1 lần = mở luôn</b>, đúng hướng khắc phục chính xác hiện tượng BO mô tả.
+        Không rõ vì sao chưa từng được xác minh/đưa vào dùng — có thể chỉ mới viết xong mà chưa
+        kiểm thử qua trình duyệt thật.</p>
+      <p><b>Xác minh trực tiếp bằng trình duyệt thật</b> (được BO cấp quyền chạy server để test):
+        không có tài khoản đăng nhập thật nên dựng 1 harness cô lập (không đụng DB/account thật)
+        — mount thẳng <code>backend/api/fs.py</code> với <code>get_current_staff</code> override
+        (giống <code>tests/conftest.py::admin_client</code>), 2 trang test dùng đúng
+        <code>open_folder_picker()</code> thật: 1 trang phẳng (giống ACH, không tabs) và 1 trang
+        có <code>ui.tabs</code>/<code>ui.tab_panels</code> (giống Đối chiếu Song phương, để loại
+        trừ khả năng dialog bị ảnh hưởng bởi z-index/stacking của tab panel). Playwright click 1
+        lần vào dòng ổ đĩa đầu tiên (<code>C:\</code>) ở CẢ 2 trang — <b>cả 2 đều điều hướng vào
+        thành công ngay sau 1 click</b> (ảnh chụp xác nhận danh sách thư mục con hiện đủ), không
+        cần click lần 2, không lỗi console. Hành vi giống hệt nhau — xác nhận không có khác biệt
+        do cấu trúc tabs như nghi vấn ban đầu.</p>
+      <p><b>Kết luận</b>: không cần viết code mới — bản sửa single-click đã đúng và đã sẵn sàng,
+        chỉ chưa được xác minh/commit. Không có gì thay đổi trong <code>frontend/shared.py</code>
+        ở đợt này (đã kiểm <code>git diff</code> xác nhận không đụng file thật trong lúc test).
+        Khuyến nghị: commit bản sửa này cùng đợt.</p>
+
+      <div class="label">⚠️ Phiên làm việc song song trên cùng file — xử lý theo đúng quy tắc dự án</div>
+      <p>Phát hiện 1 cửa sổ Claude Code khác đang sửa sống <code>core/pipeline.py</code> +
+        <code>kenh_core_service.py</code> (đổi dò file HUB sang glob-tolerant, thêm cảnh báo nhiều
+        file khớp) NGAY TRONG LÚC phiên này đang làm — phát hiện qua so sánh 2 lần Read cùng file
+        cách nhau vài phút. Đã hỏi xác nhận với người dùng (đúng
+        <code>feedback_concurrent_session_file_conflict</code>), hoãn sửa 2 file đó, hoàn tất
+        trước phần không đụng chạm (<code>common.py</code>, <code>kenh/pipeline.py</code>,
+        <code>doi_chieu_song_phuong_service.py</code>, API, frontend Phần 2), rồi quay lại sau khi
+        người dùng xác nhận tiếp tục — đọc lại nguyên trạng file trước khi sửa tiếp, chỉ thêm dòng
+        mới, không đụng logic glob-tolerant họ vừa thêm. Không có xung đột thật xảy ra.</p>
+
+      <div class="label">Test</div>
+      <p>13 test mới: 7 đơn vị (<code>test_doi_chieu_song_phuong_common.py::kiem_tra_du_lieu</code>)
+        + 6 API (<code>TestCheckReadinessEndpoint</code>) + mở rộng assertion 2 test cũ (sheet
+        TrangThai, khoá trang_thai trong response poll). 806/806 test toàn dự án pass.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">96</span>
+      <span class="card-title">Đối chiếu Song phương — nhiều người dùng chung 1 thư mục server (mode 2): ngừng tự đoán "file mới nhất" khi nhiều file khớp glob</span>
+      <span class="badge badge-done">HOÀN THIỆN CODE+TEST · 2026-08-30 · 111/111 pass</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh — đến từ câu hỏi hạ tầng của BO, không phải bug báo cáo</div>
+      <p>BO cho biết máy chủ giới hạn lưu dữ liệu (không quá 1 ngày sau khi chạy xong, toàn bộ đĩa
+        máy chủ) và tối đa 4 người dùng có thể chạy Đối chiếu Song phương song song. Rà lại toàn bộ
+        code xử lý file (không tìm thấy write nào vào thư mục nguồn — an toàn), nhưng phát hiện 1
+        rủi ro thật khi nhiều người CÙNG trỏ vào 1 thư mục dùng chung (mode 2, thư mục server): nếu
+        2 file cùng khớp 1 mẫu glob (VD người khác vừa thả file mới vào đúng lúc), code cũ <b>tự
+        chọn file mtime mới nhất + chỉ log 1 dòng CẢNH BÁO dễ bỏ qua</b> — có thể đọc nhầm file của
+        người khác, ra kết quả sai mà không ai biết.</p>
+
+      <div class="label">Sửa — đổi "tự đoán + cảnh báo" thành "không đoán, báo lỗi rõ"</div>
+      <p>3 chỗ có hành vi này, đều đổi cùng kiểu: nhiều file khớp → KHÔNG chọn nữa, coi như "chưa
+        xác định được" (giống "không tìm thấy" nhưng log riêng biệt <code>[LỖI] N file khớp cùng
+        lúc ... KHÔNG tự chọn ...</code> để phân biệt rõ với "thật sự không có file"):</p>
+      <table>
+        <tr><th>Vị trí</th><th>Vai trò</th></tr>
+        <tr><td><code>doi_chieu_song_phuong_core/pipeline.py::_tim_file_hub</code></td>
+          <td>Dò file HUB cho bước Hub↔Core (cả 4 offset T/T-1/T-2/T-3)</td></tr>
+        <tr><td><code>doi_chieu_song_phuong_core/pipeline.py::_tim_file_core_hoac_csv</code></td>
+          <td>Dò CSV CORE đã phân loại sẵn cho bước Hub↔Core (cả 4 offset T/T+1/T+2/T+3)</td></tr>
+        <tr><td><code>doi_chieu_song_phuong_kenh_core_service.py::_run</code> (đoạn dò HUB)</td>
+          <td>Dò file HUB riêng cho bước Kênh↔Hub — set <code>trang_thai["kenh_hub"]</code> =
+          "chua_doi_chieu" kèm lý do phân biệt "nhiều file khớp" / "không tìm thấy"</td></tr>
+      </table>
+      <p>Không raise exception ở 2 vị trí trong <code>core/pipeline.py</code> cho offset KHÔNG bắt
+        buộc (VD HUB T-2/T-3, CORE T+2/T+3) — trả <code>None</code>, đúng hành vi "bỏ qua offset đó"
+        đã có sẵn cho trường hợp "không tìm thấy"; offset bắt buộc (HUB T/T-1, CORE T/T+1) tự động
+        rơi vào nhánh <code>raise ValueError</code> đã có sẵn khi thiếu. Ở
+        <code>kenh_core_service.py</code>, KHÔNG raise exception (đoạn này nằm ngoài try/except cục
+        bộ của bước Hub↔Core — raise ở đây sẽ crash cả job, phá vỡ triết lý "lỗi 1 bước không chặn
+        bước kia") — xử lý y hệt nhánh "không tìm thấy" hiện có, chỉ đổi thông điệp lý do.</p>
+
+      <div class="label">Vẫn còn — không thuộc phạm vi sửa lần này</div>
+      <p>Năng lực máy chủ chịu 4 job song song (RAM/CPU) là câu hỏi hạ tầng, không trả lời được chỉ
+        bằng đọc code — cần cấu hình máy chủ thật hoặc load test để đánh giá, chưa làm.</p>
+
+      <div class="label">Test</div>
+      <p>3 test mới: 2 đơn vị (<code>TestTimFile::test_nhieu_csv_cung_khop_khong_tu_chon</code>,
+        <code>test_nhieu_hub_cung_khop_khong_tu_chon</code>) + 1 API
+        (<code>TestStartFolderEndpoint::test_2_file_hub_cung_khop_khong_tu_chon</code> — verify cả
+        2 bước cùng báo "chưa đối chiếu" khi HUB T bị trùng, không silently ra kết quả sai). Toàn
+        bộ 111/111 test nhóm Đối chiếu Song phương pass sau khi sửa.</p>
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-30</footer>
 </div>
 </body>
 </html>

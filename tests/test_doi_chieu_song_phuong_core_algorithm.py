@@ -343,3 +343,19 @@ class TestTimFile:
         loai, p = pipeline._tim_file_core_hoac_csv(tmp_path, "20260823", "202")
         assert loai == "csv"
         assert p.name == "202_DEN.csv"
+
+    def test_nhieu_csv_cung_khop_khong_tu_chon(self, tmp_path):
+        """Quyết định 2026-08-30: nhiều người dùng có thể trỏ chung 1 thư mục server (mode 2)
+        cùng lúc — nhiều file CSV cùng khớp glob KHÔNG được tự đoán "mới nhất" như trước, phải
+        trả None (coi như chưa xác định được) để không đọc nhầm file người khác vừa thả vào."""
+        (tmp_path / "23.8").mkdir()
+        (tmp_path / "23.8" / "202_DEN_20260823_0900.csv").write_bytes(b"x")
+        (tmp_path / "23.8" / "202_DEN_20260823_1400.csv").write_bytes(b"x")
+        assert pipeline._tim_file_core_hoac_csv(tmp_path, "20260823", "202") is None
+
+    def test_nhieu_hub_cung_khop_khong_tu_chon(self, tmp_path):
+        """Như trên, áp dụng cho `_tim_file_hub` (dùng chung ở cả 2 bước Kênh↔Hub và Hub↔Core)."""
+        (tmp_path / "23.8").mkdir()
+        (tmp_path / "23.8" / "doichieugd_20260823__05_DEN_9999_N.zip").write_bytes(b"x")
+        (tmp_path / "23.8" / "doichieugd_20260823__05_DEN_9999_N_v2.zip").write_bytes(b"x")
+        assert pipeline._tim_file_hub(tmp_path, "20260823", "202") is None

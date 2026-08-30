@@ -17,10 +17,10 @@ import pandas as pd
 
 from backend.services import doi_chieu_song_phuong_service as ipcas_svc
 from backend.services.doi_chieu_song_phuong_common import (
-    cong_ngay, nhan_offset, thu_muc_ngay_ung_vien, tim_file, tim_file_glob,
+    cong_ngay, do_thoi_gian, nhan_offset, thu_muc_ngay_ung_vien, tim_file, tim_file_glob,
 )
 from backend.services.doi_chieu_song_phuong_kenh.load_hub import (
-    build_key_hub_core, filter_before_reconcile_core, hub_filename, load_hub_zip,
+    build_key_hub_core, filter_before_reconcile_core, hub_filename_glob, load_hub_zip,
 )
 from backend.services.doi_chieu_song_phuong_kenh.load_kenh import _tu_khoa_ten_file
 
@@ -28,8 +28,27 @@ from . import load_core, load_osb, match
 from .config import NHAN_HUB_T_CORE_T
 
 
-def _tim_file_hub(goc_dir: Path, ngay: str, ma_nh: str) -> Path | None:
-    return tim_file(goc_dir, ngay, hub_filename(ngay, ma_nh))
+def _tim_file_hub(
+    goc_dir: Path, ngay: str, ma_nh: str, log: Callable[[str], None] = lambda msg: None,
+) -> Path | None:
+    """Khớp glob `doichieugd_{ngay}__{code}_DEN_9999_N*.zip` — KHÔNG đòi tên chính xác, cùng lý
+    do CSV CORE/OSB đã vá (dữ liệu export thủ công có thể kèm hậu tố).
+
+    Nhiều file khớp → KHÔNG tự đoán (đổi 2026-08-30, khác hành vi cũ "lấy file mtime mới nhất") —
+    coi như chưa xác định được, trả None kèm log riêng biệt với "không tìm thấy". Lý do: nhiều
+    người dùng có thể trỏ chung 1 thư mục server (mode 2) cùng lúc — tự đoán "mới nhất" dễ đọc
+    nhầm file người khác vừa thả vào, ra kết quả sai mà không ai biết (chỉ có 1 dòng cảnh báo dễ
+    bỏ qua)."""
+    matches = tim_file_glob(goc_dir, ngay, hub_filename_glob(ngay, ma_nh))
+    if not matches:
+        return None
+    if len(matches) > 1:
+        log(f"[LỖI] {len(matches)} file HUB khớp cùng lúc trong {matches[0].parent} — KHÔNG tự "
+            f"chọn (tránh đọc nhầm khi nhiều người dùng chung thư mục): "
+            f"{', '.join(p.name for p in matches)}. Cần dọn bớt file trùng hoặc dùng thư mục "
+            f"riêng cho mỗi phiên.")
+        return None
+    return matches[0]
 
 
 def _tim_file_core_hoac_csv(
@@ -39,17 +58,18 @@ def _tim_file_core_hoac_csv(
     KHÔNG đòi tên chính xác `{ma_nh}_DEN.csv`: dữ liệu thật xuất thủ công (ngoài module Phân
     loại dữ liệu) luôn kèm hậu tố ngày/giờ xuất (VD `202_DEN_20260827_1408.csv`, người chấm xác
     nhận 2026-08-28 đây đúng là dữ liệu CORE của ngày trong tên thư mục, không phải ngày trong
-    tên file). Nhiều file cùng khớp → lấy file sửa đổi gần nhất, có cảnh báo. Không thấy CSV nào
+    tên file). Nhiều file cùng khớp — KHÔNG tự đoán (đổi 2026-08-30, cùng lý do `_tim_file_hub`,
+    tránh đọc nhầm file khi nhiều người dùng chung thư mục server), trả None. Không thấy CSV nào
     mới tới `GL02_{ngay}_1000.zip` (cần giải mã AES + phân loại). Trả `(loai, path)`, `loai` là
-    `"csv"`/`"zip"`, hoặc `None` nếu không thấy cái nào."""
+    `"csv"`/`"zip"`, hoặc `None` nếu không thấy/không xác định được cái nào."""
     matches = tim_file_glob(goc_dir, ngay, f"{ma_nh}_DEN*.csv")
     if matches:
         if len(matches) > 1:
-            newest = max(matches, key=lambda p: p.stat().st_mtime)
-            log(f"[CẢNH BÁO] {len(matches)} file khớp '{ma_nh}_DEN*.csv' trong {newest.parent} "
-                f"— dùng file mới nhất '{newest.name}' (còn lại: "
-                f"{', '.join(p.name for p in matches if p != newest)})")
-            return ("csv", newest)
+            log(f"[LỖI] {len(matches)} file khớp '{ma_nh}_DEN*.csv' cùng lúc trong "
+                f"{matches[0].parent} — KHÔNG tự chọn (tránh đọc nhầm khi nhiều người dùng chung "
+                f"thư mục): {', '.join(p.name for p in matches)}. Cần dọn bớt file trùng hoặc "
+                f"dùng thư mục riêng cho mỗi phiên.")
+            return None
         return ("csv", matches[0])
     p = tim_file(goc_dir, ngay, f"GL02_{ngay}_1000.zip")
     if p is not None:
@@ -113,13 +133,16 @@ def doi_chieu_hub_core(
 
     hub_theo_offset: dict[int, pd.DataFrame] = {}
     for off in (0, -1, -2, -3):
-        p = _tim_file_hub(goc_dir, cong_ngay(ngay, off), ma_nh)
         nhan = nhan_offset(off)
+        p = _tim_file_hub(
+            goc_dir, cong_ngay(ngay, off), ma_nh, lambda m, nhan=nhan: log(f"[HUB {nhan}] {m}"),
+        )
         if p is None:
             log(f"[HUB {nhan}] không tìm thấy file" + (" — BẮT BUỘC" if off in (0, -1) else " (bỏ qua)"))
             continue
         log(f"[HUB {nhan}] đang đọc {p.name}...")
-        hub_theo_offset[off] = _doc_hub(p, log)
+        with do_thoi_gian(log, f"đọc+parse HUB {nhan}"):
+            hub_theo_offset[off] = _doc_hub(p, log)
 
     if 0 not in hub_theo_offset:
         raise ValueError(f"Không tìm thấy file HUB ngày {ngay} cho NH {ma_nh} — không thể đối chiếu.")
@@ -134,7 +157,8 @@ def doi_chieu_hub_core(
             log(f"[CORE {nhan}] không tìm thấy file CSV/GL02" + (" — BẮT BUỘC" if off in (0, 1) else " (bỏ qua)"))
             continue
         loai, p = found
-        core_theo_offset[off] = _doc_core(loai, p, ma_nh, lambda m, nhan=nhan: log(f"[CORE {nhan}] {m}"))
+        with do_thoi_gian(log, f"đọc/giải mã CORE {nhan} ({loai})"):
+            core_theo_offset[off] = _doc_core(loai, p, ma_nh, lambda m, nhan=nhan: log(f"[CORE {nhan}] {m}"))
 
     if 0 not in core_theo_offset:
         raise ValueError(f"Không tìm thấy file CSV/GL02 ngày {ngay} — không thể đối chiếu.")
@@ -143,17 +167,20 @@ def doi_chieu_hub_core(
     osb_df = None
     if osb_path is not None:
         log(f"[OSB] đang đọc {osb_path.name}...")
-        osb_df = load_osb.load_osb_file(osb_path)
+        with do_thoi_gian(log, "đọc OSB"):
+            osb_df = load_osb.load_osb_file(osb_path)
     else:
         log("[OSB] không tìm thấy file — bỏ qua Bước 2.6 (HUB thừa sẽ không đối chiếu OSB).")
 
     log("Đang phân loại CORE...")
     core_df = core_theo_offset[0].copy()
-    core_df["KETQUADOICHIEU"] = match.classify_core(core_df, hub_theo_offset)
+    with do_thoi_gian(log, "phân loại CORE (classify_core)"):
+        core_df["KETQUADOICHIEU"] = match.classify_core(core_df, hub_theo_offset)
 
     log("Đang phân loại HUB...")
     hub_df = hub_theo_offset[0].copy()
-    hub_df["KETQUADOICHIEU"] = match.classify_hub(hub_df, core_theo_offset, osb_df)
+    with do_thoi_gian(log, "phân loại HUB (classify_hub)"):
+        hub_df["KETQUADOICHIEU"] = match.classify_hub(hub_df, core_theo_offset, osb_df)
 
     n_core_khop = int((core_df["KETQUADOICHIEU"] == NHAN_HUB_T_CORE_T).sum())
     n_hub_khop = int((hub_df["KETQUADOICHIEU"] == NHAN_HUB_T_CORE_T).sum())

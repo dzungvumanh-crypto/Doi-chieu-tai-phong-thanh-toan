@@ -22,6 +22,15 @@ def hub_filename(ngay: str, ma_nh: str) -> str:
     return f"doichieugd_{ngay}__{HUB_FILE_CODE[ma_nh]}_DEN_9999_N.zip"
 
 
+def hub_filename_glob(ngay: str, ma_nh: str) -> str:
+    """Như `hub_filename`, nhưng trả glob pattern chấp nhận hậu tố sau tên chuẩn (VD
+    `..._N_v2.zip`) — cùng rủi ro tên file không đúng quy ước như CSV CORE/OSB đã gặp (dữ liệu
+    export thủ công), xem `doi_chieu_song_phuong_common.py::tim_file_glob`."""
+    if ma_nh not in HUB_FILE_CODE:
+        raise ValueError(f"Mã ngân hàng không hợp lệ: {ma_nh}")
+    return f"doichieugd_{ngay}__{HUB_FILE_CODE[ma_nh]}_DEN_9999_N*.zip"
+
+
 def _doc_csv_hub_thu_cong(raw: bytes) -> pd.DataFrame:
     """Đọc CSV HUB bằng cách tách dòng thủ công — dùng khi `pd.read_csv` raise lỗi tokenize.
 

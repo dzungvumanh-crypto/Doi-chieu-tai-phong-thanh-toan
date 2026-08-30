@@ -51,11 +51,14 @@ DEPARTMENTS = [
                     ("cham_459901",           "Chấm 459901",            "task_alt"),
                     ("cham_ilo1000",          "Chấm ILO1000",           "checklist"),
                     ("cham_ach",              "Chấm đối chiếu ACH",     "compare_arrows"),
-                    ("doi_chieu_song_phuong", "Đối chiếu Song phương",  "account_balance"),
                     ("doi_chieu_citad",       "Đối chiếu CITAD",        "account_balance_wallet"),
                     ("doi_soat_citad",        "Đối soát CITAD ↔ IPCAS", "fact_check"),
                 ],
             },
+            # 1 trang, 3 thẻ bên trong (Phân loại / Đối chiếu đến — kênh↔hub+hub↔core / Đối
+            # chiếu đi — chưa làm) — gộp 2026-08-28 từ 3 menu riêng, xem
+            # frontend/pages/doi_chieu_song_phuong.py.
+            ("doi_chieu_song_phuong", "Đối chiếu Song phương", "account_balance"),
         ],
     },
     # ── Phòng chưa có chức năng — giữ làm marker mở rộng, items rỗng nên không render ──
@@ -649,14 +652,16 @@ async def open_folder_picker(on_select, *, initial_path: str = "") -> None:
     <input webkitdirectory>, vì cả 2 thứ đó chỉ hoạt động đúng khi browser và
     server cùng 1 máy hoặc không trả về đường dẫn tuyệt đối).
 
-    UX theo kiểu Windows Explorer: click 1 dòng = CHỌN (tô sáng, không rời khỏi
-    thư mục đang xem); double-click = MỞ vào thư mục đó. Thanh breadcrumb phía
-    trên (từ "Máy tính" → ổ đĩa → từng cấp) bấm 1 đoạn để nhảy thẳng tới đó,
-    thay vì chỉ có nút "lên 1 cấp". Nút "Chọn thư mục này" xác nhận đúng dòng
-    đang được tô sáng — nếu chưa chọn dòng nào thì xác nhận thư mục đang mở.
-    on_select(path) có thể là hàm sync hoặc async — mỗi trang gọi tự quyết định
-    làm gì với path (gán input, validate...)."""
-    state = {"path": None, "parent": None, "selected": None, "entries": []}
+    UX (đổi 2026-08-28, đợt 4 — sau phản hồi "khó kích vào ổ đĩa"): click 1 dòng
+    = MỞ LUÔN vào đó, kể cả ở danh sách ổ đĩa gốc. Bỏ mô hình "click = tô sáng,
+    double-click = mở" kiểu Windows Explorer cũ — ở dialog web, single-click cần
+    có tác dụng ngay, double-click không được gợi ý nên người dùng không biết
+    phải bấm 2 lần. Thanh breadcrumb phía trên (từ "Máy tính" → ổ đĩa → từng
+    cấp) bấm 1 đoạn để nhảy thẳng tới đó, thay vì chỉ có nút "lên 1 cấp". Nút
+    "Chọn thư mục này" luôn xác nhận đúng thư mục ĐANG MỞ (điều hướng xuống tới
+    đúng cấp cần rồi bấm nút này). on_select(path) có thể là hàm sync hoặc
+    async — mỗi trang gọi tự quyết định làm gì với path (gán input, validate...)."""
+    state = {"path": None, "parent": None, "entries": []}
     dialog = ui.dialog().props("persistent")
 
     with dialog, ui.card().classes("p-4").style("min-width: 640px; max-width: 90vw"):
@@ -708,22 +713,16 @@ async def open_folder_picker(on_select, *, initial_path: str = "") -> None:
                 icon_name = "storage" if state["path"] is None else "folder"
                 icon_color = "text-gray-500" if state["path"] is None else "text-yellow-600"
                 for ent in state["entries"]:
-                    is_sel = state["selected"] == ent["path"]
                     row = ui.row().classes(
                         "w-full items-center gap-2 px-3 py-2 cursor-pointer border-b "
-                        + ("bg-red-100" if is_sel else "hover:bg-red-50")
+                        "hover:bg-red-50"
                     )
                     with row:
                         ui.icon(icon_name).classes(f"{icon_color} text-base")
                         ui.label(ent["name"]).classes("text-sm flex-1 truncate")
                         ui.icon("chevron_right").classes("text-xs text-gray-300")
 
-                    def _select(p=ent["path"]):
-                        state["selected"] = p
-                        _render_list()
-
-                    row.on("click", _select)
-                    row.on("dblclick", lambda p=ent["path"]: _load(p))
+                    row.on("click", lambda p=ent["path"]: _load(p))
 
         async def _load(path, *, is_initial: bool = False):
             spinner.set_visibility(True)
@@ -751,7 +750,6 @@ async def open_folder_picker(on_select, *, initial_path: str = "") -> None:
             spinner.set_visibility(False)
             state["path"] = res.get("path")
             state["parent"] = res.get("parent")
-            state["selected"] = None
             state["entries"] = res.get("entries", [])
 
             if state["path"] is None:
@@ -765,7 +763,7 @@ async def open_folder_picker(on_select, *, initial_path: str = "") -> None:
             _render_list()
 
         async def _confirm():
-            target = state["selected"] or state["path"]
+            target = state["path"]
             if not target:
                 return
             dialog.close()

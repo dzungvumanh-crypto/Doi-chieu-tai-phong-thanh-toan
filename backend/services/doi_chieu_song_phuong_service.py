@@ -21,6 +21,8 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
+from backend.services.doi_chieu_song_phuong_common import do_thoi_gian
+
 try:
     import pyzipper
     _open_zip = lambda buf: pyzipper.AESZipFile(buf)   # noqa: E731
@@ -81,7 +83,7 @@ def process_zip(zip_bytes: bytes, log_callback=lambda msg: None) -> dict:
     except Exception as e:
         raise ValueError(f"Không mở được file ZIP: {e}")
 
-    with zf:
+    with zf, do_thoi_gian(log_callback, "giải mã + định tuyến ZIP GL02"):
         try:
             zf.setpassword(ZIP_PASSWORD)
         except AttributeError:
@@ -115,12 +117,13 @@ def process_zip(zip_bytes: bytes, log_callback=lambda msg: None) -> dict:
     out_dir = TEMP_DIR / result_token
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    for (cust, chieu), lines in buffers.items():
-        ma   = BANK_MAP[cust]
-        path = out_dir / f"{ma}_{chieu}.csv"
-        with open(path, "w", encoding="utf-8-sig", newline="") as fh:
-            fh.write(hdr_line)
-            fh.writelines(lines)
+    with do_thoi_gian(log_callback, "ghi 8 file CSV"):
+        for (cust, chieu), lines in buffers.items():
+            ma   = BANK_MAP[cust]
+            path = out_dir / f"{ma}_{chieu}.csv"
+            with open(path, "w", encoding="utf-8-sig", newline="") as fh:
+                fh.write(hdr_line)
+                fh.writelines(lines)
 
     # ── Thống kê + danh sách file ─────────────────────────────────────────────
     stats = [

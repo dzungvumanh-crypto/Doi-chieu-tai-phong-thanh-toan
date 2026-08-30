@@ -12,6 +12,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from backend.core.deps import require_feature
+from backend.services import doi_chieu_song_phuong_common as common
 from backend.services import doi_chieu_song_phuong_kenh_core_service as svc
 
 router = APIRouter(prefix="/api/doi_chieu_song_phuong_kenh_core", tags=["doi_chieu_song_phuong_kenh_core"])
@@ -33,6 +34,40 @@ class FolderRequest(BaseModel):
     folder_path: str
     ngay: str      # YYYYMMDD
     ma_nh: str     # 1 trong 4 ngân hàng — mỗi lần chạy chỉ 1 NH
+
+
+class ReadinessRequest(BaseModel):
+    ngay: str
+    ma_nh: str
+    folder_path: str | None = None    # chế độ thư mục server
+    file_names: list[str] | None = None  # chế độ tải file lên (chỉ tên, chưa upload nội dung)
+
+
+@router.post("/check_readiness")
+def check_readiness(
+    req: ReadinessRequest,
+    _=Depends(require_feature("menu.doi_chieu_song_phuong")),
+):
+    """Dò TÊN file (không đọc byte) xem đã đủ dữ liệu chạy Kênh↔Hub / Hub↔Core chưa — cho banner
+    cảnh báo TRƯỚC khi bấm "Chạy" (2026-08-30). KHÔNG chặn nút Chạy — hệ thống vẫn tự bỏ qua bước
+    thiếu dữ liệu như hành vi hiện có, banner chỉ để người dùng biết trước."""
+    if not (len(req.ngay) == 8 and req.ngay.isdigit()):
+        raise HTTPException(400, f"Ngày không hợp lệ (cần dạng YYYYMMDD): {req.ngay}")
+
+    if req.file_names is not None:
+        ten_file_list = req.file_names
+    elif req.folder_path:
+        p = Path(req.folder_path)
+        if not p.exists() or not p.is_dir():
+            raise HTTPException(400, f"Thư mục không tồn tại: {req.folder_path}")
+        thu_muc = [*common.thu_muc_ngay_ung_vien(p, req.ngay), p]
+        ten_file_list = sorted({
+            f.name for d in thu_muc if d.exists() for f in d.iterdir() if f.is_file()
+        })
+    else:
+        raise HTTPException(400, "Cần cung cấp folder_path hoặc file_names.")
+
+    return common.kiem_tra_du_lieu(ten_file_list, req.ngay, req.ma_nh)
 
 
 @router.post("/start_folder")

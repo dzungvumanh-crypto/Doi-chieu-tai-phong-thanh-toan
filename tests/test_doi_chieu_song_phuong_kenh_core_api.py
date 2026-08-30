@@ -133,6 +133,8 @@ class TestStartFolderEndpoint:
         assert prog["status"] == "done", prog
         assert prog["ket_qua"]["kenh_hub"] is not None
         assert prog["ket_qua"]["hub_core"] is not None
+        assert prog["ket_qua"]["trang_thai"]["kenh_hub"] == {"trang_thai": "da_doi_chieu", "ly_do": None}
+        assert prog["ket_qua"]["trang_thai"]["hub_core"] == {"trang_thai": "da_doi_chieu", "ly_do": None}
         assert any(f.startswith("doi_chieu_song_phuong_kenh_tonghop") for f in prog["files"])
         assert any(f.startswith("hub_core_202_") for f in prog["files"])
         assert any(f.startswith("bao_cao_tong_hop_202_") for f in prog["files"])
@@ -164,9 +166,14 @@ class TestStartFolderEndpoint:
         r_dl3 = admin_client.get(f"/api/doi_chieu_song_phuong_kenh_core/download/{job_id}/{bao_cao}")
         assert r_dl3.status_code == 200 and r_dl3.headers["content-type"] == _XLSX_MIME
         sheets = _doc_sheets(r_dl3.content)
-        assert set(sheets.keys()) == {"Bang1_KenhHub", "TongHop_HubCore"}
+        assert set(sheets.keys()) == {"TrangThai", "Bang1_KenhHub", "TongHop_HubCore"}
         assert sheets["Bang1_KenhHub"] == bang1_kenh_rows
         assert sheets["TongHop_HubCore"] == tonghop_core_rows
+        assert sheets["TrangThai"] == [
+            ("Bước", "Trạng thái", "Lý do"),
+            ("Kênh↔Hub", "Đã đối chiếu", None),
+            ("Hub↔Core", "Đã đối chiếu", None),
+        ]
 
     def test_thieu_gl02_hub_core_loi_khong_chan_kenh_hub(self, admin_client, monkeypatch, tmp_path):
         """Không có GL02/CSV -> Hub↔Core lỗi, nhưng Kênh↔Hub (đủ file) vẫn phải ra kết quả —
@@ -187,13 +194,45 @@ class TestStartFolderEndpoint:
         assert prog["status"] == "done", prog
         assert prog["ket_qua"]["kenh_hub"] is not None
         assert prog["ket_qua"]["hub_core"] is None
+        assert prog["ket_qua"]["trang_thai"]["kenh_hub"] == {"trang_thai": "da_doi_chieu", "ly_do": None}
+        assert prog["ket_qua"]["trang_thai"]["hub_core"]["trang_thai"] == "chua_doi_chieu"
+        assert prog["ket_qua"]["trang_thai"]["hub_core"]["ly_do"]
         assert any(f.startswith("doi_chieu_song_phuong_kenh_tonghop") for f in prog["files"])
         assert not any(f.startswith("hub_core_") for f in prog["files"])
 
         bao_cao = next(f for f in prog["files"] if f.startswith("bao_cao_tong_hop_202_"))
         r_dl = admin_client.get(f"/api/doi_chieu_song_phuong_kenh_core/download/{job_id}/{bao_cao}")
         sheets = _doc_sheets(r_dl.content)
-        assert set(sheets.keys()) == {"Bang1_KenhHub"}
+        assert set(sheets.keys()) == {"TrangThai", "Bang1_KenhHub"}
+        trang_thai_rows = {row[0]: row[1] for row in sheets["TrangThai"][1:]}
+        assert trang_thai_rows["Kênh↔Hub"] == "Đã đối chiếu"
+        assert trang_thai_rows["Hub↔Core"] == "CHƯA ĐỐI CHIẾU"
+
+    def test_2_file_hub_cung_khop_khong_tu_chon(self, admin_client, monkeypatch, tmp_path):
+        """Quyết định 2026-08-30: nhiều người dùng có thể trỏ chung 1 thư mục server (mode 2)
+        cùng lúc — 2 file HUB cùng khớp glob (VD 1 file người khác vừa thả vào) KHÔNG được tự
+        đoán "mới nhất" như trước, phải báo rõ "chưa đối chiếu" thay vì âm thầm chọn nhầm file."""
+        monkeypatch.setattr(svc, "TEMP_DIR", tmp_path / "_out")
+        monkeypatch.setattr(ipcas_svc, "TEMP_DIR", tmp_path / "_out_ipcas")
+        day_dir = tmp_path / "25.8"
+        day_dir.mkdir()
+        _setup_hub_kenh(day_dir)
+        (day_dir / "doichieugd_20260825__05_DEN_9999_N_v2.zip").write_bytes(
+            _make_hub_zip([_hub_row(_MSG_202RT, "TXID202RT")])
+        )
+        _setup_gl02(day_dir)
+
+        r = admin_client.post(
+            "/api/doi_chieu_song_phuong_kenh_core/start_folder",
+            json={"folder_path": str(tmp_path), "ngay": "20260825", "ma_nh": "202"},
+        )
+        job_id = r.json()["job_id"]
+        prog = _wait_done(admin_client, job_id)
+        assert prog["ket_qua"]["kenh_hub"] is None
+        assert prog["ket_qua"]["hub_core"] is None
+        assert prog["ket_qua"]["trang_thai"]["kenh_hub"]["trang_thai"] == "chua_doi_chieu"
+        assert "nhiều file hub" in prog["ket_qua"]["trang_thai"]["kenh_hub"]["ly_do"].lower()
+        assert any("[LỖI]" in msg and "khớp cùng lúc" in msg for msg in prog["logs"])
 
     def test_ca_2_buoc_deu_thieu_du_lieu_bao_job_loi(self, admin_client, monkeypatch, tmp_path):
         monkeypatch.setattr(svc, "TEMP_DIR", tmp_path / "_out")
@@ -323,6 +362,76 @@ class TestStartUploadEndpoint:
         assert upload_dir.exists()
         assert (upload_dir / "evil.zip").exists()
         assert not (tmp_path / "_out" / "evil.zip").exists()
+
+
+class TestCheckReadinessEndpoint:
+    """Phần 2 (2026-08-30): banner cảnh báo TRƯỚC khi bấm "Chạy" — dò TÊN file, không đọc byte,
+    không chặn nút Chạy."""
+
+    def test_folder_mode_du_ca_hai(self, admin_client, tmp_path):
+        day_dir = tmp_path / "25.8"
+        day_dir.mkdir()
+        _setup_hub_kenh(day_dir)
+        _setup_gl02(day_dir)
+
+        r = admin_client.post(
+            "/api/doi_chieu_song_phuong_kenh_core/check_readiness",
+            json={"folder_path": str(tmp_path), "ngay": "20260825", "ma_nh": "202"},
+        )
+        assert r.status_code == 200, r.text
+        assert r.json() == {"kenh_hub": "du", "hub_core": "du"}
+
+    def test_folder_mode_thieu_gl02_va_csv(self, admin_client, tmp_path):
+        day_dir = tmp_path / "25.8"
+        day_dir.mkdir()
+        _setup_hub_kenh(day_dir)
+        # Không setup GL02/CSV -> Hub↔Core thiếu
+
+        r = admin_client.post(
+            "/api/doi_chieu_song_phuong_kenh_core/check_readiness",
+            json={"folder_path": str(tmp_path), "ngay": "20260825", "ma_nh": "202"},
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["kenh_hub"] == "du"
+        assert body["hub_core"].startswith("thieu:")
+
+    def test_file_names_mode_khong_can_upload_that(self, admin_client):
+        r = admin_client.post(
+            "/api/doi_chieu_song_phuong_kenh_core/check_readiness",
+            json={
+                "file_names": [
+                    "doichieugd_20260825__05_DEN_9999_N.zip",
+                    "kênh đến SPRT 202.xlsx",
+                ],
+                "ngay": "20260825", "ma_nh": "202",
+            },
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["kenh_hub"] == "du"
+        assert body["hub_core"].startswith("thieu:")
+
+    def test_thieu_ca_folder_path_va_file_names_tra_400(self, admin_client):
+        r = admin_client.post(
+            "/api/doi_chieu_song_phuong_kenh_core/check_readiness",
+            json={"ngay": "20260825", "ma_nh": "202"},
+        )
+        assert r.status_code == 400
+
+    def test_ngay_sai_dinh_dang_tra_400(self, admin_client):
+        r = admin_client.post(
+            "/api/doi_chieu_song_phuong_kenh_core/check_readiness",
+            json={"file_names": [], "ngay": "25-08-2026", "ma_nh": "202"},
+        )
+        assert r.status_code == 400
+
+    def test_thu_muc_khong_ton_tai_tra_400(self, admin_client, tmp_path):
+        r = admin_client.post(
+            "/api/doi_chieu_song_phuong_kenh_core/check_readiness",
+            json={"folder_path": str(tmp_path / "khong-ton-tai"), "ngay": "20260825", "ma_nh": "202"},
+        )
+        assert r.status_code == 400
 
 
 class TestPollEndpoint:

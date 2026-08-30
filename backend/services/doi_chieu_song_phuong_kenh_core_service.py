@@ -26,12 +26,13 @@ from typing import Any
 import pandas as pd
 
 from backend.services import doi_chieu_song_phuong_common as common
+from backend.services.doi_chieu_song_phuong_common import do_thoi_gian
 from backend.services.doi_chieu_song_phuong_core import export as core_export
 from backend.services.doi_chieu_song_phuong_core.export import export_excel as export_core_excel
 from backend.services.doi_chieu_song_phuong_core.pipeline import doi_chieu_hub_core
 from backend.services.doi_chieu_song_phuong_kenh import export as kenh_export
 from backend.services.doi_chieu_song_phuong_kenh.export import export_bao_cao
-from backend.services.doi_chieu_song_phuong_kenh.load_hub import hub_filename
+from backend.services.doi_chieu_song_phuong_kenh.load_hub import hub_filename_glob
 from backend.services.doi_chieu_song_phuong_kenh.pipeline import main_from_dir as kenh_main_from_dir
 
 TEMP_DIR = Path("data/temp_doi_chieu_song_phuong_kenh_core")
@@ -54,7 +55,13 @@ def _new_job(ngay: str, ma_nh: str) -> tuple[str, dict]:
         "error": None,
         "ngay": ngay,
         "ma_nh": ma_nh,
-        "ket_qua": {"kenh_hub": None, "hub_core": None},  # None nếu bước đó lỗi/bỏ qua
+        "ket_qua": {
+            "kenh_hub": None, "hub_core": None,  # None nếu bước đó lỗi/bỏ qua
+            # Trạng thái cấp JOB (Phần 3, 2026-08-30) — tách "chưa đối chiếu được" (thiếu cả 1
+            # loại file) khỏi "chênh lệch thật" (số liệu trong "kenh_hub"/"hub_core" ở trên).
+            # KHÔNG đổi nhãn per-row KETQUADOICHIEU/trạng thái đơn vị — chỉ thêm cờ cấp job.
+            "trang_thai": {"kenh_hub": None, "hub_core": None},
+        },
         "stage": 0,
         "cancel_event": threading.Event(),
         "_ts": time.time(),
@@ -117,16 +124,34 @@ def start_upload(files: list[tuple[str, bytes]], ngay: str, ma_nh: str) -> str:
     return job_id
 
 
+_NHAN_TRANG_THAI = {"da_doi_chieu": "Đã đối chiếu", "chua_doi_chieu": "CHƯA ĐỐI CHIẾU"}
+
+
 def _export_bao_cao_tong_hop(
-    ket_qua_kenh: dict | None, ket_qua_core: dict | None, out_path: Path,
+    ket_qua_kenh: dict | None, ket_qua_core: dict | None, trang_thai: dict, out_path: Path,
 ) -> Path | None:
-    """Gộp Bảng 1 (Kênh↔Hub) + TongHop (Hub↔Core) vào 1 workbook 2 sheet — "1 báo cáo cuối" theo
-    quyết định 2026-08-28. Bỏ qua sheet nào bước đó không có kết quả (lỗi/thiếu file). Trả None
-    nếu cả 2 bước đều không có kết quả."""
+    """Gộp sheet TrangThai (Phần 3, 2026-08-30) + Bảng 1 (Kênh↔Hub) + TongHop (Hub↔Core) vào 1
+    workbook — "1 báo cáo cuối" theo quyết định 2026-08-28. Bỏ qua sheet nào bước đó không có kết
+    quả (lỗi/thiếu file). Trả None nếu cả 2 bước đều không có kết quả.
+
+    Sheet TrangThai đặt ĐẦU workbook — người nhận file (không xem UI/log) biết ngay bước nào
+    "chưa đối chiếu được" (thiếu dữ liệu 1 bên) thay vì đọc nhầm là "không có chênh lệch".
+
+    `engine="xlsxwriter"` — nhất quán với `core/export.py`/`kenh/export.py` (đã đo nhanh hơn
+    openpyxl ~30%, xem Implementation-notes.html); sheet này nhỏ nên tác động thấp nhưng đổi cho
+    đồng bộ quy ước toàn module, 2026-08-30."""
     if ket_qua_kenh is None and ket_qua_core is None:
         return None
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
+    with pd.ExcelWriter(out_path, engine="xlsxwriter") as writer:
+        pd.DataFrame([
+            {
+                "Bước": nhan,
+                "Trạng thái": _NHAN_TRANG_THAI.get((trang_thai.get(key) or {}).get("trang_thai"), "—"),
+                "Lý do": (trang_thai.get(key) or {}).get("ly_do") or "",
+            }
+            for key, nhan in (("kenh_hub", "Kênh↔Hub"), ("hub_core", "Hub↔Core"))
+        ]).to_excel(writer, sheet_name="TrangThai", index=False)
         if ket_qua_kenh is not None:
             kenh_export.build_bang1_rows([ket_qua_kenh]).to_excel(
                 writer, sheet_name="Bang1_KenhHub", index=False,
@@ -143,6 +168,7 @@ def _run(job_id: str, goc_dir: str, ngay: str, ma_nh: str, output_dir: str) -> N
     if job is None:
         return
     job["status"] = "running"
+    t_job0 = time.perf_counter()
     goc_dir_p = Path(goc_dir)
     output_dir_p = Path(output_dir)
     files: list[str] = []
@@ -159,29 +185,54 @@ def _run(job_id: str, goc_dir: str, ngay: str, ma_nh: str, output_dir: str) -> N
 
         # ── Bước 1/2 — Kênh↔Hub ──────────────────────────────────────────────
         log("=== Bước 1/2 — Kênh↔Hub ===")
-        hub_path = common.tim_file(goc_dir_p, ngay, hub_filename(ngay, ma_nh))
+        hub_matches = common.tim_file_glob(goc_dir_p, ngay, hub_filename_glob(ngay, ma_nh))
+        hub_path = None
+        if len(hub_matches) > 1:
+            # Đổi 2026-08-30: KHÔNG tự đoán "mới nhất" nữa (khác hành vi cũ) — nhiều người dùng
+            # có thể trỏ chung 1 thư mục server (mode 2) cùng lúc, tự đoán dễ đọc nhầm file người
+            # khác vừa thả vào, ra kết quả sai mà không ai biết.
+            log(f"[Kênh↔Hub] [LỖI] {len(hub_matches)} file HUB khớp cùng lúc trong "
+                f"{hub_matches[0].parent} — KHÔNG tự chọn (tránh đọc nhầm khi nhiều người dùng "
+                f"chung thư mục): {', '.join(p.name for p in hub_matches)}. Cần dọn bớt file "
+                f"trùng hoặc dùng thư mục riêng cho mỗi phiên.")
+        elif hub_matches:
+            hub_path = hub_matches[0]
+
         if hub_path is None:
-            loi.append("Kênh↔Hub: không tìm thấy file HUB — bỏ qua bước này.")
+            ly_do = (
+                "nhiều file HUB khớp cùng lúc, không tự chọn được — xem log"
+                if hub_matches else "không tìm thấy file HUB"
+            )
+            loi.append(f"Kênh↔Hub: {ly_do} — bỏ qua bước này.")
             log(f"[Kênh↔Hub] {loi[-1]}")
+            job["ket_qua"]["trang_thai"]["kenh_hub"] = {
+                "trang_thai": "chua_doi_chieu", "ly_do": ly_do,
+            }
         else:
             if job["cancel_event"].is_set():
                 job["status"] = "cancelled"
                 log("[JOB] Đã dừng theo yêu cầu.")
                 return
-            ket_qua_kenh = kenh_main_from_dir(
-                hub_path.parent, ngay=ngay, ma_nh=ma_nh,
-                log_callback=lambda m: log(f"[Kênh↔Hub] {m}"),
-                cancel_event=job["cancel_event"],
-            )
+            with do_thoi_gian(log, "Bước 1/2 Kênh↔Hub (tổng)"):
+                ket_qua_kenh = kenh_main_from_dir(
+                    hub_path.parent, ngay=ngay, ma_nh=ma_nh,
+                    log_callback=lambda m: log(f"[Kênh↔Hub] {m}"),
+                    cancel_event=job["cancel_event"],
+                    hub_path_override=hub_path,
+                )
             if ket_qua_kenh is None:
                 if job["cancel_event"].is_set():
                     job["status"] = "cancelled"
                     log("[JOB] Đã dừng theo yêu cầu.")
                     return
                 loi.append("Kênh↔Hub: không xác định được kết quả (xem log).")
+                job["ket_qua"]["trang_thai"]["kenh_hub"] = {
+                    "trang_thai": "chua_doi_chieu", "ly_do": "không xác định được kết quả (xem log)",
+                }
             else:
                 tong_hop_path = output_dir_p / KENH_TONG_HOP_FILENAME
-                export_bao_cao([ket_qua_kenh], tong_hop_path)
+                with do_thoi_gian(log, "ghi Excel Kênh↔Hub"):
+                    export_bao_cao([ket_qua_kenh], tong_hop_path)
                 files.append(KENH_TONG_HOP_FILENAME)
 
                 chenh_lech: dict[str, dict] = {}
@@ -195,6 +246,7 @@ def _run(job_id: str, goc_dir: str, ngay: str, ma_nh: str, output_dir: str) -> N
                     if dv["canh_bao_trang_thai"]:
                         canh_bao.append({"don_vi": key, "trang_thai": dv["canh_bao_trang_thai"]})
                 job["ket_qua"]["kenh_hub"] = {"chenh_lech": chenh_lech, "canh_bao": canh_bao}
+                job["ket_qua"]["trang_thai"]["kenh_hub"] = {"trang_thai": "da_doi_chieu", "ly_do": None}
 
         job["stage"] = 1
 
@@ -205,15 +257,18 @@ def _run(job_id: str, goc_dir: str, ngay: str, ma_nh: str, output_dir: str) -> N
             log("[JOB] Đã dừng theo yêu cầu.")
             return
         try:
-            ket_qua_core = doi_chieu_hub_core(
-                goc_dir_p, ngay, ma_nh, log_callback=lambda m: log(f"[Hub↔Core] {m}"),
-            )
+            with do_thoi_gian(log, "Bước 2/2 Hub↔Core (tổng)"):
+                ket_qua_core = doi_chieu_hub_core(
+                    goc_dir_p, ngay, ma_nh, log_callback=lambda m: log(f"[Hub↔Core] {m}"),
+                )
         except ValueError as e:
             loi.append(f"Hub↔Core: {e}")
             log(f"[Hub↔Core] {e}")
+            job["ket_qua"]["trang_thai"]["hub_core"] = {"trang_thai": "chua_doi_chieu", "ly_do": str(e)}
         else:
             out_name = f"hub_core_{ma_nh}_{ngay}.xlsx"
-            export_core_excel(ket_qua_core, output_dir_p / out_name)
+            with do_thoi_gian(log, "ghi Excel Hub↔Core"):
+                export_core_excel(ket_qua_core, output_dir_p / out_name)
             files.append(out_name)
 
             core_df, hub_df = ket_qua_core["core_df"], ket_qua_core["hub_df"]
@@ -223,6 +278,7 @@ def _run(job_id: str, goc_dir: str, ngay: str, ma_nh: str, output_dir: str) -> N
                 "phan_bo_core": core_df["KETQUADOICHIEU"].value_counts().to_dict(),
                 "phan_bo_hub": hub_df["KETQUADOICHIEU"].value_counts().to_dict(),
             }
+            job["ket_qua"]["trang_thai"]["hub_core"] = {"trang_thai": "da_doi_chieu", "ly_do": None}
 
         job["stage"] = 2
 
@@ -232,9 +288,11 @@ def _run(job_id: str, goc_dir: str, ngay: str, ma_nh: str, output_dir: str) -> N
             log(f"[JOB] {job['error']}")
             return
 
-        bao_cao_path = _export_bao_cao_tong_hop(
-            ket_qua_kenh, ket_qua_core, output_dir_p / f"bao_cao_tong_hop_{ma_nh}_{ngay}.xlsx",
-        )
+        with do_thoi_gian(log, "ghi báo cáo tổng hợp"):
+            bao_cao_path = _export_bao_cao_tong_hop(
+                ket_qua_kenh, ket_qua_core, job["ket_qua"]["trang_thai"],
+                output_dir_p / f"bao_cao_tong_hop_{ma_nh}_{ngay}.xlsx",
+            )
         if bao_cao_path:
             files.insert(0, bao_cao_path.name)
             log(f"[JOB] Đã gộp báo cáo tổng kết: {bao_cao_path.name}")
@@ -243,6 +301,7 @@ def _run(job_id: str, goc_dir: str, ngay: str, ma_nh: str, output_dir: str) -> N
         job["status"] = "done"
         log(f"[JOB] Hoàn thành — {len(files)} file kết quả."
             + (f" Lỗi/bỏ qua: {' | '.join(loi)}" if loi else ""))
+        log(f"[TIMING] Tổng thời gian job: {time.perf_counter() - t_job0:.1f}s")
 
     except Exception as e:
         import traceback
