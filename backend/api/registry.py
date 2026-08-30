@@ -35,6 +35,7 @@ from backend.api.doi_chieu_citad import router as doi_chieu_citad_router
 from backend.api.doi_chieu_citad_nostro import router as doi_chieu_citad_nostro_router
 from backend.api.doi_soat_citad import router as doi_soat_citad_router
 from backend.api.ttqt_branches import router as ttqt_branches_router
+from backend.api.dtbb import router as dtbb_router
 from backend.api.so_truc import router as so_truc_router
 from backend.api.attendance import router as attendance_router
 from backend.api.quiz import router as quiz_router
@@ -72,6 +73,7 @@ _ROUTERS = [
     (doi_chieu_citad_nostro_router, {}),
     (doi_soat_citad_router, {}),
     (ttqt_branches_router, {}),
+    (dtbb_router, {"prefix": "/api/dtbb", "tags": ["dtbb"]}),
     (so_truc_router, {}),
     (attendance_router,  {"prefix": "/api/attendance", "tags": ["attendance"]}),
     (quiz_router,        {}),

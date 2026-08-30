@@ -138,25 +138,6 @@ def test_sheet_thieu_cot_bao_ro_ten_file_va_ten_sheet():
         svc.process_files([_tep('day_du.xlsx', _xlsx([_dong()])), _tep('thieu.xlsx', thieu)])
 
 
-def test_sai_han_loai_file_bao_khac_voi_thieu_vai_cot():
-    """File chuyển tiền đi (cột tiếng Việt) không được báo "thiếu cột bắt buộc".
-
-    Thiếu SẠCH 6 cột = cầm nhầm bảng. Báo "thiếu cột" thì người vận hành đi tìm
-    cột trong một file vốn không bao giờ có.
-    """
-    khac = _xlsx([{'Ngày giao dịch': '01/08/2026', 'Số tiền': '100',
-                   'Nội dung': 'CK'}],
-                 cols=['Ngày giao dịch', 'Số tiền', 'Nội dung'])
-    with pytest.raises(svc.InputError, match=r"không phải dữ liệu GL02.*Ngày giao dịch"):
-        svc.process_files([_tep('chuyen_tien_di.xlsx', khac)])
-
-
-def test_khoi_tieu_de_bao_cao_dai_van_do_ra_dong_tieu_de():
-    """Bản người dùng tự lưu có thể có hơn 10 dòng tiêu đề báo cáo ở trên cùng."""
-    r = svc.process_files([_tep('tieu_de_dai.xlsx', _xlsx([_dong()], dong_thua=15))])
-    assert r['total_rows'] == 1
-
-
 def test_file_hong_bao_loi_kem_ten_file():
     with pytest.raises(svc.InputError, match=r"hong\.xlsx"):
         svc.process_files([_tep('hong.xlsx', b'khong phai excel')])

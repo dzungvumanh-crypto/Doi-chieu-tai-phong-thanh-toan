@@ -29,6 +29,16 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
     + **Không phải cấp lại quyền.** Ai đang thấy hai mục này thì sau khi cập nhật vẫn thấy đúng như vậy, chỉ khác chỗ đứng trên menu
     + Không đổi cơ sở dữ liệu, không đổi cách chạy của hai chức năng
 
+- 28/08/2026 Chấm 459901 - **Chia 7 nhóm thay vì 3, thêm đối chiếu HUB và ghép tồn tháng trước**
+    + **Kết quả nay tách thành 7 nhóm** thay vì 3: *Lệnh Hủy*, *Lệnh Đi*, *1000 Hoàn trả*, *Chuyển chi nhánh*, *Điện KO offline*, *Cân CN*, *GD khác*. Mỗi nhóm một file Excel riêng, phần phải chấm tay vì thế nhỏ đi rất nhiều
+    + **Chấm được nhóm 1000 Hoàn trả** nếu tải kèm 2 file HUB (*Quay\_...* của lệnh đi và *Danh sach... den* của lệnh đến). Hai file này **không bắt buộc** — thiếu cả hai thì phần mềm bỏ qua nhóm này, các bút toán đó rơi về *GD khác* để chấm tay như trước. Chỉ tải lên **một trong hai** thì bỏ cả hai, và màn hình báo rõ để biết mà tải nốt
+    + **Ghép được file tồn tháng trước** (`459_TON_T<số tháng>.xlsx`): những bút toán tháng trước chưa chấm xong được đưa vào cùng dữ liệu tháng này rồi phân loại lại từ đầu. Ghi chú chấm tay cũ trong file đó không được giữ lại — cố ý, để không mang theo kết luận cũ có thể đã sai
+    + **Không cần đặt tên file dữ liệu theo mẫu nào.** Cứ kéo thả tất cả vào cùng lúc, phần mềm tự nhận ra đâu là file dữ liệu, đâu là 2 file HUB, đâu là file tồn. File lạ trong danh sách bị bỏ qua và báo tên ra, không chặn cả lượt
+    + **Dòng chỉ khớp được một nửa thì không bị đoán bừa.** Bút toán tìm thấy một vế nhưng thiếu vế đối ứng sẽ nằm ở *GD khác* kèm ghi chú "nghi ngờ, cần chấm tay" — thà để người chấm nhìn còn hơn xếp nhầm nhóm rồi không ai kiểm lại
+    + **Thêm cách nạp dữ liệu: chỉ thẳng thư mục trên máy chủ**, khỏi tải file lên. Dùng khi dữ liệu đã nằm sẵn trên máy chủ. Hai cách hiện cùng lúc trên màn hình, chọn cách nào cũng được
+    + ⚠️ **Việc cần làm sau khi cập nhật (chỉ nếu muốn dùng cách chỉ thẳng thư mục)**: mở file `.env` trên máy chủ, thêm một dòng `CHAM459901_FOLDER_ROOTS=` rồi ghi thư mục chứa dữ liệu vào sau dấu bằng (nhiều thư mục thì ngăn nhau bằng dấu chấm phẩy), sau đó khởi động lại. **Chưa thêm dòng này thì bấm vào sẽ báo lỗi nhắc đúng việc phải làm** — cách tải file lên vẫn dùng bình thường, không phải làm gì. Sở dĩ phải khai trước là để phần mềm chỉ đọc đúng những thư mục đã cho phép, không đọc lung tung chỗ khác trên máy chủ
+    + **Bấm Dừng giữa chừng nay dừng thật**, và có thể xoá bộ kết quả vừa chạy để làm lại từ đầu
+    + Không đụng cơ sở dữ liệu, không đổi quyền
 - 28/08/2026 Đối chiếu CITAD - PaymentHub (Phòng QLTK Nostro, Vostro) - **Dùng song song 2 tiện ích không còn đá nhau**
     + **Lỗi gặp phải**: ai dùng cả tiện ích của *Phòng Thanh toán* lẫn tiện ích của *Phòng QLTK Nostro, Vostro* thì **chỉ một bên chạy được**, bên còn lại báo lỗi không có quyền. Tạo lại mã bên này thì bên kia hỏng, và ngược lại — quay vòng mãi không thoát
     + **Nguyên nhân**: hai tiện ích tuy là hai gói riêng nhưng lại **dùng chung một ô đựng mã kết nối** theo từng người. Mã mới tạo ra ghi đè lên mã cũ, nên bấm *Tạo mã kết nối mới* ở màn hình này là **tự thu hồi mã của màn hình kia** — không có thông báo nào báo cho biết
