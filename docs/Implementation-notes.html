@@ -51,7 +51,7 @@
 <div class="page">
 
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
-  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-28</p>
+  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-30</p>
 
   <!-- NS1 -->
   <div class="card">
@@ -12185,7 +12185,70 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-28</footer>
+  <!-- RS1 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">RS1</span>
+      <span class="card-title">Rà soát toàn hệ — frontend chết vì một dòng import sót lại sau merge</span>
+      <span class="badge badge-done">Xong — 1119 test pass (37 test mới)</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-blue">Sự cố 1</span> Cả giao diện không lên, mà 1082 test vẫn xanh</div>
+      <p><code>frontend/pages/cham_459901.py</code> còn
+        <code>from frontend.shared import open_folder_picker</code>, trong khi hàm ấy đã bị gỡ ở
+        commit <code>9b3d310</code> cùng endpoint <code>/api/fs/browse</code> — hộp thoại duyệt cây
+        thư mục cho <b>mọi người đăng nhập liệt kê sạch ổ đĩa máy chủ</b>. Hai nhánh merge vào nhau,
+        mỗi nhánh đúng phần của mình, chỗ gãy nằm giữa.</p>
+      <p><code>frontend/main.py</code> nạp trang bằng <code>pkgutil.iter_modules</code> +
+        <code>importlib.import_module</code> <b>không bọc try/except</b> — nên một trang hỏng là
+        <i>toàn bộ</i> SPA không khởi động, không riêng trang đó.</p>
+
+      <table>
+        <tr><th>Phương án</th><th>Vì sao chọn / bỏ</th></tr>
+        <tr><td><b>Bỏ nút "Duyệt...", giữ ô gõ đường dẫn</b> (đã chọn)</td>
+            <td>Bản thân <code>POST /api/cham459901/process_folder</code> vẫn sống và vẫn an toàn:
+                <code>_thu_muc_hop_le()</code> chặn phạm vi theo <code>CHAM459901_FOLDER_ROOTS</code>,
+                kiểm phạm vi <i>trước</i> kiểm tồn tại nên không thành máy dò đường dẫn. Chức năng
+                nghiệp vụ giữ nguyên, chỉ mất cách nhập tiện tay.</td></tr>
+        <tr><td>Khôi phục <code>open_folder_picker</code> + <code>/api/fs/browse</code></td>
+            <td>Bỏ. Đó đúng là thứ đã cố ý gỡ vì lý do bảo mật; <code>tests/test_ach_quyen.py</code>
+                đang có chốt chặn không cho endpoint này quay lại.</td></tr>
+        <tr><td>Bọc try/except quanh vòng nạp trang trong <code>main.py</code></td>
+            <td>Bỏ. Làm thế thì trang hỏng <b>biến mất lặng lẽ</b> khỏi menu — người dùng báo "không
+                thấy mục đó nữa" còn khó lần hơn là chết ngay lúc khởi động.</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-blue">Sự cố 2</span> Vì sao 1082 test không báo gì</div>
+      <p>Không test nào chạm <code>frontend/pages/</code>. Test frontend duy nhất lúc đó
+        (<code>test_frontend_api_client_calls.py</code>) đọc file bằng <b>AST</b> nên không bao giờ
+        thực thi câu <code>import</code>. Nên <code>tests/test_kiem_nap_trang_frontend.py</code> mới
+        phải <b>import thật</b> từng trang (36 trang + 1 chốt chặn phòng khi
+        <code>iter_modules</code> trả rỗng làm cả file test thành vô dụng mà vẫn xanh). Quét tĩnh
+        không thay được: lỗi nằm ở chỗ cái tên có tồn tại lúc <i>chạy</i> hay không.</p>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> pytest không được ghi vào <code>logs/app.log</code></div>
+      <p><code>_setup_logging()</code> trong <code>backend/main.py</code> chạy ngay lúc import module,
+        mà <code>conftest.py</code> có import <code>backend.main</code> — nên mỗi lần chạy test là nhật
+        ký vận hành thật bị bơm thêm hàng loạt dòng <code>ERROR ... no such table: duty_shifts</code>,
+        <code>... so_truc_records</code>. Chúng là <b>lỗi giả</b>: fixture <code>_fake_db()</code> dùng
+        SQLite <code>:memory:</code> trống, còn code thật bắt <code>sqlite3.Error</code> đúng như thiết
+        kế (dashboard cố ý không để một badge hỏng kéo sập hai badge kia). Người vận hành mở log ra
+        thấy ERROR không có thật rồi đi tìm sự cố không tồn tại. Nay <code>_setup_logging()</code>
+        thôi gắn <code>RotatingFileHandler</code> khi <code>"pytest" in sys.modules</code> — log vẫn
+        ra màn hình nên <code>pytest -s</code> và báo lỗi không mất gì.</p>
+
+      <div class="note"><b>Vấn đề phát hiện nhưng không sửa:</b> <code>data/backups/</code> còn 4 file
+        <code>*.db-journal</code> mồ côi (28/07, 27/08) — bản <code>.db</code> tương ứng đã bị nén hoặc
+        xoá nhưng <code>_rotate()</code> chỉ glob <code>.db</code>/<code>.zip</code> nên journal ở lại
+        vĩnh viễn. Mỗi file 512–1024 byte; tên có dấu thời gian đến phút nên không bao giờ trùng lại
+        để SQLite hiểu nhầm là hot journal. Không tự xoá vì đây là thư mục sao lưu của người vận hành,
+        và sự tồn tại của chúng còn là dấu vết cho biết 4 lần backup đó bị cắt ngang.</div>
+
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-30</footer>
 </div>
 </body>
 </html>

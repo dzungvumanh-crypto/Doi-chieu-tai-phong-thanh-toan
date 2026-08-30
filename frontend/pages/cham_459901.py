@@ -6,7 +6,6 @@ from nicegui import ui
 import frontend.api_client as api
 from frontend.shared import (
     _sidebar, _content_area, _page_header, _require_auth, _handle_api_error,
-    open_folder_picker,
 )
 from backend.services.cham459901_service import classify_upload_filename, DUOI_HOP_LE
 
@@ -131,20 +130,13 @@ async def cham_459901_page():
                     ui.label(
                         "Nhập đường dẫn 1 thư mục duy nhất trên server. " + _CLASSIFY_HINT
                     ).classes("text-xs text-gray-400 mb-3")
-                    with ui.row().classes("w-full items-center gap-2"):
-                        folder_input = ui.input(
-                            placeholder="Ví dụ: D:\\Data\\459901\\thang8",
-                        ).props("outlined dense clearable").classes("flex-1")
-
-                        async def _on_pick_folder():
-                            def _on_folder_selected(path: str):
-                                folder_input.value = path
-                            await open_folder_picker(
-                                _on_folder_selected, initial_path=folder_input.value or ""
-                            )
-
-                        ui.button("Duyệt...", icon="folder_open", color="blue-7",
-                                  on_click=_on_pick_folder).props("outlined dense")
+                    # Không có nút "Duyệt...": hộp thoại duyệt cây thư mục máy chủ đã bị
+                    # gỡ cùng `/api/fs/browse` — nó cho mọi người đăng nhập liệt kê sạch
+                    # ổ đĩa máy chủ. Người dùng dán đường dẫn; `/process_folder` chặn
+                    # phạm vi theo CHAM459901_FOLDER_ROOTS.
+                    folder_input = ui.input(
+                        placeholder="Dán đường dẫn — VD: D:\\Data\\459901\\thang8",
+                    ).props("outlined dense clearable").classes("w-full")
 
             with ui.card().classes("w-full p-5 mb-4"):
                 # ── Thanh tiến độ ─────────────────────────────────────────────

@@ -4,6 +4,11 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 30/08/2026 Rà soát toàn hệ - **Sửa lỗi cả giao diện không lên được, và nhật ký bị bơm lỗi giả**
+    + **Toàn bộ giao diện không khởi động được** vì trang *Chấm 459901* còn gọi một hàm đã bị gỡ ở đợt trước (gỡ cùng lúc với nút *Duyệt...*). Cách nạp trang hiện tại **không bọc chống lỗi**, nên một trang hỏng là cả phần mềm không lên — không riêng trang đó
+    + Nút **"Duyệt..."** ở chế độ *chọn thư mục server* đã bỏ hẳn: hộp thoại đó cho **mọi người đăng nhập liệt kê sạch ổ đĩa máy chủ**. Vẫn dán được đường dẫn như thường, phạm vi thư mục vẫn bị chặn như cũ
+    + **Nhật ký vận hành không còn bị bơm lỗi giả khi chạy kiểm thử.** Trước đây mỗi lượt chạy test lại ghi thêm hàng loạt dòng báo lỗi *"không tìm thấy bảng"* vào nhật ký thật — người vận hành mở ra thấy lỗi không hề tồn tại rồi đi tìm sự cố không có
+
 - 28/08/2026 Menu mới - **Quản lý nhân sự** (hồ sơ cán bộ, tra cứu & thống kê, nhắc lịch)
     + Nhóm menu mới **Quản lý nhân sự** với 3 mục: **Hồ sơ cán bộ**, **Tra cứu & Thống kê**, **Nhắc lịch**
     + **Hồ sơ cán bộ** gồm 8 phần: hồ sơ cá nhân (kèm **ảnh thẻ**, CCCD, địa chỉ, số người phụ thuộc, người liên lạc) · bằng cấp và chứng chỉ · quy hoạch – bổ nhiệm – điều động (**đính kèm được file PDF quyết định**) · thông tin và quá trình công tác · quá trình nghỉ gián đoạn · hồ sơ lương · đào tạo tại Agribank · công cụ dụng cụ đang đứng tên
