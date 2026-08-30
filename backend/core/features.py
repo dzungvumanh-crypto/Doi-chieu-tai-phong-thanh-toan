@@ -77,9 +77,17 @@ FEATURES: dict[str, str] = {
     # Chấm đối chiếu ACH — Phòng Thanh toán
     "menu.cham_ach": "Chấm đối chiếu ACH (menu)",
 
-    # Đối chiếu Song phương — Phòng Thanh toán
-    "menu.doi_chieu_song_phuong":    "Đối chiếu Song phương — Định tuyến lệnh IPCAS (menu)",
+    # Đối chiếu Song phương — Phòng Thanh toán. 1 trang duy nhất (3 thẻ: Phân loại/Đến/Đi,
+    # xem frontend/pages/doi_chieu_song_phuong.py) dùng chung 1 feature-code menu — trước đây
+    # kênh↔hub và hub↔core có menu.* riêng, gộp lại 2026-08-28 vì role không phải admin cấp 1
+    # phải được cấp thủ công từng menu.*, dễ bỏ sót khiến trang mới "vô hình" dù đã có quyền
+    # menu.doi_chieu_song_phuong gốc.
+    # 2026-08-28 (đợt 2): "Đối chiếu đến" hợp nhất Kênh↔Hub + Hub↔Core thành 1 chu trình khép
+    # kín (chạy tự động nối tiếp, 1 job/1 báo cáo cuối — đúng model ACH) — 2 action riêng trước
+    # đây gộp thành 1 action duy nhất vì không còn cách bấm chạy riêng từng chân.
+    "menu.doi_chieu_song_phuong":    "Đối chiếu Song phương (menu)",
     "doi_chieu_song_phuong.process": "Xử lý file ZIP Đối chiếu Song phương",
+    "doi_chieu_song_phuong_kenh_core.process": "Chạy Đối chiếu đến (Kênh↔Hub + Hub↔Core)",
     # Đối chiếu CITAD ↔ PaymentHub — Phòng Thanh toán
     "menu.doi_chieu_citad":     "Đối chiếu CITAD ↔ PaymentHub (menu)",
     # Đối soát CITAD ↔ IPCAS — Phòng Thanh toán
@@ -175,7 +183,10 @@ FEATURE_GROUPS: list[dict] = [
             {"code": "menu.cham_ach", "actions": []},
             {
                 "code": "menu.doi_chieu_song_phuong",
-                "actions": ["doi_chieu_song_phuong.process"],
+                "actions": [
+                    "doi_chieu_song_phuong.process",
+                    "doi_chieu_song_phuong_kenh_core.process",
+                ],
             },
             {"code": "menu.doi_chieu_citad", "actions": []},
             {"code": "menu.doi_soat_citad", "actions": []},

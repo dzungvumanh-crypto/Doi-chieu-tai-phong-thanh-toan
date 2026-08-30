@@ -14,6 +14,7 @@ import csv
 import io
 import logging
 import shutil
+import threading
 import time
 import uuid
 import zipfile
@@ -55,50 +56,10 @@ REQUIRED_COLS = {"CUSTOMER", "CRAMOUNT", "DRAMOUNT"}
 
 log = logging.getLogger(__name__)
 
-# ─── In-memory progress store ─────────────────────────────────────────────────
-# key = task_token; value = {pct, msg, done, error, result, _ts}
-_progress: dict[str, dict] = {}
-
-
-def init_progress() -> str:
-    task_token = str(uuid.uuid4())
-    _progress[task_token] = {
-        "pct": 0, "msg": "Đang khởi tạo...",
-        "done": False, "error": None, "result": None,
-        "_ts": time.time(),
-    }
-    return task_token
-
-
-def get_progress(task_token: str) -> dict | None:
-    p = _progress.get(task_token)
-    if p is None:
-        return None
-    return {k: v for k, v in p.items() if not k.startswith("_")}
-
-
-def _set_prog(task_token: str | None, pct: int, msg: str) -> None:
-    if task_token and task_token in _progress:
-        _progress[task_token]["pct"] = pct
-        _progress[task_token]["msg"] = msg
-
 
 # ─── Public API ───────────────────────────────────────────────────────────────
 
-def run_process(zip_bytes: bytes, task_token: str) -> None:
-    """Chạy process_zip trong background thread; cập nhật progress và bắt lỗi."""
-    try:
-        process_zip(zip_bytes, task_token)
-    except Exception as e:
-        log.error("process_zip lỗi [%s]: %s", task_token, e, exc_info=True)
-        if task_token in _progress:
-            _progress[task_token].update({
-                "done": True, "error": str(e),
-                "msg": "Lỗi xử lý — xem log server",
-            })
-
-
-def process_zip(zip_bytes: bytes, task_token: str | None = None) -> dict:
+def process_zip(zip_bytes: bytes, log_callback=lambda msg: None) -> dict:
     """Nhận bytes ZIP → định tuyến → ghi 8 CSV → trả metadata."""
     _cleanup_old_results()
     t0 = time.time()
@@ -107,7 +68,7 @@ def process_zip(zip_bytes: bytes, task_token: str | None = None) -> dict:
     if zip_bytes[:4] != b"PK\x03\x04":
         raise ValueError("File tải lên không phải định dạng ZIP hợp lệ.")
 
-    _set_prog(task_token, 5, "Đang giải mã và đọc dữ liệu...")
+    log_callback("Đang giải mã và đọc dữ liệu...")
 
     buffers = {(c, d): [] for c in BANK_MAP for d in DIRECTIONS}
     counts  = {(c, d): 0  for c in BANK_MAP for d in DIRECTIONS}
@@ -143,11 +104,10 @@ def process_zip(zip_bytes: bytes, task_token: str | None = None) -> dict:
             if hdr_line is None and file_hdr:
                 hdr_line = file_hdr
             total_rows += routed
-            _set_prog(task_token, int(5 + (i + 1) * 75 / n),
-                      f"Đã xử lý {i + 1}/{n}: {name} ({routed:,} dòng)")
+            log_callback(f"Đã xử lý {i + 1}/{n}: {name} ({routed:,} dòng)")
 
     # ── Ghi 8 file CSV (kể cả file rỗng → chỉ header) ─────────────────────────
-    _set_prog(task_token, 85, f"Đang ghi 8 file CSV ({total_rows:,} dòng)...")
+    log_callback(f"Đang ghi 8 file CSV ({total_rows:,} dòng)...")
     if hdr_line is None:
         hdr_line = ",".join(COLS) + "\r\n"
 
@@ -193,12 +153,115 @@ def process_zip(zip_bytes: bytes, task_token: str | None = None) -> dict:
         "process_date": datetime.now().strftime("%Y%m%d"),
     }
 
-    if task_token and task_token in _progress:
-        _progress[task_token].update({
-            "pct": 100, "msg": "Hoàn thành!",
-            "done": True, "result": result,
-        })
+    log_callback("Hoàn thành!")
     return result
+
+
+# ─── Job hàng loạt (nhiều file / thư mục server) ───────────────────────────────
+# Mỗi ZIP là 1 ngày độc lập — chạy tuần tự qua process_zip(), lỗi 1 file không chặn
+# các file còn lại (giống triết lý "bỏ qua thiếu, không crash cả job" của
+# ach_service/doi_chieu_song_phuong_kenh_service). Pattern job in-memory + thread
+# nền + TTL cleanup giống hệt 2 service đó — giữ nhất quán codebase.
+_jobs: dict[str, dict] = {}
+_jobs_lock = threading.Lock()
+_JOB_CLEANUP_TTL = 4 * 3600
+
+
+def _new_job() -> tuple[str, dict]:
+    job_id = uuid.uuid4().hex[:12]
+    job = {
+        "status": "pending",   # pending | running | done | error | cancelled
+        "logs": [],
+        "results": [],         # list kết quả process_zip() (kèm "source_name"), theo thứ tự
+        "error": None,
+        "cancel_event": threading.Event(),
+        "_ts": time.time(),
+    }
+    with _jobs_lock:
+        _jobs[job_id] = job
+    return job_id, job
+
+
+def get_job(job_id: str) -> dict | None:
+    with _jobs_lock:
+        return _jobs.get(job_id)
+
+
+def cancel_job(job_id: str) -> bool:
+    job = get_job(job_id)
+    if job and job["status"] in ("pending", "running"):
+        job["cancel_event"].set()
+        return True
+    return False
+
+
+def start_batch(files: list[tuple[str, bytes]]) -> str:
+    """Chạy process_zip() tuần tự cho từng file đã tải lên `(filename, bytes)`. Trả job_id."""
+    job_id, job = _new_job()
+    sources = [("upload", name, data) for name, data in files]
+    threading.Thread(target=_run_batch, args=(job_id, sources), daemon=True).start()
+    return job_id
+
+
+def start_batch_folder(folder_path: str) -> str:
+    """Tìm mọi file `*.zip` trong thư mục server, chạy tuần tự process_zip(). Trả job_id.
+
+    Đọc bytes từ đĩa BÊN TRONG luồng nền (không load hết vào RAM ngay lúc này) — mỗi
+    GL02 zip thật ~150-160MB, thư mục nhiều ngày cùng lúc dễ tốn hàng trăm MB nếu đọc
+    trước hết."""
+    zip_paths = sorted(Path(folder_path).glob("*.zip"))
+    if not zip_paths:
+        raise ValueError(f"Không tìm thấy file .zip nào trong thư mục: {folder_path}")
+    job_id, job = _new_job()
+    sources = [("path", p, None) for p in zip_paths]
+    threading.Thread(target=_run_batch, args=(job_id, sources), daemon=True).start()
+    return job_id
+
+
+def _run_batch(job_id: str, sources: list[tuple]) -> None:
+    job = get_job(job_id)
+    if job is None:
+        return
+    job["status"] = "running"
+
+    def log(msg: str) -> None:
+        with _jobs_lock:
+            job["logs"].append(msg)
+
+    n = len(sources)
+    for i, (kind, ref, data) in enumerate(sources, 1):
+        if job["cancel_event"].is_set():
+            job["status"] = "cancelled"
+            log("Đã dừng theo yêu cầu.")
+            job["_ts"] = time.time()
+            _cleanup_old_jobs()
+            return
+
+        name = ref.name if kind == "path" else ref
+        log(f"[{i}/{n}] Đang xử lý {name}...")
+        try:
+            zip_bytes = ref.read_bytes() if kind == "path" else data
+            result = process_zip(zip_bytes, log_callback=lambda m, nhan=f"[{i}/{n}]": log(f"{nhan} {m}"))
+            result["source_name"] = name
+            job["results"].append(result)
+            log(f"[{i}/{n}] Xong {name} — {result['total_rows']:,} dòng, {result['elapsed_s']}s")
+        except Exception as e:
+            job["results"].append({"source_name": name, "error": str(e)})
+            log(f"[{i}/{n}] LỖI {name}: {e}")
+
+    job["status"] = "done"
+    log(f"Hoàn thành {n} file.")
+    job["_ts"] = time.time()
+    _cleanup_old_jobs()
+
+
+def _cleanup_old_jobs() -> None:
+    cutoff = time.time() - _JOB_CLEANUP_TTL
+    with _jobs_lock:
+        expired = [jid for jid, j in _jobs.items()
+                   if j["status"] in ("done", "error", "cancelled") and j["_ts"] < cutoff]
+        for jid in expired:
+            del _jobs[jid]
 
 
 # ─── Internal ─────────────────────────────────────────────────────────────────
@@ -253,7 +316,7 @@ def _route_file(reader, buffers: dict, counts: dict, name: str):
 
 
 def _cleanup_old_results() -> None:
-    """Xóa thư mục kết quả và progress entry cũ hơn CLEANUP_HOURS giờ."""
+    """Xóa thư mục kết quả cũ hơn CLEANUP_HOURS giờ."""
     cutoff = time.time() - CLEANUP_HOURS * 3600
 
     if TEMP_DIR.exists():
@@ -263,7 +326,3 @@ def _cleanup_old_results() -> None:
                     shutil.rmtree(sub)
                 except Exception as e:
                     log.warning("Không xóa được %s: %s", sub, e)
-
-    stale = [k for k, v in _progress.items() if v.get("_ts", 0) < cutoff]
-    for k in stale:
-        _progress.pop(k, None)
