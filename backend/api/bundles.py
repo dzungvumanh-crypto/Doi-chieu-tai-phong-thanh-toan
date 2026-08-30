@@ -351,6 +351,18 @@ def list_groups(
     db: sqlite3.Connection = Depends(get_db),
     _: dict = Depends(require_feature("menu.bundles")),
 ):
+    """Danh sách bìa chứng từ — CHỈ dòng tiêu đề, KHÔNG kèm tập và mục bên trong.
+
+    Trang danh sách chỉ hiển thị tên phòng, kỳ, ngày tạo, người tạo và số tập
+    (`total_bundles` đã là cột sẵn của `bundle_groups`). Trước đây endpoint còn
+    trả cả `bundles[].items[]`: mỗi nhóm 1 câu SQL, mỗi tập thêm 1 câu nữa —
+    283 câu và 315 KB cho kho 1 năm, mà giao diện không đọc tới. Ba ô lọc đều
+    mặc định "tất cả" nên lần mở trang đầu tiên kéo về toàn bộ kho: đo trên dữ
+    liệu nhân theo năm, 5 năm là 513 ms / 5,1 MB và còn tăng tiếp.
+
+    Chi tiết tập lấy ở `GET /groups/{group_id}` (`_load_bundle_group`) — giữ
+    nguyên, các đường in bìa / tải bìa đều đi qua đó.
+    """
     clauses = []
     params: list = []
     if department_id:
@@ -372,35 +384,19 @@ def list_groups(
         params,
     ).fetchall()
 
+    # Gom người tạo thành 1 câu thay vì mỗi nhóm một câu.
+    creator_ids = {g["created_by_id"] for g in rows if g["created_by_id"]}
+    creators = {
+        r["id"]: r
+        for r in db.execute(
+            f"SELECT * FROM user_tttt WHERE id IN ({','.join('?' * len(creator_ids))})",
+            list(creator_ids),
+        ).fetchall()
+    } if creator_ids else {}
+
     result = []
     for g in rows:
-        creator = db.execute("SELECT * FROM user_tttt WHERE id = ?", (g["created_by_id"],)).fetchone()
-        bundle_rows = db.execute(
-            """SELECT b.id, b.sequence, b.total_sheets, b.custodian_id, b.storage_box,
-                      b.storage_location, b.cover_printed_at, b.status, b.cover_units,
-                      b.group_id
-               FROM bundles b WHERE b.group_id = ? ORDER BY b.sequence""",
-            (g["id"],),
-        ).fetchall()
-
-        bundles_out = []
-        for b in bundle_rows:
-            item_rows = db.execute(
-                "SELECT id, entry_id FROM bundle_items WHERE bundle_id = ?", (b["id"],)
-            ).fetchall()
-            bundles_out.append({
-                "id": b["id"],
-                "group_id": b["group_id"],
-                "sequence": b["sequence"],
-                "total_sheets": b["total_sheets"],
-                "custodian_id": b["custodian_id"],
-                "storage_box": b["storage_box"],
-                "storage_location": b["storage_location"],
-                "cover_printed_at": b["cover_printed_at"],
-                "status": b["status"] or "pending",
-                "cover_units": b["cover_units"],
-                "items": [{"id": r["id"], "entry_id": r["entry_id"], "entry": None} for r in item_rows],
-            })
+        creator = creators.get(g["created_by_id"])
 
         dept_dict = None
         if g["dept_name"]:
@@ -437,7 +433,6 @@ def list_groups(
             "notes": g["notes"],
             "department": dept_dict,
             "created_by_staff": creator_dict,
-            "bundles": bundles_out,
         })
 
     return result

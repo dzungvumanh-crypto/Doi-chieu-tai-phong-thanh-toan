@@ -51,7 +51,7 @@
 <div class="page">
 
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
-  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-28</p>
+  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-30</p>
 
   <!-- NS1 -->
   <div class="card">
@@ -12185,7 +12185,202 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-28</footer>
+  <!-- RS1 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">RS1</span>
+      <span class="card-title">Rà soát toàn hệ — frontend chết vì một dòng import sót lại sau merge</span>
+      <span class="badge badge-done">Xong — 1119 test pass (37 test mới)</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-blue">Sự cố 1</span> Cả giao diện không lên, mà 1082 test vẫn xanh</div>
+      <p><code>frontend/pages/cham_459901.py</code> còn
+        <code>from frontend.shared import open_folder_picker</code>, trong khi hàm ấy đã bị gỡ ở
+        commit <code>9b3d310</code> cùng endpoint <code>/api/fs/browse</code> — hộp thoại duyệt cây
+        thư mục cho <b>mọi người đăng nhập liệt kê sạch ổ đĩa máy chủ</b>. Hai nhánh merge vào nhau,
+        mỗi nhánh đúng phần của mình, chỗ gãy nằm giữa.</p>
+      <p><code>frontend/main.py</code> nạp trang bằng <code>pkgutil.iter_modules</code> +
+        <code>importlib.import_module</code> <b>không bọc try/except</b> — nên một trang hỏng là
+        <i>toàn bộ</i> SPA không khởi động, không riêng trang đó.</p>
+
+      <table>
+        <tr><th>Phương án</th><th>Vì sao chọn / bỏ</th></tr>
+        <tr><td><b>Bỏ nút "Duyệt...", giữ ô gõ đường dẫn</b> (đã chọn)</td>
+            <td>Bản thân <code>POST /api/cham459901/process_folder</code> vẫn sống và vẫn an toàn:
+                <code>_thu_muc_hop_le()</code> chặn phạm vi theo <code>CHAM459901_FOLDER_ROOTS</code>,
+                kiểm phạm vi <i>trước</i> kiểm tồn tại nên không thành máy dò đường dẫn. Chức năng
+                nghiệp vụ giữ nguyên, chỉ mất cách nhập tiện tay.</td></tr>
+        <tr><td>Khôi phục <code>open_folder_picker</code> + <code>/api/fs/browse</code></td>
+            <td>Bỏ. Đó đúng là thứ đã cố ý gỡ vì lý do bảo mật; <code>tests/test_ach_quyen.py</code>
+                đang có chốt chặn không cho endpoint này quay lại.</td></tr>
+        <tr><td>Bọc try/except quanh vòng nạp trang trong <code>main.py</code></td>
+            <td>Bỏ. Làm thế thì trang hỏng <b>biến mất lặng lẽ</b> khỏi menu — người dùng báo "không
+                thấy mục đó nữa" còn khó lần hơn là chết ngay lúc khởi động.</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-blue">Sự cố 2</span> Vì sao 1082 test không báo gì</div>
+      <p>Không test nào chạm <code>frontend/pages/</code>. Test frontend duy nhất lúc đó
+        (<code>test_frontend_api_client_calls.py</code>) đọc file bằng <b>AST</b> nên không bao giờ
+        thực thi câu <code>import</code>. Nên <code>tests/test_kiem_nap_trang_frontend.py</code> mới
+        phải <b>import thật</b> từng trang (36 trang + 1 chốt chặn phòng khi
+        <code>iter_modules</code> trả rỗng làm cả file test thành vô dụng mà vẫn xanh). Quét tĩnh
+        không thay được: lỗi nằm ở chỗ cái tên có tồn tại lúc <i>chạy</i> hay không.</p>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> pytest không được ghi vào <code>logs/app.log</code></div>
+      <p><code>_setup_logging()</code> trong <code>backend/main.py</code> chạy ngay lúc import module,
+        mà <code>conftest.py</code> có import <code>backend.main</code> — nên mỗi lần chạy test là nhật
+        ký vận hành thật bị bơm thêm hàng loạt dòng <code>ERROR ... no such table: duty_shifts</code>,
+        <code>... so_truc_records</code>. Chúng là <b>lỗi giả</b>: fixture <code>_fake_db()</code> dùng
+        SQLite <code>:memory:</code> trống, còn code thật bắt <code>sqlite3.Error</code> đúng như thiết
+        kế (dashboard cố ý không để một badge hỏng kéo sập hai badge kia). Người vận hành mở log ra
+        thấy ERROR không có thật rồi đi tìm sự cố không tồn tại. Nay <code>_setup_logging()</code>
+        thôi gắn <code>RotatingFileHandler</code> khi <code>"pytest" in sys.modules</code> — log vẫn
+        ra màn hình nên <code>pytest -s</code> và báo lỗi không mất gì.</p>
+
+      <div class="note"><b>Vấn đề phát hiện nhưng không sửa:</b> <code>data/backups/</code> còn 4 file
+        <code>*.db-journal</code> mồ côi (28/07, 27/08) — bản <code>.db</code> tương ứng đã bị nén hoặc
+        xoá nhưng <code>_rotate()</code> chỉ glob <code>.db</code>/<code>.zip</code> nên journal ở lại
+        vĩnh viễn. Mỗi file 512–1024 byte; tên có dấu thời gian đến phút nên không bao giờ trùng lại
+        để SQLite hiểu nhầm là hot journal. Không tự xoá vì đây là thư mục sao lưu của người vận hành,
+        và sự tồn tại của chúng còn là dấu vết cho biết 4 lần backup đó bị cắt ngang.</div>
+
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">HN1</span>
+      <span class="card-title">Chấm 459901 — file Excel vượt trần dòng, hỏng lặng lẽ không một lời báo</span>
+      <span class="badge badge-done">Xong — 12 test mới, kiểm chứng trên GL02 thật</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-red">Phát hiện</span> Kiểm thử hiệu năng lòi ra lỗi đúng đắn</div>
+      <p>Đang đo tốc độ luồng nặng nhất thì thấy con số lạ: một file GL02 một ngày cho
+        <b>617.120 dòng</b> nhóm "Lệnh Đi". Giao diện để <code>multiple=True</code> và docstring của
+        <code>POST /api/cham459901/process</code> ghi rõ <i>"nhiều file được GỘP"</i> — nên gộp 2 ngày
+        là <b>1.234.240 dòng</b>. Trần của định dạng XLSX là <b>1.048.576</b>.</p>
+      <p><code>_write_excel()</code> cứ ghi thẳng qua trần. Đo thật: <code>sheet1.xml</code> ghi tới
+        dòng <code>1.234.243</code>, vượt <b>185.667 dòng</b>. Server báo "Hoàn thành!", người dùng chờ
+        <b>96 giây</b>, tải về file 111 MB rồi Excel từ chối mở (hoặc đòi "repair" và ăn mất dữ liệu).
+        Không có lỗi ở bất kỳ đầu nào.</p>
+
+      <div class="note"><b>Vì sao không test nào bắt được:</b> <code>openpyxl</code> đọc file hỏng đó
+        <i>vẫn trót lọt</i> — nó không kiểm trần dòng. Mọi phép thử kiểu "ghi ra rồi đọc lại được là
+        đạt" đều báo xanh. Test mới phải đếm thẳng <code>&lt;row r="..."&gt;</code> trong
+        <code>sheet1.xml</code>, không đi qua thư viện đọc nào.</div>
+
+      <table>
+        <tr><th>Phương án</th><th>Vì sao chọn / bỏ</th></tr>
+        <tr><td><b>Tách sang sheet mới trong cùng file</b> (đã chọn)</td>
+            <td>Không đổi số lượng file kết quả, không đụng API tải về, không đụng giao diện. Người
+              dùng vẫn tải đúng <code>di.xlsx</code> như cũ, mở ra thấy 2 sheet.</td></tr>
+        <tr><td>Từ chối ngay từ đầu nếu quá lớn</td>
+            <td>Bỏ. Gộp nhiều ngày là <b>nghiệp vụ thật</b>, không phải thao tác sai. Chặn là lấy mất
+              một tính năng đang dùng.</td></tr>
+        <tr><td>Cắt bớt dòng thừa</td>
+            <td>Bỏ thẳng. Mất dữ liệu âm thầm còn tệ hơn file không mở được — ít ra file hỏng thì
+              người dùng <i>biết</i> là có chuyện.</td></tr>
+        <tr><td>Xuất CSV khi quá lớn</td>
+            <td>Bỏ. Mất toàn bộ định dạng (màu tiêu đề, đóng băng dòng, tự lọc, dòng tổng) mà kế toán
+              đang dựa vào để đối chiếu.</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> Dòng TỔNG CỘNG của mỗi sheet là tổng CỦA SHEET ĐÓ</div>
+      <p>Nếu chép tổng cả nhóm xuống cuối từng sheet thì cộng ba sheet lại ra gấp ba — kế toán không
+        đối được. Nên: dòng cuối mỗi sheet là tổng phần đó, nhãn ghi rõ <code>TỔNG CỘNG PHẦN 2/3</code>;
+        còn tổng cả nhóm nằm ở dòng tiêu đề trên cùng, kèm khoảng dòng của phần đang xem
+        (<code>Lệnh Đi — phần 2/2: dòng 1.048.574–1.234.240 trong tổng 1.234.240 dòng</code>).</p>
+      <p>Trường hợp một phần — tức <b>gần như mọi lượt chạy</b> — giữ nguyên từng chữ như trước:
+        tên sheet không có hậu tố, nhãn vẫn là <code>TỔNG CỘNG</code>. Người dùng hằng ngày không
+        thấy gì đổi.</p>
+
+      <div class="note"><b>Chi tiết dễ vấp:</b> mỗi sheet tiêu tốn <b>3 dòng</b> ngoài dữ liệu (tiêu đề
+        gộp, tên cột, dòng tổng) → <code>_MAX_DATA_ROWS = 1.048.576 − 3</code>. Tên sheet bị Excel giới
+        hạn <b>31 ký tự</b> nên hậu tố <code>" (2/2)"</code> phải cắt phần tên gốc, không được nối thêm.
+        Nhiều sheet thì <code>[Content_Types].xml</code>, <code>workbook.xml</code> và
+        <code>workbook.xml.rels</code> đều phải khai đủ N phần — thiếu một chỗ là Excel gỡ sheet đó ra
+        và báo "unreadable content".</div>
+
+      <p><b>Kiểm chứng lại đúng kịch bản đã làm hỏng:</b> gộp 2 file GL02 thật →
+        <code>sheet1</code> dừng đúng ở dòng <code>1.048.576</code>, <code>sheet2</code> giữ
+        <code>185.670</code> dòng còn lại, tổng khớp <code>di_rows = 1.234.240</code>, và có dòng
+        WARNING trong log cho người vận hành biết đã tách.</p>
+
+      <div class="note"><b>Vấn đề phát hiện nhưng không sửa:</b> 93% thời gian của một lượt chấm là
+        đọc/ghi Excel, không phải nghiệp vụ — đo trên GL02 thật (49,5 giây): đọc ZIP/Excel
+        <b>25,9 s (52%)</b>, ghi 7 file xlsx <b>20,2 s (41%)</b>, thuật toán phân loại chỉ
+        <b>3,2 s (7%)</b>. Ai muốn rút ngắn thời gian chờ thì phải động vào đường đọc-ghi file; tối ưu
+        thuật toán gần như vô ích. Chưa làm vì 49 giây cho 620k dòng hiện chưa ai kêu.</div>
+
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">HN2</span>
+      <span class="card-title">Trang Đóng chứng từ kéo cả kho về mỗi lần mở — 283 câu SQL cho thứ không ai đọc</span>
+      <span class="badge badge-done">Xong — 513 ms → 32 ms, 315 KB → 8,3 KB</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-red">Phát hiện</span> Điểm duy nhất trong hệ phình theo tổng lượng lưu trữ</div>
+      <p>Ba ô lọc (phòng / năm / tháng) ở <code>frontend/pages/bundles.py</code> đều để
+        <code>value=None</code>, nên <b>lần mở trang đầu tiên</b> gọi
+        <code>GET /api/bundles/groups</code> không kèm điều kiện nào — trả về toàn bộ bìa chứng từ từ
+        trước đến nay. <code>list_groups()</code> lại chạy N+1 hai tầng: mỗi nhóm 1 câu lấy người tạo,
+        1 câu lấy tập; <b>mỗi tập thêm 1 câu</b> lấy mục bên trong.</p>
+
+      <table>
+        <tr><th>Khối lượng lưu trữ</th><th>Trước</th><th>Sau</th></tr>
+        <tr><td>1 năm (17 nhóm, 246 tập) — hiện tại</td><td>39 ms / 315 KB / 283 câu SQL</td><td><b>11 ms / 8,3 KB / 3 câu</b></td></tr>
+        <tr><td>2 năm</td><td>87 ms / 629 KB</td><td><b>14 ms</b></td></tr>
+        <tr><td>5 năm (272 nhóm, 3.936 tập)</td><td>513 ms / 5,1 MB</td><td><b>32 ms</b></td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> Bỏ hẳn <code>bundles[]</code> khỏi endpoint danh sách, không phải thêm phân trang</div>
+      <p>Trang danh sách chỉ hiện <b>5 thứ</b>: tên phòng, kỳ, ngày tạo, người tạo, số bìa. Đã dò toàn
+        bộ mã nguồn: <code>GET /api/bundles/groups</code> có <b>đúng một</b> nơi gọi
+        (<code>frontend/pages/bundles.py:120</code>) và nơi đó <b>không đọc <code>bundles</code> một lần
+        nào</b> — <code>total_bundles</code> vốn đã là cột sẵn của <code>bundle_groups</code>. Vậy toàn
+        bộ 280 câu SQL và 97% payload là để dựng một thứ không ai nhìn.</p>
+      <p>Phân trang thì phải sửa cả giao diện và vẫn giữ nguyên chi phí trên mỗi dòng. Bỏ dữ liệu thừa
+        rẻ hơn và không đổi thao tác người dùng.</p>
+
+      <div class="note"><b>Không đụng đường lấy chi tiết:</b> cả 8 nơi đọc <code>group["bundles"]</code>
+        (in bìa, tải bìa, đánh dấu đã in…) đều đi qua <code>_load_bundle_group()</code> —
+        <code>GET /groups/{id}</code> — giữ nguyên vẹn. Chỉ endpoint <i>danh sách</i> đổi.</div>
+
+      <div class="label"><span class="pill pill-blue">Sửa kèm</span> Nút "Lọc" bọc <code>ensure_future</code> — đúng cái bẫy DESIGN.md cảnh báo</div>
+      <p>Nút Lọc gọi <code>lambda: asyncio.ensure_future(load_groups())</code>, trong khi ba ô select
+        ngay dưới đã truyền thẳng hàm. Task mới có ngăn xếp slot rỗng, mà nhánh <code>except</code> của
+        <code>load_groups()</code> gọi <code>_handle_api_error()</code> → <code>ui.notify</code> +
+        <code>ui.navigate.to</code> <b>ngoài mọi <code>with element:</code></b>. Hậu quả: phiên hết hạn
+        mà bấm Lọc thì <b>màn hình đứng im, không thông báo, không chuyển trang</b> — đúng triệu chứng
+        mục <i>"Event handler async"</i> trong <code>docs/DESIGN.md</code> mô tả. Sửa luôn vì nằm ngay
+        dòng đang đụng.</p>
+
+      <div class="note"><b>Vấn đề phát hiện nhưng không sửa:</b>
+        <code>GET /api/bundles/storage-summary</code> cũng N+1 nặng (<b>362 câu SQL</b>: 12 tháng × 7
+        phòng, mỗi ô lại duyệt từng tập). Ban đầu tưởng nghiêm trọng vì phép thử nhân dữ liệu ×20 cho
+        1,1 giây — nhưng cách nhân đó <b>dồn hết vào một tháng</b>, không giống tăng trưởng thật. Dựng
+        lại mô hình tăng theo năm thì nó đứng yên (16 → 20 → 22 ms qua 5 năm) vì
+        <code>_get_storage_rows_for_month()</code> lọc <code>notes = 'Tháng MM/YYYY'</code>, chi phí bị
+        chặn theo từng tháng. Để nguyên: sửa N+1 ở đây phải viết lại
+        <code>_decompose_bundles_to_rows</code>, mà "tập có ngày" phụ thuộc JSON
+        <code>cover_units</code> nên không diễn đạt được bằng SQL (xem <code>docs/DESIGN.md</code>).</div>
+
+      <div class="note"><b>Số nền để so sau này</b> (49 endpoint, bản sao DB thật, đo qua HTTP):
+        p95 trung vị <b>14 ms</b>; chậm nhất <code>/api/leaves/stats/annual</code> 108 ms — nó dựng file
+        Excel nên đúng như vậy. Đồng thời <b>40 người dùng: 0 lỗi</b>, trần thông lượng ~120 req/s
+        (giới hạn GIL, không phải SQLite — không có <code>database is locked</code> nào). 12 truy vấn
+        nóng đều dùng chỉ mục, không câu nào quét cả bảng.</div>
+
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-30</footer>
 </div>
 </body>
 </html>

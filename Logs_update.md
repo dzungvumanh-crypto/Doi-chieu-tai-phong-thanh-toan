@@ -4,6 +4,23 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 30/08/2026 Chấm 459901 - **Sửa lỗi file Excel kết quả không mở được khi dữ liệu quá lớn**
+    + **Gộp từ 2 file GL02 trở lên thì file *Lệnh Đi* trước đây Excel không mở được.** Một file GL02 một ngày đã cho khoảng **617.000 dòng** nhóm *Lệnh Đi*, mà một trang tính Excel chỉ chứa được tối đa **1.048.576 dòng**. Phần mềm cứ ghi tiếp qua giới hạn đó rồi báo *"Hoàn thành!"* như bình thường — người dùng chờ hơn một phút, tải về file hơn 100 MB, mở ra thì Excel **từ chối** hoặc đòi *"repair"* và ăn mất dữ liệu. **Không có thông báo lỗi nào ở cả hai đầu**
+    + **Nay nhóm nào quá lớn sẽ tự tách sang trang tính thứ hai trong cùng file** — tên trang ghi rõ *Lệnh Đi (1/2)*, *Lệnh Đi (2/2)*. **Vẫn đúng 7 file kết quả như cũ**, chỉ là mở ra thấy nhiều trang tính hơn; cách tải về không đổi
+    + **Dòng TỔNG CỘNG ở cuối mỗi trang tính là tổng của riêng trang đó**, nhãn ghi rõ *TỔNG CỘNG PHẦN 2/2* để không nhầm. Tổng của cả nhóm nằm ở dòng tiêu đề trên cùng, kèm khoảng dòng đang xem
+    + ✅ **Lượt chạy bình thường (chỉ một trang tính) hiển thị y hệt trước, không đổi gì** — tên trang không có đuôi, nhãn vẫn là *TỔNG CỘNG*. Không phải làm gì sau khi cập nhật
+
+- 30/08/2026 Đóng chứng từ - **Trang danh sách bìa mở nhanh hơn, và không chậm dần theo năm tháng**
+    + **Mỗi lần mở trang, phần mềm tải về toàn bộ bìa chứng từ từ trước đến nay** kèm chi tiết từng tập và từng chứng từ bên trong — trong khi bảng danh sách chỉ hiện 5 cột: tên phòng, kỳ, ngày tạo, người tạo, số bìa
+    + Đo trên dữ liệu thật rồi nhân lên theo năm: kho **1 năm** mất 39 mili giây và 315 KB; kho **5 năm** mất **513 mili giây và 5,1 MB** — càng dùng lâu càng chậm, không có điểm dừng
+    + **Nay chỉ lấy đúng 5 cột đang hiện**: kho 5 năm còn **32 mili giây**, dung lượng còn **8,3 KB**. Bấm vào từng bìa để in hoặc tải xuống thì vẫn lấy đầy đủ chi tiết như trước, **không mất gì**
+    + **Sửa thêm lỗi nút "Lọc" im lặng**: nếu phiên đăng nhập đã hết hạn, bấm *Lọc* thì màn hình đứng im — không báo gì, cũng không tự chuyển về trang đăng nhập. Nay báo đúng và chuyển trang
+
+- 30/08/2026 Rà soát toàn hệ - **Sửa lỗi cả giao diện không lên được, và nhật ký bị bơm lỗi giả**
+    + **Toàn bộ giao diện không khởi động được** vì trang *Chấm 459901* còn gọi một hàm đã bị gỡ ở đợt trước (gỡ cùng lúc với nút *Duyệt...*). Cách nạp trang hiện tại **không bọc chống lỗi**, nên một trang hỏng là cả phần mềm không lên — không riêng trang đó
+    + Nút **"Duyệt..."** ở chế độ *chọn thư mục server* đã bỏ hẳn: hộp thoại đó cho **mọi người đăng nhập liệt kê sạch ổ đĩa máy chủ**. Vẫn dán được đường dẫn như thường, phạm vi thư mục vẫn bị chặn như cũ
+    + **Nhật ký vận hành không còn bị bơm lỗi giả khi chạy kiểm thử.** Trước đây mỗi lượt chạy test lại ghi thêm hàng loạt dòng báo lỗi *"không tìm thấy bảng"* vào nhật ký thật — người vận hành mở ra thấy lỗi không hề tồn tại rồi đi tìm sự cố không có
+
 - 28/08/2026 Menu mới - **Quản lý nhân sự** (hồ sơ cán bộ, tra cứu & thống kê, nhắc lịch)
     + Nhóm menu mới **Quản lý nhân sự** với 3 mục: **Hồ sơ cán bộ**, **Tra cứu & Thống kê**, **Nhắc lịch**
     + **Hồ sơ cán bộ** gồm 8 phần: hồ sơ cá nhân (kèm **ảnh thẻ**, CCCD, địa chỉ, số người phụ thuộc, người liên lạc) · bằng cấp và chứng chỉ · quy hoạch – bổ nhiệm – điều động (**đính kèm được file PDF quyết định**) · thông tin và quá trình công tác · quá trình nghỉ gián đoạn · hồ sơ lương · đào tạo tại Agribank · công cụ dụng cụ đang đứng tên
