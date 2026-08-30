@@ -4,12 +4,67 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 28/08/2026 Menu mới - **Quản lý nhân sự** (hồ sơ cán bộ, tra cứu & thống kê, nhắc lịch)
+    + Nhóm menu mới **Quản lý nhân sự** với 3 mục: **Hồ sơ cán bộ**, **Tra cứu & Thống kê**, **Nhắc lịch**
+    + **Hồ sơ cán bộ** gồm 8 phần: hồ sơ cá nhân (kèm **ảnh thẻ**, CCCD, địa chỉ, số người phụ thuộc, người liên lạc) · bằng cấp và chứng chỉ · quy hoạch – bổ nhiệm – điều động (**đính kèm được file PDF quyết định**) · thông tin và quá trình công tác · quá trình nghỉ gián đoạn · hồ sơ lương · đào tạo tại Agribank · công cụ dụng cụ đang đứng tên
+    + **Hồ sơ gắn thẳng vào tài khoản đang có** — không phải nhập lại họ tên, mã cán bộ, phòng. Sửa điện thoại/email trong hồ sơ là sửa luôn thông tin tài khoản, không có hai nơi lệch nhau
+    + **"Ngày tuyển dụng" và "Ngày vào ngành" là MỘT** — chỉ có một ô, sửa ở màn *Hồ sơ cán bộ* hay màn *Quản lý User* đều là sửa cùng một chỗ, không còn cảnh hai ô cùng nghĩa ghi lệch nhau. ⚠️ Ô này quyết định **số ngày phép năm**, nên **cán bộ không tự sửa được** — chỉ người được cấp quyền *"Sửa hồ sơ cán bộ khác"* mới sửa
+    + **Ai cũng tự khai được hồ sơ của chính mình** (thông tin cá nhân, bằng cấp, khoá đào tạo, trạng thái công cụ đang giữ). Muốn xem hoặc sửa hồ sơ người khác thì phải được cấp thêm quyền trong màn hình *Phân quyền theo nhóm*
+    + **Hồ sơ lương có quyền riêng.** Không được cấp thì phần lương của người khác **không hiện ra**; và **sửa lương luôn cần quyền riêng, kể cả hồ sơ của chính mình**
+    + **Tra cứu theo từng thời điểm**: chọn một ngày trong quá khứ để xem danh sách cán bộ *toàn Trung tâm / Ban Giám đốc / Trưởng phòng / Phó phòng / trong quy hoạch* **đúng như tại ngày đó** — phòng lấy theo lịch sử chuyển phòng, chức vụ lấy theo quyết định còn hiệu lực. Xuất được ra Excel
+    + **Mỗi phòng xếp Trưởng phòng lên đầu**, rồi Phó phòng, rồi nhân viên (hậu kiểm viên và chuyên viên cùng bậc, xếp lẫn theo tên); Ban Giám đốc thì Giám đốc trước Phó Giám đốc. Chức vụ hiện ngay dưới tên trong danh sách để nhìn ra thứ tự
+    + **Danh sách cán bộ sắp theo TÊN, đúng thứ tự bảng chữ cái tiếng Việt.** Trước đó máy xếp theo mã ký tự nên mọi tên bắt đầu bằng chữ có dấu (Đ, Ạ, Ô, Ư…) bị dồn xuống cuối danh sách — *Đào Tiến Thành* nằm sau *Vũ Văn Ngân*, ai tra theo vần đều tưởng hệ thống **lấy thiếu người** (dữ liệu vẫn đủ, chỉ sai chỗ đứng). Nay *Đào Tiến Thành* nằm đúng vần **Th**, cạnh *Thảo*, *Thu*, *Thủy*
+    + **Thống kê** theo phòng ban, giới tính, trình độ, độ tuổi, đã qua chi nhánh hay chưa
+    + **Nhắc lịch tự động**: nâng lương (báo trước 1 quý), bổ nhiệm lại (báo trước 1 năm), cấp điện thoại/công cụ mới (báo trước 1 quý). Việc **đã quá hạn vẫn nằm trong danh sách** và được tô đỏ, không biến mất
+    + **Tài khoản quản trị viên không có hồ sơ nhân sự** — không nằm trong danh sách cán bộ, không được tính vào thống kê, tra cứu hay nhắc lịch. Quản trị viên vẫn vào màn hình bình thường để nhập hộ hồ sơ cho cán bộ khác
+    + ⚠️ **Việc cần làm sau khi cập nhật**: quản trị viên vào *Phân quyền theo nhóm* → thẻ **Quản lý nhân sự** để cấp quyền. Chưa cấp thì chưa ai thấy menu này
+    + **Đính kèm tệp ngay khi thêm dòng hồ sơ** — chọn file rồi bấm *Lưu* một lần, không phải lưu trước rồi mở lại. Tệp đang chờ hiện nhãn *chờ lưu* và bỏ ra được nếu chọn nhầm; chọn được nhiều tệp một lượt
+    + **Định dạng nhận vào**: ảnh cá nhân là **JPG, PNG, WEBP** (tối đa 5 MB); tệp đính kèm là **PDF, JPG, PNG, WEBP** (tối đa 15 MB). Hộp thoại chọn file chỉ hiện đúng những đuôi này nên không còn cảnh chọn xong mới bị báo lỗi
+    + Ảnh thẻ và file quyết định **nằm trong cơ sở dữ liệu** nên được sao lưu cùng bản backup hằng ngày
+    + Thêm 9 bảng mới trong cơ sở dữ liệu (tự tạo lúc khởi động), **không sửa hay xoá bảng nào đang có**. Không đụng tới nghỉ phép, chấm công hay bất kỳ chức năng nào đang chạy
+
+- 28/08/2026 Menu bên trái - **Gộp "Ôn tập" và "Chuẩn hoá văn bản" vào nhóm "Tính năng khác"**
+    + Hai mục *Ôn tập trắc nghiệm* và *Chuẩn hoá văn bản* trước đây nằm rời ở ngoài cùng, nay **nằm chung trong mục "Tính năng khác"** — đưa chuột vào là hiện ra cả hai bên phải
+    + *Ôn tập trắc nghiệm* **đổi tên ngắn lại thành "Ôn tập"** (tên trong màn hình Phân quyền theo nhóm cũng đổi theo)
+    + **Không phải cấp lại quyền.** Ai đang thấy hai mục này thì sau khi cập nhật vẫn thấy đúng như vậy, chỉ khác chỗ đứng trên menu
+    + Không đổi cơ sở dữ liệu, không đổi cách chạy của hai chức năng
+
 - 28/08/2026 Đối chiếu CITAD - PaymentHub (Phòng QLTK Nostro, Vostro) - **Dùng song song 2 tiện ích không còn đá nhau**
     + **Lỗi gặp phải**: ai dùng cả tiện ích của *Phòng Thanh toán* lẫn tiện ích của *Phòng QLTK Nostro, Vostro* thì **chỉ một bên chạy được**, bên còn lại báo lỗi không có quyền. Tạo lại mã bên này thì bên kia hỏng, và ngược lại — quay vòng mãi không thoát
     + **Nguyên nhân**: hai tiện ích tuy là hai gói riêng nhưng lại **dùng chung một ô đựng mã kết nối** theo từng người. Mã mới tạo ra ghi đè lên mã cũ, nên bấm *Tạo mã kết nối mới* ở màn hình này là **tự thu hồi mã của màn hình kia** — không có thông báo nào báo cho biết
     + **Nay mỗi phòng có ô đựng mã riêng.** Tạo hay thu hồi mã ở phòng nào chỉ ảnh hưởng đúng phòng đó. Dùng song song cả 2 tiện ích hoàn toàn bình thường
     + ⚠️ **Việc cần làm sau khi cập nhật**: ai đang dùng tiện ích *CITAD - PaymentHub N&V* phải vào màn hình đó, tab **Kết nối Extension**, bấm **Tạo mã kết nối mới** một lần nữa. Mã cũ không tự chuyển sang được — tab sẽ hiện "Chưa kết nối" cho dễ nhận ra. Mã của Phòng Thanh toán **không phải làm gì**, vẫn dùng như cũ
     + Có thêm một bảng mới trong cơ sở dữ liệu (tự tạo lúc khởi động), không sửa hay xoá bảng nào đang có. Không đổi quyền, không đổi cách đối chiếu
+
+- 28/08/2026 Đối soát CITAD - **Lệnh đi báo thành công nhưng kênh chưa xác nhận ngày trả thì không tự khớp nữa** (PR #65)
+    + Lệnh chiều Đi bên IPCAS ghi trạng thái `SCNL` (đã sang kênh thành công) nhưng ô **NGAY_KENH_TRA để trống** thì kênh thanh toán **chưa thực sự xác nhận** — trước đây chương trình vẫn tự đóng dấu "khớp" cho những lệnh này. Nay lệnh CITAD tương ứng được đưa xuống nhóm **Chỉ CITAD** để anh chị tự xác minh
+    + File IPCAS **không có** cột `NGAY_KENH_TRA` (định dạng cũ) thì không bị ảnh hưởng gì
+    + ⚠️ **Báo cáo có thể ra nhiều dòng lệch hơn trước** — đây là đúng, không phải lỗi. Số liệu trước và sau mốc này không so sánh trực tiếp với nhau được
+    + 🔴 **Điểm cần biết**: nếu bên CITAD **hoàn toàn không có** lệnh đó, thì dòng IPCAS nói trên **biến mất khỏi báo cáo** thay vì hiện ở nhóm *Chỉ Agribank* như trước. Đây lại là ca đáng ngờ nhất (sổ mình ghi đã đi kênh mà NHNN chưa từng thấy lệnh). Ô tổng số dòng IPCAS cũng đếm thiếu tương ứng. Đã ghi nhận để vá ở đợt sau
+    + Không đổi cơ sở dữ liệu, không đổi quyền
+
+- 27/08/2026 Menu mới - **Chuẩn hoá văn bản theo Quy định 979 của Tổng Giám đốc**
+    + Menu mới **Chuẩn hoá văn bản** ở ngoài cùng sidebar. Tải một file Word lên, hệ thống sửa lại cho đúng *Quy định 979/QyĐ-NHNo-PC về thể thức và kỹ thuật trình bày văn bản*, rồi cho tải bản đã sửa về
+    + **Chỉ nhận file `.docx`.** File `.doc` đời cũ thì mở bằng Word, chọn *Lưu thành* `.docx` rồi tải lên — hệ thống báo rõ điều này chứ không để lỗi khó hiểu
+    + **Những gì được sửa tự động**: khổ giấy A4 và lề trang (trái 30mm, ba cạnh còn lại 20mm); đánh số trang giữa lề trên và bỏ trang đầu; phông Times New Roman, chữ đen; **giãn dòng 1,2** và cách đoạn 6pt cho phần lời văn, còn khối đầu trang (Quốc hiệu, Tiêu ngữ, tên đơn vị, số ký hiệu, ngày tháng, tên loại, trích yếu) và khối cuối (Nơi nhận, người ký) thì **dòng đơn, không cách đoạn** đúng như mẫu 979; thụt đầu dòng 1cm; **Tiêu ngữ được đưa về đúng dạng "Độc lập - Tự do - Hạnh phúc"** (gạch nối ngắn, mỗi bên đúng một dấu cách — không còn cảnh kéo giãn bằng dấu cách cho bằng dòng Quốc hiệu); **cỡ chữ và kiểu chữ đúng cho từng phần của văn bản** — Quốc hiệu, Tiêu ngữ, tên đơn vị, số ký hiệu, ngày tháng, tên loại, trích yếu, căn cứ, Chương, Mục, Điều, khoản, điểm, Kính gửi, Nơi nhận, chức vụ và họ tên người ký (28 mục, theo Phụ lục III)
+    + **Sửa cả cách viết hoa** (Phụ lục IV): viết hoa chữ đầu câu và đầu dòng; khi viện dẫn thì Phần / Chương / Mục / Điều viết hoa còn *khoản*, *điểm* viết thường; và sửa theo **danh sách cụm từ do mình khai** (Nhà nước, Ngân hàng Nhà nước Việt Nam, Ban Kiểm soát, Tổng Giám đốc...)
+    + **Sửa cả gạch đầu dòng và đánh số**: mọi ký tự đầu dòng lạ (`•` `–` `*` `+`) đưa về `- `; khoản gõ `1)` hay `1/` đưa về `1.`; điểm gõ `a.` hay `a/` đưa về `a)`; mục La Mã `I)` đưa về `I.`; danh sách chấm tròn tự động của Word đổi thành gạch đầu dòng gõ tay
+    + **Cỡ chữ khối đầu văn bản lấy đúng theo mẫu 979**: Quốc hiệu và tên đơn vị cỡ 12, Tiêu ngữ và số ký hiệu cỡ 13, trích yếu công văn cỡ 12. **Nhờ vậy dòng "NGÂN HÀNG NÔNG NGHIỆP VÀ PHÁT TRIỂN NÔNG THÔN VIỆT NAM" không còn bị tràn cột làm chữ "NAM" rớt xuống một dòng riêng**; riêng chữ "Việt Nam" cũng đã được ghim không cho tách đôi
+    + **Dòng "Kính gửi" gửi cho MỘT nơi được căn giữa** đúng như mẫu công văn; gửi nhiều nơi (chỉ có chữ "Kính gửi:" rồi liệt kê xuống dòng) thì vẫn để sát trái
+    + **Khoảng cách trên/dưới đoạn ở khối đầu văn bản được đưa về 0 và 0** (trước đây file để 7pt/7pt thì khoảng cách thật giữa hai dòng là 14pt, mà hộp Paragraph của Word chỉ hiện hai số 7). Ô bảng ở khối đầu cũng được dọn theo — khối đó hay được dựng bằng bảng hai cột. Bảng số liệu giữa văn bản không bị đụng
+    + **Xuống dòng cho đẹp thì không bị viết hoa chữ đầu nữa.** Ví dụ ô "V/v Thông báo thay đổi tên/địa chỉ đăng ký / trên hệ thống SWIFT" — chữ "trên" giữ nguyên chữ thường vì đó là chỗ ngắt dòng cho cân ô, không phải câu mới. Quy tắc: chỉ viết hoa khi đoạn đó là lời văn thật **và** dòng ngay trước đã kết thúc bằng dấu chấm, chấm phẩy hoặc hai chấm
+    + **Tên loại văn bản lạ vẫn được căn giữa đúng chỗ**: ĐỀ CƯƠNG, KẾ HOẠCH KIỂM TRA... không nằm trong danh sách tên loại của QĐ 979 nhưng hệ thống vẫn nhận ra qua vị trí (dòng in hoa ngắn nằm ngay dưới số ký hiệu hoặc dòng địa danh - ngày tháng)
+    + **Dòng ngày tháng chưa điền vẫn nhận đúng** — "Hà Nội, ngày      tháng      năm 2026" của dự thảo trình ký được căn giữa và in nghiêng như quy định
+    + **Cụm từ không bị tách làm hai dòng**: ví dụ chữ *Tổng Giám đốc* sẽ luôn nằm gọn trên một dòng, không còn cảnh "Tổng" ở cuối dòng trên và "Giám đốc" rơi xuống dòng dưới. Danh sách cụm từ tự khai thêm được
+    + **Chỗ nào đã sửa đều được bôi màu** để dễ soát lại: **vàng** là sửa định dạng của riêng đoạn đó (cỡ chữ, in đậm, căn lề), **xanh lá** là sửa vào chữ (viết hoa, đánh số, gạch đầu dòng), **xanh ngọc** là cụm từ được ghép cho khỏi tách dòng. Những thứ sửa đồng loạt cả văn bản (giãn dòng, cách đoạn, phông chữ) **không bôi màu** — bôi hết thì cả trang vàng khè, không còn nhìn ra chỗ nào đáng chú ý; chúng được liệt kê riêng trong bảng kết quả
+    + **Xem trước rồi mới tải về**: sau khi chạy, màn hình liệt kê từng đoạn đã sửa (số thứ tự đoạn, đoạn đó là phần nào của văn bản, trích nội dung, đã sửa những gì). Đọc thấy đúng ý thì bấm *Tải văn bản đã chuẩn hoá*
+    + ⚠️ **Danh sách đánh số tự động của Word được giữ nguyên, có ghi chú nhắc.** Số 1. 2. 3. của loại danh sách này do Word tự tính lúc hiển thị chứ không nằm trong file, hệ thống đọc ra không được nên không dám sửa — sửa mò là lệch số cả văn bản mà không ai biết. Muốn đúng quy định thì gõ số thẳng vào dòng rồi tắt đánh số tự động trong Word
+    + ⚠️ **Quy tắc viết hoa tên người, tên địa danh, tên sự kiện thì hệ thống không tự sửa** — những cái đó phải hiểu nội dung câu mới quyết được, máy đoán là sửa hỏng câu chữ của người soạn. Chỉ sửa các cụm từ đã khai sẵn trong danh sách
+    + ⚠️ **Bảng số liệu trong văn bản chỉ được đổi phông chữ**, không đụng cỡ chữ và căn lề — quy định cho phép bảng biểu trình bày riêng
+    + **Tab *Cấu hình quy chuẩn*** để chỉnh thông số: lề trang, phông chữ, giãn dòng, cách đoạn; cỡ chữ / in đậm / in nghiêng / in hoa / căn lề / thụt dòng cho từng phần văn bản; hai danh sách cụm từ; các công tắc đánh số; màu bôi. Nhập cỡ chữ ngoài dải quy định thì hiện dấu nhắc chứ không chặn. Có nút **Khôi phục mặc định theo QĐ 979**
+    + **Phân quyền**: *Chuẩn hoá văn bản (menu)* cho người dùng hằng ngày, và *Sửa thông số quy chuẩn trình bày* cấp riêng — thông số là của cả đơn vị, một người đổi là mọi văn bản người khác chạy sau đó đều theo số mới
+    + **Ai không được cấp quyền sửa thông số thì mọi ô trong tab Cấu hình đều bị khoá**, chỉ xem được chứ không gõ vào được. Trước đó chỉ hai nút *Lưu* và *Khôi phục mặc định* bị mờ, còn các ô vẫn gõ được nên dễ tưởng là sửa được — **số liệu thật không hề bị đổi**, vì máy chủ luôn từ chối ghi khi không đủ quyền
+    + **File kết quả để trên máy chủ hết ngày làm việc, 23h tự xoá** như các tính năng khác. Cần giữ lâu hơn thì tải về máy mình trong ngày
 
 - 27/08/2026 Chấm 459901 - **Tải lên được cả file Excel, không chỉ file ZIP**
     + **Nhận thêm Excel** (`.xlsx`, `.xlsm`, `.xlsb`, `.xls`) bên cạnh file ZIP xuất từ GL02. Ai đã mở ZIP ra, cắt bớt hay lọc lại rồi lưu thành Excel thì tải thẳng file đó lên, khỏi nén lại

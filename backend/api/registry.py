@@ -38,6 +38,8 @@ from backend.api.ttqt_branches import router as ttqt_branches_router
 from backend.api.so_truc import router as so_truc_router
 from backend.api.attendance import router as attendance_router
 from backend.api.quiz import router as quiz_router
+from backend.api.vb_format import router as vb_format_router
+from backend.api.hr import router as hr_router
 
 # Thêm router mới: 1 dòng import ở trên + 1 tuple ở đây
 # Format: (router_object, {"prefix": "/api/...", "tags": ["..."]})
@@ -73,6 +75,8 @@ _ROUTERS = [
     (so_truc_router, {}),
     (attendance_router,  {"prefix": "/api/attendance", "tags": ["attendance"]}),
     (quiz_router,        {}),
+    (vb_format_router,   {}),
+    (hr_router,          {}),
 ]
 
 

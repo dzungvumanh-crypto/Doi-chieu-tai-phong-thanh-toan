@@ -76,7 +76,7 @@ async def quiz_page():
     picked = {"id": None, "name": "", "count": 0}
 
     with _content_area():
-        _page_header("Ôn tập trắc nghiệm",
+        _page_header("Ôn tập",
                      "Chọn một bộ câu hỏi có sẵn để ôn tập hoặc thi thử")
 
         # ── Dialog cài đặt trước khi làm bài ──────────────────────────────────

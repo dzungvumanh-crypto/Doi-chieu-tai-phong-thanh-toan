@@ -113,13 +113,32 @@ FEATURES: dict[str, str] = {
     "attendance.view_dept":  "Xem bảng công cả phòng + lịch sử các tháng",
     "attendance.export":     "Xuất Excel bảng công",
 
-    # Ôn tập trắc nghiệm (Quizz) — bộ câu hỏi dùng chung cho cả cơ quan.
+    # Ôn tập (Quizz) — bộ câu hỏi dùng chung cho cả cơ quan.
     # Xem/làm bài mở cho mọi người được cấp `menu.quiz`; tải bộ mới và xoá bộ
     # là hai quyền riêng vì chúng động tới dữ liệu dùng chung: xoá một bộ kéo
     # theo toàn bộ lượt làm bài và bảng xếp hạng của bộ đó.
-    "menu.quiz":             "Ôn tập trắc nghiệm (menu)",
+    "menu.quiz":             "Ôn tập (menu)",
     "quiz.upload":           "Tải bộ câu hỏi lên / đổi tên bộ",
     "quiz.delete":           "Xoá bộ câu hỏi",
+
+    # Chuẩn hoá văn bản — dùng chung cả cơ quan. Tách quyền sửa quy chuẩn ra
+    # riêng: thông số trình bày là của cả đơn vị, một người đổi là mọi văn bản
+    # người khác chạy sau đó đều theo số mới — không để chung với quyền dùng.
+    "menu.vb_format":        "Chuẩn hoá văn bản (menu)",
+    "vb_format.config":      "Sửa thông số quy chuẩn trình bày",
+
+    # Quản lý nhân sự. `menu.hr_profiles` là quyền TỐI THIỂU: có nó là vào được
+    # màn hình và tự khai hồ sơ của chính mình. Muốn thấy/sửa hồ sơ người khác
+    # phải có thêm hr.view_all / hr.edit_all. Lương tách riêng hai mã vì đó là
+    # số liệu chế độ, không đi kèm quyền xem hồ sơ thông thường.
+    "menu.hr_profiles":      "Hồ sơ cán bộ (menu)",
+    "hr.view_all":           "Xem hồ sơ của mọi cán bộ",
+    "hr.edit_all":           "Sửa hồ sơ cán bộ khác + phần công tác, bổ nhiệm",
+    "hr.salary_view":        "Xem hồ sơ lương của cán bộ khác",
+    "hr.salary_edit":        "Sửa hồ sơ lương",
+    "menu.hr_lookup":        "Tra cứu & Thống kê nhân sự (menu)",
+    "hr.export":             "Xuất Excel danh sách cán bộ",
+    "menu.hr_reminders":     "Nhắc lịch nhân sự (menu)",
 }
 
 # ── Cấu trúc màn hình phân quyền ──────────────────────────────────────────────
@@ -277,11 +296,44 @@ FEATURE_GROUPS: list[dict] = [
         ],
     },
     {
-        # Soi gương mục phẳng "quiz" ở cấp 1 của MENU_TREE.
-        "kind": "menu",
-        "code": "menu.quiz",
-        "icon": "school",
-        "actions": ["quiz.upload", "quiz.delete"],
+        # Soi gương nhóm "Tính năng khác" ở cấp 1 của MENU_TREE — hai menu này
+        # không thuộc phòng nào nên section không cần dải nhãn phòng.
+        "kind": "group",
+        "dept": "Tính năng khác",
+        "icon": "apps",
+        "sections": [
+            {
+                "label": None,
+                "menus": [
+                    {"code": "menu.quiz", "actions": ["quiz.upload", "quiz.delete"]},
+                    {"code": "menu.vb_format", "actions": ["vb_format.config"]},
+                ],
+            },
+        ],
+    },
+    {
+        # Soi gương nhóm "nhansu" trong MENU_TREE.
+        "kind": "group",
+        "dept": "Quản lý nhân sự",
+        "icon": "badge",
+        "sections": [
+            {
+                "label": None,
+                "menus": [
+                    {
+                        "code": "menu.hr_profiles",
+                        "actions": [
+                            "hr.view_all",
+                            "hr.edit_all",
+                            "hr.salary_view",
+                            "hr.salary_edit",
+                        ],
+                    },
+                    {"code": "menu.hr_lookup", "actions": ["hr.export"]},
+                    {"code": "menu.hr_reminders", "actions": []},
+                ],
+            },
+        ],
     },
     {
         "kind": "menu",

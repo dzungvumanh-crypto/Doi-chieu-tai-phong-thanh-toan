@@ -122,11 +122,37 @@ MENU_TREE = [
             },
         ],
     },
+    {
+        # Quản lý nhân sự — hồ sơ cán bộ của cả Trung tâm. Ba mục: nhập/xem hồ
+        # sơ, tra cứu-thống kê, và nhắc lịch (nâng lương / bổ nhiệm lại / cấp
+        # công cụ mới). Không có tầng "phòng" vì đây là việc của cả cơ quan.
+        # Icon "badge" thuộc bộ Material Icons gốc — cùng lý do đã chọn
+        # "date_range" ở nhóm Chấm công.
+        "id": "nhansu",
+        "label": "Quản lý nhân sự",
+        "icon": "badge",
+        "items": [
+            ("hr_profiles",  "Hồ sơ cán bộ",       "contact_page"),
+            ("hr_lookup",    "Tra cứu & Thống kê", "manage_search"),
+            ("hr_reminders", "Nhắc lịch",          "notifications_active"),
+        ],
+    },
     ("ttqt_branches", "Danh sách CN TTQT", "account_tree"),
-    # Ôn tập trắc nghiệm — đứng riêng cấp 1: không thuộc phòng nào, cả cơ quan
-    # dùng. Icon "school" thuộc bộ Material Icons gốc (chắc chắn có glyph trong
-    # font offline NiceGUI đóng gói) — cùng lý do đã chọn "date_range" ở trên.
-    ("quiz", "Ôn tập trắc nghiệm", "school"),
+    {
+        # Ôn tập và Chuẩn hoá văn bản không thuộc phòng nào, cả cơ quan dùng —
+        # gom vào một nhóm thay vì để hai mục phẳng cạnh nhau ở cấp 1. Items là
+        # tuple (không có tầng "phòng") nên flyout chỉ sâu 2 cấp.
+        # Icon "apps"/"school"/"description" đều thuộc bộ Material Icons gốc
+        # (chắc chắn có glyph trong font offline NiceGUI đóng gói) — cùng lý do
+        # đã chọn "date_range" ở trên.
+        "id": "khac",
+        "label": "Tính năng khác",
+        "icon": "apps",
+        "items": [
+            ("quiz",      "Ôn tập",            "school"),
+            ("vb_format", "Chuẩn hoá văn bản", "description"),
+        ],
+    },
 ]
 
 # Hai nhóm dưới đây trước nằm inline trong _sidebar(). Tách ra module-level để

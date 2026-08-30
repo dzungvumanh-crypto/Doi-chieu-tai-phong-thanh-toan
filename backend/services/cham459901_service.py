@@ -58,8 +58,11 @@ DUOI_ZIP    = '.zip'
 DUOI_EXCEL  = ('.xlsx', '.xlsm', '.xlsb', '.xls')
 DUOI_HOP_LE = (DUOI_ZIP,) + DUOI_EXCEL
 
-# Số dòng đầu mỗi sheet dùng để dò hàng tiêu đề (xem _dat_tieu_de)
-_MAX_DONG_DO_TIEU_DE = 10
+# Số dòng đầu mỗi sheet dùng để dò hàng tiêu đề (xem _dat_tieu_de). Bản người
+# dùng tự lưu lại có thể có khối tiêu đề báo cáo (tên báo cáo, chi nhánh, kỳ,
+# điều kiện lọc…) dài hơn 10 dòng — dò trượt là báo "không phải dữ liệu GL02"
+# dù dữ liệu bên dưới vẫn đủ.
+_MAX_DONG_DO_TIEU_DE = 25
 
 # Cột ngày: Excel trả về kiểu ngày-giờ, cần cắt đuôi giờ 0 cho giống bản CSV
 _COT_NGAY = ('TRDATE', 'CRTDTM')
@@ -213,6 +216,16 @@ def process_files(tep: list[tuple[str, Path]], task_token: str | None = None) ->
 
 # ─── Internal ─────────────────────────────────────────────────────────────────
 
+def _liet_ke_cot(d: pd.DataFrame, gioi_han: int = 8) -> str:
+    """Tên các cột bảng đang có, cắt bớt cho vừa một dòng thông báo."""
+    cot = [str(c) for c in d.columns]
+    if not cot:
+        return "(không có cột nào)"
+    if len(cot) <= gioi_han:
+        return ", ".join(cot)
+    return ", ".join(cot[:gioi_han]) + f", … ({len(cot)} cột)"
+
+
 def _kiem_cot(d: pd.DataFrame, nhan: str) -> None:
     """Kiểm cột NGAY TỪNG BẢNG, không đợi gộp xong.
 
@@ -220,8 +233,20 @@ def _kiem_cot(d: pd.DataFrame, nhan: str) -> None:
     kiểm thì một file sai định dạng lọt qua và làm lệch kết quả phân loại.
     """
     missing = sorted(_COT_BAT_BUOC - set(d.columns))
-    if missing:
-        raise InputError(f"{nhan} thiếu cột bắt buộc: {', '.join(missing)}.")
+    if not missing:
+        return
+
+    # Thiếu SẠCH cả 6 cột nghĩa là cầm nhầm loại file (hoặc dò trượt dòng tiêu
+    # đề) — không phải bản GL02 bị cắt bớt cột. Câu "thiếu cột bắt buộc" ở đây
+    # bắt người dùng đi tìm cột trong một file vốn không bao giờ có. Kèm luôn
+    # tên cột đang có để họ tự nhận ra mình chọn nhầm bảng nào.
+    if len(missing) == len(_COT_BAT_BUOC):
+        raise InputError(
+            f"{nhan} không phải dữ liệu GL02 — không có cột nào trong số "
+            f"{', '.join(sorted(_COT_BAT_BUOC))}. Cột đang có: {_liet_ke_cot(d)}."
+        )
+
+    raise InputError(f"{nhan} thiếu cột bắt buộc: {', '.join(missing)}.")
 
 
 def _doc_csv(nguon) -> pd.DataFrame:

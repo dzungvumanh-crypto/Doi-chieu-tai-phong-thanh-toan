@@ -407,6 +407,155 @@ def _create_tables(db_path: str):
             is_correct   INTEGER,
             time_ms      INTEGER
         )""",
+        # ── Quản lý nhân sự — 2026-08-28 ──────────────────────────────────────
+        # `recruit_date` cố ý KHÔNG có ở đây: "Ngày tuyển dụng" chính là "Ngày vào
+        # ngành" đã nằm ở `user_tttt.join_industry_date` — một mốc thì một cột.
+        # Mọi bảng khoá theo `staff_id` = user_tttt.id: hồ sơ nhân sự KHÔNG có
+        # danh sách cán bộ riêng, cán bộ nào có tài khoản thì có hồ sơ. Nhờ vậy
+        # họ tên / phòng / ngày vào ngành chỉ nằm một chỗ, không phải đồng bộ
+        # hai bảng (xem docs/Implementation-notes.html).
+        """CREATE TABLE IF NOT EXISTS hr_profiles (
+            staff_id          INTEGER PRIMARY KEY REFERENCES user_tttt(id) ON DELETE CASCADE,
+            gender            TEXT,
+            dob               DATE,
+            cccd              VARCHAR(20),
+            cccd_date         DATE,
+            cccd_place        VARCHAR(200),
+            permanent_address TEXT,
+            current_address   TEXT,
+            dependents        INTEGER DEFAULT 0,
+            contact_name      VARCHAR(100),
+            contact_relation  VARCHAR(50),
+            contact_phone     VARCHAR(30),
+            contact_address   TEXT,
+            contract_type     VARCHAR(100),
+            position_title    VARCHAR(100),
+            photo             BLOB,
+            photo_mime        VARCHAR(50),
+            note              TEXT,
+            updated_at        DATETIME,
+            updated_by        INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL
+        )""",
+        """CREATE TABLE IF NOT EXISTS hr_degrees (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            staff_id    INTEGER NOT NULL REFERENCES user_tttt(id) ON DELETE CASCADE,
+            kind        TEXT NOT NULL,
+            name        VARCHAR(200) NOT NULL,
+            major       VARCHAR(200),
+            school      VARCHAR(200),
+            issue_date  DATE,
+            expiry_date DATE,
+            grade       VARCHAR(100),
+            note        TEXT,
+            created_at  DATETIME,
+            updated_at  DATETIME,
+            updated_by  INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL
+        )""",
+        """CREATE TABLE IF NOT EXISTS hr_appointments (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            staff_id       INTEGER NOT NULL REFERENCES user_tttt(id) ON DELETE CASCADE,
+            kind           TEXT NOT NULL,
+            position       VARCHAR(200) NOT NULL,
+            unit           VARCHAR(200),
+            decision_no    VARCHAR(100),
+            decision_date  DATE,
+            effective_from DATE,
+            effective_to   DATE,
+            note           TEXT,
+            created_at     DATETIME,
+            updated_at     DATETIME,
+            updated_by     INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL
+        )""",
+        """CREATE TABLE IF NOT EXISTS hr_work_history (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            staff_id   INTEGER NOT NULL REFERENCES user_tttt(id) ON DELETE CASCADE,
+            from_date  DATE NOT NULL,
+            to_date    DATE,
+            position   VARCHAR(200),
+            unit       VARCHAR(200) NOT NULL,
+            at_branch  INTEGER NOT NULL DEFAULT 0,
+            note       TEXT,
+            created_at DATETIME,
+            updated_at DATETIME,
+            updated_by INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL
+        )""",
+        # Nghỉ gián đoạn: `count_seniority = 0` nghĩa là khoảng này KHÔNG tính
+        # vào thời gian công tác (nghỉ không hưởng lương) — đây là số liệu để
+        # người làm chế độ đối chiếu, phần mềm không tự trừ vào phép năm.
+        """CREATE TABLE IF NOT EXISTS hr_breaks (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            staff_id        INTEGER NOT NULL REFERENCES user_tttt(id) ON DELETE CASCADE,
+            from_date       DATE NOT NULL,
+            to_date         DATE NOT NULL,
+            reason          VARCHAR(200),
+            unpaid          INTEGER NOT NULL DEFAULT 1,
+            count_seniority INTEGER NOT NULL DEFAULT 0,
+            note            TEXT,
+            created_at      DATETIME,
+            updated_at      DATETIME,
+            updated_by      INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL
+        )""",
+        """CREATE TABLE IF NOT EXISTS hr_salaries (
+            id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            staff_id           INTEGER NOT NULL REFERENCES user_tttt(id) ON DELETE CASCADE,
+            grade              VARCHAR(50),
+            coef_v1            REAL,
+            coef_v2            REAL,
+            position_allowance REAL,
+            decision_no        VARCHAR(100),
+            decision_date      DATE NOT NULL,
+            effective_from     DATE,
+            cycle_months       INTEGER,
+            note               TEXT,
+            created_at         DATETIME,
+            updated_at         DATETIME,
+            updated_by         INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL
+        )""",
+        """CREATE TABLE IF NOT EXISTS hr_trainings (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            staff_id    INTEGER NOT NULL REFERENCES user_tttt(id) ON DELETE CASCADE,
+            course_name VARCHAR(300) NOT NULL,
+            from_date   DATE,
+            to_date     DATE,
+            mode        TEXT,
+            result      VARCHAR(200),
+            organizer   VARCHAR(200),
+            note        TEXT,
+            created_at  DATETIME,
+            updated_at  DATETIME,
+            updated_by  INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL
+        )""",
+        # `next_issue_date` = ngày dự kiến được cấp mới. Nhắc lịch "cấp điện
+        # thoại mới trước 1 quý" đọc đúng cột này, không đoán theo tên công cụ.
+        """CREATE TABLE IF NOT EXISTS hr_tools (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            staff_id        INTEGER NOT NULL REFERENCES user_tttt(id) ON DELETE CASCADE,
+            tool_name       VARCHAR(200) NOT NULL,
+            tool_code       VARCHAR(100),
+            quantity        INTEGER DEFAULT 1,
+            issued_date     DATE,
+            status          TEXT NOT NULL DEFAULT 'dang_dung',
+            next_issue_date DATE,
+            note            TEXT,
+            created_at      DATETIME,
+            updated_at      DATETIME,
+            updated_by      INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL
+        )""",
+        # File đính kèm dùng chung cho mọi phân hệ (quyết định bổ nhiệm, bằng
+        # cấp, chứng chỉ...). `section` + `item_id` là khoá ngoại ĐA HÌNH nên
+        # SQLite không ràng buộc hộ được: xoá dòng nào thì code phải tự xoá file
+        # của dòng đó (xem `_xoa_dinh_kem()` trong backend/api/hr.py).
+        """CREATE TABLE IF NOT EXISTS hr_attachments (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            section     TEXT NOT NULL,
+            item_id     INTEGER NOT NULL,
+            filename    VARCHAR(255) NOT NULL,
+            mime        VARCHAR(100),
+            size_bytes  INTEGER,
+            content     BLOB NOT NULL,
+            uploaded_by INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+            uploaded_at DATETIME
+        )""",
     ]
     for s in statements:
         cur.execute(s)
@@ -1210,6 +1359,18 @@ def _ensure_indexes():
         "ALTER TABLE quiz_attempts ADD COLUMN elapsed_ms INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE quiz_attempts ADD COLUMN current_idx INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE quiz_attempts ADD COLUMN saved_at DATETIME",
+        # ── Chuẩn hoá văn bản theo QĐ 979 — 2026-08-27 ─────────────────
+        # Đúng MỘT dòng: quy chuẩn trình bày là của cả cơ quan, không phải của
+        # từng người. CHECK(id = 1) chặn thẳng ở tầng DB — code có ghi nhầm
+        # dòng thứ hai thì báo lỗi ngay, thay vì âm thầm sinh ra hai bản cấu hình
+        # rồi mỗi lần đọc lại trúng một bản khác nhau.
+        """CREATE TABLE IF NOT EXISTS vb_format_config (
+            id          INTEGER PRIMARY KEY CHECK (id = 1),
+            config_json TEXT NOT NULL DEFAULT '{}',
+            updated_at  DATETIME,
+            updated_by  INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL
+        )""",
+        "INSERT OR IGNORE INTO vb_format_config (id, config_json) VALUES (1, '{}')",
     ]
     _mig_log = logging.getLogger(__name__)
 
@@ -1521,6 +1682,16 @@ def _ensure_indexes():
         "CREATE INDEX IF NOT EXISTS ix_quiz_attempts_staff     ON quiz_attempts(staff_id, started_at)",
         "CREATE INDEX IF NOT EXISTS ix_quiz_attempts_set       ON quiz_attempts(set_id, status)",
         "CREATE INDEX IF NOT EXISTS ix_quiz_attempt_items_att  ON quiz_attempt_items(attempt_id, order_no)",
+        # ── Quản lý nhân sự — 2026-08-28 ──────────────────────────────────────
+        # Mọi màn hình hồ sơ đều lọc theo staff_id trước tiên.
+        "CREATE INDEX IF NOT EXISTS ix_hr_degrees_staff      ON hr_degrees(staff_id)",
+        "CREATE INDEX IF NOT EXISTS ix_hr_appointments_staff ON hr_appointments(staff_id)",
+        "CREATE INDEX IF NOT EXISTS ix_hr_work_history_staff ON hr_work_history(staff_id)",
+        "CREATE INDEX IF NOT EXISTS ix_hr_breaks_staff       ON hr_breaks(staff_id)",
+        "CREATE INDEX IF NOT EXISTS ix_hr_salaries_staff     ON hr_salaries(staff_id, decision_date)",
+        "CREATE INDEX IF NOT EXISTS ix_hr_trainings_staff    ON hr_trainings(staff_id)",
+        "CREATE INDEX IF NOT EXISTS ix_hr_tools_staff        ON hr_tools(staff_id)",
+        "CREATE INDEX IF NOT EXISTS ix_hr_attachments_owner  ON hr_attachments(section, item_id)",
     ]
     conn = sqlite3.connect(DB_PATH, timeout=30)
     try:
