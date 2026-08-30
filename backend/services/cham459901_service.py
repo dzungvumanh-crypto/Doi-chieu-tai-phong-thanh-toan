@@ -16,6 +16,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from backend.services.ach.so_tien import doc_so_tien
+
 try:
     import pyzipper
     _ZipFile = pyzipper.AESZipFile
@@ -324,15 +326,20 @@ def _load_data(zip_bytes: bytes) -> tuple[pd.DataFrame, int]:
             df[col] = df[col].str.strip()
 
     df['REMARK'] = df['REMARK'].fillna('')
-    df['DRAMOUNT'] = pd.to_numeric(df['DRAMOUNT'], errors='coerce').fillna(0.0)
-    df['CRAMOUNT'] = pd.to_numeric(df['CRAMOUNT'], errors='coerce').fillna(0.0)
 
+    # Lọc VND TRƯỚC khi ép kiểu số — GL02 gốc có cả giao dịch ngoại tệ (USD/EUR...), số
+    # tiền ngoại tệ có phần thập phân thật (VD '1.78'), khác hẳn ngăn-nghìn VND. Ép số
+    # trước khi lọc sẽ raise lỗi ngay trên các dòng ngoại tệ (đúng ra bị loại từ đầu, không
+    # bao giờ cần ép số) — xác nhận trực tiếp từ người chấm 2026-08-30.
     before = len(df)
     df = df[
         (df['LOCAC']    == FILTER_LOCAC) &
         (df['CUSTOMER'] == FILTER_CUSTOMER) &
         (df['CCY']      == FILTER_CCY)
     ].copy()
+
+    df['DRAMOUNT'] = doc_so_tien(df['DRAMOUNT'], nguon='GL02 (459901)', ten_cot='DRAMOUNT')
+    df['CRAMOUNT'] = doc_so_tien(df['CRAMOUNT'], nguon='GL02 (459901)', ten_cot='CRAMOUNT')
     return df, before - len(df)
 
 
@@ -340,8 +347,18 @@ def _read_ton_file(raw_bytes: bytes) -> pd.DataFrame:
     """Đọc file 'tồn' tháng trước (459_TON_Tx.xlsx, header ngay dòng 1) — chỉ lấy 16 cột
     chung với dữ liệu GL02 gốc (_TON_COLS), bỏ các cột ghi chú thủ công của người chấm
     ('chấm', 'Phong ban', 'refhub') — dùng để ghép nối tiếp vào dữ liệu tháng mới rồi
-    phân loại lại từ đầu, không giữ trạng thái/ghi chú cũ."""
-    raw = pd.read_excel(io.BytesIO(raw_bytes), engine='calamine')
+    phân loại lại từ đầu, không giữ trạng thái/ghi chú cũ.
+
+    DRAMOUNT/CRAMOUNT PHẢI ép str ngay tại read_excel (không để calamine tự suy kiểu):
+    verify thực nghiệm 2026-08-28 — nếu ô Excel là TEXT dạng ngăn-nghìn 1 nhóm ('180.000'),
+    calamine tự "hiểu" nó là số hợp lệ và trả về float 180.0 NGAY TẠI TẦNG ĐỌC, xoá mất
+    3 số 0 trước khi bất kỳ code Python nào (kể cả doc_so_tien()) kịp thấy chuỗi gốc — sai
+    1000 lần, không lỗi, không NaN. Ép dtype=str tại đây buộc calamine trả nguyên văn ô
+    text, để doc_so_tien() ở dưới validate đúng. Không xảy ra với '1.234.567' (nhiều nhóm)
+    hay '839,000' (dấu phẩy) — cả hai đều không phải cú pháp float hợp lệ nên calamine tự
+    giữ nguyên dạng text; case nguy hiểm CHỈ có ở 1 nhóm ngăn-nghìn bằng dấu chấm."""
+    raw = pd.read_excel(io.BytesIO(raw_bytes), engine='calamine',
+                         dtype={'DRAMOUNT': str, 'CRAMOUNT': str})
     raw.columns = raw.columns.astype(str).str.strip()
     df = raw[_TON_COLS].copy()
 
@@ -356,14 +373,16 @@ def _read_ton_file(raw_bytes: bytes) -> pd.DataFrame:
         else:
             df[col] = s.map(lambda v: '' if pd.isna(v) else str(v).strip())
 
-    df['DRAMOUNT'] = pd.to_numeric(df['DRAMOUNT'], errors='coerce').fillna(0.0).astype(float)
-    df['CRAMOUNT'] = pd.to_numeric(df['CRAMOUNT'], errors='coerce').fillna(0.0).astype(float)
-
+    # Lọc VND TRƯỚC khi ép kiểu số — cùng lý do `_load_data()` (GL02 gốc có ngoại tệ, số
+    # tiền có phần thập phân thật, khác ngăn-nghìn VND).
     df = df[
         (df['LOCAC']    == FILTER_LOCAC) &
         (df['CUSTOMER'] == FILTER_CUSTOMER) &
         (df['CCY']      == FILTER_CCY)
     ].reset_index(drop=True)
+
+    df['DRAMOUNT'] = doc_so_tien(df['DRAMOUNT'], nguon='459_TON_Tx.xlsx', ten_cot='DRAMOUNT')
+    df['CRAMOUNT'] = doc_so_tien(df['CRAMOUNT'], nguon='459_TON_Tx.xlsx', ten_cot='CRAMOUNT')
     return df
 
 
@@ -458,13 +477,19 @@ def _classify(
 
 
 def _read_hub_di(raw_bytes: bytes) -> pd.DataFrame:
-    """Đọc file 'Quay_danh sach giao dich chuyen tien di' — tiêu đề ở dòng Excel thứ 2."""
-    raw = pd.read_excel(io.BytesIO(raw_bytes), header=None, engine='calamine')
+    """Đọc file 'Quay_danh sach giao dich chuyen tien di' — tiêu đề ở dòng Excel thứ 2.
+
+    dtype=str toàn bảng (không chỉ cột tiền): header=None nên chưa có tên cột lúc đọc,
+    không target được riêng 'Số tiền thực chuyển' như _read_ton_file — ép cả bảng để
+    tránh calamine tự suy '180.000' thành float 180.0 ngay tại tầng đọc (xem
+    _read_ton_file). Vô hại với cột khác — mọi cột còn lại vốn đã tự ép `.astype(str)`
+    hoặc `pd.to_numeric()` (dtype-agnostic) ngay sau đây."""
+    raw = pd.read_excel(io.BytesIO(raw_bytes), header=None, engine='calamine', dtype=str)
     df = raw.iloc[2:].copy()
     df.columns = raw.iloc[1].tolist()
     df = df.dropna(subset=['Số Trace 1']).reset_index(drop=True)
 
-    amt   = pd.to_numeric(df['Số tiền thực chuyển'], errors='coerce').fillna(0.0).round(0)
+    amt   = doc_so_tien(df['Số tiền thực chuyển'], nguon='Hub đi (459901)', ten_cot='Số tiền thực chuyển')
     trace = pd.to_numeric(df['Số Trace 1'], errors='coerce')
     is_napas = df['Hệ thống thanh toán'].astype(str).str.strip() == 'ACH-NAPAS'
     # ACH-NAPAS: lấy ký tự thứ 47-52 (1-based) của "Nội dung chuyển tiền"
@@ -499,13 +524,15 @@ def _trace_last9(raw: pd.Series) -> pd.Series:
 
 
 def _read_hub_den(raw_bytes: bytes) -> pd.DataFrame:
-    """Đọc file 'Danh sach giao dich den' — tiêu đề ở dòng Excel thứ 3."""
-    raw = pd.read_excel(io.BytesIO(raw_bytes), header=None, engine='calamine')
+    """Đọc file 'Danh sach giao dich den' — tiêu đề ở dòng Excel thứ 3.
+
+    dtype=str toàn bảng — cùng lý do với _read_hub_di()."""
+    raw = pd.read_excel(io.BytesIO(raw_bytes), header=None, engine='calamine', dtype=str)
     df = raw.iloc[3:].copy()
     df.columns = raw.iloc[2].tolist()
     df = df.dropna(subset=['Số trace']).reset_index(drop=True)
 
-    amt = pd.to_numeric(df['Số tiền lệnh gốc'], errors='coerce').fillna(0.0).round(0)
+    amt = doc_so_tien(df['Số tiền lệnh gốc'], nguon='Hub đến (459901)', ten_cot='Số tiền lệnh gốc')
     trace, trace2 = _trace_candidates(df['Số trace'])
     is_napas = df['Hệ thống thanh toán'].astype(str).str.strip() == 'ACH-NAPAS'
     # ACH-NAPAS: lấy 6 số cuối của "Số thành công/MSGID"

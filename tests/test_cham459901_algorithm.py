@@ -725,10 +725,31 @@ class TestReadTonFile:
         assert df.iloc[0]['TRDATE'] == '20251231'
 
     def test_amounts_numeric(self):
+        """Từ 2026-08-28: đọc qua doc_so_tien() (backend/services/ach/so_tien.py) —
+        trả về int64 (VND luôn là số nguyên), không còn float."""
         xlsx_bytes = _make_ton_xlsx([_ton_row('REF1', dr=100000, cr=0)])
         df = svc._read_ton_file(xlsx_bytes)
-        assert df.iloc[0]['DRAMOUNT'] == 100000.0
-        assert isinstance(df.iloc[0]['DRAMOUNT'], float)
+        assert df.iloc[0]['DRAMOUNT'] == 100_000
+        assert df['DRAMOUNT'].dtype == 'int64'
+
+    def test_dramount_ngan_nghin_khong_bi_cat(self):
+        """Regression bug người dùng báo: cột DRAMOUNT dạng chuỗi ngăn-nghìn
+        ('180.000') trong file tồn tháng trước phải ra 180000, không bị
+        to_numeric() trần cắt còn 180."""
+        xlsx_bytes = _make_ton_xlsx([_ton_row('REF1', dr='180.000', cr=0)])
+        df = svc._read_ton_file(xlsx_bytes)
+        assert df.iloc[0]['DRAMOUNT'] == 180_000
+
+    def test_ngoai_te_co_so_thap_phan_bi_loc_truoc_khi_ep_so(self):
+        """Cùng lỗi/regression như `TestLoadData` (file tồn tháng trước dùng chung 16 cột
+        với GL02 gốc, có thể cũng mang theo dòng ngoại tệ số lẻ thật)."""
+        xlsx_bytes = _make_ton_xlsx([
+            _ton_row('REF1', dr=100000),
+            _ton_row('REF2', dr='1.78', ccy='USD'),
+        ])
+        df = svc._read_ton_file(xlsx_bytes)
+        assert len(df) == 1
+        assert df.iloc[0]['REFERENCE'] == 'REF1'
 
     def test_filters_by_locac_customer_ccy(self):
         xlsx_bytes = _make_ton_xlsx([
@@ -747,6 +768,64 @@ class TestReadTonFile:
         assert df.iloc[0]['TRCD'] == ''
 
 
+def _make_hub_di_xlsx(so_tien_thuc_chuyen) -> bytes:
+    """Header ở dòng Excel thứ 2 (index 1), dữ liệu từ dòng thứ 3 (index 2) —
+    đúng layout _read_hub_di() kỳ vọng."""
+    import openpyxl
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(['Tiêu đề báo cáo'])
+    ws.append(['Số Trace 1', 'Số tiền thực chuyển', 'Hệ thống thanh toán',
+               'Nội dung chuyển tiền', 'Số tham chiếu lệnh gốc'])
+    ws.append(['123456789', so_tien_thuc_chuyen, 'ACH-NAPAS', 'noi dung', 'REFGOC1'])
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _make_hub_den_xlsx(so_tien_lenh_goc) -> bytes:
+    """Header ở dòng Excel thứ 3 (index 2), dữ liệu từ dòng thứ 4 (index 3) —
+    đúng layout _read_hub_den() kỳ vọng."""
+    import openpyxl
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(['Tiêu đề báo cáo'])
+    ws.append([''])
+    ws.append(['Số trace', 'Số tiền lệnh gốc', 'Hệ thống thanh toán',
+               'Số thành công/MSGID', 'Số REF HUB'])
+    ws.append(['987654321', so_tien_lenh_goc, 'ACH-NAPAS', 'MSG123456', 'REFHUB1'])
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+class TestReadHubDi:
+    def test_so_tien_thuc_chuyen_ngan_nghin_khong_bi_cat(self):
+        """Regression bug người dùng báo (2026-08-28): calamine tự suy '180.000'
+        (TEXT ngăn-nghìn 1 nhóm) thành float 180.0 NGAY TẠI TẦNG ĐỌC nếu không ép
+        dtype=str — sai 1000 lần trước khi doc_so_tien() kịp thấy chuỗi gốc."""
+        xlsx_bytes = _make_hub_di_xlsx('180.000')
+        df = svc._read_hub_di(xlsx_bytes)
+        assert df.iloc[0]['AMOUNT'] == 180_000
+
+    def test_so_tien_thuc_chuyen_so_thuan_khong_doi(self):
+        xlsx_bytes = _make_hub_di_xlsx('500000')
+        df = svc._read_hub_di(xlsx_bytes)
+        assert df.iloc[0]['AMOUNT'] == 500_000
+
+
+class TestReadHubDen:
+    def test_so_tien_lenh_goc_ngan_nghin_khong_bi_cat(self):
+        xlsx_bytes = _make_hub_den_xlsx('180.000')
+        df = svc._read_hub_den(xlsx_bytes)
+        assert df.iloc[0]['AMOUNT'] == 180_000
+
+    def test_so_tien_lenh_goc_so_thuan_khong_doi(self):
+        xlsx_bytes = _make_hub_den_xlsx('500000')
+        df = svc._read_hub_den(xlsx_bytes)
+        assert df.iloc[0]['AMOUNT'] == 500_000
+
+
 class TestLoadData:
     def test_filters_by_locac_customer_ccy(self):
         zip_bytes = _make_gl02_zip([
@@ -761,10 +840,42 @@ class TestLoadData:
         assert df.iloc[0]['REFERENCE'] == 'REF1'
 
     def test_amounts_converted_to_numeric(self):
-        zip_bytes = _make_gl02_zip([_gl02_row('REF1', dr='150000.5', cr='0')])
+        """Từ 2026-08-28: đọc qua doc_so_tien() — trả về int64."""
+        zip_bytes = _make_gl02_zip([_gl02_row('REF1', dr='150000', cr='0')])
         df, _ = svc._load_data(zip_bytes)
-        assert df.iloc[0]['DRAMOUNT'] == 150000.5
-        assert isinstance(df.iloc[0]['DRAMOUNT'], float)
+        assert df.iloc[0]['DRAMOUNT'] == 150_000
+        assert df['DRAMOUNT'].dtype == 'int64'
+
+    def test_dramount_thap_phan_khac_0_raise(self):
+        """VND không có phần thập phân (business rule 2026-08-21) — trước đây
+        to_numeric() trần âm thầm chấp nhận '150000.5', SAI theo luật nghiệp vụ.
+        Nay phải raise để người dùng biết file nguồn có vấn đề."""
+        zip_bytes = _make_gl02_zip([_gl02_row('REF1', dr='150000.5', cr='0')])
+        with pytest.raises(ValueError, match='không đúng định dạng'):
+            svc._load_data(zip_bytes)
+
+    def test_ngoai_te_co_so_thap_phan_bi_loc_truoc_khi_ep_so(self):
+        """Regression bug người chấm báo 2026-08-30: GL02 gốc có cả giao dịch ngoại tệ
+        (USD/EUR...), số tiền ngoại tệ có phần thập phân THẬT (VD '1.78') — khác hẳn
+        ngăn-nghìn VND ('180.000'). Trước đây ép số TRƯỚC khi lọc CCY nên các dòng ngoại
+        tệ làm cả file crash dù đúng ra phải bị lọc bỏ ngay từ đầu, không bao giờ cần ép
+        số. Nay lọc VND trước — dòng ngoại tệ với DRAMOUNT thập phân không còn làm vỡ."""
+        zip_bytes = _make_gl02_zip([
+            _gl02_row('REF1', dr='100000'),                          # VND, khớp filter
+            _gl02_row('REF2', dr='1.78', ccy='USD'),                 # USD, số lẻ thật -> bị lọc trước khi ép số
+            _gl02_row('REF3', dr='1003460.76', ccy='EUR'),           # EUR, số lẻ thật -> bị lọc trước khi ép số
+        ])
+        df, filtered_rows = svc._load_data(zip_bytes)
+        assert len(df) == 1
+        assert filtered_rows == 2
+        assert df.iloc[0]['REFERENCE'] == 'REF1'
+
+    def test_cramount_ngan_nghin_khong_bi_cat(self):
+        """Regression bug người dùng báo: '180.000' phải ra 180000, không bị
+        to_numeric() trần cắt còn 180."""
+        zip_bytes = _make_gl02_zip([_gl02_row('REF1', dr='0', cr='180.000')])
+        df, _ = svc._load_data(zip_bytes)
+        assert df.iloc[0]['CRAMOUNT'] == 180_000
 
     def test_wrong_password_raises(self):
         """File zip không đúng mật khẩu GL02 phải báo lỗi rõ ràng (InputError), không âm thầm
