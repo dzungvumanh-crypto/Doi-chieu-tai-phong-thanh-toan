@@ -1,13 +1,15 @@
 """API endpoints cho tính năng Chấm 459901 — phân loại bút toán TK 459901."""
 
+import threading
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
 
+from backend.api.fs import _pham_vi_cho_phep, _trong_pham_vi
 from backend.core.deps import require_feature
 from backend.services import cham459901_service
 
@@ -52,7 +54,6 @@ def _dl_headers(filename: str) -> dict:
 
 @router.post("/process")
 async def process(
-    background_tasks: BackgroundTasks,
     files: list[UploadFile],
     _=Depends(require_feature("cham_459901.process")),
 ):
@@ -69,10 +70,16 @@ async def process(
         raise HTTPException(400, "Không tìm thấy file GL02*.zip trong danh sách đã tải lên")
 
     task_token = cham459901_service.init_progress()
-    background_tasks.add_task(
-        cham459901_service.run_process, bytes_by_kind["zip"], task_token,
-        bytes_by_kind.get("hub_di"), bytes_by_kind.get("hub_den"), bytes_by_kind.get("ton"),
-    )
+    # threading.Thread thay vì BackgroundTasks (review PR#43, khanhbq693 mục 10):
+    # BackgroundTasks chạy SAU khi response đã trả nhưng vẫn giữ 1 worker trong thread
+    # pool CHUNG của cả backend — job 459901 dài vài phút chiếm 1 worker suốt thời gian
+    # đó, vài người chạy cùng lúc là cả backend (kể cả trang không liên quan) chậm theo.
+    threading.Thread(
+        target=cham459901_service.run_process,
+        args=(bytes_by_kind["zip"], task_token,
+              bytes_by_kind.get("hub_di"), bytes_by_kind.get("hub_den"), bytes_by_kind.get("ton")),
+        daemon=True,
+    ).start()
     return {
         "task_token":   task_token,
         "unrecognized": unrecognized,
@@ -88,13 +95,20 @@ class FolderRequest(BaseModel):
 @router.post("/process_folder")
 def process_folder(
     req: FolderRequest,
-    background_tasks: BackgroundTasks,
     _=Depends(require_feature("cham_459901.process")),
 ):
     """Chạy trực tiếp từ thư mục server (không upload) — quét toàn bộ file NẰM TRỰC TIẾP
     trong thư mục (không đệ quy vào thư mục con), tự nhận diện theo tên giống route /process.
-    Trả task_token ngay, xử lý nền."""
-    p = Path(req.folder_path)
+    Trả task_token ngay, xử lý nền.
+
+    Giới hạn phạm vi bằng FOLDER_PICKER_ROOTS (review PR#43, khanhbq693 mục 2) — trước
+    đây nhận folder_path tuỳ ý từ client, người có cham_459901.process trỏ vào data/ là
+    đọc được file DB, trỏ vào thư mục nặng là nạp hết vào RAM. Dùng chung cơ chế với
+    /api/fs/browse (backend/api/fs.py) — cùng 1 chính sách, không giải hai lần."""
+    roots = _pham_vi_cho_phep()
+    p = Path(req.folder_path).resolve()
+    if roots and not _trong_pham_vi(str(p), roots):
+        raise HTTPException(403, f"Thư mục ngoài phạm vi cho phép: {p}")
     if not p.exists() or not p.is_dir():
         raise HTTPException(400, f"Thư mục không tồn tại: {req.folder_path}")
 
@@ -108,10 +122,12 @@ def process_folder(
         raise HTTPException(400, "Không tìm thấy file GL02*.zip trong thư mục đã chọn")
 
     task_token = cham459901_service.init_progress()
-    background_tasks.add_task(
-        cham459901_service.run_process, bytes_by_kind["zip"], task_token,
-        bytes_by_kind.get("hub_di"), bytes_by_kind.get("hub_den"), bytes_by_kind.get("ton"),
-    )
+    threading.Thread(
+        target=cham459901_service.run_process,
+        args=(bytes_by_kind["zip"], task_token,
+              bytes_by_kind.get("hub_di"), bytes_by_kind.get("hub_den"), bytes_by_kind.get("ton")),
+        daemon=True,
+    ).start()
     return {
         "task_token":   task_token,
         "unrecognized": unrecognized,

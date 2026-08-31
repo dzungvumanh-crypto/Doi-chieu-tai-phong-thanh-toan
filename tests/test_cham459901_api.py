@@ -173,6 +173,44 @@ class TestProcessFolderEndpoint:
         assert r.status_code == 400
         assert "GL02" in r.json()["detail"]
 
+    def test_ngoai_pham_vi_FOLDER_PICKER_ROOTS_bi_tu_choi_403(
+        self, admin_client, monkeypatch, tmp_path,
+    ):
+        """Review PR#43 mục 2: trước fix, folder_path tuỳ ý từ client đọc được bất kỳ
+        thư mục nào (VD data/ chứa SQLite). Có cấu hình FOLDER_PICKER_ROOTS thì thư
+        mục ngoài phạm vi phải bị chặn TRƯỚC khi p.iterdir()/read_bytes()."""
+        from backend.core.config import settings
+
+        root = tmp_path / "goc_cho_phep"
+        root.mkdir()
+        ngoai_pham_vi = tmp_path / "du_lieu_nhay_cam"
+        ngoai_pham_vi.mkdir()
+        (ngoai_pham_vi / "secret.db").write_bytes(b"khong duoc doc")
+        monkeypatch.setattr(settings, "FOLDER_PICKER_ROOTS", [str(root)])
+
+        r = admin_client.post(
+            "/api/cham459901/process_folder",
+            json={"folder_path": str(ngoai_pham_vi)},
+        )
+        assert r.status_code == 403
+
+    def test_khong_cau_hinh_FOLDER_PICKER_ROOTS_van_giu_hanh_vi_cu(
+        self, admin_client, monkeypatch, tmp_path,
+    ):
+        """FOLDER_PICKER_ROOTS rỗng (mặc định) — không chặn nhầm, giữ đúng hành vi
+        trước khi có bản vá này."""
+        monkeypatch.setattr(svc, "TEMP_DIR", tmp_path / "out")
+        src_dir = tmp_path / "src"
+        src_dir.mkdir()
+        zip_bytes = _make_gl02_zip([_gl02_row("REF1", dr="100000")])
+        (src_dir / "GL02_20260601_1000.zip").write_bytes(zip_bytes)
+
+        r = admin_client.post(
+            "/api/cham459901/process_folder",
+            json={"folder_path": str(src_dir)},
+        )
+        assert r.status_code == 200
+
 
 class TestCancelEndpoint:
     def test_cancel_unknown_token_404(self, admin_client):

@@ -700,6 +700,8 @@ def _handle_api_error(e: Exception) -> bool:
         return True
     ui.notify(str(e), type="negative")
     return False
+
+
 async def open_folder_picker(on_select, *, initial_path: str = "") -> None:
     """Dialog điều hướng cây thư mục qua GET /api/fs/browse — hoạt động đúng bất
     kể trình duyệt mở ở máy nào (không dùng hộp thoại OS cục bộ, không dùng
