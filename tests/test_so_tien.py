@@ -103,3 +103,23 @@ class TestDocSoTienOTrong:
         """Ô trống được tha, nhưng mẫu lạ thật sự bên cạnh vẫn phải raise."""
         with pytest.raises(LoiDinhDangSoTien, match='không đúng định dạng'):
             doc_so_tien(pd.Series(['', 'abc']), nguon='TEST', ten_cot='X')
+
+    def test_pandas_na_dtype_string_treated_as_zero(self):
+        """Review PR#66 (khanhbq693) mục 2: pd.NA (dtype 'string' nullable, khác
+        object dtype) sau astype(str) ra '' — không nằm trong _O_TRONG bằng
+        chuỗi, nhưng trong_nan = sr.isna() bắt được TRƯỚC khi ép chuỗi nên vẫn
+        an toàn. Test này khoá hành vi, không để ai dọn nhầm trong_nan vì
+        tưởng thừa (chỉ thấy _O_TRONG cũng đủ nếu test bằng dtype object)."""
+        out = doc_so_tien(
+            pd.Series(['150000', pd.NA], dtype='string'), nguon='TEST', ten_cot='X',
+        )
+        assert list(out) == [150_000, 0]
+
+    def test_pandas_nat_treated_as_zero(self):
+        """NaT (Not-a-Time, dtype datetime lẫn vào cột tưởng toàn số) ra chuỗi
+        'NaT' sau astype(str) — không khớp _O_TRONG bằng chuỗi, chỉ trong_nan
+        (sr.isna()) bắt được vì NaT cũng là missing value của pandas."""
+        out = doc_so_tien(
+            pd.Series(['150000', pd.NaT]), nguon='TEST', ten_cot='X',
+        )
+        assert list(out) == [150_000, 0]
