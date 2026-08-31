@@ -60,4 +60,16 @@ class Settings:
     NTP_TIMEOUT_SEC: float = float(os.getenv("NTP_TIMEOUT_SEC", "3"))
     NTP_DRIFT_THRESHOLD_SEC: int = int(os.getenv("NTP_DRIFT_THRESHOLD_SEC", "5"))
 
+    # Thư mục gốc được phép duyệt qua /api/fs/browse (folder-picker dùng chung cho
+    # ACH/ILO1000/459901/Đối chiếu Song phương) — phân cách bằng dấu chấm phẩy, ví dụ:
+    # G:\Đối chiếu song phương;D:\Data\ACH. Review PR#68 (khanhbq693): trước đây không
+    # giới hạn gốc, ai có quyền vào 1 trong 4 module trên duyệt được TOÀN BỘ ổ đĩa máy
+    # chủ. Để RỖNG (mặc định) = KHÔNG giới hạn (giữ hành vi cũ) — vì chưa biết chắc cấu
+    # trúc thư mục dữ liệu thật trên máy chủ production, ép giới hạn sai sẽ chặn nhầm
+    # người dùng thật. backend/api/fs.py tự log WARNING mỗi lần duyệt khi để rỗng, để
+    # lỗ hổng còn mở KHÔNG bị lãng quên trong im lặng.
+    FOLDER_PICKER_ROOTS: list = [
+        p.strip() for p in os.getenv("FOLDER_PICKER_ROOTS", "").split(";") if p.strip()
+    ]
+
 settings = Settings()

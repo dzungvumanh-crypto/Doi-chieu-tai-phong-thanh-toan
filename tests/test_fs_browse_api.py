@@ -147,3 +147,79 @@ class TestBrowse:
         monkeypatch.setattr(fs_mod.os, 'scandir', _raise)
         r = admin_client.get('/api/fs/browse', params={'path': str(tmp_path)})
         assert r.status_code == 403
+
+
+# ── FOLDER_PICKER_ROOTS — giới hạn phạm vi duyệt (review PR#68, khanhbq693 mục 2) ──
+# Trước fix: require_any_feature() siết ĐƯỢC AI vào, nhưng _list_dir() nhận path tuỳ
+# ý, không có gốc giới hạn — một chuyên viên chỉ có menu.cham_ach vẫn duyệt được
+# C:\Users, ổ mạng đã map, toàn bộ cây thư mục máy chủ.
+
+class TestFolderPickerRoots:
+    def test_khong_cau_hinh_thi_van_khong_gioi_han_nhu_cu(self, admin_client, tmp_path):
+        """FOLDER_PICKER_ROOTS rỗng (mặc định, chưa ai cấu hình) — giữ hành vi cũ,
+        không chặn nhầm khi chưa biết cấu trúc thư mục thật trên server production."""
+        r = admin_client.get('/api/fs/browse', params={'path': str(tmp_path)})
+        assert r.status_code == 200
+
+    def test_duyet_trong_pham_vi_goc_duoc_phep(self, admin_client, tmp_path, monkeypatch):
+        import backend.api.fs as fs_mod
+
+        root = tmp_path / 'goc_cho_phep'
+        root.mkdir()
+        (root / 'con').mkdir()
+        monkeypatch.setattr(fs_mod.settings, 'FOLDER_PICKER_ROOTS', [str(root)])
+
+        r = admin_client.get('/api/fs/browse', params={'path': str(root)})
+        assert r.status_code == 200
+        assert any(e['name'] == 'con' for e in r.json()['entries'])
+
+        r2 = admin_client.get('/api/fs/browse', params={'path': str(root / 'con')})
+        assert r2.status_code == 200
+
+    def test_duyet_ngoai_pham_vi_bi_tu_choi_403(self, admin_client, tmp_path, monkeypatch):
+        import backend.api.fs as fs_mod
+
+        root = tmp_path / 'goc_cho_phep'
+        root.mkdir()
+        ngoai_pham_vi = tmp_path / 'noi_khac'
+        ngoai_pham_vi.mkdir()
+        monkeypatch.setattr(fs_mod.settings, 'FOLDER_PICKER_ROOTS', [str(root)])
+
+        r = admin_client.get('/api/fs/browse', params={'path': str(ngoai_pham_vi)})
+        assert r.status_code == 403
+
+    def test_khoi_dau_chi_hien_danh_sach_goc_khong_phai_o_dia(self, admin_client, tmp_path, monkeypatch):
+        import backend.api.fs as fs_mod
+
+        root = tmp_path / 'goc_cho_phep'
+        root.mkdir()
+        monkeypatch.setattr(fs_mod.settings, 'FOLDER_PICKER_ROOTS', [str(root)])
+
+        r = admin_client.get('/api/fs/browse')
+        assert r.status_code == 200
+        body = r.json()
+        assert body['path'] is None
+        assert [e['path'] for e in body['entries']] == [str(root)]
+
+    def test_len_1_cap_tai_goc_dung_lai_khong_lo_thu_muc_cha_that(self, admin_client, tmp_path, monkeypatch):
+        """'Lên 1 cấp' tại đúng thư mục gốc phải dừng (parent=None) — không lộ ra
+        thư mục cha thật của gốc (VD gốc nằm trong G:\\, không được lộ G:\\)."""
+        import backend.api.fs as fs_mod
+
+        root = tmp_path / 'goc_cho_phep'
+        root.mkdir()
+        monkeypatch.setattr(fs_mod.settings, 'FOLDER_PICKER_ROOTS', [str(root)])
+
+        r = admin_client.get('/api/fs/browse', params={'path': str(root)})
+        assert r.status_code == 200
+        assert r.json()['parent'] is None
+
+    def test_path_traversal_tu_ben_trong_goc_bi_chan(self, admin_client, tmp_path, monkeypatch):
+        import backend.api.fs as fs_mod
+
+        root = tmp_path / 'goc_cho_phep'
+        root.mkdir()
+        monkeypatch.setattr(fs_mod.settings, 'FOLDER_PICKER_ROOTS', [str(root)])
+
+        r = admin_client.get('/api/fs/browse', params={'path': str(root / '..')})
+        assert r.status_code == 403

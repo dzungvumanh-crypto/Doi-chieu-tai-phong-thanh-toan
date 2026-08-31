@@ -77,6 +77,13 @@ FEATURES: dict[str, str] = {
     # Chấm đối chiếu ACH — Phòng Thanh toán
     "menu.cham_ach": "Chấm đối chiếu ACH (menu)",
 
+    # Chấm ILO1000 — Phòng Thanh toán. Review PR#68 (khanhbq693): mã này được
+    # require_feature()/has_feature() ở 6 nơi (5 endpoint backend/api/ilo1000.py +
+    # frontend/pages/cham_ilo1000.py) từ trước nhưng CHƯA từng khai ở đây — không
+    # hiện trên màn Phân quyền chức năng nên QTV không có cách nào cấp cho ai, cả
+    # module chỉ admin dùng được, không lỗi không log.
+    "menu.cham_ilo1000": "Chấm ILO1000 (menu)",
+
     # Đối chiếu Song phương — Phòng Thanh toán. 1 trang duy nhất (3 thẻ: Phân loại/Đến/Đi,
     # xem frontend/pages/doi_chieu_song_phuong.py) dùng chung 1 feature-code menu — trước đây
     # kênh↔hub và hub↔core có menu.* riêng, gộp lại 2026-08-28 vì role không phải admin cấp 1
@@ -181,6 +188,7 @@ FEATURE_GROUPS: list[dict] = [
                 "actions": ["cham_459901.process"],
             },
             {"code": "menu.cham_ach", "actions": []},
+            {"code": "menu.cham_ilo1000", "actions": []},
             {
                 "code": "menu.doi_chieu_song_phuong",
                 "actions": [

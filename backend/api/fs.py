@@ -8,11 +8,13 @@ nào — BẤT KỲ ai đã đăng nhập, kể cả chuyên viên không có me
 này, liệt kê được toàn bộ ổ đĩa/thư mục trên máy chủ)."""
 
 import ctypes
+import logging
 import os
 import string
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from backend.core.config import settings
 from backend.core.deps import require_any_feature
 
 router = APIRouter(prefix='/api/fs', tags=['fs'])
@@ -22,13 +24,51 @@ _CO_QUYEN_DUYET_THU_MUC = require_any_feature(
 )
 
 _SKIP_NAMES = {'$recycle.bin', 'system volume information'}
+_log = logging.getLogger(__name__)
+
+
+def _pham_vi_cho_phep() -> list[str]:
+    """Danh sách thư mục gốc được phép duyệt (settings.FOLDER_PICKER_ROOTS), đã chuẩn
+    hoá tuyệt đối. Rỗng = KHÔNG giới hạn (xem cảnh báo ở _canh_bao_khong_gioi_han)."""
+    return [os.path.abspath(p) for p in settings.FOLDER_PICKER_ROOTS]
+
+
+def _trong_pham_vi(abs_path: str, roots: list[str]) -> bool:
+    norm = os.path.normcase(os.path.normpath(abs_path))
+    return any(
+        norm == os.path.normcase(os.path.normpath(r))
+        or norm.startswith(os.path.normcase(os.path.normpath(r)) + os.sep)
+        for r in roots
+    )
+
+
+def _canh_bao_khong_gioi_han() -> None:
+    _log.warning(
+        'FOLDER_PICKER_ROOTS chưa cấu hình trong .env — /api/fs/browse KHÔNG giới hạn '
+        'phạm vi (duyệt được mọi ổ đĩa/thư mục máy chủ). Đặt FOLDER_PICKER_ROOTS để vá '
+        'lỗ hổng này (xem backend/core/config.py).'
+    )
 
 
 def _list_drives() -> dict:
-    """path rỗng/None → liệt kê ổ đĩa Windows. Dùng GetLogicalDrives() (chỉ đọc
-    bitmask trong bộ nhớ, KHÔNG chạm filesystem) thay vì lặp os.path.isdir cho
-    từng chữ cái — tránh treo nếu có ổ mạng đã map nhưng mất kết nối (đã gặp
-    thật với G:\\ trong dự án)."""
+    """path rỗng/None → điểm khởi đầu duyệt cây thư mục.
+
+    Có cấu hình FOLDER_PICKER_ROOTS: hiện đúng danh sách gốc được phép (không phải ổ
+    đĩa thật) — người dùng chỉ thấy và duyệt được trong phạm vi đó.
+
+    Không cấu hình (rỗng): hành vi CŨ — liệt kê toàn bộ ổ đĩa Windows. Dùng
+    GetLogicalDrives() (chỉ đọc bitmask trong bộ nhớ, KHÔNG chạm filesystem) thay vì
+    lặp os.path.isdir cho từng chữ cái — tránh treo nếu có ổ mạng đã map nhưng mất kết
+    nối (đã gặp thật với G:\\ trong dự án)."""
+    roots = _pham_vi_cho_phep()
+    if roots:
+        entries = [
+            {'name': os.path.basename(r.rstrip(os.sep)) or r, 'path': r} for r in roots
+        ]
+        entries.sort(key=lambda x: x['name'].lower())
+        return {'path': None, 'parent': None, 'entries': entries}
+
+    _canh_bao_khong_gioi_han()
     bitmask = ctypes.windll.kernel32.GetLogicalDrives()
     entries = [
         {'name': f'{letter}:\\', 'path': f'{letter}:\\'}
@@ -50,8 +90,16 @@ def _breadcrumbs(abs_path: str) -> list[dict]:
     return crumbs
 
 
-def _compute_parent(abs_path: str) -> str | None:
-    """None nghĩa là 'lên nữa thì về danh sách ổ đĩa'."""
+def _compute_parent(abs_path: str, roots: list[str]) -> str | None:
+    """None nghĩa là 'lên nữa thì về màn khởi đầu' (danh sách gốc cho phép, hoặc danh
+    sách ổ đĩa nếu không giới hạn). Có giới hạn: dừng đúng tại gốc, không lộ ra thư mục
+    cha THẬT của gốc (VD gốc 'G:\\Đối chiếu song phương' thì 'lên' dừng ở đó, không lộ
+    ra 'G:\\')."""
+    if roots and any(
+        os.path.normcase(os.path.normpath(abs_path)) == os.path.normcase(os.path.normpath(r))
+        for r in roots
+    ):
+        return None
     _drive, tail = os.path.splitdrive(abs_path)
     if not tail or tail in ('\\', '/'):
         return None
@@ -63,6 +111,12 @@ def _compute_parent(abs_path: str) -> str | None:
 
 def _list_dir(raw_path: str) -> dict:
     abs_path = os.path.abspath(raw_path)
+    roots = _pham_vi_cho_phep()
+    if roots:
+        if not _trong_pham_vi(abs_path, roots):
+            raise HTTPException(403, f'Thư mục ngoài phạm vi cho phép: {abs_path}')
+    else:
+        _canh_bao_khong_gioi_han()
     if not os.path.isdir(abs_path):
         raise HTTPException(400, f'Thư mục không tồn tại: {abs_path}')
 
@@ -87,7 +141,7 @@ def _list_dir(raw_path: str) -> dict:
     entries.sort(key=lambda x: x['name'].lower())
     return {
         'path': abs_path,
-        'parent': _compute_parent(abs_path),
+        'parent': _compute_parent(abs_path, roots),
         'entries': entries,
         'breadcrumbs': _breadcrumbs(abs_path),
     }

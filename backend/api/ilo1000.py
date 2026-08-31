@@ -13,6 +13,27 @@ from backend.services import ilo1000_service
 router = APIRouter(prefix='/api/ilo1000', tags=['ilo1000'])
 
 _MAX_UPLOAD = 1_000 * 1024 * 1024  # 1 GB
+_CHUNK_SIZE = 1024 * 1024  # 1 MB/lần đọc
+
+
+async def _read_limited(f: UploadFile, max_bytes: int) -> bytes:
+    """Đọc theo khối, dừng NGAY khi vượt `max_bytes` — không nạp trọn file vào RAM
+    trước khi biết đã vượt trần (review PR#68 mục P68-5, khanhbq693: `await f.read()`
+    trần đọc hết file oversized vào RAM RỒI mới kiểm dung lượng, quá muộn). Cùng ý
+    tưởng `backend/core/uploads.py::read_limited()` mà develop đã có (dùng ở ACH) —
+    viết lại cục bộ vì module đó chưa tồn tại trên nhánh này (gộp lại khi rebase,
+    xem Implementation-notes.html card 68)."""
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await f.read(_CHUNK_SIZE)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise HTTPException(413, f'Tổng kích thước file vượt quá {_MAX_UPLOAD // (1024 * 1024)} MB.')
+        chunks.append(chunk)
+    return b''.join(chunks)
 
 
 def _dl_headers(filename: str) -> dict:
@@ -41,10 +62,8 @@ async def start_job(
     saved: dict[str, bytes] = {}
     total_size = 0
     for f in files:
-        data = await f.read()
+        data = await _read_limited(f, _MAX_UPLOAD - total_size)
         total_size += len(data)
-        if total_size > _MAX_UPLOAD:
-            raise HTTPException(413, 'Tổng kích thước file vượt quá 1 GB.')
         filename = f.filename or f'file_{len(saved)}'
         saved[filename] = data
 
