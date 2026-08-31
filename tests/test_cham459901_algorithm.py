@@ -621,7 +621,7 @@ class TestJobLifecycle:
 
     def test_delete_result_removes_directory(self, tmp_path, monkeypatch):
         monkeypatch.setattr(svc, 'TEMP_DIR', tmp_path)
-        result_token = 'fake-result-token'
+        result_token = svc.init_progress()   # token thật luôn là str(uuid.uuid4())
         out_dir = tmp_path / result_token
         out_dir.mkdir(parents=True)
         (out_dir / 'huy.xlsx').write_text('x')
@@ -631,7 +631,42 @@ class TestJobLifecycle:
 
     def test_delete_result_missing_returns_false(self, tmp_path, monkeypatch):
         monkeypatch.setattr(svc, 'TEMP_DIR', tmp_path)
-        assert svc.delete_result('khong-ton-tai') is False
+        assert svc.delete_result(svc.init_progress()) is False
+
+
+# ── resolve_result_dir() — chốt chặn hồi quy path traversal (review PR#43) ─────
+# Trước fix: delete_result()/download_result ghép token từ URL thẳng vào path rồi
+# rmtree/read_bytes, không kiểm gì. Token '..\\..\\data' (dấu \\ — %2F bị chặn
+# nhưng %5C thì không, và pathlib trên Windows hiểu \\ là dấu phân cách) xoá được
+# thư mục data/ chứa SQLite. Token luôn là str(uuid.uuid4()) nên chặn ngay từ
+# bước kiểm định dạng UUID là đủ, không cần đợi tới is_relative_to().
+
+class TestResolveResultDir:
+    def test_token_khong_phai_uuid_bi_tu_choi(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(svc, 'TEMP_DIR', tmp_path)
+        assert svc.resolve_result_dir(r'..\..\data') is None
+        assert svc.resolve_result_dir('../../data') is None
+        assert svc.resolve_result_dir('') is None
+        assert svc.resolve_result_dir('khong-phai-uuid') is None
+
+    def test_token_uuid_hop_le_tra_ve_dung_thu_muc(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(svc, 'TEMP_DIR', tmp_path)
+        token = svc.init_progress()
+        out_dir = svc.resolve_result_dir(token)
+        assert out_dir == (tmp_path / token).resolve()
+
+    def test_delete_result_chan_token_thoat_thu_muc(self, tmp_path, monkeypatch):
+        """Dựng đúng nạn nhân + gọi đúng hàm public (delete_result), không chỉ test
+        resolve_result_dir() đơn lẻ — verify rmtree thật sự không chạm tới nạn nhân."""
+        monkeypatch.setattr(svc, 'TEMP_DIR', tmp_path / 'temp_cham459901')
+        (tmp_path / 'temp_cham459901').mkdir()
+        victim = tmp_path / 'du_lieu_quan_trong'
+        victim.mkdir()
+        (victim / 'data.db').write_text('khong duoc xoa')
+
+        assert svc.delete_result(r'..\du_lieu_quan_trong') is False
+        assert victim.exists()
+        assert (victim / 'data.db').exists()
 
 
 # ── _write_excel — smoke test cấu trúc file xuất ra ────────────────────────────
@@ -746,6 +781,75 @@ class TestReadTonFile:
         df = svc._read_ton_file(xlsx_bytes)
         assert df.iloc[0]['TRCD'] == ''
 
+    def test_thieu_cot_bat_buoc_raise_input_error_khong_phai_key_error(self):
+        """Review PR#43 (khanhbq693) mục 6/9: nhận diện file theo tên rất lỏng
+        ('459' in name and 'ton' in name) — thả nhầm file khác định dạng vào là
+        dễ xảy ra. Trước fix: thiếu cột -> KeyError -> 500 'Lỗi hệ thống'. Nay
+        phải là InputError với tên cột thiếu, giống hệt cách _load_data() đã làm
+        cho GL02 gốc."""
+        df = pd.DataFrame([{'TRDATE': '20260601', 'REFERENCE': 'REF1'}])  # thiếu hầu hết cột
+        buf = io.BytesIO()
+        df.to_excel(buf, index=False, engine='openpyxl')
+        with pytest.raises(svc.InputError, match='thiếu cột bắt buộc'):
+            svc._read_ton_file(buf.getvalue())
+
+
+def _make_hub_di_xlsx(so_tien_thuc_chuyen='500000', thieu_cot=False) -> bytes:
+    """Header ở dòng Excel thứ 2 (index 1), dữ liệu từ dòng thứ 3 (index 2) —
+    đúng layout _read_hub_di() kỳ vọng."""
+    import openpyxl
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(['Tiêu đề báo cáo'])
+    cols = ['Số Trace 1', 'Số tiền thực chuyển', 'Hệ thống thanh toán',
+            'Nội dung chuyển tiền', 'Số tham chiếu lệnh gốc']
+    if thieu_cot:
+        cols = cols[:-1]   # bỏ 'Số tham chiếu lệnh gốc'
+    ws.append(cols)
+    row = ['123456789', so_tien_thuc_chuyen, 'ACH-NAPAS', 'noi dung', 'REFGOC1']
+    ws.append(row[:len(cols)])
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _make_hub_den_xlsx(so_tien_lenh_goc='500000', thieu_cot=False) -> bytes:
+    """Header ở dòng Excel thứ 3 (index 2), dữ liệu từ dòng thứ 4 (index 3) —
+    đúng layout _read_hub_den() kỳ vọng."""
+    import openpyxl
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(['Tiêu đề báo cáo'])
+    ws.append([''])
+    cols = ['Số trace', 'Số tiền lệnh gốc', 'Hệ thống thanh toán',
+            'Số thành công/MSGID', 'Số REF HUB']
+    if thieu_cot:
+        cols = cols[:-1]   # bỏ 'Số REF HUB'
+    ws.append(cols)
+    row = ['987654321', so_tien_lenh_goc, 'ACH-NAPAS', 'MSG123456', 'REFHUB1']
+    ws.append(row[:len(cols)])
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+class TestReadHubDiHubDen:
+    def test_hub_di_doc_dung_khi_du_cot(self):
+        df = svc._read_hub_di(_make_hub_di_xlsx('500000'))
+        assert df.iloc[0]['AMOUNT'] == 500_000
+
+    def test_hub_di_thieu_cot_raise_input_error(self):
+        with pytest.raises(svc.InputError, match='thiếu cột bắt buộc'):
+            svc._read_hub_di(_make_hub_di_xlsx(thieu_cot=True))
+
+    def test_hub_den_doc_dung_khi_du_cot(self):
+        df = svc._read_hub_den(_make_hub_den_xlsx('500000'))
+        assert df.iloc[0]['AMOUNT'] == 500_000
+
+    def test_hub_den_thieu_cot_raise_input_error(self):
+        with pytest.raises(svc.InputError, match='thiếu cột bắt buộc'):
+            svc._read_hub_den(_make_hub_den_xlsx(thieu_cot=True))
+
 
 class TestLoadData:
     def test_filters_by_locac_customer_ccy(self):
@@ -853,6 +957,10 @@ class TestProcessZipTonFile:
         assert result['ton_rows_added'] == 1
         # 1 dòng GL02 + 1 dòng tồn -> cả 2 phải được phân loại (bảo toàn dòng)
         assert _group_row_sum(result) == 2
+        # Review PR#43 mục 5/8: total_before tính TRƯỚC khi ghép dòng tồn — "Tổng
+        # số dòng" hiển thị nhỏ hơn tổng 7 ô cộng lại. total_rows PHẢI bằng đúng
+        # số dòng đã thật sự phân loại (không tính filtered_rows vì đã bị lọc ra).
+        assert result['total_rows'] == _group_row_sum(result) + result['filtered_rows']
 
     def test_missing_ton_bytes_behaves_like_before(self, tmp_path, monkeypatch):
         """Bước 2 trong yêu cầu: không có file tồn -> chạy y hệt trước khi có tham số mới."""

@@ -167,7 +167,10 @@ def download_result(
     if file_type not in VALID_TYPES:
         raise HTTPException(400, f"file_type phải là: {', '.join(sorted(VALID_TYPES))}")
 
-    path = cham459901_service.TEMP_DIR / token / f"{file_type}.xlsx"
+    out_dir = cham459901_service.resolve_result_dir(token)
+    if out_dir is None:
+        raise HTTPException(404, "File không tồn tại hoặc đã hết hạn")
+    path = out_dir / f"{file_type}.xlsx"
     if not path.exists():
         raise HTTPException(404, "File không tồn tại hoặc đã hết hạn")
 

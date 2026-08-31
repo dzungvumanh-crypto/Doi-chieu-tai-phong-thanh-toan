@@ -7007,7 +7007,146 @@ else:
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-17</footer>
+  <!-- 79 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">79</span>
+      <span class="card-title">Chấm 459901 — quy tắc phân loại 7 nhóm (thác nước) & tối ưu ghi Excel</span>
+      <span class="badge badge-done">Hoàn thành</span>
+    </div>
+    <div class="card-body">
+      <p>Review PR#43 (khanhbq693, mục 12) chỉ ra 5 quyết định không hiển nhiên trong
+      <code>cham459901_service.py</code> mà code trỏ tới "Implementation-notes.html" như đã ghi, nhưng
+      thực tế chưa từng có card nào — bổ sung lại từ đúng lý do đã có sẵn trong comment code (không suy
+      diễn thêm).</p>
+
+      <div class="label">Thứ tự thác nước: Hủy → Đi → 1000 Hoàn trả → Chuyển chi nhánh (CCN) → Điện KO
+      offline → Cân CN → GD khác</div>
+      <table>
+        <tr><th>Bước</th><th>Khoá ghép</th><th>Vì sao đúng thứ tự này</th></tr>
+        <tr><td>1000 Hoàn trả</td><td>TRACE (REFERENCE = số Trace của HUB)</td>
+          <td>Khoá chính xác nhất (verify precision &gt;99,9% trên dữ liệu thật) — phải chạy
+          <b>TRƯỚC</b> CCN/KO. Từng thử chạy SAU (khoá mờ theo số tiền), kết quả: CCN cướp mất 1 chân
+          của giao dịch 1000HT trước khi 1000HT kịp nhận diện (case thật
+          <code>REFERENCE=1000API845335</code>).</td></tr>
+        <tr><td>Chuyển chi nhánh (CCN)</td><td>(số tiền, REMARK không phân biệt hoa/thường,
+          bỏ khoảng trắng thừa)</td>
+          <td>2 chân cùng 1 giao dịch do 2 chi nhánh khác nhau gõ tay REMARK khác case
+          (VD <code>'chuyen tien'</code> / <code>'CHUYEN TIEN'</code>) vẫn phải gộp cùng 1 nhóm — không
+          chuẩn hoá case thì chân lẻ rơi xuống Cân CN, có thể ghép nhầm với giao dịch không liên quan
+          trùng số tiền tròn. Nhóm không cân bằng tuyệt đối (Nợ≠Có) bị loại bỏ HOÀN TOÀN, không tách một
+          phần — rơi về GD khác chấm tay.</td></tr>
+        <tr><td>Cân CN</td><td>(TRBRCD, số tiền), Nợ=Có theo nhóm</td>
+          <td>Riêng <code>TRBRCD=1000</code>: chỉ nhận nếu tổng tiền nhóm &gt;5 tỷ — nhóm nhỏ ở nhánh
+          1000 do người dùng xử lý thủ công, cố tình để nguyên trong GD khác cho chấm tay thay vì tự động
+          gộp sai.</td></tr>
+        <tr><td>Điện KO offline</td><td>DK1 Có: <code>USERID</code> khớp mẫu
+          <code>^\d{4}KO$</code>; DK2 Nợ: REMARK chứa <code>'Remitting Amount:VND'</code>; DK3: ghép
+          cặp N:N theo đúng số tiền</td>
+          <td>KHÔNG dùng <code>contains('KO')</code> đơn thuần — từng bắt nhầm USERID tên đăng nhập giao
+          dịch viên tình cờ có hậu tố "KO" (VD <code>'DTRLTKO'</code>) xếp nhầm vào Điện KO offline. Mẫu
+          regex chỉ khớp đúng 4 số + "KO" (verify 58/58 USERID KO offline thật). Ghép cặp N:N bắt buộc
+          Nợ=Có từng cặp đúng số tiền — dòng không tìm được đối tác thì KHÔNG đoán, đánh dấu "nghi ngờ"
+          rơi về GD khác.</td></tr>
+      </table>
+
+      <div class="label">1000 Hoàn trả — khớp TRACE 2 hướng, Số trace HUB đến có thể 2 dãy</div>
+      <p>HUB đến kênh ACH-NAPAS đôi khi có 2 dãy số trace cách nhau bởi <code>';'</code>. Verify dữ liệu
+      thật tháng 5: <b>49/97 dòng ACH-NAPAS khớp REFERENCE của TK459 với dãy ĐẦU, 46/97 dòng CHỈ khớp với
+      dãy THỨ HAI</b> — bỏ sót dãy 2 khiến ~47% giao dịch 1000 Hoàn trả kênh ACH biến mất nhầm vào GD
+      khác. Phải thử khớp CẢ HAI dãy rồi gộp kết quả, không chỉ tin dãy đầu.</p>
+
+      <div class="label">Ghi Excel bằng XML trực tiếp, stream theo lô 5000 dòng</div>
+      <p>Nhanh hơn <code>xlsxwriter</code> ~8 lần, giữ đủ formatting. <code>sheet1.xml</code> STREAM
+      thẳng vào ZIP theo từng lô thay vì dựng toàn bộ chuỗi XML trong RAM rồi mới ghi — bucket "Lệnh Đi"
+      cả triệu dòng từng gây <code>MemoryError</code> khi RAM máy trống thấp, vì cách cũ giữ đồng thời
+      list các chuỗi row + chuỗi nối + bản encode UTF-8 trong bộ nhớ cùng lúc.</p>
+    </div>
+  </div>
+
+  <!-- 80 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">80</span>
+      <span class="card-title">Chấm 459901 — vá 9/12 điểm review PR#43 (khanhbq693)</span>
+      <span class="badge badge-done">Đã sửa</span>
+    </div>
+    <div class="card-body">
+      <p>Review 2 đợt (18/08 và 23/08) trên PR#43 nêu 12 điểm, trong đó 2 điểm 🔴 khiến tính năng
+      <b>chưa từng chạy được qua giao diện</b>: commit <code>299904f</code> import
+      <code>open_folder_picker</code> từ <code>frontend/shared.py</code> — hàm không tồn tại, làm
+      <b>sập cả 27 trang</b> (không riêng trang 459901, vì vòng lặp nạp trang trong
+      <code>frontend/main.py</code> không có try/except); và nút "Xử lý" gọi
+      <code>api.post_multipart</code> — hàm chưa bao giờ tồn tại trong <code>api_client.py</code>.</p>
+
+      <table>
+        <tr><th>#</th><th>Vấn đề</th><th>Sửa</th></tr>
+        <tr><td>1 🔴</td><td>ImportError sập cả app</td>
+          <td>Mang <code>open_folder_picker()</code> từ nhánh <code>feat/doi-chieu-song-phuong-den-
+          2026-08-30</code> (bản đã chạy thật + có test) sang <code>frontend/shared.py</code> nhánh này.
+          Verify: mô phỏng đúng vòng lặp nạp trang của <code>main.py</code> — 27/27 trang nạp được.</td></tr>
+        <tr><td>2 🔴</td><td><code>api.post_multipart</code> không tồn tại</td>
+          <td>Đổi sang <code>api.post_upload</code> đúng chữ ký
+          (<code>[("files", (tên, bytes, mime)), ...]</code>) — cùng bẫy y hệt đã gặp ở PR#54 (ACH).</td></tr>
+        <tr><td>3 🔴</td><td>Xoá được thư mục bất kỳ trên máy chủ qua <code>delete_result</code></td>
+          <td>Token luôn là <code>str(uuid.uuid4())</code> — thêm <code>resolve_result_dir()</code> kiểm
+          định dạng UUID trước, rồi <code>is_relative_to(TEMP_DIR)</code> làm lớp phòng thủ thứ hai. Áp
+          dụng cho cả <code>download_result</code> (Khánh lưu ý có lỗ tương tự, chỉ đọc).</td></tr>
+        <tr><td>6</td><td>Vòng poll vô hạn khi backend restart, nuốt cả lỗi hết phiên</td>
+          <td><code>except Exception: continue</code> → phân biệt <code>SessionExpiredError</code> (qua
+          <code>_handle_api_error</code>, redirect đúng pattern DESIGN.md) với lỗi mạng thật (giới hạn
+          <code>_MAX_POLL_FAILS=4</code> lần rồi dừng + báo rõ, không lặp vĩnh viễn).</td></tr>
+        <tr><td>7</td><td><code>asyncio.create_task</code> trong event handler (vi phạm DESIGN.md)</td>
+          <td><code>on_cancel_click</code> đổi thành <code>async def</code> gắn thẳng vào
+          <code>.on("click", ...)</code>; <code>delete_result</code> (đã là async) gắn thẳng, bỏ lambda
+          bọc <code>create_task</code>.</td></tr>
+        <tr><td>8</td><td><code>total_rows</code> không cộng dòng tồn tháng trước</td>
+          <td><code>total_before</code> tính TRƯỚC khi ghép <code>df_ton</code> — "Tổng số dòng" hiển thị
+          nhỏ hơn tổng 7 ô cộng lại. Sửa: <code>total_rows = total_before + ton_rows_added</code>.</td></tr>
+        <tr><td>9</td><td>3 hàm đọc file mới không dùng <code>InputError</code></td>
+          <td><code>_read_ton_file</code>/<code>_read_hub_di</code>/<code>_read_hub_den</code> truy cột
+          trực tiếp → thiếu cột là <code>KeyError</code> → 500 "Lỗi hệ thống". Rủi ro cao vì nhận diện
+          file theo tên rất lỏng (VD chỉ cần chứa chữ "quay"). Thêm kiểm cột thiếu tường minh, raise
+          <code>InputError</code> nêu đúng tên cột — cùng cách <code>_load_data()</code> (GL02) đã làm.</td></tr>
+        <tr><td>11</td><td>Frontend import thẳng module backend (tiền lệ đầu tiên, kéo pandas+pyzipper)</td>
+          <td>Copy <code>classify_upload_filename()</code> (15 dòng, thuần so khớp tên) sang
+          <code>frontend/pages/cham_459901.py</code> làm bản riêng CHỈ để hiển thị nhãn — logic phân loại
+          THẬT vẫn ở service.py, server không tin nhãn client.</td></tr>
+        <tr><td>12</td><td>5 quyết định nghiệp vụ chưa ghi tài liệu, code trỏ vào tài liệu không tồn tại</td>
+          <td>Xem card 79 — viết lại từ đúng lý do đã có trong comment code, sửa luôn 5 chỗ code trỏ nhầm
+          "card 21" (thật ra là card khác, chủ đề báo cáo TH không liên quan).</td></tr>
+      </table>
+
+      <div class="label">Chưa làm — cần quyết định của Business Owner, không tự ý làm</div>
+      <table>
+        <tr><th>#</th><th>Việc</th><th>Vì sao chưa làm</th></tr>
+        <tr><td>4</td><td><code>/process_folder</code> đọc bất kỳ thư mục nào trên máy chủ, không giới
+          hạn thư mục gốc</td>
+          <td>Đã hỏi lại Business Owner: "chế độ chọn thư mục server" cho 459901/Đối chiếu Song phương là
+          tính năng đang CHỦ ĐỘNG xây (khác lý do ACH bỏ hẳn tính năng này 13/08) — endpoint đã có RBAC
+          (<code>cham_459901.process</code>) và dùng chung cơ chế <code>open_folder_picker()</code> +
+          <code>/api/fs/browse</code> (đã vá quyền ở PR#68) với ACH/ILO1000/Song-phương trước đây. Việc
+          còn lại — 1 thư mục gốc cố định khai trong <code>.env</code> — là quyết định hạ tầng cụ thể
+          (root path thật trên máy chủ production), không tự chọn giá trị được.</td></tr>
+        <tr><td>5</td><td>PR lạc hậu 5 commit, xung đột 3 file với <code>develop</code></td>
+          <td>Cùng tình trạng PR#54/#66/#68/#69 — chờ Khánh chốt chiến lược rebase, đặc biệt bảng so
+          sánh <code>develop</code> đã đổi <code>BackgroundTasks</code> → <code>threading.Thread</code>
+          (tránh bể 40 luồng anyio) mà PR#43 chưa theo — không tự resolve một mình.</td></tr>
+        <tr><td>10</td><td><code>/process_folder</code> nạp cả thư mục vào RAM, route <code>def</code>
+          (không async) chiếm bể luồng anyio</td>
+          <td>Cùng nguyên nhân gốc với mục 5 (thiết kế lại cách chạy nền) — sửa nửa vời (chỉ đổi
+          <code>async def</code>) không giải quyết được bể luồng, cần làm cùng lúc rebase.</td></tr>
+      </table>
+
+      <div class="label">Test</div>
+      <p>Thêm test cho mục 3 (<code>TestResolveResultDir</code>, chốt cả token traversal thật lẫn dựng
+      nạn nhân), mục 8 (assert <code>total_rows</code>), mục 9 (thiếu cột ở cả 3 hàm đọc file). 539/539
+      test pass (1 skip do máy em thiếu PIL, môi trường). Xác nhận riêng: mô phỏng vòng lặp nạp 27 trang
+      của <code>frontend/main.py</code> — 0 lỗi.</p>
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-31</footer>
 </div>
 </body>
 </html>

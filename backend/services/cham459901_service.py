@@ -114,10 +114,28 @@ def cancel_progress(task_token: str) -> bool:
     return True
 
 
+def resolve_result_dir(token: str) -> Path | None:
+    """Token luôn là str(uuid.uuid4()) (xem init_progress/process_zip) — token không đúng
+    dạng UUID là giả mạo, không phải job thật. Chặn TRƯỚC khi ghép vào path: '..\\..\\data'
+    không phải UUID hợp lệ nên bị từ chối ở đây, không tới được rmtree/read_bytes.
+    is_relative_to() là lớp phòng thủ thứ hai — giữ cả khi kiểm UUID có sơ hở nào đó."""
+    try:
+        uuid.UUID(token)
+    except ValueError:
+        log.warning("cham459901: token không hợp lệ (không phải UUID): %r", token)
+        return None
+    out_dir = (TEMP_DIR / token).resolve()
+    temp_root = TEMP_DIR.resolve()
+    if not out_dir.is_relative_to(temp_root) or out_dir == temp_root:
+        log.warning("cham459901: token thoát khỏi TEMP_DIR: %r -> %s", token, out_dir)
+        return None
+    return out_dir
+
+
 def delete_result(result_token: str) -> bool:
     """Xóa thư mục kết quả trên server (khi người dùng phát hiện sai sót, muốn làm lại)."""
-    out_dir = TEMP_DIR / result_token
-    if not out_dir.exists():
+    out_dir = resolve_result_dir(result_token)
+    if out_dir is None or not out_dir.exists():
         return False
     shutil.rmtree(out_dir, ignore_errors=True)
     return True
@@ -261,7 +279,7 @@ def process_zip(
         "ko_rows":       len(df_ko),
         "can_cn_rows":   len(df_can_cn),
         "khac_rows":     len(df_khac),
-        "total_rows":    total_before,
+        "total_rows":    total_before + ton_rows_added,
         "filtered_rows": filtered_rows,
         "ton_rows_added": ton_rows_added,
         "hub_provided":  hub_di is not None,
@@ -343,6 +361,13 @@ def _read_ton_file(raw_bytes: bytes) -> pd.DataFrame:
     phân loại lại từ đầu, không giữ trạng thái/ghi chú cũ."""
     raw = pd.read_excel(io.BytesIO(raw_bytes), engine='calamine')
     raw.columns = raw.columns.astype(str).str.strip()
+
+    missing = sorted(set(_TON_COLS) - set(raw.columns))
+    if missing:
+        raise InputError(
+            f"File tồn tháng trước thiếu cột bắt buộc: {', '.join(missing)}. "
+            "Kiểm tra đúng file 459_TON_Tx.xlsx xuất từ GL02 gốc."
+        )
     df = raw[_TON_COLS].copy()
 
     for col in _TON_STR_COLS:
@@ -413,7 +438,7 @@ def _classify(
     # đã dùng khóa mờ theo số tiền từng khiến CCN/KO bị cướp; nay đã đảo lại vì khóa
     # TRACE chính xác hơn nhiều so với khóa amt+REMARK (CCN) hay amt-pairing (KO) —
     # để 1000HT chạy sau sẽ khiến CCN cướp mất 1 chân trước khi 1000HT kịp nhận diện
-    # (xem Implementation-notes.html, case REFERENCE=1000API845335).
+    # (xem Implementation-notes.html card 79, case REFERENCE=1000API845335).
     _set_prog(task_token, 60, "Bước 3 — Đối chiếu 1000 Hoàn trả...")
     if hub_di is not None and hub_den is not None and len(df_khac) > 0:
         mask_ht, mask_ht_candidate = _mark_1000ht(df_khac, hub_di, hub_den)
@@ -462,6 +487,16 @@ def _read_hub_di(raw_bytes: bytes) -> pd.DataFrame:
     raw = pd.read_excel(io.BytesIO(raw_bytes), header=None, engine='calamine')
     df = raw.iloc[2:].copy()
     df.columns = raw.iloc[1].tolist()
+
+    can_thiet = ['Số Trace 1', 'Số tiền thực chuyển', 'Hệ thống thanh toán',
+                 'Nội dung chuyển tiền', 'Số tham chiếu lệnh gốc']
+    missing = sorted(set(can_thiet) - set(df.columns))
+    if missing:
+        raise InputError(
+            f"File HUB đi thiếu cột bắt buộc: {', '.join(missing)}. "
+            "Kiểm tra đúng file 'Quay_danh sach giao dich chuyen tien di', "
+            "tiêu đề nằm ở dòng Excel thứ 2."
+        )
     df = df.dropna(subset=['Số Trace 1']).reset_index(drop=True)
 
     amt   = pd.to_numeric(df['Số tiền thực chuyển'], errors='coerce').fillna(0.0).round(0)
@@ -480,7 +515,7 @@ def _trace_candidates(raw: pd.Series) -> tuple[pd.Series, pd.Series]:
     cách nhau bởi ';' (gặp ở giao dịch kênh ACH-NAPAS). KHÔNG thể chỉ tin dãy đầu: verify dữ
     liệu thật Tháng 5 cho thấy 49/97 dòng ACH-NAPAS khớp REFERENCE của TK459 với dãy ĐẦU,
     46/97 dòng chỉ khớp với dãy THỨ HAI — bỏ sót dãy 2 khiến ~47% giao dịch 1000 Hoàn trả kênh
-    ACH biến mất vào GD khác (xem Implementation-notes.html). Mỗi dãy lấy 9 ký tự cuối (phòng
+    ACH biến mất vào GD khác (xem Implementation-notes.html card 79). Mỗi dãy lấy 9 ký tự cuối (phòng
     trace dài hơn 9 số — phần thừa phía trước không phải trace thật). seg2 là NaN nếu không
     có ';'."""
     parts = raw.astype(str).str.split(';')
@@ -503,6 +538,16 @@ def _read_hub_den(raw_bytes: bytes) -> pd.DataFrame:
     raw = pd.read_excel(io.BytesIO(raw_bytes), header=None, engine='calamine')
     df = raw.iloc[3:].copy()
     df.columns = raw.iloc[2].tolist()
+
+    can_thiet = ['Số trace', 'Số tiền lệnh gốc', 'Hệ thống thanh toán',
+                 'Số thành công/MSGID', 'Số REF HUB']
+    missing = sorted(set(can_thiet) - set(df.columns))
+    if missing:
+        raise InputError(
+            f"File HUB đến thiếu cột bắt buộc: {', '.join(missing)}. "
+            "Kiểm tra đúng file 'Danh sach giao dich den', "
+            "tiêu đề nằm ở dòng Excel thứ 3."
+        )
     df = df.dropna(subset=['Số trace']).reset_index(drop=True)
 
     amt = pd.to_numeric(df['Số tiền lệnh gốc'], errors='coerce').fillna(0.0).round(0)
@@ -592,7 +637,7 @@ def _mark_ccn(df: pd.DataFrame) -> pd.Series:
     """Chuyển chi nhánh: ghép (số tiền + REMARK), khớp khi Tổng Nợ = Tổng Có của CẢ NHÓM.
     REMARK so khớp KHÔNG phân biệt hoa/thường và bỏ khoảng trắng thừa — 2 chân cùng 1 giao dịch
     do 2 chi nhánh khác nhau gõ tay REMARK khác case (VD 'chuyen tien' / 'CHUYEN TIEN') vẫn phải
-    được nhận diện cùng 1 nhóm (xem Implementation-notes.html) — nếu không, chân lẻ rơi xuống
+    được nhận diện cùng 1 nhóm (xem Implementation-notes.html card 79) — nếu không, chân lẻ rơi xuống
     bước Cân CN phía sau và có thể bị ghép nhầm với giao dịch không liên quan trùng số tiền tròn.
     Nhóm không cân bằng tuyệt đối (VD REMARK trùng lặp giữa nhiều giao dịch khác nhau)
     bị loại bỏ hoàn toàn — không tách một phần — để rơi về GD khác chấm thủ công."""
@@ -633,7 +678,7 @@ def _mark_ko(df: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
     """Điện KO offline (DK1-DK3): DK1 — tập ứng viên Có = USERID đúng mẫu "<mã chi nhánh 4
     số>KO" (VD '1000KO', '3511KO' — verify 58/58 USERID KO offline thật đều khớp mẫu này).
     KHÔNG dùng contains('KO') đơn thuần — bắt nhầm USERID tên đăng nhập giao dịch viên tình cờ
-    có hậu tố "KO" (VD 'DTRLTKO') gây xếp nhầm Điện KO offline (xem Implementation-notes.html).
+    có hậu tố "KO" (VD 'DTRLTKO') gây xếp nhầm Điện KO offline (xem Implementation-notes.html card 79).
     DK2 — tập ứng viên Nợ = DRAMOUNT của các dòng có REMARK chứa marker 'Remitting Amount:VND'.
     DK3 — ghép cặp N:N theo SỐ TIỀN bằng nhau giữa 1 dòng Nợ (DK2) và 1 dòng Có (DK1), bắt buộc
     Nợ=Có từng cặp; dòng không tìm được đối tác cùng số tiền thì KHÔNG đánh dấu, rơi về GD khác
@@ -733,7 +778,7 @@ def _write_excel(df: pd.DataFrame, path: Path, sheet_name: str, hex_color: str) 
 
     sheet1.xml được STREAM trực tiếp vào ZIP theo từng lô _ROW_CHUNK dòng thay vì
     dựng toàn bộ chuỗi XML trong RAM rồi mới ghi — bucket "Lệnh Đi" cả triệu dòng từng
-    gây MemoryError khi RAM máy trống thấp (xem Implementation-notes.html card 21) vì
+    gây MemoryError khi RAM máy trống thấp (xem Implementation-notes.html card 79) vì
     cách cũ giữ đồng thời list các chuỗi row + chuỗi nối + bản encode UTF-8 trong bộ nhớ.
     """
     df_out   = df[OUTPUT_COLS].reset_index(drop=True)
