@@ -10,6 +10,7 @@ Thay hẳn `test_doi_chieu_song_phuong_kenh_api.py` + `test_doi_chieu_song_phuon
 Chạy: .venv\\Scripts\\python.exe -m pytest tests/test_doi_chieu_song_phuong_kenh_core_api.py -v
 """
 
+import csv
 import io
 import time
 import zipfile
@@ -94,6 +95,13 @@ def _setup_core_csv(day_dir):
     df.to_csv(day_dir / "202_DEN.csv", index=False, encoding="utf-8-sig")
 
 
+def _doc_csv(content: bytes) -> list[tuple]:
+    """Đọc 1 file CSV kết quả (đổi 2026-08-31, xem export.py) — trả list dòng dạng tuple, cùng
+    hình dạng `_doc_sheets()` trả cho 1 sheet, để so sánh dễ với assertion cũ."""
+    text = content.decode("utf-8-sig")
+    return [tuple(row) for row in csv.reader(text.splitlines())]
+
+
 def _doc_sheets(content: bytes) -> dict[str, list[tuple]]:
     """Đọc thẳng bằng `openpyxl` (KHÔNG qua `pd.read_excel`) — venv hiện có `openpyxl` 3.1.2,
     thấp hơn mức tối thiểu pandas tự đặt ra để đọc (>=3.1.5), dù bản thân openpyxl vẫn đọc/ghi
@@ -138,30 +146,57 @@ class TestStartFolderEndpoint:
         assert prog["ket_qua"]["trang_thai"]["kenh_hub"] == {"trang_thai": "da_doi_chieu", "ly_do": None}
         assert prog["ket_qua"]["trang_thai"]["hub_core"] == {"trang_thai": "da_doi_chieu", "ly_do": None}
         assert any(f.startswith("doi_chieu_song_phuong_kenh_tonghop") for f in prog["files"])
-        assert any(f.startswith("hub_core_202_") for f in prog["files"])
+        assert any(f == "doi_chieu_song_phuong_kenh_hub_chi_tiet.csv" for f in prog["files"])
+        assert any(f == "doi_chieu_song_phuong_kenh_kenh_chi_tiet.csv" for f in prog["files"])
+        assert any(f.startswith("hub_core_202_") and f.endswith(".xlsx") for f in prog["files"])
+        assert any(f == "hub_core_202_20260825_core_chi_tiet.csv" for f in prog["files"])
+        assert any(f == "hub_core_202_20260825_hub_chi_tiet.csv" for f in prog["files"])
         assert any(f.startswith("bao_cao_tong_hop_202_") for f in prog["files"])
         # File gộp phải đứng đầu danh sách (báo cáo chính)
         assert prog["files"][0].startswith("bao_cao_tong_hop_202_")
 
-        # Tải thử 1 file mỗi bước
+        # Tải thử 1 file mỗi bước — 2026-08-31: chi tiết đổi sang CSV (đo thật ghi Excel chiếm
+        # 60% tổng thời gian job, xem Implementation-notes.html card 98), chỉ bảng tổng hợp còn Excel.
         tonghop = next(f for f in prog["files"] if f.startswith("doi_chieu_song_phuong_kenh_tonghop"))
         r_dl = admin_client.get(f"/api/doi_chieu_song_phuong_kenh_core/download/{job_id}/{tonghop}")
         assert r_dl.status_code == 200 and r_dl.headers["content-type"] == _XLSX_MIME
         kenh_sheets = _doc_sheets(r_dl.content)
-        assert set(kenh_sheets.keys()) == {"Bang1_TongHop", "Hub_ChiTiet", "Kenh_ChiTiet"}
+        assert set(kenh_sheets.keys()) == {"Bang1_TongHop"}
         bang1_kenh_rows = kenh_sheets["Bang1_TongHop"]
-        # 1 dòng HUB (202-SPRT, xem _setup_hub_kenh) + header — cột "Ngày"/"Ngân hàng"/"Loại" đầu tiên
-        assert kenh_sheets["Hub_ChiTiet"][0][:3] == ("Ngày", "Ngân hàng", "Loại")
-        assert len(kenh_sheets["Hub_ChiTiet"]) == 2
-        assert kenh_sheets["Hub_ChiTiet"][1][:3] == ("20260825", "202", "SPRT")
-        assert kenh_sheets["Kenh_ChiTiet"][0][:3] == ("Ngày", "Ngân hàng", "Loại")
-        assert len(kenh_sheets["Kenh_ChiTiet"]) == 2
-        assert kenh_sheets["Kenh_ChiTiet"][1][:3] == ("20260825", "202", "SPRT")
 
-        hub_core_file = next(f for f in prog["files"] if f.startswith("hub_core_202_"))
+        r_dl_hub = admin_client.get(
+            f"/api/doi_chieu_song_phuong_kenh_core/download/{job_id}/doi_chieu_song_phuong_kenh_hub_chi_tiet.csv"
+        )
+        assert r_dl_hub.status_code == 200 and r_dl_hub.headers["content-type"].startswith("text/csv")
+        hub_chi_tiet_rows = _doc_csv(r_dl_hub.content)
+        r_dl_kenh = admin_client.get(
+            f"/api/doi_chieu_song_phuong_kenh_core/download/{job_id}/doi_chieu_song_phuong_kenh_kenh_chi_tiet.csv"
+        )
+        assert r_dl_kenh.status_code == 200 and r_dl_kenh.headers["content-type"].startswith("text/csv")
+        kenh_chi_tiet_rows = _doc_csv(r_dl_kenh.content)
+        # 1 dòng HUB (202-SPRT, xem _setup_hub_kenh) + header — cột "Ngày"/"Ngân hàng"/"Loại" đầu tiên
+        assert hub_chi_tiet_rows[0][:3] == ("Ngày", "Ngân hàng", "Loại")
+        assert len(hub_chi_tiet_rows) == 2
+        assert hub_chi_tiet_rows[1][:3] == ("20260825", "202", "SPRT")
+        assert kenh_chi_tiet_rows[0][:3] == ("Ngày", "Ngân hàng", "Loại")
+        assert len(kenh_chi_tiet_rows) == 2
+        assert kenh_chi_tiet_rows[1][:3] == ("20260825", "202", "SPRT")
+
+        hub_core_file = next(f for f in prog["files"] if f.startswith("hub_core_202_") and f.endswith(".xlsx"))
         r_dl2 = admin_client.get(f"/api/doi_chieu_song_phuong_kenh_core/download/{job_id}/{hub_core_file}")
         assert r_dl2.status_code == 200 and r_dl2.headers["content-type"] == _XLSX_MIME
-        tonghop_core_rows = _doc_sheets(r_dl2.content)["TongHop"]
+        hub_core_sheets = _doc_sheets(r_dl2.content)
+        assert set(hub_core_sheets.keys()) == {"TongHop"}
+        tonghop_core_rows = hub_core_sheets["TongHop"]
+
+        r_dl_core_ct = admin_client.get(
+            f"/api/doi_chieu_song_phuong_kenh_core/download/{job_id}/hub_core_202_20260825_core_chi_tiet.csv"
+        )
+        assert r_dl_core_ct.status_code == 200 and r_dl_core_ct.headers["content-type"].startswith("text/csv")
+        r_dl_hub_ct = admin_client.get(
+            f"/api/doi_chieu_song_phuong_kenh_core/download/{job_id}/hub_core_202_20260825_hub_chi_tiet.csv"
+        )
+        assert r_dl_hub_ct.status_code == 200 and r_dl_hub_ct.headers["content-type"].startswith("text/csv")
 
         # File gộp: 2 sheet, số liệu phải khớp tuyệt đối với 2 file riêng ở trên
         bao_cao = next(f for f in prog["files"] if f.startswith("bao_cao_tong_hop_202_"))

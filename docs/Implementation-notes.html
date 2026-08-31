@@ -9060,6 +9060,69 @@ Bất biến MIS: 522.774 + 36.462 = 559.236 (khớp tổng gốc)</pre>
     </div>
   </div>
 
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">99</span>
+      <span class="card-title">Đối chiếu Song phương — Giai đoạn 2: đổi 2 sheet chi tiết lớn từ Excel sang CSV, giảm 57% tổng thời gian job (đo thật)</span>
+      <span class="badge badge-done">HOÀN THIỆN CODE+TEST · 2026-08-31 · 737/737 pass · verify dữ liệu thật</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Quyết định — người dùng đồng ý đổi, trừ bảng tổng hợp</div>
+      <p>Từ số đo thật ở card 98 (ghi Excel chiếm 60% tổng thời gian job, module không dùng bất kỳ
+        style/freeze pane/công thức Excel nào), người dùng đồng ý đổi 2 sheet chi tiết lớn
+        (700-800k dòng) sang CSV, GIỮ bảng tổng hợp nhỏ ở Excel (không đáng đổi). Tham khảo module
+        Phân loại dữ liệu (<code>doi_chieu_song_phuong_service.py::process_zip</code>) — đã ghi
+        CSV trực tiếp từ lâu. Phát hiện thêm: hạ tầng tải file
+        (<code>backend/api/doi_chieu_song_phuong_kenh_core.py</code>) đã CHỜ SẴN — `_MEDIA_TYPES`
+        đã có `.csv`, docstring endpoint download đã ghi "chi tiết .csv/.xlsx" — không cần sửa gì
+        ở API/frontend, cả 2 đều generic theo tên file trong danh sách <code>job["files"]</code>.</p>
+
+      <div class="label">Sửa — giữ NGUYÊN tên file tổng hợp cũ, chỉ thêm CSV mới cạnh nó</div>
+      <table>
+        <tr><th>File</th><th>Trước</th><th>Sau</th></tr>
+        <tr><td><code>doi_chieu_song_phuong_kenh_tonghop.xlsx</code></td><td>3 sheet</td>
+          <td>Chỉ còn <code>Bang1_TongHop</code></td></tr>
+        <tr><td><code>doi_chieu_song_phuong_kenh_hub_chi_tiet.csv</code></td><td>—</td><td>Mới</td></tr>
+        <tr><td><code>doi_chieu_song_phuong_kenh_kenh_chi_tiet.csv</code></td><td>—</td><td>Mới</td></tr>
+        <tr><td><code>hub_core_{ma_nh}_{ngay}.xlsx</code></td><td>3 sheet</td>
+          <td>Chỉ còn <code>TongHop</code></td></tr>
+        <tr><td><code>hub_core_{ma_nh}_{ngay}_core_chi_tiet.csv</code></td><td>—</td><td>Mới</td></tr>
+        <tr><td><code>hub_core_{ma_nh}_{ngay}_hub_chi_tiet.csv</code></td><td>—</td><td>Mới</td></tr>
+      </table>
+      <p><code>kenh/export.py::export_bao_cao()</code> và <code>core/export.py::export_excel()</code>
+        đổi chữ ký từ nhận 1 `out_path` (1 file) sang nhận `out_dir` (+ `base_name` cho core) và
+        trả `list[Path]` đã ghi — caller (<code>kenh_core_service.py::_run</code>) đổi
+        `files.append(1 tên)` thành `files.extend(p.name for p in ...)`. Không đổi hàm dựng dữ
+        liệu (`build_bang1_rows`/`_gop_chi_tiet`/`build_tong_hop`) — chỉ đổi cách ghi ra file. Bỏ
+        hằng số `KENH_TONG_HOP_FILENAME` trùng lặp (export.py giờ là nguồn chân lý duy nhất cho
+        tên file). CSV dùng `encoding="utf-8-sig"` — đúng quy ước CSV khác của module.</p>
+
+      <div class="label">Kết quả đo thật — giảm 57% tổng thời gian job (NH 202/25.8.2026, dữ liệu thật)</div>
+      <table>
+        <tr><th></th><th>Trước (Excel)</th><th>Sau (CSV chi tiết)</th></tr>
+        <tr><td>Ghi Kênh↔Hub</td><td>183.9s</td><td><b>7.1s</b> (nhanh ~26 lần)</td></tr>
+        <tr><td>Ghi Hub↔Core</td><td>223.9s</td><td><b>9.3s</b> (nhanh ~24 lần)</td></tr>
+        <tr><td><b>Tổng job</b></td><td><b>678.7s</b></td><td><b>288.8s (giảm 57%)</b></td></tr>
+      </table>
+      <p>Đúng khớp dự đoán từ card 98 (ghi Excel ~60% tổng thời gian). Nút thắt còn lại sau khi
+        sửa: giải mã AES ZIP GL02 (194.2s, ~67% thời gian còn lại) — chi phí thật không tránh được
+        khi phải giải mã lại (không có <code>{ma_nh}_DEN.csv</code> phân loại sẵn), không phải lỗi
+        code — ứng viên tối ưu tiếp theo nếu cần (song song hoá giải mã 8 file CSV thành viên
+        trong ZIP bằng multiprocessing, CHƯA thử, cần biết số core CPU máy chủ thật trước khi cam
+        kết).</p>
+
+      <div class="label">Test</div>
+      <p>Viết lại <code>test_full_flow_ca_2_buoc_ra_ket_qua</code> — đọc CSV trực tiếp
+        (<code>csv.reader</code>, không qua openpyxl) thay vì đọc sheet trong 1 file Excel gộp;
+        thêm hàm <code>_doc_csv()</code> cùng hình dạng trả về với <code>_doc_sheets()</code> để
+        so sánh dễ. Content-type CSV thật trả về <code>"text/csv; charset=utf-8"</code> (Starlette
+        tự thêm charset) — assertion đổi sang <code>.startswith("text/csv")</code>. 113/113 test
+        module + 737/737 toàn dự án pass. Verify thêm bằng dữ liệu thật (không chỉ test tổng hợp
+        nhỏ) — xác nhận kết quả số liệu (số dòng khớp, phân bố nhãn) giống hệt lượt chạy Excel
+        trước đó, chỉ khác định dạng file xuất ra.</p>
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-31</footer>
 </div>
 </body>

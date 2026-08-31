@@ -38,7 +38,6 @@ from backend.services.doi_chieu_song_phuong_kenh.pipeline import main_from_dir a
 TEMP_DIR = Path("data/temp_doi_chieu_song_phuong_kenh_core")
 CLEANUP_TTL = 4 * 3600
 CAC_NGAN_HANG = ("201", "202", "203", "311")
-KENH_TONG_HOP_FILENAME = "doi_chieu_song_phuong_kenh_tonghop.xlsx"
 
 STAGE_LABELS = ["Kênh↔Hub", "Hub↔Core", "Hoàn tất"]
 
@@ -230,10 +229,9 @@ def _run(job_id: str, goc_dir: str, ngay: str, ma_nh: str, output_dir: str) -> N
                     "trang_thai": "chua_doi_chieu", "ly_do": "không xác định được kết quả (xem log)",
                 }
             else:
-                tong_hop_path = output_dir_p / KENH_TONG_HOP_FILENAME
-                with do_thoi_gian(log, "ghi Excel Kênh↔Hub"):
-                    export_bao_cao([ket_qua_kenh], tong_hop_path)
-                files.append(KENH_TONG_HOP_FILENAME)
+                with do_thoi_gian(log, "ghi Excel+CSV Kênh↔Hub"):
+                    kenh_files = export_bao_cao([ket_qua_kenh], output_dir_p)
+                files.extend(p.name for p in kenh_files)
 
                 chenh_lech: dict[str, dict] = {}
                 canh_bao: list[dict] = []
@@ -268,10 +266,10 @@ def _run(job_id: str, goc_dir: str, ngay: str, ma_nh: str, output_dir: str) -> N
             log(f"[Hub↔Core] {e}")
             job["ket_qua"]["trang_thai"]["hub_core"] = {"trang_thai": "chua_doi_chieu", "ly_do": str(e)}
         else:
-            out_name = f"hub_core_{ma_nh}_{ngay}.xlsx"
-            with do_thoi_gian(log, "ghi Excel Hub↔Core"):
-                export_core_excel(ket_qua_core, output_dir_p / out_name)
-            files.append(out_name)
+            base_name = f"hub_core_{ma_nh}_{ngay}"
+            with do_thoi_gian(log, "ghi Excel+CSV Hub↔Core"):
+                hub_core_files = export_core_excel(ket_qua_core, output_dir_p, base_name)
+            files.extend(p.name for p in hub_core_files)
 
             core_df, hub_df = ket_qua_core["core_df"], ket_qua_core["hub_df"]
             job["ket_qua"]["hub_core"] = {

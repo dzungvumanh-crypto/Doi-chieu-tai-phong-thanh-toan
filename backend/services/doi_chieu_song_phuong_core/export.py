@@ -1,5 +1,7 @@
-"""Xuất kết quả đối chiếu HUB↔CORE ra Excel — 3 sheet: tổng hợp theo nhãn KETQUADOICHIEU +
-chi tiết CORE + chi tiết HUB (quyết định 2026-08-26: cần cả 2, không chỉ chi tiết).
+"""Xuất kết quả đối chiếu HUB↔CORE — 1 file Excel tổng hợp (`TongHop`, theo nhãn KETQUADOICHIEU)
++ 2 file CSV chi tiết CORE/HUB (quyết định 2026-08-26: cần cả 2, không chỉ chi tiết; đổi 2026-08-31
+sang CSV cho phần chi tiết — số đo thật cho thấy ghi Excel là nút thắt lớn nhất, xem
+Implementation-notes.html card 98, module không dùng style/công thức Excel nào nên không mất gì).
 """
 
 from pathlib import Path
@@ -46,18 +48,27 @@ def build_tong_hop(core_df: pd.DataFrame, hub_df: pd.DataFrame) -> pd.DataFrame:
     return pd.concat([tong, pd.DataFrame([tong_dong])], ignore_index=True)
 
 
-def export_excel(ket_qua: dict, out_path: str | Path) -> Path:
-    """`ket_qua` = dict trả về từ `pipeline.doi_chieu_hub_core()`."""
-    out_path = Path(out_path)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+def export_excel(ket_qua: dict, out_dir: str | Path, base_name: str) -> list[Path]:
+    """`ket_qua` = dict trả về từ `pipeline.doi_chieu_hub_core()`. Ghi vào `out_dir`:
+    `{base_name}.xlsx` (sheet `TongHop`) + `{base_name}_core_chi_tiet.csv` +
+    `{base_name}_hub_chi_tiet.csv` (đổi 2026-08-31, trước là 3 sheet chung 1 file .xlsx). Trả
+    `[tonghop_path, core_csv_path, hub_csv_path]` theo đúng thứ tự đó."""
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
     core_df, hub_df = ket_qua["core_df"], ket_qua["hub_df"]
     tong_hop = build_tong_hop(core_df, hub_df)
 
-    # engine="xlsxwriter" — Core_ChiTiet/Hub_ChiTiet có thể tới ~800k dòng, xlsxwriter ghi nhanh
-    # hơn openpyxl ~30% (xem ghi chú đo đạc ở doi_chieu_song_phuong_kenh/export.py). KHÔNG dùng
-    # `constant_memory=True` — đã verify làm mất dữ liệu âm thầm.
-    with pd.ExcelWriter(out_path, engine="xlsxwriter") as writer:
+    tonghop_path = out_dir / f"{base_name}.xlsx"
+    with pd.ExcelWriter(tonghop_path, engine="xlsxwriter") as writer:
         tong_hop.to_excel(writer, sheet_name="TongHop", index=False)
-        core_df.drop(columns=[KEY_COL], errors="ignore").to_excel(writer, sheet_name="Core_ChiTiet", index=False)
-        hub_df.drop(columns=[KEY_COL], errors="ignore").to_excel(writer, sheet_name="Hub_ChiTiet", index=False)
-    return out_path
+
+    # CSV (không qua ExcelWriter) — Core_ChiTiet/Hub_ChiTiet có thể tới ~800k dòng, ghi CSV nhanh
+    # hơn Excel nhiều lần (đo thật 2026-08-31, xem Implementation-notes.html card 98).
+    # encoding="utf-8-sig" — đúng quy ước CSV khác của module.
+    core_csv_path = out_dir / f"{base_name}_core_chi_tiet.csv"
+    core_df.drop(columns=[KEY_COL], errors="ignore").to_csv(core_csv_path, index=False, encoding="utf-8-sig")
+
+    hub_csv_path = out_dir / f"{base_name}_hub_chi_tiet.csv"
+    hub_df.drop(columns=[KEY_COL], errors="ignore").to_csv(hub_csv_path, index=False, encoding="utf-8-sig")
+
+    return [tonghop_path, core_csv_path, hub_csv_path]

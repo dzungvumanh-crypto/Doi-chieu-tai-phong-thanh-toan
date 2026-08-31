@@ -1,9 +1,11 @@
-"""Xuất kết quả đối chiếu Kênh↔Hub — 1 file Excel, 3 sheet (quyết định 2026-08-28, người dùng
-yêu cầu gộp thành 1 báo cáo, thay hẳn thiết kế cũ "1 file Bảng 1 + nhiều cặp file chi tiết/đơn
-vị"): `Bang1_TongHop` (tổng hợp), `Hub_ChiTiet` (toàn bộ dòng HUB đã gắn cột "TRẠNG THÁI KÊNH"),
-`Kenh_ChiTiet` (toàn bộ dòng KÊNH đã gắn cột "TRẠNG THÁI TẠI HUB") — 2 sheet chi tiết gộp MỌI đơn
-vị (SPRT+SPT) trong `day_results` vào cùng 1 sheet, phân biệt bằng cột "Ngày"/"Ngân hàng"/"Loại"
-chèn ở đầu.
+"""Xuất kết quả đối chiếu Kênh↔Hub — 1 file Excel tổng hợp + 2 file CSV chi tiết (đổi 2026-08-31,
+số đo thật cho thấy ghi Excel chiếm 60% tổng thời gian job — xem Implementation-notes.html card
+98 — module này không dùng style/freeze pane/công thức Excel nào nên đổi sang CSV cho phần chi
+tiết không mất gì ngoài tốc độ). Trước đó (2026-08-28) đã gộp cả 3 vào 1 file Excel 3 sheet:
+`Bang1_TongHop` (tổng hợp, GIỮ Excel — nhỏ, không đáng đổi), `Hub_ChiTiet` (toàn bộ dòng HUB đã
+gắn cột "TRẠNG THÁI KÊNH", ĐỔI CSV), `Kenh_ChiTiet` (toàn bộ dòng KÊNH đã gắn cột "TRẠNG THÁI TẠI
+HUB", ĐỔI CSV) — 2 file chi tiết gộp MỌI đơn vị (SPRT+SPT) trong `day_results`, phân biệt bằng cột
+"Ngày"/"Ngân hàng"/"Loại" chèn ở đầu.
 
 Bảng 1 theo đúng mẫu Table 0 trong `đối chiếu kênh hub Song phương.docx` — tài liệu còn định
 nghĩa "Bảng 1" cho CHIỀU ĐI, module này chỉ làm chiều ĐẾN (quyết định chủ dự án 2026-08-25) nên
@@ -12,10 +14,10 @@ không dựng cột chiều đi: không có dữ liệu thật để dựng, d�
 Nội dung chi tiết lấy nguyên từ `don_vi["chi_tiet"]` (`process.classify_kenh_hub_den`, theo Bước
 1/2 tài liệu v3 27/08/2026) — không đổi logic phân loại, chỉ đổi cách gộp file xuất ra.
 
-⚠️ Gộp 1 sheet chỉ an toàn vì `doi_chieu_song_phuong_kenh_core_service.py` giới hạn mỗi job 1
-ngân hàng (tối đa 2 đơn vị SPRT+SPT/lần) — tổng vẫn dưới giới hạn ~1.048.576 dòng/sheet của Excel
-(NH nhiều giao dịch nhất quan sát được, 311, ~800k dòng HUB thô/ngày). KHÔNG gọi hàm này với
-`day_results` gộp nhiều ngân hàng cùng lúc.
+⚠️ Gộp 1 sheet/1 file chỉ an toàn vì `doi_chieu_song_phuong_kenh_core_service.py` giới hạn mỗi
+job 1 ngân hàng (tối đa 2 đơn vị SPRT+SPT/lần) — tổng vẫn dưới giới hạn ~1.048.576 dòng/sheet của
+Excel (NH nhiều giao dịch nhất quan sát được, 311, ~800k dòng HUB thô/ngày) dù CSV không có giới
+hạn này. KHÔNG gọi hàm này với `day_results` gộp nhiều ngân hàng cùng lúc.
 """
 
 from pathlib import Path
@@ -102,19 +104,27 @@ def _gop_chi_tiet(day_results: list[dict], key: str) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
-def export_bao_cao(day_results: list[dict], out_path: str | Path) -> Path:
-    """Xuất báo cáo Kênh↔Hub — 1 file Excel, 3 sheet (`Bang1_TongHop`/`Hub_ChiTiet`/
-    `Kenh_ChiTiet`, xem docstring module). `day_results` = danh sách kết quả
-    `pipeline.main_from_dir()`, 1 phần tử/ngày (>=1 ngày)."""
-    out_path = Path(out_path)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    # engine="xlsxwriter" (KHÔNG "openpyxl") — 2 sheet chi tiết có thể tới ~800k dòng, xlsxwriter
-    # ghi nhanh hơn ~30% (đo thật: 203s vs 280.6s/765k dòng x 18 cột). ⚠️ ĐÃ THỬ + LOẠI BỎ tuỳ
-    # chọn `constant_memory=True` của xlsxwriter (nhanh hơn nữa, ~140s) — verify phát hiện nó làm
-    # MẤT DỮ LIỆU ÂM THẦM (1 số ô số tiền/ghi chú thành None) trên dữ liệu tiếng Việt thật, không
-    # dùng dù nhanh hơn — dữ liệu tài chính không được đánh đổi lấy tốc độ.
-    with pd.ExcelWriter(out_path, engine="xlsxwriter") as writer:
+def export_bao_cao(day_results: list[dict], out_dir: str | Path) -> list[Path]:
+    """Xuất báo cáo Kênh↔Hub vào `out_dir` — 1 file Excel tổng hợp (`Bang1_TongHop`) + 2 file CSV
+    chi tiết (`Hub_ChiTiet`/`Kenh_ChiTiet`, xem docstring module — đổi 2026-08-31, trước là 3
+    sheet chung 1 file). `day_results` = danh sách kết quả `pipeline.main_from_dir()`, 1 phần
+    tử/ngày (>=1 ngày). Trả `[tonghop_path, hub_csv_path, kenh_csv_path]` theo đúng thứ tự đó."""
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    tonghop_path = out_dir / "doi_chieu_song_phuong_kenh_tonghop.xlsx"
+    with pd.ExcelWriter(tonghop_path, engine="xlsxwriter") as writer:
         build_bang1_rows(day_results).to_excel(writer, sheet_name="Bang1_TongHop", index=False)
-        _gop_chi_tiet(day_results, "hub").to_excel(writer, sheet_name="Hub_ChiTiet", index=False)
-        _gop_chi_tiet(day_results, "kenh").to_excel(writer, sheet_name="Kenh_ChiTiet", index=False)
-    return out_path
+
+    # CSV (không qua ExcelWriter) — 2 file chi tiết có thể tới ~800k dòng, ghi CSV nhanh hơn Excel
+    # nhiều lần (đo thật 2026-08-31: ghi Excel 2 sheet 700-800k dòng ~184-224s/lượt, xem
+    # Implementation-notes.html card 98) vì không phải mã hoá container XML/zip của xlsx.
+    # encoding="utf-8-sig" — đúng quy ước CSV khác của module (GL02/HUB), tránh lỗi hiển thị
+    # tiếng Việt khi mở bằng Excel.
+    hub_csv_path = out_dir / "doi_chieu_song_phuong_kenh_hub_chi_tiet.csv"
+    _gop_chi_tiet(day_results, "hub").to_csv(hub_csv_path, index=False, encoding="utf-8-sig")
+
+    kenh_csv_path = out_dir / "doi_chieu_song_phuong_kenh_kenh_chi_tiet.csv"
+    _gop_chi_tiet(day_results, "kenh").to_csv(kenh_csv_path, index=False, encoding="utf-8-sig")
+
+    return [tonghop_path, hub_csv_path, kenh_csv_path]
