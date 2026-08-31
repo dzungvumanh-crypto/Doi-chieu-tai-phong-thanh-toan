@@ -1,8 +1,5 @@
 """API endpoints cho tính năng Chấm đối chiếu ACH."""
 
-import glob
-import os
-from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
@@ -10,10 +7,18 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from backend.core.deps import require_feature
+from backend.core.uploads import read_limited, safe_filename
 from backend.services import ach_service
 from backend.services.ach.validate import validate_required_files
 
 router = APIRouter(prefix='/api/ach', tags=['ach'])
+
+# Hai mức quyền — giống cham459901 / doi_chieu_song_phuong:
+#   menu.cham_ach     = vào xem trang, kiểm tra file, theo dõi tiến độ, tải kết quả
+#   cham_ach.process  = khởi động / tiếp tục / dừng một lần chạy
+# Tách ra để cấp được quyền chỉ-xem cho người theo dõi kết quả mà không cho chạy.
+_XEM  = require_feature('menu.cham_ach')
+_CHAY = require_feature('cham_ach.process')
 
 _MAX_UPLOAD = 500 * 1024 * 1024  # 500 MB tổng
 
@@ -34,7 +39,7 @@ async def start_job(
     ngay_doi_chieu: str = Form(''),
     bo_qua_checkpoint: bool = Form(False),
     chi_tim_timeout: bool = Form(False),
-    _=Depends(require_feature('menu.cham_ach')),
+    _=Depends(_CHAY),
 ):
     """
     Nhận nhiều file (PDF, GL02.zip, GW.xlsx, MIS_DI.zip x2, MIS_DEN.zip x2).
@@ -62,11 +67,26 @@ async def start_job(
     saved: dict[str, bytes] = {}
     total_size = 0
     for f in files:
-        data = await f.read()
+        # Trần cho TỪNG file = phần dung lượng còn lại của cả lượt: đọc theo
+        # khối và dừng đúng lúc, thay vì nạp trọn file vào RAM rồi mới đo.
+        # Thông điệp phải tự viết: read_limited() nêu con số nó nhận được, mà ở
+        # đây con số đó là phần CÒN LẠI ("vượt quá 137 MB") — người đọc không
+        # hiểu 137 ở đâu ra.
+        try:
+            data = await read_limited(f, _MAX_UPLOAD - total_size)
+        except HTTPException:
+            raise HTTPException(
+                413, f'Tổng kích thước file vượt quá {_MAX_UPLOAD // (1024 * 1024)} MB.')
         total_size += len(data)
-        if total_size > _MAX_UPLOAD:
-            raise HTTPException(413, 'Tổng kích thước file vượt quá 500 MB.')
-        filename = f.filename or f'file_{len(saved)}'
+        # Tên file do client đặt — phải cắt hết thành phần đường dẫn trước khi
+        # ghép vào thư mục job, xem backend/core/uploads.py.
+        filename = safe_filename(f.filename, f'file_{len(saved)}.dat')
+        if filename in saved:
+            raise HTTPException(
+                400,
+                f"Có hai file cùng tên '{filename}' trong một lượt tải lên — "
+                "đổi tên hoặc bỏ bớt rồi thử lại.",
+            )
         saved[filename] = data
 
     ngay = ngay_doi_chieu.strip() or None
@@ -83,65 +103,22 @@ class ValidateRequest(BaseModel):
 @router.post('/validate')
 def validate_files(
     req: ValidateRequest,
-    _=Depends(require_feature('menu.cham_ach')),
+    _=Depends(_XEM),
 ):
     """Kiểm tra sớm theo tên file đã chọn (mode upload) — chưa cần upload nội dung."""
     return validate_required_files(req.filenames)
-
-
-class FolderRequest(BaseModel):
-    folder_path: str
-    ngay_doi_chieu: str = ''
-    bo_qua_checkpoint: bool = False
-    chi_tim_timeout: bool = False
-
-
-@router.post('/validate_folder')
-def validate_folder(
-    req: FolderRequest,
-    _=Depends(require_feature('menu.cham_ach')),
-):
-    """Kiểm tra sớm theo tên file có trong thư mục server (mode folder)."""
-    p = Path(req.folder_path)
-    if not p.exists() or not p.is_dir():
-        raise HTTPException(400, f'Thư mục không tồn tại: {req.folder_path}')
-
-    filenames = [
-        os.path.basename(f)
-        for f in glob.glob(os.path.join(str(p), '**', '*'), recursive=True)
-        if os.path.isfile(f)
-    ]
-    return validate_required_files(filenames)
-
-
-@router.post('/start_folder')
-def start_from_folder(
-    req: FolderRequest,
-    _=Depends(require_feature('menu.cham_ach')),
-):
-    """Chạy pipeline từ thư mục server (không upload file). bo_qua_checkpoint — xem
-    docstring `start_job()`."""
-    p = Path(req.folder_path)
-    if not p.exists() or not p.is_dir():
-        raise HTTPException(400, f'Thư mục không tồn tại: {req.folder_path}')
-
-    ngay = req.ngay_doi_chieu.strip() or None
-    job_id = ach_service.start_from_folder(
-        str(p), ngay, bo_qua_checkpoint=req.bo_qua_checkpoint, chi_tim_timeout=req.chi_tim_timeout,
-    )
-    return {'job_id': job_id}
 
 
 @router.post('/continue/{job_id}')
 async def continue_job(
     job_id: str,
     file: UploadFile,
-    _=Depends(require_feature('menu.cham_ach')),
+    _=Depends(_CHAY),
 ):
     """Checkpoint xác nhận thủ công tại MIS_đi (Bước 3) — nhận file
     <ngày>_ACH_ConfirmMISdi.xlsx đã điền cột LOAI_BO (và REFHUB bổ sung nếu có),
     chạy lại toàn bộ pipeline áp dụng MIS_đi chuẩn rồi tiếp tục tới báo cáo cuối."""
-    data = await file.read()
+    data = await read_limited(file, ten='File xác nhận')
     try:
         ach_service.continue_job(job_id, data, file.filename or 'xac_nhan.xlsx')
     except LookupError as e:
@@ -155,7 +132,7 @@ async def continue_job(
 def poll_job(
     job_id: str,
     since: int = 0,
-    _=Depends(require_feature('menu.cham_ach')),
+    _=Depends(_XEM),
 ):
     """
     Polling tiến độ.
@@ -173,9 +150,6 @@ def poll_job(
         'error':            job['error'],
         'xac_nhan_count':      job.get('xac_nhan_count'),
         'xac_nhan_tong_tien':  job.get('xac_nhan_tong_tien'),
-        'mode':             job.get('mode'),
-        'final_output_dir': job.get('final_output_dir'),
-        'copy_error':       job.get('copy_error'),
         'stage':            job.get('stage', 0),
         'progress':         job.get('progress', 0.0),
         'summary':          job.get('summary'),
@@ -185,7 +159,7 @@ def poll_job(
 @router.post('/cancel/{job_id}')
 def cancel_job(
     job_id: str,
-    _=Depends(require_feature('menu.cham_ach')),
+    _=Depends(_CHAY),
 ):
     ok = ach_service.cancel_job(job_id)
     if not ok:
@@ -197,7 +171,7 @@ def cancel_job(
 def download_file(
     job_id: str,
     filename: str,
-    _=Depends(require_feature('menu.cham_ach')),
+    _=Depends(_XEM),
 ):
     """Tải file kết quả (.xlsx hoặc .csv)."""
     path = ach_service.get_output_file(job_id, filename)

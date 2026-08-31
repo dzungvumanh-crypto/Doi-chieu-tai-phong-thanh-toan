@@ -55,9 +55,9 @@ STATUS = {
                          "dot": "#D97706"},
     "pending_tong_hop": {"label": "Chờ Tổng hợp",  "chip": "bg-yellow-100 text-yellow-700 border-yellow-300",
                          "dot": "#CA8A04"},
-    "pending_gd":       {"label": "Chờ GĐ duyệt",  "chip": "bg-blue-100 text-blue-700 border-blue-300",
+    "pending_gd":       {"label": "Chờ Ban lãnh đạo duyệt", "chip": "bg-blue-100 text-blue-700 border-blue-300",
                          "dot": "#2563EB"},
-    "approved":         {"label": "Đã duyệt",      "chip": "bg-green-100 text-green-700 border-green-300",
+    "approved":         {"label": "Hoàn thành",    "chip": "bg-green-100 text-green-700 border-green-300",
                          "dot": "#16A34A"},
     "rejected":         {"label": "Từ chối",       "chip": "bg-red-100 text-red-700 border-red-300",
                          "dot": "#DC2626", "cell": ("#FEE2E2", "#DC2626")},
@@ -198,6 +198,34 @@ def stepper(labels: list[str], current: int):
 _FONT_HREF = ("https://fonts.googleapis.com/css2?"
               "family=Inter:wght@400;500;600;700&display=swap")
 
+# Bấm vào cả dải màu (header) của ô chọn file là mở hộp thoại chọn file, không
+# bắt người dùng nhắm đúng dấu "+". Quasar chỉ gắn <input type=file> vào riêng
+# nút "+", nên phải bắt click ở cấp document rồi chuyển tiếp sang input đó.
+# Dùng bắt sự kiện nổi bọt (không capture) + loại trừ nút thật để các nút khác
+# trên header (tải lên, xoá hàng đợi) vẫn hoạt động như cũ.
+# Gọi input.click() an toàn: handler của chính Quasar trên input chỉ gọi
+# stopPropagation (không preventDefault) nên hộp thoại vẫn mở, và cú click tổng
+# hợp cũng không nổi ngược lên listener này.
+_UPLOADER_CLICK_JS = """<script>
+if (!window.__uploaderHeaderClickInstalled) {
+  window.__uploaderHeaderClickInstalled = true;
+  document.addEventListener('click', function (ev) {
+    const header = ev.target.closest && ev.target.closest('.q-uploader__header');
+    if (!header) return;
+    if (ev.target.closest('.q-btn, button, label, input, a')) return;
+    const box = header.closest('.q-uploader') || header.parentElement;
+    if (!box || box.classList.contains('disabled')) return;
+    const input = box.querySelector('input[type="file"]');
+    if (input && !input.disabled) input.click();
+  });
+}
+</script>"""
+
+_UPLOADER_CSS = """
+.q-uploader__header { cursor: pointer; }
+.q-uploader__header .q-btn, .q-uploader__header button, .q-uploader__header label { cursor: pointer; }
+"""
+
 
 def install():
     """Gọi một lần đầu mỗi trang — nạp token + font.
@@ -209,5 +237,7 @@ def install():
     ui.add_head_html(
         f"<style>{_css_vars()}\n"
         "body, .q-app { font-family: 'Inter', -apple-system, 'Segoe UI', sans-serif; }"
+        f"{_UPLOADER_CSS}"
         "</style>"
     )
+    ui.add_head_html(_UPLOADER_CLICK_JS)
