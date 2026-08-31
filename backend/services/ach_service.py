@@ -22,6 +22,7 @@ import pandas as pd
 from backend.core.uploads import safe_filename
 from backend.services.ach.pipeline import main_from_dir
 from backend.services.ach.b4_xu_ly_mis_di import _doc_sheet_confirm_mis_di
+from backend.services.ach.so_tien import LoiDinhDangSoTien
 
 from backend.core.config import BASE_DIR
 from backend.core.don_dep import moc_don_gan_nhat
@@ -284,9 +285,11 @@ def _run(job_id: str, input_dir: str, output_dir: str, ngay: str | None,
 
     except Exception as e:
         import traceback
-        if xac_nhan_path is not None and isinstance(e, ValueError):
+        if xac_nhan_path is not None and isinstance(e, ValueError) and not isinstance(e, LoiDinhDangSoTien):
             # Lỗi do file xác nhận điền sai/thiếu (ap_dung_confirm_mis_di) — quay lại
             # chờ xác nhận để người dùng sửa và upload lại, không coi là lỗi chung cuộc.
+            # LoiDinhDangSoTien (GL02/GW đọc lại khi chạy tiếp) loại trừ riêng: đó là lỗi
+            # file gốc, không phải file xác nhận — báo nhầm sẽ tạo vòng lặp không lối ra.
             job['status'] = 'awaiting_confirmation'
             job['error']  = str(e)
             log(f'[LỖI XÁC NHẬN] {e}')
