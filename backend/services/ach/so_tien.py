@@ -20,6 +20,12 @@ Luật (Business Owner chốt 2026-08-10 cho QT, 2026-08-11 cho MIS thừa T-2,
   Nợ) → coi là 0, KHÔNG raise. Giữ đúng hành vi `to_numeric(errors='coerce').
   fillna(0)` mà module này thay thế — module chỉ siết mẫu lạ có nội dung, chưa
   từng có ý định siết ô trống.
+- Ô chỉ chứa dấu `-` → **VẪN raise** (KHÔNG thêm vào ô trống/0). Business Owner
+  xác nhận 2026-08-31: `-` là bút toán đảo/huỷ hoặc điều chỉnh — có ý nghĩa
+  nghiệp vụ thật, không phải "chưa hạch toán". Coi ngầm là 0 sẽ làm biến mất
+  một giao dịch thật khỏi khoá đối chiếu mà không ai biết. Nếu sau này cần xử
+  lý riêng dòng `-`, đó là quyết định ở TẦNG GỌI (phân loại/tách riêng bút toán
+  đảo trước khi tới `doc_so_tien()`), không phải nới luật ở module này.
 """
 import logging
 import re

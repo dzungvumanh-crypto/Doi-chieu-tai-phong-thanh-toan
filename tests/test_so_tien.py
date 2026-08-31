@@ -115,6 +115,14 @@ class TestDocSoTienOTrong:
         )
         assert list(out) == [150_000, 0]
 
+    def test_dash_cell_still_raises_not_treated_as_zero(self):
+        """Review PR#66 mục 3, Business Owner xác nhận 2026-08-31: dấu '-' là
+        bút toán đảo/huỷ/điều chỉnh — có ý nghĩa nghiệp vụ thật, KHÔNG phải ô
+        trống/0. Coi ngầm là 0 sẽ làm biến mất một giao dịch thật khỏi khoá đối
+        chiếu. PHẢI raise để lộ ra, không được lặng lẽ nuốt vào _O_TRONG."""
+        with pytest.raises(LoiDinhDangSoTien, match='không đúng định dạng'):
+            doc_so_tien(pd.Series(['150000', '-']), nguon='TEST', ten_cot='X')
+
     def test_pandas_nat_treated_as_zero(self):
         """NaT (Not-a-Time, dtype datetime lẫn vào cột tưởng toàn số) ra chuỗi
         'NaT' sau astype(str) — không khớp _O_TRONG bằng chuỗi, chỉ trong_nan
