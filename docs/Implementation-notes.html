@@ -8991,6 +8991,75 @@ Bất biến MIS: 522.774 + 36.462 = 559.236 (khớp tổng gốc)</pre>
     </div>
   </div>
 
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">98</span>
+      <span class="card-title">Đối chiếu Song phương — chạy thật NH 202/25.8.2026 lấy log [TIMING], xác định lại ưu tiên Giai đoạn 2 bằng số đo thật</span>
+      <span class="badge badge-done">HOÀN THIỆN · 2026-08-31 · dữ liệu thật, đã xoá sau khi đo</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh — BO uỷ quyền chạy dữ liệu thật để lấy log còn thiếu (card 97)</div>
+      <p>Chạy trực tiếp qua <code>doi_chieu_song_phuong_kenh_core_service.start()</code> (đúng code
+        production, không qua HTTP) trên bộ dữ liệu thật
+        <code>G:\ĐỐI CHIẾU SONG PHƯƠNG\...\dữ liệu\25.8\</code>, NH 202, ngày 25/08/2026 — có đủ
+        HUB, kênh SPRT+SPT, GL02 (164MB), OSB. Chạy 2 lần: (1) nhầm trên code CHƯA có A1/A2 (do đã
+        <code>git checkout --</code> revert khỏi <code>Cham_ILO1000</code> sau khi push card 97 —
+        bài học: xác nhận lại working tree trước khi chạy đo, đừng giả định), (2) đúng trên worktree
+        PR#68 đã có A1/A2. Phát hiện thêm 1 lỗ hổng log nhỏ khi chạy lần 1: <code>_doc_core()</code>
+        gọi <code>ipcas_svc.process_zip(path.read_bytes())</code> KHÔNG truyền <code>log_callback</code>
+        — nhãn <code>[TIMING]</code> tách ở card 97 (Phần A3) sẽ không bao giờ lộ ra ngoài job log
+        thật dù code đúng. Vá 1 dòng (<code>log_callback=log</code>), 113/113 test vẫn xanh.</p>
+
+      <div class="label">Số liệu thật — SAU khi có A1/A2 (678.7s tổng job)</div>
+      <table>
+        <tr><th>Bước</th><th>Thời gian</th><th>% tổng</th></tr>
+        <tr><td>Kênh↔Hub (đọc HUB 1 lần cho 2 đơn vị + đọc kênh + so khớp)</td><td>29.1s</td><td>4%</td></tr>
+        <tr><td><b>Ghi Excel Kênh↔Hub</b></td><td><b>183.9s</b></td><td><b>27%</b></td></tr>
+        <tr><td>Hub↔Core: đọc lại HUB T (tái dùng, chỉ lọc RJCT)</td><td>1.1s</td><td>0.2%</td></tr>
+        <tr><td>Hub↔Core: giải mã AES ZIP GL02</td><td>191.7s</td><td>28%</td></tr>
+        <tr><td>Hub↔Core: vòng lặp Python định tuyến GL02</td><td>21.1s</td><td>3%</td></tr>
+        <tr><td>Hub↔Core: ghi 8 CSV + OSB + phân loại CORE/HUB</td><td>23.8s</td><td>4%</td></tr>
+        <tr><td><b>Ghi Excel Hub↔Core</b></td><td><b>223.9s</b></td><td><b>33%</b></td></tr>
+        <tr><td>Ghi báo cáo tổng hợp</td><td>1.7s</td><td>0.2%</td></tr>
+      </table>
+      <p>So với lượt chạy trước khi có A1/A2 (704.2s, cùng bộ dữ liệu): tiết kiệm <b>~25.5s (3.6%)</b>
+        — đúng như dự đoán trong card 97 (HUB NH 202 nhỏ ~20MB, lợi ích thật thấp cho NH này; NH có
+        HUB lớn hơn — 203/311 — sẽ tiết kiệm tỉ lệ cao hơn, chưa đo). Log xác nhận đúng hành vi: "Dùng
+        lại HUB đã đọc cho NH 202 (đơn vị khác cùng ngân hàng)" (A1) + "dùng lại HUB đã đọc từ bước
+        Kênh↔Hub, bỏ qua đọc lại từ đĩa" (A2).</p>
+
+      <div class="label">Xếp lại ưu tiên Giai đoạn 2 bằng số đo thật (khác suy đoán ban đầu ở card 97)</div>
+      <table>
+        <tr><th>Ứng viên</th><th>Quyết định sau khi có số liệu thật</th></tr>
+        <tr><td><b>Ghi Excel (2 sheet chi tiết lớn)</b> — 407.8s/678.7s = <b>60% tổng thời gian</b></td>
+          <td><b>Ưu tiên #1</b> — nút thắt lớn nhất, xác nhận rõ bằng số đo, không còn là suy đoán.
+          Hướng khả thi: chạy ghi Excel Kênh↔Hub song song (thread nền) với Bước 2/2 Hub↔Core (2
+          việc độc lập dữ liệu) — tiềm năng chồng lấp tới ~183s nếu không tranh chấp CPU/đĩa.</td></tr>
+        <tr><td>Giải mã AES ZIP GL02 — 191.7s/678.7s = 28%</td>
+          <td>Chi phí thật, không phải lỗi code — chỉ xảy ra khi CHƯA có <code>{ma_nh}_DEN.csv</code>
+          phân loại sẵn (nếu BO chạy "Phân loại dữ liệu" trước, chi phí này CHUYỂN sang bước đó chứ
+          không biến mất). Ứng viên mới phát hiện từ số liệu thật: GL02 zip có 8 file CSV thành viên
+          độc lập (<code>1000_gl02_...csv</code>, mỗi file ~650k dòng) — giải mã AES từng file hiện
+          chạy TUẦN TỰ, có thể song song hoá (ProcessPoolExecutor, vì AES decode là CPU-bound) —
+          CHƯA thử, cần đo thử trên máy chủ thật trước khi cam kết (số core CPU máy chủ chưa biết).</td></tr>
+        <tr><td>Vòng lặp Python định tuyến GL02 (<code>_route_file</code>, ứng viên B3 cũ)</td>
+          <td><b>LOẠI KHỎI Giai đoạn 2</b> — số liệu thật: chỉ 21.1s/219.1s giải mã+định tuyến
+          (~10%), giải mã AES mới là 191.7s (90%). Viết lại bằng pandas không đáng công sức — số
+          liệu thật bác bỏ giả thuyết ban đầu ở card 97, tránh tối ưu nhầm chỗ.</td></tr>
+        <tr><td>Song song hoá đọc I/O offset phụ (HUB T-1/T-2/T-3, CORE T+1/T+2/T+3)</td>
+          <td>Không đo được lợi ích thật ở bộ dữ liệu này — cả 6 offset phụ đều "không tìm thấy
+          file" (dữ liệu 25.8 chỉ có đúng 1 ngày). Hạ ưu tiên — trường hợp phổ biến (chỉ có ngày T)
+          không có gì để song song hoá.</td></tr>
+      </table>
+
+      <div class="label">Dọn dữ liệu sau khi đo (real financial data)</div>
+      <p>Đã xoá toàn bộ output/temp sinh ra bởi 2 lượt chạy thật (~986MB, gồm CSV GL02 giải mã +
+        Excel kết quả chứa dữ liệu giao dịch thật) ở cả 2 nơi chạy (repo chính + worktree PR#68) —
+        không đụng gì tới thư mục nguồn <code>G:\ĐỐI CHIẾU SONG PHƯƠNG\...</code> (chỉ đọc, không
+        ghi). Không commit số liệu/log job vào git.</p>
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-31</footer>
 </div>
 </body>

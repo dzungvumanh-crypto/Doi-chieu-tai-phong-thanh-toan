@@ -126,7 +126,7 @@ def _doc_core(loai: str, path: Path, ma_nh: str, log: Callable[[str], None]) -> 
         csv_path = path
     else:
         log(f"đang giải mã + phân loại {path.name}...")
-        result = ipcas_svc.process_zip(path.read_bytes())
+        result = ipcas_svc.process_zip(path.read_bytes(), log_callback=log)
         csv_path = ipcas_svc.TEMP_DIR / result["token"] / f"{ma_nh}_DEN.csv"
     df = load_core.load_core_den_csv(csv_path)
     so_trace = load_core.build_so_trace(df)
