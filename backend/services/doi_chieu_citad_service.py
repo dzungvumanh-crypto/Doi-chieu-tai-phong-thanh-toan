@@ -53,6 +53,7 @@ import sqlite3
 import threading
 import zipfile
 from datetime import datetime
+from decimal import Decimal
 
 from backend.core.config import BASE_DIR
 from backend.database import _vn_now
@@ -346,11 +347,14 @@ _STATUS_CURS = ['VNĐ', 'USD', 'EUR']
 _STATUS_FK = ['di_ih_m', 'di_ih_t', 'di_il_m', 'di_il_t', 'den_ih_m', 'den_ih_t', 'den_il_m', 'den_il_t']
 
 
-def _status_nv(v) -> float:
+def _status_dec(v) -> Decimal:
+    """Chuyển sang Decimal CHÍNH XÁC TUYỆT ĐỐI — xem `_dec()` trong
+    `frontend/pages/doi_chieu_citad.py` (cùng lý do, đi qua `str(v)` để
+    tránh mở khai triển nhị phân của float)."""
     try:
-        return float(v) if v not in (None, '') else 0.0
+        return Decimal(str(v)) if v not in (None, '') else Decimal(0)
     except Exception:
-        return 0.0
+        return Decimal(0)
 
 
 def is_reconciliation_matched(sess: dict) -> bool:
@@ -358,22 +362,28 @@ def is_reconciliation_matched(sess: dict) -> bool:
     PaymentHub cho ĐỦ 8 trường — đúng công thức dòng "CHÊNH LỆCH" hiện trên
     trang Đối chiếu CITAD (`_compute_totals()` ở
     frontend/pages/doi_chieu_citad.py) — giữ đồng bộ công thức ở 2 nơi vì
-    frontend không gọi được service backend trực tiếp (khác tiến trình)."""
+    frontend không gọi được service backend trực tiếp (khác tiến trình).
+
+    Cộng dồn bằng Decimal (`_status_dec()`), KHÔNG bằng float — cộng nhiều
+    dòng (5 Cổng + Napas + PSS-MDP) bằng số thực có thể sinh dư nhị phân dù
+    về bản chất đã khớp tuyệt đối (bug thật 25/08/2026: 0,0078125 dù CITAD
+    gốc cộng đúng khớp PaymentHub). Decimal cộng đúng tuyệt đối với số liệu
+    gốc — không làm tròn, nên không có nguy cơ che mất lệch thật dù nhỏ."""
     gD = sess.get("gD", {}) or {}
     phD = sess.get("phD", {}) or {}
-    ci = {f: 0.0 for f in _STATUS_FK}
+    ci = {f: Decimal(0) for f in _STATUS_FK}
     for c in _STATUS_CONGS:
         for u in _STATUS_CURS:
             src = (gD.get(str(c), {}) or {}).get(u, {}) or {}
             for f in _STATUS_FK:
-                ci[f] += _status_nv(src.get(f, 0))
-    ci["den_ih_m"] += _status_nv(sess.get("napas_m", 0)) + _status_nv(sess.get("pssmdp_m", 0))
-    ci["den_ih_t"] += _status_nv(sess.get("napas_t", 0)) + _status_nv(sess.get("pssmdp_t", 0))
-    ph = {f: 0.0 for f in _STATUS_FK}
+                ci[f] += _status_dec(src.get(f, 0))
+    ci["den_ih_m"] += _status_dec(sess.get("napas_m", 0)) + _status_dec(sess.get("pssmdp_m", 0))
+    ci["den_ih_t"] += _status_dec(sess.get("napas_t", 0)) + _status_dec(sess.get("pssmdp_t", 0))
+    ph = {f: Decimal(0) for f in _STATUS_FK}
     for u in _STATUS_CURS:
         src = phD.get(u, {}) or {}
         for f in _STATUS_FK:
-            ph[f] += _status_nv(src.get(f, 0))
+            ph[f] += _status_dec(src.get(f, 0))
     return all(ci[f] == ph[f] for f in _STATUS_FK)
 
 
@@ -584,6 +594,19 @@ def build_xlsx(data: ExportIn) -> bytes:
         except Exception:
             return 0
 
+    def _dec(v) -> Decimal:
+        """Chuyển sang Decimal CHÍNH XÁC TUYỆT ĐỐI — xem `_dec()` trong
+        `frontend/pages/doi_chieu_citad.py` (cùng lý do: `str(v)` trước khi
+        vào Decimal để tránh mở khai triển nhị phân của float). Dùng riêng
+        cho `ci`/`ph`/`diff` (dòng CITAD/PaymentHub/Chênh lệch) — cộng dồn
+        nhiều dòng (5 Cổng × 3 loại tiền + Napas + PSS-MDP) bằng số thực có
+        thể sinh dư nhị phân dù về bản chất đã khớp tuyệt đối (bug thật
+        25/08/2026: 0,0078125 dù CITAD gốc cộng đúng khớp PaymentHub)."""
+        try:
+            return Decimal(str(v)) if v else Decimal(0)
+        except Exception:
+            return Decimal(0)
+
     def F(bold=False, size=14, color='000000'):
         return Font(name=TNR, bold=bold, size=size, color=color)
 
@@ -598,12 +621,12 @@ def build_xlsx(data: ExportIn) -> bytes:
     def Fill(h):
         return PatternFill('solid', fgColor=h)
 
-    ci = [0] * 8
+    ci = [Decimal(0)] * 8
     for c in CONGS:
         for u in CURS:
             src = (data.gD.get(str(c), {}) or {}).get(u, {}) or {}
             for i, f in enumerate(FK):
-                ci[i] += nv(src.get(f, 0))
+                ci[i] += _dec(src.get(f, 0))
     # Chỉ cộng Napas (nm/nt) vào tổng CITAD — KHÔNG cộng Ebanking (em/et).
     # Đã đối chiếu với DoiChieuCITAD.py::_calc() của tool desktop gốc: gốc
     # CŨNG chỉ cộng napas.den_ih_m/t vào ci['den_ih_m'/'t'], không có dòng
@@ -612,17 +635,17 @@ def build_xlsx(data: ExportIn) -> bytes:
     # còn dùng, đồng bộ với việc đã bỏ ô nhập Ebanking khỏi màn hình trước
     # đó) — data.em/et không còn được dùng ở đâu trong build_xlsx nữa,
     # vẫn giữ 2 field trong ExportIn để không phá payload cũ.
-    ci[4] += nv(data.nm)
-    ci[5] += nv(data.nt)
+    ci[4] += _dec(data.nm)
+    ci[5] += _dec(data.nt)
     # PSS - MDP: kênh mới thêm sau, theo yêu cầu Phòng Thanh toán — CÙNG
     # nguyên lý với Napas (cộng vào tổng CITAD), khác Ebanking (không cộng).
-    ci[4] += nv(data.sm)
-    ci[5] += nv(data.st)
-    ph = [0] * 8
+    ci[4] += _dec(data.sm)
+    ci[5] += _dec(data.st)
+    ph = [Decimal(0)] * 8
     for u in CURS:
         src = (data.phD.get(u, {}) or {})
         for i, f in enumerate(FK):
-            ph[i] += nv(src.get(f, 0))
+            ph[i] += _dec(src.get(f, 0))
     diff = [ci[i] - ph[i] for i in range(8)]
     wb = Workbook()
     ws = wb.active
@@ -736,7 +759,13 @@ def build_xlsx(data: ExportIn) -> bytes:
     ws.cell(row, 2).border = Bdr('thin', 'medium')
     for i, v in enumerate(diff):
         c = ws.cell(row, 3 + i)
-        c.value = v if v else None
+        # ci/ph cộng bằng Decimal (_dec()) nên `v` ở đây CHÍNH XÁC TUYỆT ĐỐI,
+        # không có dư nhị phân nào phải làm tròn/che đi — khớp thật mới ra
+        # đúng 0, lệch thật dù nhỏ (kể cả dưới 1 đơn vị) vẫn hiện đúng số,
+        # không đánh đổi độ chính xác lấy gọn màn hình. Trước đây `v if v
+        # else None` để trống ô khi khớp (0 là falsy) thay vì hiện "0" —
+        # giờ luôn ghi giá trị thật.
+        c.value = float(v)
         c.number_format = NUM
         c.font = Font(name=TNR, bold=True, size=14, color='006100' if v == 0 else 'FF0000')
         c.alignment = AL('right')

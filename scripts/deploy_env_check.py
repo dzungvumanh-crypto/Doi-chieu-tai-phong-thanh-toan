@@ -57,6 +57,8 @@ DUNG_URL_MAU = "http://127.0.0.1:{port}"
 CHI_CANH_BAO = [
     ("DOI_CHIEU_ZIP_PASSWORD",
      "Doi chieu ACH / Cham 459901 / Doi chieu Song phuong se dung o buoc giai nen"),
+    ("CHAM459901_FOLDER_ROOTS",
+     "Cham 459901 khoa che do Chon thu muc server (tai file len van chay)"),
 ]
 
 

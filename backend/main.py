@@ -41,6 +41,12 @@ def _setup_logging():
     ch = logging.StreamHandler()
     ch.setFormatter(fmt)
     root.addHandler(ch)
+    # Chạy dưới pytest thì KHÔNG ghi ra logs/app.log. Test dùng DB rỗng trong RAM nên
+    # đẻ ra hàng loạt ERROR giả ("no such table: duty_shifts", "...: so_truc_records");
+    # trộn vào nhật ký thật là người vận hành mở ra thấy lỗi không có thật, đi tìm sự cố
+    # không tồn tại. Log vẫn ra màn hình nên pytest -s / báo lỗi không mất gì.
+    if "pytest" in sys.modules:
+        return
     fh = logging.handlers.RotatingFileHandler(
         "logs/app.log", maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
     )

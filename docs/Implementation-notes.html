@@ -51,7 +51,264 @@
 <div class="page">
 
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
-  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-28</p>
+  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-30</p>
+
+  <!-- NS1 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">NS1</span>
+      <span class="card-title">Quản lý nhân sự — 8 phân hệ hồ sơ dựng trên một bảng đặc tả</span>
+      <span class="badge badge-done">Xong — 917 test pass (46 test mới)</span>
+    </div>
+    <div class="card-body">
+
+      <p>Menu mới <b>Quản lý nhân sự</b> (3 trang: Hồ sơ cán bộ, Tra cứu &amp; Thống kê, Nhắc lịch)
+        phủ đủ 8 phân hệ trong yêu cầu nghiệp vụ: hồ sơ cá nhân, bằng cấp, quy hoạch–bổ nhiệm–điều
+        động, thông tin &amp; quá trình công tác, lương, đào tạo tại Agribank, công cụ dụng cụ,
+        tra cứu–thống kê–nhắc lịch.</p>
+
+      <div class="label"><span class="pill pill-blue">Quyết định 1</span> Hồ sơ khoá theo <code>user_tttt.id</code>, không có danh sách cán bộ riêng</div>
+      <table>
+        <tr><th>Phương án</th><th>Vì sao chọn / bỏ</th></tr>
+        <tr><td><b>Mỗi tài khoản là một hồ sơ</b> (đã chọn)</td>
+            <td>Họ tên, mã cán bộ, phòng, ngày vào ngành chỉ nằm ở <code>user_tttt</code> — không có
+                bản thứ hai để lệch. Nghỉ phép / chấm công / lịch trực đang khoá theo cùng khoá đó nên
+                thống kê nhân sự và các module kia nói cùng một con số.</td></tr>
+        <tr><td>Bảng <code>hr_can_bo</code> riêng, liên kết tuỳ chọn với tài khoản</td>
+            <td>Bỏ. Quản được cả người chưa có tài khoản, nhưng đổi lại là hai nguồn họ tên/phòng và
+                một màn hình ghép hai danh sách. <b>Hệ quả đã chấp nhận:</b> cán bộ không có tài khoản
+                thì chưa có hồ sơ — nếu về sau cần, cách rẻ nhất là tạo tài khoản
+                <code>is_active=0</code> cho họ, không phải dựng bảng mới.</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-blue">Quyết định 2</span> Bảy phân hệ dạng danh sách dùng CHUNG một bộ CRUD</div>
+      <p>Bằng cấp, bổ nhiệm, quá trình công tác, nghỉ gián đoạn, lương, đào tạo, công cụ có cùng một
+        hình dạng: danh sách dòng gắn với một cán bộ. Viết tay thì thành 7 cặp schema Pydantic + 28
+        route gần như giống hệt. Thay vào đó tất cả được mô tả bằng
+        <code>hr_service.SECTIONS</code> (bảng đặc tả: tên cột, kiểu, nhãn tiếng Việt, bắt buộc,
+        giá trị mặc định) và dùng chung 4 route <code>/api/hr/sections|items/{section}/...</code>.</p>
+      <table>
+        <tr><th>Được</th><th>Mất</th></tr>
+        <tr><td>Thêm một cột = sửa <b>một dòng</b>; backend, bảng dữ liệu và form nhập liệu ngoài
+                giao diện có cột mới cùng lúc (frontend dựng form từ <code>GET /api/hr/meta</code>,
+                không giữ bản mô tả thứ hai)</td>
+            <td>Thân request là <code>dict</code>, không phải model Pydantic → <b>/docs không mô tả
+                được thân request</b> của 7 phân hệ này</td></tr>
+        <tr><td>Thông báo lỗi bằng tiếng Việt, đúng nhãn cột người dùng nhìn thấy
+                (<i>"Ngày cấp: 'abc' không phải ngày hợp lệ (dd/mm/yyyy)"</i>)</td>
+            <td>Việc kiểm dữ liệu dồn vào <code>chuan_hoa()</code> — hàm đó hỏng là cả 7 phân hệ hỏng
+                theo, nên nó có 5 test riêng</td></tr>
+      </table>
+      <div class="note"><code>chuan_hoa()</code> <b>từ chối</b> trường lạ thay vì bỏ qua im lặng: gõ
+        nhầm tên cột mà vẫn nhận 200 thì người dùng tưởng đã lưu, dữ liệu lại không nằm ở đâu cả.
+        Tên bảng và mệnh đề <code>ORDER BY</code> chỉ lấy từ <code>SECTIONS</code>, không bao giờ nhận
+        từ client — client chỉ chọn được <i>khoá phân hệ</i> có trong đặc tả.</div>
+
+      <div class="label"><span class="pill pill-blue">Quyết định 3</span> Phân quyền: menu là mức tối thiểu, mọi thứ khác cộng thêm</div>
+      <table>
+        <tr><th>Việc</th><th>Hồ sơ của chính mình</th><th>Hồ sơ người khác</th></tr>
+        <tr><td>Xem</td><td><code>menu.hr_profiles</code></td><td>+ <code>hr.view_all</code></td></tr>
+        <tr><td>Sửa phần tự khai (cá nhân, bằng cấp, đào tạo, công cụ)</td>
+            <td><code>menu.hr_profiles</code></td><td>+ <code>hr.edit_all</code></td></tr>
+        <tr><td>Sửa phần công tác, bổ nhiệm, quá trình công tác, nghỉ gián đoạn</td>
+            <td><code>hr.edit_all</code></td><td><code>hr.edit_all</code></td></tr>
+        <tr><td>Xem hồ sơ lương</td><td><code>menu.hr_profiles</code></td><td>+ <code>hr.salary_view</code></td></tr>
+        <tr><td>Sửa hồ sơ lương</td><td><code>hr.salary_edit</code></td><td><code>hr.salary_edit</code></td></tr>
+      </table>
+      <p><b>Vì sao sửa lương luôn cần quyền riêng, kể cả hồ sơ của chính mình:</b> bậc lương, hệ số
+        V1/V2 là số liệu người làm chế độ nhập theo quyết định. Để người ta tự sửa của mình thì bảng
+        lương mất giá trị đối chiếu. Ngược lại, trạng thái công cụ (<i>đã chuyển người khác / đã trả
+        văn phòng / mới cấp mà TSC chưa cập nhật</i>) <b>để cán bộ tự ghi</b> — chính người đứng tên
+        mới biết, và đó đúng là cột mà yêu cầu nghiệp vụ đòi.</p>
+      <div class="note">Hồ sơ lương của người khác bị <b>ẩn hẳn khỏi phản hồi</b>, không trả mảng
+        rỗng: mảng rỗng đọc thành "người này chưa có dữ liệu lương", sai hoàn toàn.</div>
+
+      <div class="label"><span class="pill pill-blue">Quyết định 4</span> Quản trị viên KHÔNG có hồ sơ nhân sự</div>
+      <p><code>admin</code> / <code>admin_l2</code> là tài khoản <b>hệ thống</b>, không phải cán bộ
+        nghiệp vụ: không thuộc phòng nào (chọn vai trò quản trị ở màn Quản lý User là ô Phòng bị ẩn),
+        không tham gia quy trình nghỉ phép, không có ngày tuyển dụng hay bậc lương của Trung tâm. Để
+        họ lẫn trong danh sách thì mọi con số <i>"tổng số cán bộ"</i> đều lệch và người làm nhân sự
+        phải nhớ tự trừ ra mỗi lần đọc báo cáo.</p>
+      <table>
+        <tr><th>Chỗ</th><th>Cách chặn</th></tr>
+        <tr><td>Danh sách hồ sơ, thống kê, tra cứu, nhắc lịch (5 câu SQL)</td>
+            <td>Chung một mảnh WHERE <code>SQL_CHI_CAN_BO</code> sinh từ hằng
+                <code>ROLES_KHONG_HO_SO</code> — không gõ lại danh sách vai trò ở từng câu</td></tr>
+        <tr><td>Mở / ghi hồ sơ của một tài khoản quản trị</td>
+            <td><b>404 kèm lý do</b> ngay trong <code>_staff()</code>. Đặt ở đó vì mọi đường ghi (sửa
+                hồ sơ, ảnh thẻ, thêm dòng phân hệ) đều đi qua hàm này — chặn rải rác ở từng endpoint
+                thì thêm endpoint mới là quên</td></tr>
+        <tr><td>Màn hình Hồ sơ cán bộ</td>
+            <td>Quản trị viên vào bình thường (để nhập hộ hồ sơ người khác) nhưng <b>không tự mở hồ sơ
+                của chính mình</b> — mở sẵn sẽ ra 404 ngay khi vào trang. Thay bằng lời nhắc chọn cán
+                bộ ở danh sách bên trái</td></tr>
+      </table>
+      <div class="note">Tài khoản quản trị vẫn <b>bỏ qua mọi kiểm quyền</b> như trước (admin bypass
+        <code>require_feature</code>) — thay đổi này chỉ nói "họ không phải đối tượng của hồ sơ",
+        không đụng tới quyền thao tác.</div>
+
+      <div class="label"><span class="pill pill-red">Lỗi người dùng báo</span> "Lấy thiếu user" — thật ra là sai thứ tự sắp xếp</div>
+      <p>Người dùng báo danh sách <b>thiếu người</b>, ví dụ <i>Đào Tiến Thành</i>. Kiểm lại trên dữ liệu
+        thật: API trả về đủ <b>72/72</b> cán bộ và có đúng người đó. Thứ thiếu không phải dòng dữ liệu,
+        mà là <b>chỗ đứng của nó trong danh sách</b>.</p>
+      <p><code>ORDER BY u.full_name</code> của SQLite so sánh theo <b>mã byte</b>: mọi chữ cái tiếng
+        Việt có dấu đều nằm sau <code>z</code> trong bảng mã. Đo trên Phòng Thanh toán (25 người):</p>
+      <table>
+        <tr><th>Trước — ORDER BY của SQLite</th><th>Sau — <code>khoa_ten()</code></th></tr>
+        <tr><td>… 20. Vũ Mạnh Dũng · 21. Vũ Văn Ngân · <b>22. Đoàn Thị Huyền Trang · 23. Đào Tiến
+                Thành · 24. Đặng Thị Hương Ly · 25. Đặng Thị Thương Nhi</b></td>
+            <td>… 18. Trần Thị Bích Phương · <b>19. Đào Tiến Thành</b> · 20. Tô Phương Thảo ·
+                21. Hà Phương Thu · 22. Bùi Thị Thu Thủy …</td></tr>
+      </table>
+      <p>Ba tên bắt đầu bằng <b>Đ</b> bị dồn xuống ba dòng cuối, sau cả <i>Vũ Văn Ngân</i>; tương tự
+        <i>Hà Phương Thu</i> đứng sau <i>Hoàng Thị Lan Anh</i>, còn <i>Tạ</i>, <i>Tô</i>, <i>Từ</i>
+        đứng sau <i>Trần</i>. Người tra theo vần không thấy tên ở chỗ đáng lẽ phải có nên kết luận hệ
+        thống lấy thiếu — <b>không có lỗi nào, không có cảnh báo nào</b>.</p>
+      <div class="label">Cách sửa</div>
+      <p>Bỏ <code>ORDER BY</code> tên ở SQL, sắp bằng Python với <code>hr_service.khoa_ten()</code>:
+        bỏ dấu để so sánh (Đ xếp cùng D, Ă/Â cùng A — đúng thứ tự bảng chữ cái tiếng Việt) và lấy
+        <b>chữ cuối làm khoá chính</b>. Áp cho cả danh sách hồ sơ, màn Tra cứu và file Excel xuất ra
+        để ba chỗ không xếp khác nhau.</p>
+      <div class="label">Thứ tự trong một phòng: lãnh đạo trước</div>
+      <p>Khoá sắp xếp đầy đủ là <b>phòng → chức vụ → tên</b>: Trưởng phòng, Phó phòng, rồi nhân viên
+        (hậu kiểm viên và chuyên viên <b>cùng bậc</b>, xếp lẫn nhau theo tên); Ban Giám đốc thì Giám
+        đốc trước Phó Giám đốc. Danh sách hiện thêm chức vụ ngay dưới tên — không ghi thì thứ tự nhìn
+        như ngẫu nhiên.</p>
+      <div class="caution"><b>Không dùng chung <code>ROLE_RANK</code></b> (backend/core/enums.py) dù
+        nó cũng là một bảng xếp hạng vai trò. Bảng đó xếp theo <b>QUYỀN</b> — hậu kiểm viên đứng
+        <i>trên</i> trưởng phòng vì duyệt được nhiều việc hơn — và đang dùng để chặn leo thang quyền
+        khi gán vai trò. Trộn hai thứ tự vào một bảng thì một hôm nào đó sửa thứ tự hiển thị cho dễ
+        nhìn là <b>vô tình đổi luật phân quyền</b>, không ai nhận ra. Có test canh đúng điểm này:
+        <code>test_thu_tu_chuc_vu_khong_dung_chung_bang_voi_phan_quyen</code>.</div>
+
+      <div class="note"><b>Sắp theo TÊN, không theo họ</b> — <i>Đào Tiến Thành</i> nằm ở vần <b>Th</b>,
+        cạnh <i>Thảo</i>, <i>Thu</i>, <i>Thủy</i>. Đây là lối gọi tên và lối lập danh sách cán bộ thông
+        thường; nếu đơn vị muốn xếp theo họ thì đổi đúng một dòng trong <code>khoa_ten()</code>.</div>
+      <div class="caution">Cùng một bẫy đã có tiền lệ trong dự án: <code>LOWER()</code> của SQLite
+        không hạ được chữ hoa có dấu, làm 43/218 chi nhánh tìm không ra (xem
+        <code>backend/api/ttqt_branches.py::_fold</code>). <b>Quy tắc chung: đừng để SQLite so sánh
+        chuỗi tiếng Việt</b> — cả khi tìm kiếm lẫn khi sắp xếp.</div>
+
+      <div class="label"><span class="pill pill-red">Sửa sau khi rà lại nghiệp vụ</span> "Ngày tuyển dụng" và "Ngày vào ngành" là MỘT</div>
+      <p>Bản đầu có <code>hr_profiles.recruit_date</code> ("Ngày tuyển dụng") song song với
+        <code>user_tttt.join_industry_date</code> ("Ngày vào ngành") đã dùng từ trước. Hai ô cùng
+        nghĩa, nằm hai màn hình, <b>không có gì buộc chúng bằng nhau</b> — nhập lệch thì không ai biết
+        ô nào đúng, và chỉ một trong hai ô có tác dụng thật.</p>
+      <p>Nay bỏ hẳn <code>recruit_date</code>, hồ sơ mượn thẳng cột cũ — cùng cách đã làm với điện
+        thoại/email. Điều đáng chú ý là <b>quyền</b>: cột này không đi cùng nhóm "tự khai" như
+        điện thoại, mà nằm trong nhóm mới <code>PROFILE_FIELDS_TAI_KHOAN_HR</code> (ghi vào
+        <code>user_tttt</code> nhưng cần <code>hr.edit_all</code>).</p>
+      <div class="caution"><b>Vì sao không cho tự khai:</b> <code>join_industry_date</code> là đầu vào
+        của <code>compute_annual_leave()</code> — 12 ngày phép + 1 ngày mỗi 4 năm công tác. Để cán bộ
+        tự sửa ngày này trong hồ sơ của mình là <b>để họ tự cộng phép cho mình</b>, và số phép đó chảy
+        thẳng vào module Nghỉ phép đang chạy thật. Màn hình có dòng nhắc ngay dưới ô nhập cho người có
+        quyền biết mình đang đổi cái gì.</div>
+      <p><code>PUT /api/hr/profiles/{staff_id}</code> nay chia thân request làm <b>4 nhóm</b> (2 bảng ×
+        2 mức quyền) và kiểm riêng từng nhóm, không lọc bỏ im lặng: người chỉ được tự khai mà gửi kèm
+        <code>join_industry_date</code> nhận <b>403</b>, chứ không phải "lưu xong mà không đổi gì".</p>
+
+      <div class="label"><span class="pill pill-blue">Quyết định 5</span> Đính kèm tệp ngay ở bước Thêm dòng</div>
+      <p>Bản đầu bắt người dùng <i>lưu dòng trước, mở lại rồi mới đính kèm</i> — API đính kèm cần
+        <code>item_id</code> mà id chỉ có sau khi lưu. Đúng về kỹ thuật, phiền về thao tác: thêm một
+        quyết định bổ nhiệm là ba lượt mở form.</p>
+      <p>Nay form giữ tệp lại trong lúc nhập, gắn nhãn <b>"chờ lưu"</b> (bỏ ra được), và
+        <b>lưu dòng xong mới tải tệp lên</b> bằng chính id vừa nhận. Thứ tự đó không đảo được — nên
+        điều quan trọng là <b>tệp lỗi KHÔNG làm mất dòng vừa tạo</b>: dòng đã lưu vẫn còn, hệ thống báo
+        đích danh tệp nào hỏng để mở lại tải tiếp. Với dòng ĐÃ CÓ id thì vẫn tải lên ngay như cũ, và
+        danh sách tệp trong form tự vẽ lại — không phải đóng form ra xem.</p>
+
+      <div class="label"><span class="pill pill-red">Rà lại lúc sửa</span> Kiểu MIME không được tin ở client</div>
+      <table>
+        <tr><th>Trước</th><th>Nay</th></tr>
+        <tr><td>Kiểm <code>file.content_type</code> rồi <b>lưu luôn chuỗi đó</b> vào DB</td>
+            <td>Kiểm theo <b>phần mở rộng</b>, kiểu MIME lưu lại <b>suy từ đuôi file</b>
+                (<code>_kieu_file()</code>)</td></tr>
+        <tr><td>Ô chọn file khai <code>accept="image/*"</code> — rộng hơn backend</td>
+            <td>Danh sách đuôi + trần dung lượng trả qua <code>GET /api/hr/meta</code>, form dùng đúng
+                danh sách đó</td></tr>
+      </table>
+      <p><code>content_type</code> là chuỗi do trình duyệt (hay bất cứ ai gọi API) <b>tự khai</b>. Lưu
+        lại rồi phát ngược ra nghĩa là người tải lên chọn được kiểu nội dung máy chủ sẽ trả cho người
+        khác — mà ảnh thẻ được trả về <b>inline</b>, nên đó là đường đưa nội dung lạ chạy trên chính
+        tên miền của hệ thống. Kiểm theo đuôi file còn dễ hiểu hơn cho người dùng: thông báo lỗi nói
+        <i>"chỉ nhận .pdf, .jpg, .jpeg, .png, .webp"</i> — đúng thứ họ nhìn thấy trong hộp thoại chọn file.</p>
+      <div class="note">Ảnh cá nhân: <b>.jpg .jpeg .png .webp</b>, tối đa <b>5 MB</b>. Tệp đính kèm:
+        thêm <b>.pdf</b>, tối đa <b>15 MB</b>. Không nhận <code>.doc/.docx</code> — quyết định bàn giao
+        cho lưu trữ phải là bản đã ký dạng PDF hoặc bản scan.</div>
+
+      <div class="label">Ba điều nhỏ nhưng cố ý</div>
+      <table>
+        <tr><th>Chỗ</th><th>Quyết định</th></tr>
+        <tr><td>Điện thoại, email trong hồ sơ</td>
+            <td>Ghi thẳng vào <code>user_tttt.phone/email</code>, <b>không</b> tạo cột thứ hai trong
+                <code>hr_profiles</code>. Hai bản sao của cùng một số điện thoại chắc chắn lệch nhau,
+                mà cột ở <code>user_tttt</code> mới là cột cả hệ thống dùng để liên lạc.</td></tr>
+        <tr><td><b>Ngày tuyển dụng</b></td>
+            <td>Chính là <b>Ngày vào ngành</b> — dùng lại <code>user_tttt.join_industry_date</code>,
+                cột <code>hr_profiles.recruit_date</code> đã bỏ khỏi DDL. Xem khối bên dưới.</td></tr>
+        <tr><td>Ảnh thẻ + file quyết định</td>
+            <td>BLOB trong SQLite (giống <code>user_signatures</code> đã có). Để ngoài đĩa thì sao lưu
+                DB xong vẫn mất file.</td></tr>
+        <tr><td>Nhắc lịch</td>
+            <td>Việc <b>đã quá hạn vẫn nằm trong danh sách</b> và được tô đỏ. Cho biến mất là đúng thứ
+                cần xử lý gấp lại thành thứ không ai nhìn thấy.</td></tr>
+      </table>
+
+      <div class="label">Tra cứu "tại từng thời điểm" — lấy dữ liệu ở đâu</div>
+      <table>
+        <tr><th>Thông tin</th><th>Nguồn</th></tr>
+        <tr><td>Phòng tại ngày X</td>
+            <td><code>staff_department_history</code> (bảng đã có sẵn từ tính năng đổi phòng).
+                <b>Không</b> dùng <code>user_tttt.department_id</code> — cột đó chỉ nói phòng
+                <i>hiện tại</i> nên tra ngày cũ sẽ ra kết quả của hôm nay mà không báo gì.</td></tr>
+        <tr><td>Chức vụ / quy hoạch tại ngày X</td>
+            <td><code>hr_appointments</code>: quyết định có hiệu lực bao trùm ngày đó (chưa ghi ngày
+                hết hiệu lực = còn hiệu lực). Chưa nhập quyết định thì lui về chức vụ khai trong hồ sơ.</td></tr>
+        <tr><td>Trình độ (thống kê)</td>
+            <td>Dò <b>từ khoá</b> trên tên bằng do người nhập gõ tay ("Thạc sỹ", "thac si", "ĐH Kinh
+                tế"...), lấy bằng cao nhất mỗi người. Không nhận ra thì xếp <b>"Khác"</b> — không đoán
+                bừa một bậc. SQL không xếp hạng hộ được việc này nên phải tính bằng Python.</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-red">Lỗi phát hiện trong lúc làm</span> Cột NOT NULL gặp API luôn gửi đủ trường</div>
+      <p><code>hr_tools.status</code> khai <code>NOT NULL DEFAULT 'dang_dung'</code>, nhưng bộ CRUD
+        chung luôn gửi <b>mọi</b> cột trong đặc tả — ô để trống thành <code>NULL</code> tường minh,
+        và <code>DEFAULT</code> của SQLite <b>không</b> áp cho <code>NULL</code> tường minh → vỡ câu
+        INSERT. Sửa bằng cách đưa khái niệm <code>mac_dinh</code> vào chính bảng đặc tả, dùng chung cho
+        cả backend lẫn ô nhập ngoài giao diện (nhờ đó ô <i>"Không hưởng lương"</i> của phần nghỉ gián
+        đoạn tự tích sẵn, số lượng công cụ mặc định 1). Đã có test canh.</p>
+
+      <div class="label"><span class="pill pill-gray">Biết mà chưa làm</span></div>
+      <table>
+        <tr><th>Việc</th><th>Vì sao dừng ở đây</th></tr>
+        <tr><td>Nghỉ gián đoạn <b>không</b> tự trừ vào phép năm</td>
+            <td>Cố ý. <code>compute_annual_leave()</code> đang tính phép theo ngày vào ngành cho cả
+                hệ thống; nối thêm một nguồn trừ tự động là đổi số phép của mọi người dựa trên bảng
+                vừa mới có dữ liệu. Ở đây chỉ <b>ghi nhận</b> khoảng nghỉ và cờ "có tính thời gian
+                công tác không" để người làm chế độ đối chiếu.</td></tr>
+        <tr><td>Chưa có nhập hàng loạt từ Excel</td>
+            <td>Chưa có file nguồn chuẩn nào để bám (khác <code>ttqt_branches</code> vốn có sẵn file
+                phát hành). Xuất Excel thì đã có.</td></tr>
+        <tr><td>Chưa test được giao diện bằng trình duyệt</td>
+            <td>Dự án chưa có hạ tầng test UI (không cài selenium). Backend đã chạy hết luồng thật
+                trên DB tạm — kể cả tải ảnh, đính kèm PDF, xuất Excel — nhưng thao tác trên màn hình
+                thì cần người mở thử.</td></tr>
+        <tr><td>Ảnh thẻ không bị nén / giới hạn kích thước điểm ảnh</td>
+            <td>Chỉ chặn theo dung lượng (5 MB). Vài trăm cán bộ × vài MB vẫn nhỏ so với DB hiện tại;
+                nếu sau này nặng thì thu nhỏ ảnh lúc tải lên là đủ.</td></tr>
+      </table>
+
+      <div class="label">Migration</div>
+      <p>9 bảng mới chỉ khai trong <code>_create_tables()</code> — nhất quán với kết luận ở thẻ
+        <b>Z10</b>: hàm này chạy vô điều kiện mỗi lần khởi động và toàn bộ là
+        <code>CREATE TABLE IF NOT EXISTS</code>, nên DB đang chạy có bảng mới ngay lần restart đầu.
+        Không chép DDL sang <code>_ensure_indexes()</code> lần thứ hai.</p>
+      <div class="caution"><code>hr_attachments</code> trỏ tới chủ sở hữu bằng
+        <b>(section, item_id)</b> — khoá ngoại đa hình nên SQLite <b>không</b> dọn hộ khi xoá dòng hồ
+        sơ. Mọi đường xoá phải gọi <code>_xoa_dinh_kem()</code>; đã có test canh đúng điểm này.</div>
+
+    </div>
+  </div>
 
   <!-- Z10 -->
   <div class="card">
@@ -132,6 +389,292 @@ ON CONFLICT(staff_id) DO UPDATE SET token_hash=excluded.token_hash, ...</pre>
         công thức đối chiếu / lọc ngày — <b>không test nào gọi <code>generate_extension_token</code></b>,
         cả trước lẫn sau PR. Đúng cái lỗi vừa sửa vẫn chưa có gì chặn tái diễn. Test cần có: cùng 1
         <code>staff_id</code> tạo mã ở cả 2 module, khẳng định cả 2 vẫn resolve được.</p>
+
+    </div>
+  </div>
+
+  <!-- VB979 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">VB979</span>
+      <span class="card-title">Chuẩn hoá văn bản theo QĐ 979 — máy sửa được tới đâu, và vì sao dừng ở đó</span>
+      <span class="badge badge-done">Xong — 918 test pass (66 test mới)</span>
+    </div>
+    <div class="card-body">
+
+      <p>Yêu cầu: <i>người dùng tải file Word lên, hệ thống dựa vào văn bản quy định và mẫu có sẵn để
+        chỉnh cho đúng, đánh dấu vùng đã sửa bằng highlight, thêm một tab cấu hình thông số</i>. Nguồn
+        quy chuẩn là <code>979-QyD-NHNo-PC (Trình bày VB).7z</code> — Điều 4–17, Phụ lục III (bảng cỡ chữ /
+        kiểu chữ từng thành phần), Phụ lục IV (viết hoa). Người dùng chốt phạm vi: <b>sửa thể thức
+        + viết hoa + đánh số, gạch đầu dòng</b>.</p>
+
+      <div class="label">1. Ranh giới: cái gì máy quyết được bằng hình thức, cái gì không</div>
+      <p>Phụ lục IV có 5 mục viết hoa, phần lớn <b>đòi hiểu nghĩa</b>: "tên người", "tên địa lý", "tên sự
+        kiện lịch sử". Máy không phân biệt được <i>cửa Lò</i> (cửa sông) với <i>Cửa Lò</i> (địa danh) nếu
+        không biết câu đang nói về cái gì. Ép máy đoán là <b>sửa sai câu chữ của người soạn</b> — tệ hơn
+        để nguyên, vì người kiểm tra tin rằng máy đã làm đúng.</p>
+      <p>Nên chỉ làm ba cơ chế quyết định được bằng hình thức:</p>
+      <table>
+        <tr><th>Cơ chế</th><th>Căn cứ</th><th>Vì sao an toàn</th></tr>
+        <tr><td>Viết hoa đầu câu, đầu dòng</td><td>Phụ lục IV mục I</td>
+            <td>Thuần hình thức. Có danh sách viết tắt chặn (<code>TP.</code>, <code>v.v.</code>,
+            <code>TM.</code>…) để dấu chấm của viết tắt không bị hiểu là hết câu.</td></tr>
+        <tr><td>Viện dẫn</td><td>Phụ lục IV mục V.7</td>
+            <td>Luật nói thẳng: Phần/Chương/Mục/Tiểu mục/Điều viết hoa, khoản và điểm viết thường.
+            Không cần ngữ nghĩa nào.</td></tr>
+        <tr><td>Từ điển cụm từ</td><td>Phụ lục IV mục V.1, IV.1</td>
+            <td>Máy <b>không đoán</b> — người dùng khai danh sách trong tab Cấu hình. Muốn thêm
+            "Ban Kiểm soát" thì gõ vào, không phải sửa mã nguồn.</td></tr>
+      </table>
+      <div class="caution">Cụm khớp từ điển mà <b>đang viết HOA TOÀN BỘ</b> thì bỏ qua. Không có luật này,
+        dòng "NGÂN HÀNG NÔNG NGHIỆP VÀ PHÁT TRIỂN NÔNG THÔN VIỆT NAM" trên đầu văn bản bị hạ xuống dạng
+        từ điển — tức là làm SAI đúng chỗ quy định bắt phải in hoa.</div>
+
+      <div class="label">2. Danh sách đánh số tự động của Word: cố ý KHÔNG đụng</div>
+      <p>Số "1." "2." của danh sách đánh số tự động <b>không nằm trong file</b> — Word tính lúc hiển thị,
+        file chỉ có một tham chiếu <code>numId</code>. Muốn đổi thành số gõ tay thì phần mềm phải <b>tự đếm
+        lại toàn bộ</b>, mà lệch một chỗ là sai số cả văn bản và không có gì báo.</p>
+      <table>
+        <tr><th>Loại danh sách</th><th>Xử lý</th><th>Lý do</th></tr>
+        <tr><td>Chấm tròn (bullet)</td><td>Chuyển thành <code>- </code> gõ tay <span class="pill pill-green">tự động</span></td>
+            <td>Không có số nào phải tính — chỉ việc gỡ thuộc tính và thêm ký tự.</td></tr>
+        <tr><td>Đánh số</td><td>Giữ nguyên + ghi cảnh báo <span class="pill pill-gray">mặc định tắt</span></td>
+            <td>Phải tự đếm lại. Có công tắc bật trong tab Cấu hình cho ai chấp nhận rủi ro.</td></tr>
+      </table>
+      <p>Thẻ <code>w:numPr</code> nằm ở <b>hai chỗ khác nhau</b> tuỳ cách người dùng tạo danh sách: bấm nút
+        bullet trên thanh công cụ thì nó ở trên <b>đoạn</b>; chọn style "List Bullet" / "List Paragraph"
+        thì nó ở trên <b>style</b>. Chỉ đọc trên đoạn là bỏ sót đúng nửa số văn bản — bỏ sót thì im lặng,
+        dấu chấm tròn nằm nguyên và không ai hiểu vì sao phần mềm "không làm gì".</p>
+      <div class="note">Khi thẻ nằm trên style thì <b>không xoá thẻ</b> mà đổi đoạn về style thường: style
+        dùng chung, xoá một lần là mọi đoạn khác cùng style cũng mất dấu đầu dòng — kể cả đoạn phần mềm
+        chưa xét tới.</div>
+
+      <div class="label">3. Sửa chữ mà không phá định dạng giữa câu</div>
+      <p>Một đoạn Word không phải một chuỗi — nó là dãy <i>run</i>, mỗi run mang định dạng riêng. Câu
+        "Căn cứ <b>Quyết định số 600/QĐ-HĐTV</b>…" là ba run. Cách làm quen thuộc (ghép cả đoạn thành một
+        chuỗi, sửa, ghi lại bằng một run duy nhất) <b>xoá sạch phần in đậm giữa câu</b> mà không có lỗi nào.</p>
+      <p>Nên mọi hàm biến đổi trả về <code>[(đầu, cuối, chữ_mới), …]</code> tính trên chuỗi ghép, và
+        <code>ap_sua_text()</code> chiếu từng khoảng về đúng run chứa nó. Áp <b>ngược từ cuối lên đầu</b>:
+        mỗi lần ghi là độ dài đổi, đi xuôi thì phải cộng trừ bù và sai một lần là ghi đè vào giữa một chữ khác.</p>
+
+      <div class="label">4. Ba màu, và những sửa đổi cố ý KHÔNG bôi màu</div>
+      <p>Giãn dòng, cách đoạn, phông chữ, thụt dòng đầu gần như <b>đoạn nào cũng phải sửa</b> — văn bản
+        soạn bằng mặc định của Word không đoạn nào đúng. Bôi màu hết thì cả trang vàng khè và người kiểm
+        tra không còn chỗ nào để nhìn.</p>
+      <table>
+        <tr><th>Loại sửa đổi</th><th>Đi đâu</th><th>Vì sao</th></tr>
+        <tr><td>Cỡ chữ, đậm/nghiêng, căn lề</td><td>Bôi <span class="pill pill-gray">vàng</span></td>
+            <td>Khác biệt riêng của từng đoạn — đúng thứ đáng soi.</td></tr>
+        <tr><td>Viết hoa, đánh số, gạch đầu dòng</td><td>Bôi <span class="pill pill-green">xanh lá</span></td>
+            <td>Sửa vào CON CHỮ. Người kiểm tra phải đọc lại xem máy có làm hỏng câu không —
+            việc khác hẳn với liếc qua định dạng, nên phải khác màu.</td></tr>
+        <tr><td>Cụm từ ghép liền dòng</td><td>Bôi <span class="pill pill-blue">xanh ngọc</span></td>
+            <td>Chữ nhìn y hệt (chỉ đổi dấu cách thành U+00A0) — không đánh dấu thì không ai thấy.</td></tr>
+        <tr><td>Giãn dòng, cách đoạn, phông chữ, thụt dòng</td><td>Mục "Sửa chung" của nhật ký</td>
+            <td>Áp đồng loạt. Bôi màu là bôi cả văn bản.</td></tr>
+      </table>
+
+      <div class="label">5. Chỉ ghi khi giá trị ĐANG SAI — và cái bẫy style</div>
+      <p>Trước mỗi lần ghi đều so với <b>giá trị đang có hiệu lực</b>, kể cả khi giá trị đó đến từ style
+        chứ không đặt thẳng trên run (<code>_hieu_luc_run()</code> / <code>_hieu_luc_doan()</code> leo ngược
+        chuỗi <code>base_style</code>). Đọc thẳng <code>run.font.size</code> thì mọi văn bản soạn bằng style
+        — tức đa số — đều trả <code>None</code>, bị hiểu là "chưa đặt" và <b>bị ghi đè toàn bộ</b>, kéo theo
+        cả văn bản bị bôi vàng.</p>
+
+      <div class="label">6. Đánh đổi đã chấp nhận</div>
+      <table>
+        <tr><th>Đánh đổi</th><th>Lý do</th></tr>
+        <tr><td>Lời văn để <code>dam=None</code> (giữ nguyên in đậm) thay vì ép tắt</td>
+            <td>Một câu trong văn bản hay có cụm in đậm cố ý — tên văn bản được viện dẫn, số tiền, mốc
+            thời hạn. Phụ lục III không cấm in đậm trong lời văn; cột "Kiểu chữ" nói về kiểu chủ đạo của
+            đoạn. Ai muốn ép thì bật trong tab Cấu hình. <b>Đổi lại:</b> văn bản in đậm lung tung sẽ không
+            được dọn tự động.</td></tr>
+        <tr><td>Cỡ chữ mặc định lấy số LỚN của dải ("13&nbsp;-&nbsp;14" → 14)</td>
+            <td>Cột "Cỡ chữ" trong ví dụ minh hoạ của Phụ lục III dùng đúng số đó. Nhập ra ngoài dải thì
+            <b>cảnh báo, không chặn</b> — quy định là dải khuyến nghị.</td></tr>
+        <tr><td>Cụm từ liền dòng mặc định chỉ để cụm NGẮN</td>
+            <td>Bản đầu có cả "Ngân hàng Nông nghiệp và Phát triển nông thôn Việt Nam". Đo thử: cả cụm 8 từ
+            thành một khối không bẻ được, Word phải đẩy nguyên khối xuống dòng dưới và để lại khoảng trống
+            dài ở dòng trên — văn bản căn đều hai bên thì thành giãn chữ thưa thớt, <b>xấu hơn lúc bị tách
+            dòng</b>. Đã bỏ khỏi mặc định.</td></tr>
+        <tr><td>Ô bảng không khớp thành phần thể thức chỉ được sửa phông chữ</td>
+            <td>Bảng số liệu giữa văn bản có cỡ chữ và căn lề riêng (Điều 4.2 cho phép cả xoay ngang trang
+            vì bảng biểu). Nhưng vẫn phải duyệt đoạn trong bảng vì khối Quốc hiệu / tên đơn vị đầu trang
+            thường được dựng bằng bảng hai cột.</td></tr>
+        <tr><td>Chỉ nhận <code>.docx</code>, từ chối <code>.doc</code></td>
+            <td>.doc là định dạng nhị phân khác hẳn, python-docx không đọc được. Chặn ở API với thông báo
+            chỉ rõ cách xử lý, thay vì để lỗi hiện ra là "file is not a zip file".</td></tr>
+      </table>
+
+      <div class="label">7. Hai lỗi bắt được lúc chạy thử trên chính văn bản QĐ 979</div>
+      <table>
+        <tr><th>Lỗi</th><th>Triệu chứng</th><th>Nguyên nhân</th></tr>
+        <tr><td>Tiêu đề chương bị căn đều hai bên như lời văn</td>
+            <td>"QUY ĐỊNH CHUNG" không được nhận là chữ in hoa</td>
+            <td>Hàm <code>la_in_hoa()</code> dùng dải ký tự <code>[ạ-ỹ]</code> để tìm chữ thường. Khối
+            Latin Extended Additional <b>xếp xen kẽ hoa và thường</b> (Ạ U+1EA0, ạ U+1EA1, Ả U+1EA2…) nên
+            dải đó nuốt luôn toàn bộ chữ HOA có dấu — "Ị" bị coi là chữ thường. Đổi sang
+            <code>str.islower()</code>.</td></tr>
+        <tr><td>Một câu bị ép IN HOA cả câu</td>
+            <td>Câu <i>«1. Quốc hiệu "CỘNG HÒA…": được trình bày…»</i> biến thành chữ hoa</td>
+            <td>Nhận diện Quốc hiệu dùng "có chứa" thay vì "cả dòng đúng bằng". Văn bản nói VỀ thể thức
+            thì trích dẫn Quốc hiệu giữa câu là chuyện thường.</td></tr>
+      </table>
+
+      <div class="label">8. Vòng hai — người dùng đối chiếu bản in với mẫu 979 và bắt được ba lỗi</div>
+      <p>Cả ba đều là <b>đọc quy định mà không đo mẫu</b>. Quy định cho dải, cho nguyên tắc; con số
+        thật nằm trong chính file <code>Phần VB_Hướng dẫn thể thức văn bản.docx</code> và
+        <code>Phụ lục V_Mẫu trình bày văn bản.docx</code>. Đo được:</p>
+      <table>
+        <tr><th>Khối</th><th>Giãn dòng đo được</th><th>Cách đoạn</th></tr>
+        <tr><td>Quốc hiệu, Tiêu ngữ, tên đơn vị, tên loại, trích yếu</td><td>1,15</td><td>0</td></tr>
+        <tr><td>Số ký hiệu, địa danh – ngày tháng</td><td>1,0</td><td>0 (before 12pt)</td></tr>
+        <tr><td>Lời văn: căn cứ, Chương, Điều, khoản, điểm</td><td><b>1,2</b></td><td>3+3 / 4+4 pt</td></tr>
+      </table>
+      <table>
+        <tr><th>Lỗi người dùng chỉ ra</th><th>Nguyên nhân</th><th>Đã sửa</th></tr>
+        <tr><td>"Tiêu ngữ giãn cách quá xa"</td>
+            <td>Ép giãn dòng 1,5 + cách đoạn 6pt cho <b>mọi</b> đoạn, kể cả khối thể thức đầu trang.
+            Điều 7.3 và 8.2 nói thẳng Quốc hiệu / Tiêu ngữ / tên đơn vị "trình bày cách nhau
+            <b>dòng đơn</b>" — tôi đọc Điều 12.6 (nói về <i>nội dung văn bản</i>) rồi áp cho cả trang.</td>
+            <td><code>_tp()</code> nhận thêm <code>gian_dong</code> / <code>cach_doan_pt</code>; khối
+            đầu và cuối trang khai riêng dòng đơn / 0pt <span class="pill pill-green">1,2 cho lời văn</span></td></tr>
+        <tr><td>"Chữ ĐỀ CƯƠNG phải căn giữa"</td>
+            <td>Tên loại chỉ nhận theo danh sách Điều 3, mà Điều 3.2.ađ cho phép "các loại văn bản…
+            <b>khác</b> phù hợp với thực tiễn" — danh sách không bao giờ đủ. "ĐỀ CƯƠNG" rơi thành lời
+            văn nên bị căn đều hai bên.</td>
+            <td>Nhận theo hình thức: dòng in hoa ngắn đứng riêng <b>ngay dưới số ký hiệu hoặc địa
+            danh–ngày tháng</b>. Không có mốc đó thì không đoán</td></tr>
+        <tr><td>"Giãn dòng 1.2 chứ không phải 1.5"</td>
+            <td>Điều 12.6 cho dải "tối thiểu dòng đơn, tối đa 1,5 lines". Tôi lấy cận TRÊN. Hợp lệ,
+            nhưng thưa hơn hẳn mẫu và in ra dài thêm mấy trang.</td>
+            <td>Mặc định <code>1.2</code> — đúng con số mọi đoạn lời văn của QĐ 979 đang dùng</td></tr>
+      </table>
+      <div class="note"><b>Bài học chung:</b> quy định mô tả <i>dải</i> và <i>nguyên tắc</i>; mẫu mới
+        cho <i>con số</i>. Chỗ nào quy định nói "tối thiểu / tối đa" là chỗ bắt buộc phải mở file mẫu
+        đo lại, không được chọn bừa một đầu của dải.</div>
+
+      <div class="label">9. "Chỉ nâng lên" và "ép chính xác" là hai luật khác nhau</div>
+      <p>Cách đoạn của lời văn dùng luật <b>chỉ nâng lên</b>: Điều 12.6 nêu mức tối thiểu 6pt nên ai để
+        8pt vẫn hợp lệ, hạ xuống là sửa thứ không sai. Nhưng khối đầu trang phải <b>ép chính xác</b> về
+        0 — nếu vẫn dùng luật "chỉ nâng lên" thì file đang giãn 1,5 sẽ được giữ nguyên 1,5 và Tiêu ngữ
+        vẫn nằm xa Quốc hiệu, tức là sửa xong mà lỗi còn nguyên.</p>
+      <div class="caution">Khoảng cách giữa hai đoạn là <code>space_after</code> của đoạn trên
+        <b>cộng</b> <code>space_before</code> của đoạn dưới. Ép <code>after</code> về 0 mà bỏ mặc
+        <code>before</code> thì khối đầu trang vẫn giãn — đúng cái lỗi đang phải sửa.</div>
+
+      <div class="label">10. Hai chỗ nhỏ lộ ra khi dựng lại đúng file người dùng gửi</div>
+      <table>
+        <tr><th>Chỗ</th><th>Vấn đề</th></tr>
+        <tr><td>Dòng ngày tháng để trống</td>
+            <td><code>ngày\s+\d{1,2}\s+tháng…</code> đòi phải có số. Nhưng dự thảo trình ký và
+            <b>mọi mẫu trong Phụ lục V</b> đều ghi "ngày&nbsp;&nbsp;&nbsp;tháng&nbsp;&nbsp;&nbsp;năm
+            2026" — tức là bỏ sót đúng loại file người dùng mang tới để chuẩn hoá. Đổi sang khớp
+            <b>cả dòng</b> và cho phép phần số rỗng; bắt buộc kết thúc ở năm để câu viện dẫn
+            "…Quyết định số 05/QĐ ngày 05 tháng 01 năm 2026 của…" không bị nhận nhầm.</td></tr>
+        <tr><td>Tiêu ngữ</td>
+            <td>Điều 7.2 đòi <b>gạch nối (-)</b> có cách chữ. Người soạn hay gõ gạch ngang dài (– —)
+            hoặc chèn thêm dấu cách cho dòng Tiêu ngữ dài bằng dòng Quốc hiệu — kéo giãn bằng dấu
+            cách, đổi cỡ chữ một cái là lệch. Chỉ sửa dấu nối và dấu cách; <b>không đụng tới chữ</b>,
+            vì "Hòa" hay "Hoà" là thói quen của từng đơn vị chứ không phải chỗ máy can thiệp.</td></tr>
+      </table>
+
+      <div class="label">11. Vòng ba — đếm cỡ chữ trên cả 18 mẫu thay vì đọc dải trong quy định</div>
+      <p>Người dùng in ra một công văn thật và chỉ ra bốn chỗ. Ba trong bốn có chung một gốc:
+        <b>tôi lấy cận trên của dải mà Phụ lục III ghi, thay vì đếm con số các mẫu đang dùng</b>.</p>
+      <table>
+        <tr><th>Thành phần</th><th>Dải Phụ lục III</th><th>18 mẫu Phụ lục V dùng</th><th>Tôi đã đặt</th></tr>
+        <tr><td>Quốc hiệu</td><td>12 – 13</td><td><b>12</b> (17/18 mẫu)</td><td>13 <span class="pill pill-red">sai</span></td></tr>
+        <tr><td>Tên đơn vị quản lý / ban hành</td><td>12 – 13</td><td><b>12</b></td><td>13 <span class="pill pill-red">sai</span></td></tr>
+        <tr><td>Trích yếu công văn (V/v…)</td><td>12 – 13</td><td><b>12</b></td><td>13 <span class="pill pill-red">sai</span></td></tr>
+        <tr><td>Tiêu ngữ, Số ký hiệu</td><td>13 – 14 / 13</td><td>13</td><td>13 <span class="pill pill-green">đúng</span></td></tr>
+      </table>
+      <p>Chênh một điểm không phải chuyện thẩm mỹ: ở cỡ 13, dòng "NGÂN HÀNG NÔNG NGHIỆP VÀ PHÁT
+        TRIỂN NÔNG THÔN VIỆT NAM" tràn khỏi cột trái và đẩy chữ <b>"NAM" xuống một dòng riêng</b> —
+        tên nước bị cắt đôi. Thêm "Việt Nam" vào danh sách cụm từ liền dòng để chặn hẳn, và cho
+        <code>regex_lien_dong()</code> khớp không phân biệt hoa thường: cùng một cụm xuất hiện ở hai
+        dạng ("Việt Nam" trong lời văn, "VIỆT NAM" trong dòng tên đơn vị in hoa).</p>
+
+      <div class="label">12. Kính gửi: một nơi và nhiều nơi là hai cách trình bày khác nhau</div>
+      <p>Điều 15.4.a: gửi <b>một</b> nơi thì "Kính gửi" và tên đơn vị nằm trên cùng một dòng; gửi
+        <b>nhiều</b> nơi thì xuống dòng liệt kê. Đo trong Phụ lục V thì hai trường hợp đó căn lề khác
+        nhau — mẫu 06 và 09 canh giữa cả dòng, mẫu 08 để sát trái. Tách thành hai mã
+        (<code>kinh_gui</code> / <code>kinh_gui_ds</code>), phân biệt bằng việc sau chữ "Kính gửi" còn
+        chữ hay không.</p>
+      <div class="note">Biểu thức cũ đòi phải có dấu hai chấm. Mẫu 06 ghi "Kính gửi ……." <b>không có
+        dấu hai chấm</b> — đòi dấu đó là bỏ sót.</div>
+
+      <div class="label">13. Spacing 7pt/7pt: con số thật không hiện ở đâu cả</div>
+      <p>Khoảng cách giữa hai đoạn là <code>space_after</code> của đoạn trên <b>cộng</b>
+        <code>space_before</code> của đoạn dưới. File người dùng đặt 7pt/7pt cho ra khoảng cách thật
+        <b>14pt</b> — gấp hơn hai lần mức Điều 12.6 nêu — mà hộp Paragraph của Word chỉ hiện hai số 7.
+        Nay <code>space_before</code> luôn về 0 để chỉ còn MỘT nguồn quyết định khoảng cách.</p>
+      <table>
+        <tr><th>Khối</th><th>Kết quả</th><th>Lý do</th></tr>
+        <tr><td>Khối đầu trang, Kính gửi, khối cuối</td><td><b>0 / 0</b></td>
+            <td>Khai <code>cach_doan_pt=0</code> riêng → ép chính xác</td></tr>
+        <tr><td>Lời văn</td><td><b>0 / giữ nguyên (≥6)</b></td>
+            <td>Điều 12.6 chỉ nêu mức <i>tối thiểu</i> 6pt — 7pt vẫn hợp lệ, hạ xuống là sửa thứ
+            không sai. Ai muốn 0 thì đổi một ô trong tab Cấu hình.</td></tr>
+      </table>
+      <div class="caution">Ô bảng không khớp thành phần nào cũng phải về 0/0 — khối đầu thường được
+        dựng bằng bảng hai cột, bỏ sót thì nó vẫn giãn dù mọi đoạn <i>nhận ra được</i> đều đã về 0.
+        Thêm mã <code>bang_the_thuc</code> cho ô bảng nằm TRƯỚC chỗ nội dung bắt đầu: chỉ kéo giãn
+        dòng và cách đoạn, <b>không đụng cỡ chữ và căn lề</b> — không biết nó là gì thì không áp
+        luật của ai. Bảng số liệu giữa văn bản không bị ảnh hưởng.</div>
+
+      <div class="label">14. Viết hoa đầu dòng: "xuống dòng" không đồng nghĩa với "câu mới"</div>
+      <p>Ô trích yếu công văn "V/v Thông báo thay đổi tên/địa chỉ đăng ký" xuống dòng thành
+        "trên hệ thống SWIFT" <b>cho cân ô</b>, không phải vì hết câu. Luật viết hoa đầu dòng của tôi
+        đã biến nó thành "Trên hệ thống SWIFT" — sai chính tả ngay giữa một cụm từ.</p>
+      <p>Phụ lục IV mục I nói "đầu một <b>câu hoàn chỉnh</b>". Nay phải đủ <b>hai</b> điều kiện mới
+        viết hoa chữ đầu đoạn:</p>
+      <table>
+        <tr><th>Điều kiện</th><th>Chặn được gì</th></tr>
+        <tr><td>Thành phần là lời văn thật (<code>THANH_PHAN_LA_CAU</code>)</td>
+            <td>Trích yếu, tên đơn vị, Kính gửi, Nơi nhận, chức danh — chúng là <i>cụm từ</i>, không
+            phải câu, nên chỗ xuống dòng trong đó luôn là ngắt dòng thẩm mỹ</td></tr>
+        <tr><td>Đoạn liền trước đã kết thúc (<code>. ! ? ; : …</code>)</td>
+            <td>Mọi trường hợp một câu bị bẻ làm hai đoạn để trình bày — kể cả trong lời văn</td></tr>
+      </table>
+      <p>Luật viết hoa <b>sau dấu chấm giữa đoạn</b> không đổi: đó vẫn là ranh giới câu thật.</p>
+
+      <div class="label">15. Khoá nút thôi là chưa đủ — và một bài test tự lừa mình</div>
+      <p>Người dùng báo: <i>"không set quyền chỉnh sửa tham số nhưng user vào menu vẫn sửa được"</i>.
+        Kiểm tra thật bằng một chuyên viên chỉ được cấp <code>menu.vb_format</code>:</p>
+      <table>
+        <tr><th>Đường</th><th>Kết quả</th></tr>
+        <tr><td><code>PUT /cau-hinh</code></td><td>403 <span class="pill pill-green">chặn đúng</span></td></tr>
+        <tr><td><code>POST /cau-hinh/mac-dinh</code></td><td>403 <span class="pill pill-green">chặn đúng</span></td></tr>
+        <tr><td><code>config_json</code> trong DB sau khi thử ghi</td><td>không đổi</td></tr>
+      </table>
+      <p>Nên dữ liệu chưa bao giờ bị sửa. Nhưng báo cáo của người dùng <b>vẫn đúng về cái họ thấy</b>:
+        màn Cấu hình chỉ khoá <b>hai cái nút</b>, còn gần <b>200 ô nhập vẫn gõ được</b>. Người dùng
+        chỉnh cả loạt thông số, thấy số đổi ngay trên màn hình, tin là đã sửa xong — tới lúc bấm Lưu
+        (đang xám) mới biết là không. Công chỉnh tay mất trắng, và họ có lý do để nghĩ phần mềm hỏng.</p>
+      <p>Nay khoá <b>mọi</b> ô nhập, và khoá ở <b>một chỗ duy nhất</b> — sau khi dựng xong toàn bộ
+        form thì duyệt lại sổ widget. Truyền cờ quyền vào từng chỗ tạo widget thì thêm một ô mới mà
+        quên truyền là thủng đúng chỗ đó, không có gì báo. Đo lại: 273 phần tử bị khoá khi không có
+        quyền, 0 khi có.</p>
+
+      <div class="caution"><b>Bài test cũ chứng minh cái giả lập của chính nó chạy đúng.</b>
+        <code>test_sua_cau_hinh_can_quyen_rieng</code> override đúng cái dependency đang cần kiểm tra
+        rồi khẳng định "route trả 403" — tức là chỉ kiểm tra rằng FastAPI gọi dependency. Gắn nhầm mã
+        feature vào route thì test đó <b>vẫn xanh</b>, mà gắn nhầm mã chính là lỗi cần bắt.
+        <br><br>
+        Bản mới để <code>require_feature</code> chạy thật trên bảng <code>group_features</code>, và
+        khẳng định trên <b>dữ liệu</b> chứ không chỉ trên mã trạng thái (403 mà vẫn ghi được thì mã
+        trạng thái chẳng nói lên điều gì). Kiểm chứng bằng cách cố tình đổi mã feature của route
+        thành <code>menu.vb_format</code>: bản mới <b>đỏ</b>, bản cũ sẽ xanh.</div>
+
+      <div class="note"><b>Cấu hình lưu gì:</b> chỉ phần <b>khác mặc định</b>
+        (<code>store._khac_mac_dinh()</code>). Nhờ vậy khi quy định đổi, những mục người dùng chưa từng
+        đụng tới tự đi theo mặc định mới. Lưu trọn bản sao thì cấu hình đông cứng ở phiên bản lúc bấm Lưu
+        và không ai nhận ra — vì màn hình vẫn hiện đúng cái đã lưu.</div>
+
+      <div class="note"><b>Quyền:</b> <code>menu.vb_format</code> (dùng) tách khỏi
+        <code>vb_format.config</code> (sửa thông số). Quy chuẩn là của cả đơn vị — một người đổi là mọi
+        văn bản người khác chạy sau đó đều theo số mới.</div>
 
     </div>
   </div>
@@ -11320,6 +11863,561 @@ This may happen if you try to create UI from a background task.</pre>
       nhánh <code>Cham_ILO1000</code>), <code>so_tien.py</code> phải lấy đúng bản của PR#66 (có
       <code>_chuan_hoa_chuoi()</code> xử lý đuôi <code>.0</code> do pandas nâng dtype float64 + ô trống→0).
       Các nhánh khác đang giữ bản <code>so_tien.py</code> cũ hơn/thiếu tính năng.</div>
+    </div>
+  </div>
+
+  <!-- 109 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">109</span>
+      <span class="card-title">PR#65 (SCNL thiếu NGAY_KENH_TRA): merge dù lọc sai tầng — dòng không có đối chứng CITAD bị nuốt</span>
+      <span class="badge badge-warn">chưa sửa · 2026-08-28</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Yêu cầu nghiệp vụ (đúng, không bàn lại)</div>
+      <p>Phòng Thanh toán 27/08/2026: lệnh Đi IPCAS <code>TRANG_THAI_LENH='SCNL'</code> mà
+      <code>NGAY_KENH_TRA</code> trống thì kênh <b>chưa thật sự xác nhận ngày trả</b> —
+      <code>VALID_DI={'SCNL'}</code> ở <code>reconcile.py</code> chỉ xét trạng thái nên vẫn đóng dấu
+      "khớp khống". Phải đẩy lệnh CITAD tương ứng xuống nhóm <b>Chỉ CITAD</b>.</p>
+
+      <div class="label">Chỗ đặt bộ lọc — điểm phải biết trước khi sửa tiếp</div>
+      <p>PR lọc bằng một câu <code>continue</code> trong <code>_parse_ipcas_text()</code>
+      (<code>parsers.py</code>), tức là <b>bỏ dòng ngay lúc đọc file</b>. Hệ quả rộng hơn phần mô tả
+      của PR: dòng không vào <code>ipcas_di_map</code> nên vòng lặp "IPCAS Đi dư"
+      (<code>reconcile.py</code>) không bao giờ nhìn thấy nó nữa.</p>
+      <table>
+        <tr><th>Tình huống</th><th>Trước PR</th><th>Sau PR</th></tr>
+        <tr><td>CITAD <b>có</b> lệnh</td><td><code>both</code> (khớp khống)</td>
+            <td><code>only_citad</code> — <b>đúng yêu cầu</b></td></tr>
+        <tr><td>CITAD <b>không có</b> lệnh</td><td><code>only_ipcas</code> (hiện ở "Chỉ Agribank")</td>
+            <td><b>0 dòng — biến mất hoàn toàn</b></td></tr>
+      </table>
+      <p>Đo thật, không suy đoán: cùng một CSV một dòng (SCNL, <code>NGAY_KENH_TRA</code> trống) chạy
+      <code>run_doiSoat_ram([], rows, [])</code> — nhánh <code>develop</code> trả 1 dòng
+      <code>only_ipcas</code>, nhánh PR trả <b>khớp 0 / lệch 0</b>. Ca bị nuốt lại đúng là ca đáng ngờ
+      nhất: IPCAS ghi đã đi kênh thành công mà CITAD chưa từng thấy lệnh. Kèm theo,
+      <code>total_ipcas</code> (trả về API và lưu <code>doi_soat_citad_history</code>) đếm thiếu đúng
+      số dòng này — số lượng dòng đọc được không còn khớp với file gốc.</p>
+
+      <div class="label">Vì sao vẫn merge</div>
+      <p>Người dùng quyết định merge sau khi đã được báo điểm mù ở trên: phần khớp khống là lỗi
+      <b>đang gây sai số hằng ngày</b>, còn ca bị nuốt hiếm hơn và vẫn dò được từ file gốc. CI xanh,
+      35 test module pass, không regression. Ghi lại đây để đợt sau không phải điều tra lại.</p>
+
+      <div class="label">Hướng vá đã xác định (cho PR sau)</div>
+      <p>Không lọc ở parser — parser là nơi <b>đọc trung thực file</b>, <code>reconcile.py</code> mới là
+      nơi phán xét khớp/lệch. Cụ thể: thêm cờ <code>'has_nkt': has_nkt</code> vào dict trả về
+      (<code>nkt=''</code> hiện <b>không</b> phân biệt được "file không có cột" với "cột để trống"), rồi
+      ở nhánh Đi của <code>reconcile.py</code> — khi tìm thấy <code>m</code> nhưng SCNL + có cột + trống —
+      đẩy dòng CITAD vào <code>only_citad</code> và <b>không</b> thêm khoá vào
+      <code>citad_matched_di_ipcas</code>. Vòng "IPCAS Đi dư" sẽ tự sinh dòng <code>only_ipcas</code>
+      cho phía IPCAS: đúng yêu cầu Phòng Thanh toán mà không mất dữ liệu ở ca CITAD trống.</p>
+
+      <div class="label">Khoảng trống test</div>
+      <p>3 test mới chỉ gọi thẳng <code>_parse_ipcas_text()</code>. Mệnh đề trung tâm của PR
+      ("lệnh CITAD tương ứng rơi vào Chỉ CITAD") <b>chưa có test nào</b> ở mức
+      <code>run_doiSoat_ram()</code> — cũng chính vì thế ca CITAD-không-có mới lọt. PR vá phải bổ sung
+      2 test mức đối soát: có CITAD → <code>only_citad</code>; không có CITAD → vẫn còn 1 dòng lệch.</p>
+
+      <div class="note"><b>Phạm vi ảnh hưởng đã quét</b>: <code>parse_ipcas_files()</code> chỉ có một
+      caller là <code>backend/api/doi_soat_citad.py:122</code>. Câu <code>continue</code> nằm trong nhánh
+      <code>if chieu == 'di'</code> nên <b>chiều Đến không đổi</b>; Hub dùng <code>hub_rows</code> nguồn
+      riêng, không đụng. Không migration, không đụng RBAC/session. Các module đối chiếu khác (ACH, Chấm
+      459901, Song phương, SWIFT) có parser riêng.</div>
+      <span class="card-title">Review PR#63 (Chấm 459901, khanhbq693): PR thay đè bản cũ hơn, xoá mất
+      toàn bộ vá bảo mật upload của develop — đã sửa bằng cách ghép lại, không vá từng chỗ</span>
+      <span class="badge badge-done">đã sửa · 2026-08-28</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Vì sao ghi lại: bài học "PR thay nguyên file" xoá mất việc đã merge</div>
+      <p>PR#63 không sửa trên <code>develop</code> mà thay nguyên <code>backend/api/cham459901.py</code> +
+      <code>backend/services/cham459901_service.py</code> bằng một nhánh code cũ hơn (rẽ ra từ lịch sử
+      <code>Cham_ILO1000</code>, viết trước khi <code>develop</code> được vá bảo mật upload ở PR#62).
+      Hậu quả: 22/129 test fail, và PR tái tạo hẳn 6 vấn đề mà <code>develop</code> đã vá xong.</p>
+
+      <table>
+        <tr><th>Vấn đề</th><th>develop có gì</th><th>PR#63 làm mất</th></tr>
+        <tr><td>Mật khẩu ZIP</td><td><code>zip_password()</code> đọc từ <code>.env</code></td>
+            <td>Viết cứng mật khẩu thật vào <code>ZIP_PASSWORD</code> — lọt vào git history</td></tr>
+        <tr><td>Đường dẫn <code>token</code></td><td><code>safe_filename(token)</code> trước khi ghép path</td>
+            <td>Ghép thẳng — <code>DELETE /result/..%2Fx</code> xoá được thư mục ngoài <code>TEMP_DIR</code></td></tr>
+        <tr><td>Chạy nền</td><td><code>threading.Thread</code></td>
+            <td><code>BackgroundTasks</code> — treo threadpool 40 token dùng chung của anyio</td></tr>
+        <tr><td>Nhận Excel rời + gộp nhiều ZIP</td><td>Có (PR#62, PR nhiều-zip trước đó)</td>
+            <td>Biến mất — <code>_doc_excel/_doc_zip</code> theo luồng bị thay bằng <code>zf.read()</code>
+            nạp cả file vào RAM</td></tr>
+        <tr><td>Chọn trùng file</td><td>Chặn cứng, báo lỗi ngay</td>
+            <td>Lặng lẽ "giữ file cuối cùng"</td></tr>
+        <tr><td>Dọn rác 23h</td><td><code>_cleanup_old_results(cutoff)</code></td>
+            <td>Bỏ tham số <code>cutoff</code> — <code>temp_cleanup_service.py</code> gọi
+            <code>ham(cutoff)</code> vẫn y nguyên → <code>TypeError</code> bị <code>except Exception</code>
+            nuốt, lịch dọn 23h không bao giờ chạy cho module này</td></tr>
+      </table>
+
+      <div class="caution">
+      <p><b>Đã tự kiểm chứng độc lập trước khi tin review</b> (đúng nguyên tắc "phản biện trước, ủng hộ
+      sau"): fetch nhánh PR, đọc trực tiếp code, và chạy test suite thật (không chỉ đọc lời review) —
+      22 fail đúng như review nêu, cùng bộ test trên <code>develop</code> xanh 100%. Cả 6 điểm trong bảng
+      trên đều xác nhận bằng đọc code, không suy đoán từ mô tả.</p>
+      </div>
+
+      <div class="note"><b>Cách sửa — ghép, không vá từng dòng.</b> Dựng lại nhánh trên
+      <code>origin/develop</code> mới nhất: giữ nguyên toàn bộ khung an toàn của <code>develop</code>
+      (I/O theo đường dẫn, <code>zip_password()</code>, <code>threading.Thread</code>,
+      <code>safe_filename</code>, chặn trùng file, <code>_cleanup_old_results(cutoff)</code>), ghép thêm
+      đúng phần giá trị thật của PR#63 (phân loại 7 nhóm, đọc HUB đi/đến, ghép file tồn tháng trước,
+      route <code>/process_folder</code>). <code>classify_upload_filename()</code> đổi phạm vi: chỉ còn
+      nhận diện 3 loại phụ trợ (HUB đi/đến, tồn) theo tên — file GL02 chính không cần đặt tên theo mẫu,
+      nhận theo đuôi file và nhiều file vẫn được GỘP trước khi phân loại như <code>develop</code> đang làm
+      (khác PR#63: PR coi 2 file zip khác tên là "trùng loại, chỉ dùng file cuối").</p></div>
+
+      <div class="note"><b><code>/process_folder</code> — vá RAM/DoS ở commit này.</b> Lọc tên trước,
+      chỉ đọc byte file khớp mẫu GL02/HUB/tồn, thay vì đọc byte MỌI file trong thư mục rồi mới lọc
+      (thư mục nặng → hết RAM). Phần <i>giới hạn thư mục gốc</i> ban đầu quyết định không làm — xem
+      <b>card 110</b>, quyết định đó đã bị đảo lại trước khi merge.</div>
+
+      <div class="caution"><p><b>⚠️ Cần đổi mật khẩu ZIP thật.</b> Mật khẩu viết cứng trong
+      <code>ZIP_PASSWORD</code> đã lọt vào git history ở cả 2 nhánh (<code>Cham_ILO1000</code> và <code>cham459901/module-moi</code>) trước khi
+      commit này. Đổi source ở đầu chuỗi (nơi tạo file GL02) rồi cập nhật lại
+      <code>DOI_CHIEU_ZIP_PASSWORD</code> trong <code>.env</code> mọi máy — việc này ngoài phạm vi code,
+      cần Business Owner quyết định và thực hiện.</p></div>
+
+      <div class="note">129 test pass (127 cũ khôi phục xanh + thêm 5 test mới: chặn path traversal
+      <code>delete_result</code>/<code>download_result</code>, <code>process_folder</code> không đọc byte
+      file lạ, gộp nhiều ZIP qua <code>process_folder</code>, và khoá lại chữ ký
+      <code>_cleanup_old_results(cutoff)</code> đúng như <code>temp_cleanup_service.py</code> gọi). Chạy
+      toàn bộ <code>tests/</code> xác nhận không lan sang module khác.</div>
+    </div>
+  </div>
+
+  <!-- 110 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">110</span>
+      <span class="card-title">Gom "Ôn tập" + "Chuẩn hoá văn bản" vào nhóm "Tính năng khác"; bỏ chữ "trắc nghiệm" khỏi nhãn menu</span>
+      <span class="badge badge-ok">đã làm · 2026-08-28</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Đổi cái gì</div>
+      <table>
+        <tr><th>Chỗ</th><th>Trước</th><th>Sau</th></tr>
+        <tr><td>Sidebar (<code>MENU_TREE</code>)</td>
+            <td>2 mục phẳng cấp 1: <i>Ôn tập trắc nghiệm</i>, <i>Chuẩn hoá văn bản</i></td>
+            <td>1 nhóm cấp 1 <b>Tính năng khác</b> (icon <code>apps</code>) → 2 mục cấp 2</td></tr>
+        <tr><td>Nhãn menu + tiêu đề trang <code>/quiz</code></td>
+            <td>Ôn tập trắc nghiệm</td><td><b>Ôn tập</b></td></tr>
+        <tr><td>Màn Phân quyền (<code>FEATURE_GROUPS</code>)</td>
+            <td>2 thẻ <code>kind="menu"</code> rời</td>
+            <td>1 thẻ <code>kind="group"</code>, <code>sections=[{label: None, ...}]</code></td></tr>
+      </table>
+
+      <div class="label">Không đụng tới mã quyền — quyền đã cấp không mất</div>
+      <p><code>menu.quiz</code>, <code>quiz.upload</code>, <code>quiz.delete</code>,
+      <code>menu.vb_format</code>, <code>vb_format.config</code> <b>giữ nguyên mã</b>; chỉ chuỗi hiển thị
+      <code>"menu.quiz"</code> đổi thành "Ôn tập (menu)" và bố cục thẻ đổi. Bảng
+      <code>group_features</code> lưu theo mã nên không cần migration, nhóm nào đang được cấp vẫn thấy
+      menu ngay sau khi deploy.</p>
+
+      <div class="label">Vì sao không phải sửa <code>_dept_group()</code></div>
+      <p>Nhóm mới có <code>items</code> toàn <b>tuple</b> — không có tầng "phòng" ở giữa như Đối chiếu /
+      Báo cáo. <code>_dept_group()</code> vốn đã phân nhánh tuple / dict cho từng item, nên flyout chỉ
+      sâu 2 cấp và tự chạy. Nhóm cũng tự ẩn khi user không được cấp mục nào bên trong, giống mọi nhóm khác.</p>
+
+      <div class="label">Chỗ dễ sót: tiêu đề trang KHÔNG tự đổi theo menu</div>
+      <p>Breadcrumb dựng từ chính <code>MENU_TREE</code> (<code>BREADCRUMBS</code>) nên tự thành
+      <i>Tính năng khác / Ôn tập</i>. Nhưng đoạn cuối — tên trang — là chuỗi <b>trang tự khai</b> trong
+      <code>_page_header(...)</code> ở <code>frontend/pages/quiz.py</code>. Không sửa tay chỗ đó thì sidebar
+      ghi "Ôn tập" còn đầu trang vẫn "Ôn tập trắc nghiệm". Đây là mặt trái đã biết của thiết kế "title do
+      trang tự khai" (xem README, mục Breadcrumb).</p>
+
+      <div class="label">Đánh đổi đã chấp nhận</div>
+      <p>Hai chức năng cả cơ quan dùng nay phải hover thêm một tầng — đúng cái lý do trước đây đã kéo
+      <i>Nghỉ phép</i> ra cấp 1. Chấp nhận vì cấp 1 đang phình: gom lại đổi 1 lần hover lấy một sidebar
+      ngắn hơn, và đây là chỗ để các tính năng dùng chung sau này rơi vào thay vì đẻ thêm mục phẳng.</p>
+
+      <div class="note"><b>Phạm vi ảnh hưởng đã quét</b>: <code>MENU_TREE</code> chỉ được đọc bởi
+      <code>_sidebar()</code>, <code>_build_breadcrumbs()</code> và một dòng re-export ở
+      <code>frontend/main.py</code>. Route <code>/quiz</code>, <code>/vb_format</code> và mọi
+      <code>require_feature()</code> ở backend không đổi. 861 test pass.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">E459</span>
+      <span class="card-title">Chấm 459901 — "thiếu cột bắt buộc" là câu trả lời sai khi thiếu <i>hết</i> cột</span>
+      <span class="badge badge-done">Xong — 900 test pass (2 test mới)</span>
+    </div>
+    <div class="card-body">
+
+      <p>Người vận hành tải lên <code>Quay_danh sach giao dich chuyen tien di_*.xlsx</code> (bản xuất màn
+        quay giao dịch chuyển tiền đi) và nhận được:
+        <i>sheet 'Danh sách giao dịch chuyển tiền' thiếu cột bắt buộc: CCY, CRAMOUNT, CUSTOMER, DRAMOUNT,
+        LOCAC, REMARK</i>. Chương trình không sai, nhưng câu trả lời dẫn người đọc đi sai đường: họ mở
+        file ra tìm 6 cột trong một bảng vốn không bao giờ có cột nào như thế.</p>
+
+      <div class="label">Phân biệt hai tình huống khác hẳn nhau, trước đây gộp làm một</div>
+      <table>
+        <tr><th>Thiếu</th><th>Nghĩa thật</th><th>Việc người dùng phải làm</th></tr>
+        <tr><td>1–5 cột</td><td>Đúng là dữ liệu GL02 nhưng bị cắt bớt cột khi lưu lại</td>
+            <td>Xuất lại đủ cột</td></tr>
+        <tr><td><b>Đủ 6/6 cột</b></td><td>Cầm nhầm loại file — hoặc dò trượt dòng tiêu đề</td>
+            <td>Chọn đúng file GL02</td></tr>
+      </table>
+      <p>Thiếu sạch cả 6 nay báo <i>"không phải dữ liệu GL02"</i> và <b>liệt kê tên cột sheet đang có</b>
+        (tối đa 8 cột). Chính danh sách đó là thứ để người vận hành tự nhận ra mình mở nhầm bảng nào —
+        không phải gọi hỏi ai.</p>
+
+      <div class="label">Nới phạm vi dò dòng tiêu đề: 10 → 25</div>
+      <p><code>_dat_tieu_de()</code> dò dòng tiêu đề trong vài dòng đầu sheet. Bản người dùng tự lưu lại
+        thường có khối tiêu đề báo cáo (tên báo cáo, chi nhánh, kỳ, điều kiện lọc…) — quá 10 dòng là dò
+        trượt, rơi về dòng 0 và báo lỗi <b>y hệt</b> trường hợp nhầm file. Hai nguyên nhân khác nhau cho
+        cùng một thông báo thì không chẩn đoán được từ xa.</p>
+      <p>Rủi ro của việc nới: gần như không. Điều kiện nhận dòng tiêu đề là <b>≥3 tên cột bắt buộc nằm
+        trên cùng một dòng</b> — quét thêm 15 dòng không làm một dòng dữ liệu tình cờ trúng điều kiện đó.
+        Cái giá là đọc thêm vài dòng đầu mỗi sheet, không đo được.</p>
+
+      <div class="note"><b>Phạm vi ảnh hưởng đã quét</b>: <code>_kiem_cot()</code> chỉ có 2 nơi gọi
+      (<code>_doc_excel</code> cho Excel, <code>_doc_zip</code> cho CSV trong ZIP) — cả hai đều hưởng
+      thông báo mới. Nhánh "thiếu 1–5 cột" giữ nguyên câu cũ nên 2 test đang canh nó
+      (<code>test_sheet_thieu_cot_bao_ro_ten_file_va_ten_sheet</code>,
+      <code>test_thieu_cot_o_mot_file_bi_bat_thay_vi_thanh_o_rong</code>) không phải sửa. Logic lọc và
+      phân loại không đụng tới.</div>
+      <span class="card-title">Đảo lại quyết định của card 109: <code>/process_folder</code> phải có
+      thư mục gốc — "chỉ staff nội bộ dùng" không phải một hàng rào</span>
+      <span class="badge badge-done">đã sửa · 2026-08-28</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Vì sao đảo lại</div>
+      <p>Card 109 kết luận giữ tự do chọn thư mục vì endpoint đã sau RBAC. Lập luận đó trả lời câu
+      "ai gọi được?" nhưng không trả lời câu "gọi được thì đọc được tới đâu?". Với đường dẫn tự do,
+      route làm được hai việc không nằm trong ý định của nó:</p>
+      <table>
+        <tr><th>Việc ngoài ý định</th><th>Cơ chế</th></tr>
+        <tr><td>Dò cây thư mục của máy chủ</td>
+            <td>"Thư mục không tồn tại" và "không tìm thấy file GL02" là <b>hai câu khác nhau</b> —
+            đủ để hỏi từng đường dẫn một và biết chỗ nào có thật.</td></tr>
+        <tr><td>Đọc tên file trong thư mục bất kỳ</td>
+            <td>Thư mục chỉ cần tình cờ có <b>một</b> file <code>.zip</code>/<code>.xlsx</code> là
+            lượt chạy được chấp nhận, và danh sách <code>unrecognized</code> trả về <b>tên toàn bộ
+            file còn lại</b> trong đó.</td></tr>
+      </table>
+      <p>Cả hai đều rẻ để chặn, nên "chấp nhận vì người dùng nội bộ" là đổi một hàng rào lấy con số
+      không.</p>
+
+      <div class="label">Cách chặn</div>
+      <table>
+        <tr><th>Quyết định</th><th>Lý do</th></tr>
+        <tr><td>Danh sách thư mục gốc trong <code>.env</code>
+            (<code>CHAM459901_FOLDER_ROOTS</code>, ngăn bằng <code>;</code>)</td>
+            <td>Cùng kiểu với <code>zip_password()</code>: giá trị phụ thuộc từng máy, không hằng số
+            hoá được trong mã.</td></tr>
+        <tr><td><b>Kiểm phạm vi TRƯỚC khi kiểm tồn tại</b></td>
+            <td>Thứ tự ngược lại giữ nguyên máy dò thư mục: chỉ cần hai câu lỗi khác nhau là lộ.
+            Nay ngoài phạm vi thì thư mục có thật và không có thật trả về <b>cùng một câu</b> —
+            có test khoá lại đúng điều này.</td></tr>
+        <tr><td><code>.resolve()</code> rồi mới so</td>
+            <td>Bắt luôn <code>gốc_hợp_lệ/../../Windows</code> và symlink trỏ ra ngoài.</td></tr>
+        <tr><td>Fail-closed, <b>không</b> mặc định về <code>BASE_DIR</code></td>
+            <td>Mặc định "cho tạm một chỗ" là hàng rào mà người vận hành không biết mình đang dựa
+            vào cho tới lúc nó không đủ. Đổi lại: chưa khai biến thì nút <i>Chọn thư mục server</i>
+            báo lỗi — nên câu lỗi phải nói thẳng cần thêm dòng gì vào <code>.env</code>.</td></tr>
+      </table>
+
+      <div class="note"><b>Biết mà không chặn:</b> symlink <i>nằm trong</i> thư mục hợp lệ trỏ ra
+      ngoài vẫn đọc được. Ai đặt được symlink vào thư mục đó thì cũng đặt được file thật vào đó —
+      hàng rào này không phải chỗ giải quyết chuyện ấy.</div>
+
+      <div class="note"><b>Cũng ở commit này:</b> gỡ mật khẩu ZIP thật ra khỏi chính file tài liệu
+      này. Card 109 chép nguyên văn nó vào 2 chỗ để minh hoạ — nhưng như thế là sau khi merge,
+      <code>develop</code> lại có secret dạng chữ thường trong cây làm việc. Nói "mật khẩu viết cứng
+      trong <code>ZIP_PASSWORD</code>" là đủ nghĩa. Việc này <b>không</b> thu hồi được thứ đã nằm
+      trong git history — cảnh báo phải đổi mật khẩu ở đầu nguồn vẫn nguyên giá trị.</div>
+
+      <div class="note">926 test pass (921 + 5 test mới cho phạm vi thư mục: ngoài phạm vi bị 403 và
+      không lộ tên file, thư mục có thật/không có thật trả lời giống nhau, đi ngược ra khỏi gốc bị
+      chặn, thư mục con của gốc vẫn chạy, chưa cấu hình thì khoá và nói rõ phải làm gì).</div>
+    </div>
+  </div>
+
+  <!-- 111 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">111</span>
+      <span class="card-title">DTBB — công thức tỷ giá sai từ lúc tạo module, phát hiện bằng cách dò ngược số liệu tay + chi nhánh/xác nhận vàng-xanh</span>
+      <span class="badge badge-done">Đã sửa</span>
+    </div>
+    <div class="card-body">
+
+      <p>Module DTBB (<code>backend/services/dtbb/</code>) tạo ngày 10/08/2026, chưa từng có card
+        nào ở đây — vi phạm quy tắc CLAUDE.md. Bù lại toàn bộ trong đợt sửa công thức này.</p>
+
+      <div class="caution"><b>Công thức quy đổi gốc sai với nghiệp vụ thật.</b> Bản đầu dùng
+        <code>taxrt(ngoại tệ) / taxrt(USD)</code> cho mọi mã tiền — một cột tỷ giá duy nhất
+        (<i>tỷ giá hạch toán/tính thuế</i>), chọn vì nó luôn có vẻ "ổn định". Khi đối chiếu với số
+        liệu tay thật của Kế toán (chi nhánh 1200, kỳ 20/07/2026), dò ngược qua 9 tổ hợp
+        mua/bán/bình quân chuyển khoản mới lộ ra công thức đúng đang dùng là
+        <code>bsrt(ngoại tệ) / ttbuyrt(USD)</code> — tỷ giá <b>bình quân mua-bán</b> của ngoại tệ,
+        chia cho tỷ giá <b>mua chuyển khoản</b> của USD. Khớp sát <b>0,0007–0,0013%</b> (tổ hợp
+        gần nhì lệch xa hơn <b>13 lần</b> — không phải trùng hợp). Không kiểm bằng số liệu tay thật
+        thì sẽ không bao giờ lộ ra, vì cả hai công thức đều "chạy được", chỉ số ra khác nhau vài
+        phần vạn đến vài phần trăm tuỳ kỳ.</div>
+
+      <table>
+        <tr><th>Cột</th><th>Ý nghĩa</th><th>Vai trò trong công thức mới</th></tr>
+        <tr><td><code>bsrt</code></td><td>Bình quân mua-bán chuyển khoản</td><td>Tử số — quy đổi ngoại tệ → VND</td></tr>
+        <tr><td><code>ttbuyrt</code></td><td>Mua chuyển khoản</td><td>Mẫu số — chỉ dùng riêng cho USD, quy đổi VND → USD</td></tr>
+        <tr><td><code>taxrt</code></td><td>Hạch toán/tính thuế</td><td>Fallback khi 1 trong 2 cột trên = 0</td></tr>
+      </table>
+
+      <div class="note"><b>Vì sao cần fallback:</b> có kỳ <code>taxrt</code> = 0 cho <b>toàn bộ</b>
+        mã tiền trong file (gặp thật ở kỳ 20/07/2026 — kể cả <code>USD</code>), trong khi
+        <code>bsrt</code>/<code>ttbuyrt</code> vẫn đầy đủ. Bản cũ chỉ đọc <code>taxrt</code> nên
+        raise lỗi, không tính được gì. Riêng <code>KHR</code> nhiều kỳ <b>cả 3 cột đều = 0</b>
+        (Riel không niêm yết giá mua/bán, cũng không có tỷ giá hạch toán) — trường hợp này không
+        còn cột nào để fallback, đưa vào <code>unconverted_ccy</code> thay vì chặn cả phép tính.</div>
+
+      <div class="caution"><b>Lỗi thật bắt được lúc code lại công thức (chưa kịp lên production):</b>
+        viết nhầm — thiếu nhánh riêng cho <code>USD</code> trong vòng lặp <code>calculate()</code>.
+        Vì công thức mới dùng <b>2 cột khác nhau</b> cho tử/mẫu số (không như bản cũ cùng dùng
+        <code>taxrt</code> nên tỷ số USD/USD tự nhiên = 1), USD bị chạy qua công thức chung và tự
+        nhân với <code>bsrt(USD)/ttbuyrt(USD)</code> ≈ 1,0073 — sai ~0,73%, không phải sai số làm
+        tròn. Bắt được nhờ so kết quả code với script tay đã verify trước đó lệch hẳn (553,8 triệu
+        so với 550,0 triệu USD) thay vì tin ngay số code trả về. Đã thêm
+        <code>test_usd_khong_bi_tu_nhan_voi_ty_gia_cua_chinh_no</code> khoá lại.</div>
+
+      <div class="label">Chi nhánh: mã suy từ tên file, không nhập tay</div>
+      <p>Tên file cân đối giờ có thể mang tiền tố mã chi nhánh, ví dụ
+        <code>1200USD20260720.XLS</code> = chi nhánh <code>1200</code>. Thuật toán tách
+        (<code>reader.py::extract_report_date_and_branch()</code>): bỏ 8 số ngày + <code>.XLS</code>
+        ở cuối, rồi bỏ tiếp đúng độ dài mã tiền — mã tiền đọc từ <b>nội dung</b> file (cột
+        <code>ccy</code>), không đoán từ tên — phần dư trước đó là mã chi nhánh; rỗng thì mặc định
+        <code>9999</code> (toàn hệ thống/TSC). Tên file không khớp mã tiền thật → báo lỗi rõ ràng,
+        không đoán liều. 1 lượt tính trộn nhiều chi nhánh khác nhau cũng bị chặn (giống cách đã
+        chặn ngày không khớp giữa file cân đối và file tỷ giá).</p>
+
+      <div class="label">Luồng xác nhận vàng/xanh</div>
+      <p>Khoá lưu trữ đổi từ <code>report_date</code> đơn sang <code>(report_date, branch_code)</code>
+        — 1 ngày nhiều chi nhánh cùng lưu được. Kỳ mới lưu/ghi đè luôn ở trạng thái
+        <code>pending</code> (vàng). Trưởng/Phó phòng Kế toán (<b>không phải chính người vừa
+        tạo/sửa gần nhất</b> — kiểm bằng so <code>current.id</code> với
+        <code>created_by</code>/<code>updated_by</code>) xác nhận → <code>confirmed</code> (xanh).
+        Kỳ đã xanh <b>chặn hẳn</b> việc ghi đè (400, không đi qua flow "hỏi xác nhận ghi đè" cũ) —
+        phải bỏ xác nhận (<code>POST /{id}/unconfirm</code>) đưa về vàng trước. Admin bypass cả hai
+        chiều, theo đúng quy ước "admin luôn qua" dùng khắp hệ thống.</p>
+
+      <div class="label">Đổi UNIQUE constraint trên SQLite — phải rebuild bảng</div>
+      <p>SQLite không cho <code>ALTER TABLE</code> sửa ràng buộc <code>UNIQUE</code>. Vá
+        <code>dtbb_reports</code> cho DB đang chạy theo đúng pattern đã dùng cho
+        <code>attendance_adjustments</code> (card trước): dò <code>sqlite_master.sql</code> xem có
+        cột <code>branch_code</code> chưa, chưa có thì tạo bảng <code>_new</code> đúng schema, copy
+        dữ liệu cũ (<code>branch_code='9999'</code>, <code>status='pending'</code> mặc định cho
+        toàn bộ kỳ đã lưu trước bản vá), xoá bảng cũ, đổi tên.</p>
+      <div class="note"><b>Rủi ro suýt gặp khi tự kiểm tra:</b> lúc viết test cho migration, set
+        biến môi trường <code>DATABASE_URL</code> trước khi import tưởng sẽ trỏ DB sang file tạm —
+        nhưng <code>Settings.DATABASE_URL</code> ở <code>config.py</code> là <b>hằng số class,
+        không đọc qua <code>os.getenv</code></b>. Migration test chạy thẳng vào
+        <code>data/ksnb.db</code> thật. May mắn bảng <code>dtbb_reports</code> lúc đó đang 0 dòng
+        (chưa ai lưu kỳ nào qua UI) nên không mất dữ liệu — tương đương khởi động lại server 1 lần.
+        Bài học: muốn đổi <code>DB_PATH</code> khi test, phải patch trực tiếp biến đã import
+        (<code>backend.database.DB_PATH</code> / <code>backend.db.migrations.DB_PATH</code>), set
+        env var không có tác dụng gì với module này.</div>
+
+    </div>
+  </div>
+
+  <!-- RS1 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">RS1</span>
+      <span class="card-title">Rà soát toàn hệ — frontend chết vì một dòng import sót lại sau merge</span>
+      <span class="badge badge-done">Xong — 1119 test pass (37 test mới)</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-blue">Sự cố 1</span> Cả giao diện không lên, mà 1082 test vẫn xanh</div>
+      <p><code>frontend/pages/cham_459901.py</code> còn
+        <code>from frontend.shared import open_folder_picker</code>, trong khi hàm ấy đã bị gỡ ở
+        commit <code>9b3d310</code> cùng endpoint <code>/api/fs/browse</code> — hộp thoại duyệt cây
+        thư mục cho <b>mọi người đăng nhập liệt kê sạch ổ đĩa máy chủ</b>. Hai nhánh merge vào nhau,
+        mỗi nhánh đúng phần của mình, chỗ gãy nằm giữa.</p>
+      <p><code>frontend/main.py</code> nạp trang bằng <code>pkgutil.iter_modules</code> +
+        <code>importlib.import_module</code> <b>không bọc try/except</b> — nên một trang hỏng là
+        <i>toàn bộ</i> SPA không khởi động, không riêng trang đó.</p>
+
+      <table>
+        <tr><th>Phương án</th><th>Vì sao chọn / bỏ</th></tr>
+        <tr><td><b>Bỏ nút "Duyệt...", giữ ô gõ đường dẫn</b> (đã chọn)</td>
+            <td>Bản thân <code>POST /api/cham459901/process_folder</code> vẫn sống và vẫn an toàn:
+                <code>_thu_muc_hop_le()</code> chặn phạm vi theo <code>CHAM459901_FOLDER_ROOTS</code>,
+                kiểm phạm vi <i>trước</i> kiểm tồn tại nên không thành máy dò đường dẫn. Chức năng
+                nghiệp vụ giữ nguyên, chỉ mất cách nhập tiện tay.</td></tr>
+        <tr><td>Khôi phục <code>open_folder_picker</code> + <code>/api/fs/browse</code></td>
+            <td>Bỏ. Đó đúng là thứ đã cố ý gỡ vì lý do bảo mật; <code>tests/test_ach_quyen.py</code>
+                đang có chốt chặn không cho endpoint này quay lại.</td></tr>
+        <tr><td>Bọc try/except quanh vòng nạp trang trong <code>main.py</code></td>
+            <td>Bỏ. Làm thế thì trang hỏng <b>biến mất lặng lẽ</b> khỏi menu — người dùng báo "không
+                thấy mục đó nữa" còn khó lần hơn là chết ngay lúc khởi động.</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-blue">Sự cố 2</span> Vì sao 1082 test không báo gì</div>
+      <p>Không test nào chạm <code>frontend/pages/</code>. Test frontend duy nhất lúc đó
+        (<code>test_frontend_api_client_calls.py</code>) đọc file bằng <b>AST</b> nên không bao giờ
+        thực thi câu <code>import</code>. Nên <code>tests/test_kiem_nap_trang_frontend.py</code> mới
+        phải <b>import thật</b> từng trang (36 trang + 1 chốt chặn phòng khi
+        <code>iter_modules</code> trả rỗng làm cả file test thành vô dụng mà vẫn xanh). Quét tĩnh
+        không thay được: lỗi nằm ở chỗ cái tên có tồn tại lúc <i>chạy</i> hay không.</p>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> pytest không được ghi vào <code>logs/app.log</code></div>
+      <p><code>_setup_logging()</code> trong <code>backend/main.py</code> chạy ngay lúc import module,
+        mà <code>conftest.py</code> có import <code>backend.main</code> — nên mỗi lần chạy test là nhật
+        ký vận hành thật bị bơm thêm hàng loạt dòng <code>ERROR ... no such table: duty_shifts</code>,
+        <code>... so_truc_records</code>. Chúng là <b>lỗi giả</b>: fixture <code>_fake_db()</code> dùng
+        SQLite <code>:memory:</code> trống, còn code thật bắt <code>sqlite3.Error</code> đúng như thiết
+        kế (dashboard cố ý không để một badge hỏng kéo sập hai badge kia). Người vận hành mở log ra
+        thấy ERROR không có thật rồi đi tìm sự cố không tồn tại. Nay <code>_setup_logging()</code>
+        thôi gắn <code>RotatingFileHandler</code> khi <code>"pytest" in sys.modules</code> — log vẫn
+        ra màn hình nên <code>pytest -s</code> và báo lỗi không mất gì.</p>
+
+      <div class="note"><b>Vấn đề phát hiện nhưng không sửa:</b> <code>data/backups/</code> còn 4 file
+        <code>*.db-journal</code> mồ côi (28/07, 27/08) — bản <code>.db</code> tương ứng đã bị nén hoặc
+        xoá nhưng <code>_rotate()</code> chỉ glob <code>.db</code>/<code>.zip</code> nên journal ở lại
+        vĩnh viễn. Mỗi file 512–1024 byte; tên có dấu thời gian đến phút nên không bao giờ trùng lại
+        để SQLite hiểu nhầm là hot journal. Không tự xoá vì đây là thư mục sao lưu của người vận hành,
+        và sự tồn tại của chúng còn là dấu vết cho biết 4 lần backup đó bị cắt ngang.</div>
+
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">HN1</span>
+      <span class="card-title">Chấm 459901 — file Excel vượt trần dòng, hỏng lặng lẽ không một lời báo</span>
+      <span class="badge badge-done">Xong — 12 test mới, kiểm chứng trên GL02 thật</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-red">Phát hiện</span> Kiểm thử hiệu năng lòi ra lỗi đúng đắn</div>
+      <p>Đang đo tốc độ luồng nặng nhất thì thấy con số lạ: một file GL02 một ngày cho
+        <b>617.120 dòng</b> nhóm "Lệnh Đi". Giao diện để <code>multiple=True</code> và docstring của
+        <code>POST /api/cham459901/process</code> ghi rõ <i>"nhiều file được GỘP"</i> — nên gộp 2 ngày
+        là <b>1.234.240 dòng</b>. Trần của định dạng XLSX là <b>1.048.576</b>.</p>
+      <p><code>_write_excel()</code> cứ ghi thẳng qua trần. Đo thật: <code>sheet1.xml</code> ghi tới
+        dòng <code>1.234.243</code>, vượt <b>185.667 dòng</b>. Server báo "Hoàn thành!", người dùng chờ
+        <b>96 giây</b>, tải về file 111 MB rồi Excel từ chối mở (hoặc đòi "repair" và ăn mất dữ liệu).
+        Không có lỗi ở bất kỳ đầu nào.</p>
+
+      <div class="note"><b>Vì sao không test nào bắt được:</b> <code>openpyxl</code> đọc file hỏng đó
+        <i>vẫn trót lọt</i> — nó không kiểm trần dòng. Mọi phép thử kiểu "ghi ra rồi đọc lại được là
+        đạt" đều báo xanh. Test mới phải đếm thẳng <code>&lt;row r="..."&gt;</code> trong
+        <code>sheet1.xml</code>, không đi qua thư viện đọc nào.</div>
+
+      <table>
+        <tr><th>Phương án</th><th>Vì sao chọn / bỏ</th></tr>
+        <tr><td><b>Tách sang sheet mới trong cùng file</b> (đã chọn)</td>
+            <td>Không đổi số lượng file kết quả, không đụng API tải về, không đụng giao diện. Người
+              dùng vẫn tải đúng <code>di.xlsx</code> như cũ, mở ra thấy 2 sheet.</td></tr>
+        <tr><td>Từ chối ngay từ đầu nếu quá lớn</td>
+            <td>Bỏ. Gộp nhiều ngày là <b>nghiệp vụ thật</b>, không phải thao tác sai. Chặn là lấy mất
+              một tính năng đang dùng.</td></tr>
+        <tr><td>Cắt bớt dòng thừa</td>
+            <td>Bỏ thẳng. Mất dữ liệu âm thầm còn tệ hơn file không mở được — ít ra file hỏng thì
+              người dùng <i>biết</i> là có chuyện.</td></tr>
+        <tr><td>Xuất CSV khi quá lớn</td>
+            <td>Bỏ. Mất toàn bộ định dạng (màu tiêu đề, đóng băng dòng, tự lọc, dòng tổng) mà kế toán
+              đang dựa vào để đối chiếu.</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> Dòng TỔNG CỘNG của mỗi sheet là tổng CỦA SHEET ĐÓ</div>
+      <p>Nếu chép tổng cả nhóm xuống cuối từng sheet thì cộng ba sheet lại ra gấp ba — kế toán không
+        đối được. Nên: dòng cuối mỗi sheet là tổng phần đó, nhãn ghi rõ <code>TỔNG CỘNG PHẦN 2/3</code>;
+        còn tổng cả nhóm nằm ở dòng tiêu đề trên cùng, kèm khoảng dòng của phần đang xem
+        (<code>Lệnh Đi — phần 2/2: dòng 1.048.574–1.234.240 trong tổng 1.234.240 dòng</code>).</p>
+      <p>Trường hợp một phần — tức <b>gần như mọi lượt chạy</b> — giữ nguyên từng chữ như trước:
+        tên sheet không có hậu tố, nhãn vẫn là <code>TỔNG CỘNG</code>. Người dùng hằng ngày không
+        thấy gì đổi.</p>
+
+      <div class="note"><b>Chi tiết dễ vấp:</b> mỗi sheet tiêu tốn <b>3 dòng</b> ngoài dữ liệu (tiêu đề
+        gộp, tên cột, dòng tổng) → <code>_MAX_DATA_ROWS = 1.048.576 − 3</code>. Tên sheet bị Excel giới
+        hạn <b>31 ký tự</b> nên hậu tố <code>" (2/2)"</code> phải cắt phần tên gốc, không được nối thêm.
+        Nhiều sheet thì <code>[Content_Types].xml</code>, <code>workbook.xml</code> và
+        <code>workbook.xml.rels</code> đều phải khai đủ N phần — thiếu một chỗ là Excel gỡ sheet đó ra
+        và báo "unreadable content".</div>
+
+      <p><b>Kiểm chứng lại đúng kịch bản đã làm hỏng:</b> gộp 2 file GL02 thật →
+        <code>sheet1</code> dừng đúng ở dòng <code>1.048.576</code>, <code>sheet2</code> giữ
+        <code>185.670</code> dòng còn lại, tổng khớp <code>di_rows = 1.234.240</code>, và có dòng
+        WARNING trong log cho người vận hành biết đã tách.</p>
+
+      <div class="note"><b>Vấn đề phát hiện nhưng không sửa:</b> 93% thời gian của một lượt chấm là
+        đọc/ghi Excel, không phải nghiệp vụ — đo trên GL02 thật (49,5 giây): đọc ZIP/Excel
+        <b>25,9 s (52%)</b>, ghi 7 file xlsx <b>20,2 s (41%)</b>, thuật toán phân loại chỉ
+        <b>3,2 s (7%)</b>. Ai muốn rút ngắn thời gian chờ thì phải động vào đường đọc-ghi file; tối ưu
+        thuật toán gần như vô ích. Chưa làm vì 49 giây cho 620k dòng hiện chưa ai kêu.</div>
+
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">HN2</span>
+      <span class="card-title">Trang Đóng chứng từ kéo cả kho về mỗi lần mở — 283 câu SQL cho thứ không ai đọc</span>
+      <span class="badge badge-done">Xong — 513 ms → 32 ms, 315 KB → 8,3 KB</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-red">Phát hiện</span> Điểm duy nhất trong hệ phình theo tổng lượng lưu trữ</div>
+      <p>Ba ô lọc (phòng / năm / tháng) ở <code>frontend/pages/bundles.py</code> đều để
+        <code>value=None</code>, nên <b>lần mở trang đầu tiên</b> gọi
+        <code>GET /api/bundles/groups</code> không kèm điều kiện nào — trả về toàn bộ bìa chứng từ từ
+        trước đến nay. <code>list_groups()</code> lại chạy N+1 hai tầng: mỗi nhóm 1 câu lấy người tạo,
+        1 câu lấy tập; <b>mỗi tập thêm 1 câu</b> lấy mục bên trong.</p>
+
+      <table>
+        <tr><th>Khối lượng lưu trữ</th><th>Trước</th><th>Sau</th></tr>
+        <tr><td>1 năm (17 nhóm, 246 tập) — hiện tại</td><td>39 ms / 315 KB / 283 câu SQL</td><td><b>11 ms / 8,3 KB / 3 câu</b></td></tr>
+        <tr><td>2 năm</td><td>87 ms / 629 KB</td><td><b>14 ms</b></td></tr>
+        <tr><td>5 năm (272 nhóm, 3.936 tập)</td><td>513 ms / 5,1 MB</td><td><b>32 ms</b></td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> Bỏ hẳn <code>bundles[]</code> khỏi endpoint danh sách, không phải thêm phân trang</div>
+      <p>Trang danh sách chỉ hiện <b>5 thứ</b>: tên phòng, kỳ, ngày tạo, người tạo, số bìa. Đã dò toàn
+        bộ mã nguồn: <code>GET /api/bundles/groups</code> có <b>đúng một</b> nơi gọi
+        (<code>frontend/pages/bundles.py:120</code>) và nơi đó <b>không đọc <code>bundles</code> một lần
+        nào</b> — <code>total_bundles</code> vốn đã là cột sẵn của <code>bundle_groups</code>. Vậy toàn
+        bộ 280 câu SQL và 97% payload là để dựng một thứ không ai nhìn.</p>
+      <p>Phân trang thì phải sửa cả giao diện và vẫn giữ nguyên chi phí trên mỗi dòng. Bỏ dữ liệu thừa
+        rẻ hơn và không đổi thao tác người dùng.</p>
+
+      <div class="note"><b>Không đụng đường lấy chi tiết:</b> cả 8 nơi đọc <code>group["bundles"]</code>
+        (in bìa, tải bìa, đánh dấu đã in…) đều đi qua <code>_load_bundle_group()</code> —
+        <code>GET /groups/{id}</code> — giữ nguyên vẹn. Chỉ endpoint <i>danh sách</i> đổi.</div>
+
+      <div class="label"><span class="pill pill-blue">Sửa kèm</span> Nút "Lọc" bọc <code>ensure_future</code> — đúng cái bẫy DESIGN.md cảnh báo</div>
+      <p>Nút Lọc gọi <code>lambda: asyncio.ensure_future(load_groups())</code>, trong khi ba ô select
+        ngay dưới đã truyền thẳng hàm. Task mới có ngăn xếp slot rỗng, mà nhánh <code>except</code> của
+        <code>load_groups()</code> gọi <code>_handle_api_error()</code> → <code>ui.notify</code> +
+        <code>ui.navigate.to</code> <b>ngoài mọi <code>with element:</code></b>. Hậu quả: phiên hết hạn
+        mà bấm Lọc thì <b>màn hình đứng im, không thông báo, không chuyển trang</b> — đúng triệu chứng
+        mục <i>"Event handler async"</i> trong <code>docs/DESIGN.md</code> mô tả. Sửa luôn vì nằm ngay
+        dòng đang đụng.</p>
+
+      <div class="note"><b>Vấn đề phát hiện nhưng không sửa:</b>
+        <code>GET /api/bundles/storage-summary</code> cũng N+1 nặng (<b>362 câu SQL</b>: 12 tháng × 7
+        phòng, mỗi ô lại duyệt từng tập). Ban đầu tưởng nghiêm trọng vì phép thử nhân dữ liệu ×20 cho
+        1,1 giây — nhưng cách nhân đó <b>dồn hết vào một tháng</b>, không giống tăng trưởng thật. Dựng
+        lại mô hình tăng theo năm thì nó đứng yên (16 → 20 → 22 ms qua 5 năm) vì
+        <code>_get_storage_rows_for_month()</code> lọc <code>notes = 'Tháng MM/YYYY'</code>, chi phí bị
+        chặn theo từng tháng. Để nguyên: sửa N+1 ở đây phải viết lại
+        <code>_decompose_bundles_to_rows</code>, mà "tập có ngày" phụ thuộc JSON
+        <code>cover_units</code> nên không diễn đạt được bằng SQL (xem <code>docs/DESIGN.md</code>).</div>
+
+      <div class="note"><b>Số nền để so sau này</b> (49 endpoint, bản sao DB thật, đo qua HTTP):
+        p95 trung vị <b>14 ms</b>; chậm nhất <code>/api/leaves/stats/annual</code> 108 ms — nó dựng file
+        Excel nên đúng như vậy. Đồng thời <b>40 người dùng: 0 lỗi</b>, trần thông lượng ~120 req/s
+        (giới hạn GIL, không phải SQLite — không có <code>database is locked</code> nào). 12 truy vấn
+        nóng đều dùng chỉ mục, không câu nào quét cả bảng.</div>
+
     </div>
   </div>
 
