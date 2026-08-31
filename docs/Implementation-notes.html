@@ -7146,6 +7146,49 @@ else:
     </div>
   </div>
 
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">81</span>
+      <span class="card-title">Chấm 459901 — hợp nhất fix lọc VND từ PR#69 (không copy đè, giữ fix bảo mật PR#43)</span>
+      <span class="badge badge-done">Đã sửa</span>
+    </div>
+    <div class="card-body">
+      <p>PR#69 (<code>fix/cham459901-ccy-filter-order-2026-08-30</code>) đã sửa đúng và độc lập một
+      bug thật ở <code>cham459901_service.py</code>: GL02 gốc có cả giao dịch ngoại tệ (USD/EUR),
+      ép số TRƯỚC khi lọc CCY khiến các dòng ngoại tệ (số tiền có phần thập phân thật, VD
+      <code>'1.78'</code>) làm crash cả lượt chấm — đúng ra phải bị lọc bỏ trước, không bao giờ
+      cần ép số. Nhưng PR#69 dựa trên nhánh cũ hơn <code>fix/cham459901-3bugs</code> (PR#43), thiếu
+      hẳn fix bảo mật của PR#43 (<code>resolve_result_dir</code> chặn path traversal qua token, kiểm
+      cột thiếu bằng <code>InputError</code>) — <b>copy đè nguyên file sẽ mất fix bảo mật</b>.</p>
+
+      <div class="label">Đã hợp nhất, không copy đè</div>
+      <table>
+        <tr><th>Từ PR#69 (giữ)</th><th>Từ PR#43 (giữ nguyên, không đụng)</th></tr>
+        <tr><td>Lọc VND (<code>LOCAC/CUSTOMER/CCY</code>) TRƯỚC khi gọi <code>doc_so_tien()</code> ở
+          <code>_load_data()</code> và <code>_read_ton_file()</code></td>
+          <td><code>resolve_result_dir()</code> — kiểm token là UUID hợp lệ trước khi ghép path</td></tr>
+        <tr><td><code>dtype={'DRAMOUNT': str, 'CRAMOUNT': str}</code> khi <code>read_excel</code> —
+          chặn calamine tự suy <code>'180.000'</code> thành <code>float 180.0</code> ngay tại tầng đọc</td>
+          <td>Kiểm cột thiếu bằng <code>InputError</code> ở cả 3 hàm đọc file (không phải
+          <code>KeyError</code> → 500)</td></tr>
+        <tr><td><code>doc_so_tien()</code> thay <code>pd.to_numeric().fillna(0.0)</code> trần ở cả
+          4 nơi (<code>_load_data</code>, <code>_read_ton_file</code>, <code>_read_hub_di</code>,
+          <code>_read_hub_den</code>) — trả về <code>int64</code>, không còn <code>float</code></td>
+          <td><code>total_rows = total_before + ton_rows_added</code> (card 80)</td></tr>
+      </table>
+
+      <div class="caution">Mang theo <code>so_tien.py</code> đã vá ô trống từ PR#66 sang nhánh này
+      cùng lúc — bắt buộc, vì mới thêm <code>doc_so_tien()</code> lần đầu vào
+      <code>cham459901_service.py</code>: nếu không có bản vá ô trống, GL02 thật (sổ cái luôn có ô
+      trống) sẽ crash ngay ở lần chấm đầu tiên (xem card 66 trên nhánh PR#66).</div>
+
+      <div class="note">Đã cập nhật 2 test cũ giả định sai kiểu dữ liệu (
+      <code>isinstance(..., float)</code> — nay là <code>int64</code>), thêm 6 test regression mới
+      (ngăn-nghìn không bị cắt ở cả 4 cửa vào, ngoại tệ số lẻ bị lọc trước khi ép số) — port nguyên
+      từ bộ test PR#69 đã verify.</div>
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-31</footer>
 </div>
 </body>
