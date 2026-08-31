@@ -1037,6 +1037,18 @@ def _ensure_indexes():
             created_at  DATETIME NOT NULL
         )""",
         "CREATE INDEX IF NOT EXISTS ix_doi_chieu_citad_history_edits_history_id ON doi_chieu_citad_history_edits(history_id)",
+
+        # ── ACH — cấp phát cham_ach.process khi bắt đầu enforce — 2026-08-31 ──
+        # cham_ach.process đã khai trong FEATURES từ trước nhưng CHƯA từng được
+        # require_feature() kiểm tra thật (mọi endpoint /start /continue /cancel
+        # trước PR#54 chỉ đòi menu.cham_ach). Nhóm nào trong DB thật đang có
+        # menu.cham_ach nhiều khả năng KHÔNG có cham_ach.process — bắt đầu
+        # enforce mà không cấp bù thì mọi user không phải admin mất nút "Chạy"
+        # ngay khi deploy (review PR#54, khanhbq693). Cấp bù = giữ nguyên hành
+        # vi trước merge; QTV vẫn thu hồi tay được sau nếu muốn tách quyền thật.
+        """INSERT OR IGNORE INTO group_features (group_id, feature_code)
+           SELECT group_id, 'cham_ach.process' FROM group_features
+           WHERE feature_code = 'menu.cham_ach'""",
     ]
     _mig_log = logging.getLogger(__name__)
 

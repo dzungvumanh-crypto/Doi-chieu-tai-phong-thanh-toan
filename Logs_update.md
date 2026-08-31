@@ -4,6 +4,28 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 31/08/2026 Chấm đối chiếu ACH - **⚠️ VIỆC PHẢI LÀM SAU KHI DEPLOY ĐỢT NÀY (PR#54)**
+    + **Kiểm tra quyền `cham_ach.process` ngay sau khi deploy.** Đợt này bắt đầu ép kiểm tra
+      thật quyền chạy (`cham_ach.process`) cho nút "Chạy đối chiếu"/"Tiếp tục"/"Dừng" — trước
+      đây mã này đã khai nhưng CHƯA từng được kiểm, các nhóm trong DB thật có thể chỉ được cấp
+      `menu.cham_ach` (xem trang) mà chưa có `cham_ach.process` (chạy). Đã có migration tự cấp
+      bù `cham_ach.process` cho mọi nhóm đang có `menu.cham_ach` (giữ nguyên quyền như trước
+      deploy), nhưng **vẫn nên chạy câu SQL sau trên DB thật để xác nhận không còn nhóm nào bị
+      sót** (migration chỉ chạy 1 lần lúc khởi động backend):
+      ```sql
+      SELECT g.name FROM user_groups g
+      JOIN group_features gf ON gf.group_id = g.id AND gf.feature_code = 'menu.cham_ach'
+      WHERE NOT EXISTS (
+          SELECT 1 FROM group_features x
+          WHERE x.group_id = g.id AND x.feature_code = 'cham_ach.process'
+      );
+      ```
+      Ra dòng nào là nhóm đó vẫn thiếu quyền chạy — cấp tay qua màn Phân quyền chức năng.
+    + **Xoá tay thư mục `data/temp_ach` cũ (đường dẫn tương đối, nằm cạnh thư mục chạy
+      backend)** nếu có. `TEMP_DIR` đổi sang đường dẫn tuyệt đối (`BASE_DIR/data/temp_ach`) —
+      thư mục cũ ở vị trí tương đối sẽ không còn được vòng dọn tự động quét tới, thành mồ côi
+      vĩnh viễn nếu không xoá tay một lần.
+
 - 22/08/2026 Bàn giao cho lưu trữ - **Cột TIEUDE_HS đổi sang mẫu "Nhật ký chứng từ ngày ... của Phòng ..."**
     + **Đổi gì**: tiêu đề hồ sơ nộp lưu trữ trước đây in ra là *"Hồ sơ ngày 27/02/2025 Phòng Kế toán tháng 02/2025 tập 1/2"*, nay là **"Nhật ký chứng từ ngày 27/02/2025 của Phòng Kế toán tập 1/2"**
     + **Bỏ hẳn đuôi "tháng 02/2025"**: ngày ghi ngay phía trước đã có đủ tháng và năm rồi, nhắc lại chỉ làm ô dài thêm

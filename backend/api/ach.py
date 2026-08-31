@@ -74,7 +74,12 @@ async def start_job(
         # hiểu 137 ở đâu ra.
         try:
             data = await read_limited(f, _MAX_UPLOAD - total_size)
-        except HTTPException:
+        except HTTPException as e:
+            # Chỉ 413 (vượt trần) mới đổi thông điệp — bắt rộng "mọi HTTPException"
+            # sẽ biến lỗi tương lai khác của read_limited() thành "vượt 500 MB" sai
+            # lệch chẩn đoán (review PR#54, khanhbq693).
+            if e.status_code != 413:
+                raise
             raise HTTPException(
                 413, f'Tổng kích thước file vượt quá {_MAX_UPLOAD // (1024 * 1024)} MB.')
         total_size += len(data)
