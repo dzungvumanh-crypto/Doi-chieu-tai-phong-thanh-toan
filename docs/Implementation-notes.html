@@ -9123,7 +9123,93 @@ Bất biến MIS: 522.774 + 36.462 = 559.236 (khớp tổng gốc)</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-31</footer>
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">100</span>
+      <span class="card-title">Phân loại dữ liệu GL02 — phát hiện KHÔNG phải AES-256 mà là ZipCrypto cổ điển, vá bằng numba: giảm 5,5 lần tổng thời gian (228.8s → 41.7s)</span>
+      <span class="badge badge-done">HOÀN THIỆN CODE+TEST · 2026-09-01 · 742/742 pass · verify dữ liệu thật</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh — hướng multiprocessing ban đầu bị BO yêu cầu dừng để điều tra đúng gốc rễ</div>
+      <p>Sau khi card 99 xác nhận ghi Excel không còn là nút thắt, giải mã GL02 (194.9s, 28% tổng
+        job) trở thành ứng viên tiếp theo. Thử nghiệm đầu tiên (song song hoá 8 file thành viên
+        bằng <code>ProcessPoolExecutor</code>, mỗi tiến trình 1 file) verify chạy ổn định + đúng
+        (không lặp lại lỗi pickling/spawn trong <code>BackgroundTasks</code> đã bị từ chối ở card
+        30) nhưng chỉ nhanh hơn ~2,2-2,7 lần. BO yêu cầu dừng hướng này, benchmark thêm phương án
+        gọi 7-Zip native rồi đọc bằng polars trước khi quyết song song hoá — phát hiện 7-Zip
+        KHÔNG có sẵn trên máy dev (đúng rủi ro triển khai binary ngoài đã ghi ở card 30 cho
+        WinRAR), nên chuyển hướng điều tra sâu bằng <code>cProfile</code> trước khi benchmark
+        thêm công cụ ngoài.</p>
+
+      <div class="label">Phát hiện gốc rễ — GL02 KHÔNG dùng AES, dù code/tài liệu gọi là "AES-256"</div>
+      <p><code>cProfile</code> trên 1 lần <code>zf.read()</code> thật lộ ra: 12,95s trong tổng
+        13,057s nằm ở <code>pyzipper.zipfile.py:928(decrypt)</code> — gọi <code>update_keys()</code>
+        <b>5.050.018 lần</b> + <code>crc32()</code> <b>10.100.036 lần</b> CHO 1 FILE THÀNH VIÊN
+        (5MB nén). Đây là <code>CRCZipDecrypter</code> — thuật toán <b>PKWARE ZipCrypto cổ điển</b>
+        (vòng lặp Python xử lý từng byte một), KHÔNG phải AES. Xác nhận bằng
+        <code>zipfile.ZipInfo.compress_type</code> của file GL02 thật = 8 (DEFLATE thường), trong
+        khi AES thật của pyzipper báo <code>compress_type=99</code> ở dạng thô trên đĩa. Benchmark
+        riêng AES-NI phần cứng qua <code>pycryptodomex</code> (dependency của pyzipper) đạt
+        <b>~974 MB/s</b> — chứng minh bản chất phép toán mã hoá không hề chậm, vấn đề là thuật
+        toán ĐANG DÙNG (ZipCrypto) bị thực thi bằng vòng lặp Python thuần thay vì mã máy.</p>
+      <p><b>⚠️ Sai lệch tài liệu cần lưu ý</b>: toàn bộ code/comment/Implementation-notes.html cũ
+        (card 30: "Giải mã ZIP AES-256 bắt buộc cần pyzipper") gọi nhầm là AES trong khi thực tế
+        là ZipCrypto — tên lớp <code>pyzipper.AESZipFile</code> gây hiểu lầm vì lớp này hỗ trợ CẢ
+        2 thuật toán, tự chọn theo metadata thật của từng entry, không phải luôn dùng AES.</p>
+
+      <div class="label">Sửa — viết lại vòng lặp ZipCrypto bằng numba (JIT, không cần binary/compiler ngoài)</div>
+      <p>Thêm dependency <code>numba</code> (bản build sẵn cho Windows/Linux, không cần compiler
+        hệ thống lúc cài — khác hẳn rủi ro "chưa chắc có trên server" của WinRAR/7-Zip đã bị từ
+        chối ở card 30). Viết lại đúng thuật toán PKWARE ZipCrypto (<code>_zipcrypto_decrypt_numba</code>,
+        <code>@njit</code>) — cùng công thức <code>update_keys</code>/<code>crc32</code> với
+        <code>CRCZipDecrypter</code> gốc của pyzipper, biên dịch JIT thành mã máy.</p>
+      <table>
+        <tr><th>Hàm</th><th>Vai trò</th></tr>
+        <tr><td><code>_doc_1_file_thanh_vien(zf, name, pwd)</code></td>
+          <td>Điểm vào duy nhất thay <code>zf.read()</code> trực tiếp — CHỈ dùng đường tắt numba
+          khi chắc chắn đúng thuật toán, ngược lại rơi về <code>zf.read()</code> gốc (an toàn,
+          không đoán).</td></tr>
+        <tr><td><code>_doc_raw_ciphertext(zf, info)</code></td>
+          <td>Đọc thẳng byte mã hoá qua <code>zf.fp</code> + offset <code>header_offset</code> —
+          hoạt động cả với file thật lẫn <code>io.BytesIO</code> trong bộ nhớ.</td></tr>
+        <tr><td><code>_zipcrypto_derive_keys</code>/<code>_zipcrypto_decrypt_numba</code></td>
+          <td>Suy khoá từ mật khẩu + giải mã — verify byte cuối header mã hoá (check_byte) để bắt
+          sai mật khẩu sớm, giống hệt <code>CRCZipDecrypter.__init__</code>.</td></tr>
+      </table>
+      <p><b>⚠️ Bẫy đã dính khi viết điều kiện phân biệt AES/ZipCrypto</b>: ban đầu dùng
+        <code>info.compress_type == 8</code> làm điều kiện — SAI, vì pyzipper tự giải mã extra
+        field AES (0x9901) và GHI ĐÈ <code>compress_type</code> bằng phương pháp nén THẬT bên
+        trong (cũng là 8 = DEFLATE), khiến AES thật và ZipCrypto trả cùng giá trị này sau khi
+        parse. Test fixture AES có sẵn của dự án (<code>pyzipper.AESZipFile(...,
+        encryption=WZ_AES)</code>) lộ ra lỗi này ngay (5 test fail — đường tắt numba nhận nhầm
+        entry AES thật, verify sai mật khẩu vì áp sai thuật toán). Sửa đúng: phân biệt bằng
+        <code>getattr(info, "wz_aes_version", None) is None</code> — thuộc tính pyzipper CHỈ gán
+        khi thật sự giải mã được extra field AES.</p>
+
+      <div class="label">Kết quả đo thật (NH 202/25.8.2026, qua đúng hàm <code>process_zip()</code> production)</div>
+      <table>
+        <tr><th></th><th>Trước</th><th>Sau (numba)</th></tr>
+        <tr><td>Giải mã ZIP (đọc+giải nén, 8 file)</td><td>194,9s</td><td><b>5,5s</b> (nhanh ~35 lần)</td></tr>
+        <tr><td>Định tuyến từng dòng (không đổi)</td><td>21,1-23,3s</td><td>21,1-23,3s</td></tr>
+        <tr><td>Ghi 8 file CSV (không đổi)</td><td>12,4-16,3s</td><td>12,4-16,3s</td></tr>
+        <tr><td><b>TỔNG <code>process_zip()</code></b></td><td><b>228,8s</b></td><td><b>41,7s (giảm 5,5 lần)</b></td></tr>
+      </table>
+      <p>Verify byte-for-byte (SHA-256) toàn bộ 8 file kết quả (<code>{ma}_DEN.csv</code>/
+        <code>{ma}_DI.csv</code>) khớp TUYỆT ĐỐI với bản chạy tuần tự cũ trước khi sửa — dữ liệu
+        tài chính không đổi, chỉ tốc độ đổi. Vòng lặp định tuyến Python (giờ chiếm ~56% thời gian
+        còn lại) là ứng viên tối ưu tiếp theo nếu cần — chưa làm, chờ quyết định.</p>
+
+      <div class="label">Test</div>
+      <p>Test mới <code>tests/test_doi_chieu_song_phuong_service_algorithm.py</code> (5 test) — vì
+        <code>pyzipper</code> KHÔNG hỗ trợ GHI ZipCrypto cổ điển (chỉ ghi được AES), tự dựng 1 ZIP
+        ZipCrypto hợp lệ bằng tay (đúng thuật toán PKWARE) làm fixture, không phụ thuộc dữ liệu
+        GL02 thật: giải mã đúng nội dung gốc, sai mật khẩu bị bắt sớm, khớp tuyệt đối với
+        <code>zf.read()</code> gốc của pyzipper, entry AES thật không bị nhận nhầm, và
+        <code>process_zip()</code> đầy đủ định tuyến đúng. 742/742 test toàn dự án pass.</p>
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-01</footer>
 </div>
 </body>
 </html>

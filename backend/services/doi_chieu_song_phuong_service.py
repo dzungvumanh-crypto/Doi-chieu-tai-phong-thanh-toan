@@ -14,12 +14,17 @@ import csv
 import io
 import logging
 import shutil
+import struct
 import threading
 import time
 import uuid
 import zipfile
+import zlib
 from datetime import datetime
 from pathlib import Path
+
+import numpy as np
+from numba import njit
 
 from backend.services.doi_chieu_song_phuong_common import do_thoi_gian
 
@@ -64,7 +69,7 @@ log = logging.getLogger(__name__)
 def process_zip(zip_bytes: bytes, log_callback=lambda msg: None) -> dict:
     """Nhận bytes ZIP → định tuyến → ghi 8 CSV → trả metadata."""
     _cleanup_old_results()
-    t0 = time.time()
+    t_start = time.time()
 
     # ── Kiểm tra magic bytes ──────────────────────────────────────────────────
     if zip_bytes[:4] != b"PK\x03\x04":
@@ -72,72 +77,23 @@ def process_zip(zip_bytes: bytes, log_callback=lambda msg: None) -> dict:
 
     log_callback("Đang giải mã và đọc dữ liệu...")
 
-    buffers = {(c, d): [] for c in BANK_MAP for d in DIRECTIONS}
-    counts  = {(c, d): 0  for c in BANK_MAP for d in DIRECTIONS}
-    hdr_line   = None
-    total_rows = 0
-
-    buf = io.BytesIO(zip_bytes)
     try:
-        zf = _open_zip(buf)
+        with io.BytesIO(zip_bytes) as buf, _open_zip(buf) as zf:
+            try:
+                zf.setpassword(ZIP_PASSWORD)
+            except AttributeError:
+                pass  # zipfile thường không cần setpassword riêng
+            csv_names = sorted(n for n in zf.namelist() if n.lower().endswith(".csv"))
     except Exception as e:
         raise ValueError(f"Không mở được file ZIP: {e}")
-
-    # Tách riêng 2 nhãn đo thời gian (2026-08-31, yêu cầu khảo sát hiệu năng) — trước gộp chung
-    # "giải mã + định tuyến" vào 1 khối, không biết chi phí chính nằm ở giải nén AES/zlib hay ở
-    # vòng lặp Python thuần `_route_file()`. Cộng dồn thủ công qua nhiều file thay vì bọc
-    # `do_thoi_gian` mỗi file (tránh log rác n dòng), chỉ log tổng 1 lần sau vòng lặp.
-    t_giai_nen = 0.0
-    t_dinh_tuyen = 0.0
-    with zf:
-        try:
-            zf.setpassword(ZIP_PASSWORD)
-        except AttributeError:
-            pass  # zipfile thường không cần setpassword riêng
-        csv_names = sorted(n for n in zf.namelist() if n.lower().endswith(".csv"))
-        if not csv_names:
-            raise ValueError("Không tìm thấy file CSV nào trong ZIP.")
-
-        n = len(csv_names)
-        for i, name in enumerate(csv_names):
-            t0 = time.perf_counter()
-            try:
-                raw = zf.read(name, pwd=ZIP_PASSWORD)
-            except Exception as e:
-                raise ValueError(
-                    f"Không giải mã được '{name}' — sai mật khẩu hoặc file hỏng ({e})."
-                )
-            t_giai_nen += time.perf_counter() - t0
-
-            t0 = time.perf_counter()
-            reader = csv.reader(io.TextIOWrapper(
-                io.BytesIO(raw), encoding="utf-8-sig", newline=""))
-            file_hdr, routed = _route_file(reader, buffers, counts, name)
-            t_dinh_tuyen += time.perf_counter() - t0
-
-            if hdr_line is None and file_hdr:
-                hdr_line = file_hdr
-            total_rows += routed
-            log_callback(f"Đã xử lý {i + 1}/{n}: {name} ({routed:,} dòng)")
-    log_callback(f"[TIMING] giải mã ZIP (đọc+giải nén AES): {t_giai_nen:.1f}s")
-    log_callback(f"[TIMING] định tuyến từng dòng (vòng lặp Python): {t_dinh_tuyen:.1f}s")
-
-    # ── Ghi 8 file CSV (kể cả file rỗng → chỉ header) ─────────────────────────
-    log_callback(f"Đang ghi 8 file CSV ({total_rows:,} dòng)...")
-    if hdr_line is None:
-        hdr_line = ",".join(COLS) + "\r\n"
+    if not csv_names:
+        raise ValueError("Không tìm thấy file CSV nào trong ZIP.")
 
     result_token = str(uuid.uuid4())
     out_dir = TEMP_DIR / result_token
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    with do_thoi_gian(log_callback, "ghi 8 file CSV"):
-        for (cust, chieu), lines in buffers.items():
-            ma   = BANK_MAP[cust]
-            path = out_dir / f"{ma}_{chieu}.csv"
-            with open(path, "w", encoding="utf-8-sig", newline="") as fh:
-                fh.write(hdr_line)
-                fh.writelines(lines)
+    hdr_line, total_rows, counts = _giai_ma_tuan_tu(zip_bytes, csv_names, out_dir, log_callback)
 
     # ── Thống kê + danh sách file ─────────────────────────────────────────────
     stats = [
@@ -166,7 +122,7 @@ def process_zip(zip_bytes: bytes, log_callback=lambda msg: None) -> dict:
         "stats":        stats,
         "files":        files,
         "total_rows":   total_rows,
-        "elapsed_s":    round(time.time() - t0, 1),
+        "elapsed_s":    round(time.time() - t_start, 1),
         "process_date": datetime.now().strftime("%Y%m%d"),
     }
 
@@ -283,6 +239,182 @@ def _cleanup_old_jobs() -> None:
 
 # ─── Internal ─────────────────────────────────────────────────────────────────
 
+def _giai_ma_tuan_tu(
+    zip_bytes: bytes, csv_names: list[str], out_dir: Path, log_callback,
+) -> tuple[str, int, dict]:
+    """Đọc lần lượt từng file thành viên. Giải mã qua `_doc_1_file_thanh_vien()` — dùng đường
+    tắt numba cho ZipCrypto cổ điển (2026-09-01, xem Implementation-notes.html card 100, nhanh
+    ~39 lần so với vòng lặp Python thuần của pyzipper), tự rơi về `zf.read()` gốc cho mọi trường
+    hợp khác (AES thật, STORED...) — không đoán, chỉ dùng đường tắt khi chắc chắn đúng thuật
+    toán."""
+    buffers = {(c, d): [] for c in BANK_MAP for d in DIRECTIONS}
+    counts = {(c, d): 0 for c in BANK_MAP for d in DIRECTIONS}
+    hdr_line = None
+    total_rows = 0
+
+    # Tách riêng 2 nhãn đo thời gian (2026-08-31, yêu cầu khảo sát hiệu năng) — trước gộp chung
+    # "giải mã + định tuyến" vào 1 khối, không biết chi phí chính nằm ở giải nén hay ở vòng lặp
+    # Python thuần `_route_file()`. Cộng dồn thủ công qua nhiều file thay vì bọc `do_thoi_gian`
+    # mỗi file (tránh log rác n dòng), chỉ log tổng 1 lần sau vòng lặp.
+    t_giai_nen = 0.0
+    t_dinh_tuyen = 0.0
+    with io.BytesIO(zip_bytes) as buf, _open_zip(buf) as zf:
+        try:
+            zf.setpassword(ZIP_PASSWORD)
+        except AttributeError:
+            pass
+        n = len(csv_names)
+        for i, name in enumerate(csv_names):
+            t0 = time.perf_counter()
+            try:
+                raw = _doc_1_file_thanh_vien(zf, name, ZIP_PASSWORD)
+            except Exception as e:
+                raise ValueError(
+                    f"Không giải mã được '{name}' — sai mật khẩu hoặc file hỏng ({e})."
+                )
+            t_giai_nen += time.perf_counter() - t0
+
+            t0 = time.perf_counter()
+            reader = csv.reader(io.TextIOWrapper(
+                io.BytesIO(raw), encoding="utf-8-sig", newline=""))
+            file_hdr, routed = _route_file(reader, buffers, counts, name)
+            t_dinh_tuyen += time.perf_counter() - t0
+
+            if hdr_line is None and file_hdr:
+                hdr_line = file_hdr
+            total_rows += routed
+            log_callback(f"Đã xử lý {i + 1}/{n}: {name} ({routed:,} dòng)")
+    log_callback(f"[TIMING] giải mã ZIP (đọc+giải nén): {t_giai_nen:.1f}s")
+    log_callback(f"[TIMING] định tuyến từng dòng (vòng lặp Python): {t_dinh_tuyen:.1f}s")
+
+    log_callback(f"Đang ghi 8 file CSV ({total_rows:,} dòng)...")
+    if hdr_line is None:
+        hdr_line = ",".join(COLS) + "\r\n"
+
+    with do_thoi_gian(log_callback, "ghi 8 file CSV"):
+        for (cust, chieu), lines in buffers.items():
+            ma = BANK_MAP[cust]
+            path = out_dir / f"{ma}_{chieu}.csv"
+            with open(path, "w", encoding="utf-8-sig", newline="") as fh:
+                fh.write(hdr_line)
+                fh.writelines(lines)
+
+    return hdr_line, total_rows, counts
+
+
+# ─── Giải mã nhanh (numba) cho ZipCrypto cổ điển ────────────────────────────────
+# Phát hiện 2026-09-01 (Implementation-notes.html card 100): dù dùng `pyzipper.AESZipFile` và
+# đặt tên "AES" khắp nơi trong code/tài liệu, file GL02 THẬT lại dùng mã hoá PKWARE ZipCrypto cổ
+# điển (compress_type=8, KHÔNG phải 99 = mã AES thật của pyzipper) — không phải AES-256 như tài
+# liệu cũ ghi. `pyzipper` giải mã kiểu này bằng vòng lặp Python xử lý TỪNG BYTE MỘT
+# (profiling: 184 triệu lượt gọi `update_keys()`/`crc32()` cho 1 file GL02) — đây mới là nguyên
+# nhân thật của 190s+ đo được, không phải vì bản chất phép toán mã hoá chậm (AES-NI phần cứng đo
+# riêng đạt ~974 MB/s). Viết lại đúng thuật toán ZipCrypto (RFC lược sử PKZIP, giống hệt
+# `pyzipper.zipfile.CRCZipDecrypter`) bằng `numba.njit` — biên dịch máy JIT, không cần compiler
+# hệ thống, không cần binary ngoài (khác rủi ro WinRAR/7-Zip "chưa chắc có trên server" đã ghi ở
+# card 30) — nhanh hơn ~39 lần khi verify trên dữ liệu GL02 thật, output byte-for-byte giống hệt.
+#
+# CHỈ áp dụng khi CHẮC CHẮN đúng thuật toán: `compress_type == ZIP_DEFLATED` (8) — loại trừ AES
+# thật (compress_type == 99, tài liệu pyzipper) và STORED — mọi trường hợp khác rơi về
+# `zf.read()` gốc của pyzipper (không đoán, không tự ý mở rộng đường tắt cho case chưa xác nhận).
+
+def _crc32_table() -> np.ndarray:
+    table = []
+    for i in range(256):
+        c = i
+        for _ in range(8):
+            c = (0xEDB88320 ^ (c >> 1)) if (c & 1) else (c >> 1)
+        table.append(c)
+    return np.array(table, dtype=np.uint64)
+
+
+_CRC_TABLE = _crc32_table()
+
+
+@njit(cache=True)
+def _zipcrypto_decrypt_numba(data: np.ndarray, key0: int, key1: int, key2: int,
+                              crc_table: np.ndarray) -> np.ndarray:
+    """Đúng thuật toán PKWARE ZipCrypto (xem `pyzipper.zipfile.CRCZipDecrypter.decrypt`/
+    `update_keys`) — biên dịch JIT bằng numba để chạy tốc độ gần mã máy thay vì vòng lặp bytecode
+    Python."""
+    n = data.shape[0]
+    out = np.empty(n, dtype=np.uint8)
+    for i in range(n):
+        k = key2 | 2
+        c = data[i] ^ (((k * (k ^ 1)) >> 8) & 0xFF)
+        key0 = (crc_table[(key0 ^ c) & 0xFF] ^ (key0 >> 8)) & 0xFFFFFFFF
+        key1 = (key1 + (key0 & 0xFF)) & 0xFFFFFFFF
+        key1 = (key1 * 134775813 + 1) & 0xFFFFFFFF
+        key2 = (crc_table[(key2 ^ (key1 >> 24)) & 0xFF] ^ (key2 >> 8)) & 0xFFFFFFFF
+        out[i] = c
+    return out
+
+
+def _zipcrypto_derive_keys(pwd: bytes) -> tuple[int, int, int]:
+    key0, key1, key2 = 305419896, 591751049, 878082192
+    for p in pwd:
+        key0 = (int(_CRC_TABLE[(key0 ^ p) & 0xFF]) ^ (key0 >> 8)) & 0xFFFFFFFF
+        key1 = (key1 + (key0 & 0xFF)) & 0xFFFFFFFF
+        key1 = (key1 * 134775813 + 1) & 0xFFFFFFFF
+        key2 = (int(_CRC_TABLE[(key2 ^ (key1 >> 24)) & 0xFF]) ^ (key2 >> 8)) & 0xFFFFFFFF
+    return key0, key1, key2
+
+
+def _doc_raw_ciphertext(zf, info) -> bytes:
+    """Đọc thẳng byte mã hoá (compressed, kèm 12 byte header mã hoá ZipCrypto) từ `zf.fp` bằng vị
+    trí `header_offset` — hoạt động với cả file thật lẫn `io.BytesIO` trong bộ nhớ (không cần
+    đường dẫn trên đĩa)."""
+    zf.fp.seek(info.header_offset)
+    local_header = zf.fp.read(30)
+    (_sig, _ver, _flag, _comp, _mtime, _mdate, _crc, _csize, _usize, nlen, elen) = \
+        struct.unpack("<IHHHHHIIIHH", local_header)
+    zf.fp.seek(info.header_offset + 30 + nlen + elen)
+    return zf.fp.read(info.compress_size)
+
+
+def _doc_1_file_thanh_vien(zf, name: str, pwd: bytes) -> bytes:
+    """Đọc + giải mã + giải nén 1 file thành viên trong ZIP đang mở `zf`. Dùng đường tắt numba
+    (ZipCrypto cổ điển, xem block comment phía trên) khi entry chắc chắn khớp thuật toán, ngược
+    lại rơi về `zf.read()` gốc của pyzipper (bao gồm cả AES thật lẫn mọi trường hợp không chắc
+    chắn)."""
+    info = zf.getinfo(name)
+    # ⚠️ `info.compress_type` KHÔNG đủ để phân biệt AES thật với ZipCrypto — pyzipper tự giải mã
+    # extra field AES (0x9901) và GHI ĐÈ `compress_type` bằng phương pháp nén THẬT bên trong (vd
+    # 8 = DEFLATE), giống hệt giá trị của entry ZipCrypto thường. Verify trực tiếp: file GL02 thật
+    # (ZipCrypto) và 1 fixture test tạo bằng `pyzipper.AESZipFile(..., encryption=WZ_AES)` đều trả
+    # `compress_type=8` — chỉ có `wz_aes_version` (pyzipper set khi decode được extra field AES,
+    # mặc định `None`) mới phân biệt đúng được 2 trường hợp.
+    is_zip_crypto = (
+        bool(info.flag_bits & 0x1)               # bit 0 = có mã hoá
+        and not bool(info.flag_bits & 0x40)      # bit 6 = strong encryption (không dùng ở đây)
+        and getattr(info, "wz_aes_version", None) is None   # KHÔNG phải AES thật
+        and info.compress_type == zipfile.ZIP_DEFLATED
+    )
+    if not is_zip_crypto:
+        return zf.read(name, pwd=pwd)
+
+    ciphertext = _doc_raw_ciphertext(zf, info)
+    key0, key1, key2 = _zipcrypto_derive_keys(pwd)
+    cipher_arr = np.frombuffer(ciphertext, dtype=np.uint8)
+    plain = _zipcrypto_decrypt_numba(cipher_arr, key0, key1, key2, _CRC_TABLE)
+
+    # 12 byte đầu là header mã hoá (không phải dữ liệu thật) — byte cuối dùng để kiểm tra mật
+    # khẩu đúng/sai, giống hệt `CRCZipDecrypter.__init__` của pyzipper.
+    use_datadescriptor = bool(info.flag_bits & 0x8)
+    check_byte = ((info._raw_time >> 8) & 0xFF) if use_datadescriptor else ((info.CRC >> 24) & 0xFF)
+    if int(plain[11]) != check_byte:
+        raise ValueError(f"Sai mật khẩu cho file '{name}' trong ZIP")
+
+    decompressed = zlib.decompressobj(-15).decompress(plain[12:].tobytes())
+    actual_crc = zlib.crc32(decompressed) & 0xFFFFFFFF
+    if actual_crc != info.CRC:
+        raise ValueError(
+            f"CRC không khớp sau khi giải mã '{name}' — dữ liệu có thể hỏng "
+            f"(expected={info.CRC:x}, actual={actual_crc:x})"
+        )
+    return decompressed
+
+
 def _route_file(reader, buffers: dict, counts: dict, name: str):
     """Đọc 1 CSV đã parse, đưa dòng vào buffers/counts theo NH + chiều.
 
@@ -333,13 +465,22 @@ def _route_file(reader, buffers: dict, counts: dict, name: str):
 
 
 def _cleanup_old_results() -> None:
-    """Xóa thư mục kết quả cũ hơn CLEANUP_HOURS giờ."""
+    """Xóa thư mục kết quả cũ hơn CLEANUP_HOURS giờ — kể cả file `_tmp_gl02_*.zip` bị bỏ sót nếu
+    tiến trình chết giữa chừng lúc giải mã song song (`_giai_ma_song_song` tự dọn ở nhánh chạy
+    bình thường qua `finally`, đây chỉ là lưới an toàn cho trường hợp crash)."""
     cutoff = time.time() - CLEANUP_HOURS * 3600
 
     if TEMP_DIR.exists():
         for sub in TEMP_DIR.iterdir():
-            if sub.is_dir() and sub.stat().st_mtime < cutoff:
+            if sub.stat().st_mtime >= cutoff:
+                continue
+            if sub.is_dir():
                 try:
                     shutil.rmtree(sub)
+                except Exception as e:
+                    log.warning("Không xóa được %s: %s", sub, e)
+            elif sub.name.startswith("_tmp_gl02_") and sub.suffix == ".zip":
+                try:
+                    sub.unlink()
                 except Exception as e:
                     log.warning("Không xóa được %s: %s", sub, e)
