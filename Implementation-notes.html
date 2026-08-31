@@ -8864,7 +8864,59 @@ Bất biến MIS: 522.774 + 36.462 = 559.236 (khớp tổng gốc)</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-30</footer>
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">68</span>
+      <span class="card-title">Đối chiếu Song phương/ILO1000 — 2 lỗ hổng từ review PR#68 đã vá</span>
+      <span class="badge badge-done">Đã sửa</span>
+    </div>
+    <div class="card-body">
+      <p>Review khanhbq693 trên PR#68 nêu 2 lỗ hổng bảo mật cụ thể, sửa được ngay không cần chờ chiến
+      lược rebase 39 file (mục "Chưa làm" bên dưới):</p>
+
+      <div class="label">1. Path traversal — ilo1000_service.py:65</div>
+      <p><code>start_job()</code> ghi file theo <code>UploadFile.filename</code> do client gửi thẳng vào
+      <code>input_dir</code>, không qua <code>os.path.basename()</code>. Tên file cố ý mang
+      <code>'..\..\..\backend\main.py'</code> ghi đè được mã nguồn hệ thống. Vá bằng
+      <code>os.path.basename()</code> — đúng cách <code>doi_chieu_song_phuong_kenh_core_service.py:119</code>
+      cùng PR đã dùng (review xác nhận đây là chỗ SÓT, không phải chủ ý khác biệt). Có test
+      (<code>test_ilo1000_service_bao_mat.py</code>).</p>
+
+      <div class="label">2. /api/fs/browse không giới hạn quyền — bất kỳ ai đăng nhập duyệt được cả ổ đĩa server</div>
+      <p>Trước fix: chỉ gắn <code>get_current_staff</code>, docstring ghi rõ lý do bỏ
+      <code>require_feature</code> là "cần OR giữa nhiều menu, require_feature chỉ nhận 1 mã" — tức biết
+      lỗ hổng mà vẫn để trống thay vì giải bài toán OR. Thêm <code>require_any_feature(*codes)</code>
+      vào <code>backend/core/deps.py</code> (cho qua nếu có ÍT NHẤT MỘT trong các feature_code), áp cho
+      <code>/api/fs/browse</code> với 4 mã: <code>menu.cham_ach</code>, <code>menu.cham_ilo1000</code>,
+      <code>menu.cham_459901</code>, <code>menu.doi_chieu_song_phuong</code>.</p>
+      <div class="note">Nhánh <code>ach-chi-tim-timeout-2026-08-22</code> (PR#54, hướng ACH đã bỏ hẳn
+      server-folder-mode) đã cài sẵn một "sentinel test" đúng tên
+      <code>TestFsBrowseKhongLoRaNgoai</code> yêu cầu chính xác giải pháp này khi nhánh này được gộp —
+      xác nhận độc lập rằng <code>require_any_feature</code> là hướng đúng, không phải suy đoán riêng.</div>
+
+      <div class="label">Chưa làm — cần quyết định của Business Owner, không tự ý làm</div>
+      <table>
+        <tr><th>Việc</th><th>Vì sao chưa làm</th></tr>
+        <tr><td>Rebase 39 file xung đột với <code>develop</code> hiện tại (lệch 203 commit)</td>
+          <td>Đặc biệt <code>features.py</code>/<code>shared.py</code> (RBAC) — resolve tay sai sẽ mất
+          quyền/menu <b>im lặng</b>, không test nào bắt được (cảnh báo của chính review). Cần chốt chiến
+          lược (rebase toàn bộ vs. cắt PR mới từ <code>develop</code>) trước khi động vào.</td></tr>
+        <tr><td>Giữ hay bỏ hẳn "chế độ chọn thư mục server" cho Đối chiếu Song phương/459901</td>
+          <td><code>develop</code> đã CHỦ ĐỘNG bỏ tính năng này khỏi ACH (commit <code>9b3d310</code>,
+          <code>0b58d57</code>) vì lý do bảo mật — nhưng nhánh <code>Cham_ILO1000</code> lại đang XÂY nó
+          như tính năng mới cho 459901/Song phương (commit <code>e10c9a6</code> 2026-08-28). Đây là xung
+          đột định hướng sản phẩm giữa 2 nhánh, không phải lỗi kỹ thuật — không tự ý xoá tính năng có thể
+          đang được cố ý phát triển.</td></tr>
+        <tr><td>RAM read-limit cho <code>/api/ilo1000/start</code> (<code>await f.read()</code> trần 1 GB)</td>
+          <td>Cách làm đúng (<code>read_limited_sync</code>/<code>save_upload_to_sync</code>) nằm trong
+          <code>backend/core/uploads.py</code> — module này CHƯA TỒN TẠI trên nhánh này (chỉ có ở
+          <code>develop</code>). Tự viết bản rút gọn riêng sẽ tạo thêm một cách làm phân kỳ nữa, đúng thứ
+          review đang cảnh báo — nên gộp cùng lúc rebase, không vá tạm.</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-31</footer>
 </div>
 </body>
 </html>

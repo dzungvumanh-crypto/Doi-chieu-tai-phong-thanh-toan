@@ -1657,11 +1657,16 @@ class TestBuildOsbKey:
         assert key.iloc[0] == '3510' + '141470277' + '70000'
 
     def test_raises_on_unknown_amount_format(self):
-        """Số tiền không đúng mẫu đã biết (thuần số hoặc ngăn nghìn 3 chữ số)
-        → raise, không đoán — dùng chung doc_so_tien() với module ACH."""
+        """Số tiền không đúng mẫu đã biết (thuần số, ngăn nghìn dấu chấm hoặc
+        dấu phẩy) → raise, không đoán — dùng chung doc_so_tien() với module ACH.
+
+        '70,000' KHÔNG dùng làm mẫu lạ nữa: từ 2026-08-21 doc_so_tien() chấp
+        nhận dấu phẩy ngăn nghìn (VND luôn nguyên, không rủi ro nhầm thập phân
+        kiểu châu Âu) — '70,000' giờ hợp lệ, ra 70000. Test cũ giữ nguyên input
+        này sẽ fail vì không còn raise (xem review PR#68/#69)."""
         from backend.services.ilo1000.load_osb import build_osb_key
 
-        df = pd.DataFrame([_osb_row('141470277', '3510 - CN A', '70,000', '10/08/2026')])
+        df = pd.DataFrame([_osb_row('141470277', '3510 - CN A', '1.5', '10/08/2026')])
         with pytest.raises(ValueError):
             build_osb_key(df)
 

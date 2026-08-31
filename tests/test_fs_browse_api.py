@@ -2,6 +2,78 @@
 Chạy: .venv\\Scripts\\python.exe -m pytest tests/test_fs_browse_api.py -v
 """
 
+import sqlite3
+
+import pytest
+from fastapi.testclient import TestClient
+
+from backend.core.deps import get_current_staff
+from backend.core.enums import StaffRole
+from backend.database import get_db
+from backend.main import app
+
+_STAFF_ID = 7
+
+
+def _client_voi_quyen(codes: list[str]) -> TestClient:
+    """TestClient đăng nhập bằng chuyên viên thuộc 1 nhóm được cấp đúng `codes`
+    (không phải admin — admin bypass mọi feature check, không chạm được lớp
+    phân quyền đang test)."""
+    conn = sqlite3.connect(':memory:', check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(
+        """CREATE TABLE user_groups (id INTEGER PRIMARY KEY, name TEXT, is_active BOOLEAN DEFAULT 1);
+           CREATE TABLE group_members (group_id INTEGER, staff_id INTEGER);
+           CREATE TABLE group_features (group_id INTEGER, feature_code TEXT);
+           INSERT INTO user_groups (id, name, is_active) VALUES (1, 'Nhom test', 1);"""
+    )
+    conn.execute('INSERT INTO group_members (group_id, staff_id) VALUES (1, ?)', (_STAFF_ID,))
+    conn.executemany(
+        'INSERT INTO group_features (group_id, feature_code) VALUES (1, ?)',
+        [(c,) for c in codes],
+    )
+    conn.commit()
+
+    app.dependency_overrides[get_current_staff] = lambda: {
+        'id': _STAFF_ID, 'role': StaffRole.CHUYEN_VIEN,
+        'username': 'test-cv', 'full_name': 'Test Chuyen Vien',
+    }
+    def _db():
+        yield conn
+
+    app.dependency_overrides[get_db] = _db
+    return TestClient(app)
+
+
+@pytest.fixture
+def client_khong_co_menu_nao():
+    yield _client_voi_quyen([])
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def client_co_menu_459901():
+    yield _client_voi_quyen(['menu.cham_459901'])
+    app.dependency_overrides.clear()
+
+
+class TestFsBrowseChanUserKhongLienQuan:
+    """Review PR#68 (khanhbq693): trước fix, /api/fs/browse chỉ gắn
+    get_current_staff — BẤT KỲ ai đã đăng nhập, kể cả chuyên viên không có menu
+    nào trong 4 module dùng folder-picker, liệt kê được toàn bộ ổ đĩa/thư mục
+    trên máy chủ. Nay dùng require_any_feature() — cùng cách PR54 (nhánh
+    ach-chi-tim-timeout) đã cài sẵn sentinel test yêu cầu đúng giải pháp này."""
+
+    def test_khong_co_menu_nao_bi_tu_choi(self, client_khong_co_menu_nao):
+        for tham_so in ({}, {'path': 'C:\\'}):
+            r = client_khong_co_menu_nao.get('/api/fs/browse', params=tham_so)
+            assert r.status_code == 403
+
+    def test_co_menu_459901_duoc_qua(self, client_co_menu_459901):
+        """Chỉ cần MỘT trong 4 menu — không bắt phải có cả 4 (quan hệ HOẶC)."""
+        r = client_co_menu_459901.get('/api/fs/browse')
+        assert r.status_code == 200
+
 
 class TestBrowse:
     def test_list_drives_when_path_empty(self, admin_client):

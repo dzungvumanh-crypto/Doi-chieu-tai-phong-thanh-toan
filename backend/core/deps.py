@@ -78,3 +78,32 @@ def require_feature(feature_code: str):
             )
         return current
     return _check
+
+
+def require_any_feature(*feature_codes: str):
+    """Như require_feature(), nhưng cho qua nếu current có ÍT NHẤT MỘT trong các
+    feature_code — dùng cho endpoint dùng chung nhiều module (VD folder-picker
+    /api/fs/browse dùng chung cho ACH/ILO1000/459901/Đối chiếu Song phương),
+    nơi require_feature() với đúng 1 mã sẽ chặn nhầm user chỉ có menu module khác."""
+    def _check(
+        current: dict = Depends(get_current_staff),
+        db: sqlite3.Connection = Depends(get_db),
+    ) -> dict:
+        if current["role"] == StaffRole.ADMIN:
+            return current
+        placeholders = ",".join("?" * len(feature_codes))
+        row = db.execute(
+            f"""SELECT 1 FROM group_features gf
+               JOIN group_members gm ON gm.group_id = gf.group_id
+               JOIN user_groups g ON g.id = gm.group_id AND g.is_active = 1
+               WHERE gm.staff_id = ? AND gf.feature_code IN ({placeholders})
+               LIMIT 1""",
+            (current["id"], *feature_codes),
+        ).fetchone()
+        if not row:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Không có quyền truy cập tính năng này",
+            )
+        return current
+    return _check

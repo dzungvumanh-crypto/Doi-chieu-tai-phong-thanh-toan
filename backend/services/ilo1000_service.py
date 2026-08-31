@@ -62,8 +62,13 @@ def start_job(saved_files: dict[str, bytes]) -> str:
     input_dir.mkdir(parents=True, exist_ok=True)
     Path(job['output_dir']).mkdir(parents=True, exist_ok=True)
 
+    # os.path.basename(): filename tới thẳng từ UploadFile.filename do client gửi,
+    # chưa qua lọc — cắt hết thành phần đường dẫn trước khi ghép vào input_dir để
+    # chặn path traversal (VD '..\..\..\backend\main.py' ghi đè mã nguồn). Cùng
+    # cách doi_chieu_song_phuong_kenh_core_service.py:119 đã dùng — nhất quán,
+    # không kéo thêm module backend/core/uploads.py (chưa có trên nhánh này).
     for filename, data in saved_files.items():
-        (input_dir / filename).write_bytes(data)
+        (input_dir / os.path.basename(filename)).write_bytes(data)
 
     threading.Thread(
         target=_run,

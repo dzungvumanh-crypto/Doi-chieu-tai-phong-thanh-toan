@@ -1,8 +1,11 @@
 """API liệt kê thư mục con của 1 path trên máy server — phục vụ dialog chọn
 thư mục ở frontend (bấm chọn thay vì gõ tay đường dẫn). Chỉ liệt kê thư mục
 (không liệt kê file) vì đây thuần túy là folder-picker. Dùng chung cho
-cham_ach.py và cham_ilo1000.py — không gắn require_feature vì cần OR giữa
-menu.cham_ach và menu.cham_ilo1000 (require_feature chỉ nhận 1 feature_code)."""
+cham_ach.py, cham_ilo1000.py, cham459901.py, doi_chieu_song_phuong.py —
+require_any_feature() cho qua nếu có ÍT NHẤT MỘT trong các menu đó (review
+khanhbq693 PR#68: trước đây chỉ gắn get_current_staff, không giới hạn feature
+nào — BẤT KỲ ai đã đăng nhập, kể cả chuyên viên không có menu nào trong 4 module
+này, liệt kê được toàn bộ ổ đĩa/thư mục trên máy chủ)."""
 
 import ctypes
 import os
@@ -10,9 +13,13 @@ import string
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from backend.core.deps import get_current_staff
+from backend.core.deps import require_any_feature
 
 router = APIRouter(prefix='/api/fs', tags=['fs'])
+
+_CO_QUYEN_DUYET_THU_MUC = require_any_feature(
+    'menu.cham_ach', 'menu.cham_ilo1000', 'menu.cham_459901', 'menu.doi_chieu_song_phuong',
+)
 
 _SKIP_NAMES = {'$recycle.bin', 'system volume information'}
 
@@ -87,7 +94,7 @@ def _list_dir(raw_path: str) -> dict:
 
 
 @router.get('/browse')
-def browse(path: str | None = None, _staff: dict = Depends(get_current_staff)):
+def browse(path: str | None = None, _staff: dict = Depends(_CO_QUYEN_DUYET_THU_MUC)):
     """Liệt kê thư mục con của `path`. path rỗng/None → danh sách ổ đĩa."""
     if not path or not path.strip():
         return _list_drives()
