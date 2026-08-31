@@ -256,10 +256,12 @@ def _run(job_id: str, goc_dir: str, ngay: str, ma_nh: str, output_dir: str) -> N
             job["status"] = "cancelled"
             log("[JOB] Đã dừng theo yêu cầu.")
             return
+        hub_t_da_doc = (ket_qua_kenh or {}).get("hub_theo_nh", {}).get(ma_nh)
         try:
             with do_thoi_gian(log, "Bước 2/2 Hub↔Core (tổng)"):
                 ket_qua_core = doi_chieu_hub_core(
                     goc_dir_p, ngay, ma_nh, log_callback=lambda m: log(f"[Hub↔Core] {m}"),
+                    hub_t_override=hub_t_da_doc,
                 )
         except ValueError as e:
             loi.append(f"Hub↔Core: {e}")

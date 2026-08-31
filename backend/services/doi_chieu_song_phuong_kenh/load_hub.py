@@ -120,20 +120,28 @@ def filter_before_reconcile(df: pd.DataFrame, log: Callable[[str], None] = lambd
     return df[~mask_huy].reset_index(drop=True)
 
 
-def filter_before_reconcile_core(df: pd.DataFrame, log: Callable[[str], None] = lambda msg: None) -> pd.DataFrame:
-    """Tiền xử lý HUB cho nhánh đối chiếu HUB↔CORE (Bước 2.1 tài liệu `đối chiếu Song phương.docx`).
-
-    Tái dùng `filter_before_reconcile()` (loại `-` trong TXID + cặp TXID/TRACE trùng) rồi loại
-    thêm RJCT. KHÁC nhánh kênh↔hub: ở đó RJCT vẫn giữ lại (để hiện "KHÔNG CÓ" trong Bảng 3), ở
-    đây tài liệu yêu cầu loại hẳn — vì vậy tách hàm riêng, không đổi hành vi `filter_before_reconcile`
-    hiện có (module kênh↔hub đã duyệt Phase 9, không được ảnh hưởng).
-    """
-    df = filter_before_reconcile(df, log)
+def loai_rjct_hub_core(df: pd.DataFrame, log: Callable[[str], None] = lambda msg: None) -> pd.DataFrame:
+    """Loại riêng dòng RJCT trên HUB đã qua `filter_before_reconcile()` — tách ra từ
+    `filter_before_reconcile_core()` (2026-08-31) để bước Hub↔Core có thể áp lên 1 DataFrame HUB
+    đã đọc+lọc base SẴN từ bước Kênh↔Hub (tránh đọc+giải nén+lọc lại từ đầu cùng 1 file HUB,
+    xem `doi_chieu_song_phuong_core/pipeline.py::doi_chieu_hub_core` tham số `hub_t_override`)."""
     mask_rjct = df["TRANG_THAI_LENH"].astype(str).str.strip() == "RJCT"
     n_rjct = int(mask_rjct.sum())
     if n_rjct:
         log(f"Loại {n_rjct} dòng HUB có TRANG_THAI_LENH='RJCT' (nhánh hub↔core)")
     return df[~mask_rjct].reset_index(drop=True)
+
+
+def filter_before_reconcile_core(df: pd.DataFrame, log: Callable[[str], None] = lambda msg: None) -> pd.DataFrame:
+    """Tiền xử lý HUB cho nhánh đối chiếu HUB↔CORE (Bước 2.1 tài liệu `đối chiếu Song phương.docx`).
+
+    Tái dùng `filter_before_reconcile()` (loại `-` trong TXID + cặp TXID/TRACE trùng) rồi loại
+    thêm RJCT (`loai_rjct_hub_core`). KHÁC nhánh kênh↔hub: ở đó RJCT vẫn giữ lại (để hiện "KHÔNG
+    CÓ" trong Bảng 3), ở đây tài liệu yêu cầu loại hẳn — vì vậy tách hàm riêng, không đổi hành vi
+    `filter_before_reconcile` hiện có (module kênh↔hub đã duyệt Phase 9, không được ảnh hưởng).
+    """
+    df = filter_before_reconcile(df, log)
+    return loai_rjct_hub_core(df, log)
 
 
 def build_key_hub_core(df: pd.DataFrame) -> pd.Series:

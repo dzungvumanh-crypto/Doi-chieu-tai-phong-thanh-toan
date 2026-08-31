@@ -51,7 +51,10 @@ def main_from_dir(
     dạng). Chỉ có ý nghĩa khi `ma_nh` đã lọc còn 1 giá trị (mọi đơn vị của NH đó dùng chung 1 file
     HUB); mặc định `None` giữ nguyên hành vi tự dò cũ cho caller độc lập/test hiện có.
 
-    Trả `{"ngay": ..., "don_vi": [...]}` — mỗi phần tử `don_vi` có `trang_thai`
+    Trả `{"ngay": ..., "don_vi": [...], "hub_theo_nh": {ma_nh: hub_df_da_loc}}` — `hub_theo_nh`
+    (2026-08-31) là HUB đã qua `filter_before_reconcile`, cache theo NH để bước Hub↔Core
+    (`kenh_core_service.py`) tái dùng thay vì tự đọc lại cùng file (xem `doi_chieu_hub_core`
+    tham số `hub_t_override`). Mỗi phần tử `don_vi` có `trang_thai`
     ("ok" | "thieu_file_hub" | "thieu_file_kenh"). Khi "ok", kèm `match_result`
     (dict DataFrame từ `process.match_unit`), `kenh_df`, `summary` (có `chenh_so_mon`/
     `chenh_so_tien` — số tuyệt đối, KHÔNG dùng %, xem `SKILL.md`/quy tắc dự án: 1 lệnh
@@ -74,17 +77,40 @@ def main_from_dir(
 
     units = [u for u in RECONCILE_UNITS if ma_nh is None or u["ma_nh"] == ma_nh]
     don_vi_results = []
+    # Cache HUB theo NH (2026-08-31, tối ưu hiệu năng) — NH 201/202 có 2 đơn vị (SPRT+SPT) DÙNG
+    # CHUNG 1 file HUB (chỉ phụ thuộc `ma_nh`, không phụ thuộc `loai` — xem `config.py`). Trước
+    # đây mỗi unit tự đọc+giải nén+lọc lại từ đầu dù kết quả giống hệt nhau. `None` = đã thử NH đó,
+    # không có file (tránh dò lại + log lặp cho unit thứ 2 cùng NH).
+    hub_cache: dict[str, tuple | None] = {}
+    hub_theo_nh: dict[str, object] = {}  # trả ra ngoài cho caller (A2) tái dùng ở bước Hub↔Core
+
     for unit in units:
         if cancel.is_set():
             return None
         ma_nh, loai = unit["ma_nh"], unit["loai"]
         nhan = f"[{ma_nh}-{loai}]"
 
-        hub_path = hub_path_override or (input_dir / hub_filename(ngay, ma_nh))
-        if not hub_path.exists():
-            log(f"{nhan} BỎ QUA — thiếu file HUB: {hub_path.name}")
+        if ma_nh not in hub_cache:
+            hub_path = hub_path_override or (input_dir / hub_filename(ngay, ma_nh))
+            if not hub_path.exists():
+                log(f"[{ma_nh}] BỎ QUA — thiếu file HUB: {hub_path.name}")
+                hub_cache[ma_nh] = None
+            else:
+                log(f"[{ma_nh}] Đang đọc HUB ({hub_path.name})...")
+                with do_thoi_gian(log, f"[{ma_nh}] đọc+parse HUB"):
+                    hub_raw = load_hub_zip(hub_path.read_bytes(), log=lambda msg, m=ma_nh: log(f"[{m}] {msg}"))
+                    hub = filter_before_reconcile(hub_raw, log=lambda msg, m=ma_nh: log(f"[{m}] {msg}"))
+                hub_cache[ma_nh] = (hub_raw, hub)
+                hub_theo_nh[ma_nh] = hub
+        elif hub_cache[ma_nh] is not None:
+            log(f"{nhan} Dùng lại HUB đã đọc cho NH {ma_nh} (đơn vị khác cùng ngân hàng).")
+
+        if hub_cache[ma_nh] is None:
             don_vi_results.append({"ma_nh": ma_nh, "loai": loai, "ngay": ngay, "trang_thai": "thieu_file_hub"})
             continue
+        hub_raw, hub = hub_cache[ma_nh]
+        if cancel.is_set():
+            return None
 
         kenh_path = find_kenh_path(input_dir, ma_nh, loai)
         if kenh_path is None:
@@ -92,13 +118,6 @@ def main_from_dir(
                 f"(đã thử cả tên đảo thứ tự {ma_nh}/{loai})")
             don_vi_results.append({"ma_nh": ma_nh, "loai": loai, "ngay": ngay, "trang_thai": "thieu_file_kenh"})
             continue
-
-        log(f"{nhan} Đang đọc HUB ({hub_path.name})...")
-        with do_thoi_gian(log, f"{nhan} đọc+parse HUB"):
-            hub_raw = load_hub_zip(hub_path.read_bytes(), log=lambda msg, nhan=nhan: log(f"{nhan} {msg}"))
-            hub = filter_before_reconcile(hub_raw, log=lambda msg, nhan=nhan: log(f"{nhan} {msg}"))
-        if cancel.is_set():
-            return None
 
         log(f"{nhan} Đang đọc kênh ({kenh_path.name})...")
         with do_thoi_gian(log, f"{nhan} đọc file kênh"):
@@ -140,4 +159,4 @@ def main_from_dir(
         })
 
     log(f"Hoàn thành đối chiếu ngày {ngay}.")
-    return {"ngay": ngay, "don_vi": don_vi_results}
+    return {"ngay": ngay, "don_vi": don_vi_results, "hub_theo_nh": hub_theo_nh}

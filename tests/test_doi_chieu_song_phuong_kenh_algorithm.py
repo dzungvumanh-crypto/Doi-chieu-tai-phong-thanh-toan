@@ -15,6 +15,7 @@ import zipfile
 import pandas as pd
 import pytest
 
+from backend.services.doi_chieu_song_phuong_kenh import pipeline as pipeline_mod
 from backend.services.doi_chieu_song_phuong_kenh.load_hub import (
     filter_before_reconcile, hub_filename, load_hub_zip,
 )
@@ -452,3 +453,40 @@ class TestLoadKenhFile:
         df.to_excel(path, index=False, engine="openpyxl")
         out = load_kenh_file(str(path), "202", "SPT")
         assert len(out) == 1
+
+
+class TestMainFromDirHubCache:
+    """2026-08-31, tối ưu hiệu năng — NH 201 có 2 đơn vị (SPRT+SPT) dùng CHUNG 1 file HUB
+    (`config.py::RECONCILE_UNITS`). Trước đây `main_from_dir` đọc+giải nén+lọc lại HUB bên trong
+    vòng lặp từng đơn vị -> đọc 2 lần cùng 1 file cho NH 201/202. Test này khoá hành vi: đúng 1
+    lần gọi `load_hub_zip()` cho cả 2 đơn vị."""
+
+    def test_hub_doc_dung_1_lan_cho_2_don_vi_cung_nh(self, tmp_path, monkeypatch):
+        ngay = "20260821"
+        hub_bytes = TestLoadHubZip()._make_zip(_hub_df([
+            _hub_row("0200970415MSGRT2010001", "TXID2010001SPRT", ktt="SP REALTIME"),
+            _hub_row("MSGREF2010002", "TXID2010002SPT", ktt="SP THUONG"),
+        ]))
+        (tmp_path / hub_filename(ngay, "201")).write_bytes(hub_bytes)
+        pd.DataFrame(_kenh_df([_kenh_row("0200970415MSGRT2010001")])).to_excel(
+            tmp_path / kenh_filename("201", "SPRT"), index=False, engine="openpyxl")
+        pd.DataFrame(_kenh_df([_kenh_row("TXID2010002SPT")])).to_excel(
+            tmp_path / kenh_filename("201", "SPT"), index=False, engine="openpyxl")
+
+        calls = []
+        real_load_hub_zip = pipeline_mod.load_hub_zip
+
+        def dem_va_goi(*args, **kwargs):
+            calls.append(1)
+            return real_load_hub_zip(*args, **kwargs)
+
+        monkeypatch.setattr(pipeline_mod, "load_hub_zip", dem_va_goi)
+
+        result = pipeline_mod.main_from_dir(tmp_path, ngay=ngay, ma_nh="201")
+
+        assert result is not None
+        trang_thai = {(d["ma_nh"], d["loai"]): d["trang_thai"] for d in result["don_vi"]}
+        assert trang_thai[("201", "SPRT")] == "ok"
+        assert trang_thai[("201", "SPT")] == "ok"
+        assert len(calls) == 1, f"HUB bị đọc {len(calls)} lần cho 2 đơn vị cùng NH, kỳ vọng đúng 1 lần"
+        assert set(result["hub_theo_nh"].keys()) == {"201"}

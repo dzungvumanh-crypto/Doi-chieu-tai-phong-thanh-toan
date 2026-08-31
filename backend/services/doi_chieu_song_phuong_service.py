@@ -83,7 +83,13 @@ def process_zip(zip_bytes: bytes, log_callback=lambda msg: None) -> dict:
     except Exception as e:
         raise ValueError(f"Không mở được file ZIP: {e}")
 
-    with zf, do_thoi_gian(log_callback, "giải mã + định tuyến ZIP GL02"):
+    # Tách riêng 2 nhãn đo thời gian (2026-08-31, yêu cầu khảo sát hiệu năng) — trước gộp chung
+    # "giải mã + định tuyến" vào 1 khối, không biết chi phí chính nằm ở giải nén AES/zlib hay ở
+    # vòng lặp Python thuần `_route_file()`. Cộng dồn thủ công qua nhiều file thay vì bọc
+    # `do_thoi_gian` mỗi file (tránh log rác n dòng), chỉ log tổng 1 lần sau vòng lặp.
+    t_giai_nen = 0.0
+    t_dinh_tuyen = 0.0
+    with zf:
         try:
             zf.setpassword(ZIP_PASSWORD)
         except AttributeError:
@@ -94,19 +100,27 @@ def process_zip(zip_bytes: bytes, log_callback=lambda msg: None) -> dict:
 
         n = len(csv_names)
         for i, name in enumerate(csv_names):
+            t0 = time.perf_counter()
             try:
                 raw = zf.read(name, pwd=ZIP_PASSWORD)
             except Exception as e:
                 raise ValueError(
                     f"Không giải mã được '{name}' — sai mật khẩu hoặc file hỏng ({e})."
                 )
+            t_giai_nen += time.perf_counter() - t0
+
+            t0 = time.perf_counter()
             reader = csv.reader(io.TextIOWrapper(
                 io.BytesIO(raw), encoding="utf-8-sig", newline=""))
             file_hdr, routed = _route_file(reader, buffers, counts, name)
+            t_dinh_tuyen += time.perf_counter() - t0
+
             if hdr_line is None and file_hdr:
                 hdr_line = file_hdr
             total_rows += routed
             log_callback(f"Đã xử lý {i + 1}/{n}: {name} ({routed:,} dòng)")
+    log_callback(f"[TIMING] giải mã ZIP (đọc+giải nén AES): {t_giai_nen:.1f}s")
+    log_callback(f"[TIMING] định tuyến từng dòng (vòng lặp Python): {t_dinh_tuyen:.1f}s")
 
     # ── Ghi 8 file CSV (kể cả file rỗng → chỉ header) ─────────────────────────
     log_callback(f"Đang ghi 8 file CSV ({total_rows:,} dòng)...")

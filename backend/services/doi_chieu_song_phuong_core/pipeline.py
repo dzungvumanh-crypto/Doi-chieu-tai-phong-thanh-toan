@@ -8,6 +8,10 @@ CORE đọc từ CSV đã phân loại sẵn nếu có (`{ma_nh}_DEN.csv`, đún
 ra), chỉ giải mã lại GL02 zip khi không thấy CSV — quyết định 2026-08-28, giảm số lần phải giải
 mã AES ~150-160MB (nguyên nhân MemoryError thật khi chạy nhiều NH liên tiếp, xem Implementation-
 notes.html card 91).
+
+HUB offset T: `doi_chieu_hub_core()` chấp nhận `hub_t_override` (2026-08-31, tối ưu hiệu năng) —
+tránh đọc+giải nén lại file HUB mà bước Kênh↔Hub (`kenh/pipeline.py::main_from_dir`) đã đọc trước
+đó trong cùng job (`doi_chieu_song_phuong_kenh_core_service.py` truyền vào).
 """
 
 from pathlib import Path
@@ -20,7 +24,8 @@ from backend.services.doi_chieu_song_phuong_common import (
     cong_ngay, do_thoi_gian, nhan_offset, thu_muc_ngay_ung_vien, tim_file, tim_file_glob,
 )
 from backend.services.doi_chieu_song_phuong_kenh.load_hub import (
-    build_key_hub_core, filter_before_reconcile_core, hub_filename_glob, load_hub_zip,
+    build_key_hub_core, filter_before_reconcile_core, hub_filename_glob, loai_rjct_hub_core,
+    load_hub_zip,
 )
 from backend.services.doi_chieu_song_phuong_kenh.load_kenh import _tu_khoa_ten_file
 
@@ -103,6 +108,15 @@ def _doc_hub(path: Path, log: Callable[[str], None]) -> pd.DataFrame:
     return df
 
 
+def _doc_hub_tu_da_loc(hub_da_loc_base: pd.DataFrame, log: Callable[[str], None]) -> pd.DataFrame:
+    """Như `_doc_hub`, nhưng nhận thẳng HUB đã qua `filter_before_reconcile()` từ bước Kênh↔Hub
+    (2026-08-31, tối ưu hiệu năng) — chỉ áp thêm lọc RJCT riêng của nhánh core + build khoá, KHÔNG
+    đọc lại/giải nén lại file HUB đã đọc trước đó trong cùng job."""
+    df = loai_rjct_hub_core(hub_da_loc_base, log)
+    df[match.KEY_COL] = build_key_hub_core(df)
+    return df
+
+
 def _doc_core(loai: str, path: Path, ma_nh: str, log: Callable[[str], None]) -> pd.DataFrame:
     """`loai="csv"`: đọc thẳng `{ma_nh}_DEN.csv` đã phân loại sẵn — không giải mã. `loai="zip"`:
     giải mã + phân loại GL02 (tái dùng `doi_chieu_song_phuong_service.process_zip`, không sửa
@@ -123,9 +137,15 @@ def _doc_core(loai: str, path: Path, ma_nh: str, log: Callable[[str], None]) -> 
 def doi_chieu_hub_core(
     goc_dir: str | Path, ngay: str, ma_nh: str,
     log_callback: Callable[[str], None] | None = None,
+    hub_t_override: pd.DataFrame | None = None,
 ) -> dict:
     """Đối chiếu HUB↔CORE 1 ngân hàng, ngày `ngay` (YYYYMMDD). Trả
     `{"ma_nh", "ngay", "core_df", "hub_df"}` — 2 DataFrame đã gắn cột `KETQUADOICHIEU`.
+
+    `hub_t_override` (2026-08-31, tối ưu hiệu năng): HUB offset T đã đọc+lọc sẵn (qua
+    `filter_before_reconcile()`) từ bước Kênh↔Hub (`kenh/pipeline.py::main_from_dir`, khoá
+    `hub_theo_nh`) — dùng thẳng thay vì đọc+giải nén lại cùng file HUB lần thứ 2-3 trong job. `None`
+    giữ nguyên hành vi cũ (tự dò + đọc file), dùng cho caller độc lập/test hiện có.
 
     Raise `ValueError` nếu thiếu file bắt buộc (HUB T, CORE T)."""
     log = log_callback or (lambda msg: None)
@@ -134,6 +154,11 @@ def doi_chieu_hub_core(
     hub_theo_offset: dict[int, pd.DataFrame] = {}
     for off in (0, -1, -2, -3):
         nhan = nhan_offset(off)
+        if off == 0 and hub_t_override is not None:
+            log(f"[HUB {nhan}] dùng lại HUB đã đọc từ bước Kênh↔Hub (bỏ qua đọc lại từ đĩa).")
+            with do_thoi_gian(log, f"đọc+parse HUB {nhan} (tái dùng, chỉ lọc RJCT)"):
+                hub_theo_offset[off] = _doc_hub_tu_da_loc(hub_t_override, lambda m, nhan=nhan: log(f"[HUB {nhan}] {m}"))
+            continue
         p = _tim_file_hub(
             goc_dir, cong_ngay(ngay, off), ma_nh, lambda m, nhan=nhan: log(f"[HUB {nhan}] {m}"),
         )

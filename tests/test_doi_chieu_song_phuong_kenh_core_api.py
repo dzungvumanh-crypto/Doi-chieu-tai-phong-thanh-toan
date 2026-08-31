@@ -20,6 +20,8 @@ import pyzipper
 
 from backend.services import doi_chieu_song_phuong_kenh_core_service as svc
 from backend.services import doi_chieu_song_phuong_service as ipcas_svc
+from backend.services.doi_chieu_song_phuong_core import pipeline as core_pipeline_mod
+from backend.services.doi_chieu_song_phuong_kenh import pipeline as kenh_pipeline_mod
 
 _XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
@@ -174,6 +176,38 @@ class TestStartFolderEndpoint:
             ("Kênh↔Hub", "Đã đối chiếu", None),
             ("Hub↔Core", "Đã đối chiếu", None),
         ]
+
+    def test_hub_khong_bi_doc_lai_giua_kenh_hub_va_hub_core(self, admin_client, monkeypatch, tmp_path):
+        """2026-08-31, tối ưu hiệu năng — HUB T (202) trước đây bị Bước 2/2 Hub↔Core đọc+giải nén
+        lại từ đầu dù Bước 1/2 Kênh↔Hub vừa đọc xong cùng file trong cùng job. Khoá hành vi: đúng
+        1 lần gọi `load_hub_zip()` cho cả job (không phải 2)."""
+        monkeypatch.setattr(svc, "TEMP_DIR", tmp_path / "_out")
+        monkeypatch.setattr(ipcas_svc, "TEMP_DIR", tmp_path / "_out_ipcas")
+        day_dir = tmp_path / "25.8"
+        day_dir.mkdir()
+        _setup_hub_kenh(day_dir)
+        _setup_gl02(day_dir)
+
+        calls = []
+        real_load_hub_zip = kenh_pipeline_mod.load_hub_zip
+
+        def dem_va_goi(*args, **kwargs):
+            calls.append(1)
+            return real_load_hub_zip(*args, **kwargs)
+
+        monkeypatch.setattr(kenh_pipeline_mod, "load_hub_zip", dem_va_goi)
+        monkeypatch.setattr(core_pipeline_mod, "load_hub_zip", dem_va_goi)
+
+        r = admin_client.post(
+            "/api/doi_chieu_song_phuong_kenh_core/start_folder",
+            json={"folder_path": str(tmp_path), "ngay": "20260825", "ma_nh": "202"},
+        )
+        job_id = r.json()["job_id"]
+        prog = _wait_done(admin_client, job_id)
+        assert prog["status"] == "done", prog
+        assert prog["ket_qua"]["kenh_hub"] is not None
+        assert prog["ket_qua"]["hub_core"] is not None
+        assert len(calls) == 1, f"HUB bị đọc {len(calls)} lần trong job, kỳ vọng đúng 1 lần"
 
     def test_thieu_gl02_hub_core_loi_khong_chan_kenh_hub(self, admin_client, monkeypatch, tmp_path):
         """Không có GL02/CSV -> Hub↔Core lỗi, nhưng Kênh↔Hub (đủ file) vẫn phải ra kết quả —

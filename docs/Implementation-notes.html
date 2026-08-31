@@ -8916,6 +8916,81 @@ Bất biến MIS: 522.774 + 36.462 = 559.236 (khớp tổng gốc)</pre>
     </div>
   </div>
 
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">97</span>
+      <span class="card-title">Đối chiếu Song phương — Giai đoạn 1 giảm thời gian xử lý: loại bỏ đọc HUB trùng lặp 2-3 lần/job</span>
+      <span class="badge badge-done">HOÀN THIỆN CODE+TEST · 2026-08-31 · 822/822 pass</span>
+    </div>
+    <div class="card-body">
+      <div class="label">Bối cảnh — trải nghiệm thật của người dùng, chưa có log <code>[TIMING]</code></div>
+      <p>Người dùng báo: từ lúc upload file đến khi tải xong file kết quả (Phân loại GL02 +
+        Đối chiếu đến — Kênh↔Hub+Hub↔Core hợp nhất) mất <b>~1100s</b>. Cơ chế đo
+        <code>do_thoi_gian()</code> (card 95) đã có sẵn nhưng log <code>[TIMING]</code> của đúng
+        lượt chạy đó không còn — chỉ tồn tại tạm trong <code>job["logs"]</code> (TTL 4h), không
+        ghi ra <code>logs/app.log</code>/<code>backend.log</code> (đã grep xác nhận không có dòng
+        nào khớp). Khảo sát code (không đoán mù) phát hiện 1 lỗi kiến trúc gây tính toán thừa
+        <b>chắc chắn, không cần số đo mới biết là lợi</b> — xử lý ngay; các ứng viên còn lại cần
+        log thật mới quyết định đúng (Giai đoạn 2, chưa làm).</p>
+
+      <div class="label">Phát hiện — HUB cùng 1 file bị đọc+giải nén+parse trùng 2-3 lần/job</div>
+      <p>Với 1 job "Đối chiếu đến": (1) <code>kenh/pipeline.py::main_from_dir</code> gọi
+        <code>load_hub_zip()</code>+<code>filter_before_reconcile()</code> <b>bên trong</b> vòng
+        lặp <code>for unit in units</code> — NH 201/202 có 2 đơn vị (SPRT+SPT) dùng
+        <b>chung 1 file HUB</b> (chỉ phụ thuộc <code>ma_nh</code>, không phụ thuộc
+        <code>loai</code> — <code>config.py::RECONCILE_UNITS</code>) nên bị đọc 2 lần ngay trong
+        chính bước này; (2) <code>core/pipeline.py::doi_chieu_hub_core</code> tự dò và đọc lại HUB
+        offset T (<code>_doc_hub</code>) mà không biết Bước 1/2 vừa đọc xong cùng file vài giây
+        trước — lần đọc thứ 3 (NH 201/202) hoặc thứ 2 (NH 203/311). Không có lý do nghiệp vụ nào
+        cần đọc lại — loại bỏ không đổi kết quả.</p>
+
+      <div class="label">Sửa — cache HUB trong <code>main_from_dir</code>, truyền tiếp sang Hub↔Core</div>
+      <table>
+        <tr><th>File</th><th>Thay đổi</th></tr>
+        <tr><td><code>kenh/pipeline.py</code></td>
+          <td>Đọc+lọc HUB 1 lần/<code>ma_nh</code> (cache dict trong vòng lặp, thay vì trong từng
+          unit) — cả <code>hub_raw</code> (dùng cho <code>classify_kenh_hub_den</code>) lẫn
+          <code>hub</code> (đã <code>filter_before_reconcile</code>, dùng cho <code>match_unit</code>).
+          Trả thêm khoá <code>hub_theo_nh</code> ra kết quả cho caller tái dùng.</td></tr>
+        <tr><td><code>load_hub.py</code></td>
+          <td>Tách <code>loai_rjct_hub_core()</code> ra khỏi <code>filter_before_reconcile_core()</code>
+          — cho phép áp riêng phần lọc RJCT (đặc thù nhánh core) lên 1 DataFrame đã qua base filter
+          sẵn, không phải chạy lại base filter.</td></tr>
+        <tr><td><code>core/pipeline.py</code></td>
+          <td>Thêm <code>_doc_hub_tu_da_loc()</code> + tham số <code>hub_t_override</code> cho
+          <code>doi_chieu_hub_core()</code> — offset T dùng thẳng DataFrame truyền vào (chỉ áp
+          <code>loai_rjct_hub_core</code>+build khoá) thay vì <code>_doc_hub()</code> đọc từ đĩa.
+          <code>None</code> giữ nguyên hành vi cũ cho caller độc lập/test.</td></tr>
+        <tr><td><code>doi_chieu_song_phuong_kenh_core_service.py</code></td>
+          <td>Nối 2 bước: lấy <code>ket_qua_kenh["hub_theo_nh"][ma_nh]</code> truyền vào
+          <code>doi_chieu_hub_core(..., hub_t_override=...)</code>.</td></tr>
+        <tr><td><code>doi_chieu_song_phuong_service.py</code></td>
+          <td>Tách nhãn <code>do_thoi_gian</code> ở bước Phân loại GL02 — trước gộp chung "giải
+          nén ZIP" + "vòng lặp Python <code>_route_file</code>" vào 1 nhãn, nay 2 nhãn riêng để
+          log lượt chạy tiếp theo trả lời được vòng lặp Python định tuyến có phải nút thắt không
+          (chưa biết — chỉ đổi log, không đổi hành vi).</td></tr>
+      </table>
+
+      <div class="label">Giai đoạn 2 — CHƯA làm, chờ log <code>[TIMING]</code> thật</div>
+      <p>Ứng viên còn lại đều cần số đo thật mới xếp hạng đúng ưu tiên (tránh tối ưu nhầm chỗ):
+        ghi Excel song song với Bước 2/2 (đổi kiến trúc job, rủi ro cao hơn); song song hoá 8 lần
+        đọc I/O độc lập còn lại trong Hub↔Core (rủi ro nếu nguồn là ổ mạng SMB băng thông giới
+        hạn — dữ liệu thật đọc từ <code>G:\ĐỐI CHIẾU SONG PHƯƠNG\...</code>); viết lại vòng lặp
+        Python <code>_route_file</code> bằng pandas vectorized (chỉ đáng làm nếu nhãn TIMING mới
+        xác nhận đây chiếm tỷ trọng lớn). Kế hoạch đầy đủ lưu tại
+        <code>docs/VIEC-CAN-LAM.md</code>/memory phiên, chờ người dùng chạy lại 1 lượt thật (trên
+        laptop, không chạy được từ phiên nghiên cứu) rồi gửi lại log.</p>
+
+      <div class="label">Test</div>
+      <p>2 test mới khoá hành vi cache: <code>TestMainFromDirHubCache::test_hub_doc_dung_1_lan_cho_2_don_vi_cung_nh</code>
+        (đếm số lần gọi <code>load_hub_zip</code> qua wrapper thật, không mock giả — 2 đơn vị NH
+        201 chỉ đọc HUB đúng 1 lần) và
+        <code>TestStartFolderEndpoint::test_hub_khong_bi_doc_lai_giua_kenh_hub_va_hub_core</code>
+        (cả job "Đối chiếu đến" NH 202 chỉ đọc HUB đúng 1 lần, không phải 2). Toàn bộ 822/822 test
+        dự án pass sau khi sửa (không chỉ nhóm Đối chiếu Song phương).</p>
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-31</footer>
 </div>
 </body>
