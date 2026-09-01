@@ -12421,7 +12421,67 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-31</footer>
+  <div class="card">
+    <div class="card-head">
+      <span class="card-title">Merge PR#54 — develop đã tự đi tới đích của A1–A6, chỉ còn 3 thứ phải mang sang</span>
+      <span class="badge badge-done">Xong — 1.197 test pass</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-red">Phát hiện lúc giải xung đột</span> Nhánh và develop cùng sửa một chỗ, theo hai đường khác nhau</div>
+      <p>PR#54 mở từ 22/08 với 10 mục A1–A10. Tới lúc merge (01/09) thì <b>develop đã có sẵn A1–A6</b>
+        qua các đợt khác, và làm <b>tốt hơn</b> ở hai chỗ: <code>save_upload_to()</code> ghi thẳng từng
+        khối xuống đĩa (bản PR#54 vẫn gom cả lượt 500 MB vào một dict bytes trong RAM rồi mới đổ ra),
+        và chốt <code>job_dang_chay()</code> trả 409 khi đã có phiên đang chạy — thứ PR#54 không có.</p>
+
+      <table>
+        <tr><th>Mục</th><th>develop đã có?</th><th>Xử lý</th></tr>
+        <tr><td>A1 tách quyền <code>_XEM</code>/<code>_CHAY</code></td><td>Có</td><td>Lấy bản develop</td></tr>
+        <tr><td>A2 <code>safe_filename</code> + chặn trùng tên</td><td>Có</td><td>Lấy bản develop</td></tr>
+        <tr><td>A3 đọc theo khối</td><td>Có, tốt hơn (<code>save_upload_to</code>)</td><td>Lấy bản develop</td></tr>
+        <tr><td>A4 gỡ folder-mode ACH</td><td>Có</td><td>Lấy bản develop</td></tr>
+        <tr><td>A5 <code>TEMP_DIR</code> tuyệt đối</td><td>Có</td><td>Lấy bản develop</td></tr>
+        <tr><td>A6 dọn thư mục mồ côi</td><td>Có</td><td>Lấy bản develop</td></tr>
+        <tr><td><code>chi_tim_timeout</code></td><td><b>Không</b></td><td>Mang sang (backend + UI)</td></tr>
+        <tr><td>stage/progress + "Kết quả tạm thời"</td><td><b>Không</b></td><td>Mang sang</td></tr>
+        <tr><td>Migration cấp bù <code>cham_ach.process</code></td><td><b>Không</b></td><td>Mang sang — xem dưới</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-red">Rủi ro đã nằm sẵn trên develop</span> Enforce quyền mà không cấp bù</div>
+      <p>develop <b>đã</b> đổi <code>/start</code>, <code>/continue</code>, <code>/cancel</code> sang
+        đòi <code>cham_ach.process</code>, nhưng <b>chưa có migration</b>. Mã đó khai trong
+        <code>FEATURES</code> từ lâu mà chưa bao giờ được kiểm thật, nên các nhóm trong DB thật rất có
+        thể chỉ có <code>menu.cham_ach</code>. Nếu develop deploy trước khi PR#54 vào thì
+        <b>mọi người không phải admin mất nút "Chạy"</b>, triệu chứng là "bấm không có gì xảy ra" —
+        không chỉ về nguyên nhân. Migration <code>INSERT OR IGNORE</code> trong PR#54 vá đúng chỗ này;
+        <code>group_features</code> có <code>PRIMARY KEY (group_id, feature_code)</code> nên chạy lại
+        không sinh dòng trùng.</p>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> Lấy kiến trúc của develop, mang tính năng của nhánh sang — không lấy nguyên bên nào</div>
+      <p><code>git checkout --theirs</code> cho 3 file rồi vá lại từng tính năng, thay vì giải từng khối
+        xung đột. Giải theo khối ở đây sẽ đẻ ra bản lai: <code>start_job()</code> nhận
+        <code>dict[str, bytes]</code> kiểu cũ nằm cạnh <code>tao_job()</code>/<code>chay_job()</code>
+        kiểu mới, và cửa 409 bị bỏ trống đúng khoảng thời gian đang upload.</p>
+
+      <div class="note"><b>Một test bắt được đúng chỗ sót:</b> phần <code>stage</code>/<code>progress</code>
+        đã mang sang <code>ach_service.py</code> nhưng <code>/api/ach/poll</code> (lấy bản develop) vẫn
+        chưa trả ba trường đó ra ngoài — <code>test_ach_stage_progress_api.py</code> đỏ ngay. Không có
+        test này thì thanh tiến trình đứng im ở 0% mà không lỗi nào.</div>
+
+      <div class="note"><b>Giữ đường lui cho thanh tiến trình:</b> <code>_bump_progress()</code> phía
+        client (đoán theo dòng log) <b>không</b> bị gỡ, dù server giờ đã tự tính. Job cũ còn trong RAM
+        lúc vừa deploy sẽ không có <code>stage</code> trong phản hồi — <code>_update_stage()</code> chỉ
+        chạy khi <code>'stage' in res</code>.</div>
+
+      <div class="note"><b>Vấn đề phát hiện nhưng không sửa:</b> <code>except HTTPException</code> bọc
+        <code>save_upload_to()</code> trên develop bắt rộng mọi mã lỗi rồi báo "vượt 500 MB". Đã sửa
+        thành chỉ đổi thông điệp khi <code>status_code == 413</code> — nhưng đây là lỗi của develop,
+        không phải của PR#54, ghi lại để biết vì sao thay đổi này nằm trong commit merge.</div>
+
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-01</footer>
 </div>
 </body>
 </html>

@@ -56,6 +56,7 @@ async def start_job(
     files: list[UploadFile],
     ngay_doi_chieu: str = Form(''),
     bo_qua_checkpoint: bool = Form(False),
+    chi_tim_timeout: bool = Form(False),
     _=Depends(_CHAY),
 ):
     """
@@ -66,6 +67,11 @@ async def start_job(
     MIS_đi mặc định đúng, KHÔNG dừng lại chờ xác nhận thủ công (tính năng mới
     2026-07-31, xem project_ach_chay_thang_bo_qua_checkpoint). Mặc định False —
     hành vi Checkpoint bắt buộc như từ trước tới nay không đổi.
+
+    chi_tim_timeout=True (2026-08-21, xem project_ach_gl02_optional_tiered_deps)
+    — người dùng xác nhận tay (checkbox) đang thiếu GL02/MIS_đến, chỉ muốn chạy
+    để tìm "Timeout không đi kênh" (Tầng 0). Mặc định False — vẫn bắt buộc đủ
+    file như cũ, không đổi hành vi.
 
     LƯU Ý (bug thật phát hiện 2026-07-31, sửa cùng lúc): `ngay_doi_chieu`/
     `bo_qua_checkpoint` PHẢI khai báo `Form(...)` tường minh — khi route có
@@ -126,7 +132,12 @@ async def start_job(
             try:
                 total_size += await save_upload_to(
                     f, input_dir / filename, _MAX_UPLOAD - total_size)
-            except HTTPException:
+            except HTTPException as e:
+                # Chỉ 413 (vượt trần) mới đổi thông điệp — bắt rộng "mọi HTTPException"
+                # sẽ biến lỗi tương lai khác của save_upload_to() thành "vượt 500 MB",
+                # sai lệch chẩn đoán (review PR#54, khanhbq693).
+                if e.status_code != 413:
+                    raise
                 raise HTTPException(
                     413, f'Tổng kích thước file vượt quá {_MAX_UPLOAD // (1024 * 1024)} MB.')
     except BaseException:
@@ -136,7 +147,8 @@ async def start_job(
         raise
 
     ngay = ngay_doi_chieu.strip() or None
-    ach_service.chay_job(job_id, ngay, bo_qua_checkpoint=bo_qua_checkpoint)
+    ach_service.chay_job(job_id, ngay, bo_qua_checkpoint=bo_qua_checkpoint,
+                        chi_tim_timeout=chi_tim_timeout)
     return {'job_id': job_id}
 
 
@@ -207,6 +219,11 @@ def poll_job(
         'error':            job['error'],
         'xac_nhan_count':      job.get('xac_nhan_count'),
         'xac_nhan_tong_tien':  job.get('xac_nhan_tong_tien'),
+        # stage/progress do server tính (ach_service::_bump_stage) — frontend chỉ
+        # hiển thị, không tự đoán theo dòng log nữa. summary có từ cuối Phase 2.
+        'stage':            job.get('stage', 0),
+        'progress':         job.get('progress', 0.0),
+        'summary':          job.get('summary'),
     }
 
 

@@ -28,12 +28,17 @@ _LOCAC_TARGET  = '502003'
 _CUSTOMER_ACH  = '1000-003526275'
 
 
-def _log_loc_filter(df_truoc: pd.DataFrame, df_sau: pd.DataFrame, ten_file: str, log_callback) -> None:
+def _log_loc_filter(n_truoc: int, n_sau: int, ten_file: str, log_callback) -> None:
     """Audit 2026-08-04 — trước đây lọc LOCAC/CUSTOMER (2 nhánh 7z/pyzipper) không
     log số dòng bị loại, dễ khiến 1 chi nhánh/khách hàng biến mất khỏi NPO mà
-    không ai biết."""
+    không ai biết.
+
+    2026-08-22 — nhận thẳng số dòng (không phải DataFrame) để `_doc_zip_tool()`
+    có thể gộp TOÀN BỘ chunk của 1 file thành 1 dòng log duy nhất — GL02 là sổ
+    cái toàn ngân hàng, một file vật lý đọc theo chunk 100k có thể bị lọc sạch
+    hàng chục lần liên tiếp (đúng thiết kế, không phải lỗi), log riêng từng
+    chunk tạo ra hàng chục dòng gần giống hệt nhau, khó rà khi cần soát lại."""
     _log = log_callback or print
-    n_truoc, n_sau = len(df_truoc), len(df_sau)
     if n_truoc != n_sau:
         _log(f'[B2] {ten_file}: loại {n_truoc - n_sau:,} dòng theo LOCAC={_LOCAC_TARGET}/'
              f'CUSTOMER={_CUSTOMER_ACH} (giữ {n_sau:,}/{n_truoc:,})')
@@ -69,6 +74,7 @@ def _doc_zip_tool(zip_path: str, tool_path: str, tool_type: str, log_callback=No
             path       = os.path.join(tmp_dir, name)
             enc        = _detect_encoding_path(path)
             file_frames = []
+            n_truoc_tong, n_sau_tong = 0, 0
             for i, chunk in enumerate(pd.read_csv(
                 path, dtype=str, encoding=enc,
                 usecols=lambda c: c.strip() in _COLS_NPO,
@@ -79,14 +85,15 @@ def _doc_zip_tool(zip_path: str, tool_path: str, tool_type: str, log_callback=No
                     missing = [c for c in _COLS_REQUIRED if c not in chunk.columns]
                     if missing:
                         raise ValueError(f'Thiếu cột: {missing}')
-                chunk_truoc = chunk
+                n_truoc_tong += len(chunk)
                 if 'LOCAC' in chunk.columns:
                     chunk = chunk[chunk['LOCAC'].str.strip() == _LOCAC_TARGET]
                 if 'CUSTOMER' in chunk.columns:
                     chunk = chunk[chunk['CUSTOMER'].str.strip() == _CUSTOMER_ACH]
-                _log_loc_filter(chunk_truoc, chunk, name, log_callback)
+                n_sau_tong += len(chunk)
                 if not chunk.empty:
                     file_frames.append(chunk)
+            _log_loc_filter(n_truoc_tong, n_sau_tong, name, log_callback)
             if file_frames:
                 frames.append(pd.concat(file_frames, ignore_index=True))
         return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=_COLS_NPO)
@@ -114,12 +121,12 @@ def _doc_zip_pyzipper(zip_path: str, log_callback=None) -> pd.DataFrame:
             missing = [c for c in _COLS_REQUIRED if c not in df.columns]
             if missing:
                 raise ValueError(f'Thiếu cột: {missing}')
-            df_truoc = df
+            n_truoc = len(df)
             if 'LOCAC' in df.columns:
                 df = df[df['LOCAC'].str.strip() == _LOCAC_TARGET]
             if 'CUSTOMER' in df.columns:
                 df = df[df['CUSTOMER'].str.strip() == _CUSTOMER_ACH]
-            _log_loc_filter(df_truoc, df, name, log_callback)
+            _log_loc_filter(n_truoc, len(df), name, log_callback)
             if not df.empty:
                 frames.append(df)
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=_COLS_NPO)

@@ -5,6 +5,7 @@ import asyncio
 
 from nicegui import ui
 import frontend.api_client as api
+import frontend.ui_kit as ui_kit
 from frontend.shared import (
     _sidebar, _content_area, _page_header, _require_auth, _handle_api_error,
 )
@@ -62,6 +63,32 @@ def _bump_progress(current: float, line: str) -> float:
     return current
 
 
+# Khớp đúng thứ tự backend/services/ach_service.py::STAGE_LABELS — stage/% tiến
+# trình tính ở server, trang này chỉ hiển thị.
+_STAGE_LABELS = [
+    'Đọc dữ liệu',
+    'Chuẩn hoá & xử lý',
+    'Đối chiếu & phân loại',
+    'Tổng hợp báo cáo',
+    'Hoàn tất',
+]
+
+# "Kết quả tạm thời" — nhóm nghiệp vụ ACH thật (khớp đúng dict summary_callback
+# ở backend/services/ach/pipeline.py::xuat_excel), không dùng nhãn đối chiếu
+# ngân hàng chung chung. (n_key, s_key, nhãn, icon, class khung, class chữ)
+_SUMMARY_CARDS = [
+    ('khop_npo_di',    'tien_khop_npo_di',    'Khớp NPO — đi',        'call_made',     'bg-green-50 border-green-200', 'text-green-700'),
+    ('khop_npo_den',   'tien_khop_npo_den',   'Khớp NPO — đến',       'call_received', 'bg-green-50 border-green-200', 'text-green-700'),
+    ('khop_osb_di',    'tien_khop_osb_di',    'Khớp OSB — đi',        'call_made',     'bg-blue-50 border-blue-200',   'text-blue-700'),
+    ('khop_osb_den',   'tien_khop_osb_den',   'Khớp OSB — đến',       'call_received', 'bg-blue-50 border-blue-200',   'text-blue-700'),
+    ('timeout',        'tien_timeout',        'Timeout không đi kênh', 'schedule',     'bg-orange-50 border-orange-200', 'text-orange-700'),
+    ('huy_trong_ngay', 'tien_huy_trong_ngay', 'Huỷ trong ngày',       'block',         'bg-gray-50 border-gray-200',   'text-gray-700'),
+    ('huy_khac_ngay',  'tien_huy_khac_ngay',  'Huỷ khác ngày',        'block',         'bg-gray-50 border-gray-200',   'text-gray-700'),
+    ('thua_di',        'tien_thua_di',        'Thừa chưa khớp — đi',   'warning',      'bg-red-50 border-red-200',     'text-red-700'),
+    ('thua_den',       'tien_thua_den',       'Thừa chưa khớp — đến',  'warning',      'bg-red-50 border-red-200',     'text-red-700'),
+]
+
+
 @ui.page('/cham_ach')
 async def cham_ach_page():
     if not _require_auth():
@@ -89,6 +116,12 @@ async def cham_ach_page():
         'bo_qua_checkpoint': False,   # True = chạy thẳng, coi MIS_đi đúng 100%, không dừng chờ xác nhận
         'max_total_mb': None,  # trần tổng dung lượng 1 lượt upload, do /api/ach/validate trả về
         'dang_cho_dung': False,  # đang chờ phiên cũ dừng hẳn — để _poll() không báo trùng
+        'stage':       0,      # index trong _STAGE_LABELS — server tính, trang chỉ hiện
+        # 2026-08-21 (xem project_ach_gl02_optional_tiered_deps) — thiếu GL02/MIS_đến
+        # nhưng đủ PDF+GW+MIS_đi (Tầng 0) thì validate trả tang0_ok=True; người dùng
+        # phải tự tick chi_tim_timeout mới được chạy thiếu (không tự động hạ cấp).
+        'tang0_ok':        False,
+        'chi_tim_timeout': False,
     }
 
     with ui.row().classes('w-full'):
@@ -249,6 +282,21 @@ async def cham_ach_page():
                             'Tôi hiểu, chạy thẳng luôn', icon='play_arrow', color='orange-8',
                         ).classes('font-semibold')
 
+            # ── Tiến trình ────────────────────────────────────────────────────
+            progress_card = ui.card().classes('w-full p-4 mb-4')
+            progress_card.set_visibility(False)
+            with progress_card:
+                stepper_box = ui.column().classes('w-full')
+                with stepper_box:
+                    ui_kit.stepper(_STAGE_LABELS, 0)
+
+            # ── Kết quả tạm thời ──────────────────────────────────────────────
+            summary_card = ui.card().classes('w-full p-4 mb-4')
+            summary_card.set_visibility(False)
+            with summary_card:
+                ui.label('Kết quả tạm thời').classes('text-base font-semibold text-red-800 mb-3')
+                summary_body = ui.row().classes('w-full gap-3 flex-wrap')
+
             # ── Log card ──────────────────────────────────────────────────────
             with ui.card().classes('w-full p-0 mb-4'):
                 with ui.row().classes('w-full bg-gray-800 px-4 py-2 rounded-t items-center gap-2'):
@@ -296,14 +344,54 @@ async def cham_ach_page():
                 state['progress'] = _bump_progress(state['progress'], msg)
                 progress_bar.set_value(state['progress'])
 
+            def _update_stage(stage: int, progress: float | None = None):
+                """Stage/% do SERVER tính (ach_service::_bump_stage) — trang chỉ hiển thị.
+                `_bump_progress()` phía client vẫn giữ làm đường lui cho lượt chạy mà
+                server chưa trả `stage` (job cũ còn trong RAM lúc vừa deploy)."""
+                state['stage'] = stage
+                progress_card.set_visibility(True)
+                if progress is not None:
+                    state['progress'] = progress
+                    progress_bar.set_value(progress)
+                stepper_box.clear()
+                with stepper_box:
+                    ui_kit.stepper(_STAGE_LABELS, stage)
+
+            def _render_summary(summary: dict | None):
+                if not summary:
+                    return
+                summary_card.set_visibility(True)
+                summary_body.clear()
+                with summary_body:
+                    for n_key, s_key, label, icon, box_cls, txt_cls in _SUMMARY_CARDS:
+                        n = summary.get(n_key, 0)
+                        s = summary.get(s_key, 0)
+                        with ui.column().classes(
+                            f'flex-1 min-w-[11rem] p-3 rounded-lg border gap-0 {box_cls}'
+                        ):
+                            with ui.row().classes('items-center gap-1'):
+                                ui.icon(icon).classes(f'text-sm {txt_cls}')
+                                ui.label(label).classes(f'text-xs font-medium {txt_cls}')
+                            ui.label(f'{n:,}').classes(f'text-xl font-bold {txt_cls}')
+                            ui.label(f'{s:,} VND').classes('text-xs text-gray-500')
+
             def _clear_log():
                 log_area.clear()
                 state['progress'] = 0.0
                 progress_bar.set_value(0)
+                state['stage'] = 0
+                progress_card.set_visibility(False)
+                summary_card.set_visibility(False)
+                summary_body.clear()
 
             def _render_validate_result(res: dict):
                 validate_card.set_visibility(True)
                 validate_card.clear()
+                # Bộ file đã đủ, hoặc không còn đủ Tầng 0 — bỏ tick cũ. KHÔNG bỏ khi
+                # vẫn đang ở đúng tình huống Tầng 0, vì on_run() gọi lại _validate_now()
+                # ngay trước khi chạy ("chốt kiểm tra") và không được xoá tick lúc đó.
+                if res.get('ok') or not res.get('tang0_ok'):
+                    state['chi_tim_timeout'] = False
                 with validate_card:
                     for chk in res.get('checks', []):
                         icon  = 'check_circle' if chk['ok'] else 'cancel'
@@ -313,8 +401,38 @@ async def cham_ach_page():
                             ui.label(chk['label']).classes('text-xs font-medium')
                         ui.label(chk['detail']).classes('text-xs text-gray-500 ml-6 -mt-1')
 
+                    # Thiếu GL02/MIS_đến nhưng đủ Tầng 0 (PDF+GW+MIS_đi) — đề nghị chế
+                    # độ chạy thiếu, CHỈ tìm Timeout không đi kênh (2026-08-21).
+                    if not res.get('ok') and res.get('tang0_ok'):
+                        thieu = ', '.join(chk['label'] for chk in res.get('checks', []) if not chk['ok'])
+                        with ui.row().classes(
+                            'w-full items-start gap-2 mt-3 p-3 rounded bg-orange-50 border border-orange-200'
+                        ):
+                            ui.icon('warning').classes('text-orange-700 mt-1')
+                            with ui.column().classes('gap-0'):
+                                chi_tim_timeout_checkbox = ui.checkbox(
+                                    'Tôi biết đang thiếu file trên — chỉ chạy tìm '
+                                    '"Timeout không đi kênh"',
+                                    value=state['chi_tim_timeout'],
+                                ).props('dense').classes('text-orange-900 font-medium')
+                                ui.label(
+                                    f'Đủ PDF + GW + MIS_đi để tính Timeout không đi kênh, nhưng '
+                                    f'thiếu {thieu} — các phần đối chiếu khác (NPO/MIS thừa, huỷ, '
+                                    f'OSB...) sẽ ghi "CHƯA ĐỐI CHIẾU ĐƯỢC" thay vì số liệu thật.'
+                                ).classes('text-xs text-orange-700')
+
+                        def _on_chi_tim_timeout_change(val: bool):
+                            state['chi_tim_timeout'] = val
+
+                        chi_tim_timeout_checkbox.on_value_change(
+                            lambda e: _on_chi_tim_timeout_change(e.value)
+                        )
+
             async def _validate_now() -> bool:
-                """Kiểm tra sớm bộ file theo tên — trả True nếu đủ, chặn chạy nếu thiếu."""
+                """Kiểm tra sớm bộ file theo tên — trả True nếu đủ, chặn chạy nếu thiếu.
+                Luôn cập nhật state['tang0_ok'] (đủ PDF+GW+MIS_đi cho Timeout không đi
+                kênh) — dùng bởi on_run() để biết có được đề nghị chạy thiếu hay không."""
+                state['tang0_ok'] = False
                 try:
                     if not state['files']:
                         validate_card.set_visibility(False)
@@ -334,6 +452,7 @@ async def cham_ach_page():
 
                 if res.get('max_total_mb'):
                     state['max_total_mb'] = res['max_total_mb']
+                state['tang0_ok'] = bool(res.get('tang0_ok'))
                 _render_validate_result(res)
                 return bool(res.get('ok'))
 
@@ -431,6 +550,10 @@ async def cham_ach_page():
 
                 state['poll_fails'] = 0
 
+                if 'stage' in res:
+                    _update_stage(res['stage'], res.get('progress'))
+                _render_summary(res.get('summary'))
+
                 new_logs = res.get('logs', [])
                 for line in new_logs:
                     _append_log(line)
@@ -452,7 +575,7 @@ async def cham_ach_page():
                     _stop_running()
 
                     if status == 'done':
-                        progress_bar.set_value(1.0)
+                        _update_stage(len(_STAGE_LABELS) - 1, 1.0)
                         files = res.get('files', [])
                         _show_results(files)
                         ui.notify('Hoàn thành! Tải file kết quả bên dưới.', type='positive')
@@ -724,6 +847,7 @@ async def cham_ach_page():
                         data={
                             'ngay_doi_chieu': ngay or '',
                             'bo_qua_checkpoint': str(state['bo_qua_checkpoint']).lower(),
+                            'chi_tim_timeout': str(state['chi_tim_timeout']).lower(),
                         },
                         timeout=600.0,   # bộ file ACH có thể tới hàng trăm MB
                     )
@@ -752,8 +876,11 @@ async def cham_ach_page():
                     return
 
                 # Chốt kiểm tra ngay trước khi chạy — chặn nếu thiếu/sai file.
+                # Ngoại lệ (2026-08-21): thiếu GL02/MIS_đến nhưng đủ Tầng 0 (tang0_ok)
+                # VÀ người dùng đã tự tick "chỉ chạy tìm Timeout" — cho qua, chạy chế
+                # độ chi_tim_timeout thay vì chặn cứng.
                 ok = await _validate_now()
-                if not ok:
+                if not ok and not (state['tang0_ok'] and state['chi_tim_timeout']):
                     ui.notify('Bộ file chưa đủ/đúng — xem chi tiết bên trên trước khi chạy.',
                               type='negative')
                     return

@@ -10,6 +10,7 @@ Mỗi job:
 import gc
 import logging
 import os
+import re
 import shutil
 import threading
 import time
@@ -35,6 +36,43 @@ TEMP_DIR    = BASE_DIR / 'data' / 'temp_ach'
 # lên hết ngày sẽ vô tình khoá chết tính năng cả ngày vì một phiên ai đó bỏ dở.
 CLEANUP_TTL = 4 * 3600
 
+# ─── Stage/progress — 5 giai đoạn thật của pipeline (không phải 6 bước UI chung
+# chung) — mốc log → (stage, %), tăng dần, không lùi lại. `stage` là index nhãn
+# trong STAGE_LABELS, dùng cho stepper phía UI.
+STAGE_LABELS = [
+    'Đọc dữ liệu',
+    'Chuẩn hoá & xử lý',
+    'Đối chiếu & phân loại',
+    'Tổng hợp báo cáo',
+    'Hoàn tất',
+]
+_STAGE_MARKERS = [
+    (re.compile(r'^Ngày đối chiếu:'),               0, 0.05),
+    (re.compile(r'^\[B1\] Session:'),                0, 0.10),
+    (re.compile(r'^Tìm thấy: GL02='),                0, 0.15),
+    (re.compile(r'\[TIMING\] Phase 1 IO:'),          1, 0.45),
+    (re.compile(r'^\[JOB\] Đang chờ xác nhận'),      2, 0.50),
+    (re.compile(r'\[TIMING\] Phase 2 đối chiếu:'),   2, 0.65),
+    (re.compile(r'\[TIMING\] Phase 3 Excel:'),       3, 0.97),
+    (re.compile(r'^Hoàn thành:'),                    4, 1.0),
+]
+_EXCEL_STEP_RE = re.compile(r'\[EXCEL\] \((\d+)/(\d+)\)')
+
+
+def _bump_stage(stage: int, progress: float, line: str) -> tuple[int, float]:
+    m = _EXCEL_STEP_RE.search(line)
+    if m:
+        i, total = int(m.group(1)), int(m.group(2))
+        if total > 0:
+            progress = max(progress, 0.65 + 0.30 * (i / total))
+            stage    = max(stage, 3)
+    for pattern, st, pct in _STAGE_MARKERS:
+        if pattern.search(line):
+            stage    = max(stage, st)
+            progress = max(progress, pct)
+    return stage, progress
+
+
 # ─── In-memory job store ─────────────────────────────────────────────────────
 # {job_id: {status, logs, files, error, cancel_event, _ts, output_dir}}
 _jobs: dict[str, dict[str, Any]] = {}
@@ -49,6 +87,9 @@ def _new_job() -> tuple[str, dict]:
         'logs':          [],
         'files':         [],
         'error':         None,
+        'stage':         0,      # index trong STAGE_LABELS
+        'progress':      0.0,    # 0.0 - 1.0
+        'summary':       None,   # dict số liệu nhóm nghiệp vụ — có từ cuối stage 2
         'cancel_event':  threading.Event(),
         '_ts':           time.time(),
         'output_dir':    str(TEMP_DIR / job_id / 'output'),
@@ -143,23 +184,30 @@ def bo_job(job_id: str) -> None:
     shutil.rmtree(TEMP_DIR / job_id, ignore_errors=True)
 
 
-def chay_job(job_id: str, ngay: str | None, bo_qua_checkpoint: bool = False) -> None:
-    """Khởi chạy pipeline cho job đã nhận đủ file (xem `tao_job()`)."""
+def chay_job(job_id: str, ngay: str | None, bo_qua_checkpoint: bool = False,
+             chi_tim_timeout: bool = False) -> None:
+    """Khởi chạy pipeline cho job đã nhận đủ file (xem `tao_job()`).
+
+    chi_tim_timeout=True (2026-08-21, xem project_ach_gl02_optional_tiered_deps)
+    — chạy được khi thiếu GL02/MIS_đến, chỉ tìm "Timeout không đi kênh" (Tầng 0).
+    Nhớ vào job để `continue_job()` giữ đúng chế độ khi chạy lại sau Checkpoint."""
     job = get_job(job_id)
     if job is None:
         raise LookupError('Job không tồn tại.')
     job['ngay'] = ngay
+    job['chi_tim_timeout'] = chi_tim_timeout
     thread = threading.Thread(
         target=_run,
         args=(job_id, job['input_dir'], job['output_dir'], ngay),
-        kwargs={'dung_sau_mis_di': not bo_qua_checkpoint},
+        kwargs={'dung_sau_mis_di': not bo_qua_checkpoint,
+                'chi_tim_timeout': chi_tim_timeout},
         daemon=True,
     )
     thread.start()
 
 
 def start_job(saved_files: dict[str, bytes], ngay: str | None,
-             bo_qua_checkpoint: bool = False) -> str:
+             bo_qua_checkpoint: bool = False, chi_tim_timeout: bool = False) -> str:
     """
     Tạo job mới, lưu file vào disk, chạy pipeline trong background thread.
     saved_files: {filename: bytes}
@@ -181,7 +229,8 @@ def start_job(saved_files: dict[str, bytes], ngay: str | None,
     for filename, data in saved_files.items():
         (input_dir / safe_filename(filename)).write_bytes(data)
 
-    chay_job(job_id, ngay, bo_qua_checkpoint=bo_qua_checkpoint)
+    chay_job(job_id, ngay, bo_qua_checkpoint=bo_qua_checkpoint,
+             chi_tim_timeout=chi_tim_timeout)
     return job_id
 
 
@@ -208,7 +257,10 @@ def continue_job(job_id: str, xac_nhan_bytes: bytes, xac_nhan_filename: str) -> 
     thread = threading.Thread(
         target=_run,
         args=(job_id, job['input_dir'], job['output_dir'], job['ngay']),
-        kwargs={'xac_nhan_path': str(saved_path)},
+        # Giữ đúng chi_tim_timeout của lần chạy đầu (2026-08-21) — nếu không
+        # truyền lại, lần chạy tiếp sẽ đòi đủ GL02/MIS_đến và hỏng giữa chừng.
+        kwargs={'xac_nhan_path': str(saved_path),
+                'chi_tim_timeout': job.get('chi_tim_timeout', False)},
         daemon=True,
     )
     thread.start()
@@ -231,7 +283,8 @@ def _thong_ke_mis_di_can_confirm(xac_nhan_path: str) -> tuple[int | None, int | 
 
 
 def _run(job_id: str, input_dir: str, output_dir: str, ngay: str | None,
-        dung_sau_mis_di: bool = False, xac_nhan_path: str | None = None):
+        dung_sau_mis_di: bool = False, xac_nhan_path: str | None = None,
+        chi_tim_timeout: bool = False):
     job = get_job(job_id)
     if job is None:
         return
@@ -241,6 +294,10 @@ def _run(job_id: str, input_dir: str, output_dir: str, ngay: str | None,
     def log(msg: str):
         with _lock:
             job['logs'].append(msg)
+            job['stage'], job['progress'] = _bump_stage(job['stage'], job['progress'], msg)
+
+    def on_summary(summary: dict):
+        job['summary'] = summary
 
     try:
         log(f'[JOB {job_id}] Bắt đầu xử lý...')
@@ -249,9 +306,11 @@ def _run(job_id: str, input_dir: str, output_dir: str, ngay: str | None,
             output_dir=output_dir,
             ngay=ngay,
             log_callback=log,
+            summary_callback=on_summary,
             cancel_event=job['cancel_event'],
             dung_sau_mis_di=dung_sau_mis_di,
             xac_nhan_path=xac_nhan_path,
+            chi_tim_timeout=chi_tim_timeout,
         )
 
         if output_path is None:

@@ -4,6 +4,27 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 31/08/2026 Chấm đối chiếu ACH - **⚠️ VIỆC PHẢI LÀM SAU KHI DEPLOY ĐỢT NÀY (PR#54)**
+    + **Kiểm tra quyền `cham_ach.process` ngay sau khi deploy.** Đợt này bắt đầu ép kiểm tra
+      thật quyền chạy (`cham_ach.process`) cho nút "Chạy đối chiếu"/"Tiếp tục"/"Dừng" — trước
+      đây mã này đã khai nhưng CHƯA từng được kiểm, các nhóm trong DB thật có thể chỉ được cấp
+      `menu.cham_ach` (xem trang) mà chưa có `cham_ach.process` (chạy). Đã có migration tự cấp
+      bù `cham_ach.process` cho mọi nhóm đang có `menu.cham_ach` (giữ nguyên quyền như trước
+      deploy), nhưng **vẫn nên chạy câu SQL sau trên DB thật để xác nhận không còn nhóm nào bị
+      sót** (migration chỉ chạy 1 lần lúc khởi động backend):
+      ```sql
+      SELECT g.name FROM user_groups g
+      JOIN group_features gf ON gf.group_id = g.id AND gf.feature_code = 'menu.cham_ach'
+      WHERE NOT EXISTS (
+          SELECT 1 FROM group_features x
+          WHERE x.group_id = g.id AND x.feature_code = 'cham_ach.process'
+      );
+      ```
+      Ra dòng nào là nhóm đó vẫn thiếu quyền chạy — cấp tay qua màn Phân quyền chức năng.
+    + **Xoá tay thư mục `data/temp_ach` cũ (đường dẫn tương đối, nằm cạnh thư mục chạy
+      backend)** nếu có. `TEMP_DIR` đổi sang đường dẫn tuyệt đối (`BASE_DIR/data/temp_ach`) —
+      thư mục cũ ở vị trí tương đối sẽ không còn được vòng dọn tự động quét tới, thành mồ côi
+      vĩnh viễn nếu không xoá tay một lần.
 - 30/08/2026 Chấm 459901 - **Sửa lỗi file Excel kết quả không mở được khi dữ liệu quá lớn**
     + **Gộp từ 2 file GL02 trở lên thì file *Lệnh Đi* trước đây Excel không mở được.** Một file GL02 một ngày đã cho khoảng **617.000 dòng** nhóm *Lệnh Đi*, mà một trang tính Excel chỉ chứa được tối đa **1.048.576 dòng**. Phần mềm cứ ghi tiếp qua giới hạn đó rồi báo *"Hoàn thành!"* như bình thường — người dùng chờ hơn một phút, tải về file hơn 100 MB, mở ra thì Excel **từ chối** hoặc đòi *"repair"* và ăn mất dữ liệu. **Không có thông báo lỗi nào ở cả hai đầu**
     + **Nay nhóm nào quá lớn sẽ tự tách sang trang tính thứ hai trong cùng file** — tên trang ghi rõ *Lệnh Đi (1/2)*, *Lệnh Đi (2/2)*. **Vẫn đúng 7 file kết quả như cũ**, chỉ là mở ra thấy nhiều trang tính hơn; cách tải về không đổi
