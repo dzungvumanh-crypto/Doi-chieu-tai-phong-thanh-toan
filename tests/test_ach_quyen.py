@@ -122,14 +122,31 @@ class TestFsBrowseKhongLoRaNgoai:
     Chấp nhận cả 404 (endpoint đã xoá) lẫn 403 (đã dựng lại, có kiểm quyền) —
     cố tình KHÔNG viết cứng `== 404`, để người dựng lại đúng cách không bị test
     cản đường rồi xoá luôn chốt chặn này.
+
+    2026-09-01: đã chọn hướng 1 (`require_any_feature`, xem `backend/api/fs.py`).
+    `client_chi_xem` (chỉ `menu.cham_ach`) KHÔNG dùng được ở đây nữa — nó chính
+    là 1 trong các menu được `require_any_feature` cho qua (ACH cũng dùng chung
+    folder-picker này), nên test phải dùng tài khoản KHÔNG có menu nào trong 4
+    module liên quan để đúng nghĩa "tài khoản thường".
     """
 
-    def test_tai_khoan_thuong_khong_liet_ke_duoc_thu_muc_may_chu(self, client_chi_xem):
-        # Không tham số = liệt kê toàn bộ ổ đĩa; có tham số = liệt kê thư mục con
-        for tham_so in ({}, {'path': 'C:\\'}):
-            r = client_chi_xem.get('/api/fs/browse', params=tham_so)
-            assert r.status_code in (403, 404), (
-                f'/api/fs/browse {tham_so} tra ve {r.status_code} cho tai khoan chuyen vien. '
-                f'404 = endpoint da xoa (dung), 403 = co kiem quyen (dung), '
-                f'200 = DANG LO CAY THU MUC MAY CHU cho moi tai khoan da dang nhap.'
-            )
+    def test_tai_khoan_thuong_khong_liet_ke_duoc_thu_muc_may_chu(self):
+        client_khong_lien_quan = _client_voi_quyen(['menu.khong_lien_quan'])
+        try:
+            # Không tham số = liệt kê toàn bộ ổ đĩa; có tham số = liệt kê thư mục con
+            for tham_so in ({}, {'path': 'C:\\'}):
+                r = client_khong_lien_quan.get('/api/fs/browse', params=tham_so)
+                assert r.status_code in (403, 404), (
+                    f'/api/fs/browse {tham_so} tra ve {r.status_code} cho tai khoan '
+                    f'khong co menu nao trong 4 module lien quan. '
+                    f'404 = endpoint da xoa (dung), 403 = co kiem quyen (dung), '
+                    f'200 = DANG LO CAY THU MUC MAY CHU cho moi tai khoan da dang nhap.'
+                )
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_tai_khoan_co_menu_lien_quan_qua_duoc_kiem_quyen(self, client_chi_xem):
+        """menu.cham_ach là 1 trong các menu được require_any_feature cho qua — chuyên
+        viên chỉ xem ACH vẫn hợp lệ dùng chung folder-picker (không phải lỗ hổng)."""
+        r = client_chi_xem.get('/api/fs/browse')
+        assert r.status_code != 403

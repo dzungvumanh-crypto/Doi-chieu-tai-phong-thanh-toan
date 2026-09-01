@@ -83,6 +83,14 @@ FEATURES: dict[str, str] = {
     # Đối chiếu Song phương — Phòng Thanh toán
     "menu.doi_chieu_song_phuong":    "Đối chiếu Song phương — Định tuyến lệnh IPCAS (menu)",
     "doi_chieu_song_phuong.process": "Xử lý file ZIP Đối chiếu Song phương",
+    # "Đối chiếu đến" (Kênh↔Hub + Hub↔Core, 2026-09-01) — tab riêng trong cùng menu
+    # doi_chieu_song_phuong ở trên, tách quyền chạy khỏi quyền xem giống cham_ach.process.
+    "doi_chieu_song_phuong_kenh_core.process": "Chạy \"Đối chiếu đến\" (Kênh↔Hub + Hub↔Core)",
+    # Chấm ILO1000 — Phòng Thanh toán. Module đang xây dựng, chưa hoàn thiện (BO xác
+    # nhận 2026-08-31: chưa từng có ai kể cả admin dùng được do thiếu đúng mã này —
+    # không tách quyền xem/chạy riêng vì code hiện tại (5 endpoint + frontend) chỉ
+    # dùng đúng 1 mã, chưa có chỗ nào cần phân biệt).
+    "menu.cham_ilo1000": "Chấm ILO1000 — Đối chiếu 4 nguồn (menu)",
     # Chấm đối chiếu ACH — Phòng Thanh toán. Mã đổi từ `menu.doi_chieu_ach` khi
     # module `doi_chieu_ach` cũ được thay bằng `backend/services/ach/` — code ACH
     # (backend/api/ach.py, frontend/pages/cham_ach.py) đòi đúng mã `menu.cham_ach`.
@@ -198,9 +206,13 @@ FEATURE_GROUPS: list[dict] = [
                     {"code": "menu.cham_459901", "actions": ["cham_459901.process"]},
                     {
                         "code": "menu.doi_chieu_song_phuong",
-                        "actions": ["doi_chieu_song_phuong.process"],
+                        "actions": [
+                            "doi_chieu_song_phuong.process",
+                            "doi_chieu_song_phuong_kenh_core.process",
+                        ],
                     },
                     {"code": "menu.cham_ach", "actions": ["cham_ach.process"]},
+                    {"code": "menu.cham_ilo1000", "actions": []},
                     {"code": "menu.doi_chieu_citad", "actions": []},
                     {"code": "menu.doi_soat_citad", "actions": []},
                 ],

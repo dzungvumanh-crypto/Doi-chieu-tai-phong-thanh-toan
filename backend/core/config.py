@@ -107,4 +107,21 @@ def cham459901_folder_roots() -> list[Path]:
     return [Path(x.strip()).resolve() for x in raw.split(";") if x.strip()]
 
 
+# ── Thư mục được phép duyệt cho dialog chọn thư mục dùng chung ───────────────
+# /api/fs/browse dùng chung cho ACH/ILO1000/459901/Đối chiếu Song phương — cùng
+# nguyên tắc fail-closed như cham459901_folder_roots() ở trên (2026-09-01, theo
+# review khanhbq693 PR#68 mục B2: rỗng = fail-open, duyệt được mọi ổ đĩa/thư mục
+# máy chủ cho BẤT KỲ ai đã đăng nhập — không phải kiểm soát bảo mật thật).
+def folder_picker_roots() -> list[Path]:
+    """Các thư mục gốc được phép duyệt qua dialog chọn thư mục. Raise nếu chưa cấu hình."""
+    raw = (os.getenv("FOLDER_PICKER_ROOTS") or "").strip()
+    if not raw:
+        raise RuntimeError(
+            "Chưa đặt FOLDER_PICKER_ROOTS trong file .env — dialog chọn thư mục server bị "
+            "khoá. Thêm vào .env thư mục chứa dữ liệu (nhiều thư mục ngăn bằng dấu ;), ví dụ:  "
+            "FOLDER_PICKER_ROOTS=D:\\DuLieu"
+        )
+    return [Path(x.strip()).resolve() for x in raw.split(";") if x.strip()]
+
+
 settings = Settings()
