@@ -4,6 +4,20 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 01/09/2026 Chấm 459901 - **Sửa 3 lỗi: đếm thiếu dòng, thanh tiến trình chạy mãi, nút Dừng im lặng**
+    + **Ô "Tổng số dòng" đếm thiếu đúng bằng số dòng của file tồn tháng trước.** Cộng 7 nhóm
+      kết quả lại thì ra một con số, mà ô tổng ở trên lại ghi con số nhỏ hơn — ai đối chiếu hai
+      chỗ đều tưởng phần mềm làm mất dòng. Thật ra 7 nhóm mới đúng, chỉ ô tổng chốt sổ quá sớm,
+      trước lúc ghép file tồn vào. **Không có dòng nào bị mất, chỉ hiển thị sai**
+    + **Thanh tiến trình chạy mãi không dừng nếu máy chủ khởi động lại giữa chừng.** Trước đây
+      mất liên lạc thì phần mềm cứ hỏi lại vô hạn, không báo gì — người dùng ngồi chờ một việc
+      đã chết. Nay thử lại 4 giây, vẫn không được thì **báo rõ "mất kết nối, không rõ đã xong
+      hay chưa"** và mở khoá nút để chạy lại. Phiên đăng nhập hết hạn thì tự về trang đăng nhập
+      thay vì đứng im
+    + **Nút "Dừng" và "Xóa kết quả" bấm vào không phản hồi trong một số trường hợp.** Khi có lỗi,
+      thông báo lỗi bị nuốt mất — màn hình không đổi gì, cũng không báo gì. Nay báo đúng
+    + ✅ **Không phải làm gì sau khi cập nhật**
+
 - 31/08/2026 Chấm đối chiếu ACH - **⚠️ VIỆC PHẢI LÀM SAU KHI DEPLOY ĐỢT NÀY (PR#54)**
     + **Kiểm tra quyền `cham_ach.process` ngay sau khi deploy.** Đợt này bắt đầu ép kiểm tra
       thật quyền chạy (`cham_ach.process`) cho nút "Chạy đối chiếu"/"Tiếp tục"/"Dừng" — trước
