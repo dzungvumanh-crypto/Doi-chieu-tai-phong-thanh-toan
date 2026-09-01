@@ -4,6 +4,13 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 01/09/2026 Phòng Thanh toán - Đối chiếu Song phương - "Đối chiếu đến" (tính năng mới) + tăng tốc xử lý:
+    + Menu **Đối chiếu Song phương** có thêm tab **"Đối chiếu đến"** — chạy tự động nối tiếp 2 bước Kênh↔Hub rồi Hub↔Core trong **1 lần bấm**, trả về 1 bộ kết quả duy nhất thay vì phải chạy tay từng bước. Chọn thư mục dữ liệu trên máy chủ hoặc tải file trực tiếp lên đều được
+    + ⚠️ **File kết quả "chi tiết" (Hub_ChiTiet, Kenh_ChiTiet, Core_ChiTiet) nay là file `.csv` riêng, không còn là sheet trong file Excel tổng hợp.** Tải về sẽ thấy thêm vài file `.csv` cạnh file `.xlsx` tổng hợp (vẫn giữ nguyên) — mở `.csv` bằng Excel bình thường như mọi file `.csv` khác. Đổi để tăng tốc ghi kết quả, không đổi số liệu
+    + **Tốc độ xử lý giảm mạnh** cho ngày nhiều giao dịch — một lượt chạy thật đo được giảm từ khoảng 700 giây xuống còn khoảng 100 giây (tuỳ dữ liệu từng ngày/ngân hàng)
+    + Banner **"Đủ dữ liệu"/"Thiếu dữ liệu"** hiện trước khi bấm Chạy — kiểm nhanh đã có đủ file cần thiết chưa, không cần đợi chạy xong mới biết thiếu
+    + Nhãn **"Chưa đối chiếu"** ở cấp toàn bộ lượt chạy — phân biệt rõ "chưa đủ dữ liệu để so sánh" với "đã so sánh nhưng có chênh lệch thật", tránh đọc nhầm 2 trường hợp này là một
+
 - 10/08/2026 Phân lịch trực - Khai số người mỗi ca, ca quyết toán chính/phụ, sửa tay được thành phần ca:
     + **Số người mỗi ca không còn cứng trong hệ thống** — vào tab *Cài đặt* khai riêng cho ca thường và ca quyết toán (số Lãnh đạo, số nhân viên trực chính, số trực phụ). Lịch tạo sau khi lưu sẽ theo số này
     + ⚠️ **Thiếu người so với số đã khai thì hệ thống KHÔNG lập ca ngày đó**, kèm dòng cảnh báo nêu rõ thiếu ở đâu. Trước đây vẫn sinh ca thiếu người mà không báo gì

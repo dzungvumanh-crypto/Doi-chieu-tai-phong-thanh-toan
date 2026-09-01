@@ -9206,6 +9206,22 @@ Bất biến MIS: 522.774 + 36.462 = 559.236 (khớp tổng gốc)</pre>
         GL02 thật: giải mã đúng nội dung gốc, sai mật khẩu bị bắt sớm, khớp tuyệt đối với
         <code>zf.read()</code> gốc của pyzipper, entry AES thật không bị nhận nhầm, và
         <code>process_zip()</code> đầy đủ định tuyến đúng. 742/742 test toàn dự án pass.</p>
+
+      <div class="label">Cập nhật sau review khanhbq693 PR#68 vòng 3 (B1) — numba phải là dependency TÙY CHỌN</div>
+      <p>Phát hiện đúng: <code>from numba import njit</code> ở đầu module, mà module này được nạp
+        lúc khởi động qua <code>backend/api/doi_chieu_song_phuong.py</code> — thiếu numba (VD môi
+        trường mới chưa <code>pip install</code> kịp, dự án chạy từ USB nên rủi ro có thật) sẽ làm
+        <b>sập cả backend</b>, không riêng module này. Sửa: bọc
+        <code>import numpy</code>/<code>from numba import njit</code> trong <code>try/except
+        ImportError</code>, cờ <code>_CO_NUMBA</code> — thiếu thì <code>_doc_1_file_thanh_vien()</code>
+        rơi thẳng về <code>zf.read()</code> gốc của pyzipper (chậm hơn ~35 lần nhưng vẫn đúng),
+        không đụng gì tới phần còn lại của backend. Verify RIÊNG bằng cách chặn
+        <code>builtins.__import__</code> mô phỏng thiếu numba/numpy THẬT (không chỉ monkeypatch cờ)
+        — module vẫn import được, <code>process_zip()</code> vẫn chạy đúng. Thêm
+        <code>numpy&gt;=1.22,&lt;2.6</code> tường minh vào <code>requirements.txt</code> (đúng
+        khoảng numba yêu cầu) thay vì để <code>pandas&gt;=2.0.0</code> thả nổi tự chọn — tránh
+        solver pip ra bản numpy ngoài khoảng numba chấp nhận. 1 test mới (giả lập thiếu numba qua
+        monkeypatch cờ) + đợt verify import thủ công riêng. 743/743 test pass.</p>
     </div>
   </div>
 

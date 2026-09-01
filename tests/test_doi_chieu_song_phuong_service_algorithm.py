@@ -149,6 +149,19 @@ class TestZipCryptoNumbaFastPath:
             out = svc._doc_1_file_thanh_vien(zf2, "gl02.csv", pwd)
         assert out == _GL02_CONTENT
 
+    def test_khong_co_numba_van_giai_ma_dung(self, monkeypatch):
+        """2026-09-01, theo review khanhbq693 PR#68 vòng 3 (B1) — numba là dependency TÙY CHỌN,
+        thiếu numba/numpy KHÔNG được làm sập backend, chỉ rơi về `zf.read()` gốc của pyzipper
+        (chậm hơn, vẫn đúng). Giả lập thiếu numba bằng `monkeypatch` cờ `_CO_NUMBA`, không gỡ
+        thật thư viện — vẫn phải ra đúng kết quả qua đường lui."""
+        monkeypatch.setattr(svc, "_CO_NUMBA", False)
+        pwd = svc.ZIP_PASSWORD
+        zip_bytes = _make_zipcrypto_zip("gl02.csv", _GL02_CONTENT, pwd)
+        with pyzipper.AESZipFile(io.BytesIO(zip_bytes)) as zf:
+            zf.setpassword(pwd)
+            out = svc._doc_1_file_thanh_vien(zf, "gl02.csv", pwd)
+        assert out == _GL02_CONTENT
+
     def test_process_zip_end_to_end_voi_zipcrypto(self, monkeypatch, tmp_path):
         """`process_zip()` đầy đủ (giải mã + định tuyến + ghi 8 CSV) trên ZIP ZipCrypto — đúng
         kịch bản GL02 thật, không phải fixture AES như các test khác trong dự án."""

@@ -23,9 +23,6 @@ import zlib
 from datetime import datetime
 from pathlib import Path
 
-import numpy as np
-from numba import njit
-
 from backend.services.doi_chieu_song_phuong_common import do_thoi_gian
 
 try:
@@ -33,6 +30,18 @@ try:
     _open_zip = lambda buf: pyzipper.AESZipFile(buf)   # noqa: E731
 except ImportError:
     _open_zip = lambda buf: zipfile.ZipFile(buf)       # noqa: E731
+
+# numba là dependency TÙY CHỌN (2026-09-01, theo review khanhbq693 PR#68 vòng 3) — chỉ dùng để
+# tăng tốc giải mã ZipCrypto cổ điển (card 100). Module này được nạp lúc khởi động qua
+# `backend/api/doi_chieu_song_phuong.py` — thiếu numba/numpy (VD môi trường mới chưa `pip
+# install` kịp) KHÔNG được làm sập cả backend, chỉ được rơi về `zf.read()` gốc của pyzipper
+# (chậm hơn nhưng vẫn đúng) cho riêng module này.
+try:
+    import numpy as np
+    from numba import njit
+    _CO_NUMBA = True
+except ImportError:
+    _CO_NUMBA = False
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 TEMP_DIR      = Path("data/temp_doi_chieu_song_phuong")
@@ -318,36 +327,37 @@ def _giai_ma_tuan_tu(
 # thật (compress_type == 99, tài liệu pyzipper) và STORED — mọi trường hợp khác rơi về
 # `zf.read()` gốc của pyzipper (không đoán, không tự ý mở rộng đường tắt cho case chưa xác nhận).
 
-def _crc32_table() -> np.ndarray:
+def _crc32_table():
     table = []
     for i in range(256):
         c = i
         for _ in range(8):
             c = (0xEDB88320 ^ (c >> 1)) if (c & 1) else (c >> 1)
         table.append(c)
-    return np.array(table, dtype=np.uint64)
+    return np.array(table, dtype=np.uint64) if _CO_NUMBA else table
 
 
 _CRC_TABLE = _crc32_table()
 
 
-@njit(cache=True)
-def _zipcrypto_decrypt_numba(data: np.ndarray, key0: int, key1: int, key2: int,
-                              crc_table: np.ndarray) -> np.ndarray:
-    """Đúng thuật toán PKWARE ZipCrypto (xem `pyzipper.zipfile.CRCZipDecrypter.decrypt`/
-    `update_keys`) — biên dịch JIT bằng numba để chạy tốc độ gần mã máy thay vì vòng lặp bytecode
-    Python."""
-    n = data.shape[0]
-    out = np.empty(n, dtype=np.uint8)
-    for i in range(n):
-        k = key2 | 2
-        c = data[i] ^ (((k * (k ^ 1)) >> 8) & 0xFF)
-        key0 = (crc_table[(key0 ^ c) & 0xFF] ^ (key0 >> 8)) & 0xFFFFFFFF
-        key1 = (key1 + (key0 & 0xFF)) & 0xFFFFFFFF
-        key1 = (key1 * 134775813 + 1) & 0xFFFFFFFF
-        key2 = (crc_table[(key2 ^ (key1 >> 24)) & 0xFF] ^ (key2 >> 8)) & 0xFFFFFFFF
-        out[i] = c
-    return out
+if _CO_NUMBA:
+    @njit(cache=True)
+    def _zipcrypto_decrypt_numba(data: np.ndarray, key0: int, key1: int, key2: int,
+                                  crc_table: np.ndarray) -> np.ndarray:
+        """Đúng thuật toán PKWARE ZipCrypto (xem `pyzipper.zipfile.CRCZipDecrypter.decrypt`/
+        `update_keys`) — biên dịch JIT bằng numba để chạy tốc độ gần mã máy thay vì vòng lặp
+        bytecode Python."""
+        n = data.shape[0]
+        out = np.empty(n, dtype=np.uint8)
+        for i in range(n):
+            k = key2 | 2
+            c = data[i] ^ (((k * (k ^ 1)) >> 8) & 0xFF)
+            key0 = (crc_table[(key0 ^ c) & 0xFF] ^ (key0 >> 8)) & 0xFFFFFFFF
+            key1 = (key1 + (key0 & 0xFF)) & 0xFFFFFFFF
+            key1 = (key1 * 134775813 + 1) & 0xFFFFFFFF
+            key2 = (crc_table[(key2 ^ (key1 >> 24)) & 0xFF] ^ (key2 >> 8)) & 0xFFFFFFFF
+            out[i] = c
+        return out
 
 
 def _zipcrypto_derive_keys(pwd: bytes) -> tuple[int, int, int]:
@@ -375,8 +385,11 @@ def _doc_raw_ciphertext(zf, info) -> bytes:
 def _doc_1_file_thanh_vien(zf, name: str, pwd: bytes) -> bytes:
     """Đọc + giải mã + giải nén 1 file thành viên trong ZIP đang mở `zf`. Dùng đường tắt numba
     (ZipCrypto cổ điển, xem block comment phía trên) khi entry chắc chắn khớp thuật toán, ngược
-    lại rơi về `zf.read()` gốc của pyzipper (bao gồm cả AES thật lẫn mọi trường hợp không chắc
-    chắn)."""
+    lại rơi về `zf.read()` gốc của pyzipper (bao gồm cả AES thật, thiếu numba, lẫn mọi trường hợp
+    không chắc chắn)."""
+    if not _CO_NUMBA:
+        return zf.read(name, pwd=pwd)
+
     info = zf.getinfo(name)
     # ⚠️ `info.compress_type` KHÔNG đủ để phân biệt AES thật với ZipCrypto — pyzipper tự giải mã
     # extra field AES (0x9901) và GHI ĐÈ `compress_type` bằng phương pháp nén THẬT bên trong (vd

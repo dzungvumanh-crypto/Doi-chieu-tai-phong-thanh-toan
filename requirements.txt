@@ -12,7 +12,12 @@ docxtpl==0.16.8
 python-docx==1.1.2
 openpyxl==3.1.2
 pyzipper>=0.3.6
+# numba TÙY CHỌN (tăng tốc giải mã ZipCrypto GL02, xem doi_chieu_song_phuong_service.py) — thiếu
+# vẫn chạy được (rơi về pyzipper chậm hơn), KHÔNG được để pip install kẹt vì nó. Ghim numpy theo
+# đúng khoảng numba yêu cầu (2026-09-01, theo review khanhbq693 PR#68) thay vì để pandas>=2.0.0
+# thả nổi tự chọn — tránh solver ra bản numpy ngoài khoảng numba chấp nhận.
 numba>=0.60.0
+numpy>=1.22,<2.6
 pandas>=2.0.0
 xlrd>=2.0.1
 lunardate>=0.2.0
