@@ -12,6 +12,7 @@ import pyzipper
 import pandas as pd
 
 from .config import zip_password
+from .so_tien import doc_so_tien
 from .zip_utils import (
     find_zip_tool as _find_zip_tool,
     build_extract_cmd as _build_extract_cmd,
@@ -127,7 +128,7 @@ def _chuan_hoa_co_ban(df: pd.DataFrame) -> pd.DataFrame:
     `_process_mis_di()`, `tim_giao_dich_bi_loai_session_null()`, và dòng bổ sung
     thủ công ở `ap_dung_confirm_mis_di()` (Bước 2 Checkpoint MIS_đi)."""
     df = df.copy()
-    df['SO_TIEN']  = pd.to_numeric(df['SO_TIEN'], errors='coerce').fillna(0).astype('int64')
+    df['SO_TIEN']  = doc_so_tien(df['SO_TIEN'], nguon='MIS_DI', ten_cot='SO_TIEN')
     df['SO_TRACE'] = _tao_so_trace(df)
     df['NGAY_KENH_TRA'] = pd.to_datetime(
         df['NGAY_KENH_TRA'].str.strip(), format='%d/%m/%Y %H:%M:%S', errors='coerce'

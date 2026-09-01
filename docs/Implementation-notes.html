@@ -11825,6 +11825,47 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">66</span>
+      <span class="card-title">ACH so_tien.py — dấu phẩy ngăn nghìn + ô trống không còn làm sập job</span>
+      <span class="badge badge-done">Đã sửa</span>
+    </div>
+    <div class="card-body">
+      <p>PR#66 mở rộng <code>doc_so_tien()</code> (dùng ở b2/b3/b4/b6/b10) nhận thêm dấu phẩy ngăn nghìn
+      (<code>'839,000'</code>), không chỉ dấu chấm. Review khanhbq693 phát hiện bản đầu gây <b>regression nặng hơn
+      bug đang sửa</b>: đổi <code>to_numeric(errors='coerce').fillna(0)</code> (ô trống → 0, không lỗi) sang
+      <code>astype(str)</code> trần (ô trống/NaN → chuỗi <code>'nan'</code>/<code>''</code>, không khớp regex nào
+      → <code>ValueError</code>, dừng cả lượt chấm). GL02 là sổ cái: dòng ghi Có thường bỏ trống cột Nợ — một ô
+      trống trong file thật là chấm dứt cả ngày làm việc.</p>
+
+      <div class="label">Ba quyết định không đọc ra được từ diff</div>
+      <table>
+        <tr><th>Quyết định</th><th>Lý do</th></tr>
+        <tr><td>Ô trống/NaN → <code>0</code> tường minh trong <code>doc_so_tien()</code>,
+            <b>không</b> raise, có log cảnh báo đếm số dòng</td>
+            <td>Giữ đúng hành vi <code>fillna(0)</code> trước khi module này tồn tại — module chỉ siết
+            <i>mẫu lạ có nội dung</i> (VD <code>'1.5'</code>), chưa từng có ý định siết ô trống.</td></tr>
+        <tr><td>Thêm <code>LoiDinhDangSoTien(ValueError)</code> riêng, thay vì raise
+            <code>ValueError</code> trần</td>
+            <td><code>ach_service.py</code> bắt <code>ValueError</code> sau checkpoint MIS_đi để coi là
+            "file xác nhận điền sai" và quay lại chờ xác nhận. Khi chạy lại, b2/b3/b4/b6/b10 cũng chạy lại
+            và có thể raise vì lỗi <i>định dạng số tiền ở file GL02/GW gốc</i> — bị phân loại nhầm thành lỗi
+            file xác nhận thì người dùng sửa sai chỗ, sập vòng lặp không lối ra. Điều kiện bắt lỗi đổi thành
+            <code>isinstance(e, ValueError) and not isinstance(e, LoiDinhDangSoTien)</code>.</td></tr>
+        <tr><td>Bỏ <code>doc_so_tien_mem()</code> khỏi PR này (không xoá vĩnh viễn — bản khác đã tồn tại
+            độc lập trên nhánh <code>fix/cham459901-ccy-filter-order-2026-08-30</code>)</td>
+            <td>Không caller nào trong PR#66. Thêm code chết + 8 test cho một hàm chưa ai gọi chỉ để "phòng
+            khi ILO1000 cần" — review khuyến nghị tách sang đúng PR dùng nó, review cùng chỗ gọi thật.</td></tr>
+      </table>
+
+      <div class="caution">Khi rebase các PR ACH/459901 khác về sau (PR#54, #68, #69 — tất cả cùng cắt từ
+      nhánh <code>Cham_ILO1000</code>), <code>so_tien.py</code> phải lấy đúng bản của PR#66 (có
+      <code>_chuan_hoa_chuoi()</code> xử lý đuôi <code>.0</code> do pandas nâng dtype float64 + ô trống→0).
+      Các nhánh khác đang giữ bản <code>so_tien.py</code> cũ hơn/thiếu tính năng.</div>
+    </div>
+  </div>
+
   <!-- 109 -->
   <div class="card">
     <div class="card-header">
@@ -12380,7 +12421,7 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-30</footer>
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-08-31</footer>
 </div>
 </body>
 </html>
