@@ -236,11 +236,38 @@ def list_special_days(db: sqlite3.Connection, month: Optional[int] = None,
 
 
 def get_holiday_dates(db: sqlite3.Connection, year: int) -> set:
-    rows = db.execute(
-        "SELECT date FROM duty_special_days WHERE day_type='holiday' AND date LIKE ?",
-        (f"{year}%",)
-    ).fetchall()
-    return {r["date"] for r in rows}
+    """Ngày nghỉ lễ dùng cho xếp lịch trực — HỢP của hai nguồn, không phải một.
+
+      - `duty_special_days` — khai báo riêng của Sổ trực (gồm cả 'makeup');
+      - `public_holidays`   — danh mục ngày lễ chung của cơ quan.
+
+    Trước đây chỉ đọc bảng đầu. Nhưng giao diện nhập ngày lễ duy nhất trong cả
+    phần mềm nằm ở màn hình **Nghỉ phép**, và nó ghi vào `public_holidays`. Nên
+    quản trị viên khai ngày lễ xong là yên tâm, còn Sổ trực thì không hề biết:
+    vẫn xếp người trực ngày lễ, vẫn tính cut-off cuối tháng như ngày làm việc —
+    trừ khi có người nhớ bấm "Seed ngày lễ" bên tab Ngày đặc biệt. Không lỗi,
+    không cảnh báo, chỉ là lịch sai.
+
+    **Khai báo riêng của Sổ trực THẮNG.** Ngày nào đã có dòng trong
+    `duty_special_days` thì lấy nguyên `day_type` của dòng đó. Cần thế để giữ
+    được ngày làm bù rơi trúng ngày lễ (nhà nước hoán đổi ngày nghỉ): hợp thẳng
+    hai tập thì ngày ấy vừa là lễ vừa là bù, engine xếp lịch nhận hai câu trả
+    lời trái nhau.
+    """
+    khai_rieng = {
+        r["date"]: r["day_type"]
+        for r in db.execute(
+            "SELECT date, day_type FROM duty_special_days WHERE date LIKE ?",
+            (f"{year}%",),
+        ).fetchall()
+    }
+    ngay_le = {d for d, loai in khai_rieng.items() if loai == "holiday"}
+    for r in db.execute(
+        "SELECT date FROM public_holidays WHERE date LIKE ?", (f"{year}%",)
+    ).fetchall():
+        if r["date"] not in khai_rieng:
+            ngay_le.add(r["date"])
+    return ngay_le
 
 
 def get_makeup_dates(db: sqlite3.Connection, year: int) -> set:

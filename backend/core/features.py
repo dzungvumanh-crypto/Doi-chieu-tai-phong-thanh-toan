@@ -47,6 +47,7 @@ FEATURES: dict[str, str] = {
     "leaves.approve_gd":       "Duyệt / Từ chối (bước Giám đốc)",
     "leaves.dashboard":        "Dashboard nghỉ phép (tổng quan + thống kê)",
     "leaves.quota_admin":      "Quản lý hạn mức phép theo năm",
+    "leaves.delegation_admin": "Quản lý ủy quyền GĐ/PGĐ",
     "leaves.stats_export":     "Xuất báo cáo tổng hợp phép năm",
     "leaves.declare_direct":   "Khai báo hộ nghỉ phép",
     "leaves.recall":           "Rút đơn nhiều cấp",
@@ -67,7 +68,7 @@ FEATURES: dict[str, str] = {
     "staff.import_join_date":  "Nhập Ngày vào ngành từ Excel",
 
     # Phân lịch trực — Phòng Thanh toán
-    "menu.duty_schedule":      "Phân lịch trực — Phòng Thanh toán (menu)",
+    "menu.duty_schedule":      "Phân lịch trực (menu)",   # dải nhãn "Phòng Thanh toán" đã nói phòng
     "duty.generate":           "Tạo lịch trực tự động",
     "duty.confirm":            "Xác nhận lịch trực",
     "duty.delete":             "Xóa lịch trực",
@@ -77,7 +78,7 @@ FEATURES: dict[str, str] = {
 
     # Chấm 459901 — Phòng Thanh toán
     "menu.cham_459901":    "Chấm 459901 — Phân loại bút toán TK 459901 (menu)",
-    "cham_459901.process": "Xử lý file ZIP 459901",
+    "cham_459901.process": "Xử lý file 459901 (ZIP hoặc Excel)",
 
     # Đối chiếu Song phương — Phòng Thanh toán
     "menu.doi_chieu_song_phuong":    "Đối chiếu Song phương — Định tuyến lệnh IPCAS (menu)",
@@ -91,6 +92,10 @@ FEATURES: dict[str, str] = {
     # Nhãn phải khớp tên menu ở frontend/shared.py, phần mô tả sau dấu — mới
     # nói rõ đối chiếu/đối soát với hệ thống nào.
     "menu.doi_chieu_citad":     "Đối chiếu CITAD cuối ngày — CITAD ↔ PaymentHub (menu)",
+    # Đối chiếu CITAD ↔ PaymentHub — Phòng QLTK Nostro, Vostro. Module SONG
+    # SONG với menu.doi_chieu_citad ở trên, không phải phân hệ con của nó —
+    # nghiệp vụ/nguồn dữ liệu khác hẳn (xem doi_chieu_citad_nostro_service.py).
+    "menu.doi_chieu_citad_nostro": "Đối chiếu CITAD - PaymentHub — Phòng QLTK Nostro, Vostro (menu)",
     # Đối soát CITAD ↔ IPCAS — Phòng Thanh toán
     "menu.doi_soat_citad":      "Đối soát chênh lệch CITAD cuối ngày — CITAD ↔ IPCAS (menu)",
     # Sổ trực cuối ngày — Phòng Thanh toán
@@ -98,6 +103,42 @@ FEATURES: dict[str, str] = {
     "so_truc.ksv_confirm":      "Xác nhận / Từ chối sổ trực (vai KSV)",
     # Đối chiếu điện SWIFT — hậu tố phòng bỏ vì đã có dải nhãn "Phòng Swift"
     "menu.swift_recon":        "Đối chiếu điện SWIFT (menu)",
+
+    # Chấm công — Phòng Kế toán. "menu.attendance" CHỈ để làm tiêu đề nhóm hiển thị
+    # trong màn Phân quyền theo nhóm — sidebar KHÔNG dùng code này để ẩn/hiện (xem
+    # frontend/shared.py::_sidebar(), vẫn gate theo department code ACCT như cũ) vì
+    # mọi nhân viên ACCT đều cần thấy menu để xem "Công của tôi", không riêng người
+    # được cấp quyền. 2 action dưới đây mới thực sự được check (attendance.py).
+    "menu.attendance":       "Chấm công (menu)",
+    "attendance.view_dept":  "Xem bảng công cả phòng + lịch sử các tháng",
+    "attendance.export":     "Xuất Excel bảng công",
+
+    # Ôn tập (Quizz) — bộ câu hỏi dùng chung cho cả cơ quan.
+    # Xem/làm bài mở cho mọi người được cấp `menu.quiz`; tải bộ mới và xoá bộ
+    # là hai quyền riêng vì chúng động tới dữ liệu dùng chung: xoá một bộ kéo
+    # theo toàn bộ lượt làm bài và bảng xếp hạng của bộ đó.
+    "menu.quiz":             "Ôn tập (menu)",
+    "quiz.upload":           "Tải bộ câu hỏi lên / đổi tên bộ",
+    "quiz.delete":           "Xoá bộ câu hỏi",
+
+    # Chuẩn hoá văn bản — dùng chung cả cơ quan. Tách quyền sửa quy chuẩn ra
+    # riêng: thông số trình bày là của cả đơn vị, một người đổi là mọi văn bản
+    # người khác chạy sau đó đều theo số mới — không để chung với quyền dùng.
+    "menu.vb_format":        "Chuẩn hoá văn bản (menu)",
+    "vb_format.config":      "Sửa thông số quy chuẩn trình bày",
+
+    # Quản lý nhân sự. `menu.hr_profiles` là quyền TỐI THIỂU: có nó là vào được
+    # màn hình và tự khai hồ sơ của chính mình. Muốn thấy/sửa hồ sơ người khác
+    # phải có thêm hr.view_all / hr.edit_all. Lương tách riêng hai mã vì đó là
+    # số liệu chế độ, không đi kèm quyền xem hồ sơ thông thường.
+    "menu.hr_profiles":      "Hồ sơ cán bộ (menu)",
+    "hr.view_all":           "Xem hồ sơ của mọi cán bộ",
+    "hr.edit_all":           "Sửa hồ sơ cán bộ khác + phần công tác, bổ nhiệm",
+    "hr.salary_view":        "Xem hồ sơ lương của cán bộ khác",
+    "hr.salary_edit":        "Sửa hồ sơ lương",
+    "menu.hr_lookup":        "Tra cứu & Thống kê nhân sự (menu)",
+    "hr.export":             "Xuất Excel danh sách cán bộ",
+    "menu.hr_reminders":     "Nhắc lịch nhân sự (menu)",
 }
 
 # ── Cấu trúc màn hình phân quyền ──────────────────────────────────────────────
@@ -109,7 +150,7 @@ FEATURES: dict[str, str] = {
 #                  label=None nghĩa là không cần dải nhãn phòng.
 #   kind="menu"  → thẻ không header, chính ô tick là tiêu đề thẻ. Dùng cho menu
 #                  đứng một mình ở cấp 1 sidebar; nếu bọc header sẽ ra
-#                  "Nghỉ phép / Nghỉ phép" — nhãn lặp hai lần liền.
+#                  "Danh sách CN TTQT / Danh sách CN TTQT" — nhãn lặp hai lần.
 #
 # "actions": [] = menu chỉ có một ô tick, không có mục con.
 FEATURE_GROUPS: list[dict] = [
@@ -170,6 +211,12 @@ FEATURE_GROUPS: list[dict] = [
                     {"code": "menu.swift_recon", "actions": []},
                 ],
             },
+            {
+                "label": "Phòng QLTK Nostro, Vostro",
+                "menus": [
+                    {"code": "menu.doi_chieu_citad_nostro", "actions": []},
+                ],
+            },
         ],
     },
     {
@@ -193,6 +240,7 @@ FEATURE_GROUPS: list[dict] = [
         ],
     },
     {
+        # Soi gương mục phẳng "leaves" ở cấp 1 của MENU_TREE.
         "kind": "menu",
         "code": "menu.leaves",
         "icon": "event_busy",
@@ -205,29 +253,87 @@ FEATURE_GROUPS: list[dict] = [
             "leaves.approve_gd",
             "leaves.dashboard",
             "leaves.quota_admin",
+            "leaves.delegation_admin",
             "leaves.stats_export",
             "leaves.declare_direct",
             "leaves.recall",
         ],
     },
     {
-        "kind": "menu",
-        "code": "menu.duty_schedule",
-        "icon": "edit_calendar",
-        "actions": [
-            "duty.generate",
-            "duty.confirm",
-            "duty.delete",
-            "duty.export",
-            "duty.manage_staff",
-            "duty.manage_config",
+        # Soi gương nhóm "cong_truc" trong MENU_TREE. Ô tick "menu.attendance"
+        # KHÔNG điều khiển việc hiện menu Chấm công (sidebar gate theo phòng
+        # ACCT) — nó ở đây để admin gán "xem bảng công cả phòng + xuất Excel"
+        # cho một GDV được giao theo dõi chấm công, khỏi phải nâng role lên
+        # trưởng/phó phòng. attendance.py check role trưởng/phó phòng/admin
+        # HOẶC 2 quyền này (cộng thêm, không thay thế check role cũ).
+        "kind": "group",
+        "dept": "Chấm công & Lịch trực",
+        "icon": "date_range",
+        "sections": [
+            {
+                "label": "Phòng Kế toán",
+                "menus": [
+                    {"code": "menu.attendance", "actions": ["attendance.view_dept", "attendance.export"]},
+                ],
+            },
+            {
+                "label": "Phòng Thanh toán",
+                "menus": [
+                    {
+                        "code": "menu.duty_schedule",
+                        "actions": [
+                            "duty.generate",
+                            "duty.confirm",
+                            "duty.delete",
+                            "duty.export",
+                            "duty.manage_staff",
+                            "duty.manage_config",
+                        ],
+                    },
+                    {"code": "menu.so_truc", "actions": ["so_truc.ksv_confirm"]},
+                ],
+            },
         ],
     },
     {
-        "kind": "menu",
-        "code": "menu.so_truc",
-        "icon": "assignment_turned_in",
-        "actions": ["so_truc.ksv_confirm"],
+        # Soi gương nhóm "Tính năng khác" ở cấp 1 của MENU_TREE — hai menu này
+        # không thuộc phòng nào nên section không cần dải nhãn phòng.
+        "kind": "group",
+        "dept": "Tính năng khác",
+        "icon": "apps",
+        "sections": [
+            {
+                "label": None,
+                "menus": [
+                    {"code": "menu.quiz", "actions": ["quiz.upload", "quiz.delete"]},
+                    {"code": "menu.vb_format", "actions": ["vb_format.config"]},
+                ],
+            },
+        ],
+    },
+    {
+        # Soi gương nhóm "nhansu" trong MENU_TREE.
+        "kind": "group",
+        "dept": "Quản lý nhân sự",
+        "icon": "badge",
+        "sections": [
+            {
+                "label": None,
+                "menus": [
+                    {
+                        "code": "menu.hr_profiles",
+                        "actions": [
+                            "hr.view_all",
+                            "hr.edit_all",
+                            "hr.salary_view",
+                            "hr.salary_edit",
+                        ],
+                    },
+                    {"code": "menu.hr_lookup", "actions": ["hr.export"]},
+                    {"code": "menu.hr_reminders", "actions": []},
+                ],
+            },
+        ],
     },
     {
         "kind": "menu",

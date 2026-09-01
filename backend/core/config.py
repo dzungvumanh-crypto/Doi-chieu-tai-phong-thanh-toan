@@ -60,16 +60,51 @@ class Settings:
     NTP_TIMEOUT_SEC: float = float(os.getenv("NTP_TIMEOUT_SEC", "3"))
     NTP_DRIFT_THRESHOLD_SEC: int = int(os.getenv("NTP_DRIFT_THRESHOLD_SEC", "5"))
 
-    # Thư mục gốc được phép duyệt qua /api/fs/browse (folder-picker dùng chung cho
-    # ACH/459901/Đối chiếu Song phương) — phân cách bằng dấu chấm phẩy, ví dụ:
-    # G:\Đối chiếu song phương;D:\Data\ACH. Review PR#43/#68 (khanhbq693): trước đây
-    # không giới hạn gốc, ai có quyền vào 1 trong các module trên duyệt được TOÀN BỘ ổ
-    # đĩa máy chủ. Để RỖNG (mặc định) = KHÔNG giới hạn (giữ hành vi cũ) — vì chưa biết
-    # chắc cấu trúc thư mục dữ liệu thật trên máy chủ production, ép giới hạn sai sẽ
-    # chặn nhầm người dùng thật. backend/api/fs.py tự log WARNING mỗi lần duyệt khi để
-    # rỗng, để lỗ hổng còn mở KHÔNG bị lãng quên trong im lặng.
-    FOLDER_PICKER_ROOTS: list = [
-        p.strip() for p in os.getenv("FOLDER_PICKER_ROOTS", "").split(";") if p.strip()
-    ]
+# ── Mật khẩu file ZIP do hệ thống nguồn cấp ──────────────────────────────────
+# Ba module dùng chung một mật khẩu: Đối chiếu ACH, Chấm 459901, Đối chiếu
+# Song phương. Trước đây nó nằm CỨNG trong mã (`ZIP_PASSWORD = b"..."`) ở cả ba
+# nơi, tức là đã đi vào lịch sử git — xoá khỏi mã hôm nay cũng không xoá được
+# khỏi lịch sử, ai từng clone repo là có.
+#
+# Cố ý KHÔNG fail-fast lúc khởi động như SECRET_KEY: ba module này là tính năng
+# tuỳ chọn, thiếu mật khẩu không phải lý do để cả hệ thống không lên. Đổi lại
+# phải nêu rõ nguyên nhân ĐÚNG LÚC dùng, nếu không người vận hành chỉ thấy
+# "giải nén thất bại" và đi tìm nhầm chỗ (file hỏng? sai đường dẫn?).
+def zip_password() -> bytes:
+    """Mật khẩu giải nén file nguồn. Raise nếu chưa cấu hình."""
+    raw = (os.getenv("DOI_CHIEU_ZIP_PASSWORD") or "").strip()
+    if not raw:
+        raise RuntimeError(
+            "Chưa đặt DOI_CHIEU_ZIP_PASSWORD trong file .env — không giải nén được "
+            "file nguồn của Đối chiếu ACH / Chấm 459901 / Đối chiếu Song phương. "
+            "Thêm vào .env:  DOI_CHIEU_ZIP_PASSWORD=<mật_khẩu_do_đơn_vị_cấp_file_cung_cấp>"
+        )
+    return raw.encode()
+
+
+# ── Thư mục được phép quét cho "Chấm 459901 → Chọn thư mục server" ───────────
+# Route /api/cham459901/process_folder nhận đường dẫn do người dùng gõ rồi ĐỌC
+# file trên chính máy chủ. Không giới hạn gốc thì nó thành hai thứ khác hẳn ý
+# định ban đầu: một máy dò "thư mục này có tồn tại không" cho mọi đường dẫn trên
+# máy chủ (hai câu lỗi khác nhau là đủ để phân biệt), và — nếu thư mục tình cờ
+# có một file .zip/.xlsx — một cách liệt kê TÊN toàn bộ file còn lại trong đó
+# qua danh sách `unrecognized` trả về.
+#
+# Fail-closed: chưa cấu hình thì route báo lỗi nói rõ phải thêm gì vào .env,
+# KHÔNG mặc định về BASE_DIR. Mặc định "cho tạm một chỗ" là kiểu hàng rào mà
+# người vận hành không biết mình đang dựa vào cho tới lúc nó không đủ.
+# Nhiều thư mục ngăn nhau bằng dấu ";" (quy ước Windows).
+def cham459901_folder_roots() -> list[Path]:
+    """Các thư mục gốc được phép quét. Raise nếu chưa cấu hình."""
+    raw = (os.getenv("CHAM459901_FOLDER_ROOTS") or "").strip()
+    if not raw:
+        raise RuntimeError(
+            "Chưa đặt CHAM459901_FOLDER_ROOTS trong file .env — chức năng "
+            "\"Chọn thư mục server\" của Chấm 459901 bị khoá. Thêm vào .env "
+            "thư mục chứa dữ liệu (nhiều thư mục ngăn bằng dấu ;), ví dụ:  "
+            "CHAM459901_FOLDER_ROOTS=D:\\DuLieu\\459901"
+        )
+    return [Path(x.strip()).resolve() for x in raw.split(";") if x.strip()]
+
 
 settings = Settings()

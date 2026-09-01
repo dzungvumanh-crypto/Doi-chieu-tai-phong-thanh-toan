@@ -40,8 +40,15 @@ if not defined PY goto envkhongpy
 :: --siet-bao-mat: chi may CHINH moi siet (BACKEND_HOST=127.0.0.1, ENV=production).
 :: deploy-test.bat KHONG truyen co nay -- he thong test can /docs de go loi.
 "%PY%" "%~dp0scripts\deploy_env_check.py" "%DEST%\.env" 8000 check --siet-bao-mat
+:: 3 = khong phai sua gi nhung THIEU bien phai go tay (xem CHI_CANH_BAO trong script).
+:: Phai xet truoc 2: `if errorlevel N` la phep so sanh >=, dat sau thi 3 roi vao nhanh loi.
+if errorlevel 3 goto envcanhbao
 if errorlevel 2 goto envloi
 if errorlevel 1 goto envsua
+goto envxong
+
+:envcanhbao
+set "ENVWARN=1"
 goto envxong
 
 :envkhongpy
@@ -58,6 +65,7 @@ echo.
 set /p FIXENV=    Sua lai .env cho dung? (Y/n):
 if /i "%FIXENV%"=="n" goto envboqua
 "%PY%" "%~dp0scripts\deploy_env_check.py" "%DEST%\.env" 8000 fix --siet-bao-mat
+if errorlevel 3 set "ENVWARN=1"
 goto envxong
 
 :envboqua
@@ -160,6 +168,14 @@ echo  Ban nay them bien STORAGE_SECRET -- start.bat se TU SINH neu .env chua co.
 echo  Nguoi dung dang dang nhap se bi dang xuat MOT LAN sau khi khoi dong lai.
 echo  Khoi dong lai ung dung: tat tien trinh cu, chay start.bat
 echo ============================================================
+if defined ENVWARN (
+    echo.
+    echo  ############################################################
+    echo  #  CHUA XONG: .env tren may dich THIEU bien phai go tay.
+    echo  #  Xem dong [CANH BAO] o buoc 1/8 phia tren de biet bien nao.
+    echo  #  Deploy khong tu dien duoc gia tri do -- go tay roi khoi dong lai.
+    echo  ############################################################
+)
 echo.
 pause
 

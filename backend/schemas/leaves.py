@@ -1,6 +1,6 @@
 from datetime import date, datetime
 from typing import Optional, Literal, List
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 # ─── Leave ───────────────────────────────────────────────────────────────────
@@ -60,7 +60,7 @@ class LeaveOut(BaseModel):
     spread_dates: Optional[List[str]] = None
     recall_reason: Optional[str] = None
     created_at: datetime
-    class Config: from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class LeaveActionLogOut(BaseModel):
     id: int
@@ -71,7 +71,7 @@ class LeaveActionLogOut(BaseModel):
     from_status: Optional[str]
     to_status: Optional[str]
     created_at: datetime
-    class Config: from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ─── Quota & Direct ──────────────────────────────────────────────────────────
@@ -88,7 +88,7 @@ class LeaveQuotaOut(BaseModel):
     carry_over: float = 0.0
     used_days: float = 0.0
     remaining: float = 0.0
-    class Config: from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class DirectLeaveCreate(BaseModel):
     staff_id: int
@@ -121,4 +121,4 @@ class DelegationOut(BaseModel):
     is_active: bool
     created_by_name: str
     created_at: datetime
-    class Config: from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

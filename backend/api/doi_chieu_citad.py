@@ -46,8 +46,9 @@ from fastapi.responses import Response, StreamingResponse
 
 from backend.database import get_db
 from backend.core import audit_queue
+from backend.core.net import header_ip_dang_tin
 from backend.core.concurrency import run_heavy
-from backend.core.deps import require_feature
+from backend.core.deps import require_admin, require_feature
 from backend.schemas.doi_chieu_citad import (
     CitadBufferIn,
     ExportIn,
@@ -91,8 +92,10 @@ def _resolve_extension_owner(
     Hàng đợi cũng không bao giờ raise và ghi bằng kết nối riêng, nên không
     còn phải commit trước khi raise như bản đồng bộ trước đây."""
     resolved = svc.resolve_extension_token(db, x_extension_token)
-    ip_hdr = request.headers.get("X-Client-IP", "").strip() or None
     client_ip = request.client.host if request.client else None
+    # Header chỉ đáng tin khi bên gọi là proxy frontend chạy cùng máy — xem
+    # backend/core/net.py. Extension đi qua đúng đường đó (frontend/api_proxy.py).
+    ip_hdr = header_ip_dang_tin(client_ip, request.headers.get("X-Client-IP"))
     if not resolved:
         # Ghi audit CẢ khi token không hợp lệ/đã bị thu hồi — đây là tín hiệu
         # cần theo dõi (máy quên cập nhật token mới, hoặc có người đang dò
@@ -250,7 +253,17 @@ def get_session(
 def save_session(
     data: SessionIn, db=Depends(get_db), current: dict = Depends(require_feature("menu.doi_chieu_citad"))
 ):
-    svc.session_save(db, data.ngay, current["id"], data.model_dump())
+    """"Lưu bản tạm" (status='draft') hay "Lưu bản cuối" (status='final') —
+    xem session_save() trong service cho quy tắc ai được sửa gì. 403 khi
+    ngày đã chốt (SessionLockedError) hoặc người gọi không phải người lập
+    bảng nhưng cố sửa ngoài Napas/PSS-MDP hay cố chốt bản cuối
+    (SessionForbiddenError)."""
+    payload = data.model_dump()
+    status = payload.pop("status")
+    try:
+        svc.session_save(db, data.ngay, current["id"], payload, status)
+    except (svc.SessionLockedError, svc.SessionForbiddenError) as e:
+        raise HTTPException(403, str(e))
     return {"ok": True}
 
 
@@ -258,7 +271,20 @@ def save_session(
 def delete_session(
     ngay: str, db=Depends(get_db), current: dict = Depends(require_feature("menu.doi_chieu_citad"))
 ):
-    svc.session_delete(db, ngay)
+    try:
+        svc.session_delete(db, ngay, current["id"])
+    except (svc.SessionLockedError, svc.SessionForbiddenError) as e:
+        raise HTTPException(403, str(e))
+    return {"ok": True}
+
+
+@router.post("/session/{ngay:path}/unlock")
+def unlock_session(
+    ngay: str, db=Depends(get_db), current: dict = Depends(require_admin)
+):
+    """Chỉ Admin — mở khoá 1 ngày đã "Lưu bản cuối" về lại bản tạm để người
+    lập bảng sửa tiếp. Không phải xoá số liệu, chỉ đổi status."""
+    svc.session_admin_unlock(db, ngay)
     return {"ok": True}
 
 
@@ -272,6 +298,15 @@ def get_history_entry(
     if data is None:
         raise HTTPException(404, "Không tìm thấy bản ghi lịch sử này")
     return data
+
+
+@router.get("/history-entry/{history_id}/edits")
+def get_history_entry_edits(
+    history_id: int, db=Depends(get_db), current: dict = Depends(require_feature("menu.doi_chieu_citad"))
+):
+    """Danh sách người đã lưu góp phần vào dòng lịch sử này, kèm thời gian —
+    phục vụ icon "Ai đã sửa" trên mỗi dòng ở tab Lịch sử."""
+    return svc.get_history_edits(db, history_id)
 
 
 # ── Xuất Excel ────────────────────────────────────────────────────────────

@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from backend.database import get_db
 from backend.core.concurrency import run_heavy
 from backend.core.deps import require_feature
+from backend.core.uploads import read_limited
 from backend.services.report_service import (
     parse_ipcas, parse_payment_teller, parse_payment_backchecker,
     enrich_and_group, merge_hkv,
@@ -41,22 +42,26 @@ async def parse_gdv(
 
     if gdv_file and gdv_file.filename:
         try:
-            raw = await gdv_file.read()
+            raw = await read_limited(gdv_file, ten="File GDV")
             rows, month, year = await run_heavy(parse_ipcas, raw)
             result["ipcas"] = await run_heavy(enrich_and_group, rows, db, is_payment=False)
             if month:
                 result["month"] = month
             if year:
                 result["year"] = year
+        except HTTPException:
+            raise
         except Exception as e:
             log.error("parse_gdv IPCAS error: %s", e)
             raise HTTPException(status_code=400, detail=f"Lỗi đọc file GDV: {e}")
 
     if teller_file and teller_file.filename:
         try:
-            raw = await teller_file.read()
+            raw = await read_limited(teller_file, ten="File Teller")
             rows = await run_heavy(parse_payment_teller, raw)
             result["payment"] = await run_heavy(enrich_and_group, rows, db, is_payment=True)
+        except HTTPException:
+            raise
         except Exception as e:
             log.error("parse_gdv Payment error: %s", e)
             raise HTTPException(status_code=400, detail=f"Lỗi đọc file Teller: {e}")
@@ -76,18 +81,22 @@ async def parse_hkv(
 
     if hkv_file and hkv_file.filename:
         try:
-            raw = await hkv_file.read()
+            raw = await read_limited(hkv_file, ten="File HKV")
             rows, m, y = await run_heavy(parse_ipcas, raw)
             ipcas_rows = rows
             month, year = m or month, y or year
+        except HTTPException:
+            raise
         except Exception as e:
             log.error("parse_hkv IPCAS error: %s", e)
             raise HTTPException(status_code=400, detail=f"Lỗi đọc file HKV: {e}")
 
     if checker_file and checker_file.filename:
         try:
-            raw = await checker_file.read()
+            raw = await read_limited(checker_file, ten="File Backchecker")
             payment_rows = await run_heavy(parse_payment_backchecker, raw)
+        except HTTPException:
+            raise
         except Exception as e:
             log.error("parse_hkv Payment error: %s", e)
             raise HTTPException(status_code=400, detail=f"Lỗi đọc file Backchecker: {e}")
@@ -126,6 +135,8 @@ def generate_dept(
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers=_dl_headers(filename),
         )
+    except HTTPException:
+        raise
     except Exception as e:
         log.error("generate_dept error: %s", e)
         raise HTTPException(status_code=500, detail=f"Lỗi sinh báo cáo Excel: {e}")
@@ -158,6 +169,8 @@ def generate_word(
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             headers=_dl_headers(filename),
         )
+    except HTTPException:
+        raise
     except Exception as e:
         log.error("generate_word error: %s", e)
         raise HTTPException(status_code=500, detail=f"Lỗi sinh báo cáo Word: {e}")
@@ -176,19 +189,23 @@ async def generate_dept_zip(
 
     if gdv_file and gdv_file.filename:
         try:
-            raw = await gdv_file.read()
+            raw = await read_limited(gdv_file, ten="File GDV")
             rows, m, y = await run_heavy(parse_ipcas, raw)
             ipcas_grouped = await run_heavy(enrich_and_group, rows, db, is_payment=False)
             month, year = m or month, y or year
+        except HTTPException:
+            raise
         except Exception as e:
             log.error("generate_dept_zip IPCAS: %s", e)
             raise HTTPException(status_code=400, detail=f"Lỗi đọc file GDV: {e}")
 
     if teller_file and teller_file.filename:
         try:
-            raw = await teller_file.read()
+            raw = await read_limited(teller_file, ten="File Teller")
             rows = await run_heavy(parse_payment_teller, raw)
             payment_grouped = await run_heavy(enrich_and_group, rows, db, is_payment=True)
+        except HTTPException:
+            raise
         except Exception as e:
             log.error("generate_dept_zip Payment: %s", e)
             raise HTTPException(status_code=400, detail=f"Lỗi đọc file Teller: {e}")

@@ -8,9 +8,12 @@ kết quả HTTP, IP, thời gian). Các thao tác có write_audit ngữ nghĩa 
 Middleware này KHÔNG tự ghi DB. Nó chỉ bỏ dòng vào hàng đợi rồi trả response
 ngay — xem `backend/core/audit_queue.py` để biết vì sao.
 """
+import re
+
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from backend.core import audit_queue
+from backend.core.net import header_ip_dang_tin
 
 _MUTATING = {"POST", "PUT", "PATCH", "DELETE"}
 
@@ -29,7 +32,33 @@ _SKIP_PREFIXES = (
     # nằm ở POST /session — đường đó KHÔNG bị bỏ qua, vẫn ghi bình thường.
     "/api/doi-chieu-citad/citad-buffer",
     "/api/doi-chieu-citad/paymenthub-buffer",
+    # Đối chiếu CITAD - PaymentHub Phòng QLTK Nostro, Vostro — cùng lý do
+    # như 2 dòng trên, xem _resolve_extension_owner() trong
+    # backend/api/doi_chieu_citad_nostro.py.
+    "/api/doi-chieu-citad-nostro/citad-buffer",
+    "/api/doi-chieu-citad-nostro/paymenthub-buffer",
+    # Ôn tập trắc nghiệm — cùng lý do với 4 dòng trên, nhưng gay hơn nhiều:
+    # `PATCH /attempts/{id}/progress` chạy sau MỖI CÂU trả lời, tức một bài 550
+    # câu để lại 550 dòng. Đo trên máy thật: vài giờ chạy thử sinh 1.634 dòng,
+    # bằng 36% toàn bộ bảng audit_logs tích luỹ từ trước tới nay — nhật ký của
+    # mọi module khác sẽ bị trôi mất trong lúc bảng vẫn dọn theo cùng hạn lưu.
+    #
+    # Bỏ cả nhánh là an toàn: những thao tác thực sự cần tra sau này đều đã tự
+    # ghi `write_audit` ngữ nghĩa trong backend/api/quiz.py — tải bộ câu hỏi
+    # lên, đổi tên bộ, xoá bộ, và nộp bài. Phần bị bỏ chỉ là tạo lượt làm bài,
+    # lưu tiến độ và bỏ bài dở: đều là thao tác của một người trên bài của
+    # chính họ, không ai cần tra soát.
+    "/api/quiz",
 )
+
+_ID_RE = re.compile(r"/\d+")
+
+# Đường dẫn ĐƠN LẺ đã tự ghi write_audit ngữ nghĩa nhưng nằm trong nhánh không
+# được bỏ qua. Bỏ cả prefix "/api/leaves" thì mất nhật ký của toàn bộ nghỉ phép,
+# nên chặn đúng một đường. So khớp trên path đã chuẩn hoá số → /{id}.
+_SKIP_EXACT = {
+    ("PATCH", "/api/leaves/quotas/staff/{id}/join-date"),
+}
 
 
 class AuditMiddleware(BaseHTTPMiddleware):
@@ -40,18 +69,23 @@ class AuditMiddleware(BaseHTTPMiddleware):
         path = request.url.path
         if method not in _MUTATING or any(path.startswith(p) for p in _SKIP_PREFIXES):
             return response
+        if (method, _ID_RE.sub("/{id}", path)) in _SKIP_EXACT:
+            return response
         # 404/405 = không khớp route → không có thao tác thực sự, khỏi ghi
         if response.status_code in (404, 405):
             return response
 
         # Đọc sẵn mọi thứ cần từ request: luồng ghi nền không được đụng vào
         # đối tượng Request, và tất cả những gì nó cần đều là giá trị đơn giản.
+        peer = request.client.host if request.client else None
         audit_queue.enqueue(
             method,
             path,
             response.status_code,
             request.headers.get("Authorization", ""),
-            request.headers.get("X-Client-IP", "").strip() or None,
-            request.client.host if request.client else None,
+            # None khi header không đáng tin → audit_queue tự lui về IP đã lưu
+            # lúc đăng nhập, rồi mới tới địa chỉ của kết nối.
+            header_ip_dang_tin(peer, request.headers.get("X-Client-IP")),
+            peer,
         )
         return response

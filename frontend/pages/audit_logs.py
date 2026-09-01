@@ -16,7 +16,7 @@ async def audit_logs_page():
     if not api.has_feature("menu.logs"):
         ui.navigate.to("/home")
         return
-    _ = _sidebar("audit-logs")
+    _ = await _sidebar("audit-logs")
 
     with _content_area():
         _page_header("Nhật ký hệ thống", "Lịch sử thao tác ghi dữ liệu — giữ tối đa 365 ngày")
@@ -66,7 +66,8 @@ async def audit_logs_page():
                 with ui.row().classes("w-full bg-gray-100 border-b border-gray-200 px-3 py-2 items-center gap-2"):
                     ui.label("Thời gian").classes("font-semibold text-gray-700 text-xs w-36 shrink-0")
                     ui.label("Người thao tác").classes("font-semibold text-gray-700 text-xs w-44 shrink-0")
-                    ui.label("Công việc").classes("font-semibold text-gray-700 text-xs flex-1")
+                    ui.label("Công việc").classes("font-semibold text-gray-700 text-xs w-64 shrink-0")
+                    ui.label("Chi tiết").classes("font-semibold text-gray-700 text-xs flex-1")
                     ui.label("Kết quả").classes("font-semibold text-gray-700 text-xs w-32 shrink-0")
                     ui.label("IP").classes("font-semibold text-gray-700 text-xs w-32 shrink-0")
                 for e in entries:
@@ -81,8 +82,14 @@ async def audit_logs_page():
                             "text-xs w-44 shrink-0 truncate")
                         # Công việc — path kỹ thuật ở tooltip cho ai cần tra cứu
                         ui.label(e.get("work") or "—").classes(
-                            "text-xs flex-1 font-medium text-gray-800 truncate"
+                            "text-xs w-64 shrink-0 font-medium text-gray-800 truncate"
                         ).tooltip(e.get("target_type") or "")
+                        # Chi tiết — chỉ dòng do write_audit ghi mới có; cắt ngắn
+                        # cho thẳng cột, tooltip giữ nguyên văn để đọc đủ
+                        _ct = e.get("detail") or ""
+                        ui.label(_ct or "—").classes(
+                            "text-xs flex-1 text-gray-700 truncate"
+                        ).tooltip(_ct)
                         ui.label(e.get("result") or "—").classes(
                             f"text-xs px-1.5 py-0.5 rounded {res_cls} w-32 shrink-0 text-center font-medium truncate")
                         ui.label(e.get("ip_address") or "—").classes(

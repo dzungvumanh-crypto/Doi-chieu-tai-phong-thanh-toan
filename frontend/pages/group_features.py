@@ -1,4 +1,4 @@
-"""Trang phân quyền chức năng theo nhóm — chỉ admin.
+"""Trang phân quyền chức năng theo nhóm — Quản trị viên cấp 1 và cấp 2.
 
 Cấu trúc phòng/menu/action lấy động từ API — không hardcode ở frontend.
 Để thêm phòng/menu mới: chỉ sửa backend/core/features.py, trang này tự cập nhật.
@@ -16,11 +16,15 @@ async def group_features_page():
     if not _require_auth():
         return
     user = api.get_current_user()
-    if not user or user.get("role") != "admin":
+    if not user or user.get("role") not in ("admin", "admin_l2"):
         ui.navigate.to("/home")
         return
+    # Cấp 2 xem được mọi nhóm nhưng không sửa quyền của nhóm chứa chính mình —
+    # nếu không, tick hết ô là tự nâng lên gần bằng cấp 1 (backend chặn thật,
+    # đây là lớp hiển thị). Xem groups.py::_chan_l2_tu_cap_quyen().
+    la_cap_2 = user.get("role") == "admin_l2"
 
-    _sidebar("group-features")
+    await _sidebar("group-features")
     with _content_area():
         _page_header("Phân quyền theo nhóm", "Chọn nhóm và tick các chức năng nhóm đó được phép dùng")
 
@@ -28,6 +32,7 @@ async def group_features_page():
         groups_data: list        = []
         structure: list          = []          # từ API /features/all
         selected_group_id: dict  = {"value": None}
+        nhom_cua_toi: set        = set()       # id nhóm mà mình là thành viên
         current_codes: list      = [set()]     # mutable wrapper tránh rebinding issue
         menu_refs: dict          = {}          # menu_code → checkbox element
         action_refs: dict        = {}          # action_code → checkbox element
@@ -37,6 +42,7 @@ async def group_features_page():
         group_selector = None
         save_btn       = None
         status_label   = None
+        locked_note    = None
 
         # ── Load nhóm + cấu trúc features ─────────────────────────────────────
         async def load_initial():
@@ -55,6 +61,8 @@ async def group_features_page():
                     return
                 ui.notify(f"Lỗi tải cấu trúc tính năng: {e}", type="negative")
                 return
+            nhom_cua_toi.clear()
+            nhom_cua_toi.update(g["id"] for g in groups_data if g.get("contains_me"))
             group_selector.options = {str(g["id"]): g["name"] for g in groups_data}
             group_selector.update()
 
@@ -67,12 +75,18 @@ async def group_features_page():
                 result = await asyncio.to_thread(api.get, f"/api/groups/{gid}/features")
                 current_codes[0] = set(result.get("codes", []))
                 _render_features.refresh()
-                save_btn.set_visibility(True)
+                khoa = la_cap_2 and int(gid) in nhom_cua_toi
+                save_btn.set_visibility(not khoa)
+                locked_note.set_visibility(khoa)
                 status_label.set_text("")
             except Exception as e:
                 if _handle_api_error(e):
                     return
                 ui.notify(str(e), type="negative")
+
+        def _bi_khoa() -> bool:
+            """Cấp 2 mở nhóm chứa chính mình → ô tick chỉ để đọc."""
+            return la_cap_2 and selected_group_id["value"] in nhom_cua_toi
 
         # ── Một menu + các action con ─────────────────────────────────────────
         def _menu_block(menu: dict, codes: set, icon: str = "", standalone: bool = False):
@@ -106,6 +120,7 @@ async def group_features_page():
                     "text-base font-semibold text-red-900" if standalone
                     else "text-sm font-semibold text-gray-800"
                 )
+                menu_refs[mcode].set_enabled(not _bi_khoa())
 
             if acodes:
                 with ui.column().classes("pl-7 pb-2 pt-1 gap-1 w-full") as action_col:
@@ -116,6 +131,7 @@ async def group_features_page():
                             action["label"],
                             value=action["code"] in codes and mchecked,
                         ).classes("text-sm text-gray-600")
+                        action_refs[action["code"]].set_enabled(not _bi_khoa())
 
         # ── Dải nhãn phòng + nút chọn nhanh ───────────────────────────────────
         def _section_header(label: str, menu_codes: list[str]):
@@ -234,6 +250,12 @@ async def group_features_page():
                 status_label = ui.label("").classes("text-sm text-gray-500 self-center")
 
         _render_features()
+
+        locked_note = ui.label(
+            "Bạn là thành viên của nhóm này — Quản trị viên cấp 2 chỉ được xem, "
+            "không sửa được quyền của nhóm mình đang ở trong."
+        ).classes("text-sm text-amber-700 bg-amber-50 rounded px-3 py-2 mt-2")
+        locked_note.set_visibility(False)
 
         save_btn = ui.button(
             "Lưu thay đổi", icon="save", on_click=save_features

@@ -1,7 +1,6 @@
 """Shared utilities, helpers và constants dùng chung cho tất cả pages."""
 import asyncio
 import datetime
-import inspect
 import logging
 import os
 from nicegui import ui, app
@@ -61,6 +60,13 @@ MENU_TREE = [
                     ("swift_recon", "Đối chiếu điện SWIFT", "compare_arrows"),
                 ],
             },
+            {
+                "label": "Phòng QLTK Nostro, Vostro",
+                "icon": "account_balance",
+                "items": [
+                    ("doi_chieu_citad_nostro", "Đối chiếu CITAD - PaymentHub", "account_balance_wallet"),
+                ],
+            },
         ],
     },
     {
@@ -85,10 +91,72 @@ MENU_TREE = [
             },
         ],
     },
-    ("leaves",        "Nghỉ phép",         "event_busy"),
-    ("duty_schedule", "Phân lịch trực",    "edit_calendar"),
-    ("so_truc",        "Sổ trực cuối ngày", "assignment_turned_in"),
+    # Nghỉ phép đứng riêng ở cấp 1, ngang hàng với "Chấm công & Lịch trực": cả cơ
+    # quan dùng hằng ngày nên không bắt người dùng hover qua một nhóm mới tới.
+    ("leaves", "Nghỉ phép", "event_busy"),
+    {
+        # Gom theo CHỨC NĂNG "thời gian làm việc" — chấm công và lịch trực là việc
+        # của riêng một phòng nên nằm ở tầng dưới đúng tên phòng, giống Đối chiếu
+        # và Báo cáo.
+        "id": "cong_truc",
+        "label": "Chấm công & Lịch trực",
+        # date_range thuộc bộ Material Icons gốc — chắc chắn có trong font offline
+        # NiceGUI đóng gói sẵn. Icon mới (punch_clock) có thể thiếu glyph và bị
+        # font render ra nguyên chữ "punch_clock" trên sidebar.
+        "icon": "date_range",
+        "items": [
+            {
+                "label": "Phòng Kế toán",
+                "icon": "calculate",
+                "items": [
+                    ("attendance", "Chấm công", "schedule"),
+                ],
+            },
+            {
+                "label": "Phòng Thanh toán",
+                "icon": "payments",
+                "items": [
+                    ("duty_schedule", "Phân lịch trực",    "edit_calendar"),
+                    ("so_truc",       "Sổ trực cuối ngày", "assignment_turned_in"),
+                ],
+            },
+        ],
+    },
+    {
+        # Quản lý nhân sự — hồ sơ cán bộ của cả Trung tâm. Ba mục: nhập/xem hồ
+        # sơ, tra cứu-thống kê, và nhắc lịch (nâng lương / bổ nhiệm lại / cấp
+        # công cụ mới). Không có tầng "phòng" vì đây là việc của cả cơ quan.
+        # Icon "badge" thuộc bộ Material Icons gốc — cùng lý do đã chọn
+        # "date_range" ở nhóm Chấm công.
+        "id": "nhansu",
+        "label": "Quản lý nhân sự",
+        "icon": "badge",
+        "items": [
+            ("hr_profiles",  "Hồ sơ cán bộ",       "contact_page"),
+            ("hr_lookup",    "Tra cứu & Thống kê", "manage_search"),
+            ("hr_reminders", "Nhắc lịch",          "notifications_active"),
+        ],
+    },
+    # Đối chiếu DTBB đứng riêng cấp 1 — không phải "thời gian làm việc" nên không
+    # gộp vào nhóm "cong_truc" phía trên dù cùng Phòng Kế toán (gate theo department
+    # code ACCT ở dtbb_page(), không theo cấu trúc cây này).
+    ("dtbb", "Đối chiếu DTBB", "account_balance_wallet"),
     ("ttqt_branches", "Danh sách CN TTQT", "account_tree"),
+    {
+        # Ôn tập và Chuẩn hoá văn bản không thuộc phòng nào, cả cơ quan dùng —
+        # gom vào một nhóm thay vì để hai mục phẳng cạnh nhau ở cấp 1. Items là
+        # tuple (không có tầng "phòng") nên flyout chỉ sâu 2 cấp.
+        # Icon "apps"/"school"/"description" đều thuộc bộ Material Icons gốc
+        # (chắc chắn có glyph trong font offline NiceGUI đóng gói) — cùng lý do
+        # đã chọn "date_range" ở trên.
+        "id": "khac",
+        "label": "Tính năng khác",
+        "icon": "apps",
+        "items": [
+            ("quiz",      "Ôn tập",            "school"),
+            ("vb_format", "Chuẩn hoá văn bản", "description"),
+        ],
+    },
 ]
 
 # Hai nhóm dưới đây trước nằm inline trong _sidebar(). Tách ra module-level để
@@ -404,24 +472,39 @@ def _nav_item(key: str, label: str, icon: str, current_page: str):
         ui.label(label).classes("sidebar-label text-sm flex-1")
 
 
-def _item_visible(item, check_features: bool) -> bool:
+def _key_visible(k: str, check_features: bool, overrides: dict[str, bool]) -> bool:
+    """Một route key có được hiện không.
+
+    `overrides` cho phép đè kết quả của từng key riêng lẻ — dùng cho mục không
+    gate bằng feature-flag (vd "Chấm công" gate theo phòng ACCT) khi nó nằm
+    chung nhóm với các mục gate bằng feature-flag bình thường.
+    """
+    if k in overrides:
+        return overrides[k]
+    return not check_features or api.has_feature(f"menu.{k}")
+
+
+def _item_visible(item, check_features: bool, overrides: dict[str, bool]) -> bool:
     """Kiểm tra một item (tuple hoặc sub-group dict) có visible không."""
     if isinstance(item, tuple):
         k, _, _ = item
-        return not check_features or api.has_feature(f"menu.{k}")
+        return _key_visible(k, check_features, overrides)
     # dict = sub-group: visible nếu ít nhất 1 child visible
     return any(
-        not check_features or api.has_feature(f"menu.{k}")
+        _key_visible(k, check_features, overrides)
         for k, _, _ in item["items"]
     )
 
 
-def _dept_group(dept: dict, current_page: str, check_features: bool = True):
+def _dept_group(dept: dict, current_page: str, check_features: bool = True,
+                overrides: dict[str, bool] | None = None):
     """Nhóm phòng ban — hover để xem flyout menu bên phải (không đẩy các mục dưới xuống).
     check_features=True: lọc items theo api.has_feature(); False: hiện tất cả (dùng cho admin menu cứng).
+    overrides: {route_key: True/False} đè kết quả kiểm tra cho từng mục riêng.
     Item có thể là tuple (key, label, icon) hoặc dict sub-group {"label", "icon", "items"}.
     """
-    visible_items = [i for i in dept["items"] if _item_visible(i, check_features)]
+    overrides = overrides or {}
+    visible_items = [i for i in dept["items"] if _item_visible(i, check_features, overrides)]
     if not visible_items:
         return  # gồm cả phòng chưa có chức năng (items rỗng) — không render header chết
 
@@ -467,7 +550,7 @@ def _dept_group(dept: dict, current_page: str, check_features: bool = True):
                         # ── Sub-group (nested flyout) ──
                         sub_children = [
                             (k, lbl, ico) for k, lbl, ico in item["items"]
-                            if not check_features or api.has_feature(f"menu.{k}")
+                            if _key_visible(k, check_features, overrides)
                         ]
                         if not sub_children:
                             continue
@@ -495,9 +578,54 @@ def _dept_group(dept: dict, current_page: str, check_features: bool = True):
                                         ui.label(lbl).classes("text-sm flex-1")
 
 
-def _sidebar(current_page: str) -> dict:
+async def _user_dept_code(user: dict) -> str | None:
+    """Tra department_id của user ra code (vd 'ACCT'), cache trong app.storage.user
+    để không gọi lại API mỗi lần chuyển trang. Dùng để giới hạn hiển thị các menu
+    riêng Phòng Kế toán ("Chấm công", "Đối chiếu DTBB") chỉ cho đúng nhân viên
+    phòng đó.
+
+    Rà soát tiếp theo: trước đây cache cả khi gọi API lỗi (mạng chậm, backend
+    restart giữa chừng...) — `code=None` bị ghi cứng vào cache, nhân viên ACCT mất
+    hẳn menu "Chấm công" cho tới khi logout/login lại (chỉ `clear_auth()` mới xoá
+    được cache này). Giờ chỉ cache khi gọi API THÀNH CÔNG; lỗi thì trả None cho lần
+    gọi này nhưng để lần render sau (đổi trang) thử lại, không kẹt vĩnh viễn.
+
+    Rà soát review PR #22 (Người 1, 17/08), phần 2/2: trước đây gọi api.get()
+    trần (không bọc asyncio.to_thread như mọi lượt gọi mạng khác trong file
+    này), mà _sidebar() — hàm gọi thẳng chỗ này — vốn là hàm sync được ~25 trang
+    gọi không qua to_thread. NiceGUI chạy một vòng lặp sự kiện duy nhất nên lượt
+    HTTP đó chặn cả server: lúc nó chờ phản hồi (bình thường vài mili-giây,
+    nhưng tới 10s nếu trúng lúc backend đang khởi động lại — timeout ở
+    api_client.py), trang của MỌI người dùng khác đứng im theo. Đổi hàm này (và
+    _sidebar) sang async + bọc to_thread để nhường lại vòng lặp sự kiện trong
+    lúc chờ mạng, giống 3 chỗ gọi khác trong file."""
+    if "_dept_code" in app.storage.user:
+        return app.storage.user["_dept_code"]
+    dept_id = user.get("department_id") if user else None
+    if not dept_id:
+        return None
+    try:
+        row = await asyncio.to_thread(api.get, f"/api/departments/{dept_id}")
+        code = row.get("code")
+    except (api.SessionExpiredError, api.DisplacedSessionError) as e:
+        # Rà soát review PR #22 (Người 1, 17/08): trước đây bắt tuốt Exception nên
+        # phiên hết hạn/bị đăng nhập nơi khác cũng lặng lẽ trả None — không redirect
+        # về /login như quy định ở DESIGN.md, không log gì. Dùng lại đúng
+        # _handle_api_error() đã có sẵn cho các chỗ gọi API khác trong file này.
+        _handle_api_error(e)
+        return None
+    except Exception as e:
+        _log.warning("_user_dept_code: lỗi tra department_id=%s: %s", dept_id, e)
+        return None
+    app.storage.user["_dept_code"] = code
+    return code
+
+
+async def _sidebar(current_page: str) -> dict:
     # Trả về dict rỗng — badge số đã chuyển hết vào khối "Công việc chờ xử lý".
-    # Giữ kiểu trả về để 19 trang đang gọi không phải sửa chữ ký.
+    # Giữ kiểu trả về để các trang đang gọi không phải sửa chữ ký.
+    # Đổi sang async theo review PR #22 (Người 1, 17/08) — xem docstring
+    # _user_dept_code() phía trên để biết lý do.
     badge_refs: dict = {}
     ui_kit.install()          # token màu + font Inter cho 19 trang có sidebar
     ui.add_head_html(_SIDEBAR_CSS)
@@ -569,13 +697,32 @@ def _sidebar(current_page: str) -> dict:
             # Trang chủ — luôn hiển thị
             _nav_item("home", "Trang chủ", "home", current_page)
 
+            # "Chấm công" không dùng feature-flag — chỉ hiện cho đúng nhân viên
+            # Phòng Kế toán (code ACCT) hoặc admin. Trước đây cả nhóm "Phòng Kế
+            # toán" được render riêng với check_features=False; nay mục này nằm
+            # chung nhóm với Nghỉ phép / lịch trực (vốn gate bằng feature-flag)
+            # nên phải đè riêng đúng một key, không đổi cách lọc của cả nhóm.
+            # Giữ nguyên kết luận review PR #22: không thuộc ACCT/admin thì ẩn
+            # hẳn, kể cả khi lỡ được cấp feature menu.attendance qua Phân quyền
+            # theo nhóm — nếu không sẽ hiện menu rồi 403 khi bấm vào.
+            show_attendance = user_role == "admin" or await _user_dept_code(user) == "ACCT"
+
             # Menu chức năng — nhóm thì dựng flyout, mục phẳng thì dựng thẳng
             for node in MENU_TREE:
                 if isinstance(node, tuple):
-                    if api.has_feature(f"menu.{node[0]}"):
+                    if node[0] == "dtbb":
+                        # "Đối chiếu DTBB" không dùng feature-flag — chỉ hiện cho đúng
+                        # nhân viên Phòng Kế toán (code ACCT) hoặc admin, giống
+                        # show_attendance bên dưới. Sửa theo review PR #22: nếu lỡ được
+                        # cấp nhầm feature qua Phân quyền theo nhóm thì vẫn hiện menu
+                        # rồi 403 khi bấm vào — không thuộc ACCT/admin thì bỏ qua hẳn.
+                        if user_role == "admin" or await _user_dept_code(user) == "ACCT":
+                            _nav_item(*node, current_page)
+                    elif api.has_feature(f"menu.{node[0]}"):
                         _nav_item(*node, current_page)
                 else:
-                    _dept_group(node, current_page, check_features=True)
+                    _dept_group(node, current_page, check_features=True,
+                                overrides={"attendance": show_attendance})
 
             ui.separator().classes("border-red-700 my-1")
 
@@ -587,8 +734,11 @@ def _sidebar(current_page: str) -> dict:
             if user_role == "admin" or api.has_feature("menu.logs"):
                 _dept_group(DEPT_NHATKY, current_page, check_features=False)
 
-            # Phân quyền chức năng — chỉ admin (hard-coded, không phải feature)
-            if user_role == "admin":
+            # Phân quyền chức năng — hai cấp quản trị, hard-coded (không phải
+            # feature): nếu gate bằng feature thì ai được cấp feature đó sẽ tự
+            # cấp thêm cho mình, quyền tự nhân bản. Cấp 2 bị chặn thao tác lên
+            # nhóm chứa chính mình — xem groups.py::_chan_l2_tu_cap_quyen().
+            if user_role in ("admin", "admin_l2"):
                 _dept_group(DEPT_PHANQUYEN, current_page, check_features=False)
 
         # ── Đăng xuất ──
@@ -698,137 +848,9 @@ def _handle_api_error(e: Exception) -> bool:
         ui.notify(str(e), type="warning")
         ui.navigate.to("/login")
         return True
+    if isinstance(e, api.MustChangePasswordError):
+        ui.notify(str(e), type="warning", timeout=4000)
+        ui.navigate.to("/change-password")
+        return True
     ui.notify(str(e), type="negative")
     return False
-
-
-async def open_folder_picker(on_select, *, initial_path: str = "") -> None:
-    """Dialog điều hướng cây thư mục qua GET /api/fs/browse — hoạt động đúng bất
-    kể trình duyệt mở ở máy nào (không dùng hộp thoại OS cục bộ, không dùng
-    <input webkitdirectory>, vì cả 2 thứ đó chỉ hoạt động đúng khi browser và
-    server cùng 1 máy hoặc không trả về đường dẫn tuyệt đối).
-
-    UX (đổi 2026-08-28, đợt 4 — sau phản hồi "khó kích vào ổ đĩa"): click 1 dòng
-    = MỞ LUÔN vào đó, kể cả ở danh sách ổ đĩa gốc. Bỏ mô hình "click = tô sáng,
-    double-click = mở" kiểu Windows Explorer cũ — ở dialog web, single-click cần
-    có tác dụng ngay, double-click không được gợi ý nên người dùng không biết
-    phải bấm 2 lần. Thanh breadcrumb phía trên (từ "Máy tính" → ổ đĩa → từng
-    cấp) bấm 1 đoạn để nhảy thẳng tới đó, thay vì chỉ có nút "lên 1 cấp". Nút
-    "Chọn thư mục này" luôn xác nhận đúng thư mục ĐANG MỞ (điều hướng xuống tới
-    đúng cấp cần rồi bấm nút này). on_select(path) có thể là hàm sync hoặc
-    async — mỗi trang gọi tự quyết định làm gì với path (gán input, validate...)."""
-    state = {"path": None, "parent": None, "entries": []}
-    dialog = ui.dialog().props("persistent")
-
-    with dialog, ui.card().classes("p-4").style("min-width: 640px; max-width: 90vw"):
-        ui.label("Chọn thư mục").classes("text-base font-semibold text-red-800 mb-2")
-
-        with ui.row().classes("w-full items-center gap-1 mb-1"):
-            btn_up = ui.button(icon="arrow_upward").props("flat dense round").tooltip("Lên 1 cấp")
-            breadcrumb_row = ui.row().classes("items-center gap-0 flex-1 flex-nowrap overflow-x-auto")
-
-        error_label = ui.label("").classes("text-xs text-red-600 mb-1")
-        error_label.set_visibility(False)
-
-        spinner = ui.spinner("dots", size="md").classes("m-auto")
-
-        list_area = ui.column().classes(
-            "w-full max-h-96 overflow-y-auto border rounded gap-0"
-        )
-
-        with ui.row().classes("gap-2 justify-end w-full mt-3"):
-            ui.button("Hủy", color="grey-6").props("flat").on("click", dialog.close)
-            btn_select = ui.button("Chọn thư mục này", icon="check", color="red-8")
-
-        def _crumb_click(p):
-            return lambda: _load(p)
-
-        def _render_breadcrumb(crumbs):
-            breadcrumb_row.clear()
-            with breadcrumb_row:
-                is_root = state["path"] is None
-                ui.label("Máy tính").classes(
-                    "text-sm cursor-pointer px-1 rounded hover:bg-red-50 "
-                    + ("text-red-800 font-semibold" if is_root else "text-gray-500")
-                ).on("click", _crumb_click(None))
-                for i, c in enumerate(crumbs):
-                    ui.icon("chevron_right").classes("text-xs text-gray-300")
-                    is_last = i == len(crumbs) - 1
-                    ui.label(c["name"]).classes(
-                        "text-sm px-1 rounded truncate max-w-[160px] "
-                        + ("text-red-800 font-semibold" if is_last
-                           else "text-gray-500 cursor-pointer hover:bg-red-50")
-                    ).on("click", (lambda: None) if is_last else _crumb_click(c["path"]))
-
-        def _render_list():
-            list_area.clear()
-            with list_area:
-                if not state["entries"]:
-                    msg = "(Không có ổ đĩa nào khả dụng)" if state["path"] is None else "(Không có thư mục con)"
-                    ui.label(msg).classes("text-xs text-gray-400 italic p-3")
-                icon_name = "storage" if state["path"] is None else "folder"
-                icon_color = "text-gray-500" if state["path"] is None else "text-yellow-600"
-                for ent in state["entries"]:
-                    row = ui.row().classes(
-                        "w-full items-center gap-2 px-3 py-2 cursor-pointer border-b "
-                        "hover:bg-red-50"
-                    )
-                    with row:
-                        ui.icon(icon_name).classes(f"{icon_color} text-base")
-                        ui.label(ent["name"]).classes("text-sm flex-1 truncate")
-                        ui.icon("chevron_right").classes("text-xs text-gray-300")
-
-                    row.on("click", lambda p=ent["path"]: _load(p))
-
-        async def _load(path, *, is_initial: bool = False):
-            spinner.set_visibility(True)
-            error_label.set_visibility(False)
-            try:
-                res = await asyncio.to_thread(
-                    api.get, "/api/fs/browse", {"path": path} if path else None
-                )
-            except Exception as e:
-                spinner.set_visibility(False)
-                if _handle_api_error(e):
-                    dialog.close()
-                    return
-                if is_initial:
-                    error_label.set_text(
-                        f"Không mở được đường dẫn hiện tại ({e}) — bắt đầu từ danh sách ổ đĩa."
-                    )
-                    error_label.set_visibility(True)
-                    await _load(None)
-                    return
-                error_label.set_text(f"Không mở được thư mục: {e}")
-                error_label.set_visibility(True)
-                return
-
-            spinner.set_visibility(False)
-            state["path"] = res.get("path")
-            state["parent"] = res.get("parent")
-            state["entries"] = res.get("entries", [])
-
-            if state["path"] is None:
-                btn_up.props("disable")
-                btn_select.props("disable")
-            else:
-                btn_up.props(remove="disable")
-                btn_select.props(remove="disable")
-
-            _render_breadcrumb(res.get("breadcrumbs", []))
-            _render_list()
-
-        async def _confirm():
-            target = state["path"]
-            if not target:
-                return
-            dialog.close()
-            result = on_select(target)
-            if inspect.isawaitable(result):
-                await result
-
-        btn_up.on("click", lambda: _load(state["parent"]))
-        btn_select.on("click", _confirm)
-
-        dialog.open()
-        await _load(initial_path.strip() if initial_path else None, is_initial=True)

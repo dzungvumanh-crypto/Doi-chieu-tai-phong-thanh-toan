@@ -45,6 +45,11 @@ class SessionIn(BaseModel):
     ebank_t: float = 0
     pssmdp_m: float = 0
     pssmdp_t: float = 0
+    # "draft" (Lưu bản tạm) | "final" (Lưu bản cuối, CHỐT) — mặc định "draft"
+    # (KHÔNG phải "final"): nếu client cũ/lỗi quên gửi field này, thà rơi về
+    # trạng thái vẫn sửa được còn hơn vô tình khoá cứng 1 ngày không ai sửa
+    # lại được nữa — xem session_save() trong service.
+    status: str = "draft"
 
 
 class CitadBufferIn(BaseModel):

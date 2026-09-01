@@ -20,7 +20,8 @@ from backend.main import app
 _SCHEMA = """
 CREATE TABLE departments (id INTEGER PRIMARY KEY, name TEXT, is_source INTEGER DEFAULT 1);
 CREATE TABLE bundle_groups (id INTEGER PRIMARY KEY, department_id INTEGER,
-                            total_bundles INTEGER DEFAULT 1, created_at TEXT, notes TEXT);
+                            total_bundles INTEGER DEFAULT 1, created_by_id INTEGER,
+                            created_at TEXT, notes TEXT);
 CREATE TABLE bundles (id INTEGER PRIMARY KEY, group_id INTEGER, sequence INTEGER,
                       total_sheets INTEGER, custodian_id INTEGER, storage_box TEXT,
                       storage_location TEXT, cover_printed_at TEXT, status TEXT,

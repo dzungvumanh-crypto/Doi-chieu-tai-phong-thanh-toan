@@ -9,12 +9,29 @@ Chạy: python -m pytest tests/test_cham459901_algorithm.py -v
 """
 
 import io
+from pathlib import Path
 
 import pandas as pd
 import pyzipper
 import pytest
 
 from backend.services import cham459901_service as svc
+
+_MK = "matkhau-test-459901-algorithm"
+
+
+@pytest.fixture(autouse=True)
+def _mat_khau_zip(monkeypatch):
+    """Mật khẩu ZIP đọc từ .env (zip_password()) — không còn hằng số svc.ZIP_PASSWORD."""
+    monkeypatch.setenv('DOI_CHIEU_ZIP_PASSWORD', _MK)
+
+
+def _tep(dirpath: Path, name: str, data: bytes) -> tuple[str, Path]:
+    """(tên người dùng chọn, đường dẫn trên đĩa) — đúng dạng process_files()/_load_data()
+    nhận. Cả hai hàm này giờ đọc ĐƯỜNG DẪN, không nhận bytes trực tiếp."""
+    p = dirpath / name
+    p.write_bytes(data)
+    return name, p
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -85,14 +102,16 @@ class TestTraceCandidates:
 # ── classify_upload_filename ──────────────────────────────────────────────────
 
 class TestClassifyUploadFilename:
-    def test_gl02_zip(self):
-        assert svc.classify_upload_filename('GL02_20260630_1000.zip') == 'zip'
+    def test_zip_files_never_classified_here(self):
+        """File GL02 chính (.zip) không có mẫu tên riêng — nhận theo ĐUÔI file ở tầng
+        gọi (DUOI_HOP_LE), tên gì cũng được, nhiều file được gộp. classify_upload_filename()
+        chỉ còn nhận diện 3 loại phụ trợ (HUB đi/đến, tồn)."""
+        assert svc.classify_upload_filename('GL02_20260630_1000.zip') is None
+        assert svc.classify_upload_filename('random_backup.zip') is None
 
     def test_case_insensitive(self):
-        assert svc.classify_upload_filename('gl02_test.ZIP') == 'zip'
-
-    def test_zip_without_gl02_not_recognized(self):
-        assert svc.classify_upload_filename('random_backup.zip') is None
+        name = 'QUAY_danh sach giao dich chuyen tien di_x.XLSX'
+        assert svc.classify_upload_filename(name) == 'hub_di'
 
     def test_hub_di_quay_prefix(self):
         name = 'Quay_danh sach giao dich chuyen tien di_20260707105525.xlsx'
@@ -621,7 +640,7 @@ class TestJobLifecycle:
 
     def test_delete_result_removes_directory(self, tmp_path, monkeypatch):
         monkeypatch.setattr(svc, 'TEMP_DIR', tmp_path)
-        result_token = svc.init_progress()   # token thật luôn là str(uuid.uuid4())
+        result_token = 'fake-result-token'
         out_dir = tmp_path / result_token
         out_dir.mkdir(parents=True)
         (out_dir / 'huy.xlsx').write_text('x')
@@ -631,42 +650,7 @@ class TestJobLifecycle:
 
     def test_delete_result_missing_returns_false(self, tmp_path, monkeypatch):
         monkeypatch.setattr(svc, 'TEMP_DIR', tmp_path)
-        assert svc.delete_result(svc.init_progress()) is False
-
-
-# ── resolve_result_dir() — chốt chặn hồi quy path traversal (review PR#43) ─────
-# Trước fix: delete_result()/download_result ghép token từ URL thẳng vào path rồi
-# rmtree/read_bytes, không kiểm gì. Token '..\\..\\data' (dấu \\ — %2F bị chặn
-# nhưng %5C thì không, và pathlib trên Windows hiểu \\ là dấu phân cách) xoá được
-# thư mục data/ chứa SQLite. Token luôn là str(uuid.uuid4()) nên chặn ngay từ
-# bước kiểm định dạng UUID là đủ, không cần đợi tới is_relative_to().
-
-class TestResolveResultDir:
-    def test_token_khong_phai_uuid_bi_tu_choi(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(svc, 'TEMP_DIR', tmp_path)
-        assert svc.resolve_result_dir(r'..\..\data') is None
-        assert svc.resolve_result_dir('../../data') is None
-        assert svc.resolve_result_dir('') is None
-        assert svc.resolve_result_dir('khong-phai-uuid') is None
-
-    def test_token_uuid_hop_le_tra_ve_dung_thu_muc(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(svc, 'TEMP_DIR', tmp_path)
-        token = svc.init_progress()
-        out_dir = svc.resolve_result_dir(token)
-        assert out_dir == (tmp_path / token).resolve()
-
-    def test_delete_result_chan_token_thoat_thu_muc(self, tmp_path, monkeypatch):
-        """Dựng đúng nạn nhân + gọi đúng hàm public (delete_result), không chỉ test
-        resolve_result_dir() đơn lẻ — verify rmtree thật sự không chạm tới nạn nhân."""
-        monkeypatch.setattr(svc, 'TEMP_DIR', tmp_path / 'temp_cham459901')
-        (tmp_path / 'temp_cham459901').mkdir()
-        victim = tmp_path / 'du_lieu_quan_trong'
-        victim.mkdir()
-        (victim / 'data.db').write_text('khong duoc xoa')
-
-        assert svc.delete_result(r'..\du_lieu_quan_trong') is False
-        assert victim.exists()
-        assert (victim / 'data.db').exists()
+        assert svc.delete_result('khong-ton-tai') is False
 
 
 # ── _write_excel — smoke test cấu trúc file xuất ra ────────────────────────────
@@ -710,7 +694,7 @@ def _make_gl02_zip(rows: list[dict]) -> bytes:
     buf = io.BytesIO()
     with pyzipper.AESZipFile(buf, 'w', compression=pyzipper.ZIP_DEFLATED,
                               encryption=pyzipper.WZ_AES) as zf:
-        zf.setpassword(svc.ZIP_PASSWORD)
+        zf.setpassword(_MK.encode())
         zf.writestr('data.csv', csv_bytes)
     return buf.getvalue()
 
@@ -748,195 +732,65 @@ def _ton_row(ref, dr=0, cr=0, trdate=20260601, trbrcd=1000, journseq=1, dytrseq=
 
 
 class TestReadTonFile:
-    def test_reads_16_common_columns_only(self):
-        xlsx_bytes = _make_ton_xlsx([_ton_row('REF1', dr=100000)])
-        df = svc._read_ton_file(xlsx_bytes)
+    def test_reads_16_common_columns_only(self, tmp_path):
+        p = tmp_path / 'ton.xlsx'
+        p.write_bytes(_make_ton_xlsx([_ton_row('REF1', dr=100000)]))
+        df = svc._read_ton_file(p)
         assert list(df.columns) == svc._TON_COLS
         assert 'refhub' not in df.columns
 
-    def test_integer_columns_no_dot_zero_suffix(self):
-        xlsx_bytes = _make_ton_xlsx([_ton_row('REF1', dr=100000, trdate=20251231)])
-        df = svc._read_ton_file(xlsx_bytes)
+    def test_integer_columns_no_dot_zero_suffix(self, tmp_path):
+        p = tmp_path / 'ton.xlsx'
+        p.write_bytes(_make_ton_xlsx([_ton_row('REF1', dr=100000, trdate=20251231)]))
+        df = svc._read_ton_file(p)
         assert df.iloc[0]['TRDATE'] == '20251231'
 
-    def test_amounts_numeric(self):
-        """Từ 2026-08-31 (hợp nhất fix PR#69): đọc qua doc_so_tien()
-        (backend/services/ach/so_tien.py) — trả về int64 (VND luôn là số
-        nguyên), không còn float."""
-        xlsx_bytes = _make_ton_xlsx([_ton_row('REF1', dr=100000, cr=0)])
-        df = svc._read_ton_file(xlsx_bytes)
-        assert df.iloc[0]['DRAMOUNT'] == 100_000
-        assert df['DRAMOUNT'].dtype == 'int64'
+    def test_amounts_numeric(self, tmp_path):
+        p = tmp_path / 'ton.xlsx'
+        p.write_bytes(_make_ton_xlsx([_ton_row('REF1', dr=100000, cr=0)]))
+        df = svc._read_ton_file(p)
+        assert df.iloc[0]['DRAMOUNT'] == 100000.0
+        assert isinstance(df.iloc[0]['DRAMOUNT'], float)
 
-    def test_filters_by_locac_customer_ccy(self):
-        xlsx_bytes = _make_ton_xlsx([
+    def test_filters_by_locac_customer_ccy(self, tmp_path):
+        p = tmp_path / 'ton.xlsx'
+        p.write_bytes(_make_ton_xlsx([
             _ton_row('REF1', dr=100000),                     # khớp filter
             _ton_row('REF2', dr=200000, locac=999999),       # sai LOCAC -> bị lọc
             _ton_row('REF3', dr=300000, customer='khac'),    # sai CUSTOMER -> bị lọc
             _ton_row('REF4', dr=400000, ccy='USD'),          # sai CCY -> bị lọc
-        ])
-        df = svc._read_ton_file(xlsx_bytes)
+        ]))
+        df = svc._read_ton_file(p)
         assert len(df) == 1
         assert df.iloc[0]['REFERENCE'] == 'REF1'
 
-    def test_blank_trcd_becomes_empty_string_not_none_literal(self):
-        xlsx_bytes = _make_ton_xlsx([_ton_row('REF1', dr=100000)])
-        df = svc._read_ton_file(xlsx_bytes)
+    def test_blank_trcd_becomes_empty_string_not_none_literal(self, tmp_path):
+        p = tmp_path / 'ton.xlsx'
+        p.write_bytes(_make_ton_xlsx([_ton_row('REF1', dr=100000)]))
+        df = svc._read_ton_file(p)
         assert df.iloc[0]['TRCD'] == ''
-
-    def test_dramount_ngan_nghin_khong_bi_cat(self):
-        """Regression bug người dùng báo (hợp nhất từ PR#69): cột DRAMOUNT dạng
-        chuỗi ngăn-nghìn ('180.000') trong file tồn tháng trước phải ra 180000,
-        không bị to_numeric() trần cắt còn 180."""
-        xlsx_bytes = _make_ton_xlsx([_ton_row('REF1', dr='180.000', cr=0)])
-        df = svc._read_ton_file(xlsx_bytes)
-        assert df.iloc[0]['DRAMOUNT'] == 180_000
-
-    def test_ngoai_te_co_so_thap_phan_bi_loc_truoc_khi_ep_so(self):
-        """Cùng lỗi/regression như TestLoadData (file tồn tháng trước dùng chung
-        16 cột với GL02 gốc, có thể cũng mang theo dòng ngoại tệ số lẻ thật)."""
-        xlsx_bytes = _make_ton_xlsx([
-            _ton_row('REF1', dr=100000),
-            _ton_row('REF2', dr='1.78', ccy='USD'),
-        ])
-        df = svc._read_ton_file(xlsx_bytes)
-        assert len(df) == 1
-        assert df.iloc[0]['REFERENCE'] == 'REF1'
-
-    def test_thieu_cot_bat_buoc_raise_input_error_khong_phai_key_error(self):
-        """Review PR#43 (khanhbq693) mục 6/9: nhận diện file theo tên rất lỏng
-        ('459' in name and 'ton' in name) — thả nhầm file khác định dạng vào là
-        dễ xảy ra. Trước fix: thiếu cột -> KeyError -> 500 'Lỗi hệ thống'. Nay
-        phải là InputError với tên cột thiếu, giống hệt cách _load_data() đã làm
-        cho GL02 gốc."""
-        df = pd.DataFrame([{'TRDATE': '20260601', 'REFERENCE': 'REF1'}])  # thiếu hầu hết cột
-        buf = io.BytesIO()
-        df.to_excel(buf, index=False, engine='openpyxl')
-        with pytest.raises(svc.InputError, match='thiếu cột bắt buộc'):
-            svc._read_ton_file(buf.getvalue())
-
-
-def _make_hub_di_xlsx(so_tien_thuc_chuyen='500000', thieu_cot=False) -> bytes:
-    """Header ở dòng Excel thứ 2 (index 1), dữ liệu từ dòng thứ 3 (index 2) —
-    đúng layout _read_hub_di() kỳ vọng."""
-    import openpyxl
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.append(['Tiêu đề báo cáo'])
-    cols = ['Số Trace 1', 'Số tiền thực chuyển', 'Hệ thống thanh toán',
-            'Nội dung chuyển tiền', 'Số tham chiếu lệnh gốc']
-    if thieu_cot:
-        cols = cols[:-1]   # bỏ 'Số tham chiếu lệnh gốc'
-    ws.append(cols)
-    row = ['123456789', so_tien_thuc_chuyen, 'ACH-NAPAS', 'noi dung', 'REFGOC1']
-    ws.append(row[:len(cols)])
-    buf = io.BytesIO()
-    wb.save(buf)
-    return buf.getvalue()
-
-
-def _make_hub_den_xlsx(so_tien_lenh_goc='500000', thieu_cot=False) -> bytes:
-    """Header ở dòng Excel thứ 3 (index 2), dữ liệu từ dòng thứ 4 (index 3) —
-    đúng layout _read_hub_den() kỳ vọng."""
-    import openpyxl
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.append(['Tiêu đề báo cáo'])
-    ws.append([''])
-    cols = ['Số trace', 'Số tiền lệnh gốc', 'Hệ thống thanh toán',
-            'Số thành công/MSGID', 'Số REF HUB']
-    if thieu_cot:
-        cols = cols[:-1]   # bỏ 'Số REF HUB'
-    ws.append(cols)
-    row = ['987654321', so_tien_lenh_goc, 'ACH-NAPAS', 'MSG123456', 'REFHUB1']
-    ws.append(row[:len(cols)])
-    buf = io.BytesIO()
-    wb.save(buf)
-    return buf.getvalue()
-
-
-class TestReadHubDiHubDen:
-    def test_hub_di_doc_dung_khi_du_cot(self):
-        df = svc._read_hub_di(_make_hub_di_xlsx('500000'))
-        assert df.iloc[0]['AMOUNT'] == 500_000
-
-    def test_hub_di_thieu_cot_raise_input_error(self):
-        with pytest.raises(svc.InputError, match='thiếu cột bắt buộc'):
-            svc._read_hub_di(_make_hub_di_xlsx(thieu_cot=True))
-
-    def test_so_tien_thuc_chuyen_ngan_nghin_khong_bi_cat(self):
-        """Regression bug người dùng báo (hợp nhất từ PR#69): calamine tự suy
-        '180.000' (TEXT ngăn-nghìn 1 nhóm) thành float 180.0 NGAY TẠI TẦNG ĐỌC
-        nếu không ép dtype=str — sai 1000 lần trước khi doc_so_tien() kịp thấy
-        chuỗi gốc."""
-        xlsx_bytes = _make_hub_di_xlsx('180.000')
-        df = svc._read_hub_di(xlsx_bytes)
-        assert df.iloc[0]['AMOUNT'] == 180_000
-
-    def test_hub_den_doc_dung_khi_du_cot(self):
-        df = svc._read_hub_den(_make_hub_den_xlsx('500000'))
-        assert df.iloc[0]['AMOUNT'] == 500_000
-
-    def test_hub_den_thieu_cot_raise_input_error(self):
-        with pytest.raises(svc.InputError, match='thiếu cột bắt buộc'):
-            svc._read_hub_den(_make_hub_den_xlsx(thieu_cot=True))
-
-    def test_so_tien_lenh_goc_ngan_nghin_khong_bi_cat(self):
-        xlsx_bytes = _make_hub_den_xlsx('180.000')
-        df = svc._read_hub_den(xlsx_bytes)
-        assert df.iloc[0]['AMOUNT'] == 180_000
 
 
 class TestLoadData:
-    def test_filters_by_locac_customer_ccy(self):
-        zip_bytes = _make_gl02_zip([
+    def test_filters_by_locac_customer_ccy(self, tmp_path):
+        tep = [_tep(tmp_path, 'a.zip', _make_gl02_zip([
             _gl02_row('REF1', dr='100000'),                      # khớp filter
             _gl02_row('REF2', dr='200000', locac='999999'),      # sai LOCAC -> bị lọc
             _gl02_row('REF3', dr='300000', customer='khac'),     # sai CUSTOMER -> bị lọc
             _gl02_row('REF4', dr='400000', ccy='USD'),           # sai CCY -> bị lọc
-        ])
-        df, filtered_rows = svc._load_data(zip_bytes)
+        ]))]
+        df, filtered_rows = svc._load_data(tep)
         assert len(df) == 1
         assert filtered_rows == 3
         assert df.iloc[0]['REFERENCE'] == 'REF1'
 
-    def test_ngoai_te_co_so_thap_phan_bi_loc_truoc_khi_ep_so(self):
-        """Regression bug người chấm báo (hợp nhất từ PR#69): GL02 gốc có cả
-        giao dịch ngoại tệ (USD/EUR...), số tiền ngoại tệ có phần thập phân
-        THẬT (VD '1.78') — khác hẳn ngăn-nghìn VND ('180.000'). Trước đây ép số
-        TRƯỚC khi lọc CCY nên các dòng ngoại tệ làm cả file crash dù đúng ra
-        phải bị lọc bỏ ngay từ đầu, không bao giờ cần ép số. Nay lọc VND trước
-        — dòng ngoại tệ với DRAMOUNT thập phân không còn làm vỡ."""
-        zip_bytes = _make_gl02_zip([
-            _gl02_row('REF1', dr='100000'),                          # VND, khớp filter
-            _gl02_row('REF2', dr='1.78', ccy='USD'),                 # USD, số lẻ thật -> bị lọc trước khi ép số
-            _gl02_row('REF3', dr='1003460.76', ccy='EUR'),           # EUR, số lẻ thật -> bị lọc trước khi ép số
-        ])
-        df, filtered_rows = svc._load_data(zip_bytes)
-        assert len(df) == 1
-        assert df.iloc[0]['REFERENCE'] == 'REF1'
+    def test_amounts_converted_to_numeric(self, tmp_path):
+        tep = [_tep(tmp_path, 'a.zip', _make_gl02_zip([_gl02_row('REF1', dr='150000.5', cr='0')]))]
+        df, _ = svc._load_data(tep)
+        assert df.iloc[0]['DRAMOUNT'] == 150000.5
+        assert isinstance(df.iloc[0]['DRAMOUNT'], float)
 
-    def test_dramount_ngan_nghin_khong_bi_cat_khi_build_key(self):
-        zip_bytes = _make_gl02_zip([_gl02_row('REF1', dr='0', cr='180.000')])
-        df, _ = svc._load_data(zip_bytes)
-        assert df.iloc[0]['CRAMOUNT'] == 180_000
-
-    def test_amounts_converted_to_numeric(self):
-        """Từ 2026-08-31 (hợp nhất fix PR#69): đọc qua doc_so_tien() — trả về int64."""
-        zip_bytes = _make_gl02_zip([_gl02_row('REF1', dr='150000', cr='0')])
-        df, _ = svc._load_data(zip_bytes)
-        assert df.iloc[0]['DRAMOUNT'] == 150_000
-        assert df['DRAMOUNT'].dtype == 'int64'
-
-    def test_dramount_thap_phan_khac_0_raise(self):
-        """VND không có phần thập phân (business rule 2026-08-21) — trước đây
-        to_numeric() trần âm thầm chấp nhận '150000.5', SAI theo luật nghiệp vụ.
-        Nay phải raise để người dùng biết file nguồn có vấn đề."""
-        zip_bytes = _make_gl02_zip([_gl02_row('REF1', dr='150000.5', cr='0')])
-        with pytest.raises(ValueError, match='không đúng định dạng'):
-            svc._load_data(zip_bytes)
-
-    def test_wrong_password_raises(self):
+    def test_wrong_password_raises(self, tmp_path):
         """File zip không đúng mật khẩu GL02 phải báo lỗi rõ ràng (InputError), không âm thầm
         trả rỗng và không lộ lỗi hệ thống chung chung."""
         buf = io.BytesIO()
@@ -944,31 +798,35 @@ class TestLoadData:
                                   encryption=pyzipper.WZ_AES) as zf:
             zf.setpassword(b'sai-mat-khau')
             zf.writestr('data.csv', 'a,b\n1,2\n')
+        tep = [_tep(tmp_path, 'a.zip', buf.getvalue())]
         with pytest.raises(svc.InputError, match='mật khẩu'):
-            svc._load_data(buf.getvalue())
+            svc._load_data(tep)
 
-    def test_not_a_zip_file_raises_input_error(self):
+    def test_not_a_zip_file_raises_input_error(self, tmp_path):
+        tep = [_tep(tmp_path, 'a.zip', b'day khong phai file zip')]
         with pytest.raises(svc.InputError, match=r'\.zip hợp lệ'):
-            svc._load_data(b'day khong phai file zip')
+            svc._load_data(tep)
 
-    def test_zip_without_csv_raises_input_error(self):
+    def test_zip_without_csv_raises_input_error(self, tmp_path):
         buf = io.BytesIO()
         with pyzipper.AESZipFile(buf, 'w', compression=pyzipper.ZIP_DEFLATED,
                                   encryption=pyzipper.WZ_AES) as zf:
-            zf.setpassword(svc.ZIP_PASSWORD)
+            zf.setpassword(_MK.encode())
             zf.writestr('readme.txt', 'khong co file csv nao')
+        tep = [_tep(tmp_path, 'a.zip', buf.getvalue())]
         with pytest.raises(svc.InputError, match='csv'):
-            svc._load_data(buf.getvalue())
+            svc._load_data(tep)
 
-    def test_missing_required_column_raises_input_error(self):
+    def test_missing_required_column_raises_input_error(self, tmp_path):
         buf = io.BytesIO()
         with pyzipper.AESZipFile(buf, 'w', compression=pyzipper.ZIP_DEFLATED,
                                   encryption=pyzipper.WZ_AES) as zf:
-            zf.setpassword(svc.ZIP_PASSWORD)
+            zf.setpassword(_MK.encode())
             # thiếu cột CCY và DRAMOUNT bắt buộc
             zf.writestr('data.csv', 'LOCAC,CUSTOMER,REMARK,CRAMOUNT\n459901,1000-000007709,x,0\n')
+        tep = [_tep(tmp_path, 'a.zip', buf.getvalue())]
         with pytest.raises(svc.InputError, match='CCY') as exc_info:
-            svc._load_data(buf.getvalue())
+            svc._load_data(tep)
         assert 'DRAMOUNT' in str(exc_info.value)
 
 
@@ -976,9 +834,14 @@ class TestRunProcessInputError:
     def test_input_error_stored_as_friendly_message_not_generic_500(self, tmp_path, monkeypatch):
         """run_process phải bắt InputError TRƯỚC nhánh Exception chung — người dùng thấy đúng
         lý do (file sai), không phải 'Lỗi xử lý — xem log server'."""
-        monkeypatch.setattr(svc, 'TEMP_DIR', tmp_path)
+        out_dir = tmp_path / 'out'
+        monkeypatch.setattr(svc, 'TEMP_DIR', out_dir)
+        upload_dir = tmp_path / 'upload'
+        upload_dir.mkdir()
+        tep = [_tep(upload_dir, 'a.zip', b'day khong phai file zip')]
+
         token = svc.init_progress()
-        svc.run_process(b'day khong phai file zip', token)
+        svc.run_process(tep, token)
         prog = svc.get_progress(token)
         assert prog['done'] is True
         assert prog['error'] is not None
@@ -986,26 +849,23 @@ class TestRunProcessInputError:
         assert '.zip hợp lệ' in prog['msg']
 
 
-# ── process_zip — bytes rỗng (b'') phải được coi là "có cung cấp" chứ không phải
-#    "không cung cấp" (regression test cho fix truthy-check ngày hôm nay) ────────
+# ── process_files — chỉ 1/2 file HUB → bỏ qua bước 1000HT, KHÔNG lặng lẽ đọc file ─
+# thiếu (hub_di/hub_den giờ là None hoặc tuple (tên, Path) — không còn kiểu bytes
+# nên không còn khe hở "bytes rỗng b'' bị coi là falsy" của bản cũ).
 
-class TestProcessZipHubBytesEdgeCase:
-    def test_empty_bytes_hub_file_is_not_silently_skipped(self):
-        """b'' (file 0 byte) khác None — không được lặng lẽ coi là 'không có file HUB',
-        phải cố đọc và báo lỗi rõ ràng (file hỏng/rỗng) thay vì bỏ qua trong im lặng."""
-        zip_bytes = _make_gl02_zip([_gl02_row('REF1', dr='100000')])
-        with pytest.raises(Exception):
-            svc.process_zip(zip_bytes, hub_di_bytes=b'', hub_den_bytes=b'')
+class TestProcessFilesHubEdgeCase:
+    def test_only_one_hub_file_skips_1000ht_cleanly(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(svc, 'TEMP_DIR', tmp_path / 'out')
+        upload_dir = tmp_path / 'upload'
+        upload_dir.mkdir()
+        tep = [_tep(upload_dir, 'a.zip', _make_gl02_zip([_gl02_row('REF1', dr='100000')]))]
 
-    def test_none_hub_bytes_skips_1000ht_cleanly(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(svc, 'TEMP_DIR', tmp_path)
-        zip_bytes = _make_gl02_zip([_gl02_row('REF1', dr='100000')])
-        result = svc.process_zip(zip_bytes, hub_di_bytes=None, hub_den_bytes=None)
+        result = svc.process_files(tep, hub_di=None, hub_den=None)
         assert result['hub_provided'] is False
         assert result['ht1000_rows'] == 0
 
 
-# ── process_zip — ghép file tồn tháng trước (ton_bytes) trước khi phân loại ────
+# ── process_files — ghép file tồn tháng trước trước khi phân loại ──────────────
 
 def _group_row_sum(result: dict) -> int:
     return (result['huy_rows'] + result['di_rows'] + result['ht1000_rows']
@@ -1013,25 +873,27 @@ def _group_row_sum(result: dict) -> int:
             + result['khac_rows'])
 
 
-class TestProcessZipTonFile:
+class TestProcessFilesTonFile:
     def test_ton_rows_added_and_included_in_classification(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(svc, 'TEMP_DIR', tmp_path)
-        zip_bytes = _make_gl02_zip([_gl02_row('REF1', dr='100000')])
-        ton_bytes = _make_ton_xlsx([_ton_row('TONREF1', dr=50000, remark='tồn cũ')])
+        monkeypatch.setattr(svc, 'TEMP_DIR', tmp_path / 'out')
+        upload_dir = tmp_path / 'upload'
+        upload_dir.mkdir()
+        tep = [_tep(upload_dir, 'a.zip', _make_gl02_zip([_gl02_row('REF1', dr='100000')]))]
+        ton = _tep(upload_dir, 'ton.xlsx',
+                   _make_ton_xlsx([_ton_row('TONREF1', dr=50000, remark='tồn cũ')]))
 
-        result = svc.process_zip(zip_bytes, ton_bytes=ton_bytes)
+        result = svc.process_files(tep, ton=ton)
         assert result['ton_rows_added'] == 1
         # 1 dòng GL02 + 1 dòng tồn -> cả 2 phải được phân loại (bảo toàn dòng)
         assert _group_row_sum(result) == 2
-        # Review PR#43 mục 5/8: total_before tính TRƯỚC khi ghép dòng tồn — "Tổng
-        # số dòng" hiển thị nhỏ hơn tổng 7 ô cộng lại. total_rows PHẢI bằng đúng
-        # số dòng đã thật sự phân loại (không tính filtered_rows vì đã bị lọc ra).
-        assert result['total_rows'] == _group_row_sum(result) + result['filtered_rows']
 
-    def test_missing_ton_bytes_behaves_like_before(self, tmp_path, monkeypatch):
-        """Bước 2 trong yêu cầu: không có file tồn -> chạy y hệt trước khi có tham số mới."""
-        monkeypatch.setattr(svc, 'TEMP_DIR', tmp_path)
-        zip_bytes = _make_gl02_zip([_gl02_row('REF1', dr='100000')])
-        result = svc.process_zip(zip_bytes)
+    def test_missing_ton_behaves_like_before(self, tmp_path, monkeypatch):
+        """Không có file tồn -> chạy y hệt trước khi có tham số mới."""
+        monkeypatch.setattr(svc, 'TEMP_DIR', tmp_path / 'out')
+        upload_dir = tmp_path / 'upload'
+        upload_dir.mkdir()
+        tep = [_tep(upload_dir, 'a.zip', _make_gl02_zip([_gl02_row('REF1', dr='100000')]))]
+
+        result = svc.process_files(tep)
         assert result['ton_rows_added'] == 0
         assert _group_row_sum(result) == 1

@@ -4,6 +4,7 @@ from datetime import date as _date, datetime as _datetime
 from nicegui import ui
 import frontend.api_client as api
 from frontend.shared import _sidebar, _content_area, _require_auth, _handle_api_error
+import frontend.le_29 as le_29
 
 # Sau giờ này trong ngày mà Sổ trực cuối ngày (Phòng Thanh toán) vẫn chưa có
 # ai mở/chọn GDV thì nhắc trên trang chủ — ước lượng, chỉnh nếu không hợp
@@ -20,6 +21,9 @@ _SO_TRUC_REMINDER_HOUR = 16
 # đổi tên trong DB, vì tên đầy đủ còn dùng ở phiếu nghỉ phép, bìa tập và báo cáo.
 # Tra theo code chứ không theo tên: đổi tên phòng không làm mất mapping.
 _DEPT_SHORT = {"NOSTRO": "Phòng QLTK Nostro, Vostro"}
+
+# Tài khoản quản trị — không phải người dùng nghiệp vụ, không đếm vào ô "Người dùng".
+_ADMIN_ROLES = ("admin", "admin_l2")
 
 _HOME_FIT_CSS = """
 <style>
@@ -40,8 +44,9 @@ async def dashboard_page():
     # Không redirect chuyên viên sang /handovers nữa: mục "Trang chủ" luôn có trên
     # sidebar nên redirect làm nó thành mục bấm không bao giờ vào được. Việc đưa CV
     # đáp thẳng xuống Bàn giao chứng từ vẫn giữ, nhưng nằm ở trang login.
-    _sidebar("home")
+    await _sidebar("home")
     ui.add_head_html(_HOME_FIT_CSS)
+    le_29.css_trang_chu()     # dịp 2-9; ngoài dịp không nạp gì
     # Trang chủ khoá chiều cao đúng 1 viewport: 3 khối trên cùng cao cố định, biểu đồ
     # ăn hết phần còn lại. overflow-y-auto chỉ là lối thoát cho màn hình quá thấp.
     with _content_area() as _ca:
@@ -110,13 +115,16 @@ async def dashboard_page():
 
         # Badge sidebar do khối "Công việc chờ xử lý" trong shared.py tự nạp.
 
-        # Số người dùng không tính quản trị viên (admin).
+        # Số người dùng không tính quản trị viên — CẢ hai cấp (admin, admin_l2).
+        # Cấp 2 cũng là tài khoản quản trị, đếm vào đây thì con số nhảy lên mỗi
+        # lần thêm một quản trị viên, trong khi ô này để nói "có bao nhiêu người
+        # dùng nghiệp vụ".
         # /api/staff/ chỉ trả nhân sự phòng mình cho CV/TP/PP — nhãn phải nói đúng
         # phạm vi của con số, nếu không CV sẽ đọc "Người dùng: 8" là toàn trung tâm.
         _role = (api.get_current_user() or {}).get("role", "")
         _users_label = "Người dùng" if _role not in ("chuyen_vien", "truong_phong", "pho_phong") \
                        else "Nhân sự phòng"
-        n_users = len([s for s in staff_list if s.get("role") != "admin"])
+        n_users = len([s for s in staff_list if s.get("role") not in _ADMIN_ROLES])
         stats = [
             (_users_label,      n_users,                                           "people",   "bg-red-50 border-red-200"),
             ("Phòng nghiệp vụ", len([d for d in depts if d.get("code") != "BGD"]), "business", "bg-blue-50 border-blue-200"),
@@ -138,6 +146,8 @@ async def dashboard_page():
                         ui.label(lbl).classes("text-xs text-gray-500")
 
         with content:
+            le_29.dai_trang_chu()
+
             # Khối "Công việc đang chờ" đã chuyển hẳn về sidebar + trang /pending/<loại>.
             # Để lại đây sẽ là nơi thứ hai hiển thị cùng một thông tin, và là nơi duy nhất
             # người dùng phải quay về Trang chủ mới thấy được.

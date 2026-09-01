@@ -26,7 +26,17 @@ import anyio.to_thread
 
 _log = logging.getLogger(__name__)
 
-MAX_HEAVY = max(1, int(os.getenv("MAX_HEAVY_TASKS", "4")))
+def _doc_so(ten_bien: str, mac_dinh: int) -> int:
+    """Ô để trống trong .env (`MAX_HEAVY_TASKS=`) làm `int("")` ném ValueError
+    ngay lúc import — backend không khởi động, mà lỗi không nhắc gì tới .env."""
+    thô = (os.getenv(ten_bien) or "").strip()
+    try:
+        return max(1, int(thô)) if thô else mac_dinh
+    except ValueError:
+        return mac_dinh
+
+
+MAX_HEAVY = _doc_so("MAX_HEAVY_TASKS", 4)
 
 # Tạo trễ: anyio.CapacityLimiter cần event loop đang chạy, không dựng được ở
 # thời điểm import module.

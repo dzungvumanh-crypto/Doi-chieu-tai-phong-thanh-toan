@@ -1,6 +1,8 @@
 import time
 import pandas as pd
 
+from .so_tien import doc_so_tien
+
 
 def _xu_ly_sheet(df_raw: pd.DataFrame) -> pd.DataFrame:
     """Tìm header row có BRCD, trả về DataFrame có header đúng."""
@@ -166,12 +168,14 @@ def xu_ly_gw(xlsx_path: str, session_id: str, log_callback=None):
          f'{int((mask_tu_choi & ~mask_sai_session).sum()):,} dòng "ACH Từ chối" '
          f'(giữ {len(df):,}/{n_truoc:,} dòng)')
 
-    # Bước 2 — định dạng lại STTLMAMT (bỏ chữ VND, ra số).
+    # Bước 2 — định dạng lại STTLMAMT (bỏ chữ VND, ra số). Chỉ xoá 'VND'/khoảng
+    # trắng ở đây — GIỮ dấu phẩy/chấm ngăn-nghìn để doc_so_tien() tự validate,
+    # xoá sớm quá sẽ mất khả năng bắt lỗi thật (mẫu lạ ngoài 3 dạng chấp nhận).
     df['STTLMAMT'] = (
         df['STTLMAMT'].astype(str)
-        .str.replace(r'[VND,\s]', '', regex=True)
+        .str.replace(r'[VND\s]', '', regex=True)
     )
-    df['STTLMAMT'] = pd.to_numeric(df['STTLMAMT'], errors='coerce').fillna(0).astype('int64')
+    df['STTLMAMT'] = doc_so_tien(df['STTLMAMT'], nguon='GW', ten_cot='STTLMAMT')
 
     # Bước 3 — tạo cột CN TIỀN = BRCD + STTLMAMT.
     df['KEY_GW'] = df['BRCD'].astype(str).str.strip() + df['STTLMAMT'].astype(str)

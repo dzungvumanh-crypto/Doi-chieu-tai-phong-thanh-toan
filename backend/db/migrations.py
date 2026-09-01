@@ -229,6 +229,46 @@ def _create_tables(db_path: str):
             created_at   DATETIME,
             last_used_at DATETIME
         )""",
+        # Đối chiếu CITAD ↔ PaymentHub — Phòng QLTK Nostro, Vostro. Song song
+        # với doi_chieu_citad_sessions/_history (Phòng Thanh toán), khoá theo
+        # `ky` (kỳ đối chiếu "dd/mm/yyyy-dd/mm/yyyy", có thể gộp nhiều ngày)
+        # thay vì `ngay` đơn — xem doi_chieu_citad_nostro_service.py. Dùng
+        # CHUNG bảng doi_chieu_citad_extension_tokens ở trên (mã kết nối
+        # Extension trung lập, không tạo bảng token riêng cho module này).
+        # `created_by` = người LẬP BẢNG (người đầu tiên lưu kỳ đó), cố định
+        # suốt vòng đời bản ghi; `updated_by` = người lưu SAU CÙNG. Tab "Lịch
+        # sử" hiển thị created_by — bản chung của cả phòng, nếu hiển thị
+        # updated_by thì ai lưu đè sau cũng chiếm mất tên người lập bảng
+        # (đúng lỗi đã sửa ở module Phòng Thanh toán, xem ALTER tương ứng
+        # trong _ensure_indexes()).
+        """CREATE TABLE IF NOT EXISTS doi_chieu_citad_nostro_sessions (
+            ky          TEXT    PRIMARY KEY,
+            data        TEXT    NOT NULL,
+            updated_at  DATETIME,
+            updated_by  INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+            created_by  INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL
+        )""",
+        """CREATE TABLE IF NOT EXISTS doi_chieu_citad_nostro_history (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            ky          TEXT    NOT NULL,
+            staff_id    INTEGER NOT NULL REFERENCES user_tttt(id) ON DELETE CASCADE,
+            data        TEXT    NOT NULL,
+            created_at  DATETIME NOT NULL
+        )""",
+        # Mã kết nối Extension RIÊNG của Phòng QLTK Nostro, Vostro — TÁCH HẲN
+        # khỏi doi_chieu_citad_extension_tokens (Phòng Thanh toán). Lý do: 2
+        # bảng ban đầu dùng CHUNG 1 bảng token theo staff_id — tạo mã mới ở
+        # module này (INSERT ... ON CONFLICT(staff_id) DO UPDATE) vô tình
+        # THU HỒI LUÔN mã của module kia cho cùng 1 người, gây lỗi 403 âm
+        # thầm khi 1 người dùng cả 2 Extension song song (phát hiện thực tế
+        # khi test). Từ nay 2 phòng dùng 2 mã hoàn toàn độc lập, tạo/thu hồi
+        # ở phòng nào chỉ ảnh hưởng đúng phòng đó.
+        """CREATE TABLE IF NOT EXISTS doi_chieu_citad_nostro_extension_tokens (
+            staff_id     INTEGER PRIMARY KEY REFERENCES user_tttt(id) ON DELETE CASCADE,
+            token_hash   TEXT NOT NULL UNIQUE,
+            created_at   DATETIME,
+            last_used_at DATETIME
+        )""",
         """CREATE TABLE IF NOT EXISTS doi_soat_citad_history (
             id                  INTEGER PRIMARY KEY AUTOINCREMENT,
             ngay_cham           VARCHAR(10) NOT NULL,
@@ -310,6 +350,211 @@ def _create_tables(db_path: str):
             is_closed    INTEGER NOT NULL DEFAULT 0,
             sort_order   INTEGER,
             updated_at   DATETIME
+        )""",
+        # ── Ôn tập trắc nghiệm (Quizz) ────────────────────────────────────
+        # Bộ câu hỏi nhập MỘT LẦN từ Excel rồi dùng chung cho cả cơ quan —
+        # `content_hash` để nhận ra ai đó tải lại đúng file cũ dưới tên khác.
+        """CREATE TABLE IF NOT EXISTS quiz_sets (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            name           VARCHAR(200) NOT NULL UNIQUE,
+            description    TEXT,
+            source_file    TEXT,
+            content_hash   VARCHAR(64),
+            question_count INTEGER NOT NULL DEFAULT 0,
+            created_by     INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+            created_at     DATETIME NOT NULL,
+            is_active      INTEGER NOT NULL DEFAULT 1
+        )""",
+        # opt4 để trống được: file mẫu có cả câu 3 lựa chọn.
+        """CREATE TABLE IF NOT EXISTS quiz_questions (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            set_id     INTEGER NOT NULL REFERENCES quiz_sets(id) ON DELETE CASCADE,
+            order_no   INTEGER NOT NULL,
+            content    TEXT NOT NULL,
+            opt1       TEXT,
+            opt2       TEXT,
+            opt3       TEXT,
+            opt4       TEXT,
+            correct_no INTEGER NOT NULL
+        )""",
+        """CREATE TABLE IF NOT EXISTS quiz_attempts (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            set_id          INTEGER NOT NULL REFERENCES quiz_sets(id) ON DELETE CASCADE,
+            staff_id        INTEGER NOT NULL REFERENCES user_tttt(id) ON DELETE CASCADE,
+            mode            TEXT NOT NULL DEFAULT 'practice',
+            settings        TEXT,
+            total_questions INTEGER NOT NULL DEFAULT 0,
+            correct_count   INTEGER,
+            score           REAL,
+            duration_ms     INTEGER,
+            status          TEXT NOT NULL DEFAULT 'in_progress',
+            elapsed_ms      INTEGER NOT NULL DEFAULT 0,
+            current_idx     INTEGER NOT NULL DEFAULT 0,
+            saved_at        DATETIME,
+            started_at      DATETIME NOT NULL,
+            finished_at     DATETIME
+        )""",
+        # Sinh sẵn đủ N dòng lúc tạo lượt: thứ tự câu và thứ tự đáp án đã trộn
+        # phải lưu lại, nếu không màn "Xem lại bài" sẽ dựng ra một đề khác hẳn
+        # với đề người dùng vừa làm.
+        """CREATE TABLE IF NOT EXISTS quiz_attempt_items (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            attempt_id   INTEGER NOT NULL REFERENCES quiz_attempts(id) ON DELETE CASCADE,
+            question_id  INTEGER NOT NULL REFERENCES quiz_questions(id) ON DELETE CASCADE,
+            order_no     INTEGER NOT NULL,
+            option_order TEXT NOT NULL,
+            chosen_no    INTEGER,
+            is_correct   INTEGER,
+            time_ms      INTEGER
+        )""",
+        # ── Quản lý nhân sự — 2026-08-28 ──────────────────────────────────────
+        # `recruit_date` cố ý KHÔNG có ở đây: "Ngày tuyển dụng" chính là "Ngày vào
+        # ngành" đã nằm ở `user_tttt.join_industry_date` — một mốc thì một cột.
+        # Mọi bảng khoá theo `staff_id` = user_tttt.id: hồ sơ nhân sự KHÔNG có
+        # danh sách cán bộ riêng, cán bộ nào có tài khoản thì có hồ sơ. Nhờ vậy
+        # họ tên / phòng / ngày vào ngành chỉ nằm một chỗ, không phải đồng bộ
+        # hai bảng (xem docs/Implementation-notes.html).
+        """CREATE TABLE IF NOT EXISTS hr_profiles (
+            staff_id          INTEGER PRIMARY KEY REFERENCES user_tttt(id) ON DELETE CASCADE,
+            gender            TEXT,
+            dob               DATE,
+            cccd              VARCHAR(20),
+            cccd_date         DATE,
+            cccd_place        VARCHAR(200),
+            permanent_address TEXT,
+            current_address   TEXT,
+            dependents        INTEGER DEFAULT 0,
+            contact_name      VARCHAR(100),
+            contact_relation  VARCHAR(50),
+            contact_phone     VARCHAR(30),
+            contact_address   TEXT,
+            contract_type     VARCHAR(100),
+            position_title    VARCHAR(100),
+            photo             BLOB,
+            photo_mime        VARCHAR(50),
+            note              TEXT,
+            updated_at        DATETIME,
+            updated_by        INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL
+        )""",
+        """CREATE TABLE IF NOT EXISTS hr_degrees (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            staff_id    INTEGER NOT NULL REFERENCES user_tttt(id) ON DELETE CASCADE,
+            kind        TEXT NOT NULL,
+            name        VARCHAR(200) NOT NULL,
+            major       VARCHAR(200),
+            school      VARCHAR(200),
+            issue_date  DATE,
+            expiry_date DATE,
+            grade       VARCHAR(100),
+            note        TEXT,
+            created_at  DATETIME,
+            updated_at  DATETIME,
+            updated_by  INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL
+        )""",
+        """CREATE TABLE IF NOT EXISTS hr_appointments (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            staff_id       INTEGER NOT NULL REFERENCES user_tttt(id) ON DELETE CASCADE,
+            kind           TEXT NOT NULL,
+            position       VARCHAR(200) NOT NULL,
+            unit           VARCHAR(200),
+            decision_no    VARCHAR(100),
+            decision_date  DATE,
+            effective_from DATE,
+            effective_to   DATE,
+            note           TEXT,
+            created_at     DATETIME,
+            updated_at     DATETIME,
+            updated_by     INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL
+        )""",
+        """CREATE TABLE IF NOT EXISTS hr_work_history (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            staff_id   INTEGER NOT NULL REFERENCES user_tttt(id) ON DELETE CASCADE,
+            from_date  DATE NOT NULL,
+            to_date    DATE,
+            position   VARCHAR(200),
+            unit       VARCHAR(200) NOT NULL,
+            at_branch  INTEGER NOT NULL DEFAULT 0,
+            note       TEXT,
+            created_at DATETIME,
+            updated_at DATETIME,
+            updated_by INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL
+        )""",
+        # Nghỉ gián đoạn: `count_seniority = 0` nghĩa là khoảng này KHÔNG tính
+        # vào thời gian công tác (nghỉ không hưởng lương) — đây là số liệu để
+        # người làm chế độ đối chiếu, phần mềm không tự trừ vào phép năm.
+        """CREATE TABLE IF NOT EXISTS hr_breaks (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            staff_id        INTEGER NOT NULL REFERENCES user_tttt(id) ON DELETE CASCADE,
+            from_date       DATE NOT NULL,
+            to_date         DATE NOT NULL,
+            reason          VARCHAR(200),
+            unpaid          INTEGER NOT NULL DEFAULT 1,
+            count_seniority INTEGER NOT NULL DEFAULT 0,
+            note            TEXT,
+            created_at      DATETIME,
+            updated_at      DATETIME,
+            updated_by      INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL
+        )""",
+        """CREATE TABLE IF NOT EXISTS hr_salaries (
+            id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            staff_id           INTEGER NOT NULL REFERENCES user_tttt(id) ON DELETE CASCADE,
+            grade              VARCHAR(50),
+            coef_v1            REAL,
+            coef_v2            REAL,
+            position_allowance REAL,
+            decision_no        VARCHAR(100),
+            decision_date      DATE NOT NULL,
+            effective_from     DATE,
+            cycle_months       INTEGER,
+            note               TEXT,
+            created_at         DATETIME,
+            updated_at         DATETIME,
+            updated_by         INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL
+        )""",
+        """CREATE TABLE IF NOT EXISTS hr_trainings (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            staff_id    INTEGER NOT NULL REFERENCES user_tttt(id) ON DELETE CASCADE,
+            course_name VARCHAR(300) NOT NULL,
+            from_date   DATE,
+            to_date     DATE,
+            mode        TEXT,
+            result      VARCHAR(200),
+            organizer   VARCHAR(200),
+            note        TEXT,
+            created_at  DATETIME,
+            updated_at  DATETIME,
+            updated_by  INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL
+        )""",
+        # `next_issue_date` = ngày dự kiến được cấp mới. Nhắc lịch "cấp điện
+        # thoại mới trước 1 quý" đọc đúng cột này, không đoán theo tên công cụ.
+        """CREATE TABLE IF NOT EXISTS hr_tools (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            staff_id        INTEGER NOT NULL REFERENCES user_tttt(id) ON DELETE CASCADE,
+            tool_name       VARCHAR(200) NOT NULL,
+            tool_code       VARCHAR(100),
+            quantity        INTEGER DEFAULT 1,
+            issued_date     DATE,
+            status          TEXT NOT NULL DEFAULT 'dang_dung',
+            next_issue_date DATE,
+            note            TEXT,
+            created_at      DATETIME,
+            updated_at      DATETIME,
+            updated_by      INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL
+        )""",
+        # File đính kèm dùng chung cho mọi phân hệ (quyết định bổ nhiệm, bằng
+        # cấp, chứng chỉ...). `section` + `item_id` là khoá ngoại ĐA HÌNH nên
+        # SQLite không ràng buộc hộ được: xoá dòng nào thì code phải tự xoá file
+        # của dòng đó (xem `_xoa_dinh_kem()` trong backend/api/hr.py).
+        """CREATE TABLE IF NOT EXISTS hr_attachments (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            section     TEXT NOT NULL,
+            item_id     INTEGER NOT NULL,
+            filename    VARCHAR(255) NOT NULL,
+            mime        VARCHAR(100),
+            size_bytes  INTEGER,
+            content     BLOB NOT NULL,
+            uploaded_by INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+            uploaded_at DATETIME
         )""",
     ]
     for s in statements:
@@ -688,6 +933,51 @@ def _ensure_indexes():
         "UPDATE user_tttt SET department_id = NULL WHERE role IN ('admin', 'admin_l2')",
         "DELETE FROM staff_department_history WHERE staff_id IN (SELECT id FROM user_tttt WHERE role IN ('admin', 'admin_l2'))",
 
+        # ── Đối chiếu số liệu DTBB — Phòng Kế toán — 2026-08-07 ─────────────────
+        # 1 dòng/kỳ/chi nhánh (report_date = ngày cuối kỳ suy từ tên file upload, vd
+        # 2026-07-31; branch_code = mã chi nhánh suy từ tên file, '9999' = toàn hệ
+        # thống/TSC khi tên file không mang mã chi nhánh — xem
+        # reader.py::extract_report_date_and_branch()). UNIQUE(report_date,
+        # branch_code) đặt ở khối constraint bảng, không inline theo cột, để 1 ngày
+        # có nhiều chi nhánh cùng lưu được.
+        # created_by/updated_by để phân biệt lần lưu đầu vs lần ghi đè (FE hỏi xác
+        # nhận ghi đè trước khi gọi lại /save — xem dtbb_report_details bên dưới).
+        # status: 'pending' (vàng, mới lưu/ghi đè) → 'confirmed' (xanh, đã được
+        # Trưởng/Phó phòng Kế toán xác nhận — không phải chính created_by/updated_by).
+        # Kỳ đã 'confirmed' bị chặn ghi đè ở API cho tới khi bị 'unconfirm' về pending.
+        """CREATE TABLE IF NOT EXISTS dtbb_reports (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            report_date     DATE NOT NULL,
+            branch_code     VARCHAR(10) NOT NULL DEFAULT '9999',
+            vnd_duoi12      REAL NOT NULL DEFAULT 0,
+            vnd_tu12        REAL NOT NULL DEFAULT 0,
+            usd_duoi12      REAL NOT NULL DEFAULT 0,
+            usd_tu12        REAL NOT NULL DEFAULT 0,
+            tk413_usd       REAL NOT NULL DEFAULT 0,
+            rate_usd_to_vnd REAL NOT NULL DEFAULT 0,
+            file_count      INTEGER NOT NULL DEFAULT 0,
+            status          VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','confirmed')),
+            confirmed_by    INTEGER REFERENCES user_tttt(id),
+            confirmed_at    DATETIME,
+            created_by      INTEGER NOT NULL REFERENCES user_tttt(id),
+            created_at      DATETIME NOT NULL,
+            updated_by      INTEGER REFERENCES user_tttt(id),
+            updated_at      DATETIME,
+            UNIQUE(report_date, branch_code)
+        )""",
+        # 1 dòng/loại tiền/kỳ — lưu số dư nguyên tệ (chưa quy đổi) + tỷ giá đã dùng,
+        # phục vụ truy vết/kiểm toán lại từng mã tiền thay vì chỉ có tổng cuối cùng.
+        """CREATE TABLE IF NOT EXISTS dtbb_report_details (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            report_id       INTEGER NOT NULL REFERENCES dtbb_reports(id) ON DELETE CASCADE,
+            ccy             TEXT NOT NULL,
+            rate_to_vnd     REAL,
+            group1_native   REAL NOT NULL DEFAULT 0,
+            group2_native   REAL NOT NULL DEFAULT 0,
+            tk413_native    REAL NOT NULL DEFAULT 0,
+            UNIQUE(report_id, ccy)
+        )""",
+
         # ── Đồng bộ is_active NULL — 2026-08-11 ───────────────────────────────
         # is_active không NOT NULL và không có DEFAULT nên NULL lọt vào được.
         # Mọi truy vấn đọc đều so `is_active = 1` → NULL vốn đã là "không hoạt
@@ -723,6 +1013,429 @@ def _ensure_indexes():
             signed_at  DATETIME
         )""",
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_leave_sig_slot ON leave_signatures(leave_id, slot)",
+
+        # ── Chấm công — Phòng Kế toán — 2026-07-23 ──────────────────────────────
+        """CREATE TABLE IF NOT EXISTS attendance_symbols (
+            symbol      TEXT PRIMARY KEY,
+            description TEXT NOT NULL,
+            work_value  REAL NOT NULL DEFAULT 0,
+            color       TEXT DEFAULT '#E5E7EB',
+            is_active   BOOLEAN DEFAULT 1
+        )""",
+        """INSERT OR IGNORE INTO attendance_symbols (symbol, description, work_value, color, is_active) VALUES
+            ('x',   'Công cả ngày', 1.0, '#DCFCE7', 1),
+            ('P',   'Nghỉ phép',    0.0, '#FEE2E2', 1),
+            ('0.5', 'Nửa công',     0.5, '#FEF9C3', 1)""",
+        """CREATE TABLE IF NOT EXISTS attendances (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            staff_id     INTEGER NOT NULL REFERENCES user_tttt(id),
+            date         DATE    NOT NULL,
+            symbol       TEXT    NOT NULL REFERENCES attendance_symbols(symbol),
+            work_value   REAL    NOT NULL DEFAULT 0,
+            status       TEXT    NOT NULL DEFAULT 'auto' CHECK(status IN ('auto','adjusted','confirmed')),
+            note         TEXT,
+            confirmed_by INTEGER REFERENCES user_tttt(id),
+            confirmed_at DATETIME,
+            created_at   DATETIME,
+            updated_at   DATETIME,
+            source_leave_id INTEGER REFERENCES leave_records(id),
+            UNIQUE(staff_id, date)
+        )""",
+        # Rà soát vòng 2 PR #22 — 2026-08-10: trước đây trigger revert (huỷ/xoá đơn
+        # nghỉ) xác định dòng attendances cần xoá bằng cách khớp lại "ký hiệu suy ra
+        # từ leave_type" — nếu 2 đơn nghỉ chồng ngày cùng ra 1 ký hiệu (leaves.py chặn
+        # trùng lịch bằng SELECT-rồi-INSERT, không atomic), huỷ đơn cũ có thể xoá nhầm
+        # dòng do đơn mới tạo. Thêm cột này để trigger revert khớp đúng theo ID đơn
+        # nghỉ đã tạo ra dòng đó, không đoán qua ký hiệu nữa.
+        #
+        # Sửa theo review vòng 2 PR #22 (Người 1, 2026-08-12): câu ALTER này trước đây
+        # nằm ở dòng ~590 (TRƯỚC khối CREATE TABLE attendances) — cài mới trên DB trắng
+        # sẽ ALTER một bảng chưa tồn tại → "no such table: attendances", lỗi này KHÔNG
+        # nằm trong danh sách nuốt lỗi (cố ý, xem phần xử lý lỗi bên dưới) nên sẽ raise
+        # và chặn khởi động app. DB thật đang chạy không lộ vì bảng attendances đã có
+        # sẵn từ migration 2026-07-23. Chuyển câu ALTER xuống đây — ngay sau khi bảng
+        # chắc chắn đã tồn tại (từ CREATE TABLE IF NOT EXISTS ở trên, dù DB mới hay cũ).
+        "ALTER TABLE attendances ADD COLUMN source_leave_id INTEGER REFERENCES leave_records(id)",
+        # Rà soát review PR #22 (Người 1, 17/08): trigger revert xoá 'attendances'
+        # khi huỷ/xoá đơn nghỉ (trg_leave_unapprove_revert_attendance /
+        # trg_leave_delete_revert_attendance), nhưng attendance_adjustments.attendance_id
+        # trỏ vào đúng dòng đó mà KHÔNG có ON DELETE — nếu dòng công còn một yêu cầu
+        # điều chỉnh (đang chờ hoặc đã bị từ chối) tham chiếu tới, DELETE dính
+        # FOREIGN KEY constraint, đơn nghỉ kẹt lại không huỷ được. ON DELETE CASCADE:
+        # xoá dòng công thì dọn theo luôn yêu cầu điều chỉnh của chính nó — hợp lý vì
+        # yêu cầu điều chỉnh không còn ý nghĩa gì khi dòng công gốc không còn tồn tại.
+        # DB đã cài từ trước (bảng đã tạo, thiếu CASCADE) được vá bằng khối tạo lại
+        # bảng ngay dưới khối rename ksnb_staff — SQLite không cho ALTER constraint.
+        """CREATE TABLE IF NOT EXISTS attendance_adjustments (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            attendance_id   INTEGER NOT NULL REFERENCES attendances(id) ON DELETE CASCADE,
+            requested_by    INTEGER NOT NULL REFERENCES user_tttt(id),
+            old_symbol      TEXT,
+            new_symbol      TEXT NOT NULL,
+            old_work_value  REAL,
+            new_work_value  REAL NOT NULL,
+            reason          TEXT NOT NULL,
+            status          TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected')),
+            reviewer_id     INTEGER REFERENCES user_tttt(id),
+            reviewed_at     DATETIME,
+            reject_reason   TEXT,
+            created_at      DATETIME
+        )""",
+        # Trigger: đơn nghỉ phép chuyển sang 'approved' → tự ghi ký hiệu tương ứng vào
+        # attendances. Không sửa backend/api/leaves.py (module khác phụ trách) — dùng
+        # trigger SQL thuần, tự kích hoạt trên câu UPDATE status thật của leaves.py,
+        # không gọi code Python nào từ đó. spread_dates (nghỉ ngày lẻ không liên tục,
+        # cột JSON có sẵn trên leave_records): nếu có giá trị thì chỉ đánh dấu đúng các
+        # ngày trong JSON đó; nếu NULL thì đánh dấu toàn bộ ngày làm việc trong
+        # [start_date,end_date] (bỏ T7/CN + public_holidays — áp dụng cho MỌI leave_type,
+        # kể cả thai_san/bao_hiem: quyết định nghiệp vụ 2026-08-10 là lưới chấm công chỉ
+        # đánh ngày thường, số ngày phép tính đủ lịch vẫn đúng riêng ở leaves.py, không
+        # liên quan lưới này). Chỉ ghi đè dòng đang status='auto' — không đụng dòng đã
+        # 'adjusted'/'confirmed' (kế toán đã tự xử lý ngày đó). datetime('now','+7 hours')
+        # xấp xỉ _vn_now() vì trigger SQL thuần không gọi được hàm Python — trade-off này
+        # được ghi trong Implementation-notes.html.
+        #
+        # Sửa theo review PR #22 (Người 1, 2026-08-10):
+        #  - 'bat_buoc' là leave_type CỦA BẢN GHI GIẢ (import hạn mức phép/đặt số ngày đã
+        #    dùng ở leaves.py::import_quota_apply, update_used_days — KHÔNG phải đơn nghỉ
+        #    thật) → loại hẳn khỏi trigger, không được đánh bất kỳ ký hiệu nào.
+        #  - Chỉ áp dụng cho nhân viên Phòng Kế toán (ACCT) — trước đây chạy cho toàn hệ
+        #    thống, phình bảng attendances vô ích cho các phòng không dùng tính năng này.
+        #  - Ký hiệu theo leave_type thay vì hardcode 'P': thai_san/bao_hiem→'T', sick→'O',
+        #    còn lại (annual/other/personal/dot_xuat...)→'P'.
+        # Rà soát vòng 2 PR #22: thêm is_active=1 vào EXISTS (đồng bộ đúng với
+        # _acct_staff_rows() ở attendance.py — nhân viên ACCT đã nghỉ việc không còn
+        # kích hoạt trigger); ghi thêm source_leave_id để trigger revert bên dưới khớp
+        # đúng đơn nghỉ, không đoán qua ký hiệu. DROP trước để đảm bảo DB đã chạy
+        # migration cũ (trigger cùng tên) cũng được thay bằng logic mới — CREATE
+        # TRIGGER IF NOT EXISTS sẽ bỏ qua nếu trigger cùng tên đã tồn tại.
+        #
+        # Sửa theo review vòng 2 PR #22 (Người 1, 2026-08-12) — lỗi mới phát sinh từ
+        # fix trước: 'bat_buoc' KHÔNG CHỈ là leave_type của bản ghi giả (import hạn
+        # mức/đặt số ngày đã dùng) — nó còn là loại nghỉ THẬT nhân viên nộp được
+        # (leaves.py validate riêng: phải ≥5 ngày làm việc). Loại hẳn theo leave_type
+        # khiến đơn "nghỉ phép bắt buộc" thật của ACCT không được chấm công nghỉ, lưới
+        # rơi về mặc định 'x' = đủ công — sai ngược chiều so với lỗi gốc. Dấu hiệu
+        # đúng để nhận biết bản ghi giả là REASON (2 nơi tạo bản ghi giả ở leaves.py
+        # đều gắn tiền tố cố định "[Import]"/"[Điều chỉnh]"), không phải leave_type.
+        # CẢNH BÁO: cách này dựa vào chuỗi text — nếu sau này ai đổi câu chữ reason ở
+        # leaves.py (import_quota_apply/update_used_days) mà không cập nhật CASE này
+        # thì sẽ hỏng ngầm (bản ghi giả lại bị chấm công, hoặc đơn thật lại bị bỏ qua).
+        #
+        # Rà soát tiếp theo: leave_records.reason NULLABLE (LeaveCreate.reason cũng
+        # optional) — đơn "bat_buoc" THẬT không nhập lý do sẽ có reason=NULL. SQLite:
+        # "NULL LIKE '...'" → NULL, không phải FALSE → cả biểu thức NOT (...) thành
+        # NULL → WHEN coi NULL là false → trigger KHÔNG chạy, đúng lỗi vừa sửa lại tái
+        # phát qua đường NULL. Thêm "reason IS NOT NULL AND" để khi NULL, vế
+        # "bat_buoc AND ..." chắc chắn là FALSE (không phải NULL) → NOT FALSE = TRUE
+        # → trigger chạy bình thường cho đơn thật.
+        "DROP TRIGGER IF EXISTS trg_leave_approved_sync_attendance",
+        """CREATE TRIGGER IF NOT EXISTS trg_leave_approved_sync_attendance
+            AFTER UPDATE OF status ON leave_records
+            WHEN NEW.status = 'approved' AND OLD.status != 'approved'
+                 AND NOT (NEW.leave_type = 'bat_buoc' AND NEW.reason IS NOT NULL
+                          AND (NEW.reason LIKE '[Import]%' OR NEW.reason LIKE '[Điều chỉnh]%'))
+                 AND EXISTS (SELECT 1 FROM user_tttt u JOIN departments d ON d.id = u.department_id
+                             WHERE u.id = NEW.staff_id AND d.code = 'ACCT' AND u.is_active = 1)
+            BEGIN
+                INSERT INTO attendances (staff_id, date, symbol, work_value, status, source_leave_id, created_at, updated_at)
+                WITH RECURSIVE d(day) AS (
+                    SELECT NEW.start_date
+                    UNION ALL
+                    SELECT date(day, '+1 day') FROM d WHERE day < NEW.end_date
+                )
+                SELECT NEW.staff_id, day,
+                       CASE NEW.leave_type WHEN 'thai_san' THEN 'T' WHEN 'bao_hiem' THEN 'T'
+                            WHEN 'sick' THEN 'O' ELSE 'P' END,
+                       (SELECT work_value FROM attendance_symbols WHERE symbol =
+                           CASE NEW.leave_type WHEN 'thai_san' THEN 'T' WHEN 'bao_hiem' THEN 'T'
+                                WHEN 'sick' THEN 'O' ELSE 'P' END),
+                       'auto', NEW.id, datetime('now','+7 hours'), datetime('now','+7 hours')
+                FROM d
+                WHERE (
+                    (NEW.spread_dates IS NOT NULL AND day IN (SELECT value FROM json_each(NEW.spread_dates)))
+                    OR
+                    (NEW.spread_dates IS NULL AND strftime('%w', day) NOT IN ('0','6')
+                         AND day NOT IN (SELECT date FROM public_holidays))
+                )
+                ON CONFLICT(staff_id, date) DO UPDATE SET
+                    symbol = excluded.symbol,
+                    work_value = excluded.work_value,
+                    status = 'auto',
+                    source_leave_id = excluded.source_leave_id,
+                    updated_at = datetime('now','+7 hours')
+                WHERE attendances.status = 'auto';
+            END""",
+        # Trigger bổ sung: backend/api/leaves.py::create_direct_leave ("khai báo hộ") INSERT
+        # thẳng leave_records với status='approved' ngay từ đầu (không qua UPDATE) — trigger
+        # AFTER UPDATE ở trên sẽ không kích hoạt cho trường hợp này. Thêm trigger AFTER INSERT
+        # cùng logic để phủ đúng path này (phát hiện khi test thực tế qua API /api/leaves/direct).
+        # Cùng các fix bat_buoc/ACCT-only/ký hiệu theo leave_type như trigger UPDATE ở
+        # trên, kể cả fix vòng 2 (nhận biết bản ghi giả qua reason, xem comment ở trigger
+        # trg_leave_approved_sync_attendance phía trên — không lặp lại toàn bộ ở đây).
+        "DROP TRIGGER IF EXISTS trg_leave_direct_insert_sync_attendance",
+        """CREATE TRIGGER IF NOT EXISTS trg_leave_direct_insert_sync_attendance
+            AFTER INSERT ON leave_records
+            WHEN NEW.status = 'approved'
+                 AND NOT (NEW.leave_type = 'bat_buoc' AND NEW.reason IS NOT NULL
+                          AND (NEW.reason LIKE '[Import]%' OR NEW.reason LIKE '[Điều chỉnh]%'))
+                 AND EXISTS (SELECT 1 FROM user_tttt u JOIN departments d ON d.id = u.department_id
+                             WHERE u.id = NEW.staff_id AND d.code = 'ACCT' AND u.is_active = 1)
+            BEGIN
+                INSERT INTO attendances (staff_id, date, symbol, work_value, status, source_leave_id, created_at, updated_at)
+                WITH RECURSIVE d(day) AS (
+                    SELECT NEW.start_date
+                    UNION ALL
+                    SELECT date(day, '+1 day') FROM d WHERE day < NEW.end_date
+                )
+                SELECT NEW.staff_id, day,
+                       CASE NEW.leave_type WHEN 'thai_san' THEN 'T' WHEN 'bao_hiem' THEN 'T'
+                            WHEN 'sick' THEN 'O' ELSE 'P' END,
+                       (SELECT work_value FROM attendance_symbols WHERE symbol =
+                           CASE NEW.leave_type WHEN 'thai_san' THEN 'T' WHEN 'bao_hiem' THEN 'T'
+                                WHEN 'sick' THEN 'O' ELSE 'P' END),
+                       'auto', NEW.id, datetime('now','+7 hours'), datetime('now','+7 hours')
+                FROM d
+                WHERE (
+                    (NEW.spread_dates IS NOT NULL AND day IN (SELECT value FROM json_each(NEW.spread_dates)))
+                    OR
+                    (NEW.spread_dates IS NULL AND strftime('%w', day) NOT IN ('0','6')
+                         AND day NOT IN (SELECT date FROM public_holidays))
+                )
+                ON CONFLICT(staff_id, date) DO UPDATE SET
+                    symbol = excluded.symbol,
+                    work_value = excluded.work_value,
+                    status = 'auto',
+                    source_leave_id = excluded.source_leave_id,
+                    updated_at = datetime('now','+7 hours')
+                WHERE attendances.status = 'auto';
+            END""",
+        # Trigger ngược: đơn đã 'approved' bị huỷ/từ chối lại → xoá ký hiệu tự động tương
+        # ứng (chỉ xoá nếu vẫn còn status='auto' — nếu đã bị chỉnh tay/duyệt điều chỉnh
+        # thành 'adjusted'/'confirmed' thì giữ nguyên, không đụng).
+        # Sửa theo review PR #22: trước đây xoá theo cả khoảng BETWEEN start_date/end_date
+        # bất kể spread_dates — đơn nghỉ ngày lẻ (vd 2 ngày rời nhau) khi huỷ sẽ xoá lây
+        # sang "P"/"T"/"O" của ĐƠN KHÁC nằm lọt trong khoảng đó (đã test thực tế, xem PR).
+        # Giờ tôn trọng spread_dates + đúng ký hiệu theo leave_type y hệt trigger ghi, chỉ
+        # xoá đúng những ngày/ký hiệu mà trigger ghi từng thực sự tạo ra.
+        # Rà soát vòng 2 PR #22: trước đây xoá bằng cách khớp lại ký hiệu suy ra từ
+        # leave_type + khoảng ngày — nếu 2 đơn nghỉ chồng ngày cùng ra 1 ký hiệu (có
+        # thể xảy ra do leaves.py chặn trùng lịch không atomic), huỷ đơn cũ sẽ xoá
+        # nhầm dòng do đơn khác tạo ra. Giờ khớp thẳng theo source_leave_id — chỉ xoá
+        # đúng dòng do chính đơn nghỉ này tạo, không cần đoán qua ký hiệu/khoảng ngày nữa.
+        # Sửa theo review PR #22 (Người 1, 17/08): luồng "thu hồi đơn đã duyệt"
+        # (leaves.py::request_recall/approve_recall) đi 2 bước — approved →
+        # pending_tong_hop (request_recall), rồi pending_tong_hop → cancelled
+        # (approve_recall). Ở bước UPDATE cuối cùng OLD.status đã là
+        # 'pending_tong_hop', không còn 'approved' → trigger cũ không chạy, "P" mồ
+        # côi ở lại vĩnh viễn. Thêm 'pending_tong_hop' vào WHEN để bắt cả 2 luồng.
+        # An toàn cho các đường pending_tong_hop khác (bị Tổng hợp từ chối trước khi
+        # từng được duyệt): DELETE chỉ xoá đúng dòng status='auto' khớp
+        # source_leave_id — đơn chưa từng approved thì chưa từng được trigger ghi
+        # sync tạo dòng nào, DELETE không khớp gì, vô hại.
+        "DROP TRIGGER IF EXISTS trg_leave_unapprove_revert_attendance",
+        """CREATE TRIGGER IF NOT EXISTS trg_leave_unapprove_revert_attendance
+            AFTER UPDATE OF status ON leave_records
+            WHEN OLD.status IN ('approved','pending_tong_hop') AND NEW.status IN ('cancelled','rejected')
+            BEGIN
+                DELETE FROM attendances
+                WHERE staff_id = NEW.staff_id
+                  AND status = 'auto'
+                  AND source_leave_id = NEW.id;
+            END""",
+        # Trigger mới theo review PR #22: 3 chỗ trong leaves.py xoá thẳng bản ghi
+        # leave_records (xoá đơn khai báo hộ, rollback batch import) không có trigger dọn
+        # attendances tương ứng — để lại ký hiệu "mồ côi" vĩnh viễn. Logic xoá giống hệt
+        # trigger unapprove ở trên, chỉ khác sự kiện kích hoạt (DELETE thay vì UPDATE).
+        # Cùng fix vòng 2 nhận biết bản ghi giả qua reason (không phải leave_type) —
+        # xem comment đầy đủ ở trg_leave_approved_sync_attendance. Bắt buộc phải sửa
+        # trigger này theo cùng điều kiện: nếu chỉ trigger ghi cho phép đơn 'bat_buoc'
+        # thật đi qua mà trigger xoá này vẫn chặn theo leave_type cũ, huỷ/xoá đơn
+        # 'bat_buoc' thật sẽ không dọn được dòng attendances đã ghi — để lại mồ côi.
+        "DROP TRIGGER IF EXISTS trg_leave_delete_revert_attendance",
+        """CREATE TRIGGER IF NOT EXISTS trg_leave_delete_revert_attendance
+            AFTER DELETE ON leave_records
+            WHEN OLD.status = 'approved'
+                 AND NOT (OLD.leave_type = 'bat_buoc' AND OLD.reason IS NOT NULL
+                          AND (OLD.reason LIKE '[Import]%' OR OLD.reason LIKE '[Điều chỉnh]%'))
+            BEGIN
+                DELETE FROM attendances
+                WHERE staff_id = OLD.staff_id
+                  AND status = 'auto'
+                  AND source_leave_id = OLD.id;
+            END""",
+
+        # ── Gỡ bỏ Check-in/out tự động — 2026-07-29 (người dùng đổi ý, không dùng
+        # nữa) — DROP thay vì để nguyên CREATE, vì DB đang chạy sống đã lỡ tạo
+        # bảng/trigger này ở migration trước đó (2026-07-24), cần dọn sạch. Không
+        # xoá/sửa lịch sử migration cũ, chỉ nối thêm bước dọn dẹp phía sau.
+        "DROP TRIGGER IF EXISTS trg_login_sync_checkin",
+        "DROP TABLE IF EXISTS attendance_checkin_logs",
+
+        # ── Bổ sung ký hiệu chấm công theo đúng mẫu giấy thật của Phòng Kế toán
+        # (file 5_BANG_CHAM_CONG_PHONG_KE_TOAN_2026.xlsx) — 2026-08-05. CT/H/HT vẫn
+        # tính đủ 1 công (công tác/đi học/hội thao vẫn là đi làm, không phải nghỉ);
+        # T/ND/O/S/C không tính công, giống 'P' — theo xác nhận của người dùng.
+        """INSERT OR IGNORE INTO attendance_symbols (symbol, description, work_value, color, is_active) VALUES
+            ('T',  'Nghỉ thai sản',    0.0, '#FDE68A', 1),
+            ('ND', 'Nghỉ dưỡng',       0.0, '#FBCFE8', 1),
+            ('CT', 'Công tác',         1.0, '#BFDBFE', 1),
+            ('O',  'Nghỉ ốm',          0.0, '#E5E7EB', 1),
+            ('H',  'Đi học',           1.0, '#C7D2FE', 1),
+            ('S',  'Nghỉ ốm dài ngày', 0.0, '#D1D5DB', 1),
+            ('C',  'Cưới',             0.0, '#FBCFE8', 1),
+            ('HT', 'Hội Thao',         1.0, '#A7F3D0', 1)""",
+        # Backfill theo review PR #22 (Người 1, 18/08): fix trước đó (put_day /
+        # review_adjustment reset source_leave_id=NULL khi ghi đè) chỉ áp dụng cho
+        # LƯỢT GHI MỚI kể từ lúc code chạy — dòng attendances đã ở trạng thái
+        # 'confirmed'/'adjusted' TỪ TRƯỚC bản vá vẫn còn source_leave_id trỏ về đơn
+        # nghỉ cũ, xoá đúng đơn đó vẫn dính FOREIGN KEY constraint y hệt lỗi gốc.
+        # Tự nhiên idempotent: sau lần chạy đầu dọn sạch, các lần sau WHERE không
+        # còn dòng nào khớp nên vô hại — không cần dò sqlite_master như khối vá bảng.
+        """UPDATE attendances SET source_leave_id = NULL
+           WHERE status IN ('confirmed','adjusted') AND source_leave_id IS NOT NULL""",
+
+        # ── Đối chiếu CITAD — Lưu bản tạm / Lưu bản cuối — 2026-08-20 ─────────
+        # `status`: 'draft' (bản tạm — người KHÁC người lập bảng vẫn vào được để
+        # nạp riêng Napas/PSS-MDP qua Extension) | 'final' (bản cuối — CHỐT,
+        # không ai sửa được nữa kể cả người lập bảng, chỉ Admin mở khoá qua
+        # endpoint riêng). Default 'final' để dữ liệu CŨ (lưu trước khi có tính
+        # năng này, qua nút "Lưu" duy nhất) coi như đã chốt sẵn — không tự
+        # nhiên biến thành bản tạm ai cũng sửa Napas được.
+        # `created_by`: người lập bảng — người ĐẦU TIÊN lưu ngày đó, cố định
+        # suốt vòng đời bản ghi (không đổi theo `updated_by`, vốn là người lưu
+        # SAU CÙNG — 2 khái niệm khác nhau, cần tách riêng để biết ai được sửa
+        # đủ mọi trường, ai chỉ được nạp Napas/PSS-MDP). Backfill từ
+        # `updated_by` cho dữ liệu cũ — không có thông tin ai lập bảng thật sự
+        # trước đây, đây là ước lượng hợp lý nhất có thể.
+        "ALTER TABLE doi_chieu_citad_sessions ADD COLUMN status TEXT NOT NULL DEFAULT 'final'",
+        "ALTER TABLE doi_chieu_citad_sessions ADD COLUMN created_by INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL",
+        "UPDATE doi_chieu_citad_sessions SET created_by = updated_by WHERE created_by IS NULL",
+        "ALTER TABLE doi_chieu_citad_history ADD COLUMN status TEXT NOT NULL DEFAULT 'final'",
+
+        # ── Đối chiếu CITAD - PaymentHub (Nostro, Vostro) — người lập bảng ──
+        # Bảng đã có `created_by` ngay trong _create_tables(); ALTER này chỉ
+        # vá DB đã tạo bảng ở bản nhánh trước đó (lỗi "duplicate column" được
+        # nuốt có chủ đích). Backfill từ `updated_by` vì bản ghi cũ không có
+        # thông tin ai lập bảng thật sự.
+        "ALTER TABLE doi_chieu_citad_nostro_sessions ADD COLUMN created_by INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL",
+        "UPDATE doi_chieu_citad_nostro_sessions SET created_by = updated_by WHERE created_by IS NULL",
+
+        # ── Đối chiếu CITAD — nhật ký từng lượt sửa bảng tạm — 2026-08-21 ─────
+        # Các lần "Lưu bảng tạm" LIÊN TIẾP gộp vào CHUNG 1 dòng
+        # doi_chieu_citad_history (UPDATE tại chỗ, tránh phình Lịch sử — xem
+        # docstring session_save()), nên dòng lịch sử đó không còn giữ dấu vết
+        # từng người đã góp phần sửa. Bảng riêng này ghi lại MỌI lần lưu,
+        # không gộp, gắn theo history_id của dòng đang đại diện cho bản ghi đó
+        # — phục vụ icon "Ai đã sửa bảng tạm này" trên tab Lịch sử.
+        """CREATE TABLE IF NOT EXISTS doi_chieu_citad_history_edits (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            history_id  INTEGER NOT NULL REFERENCES doi_chieu_citad_history(id) ON DELETE CASCADE,
+            staff_id    INTEGER NOT NULL REFERENCES user_tttt(id) ON DELETE CASCADE,
+            created_at  DATETIME NOT NULL
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_doi_chieu_citad_history_edits_history_id ON doi_chieu_citad_history_edits(history_id)",
+
+        # ── ACH — cấp phát cham_ach.process khi bắt đầu enforce — 2026-08-31 ──
+        # cham_ach.process đã khai trong FEATURES từ trước nhưng CHƯA từng được
+        # require_feature() kiểm tra thật (mọi endpoint /start /continue /cancel
+        # trước PR#54 chỉ đòi menu.cham_ach). Nhóm nào trong DB thật đang có
+        # menu.cham_ach nhiều khả năng KHÔNG có cham_ach.process — bắt đầu
+        # enforce mà không cấp bù thì mọi user không phải admin mất nút "Chạy"
+        # ngay khi deploy (review PR#54, khanhbq693). Cấp bù = giữ nguyên hành
+        # vi trước merge; QTV vẫn thu hồi tay được sau nếu muốn tách quyền thật.
+        """INSERT OR IGNORE INTO group_features (group_id, feature_code)
+           SELECT group_id, 'cham_ach.process' FROM group_features
+           WHERE feature_code = 'menu.cham_ach'""",
+        # ── Ôn tập trắc nghiệm (Quizz) — 2026-08-26 ───────────────────────
+        # Bản sao của khối trong _create_tables(): DB đã cài từ trước không
+        # chạy lại _create_tables cho bảng mới thêm sau này.
+        # ── Ôn tập trắc nghiệm (Quizz) ────────────────────────────────────
+        # Bộ câu hỏi nhập MỘT LẦN từ Excel rồi dùng chung cho cả cơ quan —
+        # `content_hash` để nhận ra ai đó tải lại đúng file cũ dưới tên khác.
+        """CREATE TABLE IF NOT EXISTS quiz_sets (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            name           VARCHAR(200) NOT NULL UNIQUE,
+            description    TEXT,
+            source_file    TEXT,
+            content_hash   VARCHAR(64),
+            question_count INTEGER NOT NULL DEFAULT 0,
+            created_by     INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+            created_at     DATETIME NOT NULL,
+            is_active      INTEGER NOT NULL DEFAULT 1
+        )""",
+        # opt4 để trống được: file mẫu có cả câu 3 lựa chọn.
+        """CREATE TABLE IF NOT EXISTS quiz_questions (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            set_id     INTEGER NOT NULL REFERENCES quiz_sets(id) ON DELETE CASCADE,
+            order_no   INTEGER NOT NULL,
+            content    TEXT NOT NULL,
+            opt1       TEXT,
+            opt2       TEXT,
+            opt3       TEXT,
+            opt4       TEXT,
+            correct_no INTEGER NOT NULL
+        )""",
+        """CREATE TABLE IF NOT EXISTS quiz_attempts (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            set_id          INTEGER NOT NULL REFERENCES quiz_sets(id) ON DELETE CASCADE,
+            staff_id        INTEGER NOT NULL REFERENCES user_tttt(id) ON DELETE CASCADE,
+            mode            TEXT NOT NULL DEFAULT 'practice',
+            settings        TEXT,
+            total_questions INTEGER NOT NULL DEFAULT 0,
+            correct_count   INTEGER,
+            score           REAL,
+            duration_ms     INTEGER,
+            status          TEXT NOT NULL DEFAULT 'in_progress',
+            elapsed_ms      INTEGER NOT NULL DEFAULT 0,
+            current_idx     INTEGER NOT NULL DEFAULT 0,
+            saved_at        DATETIME,
+            started_at      DATETIME NOT NULL,
+            finished_at     DATETIME
+        )""",
+        # Sinh sẵn đủ N dòng lúc tạo lượt: thứ tự câu và thứ tự đáp án đã trộn
+        # phải lưu lại, nếu không màn "Xem lại bài" sẽ dựng ra một đề khác hẳn
+        # với đề người dùng vừa làm.
+        """CREATE TABLE IF NOT EXISTS quiz_attempt_items (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            attempt_id   INTEGER NOT NULL REFERENCES quiz_attempts(id) ON DELETE CASCADE,
+            question_id  INTEGER NOT NULL REFERENCES quiz_questions(id) ON DELETE CASCADE,
+            order_no     INTEGER NOT NULL,
+            option_order TEXT NOT NULL,
+            chosen_no    INTEGER,
+            is_correct   INTEGER,
+            time_ms      INTEGER
+        )""",
+        "CREATE INDEX IF NOT EXISTS ix_quiz_questions_set      ON quiz_questions(set_id, order_no)",
+        "CREATE INDEX IF NOT EXISTS ix_quiz_attempts_staff     ON quiz_attempts(staff_id, started_at)",
+        "CREATE INDEX IF NOT EXISTS ix_quiz_attempts_set       ON quiz_attempts(set_id, status)",
+        "CREATE INDEX IF NOT EXISTS ix_quiz_attempt_items_att  ON quiz_attempt_items(attempt_id, order_no)",
+        # ── Quizz: tạm dừng & làm tiếp — 2026-08-27 ───────────────────────
+        # Ba cột giữ chỗ người làm đang đứng, để lần vào sau nối tiếp đúng chỗ.
+        # NOT NULL kèm DEFAULT hằng số nên ALTER TABLE của SQLite chấp nhận được.
+        "ALTER TABLE quiz_attempts ADD COLUMN elapsed_ms INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE quiz_attempts ADD COLUMN current_idx INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE quiz_attempts ADD COLUMN saved_at DATETIME",
+        # ── Chuẩn hoá văn bản theo QĐ 979 — 2026-08-27 ─────────────────
+        # Đúng MỘT dòng: quy chuẩn trình bày là của cả cơ quan, không phải của
+        # từng người. CHECK(id = 1) chặn thẳng ở tầng DB — code có ghi nhầm
+        # dòng thứ hai thì báo lỗi ngay, thay vì âm thầm sinh ra hai bản cấu hình
+        # rồi mỗi lần đọc lại trúng một bản khác nhau.
+        """CREATE TABLE IF NOT EXISTS vb_format_config (
+            id          INTEGER PRIMARY KEY CHECK (id = 1),
+            config_json TEXT NOT NULL DEFAULT '{}',
+            updated_at  DATETIME,
+            updated_by  INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL
+        )""",
+        "INSERT OR IGNORE INTO vb_format_config (id, config_json) VALUES (1, '{}')",
+
+        # ── dtbb_reports.rate_usd_to_vnd — 2026-08-27 ─────────────────────────
+        # Lưu lại tỷ giá VND/USD (ttbuyrt/taxrt fallback) đã dùng lúc tính, để FE
+        # tính "USD quy đổi" theo từng mã tiền khi xem lại kỳ đã lưu — mỗi mã tiền
+        # chỉ lưu tỷ giá riêng của nó (rate_to_vnd), không lưu tỷ giá USD dùng làm
+        # mẫu số nên không tái tạo được nếu thiếu cột này. Kỳ lưu trước bản vá có
+        # giá trị mặc định 0 — FE nhận biết 0 để ẩn hẳn cột thay vì hiện số sai.
+        "ALTER TABLE dtbb_reports ADD COLUMN rate_usd_to_vnd REAL NOT NULL DEFAULT 0",
     ]
     _mig_log = logging.getLogger(__name__)
 
@@ -749,6 +1462,88 @@ def _ensure_indexes():
             _mig_log.info("Đã đổi tên bảng ksnb_staff → user_tttt")
     finally:
         _rc.close()
+
+    # ── Vá attendance_adjustments.attendance_id thiếu ON DELETE CASCADE (one-time,
+    # idempotent) — 2026-08-18, theo review PR #22 (Người 1). SQLite không cho ALTER
+    # TABLE sửa ràng buộc FK, nên tạo bảng mới đúng schema, copy dữ liệu, xoá bảng
+    # cũ, đổi tên. Bảng cài mới đã có CASCADE sẵn từ CREATE TABLE IF NOT EXISTS ở
+    # trên nên khối này bỏ qua (điều kiện "ON DELETE CASCADE" not in sql không khớp).
+    _ac = sqlite3.connect(DB_PATH, timeout=30)
+    try:
+        _adj_row = _ac.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='attendance_adjustments'"
+        ).fetchone()
+        if _adj_row and _adj_row[0] and "ON DELETE CASCADE" not in _adj_row[0]:
+            _ac.execute("PRAGMA foreign_keys = OFF")
+            _ac.execute("""CREATE TABLE attendance_adjustments_new (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                attendance_id   INTEGER NOT NULL REFERENCES attendances(id) ON DELETE CASCADE,
+                requested_by    INTEGER NOT NULL REFERENCES user_tttt(id),
+                old_symbol      TEXT,
+                new_symbol      TEXT NOT NULL,
+                old_work_value  REAL,
+                new_work_value  REAL NOT NULL,
+                reason          TEXT NOT NULL,
+                status          TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected')),
+                reviewer_id     INTEGER REFERENCES user_tttt(id),
+                reviewed_at     DATETIME,
+                reject_reason   TEXT,
+                created_at      DATETIME
+            )""")
+            _ac.execute("INSERT INTO attendance_adjustments_new SELECT * FROM attendance_adjustments")
+            _ac.execute("DROP TABLE attendance_adjustments")
+            _ac.execute("ALTER TABLE attendance_adjustments_new RENAME TO attendance_adjustments")
+            _ac.commit()
+            _mig_log.info("Đã thêm ON DELETE CASCADE cho attendance_adjustments.attendance_id")
+    finally:
+        _ac.close()
+
+    # ── Vá dtbb_reports: thêm branch_code + status xác nhận, đổi UNIQUE từ
+    # report_date đơn sang (report_date, branch_code) — one-time, idempotent.
+    # 2026-08-27. SQLite không cho ALTER TABLE sửa ràng buộc UNIQUE nên phải tạo
+    # bảng mới đúng schema, copy dữ liệu cũ (branch_code mặc định '9999', status
+    # mặc định 'pending' — kỳ đã lưu trước bản vá này coi như chưa được xác nhận),
+    # xoá bảng cũ, đổi tên. Bảng cài mới đã đúng schema từ CREATE TABLE IF NOT
+    # EXISTS ở trên nên khối này bỏ qua (điều kiện "branch_code" not in sql không khớp).
+    _db = sqlite3.connect(DB_PATH, timeout=30)
+    try:
+        _dtbb_row = _db.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='dtbb_reports'"
+        ).fetchone()
+        if _dtbb_row and _dtbb_row[0] and "branch_code" not in _dtbb_row[0]:
+            _db.execute("PRAGMA foreign_keys = OFF")
+            _db.execute("""CREATE TABLE dtbb_reports_new (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                report_date     DATE NOT NULL,
+                branch_code     VARCHAR(10) NOT NULL DEFAULT '9999',
+                vnd_duoi12      REAL NOT NULL DEFAULT 0,
+                vnd_tu12        REAL NOT NULL DEFAULT 0,
+                usd_duoi12      REAL NOT NULL DEFAULT 0,
+                usd_tu12        REAL NOT NULL DEFAULT 0,
+                tk413_usd       REAL NOT NULL DEFAULT 0,
+                rate_usd_to_vnd REAL NOT NULL DEFAULT 0,
+                file_count      INTEGER NOT NULL DEFAULT 0,
+                status          VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','confirmed')),
+                confirmed_by    INTEGER REFERENCES user_tttt(id),
+                confirmed_at    DATETIME,
+                created_by      INTEGER NOT NULL REFERENCES user_tttt(id),
+                created_at      DATETIME NOT NULL,
+                updated_by      INTEGER REFERENCES user_tttt(id),
+                updated_at      DATETIME,
+                UNIQUE(report_date, branch_code)
+            )""")
+            _db.execute("""INSERT INTO dtbb_reports_new
+                (id, report_date, vnd_duoi12, vnd_tu12, usd_duoi12, usd_tu12, tk413_usd,
+                 file_count, created_by, created_at, updated_by, updated_at)
+                SELECT id, report_date, vnd_duoi12, vnd_tu12, usd_duoi12, usd_tu12, tk413_usd,
+                       file_count, created_by, created_at, updated_by, updated_at
+                FROM dtbb_reports""")
+            _db.execute("DROP TABLE dtbb_reports")
+            _db.execute("ALTER TABLE dtbb_reports_new RENAME TO dtbb_reports")
+            _db.commit()
+            _mig_log.info("Đã thêm branch_code/status cho dtbb_reports (UNIQUE report_date,branch_code)")
+    finally:
+        _db.close()
 
     conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
@@ -982,8 +1777,37 @@ def _ensure_indexes():
         "CREATE INDEX IF NOT EXISTS ix_staff_dept_hist       ON staff_department_history(staff_id, effective_from)",
         "CREATE INDEX IF NOT EXISTS ix_ttqt_branches_bic      ON ttqt_branches(swift_bic)",
         "CREATE INDEX IF NOT EXISTS ix_ttqt_branches_sort     ON ttqt_branches(is_closed, sort_order)",
+        "CREATE INDEX IF NOT EXISTS ix_dtbb_reports_date       ON dtbb_reports(report_date)",
+        "CREATE INDEX IF NOT EXISTS ix_dtbb_reports_status     ON dtbb_reports(status)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_dtbb_reports_date_branch ON dtbb_reports(report_date, branch_code)",
+        "CREATE INDEX IF NOT EXISTS ix_dtbb_report_details_rpt ON dtbb_report_details(report_id)",
         "CREATE INDEX IF NOT EXISTS ix_so_truc_records_date ON so_truc_records(truc_date)",
         "CREATE UNIQUE INDEX IF NOT EXISTS ux_so_truc_active_date ON so_truc_records(truc_date) WHERE status != 'cancelled'",
+        # Rác còn lại sau lần đổi tên bảng ksnb_staff → user_tttt: index cũ vẫn
+        # nằm nguyên trên bảng mới. `ix_ksnb_staff_dept` trùng y hệt
+        # `ix_user_tttt_dept`, còn `ix_ksnb_staff_id` phủ lên chính khoá chính
+        # (rowid) nên không câu truy vấn nào dùng tới. Không sai kết quả, chỉ
+        # bắt SQLite ghi thừa mỗi lần thêm/sửa cán bộ.
+        "DROP INDEX IF EXISTS ix_ksnb_staff_dept",
+        "DROP INDEX IF EXISTS ix_ksnb_staff_id",
+        "CREATE INDEX IF NOT EXISTS ix_attendances_date           ON attendances(date)",
+        "CREATE INDEX IF NOT EXISTS ix_attendance_adj_attendance  ON attendance_adjustments(attendance_id)",
+        "CREATE INDEX IF NOT EXISTS ix_attendance_adj_status      ON attendance_adjustments(status)",
+        "CREATE INDEX IF NOT EXISTS ix_attendance_adj_requested_by ON attendance_adjustments(requested_by)",
+        "CREATE INDEX IF NOT EXISTS ix_quiz_questions_set      ON quiz_questions(set_id, order_no)",
+        "CREATE INDEX IF NOT EXISTS ix_quiz_attempts_staff     ON quiz_attempts(staff_id, started_at)",
+        "CREATE INDEX IF NOT EXISTS ix_quiz_attempts_set       ON quiz_attempts(set_id, status)",
+        "CREATE INDEX IF NOT EXISTS ix_quiz_attempt_items_att  ON quiz_attempt_items(attempt_id, order_no)",
+        # ── Quản lý nhân sự — 2026-08-28 ──────────────────────────────────────
+        # Mọi màn hình hồ sơ đều lọc theo staff_id trước tiên.
+        "CREATE INDEX IF NOT EXISTS ix_hr_degrees_staff      ON hr_degrees(staff_id)",
+        "CREATE INDEX IF NOT EXISTS ix_hr_appointments_staff ON hr_appointments(staff_id)",
+        "CREATE INDEX IF NOT EXISTS ix_hr_work_history_staff ON hr_work_history(staff_id)",
+        "CREATE INDEX IF NOT EXISTS ix_hr_breaks_staff       ON hr_breaks(staff_id)",
+        "CREATE INDEX IF NOT EXISTS ix_hr_salaries_staff     ON hr_salaries(staff_id, decision_date)",
+        "CREATE INDEX IF NOT EXISTS ix_hr_trainings_staff    ON hr_trainings(staff_id)",
+        "CREATE INDEX IF NOT EXISTS ix_hr_tools_staff        ON hr_tools(staff_id)",
+        "CREATE INDEX IF NOT EXISTS ix_hr_attachments_owner  ON hr_attachments(section, item_id)",
     ]
     conn = sqlite3.connect(DB_PATH, timeout=30)
     try:

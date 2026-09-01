@@ -29,6 +29,7 @@ from __future__ import annotations
 import os
 import re
 import tempfile
+from pathlib import Path
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -36,9 +37,10 @@ from fastapi.responses import Response
 
 from backend.database import get_db
 from backend.core.concurrency import run_heavy
+from backend.core.uploads import safe_filename, save_upload_to_sync
 from backend.core.deps import require_feature
-from backend.schemas.doi_soat_citad import ExportIn, HistoryOut, ReconcileResultOut
-from backend.services.doi_soat_citad import exporters, parsers, reconcile
+from backend.schemas.doi_soat_citad import ExportAllIn, ExportIn, HistoryOut, ReconcileResultOut
+from backend.services.doi_soat_citad import exporters, parsers, reconcile, temp_files
 from backend.services.doi_soat_citad.history_service import (
     get_recon_detail,
     list_recon_history,
@@ -54,28 +56,38 @@ def _safe_filename(name: str) -> str:
 router = APIRouter(prefix="/api/doi-soat-citad", tags=["doi-soat-citad"])
 
 
-def _save_uploads(files: Optional[List[UploadFile]]) -> tuple[list[str], list[str], callable]:
-    """Lưu danh sách UploadFile ra file tạm, trả về (đường dẫn, tên gốc, cleanup).
-    parsers.py tự xử lý .zip nội bộ (CITAD/IPCAS) nên ở đây chỉ cần ghi bytes
-    ra đúng phần mở rộng gốc — không cần giải nén ở lớp API."""
+def _save_uploads(files: Optional[List[UploadFile]], dich: Path) -> tuple[list[str], list[str]]:
+    """Lưu danh sách UploadFile vào `dich` trên máy chủ, trả về
+    (đường dẫn, tên gốc).
+
+    parsers.py tự xử lý .zip nội bộ (CITAD/IPCAS) nên ở đây chỉ cần ghi ra đúng
+    phần mở rộng gốc — không cần giải nén ở lớp API.
+
+    Ghi theo từng khối thẳng xuống đĩa (`save_upload_to_sync`) thay vì
+    `read_limited_sync()` rồi mới ghi: một lượt đối soát có thể kèm nhiều file
+    CITAD/IPCAS/HUB, gom hết vào RAM trước là đỉnh bộ nhớ gấp đôi mà không đổi
+    lại được gì — đằng nào parsers.py cũng chỉ nhận đường dẫn.
+
+    Tên file giữ nguyên bản gốc (đã qua `safe_filename`) để người vận hành mở
+    thư mục lượt ra là biết file nào của ai — khác hẳn tên ngẫu nhiên của
+    `tempfile`. Trùng tên trong cùng một nhóm thì thêm hậu tố số thứ tự, không
+    ghi đè. Dọn dẹp là việc của người tạo thư mục lượt (xem caller).
+    """
     if not files:
-        return [], [], lambda: None
+        return [], []
+
     paths, names = [], []
-    for f in files:
-        suffix = os.path.splitext(f.filename or "")[1] or ".dat"
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-            tmp.write(f.file.read())
-            paths.append(tmp.name)
-        names.append(f.filename or os.path.basename(paths[-1]))
+    for i, f in enumerate(files):
+        ten = safe_filename(f.filename, f"file_{i}.dat")
+        dest = dich / ten
+        if dest.exists():
+            goc, duoi = os.path.splitext(ten)
+            dest = dich / f"{goc}_{i}{duoi}"
+        save_upload_to_sync(f, dest)
+        paths.append(str(dest))
+        names.append(f.filename or dest.name)
 
-    def cleanup():
-        for p in paths:
-            try:
-                os.remove(p)
-            except OSError:
-                pass
-
-    return paths, names, cleanup
+    return paths, names
 
 
 @router.post("/reconcile", response_model=ReconcileResultOut)
@@ -98,27 +110,29 @@ async def do_reconcile(
     # event loop, vừa nằm trong giới hạn việc nặng dùng chung (xem docstring
     # đầu file).
     def _blocking_parse_and_reconcile():
-        citad_paths, citad_names, cleanup_citad = _save_uploads(citad_files)
-        ipcas_paths, ipcas_names, cleanup_ipcas = _save_uploads(ipcas_files)
-        hub_paths, hub_names, cleanup_hub = _save_uploads(hub_files)
+        # Một thư mục cho cả lượt, ba thư mục con theo nguồn — mở ra là đọc
+        # được ngay lượt đó gồm file nào. Xoá cả cụm trong `finally`; lịch dọn
+        # 23h chỉ phải hứng những lượt chết giữa chừng.
+        luot = temp_files.tao_thu_muc_luot()
         try:
+            citad_paths, citad_names = _save_uploads(citad_files, luot / "citad")
+            ipcas_paths, ipcas_names = _save_uploads(ipcas_files, luot / "ipcas")
+            hub_paths, hub_names = _save_uploads(hub_files, luot / "hub")
             citad_rows, citad_errors = parsers.parse_citad_files(citad_paths, ngay_cham)
             ipcas_rows, ipcas_errors = parsers.parse_ipcas_files(ipcas_paths, ngay_cham)
             hub_rows, hub_errors = parsers.parse_hub_files(hub_paths, ngay_cham)
         finally:
-            cleanup_citad()
-            cleanup_ipcas()
-            cleanup_hub()
+            temp_files.xoa(luot)
         errors = citad_errors + ipcas_errors + hub_errors
-        n_khop, lech = reconcile.run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows)
+        n_khop, lech, khop = reconcile.run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows)
         return (
             citad_rows, ipcas_rows, hub_rows, citad_names, ipcas_names, hub_names,
-            errors, n_khop, lech,
+            errors, n_khop, lech, khop,
         )
 
     (
         citad_rows, ipcas_rows, hub_rows, citad_names, ipcas_names, hub_names,
-        errors, n_khop, lech,
+        errors, n_khop, lech, khop,
     ) = await run_heavy(_blocking_parse_and_reconcile)
 
     if errors and not (citad_rows or ipcas_rows or hub_rows):
@@ -148,6 +162,12 @@ async def do_reconcile(
         "total_ipcas": len(ipcas_rows),
         "total_hub": len(hub_rows),
         "lech": lech,
+        # Chi tiết từng dòng ĐÃ khớp — chỉ để phục vụ nút "Xuất tất cả lệnh"
+        # (frontend giữ trong state, gửi lại /export-all, KHÔNG lưu vào lịch
+        # sử — bảng doi_soat_citad_history vẫn chỉ lưu `lech`, tránh phình
+        # dung lượng DB thêm ~1000 lần mỗi lượt chấm chỉ để phục vụ 1 nút
+        # xuất tùy chọn ít dùng).
+        "khop_rows": khop,
         "history_saved": history_saved,
         "history_error": history_error,
         # Vẫn còn rows đọc được nên không rơi vào nhánh 422 ở trên, nhưng
@@ -189,6 +209,44 @@ async def export_excel(
     content = await run_heavy(_build_doisoat_xlsx, lech, n_khop, ngay_cham)
 
     fname = _safe_filename(f"DoiSoat_CITAD_IPCAS_{ngay_cham.replace('/', '-')}.xlsx")
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+def _build_doisoat_xlsx_full(lech, khop_rows, ngay_cham) -> bytes:
+    """Như _build_doisoat_xlsx() nhưng gọi export_doiSoat_full() — xem
+    docstring hàm đó (lech.py::exporters) để biết khác biệt."""
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as out:
+        out_path = out.name
+    try:
+        exporters.export_doiSoat_full(lech, khop_rows, ngay_cham, out_path)
+        with open(out_path, "rb") as f:
+            return f.read()
+    finally:
+        os.remove(out_path)
+
+
+@router.post("/export-all")
+async def export_excel_all(
+    payload: ExportAllIn,
+    current: dict = Depends(require_feature("menu.doi_soat_citad")),
+):
+    """"Xuất tất cả lệnh" — cùng cơ chế với /export (frontend gửi lại đúng
+    kết quả /reconcile gần nhất đang giữ trong state, không upload lại
+    file), nhưng gồm ĐỦ cả 2 danh sách khớp + lệch (xem
+    ReconcileResultOut.khop_rows) thay vì chỉ lệch."""
+    ngay_cham = payload.ngay_cham
+    lech = payload.lech
+    khop_rows = payload.khop_rows
+    if not lech and not khop_rows:
+        raise HTTPException(400, "Chưa có dữ liệu đối soát để xuất")
+
+    content = await run_heavy(_build_doisoat_xlsx_full, lech, khop_rows, ngay_cham)
+
+    fname = _safe_filename(f"DoiSoat_CITAD_IPCAS_TatCa_{ngay_cham.replace('/', '-')}.xlsx")
     return Response(
         content=content,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

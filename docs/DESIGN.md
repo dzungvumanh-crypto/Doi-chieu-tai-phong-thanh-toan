@@ -47,6 +47,7 @@ Riêng `database is locked` chỉ log WARNING và bỏ qua, thử lại ở lầ
 |---|---|
 | `get_current_staff` | Tất cả đã đăng nhập |
 | `require_admin` | admin |
+| `require_admin_any` | admin, admin_l2 — **chỉ dùng cho `/api/groups`** (màn Phân quyền chức năng); cấp 2 còn bị `_chan_l2_tu_cap_quyen()` chặn ghi lên nhóm chứa chính mình và chặn tự thêm mình vào nhóm |
 | `require_hkv_or_above` | admin, hau_kiem_vien |
 | `require_pho_phong_or_above` | admin, hau_kiem_vien, truong_phong, pho_phong |
 | `require_handover_write` | admin, hau_kiem_vien, truong_phong, pho_phong, chuyen_vien |
@@ -130,14 +131,56 @@ Dùng `_download_headers(filename)` từ `backend/api/bundles.py` cho RFC 6266 C
 
 ## Đơn nghỉ phép bản PDF + chữ ký (`backend/services/leave_pdf.py`)
 ```
-docx (docxtpl) → [Word COM qua PowerShell] → PDF gốc (cache RAM theo nội dung)
-                                              ├→ pypdfium2 render → PNG xem trước
-                                              └→ pypdfium2 dán ảnh chữ ký → PDF tải về
+docx (docxtpl) → [Word thường trú qua PowerShell] → PDF gốc (cache RAM theo nội dung)
+                                                     ├→ pypdfium2 render → PNG xem trước
+                                                     └→ pypdfium2 dán ảnh chữ ký → PDF tải về
 ```
-- **Word chỉ chạy khi cache trượt** (5–7 giây/lần). Khoá cache = template + mtime + toàn bộ
-  ctx → đổi người duyệt/số ngày là tự dựng lại. Dán chữ ký ~0,02 giây nên mỗi lần ký thêm
-  KHÔNG gọi Word.
+- **Một bản Word chạy nền, dùng lại giữa các lần gọi** (`_WordServer` + `docx_pdf_server.ps1`).
+  Mở/đóng Word tốn ~3,6 giây còn chuyển một file chỉ ~0,25 giây — mở lại mỗi lần là tự trả
+  giá 3,6 giây đó cho từng người dùng. Đo: 4,1–6,5 giây → **0,32–0,39 giây/lượt**.
+- **Word chỉ chạy khi cache trượt.** Khoá cache = template + mtime + toàn bộ ctx → đổi người
+  duyệt/số ngày là tự dựng lại. Dán chữ ký ~0,02 giây nên mỗi lần ký thêm KHÔNG gọi Word.
 - `_word_lock` tuần tự hoá: hai request cùng lúc sẽ đẻ hai tiến trình WINWORD tranh nhau.
+- Word tự tắt khi rảnh `WORD_IDLE_SECONDS` (mặc định 900) và được thay bản mới sau
+  `WORD_MAX_JOBS` lượt (mặc định 100). `WORD_SERVER=0` quay về cách cũ (mở/đóng từng lần).
+- `POST /api/leaves/preview/warmup` bật sẵn Word lúc người dùng mở màn Nghỉ phép; trả lời
+  ngay, không đợi Word lên.
+- PID của WINWORD do mình sinh ra ghi ở `data/word_server.pid`; lần khởi động sau diệt bản
+  mồ côi (backend bị `taskkill /F` thì `atexit` không chạy). **Luôn kiểm tên chương trình
+  bằng `_la_winword()` trước khi diệt** — Windows cấp lại PID cho tiến trình khác.
+
+> Trong `docx_pdf_server.ps1` phải dùng `[Console]::Out.WriteLine()` + `Flush()`, **không**
+> `Write-Output`: `Write-Output` đi qua bộ định dạng của PowerShell và nằm lại trong bộ đệm,
+> Python đọc dòng sẽ chờ mãi — treo im lặng, không lỗi nào.
+
+> ### ⚠ Không bao giờ `Quit()` một bản Word đang có cửa sổ
+> Nếu bản Word ngầm là WINWORD **duy nhất** đang chạy trên máy, người vận hành double-click một
+> file `.docx` thì Windows điều tài liệu đó vào **đúng tiến trình của mình**. Đo được: PID không
+> đổi, `MainWindowHandle` từ `0` nhảy lên khác `0`, tiêu đề cửa sổ thành tên tài liệu của họ.
+> `Quit()` lúc đó **đóng tài liệu của họ**, và nếu `DisplayAlerts=0` thì đóng luôn không hỏi
+> "có lưu không" — mất bài đang gõ, không có cách lấy lại.
+>
+> Ba hàng rào, đừng gỡ cái nào:
+> 1. `DisplayAlerts` chỉ tắt **quanh `Open`/`SaveAs` của mình**, xong trả lại `-1` (wdAlertsAll).
+> 2. Lúc thoát chỉ `Quit()` khi `Documents.Count -eq 0` **và** `MainWindowHandle -eq 0`.
+>    Giữ lại thì **xoá luôn `word_server.pid`** để lần khởi động sau không diệt nhầm.
+> 3. `_kiem_truoc_khi_diet()` phía Python chặn mọi `taskkill` lên WINWORD có cửa sổ; tra không
+>    được cũng **không** bắn.
+>
+> Lỗi khi có lỗi phải đóng **đúng tài liệu của mình** (`$doc`), không quét sạch `Documents`.
+
+> ### ⚠ Word không làm việc ở phiên 0
+> Máy chủ **phải có người đăng nhập**. Chạy backend bằng Windows Service hoặc Task Scheduler
+> *"chạy cả khi không ai đăng nhập"* là rơi vào phiên 0 — đo được ở đó:
+> `New-Object -ComObject Word.Application` **thành công** (0,59 s), nhưng `Documents.Open()`
+> **trả `null` mà không ném lỗi**. Bước tạo COM chạy được nên nhìn qua tưởng Word ổn.
+>
+> `docx_pdf_server.ps1` bắt riêng trường hợp `$doc -eq $null` và ném thông báo nói thẳng
+> nguyên nhân — không có nó thì lỗi hiện ra là "You cannot call a method on a null-valued
+> expression", đọc xong không biết làm gì. Xem mục *Word đòi phiên đăng nhập trên máy chủ*
+> trong README.
+> Thứ tự ngược lại (người vận hành mở Word **trước**, backend bật sau) thì hai tiến trình tách
+> rời — an toàn sẵn, nhưng đó không phải thứ tự thường gặp vì backend chạy suốt ngày.
 - Toạ độ chữ ký tính bằng **mm từ góc TRÊN-TRÁI trang** (hệ của trình duyệt); `stamp()` lật
   trục y khi ghi vào PDF.
 - `leave_signatures.image` là **bản sao** ảnh lúc ký, không phải khoá ngoại sang

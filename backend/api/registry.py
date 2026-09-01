@@ -32,10 +32,15 @@ from backend.api.doi_chieu_song_phuong import router as doi_chieu_song_phuong_ro
 from backend.api.swift_recon import router as swift_recon_router
 from backend.api.ach import router as ach_router
 from backend.api.doi_chieu_citad import router as doi_chieu_citad_router
+from backend.api.doi_chieu_citad_nostro import router as doi_chieu_citad_nostro_router
 from backend.api.doi_soat_citad import router as doi_soat_citad_router
 from backend.api.ttqt_branches import router as ttqt_branches_router
+from backend.api.dtbb import router as dtbb_router
 from backend.api.so_truc import router as so_truc_router
-from backend.api.fs import router as fs_router
+from backend.api.attendance import router as attendance_router
+from backend.api.quiz import router as quiz_router
+from backend.api.vb_format import router as vb_format_router
+from backend.api.hr import router as hr_router
 
 # Thêm router mới: 1 dòng import ở trên + 1 tuple ở đây
 # Format: (router_object, {"prefix": "/api/...", "tags": ["..."]})
@@ -65,10 +70,15 @@ _ROUTERS = [
     (swift_recon_router, {}),
     (ach_router,             {}),
     (doi_chieu_citad_router, {}),
+    (doi_chieu_citad_nostro_router, {}),
     (doi_soat_citad_router, {}),
     (ttqt_branches_router, {}),
+    (dtbb_router, {"prefix": "/api/dtbb", "tags": ["dtbb"]}),
     (so_truc_router, {}),
-    (fs_router, {}),
+    (attendance_router,  {"prefix": "/api/attendance", "tags": ["attendance"]}),
+    (quiz_router,        {}),
+    (vb_format_router,   {}),
+    (hr_router,          {}),
 ]
 
 

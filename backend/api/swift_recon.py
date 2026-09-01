@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+from urllib.parse import quote
 
 import pandas as pd
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -49,6 +50,7 @@ from fastapi.responses import Response
 from backend.database import get_db
 from backend.core.concurrency import run_heavy
 from backend.core.deps import require_feature
+from backend.core.uploads import safe_filename
 from backend.schemas.swift_recon import ExportFilteredIn
 from backend.services.swift_recon import exporters, parsers, reconcile, template_exporters
 from backend.services.swift_recon.history_service import (
@@ -68,6 +70,38 @@ ACK_CHECK_DI = {
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
+def _dl_headers(filename: str) -> dict:
+    """Content-Disposition theo RFC 6266 — tên ASCII để lui về, kèm bản UTF-8."""
+    fallback = "".join(ch if ord(ch) < 128 and ch not in '\\"' else "_" for ch in filename)
+    return {
+        "Content-Disposition": (
+            f'attachment; filename="{fallback}"; '
+            f"filename*=UTF-8''{quote(filename, safe='')}"
+        )
+    }
+
+
+def _xuat_xlsx(ghi) -> bytes:
+    """Chạy `ghi(path)` để sinh Excel ra file tạm, trả bytes, LUÔN xoá file tạm.
+
+    try/finally chứ không phải `os.remove()` đặt sau lệnh ghi: hàm ghi ném lỗi
+    (dữ liệu bất thường, đĩa đầy, openpyxl vỡ) là file .xlsx nằm lại %TEMP%
+    vĩnh viễn — mỗi lượt xuất lỗi một file, không tiến trình nào dọn. Cùng lý
+    do đã ghi ở `backend/api/doi_soat_citad.py::_build_doisoat_xlsx`.
+    """
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as out:
+        out_path = out.name
+    try:
+        ghi(out_path)
+        with open(out_path, "rb") as f:
+            return f.read()
+    finally:
+        try:
+            os.remove(out_path)
+        except OSError:
+            pass
+
+
 def _load(upload: UploadFile, source: str) -> pd.DataFrame:
     """Lưu file (giải nén nếu là .zip) rồi parse đúng theo `source`
     ('SAA_DEN'|'QL_DEN'|'QL_DI'|'SAA_DI'). Luôn dọn file/thư mục tạm."""
@@ -302,13 +336,8 @@ async def export_summary(
         if summary_den is None and summary_di is None:
             raise HTTPException(400, "Chưa có dữ liệu đối chiếu nào để xuất")
 
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as out:
-            out_path = out.name
-        exporters.export_summary_excel(out_path, summary_den, summary_di)
-        with open(out_path, "rb") as f:
-            content = f.read()
-        os.remove(out_path)
-        return content
+        return _xuat_xlsx(
+            lambda p: exporters.export_summary_excel(p, summary_den, summary_di))
 
     try:
         content = await run_heavy(_work)
@@ -349,15 +378,9 @@ async def export_diff(
         if all(x is None for x in (saa_den_only, ql_den_only, ql_di_only, saa_di_only)):
             raise HTTPException(400, "Chưa có dữ liệu đối chiếu nào để xuất")
 
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as out:
-            out_path = out.name
-        exporters.export_diff_excel(
-            out_path, saa_den_only, ql_den_only, ql_di_only, saa_di_only, di_not_ack,
-        )
-        with open(out_path, "rb") as f:
-            content = f.read()
-        os.remove(out_path)
-        return content
+        return _xuat_xlsx(lambda p: exporters.export_diff_excel(
+            p, saa_den_only, ql_den_only, ql_di_only, saa_di_only, di_not_ack,
+        ))
 
     try:
         content = await run_heavy(_work)
@@ -397,12 +420,8 @@ async def export_summary_template(
     def _work() -> tuple[bytes, str]:
         direction, df_a, source_a, df_b, source_b = _pick_direction(saa_den, ql_den, ql_di, saa_di)
 
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as out:
-            out_path = out.name
-        template_exporters.export_summary_template(out_path, direction, df_a, source_a, df_b, source_b)
-        with open(out_path, "rb") as f:
-            content = f.read()
-        os.remove(out_path)
+        content = _xuat_xlsx(lambda p: template_exporters.export_summary_template(
+            p, direction, df_a, source_a, df_b, source_b))
         return content, direction
 
     try:
@@ -434,12 +453,8 @@ async def export_diff_template(
     def _work() -> tuple[bytes, str]:
         direction, df_a, source_a, df_b, source_b = _pick_direction(saa_den, ql_den, ql_di, saa_di)
 
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as out:
-            out_path = out.name
-        template_exporters.export_diff_template(out_path, direction, df_a, source_a, df_b, source_b)
-        with open(out_path, "rb") as f:
-            content = f.read()
-        os.remove(out_path)
+        content = _xuat_xlsx(lambda p: template_exporters.export_diff_template(
+            p, direction, df_a, source_a, df_b, source_b))
         return content, direction
 
     try:
@@ -474,19 +489,18 @@ async def export_filtered(
         if cols:
             df = df[cols]
 
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as out:
-            out_path = out.name
-        df.to_excel(out_path, index=False, sheet_name="BanGhiDangLoc")
-        with open(out_path, "rb") as f:
-            content = f.read()
-        os.remove(out_path)
-        return content
+        return _xuat_xlsx(
+            lambda p: df.to_excel(p, index=False, sheet_name="BanGhiDangLoc"))
 
     content = await run_heavy(_work)
     return Response(
         content=content,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{payload.filename}"'},
+        # `payload.filename` do trình duyệt gửi lên. Ghép thẳng vào header thì
+        # một dấu nháy kép trong tên là vỡ cú pháp Content-Disposition, còn chữ
+        # có dấu là 500 (header phải mã hoá được bằng latin-1). Dùng chung hàm
+        # dựng header RFC 6266 như mọi endpoint tải file khác.
+        headers=_dl_headers(safe_filename(payload.filename, "Ban_ghi_dang_loc.xlsx")),
     )
 
 
@@ -523,12 +537,8 @@ async def export_raw_from_history(
         df = pd.DataFrame(records)
         df = df[[c for c in df.columns if not c.startswith("_")]]  # bỏ cột nội bộ (_key, _msg_type...)
 
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as out:
-            out_path = out.name
-        df.to_excel(out_path, index=False, sheet_name="DuLieuDaImport")
-        with open(out_path, "rb") as f:
-            content = f.read()
-        os.remove(out_path)
+        content = _xuat_xlsx(
+            lambda p: df.to_excel(p, index=False, sheet_name="DuLieuDaImport"))
         return content, detail
 
     content, detail = await run_heavy(_work)
@@ -569,16 +579,11 @@ async def export_summary_from_history(
             raise HTTPException(404, "Không tìm thấy")
         summary_df = pd.DataFrame(detail["summary_records"])
 
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as out:
-            out_path = out.name
-        exporters.export_summary_excel(
-            out_path,
+        content = _xuat_xlsx(lambda p: exporters.export_summary_excel(
+            p,
             summary_den=summary_df if detail["recon_type"] == "den" else None,
             summary_di=summary_df if detail["recon_type"] == "di" else None,
-        )
-        with open(out_path, "rb") as f:
-            content = f.read()
-        os.remove(out_path)
+        ))
         return content, detail["recon_type"]
 
     content, recon_type = await run_heavy(_work)
@@ -607,22 +612,19 @@ async def export_diff_from_history(
         only_b = pd.DataFrame(detail["diff_b_only_records"])
         di_not_ack = pd.DataFrame(detail["di_not_ack_records"]) if detail["di_not_ack_records"] is not None else None
 
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as out:
-            out_path = out.name
-        if detail["recon_type"] == "den":
-            exporters.export_diff_excel(
-                out_path, saa_den_only=only_a, ql_den_only=only_b,
-                ql_di_only=None, saa_di_only=None, di_matched_not_ack=None,
-            )
-        else:
-            exporters.export_diff_excel(
-                out_path, saa_den_only=None, ql_den_only=None,
-                ql_di_only=only_a, saa_di_only=only_b, di_matched_not_ack=di_not_ack,
-            )
-        with open(out_path, "rb") as f:
-            content = f.read()
-        os.remove(out_path)
-        return content, detail["recon_type"]
+        def _ghi(p):
+            if detail["recon_type"] == "den":
+                exporters.export_diff_excel(
+                    p, saa_den_only=only_a, ql_den_only=only_b,
+                    ql_di_only=None, saa_di_only=None, di_matched_not_ack=None,
+                )
+            else:
+                exporters.export_diff_excel(
+                    p, saa_den_only=None, ql_den_only=None,
+                    ql_di_only=only_a, saa_di_only=only_b, di_matched_not_ack=di_not_ack,
+                )
+
+        return _xuat_xlsx(_ghi), detail["recon_type"]
 
     content, recon_type = await run_heavy(_work)
     fname = f"Chi_tiet_lech_doi_chieu_Dien{recon_type.upper()}_lichsu_{history_id}.xlsx"

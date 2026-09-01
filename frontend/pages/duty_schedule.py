@@ -140,7 +140,7 @@ async def duty_schedule_page():
     can_write        = any([can_generate, can_confirm, can_delete, can_export,
                             can_manage_staff, can_manage_cfg])
 
-    _sidebar("duty_schedule")
+    await _sidebar("duty_schedule")
     with _content_area():
         _page_header("Phân lịch trực", "Phân ca trực Phòng Thanh toán theo tuần")
 

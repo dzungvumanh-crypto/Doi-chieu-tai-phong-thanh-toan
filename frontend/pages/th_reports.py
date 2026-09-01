@@ -10,7 +10,7 @@ from frontend.shared import (
 
 
 @ui.page("/th_reports")
-def th_reports_page():
+async def th_reports_page():
     if not _require_auth():
         return
     if not api.has_feature("menu.th_reports"):
@@ -26,7 +26,7 @@ def th_reports_page():
     today = date.today()
 
     with ui.row().classes("w-full"):
-        _sidebar("th_reports")
+        await _sidebar("th_reports")
         with _content_area():
             _page_header(
                 "Báo cáo dữ liệu thanh toán",

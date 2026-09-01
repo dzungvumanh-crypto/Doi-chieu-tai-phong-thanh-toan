@@ -130,7 +130,7 @@ def _date_filter_input(label: str):
 
 
 @ui.page("/so_truc")
-def so_truc_page(request: _StarletteRequest):
+async def so_truc_page(request: _StarletteRequest):
     if not _require_auth():
         return
     if not api.has_feature("menu.so_truc"):
@@ -866,10 +866,10 @@ def so_truc_page(request: _StarletteRequest):
         """Tab "Lịch sử" — liệt kê mọi dòng trong so_truc_records (bảng tự
         thân đã là lịch sử, xem docstring so_truc_service.py); 1 ngày có thể
         có NHIỀU dòng nếu từng bị "huỷ" rồi mở phiên trực mới. KHÔNG lọc gì
-        thì chỉ hiện ĐÚNG 1 dòng gần nhất (xem get_history() trong service)
-        — bấm lọc theo khoảng ngày mới hiện đầy đủ lịch sử."""
+        thì hiện TOÀN BỘ (xem get_history() trong service) — chọn khoảng
+        ngày để thu hẹp khi cần."""
         ui.label(
-            "Mặc định chỉ hiện phiên trực gần nhất — chọn khoảng ngày rồi bấm \"Lọc\" để xem đầy đủ lịch sử."
+            "Không chọn khoảng ngày sẽ hiện toàn bộ lịch sử — lọc theo khoảng ngày để thu hẹp."
         ).classes("text-xs text-gray-500 mb-2")
         with ui.row().classes("w-full items-end gap-3 flex-wrap mb-2"):
             tu_input = _date_filter_input("Từ ngày")
@@ -941,7 +941,20 @@ def so_truc_page(request: _StarletteRequest):
                         ui.label("KSV").classes("w-40 border-r border-white/30 pr-2 mr-2")
                         ui.label("Trạng thái").classes("w-44 border-r border-white/30 pr-2 mr-2")
                         ui.label("Cập nhật lúc").classes("flex-1")
+                    # Dòng ngăn cách xanh mỗi khi sang tháng khác — rows đã sắp
+                    # `truc_date DESC` (ISO yyyy-mm-dd) nên chỉ cần so 7 ký tự
+                    # đầu (yyyy-mm) đổi giữa 2 dòng liên tiếp là biết sang tháng.
+                    current_month = None
                     for i, r in enumerate(rows, start=1):
+                        month_key = r["truc_date"][:7]
+                        if month_key != current_month:
+                            current_month = month_key
+                            y, m = month_key.split("-")
+                            with ui.row().classes(
+                                "w-full items-center px-3 py-1.5 bg-emerald-400"
+                                + ("" if i == 1 else " border-t border-gray-200")
+                            ):
+                                ui.label(f"{int(m)}/{y}").classes("text-xs font-bold text-emerald-950")
                         _history_row(r, is_last=(i == len(rows)))
 
         def _history_row(r: dict, is_last: bool):
@@ -1035,7 +1048,7 @@ def so_truc_page(request: _StarletteRequest):
         ui.timer(0.1, load_history, once=True)
 
     with ui.row().classes("w-full"):
-        _sidebar("so_truc")
+        await _sidebar("so_truc")
         with _content_area():
             _navy_header(
                 "SỔ TRỰC CUỐI NGÀY",

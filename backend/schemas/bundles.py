@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional, List
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from .common import DepartmentOut
 from .staff import StaffOut
@@ -29,6 +29,11 @@ class StorageViewUpdateRow(BaseModel):
 
 class StorageViewUpdateRequest(BaseModel):
     rows: List[StorageViewUpdateRow]
+    # Chỉ cần cho dòng mới hoàn toàn (không có bundle_ids) — tháng chưa có tập nào
+    # thì không suy ra được phòng/tháng từ tập nào cả.
+    department_id: Optional[int] = None
+    year: Optional[int] = None
+    month: Optional[int] = None
 
 
 # ─── Storage Summary (toàn bộ phòng theo năm) ────────────────────────────────
@@ -58,7 +63,7 @@ class BundleItemOut(BaseModel):
     id: int
     entry_id: int
     entry: Optional[DocumentEntryOut] = None
-    class Config: from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class BundleOut(BaseModel):
     id: int
@@ -71,7 +76,7 @@ class BundleOut(BaseModel):
     cover_printed_at: Optional[datetime]
     status: str
     items: List[BundleItemOut] = []
-    class Config: from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class BundleGroupOut(BaseModel):
     id: int
@@ -82,7 +87,7 @@ class BundleGroupOut(BaseModel):
     department: Optional[DepartmentOut] = None
     bundles: List[BundleOut] = []
     created_by_staff: Optional[StaffOut] = None
-    class Config: from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class BundleGenerateRequest(BaseModel):
     department_id: int

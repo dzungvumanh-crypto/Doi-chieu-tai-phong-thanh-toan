@@ -26,17 +26,40 @@ hai kiểm tra nữa, để cấu hình bảo mật của máy chính không ph�
 Hệ thống test (`deploy-test.bat`, cổng 9000) KHÔNG truyền cờ này: nó auto-fix
 không hỏi, nên siết ở đó sẽ âm thầm tắt `/docs` đúng nơi cần `/docs` để gỡ lỗi.
 
+Ngoài ba biến trên còn một nhóm thứ hai: biến mà script **cảnh báo được nhưng không
+sửa được**, vì giá trị đúng nằm ngoài phần mềm. Hiện có `DOI_CHIEU_ZIP_PASSWORD` —
+mật khẩu do đơn vị cấp file đặt, không sinh bừa được. Nhóm này cần tồn tại vì:
+
+* `.env` không nằm trong git và `deploy.bat` cố ý không chép đè nó, nên biến mới
+  thêm vào giữa vòng đời hệ thống KHÔNG tự sang máy đích.
+* `start.bat` vá được `STORAGE_SECRET` và `BACKUP_PASSWORD` chỉ vì hai giá trị đó
+  do chính phần mềm sinh ra. Mật khẩu của bên ngoài thì không có đường nào tự vá.
+
+Đã xảy ra thật 21/08/2026: máy chính chạy Đối chiếu ACH, đọc Excel 67,8 giây rồi
+dừng vì thiếu đúng dòng đó. Deploy trước đó không nhắc một chữ nào.
+
 Dùng:
     python deploy_env_check.py <đường-dẫn-.env> <cổng-backend> check [--siet-bao-mat]
     python deploy_env_check.py <đường-dẫn-.env> <cổng-backend> fix   [--siet-bao-mat]
 
-Mã thoát: 0 = không có gì phải sửa (hoặc đã sửa xong), 1 = cần sửa, 2 = lỗi.
+Mã thoát: 0 = sạch, 1 = cần sửa, 2 = lỗi, 3 = không phải sửa gì nhưng CÓ cảnh báo.
+Vừa cần sửa vừa có cảnh báo thì trả 1 (cảnh báo đã in ra màn hình rồi) — batch so
+sánh errorlevel theo kiểu >=, nên deploy.bat phải xét 3 TRƯỚC 2 và 2 trước 1.
 """
 import io
 import os
 import sys
 
 DUNG_URL_MAU = "http://127.0.0.1:{port}"
+
+# Bien khong tu sinh duoc -> chi canh bao, khong bao gio tu dien.
+# (khoa, hau qua khi thieu)
+CHI_CANH_BAO = [
+    ("DOI_CHIEU_ZIP_PASSWORD",
+     "Doi chieu ACH / Cham 459901 / Doi chieu Song phuong se dung o buoc giai nen"),
+    ("CHAM459901_FOLDER_ROOTS",
+     "Cham 459901 khoa che do Chon thu muc server (tai file len van chay)"),
+]
 
 
 def _doc(path: str) -> list:
@@ -119,18 +142,38 @@ def main() -> int:
         elif v_env.lower() != "production":
             can_sua.append(("ENV", v_env, "production", "tat /docs, /redoc, /openapi.json"))
 
+    # ── Nhom chi canh bao ────────────────────────────────────────────────────
+    # Kiem ca hai che do (co siet hay khong): thieu mat khau ZIP thi he thong
+    # test cung hong dung ba chuc nang do, khong lien quan gi den bao mat.
+    canh_bao = []
+    for khoa, hau_qua in CHI_CANH_BAO:
+        _, gia_tri = _gia_tri(dong, khoa)
+        if not (gia_tri or "").strip():          # thieu han HOAC co dong nhung de trong
+            canh_bao.append((khoa, hau_qua))
+
+    def _in_canh_bao():
+        if not canh_bao:
+            return
+        print("  [CANH BAO] .env tren may dich thieu bien phai GO TAY:")
+        for khoa, hau_qua in canh_bao:
+            print(f"      {khoa}  -- thieu thi {hau_qua}.")
+        print("      Script nay KHONG tu dien duoc: gia tri do ben ngoai cap, khong sinh bua duoc.")
+        print("      Mo .env tren may dich, them dong  <TEN_BIEN>=<gia tri>  roi khoi dong lai.")
+
     if not can_sua:
         thong_tin = f"BACKEND_URL={v_url}, BACKEND_HOST={v_host}"
         if siet:
             thong_tin += f", ENV={v_env}"
         print(f"  [OK] .env dung: {thong_tin}")
-        return 0
+        _in_canh_bao()
+        return 3 if canh_bao else 0
 
     print("  [CAN SUA] .env tren may dich:")
     for khoa, cu, moi, ly_do in can_sua:
         print(f"      {khoa}: {cu}  ->  {moi}   ({ly_do})")
 
     if che_do != "fix":
+        _in_canh_bao()
         return 1
 
     # ── Sửa: chỉ đụng đúng dòng cần đổi, giữ nguyên mọi thứ khác ─────────────
@@ -156,7 +199,8 @@ def main() -> int:
     if siet:
         print("      Cong backend chi con nghe trong may. Neu co may tram tro Extension CITAD")
         print("      vao dia chi co :8000 thi vao /doi_chieu_citad bam 'Tao ma ket noi moi'.")
-    return 0
+    _in_canh_bao()
+    return 3 if canh_bao else 0
 
 
 if __name__ == "__main__":

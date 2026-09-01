@@ -16,7 +16,10 @@ from backend.database import DB_PATH, get_db, write_audit, compute_annual_leave,
 _DEPT_HISTORY_EPOCH = "2000-01-01"
 from backend.schemas.staff import StaffCreate, StaffUpdate, StaffOut
 from backend.core.security import get_password_hash
-from backend.core.deps import get_current_staff, require_feature
+from backend.core.uploads import read_limited, read_limited_sync
+from backend.core.deps import get_current_staff, require_feature, TONG_HOP_CODES
+from backend.core.enums import ROLE_RANK, VALID_ROLES
+from backend.core.net import client_ip as _client_ip
 
 router = APIRouter(prefix="/api/staff", tags=["Staff"])
 
@@ -24,6 +27,51 @@ router = APIRouter(prefix="/api/staff", tags=["Staff"])
 _ADMIN_ROLES = frozenset(("admin", "admin_l2"))
 # Role được xem toàn bộ nhân viên không bị giới hạn phòng
 _BROAD_VIEW_ROLES = frozenset(("admin", "admin_l2", "hau_kiem_vien", "giam_doc", "pho_giam_doc"))
+# Cột do tính năng Nghỉ phép làm chủ — /import-db không đè lên tài khoản đã có
+_COT_NGHI_PHEP = frozenset(("used_leave_days", "annual_leave_days", "carryover_notice_year"))
+
+
+def _chan_leo_thang_quyen(current: dict, role_moi, row_cu=None) -> None:
+    """Chặn người dùng tự nâng mình — hoặc nâng người khác — lên quyền cao hơn.
+
+    Trước đây chỗ này chỉ có đúng một luật: "QTV cấp 2 không được đụng QTV cấp
+    1". Nghĩa là rào chắn nằm ở CHỖ AI ĐANG ĐƯỢC GÁN feature `staff.edit`, chứ
+    không nằm trong mã. Ai được cấp feature đó — kể cả một chuyên viên — đều gọi
+    được `PUT /api/staff/{id_của_chính_mình}` với `role: "admin"` và trở thành
+    quản trị viên toàn quyền. Hiện tại feature mới chỉ nằm ở nhóm quản trị nên
+    chưa ai khai thác được, nhưng đó là may chứ không phải thiết kế.
+
+    Giữ NGUYÊN cách hành xử của admin và admin_l2 (đang chạy tốt, đổi là gãy
+    việc quản trị hằng ngày); chỉ siết những vai trò còn lại theo bậc quyền
+    trong docs/DESIGN.md: chỉ được thao tác với vai trò THẤP HƠN mình.
+    Bậc bằng nhau cũng bị chặn — đó chính là trường hợp tự sửa vai trò mình.
+    """
+    # QTV cấp 1: toàn quyền, như cũ.
+    if current["role"] == "admin":
+        return
+
+    # QTV cấp 2: giữ nguyên hai luật cũ.
+    if current["role"] == "admin_l2":
+        if row_cu is not None and row_cu["role"] == "admin":
+            raise HTTPException(403, "Quản trị viên cấp 2 không được sửa tài khoản Quản trị viên cấp 1")
+        if role_moi == "admin":
+            raise HTTPException(
+                403, "Quản trị viên cấp 2 không được nâng lên Quản trị viên cấp 1")
+        return
+
+    # Mọi vai trò khác có feature staff.create / staff.edit.
+    bac_minh = ROLE_RANK.get(current["role"], 0)
+    if row_cu is not None:
+        bac_cu = ROLE_RANK.get(row_cu["role"], 0)
+        if bac_cu >= bac_minh:
+            raise HTTPException(
+                403,
+                "Không được sửa tài khoản có vai trò ngang hoặc cao hơn mình"
+                + (" (kể cả tài khoản của chính mình)" if row_cu["id"] == current["id"] else ""),
+            )
+    if role_moi is not None and ROLE_RANK.get(role_moi, 0) >= bac_minh:
+        raise HTTPException(
+            403, "Không được gán vai trò ngang hoặc cao hơn vai trò của mình")
 
 _ROLE_ORDER_SQL = """
     CASE role
@@ -55,6 +103,26 @@ def _validate_dept(db: sqlite3.Connection, role: str, department_id):
         raise HTTPException(400, "Giám đốc / Phó Giám đốc phải thuộc Ban Giám đốc")
 
 
+def _pham_vi_rong(current: dict, db: sqlite3.Connection) -> bool:
+    """Người này có được xem hồ sơ cán bộ NGOÀI phòng mình không?
+
+    Tách khỏi `list_staff()` vì `get_staff()` cần đúng luật ấy: trước đây
+    danh sách thì lọc theo phòng, còn lấy từng người chỉ cần đăng nhập — đếm
+    id từ 1 đến N là gom được số điện thoại, email, mã IPCAS, tên đăng nhập
+    Payment của toàn cơ quan, đi vòng qua đúng cái lọc vừa đặt.
+    """
+    if current["role"] in _BROAD_VIEW_ROLES:
+        return True
+    # Nhân viên phòng Tổng hợp cần xem GĐ/PGĐ để chọn người duyệt tiếp
+    dept_id = current.get("department_id")
+    if not dept_id:
+        return False
+    dept_row = db.execute(
+        "SELECT code FROM departments WHERE id = ?", (dept_id,)
+    ).fetchone()
+    return bool(dept_row and dept_row["code"].upper() in TONG_HOP_CODES)
+
+
 @router.get("/", response_model=List[StaffOut])
 def list_staff(
     active_only: bool = True,
@@ -68,13 +136,7 @@ def list_staff(
         clauses.append("is_active = 1")
 
     # ── Scope theo role ──
-    is_broad = current["role"] in _BROAD_VIEW_ROLES
-    if not is_broad:
-        # Kiểm tra có phải nhân viên phòng Tổng hợp không (cần xem GĐ/PGĐ để chọn approver)
-        dept_row = db.execute(
-            "SELECT code FROM departments WHERE id = ?", (current.get("department_id"),)
-        ).fetchone() if current.get("department_id") else None
-        is_broad = bool(dept_row and dept_row["code"].upper() in ("TH", "TONGHOP", "TONG_HOP"))
+    is_broad = _pham_vi_rong(current, db)
 
     if not is_broad:
         # truong_phong / pho_phong / chuyen_vien: chỉ xem phòng mình
@@ -111,8 +173,9 @@ _ROLE_VN = {
 
 @router.get("/export")
 def export_staff_excel(
+    request: Request,
     db: sqlite3.Connection = Depends(get_db),
-    _: dict = Depends(require_feature("staff.export")),
+    current: dict = Depends(require_feature("staff.export")),
 ):
     import openpyxl
     from openpyxl.styles import Alignment, Font, PatternFill
@@ -167,6 +230,12 @@ def export_staff_excel(
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
+    # Mang cả bảng nhân sự ra ngoài — phải để lại vết. AuditMiddleware chỉ ghi
+    # POST/PUT/PATCH/DELETE và còn bỏ qua hẳn tiền tố /api/staff, nên nếu ở đây
+    # không tự ghi thì việc này KHÔNG xuất hiện ở bất kỳ nhật ký nào.
+    write_audit(db, current["id"], "staff_export", "staff", None,
+                f"Xuất danh sách {len(rows)} cán bộ ra Excel", _client_ip(request))
+    db.commit()
     fname = f"danh_sach_can_bo_{date.today().strftime('%Y%m%d')}.xlsx"
     return StreamingResponse(
         buf,
@@ -176,8 +245,27 @@ def export_staff_excel(
 
 
 @router.get("/export-db")
-def export_users_db(_: dict = Depends(require_feature("staff.export"))):
-    """Xuất bảng user_tttt thành file SQLite để chép sang hệ thống khác."""
+def export_users_db(
+    request: Request,
+    db: sqlite3.Connection = Depends(get_db),
+    current: dict = Depends(require_feature("staff.export")),
+):
+    """Xuất bảng user_tttt thành file SQLite để chép sang hệ thống khác.
+
+    File này chứa NGUYÊN cột `pwd_hash` — đó là chủ đích, vì mục đích của nó là
+    chuyển người dùng sang hệ thống khác mà không bắt ai đặt lại mật khẩu. Hệ
+    quả: ai cầm được file là cầm toàn bộ mã băm mật khẩu để dò ngoại tuyến.
+
+    Vì thế hai lớp chặn, không phải một:
+      - Chỉ quản trị viên (cấp 1 hoặc cấp 2) được gọi, dù feature `staff.export`
+        có trót được gán cho nhóm nào khác đi nữa.
+      - Luôn ghi một dòng nhật ký. Đây là GET nên AuditMiddleware không đụng tới.
+    """
+    if current["role"] not in _ADMIN_ROLES:
+        raise HTTPException(
+            403,
+            "Chỉ quản trị viên được xuất file DB người dùng — file này chứa mã băm mật khẩu.",
+        )
     tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
     tmp.close()
     try:
@@ -202,6 +290,13 @@ def export_users_db(_: dict = Depends(require_feature("staff.export"))):
     finally:
         os.unlink(tmp.name)
 
+    # _client_ip(): request.client.host luôn là 127.0.0.1 vì frontend gọi
+    # backend qua loopback — IP thật của trình duyệt nằm ở X-Client-IP.
+    write_audit(db, current["id"], "staff_export_db", "staff", None,
+                f"Xuất file DB người dùng ({len(rows_db)} tài khoản, GỒM mã băm mật khẩu)",
+                _client_ip(request))
+    db.commit()
+
     from datetime import date as _date
     fname_db = f"users_{_date.today().strftime('%Y%m%d')}.db"
     return StreamingResponse(
@@ -222,11 +317,18 @@ def _enrich(row: dict) -> dict:
 def get_staff(
     staff_id: int,
     db: sqlite3.Connection = Depends(get_db),
-    _: dict = Depends(get_current_staff),
+    current: dict = Depends(get_current_staff),
 ):
     row = db.execute("SELECT * FROM user_tttt WHERE id = ?", (staff_id,)).fetchone()
     if not row:
         raise HTTPException(404, "Không tìm thấy cán bộ")
+    # Cùng luật với GET /api/staff/ — xem _pham_vi_rong(). Người không có phạm
+    # vi rộng chỉ xem được người cùng phòng (và chính mình).
+    if (row["id"] != current["id"]
+            and current.get("department_id")
+            and row["department_id"] != current["department_id"]
+            and not _pham_vi_rong(current, db)):
+        raise HTTPException(403, "Không có quyền xem thông tin cán bộ ngoài phòng mình")
     return _enrich(dict(row))
 
 
@@ -242,9 +344,7 @@ def create_staff(
     emp_code = body.employee_code or body.username
     if db.execute("SELECT id FROM user_tttt WHERE employee_code = ?", (emp_code,)).fetchone():
         raise HTTPException(400, "Mã nhân viên đã tồn tại")
-    # QTV cấp 2 không được tạo QTV cấp 1 (tránh leo thang quyền)
-    if current["role"] == "admin_l2" and body.role == "admin":
-        raise HTTPException(403, "Quản trị viên cấp 2 không được tạo Quản trị viên cấp 1")
+    _chan_leo_thang_quyen(current, body.role)
     # Admin (cấp 1 + cấp 2) không thuộc phòng nào → ép department_id về None dù client có gửi
     dept_id = None if body.role in _ADMIN_ROLES else body.department_id
     _validate_dept(db, body.role, dept_id)
@@ -285,13 +385,8 @@ def update_staff(
     row = db.execute("SELECT * FROM user_tttt WHERE id = ?", (staff_id,)).fetchone()
     if not row:
         raise HTTPException(404, "Không tìm thấy cán bộ")
-    # QTV cấp 2 không được đụng tài khoản cấp 1, cũng không được nâng ai lên cấp 1
-    if current["role"] == "admin_l2":
-        if row["role"] == "admin":
-            raise HTTPException(403, "Quản trị viên cấp 2 không được sửa tài khoản Quản trị viên cấp 1")
-        if body.role == "admin":
-            raise HTTPException(403, "Quản trị viên cấp 2 không được nâng lên Quản trị viên cấp 1")
-    update_data = body.dict(exclude_none=True)
+    _chan_leo_thang_quyen(current, body.role, row)
+    update_data = body.model_dump(exclude_none=True)
     # Serialize date object → ISO string cho sqlite3
     if "join_industry_date" in update_data and update_data["join_industry_date"]:
         update_data["join_industry_date"] = update_data["join_industry_date"].isoformat()
@@ -338,11 +433,12 @@ def delete_staff(
 ):
     if staff_id == current["id"]:
         raise HTTPException(400, "Không thể xóa tài khoản của chính mình")
-    row = db.execute("SELECT username, full_name, role FROM user_tttt WHERE id = ?", (staff_id,)).fetchone()
+    # `id` phải có trong SELECT: _chan_leo_thang_quyen() đọc nó để nói rõ
+    # "kể cả tài khoản của chính mình" trong thông báo từ chối.
+    row = db.execute("SELECT id, username, full_name, role FROM user_tttt WHERE id = ?", (staff_id,)).fetchone()
     if not row:
         raise HTTPException(404, "Không tìm thấy cán bộ")
-    if current["role"] == "admin_l2" and row["role"] == "admin":
-        raise HTTPException(403, "Quản trị viên cấp 2 không được xóa tài khoản Quản trị viên cấp 1")
+    _chan_leo_thang_quyen(current, None, row)
     db.execute("UPDATE user_tttt SET is_deleted = 1, is_active = 0 WHERE id = ?", (staff_id,))
     client_ip = request.client.host if request.client else "unknown"
     write_audit(db, current["id"], "staff_delete", "staff", staff_id,
@@ -358,10 +454,35 @@ def import_users_db(
     db: sqlite3.Connection = Depends(get_db),
     current: dict = Depends(require_feature("staff.import_db")),
 ):
-    """Nhập bảng user_tttt từ file SQLite xuất bởi hệ thống cùng schema."""
+    """Nhập bảng user_tttt từ file SQLite xuất bởi hệ thống cùng schema.
+
+    Cặp đôi với `/export-db`, nên file mang theo NGUYÊN `pwd_hash` và `role`:
+    ai gọi được endpoint này là đặt được mật khẩu VÀ vai trò cho bất kỳ ai —
+    kể cả tự nâng mình lên `admin`. Vì thế chặn theo VAI TRÒ THẬT chứ không chỉ
+    theo feature, y hệt lý do đã ghi ở `/export-db`.
+
+    Ba thứ trong file cố ý KHÔNG được tin:
+      - `role` sai chính tả → tài khoản rớt khỏi mọi kiểm tra quyền (xem
+        `_kiem_tra_role` trong schemas/staff.py) → bỏ dòng, báo lại.
+      - `department_id` trỏ vào phòng không tồn tại → bỏ dòng, báo lại. Nhờ vậy
+        không cần tắt kiểm tra khoá ngoại nữa: bản cũ tắt `foreign_keys` rồi ghi
+        bừa, để lại đúng loại dữ liệu hỏng mà `StaffOut._null_la_khoa` đang phải
+        chữa cháy.
+      - Số liệu phép của tài khoản ĐÃ CÓ (xem `_COT_NGHI_PHEP`) — đó là dữ liệu
+        của tính năng Nghỉ phép, nơi có batch + rollback riêng. Nhập file cũ đè
+        lên là xoá sổ ngày phép đã dùng của cả cơ quan mà không hoàn tác được.
+        Tài khoản MỚI thì vẫn lấy — di trú người sang thì số liệu đi theo người.
+    """
+    if current["role"] not in _ADMIN_ROLES:
+        raise HTTPException(
+            403,
+            "Chỉ quản trị viên được nhập file DB người dùng — file này đặt được "
+            "mật khẩu và vai trò cho mọi tài khoản.",
+        )
+
     tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
     try:
-        tmp.write(file.file.read())
+        tmp.write(read_limited_sync(file, ten="File DB người dùng"))
         tmp.close()
         imp = sqlite3.connect(tmp.name)
         imp.row_factory = sqlite3.Row
@@ -375,34 +496,80 @@ def import_users_db(
 
     cols = list(rows[0].keys())
     non_id_cols = [c for c in cols if c != "id"]
+    dept_ids = {r["id"] for r in db.execute("SELECT id FROM departments").fetchall()}
+
     inserted = updated = 0
-    db.execute("PRAGMA foreign_keys = OFF")
+    bo_qua: list[str] = []
+
     for row in rows:
+        ma = row["employee_code"] if "employee_code" in cols else None
+        if not ma:
+            # Cột này là khoá đối chiếu duy nhất và NOT NULL UNIQUE trong lược đồ.
+            # Không chặn ở đây thì INSERT ném IntegrityError → 500 giữa mẻ.
+            bo_qua.append("(dòng không có mã cán bộ)")
+            continue
         existing = db.execute(
-            "SELECT id FROM user_tttt WHERE employee_code = ?", (row["employee_code"],)
+            "SELECT id, role FROM user_tttt WHERE employee_code = ?", (ma,)
         ).fetchone()
-        vals = [row[c] for c in non_id_cols]
+
+        # ── Validate từng dòng — dòng hỏng bị bỏ, không làm hỏng cả mẻ ──
+        role_moi = row["role"] if "role" in cols else None
+        if role_moi is not None and role_moi not in VALID_ROLES:
+            bo_qua.append(f"{ma}: vai trò '{role_moi}' không hợp lệ")
+            continue
+        if current["role"] == "admin_l2" and (
+            role_moi == "admin" or (existing and existing["role"] == "admin")
+        ):
+            bo_qua.append(f"{ma}: QTV cấp 2 không được đụng tài khoản QTV cấp 1")
+            continue
+        dept = row["department_id"] if "department_id" in cols else None
+        if dept not in (None, ""):
+            # int(): SQLite không ép kiểu, file do người khác chỉnh tay có thể
+            # để id phòng dưới dạng chuỗi — "1" != 1 sẽ loại nhầm cả mẻ dữ liệu đúng
+            try:
+                dept = int(dept)
+            except (TypeError, ValueError):
+                bo_qua.append(f"{ma}: phòng ban '{dept}' không phải số")
+                continue
+            if dept not in dept_ids:
+                bo_qua.append(f"{ma}: phòng ban id={dept} không tồn tại trên hệ thống này")
+                continue
+
+        vals = {c: row[c] for c in non_id_cols}
+        if "department_id" in vals:
+            vals["department_id"] = dept if dept not in (None, "") else None
+        # NULL lọt vào is_active là nguồn của validator vá lỗi ở StaffOut — chặn tại đây
+        if "is_active" in vals and vals["is_active"] is None:
+            vals["is_active"] = 0
+
         if existing:
-            sets = ", ".join(f"{c} = ?" for c in non_id_cols if c != "employee_code")
-            set_vals = [row[c] for c in non_id_cols if c != "employee_code"]
+            ghi = [c for c in non_id_cols
+                   if c != "employee_code" and c not in _COT_NGHI_PHEP]
+            if not ghi:
+                bo_qua.append(f"{ma}: file không có cột nào được phép cập nhật")
+                continue
+            sets = ", ".join(f"{c} = ?" for c in ghi)
             db.execute(
                 f"UPDATE user_tttt SET {sets} WHERE employee_code = ?",
-                set_vals + [row["employee_code"]],
+                [vals[c] for c in ghi] + [ma],
             )
             updated += 1
         else:
             ph = ",".join("?" * len(non_id_cols))
             db.execute(
-                f"INSERT INTO user_tttt ({','.join(non_id_cols)}) VALUES ({ph})", vals
+                f"INSERT INTO user_tttt ({','.join(non_id_cols)}) VALUES ({ph})",
+                [vals[c] for c in non_id_cols],
             )
             inserted += 1
-    db.execute("PRAGMA foreign_keys = ON")
+
     db.commit()
-    client_ip = request.client.host if request and request.client else "unknown"
-    write_audit(db, current["id"], "staff_import_db", "staff", None,
-                f"Import DB: +{inserted} mới, ~{updated} cập nhật", client_ip)
+    chi_tiet = f"Import DB: +{inserted} mới, ~{updated} cập nhật"
+    if bo_qua:
+        chi_tiet += f", bỏ qua {len(bo_qua)} dòng ({'; '.join(bo_qua[:5])}"
+        chi_tiet += " …)" if len(bo_qua) > 5 else ")"
+    write_audit(db, current["id"], "staff_import_db", "staff", None, chi_tiet, _client_ip(request))
     db.commit()
-    return {"inserted": inserted, "updated": updated}
+    return {"inserted": inserted, "updated": updated, "skipped": bo_qua}
 
 
 # ─── Nhập Ngày vào ngành hàng loạt từ Excel ─────────────────────────────────
@@ -509,7 +676,8 @@ async def import_join_dates(
     if not (file.filename or "").lower().endswith((".xlsx", ".xlsm")):
         raise HTTPException(400, "Chỉ nhận file Excel .xlsx")
 
-    items = await run_heavy(_parse_join_date_workbook, await file.read())
+    items = await run_heavy(_parse_join_date_workbook,
+                            await read_limited(file, ten="File Excel ngày vào ngành"))
     if not items:
         raise HTTPException(400, "Không đọc được dòng dữ liệu nào trong file")
 

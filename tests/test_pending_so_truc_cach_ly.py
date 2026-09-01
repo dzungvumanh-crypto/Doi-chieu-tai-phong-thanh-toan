@@ -46,14 +46,15 @@ CREATE TABLE so_truc_records (
     ksv_decided_by INTEGER, reject_reason TEXT, gdv_decided_by INTEGER,
     created_at DATETIME, updated_at DATETIME
 );
-INSERT INTO departments (id, code, name) VALUES (1, 'KSNB', 'Phòng KSNB');
+INSERT INTO departments (id, code, name) VALUES
+    (1, 'KSNB', 'Phòng KSNB'), (2, 'TH', 'Phòng Tổng hợp');
 INSERT INTO handovers (id, department_id) VALUES (1, 1);
 INSERT INTO document_entries (id, handover_id, staff_id, entry_status, entered_by_id, transaction_date)
 VALUES (1, 1, 5, 'pending_confirm', 5, '2026-08-20');
 INSERT INTO user_tttt (id, full_name, ipcas_code, department_id) VALUES
-    (5, 'Chuyên viên A', 'CV05', 1), (7, 'Hậu kiểm viên', 'HK07', 1);
+    (5, 'Chuyên viên TH', 'CV05', 2), (7, 'Trưởng phòng', 'TP07', 1);
 INSERT INTO leave_records (id, status, ksv_approver_id, staff_id, start_date, end_date, leave_type, reason)
-VALUES (1, 'pending_ksv', 7, 5, '2026-08-21', '2026-08-21', 'annual', 'viec rieng');
+VALUES (1, 'pending_tong_hop', 7, 7, '2026-08-21', '2026-08-21', 'annual', 'viec rieng');
 """
 
 
@@ -70,10 +71,12 @@ def db():
 @pytest.fixture
 def client(db):
     app.dependency_overrides[get_db] = lambda: db
-    # Hậu kiểm viên: cả _leave_filter lẫn _handover_filter đều hoạt động
+    # Chuyên viên phòng Tổng hợp: cả _leave_filter (gác cửa bước TH) lẫn
+    # _handover_filter (chứng từ do chính mình nhập) đều trả việc — cần một vai
+    # trò có CẢ HAI loại để bài kiểm này còn ý nghĩa.
     app.dependency_overrides[get_current_staff] = lambda: {
-        "id": 7, "role": "hau_kiem_vien", "department_id": 1,
-        "username": "hkv", "full_name": "Hậu kiểm viên",
+        "id": 5, "role": "chuyen_vien", "department_id": 2,
+        "username": "cvth", "full_name": "Chuyên viên TH",
     }
     yield TestClient(app)
     app.dependency_overrides.clear()

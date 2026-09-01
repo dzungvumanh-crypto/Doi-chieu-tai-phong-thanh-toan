@@ -6,42 +6,52 @@ from nicegui import ui
 import frontend.api_client as api
 from frontend.shared import (
     _sidebar, _content_area, _page_header, _require_auth, _handle_api_error,
-    open_folder_picker,
 )
 
 _POLL_INTERVAL = 1.0
 _MAX_POLL_FAILS = 4  # ~4s liên tiếp lỗi mới báo — tránh báo nhầm khi mạng chập chờn
 
-
-def _classify_upload_filename(filename: str) -> str | None:
-    """Bản sao CHỈ ĐỂ HIỂN THỊ nhãn loại file trước khi tải lên (UX) — logic phân loại
-    THẬT nằm ở backend/services/cham459901_service.py::classify_upload_filename(), server
-    tự phân loại lại từ đầu khi nhận file, không tin nhãn phía client. Tách bản riêng ở
-    đây (thay vì import thẳng module backend) để không kéo pandas + pyzipper vào tiến
-    trình frontend chỉ để dùng vài dòng so khớp tên (review PR#43, khanhbq693) — frontend/
-    không có tiền lệ import module backend nào khác. Đổi luật ở service.py thì PHẢI đổi
-    theo ở đây, nếu không nhãn hiển thị sẽ sai lệch với phân loại thật của server."""
-    name = filename.lower()
-    if name.endswith('.zip') and 'gl02' in name:
-        return 'zip'
-    if name.endswith('.xlsx'):
-        if '459' in name and 'ton' in name:
-            return 'ton'
-        if 'quay' in name or 'chuyen tien di' in name or 'chuyen_tien_di' in name:
-            return 'hub_di'
-        if ('giao dich den' in name or 'giao_dich_den' in name
-                or ('danh_sach' in name and 'den' in name)
-                or ('danh sach' in name and 'den' in name)):
-            return 'hub_den'
-    return None
-
 _KIND_LABELS = {
-    "zip":     ("GL02 (chính)",       "bg-red-100 text-red-700"),
+    "main":    ("GL02 (chính)",       "bg-red-100 text-red-700"),
     "hub_di":  ("HUB đi",             "bg-blue-100 text-blue-700"),
     "hub_den": ("HUB đến",            "bg-purple-100 text-purple-700"),
     "ton":     ("Tồn tháng trước",    "bg-yellow-100 text-yellow-700"),
     None:      ("Không nhận diện",    "bg-gray-100 text-gray-500"),
 }
+
+
+# Bản sao CHỈ ĐỂ HIỂN THỊ nhãn loại file trước khi tải lên. Logic phân loại THẬT
+# nằm ở backend/services/cham459901_service.py — server tự phân loại lại từ đầu khi
+# nhận file, không tin nhãn phía client. Tách bản riêng ở đây (thay vì import thẳng
+# module backend) để không kéo pandas + pyzipper vào tiến trình frontend chỉ để dùng
+# vài dòng so khớp tên (review PR#43, khanhbq693) — frontend/ không import module
+# backend nào khác. tests/test_classify_filename_frontend_backend_sync.py canh không
+# cho hai bản trôi khỏi nhau.
+_DUOI_HOP_LE = ('.zip', '.xlsx', '.xlsm', '.xlsb', '.xls')
+
+
+def _classify_upload_filename(filename: str) -> str | None:
+    name = filename.lower()
+    if not name.endswith('.xlsx'):
+        return None
+    if '459' in name and 'ton' in name:
+        return 'ton'
+    if 'quay' in name or 'chuyen tien di' in name or 'chuyen_tien_di' in name:
+        return 'hub_di'
+    if ('giao dich den' in name or 'giao_dich_den' in name
+            or ('danh_sach' in name and 'den' in name)
+            or ('danh sach' in name and 'den' in name)):
+        return 'hub_den'
+    return None
+
+
+def _kind_for_display(fname: str) -> str | None:
+    """`_classify_upload_filename()` chỉ nhận diện 3 loại phụ trợ (HUB đi/đến, tồn) —
+    file GL02 chính không có mẫu tên riêng, nhận theo ĐUÔI FILE giống backend."""
+    kind = _classify_upload_filename(fname)
+    if kind is not None:
+        return kind
+    return "main" if fname.lower().endswith(_DUOI_HOP_LE) else None
 
 
 @ui.page("/cham_459901")
@@ -55,39 +65,34 @@ async def cham_459901_page():
     # ── State ─────────────────────────────────────────────────────────────────
     state = {
         "files":            {},     # {filename: bytes}
-        "mode":             "upload",   # 'upload' | 'folder'
         "task_token":       None,
         "result":           None,
         "cancel_requested": False,  # bấm Dừng trong lúc đang tải file lên (chưa có task_token)
     }
+
+    _CLASSIFY_HINT = (
+        "Hệ thống tự nhận diện: GL02*.zip (bắt buộc), file HUB đi "
+        "(Quay_danh sach...), file HUB đến (Danh_sach...den) — 2 file HUB tùy "
+        "chọn, thiếu thì bỏ qua nhóm 1000 Hoàn trả. File tồn tháng trước "
+        "(459_TON_T<n>.xlsx) — tùy chọn, ghép vào dữ liệu tháng này để phân "
+        "loại lại các giao dịch chưa xử lý xong."
+    )
 
     with ui.row().classes("w-full"):
         _sidebar("cham_459901")
         with _content_area():
             _page_header("Chấm 459901", "Phân loại bút toán tài khoản trung gian 459901")
 
-            # ── Upload card ───────────────────────────────────────────────────
-            with ui.card().classes("w-full p-5 mb-4"):
-                ui.label("Nguồn dữ liệu").classes(
-                    "text-base font-semibold text-red-800 mb-1"
-                )
+            ui.label("Nguồn dữ liệu — chọn 1 trong 2 cách bên dưới").classes(
+                "text-base font-semibold text-red-800 mb-2"
+            )
 
-                mode_toggle = ui.toggle(
-                    {"upload": "Tải file lên", "folder": "Chọn thư mục server"},
-                    value="upload",
-                ).props("dense").classes("mb-2")
-
-                _CLASSIFY_HINT = (
-                    "Hệ thống tự nhận diện: GL02*.zip (bắt buộc), file HUB đi "
-                    "(Quay_danh sach...), file HUB đến (Danh_sach...den) — 2 file HUB tùy "
-                    "chọn, thiếu thì bỏ qua nhóm 1000 Hoàn trả. File tồn tháng trước "
-                    "(459_TON_T<n>.xlsx) — tùy chọn, ghép vào dữ liệu tháng này để phân "
-                    "loại lại các giao dịch chưa xử lý xong."
-                )
-
-                # ── Chế độ Upload ───────────────────────────────────────────
-                upload_section = ui.column().classes("w-full gap-1")
-                with upload_section:
+            with ui.row().classes("w-full gap-4 mb-4 items-stretch"):
+                # ── Card A — Tải nhiều file lên ─────────────────────────────
+                with ui.card().classes("flex-1 p-5"):
+                    ui.label("Tải nhiều file lên").classes(
+                        "text-sm font-semibold text-gray-700 mb-1"
+                    )
                     ui.label(
                         "Kéo-thả hoặc chọn nhiều file cùng lúc — " + _CLASSIFY_HINT
                     ).classes("text-xs text-gray-400 mb-3")
@@ -103,7 +108,7 @@ async def cham_459901_page():
                                 )
                                 return
                             for fname in list(state["files"].keys()):
-                                kind = _classify_upload_filename(fname)
+                                kind = _kind_for_display(fname)
                                 label, cls = _KIND_LABELS[kind]
                                 with ui.row().classes(
                                     "items-center gap-2 py-1 border-b border-gray-100 w-full"
@@ -139,37 +144,25 @@ async def cham_459901_page():
                         multiple=True,
                     ).props(
                         'accept=".zip,.xlsx" flat dense label="Kéo-thả hoặc chọn file..."'
-                    ).classes("w-full mb-3")
+                    ).classes("w-full")
 
-                # ── Chế độ Folder ───────────────────────────────────────────
-                folder_section = ui.column().classes("w-full gap-2")
-                folder_section.set_visibility(False)
-                with folder_section:
+                # ── Card B — Chọn thư mục server ─────────────────────────────
+                with ui.card().classes("flex-1 p-5"):
+                    ui.label("Chọn thư mục server").classes(
+                        "text-sm font-semibold text-gray-700 mb-1"
+                    )
                     ui.label(
                         "Nhập đường dẫn 1 thư mục duy nhất trên server. " + _CLASSIFY_HINT
-                    ).classes("text-xs text-gray-400 mb-1")
-                    with ui.row().classes("w-full items-center gap-2"):
-                        folder_input = ui.input(
-                            placeholder="Ví dụ: D:\\Data\\459901\\thang8",
-                        ).props("outlined dense clearable").classes("flex-1")
+                    ).classes("text-xs text-gray-400 mb-3")
+                    # Không có nút "Duyệt...": hộp thoại duyệt cây thư mục máy chủ đã bị
+                    # gỡ cùng `/api/fs/browse` — nó cho mọi người đăng nhập liệt kê sạch
+                    # ổ đĩa máy chủ. Người dùng dán đường dẫn; `/process_folder` chặn
+                    # phạm vi theo CHAM459901_FOLDER_ROOTS.
+                    folder_input = ui.input(
+                        placeholder="Dán đường dẫn — VD: D:\\Data\\459901\\thang8",
+                    ).props("outlined dense clearable").classes("w-full")
 
-                        async def _on_pick_folder():
-                            def _on_folder_selected(path: str):
-                                folder_input.value = path
-                            await open_folder_picker(
-                                _on_folder_selected, initial_path=folder_input.value or ""
-                            )
-
-                        ui.button("Duyệt...", icon="folder_open", color="blue-7",
-                                  on_click=_on_pick_folder).props("outlined dense")
-
-                def on_mode_change(val):
-                    state["mode"] = val
-                    upload_section.set_visibility(val == "upload")
-                    folder_section.set_visibility(val == "folder")
-
-                mode_toggle.on_value_change(lambda e: on_mode_change(e.value))
-
+            with ui.card().classes("w-full p-5 mb-4"):
                 # ── Thanh tiến độ ─────────────────────────────────────────────
                 progress_bar = ui.linear_progress(value=0).classes("w-full mb-1")
                 progress_bar.set_visibility(False)
@@ -205,6 +198,10 @@ async def cham_459901_page():
                 _render_file_list()
                 result_area.clear()
 
+            # Gắn THẲNG hàm async, không bọc asyncio.create_task — xem docs/DESIGN.md
+            # mục "Event handler async": task mới có ngăn xếp slot rỗng nên ui.notify /
+            # ui.navigate trong nhánh lỗi ném RuntimeError, rơi vào handler toàn cục và
+            # người dùng không thấy gì (review PR#43, khanhbq693).
             async def on_cancel_click():
                 if not state["task_token"]:
                     # Chưa tải file lên xong (chưa có task_token) — ghi nhận yêu cầu,
@@ -224,18 +221,28 @@ async def cham_459901_page():
             cancel_btn.on("click", on_cancel_click)
 
             async def do_process():
-                if state["mode"] == "upload":
-                    if not state["files"]:
-                        ui.notify("Vui lòng chọn file trước", type="warning")
-                        return
-                    if not any(_classify_upload_filename(f) == "zip" for f in state["files"]):
-                        ui.notify("Chưa có file GL02*.zip trong danh sách đã chọn", type="warning")
-                        return
-                else:
-                    folder_path = (folder_input.value or "").strip()
-                    if not folder_path:
-                        ui.notify("Vui lòng nhập đường dẫn thư mục", type="warning")
-                        return
+                folder_path = (folder_input.value or "").strip()
+                has_files  = bool(state["files"])
+                has_folder = bool(folder_path)
+
+                if not has_files and not has_folder:
+                    ui.notify("Vui lòng chọn file hoặc nhập đường dẫn thư mục", type="warning")
+                    return
+                if has_files and has_folder:
+                    ui.notify(
+                        "Chỉ chọn 1 trong 2 cách nạp dữ liệu — hãy xoá file đã chọn hoặc "
+                        "xoá đường dẫn thư mục",
+                        type="warning",
+                    )
+                    return
+                if has_files and not any(
+                    f.lower().endswith(_DUOI_HOP_LE) for f in state["files"]
+                ):
+                    ui.notify(
+                        "Chưa có file GL02 (.zip hoặc Excel) trong danh sách đã chọn",
+                        type="warning",
+                    )
+                    return
 
                 state["cancel_requested"] = False
                 process_btn.props("loading disable")
@@ -244,20 +251,17 @@ async def cham_459901_page():
 
                 progress_bar.set_value(0)
                 progress_label.set_text(
-                    "0% — Đang tải file lên..." if state["mode"] == "upload" else "0% — Đang xử lý..."
+                    "0% — Đang tải file lên..." if has_files else "0% — Đang xử lý..."
                 )
                 progress_bar.set_visibility(True)
                 progress_label.set_visibility(True)
 
                 try:
-                    if state["mode"] == "upload":
-                        files_payload = [
-                            ("files", (name, data, "application/octet-stream"))
-                            for name, data in state["files"].items()
-                        ]
+                    if has_files:
                         resp = await asyncio.to_thread(
-                            api.post_upload, "/api/cham459901/process", files_payload,
-                            timeout=600.0,   # nhiều ZIP GL02 có thể tới hàng trăm MB
+                            api.post_upload, "/api/cham459901/process",
+                            files=[('files', (name, data, 'application/octet-stream'))
+                                   for name, data in state["files"].items()],
                         )
                     else:
                         resp = await asyncio.to_thread(
@@ -290,7 +294,12 @@ async def cham_459901_page():
                     cancel_btn.set_visibility(False)
                     process_btn.props(remove="loading disable")
                     if not _handle_api_error(e):
-                        ui.notify(f"Lỗi tải file: {e}", type="negative")
+                        # Chế độ thư mục không tải file nào lên — gắn nhãn "Lỗi tải file"
+                        # là chỉ người vận hành đi tìm sai chỗ (câu lỗi hay gặp nhất ở
+                        # đây là ".env chưa khai CHAM459901_FOLDER_ROOTS").
+                        nhan = "Lỗi tải file" if has_files else "Lỗi đọc thư mục"
+                        ui.notify(f"{nhan}: {e}", type="negative", timeout=0,
+                                  close_button=True)
                     return
 
                 # Người dùng đã bấm Dừng trong lúc file còn đang tải lên — dừng ngay,
@@ -313,6 +322,9 @@ async def cham_459901_page():
                             api.get, f'/api/cham459901/progress/{state["task_token"]}'
                         )
                     except Exception as e:
+                        # `except Exception: continue` cũ nuốt cả SessionExpiredError và
+                        # quay vòng vô hạn khi backend khởi động lại: thanh tiến trình
+                        # chạy mãi, không lỗi, không kết quả (review PR#43, khanhbq693).
                         if _handle_api_error(e):
                             progress_bar.set_visibility(False)
                             progress_label.set_visibility(False)

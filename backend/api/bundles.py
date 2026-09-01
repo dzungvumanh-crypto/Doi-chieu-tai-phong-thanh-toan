@@ -14,6 +14,7 @@ from fastapi.responses import Response
 from openpyxl.styles import Alignment, Border, Font, Side
 
 from backend.core.concurrency import run_heavy
+from backend.core.uploads import read_limited
 from backend.core.deps import get_current_staff, require_feature
 from backend.core.enums import StaffRole
 from backend.database import get_db, _vn_now
@@ -92,19 +93,20 @@ def _units_from_bundle(bundle: dict) -> List[EntryUnit]:
 
 
 def _get_bundle_label(bundle: dict, all_bundles: list) -> Tuple[int, int]:
+    """Nhãn "tập i/N" — gom các tập có CÙNG tập hợp ngày, kể cả tập nhiều ngày.
+    Chỉ gom tập một ngày thì hai tập của cùng hồ sơ "ngày 01, 02" đều in 1/1,
+    hai bìa giống hệt nhau, không phân biệt được tập nào là tập nào."""
     bundle_dates = {b["id"]: _get_dates_for_bundle(b) for b in all_bundles}
-    single_date_groups: dict = defaultdict(list)
-    for b in all_bundles:
-        dates = bundle_dates[b["id"]]
-        if len(dates) == 1:
-            single_date_groups[next(iter(dates))].append(b)
     my_dates = bundle_dates.get(bundle["id"], frozenset())
-    if len(my_dates) == 1:
-        day = next(iter(my_dates))
-        same = sorted(single_date_groups[day], key=lambda b: b["sequence"])
-        if len(same) > 1:
-            idx = next(i + 1 for i, b in enumerate(same) if b["id"] == bundle["id"])
-            return idx, len(same)
+    if not my_dates:
+        return 1, 1
+    same = sorted(
+        (b for b in all_bundles if bundle_dates[b["id"]] == my_dates),
+        key=lambda b: b["sequence"],
+    )
+    if len(same) > 1:
+        idx = next(i + 1 for i, b in enumerate(same) if b["id"] == bundle["id"])
+        return idx, len(same)
     return 1, 1
 
 
@@ -229,33 +231,25 @@ def _delete_group_cascade(db: sqlite3.Connection, group_id: int):
 
 def _decompose_bundles_to_rows(bundles_data: list) -> list:
     """Shared logic: bundles_data là list dict có id, sequence, total_sheets, cover_units, items."""
-    bundle_dates = {b["id"]: sorted(_get_dates_for_bundle(b)) for b in bundles_data}
-    single_day: dict = defaultdict(list)
-    multi_day: list = []
+    # Một dòng = một TẬP HỢP NGÀY. Tập nhiều ngày trước đây mỗi cái một dòng nên
+    # hai tập của cùng hồ sơ "ngày 01, 02" bị tách thành hai dòng giống hệt nhau.
+    by_dates: dict = defaultdict(list)
     for b in bundles_data:
-        dates = bundle_dates[b["id"]]
-        if len(dates) == 1:
-            single_day[dates[0]].append(b)
-        elif len(dates) > 1:
-            multi_day.append((dates, b))
+        dates = tuple(sorted(_get_dates_for_bundle(b)))
+        if dates:
+            by_dates[dates].append(b)
 
     rows = []
-    for dates, b in multi_day:
-        rows.append(StorageViewRow(
-            days=sorted(d.day for d in dates),
-            bundle_ids=[b["id"]],
-            bundle_sheets=[b["total_sheets"]],
-            n_bundles=1,
-        ))
-    for d, date_bundles in single_day.items():
+    for dates, date_bundles in by_dates.items():
         date_bundles = sorted(date_bundles, key=lambda b: b["sequence"])
         rows.append(StorageViewRow(
-            days=[d.day],
+            days=[d.day for d in dates],
             bundle_ids=[b["id"] for b in date_bundles],
             bundle_sheets=[b["total_sheets"] for b in date_bundles],
             n_bundles=len(date_bundles),
         ))
-    rows.sort(key=lambda r: min(r.days) if r.days else 0)
+    # Cùng ngày đầu thì dòng ít ngày lên trước — thứ tự phải ổn định giữa các lần tải
+    rows.sort(key=lambda r: (r.days[0], r.days))
     return rows
 
 
@@ -330,7 +324,9 @@ def _generate_archive_records(
             bundles_data = _load_bundles_for_storage(db, gid)
             all_rows.extend(_decompose_bundles_to_rows(bundles_data))
 
-        tieu_de_cuoi = f"{dept_name} tháng {month:02d}/{year}"
+        # Tên phòng trong DB đã có sẵn chữ "Phòng" (vd "Phòng Kế toán") — không thêm nữa.
+        # Không ghi "tháng MM/YYYY": danh sách ngày phía trước đã nói rõ tháng và năm.
+        tieu_de_cuoi = f"của {dept_name}"
         for r in all_rows:
             days = r.days
             ds_ngay_full = ", ".join(f"{d:02d}/{month:02d}/{year}" for d in days)
@@ -355,6 +351,18 @@ def list_groups(
     db: sqlite3.Connection = Depends(get_db),
     _: dict = Depends(require_feature("menu.bundles")),
 ):
+    """Danh sách bìa chứng từ — CHỈ dòng tiêu đề, KHÔNG kèm tập và mục bên trong.
+
+    Trang danh sách chỉ hiển thị tên phòng, kỳ, ngày tạo, người tạo và số tập
+    (`total_bundles` đã là cột sẵn của `bundle_groups`). Trước đây endpoint còn
+    trả cả `bundles[].items[]`: mỗi nhóm 1 câu SQL, mỗi tập thêm 1 câu nữa —
+    283 câu và 315 KB cho kho 1 năm, mà giao diện không đọc tới. Ba ô lọc đều
+    mặc định "tất cả" nên lần mở trang đầu tiên kéo về toàn bộ kho: đo trên dữ
+    liệu nhân theo năm, 5 năm là 513 ms / 5,1 MB và còn tăng tiếp.
+
+    Chi tiết tập lấy ở `GET /groups/{group_id}` (`_load_bundle_group`) — giữ
+    nguyên, các đường in bìa / tải bìa đều đi qua đó.
+    """
     clauses = []
     params: list = []
     if department_id:
@@ -376,35 +384,19 @@ def list_groups(
         params,
     ).fetchall()
 
+    # Gom người tạo thành 1 câu thay vì mỗi nhóm một câu.
+    creator_ids = {g["created_by_id"] for g in rows if g["created_by_id"]}
+    creators = {
+        r["id"]: r
+        for r in db.execute(
+            f"SELECT * FROM user_tttt WHERE id IN ({','.join('?' * len(creator_ids))})",
+            list(creator_ids),
+        ).fetchall()
+    } if creator_ids else {}
+
     result = []
     for g in rows:
-        creator = db.execute("SELECT * FROM user_tttt WHERE id = ?", (g["created_by_id"],)).fetchone()
-        bundle_rows = db.execute(
-            """SELECT b.id, b.sequence, b.total_sheets, b.custodian_id, b.storage_box,
-                      b.storage_location, b.cover_printed_at, b.status, b.cover_units,
-                      b.group_id
-               FROM bundles b WHERE b.group_id = ? ORDER BY b.sequence""",
-            (g["id"],),
-        ).fetchall()
-
-        bundles_out = []
-        for b in bundle_rows:
-            item_rows = db.execute(
-                "SELECT id, entry_id FROM bundle_items WHERE bundle_id = ?", (b["id"],)
-            ).fetchall()
-            bundles_out.append({
-                "id": b["id"],
-                "group_id": b["group_id"],
-                "sequence": b["sequence"],
-                "total_sheets": b["total_sheets"],
-                "custodian_id": b["custodian_id"],
-                "storage_box": b["storage_box"],
-                "storage_location": b["storage_location"],
-                "cover_printed_at": b["cover_printed_at"],
-                "status": b["status"] or "pending",
-                "cover_units": b["cover_units"],
-                "items": [{"id": r["id"], "entry_id": r["entry_id"], "entry": None} for r in item_rows],
-            })
+        creator = creators.get(g["created_by_id"])
 
         dept_dict = None
         if g["dept_name"]:
@@ -441,7 +433,6 @@ def list_groups(
             "notes": g["notes"],
             "department": dept_dict,
             "created_by_staff": creator_dict,
-            "bundles": bundles_out,
         })
 
     return result
@@ -916,11 +907,45 @@ def _rewrite_bundle_dates(db: sqlite3.Connection, bundle_id: int, new_dates: lis
     db.execute("UPDATE bundles SET cover_units=? WHERE id=?", (_dump_units(units), bundle_id))
 
 
+def _period_from_request(db: sqlite3.Connection, req: StorageViewUpdateRequest) -> Tuple[int, int, int]:
+    """Phòng/năm/tháng cho dòng mới hoàn toàn — chỉ tin client ở đúng chỗ này vì
+    tháng chưa có tập nào thì không có nguồn nào khác để suy ra."""
+    if not req.department_id or not req.year or not req.month:
+        raise HTTPException(400, "Thiếu phòng/năm/tháng, không thêm được dòng mới")
+    if not 1 <= req.month <= 12:
+        raise HTTPException(400, f"Tháng {req.month} không hợp lệ")
+    if not 2000 <= req.year <= 2100:
+        raise HTTPException(400, f"Năm {req.year} không hợp lệ")
+    if not db.execute("SELECT 1 FROM departments WHERE id = ?", (req.department_id,)).fetchone():
+        raise HTTPException(404, "Không tìm thấy phòng nghiệp vụ")
+    return req.department_id, req.year, req.month
+
+
+def _find_or_create_group(db: sqlite3.Connection, department_id: int, year: int,
+                          month: int, creator_id: int) -> int:
+    """Nhóm tập của tháng — dùng lại nhóm cũ nếu có, chỉ tạo khi tháng trống trơn.
+    Nhiều nhóm cùng tháng thì lấy nhóm sớm nhất, đúng thứ tự _get_storage_rows_for_month đọc."""
+    notes_key = f"Tháng {month:02d}/{year}"
+    g = db.execute(
+        "SELECT id FROM bundle_groups WHERE department_id = ? AND notes = ? "
+        "ORDER BY created_at LIMIT 1",
+        (department_id, notes_key),
+    ).fetchone()
+    if g:
+        return g["id"]
+    cur = db.execute(
+        "INSERT INTO bundle_groups (department_id, total_bundles, created_by_id, created_at, notes) "
+        "VALUES (?,?,?,?,?)",
+        (department_id, 0, creator_id, str(_vn_now()), notes_key),
+    )
+    return cur.lastrowid
+
+
 @router.patch("/storage-view")
 def update_storage_view(
     req: StorageViewUpdateRequest,
     db: sqlite3.Connection = Depends(get_db),
-    _: dict = Depends(require_feature("menu.storage")),
+    current: dict = Depends(require_feature("menu.storage")),
 ):
     touched_groups: set = set()
 
@@ -931,13 +956,25 @@ def update_storage_view(
             if anchor_id else None
         )
         group_id = anchor["group_id"] if anchor else None
-        if group_id is not None:
-            touched_groups.add(group_id)
+        adds = [s for s in row.new_sheets if s and s > 0]
+        year = month = None
+
+        # ── Dòng mới hoàn toàn (tháng chưa có tập nào) ──
+        if group_id is None:
+            if not adds:
+                if row.days:
+                    raise HTTPException(400, "Đã nhập ngày nhưng chưa nhập số chứng từ")
+                continue                      # dòng để trống — bỏ qua
+            dept_id, year, month = _period_from_request(db, req)
+            group_id = _find_or_create_group(db, dept_id, year, month, current["id"])
+
+        touched_groups.add(group_id)
 
         # ── Sửa ngày: ghi trước khi thêm tập mới để tập mới nhận ngày mới ──
         new_dates = None
-        if row.days is not None and group_id is not None:
-            year, month = _group_year_month(db, group_id)
+        if row.days is not None:
+            if year is None:
+                year, month = _group_year_month(db, group_id)
             new_dates = _row_dates(row.days, year, month)
             for i, bundle_id in enumerate(row.bundle_ids):
                 # Tập sắp bị xoá (số chứng từ = 0) thì không cần đổi ngày
@@ -946,9 +983,8 @@ def update_storage_view(
                 _rewrite_bundle_dates(db, bundle_id, new_dates)
 
         # ── Thêm tập mới cho các ô trống được nhập (dùng ngày của dòng) ──
-        adds = [s for s in row.new_sheets if s and s > 0]
-        if adds and anchor_id and group_id is not None:
-            dates = new_dates or _bundle_dates(db, anchor_id)
+        if adds:
+            dates = new_dates or (_bundle_dates(db, anchor_id) if anchor_id else [])
             seq = (db.execute(
                 "SELECT COALESCE(MAX(sequence), 0) FROM bundles WHERE group_id = ?", (group_id,)
             ).fetchone()[0])
@@ -989,7 +1025,7 @@ def update_storage_view(
 def handover_archive_preview(
     department_id: int,
     year: int,
-    tieu_de_dau: str = "Hồ sơ ngày",
+    tieu_de_dau: str = "Nhật ký chứng từ ngày",
     tu_tap: str = "tập",
     db: sqlite3.Connection = Depends(get_db),
     _: dict = Depends(get_current_staff),
@@ -1002,7 +1038,7 @@ def handover_archive_preview(
 async def handover_archive_excel(
     department_id: int,
     year: int,
-    tieu_de_dau: str = "Hồ sơ ngày",
+    tieu_de_dau: str = "Nhật ký chứng từ ngày",
     tu_tap: str = "tập",
     db: sqlite3.Connection = Depends(get_db),
     _: dict = Depends(get_current_staff),
@@ -1074,11 +1110,9 @@ async def archive_cover_parse(
     if not name.lower().endswith((".xls", ".xlsx")):
         raise HTTPException(400, "Chỉ nhận file Excel (.xls hoặc .xlsx)")
 
-    content = await file.read()
+    content = await read_limited(file, _ARCHIVE_COVER_MAX_UPLOAD, "File Excel tra cứu")
     if not content:
         raise HTTPException(400, "File rỗng")
-    if len(content) > _ARCHIVE_COVER_MAX_UPLOAD:
-        raise HTTPException(400, "File quá lớn (tối đa 20MB)")
 
     def _work():
         return archive_cover_service.parse_lookup_excel(content, name)

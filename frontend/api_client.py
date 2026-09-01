@@ -15,6 +15,16 @@ load_dotenv(override=True)
 BACKEND_URL = os.getenv("BACKEND_URL", f"http://127.0.0.1:{os.getenv('BACKEND_PORT', '8000')}")
 
 
+class ApiFileError(Exception):
+    """Lỗi 400 có kèm danh sách tên file cụ thể gây lỗi (vd DtbbFileError.filenames) —
+    backend trả detail dạng dict {"message":..., "filenames":[...]} thay vì chuỗi
+    thường. FE dùng .filenames để tô đỏ đúng file trong danh sách đã chọn."""
+
+    def __init__(self, message: str, filenames: list | None = None):
+        super().__init__(message)
+        self.filenames = filenames or []
+
+
 class SessionExpiredError(Exception):
     """Raised khi backend trả 401 — session đã hết hạn hoặc đã logout."""
     pass
@@ -22,6 +32,15 @@ class SessionExpiredError(Exception):
 
 class DisplacedSessionError(Exception):
     """Raised khi phiên bị thay thế bởi đăng nhập mới từ thiết bị khác."""
+    pass
+
+
+class MustChangePasswordError(Exception):
+    """Raised khi backend chặn vì tài khoản chưa đổi mật khẩu bắt buộc.
+
+    Trước đây việc bắt đổi mật khẩu chỉ là một lần chuyển trang ở màn hình đăng
+    nhập — gõ thẳng /home lên thanh địa chỉ là đi tiếp được. Nay backend chặn
+    thật, nên frontend phải nhận ra và đưa người dùng về đúng chỗ."""
     pass
 
 
@@ -43,6 +62,9 @@ def clear_auth():
     app.storage.user.pop("token", None)
     app.storage.user.pop("user_data", None)
     app.storage.user.pop("features", None)
+    # Cache mã phòng ban (frontend/shared.py::_user_dept_code) — không xoá thì đăng nhập
+    # user khác cùng trình duyệt sẽ hiện/ẩn sai menu "Chấm công" (review PR #22).
+    app.storage.user.pop("_dept_code", None)
 
 
 def load_my_features() -> None:
@@ -116,12 +138,30 @@ def _headers():
     return h
 
 
+def la_loi_mang(e: Exception) -> bool:
+    """True khi máy chủ KHÔNG trả lời (hết giờ chờ, không nối được, đứt giữa chừng);
+    False khi nó có trả lời nhưng là mã lỗi (404, 500...).
+
+    Hai thứ này đòi hai cách xử lý ngược nhau ở phía gọi: im lặng thì phải thử lại
+    và phải coi việc đang chạy là VẪN CÒN; còn trả lời 404 là câu trả lời dứt khoát,
+    thử lại chỉ tổ mất thời gian và báo sai cho người dùng.
+
+    `get()`/`post()` gói HTTPStatusError thành `Exception` thường (mất kiểu), còn
+    lỗi mạng thì để nguyên kiểu httpx — nên chỉ cần hỏi "có phải httpx.HTTPError không".
+    """
+    return isinstance(e, httpx.HTTPError)
+
+
 def _parse_error(e: "httpx.HTTPStatusError") -> str:
     try:
         body = e.response.json()
     except Exception:
         return str(e)
     detail = body.get("detail", "")
+    # detail kiểu dict là quy ước sẵn có cho lỗi cần kèm dữ liệu (xem
+    # post_upload_bytes): lấy 'message' ra, đừng in nguyên cái dict cho người dùng đọc.
+    if isinstance(detail, dict):
+        return str(detail.get("message") or detail)
     if isinstance(detail, list):
         parts = []
         for err in detail:
@@ -142,6 +182,27 @@ def _raise_http_error(e: httpx.HTTPStatusError):
         if "__session_displaced__" in str(detail):
             raise DisplacedSessionError("Tài khoản này đang được đăng nhập từ thiết bị khác")
         raise SessionExpiredError("Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.")
+    if e.response.status_code == 403:
+        try:
+            detail = e.response.json().get("detail", "")
+        except Exception:
+            detail = ""
+        if "__must_change_password__" in str(detail):
+            # KHÔNG clear_auth(): token vẫn hợp lệ, người dùng cần nó để gọi
+            # /api/auth/change-password. Xoá đi là đá họ về màn hình đăng nhập,
+            # đăng nhập lại cũng vấp đúng chỗ này — vòng lặp không lối ra.
+            raise MustChangePasswordError(
+                "Bạn phải đổi mật khẩu trước khi sử dụng hệ thống"
+            )
+    # detail dạng dict có "filenames" — lỗi có cấu trúc (vd DtbbFileError), không phải
+    # str/list detail thông thường. Chỉ endpoint nào chủ động trả dạng này mới vào
+    # nhánh này — không đổi hành vi của các endpoint khác (luôn trả str/list detail).
+    try:
+        raw_detail = e.response.json().get("detail", "")
+    except Exception:
+        raw_detail = None
+    if isinstance(raw_detail, dict) and "filenames" in raw_detail:
+        raise ApiFileError(raw_detail.get("message") or str(raw_detail), raw_detail.get("filenames"))
     raise Exception(_parse_error(e))
 
 
@@ -192,9 +253,13 @@ def put(path: str, data: dict = None) -> Any:
         raise Exception(str(e))
 
 
-def patch(path: str, data: dict = None) -> Any:
+def patch(path: str, data: dict = None, timeout: float = None) -> Any:
+    # timeout: cho lời gọi chạy trong nhịp đồng hồ (vd. lưu tiến độ bài trắc
+    # nghiệm mỗi mấy giây) — 10s mặc định của _client là quá dài ở đó, mạng
+    # chập chờn sẽ làm đồng hồ đứng hình chờ một lần lưu.
     try:
-        r = _client.patch(f"{BACKEND_URL}{path}", headers=_headers(), json=data)
+        kw = {} if timeout is None else {"timeout": timeout}
+        r = _client.patch(f"{BACKEND_URL}{path}", headers=_headers(), json=data, **kw)
         r.raise_for_status()
         try:
             return r.json()
@@ -267,10 +332,19 @@ def post_upload(path: str, files, data: dict = None, timeout: float = None) -> A
         raise Exception(str(e))
 
 
-def post_download(path: str, data: dict = None) -> bytes:
-    """POST với JSON body, nhận bytes (Excel/Word)."""
+def post_download(path: str, data: dict = None, timeout: float = None) -> bytes:
+    """POST với JSON body, nhận bytes (Excel/Word).
+
+    timeout=None giữ mặc định 60s của _download_client; truyền số lớn hơn cho
+    endpoint sinh file rất lớn. Cùng khuôn mẫu với post_upload() phía trên —
+    nút "Xuất tất cả lệnh" (doi_soat_citad) có thể xuất tới ~38.000 dòng và
+    còn phải xếp hàng chờ suất run_heavy() dùng chung cả backend, nên 60s
+    mặc định là quá sát.
+    """
     try:
-        r = _download_client.post(f"{BACKEND_URL}{path}", headers=_headers(), json=data or {})
+        kw = {"timeout": timeout} if timeout is not None else {}
+        r = _download_client.post(f"{BACKEND_URL}{path}", headers=_headers(),
+                                  json=data or {}, **kw)
         r.raise_for_status()
         return r.content
     except httpx.HTTPStatusError as e:

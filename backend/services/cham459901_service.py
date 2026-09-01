@@ -1,7 +1,12 @@
-"""Service phân loại bút toán tài khoản 459901.
+"""Service phân loại bút toán tài khoản 459901 — 7 nhóm (Hủy/Đi/1000 Hoàn trả/
+Chuyển chi nhánh/Điện KO offline/Cân CN/GD khác).
 
-Logic phân loại (3 phase) port nguyên từ phan_loai_459901.py — KHÔNG THAY ĐỔI.
-I/O được điều chỉnh để hoạt động với bytes (từ HTTP upload) thay vì file path.
+I/O làm việc với ĐƯỜNG DẪN file đã nằm trên máy chủ (`backend/api/cham459901.py`
+ghi thẳng từng khối xuống `data/temp_cham459901/upload_<token>/`, hoặc — với
+`process_folder` — dùng thẳng đường dẫn có sẵn trên server), không nhận bytes:
+một lượt có thể là nhiều ZIP vài trăm MB, ôm hết vào RAM rồi mới đọc là trả giá
+gấp đôi bộ nhớ cho cùng một kết quả. Chỉ file con BÊN TRONG ZIP mới đi qua bytes,
+và cũng chỉ khi buộc phải thế (xem `_doc_zip`).
 """
 
 import io
@@ -16,7 +21,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from backend.services.ach.so_tien import doc_so_tien
+from backend.core.config import BASE_DIR, zip_password   # mật khẩu ZIP đọc từ .env
+from backend.core.don_dep import moc_don_gan_nhat
 
 try:
     import pyzipper
@@ -29,12 +35,10 @@ except ImportError:
     _BAD_ZIP = (zipfile.BadZipFile,)
 
 # ─── Config ───────────────────────────────────────────────────────────────────
-TEMP_DIR        = Path("data/temp_cham459901")
-ZIP_PASSWORD    = b"DACwLdHi"
+TEMP_DIR        = BASE_DIR / "data" / "temp_cham459901"
 FILTER_LOCAC    = "459901"
 FILTER_CUSTOMER = "1000-000007709"
 FILTER_CCY      = "VND"
-CLEANUP_HOURS   = 2
 # ─────────────────────────────────────────────────────────────────────────────
 
 OUTPUT_COLS = [
@@ -42,6 +46,19 @@ OUTPUT_COLS = [
     'BUSCD', 'UNIT', 'TRCD', 'CUSTOMER', 'TRTP', 'REFERENCE', 'REMARK',
     'DRAMOUNT', 'CRAMOUNT', 'CRTDTM', 'GHI_CHU',
 ]
+
+COL_WIDTHS = {
+    'TRDATE': 12, 'TRBRCD': 8, 'USERID': 13, 'JOURSEQ': 10, 'DYTRSEQ': 9,
+    'LOCAC': 8, 'CCY': 5, 'BUSCD': 7, 'UNIT': 6, 'TRCD': 6, 'CUSTOMER': 18,
+    'TRTP': 8, 'REFERENCE': 22, 'REMARK': 52, 'DRAMOUNT': 18, 'CRAMOUNT': 18,
+    'CRTDTM': 20, 'GHI_CHU': 38,
+}
+
+# Định dạng nhận được. ZIP là bản xuất gốc từ GL02 (bên trong là .csv, đôi khi là
+# Excel); Excel rời dành cho người đã mở ZIP ra, cắt bớt rồi lưu lại.
+DUOI_ZIP    = '.zip'
+DUOI_EXCEL  = ('.xlsx', '.xlsm', '.xlsb', '.xls')
+DUOI_HOP_LE = (DUOI_ZIP,) + DUOI_EXCEL
 
 # Cột chung giữa dữ liệu GL02 gốc và file "tồn" tháng trước (459_TON_Tx.xlsx) — dùng khi
 # ghép nối tiếp file tồn vào dữ liệu tháng mới để phân loại lại (xem _read_ton_file).
@@ -54,17 +71,22 @@ _TON_COLS = [
 ]
 _TON_STR_COLS = [c for c in _TON_COLS if c not in ('DRAMOUNT', 'CRAMOUNT')]
 
-COL_WIDTHS = {
-    'TRDATE': 12, 'TRBRCD': 8, 'USERID': 13, 'JOURSEQ': 10, 'DYTRSEQ': 9,
-    'LOCAC': 8, 'CCY': 5, 'BUSCD': 7, 'UNIT': 6, 'TRCD': 6, 'CUSTOMER': 18,
-    'TRTP': 8, 'REFERENCE': 22, 'REMARK': 52, 'DRAMOUNT': 18, 'CRAMOUNT': 18,
-    'CRTDTM': 20, 'GHI_CHU': 38,
-}
+# Số dòng đầu mỗi sheet dùng để dò hàng tiêu đề (xem _dat_tieu_de). Bản người
+# dùng tự lưu lại có thể có khối tiêu đề báo cáo (tên báo cáo, chi nhánh, kỳ,
+# điều kiện lọc…) dài hơn 10 dòng — dò trượt là báo "không phải dữ liệu GL02"
+# dù dữ liệu bên dưới vẫn đủ.
+_MAX_DONG_DO_TIEU_DE = 25
+
+# Cột ngày: Excel trả về kiểu ngày-giờ, cần cắt đuôi giờ 0 cho giống bản CSV
+_COT_NGAY = ('TRDATE', 'CRTDTM')
 
 # Chỉ strip các cột dùng trong filter và xây key — không strip tất cả string cols
 _STRIP_COLS = {'LOCAC', 'CUSTOMER', 'CCY', 'TRTP', 'REFERENCE', 'TRBRCD', 'DYTRSEQ', 'REMARK'}
 
 _NUM_COLS = frozenset({'DRAMOUNT', 'CRAMOUNT'})
+
+# Không có đủ các cột này thì không lọc/phân loại được — kiểm từng file một
+_COT_BAT_BUOC = frozenset({'LOCAC', 'CUSTOMER', 'CCY', 'REMARK', 'DRAMOUNT', 'CRAMOUNT'})
 
 # A–Z rồi AA, AB, … (đủ cho 30 cột)
 _COL_LETTERS = [
@@ -100,6 +122,24 @@ def init_progress() -> str:
     return task_token
 
 
+def tao_thu_muc_upload(task_token: str) -> Path:
+    """Thư mục nhận file tải lên của một lượt: `data/temp_cham459901/upload_<token>/`.
+
+    Nằm cùng chỗ với thư mục kết quả nên `_cleanup_old_results()` trông coi luôn,
+    không phải thêm đường dọn thứ hai. Tiền tố `upload_` để người vận hành mở ra
+    là phân biệt được đâu là file người dùng gửi lên, đâu là 7 file Excel sinh ra.
+    """
+    d = TEMP_DIR / f"upload_{task_token}"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def bo_luot(task_token: str) -> None:
+    """Huỷ một lượt chưa chạy (upload lỗi/đứt): xoá thư mục và entry tiến độ."""
+    shutil.rmtree(TEMP_DIR / f"upload_{task_token}", ignore_errors=True)
+    _progress.pop(task_token, None)
+
+
 def get_progress(task_token: str) -> dict | None:
     p = _progress.get(task_token)
     if p is None:
@@ -116,48 +156,40 @@ def cancel_progress(task_token: str) -> bool:
     return True
 
 
-def resolve_result_dir(token: str) -> Path | None:
-    """Token luôn là str(uuid.uuid4()) (xem init_progress/process_zip) — token không đúng
-    dạng UUID là giả mạo, không phải job thật. Chặn TRƯỚC khi ghép vào path: '..\\..\\data'
-    không phải UUID hợp lệ nên bị từ chối ở đây, không tới được rmtree/read_bytes.
-    is_relative_to() là lớp phòng thủ thứ hai — giữ cả khi kiểm UUID có sơ hở nào đó."""
-    try:
-        uuid.UUID(token)
-    except ValueError:
-        log.warning("cham459901: token không hợp lệ (không phải UUID): %r", token)
-        return None
-    out_dir = (TEMP_DIR / token).resolve()
-    temp_root = TEMP_DIR.resolve()
-    if not out_dir.is_relative_to(temp_root) or out_dir == temp_root:
-        log.warning("cham459901: token thoát khỏi TEMP_DIR: %r -> %s", token, out_dir)
-        return None
-    return out_dir
-
-
 def delete_result(result_token: str) -> bool:
-    """Xóa thư mục kết quả trên server (khi người dùng phát hiện sai sót, muốn làm lại)."""
-    out_dir = resolve_result_dir(result_token)
-    if out_dir is None or not out_dir.exists():
+    """Xóa thư mục kết quả trên server (khi người dùng phát hiện sai sót, muốn làm lại).
+
+    `result_token` phải đã qua `safe_filename()` ở tầng gọi (API) trước khi tới đây —
+    hàm này chỉ ghép thẳng vào TEMP_DIR, không tự làm sạch.
+    """
+    out_dir = TEMP_DIR / result_token
+    if not out_dir.exists():
         return False
     shutil.rmtree(out_dir, ignore_errors=True)
     return True
 
 
 def classify_upload_filename(filename: str) -> str | None:
-    """Tự nhận diện loại file theo tên khi upload nhiều file cùng lúc (kéo-thả kiểu ACH).
-    Trả về 'zip' | 'hub_di' | 'hub_den' | 'ton' | None (không nhận diện được)."""
+    """Tự nhận diện 3 loại file PHỤ TRỢ theo tên khi upload nhiều file cùng lúc
+    (kéo-thả kiểu ACH): HUB đi / HUB đến / tồn tháng trước. Trả về
+    'hub_di' | 'hub_den' | 'ton' | None.
+
+    File GL02 chính (zip hoặc Excel) KHÔNG qua hàm này — tên gì cũng được, nhận
+    diện bằng đuôi file (`DUOI_HOP_LE`) ở tầng gọi, và nhiều file được GỘP lại
+    trước khi phân loại (xem `process_files`), không phải chọn 1 file như 3 loại
+    phụ trợ dưới đây.
+    """
     name = filename.lower()
-    if name.endswith('.zip') and 'gl02' in name:
-        return 'zip'
-    if name.endswith('.xlsx'):
-        if '459' in name and 'ton' in name:
-            return 'ton'
-        if 'quay' in name or 'chuyen tien di' in name or 'chuyen_tien_di' in name:
-            return 'hub_di'
-        if ('giao dich den' in name or 'giao_dich_den' in name
-                or ('danh_sach' in name and 'den' in name)
-                or ('danh sach' in name and 'den' in name)):
-            return 'hub_den'
+    if not name.endswith('.xlsx'):
+        return None
+    if '459' in name and 'ton' in name:
+        return 'ton'
+    if 'quay' in name or 'chuyen tien di' in name or 'chuyen_tien_di' in name:
+        return 'hub_di'
+    if ('giao dich den' in name or 'giao_dich_den' in name
+            or ('danh_sach' in name and 'den' in name)
+            or ('danh sach' in name and 'den' in name)):
+        return 'hub_den'
     return None
 
 
@@ -173,15 +205,15 @@ def _set_prog(task_token: str | None, pct: int, msg: str) -> None:
 # ─── Public API ───────────────────────────────────────────────────────────────
 
 def run_process(
-    zip_bytes: bytes,
+    tep: list[tuple[str, Path]],
     task_token: str,
-    hub_di_bytes: bytes | None = None,
-    hub_den_bytes: bytes | None = None,
-    ton_bytes: bytes | None = None,
+    hub_di: tuple[str, Path] | None = None,
+    hub_den: tuple[str, Path] | None = None,
+    ton: tuple[str, Path] | None = None,
 ) -> None:
-    """Chạy process_zip trong background thread; cập nhật progress và bắt lỗi."""
+    """Chạy process_files trong luồng riêng; cập nhật progress và bắt lỗi."""
     try:
-        process_zip(zip_bytes, hub_di_bytes, hub_den_bytes, task_token, ton_bytes)
+        process_files(tep, task_token, hub_di, hub_den, ton)
     except _Cancelled:
         if task_token in _progress:
             _progress[task_token].update({
@@ -193,7 +225,7 @@ def run_process(
         if task_token in _progress:
             _progress[task_token].update({"done": True, "error": str(e), "msg": str(e)})
     except Exception as e:
-        log.error("process_zip lỗi [%s]: %s", task_token, e, exc_info=True)
+        log.error("process_files lỗi [%s]: %s", task_token, e, exc_info=True)
         if task_token in _progress:
             _progress[task_token].update({
                 "done": True, "error": str(e),
@@ -201,42 +233,59 @@ def run_process(
             })
 
 
-def process_zip(
-    zip_bytes: bytes,
-    hub_di_bytes: bytes | None = None,
-    hub_den_bytes: bytes | None = None,
+def process_files(
+    tep: list[tuple[str, Path]],
     task_token: str | None = None,
-    ton_bytes: bytes | None = None,
+    hub_di: tuple[str, Path] | None = None,
+    hub_den: tuple[str, Path] | None = None,
+    ton: tuple[str, Path] | None = None,
 ) -> dict:
-    """Nhận bytes ZIP (+ 2 file HUB đi/đến, + file tồn tháng trước — đều tùy chọn) → phân
-    loại 7 nhóm → lưu 7 xlsx → trả metadata.
+    """Nhận nhiều file GL02 ZIP/Excel [(tên hiển thị, đường dẫn)] (+ tùy chọn 1 file
+    HUB đi, 1 file HUB đến, 1 file tồn tháng trước) → gộp → phân loại 7 nhóm → lưu
+    7 xlsx → trả metadata.
 
-    Thiếu file HUB → bỏ qua bước 1000 Hoàn trả (các dòng đó rơi về GD khác chấm thủ công).
-    Thiếu file tồn → chạy như cũ, không ghép thêm dữ liệu tháng trước.
+    `tên hiển thị` là tên gốc người dùng chọn, chỉ dùng để viết thông báo lỗi;
+    `đường dẫn` là file đã nằm trên máy chủ (ghi từ upload, hoặc đã có sẵn khi
+    chạy từ thư mục server). Hai thứ tách nhau vì tên trên đĩa đã qua
+    `safe_filename()` nên có thể khác tên người dùng nhìn thấy — báo lỗi bằng
+    tên đã bị cắt là bắt họ đi tìm một file không tồn tại.
+
+    Gộp TRƯỚC rồi mới phân loại các file GL02 chính, không chạy riêng từng file:
+    cặp Cancel/Normal của một lệnh hủy có thể nằm ở hai file khác nhau (xuất theo
+    ngày/theo chi nhánh). Chạy tách ra thì cả hai vế đều rơi vào "GD khác". Trộn
+    ZIP với Excel trong cùng một lượt cũng vậy — nguồn nào không quan trọng, sau
+    khi đọc lên đều là cùng một bảng.
+
+    Thiếu file HUB (thiếu 1 trong 2, hoặc cả 2) → bỏ qua bước 1000 Hoàn trả, các
+    dòng đó rơi về GD khác chấm thủ công. Thiếu file tồn → chạy như cũ, không
+    ghép thêm dữ liệu tháng trước.
     """
+    if not tep:
+        raise InputError("Chưa chọn file nào.")
+
     _cleanup_old_results()
     t0 = time.time()
 
-    _set_prog(task_token, 5, "Đang giải mã và đọc dữ liệu...")
-    df, filtered_rows = _load_data(zip_bytes)
+    _set_prog(task_token, 5, "Đang đọc dữ liệu...")
+    df, filtered_rows = _load_data(tep, task_token)
     total_before = len(df) + filtered_rows
 
     ton_rows_added = 0
-    if ton_bytes is not None:
-        _set_prog(task_token, 8, "Đang đọc file tồn tháng trước...")
-        df_ton = _read_ton_file(ton_bytes)
+    if ton is not None:
+        _set_prog(task_token, 26, "Đang đọc file tồn tháng trước...")
+        df_ton = _read_ton_file(ton[1])
         ton_rows_added = len(df_ton)
         df = pd.concat([df_ton, df], ignore_index=True)
 
-    hub_di = hub_den = None
-    if hub_di_bytes is not None and hub_den_bytes is not None:
-        _set_prog(task_token, 15, "Đang đọc file HUB đi/đến...")
-        hub_di  = _read_hub_di(hub_di_bytes)
-        hub_den = _read_hub_den(hub_den_bytes)
+    hub_di_df = hub_den_df = None
+    if hub_di is not None and hub_den is not None:
+        _set_prog(task_token, 28, "Đang đọc file HUB đi/đến...")
+        hub_di_df  = _read_hub_di(hub_di[1])
+        hub_den_df = _read_hub_den(hub_den[1])
 
     _set_prog(task_token, 30, "Bước 1 — Xác định lệnh hủy...")
     df_huy, df_di, df_1000ht, df_ccn, df_ko, df_can_cn, df_khac = _classify(
-        df, task_token, hub_di, hub_den,
+        df, task_token, hub_di_df, hub_den_df,
     )
 
     result_token = str(uuid.uuid4())
@@ -273,20 +322,24 @@ def process_zip(
         raise
 
     result = {
-        "token":         result_token,
-        "huy_rows":      len(df_huy),
-        "di_rows":       len(df_di),
-        "ht1000_rows":   len(df_1000ht),
-        "ccn_rows":      len(df_ccn),
-        "ko_rows":       len(df_ko),
-        "can_cn_rows":   len(df_can_cn),
-        "khac_rows":     len(df_khac),
-        "total_rows":    total_before + ton_rows_added,
-        "filtered_rows": filtered_rows,
+        "token":          result_token,
+        "huy_rows":       len(df_huy),
+        "di_rows":        len(df_di),
+        "ht1000_rows":    len(df_1000ht),
+        "ccn_rows":       len(df_ccn),
+        "ko_rows":        len(df_ko),
+        "can_cn_rows":    len(df_can_cn),
+        "khac_rows":      len(df_khac),
+        # total_before chốt TRƯỚC khi ghép df_ton (dòng tồn tháng trước) — không
+        # cộng thêm thì bảng kết quả báo thiếu đúng bằng số dòng vừa ghép vào,
+        # trong khi 7 nhóm bên dưới đã tính cả chúng (review PR#43, khanhbq693).
+        "total_rows":     total_before + ton_rows_added,
+        "filtered_rows":  filtered_rows,
+        "n_files":        len(tep),
         "ton_rows_added": ton_rows_added,
-        "hub_provided":  hub_di is not None,
-        "elapsed_s":     round(time.time() - t0, 1),
-        "process_date":  datetime.now().strftime("%Y%m%d"),
+        "hub_provided":   hub_di_df is not None,
+        "elapsed_s":      round(time.time() - t0, 1),
+        "process_date":   datetime.now().strftime("%Y%m%d"),
     }
 
     if task_token and task_token in _progress:
@@ -298,45 +351,207 @@ def process_zip(
     return result
 
 
-# ─── Internal ─────────────────────────────────────────────────────────────────
+# ─── Internal — đọc file GL02 chính (ZIP/Excel, gộp nhiều file) ───────────────
 
-def _load_data(zip_bytes: bytes) -> tuple[pd.DataFrame, int]:
-    buf = io.BytesIO(zip_bytes)
+def _liet_ke_cot(d: pd.DataFrame, gioi_han: int = 8) -> str:
+    """Tên các cột bảng đang có, cắt bớt cho vừa một dòng thông báo."""
+    cot = [str(c) for c in d.columns]
+    if not cot:
+        return "(không có cột nào)"
+    if len(cot) <= gioi_han:
+        return ", ".join(cot)
+    return ", ".join(cot[:gioi_han]) + f", … ({len(cot)} cột)"
+
+
+def _kiem_cot(d: pd.DataFrame, nhan: str) -> None:
+    """Kiểm cột NGAY TỪNG BẢNG, không đợi gộp xong.
+
+    `pd.concat` lấy hợp các cột: bảng thiếu cột chỉ thành ô rỗng. Gộp rồi mới
+    kiểm thì một file sai định dạng lọt qua và làm lệch kết quả phân loại.
+    """
+    missing = sorted(_COT_BAT_BUOC - set(d.columns))
+    if not missing:
+        return
+
+    # Thiếu SẠCH cả 6 cột nghĩa là cầm nhầm loại file (hoặc dò trượt dòng tiêu
+    # đề) — không phải bản GL02 bị cắt bớt cột. Câu "thiếu cột bắt buộc" ở đây
+    # bắt người dùng đi tìm cột trong một file vốn không bao giờ có. Kèm luôn
+    # tên cột đang có để họ tự nhận ra mình chọn nhầm bảng nào.
+    if len(missing) == len(_COT_BAT_BUOC):
+        raise InputError(
+            f"{nhan} không phải dữ liệu GL02 — không có cột nào trong số "
+            f"{', '.join(sorted(_COT_BAT_BUOC))}. Cột đang có: {_liet_ke_cot(d)}."
+        )
+
+    raise InputError(f"{nhan} thiếu cột bắt buộc: {', '.join(missing)}.")
+
+
+def _doc_csv(nguon) -> pd.DataFrame:
+    """`nguon`: đường dẫn file, hoặc luồng đọc của một file con trong ZIP."""
+    d = pd.read_csv(nguon, encoding='utf-8-sig', dtype=str, keep_default_na=False)
+    d.columns = d.columns.str.strip()
+    return d
+
+
+def _dat_tieu_de(raw: pd.DataFrame) -> pd.DataFrame | None:
+    """Dò hàng tiêu đề trong vài dòng đầu sheet → bảng đã đặt tên cột (None nếu trống).
+
+    Đọc `header=None` rồi tự dò, không đọc thẳng `header=0`: bản Excel người
+    dùng tự lưu lại thường có thêm dòng tiêu đề báo cáo / ngày xuất ở trên
+    cùng. Đọc cứng dòng đầu thì những file đó báo "thiếu cột bắt buộc" dù dữ
+    liệu bên dưới vẫn đủ.
+    """
+    raw = raw.dropna(how='all')
+    if raw.empty:
+        return None
+
+    dong = 0
+    for i in range(min(_MAX_DONG_DO_TIEU_DE, len(raw))):
+        ten_cot = {str(v).strip() for v in raw.iloc[i]}
+        # 3 cột bắt buộc trên cùng một dòng là đủ chắc đây là hàng tiêu đề,
+        # không phải một dòng dữ liệu tình cờ có chữ giống tên cột.
+        if len(_COT_BAT_BUOC & ten_cot) >= 3:
+            dong = i
+            break
+    # Dò không ra thì vẫn lấy dòng đầu làm tiêu đề: _kiem_cot() ngay sau đó nói
+    # rõ thiếu những cột nào — sát vấn đề hơn câu "không tìm thấy dòng tiêu đề".
+
+    d = raw.iloc[dong + 1:].copy()
+    d.columns = [str(v).strip() for v in raw.iloc[dong]]
+    d = d.dropna(how='all')
+    if d.empty:
+        return None
+
+    # Bỏ cột không có tên (ô tiêu đề trống → pandas trả 'nan'); giữ theo vị trí
+    # để không vấp khi workbook có hai cột trùng tên.
+    giu = [i for i, c in enumerate(d.columns) if c and c.lower() != 'nan']
+    d = d.iloc[:, giu]
+
+    # Ô trống trong Excel là NaN. Để nguyên thì `.str.strip()` và phép ghép khoá
+    # phân loại đều cho NaN, mà NaN != NaN → dòng đó lặng lẽ rơi vào "GD khác".
+    d = d.fillna('')
+
+    # Excel lưu ngày ở kiểu ngày-giờ, pandas đổi ra "2026-08-01 00:00:00"; bản
+    # CSV gốc không có đuôi giờ đó — cắt đi để hai nguồn ra cùng một dạng.
+    for col in _COT_NGAY:
+        if col in d.columns:
+            d[col] = d[col].astype(str).str.replace(r' 00:00:00$', '', regex=True)
+
+    return d.reset_index(drop=True)
+
+
+def _doc_excel(nguon, nhan: str) -> list[pd.DataFrame]:
+    """Đọc 1 workbook Excel → mỗi sheet có dữ liệu là một DataFrame.
+
+    `nguon` là đường dẫn file trên đĩa (đường thường), hoặc bytes khi workbook
+    nằm bên trong ZIP — calamine cần đọc nhảy vị trí nên không nhận luồng giải
+    nén tuần tự, đó là chỗ duy nhất còn phải qua RAM.
+
+    Đọc TẤT CẢ sheet chứ không chỉ sheet đầu, và bắt sheet nào cũng phải đủ cột.
+    Bỏ qua sheet thiếu cột là im lặng đánh rơi dữ liệu — người dùng không có
+    cách nào biết một phần bút toán đã không được tính.
+    """
+    try:
+        sheets = pd.read_excel(io.BytesIO(nguon) if isinstance(nguon, bytes) else nguon,
+                               sheet_name=None, header=None,
+                               dtype=str, engine='calamine')
+    except Exception as e:
+        log.warning("%s: không đọc được Excel: %s", nhan, e, exc_info=True)
+        raise InputError(
+            f"{nhan} không đọc được như file Excel — có thể file hỏng, bị cắt dở, "
+            "hoặc chỉ được đổi đuôi tên thành .xlsx."
+        ) from e
+
+    dfs = []
+    for ten_sheet, raw in sheets.items():
+        d = _dat_tieu_de(raw)
+        if d is None:
+            continue                      # sheet trống — bỏ qua, không phải lỗi
+        _kiem_cot(d, f"{nhan} → sheet '{ten_sheet}'")
+        dfs.append(d)
+
+    if not dfs:
+        raise InputError(f"{nhan} không có sheet nào chứa dữ liệu.")
+    return dfs
+
+
+def _doc_tep(ten: str, duong_dan: Path) -> list[pd.DataFrame]:
+    """Đọc 1 file GL02 → danh sách DataFrame, theo đuôi tên file.
+
+    Đuôi lấy từ TÊN NGƯỜI DÙNG CHỌN, không từ tên trên đĩa: hai cái có thể khác
+    nhau sau `safe_filename()`, và đây là thứ quyết định file được đọc kiểu gì.
+    """
+    duoi = Path(ten).suffix.lower()
+    if duoi == DUOI_ZIP:
+        return _doc_zip(ten, duong_dan)
+    if duoi in DUOI_EXCEL:
+        return _doc_excel(duong_dan, f"File '{ten}'")
+    raise InputError(
+        f"File '{ten}' không thuộc định dạng nhận được — chỉ nhận "
+        f"{', '.join(DUOI_HOP_LE)}."
+    )
+
+
+def _doc_zip(ten: str, duong_dan: Path) -> list[pd.DataFrame]:
+    """Giải nén 1 file ZIP trên đĩa → danh sách DataFrame (mỗi .csv/Excel bên trong một cái).
+
+    CSV bên trong được đọc qua `zf.open()` — pandas kéo dữ liệu giải nén theo
+    luồng, không có lúc nào cả file CSV nằm nguyên trong RAM. Workbook Excel thì
+    vẫn phải `zf.read()` vì calamine đọc nhảy vị trí (xem `_doc_excel`).
+
+    Mọi thông báo lỗi đều kèm TÊN FILE: người dùng chọn cả chục file một lượt,
+    câu "file .zip không hợp lệ" trơ trọi thì không biết phải bỏ file nào ra.
+    """
     dfs = []
     try:
-        with _ZipFile(buf) as zf:
-            csv_names = [n for n in zf.namelist() if n.lower().endswith('.csv')]
-            for csv_name in csv_names:
-                raw = zf.read(csv_name, pwd=ZIP_PASSWORD)
-                dfs.append(pd.read_csv(
-                    io.BytesIO(raw),
-                    encoding='utf-8-sig',
-                    dtype=str,
-                    keep_default_na=False,
-                ))
+        with _ZipFile(str(duong_dan)) as zf:
+            ten_con = [n for n in zf.namelist()
+                       if n.lower().endswith(('.csv',) + DUOI_EXCEL)]
+            for ten_trong in ten_con:
+                nhan = f"File '{ten}' → '{ten_trong}'"
+                if ten_trong.lower().endswith('.csv'):
+                    with zf.open(ten_trong, pwd=zip_password()) as luong:
+                        d = _doc_csv(luong)
+                    _kiem_cot(d, nhan)
+                    dfs.append(d)
+                else:
+                    dfs.extend(_doc_excel(zf.read(ten_trong, pwd=zip_password()), nhan))
     except _BAD_ZIP as e:
         raise InputError(
-            "File tải lên không phải file .zip hợp lệ — có thể tải bị lỗi, "
+            f"File '{ten}' không phải file .zip hợp lệ — có thể tải bị lỗi, "
             "bị cắt dở, hoặc chỉ được đổi đuôi tên thành .zip."
         ) from e
     except RuntimeError as e:
         raise InputError(
-            "Không giải nén được file .zip — sai mật khẩu hoặc file dùng kiểu "
+            f"Không giải nén được file '{ten}' — sai mật khẩu hoặc file dùng kiểu "
             "mã hoá khác với file xuất từ IPCAS."
         ) from e
 
     # Trước đây dfs rỗng → dfs[0] ném IndexError('list index out of range'),
     # người dùng chỉ thấy đúng câu đó, không biết phải sửa gì.
     if not dfs:
-        raise InputError("File .zip không chứa file .csv nào — cần file dữ liệu xuất từ IPCAS.")
+        raise InputError(
+            f"File '{ten}' không chứa file .csv hay Excel nào — cần file dữ liệu "
+            "xuất từ IPCAS."
+        )
+    return dfs
 
+
+def _load_data(
+    tep: list[tuple[str, Path]],
+    task_token: str | None = None,
+) -> tuple[pd.DataFrame, int]:
+    """Đọc tất cả file GL02, gộp thành một DataFrame, lọc theo TK 459901."""
+    dfs: list[pd.DataFrame] = []
+    n = len(tep)
+    for i, (ten, duong_dan) in enumerate(tep, 1):
+        # 5% → 25%: phần đọc file chiếm khoảng đó trong thanh tiến độ chung
+        _set_prog(task_token, 5 + (20 * (i - 1)) // n,
+                  f"Đang đọc dữ liệu ({i}/{n}): {ten}...")
+        dfs.extend(_doc_tep(ten, duong_dan))
+
+    _set_prog(task_token, 25, f"Đang gộp dữ liệu {n} file...")
     df = pd.concat(dfs, ignore_index=True) if len(dfs) > 1 else dfs[0]
-
-    df.columns = df.columns.str.strip()
-
-    missing = sorted({'LOCAC', 'CUSTOMER', 'CCY', 'REMARK', 'DRAMOUNT', 'CRAMOUNT'} - set(df.columns))
-    if missing:
-        raise InputError(f"File .csv thiếu cột bắt buộc: {', '.join(missing)}.")
 
     # Chỉ strip các cột cần thiết — tránh strip 17 cột × 645k dòng
     for col in _STRIP_COLS:
@@ -344,47 +559,27 @@ def _load_data(zip_bytes: bytes) -> tuple[pd.DataFrame, int]:
             df[col] = df[col].str.strip()
 
     df['REMARK'] = df['REMARK'].fillna('')
+    df['DRAMOUNT'] = pd.to_numeric(df['DRAMOUNT'], errors='coerce').fillna(0.0)
+    df['CRAMOUNT'] = pd.to_numeric(df['CRAMOUNT'], errors='coerce').fillna(0.0)
 
-    # Lọc VND TRƯỚC khi ép kiểu số — GL02 gốc có cả giao dịch ngoại tệ (USD/EUR...), số
-    # tiền ngoại tệ có phần thập phân thật (VD '1.78'), khác hẳn ngăn-nghìn VND. Ép số
-    # trước khi lọc sẽ raise lỗi ngay trên các dòng ngoại tệ (đúng ra bị loại từ đầu, không
-    # bao giờ cần ép số) — xác nhận trực tiếp từ người chấm 2026-08-30.
     before = len(df)
     df = df[
         (df['LOCAC']    == FILTER_LOCAC) &
         (df['CUSTOMER'] == FILTER_CUSTOMER) &
         (df['CCY']      == FILTER_CCY)
     ].copy()
-
-    df['DRAMOUNT'] = doc_so_tien(df['DRAMOUNT'], nguon='GL02 (459901)', ten_cot='DRAMOUNT')
-    df['CRAMOUNT'] = doc_so_tien(df['CRAMOUNT'], nguon='GL02 (459901)', ten_cot='CRAMOUNT')
     return df, before - len(df)
 
 
-def _read_ton_file(raw_bytes: bytes) -> pd.DataFrame:
+# ─── Internal — file phụ trợ (tồn tháng trước / HUB đi / HUB đến) ─────────────
+
+def _read_ton_file(duong_dan: Path) -> pd.DataFrame:
     """Đọc file 'tồn' tháng trước (459_TON_Tx.xlsx, header ngay dòng 1) — chỉ lấy 16 cột
     chung với dữ liệu GL02 gốc (_TON_COLS), bỏ các cột ghi chú thủ công của người chấm
     ('chấm', 'Phong ban', 'refhub') — dùng để ghép nối tiếp vào dữ liệu tháng mới rồi
-    phân loại lại từ đầu, không giữ trạng thái/ghi chú cũ.
-
-    DRAMOUNT/CRAMOUNT PHẢI ép str ngay tại read_excel (không để calamine tự suy kiểu):
-    verify thực nghiệm 2026-08-28 — nếu ô Excel là TEXT dạng ngăn-nghìn 1 nhóm ('180.000'),
-    calamine tự "hiểu" nó là số hợp lệ và trả về float 180.0 NGAY TẠI TẦNG ĐỌC, xoá mất
-    3 số 0 trước khi bất kỳ code Python nào (kể cả doc_so_tien()) kịp thấy chuỗi gốc — sai
-    1000 lần, không lỗi, không NaN. Ép dtype=str tại đây buộc calamine trả nguyên văn ô
-    text, để doc_so_tien() ở dưới validate đúng. Không xảy ra với '1.234.567' (nhiều nhóm)
-    hay '839,000' (dấu phẩy) — cả hai đều không phải cú pháp float hợp lệ nên calamine tự
-    giữ nguyên dạng text; case nguy hiểm CHỈ có ở 1 nhóm ngăn-nghìn bằng dấu chấm."""
-    raw = pd.read_excel(io.BytesIO(raw_bytes), engine='calamine',
-                         dtype={'DRAMOUNT': str, 'CRAMOUNT': str})
+    phân loại lại từ đầu, không giữ trạng thái/ghi chú cũ."""
+    raw = pd.read_excel(duong_dan, engine='calamine')
     raw.columns = raw.columns.astype(str).str.strip()
-
-    missing = sorted(set(_TON_COLS) - set(raw.columns))
-    if missing:
-        raise InputError(
-            f"File tồn tháng trước thiếu cột bắt buộc: {', '.join(missing)}. "
-            "Kiểm tra đúng file 459_TON_Tx.xlsx xuất từ GL02 gốc."
-        )
     df = raw[_TON_COLS].copy()
 
     for col in _TON_STR_COLS:
@@ -398,133 +593,25 @@ def _read_ton_file(raw_bytes: bytes) -> pd.DataFrame:
         else:
             df[col] = s.map(lambda v: '' if pd.isna(v) else str(v).strip())
 
-    # Lọc VND TRƯỚC khi ép kiểu số — cùng lý do _load_data() (GL02 gốc có ngoại tệ, số
-    # tiền có phần thập phân thật, khác ngăn-nghìn VND).
+    df['DRAMOUNT'] = pd.to_numeric(df['DRAMOUNT'], errors='coerce').fillna(0.0).astype(float)
+    df['CRAMOUNT'] = pd.to_numeric(df['CRAMOUNT'], errors='coerce').fillna(0.0).astype(float)
+
     df = df[
         (df['LOCAC']    == FILTER_LOCAC) &
         (df['CUSTOMER'] == FILTER_CUSTOMER) &
         (df['CCY']      == FILTER_CCY)
     ].reset_index(drop=True)
-
-    df['DRAMOUNT'] = doc_so_tien(df['DRAMOUNT'], nguon='459_TON_Tx.xlsx', ten_cot='DRAMOUNT')
-    df['CRAMOUNT'] = doc_so_tien(df['CRAMOUNT'], nguon='459_TON_Tx.xlsx', ten_cot='CRAMOUNT')
     return df
 
 
-def _classify(
-    df: pd.DataFrame,
-    task_token: str | None = None,
-    hub_di: pd.DataFrame | None = None,
-    hub_den: pd.DataFrame | None = None,
-) -> tuple[pd.DataFrame, ...]:
-    """Phân loại thác nước: Hủy → Đi → 1000 Hoàn trả → Chuyển chi nhánh → Điện KO offline
-    → Cân CN → Khác."""
-    # ── Bước 1: Lệnh Hủy ──────────────────────────────────────────────────────
-    df['abs_amt']  = (df['DRAMOUNT'] + df['CRAMOUNT']).abs()
-    df['_huy_key'] = (df['REFERENCE'] + '|' + df['TRBRCD'] + '|'
-                      + df['DYTRSEQ'] + '|' + df['abs_amt'].astype(str))
-
-    cancel_keys = set(df.loc[df['TRTP'] == 'Cancel', '_huy_key'])
-    normal_keys = set(df.loc[df['TRTP'] == 'Normal', '_huy_key'])
-    huy_keys    = cancel_keys & normal_keys
-
-    df_huy       = df[df['_huy_key'].isin(huy_keys)].copy()
-    df_remaining = df[~df['_huy_key'].isin(huy_keys)].copy()
-
-    # ── Bước 2: Lệnh Đi ───────────────────────────────────────────────────────
-    _set_prog(task_token, 50, "Bước 2 — Phân loại lệnh đi...")
-    df_remaining['_amt']    = df_remaining[['DRAMOUNT', 'CRAMOUNT']].abs().max(axis=1)
-    df_remaining['_di_key'] = (df_remaining['TRBRCD'] + '|'
-                               + df_remaining['_amt'].astype(str) + '|'
-                               + df_remaining['REMARK'])
-
-    # Vectorized — nhanh hơn groupby().apply(lambda) ~10-20x
-    grp = df_remaining.groupby('_di_key')[['CRAMOUNT', 'DRAMOUNT']].sum()
-    grp['balance'] = (grp['CRAMOUNT'] - grp['DRAMOUNT']).round(2)
-    zero_keys = set(grp.index[grp['balance'] == 0])
-
-    df_di   = df_remaining[df_remaining['_di_key'].isin(zero_keys)].copy()
-    df_khac = df_remaining[~df_remaining['_di_key'].isin(zero_keys)].copy()
-
-    # Xóa cột tạm
-    temp_cols = ['abs_amt', '_huy_key', '_amt', '_di_key']
-    for tmp_df in (df_huy, df_di, df_khac):
-        tmp_df.drop(columns=[c for c in temp_cols if c in tmp_df.columns], inplace=True)
-
-    # ── Bước 3: 1000 Hoàn trả (cần đủ 2 file HUB đi/đến) ──────────────────────
-    # Ghép theo khóa TRACE (REFERENCE = số Trace của hub) — gần như không có rủi ro
-    # cướp nhầm (đã verify precision >99,9%) nên chạy TRƯỚC CCN/KO. Chạy sau khi 1000HT
-    # đã dùng khóa mờ theo số tiền từng khiến CCN/KO bị cướp; nay đã đảo lại vì khóa
-    # TRACE chính xác hơn nhiều so với khóa amt+REMARK (CCN) hay amt-pairing (KO) —
-    # để 1000HT chạy sau sẽ khiến CCN cướp mất 1 chân trước khi 1000HT kịp nhận diện
-    # (xem Implementation-notes.html card 79, case REFERENCE=1000API845335).
-    _set_prog(task_token, 60, "Bước 3 — Đối chiếu 1000 Hoàn trả...")
-    if hub_di is not None and hub_den is not None and len(df_khac) > 0:
-        mask_ht, mask_ht_candidate = _mark_1000ht(df_khac, hub_di, hub_den)
-    else:
-        mask_ht = pd.Series(False, index=df_khac.index)
-        mask_ht_candidate = pd.Series(False, index=df_khac.index)
-    df_1000ht = df_khac[mask_ht].copy()
-    df_rem2   = df_khac[~mask_ht].copy()
-
-    # ── Bước 4: Chuyển chi nhánh ──────────────────────────────────────────────
-    _set_prog(task_token, 70, "Bước 4 — Phân loại chuyển chi nhánh...")
-    mask_ccn = _mark_ccn(df_rem2)
-    df_ccn  = df_rem2[mask_ccn].copy()
-    df_rem3 = df_rem2[~mask_ccn].copy()
-
-    # ── Bước 5: Điện KO offline ───────────────────────────────────────────────
-    _set_prog(task_token, 80, "Bước 5 — Phân loại điện KO offline...")
-    mask_ko, mask_ko_candidate = _mark_ko(df_rem3)
-    df_ko   = df_rem3[mask_ko].copy()
-    df_rem4 = df_rem3[~mask_ko].copy()
-
-    # ── Bước 6: Cân CN ────────────────────────────────────────────────────────
-    _set_prog(task_token, 85, "Bước 6 — Phân loại Cân CN...")
-    mask_can_cn   = _mark_can_cn(df_rem4)
-    df_can_cn     = df_rem4[mask_can_cn].copy()
-    df_khac_final = df_rem4[~mask_can_cn].copy()
-
-    # Đánh dấu các dòng "nghi ngờ nhưng chưa đủ điều kiện" (1000HT hoặc KO) để chấm tay dễ hơn
-    ghi_chu = pd.Series('', index=df_khac_final.index)
-    ghi_chu[mask_ht_candidate.reindex(df_khac_final.index, fill_value=False)] = \
-        'Nghi ngờ 1000HT — chưa khớp đủ cặp, cần chấm tay'
-    ghi_chu[mask_ko_candidate.reindex(df_khac_final.index, fill_value=False)] = \
-        'Nghi ngờ Điện KO offline — chưa khớp đủ cặp, cần chấm tay'
-    df_khac_final['GHI_CHU'] = ghi_chu
-    for tmp_df in (df_huy, df_di, df_1000ht, df_ccn, df_ko, df_can_cn):
-        tmp_df['GHI_CHU'] = ''
-
-    assert (len(df_huy) + len(df_di) + len(df_ccn) + len(df_ko) + len(df_can_cn)
-            + len(df_1000ht) + len(df_khac_final)) == len(df), "Lỗi logic phân loại!"
-
-    return df_huy, df_di, df_1000ht, df_ccn, df_ko, df_can_cn, df_khac_final
-
-
-def _read_hub_di(raw_bytes: bytes) -> pd.DataFrame:
-    """Đọc file 'Quay_danh sach giao dich chuyen tien di' — tiêu đề ở dòng Excel thứ 2.
-
-    dtype=str toàn bảng (không chỉ cột tiền): header=None nên chưa có tên cột lúc đọc,
-    không target được riêng 'Số tiền thực chuyển' như _read_ton_file — ép cả bảng để
-    tránh calamine tự suy '180.000' thành float 180.0 ngay tại tầng đọc (xem
-    _read_ton_file). Vô hại với cột khác — mọi cột còn lại vốn đã tự ép `.astype(str)`
-    hoặc `pd.to_numeric()` (dtype-agnostic) ngay sau đây."""
-    raw = pd.read_excel(io.BytesIO(raw_bytes), header=None, engine='calamine', dtype=str)
+def _read_hub_di(duong_dan: Path) -> pd.DataFrame:
+    """Đọc file 'Quay_danh sach giao dich chuyen tien di' — tiêu đề ở dòng Excel thứ 2."""
+    raw = pd.read_excel(duong_dan, header=None, engine='calamine')
     df = raw.iloc[2:].copy()
     df.columns = raw.iloc[1].tolist()
-
-    can_thiet = ['Số Trace 1', 'Số tiền thực chuyển', 'Hệ thống thanh toán',
-                 'Nội dung chuyển tiền', 'Số tham chiếu lệnh gốc']
-    missing = sorted(set(can_thiet) - set(df.columns))
-    if missing:
-        raise InputError(
-            f"File HUB đi thiếu cột bắt buộc: {', '.join(missing)}. "
-            "Kiểm tra đúng file 'Quay_danh sach giao dich chuyen tien di', "
-            "tiêu đề nằm ở dòng Excel thứ 2."
-        )
     df = df.dropna(subset=['Số Trace 1']).reset_index(drop=True)
 
-    amt   = doc_so_tien(df['Số tiền thực chuyển'], nguon='Hub đi (459901)', ten_cot='Số tiền thực chuyển')
+    amt   = pd.to_numeric(df['Số tiền thực chuyển'], errors='coerce').fillna(0.0).round(0)
     trace = pd.to_numeric(df['Số Trace 1'], errors='coerce')
     is_napas = df['Hệ thống thanh toán'].astype(str).str.strip() == 'ACH-NAPAS'
     # ACH-NAPAS: lấy ký tự thứ 47-52 (1-based) của "Nội dung chuyển tiền"
@@ -540,7 +627,7 @@ def _trace_candidates(raw: pd.Series) -> tuple[pd.Series, pd.Series]:
     cách nhau bởi ';' (gặp ở giao dịch kênh ACH-NAPAS). KHÔNG thể chỉ tin dãy đầu: verify dữ
     liệu thật Tháng 5 cho thấy 49/97 dòng ACH-NAPAS khớp REFERENCE của TK459 với dãy ĐẦU,
     46/97 dòng chỉ khớp với dãy THỨ HAI — bỏ sót dãy 2 khiến ~47% giao dịch 1000 Hoàn trả kênh
-    ACH biến mất vào GD khác (xem Implementation-notes.html card 79). Mỗi dãy lấy 9 ký tự cuối (phòng
+    ACH biến mất vào GD khác (xem Implementation-notes.html). Mỗi dãy lấy 9 ký tự cuối (phòng
     trace dài hơn 9 số — phần thừa phía trước không phải trace thật). seg2 là NaN nếu không
     có ';'."""
     parts = raw.astype(str).str.split(';')
@@ -558,26 +645,14 @@ def _trace_last9(raw: pd.Series) -> pd.Series:
     return _trace_candidates(raw)[0]
 
 
-def _read_hub_den(raw_bytes: bytes) -> pd.DataFrame:
-    """Đọc file 'Danh sach giao dich den' — tiêu đề ở dòng Excel thứ 3.
-
-    dtype=str toàn bảng — cùng lý do với _read_hub_di()."""
-    raw = pd.read_excel(io.BytesIO(raw_bytes), header=None, engine='calamine', dtype=str)
+def _read_hub_den(duong_dan: Path) -> pd.DataFrame:
+    """Đọc file 'Danh sach giao dich den' — tiêu đề ở dòng Excel thứ 3."""
+    raw = pd.read_excel(duong_dan, header=None, engine='calamine')
     df = raw.iloc[3:].copy()
     df.columns = raw.iloc[2].tolist()
-
-    can_thiet = ['Số trace', 'Số tiền lệnh gốc', 'Hệ thống thanh toán',
-                 'Số thành công/MSGID', 'Số REF HUB']
-    missing = sorted(set(can_thiet) - set(df.columns))
-    if missing:
-        raise InputError(
-            f"File HUB đến thiếu cột bắt buộc: {', '.join(missing)}. "
-            "Kiểm tra đúng file 'Danh sach giao dich den', "
-            "tiêu đề nằm ở dòng Excel thứ 3."
-        )
     df = df.dropna(subset=['Số trace']).reset_index(drop=True)
 
-    amt = doc_so_tien(df['Số tiền lệnh gốc'], nguon='Hub đến (459901)', ten_cot='Số tiền lệnh gốc')
+    amt = pd.to_numeric(df['Số tiền lệnh gốc'], errors='coerce').fillna(0.0).round(0)
     trace, trace2 = _trace_candidates(df['Số trace'])
     is_napas = df['Hệ thống thanh toán'].astype(str).str.strip() == 'ACH-NAPAS'
     # ACH-NAPAS: lấy 6 số cuối của "Số thành công/MSGID"
@@ -664,7 +739,7 @@ def _mark_ccn(df: pd.DataFrame) -> pd.Series:
     """Chuyển chi nhánh: ghép (số tiền + REMARK), khớp khi Tổng Nợ = Tổng Có của CẢ NHÓM.
     REMARK so khớp KHÔNG phân biệt hoa/thường và bỏ khoảng trắng thừa — 2 chân cùng 1 giao dịch
     do 2 chi nhánh khác nhau gõ tay REMARK khác case (VD 'chuyen tien' / 'CHUYEN TIEN') vẫn phải
-    được nhận diện cùng 1 nhóm (xem Implementation-notes.html card 79) — nếu không, chân lẻ rơi xuống
+    được nhận diện cùng 1 nhóm (xem Implementation-notes.html) — nếu không, chân lẻ rơi xuống
     bước Cân CN phía sau và có thể bị ghép nhầm với giao dịch không liên quan trùng số tiền tròn.
     Nhóm không cân bằng tuyệt đối (VD REMARK trùng lặp giữa nhiều giao dịch khác nhau)
     bị loại bỏ hoàn toàn — không tách một phần — để rơi về GD khác chấm thủ công."""
@@ -705,7 +780,7 @@ def _mark_ko(df: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
     """Điện KO offline (DK1-DK3): DK1 — tập ứng viên Có = USERID đúng mẫu "<mã chi nhánh 4
     số>KO" (VD '1000KO', '3511KO' — verify 58/58 USERID KO offline thật đều khớp mẫu này).
     KHÔNG dùng contains('KO') đơn thuần — bắt nhầm USERID tên đăng nhập giao dịch viên tình cờ
-    có hậu tố "KO" (VD 'DTRLTKO') gây xếp nhầm Điện KO offline (xem Implementation-notes.html card 79).
+    có hậu tố "KO" (VD 'DTRLTKO') gây xếp nhầm Điện KO offline (xem Implementation-notes.html).
     DK2 — tập ứng viên Nợ = DRAMOUNT của các dòng có REMARK chứa marker 'Remitting Amount:VND'.
     DK3 — ghép cặp N:N theo SỐ TIỀN bằng nhau giữa 1 dòng Nợ (DK2) và 1 dòng Có (DK1), bắt buộc
     Nợ=Có từng cặp; dòng không tìm được đối tác cùng số tiền thì KHÔNG đánh dấu, rơi về GD khác
@@ -736,6 +811,96 @@ def _mark_ko(df: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
     mask_confirmed = (dr_amt.notna() & (cc_dr < limit_dr)) | (cr_amt.notna() & (cc_cr < limit_cr))
     mask_candidate = (is_ko_user | is_remit) & ~mask_confirmed
     return mask_confirmed, mask_candidate
+
+
+def _classify(
+    df: pd.DataFrame,
+    task_token: str | None = None,
+    hub_di: pd.DataFrame | None = None,
+    hub_den: pd.DataFrame | None = None,
+) -> tuple[pd.DataFrame, ...]:
+    """Phân loại thác nước: Hủy → Đi → 1000 Hoàn trả → Chuyển chi nhánh → Điện KO offline
+    → Cân CN → GD khác."""
+    # ── Bước 1: Lệnh Hủy ──────────────────────────────────────────────────────
+    df['abs_amt']  = (df['DRAMOUNT'] + df['CRAMOUNT']).abs()
+    df['_huy_key'] = (df['REFERENCE'] + '|' + df['TRBRCD'] + '|'
+                      + df['DYTRSEQ'] + '|' + df['abs_amt'].astype(str))
+
+    cancel_keys = set(df.loc[df['TRTP'] == 'Cancel', '_huy_key'])
+    normal_keys = set(df.loc[df['TRTP'] == 'Normal', '_huy_key'])
+    huy_keys    = cancel_keys & normal_keys
+
+    df_huy       = df[df['_huy_key'].isin(huy_keys)].copy()
+    df_remaining = df[~df['_huy_key'].isin(huy_keys)].copy()
+
+    # ── Bước 2: Lệnh Đi ───────────────────────────────────────────────────────
+    _set_prog(task_token, 50, "Bước 2 — Phân loại lệnh đi...")
+    df_remaining['_amt']    = df_remaining[['DRAMOUNT', 'CRAMOUNT']].abs().max(axis=1)
+    df_remaining['_di_key'] = (df_remaining['TRBRCD'] + '|'
+                               + df_remaining['_amt'].astype(str) + '|'
+                               + df_remaining['REMARK'])
+
+    # Vectorized — nhanh hơn groupby().apply(lambda) ~10-20x
+    grp = df_remaining.groupby('_di_key')[['CRAMOUNT', 'DRAMOUNT']].sum()
+    grp['balance'] = (grp['CRAMOUNT'] - grp['DRAMOUNT']).round(2)
+    zero_keys = set(grp.index[grp['balance'] == 0])
+
+    df_di   = df_remaining[df_remaining['_di_key'].isin(zero_keys)].copy()
+    df_khac = df_remaining[~df_remaining['_di_key'].isin(zero_keys)].copy()
+
+    # Xóa cột tạm
+    temp_cols = ['abs_amt', '_huy_key', '_amt', '_di_key']
+    for tmp_df in (df_huy, df_di, df_khac):
+        tmp_df.drop(columns=[c for c in temp_cols if c in tmp_df.columns], inplace=True)
+
+    # ── Bước 3: 1000 Hoàn trả (cần đủ 2 file HUB đi/đến) ──────────────────────
+    # Ghép theo khóa TRACE (REFERENCE = số Trace của hub) — gần như không có rủi ro
+    # cướp nhầm (đã verify precision >99,9%) nên chạy TRƯỚC CCN/KO. Chạy sau khi 1000HT
+    # đã dùng khóa mờ theo số tiền từng khiến CCN/KO bị cướp; nay đã đảo lại vì khóa
+    # TRACE chính xác hơn nhiều so với khóa amt+REMARK (CCN) hay amt-pairing (KO) —
+    # để 1000HT chạy sau sẽ khiến CCN cướp mất 1 chân trước khi 1000HT kịp nhận diện
+    # (xem Implementation-notes.html, case REFERENCE=1000API845335).
+    _set_prog(task_token, 60, "Bước 3 — Đối chiếu 1000 Hoàn trả...")
+    if hub_di is not None and hub_den is not None and len(df_khac) > 0:
+        mask_ht, mask_ht_candidate = _mark_1000ht(df_khac, hub_di, hub_den)
+    else:
+        mask_ht = pd.Series(False, index=df_khac.index)
+        mask_ht_candidate = pd.Series(False, index=df_khac.index)
+    df_1000ht = df_khac[mask_ht].copy()
+    df_rem2   = df_khac[~mask_ht].copy()
+
+    # ── Bước 4: Chuyển chi nhánh ──────────────────────────────────────────────
+    _set_prog(task_token, 70, "Bước 4 — Phân loại chuyển chi nhánh...")
+    mask_ccn = _mark_ccn(df_rem2)
+    df_ccn  = df_rem2[mask_ccn].copy()
+    df_rem3 = df_rem2[~mask_ccn].copy()
+
+    # ── Bước 5: Điện KO offline ───────────────────────────────────────────────
+    _set_prog(task_token, 80, "Bước 5 — Phân loại điện KO offline...")
+    mask_ko, mask_ko_candidate = _mark_ko(df_rem3)
+    df_ko   = df_rem3[mask_ko].copy()
+    df_rem4 = df_rem3[~mask_ko].copy()
+
+    # ── Bước 6: Cân CN ────────────────────────────────────────────────────────
+    _set_prog(task_token, 85, "Bước 6 — Phân loại Cân CN...")
+    mask_can_cn   = _mark_can_cn(df_rem4)
+    df_can_cn     = df_rem4[mask_can_cn].copy()
+    df_khac_final = df_rem4[~mask_can_cn].copy()
+
+    # Đánh dấu các dòng "nghi ngờ nhưng chưa đủ điều kiện" (1000HT hoặc KO) để chấm tay dễ hơn
+    ghi_chu = pd.Series('', index=df_khac_final.index)
+    ghi_chu[mask_ht_candidate.reindex(df_khac_final.index, fill_value=False)] = \
+        'Nghi ngờ 1000HT — chưa khớp đủ cặp, cần chấm tay'
+    ghi_chu[mask_ko_candidate.reindex(df_khac_final.index, fill_value=False)] = \
+        'Nghi ngờ Điện KO offline — chưa khớp đủ cặp, cần chấm tay'
+    df_khac_final['GHI_CHU'] = ghi_chu
+    for tmp_df in (df_huy, df_di, df_1000ht, df_ccn, df_ko, df_can_cn):
+        tmp_df['GHI_CHU'] = ''
+
+    assert (len(df_huy) + len(df_di) + len(df_ccn) + len(df_ko) + len(df_can_cn)
+            + len(df_1000ht) + len(df_khac_final)) == len(df), "Lỗi logic phân loại!"
+
+    return df_huy, df_di, df_1000ht, df_ccn, df_ko, df_can_cn, df_khac_final
 
 
 def _xe(s: str) -> str:
@@ -799,14 +964,31 @@ def _styles_xml(header_argb: str) -> str:
 
 _ROW_CHUNK = 5000  # dòng gộp mỗi lần ghi xuống stream — giới hạn đỉnh RAM ở mức 1 chunk
 
+# Định dạng XLSX chỉ có đúng 1.048.576 dòng. Mỗi sheet tiêu tốn 3 dòng ngoài dữ liệu:
+# dòng 1 tiêu đề gộp, dòng 2 tên cột, dòng cuối TỔNG CỘNG.
+_XLSX_MAX_ROWS = 1_048_576
+_MAX_DATA_ROWS = _XLSX_MAX_ROWS - 3
+
+
+def _ten_sheet(goc: str, phan: int, tong_phan: int) -> str:
+    """Tên sheet cho từng phần; Excel giới hạn 31 ký tự."""
+    if tong_phan == 1:
+        return goc[:31]
+    hau_to = f" ({phan}/{tong_phan})"
+    return goc[:31 - len(hau_to)] + hau_to
+
 
 def _write_excel(df: pd.DataFrame, path: Path, sheet_name: str, hex_color: str) -> None:
     """Ghi XLSX bằng direct XML — 8x nhanh hơn xlsxwriter, giữ đủ formatting.
 
     sheet1.xml được STREAM trực tiếp vào ZIP theo từng lô _ROW_CHUNK dòng thay vì
     dựng toàn bộ chuỗi XML trong RAM rồi mới ghi — bucket "Lệnh Đi" cả triệu dòng từng
-    gây MemoryError khi RAM máy trống thấp (xem Implementation-notes.html card 79) vì
+    gây MemoryError khi RAM máy trống thấp (xem Implementation-notes.html card 21) vì
     cách cũ giữ đồng thời list các chuỗi row + chuỗi nối + bản encode UTF-8 trong bộ nhớ.
+
+    Quá _MAX_DATA_ROWS dòng thì CẮT SANG SHEET MỚI trong cùng file. Trước đây cứ ghi
+    thẳng qua dòng 1.048.576 — Excel từ chối mở file mà server không hề báo lỗi
+    (gộp 2 file GL02 một ngày là đã 1,23 triệu dòng).
     """
     df_out   = df[OUTPUT_COLS].reset_index(drop=True)
     n_data   = len(df_out)
@@ -814,9 +996,6 @@ def _write_excel(df: pd.DataFrame, path: Path, sheet_name: str, hex_color: str) 
     cr_total = float(df_out['CRAMOUNT'].sum())
     ncols    = len(OUTPUT_COLS)
     last_col = _COL_LETTERS[ncols - 1]
-
-    summary = (f"{sheet_name}: {n_data:,} dòng  |  "
-               f"Tổng Nợ: {dr_total:,.0f}  |  Tổng Có: {cr_total:,.0f}")
 
     styles   = _styles_xml(f'FF{hex_color.upper()}')
     num_idx  = frozenset(i for i, c in enumerate(OUTPUT_COLS) if c in _NUM_COLS)
@@ -831,32 +1010,44 @@ def _write_excel(df: pd.DataFrame, path: Path, sheet_name: str, hex_color: str) 
         for i, col in enumerate(OUTPUT_COLS)
     )
 
-    sum_row = n_data + 3
-    total: list[str] = [
-        f'<c r="A{sum_row}" t="inlineStr" s="4"><is><t>TỔNG CỘNG</t></is></c>'
-    ]
-    for c_idx, col in enumerate(OUTPUT_COLS[1:], start=1):
-        cl = _COL_LETTERS[c_idx]
-        if col == 'DRAMOUNT':
-            total.append(f'<c r="{cl}{sum_row}" s="5"><v>{dr_total:.2f}</v></c>')
-        elif col == 'CRAMOUNT':
-            total.append(f'<c r="{cl}{sum_row}" s="5"><v>{cr_total:.2f}</v></c>')
-        else:
-            total.append(f'<c r="{cl}{sum_row}" t="inlineStr" s="4"><is><t></t></is></c>')
+    # ── Chia phần ─────────────────────────────────────────────────────────────
+    # max(1, ...) để bucket rỗng vẫn có đúng 1 sheet như trước.
+    tong_phan = max(1, -(-n_data // _MAX_DATA_ROWS))
+    if tong_phan > 1:
+        log.warning(
+            "cham459901: '%s' có %s dòng, vượt giới hạn %s của một sheet Excel "
+            "→ tách thành %d sheet trong cùng file %s",
+            sheet_name, f"{n_data:,}", f"{_MAX_DATA_ROWS:,}", tong_phan, path.name,
+        )
+    lat_cat = [(k * _MAX_DATA_ROWS, min((k + 1) * _MAX_DATA_ROWS, n_data))
+               for k in range(tong_phan)]
 
     # ── Bundle thành XLSX (ZIP) ───────────────────────────────────────────────
+    sheets_xml = ''.join(
+        f'<sheet name="{_xe(_ten_sheet(sheet_name, k + 1, tong_phan))}"'
+        f' sheetId="{k + 1}" r:id="rId{k + 1}"/>'
+        for k in range(tong_phan)
+    )
     workbook_xml = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
         ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
-        f'<sheets><sheet name="{_xe(sheet_name)}" sheetId="1" r:id="rId1"/></sheets>'
+        f'<sheets>{sheets_xml}</sheets>'
         '</workbook>'
+    )
+    rel_sheets = ''.join(
+        f'<Relationship Id="rId{k + 1}"'
+        ' Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet"'
+        f' Target="worksheets/sheet{k + 1}.xml"/>'
+        for k in range(tong_phan)
     )
     wb_rels = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
-        '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'
+        f'{rel_sheets}'
+        f'<Relationship Id="rId{tong_phan + 1}"'
+        ' Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles"'
+        ' Target="styles.xml"/>'
         '</Relationships>'
     )
     pkg_rels = (
@@ -865,6 +1056,11 @@ def _write_excel(df: pd.DataFrame, path: Path, sheet_name: str, hex_color: str) 
         '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
         '</Relationships>'
     )
+    override_sheets = ''.join(
+        f'<Override PartName="/xl/worksheets/sheet{k + 1}.xml"'
+        ' ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+        for k in range(tong_phan)
+    )
     content_types = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
@@ -872,8 +1068,7 @@ def _write_excel(df: pd.DataFrame, path: Path, sheet_name: str, hex_color: str) 
         '<Default Extension="xml" ContentType="application/xml"/>'
         '<Override PartName="/xl/workbook.xml"'
         ' ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
-        '<Override PartName="/xl/worksheets/sheet1.xml"'
-        ' ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+        f'{override_sheets}'
         '<Override PartName="/xl/styles.xml"'
         ' ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
         '</Types>'
@@ -886,57 +1081,101 @@ def _write_excel(df: pd.DataFrame, path: Path, sheet_name: str, hex_color: str) 
         zf.writestr('xl/_rels/workbook.xml.rels',   wb_rels)
         zf.writestr('xl/styles.xml',                styles)
 
-        with zf.open('xl/worksheets/sheet1.xml', 'w') as fh:
-            w = lambda s: fh.write(s.encode('utf-8'))
-            w('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>')
-            w('<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
-              ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">')
-            w('<sheetViews><sheetView workbookViewId="0">'
-              '<pane ySplit="2" topLeftCell="A3" activePane="bottomLeft" state="frozen"/>'
-              '</sheetView></sheetViews>')
-            w(cols_xml)
-            w('<sheetData>')
-            w(f'<row r="1"><c r="A1" t="inlineStr" s="1"><is><t>{_xe(summary)}</t></is></c></row>')
-            w(f'<row r="2">{hdr}</row>')
+        for k, (dau, cuoi) in enumerate(lat_cat):
+            phan_df = df_out.iloc[dau:cuoi]
+            n_part  = len(phan_df)
+            dr_part = float(phan_df['DRAMOUNT'].sum())
+            cr_part = float(phan_df['CRAMOUNT'].sum())
 
-            chunk: list[str] = []
-            for row_0, row in enumerate(df_out.itertuples(index=False)):
-                r_num = row_0 + 3
-                cells: list[str] = []
-                for c_idx, val in enumerate(row):
-                    cl = _COL_LETTERS[c_idx]
-                    if c_idx in num_idx:
-                        cells.append(f'<c r="{cl}{r_num}" s="3"><v>{val:.2f}</v></c>')
-                    else:
-                        v = str(val).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-                        cells.append(f'<c r="{cl}{r_num}" t="inlineStr"><is><t>{v}</t></is></c>')
-                chunk.append(f'<row r="{r_num}">{"".join(cells)}</row>')
-                if len(chunk) >= _ROW_CHUNK:
+            # Một phần thì giữ nguyên câu chữ cũ; nhiều phần thì nói rõ phần nào,
+            # và tổng ở cuối sheet là tổng CỦA PHẦN ĐÓ, không phải tổng cả nhóm.
+            if tong_phan == 1:
+                summary   = (f"{sheet_name}: {n_data:,} dòng  |  "
+                             f"Tổng Nợ: {dr_total:,.0f}  |  Tổng Có: {cr_total:,.0f}")
+                nhan_tong = "TỔNG CỘNG"
+            else:
+                summary   = (f"{sheet_name} — phần {k + 1}/{tong_phan}: dòng "
+                             f"{dau + 1:,}–{cuoi:,} trong tổng {n_data:,} dòng  |  "
+                             f"Tổng Nợ cả nhóm: {dr_total:,.0f}  |  "
+                             f"Tổng Có cả nhóm: {cr_total:,.0f}")
+                nhan_tong = f"TỔNG CỘNG PHẦN {k + 1}/{tong_phan}"
+
+            sum_row = n_part + 3
+            total: list[str] = [
+                f'<c r="A{sum_row}" t="inlineStr" s="4"><is><t>{_xe(nhan_tong)}</t></is></c>'
+            ]
+            for c_idx, col in enumerate(OUTPUT_COLS[1:], start=1):
+                cl = _COL_LETTERS[c_idx]
+                if col == 'DRAMOUNT':
+                    total.append(f'<c r="{cl}{sum_row}" s="5"><v>{dr_part:.2f}</v></c>')
+                elif col == 'CRAMOUNT':
+                    total.append(f'<c r="{cl}{sum_row}" s="5"><v>{cr_part:.2f}</v></c>')
+                else:
+                    total.append(f'<c r="{cl}{sum_row}" t="inlineStr" s="4"><is><t></t></is></c>')
+
+            with zf.open(f'xl/worksheets/sheet{k + 1}.xml', 'w') as fh:
+                w = lambda s: fh.write(s.encode('utf-8'))
+                w('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>')
+                w('<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+                  ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">')
+                w('<sheetViews><sheetView workbookViewId="0">'
+                  '<pane ySplit="2" topLeftCell="A3" activePane="bottomLeft" state="frozen"/>'
+                  '</sheetView></sheetViews>')
+                w(cols_xml)
+                w('<sheetData>')
+                w(f'<row r="1"><c r="A1" t="inlineStr" s="1"><is><t>{_xe(summary)}</t></is></c></row>')
+                w(f'<row r="2">{hdr}</row>')
+
+                chunk: list[str] = []
+                for row_0, row in enumerate(phan_df.itertuples(index=False)):
+                    r_num = row_0 + 3
+                    cells: list[str] = []
+                    for c_idx, val in enumerate(row):
+                        cl = _COL_LETTERS[c_idx]
+                        if c_idx in num_idx:
+                            cells.append(f'<c r="{cl}{r_num}" s="3"><v>{val:.2f}</v></c>')
+                        else:
+                            v = str(val).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                            cells.append(f'<c r="{cl}{r_num}" t="inlineStr"><is><t>{v}</t></is></c>')
+                    chunk.append(f'<row r="{r_num}">{"".join(cells)}</row>')
+                    if len(chunk) >= _ROW_CHUNK:
+                        w(''.join(chunk))
+                        chunk = []
+                if chunk:
                     w(''.join(chunk))
-                    chunk = []
-            if chunk:
-                w(''.join(chunk))
 
-            w(f'<row r="{sum_row}">{"".join(total)}</row>')
-            w('</sheetData>')
-            # OOXML CT_Worksheet yêu cầu thứ tự cố định: autoFilter PHẢI đứng TRƯỚC mergeCells.
-            # Ghi sai thứ tự khiến Excel coi sheet1.xml là "unreadable content" và gỡ bỏ sheet.
-            w(f'<autoFilter ref="A2:{last_col}{n_data + 2}"/>')
-            w(f'<mergeCells count="1"><mergeCell ref="A1:{last_col}1"/></mergeCells>')
-            w('</worksheet>')
+                w(f'<row r="{sum_row}">{"".join(total)}</row>')
+                w('</sheetData>')
+                # OOXML CT_Worksheet yêu cầu thứ tự cố định: autoFilter PHẢI đứng TRƯỚC mergeCells.
+                # Ghi sai thứ tự khiến Excel coi sheet là "unreadable content" và gỡ bỏ sheet.
+                w(f'<autoFilter ref="A2:{last_col}{n_part + 2}"/>')
+                w(f'<mergeCells count="1"><mergeCell ref="A1:{last_col}1"/></mergeCells>')
+                w('</worksheet>')
 
 
-def _cleanup_old_results() -> None:
-    """Xóa thư mục kết quả và progress entry cũ hơn CLEANUP_HOURS giờ."""
-    cutoff = time.time() - CLEANUP_HOURS * 3600
+def _cleanup_old_results(cutoff: float | None = None) -> None:
+    """Xóa thư mục kết quả và progress entry cũ hơn `cutoff`.
+
+    Mặc định là mốc 23h gần nhất đã trôi qua (backend/core/don_dep.py) — kết quả
+    sống hết ngày làm việc thay vì tự bốc hơi sau 2 giờ như trước. Vì mốc đó
+    không bao giờ rơi vào trong ngày đang chạy, hàm này vẫn gọi được ngay đầu
+    một lượt xử lý mới mà không xoá mất kết quả người khác vừa chạy sáng nay.
+    """
+    cutoff = moc_don_gan_nhat() if cutoff is None else cutoff
 
     if TEMP_DIR.exists():
         for sub in TEMP_DIR.iterdir():
-            if sub.is_dir() and sub.stat().st_mtime < cutoff:
-                try:
+            # stat() nằm TRONG try, dù `is_dir()` đã chặn phần lớn: hai lượt dọn
+            # chạy sát nhau (mỗi lượt xử lý mới đều gọi hàm này) vẫn có kẽ hở
+            # giữa is_dir() và stat() để lượt kia xoá xong thư mục. Rơi vào kẽ
+            # đó thì OSError ném thẳng ra giữa `process_files()` và người dùng
+            # nhận lỗi 500 chẳng liên quan gì tới file họ vừa tải lên. Phòng xa,
+            # chưa gặp thật — cùng cách `ach_service._cleanup_old_jobs()` làm.
+            try:
+                if sub.is_dir() and sub.stat().st_mtime < cutoff:
                     shutil.rmtree(sub)
-                except Exception as e:
-                    log.warning("Không xóa được %s: %s", sub, e)
+            except OSError as e:
+                log.warning("Không xóa được %s: %s", sub, e)
 
     # list(...) chụp nhanh trước khi duyệt — tránh RuntimeError nếu 1 request khác
     # gọi init_progress() làm thay đổi kích thước _progress cùng lúc (nhiều thread nền).

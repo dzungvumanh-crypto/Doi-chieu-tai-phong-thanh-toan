@@ -6,6 +6,17 @@ import frontend.api_client as api
 from frontend.shared import _sidebar, _content_area, _page_header, _require_auth, _handle_api_error
 
 
+# Số dòng trống sẵn ở cuối bảng tra cứu lưu trữ — đủ để gõ vài ngày một lượt;
+# thiếu thì bấm "Thêm dòng".
+_N_BLANK_ROWS = 5
+
+# Số cột Ngày tối thiểu — một tập có thể gộp chứng từ của nhiều ngày, cần đủ chỗ gõ
+_N_DAY_COLS = 10
+
+# Số cột "Số chứng từ" tối thiểu — một ngày có thể tách thành nhiều tập
+_N_SHEET_COLS = 10
+
+
 def _dept_display(name: str) -> str:
     # Rút gọn tên phòng QLTK Nostro Vostro cho bảng lưu trữ
     if name and "nostro" in name.lower():
@@ -186,7 +197,7 @@ async def storage_page():
     if not api.has_feature("menu.storage"):
         ui.navigate.to("/home")
         return
-    _ = _sidebar("storage")
+    _ = await _sidebar("storage")
     with _content_area():
         _page_header("Lưu trữ", "Tra cứu và bàn giao tập chứng từ")
 
@@ -246,6 +257,7 @@ async def storage_page():
 <style>
   body{{font-family:Arial,sans-serif;margin:10mm}}
   table{{border-collapse:collapse;width:100%}}
+  .sv-new{{display:none}}
   @page{{size:A4 landscape;margin:10mm}}
   @media print{{button{{display:none}}}}
 </style>
@@ -262,6 +274,10 @@ async def storage_page():
                         f"w.document.close();"
                     )
 
+                # Mẫu dòng trống của lần dựng bảng gần nhất — nút "Thêm dòng" chèn thẳng
+                # chuỗi này, không nhân bản DOM (bảng có thể không còn dòng trống nào).
+                _tbl = {"blank": ""}
+
                 def _build_html(data: dict) -> str:
                     rows       = data.get("rows", [])
                     dept_name  = data.get("department_name", "")
@@ -269,14 +285,15 @@ async def storage_page():
                     tot_sheets = data.get("total_sheets", 0)
                     tot_bndls  = data.get("total_bundles", 0)
 
-                    if not rows:
+                    # Tháng chưa có tập nào vẫn dựng bảng — chỉ toàn dòng trống để nhập
+                    if not dept_name:
                         return ""
 
                     n_day = max((len(r["days"]) for r in rows), default=1)
-                    n_day = max(n_day, 2)
+                    n_day = max(n_day, _N_DAY_COLS)
                     n_sh  = max((len(r["bundle_sheets"]) for r in rows), default=1)
-                    # +1 để mọi dòng luôn còn ít nhất 1 ô trống nhập thêm số chứng từ; tối thiểu 5 cột
-                    n_sh  = max(n_sh + 1, 5)
+                    # +1 để mọi dòng luôn còn ít nhất 1 ô trống nhập thêm số chứng từ
+                    n_sh  = max(n_sh + 1, _N_SHEET_COLS)
 
                     C  = "border:1px solid #000;text-align:center;padding:5px 8px;font-size:13px"
                     CE = "border:1px solid #000;text-align:center;padding:5px 8px;font-size:13px;color:#bbb"
@@ -312,7 +329,21 @@ async def storage_page():
                         html += f'<td style="{C};font-weight:700">{r["n_bundles"]}</td>'
                         html += "</tr>\n"
 
-                    html += f"""<tr>
+                    # Dòng trống để nhập ngày/số chứng từ chưa có trong máy.
+                    # class sv-new: ẩn khi in.
+                    blank = '<tr class="sv-new" data-bids="[]" data-ncols="0">'
+                    blank += f'<td contenteditable="true" data-col="day" style="{CE};{ED}"></td>' * n_day
+                    blank += f'<td contenteditable="true" data-col="sheet" style="{CE};{ED}"></td>' * n_sh
+                    blank += f'<td style="{CE}"></td></tr>'
+                    _tbl["blank"] = blank
+
+                    # Chỉ tự dựng dòng trống khi bảng CHƯA có dữ liệu — tháng mới cần chỗ gõ
+                    # đầu tiên. Tháng đã có dữ liệu mà vẫn tự nối 5 dòng thì mỗi lần lưu xong
+                    # bảng lại dài thêm 5 dòng thừa; cần thêm thì bấm nút "Thêm dòng".
+                    if not rows:
+                        html += blank * _N_BLANK_ROWS
+
+                    html += f"""<tr id="sv-foot">
   <td colspan="{n_day}" style="{CF};text-align:right">Cộng tổng:</td>
   <td colspan="{n_sh}"  style="{CF};font-size:15px">{tot_sheets:,}</td>
   <td style="{CF};font-size:15px">{tot_bndls}</td>
@@ -396,7 +427,7 @@ async def storage_page():
                                         if (bid) { bundle_ids.push(parseInt(bid, 10)); bundle_sheets.push(v); }
                                         else if (v > 0) { new_sheets.push(v); }
                                     });
-                                    if (bundle_ids.length || new_sheets.length)
+                                    if (bundle_ids.length || new_sheets.length || days.length)
                                         rows.push({bundle_ids: bundle_ids, bundle_sheets: bundle_sheets,
                                                    new_sheets: new_sheets, days: days});
                                 });
@@ -406,8 +437,12 @@ async def storage_page():
                                 ui.notify("Không có dữ liệu để lưu", type="warning")
                                 return
                             try:
-                                await asyncio.to_thread(api.patch, "/api/bundles/storage-view",
-                                                        {"rows": result})
+                                await asyncio.to_thread(api.patch, "/api/bundles/storage-view", {
+                                    "rows": result,
+                                    "department_id": s_dept.value,
+                                    "year": s_year.value,
+                                    "month": s_month.value,
+                                })
                             except Exception as e:
                                 # Lỗi (ngày không hợp lệ, hết phiên...) — giữ nguyên số đang nhập
                                 _handle_api_error(e)
@@ -416,14 +451,28 @@ async def storage_page():
                             # Tải lại để Ngày + Số tập + tổng cuối tự cập nhật theo
                             await load_storage()
 
+                        _blank_js = _json.dumps(_tbl["blank"])
+
+                        async def add_blank_row():
+                            # Chèn thẳng vào DOM — không tải lại bảng để giữ số đang gõ dở.
+                            # Không nhân bản dòng có sẵn: bảng đã có dữ liệu thì không còn
+                            # dòng trống nào để làm mẫu.
+                            await ui.run_javascript(f"""
+                                var foot = document.getElementById('sv-foot');
+                                if (foot) foot.insertAdjacentHTML('beforebegin', {_blank_js});
+                            """)
+
                         with ui.row().classes("w-full justify-start gap-2 mb-3"):
                             ui.button("Lưu thay đổi", icon="save",
                                       on_click=do_save).classes("bg-red-700 text-white px-4")
+                            ui.button("Thêm dòng", icon="add",
+                                      on_click=add_blank_row).props("outline").classes("text-red-700 px-4")
                             ui.button("In danh sách (A4 ngang)", icon="print",
                                       on_click=lambda: _print_table(html_table)
                                       ).classes("bg-green-700 text-white px-4")
                             ui.label("Sửa trực tiếp trên bảng: ô Ngày và ô Số chứng từ "
-                                     "(số chứng từ = 0 để xoá tập)").classes(
+                                     "(số chứng từ = 0 để xoá tập). Cần nhập ngày chưa có thì "
+                                     "bấm \"Thêm dòng\" — dòng trống không in ra.").classes(
                                 "text-xs text-gray-500 self-center ml-2")
 
                         with ui.card().classes("w-full shadow-sm rounded-xl bg-white p-4 overflow-x-auto"):

@@ -87,6 +87,7 @@ def _ensure_dirs():
     os.makedirs(os.path.join(ROOT, "data"), exist_ok=True)
     os.makedirs(LOGS_DIR, exist_ok=True)
     _tach_log_cu_khong_utf8()
+    _xoay_log_qua_han()
 
 
 def _log_path(name: str) -> str:
@@ -147,6 +148,46 @@ def _tach_log_cu_khong_utf8():
             # Thường là file đang bị khoá bởi tiến trình cũ chưa tắt hẳn.
             # Bỏ qua, lần khởi động sau thử lại; không chặn việc chạy hệ thống.
             _warn(f"Chưa tách được {name}.log cũ ({e}) — sẽ thử lại lần sau")
+
+
+# Ngưỡng xoay vòng backend.log / frontend.log
+_LOG_MAX_BYTES = 20 * 1024 * 1024
+_LOG_KEEP      = 3          # giữ .1 .2 .3, cái thứ 4 bị xoá
+
+
+def _xoay_log_qua_han():
+    """Xoay vòng backend.log / frontend.log khi vượt _LOG_MAX_BYTES.
+
+    Hai file này do TIẾN TRÌNH CON ghi thẳng qua stdout/stderr, không đi qua
+    `logging` của Python, nên `RotatingFileHandler` trong backend/main.py không
+    với tới (nó chỉ quản logs/app.log). `log_cleanup_service` thì chỉ dọn bảng
+    trong cơ sở dữ liệu. Tức là trước bản vá này KHÔNG có gì dọn chúng cả — máy
+    chạy liên tục vài tháng là file vài GB, và thứ hết chỗ trước là ổ đĩa chứ
+    không phải phần mềm.
+
+    **Chỉ xoay lúc khởi động, cố ý.** Đang chạy thì file bị tiến trình con giữ
+    mở, Windows không cho đổi tên — xoay giữa chừng chỉ tổ ném lỗi. Hệ quả phải
+    biết: máy chạy liền mạch nhiều tháng không khởi động lại thì file vẫn phình
+    quá ngưỡng cho tới lần khởi động kế tiếp.
+    """
+    for name in ("backend", "frontend"):
+        path = _log_path(name)
+        try:
+            if not os.path.exists(path) or os.path.getsize(path) < _LOG_MAX_BYTES:
+                continue
+            cu_nhat = f"{path}.{_LOG_KEEP}"
+            if os.path.exists(cu_nhat):
+                os.remove(cu_nhat)
+            for i in range(_LOG_KEEP - 1, 0, -1):
+                truoc = f"{path}.{i}"
+                if os.path.exists(truoc):
+                    os.replace(truoc, f"{path}.{i + 1}")
+            os.replace(path, f"{path}.1")
+            _info(f"Nhật ký {name}.log vượt {_LOG_MAX_BYTES // (1024 * 1024)} MB "
+                  f"— đã xoay sang {name}.log.1")
+        except OSError as e:
+            # Thường là file đang bị khoá bởi tiến trình cũ chưa tắt hẳn.
+            _warn(f"Chưa xoay được {name}.log ({e}) — sẽ thử lại lần khởi động sau")
 
 
 def _port_in_use(port, host: str = "127.0.0.1") -> bool:

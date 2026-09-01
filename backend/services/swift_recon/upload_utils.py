@@ -20,6 +20,7 @@ from pathlib import Path
 
 from fastapi import UploadFile
 
+from backend.core.uploads import read_limited_sync
 from backend.services.swift_recon import parsers
 
 
@@ -27,7 +28,7 @@ def save_upload_to_path(upload: UploadFile) -> tuple[str, callable]:
     """Trả về (path, cleanup_fn). Hỗ trợ .xls / .xlsx / .zip (zip chứa
     file .xls/.htm/.html, có thể kèm thư mục "..._files")."""
     suffix = Path(upload.filename or "").suffix.lower() or ".xls"
-    raw = upload.file.read()
+    raw = read_limited_sync(upload)
 
     if suffix != ".zip":
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:

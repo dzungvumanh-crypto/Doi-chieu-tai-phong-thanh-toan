@@ -60,4 +60,12 @@ def validate_required_files(filenames: list[str]) -> dict:
                   else 'Thiếu file *_DEN_*.zip (cần 2)',
     })
 
-    return {'ok': all(c['ok'] for c in checks), 'checks': checks}
+    # tang0_ok — 2026-08-21 (chi_tim_timeout, xem project_ach_gl02_optional_tiered_deps):
+    # PDF + GW + MIS_DI×2 là mức tối thiểu thật sự để tính "Timeout không đi kênh"
+    # (không cần GL02/MIS_DEN). Tách riêng khỏi `ok` tổng (giữ nguyên, không phá
+    # API contract hiện có) để frontend biết có nên ĐỀ NGHỊ chế độ chạy thiếu
+    # GL02/MIS_đến hay không — không đề nghị nếu thiếu cả mức tối thiểu này.
+    _nhan_tang0 = {'File PDF (session)', 'GW (.xlsx)', 'MIS_DI (cần 2 file .zip)'}
+    tang0_ok = all(c['ok'] for c in checks if c['label'] in _nhan_tang0)
+
+    return {'ok': all(c['ok'] for c in checks), 'tang0_ok': tang0_ok, 'checks': checks}

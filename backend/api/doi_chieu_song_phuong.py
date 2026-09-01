@@ -4,9 +4,12 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile
+import threading
+
+from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import Response
 
+from backend.core.uploads import safe_filename, save_upload_to
 from backend.core.deps import require_feature
 from backend.services import doi_chieu_song_phuong_service as svc
 
@@ -27,14 +30,31 @@ def _dl_headers(filename: str) -> dict:
 
 @router.post("/process")
 async def process(
-    background_tasks: BackgroundTasks,
     file: UploadFile,
     _=Depends(require_feature("doi_chieu_song_phuong.process")),
 ):
     """Nhận ZIP, khởi chạy định tuyến trong background, trả task_token ngay."""
-    zip_bytes  = await file.read()
+    # Ghi THẲNG từng khối xuống thư mục của lượt, không gom vào RAM trước —
+    # `process_zip()` đằng nào cũng chỉ cần đường dẫn, và zipfile đọc từ đĩa
+    # được. Xem save_upload_to() trong backend/core/uploads.py.
     task_token = svc.init_progress()
-    background_tasks.add_task(svc.run_process, zip_bytes, task_token)
+    thu_muc = svc.tao_thu_muc_upload(task_token)
+    ten = safe_filename(file.filename, "du_lieu.zip")
+    try:
+        await save_upload_to(file, thu_muc / ten, ten="File ZIP dữ liệu")
+    except BaseException:
+        # Upload hỏng hoặc client cắt kết nối: xoá thư mục và entry tiến độ ngay,
+        # đừng để lại một lượt "đang khởi tạo" không bao giờ chạy tới.
+        svc.bo_luot(task_token)
+        raise
+    # Chạy trong luồng riêng, KHÔNG dùng BackgroundTasks: Starlette chạy hàm
+    # đồng bộ của BackgroundTasks trong threadpool CHUNG 40 token của anyio và
+    # giữ token đó suốt thời gian xử lý (phút, không phải giây). Vài lượt chạy
+    # cùng lúc là bể cạn, mọi endpoint `def` khác của hệ thống phải xếp hàng
+    # theo. Luồng riêng thì việc nặng chạy ngoài bể, đúng cách ACH đang làm
+    # (backend/services/ach_service.py). Tiến độ vẫn theo dõi qua /progress.
+    threading.Thread(target=svc.run_process, args=(thu_muc / ten, task_token),
+                     daemon=True).start()
     return {"task_token": task_token}
 
 
@@ -60,7 +80,9 @@ def download_result(
     if file_key not in VALID_KEYS:
         raise HTTPException(400, "file_key không hợp lệ")
 
-    path = svc.TEMP_DIR / token / f"{file_key}.csv"
+    # `token` là chuỗi client đặt và được ghép vào đường dẫn — xem chú thích
+    # cùng kiểu ở backend/api/cham459901.py.
+    path = svc.TEMP_DIR / safe_filename(token, "_") / f"{file_key}.csv"
     if not path.exists():
         raise HTTPException(404, "File không tồn tại hoặc đã hết hạn")
 

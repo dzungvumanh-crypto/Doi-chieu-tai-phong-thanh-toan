@@ -9,7 +9,14 @@
 - Windows / Linux / macOS
 - **Microsoft Word** trên máy chạy backend — chỉ cần cho việc xuất **đơn nghỉ phép bản PDF**
   (Word chuyển `.docx` → `.pdf`). Không có Word thì hệ thống vẫn chạy đủ, riêng phần ký đơn
-  lui về tải bản `.docx` không chữ ký
+  lui về tải bản `.docx` không chữ ký.
+  Backend **giữ sẵn một bản Word chạy ngầm** để không phải mở/đóng Word cho từng tờ đơn
+  (~0,3 giây thay vì ~5 giây mỗi lần xem trước). Bản này chiếm ~130 MB RAM và tự tắt sau
+  15 phút không ai dùng. Chỉnh bằng `WORD_SERVER`, `WORD_IDLE_SECONDS`, `WORD_MAX_JOBS`
+  trong `.env` — xem `.env.example`.
+  **Máy người dùng không cần Word** — họ chỉ dùng trình duyệt.
+  > ⚠️ **Word đòi một phiên có người đăng nhập trên máy chủ** — xem
+  > [mục riêng bên dưới](#word-đòi-phiên-đăng-nhập-trên-máy-chủ)
 
 ### 2. Tạo môi trường ảo và cài thư viện
 
@@ -67,6 +74,30 @@ ENV=production                                  # tắt /docs, /redoc, /openapi.
 > `ALLOWED_ORIGINS` **chỉ cần khi có máy khác gọi thẳng cổng 8000 từ trình duyệt.** Với
 > `BACKEND_HOST=127.0.0.1` (mặc định `start.bat` sinh ra) thì không cần đặt: trình duyệt
 > chỉ nói chuyện với frontend cổng 8080, CORS không tham gia vào đường đi nào cả.
+
+Hai mật khẩu nghiệp vụ — không bắt buộc để khởi động, nhưng thiếu là mất tính năng hoặc mất lớp bảo vệ:
+
+```ini
+DOI_CHIEU_ZIP_PASSWORD=<mật khẩu file ZIP do đơn vị cấp file đặt>
+BACKUP_PASSWORD=<mật khẩu nén bản sao lưu>
+```
+
+| Biến | Thiếu thì sao |
+|---|---|
+| `DOI_CHIEU_ZIP_PASSWORD` | Đối chiếu ACH / Chấm 459901 / Đối chiếu Song phương báo lỗi rõ khi giải nén; phần còn lại chạy bình thường. Trước 20/08/2026 mật khẩu này nằm cứng trong mã nguồn nên **đã đi vào lịch sử git** — nếu chưa đổi thì coi như đã lộ. |
+| `CHAM459901_FOLDER_ROOTS` | Chấm 459901 **khoá** chế độ *Chọn thư mục server* (bấm vào báo lỗi nói rõ phải thêm gì); chế độ tải file lên không ảnh hưởng. Đây là danh sách thư mục được phép quét, ngăn nhau bằng dấu `;` — đường dẫn người dùng gõ phải nằm trong đó. |
+| `BACKUP_PASSWORD` | Bản sao lưu ghi ra `.db` **không mã hoá** (chứa mã băm mật khẩu toàn bộ tài khoản), kèm cảnh báo trong log mỗi lần backup. Xem mục [Backup tự động](#backup-tự-động). |
+
+> `start.bat` **tự sinh `BACKUP_PASSWORD`** nếu `.env` chưa có, và in ra màn hình đúng một lần —
+> chép ngay vào két mật khẩu của đơn vị. `DOI_CHIEU_ZIP_PASSWORD` phải điền tay vì đó là mật khẩu
+> của bên cấp file, không phải của phần mềm này — không có cách nào tự sinh hộ.
+
+> **Nâng cấp máy đang chạy:** `deploy.bat` không chép đè `.env` của máy đích, nên biến mới thêm vào
+> giữa vòng đời hệ thống **không tự sang**. Từ 22/08/2026 `deploy.bat` in cảnh báo (bước 1/8, nhắc lại
+> ở khung tổng kết cuối) khi `.env` máy đích còn thiếu biến thuộc loại phải gõ tay — hiện là
+> `DOI_CHIEU_ZIP_PASSWORD` và `CHAM459901_FOLDER_ROOTS`. Biến mới cùng loại thì thêm vào bảng `CHI_CANH_BAO` trong
+> `scripts/deploy_env_check.py`; chỉ đưa vào đó thứ mà **thiếu là gãy tính năng**, không thì bảng
+> thành danh sách dài ai cũng bỏ qua.
 
 Hai biến tuỳ chọn liên quan đến hiệu năng và mức độ kín của backend:
 
@@ -126,7 +157,9 @@ Truy cập:
 │   │   ├── audit_queue.py   # Hàng đợi + 1 luồng ghi audit, không chặn response
 │   │   ├── concurrency.py   # Giới hạn số việc nặng chạy đồng thời (sinh Word/Excel)
 │   │   ├── paths.py         # Đường dẫn template có dấu — chống lệch chuẩn hoá Unicode NFC/NFD
-│   │   └── rate_limit.py    # Rate limiting đăng nhập
+│   │   ├── net.py           # IP thật của người dùng — chỉ tin X-Client-IP từ máy đáng tin
+│   │   ├── uploads.py       # Trần kích thước upload + làm sạch tên file (chống ghi ra ngoài thư mục)
+│   │   └── rate_limit.py    # Chặn dò mật khẩu — đếm theo tên đăng nhập VÀ theo địa chỉ máy
 │   ├── api/
 │   │   ├── auth.py          # Đăng nhập / đăng xuất / đổi mật khẩu
 │   │   ├── staff.py         # Quản lý cán bộ
@@ -161,7 +194,7 @@ Truy cập:
 │       ├── backup_service.py       # Backup SQLite tự động
 │       ├── log_cleanup_service.py  # Dọn login_logs / audit_logs quá hạn theo lịch
 │       ├── time_sync.py            # Cảnh báo lệch giờ máy chủ so NTP (không tự sửa, có cache)
-│       ├── cham459901_service.py   # Xử lý ZIP + phân loại bút toán 459901
+│       ├── cham459901_service.py   # Xử lý ZIP/Excel + phân loại bút toán 459901
 │       ├── doi_chieu_song_phuong_service.py # Định tuyến lệnh IPCAS theo NH + chiều → 8 CSV
 │       ├── swift_recon/            # Đối chiếu điện SWIFT (parse, so khớp, export Excel)
 │       └── duty_*                  # Xếp lịch trực, ràng buộc, thống kê, xuất file (6 module)
@@ -169,6 +202,7 @@ Truy cập:
 │   ├── main.py              # NiceGUI entry point
 │   ├── shared.py            # Layout chung (sidebar, header, helpers)
 │   ├── ui_kit.py            # Nguồn sự thật: màu, trạng thái, khung chờ, font
+│   ├── le_29.py             # Trang trí chủ đề Quốc khánh 2-9 (tự bật 25/8–3/9)
 │   ├── api_client.py        # httpx wrapper → backend
 │   └── pages/
 │       ├── login.py         # Đăng nhập
@@ -204,11 +238,16 @@ Truy cập:
 │           ├── Bia_ho_so.doc        # Mẫu gốc do bên lưu trữ cấp (giữ để đối chiếu)
 │           └── Bia_ho_so.docx       # Bản dùng lúc chạy (chuyển từ .doc, render giống hệt)
 ├── data/
-│   └── ksnb.db             # SQLite database (tự tạo khi chạy lần đầu)
+│   ├── ksnb.db             # SQLite database (tự tạo khi chạy lần đầu)
+│   ├── backups/            # Backup tự động — xem mục "Backup tự động"
+│   └── temp_*/             # File tải lên + kết quả tạm của ACH / Chấm 459901 /
+│                           #   Đối chiếu song phương / Đối soát CITAD. Sống hết ngày làm
+│                           #   việc, temp_cleanup_service xoá sạch lúc 23h (không chờ ai
+│                           #   mở menu). Backend bật giữa ngày chỉ dọn rác của hôm trước
 ├── logs/
 │   ├── app.log             # Log xoay vòng (5 MB × 3 file) — nguồn của màn hình Nhật ký hệ thống
-│   ├── backend.log         # stdout/stderr tiến trình backend (run.py ghi) — không xoay vòng
-│   ├── frontend.log        # stdout/stderr tiến trình frontend (run.py ghi) — không xoay vòng
+│   ├── backend.log         # stdout/stderr tiến trình backend (run.py ghi) — xoay khi >20 MB, giữ 3 đời
+│   ├── frontend.log        # stdout/stderr tiến trình frontend (run.py ghi) — xoay khi >20 MB, giữ 3 đời
 │   └── *.truoc-utf8.log    # Phần log ghi trước bản vá UTF-8, run.py tự tách ra một lần
 ├── init_db.py               # Khởi tạo DB + seed data
 ├── run.py                   # Launcher (chạy backend + frontend song song; ép UTF-8 cho tiến trình con)
@@ -239,6 +278,7 @@ Truy cập:
 - Quản lý cán bộ theo phòng ban, vai trò (8 vai trò — xem bảng RBAC)
 - Quản lý nhóm cán bộ và phân quyền tính năng theo nhóm
 - Dashboard tổng quan: KPI người dùng & phòng nghiệp vụ, bảng nghỉ phép hôm nay theo phòng, biểu đồ cột tỷ lệ nộp chứng từ đúng hạn/muộn theo 4 phòng (chọn tháng/năm để xem). **Mọi vai trò đều vào Trang chủ sau khi đăng nhập**
+- **Chủ đề kỷ niệm 2-9**: từ 25/8 đến hết 3/9 hằng năm, Trang chủ và trang Đăng nhập tự đổi nền + hiện khẩu hiệu chào mừng Cách mạng Tháng Tám và Quốc khánh; hết khoảng ngày tự trở lại giao diện thường. Khoảng ngày và nội dung nằm trong `frontend/le_29.py`
 - **Công việc chờ xử lý**: khối ở đầu sidebar, hiện trên mọi trang — số chứng từ chờ xác nhận và đơn nghỉ phép chờ duyệt của **chính người đang đăng nhập**; bấm vào mở màn hình theo dõi `/pending/<loại>` có đủ chi tiết và link nhảy thẳng tới ô cần xử lý
 - **Nhật ký thao tác** (audit log): middleware ghi tập trung mọi request thay đổi dữ liệu (POST/PUT/PATCH/DELETE) vào bảng `audit_logs` — ai, làm gì, kết quả HTTP, IP, thời gian; lọc theo phương thức, tìm kiếm, phân trang; tự dọn sau 365 ngày
 - Nhật ký đăng nhập và nhật ký lỗi/cảnh báo hệ thống (admin xem, lọc theo user/thời gian)
@@ -255,6 +295,15 @@ Truy cập:
   `dry_run=true` trước để xem số dòng sẽ đổi / mã không khớp / ô ngày hỏng, chỉ mở nút ghi khi thật sự
   có thay đổi. Người đã xoá (`is_deleted = 1`) không được khớp; endpoint **không tạo tài khoản mới**
 
+- **Xuất / Nhập file DB người dùng** (`staff.export` · `staff.import_db`) — dùng để di trú toàn bộ
+  tài khoản sang hệ thống khác **mà không phải đặt lại mật khẩu**, nên file mang theo nguyên
+  `pwd_hash` và `role`. Vì thế **cả hai đường đều chỉ Quản trị viên (cấp 1/2) gọi được**, xét theo
+  vai trò thật chứ không chỉ theo feature. Đường nhập còn bỏ qua — và báo lại danh sách bỏ qua —
+  các dòng có `role` sai chính tả, `department_id` không tồn tại, hoặc thiếu Mã cán bộ; khớp theo
+  **Mã cán bộ**. ⚠️ **Số liệu phép (`used_leave_days`, `annual_leave_days`, `carryover_notice_year`)
+  của tài khoản đã có thì KHÔNG bị đè** — đó là dữ liệu của module Nghỉ phép, nơi có batch nhập +
+  hoàn tác riêng; tài khoản mới thì vẫn lấy theo file. `tests/test_import_db_an_toan.py` canh việc này
+
 ### Module Nghỉ phép
 - Cán bộ tạo đơn xin nghỉ (phép năm, ốm, việc riêng, khác)
 - Workflow duyệt 3 bước: **KSV → Tổng hợp → Giám đốc**
@@ -262,10 +311,14 @@ Truy cập:
 - Tải phiếu nghỉ phép dạng **`.pdf`** đúng mẫu (Word chuyển từ `.docx`; máy không có Word → lui về `.docx`)
 - **Ký đơn trên bản in**: lúc gửi đơn và lúc phê duyệt (KSV, Ban lãnh đạo) hiện popup xem trước
   **chính bản in thật**, kéo/thu phóng ảnh chữ ký cá nhân vào đúng ô ký rồi mới gửi/duyệt.
+  Mở màn Nghỉ phép là backend tự đánh thức Word ở nền, nên đến lúc bấm nút gần như không phải chờ.
   Chữ ký được **sao lại vào đơn** tại thời điểm ký — sau này đổi hoặc xoá ảnh chữ ký cá nhân
   thì đơn đã ký không đổi theo. Nộp lại đơn bị từ chối sẽ xoá chữ ký của người duyệt.
   Chưa có ảnh chữ ký (Quản lý người dùng → Ảnh chữ ký) thì vẫn gửi/duyệt được, chỉ là phiếu trống ô ký.
   *Duyệt hàng loạt và bước Tổng hợp không ký.*
+- **Lịch nghỉ tháng chỉ hiện người cùng phòng.** Xem được toàn trung tâm: admin, GĐ/PGĐ, nhân viên
+  phòng Tổng hợp — đúng tiêu chí `scope="all"` của `list_leaves()`. Hậu kiểm viên **không** nằm trong
+  danh sách này (họ ngang chuyên viên ở quy trình nghỉ phép). Rê chuột vào ô ngày để xem đủ danh sách
 - Theo dõi quota phép năm (hạn ngạch / đã dùng); chuyển tiếp ngày phép chưa dùng năm trước sang Q1
 - Banner "Phép còn lại" tính đủ hạn mức nhập tay + ngày chuyển kỳ, khớp đúng tab Hạn mức phép
 - Đơn nghỉ vắt qua ranh giới năm (vd 29/12 → 02/01) được chia đúng cho từng năm khi tính hạn mức
@@ -292,6 +345,12 @@ Truy cập:
   - (user, ngày) không bị tách sang tập khác
   - Nếu 1 ngày > 350 tờ → chia 2 tập cân bằng
 - **In bìa**: Tạo file `.docx` đúng format mẫu (2-column layout)
+  - Danh sách bìa (`GET /api/bundles/groups`) **chỉ trả dòng tiêu đề** — tên phòng, kỳ, ngày tạo,
+    người tạo, số bìa — **không kèm tập và mục bên trong**. Ba ô lọc mặc định "tất cả" nên lần mở
+    trang đầu tiên kéo về toàn bộ kho; kèm cả tập/mục thì mỗi tập là thêm một câu SQL (283 câu,
+    315 KB cho kho 1 năm; đo trên dữ liệu nhân theo năm, 5 năm là 513 ms / 5,1 MB và còn tăng
+    tiếp) trong khi giao diện không đọc tới. Chi tiết tập lấy ở `GET /api/bundles/groups/{id}` —
+    mọi đường in bìa / tải bìa đều đi qua đó, không đổi
 - **Lưu trữ**: Ghi số hộp, vị trí kệ; tra cứu theo phòng/thời gian; bảng tổng hợp cả năm (số tờ/số tập theo phòng × 12 tháng); sửa **ngày** và **số chứng từ** ngay trên bảng — nhập vào ô trống để thêm tập, sửa về 0 để xoá tập, số tập/tổng tự cập nhật. Sửa ngày chỉ ghi lại `cover_units` của tập, **không đụng** số liệu bàn giao gốc của phòng nguồn (`document_entries`); mỗi dòng phải còn ít nhất một ngày, xoá hết ngày thì báo lỗi và giữ nguyên số đang nhập
   - *Tab "In bìa hồ sơ"*: Nạp file Excel tra cứu hồ sơ (`LT_HS_TRACUU_*.xls`) xuất từ chương trình lưu trữ → điền vào mẫu bìa **M01/LHS** (`templates/Phòng KSNB&HTVH/Bàn giao cho lưu trữ/Bia_ho_so.docx`), giữ nguyên toàn bộ định dạng của mẫu. Lấy cột **I** *Mã vạch* (ký hiệu thông tin + chuỗi barcode), cột **C** *Tên hồ sơ* (dòng tiêu đề + **Ngày mở** = ngày **đầu tiên** xuất hiện trong tên), cột **F** *Ngày CVKT*, cột **G** *Số tờ*. Chọn hồ sơ cần in trên bảng rồi tải về **1 file Word nhiều trang** (mỗi hồ sơ 1 trang) hoặc **ZIP mỗi hồ sơ 1 file**. Máy in phải cài font **"3 of 9 Barcode"**, nếu không dòng mã vạch in ra thành chữ thường và máy quét không đọc được
 - **Báo cáo** (menu con):
@@ -323,6 +382,11 @@ Truy cập:
   đều vẫn lập ca, chỉ cảnh báo. Người ở nhóm trực phụ không tính (về sớm)
 - Ngày thường bốc **ngẫu nhiên trong nhóm ít ca nhất**; thứ 6 luân phiên **tất định**.
   Có tiêu chí phụ tránh hình thành ê-kíp trực cố định
+- **Ba luật công bằng (mềm)**, áp dụng như nhau cho Lãnh đạo lẫn nhân viên: không quá
+  **2 ca/tuần**, không quá **2 thứ 6/tháng**, không trực thứ 6 ở **2 tuần liên tiếp**.
+  Thuật toán ưu tiên tránh; pool cạn thì **vẫn lập ca** kèm cảnh báo nêu đích danh người bị
+  phá luật — đủ người quan trọng hơn giữ đúng luật mềm. Đường **sửa tay** cũng cảnh báo,
+  nhưng hiện chỉ soi các ca **trước** ngày đang sửa (xem card 91 trong Implementation-notes)
 - **Sửa tay** thành phần ca: vai song phương hệ thống tự suy từ cờ "biết song phương",
   số ca trong vòng xoay đi theo người được đổi. Sửa xong ca quay về bản thảo, phải xác nhận lại
 - **Xoá hoặc tạo lại lịch trả số ca về vòng xoay** — mọi đường ghi/xoá ca đều tra cùng
@@ -330,6 +394,13 @@ Truy cập:
 - **Thứ 7 / chủ nhật đi làm**: khai loại **"Ngày bù"** ở tab Ngày đặc biệt rồi xác nhận thì
   hôm đó sinh ca thường, vào lịch tuần/tháng, lên file Excel, đăng ký nguyện vọng được,
   và được tính khi dò 2 ngày cut-off cuối tháng
+- **Ngày lễ lấy từ hai nguồn**: danh mục ngày lễ chung `public_holidays` (nhập ở màn hình *Nghỉ phép*
+  — giao diện nhập ngày lễ duy nhất của phần mềm) hợp với khai báo riêng ở tab *Ngày đặc biệt*.
+  **Khai báo riêng thắng**: ngày đã có dòng trong `duty_special_days` thì lấy nguyên `day_type` của
+  nó, nhờ vậy ngày làm bù rơi trúng ngày lễ (nhà nước hoán đổi) vẫn đúng là ngày làm
+- **Đơn nghỉ phép đã duyệt tự loại người khỏi lịch** — không phải khai vắng mặt lần thứ hai.
+  Đọc thẳng `leave_records` lúc xếp lịch chứ không sao chép sang `duty_absences`: đơn còn bị huỷ,
+  thu hồi, sửa ngày. Chỉ đơn `approved` mới tính; đơn đang chờ duyệt vẫn xếp trực bình thường
 - Quản lý cán bộ trực, ràng buộc lịch trực (ngày không trực, giới hạn ca)
 - Thống kê số ca trực theo cán bộ, theo tháng — **trực chính và trực phụ đếm 2 cột riêng**, không quy đổi
 - **Xuất lịch trực ra Excel** bám mẫu giấy của phòng: 5 cột A–E, trắng đen, cỡ chữ 24/18/16,
@@ -354,14 +425,52 @@ Truy cập:
 ### Module Chấm 459901
 - Phân loại bút toán tài khoản trung gian 459901 dành cho phòng Thanh toán
 - Menu: **Đối chiếu → Phòng Thanh toán → Chấm 459901**
-- Upload file ZIP chứa dữ liệu giao dịch; xử lý bất đồng bộ (~65s)
-- Xuất 3 file Excel: **Huỷ**, **Đi**, **Khác** theo kết quả phân loại
+- Upload **một hoặc nhiều** file chứa dữ liệu giao dịch; xử lý bất đồng bộ (~65s)
+- Nhận **ZIP** (bản xuất gốc GL02, mã hoá AES-256; bên trong là `.csv` hoặc Excel) và **Excel
+  rời** (`.xlsx/.xlsm/.xlsb/.xls`) — trộn hai loại trong một lượt cũng được. Đuôi khác bị chặn
+  ngay ở bước tải lên (400). Với Excel: đọc **mọi sheet**, tự dò hàng tiêu đề trong 10 dòng đầu
+  (bản người dùng lưu lại hay có dòng tiêu đề báo cáo ở trên cùng), sheet nào thiếu cột bắt buộc
+  thì báo lỗi kèm tên sheet chứ không lặng lẽ bỏ qua
+- Nhiều file được **gộp** rồi mới phân loại — cặp Cancel/Normal của một lệnh hủy có thể nằm ở
+  hai file khác ngày, chạy tách từng file thì cả hai vế rơi nhầm vào *Khác*. Chọn trùng tên
+  file trong cùng một lượt bị chặn (400) vì dữ liệu nhân đôi không sinh lỗi nào
+- Phân loại thác nước thành **7 nhóm**, xuất 7 file Excel: **Lệnh Hủy**, **Lệnh Đi**,
+  **1000 Hoàn trả**, **Chuyển chi nhánh**, **Điện KO offline**, **Cân CN**, **GD khác**.
+  Dòng chỉ khớp được một chân (chưa đủ cặp Nợ/Có) không bị đoán bừa — rơi về *GD khác*
+  kèm ghi chú "nghi ngờ, cần chấm tay"
+- Nhóm nào quá **1.048.573 dòng** thì **tự tách sang sheet thứ hai trong cùng file** (`Lệnh Đi
+  (1/2)`, `Lệnh Đi (2/2)`…) — vẫn đúng 7 file như cũ, chỉ nhiều sheet hơn. Một file GL02 một
+  ngày đã cho ~617.000 dòng *Lệnh Đi*, nên gộp 2 ngày là vượt trần 1.048.576 dòng của định dạng
+  Excel; trước đây phần mềm cứ ghi tiếp qua trần, báo "Hoàn thành!" rồi Excel **từ chối mở file**
+  mà không có lỗi nào ở cả hai đầu. Dòng **TỔNG CỘNG** cuối mỗi sheet là tổng **của sheet đó**
+  (nhãn ghi rõ `TỔNG CỘNG PHẦN 2/2`), tổng cả nhóm nằm ở dòng tiêu đề trên cùng. Lượt chạy chỉ
+  có một sheet — tức gần như mọi lượt — hiển thị y hệt trước, không đổi gì
+- Nhận thêm **3 file phụ trợ tuỳ chọn**, tự nhận diện theo tên: HUB đi (`Quay_...`),
+  HUB đến (`Danh sach...den`) để chấm nhóm *1000 Hoàn trả*, và file tồn tháng trước
+  (`459_TON_T<n>.xlsx`) ghép nối tiếp vào dữ liệu tháng này. Thiếu **cả 2** file HUB thì
+  bỏ qua nhóm 1000 Hoàn trả; chỉ có 1/2 thì bỏ cả hai và báo rõ trên màn hình
+- Hai cách nạp dữ liệu hiển thị đồng thời: **tải file lên**, hoặc **chọn thư mục trên máy
+  chủ** (dữ liệu đã nằm sẵn ở đó, khỏi upload). Chế độ thứ hai chỉ quét trong các thư mục
+  khai ở `CHAM459901_FOLDER_ROOTS`; đường dẫn ngoài phạm vi bị từ chối **trước khi** kiểm
+  tra tồn tại, để endpoint không thành máy dò cây thư mục của máy chủ
+- Chế độ chọn thư mục **gõ/dán đường dẫn**, không có nút *Duyệt...*. Hộp thoại duyệt cây thư
+  mục đã bị gỡ cùng endpoint `/api/fs/browse` vì nó cho **mọi người đăng nhập liệt kê sạch ổ
+  đĩa máy chủ**
+- File tải lên được ghi **thẳng từng khối** xuống `data/temp_cham459901/upload_<token>/`
+  (`save_upload_to`), `process_files()` nhận **đường dẫn** chứ không nhận bytes. CSV bên trong
+  ZIP đọc qua `zf.open()` — luồng giải nén, không có lúc nào cả file nằm trong RAM (đo: CSV
+  114 MB → đỉnh 0,1 MB thay vì 256 MB). Workbook Excel trong ZIP vẫn phải qua RAM: calamine
+  đọc nhảy vị trí nên không nhận luồng tuần tự
 - Phân quyền riêng theo nhóm (`menu.cham_459901`, `cham_459901.process`)
 
 ### Module Đối chiếu Song phương
 - Định tuyến lệnh IPCAS phục vụ đối chiếu song phương tại phòng Thanh toán
 - Menu: **Đối chiếu → Phòng Thanh toán → Đối chiếu Song phương**
 - Upload file ZIP (mã hóa AES-256) chứa dữ liệu IPCAS; xử lý bất đồng bộ, theo dõi tiến độ real-time
+- File tải lên được ghi **thẳng từng khối** xuống `data/temp_doi_chieu_song_phuong/upload_<token>/`;
+  `process_zip()` nhận **đường dẫn**, kiểm magic bytes bằng 4 byte đầu đọc từ file, và duyệt CSV
+  bên trong ZIP theo luồng (`zf.open()`) — `_route_file()` đi tuần tự từng dòng nên không bao giờ
+  cần nhìn lại dòng đã qua
 - Phân loại mỗi dòng theo **4 ngân hàng** (Vietinbank 201, BIDV 202, Vietcombank 203, MBBank 311) × **2 chiều**: **ĐẾN** (`CRAMOUNT=0`) / **ĐI** (`DRAMOUNT=0`) → xuất **8 file CSV**
 - Phân quyền riêng theo nhóm (`menu.doi_chieu_song_phuong`, `doi_chieu_song_phuong.process`)
 
@@ -371,8 +480,11 @@ Truy cập:
 - Chọn bộ file 1 ngày **từ máy người dùng**: `GL02*.zip`, file GW `.xlsx`, 2 file `*_DI_*.zip`,
   2 file `*_DEN_*.zip`, PDF sao kê ACH (lấy số session + suy ngày đối chiếu). Mở thư mục chứa
   bộ file rồi Ctrl+A để chọn cả loạt. Mỗi file gửi lên frontend ngay khi chọn (`auto_upload`) và
-  **nằm trong RAM** của tiến trình frontend cho tới lúc bấm Chạy; backend cũng `await f.read()`
-  trọn bộ vào RAM trước khi ghi ra `data/temp_ach/<job>/input/`. Trần 500 MB (`_MAX_UPLOAD`), bộ
+  **nằm trong RAM** của tiến trình frontend cho tới lúc bấm Chạy; backend thì ghi **thẳng từng
+  khối** xuống `data/temp_ach/<job>/input/` (`save_upload_to`), không gom vào RAM trước — đo với
+  file 200 MB: đỉnh bộ nhớ 400 MB (cách cũ `read_limited` rồi mới ghi) → **2 MB**. Tên file được
+  `safe_filename()` cắt sạch phần đường dẫn trước khi ghi — tên client gửi lên là chuỗi tuỳ ý,
+  ghép thẳng vào `Path` thì đoạn tuyệt đối nuốt trọn thư mục đích. Trần 500 MB (`_MAX_UPLOAD`), bộ
   file thật 150–250 MB → cần dư RAM tương ứng ở **cả hai** tiến trình. Timeout lần gửi này để
   riêng 600s (`post_upload(..., timeout=600.0)`), các màn hình khác giữ mặc định 60s
 - Ngày đối chiếu suy từ tên file PDF (`ACH_YYYYMMDD_..._NRT_<session>_...` → ngày T-1), nhập tay được;
@@ -384,7 +496,8 @@ Truy cập:
   CAP_CN_TIEN, RAW_GW); sheet trên **15.000 dòng** tự tách ra CSV riêng, tải lẻ hoặc tải gộp ZIP
 - Chạy nền trên **1 luồng riêng** (`max_workers=1`) — job thứ hai xếp hàng; theo dõi tiến độ + nhật ký
   bằng poll, có nút Dừng (dừng ở mốc kiểm tra giữa các pha, không tức thì)
-- Kết quả giữ **4 giờ** trong `data/temp_ach/` rồi tự xoá; không lưu lịch sử vào DB
+- Kết quả nằm trong `data/temp_ach/` **hết ngày làm việc**, 23h xoá sạch; không lưu lịch sử vào DB.
+  Cần giữ lâu hơn thì tải về máy trong ngày
 - Phân quyền riêng theo nhóm: `menu.cham_ach` = xem trang / kiểm tra file / tải kết quả,
   `cham_ach.process` = được bấm Chạy, Chạy tiếp sau Checkpoint và Dừng
 
@@ -392,6 +505,9 @@ Truy cập:
 - Đối chiếu số liệu tổng CITAD (NHNN) với PaymentHub (Agribank) theo từng ngày
 - Menu: **Đối chiếu → Phòng Thanh toán → Đối chiếu CITAD**
 - Nhập tay 5 cổng CITAD × 3 loại tiền × 8 trường; chênh lệch tính lại ngay khi gõ
+- Ngoài 5 cổng còn 2 kênh cộng vào tổng CITAD: **Napas** và **PSS - MDP** (chỉ 2 ô *IH Đến —
+  Món/Tiền*). Kênh **Ebanking** đã ngừng: bỏ khỏi màn hình 14/08/2026, bỏ nốt khỏi file Excel
+  20/08/2026 — số liệu các ngày đã chấm vẫn nằm nguyên trong DB, chỉ không hiện/in ra nữa
 - Mỗi ngày là **một bản ghi chung cả phòng** (`doi_chieu_citad_sessions`, khoá theo `ngay`) —
   ai lưu sau cùng là bản hiện hành; mỗi lần bấm Lưu ghi thêm 1 dòng vào
   `doi_chieu_citad_history` để xem/tải lại từng bản cũ
@@ -401,7 +517,43 @@ Truy cập:
   tải `.zip` ngay trên màn hình, ghép nối bằng *mã kết nối* cá nhân
   (`doi_chieu_citad_extension_tokens`, chỉ lưu hash SHA-256, tạo mã mới tự thu hồi mã cũ).
   Chỉ chạy trên Chromium (Chrome/Edge/Cốc Cốc), phải cài tay từng máy
+- Hai ô **Lập bảng** / **Kiểm soát** vừa gõ tay tự do, vừa bấm chọn từ danh sách nhân viên
+  **Phòng Thanh toán** (tra theo `code='PAYMENT'`, không phụ thuộc id phòng).
+  Tên không nằm trong danh sách (người đã nghỉ / chuyển phòng / gõ tay kiểu khác) vẫn được giữ
+  nguyên khi mở lại bảng cũ — hai lỗi mất tên và **Xuất Excel 422** của 23/08/2026 đã vá
+  25/08/2026, xem `docs/Implementation-notes.html` mục Z8
+- Tab **Lịch sử** (từ 25/08/2026): mỗi người bấm *Lưu* là **một dòng riêng** mang đúng tên người
+  đó, không còn gộp các lần lưu tạm của nhiều người vào một dòng mang tên người lập bảng.
+  ⚠️ Ô lọc **Tên người chấm** và cột *User chấm đối chiếu* vẫn chỉ tìm theo **người lập bảng** —
+  tìm tên người chỉ bổ sung Napas/PSS-MDP sẽ không ra ngày nào, phải bung dòng ra mới thấy
 - Phân quyền riêng theo nhóm (`menu.doi_chieu_citad`)
+
+### Module Đối chiếu CITAD - PaymentHub (Phòng QLTK Nostro, Vostro)
+- Module **song song, độc lập hoàn toàn** với "Đối chiếu CITAD ↔ PaymentHub" của Phòng Thanh toán ở
+  trên — bảng riêng, buffer riêng, route riêng, Extension riêng, **mã kết nối riêng**
+  (`doi_chieu_citad_nostro_extension_tokens`). Không dùng chung gì cả
+- ⚠️ **Mã kết nối phải tạo riêng cho từng Extension** (27/08/2026, PR#64). Trước đó 2 module dùng
+  chung bảng `doi_chieu_citad_extension_tokens` khoá theo `staff_id`, nên ai tạo mã ở module này
+  là **âm thầm thu hồi mã module kia của chính mình** → 1 trong 2 Extension bị 403. Nay tách hẳn 2
+  bảng, tạo/thu hồi ở phòng nào chỉ ảnh hưởng đúng phòng đó
+- Menu: **Đối chiếu → Phòng QLTK Nostro, Vostro → Đối chiếu CITAD - PaymentHub**
+- Nguồn số liệu khác hẳn: CITAD lấy ở trang **"Tra cứu dữ liệu"** (không phải "Bảng kê giao dịch"),
+  chỉ chiều **Đi**, chỉ **giao dịch thành công**, chỉ VNĐ, đủ 5 cổng; PaymentHub lấy dòng
+  **Tổng cộng** ở trang "Lập bảng kê phí chia sẻ CITAD"
+- Công thức: Tổng CITAD (GTT/GTC) = cộng 5 cổng; Tổng HUB (GTC) = Trước 15h30 + Từ 15h30;
+  Chênh lệch = Tổng CITAD − Tổng HUB
+- **Kỳ đối chiếu linh hoạt** (Từ ngày – Đến ngày, gộp được nhiều ngày) thay vì 1 dòng/ngày cố định.
+  Trước khi lưu có **cảnh báo (không chặn)** nếu kỳ mới chồng ngày với kỳ đã lưu, hoặc bỏ hở ngày so
+  với kỳ liền trước
+- Mỗi kỳ là **một bản ghi chung cả phòng** (`doi_chieu_citad_nostro_sessions`, khoá theo `ky`) — ai
+  lưu sau cùng là bản hiện hành, nhưng cột **người chấm** ở tab Lịch sử luôn hiển thị **người lập
+  bảng** (người lưu đầu tiên), không đổi theo người lưu sau. Mỗi lần bấm Lưu ghi thêm 1 dòng vào
+  `doi_chieu_citad_nostro_history` để xem/tải lại từng bản cũ
+- Kèm **Extension trình duyệt riêng** (`extension_citad_nv/`) — **không** dùng chung
+  `extension_citad/` của Phòng Thanh toán, 2 gói có 2 ID khác nhau, cài song song được. Một mã kết
+  nối dùng được cho cả 2 gói nếu một người làm cả 2 module
+- Phân quyền riêng theo nhóm (`menu.doi_chieu_citad_nostro`) — user Nostro **không** có
+  `menu.doi_chieu_citad` nên không vào được màn hình của Phòng Thanh toán và ngược lại
 
 ### Module Đối soát CITAD ↔ IPCAS
 - Đối soát từng lệnh chuyển tiền giữa CITAD (NHNN) và IPCAS (Agribank) theo ngày chấm
@@ -409,9 +561,43 @@ Truy cập:
 - Upload file CITAD (`.xls`/`.xlsx`/`.zip`), IPCAS (`.csv`/`.zip`) và Hub ngoại tệ (`.xls`/`.xlsx`);
   khớp trong RAM theo `msgref` (Đi) / `txid` (Đến), phân loại lệch thành 4 nhóm:
   **Chỉ CITAD / Chỉ IPCAS / Chỉ Hub / Lệch trạng thái**
-- Cảnh báo khi chọn **trùng nội dung file** (băm SHA-256 toàn bộ byte, không dựa vào tên file)
+- **Phát hiện IPCAS/Hub hạch toán trùng**: cùng 1 lệnh ghi nhiều lần sẽ hiện thành từng dòng
+  **Chỉ Agribank** riêng (đúng số lần dư), kèm ghi chú "N lần" trên dòng đã khớp — không gộp lại
+  thành 1 dòng như trước
+- **Cặp "hạch toán nhầm rồi huỷ"** (GDV hạch toán tay sai chi nhánh rồi huỷ, hạch toán lại) được
+  nhận ra qua `REFHUB` và **loại khỏi đối soát** — không tính khớp, không tính lệch
+- ⚠️ **Lệnh Đến trạng thái PYED/PYEK nay VẪN hiện nếu không khớp CITAD.** Trước 24/08/2026 hai
+  trạng thái này được bỏ qua khi tính dư. Hệ quả: **báo cáo có thể nhiều dòng lệch hơn trước** một
+  cách hợp lệ — số liệu trước/sau mốc này không so sánh trực tiếp được
+- ⚠️ **Lệnh Đi trạng thái `SCNL` nhưng cột `NGAY_KENH_TRA` để trống nay KHÔNG còn được coi là
+  khớp** (từ 28/08/2026, yêu cầu Phòng Thanh toán). `SCNL` nghĩa là "đã sang kênh thành công",
+  nhưng kênh chưa ghi ngày trả thì chưa phải xác nhận thật — lệnh CITAD tương ứng rơi vào nhóm
+  **Chỉ CITAD** để người dùng tự xác minh. Hệ quả: **số dòng lệch có thể tăng**, số liệu
+  trước/sau mốc này không so sánh trực tiếp được
+- 🔴 **Điểm mù đã biết của quy tắc trên**: dòng IPCAS nói trên bị loại ngay lúc đọc file, nên nếu
+  CITAD **không hề có** lệnh đó thì dòng biến mất khỏi báo cáo — trước đây nó hiện ở nhóm
+  **Chỉ Agribank**. Đây đúng là ca đáng ngờ nhất (IPCAS ghi đã đi kênh mà CITAD chưa từng thấy).
+  `total_ipcas` trong tab Lịch sử cũng đếm thiếu đúng số dòng này. Xem
+  `docs/Implementation-notes.html` (card 109)
+- Cảnh báo khi chọn **trùng nội dung file** (băm SHA-256 toàn bộ byte, không dựa vào tên file).
+  ⚠️ Chỉ là cảnh báo, bấm qua được — nhưng chọn nhầm trùng file nay khiến **mỗi dòng đẻ 1 dòng
+  lệch giả**, không còn bị lọc âm thầm như trước
 - Xuất Excel 4 sheet; tab **Lịch sử** lưu `doi_soat_citad_history` kèm snapshot nguyên vẹn danh sách
   lệch — xem lại/tải lại đúng số liệu của lần đối soát cũ, không tính lại từ file gốc
+- Nút **"Xuất tất cả lệnh"** xuất đủ cả khớp lẫn lệch trong 1 sheet (lệch đẩy lên đầu, bôi vàng);
+  ~38.000 dòng mất ~6 giây nhờ đặt style ở cấp cột thay vì từng ô, riêng 2 cột số (STT, Số tiền)
+  phải gán căn lề từng ô vì Excel **không** áp style cột cho ô đã ghi giá trị — xem
+  `docs/Implementation-notes.html` (card 105). Danh sách khớp **không** lưu vào lịch sử, chỉ giữ
+  trong phiên
+- 🔴 **KHÔNG mở file CSV IPCAS bằng Excel rồi lưu lại** — kể cả chỉ mở ra xem rồi bấm Ctrl+S.
+  Excel tự đổi mọi số tiền đủ lớn (từ ~100 tỷ, đúng nhóm giá trị **cao**/IH) sang ký hiệu khoa
+  học (`5.53722E+11`) và **chỉ giữ ~6 chữ số có nghĩa** — 6 chữ số cuối bị làm tròn thành 0
+  **vĩnh viễn trong file**, không cách nào lấy lại. Từ 25/08/2026 chương trình đọc đúng độ lớn
+  của dạng khoa học (trước đó cho ra `55372211`, sai hẳn), nhưng **phần chính xác đã mất thì
+  không cứu được** — gặp file nghi bị Excel lưu đè thì tải lại bản gốc từ IPCAS
+- ⚠️ Chương trình **chưa cảnh báo** khi gặp file đã bị Excel làm hỏng kiểu trên — vẫn chấm bình
+  thường và ra vài chục dòng lệch không giải thích được. Đang chờ vá; xem
+  `docs/Implementation-notes.html` (card 107)
 - Phân quyền riêng theo nhóm (`menu.doi_soat_citad`)
 
 ### Module Sổ trực cuối ngày (Phòng Thanh toán)
@@ -432,11 +618,234 @@ Truy cập:
   `ux_so_truc_active_date (truc_date) WHERE status != 'cancelled'` bảo đảm mỗi ngày chỉ một
   phiên đang hoạt động, đồng thời chặn tranh chấp khi hai GDV cùng mở một ngày
 - Cảnh báo (không chặn) khi **Đối chiếu CITAD cùng ngày chưa khớp**; link sang thẳng tab
-  Lịch sử của `/doi_chieu_citad?ngay=`
+  Lịch sử của `/doi_chieu_citad?ngay=`. Từ 23/08/2026 **chỉ bản đã "Lưu bảng cuối"
+  (`status='final'`) mới tính là đã đối chiếu** — bảng tạm coi như chưa có, vì Napas/PSS-MDP
+  thường do người khác bổ sung sau nên bản tạm "khớp" chỉ khớp trên phần đã nhập
 - Badge **Sổ trực chờ xử lý** trên sidebar; trang chủ nhắc khi sau 16h (giờ máy chủ) chưa ai
-  mở sổ. Tab Lịch sử xuất Excel theo khoảng ngày
+  mở sổ. Tab **Lịch sử** không lọc thì hiện **toàn bộ** phiên trực (trước 23/08/2026 chỉ hiện
+  1 phiên gần nhất), có dòng ngăn cách khi sang tháng khác; xuất Excel vẫn bắt buộc chọn khoảng ngày
 - Phân quyền: `menu.so_truc` (vào module, xem lịch sử) + `so_truc.ksv_confirm`
   (được xuất hiện trong danh sách chọn KSV)
+
+### Module Ôn tập (Quizz)
+- Nhóm **Tính năng khác** → **Ôn tập** (`/quiz`). Dùng chung cho cả cơ quan, không thuộc phòng nào
+- **Bộ câu hỏi chỉ tải lên một lần** — người sau chọn bộ có sẵn để ôn, không phải nhập lại.
+  File Excel, cột theo thứ tự: `Câu hỏi | Đáp án 1 | Đáp án 2 | Đáp án 3 | Đáp án 4 | Đáp án đúng`
+  (đáp án đúng ghi **số 1-4**). Bỏ trống *Đáp án 4* nếu câu chỉ có 3 lựa chọn. Nút *Tải file mẫu*
+  xuất đúng khuôn này. Dòng 1 được nhận là tiêu đề nếu ô A chứa chữ "câu hỏi"
+- Dòng sai (đáp án đúng không phải số, trỏ vào ô trống, dưới 2 lựa chọn) **bị bỏ qua kèm số dòng**
+  để người nhập mở Excel sửa; cả file không có dòng nào hợp lệ thì bị từ chối. Không bao giờ đoán
+  đáp án — đoán sai là người học nhớ sai
+- Chặn tải lên trùng: **trùng tên** (`UNIQUE`) và **trùng nội dung câu hỏi**, báo rõ bộ cũ tên gì.
+  Vân tay lấy từ **nội dung đã đọc**, không phải từ byte của file — mở file ra xem rồi bấm lưu là
+  Excel đổi dấu thời gian bên trong, băm theo file sẽ không nhận ra bản sao
+- **Cài đặt trước khi làm bài**: chế độ (*Ôn tập* — hiện đáp án ngay sau mỗi câu / *Thi thử* — chỉ chấm
+  khi nộp), số câu (10/20/30/50/100 hoặc tất cả), **trộn thứ tự câu hỏi**, **trộn thứ tự đáp án**,
+  **thời gian mỗi câu** (10-90 giây hoặc không giới hạn), **tổng thời gian làm bài** (5-90 phút hoặc
+  không giới hạn). Hết giờ câu thì tự sang câu kế; hết tổng giờ thì hệ thống tự nộp bài
+- Màn làm bài `/quiz/play` chiếm **toàn màn hình** (không sidebar): 4 ô đáp án màu + hình khối xếp
+  lưới 2×2 bằng nhau, thanh tiến trình, hai đồng hồ. Nộp xong hiện điểm, số câu
+  **đúng / sai / bỏ trống**, thời gian làm và phần **Xem lại bài** từng câu (đáp án đúng gắn nhãn
+  *ĐÁP ÁN ĐÚNG* + viền trắng, ô chọn sai gắn nhãn *BẠN CHỌN*, các ô còn lại xám hẳn)
+- **Tạm dừng & làm tiếp**: tiến độ được **lưu lên máy chủ sau mỗi câu trả lời**, không đợi nộp bài.
+  Mất kết nối, máy ngủ, tắt máy hay đóng nhầm tab đều không mất bài — vào lại bộ câu hỏi đó, thẻ hiện
+  **Làm tiếp** và nối đúng câu đang đứng, kèm đáp án đã chọn và thời gian đã tiêu. Nút **Tạm dừng**
+  trên thanh trên lưu rồi thoát; chỉ báo nhỏ cạnh đồng hồ cho biết đã lưu hay còn câu chưa gửi được
+- **Đồng hồ đếm thời gian làm bài, không phải thời gian thực** — tạm dừng thì đồng hồ dừng theo. Máy
+  chủ chỉ cho thời gian **tăng**, gửi lại gói cũ không kéo dài thêm được
+- **Mỗi người mỗi bộ nhiều nhất một bài dở.** Bấm *Bắt đầu bài mới* trên bộ đang có bài dở sẽ bỏ bài
+  đó (có cảnh báo trước); menu ⋮ còn có *Bỏ bài đang làm dở*
+- **Lịch sử của tôi** (30 lượt gần nhất, bấm để xem lại bài) và **Bảng xếp hạng** theo từng bộ — mỗi
+  người lấy lượt tốt nhất, cùng điểm thì ai nhanh hơn đứng trên. Bảng xếp hạng **chỉ tính bài Thi thử**;
+  chế độ Ôn tập hiện sẵn đáp án nên điểm không có ý nghĩa so sánh
+- Chấm điểm **luôn ở backend**, đọc đáp án đúng từ DB — client chỉ gửi "tôi chọn ô số mấy"
+- Đề được cố định ngay lúc bắt đầu (thứ tự câu + thứ tự đáp án lưu vào `quiz_attempt_items`): F5 giữa
+  bài không sinh đề mới, và màn xem lại hiển thị đúng đề đã làm
+- ⚠️ **Xoá một bộ là xoá luôn** toàn bộ câu hỏi, mọi lượt làm bài của mọi người và bảng xếp hạng của bộ
+  đó (`ON DELETE CASCADE`) — không hoàn tác được
+- Bảng DB: `quiz_sets`, `quiz_questions`, `quiz_attempts`, `quiz_attempt_items`
+- Phân quyền riêng theo nhóm: `menu.quiz` (vào module, ôn tập, xem xếp hạng) +
+  `quiz.upload` (tải bộ mới / đổi tên) + `quiz.delete` (xoá bộ)
+
+---
+
+### Module Chuẩn hoá văn bản (QĐ 979/QyĐ-NHNo-PC)
+- Nhóm **Tính năng khác** → **Chuẩn hoá văn bản** (`/vb_format`). Dùng chung cho cả cơ quan, không thuộc phòng nào
+- Tải một file **`.docx`** lên → hệ thống sửa về đúng thể thức và kỹ thuật trình bày theo
+  *Quy định 979/QyĐ-NHNo-PC* (Điều 4–17, Phụ lục III, Phụ lục IV) → hiện **nhật ký từng đoạn đã sửa**
+  → bấm *Tải văn bản đã chuẩn hoá*. File `.doc` đời cũ bị từ chối kèm hướng dẫn (python-docx không đọc
+  được định dạng nhị phân cũ)
+- **Ba việc được làm tự động:**
+
+  | Nhóm | Nội dung |
+  |---|---|
+  | Thể thức trình bày | Khổ giấy A4, lề 30/20/20/20 mm, đánh số trang canh giữa lề trên (bỏ trang 1), phông Times New Roman (đặt cho cả nhánh `w:cs` để chữ có dấu không lệch phông), màu chữ đen, **giãn dòng 1,2** và cách đoạn 6 pt cho lời văn, thụt dòng đầu 1 cm, chuẩn hoá Tiêu ngữ về “Độc lập - Tự do - Hạnh phúc” (gạch NỐI, mỗi bên một dấu cách — Điều 7.2), và **cỡ chữ / kiểu chữ / căn lề / giãn dòng riêng cho 28 thành phần thể thức** theo Phụ lục III |
+  | Viết hoa (Phụ lục IV) | Chữ đầu câu và đầu dòng (có danh sách viết tắt chặn: `TP.`, `v.v.`, `TM.`…); viện dẫn (Phần/Chương/Mục/Tiểu mục/**Điều** viết hoa, *khoản* và *điểm* viết thường — mục V.7); và **từ điển cụm từ** do người dùng tự khai |
+  | Đánh số, gạch đầu dòng | Mọi ký tự gạch đầu dòng (`•`, `–`, `*`, `+`…) → `- `; khoản `1)` `1/` → `1.`; điểm `a.` `a/` → `a)`; mục La Mã `I)` `I/` → `I.`; danh sách **chấm tròn** tự động của Word → gạch đầu dòng gõ tay |
+
+- **Giãn dòng và cách đoạn khác nhau theo từng khối.** Điều 12.6 cho một *dải* (tối thiểu
+  dòng đơn, tối đa 1,5) nên phải đo lại từ chính văn bản QĐ 979 mới biết lấy số nào:
+
+  | Khối | Giãn dòng | Cách đoạn | Căn cứ |
+  |---|---|---|---|
+  | Lời văn (căn cứ, Chương, Điều, khoản, điểm) | **1,2** | 6 pt | Đo từ `Phần VB_Hướng dẫn thể thức văn bản.docx` |
+  | Khối thể thức đầu trang (Quốc hiệu, Tiêu ngữ, tên đơn vị, số ký hiệu, ngày tháng, tên loại, trích yếu) | **dòng đơn** | **0** | Điều 7.3 và 8.2: "trình bày cách nhau dòng đơn" |
+  | Khối cuối (Nơi nhận, chức vụ và họ tên người ký) | **dòng đơn** | **0** | cùng lý do |
+
+  Lấy 1,5 là lấy đúng cận TRÊN của dải — hợp lệ nhưng thưa hơn hẳn mẫu. Áp luôn cho khối
+  đầu trang thì Tiêu ngữ bị đẩy xa Quốc hiệu, khối đầu cao gấp đôi mẫu Phụ lục V. Hai
+  cột cuối của bảng thành phần thể thức trong tab Cấu hình cho phép để trống = theo giá
+  trị chung, hoặc điền số = ép chính xác cho riêng thành phần đó
+- **Cỡ chữ khối đầu lấy theo con số đếm được trên 18 mẫu Phụ lục V**, không lấy cận trên
+  của dải: Quốc hiệu **12** (17/18 mẫu), tên đơn vị **12**, trích yếu công văn **12**,
+  Tiêu ngữ và số ký hiệu **13**. Chênh một điểm làm dòng "NGÂN HÀNG NÔNG NGHIỆP VÀ
+  PHÁT TRIỂN NÔNG THÔN VIỆT NAM" tràn cột và đẩy chữ "NAM" xuống dòng riêng — "Việt Nam"
+  nằm trong danh sách cụm từ liền dòng để chặn hẳn
+- **"Kính gửi" có hai cách trình bày** (Điều 15.4.a): gửi **một** nơi thì cả cụm nằm trên một
+  dòng và **canh giữa** (mẫu 06, 09); gửi **nhiều** nơi thì chỉ có chữ "Kính gửi:" đứng
+  riêng rồi liệt kê xuống dòng, để **sát trái** (mẫu 08). Hai tình huống có hai mục cấu hình riêng
+- **Khoảng trống trước đoạn (Spacing Before) luôn được đưa về 0.** Khoảng cách thật giữa
+  hai đoạn là *After của đoạn trên + Before của đoạn dưới*, nên 7pt/7pt cho ra **14pt** mà
+  hộp Paragraph chỉ hiện hai số 7. Đưa Before về 0 để chỉ còn một nguồn quyết định.
+  Khối đầu trang, Kính gửi và khối cuối về **0/0**; lời văn giữ After sẵn có nếu đã ≥ 6pt
+  (Điều 12.6 chỉ nêu mức tối thiểu). Ô bảng trong khối đầu cũng về 0/0 — khối đó hay được
+  dựng bằng bảng hai cột; bảng số liệu giữa văn bản không bị ảnh hưởng
+- **Xuống dòng để trình bày thì KHÔNG viết hoa chữ đầu.** Phụ lục IV mục I nói "đầu một *câu
+  hoàn chỉnh*". Phải đủ hai điều kiện mới viết hoa: đoạn đó là **lời văn thật** (không phải
+  trích yếu, tên đơn vị, Kính gửi, Nơi nhận, chức danh — những thứ đó là *cụm từ*, không
+  phải câu) **và** đoạn liền trước đã kết thúc bằng `.` `!` `?` `;` `:`. Ví dụ ô trích yếu
+  "V/v Thông báo thay đổi tên/địa chỉ đăng ký" xuống dòng thành "trên hệ thống SWIFT" cho cân
+  ô — giữ nguyên chữ thường. Luật viết hoa **sau dấu chấm giữa đoạn** không đổi
+- **Tên loại văn bản ngoài danh sách Điều 3 vẫn được nhận** (ĐỀ CƯƠNG, KẾ HOẠCH KIỂM
+  TRA…) — Điều 3.2.ađ cho phép "các loại văn bản… khác phù hợp với thực tiễn" nên danh
+  sách không bao giờ đủ. Nhận theo hình thức: dòng in hoa ngắn đứng riêng **ngay dưới số
+  ký hiệu hoặc địa danh - ngày tháng**. Không có mốc đó thì không đoán — một dòng in hoa
+  giữa văn bản có thể là tiêu đề bảng, tên phụ lục, bất cứ thứ gì
+- **Dòng ngày tháng ĐỂ TRỐNG vẫn được nhận** ("Hà Nội, ngày   tháng   năm 2026") — dự
+  thảo trình ký và mọi mẫu trong Phụ lục V đều viết như vậy
+- **Cụm từ không được tách dòng**: ví dụ *Tổng Giám đốc* sẽ không bị Word ngắt thành "Tổng" ở cuối dòng
+  và "Giám đốc" ở dòng dưới — dấu cách bên trong cụm được đổi thành dấu cách không ngắt (U+00A0).
+  Danh sách cụm từ khai trong tab Cấu hình; **chỉ nên khai cụm ngắn**, cụm dài bị ghim liền dòng sẽ đẩy
+  nguyên khối xuống dòng dưới và để lại khoảng trống dài ở dòng trên
+- **Đánh dấu vùng đã sửa bằng highlight**, ba màu cho ba loại việc khác nhau:
+  **vàng** = sửa định dạng riêng của đoạn (cỡ chữ, đậm/nghiêng, căn lề) · **xanh lá** = sửa con chữ
+  (viết hoa, đánh số, gạch đầu dòng) · **xanh ngọc** = cụm từ được ghép liền dòng.
+  Những sửa đổi áp **đồng loạt cả văn bản** (giãn dòng, cách đoạn, phông chữ, thụt dòng đầu) chỉ vào
+  mục *Sửa chung* của nhật ký, **không bôi màu** — bôi hết thì cả trang vàng khè, không còn chỗ để soi
+- ⚠️ **Danh sách ĐÁNH SỐ tự động của Word được giữ nguyên** kèm cảnh báo. Số "1." "2." không nằm trong
+  file — Word tính lúc hiển thị — nên đổi thành số gõ tay đồng nghĩa với tự đếm lại toàn bộ, lệch một
+  chỗ là sai số cả văn bản mà không có gì báo. Có công tắc bật trong tab Cấu hình cho ai chấp nhận rủi ro
+- ⚠️ Phụ lục IV phần lớn **đòi hiểu ngữ cảnh** (tên người, tên địa lý, tên sự kiện) — máy không đoán,
+  chỉ sửa những cụm khai trong từ điển. Cụm đang viết **HOA TOÀN BỘ** được bỏ qua để không phá dòng tên
+  đơn vị trên đầu văn bản
+- Ô **bảng số liệu** giữa văn bản chỉ được sửa phông chữ, không đụng cỡ chữ và căn lề (Điều 4.2 cho phép
+  bảng biểu trình bày riêng). Nhưng đoạn trong bảng vẫn được nhận diện, vì khối Quốc hiệu / tên đơn vị
+  đầu trang thường được dựng bằng bảng hai cột
+- **Tab *Cấu hình quy chuẩn***: lề trang, phông chữ, giãn dòng, cách đoạn; cỡ chữ / đậm / nghiêng /
+  hoa-thường / căn lề / thụt dòng cho từng thành phần thể thức; hai danh sách cụm từ; các công tắc
+  đánh số; màu highlight. Nhập cỡ chữ ra ngoài dải quy định thì **cảnh báo, không chặn**. Nút
+  *Khôi phục mặc định theo QĐ 979*. Chỉ **phần khác mặc định** được lưu vào DB — quy định đổi thì các
+  mục chưa từng đụng tới tự đi theo mặc định mới
+- File kết quả nằm trong `data/temp_vb_format/`, **sống hết ngày làm việc và bị dọn lúc 23h** cùng các
+  tính năng có file tạm khác
+- Bảng DB: `vb_format_config` (đúng một dòng, `CHECK (id = 1)`)
+- Phân quyền riêng theo nhóm: `menu.vb_format` (tải file lên, chuẩn hoá, tải kết quả) +
+  `vb_format.config` (sửa thông số quy chuẩn). Tách hai quyền vì quy chuẩn là của cả đơn vị — một
+  người đổi là mọi văn bản người khác chạy sau đó đều theo số mới.
+  **Chỉ có `menu.vb_format` thì tab Cấu hình vẫn mở được để XEM, nhưng mọi ô nhập đều bị khoá**
+  (không chỉ hai nút Lưu / Khôi phục) — khoá mỗi nút thì người dùng vẫn gõ được vào gần 200 ô,
+  tưởng đã sửa xong rồi mới phát hiện không lưu được. Backend chặn độc lập ở cả hai đường ghi
+  (`PUT /cau-hinh` và `POST /cau-hinh/mac-dinh` đều trả 403)
+
+---
+
+### Module Quản lý nhân sự
+- Nhóm **Quản lý nhân sự** → **Hồ sơ cán bộ** (`/hr_profiles`) · **Tra cứu & Thống kê**
+  (`/hr_lookup`) · **Nhắc lịch** (`/hr_reminders`). Dùng chung cả cơ quan, không thuộc phòng nào
+- **Quản trị viên không có hồ sơ nhân sự.** Tài khoản `admin` / `admin_l2` là tài khoản hệ thống,
+  không thuộc phòng nào, không có ngày tuyển dụng hay bậc lương — nên bị loại khỏi danh sách hồ sơ,
+  thống kê, tra cứu và nhắc lịch (`hr_service.ROLES_KHONG_HO_SO`). Mở hồ sơ của tài khoản quản trị trả
+  **404 kèm lý do**, không phải màn hình trống. Quản trị viên vẫn vào màn hình bình thường để nhập hộ
+  hồ sơ cho cán bộ
+- **Hồ sơ khoá theo tài khoản** (`user_tttt.id`) — không có danh sách cán bộ riêng. Họ tên, mã cán bộ,
+  phòng đọc thẳng từ `user_tttt`; điện thoại, email và **ngày tuyển dụng** sửa trong hồ sơ **ghi ngược
+  lại** `user_tttt` chứ không tạo bản sao. Hệ quả: cán bộ chưa có tài khoản thì chưa có hồ sơ
+- **"Ngày tuyển dụng" chính là "Ngày vào ngành"** (`user_tttt.join_industry_date`) — một mốc, một cột,
+  sửa ở màn Hồ sơ cán bộ hay màn Quản lý User đều là sửa cùng một chỗ. ⚠️ Cột này quyết định **số ngày
+  phép năm** (`compute_annual_leave()`: 12 ngày + 1 ngày mỗi 4 năm) nên **sửa được cần `hr.edit_all`**,
+  không nằm trong phần cán bộ tự khai — tự khai được là tự cộng phép cho mình
+- **Tám phân hệ:**
+
+  | Phân hệ | Nội dung chính | Cán bộ tự khai? | File đính kèm |
+  |---|---|---|---|
+  | Hồ sơ cá nhân | Giới tính, ngày sinh, CCCD, địa chỉ, điện thoại, email, ảnh thẻ, số người phụ thuộc, người liên lạc | ✔ | ảnh thẻ |
+  | Hồ sơ bằng cấp | Trình độ, chuyên ngành, chứng chỉ ngoại ngữ / tin học / khác | ✔ | ✔ |
+  | Quy hoạch, bổ nhiệm, điều động | Loại, chức vụ, đơn vị, số & ngày quyết định, hiệu lực từ–đến | ✘ | ✔ |
+  | Thông tin công tác | Phòng (từ tài khoản), chức vụ, **ngày tuyển dụng = ngày vào ngành**, loại hợp đồng | ✘ | — |
+  | Quá trình công tác | Từ ngày – đến ngày – chức vụ – đơn vị, cờ *đã qua chi nhánh* | ✘ | — |
+  | Nghỉ gián đoạn | Từ ngày – đến ngày, lý do, không hưởng lương, có tính thời gian công tác không | ✘ | — |
+  | Hồ sơ lương | Bậc, hệ số V1/V2, phụ cấp chức vụ, ngày QĐ nâng lương, chu kỳ nâng lương | ✘ | ✔ |
+  | Đào tạo tại Agribank | Tên khoá – thời gian – Online/Offline – kết quả | ✔ | ✔ |
+  | Công cụ, dụng cụ | Tên, mã tài sản, ngày cấp, **trạng thái** (đang dùng / đã chuyển người khác / đã trả văn phòng / mới cấp mà TSC chưa cập nhật), dự kiến cấp mới | ✔ | — |
+
+- **Thứ tự danh sách: phòng → chức vụ → tên.** Trong mỗi phòng, **Trưởng phòng đứng trước, rồi Phó
+  phòng, rồi nhân viên** (hậu kiểm viên và chuyên viên cùng bậc, xếp lẫn nhau theo tên); Ban Giám đốc
+  thì Giám đốc trước Phó Giám đốc. Bảng thứ tự ở `hr_service.THU_TU_CHUC_VU` — **không** dùng chung
+  `ROLE_RANK` của `backend/core/enums.py`: bảng đó xếp theo *quyền* (hậu kiểm viên đứng trên trưởng
+  phòng) và đang dùng để chặn leo thang quyền, trộn vào nhau thì sửa thứ tự hiển thị là vô tình đổi
+  luật phân quyền
+- **Tên sắp đúng bảng chữ cái tiếng Việt** — không dùng `ORDER BY` của SQLite (so sánh theo mã byte
+  nên mọi chữ có dấu nằm sau `z`). Sắp bằng Python qua `hr_service.khoa_ten()`: bỏ dấu để so sánh
+  (Đ xếp cùng D, Ă/Â cùng A) và lấy **chữ cuối làm khoá chính** theo lối gọi tên tiếng Việt —
+  *Đào Tiến Thành* nằm ở vần **Th**, cạnh *Thảo*, *Thu*, *Thủy*
+- **Tra cứu tại từng thời điểm**: chọn ngày rồi lọc theo *Toàn Trung tâm / Ban Giám đốc / Trưởng phòng /
+  Phó phòng / Cán bộ trong quy hoạch*. Phòng tại ngày đó lấy từ `staff_department_history` (**không**
+  lấy phòng hiện tại), chức vụ và quy hoạch lấy từ quyết định còn hiệu lực tại ngày đó. Xuất Excel được
+- **Thống kê**: theo phòng ban / giới tính / trình độ / độ tuổi / đã qua chi nhánh hay chưa. Trình độ
+  dò theo **từ khoá** trên tên bằng người nhập gõ tay và lấy bằng cao nhất; không nhận ra thì xếp
+  *"Khác"* chứ không đoán bừa một bậc
+- **Nhắc lịch**: nâng lương (**trước 1 quý**, tính từ ngày QĐ + chu kỳ, mặc định 36 tháng), bổ nhiệm lại
+  (**trước 1 năm**, tính từ ngày hết hiệu lực của QĐ bổ nhiệm), cấp công cụ/điện thoại mới (**trước 1
+  quý**, theo cột *Dự kiến cấp mới*). Việc **đã quá hạn vẫn hiện** và được tô đỏ
+- **Tệp đính kèm chọn được ngay ở bước Thêm dòng** — không phải lưu rồi mở lại. Tệp chọn lúc đó hiện
+  trong danh sách với nhãn *chờ lưu* (bỏ ra được), và chỉ thực sự tải lên sau khi dòng hồ sơ đã tạo
+  (API đính kèm cần `item_id`, mà id chỉ có sau khi lưu). Tệp lỗi **không** làm mất dòng vừa tạo — báo
+  đích danh tệp nào hỏng để tải lại
+- **Định dạng và dung lượng** — khai một chỗ trong `backend/api/hr.py` rồi trả qua `GET /api/hr/meta`
+  để ô chọn file ngoài giao diện lọc đúng thứ backend nhận:
+
+  | | Đuôi file | Trần dung lượng |
+  |---|---|---|
+  | Ảnh cá nhân (ảnh thẻ) | `.jpg` `.jpeg` `.png` `.webp` | 5 MB |
+  | Tệp đính kèm (bằng cấp, quyết định) | `.pdf` + `.jpg` `.jpeg` `.png` `.webp` | 15 MB |
+
+  Kiểm theo **phần mở rộng**, và kiểu MIME lưu lại cũng **suy từ đuôi file**, không lấy `content_type`
+  do trình duyệt khai: đó là chuỗi client tự đặt, lưu lại rồi phát ngược ra thì người tải lên chọn được
+  luôn kiểu nội dung máy chủ sẽ trả cho người khác — ảnh thẻ được trả **inline** nên đó là đường đưa
+  nội dung lạ chạy trên chính tên miền của hệ thống
+- **Ảnh thẻ và file quyết định lưu trong DB** (BLOB, giống ảnh chữ ký). Để ngoài đĩa thì sao lưu DB
+  xong vẫn mất file
+- Bảng DB: `hr_profiles`, `hr_degrees`, `hr_appointments`, `hr_work_history`, `hr_breaks`,
+  `hr_salaries`, `hr_trainings`, `hr_tools`, `hr_attachments`
+- **Phân quyền theo nhóm** — `menu.hr_profiles` là mức tối thiểu (vào màn hình + tự khai hồ sơ của
+  chính mình), mọi thứ khác cộng thêm:
+
+  | Việc | Hồ sơ của mình | Hồ sơ người khác |
+  |---|---|---|
+  | Xem | `menu.hr_profiles` | + `hr.view_all` |
+  | Sửa phần tự khai | `menu.hr_profiles` | + `hr.edit_all` |
+  | Sửa phần công tác, bổ nhiệm, quá trình công tác, nghỉ gián đoạn | `hr.edit_all` | `hr.edit_all` |
+  | Xem hồ sơ lương | `menu.hr_profiles` | + `hr.salary_view` |
+  | Sửa hồ sơ lương | `hr.salary_edit` | `hr.salary_edit` |
+
+  Thêm `menu.hr_lookup` (tra cứu & thống kê), `hr.export` (xuất Excel), `menu.hr_reminders` (nhắc lịch).
+  **Sửa lương luôn cần quyền riêng, kể cả hồ sơ của chính mình** — bậc lương là số liệu do người làm chế
+  độ nhập theo quyết định. Hồ sơ lương của người khác bị **ẩn hẳn** khỏi phản hồi, không trả mảng rỗng
+  (mảng rỗng đọc thành "chưa có dữ liệu lương", sai hoàn toàn)
+- **Cột của 7 phân hệ dạng danh sách khai đúng một chỗ** — `hr_service.SECTIONS`. Backend dùng chung một
+  bộ CRUD, còn form nhập liệu ngoài giao diện dựng từ `GET /api/hr/meta`, nên thêm một cột chỉ phải sửa
+  một dòng. Đánh đổi: thân request là `dict` (kiểm bằng `chuan_hoa()`, báo lỗi tiếng Việt theo đúng nhãn
+  cột) nên `/docs` không mô tả được thân request của nhóm route này
 
 ---
 
@@ -445,7 +854,7 @@ Truy cập:
 | Vai trò | Mô tả |
 |---|---|
 | `admin` | **Quản trị viên cấp 1** — toàn quyền hệ thống, quản lý tài khoản & phân quyền nhóm. **Ngoại lệ: chỉ đọc ở Bàn giao chứng từ** |
-| `admin_l2` | **Quản trị viên cấp 2** — quyền theo nhóm chức năng được gán; không thuộc phòng nào; không được tạo/sửa/xóa tài khoản cấp 1 |
+| `admin_l2` | **Quản trị viên cấp 2** — quyền theo nhóm chức năng được gán; không thuộc phòng nào; không được tạo/sửa/xóa tài khoản cấp 1; **dùng được màn Phân quyền chức năng, trừ nhóm chứa chính mình** |
 | `hau_kiem_vien` | Quyền hậu kiểm (xác nhận, gom tập, in bìa) |
 | `giam_doc` | Duyệt nghỉ phép bước cuối; xem toàn bộ màn hình. **Chỉ đọc ở Bàn giao chứng từ** (xem mọi phòng) |
 | `pho_giam_doc` | Duyệt thay GĐ khi có ủy quyền còn hiệu lực. **Chỉ đọc ở Bàn giao chứng từ** (xem mọi phòng) |
@@ -457,6 +866,21 @@ Truy cập:
 
 > `admin_l2` (Quản trị viên cấp 2) hiển thị chung nhóm "Quản trị viên" như cấp 1, nhưng quyền hạn được cấu hình qua **Phân quyền theo nhóm** thay vì all-access.
 
+**Cấp 2 và màn Phân quyền chức năng** — cấp 2 thấy menu *Phân quyền chức năng* và thao tác như cấp 1
+(tạo/sửa/xoá nhóm, thêm bớt thành viên, tick ma trận quyền), trừ hai đường có thể dùng để tự nâng mình
+lên gần bằng cấp 1:
+
+| Thao tác | Cấp 1 | Cấp 2 |
+|---|---|---|
+| Nhóm **không** chứa mình | ✔ | ✔ |
+| Nhóm **có** chứa mình (sửa tên, xoá, thành viên, quyền) | ✔ | ✘ 403 — chỉ xem |
+| Tự thêm mình vào một nhóm bất kỳ | ✔ | ✘ 403 |
+
+Chặn ở backend (`groups.py::_chan_l2_tu_cap_quyen`), frontend chỉ khoá nút cho khỏi bấm rồi nhận 403.
+Hai luật phải đi cùng nhau: nếu chỉ cấm sửa nhóm chứa mình thì cấp 2 lập nhóm mới full quyền rồi tự
+thêm mình vào — lúc thêm, nhóm chưa chứa mình. Vẫn còn một đường **không** chặn: hai cấp 2 cấp quyền
+chéo cho nhau; đó là chuyện chọn người, không phải chuyện mã.
+
 ### Menu sidebar
 Menu nhóm theo **chức năng**, không theo phòng ban. Hover để mở flyout bên phải.
 
@@ -464,16 +888,24 @@ Menu nhóm theo **chức năng**, không theo phòng ban. Hover để mở flyou
 Quản lý chứng từ ─ Bàn giao chứng từ / Đóng chứng từ / Lưu trữ
 Đối chiếu ──────── Phòng Thanh toán ─ Chấm 459901 / Song phương / ACH / CITAD / Đối soát CITAD
                    Phòng Swift ────── Đối chiếu điện SWIFT
+                   Phòng QLTK Nostro, Vostro ─ Đối chiếu CITAD - PaymentHub
 Báo cáo ────────── Phòng KSNB & HTVH ─ Báo cáo hậu kiểm / Báo cáo bàn giao chứng từ
                    Phòng Tổng hợp ──── Báo cáo dữ liệu thanh toán
-Nghỉ phép                    ┐
-Phân lịch trực               ├ menu phẳng, không có nhóm cha
-Danh sách CN TTQT            ┘
+Nghỉ phép ──────── menu phẳng, không có nhóm cha
+Chấm công & Lịch trực ─ Phòng Kế toán ───── Chấm công
+                   Phòng Thanh toán ── Phân lịch trực / Sổ trực cuối ngày
+Quản lý nhân sự ── Hồ sơ cán bộ / Tra cứu & Thống kê / Nhắc lịch
+Danh sách CN TTQT ─ menu phẳng, không có nhóm cha
+Tính năng khác ─── Ôn tập / Chuẩn hoá văn bản
 ```
 
-Tầng "phòng" **chỉ còn ở cấp 2** của Đối chiếu và Báo cáo, và chỉ liệt kê phòng đang thực sự có tính năng. Trước đây menu chia theo phòng ở cấp 1; cách đó buộc người dùng phải biết chức năng mình cần thuộc phòng nào mới tìm ra.
+Tầng "phòng" **chỉ còn ở cấp 2** của Đối chiếu, Báo cáo và Chấm công & Lịch trực, và chỉ liệt kê phòng đang thực sự có tính năng. Trước đây menu chia theo phòng ở cấp 1; cách đó buộc người dùng phải biết chức năng mình cần thuộc phòng nào mới tìm ra.
 
-Một nhóm **chỉ hiện khi user có ít nhất 1 chức năng** bên trong (`menu.<key>`); nhóm con không còn mục nào hiển thị được cũng bị bỏ qua — không dựng mục menu hover ra rỗng. Menu phẳng cấp 1 kiểm feature giống hệt: không có `menu.leaves` thì không thấy "Nghỉ phép".
+**Nghỉ phép** đứng riêng ở cấp 1 (22/08/2026), ngang hàng với *Chấm công & Lịch trực*: cả cơ quan dùng hằng ngày nên không bắt người dùng hover qua một nhóm mới tới. Nhóm *Chấm công & Lịch trực* giờ thuần các mục của riêng một phòng.
+
+Một nhóm **chỉ hiện khi user có ít nhất 1 chức năng** bên trong (`menu.<key>`); nhóm con không còn mục nào hiển thị được cũng bị bỏ qua — không dựng mục menu hover ra rỗng. Menu phẳng cấp 1 kiểm feature giống hệt: không có `menu.ttqt_branches` thì không thấy "Danh sách CN TTQT".
+
+Một ngoại lệ: **Chấm công** không gate bằng feature-flag mà theo **phòng** — chỉ nhân viên Phòng Kế toán (`ACCT`) và admin thấy, vì mọi nhân viên phòng đó đều cần xem "Công của tôi" chứ không riêng người được cấp quyền. Nó nằm chung nhóm với các mục gate bằng feature-flag, nên `_dept_group()` nhận thêm tham số `overrides={"attendance": ...}` để đè kết quả kiểm tra của **đúng một khoá** thay vì đổi cách lọc cả nhóm. Ô tick `menu.attendance` ở màn Phân quyền vẫn tồn tại nhưng chỉ để gán 2 quyền con (xem bảng công cả phòng / xuất Excel) — tick hay không **không** làm menu hiện ra với người ngoài phòng ACCT.
 
 Cây menu nằm ở `shared.MENU_TREE`. Phần tử cấp 1 là **tuple** `(key, label, icon)` cho menu phẳng, hoặc **dict** `{"id", "label", "icon", "items"}` cho nhóm. Sâu tối đa 3 tầng — `_dept_group()` không dựng được tầng thứ tư.
 
@@ -486,8 +918,8 @@ Bố cục **soi gương cây menu sidebar** — admin tick quyền theo đúng 
 
 | `kind` | Hình dạng | Dùng cho |
 |---|---|---|
-| `group` | Thẻ có header đỏ; `sections` gom menu theo phòng (`label=None` = không cần dải nhãn) | Quản lý chứng từ, Đối chiếu, Báo cáo, Quản lý hệ thống |
-| `menu` | Thẻ **không header**, chính ô tick là tiêu đề thẻ | Nghỉ phép, Phân lịch trực, Danh sách CN TTQT |
+| `group` | Thẻ có header đỏ; `sections` gom menu theo phòng (`label=None` = không cần dải nhãn) | Quản lý chứng từ, Đối chiếu, Báo cáo, Chấm công & Lịch trực, Quản lý nhân sự, Tính năng khác, Quản lý hệ thống |
+| `menu` | Thẻ **không header**, chính ô tick là tiêu đề thẻ | Nghỉ phép, Danh sách CN TTQT |
 
 Dải nhãn phòng **không phải ô tick** — luật *"mỗi ô tick là đúng một mã quyền"* được giữ nguyên, để không có hai loại ô nhìn giống nhau mà ý nghĩa khác nhau. Cạnh dải nhãn có nút **Chọn tất cả / Bỏ chọn**, chỉ tác động lên MENU chứ không tự cấp ACTION — tránh một cú bấm cấp luôn quyền chạy xử lý dữ liệu.
 
@@ -500,7 +932,7 @@ Máy có màn hình rộng **≤ 1440px** (máy trạm 1366×768) mặc định 
 ### Vùng nội dung
 Giao diện thiết kế cho **máy trạm desktop**, không có breakpoint mobile. Vùng nội dung rộng `calc(100% - 16rem)` (hoặc `- 4.5rem` khi sidebar thu gọn) và cho **cuộn ngang** khi bảng vượt khung — không cắt bớt nội dung.
 
-Đầu mỗi trang hiển thị **đường dẫn menu** dẫn tới trang đó, ví dụ *Báo cáo / Phòng KSNB & HTVH / **Báo cáo hậu kiểm***. Phần cha in nhỏ màu xám, tên trang giữ cỡ tiêu đề. Đường dẫn **suy ra từ route** rồi tra bảng dựng sẵn từ chính cây menu (`shared.BREADCRUMBS`) — đổi tên một mục trong `MENU_TREE` thì breadcrumb tự đổi theo, không có chỗ thứ hai phải sửa. Trang không nằm trong menu (`/home`, `/user-management`) không hiện phần cha. Menu phẳng cấp 1 (Nghỉ phép, Phân lịch trực…) chỉ có 1 đoạn nên cũng không hiện phần cha — nếu hiện sẽ là chính tên trang lặp lại.
+Đầu mỗi trang hiển thị **đường dẫn menu** dẫn tới trang đó, ví dụ *Báo cáo / Phòng KSNB & HTVH / **Báo cáo hậu kiểm***. Phần cha in nhỏ màu xám, tên trang giữ cỡ tiêu đề. Đường dẫn **suy ra từ route** rồi tra bảng dựng sẵn từ chính cây menu (`shared.BREADCRUMBS`) — đổi tên một mục trong `MENU_TREE` thì breadcrumb tự đổi theo, không có chỗ thứ hai phải sửa. Trang không nằm trong menu (`/home`, `/user-management`) không hiện phần cha. Menu phẳng cấp 1 (Danh sách CN TTQT) chỉ có 1 đoạn nên cũng không hiện phần cha — nếu hiện sẽ là chính tên trang lặp lại.
 
 > Điều kiện: route của trang phải trùng khoá menu (`@ui.page("/reports")` ↔ khoá `reports`) — ràng buộc này vốn đã có sẵn vì sidebar điều hướng bằng `ui.navigate.to(f"/{key}")`.
 
@@ -541,9 +973,77 @@ approved / rejected / cancelled
 
 ## Backup tự động
 
-Database SQLite được backup tự động vào thư mục `data/backups/`. Lịch backup cấu hình trong `backend/services/backup_service.py`.
+Database SQLite được backup vào `data/backups/` **mỗi lần app khởi động** và sau đó mỗi 24h.
+Cấu hình trong `backend/services/backup_service.py`.
+
+**Tiêu chí giữ lại** (hợp của hai tập, giữ cả hai):
+
+| Giữ | Vì sao |
+|---|---|
+| Bản mới nhất của **mỗi ngày**, trong `_GIU_NGAY = 7` ngày gần nhất | Chiều sâu lịch sử — hỏng DB thường phát hiện muộn |
+| `_GIU_GAN_NHAT = 5` bản mới nhất, bất kể ngày | Một ngày khởi động lại nhiều lần thì bản vừa chụp không bị dọn ngay |
+
+> ⚠️ **Chỉ file đúng mẫu `ksnb_YYYYMMDD_HHMM.db` (hoặc `.zip`) mới bị xoá tự động.** Bản đặt tay
+> (`ksnb_truoc_nhomA_20260728.db`…) **không bao giờ** bị đụng tới — muốn bỏ thì xoá tay.
+> Trước đây luật dọn glob `ksnb_*.db` và sắp **theo tên**: `'2' < 'b' < 't'` nên bản đặt tay
+> luôn bị coi là "mới nhất", vừa chiếm chỗ vĩnh viễn vừa làm màn hình Admin báo sai ngày
+> backup gần nhất. `tests/test_backup_rotation.py` canh việc này.
+
+**Thư mục backup phụ** (`BACKUP_EXTRA_DIR` trong `.env`, nên đặt ở ổ/máy khác): mỗi bản backup được
+chép sang đó rồi **áp cùng luật dọn**. Tức là phần mềm chủ động xoá file trên ổ/máy ngoài — vẫn chỉ
+đụng đúng mẫu tên `ksnb_YYYYMMDD_HHMM.db` / `.zip`.
+
+> ⚠️ **Mỗi máy chủ một thư mục riêng.** Hai máy cùng trỏ vào một thư mục thì tên file không phân
+> biệt được nguồn, máy này sẽ xoá bản của máy kia mà cả hai đều tưởng mình còn đủ lịch sử.
+
+### Mã hoá bản sao lưu (`BACKUP_PASSWORD`)
+
+Đặt `BACKUP_PASSWORD` trong `.env` thì mỗi bản sao lưu được nén thành `.zip` **mã hoá AES-256**
+(mở được bằng 7-Zip/WinRAR sẵn có, không cần công cụ riêng của phần mềm), bản `.db` trần bị xoá
+ngay sau đó.
+
+Vì sao cần: file `.db` chứa **nguyên cột `pwd_hash` của toàn bộ tài khoản**. Ai đọc được thư mục
+`data/backups` — hoặc share mạng `BACKUP_EXTRA_DIR` — là mang mã băm về dò ngoại tuyến, không cần
+quyền gì trong phần mềm.
+
+> ⚠️ **Mất mật khẩu này = không mở được bản sao lưu.** Cất vào két mật khẩu của đơn vị, đừng chỉ để
+> trong `.env` trên đúng cái máy mà bản sao lưu dùng để cứu.
+
+Để trống thì **vẫn backup** nhưng ra `.db` không mã hoá, kèm một dòng cảnh báo trong log mỗi lần
+chạy — mất bản sao lưu nặng hơn hẳn việc bản sao lưu chưa được mã hoá, nên thiếu cấu hình không
+làm dừng việc backup. `tests/test_backup_ma_hoa.py` canh cả hai nhánh.
 
 ---
+
+## Word đòi phiên đăng nhập trên máy chủ
+
+**Máy chủ phải có một tài khoản đang đăng nhập** (console hoặc RDP) thì việc xuất đơn nghỉ
+phép bản PDF mới chạy. Chạy `start.bat` bằng tay trong phiên đó là đúng cách.
+
+**Không** đưa hệ thống vào Windows Service, cũng không dùng Task Scheduler với tuỳ chọn
+*"Run whether user is logged on or not"*. Cả hai đều chạy ở **phiên 0** — phiên không có
+màn hình — và Word không làm việc được ở đó.
+
+Đã đo trên chính máy này (chạy dưới `NT AUTHORITY\SYSTEM`, phiên 0):
+
+| Bước | Kết quả ở phiên 0 |
+|---|---|
+| `New-Object -ComObject Word.Application` | ✅ tạo được, mất 0,59 s |
+| `Documents.Open(...)` | ❌ trả về `null` — **không ném lỗi, chỉ trả rỗng** |
+| Chuyển sang PDF | ❌ không thực hiện được |
+
+Chỗ khó chịu là bước 1 **thành công**, nên nhìn qua tưởng Word chạy tốt. Chỉ tới lúc mở tài
+liệu mới hỏng, mà lại hỏng kiểu trả `null` chứ không báo lỗi.
+
+**Hỏng thì hệ thống không đứng lại**: API trả 503, giao diện tự lui về tải bản `.docx` và vẫn
+duyệt đơn được, chỉ là không có chữ ký trên bản in. Trong log sẽ thấy nguyên văn:
+
+> Word mo len duoc nhung KHONG mo duoc tai lieu. Thuong gap khi backend chay o phien khong co
+> nguoi dang nhap...
+
+> 💡 Máy chủ hay bị khoá màn hình hoặc mất phiên RDP: khoá màn hình **vẫn giữ phiên**, không
+> sao. Nhưng *đăng xuất* (Sign out) thì mất phiên — sau khi khởi động lại máy, phải đăng nhập
+> rồi chạy lại `start.bat`.
 
 ## Truy cập LAN (nhiều người dùng)
 
@@ -569,6 +1069,17 @@ ENV=production                               # tắt /docs, /redoc, /openapi.jso
 
 Chỉ thêm `ALLOWED_ORIGINS=http://192.168.1.100:8080` khi thật sự phải để `BACKEND_HOST=0.0.0.0`
 cho một hệ thống khác gọi thẳng API — nhiều giá trị cách nhau dấu phẩy.
+
+Hai biến nữa có mặc định an toàn, chỉ đặt khi cần đổi:
+
+```ini
+MAX_UPLOAD_MB=200          # trần MỘT file tải lên; MAX_REQUEST_MB=600 cho cả thân request
+TRUSTED_PROXY_IPS=         # máy được phép khai IP hộ qua X-Client-IP (loopback đã có sẵn)
+```
+
+> Chỉ điền `TRUSTED_PROXY_IPS` khi đặt nginx/IIS **trước cổng backend**. Máy không nằm trong danh
+> sách mà gửi `X-Client-IP` thì backend bỏ qua và ghi IP thật của kết nối — nếu không, nhật ký
+> truy vết có thể do chính người bị truy vết viết ra.
 
 Backend tự **cảnh báo trong log khi khởi động** nếu đang lắng nghe trên mạng mà hai biến này chưa đặt đúng.
 `deploy.bat` cũng kiểm `.env` của máy đích ở bước 1/8 và hỏi trước khi sửa, nên không phải nhớ thủ công.

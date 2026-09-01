@@ -41,6 +41,12 @@ def _setup_logging():
     ch = logging.StreamHandler()
     ch.setFormatter(fmt)
     root.addHandler(ch)
+    # Chạy dưới pytest thì KHÔNG ghi ra logs/app.log. Test dùng DB rỗng trong RAM nên
+    # đẻ ra hàng loạt ERROR giả ("no such table: duty_shifts", "...: so_truc_records");
+    # trộn vào nhật ký thật là người vận hành mở ra thấy lỗi không có thật, đi tìm sự cố
+    # không tồn tại. Log vẫn ra màn hình nên pytest -s / báo lỗi không mất gì.
+    if "pytest" in sys.modules:
+        return
     fh = logging.handlers.RotatingFileHandler(
         "logs/app.log", maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
     )
@@ -114,6 +120,9 @@ async def lifespan(app: FastAPI):
     _start_backup(_db_file)
     from backend.services.log_cleanup_service import start_scheduler as _start_log_cleanup
     _start_log_cleanup(_db_file)
+    # Dọn data/temp_* theo lịch — trước đây chỉ dọn khi có người dùng tính năng
+    from backend.services.temp_cleanup_service import start_scheduler as _start_temp_cleanup
+    _start_temp_cleanup()
     from backend.core import audit_queue
     audit_queue.start()
     # Cảnh báo (không chặn khởi động) nếu đồng hồ máy lệch nguồn giờ chuẩn
@@ -136,6 +145,17 @@ app = FastAPI(
 
 from backend.core.audit_middleware import AuditMiddleware
 app.add_middleware(AuditMiddleware)
+
+# Thứ tự add_middleware là NGƯỢC với thứ tự chạy: cái thêm sau nằm ngoài cùng.
+# Muốn là CORS (ngoài cùng, để preflight vẫn có header) → chặn kích thước →
+# audit → route. Nên trần kích thước phải thêm SAU audit và TRƯỚC CORS.
+from backend.core.uploads import BodySizeLimitMiddleware, MAX_REQUEST_BYTES
+app.add_middleware(BodySizeLimitMiddleware, max_bytes=MAX_REQUEST_BYTES)
+
+# Ngoài cùng (thêm sau cùng trước CORS) để header có mặt cả trên phản hồi lỗi
+# do middleware bên trong sinh ra — vd 413 của BodySizeLimitMiddleware.
+from backend.core.security_headers import SecurityHeadersMiddleware
+app.add_middleware(SecurityHeadersMiddleware)
 
 app.add_middleware(
     CORSMiddleware,

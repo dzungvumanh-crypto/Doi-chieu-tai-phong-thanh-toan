@@ -63,7 +63,7 @@ def _status_to_label(direction: str) -> dict:
 
 
 @ui.page("/swift_recon")
-def swift_recon_page():
+async def swift_recon_page():
     if not _require_auth():
         return
     if not api.has_feature("menu.swift_recon"):
@@ -97,7 +97,7 @@ def swift_recon_page():
     history_refresh = {"fn": None}  # sẽ được _build_history_panel gán vào — gọi lại mỗi khi đối chiếu xong
 
     with ui.row().classes("w-full"):
-        _sidebar("swift_recon")
+        await _sidebar("swift_recon")
         with _content_area():
             _page_header(
                 "Đối chiếu điện SWIFT",

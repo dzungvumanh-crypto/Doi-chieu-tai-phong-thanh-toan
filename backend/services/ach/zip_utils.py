@@ -61,3 +61,44 @@ def detect_encoding(z: pyzipper.AESZipFile, name: str) -> str:
     with z.open(name) as f:
         raw = f.read(512)
     return detect_encoding_from_bytes(raw)
+
+
+# ─── Nhật ký giải nén — vì sao phải đẩy ra LOG CỦA JOB ────────────────────────
+# Ba bước B2/B4/B6 đều có nhánh dự phòng: không tìm thấy 7-Zip/WinRAR (hoặc gọi
+# chúng thất bại) thì tự giải nén bằng pyzipper. Nhánh dự phòng đó nạp TRỌN file
+# CSV vào bộ nhớ rồi mới đọc — đo được `dtype=str` phình gấp ~7 lần kích thước
+# file, hai ZIP chạy song song thì gấp đôi nữa. Máy chủ 8-16 GB sẽ đổ sang bộ nhớ
+# ảo và chậm tới mức mọi yêu cầu đều hết giờ chờ.
+#
+# Trước đây các dòng chẩn đoán này chỉ đi qua `print()`, tức chỉ nằm trong
+# logs/backend.log trên máy chủ. Người bấm nút nhìn màn hình KHÔNG hề biết lượt
+# chạy của mình vừa rẽ sang đường nguy hiểm — họ chỉ thấy một khoảng lặng dài
+# rồi mất kết nối. Nay in cả hai chỗ: backend.log giữ nguyên cho người kỹ thuật,
+# log của job hiện thẳng lên màn hình cho người vận hành.
+
+def _ghi(log, msg: str) -> None:
+    print(msg)
+    if log:
+        log(msg)
+
+
+def bao_dung_cong_cu(buoc: str, zip_path: str, tool_type: str, tool_path: str, log=None) -> None:
+    print(f'[{buoc}][DIAG] {tool_type}: {tool_path} | {os.path.basename(zip_path)}')
+    _ghi(log, f'[{buoc}] Đang giải nén {os.path.basename(zip_path)} bằng {tool_type}...')
+
+
+def bao_giai_nen_xong(buoc: str, zip_path: str, giay: float, rc: int, log=None) -> None:
+    _ghi(log, f'[{buoc}] Giải nén xong {os.path.basename(zip_path)}: {giay:.1f}s (mã trả về {rc}).')
+
+
+def bao_lui_ve_pyzipper(buoc: str, zip_path: str, ly_do: str, log=None) -> None:
+    """`ly_do` rỗng nghĩa là máy không cài 7-Zip lẫn WinRAR."""
+    ten = os.path.basename(zip_path)
+    if ly_do:
+        _ghi(log, f'[{buoc}] CẢNH BÁO: công cụ giải nén báo lỗi với {ten} ({ly_do}).')
+    else:
+        _ghi(log, f'[{buoc}] CẢNH BÁO: máy chủ không cài 7-Zip lẫn WinRAR.')
+    _ghi(log,
+         f'[{buoc}] CẢNH BÁO: phải giải nén {ten} bằng cách dự phòng — cách này nạp trọn '
+         'file vào bộ nhớ (gấp khoảng 7 lần kích thước file), máy chủ có thể chậm hẳn '
+         'hoặc không phản hồi. Cài 7-Zip lên máy chủ để tránh.')
