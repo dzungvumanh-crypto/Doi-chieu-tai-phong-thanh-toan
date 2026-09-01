@@ -60,6 +60,13 @@ MENU_TREE = [
                     ("swift_recon", "Đối chiếu điện SWIFT", "compare_arrows"),
                 ],
             },
+            {
+                "label": "Phòng QLTK Nostro, Vostro",
+                "icon": "account_balance",
+                "items": [
+                    ("doi_chieu_citad_nostro", "Đối chiếu CITAD - PaymentHub", "account_balance_wallet"),
+                ],
+            },
         ],
     },
     {
@@ -115,7 +122,41 @@ MENU_TREE = [
             },
         ],
     },
+    {
+        # Quản lý nhân sự — hồ sơ cán bộ của cả Trung tâm. Ba mục: nhập/xem hồ
+        # sơ, tra cứu-thống kê, và nhắc lịch (nâng lương / bổ nhiệm lại / cấp
+        # công cụ mới). Không có tầng "phòng" vì đây là việc của cả cơ quan.
+        # Icon "badge" thuộc bộ Material Icons gốc — cùng lý do đã chọn
+        # "date_range" ở nhóm Chấm công.
+        "id": "nhansu",
+        "label": "Quản lý nhân sự",
+        "icon": "badge",
+        "items": [
+            ("hr_profiles",  "Hồ sơ cán bộ",       "contact_page"),
+            ("hr_lookup",    "Tra cứu & Thống kê", "manage_search"),
+            ("hr_reminders", "Nhắc lịch",          "notifications_active"),
+        ],
+    },
+    # Đối chiếu DTBB đứng riêng cấp 1 — không phải "thời gian làm việc" nên không
+    # gộp vào nhóm "cong_truc" phía trên dù cùng Phòng Kế toán (gate theo department
+    # code ACCT ở dtbb_page(), không theo cấu trúc cây này).
+    ("dtbb", "Đối chiếu DTBB", "account_balance_wallet"),
     ("ttqt_branches", "Danh sách CN TTQT", "account_tree"),
+    {
+        # Ôn tập và Chuẩn hoá văn bản không thuộc phòng nào, cả cơ quan dùng —
+        # gom vào một nhóm thay vì để hai mục phẳng cạnh nhau ở cấp 1. Items là
+        # tuple (không có tầng "phòng") nên flyout chỉ sâu 2 cấp.
+        # Icon "apps"/"school"/"description" đều thuộc bộ Material Icons gốc
+        # (chắc chắn có glyph trong font offline NiceGUI đóng gói) — cùng lý do
+        # đã chọn "date_range" ở trên.
+        "id": "khac",
+        "label": "Tính năng khác",
+        "icon": "apps",
+        "items": [
+            ("quiz",      "Ôn tập",            "school"),
+            ("vb_format", "Chuẩn hoá văn bản", "description"),
+        ],
+    },
 ]
 
 # Hai nhóm dưới đây trước nằm inline trong _sidebar(). Tách ra module-level để
@@ -539,8 +580,9 @@ def _dept_group(dept: dict, current_page: str, check_features: bool = True,
 
 async def _user_dept_code(user: dict) -> str | None:
     """Tra department_id của user ra code (vd 'ACCT'), cache trong app.storage.user
-    để không gọi lại API mỗi lần chuyển trang. Dùng để giới hạn hiển thị menu
-    "Chấm công" (Phòng Kế toán) chỉ cho đúng nhân viên phòng đó.
+    để không gọi lại API mỗi lần chuyển trang. Dùng để giới hạn hiển thị các menu
+    riêng Phòng Kế toán ("Chấm công", "Đối chiếu DTBB") chỉ cho đúng nhân viên
+    phòng đó.
 
     Rà soát tiếp theo: trước đây cache cả khi gọi API lỗi (mạng chậm, backend
     restart giữa chừng...) — `code=None` bị ghi cứng vào cache, nhân viên ACCT mất
@@ -668,7 +710,15 @@ async def _sidebar(current_page: str) -> dict:
             # Menu chức năng — nhóm thì dựng flyout, mục phẳng thì dựng thẳng
             for node in MENU_TREE:
                 if isinstance(node, tuple):
-                    if api.has_feature(f"menu.{node[0]}"):
+                    if node[0] == "dtbb":
+                        # "Đối chiếu DTBB" không dùng feature-flag — chỉ hiện cho đúng
+                        # nhân viên Phòng Kế toán (code ACCT) hoặc admin, giống
+                        # show_attendance bên dưới. Sửa theo review PR #22: nếu lỡ được
+                        # cấp nhầm feature qua Phân quyền theo nhóm thì vẫn hiện menu
+                        # rồi 403 khi bấm vào — không thuộc ACCT/admin thì bỏ qua hẳn.
+                        if user_role == "admin" or await _user_dept_code(user) == "ACCT":
+                            _nav_item(*node, current_page)
+                    elif api.has_feature(f"menu.{node[0]}"):
                         _nav_item(*node, current_page)
                 else:
                     _dept_group(node, current_page, check_features=True,

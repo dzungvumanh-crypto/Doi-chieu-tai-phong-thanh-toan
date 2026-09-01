@@ -21,11 +21,17 @@ _SEMANTIC = {
     "staff_export":    "Xuất danh sách cán bộ ra Excel",
     "staff_export_db": "Xuất file DB người dùng (có mã băm mật khẩu)",
     "password_reset":  "Đặt lại mật khẩu người dùng",
+    "dtbb_save_new":       "Lưu kỳ DTBB mới",
+    "dtbb_save_overwrite": "Ghi đè kỳ DTBB đã có",
+    "dtbb_confirm":        "Xác nhận kỳ DTBB",
+    "dtbb_unconfirm":      "Bỏ xác nhận kỳ DTBB",
+    "dtbb_delete":         "Xóa kỳ DTBB",
     "signature_upload": "Tải lên ảnh chữ ký",
     "signature_delete": "Xóa ảnh chữ ký",
     "staff_import_join_dates": "Nhập Ngày vào ngành từ Excel",
     "staff_join_date_update":  "Sửa Ngày vào ngành (màn hình quỹ phép)",
     "db_backup_download":      "Tải bản sao cơ sở dữ liệu",
+    "handover_entry_delete":   "Xoá ô chứng từ đã xác nhận",
 }
 
 # ── Ánh xạ "METHOD /path_chuẩn_hóa" → mô tả công việc ────────────────────────
@@ -178,6 +184,20 @@ def describe_result(detail: str, action: str) -> str:
     if code >= 500:
         return "Lỗi hệ thống"
     return f"Mã {code}"
+
+
+_CHI_HTTP = re.compile(r"^HTTP\s+\d+$")
+
+
+def describe_detail(detail: str) -> str:
+    """Nội dung chi tiết để hiện lên màn hình.
+
+    Dòng do middleware ghi chỉ có "HTTP 200" — đó là mã kết quả, đã nằm ở cột
+    Kết quả rồi, hiện lại thành cột chi tiết toàn số thì vô nghĩa. Chỉ những
+    dòng do write_audit ghi mới có nội dung thật.
+    """
+    d = (detail or "").strip()
+    return "" if _CHI_HTTP.match(d) else d
 
 
 def result_ok(detail: str, action: str) -> bool:

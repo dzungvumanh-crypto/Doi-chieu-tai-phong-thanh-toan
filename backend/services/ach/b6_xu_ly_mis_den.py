@@ -12,6 +12,7 @@ import pyzipper
 import pandas as pd
 
 from .config import zip_password
+from .so_tien import doc_so_tien
 from .zip_utils import (
     find_zip_tool as _find_zip_tool,
     build_extract_cmd as _build_extract_cmd,
@@ -141,7 +142,7 @@ def xu_ly_mis_den(zip_paths: List[str], session_id: str, ngay_doi_chieu: datetim
     n_truoc_rjct = len(df)
     df = df[df['TRANG_THAI_LENH'].astype(str).str.strip() != 'RJCT'].copy()
     _log(f"[B6] Loại {n_truoc_rjct - len(df):,} dòng TRANG_THAI_LENH='RJCT' (BƯỚC 6.3)")
-    df['SO_TIEN'] = pd.to_numeric(df['SO_TIEN'], errors='coerce').fillna(0).astype('int64')
+    df['SO_TIEN'] = doc_so_tien(df['SO_TIEN'], nguon='MIS_DEN', ten_cot='SO_TIEN')
     df['TRACE']   = df['TRACE'].fillna('').astype(str).str.strip().str.lstrip("'0")
     df['KEY_DEN_HUB'] = (
         df['CHI_NHANH'].astype(str).str.strip()

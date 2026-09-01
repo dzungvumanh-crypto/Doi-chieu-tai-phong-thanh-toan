@@ -2,7 +2,10 @@
 
 Logic port từ processor.py của app gốc (Doi_Chieu_Song_Phuong), GIỮ NGUYÊN
 ngữ nghĩa định tuyến. Khác biệt: chạy 1 luồng nền in-process (bỏ WinRAR +
-multiprocessing của bản desktop), I/O làm việc với bytes từ HTTP upload.
+multiprocessing của bản desktop), I/O làm việc với ĐƯỜNG DẪN file đã nằm trên
+máy chủ (`backend/api/doi_chieu_song_phuong.py` ghi thẳng từng khối xuống
+`data/temp_doi_chieu_song_phuong/upload_<token>/`). Nhận bytes như trước là ôm
+trọn file ZIP trong RAM suốt thời gian xử lý, trong khi zipfile đọc từ đĩa được.
 
 Mỗi dòng IPCAS thuộc 1 trong 4 ngân hàng (theo CUSTOMER) được đưa vào:
   - file ĐẾN nếu CRAMOUNT = 0   (tiền ghi Có = 0 → lệnh nhận về)
@@ -21,6 +24,7 @@ from datetime import datetime
 from pathlib import Path
 
 from backend.core.config import BASE_DIR, zip_password   # mật khẩu ZIP đọc từ .env
+from backend.core.don_dep import moc_don_gan_nhat
 
 try:
     import pyzipper
@@ -30,7 +34,6 @@ except ImportError:
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 TEMP_DIR      = BASE_DIR / "data" / "temp_doi_chieu_song_phuong"
-CLEANUP_HOURS = 2
 
 # Cột chuẩn IPCAS — đảm bảo mọi file xuất ra luôn có đủ 10 cột này
 COLS = ["BUSCD", "UNIT", "TRCD", "CUSTOMER", "TRTP",
@@ -71,6 +74,23 @@ def init_progress() -> str:
     return task_token
 
 
+def tao_thu_muc_upload(task_token: str) -> Path:
+    """Thư mục nhận file tải lên của một lượt: `upload_<token>/` trong TEMP_DIR.
+
+    Nằm cùng chỗ với thư mục kết quả nên `_cleanup_old_results()` trông coi luôn,
+    không phải thêm đường dọn thứ hai.
+    """
+    d = TEMP_DIR / f"upload_{task_token}"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def bo_luot(task_token: str) -> None:
+    """Huỷ một lượt chưa chạy (upload lỗi/đứt): xoá thư mục và entry tiến độ."""
+    shutil.rmtree(TEMP_DIR / f"upload_{task_token}", ignore_errors=True)
+    _progress.pop(task_token, None)
+
+
 def get_progress(task_token: str) -> dict | None:
     p = _progress.get(task_token)
     if p is None:
@@ -86,10 +106,10 @@ def _set_prog(task_token: str | None, pct: int, msg: str) -> None:
 
 # ─── Public API ───────────────────────────────────────────────────────────────
 
-def run_process(zip_bytes: bytes, task_token: str) -> None:
+def run_process(zip_path: Path, task_token: str) -> None:
     """Chạy process_zip trong background thread; cập nhật progress và bắt lỗi."""
     try:
-        process_zip(zip_bytes, task_token)
+        process_zip(zip_path, task_token)
     except Exception as e:
         log.error("process_zip lỗi [%s]: %s", task_token, e, exc_info=True)
         if task_token in _progress:
@@ -99,14 +119,18 @@ def run_process(zip_bytes: bytes, task_token: str) -> None:
             })
 
 
-def process_zip(zip_bytes: bytes, task_token: str | None = None) -> dict:
-    """Nhận bytes ZIP → định tuyến → ghi 8 CSV → trả metadata."""
+def process_zip(zip_path: Path, task_token: str | None = None) -> dict:
+    """Nhận đường dẫn file ZIP trên máy chủ → định tuyến → ghi 8 CSV → trả metadata."""
     _cleanup_old_results()
     t0 = time.time()
 
     # ── Kiểm tra magic bytes ──────────────────────────────────────────────────
-    if zip_bytes[:4] != b"PK\x03\x04":
-        raise ValueError("File tải lên không phải định dạng ZIP hợp lệ.")
+    # Đọc đúng 4 byte đầu, không nạp cả file: chỗ này chạy TRƯỚC khi mở ZIP nên
+    # nó là cửa duy nhất chặn được file người dùng chọn nhầm (PDF, Excel) —
+    # thông báo "không phải ZIP" rõ hơn nhiều so với lỗi giải nén ném ra sau đó.
+    with open(zip_path, "rb") as f:
+        if f.read(4) != b"PK\x03\x04":
+            raise ValueError("File tải lên không phải định dạng ZIP hợp lệ.")
 
     _set_prog(task_token, 5, "Đang giải mã và đọc dữ liệu...")
 
@@ -115,9 +139,8 @@ def process_zip(zip_bytes: bytes, task_token: str | None = None) -> dict:
     hdr_line   = None
     total_rows = 0
 
-    buf = io.BytesIO(zip_bytes)
     try:
-        zf = _open_zip(buf)
+        zf = _open_zip(str(zip_path))
     except Exception as e:
         raise ValueError(f"Không mở được file ZIP: {e}")
 
@@ -132,15 +155,19 @@ def process_zip(zip_bytes: bytes, task_token: str | None = None) -> dict:
 
         n = len(csv_names)
         for i, name in enumerate(csv_names):
+            # Đọc theo LUỒNG giải nén, không `zf.read()` cả file vào RAM: một CSV
+            # nén 30 MB bung ra vài trăm MB, mà `_route_file()` chỉ đi tuần tự
+            # từng dòng nên chẳng bao giờ cần nhìn lại dòng đã qua.
             try:
-                raw = zf.read(name, pwd=zip_password())
+                nguon = zf.open(name, pwd=zip_password())
             except Exception as e:
                 raise ValueError(
                     f"Không giải mã được '{name}' — sai mật khẩu hoặc file hỏng ({e})."
                 )
-            reader = csv.reader(io.TextIOWrapper(
-                io.BytesIO(raw), encoding="utf-8-sig", newline=""))
-            file_hdr, routed = _route_file(reader, buffers, counts, name)
+            with nguon:
+                reader = csv.reader(io.TextIOWrapper(
+                    nguon, encoding="utf-8-sig", newline=""))
+                file_hdr, routed = _route_file(reader, buffers, counts, name)
             if hdr_line is None and file_hdr:
                 hdr_line = file_hdr
             total_rows += routed
@@ -253,17 +280,29 @@ def _route_file(reader, buffers: dict, counts: dict, name: str):
     return hdr_line, routed
 
 
-def _cleanup_old_results() -> None:
-    """Xóa thư mục kết quả và progress entry cũ hơn CLEANUP_HOURS giờ."""
-    cutoff = time.time() - CLEANUP_HOURS * 3600
+def _cleanup_old_results(cutoff: float | None = None) -> None:
+    """Xóa thư mục kết quả và progress entry cũ hơn `cutoff`.
+
+    Mặc định là mốc 23h gần nhất đã trôi qua (backend/core/don_dep.py) — kết quả
+    sống hết ngày làm việc thay vì tự bốc hơi sau 2 giờ như trước. Vì mốc đó
+    không bao giờ rơi vào trong ngày đang chạy, hàm này vẫn gọi được ngay đầu
+    một lượt xử lý mới mà không xoá mất kết quả người khác vừa chạy sáng nay.
+    """
+    cutoff = moc_don_gan_nhat() if cutoff is None else cutoff
 
     if TEMP_DIR.exists():
         for sub in TEMP_DIR.iterdir():
-            if sub.is_dir() and sub.stat().st_mtime < cutoff:
-                try:
+            # stat() nằm TRONG try, dù `is_dir()` đã chặn phần lớn: hai lượt dọn
+            # chạy sát nhau (mỗi lượt xử lý mới đều gọi hàm này) vẫn có kẽ hở
+            # giữa is_dir() và stat() để lượt kia xoá xong thư mục. Rơi vào kẽ
+            # đó thì OSError ném thẳng ra giữa `process_files()` và người dùng
+            # nhận lỗi 500 chẳng liên quan gì tới file họ vừa tải lên. Phòng xa,
+            # chưa gặp thật — cùng cách `ach_service._cleanup_old_jobs()` làm.
+            try:
+                if sub.is_dir() and sub.stat().st_mtime < cutoff:
                     shutil.rmtree(sub)
-                except Exception as e:
-                    log.warning("Không xóa được %s: %s", sub, e)
+            except OSError as e:
+                log.warning("Không xóa được %s: %s", sub, e)
 
     stale = [k for k, v in _progress.items() if v.get("_ts", 0) < cutoff]
     for k in stale:

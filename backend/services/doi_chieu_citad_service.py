@@ -53,6 +53,7 @@ import sqlite3
 import threading
 import zipfile
 from datetime import datetime
+from decimal import Decimal
 
 from backend.core.config import BASE_DIR
 from backend.database import _vn_now
@@ -278,13 +279,21 @@ def session_save(db: sqlite3.Connection, ngay: str, staff_id: int, data: dict, s
         (ngay, data_json, now, staff_id, status, created_by),
     )
 
+    # Gộp lưu tạm liên tiếp vào CÙNG 1 dòng lịch sử — nhưng CHỈ khi cùng 1
+    # người lưu liên tiếp (thêm điều kiện staff_id, xác nhận yêu cầu Phòng
+    # Thanh toán 25/08/2026). TRƯỚC ĐÂY chỉ xét status=='draft', không xét
+    # ai lưu — 2 người khác nhau lưu tạm nối tiếp nhau (vd A lưu tạm, B bổ
+    # sung Napas rồi lưu tạm tiếp) sẽ bị gộp chung 1 dòng, đè mất dấu vết
+    # dòng riêng của A, chỉ còn thấy B trong Lịch sử dù cả 2 đều đã lưu
+    # thật. Khác người thì tách dòng MỚI — mỗi người 1 dòng riêng cho lần
+    # họ lưu, đúng ý "mỗi người chấm là 1 dòng".
     last_hist = db.execute(
-        "SELECT id, status FROM doi_chieu_citad_history WHERE ngay=? ORDER BY id DESC LIMIT 1", (ngay,)
+        "SELECT id, status, staff_id FROM doi_chieu_citad_history WHERE ngay=? ORDER BY id DESC LIMIT 1", (ngay,)
     ).fetchone()
-    if last_hist and last_hist["status"] == "draft":
+    if last_hist and last_hist["status"] == "draft" and last_hist["staff_id"] == staff_id:
         db.execute(
-            "UPDATE doi_chieu_citad_history SET staff_id=?, data=?, created_at=?, status=? WHERE id=?",
-            (staff_id, data_json, now, status, last_hist["id"]),
+            "UPDATE doi_chieu_citad_history SET data=?, created_at=?, status=? WHERE id=?",
+            (data_json, now, status, last_hist["id"]),
         )
         hist_id = last_hist["id"]
     else:
@@ -338,11 +347,14 @@ _STATUS_CURS = ['VNĐ', 'USD', 'EUR']
 _STATUS_FK = ['di_ih_m', 'di_ih_t', 'di_il_m', 'di_il_t', 'den_ih_m', 'den_ih_t', 'den_il_m', 'den_il_t']
 
 
-def _status_nv(v) -> float:
+def _status_dec(v) -> Decimal:
+    """Chuyển sang Decimal CHÍNH XÁC TUYỆT ĐỐI — xem `_dec()` trong
+    `frontend/pages/doi_chieu_citad.py` (cùng lý do, đi qua `str(v)` để
+    tránh mở khai triển nhị phân của float)."""
     try:
-        return float(v) if v not in (None, '') else 0.0
+        return Decimal(str(v)) if v not in (None, '') else Decimal(0)
     except Exception:
-        return 0.0
+        return Decimal(0)
 
 
 def is_reconciliation_matched(sess: dict) -> bool:
@@ -350,34 +362,46 @@ def is_reconciliation_matched(sess: dict) -> bool:
     PaymentHub cho ĐỦ 8 trường — đúng công thức dòng "CHÊNH LỆCH" hiện trên
     trang Đối chiếu CITAD (`_compute_totals()` ở
     frontend/pages/doi_chieu_citad.py) — giữ đồng bộ công thức ở 2 nơi vì
-    frontend không gọi được service backend trực tiếp (khác tiến trình)."""
+    frontend không gọi được service backend trực tiếp (khác tiến trình).
+
+    Cộng dồn bằng Decimal (`_status_dec()`), KHÔNG bằng float — cộng nhiều
+    dòng (5 Cổng + Napas + PSS-MDP) bằng số thực có thể sinh dư nhị phân dù
+    về bản chất đã khớp tuyệt đối (bug thật 25/08/2026: 0,0078125 dù CITAD
+    gốc cộng đúng khớp PaymentHub). Decimal cộng đúng tuyệt đối với số liệu
+    gốc — không làm tròn, nên không có nguy cơ che mất lệch thật dù nhỏ."""
     gD = sess.get("gD", {}) or {}
     phD = sess.get("phD", {}) or {}
-    ci = {f: 0.0 for f in _STATUS_FK}
+    ci = {f: Decimal(0) for f in _STATUS_FK}
     for c in _STATUS_CONGS:
         for u in _STATUS_CURS:
             src = (gD.get(str(c), {}) or {}).get(u, {}) or {}
             for f in _STATUS_FK:
-                ci[f] += _status_nv(src.get(f, 0))
-    ci["den_ih_m"] += _status_nv(sess.get("napas_m", 0)) + _status_nv(sess.get("pssmdp_m", 0))
-    ci["den_ih_t"] += _status_nv(sess.get("napas_t", 0)) + _status_nv(sess.get("pssmdp_t", 0))
-    ph = {f: 0.0 for f in _STATUS_FK}
+                ci[f] += _status_dec(src.get(f, 0))
+    ci["den_ih_m"] += _status_dec(sess.get("napas_m", 0)) + _status_dec(sess.get("pssmdp_m", 0))
+    ci["den_ih_t"] += _status_dec(sess.get("napas_t", 0)) + _status_dec(sess.get("pssmdp_t", 0))
+    ph = {f: Decimal(0) for f in _STATUS_FK}
     for u in _STATUS_CURS:
         src = phD.get(u, {}) or {}
         for f in _STATUS_FK:
-            ph[f] += _status_nv(src.get(f, 0))
+            ph[f] += _status_dec(src.get(f, 0))
     return all(ci[f] == ph[f] for f in _STATUS_FK)
 
 
 def get_reconciliation_status(db: sqlite3.Connection, ngay: str) -> dict:
     """Trạng thái đối chiếu của 1 ngày, dùng để cảnh báo ở module Sổ trực
     (xem `so_truc_service.check_citad_status`) — KHÔNG phải endpoint hiển
-    thị số liệu, chỉ trả 2 cờ: có bản lưu chưa, và bản lưu hiện hành (mới
-    nhất) đã khớp (hết chênh lệch) chưa."""
+    thị số liệu, chỉ trả 2 cờ: có bản LƯU BẢNG CUỐI chưa, và bản đó đã khớp
+    (hết chênh lệch) chưa.
+
+    Chỉ tính bản đã "Lưu bảng cuối" (status='final') là "đã có đối chiếu" —
+    bảng tạm (status='draft') vẫn có thể còn đang chấm dở/chưa đủ người góp
+    Napas-PSS-MDP, coi như CHƯA CÓ để Sổ trực vẫn cảnh báo, không để lọt bản
+    tạm chưa hoàn chỉnh."""
     sess = session_get(db, ngay)
+    is_final = bool(sess) and sess.get("_meta_status") == "final"
     return {
-        "exists": sess is not None,
-        "matched": bool(sess) and is_reconciliation_matched(sess),
+        "exists": is_final,
+        "matched": is_final and is_reconciliation_matched(sess),
     }
 
 
@@ -456,22 +480,19 @@ def get_reconciliation_history(db: sqlite3.Connection, ngay: str) -> list:
     tự thời gian đã lưu (cũ -> mới) — KHÔNG trả kèm số liệu (có thể nặng nếu
     nhiều dòng) — xem từng bản cụ thể qua get_history_entry_data(id).
 
-    `username` mỗi dòng lấy từ `created_by` của bảng `doi_chieu_citad_sessions`
-    (người lập bảng, CỐ ĐỊNH suốt vòng đời ngày đó) — KHÔNG lấy `h.staff_id`
-    (người thực sự bấm Lưu ra dòng lịch sử này): với bản tạm, nhiều lần lưu
-    liên tiếp gộp chung 1 dòng (`session_save()`), mỗi lần gộp lại ghi đè
-    `h.staff_id` thành người lưu sau cùng — dùng thẳng cột đó khiến danh sách
-    "ai đang phụ trách ngày này" nhảy lung tung theo mỗi lượt ai đó chỉ nạp
-    Napas/PSS-MDP. COALESCE về `h.staff_id` chỉ khi session đã bị xoá (không
-    còn `created_by` để tra) — tránh dòng lịch sử cũ mất trắng tên hiển thị.
-    Ai đã sửa từng dòng lúc nào xem qua get_history_edits()."""
+    `username` mỗi dòng lấy đúng `h.staff_id` — người THỰC SỰ bấm Lưu ra
+    đúng dòng lịch sử này (xác nhận yêu cầu Phòng Thanh toán 25/08/2026:
+    mỗi dòng bung ra phải hiện đúng người đã lưu dòng đó, không gộp về 1
+    tên duy nhất của cả ngày). TRƯỚC ĐÂY override bằng `created_by` của
+    `doi_chieu_citad_sessions` (người lập bảng gốc, cố định suốt ngày) với
+    lý do tránh "nhảy lung tung" khi bản tạm bị gộp nhiều lần lưu vào cùng
+    1 dòng — nhưng đó chính xác lại là điều Phòng Thanh toán muốn THẤY:
+    dòng lịch sử nào do ai lưu sau cùng thì hiện đúng người đó, không che
+    đi. Ai đã sửa TỪNG PHẦN dữ liệu trong 1 dòng (không chỉ ai bấm Lưu sau
+    cùng) xem chi tiết hơn qua get_history_edits()."""
     rows = db.execute(
-        """SELECT h.id, h.status, h.created_at,
-                  COALESCE(s.created_by, h.staff_id) AS staff_id,
-                  COALESCE(cu.username, hu.username) AS username
+        """SELECT h.id, h.status, h.created_at, h.staff_id, hu.username
            FROM doi_chieu_citad_history h
-           LEFT JOIN doi_chieu_citad_sessions s ON s.ngay = h.ngay
-           LEFT JOIN user_tttt cu ON cu.id = s.created_by
            JOIN user_tttt hu ON hu.id = h.staff_id
            WHERE h.ngay = ?
            ORDER BY h.created_at ASC, h.id ASC""",
@@ -573,6 +594,19 @@ def build_xlsx(data: ExportIn) -> bytes:
         except Exception:
             return 0
 
+    def _dec(v) -> Decimal:
+        """Chuyển sang Decimal CHÍNH XÁC TUYỆT ĐỐI — xem `_dec()` trong
+        `frontend/pages/doi_chieu_citad.py` (cùng lý do: `str(v)` trước khi
+        vào Decimal để tránh mở khai triển nhị phân của float). Dùng riêng
+        cho `ci`/`ph`/`diff` (dòng CITAD/PaymentHub/Chênh lệch) — cộng dồn
+        nhiều dòng (5 Cổng × 3 loại tiền + Napas + PSS-MDP) bằng số thực có
+        thể sinh dư nhị phân dù về bản chất đã khớp tuyệt đối (bug thật
+        25/08/2026: 0,0078125 dù CITAD gốc cộng đúng khớp PaymentHub)."""
+        try:
+            return Decimal(str(v)) if v else Decimal(0)
+        except Exception:
+            return Decimal(0)
+
     def F(bold=False, size=14, color='000000'):
         return Font(name=TNR, bold=bold, size=size, color=color)
 
@@ -587,12 +621,12 @@ def build_xlsx(data: ExportIn) -> bytes:
     def Fill(h):
         return PatternFill('solid', fgColor=h)
 
-    ci = [0] * 8
+    ci = [Decimal(0)] * 8
     for c in CONGS:
         for u in CURS:
             src = (data.gD.get(str(c), {}) or {}).get(u, {}) or {}
             for i, f in enumerate(FK):
-                ci[i] += nv(src.get(f, 0))
+                ci[i] += _dec(src.get(f, 0))
     # Chỉ cộng Napas (nm/nt) vào tổng CITAD — KHÔNG cộng Ebanking (em/et).
     # Đã đối chiếu với DoiChieuCITAD.py::_calc() của tool desktop gốc: gốc
     # CŨNG chỉ cộng napas.den_ih_m/t vào ci['den_ih_m'/'t'], không có dòng
@@ -601,17 +635,17 @@ def build_xlsx(data: ExportIn) -> bytes:
     # còn dùng, đồng bộ với việc đã bỏ ô nhập Ebanking khỏi màn hình trước
     # đó) — data.em/et không còn được dùng ở đâu trong build_xlsx nữa,
     # vẫn giữ 2 field trong ExportIn để không phá payload cũ.
-    ci[4] += nv(data.nm)
-    ci[5] += nv(data.nt)
+    ci[4] += _dec(data.nm)
+    ci[5] += _dec(data.nt)
     # PSS - MDP: kênh mới thêm sau, theo yêu cầu Phòng Thanh toán — CÙNG
     # nguyên lý với Napas (cộng vào tổng CITAD), khác Ebanking (không cộng).
-    ci[4] += nv(data.sm)
-    ci[5] += nv(data.st)
-    ph = [0] * 8
+    ci[4] += _dec(data.sm)
+    ci[5] += _dec(data.st)
+    ph = [Decimal(0)] * 8
     for u in CURS:
         src = (data.phD.get(u, {}) or {})
         for i, f in enumerate(FK):
-            ph[i] += nv(src.get(f, 0))
+            ph[i] += _dec(src.get(f, 0))
     diff = [ci[i] - ph[i] for i in range(8)]
     wb = Workbook()
     ws = wb.active
@@ -725,7 +759,13 @@ def build_xlsx(data: ExportIn) -> bytes:
     ws.cell(row, 2).border = Bdr('thin', 'medium')
     for i, v in enumerate(diff):
         c = ws.cell(row, 3 + i)
-        c.value = v if v else None
+        # ci/ph cộng bằng Decimal (_dec()) nên `v` ở đây CHÍNH XÁC TUYỆT ĐỐI,
+        # không có dư nhị phân nào phải làm tròn/che đi — khớp thật mới ra
+        # đúng 0, lệch thật dù nhỏ (kể cả dưới 1 đơn vị) vẫn hiện đúng số,
+        # không đánh đổi độ chính xác lấy gọn màn hình. Trước đây `v if v
+        # else None` để trống ô khi khớp (0 là falsy) thay vì hiện "0" —
+        # giờ luôn ghi giá trị thật.
+        c.value = float(v)
         c.number_format = NUM
         c.font = Font(name=TNR, bold=True, size=14, color='006100' if v == 0 else 'FF0000')
         c.alignment = AL('right')

@@ -18,13 +18,14 @@ Hai việc, cùng một lý do: **không tin gì ở phía client**.
 một byte thân request nào được đọc, phòng những endpoint quên gọi hai hàm trên.
 """
 import os
+from pathlib import Path
 
 from fastapi import HTTPException, UploadFile
 
 _MB = 1024 * 1024
 
 
-def _so_mb(ten_bien: str, mac_dinh: int) -> int:
+def so_mb(ten_bien: str, mac_dinh: int) -> int:
     """Đọc một biến môi trường kiểu số MB.
 
     `int(os.getenv(...))` trực tiếp là bẫy: `.env.example` liệt kê biến với ô
@@ -45,11 +46,11 @@ def _so_mb(ten_bien: str, mac_dinh: int) -> int:
 
 # Trần mặc định cho MỘT file tải lên. Rộng tay (báo cáo Excel/ZIP cả tháng vẫn
 # lọt) nhưng hữu hạn. Chỉnh bằng .env khi nghiệp vụ thật cần khác.
-MAX_UPLOAD_BYTES = _so_mb("MAX_UPLOAD_MB", 200) * _MB
+MAX_UPLOAD_BYTES = so_mb("MAX_UPLOAD_MB", 200) * _MB
 
 # Trần cho TOÀN BỘ thân request. Phải lớn hơn trần một file vì ACH gửi nhiều
 # file trong một lượt (xem _MAX_UPLOAD trong backend/api/ach.py).
-MAX_REQUEST_BYTES = _so_mb("MAX_REQUEST_MB", 600) * _MB
+MAX_REQUEST_BYTES = so_mb("MAX_REQUEST_MB", 600) * _MB
 
 _CHUNK = _MB
 
@@ -108,6 +109,75 @@ def read_limited_sync(
             raise _loi_qua_tran(ten, max_bytes)
         phan.append(khoi)
     return b"".join(phan)
+
+
+async def save_upload_to(
+    upload: UploadFile, dest, max_bytes: int | None = None, ten: str | None = None
+) -> int:
+    """Ghi thẳng `upload` xuống `dest` theo từng khối. Trả về số byte đã ghi.
+
+    Khác `read_limited()` ở chỗ KHÔNG bao giờ giữ trọn nội dung trong RAM: một
+    file 500 MB đi qua đây chỉ tốn đúng một khối 1 MB. Dùng cho những đường
+    upload mà đằng nào cũng kết thúc trên đĩa (ACH, Đối soát CITAD) — đọc hết
+    lên RAM rồi mới ghi xuống là trả giá gấp đôi bộ nhớ cho cùng một kết quả,
+    và với ACH (trần 500 MB một lượt) cái giá đó đủ để backend chết giữa lúc
+    đang nhận file, người dùng chỉ thấy "[WinError 10054]".
+
+    `dest` phải là đường dẫn ĐÃ làm sạch bằng `safe_filename()` — hàm này không
+    tự đoán, nó ghi đúng chỗ được bảo.
+
+    Vượt trần thì xoá luôn file dở dang: để lại một file cụt trong thư mục job
+    còn tệ hơn không có gì, vì pipeline sau đó sẽ đọc nó như dữ liệu thật.
+    """
+    return await _ghi_theo_khoi(upload, dest, max_bytes, ten)
+
+
+def save_upload_to_sync(
+    upload: UploadFile, dest, max_bytes: int | None = None, ten: str | None = None
+) -> int:
+    """Bản đồng bộ của `save_upload_to()` — cho endpoint `def` và hàm chạy
+    trong threadpool (không có event loop để `await`)."""
+    max_bytes = MAX_UPLOAD_BYTES if max_bytes is None else max_bytes
+    ten = ten or f"File '{upload.filename or 'không tên'}'"
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tong = 0
+    try:
+        with open(dest, "wb") as ra:
+            while True:
+                khoi = upload.file.read(_CHUNK)
+                if not khoi:
+                    break
+                tong += len(khoi)
+                if tong > max_bytes:
+                    raise _loi_qua_tran(ten, max_bytes)
+                ra.write(khoi)
+    except BaseException:
+        dest.unlink(missing_ok=True)
+        raise
+    return tong
+
+
+async def _ghi_theo_khoi(upload, dest, max_bytes, ten) -> int:
+    max_bytes = MAX_UPLOAD_BYTES if max_bytes is None else max_bytes
+    ten = ten or f"File '{upload.filename or 'không tên'}'"
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tong = 0
+    try:
+        with open(dest, "wb") as ra:
+            while True:
+                khoi = await upload.read(_CHUNK)
+                if not khoi:
+                    break
+                tong += len(khoi)
+                if tong > max_bytes:
+                    raise _loi_qua_tran(ten, max_bytes)
+                ra.write(khoi)
+    except BaseException:
+        dest.unlink(missing_ok=True)
+        raise
+    return tong
 
 
 def safe_filename(raw: str | None, mac_dinh: str = "file.dat") -> str:

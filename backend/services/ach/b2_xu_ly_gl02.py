@@ -9,6 +9,7 @@ import pyzipper
 import pandas as pd
 
 from .config import zip_password, COLS_NPO as _COLS_NPO
+from .so_tien import doc_so_tien
 from .zip_utils import (
     find_zip_tool as _find_zip_tool,
     build_extract_cmd as _build_extract_cmd,
@@ -135,8 +136,8 @@ def xu_ly_gl02(zip_path: str, log_callback=None):
     """Doc GL02 zip, trả về (df_npo_di, df_npo_den)."""
     df = _doc_zip(zip_path, log_callback)
 
-    df['CRAMOUNT'] = pd.to_numeric(df['CRAMOUNT'], errors='coerce').fillna(0).astype('int64')
-    df['DRAMOUNT'] = pd.to_numeric(df['DRAMOUNT'], errors='coerce').fillna(0).astype('int64')
+    df['CRAMOUNT'] = doc_so_tien(df['CRAMOUNT'], nguon='GL02', ten_cot='CRAMOUNT')
+    df['DRAMOUNT'] = doc_so_tien(df['DRAMOUNT'], nguon='GL02', ten_cot='DRAMOUNT')
     if 'LOCAC' in df.columns:
         df['LOCAC'] = df['LOCAC'].astype(str).str.strip()
 

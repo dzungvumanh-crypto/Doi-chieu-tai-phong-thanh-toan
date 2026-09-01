@@ -268,8 +268,8 @@ def _parse_sheet(ws, filepath, is_first, chieu_ref=None, cong_ref=None, ngay_ref
             col_tien = i_no_den
 
         tien_raw = str(ws.cell_value(i, col_tien)).strip().replace("'", "")
-        so_tien = ''.join(c for c in tien_raw if c.isdigit())
-        if not so_tien or so_tien == '0':
+        so_tien = _parse_so_tien(tien_raw)
+        if not so_tien:
             continue
 
         ngay = str(ws.cell_value(i, i_ngay)).strip()
@@ -282,7 +282,7 @@ def _parse_sheet(ws, filepath, is_first, chieu_ref=None, cong_ref=None, ngay_ref
             'loai': loai,
             'chieu': chieu,
             'loai_tien': loai_tien,
-            'so_tien': int(so_tien),
+            'so_tien': so_tien,
             'ngay': ngay,
             'cong': cong,
         })
@@ -338,6 +338,48 @@ def parse_citad_files(filepaths, ngay_cham=None, progress_cb=None):
 # ──────────────────────────────────────────────────────────────
 def _strip_apos(s):
     return s.lstrip("'").strip() if s else ''
+
+
+def _parse_so_tien(raw) -> int:
+    """Đọc số tiền dạng chuỗi/số — chịu được cả định dạng thường
+    ("553,722,000,000") lẫn định dạng KHOA HỌC ("5.53722E+11").
+
+    Bug thật (xác nhận 25/08/2026, Phòng Thanh toán tự phát hiện): GDV mở
+    file CSV IPCAS trong Excel để xoá thử 1 dòng rồi lưu lại — Excel TỰ ĐỘNG
+    đổi mọi số tiền ĐỦ LỚN (nhóm "cao"/IH — hàng trăm tỷ trở lên) sang định
+    dạng khoa học khi lưu CSV, số nhỏ (nhóm "thấp"/IL) không đủ lớn nên
+    không bị đổi — đúng khớp quan sát thực tế "chỉ cao mới lỗi, thấp thì
+    không". Cách đọc cũ (xoá mọi ký tự không phải chữ số) xử lý SAI hoàn
+    toàn với dạng khoa học: "5.53722E+11" bị xoá mất dấu chấm/E/dấu cộng,
+    ghép chữ số còn lại thành "55372211" — SAI HẲN so với giá trị thật
+    553.722.000.000, và cái đuôi "11" chính là số mũ "E+11" dính vào. Không
+    phải lỗi do việc xoá dòng — chỉ cần Excel lưu lại CSV có cột số tiền lớn
+    là dính, xoá dòng chỉ là thao tác tình cờ kích hoạt Excel lưu lại file.
+
+    CHỈ bắt theo dấu hiệu 'E'/'e' của khoa học — KHÔNG bắt theo dấu chấm
+    nói chung. Bug thật khi sửa lần đầu (tự phát hiện ngay khi kiểm lại):
+    số tiền CITAD dùng DẤU CHẤM làm dấu phân cách HÀNG NGHÌN kiểu Việt Nam
+    (vd "252.121.572" = 252.121.572 đồng, không phải số thập phân
+    252,121572) — bắt theo cả dấu chấm sẽ hiểu "790.840" (790.840 đồng)
+    thành số thập phân 790,84 rồi làm tròn ra 791, sai gấp cả nghìn lần.
+    Dấu chấm nhiều lần ("252.121.572") thì `float()` tự ném lỗi nên vô
+    tình không sao — nhưng đúng 1 dấu chấm ("790.840") thì `float()` CHẤP
+    NHẬN được, âm thầm ra số sai. Định dạng khoa học không bao giờ có 'E'
+    trong số Việt Nam nên chỉ bắt theo 'E'/'e' là an toàn, không đụng gì
+    tới cách đọc số CITAD."""
+    if raw is None:
+        return 0
+    s = str(raw).strip()
+    if not s:
+        return 0
+    cleaned = s.replace(',', '').replace("'", '').replace(' ', '')
+    if re.search(r'[Ee]', cleaned):
+        try:
+            return int(round(float(cleaned)))
+        except (ValueError, TypeError):
+            pass
+    digits = re.sub(r'[^0-9]', '', s)
+    return int(digits) if digits else 0
 
 
 # Chuẩn hoá 1 ô "ngày" đọc từ Excel về "dd/mm/yyyy" để so được với
@@ -408,7 +450,15 @@ def _parse_ipcas_text(text, filename, ngay_cham):
     i_nh = hmap.get('NH_NHAN', hmap.get('NH_GUI', -1))
     i_nkt = hmap.get('NGAY_KENH_TRA', -1)
 
-    seen = set()
+    # Trước đây có 1 bước lọc bỏ ÂM THẦM dòng trùng y hệt (cùng ngày/chi
+    # nhánh/txid/số tiền/trace/trạng thái) ngay ở đây — xác nhận thật: IPCAS
+    # có thể hạch toán CÙNG 1 lệnh nhiều lần (nghi ngờ lỗi hệ thống lõi),
+    # trong khi CITAD chỉ nhận đúng 1 lần; bỏ ngay lúc đọc file khiến
+    # reconcile.py không bao giờ thấy để phát hiện, đối soát báo "khớp" bình
+    # thường như không có gì. Đã BỎ HẲN bước lọc này — giữ nguyên MỌI dòng
+    # kể cả trùng y hệt, để reconcile.py::run_doiSoat_ram() tự đếm số lần
+    # trùng theo đúng khoá khớp lệnh (msgref/txid+loai+so_tien) và sinh
+    # đúng số dòng "Chỉ Agribank" phản ánh số dư thật — xem ghi chú ở đó.
     result = []
 
     for line in lines[1:]:
@@ -467,7 +517,7 @@ def _parse_ipcas_text(text, filename, ngay_cham):
         # Chuan hoa ngay_gd: 4/6/2026 -> 04/06/2026
         _m = re.match(r'(\d{1,2})/(\d{1,2})/(\d{4})', ngay_gd_raw)
         ngay_gd = f'{_m.group(1).zfill(2)}/{_m.group(2).zfill(2)}/{_m.group(3)}' if _m else ngay_gd_raw[:10]
-        so_tien = re.sub(r'[^0-9]', '', gv('SO_TIEN'))
+        so_tien = _parse_so_tien(gv('SO_TIEN'))
         kenh = gv('KENH_THANH_TOAN').lower()
 
         # Filter theo chiều
@@ -482,6 +532,15 @@ def _parse_ipcas_text(text, filename, ngay_cham):
             # Bo: rong
             KEEP_DI = {'SCNL', 'WFPG', 'SBFL', 'RFED', 'SDEB', 'SBSC', 'RTSC', 'ERPO', 'CALD'}
             if tt not in KEEP_DI:
+                continue
+            # Yêu cầu Phòng Thanh toán 27/08/2026: SCNL báo lệnh đã sang kênh
+            # thành công, nhưng NGAY_KENH_TRA vẫn trống nghĩa là kênh CHƯA
+            # THỰC SỰ xác nhận ngày trả — giữ nguyên coi là khớp (VALID_DI ở
+            # reconcile.py) sẽ khớp "khống" với CITAD dù chưa có xác nhận
+            # thật. Bỏ khỏi kết quả IPCAS (không chỉ khỏi diện SCNL=khớp) để
+            # lệnh CITAD tương ứng (nếu có) rơi đúng vào "Chỉ CITAD" — cần
+            # người dùng tự xác minh, không tự động khớp.
+            if has_nkt and tt == 'SCNL' and not nkt:
                 continue
             if ngay_cham:
                 if has_nkt:
@@ -511,23 +570,44 @@ def _parse_ipcas_text(text, filename, ngay_cham):
         nh_nhan = gv('NH_NHAN') or gv('NH_GUI')
         loai = 'ih' if 'cao' in kenh else 'il'
 
-        # Dedup
-        key = f"{ngay_gd}|{gv('CHI_NHANH')}|{txid_raw}|{so_tien}|{gv('TRACE')}|{tt}"
-        if key in seen:
-            continue
-        seen.add(key)
-
         result.append({
             'txid': txid,
             'msgref': msgref,
             'loai': loai,
             'chieu': chieu,
-            'so_tien': int(so_tien) if so_tien else 0,
+            'so_tien': so_tien,
             'trang_thai': tt,
             'nkt': nkt,
             'kenh': gv('KENH_THANH_TOAN'),
             'nh_nhan': nh_nhan,
             'ngay': ngay_gd,
+            # `chi_nhanh` — CHỈ để reconcile.py so khớp "có phải cùng 1 bản
+            # ghi IPCAS bị lặp lại y hệt hay không" (khoá mịn), KHÔNG dùng để
+            # khớp lệnh với CITAD (khoá khớp lệnh vẫn là txid/msgref+loai+
+            # so_tien như cũ, xem run_doiSoat_ram()). Cần field này vì
+            # (txid, loai, so_tien) là khoá CỐ Ý làm thô để khớp lệnh linh
+            # hoạt — IPCAS xác nhận thật dùng CHUNG 1 txid cho nhiều lệnh
+            # KHÁC NHAU (khác nh_nhan), nên không thể dùng đúng khoá đó để
+            # kết luận "IPCAS ghi trùng" (regression thật 23/08/2026: 2 lệnh
+            # Đến khác ngân hàng nhận, trùng ngẫu nhiên txid+loai+so_tien, bị
+            # hiểu nhầm hàng loạt thành hạch toán trùng — xem ghi chú
+            # `_ghi_chu_khop_du_nguon` trong reconcile.py).
+            #
+            # `trace` giữ lại để tham khảo/audit (không tốn gì thêm, đã đọc
+            # sẵn cột này) nhưng KHÔNG đưa vào khoá mịn ở reconcile.py —
+            # xác nhận thật (23/08/2026, cùng ngày): 3 dòng cùng 1 lệnh
+            # trùng lặp có thể mang 2-3 giá trị trace KHÁC NHAU (IPCAS cấp
+            # trace mới mỗi lần ghi sổ) dù mọi trường khác giống hệt — đưa
+            # trace vào khoá làm dòng trùng thứ 3 rơi ra khoá riêng, biến
+            # mất khỏi báo cáo hoàn toàn (không khớp, không "Chỉ IPCAS").
+            'chi_nhanh': gv('CHI_NHANH'),
+            'trace': gv('TRACE'),
+            # `refhub` — mã tham chiếu gốc của điện đến, phải DUY NHẤT cho
+            # mỗi bản ghi thật (khác hẳn txid — có thể trùng giữa nhiều lệnh
+            # không liên quan, xem ghi chú `chi_nhanh` ở trên). Dùng để xác
+            # nhận chắc chắn "cùng 1 lệnh gốc" khi phát hiện hạch toán nhầm
+            # rồi huỷ (xem reconcile.py — GDV xác nhận 23/08/2026).
+            'refhub': gv('REFHUB'),
         })
     return result
 
@@ -636,6 +716,7 @@ def _parse_hub_xls(filepath, ext, fname, ngay_cham):
         i_loai_tien = -1
         i_ngay = -1
         i_nh = -1
+        i_trang_thai = -1
 
         for i in range(min(10, ws.nrows)):
             row_txt = ' '.join(str(ws.cell_value(i, j)).lower() for j in range(ws.ncols))
@@ -653,6 +734,7 @@ def _parse_hub_xls(filepath, ext, fname, ngay_cham):
                 cand_loai_tien = -1
                 cand_ngay = -1
                 cand_nh = -1
+                cand_trang_thai = -1
                 for j in range(ws.ncols):
                     hdr = str(ws.cell_value(i, j)).strip().lower()
                     # Uu tien 'so thanh cong' truoc, sau moi den msgid
@@ -670,10 +752,13 @@ def _parse_hub_xls(filepath, ext, fname, ngay_cham):
                         cand_ngay = j  # fallback ngay nhan
                     if 'ngân hàng' in hdr or 'nh ' in hdr:
                         cand_nh = j
+                    if 'trạng thái' in hdr or 'trang thai' in hdr:
+                        cand_trang_thai = j
                 if cand_so_tc < 0:
                     continue  # dòng khớp từ khoá nhưng không có cột thật — thử dòng sau
                 h_row, i_so_tc, i_so_tien = i, cand_so_tc, cand_so_tien
                 i_loai_tien, i_ngay, i_nh = cand_loai_tien, cand_ngay, cand_nh
+                i_trang_thai = cand_trang_thai
                 break
 
         if h_row < 0 or i_so_tc < 0:
@@ -693,7 +778,7 @@ def _parse_hub_xls(filepath, ext, fname, ngay_cham):
 
             # Số tiền
             tien_raw = str(ws.cell_value(i, i_so_tien)).strip() if i_so_tien >= 0 else ''
-            so_tien = ''.join(ch for ch in tien_raw if ch.isdigit())
+            so_tien = _parse_so_tien(tien_raw)
             if not so_tien:
                 continue
 
@@ -717,14 +802,23 @@ def _parse_hub_xls(filepath, ext, fname, ngay_cham):
                 continue
 
             nh = str(ws.cell_value(i, i_nh)).strip() if i_nh >= 0 else ''
+            # Trạng thái — CHỈ để reconcile.py chọn đúng "dòng gốc" khi 1 lệnh
+            # chuyển chi nhánh sinh nhiều dòng cùng Số thành công (khác chi
+            # nhánh) — xác nhận nghiệp vụ 23/08/2026 (Phòng Thanh toán), cùng
+            # hiện tượng đã xử lý cho IPCAS (xem PRIORITY_TT/CGBR trong
+            # reconcile.py): "Đã trả KH" là dòng gốc, các trạng thái khác là
+            # dòng con (chi nhánh trung gian). KHÔNG dùng để lọc/loại bỏ dòng
+            # nào ở đây — chỉ mang theo để chọn ưu tiên lúc khớp lệnh.
+            trang_thai = str(ws.cell_value(i, i_trang_thai)).strip() if i_trang_thai >= 0 else ''
 
             result.append({
                 'so_gd': so_tc_clean,   # Số thành công = key ghép với CITAD
                 'loai': 'ih',            # Hub ngoại tệ luôn là IH
                 'chieu': chieu,
                 'loai_tien': loai_tien,
-                'so_tien': int(so_tien),
+                'so_tien': so_tien,
                 'nh_nhan': nh,
                 'ngay': ngay,
+                'trang_thai': trang_thai,
             })
     return result

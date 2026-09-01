@@ -13,6 +13,9 @@ _N_BLANK_ROWS = 5
 # Số cột Ngày tối thiểu — một tập có thể gộp chứng từ của nhiều ngày, cần đủ chỗ gõ
 _N_DAY_COLS = 10
 
+# Số cột "Số chứng từ" tối thiểu — một ngày có thể tách thành nhiều tập
+_N_SHEET_COLS = 10
+
 
 def _dept_display(name: str) -> str:
     # Rút gọn tên phòng QLTK Nostro Vostro cho bảng lưu trữ
@@ -289,8 +292,8 @@ async def storage_page():
                     n_day = max((len(r["days"]) for r in rows), default=1)
                     n_day = max(n_day, _N_DAY_COLS)
                     n_sh  = max((len(r["bundle_sheets"]) for r in rows), default=1)
-                    # +1 để mọi dòng luôn còn ít nhất 1 ô trống nhập thêm số chứng từ; tối thiểu 5 cột
-                    n_sh  = max(n_sh + 1, 5)
+                    # +1 để mọi dòng luôn còn ít nhất 1 ô trống nhập thêm số chứng từ
+                    n_sh  = max(n_sh + 1, _N_SHEET_COLS)
 
                     C  = "border:1px solid #000;text-align:center;padding:5px 8px;font-size:13px"
                     CE = "border:1px solid #000;text-align:center;padding:5px 8px;font-size:13px;color:#bbb"

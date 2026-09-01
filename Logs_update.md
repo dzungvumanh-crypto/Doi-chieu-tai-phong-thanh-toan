@@ -25,6 +25,335 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
       backend)** nếu có. `TEMP_DIR` đổi sang đường dẫn tuyệt đối (`BASE_DIR/data/temp_ach`) —
       thư mục cũ ở vị trí tương đối sẽ không còn được vòng dọn tự động quét tới, thành mồ côi
       vĩnh viễn nếu không xoá tay một lần.
+- 30/08/2026 Chấm 459901 - **Sửa lỗi file Excel kết quả không mở được khi dữ liệu quá lớn**
+    + **Gộp từ 2 file GL02 trở lên thì file *Lệnh Đi* trước đây Excel không mở được.** Một file GL02 một ngày đã cho khoảng **617.000 dòng** nhóm *Lệnh Đi*, mà một trang tính Excel chỉ chứa được tối đa **1.048.576 dòng**. Phần mềm cứ ghi tiếp qua giới hạn đó rồi báo *"Hoàn thành!"* như bình thường — người dùng chờ hơn một phút, tải về file hơn 100 MB, mở ra thì Excel **từ chối** hoặc đòi *"repair"* và ăn mất dữ liệu. **Không có thông báo lỗi nào ở cả hai đầu**
+    + **Nay nhóm nào quá lớn sẽ tự tách sang trang tính thứ hai trong cùng file** — tên trang ghi rõ *Lệnh Đi (1/2)*, *Lệnh Đi (2/2)*. **Vẫn đúng 7 file kết quả như cũ**, chỉ là mở ra thấy nhiều trang tính hơn; cách tải về không đổi
+    + **Dòng TỔNG CỘNG ở cuối mỗi trang tính là tổng của riêng trang đó**, nhãn ghi rõ *TỔNG CỘNG PHẦN 2/2* để không nhầm. Tổng của cả nhóm nằm ở dòng tiêu đề trên cùng, kèm khoảng dòng đang xem
+    + ✅ **Lượt chạy bình thường (chỉ một trang tính) hiển thị y hệt trước, không đổi gì** — tên trang không có đuôi, nhãn vẫn là *TỔNG CỘNG*. Không phải làm gì sau khi cập nhật
+
+- 30/08/2026 Đóng chứng từ - **Trang danh sách bìa mở nhanh hơn, và không chậm dần theo năm tháng**
+    + **Mỗi lần mở trang, phần mềm tải về toàn bộ bìa chứng từ từ trước đến nay** kèm chi tiết từng tập và từng chứng từ bên trong — trong khi bảng danh sách chỉ hiện 5 cột: tên phòng, kỳ, ngày tạo, người tạo, số bìa
+    + Đo trên dữ liệu thật rồi nhân lên theo năm: kho **1 năm** mất 39 mili giây và 315 KB; kho **5 năm** mất **513 mili giây và 5,1 MB** — càng dùng lâu càng chậm, không có điểm dừng
+    + **Nay chỉ lấy đúng 5 cột đang hiện**: kho 5 năm còn **32 mili giây**, dung lượng còn **8,3 KB**. Bấm vào từng bìa để in hoặc tải xuống thì vẫn lấy đầy đủ chi tiết như trước, **không mất gì**
+    + **Sửa thêm lỗi nút "Lọc" im lặng**: nếu phiên đăng nhập đã hết hạn, bấm *Lọc* thì màn hình đứng im — không báo gì, cũng không tự chuyển về trang đăng nhập. Nay báo đúng và chuyển trang
+
+- 30/08/2026 Rà soát toàn hệ - **Sửa lỗi cả giao diện không lên được, và nhật ký bị bơm lỗi giả**
+    + **Toàn bộ giao diện không khởi động được** vì trang *Chấm 459901* còn gọi một hàm đã bị gỡ ở đợt trước (gỡ cùng lúc với nút *Duyệt...*). Cách nạp trang hiện tại **không bọc chống lỗi**, nên một trang hỏng là cả phần mềm không lên — không riêng trang đó
+    + Nút **"Duyệt..."** ở chế độ *chọn thư mục server* đã bỏ hẳn: hộp thoại đó cho **mọi người đăng nhập liệt kê sạch ổ đĩa máy chủ**. Vẫn dán được đường dẫn như thường, phạm vi thư mục vẫn bị chặn như cũ
+    + **Nhật ký vận hành không còn bị bơm lỗi giả khi chạy kiểm thử.** Trước đây mỗi lượt chạy test lại ghi thêm hàng loạt dòng báo lỗi *"không tìm thấy bảng"* vào nhật ký thật — người vận hành mở ra thấy lỗi không hề tồn tại rồi đi tìm sự cố không có
+
+- 28/08/2026 Menu mới - **Quản lý nhân sự** (hồ sơ cán bộ, tra cứu & thống kê, nhắc lịch)
+    + Nhóm menu mới **Quản lý nhân sự** với 3 mục: **Hồ sơ cán bộ**, **Tra cứu & Thống kê**, **Nhắc lịch**
+    + **Hồ sơ cán bộ** gồm 8 phần: hồ sơ cá nhân (kèm **ảnh thẻ**, CCCD, địa chỉ, số người phụ thuộc, người liên lạc) · bằng cấp và chứng chỉ · quy hoạch – bổ nhiệm – điều động (**đính kèm được file PDF quyết định**) · thông tin và quá trình công tác · quá trình nghỉ gián đoạn · hồ sơ lương · đào tạo tại Agribank · công cụ dụng cụ đang đứng tên
+    + **Hồ sơ gắn thẳng vào tài khoản đang có** — không phải nhập lại họ tên, mã cán bộ, phòng. Sửa điện thoại/email trong hồ sơ là sửa luôn thông tin tài khoản, không có hai nơi lệch nhau
+    + **"Ngày tuyển dụng" và "Ngày vào ngành" là MỘT** — chỉ có một ô, sửa ở màn *Hồ sơ cán bộ* hay màn *Quản lý User* đều là sửa cùng một chỗ, không còn cảnh hai ô cùng nghĩa ghi lệch nhau. ⚠️ Ô này quyết định **số ngày phép năm**, nên **cán bộ không tự sửa được** — chỉ người được cấp quyền *"Sửa hồ sơ cán bộ khác"* mới sửa
+    + **Ai cũng tự khai được hồ sơ của chính mình** (thông tin cá nhân, bằng cấp, khoá đào tạo, trạng thái công cụ đang giữ). Muốn xem hoặc sửa hồ sơ người khác thì phải được cấp thêm quyền trong màn hình *Phân quyền theo nhóm*
+    + **Hồ sơ lương có quyền riêng.** Không được cấp thì phần lương của người khác **không hiện ra**; và **sửa lương luôn cần quyền riêng, kể cả hồ sơ của chính mình**
+    + **Tra cứu theo từng thời điểm**: chọn một ngày trong quá khứ để xem danh sách cán bộ *toàn Trung tâm / Ban Giám đốc / Trưởng phòng / Phó phòng / trong quy hoạch* **đúng như tại ngày đó** — phòng lấy theo lịch sử chuyển phòng, chức vụ lấy theo quyết định còn hiệu lực. Xuất được ra Excel
+    + **Mỗi phòng xếp Trưởng phòng lên đầu**, rồi Phó phòng, rồi nhân viên (hậu kiểm viên và chuyên viên cùng bậc, xếp lẫn theo tên); Ban Giám đốc thì Giám đốc trước Phó Giám đốc. Chức vụ hiện ngay dưới tên trong danh sách để nhìn ra thứ tự
+    + **Danh sách cán bộ sắp theo TÊN, đúng thứ tự bảng chữ cái tiếng Việt.** Trước đó máy xếp theo mã ký tự nên mọi tên bắt đầu bằng chữ có dấu (Đ, Ạ, Ô, Ư…) bị dồn xuống cuối danh sách — *Đào Tiến Thành* nằm sau *Vũ Văn Ngân*, ai tra theo vần đều tưởng hệ thống **lấy thiếu người** (dữ liệu vẫn đủ, chỉ sai chỗ đứng). Nay *Đào Tiến Thành* nằm đúng vần **Th**, cạnh *Thảo*, *Thu*, *Thủy*
+    + **Thống kê** theo phòng ban, giới tính, trình độ, độ tuổi, đã qua chi nhánh hay chưa
+    + **Nhắc lịch tự động**: nâng lương (báo trước 1 quý), bổ nhiệm lại (báo trước 1 năm), cấp điện thoại/công cụ mới (báo trước 1 quý). Việc **đã quá hạn vẫn nằm trong danh sách** và được tô đỏ, không biến mất
+    + **Tài khoản quản trị viên không có hồ sơ nhân sự** — không nằm trong danh sách cán bộ, không được tính vào thống kê, tra cứu hay nhắc lịch. Quản trị viên vẫn vào màn hình bình thường để nhập hộ hồ sơ cho cán bộ khác
+    + ⚠️ **Việc cần làm sau khi cập nhật**: quản trị viên vào *Phân quyền theo nhóm* → thẻ **Quản lý nhân sự** để cấp quyền. Chưa cấp thì chưa ai thấy menu này
+    + **Đính kèm tệp ngay khi thêm dòng hồ sơ** — chọn file rồi bấm *Lưu* một lần, không phải lưu trước rồi mở lại. Tệp đang chờ hiện nhãn *chờ lưu* và bỏ ra được nếu chọn nhầm; chọn được nhiều tệp một lượt
+    + **Định dạng nhận vào**: ảnh cá nhân là **JPG, PNG, WEBP** (tối đa 5 MB); tệp đính kèm là **PDF, JPG, PNG, WEBP** (tối đa 15 MB). Hộp thoại chọn file chỉ hiện đúng những đuôi này nên không còn cảnh chọn xong mới bị báo lỗi
+    + Ảnh thẻ và file quyết định **nằm trong cơ sở dữ liệu** nên được sao lưu cùng bản backup hằng ngày
+    + Thêm 9 bảng mới trong cơ sở dữ liệu (tự tạo lúc khởi động), **không sửa hay xoá bảng nào đang có**. Không đụng tới nghỉ phép, chấm công hay bất kỳ chức năng nào đang chạy
+
+- 28/08/2026 Menu bên trái - **Gộp "Ôn tập" và "Chuẩn hoá văn bản" vào nhóm "Tính năng khác"**
+    + Hai mục *Ôn tập trắc nghiệm* và *Chuẩn hoá văn bản* trước đây nằm rời ở ngoài cùng, nay **nằm chung trong mục "Tính năng khác"** — đưa chuột vào là hiện ra cả hai bên phải
+    + *Ôn tập trắc nghiệm* **đổi tên ngắn lại thành "Ôn tập"** (tên trong màn hình Phân quyền theo nhóm cũng đổi theo)
+    + **Không phải cấp lại quyền.** Ai đang thấy hai mục này thì sau khi cập nhật vẫn thấy đúng như vậy, chỉ khác chỗ đứng trên menu
+    + Không đổi cơ sở dữ liệu, không đổi cách chạy của hai chức năng
+
+- 28/08/2026 Chấm 459901 - **Chia 7 nhóm thay vì 3, thêm đối chiếu HUB và ghép tồn tháng trước**
+    + **Kết quả nay tách thành 7 nhóm** thay vì 3: *Lệnh Hủy*, *Lệnh Đi*, *1000 Hoàn trả*, *Chuyển chi nhánh*, *Điện KO offline*, *Cân CN*, *GD khác*. Mỗi nhóm một file Excel riêng, phần phải chấm tay vì thế nhỏ đi rất nhiều
+    + **Chấm được nhóm 1000 Hoàn trả** nếu tải kèm 2 file HUB (*Quay\_...* của lệnh đi và *Danh sach... den* của lệnh đến). Hai file này **không bắt buộc** — thiếu cả hai thì phần mềm bỏ qua nhóm này, các bút toán đó rơi về *GD khác* để chấm tay như trước. Chỉ tải lên **một trong hai** thì bỏ cả hai, và màn hình báo rõ để biết mà tải nốt
+    + **Ghép được file tồn tháng trước** (`459_TON_T<số tháng>.xlsx`): những bút toán tháng trước chưa chấm xong được đưa vào cùng dữ liệu tháng này rồi phân loại lại từ đầu. Ghi chú chấm tay cũ trong file đó không được giữ lại — cố ý, để không mang theo kết luận cũ có thể đã sai
+    + **Không cần đặt tên file dữ liệu theo mẫu nào.** Cứ kéo thả tất cả vào cùng lúc, phần mềm tự nhận ra đâu là file dữ liệu, đâu là 2 file HUB, đâu là file tồn. File lạ trong danh sách bị bỏ qua và báo tên ra, không chặn cả lượt
+    + **Dòng chỉ khớp được một nửa thì không bị đoán bừa.** Bút toán tìm thấy một vế nhưng thiếu vế đối ứng sẽ nằm ở *GD khác* kèm ghi chú "nghi ngờ, cần chấm tay" — thà để người chấm nhìn còn hơn xếp nhầm nhóm rồi không ai kiểm lại
+    + **Thêm cách nạp dữ liệu: chỉ thẳng thư mục trên máy chủ**, khỏi tải file lên. Dùng khi dữ liệu đã nằm sẵn trên máy chủ. Hai cách hiện cùng lúc trên màn hình, chọn cách nào cũng được
+    + ⚠️ **Việc cần làm sau khi cập nhật (chỉ nếu muốn dùng cách chỉ thẳng thư mục)**: mở file `.env` trên máy chủ, thêm một dòng `CHAM459901_FOLDER_ROOTS=` rồi ghi thư mục chứa dữ liệu vào sau dấu bằng (nhiều thư mục thì ngăn nhau bằng dấu chấm phẩy), sau đó khởi động lại. **Chưa thêm dòng này thì bấm vào sẽ báo lỗi nhắc đúng việc phải làm** — cách tải file lên vẫn dùng bình thường, không phải làm gì. Sở dĩ phải khai trước là để phần mềm chỉ đọc đúng những thư mục đã cho phép, không đọc lung tung chỗ khác trên máy chủ
+    + **Bấm Dừng giữa chừng nay dừng thật**, và có thể xoá bộ kết quả vừa chạy để làm lại từ đầu
+    + Không đụng cơ sở dữ liệu, không đổi quyền
+- 28/08/2026 Đối chiếu CITAD - PaymentHub (Phòng QLTK Nostro, Vostro) - **Dùng song song 2 tiện ích không còn đá nhau**
+    + **Lỗi gặp phải**: ai dùng cả tiện ích của *Phòng Thanh toán* lẫn tiện ích của *Phòng QLTK Nostro, Vostro* thì **chỉ một bên chạy được**, bên còn lại báo lỗi không có quyền. Tạo lại mã bên này thì bên kia hỏng, và ngược lại — quay vòng mãi không thoát
+    + **Nguyên nhân**: hai tiện ích tuy là hai gói riêng nhưng lại **dùng chung một ô đựng mã kết nối** theo từng người. Mã mới tạo ra ghi đè lên mã cũ, nên bấm *Tạo mã kết nối mới* ở màn hình này là **tự thu hồi mã của màn hình kia** — không có thông báo nào báo cho biết
+    + **Nay mỗi phòng có ô đựng mã riêng.** Tạo hay thu hồi mã ở phòng nào chỉ ảnh hưởng đúng phòng đó. Dùng song song cả 2 tiện ích hoàn toàn bình thường
+    + ⚠️ **Việc cần làm sau khi cập nhật**: ai đang dùng tiện ích *CITAD - PaymentHub N&V* phải vào màn hình đó, tab **Kết nối Extension**, bấm **Tạo mã kết nối mới** một lần nữa. Mã cũ không tự chuyển sang được — tab sẽ hiện "Chưa kết nối" cho dễ nhận ra. Mã của Phòng Thanh toán **không phải làm gì**, vẫn dùng như cũ
+    + Có thêm một bảng mới trong cơ sở dữ liệu (tự tạo lúc khởi động), không sửa hay xoá bảng nào đang có. Không đổi quyền, không đổi cách đối chiếu
+
+- 28/08/2026 Đối soát CITAD - **Lệnh đi báo thành công nhưng kênh chưa xác nhận ngày trả thì không tự khớp nữa** (PR #65)
+    + Lệnh chiều Đi bên IPCAS ghi trạng thái `SCNL` (đã sang kênh thành công) nhưng ô **NGAY_KENH_TRA để trống** thì kênh thanh toán **chưa thực sự xác nhận** — trước đây chương trình vẫn tự đóng dấu "khớp" cho những lệnh này. Nay lệnh CITAD tương ứng được đưa xuống nhóm **Chỉ CITAD** để anh chị tự xác minh
+    + File IPCAS **không có** cột `NGAY_KENH_TRA` (định dạng cũ) thì không bị ảnh hưởng gì
+    + ⚠️ **Báo cáo có thể ra nhiều dòng lệch hơn trước** — đây là đúng, không phải lỗi. Số liệu trước và sau mốc này không so sánh trực tiếp với nhau được
+    + 🔴 **Điểm cần biết**: nếu bên CITAD **hoàn toàn không có** lệnh đó, thì dòng IPCAS nói trên **biến mất khỏi báo cáo** thay vì hiện ở nhóm *Chỉ Agribank* như trước. Đây lại là ca đáng ngờ nhất (sổ mình ghi đã đi kênh mà NHNN chưa từng thấy lệnh). Ô tổng số dòng IPCAS cũng đếm thiếu tương ứng. Đã ghi nhận để vá ở đợt sau
+    + Không đổi cơ sở dữ liệu, không đổi quyền
+
+- 27/08/2026 Menu mới - **Chuẩn hoá văn bản theo Quy định 979 của Tổng Giám đốc**
+    + Menu mới **Chuẩn hoá văn bản** ở ngoài cùng sidebar. Tải một file Word lên, hệ thống sửa lại cho đúng *Quy định 979/QyĐ-NHNo-PC về thể thức và kỹ thuật trình bày văn bản*, rồi cho tải bản đã sửa về
+    + **Chỉ nhận file `.docx`.** File `.doc` đời cũ thì mở bằng Word, chọn *Lưu thành* `.docx` rồi tải lên — hệ thống báo rõ điều này chứ không để lỗi khó hiểu
+    + **Những gì được sửa tự động**: khổ giấy A4 và lề trang (trái 30mm, ba cạnh còn lại 20mm); đánh số trang giữa lề trên và bỏ trang đầu; phông Times New Roman, chữ đen; **giãn dòng 1,2** và cách đoạn 6pt cho phần lời văn, còn khối đầu trang (Quốc hiệu, Tiêu ngữ, tên đơn vị, số ký hiệu, ngày tháng, tên loại, trích yếu) và khối cuối (Nơi nhận, người ký) thì **dòng đơn, không cách đoạn** đúng như mẫu 979; thụt đầu dòng 1cm; **Tiêu ngữ được đưa về đúng dạng "Độc lập - Tự do - Hạnh phúc"** (gạch nối ngắn, mỗi bên đúng một dấu cách — không còn cảnh kéo giãn bằng dấu cách cho bằng dòng Quốc hiệu); **cỡ chữ và kiểu chữ đúng cho từng phần của văn bản** — Quốc hiệu, Tiêu ngữ, tên đơn vị, số ký hiệu, ngày tháng, tên loại, trích yếu, căn cứ, Chương, Mục, Điều, khoản, điểm, Kính gửi, Nơi nhận, chức vụ và họ tên người ký (28 mục, theo Phụ lục III)
+    + **Sửa cả cách viết hoa** (Phụ lục IV): viết hoa chữ đầu câu và đầu dòng; khi viện dẫn thì Phần / Chương / Mục / Điều viết hoa còn *khoản*, *điểm* viết thường; và sửa theo **danh sách cụm từ do mình khai** (Nhà nước, Ngân hàng Nhà nước Việt Nam, Ban Kiểm soát, Tổng Giám đốc...)
+    + **Sửa cả gạch đầu dòng và đánh số**: mọi ký tự đầu dòng lạ (`•` `–` `*` `+`) đưa về `- `; khoản gõ `1)` hay `1/` đưa về `1.`; điểm gõ `a.` hay `a/` đưa về `a)`; mục La Mã `I)` đưa về `I.`; danh sách chấm tròn tự động của Word đổi thành gạch đầu dòng gõ tay
+    + **Cỡ chữ khối đầu văn bản lấy đúng theo mẫu 979**: Quốc hiệu và tên đơn vị cỡ 12, Tiêu ngữ và số ký hiệu cỡ 13, trích yếu công văn cỡ 12. **Nhờ vậy dòng "NGÂN HÀNG NÔNG NGHIỆP VÀ PHÁT TRIỂN NÔNG THÔN VIỆT NAM" không còn bị tràn cột làm chữ "NAM" rớt xuống một dòng riêng**; riêng chữ "Việt Nam" cũng đã được ghim không cho tách đôi
+    + **Dòng "Kính gửi" gửi cho MỘT nơi được căn giữa** đúng như mẫu công văn; gửi nhiều nơi (chỉ có chữ "Kính gửi:" rồi liệt kê xuống dòng) thì vẫn để sát trái
+    + **Khoảng cách trên/dưới đoạn ở khối đầu văn bản được đưa về 0 và 0** (trước đây file để 7pt/7pt thì khoảng cách thật giữa hai dòng là 14pt, mà hộp Paragraph của Word chỉ hiện hai số 7). Ô bảng ở khối đầu cũng được dọn theo — khối đó hay được dựng bằng bảng hai cột. Bảng số liệu giữa văn bản không bị đụng
+    + **Xuống dòng cho đẹp thì không bị viết hoa chữ đầu nữa.** Ví dụ ô "V/v Thông báo thay đổi tên/địa chỉ đăng ký / trên hệ thống SWIFT" — chữ "trên" giữ nguyên chữ thường vì đó là chỗ ngắt dòng cho cân ô, không phải câu mới. Quy tắc: chỉ viết hoa khi đoạn đó là lời văn thật **và** dòng ngay trước đã kết thúc bằng dấu chấm, chấm phẩy hoặc hai chấm
+    + **Tên loại văn bản lạ vẫn được căn giữa đúng chỗ**: ĐỀ CƯƠNG, KẾ HOẠCH KIỂM TRA... không nằm trong danh sách tên loại của QĐ 979 nhưng hệ thống vẫn nhận ra qua vị trí (dòng in hoa ngắn nằm ngay dưới số ký hiệu hoặc dòng địa danh - ngày tháng)
+    + **Dòng ngày tháng chưa điền vẫn nhận đúng** — "Hà Nội, ngày      tháng      năm 2026" của dự thảo trình ký được căn giữa và in nghiêng như quy định
+    + **Cụm từ không bị tách làm hai dòng**: ví dụ chữ *Tổng Giám đốc* sẽ luôn nằm gọn trên một dòng, không còn cảnh "Tổng" ở cuối dòng trên và "Giám đốc" rơi xuống dòng dưới. Danh sách cụm từ tự khai thêm được
+    + **Chỗ nào đã sửa đều được bôi màu** để dễ soát lại: **vàng** là sửa định dạng của riêng đoạn đó (cỡ chữ, in đậm, căn lề), **xanh lá** là sửa vào chữ (viết hoa, đánh số, gạch đầu dòng), **xanh ngọc** là cụm từ được ghép cho khỏi tách dòng. Những thứ sửa đồng loạt cả văn bản (giãn dòng, cách đoạn, phông chữ) **không bôi màu** — bôi hết thì cả trang vàng khè, không còn nhìn ra chỗ nào đáng chú ý; chúng được liệt kê riêng trong bảng kết quả
+    + **Xem trước rồi mới tải về**: sau khi chạy, màn hình liệt kê từng đoạn đã sửa (số thứ tự đoạn, đoạn đó là phần nào của văn bản, trích nội dung, đã sửa những gì). Đọc thấy đúng ý thì bấm *Tải văn bản đã chuẩn hoá*
+    + ⚠️ **Danh sách đánh số tự động của Word được giữ nguyên, có ghi chú nhắc.** Số 1. 2. 3. của loại danh sách này do Word tự tính lúc hiển thị chứ không nằm trong file, hệ thống đọc ra không được nên không dám sửa — sửa mò là lệch số cả văn bản mà không ai biết. Muốn đúng quy định thì gõ số thẳng vào dòng rồi tắt đánh số tự động trong Word
+    + ⚠️ **Quy tắc viết hoa tên người, tên địa danh, tên sự kiện thì hệ thống không tự sửa** — những cái đó phải hiểu nội dung câu mới quyết được, máy đoán là sửa hỏng câu chữ của người soạn. Chỉ sửa các cụm từ đã khai sẵn trong danh sách
+    + ⚠️ **Bảng số liệu trong văn bản chỉ được đổi phông chữ**, không đụng cỡ chữ và căn lề — quy định cho phép bảng biểu trình bày riêng
+    + **Tab *Cấu hình quy chuẩn*** để chỉnh thông số: lề trang, phông chữ, giãn dòng, cách đoạn; cỡ chữ / in đậm / in nghiêng / in hoa / căn lề / thụt dòng cho từng phần văn bản; hai danh sách cụm từ; các công tắc đánh số; màu bôi. Nhập cỡ chữ ngoài dải quy định thì hiện dấu nhắc chứ không chặn. Có nút **Khôi phục mặc định theo QĐ 979**
+    + **Phân quyền**: *Chuẩn hoá văn bản (menu)* cho người dùng hằng ngày, và *Sửa thông số quy chuẩn trình bày* cấp riêng — thông số là của cả đơn vị, một người đổi là mọi văn bản người khác chạy sau đó đều theo số mới
+    + **Ai không được cấp quyền sửa thông số thì mọi ô trong tab Cấu hình đều bị khoá**, chỉ xem được chứ không gõ vào được. Trước đó chỉ hai nút *Lưu* và *Khôi phục mặc định* bị mờ, còn các ô vẫn gõ được nên dễ tưởng là sửa được — **số liệu thật không hề bị đổi**, vì máy chủ luôn từ chối ghi khi không đủ quyền
+    + **File kết quả để trên máy chủ hết ngày làm việc, 23h tự xoá** như các tính năng khác. Cần giữ lâu hơn thì tải về máy mình trong ngày
+
+- 27/08/2026 Chấm 459901 - **Tải lên được cả file Excel, không chỉ file ZIP**
+    + **Nhận thêm Excel** (`.xlsx`, `.xlsm`, `.xlsb`, `.xls`) bên cạnh file ZIP xuất từ GL02. Ai đã mở ZIP ra, cắt bớt hay lọc lại rồi lưu thành Excel thì tải thẳng file đó lên, khỏi nén lại
+    + **Trộn ZIP với Excel trong cùng một lượt cũng được** — tất cả vẫn được gộp lại rồi mới phân loại, nên cặp lệnh hủy nằm ở hai file khác nhau vẫn bắt được như trước
+    + **File Excel có dòng tiêu đề báo cáo ở trên cùng vẫn đọc được**: hệ thống tự tìm dòng tên cột trong 10 dòng đầu, không bắt phải xoá cho sạch mới tải lên
+    + **Workbook nhiều sheet thì đọc hết mọi sheet.** Sheet nào thiếu cột bắt buộc sẽ **báo lỗi kèm tên sheet** chứ không âm thầm bỏ qua — thà bị từ chối còn hơn tính thiếu bút toán mà không ai biết. Sheet trống hoàn toàn thì bỏ qua, không kêu
+    + **Chọn nhầm file kiểu khác** (PDF, Word, ảnh...) bị chặn **ngay khi bấm chọn**, báo rõ chỉ nhận những đuôi nào — không phải chờ tải lên xong mới biết
+    + **Lưu ý khi lưu Excel**: mở file CSV bằng Excel rồi lưu lại thì Excel đổi các ô mã số thành kiểu số. Hệ thống đã xử lý đúng trường hợp này, số tài khoản 459901 không bị đọc thành "459901.0" nữa
+    + Cách phân loại Hủy / Đi / Khác **không đổi**, kết quả xuất ra vẫn 3 file Excel như cũ
+    + Không đụng cơ sở dữ liệu, không đổi quyền
+
+- 27/08/2026 File tải lên - **File để trên máy chủ hết ngày làm việc, 23h tự xoá sạch**
+    + **Trước đây file biến mất giữa giờ làm**: kết quả *Chấm đối chiếu ACH* chỉ sống **4 giờ**, *Chấm 459901* và *Đối chiếu song phương* chỉ **2 giờ**. Chạy buổi sáng, chiều quay lại tải báo cáo thì không còn gì — không thông báo, không dấu vết, người dùng tưởng hệ thống lỗi
+    + **Nay giữ hết ngày**: mọi file tải lên và kết quả sinh ra nằm trên máy chủ tới **23h hằng ngày** rồi mới bị xoá sạch. Trong ngày tải lại bao nhiêu lần cũng được. **Cần giữ lâu hơn thì tải về máy mình trong ngày** — hệ thống không lưu lịch sử các lượt chạy này
+    + **Máy chủ khởi động lại giữa ngày không làm mất file của ngày hôm đó** — lúc bật lên nó chỉ dọn rác còn sót của những ngày trước
+    + **Máy chủ tắt qua đêm cũng không bỏ sót**: lần bật đầu tiên sau đó dọn bù ngay, không đợi tới 23h hôm sau
+    + **Nhận file nhẹ hơn hẳn cho máy chủ**: trước đây máy chủ phải ôm trọn bộ file trong bộ nhớ rồi mới ghi xuống ổ đĩa — bộ file 200 MB chiếm tới **400 MB bộ nhớ**. Nay ghi thẳng xuống ổ đĩa từng phần, cùng bộ file đó chỉ còn **2 MB**. Đây chính là nguyên nhân gốc của những lần *"[WinError 10054]"* khi tải bộ file nặng
+    + **Đã chặn được cảnh hai người cùng upload đè nhau ở ACH**: máy chủ nay coi là "đang bận" ngay từ giây đầu tiên nhận file, không phải đợi tới lúc bắt đầu chạy. Trước đó suốt vài phút upload là khoảng trống, hai bộ file vài trăm MB cùng lọt vào
+    + **Chấm 459901 và Đối chiếu song phương cũng đã chuyển sang cách này** — file tải lên nằm trong `data/temp_cham459901/upload_.../` và `data/temp_doi_chieu_song_phuong/upload_.../` rồi mới được xử lý. Thêm một khoản tiết kiệm nữa: dữ liệu bên trong file ZIP trước đây được **bung hết ra bộ nhớ** rồi mới đọc — một file CSV nén nhỏ nhưng bung ra 114 MB thì chiếm tới **256 MB bộ nhớ**; nay đọc lần lượt từng dòng, chỉ còn **0,1 MB**
+    + **Đối soát CITAD**: file tải lên nay nằm trong `data/temp_citad/` của phần mềm thay vì thư mục tạm của Windows — tra lại được khi cần đối chiếu; vẫn xoá ngay sau khi đối soát xong như trước
+    + **Đổi lại**: ổ đĩa máy chủ giữ nhiều file hơn trước trong ngày (mỗi lượt ACH khoảng 150–250 MB). Nếu ổ đĩa chật, báo người phát triển để hạ giờ dọn xuống sớm hơn
+    + Không đụng cơ sở dữ liệu, không đổi quyền, không đổi cách chạy đối chiếu
+
+- 26/08/2026 Chấm đối chiếu ACH - **Hết lỗi khó hiểu "[WinError 10054]" khi bấm Chạy đối chiếu**
+    + **Chuyện gì đã xảy ra**: bộ file ACH chọn lên quá nặng, máy chủ từ chối nhận và **cắt kết nối ngay lúc file đang gửi dở**. Vì bị cắt giữa chừng nên lời từ chối ("file vượt quá dung lượng cho phép") không bao giờ tới được màn hình — trình duyệt chỉ kịp báo một mã lỗi mạng của Windows. Log máy chủ thì vẫn ghi đúng là *vượt dung lượng*, nhưng người dùng không thấy được
+    + **Nay chặn ngay trên máy mình, trước khi gửi**: nếu bộ file vượt trần thì hiện thẳng *tổng bao nhiêu MB, trần bao nhiêu MB, và 3 file nặng nhất là file nào* — chưa gửi đi byte nào, không phải ngồi chờ
+    + **Dòng "Đã chọn (... file)" nay có thêm tổng dung lượng**, ví dụ *Đã chọn (7 file, 512 MB)* — nhìn là biết mình đang ở đâu so với trần
+    + **Trần hiện tại là 500 MB cho cả một lượt.** Bộ file thật vượt mức này thì báo người phát triển — nâng được bằng cấu hình, nhưng cần cân nhắc vì máy chủ phải giữ toàn bộ bộ file trong bộ nhớ khi chạy
+    + **Không cho chạy chồng hai phiên nữa** — đây mới là nguyên nhân hay gặp nhất: phiên cũ chưa chạy xong (kể cả đang **chờ xác nhận MIS_đi**) mà upload bộ file phiên mới thì máy chủ phải ôm hai bộ dữ liệu cùng lúc, hết bộ nhớ và **chết ngay giữa lúc đang nhận file**
+    + Nay bấm *Chạy đối chiếu* lúc máy chủ còn bận sẽ hiện: **đang chạy phiên nào, mã phiên, bận bao lâu rồi, và phải làm gì** — chưa gửi file đi. Muốn chạy đè thì bấm **Dừng** cho phiên cũ trước
+    + **Chốt này nằm ở máy chủ**, không phải ở trình duyệt — nên **F5 hay mở tab mới cũng không lách được**, và người khác đang chạy dở thì mình cũng bị chặn (trước đây trình duyệt chỉ nhớ phiên của chính tab đang mở)
+    + **Nút "Dừng" nay dừng cho ra dừng**: bấm xong màn hình báo *đang dừng*, chờ bước đang chạy kết thúc, rồi mới báo **"Đã dừng hẳn. Bộ nhớ đã được giải phóng — chạy phiên mới được rồi"**. Trước đây nó chỉ báo *đã gửi yêu cầu dừng* rồi im, không ai biết dừng thật chưa
+    + **Vì sao phải chờ**: lệnh dừng chỉ có hiệu lực ở **ranh giới giữa các bước**. Đang giải nén file MIS thì phải xong chỗ đó mới dừng được — chạy phiên mới lúc đang chờ là máy chủ vẫn ôm hai bộ dữ liệu, đúng cảnh vừa sửa. Hệ thống chờ tối đa **5 phút**; quá đó nó **nói thẳng là chưa dừng được** và khuyên đừng chạy tiếp
+    + Máy chủ **thu hồi bộ nhớ ngay** khi phiên kết thúc (dù dừng giữa chừng hay chạy xong), không đợi hệ thống tự dọn
+    + **Không tự động ngắt phiên cũ** khi bấm Chạy — phiên đang *chờ xác nhận MIS_đi* thường là có người đang mở file ra điền dở, ngắt ngang là mất công họ
+    + Lỡ đóng trình duyệt giữa chừng thì phiên cũ **tự hết hiệu lực sau 4 giờ**, không khoá máy vĩnh viễn
+    + Nếu kết nối vẫn đứt vì lý do khác (máy chủ vừa khởi động lại), thông báo cũng được viết lại bằng tiếng Việt thay vì để nguyên mã lỗi
+    + Không đụng cơ sở dữ liệu, không đổi quyền, không đổi cách chạy đối chiếu
+
+- 26/08/2026 Menu MỚI - **Ôn tập trắc nghiệm (Quizz)** — ôn thi nghiệp vụ ngay trên hệ thống
+    + **Vào bằng**: menu **Ôn tập trắc nghiệm** ở thanh bên trái (nằm dưới *Danh sách CN TTQT*). **Phải được cấp quyền mới thấy menu** — báo quản trị viên thêm vào nhóm quyền tương ứng
+    + **Bộ câu hỏi chỉ cần tải lên MỘT lần cho cả cơ quan.** Người vào sau chỉ việc chọn bộ có sẵn rồi bấm *Bắt đầu*, không phải tải lại file lần nào nữa
+    + **File Excel để tải lên** phải đúng thứ tự cột: *Câu hỏi | Đáp án 1 | Đáp án 2 | Đáp án 3 | Đáp án 4 | Đáp án đúng*. Ô *Đáp án đúng* ghi **số 1, 2, 3 hoặc 4** (không ghi A/B/C/D). Câu chỉ có 3 lựa chọn thì **bỏ trống ô Đáp án 4**. Có sẵn nút **Tải file mẫu** để lấy đúng khuôn
+    + **Dòng nào sai thì bỏ dòng đó và báo rõ số dòng** để mở Excel sửa, phần còn lại vẫn nhập bình thường. Hệ thống **không tự đoán đáp án** — thà thiếu một câu còn hơn để người ôn nhớ sai
+    + **Không tải lên trùng được**: trùng tên bộ, hoặc trùng **nội dung câu hỏi** với bộ đã có, đều bị chặn và báo tên bộ cũ để đi tìm. Đổi tên file, hay mở file ra xem rồi bấm lưu, đều không lách được — hệ thống so nội dung chứ không so file
+    + **Cài đặt trước mỗi lần làm bài**:
+        - **Chế độ** — *Ôn tập* (hiện đáp án đúng ngay sau khi chọn, để học) hoặc *Thi thử* (chỉ chấm khi nộp bài)
+        - **Số câu** — 10 / 20 / 30 / 50 / 100 hoặc lấy hết bộ
+        - **Trộn thứ tự câu hỏi** và **trộn thứ tự đáp án** — bật/tắt riêng
+        - **Thời gian mỗi câu** — 10 đến 90 giây, hoặc không giới hạn. Hết giờ tự sang câu kế
+        - **Tổng thời gian làm bài** — 5 đến 90 phút, hoặc không giới hạn. Hết giờ hệ thống **tự nộp bài**
+    + **Màn làm bài chiếm cả màn hình** (không có thanh menu bên trái): câu hỏi ở giữa, 4 ô đáp án màu to bên dưới, thanh tiến trình và hai đồng hồ ở trên. Có nút *Bỏ qua câu này* và nút thoát (hỏi lại trước khi thoát)
+    + **Nộp bài xong hiện ngay**: điểm phần trăm, số câu **đúng / sai / bỏ trống** (bỏ trống tách riêng khỏi sai, để biết mình *không kịp* hay *không biết*), thời gian làm bài, và phần **Xem lại bài** từng câu — tô xanh đáp án đúng, tô đỏ ô mình đã chọn sai
+    + **Lịch sử của tôi**: 30 lượt gần nhất, bấm vào xem lại nguyên bài đã làm
+    + **Bảng xếp hạng** theo từng bộ (biểu tượng cúp trên thẻ bộ câu hỏi): mỗi người lấy lượt tốt nhất, cùng điểm thì ai làm nhanh hơn đứng trên. **Chỉ tính bài Thi thử** — chế độ Ôn tập hiện sẵn đáp án nên ai cũng 100%, đưa vào bảng thì bảng mất ý nghĩa
+    + ⚠️ **Xoá một bộ câu hỏi là xoá luôn toàn bộ lượt làm bài của mọi người và bảng xếp hạng của bộ đó**, không lấy lại được. Vì vậy quyền *Xoá bộ câu hỏi* tách riêng, không đi kèm quyền tải lên
+    + **Tạm dừng và làm tiếp** — *bổ sung 27/08*:
+        - **Bài làm được lưu tự động sau mỗi câu trả lời**, không đợi tới lúc bấm *Nộp bài*. Mất mạng, máy ngủ, tắt máy giữa chừng hay lỡ đóng tab đều **không mất bài**
+        - Vào lại menu *Ôn tập trắc nghiệm*, thẻ của bộ đó hiện nút **Làm tiếp** kèm dòng *"Đang dở — đã trả lời X/Y câu"*. Bấm vào là quay lại **đúng câu đang làm**, giữ nguyên các đáp án đã chọn và thời gian đã dùng
+        - Nút **Tạm dừng** ở góc trên bên phải màn làm bài: lưu lại rồi về danh sách. Cạnh đồng hồ có chỉ báo nhỏ *✓ đã lưu* / *⚠ chưa lưu* để biết bài mình có đang được giữ hay không
+        - **Đồng hồ dừng khi tạm dừng** — nó đếm thời gian *làm bài*, không phải thời gian trôi ngoài đời. Nghỉ trưa hai tiếng rồi vào làm tiếp không bị mất giờ
+        - **Mỗi người mỗi bộ chỉ giữ một bài dở.** Muốn làm lại từ đầu thì vào menu ⋮ trên thẻ, chọn *Bắt đầu bài mới* — hệ thống báo trước là bài dở cũ sẽ bị bỏ. Cũng ở menu đó có *Bỏ bài đang làm dở*
+        - ⚠️ Bài bỏ dở **không tính điểm và không lên bảng xếp hạng** cho tới khi bấm *Nộp bài*
+    + **Cơ sở dữ liệu thêm 3 cột** vào bảng lượt làm bài, tự thêm lúc khởi động — không phải làm gì thêm, dữ liệu cũ giữ nguyên
+    + **Không làm chậm hệ thống, không làm ngập Nhật ký thao tác** — đã đo trên bản sao cơ sở dữ liệu thật:
+        - 20 người ôn tập cùng lúc: các màn hình khác vẫn chạy như cũ (truy vấn báo cáo 0,2 ms trước và sau, không đổi)
+        - Dung lượng: một bộ 550 câu tốn 280 KB (nhập một lần); mỗi lượt làm bài cỡ 20 câu tốn dưới 1 KB
+        - **Việc lưu tiến độ KHÔNG ghi vào Nhật ký thao tác.** Nếu ghi thì một bài 550 câu để lại 550 dòng và nhật ký của các phần khác bị đẩy trôi. Những việc cần tra sau này — ai tải bộ câu hỏi lên, ai đổi tên, ai xoá bộ, ai nộp bài — thì **vẫn ghi đầy đủ**
+    + **Ba quyền cần khai báo cho nhóm**: *Ôn tập trắc nghiệm (menu)* — vào module và làm bài; *Tải bộ câu hỏi lên / đổi tên bộ*; *Xoá bộ câu hỏi*
+    + **Cơ sở dữ liệu có thêm 4 bảng mới**, tự tạo lúc khởi động — không phải làm gì thêm. Không đụng tới dữ liệu sẵn có
+    + Thêm 31 test tự động cho phần này. Toàn bộ **804 test** chạy đạt. Đã thử nhập đúng file *1. Kiến thức chung Đợt II.2026.xlsx*: **550/550 câu vào sạch, không dòng nào lỗi**
+
+- 25/08/2026 Giao diện - **Trang Đăng nhập và Trang chủ đổi sang chủ đề kỷ niệm 2-9**
+    + **Tự bật từ 25/8, tự tắt sau ngày 3/9** — không ai phải làm gì để gỡ sau lễ, và sang năm tự bật lại. Ngoài khoảng ngày này hai trang y hệt như cũ
+    + **Trang Đăng nhập**: nền đỏ cờ bừng sáng quanh ô đăng nhập rồi sẫm dần ra rìa, dải cờ đỏ - vàng trên đỉnh trang, ngôi sao vàng lớn mờ làm hoạ tiết, khẩu hiệu chào mừng đặt phía trên ô đăng nhập
+    + **Trang chủ**: nền ấm dần lên phía trên (đáy vẫn giữ màu cũ để bảng số và biểu đồ dễ đọc), thêm dải khẩu hiệu hai dòng ngay dưới tiêu đề
+    + **Khẩu hiệu**: *NHIỆT LIỆT CHÀO MỪNG 81 NĂM CÁCH MẠNG THÁNG TÁM THÀNH CÔNG (19/8/1945 - 19/8/2026) VÀ QUỐC KHÁNH NƯỚC CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM (2/9/1945 - 2/9/2026)!* — số năm tự tính, sang năm không phải sửa
+    + **Chỉ đổi hai trang này.** Các màn hình khác và thanh menu bên trái giữ nguyên màu — trong dịp lễ, rời Trang chủ sang màn khác sẽ thấy nền trở lại như thường
+    + **Không đụng cơ sở dữ liệu, không đổi quyền, không đổi thao tác nào.** Máy không vào được internet vẫn hiển thị đủ: mọi hoạ tiết đều vẽ tại chỗ, không tải ảnh từ ngoài
+
+- 25/08/2026 Bàn giao chứng từ - **Xoá ô chứng từ đã xác nhận: bắt nhập lý do và ghi lại vào Nhật ký thao tác**
+    + **Trước đây xoá một ô đã xác nhận không để lại dấu vết ở đâu cả**: người có quyền xác nhận chỉ cần xoá trắng ô rồi bấm Lưu — số liệu và cả lịch sử sửa đổi riêng của ô đó biến mất cùng lúc. Nhật ký thao tác vẫn có một dòng, nhưng nội dung y hệt một lần sửa số tờ bình thường, không phân biệt được
+    + **Nay bắt buộc nhập lý do** khi xoá ô đang ở trạng thái *Đã xác nhận* hoặc *Đang mượn*. Ô chưa xác nhận (hoặc bị trả lại) vẫn xoá bình thường như cũ, không hỏi gì
+    + **Nhật ký thao tác ghi lại đủ**: ai xoá, xoá ô của giao dịch viên nào, ngày nào, bao nhiêu tờ, phòng nào, trạng thái trước khi xoá, và lý do — đọc một dòng là hiểu chuyện gì đã xảy ra
+    + **Màn Nhật ký thao tác có thêm cột "Chi tiết"**: hiện nội dung của những thao tác có ghi chi tiết. Các dòng máy tự ghi (chỉ có mã kết quả HTTP) để trống cột này cho khỏi rối mắt
+    + Không đụng cơ sở dữ liệu, không phải khai báo quyền lại
+- 25/08/2026 Đối chiếu CITAD - **Đã vá 2 lỗi ở ô *Lập bảng* / *Kiểm soát* cảnh báo hôm 23/08 (PR#56)**:
+    + ✅ **Mở lại bảng cũ không còn mất tên người ký nữa.** Tên của người đã nghỉ, đã chuyển phòng, hay
+      gõ tay kiểu khác đều hiện đúng như lúc lưu. **Bấm *Lưu* lúc này đã an toàn** — cảnh báo "thấy ô
+      trống bất thường thì đừng bấm Lưu" ở mục 23/08 bên dưới **không còn hiệu lực**
+    + ✅ **Xuất Excel không còn báo lỗi khi để trống cả hai ô.** Không phải gõ dấu gạch để lách nữa
+    + **Tab *Lịch sử* nay hiện đúng người đã bấm Lưu ở từng dòng.** Trước đây mọi dòng của một ngày đều
+      mang tên người lập bảng, ai vào bổ sung Napas / PSS - MDP cũng không thấy tên mình. Nay **mỗi
+      người bấm Lưu là một dòng riêng**, nên **số dòng và cột *Số lần lưu* sẽ nhiều hơn trước** — không
+      phải hệ thống đếm nhầm
+    + ⚠️ **Ngày đã chốt bản cuối vẫn có thể còn vài dòng ghi "Tạm" nằm phía trên dòng "Chính thức".**
+      Đó là các lần lưu tạm của từng người, được giữ lại làm dấu vết — dòng cuối cùng mới là bản đang
+      dùng, có nhãn *Bản hiện hành*
+    + ⚠️ **Ô lọc *Tên người chấm* vẫn chỉ tìm theo người lập bảng.** Gõ tên người chỉ bổ sung Napas /
+      PSS - MDP sẽ **không ra ngày nào** — phải bấm vào ngày để bung danh sách ra mới thấy tên họ.
+      Chưa sửa vì đổi cách tìm là đổi nghiệp vụ, cần Phòng Thanh toán chốt trước
+    + Không đổi cơ sở dữ liệu, không phải khai báo quyền lại
+
+- 25/08/2026 Đối soát CITAD ↔ IPCAS - **Sửa lỗi đọc SAI số tiền khi file IPCAS đã bị Excel lưu đè (đã merge PR#58)**
+    + 🔴 **Nguyên nhân — Phòng Thanh toán tự phát hiện**: mở file CSV của IPCAS bằng Excel (chỉ để xoá thử 1 dòng) rồi lưu lại. Excel **tự động** đổi mọi số tiền đủ lớn — từ khoảng 100 tỷ trở lên, đúng nhóm giá trị **cao** (IH) — sang kiểu viết tắt `5.53722E+11`. Số nhỏ (nhóm **thấp**/IL) không đủ lớn nên không bị đổi, đúng khớp hiện tượng quan sát được *"chỉ nhóm cao mới lệch, nhóm thấp thì không"*
+    + **Chương trình đọc sai hoàn toàn**: cách đọc cũ gom hết chữ số lại, `5.53722E+11` thành **55.372.211 đồng** thay vì **553.722.000.000 đồng** — cái đuôi `11` chính là phần `E+11` bị dính vào. Nay đọc đúng
+    + **Đo trên dữ liệu thật**: file gốc ngày 19/08 (chưa ai mở bằng Excel) **không đổi gì** — vẫn 38.129 khớp / 14 lệch, đúng như cũ. File ngày 24/08 đã bị Excel lưu đè: **42.549 khớp / 120 lệch → 42.563 khớp / 92 lệch**
+    + 🔴 **92 dòng lệch còn lại KHÔNG phải lỗi chương trình và không sửa được**: lúc Excel đổi sang kiểu viết tắt, nó **chỉ giữ khoảng 6 chữ số đầu**, các chữ số sau bị làm tròn thành 0 **ngay trong file** — đã xác nhận bằng cách đọc thẳng nội dung file. Số tiền thật đã mất, chương trình đọc kiểu gì cũng không lấy lại được
+    + ⚠️ **Việc cần làm từ nay — quan trọng hơn cả bản vá**: **không mở file CSV của IPCAS bằng Excel rồi bấm lưu**, kể cả chỉ mở ra xem. Cần xem thì mở bằng Notepad, hoặc mở bằng Excel nhưng **thoát ra không lưu**. Lỡ lưu rồi thì **tải lại file gốc từ IPCAS**, đừng chấm bằng file đó
+    + ⚠️ **Chương trình chưa biết tự cảnh báo** khi gặp file đã bị hỏng kiểu này — nó vẫn chấm bình thường và cho ra vài chục dòng lệch không giải thích được. Gặp tình huống "tự nhiên nhiều dòng lệch ở nhóm giá trị cao" thì nghĩ ngay tới nguyên nhân này trước. Đã ghi lại để người phát triển vá đợt sau
+    + **Không đụng cơ sở dữ liệu, không phải khai báo quyền lại.** Lưu ý: các lần chấm **đã lưu trong tab Lịch sử trước hôm nay vẫn giữ nguyên số cũ (sai)** — lịch sử là ảnh chụp tại thời điểm chấm, không tính lại. Cần số đúng thì chấm lại bằng file gốc
+    + Thêm 4 test tự động. Toàn bộ **725 test** chạy đạt sau khi merge (đo lại trên đúng bản đã merge, không có test nào lỗi)
+    + 🟡 **5 điểm review CHƯA sửa, để người phát triển xử lý sau** (chi tiết + cách sửa đã đo ở `docs/Implementation-notes.html` card 107): ô Excel kiểu số cho ra số **sai gấp 10 lần**; số tiền lẫn đơn vị (`5.53722E+11 VND`) rơi lại về lỗi cũ; số âm dạng viết tắt nay đi lọt; codebase đang có **3 luật đọc số tiền khác nhau** ở 3 module; và thiếu cảnh báo file hỏng nói trên
+
+- 25/08/2026 Đối chiếu CITAD - PaymentHub - **Màn hình MỚI cho Phòng QLTK Nostro, Vostro (đã merge PR#57)**
+    + **Vào bằng**: Đối chiếu → Phòng QLTK Nostro, Vostro → Đối chiếu CITAD - PaymentHub. **Phải được cấp quyền mới thấy menu** — báo quản trị viên thêm vào nhóm quyền tương ứng
+    + **Đây là màn hình riêng, không liên quan gì tới màn "Đối chiếu CITAD" của Phòng Thanh toán**: số liệu lấy từ trang khác (CITAD lấy ở **"Tra cứu dữ liệu"**, chỉ chiều **Đi**, chỉ **giao dịch thành công**; PaymentHub lấy dòng **Tổng cộng** ở trang "Lập bảng kê phí chia sẻ CITAD"). Hai phòng không nhìn thấy và không ghi đè số liệu của nhau
+    + **Chấm gộp được nhiều ngày**: chọn Từ ngày – Đến ngày thay vì mỗi ngày một bản. Khi bấm Lưu, máy **cảnh báo** nếu kỳ vừa chọn trùng ngày với kỳ đã chấm trước đó, hoặc bỏ sót ngày ở giữa — **chỉ cảnh báo, vẫn cho lưu**, quyết định là ở người chấm
+    + **Tiện ích lấy số liệu tự động (Extension) là bản RIÊNG**, tải ngay trên màn hình ở tab "Kết nối Extension". ⚠️ **Không dùng chung với Extension của Phòng Thanh toán** — ai đang dùng bản kia thì cài thêm bản này, hai bản chạy song song được, không phải gỡ bản cũ
+    + **Cột "người chấm" trong tab Lịch sử là người LẬP BẢNG** (người lưu đầu tiên của kỳ đó), không đổi khi người khác lưu đè sau — để biết ai phụ trách kỳ đó, không phải ai bấm Lưu gần nhất
+    + Thêm 2 bảng mới trong cơ sở dữ liệu, **không sửa/xoá bảng cũ nào** — các màn hình đang dùng không bị ảnh hưởng
+    + ⚠️ **Chưa thử được trên máy trong mạng nội bộ Agribank**: phần tự động lấy số liệu từ trang CITAD/PaymentHub thật chưa chạy thử lần nào (môi trường phát triển không vào được mạng nội bộ). **Lần đầu dùng nên đối chiếu lại vài số với bản chấm tay** trước khi tin hoàn toàn. Nếu số không lên, vẫn **gõ tay bình thường** được — mọi ô đều nhập tay được
+    + **6 lỗi đã tìm ra và vá trước khi merge** (chi tiết kỹ thuật ở `docs/Implementation-notes.html` mục Z9), trong đó đáng chú ý với người dùng:
+        * **Tab Lịch sử bị sập** (trang trắng) nếu gõ ngày sai kiểu vào ô lọc — ví dụ gõ dở `01/08` rồi bấm Tìm. Nay gõ sai chỉ là không lọc, không sập
+        * **Tiện ích lấy số liệu gửi hỏng mà không báo gì**: mã kết nối hết hạn / mất mạng thì im lặng hoàn toàn, người dùng tưởng đã lưu xong. Nay **luôn hiện thông báo** — đỏ nghĩa là mã kết nối hỏng phải tạo lại, vàng nghĩa là mạng lỗi và máy sẽ tự thử lại
+        * **Lưu được kỳ trống** (xoá trắng ô ngày rồi bấm Lưu) tạo ra bản ghi không hiện ra ở đâu mà cũng không xoá được. Nay bắt buộc nhập đủ Từ ngày – Đến ngày
+        * **File Excel xuất ra gọi tên cổng khác với màn hình** (Excel ghi "Cổng 1", màn hình ghi "Cổng 001"). Nay hai nơi gọi giống nhau
+    + Thêm **19 test tự động** cho module này (PR gửi lên ban đầu không có test nào). Toàn bộ **732 test** chạy đạt sau khi merge
+
+- 24/08/2026 Đối soát CITAD ↔ IPCAS - **Đã merge PR#55 vào develop (các mục 23/08 bên dưới nay đã lên bản chính)**
+    + **Gộp chung 6 đợt sửa ghi ở dưới**: bắt được IPCAS/Hub hạch toán trùng, loại cặp hạch toán nhầm-huỷ theo REFHUB, lệnh chuyển chi nhánh chỉ tính dòng gốc, sửa cột Ngày GD / STT / Số tiền trong file "Tất cả lệnh", thêm 41 test tự động cho phần đối soát (trước đây không có test nào)
+    + ⚠️ **Từ hôm nay báo cáo có thể NHIỀU dòng lệch hơn trước, và đó là đúng.** Lệnh Đến trạng thái **PYED/PYEK** trước đây được bỏ qua khi tính dư, nay không khớp CITAD là **vẫn hiện**. Vì vậy **số liệu trước và sau mốc 24/08/2026 không so sánh trực tiếp được** — không phải hệ thống hỏng
+    + ⚠️ **Chọn nhầm trùng file nay hậu quả nặng hơn nhiều.** Hộp cảnh báo "trùng nội dung file" vẫn chỉ là cảnh báo, bấm qua được — nhưng nếu bấm qua, **mỗi dòng trong file sẽ đẻ 1 dòng lệch giả** (trước đây bị lọc âm thầm). Thấy hộp cảnh báo đỏ thì nên xoá bớt file rồi chọn lại từ đầu
+    + 🔴 **Hai lỗi đã biết khi merge, CHƯA vá — đọc kỹ trước khi tin dòng lệch**:
+        * **Có thể hiện dòng "Chỉ IPCAS" GIẢ ở lệnh ĐI**, khi hai lệnh Đi khác nhau tình cờ trùng mã TXID và trùng cả số tiền / ngân hàng nhận / trạng thái / ngày. Dấu hiệu nhận ra: dòng lệch ghi *"1 trong 2 lần IPCAS ghi nhận lệnh này"* nhưng tra lại IPCAS chỉ thấy đúng 1 bút toán
+        * **Có thể hiện dòng "Chỉ Hub" GIẢ** nếu file Hub ngoại tệ không có cột *Trạng thái* (hoặc cột đó đổi tên) — lúc đó lệnh chuyển chi nhánh bị hiểu nhầm thành ghi trùng
+        * Cả hai chờ người phát triển vá ở đợt sau. Trong lúc chờ: **gặp dòng "Chỉ IPCAS"/"Chỉ Hub" kèm ghi chú "N lần" thì tra lại IPCAS/Hub trước khi báo lệch cho đối tác**. Chi tiết kỹ thuật + cách sửa đã đo ở `docs/Implementation-notes.html` card 106
+    + Không đổi cơ sở dữ liệu, không phải khai báo quyền lại. Toàn bộ **702 test** chạy đạt sau khi merge
+
+- 23/08/2026 Đối soát CITAD↔IPCAS - **Sửa lại theo review PR#55 (Người 1): fix căn lề STT/Số tiền hôm qua làm xuất "Tất cả lệnh" chậm gấp 3 lần**:
+    + ⚠️ **Người 1 đo lại bằng cProfile trên PR**: cách sửa căn lề 2 cột STT/Số tiền (đợt trước) làm xuất "Tất cả lệnh" chậm từ 6,19 giây lên **18,94 giây (gấp 3,1 lần)** — comment lúc đó viết "không đánh đổi tốc độ xuất" nhưng chưa đo lại thật
+    + **Nguyên nhân**: cách sửa cũ gán CẢ font+nền+viền+căn lề (4 thuộc tính) cho 2 ô đó, trong khi chỉ cần đúng căn lề + dấu phẩy — mỗi lượt gán thêm là 1 lượt máy phải so khớp kiểu dáng với bảng kiểu dùng chung của cả file, tốn thời gian
+    + **Vì sao đáng lo**: hàm xuất này chỉ có 4 "chỗ" xử lý việc nặng dùng chung cho CẢ hệ thống (nghỉ phép, in bìa, ACH, SWIFT...) — chậm gấp 3 lần nghĩa là giữ mất 1 trong 4 chỗ đó lâu gấp 3 lần, 2 người xuất cùng lúc sẽ chiếm gần hết, người khác đang thao tác việc nặng khác sẽ thấy đơ mà không hiểu vì sao
+    + **Đã sửa**: chỉ gán đúng căn lề + dấu phẩy cho 2 ô này, bỏ hẳn font/nền/viền không cần thiết. Đo lại trên dữ liệu thật 19/08/2026: **5,22 giây** — còn nhanh hơn cả trước khi có đợt sửa nào, không còn ảnh hưởng gì
+    + Không đổi giao diện file xuất, không cần sửa test — toàn bộ 41 test vẫn pass
+
+- 23/08/2026 Đối soát CITAD↔IPCAS - **Sửa 2 lỗi hiển thị thật trong file xuất "Tất cả lệnh": cột Ngày GD trống ở dòng gốc CITAD, cột Số tiền căn lề/định dạng khác nhau giữa dòng khớp và dòng lệch**:
+    + ⚠️ **Phòng Thanh toán phát hiện qua ảnh chụp file Excel thật**: cột "Số tiền" ở phần dòng đã khớp căn PHẢI và không có dấu phẩy ngăn cách hàng nghìn, trong khi phần dòng lệch căn TRÁI và có dấu phẩy — nhìn không thống nhất giữa 2 phần
+    + **Nguyên nhân xác nhận bằng cách mổ trực tiếp file XML xuất ra**: để xuất nhanh cho ~38.000 dòng khớp, code ghi giá trị thô không style riêng từng ô, định dạng đặt ở CẤP CỘT — nhưng Excel KHÔNG áp dụng định dạng cấp cột cho ô đã có giá trị ghi vào (chỉ áp cho ô thật sự trống), nên các ô này rơi về định dạng mặc định của Excel (số thì căn phải, không dấu phẩy)
+    + **Cùng lúc phát hiện thêm**: cột "Ngày GD" luôn TRỐNG ở mọi dòng có gốc CITAD (dòng khớp, dòng Chỉ CITAD) — vì file CITAD không có cột ngày riêng cho từng dòng (chỉ ghi 1 lần ở đầu file, áp dụng chung), khác dòng Chỉ IPCAS có ngày riêng nên hiện bình thường — tạo cảm giác 2 phần "lệch cột" khi xem
+    + **Đã sửa**: cột Ngày GD nay hiện đúng ngày đang chấm khi CITAD không có ngày riêng (mọi dòng trong 1 lần chấm luôn cùng 1 ngày, không mơ hồ); cột Số tiền ở dòng khớp được style riêng (căn trái + dấu phẩy) giống hệt dòng lệch — chỉ đúng 1 cột này, KHÔNG style lại cả 13 cột để giữ tốc độ xuất (đổi tốc độ ~10 lần chỉ để đồng bộ toàn bộ cột là không đáng, theo lựa chọn của Phòng Thanh toán)
+    + **Phát hiện tiếp cùng gốc lỗi**: cột "STT" ở dòng khớp cũng bị y hệt vấn đề trên (là số nguyên nên Excel tự căn PHẢI thay vì GIỮA như ý định) — sửa cùng cách, style riêng đúng ô STT cho dòng khớp
+    + Thêm 4 test mới (file test riêng cho `exporters.py`, ghi file Excel thật rồi đọc lại kiểm tra, không mock) — toàn bộ **41 test** pass
+
+- 23/08/2026 Đối soát CITAD↔IPCAS - **Rà soát lại toàn bộ sau các sửa hôm nay: sửa 1 câu ghi chú viết cứng sai khi CITAD tự trùng khoá thật, chưa từng ảnh hưởng dữ liệu đã chấm**:
+    + ⚠️ **Phát hiện qua tự rà soát** (theo yêu cầu kiểm tra lại toàn bộ đối soát): câu ghi chú trên dòng ĐÃ khớp khi báo "nguồn đối ứng ghi nhận trùng" luôn viết cứng "chỉ tính khớp 1 lần" — đúng với lệnh Đi nhưng SAI với lệnh Đến/ngoại tệ khi CITAD cũng tự trùng khoá thật (đã xác nhận có thật, xem mục sửa lỗi tính dòng thừa phía dưới): ví dụ CITAD trùng 2 dòng thật + IPCAS trùng 3 dòng sẽ hiện sai "chỉ tính khớp 1 lần — xem thêm 2 dòng" thay vì đúng "khớp 2 lần — xem thêm 1 dòng"
+    + **Không ảnh hưởng số liệu tổng** (khớp/lệch vẫn đúng, chỉ câu chữ giải thích sai) — kiểm dữ liệu thật 19/08/2026: không có trường hợp nào rơi đúng vào tình huống này nên báo cáo hôm nay không sai
+    + **Đã sửa**: câu ghi chú giờ dùng đúng số dòng CITAD thật khớp được, không còn viết cứng là 1
+    + Thêm 1 test khoá lại — toàn bộ **32 test** pass, số liệu thật không đổi (38.129 khớp / 14 lệch)
+
+- 23/08/2026 Đối soát CITAD↔IPCAS - **Tìm ra và loại đúng nguyên nhân của phần lớn dòng "Chỉ IPCAS" đang bị báo hôm nay: GDV hạch toán thủ công nhầm chi nhánh, phải huỷ rồi hạch toán lại**:
+    + ⚠️ **Phòng Thanh toán tự tìm ra nguyên nhân** khi soi lại 1 trong các nhóm bị báo lệch bằng Excel: lệnh Đến được GDV hạch toán thủ công NHẦM chi nhánh, phải HUỶ bút toán đó rồi hạch toán lại thủ công đúng nơi — bút toán HUỶ dùng LẠI đúng số phiếu ghi sổ (trace) của bút toán bị huỷ (2 dòng cùng chi nhánh, cùng trace), còn bút toán hạch toán lại ĐÚNG luôn có số trace MỚI (có thể ở chi nhánh khác). Đây chính là nguyên nhân thật của hiện tượng "trùng trace" đã phát hiện hôm qua — không phải IPCAS ngẫu nhiên cấp trace khác nhau, mà là 1 quy trình sửa sai có chủ đích của GDV
+    + **Kiểm lại cả 5 nhóm đang bị báo "Chỉ IPCAS" hôm nay**: cả 5/5 đều đúng mẫu này (2 dòng trùng chi nhánh+trace, 1 dòng trace riêng) — nghĩa là cả 5 nhóm không phải chênh lệch thật, chỉ là dấu vết của việc sửa sai thao tác, không cần Phòng Thanh toán kiểm tra lại nữa
+    + **Đã thêm**: đọc thêm cột "REFHUB" (mã tham chiếu điện đến gốc, duy nhất cho mỗi lệnh thật, không bị trùng lặp giữa các lệnh khác nhau như TXID) để xác định chắc chắn nhiều dòng có phải cùng 1 lệnh gốc hay không, trước khi áp dụng quy tắc loại cặp trùng chi nhánh+trace
+    + **An toàn**: nếu 1 lệnh có TẤT CẢ các dòng đều trùng chi nhánh+trace (không tìm được dòng nào là bút toán đúng cuối cùng) thì KHÔNG loại gì cả, vẫn báo lệch như trước — theo xác nhận của Phòng Thanh toán, trường hợp này không xảy ra trong thực tế, chỉ là chốt an toàn
+    + **Kết quả trên dữ liệu thật 19/08/2026**: số lệch giảm từ 24 xuống còn **14** (13 Chỉ IPCAS + 1 Chỉ CITAD), số khớp giữ nguyên 38.129 — đúng 10 dòng vừa loại là 5 nhóm × 2 dòng thừa mỗi nhóm
+    + Thêm 3 test khoá lại (kể cả ca dòng đúng ở chi nhánh khác, và ca an toàn không có dòng nào đúng) — toàn bộ **32 test** pass
+
+- 23/08/2026 Đối soát CITAD↔IPCAS - **Sửa lỗi tính SAI số dòng "IPCAS/Hub ghi nhận trùng" khi CITAD cũng tự trùng khoá thật (chưa từng xảy ra trên dữ liệu đã chấm, nhưng có thể xảy ra)**:
+    + ⚠️ **Phát hiện qua câu hỏi trực tiếp của Phòng Thanh toán**: "lệnh lệch có chắc CITAD không có không, nếu các lệnh giống hệt nhau nhưng có đủ ở cả CITAD và IPCAS thì không phải lệch". Kiểm tra lại code phát hiện: khi tính số dòng "Chỉ IPCAS"/"Chỉ Hub" do nguồn đối ứng ghi nhận trùng, phần mềm LUÔN giả định CITAD chỉ có đúng 1 lệnh cho mỗi mã giao dịch — đúng với lệnh Đi (VNĐ) nhưng KHÔNG đúng với lệnh Đến (VNĐ) và ngoại tệ (Hub), 2 loại này CITAD được phép tự trùng mã thật (đã xác nhận 1.154 nhóm trùng thật riêng ngày 19/08/2026)
+    + **Ví dụ cụ thể lỗi cũ**: CITAD trùng 2 dòng thật + IPCAS trùng 3 dòng cho cùng 1 lệnh → phần mềm cũ báo dư SAI 2 dòng (3-1, coi CITAD chỉ có 1) thay vì ĐÚNG 1 dòng (3-2), kèm ghi chú sai "CITAD chỉ có 1 lệnh" dù CITAD thật có 2
+    + **Đã kiểm lại toàn bộ dữ liệu 19/08/2026**: không có ca nào rơi vào đúng tình huống lỗi (24 dòng lệch hôm nay đều ứng với CITAD có 0 hoặc 1 dòng, không có dòng nào CITAD có ≥2) — số liệu báo cáo hôm nay KHÔNG đổi (38.129 khớp / 24 lệch), nhưng lỗi có thật và cần sửa trước khi gặp phải trong dữ liệu ngày khác
+    + **Đã sửa**: đếm đúng số dòng CITAD thật theo từng mã giao dịch thay vì giả định luôn là 1, áp dụng cho cả VNĐ Đến lẫn ngoại tệ (Hub)
+    + Thêm 1 test khoá lại đúng ca lỗi (CITAD trùng 2, IPCAS trùng 3 → dư đúng 1) — toàn bộ 29 test pass
+
+- 23/08/2026 Đối soát CITAD↔IPCAS - **Rà soát cuối ngày: sửa 1 lỗi có sẵn từ trước (không phải do các sửa hôm nay), không ảnh hưởng ngày nào đã chấm bằng VNĐ thuần tuý**:
+    + ⚠️ **Lỗi tìm được**: khi 1 ngày chấm có CẢ lệnh VNĐ lẫn lệnh ngoại tệ (USD/EUR), nếu 1 mã số giao dịch VNĐ trùng ngẫu nhiên với 1 mã số giao dịch ngoại tệ (2 hệ đánh số hoàn toàn độc lập với nhau, trùng số là chuyện ngẫu nhiên có thể xảy ra), lệnh IPCAS thật của bên VNĐ có thể **biến mất hoàn toàn khỏi báo cáo** — không khớp, không "Chỉ IPCAS". Lỗi này có sẵn trong phần mềm từ trước, không phải do các lần sửa trong ngày hôm nay gây ra — chỉ tình cờ chưa gặp phải vì dữ liệu dùng để kiểm tra suốt hôm nay chỉ có lệnh VNĐ, không có lệnh ngoại tệ
+    + **Đã sửa**: tách riêng việc theo dõi "lệnh nào đã khớp" cho VNĐ và ngoại tệ, không dùng chung nữa
+    + **Đồng thời sửa cho nhất quán**: dòng "lệch trạng thái" (khớp được số hiệu nhưng IPCAS chưa xác nhận thành công) giờ cũng ghi rõ khi IPCAS có dữ liệu trùng, giống như dòng đã khớp hoàn toàn — trước đây chỉ dòng khớp hoàn toàn mới có ghi chú này
+    + Thêm 2 test khoá lại — toàn bộ 28 test pass. Đã kiểm lại dữ liệu thật 19/08/2026: số liệu không đổi (38.129 khớp / 24 lệch), đúng như dự kiến vì ngày này chỉ có lệnh VNĐ
+
+- 23/08/2026 Đối soát CITAD↔IPCAS - **Sửa tiếp: các lệnh "IPCAS hạch toán trùng" phát hiện hôm nay thực ra bị đếm THIẾU (trùng 3 lần, báo có 2)**:
+    + ⚠️ **Phát hiện qua tự kiểm thử của Phòng Thanh toán**: xoá thử 1 dòng trong 1 nhóm trùng IPCAS để kiểm tra lại, phát hiện nhóm đó thực ra có 3 dòng, không phải 2. Kiểm lại toàn bộ: **cả 5 nhóm đã báo trùng hôm nay đều bị thiếu đúng 1 dòng** — dòng thứ 3 giống hệt mọi thông tin (chi nhánh, ngân hàng, trạng thái, ngày, số tiền) nhưng có 1 số phiếu ghi sổ (trace) khác, nên bị máy hiểu nhầm là "khác nhau" và **biến mất hoàn toàn** khỏi báo cáo — không khớp, không "Chỉ IPCAS", không hiện ở đâu cả
+    + **Đã sửa**: số phiếu ghi sổ không còn được dùng để phân biệt "trùng hay không trùng" nữa — chỉ cần giống hệt các thông tin định danh khác (chi nhánh, ngân hàng, trạng thái, ngày, số tiền) là tính là trùng, bất kể số phiếu ghi sổ khác nhau
+    + **Đã kiểm chứng thêm bằng cách xoá NGẪU NHIÊN 20 lệnh IPCAS bất kỳ** (không liên quan gì tới các nhóm trùng) — cả 20/20 đều hiện đúng "Chỉ CITAD" ngay, xác nhận việc phát hiện "lệnh CITAD không có gì đối ứng" hoạt động đúng cho mọi trường hợp, không riêng ca cụ thể vừa test
+    + Thêm 1 test khoá lại — toàn bộ 26 test pass
+
+- 23/08/2026 Đối soát CITAD↔IPCAS - **"Chuyển chi nhánh — chỉ tính dòng gốc" nay áp dụng cho cả ngoại tệ (USD/EUR qua Hub), không riêng VNĐ**:
+    + Xác nhận nghiệp vụ Phòng Thanh toán: ngoại tệ cũng có lệnh chuyển chi nhánh giống VNĐ (IPCAS) — 1 lệnh sinh nhiều dòng cùng "Số thành công" nhưng khác chi nhánh; dòng gốc là dòng mang trạng thái **"Đã trả KH"**
+- 23/08/2026 Đối soát CITAD↔IPCAS - **"Chuyển chi nhánh — chỉ tính dòng gốc" nay áp dụng cho cả ngoại tệ (USD/EUR qua Hub), không riêng VNĐ**:
+    + Xác nhận nghiệp vụ Phòng Thanh toán: ngoại tệ cũng có lệnh chuyển chi nhánh giống VNĐ (IPCAS) — 1 lệnh sinh nhiều dòng cùng "Số thành công" nhưng khác chi nhánh; dòng gốc là dòng mang trạng thái **"Đã trả KH"**
+    + **Trước bản sửa này, phần mềm hoàn toàn chưa đọc cột "Trạng thái" của file Hub ngoại tệ** — và khi trùng "Số thành công", dòng nào thắng phụ thuộc thứ tự dòng trong file (không cố định, có thể đổi kết quả giữa các lần chấm cùng 1 file). Nay dòng "Đã trả KH" luôn thắng, đúng dòng gốc
+    + **Không đổi cách làm hằng ngày.** File Hub không có cột Trạng thái thì mọi thứ giữ nguyên như trước (không có gì để ưu tiên)
+    + Thêm 1 test khoá lại hành vi này — toàn bộ 25 test pass
+
+- 23/08/2026 Đối soát CITAD↔IPCAS - **Bắt được thêm ca "IPCAS/Hub hạch toán trùng lệnh" — trước đây bị bỏ qua âm thầm, ra thành dòng "Chỉ Agribank"/"Chỉ Hub" riêng**:
+    + ⚠️ **Phát hiện qua tự kiểm thử của Phòng Thanh toán**: dán thêm 1 dòng y hệt vào file IPCAS để mô phỏng việc IPCAS ghi nhận trùng 1 lệnh Đến, chạy đối soát thì máy không báo gì — vì bước đọc file IPCAS có sẵn 1 khâu âm thầm bỏ dòng trùng y hệt trước khi đối soát kịp thấy
+    + **Đây là chiều ngược lại của tính năng đã có** (CITAD gửi trùng 1 lệnh Đi, IPCAS chỉ ghi 1 lần — phát hiện từ 20/08): nay thêm chiều IPCAS/Hub ghi trùng 1 lệnh, trong khi CITAD chỉ có đúng 1 lệnh — áp dụng cho **cả VND (IPCAS) lẫn ngoại tệ (Hub)**
+    + **Dòng trùng dư ra nay hiện thành dòng "Chỉ IPCAS"/"Chỉ Hub" RIÊNG** (không chỉ 1 câu ghi chú trên dòng đã khớp) — đúng bản chất CITAD chỉ xác nhận đúng 1 lệnh, phần dư ra là số liệu không có gì đối chứng. Dòng khớp và các dòng dư đều ghi rõ số lần trùng và đúng cổng CITAD của lệnh đó để tra thẳng ra
+    + 🔧 **Đính chính trong ngày — bản sửa đầu tiên tự phát hiện sai trước khi báo xong, đã sửa lại ngay**: lần đầu đếm "trùng" theo đúng mã giao dịch IPCAS dùng để khớp lệnh — tưởng hợp lý nhưng kiểm lại bằng dữ liệu thật thì số Lệch nhảy vọt từ 12 lên 1.556, vì IPCAS có thể dùng CHUNG 1 mã cho nhiều lệnh THẬT khác nhau (khác ngân hàng nhận) — bị hiểu nhầm hàng loạt thành "hạch toán trùng". Đã sửa: chỉ tính là trùng thật khi khớp đủ MỌI thông tin nhận dạng (thêm mã chi nhánh, số trace), không chỉ mã giao dịch. Đã kiểm lại đúng dữ liệu thật: về đúng **12 lệch gốc + 6 lệnh trùng thật đã xác nhận = 18**, không còn sai lệch lớn
+    + **Không đổi số Khớp của bất kỳ ngày nào đã chấm trước đây** — chỉ thêm dòng "Chỉ IPCAS"/"Chỉ Hub" mới cho đúng số lượng dư ra thật, không đổi lệnh nào đã khớp thành lệch
+    + Bộ test tự động của module tăng lên 21 bài, trong đó có bài canh riêng ca "trùng ngẫu nhiên mã giao dịch nhưng không phải trùng thật" để không tái diễn lỗi vừa đính chính
+
+- 23/08/2026 Đối soát CITAD↔IPCAS - **Lệnh Đến bất thường mang trạng thái PYED/PYEK không còn biến mất khỏi báo cáo**:
+    + ⚠️ **Phát hiện qua tự kiểm thử của Phòng Thanh toán**: thêm 1 lệnh KHÔNG CÓ THẬT (không khớp CITAD nào) mang trạng thái PYED vào file IPCAS Đến, chạy đối soát thì máy không báo gì — vì có sẵn 1 luật từ 20/08 bỏ qua mọi lệnh Đến trạng thái PYED/PYEK khi tính "Chỉ IPCAS" (lý do ban đầu: PYED/PYEK là đang xử lý, CITAD chưa kịp có). Luật đó không phân biệt được "PYED thật đang chờ CITAD" với "PYED giả sẽ không bao giờ khớp" — cả hai đều bị bỏ qua như nhau, im lặng
+    + **Nguyên tắc đúng đã xác nhận**: chênh lệch SỐ LƯỢNG lệnh áp dụng cho MỌI trạng thái, không riêng gì trạng thái nào. Từ nay lệnh Đến không khớp CITAD nào luôn hiện "Chỉ IPCAS", bất kể mang trạng thái gì
+    + **Không gây bùng nổ số liệu** dù PYED là trạng thái khá phổ biến — kiểm bằng dữ liệu thật: số Lệch chỉ tăng đúng 1 (đúng bằng lệnh giả vừa thêm để test), nghĩa là tuyệt đại đa số lệnh PYED thật vốn đã khớp sẵn với CITAD, chỉ đúng lệnh bất thường mới lộ ra
+    + Sửa lại 2 test đã khoá hành vi cũ, giờ khoá đúng hành vi mới — toàn bộ 24 test pass
+
+- 23/08/2026 Đối soát CITAD↔IPCAS - **Cài đặt đúng việc còn dang dở từ tài liệu bàn giao gốc: "Lệnh chuyển chi nhánh Đến — chỉ tính dòng gốc"**:
+    + ⚠️ **Phát hiện qua trao đổi với Phòng Thanh toán**: một số lệnh IPCAS Đến có mã dạng "số gốc-dãy số dài" — đây là lệnh CHUYỂN CHI NHÁNH (IPCAS chuyển 1 lệnh sang chi nhánh khác xử lý), không phải chênh lệch thật. Việc này đã được ghi chú từ trước trong tài liệu bàn giao gốc của dự án nhưng đánh dấu "chưa cài đặt"
+    + **Phát hiện thêm, quan trọng hơn**: dòng gốc (luôn ở 1 chi nhánh cố định, trạng thái CGBR) và dòng con (chuyển sang chi nhánh khác) đang dùng CHUNG 1 khoá để khớp lệnh — nên từ trước tới nay khi 2 dòng này trùng nhau, hệ thống **tự chọn NHẦM dòng con** để hiện kết quả đối soát (vì bảng độ ưu tiên trạng thái thiếu đúng mã của dòng gốc). Hậu quả: ngân hàng nhận và trạng thái hiển thị cho những lệnh này trước nay là của dòng con, không phải dòng gốc
+    + **Từ nay dòng gốc luôn được chọn đúng** khi có va chạm — dòng con (chỉ là thao tác nội bộ IPCAS) bị loại hẳn, không còn hiện sai thông tin ngân hàng nhận/trạng thái nữa. Đúng nguyên tắc Phòng Thanh toán xác nhận: "1 lệnh CITAD cân với 1 lệnh gốc IPCAS là được"
+    + **Không đổi số Khớp/Lệch của bất kỳ ngày nào** — đã kiểm chứng bằng đúng dữ liệu thật, chỉ đổi đúng thông tin hiển thị (ngân hàng nhận/trạng thái) cho các lệnh từng bị chọn nhầm
+    + Thêm 1 test khoá lại đúng hành vi này — toàn bộ 24 test pass
+
+- 23/08/2026 Đối soát CITAD↔IPCAS - **Dòng "Chỉ IPCAS"/"Chỉ Hub" thôi hiện nhầm số ở cột "Số GD (CITAD)"**:
+    + ⚠️ **Phát hiện qua câu hỏi trực tiếp của người dùng khi xem bảng kết quả**: dòng báo "Chỉ IPCAS" (nghĩa là CITAD không hề có lệnh này) nhưng cột "Số GD (CITAD)" vẫn hiện 1 số — gây hiểu lầm là CITAD cũng có lệnh đó. Đây là lỗi hiển thị **có sẵn từ trước**, không phải do các thay đổi trong ngày, chỉ là được để ý ra khi đang xem kỹ các dòng liên quan tới mục ở trên
+    + **Từ nay dòng "Chỉ IPCAS"/"Chỉ Hub" để trống đúng cột "Số GD (CITAD)"** — giống hệt cách dòng "Chỉ CITAD" từ trước tới nay vẫn để trống đúng cột "Số GD (Agribank)". Áp dụng cho cả màn hình xem lẫn file Excel xuất ra
+    + **Không đổi số Khớp/Lệch của bất kỳ ngày nào** — chỉ đổi cách hiển thị 1 cột, không đổi lệnh nào từ khớp thành lệch hay ngược lại
+    + Thêm 2 test khoá lại đúng hành vi này (cột CITAD để trống ở cả dòng "Chỉ IPCAS" và "Chỉ Hub") — toàn bộ 23 test pass
+
+- 22/08/2026 Đối soát CITAD↔IPCAS - **Thử mở rộng chốt chặn "CITAD gửi trùng" sang lệnh Đến/ngoại tệ — RÚT LẠI trong ngày vì làm sai số liệu thật**:
+    + 🚫 **Đã thử rồi bỏ, không phải tính năng mới.** Có ý định mở rộng chốt chặn "CITAD gửi trùng" (sửa 20/08, khi đó chỉ áp cho lệnh Đi VND) sang cả lệnh Đến VND và ngoại tệ. Khi kiểm lại bằng đúng dữ liệu CITAD/IPCAS thật ngày 19/08/2026 thì phát hiện **số Khớp tụt từ 38.130 xuống còn 36.715** — mất hơn 1.400 lệnh khớp THẬT một cách oan uổng
+    + **Nguyên nhân**: CITAD đánh số "Số GD" **riêng theo từng cổng** (cổng 1, 9, 12, 17, 18) — một mã số hoàn toàn có thể trùng giữa 2 cổng khác nhau mà KHÔNG phải là gửi trùng, chỉ là trùng số ngẫu nhiên vì 2 cổng đếm độc lập. Máy không phân biệt được việc này với CITAD gửi trùng thật, nên gạt nhầm hàng loạt lệnh Đến khớp đúng thành "Trùng CITAD"
+    + ✅ **Đã trả lại đúng như cũ — chỉ VND Đi mới có chốt chặn "gửi trùng", như từ 20/08 tới nay.** Đã kiểm lại bằng đúng dữ liệu 19/08/2026: số Khớp/Lệch về đúng 38.130/12 như trước. **Không ai cần làm gì, màn hình và số liệu không đổi so với trước ngày hôm nay**
+    + Thêm bộ test tự động đầu tiên cho module Đối soát CITAD (15 test, trước đây module này không có test nào) — trong đó có 2 bài khoá lại đúng phát hiện ở trên, để lần sau có ai định mở rộng chốt chặn này thì phải tự chứng minh bằng dữ liệu thật trước, không suy luận suông
+
+
+- 23/08/2026 Sổ trực + Đối chiếu CITAD - **5 sửa nhỏ theo phản hồi dùng thật (PR#53)**
+    + **Sổ trực nay chỉ coi là "đã đối chiếu CITAD" khi ngày đó đã bấm *Lưu bảng cuối***. Bảng mới *Lưu tạm* vẫn bị tính là **chưa có**, nên lời nhắc trước khi chuyển KSV / xác nhận vẫn hiện. Cố ý làm vậy: số Napas và PSS - MDP thường do người khác điền sau, một bảng tạm "khớp" chỉ khớp trên phần đã nhập
+    + ⚠️ **Sẽ thấy lời nhắc thường xuyên hơn trước.** Ngày nào chuyển KSV trước khi có người chốt bảng cuối là có hộp thoại nhắc. Vẫn **không chặn** — bấm *Vẫn xác nhận* là đi tiếp
+    + ⚠️ **Câu chữ trong hộp thoại đó chưa chỉnh theo**: nó vẫn viết *"Chưa có bản đối chiếu CITAD nào được lưu"* trong khi thực tế có thể **đang có bảng tạm**. Bảng tạm không mất đi đâu cả — mở màn Đối chiếu CITAD vẫn còn nguyên. Sẽ sửa lại câu chữ ở đợt sau
+    + **Tab *Lịch sử* của Sổ trực: không chọn ngày thì hiện TOÀN BỘ phiên trực**, trước đây chỉ hiện đúng 1 phiên gần nhất. Danh sách dài nhiều tháng có **dòng ngăn cách màu xanh mint ghi tháng/năm** để dễ dò. Muốn thu hẹp thì chọn khoảng ngày rồi bấm *Lọc*
+    + **Ô *Lập bảng* / *Kiểm soát* ở Đối chiếu CITAD nay bấm chọn được tên** từ danh sách nhân viên Phòng Thanh toán, vẫn gõ tay tự do như cũ
+    + 🔴 **Hai lỗi đã biết ở hai ô này, chưa vá — xin đọc kỹ**:
+        * **Xuất Excel sẽ báo lỗi nếu để trống cả hai ô.** Cách tránh: điền tên (hoặc gõ một dấu gạch) trước khi bấm *Xuất Excel*
+        * **Mở lại bảng cũ mà tên người ký không có trong danh sách Phòng Thanh toán** (người đã nghỉ, đã chuyển phòng, hoặc tên gõ tay kiểu khác) thì **ô đó hiện trống**. Nguy hiểm hơn: lúc đó bấm *Lưu* sẽ **ghi đè mất tên cũ trong máy**. Trong lúc chờ vá: nếu mở bảng của ngày cũ mà thấy hai ô này trống bất thường thì **đừng bấm Lưu**, báo lại để khôi phục
+    + **Bấm *Bỏ xem, làm bảng mới* nay chỉ hiện 1 thông báo** (*"Đã chuyển sang phiên chấm đối chiếu mới"*) thay vì 2 thông báo chồng nhau. Nút *Xoá* riêng vẫn báo như cũ
+    + **Đối soát CITAD ↔ IPCAS: 3 khung tải file** (CITAD / IPCAS / Hub ngoại tệ) nay **có viền đỏ đô bo góc riêng** cho dễ phân biệt
+    + Không đổi cơ sở dữ liệu, không phải khai báo quyền lại. Toàn bộ **666 test** chạy đạt
 
 - 22/08/2026 Bàn giao cho lưu trữ - **Cột TIEUDE_HS đổi sang mẫu "Nhật ký chứng từ ngày ... của Phòng ..."**
     + **Đổi gì**: tiêu đề hồ sơ nộp lưu trữ trước đây in ra là *"Hồ sơ ngày 27/02/2025 Phòng Kế toán tháng 02/2025 tập 1/2"*, nay là **"Nhật ký chứng từ ngày 27/02/2025 của Phòng Kế toán tập 1/2"**

@@ -26,12 +26,16 @@ Napas/Ebanking chỉ có 2 field "IH Đến — Món/Tiền" thực sự đượ
 import asyncio
 import datetime
 import json
+import logging
+from decimal import Decimal
 from urllib.parse import quote
 
 from nicegui import ui
 from starlette.requests import Request as _StarletteRequest
 import frontend.api_client as api
 from frontend.shared import _sidebar, _content_area, _require_auth, _handle_api_error
+
+_log = logging.getLogger(__name__)
 
 # Card kiểu "modern SaaS" RIÊNG cho trang này (icon trong khung màu + tiêu đề,
 # không dùng banner phủ màu như `_card()` dùng chung ở frontend/shared.py —
@@ -128,6 +132,13 @@ CURS = ['VNĐ', 'USD', 'EUR']
 FK = ['di_ih_m', 'di_ih_t', 'di_il_m', 'di_il_t', 'den_ih_m', 'den_ih_t', 'den_il_m', 'den_il_t']
 FK_LBL = ['ĐI IH Món', 'ĐI IH Tiền', 'ĐI IL Món', 'ĐI IL Tiền',
           'ĐẾN IH Món', 'ĐẾN IH Tiền', 'ĐẾN IL Món', 'ĐẾN IL Tiền']
+# ui.grid(columns=9) mặc định chia đều 9 cột (1fr mỗi cột) — cột "Tiền" VNĐ
+# dài tới 21 ký tự (vd "43,462,772,025,396.47") bị cắt cụt vì chia bằng cột
+# "Món" chỉ 5-6 ký tự (vd "22,888"). Dùng template tuỳ ý (ui.grid nhận string
+# CSS grid-template-columns) thay vì số cột thường — cột Tiền rộng gấp ~2,4
+# lần cột Món. Dùng chung ở CẢ 3 lưới (Bảng chênh lệch, build_grid,
+# build_napas_pssmdp_grid) để cột vẫn thẳng hàng giữa các bảng như thiết kế.
+_MONEY_GRID_TEMPLATE = '1fr 0.7fr 1.7fr 0.7fr 1.7fr 0.7fr 1.7fr 0.7fr 1.7fr'
 
 
 def nv(v):
@@ -151,6 +162,40 @@ def fmt(v):
     if v == int(v):
         return f'{int(v):,}'
     return f'{v:,.2f}'
+
+
+def _dec(v) -> Decimal:
+    """Chuyển sang Decimal CHÍNH XÁC TUYỆT ĐỐI, không qua số thực nhị phân.
+
+    `Decimal(v)` trên 1 float sẽ mở ra đúng dạng nhị phân của nó (vd
+    `Decimal(516.6)` ra `Decimal('516.59999999999999...')`) — phải đi qua
+    `str(v)` trước: `str()` của float là chuỗi thập phân NGẮN NHẤT vẫn ra
+    đúng float đó (thuật toán repr của Python), nên `Decimal(str(516.6))`
+    ra đúng `Decimal('516.6')`. Dùng cho MỌI phép cộng dồn tiền (`_compute_totals()`,
+    `cur_mismatch()`) — cộng nhiều số thực rồi so sánh trực tiếp có thể sinh
+    dư nhị phân (bug thật 25/08/2026: 0,0078125 dù CITAD gốc cộng đúng khớp
+    PaymentHub, khiến màn hình báo "+0,01" giả); cộng bằng Decimal thì không
+    có dư nào — kết quả đúng tuyệt đối với số liệu gốc, khớp thật ra đúng 0,
+    lệch thật dù nhỏ đến đâu vẫn hiện đúng, không đánh đổi độ chính xác lấy
+    gọn màn hình."""
+    try:
+        return Decimal(str(v)) if v not in (None, '') else Decimal(0)
+    except Exception:
+        return Decimal(0)
+
+
+def diff_exact(ci_val: Decimal, ph_val: Decimal) -> Decimal:
+    """Chênh lệch CITAD-PaymentHub cho 1 cột — `ci_val`/`ph_val` phải là
+    Decimal đã cộng dồn qua `_dec()` (xem `_compute_totals()`), nên phép trừ
+    này chính xác tuyệt đối, không cần và không được làm tròn gì thêm."""
+    return ci_val - ph_val
+
+
+def cur_mismatch(ci_cur: dict, ph_cur: dict) -> bool:
+    """Có lệch thật giữa CITAD/PaymentHub cho 1 loại tiền không — `ci_cur`/
+    `ph_cur` phải là dict giá trị Decimal (cộng dồn qua `_dec()`), nên so
+    `!=` ở đây chính xác tuyệt đối, không lẫn dư nhị phân nào."""
+    return any(ci_cur[f] != ph_cur[f] for f in FK)
 
 
 _CELL_DATA_BG = "bg-red-200"
@@ -291,28 +336,34 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
         trong `doi_chieu_citad_service.py::build_xlsx`. Dùng chung cho cả
         `recalc()` (hiện trên trang) và preview trước khi xuất Excel — luôn
         khớp nhau, tính 1 nơi duy nhất."""
-        ci = {f: 0.0 for f in FK}
+        # Cộng dồn bằng Decimal (qua _dec()) — KHÔNG cộng bằng float trực
+        # tiếp. Cộng nhiều số thực (5 Cổng × 3 loại tiền + Napas + PSS-MDP)
+        # có thể sinh dư nhị phân dù về bản chất đã khớp tuyệt đối (bug thật
+        # 25/08/2026: 0,0078125 dù CITAD gốc cộng đúng khớp PaymentHub) —
+        # Decimal cộng đúng tuyệt đối với số liệu gốc, không có dư nào phải
+        # làm tròn/che đi, nên lệch thật dù chỉ 1 xu vẫn hiện đúng.
+        ci = {f: Decimal(0) for f in FK}
         for c in CONGS:
             for u in CURS:
                 for f in FK:
-                    ci[f] += data["gD"][c][u][f]
-        ci["den_ih_m"] += data["napas"]["den_ih_m"]
-        ci["den_ih_t"] += data["napas"]["den_ih_t"]
+                    ci[f] += _dec(data["gD"][c][u][f])
+        ci["den_ih_m"] += _dec(data["napas"]["den_ih_m"])
+        ci["den_ih_t"] += _dec(data["napas"]["den_ih_t"])
         # PSS - MDP: kênh mới, cùng nguyên lý Napas (cộng vào tổng CITAD).
-        ci["den_ih_m"] += data["pssmdp"]["den_ih_m"]
-        ci["den_ih_t"] += data["pssmdp"]["den_ih_t"]
+        ci["den_ih_m"] += _dec(data["pssmdp"]["den_ih_m"])
+        ci["den_ih_t"] += _dec(data["pssmdp"]["den_ih_t"])
 
-        ph = {f: 0.0 for f in FK}
+        ph = {f: Decimal(0) for f in FK}
         for u in CURS:
             for f in FK:
-                ph[f] += data["phD"][u][f]
+                ph[f] += _dec(data["phD"][u][f])
         return ci, ph
 
     def recalc():
         ci, ph = _compute_totals()
         for f in FK:
             ci_val, ph_val = ci[f], ph[f]
-            df_val = ci_val - ph_val
+            df_val = diff_exact(ci_val, ph_val)
             diff_labels["citad"][f].text = fmt(ci_val) if ci_val else '—'
             diff_labels["phub"][f].text = fmt(ph_val) if ph_val else '—'
             if df_val == 0 and ci_val == 0 and ph_val == 0:
@@ -340,12 +391,12 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
         if lech_cur_label is not None:
             lech_curs = []
             for cur in CURS:
-                ci_cur = {f: sum(data["gD"][c][cur][f] for c in CONGS) for f in FK}
+                ci_cur = {f: sum((_dec(data["gD"][c][cur][f]) for c in CONGS), Decimal(0)) for f in FK}
                 if cur == 'VNĐ':
-                    ci_cur["den_ih_m"] += data["napas"]["den_ih_m"] + data["pssmdp"]["den_ih_m"]
-                    ci_cur["den_ih_t"] += data["napas"]["den_ih_t"] + data["pssmdp"]["den_ih_t"]
-                ph_cur = {f: data["phD"][cur][f] for f in FK}
-                if any(ci_cur[f] != ph_cur[f] for f in FK):
+                    ci_cur["den_ih_m"] += _dec(data["napas"]["den_ih_m"]) + _dec(data["pssmdp"]["den_ih_m"])
+                    ci_cur["den_ih_t"] += _dec(data["napas"]["den_ih_t"]) + _dec(data["pssmdp"]["den_ih_t"])
+                ph_cur = {f: _dec(data["phD"][cur][f]) for f in FK}
+                if cur_mismatch(ci_cur, ph_cur):
                     lech_curs.append(cur)
             if lech_curs:
                 lech_cur_label.text = f"⚠ Lệch: {', '.join(lech_curs)}"
@@ -358,7 +409,7 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
         with container:
             n_cols = len(FK) + 1
             n_rows = len(row_keys) + 1
-            with ui.grid(columns=n_cols).classes("w-full gap-0 p-4"):
+            with ui.grid(columns=_MONEY_GRID_TEMPLATE).classes("w-full gap-0 p-4"):
                 _group_header_row()
                 ui.label("Loại tiền").classes(
                     _grid_cell_cls(0, 0, n_rows, n_cols, "text-sm font-bold text-gray-500 text-center")
@@ -407,7 +458,7 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
         with container:
             n_cols = len(FK) + 1
             n_rows = 3
-            with ui.grid(columns=n_cols).classes("w-full gap-0 p-4"):
+            with ui.grid(columns=_MONEY_GRID_TEMPLATE).classes("w-full gap-0 p-4"):
                 _group_header_row()
                 ui.label("Loại tiền").classes(
                     _grid_cell_cls(0, 0, n_rows, n_cols, "text-sm font-bold text-gray-500 text-center")
@@ -456,8 +507,34 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
             return
         if sess.get("ngay"):
             ngay_input.value = sess["ngay"]
-        lap_bang_input.value = sess.get("lap_bang", "")
-        kiem_soat_input.value = sess.get("kiem_soat", "")
+        # ui.select(new_value_mode="add-unique") chỉ tự thêm giá trị lạ vào
+        # options khi NGƯỜI DÙNG gõ — gán .value bằng code không kích hoạt
+        # cơ chế đó (NiceGUI docstring: "ineffective when setting the value
+        # property programmatically"). Tên không có sẵn trong options (đã
+        # nghỉ/chuyển phòng, hoặc options chưa kịp tải) sẽ bị ChoiceElement
+        # tự đổi thành None — mất tên khi mở lại bảng cũ, và nếu bấm Lưu sẽ
+        # ghi đè None đè lên tên đã lưu trong DB (bug thật, ghi ở PR#53).
+        # Tự bơm giá trị vào options trước khi gán để giữ nguyên tên cũ.
+        #
+        # PHẢI gọi .update() ngay sau khi đổi .options — đọc thẳng
+        # docstring ui.select(): "After manipulating the options, call
+        # update()". .options chỉ là thuộc tính thường, không tự kích hoạt
+        # gì cả; ChoiceElement._values/._labels (dùng để đối chiếu khi đổi
+        # .value) chỉ được tính lại bên trong update()/_update_options().
+        # Thiếu bước này thì self._values vẫn CŨ, có thể khiến lần gán
+        # .value tiếp theo tính sai index — hoặc lần .update() nào khác gọi
+        # sau đó (không phải do mình) đọc lại self._values cũ, đúng bug
+        # cần sửa lại xảy ra lần nữa.
+        lap_bang = sess.get("lap_bang", "")
+        if lap_bang and lap_bang not in (lap_bang_input.options or []):
+            lap_bang_input.options = [*(lap_bang_input.options or []), lap_bang]
+            lap_bang_input.update()
+        lap_bang_input.value = lap_bang
+        kiem_soat = sess.get("kiem_soat", "")
+        if kiem_soat and kiem_soat not in (kiem_soat_input.options or []):
+            kiem_soat_input.options = [*(kiem_soat_input.options or []), kiem_soat]
+            kiem_soat_input.update()
+        kiem_soat_input.value = kiem_soat
         gD = sess.get("gD", {})
         for c in CONGS:
             for u in CURS:
@@ -594,20 +671,20 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
         đây chỉ là xoá màn hình, không phải sửa/lưu đè). do_reset() không
         đụng ngay_input/lap_bang_input/kiem_soat_input nên tự set lại 3 ô
         đó ở đây."""
-        do_reset()
+        do_reset(notify=False)
         ngay_input.value = datetime.date.today().strftime('%d/%m/%Y')
         lap_bang_input.value = ""
         kiem_soat_input.value = ""
         _apply_view_mode("edit")
-        ui.notify("Đã thoát chế độ xem — sẵn sàng nhập mới", type="info")
+        ui.notify("Đã chuyển sang phiên chấm đối chiếu mới", type="info")
 
     def get_session_payload() -> dict:
         gD = {str(c): {u: {f: data["gD"][c][u][f] for f in FK} for u in CURS} for c in CONGS}
         phD = {u: {f: data["phD"][u][f] for f in FK} for u in CURS}
         return {
             "ngay": ngay_input.value,
-            "lap_bang": lap_bang_input.value,
-            "kiem_soat": kiem_soat_input.value,
+            "lap_bang": lap_bang_input.value or "",
+            "kiem_soat": kiem_soat_input.value or "",
             "gD": gD,
             "phD": phD,
             "napas_m": data["napas"]["den_ih_m"],
@@ -1041,7 +1118,7 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
         history_refresh["fn"] = load_days
         ui.timer(0.1, load_days, once=True)
 
-    def do_reset():
+    def do_reset(notify: bool = True):
         for c in CONGS:
             for u in CURS:
                 for f in FK:
@@ -1058,7 +1135,8 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
             _set_input(inputs["napasE"][f], '')
             _set_input(inputs["pssmdpE"][f], '')
         recalc()
-        ui.notify("Đã xoá toàn bộ dữ liệu", type="info")
+        if notify:
+            ui.notify("Đã xoá toàn bộ dữ liệu", type="info")
 
     async def _do_download_export():
         gD = {str(c): {u: {f: data["gD"][c][u][f] for f in FK} for u in CURS} for c in CONGS}
@@ -1066,8 +1144,8 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
         payload = {
             "day_str": ngay_input.value,
             "sheet_name": (ngay_input.value or "Sheet1").replace("/", "_"),
-            "lb": lap_bang_input.value,
-            "ks": kiem_soat_input.value,
+            "lb": lap_bang_input.value or "",
+            "ks": kiem_soat_input.value or "",
             "gD": gD,
             "phD": phD,
             "nm": data["napas"]["den_ih_m"],
@@ -1145,6 +1223,40 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
                     "bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg"
                 )
         dialog.open()
+
+    # ── Danh sách tên Phòng Thanh toán cho ô "Lập bảng"/"Kiểm soát" ───────────
+    # ui.select(with_input, new_value_mode="add-unique") — vẫn gõ tay tự do
+    # được như ui.input cũ (giá trị gõ không có trong danh sách vẫn nhận),
+    # thêm được bấm chọn từ danh sách có sẵn. Tra department theo CODE
+    # "PAYMENT" thay vì hardcode id — tránh phụ thuộc thứ tự tạo phòng ban.
+    async def _load_payment_staff_names():
+        try:
+            depts = await asyncio.to_thread(api.get, "/api/departments/")
+            dept = next((d for d in depts if d.get("code") == "PAYMENT"), None)
+            if not dept:
+                _log.warning(
+                    "Không tìm thấy phòng ban code='PAYMENT' — 2 ô Lập bảng/Kiểm soát không có gợi ý tên"
+                )
+                return
+            staff = await asyncio.to_thread(
+                api.get, "/api/staff/", {"department_id": dept["id"], "active_only": True}
+            )
+        except Exception as e:
+            # Danh sách gợi ý — lỗi ở đây không được chặn cả trang, nhưng PHẢI
+            # ghi log: options rỗng nhìn y hệt "phòng không có ai", không có log
+            # thì không có đường nào biết vì sao tên biến mất.
+            _log.warning("Không tải được danh sách nhân viên Phòng Thanh toán: %s", e)
+            return
+        names = {s["full_name"] for s in staff if s.get("full_name")}
+        # GỘP vào options đang có, KHÔNG ghi đè. apply_session_data() tự bơm tên
+        # người ký cũ (đã nghỉ/chuyển phòng) vào options để giữ được giá trị, và
+        # new_value_mode="add-unique" cũng thêm tên người dùng vừa gõ tay vào đó.
+        # Gán đè cả danh sách thì ChoiceElement._update_options() thấy .value
+        # không còn trong options nữa và đổi ngay thành None — đúng lại lỗ hổng
+        # vừa vá ở PR#53, chỉ khác đường đi.
+        for sel in (lap_bang_input, kiem_soat_input):
+            sel.options = sorted({*(sel.options or []), *names})
+            sel.update()
 
     # ── Kết nối Extension (mã kết nối cá nhân — xem docstring api/doi_chieu_citad.py) ──
     ext_status_label = None
@@ -1400,8 +1512,12 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
                         "border-2 border-red-800 shadow-sm p-4"
                     ):
                         ngay_input = _date_picker_input("Ngày")
-                        lap_bang_input = ui.input("Lập bảng").props("dense outlined").classes("w-48")
-                        kiem_soat_input = ui.input("Kiểm soát").props("dense outlined").classes("w-48")
+                        lap_bang_input = ui.select(
+                            [], label="Lập bảng", with_input=True, new_value_mode="add-unique"
+                        ).props("dense outlined").classes("w-48")
+                        kiem_soat_input = ui.select(
+                            [], label="Kiểm soát", with_input=True, new_value_mode="add-unique"
+                        ).props("dense outlined").classes("w-48")
                         btn_nap_citad = ui.button("Nạp CITAD", icon="cloud_download", on_click=load_citad_buffer).props("outline").classes("rounded-lg")
                         btn_nap_ph = ui.button("Nạp PaymentHub", icon="cloud_download", on_click=load_phub_buffer).props("outline").classes("rounded-lg")
                         btn_luu_tam = ui.button(
@@ -1425,6 +1541,7 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
                         ui.button("Xuất Excel", icon="grid_on", on_click=do_export).classes(
                             "bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg"
                         )
+                    ui.timer(0.1, _load_payment_staff_names, once=True)
 
                     # Banner trạng thái — nội dung dựng ĐỘNG theo mode trong
                     # _apply_view_mode() (rỗng/ẩn khi mode='edit' của chính
@@ -1442,7 +1559,7 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
                         n_cols = len(FK) + 1
                         n_rows = 4  # 1 dòng tiêu đề + CITAD/PaymentHub/CHÊNH LỆCH
 
-                        with ui.grid(columns=n_cols).classes("w-full gap-0 p-4"):
+                        with ui.grid(columns=_MONEY_GRID_TEMPLATE).classes("w-full gap-0 p-4"):
                             _group_header_row()
                             ui.label("").classes(
                                 _grid_cell_cls(0, 0, n_rows, n_cols, "text-sm font-bold text-gray-500 text-center")

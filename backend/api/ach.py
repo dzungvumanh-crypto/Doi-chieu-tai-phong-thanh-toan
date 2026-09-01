@@ -7,7 +7,13 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from backend.core.deps import require_feature
-from backend.core.uploads import read_limited, safe_filename
+from backend.core.uploads import (
+    MAX_REQUEST_BYTES,
+    read_limited,
+    safe_filename,
+    save_upload_to,
+    so_mb,
+)
 from backend.services import ach_service
 from backend.services.ach.validate import validate_required_files
 
@@ -20,7 +26,19 @@ router = APIRouter(prefix='/api/ach', tags=['ach'])
 _XEM  = require_feature('menu.cham_ach')
 _CHAY = require_feature('cham_ach.process')
 
-_MAX_UPLOAD = 500 * 1024 * 1024  # 500 MB tổng
+_MB = 1024 * 1024
+
+# Trần TỔNG dung lượng một lượt upload ACH. Chỉnh bằng ACH_MAX_UPLOAD_MB trong .env.
+#
+# Phải luôn NHỎ HƠN trần thân request của BodySizeLimitMiddleware, chừa chỗ cho
+# phần bao multipart. Nếu ngược lại thì middleware chặn trước — nó trả 413 rồi
+# đóng luôn kết nối mà KHÔNG đọc nốt thân request đang gửi dở, nên client không
+# bao giờ đọc được câu trả lời đó: httpx chỉ thấy socket đứt và báo
+# "[WinError 10054] An existing connection was forcibly closed by the remote host".
+# Đo được 26/08/2026 (uvicorn + httpx, trần 1 MB, gửi 60 MB): client nhận
+# ReadError/WinError, KHÔNG nhận 413, trong khi log máy chủ vẫn ghi 413.
+# max(_MB, ...) chỉ để chặn cấu hình vô nghĩa (MAX_REQUEST_MB=4) làm trần thành số âm.
+_MAX_UPLOAD = max(_MB, min(so_mb('ACH_MAX_UPLOAD_MB', 500) * _MB, MAX_REQUEST_BYTES - 8 * _MB))
 
 
 def _dl_headers(filename: str) -> dict:
@@ -64,45 +82,87 @@ async def start_job(
     if not files:
         raise HTTPException(400, 'Cần upload ít nhất 1 file.')
 
-    saved: dict[str, bytes] = {}
-    total_size = 0
-    for f in files:
-        # Trần cho TỪNG file = phần dung lượng còn lại của cả lượt: đọc theo
-        # khối và dừng đúng lúc, thay vì nạp trọn file vào RAM rồi mới đo.
-        # Thông điệp phải tự viết: read_limited() nêu con số nó nhận được, mà ở
-        # đây con số đó là phần CÒN LẠI ("vượt quá 137 MB") — người đọc không
-        # hiểu 137 ở đâu ra.
-        try:
-            data = await read_limited(f, _MAX_UPLOAD - total_size)
-        except HTTPException as e:
-            # Chỉ 413 (vượt trần) mới đổi thông điệp — bắt rộng "mọi HTTPException"
-            # sẽ biến lỗi tương lai khác của read_limited() thành "vượt 500 MB" sai
-            # lệch chẩn đoán (review PR#54, khanhbq693).
-            if e.status_code != 413:
-                raise
-            raise HTTPException(
-                413, f'Tổng kích thước file vượt quá {_MAX_UPLOAD // (1024 * 1024)} MB.')
-        total_size += len(data)
-        # Tên file do client đặt — phải cắt hết thành phần đường dẫn trước khi
-        # ghép vào thư mục job, xem backend/core/uploads.py.
-        filename = safe_filename(f.filename, f'file_{len(saved)}.dat')
-        if filename in saved:
-            raise HTTPException(
-                400,
-                f"Có hai file cùng tên '{filename}' trong một lượt tải lên — "
-                "đổi tên hoặc bỏ bớt rồi thử lại.",
-            )
-        saved[filename] = data
+    # Một phiên tại một thời điểm. Hai pipeline pandas cùng ôm vài trăm MB là
+    # backend hết RAM và chết ngay giữa lúc đang nhận file của lượt thứ hai —
+    # người dùng chỉ thấy "[WinError 10054]", không thấy lỗi nào có nghĩa.
+    #
+    # Chặn ở ĐÂY chứ không chỉ ở frontend: frontend chỉ nhớ job của tab đang mở,
+    # F5 hoặc người khác chạy là nó không biết gì.
+    #
+    # Thứ tự quan trọng: đặt TRƯỚC vòng read_limited(). Tới được dòng này thì
+    # Starlette đã nhận xong thân request (spool ra đĩa khi quá 1 MB) nên client
+    # đọc được 409 đàng hoàng; read_limited() mới là chỗ kéo file lên RAM.
+    dang = ach_service.job_dang_chay()
+    if dang:
+        raise HTTPException(409, {
+            'message': (
+                f"Máy chủ đang bận với một phiên đối chiếu khác (job {dang['job_id']}, "
+                f"trạng thái '{dang['status']}'). Chờ phiên đó xong hoặc dừng nó rồi chạy lại."
+            ),
+            'job': dang,
+        })
+
+    # Ghi THẲNG từng khối xuống thư mục job, không gom vào RAM trước. Bản cũ
+    # giữ cả lượt (tới 500 MB) trong một dict bytes rồi mới đưa xuống đĩa: đỉnh
+    # bộ nhớ gấp đôi dung lượng thật, đúng lúc pipeline lượt trước có thể còn
+    # đang ôm DataFrame. Xem save_upload_to() trong backend/core/uploads.py.
+    #
+    # Job được đăng ký TRƯỚC khi đọc byte đầu tiên, nên trong suốt lúc upload
+    # (vài phút với file lớn) `job_dang_chay()` đã báo bận — cửa 409 ở trên
+    # trước đây bỏ trống đúng khoảng thời gian này.
+    job_id, input_dir = ach_service.tao_job()
+    try:
+        total_size = 0
+        da_luu: set[str] = set()
+        for f in files:
+            # Tên file do client đặt — phải cắt hết thành phần đường dẫn trước
+            # khi ghép vào thư mục job, xem backend/core/uploads.py.
+            filename = safe_filename(f.filename, f'file_{len(da_luu)}.dat')
+            if filename in da_luu:
+                raise HTTPException(
+                    400,
+                    f"Có hai file cùng tên '{filename}' trong một lượt tải lên — "
+                    "đổi tên hoặc bỏ bớt rồi thử lại.",
+                )
+            da_luu.add(filename)
+            # Trần cho TỪNG file = phần dung lượng còn lại của cả lượt: ghi theo
+            # khối và dừng đúng lúc. Thông điệp phải tự viết: save_upload_to()
+            # nêu con số nó nhận được, mà ở đây con số đó là phần CÒN LẠI
+            # ("vượt quá 137 MB") — người đọc không hiểu 137 ở đâu ra.
+            try:
+                total_size += await save_upload_to(
+                    f, input_dir / filename, _MAX_UPLOAD - total_size)
+            except HTTPException as e:
+                # Chỉ 413 (vượt trần) mới đổi thông điệp — bắt rộng "mọi HTTPException"
+                # sẽ biến lỗi tương lai khác của save_upload_to() thành "vượt 500 MB",
+                # sai lệch chẩn đoán (review PR#54, khanhbq693).
+                if e.status_code != 413:
+                    raise
+                raise HTTPException(
+                    413, f'Tổng kích thước file vượt quá {_MAX_UPLOAD // (1024 * 1024)} MB.')
+    except BaseException:
+        # Upload hỏng hoặc client cắt kết nối: trả lại chỗ ngay, không để một
+        # job 'pending' chết khoá tính năng tới khi hết CLEANUP_TTL.
+        ach_service.bo_job(job_id)
+        raise
 
     ngay = ngay_doi_chieu.strip() or None
-    job_id = ach_service.start_job(
-        saved, ngay, bo_qua_checkpoint=bo_qua_checkpoint, chi_tim_timeout=chi_tim_timeout,
-    )
+    ach_service.chay_job(job_id, ngay, bo_qua_checkpoint=bo_qua_checkpoint,
+                        chi_tim_timeout=chi_tim_timeout)
     return {'job_id': job_id}
 
 
 class ValidateRequest(BaseModel):
     filenames: list[str]
+
+
+@router.get('/dang-chay')
+def job_dang_chay(_=Depends(_XEM)):
+    """Máy chủ có đang bận phiên nào không — frontend hỏi TRƯỚC khi upload.
+
+    Không có nó thì cách duy nhất để biết là gửi hết vài trăm MB lên rồi ăn 409.
+    """
+    return {'job': ach_service.job_dang_chay()}
 
 
 @router.post('/validate')
@@ -111,7 +171,11 @@ def validate_files(
     _=Depends(_XEM),
 ):
     """Kiểm tra sớm theo tên file đã chọn (mode upload) — chưa cần upload nội dung."""
-    return validate_required_files(req.filenames)
+    res = validate_required_files(req.filenames)
+    # Kèm trần dung lượng để frontend chặn TRƯỚC khi gửi: gửi rồi mới bị chặn thì
+    # người dùng chỉ nhận được lỗi socket khó hiểu (xem chú thích ở _MAX_UPLOAD).
+    res['max_total_mb'] = _MAX_UPLOAD // _MB
+    return res
 
 
 @router.post('/continue/{job_id}')
@@ -155,6 +219,8 @@ def poll_job(
         'error':            job['error'],
         'xac_nhan_count':      job.get('xac_nhan_count'),
         'xac_nhan_tong_tien':  job.get('xac_nhan_tong_tien'),
+        # stage/progress do server tính (ach_service::_bump_stage) — frontend chỉ
+        # hiển thị, không tự đoán theo dòng log nữa. summary có từ cuối Phase 2.
         'stage':            job.get('stage', 0),
         'progress':         job.get('progress', 0.0),
         'summary':          job.get('summary'),

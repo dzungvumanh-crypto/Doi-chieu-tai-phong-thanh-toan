@@ -9,7 +9,7 @@ import threading
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import Response
 
-from backend.core.uploads import read_limited, safe_filename
+from backend.core.uploads import safe_filename, save_upload_to
 from backend.core.deps import require_feature
 from backend.services import doi_chieu_song_phuong_service as svc
 
@@ -34,15 +34,26 @@ async def process(
     _=Depends(require_feature("doi_chieu_song_phuong.process")),
 ):
     """Nhận ZIP, khởi chạy định tuyến trong background, trả task_token ngay."""
-    zip_bytes  = await read_limited(file, ten="File ZIP dữ liệu")
+    # Ghi THẲNG từng khối xuống thư mục của lượt, không gom vào RAM trước —
+    # `process_zip()` đằng nào cũng chỉ cần đường dẫn, và zipfile đọc từ đĩa
+    # được. Xem save_upload_to() trong backend/core/uploads.py.
     task_token = svc.init_progress()
+    thu_muc = svc.tao_thu_muc_upload(task_token)
+    ten = safe_filename(file.filename, "du_lieu.zip")
+    try:
+        await save_upload_to(file, thu_muc / ten, ten="File ZIP dữ liệu")
+    except BaseException:
+        # Upload hỏng hoặc client cắt kết nối: xoá thư mục và entry tiến độ ngay,
+        # đừng để lại một lượt "đang khởi tạo" không bao giờ chạy tới.
+        svc.bo_luot(task_token)
+        raise
     # Chạy trong luồng riêng, KHÔNG dùng BackgroundTasks: Starlette chạy hàm
     # đồng bộ của BackgroundTasks trong threadpool CHUNG 40 token của anyio và
     # giữ token đó suốt thời gian xử lý (phút, không phải giây). Vài lượt chạy
     # cùng lúc là bể cạn, mọi endpoint `def` khác của hệ thống phải xếp hàng
     # theo. Luồng riêng thì việc nặng chạy ngoài bể, đúng cách ACH đang làm
     # (backend/services/ach_service.py). Tiến độ vẫn theo dõi qua /progress.
-    threading.Thread(target=svc.run_process, args=(zip_bytes, task_token),
+    threading.Thread(target=svc.run_process, args=(thu_muc / ten, task_token),
                      daemon=True).start()
     return {"task_token": task_token}
 

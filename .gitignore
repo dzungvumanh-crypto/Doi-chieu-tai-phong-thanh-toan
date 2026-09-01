@@ -52,8 +52,18 @@ MCB.xlsx
 /MA CB.xlsx
 /HDSD*.docx
 
+# Ngan hang cau hoi that tai len de thu module On tap trac nghiem - khong day len repo.
+# Dung dai dien cho phan co dau tieng Viet, cung ly do da ghi o muc 'MA CB.xlsx' tren.
+/1. Ki*n th*c chung*.xlsx
+
 # Mat khau bo sao luu do start.bat sinh ra - TUYET DOI khong day len repo
 /Backup_password.txt
 
 # Du lieu nghiep vu that tai ve de doi chieu (Excel co ten nguoi that) - khong day len repo
 /lt/
+
+# Ban goc Quy dinh 979 (the thuc trinh bay van ban) dung lam nguon cho module
+# Chuan hoa van ban. Quy chuan da duoc ma hoa vao backend/services/vb_format/quy_chuan.py
+# nen khong can day 800 KB nhi phan len repo - va file nen thi git khong dien duoc
+# thay doi. Dung dai dien cho phan co dau tieng Viet (cung ly do da ghi o muc "MA CB.xlsx").
+/979-QyD-NHNo-PC*.7z

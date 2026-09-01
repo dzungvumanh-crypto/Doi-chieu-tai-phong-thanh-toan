@@ -15,6 +15,16 @@ load_dotenv(override=True)
 BACKEND_URL = os.getenv("BACKEND_URL", f"http://127.0.0.1:{os.getenv('BACKEND_PORT', '8000')}")
 
 
+class ApiFileError(Exception):
+    """Lỗi 400 có kèm danh sách tên file cụ thể gây lỗi (vd DtbbFileError.filenames) —
+    backend trả detail dạng dict {"message":..., "filenames":[...]} thay vì chuỗi
+    thường. FE dùng .filenames để tô đỏ đúng file trong danh sách đã chọn."""
+
+    def __init__(self, message: str, filenames: list | None = None):
+        super().__init__(message)
+        self.filenames = filenames or []
+
+
 class SessionExpiredError(Exception):
     """Raised khi backend trả 401 — session đã hết hạn hoặc đã logout."""
     pass
@@ -148,6 +158,10 @@ def _parse_error(e: "httpx.HTTPStatusError") -> str:
     except Exception:
         return str(e)
     detail = body.get("detail", "")
+    # detail kiểu dict là quy ước sẵn có cho lỗi cần kèm dữ liệu (xem
+    # post_upload_bytes): lấy 'message' ra, đừng in nguyên cái dict cho người dùng đọc.
+    if isinstance(detail, dict):
+        return str(detail.get("message") or detail)
     if isinstance(detail, list):
         parts = []
         for err in detail:
@@ -180,6 +194,15 @@ def _raise_http_error(e: httpx.HTTPStatusError):
             raise MustChangePasswordError(
                 "Bạn phải đổi mật khẩu trước khi sử dụng hệ thống"
             )
+    # detail dạng dict có "filenames" — lỗi có cấu trúc (vd DtbbFileError), không phải
+    # str/list detail thông thường. Chỉ endpoint nào chủ động trả dạng này mới vào
+    # nhánh này — không đổi hành vi của các endpoint khác (luôn trả str/list detail).
+    try:
+        raw_detail = e.response.json().get("detail", "")
+    except Exception:
+        raw_detail = None
+    if isinstance(raw_detail, dict) and "filenames" in raw_detail:
+        raise ApiFileError(raw_detail.get("message") or str(raw_detail), raw_detail.get("filenames"))
     raise Exception(_parse_error(e))
 
 
@@ -230,9 +253,13 @@ def put(path: str, data: dict = None) -> Any:
         raise Exception(str(e))
 
 
-def patch(path: str, data: dict = None) -> Any:
+def patch(path: str, data: dict = None, timeout: float = None) -> Any:
+    # timeout: cho lời gọi chạy trong nhịp đồng hồ (vd. lưu tiến độ bài trắc
+    # nghiệm mỗi mấy giây) — 10s mặc định của _client là quá dài ở đó, mạng
+    # chập chờn sẽ làm đồng hồ đứng hình chờ một lần lưu.
     try:
-        r = _client.patch(f"{BACKEND_URL}{path}", headers=_headers(), json=data)
+        kw = {} if timeout is None else {"timeout": timeout}
+        r = _client.patch(f"{BACKEND_URL}{path}", headers=_headers(), json=data, **kw)
         r.raise_for_status()
         try:
             return r.json()

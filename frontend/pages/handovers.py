@@ -117,6 +117,42 @@ async def handovers_page():
                     )
                     ui.label(label).classes("text-xs text-gray-600")
 
+        async def _hoi_ly_do_xoa(o_xoa: list, month: int, year: int) -> str:
+            """Hỏi lý do trước khi gỡ số liệu đã chốt. Trả "" nghĩa là người dùng huỷ."""
+            with ui.dialog() as dlg, ui.card().classes("w-[540px]"):
+                ui.label("Xoá ô chứng từ đã xác nhận").classes("text-lg font-bold text-red-700")
+                ui.label(
+                    f"{len(o_xoa)} ô sau sẽ bị xoá khỏi hệ thống cùng lịch sử của nó, không khôi phục được:"
+                ).classes("text-sm text-gray-700")
+                with ui.column().classes("w-full gap-0 max-h-40 overflow-auto bg-red-50 rounded p-2 my-1"):
+                    for c in o_xoa:
+                        ui.label(
+                            f"• {c['uname']} — ngày {c['day']:02d}/{month:02d}/{year} — {c['orig']} tờ"
+                        ).classes("text-sm text-red-900")
+                ly_do_inp = ui.textarea(
+                    label="Lý do xoá *",
+                    placeholder="Ví dụ: GDV nhập nhầm sang ngày 13, đã nhập lại đúng ngày 14",
+                ).props("outlined autogrow").classes("w-full")
+                ui.label(
+                    "Lý do được ghi vào Nhật ký thao tác kèm tên người xoá, tên GDV, ngày và số tờ."
+                ).classes("text-xs text-gray-500")
+
+                def _xac_nhan():
+                    if not (ly_do_inp.value or "").strip():
+                        ui.notify("Vui lòng nhập lý do xoá", type="warning")
+                        return
+                    dlg.submit(ly_do_inp.value.strip())
+
+                with ui.row().classes("w-full justify-end gap-2 mt-2"):
+                    ui.button("Huỷ", on_click=lambda: dlg.submit("")).props("flat").classes("text-gray-600")
+                    ui.button("Xác nhận xoá", on_click=_xac_nhan).classes("bg-red-600 text-white")
+            try:
+                # Bấm ra ngoài để đóng → NiceGUI trả None, coi như huỷ
+                return await dlg or ""
+            finally:
+                # Hộp thoại dựng mới mỗi lượt Lưu — không dọn thì chồng đống trên trang
+                dlg.delete()
+
         async def save_pending():
             save_btn.props("loading")
             year  = int(sel_year.value)
@@ -127,19 +163,37 @@ async def handovers_page():
                 document.querySelectorAll('.hv-inp').forEach(function(inp) {
                     var orig = parseInt(inp.dataset.orig || '0');
                     var curr = inp.value === '' ? 0 : (parseInt(inp.value) || 0);
-                    if (curr !== orig) r.push({uid: parseInt(inp.dataset.uid), day: parseInt(inp.dataset.day), count: curr});
+                    if (curr !== orig) r.push({uid: parseInt(inp.dataset.uid), day: parseInt(inp.dataset.day),
+                                               count: curr, status: inp.dataset.status || '',
+                                               uname: inp.dataset.uname || '', orig: orig});
                 });
                 return r;
             """)
             changes = changes or []
+
+            # Xoá trắng ô ĐÃ CHỐT = gỡ số liệu bàn giao đã xác nhận → hỏi lý do
+            # trước khi gửi. Backend cũng chặn nếu thiếu, đây chỉ là để người dùng
+            # không bấm Lưu rồi mới ăn lỗi.
+            xoa_chot = [c for c in changes
+                        if c["count"] == 0 and c["status"] in ("confirmed", "borrowed")]
+            xoa_keys = {(c["uid"], c["day"]) for c in xoa_chot}
+            ly_do = ""
+            if xoa_chot:
+                save_btn.props(remove="loading")
+                ly_do = await _hoi_ly_do_xoa(xoa_chot, month, year)
+                if not ly_do:
+                    ui.notify("Đã huỷ — chưa lưu thay đổi nào", type="info")
+                    return
+                save_btn.props("loading")
+
             errors = []
             for item in changes:
                 try:
                     date_str = f"{year}-{month:02d}-{item['day']:02d}"
-                    await asyncio.to_thread(
-                        api.put, "/api/handovers/entry-upsert",
-                        {"staff_id": item["uid"], "date": date_str, "sheet_count": item["count"]},
-                    )
+                    body = {"staff_id": item["uid"], "date": date_str, "sheet_count": item["count"]}
+                    if (item["uid"], item["day"]) in xoa_keys:
+                        body["reason"] = ly_do
+                    await asyncio.to_thread(api.put, "/api/handovers/entry-upsert", body)
                 except Exception as ex:
                     if _handle_api_error(ex):
                         save_btn.props(remove="loading")
@@ -538,7 +592,8 @@ async def handovers_page():
                         p.append(
                             f'<div style="{BB};flex:0 1 {CW}px;min-width:{MCW}px;background:{cbg};border-right:{bdr};">'
                             f'<input class="hv-inp" id="hv_{row_idx}_{d}" data-uid="{uid}" data-day="{d}"'
-                            f' data-orig="{val}" data-uname="{_html.escape(name, quote=True)}"{eid_attr}{_ro_attr}'
+                            f' data-orig="{val}" data-uname="{_html.escape(name, quote=True)}"'
+                            f' data-status="{status if val else ""}"{eid_attr}{_ro_attr}'
                             f' value="{val if val else ""}"'
                             f' style="width:100%;border:none;outline:none;background:transparent;{_cursor}'
                             f'font-size:14px;font-weight:600;color:#1e3a8a;text-align:center;'

@@ -4,6 +4,7 @@ from datetime import datetime
 from nicegui import ui, app
 import frontend.api_client as api
 import frontend.ui_kit as ui_kit
+import frontend.le_29 as le_29
 from starlette.requests import Request as _StarletteRequest
 
 _LOGIN_CSS = """
@@ -209,17 +210,21 @@ async def login_page(request: _StarletteRequest):
     ui_kit.install()          # trang này không có sidebar nên phải tự gọi
     ui.add_head_html(_LOGIN_CSS)
     ui.add_head_html(_split_gap_css())
+    le_29.css_login()         # dịp 2-9: đè nền + dải đỉnh + hoạ tiết sao, ngoài dịp không nạp gì
 
     # Hoạ tiết nền (phương án A) — nằm dưới nội dung, không nhận sự kiện chuột
     ui.element("div").classes("pc-topbar")
     with ui.element("div").classes("pc-bg"):
         ui.element("div").classes("pc-ring")
+        le_29.trang_tri_login()
 
     # bg-red-900 đặt trực tiếp trên container nội dung để đảm bảo hiển thị
     # ngay cả khi lớp bọc của NiceGUI/Quasar phủ nền riêng lên trên <body>.
-    with ui.column().classes("w-full min-h-screen items-center justify-center bg-red-900").style(
+    with ui.column().classes("w-full min-h-screen items-center justify-center bg-red-900 pc-main").style(
         "position: relative; z-index: 1; background: #6E0F14;"
     ):
+        le_29.dong_chuc_login()   # dịp 2-9 — nằm trên cùng, trên cả hàng card
+
         # Card giữ nguyên bề rộng ở giữa; hai cột link chiếm phần còn lại và tự
         # căn giữa khoảng trống của mình. Màn hẹp: card lên trước (order-1).
         with ui.row().classes(

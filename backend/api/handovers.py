@@ -14,7 +14,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from backend.core.concurrency import run_heavy
 from backend.core.deps import get_current_staff, require_feature
 from backend.core.enums import EntryStatus, StaffRole
-from backend.database import get_db, _vn_now
+from backend.database import get_db, write_audit, _vn_now
 from backend.schemas.handovers import (
     BorrowRequest, EntryHistoryItem, EntryHistoryOut,
     EntryUpsertRequest, GridEntryOut, GridResponse, HandbackRequest,
@@ -152,6 +152,23 @@ _ROLE_LABEL = {
     "pho_phong":     "Phó phòng",
     "chuyen_vien":   "Chuyên viên",
 }
+
+
+def _ghi_audit_xoa_o(db, current, entry_row, staff_row, dept_id, ly_do: str) -> None:
+    """Một dòng nhật ký tự nó kể đủ chuyện: ai, xoá của ai, ngày nào, bao nhiêu tờ, vì sao."""
+    dept = db.execute("SELECT name FROM departments WHERE id = ?", (dept_id,)).fetchone()
+    d = entry_row["transaction_date"] or ""
+    ngay = f"{d[8:10]}/{d[5:7]}/{d[0:4]}" if len(d) >= 10 else str(d)
+    ten = staff_row["full_name"] or staff_row["username"] or ("#%s" % staff_row["id"])
+    ma = " (%s)" % staff_row["ipcas_code"] if staff_row["ipcas_code"] else ""
+    phong = ", phòng %s" % dept["name"] if dept else ""
+    so_to = entry_row["sheet_count"]
+    trang_thai = _STATUS_LABEL.get(entry_row["entry_status"], entry_row["entry_status"])
+    detail = (
+        f"Xoá ô chứng từ — GDV {ten}{ma}, ngày {ngay}, {so_to} tờ{phong}, "
+        f"trạng thái trước khi xoá: {trang_thai}. Lý do: {ly_do}"
+    )
+    write_audit(db, current["id"], "handover_entry_delete", "document_entry", entry_row["id"], detail)
 
 
 # ─── Grid ─────────────────────────────────────────────────────────────────────
@@ -351,6 +368,16 @@ def upsert_entry(
         if entry_row:
             if not can_confirm and entry_row["entry_status"] not in (EntryStatus.PENDING, EntryStatus.REJECTED):
                 raise HTTPException(400, "Không thể xóa chứng từ đã được xác nhận. Vui lòng liên hệ HKV/KSV.")
+            # Xoá ô ĐÃ CHỐT là sửa số liệu bàn giao đã xác nhận → bắt lý do và ghi
+            # nhật ký ngữ nghĩa. Lịch sử riêng của ô bị xoá theo ngay dưới đây, nên
+            # không ghi ở chỗ này thì thao tác không để lại dấu vết ở bất kỳ đâu:
+            # middleware audit chỉ ghi được "PUT /entry-upsert — HTTP 200", không
+            # phân biệt nổi với một lần sửa số tờ bình thường.
+            if entry_row["entry_status"] in (EntryStatus.CONFIRMED, EntryStatus.BORROWED):
+                ly_do = (body.reason or "").strip()
+                if not ly_do:
+                    raise HTTPException(400, "Vui lòng nhập lý do xoá ô chứng từ đã xác nhận")
+                _ghi_audit_xoa_o(db, current, entry_row, staff_row, dept_id, ly_do)
             db.execute("DELETE FROM entry_change_logs WHERE entry_id = ?", (entry_row["id"],))
             db.execute("DELETE FROM document_entries WHERE id = ?", (entry_row["id"],))
 
