@@ -330,7 +330,10 @@ def process_files(
         "ko_rows":        len(df_ko),
         "can_cn_rows":    len(df_can_cn),
         "khac_rows":      len(df_khac),
-        "total_rows":     total_before,
+        # total_before chốt TRƯỚC khi ghép df_ton (dòng tồn tháng trước) — không
+        # cộng thêm thì bảng kết quả báo thiếu đúng bằng số dòng vừa ghép vào,
+        # trong khi 7 nhóm bên dưới đã tính cả chúng (review PR#43, khanhbq693).
+        "total_rows":     total_before + ton_rows_added,
         "filtered_rows":  filtered_rows,
         "n_files":        len(tep),
         "ton_rows_added": ton_rows_added,

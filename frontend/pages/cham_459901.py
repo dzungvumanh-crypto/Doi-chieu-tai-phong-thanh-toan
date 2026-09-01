@@ -7,9 +7,9 @@ import frontend.api_client as api
 from frontend.shared import (
     _sidebar, _content_area, _page_header, _require_auth, _handle_api_error,
 )
-from backend.services.cham459901_service import classify_upload_filename, DUOI_HOP_LE
 
 _POLL_INTERVAL = 1.0
+_MAX_POLL_FAILS = 4  # ~4s liên tiếp lỗi mới báo — tránh báo nhầm khi mạng chập chờn
 
 _KIND_LABELS = {
     "main":    ("GL02 (chính)",       "bg-red-100 text-red-700"),
@@ -20,14 +20,38 @@ _KIND_LABELS = {
 }
 
 
+# Bản sao CHỈ ĐỂ HIỂN THỊ nhãn loại file trước khi tải lên. Logic phân loại THẬT
+# nằm ở backend/services/cham459901_service.py — server tự phân loại lại từ đầu khi
+# nhận file, không tin nhãn phía client. Tách bản riêng ở đây (thay vì import thẳng
+# module backend) để không kéo pandas + pyzipper vào tiến trình frontend chỉ để dùng
+# vài dòng so khớp tên (review PR#43, khanhbq693) — frontend/ không import module
+# backend nào khác. tests/test_classify_filename_frontend_backend_sync.py canh không
+# cho hai bản trôi khỏi nhau.
+_DUOI_HOP_LE = ('.zip', '.xlsx', '.xlsm', '.xlsb', '.xls')
+
+
+def _classify_upload_filename(filename: str) -> str | None:
+    name = filename.lower()
+    if not name.endswith('.xlsx'):
+        return None
+    if '459' in name and 'ton' in name:
+        return 'ton'
+    if 'quay' in name or 'chuyen tien di' in name or 'chuyen_tien_di' in name:
+        return 'hub_di'
+    if ('giao dich den' in name or 'giao_dich_den' in name
+            or ('danh_sach' in name and 'den' in name)
+            or ('danh sach' in name and 'den' in name)):
+        return 'hub_den'
+    return None
+
+
 def _kind_for_display(fname: str) -> str | None:
-    """`classify_upload_filename()` chỉ nhận diện 3 loại phụ trợ (HUB đi/đến, tồn) —
-    file GL02 chính không có mẫu tên riêng, nhận theo ĐUÔI FILE giống backend
-    (`DUOI_HOP_LE`)."""
-    kind = classify_upload_filename(fname)
+    """`_classify_upload_filename()` chỉ nhận diện 3 loại phụ trợ (HUB đi/đến, tồn) —
+    file GL02 chính không có mẫu tên riêng, nhận theo ĐUÔI FILE giống backend."""
+    kind = _classify_upload_filename(fname)
     if kind is not None:
         return kind
-    return "main" if fname.lower().endswith(DUOI_HOP_LE) else None
+    return "main" if fname.lower().endswith(_DUOI_HOP_LE) else None
 
 
 @ui.page("/cham_459901")
@@ -174,23 +198,25 @@ async def cham_459901_page():
                 _render_file_list()
                 result_area.clear()
 
-            def on_cancel_click():
-                async def _do():
-                    if not state["task_token"]:
-                        # Chưa tải file lên xong (chưa có task_token) — ghi nhận yêu cầu,
-                        # do_process() sẽ tự dừng ngay khi nhận được task_token.
-                        state["cancel_requested"] = True
-                        progress_label.set_text("Đang tải file lên — sẽ dừng ngay khi xong...")
-                        return
-                    try:
-                        await asyncio.to_thread(
-                            api.post, f'/api/cham459901/cancel/{state["task_token"]}'
-                        )
-                        progress_label.set_text("Đang dừng — chờ tiến trình kết thúc...")
-                    except Exception as e:
-                        if not _handle_api_error(e):
-                            ui.notify(f"Lỗi khi dừng: {e}", type="negative")
-                asyncio.create_task(_do())
+            # Gắn THẲNG hàm async, không bọc asyncio.create_task — xem docs/DESIGN.md
+            # mục "Event handler async": task mới có ngăn xếp slot rỗng nên ui.notify /
+            # ui.navigate trong nhánh lỗi ném RuntimeError, rơi vào handler toàn cục và
+            # người dùng không thấy gì (review PR#43, khanhbq693).
+            async def on_cancel_click():
+                if not state["task_token"]:
+                    # Chưa tải file lên xong (chưa có task_token) — ghi nhận yêu cầu,
+                    # do_process() sẽ tự dừng ngay khi nhận được task_token.
+                    state["cancel_requested"] = True
+                    progress_label.set_text("Đang tải file lên — sẽ dừng ngay khi xong...")
+                    return
+                try:
+                    await asyncio.to_thread(
+                        api.post, f'/api/cham459901/cancel/{state["task_token"]}'
+                    )
+                    progress_label.set_text("Đang dừng — chờ tiến trình kết thúc...")
+                except Exception as e:
+                    if not _handle_api_error(e):
+                        ui.notify(f"Lỗi khi dừng: {e}", type="negative")
 
             cancel_btn.on("click", on_cancel_click)
 
@@ -210,7 +236,7 @@ async def cham_459901_page():
                     )
                     return
                 if has_files and not any(
-                    f.lower().endswith(DUOI_HOP_LE) for f in state["files"]
+                    f.lower().endswith(_DUOI_HOP_LE) for f in state["files"]
                 ):
                     ui.notify(
                         "Chưa có file GL02 (.zip hoặc Excel) trong danh sách đã chọn",
@@ -287,6 +313,7 @@ async def cham_459901_page():
                         pass
 
                 # ── Poll progress cho đến khi done ─────────────────────────────
+                poll_fails = 0
                 while True:
                     await asyncio.sleep(_POLL_INTERVAL)
 
@@ -294,8 +321,31 @@ async def cham_459901_page():
                         prog = await asyncio.to_thread(
                             api.get, f'/api/cham459901/progress/{state["task_token"]}'
                         )
-                    except Exception:
+                    except Exception as e:
+                        # `except Exception: continue` cũ nuốt cả SessionExpiredError và
+                        # quay vòng vô hạn khi backend khởi động lại: thanh tiến trình
+                        # chạy mãi, không lỗi, không kết quả (review PR#43, khanhbq693).
+                        if _handle_api_error(e):
+                            progress_bar.set_visibility(False)
+                            progress_label.set_visibility(False)
+                            cancel_btn.set_visibility(False)
+                            process_btn.props(remove="loading disable")
+                            return
+                        poll_fails += 1
+                        if poll_fails >= _MAX_POLL_FAILS:
+                            progress_bar.set_visibility(False)
+                            progress_label.set_visibility(False)
+                            cancel_btn.set_visibility(False)
+                            process_btn.props(remove="loading disable")
+                            ui.notify(
+                                "Mất kết nối tới máy chủ hoặc job đã hết hạn (có thể do "
+                                "backend khởi động lại) — không rõ đã xử lý xong hay chưa. "
+                                "Vui lòng kiểm tra lại và chạy lại nếu cần.",
+                                type="negative", timeout=0, close_button=True,
+                            )
+                            return
                         continue
+                    poll_fails = 0
 
                     pct = prog.get("pct", 0)
                     progress_bar.set_value(pct / 100)
@@ -367,7 +417,7 @@ async def cham_459901_page():
                             del_btn = ui.button(
                                 "Xóa kết quả", icon="delete_outline",
                             ).classes("bg-red-50 text-red-700 text-xs")
-                            del_btn.on("click", lambda: asyncio.create_task(delete_result()))
+                            del_btn.on("click", delete_result)
 
                         if not r.get("hub_provided"):
                             with ui.row().classes("items-center gap-2 mb-2"):

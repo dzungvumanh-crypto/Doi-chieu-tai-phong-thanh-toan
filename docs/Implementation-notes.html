@@ -12481,6 +12481,86 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
+  <div class="card">
+    <div class="card-head">
+      <span class="card-title">Merge PR#43 — develop đã vá 3/4 điểm bằng đường khác và chặt hơn; giữ lại 4 lỗi còn sót</span>
+      <span class="badge badge-done">Xong — 1.198 test pass</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-blue">Đối chiếu trước khi giải xung đột</span> Ai đã vá gì</div>
+      <p>PR#43 mở từ 18/08. Tới lúc merge (01/09), develop đã đi qua chính những chỗ đó bằng
+        đường khác — và <b>chặt hơn ở cả ba</b>:</p>
+
+      <table>
+        <tr><th>Điểm review</th><th>Bản PR#43</th><th>Bản develop</th><th>Chọn</th></tr>
+        <tr>
+          <td>Path traversal ở <code>/result/{token}</code>, <code>/download/{token}</code></td>
+          <td><code>resolve_result_dir()</code> — kiểm token là UUID + <code>is_relative_to()</code></td>
+          <td><code>safe_filename(token)</code> ngay tại API — cắt cả <code>/</code> lẫn <code>\</code>,
+              bỏ luồng NTFS <code>:ẩn</code>, bỏ tên thiết bị <code>NUL</code>/<code>COM1</code></td>
+          <td>develop</td>
+        </tr>
+        <tr>
+          <td><code>/process_folder</code> đọc thư mục tuỳ ý</td>
+          <td>Chưa làm (mục 4 để treo), vòng sau thêm <code>FOLDER_PICKER_ROOTS</code> <b>mặc định rỗng = không giới hạn</b></td>
+          <td><code>CHAM459901_FOLDER_ROOTS</code> <b>fail-closed</b> (chưa khai thì khoá hẳn),
+              <code>.resolve()</code>, kiểm phạm vi TRƯỚC kiểm tồn tại</td>
+          <td>develop</td>
+        </tr>
+        <tr>
+          <td>Nạp cả thư mục vào RAM</td>
+          <td>Chưa làm — vẫn <code>read_bytes()</code> mọi file</td>
+          <td><code>_quet_thu_muc()</code> lọc theo TÊN rồi truyền <code>Path</code>, không đọc byte</td>
+          <td>develop</td>
+        </tr>
+        <tr>
+          <td>Thiếu cột bắt buộc → 500</td>
+          <td><code>InputError</code> tường minh</td>
+          <td>Đã có, cùng cách</td>
+          <td>develop</td>
+        </tr>
+      </table>
+
+      <div class="label"><span class="pill pill-red">Bốn lỗi develop chưa có — mang sang</span></div>
+      <table>
+        <tr><th>Lỗi</th><th>Hậu quả nếu để nguyên</th></tr>
+        <tr><td><code>total_rows = total_before</code></td>
+            <td><code>total_before</code> chốt TRƯỚC khi ghép <code>df_ton</code>, nên bảng kết quả
+                báo thiếu đúng bằng số dòng tồn tháng trước, trong khi 7 nhóm bên dưới đã tính cả
+                chúng — cộng 7 nhóm lại không ra tổng</td></tr>
+        <tr><td>Vòng poll <code>except Exception: continue</code></td>
+            <td>Nuốt cả <code>SessionExpiredError</code> và quay vòng vô hạn khi backend khởi động
+                lại: thanh tiến trình chạy mãi, không lỗi, không kết quả</td></tr>
+        <tr><td><code>asyncio.create_task</code> trong event handler (2 chỗ)</td>
+            <td>Đúng cái bẫy <code>docs/DESIGN.md</code> cảnh báo — ngăn xếp slot rỗng, nhánh lỗi
+                gọi <code>ui.notify</code> là ném <code>RuntimeError</code> vào handler toàn cục,
+                người dùng không thấy gì</td></tr>
+        <tr><td>Frontend <code>import backend.services.cham459901_service</code></td>
+            <td>Kéo pandas + pyzipper vào tiến trình frontend chỉ để so khớp vài dòng tên file —
+                tiền lệ duy nhất trong <code>frontend/</code></td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> Không mang <code>fs.py</code> / <code>open_folder_picker</code> sang</div>
+      <p>PR#43 thêm hộp thoại duyệt cây thư mục (<code>GET /api/fs/browse</code>). develop đi hướng
+        ngược lại: <b>bỏ hẳn nút "Duyệt…"</b> vì hộp thoại đó cho mọi người đã đăng nhập liệt kê sạch
+        ổ đĩa máy chủ, và bản PR#43 mang sang vẫn <b>mặc định không giới hạn</b> khi
+        <code>FOLDER_PICKER_ROOTS</code> để trống — tức là trên máy chính chưa cấu hình thì lỗ hổng
+        còn nguyên, chỉ thêm một dòng WARNING. Người vận hành vẫn dán được đường dẫn như thường, và
+        <code>CHAM459901_FOLDER_ROOTS</code> chặn phạm vi ở tầng dưới.</p>
+      <p>Gỡ kèm <code>require_any_feature()</code> (chỉ <code>fs.py</code> dùng) và
+        <code>tests/test_fs_browse_api.py</code>. PR#68 sẽ mang lại bản đầy đủ khi rebase — lúc đó
+        phải sửa mặc định thành fail-closed giống <code>cham459901_folder_roots()</code>.</p>
+
+      <div class="note"><b>Bản sao luật phân loại phải có test canh:</b> tách
+        <code>_classify_upload_filename()</code> sang frontend là cố ý tạo hai bản của cùng một luật.
+        <code>tests/test_classify_filename_frontend_backend_sync.py</code> chạy cả hai qua 14 tên file
+        mẫu và so kết quả — sửa một bên quên bên kia là test đỏ, thay vì nhãn hiển thị lệch âm thầm
+        với phân loại thật của server.</div>
+
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-01</footer>
 </div>
 </body>
