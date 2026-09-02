@@ -20,12 +20,22 @@ import pandas as pd
 import pytest
 import pyzipper
 
+import backend.api.doi_chieu_song_phuong_kenh_core as kenh_core_api
+from backend.core.uploads import MAX_REQUEST_BYTES
 from backend.services import doi_chieu_song_phuong_kenh_core_service as svc
 from backend.services import doi_chieu_song_phuong_service as ipcas_svc
 from backend.services.doi_chieu_song_phuong_core import pipeline as core_pipeline_mod
 from backend.services.doi_chieu_song_phuong_kenh import pipeline as kenh_pipeline_mod
 
 _MK = "matkhau-test-kenh-core-api"
+
+
+def test_tran_upload_nho_hon_tran_than_request():
+    """Nếu trần upload >= trần thân request (MAX_REQUEST_BYTES, mặc định 600MB) thì
+    BodySizeLimitMiddleware chặn TRƯỚC — client chỉ thấy socket đứt kiểu "[WinError 10054]",
+    không đọc được thông báo 413 rõ ràng của route (cùng bài học đã dính ở ACH, xem
+    tests/test_ach_tran_upload.py)."""
+    assert kenh_core_api._MAX_UPLOAD < MAX_REQUEST_BYTES
 
 
 @pytest.fixture(autouse=True)
@@ -69,10 +79,6 @@ def _kenh_row(mtid, so_tien="100000"):
             "MtId/MsgId": mtid, "Số tiền": so_tien}
 
 
-def _write_kenh_xlsx(path, rows: list[dict]):
-    pd.DataFrame(rows, columns=_KENH_COLS).to_excel(path, index=False, engine="openpyxl")
-
-
 def _make_gl02_zip(rows: list[dict]) -> bytes:
     """GL02 thật mã hoá AES (đúng mật khẩu `DOI_CHIEU_ZIP_PASSWORD` — xem fixture `_mat_khau_zip`)."""
     df = pd.DataFrame(rows, columns=_GL02_COLS)
@@ -89,20 +95,29 @@ def _gl02_row(customer="1000-003046328", dramount="500000"):
             "REFERENCE": "1000API001002080", "REMARK": "TEST"}
 
 
-def _setup_hub_kenh(day_dir, ngay="20260825"):
-    hub202 = _make_hub_zip([_hub_row(_MSG_202RT, "TXID202RT")])
-    (day_dir / f"doichieugd_{ngay}__05_DEN_9999_N.zip").write_bytes(hub202)
-    _write_kenh_xlsx(day_dir / "kênh đến SPRT 202.xlsx", [_kenh_row(_MSG_202RT, "100000")])
+# ─── Helper dựng danh sách file cho /start_upload (2026-09-02, bỏ chế độ thư mục máy chủ) ──────
+# Cùng nội dung với _setup_hub_kenh/_setup_gl02/_setup_core_csv ở trên nhưng trả thẳng tuple
+# multipart thay vì ghi ra đĩa — /start_upload là đường DUY NHẤT còn lại để chạy job qua API.
+
+def _hub_kenh_upload_files(ngay="20260825") -> list[tuple]:
+    hub_bytes = _make_hub_zip([_hub_row(_MSG_202RT, "TXID202RT")])
+    kenh_buf = io.BytesIO()
+    pd.DataFrame([_kenh_row(_MSG_202RT, "100000")], columns=_KENH_COLS).to_excel(
+        kenh_buf, index=False, engine="openpyxl"
+    )
+    return [
+        ("files", (f"doichieugd_{ngay}__05_DEN_9999_N.zip", hub_bytes, "application/zip")),
+        ("files", ("kênh đến SPRT 202.xlsx", kenh_buf.getvalue(), _XLSX_MIME)),
+    ]
 
 
-def _setup_gl02(day_dir, ngay="20260825"):
-    (day_dir / f"GL02_{ngay}_1000.zip").write_bytes(_make_gl02_zip([_gl02_row()]))
+def _gl02_upload_file(ngay="20260825") -> tuple:
+    return ("files", (f"GL02_{ngay}_1000.zip", _make_gl02_zip([_gl02_row()]), "application/zip"))
 
 
-def _setup_core_csv(day_dir):
-    """`{ma_nh}_DEN.csv` đã phân loại sẵn — đúng định dạng thẻ Phân loại dữ liệu xuất ra."""
+def _core_csv_upload_file() -> tuple:
     df = pd.DataFrame([_gl02_row()], columns=_GL02_COLS)
-    df.to_csv(day_dir / "202_DEN.csv", index=False, encoding="utf-8-sig")
+    return ("files", ("202_DEN.csv", df.to_csv(index=False).encode("utf-8-sig"), "text/csv"))
 
 
 def _doc_csv(content: bytes) -> list[tuple]:
@@ -134,17 +149,19 @@ def _wait_done(admin_client, job_id, timeout_s=15):
 
 
 class TestStartFolderEndpoint:
+    """2026-09-02: chế độ "chọn thư mục máy chủ" đã bỏ hẳn (review khanhbq693 PR#70 mục A) —
+    các test dưới đây trước dùng `/start_folder` chỉ như đường tắt dựng fixture qua `tmp_path`,
+    thật ra đang kiểm THUẬT TOÁN điều phối Kênh↔Hub/Hub↔Core (không phải chính chế độ thư mục),
+    nên chuyển sang `/start_upload` — không mất độ phủ test nào."""
+
     def test_full_flow_ca_2_buoc_ra_ket_qua(self, admin_client, monkeypatch, tmp_path):
         monkeypatch.setattr(svc, "TEMP_DIR", tmp_path / "_out")
         monkeypatch.setattr(ipcas_svc, "TEMP_DIR", tmp_path / "_out_ipcas")
-        day_dir = tmp_path / "25.8"
-        day_dir.mkdir()
-        _setup_hub_kenh(day_dir)
-        _setup_gl02(day_dir)
 
         r = admin_client.post(
-            "/api/doi_chieu_song_phuong_kenh_core/start_folder",
-            json={"folder_path": str(tmp_path), "ngay": "20260825", "ma_nh": "202"},
+            "/api/doi_chieu_song_phuong_kenh_core/start_upload",
+            files=[*_hub_kenh_upload_files(), _gl02_upload_file()],
+            data={"ngay": "20260825", "ma_nh": "202"},
         )
         assert r.status_code == 200
         job_id = r.json()["job_id"]
@@ -228,10 +245,6 @@ class TestStartFolderEndpoint:
         1 lần gọi `load_hub_zip()` cho cả job (không phải 2)."""
         monkeypatch.setattr(svc, "TEMP_DIR", tmp_path / "_out")
         monkeypatch.setattr(ipcas_svc, "TEMP_DIR", tmp_path / "_out_ipcas")
-        day_dir = tmp_path / "25.8"
-        day_dir.mkdir()
-        _setup_hub_kenh(day_dir)
-        _setup_gl02(day_dir)
 
         calls = []
         real_load_hub_zip = kenh_pipeline_mod.load_hub_zip
@@ -244,8 +257,9 @@ class TestStartFolderEndpoint:
         monkeypatch.setattr(core_pipeline_mod, "load_hub_zip", dem_va_goi)
 
         r = admin_client.post(
-            "/api/doi_chieu_song_phuong_kenh_core/start_folder",
-            json={"folder_path": str(tmp_path), "ngay": "20260825", "ma_nh": "202"},
+            "/api/doi_chieu_song_phuong_kenh_core/start_upload",
+            files=[*_hub_kenh_upload_files(), _gl02_upload_file()],
+            data={"ngay": "20260825", "ma_nh": "202"},
         )
         job_id = r.json()["job_id"]
         prog = _wait_done(admin_client, job_id)
@@ -259,14 +273,12 @@ class TestStartFolderEndpoint:
         đúng triết lý 'lỗi 1 bước không chặn bước kia'."""
         monkeypatch.setattr(svc, "TEMP_DIR", tmp_path / "_out")
         monkeypatch.setattr(ipcas_svc, "TEMP_DIR", tmp_path / "_out_ipcas")
-        day_dir = tmp_path / "25.8"
-        day_dir.mkdir()
-        _setup_hub_kenh(day_dir)
-        # KHÔNG gọi _setup_gl02 — thiếu hẳn dữ liệu CORE
+        # KHÔNG gửi file GL02/CSV — thiếu hẳn dữ liệu CORE
 
         r = admin_client.post(
-            "/api/doi_chieu_song_phuong_kenh_core/start_folder",
-            json={"folder_path": str(tmp_path), "ngay": "20260825", "ma_nh": "202"},
+            "/api/doi_chieu_song_phuong_kenh_core/start_upload",
+            files=_hub_kenh_upload_files(),
+            data={"ngay": "20260825", "ma_nh": "202"},
         )
         job_id = r.json()["job_id"]
         prog = _wait_done(admin_client, job_id)
@@ -293,17 +305,16 @@ class TestStartFolderEndpoint:
         đoán "mới nhất" như trước, phải báo rõ "chưa đối chiếu" thay vì âm thầm chọn nhầm file."""
         monkeypatch.setattr(svc, "TEMP_DIR", tmp_path / "_out")
         monkeypatch.setattr(ipcas_svc, "TEMP_DIR", tmp_path / "_out_ipcas")
-        day_dir = tmp_path / "25.8"
-        day_dir.mkdir()
-        _setup_hub_kenh(day_dir)
-        (day_dir / "doichieugd_20260825__05_DEN_9999_N_v2.zip").write_bytes(
-            _make_hub_zip([_hub_row(_MSG_202RT, "TXID202RT")])
-        )
-        _setup_gl02(day_dir)
 
         r = admin_client.post(
-            "/api/doi_chieu_song_phuong_kenh_core/start_folder",
-            json={"folder_path": str(tmp_path), "ngay": "20260825", "ma_nh": "202"},
+            "/api/doi_chieu_song_phuong_kenh_core/start_upload",
+            files=[
+                *_hub_kenh_upload_files(),
+                ("files", ("doichieugd_20260825__05_DEN_9999_N_v2.zip",
+                           _make_hub_zip([_hub_row(_MSG_202RT, "TXID202RT")]), "application/zip")),
+                _gl02_upload_file(),
+            ],
+            data={"ngay": "20260825", "ma_nh": "202"},
         )
         job_id = r.json()["job_id"]
         prog = _wait_done(admin_client, job_id)
@@ -316,12 +327,12 @@ class TestStartFolderEndpoint:
     def test_ca_2_buoc_deu_thieu_du_lieu_bao_job_loi(self, admin_client, monkeypatch, tmp_path):
         monkeypatch.setattr(svc, "TEMP_DIR", tmp_path / "_out")
         monkeypatch.setattr(ipcas_svc, "TEMP_DIR", tmp_path / "_out_ipcas")
-        empty_dir = tmp_path / "rong"
-        empty_dir.mkdir()
 
         r = admin_client.post(
-            "/api/doi_chieu_song_phuong_kenh_core/start_folder",
-            json={"folder_path": str(empty_dir), "ngay": "20260825", "ma_nh": "202"},
+            "/api/doi_chieu_song_phuong_kenh_core/start_upload",
+            # File không khớp bất kỳ pattern HUB/kênh/CORE nào — mô phỏng "thiếu hẳn dữ liệu"
+            files=[("files", ("khong_lien_quan.txt", b"khong phai du lieu", "text/plain"))],
+            data={"ngay": "20260825", "ma_nh": "202"},
         )
         job_id = r.json()["job_id"]
         prog = _wait_done(admin_client, job_id)
@@ -332,45 +343,21 @@ class TestStartFolderEndpoint:
         `process_zip()` (giải mã AES) dù file GL02 zip cũng tồn tại cùng thư mục."""
         monkeypatch.setattr(svc, "TEMP_DIR", tmp_path / "_out")
         monkeypatch.setattr(ipcas_svc, "TEMP_DIR", tmp_path / "_out_ipcas")
-        day_dir = tmp_path / "25.8"
-        day_dir.mkdir()
-        _setup_hub_kenh(day_dir)
-        _setup_gl02(day_dir)       # cả 2 cùng tồn tại
-        _setup_core_csv(day_dir)   # CSV phải được ưu tiên
 
         def _raise_neu_goi(*a, **kw):
             raise AssertionError("process_zip() KHÔNG được gọi khi đã có CSV phân loại sẵn")
         monkeypatch.setattr(ipcas_svc, "process_zip", _raise_neu_goi)
 
         r = admin_client.post(
-            "/api/doi_chieu_song_phuong_kenh_core/start_folder",
-            json={"folder_path": str(tmp_path), "ngay": "20260825", "ma_nh": "202"},
+            "/api/doi_chieu_song_phuong_kenh_core/start_upload",
+            # GL02 + CSV cùng gửi lên — CSV phải được ưu tiên, process_zip() không được gọi
+            files=[*_hub_kenh_upload_files(), _gl02_upload_file(), _core_csv_upload_file()],
+            data={"ngay": "20260825", "ma_nh": "202"},
         )
         job_id = r.json()["job_id"]
         prog = _wait_done(admin_client, job_id)
         assert prog["status"] == "done", prog
         assert prog["ket_qua"]["hub_core"] is not None
-
-    def test_nonexistent_folder_returns_400(self, admin_client, tmp_path):
-        r = admin_client.post(
-            "/api/doi_chieu_song_phuong_kenh_core/start_folder",
-            json={"folder_path": str(tmp_path / "khong-ton-tai"), "ngay": "20260825", "ma_nh": "202"},
-        )
-        assert r.status_code == 400
-
-    def test_ngay_sai_dinh_dang_tra_400(self, admin_client, tmp_path):
-        r = admin_client.post(
-            "/api/doi_chieu_song_phuong_kenh_core/start_folder",
-            json={"folder_path": str(tmp_path), "ngay": "25-08-2026", "ma_nh": "202"},
-        )
-        assert r.status_code == 400
-
-    def test_ma_nh_khong_hop_le_tra_400(self, admin_client, tmp_path):
-        r = admin_client.post(
-            "/api/doi_chieu_song_phuong_kenh_core/start_folder",
-            json={"folder_path": str(tmp_path), "ngay": "20260825", "ma_nh": "999"},
-        )
-        assert r.status_code == 400
 
 
 class TestStartUploadEndpoint:
@@ -422,6 +409,33 @@ class TestStartUploadEndpoint:
         )
         assert r.status_code == 400
 
+    def test_ngay_sai_dinh_dang_tra_400(self, admin_client, monkeypatch, tmp_path):
+        monkeypatch.setattr(svc, "TEMP_DIR", tmp_path / "_out")
+        r = admin_client.post(
+            "/api/doi_chieu_song_phuong_kenh_core/start_upload",
+            files=[("files", ("a.zip", b"x", "application/zip"))],
+            data={"ngay": "25-08-2026", "ma_nh": "202"},
+        )
+        assert r.status_code == 400
+
+    def test_hai_file_cung_ten_bi_tu_choi_400(self, admin_client, monkeypatch, tmp_path):
+        """2 file cùng tên trong 1 lượt upload phải bị chặn ngay — file sau sẽ ghi đè file
+        trước trong input_dir mà không ai hay biết nếu không chặn."""
+        monkeypatch.setattr(svc, "TEMP_DIR", tmp_path / "_out")
+        r = admin_client.post(
+            "/api/doi_chieu_song_phuong_kenh_core/start_upload",
+            files=[
+                ("files", ("a.zip", b"noi dung 1", "application/zip")),
+                ("files", ("a.zip", b"noi dung 2", "application/zip")),
+            ],
+            data={"ngay": "20260825", "ma_nh": "202"},
+        )
+        assert r.status_code == 400
+        assert "cùng tên" in r.json()["detail"]
+        # bo_job() phải dọn sạch — không để lại thư mục job "pending" mồ côi.
+        out_dir = tmp_path / "_out"
+        assert not out_dir.exists() or not list(out_dir.iterdir())
+
     def test_ten_file_co_duong_dan_bi_cat_ve_ten_thuan(self, admin_client, monkeypatch, tmp_path):
         """Tên file client gửi lên chứa `/`/`..` không được dùng thẳng để ghép đường dẫn ghi
         đĩa — chỉ giữ phần tên file (đúng lớp bảo vệ đã áp dụng ở `get_output_file`)."""
@@ -444,36 +458,26 @@ class TestStartUploadEndpoint:
 
 
 class TestCheckReadinessEndpoint:
-    """Phần 2 (2026-08-30): banner cảnh báo TRƯỚC khi bấm "Chạy" — dò TÊN file, không đọc byte,
-    không chặn nút Chạy."""
+    """Phần 2 (2026-08-30): banner cảnh báo TRƯỚC khi bấm "Chạy" — dò TÊN file (chỉ còn nhận
+    `file_names`, không cần upload nội dung thật), không chặn nút Chạy.
 
-    def test_folder_mode_du_ca_hai(self, admin_client, tmp_path):
-        day_dir = tmp_path / "25.8"
-        day_dir.mkdir()
-        _setup_hub_kenh(day_dir)
-        _setup_gl02(day_dir)
+    2026-09-02: bỏ hẳn `folder_path` (review khanhbq693 PR#70 mục A) — 2 test trước đây dựng
+    fixture qua `tmp_path` rồi gọi `folder_path` đã chuyển sang liệt kê thẳng tên file."""
 
+    def test_du_ca_hai(self, admin_client):
         r = admin_client.post(
             "/api/doi_chieu_song_phuong_kenh_core/check_readiness",
-            json={"folder_path": str(tmp_path), "ngay": "20260825", "ma_nh": "202"},
+            json={
+                "file_names": [
+                    "doichieugd_20260825__05_DEN_9999_N.zip",
+                    "kênh đến SPRT 202.xlsx",
+                    "GL02_20260825_1000.zip",
+                ],
+                "ngay": "20260825", "ma_nh": "202",
+            },
         )
         assert r.status_code == 200, r.text
         assert r.json() == {"kenh_hub": "du", "hub_core": "du"}
-
-    def test_folder_mode_thieu_gl02_va_csv(self, admin_client, tmp_path):
-        day_dir = tmp_path / "25.8"
-        day_dir.mkdir()
-        _setup_hub_kenh(day_dir)
-        # Không setup GL02/CSV -> Hub↔Core thiếu
-
-        r = admin_client.post(
-            "/api/doi_chieu_song_phuong_kenh_core/check_readiness",
-            json={"folder_path": str(tmp_path), "ngay": "20260825", "ma_nh": "202"},
-        )
-        assert r.status_code == 200
-        body = r.json()
-        assert body["kenh_hub"] == "du"
-        assert body["hub_core"].startswith("thieu:")
 
     def test_file_names_mode_khong_can_upload_that(self, admin_client):
         r = admin_client.post(
@@ -491,10 +495,10 @@ class TestCheckReadinessEndpoint:
         assert body["kenh_hub"] == "du"
         assert body["hub_core"].startswith("thieu:")
 
-    def test_thieu_ca_folder_path_va_file_names_tra_400(self, admin_client):
+    def test_thieu_file_names_tra_400(self, admin_client):
         r = admin_client.post(
             "/api/doi_chieu_song_phuong_kenh_core/check_readiness",
-            json={"ngay": "20260825", "ma_nh": "202"},
+            json={"file_names": [], "ngay": "20260825", "ma_nh": "202"},
         )
         assert r.status_code == 400
 
@@ -502,13 +506,6 @@ class TestCheckReadinessEndpoint:
         r = admin_client.post(
             "/api/doi_chieu_song_phuong_kenh_core/check_readiness",
             json={"file_names": [], "ngay": "25-08-2026", "ma_nh": "202"},
-        )
-        assert r.status_code == 400
-
-    def test_thu_muc_khong_ton_tai_tra_400(self, admin_client, tmp_path):
-        r = admin_client.post(
-            "/api/doi_chieu_song_phuong_kenh_core/check_readiness",
-            json={"folder_path": str(tmp_path / "khong-ton-tai"), "ngay": "20260825", "ma_nh": "202"},
         )
         assert r.status_code == 400
 
@@ -529,4 +526,15 @@ class TestDownloadEndpoint:
     def test_unknown_job_returns_404(self, admin_client, monkeypatch, tmp_path):
         monkeypatch.setattr(svc, "TEMP_DIR", tmp_path)
         r = admin_client.get("/api/doi_chieu_song_phuong_kenh_core/download/khong-ton-tai/x.xlsx")
+        assert r.status_code == 404
+
+    def test_ten_trung_thu_muc_upload_tra_404_khong_phai_500(self, admin_client, monkeypatch, tmp_path):
+        """`input_dir` của tao_job() nằm NGAY TRONG output_dir (`{output_dir}/_upload/`) — GET
+        .../download/{job_id}/_upload từng lọt qua exists() rồi vỡ ở read_bytes()
+        (IsADirectoryError) thay vì 404 rõ ràng. get_output_file() phải dùng is_file()."""
+        monkeypatch.setattr(svc, "TEMP_DIR", tmp_path / "_out")
+        job_id, input_dir = svc.tao_job("20260825", "202")
+        assert input_dir.is_dir()
+
+        r = admin_client.get(f"/api/doi_chieu_song_phuong_kenh_core/download/{job_id}/_upload")
         assert r.status_code == 404

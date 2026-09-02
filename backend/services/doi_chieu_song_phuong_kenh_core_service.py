@@ -84,43 +84,41 @@ def cancel_job(job_id: str) -> bool:
     return False
 
 
-def start(goc_dir: str, ngay: str, ma_nh: str) -> str:
-    """Chạy "Đối chiếu đến" (Kênh↔Hub + Hub↔Core) cho 1 ngân hàng `ma_nh`, ngày `ngay`
-    (YYYYMMDD), từ 1 thư mục gốc `goc_dir` (chứa thư mục con theo ngày). Trả job_id."""
+def tao_job(ngay: str, ma_nh: str) -> tuple[str, Path]:
+    """Đăng ký job mới cho "Đối chiếu đến" và trả về (job_id, input_dir).
+
+    Tách khỏi `chay_job()` để lớp API ghi THẲNG từng khối file tải lên vào `input_dir`
+    (`save_upload_to()`, backend/core/uploads.py), thay vì gom trọn vào RAM rồi mới đưa xuống đây
+    (2026-09-02, review khanhbq693 PR#70 mục A/B — bỏ hẳn chế độ "chọn thư mục máy chủ", chỉ còn
+    tải file lên; cùng khuôn mẫu `ach_service.py::tao_job()`).
+
+    Upload hỏng giữa chừng thì lớp API phải gọi `bo_job()` để trả lại chỗ."""
     if ma_nh not in CAC_NGAN_HANG:
         raise ValueError(f"Mã ngân hàng không hợp lệ: {ma_nh}")
     job_id, job = _new_job(ngay, ma_nh)
-    Path(job["output_dir"]).mkdir(parents=True, exist_ok=True)
+    input_dir = Path(job["output_dir"]) / "_upload"
+    input_dir.mkdir(parents=True, exist_ok=True)
+    job["input_dir"] = str(input_dir)
+    return job_id, input_dir
 
+
+def bo_job(job_id: str) -> None:
+    """Huỷ một job chưa chạy (upload lỗi/đứt) — xoá khỏi store và xoá thư mục."""
+    with _lock:
+        _jobs.pop(job_id, None)
+    shutil.rmtree(TEMP_DIR / job_id, ignore_errors=True)
+
+
+def chay_job(job_id: str) -> None:
+    """Khởi chạy "Đối chiếu đến" cho job đã nhận đủ file (xem `tao_job()`)."""
+    job = get_job(job_id)
+    if job is None:
+        raise LookupError("Job không tồn tại.")
     threading.Thread(
-        target=_run, args=(job_id, goc_dir, ngay, ma_nh, job["output_dir"]), daemon=True,
+        target=_run,
+        args=(job_id, job["input_dir"], job["ngay"], job["ma_nh"], job["output_dir"]),
+        daemon=True,
     ).start()
-    return job_id
-
-
-def start_upload(files: list[tuple[str, bytes]], ngay: str, ma_nh: str) -> str:
-    """Lưu file tải lên qua trình duyệt (giữ nguyên tên gốc) vào 1 thư mục tạm phẳng, rồi chạy
-    y hệt chế độ thư mục server — tái dùng toàn bộ logic dò file hiện có (`common.tim_file()`
-    luôn thử đúng thư mục GỐC nếu không thấy thư mục con theo ngày, nên 1 thư mục phẳng chứa đủ
-    file cần thiết vẫn hoạt động đúng, không cần sửa gì ở tầng pipeline).
-
-    Quyết định 2026-08-28 (đợt 3): thêm chế độ này vì chọn thư mục server qua dialog duyệt
-    thư mục "rất khó khăn" — cho phép tải thẳng nhiều file (HUB zip, kênh xlsx, GL02 zip/CSV,
-    OSB xlsx) qua trình duyệt, giống chế độ đã có ở ACH và Phân loại dữ liệu."""
-    if ma_nh not in CAC_NGAN_HANG:
-        raise ValueError(f"Mã ngân hàng không hợp lệ: {ma_nh}")
-    if not files:
-        raise ValueError("Chưa chọn file nào.")
-    job_id, job = _new_job(ngay, ma_nh)
-    upload_dir = Path(job["output_dir"]) / "_upload"
-    upload_dir.mkdir(parents=True, exist_ok=True)
-    for name, data in files:
-        (upload_dir / os.path.basename(name)).write_bytes(data)
-
-    threading.Thread(
-        target=_run, args=(job_id, str(upload_dir), ngay, ma_nh, job["output_dir"]), daemon=True,
-    ).start()
-    return job_id
 
 
 _NHAN_TRANG_THAI = {"da_doi_chieu": "Đã đối chiếu", "chua_doi_chieu": "CHƯA ĐỐI CHIẾU"}
@@ -321,7 +319,10 @@ def get_output_file(job_id: str, filename: str) -> Path | None:
         return None
     safe_name = os.path.basename(filename)
     path = Path(job["output_dir"]) / safe_name
-    return path if path.exists() else None
+    # `is_file()` chứ không phải `exists()` — `input_dir` của tao_job() nằm NGAY TRONG
+    # output_dir (`{output_dir}/_upload/`), nên GET .../download/{job_id}/_upload từng lọt qua
+    # exists() rồi vỡ ở read_bytes() (IsADirectoryError -> 500) thay vì 404 rõ ràng.
+    return path if path.is_file() else None
 
 
 def _cleanup_old_jobs() -> None:

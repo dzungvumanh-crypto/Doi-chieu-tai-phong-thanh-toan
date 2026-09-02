@@ -4,6 +4,19 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 02/09/2026 Đối chiếu Song phương + Chấm ILO1000 - **Bỏ nút "Chọn thư mục server", chỉ còn "Tải file lên"**
+    + Trước đây 2 màn hình này có 2 cách nạp dữ liệu: tải file lên qua trình duyệt, hoặc gõ đường
+      dẫn một thư mục trên máy chủ rồi bấm **"Duyệt..."** để chọn. Nay bỏ hẳn cách thứ hai —
+      **chỉ còn tải file lên**
+    + Lý do: hộp thoại "Duyệt..." cho xem cả cây thư mục của máy chủ, và rà lại lần này phát hiện
+      vẫn còn vài chỗ chưa được chặn đúng phạm vi cho phép. Bỏ hẳn đường này để chắc chắn **không
+      ai còn xem/dò được thư mục máy chủ qua nút Duyệt** nữa, thay vì vá từng chỗ dễ bị sót thêm
+      về sau
+    + Cách nạp file lên không đổi: vẫn chọn file như trước (giữ Ctrl hoặc Shift để chọn nhiều file
+      một lúc), phần mềm tự lưu và chạy y như cũ
+    + ✅ **Không phải làm gì sau khi cập nhật** — không đổi dữ liệu đã có, không đổi quyền của ai,
+      không cần thao tác gì thêm
+
 - 01/09/2026 Chấm 459901 - **Sửa 3 lỗi: đếm thiếu dòng, thanh tiến trình chạy mãi, nút Dừng im lặng**
     + **Ô "Tổng số dòng" đếm thiếu đúng bằng số dòng của file tồn tháng trước.** Cộng 7 nhóm
       kết quả lại thì ra một con số, mà ô tổng ở trên lại ghi con số nhỏ hơn — ai đối chiếu hai

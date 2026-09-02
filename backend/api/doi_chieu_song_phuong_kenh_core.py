@@ -4,7 +4,6 @@ Thay hẳn 2 router cũ `doi_chieu_song_phuong_kenh.py`/`_core.py` (đã xoá) �
 `doi_chieu_song_phuong_kenh_core_service.py` cho lý do hợp nhất.
 """
 
-from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
@@ -12,12 +11,19 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from backend.core.deps import require_feature
+from backend.core.uploads import MAX_REQUEST_BYTES, safe_filename, save_upload_to, so_mb
 from backend.services import doi_chieu_song_phuong_common as common
 from backend.services import doi_chieu_song_phuong_kenh_core_service as svc
 
 router = APIRouter(prefix="/api/doi_chieu_song_phuong_kenh_core", tags=["doi_chieu_song_phuong_kenh_core"])
 
-_MAX_UPLOAD = 800 * 1024 * 1024  # 800 MB tổng — GL02 zip thật ~150-160MB, nhiều file/lượt
+_MB = 1024 * 1024
+
+# Trần TỔNG dung lượng một lượt upload — GL02 zip thật ~150-160MB, nhiều file/lượt. Chỉnh bằng
+# SONG_PHUONG_MAX_UPLOAD_MB trong .env. Luôn kẹp nhỏ hơn MAX_REQUEST_BYTES (xem
+# backend/api/ach.py::_MAX_UPLOAD) — hằng số 800MB cũ ở đây không bao giờ đạt tới được vì
+# BodySizeLimitMiddleware đã chặn ở MAX_REQUEST_MB (mặc định 600) từ trước.
+_MAX_UPLOAD = max(_MB, min(so_mb("SONG_PHUONG_MAX_UPLOAD_MB", 500) * _MB, MAX_REQUEST_BYTES - 8 * _MB))
 
 
 def _dl_headers(filename: str) -> dict:
@@ -30,17 +36,10 @@ def _dl_headers(filename: str) -> dict:
     }
 
 
-class FolderRequest(BaseModel):
-    folder_path: str
-    ngay: str      # YYYYMMDD
-    ma_nh: str     # 1 trong 4 ngân hàng — mỗi lần chạy chỉ 1 NH
-
-
 class ReadinessRequest(BaseModel):
     ngay: str
     ma_nh: str
-    folder_path: str | None = None    # chế độ thư mục server
-    file_names: list[str] | None = None  # chế độ tải file lên (chỉ tên, chưa upload nội dung)
+    file_names: list[str]  # tên file đã chọn để upload (chỉ tên, chưa upload nội dung)
 
 
 @router.post("/check_readiness")
@@ -53,41 +52,10 @@ def check_readiness(
     thiếu dữ liệu như hành vi hiện có, banner chỉ để người dùng biết trước."""
     if not (len(req.ngay) == 8 and req.ngay.isdigit()):
         raise HTTPException(400, f"Ngày không hợp lệ (cần dạng YYYYMMDD): {req.ngay}")
+    if not req.file_names:
+        raise HTTPException(400, "Chưa chọn file nào.")
 
-    if req.file_names is not None:
-        ten_file_list = req.file_names
-    elif req.folder_path:
-        p = Path(req.folder_path)
-        if not p.exists() or not p.is_dir():
-            raise HTTPException(400, f"Thư mục không tồn tại: {req.folder_path}")
-        thu_muc = [*common.thu_muc_ngay_ung_vien(p, req.ngay), p]
-        ten_file_list = sorted({
-            f.name for d in thu_muc if d.exists() for f in d.iterdir() if f.is_file()
-        })
-    else:
-        raise HTTPException(400, "Cần cung cấp folder_path hoặc file_names.")
-
-    return common.kiem_tra_du_lieu(ten_file_list, req.ngay, req.ma_nh)
-
-
-@router.post("/start_folder")
-def start_from_folder(
-    req: FolderRequest,
-    _=Depends(require_feature("doi_chieu_song_phuong_kenh_core.process")),
-):
-    """Chạy "Đối chiếu đến" (Kênh↔Hub rồi Hub↔Core) cho 1 ngân hàng, 1 ngày, từ thư mục gốc
-    server (chứa thư mục con theo ngày)."""
-    p = Path(req.folder_path)
-    if not p.exists() or not p.is_dir():
-        raise HTTPException(400, f"Thư mục không tồn tại: {req.folder_path}")
-    if not (len(req.ngay) == 8 and req.ngay.isdigit()):
-        raise HTTPException(400, f"Ngày không hợp lệ (cần dạng YYYYMMDD): {req.ngay}")
-
-    try:
-        job_id = svc.start(str(p), req.ngay, req.ma_nh)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    return {"job_id": job_id}
+    return common.kiem_tra_du_lieu(req.file_names, req.ngay, req.ma_nh)
 
 
 @router.post("/start_upload")
@@ -97,9 +65,13 @@ async def start_from_upload(
     ma_nh: str = Form(...),
     _=Depends(require_feature("doi_chieu_song_phuong_kenh_core.process")),
 ):
-    """Chạy "Đối chiếu đến" từ file tải lên qua trình duyệt (thay vì chọn thư mục server) —
-    quyết định 2026-08-28: chọn thư mục qua dialog duyệt "rất khó khăn", cho phép tải thẳng
-    nhiều file (HUB zip, kênh xlsx, GL02 zip/CSV, OSB xlsx) cùng lúc.
+    """Chạy "Đối chiếu đến" từ file tải lên qua trình duyệt — cho phép tải thẳng nhiều file
+    (HUB zip, kênh xlsx, GL02 zip/CSV, OSB xlsx) cùng lúc.
+
+    Ghi THẲNG từng khối xuống thư mục job (`save_upload_to`), không gom vào RAM trước — cùng
+    khuôn mẫu `backend/api/ach.py::start_job()` (2026-09-02, review khanhbq693 PR#70 mục A/B: bỏ
+    hẳn chế độ "chọn thư mục máy chủ" — trước đây `await f.read()` còn đọc trọn file vào RAM rồi
+    mới kiểm dung lượng).
 
     LƯU Ý: khi route có `list[UploadFile]`, FastAPI không tự suy luận tham số đơn giản khác là
     Form field — `ngay`/`ma_nh` PHẢI khai báo `Form(...)` tường minh (bẫy đã dính ở ACH, xem
@@ -109,19 +81,36 @@ async def start_from_upload(
     if not (len(ngay) == 8 and ngay.isdigit()):
         raise HTTPException(400, f"Ngày không hợp lệ (cần dạng YYYYMMDD): {ngay}")
 
-    items: list[tuple[str, bytes]] = []
-    total_size = 0
-    for f in files:
-        data = await f.read()
-        total_size += len(data)
-        if total_size > _MAX_UPLOAD:
-            raise HTTPException(413, "Tổng kích thước file vượt quá 800 MB — dùng chế độ thư mục server thay thế.")
-        items.append((f.filename or f"file_{len(items)}", data))
-
     try:
-        job_id = svc.start_upload(items, ngay, ma_nh)
+        job_id, input_dir = svc.tao_job(ngay, ma_nh)
     except ValueError as e:
         raise HTTPException(400, str(e))
+
+    try:
+        total_size = 0
+        da_luu: set[str] = set()
+        for f in files:
+            filename = safe_filename(f.filename, f"file_{len(da_luu)}.dat")
+            if filename in da_luu:
+                raise HTTPException(
+                    400,
+                    f"Có hai file cùng tên '{filename}' trong một lượt tải lên — "
+                    "đổi tên hoặc bỏ bớt rồi thử lại.",
+                )
+            da_luu.add(filename)
+            try:
+                total_size += await save_upload_to(
+                    f, input_dir / filename, _MAX_UPLOAD - total_size)
+            except HTTPException as e:
+                if e.status_code != 413:
+                    raise
+                raise HTTPException(
+                    413, f"Tổng kích thước file vượt quá {_MAX_UPLOAD // (1024 * 1024)} MB.")
+    except BaseException:
+        svc.bo_job(job_id)
+        raise
+
+    svc.chay_job(job_id)
     return {"job_id": job_id}
 
 

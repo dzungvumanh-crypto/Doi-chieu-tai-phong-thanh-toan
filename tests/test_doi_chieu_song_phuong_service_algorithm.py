@@ -11,6 +11,7 @@ thuộc dữ liệu GL02 thật (đã verify riêng, xem card 100, không lặp 
 Chạy: .venv\\Scripts\\python.exe -m pytest tests/test_doi_chieu_song_phuong_service_algorithm.py -v
 """
 
+import importlib.util
 import io
 import os
 import struct
@@ -105,7 +106,21 @@ _GL02_CONTENT = (
 )
 
 
+@pytest.mark.skipif(
+    importlib.util.find_spec("numba") is None,
+    reason="numba chưa cài (~100 MB kéo theo llvmlite) — module coi numba là TUỲ CHỌN "
+           "(_CO_NUMBA), test lớp này chỉ kiểm đường tắt numba nên skip khi thiếu.",
+)
 class TestZipCryptoNumbaFastPath:
+    # LƯU Ý: KHÔNG dùng `pytest.importorskip("numba")` ngay trong thân class — nó thực thi
+    # lúc MODULE được import (thân class chạy như code cấp module), raise Skipped ở đó làm
+    # pytest coi CẢ FILE lỗi import và skip HẾT, kể cả các test ngoài class này (đã verify
+    # bằng file mẫu: "1 skipped" cho toàn bộ module, không phải chỉ class). Hậu quả ngược hẳn
+    # ý định: đúng lúc máy KHÔNG có numba (cần test kỹ đường lui pyzipper nhất) thì
+    # `test_khong_co_numba_van_giai_ma_dung`/`test_process_zip_end_to_end_voi_zipcrypto` bên
+    # dưới cũng biến mất theo, im lặng (báo skipped, không đỏ) — phát hiện qua review PR#70.
+    # `skipif` cấp class (marker khai báo, không thực thi import lúc collect) mới đúng.
+
     def test_giai_ma_dung_noi_dung_goc(self):
         """Đường tắt numba phải giải mã+giải nén ra ĐÚNG nội dung gốc — so với chính
         `zlib`/thuật toán tham chiếu, không qua pyzipper (test độc lập với pyzipper)."""

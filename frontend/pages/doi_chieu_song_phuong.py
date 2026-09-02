@@ -33,7 +33,10 @@ _POLL_INTERVAL = 1.5      # giây — dùng chung cho "Đối chiếu đến"
 # Tiến độ "Phân loại dữ liệu" lưu trong bộ nhớ backend: backend restart là mất sạch, poll sẽ
 # 404 mãi mãi. Hai mốc dừng dưới đây để nút không kẹt "đang xử lý" vĩnh viễn.
 _MAX_POLL_SECONDS = 900   # 15 phút — dài hơn mọi file thực tế
-_MAX_POLL_FAILS = 10      # số lần lỗi liên tiếp thì bỏ cuộc
+_MAX_POLL_FAILS = 10      # số lần lỗi liên tiếp thì bỏ cuộc (thẻ 1 — vòng lặp while riêng, 1s/lần)
+# Thẻ 2 "Đối chiếu đến" dùng `ui.timer` (khác cơ chế thẻ 1 ở trên) — hằng số RIÊNG, không dùng
+# chung `_MAX_POLL_FAILS` dù cùng ý nghĩa, để đổi ngưỡng 1 thẻ không âm thầm đổi luôn thẻ kia.
+_MAX_POLL_FAILS_DEN = 3   # số lần lỗi liên tiếp (mỗi lần cách nhau _POLL_INTERVAL) thì bỏ cuộc
 
 
 # ─── Thẻ 1 — Phân loại dữ liệu (IPCAS/GL02), 1 file/lượt ───────────────────────
@@ -235,7 +238,7 @@ def _tab_doi_chieu_den():
     ACH (nhiều pha bên trong, gộp báo cáo). Kết quả vẫn nhiều file tải về, chỉ gộp chung 1 khu."""
     _STAGE_LABELS = ["Kênh↔Hub", "Hub↔Core", "Hoàn tất"]
     state = {"job_id": None, "log_pos": 0, "timer": None, "running": False,
-              "mode": "folder", "files": {}}
+              "poll_fails": 0, "files": {}}
 
     ui.label(
         "Chạy tự động nối tiếp Kênh↔Hub rồi Hub↔Core cho 1 ngân hàng — 1 lần bấm, 1 kết quả "
@@ -258,7 +261,7 @@ def _tab_doi_chieu_den():
     with ui.card().classes("w-full p-5 mb-4"):
         ui.label("Nguồn dữ liệu").classes("text-base font-semibold text-red-800 mb-3")
 
-        folder_input = build_source_input(
+        build_source_input(
             state,
             accept=".zip,.xlsx,.csv",
             upload_label="Chọn file (có thể chọn nhiều)...",
@@ -266,11 +269,6 @@ def _tab_doi_chieu_den():
                 "Chọn cùng lúc: 1-2 file HUB (.zip), 1-3 file kênh (.xlsx), 1 file GL02 (.zip) "
                 "hoặc CSV đã phân loại, OSB (.xlsx, nếu có) — giữ nguyên tên file gốc."
             ),
-            folder_hint=(
-                "Thư mục chứa các thư mục con theo ngày (VD 21.8, 22.8...) — đủ HUB, kênh, "
-                "CORE/GL02 (hoặc CSV đã phân loại), OSB (nếu có)."
-            ),
-            folder_placeholder="Ví dụ: D:\\DoiChieuSongPhuong\\dữ liệu",
         )
 
         with ui.row().classes("gap-3 mt-3 items-end"):
@@ -302,7 +300,6 @@ def _tab_doi_chieu_den():
 
         ngay_input.on_value_change(_hide_readiness)
         ma_nh_select.on_value_change(_hide_readiness)
-        folder_input.on_value_change(_hide_readiness)
 
         with ui.row().classes("gap-3 mt-4"):
             btn_check = ui.button("Kiểm tra dữ liệu", icon="fact_check",
@@ -472,8 +469,35 @@ def _tab_doi_chieu_den():
         except Exception as e:
             if _handle_api_error(e):
                 return
+            if not api.la_loi_mang(e):
+                # Máy chủ CÓ trả lời, chỉ là trả lời lỗi (thường 404 "job đã hết hạn") — job
+                # coi như đã mất hẳn, thử lại vô ích (khuôn mẫu cham_ach.py::_poll()).
+                spinner.set_visibility(False)
+                btn_cancel.set_visibility(False)
+                btn_run.set_visibility(True)
+                state["running"] = False
+                if state["timer"]:
+                    state["timer"].cancel()
+                    state["timer"] = None
+                ui.notify(f"Máy chủ từ chối theo dõi tiến độ: {e}", type="negative", timeout=0)
+                return
+            state["poll_fails"] += 1
+            if state["poll_fails"] < _MAX_POLL_FAILS_DEN:
+                return
+            spinner.set_visibility(False)
+            btn_run.set_visibility(True)
+            state["running"] = False
+            if state["timer"]:
+                state["timer"].cancel()
+                state["timer"] = None
+            # KHÔNG ẩn btn_cancel — mất liên lạc do MẠNG, job có thể vẫn đang chạy.
+            ui.notify(
+                "Mất liên lạc với máy chủ khi theo dõi tiến độ — job có thể vẫn đang chạy "
+                "trên máy chủ.", type="negative", timeout=0,
+            )
             return
 
+        state["poll_fails"] = 0
         new_logs = res.get("logs", [])
         for line in new_logs:
             _append_log(line)
@@ -525,18 +549,10 @@ def _tab_doi_chieu_den():
         if not ma_nh:
             ui.notify("Chưa chọn ngân hàng.", type="warning")
             return
-        body: dict = {"ngay": ngay, "ma_nh": ma_nh}
-        if state["mode"] == "upload":
-            if not state["files"]:
-                ui.notify("Chưa chọn file nào.", type="warning")
-                return
-            body["file_names"] = list(state["files"].keys())
-        else:
-            folder_path = (folder_input.value or "").strip()
-            if not folder_path:
-                ui.notify("Chưa nhập đường dẫn thư mục.", type="warning")
-                return
-            body["folder_path"] = folder_path
+        if not state["files"]:
+            ui.notify("Chưa chọn file nào.", type="warning")
+            return
+        body: dict = {"ngay": ngay, "ma_nh": ma_nh, "file_names": list(state["files"].keys())}
 
         try:
             res = await asyncio.to_thread(
@@ -564,11 +580,8 @@ def _tab_doi_chieu_den():
         if not ma_nh:
             ui.notify("Chưa chọn ngân hàng.", type="warning")
             return
-        if state["mode"] == "upload" and not state["files"]:
+        if not state["files"]:
             ui.notify("Chưa chọn file nào.", type="warning")
-            return
-        if state["mode"] == "folder" and not (folder_input.value or "").strip():
-            ui.notify("Chưa nhập đường dẫn thư mục.", type="warning")
             return
 
         _clear_log()
@@ -579,26 +592,19 @@ def _tab_doi_chieu_den():
         spinner.set_visibility(True)
         state["running"] = True
         state["log_pos"] = 0
+        state["poll_fails"] = 0
         _update_stepper(0)
 
         try:
-            if state["mode"] == "upload":
-                _append_log(f"Đang tải {len(state['files'])} file lên — Ngày: {ngay} — NH: {ma_nh}")
-                res = await asyncio.to_thread(
-                    api.post_upload,
-                    "/api/doi_chieu_song_phuong_kenh_core/start_upload",
-                    files=[("files", (name, data, "application/octet-stream"))
-                           for name, data in state["files"].items()],
-                    data={"ngay": ngay, "ma_nh": ma_nh},
-                )
-            else:
-                folder_path = folder_input.value.strip()
-                _append_log(f"Thư mục: {folder_path} — Ngày: {ngay} — NH: {ma_nh}")
-                res = await asyncio.to_thread(
-                    api.post,
-                    "/api/doi_chieu_song_phuong_kenh_core/start_folder",
-                    {"folder_path": folder_path, "ngay": ngay, "ma_nh": ma_nh},
-                )
+            _append_log(f"Đang tải {len(state['files'])} file lên — Ngày: {ngay} — NH: {ma_nh}")
+            res = await asyncio.to_thread(
+                api.post_upload,
+                "/api/doi_chieu_song_phuong_kenh_core/start_upload",
+                files=[("files", (name, data, "application/octet-stream"))
+                       for name, data in state["files"].items()],
+                data={"ngay": ngay, "ma_nh": ma_nh},
+                timeout=600.0,
+            )
         except Exception as e:
             spinner.set_visibility(False)
             btn_cancel.set_visibility(False)

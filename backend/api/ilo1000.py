@@ -1,19 +1,23 @@
 """API endpoints cho Chấm ILO1000."""
 
-from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import Response
-from pydantic import BaseModel
 
 from backend.core.deps import require_feature
-from backend.core.uploads import read_limited
+from backend.core.uploads import MAX_REQUEST_BYTES, safe_filename, save_upload_to, so_mb
 from backend.services import ilo1000_service
 
 router = APIRouter(prefix='/api/ilo1000', tags=['ilo1000'])
 
-_MAX_UPLOAD = 1_000 * 1024 * 1024  # 1 GB
+_MB = 1024 * 1024
+
+# Trần TỔNG dung lượng một lượt upload ILO1000. Chỉnh bằng ILO1000_MAX_UPLOAD_MB trong .env.
+# Luôn kẹp nhỏ hơn MAX_REQUEST_BYTES (xem backend/api/ach.py::_MAX_UPLOAD cho lý do đầy đủ) —
+# hằng số 1 GB cũ ở đây không bao giờ đạt tới được vì BodySizeLimitMiddleware đã chặn ở
+# MAX_REQUEST_MB (mặc định 600) từ trước, khiến thông báo lỗi tự mâu thuẫn với chính nó.
+_MAX_UPLOAD = max(_MB, min(so_mb('ILO1000_MAX_UPLOAD_MB', 500) * _MB, MAX_REQUEST_BYTES - 8 * _MB))
 
 
 def _dl_headers(filename: str) -> dict:
@@ -35,40 +39,40 @@ async def start_job(
     Nhận nhiều file (pHub XLSX, UUID CSV, EICP XLS, GL02 CSV/ZIP).
     Pipeline tự nhận dạng loại file + nhóm theo ngày.
     Trả {job_id} ngay, xử lý nền.
+
+    Ghi THẲNG từng khối xuống thư mục job (`save_upload_to`), không gom vào RAM trước — cùng
+    khuôn mẫu `backend/api/ach.py::start_job()` (2026-09-02, review khanhbq693 PR#70 mục A/B:
+    trước đây `read_limited()` vẫn giữ trọn từng file trong RAM dù có kiểm trần).
     """
     if not files:
         raise HTTPException(400, 'Cần upload ít nhất 1 file.')
 
-    saved: dict[str, bytes] = {}
-    total_size = 0
-    for f in files:
-        data = await read_limited(f, _MAX_UPLOAD - total_size)
-        total_size += len(data)
-        filename = f.filename or f'file_{len(saved)}'
-        saved[filename] = data
+    job_id, input_dir = ilo1000_service.tao_job()
+    try:
+        total_size = 0
+        da_luu: set[str] = set()
+        for f in files:
+            filename = safe_filename(f.filename, f'file_{len(da_luu)}.dat')
+            if filename in da_luu:
+                raise HTTPException(
+                    400,
+                    f"Có hai file cùng tên '{filename}' trong một lượt tải lên — "
+                    "đổi tên hoặc bỏ bớt rồi thử lại.",
+                )
+            da_luu.add(filename)
+            try:
+                total_size += await save_upload_to(
+                    f, input_dir / filename, _MAX_UPLOAD - total_size)
+            except HTTPException as e:
+                if e.status_code != 413:
+                    raise
+                raise HTTPException(
+                    413, f'Tổng kích thước file vượt quá {_MAX_UPLOAD // (1024 * 1024)} MB.')
+    except BaseException:
+        ilo1000_service.bo_job(job_id)
+        raise
 
-    job_id = ilo1000_service.start_job(saved)
-    return {'job_id': job_id}
-
-
-class FolderRequest(BaseModel):
-    folder_path: str
-
-
-@router.post('/start_folder')
-def start_from_folder(
-    req: FolderRequest,
-    _=Depends(require_feature('menu.cham_ilo1000')),
-):
-    """
-    Chạy pipeline từ thư mục server (không upload file).
-    Thư mục phải tồn tại và chứa file ILO1000 hợp lệ.
-    """
-    p = Path(req.folder_path)
-    if not p.exists() or not p.is_dir():
-        raise HTTPException(400, f'Thư mục không tồn tại: {req.folder_path}')
-
-    job_id = ilo1000_service.start_from_folder(str(p))
+    ilo1000_service.chay_job(job_id)
     return {'job_id': job_id}
 
 

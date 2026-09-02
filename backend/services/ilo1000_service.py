@@ -54,42 +54,40 @@ def cancel_job(job_id: str) -> bool:
     return False
 
 
-def start_job(saved_files: dict[str, bytes]) -> str:
-    """Lưu file upload, chạy pipeline trong background thread. Trả job_id."""
-    job_id, job = _new_job()
+def tao_job() -> tuple[str, Path]:
+    """Đăng ký một job mới ở trạng thái 'pending' và trả về (job_id, input_dir).
 
+    Tách khỏi `chay_job()` để lớp API ghi THẲNG từng khối file tải lên vào `input_dir`
+    (`save_upload_to()`, backend/core/uploads.py), thay vì gom trọn file vào RAM rồi mới đưa
+    xuống đây (2026-09-02, review khanhbq693 PR#70 mục B — cùng lỗi/cách sửa đã áp dụng cho
+    `ach_service.py::tao_job()`).
+
+    Upload hỏng giữa chừng thì lớp API phải gọi `bo_job()` để trả lại chỗ."""
+    job_id, job = _new_job()
     input_dir = TEMP_DIR / job_id / 'input'
     input_dir.mkdir(parents=True, exist_ok=True)
     Path(job['output_dir']).mkdir(parents=True, exist_ok=True)
+    job['input_dir'] = str(input_dir)
+    return job_id, input_dir
 
-    # safe_filename(): filename tới thẳng từ UploadFile.filename do client gửi, chưa qua lọc —
-    # cắt hết thành phần đường dẫn trước khi ghép vào input_dir để chặn path traversal (VD
-    # '..\..\..\backend\main.py' ghi đè mã nguồn). 2026-09-01: đổi từ os.path.basename() sang
-    # safe_filename() (backend/core/uploads.py, đã có sẵn trên develop) — xử lý thêm tên thiết bị
-    # Windows (NUL, COM1) và tên kết thúc bằng dấu phân cách (basename('foo\\') trả chuỗi rỗng ->
-    # ghi đè chính input_dir).
-    for filename, data in saved_files.items():
-        (input_dir / safe_filename(filename)).write_bytes(data)
 
+def bo_job(job_id: str) -> None:
+    """Huỷ một job chưa chạy (upload lỗi/đứt) — xoá khỏi store và xoá thư mục."""
+    with _lock:
+        _jobs.pop(job_id, None)
+    shutil.rmtree(TEMP_DIR / job_id, ignore_errors=True)
+
+
+def chay_job(job_id: str) -> None:
+    """Khởi chạy pipeline cho job đã nhận đủ file (xem `tao_job()`)."""
+    job = get_job(job_id)
+    if job is None:
+        raise LookupError('Job không tồn tại.')
     threading.Thread(
         target=_run,
-        args=(job_id, str(input_dir), job['output_dir']),
+        args=(job_id, job['input_dir'], job['output_dir']),
         daemon=True,
     ).start()
-    return job_id
-
-
-def start_from_folder(folder_path: str) -> str:
-    """Chạy pipeline trực tiếp từ thư mục server (không cần upload file). Trả job_id."""
-    job_id, job = _new_job()
-    Path(job['output_dir']).mkdir(parents=True, exist_ok=True)
-
-    threading.Thread(
-        target=_run,
-        args=(job_id, folder_path, job['output_dir']),
-        daemon=True,
-    ).start()
-    return job_id
 
 
 def _run(job_id: str, input_dir: str, output_dir: str):
@@ -144,7 +142,7 @@ def get_output_file(job_id: str, filename: str) -> Path | None:
     if not job:
         return None
     path = Path(job['output_dir']) / safe_filename(filename)
-    return path if path.exists() else None
+    return path if path.is_file() else None
 
 
 def _cleanup_old_jobs():

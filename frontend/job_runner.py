@@ -1,13 +1,16 @@
-"""Widget dùng chung: card "Nguồn dữ liệu" (tải file lên hoặc chọn thư mục server) + chạy
-pipeline nền qua job_id + poll tiến độ + card "Kết quả" tải file — tách ra từ
-frontend/pages/cham_ilo1000.py (2026-08-28) để không phải chép tay lại mỗi khi thêm module mới.
+"""Widget dùng chung: card "Nguồn dữ liệu" (tải file lên) + chạy pipeline nền qua job_id + poll
+tiến độ + card "Kết quả" tải file — tách ra từ frontend/pages/cham_ilo1000.py (2026-08-28) để
+không phải chép tay lại mỗi khi thêm module mới.
 
 Yêu cầu module gọi widget này tuân đúng hợp đồng API đã có sẵn ở ACH/ILO1000:
     POST {api_prefix}/start          (multipart nhiều file)
-    POST {api_prefix}/start_folder   ({"folder_path": str})
     GET  {api_prefix}/poll/{job_id}?since=N -> {status, logs, files, error, ...}
     POST {api_prefix}/cancel/{job_id}
     GET  {api_prefix}/download/{job_id}/{filename}
+
+2026-09-02 (review khanhbq693 PR#70 mục A): bỏ hẳn chế độ "chọn thư mục máy chủ" — endpoint
+`/start_folder` và dialog `open_folder_picker`/`/api/fs/browse` đã xoá, chỉ còn tải file lên
+(backend ghi thẳng xuống đĩa qua `save_upload_to()`, xem `backend/api/ach.py::start_job()`).
 
 cham_ach.py hiện có cùng cấu trúc phần "Nguồn dữ liệu"/log/poll/kết quả nhưng gắn thêm bước
 Checkpoint riêng (xác nhận MIS_đi) khớp nối chặt với state/nút Chạy-Dừng — CHƯA refactor sang
@@ -17,9 +20,10 @@ import asyncio
 
 from nicegui import ui
 import frontend.api_client as api
-from frontend.shared import _handle_api_error, open_folder_picker
+from frontend.shared import _handle_api_error
 
 _POLL_INTERVAL = 1.5
+_MAX_POLL_FAILS = 3   # số lần poll lỗi liên tiếp trước khi báo "mất liên lạc" và dừng theo dõi
 
 
 def build_source_input(
@@ -27,36 +31,22 @@ def build_source_input(
     *,
     accept: str,
     upload_label: str,
-    folder_hint: str,
-    folder_placeholder: str,
     upload_hint: str = '',
-    default_mode: str = 'folder',
 ):
-    """Vẽ khối toggle "Chọn thư mục server"/"Tải file lên" + upload nhiều file +
-    `open_folder_picker` (click 1 lần = mở luôn, sửa 2026-08-28 đợt 4 sau phản
-    hồi "khó kích vào ổ đĩa") — PHẢI gọi bên trong 1 `with ui.card():` đang mở
-    sẵn, không tự tạo card, để trang gọi tự thêm field/nút riêng (ngày, mã NH,
-    Chạy/Dừng...) ngay sau trong cùng card.
+    """Vẽ khối upload nhiều file — PHẢI gọi bên trong 1 `with ui.card():` đang mở sẵn, không tự
+    tạo card, để trang gọi tự thêm field/nút riêng (ngày, mã NH, Chạy/Dừng...) ngay sau trong
+    cùng card.
 
-    Ghi trực tiếp vào `state['mode']`/`state['files']` (dict đã có sẵn các key
-    khác của trang gọi như job_id/log_pos/timer) — không tự tạo state riêng để
-    tránh 2 nguồn sự thật lệch nhau. Trả `folder_input` (ui.input) để trang tự
-    đọc `.value` khi submit.
+    Ghi trực tiếp vào `state['files']` (dict đã có sẵn các key khác của trang gọi như
+    job_id/log_pos/timer) — không tự tạo state riêng để tránh 2 nguồn sự thật lệch nhau.
 
-    Tách ra 2026-08-28 (đợt 4) — người dùng muốn mọi module upload file sau này
-    tự động có UX này (khỏi phải khiếu nại lại từng module). KHÔNG gộp vào
-    `build_job_runner_card()` bên dưới để tránh đụng ILO1000 đang chạy ổn định
-    trên hàm đó — chấp nhận trùng lặp nhỏ giữa 2 hàm để giảm rủi ro."""
+    Tách ra 2026-08-28 (đợt 4) — người dùng muốn mọi module upload file sau này tự động có UX
+    này (khỏi phải khiếu nại lại từng module). KHÔNG gộp vào `build_job_runner_card()` bên dưới
+    để tránh đụng ILO1000 đang chạy ổn định trên hàm đó — chấp nhận trùng lặp nhỏ giữa 2 hàm để
+    giảm rủi ro."""
     state.setdefault('files', {})
-    state['mode'] = default_mode
-
-    mode_toggle = ui.toggle(
-        {'folder': 'Chọn thư mục server', 'upload': 'Tải file lên'},
-        value=default_mode,
-    ).props('dense')
 
     upload_section = ui.column().classes('w-full mt-3 gap-1')
-    upload_section.set_visibility(default_mode == 'upload')
     with upload_section:
         if upload_hint:
             ui.label(upload_hint).classes('text-xs text-gray-500 mb-1')
@@ -65,6 +55,13 @@ def build_source_input(
         )
 
         def on_upload(e):
+            if e.name in state['files']:
+                ui.notify(
+                    f"File '{e.name}' đã được chọn — bỏ qua file trùng tên "
+                    "(file trước đó vẫn giữ nguyên).",
+                    type='warning',
+                )
+                return
             state['files'][e.name] = e.content.read()
             names = ', '.join(state['files'].keys())
             file_list_label.set_text(f'Đã chọn ({len(state["files"])} file): {names}')
@@ -88,45 +85,15 @@ def build_source_input(
         ui.button('Xóa tất cả file', icon='delete_outline', color='grey-6',
                   on_click=on_clear).props('flat dense').classes('text-xs')
 
-    folder_section = ui.column().classes('w-full mt-3 gap-2')
-    folder_section.set_visibility(default_mode == 'folder')
-    with folder_section:
-        ui.label(folder_hint).classes('text-xs text-gray-500')
-        with ui.row().classes('w-full items-center gap-2'):
-            folder_input = ui.input(
-                placeholder=folder_placeholder,
-            ).props('outlined dense clearable').classes('flex-1')
-
-            async def _on_pick_folder():
-                def _on_folder_selected(path: str):
-                    folder_input.value = path
-                await open_folder_picker(
-                    _on_folder_selected, initial_path=folder_input.value or ''
-                )
-
-            ui.button('Duyệt...', icon='folder_open', color='blue-7',
-                      on_click=_on_pick_folder).props('outlined dense')
-
-    def on_mode_change(val):
-        state['mode'] = val
-        upload_section.set_visibility(val == 'upload')
-        folder_section.set_visibility(val == 'folder')
-
-    mode_toggle.on_value_change(lambda e: on_mode_change(e.value))
-
-    return folder_input
-
 
 def build_job_runner_card(
     *,
     api_prefix: str,
     file_hint: str,
     accept: str,
-    folder_hint: str,
-    default_mode: str = 'upload',
     on_done=None,
 ) -> dict:
-    """Dựng card Nguồn dữ liệu + Log + Kết quả tại vị trí gọi. Trả `state` (job_id, mode...)
+    """Dựng card Nguồn dữ liệu + Log + Kết quả tại vị trí gọi. Trả `state` (job_id...)
     để trang gọi có thể đọc thêm nếu cần, nhưng phần lớn trang không cần đụng tới.
 
     on_done(res: dict) -> bool | None: gọi khi job xong (status == 'done'), TRƯỚC khi hiện
@@ -135,25 +102,19 @@ def build_job_runner_card(
     ILO1000 báo số ngày bị bỏ qua thay vì "Hoàn thành!" chung chung).
     """
     state = {
-        'files':   {},
-        'job_id':  None,
-        'log_pos': 0,
-        'timer':   None,
-        'running': False,
-        'mode':    default_mode,
+        'files':      {},
+        'job_id':     None,
+        'log_pos':    0,
+        'timer':      None,
+        'running':    False,
+        'poll_fails': 0,
     }
 
     with ui.card().classes('w-full p-5 mb-4'):
         ui.label('Nguồn dữ liệu').classes('text-base font-semibold text-red-800 mb-3')
 
-        mode_toggle = ui.toggle(
-            {'upload': 'Tải file lên', 'folder': 'Chọn thư mục server'},
-            value=default_mode,
-        ).props('dense')
-
-        # ── Chế độ Upload ─────────────────────────────────────────
+        # ── Upload ─────────────────────────────────────────
         upload_section = ui.column().classes('w-full mt-3 gap-1')
-        upload_section.set_visibility(default_mode == 'upload')
         with upload_section:
             ui.label(file_hint).classes('text-xs text-gray-400 mb-1')
             file_list_label = ui.label('Chưa chọn file nào').classes(
@@ -161,6 +122,13 @@ def build_job_runner_card(
             )
 
             def on_upload(e):
+                if e.name in state['files']:
+                    ui.notify(
+                        f"File '{e.name}' đã được chọn — bỏ qua file trùng tên "
+                        "(file trước đó vẫn giữ nguyên).",
+                        type='warning',
+                    )
+                    return
                 data = e.content.read()
                 state['files'][e.name] = data
                 names = ', '.join(state['files'].keys())
@@ -186,36 +154,6 @@ def build_job_runner_card(
 
             ui.button('Xóa tất cả file', icon='delete_outline', color='grey-6',
                       on_click=on_clear).props('flat dense').classes('text-xs')
-
-        # ── Chế độ Folder ─────────────────────────────────────────
-        folder_section = ui.column().classes('w-full mt-3 gap-2')
-        folder_section.set_visibility(default_mode == 'folder')
-        with folder_section:
-            ui.label(
-                'Nhập đường dẫn thư mục chứa file trên server.'
-            ).classes('text-xs text-gray-500')
-            with ui.row().classes('w-full items-center gap-2'):
-                folder_input = ui.input(
-                    placeholder='Ví dụ: D:\\Data\\...',
-                ).props('outlined dense clearable').classes('flex-1')
-
-                async def _on_pick_folder():
-                    def _on_folder_selected(path: str):
-                        folder_input.value = path
-                    await open_folder_picker(
-                        _on_folder_selected, initial_path=folder_input.value or ''
-                    )
-
-                ui.button('Duyệt...', icon='folder_open', color='blue-7',
-                          on_click=_on_pick_folder).props('outlined dense')
-            ui.label(folder_hint).classes('text-xs text-gray-400')
-
-        def on_mode_change(val):
-            state['mode'] = val
-            upload_section.set_visibility(val == 'upload')
-            folder_section.set_visibility(val == 'folder')
-
-        mode_toggle.on_value_change(lambda e: on_mode_change(e.value))
 
         # Nút Chạy / Dừng
         with ui.row().classes('gap-3 mt-4'):
@@ -288,8 +226,37 @@ def build_job_runner_card(
         except Exception as e:
             if _handle_api_error(e):
                 return
+            if not api.la_loi_mang(e):
+                # Máy chủ CÓ trả lời, chỉ là trả lời lỗi (thường 404 "job đã hết hạn") — job
+                # coi như đã mất hẳn, thử lại vô ích và dễ báo sai "vẫn đang chạy" (xem
+                # api.la_loi_mang() docstring, khuôn mẫu cham_ach.py::_poll()).
+                spinner.set_visibility(False)
+                btn_cancel.set_visibility(False)
+                btn_run.set_visibility(True)
+                state['running'] = False
+                if state['timer']:
+                    state['timer'].cancel()
+                    state['timer'] = None
+                ui.notify(f'Máy chủ từ chối theo dõi tiến độ: {e}', type='negative', timeout=0)
+                return
+            state['poll_fails'] += 1
+            if state['poll_fails'] < _MAX_POLL_FAILS:
+                return
+            spinner.set_visibility(False)
+            btn_run.set_visibility(True)
+            state['running'] = False
+            if state['timer']:
+                state['timer'].cancel()
+                state['timer'] = None
+            # KHÔNG ẩn btn_cancel — mất liên lạc do MẠNG (khác nhánh trên, máy chủ không trả
+            # lời gì cả) không có nghĩa job đã dừng, job có thể vẫn đang chạy trên máy chủ.
+            ui.notify(
+                'Mất liên lạc với máy chủ khi theo dõi tiến độ — job có thể vẫn đang chạy '
+                'trên máy chủ.', type='negative', timeout=0,
+            )
             return
 
+        state['poll_fails'] = 0
         new_logs = res.get('logs', [])
         for line in new_logs:
             _append_log(line)
@@ -319,15 +286,9 @@ def build_job_runner_card(
         if state['running']:
             return
 
-        if state['mode'] == 'upload':
-            if not state['files']:
-                ui.notify('Chưa chọn file nào.', type='warning')
-                return
-        else:
-            folder_path = (folder_input.value or '').strip()
-            if not folder_path:
-                ui.notify('Chưa nhập đường dẫn thư mục.', type='warning')
-                return
+        if not state['files']:
+            ui.notify('Chưa chọn file nào.', type='warning')
+            return
 
         _clear_log()
         result_card.set_visibility(False)
@@ -336,24 +297,17 @@ def build_job_runner_card(
         spinner.set_visibility(True)
         state['running'] = True
         state['log_pos'] = 0
+        state['poll_fails'] = 0
 
         try:
-            if state['mode'] == 'upload':
-                _append_log('Đang upload file...')
-                res = await asyncio.to_thread(
-                    api.post_upload,
-                    f'{api_prefix}/start',
-                    files=[('files', (name, data, 'application/octet-stream'))
-                           for name, data in state['files'].items()],
-                )
-            else:
-                folder_path = folder_input.value.strip()
-                _append_log(f'Thư mục: {folder_path}')
-                res = await asyncio.to_thread(
-                    api.post,
-                    f'{api_prefix}/start_folder',
-                    {'folder_path': folder_path},
-                )
+            _append_log('Đang upload file...')
+            res = await asyncio.to_thread(
+                api.post_upload,
+                f'{api_prefix}/start',
+                files=[('files', (name, data, 'application/octet-stream'))
+                       for name, data in state['files'].items()],
+                timeout=600.0,
+            )
         except Exception as e:
             spinner.set_visibility(False)
             btn_cancel.set_visibility(False)
