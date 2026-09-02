@@ -465,14 +465,31 @@ Truy cập:
 
 ### Module Đối chiếu Song phương
 - Định tuyến lệnh IPCAS phục vụ đối chiếu song phương tại phòng Thanh toán
-- Menu: **Đối chiếu → Phòng Thanh toán → Đối chiếu Song phương**
-- Upload file ZIP (mã hóa AES-256) chứa dữ liệu IPCAS; xử lý bất đồng bộ, theo dõi tiến độ real-time
-- File tải lên được ghi **thẳng từng khối** xuống `data/temp_doi_chieu_song_phuong/upload_<token>/`;
-  `process_zip()` nhận **đường dẫn**, kiểm magic bytes bằng 4 byte đầu đọc từ file, và duyệt CSV
-  bên trong ZIP theo luồng (`zf.open()`) — `_route_file()` đi tuần tự từng dòng nên không bao giờ
-  cần nhìn lại dòng đã qua
+- Menu: **Đối chiếu → Phòng Thanh toán → Đối chiếu Song phương** — 2 thẻ đang dùng: **Phân loại
+  dữ liệu** và **Đối chiếu đến** (thẻ **Đối chiếu đi** còn đang xây, chưa có backend)
+- **Thẻ Phân loại dữ liệu**: upload file ZIP chứa dữ liệu IPCAS (GL02); xử lý bất đồng bộ, theo
+  dõi tiến độ real-time. File tải lên được ghi **thẳng từng khối** xuống
+  `data/temp_doi_chieu_song_phuong/upload_<token>/`; `process_zip()` nhận **đường dẫn**, kiểm
+  magic bytes bằng 4 byte đầu đọc từ file, và duyệt CSV bên trong ZIP theo luồng (`zf.open()`) —
+  `_route_file()` đi tuần tự từng dòng nên không bao giờ cần nhìn lại dòng đã qua
 - Phân loại mỗi dòng theo **4 ngân hàng** (Vietinbank 201, BIDV 202, Vietcombank 203, MBBank 311) × **2 chiều**: **ĐẾN** (`CRAMOUNT=0`) / **ĐI** (`DRAMOUNT=0`) → xuất **8 file CSV**
-- Phân quyền riêng theo nhóm (`menu.doi_chieu_song_phuong`, `doi_chieu_song_phuong.process`)
+- ⚠️ ZIP dùng mật khẩu chung (`DOI_CHIEU_ZIP_PASSWORD`) nhưng entry GL02 thật là **PKWARE
+  ZipCrypto cổ điển**, không phải AES-256 (tên lớp `pyzipper.AESZipFile` gây hiểu nhầm — mỗi entry
+  tự chọn thuật toán riêng). ZipCrypto chỉ giải mã được bằng vòng lặp Python thuần, chậm với file
+  hàng triệu dòng; đường tắt `numba.njit` (tùy chọn, tự lui về `pyzipper` gốc nếu máy thiếu numba)
+  giải mã nhanh hơn **~35 lần** cho đúng trường hợp này — chi tiết & cách phân biệt an toàn với
+  AES thật (`wz_aes_version is None`) xem `docs/Implementation-notes.html` card 112
+- **Thẻ Đối chiếu đến** (`/api/doi_chieu_song_phuong_kenh_core`): chạy **Kênh↔Hub rồi Hub↔Core**
+  tự động nối tiếp trong 1 job cho 1 ngân hàng + 1 ngày mỗi lượt — không phải 2 tính năng rời
+  nhau, lỗi 1 bước không chặn bước còn lại, chỉ khi cả 2 đều lỗi mới đánh dấu job lỗi. Từ
+  02/09/2026 chỉ nhận **tải file lên** (HUB zip, kênh xlsx, GL02 zip/CSV, OSB xlsx cùng lúc) —
+  đã bỏ hẳn chế độ "chọn thư mục server" cùng nút "Duyệt..." — 2 endpoint cũ nhận `folder_path`
+  tuỳ ý không qua allowlist nào, tiền lệ giống lỗ hổng `/api/fs/browse` đã gỡ ở ACH trước đó (xem
+  `docs/Implementation-notes.html` card 113). Backend ghi **thẳng từng khối** xuống đĩa job
+  (`save_upload_to`), không gom vào RAM trước — cùng khuôn mẫu upload của module ACH
+- Phân quyền riêng theo nhóm: `menu.doi_chieu_song_phuong` (xem trang/kiểm tra dữ liệu),
+  `doi_chieu_song_phuong.process` (chạy Phân loại dữ liệu),
+  `doi_chieu_song_phuong_kenh_core.process` (chạy Đối chiếu đến)
 
 ### Module Đối chiếu ACH
 - Đối chiếu GL02 (IPCAS/NPO) với MIS PaymentHub theo phiên ACH, cả hai chiều ĐI và ĐẾN

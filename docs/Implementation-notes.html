@@ -12561,7 +12561,111 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-01</footer>
+  <!-- 112 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">112</span>
+      <span class="card-title">Đối chiếu Song phương — GL02 dùng ZipCrypto cổ điển chứ không phải AES-256; viết lại giải mã bằng numba nhanh hơn ~35 lần</span>
+      <span class="badge badge-done">Đã tối ưu</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-red">Ngộ nhận từ đầu</span> Tên lớp <code>pyzipper.AESZipFile</code> đánh lừa cả code lẫn tài liệu cũ</div>
+      <p>Mật khẩu ZIP chung (<code>DOI_CHIEU_ZIP_PASSWORD</code>) mở file GL02 (IPCAS xuất ra,
+        ~150-160MB/ngày) qua <code>pyzipper.AESZipFile</code> — cái tên gợi ý AES-256, và
+        <code>pyzipper</code> quả thật có AES-NI tăng tốc phần cứng cho AES (đo riêng ~974 MB/s).
+        Nhưng mỗi entry trong ZIP tự chọn thuật toán theo cách nó được nén lúc tạo, không theo tên
+        lớp mở file — GL02 thật dùng <b>PKWARE ZipCrypto cổ điển</b>, không phải AES. AES-NI không
+        giúp được gì vì sai loại mã hoá cần tăng tốc.</p>
+
+      <div class="label"><span class="pill pill-blue">Cách phân biệt đúng</span> <code>wz_aes_version is None</code>, KHÔNG phải <code>compress_type</code></div>
+      <p><code>compress_type == zipfile.ZIP_DEFLATED</code> (8) một mình <b>không đủ</b> để nhận
+        diện ZipCrypto: sau khi giải mã field mở rộng AES, <code>pyzipper</code> <b>ghi đè</b>
+        <code>compress_type</code> bằng thuật toán nén THẬT nằm bên trong (thường cũng ra 8) — nếu
+        chỉ nhìn <code>compress_type</code> sẽ nhận nhầm entry AES thật thành ZipCrypto và giải mã
+        sai byte. Điều kiện an toàn (xem <code>_mo_doc_1_file_thanh_vien()</code> trong
+        <code>backend/services/doi_chieu_song_phuong_service.py</code>): bit mã hoá bật, không phải
+        strong encryption, <code>compress_type == ZIP_DEFLATED</code>, và
+        <code>getattr(info, "wz_aes_version", None) is None</code> — thuộc tính này chỉ được
+        <code>pyzipper</code> gán khi nó thật sự giải mã thành công extra field <code>0x9901</code>
+        (đánh dấu AES), nên loại trừ đúng mọi entry AES thật.</p>
+
+      <div class="label"><span class="pill pill-blue">Giải pháp</span> Viết lại ZipCrypto bằng <code>numba.njit</code></div>
+      <p><code>pyzipper</code> giải mã ZipCrypto bằng vòng lặp Python xử lý từng byte một
+        (<code>pyzipper.zipfile.CRCZipDecrypter</code>) — hàng trăm triệu lượt gọi
+        <code>update_keys()</code>/<code>crc32()</code> cho 8 file GL02 thật, đây mới là nguyên
+        nhân chậm, không phải bản chất phép toán. Viết lại đúng thuật toán PKWARE ZipCrypto bằng
+        <code>@njit</code> (biên dịch JIT sang mã máy, không cần compiler/binary hệ thống ngoài) —
+        <b>nhanh hơn ~35 lần</b> khi verify trên dữ liệu GL02 thật (số đo từ đợt review trước,
+        không phải ước lượng lý thuyết), output byte-for-byte giống hệt <code>pyzipper</code>.</p>
+
+      <div class="label"><span class="pill pill-gray">Optional dependency</span> Thiếu numba không được làm sập backend</div>
+      <p><code>numpy</code>/<code>numba</code> nạp qua <code>try/except ImportError</code>, cờ
+        <code>_CO_NUMBA</code>. Module này được nạp lúc khởi động qua
+        <code>backend/api/doi_chieu_song_phuong.py</code> — máy chưa cài numba thì tự lui về
+        <code>zf.open()</code> streaming gốc của <code>pyzipper</code> (chậm hơn nhưng vẫn đúng),
+        không phải hard dependency.</p>
+
+      <div class="note"><b>Không đoán, không mở rộng đường tắt cho case chưa xác nhận:</b> mọi
+        trường hợp khác điều kiện trên (AES thật, STORED, thiếu numba) rơi thẳng về đọc streaming
+        gốc. Đường tắt numba còn tự kiểm lại bằng byte kiểm tra mật khẩu và CRC32 sau khi giải nén —
+        sai mật khẩu hoặc dữ liệu hỏng báo lỗi rõ ràng thay vì âm thầm trả rác.</div>
+
+    </div>
+  </div>
+
+  <!-- 113 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">113</span>
+      <span class="card-title">Bỏ hẳn chế độ "chọn thư mục máy chủ" ở Đối chiếu Song phương + Chấm ILO1000 — chỉ còn tải file lên (2026-09-02)</span>
+      <span class="badge badge-done">Hoàn thiện</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-red">Vòng 2 review PR#70 (khanhbq693)</span> Vá allowlist từng endpoint dễ sót</div>
+      <p><code>GET /api/fs/browse</code> (liệt kê cây thư mục máy chủ cho hộp thoại "Duyệt...")
+        ban đầu fail-open — bất kỳ ai đăng nhập cũng liệt kê được toàn bộ ổ đĩa máy chủ. Vòng 1 đã
+        vá bằng allowlist fail-closed <code>FOLDER_PICKER_ROOTS</code>. Nhưng vòng 2 phát hiện còn
+        <b>2 endpoint khác</b> — <code>check_readiness</code> và <code>start_folder</code> — nhận
+        <code>folder_path</code> tuỳ ý rồi đọc thẳng, không qua allowlist nào. Vá thêm allowlist
+        riêng cho từng endpoint là hướng dễ sót/dễ quên — đúng như đã sót ở đây.</p>
+
+      <div class="label"><span class="pill pill-blue">Quyết định cuối</span> Bỏ hẳn đường thư mục máy chủ, chỉ còn tải file lên</div>
+      <p>Cả 2 module (Đối chiếu Song phương "Đối chiếu đến": Kênh↔Hub + Hub↔Core; và Chấm ILO1000)
+        bỏ hẳn chế độ chọn thư mục trên máy chủ — chỉ còn tải file lên qua trình duyệt. Backend ghi
+        thẳng từng khối xuống đĩa server (<code>save_upload_to()</code>, không ôm RAM) rồi mới chạy;
+        người dùng không cần biết bước ghi đĩa đó, trong suốt với họ. Hai API tải lên
+        (<code>/api/ilo1000/start</code>, <code>/api/doi_chieu_song_phuong_kenh_core/start_upload</code>)
+        chuyển theo đúng khuôn mẫu <code>backend/api/ach.py::start_job()</code> đã dùng từ trước.</p>
+
+      <table>
+        <tr><th>Đã xoá</th><th>Vai trò cũ</th></tr>
+        <tr><td><code>backend/api/fs.py</code></td><td>Router <code>GET /api/fs/browse</code></td></tr>
+        <tr><td><code>folder_picker_roots()</code></td><td>Allowlist thư mục gốc cho hộp thoại duyệt</td></tr>
+        <tr><td><code>require_any_feature()</code></td><td>Chỉ <code>fs.py</code> dùng, không còn caller nào khác</td></tr>
+        <tr><td><code>open_folder_picker()</code> (frontend)</td><td>Hộp thoại "Duyệt..." gọi <code>/api/fs/browse</code></td></tr>
+        <tr><td>Endpoint <code>/start_folder</code> (2 module)</td><td>Chạy job thẳng từ <code>folder_path</code> đã chọn</td></tr>
+        <tr><td>Biến <code>.env</code> <code>FOLDER_PICKER_ROOTS</code></td><td>Cấu hình allowlist thư mục gốc</td></tr>
+      </table>
+
+      <div class="note"><b>Tiền lệ đã học 1 lần, giờ học lại đúng chỗ cũ:</b> commit
+        <code>9b3d310</code> (13/08/2026) đã từng gỡ <code>/api/fs/browse</code> và bỏ chế độ chọn
+        thư mục máy chủ cho module <b>ACH</b>, đúng lý do tương tự — "thư mục đó nằm trên máy chạy
+        backend, không phải máy người dùng; mở endpoint liệt kê cho mọi tài khoản đã đăng nhập là
+        lỗ hổng, không phải tiện ích". PR#68/#70 vô tình mang tính năng đó quay lại khi port code cũ
+        từ 1 nhánh khác sang cho Song phương/ILO1000. Bài học lặp lại: fail-closed từng endpoint dễ
+        sót cái mới thêm sau; bỏ hẳn tính năng khi giá trị nghiệp vụ thấp hơn rủi ro vá-đuổi.</div>
+
+      <div class="label"><span class="pill pill-gray">Không đụng</span> Chấm 459901</div>
+      <p>Chấm 459901 cũng có chế độ chọn thư mục server nhưng đã fail-closed đúng cách từ trước
+        (<code>CHAM459901_FOLDER_ROOTS</code> allowlist, không phải lỗ hổng như trên) — cố ý không
+        đụng trong đợt này, để lại thành việc riêng sau nếu cần rà thêm.</p>
+
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-02</footer>
 </div>
 </body>
 </html>
