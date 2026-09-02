@@ -10,6 +10,13 @@ See also: @DESIGN.md @SKILL.md
 
 Đó là những thứ không suy ra được từ code hay git log.
 
+**Trước khi mở PR** (đặc biệt PR có upload file, job chạy nền, đường dẫn/tên file do người dùng
+nhập, hoặc thêm quyền/menu mới) → đọc
+[`docs/CHECKLIST-TRUOC-KHI-MO-PR.md`](docs/CHECKLIST-TRUOC-KHI-MO-PR.md) — đúc từ lịch sử review
+thật của Khánh, liệt kê đúng các loại lỗi đã bị yêu cầu sửa lại nhiều lần (path traversal, RAM
+upload, RBAC tách quyền, BackgroundTasks, dữ liệu ô trống...) kèm pattern chuẩn để tự bắt trước
+khi mở PR.
+
 ## Commands
 
 ```bash
