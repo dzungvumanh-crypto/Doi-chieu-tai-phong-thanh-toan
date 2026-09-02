@@ -4,6 +4,26 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 02/09/2026 Đối chiếu Song phương + Chấm ILO1000 - **⚠️ HAI MÀN HÌNH MỚI — PHẢI CẤP QUYỀN SAU KHI DEPLOY**
+    + Đợt này thêm **2 thứ mới**: tab **"Đối chiếu đến"** (Kênh↔Hub + Hub↔Core) nằm trong màn
+      Đối chiếu Song phương đã có, và màn hình **"Chấm ILO1000"** (đối chiếu 4 nguồn) hoàn toàn mới
+    + **Việc phải làm ngay sau khi deploy:** vào **Phân quyền chức năng**, cấp 2 mục mới cho các
+      nhóm cần dùng:
+        - `Chấm ILO1000 — Đối chiếu 4 nguồn (menu)` — thiếu mục này thì **không ai nhìn thấy màn
+          hình mới** trong danh sách bên trái (trừ tài khoản Quản trị viên)
+        - `Chạy "Đối chiếu đến" (Kênh↔Hub + Hub↔Core)` — thiếu mục này thì vẫn **vào xem được**
+          tab mới nhưng bấm nút **Chạy** sẽ báo *"Không có quyền truy cập tính năng này"*
+    + Vì sao phải làm tay: đây là quyền **mới hoàn toàn**, chưa từng tồn tại trong máy nên không
+      nhóm nào đang có sẵn. Khác đợt ACH 31/08 — lần đó quyền đã khai từ trước nên cấp bù tự động
+      được; lần này không có gì để cấp bù từ đó
+    + Tài khoản Quản trị viên dùng được ngay, không cần cấp gì — nên **nếu chỉ thử bằng tài khoản
+      quản trị thì sẽ tưởng mọi thứ đã xong**. Phải thử bằng một tài khoản thường mới biết đã cấp
+      đủ hay chưa
+    + Lần deploy này **cài thêm thư viện** (`numba`, `numpy`) nên bước "đang cài thư viện" của
+      `deploy.bat` sẽ lâu hơn thường lệ (tải khoảng 100 MB). Cứ để chạy, không phải làm gì. Máy
+      không cài được cũng **không sao** — phần mềm tự chạy theo cách cũ, chỉ chậm hơn ở bước giải
+      nén file GL02
+
 - 02/09/2026 Đối chiếu Song phương + Chấm ILO1000 - **Bỏ nút "Chọn thư mục server", chỉ còn "Tải file lên"**
     + Trước đây 2 màn hình này có 2 cách nạp dữ liệu: tải file lên qua trình duyệt, hoặc gõ đường
       dẫn một thư mục trên máy chủ rồi bấm **"Duyệt..."** để chọn. Nay bỏ hẳn cách thứ hai —
