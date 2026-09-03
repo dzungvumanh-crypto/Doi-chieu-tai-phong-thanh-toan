@@ -487,6 +487,12 @@ Truy cập:
   tuỳ ý không qua allowlist nào, tiền lệ giống lỗ hổng `/api/fs/browse` đã gỡ ở ACH trước đó (xem
   `docs/Implementation-notes.html` card 113). Backend ghi **thẳng từng khối** xuống đĩa job
   (`save_upload_to`), không gom vào RAM trước — cùng khuôn mẫu upload của module ACH
+- **Nạp CORE bằng CSV đã phân loại sẵn thì chỉ có dữ liệu của đúng ngày đối chiếu.** Bước
+  Hub↔Core nhìn tới CORE của T+1..T+3, nhưng tên `{mã NH}_DEN*.csv` không mang ngày nên không
+  suy ra được nó là ngày nào — từ 03/09/2026 CSV chỉ được nhận cho ngày T (trước đó 1 file CSV bị
+  dùng nhầm cho cả 4 ngày, tự nhân dữ liệu lên ngày không có thật). Giao dịch hôm nay mà CORE hạch
+  toán sang hôm sau sẽ xếp thành "HUB THỪA" nếu thiếu — muốn chấm đủ thì nạp thêm **GL02 zip của
+  ngày hôm sau** (`docs/Implementation-notes.html` card 117)
 - Phân quyền riêng theo nhóm: `menu.doi_chieu_song_phuong` (xem trang/kiểm tra dữ liệu),
   `doi_chieu_song_phuong.process` (chạy Phân loại dữ liệu),
   `doi_chieu_song_phuong_kenh_core.process` (chạy Đối chiếu đến)

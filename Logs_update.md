@@ -4,6 +4,21 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 03/09/2026 Đối chiếu Song phương - **Sửa lỗi: chọn CSV đã phân loại sẵn cho GL02 thì không chạy đúng**
+    + Ở thẻ **"Đối chiếu đến"**, phần nạp dữ liệu CORE/GL02 có 2 cách: tải file ZIP GL02 gốc (hệ
+      thống tự giải mã + phân loại), hoặc tải thẳng file CSV đã phân loại sẵn (tải từ thẻ "Phân
+      loại dữ liệu" ở trước, chọn đúng file `{mã NH}_DEN.csv` của ngân hàng cần chấm)
+    + **Trước đây cách CSV bị lỗi:** khi đối chiếu cửa sổ nhiều ngày (T-3 đến T+3), 1 file CSV của
+      đúng 1 ngày lại bị dùng nhầm làm dữ liệu cho **cả 4 ngày trong cửa sổ**, làm sai kết quả đối
+      chiếu Hub↔Core. Cách dùng file ZIP gốc không bị lỗi này (tên file ZIP tự mang đúng ngày)
+    + Nay đã sửa: file CSV chỉ được dùng cho đúng 1 ngày nó đại diện; các ngày còn lại trong cửa
+      sổ không có CSV riêng thì phải có file ZIP đúng ngày đó, không tự lấy tạm CSV ngày khác nữa
+    + ⚠️ **Lưu ý khi dùng cách CSV:** 1 file CSV chỉ có dữ liệu của đúng ngày đối chiếu. Giao dịch
+      hôm nay mà CORE hạch toán sang **ngày hôm sau** sẽ bị xếp vào "HUB THỪA". Muốn chấm đủ thì
+      nạp thêm file **GL02 zip của ngày hôm sau**. Bản ghi log giờ nói rõ điều này khi thiếu, thay
+      vì chỉ ghi cụt lủn "BẮT BUỘC" rồi vẫn báo hoàn thành
+    + ✅ **Không phải làm gì sau khi cập nhật** — không đổi dữ liệu đã có, không đổi quyền của ai
+
 - 03/09/2026 Chấm công + Đối chiếu DTBB - **⚠️ HAI MENU NÀY GIỜ THEO PHÂN QUYỀN — PHẢI CẤP QUYỀN SAU KHI DEPLOY, KHÔNG LÀM LÀ PHÒNG KẾ TOÁN MẤT MENU**
     + Trước đây phần mềm tự nhận ra ai thuộc **Phòng Kế toán** rồi cho hiện hai menu **"Chấm công"**
       và **"Đối chiếu DTBB"**. Ai không thuộc phòng đó thì không có cách nào cấp được, dù cần —

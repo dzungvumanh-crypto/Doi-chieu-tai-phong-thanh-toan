@@ -12958,6 +12958,95 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
+  <!-- 117 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">117</span>
+      <span class="card-title">Fix: CSV đã phân loại sẵn bị dùng nhầm cho cả cửa sổ T..T+3 ở Hub↔Core (2026-09-03)</span>
+      <span class="badge badge-done">Hoàn thiện</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-red">Báo cáo người dùng</span> "Chọn CSV thì không chạy"</div>
+      <p>Người dùng thực tế chỉ dùng cách 1 (upload GL02 zip gốc, hệ thống tự giải mã+phân loại) —
+        cách 2 (upload thẳng <code>{ma_nh}_DEN.csv</code> đã phân loại sẵn từ thẻ "Phân loại dữ
+        liệu") báo không chạy đúng. Tái hiện bằng test API: job vẫn hoàn thành ("done") nên không
+        crash rõ ràng — lỗi thật nằm ở dữ liệu bị NHÂN SAI, không phải job treo/lỗi.</p>
+
+      <div class="label"><span class="pill pill-blue">Nguyên nhân gốc</span> Pattern không mang ngày, dùng trong vòng lặp quét theo ngày</div>
+      <p><code>doi_chieu_hub_core()</code> quét cửa sổ 4 ngày (T, T+1, T+2, T+3) cho dữ liệu CORE,
+        gọi <code>_tim_file_core_hoac_csv(goc_dir, ngày_offset, ma_nh)</code> cho từng ngày. Với
+        ZIP, tên file <code>GL02_{ngày}_1000.zip</code> tự mang đúng ngày nên mỗi offset tự nhiên
+        khớp đúng file của nó (offset khác ngày thì không khớp — hoạt động đúng ý). Với CSV,
+        pattern <code>{ma_nh}_DEN*.csv</code> <b>không hề chứa ngày</b> — thiết kế ban đầu (2026-08-28)
+        trông cậy vào thư mục con theo ngày (<code>27.8/</code>, <code>28.8/</code>...) để phân biệt CSV
+        của ngày nào. Kết quả: 1 file CSV duy nhất (của ngày T) bị khớp nhầm cho <b>cả 4 offset</b>
+        T/T+1/T+2/T+3 — tự nhân dữ liệu ngày T lên 3 ngày khác, làm sai lệch
+        <code>classify_core()</code>/<code>classify_hub()</code> (so khớp chéo với dữ liệu giả ở
+        các ngày không thật sự có mặt).</p>
+
+      <div class="note"><b>⚠ Đính chính chẩn đoán ban đầu (review 2026-09-03):</b> bản đầu của
+        card này quy lỗi cho card 113 / PR#70 (bỏ chế độ "chọn thư mục máy chủ" → mọi file dồn vào
+        1 thư mục phẳng <code>_upload/</code> → mất cơ chế phân biệt ngày). <b>Sai.</b> Lỗi có từ
+        2026-08-28, ngay lúc thêm nhánh CSV: <code>tim_file_glob()</code> (trong
+        <code>doi_chieu_song_phuong_common.py</code>) duyệt
+        <code>(*thu_muc_ngay_ung_vien(...), goc_dir)</code> — <b>luôn</b> thử thư mục gốc sau các
+        thư mục ngày. Nên một CSV để rời ở thư mục gốc, đúng kiểu dùng mà quyết định 2026-08-26 cố
+        ý hỗ trợ ("file để rời không có thư mục riêng"), đã khớp cả 4 offset ngay khi chế độ thư
+        mục còn nguyên. PR#70 chỉ nâng tần suất từ "thỉnh thoảng" lên "100%".
+        <br><br>
+        Giữ lại đính chính này thay vì lặng lẽ xoá đoạn sai, vì hai bài học rút ra khác hẳn nhau.
+        Bài học đúng <b>dùng lại được</b>: <i>pattern không mang ngày thì không được dùng trong
+        vòng lặp quét theo ngày</i> — bất kể thư mục có cấu trúc thế nào. Bài học sai ("gỡ tính
+        năng này phá ngầm giả định tính năng kia") đẩy người đọc đi soi lịch sử tính năng thay vì
+        soi chính chỗ hỏng. ZIP không dính chỉ vì tên <code>GL02_{ngày}_1000.zip</code> tự mang
+        ngày.</div>
+
+      <div class="label"><span class="pill pill-green">Fix</span> CSV chỉ được chấp nhận ở offset 0</div>
+      <p><code>_tim_file_core_hoac_csv()</code> thêm tham số <code>off</code> — chỉ thử khớp CSV khi
+        <code>off == 0</code> (đúng ngày T, ngày duy nhất mà CSV thật sự đại diện). Offset T+1..T+3
+        giờ CHỈ chấp nhận qua ZIP đúng ngày của offset đó — không có ZIP thì báo thiếu file đúng
+        như hành vi thiếu dữ liệu bình thường, không còn tự nhân bản CSV của ngày T. Muốn có CORE
+        cho T+1..T+3 khi chỉ có CSV cho T thì bắt buộc phải nạp ZIP ngày đó — không suy ra được từ
+        tên file CSV.</p>
+
+      <div class="label"><span class="pill pill-amber">Kèm theo</span> Nói thẳng hệ quả của dòng log "BẮT BUỘC" ở T+1</div>
+      <p>Vòng lặp CORE gắn nhãn <code>— BẮT BUỘC</code> cho cả T và T+1 (<code>config.py</code>:
+        tài liệu nguồn không ghi "(nếu có)" cho T+1), nhưng <b>chỉ T mới</b>
+        <code>raise ValueError</code>. Nghĩa là thiếu CORE T+1 thì job vẫn chạy tới cùng và báo
+        "hoàn thành" — người chấm nhìn một chữ "BẮT BUỘC" trần không đọc ra được kết quả đang đủ
+        hay thiếu. Chế độ nạp bằng CSV làm chuyện này thành thường trực: CSV chỉ đại diện ngày T
+        nên T+1 luôn trống. Nay dòng log nói thẳng hệ quả nghiệp vụ — giao dịch HUB hôm nay mà CORE
+        hạch toán sang ngày mai sẽ bị xếp thành <code>HUB THỪA</code> thay vì
+        <code>hub T core T+1</code> — kèm cách khắc phục (nạp thêm GL02 zip ngày T+1). Chỉ đổi chữ
+        trong log, <b>không</b> đổi luồng xử lý: không biến T+1 thành lỗi chặn, vì chế độ nạp 1 file
+        GL02 (cách người dùng đang dùng thật) cũng không có T+1 và vẫn phải chạy được.</p>
+
+      <p><b>Chưa làm, biết mà để lại:</b> vòng lặp HUB có đúng cùng kiểu nhãn "BẮT BUỘC không chặn"
+        cho T-1 (thiếu HUB T-1 → dòng CORE lẽ ra khớp lùi bị xếp thành <code>CORE THỪA</code>).
+        Không sửa trong đợt này để giữ diff bám đúng lỗi CSV được báo; khi sửa thì nên sửa cả hai
+        một lượt, cùng lúc rà lại toàn bộ nhãn bắt buộc.</p>
+
+      <p>Test mới, cả 3 đều đã xác nhận <b>fail khi gỡ điều kiện <code>off == 0</code></b> — tức
+        test có bắt được lỗi thật, không phải test trang trí:</p>
+      <ul>
+        <li><code>test_csv_chi_dung_cho_offset_0_khong_leo_sang_ngay_khac</code> (unit) — CSV không
+          còn leo sang T+1/T+2/T+3.</li>
+        <li><code>test_offset_khac_0_van_nhan_zip_dung_ngay_du_co_csv</code> (unit, thêm ở review)
+          — <b>mặt còn lại</b> của luật: chặn CSV ở offset ≠ 0 không được làm mất ZIP đúng ngày.
+          Đây mới là ca fix cải thiện rõ nhất (trước đây CSV xét trước nên thắng luôn cả
+          <code>GL02_{T+1}</code> đang nằm ngay đó), mà bản đầu của PR lại chưa phủ.</li>
+        <li><code>test_chi_upload_csv_khong_kem_gl02_zip_khong_nhan_ban_sang_ngay_khac</code> (API)
+          — kiểm log xác nhận T+1/T+2/T+3 không còn đọc CSV của T.</li>
+      </ul>
+      <p>Số đo thật: 110 test trong <code>tests/test_doi_chieu_song_phuong*.py</code> pass, toàn bộ
+        suite của repo pass. (Bản đầu của card ghi "124/124 test module Đối chiếu Song phương" —
+        con số đó không khớp cách đếm nào ở trên, đã đo lại. Không ghi tổng số test của repo vì
+        con số đó đổi mỗi đợt, đọc lại sau vài tuần chỉ gây nghi ngờ nhầm.)</p>
+
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-03</footer>
 </div>
 </body>

@@ -359,6 +359,34 @@ class TestStartFolderEndpoint:
         assert prog["status"] == "done", prog
         assert prog["ket_qua"]["hub_core"] is not None
 
+    def test_chi_upload_csv_khong_kem_gl02_zip_khong_nhan_ban_sang_ngay_khac(
+        self, admin_client, monkeypatch, tmp_path,
+    ):
+        """Bug báo bởi người dùng 2026-09-03: chỉ upload CSV đã phân loại sẵn (không kèm GL02 zip
+        gốc) — trước khi vá `_tim_file_core_hoac_csv()` chấp nhận CSV ở MỌI offset (T, T+1, T+2,
+        T+3), 1 file CSV bị dùng nhầm làm dữ liệu CORE cho cả 4 ngày (không có ZIP đúng ngày để
+        phân biệt như mode zip). Test hiện có (`test_co_san_csv_thi_khong_giai_ma_lai_gl02`) luôn
+        gửi CẢ zip lẫn CSV cùng lúc nên không lộ ca chỉ-có-CSV này."""
+        monkeypatch.setattr(svc, "TEMP_DIR", tmp_path / "_out")
+        monkeypatch.setattr(ipcas_svc, "TEMP_DIR", tmp_path / "_out_ipcas")
+
+        r = admin_client.post(
+            "/api/doi_chieu_song_phuong_kenh_core/start_upload",
+            files=[*_hub_kenh_upload_files(), _core_csv_upload_file()],
+            data={"ngay": "20260825", "ma_nh": "202"},
+        )
+        job_id = r.json()["job_id"]
+        prog = _wait_done(admin_client, job_id)
+        assert prog["status"] == "done", prog
+        assert prog["ket_qua"]["hub_core"] is not None, prog
+
+        logs = "\n".join(prog["logs"])
+        assert "[CORE T] đọc thẳng CSV đã phân loại sẵn 202_DEN.csv" in logs
+        # T+1/T+2/T+3 KHÔNG có ZIP đúng ngày -> phải báo "bỏ qua", KHÔNG được đọc lại CSV của T
+        for nhan in ("T+1", "T+2", "T+3"):
+            assert f"[CORE {nhan}] không tìm thấy file CSV/GL02" in logs, logs
+            assert f"[CORE {nhan}] đọc thẳng CSV" not in logs, logs
+
 
 class TestStartUploadEndpoint:
     """Chế độ tải file qua trình duyệt (quyết định 2026-08-28 đợt 3) — thay cho chỉ đường dẫn

@@ -57,25 +57,44 @@ def _tim_file_hub(
 
 
 def _tim_file_core_hoac_csv(
-    goc_dir: Path, ngay: str, ma_nh: str, log: Callable[[str], None] = lambda msg: None,
+    goc_dir: Path, ngay: str, ma_nh: str, off: int, log: Callable[[str], None] = lambda msg: None,
 ) -> tuple[str, Path] | None:
     """Ưu tiên `{ma_nh}_DEN*.csv` (đã phân loại sẵn, đọc thẳng — không giải mã) — khớp glob,
     KHÔNG đòi tên chính xác `{ma_nh}_DEN.csv`: dữ liệu thật xuất thủ công (ngoài module Phân
     loại dữ liệu) luôn kèm hậu tố ngày/giờ xuất (VD `202_DEN_20260827_1408.csv`, người chấm xác
     nhận 2026-08-28 đây đúng là dữ liệu CORE của ngày trong tên thư mục, không phải ngày trong
-    tên file). Nhiều file cùng khớp — KHÔNG tự đoán (đổi 2026-08-30, cùng lý do `_tim_file_hub`,
+    tên file).
+
+    CHỈ thử CSV khi `off == 0` (2026-09-03, vá lỗi báo bởi người dùng). Pattern
+    `{ma_nh}_DEN*.csv` KHÔNG mang ngày giao dịch, mà `doi_chieu_hub_core()` gọi hàm này trong
+    vòng lặp quét 4 ngày T/T+1/T+2/T+3 — cùng 1 file CSV khớp cho CẢ 4 offset, tự nhân dữ liệu
+    ngày T lên 3 ngày không hề có dữ liệu. ZIP không dính vì tên `GL02_{ngay}_1000.zip` tự mang
+    ngày, offset khác ngày không khớp.
+
+    ⚠ Lỗi này KHÔNG phải do bỏ chế độ "chọn thư mục máy chủ" (PR#70, 2026-09-02) sinh ra — nó
+    có từ 2026-08-28, ngay lúc thêm nhánh CSV. `tim_file_glob()` LUÔN thử `goc_dir` sau các thư
+    mục ngày, nên một CSV để rời ở thư mục gốc (đúng kiểu dùng mà quyết định 2026-08-26 cố ý hỗ
+    trợ) đã khớp cả 4 offset ngay khi còn thư mục con theo ngày. PR#70 chỉ khiến nó xảy ra 100%
+    thay vì thỉnh thoảng. Luật rút ra: pattern không mang ngày thì KHÔNG được dùng trong vòng
+    lặp quét theo ngày, bất kể thư mục có cấu trúc thế nào.
+
+    CSV đã phân loại sẵn chỉ đại diện cho ĐÚNG 1 ngày — muốn có CORE cho T+1..T+3 phải có ZIP
+    đúng ngày đó (không suy ra được từ tên file CSV).
+
+    Nhiều file CSV cùng khớp ở offset 0 — KHÔNG tự đoán (đổi 2026-08-30, cùng lý do `_tim_file_hub`,
     tránh đọc nhầm file khi nhiều người dùng chung thư mục server), trả None. Không thấy CSV nào
     mới tới `GL02_{ngay}_1000.zip` (cần giải mã AES + phân loại). Trả `(loai, path)`, `loai` là
     `"csv"`/`"zip"`, hoặc `None` nếu không thấy/không xác định được cái nào."""
-    matches = tim_file_glob(goc_dir, ngay, f"{ma_nh}_DEN*.csv")
-    if matches:
-        if len(matches) > 1:
-            log(f"[LỖI] {len(matches)} file khớp '{ma_nh}_DEN*.csv' cùng lúc trong "
-                f"{matches[0].parent} — KHÔNG tự chọn (tránh đọc nhầm khi nhiều người dùng chung "
-                f"thư mục): {', '.join(p.name for p in matches)}. Cần dọn bớt file trùng hoặc "
-                f"dùng thư mục riêng cho mỗi phiên.")
-            return None
-        return ("csv", matches[0])
+    if off == 0:
+        matches = tim_file_glob(goc_dir, ngay, f"{ma_nh}_DEN*.csv")
+        if matches:
+            if len(matches) > 1:
+                log(f"[LỖI] {len(matches)} file khớp '{ma_nh}_DEN*.csv' cùng lúc trong "
+                    f"{matches[0].parent} — KHÔNG tự chọn (tránh đọc nhầm khi nhiều người dùng chung "
+                    f"thư mục): {', '.join(p.name for p in matches)}. Cần dọn bớt file trùng hoặc "
+                    f"dùng thư mục riêng cho mỗi phiên.")
+                return None
+            return ("csv", matches[0])
     p = tim_file(goc_dir, ngay, f"GL02_{ngay}_1000.zip")
     if p is not None:
         return ("zip", p)
@@ -178,10 +197,22 @@ def doi_chieu_hub_core(
     for off in (0, 1, 2, 3):
         nhan = nhan_offset(off)
         found = _tim_file_core_hoac_csv(
-            goc_dir, cong_ngay(ngay, off), ma_nh, lambda m, nhan=nhan: log(f"[CORE {nhan}] {m}"),
+            goc_dir, cong_ngay(ngay, off), ma_nh, off,
+            lambda m, nhan=nhan: log(f"[CORE {nhan}] {m}"),
         )
         if found is None:
-            log(f"[CORE {nhan}] không tìm thấy file CSV/GL02" + (" — BẮT BUỘC" if off in (0, 1) else " (bỏ qua)"))
+            # 2026-09-03: T+1 gắn nhãn BẮT BUỘC (config.py — tài liệu không ghi "nếu có") nhưng
+            # chỉ T mới raise. Nói thẳng hệ quả thay vì để 1 chữ BẮT BUỘC trần rồi job vẫn báo
+            # hoàn thành — người chấm không đọc ra được là kết quả đã thiếu hay đủ.
+            if off == 0:
+                nhac = " — BẮT BUỘC"
+            elif off == 1:
+                nhac = (" — BẮT BUỘC nhưng KHÔNG chặn: giao dịch HUB hôm nay mà CORE hạch toán "
+                        "sang ngày mai sẽ bị xếp thành 'HUB THỪA'. Cần nạp thêm GL02 zip ngày "
+                        "T+1 (CSV đã phân loại sẵn chỉ đại diện đúng ngày T).")
+            else:
+                nhac = " (bỏ qua)"
+            log(f"[CORE {nhan}] không tìm thấy file CSV/GL02" + nhac)
             continue
         loai, p = found
         with do_thoi_gian(log, f"đọc/giải mã CORE {nhan} ({loai})"):
