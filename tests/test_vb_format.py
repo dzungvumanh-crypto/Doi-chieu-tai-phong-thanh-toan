@@ -12,7 +12,7 @@ import pytest
 from docx import Document
 from docx.shared import Mm, Pt
 
-from backend.services.vb_format import ap_dung, bien_doi, nhan_dien, quy_chuan
+from backend.services.vb_format import ap_dung, bien_doi, do_chu, nhan_dien, quy_chuan
 from backend.services.vb_format.chuan_hoa import chuan_hoa
 
 
@@ -586,3 +586,209 @@ def test_van_viet_hoa_khi_doan_truoc_da_ket_cau():
     # Thành phần không phải lời văn thì không bao giờ áp luật viết hoa đầu dòng
     assert not bien_doi.cho_phep_hoa_dau_doan("trich_yeu_cong_van", "Đơn vị thực hiện.")
     assert not bien_doi.cho_phep_hoa_dau_doan("noi_nhan_ds", None)
+
+
+# ── Trích yếu nhiều dòng, nén chữ, đường kẻ ngang ────────────────────────────
+def _bao_cao(o_rong_dxa: int | None = None) -> bytes:
+    """Báo cáo có trích yếu HAI dòng — dòng trên kết thúc bằng dấu phẩy."""
+    doc = Document()
+    st = doc.styles["Normal"]
+    st.font.name = "Times New Roman"
+    st.font.size = Pt(13)
+
+    dong_dau = ["NGÂN HÀNG NÔNG NGHIỆP", "VÀ PHÁT TRIỂN NÔNG THÔN VIỆT NAM",
+                "CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM", "Độc lập - Tự do - Hạnh phúc",
+                "Số:   /BC-TTTT", "Hà Nội, ngày   tháng   năm 2026"]
+    if o_rong_dxa:
+        from docx.oxml import OxmlElement
+        from docx.oxml.ns import qn as _qn
+        t = doc.add_table(rows=1, cols=1)
+        o = t.rows[0].cells[0]
+        o.text = ""
+        tcPr = o._tc.get_or_add_tcPr()
+        cu = tcPr.find(_qn("w:tcW"))
+        if cu is not None:
+            tcPr.remove(cu)
+        w = OxmlElement("w:tcW")
+        w.set(_qn("w:w"), str(o_rong_dxa))
+        w.set(_qn("w:type"), "dxa")
+        tcPr.append(w)
+        for x in dong_dau:
+            o.add_paragraph(x)
+    else:
+        for x in dong_dau:
+            doc.add_paragraph(x)
+
+    doc.add_paragraph("BÁO CÁO")
+    p = doc.add_paragraph("Về kết quả xây dựng phương pháp luận thực hiện Quản lý sản phẩm mới,")
+    p.runs[0].bold = True
+    p2 = doc.add_paragraph("hoạt động trong thị trường mới (NPA)")
+    p2.runs[0].italic = True
+    doc.add_paragraph("Căn cứ Quyết định số 05/QĐ-NHNo ngày 01/9/2026;")
+    ra = io.BytesIO()
+    doc.save(ra)
+    return ra.getvalue()
+
+
+def test_trich_yeu_hai_dong_dong_bo_format_va_canh_giua():
+    """Trích yếu dài xuống dòng cho cân — dòng dưới KHÔNG phải lời văn.
+
+    Nhận mỗi dòng đầu thì dòng thứ hai rơi vào `noi_dung`: căn đều hai bên
+    trong khi dòng trên căn giữa, lại không được in đậm theo.
+    """
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    du_lieu, _ = chuan_hoa(_bao_cao())
+    doan = [p for p, _ in ap_dung.duyet_doan(Document(io.BytesIO(du_lieu)))]
+
+    for mo_dau in ("Về kết quả", "hoạt động trong thị trường"):
+        p = _tim(doan, mo_dau)
+        assert p.paragraph_format.alignment == WD_ALIGN_PARAGRAPH.CENTER, mo_dau
+        # Đọc giá trị ĐANG CÓ HIỆU LỰC: dòng trên vốn đã đậm và không nghiêng
+        # nên phần mềm không ghi đè, `run.font.*` là None chứ không phải False.
+        assert ap_dung._hieu_luc_run(p.runs[0], p, "bold") is True, mo_dau
+        assert not ap_dung._hieu_luc_run(p.runs[0], p, "italic"), mo_dau
+
+    # Không được nuốt sang phần sau
+    ma = _ma_theo_text(_bao_cao())
+    assert ma["Căn cứ Quyết định số 05/QĐ-NHNo ngày 01/9/2026;"] == "can_cu"
+
+
+def test_nen_chu_cho_dong_the_thuc_vua_mot_dong():
+    """Ô hẹp: nén ký tự đúng cách mẫu 979 làm, thay vì để rớt chữ xuống dòng."""
+    from docx.oxml.ns import qn
+    du_lieu, _ = chuan_hoa(_bao_cao(o_rong_dxa=4400))
+    doan = [p for p, _ in ap_dung.duyet_doan(Document(io.BytesIO(du_lieu)))]
+    p = _tim(doan, "VÀ PHÁT TRIỂN")
+    nen = [r._element.rPr.find(qn("w:spacing")) for r in p.runs
+           if r._element.rPr is not None
+           and r._element.rPr.find(qn("w:spacing")) is not None]
+    assert nen, "dòng tên đơn vị dài hơn ô thì phải được nén lại"
+    assert int(nen[0].get(qn("w:val"))) < 0
+    assert abs(int(nen[0].get(qn("w:val")))) <= 24, "không được nén quá trần"
+
+
+def test_o_rong_du_thi_khong_nen():
+    """Vừa sẵn thì không đụng — nén vô cớ làm chữ dính vào nhau."""
+    from docx.oxml.ns import qn
+    du_lieu, _ = chuan_hoa(_bao_cao(o_rong_dxa=5040))
+    doan = [p for p, _ in ap_dung.duyet_doan(Document(io.BytesIO(du_lieu)))]
+    p = _tim(doan, "VÀ PHÁT TRIỂN")
+    assert not [r for r in p.runs if r._element.rPr is not None
+                and r._element.rPr.find(qn("w:spacing")) is not None]
+
+
+def test_nen_het_tran_van_khong_vua_thi_canh_bao_chu_khong_ep():
+    _, bao_cao = chuan_hoa(_bao_cao(o_rong_dxa=2600))
+    assert any("nén hết mức" in w for w in bao_cao["luu_y"])
+
+
+def _cac_duong_ke(du_lieu: bytes) -> list:
+    doc = Document(io.BytesIO(du_lieu))
+    return [p for p, _ in ap_dung.duyet_doan(doc) if "<v:line" in p._p.xml]
+
+
+def test_ve_duong_ke_ngang_roi_khong_phai_gach_chan():
+    """Điều 7.2 / 8.2: "đường kẻ ngang, nét liền" — mẫu 979 vẽ bằng <v:line>,
+    không dùng gạch chân và cũng không dùng viền đoạn."""
+    du_lieu, _ = chuan_hoa(_bao_cao())
+    assert len(_cac_duong_ke(du_lieu)) == 3   # tên đơn vị, Tiêu ngữ, trích yếu
+
+
+def test_go_gach_chan_sai_cho():
+    doc = Document()
+    doc.add_paragraph("CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM")
+    p = doc.add_paragraph("Độc lập - Tự do - Hạnh phúc")
+    p.runs[0].underline = True
+    ra = io.BytesIO()
+    doc.save(ra)
+
+    du_lieu, _ = chuan_hoa(ra.getvalue())
+    doan = [p for p, _ in ap_dung.duyet_doan(Document(io.BytesIO(du_lieu)))]
+    assert not _tim(doan, "Độc lập").runs[0].font.underline
+
+
+def test_cum_nhieu_dong_chi_mot_duong_ke_o_duoi_cung():
+    """Trích yếu hai dòng mà vẽ hai vạch thì có một vạch chen vào giữa."""
+    du_lieu, _ = chuan_hoa(_bao_cao())
+    doc = Document(io.BytesIO(du_lieu))
+    thu_tu = []
+    for p, _ in ap_dung.duyet_doan(doc):
+        if "<v:line" in p._p.xml:
+            thu_tu.append("KE")
+        elif p.text.strip():
+            thu_tu.append(p.text.strip())
+    i = next(k for k, t in enumerate(thu_tu) if t.startswith("Về kết quả"))
+    assert thu_tu[i + 1].startswith("hoạt động"), "không được chen vạch vào giữa trích yếu"
+    assert thu_tu[i + 2] == "KE"
+
+
+def test_chay_lai_khong_ve_chong_duong_ke():
+    lan1, _ = chuan_hoa(_bao_cao())
+    lan2, _ = chuan_hoa(lan1)
+    assert len(_cac_duong_ke(lan1)) == len(_cac_duong_ke(lan2))
+
+def test_vung_noi_dung_doc_duoc_khong_bi_nuot_loi():
+    """Trừ hai `Length` trong python-docx cho ra `int` thường, không còn `.pt`.
+
+    Viết thẳng `(page_width - left - right).pt` là AttributeError, mà chỗ gọi
+    bắt `Exception` rộng nên lỗi bị nuốt — bước nén chữ tắt ngóm, không ai biết.
+    """
+    doc = Document()
+    rong = do_chu._vung_noi_dung_pt(doc)
+    assert rong is not None and rong > 100
+
+
+def test_tinh_ca_viec_word_co_bang_khi_cot_rong_hon_trang():
+    """`w:tcW` chỉ là bề rộng MONG MUỐN.
+
+    Bảng không khai `tblLayout="fixed"` mà tổng cột rộng hơn vùng nội dung thì
+    Word thu nhỏ toàn bộ cột theo cùng tỷ lệ. Đo theo số khai là đo rộng hơn
+    thực tế → kết luận "vừa rồi" nên không nén, còn Word vẫn đẩy chữ xuống dòng.
+    """
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    doc = Document()
+    t = doc.add_table(rows=1, cols=2)
+    for o, rong in zip(t.rows[0].cells, (5040, 5227)):
+        o.text = ""
+        tcPr = o._tc.get_or_add_tcPr()
+        cu = tcPr.find(qn("w:tcW"))
+        if cu is not None:
+            tcPr.remove(cu)
+        w = OxmlElement("w:tcW")
+        w.set(qn("w:w"), str(rong))
+        w.set(qn("w:type"), "dxa")
+        tcPr.append(w)
+    p = t.rows[0].cells[0].add_paragraph("VÀ PHÁT TRIỂN NÔNG THÔN VIỆT NAM")
+
+    o = do_chu._o_bang_cua(p)
+    ty_le = do_chu._ty_le_co_bang(o, doc)
+    assert ty_le < 1.0, "bảng 181mm trong vùng 160mm thì Word phải co lại"
+
+    kha_dung = do_chu.be_rong_kha_dung_pt(p, doc)
+    theo_so_khai = 5040 / 20 - 10.8
+    assert kha_dung < theo_so_khai - 20, "phải nhỏ hơn hẳn con số khai trong file"
+
+
+def test_bang_khai_fixed_thi_khong_co():
+    """`tblLayout="fixed"` là người soạn chốt bề rộng — Word không co."""
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    doc = Document()
+    t = doc.add_table(rows=1, cols=2)
+    lay = OxmlElement("w:tblLayout")
+    lay.set(qn("w:type"), "fixed")
+    t._tbl.tblPr.append(lay)
+    for o, rong in zip(t.rows[0].cells, (5040, 5227)):
+        tcPr = o._tc.get_or_add_tcPr()
+        cu = tcPr.find(qn("w:tcW"))
+        if cu is not None:
+            tcPr.remove(cu)
+        w = OxmlElement("w:tcW")
+        w.set(qn("w:w"), str(rong))
+        w.set(qn("w:type"), "dxa")
+        tcPr.append(w)
+    p = t.rows[0].cells[0].paragraphs[0]
+    assert do_chu._ty_le_co_bang(do_chu._o_bang_cua(p), doc) == 1.0

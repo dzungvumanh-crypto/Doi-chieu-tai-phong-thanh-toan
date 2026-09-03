@@ -193,6 +193,41 @@ def _doan_doc_lap(txt: str, trong_bang: bool) -> str | None:
     return "noi_dung"
 
 
+# Trích yếu kết thúc ở đây thì dòng sau là phần khác của văn bản.
+_KET_TRICH_YEU = (".", "!", "?", ";", ":")
+
+
+def _noi_dai_trich_yeu(ma: list[str], txt: list[str], i: int, ke_tiep) -> None:
+    """Trích yếu dài bị xuống dòng thì các dòng sau CŨNG là trích yếu.
+
+    Người soạn ngắt dòng để hai dòng cân nhau, không phải vì hết câu. Chỉ nhận
+    dòng đầu thì dòng thứ hai rơi vào `noi_dung`: nó bị căn đều hai bên trong
+    khi dòng trên căn giữa, và không được in đậm theo — nhìn ra ngay là hai
+    khối lệch nhau, đúng lỗi người dùng chỉ ra.
+
+    Dấu hiệu "còn dở": dòng trên KHÔNG kết thúc bằng dấu chấm / chấm phẩy /
+    hai chấm. Trong văn bản thật dòng trên hay kết thúc bằng dấu phẩy.
+
+    Chặn hai đầu để không nuốt cả phần nội dung phía sau:
+      * chỉ nối tiếp khi đoạn sau vẫn là `noi_dung` / `bang` (gặp Căn cứ, Điều,
+        Kính gửi… là dừng — chúng đã có mã riêng);
+      * nhiều nhất 3 dòng. Trích yếu dài hơn thế thì gần như chắc chắn đã lấn
+        sang lời văn, và ép đậm + canh giữa cả một đoạn lời văn là hỏng to hơn
+        việc bỏ sót một dòng trích yếu.
+    """
+    for _ in range(2):
+        truoc = _gon(txt[i])
+        if truoc.endswith(_KET_TRICH_YEU):
+            return
+        j = ke_tiep(i)
+        if j < 0 or ma[j] not in ("noi_dung", "bang"):
+            return
+        if len(_gon(txt[j])) > 200:
+            return
+        ma[j] = "trich_yeu"
+        i = j
+
+
 # ── Lượt 2: sửa theo ngữ cảnh ────────────────────────────────────────────────
 def _sua_theo_ngu_canh(ma: list[str], txt: list[str], trong_bang: list[bool]) -> None:
     n = len(ma)
@@ -239,6 +274,7 @@ def _sua_theo_ngu_canh(ma: list[str], txt: list[str], trong_bang: list[bool]) ->
         # ngay sau tên loại nghĩa là văn bản KHÔNG có trích yếu.
         if j >= 0 and ma[j] in ("noi_dung", "bang") and len(_gon(txt[j])) <= 200:
             ma[j] = "trich_yeu"
+            _noi_dai_trich_yeu(ma, txt, j, _ke_tiep)
 
     # ── Tên đơn vị: các dòng in hoa ở đầu văn bản, trước tên loại ──
     # Dòng CUỐI của khối là tên đơn vị ban hành (in đậm, có gạch dưới), các
