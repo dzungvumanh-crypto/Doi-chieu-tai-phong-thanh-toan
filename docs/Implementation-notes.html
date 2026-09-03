@@ -51,7 +51,301 @@
 <div class="page">
 
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
-  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-08-30</p>
+  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-09-03</p>
+
+  <!-- NK1 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">NK1</span>
+      <span class="card-title">Nhật ký hệ thống — ghi được "đã sửa cái gì", xem chi tiết, lọc theo ngày/người/module</span>
+      <span class="badge badge-done">Xong — 1521 test pass (29 test mới)</span>
+    </div>
+    <div class="card-body">
+
+      <p>Đo trên DB thật trước khi sửa: <b>2.292/2.885 dòng (79%)</b> của <code>audit_logs</code> có
+        <code>detail</code> đúng bằng chuỗi <code>"HTTP 200"</code>, tức cột <b>Chi tiết</b> trên màn
+        hình hiện <code>—</code>. Người tra soát biết "ai đã sửa tập chứng từ" nhưng không biết
+        <b>sửa gì</b> — nhật ký chỉ trả lời được nửa câu hỏi mà nó sinh ra để trả lời.</p>
+
+      <div class="label"><span class="pill pill-blue">Quyết định 1</span> Đọc body trong middleware, đọc <b>trước</b> <code>call_next</code></div>
+      <table>
+        <tr><th>Phương án</th><th>Vì sao chọn / bỏ</th></tr>
+        <tr><td><b>Đọc <code>await request.body()</code> trước <code>call_next</code></b> (đã chọn)</td>
+            <td>Starlette 0.35 bọc request bằng <code>_CachedRequest</code>: bản đã đọc được
+                <b>phát lại</b> nguyên vẹn cho route bên dưới. Đây là cách được hỗ trợ chính thức,
+                không phải mẹo đụng vào <code>_receive</code>.</td></tr>
+        <tr><td>Đọc <b>sau</b> <code>call_next</code></td>
+            <td>Route đã hút hết luồng — đọc lại là <b>chờ vô hạn</b>. Treo im lặng, không lỗi nào.</td></tr>
+        <tr><td>Ghi <code>write_audit</code> ngữ nghĩa ở từng endpoint</td>
+            <td>Đúng hơn về nội dung nhưng phải sửa hàng trăm route và mỗi route mới lại quên một
+                lần. Cách đang làm phủ toàn bộ ngay, chỗ nào cần chính xác hơn thì vẫn thêm
+                <code>write_audit</code> đè lên như cũ.</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-red">Rủi ro đã rào</span> Middleware này nằm trên đường đi của <b>mọi</b> POST/PUT/PATCH/DELETE</div>
+      <p>Hỏng chỗ này thì mọi thao tác ghi của hệ thống treo, chứ không phải mất một dòng nhật ký.
+        <code>tests/test_audit_chi_tiet.py::test_route_van_doc_duoc_body_sau_khi_middleware_doc</code>
+        canh đúng điều đó: route phải nhận lại <b>y nguyên</b> body sau khi middleware đã đọc.</p>
+
+      <div class="label"><span class="pill pill-blue">Quyết định 2</span> Ba giới hạn cố ý trong <code>backend/core/audit_body.py</code></div>
+      <table>
+        <tr><th>Giới hạn</th><th>Lý do</th></tr>
+        <tr><td>Chỉ đọc body <code>application/json</code> ≤ <b>8 KB</b> (theo <code>Content-Length</code>)</td>
+            <td>Đọc body là giữ nguyên cả body trong RAM để trả lại cho route. Ôm một file ACH
+                50 MB chỉ để ghi vài dòng chữ là đổi trí nhớ lấy nhật ký. Multipart, chunked,
+                octet-stream đều bỏ qua.</td></tr>
+        <tr><td>Che khoá nhạy cảm (<code>password</code>, <code>token</code>, <code>hash</code>,
+                <code>image</code>, <code>chu_ky</code>…) thành <code>***</code></td>
+            <td>Nhật ký <b>xuất Excel và tải về được</b> — coi như đã công khai. So khớp kiểu
+                "chứa chuỗi con" nên <code>new_password</code>, <code>signature_image</code> tự
+                dính, không phải khai thêm mỗi lần đặt tên trường mới.</td></tr>
+        <tr><td>Cắt còn <b>800 ký tự</b>, mỗi giá trị <b>80 ký tự</b></td>
+            <td>Dòng nhật ký là để đọc, không phải bản sao thứ hai của dữ liệu. Muốn đủ thì tra
+                chính bảng dữ liệu.</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-blue">Quyết định 3</span> Nhồi tóm tắt vào chính cột <code>detail</code>, không thêm cột mới</div>
+      <p>Dạng mới: <code>HTTP 200 · ten=Tập 1, so_to=12</code>. Mã HTTP giữ nguyên vị trí đầu chuỗi
+        nên <code>describe_result()</code> vẫn dò ra mã như cũ; <code>describe_detail()</code> đổi
+        từ "bỏ dòng nếu <i>chỉ</i> có HTTP nnn" sang "<b>cắt tiền tố</b> HTTP nnn" — dòng cũ vẫn ra
+        chuỗi rỗng, dòng mới ra phần nội dung. Không migration, không cột thứ hai cho cùng một khái
+        niệm.</p>
+      <p><span class="pill pill-gray">Đánh đổi</span> Chỉ có tác dụng cho dòng ghi <b>từ nay về sau</b>.
+        2.292 dòng cũ vẫn trống vĩnh viễn — dữ liệu không tồn tại thì không dựng lại được.</p>
+
+      <div class="label"><span class="pill pill-blue">Quyết định 4</span> Ô chọn "người thao tác" chỉ liệt kê người <b>đã có</b> dòng trong nhật ký</div>
+      <p><code>GET /audit/filters</code> nhóm theo <code>actor_id</code> kèm số dòng. Đổ cả danh sách
+        nhân sự vào thì phần lớn lựa chọn bấm vào ra bảng rỗng — ô lọc dài gấp mấy lần mà kém dùng
+        hơn.</p>
+
+      <div class="label"><span class="pill pill-blue">Quyết định 5</span> Ngày sai định dạng thì <b>bỏ qua</b> bộ lọc, không ném lỗi</div>
+      <p>Ô ngày gõ dở (<code>03/09/</code>) không đáng làm cả trang nhật ký trắng xoá hay hiện lỗi đỏ.
+        Lọc "đến ngày" dùng <code>&lt; hôm sau</code> chứ không <code>&lt;= hôm nay</code>:
+        <code>created_at</code> có cả giờ phút nên <code>&lt;=</code> sẽ <b>cắt mất chính ngày đó</b>
+        — đúng kiểu sai mà nhìn bảng không nhận ra.</p>
+
+      <div class="label"><span class="pill pill-green">Vấn đề phát hiện, không sửa</span></div>
+      <table>
+        <tr><th>Vấn đề</th><th>Vì sao để lại</th></tr>
+        <tr><td>Hộp thoại chi tiết dựng <b>một</b> lần rồi vẽ lại ruột, không tạo mới mỗi lần bấm</td>
+            <td>Đã xử lý — ghi lại vì đây là cái bẫy hay gặp: tạo <code>ui.dialog()</code> trong
+                handler thì mỗi cú bấm để lại một dialog chết trong cây phần tử.</td></tr>
+        <tr><td>Trong pytest, hàng đợi audit toàn cục tích lại dòng của mọi test đi qua middleware
+                (không có luồng nền nào dọn)</td>
+            <td>Chỉ ảnh hưởng test — máy thật luôn có luồng ghi chạy. Test nào đụng tới hàng đợi
+                phải tự xả trước, xem
+                <code>test_luong_ghi_nen_ghep_ma_http_voi_tom_tat</code>.</td></tr>
+        <tr><td>Các nhánh bị <code>_SKIP_PREFIXES</code> bỏ qua (quiz, buffer CITAD) vẫn không có
+                nhật ký</td>
+            <td>Cố ý từ trước và lý do vẫn đúng: ghi mỗi lượt sẽ làm trôi mất nhật ký của mọi
+                module khác. Xem chú thích trong <code>audit_middleware.py</code>.</td></tr>
+      </table>
+
+    </div>
+  </div>
+
+  <!-- VB2 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">VB2</span>
+      <span class="card-title">Chuẩn hoá văn bản — đường kẻ ngang, nén chữ cho vừa dòng, trích yếu nhiều dòng</span>
+      <span class="badge badge-done">Xong — 1521 test pass</span>
+    </div>
+    <div class="card-body">
+
+      <p>Ba việc engine trước đây làm sai hoặc không làm. Hai module mới:
+        <code>backend/services/vb_format/duong_ke.py</code> và
+        <code>backend/services/vb_format/do_chu.py</code>.</p>
+
+      <div class="label"><span class="pill pill-blue">Quyết định 1</span> Đường kẻ ngang là đối tượng vẽ, KHÔNG phải gạch chân</div>
+      <p>Điều 7.2 và 8.2 nói phía dưới Tiêu ngữ, tên đơn vị ban hành và trích yếu <b>có đường kẻ
+        ngang nét liền</b>, kèm độ dài riêng: dưới Tiêu ngữ dài <b>bằng</b> dòng chữ, hai chỗ còn
+        lại dài <b>1/3 đến 1/2</b> dòng chữ.</p>
+      <table>
+        <tr><th>Cách vẽ</th><th>Vì sao chọn / bỏ</th></tr>
+        <tr><td><b>Đối tượng đường thẳng <code>&lt;v:line&gt;</code></b> (đã chọn)</td>
+            <td>Đúng cách mẫu 979 làm — đếm trong <code>document.xml</code> của
+                <i>Phần VB_Hướng dẫn thể thức văn bản.docx</i> có <b>7 thẻ <code>v:line</code></b>,
+                <b>không</b> có gạch chân, cũng không có viền đoạn. Đặt được độ dài tuỳ ý.</td></tr>
+        <tr><td>Gạch chân <code>w:u</code></td>
+            <td>Luôn dài đúng bằng chữ, không ngắn hơn được, và nằm sát chân chữ. Không làm được
+                yêu cầu "1/3 đến 1/2".</td></tr>
+        <tr><td>Viền đoạn <code>w:pBdr/w:bottom</code></td>
+            <td>Dễ viết hơn nhiều nhưng kéo dài hết bề ngang đoạn, cắt ngắn không được — đổi một
+                cái sai lấy một cái sai khác.</td></tr>
+      </table>
+      <p>Tỷ lệ dùng thật: Tiêu ngữ <b>1,0</b>; tên đơn vị và trích yếu <b>0,4</b> (giữa dải
+        1/3–1/2). Chạy chuẩn hoá lần hai không vẽ chồng — <code>da_co_duong_ke()</code> dò cả
+        <code>v:line</code> lẫn <code>w:drawing</code> ở đoạn kế tiếp trước khi vẽ; thiếu bước này
+        thì mỗi lượt lại chồng thêm một vạch.</p>
+
+      <div class="label"><span class="pill pill-blue">Quyết định 2</span> Nén ký tự cho vừa dòng, không hạ cỡ chữ</div>
+      <p>Dòng thể thức phải nằm gọn một dòng, nhưng "vừa hay không" phụ thuộc <b>ba thứ cùng lúc</b>:
+        chuỗi chữ, cỡ chữ, và bề rộng ô chứa. Không đo thì không có cách nào biết. Giá của việc đoán
+        sai đã thấy: dòng <i>"NGÂN HÀNG NÔNG NGHIỆP VÀ PHÁT TRIỂN NÔNG THÔN VIỆT NAM"</i> ở cỡ 13
+        tràn khỏi ô 88,9 mm và Word đẩy chữ <b>"NAM" xuống một dòng riêng</b> — tên nước bị cắt đôi.</p>
+      <p><code>do_chu.py</code> đo bằng <b>chính phông sẽ dùng để in</b> (Times New Roman, đúng biến
+        thể đậm/nghiêng) qua Pillow. Số đo khớp thực tế: chuỗi trên ở cỡ 12 đậm đo được
+        <b>238,0 pt</b>, ô khả dụng <b>241,2 pt</b> — vừa, đúng như mẫu 979 trình bày.</p>
+      <div class="note">Tràn thì <b>nén ký tự</b>, không hạ cỡ chữ: cỡ chữ do Phụ lục III quy định,
+        hạ xuống là làm sai một thứ đang đúng. Đây cũng là cách mẫu 979 xử lý — Phụ lục V có dòng
+        tên đơn vị đầy đủ đặt <code>w:spacing = -24</code> (−1,2 pt mỗi ký tự). Trần mặc định lấy
+        đúng mức đó. <b>Nén hết trần mà vẫn tràn thì DỪNG và ghi cảnh báo</b> — không nén tiếp
+        (chữ dính nhau còn khó đọc hơn là để xuống dòng), không tự hạ cỡ chữ.</div>
+
+      <div class="label"><span class="pill pill-blue">Quyết định 3</span> Trích yếu dài xuống dòng thì dòng sau vẫn là trích yếu</div>
+      <p>Người soạn ngắt dòng để hai dòng cân nhau, không phải vì hết câu. Chỉ nhận dòng đầu thì
+        dòng thứ hai rơi vào <code>noi_dung</code>: <b>căn đều hai bên trong khi dòng trên căn giữa,
+        và không được in đậm theo</b> — nhìn ra ngay là hai khối lệch nhau.</p>
+      <p>Dấu hiệu "còn dở": dòng trên <b>không</b> kết thúc bằng <code>.</code> <code>!</code>
+        <code>?</code> <code>;</code> <code>:</code> — trong văn bản thật nó hay kết thúc bằng dấu phẩy.</p>
+      <div class="caution">Chặn hai đầu để không nuốt cả phần nội dung phía sau: chỉ nối tiếp khi
+        đoạn sau vẫn là <code>noi_dung</code>/<code>bang</code> (gặp <i>Căn cứ</i>, <i>Điều</i>,
+        <i>Kính gửi</i>… là dừng vì chúng đã có mã riêng), và <b>nhiều nhất 3 dòng</b>. Trích yếu
+        dài hơn thế thì gần như chắc chắn đã lấn sang lời văn — ép đậm và canh giữa cả một đoạn lời
+        văn là hỏng to hơn việc bỏ sót một dòng trích yếu.</div>
+
+      <div class="label"><span class="pill pill-gray">Bật/tắt được</span> Bốn công tắc mới trong tab Cấu hình</div>
+      <p><code>nen_chu_cho_vua_dong</code>, <code>nen_toi_da_twip</code> (mặc định 24),
+        <code>go_gach_chan_the_thuc</code>, <code>ve_duong_ke_ngang</code> — nằm trong nhóm
+        <code>chung</code> của <code>quy_chuan.py</code>, sửa được từ màn Cấu hình quy chuẩn.</p>
+
+      <div class="label"><span class="pill pill-red">Đã sửa trong <code>deploy.bat</code>, cần xem lại</span> Đường dẫn máy đích</div>
+      <div class="caution"><code>deploy.bat</code> đổi hai dòng ví dụ <code>DEST</code> từ chỗ giữ
+        chỗ (<code>\\192.168.1.100\TenShare\System</code>) sang <b>đường dẫn thật của một máy cụ
+        thể</b>. File này vốn được thiết kế để <i>người chạy tự sửa trước khi chạy</i> — commit
+        đường dẫn thật vào repo nghĩa là ai pull về cũng nhận đường dẫn của máy đó. Repo đang để
+        chế độ riêng tư nên không lộ ra ngoài, nhưng đây là thứ nên cân nhắc trả lại dạng giữ chỗ.</div>
+
+    </div>
+  </div>
+
+  <!-- VBM1 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">VBM1</span>
+      <span class="card-title">Chuẩn hoá văn bản — 18 mẫu trình bày sẵn tách từ Phụ lục V</span>
+      <span class="badge badge-done">Xong — 1492 test pass (8 test mới)</span>
+    </div>
+    <div class="card-body">
+
+      <p>Tab thứ hai của màn <b>Chuẩn hoá văn bản</b>: người dùng tải bản trắng của 18 mẫu trong
+        Phụ lục V về rồi điền nội dung, thay vì tự copy-paste từ file Phụ lục 20 trang — chính
+        thao tác copy-paste đó là nguồn đẻ ra phần lớn lỗi thể thức mà engine đang phải đi dọn.
+        18 file <code>.docx</code> do <code>scripts/tach_mau_vb.py</code> sinh ra một lần và
+        <b>commit vào repo</b>; máy chính không chạy script này.</p>
+
+      <div class="label"><span class="pill pill-blue">Quyết định 1</span> Xoá bớt trên bản gốc, không chép sang <code>Document()</code> trắng</div>
+      <table>
+        <tr><th>Phương án</th><th>Vì sao chọn / bỏ</th></tr>
+        <tr><td><b>Mở bản gốc rồi xoá phần tử ngoài phạm vi</b> (đã chọn)</td>
+            <td>Giữ nguyên <code>styles.xml</code>, <code>numbering.xml</code>, <code>theme1.xml</code>
+                và <code>footnotes.xml</code> của Phụ lục. Không phải chép lại thứ gì nên không có
+                gì để chép sót.</td></tr>
+        <tr><td>Chép từng đoạn sang file trắng</td>
+            <td>Đoạn chép sang rơi về style Normal của Word — mất đúng cỡ chữ và giãn dòng mà cái
+                mẫu đang minh hoạ. Mẫu trắng sai thể thức thì mẫu để làm gì.</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-blue">Quyết định 2</span> Cắt theo dòng tiêu đề <code>Mẫu NN:</code>, không theo ngắt trang</div>
+      <p>Đo trong <code>document.xml</code>: toàn văn bản có <b>17 dấu ngắt trang</b> nhưng chỉ
+        <b>8</b> dấu đứng ngay trước một tiêu đề mẫu. Cắt theo ngắt trang là ghép nhầm mẫu này vào
+        mẫu kia ở 10 chỗ. Regex trên dòng <code>Mẫu NN:</code> khớp đủ 18/18.</p>
+      <p>Dấu ngắt trang nằm <i>trong chính</i> đoạn tiêu đề, nên xoá dòng tiêu đề là xoá luôn trang
+        trắng đứng trước — không phải xử lý thêm.</p>
+
+      <div class="label"><span class="pill pill-red">Bẫy 1</span> Đoạn "trống" có thể đang chứa đường kẻ ngang</div>
+      <div class="caution">Sau khi cắt phải bỏ đoạn trống thừa ở đầu và cuối. Lọc bằng mỗi
+        <code>paragraph.text</code> là <b>xoá mất đường kẻ ngang dưới Tiêu ngữ</b> — nó là đối tượng
+        <code>&lt;v:line&gt;</code> nằm trong một đoạn không có chữ (xem <code>duong_ke.py</code>).
+        <code>_la_doan_trong()</code> vì vậy kiểm cả <code>v:line</code>, <code>w:drawing</code>,
+        <code>w:pict</code>, <code>w:object</code>. Hỏng kiểu này không có lỗi, không có log — chỉ
+        thiếu một vạch mà đến lúc in mới thấy.</div>
+
+      <div class="label"><span class="pill pill-red">Bẫy 2</span> Header của Phụ lục mang trường PAGE — giữ lại là tắt luôn việc đánh số trang</div>
+      <div class="caution"><code>sectPr</code> của Phụ lục trỏ tới <code>header3.xml</code>, trong đó
+        có trường <code>PAGE</code> và kết quả cũ <b>"22"</b> — số trang của Phụ lục. Hai hậu quả nếu
+        giữ: (1) mẫu trắng nào cũng đội một số trang lạ trên đầu; (2) nặng hơn —
+        <code>_them_so_trang()</code> trong <code>ap_dung.py</code> <b>chỉ đánh số khi header còn
+        trống</b>, nên mọi văn bản soạn từ mẫu này sẽ không bao giờ được đánh số trang. Script gỡ
+        sạch <code>headerReference</code> / <code>footerReference</code>;
+        <code>tests/test_vb_mau.py</code> canh không cho quay lại.</div>
+
+      <div class="label"><span class="pill pill-blue">Quyết định 3</span> Ép lại lề trang 15 → 20 mm</div>
+      <p>File Phụ lục để lề trên/dưới <b>15 mm</b> (và lề phải 18 mm) cho mỗi mẫu vừa gọn một trang
+        giấy. Quy chuẩn của dự án theo Điều 4 là <b>20/20/30/20 mm</b>
+        (<code>quy_chuan.py → trang</code>). Giữ nguyên lề của Phụ lục là phát ra mẫu trắng sai lề
+        ngay từ dòng đầu — và người dùng không có lý do gì để nghi ngờ một file do phần mềm phát ra.</p>
+      <p><b>Rủi ro đã đo, không xảy ra:</b> lo lề rộng hơn đẩy mẫu sang trang thứ hai. Chuyển cả 18
+        file sang PDF qua Word (dùng <code>leave_pdf.docx_to_pdf</code>) ở cả hai bộ lề:</p>
+      <table>
+        <tr><th>Mẫu</th><th>Lề gốc 15/15/30/18</th><th>Lề quy chuẩn 20/20/30/20</th></tr>
+        <tr><td>03 — Quyết định quy định gián tiếp</td><td>2 trang</td><td>2 trang</td></tr>
+        <tr><td>14 — Giấy đi đường</td><td>2 trang</td><td>2 trang</td></tr>
+        <tr><td>16 mẫu còn lại</td><td>1 trang</td><td>1 trang</td></tr>
+      </table>
+      <p>Hai mẫu 2 trang là do bản thân nội dung (Mẫu 03 có văn bản ban hành kèm theo, Mẫu 14 có phần
+        thanh toán), không phải do đổi lề.</p>
+
+      <div class="label"><span class="pill pill-green">Người dùng chốt 03/09/2026</span> Giữ nguyên toàn bộ ghi chú của Phụ lục</div>
+      <p>Bản đề xuất ban đầu định bỏ chú thích để mẫu sạch. Người dùng chốt <b>không bỏ</b>. Nên giữ
+        cả hai dạng: đoạn <code>Ghi chú:</code> cuối Mẫu 07 (liệt kê các loại văn bản dùng chung mẫu)
+        và <b>7 footnote</b> (Mẫu 04 có 3, Mẫu 17 có 4).</p>
+      <div class="note"><b>Đánh đổi đã nhận:</b> người dùng phải tự xoá phần ghi chú trước khi phát
+        hành, nếu quên thì văn bản chính thức mang theo chú thích của Phụ lục. Bù lại, mẫu giữ đúng
+        thông tin hướng dẫn ở ngay chỗ cần dùng. Màn hình có một dòng nhắc việc này ngay trên danh
+        sách; đó là toàn bộ hàng rào — không có kiểm tra tự động nào chặn.</div>
+
+      <div class="label"><span class="pill pill-blue">Quyết định 4</span> <code>muc_luc.json</code> là nguồn tên mẫu, không gõ lại trong code</div>
+      <p>Tên 18 mẫu đọc từ <b>bảng mục lục ở trang đầu Phụ lục V</b> và ghi ra
+        <code>templates/vb_mau/muc_luc.json</code>. Backend đọc file này, không có bản danh sách thứ
+        hai trong mã nguồn để lệch. Tên file thuần ASCII (<code>08_cong_van.docx</code>) — cố ý tránh
+        bẫy NFC/NFD đã dính một lần (xem <code>docs/DESIGN.md</code>).</p>
+      <p><b>Bảo mật:</b> tham số đường dẫn là <code>int</code>, tên file luôn tra từ mục lục, không
+        bao giờ ghép từ chuỗi client gửi lên.</p>
+
+      <div class="label"><span class="pill pill-blue">Quyết định 5</span> Không thêm mã quyền mới</div>
+      <p>Tải mẫu trắng là việc đọc, thuộc đúng phạm vi của menu — gate bằng
+        <code>menu.vb_format</code> có sẵn, y như <code>/tai-ve/{token}</code>. Thêm mã riêng chỉ để
+        bật/tắt một nút tải file tĩnh là đẻ thêm ô tick mà người vận hành không biết dùng để làm gì.</p>
+
+      <div class="label"><span class="pill pill-red">Bẫy 3</span> Nạp hai danh sách bằng <code>asyncio.gather</code> là hỏng lặng lẽ</div>
+      <div class="caution">Bản viết đầu dùng <code>await asyncio.gather(_nap(), _nap_mau())</code>.
+        <code>gather</code> bọc mỗi coroutine thành <b>task mới</b> → ngăn xếp slot của NiceGUI rỗng
+        → <code>_handle_api_error()</code> gọi <code>ui.navigate.to("/login")</code> sẽ ném
+        <i>"slot stack for this task is empty"</i> và rơi vào handler toàn cục: phiên hết hạn mà màn
+        hình đứng im, không thông báo gì. Đã đổi về hai lệnh <code>await</code> nối nhau — hai request
+        đều nhỏ, chênh lệch không đáng kể.
+        <br><br>Mẫu <code>asyncio.gather</code> trong <code>docs/DESIGN.md</code> vẫn đúng cho trường
+        hợp nó mô tả: gom <b>lượt gọi API thuần</b>, vẽ giao diện sau khi gather trả về. Chỗ này khác
+        ở chỗ việc vẽ nằm <i>bên trong</i> coroutine được gather.</div>
+
+      <div class="label"><span class="pill pill-gray">Đã kiểm bằng tay, chưa thành test</span> Dựng giao diện</div>
+      <p>Đã dựng thật trang <code>/vb_format</code> bằng client mô phỏng của NiceGUI
+        (<code>nicegui.testing.User</code>) và khẳng định: trang vẽ được, tab hiện đủ 18 tên, và
+        <b>18 nút "Tải mẫu" gọi đúng 18 số mẫu khác nhau</b> (bắt lỗi late-binding của closure trong
+        vòng lặp).</p>
+      <div class="note"><b>Không đưa vào bộ test.</b> Chạy được nó cần thêm <code>pytest-asyncio</code>
+        vào <code>requirements-dev.txt</code> và nạp <code>nicegui.testing.user_plugin</code> trong
+        <code>pytest.ini</code>. Dự án hiện có 1492 test, <b>không test nào là test giao diện</b> —
+        mở hướng đó là quyết định về phạm vi bộ test, không phải việc của riêng tính năng này. Đã đo:
+        cách làm chạy được, cần <code>importlib.reload</code> module trang trong thân test vì fixture
+        <code>nicegui_reset_globals</code> xoá mọi <code>@ui.page</code> đăng ký lúc import.</div>
+
+      <div class="label"><span class="pill pill-gray">Ngoài phạm vi lần này</span> Dùng mẫu làm gốc khi chuẩn hoá</div>
+      <p>Đề xuất ban đầu còn hai ý nữa: bắt người dùng chọn 1 trong 18 mẫu trước khi chuẩn hoá, và
+        lấy mẫu làm gốc rồi điền nội dung file tải lên vào. <b>Chưa làm, và ý thứ hai không nên làm
+        toàn phần:</b> Mẫu 07 chỉ có một dòng <code>[Nội dung văn bản]</code> — đổ cả văn bản vào đó
+        là mất toàn bộ cấu trúc Điều/Khoản/Điểm, còn nội dung không tìm được ô để đổ (bảng số liệu,
+        ảnh chèn, phụ lục đính kèm) thì <b>rơi mất không dấu vết</b>. Người dùng nhận về một file
+        đúng thể thức, thiếu một đoạn, và không có cách nào biết.</p>
+      <p>Nếu làm tiếp thì chỉ áp cho <b>khối thể thức đầu trang, Nơi nhận và chữ ký</b> — chỗ hình
+        dạng cố định, mọi thành phần ánh xạ 1-1 nên không có gì để rơi mất, và cũng là chỗ engine
+        hiện không sửa được bố cục (người soạn xếp Quốc hiệu và tên đơn vị thành hai đoạn dọc thay vì
+        bảng hai cột thì engine chỉ sửa được phông chữ).</p>
+
+    </div>
+  </div>
 
   <!-- NS1 -->
   <div class="card">

@@ -4,6 +4,63 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 03/09/2026 Chuẩn hoá văn bản - **Kẻ đúng đường kẻ ngang, không để tên ngân hàng bị cắt đôi, trích yếu 2 dòng không còn lệch**
+    + **Đường kẻ ngang dưới Tiêu ngữ, tên đơn vị và trích yếu nay được vẽ đúng.** Quy định đòi
+      *đường kẻ ngang nét liền*, dài bằng dòng chữ ở Tiêu ngữ và bằng **1/3–1/2** dòng chữ ở hai
+      chỗ kia. Trước đây phần mềm không vẽ được thứ ngắn hơn dòng chữ. Chạy chuẩn hoá lại nhiều
+      lần cũng không bị chồng thêm vạch
+    + **Tên ngân hàng không còn bị cắt đôi.** Dòng *"NGÂN HÀNG NÔNG NGHIỆP VÀ PHÁT TRIỂN NÔNG THÔN
+      VIỆT NAM"* ở cỡ chữ 13 dài hơn ô chứa nên Word đẩy chữ **"NAM" xuống một dòng riêng**. Nay
+      phần mềm **đo bề rộng chữ thật** rồi **nén ký tự lại** cho vừa — đúng cách mẫu 979 làm, và
+      **không hạ cỡ chữ** (cỡ chữ là do quy định, hạ xuống là làm sai một thứ đang đúng)
+    + ⚠️ Nén tới mức tối đa mà vẫn tràn thì phần mềm **dừng lại và ghi cảnh báo** trong nhật ký sửa
+      đổi, không nén tiếp — nén quá tay thì chữ dính vào nhau, đọc còn khó hơn để nó xuống dòng.
+      Thấy cảnh báo này thì rút ngắn tên đơn vị hoặc nới ô chứa trong file gốc
+    + **Trích yếu dài 2–3 dòng không còn lệch nhau.** Trước đây chỉ dòng đầu được canh giữa và in
+      đậm, dòng thứ hai bị căn đều hai bên và chữ thường — nhìn ra ngay là hai khối lệch. Nay các
+      dòng nối tiếp cũng được nhận là trích yếu (tối đa 3 dòng, và dừng ngay khi gặp *Căn cứ*,
+      *Điều*, *Kính gửi*…)
+    + Bốn mục mới trong tab **Cấu hình quy chuẩn** để bật/tắt: nén chữ cho vừa dòng, mức nén tối
+      đa, gỡ gạch chân ở dòng thể thức, vẽ đường kẻ ngang
+    + ✅ **Không phải làm gì sau khi cập nhật** — không đổi dữ liệu, không đổi quyền
+
+- 03/09/2026 Nhật ký hệ thống - **Cột "Chi tiết" nay nói rõ đã sửa cái gì; thêm bộ lọc và xem chi tiết từng dòng**
+    + **Trước đây cột "Chi tiết" trống ở phần lớn số dòng** — đo trên máy thật: 2.292/2.885 dòng
+      (79%) không có gì. Người tra soát biết *ai đã sửa tập chứng từ lúc mấy giờ* nhưng không biết
+      **sửa gì**, muốn biết phải đi mò lại trong chính màn hình nghiệp vụ
+    + Nay mỗi dòng kèm **tóm tắt dữ liệu đã gửi lên** (các trường và giá trị). Ví dụ thay vì chỉ
+      thấy *"HTTP 200"*, giờ đọc được *"trang_thai=approved, ghi_chu=Đồng ý"*
+    + **Bấm vào một dòng bất kỳ** để mở bảng xem đầy đủ: thời gian, người thao tác, chi tiết,
+      đường dẫn kỹ thuật, nguyên văn bản ghi, địa chỉ IP, mã bản ghi. Bảng chính vẫn hiện bản rút
+      gọn cho dễ quét mắt
+    + **Thêm bộ lọc**: khoảng ngày (Từ ngày / Đến ngày), **người thao tác**, và **module**
+      (chứng từ, nghỉ phép, chấm công, DTBB, ôn tập, chuẩn hoá văn bản…). Ô chọn người thao tác
+      chỉ liệt kê những người **đã thực sự có dòng** trong nhật ký, kèm số dòng của từng người
+    + 🔒 **Mật khẩu, mã đăng nhập và ảnh chữ ký KHÔNG bao giờ được ghi vào nhật ký** — bị che
+      thành `***`. Việc này quan trọng vì nhật ký **xuất được ra Excel và tải về**, tức là coi như
+      đã công khai. File tải lên (Excel, ZIP, ảnh) cũng không bị đọc vào nhật ký
+    + ✅ **Không phải cấp quyền gì thêm** — ai đang vào được menu **Nhật ký hệ thống** thì dùng
+      được ngay. Dòng nhật ký cũ vẫn xem bình thường, chỉ là không có phần tóm tắt (lúc ghi chưa
+      có tính năng này)
+
+- 03/09/2026 Chuẩn hoá văn bản - **Thêm tab "Mẫu trình bày sẵn": tải về bản trắng của 18 mẫu Phụ lục V**
+    + Vào **Tính năng khác → Chuẩn hoá văn bản**, có thêm tab **"Mẫu trình bày sẵn"** bên cạnh tab
+      cũ. Trong đó là 18 mẫu của Phụ lục V — Nghị quyết, Quyết định, Văn bản hợp nhất, Thư công
+      tác, Tờ trình, Công văn, Giấy mời, Giấy giới thiệu, Biên bản, Giấy biên nhận, Giấy đi đường,
+      Đơn xin nghỉ phép, Phiếu trình chuyển, Bản sao văn bản, Phụ lục văn bản…
+    + Bấm **"Tải mẫu"** ở dòng nào là tải về file Word trắng của mẫu đó, mở ra điền nội dung vào
+      là xong — không phải mở file Phụ lục 20 trang rồi copy-paste từng khối nữa
+    + **Lề trang đã đặt sẵn đúng quy định** (trên/dưới 20 mm, trái 30 mm, phải 20 mm). Bản nằm
+      trong file Phụ lục để lề trên/dưới 15 mm cho mỗi mẫu vừa gọn một trang giấy — ai copy thẳng
+      từ đó ra là văn bản sai lề ngay từ đầu mà không biết
+    + ⚠️ **Phần "Ghi chú" của Phụ lục được giữ nguyên trong mẫu** — theo yêu cầu. Cụ thể là dòng
+      *"Ghi chú: Mẫu này áp dụng chung đối với..."* ở cuối **Mẫu 07**, và mấy dòng chú thích nhỏ ở
+      chân trang của **Mẫu 04** và **Mẫu 17**. Đây là hướng dẫn của Phụ lục, **phải tự xoá trước
+      khi phát hành văn bản** — phần mềm không tự xoá
+    + ✅ **Không phải cấp quyền gì thêm** — ai đang vào được menu **Chuẩn hoá văn bản** thì tải mẫu
+      được luôn, không có ô tick mới trong Phân quyền chức năng
+    + ✅ **Không đổi gì ở tab chuẩn hoá cũ** — tải file lên để phần mềm sửa thể thức vẫn chạy y như trước
+
 - 03/09/2026 Đối chiếu Song phương - **Sửa lỗi: chọn CSV đã phân loại sẵn cho GL02 thì không chạy đúng**
     + Ở thẻ **"Đối chiếu đến"**, phần nạp dữ liệu CORE/GL02 có 2 cách: tải file ZIP GL02 gốc (hệ
       thống tự giải mã + phân loại), hoặc tải thẳng file CSV đã phân loại sẵn (tải từ thẻ "Phân
