@@ -59,3 +59,10 @@ Dùng format: card per topic, bảng cho so sánh trước/sau và đánh đổi
 ## Quy tắc làm việc
 
 - **Dọn data test:** Sau khi test bất kỳ tính năng nào, phải tự xóa toàn bộ data đã tạo để test (user, phòng ban, chứng từ, đơn nghỉ phép, v.v.) trước khi báo hoàn thành. Không chờ người dùng nhắc.
+
+- **Không hard-code quyền:** Mọi quyền vào menu và mọi thao tác đều phải đi qua **Phân quyền
+  theo nhóm** — khai mã trong `backend/core/features.py`, kiểm bằng `require_feature()` ở
+  backend và `api.has_feature()` ở frontend. **Không** gate bằng `role`, bằng mã phòng, hay
+  bằng thuộc tính khác của người dùng. Ngoại lệ duy nhất và lý do: xem mục *Phân quyền* trong
+  [`docs/DESIGN.md`](docs/DESIGN.md) — ở đó cũng có danh sách chỗ hiện chưa đúng quy tắc,
+  **đừng chép làm mẫu**.

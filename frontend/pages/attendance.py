@@ -21,6 +21,13 @@ def _empty():
 async def attendance_page(year: Optional[int] = None, month: Optional[int] = None):
     if not _require_auth():
         return
+    # Gate bằng mã quyền, cùng mã sidebar và backend (_QUYEN_CHAM_CONG trong
+    # api/attendance.py) đang đọc — trước đây trang không gate gì, chỉ dựa vào
+    # sidebar ẩn menu nên gõ thẳng /attendance là vào được khung trang rồi mới ăn
+    # 403 từng API. Xem mục "Phân quyền" trong docs/DESIGN.md.
+    if not api.has_feature("menu.attendance"):
+        ui.navigate.to("/home")
+        return
     await _sidebar("attendance")
 
     current_user = api.get_current_user()
@@ -130,12 +137,21 @@ async def attendance_page(year: Optional[int] = None, month: Optional[int] = Non
         def _render_grid(month_data: dict, editable: bool, on_cell_click):
             days_in_month = month_data["days_in_month"]
             holidays = set(month_data["holidays"])
+            # T7/CN đi làm bù: tô như ngày thường, không tô màu cuối tuần —
+            # cột Tổng đã cộng công của hôm đó rồi.
+            makeup = set(month_data.get("makeup_days") or [])
             cols = f"12rem repeat({days_in_month}, minmax(2rem, 1fr)) 5rem"
             with ui.element("div").style(f"display:grid;grid-template-columns:{cols};gap:1px;min-width:{40*days_in_month+300}px"):
                 ui.label("Nhân viên").classes("text-xs font-bold bg-gray-100 p-1 sticky left-0")
                 for day_num in range(1, days_in_month + 1):
                     d = date(year, month, day_num)
-                    bg = "bg-green-100" if d.isoformat() in holidays else ("bg-yellow-100" if d.weekday() >= 5 else "bg-gray-100")
+                    _iso = d.isoformat()
+                    if _iso in holidays:
+                        bg = "bg-green-100"
+                    elif d.weekday() >= 5 and _iso not in makeup:
+                        bg = "bg-yellow-100"
+                    else:
+                        bg = "bg-gray-100"
                     with ui.column().classes(f"items-center p-0.5 {bg}").style("gap:0"):
                         ui.label(str(day_num)).classes("text-xs font-bold")
                         ui.label(_DOW_VN[d.weekday()]).classes("text-[9px] text-gray-500")

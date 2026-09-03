@@ -9,6 +9,10 @@ Không dùng `handovers.handover_date`: khi nhập qua lưới, cột này đư�
 đúng `transaction_date`, nên khoảng cách giữa hai ngày luôn bằng 0 và mọi
 chứng từ đều bị coi là đúng hạn.
 
+Ngày làm việc để tính hạn nộp lấy từ `lich_lam_viec.tai_lich()` — bỏ T7/CN và
+ngày lễ, nhưng T7/CN đã khai là **ngày làm bù** thì vẫn tính là ngày làm việc.
+Ngày bù chỉ có ở màn **Phân lịch trực → Ngày đặc biệt**, không có nguồn nào khác.
+
 Hai nhóm bị loại khỏi báo cáo:
 - Không có log nộp nào (dữ liệu import cũ) → đếm riêng ở `no_submit_date`.
 - Bị từ chối và chưa nộp lại → không còn lần nộp hợp lệ nào, không tính.
@@ -18,6 +22,10 @@ import sqlite3
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 from typing import FrozenSet, Optional
+
+from backend.services.lich_lam_viec import (
+    LichLamViec, dem_ngay_lam_viec, la_ngay_lam_viec, tai_lich,
+)
 
 log = logging.getLogger(__name__)
 
@@ -72,17 +80,15 @@ def submitted_at_from_logs(logs) -> Optional[str]:
 def working_days_between(
     start_exclusive: date,
     end_inclusive: date,
-    holiday_dates: FrozenSet[date],
+    lich: LichLamViec,
     leave_dates: FrozenSet[date] = frozenset(),
 ) -> int:
-    """Đếm ngày làm việc trong (start, end]. Bỏ T7/CN, ngày lễ, ngày nghỉ phép."""
-    count = 0
-    d = start_exclusive + timedelta(days=1)
-    while d <= end_inclusive:
-        if d.weekday() < 5 and d not in holiday_dates and d not in leave_dates:
-            count += 1
-        d += timedelta(days=1)
-    return count
+    """Đếm ngày làm việc trong (start, end]. Bỏ T7/CN, ngày lễ, ngày nghỉ phép.
+
+    T7/CN đã khai là ngày làm bù thì VẪN tính — hạn nộp ngắn lại đúng bằng số
+    ngày phải đi làm thật. Xem `backend/services/lich_lam_viec.py`.
+    """
+    return dem_ngay_lam_viec(start_exclusive, end_inclusive, lich, leave_dates)
 
 
 def _parse_submit_date(raw) -> Optional[date]:
@@ -100,16 +106,12 @@ def _parse_submit_date(raw) -> Optional[date]:
         return None
 
 
-def _load_holidays(db: sqlite3.Connection, lo: date, hi: date) -> FrozenSet[date]:
-    rows = db.execute(
-        "SELECT date FROM public_holidays WHERE date >= ? AND date <= ?",
-        (lo.isoformat(), hi.isoformat()),
-    ).fetchall()
-    return frozenset(date.fromisoformat(r["date"]) for r in rows)
+def _load_staff_leave(db: sqlite3.Connection, lo: date, hi: date, lich: LichLamViec) -> dict:
+    """Ngày nghỉ phép đã duyệt của từng nhân viên (chỉ ngày làm việc).
 
-
-def _load_staff_leave(db: sqlite3.Connection, lo: date, hi: date) -> dict:
-    """Ngày nghỉ phép đã duyệt của từng nhân viên (chỉ ngày trong tuần).
+    Ngày làm bù rơi vào T7/CN cũng là ngày làm việc, nên nghỉ phép trúng hôm đó
+    vẫn được tính là vắng mặt — nếu không, ngày ấy vừa đòi người ta nộp chứng từ
+    vừa không thừa nhận là họ đang nghỉ.
 
     Loại bản ghi nghỉ "tổng hợp" (từ Nhập file hạn mức / sửa tay "Đã dùng" ở
     module Nghỉ phép, xem update_used_days/import_quota_apply trong
@@ -132,7 +134,7 @@ def _load_staff_leave(db: sqlite3.Connection, lo: date, hi: date) -> dict:
         d = max(date.fromisoformat(r["start_date"]), lo)
         end = min(date.fromisoformat(r["end_date"]), hi)
         while d <= end:
-            if d.weekday() < 5:
+            if la_ngay_lam_viec(d, lich):
                 acc[r["staff_id"]].add(d)
             d += timedelta(days=1)
     return {sid: frozenset(days) for sid, days in acc.items()}
@@ -189,8 +191,8 @@ def compute_period(db: sqlite3.Connection, year: int, month: int) -> dict:
     lookup_lo = period_start - timedelta(days=_LOOKUP_PAD_DAYS)
     lookup_hi = max([period_end, *submit_dates]) if submit_dates else period_end
 
-    holidays = _load_holidays(db, lookup_lo, lookup_hi)
-    staff_leave = _load_staff_leave(db, lookup_lo, lookup_hi)
+    lich = tai_lich(db, lookup_lo, lookup_hi)
+    staff_leave = _load_staff_leave(db, lookup_lo, lookup_hi, lich)
 
     by_dept: dict = {}
     late_entries: list = []
@@ -206,7 +208,7 @@ def compute_period(db: sqlite3.Connection, year: int, month: int) -> dict:
         recv_id = r["received_by_id"]
         receiver_leave = staff_leave.get(recv_id, frozenset()) if recv_id else frozenset()
 
-        elapsed = working_days_between(tx_date, submitted, holidays, receiver_leave)
+        elapsed = working_days_between(tx_date, submitted, lich, receiver_leave)
         days_late = max(0, elapsed - DEADLINE_WORKING_DAYS)
         on_time = days_late == 0
 

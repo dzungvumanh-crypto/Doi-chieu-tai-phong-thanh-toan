@@ -93,6 +93,10 @@ CREATE TABLE leave_action_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, leave_id I
     action TEXT, comment TEXT, from_status TEXT, to_status TEXT, created_at TEXT);
 CREATE TABLE leave_quotas (staff_id INT, year INT, quota_days REAL);
 CREATE TABLE public_holidays (date TEXT);
+-- Lịch làm việc đọc cả bảng này (ngày lễ + ngày làm bù của Sổ trực),
+-- xem backend/services/lich_lam_viec.py
+CREATE TABLE duty_special_days (id INTEGER PRIMARY KEY AUTOINCREMENT, date DATE UNIQUE,
+    day_type TEXT, label TEXT, is_confirmed INTEGER DEFAULT 0, created_at DATETIME);
 CREATE TABLE user_signatures (staff_id INTEGER PRIMARY KEY, filename TEXT, image BLOB, updated_at TEXT);
 CREATE TABLE leave_signatures (id INTEGER PRIMARY KEY AUTOINCREMENT, leave_id INT, slot TEXT,
     staff_id INT, page INT, x_mm REAL, y_mm REAL, w_mm REAL, h_mm REAL, image BLOB, signed_at TEXT);

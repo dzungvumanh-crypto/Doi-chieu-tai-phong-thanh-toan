@@ -68,6 +68,13 @@ MENU_TREE = [
                     ("doi_chieu_citad_nostro", "Đối chiếu CITAD - PaymentHub", "account_balance_wallet"),
                 ],
             },
+            {
+                "label": "Phòng Kế toán",
+                "icon": "calculate",
+                "items": [
+                    ("dtbb", "Đối chiếu DTBB", "account_balance_wallet"),
+                ],
+            },
         ],
     },
     {
@@ -138,10 +145,6 @@ MENU_TREE = [
             ("hr_reminders", "Nhắc lịch",          "notifications_active"),
         ],
     },
-    # Đối chiếu DTBB đứng riêng cấp 1 — không phải "thời gian làm việc" nên không
-    # gộp vào nhóm "cong_truc" phía trên dù cùng Phòng Kế toán (gate theo department
-    # code ACCT ở dtbb_page(), không theo cấu trúc cây này).
-    ("dtbb", "Đối chiếu DTBB", "account_balance_wallet"),
     ("ttqt_branches", "Danh sách CN TTQT", "account_tree"),
     {
         # Ôn tập và Chuẩn hoá văn bản không thuộc phòng nào, cả cơ quan dùng —
@@ -473,39 +476,32 @@ def _nav_item(key: str, label: str, icon: str, current_page: str):
         ui.label(label).classes("sidebar-label text-sm flex-1")
 
 
-def _key_visible(k: str, check_features: bool, overrides: dict[str, bool]) -> bool:
-    """Một route key có được hiện không.
+def _key_visible(k: str, check_features: bool) -> bool:
+    """Một route key có được hiện không — chỉ theo mã quyền "menu.<k>".
 
-    `overrides` cho phép đè kết quả của từng key riêng lẻ — dùng cho mục không
-    gate bằng feature-flag (vd "Chấm công" gate theo phòng ACCT) khi nó nằm
-    chung nhóm với các mục gate bằng feature-flag bình thường.
+    Từng có tham số `overrides` để đè kết quả cho "Chấm công" / "Đối chiếu DTBB"
+    (hai mục gate theo phòng ACCT). Đã bỏ cùng lúc với việc bỏ gate theo phòng —
+    đừng thêm lại: mọi mục ẩn/hiện theo Phân quyền theo nhóm, không ngoại lệ
+    (xem mục "Phân quyền" trong docs/DESIGN.md).
     """
-    if k in overrides:
-        return overrides[k]
     return not check_features or api.has_feature(f"menu.{k}")
 
 
-def _item_visible(item, check_features: bool, overrides: dict[str, bool]) -> bool:
+def _item_visible(item, check_features: bool) -> bool:
     """Kiểm tra một item (tuple hoặc sub-group dict) có visible không."""
     if isinstance(item, tuple):
         k, _, _ = item
-        return _key_visible(k, check_features, overrides)
+        return _key_visible(k, check_features)
     # dict = sub-group: visible nếu ít nhất 1 child visible
-    return any(
-        _key_visible(k, check_features, overrides)
-        for k, _, _ in item["items"]
-    )
+    return any(_key_visible(k, check_features) for k, _, _ in item["items"])
 
 
-def _dept_group(dept: dict, current_page: str, check_features: bool = True,
-                overrides: dict[str, bool] | None = None):
+def _dept_group(dept: dict, current_page: str, check_features: bool = True):
     """Nhóm phòng ban — hover để xem flyout menu bên phải (không đẩy các mục dưới xuống).
     check_features=True: lọc items theo api.has_feature(); False: hiện tất cả (dùng cho admin menu cứng).
-    overrides: {route_key: True/False} đè kết quả kiểm tra cho từng mục riêng.
     Item có thể là tuple (key, label, icon) hoặc dict sub-group {"label", "icon", "items"}.
     """
-    overrides = overrides or {}
-    visible_items = [i for i in dept["items"] if _item_visible(i, check_features, overrides)]
+    visible_items = [i for i in dept["items"] if _item_visible(i, check_features)]
     if not visible_items:
         return  # gồm cả phòng chưa có chức năng (items rỗng) — không render header chết
 
@@ -551,7 +547,7 @@ def _dept_group(dept: dict, current_page: str, check_features: bool = True,
                         # ── Sub-group (nested flyout) ──
                         sub_children = [
                             (k, lbl, ico) for k, lbl, ico in item["items"]
-                            if _key_visible(k, check_features, overrides)
+                            if _key_visible(k, check_features)
                         ]
                         if not sub_children:
                             continue
@@ -579,54 +575,13 @@ def _dept_group(dept: dict, current_page: str, check_features: bool = True,
                                         ui.label(lbl).classes("text-sm flex-1")
 
 
-async def _user_dept_code(user: dict) -> str | None:
-    """Tra department_id của user ra code (vd 'ACCT'), cache trong app.storage.user
-    để không gọi lại API mỗi lần chuyển trang. Dùng để giới hạn hiển thị các menu
-    riêng Phòng Kế toán ("Chấm công", "Đối chiếu DTBB") chỉ cho đúng nhân viên
-    phòng đó.
-
-    Rà soát tiếp theo: trước đây cache cả khi gọi API lỗi (mạng chậm, backend
-    restart giữa chừng...) — `code=None` bị ghi cứng vào cache, nhân viên ACCT mất
-    hẳn menu "Chấm công" cho tới khi logout/login lại (chỉ `clear_auth()` mới xoá
-    được cache này). Giờ chỉ cache khi gọi API THÀNH CÔNG; lỗi thì trả None cho lần
-    gọi này nhưng để lần render sau (đổi trang) thử lại, không kẹt vĩnh viễn.
-
-    Rà soát review PR #22 (Người 1, 17/08), phần 2/2: trước đây gọi api.get()
-    trần (không bọc asyncio.to_thread như mọi lượt gọi mạng khác trong file
-    này), mà _sidebar() — hàm gọi thẳng chỗ này — vốn là hàm sync được ~25 trang
-    gọi không qua to_thread. NiceGUI chạy một vòng lặp sự kiện duy nhất nên lượt
-    HTTP đó chặn cả server: lúc nó chờ phản hồi (bình thường vài mili-giây,
-    nhưng tới 10s nếu trúng lúc backend đang khởi động lại — timeout ở
-    api_client.py), trang của MỌI người dùng khác đứng im theo. Đổi hàm này (và
-    _sidebar) sang async + bọc to_thread để nhường lại vòng lặp sự kiện trong
-    lúc chờ mạng, giống 3 chỗ gọi khác trong file."""
-    if "_dept_code" in app.storage.user:
-        return app.storage.user["_dept_code"]
-    dept_id = user.get("department_id") if user else None
-    if not dept_id:
-        return None
-    try:
-        row = await asyncio.to_thread(api.get, f"/api/departments/{dept_id}")
-        code = row.get("code")
-    except (api.SessionExpiredError, api.DisplacedSessionError) as e:
-        # Rà soát review PR #22 (Người 1, 17/08): trước đây bắt tuốt Exception nên
-        # phiên hết hạn/bị đăng nhập nơi khác cũng lặng lẽ trả None — không redirect
-        # về /login như quy định ở DESIGN.md, không log gì. Dùng lại đúng
-        # _handle_api_error() đã có sẵn cho các chỗ gọi API khác trong file này.
-        _handle_api_error(e)
-        return None
-    except Exception as e:
-        _log.warning("_user_dept_code: lỗi tra department_id=%s: %s", dept_id, e)
-        return None
-    app.storage.user["_dept_code"] = code
-    return code
-
-
 async def _sidebar(current_page: str) -> dict:
     # Trả về dict rỗng — badge số đã chuyển hết vào khối "Công việc chờ xử lý".
     # Giữ kiểu trả về để các trang đang gọi không phải sửa chữ ký.
-    # Đổi sang async theo review PR #22 (Người 1, 17/08) — xem docstring
-    # _user_dept_code() phía trên để biết lý do.
+    # Hàm async từ review PR #22 (Người 1, 17/08): trước đây nó gọi api.get() trần
+    # trong một hàm sync mà ~25 trang đều gọi — lượt HTTP đó chặn cả vòng lặp sự kiện
+    # NiceGUI, trang của MỌI người dùng khác đứng im trong lúc chờ. Giữ async: mọi
+    # lượt gọi mạng thêm vào đây phải bọc asyncio.to_thread.
     badge_refs: dict = {}
     ui_kit.install()          # token màu + font Inter cho 19 trang có sidebar
     ui.add_head_html(_SIDEBAR_CSS)
@@ -698,32 +653,17 @@ async def _sidebar(current_page: str) -> dict:
             # Trang chủ — luôn hiển thị
             _nav_item("home", "Trang chủ", "home", current_page)
 
-            # "Chấm công" không dùng feature-flag — chỉ hiện cho đúng nhân viên
-            # Phòng Kế toán (code ACCT) hoặc admin. Trước đây cả nhóm "Phòng Kế
-            # toán" được render riêng với check_features=False; nay mục này nằm
-            # chung nhóm với Nghỉ phép / lịch trực (vốn gate bằng feature-flag)
-            # nên phải đè riêng đúng một key, không đổi cách lọc của cả nhóm.
-            # Giữ nguyên kết luận review PR #22: không thuộc ACCT/admin thì ẩn
-            # hẳn, kể cả khi lỡ được cấp feature menu.attendance qua Phân quyền
-            # theo nhóm — nếu không sẽ hiện menu rồi 403 khi bấm vào.
-            show_attendance = user_role == "admin" or await _user_dept_code(user) == "ACCT"
-
-            # Menu chức năng — nhóm thì dựng flyout, mục phẳng thì dựng thẳng
+            # Menu chức năng — nhóm thì dựng flyout, mục phẳng thì dựng thẳng.
+            # KHÔNG có ngoại lệ nào ở đây: mọi mục ẩn/hiện theo mã "menu.<key>" gán
+            # qua màn Phân quyền theo nhóm. "Chấm công" và "Đối chiếu DTBB" trước
+            # đây gate theo phòng ACCT — đã bỏ, xem mục "Phân quyền" trong
+            # docs/DESIGN.md. Đừng thêm nhánh đặc biệt vào vòng lặp này.
             for node in MENU_TREE:
                 if isinstance(node, tuple):
-                    if node[0] == "dtbb":
-                        # "Đối chiếu DTBB" không dùng feature-flag — chỉ hiện cho đúng
-                        # nhân viên Phòng Kế toán (code ACCT) hoặc admin, giống
-                        # show_attendance bên dưới. Sửa theo review PR #22: nếu lỡ được
-                        # cấp nhầm feature qua Phân quyền theo nhóm thì vẫn hiện menu
-                        # rồi 403 khi bấm vào — không thuộc ACCT/admin thì bỏ qua hẳn.
-                        if user_role == "admin" or await _user_dept_code(user) == "ACCT":
-                            _nav_item(*node, current_page)
-                    elif api.has_feature(f"menu.{node[0]}"):
+                    if api.has_feature(f"menu.{node[0]}"):
                         _nav_item(*node, current_page)
                 else:
-                    _dept_group(node, current_page, check_features=True,
-                                overrides={"attendance": show_attendance})
+                    _dept_group(node, current_page, check_features=True)
 
             ui.separator().classes("border-red-700 my-1")
 

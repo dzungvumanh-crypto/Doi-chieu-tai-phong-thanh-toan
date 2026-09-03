@@ -81,6 +81,7 @@ class AttendanceMonthOut(BaseModel):
     month: int
     days_in_month: int
     holidays: List[str]
+    makeup_days: List[str] = []   # T7/CN phải đi làm bù — vẫn tính công
     staff: List[AttendanceMonthStaffOut]
 
 

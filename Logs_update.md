@@ -4,6 +4,74 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 03/09/2026 Chấm công + Đối chiếu DTBB - **⚠️ HAI MENU NÀY GIỜ THEO PHÂN QUYỀN — PHẢI CẤP QUYỀN SAU KHI DEPLOY, KHÔNG LÀM LÀ PHÒNG KẾ TOÁN MẤT MENU**
+    + Trước đây phần mềm tự nhận ra ai thuộc **Phòng Kế toán** rồi cho hiện hai menu **"Chấm công"**
+      và **"Đối chiếu DTBB"**. Ai không thuộc phòng đó thì không có cách nào cấp được, dù cần —
+      phải sửa phần mềm. Nay hai menu này chuyển sang **Phân quyền chức năng** giống mọi menu khác
+    + **⚠️ Việc phải làm NGAY sau khi deploy** — vào **Phân quyền chức năng**, cấp cho nhóm của
+      Phòng Kế toán:
+        - `Chấm công (menu)` — thiếu là **cả phòng không thấy menu Chấm công**, kể cả để xem công
+          của chính mình
+        - `Đối chiếu DTBB (menu)` — thiếu là **cả phòng không thấy menu Đối chiếu DTBB**
+        - `Xác nhận / Bỏ xác nhận kỳ DTBB` — cấp cho **Trưởng phòng và Phó phòng Kế toán**. Thiếu
+          là vào xem được nhưng bấm nút xác nhận (vàng → xanh) sẽ báo *"Không có quyền truy cập
+          tính năng này"*
+    + Vì sao phải làm tay: hai mã `Đối chiếu DTBB (menu)` và `Xác nhận / Bỏ xác nhận kỳ DTBB` là
+      **quyền mới hoàn toàn**, chưa nhóm nào có. Riêng `Chấm công (menu)` thì mã đã có sẵn từ lâu
+      nhưng **trước đây không điều khiển gì cả** — nhóm nào đang tick sẵn thì dùng được ngay, nhóm
+      chưa tick phải tick vào
+    + Tài khoản **Quản trị viên vẫn dùng được ngay** không cần cấp gì — nên **thử bằng tài khoản
+      quản trị sẽ tưởng mọi thứ đã xong**. Bắt buộc thử bằng một tài khoản nhân viên Phòng Kế toán
+      thường mới biết đã cấp đủ chưa
+    + **Đổi lại được gì:** giờ giao cho một người phòng khác làm hộ chấm công hoặc DTBB chỉ cần
+      tick một ô, không phải sửa phần mềm và chờ deploy. Bảng công vẫn **chỉ liệt kê nhân viên
+      Phòng Kế toán** như cũ — cấp quyền là cho phép người ta **mở màn hình**, không đổi nội dung
+      bảng
+    + Không có màn hình mới, không đổi số liệu, không phải nhập lại gì
+
+- 03/09/2026 Menu - **"Đối chiếu DTBB" chuyển vào nhóm Đối chiếu**
+    + Trước đây **"Đối chiếu DTBB"** đứng riêng một dòng ngoài cùng danh sách menu bên trái. Nay
+      nằm trong nhóm **Đối chiếu → Phòng Kế toán**, cùng chỗ với các màn đối chiếu khác
+    + Chỉ đổi vị trí trên menu. Màn hình, số liệu, cách làm không đổi gì
+
+- 02/09/2026 Nghỉ phép + Chấm công - **Ngày làm bù nay tính là ngày đi làm**
+    + Cùng đợt với mục Báo cáo nộp chứng từ ở trên, nay áp dụng nốt cho **Nghỉ phép** và
+      **Chấm công**. Cả phần mềm dùng chung một cách hiểu "thế nào là ngày làm việc"
+    + **Nghỉ phép:** nghỉ đúng ngày làm bù (thứ Bảy cả cơ quan đi làm) thì **vẫn bị trừ vào quỹ
+      phép**. Trước đây không trừ — máy tưởng đó là thứ Bảy nghỉ bình thường. Số ngày trên đơn,
+      ô "đã dùng", ô "còn lại" và số ngày mang sang quý I năm sau đều tính lại theo cách mới
+    + **Đơn in ra cũng đổi câu chữ:** nghỉ thứ Sáu và thứ Hai mà thứ Bảy ở giữa là ngày làm bù thì
+      đơn **không** còn ghi gộp "Từ ngày ... đến hết ngày ..." nữa mà liệt kê từng ngày — vì ghi
+      gộp là khai nghỉ cả thứ Bảy, ngày người ta thực tế có mặt
+    + **Chấm công:** ngày làm bù nay **có tính công** (mặc định ký hiệu "x" như ngày thường), **xin
+      điều chỉnh được**, và trên lưới **không còn tô màu vàng cuối tuần** nữa. Bảng công xuất ra
+      Excel cũng vậy. Trước đây ngày đó bị chấm 0 công và bấm xin điều chỉnh thì báo *"Không thể
+      xin điều chỉnh cho ngày nghỉ cuối tuần"*
+    + **Vẫn chỉ khai một chỗ duy nhất:** Phân lịch trực → tab "Ngày đặc biệt" → loại "Ngày bù", và
+      phải bấm **Xác nhận**. Không có màn hình mới
+    + Tính năng Nghỉ phép chưa dùng chính thức nên **không có đơn thật nào bị ảnh hưởng**. Bảng
+      chấm công thì có: tháng nào có ngày làm bù đã khai, tổng số công của tháng đó sẽ tăng lên
+      đúng bằng số ngày bù
+
+- 02/09/2026 Báo cáo nộp chứng từ - **⚠️ TỈ LỆ ĐÚNG HẠN CÓ THỂ ĐỔI — phải khai ngày làm bù**
+    + Quy định là nộp chứng từ trong **1 ngày làm việc**, không tính thứ Bảy, Chủ nhật và ngày lễ.
+      Nhưng trước đây phần mềm **không biết ngày đi làm bù**: thứ Bảy cả cơ quan đi làm mà máy vẫn
+      coi là ngày nghỉ, nên chứng từ nộp trễ thật vẫn được chấm là đúng hạn
+    + Nay đã sửa. Phần mềm lấy ngày làm bù từ chỗ **đã có sẵn**: menu **Phân lịch trực → tab
+      "Ngày đặc biệt"** — chọn loại **"Ngày bù"**. Không có màn hình mới nào phải học
+    + **Việc phải làm:** ngày làm bù nào chưa khai thì vào đó khai, và nhớ bấm **"Xác nhận"**.
+      Khai xong mà quên bấm Xác nhận thì phần mềm vẫn coi hôm đó là ngày nghỉ như cũ — giống hệt
+      cách Sổ trực đang làm, không phải quy tắc mới
+    + Ngày lễ khai ở **màn Nghỉ phép** vẫn dùng bình thường như trước, không phải nhập lại. Ngày lễ
+      khai ở tab Ngày đặc biệt cũng được tính. Nếu **một ngày được khai ở cả hai chỗ mà khác nhau**
+      (ví dụ danh mục lễ ghi là nghỉ, Phân lịch trực ghi là ngày bù) thì **lấy theo Phân lịch trực**
+    + **⚠️ Số cũ sẽ đổi:** in lại báo cáo của tháng đã qua sau đợt này có thể ra tỉ lệ khác trước —
+      vài chứng từ đang "đúng hạn" chuyển sang "quá hạn". Đó là kết quả **đúng** theo quy định, không
+      phải phần mềm hỏng. Ai đã in bản cũ để lưu thì nên biết trước điều này
+    + Hai loại **"Cut-off"** và **"Quyết toán"** ở tab Ngày đặc biệt **không** phải ngày nghỉ, không
+      ảnh hưởng gì tới hạn nộp — cứ khai như trước
+    + **Nghỉ phép và Chấm công cũng đổi theo** (xem mục ngay dưới)
+
 - 02/09/2026 Đối chiếu Song phương + Chấm ILO1000 - **⚠️ HAI MÀN HÌNH MỚI — PHẢI CẤP QUYỀN SAU KHI DEPLOY**
     + Đợt này thêm **2 thứ mới**: tab **"Đối chiếu đến"** (Kênh↔Hub + Hub↔Core) nằm trong màn
       Đối chiếu Song phương đã có, và màn hình **"Chấm ILO1000"** (đối chiếu 4 nguồn) hoàn toàn mới

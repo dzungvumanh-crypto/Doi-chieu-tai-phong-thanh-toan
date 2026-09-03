@@ -15,7 +15,7 @@ import asyncio
 from nicegui import ui
 import frontend.api_client as api
 from frontend.shared import (
-    _sidebar, _content_area, _page_header, _require_auth, _handle_api_error, _user_dept_code,
+    _sidebar, _content_area, _page_header, _require_auth, _handle_api_error,
 )
 
 
@@ -58,9 +58,6 @@ _FORMULA_NOTE_3 = (
     "màn hình CSER01 của đúng ngày cần tính toán dữ liệu."
 )
 
-_KSV_ROLES = ("truong_phong", "pho_phong")
-
-
 def _fmt_col(value: float, divisor: int) -> str:
     return f"{value / divisor:,.2f}"
 
@@ -70,20 +67,14 @@ async def dtbb_page():
     if not _require_auth():
         return
     user = api.get_current_user()
-    user_role = user.get("role", "") if user else ""
     user_id = user.get("id") if user else None
-    # Gate theo phòng (department code ACCT), KHÔNG theo has_feature() — đa số
-    # nhân viên ACCT không được gán riêng qua màn Phân quyền theo nhóm,
-    # has_feature() luôn False cho họ. Ô tick "menu.dtbb" từng tồn tại trong màn
-    # Phân quyền không điều khiển gì (đã bỏ hẳn, xem PR #67 rà soát) — sidebar/API
-    # đều tự gate theo phòng, không đọc feature này. Bản trước gate nhầm theo
-    # has_feature() nên chuyên viên ACCT bình thường bị đá về /home dù backend
-    # (_require_acct_scope) vẫn cho qua bình thường — sidebar cũng gate đúng theo
-    # phòng nên link hiện ra nhưng bấm vào lại văng, sai lệch giữa 2 nơi.
-    if user_role != "admin" and await _user_dept_code(user) != "ACCT":
+    # Gate bằng mã quyền, y hệt sidebar và backend (_QUYEN_DUNG trong api/dtbb.py) —
+    # ba nơi đọc cùng một mã nên không thể lệch nhau. Trước đây gate theo mã phòng
+    # ACCT; xem mục "Phân quyền" trong docs/DESIGN.md.
+    if not api.has_feature("menu.dtbb"):
         ui.navigate.to("/home")
         return
-    can_be_ksv = user_role == "admin" or user_role in _KSV_ROLES
+    can_be_ksv = api.has_feature("dtbb.confirm")
 
     state = {"files": {}, "result": None, "error_files": set()}
 

@@ -84,22 +84,22 @@ def compute_carry_over(staff_id: int, year: int, db,
              AND start_date <= ? AND end_date >= ?""",
         (staff_id, f"{prev_year}-12-31", f"{prev_year}-01-01"),
     ).fetchall()
+    # Import muộn: lich_lam_viec không kéo theo gì từ database.py, nhưng đặt ở
+    # đầu file thì mọi module import database.py đều phải nạp theo — giữ nguyên
+    # kiểu import cục bộ mà hàm này đang dùng cho date/json.
+    from backend.services.lich_lam_viec import la_ngay_lam_viec, tai_lich
     used = 0.0
-    _holidays = None
+    _lich = None
     for row in rows:
         if row["spread_dates"]:
             used += len([d for d in json.loads(row["spread_dates"]) if d.startswith(str(prev_year))])
         else:
-            if _holidays is None:
-                hrows = db.execute(
-                    "SELECT date FROM public_holidays WHERE date >= ? AND date <= ?",
-                    (f"{prev_year}-01-01", f"{prev_year}-12-31"),
-                ).fetchall()
-                _holidays = frozenset(_date.fromisoformat(r["date"]) for r in hrows)
+            if _lich is None:
+                _lich = tai_lich(db, _date(prev_year, 1, 1), _date(prev_year, 12, 31))
             d = _date.fromisoformat(row["start_date"])
             end = _date.fromisoformat(row["end_date"])
             while d <= end:
-                if d.year == prev_year and d.weekday() < 5 and d not in _holidays:
+                if d.year == prev_year and la_ngay_lam_viec(d, _lich):
                     used += 1
                 d += timedelta(days=1)
     return max(0.0, prev_quota - used)

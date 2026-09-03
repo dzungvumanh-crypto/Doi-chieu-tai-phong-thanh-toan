@@ -6,6 +6,11 @@ sửa nhiều lỗi "âm thầm" — đặc biệt lỗ hổng phân quyền (ch
 được gán vào ACCT). Toàn bộ test trước đó là script tạm rồi xoá — file này khoá
 lại các quy tắc đã xác nhận, tránh tái phát khi có người sửa code sau này.
 
+Quyền VÀO màn hình nay là mã "menu.attendance" gán qua nhóm, không phải mã phòng
+ACCT — fixture `seeded` gán sẵn cho 4 người, cố ý bỏ "outsider". Phân biệt tiếp
+trong màn (xem cả phòng / xin điều chỉnh hộ người khác) vẫn theo role quản lý
+CỘNG THÊM attendance.view_dept — đó là quyền cộng thêm, không thay thế.
+
 Dùng TestClient + dependency_overrides (get_current_staff/get_db) — DB thật
 chạy qua _create_tables/_ensure_indexes trên file SQLite tạm, không đụng
 data/ksnb.db. Không dùng ":memory:" vì TestClient có thể mở nhiều connection
@@ -24,6 +29,7 @@ from backend.core.enums import StaffRole
 from backend.database import get_db
 from backend.db.migrations import _create_tables, _ensure_indexes
 from backend.main import app
+from tests.conftest import cap_quyen
 
 
 @pytest.fixture
@@ -69,6 +75,11 @@ def seeded(db_path):
         "admin": _mk("E05", "Admin E", StaffRole.ADMIN, None),
         "outsider": _mk("E06", "Nguoi Ngoai ACCT", StaffRole.CHUYEN_VIEN, other_id),
     }
+    # Quyền vào màn Chấm công gán qua nhóm, KHÔNG suy ra từ role hay phòng (xem mục
+    # "Phân quyền" trong docs/DESIGN.md). "outsider" cố ý không được gán — nó đóng vai
+    # người chưa được cấp quyền, không còn đóng vai "người ngoài phòng ACCT".
+    for k in ("chuyen_vien", "chuyen_vien2", "hau_kiem_vien", "truong_phong"):
+        cap_quyen(conn, ids[k], "menu.attendance")
     conn.commit()
     conn.close()
     return {"acct_id": acct_id, "other_id": other_id, "ids": ids}
@@ -103,15 +114,35 @@ def _teardown():
 
 
 # ══════════════════════════════════════════════════════════════
-# Ngoài ACCT bị chặn hoàn toàn
+# Chưa được cấp "menu.attendance" thì bị chặn hoàn toàn
 # ══════════════════════════════════════════════════════════════
 
-def test_nhan_vien_ngoai_acct_bi_chan_hoan_toan(db_path, seeded):
+def test_chua_duoc_cap_quyen_bi_chan_hoan_toan(db_path, seeded):
+    """Không có mã "menu.attendance" thì mọi endpoint đều 403 — kể cả xem công
+    của chính mình. Trước đây điều kiện là "thuộc phòng ACCT"."""
     s = seeded
     c = _client(db_path, s["ids"]["outsider"], StaffRole.CHUYEN_VIEN, s["other_id"])
     try:
         r = c.get("/api/attendance/month", params={"year": 2026, "month": 9})
         assert r.status_code == 403
+    finally:
+        _teardown()
+
+
+def test_nguoi_ngoai_acct_duoc_cap_quyen_van_vao_duoc(db_path, seeded):
+    """Khoá đúng thay đổi hành vi: gate là MÃ QUYỀN, không phải mã phòng.
+
+    "outsider" thuộc phòng PAYMENT. Trước đây bị chặn cứng vì không phải ACCT;
+    giờ được cấp "menu.attendance" là vào được (bảng công vẫn chỉ liệt kê nhân
+    viên ACCT — đó là phạm vi DỮ LIỆU, không phải phạm vi quyền)."""
+    s = seeded
+    conn = sqlite3.connect(db_path)
+    cap_quyen(conn, s["ids"]["outsider"], "menu.attendance")
+    conn.close()
+    c = _client(db_path, s["ids"]["outsider"], StaffRole.CHUYEN_VIEN, s["other_id"])
+    try:
+        r = c.get("/api/attendance/month", params={"year": 2026, "month": 9})
+        assert r.status_code == 200, r.text
     finally:
         _teardown()
 

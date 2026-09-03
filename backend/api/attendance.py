@@ -8,7 +8,8 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
-from backend.core.deps import get_current_staff, require_admin
+from backend.core.deps import get_current_staff, require_admin, require_feature
+from backend.services.lich_lam_viec import LichLamViec, la_ngay_lam_viec, tai_lich
 from backend.database import get_db, _vn_now
 from backend.schemas.attendance import (
     AttendanceSymbolCreate, AttendanceSymbolUpdate, AttendanceSymbolOut,
@@ -20,15 +21,10 @@ router = APIRouter()
 _MANAGER_ROLES = ("truong_phong", "pho_phong")
 
 
-def _require_acct_scope(current: dict, db: sqlite3.Connection) -> None:
-    """Admin luôn qua. Vai trò khác phải thuộc phòng code='ACCT'."""
-    if current["role"] == "admin":
-        return
-    row = db.execute(
-        "SELECT code FROM departments WHERE id=?", (current.get("department_id"),)
-    ).fetchone()
-    if not row or row["code"].upper() != "ACCT":
-        raise HTTPException(403, "Tính năng này chỉ dành cho Phòng Kế toán")
+# Quyền vào màn Chấm công — gán qua màn Phân quyền theo nhóm, không gate theo phòng
+# (xem mục "Phân quyền" trong docs/DESIGN.md). Bảng công vẫn CHỈ chứa nhân viên phòng
+# ACCT: đó là phạm vi DỮ LIỆU của module, không phải phạm vi quyền.
+_QUYEN_CHAM_CONG = require_feature("menu.attendance")
 
 
 def _is_manager(current: dict) -> bool:
@@ -59,12 +55,12 @@ def _can_export(current: dict, db: sqlite3.Connection) -> bool:
     return _is_manager(current) or _has_group_feature(db, current["id"], "attendance.export")
 
 
-def _load_holidays(db: sqlite3.Connection, start: date, end: date):
-    rows = db.execute(
-        "SELECT date FROM public_holidays WHERE date >= ? AND date <= ?",
-        (start.isoformat(), end.isoformat()),
-    ).fetchall()
-    return frozenset(date.fromisoformat(r["date"]) for r in rows)
+def _load_lich(db: sqlite3.Connection, start: date, end: date) -> LichLamViec:
+    """Lịch làm việc trong khoảng — ngày lễ + ngày làm bù.
+
+    Thứ Bảy đi làm bù là ngày làm việc: có mặc định tính công, có xin điều chỉnh
+    được, và không tô màu cuối tuần. Xem `backend/services/lich_lam_viec.py`."""
+    return tai_lich(db, start, end)
 
 
 def _default_work_value(db: sqlite3.Connection) -> float:
@@ -145,10 +141,9 @@ def get_month(
     year: int = Query(...),
     month: int = Query(..., ge=1, le=12),
     scope: str = Query("mine"),
-    current: dict = Depends(get_current_staff),
+    current: dict = Depends(_QUYEN_CHAM_CONG),
     db: sqlite3.Connection = Depends(get_db),
 ):
-    _require_acct_scope(current, db)
     # BUG đã sửa (phát hiện khi test thật): trước đây ép scope="mine" cho MỌI
     # chuyên viên vô điều kiện — kể cả GDV đã được admin cấp attendance.view_dept,
     # khiến quyền vừa gán hoàn toàn vô tác dụng ở endpoint này. Giờ chỉ ép về
@@ -164,7 +159,7 @@ def get_month(
     days_in_month = calendar.monthrange(year, month)[1]
     start = date(year, month, 1)
     end = date(year, month, days_in_month)
-    holiday_dates = _load_holidays(db, start, end)
+    lich = _load_lich(db, start, end)
 
     if scope == "dept":
         staff_rows = _acct_staff_rows(db)
@@ -205,7 +200,7 @@ def get_month(
                     "status": arow["status"], "note": arow["note"], "is_virtual": False,
                 }
                 total += arow["work_value"] or 0
-            elif d.weekday() < 5 and d not in holiday_dates and d <= today:
+            elif la_ngay_lam_viec(d, lich) and d <= today:
                 days[d.isoformat()] = {
                     "attendance_id": None, "staff_id": sid, "date": d.isoformat(),
                     "symbol": "x", "work_value": default_wv,
@@ -225,7 +220,10 @@ def get_month(
 
     return {
         "year": year, "month": month, "days_in_month": days_in_month,
-        "holidays": [d.isoformat() for d in sorted(holiday_dates)],
+        "holidays": [d.isoformat() for d in sorted(lich.ngay_le)],
+        # Ngày làm bù phải xuống tới frontend, không thì lưới tô T7 màu cuối tuần
+        # trong khi cột Tổng vẫn cộng công của hôm đó — nhìn là thấy vênh.
+        "makeup_days": [d.isoformat() for d in sorted(lich.ngay_bu)],
         "staff": result_staff,
     }
 
@@ -234,10 +232,9 @@ def get_month(
 def get_day(
     staff_id: int = Query(...),
     date_: str = Query(..., alias="date"),
-    current: dict = Depends(get_current_staff),
+    current: dict = Depends(_QUYEN_CHAM_CONG),
     db: sqlite3.Connection = Depends(get_db),
 ):
-    _require_acct_scope(current, db)
     # Đồng nhất với /month: chuyên viên được cấp attendance.view_dept cũng xem
     # được công của người khác qua endpoint tra 1 ngày này, không chỉ của mình.
     # Rà soát tiếp theo: trước đây chỉ chặn đúng role "chuyen_vien" — vai trò khác
@@ -257,8 +254,7 @@ def get_day(
         raise HTTPException(400, f"Ngày '{date_}' không hợp lệ, định dạng phải là YYYY-MM-DD")
     # Ngày lễ và ngày chưa tới không mặc định tính công — cùng fix với /month
     # (review PR #22, trước đây chỗ này chỉ check thứ trong tuần).
-    is_holiday = bool(_load_holidays(db, d, d))
-    if d.weekday() < 5 and not is_holiday and d <= _vn_now().date():
+    if la_ngay_lam_viec(d, _load_lich(db, d, d)) and d <= _vn_now().date():
         return {"staff_id": staff_id, "date": date_, "symbol": "x", "work_value": _default_work_value(db),
                 "status": None, "note": None, "is_virtual": True}
     return {"staff_id": staff_id, "date": date_, "symbol": None, "work_value": 0.0,
@@ -270,10 +266,9 @@ def put_day(
     body: AttendanceDayUpdate,
     staff_id: int = Query(...),
     date_: str = Query(..., alias="date"),
-    current: dict = Depends(get_current_staff),
+    current: dict = Depends(_QUYEN_CHAM_CONG),
     db: sqlite3.Connection = Depends(get_db),
 ):
-    _require_acct_scope(current, db)
     if not _is_manager(current):
         raise HTTPException(403, "Chỉ Trưởng/Phó phòng hoặc Admin được sửa công trực tiếp")
     # Đồng bộ với create_adjustment (rà soát vòng 3 PR #22, theo quyết định của
@@ -315,10 +310,9 @@ def put_day(
 # ─── Danh sách trưởng/phó phòng ACCT (cho dropdown "Người kiểm soát" khi xuất) ─
 @router.get("/managers")
 def list_managers(
-    current: dict = Depends(get_current_staff),
+    current: dict = Depends(_QUYEN_CHAM_CONG),
     db: sqlite3.Connection = Depends(get_db),
 ):
-    _require_acct_scope(current, db)
     rows = db.execute(
         """SELECT u.id, u.full_name FROM user_tttt u
            JOIN departments d ON d.id = u.department_id
@@ -333,10 +327,9 @@ def list_managers(
 @router.post("/adjustments")
 def create_adjustment(
     body: AdjustmentCreate,
-    current: dict = Depends(get_current_staff),
+    current: dict = Depends(_QUYEN_CHAM_CONG),
     db: sqlite3.Connection = Depends(get_db),
 ):
-    _require_acct_scope(current, db)
     staff_id = body.staff_id or current["id"]
     # Rà soát tiếp theo: chỉ chặn đúng role "chuyen_vien" trước đây bỏ sót vai trò
     # khác không phải quản lý (vd hau_kiem_vien) — họ xin điều chỉnh hộ được tuỳ ý
@@ -369,10 +362,10 @@ def create_adjustment(
         attendance_id = row["id"]
         old_symbol, old_work_value = row["symbol"], row["work_value"]
     else:
-        if body.date.weekday() >= 5:
-            raise HTTPException(400, "Không thể xin điều chỉnh cho ngày nghỉ cuối tuần chưa có dữ liệu")
-        if _load_holidays(db, body.date, body.date):
-            raise HTTPException(400, "Không thể xin điều chỉnh cho ngày nghỉ lễ chưa có dữ liệu")
+        _lich = _load_lich(db, body.date, body.date)
+        if not la_ngay_lam_viec(body.date, _lich):
+            _loai = "ngày nghỉ lễ" if body.date in _lich.ngay_le else "ngày nghỉ cuối tuần"
+            raise HTTPException(400, f"Không thể xin điều chỉnh cho {_loai} chưa có dữ liệu")
         init_symbol, init_value = "x", 1.0
         cur = db.execute(
             """INSERT INTO attendances (staff_id, date, symbol, work_value, status, created_at, updated_at)
@@ -408,10 +401,9 @@ def create_adjustment(
 def review_adjustment(
     adj_id: int,
     body: AdjustmentReview,
-    current: dict = Depends(get_current_staff),
+    current: dict = Depends(_QUYEN_CHAM_CONG),
     db: sqlite3.Connection = Depends(get_db),
 ):
-    _require_acct_scope(current, db)
     if not _is_manager(current):
         raise HTTPException(403, "Chỉ Trưởng/Phó phòng hoặc Admin được duyệt điều chỉnh công")
     row = db.execute("SELECT * FROM attendance_adjustments WHERE id=?", (adj_id,)).fetchone()
@@ -447,10 +439,9 @@ def review_adjustment(
 @router.get("/adjustments")
 def list_adjustments(
     scope: str = Query("mine"),
-    current: dict = Depends(get_current_staff),
+    current: dict = Depends(_QUYEN_CHAM_CONG),
     db: sqlite3.Connection = Depends(get_db),
 ):
-    _require_acct_scope(current, db)
     clauses, params = [], []
     # Rà soát tiếp theo: chỉ chặn đúng role "chuyen_vien" trước đây bỏ sót vai trò
     # khác không phải quản lý (vd hau_kiem_vien) — họ xem được scope="pending" (toàn
@@ -485,10 +476,9 @@ def export_month(
     year: int = Query(...),
     month: int = Query(..., ge=1, le=12),
     kiem_soat_id: int = Query(..., description="staff_id trưởng/phó phòng ACCT ký tên Kiểm soát"),
-    current: dict = Depends(get_current_staff),
+    current: dict = Depends(_QUYEN_CHAM_CONG),
     db: sqlite3.Connection = Depends(get_db),
 ):
-    _require_acct_scope(current, db)
     # Cộng thêm quyền theo nhóm (attendance.export) — GDV được admin cấp quyền
     # riêng cũng xuất được, không chỉ trưởng/phó phòng/admin.
     if not _can_export(current, db):
@@ -513,7 +503,7 @@ def export_month(
     days_in_month = calendar.monthrange(year, month)[1]
     start = date(year, month, 1)
     end = date(year, month, days_in_month)
-    holiday_dates = _load_holidays(db, start, end)
+    lich = _load_lich(db, start, end)
 
     staff_rows = _acct_staff_rows(db)
     staff_ids = [r["id"] for r in staff_rows]
@@ -591,11 +581,13 @@ def export_month(
         cell.border = cell_border
         if 3 <= col_idx <= 2 + days_in_month:
             d = date(year, month, col_idx - 2)
-            if d.weekday() >= 5:
-                cell.fill, cell.font = weekend_fill, hdr_font
-                continue
-            if d in holiday_dates:
+            # Xét lễ TRƯỚC cuối tuần: ngày lễ rơi vào T7/CN phải tô màu lễ.
+            # Ngày làm bù thì la_ngay_lam_viec() trả True nên tô như ngày thường.
+            if d in lich.ngay_le:
                 cell.fill, cell.font = holiday_fill, hdr_font
+                continue
+            if not la_ngay_lam_viec(d, lich):
+                cell.fill, cell.font = weekend_fill, hdr_font
                 continue
             cell.fill, cell.font = hdr_fill, hdr_font
             continue
@@ -628,7 +620,7 @@ def export_month(
             arow = att_map.get((sid, d.isoformat()))
             if arow:
                 symbol, value = arow["symbol"], (arow["work_value"] or 0)
-            elif d.weekday() < 5 and d not in holiday_dates and d <= today:
+            elif la_ngay_lam_viec(d, lich) and d <= today:
                 symbol, value = "x", default_wv
             else:
                 symbol, value = "", 0.0
@@ -650,9 +642,9 @@ def export_month(
             cell.alignment = Alignment(horizontal="center")
             # Không tô màu riêng cho ô nghỉ phép/nghỉ khác — mẫu thật chỉ in đậm,
             # không có nền màu (chỉ T7/CN và ngày lễ mới có nền).
-            if d in holiday_dates:
+            if d in lich.ngay_le:
                 cell.fill = holiday_fill
-            elif d.weekday() >= 5:
+            elif not la_ngay_lam_viec(d, lich):
                 cell.fill = weekend_fill
             cell.font = symbol_font_normal if cell.value in (None, "", "x") else symbol_font_special
 

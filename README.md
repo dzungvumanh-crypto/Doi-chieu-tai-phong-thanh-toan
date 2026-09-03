@@ -903,9 +903,10 @@ Menu nhóm theo **chức năng**, không theo phòng ban. Hover để mở flyou
 
 ```
 Quản lý chứng từ ─ Bàn giao chứng từ / Đóng chứng từ / Lưu trữ
-Đối chiếu ──────── Phòng Thanh toán ─ Chấm 459901 / Song phương / ACH / CITAD / Đối soát CITAD
+Đối chiếu ──────── Phòng Thanh toán ─ Chấm 459901 / Song phương / ILO1000 / ACH / CITAD / Đối soát CITAD
                    Phòng Swift ────── Đối chiếu điện SWIFT
                    Phòng QLTK Nostro, Vostro ─ Đối chiếu CITAD - PaymentHub
+                   Phòng Kế toán ──── Đối chiếu DTBB
 Báo cáo ────────── Phòng KSNB & HTVH ─ Báo cáo hậu kiểm / Báo cáo bàn giao chứng từ
                    Phòng Tổng hợp ──── Báo cáo dữ liệu thanh toán
 Nghỉ phép ──────── menu phẳng, không có nhóm cha
@@ -922,7 +923,9 @@ Tầng "phòng" **chỉ còn ở cấp 2** của Đối chiếu, Báo cáo và C
 
 Một nhóm **chỉ hiện khi user có ít nhất 1 chức năng** bên trong (`menu.<key>`); nhóm con không còn mục nào hiển thị được cũng bị bỏ qua — không dựng mục menu hover ra rỗng. Menu phẳng cấp 1 kiểm feature giống hệt: không có `menu.ttqt_branches` thì không thấy "Danh sách CN TTQT".
 
-Một ngoại lệ: **Chấm công** không gate bằng feature-flag mà theo **phòng** — chỉ nhân viên Phòng Kế toán (`ACCT`) và admin thấy, vì mọi nhân viên phòng đó đều cần xem "Công của tôi" chứ không riêng người được cấp quyền. Nó nằm chung nhóm với các mục gate bằng feature-flag, nên `_dept_group()` nhận thêm tham số `overrides={"attendance": ...}` để đè kết quả kiểm tra của **đúng một khoá** thay vì đổi cách lọc cả nhóm. Ô tick `menu.attendance` ở màn Phân quyền vẫn tồn tại nhưng chỉ để gán 2 quyền con (xem bảng công cả phòng / xuất Excel) — tick hay không **không** làm menu hiện ra với người ngoài phòng ACCT.
+**Không còn ngoại lệ nào** (03/09/2026). *Chấm công* và *Đối chiếu DTBB* trước đây gate theo **phòng** (`ACCT`) chứ không theo feature-flag, và `_dept_group()` có tham số `overrides` riêng để đè kết quả cho đúng hai khoá đó. Cả cơ chế `overrides` lẫn hàm tra mã phòng `_user_dept_code()` đã **xoá hẳn** — để lại là lời mời dựng lại đúng thứ vừa gỡ. Mọi mục ẩn/hiện theo `menu.<key>`, không có nhánh đặc biệt nào trong vòng lặp dựng menu.
+
+> **Đổi lại: sau khi deploy phải cấp quyền tay.** Trước đây mọi nhân viên phòng Kế toán tự động có hai menu này; nay admin phải xếp họ vào nhóm có `menu.attendance` / `menu.dtbb` (và `dtbb.confirm` cho trưởng/phó phòng). Không cấp là cả phòng mất menu. Đây là đánh đổi cố ý: nhận thêm một bước lúc deploy để lấy khả năng giao việc cho người phòng khác mà không phải sửa mã. Xem mục *Phân quyền* trong `docs/DESIGN.md`.
 
 Cây menu nằm ở `shared.MENU_TREE`. Phần tử cấp 1 là **tuple** `(key, label, icon)` cho menu phẳng, hoặc **dict** `{"id", "label", "icon", "items"}` cho nhóm. Sâu tối đa 3 tầng — `_dept_group()` không dựng được tầng thứ tư.
 
