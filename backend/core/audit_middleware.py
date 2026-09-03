@@ -7,12 +7,15 @@ kết quả HTTP, IP, thời gian). Các thao tác có write_audit ngữ nghĩa 
 
 Middleware này KHÔNG tự ghi DB. Nó chỉ bỏ dòng vào hàng đợi rồi trả response
 ngay — xem `backend/core/audit_queue.py` để biết vì sao.
+
+Kèm theo mỗi dòng là tóm tắt dữ liệu gửi lên (query + body JSON nhỏ, đã che
+khoá nhạy cảm) — xem `backend/core/audit_body.py`.
 """
 import re
 
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from backend.core import audit_queue
+from backend.core import audit_body, audit_queue
 from backend.core.net import header_ip_dang_tin
 
 _MUTATING = {"POST", "PUT", "PATCH", "DELETE"}
@@ -63,13 +66,29 @@ _SKIP_EXACT = {
 
 class AuditMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
-        response = await call_next(request)
-
         method = request.method
         path = request.url.path
-        if method not in _MUTATING or any(path.startswith(p) for p in _SKIP_PREFIXES):
-            return response
-        if (method, _ID_RE.sub("/{id}", path)) in _SKIP_EXACT:
+        bo_qua = (
+            method not in _MUTATING
+            or any(path.startswith(p) for p in _SKIP_PREFIXES)
+            or (method, _ID_RE.sub("/{id}", path)) in _SKIP_EXACT
+        )
+
+        # Body phải đọc TRƯỚC call_next: sau đó route đã hút hết luồng, đọc lại
+        # là chờ vô hạn. Starlette bọc request bằng _CachedRequest nên gọi
+        # `body()` ở đây là hợp lệ — bản đã đọc được phát lại cho route bên
+        # dưới. Vẫn phải nuốt lỗi: client ngắt giữa chừng thì `body()` ném
+        # ClientDisconnect, mà nhật ký không được phép làm hỏng request.
+        body = None
+        if not bo_qua and audit_body.nen_doc_body(request.headers):
+            try:
+                body = await request.body()
+            except Exception:
+                body = None
+
+        response = await call_next(request)
+
+        if bo_qua:
             return response
         # 404/405 = không khớp route → không có thao tác thực sự, khỏi ghi
         if response.status_code in (404, 405):
@@ -87,5 +106,6 @@ class AuditMiddleware(BaseHTTPMiddleware):
             # lúc đăng nhập, rồi mới tới địa chỉ của kết nối.
             header_ip_dang_tin(peer, request.headers.get("X-Client-IP")),
             peer,
+            noi_dung=audit_body.tom_tat(request.url.query, body),
         )
         return response

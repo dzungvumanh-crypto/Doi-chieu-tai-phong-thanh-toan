@@ -127,7 +127,7 @@ _WORK = {
 }
 
 # ── Fallback: tên module theo prefix + động từ theo method ────────────────────
-_MODULE = [
+MODULES = [
     ("/api/handover-reports",      "báo cáo bàn giao"),
     ("/api/handovers",             "bàn giao chứng từ"),
     ("/api/bundles",               "tập chứng từ"),
@@ -143,7 +143,15 @@ _MODULE = [
     ("/api/th-reports",            "báo cáo Tổng hợp"),
     ("/api/reports",               "báo cáo hậu kiểm"),
     ("/api/departments",           "phòng ban"),
+    ("/api/attendance",            "bảng chấm công"),
+    ("/api/dtbb",                  "DTBB"),
+    ("/api/quiz",                  "ôn tập trắc nghiệm"),
+    ("/api/vb-format",             "chuẩn hoá văn bản"),
+    ("/api/hr",                    "hồ sơ nhân sự"),
+    ("/api/admin/logs",            "nhật ký & sao lưu"),
 ]
+# Tên cũ — còn dùng bên trong file này. Giữ alias để chỗ khác import MODULES.
+_MODULE = MODULES
 _VERB = {"POST": "Thực hiện", "PUT": "Cập nhật", "PATCH": "Cập nhật", "DELETE": "Xóa"}
 
 
@@ -186,18 +194,19 @@ def describe_result(detail: str, action: str) -> str:
     return f"Mã {code}"
 
 
-_CHI_HTTP = re.compile(r"^HTTP\s+\d+$")
+_TIEN_TO_HTTP = re.compile(r"^HTTP\s+\d+\s*(?:·\s*)?")
 
 
 def describe_detail(detail: str) -> str:
     """Nội dung chi tiết để hiện lên màn hình.
 
-    Dòng do middleware ghi chỉ có "HTTP 200" — đó là mã kết quả, đã nằm ở cột
-    Kết quả rồi, hiện lại thành cột chi tiết toàn số thì vô nghĩa. Chỉ những
-    dòng do write_audit ghi mới có nội dung thật.
+    Dòng do middleware ghi mở đầu bằng "HTTP 200" — đó là mã kết quả, đã nằm ở
+    cột Kết quả rồi, lặp lại ở cột Chi tiết thì vô nghĩa. Cắt đúng phần đầu đó,
+    giữ phần tóm tắt nội dung phía sau (nếu có). Dòng cũ chỉ có "HTTP 200" trả
+    về chuỗi rỗng như trước.
     """
     d = (detail or "").strip()
-    return "" if _CHI_HTTP.match(d) else d
+    return _TIEN_TO_HTTP.sub("", d).strip()
 
 
 def result_ok(detail: str, action: str) -> bool:
