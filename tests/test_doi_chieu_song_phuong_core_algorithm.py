@@ -346,11 +346,13 @@ class TestTimFile:
 
     def test_csv_chi_dung_cho_offset_0_khong_leo_sang_ngay_khac(self, tmp_path):
         """Bug báo bởi người dùng 2026-09-03: `{ma_nh}_DEN*.csv` KHÔNG mang ngày giao dịch trong
-        tên — trước đây dựa vào thư mục con theo ngày để phân biệt, nhưng từ khi bỏ chế độ thư mục
-        máy chủ (PR#70) mọi file tải lên nằm CHUNG 1 thư mục phẳng. Nếu không chặn theo offset,
-        1 file CSV ngày T bị dùng nhầm làm dữ liệu CORE cho CẢ T+1/T+2/T+3 — tự nhân dữ liệu, sai
-        khác hẳn hành vi ZIP (tên mang đúng ngày nên tự nhiên không khớp offset khác). CSV chỉ được
-        chấp nhận ở offset 0; offset khác phải có ZIP đúng ngày của nó, không được rơi về CSV."""
+        tên, mà `doi_chieu_hub_core()` lại gọi hàm này trong vòng lặp quét 4 ngày — 1 file CSV ngày
+        T bị dùng nhầm làm dữ liệu CORE cho CẢ T+1/T+2/T+3, tự nhân dữ liệu, khác hẳn hành vi ZIP
+        (tên mang đúng ngày nên tự nhiên không khớp offset khác). CSV chỉ được chấp nhận ở offset 0;
+        offset khác phải có ZIP đúng ngày của nó, không được rơi về CSV.
+
+        Không phải lỗi do PR#70 sinh ra: `tim_file_glob()` luôn thử cả thư mục gốc, nên CSV để rời
+        ở gốc đã khớp cả 4 offset từ 2026-08-28 — xem docstring `_tim_file_core_hoac_csv`."""
         (tmp_path / "202_DEN.csv").write_bytes(b"x")  # CSV duy nhất, không có ZIP nào cả
         assert pipeline._tim_file_core_hoac_csv(tmp_path, "20260824", "202", 1) is None
         assert pipeline._tim_file_core_hoac_csv(tmp_path, "20260825", "202", 2) is None
@@ -358,6 +360,17 @@ class TestTimFile:
         # offset 0 (ngày gốc) vẫn phải đọc được CSV bình thường
         loai, p = pipeline._tim_file_core_hoac_csv(tmp_path, "20260823", "202", 0)
         assert loai == "csv"
+
+    def test_offset_khac_0_van_nhan_zip_dung_ngay_du_co_csv(self, tmp_path):
+        """Mặt còn lại của luật trên (thêm ở review 2026-09-03): chặn CSV ở offset ≠ 0 KHÔNG được
+        làm mất luôn ZIP đúng ngày đang nằm sẵn đó. Đây mới là ca fix cải thiện rõ nhất — trước khi
+        vá, CSV được xét TRƯỚC nên ở offset 1 nó thắng cả `GL02_{T+1}`, đọc dữ liệu ngày T trong
+        khi file đúng ngày T+1 có sẵn ngay cạnh."""
+        (tmp_path / "202_DEN.csv").write_bytes(b"x")
+        (tmp_path / "GL02_20260824_1000.zip").write_bytes(b"x")
+        loai, p = pipeline._tim_file_core_hoac_csv(tmp_path, "20260824", "202", 1)
+        assert loai == "zip"
+        assert p.name == "GL02_20260824_1000.zip"
 
     def test_nhieu_csv_cung_khop_khong_tu_chon(self, tmp_path):
         """Quyết định 2026-08-30: nhiều người dùng có thể trỏ chung 1 thư mục server (mode 2)

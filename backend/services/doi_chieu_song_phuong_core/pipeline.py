@@ -65,14 +65,21 @@ def _tim_file_core_hoac_csv(
     nhận 2026-08-28 đây đúng là dữ liệu CORE của ngày trong tên thư mục, không phải ngày trong
     tên file).
 
-    CHỈ thử CSV khi `off == 0` (2026-09-03, vá lỗi báo bởi người dùng) — tên `{ma_nh}_DEN*.csv`
-    KHÔNG mang ngày giao dịch, trước đây dựa vào thư mục con theo ngày (`thu_muc_ngay_ung_vien`)
-    để phân biệt CSV của ngày nào. Từ khi bỏ chế độ "chọn thư mục máy chủ" (PR#70, 2026-09-02),
-    mọi file tải lên nằm CHUNG 1 thư mục phẳng `_upload/` — cùng 1 CSV bị khớp nhầm cho CẢ 4
-    offset T/T+1/T+2/T+3, tự nhân dữ liệu ngày T lên các ngày khác, sai khác hẳn hành vi ZIP
-    (tên `GL02_{ngay}_1000.zip` mang đúng ngày, offset khác ngày tự nhiên không khớp). CSV đã
-    phân loại sẵn chỉ đại diện cho ĐÚNG 1 ngày — muốn có CORE cho T+1..T+3 phải tự giải mã ZIP
-    ngày đó (không thể suy ra từ tên file CSV).
+    CHỈ thử CSV khi `off == 0` (2026-09-03, vá lỗi báo bởi người dùng). Pattern
+    `{ma_nh}_DEN*.csv` KHÔNG mang ngày giao dịch, mà `doi_chieu_hub_core()` gọi hàm này trong
+    vòng lặp quét 4 ngày T/T+1/T+2/T+3 — cùng 1 file CSV khớp cho CẢ 4 offset, tự nhân dữ liệu
+    ngày T lên 3 ngày không hề có dữ liệu. ZIP không dính vì tên `GL02_{ngay}_1000.zip` tự mang
+    ngày, offset khác ngày không khớp.
+
+    ⚠ Lỗi này KHÔNG phải do bỏ chế độ "chọn thư mục máy chủ" (PR#70, 2026-09-02) sinh ra — nó
+    có từ 2026-08-28, ngay lúc thêm nhánh CSV. `tim_file_glob()` LUÔN thử `goc_dir` sau các thư
+    mục ngày, nên một CSV để rời ở thư mục gốc (đúng kiểu dùng mà quyết định 2026-08-26 cố ý hỗ
+    trợ) đã khớp cả 4 offset ngay khi còn thư mục con theo ngày. PR#70 chỉ khiến nó xảy ra 100%
+    thay vì thỉnh thoảng. Luật rút ra: pattern không mang ngày thì KHÔNG được dùng trong vòng
+    lặp quét theo ngày, bất kể thư mục có cấu trúc thế nào.
+
+    CSV đã phân loại sẵn chỉ đại diện cho ĐÚNG 1 ngày — muốn có CORE cho T+1..T+3 phải có ZIP
+    đúng ngày đó (không suy ra được từ tên file CSV).
 
     Nhiều file CSV cùng khớp ở offset 0 — KHÔNG tự đoán (đổi 2026-08-30, cùng lý do `_tim_file_hub`,
     tránh đọc nhầm file khi nhiều người dùng chung thư mục server), trả None. Không thấy CSV nào
@@ -194,7 +201,18 @@ def doi_chieu_hub_core(
             lambda m, nhan=nhan: log(f"[CORE {nhan}] {m}"),
         )
         if found is None:
-            log(f"[CORE {nhan}] không tìm thấy file CSV/GL02" + (" — BẮT BUỘC" if off in (0, 1) else " (bỏ qua)"))
+            # 2026-09-03: T+1 gắn nhãn BẮT BUỘC (config.py — tài liệu không ghi "nếu có") nhưng
+            # chỉ T mới raise. Nói thẳng hệ quả thay vì để 1 chữ BẮT BUỘC trần rồi job vẫn báo
+            # hoàn thành — người chấm không đọc ra được là kết quả đã thiếu hay đủ.
+            if off == 0:
+                nhac = " — BẮT BUỘC"
+            elif off == 1:
+                nhac = (" — BẮT BUỘC nhưng KHÔNG chặn: giao dịch HUB hôm nay mà CORE hạch toán "
+                        "sang ngày mai sẽ bị xếp thành 'HUB THỪA'. Cần nạp thêm GL02 zip ngày "
+                        "T+1 (CSV đã phân loại sẵn chỉ đại diện đúng ngày T).")
+            else:
+                nhac = " (bỏ qua)"
+            log(f"[CORE {nhan}] không tìm thấy file CSV/GL02" + nhac)
             continue
         loai, p = found
         with do_thoi_gian(log, f"đọc/giải mã CORE {nhan} ({loai})"):

@@ -13,6 +13,10 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
       chiếu Hub↔Core. Cách dùng file ZIP gốc không bị lỗi này (tên file ZIP tự mang đúng ngày)
     + Nay đã sửa: file CSV chỉ được dùng cho đúng 1 ngày nó đại diện; các ngày còn lại trong cửa
       sổ không có CSV riêng thì phải có file ZIP đúng ngày đó, không tự lấy tạm CSV ngày khác nữa
+    + ⚠️ **Lưu ý khi dùng cách CSV:** 1 file CSV chỉ có dữ liệu của đúng ngày đối chiếu. Giao dịch
+      hôm nay mà CORE hạch toán sang **ngày hôm sau** sẽ bị xếp vào "HUB THỪA". Muốn chấm đủ thì
+      nạp thêm file **GL02 zip của ngày hôm sau**. Bản ghi log giờ nói rõ điều này khi thiếu, thay
+      vì chỉ ghi cụt lủn "BẮT BUỘC" rồi vẫn báo hoàn thành
     + ✅ **Không phải làm gì sau khi cập nhật** — không đổi dữ liệu đã có, không đổi quyền của ai
 
 ---
