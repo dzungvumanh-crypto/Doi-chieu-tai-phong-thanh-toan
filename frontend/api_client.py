@@ -62,9 +62,6 @@ def clear_auth():
     app.storage.user.pop("token", None)
     app.storage.user.pop("user_data", None)
     app.storage.user.pop("features", None)
-    # Cache mã phòng ban (frontend/shared.py::_user_dept_code) — không xoá thì đăng nhập
-    # user khác cùng trình duyệt sẽ hiện/ẩn sai menu "Chấm công" (review PR #22).
-    app.storage.user.pop("_dept_code", None)
 
 
 def load_my_features() -> None:

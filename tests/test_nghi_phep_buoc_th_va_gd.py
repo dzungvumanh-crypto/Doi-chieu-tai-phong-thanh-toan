@@ -40,6 +40,10 @@ CREATE TABLE leave_action_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, leave_id I
     action TEXT, comment TEXT, from_status TEXT, to_status TEXT, created_at TEXT);
 CREATE TABLE leave_quotas (staff_id INT, year INT, quota_days REAL);
 CREATE TABLE public_holidays (date TEXT);
+-- Lịch làm việc đọc cả bảng này (ngày lễ + ngày làm bù của Sổ trực),
+-- xem backend/services/lich_lam_viec.py
+CREATE TABLE duty_special_days (id INTEGER PRIMARY KEY AUTOINCREMENT, date DATE UNIQUE,
+    day_type TEXT, label TEXT, is_confirmed INTEGER DEFAULT 0, created_at DATETIME);
 CREATE TABLE delegation_records (id INTEGER PRIMARY KEY AUTOINCREMENT, giam_doc_id INT,
     pho_giam_doc_id INT, start_date TEXT, end_date TEXT, is_active INT DEFAULT 1, note TEXT,
     created_by_id INT, created_at TEXT);

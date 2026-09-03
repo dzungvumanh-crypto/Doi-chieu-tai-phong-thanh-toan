@@ -112,11 +112,16 @@ FEATURES: dict[str, str] = {
     # Đối chiếu điện SWIFT — hậu tố phòng bỏ vì đã có dải nhãn "Phòng Swift"
     "menu.swift_recon":        "Đối chiếu điện SWIFT (menu)",
 
-    # Chấm công — Phòng Kế toán. "menu.attendance" CHỈ để làm tiêu đề nhóm hiển thị
-    # trong màn Phân quyền theo nhóm — sidebar KHÔNG dùng code này để ẩn/hiện (xem
-    # frontend/shared.py::_sidebar(), vẫn gate theo department code ACCT như cũ) vì
-    # mọi nhân viên ACCT đều cần thấy menu để xem "Công của tôi", không riêng người
-    # được cấp quyền. 2 action dưới đây mới thực sự được check (attendance.py).
+    # Đối chiếu DTBB — Phòng Kế toán. "menu.dtbb" mở màn hình + mọi thao tác
+    # tính/lưu/xoá/xuất (mọi người có quyền dùng như nhau). Bước XÁC NHẬN (vàng→xanh)
+    # và bỏ xác nhận tách riêng "dtbb.confirm" vì đó là chốt số liệu của người kiểm
+    # soát, không phải việc thường ngày. Cả hai đều check thật ở backend/api/dtbb.py.
+    "menu.dtbb":     "Đối chiếu DTBB (menu)",
+    "dtbb.confirm":  "Xác nhận / Bỏ xác nhận kỳ DTBB",
+
+    # Chấm công — Phòng Kế toán. "menu.attendance" điều khiển việc hiện menu và mở
+    # màn hình (sidebar + attendance.py). 2 action dưới là quyền cộng thêm trong màn:
+    # xem bảng công cả phòng và xuất Excel — người chỉ có menu chỉ thấy "Công của tôi".
     "menu.attendance":       "Chấm công (menu)",
     "attendance.view_dept":  "Xem bảng công cả phòng + lịch sử các tháng",
     "attendance.export":     "Xuất Excel bảng công",
@@ -229,6 +234,12 @@ FEATURE_GROUPS: list[dict] = [
                     {"code": "menu.doi_chieu_citad_nostro", "actions": []},
                 ],
             },
+            {
+                "label": "Phòng Kế toán",
+                "menus": [
+                    {"code": "menu.dtbb", "actions": ["dtbb.confirm"]},
+                ],
+            },
         ],
     },
     {
@@ -272,12 +283,11 @@ FEATURE_GROUPS: list[dict] = [
         ],
     },
     {
-        # Soi gương nhóm "cong_truc" trong MENU_TREE. Ô tick "menu.attendance"
-        # KHÔNG điều khiển việc hiện menu Chấm công (sidebar gate theo phòng
-        # ACCT) — nó ở đây để admin gán "xem bảng công cả phòng + xuất Excel"
-        # cho một GDV được giao theo dõi chấm công, khỏi phải nâng role lên
-        # trưởng/phó phòng. attendance.py check role trưởng/phó phòng/admin
-        # HOẶC 2 quyền này (cộng thêm, không thay thế check role cũ).
+        # Soi gương nhóm "cong_truc" trong MENU_TREE. "menu.attendance" điều khiển
+        # việc hiện menu + mở màn hình. 2 action con là quyền cộng thêm trong màn:
+        # admin gán "xem bảng công cả phòng + xuất Excel" cho một GDV được giao theo
+        # dõi chấm công, khỏi phải nâng role lên trưởng/phó phòng — attendance.py
+        # check role trưởng/phó phòng/admin HOẶC 2 quyền này.
         "kind": "group",
         "dept": "Chấm công & Lịch trực",
         "icon": "date_range",

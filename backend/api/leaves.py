@@ -18,6 +18,9 @@ from backend.core.uploads import read_limited_sync
 from backend.core.deps import TONG_HOP_CODES, get_current_staff, require_feature
 from backend.core.enums import LeaveStatus
 from backend.core.paths import template_path
+from backend.services.lich_lam_viec import (
+    LICH_RONG, LichLamViec, la_ngay_lam_viec, tai_lich,
+)
 from backend.database import get_db, write_audit, _vn_now, compute_annual_leave, compute_carry_over
 from backend.schemas.leaves import (
     LeaveCreate, LeaveReview, TongHopReview,
@@ -103,21 +106,17 @@ def _calc_used_days(staff_id: int, year: int, db: sqlite3.Connection,
         params,
     ).fetchall()
     total = 0.0
-    _holidays: frozenset | None = None  # lazy load khi cần
+    _lich: LichLamViec | None = None  # lazy load khi cần
     for row in rows:
         if row["spread_dates"]:
             total += len([d for d in json.loads(row["spread_dates"]) if d.startswith(str(year))])
         else:
-            if _holidays is None:
-                hrows = db.execute(
-                    "SELECT date FROM public_holidays WHERE date >= ? AND date <= ?",
-                    (f"{year}-01-01", f"{year}-12-31"),
-                ).fetchall()
-                _holidays = frozenset(date.fromisoformat(r["date"]) for r in hrows)
+            if _lich is None:
+                _lich = _load_lich(db, date(year, 1, 1), date(year, 12, 31))
             d = date.fromisoformat(row["start_date"])
             e = date.fromisoformat(row["end_date"])
             while d <= e:
-                if d.year == year and d.weekday() < 5 and d not in _holidays:
+                if d.year == year and la_ngay_lam_viec(d, _lich):
                     total += 1
                 d += timedelta(days=1)
     return total
@@ -142,21 +141,17 @@ def _calc_used_days_bulk(staff_ids: list, year: int, db: sqlite3.Connection,
         list(staff_ids) + [f"{year}-12-31", f"{year}-01-01"],
     ).fetchall()
     result = {sid: 0.0 for sid in staff_ids}
-    _holidays: frozenset | None = None
+    _lich: LichLamViec | None = None
     for row in rows:
         if row["spread_dates"]:
             result[row["staff_id"]] += len([d for d in json.loads(row["spread_dates"]) if d.startswith(str(year))])
         else:
-            if _holidays is None:
-                hrows = db.execute(
-                    "SELECT date FROM public_holidays WHERE date >= ? AND date <= ?",
-                    (f"{year}-01-01", f"{year}-12-31"),
-                ).fetchall()
-                _holidays = frozenset(date.fromisoformat(r["date"]) for r in hrows)
+            if _lich is None:
+                _lich = _load_lich(db, date(year, 1, 1), date(year, 12, 31))
             d = date.fromisoformat(row["start_date"])
             e = date.fromisoformat(row["end_date"])
             while d <= e:
-                if d.year == year and d.weekday() < 5 and d not in _holidays:
+                if d.year == year and la_ngay_lam_viec(d, _lich):
                     result[row["staff_id"]] += 1
                 d += timedelta(days=1)
     return result
@@ -189,7 +184,7 @@ def _carry_over_bulk(staff_ids: list, year: int, db: sqlite3.Connection,
         ).fetchall()
     }
     used_by_staff: dict = {}
-    _holidays = None
+    _lich: LichLamViec | None = None
     for r in db.execute(
         f"""SELECT staff_id, start_date, end_date, spread_dates FROM leave_records
            WHERE staff_id IN ({placeholders}) AND status='approved'
@@ -203,16 +198,12 @@ def _carry_over_bulk(staff_ids: list, year: int, db: sqlite3.Connection,
                 [d for d in json.loads(r["spread_dates"]) if d.startswith(str(prev_year))]
             )
         else:
-            if _holidays is None:
-                hrows = db.execute(
-                    "SELECT date FROM public_holidays WHERE date >= ? AND date <= ?",
-                    (f"{prev_year}-01-01", f"{prev_year}-12-31"),
-                ).fetchall()
-                _holidays = frozenset(date.fromisoformat(hr["date"]) for hr in hrows)
+            if _lich is None:
+                _lich = _load_lich(db, date(prev_year, 1, 1), date(prev_year, 12, 31))
             d = date.fromisoformat(r["start_date"])
             e = date.fromisoformat(r["end_date"])
             while d <= e:
-                if d.year == prev_year and d.weekday() < 5 and d not in _holidays:
+                if d.year == prev_year and la_ngay_lam_viec(d, _lich):
                     used_by_staff[sid] = used_by_staff.get(sid, 0.0) + 1
                 d += timedelta(days=1)
     result = {}
@@ -224,23 +215,26 @@ def _carry_over_bulk(staff_ids: list, year: int, db: sqlite3.Connection,
     return result
 
 
-def _load_holidays(db: sqlite3.Connection, start: date, end: date) -> FrozenSet[date]:
-    rows = db.execute(
-        "SELECT date FROM public_holidays WHERE date >= ? AND date <= ?",
-        (start.isoformat(), end.isoformat()),
-    ).fetchall()
-    return frozenset(date.fromisoformat(r["date"]) for r in rows)
+def _load_lich(db: sqlite3.Connection, start: date, end: date) -> LichLamViec:
+    """Lịch làm việc trong khoảng — ngày lễ + ngày làm bù.
+
+    Ngày làm bù rơi vào T7/CN là ngày làm việc, nên nghỉ phép hôm đó VẪN bị trừ
+    vào quỹ phép. Xem `backend/services/lich_lam_viec.py`."""
+    return tai_lich(db, start, end)
 
 
 def calculate_leave_days(
     start: date, end: date,
-    holiday_dates: FrozenSet[date] = frozenset(),
+    lich: LichLamViec = LICH_RONG,
 ) -> int:
-    """Đếm ngày làm việc thực (trừ T7, CN và ngày lễ). Tối thiểu 1 ngày."""
+    """Đếm ngày làm việc thực (trừ T7, CN và ngày lễ). Tối thiểu 1 ngày.
+
+    T7/CN đã khai là ngày làm bù VẪN tính — nghỉ đúng hôm đó là nghỉ một ngày
+    làm việc thật nên phải trừ vào quỹ phép."""
     count = 0
     d = start
     while d <= end:
-        if d.weekday() < 5 and d not in holiday_dates:
+        if la_ngay_lam_viec(d, lich):
             count += 1
         d += timedelta(days=1)
     return max(count, 1)
@@ -248,7 +242,7 @@ def calculate_leave_days(
 
 def _period_days(
     start: date, end: date,
-    holiday_dates: FrozenSet[date] = frozenset(),
+    lich: LichLamViec = LICH_RONG,
     leave_type: Optional[str] = None,
 ) -> int:
     """Số ngày của khoảng nghỉ liên tục (khi không dùng spread_dates).
@@ -258,7 +252,7 @@ def _period_days(
     """
     if leave_type in _NO_QUOTA_TYPES:
         return (end - start).days + 1
-    return calculate_leave_days(start, end, holiday_dates)
+    return calculate_leave_days(start, end, lich)
 
 
 def _norm_vn(s) -> str:
@@ -297,7 +291,7 @@ def _can_gd_review(current: dict, db: sqlite3.Connection) -> bool:
 def _apply_status_transition(
     leave_id: int, old_status: str, new_status: str,
     start: date, end: date, staff_id: int,
-    holiday_dates: FrozenSet[date],
+    lich: LichLamViec,
     db: sqlite3.Connection,
     days: Optional[int] = None,
     is_new: bool = False,
@@ -314,7 +308,7 @@ def _apply_status_transition(
         if rec and rec["spread_dates"]:
             days = len(json.loads(rec["spread_dates"]))
         else:
-            days = calculate_leave_days(start, end, holiday_dates)
+            days = calculate_leave_days(start, end, lich)
         leave_type = rec["leave_type"] if rec else None
     else:
         rec2 = db.execute("SELECT leave_type FROM leave_records WHERE id=?", (leave_id,)).fetchone()
@@ -407,8 +401,8 @@ def _leave_to_out(leave_id: int, db: sqlite3.Connection) -> dict:
 
     start = date.fromisoformat(r["start_date"])
     end   = date.fromisoformat(r["end_date"])
-    _h    = _load_holidays(db, start, end)
-    _days = len(json.loads(r["spread_dates"])) if r["spread_dates"] else _period_days(start, end, _h, r["leave_type"])
+    _lich = _load_lich(db, start, end)
+    _days = len(json.loads(r["spread_dates"])) if r["spread_dates"] else _period_days(start, end, _lich, r["leave_type"])
 
     return {
         "id":                     r["id"],
@@ -523,14 +517,14 @@ def create_leave(
             raise HTTPException(400, "Định dạng ngày không hợp lệ (yêu cầu YYYY-MM-DD)")
         leave_days = len(spread)
         spread_json = json.dumps(spread)
-        _h = _load_holidays(db, eff_start, eff_end)
+        _lich = _load_lich(db, eff_start, eff_end)
     else:
         if body.end_date < body.start_date:
             raise HTTPException(400, "Ngày kết thúc phải sau ngày bắt đầu")
         eff_start   = body.start_date
         eff_end     = body.end_date
-        _h          = _load_holidays(db, eff_start, eff_end)
-        leave_days  = _period_days(eff_start, eff_end, _h, body.leave_type)
+        _lich = _load_lich(db, eff_start, eff_end)
+        leave_days = _period_days(eff_start, eff_end, _lich, body.leave_type)
         spread_json = None
 
     if body.leave_type == "annual":
@@ -643,7 +637,7 @@ def create_leave(
     _log_action(db, leave_id, current["id"], "create", None, "", initial_status)
     if initial_status == LeaveStatus.APPROVED:
         _apply_status_transition(leave_id, LeaveStatus.APPROVED, LeaveStatus.APPROVED,
-                                 eff_start, eff_end, current["id"], _h, db, is_new=True)
+                                 eff_start, eff_end, current["id"], _lich, db, is_new=True)
     db.commit()
     return _leave_to_out(leave_id, db)
 
@@ -929,11 +923,11 @@ def export_leaves(
     ).fetchall()
 
     # Tải tất cả ngày lễ 1 lần cho toàn bộ khoảng
-    all_holidays: FrozenSet[date] = frozenset()
+    all_lich: LichLamViec = LICH_RONG
     if leaves:
         min_d = min(date.fromisoformat(lv["start_date"]) for lv in leaves)
         max_d = max(date.fromisoformat(lv["end_date"])   for lv in leaves)
-        all_holidays = _load_holidays(db, min_d, max_d)
+        all_lich = _load_lich(db, min_d, max_d)
 
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -955,7 +949,7 @@ def export_leaves(
     for idx, lv in enumerate(leaves, 1):
         s_date = date.fromisoformat(lv["start_date"])
         e_date = date.fromisoformat(lv["end_date"])
-        days   = _period_days(s_date, e_date, all_holidays, lv["leave_type"])
+        days   = _period_days(s_date, e_date, all_lich, lv["leave_type"])
         gd_name = ""
         if lv["gd_name"]:
             gd_name = lv["gd_name"]
@@ -1124,8 +1118,8 @@ def delete_leave(
             from datetime import date as _d
             s = _d.fromisoformat(leave["start_date"])
             e = _d.fromisoformat(leave["end_date"])
-            _h = _load_holidays(db, s, e)
-            days = calculate_leave_days(s, e, _h)
+            _lich = _load_lich(db, s, e)
+            days = calculate_leave_days(s, e, _lich)
         db.execute(
             "UPDATE user_tttt SET used_leave_days = MAX(0, COALESCE(used_leave_days,0) - ?) WHERE id = ?",
             (days, leave["staff_id"]),
@@ -1166,8 +1160,8 @@ def ksv_review(
         _save_signature(db, leave_id, "ksv", current["id"], body.signature)
     start = date.fromisoformat(leave["start_date"])
     end   = date.fromisoformat(leave["end_date"])
-    _h    = _load_holidays(db, start, end)
-    _apply_status_transition(leave_id, old, new_status, start, end, leave["staff_id"], _h, db)
+    _lich = _load_lich(db, start, end)
+    _apply_status_transition(leave_id, old, new_status, start, end, leave["staff_id"], _lich, db)
     _log_action(db, leave_id, current["id"],
                 "ksv_approve" if body.action == "approve" else "ksv_reject",
                 body.comment, old, new_status)
@@ -1220,8 +1214,8 @@ def tong_hop_review(
 
     start = date.fromisoformat(leave["start_date"])
     end   = date.fromisoformat(leave["end_date"])
-    _h    = _load_holidays(db, start, end)
-    _apply_status_transition(leave_id, old, new_status, start, end, leave["staff_id"], _h, db)
+    _lich = _load_lich(db, start, end)
+    _apply_status_transition(leave_id, old, new_status, start, end, leave["staff_id"], _lich, db)
     _log_action(db, leave_id, current["id"], action_key, body.comment, old, new_status)
     db.commit()
     return _leave_to_out(leave_id, db)
@@ -1287,8 +1281,8 @@ def gd_review(
         _save_signature(db, leave_id, "gd", current["id"], body.signature)
     start = date.fromisoformat(leave["start_date"])
     end   = date.fromisoformat(leave["end_date"])
-    _h    = _load_holidays(db, start, end)
-    _apply_status_transition(leave_id, old, new_status, start, end, leave["staff_id"], _h, db)
+    _lich = _load_lich(db, start, end)
+    _apply_status_transition(leave_id, old, new_status, start, end, leave["staff_id"], _lich, db)
     _log_action(db, leave_id, current["id"],
                 "gd_approve" if body.action == "approve" else "gd_reject",
                 body.comment, old, new_status)
@@ -1322,14 +1316,14 @@ def resubmit_leave(
             raise HTTPException(400, "Định dạng ngày không hợp lệ (yêu cầu YYYY-MM-DD)")
         leave_days = len(spread)
         spread_json = json.dumps(spread)
-        _h = _load_holidays(db, eff_start, eff_end)
+        _lich = _load_lich(db, eff_start, eff_end)
     else:
         if body.end_date < body.start_date:
             raise HTTPException(400, "Ngày kết thúc phải sau ngày bắt đầu")
         eff_start   = body.start_date
         eff_end     = body.end_date
-        _h          = _load_holidays(db, eff_start, eff_end)
-        leave_days  = _period_days(eff_start, eff_end, _h, body.leave_type)
+        _lich = _load_lich(db, eff_start, eff_end)
+        leave_days = _period_days(eff_start, eff_end, _lich, body.leave_type)
         spread_json = None
 
     if body.leave_type not in _NO_QUOTA_TYPES and body.leave_type != "bat_buoc":
@@ -1430,7 +1424,7 @@ def resubmit_leave(
     db.execute("DELETE FROM leave_signatures WHERE leave_id=? AND slot IN ('ksv','gd')", (leave_id,))
     if body.signature:
         _save_signature(db, leave_id, "nguoi_de_nghi", current["id"], body.signature)
-    _apply_status_transition(leave_id, old, new_status, eff_start, eff_end, leave["staff_id"], _h, db)
+    _apply_status_transition(leave_id, old, new_status, eff_start, eff_end, leave["staff_id"], _lich, db)
     db.commit()
     return _leave_to_out(leave_id, db)
 
@@ -1476,8 +1470,8 @@ def cancel_leave(
     old   = leave["status"]
     start = date.fromisoformat(leave["start_date"])
     end   = date.fromisoformat(leave["end_date"])
-    _h    = _load_holidays(db, start, end)
-    _apply_status_transition(leave_id, old, LeaveStatus.CANCELLED, start, end, leave["staff_id"], _h, db)
+    _lich = _load_lich(db, start, end)
+    _apply_status_transition(leave_id, old, LeaveStatus.CANCELLED, start, end, leave["staff_id"], _lich, db)
     _log_action(db, leave_id, current["id"], "cancel", None, old, LeaveStatus.CANCELLED)
     db.commit()
     return _leave_to_out(leave_id, db)
@@ -1559,16 +1553,20 @@ def _pick_template(staff_role: str) -> str:
     return path if os.path.exists(path) else _TPL_PATH
 
 
-def _is_business_contiguous(sorted_dates: list) -> bool:
+def _is_business_contiguous(sorted_dates: list, lich: LichLamViec = LICH_RONG) -> bool:
     """True nếu các ngày liền nhau, hoặc khoảng cách giữa 2 ngày kế tiếp chỉ
-    toàn thứ 7/CN (nghỉ hết tuần rồi nghỉ tiếp tuần sau) — coi như 1 khoảng
-    liên tục để ghi gọn "Từ ngày...đến hết ngày..." thay vì liệt kê từng ngày."""
+    toàn ngày nghỉ (nghỉ hết tuần rồi nghỉ tiếp tuần sau) — coi như 1 khoảng
+    liên tục để ghi gọn "Từ ngày...đến hết ngày..." thay vì liệt kê từng ngày.
+
+    Thứ Bảy đi làm bù nằm trong khoảng trống thì KHÔNG gộp: hôm đó người ta đi
+    làm, ghi "từ ngày ... đến hết ngày ..." trên đơn in là khai họ nghỉ cả một
+    ngày làm việc mà thực tế họ có mặt."""
     for prev, cur in zip(sorted_dates, sorted_dates[1:]):
         gap = (cur - prev).days
         if gap == 1:
             continue
         if gap > 1 and all(
-            (prev + timedelta(days=i)).weekday() >= 5
+            not la_ngay_lam_viec(prev + timedelta(days=i), lich)
             for i in range(1, gap)
         ):
             continue
@@ -1576,10 +1574,11 @@ def _is_business_contiguous(sorted_dates: list) -> bool:
     return True
 
 
-def _fmt_leave_period(start: date, end: date, days: int, spread_dates: list = None) -> str:
+def _fmt_leave_period(start: date, end: date, days: int, spread_dates: list = None,
+                      lich: LichLamViec = LICH_RONG) -> str:
     if spread_dates and len(spread_dates) > 1:
         parsed = sorted(date.fromisoformat(d) for d in spread_dates)
-        if _is_business_contiguous(parsed):
+        if _is_business_contiguous(parsed, lich):
             # Liền nhau (hoặc chỉ cách bởi T7/CN) — ghi gọn thành 1 khoảng.
             return (
                 f"{days:02d} ngày "
@@ -1679,9 +1678,9 @@ def _build_form_ctx(r, leave_id: Optional[int], db: sqlite3.Connection) -> tuple
     start = date.fromisoformat(r["start_date"])
     end   = date.fromisoformat(r["end_date"])
     now   = _vn_now()
-    _h    = _load_holidays(db, start, end)
+    _lich = _load_lich(db, start, end)
 
-    leave_days = len(json.loads(r["spread_dates"])) if r["spread_dates"] else _period_days(start, end, _h, r["leave_type"])
+    leave_days = len(json.loads(r["spread_dates"])) if r["spread_dates"] else _period_days(start, end, _lich, r["leave_type"])
     # Ưu tiên hạn mức nhập tay (leave_quotas) — khớp đúng quy tắc get_quotas/export_quotas/
     # stats_annual; chỉ tính theo ngày vào ngành khi năm đó chưa có ai nhập tay.
     _q_row = db.execute(
@@ -1775,6 +1774,7 @@ def _build_form_ctx(r, leave_id: Optional[int], db: sqlite3.Connection) -> tuple
         "so_ngay_xin_nghi":  _fmt_leave_period(
             start, end, leave_days,
             json.loads(r["spread_dates"]) if r["spread_dates"] else None,
+            _lich,
         ),
         "so_ngay_con_lai":   f"{con_lai_cur:g}",
         # 2-năm (carryover)
@@ -2463,7 +2463,13 @@ def import_quota_preview(
 
 
 def _import_spread_dates(n_days: int, year: int) -> list:
-    """Sinh n_days ngày làm việc (T2–T6) từ 02/01/year — dùng cho bản ghi nghỉ tổng hợp khi import."""
+    """Sinh n_days ngày làm việc (T2–T6) từ 02/01/year — dùng cho bản ghi nghỉ tổng hợp khi import.
+
+    CỐ Ý không xét ngày lễ / ngày làm bù. Đây là bản ghi giả lập để lưu SỐ ngày
+    phép đã dùng khi nhập file hạn mức, không phải người thật sự vắng mặt những
+    ngày đó (xem `_load_staff_leave` trong handover_report_service). Chỉ độ dài
+    danh sách có nghĩa, từng ngày cụ thể thì không — kéo lịch làm việc vào đây
+    chỉ đổi ngày nào được chọn chứ không đổi con số, mà lại tốn một truy vấn DB."""
     out = []
     d = date(year, 1, 2)
     while len(out) < n_days and d.year == year:
@@ -2855,7 +2861,7 @@ def export_all_leaves_annual(
     # "Số ngày" phải khớp cách tính dùng để trừ hạn mức (_period_days: chỉ tính
     # ngày làm việc, trừ T7/CN/lễ — trừ thai_san/bao_hiem tính ngày lịch), không
     # phải đếm ngày lịch thô như trước.
-    _holidays_yr = _load_holidays(db, date(year, 1, 1), date(year, 12, 31))
+    _lich_nam = _load_lich(db, date(year, 1, 1), date(year, 12, 31))
 
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -2877,7 +2883,7 @@ def export_all_leaves_annual(
         try:
             nd = len(_json.loads(r["spread_dates"])) if r["spread_dates"] else _period_days(
                 date.fromisoformat(r["start_date"]), date.fromisoformat(r["end_date"]),
-                _holidays_yr, r["leave_type"],
+                _lich_nam, r["leave_type"],
             )
         except Exception:
             nd = 1
@@ -3115,7 +3121,7 @@ def leader_dashboard(
            WHERE lr.status='approved' AND strftime('%Y', lr.start_date)=?{_dept_sql} {_not_synthetic}""",
         [str(yr)] + _dept_params,
     ).fetchall()
-    _holidays_yr = _load_holidays(db, date(yr, 1, 1), date(yr, 12, 31))
+    _lich_nam = _load_lich(db, date(yr, 1, 1), date(yr, 12, 31))
     _top_totals: dict = {}
     _top_names: dict = {}
     for r in top_raw:
@@ -3124,7 +3130,7 @@ def leader_dashboard(
         else:
             nd = _period_days(
                 date.fromisoformat(r["start_date"]), date.fromisoformat(r["end_date"]),
-                _holidays_yr, r["leave_type"],
+                _lich_nam, r["leave_type"],
             )
         _top_totals[r["staff_id"]] = _top_totals.get(r["staff_id"], 0) + nd
         _top_names[r["staff_id"]] = r["full_name"]
@@ -3175,8 +3181,8 @@ def create_direct_leave(
             raise HTTPException(400, "Ngày kết thúc phải sau ngày bắt đầu")
         eff_start   = body.start_date
         eff_end     = body.end_date
-        _h          = _load_holidays(db, eff_start, eff_end)
-        leave_days  = _period_days(eff_start, eff_end, _h, body.leave_type)
+        _lich = _load_lich(db, eff_start, eff_end)
+        leave_days = _period_days(eff_start, eff_end, _lich, body.leave_type)
         spread_json = None
 
     # Kiểm tra trùng ngày với đơn đã tồn tại (kể cả khai báo hộ và đơn thường)
@@ -3309,8 +3315,8 @@ def approve_recall(
     if leave["leave_type"] not in _NO_QUOTA_TYPES:
         start = date.fromisoformat(leave["start_date"])
         end   = date.fromisoformat(leave["end_date"])
-        _h    = _load_holidays(db, start, end)
-        days  = len(json.loads(leave["spread_dates"])) if leave["spread_dates"] else _period_days(start, end, _h, leave["leave_type"])
+        _lich = _load_lich(db, start, end)
+        days  = len(json.loads(leave["spread_dates"])) if leave["spread_dates"] else _period_days(start, end, _lich, leave["leave_type"])
         db.execute(
             "UPDATE user_tttt SET used_leave_days = MAX(0, COALESCE(used_leave_days,0) - ?) WHERE id=?",
             (days, leave["staff_id"]),

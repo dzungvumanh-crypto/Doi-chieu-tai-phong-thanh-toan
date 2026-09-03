@@ -12665,7 +12665,300 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-02</footer>
+  <!-- LLV1 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">LLV1</span>
+      <span class="card-title">Hạn nộp chứng từ biết đến ngày làm bù — lấy từ Sổ trực</span>
+      <span class="badge badge-done">Xong — giai đoạn 1/2 · 1468 test pass (35 test mới cả hai giai đoạn)</span>
+    </div>
+    <div class="card-body">
+
+      <p>Quy định nộp chứng từ là <b>1 ngày làm việc</b> kể từ ngày giao dịch, không tính T7/CN và
+        ngày lễ — <b>trừ ngày phải đi làm bù</b>. Trước đợt này
+        <code>handover_report_service.working_days_between()</code> chỉ biết
+        <code>d.weekday() &lt; 5</code> và bảng <code>public_holidays</code>: thứ Bảy đi làm bù vẫn
+        bị coi là ngày nghỉ, nên chứng từ nộp muộn một ngày làm việc thật vẫn được chấm đúng hạn.</p>
+
+      <div class="label"><span class="pill pill-blue">Quyết định 1</span> Lấy ngày làm bù từ <code>duty_special_days</code> thay vì dựng màn hình khai báo mới</div>
+      <table>
+        <tr><th>Phương án</th><th>Vì sao chọn / bỏ</th></tr>
+        <tr><td><b>Đọc <code>duty_special_days</code> của Sổ trực</b> (đã chọn)</td>
+            <td>Đây là nơi <b>duy nhất</b> trong phần mềm có khái niệm ngày làm bù, đã có giao diện
+                khai + xác nhận (Phân lịch trực → tab <b>Ngày đặc biệt</b>), người dùng đã quen nhập.
+                Không tốn màn hình mới, không đẻ nguồn dữ liệu thứ hai để lệch.</td></tr>
+        <tr><td>Bảng + màn hình khai báo ngày nghỉ/bù riêng cho chứng từ</td>
+            <td>Bỏ. Ba nguồn cùng nói về ngày nghỉ (<code>public_holidays</code>,
+                <code>duty_special_days</code>, bảng mới) thì chắc chắn có ngày lệch nhau, và người
+                vận hành phải nhập hai lần cùng một thông tin.</td></tr>
+      </table>
+
+      <div class="caution"><b>Đánh đổi đã chấp nhận — quyền hạn:</b> tab Ngày đặc biệt do quyền
+        <code>duty.manage_config</code> gác, nằm trong nhóm menu của <b>phòng Thanh toán</b>. Nghĩa là
+        một người của phòng Thanh toán gián tiếp quyết định hạn nộp chứng từ — và tỉ lệ "quá hạn" trong
+        báo cáo đánh giá — của <b>mọi phòng</b>. Xoá nhầm một dòng <code>makeup</code> là cả tháng đổi
+        số, không có cảnh báo nào. Chấp nhận vì giá trị của việc dùng lại dữ liệu có sẵn cao hơn, nhưng
+        nếu về sau tranh chấp số liệu thì đây là chỗ phải xem đầu tiên. Cách xử lý khi cần: chuyển
+        khai báo lễ + bù về một màn hình quản trị chung, đừng đẻ bảng mới.</div>
+
+      <div class="label"><span class="pill pill-blue">Quyết định 2</span> Khai báo riêng của Sổ trực <b>thắng</b> danh mục lễ chung</div>
+      <p>Ngày nào đã có dòng trong <code>duty_special_days</code> thì lấy nguyên <code>day_type</code>
+        của dòng đó, kể cả khi ngày ấy cũng nằm trong <code>public_holidays</code>. Cần thế cho trường
+        hợp nhà nước hoán đổi ngày nghỉ: một ngày vừa nằm trong danh mục lễ vừa được khai là ngày bù —
+        hợp thẳng hai tập thì nó vừa nghỉ vừa làm, hai màn hình đọc ra hai câu trả lời trái nhau.
+        Đây đúng là quy tắc <code>duty_constraint_service.get_holiday_dates()</code> đang dùng; helper
+        mới chỉ khác ở chỗ nhận <b>khoảng ngày</b> thay vì một năm, vì báo cáo chứng từ tra cứu vắt qua
+        giao thừa (<code>_LOOKUP_PAD_DAYS = 35</code>).</p>
+
+      <table>
+        <tr><th>Loại <code>day_type</code></th><th>Tác dụng lên hạn nộp</th></tr>
+        <tr><td><code>holiday</code></td><td>Ngày nghỉ — nới hạn nộp ra</td></tr>
+        <tr><td><code>makeup</code> (đã xác nhận)</td><td>Ngày làm việc dù rơi vào T7/CN — <b>rút ngắn</b> hạn nộp</td></tr>
+        <tr><td><code>makeup</code> (chưa xác nhận)</td><td>Không tính. Cùng điều kiện với <code>get_makeup_dates()</code> bên Sổ trực — khai xong quên bấm xác nhận thì hai màn hình vẫn khớp nhau</td></tr>
+        <tr><td><code>cutoff</code>, <code>settlement</code></td><td><b>Không phải ngày nghỉ.</b> Chỉ có mặt với vai trò "đã khai riêng", tức chặn ngày đó nhận nhãn lễ từ <code>public_holidays</code></td></tr>
+      </table>
+
+      <div class="caution"><b>Cạm bẫy:</b> <code>cutoff</code>/<code>settlement</code> là ngày làm việc
+        <i>bận hơn bình thường</i>. Ai đó gộp cả 4 loại vào tập "ngày đặc biệt = ngày nghỉ" là nới hạn
+        nộp sai chiều ngược lại — và sai đúng vào những ngày chứng từ nhiều nhất tháng.
+        <code>tests/test_lich_lam_viec_ngay_bu.py</code> canh cả bốn loại.</div>
+
+      <div class="label"><span class="pill pill-blue">Quyết định 3</span> Nghỉ phép trúng ngày làm bù được tính là vắng mặt</div>
+      <p><code>_load_staff_leave()</code> trước lọc <code>d.weekday() &lt; 5</code>, nay dùng
+        <code>la_ngay_lam_viec()</code>. Không đổi thì ngày làm bù vừa đòi người ta nộp chứng từ vừa
+        không thừa nhận là họ đang nghỉ phép — người nghỉ đúng hôm đó bị chấm quá hạn oan.</p>
+
+      <div class="note"><b>Số liệu cũ sẽ đổi.</b> Ngày bù làm hạn nộp ngắn lại, nên chạy lại báo cáo
+        của tháng đã qua sau đợt này sẽ ra kết quả khác: vài chứng từ đang "đúng hạn" chuyển thành
+        "quá hạn". Đây là sửa đúng, nhưng phải báo trước — người dùng tự phát hiện thì sẽ tưởng phần
+        mềm hỏng. Đã ghi ở <code>Logs_update.md</code>.</div>
+
+      <div class="label"><span class="pill pill-green">Đã làm tiếp ở giai đoạn 2</span> Xem card LLV2</div>
+      <p>Nghỉ phép và chấm công cũng đã chuyển sang helper này.</p>
+
+      <div class="label"><span class="pill pill-green">Nối một chiều đã có sẵn</span></div>
+      <p>Chiều ngược lại đã thông từ trước: <code>get_holiday_dates()</code> của Sổ trực đọc cả
+        <code>public_holidays</code>, nên ngày lễ nhập ở màn Nghỉ phép tự động vào lịch trực. Đợt này
+        chỉ nối nốt chiều còn thiếu (Sổ trực → báo cáo chứng từ).</p>
+
+    </div>
+  </div>
+
+  <!-- LLV2 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">LLV2</span>
+      <span class="card-title">Giai đoạn 2 — quỹ phép và chấm công cũng biết ngày làm bù</span>
+      <span class="badge badge-done">Xong — 1468 test pass (17 test mới)</span>
+    </div>
+    <div class="card-body">
+
+      <p>Tiếp <b>LLV1</b>. Giai đoạn 1 chỉ nối hạn nộp chứng từ; đợt này nối nốt hai đường còn lại
+        nên cả phần mềm dùng chung một định nghĩa "ngày làm việc".</p>
+
+      <div class="note"><b>Điều kiện làm được:</b> tính năng Nghỉ phép <b>chưa triển khai chính thức</b>,
+        toàn bộ đơn trong máy là đơn thử (người dùng xác nhận 02/09/2026). Rủi ro lớn nhất của giai
+        đoạn 2 — đổi số ngày phép đã trừ của những đơn đã duyệt — vì thế không tồn tại. Nếu tính năng
+        đã chạy thật thì việc này phải kèm bước rà lại từng đơn, không làm thẳng như đây.</div>
+
+      <div class="label"><span class="pill pill-blue">Chính sách</span> Nghỉ phép trúng ngày làm bù <b>vẫn trừ</b> quỹ phép</div>
+      <p>Người dùng chốt 02/09/2026. Hệ quả: <code>calculate_leave_days()</code> đếm cả T7/CN đã khai
+        là ngày bù. Đây là câu hỏi nghiệp vụ chứ không phải kỹ thuật — hôm đó là ngày làm việc thật,
+        nghỉ là vắng mặt một ngày làm việc.</p>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> Sửa cả 4 vòng đếm, không chỉ <code>calculate_leave_days</code></div>
+      <table>
+        <tr><th>Nơi</th><th>Vì sao phải sửa cùng lúc</th></tr>
+        <tr><td><code>calculate_leave_days()</code></td><td>Số ngày của một đơn</td></tr>
+        <tr><td><code>_calc_used_days()</code></td><td>Tổng đã dùng trong năm — <b>chép lại</b> vòng lặp chứ không gọi hàm trên</td></tr>
+        <tr><td><code>_calc_used_days_bulk()</code></td><td>Bản gộp truy vấn của hàm ngay trên, cũng chép lại lần nữa</td></tr>
+        <tr><td><code>_carry_over_bulk()</code> + <code>compute_carry_over()</code> (database.py)</td><td>Phép mang phép sang Q1 — chép lại lần thứ tư, và ở một file khác</td></tr>
+      </table>
+      <div class="caution"><b>Cạm bẫy đã tránh:</b> cùng một phép đếm nằm ở <b>bốn</b> chỗ, hai trong
+        số đó ở file khác. Sửa mỗi <code>calculate_leave_days()</code> thì đơn hiện "3 ngày" còn ô
+        "đã dùng" và "mang sang" vẫn tính 2 — lệch nhau ngay trên cùng một màn hình mà không có lỗi
+        nào. Đã có test <code>test_calc_used_days_bulk_khop_ban_don_le</code> khoá việc bản gộp và bản
+        đơn lẻ phải ra cùng số.</div>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> Câu chữ trên đơn in cũng phải theo</div>
+      <p><code>_is_business_contiguous()</code> gộp các ngày nghỉ rời thành "Từ ngày … đến hết ngày …"
+        khi khoảng trống giữa chúng chỉ toàn T7/CN. Nếu trong khoảng trống có ngày làm bù thì
+        <b>không gộp</b> — người ta đi làm hôm đó, ghi gộp là khai nghỉ một ngày họ có mặt. Đây là văn
+        bản có chữ ký, sai câu này không phải lỗi hiển thị.</p>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> <code>/api/attendance/month</code> trả thêm <code>makeup_days</code></div>
+      <p>Không trả thì lưới chấm công tô thứ Bảy làm bù màu vàng "cuối tuần" trong khi cột Tổng đã
+        cộng công của hôm đó — vênh nhìn thấy bằng mắt. Bản xuất Excel cũng đổi: xét ngày lễ
+        <b>trước</b> cuối tuần (lễ rơi vào T7 phải tô màu lễ), ngày bù tô như ngày thường.</p>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> Không nuốt lỗi <code>no such table: duty_special_days</code></div>
+      <p>22 test đổ vì dựng schema tối giản thiếu bảng đó. Cách rẻ là bọc <code>try/except</code> trong
+        <code>tai_lich()</code>. <b>Không làm.</b> Bảng thiếu trên máy thật nghĩa là ngày làm bù bị bỏ
+        qua âm thầm — đúng kiểu hỏng mà dự án đã dính một lần với <code>no such table</code> trong
+        migrations (xem DESIGN.md). Đã khai bảng vào 2 file test thay vì bịt miệng lỗi.</p>
+
+      <div class="label"><span class="pill pill-gray">Cố ý không đụng</span></div>
+      <table>
+        <tr><th>Nơi</th><th>Lý do</th></tr>
+        <tr><td><code>_import_spread_dates()</code></td>
+            <td>Sinh ngày giả cho bản ghi "[Import]" — chỉ <b>độ dài</b> danh sách có nghĩa, ngày cụ thể
+                thì không. Kéo lịch vào chỉ đổi ngày nào được chọn, không đổi con số, mà tốn một truy vấn.</td></tr>
+        <tr><td>Lịch chọn ngày ở frontend Nghỉ phép</td>
+            <td>T7/CN <b>vẫn chọn được</b> (chỉ tô nhạt) nên ngày bù chọn được bình thường và backend đếm
+                đúng. Chỉ thiếu chỗ tô màu phân biệt — muốn có thì 4 widget lịch đều phải gọi thêm API,
+                đổi lại chỉ được cái đẹp. <b>Không đáng, để lại.</b></td></tr>
+      </table>
+
+    </div>
+  </div>
+
+  <!-- 114 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">114</span>
+      <span class="card-title">"Đối chiếu DTBB" từ mục phẳng cấp 1 chuyển vào Đối chiếu → Phòng Kế toán</span>
+      <span class="badge badge-done">Đã sửa</span>
+    </div>
+    <div class="card-body">
+
+      <p>Menu này vốn đứng riêng ở cấp 1 sidebar với lý do ghi trong comment: "không phải thời gian
+        làm việc nên không gộp vào nhóm <code>cong_truc</code>". Lý do đó chỉ giải thích vì sao
+        <b>không</b> vào nhóm Chấm công, không giải thích vì sao đứng một mình — trong khi nó đúng là
+        một việc đối chiếu. Nay xếp vào nhóm <code>doichieu</code>, tầng phòng thứ tư: <b>Phòng Kế
+        toán</b>.</p>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> Gate ACCT chuyển từ nhánh <code>if</code> riêng sang <code>overrides</code></div>
+      <table>
+        <tr><th></th><th>Trước</th><th>Sau</th></tr>
+        <tr><td>Vị trí</td><td>Tuple cấp 1 của <code>MENU_TREE</code></td><td>Sub-group "Phòng Kế toán" trong nhóm Đối chiếu</td></tr>
+        <tr><td>Cách ẩn/hiện</td><td>Nhánh <code>if node[0] == "dtbb"</code> ngay trong vòng lặp <code>_sidebar()</code></td><td><code>overrides={"dtbb": la_ke_toan}</code> truyền vào <code>_dept_group()</code></td></tr>
+        <tr><td>Breadcrumb</td><td>1 đoạn → <code>_current_breadcrumb()</code> bỏ qua</td><td>Đối chiếu / Phòng Kế toán / …</td></tr>
+      </table>
+      <p>Không còn đường nào khác: mục nằm trong sub-group thì <code>_dept_group()</code> chỉ hỏi
+        <code>_key_visible()</code>, mà hàm này chỉ nhận đè qua <code>overrides</code>. Điều kiện
+        ACCT/admin nay dùng chung một biến <code>la_ke_toan</code> với "Chấm công" — hai mục cùng
+        phòng, cùng luật, trước đây viết hai lần và <code>_user_dept_code()</code> bị gọi hai lượt.</p>
+
+      <div class="caution"><b>Cây menu và màn Phân quyền cố ý lệch nhau ở đúng mục này.</b>
+        <code>FEATURE_GROUPS</code> soi gương <code>MENU_TREE</code>, nhưng DTBB <b>không có</b> mã
+        <code>menu.dtbb</code> trong <code>FEATURES</code> (đã bỏ hẳn từ PR #67 — xem card DTBB phía
+        trên): nó gate theo phòng, không theo quyền. Nên nhóm "Đối chiếu" trên màn Phân quyền vẫn chỉ
+        có 3 phòng, <b>không</b> thêm section "Phòng Kế toán". Thêm vào là dựng lại đúng ô tick vô
+        nghĩa đã xoá, và <code>_assert_feature_coverage()</code> sẽ chặn khởi động vì mã không có
+        trong <code>FEATURES</code>.</div>
+
+    </div>
+  </div>
+
+  <!-- 115 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">115</span>
+      <span class="card-title">Chốt quy tắc: mọi quyền vào menu và thao tác đi qua Phân quyền theo nhóm — không hard-code</span>
+      <span class="badge badge-done">Quy tắc</span>
+    </div>
+    <div class="card-body">
+
+      <p><b>Người dùng chốt 03/09/2026.</b> Việc một người <i>thấy</i> menu nào và <i>bấm được</i>
+        nút nào phải quyết bằng mã quyền khai trong <code>backend/core/features.py</code>, gán qua
+        màn Phân quyền theo nhóm. Không gate bằng <code>role</code>, bằng mã phòng, hay bằng thuộc
+        tính nào khác của người dùng. Quy tắc đầy đủ + cách thêm mã mới: mục <b>Phân quyền</b> trong
+        <code>docs/DESIGN.md</code>, nhắc lại ở <code>CLAUDE.md</code>.</p>
+
+      <div class="caution"><b>Vì sao quy tắc này đáng có.</b> Quyền hard-code chỉ đổi được bằng sửa
+        mã nguồn + deploy. Người vận hành mở màn Phân quyền thấy đủ ô tick, tick vào lại không có
+        tác dụng — không lỗi, không log. Đúng kiểu hỏng dự án đã dính: ô tick
+        <code>menu.dtbb</code> tồn tại một thời gian mà không điều khiển gì, đến PR #67 phải xoá đi
+        (commit <code>c4f08d2</code>) thay vì nối nó vào chỗ kiểm quyền thật.</div>
+
+      <div class="label"><span class="pill pill-blue">Ranh giới</span> Bước duyệt KHÔNG phải quyền</div>
+      <p><code>ksv_approver_id</code> / <code>gd_approver_id</code> / chủ đơn là <b>dữ liệu của từng
+        hồ sơ</b>. Nút "Duyệt" hiện cho đúng người được giao đơn ấy, kiểm bằng so id — không phải
+        thứ admin gán được trên màn Phân quyền. Quy tắc trên không áp cho nhóm này, và đừng nhân
+        danh nó đi sửa <code>leaves.py</code>.</p>
+
+      <div class="label"><span class="pill pill-gray">Ngoại lệ được phép</span></div>
+      <table>
+        <tr><th>Nơi</th><th>Vì sao phải hard-code</th></tr>
+        <tr><td>Màn <b>Phân quyền chức năng</b> (<code>admin</code> / <code>admin_l2</code>)</td>
+            <td>Gate bằng mã quyền thì ai được cấp mã đó <b>tự cấp thêm cho mình</b> — quyền tự nhân
+                bản, không còn ai chặn được. Đừng "sửa cho nhất quán".</td></tr>
+        <tr><td>Vai <code>admin</code> đi qua mọi cửa</td>
+            <td><code>require_feature()</code> cho qua ngay dòng đầu — siêu quyền cố ý, không tính
+                là hard-code tính năng.</td></tr>
+      </table>
+
+      <p>Ba chỗ chưa đúng quy tắc đã được migrate ngay trong đợt này — xem card 116.</p>
+
+    </div>
+  </div>
+
+  <!-- 116 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">116</span>
+      <span class="card-title">Bỏ gate theo phòng ACCT: DTBB + Chấm công chuyển sang mã quyền</span>
+      <span class="badge badge-done">Đã sửa</span>
+    </div>
+    <div class="card-body">
+
+      <p>Thi hành quy tắc card 115. Ba chỗ, hai mã quyền mới.</p>
+
+      <table>
+        <tr><th>Nơi</th><th>Trước</th><th>Sau</th></tr>
+        <tr><td>Menu + trang + 8 endpoint DTBB</td>
+            <td>Mã phòng <code>ACCT</code> ở 3 nơi tự kiểm riêng</td>
+            <td><code>menu.dtbb</code> — sidebar, <code>dtbb_page()</code>, <code>_QUYEN_DUNG</code> đọc <b>cùng một mã</b></td></tr>
+        <tr><td>Xác nhận / Bỏ xác nhận DTBB</td>
+            <td><code>_require_acct_ksv()</code>: role trưởng/phó phòng + phòng ACCT</td>
+            <td><code>dtbb.confirm</code></td></tr>
+        <tr><td>Menu + trang + 8 endpoint Chấm công</td>
+            <td><code>_require_acct_scope()</code> theo mã phòng; trang <b>không gate gì</b></td>
+            <td><code>menu.attendance</code> ở cả 3 tầng</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> Trang Chấm công nay có gate riêng, trước đây không có</div>
+      <p>Bản cũ chỉ dựa vào sidebar ẩn menu — gõ thẳng <code>/attendance</code> là dựng được khung
+        trang rồi mới ăn 403 từng API, người dùng thấy một màn hình trống lỗi lung tung thay vì bị
+        đưa về trang chủ. Đã thêm <code>has_feature("menu.attendance")</code> đầu hàm.</p>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> Giữ nguyên phần khoanh theo phòng của DỮ LIỆU</div>
+      <p>Bảng công vẫn <code>WHERE d.code='ACCT'</code>, "Người kiểm soát" ký bảng công vẫn bắt buộc
+        là trưởng/phó phòng ACCT. Đó là phạm vi <b>dữ liệu</b> và yêu cầu của <b>chứng từ</b>, không
+        phải phạm vi quyền. Người phòng khác được cấp <code>menu.attendance</code> sẽ vào được màn
+        hình và thấy bảng công phòng Kế toán — đó là điều admin cố ý làm khi tick ô, không phải lỗ hổng.</p>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> Không tự xác nhận kỳ của chính mình — giữ nguyên, không biến thành mã quyền</div>
+      <p><code>current["id"] == toucher_id</code> là luật trên <b>từng bản ghi</b>, không phải quyền.
+        Không ai gán/gỡ được nó ở màn Phân quyền, và không nên.</p>
+
+      <div class="caution"><b>Test phải dựng bảng phân quyền, không được bịt.</b> 30 test đổ vì
+        <code>require_feature()</code> truy vấn <code>group_features</code> — file test nào dựng schema
+        tối giản đều thiếu bảng đó. Đã thêm 3 bảng vào schema test + helper
+        <code>cap_quyen()</code> trong <code>tests/conftest.py</code>, <b>không</b> bọc try/except
+        trong <code>require_feature()</code>: bảng thiếu trên máy thật nghĩa là mọi người mất sạch
+        quyền âm thầm.</div>
+
+      <div class="caution"><b>⚠ Sau deploy phải cấp quyền tay, nếu không phòng Kế toán mất cả hai
+        menu.</b> Không có migration nào tự gán <code>menu.dtbb</code> / <code>dtbb.confirm</code> /
+        <code>menu.attendance</code> cho ai. Trước đây mọi nhân viên ACCT tự động có menu; nay phải
+        xếp họ vào nhóm. Các bước cụ thể ghi trong <code>Logs_update.md</code>.</div>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> Xoá luôn cơ chế <code>overrides</code> của sidebar</div>
+      <p>Tham số <code>overrides</code> xuyên qua <code>_key_visible / _item_visible / _dept_group</code>
+        sinh ra chỉ để đè kết quả cho hai mục gate theo phòng. Hết mục nào dùng thì nó thành cỗ máy
+        chết <b>kèm docstring mời gọi</b> — "dùng cho mục không gate bằng feature-flag" là lời mời
+        dựng lại đúng thứ vừa gỡ. Xoá hẳn cùng <code>_user_dept_code()</code> (không còn caller) và
+        dòng dọn cache <code>_dept_code</code> trong <code>clear_auth()</code>. Giờ hình dạng của code
+        tự ép quy tắc: muốn hard-code lại thì phải viết thêm nhánh mới, nhìn ra ngay khi review.</p>
+
+      <p>2 test mới khoá đúng phần hành vi đã đổi: người <b>ngoài</b> phòng Kế toán được cấp quyền
+        thì dùng được (DTBB + Chấm công) — trước đây bị chặn cứng. 1470 test pass.</p>
+
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-03</footer>
 </div>
 </body>
 </html>

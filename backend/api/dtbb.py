@@ -7,8 +7,7 @@ from typing import List
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
-from backend.core.deps import get_current_staff
-from backend.core.enums import StaffRole
+from backend.core.deps import require_feature
 from backend.database import get_db, write_audit, _vn_now
 from backend.schemas.dtbb import (
     DtbbCalculateResult, DtbbCurrencyOut, DtbbHistoryItem,
@@ -21,38 +20,12 @@ router = APIRouter()
 
 _ALLOWED_EXT = ".xls"
 
-# Trưởng/Phó phòng Kế toán — vai xác nhận (vàng→xanh)/bỏ xác nhận (xanh→vàng). Khác
-# _require_acct_scope() bên dưới (mọi vai trò trong phòng ACCT tính/lưu như nhau) —
-# bước xác nhận CÓ phân theo cấp bậc, đúng yêu cầu người dùng.
-_KSV_ROLES = (StaffRole.TRUONG_PHONG, StaffRole.PHO_PHONG)
-
-
-def _require_acct_scope(current: dict, db: sqlite3.Connection) -> None:
-    """Admin luôn qua. Vai trò khác phải thuộc phòng code='ACCT' — mọi vai trò trong
-    phòng đều dùng được như nhau (khác module Chấm công, DTBB không phân theo cấp bậc).
-    Áp dụng cho tính toán + lưu — bước XÁC NHẬN dùng _require_acct_ksv() riêng."""
-    if current["role"] == "admin":
-        return
-    row = db.execute(
-        "SELECT code FROM departments WHERE id=?", (current.get("department_id"),)
-    ).fetchone()
-    if not row or (row["code"] or "").upper() != "ACCT":
-        raise HTTPException(403, "Tính năng này chỉ dành cho Phòng Kế toán")
-
-
-def _require_acct_ksv(current: dict, db: sqlite3.Connection) -> None:
-    """Xác nhận/bỏ xác nhận kỳ DTBB — chỉ Trưởng/Phó phòng Kế toán (admin bypass, cùng
-    quy ước "admin luôn qua" đang dùng khắp hệ thống). Không kiểm tra người tạo/sửa ở
-    đây — việc đó (không tự xác nhận chính mình) kiểm ở nơi gọi, vì cần biết record cụ thể."""
-    if current["role"] == "admin":
-        return
-    if current["role"] not in _KSV_ROLES:
-        raise HTTPException(403, "Chỉ Trưởng/Phó phòng Kế toán được xác nhận kỳ DTBB")
-    row = db.execute(
-        "SELECT code FROM departments WHERE id=?", (current.get("department_id"),)
-    ).fetchone()
-    if not row or (row["code"] or "").upper() != "ACCT":
-        raise HTTPException(403, "Chỉ Trưởng/Phó phòng Kế toán được xác nhận kỳ DTBB")
+# Quyền vào màn hình + mọi thao tác tính/lưu/xoá/xuất: "menu.dtbb". Riêng bước XÁC NHẬN
+# (vàng→xanh) và bỏ xác nhận tách "dtbb.confirm" — chốt số liệu là việc của người kiểm
+# soát, không phải việc thường ngày. Cả hai gán qua màn Phân quyền theo nhóm; không gate
+# theo phòng/chức danh nữa (xem mục "Phân quyền" trong docs/DESIGN.md).
+_QUYEN_DUNG    = require_feature("menu.dtbb")
+_QUYEN_XAC_NHAN = require_feature("dtbb.confirm")
 
 
 def _result_to_schema(result: DtbbResult) -> DtbbCalculateResult:
@@ -82,10 +55,9 @@ def _result_to_schema(result: DtbbResult) -> DtbbCalculateResult:
 @router.post("/calculate", response_model=DtbbCalculateResult)
 async def calculate_dtbb(
     files: List[UploadFile] = File(...),
-    current: dict = Depends(get_current_staff),
+    current: dict = Depends(_QUYEN_DUNG),
     db: sqlite3.Connection = Depends(get_db),
 ):
-    _require_acct_scope(current, db)
     if not files:
         raise HTTPException(400, "Chưa chọn file nào")
 
@@ -115,10 +87,9 @@ async def calculate_dtbb(
 @router.post("/save", response_model=DtbbSaveResponse)
 def save_dtbb(
     body: DtbbSaveRequest,
-    current: dict = Depends(get_current_staff),
+    current: dict = Depends(_QUYEN_DUNG),
     db: sqlite3.Connection = Depends(get_db),
 ):
-    _require_acct_scope(current, db)
     report_date_str = body.report_date.isoformat()
     existing = db.execute(
         """SELECT id, status, created_by, created_at, updated_by, updated_at
@@ -132,7 +103,7 @@ def save_dtbb(
         raise HTTPException(
             400,
             f"Kỳ {report_date_str} (chi nhánh {body.branch_code}) đã được xác nhận — "
-            "cần Trưởng/Phó phòng Kế toán bỏ xác nhận trước khi ghi đè.",
+            "cần người có quyền xác nhận bỏ xác nhận trước khi ghi đè.",
         )
 
     if existing and not body.confirm_overwrite:
@@ -211,10 +182,9 @@ def _load_report_or_404(report_id: int, db: sqlite3.Connection) -> dict:
 @router.post("/{report_id}/confirm", response_model=DtbbSaveResponse)
 def confirm_dtbb(
     report_id: int,
-    current: dict = Depends(get_current_staff),
+    current: dict = Depends(_QUYEN_XAC_NHAN),
     db: sqlite3.Connection = Depends(get_db),
 ):
-    _require_acct_ksv(current, db)
     report = _load_report_or_404(report_id, db)
     if report["status"] == "confirmed":
         raise HTTPException(400, "Kỳ này đã được xác nhận rồi")
@@ -239,10 +209,9 @@ def confirm_dtbb(
 @router.post("/{report_id}/unconfirm", response_model=DtbbSaveResponse)
 def unconfirm_dtbb(
     report_id: int,
-    current: dict = Depends(get_current_staff),
+    current: dict = Depends(_QUYEN_XAC_NHAN),
     db: sqlite3.Connection = Depends(get_db),
 ):
-    _require_acct_ksv(current, db)
     report = _load_report_or_404(report_id, db)
     if report["status"] != "confirmed":
         raise HTTPException(400, "Kỳ này chưa được xác nhận")
@@ -263,17 +232,16 @@ def unconfirm_dtbb(
 @router.delete("/{report_id}")
 def delete_dtbb(
     report_id: int,
-    current: dict = Depends(get_current_staff),
+    current: dict = Depends(_QUYEN_DUNG),
     db: sqlite3.Connection = Depends(get_db),
 ):
-    """Xoá kỳ DTBB đã lưu. Áp dụng cho mọi người thuộc phòng ACCT (giống quyền tính/lưu,
-    KHÔNG giới hạn theo KSV như xác nhận) — chỉ chặn khi kỳ đang ở trạng thái xanh (đã xác
-    nhận), lúc đó phải bỏ xác nhận trước (đưa về vàng) rồi mới xoá được."""
-    _require_acct_scope(current, db)
+    """Xoá kỳ DTBB đã lưu. Đi cùng quyền tính/lưu ("menu.dtbb"), KHÔNG đòi thêm
+    "dtbb.confirm" — chỉ chặn khi kỳ đang ở trạng thái xanh (đã xác nhận), lúc đó phải
+    bỏ xác nhận trước (đưa về vàng) rồi mới xoá được."""
     report = _load_report_or_404(report_id, db)
     if report["status"] == "confirmed":
         raise HTTPException(
-            400, "Kỳ đã xác nhận (xanh) — cần Trưởng/Phó phòng Kế toán bỏ xác nhận trước khi xoá"
+            400, "Kỳ đã xác nhận (xanh) — cần người có quyền xác nhận bỏ xác nhận trước khi xoá"
         )
     db.execute("DELETE FROM dtbb_reports WHERE id=?", (report_id,))
     write_audit(
@@ -287,10 +255,9 @@ def delete_dtbb(
 # ─── Lịch sử ───────────────────────────────────────────────────────────────────
 @router.get("/history", response_model=List[DtbbHistoryItem])
 def list_history(
-    current: dict = Depends(get_current_staff),
+    current: dict = Depends(_QUYEN_DUNG),
     db: sqlite3.Connection = Depends(get_db),
 ):
-    _require_acct_scope(current, db)
     rows = db.execute(
         """SELECT r.*, cu.full_name AS created_by_name, uu.full_name AS updated_by_name,
                   cf.full_name AS confirmed_by_name
@@ -330,10 +297,9 @@ def _load_report_detail(report_date: str, branch_code: str, db: sqlite3.Connecti
 def get_history_detail(
     report_date: str,
     branch_code: str,
-    current: dict = Depends(get_current_staff),
+    current: dict = Depends(_QUYEN_DUNG),
     db: sqlite3.Connection = Depends(get_db),
 ):
-    _require_acct_scope(current, db)
     return _load_report_detail(report_date, branch_code, db)
 
 
@@ -342,10 +308,9 @@ def get_history_detail(
 def export_dtbb(
     report_date: str,
     branch_code: str,
-    current: dict = Depends(get_current_staff),
+    current: dict = Depends(_QUYEN_DUNG),
     db: sqlite3.Connection = Depends(get_db),
 ):
-    _require_acct_scope(current, db)
     data = _load_report_detail(report_date, branch_code, db)
 
     import openpyxl

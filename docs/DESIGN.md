@@ -22,6 +22,42 @@ Thư mục con (`Nghỉ phép`, `Bàn giao cho lưu trữ`) cũng NFD — đưa 
 > `leaves.py` trỏ vào bản rỗng nên mẫu đơn riêng theo chức danh **không bao giờ được dùng** — không lỗi,
 > không log, chỉ lặng lẽ rơi về mẫu chung. `tests/test_paths.py` canh không cho tái diễn.
 
+## Ngày làm việc — đừng viết `weekday() < 5`
+Dùng `la_ngay_lam_viec()` / `dem_ngay_lam_viec()` từ `backend/services/lich_lam_viec.py`, sau khi
+nạp lịch bằng `tai_lich(db, lo, hi)`. Ngày lễ **và ngày làm bù** đều đổi được kết quả.
+
+Ba nguồn dữ liệu, quy tắc hợp nằm gọn trong `tai_lich()`:
+
+| Bảng | Khai ở màn hình | Chứa gì |
+|---|---|---|
+| `public_holidays` | Nghỉ phép → tab ngày lễ (admin) | Danh mục ngày lễ chung |
+| `duty_special_days` | Phân lịch trực → tab Ngày đặc biệt | `holiday`, `makeup`, `cutoff`, `settlement` |
+
+- **Khai riêng của Sổ trực thắng**: ngày có dòng trong `duty_special_days` thì lấy nguyên
+  `day_type` của dòng đó, kể cả khi ngày ấy cũng nằm trong `public_holidays`. Nhà nước hoán đổi
+  ngày nghỉ thì một ngày vừa là lễ vừa là bù — hợp thẳng hai tập là hai màn hình đọc ra hai câu
+  trả lời trái nhau.
+- **`makeup` phải `is_confirmed = 1`** mới tính, cùng điều kiện với `get_makeup_dates()` bên Sổ trực.
+- **`cutoff` / `settlement` KHÔNG phải ngày nghỉ** — chúng là ngày làm việc bận hơn bình thường.
+  Chúng chỉ có mặt trong `tai_lich()` để chặn ngày đó nhận nhãn lễ từ `public_holidays`.
+
+Bốn nơi đã dùng helper này: hạn nộp chứng từ (`handover_report_service`), quỹ phép
+(`leaves.py` + `compute_carry_over` trong `database.py`), chấm công (`attendance.py`).
+**Chính sách:** nghỉ phép rơi vào ngày làm bù thì **vẫn trừ vào quỹ phép** — hôm đó là ngày làm
+việc thật.
+
+> Ngoại lệ cố ý duy nhất: `_import_spread_dates()` trong `leaves.py` vẫn sinh ngày T2–T6 thuần.
+> Đó là bản ghi giả lập để lưu **số** ngày phép đã dùng khi nhập file hạn mức, không phải người
+> thật sự vắng mặt — chỉ độ dài danh sách có nghĩa.
+
+> `/api/attendance/month` trả thêm `makeup_days` bên cạnh `holidays`. Frontend cần nó để không tô
+> T7 làm bù thành màu cuối tuần trong khi cột Tổng đã cộng công của hôm đó.
+
+> **Test cần bảng `duty_special_days`.** File test nào dựng schema tối giản mà gọi tới đường tính
+> ngày làm việc thì phải khai bảng này, không thì `tai_lich()` ném `no such table`. Cố ý **không**
+> bắt lỗi đó: bảng thiếu trên máy thật nghĩa là ngày làm bù bị bỏ qua âm thầm — đúng kiểu hỏng mà
+> dự án này đã dính một lần (xem mục Schema Migrations).
+
 ## Schema Migrations
 Thêm câu SQL vào list `schema_migrations` trong `backend/db/migrations.py::_ensure_indexes()`.
 Chạy idempotent khi khởi động.
@@ -40,6 +76,62 @@ Riêng `database is locked` chỉ log WARNING và bỏ qua, thử lại ở lầ
 - Session lưu trong DB (`backend/core/sessions.py` → bảng `login_sessions`) — **không** mất khi restart
 - 401 từ backend → `SessionExpiredError` → `_handle_api_error()` redirect về `/login`
 - Trong `asyncio.gather()`: check `isinstance(e, api.SessionExpiredError)` trước `Exception`
+
+## Phân quyền — mọi menu và thao tác đi qua Phân quyền theo nhóm
+
+**Quy tắc bắt buộc (người dùng chốt 03/09/2026): không hard-code quyền.** Việc một người
+*thấy* menu nào và *bấm được* nút nào phải quyết định bằng mã quyền trong
+`backend/core/features.py`, gán qua màn **Phân quyền theo nhóm**. Không viết điều kiện
+theo `role`, theo mã phòng, hay theo bất kỳ thuộc tính nào khác của người dùng để mở/khoá
+tính năng.
+
+Vì sao: quyền hard-code chỉ đổi được bằng sửa mã nguồn + deploy. Người vận hành nhìn màn
+Phân quyền thấy đủ ô tick nhưng tick vào không có tác dụng — không lỗi, không log, và
+người tiếp theo đọc code không biết quyền thật nằm ở đâu.
+
+### Thêm một menu hoặc thao tác mới — 4 chỗ, thiếu chỗ nào cũng hỏng lặng lẽ
+
+| # | Chỗ sửa | Nội dung |
+|---|---|---|
+| 1 | `FEATURES` trong `backend/core/features.py` | Khai mã: `menu.<key>` cho menu, `<key>.<hành động>` cho thao tác |
+| 2 | `FEATURE_GROUPS` cùng file | Vẽ ô tick lên màn Phân quyền — soi gương `MENU_TREE` |
+| 3 | Route backend | `Depends(require_feature("<mã>"))` — xem `backend/core/deps.py` |
+| 4 | Frontend | `api.has_feature("<mã>")`; menu thì để `_dept_group()` tự lọc |
+
+- Thiếu (1) → `_assert_feature_coverage()` chặn khởi động. Đây là lưới an toàn duy nhất.
+- Thiếu (2) → mã không được vẽ ra ô tick nào. `PUT /api/groups/{id}/features` **xoá sạch**
+  quyền của nhóm rồi ghi lại đúng các ô đang hiển thị → lần bấm Lưu đầu tiên xoá mã đó khỏi
+  mọi nhóm. Cũng bị `_assert_feature_coverage()` chặn.
+- Thiếu (3) → menu ẩn nhưng gọi thẳng API vẫn chạy.
+- Thiếu (4) → hiện menu rồi bấm vào ăn 403.
+
+### Không phải quyền: bước duyệt trong quy trình
+
+`ksv_approver_id`, `gd_approver_id`, chủ đơn — đó là **dữ liệu của từng hồ sơ**, không phải
+quyền. Nút "Duyệt" chỉ hiện cho đúng người được giao đơn ấy; kiểm bằng so id, không bằng
+mã quyền và cũng không phải thứ admin gán được. Quy tắc trên **không** áp cho nhóm này.
+
+### Ngoại lệ duy nhất được phép hard-code
+
+**Màn Phân quyền chức năng** (`menu.groups` / `group-features`) gate cứng theo
+`admin` / `admin_l2`. Gate nó bằng mã quyền thì ai được cấp mã đó tự cấp thêm cho mình —
+quyền tự nhân bản, không còn ai chặn được. Đừng "sửa cho nhất quán".
+
+Vai `admin` đi qua mọi cửa (`require_feature()` cho qua ngay ở dòng đầu) — đó là siêu quyền
+cố ý, không tính là hard-code tính năng.
+
+### Phạm vi quyền ≠ phạm vi dữ liệu
+
+Hai module của phòng Kế toán từng gate theo mã phòng `ACCT`, nay gate bằng mã quyền
+(03/09/2026). Nhưng **dữ liệu** vẫn khoanh theo phòng và điều đó là đúng:
+
+- Bảng công (`/api/attendance/*`) chỉ liệt kê nhân viên phòng `ACCT` — `WHERE d.code='ACCT'`
+  trong `_acct_staff_rows()`. Người phòng khác được cấp `menu.attendance` sẽ **vào được màn
+  hình** và thấy bảng công phòng Kế toán; đó là quyết định của admin khi tick ô, không phải lỗi.
+- "Người kiểm soát" ký bảng công vẫn bắt buộc là trưởng/phó phòng `ACCT` đang active — đó là
+  yêu cầu của **chứng từ**, không phải quyền truy cập.
+
+Đừng nhân danh quy tắc "không hard-code quyền" đi gỡ hai chỗ trên.
 
 ## RBAC — deps.py
 

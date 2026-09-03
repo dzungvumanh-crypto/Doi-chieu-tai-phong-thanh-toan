@@ -1,8 +1,12 @@
 """Test luồng lưu/xác nhận/bỏ xác nhận kỳ DTBB (backend/api/dtbb.py).
 
-Trọng tâm: quyền xác nhận (Trưởng/Phó phòng Kế toán, không tự xác nhận kỳ chính
-mình tạo/sửa), kỳ đã xác nhận (xanh) bị chặn ghi đè cho tới khi bỏ xác nhận, và
+Trọng tâm: quyền xác nhận (mã "dtbb.confirm", không tự xác nhận kỳ chính mình
+tạo/sửa), kỳ đã xác nhận (xanh) bị chặn ghi đè cho tới khi bỏ xác nhận, và
 (report_date, branch_code) là khoá — 1 ngày nhiều chi nhánh cùng lưu được.
+
+Quyền gán qua bảng group_features/group_members, KHÔNG theo phòng hay chức danh —
+xem mục "Phân quyền" trong docs/DESIGN.md. Fixture dựng đủ 3 bảng đó; thiếu chúng
+thì require_feature() ném "no such table" chứ không âm thầm cho qua.
 """
 import sqlite3
 
@@ -44,6 +48,9 @@ CREATE TABLE dtbb_report_details (
     ccy TEXT, rate_to_vnd REAL,
     group1_native REAL DEFAULT 0, group2_native REAL DEFAULT 0, tk413_native REAL DEFAULT 0
 );
+CREATE TABLE user_groups (id INTEGER PRIMARY KEY, name TEXT, is_active INTEGER DEFAULT 1);
+CREATE TABLE group_members (group_id INTEGER, staff_id INTEGER);
+CREATE TABLE group_features (group_id INTEGER, feature_code TEXT);
 CREATE TABLE audit_logs (
     id INTEGER PRIMARY KEY, actor_id INTEGER, action TEXT, target_type TEXT,
     target_id INTEGER, detail TEXT, ip_address TEXT, created_at DATETIME
@@ -59,13 +66,19 @@ def client_va_db():
     db.executescript(_SCHEMA)
     db.execute("INSERT INTO departments (id, code) VALUES (1, 'ACCT')")
     db.execute("INSERT INTO departments (id, code) VALUES (2, 'KSNB')")
-    # id=10 chuyên viên ACCT (tạo/lưu), id=11 trưởng phòng ACCT (xác nhận),
-    # id=12 phó phòng ACCT, id=13 chuyên viên phòng khác (không được vào)
+    # id=10 chỉ có "menu.dtbb" (tính/lưu/xoá), id=11 và id=12 có thêm "dtbb.confirm",
+    # id=13 không có mã nào — role và phòng ở đây chỉ để dựng dữ liệu cho đủ, quyền
+    # KHÔNG còn suy ra từ chúng.
     db.execute("INSERT INTO user_tttt (id, full_name, role, department_id) VALUES "
                "(10, 'Chuyen Vien', 'chuyen_vien', 1), "
                "(11, 'Truong Phong', 'truong_phong', 1), "
                "(12, 'Pho Phong', 'pho_phong', 1), "
                "(13, 'Nguoi Ngoai', 'chuyen_vien', 2)")
+    db.execute("INSERT INTO user_groups (id, name) VALUES (1, 'Dung DTBB'), (2, 'Xac nhan DTBB')")
+    db.execute("INSERT INTO group_features (group_id, feature_code) VALUES "
+               "(1, 'menu.dtbb'), (2, 'dtbb.confirm')")
+    db.execute("INSERT INTO group_members (group_id, staff_id) VALUES "
+               "(1, 10), (1, 11), (1, 12), (2, 11), (2, 12)")
     db.commit()
     app.dependency_overrides[get_db] = lambda: db
     yield TestClient(app), db
@@ -112,20 +125,34 @@ def test_1_ngay_2_chi_nhanh_cung_luu_duoc(client_va_db):
     assert n == 2
 
 
-def test_nguoi_ngoai_phong_ke_toan_khong_luu_duoc(client_va_db):
+def test_khong_co_quyen_menu_dtbb_khong_luu_duoc(client_va_db):
     client, _ = client_va_db
-    _dang_nhap(13, "chuyen_vien", department_id=2)
+    _dang_nhap(13, "chuyen_vien", department_id=2)  # không thuộc nhóm quyền nào
     r = client.post("/api/dtbb/save", json=_BODY_MAU)
     assert r.status_code == 403
 
 
-def test_truong_phong_xac_nhan_duoc_ky_nguoi_khac_luu(client_va_db):
+def test_nguoi_ngoai_phong_ke_toan_duoc_cap_quyen_van_dung_duoc(client_va_db):
+    """Khoá đúng thay đổi hành vi: gate là MÃ QUYỀN, không phải mã phòng.
+
+    id=13 thuộc phòng KSNB. Trước đây bị chặn cứng vì không phải ACCT; giờ admin
+    xếp vào nhóm có "menu.dtbb" là dùng được — đó chính là điểm của quy tắc
+    "không hard-code quyền" (xem docs/DESIGN.md)."""
+    client, db = client_va_db
+    db.execute("INSERT INTO group_members (group_id, staff_id) VALUES (1, 13)")
+    db.commit()
+    _dang_nhap(13, "chuyen_vien", department_id=2)
+    r = client.post("/api/dtbb/save", json=_BODY_MAU)
+    assert r.status_code == 200, r.text
+
+
+def test_co_quyen_xac_nhan_duoc_ky_nguoi_khac_luu(client_va_db):
     client, db = client_va_db
     _dang_nhap(10, "chuyen_vien")
     client.post("/api/dtbb/save", json=_BODY_MAU)
     report_id = db.execute("SELECT id FROM dtbb_reports").fetchone()["id"]
 
-    _dang_nhap(11, "truong_phong")
+    _dang_nhap(11, "truong_phong")  # có "dtbb.confirm"
     r = client.post(f"/api/dtbb/{report_id}/confirm")
     assert r.status_code == 200, r.text
     row = db.execute("SELECT status, confirmed_by FROM dtbb_reports WHERE id=?", (report_id,)).fetchone()
@@ -139,19 +166,21 @@ def test_khong_tu_xac_nhan_ky_chinh_minh_da_luu(client_va_db):
     client.post("/api/dtbb/save", json=_BODY_MAU)
     report_id = db.execute("SELECT id FROM dtbb_reports").fetchone()["id"]
 
-    # Vẫn đăng nhập id=11 (chính người vừa lưu) — dù đúng vai trò Trưởng phòng,
-    # vẫn phải bị chặn vì là chính người tạo.
+    # Vẫn đăng nhập id=11 (chính người vừa lưu) — dù CÓ "dtbb.confirm",
+    # vẫn phải bị chặn vì là chính người tạo. Đây là luật nghiệp vụ trên
+    # từng bản ghi, không phải quyền — không gán/gỡ được ở màn Phân quyền.
     r = client.post(f"/api/dtbb/{report_id}/confirm")
     assert r.status_code == 403
 
 
-def test_chuyen_vien_khong_duoc_xac_nhan(client_va_db):
+def test_co_menu_nhung_khong_co_quyen_xac_nhan_bi_chan(client_va_db):
+    """"menu.dtbb" cho phép tính/lưu/xoá nhưng KHÔNG kèm quyền xác nhận."""
     client, db = client_va_db
-    _dang_nhap(10, "chuyen_vien")
+    _dang_nhap(12, "pho_phong")
     client.post("/api/dtbb/save", json=_BODY_MAU)
     report_id = db.execute("SELECT id FROM dtbb_reports").fetchone()["id"]
 
-    _dang_nhap(12, "chuyen_vien")  # id khác nhưng role chuyen_vien, không phải KSV
+    _dang_nhap(10, "chuyen_vien")  # chỉ có menu.dtbb, không có dtbb.confirm
     r = client.post(f"/api/dtbb/{report_id}/confirm")
     assert r.status_code == 403
 
@@ -216,8 +245,8 @@ def test_xoa_ky_dang_vang_thanh_cong(client_va_db):
     )
     db.commit()
 
-    # Người khác cùng phòng ACCT (không phải người tạo, không phải KSV) vẫn xoá được —
-    # quyền xoá kỳ vàng áp dụng cho mọi người trong phòng, không riêng KSV.
+    # Người khác (không phải người tạo) vẫn xoá được — xoá kỳ vàng đi cùng
+    # "menu.dtbb", không đòi thêm "dtbb.confirm".
     _dang_nhap(12, "pho_phong")
     r = client.delete(f"/api/dtbb/{report_id}")
     assert r.status_code == 200, r.text
@@ -241,13 +270,13 @@ def test_xoa_ky_da_xanh_bi_chan(client_va_db):
     assert db.execute("SELECT * FROM dtbb_reports WHERE id=?", (report_id,)).fetchone() is not None
 
 
-def test_nguoi_ngoai_phong_ke_toan_khong_xoa_duoc(client_va_db):
+def test_khong_co_quyen_menu_dtbb_khong_xoa_duoc(client_va_db):
     client, db = client_va_db
     _dang_nhap(10, "chuyen_vien")
     client.post("/api/dtbb/save", json=_BODY_MAU)
     report_id = db.execute("SELECT id FROM dtbb_reports").fetchone()["id"]
 
-    _dang_nhap(13, "chuyen_vien", department_id=2)
+    _dang_nhap(13, "chuyen_vien", department_id=2)  # không thuộc nhóm quyền nào
     r = client.delete(f"/api/dtbb/{report_id}")
     assert r.status_code == 403
     assert db.execute("SELECT * FROM dtbb_reports WHERE id=?", (report_id,)).fetchone() is not None
