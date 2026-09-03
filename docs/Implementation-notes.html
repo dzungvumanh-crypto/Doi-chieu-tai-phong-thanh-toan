@@ -12665,7 +12665,60 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-02</footer>
+  <!-- 114 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">114</span>
+      <span class="card-title">Fix: CSV đã phân loại sẵn bị dùng nhầm cho cả cửa sổ T-3..T+3 ở Hub↔Core (2026-09-03)</span>
+      <span class="badge badge-done">Hoàn thiện</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-red">Báo cáo người dùng</span> "Chọn CSV thì không chạy"</div>
+      <p>Người dùng thực tế chỉ dùng cách 1 (upload GL02 zip gốc, hệ thống tự giải mã+phân loại) —
+        cách 2 (upload thẳng <code>{ma_nh}_DEN.csv</code> đã phân loại sẵn từ thẻ "Phân loại dữ
+        liệu") báo không chạy đúng. Tái hiện bằng test API: job vẫn hoàn thành ("done") nên không
+        crash rõ ràng — lỗi thật nằm ở dữ liệu bị NHÂN SAI, không phải job treo/lỗi.</p>
+
+      <div class="label"><span class="pill pill-blue">Nguyên nhân gốc</span> Pattern CSV không mang ngày, dựa ngầm vào thư mục con đã bị bỏ</div>
+      <p><code>doi_chieu_hub_core()</code> quét cửa sổ 4 ngày (T, T+1, T+2, T+3) cho dữ liệu CORE,
+        gọi <code>_tim_file_core_hoac_csv(goc_dir, ngày_offset, ma_nh)</code> cho từng ngày. Với
+        ZIP, tên file <code>GL02_{ngày}_1000.zip</code> tự mang đúng ngày nên mỗi offset tự nhiên
+        khớp đúng file của nó (offset khác ngày thì không khớp — hoạt động đúng ý). Với CSV,
+        pattern <code>{ma_nh}_DEN*.csv</code> <b>không hề chứa ngày</b> — thiết kế ban đầu (2026-08-28)
+        dựa vào thư mục con theo ngày (<code>27.8/</code>, <code>28.8/</code>...) để phân biệt CSV
+        của ngày nào, đúng khi hệ thống còn chế độ "chọn thư mục máy chủ" có cấu trúc thư mục theo
+        ngày thật. Từ khi bỏ hẳn chế độ đó (card 113, PR#70, 2026-09-02) — mọi file tải lên nằm
+        <b>chung 1 thư mục phẳng</b> <code>_upload/</code> — cơ chế phân biệt ngày qua thư mục con
+        không còn tồn tại, nhưng pattern CSV vẫn không được sửa theo. Kết quả: 1 file CSV duy nhất
+        (của ngày T) bị khớp nhầm cho <b>cả 4 offset</b> T/T+1/T+2/T+3 — tự nhân dữ liệu ngày T lên
+        3 ngày khác, làm sai lệch <code>classify_core()</code>/<code>classify_hub()</code> (so khớp
+        chéo với dữ liệu giả ở các ngày không thật sự có mặt).</p>
+
+      <div class="note"><b>Vì sao chỉ CSV bị lộ, ZIP thì không:</b> quyết định bỏ chế độ thư mục
+        (card 113) đã âm thầm xoá đi tiền đề mà thiết kế cửa sổ nhiều ngày của CSV dựa vào — một ví
+        dụ khác của việc gỡ 1 tính năng có thể phá ngầm giả định của tính năng khác tưởng chừng
+        không liên quan. ZIP không bị ảnh hưởng vì nó tự mang ngày trong tên, không phụ thuộc cấu
+        trúc thư mục.</div>
+
+      <div class="label"><span class="pill pill-green">Fix</span> CSV chỉ được chấp nhận ở offset 0</div>
+      <p><code>_tim_file_core_hoac_csv()</code> thêm tham số <code>off</code> — chỉ thử khớp CSV khi
+        <code>off == 0</code> (đúng ngày T, ngày duy nhất mà CSV thật sự đại diện). Offset T+1..T+3
+        giờ CHỈ chấp nhận qua ZIP đúng ngày của offset đó — không có ZIP thì báo "không tìm thấy
+        file CSV/GL02 (bỏ qua)" đúng như hành vi thiếu dữ liệu bình thường, không còn tự nhân bản
+        CSV của ngày T. Muốn có CORE cho T+1..T+3 khi chỉ có CSV cho T thì bắt buộc phải tự giải mã
+        ZIP ngày đó — không thể suy ra được từ tên file CSV.</p>
+
+      <p>Test mới: <code>test_csv_chi_dung_cho_offset_0_khong_leo_sang_ngay_khac</code> (unit,
+        <code>test_doi_chieu_song_phuong_core_algorithm.py</code>) +
+        <code>test_chi_upload_csv_khong_kem_gl02_zip_khong_nhan_ban_sang_ngay_khac</code> (API,
+        <code>test_doi_chieu_song_phuong_kenh_core_api.py</code>, kiểm log xác nhận T+1/T+2/T+3
+        không còn đọc CSV của T). 124/124 test module Đối chiếu Song phương pass.</p>
+
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-03</footer>
 </div>
 </body>
 </html>

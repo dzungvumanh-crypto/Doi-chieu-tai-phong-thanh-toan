@@ -311,7 +311,7 @@ class TestTimFile:
     def test_uu_tien_thu_muc_ngay_truoc(self, tmp_path):
         (tmp_path / "23.8").mkdir()
         (tmp_path / "23.8" / "GL02_20260823_1000.zip").write_bytes(b"x")
-        loai, p = pipeline._tim_file_core_hoac_csv(tmp_path, "20260823", "202")
+        loai, p = pipeline._tim_file_core_hoac_csv(tmp_path, "20260823", "202", 0)
         assert loai == "zip"
         assert p.parent.name == "23.8"
 
@@ -320,19 +320,19 @@ class TestTimFile:
         `D.M` — phải tự dò ra được, không cần đổi tên thư mục tay."""
         (tmp_path / "24.8.2026").mkdir()
         (tmp_path / "24.8.2026" / "GL02_20260824_1000.zip").write_bytes(b"x")
-        loai, p = pipeline._tim_file_core_hoac_csv(tmp_path, "20260824", "201")
+        loai, p = pipeline._tim_file_core_hoac_csv(tmp_path, "20260824", "201", 0)
         assert loai == "zip"
         assert p.parent.name == "24.8.2026"
 
     def test_roi_o_thu_muc_cha_van_tim_thay(self, tmp_path):
         """File 20.8 để rời ở gốc, không có thư mục 20.8/ riêng — quyết định 2026-08-26."""
         (tmp_path / "GL02_20260820_1000.zip").write_bytes(b"x")
-        loai, p = pipeline._tim_file_core_hoac_csv(tmp_path, "20260820", "202")
+        loai, p = pipeline._tim_file_core_hoac_csv(tmp_path, "20260820", "202", 0)
         assert loai == "zip"
         assert p.parent == tmp_path
 
     def test_khong_thay_thi_none(self, tmp_path):
-        assert pipeline._tim_file_core_hoac_csv(tmp_path, "20260820", "202") is None
+        assert pipeline._tim_file_core_hoac_csv(tmp_path, "20260820", "202", 0) is None
 
     def test_uu_tien_csv_da_phan_loai_hon_zip(self, tmp_path):
         """Quyết định 2026-08-28: có sẵn `{ma_nh}_DEN.csv` thì dùng thẳng, không giải mã lại
@@ -340,9 +340,24 @@ class TestTimFile:
         (tmp_path / "23.8").mkdir()
         (tmp_path / "23.8" / "GL02_20260823_1000.zip").write_bytes(b"x")
         (tmp_path / "23.8" / "202_DEN.csv").write_bytes(b"x")
-        loai, p = pipeline._tim_file_core_hoac_csv(tmp_path, "20260823", "202")
+        loai, p = pipeline._tim_file_core_hoac_csv(tmp_path, "20260823", "202", 0)
         assert loai == "csv"
         assert p.name == "202_DEN.csv"
+
+    def test_csv_chi_dung_cho_offset_0_khong_leo_sang_ngay_khac(self, tmp_path):
+        """Bug báo bởi người dùng 2026-09-03: `{ma_nh}_DEN*.csv` KHÔNG mang ngày giao dịch trong
+        tên — trước đây dựa vào thư mục con theo ngày để phân biệt, nhưng từ khi bỏ chế độ thư mục
+        máy chủ (PR#70) mọi file tải lên nằm CHUNG 1 thư mục phẳng. Nếu không chặn theo offset,
+        1 file CSV ngày T bị dùng nhầm làm dữ liệu CORE cho CẢ T+1/T+2/T+3 — tự nhân dữ liệu, sai
+        khác hẳn hành vi ZIP (tên mang đúng ngày nên tự nhiên không khớp offset khác). CSV chỉ được
+        chấp nhận ở offset 0; offset khác phải có ZIP đúng ngày của nó, không được rơi về CSV."""
+        (tmp_path / "202_DEN.csv").write_bytes(b"x")  # CSV duy nhất, không có ZIP nào cả
+        assert pipeline._tim_file_core_hoac_csv(tmp_path, "20260824", "202", 1) is None
+        assert pipeline._tim_file_core_hoac_csv(tmp_path, "20260825", "202", 2) is None
+        assert pipeline._tim_file_core_hoac_csv(tmp_path, "20260826", "202", 3) is None
+        # offset 0 (ngày gốc) vẫn phải đọc được CSV bình thường
+        loai, p = pipeline._tim_file_core_hoac_csv(tmp_path, "20260823", "202", 0)
+        assert loai == "csv"
 
     def test_nhieu_csv_cung_khop_khong_tu_chon(self, tmp_path):
         """Quyết định 2026-08-30: nhiều người dùng có thể trỏ chung 1 thư mục server (mode 2)
@@ -351,7 +366,7 @@ class TestTimFile:
         (tmp_path / "23.8").mkdir()
         (tmp_path / "23.8" / "202_DEN_20260823_0900.csv").write_bytes(b"x")
         (tmp_path / "23.8" / "202_DEN_20260823_1400.csv").write_bytes(b"x")
-        assert pipeline._tim_file_core_hoac_csv(tmp_path, "20260823", "202") is None
+        assert pipeline._tim_file_core_hoac_csv(tmp_path, "20260823", "202", 0) is None
 
     def test_nhieu_hub_cung_khop_khong_tu_chon(self, tmp_path):
         """Như trên, áp dụng cho `_tim_file_hub` (dùng chung ở cả 2 bước Kênh↔Hub và Hub↔Core)."""

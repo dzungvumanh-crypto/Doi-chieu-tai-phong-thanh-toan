@@ -57,25 +57,37 @@ def _tim_file_hub(
 
 
 def _tim_file_core_hoac_csv(
-    goc_dir: Path, ngay: str, ma_nh: str, log: Callable[[str], None] = lambda msg: None,
+    goc_dir: Path, ngay: str, ma_nh: str, off: int, log: Callable[[str], None] = lambda msg: None,
 ) -> tuple[str, Path] | None:
     """Ưu tiên `{ma_nh}_DEN*.csv` (đã phân loại sẵn, đọc thẳng — không giải mã) — khớp glob,
     KHÔNG đòi tên chính xác `{ma_nh}_DEN.csv`: dữ liệu thật xuất thủ công (ngoài module Phân
     loại dữ liệu) luôn kèm hậu tố ngày/giờ xuất (VD `202_DEN_20260827_1408.csv`, người chấm xác
     nhận 2026-08-28 đây đúng là dữ liệu CORE của ngày trong tên thư mục, không phải ngày trong
-    tên file). Nhiều file cùng khớp — KHÔNG tự đoán (đổi 2026-08-30, cùng lý do `_tim_file_hub`,
+    tên file).
+
+    CHỈ thử CSV khi `off == 0` (2026-09-03, vá lỗi báo bởi người dùng) — tên `{ma_nh}_DEN*.csv`
+    KHÔNG mang ngày giao dịch, trước đây dựa vào thư mục con theo ngày (`thu_muc_ngay_ung_vien`)
+    để phân biệt CSV của ngày nào. Từ khi bỏ chế độ "chọn thư mục máy chủ" (PR#70, 2026-09-02),
+    mọi file tải lên nằm CHUNG 1 thư mục phẳng `_upload/` — cùng 1 CSV bị khớp nhầm cho CẢ 4
+    offset T/T+1/T+2/T+3, tự nhân dữ liệu ngày T lên các ngày khác, sai khác hẳn hành vi ZIP
+    (tên `GL02_{ngay}_1000.zip` mang đúng ngày, offset khác ngày tự nhiên không khớp). CSV đã
+    phân loại sẵn chỉ đại diện cho ĐÚNG 1 ngày — muốn có CORE cho T+1..T+3 phải tự giải mã ZIP
+    ngày đó (không thể suy ra từ tên file CSV).
+
+    Nhiều file CSV cùng khớp ở offset 0 — KHÔNG tự đoán (đổi 2026-08-30, cùng lý do `_tim_file_hub`,
     tránh đọc nhầm file khi nhiều người dùng chung thư mục server), trả None. Không thấy CSV nào
     mới tới `GL02_{ngay}_1000.zip` (cần giải mã AES + phân loại). Trả `(loai, path)`, `loai` là
     `"csv"`/`"zip"`, hoặc `None` nếu không thấy/không xác định được cái nào."""
-    matches = tim_file_glob(goc_dir, ngay, f"{ma_nh}_DEN*.csv")
-    if matches:
-        if len(matches) > 1:
-            log(f"[LỖI] {len(matches)} file khớp '{ma_nh}_DEN*.csv' cùng lúc trong "
-                f"{matches[0].parent} — KHÔNG tự chọn (tránh đọc nhầm khi nhiều người dùng chung "
-                f"thư mục): {', '.join(p.name for p in matches)}. Cần dọn bớt file trùng hoặc "
-                f"dùng thư mục riêng cho mỗi phiên.")
-            return None
-        return ("csv", matches[0])
+    if off == 0:
+        matches = tim_file_glob(goc_dir, ngay, f"{ma_nh}_DEN*.csv")
+        if matches:
+            if len(matches) > 1:
+                log(f"[LỖI] {len(matches)} file khớp '{ma_nh}_DEN*.csv' cùng lúc trong "
+                    f"{matches[0].parent} — KHÔNG tự chọn (tránh đọc nhầm khi nhiều người dùng chung "
+                    f"thư mục): {', '.join(p.name for p in matches)}. Cần dọn bớt file trùng hoặc "
+                    f"dùng thư mục riêng cho mỗi phiên.")
+                return None
+            return ("csv", matches[0])
     p = tim_file(goc_dir, ngay, f"GL02_{ngay}_1000.zip")
     if p is not None:
         return ("zip", p)
@@ -178,7 +190,8 @@ def doi_chieu_hub_core(
     for off in (0, 1, 2, 3):
         nhan = nhan_offset(off)
         found = _tim_file_core_hoac_csv(
-            goc_dir, cong_ngay(ngay, off), ma_nh, lambda m, nhan=nhan: log(f"[CORE {nhan}] {m}"),
+            goc_dir, cong_ngay(ngay, off), ma_nh, off,
+            lambda m, nhan=nhan: log(f"[CORE {nhan}] {m}"),
         )
         if found is None:
             log(f"[CORE {nhan}] không tìm thấy file CSV/GL02" + (" — BẮT BUỘC" if off in (0, 1) else " (bỏ qua)"))

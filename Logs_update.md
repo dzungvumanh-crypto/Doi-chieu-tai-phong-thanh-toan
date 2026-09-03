@@ -4,6 +4,19 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 03/09/2026 Đối chiếu Song phương - **Sửa lỗi: chọn CSV đã phân loại sẵn cho GL02 thì không chạy đúng**
+    + Ở thẻ **"Đối chiếu đến"**, phần nạp dữ liệu CORE/GL02 có 2 cách: tải file ZIP GL02 gốc (hệ
+      thống tự giải mã + phân loại), hoặc tải thẳng file CSV đã phân loại sẵn (tải từ thẻ "Phân
+      loại dữ liệu" ở trước, chọn đúng file `{mã NH}_DEN.csv` của ngân hàng cần chấm)
+    + **Trước đây cách CSV bị lỗi:** khi đối chiếu cửa sổ nhiều ngày (T-3 đến T+3), 1 file CSV của
+      đúng 1 ngày lại bị dùng nhầm làm dữ liệu cho **cả 4 ngày trong cửa sổ**, làm sai kết quả đối
+      chiếu Hub↔Core. Cách dùng file ZIP gốc không bị lỗi này (tên file ZIP tự mang đúng ngày)
+    + Nay đã sửa: file CSV chỉ được dùng cho đúng 1 ngày nó đại diện; các ngày còn lại trong cửa
+      sổ không có CSV riêng thì phải có file ZIP đúng ngày đó, không tự lấy tạm CSV ngày khác nữa
+    + ✅ **Không phải làm gì sau khi cập nhật** — không đổi dữ liệu đã có, không đổi quyền của ai
+
+---
+
 - 02/09/2026 Đối chiếu Song phương + Chấm ILO1000 - **⚠️ HAI MÀN HÌNH MỚI — PHẢI CẤP QUYỀN SAU KHI DEPLOY**
     + Đợt này thêm **2 thứ mới**: tab **"Đối chiếu đến"** (Kênh↔Hub + Hub↔Core) nằm trong màn
       Đối chiếu Song phương đã có, và màn hình **"Chấm ILO1000"** (đối chiếu 4 nguồn) hoàn toàn mới
