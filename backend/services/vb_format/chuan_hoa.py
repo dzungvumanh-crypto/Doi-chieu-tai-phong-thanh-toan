@@ -23,9 +23,22 @@ import logging
 
 from docx import Document
 
-from . import ap_dung, bien_doi, nhan_dien, quy_chuan
+from . import ap_dung, bien_doi, do_chu, duong_ke, nhan_dien, quy_chuan
 
 _log = logging.getLogger(__name__)
+
+# Thành phần thể thức PHẢI nằm gọn một dòng. Lời văn không có trong danh sách:
+# xuống dòng là chuyện bình thường của nó, nén lại chỉ làm chữ dính vô cớ.
+_MOT_DONG = frozenset({
+    "quoc_hieu", "tieu_ngu", "ten_dv_chu_quan", "ten_dv_ban_hanh",
+    "so_ky_hieu", "dia_danh_ngay", "ten_loai", "quyen_han_chuc_vu",
+    "ho_ten_nguoi_ky", "phu_luc_so",
+})
+
+def _gon_mot_dong(txt: str, gioi_han: int = 46) -> str:
+    t = " ".join((txt or "").split())
+    return t if len(t) <= gioi_han else t[:gioi_han] + "…"
+
 
 def _loc_chong_lan(sua: list[tuple[int, int, str]]) -> list[tuple[int, int, str]]:
     """Bỏ những khoảng sửa đè lên khoảng đã nhận trước đó.
@@ -103,6 +116,7 @@ def chuan_hoa(du_lieu: bytes, cau_hinh: dict | None = None) -> tuple[bytes, dict
     luu_y: list[str] = []
     so_doan_sua = 0
     da_canh_bao_so_tu_dong = False
+    da_canh_bao_tran = False
     # Đoạn CÓ CHỮ liền trước — dùng để biết đoạn hiện tại có mở đầu một câu
     # mới hay chỉ là phần xuống dòng của câu trên (xem `cho_phep_hoa_dau_doan`).
     txt_truoc: str | None = None
@@ -159,6 +173,50 @@ def chuan_hoa(du_lieu: bytes, cau_hinh: dict | None = None) -> tuple[bytes, dict
                     sua_chung.append(mo_ta)
             else:
                 viec.append(mo_ta)
+
+        # ── Nén cho vừa một dòng ──
+        # Chạy SAU khi áp cỡ chữ: nén bao nhiêu phụ thuộc cỡ chữ cuối cùng,
+        # tính trước là tính trên con số sắp bị thay.
+        if ma in _MOT_DONG and cfg["chung"].get("nen_chu_cho_vua_dong"):
+            co = tp.get("co") or (
+                lambda v: v.pt if v is not None else None)(
+                    ap_dung._hieu_luc_run(p.runs[0], p, "size") if p.runs else None)
+            if co:
+                da_nen, con_tran = do_chu.nen_cho_vua_dong(
+                    p, doc, co,
+                    dam=bool(tp.get("dam")), nghieng=bool(tp.get("nghieng")),
+                    tran_twip=int(cfg["chung"].get("nen_toi_da_twip") or 24),
+                )
+                if da_nen:
+                    viec.append("nén chữ cho vừa một dòng")
+                elif con_tran and not da_canh_bao_tran:
+                    luu_y.append(
+                        f"Dòng «{_gon_mot_dong(p.text)}» dài hơn chỗ trống của nó, "
+                        "nén hết mức cho phép vẫn không vừa nên phần mềm giữ nguyên "
+                        "— Word sẽ đẩy phần cuối xuống dòng dưới. Cách xử lý: nới "
+                        "cột chứa nó, hoặc tự tách thành hai dòng ở chỗ hợp lý "
+                        "(Điều 8.2 cho phép tên đơn vị dài trình bày nhiều dòng)."
+                    )
+                    da_canh_bao_tran = True
+
+        # ── Đường kẻ ngang dưới dòng thể thức ──
+        # Sau bước nén: độ dài vạch tính theo bề rộng chữ, mà bề rộng đó chỉ
+        # chốt khi cỡ chữ và mức nén đã xong.
+        # Cụm nhiều dòng (trích yếu dài, tên đơn vị dài) chỉ được MỘT vạch, ở
+        # dưới dòng CUỐI. Không kiểm thì trích yếu hai dòng có một vạch chen
+        # vào giữa hai dòng — nhìn ra ngay là hỏng.
+        ma_ke = next((m for m in ma_list[stt:] if m != "trong"), None)
+        if ma in duong_ke.TY_LE and ma_ke != ma:
+            if cfg["chung"].get("go_gach_chan_the_thuc") and duong_ke.go_gach_chan(p):
+                viec.append("bỏ gạch chân (quy định dùng đường kẻ ngang rời)")
+            if cfg["chung"].get("ve_duong_ke_ngang"):
+                co_ve = tp.get("co") or (
+                    lambda v: v.pt if v is not None else None)(
+                        ap_dung._hieu_luc_run(p.runs[0], p, "size") if p.runs else None)
+                if co_ve and duong_ke.ve_duong_ke(
+                        p, ma, co_ve, dam=bool(tp.get("dam")),
+                        nghieng=bool(tp.get("nghieng"))):
+                    viec.append("vẽ đường kẻ ngang bên dưới")
 
         # ── Đánh dấu: cụ thể đè lên tổng quát ──
         if bat_mau and (rieng or run_noi_dung or run_lien_dong):

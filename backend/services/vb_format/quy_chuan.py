@@ -135,6 +135,17 @@ QUY_CHUAN_MAC_DINH: dict = {
         # hiện con số 14 đó. Đưa `space_before` về 0 để chỉ còn MỘT nguồn
         # quyết định khoảng cách.
         "bo_khoang_truoc_doan": True,
+        # Dòng thể thức (Quốc hiệu, Tiêu ngữ, tên đơn vị…) phải nằm gọn một
+        # dòng. Tràn thì nén ký tự lại đúng cách mẫu 979 làm — Phụ lục V có
+        # dòng tên đơn vị đầy đủ đặt w:spacing = -24. Trần lấy đúng mức đó:
+        # nén quá tay thì chữ dính nhau, đọc còn khó hơn là để xuống dòng.
+        "nen_chu_cho_vua_dong": True,
+        "nen_toi_da_twip": 24,
+        # Điều 7.2 / 8.2 / 11.2: dưới Tiêu ngữ, tên đơn vị ban hành và trích
+        # yếu có ĐƯỜNG KẺ NGANG nét liền — không phải gạch chân. Mẫu 979 vẽ
+        # bằng 7 thẻ <v:line>, không dùng gạch chân chỗ nào.
+        "go_gach_chan_the_thuc": True,
+        "ve_duong_ke_ngang": True,
     },
     "thanh_phan": {
         # Cỡ chữ khối đầu lấy theo con số ĐẾM ĐƯỢC trên cả 18 mẫu của Phụ lục V

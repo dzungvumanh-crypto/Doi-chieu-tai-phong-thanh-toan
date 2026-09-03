@@ -7,8 +7,8 @@ setlocal
 :: Chi copy SOURCE CODE, KHONG dung den data/ksnb.db
 :: ============================================================
 :: Sua dong duoi thanh duong dan thuc te truoc khi chay:
-::   Qua mang LAN:  set "DEST=\\192.168.1.100\TenShare\System"
-::   Cung may:      set "DEST=C:\...\System"
+::   Qua mang LAN:  set "DEST=\\10.1.3.89\ThanhDaoTien\System"
+::   Cung may:      set "DEST=C:\Users\ThanhDaoTien\Desktop\TTTT_System"
 :: ============================================================
 set "DEST=C:\Users\ThanhDaoTien\Desktop\TTTT_System"
 

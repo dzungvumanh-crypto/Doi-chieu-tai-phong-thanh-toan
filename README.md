@@ -280,7 +280,10 @@ Truy cập:
 - Dashboard tổng quan: KPI người dùng & phòng nghiệp vụ, bảng nghỉ phép hôm nay theo phòng, biểu đồ cột tỷ lệ nộp chứng từ đúng hạn/muộn theo 4 phòng (chọn tháng/năm để xem). **Mọi vai trò đều vào Trang chủ sau khi đăng nhập**
 - **Chủ đề kỷ niệm 2-9**: từ 25/8 đến hết 3/9 hằng năm, Trang chủ và trang Đăng nhập tự đổi nền + hiện khẩu hiệu chào mừng Cách mạng Tháng Tám và Quốc khánh; hết khoảng ngày tự trở lại giao diện thường. Khoảng ngày và nội dung nằm trong `frontend/le_29.py`
 - **Công việc chờ xử lý**: khối ở đầu sidebar, hiện trên mọi trang — số chứng từ chờ xác nhận và đơn nghỉ phép chờ duyệt của **chính người đang đăng nhập**; bấm vào mở màn hình theo dõi `/pending/<loại>` có đủ chi tiết và link nhảy thẳng tới ô cần xử lý
-- **Nhật ký thao tác** (audit log): middleware ghi tập trung mọi request thay đổi dữ liệu (POST/PUT/PATCH/DELETE) vào bảng `audit_logs` — ai, làm gì, kết quả HTTP, IP, thời gian; lọc theo phương thức, tìm kiếm, phân trang; tự dọn sau 365 ngày
+- **Nhật ký thao tác** (audit log): middleware ghi tập trung mọi request thay đổi dữ liệu (POST/PUT/PATCH/DELETE) vào bảng `audit_logs` — ai, làm gì, kết quả HTTP, IP, thời gian; tự dọn sau 365 ngày
+  - **Kèm tóm tắt dữ liệu gửi lên** (`backend/core/audit_body.py`): query string + body JSON, để cột *Chi tiết* nói được **đã sửa cái gì** chứ không chỉ "HTTP 200". Ba giới hạn cố ý — chỉ đọc body JSON ≤ 8 KB (bỏ qua multipart/file), **che khoá nhạy cảm** (mật khẩu, token, ảnh chữ ký — nhật ký xuất Excel được nên coi như đã công khai), và cắt còn tối đa 800 ký tự
+  - **Bấm một dòng** để mở hộp thoại xem đầy đủ, kể cả nguyên văn bản ghi
+  - **Lọc** theo phương thức, từ khoá, **khoảng ngày, người thao tác, module** (`GET /api/admin/logs/audit/filters` đổ dữ liệu vào hai ô chọn — chỉ liệt kê người đã thực sự có dòng trong nhật ký)
 - Nhật ký đăng nhập và nhật ký lỗi/cảnh báo hệ thống (admin xem, lọc theo user/thời gian)
 - **Ảnh chữ ký cá nhân** (menu *Quản lý người dùng*, mọi vai trò kể cả chuyên viên): tải lên ảnh
   **PNG nền trong suốt**, tối đa 2 MB, mỗi người một ảnh. Ảnh lưu trong DB (bảng `user_signatures`)
@@ -698,6 +701,26 @@ Truy cập:
   *Quy định 979/QyĐ-NHNo-PC* (Điều 4–17, Phụ lục III, Phụ lục IV) → hiện **nhật ký từng đoạn đã sửa**
   → bấm *Tải văn bản đã chuẩn hoá*. File `.doc` đời cũ bị từ chối kèm hướng dẫn (python-docx không đọc
   được định dạng nhị phân cũ)
+- **Đường kẻ ngang dưới Tiêu ngữ / tên đơn vị / trích yếu** (Điều 7.2, 8.2, 11.2) vẽ bằng đối tượng
+  `<v:line>` — **không phải gạch chân**: quy định đòi đường dài **1/3–1/2** dòng chữ ở tên đơn vị và
+  trích yếu, mà `w:u` luôn dài đúng bằng chữ còn `w:pBdr` luôn dài hết bề ngang đoạn. Mẫu 979 cũng
+  dùng `<v:line>` (đếm được 7 thẻ, không có gạch chân nào). Vẽ lại nhiều lần không chồng vạch
+- **Đo bề rộng chữ thật rồi nén ký tự cho dòng thể thức vừa một dòng** (`do_chu.py`): đo bằng chính
+  phông sẽ in qua Pillow. "NGÂN HÀNG NÔNG NGHIỆP VÀ PHÁT TRIỂN NÔNG THÔN VIỆT NAM" cỡ 12 đậm đo được
+  238,0 pt / ô 241,2 pt. Tràn thì nén `w:spacing` tối đa **−24 twip** (đúng mức Phụ lục V dùng),
+  **không hạ cỡ chữ**; hết trần vẫn tràn thì dừng và ghi cảnh báo
+- **Trích yếu xuống dòng**: dòng nối tiếp cũng được nhận là trích yếu (tối đa 3 dòng, dừng khi gặp
+  `Căn cứ` / `Điều` / `Kính gửi`…), nếu không thì dòng thứ hai bị căn đều hai bên và không in đậm
+  trong khi dòng trên căn giữa
+- **Tab "Mẫu trình bày sẵn"** — bản trắng của **18 mẫu Phụ lục V** (Nghị quyết, Quyết định,
+  Công văn, Tờ trình, Giấy mời, Biên bản, Đơn xin nghỉ phép…). Bấm *Tải mẫu* là có file `.docx`
+  đúng thể thức để điền nội dung vào, khỏi phải copy-paste từ file Phụ lục. Lề trang đã đặt về
+  đúng quy chuẩn 20/20/30/20 mm (bản trong Phụ lục để 15 mm cho vừa trang giấy) và đã gỡ header
+  mang số trang của Phụ lục
+  - **Phần "Ghi chú" của Phụ lục được giữ nguyên** (đoạn ghi chú ở Mẫu 07 và các chú thích chân
+    trang ở Mẫu 04, Mẫu 17) — người soạn **tự xoá trước khi phát hành**
+  - 18 file nằm ở `templates/vb_mau/`, sinh bằng `python scripts/tach_mau_vb.py`. Chỉ chạy lại khi
+    Phụ lục V có bản mới; máy chính không chạy script này
 - **Ba việc được làm tự động:**
 
   | Nhóm | Nội dung |

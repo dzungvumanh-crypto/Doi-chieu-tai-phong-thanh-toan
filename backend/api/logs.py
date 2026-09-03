@@ -229,7 +229,19 @@ def get_login_logs(
     }
 
 
-def _audit_where(method: str, q: str):
+def _ngay_ke_tiep(s: str) -> str:
+    """'2026-09-03' → '2026-09-04'. Lọc tới-ngày bằng `< hôm sau` chứ không
+    `<= hôm nay`: created_at có cả giờ phút nên `<=` sẽ cắt mất chính ngày đó."""
+    from datetime import date, timedelta
+    y, m, d = (int(x) for x in s.split("-"))
+    return (date(y, m, d) + timedelta(days=1)).isoformat()
+
+
+_NGAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _audit_where(method: str, q: str, tu_ngay: str = "", den_ngay: str = "",
+                 actor_id: int = 0, module: str = ""):
     clauses, params = [], []
     if method and method.upper() in ("POST", "PUT", "PATCH", "DELETE"):
         clauses.append("al.action = ?")
@@ -238,19 +250,62 @@ def _audit_where(method: str, q: str):
         like = f"%{q.strip()}%"
         clauses.append("(al.target_type LIKE ? OR al.detail LIKE ? OR ks.full_name LIKE ? OR ks.username LIKE ?)")
         params += [like, like, like, like]
+    # Ngày sai định dạng thì BỎ QUA bộ lọc thay vì ném lỗi: người dùng gõ dở
+    # trong ô ngày không đáng làm cả trang nhật ký trắng xoá.
+    if _NGAY_RE.match(tu_ngay or ""):
+        clauses.append("al.created_at >= ?")
+        params.append(tu_ngay)
+    if _NGAY_RE.match(den_ngay or ""):
+        clauses.append("al.created_at < ?")
+        params.append(_ngay_ke_tiep(den_ngay))
+    if actor_id:
+        clauses.append("al.actor_id = ?")
+        params.append(actor_id)
+    if module:
+        clauses.append("al.target_type LIKE ?")
+        params.append(f"{module}%")
     where = "WHERE " + " AND ".join(clauses) if clauses else ""
     return where, params
 
 
-@router.get("/audit")
-def get_audit_logs(
-    page:   int = Query(1, ge=1),
-    method: str = Query(""),
-    q:      str = Query(""),
+@router.get("/audit/filters")
+def get_audit_filters(
     _: dict = Depends(require_feature("menu.logs")),
     db: sqlite3.Connection = Depends(get_db),
 ):
-    where, params = _audit_where(method, q)
+    """Dữ liệu đổ vào 2 ô chọn của bộ lọc: người thao tác và module.
+
+    Chỉ liệt kê người ĐÃ có dòng trong nhật ký — danh sách toàn bộ nhân sự dài
+    gấp nhiều lần mà phần lớn chọn vào sẽ ra bảng rỗng.
+    """
+    from backend.services.audit_labels import MODULES
+    rows = db.execute(
+        """SELECT ks.id, ks.full_name, ks.username, COUNT(*) AS n
+           FROM audit_logs al JOIN user_tttt ks ON al.actor_id = ks.id
+           GROUP BY ks.id ORDER BY ks.full_name COLLATE NOCASE"""
+    ).fetchall()
+    return {
+        "actors": [
+            {"id": r["id"], "label": f"{r['full_name'] or r['username']} ({r['n']})"}
+            for r in rows
+        ],
+        "modules": [{"prefix": p, "label": lbl} for p, lbl in MODULES],
+    }
+
+
+@router.get("/audit")
+def get_audit_logs(
+    page:     int = Query(1, ge=1),
+    method:   str = Query(""),
+    q:        str = Query(""),
+    tu_ngay:  str = Query(""),
+    den_ngay: str = Query(""),
+    actor_id: int = Query(0),
+    module:   str = Query(""),
+    _: dict = Depends(require_feature("menu.logs")),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    where, params = _audit_where(method, q, tu_ngay, den_ngay, actor_id, module)
     base = f"""FROM audit_logs al
                LEFT JOIN user_tttt ks ON al.actor_id = ks.id
                {where}"""
@@ -275,6 +330,8 @@ def get_audit_logs(
                 "result_ok":   result_ok(r["detail"], r["action"]),
                 "detail":      describe_detail(r["detail"]),
                 "target_type": r["target_type"],   # path thô — cho tooltip tra cứu
+                "action":      r["action"],        # METHOD hoặc mã ngữ nghĩa
+                "raw_detail":  r["detail"],        # nguyên văn — hộp thoại chi tiết
                 "ip_address":  r["ip_address"],
                 "username":    r["username"],
                 "full_name":   r["full_name"],
@@ -290,8 +347,12 @@ def get_audit_logs(
 
 @router.get("/audit/export")
 def export_audit_logs(
-    method: str = Query(""),
-    q:      str = Query(""),
+    method:   str = Query(""),
+    q:        str = Query(""),
+    tu_ngay:  str = Query(""),
+    den_ngay: str = Query(""),
+    actor_id: int = Query(0),
+    module:   str = Query(""),
     _: dict = Depends(require_feature("menu.logs")),
     db: sqlite3.Connection = Depends(get_db),
 ):
@@ -300,7 +361,7 @@ def export_audit_logs(
     from datetime import date
     from backend.services.audit_labels import describe_work, describe_result, describe_detail
 
-    where, params = _audit_where(method, q)
+    where, params = _audit_where(method, q, tu_ngay, den_ngay, actor_id, module)
     rows = db.execute(
         f"""SELECT al.*, ks.full_name, ks.username
             FROM audit_logs al
