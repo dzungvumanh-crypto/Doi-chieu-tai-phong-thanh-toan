@@ -42,3 +42,10 @@ class KetQuaChuanHoa(BaseModel):
     doan: list[dict]
     luu_y: list[str]
     thong_ke: dict
+
+
+class MauVB(BaseModel):
+    """Một mẫu trình bày sẵn của Phụ lục V, để người dùng tải bản trắng."""
+
+    so: int
+    ten: str

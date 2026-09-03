@@ -11,6 +11,7 @@ trên đĩa, `/tai-ve/{token}` mới đưa file. Người dùng đọc nhật k�
 File kết quả sống hết ngày làm việc và bị dọn lúc 23h cùng các tính năng khác
 (`backend/core/don_dep.py`).
 """
+import json
 import logging
 import shutil
 import sqlite3
@@ -27,7 +28,7 @@ from backend.core.deps import require_feature
 from backend.core.don_dep import moc_don_gan_nhat
 from backend.core.uploads import read_limited, safe_filename
 from backend.database import get_db, write_audit
-from backend.schemas.vb_format import CauHinhIn, CauHinhOut, KetQuaChuanHoa
+from backend.schemas.vb_format import CauHinhIn, CauHinhOut, KetQuaChuanHoa, MauVB
 from backend.services.vb_format import quy_chuan, store
 from backend.services.vb_format.chuan_hoa import chuan_hoa as _chuan_hoa
 
@@ -36,6 +37,7 @@ router = APIRouter(prefix="/api/vb-format", tags=["vb-format"])
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 TEMP_DIR = BASE_DIR / "data" / "temp_vb_format"
+MAU_DIR = BASE_DIR / "templates" / "vb_mau"
 
 _DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 # Word 2007+ trở lên. Bản .doc cũ là định dạng nhị phân khác hẳn, python-docx
@@ -115,6 +117,48 @@ def khoi_phuc_mac_dinh(
                 "Khôi phục quy chuẩn mặc định theo QĐ 979")
     db.commit()
     return {"cau_hinh": ket_qua}
+
+
+# ── Mẫu trình bày sẵn (Phụ lục V) ────────────────────────────────────────────
+_mau_cache: list[dict] | None = None
+
+
+def _muc_luc_mau() -> list[dict]:
+    """Mục lục 18 mẫu, đọc một lần. Thư mục mẫu là dữ liệu tĩnh trong repo.
+
+    Thiếu file thì trả danh sách rỗng chứ không ném lỗi: mẫu trắng là tiện ích
+    phụ, không đáng để hỏng cả màn Chuẩn hoá. Nhưng có ghi log ERROR — người
+    vận hành cần biết để chạy `scripts/tach_mau_vb.py`, còn người dùng thì thấy
+    ngay dòng nhắc trên màn hình.
+    """
+    global _mau_cache
+    if _mau_cache is None:
+        f = MAU_DIR / "muc_luc.json"
+        try:
+            _mau_cache = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            _log.error("Không đọc được mục lục mẫu trình bày %s: %s", f, e)
+            _mau_cache = []
+    return _mau_cache
+
+
+@router.get("/mau", response_model=list[MauVB])
+def danh_sach_mau(_=Depends(require_feature("menu.vb_format"))):
+    return [MauVB(so=m["so"], ten=m["ten"]) for m in _muc_luc_mau()]
+
+
+@router.get("/mau/{so}")
+def tai_mau(so: int, _=Depends(require_feature("menu.vb_format"))):
+    """Tải một mẫu trắng. Tên file lấy từ mục lục, KHÔNG nhận từ client."""
+    mau = next((m for m in _muc_luc_mau() if m["so"] == so), None)
+    if mau is None:
+        raise HTTPException(404, f"Không có mẫu số {so}.")
+    duong_dan = MAU_DIR / mau["file"]
+    if not duong_dan.exists():
+        _log.error("Mục lục có mẫu %s nhưng thiếu file %s", so, duong_dan)
+        raise HTTPException(404, f"Thiếu file mẫu số {so} trên máy chủ.")
+    return Response(content=duong_dan.read_bytes(), media_type=_DOCX_MIME,
+                    headers=_dl_headers(f"Mau {so:02d} - {mau['ten']}.docx"))
 
 
 # ── Chuẩn hoá ────────────────────────────────────────────────────────────────

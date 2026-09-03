@@ -1,0 +1,92 @@
+[
+  {
+    "so": 1,
+    "ten": "Nghị quyết",
+    "file": "01_nghi_quyet.docx"
+  },
+  {
+    "so": 2,
+    "ten": "Quyết định (cá biệt) quy định trực tiếp",
+    "file": "02_quyet_dinh_ca_biet_quy_dinh_truc_tiep.docx"
+  },
+  {
+    "so": 3,
+    "ten": "Quyết định (cá biệt) quy định gián tiếp",
+    "file": "03_quyet_dinh_ca_biet_quy_dinh_gian_tiep.docx"
+  },
+  {
+    "so": 4,
+    "ten": "Văn bản hợp nhất",
+    "file": "04_van_ban_hop_nhat.docx"
+  },
+  {
+    "so": 5,
+    "ten": "Thư công tác",
+    "file": "05_thu_cong_tac.docx"
+  },
+  {
+    "so": 6,
+    "ten": "Tờ trình",
+    "file": "06_to_trinh.docx"
+  },
+  {
+    "so": 7,
+    "ten": "Văn bản có tên loại",
+    "file": "07_van_ban_co_ten_loai.docx"
+  },
+  {
+    "so": 8,
+    "ten": "Công văn",
+    "file": "08_cong_van.docx"
+  },
+  {
+    "so": 9,
+    "ten": "Giấy mời",
+    "file": "09_giay_moi.docx"
+  },
+  {
+    "so": 10,
+    "ten": "Giấy giới thiệu",
+    "file": "10_giay_gioi_thieu.docx"
+  },
+  {
+    "so": 11,
+    "ten": "Biên bản (cuộc họp, hội nghị, hội thảo…)",
+    "file": "11_bien_ban_cuoc_hop_hoi_nghi_hoi_thao.docx"
+  },
+  {
+    "so": 12,
+    "ten": "Biên bản bàn giao",
+    "file": "12_bien_ban_ban_giao.docx"
+  },
+  {
+    "so": 13,
+    "ten": "Giấy biên nhận",
+    "file": "13_giay_bien_nhan.docx"
+  },
+  {
+    "so": 14,
+    "ten": "Giấy đi đường",
+    "file": "14_giay_di_duong.docx"
+  },
+  {
+    "so": 15,
+    "ten": "Đơn xin nghỉ phép",
+    "file": "15_don_xin_nghi_phep.docx"
+  },
+  {
+    "so": 16,
+    "ten": "Phiếu trình chuyển",
+    "file": "16_phieu_trinh_chuyen.docx"
+  },
+  {
+    "so": 17,
+    "ten": "Bản sao văn bản",
+    "file": "17_ban_sao_van_ban.docx"
+  },
+  {
+    "so": 18,
+    "ten": "Phụ lục văn bản",
+    "file": "18_phu_luc_van_ban.docx"
+  }
+]

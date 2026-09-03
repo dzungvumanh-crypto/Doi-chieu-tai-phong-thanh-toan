@@ -85,6 +85,7 @@ async def vb_format_page():
 
         with ui.tabs().classes("w-full") as tabs:
             tab_chuan = ui.tab("Chuẩn hoá văn bản", icon="auto_fix_high")
+            tab_mau = ui.tab("Mẫu trình bày sẵn", icon="library_books")
             tab_cfg = ui.tab("Cấu hình quy chuẩn", icon="tune")
 
         with ui.tab_panels(tabs, value=tab_chuan).classes("w-full bg-transparent"):
@@ -246,7 +247,66 @@ async def vb_format_page():
 
                 nut_chay.on_click(do_chuan_hoa)
 
-            # ══ TAB 2 — Cấu hình ════════════════════════════════════════════
+            # ══ TAB 2 — Mẫu trình bày sẵn ═══════════════════════════════════
+            with ui.tab_panel(tab_mau).classes("p-0 pt-4"):
+                with _card("18 mẫu trình bày theo Phụ lục V"):
+                    with ui.column().classes("w-full p-4 gap-3"):
+                        ui.label(
+                            "Bản trắng của 18 mẫu trong Phụ lục V — tải về rồi điền nội "
+                            "dung vào là văn bản đã đúng thể thức ngay từ đầu. Lề trang "
+                            "đã đặt về đúng quy chuẩn (20/20/30/20 mm); phần Ghi chú của "
+                            "Phụ lục được giữ nguyên, xoá đi trước khi phát hành."
+                        ).classes("text-sm text-gray-600")
+                        khung_mau = ui.column().classes("w-full gap-0")
+                        with khung_mau:
+                            ui.spinner(size="2em", color="red")
+
+                async def _tai_mau(m: dict):
+                    try:
+                        data = await asyncio.to_thread(
+                            api.get_bytes, f"/api/vb-format/mau/{m['so']}")
+                    except Exception as ex:
+                        if _handle_api_error(ex):
+                            return
+                        ui.notify(str(ex), type="negative")
+                        return
+                    ui.download(data, filename=f"Mau {m['so']:02d} - {m['ten']}.docx")
+
+                def _ve_mau(ds: list):
+                    khung_mau.clear()
+                    with khung_mau:
+                        if not ds:
+                            ui.label(
+                                "Chưa có mẫu nào trên máy chủ — người quản trị cần chạy "
+                                "scripts/tach_mau_vb.py rồi triển khai lại."
+                            ).classes("text-sm text-red-700")
+                            return
+                        for m in ds:
+                            with ui.row().classes(
+                                    "vb-row w-full items-center gap-3 py-2 px-1"):
+                                ui.label(f"{m['so']:02d}").classes(
+                                    "w-8 text-center text-sm font-semibold text-red-900")
+                                ui.label(m["ten"]).classes("text-sm flex-grow")
+                                # Truyền thẳng coroutine, KHÔNG bọc create_task —
+                                # xem mục "Event handler async" trong docs/DESIGN.md.
+                                ui.button("Tải mẫu", icon="download",
+                                          on_click=lambda m=m: _tai_mau(m)).props(
+                                    "flat dense").classes("text-red-800")
+
+                async def _nap_mau():
+                    try:
+                        ds = await asyncio.to_thread(api.get, "/api/vb-format/mau")
+                    except Exception as ex:
+                        khung_mau.clear()
+                        if _handle_api_error(ex):
+                            return
+                        with khung_mau:
+                            ui.label("Không tải được danh sách mẫu.").classes(
+                                "text-sm text-red-700")
+                        return
+                    _ve_mau(ds)
+
+            # ══ TAB 3 — Cấu hình ════════════════════════════════════════════
             with ui.tab_panel(tab_cfg).classes("p-0 pt-4"):
                 khung_cfg = ui.column().classes("w-full gap-4")
                 with khung_cfg:
@@ -598,4 +658,10 @@ async def vb_format_page():
                     state["meta"] = res
                     _ve_cau_hinh(res["cau_hinh"], res)
 
+                # Tuần tự, KHÔNG asyncio.gather: gather bọc mỗi coroutine
+                # thành task mới, mà hai hàm này có gọi `_handle_api_error()`
+                # → `ui.navigate.to()` trong task rời sẽ ném "slot stack empty"
+                # và rơi vào handler toàn cục — màn hình đứng im, không báo gì.
+                # Hai request đều nhỏ, chạy nối nhau không đáng kể.
                 await _nap()
+                await _nap_mau()
