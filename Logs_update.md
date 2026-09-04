@@ -4,6 +4,27 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 04/09/2026 Chứng từ - **Trả lại ngày giờ nộp thật cho ô chứng từ bị điền nhầm người (chạy tay trên máy chủ)**
+    + Việc thật: GDV nộp chứng từ **ngày 27/08** nhưng điền vào **ô của người khác**, HKV đã xác
+      nhận. Người vận hành xoá ô nhầm rồi nhập lại vào ô đúng — ô mới mang **ngày nhập lại (03/09)**
+      thay vì ngày nộp thật (28/08)
+    + Lý do: **xoá ô là xoá vĩnh viễn**, kéo theo cả lịch sử của ô đó. "Ngày giờ nộp" không được
+      lưu riêng ở đâu cả — nó chính là dòng lịch sử vừa bị xoá. Nhập lại thì hệ thống chỉ biết
+      ngày hôm nay
+    + Cách chữa: thêm `scripts/sua_moc_thoi_gian_o_chung_tu.py`, **chạy tay trên máy chủ**, đụng
+      đúng một ô. Mặc định **chỉ xem, không ghi**; muốn ghi thật phải thêm cờ `--ghi` và script
+      **tự sao lưu DB trước**. Chạy hai lần không hỏng thêm
+    + ⚠️ Script **tự dừng** nếu ô nhầm vẫn còn hoặc số tờ trên máy chủ khác số tờ gốc — không tự
+      quyết thay người vận hành
+    + 🔎 Dấu vết can thiệp **không bị giấu**: script ghi một dòng vào **Nhật ký hệ thống** nói rõ
+      đã sửa gì, vì sao
+    + ⚠️ **Gốc rễ vẫn còn**: xoá một ô đã xác nhận là mất luôn cả số liệu lẫn lịch sử, không có
+      thùng rác. **Trước khi xoá ô, hãy chắc chắn.** Đường sửa đúng (đánh dấu xoá thay vì xoá hẳn,
+      hoặc thao tác "đổi chủ ô" giữ nguyên mốc thời gian) chưa làm trong đợt này vì đụng vào
+      đường đọc số liệu bàn giao dùng chung cho báo cáo khối lượng và đóng tập
+    + ✅ **Không phải làm gì sau khi cập nhật** — không đổi giao diện, không đổi quyền. Script chỉ
+      chạy khi người vận hành gõ lệnh
+
 - 03/09/2026 Chuẩn hoá văn bản - **Kẻ đúng đường kẻ ngang, không để tên ngân hàng bị cắt đôi, trích yếu 2 dòng không còn lệch**
     + **Đường kẻ ngang dưới Tiêu ngữ, tên đơn vị và trích yếu nay được vẽ đúng.** Quy định đòi
       *đường kẻ ngang nét liền*, dài bằng dòng chữ ở Tiêu ngữ và bằng **1/3–1/2** dòng chữ ở hai

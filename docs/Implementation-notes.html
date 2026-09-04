@@ -13341,7 +13341,65 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-03</footer>
+  <!-- CT1 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">CT1</span>
+      <span class="card-title">Sửa ô chứng từ điền nhầm người — vì sao không chép đè DB, và cái giá của xoá cứng</span>
+      <span class="badge badge-done">Xong — script vận hành, chạy tay</span>
+    </div>
+    <div class="card-body">
+
+      <p>Việc thật 03/09/2026: GDV nộp chứng từ ngày 27/08 nhưng điền vào ô của người khác, HKV đã
+        xác nhận. Người vận hành xoá ô nhầm rồi nhập lại vào ô đúng — và <b>mất mốc thời gian gốc</b>:
+        ô mới mang ngày nhập lại (03/09) thay vì ngày nộp thật (28/08).</p>
+
+      <div class="label"><span class="pill pill-red">Nguyên nhân</span> Xoá ô là xoá CỨNG, kéo theo cả lịch sử</div>
+      <p>Nhánh <code>sheet_count == 0</code> của <code>upsert_entry</code> chạy
+        <code>DELETE FROM entry_change_logs</code> rồi <code>DELETE FROM document_entries</code>.
+        Không soft-delete, không bảng lưu. "Ngày giờ nộp" không phải một cột — nó là
+        <code>timestamp</code> của dòng <code>handover</code> trong <code>entry_change_logs</code>,
+        nên xoá ô là xoá luôn thứ duy nhất trả lời được "nộp lúc nào".</p>
+      <div class="note">Chỉ có dòng <code>audit_logs</code> ngữ nghĩa (<code>handover_entry_delete</code>)
+        sống sót, nhưng nó ghi <b>chữ</b> mô tả thao tác, không giữ mốc thời gian gốc ở dạng đọc máy được.</div>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> Chuyển 6 giá trị, không chép đè file DB</div>
+      <table>
+        <tr><th>Phương án</th><th>Vì sao chọn / bỏ</th></tr>
+        <tr><td><b>Script SQL chạy tại chỗ trên máy chủ</b> (đã chọn)</td>
+            <td>Đụng đúng 1 ô. Tự backup trước, dry-run mặc định, chạy hai lần không hỏng.</td></tr>
+        <tr><td>Sửa trên DB dev rồi chép đè <code>ksnb.db</code> sang máy chủ</td>
+            <td><b>Bỏ.</b> DB dev là bản chép về; máy chủ đã phát sinh đăng nhập, ô chứng từ, nhật ký
+                sau thời điểm chép. Chép đè để lấy 1 ô là xoá tất cả những thứ đó — không có đường lùi
+                ngoài backup.</td></tr>
+        <tr><td>Thêm chức năng "đổi chủ ô" vào giao diện</td>
+            <td><b>Bỏ trong đợt này.</b> Sửa một ca lẻ không đủ cơ sở để mở một đường ghi mới lên số
+                liệu bàn giao đã chốt. Nếu tái diễn nhiều lần thì tính lại — xem mục dưới.</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-gray">Đánh đổi</span> Xoá lịch sử mới rồi chèn lại hai dòng gốc</div>
+      <p>Script <b>xoá</b> các dòng <code>entry_change_logs</code> của ngày nhập lại rồi chèn lại đúng
+        hai dòng gốc (<code>handover</code>, <code>confirmed</code>). Lý do: màn Lịch sử ô xếp theo
+        thời gian; để lẫn dòng của ngày nhập lại thì người đọc thấy <b>hai lần bàn giao</b> cho cùng
+        một tập chứng từ. Dấu vết can thiệp không mất — nó nằm ở dòng <code>audit_logs</code> mã
+        <code>handover_entry_fix_timestamp</code> mà script tự ghi.</p>
+
+      <div class="caution"><b>Ba cửa chặn trong script, đừng gỡ:</b> (1) ô nhầm còn tồn tại → dừng,
+        vì chạy tiếp sẽ đẻ ra hai ô cho cùng một tập; (2) số tờ trên máy chủ khác số tờ gốc → dừng,
+        không tự quyết; (3) mặc định <b>không ghi</b>, phải có cờ <code>--ghi</code>. Backup đặt cạnh
+        chính file DB được sửa, tên không theo mẫu <code>ksnb_YYYYMMDD_HHMM</code> nên
+        <code>_rotate()</code> của <code>backup_service</code> không dọn mất.</div>
+
+      <p><b>Biết mà để lại:</b> gốc rễ vẫn còn — xoá ô đã xác nhận là mất vĩnh viễn cả số liệu lẫn
+        lịch sử. Cách sửa đúng là soft-delete (<code>deleted_at</code> + lọc ở mọi truy vấn) hoặc một
+        thao tác "đổi chủ ô" giữ nguyên mốc thời gian. Không làm bây giờ vì cả hai đều đụng vào đường
+        đọc số liệu bàn giao dùng chung cho báo cáo khối lượng và đóng tập; làm vội dễ hỏng chỗ khác
+        hơn là ích lợi của việc chữa một ca lẻ.</p>
+
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-04</footer>
 </div>
 </body>
 </html>

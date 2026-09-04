@@ -261,7 +261,9 @@ Truy cập:
 ├── scripts/                 # Script phụ trợ chạy tay hoặc do deploy.bat gọi
 │   ├── deploy_env_check.py      # Kiểm/sửa .env máy đích khi deploy
 │   ├── deploy_don_file_thua.py  # Dò file .py cũ còn sót trên máy đích
-│   └── import_users_csv.py      # Nạp data/user_tttt.csv vào bảng user_tttt
+│   ├── import_users_csv.py      # Nạp data/user_tttt.csv vào bảng user_tttt
+│   ├── tach_mau_vb.py           # Tách 18 mẫu Phụ lục V ra templates/vb_mau/
+│   └── sua_moc_thoi_gian_o_chung_tu.py  # Sửa tay mốc thời gian một ô chứng từ (ca lẻ 03/09/2026)
 └── requirements.txt
 ```
 
