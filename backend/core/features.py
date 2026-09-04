@@ -86,6 +86,9 @@ FEATURES: dict[str, str] = {
     # "Đối chiếu đến" (Kênh↔Hub + Hub↔Core, 2026-09-01) — tab riêng trong cùng menu
     # doi_chieu_song_phuong ở trên, tách quyền chạy khỏi quyền xem giống cham_ach.process.
     "doi_chieu_song_phuong_kenh_core.process": "Chạy \"Đối chiếu đến\" (Kênh↔Hub + Hub↔Core)",
+    # "Đối chiếu đi" (Kênh↔Hub + Hub↔Core, 2026-09-03) — tab riêng thứ 2, mã HOÀN TOÀN MỚI,
+    # chưa nhóm nào có sẵn — PHẢI cấp tay sau deploy (xem Logs_update.md), giống bài học PR#70.
+    "doi_chieu_song_phuong_kenh_core_di.process": "Chạy \"Đối chiếu đi\" (Kênh↔Hub + Hub↔Core)",
     # Chấm ILO1000 — Phòng Thanh toán. Module đang xây dựng, chưa hoàn thiện (BO xác
     # nhận 2026-08-31: chưa từng có ai kể cả admin dùng được do thiếu đúng mã này —
     # không tách quyền xem/chạy riêng vì code hiện tại (5 endpoint + frontend) chỉ
@@ -214,6 +217,7 @@ FEATURE_GROUPS: list[dict] = [
                         "actions": [
                             "doi_chieu_song_phuong.process",
                             "doi_chieu_song_phuong_kenh_core.process",
+                            "doi_chieu_song_phuong_kenh_core_di.process",
                         ],
                     },
                     {"code": "menu.cham_ach", "actions": ["cham_ach.process"]},

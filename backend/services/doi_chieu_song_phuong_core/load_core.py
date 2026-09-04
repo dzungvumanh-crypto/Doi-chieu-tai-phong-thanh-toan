@@ -40,6 +40,16 @@ def build_key_den(df: pd.DataFrame, so_trace: pd.Series) -> pd.Series:
     return df["TRBRCD"].astype(str).str.strip() + so_trace + dramount.astype(str)
 
 
+def build_key_di(df: pd.DataFrame, so_trace: pd.Series) -> pd.Series:
+    """Khoá CORE chiều ĐI (docx `Đối chiếu SP chiều đi.docx` Bước 1.3/2.6): KEY = TRBRCD +
+    SO_TRACE + CRAMOUNT — khác `build_key_den()` ở chỗ dùng CRAMOUNT (ghi có) thay vì DRAMOUNT
+    (ghi nợ). Xác nhận đúng bản chất nghiệp vụ bằng dữ liệu thật: DRAMOUNT của CSV `{ma_nh}_DI*.csv`
+    LUÔN LÀ "0" (511.378/511.378 và 878.092/878.092 dòng khảo sát được), CRAMOUNT không bao giờ
+    là "0" — đối lập hẳn với CSV `_DEN*.csv` (DRAMOUNT mang tiền, CRAMOUNT luôn 0)."""
+    cramount = doc_so_tien(df["CRAMOUNT"], nguon="core_di", ten_cot="CRAMOUNT")
+    return df["TRBRCD"].astype(str).str.strip() + so_trace + cramount.astype(str)
+
+
 def mask_huy_cung_ngay(df: pd.DataFrame) -> pd.Series:
     """Bước 1.3: nhóm TRBRCD+REFERENCE trùng ≥2 dòng, tổng DRAMOUNT = 0 (tập DEN, CRAMOUNT luôn
     ∈ ZERO_AMOUNTS nên chỉ cần xét DRAMOUNT) → giao dịch huỷ cùng ngày. Trả boolean mask."""

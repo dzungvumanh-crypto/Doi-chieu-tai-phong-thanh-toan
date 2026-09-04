@@ -4,6 +4,22 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 03/09/2026 Đối chiếu Song phương - **⚠️ THÊM TAB "ĐỐI CHIẾU ĐI" — PHẢI CẤP QUYỀN SAU KHI DEPLOY**
+    + Tab "Đối chiếu đi" (Kênh↔Hub + Hub↔Core) trước đây chỉ có khung "chưa triển khai" — nay chạy
+      đầy đủ, cùng cách dùng như tab "Đối chiếu đến" đã có (chọn file, ngày, ngân hàng, bấm Chạy)
+    + **Việc phải làm ngay sau khi deploy:** vào **Phân quyền chức năng**, cấp mục
+      `Chạy "Đối chiếu đi" (Kênh↔Hub + Hub↔Core)` cho các nhóm cần dùng — thiếu mục này thì vẫn
+      **vào xem được** tab mới nhưng bấm nút **Chạy** sẽ báo "Không có quyền truy cập tính năng này"
+    + Vì sao phải làm tay: đây là quyền **mới hoàn toàn**, chưa từng tồn tại nên không nhóm nào có
+      sẵn. Tài khoản Quản trị viên dùng được ngay — **thử bằng tài khoản quản trị sẽ tưởng đã xong**,
+      phải thử bằng tài khoản thường mới biết đã cấp đủ hay chưa (đúng bài học đợt 02/09)
+    + Cách tính chiều đi khác chiều đến ở vài điểm nghiệp vụ (không lọc bớt dữ liệu trước khi đối
+      chiếu Kênh↔Hub, cách nhận diện giao dịch quyết toán/lệnh FX...) — người chấm đã xác nhận quy
+      tắc trước khi triển khai, không cần thao tác gì thêm ngoài việc cấp quyền ở trên
+    + ✅ Không đổi dữ liệu/quyền của tab "Đối chiếu đến" đang dùng
+
+---
+
 - 04/09/2026 Chứng từ - **Trả lại ngày giờ nộp thật cho ô chứng từ bị điền nhầm người (chạy tay trên máy chủ)**
     + Việc thật: GDV nộp chứng từ **ngày 27/08** nhưng điền vào **ô của người khác**, HKV đã xác
       nhận. Người vận hành xoá ô nhầm rồi nhập lại vào ô đúng — ô mới mang **ngày nhập lại (03/09)**

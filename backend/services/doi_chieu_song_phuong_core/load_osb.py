@@ -10,6 +10,9 @@ from typing import BinaryIO
 
 import pandas as pd
 
+from backend.services.ach.so_tien import doc_so_tien
+from backend.services.doi_chieu_song_phuong_kenh.load_hub import se_trace_hieu_dung
+
 _REQUIRED_COLS = {"CN thực hiện", "Mã giao dịch", "Ngày hạch toán"}
 
 
@@ -59,3 +62,36 @@ def build_key_hub_osb(hub_df: pd.DataFrame) -> pd.Series:
     KHÔNG lstrip('0'), KHÔNG kèm số tiền — khác hẳn `build_key_hub_core` (dùng cho khớp CORE,
     có lstrip('0') + kèm SO_TIEN). Verify dữ liệu thật: khớp raw 100% (8.117/8.117, NH 202 21.8)."""
     return hub_df["CHI_NHANH"].astype(str).str.strip() + hub_df["TRACE"].fillna("").str.strip()
+
+
+def build_key_hub_osb_di(hub_df: pd.DataFrame) -> pd.Series:
+    """Khoá HUB↔OSB chiều ĐI (Bước 1.7 `Đối chiếu SP chiều đi V2.docx`): `CHI_NHANH +
+    SE_TRACE(hiệu dụng) + SO_TIEN`, KHÔNG lstrip('0').
+
+    ⚠️ 2026-09-04 — V2 tài liệu THÊM `SO_TIEN` vào khoá (V1 chỉ có CHI_NHANH+SE_TRACE) — người
+    chấm thủ công (Hương Ly) xác nhận trực tiếp qua trao đổi + văn bản viết lại. Lý do nghiệp vụ:
+    OSB có cặp giao dịch gốc+đảo/huỷ cùng chi nhánh+mã giao dịch nhưng khác dấu số tiền (VD
+    "159.000" ngày gốc, "-159.000" ngày đảo) — HUB.SO_TIEN LUÔN DƯƠNG (verify 100% dữ liệu thật,
+    0 dòng âm ở cả NH 202/203) nên khi ghép SO_TIEN vào khoá, chỉ dòng OSB có "Số tiền" DƯƠNG mới
+    khớp được — tự động chọn đúng dòng gốc mà không cần rule đặc biệt "ưu tiên số dương" (đúng ý
+    Hương Ly trả lời trực tiếp: "lấy giao dịch có số tiền dương").
+
+    Khác `build_key_hub_osb()` (chiều đến, KHÔNG đổi theo V2 — V2 chỉ sửa tài liệu "đi") ở 2 điểm:
+    dùng `se_trace_hieu_dung()` thay TRACE trực tiếp (SE_TRACE nguồn HUB đi luôn rỗng, xem
+    docstring cũ), và có thêm SO_TIEN trong khoá."""
+    return (
+        hub_df["CHI_NHANH"].astype(str).str.strip() + se_trace_hieu_dung(hub_df)
+        + doc_so_tien(hub_df["SO_TIEN"], "hub_osb_di", "SO_TIEN").astype(str)
+    )
+
+
+def build_key_osb_di(df: pd.DataFrame) -> pd.Series:
+    """Khoá OSB chiều ĐI (Bước 1.7 V2): 4 ký tự đầu `CN thực hiện` + `Mã giao dịch` + `Số tiền`
+    (bỏ dấu `.`/`,` ngăn nghìn qua `doc_so_tien()`, GIỮ NGUYÊN dấu `-` nếu có — xem
+    `build_key_hub_osb_di()` giải thích đầy đủ). KHÔNG dùng `build_key_osb()` (hàm dùng chung với
+    chiều đến, đã verify đúng 2 phần cho đến — V2 chỉ đổi công thức của chiều đi, không đụng
+    đến)."""
+    cn4 = df["CN thực hiện"].fillna("").str[:4]
+    ma_gd = df["Mã giao dịch"].fillna("")
+    so_tien = doc_so_tien(df["Số tiền"], "osb_di", "Số tiền").astype(str)
+    return cn4 + ma_gd + so_tien

@@ -71,7 +71,7 @@ def tim_file_glob(goc_dir: Path, ngay: str, pattern: str) -> list[Path]:
     return []
 
 
-def kiem_tra_du_lieu(ten_file_list: list[str], ngay: str, ma_nh: str) -> dict[str, str]:
+def kiem_tra_du_lieu(ten_file_list: list[str], ngay: str, ma_nh: str, chieu: str = "DEN") -> dict[str, str]:
     """Dò theo TÊN file (không đọc đĩa/byte) xem đã đủ dữ liệu chạy Tác vụ A (Kênh↔Hub) và
     Tác vụ B (Hub↔Core) chưa — cho banner cảnh báo TRƯỚC khi bấm Chạy (không chặn nút Chạy,
     hệ thống vẫn tự bỏ qua bước thiếu như hành vi hiện có).
@@ -81,17 +81,21 @@ def kiem_tra_du_lieu(ten_file_list: list[str], ngay: str, ma_nh: str) -> dict[st
     không phát minh luật mới, chỉ đổi input từ "thư mục trên đĩa" sang "danh sách tên file" để
     dùng được cả chế độ thư mục server lẫn chế độ tải file lên (chưa upload xong).
 
+    `chieu="DI"` (2026-09-03): GL02 zip gốc KHÔNG đổi tên theo chiều (1 file chứa cả 8 file
+    {ma_nh}_{DEN|DI}.csv sau khi phân loại) — chỉ đổi pattern CSV đã phân loại sẵn thành
+    `{ma_nh}_di*.csv`, giữ nguyên tên GL02.
+
     Trả `{"kenh_hub": "du" | "thieu:<mô tả>", "hub_core": "du" | "thieu:<mô tả>"}`."""
     from backend.services.doi_chieu_song_phuong_kenh.load_hub import hub_filename_glob
     from backend.services.doi_chieu_song_phuong_kenh.load_kenh import _tu_khoa_ten_file
 
     ten_thuong = [t.lower() for t in ten_file_list]
-    hub_pattern = hub_filename_glob(ngay, ma_nh).lower()
+    hub_pattern = hub_filename_glob(ngay, ma_nh, chieu).lower()
     co_hub = any(fnmatch.fnmatchcase(t, hub_pattern) for t in ten_thuong)
     co_kenh = any(
-        {"kenh", ma_nh.lower()} <= _tu_khoa_ten_file(t) for t in ten_file_list
+        {"kenh", ma_nh.lower(), chieu.lower()} <= _tu_khoa_ten_file(t) for t in ten_file_list
     )
-    core_csv_pattern = f"{ma_nh}_den*.csv".lower()
+    core_csv_pattern = f"{ma_nh}_{chieu.lower()}*.csv".lower()
     gl02_name = f"gl02_{ngay}_1000.zip".lower()
     co_core = any(fnmatch.fnmatchcase(t, core_csv_pattern) for t in ten_thuong) or (gl02_name in ten_thuong)
 

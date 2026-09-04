@@ -1,10 +1,14 @@
 """So khớp HUB↔Kênh theo đơn vị (ngân hàng, loại) — existence-check theo khoá.
 
-⚠️ Khoá theo loại: SPRT dùng `MSGREF`, SPT dùng `TXID` (cả 2 đã strip nháy đơn phía HUB
-ở `load_hub.load_hub_zip`). Đối chiếu chỉ dựa vào tồn tại/không tồn tại khoá — KHÔNG
-group theo chi nhánh/số tiền, KHÔNG dung sai tiền/thời gian (đã xác nhận bằng dữ liệu
-thật: 0/873.189 cặp khớp lệch tiền ngày 21.8/08/2026 — xem
-docs/TU-DIEN-LENH-THANH-TOAN.md mục 4.5).
+⚠️ Khoá SPT khác nhau theo CHIỀU — xem giải thích đầy đủ + bằng chứng tại
+`config.py::LOAI_KHOA_HUB_DI`. Tóm tắt: docx-đi ghi TXID cho SPT (copy nhầm từ mẫu đến), nhưng
+dữ liệu thật NH 202 (7 ngày) cho khớp 0/X mọi ngày với TXID, 93-99% với MSGREF — người chấm thủ
+công đã XÁC NHẬN dùng MSGREF cho SPT-đi (2026-09-04, đã chốt). Chọn đúng dict qua
+`_khoa_hub(loai, chieu)`. SPRT không có tranh cãi, luôn dùng `MSGREF` cả 2 chiều. Cả 2 cột đã
+strip nháy đơn phía HUB ở
+`load_hub.load_hub_zip`. Đối chiếu chỉ dựa vào tồn tại/không tồn tại khoá — KHÔNG group theo
+chi nhánh/số tiền, KHÔNG dung sai tiền/thời gian (đã xác nhận bằng dữ liệu thật: 0/873.189 cặp
+khớp lệch tiền ngày 21.8/08/2026 — xem docs/TU-DIEN-LENH-THANH-TOAN.md mục 4.5).
 """
 
 import pandas as pd
@@ -13,12 +17,19 @@ from backend.services.ach.so_tien import doc_so_tien
 
 from .config import (
     COT_TRANG_THAI_KENH, COT_TRANG_THAI_TAI_HUB, EXPECTED_ONE_SIDED_STATUSES, HUB_AMOUNT_COL,
-    KENH_AMOUNT_COL, KENH_KEY_COL, LOAI_KENH_THANH_TOAN, LOAI_KHOA_HUB, NHAN_CHUYEN_TIEP,
-    NHAN_HUB_THUA, NHAN_KENH_THANH_CONG, NHAN_KENH_THUA, NHAN_TRACE_HUY, NHAN_TU_CHOI_KENH_KHONG_TC,
+    KENH_AMOUNT_COL, KENH_KEY_COL, LOAI_KENH_THANH_TOAN, LOAI_KHOA_HUB, LOAI_KHOA_HUB_DI,
+    NHAN_CHUYEN_TIEP, NHAN_HUB_THUA, NHAN_KENH_THANH_CONG, NHAN_KENH_THUA, NHAN_TRACE_HUY,
+    NHAN_TU_CHOI_KENH_KHONG_TC,
 )
 
 
-def match_unit(hub_df: pd.DataFrame, kenh_df: pd.DataFrame, loai: str) -> dict:
+def _khoa_hub(loai: str, chieu: str) -> str:
+    """Cột khoá HUB đúng theo CHIỀU — SPT dùng TXID (đến) hoặc MSGREF (đi), xem giải thích +
+    bằng chứng dữ liệu thật tại `config.py::LOAI_KHOA_HUB_DI`."""
+    return (LOAI_KHOA_HUB_DI if chieu == "DI" else LOAI_KHOA_HUB)[loai]
+
+
+def match_unit(hub_df: pd.DataFrame, kenh_df: pd.DataFrame, loai: str, chieu: str = "DEN") -> dict:
     """So khớp 1 đơn vị (ngân hàng, loại) trong 1 ngày.
 
     `hub_df`: đã strip nháy đơn + đã loại dòng TXID có `-`
@@ -28,7 +39,7 @@ def match_unit(hub_df: pd.DataFrame, kenh_df: pd.DataFrame, loai: str) -> dict:
     Trả dict 5 DataFrame — bất biến: `len(matched_hub)+len(only_hub)==len(hub)` và
     `len(matched_kenh)+len(only_kenh)==len(kenh_df)`.
     """
-    khoa_hub = LOAI_KHOA_HUB[loai]
+    khoa_hub = _khoa_hub(loai, chieu)
     ktt = LOAI_KENH_THANH_TOAN[loai]
 
     hub = hub_df[hub_df["KENH_THANH_TOAN"] == ktt].reset_index(drop=True)
@@ -44,6 +55,34 @@ def match_unit(hub_df: pd.DataFrame, kenh_df: pd.DataFrame, loai: str) -> dict:
         "only_hub": hub[~mask_hub_matched].reset_index(drop=True),
         "matched_kenh": kenh_df[mask_kenh_matched].reset_index(drop=True),
         "only_kenh": kenh_df[~mask_kenh_matched].reset_index(drop=True),
+    }
+
+
+def summarize_unit_di(match_result: dict, kenh_df: pd.DataFrame, ma_nh: str, loai: str) -> dict:
+    """Bảng 1 CHIỀU ĐI (docx-đi, khác công thức chiều đến ở `summarize_unit()`): cột (1)/(2) chỉ
+    đếm/tính tiền các dòng HUB có `TRANG_THAI_LENH == "SCNL"` (không phải "loại trạng thái một
+    phía" như đến — đến dùng `EXPECTED_ONE_SIDED_STATUSES` để loại RJCT, đi chỉ định đúng 1 giá
+    trị SCNL); cột (3)/(4) đếm/tính tiền TOÀN BỘ dòng kênh, giống hệt đến."""
+    hub = match_result["hub"]
+    hub_scnl = hub[hub["TRANG_THAI_LENH"] == "SCNL"]
+
+    so_mon_hub = len(hub_scnl)
+    so_tien_hub = (
+        int(doc_so_tien(hub_scnl[HUB_AMOUNT_COL], "hub", HUB_AMOUNT_COL).sum())
+        if so_mon_hub else 0
+    )
+    so_mon_kenh = len(kenh_df)
+    so_tien_kenh = (
+        int(doc_so_tien(kenh_df[KENH_AMOUNT_COL], "kenh", KENH_AMOUNT_COL).sum())
+        if so_mon_kenh else 0
+    )
+
+    return {
+        "ma_nh": ma_nh, "loai": loai,
+        "so_mon_hub": so_mon_hub, "so_tien_hub": so_tien_hub,
+        "so_mon_kenh": so_mon_kenh, "so_tien_kenh": so_tien_kenh,
+        "chenh_so_mon": so_mon_kenh - so_mon_hub,
+        "chenh_so_tien": so_tien_kenh - so_tien_hub,
     }
 
 
@@ -73,7 +112,9 @@ def summarize_unit(match_result: dict, kenh_df: pd.DataFrame, ma_nh: str, loai: 
     }
 
 
-def dem_lech_tien_tren_khop(match_result: dict, kenh_df: pd.DataFrame, loai: str) -> dict:
+def dem_lech_tien_tren_khop(
+    match_result: dict, kenh_df: pd.DataFrame, loai: str, chieu: str = "DEN",
+) -> dict:
     """Đếm số cặp khớp khoá nhưng LỆCH số tiền (dùng doc_so_tien(), không tự viết parser).
 
     Quyết định nghiệp vụ (2026-08-25): giả định KHÔNG có ca này — nếu tìm thấy, phải
@@ -82,7 +123,7 @@ def dem_lech_tien_tren_khop(match_result: dict, kenh_df: pd.DataFrame, loai: str
     if len(matched_hub) == 0:
         return {"so_cap_khop": 0, "so_cap_lech": 0, "vi_du": []}
 
-    khoa_hub = LOAI_KHOA_HUB[loai]
+    khoa_hub = _khoa_hub(loai, chieu)
     hub_tien = doc_so_tien(matched_hub[HUB_AMOUNT_COL], "hub", HUB_AMOUNT_COL)
 
     kenh_lookup = kenh_df.drop_duplicates(subset=[KENH_KEY_COL]).set_index(KENH_KEY_COL)
@@ -183,5 +224,42 @@ def classify_kenh_hub_den(hub_raw: pd.DataFrame, kenh_df: pd.DataFrame, loai: st
 
     nhan.loc[con_lai] = NHAN_HUB_THUA
     hub[COT_TRANG_THAI_KENH] = nhan
+
+    return {"hub": hub, "kenh": kenh}
+
+
+def classify_kenh_hub_di(hub_raw: pd.DataFrame, kenh_df: pd.DataFrame, loai: str) -> dict:
+    """Đối chiếu chi tiết CHIỀU ĐI (docx `Đối chiếu SP chiều đi.docx`, mục "Kênh – hub chiều đi").
+
+    Chạy trên `hub_raw` NGUYÊN VẸN, KHÔNG qua `filter_before_reconcile()` — khác hẳn chiều đến
+    (vốn loại TXID có "-" và cặp TXID+TRACE trùng trước khi khớp). Docx-đi không có bước lọc nào
+    tương ứng, xác nhận qua khảo sát dữ liệu thật (PLAN.md mục 2.1): dữ liệu HUB đi thật không có
+    dòng TXID nào chứa "-".
+
+    Đơn giản hơn hẳn chiều đến — chỉ 2 bước, không có 3 bước lọc phụ (trace hủy / chuyển tiếp /
+    từ chối-kênh không thành công):
+
+    Bước 1 (kênh, `COT_TRANG_THAI_TAI_HUB`): khớp khoá → lấy TRANG_THAI_LENH của hub (dù là SCNL,
+    ERPO, CALD hay bất kỳ giá trị nào khác — copy nguyên văn, không lọc); không khớp →
+    `"KÊNH THỪA"`.
+
+    Bước 2 (hub, `COT_TRANG_THAI_KENH`): khớp khoá → `"KÊNH THÀNH CÔNG"`; không khớp →
+    `"HUB THỪA"`.
+    """
+    khoa_hub = LOAI_KHOA_HUB_DI[loai]
+    ktt = LOAI_KENH_THANH_TOAN[loai]
+
+    hub = hub_raw[hub_raw["KENH_THANH_TOAN"] == ktt].reset_index(drop=True).copy()
+    kenh = kenh_df.reset_index(drop=True).copy()
+
+    kenh_keys = set(kenh[KENH_KEY_COL])
+
+    # ── Bước 1: cột "TRẠNG THÁI TẠI HUB" trên file kênh ──
+    hub_status_lookup = hub.drop_duplicates(subset=[khoa_hub]).set_index(khoa_hub)["TRANG_THAI_LENH"]
+    kenh[COT_TRANG_THAI_TAI_HUB] = kenh[KENH_KEY_COL].map(hub_status_lookup).fillna(NHAN_KENH_THUA)
+
+    # ── Bước 2: cột "TRẠNG THÁI KÊNH" trên file hub ──
+    mask_khop = hub[khoa_hub].isin(kenh_keys)
+    hub[COT_TRANG_THAI_KENH] = mask_khop.map({True: NHAN_KENH_THANH_CONG, False: NHAN_HUB_THUA})
 
     return {"hub": hub, "kenh": kenh}

@@ -2,16 +2,20 @@
 
 1 trang, 1 menu, 1 feature-code `menu.doi_chieu_song_phuong` cho quyền XEM cả 3 thẻ.
 
-"Đối chiếu đến" (2026-08-28): KHÔNG phải 2 tính năng độc lập (Kênh↔Hub + Hub↔Core) xếp cạnh
-nhau, mà là 1 chu trình khép kín — người dùng đưa 1 thư mục gốc + ngày + ngân hàng, hệ thống tự
-chạy Kênh↔Hub rồi Hub↔Core nối tiếp, 1 job/1 kết quả cuối (đúng model ACH: nhiều pha bên trong,
-gộp báo cáo). Gọi `/api/doi_chieu_song_phuong_kenh_core/*`
-(`doi_chieu_song_phuong_kenh_core_service.py`). "Đối chiếu đi": backend chưa code (đã hoãn 2
-lần) — chỉ có khung thẻ ghi chú "chưa triển khai".
+"Đối chiếu đến" (2026-08-28) và "Đối chiếu đi" (2026-09-03): KHÔNG phải 2 tính năng độc lập
+(Kênh↔Hub + Hub↔Core) xếp cạnh nhau, mà là 1 chu trình khép kín mỗi chiều — người dùng đưa 1 thư
+mục gốc + ngày + ngân hàng, hệ thống tự chạy Kênh↔Hub rồi Hub↔Core nối tiếp, 1 job/1 kết quả cuối
+(đúng model ACH: nhiều pha bên trong, gộp báo cáo). "Đối chiếu đến" gọi
+`/api/doi_chieu_song_phuong_kenh_core/*` (`doi_chieu_song_phuong_kenh_core_service.py`); "Đối
+chiếu đi" gọi `/api/doi_chieu_song_phuong_kenh_core_di/*`
+(`doi_chieu_song_phuong_kenh_core_di_service.py`) — 2 service/package TÁCH RIÊNG (không tham số
+hoá `chieu` trong 1 module) vì thuật toán Hub↔Core khác nhau đủ nhiều giữa 2 chiều (khoá SE_TRACE/
+CRAMOUNT, cửa sổ hủy chéo ngày, WTPA/TPER — xem PLAN.md khảo sát 2026-09-03).
 
-Quyền BẤM CHẠY "Đối chiếu đến" dùng action riêng `doi_chieu_song_phuong_kenh_core.process` —
-tách khỏi `doi_chieu_song_phuong.process` (thẻ Phân loại dữ liệu), giống cách `cham_ach.process`
-tách quyền chạy khỏi quyền xem. Quyền XEM trang vẫn dùng chung `menu.doi_chieu_song_phuong`.
+Quyền BẤM CHẠY tách riêng theo chiều: `doi_chieu_song_phuong_kenh_core.process` (đến),
+`doi_chieu_song_phuong_kenh_core_di.process` (đi) — tách khỏi `doi_chieu_song_phuong.process`
+(thẻ Phân loại dữ liệu), giống cách `cham_ach.process` tách quyền chạy khỏi quyền xem. Quyền XEM
+trang vẫn dùng chung `menu.doi_chieu_song_phuong` cho cả 3 thẻ.
 
 Thẻ "Phân loại dữ liệu" CHỈ hỗ trợ 1 file/lượt (giữ đúng thiết kế hiện tại của
 `doi_chieu_song_phuong_service.py` trên develop — xử lý ĐƯỜNG DẪN file đã nằm trên máy chủ, không
@@ -634,19 +638,399 @@ def _tab_doi_chieu_den():
     btn_cancel.on("click", on_cancel)
 
 
-# ─── Thẻ 3 — Đối chiếu đi (chưa triển khai) ─────────────────────────────────────
+# ─── Thẻ 3 — Đối chiếu đi: Kênh↔Hub + Hub↔Core chạy tự động nối tiếp ───────────
 def _tab_doi_chieu_di():
-    with ui.card().classes("w-full p-6 bg-gray-50 border border-gray-300"):
-        with ui.row().classes("items-start gap-3"):
-            ui.icon("construction", color="grey-6").classes("text-2xl mt-0.5")
-            with ui.column().classes("gap-1"):
-                ui.label("Đối chiếu chiều ĐI — chưa triển khai").classes(
-                    "text-base font-semibold text-gray-700"
+    """Mirror `_tab_doi_chieu_den()` — cùng kiến trúc 1 job/1 kết quả cuối, đổi endpoint sang
+    `/api/doi_chieu_song_phuong_kenh_core_di/*` và khoá kết quả `kenh_hub_di`/`hub_core_di`
+    (xem `doi_chieu_song_phuong_kenh_core_di_service.py`). Thuật toán Hub↔Core khác hẳn "đến"
+    (SE_TRACE, CRAMOUNT, cửa sổ hủy chéo ngày, WTPA/TPER — xem PLAN.md) nhưng UI dùng chung được
+    100% vì `_render_hub_core()`/`_render_kenh_hub()` chỉ đọc dict shape chung
+    (`phan_bo_core`/`phan_bo_hub`/`chenh_lech`), không hardcode nhãn KETQUADOICHIEU nào."""
+    _STAGE_LABELS = ["Kênh↔Hub", "Hub↔Core", "Hoàn tất"]
+    state = {"job_id": None, "log_pos": 0, "timer": None, "running": False,
+              "poll_fails": 0, "files": {}}
+
+    ui.label(
+        "Chạy tự động nối tiếp Kênh↔Hub rồi Hub↔Core cho 1 ngân hàng — 1 lần bấm, 1 kết quả "
+        "cuối (chỉ làm chiều ĐI)."
+    ).classes("text-sm text-gray-500 mb-4")
+
+    with ui.card().classes("w-full p-4 mb-4 bg-yellow-50 border border-yellow-400"):
+        with ui.row().classes("items-start gap-2"):
+            ui.icon("info", color="amber-700").classes("text-xl mt-0.5")
+            ui.label(
+                "Kênh↔Hub: đối chiếu HUB nội bộ với kênh song phương ngân hàng đối tác — không "
+                "lọc gì trước khi khớp (khác chiều đến), Bảng 1 chỉ đếm HUB trạng thái SCNL. "
+                "Hub↔Core: đối chiếu HUB (chỉ dòng SCNL) với hạch toán CORE/GL02 (cửa sổ "
+                "T-3..T+3, kể cả hủy chéo ngày) — dùng CSV đã phân loại sẵn (\"{ma_nh}_DI.csv\") "
+                "nếu có, không thì tự giải mã GL02. Mỗi lần chạy chỉ 1 ngân hàng — muốn đủ 4 NH "
+                "thì bấm chạy 4 lần. Lỗi 1 bước không chặn bước còn lại."
+            ).classes("text-sm text-amber-900")
+
+    with ui.card().classes("w-full p-5 mb-4"):
+        ui.label("Nguồn dữ liệu").classes("text-base font-semibold text-red-800 mb-3")
+
+        build_source_input(
+            state,
+            accept=".zip,.xlsx,.csv",
+            upload_label="Chọn file (có thể chọn nhiều)...",
+            upload_hint=(
+                "Chọn cùng lúc: 1-2 file HUB (.zip), 1-3 file kênh (.xlsx), 1 file GL02 (.zip) "
+                "hoặc CSV đã phân loại, OSB (.xlsx, nếu có) — giữ nguyên tên file gốc."
+            ),
+        )
+
+        with ui.row().classes("gap-3 mt-3 items-end"):
+            with ui.input(
+                label="Ngày đối chiếu", placeholder="dd/mm/yyyy",
+            ).props("outlined dense").classes("w-44") as ngay_input:
+                with ui.menu().props("no-parent-event") as ngay_menu:
+                    ui.date(mask="DD/MM/YYYY").props(
+                        'first-day-of-week="1"'
+                    ).bind_value(ngay_input)
+                with ngay_input.add_slot("append"):
+                    ui.icon("event").on("click", ngay_menu.open).classes(
+                        "cursor-pointer text-gray-500"
+                    )
+            ma_nh_select = ui.select(
+                {"201": "201 — Vietinbank", "202": "202 — BIDV",
+                 "203": "203 — Vietcombank", "311": "311 — MBBank"},
+                label="Ngân hàng", value="201",
+            ).props("outlined dense").classes("w-52")
+
+        readiness_box = ui.column().classes("w-full mt-3 gap-1")
+        readiness_box.set_visibility(False)
+
+        def _hide_readiness(_=None):
+            readiness_box.set_visibility(False)
+
+        ngay_input.on_value_change(_hide_readiness)
+        ma_nh_select.on_value_change(_hide_readiness)
+
+        with ui.row().classes("gap-3 mt-4"):
+            btn_check = ui.button("Kiểm tra dữ liệu", icon="fact_check",
+                                  color="blue-7").props("outlined").classes("font-semibold")
+            btn_run = ui.button("Chạy đối chiếu", icon="play_arrow",
+                                color="red-8").classes("font-semibold")
+            if not api.has_feature("doi_chieu_song_phuong_kenh_core_di.process"):
+                btn_run.props("disable")
+                btn_run.tooltip("Bạn không có quyền thực hiện thao tác này")
+            btn_cancel = ui.button("Dừng", icon="stop_circle",
+                                   color="grey-6").classes("font-semibold")
+            btn_cancel.set_visibility(False)
+
+        stepper_box = ui.column().classes("w-full mt-4")
+        stepper_box.set_visibility(False)
+        with stepper_box:
+            ui_kit.stepper(_STAGE_LABELS, 0)
+
+    with ui.card().classes("w-full p-0 mb-4"):
+        with ui.row().classes("w-full bg-gray-800 px-4 py-2 rounded-t items-center gap-2"):
+            ui.icon("terminal").classes("text-green-400 text-sm")
+            ui.label("Log xử lý").classes("text-xs font-semibold text-green-300")
+            spinner = ui.spinner("dots", size="xs", color="green")
+            spinner.set_visibility(False)
+
+        log_area = ui.column().classes(
+            "w-full bg-gray-900 font-mono text-xs text-green-200 "
+            "p-3 overflow-y-auto max-h-72 min-h-24 gap-0"
+        )
+        with log_area:
+            ui.label('Sẵn sàng. Chọn nguồn dữ liệu + ngày + ngân hàng rồi bấm "Chạy đối chiếu".').classes(
+                "text-gray-500"
+            )
+
+    result_card = ui.card().classes("w-full p-5")
+    result_card.set_visibility(False)
+
+    def _append_log(msg: str):
+        with log_area:
+            ui.label(msg).classes("leading-tight")
+
+    def _clear_log():
+        log_area.clear()
+
+    def _update_stepper(stage: int):
+        stepper_box.set_visibility(True)
+        stepper_box.clear()
+        with stepper_box:
+            ui_kit.stepper(_STAGE_LABELS, stage)
+
+    def _render_trang_thai_banner(trang_thai: dict | None):
+        if trang_thai and trang_thai.get("trang_thai") == "chua_doi_chieu":
+            ly_do = trang_thai.get("ly_do") or "không rõ lý do"
+            with ui.row().classes(
+                "items-center gap-2 p-2 mb-2 bg-orange-50 border border-orange-300 rounded"
+            ):
+                ui.icon("warning", color="orange-8").classes("text-lg")
+                ui.label(f"CHƯA ĐỐI CHIẾU ĐƯỢC — thiếu dữ liệu ({ly_do})").classes(
+                    "text-sm font-semibold text-orange-800"
                 )
+
+    def _render_kenh_hub(kq: dict | None, trang_thai: dict | None = None):
+        with ui.expansion("Kênh ↔ Hub", value=True).classes("w-full border rounded mb-2"):
+            _render_trang_thai_banner(trang_thai)
+            if kq is None:
+                if not trang_thai:
+                    ui.label("Không có kết quả — xem log.").classes("text-sm text-orange-700")
+                return
+            chenh_lech = kq.get("chenh_lech", {})
+            if chenh_lech:
+                columns = [
+                    {"name": "dv", "label": "Đơn vị", "field": "dv", "align": "left"},
+                    {"name": "trang_thai", "label": "Trạng thái", "field": "trang_thai"},
+                    {"name": "chenh_mon", "label": "Chênh số món", "field": "chenh_mon"},
+                    {"name": "chenh_tien", "label": "Chênh số tiền (đồng)", "field": "chenh_tien"},
+                ]
+                rows = []
+                for k, v in chenh_lech.items():
+                    cm, ct = v["chenh_so_mon"], v["chenh_so_tien"]
+                    rows.append({
+                        "dv": k,
+                        "trang_thai": "Đã cân khớp" if cm == 0 and ct == 0 else "Chưa cân khớp",
+                        "chenh_mon": f"{cm:+,}",
+                        "chenh_tien": f"{ct:+,}",
+                    })
+                ui.table(columns=columns, rows=rows, row_key="dv").classes("w-full mb-2")
+            canh_bao = kq.get("canh_bao", [])
+            if canh_bao:
+                with ui.card().classes("w-full p-3 bg-red-50 border border-red-400"):
+                    ui.label("⚠ Cảnh báo trạng thái chỉ-hub ngoài dự kiến:").classes(
+                        "text-sm font-semibold text-red-800"
+                    )
+                    for cb in canh_bao:
+                        ui.label(f"{cb['don_vi']}: {cb['trang_thai']}").classes(
+                            "text-xs text-red-700"
+                        )
+
+    def _render_hub_core(kq: dict | None, trang_thai: dict | None = None):
+        with ui.expansion("Hub ↔ Core", value=True).classes("w-full border rounded mb-2"):
+            _render_trang_thai_banner(trang_thai)
+            if kq is None:
+                if not trang_thai:
+                    ui.label("Không có kết quả — xem log.").classes("text-sm text-orange-700")
+                return
+            ui.label(
+                f"CORE: {kq.get('so_dong_core', 0):,} dòng — HUB: {kq.get('so_dong_hub', 0):,} dòng"
+            ).classes("text-sm mb-2")
+            columns = [
+                {"name": "nhan", "label": "Nhãn KETQUADOICHIEU", "field": "nhan", "align": "left"},
+                {"name": "core", "label": "Số dòng CORE", "field": "core"},
+                {"name": "hub", "label": "Số dòng HUB", "field": "hub"},
+            ]
+            phan_bo_core = kq.get("phan_bo_core", {})
+            phan_bo_hub = kq.get("phan_bo_hub", {})
+            nhan_set = sorted(set(phan_bo_core) | set(phan_bo_hub))
+            rows = [
+                {"nhan": n, "core": phan_bo_core.get(n, 0), "hub": phan_bo_hub.get(n, 0)}
+                for n in nhan_set
+            ]
+            ui.table(columns=columns, rows=rows, row_key="nhan").classes("w-full")
+
+    def _show_results(res: dict):
+        result_card.set_visibility(True)
+        result_card.clear()
+        with result_card:
+            ui.label("Kết quả").classes("text-base font-semibold text-red-800 mb-3")
+            with ui.row().classes("items-center gap-2 mb-3"):
+                ui.icon("check_circle", color="green").classes("text-xl")
                 ui.label(
-                    "Kênh↔Hub và Hub↔Core chiều đi đã có đặc tả nghiệp vụ nhưng chưa code "
-                    "backend — dự kiến làm ở đợt tiếp theo."
-                ).classes("text-sm text-gray-500")
+                    f"Ngày đối chiếu: {res.get('ngay', '?')} — Ngân hàng: {res.get('ma_nh', '?')}"
+                ).classes("font-semibold text-green-700")
+
+            ket_qua = res.get("ket_qua", {})
+            trang_thai = ket_qua.get("trang_thai") or {}
+            _render_kenh_hub(ket_qua.get("kenh_hub_di"), trang_thai.get("kenh_hub_di"))
+            _render_hub_core(ket_qua.get("hub_core_di"), trang_thai.get("hub_core_di"))
+
+            ui.label("Tải file kết quả").classes("font-semibold text-red-800 mb-2 mt-2")
+            with ui.row().classes("flex-wrap gap-3"):
+                for fname in res.get("files", []):
+                    url = f"/api/doi_chieu_song_phuong_kenh_core_di/download/{state['job_id']}/{fname}"
+
+                    async def _tai_ket_qua(u=url, name=fname):
+                        try:
+                            content = await asyncio.to_thread(api.download, u)
+                        except Exception as e:
+                            if not _handle_api_error(e):
+                                ui.notify(str(e), type="negative")
+                            return
+                        ui.download(content, name)
+
+                    ui.button(fname, icon="table_chart", color="green-7").on(
+                        "click", _tai_ket_qua
+                    ).classes("text-xs")
+
+    async def _poll():
+        if not state["job_id"]:
+            return
+        try:
+            res = await asyncio.to_thread(
+                api.get,
+                f"/api/doi_chieu_song_phuong_kenh_core_di/poll/{state['job_id']}",
+                params={"since": state["log_pos"]},
+            )
+        except Exception as e:
+            if _handle_api_error(e):
+                return
+            if not api.la_loi_mang(e):
+                spinner.set_visibility(False)
+                btn_cancel.set_visibility(False)
+                btn_run.set_visibility(True)
+                state["running"] = False
+                if state["timer"]:
+                    state["timer"].cancel()
+                    state["timer"] = None
+                ui.notify(f"Máy chủ từ chối theo dõi tiến độ: {e}", type="negative", timeout=0)
+                return
+            state["poll_fails"] += 1
+            if state["poll_fails"] < _MAX_POLL_FAILS_DEN:
+                return
+            spinner.set_visibility(False)
+            btn_run.set_visibility(True)
+            state["running"] = False
+            if state["timer"]:
+                state["timer"].cancel()
+                state["timer"] = None
+            ui.notify(
+                "Mất liên lạc với máy chủ khi theo dõi tiến độ — job có thể vẫn đang chạy "
+                "trên máy chủ.", type="negative", timeout=0,
+            )
+            return
+
+        state["poll_fails"] = 0
+        new_logs = res.get("logs", [])
+        for line in new_logs:
+            _append_log(line)
+        state["log_pos"] += len(new_logs)
+        _update_stepper(res.get("stage", 0))
+
+        status = res.get("status", "")
+        if status in ("done", "error", "cancelled"):
+            spinner.set_visibility(False)
+            btn_cancel.set_visibility(False)
+            btn_run.set_visibility(True)
+            state["running"] = False
+            if state["timer"]:
+                state["timer"].cancel()
+                state["timer"] = None
+
+            if status == "done":
+                _show_results(res)
+                ui.notify("Hoàn thành! Tải file kết quả bên dưới.", type="positive")
+            elif status == "error":
+                ui.notify(f"Lỗi: {res.get('error', '')}", type="negative", timeout=0)
+            elif status == "cancelled":
+                ui.notify("Đã dừng theo yêu cầu.", type="warning")
+
+    def _yyyymmdd_tu_dmy(s: str) -> str | None:
+        parts = s.strip().split("/")
+        if len(parts) != 3:
+            return None
+        d, m, y = parts
+        if not (d.isdigit() and m.isdigit() and y.isdigit()):
+            return None
+        return f"{y}{m.zfill(2)}{d.zfill(2)}"
+
+    def _render_readiness_line(nhan: str, trang_thai: str):
+        if trang_thai == "du":
+            ui.label(f"✅ Đủ dữ liệu {nhan}").classes("text-sm text-green-700")
+        else:
+            ly_do = trang_thai.split(":", 1)[1] if ":" in trang_thai else trang_thai
+            ui.label(f"⚠️ {nhan}: thiếu {ly_do}").classes("text-sm text-orange-700")
+
+    async def _check_readiness():
+        ngay = _yyyymmdd_tu_dmy(ngay_input.value or "")
+        ma_nh = ma_nh_select.value
+        if not ngay:
+            ui.notify("Ngày đối chiếu chưa hợp lệ — bấm icon lịch để chọn.", type="warning")
+            return
+        if not ma_nh:
+            ui.notify("Chưa chọn ngân hàng.", type="warning")
+            return
+        if not state["files"]:
+            ui.notify("Chưa chọn file nào.", type="warning")
+            return
+        body: dict = {"ngay": ngay, "ma_nh": ma_nh, "file_names": list(state["files"].keys())}
+
+        try:
+            res = await asyncio.to_thread(
+                api.post, "/api/doi_chieu_song_phuong_kenh_core_di/check_readiness", body,
+            )
+        except Exception as e:
+            if not _handle_api_error(e):
+                ui.notify(str(e), type="negative")
+            return
+
+        readiness_box.set_visibility(True)
+        readiness_box.clear()
+        with readiness_box:
+            _render_readiness_line("Kênh↔Hub", res.get("kenh_hub", ""))
+            _render_readiness_line("Hub↔Core", res.get("hub_core", ""))
+
+    async def on_run():
+        if state["running"]:
+            return
+        ngay = _yyyymmdd_tu_dmy(ngay_input.value or "")
+        ma_nh = ma_nh_select.value
+        if not ngay:
+            ui.notify("Ngày đối chiếu chưa hợp lệ — bấm icon lịch để chọn.", type="warning")
+            return
+        if not ma_nh:
+            ui.notify("Chưa chọn ngân hàng.", type="warning")
+            return
+        if not state["files"]:
+            ui.notify("Chưa chọn file nào.", type="warning")
+            return
+
+        _clear_log()
+        result_card.set_visibility(False)
+        readiness_box.set_visibility(False)
+        btn_run.set_visibility(False)
+        btn_cancel.set_visibility(True)
+        spinner.set_visibility(True)
+        state["running"] = True
+        state["log_pos"] = 0
+        state["poll_fails"] = 0
+        _update_stepper(0)
+
+        try:
+            _append_log(f"Đang tải {len(state['files'])} file lên — Ngày: {ngay} — NH: {ma_nh}")
+            res = await asyncio.to_thread(
+                api.post_upload,
+                "/api/doi_chieu_song_phuong_kenh_core_di/start_upload",
+                files=[("files", (name, data, "application/octet-stream"))
+                       for name, data in state["files"].items()],
+                data={"ngay": ngay, "ma_nh": ma_nh},
+                timeout=600.0,
+            )
+        except Exception as e:
+            spinner.set_visibility(False)
+            btn_cancel.set_visibility(False)
+            btn_run.set_visibility(True)
+            state["running"] = False
+            if not _handle_api_error(e):
+                ui.notify(str(e), type="negative")
+            return
+
+        state["job_id"] = res.get("job_id")
+        _append_log(f"Job ID: {state['job_id']}")
+        state["timer"] = ui.timer(_POLL_INTERVAL, _poll)
+
+    async def on_cancel():
+        if not state["job_id"]:
+            return
+        try:
+            await asyncio.to_thread(
+                api.post, f"/api/doi_chieu_song_phuong_kenh_core_di/cancel/{state['job_id']}"
+            )
+            _append_log("[Yêu cầu dừng đã gửi — chờ xử lý xong bước hiện tại...]")
+        except Exception as e:
+            ui.notify(str(e), type="negative")
+
+    btn_check.on("click", _check_readiness)
+    btn_run.on("click", on_run)
+    btn_cancel.on("click", on_cancel)
 
 
 # ─── Trang chính — page shell 3 thẻ ─────────────────────────────────────────────

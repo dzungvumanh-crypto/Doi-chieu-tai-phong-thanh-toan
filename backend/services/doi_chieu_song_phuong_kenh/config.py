@@ -49,8 +49,22 @@ KENH_MTID_PREFIX: dict[str, str] = {
 }
 
 # ─── Loại song phương ───────────────────────────────────────────────────────────
-# SPRT = Song Phương Real Time (khoá MSGREF), SPT = Song Phương Thường (khoá TXID).
-LOAI_KHOA_HUB = {"SPRT": "MSGREF", "SPT": "TXID"}
+# SPRT = Song Phương Real Time (khoá MSGREF, cả 2 chiều — không tranh cãi).
+#
+# SPT = Song Phương Thường — khoá KHÁC NHAU theo CHIỀU, ĐÃ CHỐT (2026-09-04):
+#   - Văn bản `Đối chiếu SP chiều đi.docx` (Bước 1.1/2.1, mục "Kênh – hub chiều đi") ghi TXID —
+#     y hệt câu chữ chiều đến. Nhưng dữ liệu thật NH 202 (7 ngày liên tiếp 27/8-2/9/2026) dùng
+#     TXID cho khớp 0/X MỌI NGÀY (100% không khớp); dùng MSGREF cho khớp 93-99%/ngày, đúng tầm
+#     SPRT. Ví dụ: HUB.MSGREF="2620410375583849" == kênh.MtId/MsgId; HUB.TXID cùng dòng =
+#     "2715HUB027440211" — khác hẳn dạng. → Văn bản "đi" copy nhầm câu SPT/TXID từ mẫu "đến" mà
+#     quên cập nhật cho khác biệt thật của chiều đi.
+#   - **Người chấm thủ công đã xác nhận trực tiếp (2026-09-04): SPT-đi dùng MSGREF, đúng như dữ
+#     liệu thật cho thấy.** Không còn là suy luận/tạm — đã chốt.
+#   - Đối chứng: CHIỀU ĐẾN dùng TXID cho SPT vẫn ĐÚNG, verify độc lập NH 202 ngày 21.8.2026
+#     (TXID="2620210308078343" khớp kênh, MSGREF cùng dòng ="R0N268XNV82EG7CO" — khác dạng). Không
+#     đụng khoá chiều đến — 2 chiều khác nhau thật, không phải cùng 1 vấn đề.
+LOAI_KHOA_HUB = {"SPRT": "MSGREF", "SPT": "TXID"}          # chiều ĐẾN
+LOAI_KHOA_HUB_DI = {"SPRT": "MSGREF", "SPT": "MSGREF"}     # chiều ĐI — đã chốt, người chấm xác nhận
 LOAI_KENH_THANH_TOAN = {"SPRT": "SP REALTIME", "SPT": "SP THUONG"}
 
 # ─── Trạng thái đương nhiên một phía (hub-only hợp lệ, KHÔNG cảnh báo) ─────────
@@ -84,8 +98,8 @@ RECONCILE_UNITS: list[dict] = [
     {"ma_nh": "311", "loai": "SPRT"},
 ]
 
-# ─── Chiều — đợt này chỉ ĐẾN, chừa chỗ tham số hoá cho ĐI (chưa code logic ĐI) ──
-CHIEU_DA_HO_TRO = ("DEN",)
+# ─── Chiều — 2026-09-03: đã thêm ĐI (Kênh↔Hub, xem process.py::classify_kenh_hub_di) ──
+CHIEU_DA_HO_TRO = ("DEN", "DI")
 
 # ─── Đối chiếu chi tiết chiều ĐẾN (Bước 1/2, tài liệu v3 27/08/2026) ───────────
 # Thay hẳn thiết kế "Bảng 3" cũ (tổng hợp theo TRANG_THAI_LENH, duyệt Phase 9) — v3 yêu cầu gắn

@@ -470,8 +470,8 @@ Truy cập:
 
 ### Module Đối chiếu Song phương
 - Định tuyến lệnh IPCAS phục vụ đối chiếu song phương tại phòng Thanh toán
-- Menu: **Đối chiếu → Phòng Thanh toán → Đối chiếu Song phương** — 2 thẻ đang dùng: **Phân loại
-  dữ liệu** và **Đối chiếu đến** (thẻ **Đối chiếu đi** còn đang xây, chưa có backend)
+- Menu: **Đối chiếu → Phòng Thanh toán → Đối chiếu Song phương** — 3 thẻ: **Phân loại dữ liệu**,
+  **Đối chiếu đến**, **Đối chiếu đi** (từ 03/09/2026)
 - **Thẻ Phân loại dữ liệu**: upload file ZIP chứa dữ liệu IPCAS (GL02); xử lý bất đồng bộ, theo
   dõi tiến độ real-time. File tải lên được ghi **thẳng từng khối** xuống
   `data/temp_doi_chieu_song_phuong/upload_<token>/`; `process_zip()` nhận **đường dẫn**, kiểm
@@ -498,9 +498,18 @@ Truy cập:
   dùng nhầm cho cả 4 ngày, tự nhân dữ liệu lên ngày không có thật). Giao dịch hôm nay mà CORE hạch
   toán sang hôm sau sẽ xếp thành "HUB THỪA" nếu thiếu — muốn chấm đủ thì nạp thêm **GL02 zip của
   ngày hôm sau** (`docs/Implementation-notes.html` card 117)
-- Phân quyền riêng theo nhóm: `menu.doi_chieu_song_phuong` (xem trang/kiểm tra dữ liệu),
+- **Thẻ Đối chiếu đi** (`/api/doi_chieu_song_phuong_kenh_core_di`): cùng kiến trúc 1 job/1 kết quả
+  cuối như "Đối chiếu đến", nhưng thuật toán Hub↔Core khác đáng kể (không tái dùng được — package
+  riêng `doi_chieu_song_phuong_core_di/`): khoá HUB dùng `SE_TRACE` (tự suy từ TRACE, cột nguồn
+  luôn rỗng trong dữ liệu thật) thay vì `TRACE`, khoá CORE dùng `CRAMOUNT` thay `DRAMOUNT`, thêm
+  cửa sổ hủy CHÉO NGÀY T±3, nhận diện OSB qua `USERID` thay vì `REFERENCE`. Kênh↔Hub-đi đơn giản
+  hơn đến (không lọc "-"/trace-huỷ trước khi khớp). Chi tiết đầy đủ + các bug thật phát hiện khi
+  verify (lstrip số 0 SE_TRACE, guard MtId/MsgId theo NH không áp dụng được cho chiều đi...) xem
+  `docs/Implementation-notes.html` card 118
+- Phân quyền riêng theo nhóm: `menu.doi_chieu_song_phuong` (xem trang/kiểm tra dữ liệu, cả 3 thẻ),
   `doi_chieu_song_phuong.process` (chạy Phân loại dữ liệu),
-  `doi_chieu_song_phuong_kenh_core.process` (chạy Đối chiếu đến)
+  `doi_chieu_song_phuong_kenh_core.process` (chạy Đối chiếu đến),
+  `doi_chieu_song_phuong_kenh_core_di.process` (chạy Đối chiếu đi)
 
 ### Module Đối chiếu ACH
 - Đối chiếu GL02 (IPCAS/NPO) với MIS PaymentHub theo phiên ACH, cả hai chiều ĐI và ĐẾN

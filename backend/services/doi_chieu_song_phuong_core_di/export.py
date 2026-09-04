@@ -1,0 +1,79 @@
+"""Xuất kết quả đối chiếu HUB↔CORE **chiều ĐI** — 1 file Excel tổng hợp (`TongHop`, phân bố theo
+nhãn KETQUADOICHIEU) + 2 file CSV chi tiết CORE/HUB.
+
+Giữ nguyên khuôn của chiều đến (`doi_chieu_song_phuong_core/export.py`): chi tiết ghi CSV, chỉ
+bảng tổng hợp ghi Excel — số đo thật 2026-08-31 cho thấy ghi Excel chiếm ~60% thời gian job với
+dữ liệu vài trăm nghìn dòng, mà module không dùng style/công thức Excel nào.
+
+KHÁC chiều đến đúng MỘT chỗ: cột "Số tiền CORE" cộng `CRAMOUNT` thay vì `DRAMOUNT` — CSV
+`{ma_nh}_DI*.csv` có DRAMOUNT LUÔN = "0" (511.378/511.378 và 878.092/878.092 dòng đã khảo sát),
+lấy DRAMOUNT thì cột tiền CORE ra 0 tuyệt đối, bảng tổng hợp mất hết ý nghĩa mà không báo lỗi.
+"""
+
+from pathlib import Path
+
+import pandas as pd
+
+from backend.services.ach.so_tien import doc_so_tien
+
+from .match import KEY_COL
+
+_TONG_HOP_COLS = ["Nhãn (KETQUADOICHIEU)", "Số dòng CORE", "Số tiền CORE", "Số dòng HUB", "Số tiền HUB"]
+
+
+def build_tong_hop_di(core_df: pd.DataFrame, hub_df: pd.DataFrame) -> pd.DataFrame:
+    core_amt = doc_so_tien(core_df["CRAMOUNT"], "core_di", "CRAMOUNT")
+    hub_amt = doc_so_tien(hub_df["SO_TIEN"], "hub_di", "SO_TIEN")
+
+    core_grp = (
+        core_df.assign(_amt=core_amt)
+        .groupby("KETQUADOICHIEU")
+        .agg(so_dong_core=("KETQUADOICHIEU", "size"), so_tien_core=("_amt", "sum"))
+    )
+    hub_grp = (
+        hub_df.assign(_amt=hub_amt)
+        .groupby("KETQUADOICHIEU")
+        .agg(so_dong_hub=("KETQUADOICHIEU", "size"), so_tien_hub=("_amt", "sum"))
+    )
+
+    tong = core_grp.join(hub_grp, how="outer").fillna(0)
+    for c in ("so_dong_core", "so_tien_core", "so_dong_hub", "so_tien_hub"):
+        tong[c] = tong[c].astype("int64")
+    tong = tong.reset_index().rename(columns=dict(zip(
+        ["KETQUADOICHIEU", "so_dong_core", "so_tien_core", "so_dong_hub", "so_tien_hub"],
+        _TONG_HOP_COLS,
+    ))).sort_values(_TONG_HOP_COLS[0]).reset_index(drop=True)
+
+    tong_dong = {
+        _TONG_HOP_COLS[0]: "Tổng cộng",
+        _TONG_HOP_COLS[1]: int(tong[_TONG_HOP_COLS[1]].sum()),
+        _TONG_HOP_COLS[2]: int(tong[_TONG_HOP_COLS[2]].sum()),
+        _TONG_HOP_COLS[3]: int(tong[_TONG_HOP_COLS[3]].sum()),
+        _TONG_HOP_COLS[4]: int(tong[_TONG_HOP_COLS[4]].sum()),
+    }
+    return pd.concat([tong, pd.DataFrame([tong_dong])], ignore_index=True)
+
+
+def export_excel_di(ket_qua: dict, out_dir: str | Path, base_name: str) -> list[Path]:
+    """`ket_qua` = dict trả về từ `pipeline.doi_chieu_hub_core_di()`. Ghi vào `out_dir`:
+    `{base_name}.xlsx` (sheet `TongHop`) + `{base_name}_core_chi_tiet.csv` +
+    `{base_name}_hub_chi_tiet.csv`. Trả `[tonghop_path, core_csv_path, hub_csv_path]`."""
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    core_df, hub_df = ket_qua["core_df"], ket_qua["hub_df"]
+    tong_hop = build_tong_hop_di(core_df, hub_df)
+
+    tonghop_path = out_dir / f"{base_name}.xlsx"
+    with pd.ExcelWriter(tonghop_path, engine="xlsxwriter") as writer:
+        tong_hop.to_excel(writer, sheet_name="TongHop", index=False)
+
+    # encoding="utf-8-sig" — đúng quy ước CSV của cả module Đối chiếu Song phương.
+    core_csv_path = out_dir / f"{base_name}_core_chi_tiet.csv"
+    core_df.drop(columns=[KEY_COL], errors="ignore").to_csv(
+        core_csv_path, index=False, encoding="utf-8-sig")
+
+    hub_csv_path = out_dir / f"{base_name}_hub_chi_tiet.csv"
+    hub_df.drop(columns=[KEY_COL], errors="ignore").to_csv(
+        hub_csv_path, index=False, encoding="utf-8-sig")
+
+    return [tonghop_path, core_csv_path, hub_csv_path]
