@@ -2152,6 +2152,11 @@ _ROLE_VN = {
     "admin_l2":      "Quản trị viên cấp 2",
 }
 
+# Khớp GIOI_TINH trong backend/services/hr_service.py (không import chéo — dict
+# 3 dòng, tự chứa cho gọn, đúng khuôn mẫu các dict _..._VN tự có sẵn trong file
+# này thay vì phụ thuộc module khác cho 1 mapping nhỏ).
+_GIOI_TINH_VN = {"nam": "Nam", "nu": "Nữ", "khac": "Khác"}
+
 # template_path() chứ không phải os.path.join(): tên thư mục có dấu trên đĩa đang
 # ở dạng NFD, ghép chuỗi NFC từ mã nguồn sẽ không khớp — xem backend/core/paths.py
 _TPL_DIR = template_path("Phòng Tổng hợp", "Nghỉ phép")
@@ -3812,10 +3817,12 @@ def export_npbb_batch(
 
     roots = db.execute(
         f"""SELECT lr.*, s.full_name AS staff_name, s.role AS staff_role,
-                  s.join_industry_date, d.name AS dept_name
+                  s.join_industry_date, d.name AS dept_name,
+                  p.dob AS staff_dob, p.gender AS staff_gender
            FROM leave_records lr
-           LEFT JOIN user_tttt s   ON lr.staff_id = s.id
-           LEFT JOIN departments d ON s.department_id = d.id
+           LEFT JOIN user_tttt s     ON lr.staff_id = s.id
+           LEFT JOIN departments d   ON s.department_id = d.id
+           LEFT JOIN hr_profiles p   ON p.staff_id = s.id
            WHERE lr.leave_type='bat_buoc' AND lr.adjusts_leave_id IS NULL
              AND {_period_sql}{_dept_sql}
              AND (lr.status='approved' OR EXISTS(
@@ -3846,6 +3853,9 @@ def export_npbb_batch(
         da_nghi = _calc_used_days(r["staff_id"], year, db)
         rows_data.append({
             "name":       r["staff_name"] or "",
+            "dob":        (date.fromisoformat(str(r["staff_dob"])[:10]).strftime("%d/%m/%Y")
+                           if r["staff_dob"] else ""),
+            "gender":     _GIOI_TINH_VN.get(r["staff_gender"] or "", ""),
             "chuc_vu":    _ROLE_VN.get(r["staff_role"] or "", r["staff_role"] or ""),
             "tong_phep":  tong_phep,
             "da_nghi":    da_nghi,
@@ -3866,8 +3876,8 @@ def export_npbb_batch(
         cells = table.rows[-1].cells
         _npbb_set_cell_text(cells[0], str(idx))
         _npbb_set_cell_text(cells[1], item["name"])
-        _npbb_set_cell_text(cells[2], "")
-        _npbb_set_cell_text(cells[3], "")
+        _npbb_set_cell_text(cells[2], item["dob"])
+        _npbb_set_cell_text(cells[3], item["gender"])
         _npbb_set_cell_text(cells[4], item["chuc_vu"])
         _npbb_set_cell_text(cells[5], "TTTT")
         _npbb_set_cell_text(cells[6], f"{item['tong_phep']:g}")
