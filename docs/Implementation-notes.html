@@ -14497,7 +14497,204 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-06</footer>
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">126</span>
+      <span class="card-title">Chấm công — Chuẩn hoá ký hiệu chấm công tự động theo đúng bảng mã hệ IPCAS thật (2026-09-07)</span>
+      <span class="badge badge-done">Hoàn thiện</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-red">Phát hiện</span> Ký hiệu chấm công tự động suy đoán sai so với bảng mã IPCAS thật</div>
+      <p>Người dùng đối chiếu ảnh chụp màn hình gốc IPCAS ("Check in employees monthly for
+        Department") — 2 trigger tự động chấm công (<code>trg_leave_approved_sync_attendance</code>,
+        <code>trg_leave_direct_insert_sync_attendance</code>) đang map <code>leave_type</code> →
+        ký hiệu SAI ở 3 chỗ, và thiếu hẳn 1 nhánh:</p>
+      <ul>
+        <li><code>bao_hiem</code> (nghỉ ốm hưởng BHXH) map <code>'T'</code> — trùng ký hiệu thai sản,
+          sai bản chất.</li>
+        <li><code>sick</code> map <code>'O'</code> — IPCAS không có ký hiệu 'O' nào cả.</li>
+        <li><code>hop_cong_tac</code> map <code>'CT'</code> — ký hiệu tự đặt lúc chưa biết bảng mã
+          thật, không khớp IPCAS.</li>
+        <li><code>khong_luong</code> chưa có nhánh riêng, rơi vào <code>ELSE 'P'</code> — lẫn với
+          nghỉ phép có lương.</li>
+      </ul>
+
+      <div class="label"><span class="pill pill-green">Fix</span> Sửa CASE map theo đúng bảng mã IPCAS, thêm ký hiệu còn thiếu</div>
+      <ul>
+        <li><code>bao_hiem</code> và <code>sick</code> → <code>'S'</code> (Nghỉ ốm dài ngày — IPCAS
+          chỉ có 1 ký hiệu ốm duy nhất, không tách ngắn/dài ngày).</li>
+        <li><code>hop_cong_tac</code> → <code>'B'</code> ("Đi công tác" — đúng ký hiệu IPCAS).</li>
+        <li><code>khong_luong</code> → <code>'N'</code> (IPCAS có sẵn "Nghỉ không lương").</li>
+        <li><code>other</code> (Khác) → map theo đúng cờ <code>other_deduct_quota</code> (đợt sửa
+          "Khác tự chọn tính hạn mức" trước đó): tắt cờ → <code>'K'</code> (Nghỉ khác), bật cờ
+          (mặc định) → <code>'P'</code>, giữ đúng hành vi cũ cho dữ liệu sẵn có.</li>
+        <li>Thêm ký hiệu <code>'B'</code>/<code>'N'</code>/<code>'K'</code> còn thiếu vào
+          <code>attendance_symbols</code>; vô hiệu hoá (<code>is_active=0</code>, không xoá — giữ
+          audit trail) <code>'CT'</code>/<code>'O'</code> vì không có trong bảng mã chuẩn, tránh
+          chọn nhầm lúc ghi công thủ công (<code>put_day</code>/<code>review_adjustment</code> đều
+          lọc theo <code>is_active=1</code>).</li>
+        <li>Đồng bộ luôn ký hiệu "Họp/Công tác" ở báo cáo chấm công tháng dạng TCNS riêng
+          (<code>_ATTENDANCE_SYMBOL</code> trong <code>_build_attendance_month_sheet</code>) từ
+          <code>'CT'</code> sang <code>'B'</code> cho nhất quán — ký hiệu <code>'BB'</code> của
+          <code>bat_buoc</code> giữ nguyên (lựa chọn riêng của Phòng Tổng hợp cho báo cáo này, không
+          thuộc bảng mã IPCAS đang chuẩn hoá).</li>
+      </ul>
+
+      <div class="note">Verify thật (không đoán từ đọc code): bảng <code>attendances</code> đang
+        hoàn toàn rỗng lúc sửa — xác nhận trước, không có rủi ro dữ liệu lịch sử sai lệch. Tạo trực
+        tiếp qua DB đơn đã duyệt cho 1 cán bộ Phòng Kế toán, đủ cả 5 trường hợp thay đổi
+        (<code>bao_hiem</code>, <code>hop_cong_tac</code>, <code>khong_luong</code>, <code>other</code>
+        với cờ bật/tắt) — đúng ký hiệu mới ở mọi trường hợp, dọn sạch dữ liệu test + khôi phục phòng
+        ban sau khi xong. Gọi trực tiếp <code>_build_attendance_month_sheet</code> — chạy được, không
+        lỗi. 105 test liên quan nghỉ phép/chấm công pass đủ (cập nhật 1 test cũ khẳng định ký hiệu
+        'O' cho "sick" theo đúng chuẩn mới).</div>
+
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">127</span>
+      <span class="card-title">Nghỉ phép — Cảnh báo hạn mức không đủ cho NPBB đã đăng ký, ứng phần thiếu sang năm sau (2026-09-07)</span>
+      <span class="badge badge-done">Hoàn thiện</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-red">Vấn đề</span> NPBB lúc tạo hoàn toàn không kiểm tra hạn mức còn lại</div>
+      <p>Đơn NPBB (nghỉ phép bắt buộc) lúc tạo bỏ qua hoàn toàn bước kiểm tra hạn mức
+        (<code>leave_type == "bat_buoc"</code> trả về <code>0.0</code> ngay trong
+        <code>_check_quota_or_borrow</code>), chỉ bắt buộc ≥5 ngày làm việc. Nếu đăng ký NPBB xong rồi
+        dùng bớt hạn mức năm đó qua các đơn KHÁC sau đó, hạn mức còn lại có thể tụt xuống dưới mức tối
+        thiểu 5 ngày mà hệ thống không hề báo — tới lúc nghỉ mới lộ ra vấn đề.</p>
+
+      <div class="label"><span class="pill pill-green">Thêm mới</span> Cảnh báo chủ động + 2 lựa chọn xử lý</div>
+      <ul>
+        <li><code>GET /api/leaves/npbb-quota-warning</code> — đơn NPBB ĐÃ DUYỆT, CHƯA tới ngày nghỉ,
+          hạn mức năm đó (tính tới hiện tại) dưới 5 ngày → hiện popup "Số lượng ngày nghỉ phép còn lại
+          là X ngày, không đủ hạn mức để nghỉ phép bắt buộc năm Y. Bạn có muốn tiếp tục nghỉ phép bắt
+          buộc năm Y hay không?". Hiện lại mỗi lần mở trang trong khi điều kiện còn đúng (giống cơ chế
+          nhắc đơn quá hạn duyệt sẵn có) — không phải cảnh báo 1 lần/năm vì hạn mức đổi qua lại được.</li>
+        <li><b>"Hủy đơn NPBB"</b> — mở đúng chi tiết đơn đó, dùng lại nguyên nút "Rút đơn" có sẵn (cùng
+          quy trình cần Phòng Tổng hợp xác nhận, không thêm cơ chế mới).</li>
+        <li><b>"Tiếp tục"</b> — <code>POST /{leave_id}/npbb-borrow-confirm</code>: dùng nốt phần hạn
+          mức năm nay còn thật sự trống cho đơn NPBB này (loại trừ chính nó ra khi tính), phần còn
+          thiếu <b>ứng thật</b> sang hạn mức năm sau — tái dùng đúng cơ chế <code>borrow_next_year_days</code>
+          sẵn có của tính năng "ứng phép năm sau" (<code>_check_quota_or_borrow</code>), tính NGƯỢC lại
+          trên đơn đã tồn tại thay vì lúc tạo mới. Chặn cứng 400 nếu năm sau CŨNG không đủ chỗ ứng,
+          yêu cầu hủy đơn thay vì tiếp tục.</li>
+      </ul>
+
+      <div class="note">Verify thật qua TestClient + DB thật, không đoán: đơn NPBB thật đang có của 1
+        GDV Phòng Swift (hạn mức còn 4/12 ngày do 1 đơn phép năm khác dùng bớt) — cảnh báo tự nhiên
+        hiện đúng ngay với dữ liệu thật hiện có, không cần dựng kịch bản mới mới thấy được. Dựng thêm
+        kịch bản giả lập riêng (năm 2030/2031, không đụng dữ liệu thật) để phủ hết nhánh: tiếp tục khi
+        năm sau còn chỗ → ứng đúng số ngày thiếu, <code>_calc_used_days</code> 2 năm phản ánh đúng; gọi
+        lại xác nhận lần 2 khi tình trạng không đổi → không lỗi, không đổi số (idempotent); lấp gần hết
+        hạn mức năm sau rồi tiếp tục lại → bị chặn đúng 400, cảnh báo vẫn tiếp tục hiện đúng. Dọn sạch
+        dữ liệu test, xác nhận đơn NPBB thật không hề bị đụng tới. 105 test liên quan pass đủ. Tự phát
+        hiện và sửa 1 lỗi lúc test: <code>ref_date</code> truyền vào <code>compute_carry_over</code> ban
+        đầu dùng "hôm nay" thay vì đúng ngày bắt đầu nghỉ của đơn (khác quy ước <code>_check_quota_or_borrow</code>
+        đang dùng) — sai lệch chỉ lộ ra với đơn xa hơn 1 năm trong tương lai, đã sửa khớp đúng quy ước
+        chung của codebase.</div>
+
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">128</span>
+      <span class="card-title">Nghỉ phép — Báo cáo NPBB Mẫu 18/19: điền đúng cột Ngày sinh/Giới tính từ hồ sơ cán bộ (2026-09-07)</span>
+      <span class="badge badge-done">Hoàn thiện</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-red">Phát hiện</span> 2 cột có sẵn trên template nhưng luôn bị ghi đè rỗng</div>
+      <p><code>export_npbb_batch</code> (Mẫu 18 — điều chỉnh nội bộ, Mẫu 19 — đăng ký gửi TCNS) nhân
+        bản dòng mẫu từ template Word rồi điền dữ liệu thật vào từng ô — nhưng cột "Ngày sinh"
+        (<code>cells[2]</code>) và "Giới tính" (<code>cells[3]</code>) trước nay luôn bị ghi đè bằng
+        chuỗi rỗng <code>""</code>, dù dữ liệu này có sẵn ở module Quản lý nhân sự → Hồ sơ cán bộ
+        (bảng <code>hr_profiles</code>, cột <code>dob</code>/<code>gender</code>, khớp 1-1 theo
+        <code>staff_id</code>).</p>
+
+      <div class="label"><span class="pill pill-green">Fix</span> LEFT JOIN hr_profiles, định dạng đúng chuẩn Việt hoá</div>
+      <p>Thêm <code>LEFT JOIN hr_profiles p ON p.staff_id = s.id</code> vào câu truy vấn đơn NPBB gốc,
+        lấy <code>p.dob</code> (định dạng lại <code>dd/mm/yyyy</code>) và <code>p.gender</code> (dịch
+        qua dict <code>_GIOI_TINH_VN</code> mới thêm trong <code>leaves.py</code> — tự chứa, khớp giá
+        trị với <code>GIOI_TINH</code> ở <code>hr_service.py</code> nhưng không import chéo module cho
+        1 mapping 3 dòng). Cán bộ chưa khai hồ sơ nhân sự (<code>hr_profiles</code> chưa có dòng) thì
+        2 cột vẫn để trống như hành vi cũ — không lỗi, không hiện sai giá trị.</p>
+
+      <div class="note">Verify thật qua TestClient (không đoán): xác nhận đúng thứ tự cột trên CẢ 2
+        file template thật (<code>npbb_mau18_dieu_chinh_tpl.docx</code>,
+        <code>npbb_mau19_dangky_tpl.docx</code>) — cột 2/3 đúng là Ngày sinh/Giới tính. Gán tạm hồ sơ
+        mẫu (Nam, sinh 20/05/1990) cho 1 cán bộ đang có đơn NPBB thật năm 2026, xuất Mẫu 19 thật, đọc
+        lại file .docx trả về bằng <code>python-docx</code> — đúng "20/05/1990"/"Nam" ở đúng cột của
+        đúng dòng nhân sự đó; dòng của cán bộ KHÁC (chưa có hồ sơ) vẫn trống đúng như trước, không lỗi.
+        Dọn sạch dữ liệu test ngay sau khi xong. 158 test liên quan nghỉ phép/chấm công/nhân sự pass đủ.</div>
+
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">129</span>
+      <span class="card-title">Nghỉ phép — Rà soát điểm nối NPBB, sửa vòng lặp không lối ra giữa cảnh báo hạn mức và đơn điều chỉnh (2026-09-07)</span>
+      <span class="badge badge-done">Hoàn thiện</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-green">Rà soát</span> Giao agent riêng tìm điểm nối giữa 3 đợt sửa NPBB gần nhất</div>
+      <p>Mỗi tính năng (chuẩn hoá ký hiệu chấm công, cảnh báo hạn mức NPBB + ứng năm sau, cột Ngày
+        sinh/Giới tính báo cáo) đã test riêng lẻ và pass, nhưng chưa ai soi kỹ điểm NỐI giữa chúng.
+        Giao 1 agent đọc lại toàn bộ diff, tập trung đúng vào các điểm nối đó.</p>
+
+      <div class="label"><span class="pill pill-red">Phát hiện</span> "Tiếp tục" ở popup cảnh báo có thể thành công giả khi đơn đang có đơn điều chỉnh dở dang</div>
+      <p><code>POST /{leave_id}/npbb-borrow-confirm</code> không kiểm tra đơn có đang bị 1 đơn điều
+        chỉnh (chưa duyệt xong) trỏ tới hay không. Nếu gọi vào lúc đó: <code>borrow_next_year_days</code>
+        vẫn ghi được vào DB, nhưng dòng này đã bị <code>_NO_ACTIVE_ADJ_SQL</code> loại khỏi MỌI câu
+        tính "đã dùng" (<code>_calc_used_days</code>/<code>_calc_used_days_bulk</code>) trong lúc đơn
+        điều chỉnh còn hiệu lực — API trả về 200 "thành công", frontend hiện toast tích cực, nhưng
+        thực chất không có tác dụng gì. Cảnh báo cũ hiện lại y nguyên ở lần mở trang sau — vòng lặp
+        không lối ra: người dùng bấm "Tiếp tục" nhiều lần, tưởng đã xử lý xong, nhưng vấn đề vẫn còn
+        nguyên.</p>
+
+      <div class="label"><span class="pill pill-green">Fix</span> Chặn 409 khớp mẫu sẵn có, loại trừ luôn khỏi danh sách cảnh báo</div>
+      <ul>
+        <li><code>confirm_npbb_borrow</code>: thêm đúng chặn <code>_active</code> theo mẫu đã có ở
+          <code>npbb_adjust_leave</code> — phát hiện đơn điều chỉnh còn hiệu lực → 409 kèm hướng dẫn
+          rõ ("chờ đơn điều chỉnh được duyệt hoặc bị từ chối/rút trước").</li>
+        <li><code>get_npbb_quota_warning</code>: thêm <code>_NO_ACTIVE_ADJ_SQL</code> loại trừ đơn này
+          khỏi danh sách cảnh báo luôn — đơn đang có điều chỉnh dở dang thì "Tiếp tục" chắc chắn bị
+          chặn, hiện cảnh báo cho đơn đó chỉ gây rối chứ không giúp làm được gì.</li>
+      </ul>
+
+      <div class="label"><span class="pill pill-green">Rà soát thêm</span> Các điểm nối khác — không có vấn đề</div>
+      <p>Trạng thái "đã ứng" (<code>borrow_next_year_days</code>) tự hết tác dụng đúng lúc đơn bị hủy/
+        rút (lọc theo <code>status</code> trong mọi câu tính, không cần dọn tay). Tạo đơn điều chỉnh
+        mới không hề đọc/copy số ngày đã ứng của đơn gốc — luôn tính lại từ đầu qua
+        <code>_check_quota_or_borrow</code>, không rủi ro dữ liệu ứng cũ sót lại.</p>
+
+      <div class="label"><span class="pill pill-orange">Ghi nhận, chưa sửa</span> Lỗ hổng có từ trước, ngoài phạm vi đợt này</div>
+      <p>2 trigger tự động chấm công (<code>trg_leave_*_sync_attendance</code>) chỉ CHÈN dữ liệu vào
+        <code>attendances</code>, chưa có trigger nào tự XOÁ/CẬP NHẬT khi đơn gốc NPBB bị hủy do đơn
+        điều chỉnh khác ngày duyệt xong — những ngày chỉ có ở đơn gốc mà không có ở đơn điều chỉnh sẽ
+        để lại dòng <code>attendances</code> sai (phạm vi cán bộ Phòng Kế toán/ACCT). Không thuộc các
+        đợt sửa gần đây, cần bàn riêng nếu muốn xử lý.</p>
+
+      <div class="note">Verify thật qua TestClient, kịch bản giả lập riêng (không đụng dữ liệu thật):
+        tạo đơn NPBB gốc giả có hạn mức thấp → cảnh báo hiện đúng; tạo đơn điều chỉnh THẬT qua API (còn
+        <code>pending_ksv</code>) → cảnh báo cho đơn gốc biến mất đúng ngay; gọi thẳng borrow-confirm
+        vào đơn gốc lúc này (mô phỏng link cũ/bỏ qua UI) → đúng bị chặn 409, xác nhận
+        <code>borrow_next_year_days</code> vẫn = 0, không ghi giá trị vô tác dụng nào. Chạy lại toàn bộ
+        kịch bản test trước đó (điều chỉnh lặp 5 lần, cảnh báo hạn mức đủ nhánh thành công/chặn) — vẫn
+        pass đủ sau khi thêm chặn mới, không phá vỡ luồng nào đã có. 158 test liên quan pass đủ, dọn
+        sạch dữ liệu test, xác nhận dữ liệu thật không bị đụng.</div>
+
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-07</footer>
 </div>
 </body>
 </html>

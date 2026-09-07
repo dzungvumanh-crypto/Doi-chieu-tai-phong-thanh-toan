@@ -4,6 +4,98 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 07/09/2026 Nghỉ phép - **Rà soát toàn bộ đợt sửa NPBB gần đây (giao agent riêng) — sửa 1 lỗi thật ở điểm nối giữa cảnh báo hạn mức và điều chỉnh NPBB**
+    + Giao agent rà soát riêng toàn bộ 3 đợt sửa gần nhất (chuẩn hoá ký hiệu chấm công, cảnh báo hạn
+      mức NPBB + ứng năm sau, cột Ngày sinh/Giới tính báo cáo) — tập trung tìm điểm NỐI giữa các tính
+      năng hay bị bỏ sót khi mỗi tính năng chỉ được test riêng lẻ
+    + ✅ **Phát hiện + sửa lỗi thật**: `POST /{leave_id}/npbb-borrow-confirm` (nút "Tiếp tục" ở popup
+      cảnh báo hạn mức) KHÔNG kiểm tra đơn có đang bị 1 đơn điều chỉnh (chưa duyệt xong) trỏ tới hay
+      không — nếu gọi vào lúc đó, `borrow_next_year_days` vẫn ghi được vào DB nhưng dòng này đã bị
+      `_NO_ACTIVE_ADJ_SQL` loại khỏi MỌI câu tính "đã dùng" (`_calc_used_days`/`_calc_used_days_bulk`)
+      trong lúc đơn điều chỉnh còn hiệu lực — API trả về 200 "thành công" nhưng thực chất không có tác
+      dụng gì, cảnh báo cũ vẫn hiện y nguyên ở lần mở trang sau, y hệt vòng lặp không lối ra
+    + ✅ Thêm chặn 409 đúng theo mẫu chặn sẵn có ở `npbb_adjust_leave` khi phát hiện đơn đang có đơn
+      điều chỉnh còn hiệu lực, kèm hướng dẫn rõ ("chờ đơn điều chỉnh được duyệt hoặc bị từ chối/rút
+      trước"). Đồng thời sửa `GET /npbb-quota-warning` loại trừ luôn những đơn này khỏi danh sách cảnh
+      báo — đơn đang có điều chỉnh dở dang thì "Tiếp tục" chắc chắn bị chặn, hiện cảnh báo cho đơn đó
+      chỉ gây rối chứ không giúp làm được gì
+    + Rà soát thêm các điểm nối khác — xác nhận không có vấn đề: trạng thái "đã ứng" (`borrow_next_year_days`)
+      tự động hết tác dụng đúng lúc đơn bị hủy/rút (không cần dọn tay); tạo đơn điều chỉnh mới không hề
+      đọc/copy số ngày đã ứng của đơn gốc (luôn tính lại từ đầu, không rủi ro dữ liệu ứng cũ sót lại)
+    + Nêu thêm 1 điểm CÓ TỪ TRƯỚC (không thuộc phạm vi các đợt sửa gần đây, không sửa ngay): 2 trigger
+      tự động chấm công chỉ CHÈN dữ liệu vào `attendances`, chưa có trigger nào tự XOÁ/CẬP NHẬT khi đơn
+      gốc NPBB bị hủy do đơn điều chỉnh khác ngày duyệt xong — những ngày chỉ có ở đơn gốc mà không có
+      ở đơn điều chỉnh sẽ để lại dòng `attendances` sai, phạm vi cán bộ Phòng Kế toán (ACCT). Báo lại
+      nếu muốn xử lý riêng.
+    + Verify thật qua TestClient (kịch bản giả lập riêng, không đụng dữ liệu thật): tạo đơn NPBB gốc
+      giả có hạn mức thấp → cảnh báo hiện đúng; tạo đơn điều chỉnh thật (còn `pending_ksv`) → cảnh báo
+      cho đơn gốc biến mất đúng, gọi thẳng borrow-confirm vào đơn gốc lúc này → đúng bị chặn 409, không
+      ghi giá trị nào. Chạy lại toàn bộ kịch bản test trước đó (điều chỉnh lặp 5 lần, cảnh báo hạn mức
+      đủ nhánh) — vẫn pass đủ sau khi thêm chặn mới. 158 test liên quan pass đủ, dọn sạch dữ liệu test.
+
+- 07/09/2026 Nghỉ phép - **Báo cáo NPBB Mẫu 18/19: điền đúng cột Ngày sinh/Giới tính từ hồ sơ cán bộ**
+    + 2 cột "Ngày sinh"/"Giới tính" có sẵn trong template Word (Mẫu 18 điều chỉnh, Mẫu 19 đăng ký gửi
+      TCNS) nhưng `export_npbb_batch` trước nay luôn ghi đè bằng chuỗi rỗng — 2 cột này lúc nào cũng
+      trống trên file xuất ra, dù dữ liệu có sẵn ở module Quản lý nhân sự
+    + ✅ Lấy đúng `dob`/`gender` từ bảng `hr_profiles` (module Quản lý nhân sự → Hồ sơ cán bộ, khớp
+      1-1 theo `staff_id`) qua LEFT JOIN — định dạng ngày `dd/mm/yyyy`, giới tính dịch tiếng Việt
+      (nam→Nam, nu→Nữ, khac→Khác, khớp đúng `GIOI_TINH` bên `hr_service.py`). Cán bộ CHƯA khai hồ sơ
+      thì 2 cột vẫn để trống như trước — không lỗi, không hiện giá trị sai
+    + Verify thật qua TestClient: gán tạm hồ sơ mẫu (giới tính Nam, sinh 20/05/1990) cho 1 cán bộ đang
+      có đơn NPBB thật năm 2026, xuất Mẫu 19 thật, đọc lại file .docx trả về — đúng "20/05/1990"/"Nam"
+      ở đúng cột của đúng dòng; cán bộ khác chưa có hồ sơ vẫn trống đúng như cũ. Dọn sạch dữ liệu test.
+      158 test liên quan nghỉ phép/chấm công/nhân sự pass đủ.
+
+- 07/09/2026 Nghỉ phép - **Cảnh báo hạn mức không đủ cho NPBB đã đăng ký, cho phép ứng phần thiếu sang năm sau**
+    + Đơn NPBB (nghỉ phép bắt buộc) lúc tạo KHÔNG kiểm tra hạn mức còn lại (miễn hoàn toàn, chỉ bắt
+      buộc ≥5 ngày làm việc) — nếu đăng ký NPBB xong, sau đó dùng bớt hạn mức năm đó qua các đơn KHÁC,
+      hạn mức còn lại có thể tụt xuống dưới mức tối thiểu 5 ngày mà hệ thống không hề báo cho người
+      dùng biết, tới lúc nghỉ mới lộ ra vấn đề
+    + ✅ Thêm cảnh báo mới: `GET /api/leaves/npbb-quota-warning` — với đơn NPBB ĐÃ DUYỆT, CHƯA tới
+      ngày nghỉ, nếu hạn mức phép còn lại của năm đó (tính tới hiện tại) đã dưới 5 ngày, hiện popup
+      "Số lượng ngày nghỉ phép còn lại là X ngày, không đủ hạn mức để nghỉ phép bắt buộc năm Y. Bạn
+      có muốn tiếp tục nghỉ phép bắt buộc năm Y hay không?" — hiện lại mỗi lần mở trang trong khi điều
+      kiện còn đúng (giống cơ chế nhắc đơn quá hạn duyệt sẵn có), không phải cảnh báo 1 lần/năm vì hạn
+      mức có thể đổi qua lại
+    + ✅ 2 lựa chọn trong popup: **"Hủy đơn NPBB"** — mở đúng chi tiết đơn đó, dùng lại nguyên nút "Rút
+      đơn" có sẵn (cùng quy trình cần Phòng Tổng hợp xác nhận, không có gì mới); **"Tiếp tục"** — gọi
+      `POST /{leave_id}/npbb-borrow-confirm`: dùng nốt phần hạn mức năm nay còn thật sự trống cho đơn
+      NPBB này (không tính chính nó), phần còn thiếu **ứng thật** sang hạn mức năm sau (tái dùng đúng
+      cơ chế `borrow_next_year_days` sẵn có của tính năng "ứng phép năm sau", tính NGƯỢC lại trên đơn
+      đã tồn tại thay vì lúc tạo mới) — chặn cứng 400 nếu năm sau CŨNG không đủ chỗ ứng, yêu cầu hủy
+      đơn thay vì tiếp tục
+    + Verify thật qua TestClient + DB thật (không đoán): đơn NPBB thật đang có của 1 GDV Phòng Swift
+      (hạn mức còn 4/12 ngày do 1 đơn phép năm khác dùng bớt) — cảnh báo tự nhiên hiện đúng, xác nhận
+      hành vi hoạt động ngay với dữ liệu thật hiện có. Dựng thêm kịch bản giả lập riêng (năm 2030/2031,
+      không đụng dữ liệu thật): tiếp tục khi năm sau còn chỗ → ứng đúng số ngày thiếu, `_calc_used_days`
+      2 năm phản ánh đúng; gọi lại xác nhận lần 2 khi tình trạng không đổi → không lỗi, không đổi số;
+      lấp gần hết hạn mức năm sau rồi tiếp tục lại → bị chặn đúng 400, cảnh báo vẫn tiếp tục hiện. Dọn
+      sạch dữ liệu test, xác nhận đơn NPBB thật không hề bị đụng tới. 105 test liên quan pass đủ.
+      Sửa 1 lỗi tự phát hiện lúc test: `ref_date` truyền vào `compute_carry_over` ban đầu dùng "hôm
+      nay" thay vì đúng ngày bắt đầu nghỉ của đơn (khác quy ước `_check_quota_or_borrow` đang dùng) —
+      sai lệch chỉ lộ ra với đơn xa hơn 1 năm trong tương lai, đã sửa khớp đúng quy ước chung.
+
+- 07/09/2026 Chấm công - **Chuẩn hoá ký hiệu chấm công tự động theo đúng bảng mã hệ IPCAS thật**
+    + Đối chiếu ảnh chụp màn hình gốc IPCAS ("Check in employees monthly for Department") do người
+      dùng cung cấp: 3 ký hiệu 2 trigger tự động chấm công (`trg_leave_*_sync_attendance`) đang suy
+      đoán SAI so với bảng mã thật, và 1 loại nghỉ chưa có ký hiệu riêng
+    + ✅ `bao_hiem` (nghỉ ốm hưởng BHXH) trước map 'T' (trùng thai sản) → đổi 'S' (Nghỉ ốm dài ngày —
+      IPCAS chỉ có 1 ký hiệu ốm duy nhất, không tách ngắn/dài ngày)
+    + ✅ `sick` trước map 'O' (IPCAS không có ký hiệu này) → đổi 'S', dùng chung với `bao_hiem`
+    + ✅ `hop_cong_tac` trước map 'CT' (ký hiệu tự đặt) → đổi 'B' ("Đi công tác" — đúng ký hiệu IPCAS)
+    + ✅ `khong_luong` trước KHÔNG có nhánh riêng, rơi vào ELSE 'P' (lẫn với nghỉ phép có lương) →
+      thêm nhánh riêng map 'N' (IPCAS có sẵn "Nghỉ không lương")
+    + ✅ `other` (Khác): map theo đúng cờ "Trừ vào hạn mức phép năm" (đợt sửa trước) — tắt cờ → 'K'
+      (Nghỉ khác), bật cờ (mặc định) → 'P', giữ đúng hành vi cũ cho dữ liệu sẵn có
+    + Thêm ký hiệu 'B'/'N'/'K' còn thiếu vào `attendance_symbols`; vô hiệu hoá (không xoá) 'CT'/'O'
+      vì không có trong bảng mã chuẩn — tránh chọn nhầm khi ghi công thủ công. Đồng bộ luôn ký hiệu
+      "Họp/Công tác" ở báo cáo chấm công tháng dạng TCNS riêng (`_ATTENDANCE_SYMBOL`) từ 'CT' sang 'B'
+    + Verify: bảng `attendances` đang hoàn toàn rỗng lúc sửa (không có rủi ro dữ liệu lịch sử sai
+      lệch); test trực tiếp qua DB thật cho cả 5 trường hợp thay đổi (tạo đơn duyệt thẳng cho cán bộ
+      Phòng Kế toán, dọn sạch sau khi xong) — đúng ký hiệu mới ở mọi trường hợp; 105 test liên quan
+      nghỉ phép/chấm công pass đủ (có 1 test cũ khẳng định ký hiệu 'O' cho "sick" — cập nhật theo
+      chuẩn mới)
+
 - 06/09/2026 Nghỉ phép - **Rà soát toàn bộ đợt sửa "Khác"/điều chỉnh NPBB — sửa 2 lỗi hiện chữ hướng dẫn sai loại nghỉ**
     + Giao agent rà soát riêng toàn bộ code mới của 2 đợt trước (loại "Khác" tự chọn tính hạn mức,
       chặn điều chỉnh NPBB xếp chuỗi) — xác nhận toàn bộ 5 câu SQL + các điểm chặn/khôi phục đơn gốc
