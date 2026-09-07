@@ -562,6 +562,62 @@ async def leaves_page(open_id: Optional[int] = None):
             ui.button("Đã biết", on_click=_op_dp.close).classes("bg-red-700 text-white mt-4 w-full")
     ui.timer(0.9, _check_overdue_pending_notice, once=True)
 
+    # ── Popup cảnh báo NPBB (nghỉ phép bắt buộc) đã duyệt, chưa tới ngày nghỉ,
+    # nhưng hạn mức phép năm đó đã tụt xuống dưới 5 ngày do các đơn KHÁC dùng
+    # bớt SAU khi đã đăng ký NPBB. Hiện lại mỗi lần mở trang trong khi điều
+    # kiện còn đúng (giống overdue-pending-notice) — hạn mức có thể đổi qua
+    # lại nên không đánh dấu "đã xem" 1 lần/năm. 2 lựa chọn: hủy đơn NPBB
+    # (mở đúng chi tiết đơn đó, dùng lại nút "Rút đơn" có sẵn — cùng quy trình
+    # cần Phòng Tổng hợp xác nhận) hoặc tiếp tục (ứng phần thiếu sang hạn mức
+    # năm sau, xem /npbb-borrow-confirm).
+    async def _check_npbb_quota_warning():
+        try:
+            res = await asyncio.to_thread(api.get, "/api/leaves/npbb-quota-warning")
+        except Exception:
+            return
+        if not isinstance(res, dict) or not res.get("show"):
+            return
+        for it in (res.get("items") or []):
+            _year = it["year"]
+            _remaining = it["remaining"]
+            _lid = it["id"]
+            with ui.dialog(value=True) as _nq_dp, ui.card().classes("p-6 max-w-lg"):
+                ui.label("⚠️ Hạn mức không đủ cho nghỉ phép bắt buộc").classes(
+                    "text-lg font-bold text-red-900 mb-3")
+                ui.label(
+                    f"Số lượng ngày nghỉ phép còn lại là {_remaining:.0f} ngày, không đủ hạn mức "
+                    f"để nghỉ phép bắt buộc năm {_year}."
+                ).classes("text-sm text-gray-700 leading-relaxed")
+                ui.label(f"Bạn có muốn tiếp tục nghỉ phép bắt buộc năm {_year} hay không?").classes(
+                    "text-sm text-gray-800 font-medium mt-2")
+
+                async def _huy(l=_lid, dp=_nq_dp):
+                    dp.close()
+                    _lv = next((x for x in my_leaves if x.get("id") == l), None)
+                    if not _lv:
+                        try:
+                            _lv = await asyncio.to_thread(api.get, f"/api/leaves/{l}")
+                        except Exception as e:
+                            _handle_api_error(e)
+                            return
+                    await open_detail(_lv)
+
+                async def _tiep_tuc(l=_lid, dp=_nq_dp, y=_year):
+                    try:
+                        await asyncio.to_thread(api.post, f"/api/leaves/{l}/npbb-borrow-confirm", {})
+                    except Exception as e:
+                        _handle_api_error(e)
+                        return
+                    dp.close()
+                    ui.notify(f"Đã ứng phần hạn mức còn thiếu sang năm {y + 1} — đơn NPBB giữ nguyên",
+                             type="positive")
+
+                with ui.row().classes("w-full gap-2 mt-4"):
+                    ui.button("Hủy đơn NPBB", on_click=_huy).classes("bg-gray-200 text-gray-700 flex-1")
+                    ui.button(f"Tiếp tục NPBB năm {_year}", on_click=_tiep_tuc).classes(
+                        "bg-orange-600 text-white flex-1")
+    ui.timer(1.0, _check_npbb_quota_warning, once=True)
+
 
 
     can_all        = (user_role in ("admin", "giam_doc", "pho_giam_doc")

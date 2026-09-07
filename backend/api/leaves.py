@@ -78,6 +78,7 @@ ACTION_LABELS = {
     "npbb_adjust":    ("Điều chỉnh ngày NPBB", "orange"),
     "npbb_adjusted_cancel": ("Đơn gốc bị thay bởi đơn điều chỉnh", "grey"),
     "npbb_adjustment_recalled": ("Đơn gốc được khôi phục do đơn điều chỉnh bị rút/hủy", "grey"),
+    "npbb_borrow_confirm": ("Xác nhận ứng hạn mức năm sau để tiếp tục NPBB", "orange"),
     "cancel":         ("Hủy đơn",            "grey"),
     "direct_create":  ("Khai báo hộ",        "purple"),
     "recall_request": ("Yêu cầu rút đơn",    "orange"),
@@ -997,6 +998,112 @@ def npbb_adjust_leave(
     return _leave_to_out(new_leave_id, db)
 
 
+@router.post("/{leave_id}/npbb-borrow-confirm")
+def confirm_npbb_borrow(
+    leave_id: int,
+    db: sqlite3.Connection = Depends(get_db),
+    current: dict = Depends(get_current_staff),
+):
+    """Người dùng chọn "Tiếp tục nghỉ phép bắt buộc" ở popup cảnh báo hạn mức
+    (xem npbb-quota-warning) thay vì hủy đơn — NPBB đã duyệt từ trước, nhưng
+    hạn mức năm đó tụt xuống dưới 5 ngày do các đơn KHÁC dùng bớt SAU khi đã
+    đăng ký NPBB (lúc tạo NPBB không kiểm tra hạn mức, xem _check_quota_or_borrow).
+
+    Áp dụng lại đúng cơ chế "ứng phép năm sau" đã có (borrow_next_year_days) —
+    NHƯNG tính NGƯỢC trên 1 đơn NPBB đã tồn tại thay vì lúc tạo mới: dùng nốt
+    phần hạn mức năm nay còn thực sự trống cho đơn này (không tính chính nó),
+    phần còn thiếu ứng sang hạn mức năm sau — chặn cứng nếu năm sau cũng
+    không đủ chỗ ứng (phải hủy đơn NPBB thay vì tiếp tục)."""
+    leave = db.execute("SELECT * FROM leave_records WHERE id=?", (leave_id,)).fetchone()
+    if not leave:
+        raise HTTPException(404, "Không tìm thấy đơn nghỉ phép")
+    if leave["staff_id"] != current["id"] and current["role"] != "admin":
+        raise HTTPException(403, "Chỉ chủ nhân đơn hoặc Admin mới thao tác được")
+    if leave["leave_type"] != "bat_buoc" or leave["status"] != LeaveStatus.APPROVED:
+        raise HTTPException(400, "Chỉ áp dụng cho đơn nghỉ phép bắt buộc đã duyệt")
+    # Đơn đang có đơn điều chỉnh còn hiệu lực (chưa duyệt xong hẳn) — _NO_ACTIVE_ADJ_SQL
+    # khiến MỌI _calc_used_days/_calc_used_days_bulk bỏ qua hẳn dòng này, nên
+    # borrow_next_year_days ghi vào lúc này sẽ KHÔNG có tác dụng gì (không tính
+    # vào năm nào cả) dù API trả về 200 — người dùng tưởng đã xử lý xong nhưng
+    # cảnh báo vẫn hiện lại y nguyên ở lần tải trang sau, y hệt vòng lặp không
+    # lối ra. Chặn hẳn, hướng dẫn chờ đơn điều chỉnh xử lý xong trước (khớp
+    # đúng chặn đã có ở npbb_adjust_leave khi tạo đơn điều chỉnh mới).
+    _active_adj = db.execute(
+        """SELECT id FROM leave_records WHERE adjusts_leave_id=?
+           AND status NOT IN ('rejected','cancelled') LIMIT 1""",
+        (leave_id,),
+    ).fetchone()
+    if _active_adj:
+        raise HTTPException(
+            409,
+            "Đơn này đang có đơn điều chỉnh chưa xử lý xong — vui lòng chờ đơn "
+            "điều chỉnh được duyệt hoặc bị từ chối/rút trước khi xác nhận ứng hạn mức.",
+        )
+
+    start = date.fromisoformat(leave["start_date"])
+    end   = date.fromisoformat(leave["end_date"])
+    year  = start.year
+    if leave["spread_dates"]:
+        leave_days = len(json.loads(leave["spread_dates"]))
+    else:
+        _lich = _load_lich(db, start, end)
+        leave_days = _period_days(start, end, _lich, leave["leave_type"])
+
+    staff = db.execute(
+        "SELECT join_industry_date FROM user_tttt WHERE id=?", (leave["staff_id"],)
+    ).fetchone()
+    carry_eff = compute_carry_over(leave["staff_id"], year, db, effective=True, ref_date=start)
+    q_row = db.execute(
+        "SELECT quota_days FROM leave_quotas WHERE staff_id=? AND year=?",
+        (leave["staff_id"], year),
+    ).fetchone()
+    quota = (float(q_row["quota_days"]) if q_row
+             else float(compute_annual_leave(staff["join_industry_date"], year)))
+    # exclude_id=leave_id: đo hạn mức "nếu đơn NPBB này không tồn tại" — tránh
+    # tự trừ trùng chính nó (nó đã có sẵn trong tổng "đã dùng" của năm gốc).
+    used_excl = _calc_used_days(leave["staff_id"], year, db, exclude_id=leave_id, include_pending=True)
+    remaining_excl = quota + carry_eff - used_excl
+
+    if leave_days <= remaining_excl:
+        # Hạn mức đã đủ trở lại (vd người khác vừa hủy bớt đơn khác) — không
+        # cần ứng, dọn borrow cũ (nếu có từ lần xác nhận trước) về 0.
+        if leave["borrow_next_year_days"]:
+            db.execute(
+                "UPDATE leave_records SET borrow_next_year_days=0, updated_at=? WHERE id=?",
+                (str(_vn_now()), leave_id),
+            )
+            _log_action(db, leave_id, current["id"], "npbb_borrow_confirm", None,
+                       leave["status"], leave["status"])
+            db.commit()
+        return _leave_to_out(leave_id, db)
+
+    overflow = leave_days - max(0.0, remaining_excl)
+    next_year = year + 1
+    q_next = db.execute(
+        "SELECT quota_days FROM leave_quotas WHERE staff_id=? AND year=?",
+        (leave["staff_id"], next_year),
+    ).fetchone()
+    next_quota = (float(q_next["quota_days"]) if q_next
+                  else float(compute_annual_leave(staff["join_industry_date"], next_year)))
+    next_used = _calc_used_days(leave["staff_id"], next_year, db, exclude_id=leave_id, include_pending=True)
+    next_remaining = next_quota - next_used
+    if overflow > next_remaining:
+        raise HTTPException(
+            400,
+            f"Hạn mức phép năm {next_year} cũng không đủ để ứng thêm "
+            f"{overflow:.0f} ngày còn thiếu — vui lòng hủy đơn nghỉ phép bắt buộc "
+            "thay vì tiếp tục.",
+        )
+    db.execute(
+        "UPDATE leave_records SET borrow_next_year_days=?, updated_at=? WHERE id=?",
+        (overflow, str(_vn_now()), leave_id),
+    )
+    _log_action(db, leave_id, current["id"], "npbb_borrow_confirm", None,
+               leave["status"], leave["status"])
+    db.commit()
+    return _leave_to_out(leave_id, db)
+
+
 @router.get("/")
 def list_leaves(
     scope: str = "mine",
@@ -1507,6 +1614,52 @@ def get_overdue_pending_notice(
             "date_label": date_label,
             "level": _OVERDUE_PENDING_LEVEL_VN.get(r["status"], r["status"]),
         })
+    return {"show": bool(items), "items": items}
+
+
+@router.get("/npbb-quota-warning")
+def get_npbb_quota_warning(
+    db: sqlite3.Connection = Depends(get_db),
+    current: dict = Depends(get_current_staff),
+):
+    """NPBB đã duyệt, CHƯA tới ngày nghỉ, nhưng hạn mức phép năm đó (tính đến
+    hiện tại — sau khi các đơn KHÁC dùng bớt kể từ lúc đăng ký NPBB) đã tụt
+    xuống dưới 5 ngày (mức tối thiểu bắt buộc của NPBB) — nhắc người dùng chọn
+    hủy đơn NPBB hay tiếp tục (ứng phần thiếu sang hạn mức năm sau, xem
+    /{leave_id}/npbb-borrow-confirm). Hiện lại mỗi lần mở trang trong khi điều
+    kiện còn đúng — hạn mức có thể đổi qua lại (đủ lại nếu hủy bớt đơn khác,
+    hoặc thiếu thêm nếu dùng thêm) nên không đánh dấu "đã xem" 1 lần/năm như
+    carryover-notice.
+
+    Loại trừ đơn đang có đơn điều chỉnh còn hiệu lực (chưa duyệt xong hẳn) —
+    "Tiếp tục" (npbb-borrow-confirm) chặn hẳn với đơn này (xem chặn tương ứng
+    ở đó), hiện cảnh báo cho 1 đơn sắp bị thay/hủy bởi đơn điều chỉnh của
+    chính nó chỉ gây rối, không giúp người dùng làm được gì thêm."""
+    today = _vn_now().date()
+    rows = db.execute(
+        f"""SELECT id, start_date FROM leave_records
+           WHERE staff_id=? AND leave_type='bat_buoc' AND status='approved'
+             AND start_date >= ?
+             {_NO_ACTIVE_ADJ_SQL}""",
+        (current["id"], today.isoformat()),
+    ).fetchall()
+    items = []
+    for r in rows:
+        _start = date.fromisoformat(r["start_date"])
+        year = _start.year
+        # ref_date=ngày BẮT ĐẦU NGHỈ (khớp _check_quota_or_borrow), không phải
+        # "hôm nay" — hạn "hết hiệu lực sau 31/03" tính theo ngày nghỉ thật.
+        carry = compute_carry_over(current["id"], year, db, effective=True, ref_date=_start)
+        q_row = db.execute(
+            "SELECT quota_days FROM leave_quotas WHERE staff_id=? AND year=?",
+            (current["id"], year),
+        ).fetchone()
+        quota = (float(q_row["quota_days"]) if q_row
+                 else float(compute_annual_leave(current.get("join_industry_date"), year)))
+        used = _calc_used_days(current["id"], year, db, include_pending=True)
+        remaining = quota + carry - used
+        if remaining < 5:
+            items.append({"id": r["id"], "year": year, "remaining": remaining})
     return {"show": bool(items), "items": items}
 
 
