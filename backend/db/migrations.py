@@ -1598,6 +1598,122 @@ def _ensure_indexes():
         # 0 = không tính — ghi nhận ngày nghỉ như các loại miễn quota sẵn có
         # (_NO_QUOTA_TYPES). Xem _check_quota_or_borrow trong backend/api/leaves.py.
         "ALTER TABLE leave_records ADD COLUMN other_deduct_quota INTEGER DEFAULT 1",
+
+        # ── Chuẩn hoá ký hiệu chấm công theo đúng bảng mã hệ IPCAS thật — 2026-09-07
+        # ────────────────────────────────────────────────────────────────────────
+        # Người dùng đối chiếu ảnh chụp màn hình gốc IPCAS ("Check in employees
+        # monthly for Department") — bảng mã chuẩn của ngân hàng KHÔNG trùng với
+        # suy đoán trước đó của 2 trigger sync attendances:
+        #   - "bao_hiem" (nghỉ ốm hưởng BHXH) trước map 'T' (trùng thai sản, SAI
+        #     bản chất) → đổi sang 'S' (Nghỉ ốm dài ngày — ký hiệu ốm duy nhất
+        #     IPCAS có, không có ký hiệu ốm ngắn ngày riêng).
+        #   - "sick" trước map 'O' ("Nghỉ ốm") → IPCAS không có ký hiệu 'O' nào cả
+        #     → đổi sang 'S' luôn, cùng nhóm với "bao_hiem" ở trên.
+        #   - "hop_cong_tac" trước map 'CT' (ký hiệu tự đặt, không có trong bảng mã
+        #     IPCAS thật) → đổi sang 'B' ("Đi công tác" — đúng ký hiệu IPCAS).
+        #   - "khong_luong" trước KHÔNG có nhánh riêng, rơi vào ELSE 'P' (SAI —
+        #     "Nghỉ không lương" lẫn vào "Nghỉ phép" có lương) → thêm nhánh riêng
+        #     map 'N' (IPCAS có sẵn ký hiệu này đúng cho "Nghỉ không lương").
+        #   - "other" (Khác): từ khi có other_deduct_quota (xem migration ngay
+        #     trên), loại "Khác" có 2 kiểu — có tính hạn mức (xử sự như phép năm)
+        #     hoặc không. Map theo đúng bản chất: other_deduct_quota=0 → 'K'
+        #     (Nghỉ khác), ngược lại (mặc định 1) → 'P' (Nghỉ phép), giữ đúng hành
+        #     vi cũ cho dữ liệu đã có.
+        # attendances hiện đang HOÀN TOÀN RỖNG (xác nhận trước khi viết migration
+        # này) nên không có rủi ro dữ liệu lịch sử sai lệch — sửa thẳng CASE, không
+        # cần script backfill riêng. Thêm ký hiệu 'B'/'N'/'K' còn thiếu vào
+        # attendance_symbols, đồng thời VÔ HIỆU HOÁ (không xoá, giữ audit trail cũ
+        # nếu có) 'CT' và 'O' vì 2 mã này không có trong bảng chuẩn IPCAS, tránh
+        # người dùng chọn nhầm khi ghi công thủ công (put_day/review_adjustment
+        # đều lọc theo is_active=1).
+        """INSERT OR IGNORE INTO attendance_symbols (symbol, description, work_value, color, is_active) VALUES
+            ('B', 'Đi công tác',      1.0, '#BFDBFE', 1),
+            ('N', 'Nghỉ không lương', 0.0, '#FDBA74', 1),
+            ('K', 'Nghỉ khác',        0.0, '#D8B4FE', 1)""",
+        "UPDATE attendance_symbols SET is_active = 0 WHERE symbol IN ('CT', 'O')",
+
+        "DROP TRIGGER IF EXISTS trg_leave_approved_sync_attendance",
+        """CREATE TRIGGER IF NOT EXISTS trg_leave_approved_sync_attendance
+            AFTER UPDATE OF status ON leave_records
+            WHEN NEW.status = 'approved' AND OLD.status != 'approved'
+                 AND NOT (NEW.leave_type = 'bat_buoc' AND NEW.reason IS NOT NULL
+                          AND (NEW.reason LIKE '[Import]%' OR NEW.reason LIKE '[Điều chỉnh]%'))
+                 AND EXISTS (SELECT 1 FROM user_tttt u JOIN departments d ON d.id = u.department_id
+                             WHERE u.id = NEW.staff_id AND d.code = 'ACCT' AND u.is_active = 1)
+            BEGIN
+                INSERT INTO attendances (staff_id, date, symbol, work_value, status, source_leave_id, created_at, updated_at)
+                WITH RECURSIVE d(day) AS (
+                    SELECT NEW.start_date
+                    UNION ALL
+                    SELECT date(day, '+1 day') FROM d WHERE day < NEW.end_date
+                )
+                SELECT NEW.staff_id, day,
+                       CASE NEW.leave_type WHEN 'thai_san' THEN 'T' WHEN 'bao_hiem' THEN 'S'
+                            WHEN 'sick' THEN 'S' WHEN 'hop_cong_tac' THEN 'B' WHEN 'khong_luong' THEN 'N'
+                            WHEN 'other' THEN (CASE WHEN NEW.other_deduct_quota = 0 THEN 'K' ELSE 'P' END)
+                            ELSE 'P' END,
+                       (SELECT work_value FROM attendance_symbols WHERE symbol =
+                           CASE NEW.leave_type WHEN 'thai_san' THEN 'T' WHEN 'bao_hiem' THEN 'S'
+                                WHEN 'sick' THEN 'S' WHEN 'hop_cong_tac' THEN 'B' WHEN 'khong_luong' THEN 'N'
+                                WHEN 'other' THEN (CASE WHEN NEW.other_deduct_quota = 0 THEN 'K' ELSE 'P' END)
+                                ELSE 'P' END),
+                       'auto', NEW.id, datetime('now','+7 hours'), datetime('now','+7 hours')
+                FROM d
+                WHERE (
+                    (NEW.spread_dates IS NOT NULL AND day IN (SELECT value FROM json_each(NEW.spread_dates)))
+                    OR
+                    (NEW.spread_dates IS NULL AND strftime('%w', day) NOT IN ('0','6')
+                         AND day NOT IN (SELECT date FROM public_holidays))
+                )
+                ON CONFLICT(staff_id, date) DO UPDATE SET
+                    symbol = excluded.symbol,
+                    work_value = excluded.work_value,
+                    status = 'auto',
+                    source_leave_id = excluded.source_leave_id,
+                    updated_at = datetime('now','+7 hours')
+                WHERE attendances.status = 'auto';
+            END""",
+        "DROP TRIGGER IF EXISTS trg_leave_direct_insert_sync_attendance",
+        """CREATE TRIGGER IF NOT EXISTS trg_leave_direct_insert_sync_attendance
+            AFTER INSERT ON leave_records
+            WHEN NEW.status = 'approved'
+                 AND NOT (NEW.leave_type = 'bat_buoc' AND NEW.reason IS NOT NULL
+                          AND (NEW.reason LIKE '[Import]%' OR NEW.reason LIKE '[Điều chỉnh]%'))
+                 AND EXISTS (SELECT 1 FROM user_tttt u JOIN departments d ON d.id = u.department_id
+                             WHERE u.id = NEW.staff_id AND d.code = 'ACCT' AND u.is_active = 1)
+            BEGIN
+                INSERT INTO attendances (staff_id, date, symbol, work_value, status, source_leave_id, created_at, updated_at)
+                WITH RECURSIVE d(day) AS (
+                    SELECT NEW.start_date
+                    UNION ALL
+                    SELECT date(day, '+1 day') FROM d WHERE day < NEW.end_date
+                )
+                SELECT NEW.staff_id, day,
+                       CASE NEW.leave_type WHEN 'thai_san' THEN 'T' WHEN 'bao_hiem' THEN 'S'
+                            WHEN 'sick' THEN 'S' WHEN 'hop_cong_tac' THEN 'B' WHEN 'khong_luong' THEN 'N'
+                            WHEN 'other' THEN (CASE WHEN NEW.other_deduct_quota = 0 THEN 'K' ELSE 'P' END)
+                            ELSE 'P' END,
+                       (SELECT work_value FROM attendance_symbols WHERE symbol =
+                           CASE NEW.leave_type WHEN 'thai_san' THEN 'T' WHEN 'bao_hiem' THEN 'S'
+                                WHEN 'sick' THEN 'S' WHEN 'hop_cong_tac' THEN 'B' WHEN 'khong_luong' THEN 'N'
+                                WHEN 'other' THEN (CASE WHEN NEW.other_deduct_quota = 0 THEN 'K' ELSE 'P' END)
+                                ELSE 'P' END),
+                       'auto', NEW.id, datetime('now','+7 hours'), datetime('now','+7 hours')
+                FROM d
+                WHERE (
+                    (NEW.spread_dates IS NOT NULL AND day IN (SELECT value FROM json_each(NEW.spread_dates)))
+                    OR
+                    (NEW.spread_dates IS NULL AND strftime('%w', day) NOT IN ('0','6')
+                         AND day NOT IN (SELECT date FROM public_holidays))
+                )
+                ON CONFLICT(staff_id, date) DO UPDATE SET
+                    symbol = excluded.symbol,
+                    work_value = excluded.work_value,
+                    status = 'auto',
+                    source_leave_id = excluded.source_leave_id,
+                    updated_at = datetime('now','+7 hours')
+                WHERE attendances.status = 'auto';
+            END""",
     ]
     _mig_log = logging.getLogger(__name__)
 

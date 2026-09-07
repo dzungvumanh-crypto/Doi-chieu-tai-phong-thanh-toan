@@ -3869,12 +3869,13 @@ def _build_attendance_month_sheet(ws, db: sqlite3.Connection, year: int, month: 
     # ký hiệu riêng thì dùng chung "P". "hop_cong_tac" giờ là leave_type thật
     # (đi qua đúng luồng đơn nghỉ phép bình thường) nên tự điền được từ dữ liệu
     # thật, không còn phải để trống như trước khi loại này chưa tồn tại.
-    # "CT" (không phải "H") — bảng attendance_symbols có sẵn "H" = "Đi học"
+    # "B" (không phải "H") — bảng attendance_symbols có sẵn "H" = "Đi học"
     # (dùng bởi hệ chấm công thật của Phòng Kế toán, backend/db/migrations.py
     # ::trg_leave_*_sync_attendance) — dùng lại "H" ở đây cho "họp/công tác"
-    # sẽ đụng ký hiệu, hiểu sai bản chất khi đọc báo cáo. "CT" = "Công tác" đã
-    # có sẵn trong attendance_symbols (review PR #77, Người 1, 2026-09-06).
-    _ATTENDANCE_SYMBOL = {"bat_buoc": "BB", "hop_cong_tac": "CT"}
+    # sẽ đụng ký hiệu, hiểu sai bản chất khi đọc báo cáo. "B" = "Đi công tác"
+    # là ký hiệu chuẩn IPCAS thật (đối chiếu 2026-09-07, thay cho "CT" tự đặt
+    # trước đây — xem migration chuẩn hoá ký hiệu chấm công cùng ngày).
+    _ATTENDANCE_SYMBOL = {"bat_buoc": "BB", "hop_cong_tac": "B"}
 
     staff_ids = [s["id"] for s in staffs]
     leave_symbol_by_staff: dict[int, dict] = {sid: {} for sid in staff_ids}
