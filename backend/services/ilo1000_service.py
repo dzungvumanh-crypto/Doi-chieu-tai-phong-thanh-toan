@@ -9,6 +9,7 @@ Pattern giống ach_service.py:
 
 import os
 import shutil
+import sqlite3
 import threading
 import time
 import uuid
@@ -16,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from backend.core.uploads import safe_filename
-from backend.database import get_db
+from backend.database import DB_PATH
 from backend.services.ilo1000.pipeline import main_from_dir
 from backend.services.ilo1000.config import CLEANUP_TTL
 
@@ -103,7 +104,13 @@ def _run(job_id: str, input_dir: str, output_dir: str):
         with _lock:
             job['logs'].append(msg)
 
-    db = get_db()
+    # get_db() (backend/database.py) là generator function chỉ dùng đúng qua
+    # FastAPI Depends() — gọi trần trụi trả về generator object, không phải
+    # sqlite3.Connection, .execute() sẽ AttributeError ngay lần tra lịch nghỉ
+    # lễ đầu tiên (phát hiện qua phản biện 2026-09-08, xem card 121). Mở kết
+    # nối trần, đúng pattern backend/core/audit_queue.py.
+    db = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30)
+    db.row_factory = sqlite3.Row
     try:
         log(f'[JOB {job_id}] Bắt đầu xử lý ILO1000...')
         output_path = main_from_dir(

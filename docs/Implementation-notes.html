@@ -13956,9 +13956,23 @@ This may happen if you try to create UI from a background task.</pre>
         khoảng ngày trong batch, tra <code>tai_lich()</code> lùi 14 ngày trước ngày sớm nhất (đủ rộng
         cho Tết mà không phải đoán trước độ dài), rồi gọi lại lần 2 với lịch thật. Không tốn kém —
         <code>group_files_by_date()</code> không đọc nội dung GL02/EICP, chỉ đọc 2 dòng đầu CSV citad
-        để nhận dạng loại file. <code>ilo1000_service.py::_run()</code> tự mở
-        <code>get_db()</code>/đóng ở <code>finally</code>, theo đúng pattern
-        <code>attendance.py</code>.</p>
+        để nhận dạng loại file. <code>ilo1000_service.py::_run()</code> tự mở kết nối/đóng ở
+        <code>finally</code> — theo đúng pattern <code>backend/core/audit_queue.py</code>
+        (<code>sqlite3.connect(DB_PATH, ...)</code> trần trụi), <b>KHÔNG</b> qua
+        <code>backend.database.get_db()</code>.</p>
+
+      <div class="caution"><b>Lỗi thật đã dính, phát hiện qua phản biện độc lập (2026-09-08):</b>
+        bản đầu của thay đổi này viết <code>db = get_db()</code> — <code>get_db()</code> là
+        generator function CHỈ dùng đúng qua FastAPI <code>Depends(get_db)</code> (mọi nơi khác
+        trong repo, VD <code>attendance.py</code>, đều gọi qua <code>Depends</code>, không nơi nào
+        gọi trần trụi). Gọi trực tiếp trả về <b>generator object</b>, thân hàm (kể cả
+        <code>sqlite3.connect()</code>) chưa chạy — <code>tai_lich(db, ...)</code> gọi
+        <code>db.execute(...)</code> sẽ <code>AttributeError: 'generator' object has no attribute
+        'execute'</code> ngay lần chạy job thật đầu tiên. Test suite không bắt được: mọi test gọi
+        thẳng <code>main_from_dir(db=&lt;sqlite3.Connection thật&gt;)</code>, không có test nào
+        chạy qua <code>chay_job()</code>/<code>_run()</code> thật — nếu merge nguyên trạng, MỌI
+        job ILO1000 (không riêng batch có nghỉ lễ) sẽ lỗi ngay khi lên develop. Đã sửa: mở kết nối
+        trần đúng pattern <code>audit_queue.py</code>, không qua <code>get_db()</code>.</div>
 
       <div class="caution"><b>Bug tiềm ẩn phát hiện thêm — merge Core vào ngày đi làm lại trước đây
         VÔ TÁC DỤNG với sheet xuất ra:</b> <code>merge_monday_carryover()</code> gộp đúng đường dẫn
