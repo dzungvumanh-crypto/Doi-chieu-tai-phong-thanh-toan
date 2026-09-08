@@ -192,23 +192,46 @@ class TestHubTraceLeadingZero:
 
 class TestHubSmfSkipsVlookup:
     """
-    Người dùng xác nhận 2026-07-16: dòng Hub có "Số giao dịch" chứa 'SMF' (giao
-    dịch smart form) phải giữ nguyên Số Trace 1 gốc — KHÔNG chạy VLOOKUP qua
-    EICP, dù thuộc nhóm "Số giao dịch" chứa 'S' + không BFX (lẽ ra sẽ qua EICP).
-    Trước đây code chạy VLOOKUP cho cả cột không phân biệt SMF — không mong muốn.
+    Dòng Hub có "Số giao dịch" chứa 'SMF' (giao dịch smart form) không chạy
+    VLOOKUP qua EICP — build_eicp_maps() xác nhận không có entry EICP nào cho
+    SMF (tra lúc nào cũng rỗng), khớp đúng lý do nghiệp vụ ban đầu (2026-07-16).
+
+    SỬA 2026-09-07 (người chấm Việt phát hiện, dữ liệu thật batch 29/8-3/9):
+    quy tắc cũ "giữ nguyên Số Trace 1" SAI — Core REFERENCE khớp đúng "Số Trace
+    2" của SMF, không phải "Số Trace 1". Đối chiếu 1 dòng thật: REFERENCE
+    "1000API200192551", Số Trace 1 = "209326125" (không liên quan), Số Trace 2
+    = "200192551" (khớp đúng). Verify toàn batch: đổi SMF dùng Trace 2 giải
+    quyết đúng 155/156 dòng "chưa khớp" còn lại sau khi sửa Hub carryover,
+    không tạo lệch mới. SMF giờ xử lý giống nhóm không chứa 'S' — dùng thẳng
+    Số Trace 2 (rơi về Trace 1 nếu Trace 2 trống).
     """
 
-    def test_smf_keeps_raw_trace1_even_when_eicp_has_a_match(self):
+    def test_smf_uses_trace2_when_available(self):
+        """SMF có Số Trace 2 -> dùng Trace 2, không giữ Trace 1 (fix 2026-09-07)."""
+        df = pd.DataFrame([{
+            **_hub_row('SMF12345', 'STC_SMF', 'RAW_TRACE1_KHONG_DUOC_DUNG', 'Hoàn thành', '06/07/2026 09:00'),
+            'Số Trace 2': 'TRACE2_DUNG',
+        }])
+        eicp_maps = {'hub_to_core': {'SMF12345': 'TRACE_TU_EICP_KHONG_DUOC_DUNG'}}
+        hub_out, _ = process_hub(df, eicp_maps, 20260706)
+        assert hub_out['Trace'].iloc[0] == 'TRACE2_DUNG'
+
+    def test_smf_keeps_raw_trace1_when_trace2_missing(self):
+        """SMF KHÔNG có cột/giá trị Số Trace 2 -> vẫn giữ Trace 1, không crash,
+        không VLOOKUP qua EICP (hành vi trước 2026-09-07 khi thiếu Trace 2)."""
         df = pd.DataFrame([_hub_row('SMF12345', 'STC_SMF', 'RAW_TRACE_GIU_NGUYEN', 'Hoàn thành', '06/07/2026 09:00')])
         eicp_maps = {'hub_to_core': {'SMF12345': 'TRACE_TU_EICP_KHONG_DUOC_DUNG'}}
         hub_out, _ = process_hub(df, eicp_maps, 20260706)
         assert hub_out['Trace'].iloc[0] == 'RAW_TRACE_GIU_NGUYEN'
 
     def test_smf_case_insensitive(self):
-        df = pd.DataFrame([_hub_row('smfABCDE', 'STC_SMF2', 'RAW2', 'Hoàn thành', '06/07/2026 09:00')])
+        df = pd.DataFrame([{
+            **_hub_row('smfABCDE', 'STC_SMF2', 'RAW2', 'Hoàn thành', '06/07/2026 09:00'),
+            'Số Trace 2': 'TRACE2_ABCDE',
+        }])
         eicp_maps = {'hub_to_core': {'smfABCDE': 'SAI_KHONG_DUOC_DUNG'}}
         hub_out, _ = process_hub(df, eicp_maps, 20260706)
-        assert hub_out['Trace'].iloc[0] == 'RAW2'
+        assert hub_out['Trace'].iloc[0] == 'TRACE2_ABCDE'
 
     def test_non_smf_s_transaction_still_uses_eicp(self):
         """Không phải SMF thì vẫn qua EICP như bình thường — không ảnh hưởng logic cũ."""
@@ -1127,7 +1150,10 @@ class TestMondayCarryover:
         assert mon['eicp'] == [] and mon['core'] == [], "Không có gì để gộp → nhóm thứ 2 giữ nguyên rỗng"
         warn_logs = [l for l in logs if 'CẢNH BÁO' in l]
         assert warn_logs, "Phải log cảnh báo khi thiếu dữ liệu bù cuối tuần"
-        assert 'thứ 6' in warn_logs[0] and 'thứ 7' in warn_logs[0] and 'CN' in warn_logs[0]
+        # Định dạng log liệt kê ngày cụ thể (20260710/11/12) thay vì nhãn cố định
+        # "thứ 6/7/CN" — tổng quát cho cửa sổ dài bao nhiêu ngày cũng được (kỳ
+        # nghỉ lễ dài, không riêng cuối tuần), xem detect.carryover_window().
+        assert '20260710' in warn_logs[0] and '20260711' in warn_logs[0] and '20260712' in warn_logs[0]
 
     def test_non_monday_groups_untouched(self):
         """Ngày không phải thứ 2 (VD thứ 3) không bị áp dụng carryover."""
@@ -1141,6 +1167,192 @@ class TestMondayCarryover:
         }
         merge_monday_carryover(groups)
         assert groups['20260714']['eicp'] == [], "Thứ 3 không được gộp thêm gì"
+
+
+# ── Test: carryover_window() + lịch nghỉ lễ thật — kỳ nghỉ dài không phải cuối tuần ──
+# Phát hiện 2026-09-05 khi chấm chiều ĐI 29/8-3/9 (nghỉ bù Quốc khánh 2/9: nghỉ từ
+# 29/8 T7 đến hết 2/9 T4, đi làm lại 3/9 T5) — merge_monday_carryover() cũ chỉ lùi
+# cứng 3 ngày cho thứ 2, không xử lý được kỳ nghỉ 5 ngày này. Phải xử lý bằng script
+# tay ngoài pipeline; các test dưới đây tái hiện đúng kịch bản đó qua đường THẬT.
+
+class TestCarryoverWindowNghiLeDai:
+    def _lich(self, ngay_le):
+        from backend.services.lich_lam_viec import LichLamViec
+        return LichLamViec(ngay_le=frozenset(ngay_le), ngay_bu=frozenset())
+
+    def test_ngay_thuong_chi_lui_1_ngay(self):
+        """Thứ 3 — T-1 (thứ 2) là ngày làm việc → cửa sổ chỉ có 1 ngày, hệt cũ."""
+        from datetime import date
+        from backend.services.ilo1000.detect import carryover_window
+        from backend.services.lich_lam_viec import LICH_RONG
+
+        # 2026-07-14 = thứ 3
+        window = carryover_window(date(2026, 7, 14), LICH_RONG)
+        assert window == [date(2026, 7, 13)]
+
+    def test_thu_2_lui_ve_thu_6_het_cuoi_tuan(self):
+        """Thứ 2 — lùi qua CN, T7, dừng ở thứ 6 (ngày làm việc) — khớp hành vi cũ."""
+        from datetime import date
+        from backend.services.ilo1000.detect import carryover_window
+        from backend.services.lich_lam_viec import LICH_RONG
+
+        # 2026-07-13 = thứ 2
+        window = carryover_window(date(2026, 7, 13), LICH_RONG)
+        assert window == [date(2026, 7, 12), date(2026, 7, 11), date(2026, 7, 10)]
+
+    def test_nghi_bu_quoc_khanh_5_ngay(self):
+        """
+        29/8(T7)-2/9(T4) nghỉ bù Quốc khánh, đi làm lại 3/9(T5). Cửa sổ phải gồm
+        cả 5 ngày nghỉ (2/9,1/9,31/8,30/8,29/8) VÀ ngày làm việc gần nhất trước đó
+        (28/8, thứ 6 — phiên thật gần nhất, có cutoff carryover riêng vào 3/9).
+        """
+        from datetime import date
+        from backend.services.ilo1000.detect import carryover_window
+
+        lich = self._lich([date(2026, 8, 31), date(2026, 9, 1), date(2026, 9, 2)])
+        window = carryover_window(date(2026, 9, 3), lich)
+        assert window == [
+            date(2026, 9, 2), date(2026, 9, 1), date(2026, 8, 31),
+            date(2026, 8, 30), date(2026, 8, 29), date(2026, 8, 28),
+        ]
+
+    def test_nghi_le_giua_tuan_1_ngay_khong_dinh_cuoi_tuan(self):
+        """Nghỉ lễ đúng 1 ngày giữa tuần (thứ 4) — cửa sổ của thứ 5 phải gồm cả
+        thứ 4 (nghỉ) và thứ 3 (ngày làm việc gần nhất, cutoff riêng)."""
+        from datetime import date
+        from backend.services.ilo1000.detect import carryover_window
+
+        # 2026-07-15 = thứ 4
+        lich = self._lich([date(2026, 7, 15)])
+        window = carryover_window(date(2026, 7, 16), lich)
+        assert window == [date(2026, 7, 15), date(2026, 7, 14)]
+
+    def test_osb_carryover_days_theo_lich_nghi_le(self):
+        """_osb_carryover_days() phải dùng đúng lịch nghỉ lễ khi được truyền vào."""
+        from datetime import date
+        from backend.services.ilo1000.pipeline import _osb_carryover_days
+
+        lich = self._lich([date(2026, 8, 31), date(2026, 9, 1), date(2026, 9, 2)])
+        assert _osb_carryover_days(20260903, lich) == {
+            20260903, 20260902, 20260901, 20260831, 20260830, 20260829, 20260828,
+        }
+        # Không truyền lịch (mặc định LICH_RONG) — hành vi cũ, không biết nghỉ lễ
+        assert _osb_carryover_days(20260903) == {20260903, 20260902}
+
+    def test_merge_monday_carryover_ap_dung_cho_ngay_di_lam_lai_bat_ky(self):
+        """merge_monday_carryover() (tên giữ nguyên) phải kích hoạt cho BẤT KỲ
+        ngày nào có T-1 không phải ngày làm việc — không chỉ riêng thứ 2 — và gộp
+        đúng EICP/Core của toàn bộ 6 ngày (5 ngày nghỉ + 1 ngày làm việc gần nhất)."""
+        from datetime import date
+        from pathlib import Path
+        from backend.services.ilo1000.detect import merge_monday_carryover
+
+        lich = self._lich([date(2026, 8, 31), date(2026, 9, 1), date(2026, 9, 2)])
+        groups = {
+            '20260903': {'hub': [], 'citad': [Path('thu_citad.csv')], 'eicp': [], 'core': [Path('thu_core.csv')]},
+            '20260828': {'hub': [], 'citad': [], 'eicp': [Path('fri_eicp.xls')], 'core': []},
+            '20260829': {'hub': [], 'citad': [], 'eicp': [Path('sat_eicp.xls')], 'core': [Path('sat_core.csv')]},
+            '20260830': {'hub': [], 'citad': [], 'eicp': [Path('sun_eicp.xls')], 'core': [Path('sun_core.csv')]},
+            '20260831': {'hub': [], 'citad': [], 'eicp': [Path('mon_eicp.xls')], 'core': [Path('mon_core.csv')]},
+            '20260901': {'hub': [], 'citad': [], 'eicp': [Path('tue_eicp.xls')], 'core': [Path('tue_core.csv')]},
+            '20260902': {'hub': [], 'citad': [], 'eicp': [Path('wed_eicp.xls')], 'core': [Path('wed_core.csv')]},
+        }
+        merge_monday_carryover(groups, lich=lich)
+        thu = groups['20260903']
+
+        assert set(thu['eicp']) == {
+            Path('fri_eicp.xls'), Path('sat_eicp.xls'), Path('sun_eicp.xls'),
+            Path('mon_eicp.xls'), Path('tue_eicp.xls'), Path('wed_eicp.xls'),
+        }, "EICP phải gộp đủ cả 6 ngày trong cửa sổ"
+        assert set(thu['core']) == {
+            Path('thu_core.csv'),  # Core gốc của chính ngày T vẫn còn nguyên
+            Path('sat_core.csv'), Path('sun_core.csv'), Path('mon_core.csv'),
+            Path('tue_core.csv'), Path('wed_core.csv'),
+        }, "Core chỉ gộp 5 ngày NGHỈ, không gộp Core của thứ 6 (ngày làm việc, tự có báo cáo riêng)"
+
+
+class TestMainFromDirLichNghiLeDai:
+    """Kiểm chứng xuyên suốt: main_from_dir(db=...) đọc lịch nghỉ lễ thật từ DB và
+    tự xử lý đúng kỳ nghỉ dài — không cần script tay ngoài pipeline như đợt
+    29/8-3/9 thật (xem TestCarryoverWindowNghiLeDai để test riêng từng hàm)."""
+
+    @pytest.fixture
+    def db(self):
+        import sqlite3
+        conn = sqlite3.connect(':memory:')
+        conn.row_factory = sqlite3.Row
+        conn.executescript("""
+            CREATE TABLE public_holidays (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date DATE NOT NULL UNIQUE,
+                name TEXT NOT NULL);
+            CREATE TABLE duty_special_days (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date DATE UNIQUE NOT NULL,
+                day_type VARCHAR(20) NOT NULL,
+                label VARCHAR(100),
+                is_confirmed BOOLEAN DEFAULT 0,
+                created_at DATETIME);
+        """)
+        for d, name in (
+            ('2026-08-31', 'Nghỉ bù Quốc khánh'),
+            ('2026-09-01', 'Nghỉ bù Quốc khánh'),
+            ('2026-09-02', 'Quốc khánh 2/9'),
+        ):
+            conn.execute("INSERT INTO public_holidays (date, name) VALUES (?,?)", (d, name))
+        yield conn
+        conn.close()
+
+    def _write_citad(self, path, trx_date):
+        path.write_text(
+            'SERIAL_NO,RELATION_NO,TRX_DATE,AMOUNT,TRX_STATUS,extra\n'
+            f'1,2003OTT26090100001,{trx_date},100000,OK,\n',
+            encoding='utf-8',
+        )
+
+    def _write_core(self, path, trdate):
+        path.write_text(
+            'TRDATE,TRBRCD,USERID,JOURSEQ,DYTRSEQ,LOCAC,CCY,BUSCD,UNIT,TRCD,CUSTOMER,TRTP,REFERENCE,REMARK,DRAMOUNT,CRAMOUNT,CRTDTM\n'
+            f'{trdate},2003,2003OSB,1,1,501202,VND,GL,IB,  ,1000-000007709,Normal,'
+            f'2003OTT26090100001,test,0,100000,{trdate} 09:00:00\n',
+            encoding='utf-8',
+        )
+
+    def test_thu_5_gom_du_ca_ky_nghi_chi_khi_co_db(self, tmp_path, db):
+        """
+        Mỗi ngày có sẵn 1 file Core riêng (tên đúng chuẩn nhận dạng — khác dữ
+        liệu ĐI thật 2026-09-05, nơi cả 6 ngày dồn trong 1 file tên chỉ mang 1
+        ngày; đó là gap RIÊNG — xem Giai đoạn B trong kế hoạch, không phải test
+        này). Test này nhắm đúng Giai đoạn A: dù mỗi ngày ĐÃ có nhóm riêng, báo
+        cáo của ngày đi làm lại (3/9) chỉ thật sự gộp đủ dữ liệu cả kỳ nghỉ khi
+        `main_from_dir()` biết lịch nghỉ lễ thật (`db`) — không có `db`, 3/9 chỉ
+        thấy T-1 (2/9) là ngày làm việc bình thường (LICH_RONG không biết đó là
+        ngày nghỉ bù) nên không gộp thêm gì, y hệt lỗi đã gặp thật.
+        """
+        import pandas as pd
+        from backend.services.ilo1000.pipeline import main_from_dir
+
+        input_dir = tmp_path / 'input'
+        input_dir.mkdir()
+        output_dir_no_db = tmp_path / 'out_no_db'
+        output_dir_with_db = tmp_path / 'out_with_db'
+
+        for d in ('20260829', '20260830', '20260831', '20260901', '20260902', '20260903'):
+            self._write_core(input_dir / f'1000_gl02_{d}.csv', d)
+        self._write_citad(input_dir / 'citad_pool.csv', '20260903')
+
+        main_from_dir(str(input_dir), str(output_dir_no_db))
+        core_no_db = pd.read_excel(output_dir_no_db / '20260903.xlsx', sheet_name='core')
+        assert set(core_no_db['TRDATE'].astype(str)) == {'20260903'}, (
+            "Không có lịch nghỉ lễ thật: báo cáo 3/9 chỉ có đúng TRDATE của "
+            "chính nó — KHÔNG phải hành vi mong muốn, tái hiện lỗi đã gặp thật"
+        )
+
+        main_from_dir(str(input_dir), str(output_dir_with_db), db=db)
+        core_with_db = pd.read_excel(output_dir_with_db / '20260903.xlsx', sheet_name='core')
+        assert set(core_with_db['TRDATE'].astype(str)) == {
+            '20260829', '20260830', '20260831', '20260901', '20260902', '20260903',
+        }, "Có lịch nghỉ lễ thật từ DB: báo cáo 3/9 phải gộp đủ TRDATE cả 6 ngày trong kỳ nghỉ"
 
 
 # ── Test 13: load_core — ZIP GL02 mã hóa AES + dedup CSV rời trùng dữ liệu ──

@@ -47,8 +47,17 @@ def process_hub(hub_df: pd.DataFrame, eicp_maps: dict, ngay_int: int) -> tuple[p
     noi_dung = _safe_str(df[HUB_COL_NOI_DUNG])
     s_mask = so_gd.str.contains('S', case=False, na=False)
     bfx_mask = noi_dung.str.contains('BFX', case=False, na=False)
-    # "Số giao dịch" chứa 'SMF' → luôn giữ nguyên Số Trace 1 gốc, không VLOOKUP
-    # qua EICP dù thuộc nhóm 'S' không BFX (xác nhận từ người dùng 2026-07-16).
+    # "Số giao dịch" chứa 'SMF' → không qua BFX/EICP (EICP xác nhận không có
+    # entry nào cho SMF — build_eicp_maps() không tạo map_hub nào chứa 'SMF',
+    # tra lúc nào cũng rỗng). Trước đây giữ nguyên Số Trace 1 (xác nhận từ
+    # người dùng 2026-07-16) — SỬA 2026-09-07: dữ liệu thật batch 29/8-3/9
+    # (người chấm Việt phát hiện) cho thấy rule đó SAI. Đối chiếu trực tiếp
+    # pHub gốc cho 1 dòng SMF: Core REFERENCE "1000API200192551" nhưng Số
+    # Trace 1 = "209326125" (không khớp gì), Số Trace 2 = "200192551" (khớp
+    # đúng). Verify toàn batch: đổi SMF sang dùng Trace 2 giải quyết đúng
+    # 155/156 dòng "chưa khớp" còn lại (130 → Hoàn thành, 25 → Chờ đi kênh),
+    # không tạo lệch mới, không đổi số dòng khớp Citad. SMF giờ xử lý giống
+    # nhóm không chứa 'S' — dùng thẳng Số Trace 2, không qua BFX/EICP.
     smf_mask = so_gd.str.contains('SMF', case=False, na=False)
 
     # Giá trị Trace ban đầu (Số Trace 1, từ pHub)
@@ -56,7 +65,7 @@ def process_hub(hub_df: pd.DataFrame, eicp_maps: dict, ngay_int: int) -> tuple[p
 
     if HUB_COL_TRACE2_RAW in df.columns:
         trace2_raw = _safe_str(df[HUB_COL_TRACE2_RAW])
-        use_trace2 = ~s_mask & (trace2_raw != '')
+        use_trace2 = (~s_mask | smf_mask) & (trace2_raw != '')
         trace.loc[use_trace2] = trace2_raw.loc[use_trace2]
 
     # BFX (chỉ trong nhóm "Số giao dịch" chứa 'S'): right(nội dung, 16)

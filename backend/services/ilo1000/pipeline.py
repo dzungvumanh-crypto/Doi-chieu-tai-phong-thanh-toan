@@ -1,12 +1,15 @@
 """Pipeline ILO1000: orchestrator chính, chạy mỗi ngày."""
 
+import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Callable
 
-from .detect import group_files_by_date
+from backend.services.lich_lam_viec import LICH_RONG, LichLamViec, la_ngay_lam_viec, tai_lich
+
+from .detect import carryover_window, group_files_by_date
 from .export import export_excel
 from .load_citad import load_citad
 from .load_core import load_core
@@ -19,19 +22,21 @@ from .process import (
 )
 
 
-def _osb_carryover_days(ngay_int: int) -> set[int]:
+def _osb_carryover_days(ngay_int: int, lich: LichLamViec = LICH_RONG) -> set[int]:
     """
-    Cửa sổ ngày cần nạp cho ngày T đang chấm: T + T-1 (ngày thường); T + thứ
-    6,7,CN nếu T là thứ 2 (Citad không chạy phiên T7/CN, dữ liệu "chưa đi
-    kênh"/"chưa đi" dồn sang thứ 2). Dùng chung cho cả OSB ("OSB cũ chưa đi")
-    và Hub (`load_hub(..., ngay_ints=...)`) — tên hàm giữ nguyên từ lúc chỉ
-    phục vụ OSB, logic đã tổng quát cho cả 2 nguồn (2026-08-19).
+    Cửa sổ ngày cần nạp cho ngày T đang chấm: T + T-1 (ngày thường); T + toàn
+    bộ chuỗi ngày nghỉ liên tiếp trước đó (Citad không chạy phiên các ngày
+    nghỉ, dữ liệu "chưa đi kênh" dồn sang phiên đi làm lại) — xem
+    `detect.carryover_window()`. Dùng chung cho cả OSB ("OSB cũ chưa đi") và
+    Hub (`load_hub(..., ngay_ints=...)`) — tên hàm giữ nguyên từ lúc chỉ phục
+    vụ OSB, logic đã tổng quát cho cả 2 nguồn (2026-08-19), nay tổng quát thêm
+    cho MỌI kỳ nghỉ dài (2026-09-05), không riêng cuối tuần thứ 6-7-CN.
+
+    `lich=LICH_RONG` (mặc định) => chỉ theo thứ Bảy/CN, hệt hành vi cũ.
     """
     d = date(ngay_int // 10000, (ngay_int // 100) % 100, ngay_int % 100)
     days = {ngay_int}
-    back = (1, 2, 3) if d.weekday() == 0 else (1,)
-    for delta in back:
-        prev = d - timedelta(days=delta)
+    for prev in carryover_window(d, lich):
         days.add(int(prev.strftime('%Y%m%d')))
     return days
 
@@ -54,20 +59,33 @@ def _dedup_core_batch(core_raw_by_date: dict):
     return combined.drop_duplicates().reset_index(drop=True)
 
 
-def _filter_core_by_date(core_raw, date_str: str):
+def _filter_core_by_date(core_raw, date_strs: str | set[str]):
     """
     Lọc `core_raw` (đã nạp cho CẢ BATCH nhiều ngày, xem `main_from_dir()`) về
-    đúng TRDATE của ngày đang chấm. 1 file GL02 gốc có thể tự chứa NHIỀU ngày
-    trộn lẫn (xác nhận thật 2026-08-19: "1000_gl02_2026081120260812.csv" chứa
-    cả TRDATE 11 và 12/08) — không lọc lại thì sheet 'core' xuất ra của MỌI
-    ngày trong batch giống hệt nhau (đều chứa toàn bộ batch, không riêng
-    ngày đang chấm).
+    đúng (các) TRDATE thuộc phiên đang chấm. 1 file GL02 gốc có thể tự chứa
+    NHIỀU ngày trộn lẫn (xác nhận thật 2026-08-19: "1000_gl02_2026081120260812
+    .csv" chứa cả TRDATE 11 và 12/08) — không lọc lại thì sheet 'core' xuất ra
+    của MỌI ngày trong batch giống hệt nhau (đều chứa toàn bộ batch, không
+    riêng ngày đang chấm).
+
+    `date_strs`: 1 ngày (str, hành vi cũ) hoặc TẬP nhiều ngày (set[str]) —
+    ngày đi làm lại sau cuối tuần/nghỉ lễ cần giữ lại CẢ TRDATE của các ngày
+    nghỉ đã được `merge_monday_carryover()` gộp file vào (xem `_run_one_day()`),
+    không chỉ đúng 1 ngày T. Thiếu bước này thì việc gộp file Core ở
+    `detect.merge_monday_carryover()` chỉ có tác dụng cho `huy_map` xuyên ngày
+    (tính trên `all_core_df` ở `main_from_dir()`), còn sheet 'core' xuất ra của
+    chính ngày đi làm lại vẫn bị lọc sạch dữ liệu các ngày nghỉ đã gộp — phát
+    hiện 2026-09-05 khi tổng quát hoá carryover cho kỳ nghỉ dài (áp dụng ngược
+    luôn cho cuối tuần chuẩn — Thứ 2 trước đây cũng bị lọc mất dữ liệu Thứ 7/CN
+    đã gộp, chỉ là không ai để ý vì Core Thứ 7/CN thường rỗng hoặc trùng dữ liệu
+    Core của chính ngày Thứ 2).
     """
     if 'TRDATE' not in core_raw.columns:
         return core_raw
-    return core_raw[
-        core_raw['TRDATE'].fillna('').astype(str).str.strip() == date_str
-    ].copy()
+    trdate = core_raw['TRDATE'].fillna('').astype(str).str.strip()
+    if isinstance(date_strs, str):
+        return core_raw[trdate == date_strs].copy()
+    return core_raw[trdate.isin(date_strs)].copy()
 
 
 def _run_one_day(
@@ -78,6 +96,7 @@ def _run_one_day(
     output_dir: str,
     log: Callable,
     cancel_event: threading.Event,
+    lich: LichLamViec = LICH_RONG,
 ) -> Path | None:
     """Xử lý 1 ngày. Trả None nếu bị cancel hoặc thiếu file thiết yếu.
 
@@ -95,17 +114,26 @@ def _run_one_day(
         log(f'[{date_str}] WARN — không có file Hub, TT sẽ chỉ khớp theo Citad.')
 
     ngay_int = int(date_str)
-    core_raw = _filter_core_by_date(core_raw, date_str)
+    ngay = date(ngay_int // 10000, (ngay_int // 100) % 100, ngay_int % 100)
+    # Giữ lại TRDATE của chính ngày T + mọi ngày NGHỈ trong cửa sổ carryover đã
+    # được merge_monday_carryover() gộp file Core vào `files['core']` — không
+    # chỉ đúng ngày T (xem docstring _filter_core_by_date()). Ngày làm việc cuối
+    # cửa sổ (nếu có) không tính — nó tự có báo cáo Core riêng của chính nó.
+    core_dates = {date_str} | {
+        d.strftime('%Y%m%d') for d in carryover_window(ngay, lich)
+        if not la_ngay_lam_viec(d, lich)
+    }
+    core_raw = _filter_core_by_date(core_raw, core_dates)
 
     # ── Load song song (I/O bound) — Core đã nạp sẵn từ main_from_dir() ──
     import pandas as pd
 
     log(f'[{date_str}] Đang đọc file song song...')
     with ThreadPoolExecutor(max_workers=4) as ex:
-        f_hub   = ex.submit(load_hub, files.get('hub', []), _osb_carryover_days(ngay_int)) if files.get('hub') else None
+        f_hub   = ex.submit(load_hub, files.get('hub', []), _osb_carryover_days(ngay_int, lich)) if files.get('hub') else None
         f_citad = ex.submit(load_citad, files['citad'], ngay_int)
         f_eicp  = ex.submit(load_eicp,  files.get('eicp', []))
-        f_osb   = ex.submit(load_osb, files.get('osb', []), _osb_carryover_days(ngay_int)) if files.get('osb') else None
+        f_osb   = ex.submit(load_osb, files.get('osb', []), _osb_carryover_days(ngay_int, lich)) if files.get('osb') else None
 
         eicp_df = f_eicp.result()
         if cancel_event.is_set():
@@ -183,10 +211,16 @@ def main_from_dir(
     ngay: str | None = None,
     log_callback: Callable | None = None,
     cancel_event: threading.Event | None = None,
+    db: sqlite3.Connection | None = None,
 ) -> Path | None:
     """
     Entry point: nhận thư mục chứa file đầu vào, nhóm theo ngày, xử lý từng ngày.
     Trả về Path file cuối cùng (hoặc None nếu không có output hoặc bị cancel).
+
+    `db`: nếu truyền, đọc lịch nghỉ lễ/làm bù thật (`tai_lich()`) để tính đúng
+    cửa sổ carryover cho MỌI kỳ nghỉ dài (không chỉ cuối tuần chuẩn) — xem
+    `detect.carryover_window()`. Không truyền (mặc định) => dùng `LICH_RONG`,
+    hệt hành vi cũ (chỉ theo thứ Bảy/CN).
     """
     log = log_callback or (lambda msg: None)
     cancel = cancel_event or threading.Event()
@@ -194,7 +228,24 @@ def main_from_dir(
     all_paths = list(Path(input_dir).iterdir())
     log(f'Tổng file phát hiện: {len(all_paths)}')
 
-    day_groups = group_files_by_date(all_paths, log)
+    # ── Xác định lịch nghỉ lễ thật (nếu có db) TRƯỚC khi nhóm ngày chính thức ──
+    # Nhóm sơ bộ (lịch rỗng, không log) chỉ để biết khoảng ngày cần tra —
+    # group_files_by_date() không đọc nội dung file lớn (GL02/EICP), chỉ đọc
+    # 2 dòng đầu CSV citad để nhận dạng loại file, nên gọi 2 lần không tốn kém.
+    lich: LichLamViec = LICH_RONG
+    if db is not None:
+        so_bo = group_files_by_date(all_paths, log=None)
+        if so_bo:
+            ngay_list = [
+                date(int(d[:4]), int(d[4:6]), int(d[6:8])) for d in so_bo
+            ]
+            # Lùi thêm 14 ngày trước ngày sớm nhất trong batch — đủ rộng cho
+            # kỳ nghỉ dài nhất thực tế (Tết) mà không phải đoán trước độ dài.
+            lo = min(ngay_list) - timedelta(days=14)
+            hi = max(ngay_list)
+            lich = tai_lich(db, lo, hi)
+
+    day_groups = group_files_by_date(all_paths, log, lich)
     if not day_groups:
         log('[WARN] Không nhóm được file theo ngày.')
         return None
@@ -228,7 +279,7 @@ def main_from_dir(
         if cancel.is_set():
             return None
         core_raw = core_raw_by_date.get(date_str, pd.DataFrame())
-        out = _run_one_day(date_str, day_groups[date_str], core_raw, huy_map, output_dir, log, cancel)
+        out = _run_one_day(date_str, day_groups[date_str], core_raw, huy_map, output_dir, log, cancel, lich)
         if out:
             output_paths.append(out)
 

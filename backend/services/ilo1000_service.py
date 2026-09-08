@@ -7,6 +7,7 @@ Pattern giống ach_service.py:
   - Auto-cleanup sau TTL
 """
 
+import os
 import shutil
 import threading
 import time
@@ -15,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from backend.core.uploads import safe_filename
+from backend.database import get_db
 from backend.services.ilo1000.pipeline import main_from_dir
 from backend.services.ilo1000.config import CLEANUP_TTL
 
@@ -101,6 +103,7 @@ def _run(job_id: str, input_dir: str, output_dir: str):
         with _lock:
             job['logs'].append(msg)
 
+    db = get_db()
     try:
         log(f'[JOB {job_id}] Bắt đầu xử lý ILO1000...')
         output_path = main_from_dir(
@@ -108,6 +111,7 @@ def _run(job_id: str, input_dir: str, output_dir: str):
             output_dir=output_dir,
             log_callback=log,
             cancel_event=job['cancel_event'],
+            db=db,
         )
 
         if output_path is None:
@@ -133,6 +137,7 @@ def _run(job_id: str, input_dir: str, output_dir: str):
         log(traceback.format_exc())
 
     finally:
+        db.close()
         job['_ts'] = time.time()
         _cleanup_old_jobs()
 

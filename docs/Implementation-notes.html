@@ -13913,7 +13913,182 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-04</footer>
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">119</span>
+      <span class="card-title">Chấm ILO1000 — cửa sổ carryover tổng quát cho MỌI kỳ nghỉ dài, không chỉ cuối tuần (2026-09-05)</span>
+      <span class="badge badge-info">Giai đoạn A xong, chưa mở PR</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-red">Phát hiện từ</span> Chấm chiều ĐI 29/8-3/9 (nghỉ bù Quốc khánh 2/9)</div>
+      <p>Nghỉ từ chiều Thứ 6 28/8 đến hết Thứ 4 2/9, đi làm lại Thứ 5 3/9 (BO xác nhận trực tiếp —
+        Citad chỉ có phiên ngày Ngân hàng Nhà nước mở sổ). <code>merge_monday_carryover()</code>
+        cũ chỉ lùi <b>cứng đúng 3 ngày</b> cho Thứ 2 (<code>weekday()==0</code>) — không xử lý được
+        kỳ nghỉ 5 ngày này. Phải xử lý bằng script tay gọi thẳng
+        <code>load_*</code>/<code>process_*</code> ngoài pipeline, không đụng code đã merge.
+        Kết quả tay khớp <b>55.157/55.157 dòng</b> với file chấm thủ công <code>kq29-3.9.xlsx</code>,
+        253 dòng lệch TT thật sau khi lọc bỏ khác biệt cách ghi nhãn (báo cáo chi tiết giao cho
+        người chấm phối hợp, không phải nội dung card này).</p>
+
+      <div class="label"><span class="pill pill-blue">Fix — tổng quát hoá bằng lịch nghỉ lễ thật</span> <code>tai_lich()</code> thay vì hard-code</div>
+      <p>Hàm mới <code>carryover_window(ngay, lich)</code> (<code>detect.py</code>): LUÔN gồm T-1
+        (cutoff ngày thường); nếu T-1 không phải ngày làm việc (tra bằng
+        <code>la_ngay_lam_viec()</code> — đã dùng ở <code>attendance.py</code>/<code>leaves.py</code>
+        /<code>handover_report_service.py</code>, xem <code>lich_lam_viec.py</code>), đi lùi tiếp
+        qua toàn bộ chuỗi ngày nghỉ liên tiếp VÀ gồm luôn ngày làm việc gần nhất trước chuỗi (phiên
+        thật gần nhất, cũng có cutoff riêng vào T). Dài bao nhiêu ngày cũng được, không hard-code số
+        ngày. Thay cho công thức cũ <code>back = (1,2,3) if weekday()==0 else (1,)</code> ở
+        <code>_osb_carryover_days()</code>.</p>
+
+      <p><code>merge_previous_day_eicp()</code> và <code>merge_monday_carryover()</code>
+        <b>giữ nguyên tên hàm</b> (đã có tiền lệ ở <code>_osb_carryover_days()</code>: "tên giữ
+        nguyên, logic tổng quát") — điều kiện chọn hàm đổi từ <code>weekday()!=0</code>/<code>==0</code>
+        sang <code>la_ngay_lam_viec(T-1, lich)</code> đúng/sai. Với <code>lich=LICH_RONG</code>
+        (mặc định, không truyền <code>db</code>) hai điều kiện tương đương hệt nhau — 125/125 test cũ
+        (bao gồm 3 test <code>TestOsbCarryoverDays</code>, các test
+        <code>TestPreviousDayEicpCarryover</code>/<code>TestMondayCarryover</code>) pass nguyên
+        không sửa logic, chỉ 1 chỗ sửa assertion do đổi định dạng log (liệt kê ngày cụ thể thay vì
+        nhãn "thứ 6/7/CN" cố định).</p>
+
+      <p><code>main_from_dir()</code> nhận thêm <code>db: sqlite3.Connection | None = None</code> —
+        có thì gọi <code>group_files_by_date()</code> 2 lần: lần 1 (lịch rỗng, không log) chỉ để biết
+        khoảng ngày trong batch, tra <code>tai_lich()</code> lùi 14 ngày trước ngày sớm nhất (đủ rộng
+        cho Tết mà không phải đoán trước độ dài), rồi gọi lại lần 2 với lịch thật. Không tốn kém —
+        <code>group_files_by_date()</code> không đọc nội dung GL02/EICP, chỉ đọc 2 dòng đầu CSV citad
+        để nhận dạng loại file. <code>ilo1000_service.py::_run()</code> tự mở
+        <code>get_db()</code>/đóng ở <code>finally</code>, theo đúng pattern
+        <code>attendance.py</code>.</p>
+
+      <div class="caution"><b>Bug tiềm ẩn phát hiện thêm — merge Core vào ngày đi làm lại trước đây
+        VÔ TÁC DỤNG với sheet xuất ra:</b> <code>merge_monday_carryover()</code> gộp đúng đường dẫn
+        file Core của Thứ 7/CN vào <code>day_groups[T]['core']</code>, nhưng
+        <code>_run_one_day()</code> gọi <code>_filter_core_by_date(core_raw, date_str)</code> lọc
+        CỨNG về <b>đúng 1 TRDATE</b> = ngày T — xoá sạch dữ liệu Thứ 7/CN vừa gộp trước khi xuất
+        Excel. Tác dụng thật sự trước đây chỉ là đóng góp cho <code>huy_map</code> xuyên ngày (tính
+        trên <code>all_core_df</code> ở <code>main_from_dir()</code>), KHÔNG bao giờ khiến Thứ 7/CN
+        xuất hiện trong sheet 'core' của báo cáo Thứ 2 — <b>ảnh hưởng ngược cả các batch cuối tuần cũ
+        đã chấm</b>, không riêng kỳ nghỉ dài. Sửa: <code>_filter_core_by_date()</code> nhận thêm
+        <code>set[str]</code> (giữ tương thích tham số <code>str</code> đơn cũ),
+        <code>_run_one_day()</code> tính đúng tập TRDATE cần giữ = ngày T + mọi ngày NGHỈ trong cửa
+        sổ carryover.</p>
+
+      <div class="label"><span class="pill pill-green">Verify</span> 3 batch thật, dùng bản sao DB (không đụng DB thật)</div>
+      <table>
+        <tr><th>Batch</th><th>Trước fix</th><th>Sau fix (có <code>db</code> khai nghỉ lễ)</th></tr>
+        <tr><td><code>11-12.8.2026</code> (Thứ 3-4, không dính cuối tuần/lễ)</td>
+            <td colspan="2">Byte-for-byte giống hệt cả 2 sheet 'core' (72.621 và 71.416 dòng) —
+                <code>DataFrame.equals()</code> = <code>True</code>.</td></tr>
+        <tr><td><code>23-24.8.2026</code> (24/8 = Thứ 2 thật, CN 23/8 có dữ liệu)</td>
+            <td>Core Thứ 2 = 30.706 dòng, khớp citad/hub = 23.988</td>
+            <td>Core Thứ 2 = 33.705 dòng (+2.999, đúng bằng số dòng CN 23/8), khớp citad/hub = 26.987
+                (+2.999 — <b>toàn bộ</b> backlog CN giờ khớp đúng qua phiên Thứ 2, "Chưa khớp" giữ
+                nguyên 6.718 không đổi)</td></tr>
+        <tr><td>ĐI 29/8-3/9 (nghỉ bù Quốc khánh, dữ liệu gốc CHƯA tách file tay)</td>
+            <td>Chỉ nhóm được 20260829 (rỗng, citad=0) — xem card gap Giai đoạn B dưới</td>
+            <td>Core 3/9 = <b>55.157 dòng</b>, khớp citad/hub = 49.517 — trùng khớp chính xác kết quả
+                script tay (55.157) và file chấm thủ công <code>kq29-3.9.xlsx</code> (55.157)</td></tr>
+      </table>
+
+      <div class="note"><b>Vì sao ĐI 29/8-3/9 ra đúng dù Giai đoạn B (nhận diện ngày theo nội dung
+        file, chưa làm) vẫn còn thiếu:</b> tình cờ file CSV gộp cả tuần (chứa đủ TRDATE 29/8-3/9)
+        đã được gán vào nhóm "20260829" bởi cách đọc tên file cũ, và "20260829" nằm trong cửa sổ
+        carryover mới của ngày 3/9 — merge kéo theo cả file đó, cộng dồn đủ 55.157 dòng. Đây là may
+        mắn cấu trúc file cụ thể, <b>không phải Giai đoạn A tự giải quyết được Giai đoạn B</b> — batch
+        khác với cách đặt tên khác vẫn có thể vẫn thiếu ngày. Giai đoạn B (đọc TRDATE/TRADATE thật
+        thay vì suy từ tên file GL02/EICP) vẫn cần làm riêng.</div>
+
+      <p>Test mới: 7 test trong <code>TestCarryoverWindowNghiLeDai</code> +
+        <code>TestMainFromDirLichNghiLeDai</code> (<code>test_ilo1000_algorithm.py</code>) — tái hiện
+        đúng kịch bản nghỉ bù Quốc khánh (5 ngày liên tiếp không phải cuối tuần chuẩn), nghỉ lễ 1
+        ngày giữa tuần, và toàn trình <code>main_from_dir(db=...)</code> qua DB in-memory có bảng
+        <code>public_holidays</code>/<code>duty_special_days</code> thật. 125/125 test module ILO1000
+        pass (118 cũ + 7 mới).</p>
+
+      <div class="note"><b>Lỗi có sẵn không liên quan, vá kèm vì chặn tự kiểm chứng:</b>
+        <code>ilo1000_service.py</code> gọi <code>os.listdir()</code> nhưng chưa từng
+        <code>import os</code> — job sẽ <code>NameError</code> ngay khi chạy xong thành công. Thêm
+        1 dòng import.</div>
+
+      <div class="caution"><b>Việc ngoài code — chưa làm:</b> DB thật (<code>data/ksnb.db</code>)
+        CHƯA khai 31/8, 1/9, 2/9/2026 vào <code>public_holidays</code> — cần người có quyền khai qua
+        màn <b>Nghỉ phép → tab ngày lễ</b> trước khi cơ chế này có tác dụng trên dữ liệu thật kế
+        tiếp. Việc của HR/admin, không tự ý ghi qua script.</div>
+
+      <p><b>Chưa làm — Giai đoạn B (kế hoạch riêng, sau khi PR Giai đoạn A này được duyệt):</b> đọc
+        TRDATE/TRADATE thật của GL02/EICP thay vì suy từ tên file (<code>_RE_GL02_CSV</code>,
+        <code>_RE_GL02_ZIP</code>, <code>_RE_EICP_DAY</code> ở <code>detect.py</code>) — rủi ro hiệu
+        năng (đọc nội dung sớm hơn) cần thiết kế riêng, xem kế hoạch đã duyệt cùng ngày.</p>
+
+      <p>Branch/worktree: <code>feat/ilo1000-nghi-le-dai-2026-09-05</code>,
+        <code>E:\Clause code\TTTT-ilo1000-nghi-le-dai</code> — chưa commit, chưa mở PR.</p>
+
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">120</span>
+      <span class="card-title">Chấm ILO1000 — SMF dùng nhầm Số Trace 1, phải là Số Trace 2; Hub cần đủ carryover tới (2026-09-07, người chấm Việt phát hiện)</span>
+      <span class="badge badge-info">Đã sửa process.py, chưa commit; cửa sổ carryover Hub mới sửa ở kết quả tay, chưa đưa vào pipeline</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-red">Báo cáo người chấm</span> Việt kiểm tra kết quả đợt ĐI 29/8-3/9, phát hiện 2 lỗi liên tiếp</div>
+      <p>(1) "Chỉ dùng một file Hub, vẫn còn dữ liệu chưa được chấm" — kiểm tra lại đúng: cửa sổ
+        carryover Hub (6 ngày 29/8-3/9) cắt mất dữ liệu từ file thứ 3
+        (<code>pHub..._20260904154557.xlsx</code>) có "Ngày giờ kênh trả" tới tận 4/9 — 78.776/132.401
+        dòng Hub (60%) bị loại trước khi vào bước khớp. (2) Sau khi gộp đủ Hub, Việt kiểm tra kỹ hơn
+        thấy "Số Trace của giao dịch SMF đang không đúng".</p>
+
+      <div class="label"><span class="pill pill-blue">Nguyên nhân gốc — SMF</span> Trace dùng nhầm cột</div>
+      <p><code>process_hub()</code> (<code>backend/services/ilo1000/process.py</code>): dòng Hub có
+        "Số giao dịch" chứa <code>SMF</code> trước đây giữ nguyên <b>Số Trace 1</b> (xác nhận từ
+        người dùng 2026-07-16). Đối chiếu 1 dòng thật (batch 3/9): Core REFERENCE
+        <code>1000API200192551</code>, Citad khớp đúng qua Map dc <code>TRBRCD+Trace+AMOUNT</code>
+        cùng chi nhánh/số tiền — nhưng Số Trace 1 của dòng SMF tương ứng
+        (<code>1303SMF2609030000009</code>) là <code>209326125</code> (không liên quan gì), còn
+        <b>Số Trace 2 = <code>200192551</code></b> — khớp đúng tuyệt đối. Quy tắc cũ SAI.</p>
+
+      <div class="note">EICP xác nhận không có entry nào cho SMF (<code>build_eicp_maps()</code> tra
+        <code>SMF...</code> trong "map chung hub" → 0 kết quả trên toàn batch) — nhánh loại trừ SMF
+        khỏi VLOOKUP EICP vẫn đúng, chỉ riêng phần "giữ Trace 1" là sai.</div>
+
+      <div class="label"><span class="pill pill-green">Fix</span> SMF dùng Số Trace 2 giống nhóm không chứa 'S'</div>
+      <p><code>use_trace2 = (~s_mask | smf_mask) & (trace2_raw != '')</code> thay cho
+        <code>use_trace2 = ~s_mask & (...)</code> — SMF giờ nhận Trace 2 TRƯỚC khi bước BFX/EICP chạy
+        (2 bước đó vẫn loại trừ SMF như cũ, không đụng). Rơi về Trace 1 nếu Trace 2 trống (không
+        crash, không NaN).</p>
+
+      <table>
+        <tr><th>Bước</th><th>Core "chưa khớp"</th><th>Citad khớp</th><th>Lệch TT thật so với chấm tay (số tuyệt đối trên 55.157 dòng)</th></tr>
+        <tr><td>Trước (Hub cắt cửa sổ + Trace 1)</td><td>5.641</td><td>49.407</td><td>253 dòng lệch</td></tr>
+        <tr><td>Sau bước 1 — Hub đủ 3 file (chưa sửa SMF)</td><td>156</td><td>49.514</td><td>132 dòng lệch</td></tr>
+        <tr><td>Sau bước 2 — sửa SMF Trace 2</td><td>1</td><td><b>49.644</b></td><td><b>2 dòng lệch</b></td></tr>
+      </table>
+      <p>49.644 khớp Citad = trùng khớp tuyệt đối với số liệu người chấm tay
+        (<code>kq29-3.9.xlsx</code>, cột TT đếm "citad 29-3.9" = 49.644). Còn <b>2 dòng chưa cân
+        khớp</b> — CHƯA HOÀN THIỆN, không phải "gần xong": (1) Hub trạng thái "HT lỗi" vs tay ghi
+        "chờ đi kênh"; (2) 1 dòng <code>TRTP=Cancel</code>, CRAMOUNT âm — chương trình ghi "Đã hủy",
+        tay ghi "Hoàn thành". Để nguyên cho người chấm xem xét, không tự suy diễn thêm.</p>
+
+      <p>Test mới/sửa trong <code>TestHubSmfSkipsVlookup</code> (<code>test_ilo1000_algorithm.py</code>):
+        thêm <code>test_smf_uses_trace2_when_available</code> (hành vi đúng mới), giữ
+        <code>test_smf_keeps_raw_trace1_when_trace2_missing</code> (fallback khi thiếu Trace 2, đổi
+        tên từ test cũ). 135/135 test module ILO1000 pass.</p>
+
+      <div class="caution"><b>Chưa đưa vào pipeline chính — bước "Hub đủ 3 file":</b> kết quả bàn
+        giao dùng <code>load_hub(files, ngay_ints=None)</code> (bỏ hẳn giới hạn ngày) ở script tay,
+        KHÔNG sửa <code>_osb_carryover_days()</code>/<code>pipeline.py</code> — cửa sổ carryover Hub
+        trong pipeline hiện chỉ lùi về trước (xem card 119), chưa từng tính tới ngày SAU ngày chấm dù
+        <code>process_hub()</code>'s "Chờ đi kênh" after-mask đã sẵn logic cho trường hợp đó. Cần
+        quyết định cách tổng quát hoá đúng (lùi bao xa về sau? theo file cụ thể hay theo ngày cố
+        định?) trước khi đưa vào code sản phẩm — chưa làm, chỉ mới đúng cho đúng 1 batch giao tay này.</div>
+
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-07</footer>
 </div>
 </body>
 </html>

@@ -5,6 +5,8 @@ import zipfile
 from datetime import date, timedelta
 from pathlib import Path
 
+from backend.services.lich_lam_viec import LICH_RONG, LichLamViec, la_ngay_lam_viec
+
 
 # ── Regex nhận dạng date từ tên file ─────────────────────────────────────────
 _RE_GL02_CSV = re.compile(r'gl02[_\s](\d{8})', re.IGNORECASE)
@@ -91,10 +93,15 @@ def _eicp_day(path: Path) -> int | None:
     return int(m.group(1)) if m else None
 
 
-def group_files_by_date(paths: list[Path], log=None) -> dict[str, dict]:
+def group_files_by_date(paths: list[Path], log=None, lich: LichLamViec = LICH_RONG) -> dict[str, dict]:
     """
     Phân loại và nhóm file theo ngày.
     Trả về: {yyyymmdd: {hub: Path, citad: [Path], eicp: [Path], core: [Path]}}
+
+    `lich`: lịch nghỉ lễ/làm bù thật của dự án (xem `lich_lam_viec.py`), dùng để
+    tính đúng cửa sổ gộp carryover (xem `carryover_window()`) — mặc định
+    `LICH_RONG` (chỉ tính T7/CN, không biết ngày lễ) để tương thích ngược cho
+    caller chưa truyền lịch thật.
     """
     groups: dict[str, dict] = {}
     eicp_pending: list[tuple[Path, int]] = []  # (path, day_num)
@@ -212,11 +219,12 @@ def group_files_by_date(paths: list[Path], log=None) -> dict[str, dict]:
         for p in eicp_unmatched:
             log(f'  [WARN] Không gán được ngày cho EICP: {p.name}')
 
-    # Chạy trước merge_monday_carryover: khi thứ 2 tự gộp thêm dữ liệu cuối tuần,
-    # KHÔNG được để việc đó "lan" ngược vào ngày thứ 3 (thứ 3 chỉ cần EICP gốc
-    # của thứ 2, không cần cả cuối tuần thứ 2 đã gộp thêm).
-    merge_previous_day_eicp(groups, log)
-    merge_monday_carryover(groups, log)
+    # Chạy trước merge_monday_carryover: khi thứ 2 (hoặc ngày đi làm lại sau kỳ
+    # nghỉ dài) tự gộp thêm dữ liệu ngày nghỉ, KHÔNG được để việc đó "lan" ngược
+    # vào ngày kế tiếp (ngày kế tiếp chỉ cần EICP gốc của phiên trước, không cần
+    # cả phần phiên trước đã tự gộp thêm).
+    merge_previous_day_eicp(groups, log, lich)
+    merge_monday_carryover(groups, log, lich)
 
     return groups
 
@@ -225,15 +233,40 @@ def _parse_date(date_str: str) -> date:
     return date(int(date_str[:4]), int(date_str[4:6]), int(date_str[6:8]))
 
 
-def merge_previous_day_eicp(groups: dict, log=None) -> None:
+def carryover_window(ngay: date, lich: LichLamViec = LICH_RONG) -> list[date]:
     """
-    Ngày chấm bình thường (không phải thứ 2 — thứ 2 dùng merge_monday_carryover
-    riêng, phạm vi rộng hơn): gộp thêm EICP của T-1 vào nhóm ngày T, theo đúng
-    tài liệu gốc bước 1 ("Xuất dữ liệu hub gồm cần đối chiếu t và trước ngày
-    cần chấm đối chiếu 1 ngày t-1"). Lệnh vào hệ thống sau giờ cutoff T-1
-    chuyển "chờ đi kênh" sang T — EICP của lệnh đó vẫn nằm trong file T-1, cần
-    gộp vào để tra đúng Trace. Citad/Core giữ nguyên chỉ ngày T.
-    COPY (không xoá khỏi nhóm T-1 gốc) — T-1 vẫn tự ra báo cáo riêng bình thường.
+    Cửa sổ ngày cần gộp EICP/Core cho phiên chấm `ngay`. LUÔN gồm T-1 (cutoff
+    thường ngày: lệnh vào sau giờ cắt của T-1 chờ sang phiên T, kể cả khi T-1
+    là ngày làm việc bình thường). Nếu T-1 KHÔNG phải ngày làm việc (cuối tuần/
+    lễ), đi lùi tiếp qua toàn bộ chuỗi ngày nghỉ liên tiếp đó VÀ gồm luôn ngày
+    làm việc gần nhất trước chuỗi (phiên thật gần nhất, cũng có cutoff riêng
+    vào T) — tổng quát hoá `_osb_carryover_days()`/`merge_monday_carryover()`
+    cũ (chỉ cứng đúng 3 ngày thứ 6-7-CN) cho MỌI kỳ nghỉ dài bao nhiêu ngày
+    cũng được, miễn `lich` (từ `tai_lich()`) khai đủ ngày lễ.
+
+    `lich=LICH_RONG` (mặc định) => chỉ theo thứ Bảy/CN, hệt hành vi cũ.
+
+    Trả về danh sách ngày, thứ tự gần nhất (T-1) trước.
+    """
+    days: list[date] = []
+    d = ngay - timedelta(days=1)
+    days.append(d)
+    while not la_ngay_lam_viec(d, lich):
+        d -= timedelta(days=1)
+        days.append(d)
+    return days
+
+
+def merge_previous_day_eicp(groups: dict, log=None, lich: LichLamViec = LICH_RONG) -> None:
+    """
+    Ngày chấm bình thường (T-1 là ngày làm việc — không phải ngay sau cuối
+    tuần/nghỉ lễ, xem merge_monday_carryover() cho trường hợp đó): gộp thêm
+    EICP của T-1 vào nhóm ngày T, theo đúng tài liệu gốc bước 1 ("Xuất dữ liệu
+    hub gồm cần đối chiếu t và trước ngày cần chấm đối chiếu 1 ngày t-1"). Lệnh
+    vào hệ thống sau giờ cutoff T-1 chuyển "chờ đi kênh" sang T — EICP của lệnh
+    đó vẫn nằm trong file T-1, cần gộp vào để tra đúng Trace. Citad/Core giữ
+    nguyên chỉ ngày T. COPY (không xoá khỏi nhóm T-1 gốc) — T-1 vẫn tự ra báo
+    cáo riêng bình thường.
 
     (Hub trước đây cũng gộp ở đây theo file — đã bỏ 2026-08-19: Hub giờ là
     pool lọc theo dòng "Ngày giờ kênh trả" + cửa sổ T/T-1 ngay lúc load_hub(),
@@ -242,9 +275,12 @@ def merge_previous_day_eicp(groups: dict, log=None) -> None:
     # Chỉ áp dụng cho nhóm THỰC SỰ chấm (có Citad) — nhóm không có Citad (VD
     # thứ 7/CN đơn thuần chỉ có Core rơi vào) sẽ bị SKIP ở bước xử lý sau,
     # không cần áp T-1; quan trọng hơn: nếu vẫn áp cho chúng, danh sách eicp
-    # của nhóm đó bị nối dài trước khi merge_monday_carryover đọc lại (T-2/T-3),
-    # khiến dữ liệu T-1-của-T-1 bị "lan" 2 lớp vào thứ 2 một cách dư thừa.
-    target_keys = [d for d in groups if _parse_date(d).weekday() != 0 and groups[d].get('citad')]
+    # của nhóm đó bị nối dài trước khi merge_monday_carryover đọc lại, khiến
+    # dữ liệu T-1-của-T-1 bị "lan" 2 lớp vào ngày đi làm lại một cách dư thừa.
+    target_keys = [
+        d for d in groups
+        if groups[d].get('citad') and la_ngay_lam_viec(_parse_date(d) - timedelta(days=1), lich)
+    ]
 
     for t_str in target_keys:
         t_date = _parse_date(t_str)
@@ -264,48 +300,59 @@ def merge_previous_day_eicp(groups: dict, log=None) -> None:
             )
 
 
-def merge_monday_carryover(groups: dict, log=None) -> None:
+def merge_monday_carryover(groups: dict, log=None, lich: LichLamViec = LICH_RONG) -> None:
     """
-    Chấm thứ 2: Citad không chạy phiên thứ 7/CN nên toàn bộ lệnh "chờ đi kênh"
-    phát sinh sau giờ cutoff thứ 6 + cả thứ 7 + CN đều dồn sang phiên sáng thứ 2.
-    Gộp thêm EICP của thứ 6,7,CN (T-3,T-2,T-1) và Core của thứ 7,CN (T-2,T-1)
-    vào nhóm thứ 2 để bắt được các lệnh này. Citad giữ nguyên chỉ ngày thứ 2 (T).
-    Đây là COPY (không xoá khỏi nhóm gốc) — thứ 6 vẫn tự ra báo cáo riêng bình thường.
+    Ngày đi làm lại sau cuối tuần/nghỉ lễ (T-1 KHÔNG phải ngày làm việc — tên
+    hàm giữ nguyên từ lúc chỉ xử lý đúng thứ 2, nay tổng quát cho MỌI kỳ nghỉ
+    dài bao nhiêu ngày cũng được, xem `carryover_window()`): Citad không chạy
+    phiên các ngày nghỉ nên toàn bộ lệnh "chờ đi kênh" phát sinh trong cả kỳ
+    nghỉ (kể cả cutoff của phiên làm việc gần nhất trước đó) đều dồn sang phiên
+    đi làm lại. Gộp thêm EICP của MỌI ngày trong cửa sổ (kể cả ngày làm việc
+    cuối cùng trước kỳ nghỉ — phiên đó cũng có cutoff carryover riêng vào T) và
+    Core của các ngày NGHỈ trong cửa sổ (không gộp Core của ngày làm việc cuối
+    — ngày đó tự có báo cáo Core riêng của chính nó rồi). Citad giữ nguyên chỉ
+    ngày T. Đây là COPY (không xoá khỏi nhóm gốc) — mỗi ngày nguồn vẫn tự ra
+    báo cáo riêng bình thường.
 
     (Hub trước đây cũng gộp ở đây theo file — đã bỏ 2026-08-19, xem
     merge_previous_day_eicp() để biết lý do: Hub giờ là pool lọc theo dòng,
-    cửa sổ carryover cho thứ 2 áp dụng ngay ở load_hub() qua
-    pipeline.py::_osb_carryover_days().)
+    cửa sổ carryover áp dụng ngay ở load_hub() qua pipeline.py::_osb_carryover_days().)
     """
-    monday_keys = [d for d in groups if _parse_date(d).weekday() == 0]
+    target_keys = [
+        d for d in groups
+        if groups[d].get('citad') and not la_ngay_lam_viec(_parse_date(d) - timedelta(days=1), lich)
+    ]
 
-    for mon_str in monday_keys:
-        mon_date = _parse_date(mon_str)
-        fri_str = (mon_date - timedelta(days=3)).strftime('%Y%m%d')
-        sat_str = (mon_date - timedelta(days=2)).strftime('%Y%m%d')
-        sun_str = (mon_date - timedelta(days=1)).strftime('%Y%m%d')
+    for t_str in target_keys:
+        t_date = _parse_date(t_str)
+        window = carryover_window(t_date, lich)
 
-        g = groups[mon_str]
+        g = groups[t_str]
         missing: list[str] = []
 
-        for label, d_str in (('thứ 6', fri_str), ('thứ 7', sat_str), ('CN', sun_str)):
+        for d in window:
+            d_str = d.strftime('%Y%m%d')
             src = groups.get(d_str, {})
             if src.get('eicp'):
                 g['eicp'] = g['eicp'] + src['eicp']
             else:
-                missing.append(f'EICP {label} ({d_str})')
+                missing.append(f'EICP {d_str}')
 
-        for label, d_str in (('thứ 7', sat_str), ('CN', sun_str)):
+        for d in window:
+            if la_ngay_lam_viec(d, lich):
+                continue  # ngày làm việc cuối chuỗi: chỉ cutoff EICP, Core đã có báo cáo riêng
+            d_str = d.strftime('%Y%m%d')
             src = groups.get(d_str, {})
             if src.get('core'):
                 g['core'] = g['core'] + src['core']
             else:
-                missing.append(f'Core {label} ({d_str})')
+                missing.append(f'Core {d_str}')
 
         if log:
-            log(f'[{mon_str}] Chấm thứ 2 — gộp thêm dữ liệu cuối tuần (EICP thứ 6-7-CN, Core thứ 7-CN).')
+            ngay_str = ', '.join(d.strftime('%d/%m') for d in reversed(window))
+            log(f'[{t_str}] Đi làm lại sau nghỉ — gộp thêm dữ liệu các ngày {ngay_str}.')
             if missing:
                 log(
-                    f'[{mon_str}] CẢNH BÁO — thiếu: {", ".join(missing)}. '
-                    'Kết quả thứ 2 có thể sót giao dịch chờ đi kênh cuối tuần.'
+                    f'[{t_str}] CẢNH BÁO — thiếu: {", ".join(missing)}. '
+                    'Kết quả có thể sót giao dịch chờ đi kênh từ kỳ nghỉ.'
                 )
