@@ -14694,7 +14694,73 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-07</footer>
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">130</span>
+      <span class="card-title">Nghỉ phép — NPBB: chuẩn lại "chưa tới ngày chưa tính hạn mức", tự động hủy nếu không đủ, sửa 2 lỗi thật từ review (2026-09-08)</span>
+      <span class="badge badge-done">Hoàn thiện</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-red">Phát hiện qua review</span> 2 lỗi thật ở đợt cảnh báo hạn mức NPBB (PR #79)</div>
+      <ul>
+        <li><b>Lệch thước:</b> <code>get_npbb_quota_warning</code> đo "còn lại" ĐÃ gồm cả NPBB, còn
+          <code>confirm_npbb_borrow</code> đo "còn lại" KHÔNG gồm NPBB — lệch nhau đúng bằng số ngày NPBB.
+          Hệ quả: sau khi bấm "Tiếp tục" thành công, "còn lại" (theo công thức cảnh báo) luôn về đúng 0 —
+          vẫn <5 → cảnh báo hiện lại <b>vĩnh viễn</b>, không có đường nào tắt được ngoài hủy đơn — đúng
+          "vòng lặp không lối ra" mà tính năng này sinh ra để tránh, chỉ là đi bằng cửa khác.</li>
+        <li><b>Migration ghi đè lựa chọn vận hành:</b> câu <code>UPDATE attendance_symbols SET
+          is_active=0 WHERE symbol IN ('CT','O')</code> nằm trong danh sách chạy lại MỖI LẦN khởi động app —
+          admin bật lại 'CT'/'O' qua màn Chấm công hôm nay, restart đêm đó tự tắt lại, không log, không ai
+          biết vì sao.</li>
+      </ul>
+
+      <div class="label"><span class="pill pill-green">Fix</span> Hàm dùng chung + chuẩn lại bản chất NPBB trong _calc_used_days</div>
+      <p>Thêm <code>_npbb_remaining_excl</code> — cảnh báo, xác nhận ứng, và tự động hủy giờ đo bằng đúng
+        1 công thức, không lệch nhau nữa. Đồng thời chuẩn lại đúng bản chất NPBB ngay trong
+        <code>_calc_used_days</code>/<code>_calc_used_days_bulk</code> (nguồn tính "đã dùng" DUY NHẤT —
+        nuôi cả tab Hạn mức phép, banner "Phép còn lại", kiểm tra hạn mức lúc tạo đơn loại khác): NPBB
+        không bị chặn hạn mức lúc tạo (khác mọi loại nghỉ khác) nên về bản chất CHƯA "tiêu" hạn mức cho
+        tới ĐÚNG NGÀY ĐĂNG KÝ — đơn đã duyệt nhưng ngày nghỉ còn ở tương lai không tính vào "đã dùng" dù
+        trạng thái gì. Tới đúng ngày thì cộng đủ 1 lần (không tính dần từng ngày như báo cáo năm
+        <code>_calc_occurred_days</code> đang dùng).</p>
+
+      <div class="label"><span class="pill pill-green">Thêm mới</span> Tự động hủy NPBB đúng ngày đăng ký nếu vẫn không đủ hạn mức</div>
+      <p>Scheduler mới <code>start_npbb_auto_cancel_scheduler</code> (cùng khuôn mẫu
+        <code>log_cleanup_service</code>: quét ngay lúc khởi động + lặp lại mỗi 12h, không phụ thuộc
+        module API theo đúng quy ước services hiện có) — tới đúng ngày đăng ký (đơn gốc hoặc đơn điều
+        chỉnh mới nhất còn hiệu lực) mà hạn mức (không tính NPBB) vẫn không đủ và chưa ai xử lý, tự
+        chuyển đơn sang "Đã hủy" — không cần chủ đơn tự bấm. Bỏ qua đúng 2 trường hợp: đơn đang có đơn
+        điều chỉnh còn hiệu lực (chờ xử lý xong trước), và đơn đã "Tiếp tục" (ứng năm sau) thành công từ
+        trước (không hủy oan). Popup cảnh báo cũ (Hủy đơn/Tiếp tục) giữ nguyên cho giai đoạn TRƯỚC ngày
+        đăng ký; thêm popup thông báo mới (chỉ nút "Đã biết") cho đơn vừa bị tự hủy, có endpoint ack
+        riêng để không hiện lại sau khi đã xem.</p>
+
+      <div class="label"><span class="pill pill-green">Fix</span> Các điểm nhỏ khác</div>
+      <ul>
+        <li><code>confirm_npbb_borrow</code> thêm chặn 409 khi đơn đang có đơn điều chỉnh còn hiệu lực —
+          khớp mẫu sẵn có ở <code>npbb_adjust_leave</code>.</li>
+        <li>Migration bỏ hẳn câu <code>UPDATE ... is_active=0</code> khỏi danh sách chạy-lại-mỗi-lần —
+          vô hiệu hoá ký hiệu cũ là quyết định vận hành 1 lần, để admin tự làm qua màn quản lý ký hiệu.</li>
+        <li>Frontend: toast "Tiếp tục" đọc đúng kết quả trả về thay vì luôn báo thành công cố định.</li>
+      </ul>
+
+      <div class="note">Thêm bộ test tự động mới <code>tests/test_npbb_quota_warning.py</code> (11 test,
+        khoá lại đúng từng lỗi vừa sửa — kể cả 2 test tái hiện đúng bug gốc: cảnh báo phải TẮT hẳn sau
+        khi "Tiếp tục" thành công, và đơn đã ứng thành công KHÔNG bị tự hủy oan — trước đây tính năng
+        này hoàn toàn không có test tự động, chỉ verify bằng script tạm, đúng lý do lỗi lọt qua cả vòng
+        rà soát bằng agent). Pass đủ, cùng 179 test liên quan nghỉ phép/chấm công/nhân sự khác và toàn bộ
+        1513 test không liên quan (33 fail còn lại thuộc nhóm không liên quan, thiếu đúng version
+        <code>openpyxl</code> cho <code>pandas</code>, không phải do thay đổi lần này). Verify thật trên
+        DB dev: đơn NPBB thật của GDV Phòng Swift (chưa tới ngày) nay đúng KHÔNG bị trừ vào "đã dùng"/
+        "Phép còn lại" cho tới ngày đăng ký thật sự tới (banner đổi từ 4 → 9 ngày còn lại, đúng cộng lại
+        5 ngày NPBB chưa tới hạn); scheduler chạy thử ngay lúc khởi động server thật — không đụng nhầm
+        đơn thật nào.</div>
+
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-08</footer>
 </div>
 </body>
 </html>

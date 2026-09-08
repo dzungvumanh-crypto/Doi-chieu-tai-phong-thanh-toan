@@ -4,6 +4,43 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 08/09/2026 Nghỉ phép - **NPBB: chuẩn lại đúng bản chất "chưa tới ngày chưa tính hạn mức", tự động hủy nếu không đủ, sửa 2 lỗi thật từ review**
+    + Rà soát/review đợt cảnh báo hạn mức NPBB (PR #79) phát hiện 2 lỗi thật: (1) `get_npbb_quota_warning` và
+      `confirm_npbb_borrow` đo "còn lại" bằng 2 công thức lệch nhau đúng bằng số ngày NPBB — sau khi bấm
+      "Tiếp tục" thành công, "còn lại" luôn về đúng 0 (vẫn <5) nên cảnh báo hiện lại **vĩnh viễn**, và ở
+      trường hợp không thực sự cần ứng thì API còn âm thầm không ghi gì cả dù báo "thành công"; (2) migration
+      vô hiệu hoá 'CT'/'O' chạy lại mỗi lần khởi động app, ghi đè mất lựa chọn bật lại của admin qua màn
+      Chấm công
+    + ✅ Thêm hàm dùng chung `_npbb_remaining_excl` cho cả cảnh báo, xác nhận ứng, và tự động hủy — cả 3 nơi
+      giờ đo bằng đúng 1 cây thước, không lệch nhau nữa
+    + ✅ **Chuẩn lại bản chất NPBB trong `_calc_used_days`/`_calc_used_days_bulk`** (nguồn tính "đã dùng" duy
+      nhất — nuôi cả tab Hạn mức phép, banner "Phép còn lại", và kiểm tra hạn mức lúc tạo đơn loại khác):
+      NPBB không bị chặn hạn mức lúc tạo (khác mọi loại nghỉ khác), nên về bản chất CHƯA "tiêu" hạn mức cho
+      tới **đúng ngày đăng ký** — đơn đã duyệt nhưng ngày nghỉ còn ở tương lai không tính vào "đã dùng" dù
+      trạng thái gì. Tới đúng ngày thì cộng **đủ 1 lần** (không tính dần từng ngày như báo cáo năm
+      `_calc_occurred_days` đang dùng)
+    + ✅ **Tự động hủy đơn NPBB đúng ngày đăng ký** nếu hạn mức (không tính chính NPBB) vẫn không đủ và chưa
+      ai xử lý gì — không cần chủ đơn tự bấm "Hủy đơn". Scheduler mới (`start_npbb_auto_cancel_scheduler`,
+      cùng khuôn mẫu `log_cleanup_service`: quét ngay lúc khởi động + lặp lại mỗi 12h) tự chuyển đơn sang "Đã
+      hủy", bỏ qua đúng: đơn đang có đơn điều chỉnh còn hiệu lực (chờ điều chỉnh xử lý xong trước), và đơn đã
+      "Tiếp tục" (ứng năm sau) thành công từ trước (không huỷ oan đơn đã xử lý xong)
+    + ✅ Popup cảnh báo cũ (Hủy đơn/Tiếp tục) vẫn giữ nguyên cho giai đoạn TRƯỚC ngày đăng ký; thêm popup
+      thông báo MỚI (chỉ có nút "Đã biết") cho đơn vừa bị hệ thống tự huỷ — endpoint ack riêng
+      (`/npbb-auto-cancel-ack`) để không hiện lại sau khi chủ đơn đã xem
+    + ✅ Sửa `confirm_npbb_borrow` không chặn khi đơn đang có đơn điều chỉnh còn hiệu lực — thêm chặn 409
+      khớp mẫu sẵn có ở `npbb_adjust_leave`
+    + ✅ Migration: bỏ hẳn câu `UPDATE attendance_symbols SET is_active=0` khỏi danh sách chạy-lại-mỗi-lần —
+      vô hiệu hoá ký hiệu cũ là quyết định vận hành 1 lần, để admin tự làm qua màn quản lý ký hiệu
+    + Thêm bộ test tự động mới `tests/test_npbb_quota_warning.py` (11 test, khoá lại đúng từng lỗi vừa sửa —
+      trước đây tính năng này hoàn toàn không có test tự động, chỉ verify bằng script tạm) — pass đủ, cùng
+      179 test liên quan nghỉ phép/chấm công/nhân sự khác và toàn bộ 1513 test không liên quan (33 fail còn
+      lại thuộc nhóm không liên quan, thiếu thư viện `openpyxl` đúng version cho `pandas`)
+    + Verify thật trên DB dev: đơn NPBB thật của GDV Phòng Swift (chưa tới ngày) nay đúng KHÔNG bị trừ vào
+      "đã dùng"/"Phép còn lại" cho tới ngày đăng ký thật sự tới; scheduler chạy thử ngay lúc khởi động không
+      đụng nhầm đơn thật nào
+
+---
+
 - 07/09/2026 Nghỉ phép - **Rà soát toàn bộ đợt sửa NPBB gần đây (giao agent riêng) — sửa 1 lỗi thật ở điểm nối giữa cảnh báo hạn mức và điều chỉnh NPBB**
     + Giao agent rà soát riêng toàn bộ 3 đợt sửa gần nhất (chuẩn hoá ký hiệu chấm công, cảnh báo hạn
       mức NPBB + ứng năm sau, cột Ngày sinh/Giới tính báo cáo) — tập trung tìm điểm NỐI giữa các tính
