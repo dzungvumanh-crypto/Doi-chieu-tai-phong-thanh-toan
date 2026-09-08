@@ -1622,15 +1622,23 @@ def _ensure_indexes():
         # attendances hiện đang HOÀN TOÀN RỖNG (xác nhận trước khi viết migration
         # này) nên không có rủi ro dữ liệu lịch sử sai lệch — sửa thẳng CASE, không
         # cần script backfill riêng. Thêm ký hiệu 'B'/'N'/'K' còn thiếu vào
-        # attendance_symbols, đồng thời VÔ HIỆU HOÁ (không xoá, giữ audit trail cũ
-        # nếu có) 'CT' và 'O' vì 2 mã này không có trong bảng chuẩn IPCAS, tránh
-        # người dùng chọn nhầm khi ghi công thủ công (put_day/review_adjustment
-        # đều lọc theo is_active=1).
+        # attendance_symbols.
+        #
+        # CỐ Ý KHÔNG tự vô hiệu hoá 'CT'/'O' ở đây dù 2 mã này không còn nằm
+        # trong bảng chuẩn IPCAS — bản đầu tiên có thêm 1 câu UPDATE
+        # attendance_symbols SET is_active=0, nhưng migration này chạy lại MỖI
+        # LẦN khởi động app (không có bảng theo dõi "đã chạy chưa", khác ALTER/
+        # CREATE IF NOT EXISTS/INSERT OR IGNORE vốn tự an toàn khi lặp lại) —
+        # nên hễ admin chủ động bật lại 'CT'/'O' qua màn Chấm công (nút bật/tắt
+        # ký hiệu, frontend/pages/attendance.py) thì lần restart kế tiếp sẽ tự
+        # tắt lại ngay, không log, không ai biết vì sao (phát hiện qua rà soát
+        # 2026-09-08). Vô hiệu hoá 2 mã cũ là quyết định VẬN HÀNH một lần, để
+        # admin tự làm qua màn quản lý ký hiệu — không phù hợp đặt trong 1
+        # migration chạy lại vô hạn.
         """INSERT OR IGNORE INTO attendance_symbols (symbol, description, work_value, color, is_active) VALUES
             ('B', 'Đi công tác',      1.0, '#BFDBFE', 1),
             ('N', 'Nghỉ không lương', 0.0, '#FDBA74', 1),
             ('K', 'Nghỉ khác',        0.0, '#D8B4FE', 1)""",
-        "UPDATE attendance_symbols SET is_active = 0 WHERE symbol IN ('CT', 'O')",
 
         "DROP TRIGGER IF EXISTS trg_leave_approved_sync_attendance",
         """CREATE TRIGGER IF NOT EXISTS trg_leave_approved_sync_attendance
