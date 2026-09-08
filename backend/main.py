@@ -123,6 +123,9 @@ async def lifespan(app: FastAPI):
     # Dọn data/temp_* theo lịch — trước đây chỉ dọn khi có người dùng tính năng
     from backend.services.temp_cleanup_service import start_scheduler as _start_temp_cleanup
     _start_temp_cleanup()
+    # Tự động hủy đơn NPBB đúng ngày đăng ký nếu hạn mức không đủ (Người 3)
+    from backend.api.leaves import start_npbb_auto_cancel_scheduler as _start_npbb_auto_cancel
+    _start_npbb_auto_cancel(_db_file)
     from backend.core import audit_queue
     audit_queue.start()
     # Cảnh báo (không chặn khởi động) nếu đồng hồ máy lệch nguồn giờ chuẩn
