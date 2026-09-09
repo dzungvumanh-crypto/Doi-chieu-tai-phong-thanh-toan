@@ -4744,27 +4744,44 @@ def approve_recall(
 # sang "Đã hủy" — không cần chủ đơn tự bấm "Hủy đơn". Popup ở
 # get_npbb_quota_warning/npbb-auto-cancel-ack báo lại việc này cho chủ đơn.
 
-_NPBB_AUTO_CANCEL_INTERVAL_HOURS = 12
+_NPBB_AUTO_CANCEL_CATCHUP_DAYS = 3  # đủ chịu server tắt vài ngày, xem chú thích dưới
 _npbb_auto_cancel_timer: threading.Timer | None = None
 
 
 def _npbb_auto_cancel_check(db_path: str = None) -> int:
-    """Quét 1 lượt, tự hủy các đơn đủ điều kiện. Trả về số đơn đã hủy."""
+    """Quét 1 lượt, tự hủy các đơn đủ điều kiện. Trả về số đơn đã hủy.
+
+    QUAN TRỌNG — cửa sổ quét PHẢI có cận dưới (start_date >=
+    hôm_nay - _NPBB_AUTO_CANCEL_CATCHUP_DAYS), không được chỉ có
+    "start_date <= hôm nay" — bản đầu tiên (2026-09-08) thiếu cận dưới nên
+    MỌI lần quét đem lại TOÀN BỘ đơn NPBB approved trong lịch sử (kể cả đơn
+    đã nghỉ xong hàng tháng/năm trước) ra xét lại. Hậu quả thật khi phát
+    hiện qua rà soát: chỉ cần hạ hạn mức 1 cán bộ sau đó (thao tác vận hành
+    bình thường) là đơn NPBB đã hoàn thành từ lâu bị hủy ngược — trả lại
+    "đã dùng", trigger revert xoá luôn dòng attendances tương ứng, đơn biến
+    mất khỏi báo cáo, không ai được báo (KSV/Tổng hợp đã duyệt không biết).
+    Mất dữ liệu thật, không phải lỗi giao diện — tuyệt đối không được bỏ
+    cận dưới này dù có sửa gì thêm sau này.
+
+    Cận dưới 3 ngày (không phải đúng "hôm nay") để chịu được trường hợp
+    server tắt/không quét được đúng ngày đơn tới hạn — vẫn bắt kịp trong
+    vài ngày, không bao giờ đụng tới đơn cũ hơn."""
     db = sqlite3.connect(db_path or DB_PATH, timeout=10)
     db.row_factory = sqlite3.Row
     n_cancelled = 0
     try:
         db.execute("PRAGMA busy_timeout=10000")
         today = _vn_now().date()
+        earliest = today - timedelta(days=_NPBB_AUTO_CANCEL_CATCHUP_DAYS)
         rows = db.execute(
             f"""SELECT leave_records.id, leave_records.staff_id, leave_records.start_date,
                       leave_records.end_date, leave_records.spread_dates,
                       leave_records.borrow_next_year_days, u.join_industry_date
                FROM leave_records JOIN user_tttt u ON u.id = leave_records.staff_id
                WHERE leave_records.leave_type='bat_buoc' AND leave_records.status='approved'
-                 AND leave_records.start_date <= ?
+                 AND leave_records.start_date <= ? AND leave_records.start_date >= ?
                  {_NO_ACTIVE_ADJ_SQL}""",
-            (today.isoformat(),),
+            (today.isoformat(), earliest.isoformat()),
         ).fetchall()
         for r in rows:
             start = date.fromisoformat(r["start_date"])
@@ -4794,14 +4811,40 @@ def _npbb_auto_cancel_check(db_path: str = None) -> int:
     return n_cancelled
 
 
+_NPBB_AUTO_CANCEL_HOUR   = 0   # neo vào 00:30 hằng ngày — đủ sớm để quyết
+_NPBB_AUTO_CANCEL_MINUTE = 30  # định "đúng ngày" trước khi ai kịp bắt đầu
+                                # nghỉ trong ngày đó (khác chu kỳ 12h cũ,
+                                # có thể hủy lúc cán bộ đã nghỉ được nửa buổi).
+
+
+def _npbb_auto_cancel_seconds_until_next_run() -> float:
+    """Số giây từ bây giờ tới lần 00:30 kế tiếp (hôm nay nếu chưa qua, mai
+    nếu đã qua) — dùng làm delay cho cả lần lặp đầu lẫn mỗi lần lặp sau,
+    tự neo lại đúng giờ mỗi ngày, không trôi dần theo giờ server khởi động."""
+    now = _vn_now()
+    target = now.replace(hour=_NPBB_AUTO_CANCEL_HOUR, minute=_NPBB_AUTO_CANCEL_MINUTE,
+                         second=0, microsecond=0)
+    if target <= now:
+        target += timedelta(days=1)
+    return (target - now).total_seconds()
+
+
 def _npbb_auto_cancel_schedule_next(db_path: str):
+    """Lỗi khi TỰ LỊCH (không phải lỗi lúc quét, đã có _run_safe lo) cũng
+    không được làm chết cả chuỗi lịch trong im lặng — bọc try/except riêng,
+    khác bản đầu tiên chỉ bọc lỗi 1 nhánh (_run_safe), nhánh này lỗi thì
+    không còn lần lặp nào sau nữa mà không log gì cả."""
     global _npbb_auto_cancel_timer
-    _npbb_auto_cancel_timer = threading.Timer(
-        _NPBB_AUTO_CANCEL_INTERVAL_HOURS * 3600,
-        lambda: (_npbb_auto_cancel_schedule_next(db_path), _npbb_auto_cancel_run_safe(db_path)),
-    )
-    _npbb_auto_cancel_timer.daemon = True
-    _npbb_auto_cancel_timer.start()
+    try:
+        delay = _npbb_auto_cancel_seconds_until_next_run()
+        _npbb_auto_cancel_timer = threading.Timer(
+            delay,
+            lambda: (_npbb_auto_cancel_schedule_next(db_path), _npbb_auto_cancel_run_safe(db_path)),
+        )
+        _npbb_auto_cancel_timer.daemon = True
+        _npbb_auto_cancel_timer.start()
+    except Exception as exc:
+        _log.error("NPBB auto-cancel: lên lịch lần kế tiếp thất bại: %s", exc, exc_info=True)
 
 
 def _npbb_auto_cancel_run_safe(db_path: str):
@@ -4813,12 +4856,14 @@ def _npbb_auto_cancel_run_safe(db_path: str):
 
 
 def start_npbb_auto_cancel_scheduler(db_path: str = None):
-    """Gọi khi khởi động app: quét ngay (background) + lặp lại mỗi 12h — đủ
-    bắt kịp trong ngày đơn tới hạn, kể cả sau khi server tắt/mở lại."""
+    """Gọi khi khởi động app: quét ngay (background, bắt kịp ngày bị lỡ do
+    server tắt) + lặp lại 1 lần/ngày neo vào 00:30 (xem
+    _npbb_auto_cancel_seconds_until_next_run)."""
     _path = db_path or DB_PATH
     threading.Thread(
         target=_npbb_auto_cancel_run_safe, args=(_path,), daemon=True,
         name="npbb-auto-cancel-init",
     ).start()
     _npbb_auto_cancel_schedule_next(_path)
-    _log.info("NPBB auto-cancel scheduler khởi động — chu kỳ %dh", _NPBB_AUTO_CANCEL_INTERVAL_HOURS)
+    _log.info("NPBB auto-cancel scheduler khởi động — 1 lần/ngày lúc %02d:%02d",
+             _NPBB_AUTO_CANCEL_HOUR, _NPBB_AUTO_CANCEL_MINUTE)
