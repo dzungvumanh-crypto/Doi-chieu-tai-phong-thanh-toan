@@ -167,6 +167,52 @@ def test_nkt_thieu_khong_lam_dong_khop_khac_bi_tinh_nham_la_trung():
     assert not any(r['status'] == 'only_ipcas' for r in lech)  # không dòng ma
 
 
+def test_vnd_di_lech_loai_kenh_ih_il_khong_tu_khop_kem_ghi_chu_cheo():
+    """Ca thật báo 10/09/2026 (Phòng Thanh toán): 1 lệnh VND Đi giống hệt
+    nhau ở CITAD và Agribank (cùng so_gd/msgref, cùng trạng thái SCNL) —
+    CHỈ khác trường loại lệnh (IH giá trị cao / IL giá trị thấp). Trước sửa
+    này, khoá khớp chỉ dùng msgref nên bị khớp "khống" (n_khop tăng nhầm),
+    không phát hiện, không cảnh báo gì. Sau sửa: KHÔNG được tự động khớp,
+    tách thành đúng 2 dòng (Chỉ CITAD + Chỉ IPCAS, KHÔNG phải
+    lech_trang_thai) — mỗi dòng phải có ghi_chú nói rõ CẢ 2 loại lệnh để
+    người chấm tự nối lại thành 1 cặp."""
+    citad = [_citad('960001', chieu='di', loai='ih')]
+    ipcas = [_ipcas(chieu='di', msgref='960001', trang_thai='SCNL', loai='il')]
+    n_khop, lech, khop = run_doiSoat_ram(citad, ipcas, [])
+    assert n_khop == 0
+    assert khop == []
+    assert len(lech) == 2
+    chi_citad = [r for r in lech if r['status'] == 'only_citad'][0]
+    chi_ipcas = [r for r in lech if r['status'] == 'only_ipcas'][0]
+    assert 'IH' in chi_citad['ghi_chu'] and 'IL' in chi_citad['ghi_chu']
+    assert 'IH' in chi_ipcas['ghi_chu'] and 'IL' in chi_ipcas['ghi_chu']
+
+
+def test_vnd_di_lech_loai_kenh_chieu_nguoc_lai_ghi_chu_dung_thu_tu():
+    """Đối chứng chiều ngược lại — câu ghi_chú phải tự đổi đúng theo giá
+    trị thật 2 bên (CITAD IL/IPCAS IH), không hardcode cứng thứ tự
+    "CITAD IH...IPCAS IL" như test trên."""
+    citad = [_citad('960002', chieu='di', loai='il')]
+    ipcas = [_ipcas(chieu='di', msgref='960002', trang_thai='SCNL', loai='ih')]
+    n_khop, lech, khop = run_doiSoat_ram(citad, ipcas, [])
+    assert n_khop == 0
+    assert len(lech) == 2
+    chi_citad = [r for r in lech if r['status'] == 'only_citad'][0]
+    assert 'CITAD loại lệnh IL' in chi_citad['ghi_chu']
+    assert 'Agribank loại lệnh IH' in chi_citad['ghi_chu']
+
+
+def test_vnd_di_cung_loai_kenh_van_khop_binh_thuong_khong_ghi_chu_lech():
+    """Đối chứng: CITAD và IPCAS CÙNG loại lệnh vẫn khớp bình thường như
+    trước, không có ghi_chú lệch loại kênh nào."""
+    citad = [_citad('960003', chieu='di', loai='ih')]
+    ipcas = [_ipcas(chieu='di', msgref='960003', trang_thai='SCNL', loai='ih')]
+    n_khop, lech, khop = run_doiSoat_ram(citad, ipcas, [])
+    assert n_khop == 1
+    assert lech == []
+    assert 'loại lệnh' not in (khop[0].get('ghi_chu') or '')
+
+
 def test_vnd_di_erpo_khong_co_citad_bi_bo_qua():
     """ERPO/CALD mà CITAD KHÔNG có → thất bại bình thường (chưa từng đi
     kênh), không được tính vào 'chỉ IPCAS'."""
