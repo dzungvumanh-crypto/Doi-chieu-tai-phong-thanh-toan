@@ -4,6 +4,36 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 10/09/2026 Đối chiếu CITAD — **Bắt được kiểu "khớp khống": cùng số giao dịch nhưng một bên ghi giá trị cao, bên kia ghi giá trị thấp**
+    + ✅ **Lệnh cùng số giao dịch mà hai bên ghi khác loại nay không còn bị coi là khớp.** Ca thật
+      Phòng Thanh toán báo ngày 10/09: một lệnh VND đi, CITAD và Agribank ghi giống hệt nhau mọi thứ —
+      cùng số giao dịch, cùng trạng thái đã thành công — chỉ khác đúng một chỗ: CITAD ghi **giá trị
+      cao**, Agribank ghi **giá trị thấp**. Cách so cũ chỉ nhìn số giao dịch nên vẫn tick "khớp", không
+      ai biết có chuyện. Nay lệnh đó tách thành 2 dòng lệch (một bên "Chỉ CITAD", một bên "Chỉ IPCAS"),
+      mỗi dòng có sẵn câu ghi chú chỉ sang dòng kia để người chấm nối lại thành một cặp
+    + ✅ **Bảng chi tiết ở tab "Lịch sử" nay có thêm cột "Số RefHub"** — trước chỉ tab "Kết quả" và file
+      Excel xuất ra mới có. Lượt đối soát lưu trước ngày 09/09 thì cột này để trống, đó là bình thường:
+      thời điểm lưu chưa có số liệu đó
+    + ✅ **Nhóm "Lệch trạng thái" nay cũng hiện số RefHub.** Đây đúng là nhóm cần nhất — Agribank có
+      lệnh nhưng chưa xong trạng thái, người chấm bắt buộc phải tự tra bên Agribank mà lại không có mã
+      để tra. Sót từ đợt 09/09
+    + ⚠️ **Merge kèm 2 lỗi đã biết, chưa vá — chấp nhận có chủ ý.** Rà soát trước khi merge tìm ra và
+      tái hiện được cả hai:
+        + **Mất một cảnh báo quan trọng hơn.** Nếu một lệnh vừa lệch loại **vừa** bị Agribank ghi là
+          thất bại, thì câu cảnh báo cũ *"Agribank ghi nhận thất bại nhưng lệnh THỰC TẾ đã đi kênh
+          CITAD thành công — cần kiểm tra lại"* **biến mất**, chỉ còn câu nói về lệch loại. Đây là cảnh
+          báo tiền đã ra khỏi kênh mà sổ sách báo hỏng — nặng hơn chuyện lệch loại
+        + **Ghi chú nói sai khi CITAD gửi trùng qua 2 cổng.** Nếu cùng một số giao dịch mà CITAD có 2
+          dòng ở 2 cổng khác loại nhau, hệ thống chỉ nhìn dòng đầu rồi kết luận "CITAD ghi loại này,
+          Agribank ghi loại kia" — trong khi CITAD có **cả hai**. Kèm theo là một lệnh khớp thật bị
+          đánh rớt
+    + ⚠️ **Chưa đo trên dữ liệu thật một ngày trọn vẹn.** Quy tắc mới áp cho **mọi** lệnh VND đi, nên
+      cần chạy lại một ngày có sẵn (19/08 hoặc 10/09) và so số lệnh khớp trước/sau. Nếu số cặp "lệch
+      loại" nhảy lên hàng trăm thì đây không phải ca cá biệt mà là khác biệt hệ thống giữa hai file —
+      lúc đó phải nghĩ lại cách xử lý
+    + ℹ️ Tab "Lịch sử" vẫn **chưa có cột Ghi chú**, nên xem lại lượt cũ thì không thấy câu nối cặp
+      IH/IL. Vẫn dò được bằng mắt qua cột "Số GD" và "Số GD (Agribank)"
+
 - 10/09/2026 Hiệu năng toàn hệ thống — **Xem lịch sử đối soát CITAD nhanh gấp 94 lần, và chặn được kiểu sự cố đã làm sập máy chủ 26/08**
     + ✅ **Bấm "Xem chi tiết" ở Lịch sử đối soát CITAD nay ra ngay**, trước phải chờ khoảng 1 giây
       và máy chủ phải ôm 97 MB bộ nhớ cho **mỗi lần một người bấm**. Nguyên nhân: toàn bộ danh sách

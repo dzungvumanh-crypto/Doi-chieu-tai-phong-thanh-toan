@@ -53,6 +53,107 @@
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
   <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-09-05</p>
 
+  <!-- DC2 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">DC2</span>
+      <span class="card-title">Đối chiếu CITAD — lệch loại kênh IH/IL ở VND Đi + RefHub cho <code>lech_trang_thai</code> (PR #87)</span>
+      <span class="badge badge-warn">Đã merge kèm 2 lỗi đã biết — chủ ý, chưa vá</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label">Vì sao khớp chỉ bằng <code>msgref</code> là khớp khống</div>
+      <p>Ca thật Phòng Thanh toán báo 10/09/2026: 1 lệnh VND Đi trùng nhau ở CITAD và Agribank về
+        <code>so_gd</code>/<code>msgref</code> và cùng trạng thái SCNL, chỉ khác <b>trường loại lệnh</b>
+        (IH giá trị cao / IL giá trị thấp). Khoá khớp cũ không xét <code>loai</code> nên cặp này được
+        tính là khớp. PR tách nó thành 2 dòng (<code>only_citad</code> + <code>only_ipcas</code>), mỗi
+        dòng gắn <code>ghi_chu</code> chéo để người chấm tự nối lại — <b>không</b> đổi khoá khớp chính.</p>
+      <p>Ngoại tệ (Hub) cố ý ngoài phạm vi: bên Agribank không phân tầng giá trị cao/thấp cho ngoại tệ.</p>
+
+      <div class="caution"><b>Merge với 2 lỗi đã biết.</b> Rà soát trước khi merge (10/09/2026) tái hiện
+        được 2 lỗi dưới đây bằng A/B giữa <code>develop</code> và nhánh PR. Người dùng quyết định merge
+        trước, vá sau. Ghi lại đây để người sửa tiếp không phải tìm lại từ đầu.</div>
+
+      <div class="label">Lỗi 1 — lệch loại + trạng thái thất bại làm mất cảnh báo "tiền đã ra kênh"</div>
+      <p>Nhánh mới đặt <b>trước</b> mọi xử lý trạng thái trong <code>run_doiSoat_ram()</code>. Khi vừa
+        lệch <code>loai</code> vừa có <code>trang_thai</code> thuộc <code>ERR_DI</code>, dòng rơi sang
+        <code>only_citad</code> và mất câu cảnh báo cũ. Tệ hơn: vòng "IPCAS Đi dư" có
+        <code>excluded = trang_thai in ERR_DI</code> nên <b>dòng IPCAS không được sinh ra</b> — không
+        còn dấu vết nào của trạng thái ERPO trong báo cáo.</p>
+      <table>
+        <tr><th>Cùng input <code>CITAD ih</code> / <code>IPCAS il</code> + ERPO</th><th>Số dòng lệch</th><th>Ghi chú hiển thị</th></tr>
+        <tr><td><code>develop</code> (trước PR)</td><td><span class="pill pill-green">1 — <code>lech_trang_thai</code></span></td>
+            <td>IPCAS ghi nhận ERPO (thất bại) nhưng lệnh THỰC TẾ đã đi kênh CITAD thành công — <b>cần kiểm tra lại</b></td></tr>
+        <tr><td>PR #87 (sau merge)</td><td><span class="pill pill-red">1 — <code>only_citad</code></span></td>
+            <td>CITAD loại lệnh IH nhưng Agribank loại lệnh IL — cùng số GD, nghi lệch phân loại kênh</td></tr>
+      </table>
+      <p>Đây đúng loại lỗi module sinh ra để bắt: tiền ra khỏi kênh mà sổ cái báo hỏng. Test
+        <code>test_vnd_di_erpo_voi_citad_la_bat_thuong</code> không đỡ được vì chỉ chạy trường hợp
+        cùng loại. Hướng vá: <b>gộp</b> ghi chú thay vì thay thế, và giữ <code>trang_thai</code> lại
+        trên dòng đó.</p>
+      <pre>if m and m.get('loai') != r['loai']:
+    tt = m.get('trang_thai', '')
+    parts = [_ghi_chu_lech_loai_kenh(r['loai'], m['loai'])]
+    if tt in ERR_DI:
+        parts.append(f'IPCAS ghi nhận {tt} (thất bại) nhưng lệnh THỰC TẾ đã '
+                     f'đi kênh CITAD thành công — cần kiểm tra lại')
+    row = {**r, 'status': 'only_citad', 'key_agri': '', 'nh_nhan': '',
+           'trang_thai': tt, 'refhub': m.get('refhub', '')}
+    row['ghi_chu'] = ' | '.join(parts)</pre>
+
+      <div class="label">Lỗi 2 — CITAD dup 2 cổng khác loại làm ghi chú khẳng định sai về dữ liệu</div>
+      <p><code>citad_di_vnd_loai.setdefault(k, r['loai'])</code> chỉ nhớ loại của <b>dòng CITAD đầu
+        tiên</b>. Mà dup theo cổng là hiện tượng có thật ở module này — chính <code>dup_citad</code>
+        sinh ra vì nó.</p>
+      <table>
+        <tr><th>Input <code>CITAD[X, il, cổng 1]</code> + <code>CITAD[X, ih, cổng 9]</code> + <code>IPCAS[X, ih]</code></th><th>Kết quả</th></tr>
+        <tr><td><code>develop</code> (trước PR)</td><td><span class="pill pill-green"><code>n_khop=1</code></span>, 1 dòng <code>dup_citad</code></td></tr>
+        <tr><td>PR #87 (sau merge)</td><td><span class="pill pill-red"><code>n_khop=0</code></span>, 3 dòng, ghi chú <i>"CITAD loại lệnh <b>IL</b> nhưng Agribank loại lệnh IH"</i></td></tr>
+      </table>
+      <p>CITAD có <b>cả</b> IL lẫn IH cho số GD đó — câu ghi chú nói sai sự thật, và một lệnh khớp thật
+        bị đánh rớt. Hướng vá: so với <b>tập hợp</b> loại, không so với dòng đầu.</p>
+      <pre>citad_di_vnd_loai.setdefault(k, set()).add(r['loai'])
+...
+if m and m.get('loai') not in citad_di_vnd_loai.get(sogd, set()):</pre>
+
+      <div class="label">Ba điểm nhỏ chưa xử lý</div>
+      <ul>
+        <li>Dòng <code>only_citad</code> <b>không mang <code>refhub</code></b> dù <code>m['refhub']</code>
+          nằm ngay đó. Nhánh <code>nkt_thieu</code> cách 40 dòng bên dưới cố ý gắn refhub với đúng lý do
+          "để người chấm tự tra cứu" — ca này còn cần hơn.</li>
+        <li><b>Ghi chú đè mất số cổng.</b> Frontend dùng
+          <code>r.get("ghi_chu") or f"Cổng {r['cong']}"</code> nên dòng lệch loại kênh mất thông tin cổng
+          CITAD. Nhánh <code>dup_citad</code> đã xử đúng: nhét cổng vào chính câu ghi chú.</li>
+        <li><b>Tab Lịch sử không có cột Ghi chú.</b> PR sửa đúng bảng đó (thêm "Số RefHub") mà không thêm
+          — xem lại lịch sử thì cơ chế nối cặp IH/IL vô hình. Vẫn dò được bằng mắt qua
+          <code>so_gd</code> ↔ <code>key_agri</code>.</li>
+      </ul>
+
+      <div class="note"><b>Chưa đo trên dữ liệu thật.</b> PR đổi quy tắc khớp áp lên <b>mọi</b> lệnh VND
+        Đi nhưng không có <code>n_khop</code> trước/sau trên một ngày dữ liệu thật. Dự án có tiền lệ đúng
+        cho việc này (ghi ngay trong <code>reconcile.py</code>: <i>n_khop tụt từ 38.130 xuống 36.715 trên
+        dữ liệu 19/08/2026</i> — chính con số đó làm một thay đổi tương tự bị rút lại). Cần chạy lại bộ
+        19/08 hoặc 10/09: nếu số cặp lệch loại nhảy lên hàng trăm thì đây không phải ca cá biệt mà là
+        khác biệt hệ thống trong cách hai file gán loại, lúc đó tách 2 dòng là <b>sai hướng</b>.</div>
+      <p>Cách gán loại vốn đã bất đối xứng, đủ để đẻ ra "lệch loại" giả: CITAD dùng
+        <code>'ih' if 'giá trị cao' in dv_low else loai_file</code> (rơi về loại của cả sheet), IPCAS dùng
+        <code>'ih' if 'cao' in kenh else 'il'</code> (rơi về <code>il</code> khi cột kênh trống).</p>
+
+      <div class="label">Commit 2 — <code>lech_trang_thai</code> cũng phải giữ RefHub</div>
+      <p>Sót lại từ PR #82: PR đó chép <code>refhub</code> cho 3 nhánh
+        (<code>both</code> / <code>only_citad</code> nkt_thieu / <code>only_ipcas</code>) nhưng bỏ đúng
+        nhánh <code>lech_trang_thai</code> — trong khi đây mới là nhóm cần refhub nhất (IPCAS có lệnh
+        nhưng chưa xong trạng thái, người chấm bắt buộc phải tự tra Agribank). Sửa 1 dòng, có test khoá
+        lại. Phần này <span class="pill pill-green">không có ý kiến</span>.</p>
+
+      <div class="label">Ảnh hưởng lan rộng — đã soi</div>
+      <p>Không thêm status mới nào. <code>only_citad</code>/<code>only_ipcas</code> đã được
+        <code>exporters.py</code> (nhãn, màu, sheet lọc), bộ lọc 4 nhóm và các ô đếm ở frontend xử lý sẵn.
+        Các ô đếm sẽ dịch chuyển (<code>n_khop</code> giảm 1, mỗi bên tăng 1 cho từng cặp lệch) — đúng ý đồ.</p>
+
+    </div>
+  </div>
+
   <!-- HN1 -->
   <div class="card">
     <div class="card-header">

@@ -765,7 +765,7 @@ Kết nối CSDL dùng **bể mượn–trả** (`DB_POOL_SIZE`, mặc định 1
   thiếu**. Nửa còn lại chưa vá: nếu CITAD **không hề có** lệnh đó thì dòng vẫn biến mất khỏi báo
   cáo, không hiện ở nhóm **Chỉ Agribank** — đây đúng là ca đáng ngờ nhất (IPCAS ghi đã đi kênh mà
   CITAD chưa từng thấy), đang chờ Phòng Thanh toán chốt vì cho hiện sẽ làm số dòng lệch tăng thêm.
-  Xem `docs/Implementation-notes.html` (card 109, 127)
+  Xem `docs/Implementation-notes.html` (card 109, 127, DC2)
 - ⚠️ **`total_ipcas` từ 09/09/2026 không so sánh trực tiếp được với các lượt chấm cũ** — cùng một
   file IPCAS nay cho con số lớn hơn trước, vì hết đếm thiếu nhóm dòng nói trên (không phải do dữ
   liệu thay đổi)
@@ -773,8 +773,27 @@ Kết nối CSDL dùng **bể mượn–trả** (`DB_POOL_SIZE`, mặc định 1
   cả Excel xuất ra lẫn bảng "Kết quả" trên màn hình. Nội dung cột "Dịch vụ" cũ suy thẳng được từ
   cột **Loại GD** (IH = giá trị cao, IL = giá trị thấp) ngay bên cạnh. "Số RefHub" đặt **cuối nhóm
   AGRIBANK (IPCAS)** vì đó là dữ liệu gốc của file IPCAS, phía CITAD không có
-- 🔴 **Dòng nhóm "Lệch trạng thái" hiện vẫn để trống cột Số RefHub** dù IPCAS có sẵn giá trị đó —
-  đúng nhóm cần tra cứu nhất. Đang chờ vá; xem `docs/Implementation-notes.html` (card 127)
+- **Dòng nhóm "Lệch trạng thái" nay đã có Số RefHub** (10/09/2026) — sót từ đợt 09/09, trong khi
+  đây đúng là nhóm cần tra cứu nhất (IPCAS có lệnh nhưng chưa xong trạng thái, phải tự tra bên
+  Agribank). Bảng chi tiết tab **Lịch sử** cũng có thêm cột "Số RefHub"; lượt lưu trước 09/09/2026
+  để trống cột này vì thời điểm đó chưa có dữ liệu, không phải lỗi
+- ⚠️ **Lệnh VND Đi cùng số GD nhưng hai bên ghi khác loại (IH/IL) nay KHÔNG còn được coi là khớp**
+  (10/09/2026, ca thật Phòng Thanh toán). Khoá khớp cũ chỉ nhìn `msgref` nên một lệnh mà CITAD ghi
+  **giá trị cao** còn Agribank ghi **giá trị thấp** vẫn được tick khớp. Nay tách thành 2 dòng
+  (**Chỉ CITAD** + **Chỉ IPCAS**), mỗi dòng kèm ghi chú chéo để người chấm nối lại thành 1 cặp.
+  Hệ quả: **số dòng lệch có thể tăng**, `n_khop` giảm tương ứng. Ngoại tệ (Hub) ngoài phạm vi —
+  Agribank không phân tầng cao/thấp cho ngoại tệ
+- 🔴 **Hai lỗi đã biết của quy tắc IH/IL trên, merge có chủ ý và chưa vá** (rà soát 10/09/2026,
+  tái hiện được):
+  (1) lệnh vừa lệch loại **vừa** bị IPCAS ghi thất bại thì **mất** câu cảnh báo *"IPCAS ghi nhận
+  thất bại nhưng lệnh THỰC TẾ đã đi kênh CITAD thành công — cần kiểm tra lại"*, và dòng IPCAS
+  không được sinh ra;
+  (2) khi CITAD gửi trùng qua 2 cổng khác loại nhau, ghi chú chỉ nhìn dòng đầu nên **khẳng định
+  sai** về dữ liệu, đồng thời đánh rớt một lệnh khớp thật.
+  Xem `docs/Implementation-notes.html` (card DC2) — có sẵn hướng vá cho cả hai
+- ⚠️ **Quy tắc IH/IL chưa được đo trên dữ liệu thật một ngày trọn vẹn** — cần chạy lại bộ 19/08
+  hoặc 10/09 và so `n_khop` trước/sau. Nếu số cặp lệch loại lên tới hàng trăm thì đây là khác biệt
+  hệ thống giữa hai file chứ không phải ca cá biệt, và cách xử lý phải nghĩ lại
 - Cảnh báo khi chọn **trùng nội dung file** (băm SHA-256 toàn bộ byte, không dựa vào tên file).
   ⚠️ Chỉ là cảnh báo, bấm qua được — nhưng chọn nhầm trùng file nay khiến **mỗi dòng đẻ 1 dòng
   lệch giả**, không còn bị lọc âm thầm như trước
