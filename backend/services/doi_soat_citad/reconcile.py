@@ -556,6 +556,12 @@ def run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows):
                         'key_agri': m.get('msgref', sogd),
                         'nh_nhan': m.get('nh_nhan', ''),
                         'trang_thai': tt,
+                        # Bug thật (rà soát 10/09/2026): PR#82 chép refhub cho
+                        # 3 nhánh 'both'/'only_citad' (nkt_thieu)/'only_ipcas'
+                        # nhưng sót đúng nhánh này — trong khi đây MỚI là nhóm
+                        # cần refhub nhất (IPCAS có lệnh nhưng chưa xong trạng
+                        # thái, người chấm bắt buộc phải tự tra Agribank).
+                        'refhub': m.get('refhub', ''),
                     }
                     ghi_chu_parts = []
                     if tt in ERR_DI:

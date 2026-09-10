@@ -118,6 +118,22 @@ def test_vnd_di_erpo_voi_citad_la_bat_thuong():
     assert 'kiểm tra lại' in lech[0]['ghi_chu']
 
 
+def test_lech_trang_thai_cung_giu_refhub():
+    """Bug thật (rà soát 10/09/2026, ghi trong Implementation-notes.html card
+    127 — "chưa làm, biết mà để lại" từ PR#82): dòng 'lech_trang_thai' (IPCAS
+    CÓ lệnh nhưng chưa SCNL) bị bỏ sót khi PR#82 chép refhub cho 3 nhánh kia
+    ('both'/'only_citad' nkt_thieu/'only_ipcas'). Đây lại chính là nhóm cần
+    refhub nhất — IPCAS có lệnh nhưng chưa xong, người chấm bắt buộc phải tự
+    tra Agribank để kiểm tra trạng thái thật."""
+    citad = [_citad('970001', chieu='di')]
+    ipcas = [_ipcas(chieu='di', msgref='970001', trang_thai='WFPG',
+                     refhub='RH-LECHTT-970001')]
+    n_khop, lech, khop = run_doiSoat_ram(citad, ipcas, [])
+    assert n_khop == 0
+    assert lech[0]['status'] == 'lech_trang_thai'
+    assert lech[0]['refhub'] == 'RH-LECHTT-970001'
+
+
 def test_scnl_thieu_ngay_kenh_tra_rot_vao_chi_citad_kem_refhub():
     """Case đặc biệt (xác nhận Phòng Thanh toán 09/09/2026): IPCAS báo SCNL
     (đã sang kênh) nhưng thiếu ngày kênh trả (`nkt_thieu=True`, xem
