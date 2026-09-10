@@ -113,7 +113,7 @@ def _rotate(backup_dir: Path):
 _BANG_BAT_BUOC = "user_tttt"
 
 
-def _verify(db_file: Path) -> bool:
+def _verify(db_file: Path, so_dong_nguon: int) -> bool:
     """Bản backup vừa tạo có DÙNG ĐƯỢC không.
 
     `PRAGMA integrity_check` là ĐIỀU KIỆN CẦN, không đủ: một file SQLite **rỗng**
@@ -121,6 +121,11 @@ def _verify(db_file: Path) -> bool:
     `integrity_check` nói "ok", mà bên trong **không có bảng nào**. Chỉ kiểm
     integrity thì bản sao lưu trống rỗng vẫn được đóng dấu hợp lệ, rồi người vận
     hành chỉ phát hiện vào đúng lúc cần khôi phục.
+
+    So SỐ DÒNG với nguồn chứ không chỉ "có dòng nào không": máy vừa cài xong
+    (đã `init_db.py`, chưa tạo tài khoản) có 0 dòng là ĐÚNG, bắt lỗi ở đó là
+    đẻ ra một dòng ERROR giả ngay lần chạy đầu. So với nguồn thì bắt được cả
+    trường hợp chép thiếu giữa chừng.
     """
     try:
         c = sqlite3.connect(str(db_file))
@@ -128,11 +133,13 @@ def _verify(db_file: Path) -> bool:
             if c.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
                 return False
             n = c.execute(f"SELECT COUNT(*) FROM {_BANG_BAT_BUOC}").fetchone()[0]
-            if not n:
-                _log.error("Bản backup %s không có dòng nào trong %s — coi như hỏng",
-                           db_file.name, _BANG_BAT_BUOC)
-                return False
-            return True
+            if n == so_dong_nguon:
+                return True
+            _log.error(
+                "Bản backup %s có %d dòng %s, nguồn có %d — chép thiếu, coi như hỏng",
+                db_file.name, n, _BANG_BAT_BUOC, so_dong_nguon,
+            )
+            return False
         finally:
             c.close()
     except sqlite3.Error as exc:
@@ -226,6 +233,9 @@ def run_backup(db_path: str = "data/ksnb.db") -> Path:
     dst = _BACKUP_DIR / f"ksnb_{stamp}.db"
     try:
         src = sqlite3.connect(db_path)
+        # Đếm TRƯỚC khi chép, trên chính kết nối nguồn — mốc để đối chiếu bản
+        # vừa tạo có chép đủ không.
+        so_dong_nguon = src.execute(f"SELECT COUNT(*) FROM {_BANG_BAT_BUOC}").fetchone()[0]
         bak = sqlite3.connect(str(dst))
         src.backup(bak)
         bak.close()
@@ -233,7 +243,7 @@ def run_backup(db_path: str = "data/ksnb.db") -> Path:
 
         # Chống rủi ro backup ra bản hỏng — cảnh báo nhưng vẫn giữ file để điều tra.
         # Phải kiểm TRƯỚC khi nén: sau khi nén thì không mở bằng sqlite3 được nữa.
-        if not _verify(dst):
+        if not _verify(dst, so_dong_nguon):
             _log.error("Backup vừa tạo KHÔNG toàn vẹn: %s (file chính có thể đã hỏng)", dst)
 
         dst = _ma_hoa(dst)

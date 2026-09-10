@@ -192,6 +192,18 @@
         test qua với cả cách cũ lẫn cách mới (đo: cả hai đều ra 1), tức là không canh được gì. Có
         độ trễ 10 ms: cách cũ cho lọt <b>12/12</b>, cách mới đúng <b>1</b>.</p>
 
+      <div class="label">Lượt phản biện tìm ra CỬA THỨ NĂM</div>
+      <div class="caution"><b><code>POST /api/doi_chieu_song_phuong/process</code> — "Phân loại dữ
+        liệu" (chiều ĐI) — hoàn toàn nằm ngoài chốt.</b> Service của nó chưa hề gọi
+        <code>dang_ky_nguon()</code>, nên vừa không bị chặn, vừa <b>không được đếm</b> vào trần:
+        3 lượt khác cộng lượt này là 4 pipeline nặng chạy song song trong khi chốt tưởng mới có 3.
+        Không phải module nhẹ — <code>process_zip()</code> gom toàn bộ dòng đã định tuyến vào RAM,
+        và đường tắt numba nạp trọn một file thành viên (~140 MB sau giải nén với GL02 thật).</div>
+      <p>Kèm theo là hai chỗ tài liệu sai phải sửa: docstring <code>phien_doi_chieu.py</code> và
+        <code>.env.example</code> đều ghi "cả 4 module". <b>Là 5 cửa</b>, và nhãn hiển thị cũng
+        gây nhầm: chốt gọi chiều ĐẾN là "Đối chiếu Song phương", người vận hành đọc thông báo 409
+        sẽ tưởng cả hai chiều đã được canh.</p>
+
       <div class="label">Giữ nguyên hình dạng dữ liệu trang ACH đang đọc</div>
       <p>Trang ACH đọc <code>job_id</code>/<code>status</code>/<code>tuoi_giay</code> để hiện nút
         "Dừng", nên payload 409 giữ khoá <code>job</code> y như cũ. Thêm: endpoint
@@ -259,6 +271,33 @@
         <li>Nhập DB người dùng (<code>staff.py</code>) đọc từ file tạm rồi INSERT qua kết nối
           thường — <b>không thay thế file CSDL đang chạy</b>, nên handle của bể không bị treo.</li>
       </ul>
+
+      <div class="label">Bốn chỗ lượt phản biện bắt được</div>
+      <table>
+        <tr><th>Vấn đề</th><th>Vì sao nguy</th><th>Đã sửa</th></tr>
+        <tr><td>WAL trượt chỉ ghi log</td>
+            <td>Bản cũ chạy <code>PRAGMA journal_mode=WAL</code> ở MỌI kết nối nên một lần trượt
+                tự lành ở request sau. Nay chỉ một lượt lúc khởi động — trượt phát nào là cả tiến
+                trình chạy chế độ rollback-journal với 48 kết nối sống lâu, writer khoá sạch reader,
+                hệ thống chậm bí ẩn.</td>
+            <td><b>Raise, chặn khởi động</b> — cùng nguyên tắc mục Schema Migrations trong DESIGN.md</td></tr>
+        <tr><td><code>DB_POOL_SIZE</code> đọc bằng <code>int()</code> trần</td>
+            <td>Gõ nhầm chữ → ValueError lúc import, backend không lên mà lỗi không nhắc tới .env.
+                Số ÂM → bể không bao giờ tạo thêm kết nối, cả hệ thống dùng đúng 1 kết nối rồi mọi
+                request chờ hết giờ và ăn 500.</td>
+            <td>Dùng <code>_doc_so()</code>, kẹp <code>max(1, ...)</code></td></tr>
+        <tr><td>Trần bể 16 &lt; threadpool anyio 40</td>
+            <td>Endpoint khai <code>def</code> chạy trong bể 40 token, mỗi cái giữ một kết nối.
+                Trên 16 request đồng thời thì phần dư nhận <b>500</b> — nặng hơn hẳn bản cũ (chỉ chậm).</td>
+            <td>Mặc định <b>48</b>, ghi rõ ràng buộc vào <code>.env.example</code></td></tr>
+        <tr><td><code>_tra()</code> nuốt lỗi</td>
+            <td>Ổ đĩa đầy / CSDL hỏng thì hệ thống âm thầm quay vòng kết nối, không dấu vết.</td>
+            <td><code>_log.warning</code> kèm nguyên nhân</td></tr>
+      </table>
+      <p>Thêm một chỗ nhỏ: khi <code>_tra()</code> vứt bỏ kết nối hỏng thì suất trống ra nhưng
+        <b>không có gì được đưa vào hàng đợi</b>, nên luồng đang chờ nằm đủ 30 giây rồi ăn lỗi "bể
+        đều đang bận" trong khi suất đã trống — thông báo sai hướng. Nay chờ theo nhịp ngắn rồi
+        ngó lại sổ.</p>
 
       <div class="label">Hết kết nối thì báo, không treo</div>
       <p>Bể đầy mà chờ quá <code>_POOL_CHO_GIAY</code> (30 giây) thì ném lỗi nói thẳng phải nâng
@@ -345,6 +384,12 @@
       <p><code>_verify()</code> nay kiểm thêm: bảng <code>user_tttt</code> phải tồn tại VÀ có dòng.
         Mất bảng đó thì không ai đăng nhập được, bản sao lưu vô dụng. Thiếu hẳn bảng rơi vào nhánh
         <code>sqlite3.Error</code> ("no such table") — đúng ý.</p>
+
+      <div class="label">Phản biện chỉnh lại phép kiểm</div>
+      <p>Bản đầu kiểm "<code>user_tttt</code> phải có ít nhất một dòng". Sai ở máy <b>vừa cài
+        xong</b> (đã <code>init_db.py</code>, chưa tạo tài khoản): 0 dòng là đúng, bắt lỗi ở đó là
+        đẻ một dòng ERROR giả ngay lần chạy đầu. Nay <b>so số dòng với nguồn</b> — vừa đúng ở máy
+        mới, vừa bắt được cả trường hợp chép thiếu giữa chừng.</p>
 
       <div class="label">Sửa kèm: một chỗ nuốt lỗi</div>
       <p><code>_initial()</code> dùng <code>except Exception: pass</code> — backup hỏng lúc khởi

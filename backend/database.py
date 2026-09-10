@@ -4,6 +4,7 @@ import os
 import queue
 import sqlite3
 import threading
+import time
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from backend.core.config import settings
@@ -141,7 +142,29 @@ def compute_carry_over(staff_id: int, year: int, db,
 # `journal_mode` KHÔNG đặt ở đây: nó ghi cố định trong file CSDL, đặt một lần lúc
 # khởi động là đủ (xem `khoi_tao_pool()`). `foreign_keys` và `synchronous` thì
 # theo từng kết nối nên phải đặt lúc tạo.
-_POOL_MAX = int(os.getenv("DB_POOL_SIZE") or 0) or 16
+def _doc_so(ten_bien: str, mac_dinh: int) -> int:
+    """Đọc số từ .env, không để cấu hình sai giết hệ thống không dấu vết.
+
+    `int(os.getenv(...))` trần có hai cách chết: ô để trống hoặc gõ nhầm chữ thì
+    ném ValueError ngay lúc import (backend không lên, lỗi không nhắc gì tới
+    .env); số ÂM thì `_da_tao < _POOL_MAX` luôn sai nên bể không bao giờ tạo
+    thêm kết nối — cả hệ thống dùng đúng một kết nối rồi mọi request đồng thời
+    chờ hết giờ và ăn 500. Cùng cách `backend/core/phien_doi_chieu.py` làm.
+    """
+    tho = (os.getenv(ten_bien) or "").strip()
+    try:
+        return max(1, int(tho)) if tho else mac_dinh
+    except ValueError:
+        _log.warning("%s=%r không phải số — dùng mặc định %d", ten_bien, tho, mac_dinh)
+        return mac_dinh
+
+
+# Mặc định 48, KHÔNG phải 16: endpoint khai `def` chạy trong bể 40 token của
+# anyio và mỗi cái giữ một kết nối suốt thời gian xử lý. Trần nhỏ hơn 40 thì
+# phần dư chờ hết giờ rồi nhận 500 — nặng hơn hẳn bản cũ (chỉ chậm, không lỗi).
+# Cộng thêm các đường giữ kết nối rất lâu: `do_reconcile` giữ suốt lượt đối
+# soát, xem trước đơn nghỉ phép tới 150 giây. Chừa dư cho endpoint `async def`.
+_POOL_MAX = _doc_so("DB_POOL_SIZE", 48)
 _POOL_CHO_GIAY = 30.0
 
 _pool: "queue.LifoQueue[sqlite3.Connection]" = queue.LifoQueue()
@@ -177,16 +200,40 @@ def _muon() -> sqlite3.Connection:
             with _pool_lock:
                 _da_tao -= 1      # tạo hỏng thì trả lại suất, không thì bể teo dần
             raise
-    # Bể đầy: chờ người khác trả. Hết giờ chờ là báo thẳng thay vì treo vô hạn —
-    # request treo im lặng khó lần hơn nhiều so với một lỗi nói rõ nguyên nhân.
-    try:
-        return _pool.get(timeout=_POOL_CHO_GIAY)
-    except queue.Empty:
-        raise RuntimeError(
-            f"Hết kết nối CSDL sau {_POOL_CHO_GIAY:.0f} giây chờ "
-            f"(bể {_POOL_MAX} kết nối đều đang bận). Nếu lặp lại thường xuyên, "
-            f"nâng DB_POOL_SIZE trong .env."
-        )
+    # Bể đầy: chờ người khác trả. Chờ từng nhịp ngắn rồi ngó lại sổ, thay vì một
+    # lần `get(timeout=30)`: khi `_tra()` vứt bỏ một kết nối hỏng thì suất trống
+    # ra nhưng KHÔNG có gì được đưa vào hàng đợi, nên luồng đang chờ sẽ nằm đủ
+    # 30 giây rồi ăn lỗi "bể đều đang bận" trong khi suất đã trống — thông báo
+    # sai hướng, người vận hành đi nâng DB_POOL_SIZE vô ích.
+    het_han = time.monotonic() + _POOL_CHO_GIAY
+    while True:
+        con_lai = het_han - time.monotonic()
+        if con_lai <= 0:
+            break
+        try:
+            return _pool.get(timeout=min(0.5, con_lai))
+        except queue.Empty:
+            pass
+        with _pool_lock:
+            if _da_tao < _POOL_MAX:
+                _da_tao += 1
+                tu_tao = True
+            else:
+                tu_tao = False
+        if tu_tao:
+            try:
+                return _tao_ket_noi()
+            except Exception:
+                with _pool_lock:
+                    _da_tao -= 1
+                raise
+    # Hết giờ chờ là báo thẳng thay vì treo vô hạn — request treo im lặng khó
+    # lần hơn nhiều so với một lỗi nói rõ nguyên nhân.
+    raise RuntimeError(
+        f"Hết kết nối CSDL sau {_POOL_CHO_GIAY:.0f} giây chờ "
+        f"(bể {_POOL_MAX} kết nối đều đang bận). Nếu lặp lại thường xuyên, "
+        f"nâng DB_POOL_SIZE trong .env."
+    )
 
 
 def _tra(conn: sqlite3.Connection) -> None:
@@ -197,7 +244,10 @@ def _tra(conn: sqlite3.Connection) -> None:
         # nối nên SQLite tự huỷ giao dịch đó; nay kết nối sống tiếp, không rollback
         # là phần ghi dở rò sang request kế tiếp.
         conn.rollback()
-    except sqlite3.Error:
+    except sqlite3.Error as exc:
+        # Không nuốt: ổ đĩa đầy hay CSDL hỏng thì hệ thống âm thầm quay vòng kết
+        # nối mà không để lại dấu vết nào. Xem docs/SKILL.md.
+        _log.warning("Kết nối CSDL hỏng lúc trả về bể (%s) — bỏ kết nối này", exc)
         try:
             conn.close()
         except sqlite3.Error:
@@ -221,7 +271,17 @@ def khoi_tao_pool() -> None:
     try:
         che_do = conn.execute("PRAGMA journal_mode=WAL").fetchone()[0]
         if str(che_do).lower() != "wal":
-            _log.error("Không bật được WAL, journal_mode hiện tại: %s", che_do)
+            # RAISE chứ không chỉ log. Bản cũ chạy PRAGMA này ở MỌI kết nối nên
+            # một lần trượt (khoá tạm thời) tự lành ở request sau. Nay chỉ có
+            # đúng một lượt lúc khởi động: trượt phát nào là cả tiến trình chạy
+            # ở chế độ rollback-journal với 48 kết nối sống lâu — writer khoá
+            # sạch reader, hệ thống chậm bí ẩn mà không ai biết vì sao.
+            # Cùng nguyên tắc với mục Schema Migrations trong docs/DESIGN.md.
+            raise RuntimeError(
+                f"Không bật được chế độ WAL cho {DB_PATH} — journal_mode đang là "
+                f"{che_do!r}. Thường do file CSDL đang bị tiến trình khác giữ "
+                f"(công cụ xem DB đang mở?). Đóng nó rồi khởi động lại."
+            )
     finally:
         _tra(conn)
 

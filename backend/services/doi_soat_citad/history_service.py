@@ -289,10 +289,13 @@ def _doc_ban_cu(db: sqlite3.Connection, history_id: int,
 
 
 def iter_lech(db: sqlite3.Connection, history_id: int, lo: int = 2000):
-    """Duyệt toàn bộ lệnh lệch theo lô — cho đường xuất Excel.
+    """Duyệt toàn bộ lệnh lệch theo lô, sinh từng bản ghi.
 
-    Sinh từng bản ghi thay vì trả cả danh sách: openpyxl vốn đã giữ cả bảng
-    tính trong RAM, không cần cõng thêm một bản sao của dữ liệu nguồn.
+    CHƯA CÓ AI DÙNG — đường xuất Excel hiện vẫn dựng cả danh sách trong RAM vì
+    `export_doiSoat()` cần `len()` rồi duyệt lại 4 lượt (bảng chính + 3 sheet
+    lọc) nên không nhận generator. Giữ lại cho ngày viết lại exporters sang chế
+    độ `write_only`; tới lúc đó chỗ này đã có sẵn và đang được test canh.
+    Xem thẻ HN1 trong docs/Implementation-notes.html.
     """
     offset = 0
     while True:

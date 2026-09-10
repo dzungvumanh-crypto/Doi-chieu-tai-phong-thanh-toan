@@ -104,6 +104,14 @@ def test_backup_hong_duoc_ghi_log_khong_nuot_tron(monkeypatch, thu_muc, caplog):
 import sqlite3
 
 
+def _db_co(duong_dan, so_dong: int):
+    c = sqlite3.connect(str(duong_dan))
+    c.execute("CREATE TABLE user_tttt (id INTEGER, username TEXT)")
+    for i in range(so_dong):
+        c.execute("INSERT INTO user_tttt VALUES (?, ?)", (i, f"u{i}"))
+    c.commit(); c.close()
+
+
 def test_ban_backup_rong_bi_coi_la_hong(tmp_path):
     """Đã gặp thật: data/backups/ksnb_20260910_1404.db nặng 12,7 MB,
     `PRAGMA integrity_check` trả "ok", mà bên trong KHÔNG có bảng nào."""
@@ -111,27 +119,31 @@ def test_ban_backup_rong_bi_coi_la_hong(tmp_path):
     sqlite3.connect(str(p)).close()
     assert sqlite3.connect(str(p)).execute(
         "PRAGMA integrity_check").fetchone()[0] == "ok", "tiền đề: file rỗng vẫn 'ok'"
-    assert bs._verify(p) is False
+    assert bs._verify(p, 78) is False
 
 
-def test_ban_co_bang_nhung_khong_co_dong_bi_coi_la_hong(tmp_path):
-    p = tmp_path / "trong.db"
-    c = sqlite3.connect(str(p))
-    c.execute("CREATE TABLE user_tttt (id INTEGER, username TEXT)")
-    c.commit(); c.close()
-    assert bs._verify(p) is False
+def test_chep_thieu_dong_bi_coi_la_hong(tmp_path):
+    """Backup dừng giữa chừng: đọc được, integrity ok, nhưng hụt dữ liệu."""
+    p = tmp_path / "thieu.db"
+    _db_co(p, 40)
+    assert bs._verify(p, 78) is False
+
+
+def test_may_moi_cai_chua_co_tai_khoan_van_qua(tmp_path):
+    """0 dòng mà nguồn cũng 0 dòng là ĐÚNG — bắt lỗi ở đây là đẻ ra một dòng
+    ERROR giả ngay lần chạy đầu sau khi cài."""
+    p = tmp_path / "moi.db"
+    _db_co(p, 0)
+    assert bs._verify(p, 0) is True
 
 
 def test_ban_du_du_lieu_thi_qua(tmp_path):
     p = tmp_path / "du.db"
-    c = sqlite3.connect(str(p))
-    c.execute("CREATE TABLE user_tttt (id INTEGER, username TEXT)")
-    c.execute("INSERT INTO user_tttt VALUES (1, 'ai_do')")
-    c.commit(); c.close()
-    assert bs._verify(p) is True
+    _db_co(p, 78)
+    assert bs._verify(p, 78) is True
 
 
 def test_file_khong_phai_sqlite_bi_coi_la_hong(tmp_path):
     p = tmp_path / "rac.db"
     p.write_bytes(b"day khong phai sqlite")
-    assert bs._verify(p) is False
+    assert bs._verify(p, 78) is False

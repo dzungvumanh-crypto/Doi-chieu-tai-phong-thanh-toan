@@ -154,6 +154,13 @@ async def do_reconcile(
             n_khop=n_khop, lech_rows=lech,
         )
     except Exception as e:  # noqa: BLE001 — không để lỗi lưu lịch sử chặn mất kết quả đối soát
+        # Rollback TƯỜNG MINH: dòng cha và các dòng lệnh lệch nằm trong cùng một
+        # giao dịch ngầm. Hỏng giữa chừng mà chỉ nuốt lỗi thì dòng cha còn treo
+        # trong giao dịch dở — nay `_tra()` của bể kết nối huỷ nó hộ, nhưng ai đó
+        # thêm một `db.commit()` phía sau (ghi nhật ký chẳng hạn) là commit luôn
+        # dòng cha MỒ CÔI, không có lệnh lệch nào. Đừng để đúng/sai phụ thuộc vào
+        # chuyện phía dưới có commit hay không.
+        db.rollback()
         history_saved, history_error = False, str(e)
 
     return {
