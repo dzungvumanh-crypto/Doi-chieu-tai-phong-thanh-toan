@@ -274,6 +274,24 @@ Truy cập:
 
 ---
 
+## Giới hạn tài nguyên máy chủ
+
+Bốn module đối chiếu nặng (ACH, Chấm ILO1000, Đối chiếu Song phương, Chấm 459901) nạp file bằng
+pandas ngay trong tiến trình backend — đo được pandas giữ **~5,3 lần** kích thước file. Trần upload
+mỗi lượt 500 MB, nên bốn lượt cùng lúc có thể chạm ~10 GB.
+
+Từ 10/09/2026 cả bốn dùng chung một chốt (`backend/core/phien_doi_chieu.py`):
+
+| Phạm vi | Giới hạn | Chỉnh được không |
+|---|---|---|
+| Cùng một module | **1 lượt** | Không — luật cứng |
+| Toàn hệ thống | `DOI_CHIEU_MAX_SONG_SONG`, mặc định **3** | Có, trong `.env` |
+
+Bị chặn → HTTP 409 kèm câu nói rõ module nào đang chạy. Trước đó chỉ ACH có chốt, và nó cũng chỉ
+tự canh mình.
+
+Kết nối CSDL dùng **bể mượn–trả** (`DB_POOL_SIZE`, mặc định 16) thay vì mở tệp ở từng request.
+
 ## Chức năng
 
 ### Module Nhân sự & Tài khoản
@@ -705,6 +723,15 @@ Truy cập:
 
 ### Module Đối soát CITAD ↔ IPCAS
 - Đối soát từng lệnh chuyển tiền giữa CITAD (NHNN) và IPCAS (Agribank) theo ngày chấm
+- **Lệnh lệch lưu ở bảng riêng `doi_soat_citad_lech`, mỗi lệnh một dòng** (từ 10/09/2026). Trước
+  đây cả danh sách nằm trong một ô JSON của `doi_soat_citad_history` — cột đó chiếm 92% dung lượng
+  toàn CSDL, và mỗi lần bấm "Xem chi tiết" tốn 97 MB RAM + ~1 giây. Nay màn hình phân trang, chỉ
+  lấy 200 dòng mỗi lần
+- **Cảnh báo đỏ khi tỷ lệ lệch bất thường** — quá nửa số giao dịch bị coi là lệch **và** trên 1.000
+  lệnh, thường có nghĩa các file nguồn không cùng ngày / không cùng hệ thống. Chỉ báo, không chặn
+- ⚠️ **Sau khi deploy phải chạy `scripts/chuyen_lech_json_sang_bang_con.py`** để chuyển dữ liệu cũ.
+  Chưa chạy thì lịch sử vẫn xem được (hệ thống tự lui về đọc cột cũ, ghi WARNING vào nhật ký) nhưng
+  chậm như trước
 - Menu: **Đối chiếu → Phòng Thanh toán → Đối soát CITAD ↔ IPCAS**
 - Upload file CITAD (`.xls`/`.xlsx`/`.zip`), IPCAS (`.csv`/`.zip`) và Hub ngoại tệ (`.xls`/`.xlsx`);
   khớp trong RAM theo `msgref` (Đi) / `txid` (Đến), phân loại lệch thành 4 nhóm:

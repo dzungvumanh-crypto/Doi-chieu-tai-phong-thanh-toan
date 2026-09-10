@@ -489,9 +489,22 @@ async def cham_ach_page():
                     if api.la_loi_mang(e):
                         return 'khong_hoi_duoc'
                     raise
-                return res.get('job')
+                # `nghen` là câu trả lời của chốt chung 4 module: có giá trị cả
+                # khi ACH rảnh nhưng các module khác đã dùng hết suất chạy song
+                # song. Ưu tiên nó, nhưng chỉ khi KHÔNG phải phiên ACH của mình —
+                # phiên ACH còn cần `job` để hiện nút "Dừng".
+                nghen = res.get('nghen')
+                if res.get('job'):
+                    return res['job']
+                if nghen:
+                    return {'chi_bao': nghen.get('message')}
+                return None
 
             def _mo_ta_phien_dang_chay(job: dict) -> str:
+                # Nghẽn vì MODULE KHÁC đang chạy: chốt chung đã viết sẵn câu giải
+                # thích (nêu tên module nào), không có job ACH nào để bấm "Dừng".
+                if job.get('chi_bao'):
+                    return job['chi_bao']
                 phut = job.get('tuoi_giay', 0) // 60
                 da_lau = f', đã {phut} phút' if phut else ''
                 if job.get('status') == 'awaiting_confirmation':
@@ -807,7 +820,10 @@ async def cham_ach_page():
                     if not state['job_id']:
                         state['job_id'] = dang.get('job_id')
                     ui.notify(_mo_ta_phien_dang_chay(dang), type='negative', timeout=0)
-                    btn_cancel.set_visibility(True)
+                    # Nghẽn vì module KHÁC thì không có phiên ACH nào để dừng —
+                    # hiện nút "Dừng" ở đây là mời người dùng bấm một nút vô tác
+                    # dụng, rồi họ tưởng đã dừng được mà thật ra không.
+                    btn_cancel.set_visibility(bool(state['job_id']))
                     return
 
                 if dang == 'khong_hoi_duoc':

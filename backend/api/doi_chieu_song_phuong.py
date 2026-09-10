@@ -9,6 +9,7 @@ import threading
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import Response
 
+from backend.core import phien_doi_chieu
 from backend.core.uploads import safe_filename, save_upload_to
 from backend.core.deps import require_feature
 from backend.services import doi_chieu_song_phuong_service as svc
@@ -37,7 +38,14 @@ async def process(
     # Ghi THẲNG từng khối xuống thư mục của lượt, không gom vào RAM trước —
     # `process_zip()` đằng nào cũng chỉ cần đường dẫn, và zipfile đọc từ đĩa
     # được. Xem save_upload_to() trong backend/core/uploads.py.
-    task_token = svc.init_progress()
+    # Chốt chặn dùng chung — xem backend/core/phien_doi_chieu.py. Cửa này TỪNG BỊ
+    # BỎ SÓT: chốt chỉ phủ 4 module kia nên "Phân loại dữ liệu" (chiều ĐI) vừa
+    # không bị chặn, vừa KHÔNG được đếm vào trần chạy song song — 3 lượt khác cộng
+    # lượt này là 4 pipeline nặng chạy cùng lúc trong khi chốt tưởng mới có 3.
+    with phien_doi_chieu.gianh_cho("song_phuong_di") as nghen:
+        if nghen:
+            raise HTTPException(409, nghen)
+        task_token = svc.init_progress()
     thu_muc = svc.tao_thu_muc_upload(task_token)
     ten = safe_filename(file.filename, "du_lieu.zip")
     try:

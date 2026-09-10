@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
 
+from backend.core import phien_doi_chieu
 from backend.core.deps import require_feature
 from backend.core.uploads import MAX_REQUEST_BYTES, safe_filename, save_upload_to, so_mb
 from backend.services import doi_chieu_song_phuong_common as common
@@ -78,10 +79,16 @@ async def start_from_upload(
     if not (len(ngay) == 8 and ngay.isdigit()):
         raise HTTPException(400, f"Ngày không hợp lệ (cần dạng YYYYMMDD): {ngay}")
 
-    try:
-        job_id, input_dir = svc.tao_job(ngay, ma_nh)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
+    # Chốt chặn dùng chung — xem backend/core/phien_doi_chieu.py. Module này vào
+    # develop qua PR #86, sau khi chốt được viết; không khai thì nó vừa không bị
+    # chặn vừa không được đếm vào trần chạy song song.
+    with phien_doi_chieu.gianh_cho("song_phuong_kenh_core_di") as nghen:
+        if nghen:
+            raise HTTPException(409, nghen)
+        try:
+            job_id, input_dir = svc.tao_job(ngay, ma_nh)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
 
     try:
         total_size = 0

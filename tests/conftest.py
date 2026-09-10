@@ -51,16 +51,33 @@ def _fake_db():
 
 @pytest.fixture(autouse=True)
 def _don_job_ach():
-    """Xoá sổ job ACH trước/sau mỗi test.
+    """Xoá sổ job của CẢ BỐN module đối chiếu trước/sau mỗi test.
 
     `ach_service._jobs` là dict toàn cục trong RAM, sống suốt phiên pytest. Từ khi
     `/api/ach/start` chặn "một phiên tại một thời điểm" (409), một job do test trước
     để lại ở trạng thái awaiting_confirmation sẽ làm test sau bị từ chối — lỗi hiện
-    ra ở file test hoàn toàn khác, rất khó lần."""
-    from backend.services import ach_service
-    ach_service._jobs.clear()
+    ra ở file test hoàn toàn khác, rất khó lần.
+
+    Nay chốt đó dùng chung cho cả bốn module (backend/core/phien_doi_chieu.py), nên
+    ba module kia dính đúng cái bẫy ấy: một lượt 459901 mà luồng nền chưa kịp đặt
+    `done=True` trước lúc test kết thúc sẽ làm mọi test 459901 SAU đó ăn 409. Đã xảy
+    ra thật khi thêm chốt — 7 test đỏ ở file không liên quan gì tới thay đổi.
+
+    Dọn từng sổ chứ không gọi hàm dọn của service: hàm đó còn xoá thư mục kết quả
+    theo mốc thời gian, không phải việc của test."""
+    from backend.services import (
+        ach_service,
+        cham459901_service,
+        doi_chieu_song_phuong_kenh_core_service as sp_service,
+        ilo1000_service,
+    )
+    so = (ach_service._jobs, ilo1000_service._jobs,
+          sp_service._jobs, cham459901_service._progress)
+    for s in so:
+        s.clear()
     yield
-    ach_service._jobs.clear()
+    for s in so:
+        s.clear()
 
 
 @pytest.fixture

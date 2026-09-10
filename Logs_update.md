@@ -4,6 +4,33 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 10/09/2026 Hiệu năng toàn hệ thống — **Xem lịch sử đối soát CITAD nhanh gấp 94 lần, và chặn được kiểu sự cố đã làm sập máy chủ 26/08**
+    + ✅ **Bấm "Xem chi tiết" ở Lịch sử đối soát CITAD nay ra ngay**, trước phải chờ khoảng 1 giây
+      và máy chủ phải ôm 97 MB bộ nhớ cho **mỗi lần một người bấm**. Nguyên nhân: toàn bộ danh sách
+      lệnh lệch của một lượt (có lượt tới 93.781 lệnh) bị nhồi vào **một ô duy nhất** trong cơ sở
+      dữ liệu, mở ra là phải mở trọn. Nay mỗi lệnh một dòng riêng, màn hình chỉ lấy đúng 200 dòng
+      đang xem
+    + ✅ **Cơ sở dữ liệu nhẹ đi khoảng một nửa** (68 MB → chừng 30 MB). Ô nói trên chiếm tới **92%**
+      toàn bộ dung lượng. Nhẹ hơn thì sao lưu nhanh hơn, kiểm tra toàn vẹn nhanh hơn
+    + ✅ **Đối soát mà ghép nhầm cặp file nay được báo đỏ ngay tại màn hình.** Trước đây một lượt
+      như vậy vẫn chạy tới cùng, báo "Hoàn thành", rồi lặng lẽ ghi hàng chục MB vào cơ sở dữ liệu —
+      không ai biết. Dấu hiệu: quá nửa số giao dịch bị coi là lệch **và** trên 1.000 lệnh
+    + ✅ **Máy chủ không còn bị chạy chồng nhiều lượt đối chiếu nặng.** Sau sự cố 26/08 chỉ Đối chiếu
+      ACH được khoá; Chấm ILO1000, Đối chiếu Song phương, Chấm 459901 vẫn vào thẳng, mà mỗi lượt có
+      thể ăn vài GB bộ nhớ. Nay: **cùng một menu chỉ 1 người chạy**, khác menu thì tối đa 3 lượt
+      cùng lúc. Bị chặn sẽ thấy thông báo nói rõ ai đang chạy, chờ hay bấm "Dừng"
+    + ✅ **Mọi thao tác trong phần mềm nhanh thêm một chút** — máy chủ không còn mở lại tệp cơ sở dữ
+      liệu ở từng thao tác. Đo được: 2,36 mili-giây → 0,02 mili-giây mỗi lần
+    + ✅ **Khởi động lại liên tiếp không còn chép cơ sở dữ liệu 5 lần dồn dập.** Nếu vừa có bản sao
+      lưu cách đây chưa tới 4 giờ thì bỏ qua lượt lúc khởi động. Bản sao lưu theo lịch 24 giờ giữ nguyên
+    + ⚠️ **Bản sao lưu RỖNG trước đây vẫn được coi là hợp lệ.** Tìm thấy một file 12,7 MB trong thư
+      mục sao lưu, phép kiểm tra cũ nói "ổn", mà mở ra **không có bảng nào**. Nếu phải khôi phục
+      bằng file đó thì mất trắng. Nay kiểm thêm: phải có dữ liệu nhân sự thật bên trong
+    + ⚠️ **Sau khi deploy phải chạy thêm một lệnh chuyển dữ liệu** (xem mục Deploy bên dưới). Chưa
+      chạy thì lịch sử đối soát cũ **vẫn xem được bình thường** nhưng chậm như trước — hệ thống tự
+      lui về đường cũ và ghi cảnh báo vào nhật ký
+    + ℹ️ **Xuất Excel từ lịch sử vẫn nặng như cũ.** Việc này phải viết lại phần sinh file Excel, để
+      riêng một đợt khác
 - 09/09/2026 Đối chiếu Song phương — chiều ĐI - **Nhận nhiều file GL02/CSV/Excel cùng lúc, tự đọc ngày thật bên trong file; bỏ TPAY khỏi diện tính khớp; báo cáo có thêm ghi chú tự giải thích**
     + ✅ **File core đã phân loại sẵn nay nộp được cả `.xlsx`**, không chỉ `.csv`, và **nộp cùng lúc
       nhiều file của nhiều ngày khác nhau (T-1, T, T+1…) đã chạy được** — hệ thống tự mở file đọc

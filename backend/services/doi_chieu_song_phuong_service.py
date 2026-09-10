@@ -456,3 +456,38 @@ def _cleanup_old_results(cutoff: float | None = None) -> None:
     stale = [k for k, v in _progress.items() if v.get("_ts", 0) < cutoff]
     for k in stale:
         _progress.pop(k, None)
+
+
+# ── Chốt chặn dùng chung ─────────────────────────────────────────────────────
+# Một lượt bị bỏ dở quá lâu coi như đã chết, không được khoá chết tính năng.
+_TTL_DANG_CHAY = 4 * 3600
+
+
+def luot_dang_chay() -> dict | None:
+    """Lượt "Phân loại dữ liệu" (chiều ĐI) đang chiếm máy chủ, None nếu rảnh.
+
+    Module này nặng thật chứ không nhẹ: `process_zip()` gom toàn bộ dòng đã định
+    tuyến vào RAM trước khi ghi file, và đường tắt numba nạp trọn một file thành
+    viên (~140 MB sau giải nén với GL02 thật — xem ghi chú trong process_zip).
+
+    `_progress` không có khoá riêng nên chụp nhanh bằng `list()` trước khi duyệt.
+    """
+    now = time.time()
+    for token, p in list(_progress.items()):
+        if p.get("done"):
+            continue
+        if now - p.get("_ts", 0) > _TTL_DANG_CHAY:
+            continue
+        return {
+            "job_id":    token,
+            "status":    "running",
+            "tuoi_giay": max(0, int(now - p.get("_ts", now))),
+        }
+    return None
+
+
+# Đặt CUỐI file: `luot_dang_chay` phải tồn tại trước khi đem đi khai.
+from backend.core.phien_doi_chieu import dang_ky_nguon  # noqa: E402
+
+dang_ky_nguon("song_phuong_di", "Đối chiếu Song phương (phân loại dữ liệu)",
+              luot_dang_chay)

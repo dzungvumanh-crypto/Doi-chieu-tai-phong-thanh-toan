@@ -47,6 +47,12 @@ _GIU_GAN_NHAT = 5
 
 _INTERVAL_HOURS = 24
 
+# Khởi động mà bản gần nhất mới cách đây dưới ngần này giờ thì bỏ qua lượt backup
+# lúc khởi động. Đặt 4 giờ: đủ dài để nuốt trọn một chuỗi khởi động lại (chúng
+# cách nhau vài giây tới vài phút), đủ ngắn để một lần bật máy buổi sáng sau khi
+# tắt qua đêm vẫn có bản mới.
+_TOI_THIEU_GIO = 4.0
+
 # Đúng mẫu tên do run_backup() sinh: ksnb_YYYYMMDD_HHMM.db (hoặc .zip khi có mã
 # hoá) — và CHỈ mẫu này mới bị xoá tự động. File tên khác trong cùng thư mục là
 # do người đặt, không đụng.
@@ -102,14 +108,43 @@ def _rotate(backup_dir: Path):
             _log.warning("Không xoá được backup cũ %s: %s", p.name, exc)
 
 
-def _verify(db_file: Path) -> bool:
-    """Kiểm tra bản backup vừa tạo có toàn vẹn không (chống đẻ ra bản hỏng)."""
+# Bảng bắt buộc phải có VÀ có dữ liệu trong một bản sao lưu dùng được. Chọn
+# `user_tttt`: mất bảng này thì không ai đăng nhập được, bản sao lưu vô dụng.
+_BANG_BAT_BUOC = "user_tttt"
+
+
+def _verify(db_file: Path, so_dong_nguon: int) -> bool:
+    """Bản backup vừa tạo có DÙNG ĐƯỢC không.
+
+    `PRAGMA integrity_check` là ĐIỀU KIỆN CẦN, không đủ: một file SQLite **rỗng**
+    cũng trả "ok". Đã gặp thật — `data/backups/ksnb_20260910_1404.db` nặng 12,7 MB,
+    `integrity_check` nói "ok", mà bên trong **không có bảng nào**. Chỉ kiểm
+    integrity thì bản sao lưu trống rỗng vẫn được đóng dấu hợp lệ, rồi người vận
+    hành chỉ phát hiện vào đúng lúc cần khôi phục.
+
+    So SỐ DÒNG với nguồn chứ không chỉ "có dòng nào không": máy vừa cài xong
+    (đã `init_db.py`, chưa tạo tài khoản) có 0 dòng là ĐÚNG, bắt lỗi ở đó là
+    đẻ ra một dòng ERROR giả ngay lần chạy đầu. So với nguồn thì bắt được cả
+    trường hợp chép thiếu giữa chừng.
+    """
     try:
         c = sqlite3.connect(str(db_file))
-        ok = c.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
-        c.close()
-        return ok
-    except Exception:
+        try:
+            if c.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                return False
+            n = c.execute(f"SELECT COUNT(*) FROM {_BANG_BAT_BUOC}").fetchone()[0]
+            if n == so_dong_nguon:
+                return True
+            _log.error(
+                "Bản backup %s có %d dòng %s, nguồn có %d — chép thiếu, coi như hỏng",
+                db_file.name, n, _BANG_BAT_BUOC, so_dong_nguon,
+            )
+            return False
+        finally:
+            c.close()
+    except sqlite3.Error as exc:
+        # Thiếu hẳn bảng cũng rơi vào đây ("no such table") — đúng ý.
+        _log.error("Không kiểm tra được bản backup %s: %s", db_file.name, exc)
         return False
 
 
@@ -198,6 +233,9 @@ def run_backup(db_path: str = "data/ksnb.db") -> Path:
     dst = _BACKUP_DIR / f"ksnb_{stamp}.db"
     try:
         src = sqlite3.connect(db_path)
+        # Đếm TRƯỚC khi chép, trên chính kết nối nguồn — mốc để đối chiếu bản
+        # vừa tạo có chép đủ không.
+        so_dong_nguon = src.execute(f"SELECT COUNT(*) FROM {_BANG_BAT_BUOC}").fetchone()[0]
         bak = sqlite3.connect(str(dst))
         src.backup(bak)
         bak.close()
@@ -205,7 +243,7 @@ def run_backup(db_path: str = "data/ksnb.db") -> Path:
 
         # Chống rủi ro backup ra bản hỏng — cảnh báo nhưng vẫn giữ file để điều tra.
         # Phải kiểm TRƯỚC khi nén: sau khi nén thì không mở bằng sqlite3 được nữa.
-        if not _verify(dst):
+        if not _verify(dst, so_dong_nguon):
             _log.error("Backup vừa tạo KHÔNG toàn vẹn: %s (file chính có thể đã hỏng)", dst)
 
         dst = _ma_hoa(dst)
@@ -229,13 +267,47 @@ def _schedule_next(db_path: str):
     _timer.start()
 
 
+def _gio_ke_tu_ban_gan_nhat() -> float | None:
+    """Số giờ kể từ bản backup tự sinh mới nhất. None nếu chưa có bản nào.
+
+    Đọc mốc từ TÊN file, cùng lý do với `_ban_tu_sinh()`: chép thư mục backup
+    sang ổ khác làm `mtime` đổi hết, còn tên thì không.
+    """
+    ban = _ban_tu_sinh(_BACKUP_DIR)
+    if not ban:
+        return None
+    try:
+        moc = datetime.strptime(ban[-1][0], "%Y%m%d%H%M")
+    except ValueError:
+        return None      # tên lạ — coi như chưa có, thà backup thừa còn hơn thiếu
+    return (datetime.now() - moc).total_seconds() / 3600
+
+
 def start_scheduler(db_path: str = "data/ksnb.db"):
     """Gọi khi khởi động app: backup ngay (background) + lên lịch mỗi 24h."""
     def _initial():
+        # Bỏ qua nếu vừa có bản cách đây chưa lâu. `run.py` tự khởi động lại tới
+        # MAX_RESTARTS=5 lần khi gặp sự cố, mà mỗi lần lên là chép nguyên file
+        # CSDL — đúng lúc hệ thống đang trục trặc thì nó chép 5 lần liên tiếp,
+        # mỗi lần giữ khoá đọc trên CSDL.
+        #
+        # KHÔNG đụng tới `_rotate()`: luật giữ bản đã được cân nhắc kỹ (xem
+        # docstring đầu file), đây chỉ là chuyện có chạy lượt này hay không.
+        gio = _gio_ke_tu_ban_gan_nhat()
+        if gio is not None and gio < _TOI_THIEU_GIO:
+            _log.info(
+                "Bỏ qua backup lúc khởi động — đã có bản cách đây %.1f giờ "
+                "(ngưỡng %.0f giờ). Lượt theo lịch vẫn chạy như thường.",
+                gio, _TOI_THIEU_GIO,
+            )
+            return
         try:
             run_backup(db_path)
-        except Exception:
-            pass
+        except Exception as exc:
+            # `run_backup()` đã log ERROR rồi raise. Bắt lại ở đây để một lần
+            # backup hỏng không giết luồng và làm mất lượt kế tiếp — nhưng vẫn
+            # ghi rõ, không nuốt trơn như bản cũ (`except Exception: pass`).
+            _log.error("Backup lúc khởi động thất bại: %s", exc)
 
     # Chạy backup đầu tiên trong background để không block lifespan của FastAPI
     threading.Thread(target=_initial, daemon=True, name="backup-init").start()

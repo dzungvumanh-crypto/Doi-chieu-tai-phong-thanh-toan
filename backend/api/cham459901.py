@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
 
+from backend.core import phien_doi_chieu
 from backend.core.config import cham459901_folder_roots
 from backend.core.uploads import MAX_REQUEST_BYTES, safe_filename, save_upload_to
 from backend.core.deps import require_feature
@@ -151,7 +152,13 @@ async def process(
     if not files:
         raise HTTPException(400, "Cần chọn ít nhất 1 file.")
 
-    task_token = cham459901_service.init_progress()
+    # Chốt chặn dùng chung — xem backend/core/phien_doi_chieu.py. Trước đây
+    # module này KHÔNG có cửa nào. Đặt TRƯỚC khi nhận file để client còn đọc
+    # được 409 (Starlette đã nhận xong thân request tới đây).
+    with phien_doi_chieu.gianh_cho("cham459901") as nghen:
+        if nghen:
+            raise HTTPException(409, nghen)
+        task_token = cham459901_service.init_progress()
     thu_muc = cham459901_service.tao_thu_muc_upload(task_token)
     try:
         tep, unrecognized, duplicates, hub_di, hub_den, ton = await _nhan_file(files, thu_muc)
@@ -250,7 +257,12 @@ def process_folder(
         )
 
     hub_partial = (hub_di is not None) != (hub_den is not None)
-    task_token = cham459901_service.init_progress()
+    # Cửa thứ hai của cùng module: chạy từ thư mục máy chủ cũng nạp pandas y hệt
+    # đường tải file lên. Bịt một cửa mà bỏ cửa kia thì chốt vô nghĩa.
+    with phien_doi_chieu.gianh_cho("cham459901") as nghen:
+        if nghen:
+            raise HTTPException(409, nghen)
+        task_token = cham459901_service.init_progress()
     threading.Thread(
         target=cham459901_service.run_process,
         args=(tep, task_token, hub_di, hub_den, ton),

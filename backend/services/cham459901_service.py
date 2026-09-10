@@ -122,6 +122,33 @@ def init_progress() -> str:
     return task_token
 
 
+# Một lượt bị bỏ dở quá lâu coi như đã chết, không được khoá chết tính năng.
+# Bằng CLEANUP_TTL của ba module kia; KHÔNG dùng mốc 23h của
+# `_cleanup_old_results()` — mốc đó để giữ KẾT QUẢ hết ngày làm việc, còn ở đây
+# hỏi "có ai đang chiếm máy chủ không", hai câu hỏi khác nhau.
+_TTL_DANG_CHAY = 4 * 3600
+
+
+def luot_dang_chay() -> dict | None:
+    """Lượt Chấm 459901 đang chiếm máy chủ, None nếu rảnh.
+
+    `_progress` không có khoá riêng (khác ba module kia) nên chụp nhanh bằng
+    `list()` trước khi duyệt — đúng cách `_cleanup_old_results()` đang làm.
+    """
+    now = time.time()
+    for token, p in list(_progress.items()):
+        if p.get("done"):
+            continue
+        if now - p.get("_ts", 0) > _TTL_DANG_CHAY:
+            continue
+        return {
+            "job_id":    token,
+            "status":    "running",
+            "tuoi_giay": max(0, int(now - p.get("_ts", now))),
+        }
+    return None
+
+
 def tao_thu_muc_upload(task_token: str) -> Path:
     """Thư mục nhận file tải lên của một lượt: `data/temp_cham459901/upload_<token>/`.
 
@@ -1182,3 +1209,10 @@ def _cleanup_old_results(cutoff: float | None = None) -> None:
     stale = [k for k, v in list(_progress.items()) if v.get("_ts", 0) < cutoff]
     for k in stale:
         _progress.pop(k, None)
+
+
+# Khai với chốt chặn dùng chung — xem backend/core/phien_doi_chieu.py.
+# Đặt CUỐI file: `luot_dang_chay` phải tồn tại trước khi đem đi khai.
+from backend.core.phien_doi_chieu import dang_ky_nguon  # noqa: E402
+
+dang_ky_nguon("cham459901", "Chấm 459901", luot_dang_chay)
