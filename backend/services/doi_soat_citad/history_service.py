@@ -18,15 +18,51 @@ Bảng đã tạo sẵn trong backend/db/migrations.py (cùng PR này).
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from datetime import datetime
 from typing import Optional
 
 from backend.database import _vn_now
 
+_log = logging.getLogger(__name__)
+
 
 def _dumps(obj) -> str:
     return json.dumps(obj, ensure_ascii=False, default=str)
+
+
+# ── Cảnh báo lượt đối soát bất thường ────────────────────────────────────────
+# Một lượt bình thường lệch vài chục lệnh. Đo trên dữ liệu thật: 6, 14, 15, 39 —
+# rồi đột ngột 22 202, 60 542, 75 921, 93 781. Những lượt sau gần như chắc chắn
+# là ghép NHẦM CẶP FILE (file CITAD của ngày này với IPCAS của ngày khác chẳng
+# hạn): không khớp được gì nên mọi giao dịch đều bị coi là lệch.
+#
+# Hai điều kiện phải cùng đúng, cố ý:
+#   - tỷ lệ cao: quá nửa số giao dịch bị coi là lệch — đối soát mà hỏng quá nửa
+#     thì không còn là "có sai sót", mà là hai file không cùng một gốc;
+#   - số tuyệt đối lớn: ngày ít giao dịch (3 lệnh, lệch 2) vẫn quá nửa nhưng
+#     hoàn toàn bình thường — không có ngưỡng này thì cảnh báo kêu suốt và
+#     người dùng học cách bỏ qua nó.
+_TY_LE_LECH_BAT_THUONG = 0.5
+_SO_LECH_BAT_THUONG = 1000
+
+
+def canh_bao_lech_bat_thuong(n_lech: int, total_citad: int,
+                             total_ipcas: int, total_hub: int) -> Optional[str]:
+    """Câu cảnh báo nếu lượt đối soát có dấu hiệu ghép nhầm file, None nếu bình thường."""
+    lon_nhat = max(total_citad, total_ipcas, total_hub)
+    if n_lech < _SO_LECH_BAT_THUONG or lon_nhat <= 0:
+        return None
+    ty_le = n_lech / lon_nhat
+    if ty_le < _TY_LE_LECH_BAT_THUONG:
+        return None
+    return (
+        f"Có {n_lech:,} lệnh lệch trên tổng {lon_nhat:,} — tức {ty_le:.0%}. "
+        "Tỷ lệ này thường có nghĩa các file nguồn KHÔNG cùng một ngày hoặc "
+        "không cùng một hệ thống, chứ không phải nghiệp vụ sai. Kiểm tra lại "
+        "cặp file đã chọn trước khi dùng kết quả này."
+    )
 
 
 def _parse_ngay(ngay: str) -> Optional[datetime]:
@@ -38,6 +74,34 @@ def _parse_ngay(ngay: str) -> Optional[datetime]:
         return datetime.strptime(ngay.strip(), "%d/%m/%Y")
     except Exception:
         return None
+
+
+# ── Bảng con `doi_soat_citad_lech` ───────────────────────────────────────────
+# Các khoá có cột riêng. Khoá nào KHÔNG nằm đây rơi vào `extra_json` — bản ghi
+# lệch dựng bằng `{**r, ...}` nên bộ khoá theo dòng nguồn, không cố định.
+_COT_LECH = (
+    "so_gd", "dich_vu", "loai", "chieu", "loai_tien", "so_tien",
+    "ngay", "status", "key_agri", "nh_nhan", "trang_thai", "cong", "ghi_chu",
+)
+
+
+def _tach_ban_ghi(rec: dict) -> tuple:
+    """Bản ghi lệch → tuple giá trị theo `_COT_LECH`, phần dư gói vào extra_json."""
+    du = {k: v for k, v in rec.items() if k not in _COT_LECH}
+    return tuple(rec.get(k) for k in _COT_LECH) + (_dumps(du) if du else None,)
+
+
+def _ghep_ban_ghi(row: sqlite3.Row) -> dict:
+    """Dòng DB → bản ghi lệch y như lúc lưu.
+
+    Chỉ trả về khoá THỰC SỰ có lúc lưu: cột NULL nghĩa là bản ghi gốc không có
+    khoá đó (`cong`/`ghi_chu` vắng ở nhiều dòng), trả kèm `None` là bịa thêm
+    field mà bản gốc không có — Excel xuất ra sẽ khác bản đã ký.
+    """
+    rec = {k: row[k] for k in _COT_LECH if row[k] is not None}
+    if row["extra_json"]:
+        rec.update(json.loads(row["extra_json"]))
+    return rec
 
 
 def save_recon_history(
@@ -68,11 +132,21 @@ def save_recon_history(
             ngay_cham, _vn_now(), performed_by_id,
             _dumps(citad_file_names), _dumps(ipcas_file_names), _dumps(hub_file_names),
             total_citad, total_ipcas, total_hub, n_khop, n_lech,
-            _dumps(lech_rows), _vn_now(),
+            None, _vn_now(),
         ),
     )
+    history_id = cur.lastrowid
+
+    # executemany một phát: 93 781 lệnh lệch mà chạy execute() từng dòng thì
+    # riêng vòng lặp Python đã lâu hơn cả lượt đối soát.
+    db.executemany(
+        f"""INSERT INTO doi_soat_citad_lech
+            (history_id, seq, {", ".join(_COT_LECH)}, extra_json)
+            VALUES ({", ".join("?" * (len(_COT_LECH) + 3))})""",
+        [(history_id, i) + _tach_ban_ghi(rec) for i, rec in enumerate(lech_rows)],
+    )
     db.commit()
-    return cur.lastrowid
+    return history_id
 
 
 def list_recon_history(
@@ -131,10 +205,28 @@ def list_recon_history(
     return out
 
 
-def get_recon_detail(db: sqlite3.Connection, history_id: int) -> Optional[dict]:
-    """Lấy lại đầy đủ 1 lần đối soát — snapshot `lech` (giải nén JSON)."""
+# Mọi cột của bảng cha TRỪ `lech_json`. Liệt kê tên thay cho `SELECT *`: cột đó
+# còn tồn tại cho tới khi dữ liệu cũ được chuyển hết, và `SELECT *` sẽ kéo trọn
+# 19 MB lên RAM ngay cả khi không ai dùng tới nó.
+_COT_CHA = """h.id, h.ngay_cham, h.recon_date, h.performed_by_id,
+              h.citad_file_names, h.ipcas_file_names, h.hub_file_names,
+              h.total_citad, h.total_ipcas, h.total_hub, h.n_khop, h.n_lech,
+              h.created_at"""
+
+
+def get_recon_detail(
+    db: sqlite3.Connection,
+    history_id: int,
+    offset: int = 0,
+    limit: Optional[int] = 200,
+) -> Optional[dict]:
+    """Một lần đối soát + MỘT TRANG lệnh lệch.
+
+    `limit=None` lấy hết — chỉ dùng cho đường xuất Excel, không dùng cho màn
+    hình: một lượt đối soát hỏng có tới 93 781 lệnh, trả hết là 97 MB RAM.
+    """
     row = db.execute(
-        "SELECT * FROM doi_soat_citad_history WHERE id = ?", (history_id,)
+        f"SELECT {_COT_CHA} FROM doi_soat_citad_history h WHERE h.id = ?", (history_id,)
     ).fetchone()
     if not row:
         return None
@@ -142,5 +234,75 @@ def get_recon_detail(db: sqlite3.Connection, history_id: int) -> Optional[dict]:
     d["citad_file_names"] = json.loads(d.pop("citad_file_names") or "[]")
     d["ipcas_file_names"] = json.loads(d.pop("ipcas_file_names") or "[]")
     d["hub_file_names"] = json.loads(d.pop("hub_file_names") or "[]")
-    d["lech_records"] = json.loads(d.pop("lech_json") or "[]")
+
+    # Tổng số lệnh lệch THẬT trong bảng con, không lấy `n_lech` của bảng cha:
+    # hai số này lệch nhau nếu một lượt lưu hụt giữa chừng, và phân trang phải
+    # bám theo thứ có thật thì mới không hiện trang trống ở cuối.
+    tong = db.execute(
+        "SELECT COUNT(*) FROM doi_soat_citad_lech WHERE history_id = ?", (history_id,)
+    ).fetchone()[0]
+
+    if tong:
+        sql = "SELECT * FROM doi_soat_citad_lech WHERE history_id = ? ORDER BY seq"
+        tham_so: list = [history_id]
+        if limit is not None:
+            sql += " LIMIT ? OFFSET ?"
+            tham_so += [limit, offset]
+        d["lech_records"] = [_ghep_ban_ghi(r) for r in db.execute(sql, tham_so)]
+    else:
+        d["lech_records"], tong = _doc_ban_cu(db, history_id, offset, limit)
+
+    d["lech_offset"] = offset
+    d["lech_total"] = tong
     return d
+
+
+def _doc_ban_cu(db: sqlite3.Connection, history_id: int,
+                offset: int, limit: Optional[int]) -> tuple[list, int]:
+    """Đường lui: đọc lệnh lệch từ cột `lech_json` cũ khi bảng con chưa có dữ liệu.
+
+    Cần vì mã và dữ liệu chuyển sang bảng con ở HAI bước rời nhau: deploy mã
+    trước, chạy `scripts/chuyen_lech_json_sang_bang_con.py` sau. Không có đường
+    lui này thì trong khoảng giữa, mọi lượt lịch sử cũ hiện ra **0 lệnh lệch** —
+    không lỗi, không log, người dùng tưởng mất sạch dữ liệu audit. Phát hiện lúc
+    chạy thử trên máy thật, không phải suy đoán.
+
+    Chậm (phải giải nén cả chuỗi JSON, dòng nặng nhất 19 MB / ~1 giây) nên KÊU TO
+    mỗi lần dùng: đây là trạng thái tạm, phải chạy script chuyển cho xong.
+    """
+    row = db.execute(
+        "SELECT lech_json FROM doi_soat_citad_history WHERE id = ?", (history_id,)
+    ).fetchone()
+    raw = row["lech_json"] if row else None
+    if not raw:
+        return [], 0
+    _log.warning(
+        "Lượt đối soát id=%s còn nằm ở cột lech_json cũ — đang đọc đường chậm. "
+        "Chạy scripts/chuyen_lech_json_sang_bang_con.py để chuyển dứt điểm.",
+        history_id,
+    )
+    ban_ghi = json.loads(raw)
+    tong = len(ban_ghi)
+    if limit is None:
+        return ban_ghi, tong
+    return ban_ghi[offset:offset + limit], tong
+
+
+def iter_lech(db: sqlite3.Connection, history_id: int, lo: int = 2000):
+    """Duyệt toàn bộ lệnh lệch theo lô — cho đường xuất Excel.
+
+    Sinh từng bản ghi thay vì trả cả danh sách: openpyxl vốn đã giữ cả bảng
+    tính trong RAM, không cần cõng thêm một bản sao của dữ liệu nguồn.
+    """
+    offset = 0
+    while True:
+        rows = db.execute(
+            "SELECT * FROM doi_soat_citad_lech WHERE history_id = ? "
+            "ORDER BY seq LIMIT ? OFFSET ?",
+            (history_id, lo, offset),
+        ).fetchall()
+        if not rows:
+            return
+        for r in rows:
+            yield _ghep_ban_ghi(r)
+        offset += lo

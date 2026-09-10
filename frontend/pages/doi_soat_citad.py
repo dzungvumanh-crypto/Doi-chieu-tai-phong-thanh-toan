@@ -208,6 +208,19 @@ def _build_input_panel(tab, state, tabs, result_tab, history_refresh):
                         ).classes("text-orange-600 font-bold mt-1")
                         for w in warnings:
                             ui.label(f"• {w}").classes("text-orange-600 text-sm")
+                    # Tỷ lệ lệch bất thường — dấu hiệu ghép nhầm cặp file. Đặt
+                    # nổi hơn parse_warnings vì kết quả trông vẫn "chạy được",
+                    # không có gì báo hỏng; trước đây một lượt như vậy lặng lẽ
+                    # ghi hàng chục MB vào CSDL mà không ai biết.
+                    if data.get("canh_bao_bat_thuong"):
+                        with ui.row().classes(
+                            "w-full items-start gap-2 mt-2 p-2 rounded "
+                            "bg-red-50 border border-red-300"
+                        ):
+                            ui.icon("report_problem").classes("text-red-600 mt-1")
+                            ui.label(data["canh_bao_bat_thuong"]).classes(
+                                "text-red-700 text-sm flex-1"
+                            )
                 if not data.get("history_saved", True):
                     ui.notify(
                         f"Đối soát xong nhưng LƯU LỊCH SỬ bị lỗi: {data.get('history_error')}",
@@ -603,35 +616,56 @@ def _build_history_panel(tab, history_refresh):
             # quả chính trước khi được phân trang. Áp dụng lại đúng cách đó
             # ở đây: cắt trang phía Python, chỉ render 1 trang mỗi lần.
             HIST_PAGE_SIZE = 200
-            hist_state = {"records": None, "page": 1}
+            # `records` nay chỉ giữ ĐÚNG MỘT TRANG, không phải cả snapshot.
+            # Backend cắt trang sẵn (offset/limit) — trước đây nó trả hết rồi
+            # frontend mới cắt, nghĩa là 97 MB RAM ở máy chủ + ngần ấy dữ liệu
+            # bơm qua websocket, chỉ để hiện 200 dòng đầu.
+            hist_state = {"records": None, "page": 1, "total": 0}
+
+            async def _tai_trang(trang: int) -> bool:
+                """Lấy một trang lệnh lệch. False nếu lỗi (đã báo cho người dùng)."""
+                try:
+                    detail = await asyncio.to_thread(
+                        api.get,
+                        f"/api/doi-soat-citad/history/{history_id}",
+                        params={"offset": (trang - 1) * HIST_PAGE_SIZE,
+                                "limit": HIST_PAGE_SIZE},
+                    )
+                except Exception as e:
+                    if _handle_api_error(e):
+                        return False
+                    ui.notify(f"Lỗi: {e}", type="negative")
+                    return False
+                hist_state["records"] = detail["lech_records"]
+                hist_state["total"] = detail["lech_total"]
+                hist_state["page"] = trang
+                return True
 
             def render_hist_page():
                 detail_area.clear()
-                records = hist_state["records"]
-                if not records:
+                page_records = hist_state["records"]
+                total = hist_state["total"]
+                if not total:
                     with detail_area:
                         ui.label("Không có lệnh lệch nào (khớp 100%)").classes("text-gray-400 text-sm p-2")
                     return
-                total = len(records)
                 n_pages = max(1, (total + HIST_PAGE_SIZE - 1) // HIST_PAGE_SIZE)
-                if hist_state["page"] > n_pages:
-                    hist_state["page"] = n_pages
-                start = (hist_state["page"] - 1) * HIST_PAGE_SIZE
-                page_records = records[start:start + HIST_PAGE_SIZE]
                 with detail_area:
                     with ui.row().classes("w-full items-center justify-between mb-1"):
                         ui.label(
                             f"Hiển thị {len(page_records)}/{total} dòng — trang {hist_state['page']}/{n_pages}."
                         ).classes("text-gray-500 text-xs")
                         with ui.row().classes("gap-1"):
-                            def _prev():
-                                if hist_state["page"] > 1:
-                                    hist_state["page"] -= 1
+                            # Truyền THẲNG hàm async cho on_click — không bọc
+                            # asyncio.create_task: task mới làm rỗng ngăn xếp slot
+                            # của NiceGUI, ui.notify/ui.navigate im lặng không chạy.
+                            # Xem mục "Event handler async" trong docs/DESIGN.md.
+                            async def _prev():
+                                if hist_state["page"] > 1 and await _tai_trang(hist_state["page"] - 1):
                                     render_hist_page()
 
-                            def _next():
-                                if hist_state["page"] < n_pages:
-                                    hist_state["page"] += 1
+                            async def _next():
+                                if hist_state["page"] < n_pages and await _tai_trang(hist_state["page"] + 1):
                                     render_hist_page()
 
                             ui.button(icon="chevron_left", on_click=_prev).props("dense flat size=sm")
@@ -663,16 +697,9 @@ def _build_history_panel(tab, history_refresh):
                     detail_area.clear()
                     expanded["open"] = False
                     return
-                try:
-                    detail = await asyncio.to_thread(api.get, f"/api/doi-soat-citad/history/{history_id}")
-                except Exception as e:
-                    if _handle_api_error(e):
-                        return
-                    ui.notify(f"Lỗi: {e}", type="negative")
+                if not await _tai_trang(1):
                     return
                 expanded["open"] = True
-                hist_state["records"] = detail["lech_records"]
-                hist_state["page"] = 1
                 render_hist_page()
 
             async def dl_excel():

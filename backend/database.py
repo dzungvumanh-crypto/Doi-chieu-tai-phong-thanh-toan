@@ -1,8 +1,14 @@
 """SQLite connection factory — raw SQL, no ORM."""
+import logging
+import os
+import queue
 import sqlite3
+import threading
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from backend.core.config import settings
+
+_log = logging.getLogger(__name__)
 
 DB_PATH = settings.DATABASE_URL.replace("sqlite:///", "")
 Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
@@ -120,17 +126,137 @@ def compute_carry_over(staff_id: int, year: int, db,
     return max(0.0, prev_quota - used)
 
 
-def get_db():
+# ── Bể kết nối ───────────────────────────────────────────────────────────────
+# Đo trên máy chủ 10/09/2026: mở file CSDL tốn 1,55 ms mỗi request, trong khi một
+# truy vấn trên kết nối có sẵn chỉ 0,0057 ms — **đắt gấp 270 lần**. Kiểm riêng:
+# bỏ hết 4 câu PRAGMA đi vẫn tốn 1,52 ms, nên chi phí nằm ở việc MỞ FILE (db +
+# WAL + shm), không phải ở PRAGMA. Vì vậy cách sửa là dùng lại kết nối, KHÔNG
+# phải cắt PRAGMA — cắt thì mất an toàn dữ liệu mà không nhanh lên chút nào.
+#
+# Mượn–trả từng request, KHÔNG dùng `threading.local()`. `get_db()` là generator
+# đồng bộ nên FastAPI chạy nó trong threadpool, còn thân hàm `async def` lại chạy
+# trên luồng event loop: kết nối gắn theo luồng sẽ bị dùng chéo luồng và trộn
+# trạng thái giao dịch giữa hai request khác nhau.
+#
+# `journal_mode` KHÔNG đặt ở đây: nó ghi cố định trong file CSDL, đặt một lần lúc
+# khởi động là đủ (xem `khoi_tao_pool()`). `foreign_keys` và `synchronous` thì
+# theo từng kết nối nên phải đặt lúc tạo.
+_POOL_MAX = int(os.getenv("DB_POOL_SIZE") or 0) or 16
+_POOL_CHO_GIAY = 30.0
+
+_pool: "queue.LifoQueue[sqlite3.Connection]" = queue.LifoQueue()
+_pool_lock = threading.Lock()
+_da_tao = 0
+
+
+def _tao_ket_noi() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
-    conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=30000")
     conn.execute("PRAGMA synchronous=NORMAL")
+    return conn
+
+
+def _muon() -> sqlite3.Connection:
+    global _da_tao
+    try:
+        return _pool.get_nowait()
+    except queue.Empty:
+        pass
+    with _pool_lock:
+        if _da_tao < _POOL_MAX:
+            _da_tao += 1
+            tu_tao = True
+        else:
+            tu_tao = False
+    if tu_tao:
+        try:
+            return _tao_ket_noi()
+        except Exception:
+            with _pool_lock:
+                _da_tao -= 1      # tạo hỏng thì trả lại suất, không thì bể teo dần
+            raise
+    # Bể đầy: chờ người khác trả. Hết giờ chờ là báo thẳng thay vì treo vô hạn —
+    # request treo im lặng khó lần hơn nhiều so với một lỗi nói rõ nguyên nhân.
+    try:
+        return _pool.get(timeout=_POOL_CHO_GIAY)
+    except queue.Empty:
+        raise RuntimeError(
+            f"Hết kết nối CSDL sau {_POOL_CHO_GIAY:.0f} giây chờ "
+            f"(bể {_POOL_MAX} kết nối đều đang bận). Nếu lặp lại thường xuyên, "
+            f"nâng DB_POOL_SIZE trong .env."
+        )
+
+
+def _tra(conn: sqlite3.Connection) -> None:
+    """Trả kết nối về bể. Kết nối hỏng thì bỏ hẳn, không đưa lại cho request sau."""
+    global _da_tao
+    try:
+        # Bắt buộc: request có thể kết thúc khi còn giao dịch dở. Bản cũ đóng kết
+        # nối nên SQLite tự huỷ giao dịch đó; nay kết nối sống tiếp, không rollback
+        # là phần ghi dở rò sang request kế tiếp.
+        conn.rollback()
+    except sqlite3.Error:
+        try:
+            conn.close()
+        except sqlite3.Error:
+            pass
+        with _pool_lock:
+            _da_tao -= 1
+        return
+    _pool.put(conn)
+
+
+def khoi_tao_pool() -> None:
+    """Đặt `journal_mode=WAL` một lần cho cả file CSDL. Gọi lúc khởi động.
+
+    `journal_mode` ghi cố định vào file CSDL nên không cần lặp ở mỗi kết nối —
+    bản cũ chạy nó 266 lần mỗi vòng request mà kết quả luôn y nhau.
+    """
+    global _da_tao
+    conn = _tao_ket_noi()
+    with _pool_lock:
+        _da_tao += 1          # tính suất TRƯỚC khi đưa vào bể, để `_tra` cân đúng sổ
+    try:
+        che_do = conn.execute("PRAGMA journal_mode=WAL").fetchone()[0]
+        if str(che_do).lower() != "wal":
+            _log.error("Không bật được WAL, journal_mode hiện tại: %s", che_do)
+    finally:
+        _tra(conn)
+
+
+def dong_pool() -> None:
+    """Đóng mọi kết nối rảnh. Gọi lúc tắt ứng dụng."""
+    global _da_tao
+    while True:
+        try:
+            conn = _pool.get_nowait()
+        except queue.Empty:
+            break
+        try:
+            conn.close()
+        except sqlite3.Error:
+            pass
+        with _pool_lock:
+            _da_tao -= 1
+
+
+def pool_stats() -> dict:
+    """Trạng thái bể — để chẩn đoán khi hệ thống có vẻ chậm."""
+    with _pool_lock:
+        da_tao = _da_tao
+    ranh = _pool.qsize()
+    return {"toi_da": _POOL_MAX, "da_tao": da_tao, "ranh": ranh,
+            "dang_muon": max(0, da_tao - ranh)}
+
+
+def get_db():
+    conn = _muon()
     try:
         yield conn
     except Exception:
         conn.rollback()
         raise
     finally:
-        conn.close()
+        _tra(conn)

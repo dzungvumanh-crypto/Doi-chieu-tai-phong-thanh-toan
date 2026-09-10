@@ -115,6 +115,10 @@ async def lifespan(app: FastAPI):
     _create_tables(DB_PATH)
     _ensure_indexes()
     _warn_deployment_config()
+    # Bể kết nối: bật WAL một lần cho cả file CSDL. Phải sau migrations — hai
+    # bước trên mở kết nối riêng và có thể còn đang giữ khoá ghi.
+    from backend.database import khoi_tao_pool as _khoi_tao_pool
+    _khoi_tao_pool()
     _db_file = _settings.DATABASE_URL.replace("sqlite:///", "")
     from backend.services.backup_service import start_scheduler as _start_backup
     _start_backup(_db_file)
@@ -132,6 +136,8 @@ async def lifespan(app: FastAPI):
     yield
     # Xả nốt dòng audit đang chờ trước khi tiến trình chết
     audit_queue.stop()
+    from backend.database import dong_pool as _dong_pool
+    _dong_pool()
 
 app = FastAPI(
     title="PAYMENT CENTER",

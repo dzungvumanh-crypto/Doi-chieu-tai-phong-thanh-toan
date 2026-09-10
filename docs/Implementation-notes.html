@@ -53,6 +53,307 @@
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
   <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-09-05</p>
 
+  <!-- HN1 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">HN1</span>
+      <span class="card-title">Hiệu năng hạng mục 01 — tách <code>lech_json</code> ra bảng con <code>doi_soat_citad_lech</code></span>
+      <span class="badge badge-ok">Đã đo trên bản sao CSDL thật</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label">Vì sao động vào chỗ này trước</div>
+      <p>Đo trên máy chủ 10/09/2026: cột <code>doi_soat_citad_history.lech_json</code> chiếm
+        <b>62,9/68,2 MB — 92% toàn bộ CSDL</b>. Dòng nặng nhất 19,34 MB chứa 93 781 lệnh lệch nhồi
+        trong một ô TEXT. Mỗi lần một người bấm "Xem chi tiết" là <b>97 MB RAM + 1,0 giây CPU</b>,
+        rồi ngần ấy dữ liệu đi tiếp qua websocket xuống trình duyệt — chỉ để hiện 200 dòng đầu.</p>
+      <p><b>Nguồn rác vẫn đang chảy, không phải chuyện cũ.</b> Bản trên máy phát triển dừng ở
+        <code>id=37</code>, máy chủ đã có <code>id=38</code> nặng 13,13 MB sinh trong ~13 ngày —
+        chiếm 94% phần CSDL phình thêm trong quãng đó.</p>
+
+      <div class="label">Vì sao KHÔNG cắm cứng danh sách cột</div>
+      <div class="caution"><b>Bản ghi lệch dựng bằng <code>{**r, ...}</code> trong
+        <code>reconcile.py</code> — bộ khoá theo dòng nguồn, không cố định.</b> Đếm trên 233 794 bản
+        ghi thật: <b>4 bộ khoá khác nhau</b>, <code>cong</code> vắng ở 94 441 dòng,
+        <code>ghi_chu</code> chỉ có ở 5 dòng. Lấy một dòng mẫu ra suy danh sách cột thì mất
+        <code>cong</code> và <code>ghi_chu</code> — bản ghi vẫn lưu, chỉ thiếu field, không lỗi nào.
+        Vì vậy có cột <code>extra_json</code> hứng mọi khoá không có cột riêng.</div>
+      <p>Đối xứng với nó: <code>_ghep_ban_ghi()</code> chỉ trả về khoá <b>thực sự có lúc lưu</b>.
+        Cột NULL nghĩa là bản gốc không có khoá đó; trả kèm <code>None</code> là bịa thêm field mà
+        bản đã ký không có, Excel xuất ra sẽ khác bản audit.</p>
+
+      <div class="label">Vì sao <code>WITHOUT ROWID</code></div>
+      <p>Mọi truy vấn đều là "lượt nào, từ dòng thứ mấy" — đúng thứ tự khoá chính
+        <code>(history_id, seq)</code>. Bảng tự sắp theo khoá nên bỏ được cả index phụ lẫn cột
+        <code>id</code> và rowid ẩn. Đo trên 233 794 dòng thật: <b>25,40 MB → 21,48 MB</b>.</p>
+
+      <table>
+        <tr><th>Chỉ số</th><th>Trước</th><th>Sau</th><th>Đo bằng</th></tr>
+        <tr><td>Mở chi tiết lượt nặng nhất (<code>id=2</code>)</td><td>1 013,8 ms</td>
+            <td><b>10,8 ms</b></td><td>Bản sao CSDL thật</td></tr>
+        <tr><td>Đỉnh RAM một request</td><td>97,2 MB</td><td><b>0,21 MB</b></td><td><code>tracemalloc</code></td></tr>
+        <tr><td>Kích thước CSDL (bản dev)</td><td>54,3 MB</td><td><b>21,5 MB</b></td><td>Sau <code>VACUUM</code></td></tr>
+        <tr><td>Đối chiếu bản ghi sau chuyển</td><td colspan="2"><b>233 794/233 794 khớp từng khoá, từng giá trị</b></td>
+            <td>Bước <code>doi_chieu</code></td></tr>
+      </table>
+
+      <div class="label">Vấn đề phát hiện nhưng CHƯA sửa — và vì sao</div>
+      <div class="caution"><b>Đường xuất Excel vẫn dựng cả danh sách trong RAM.</b>
+        <code>export_doiSoat()</code> cần <code>len()</code> rồi duyệt lại 4 lượt (bảng chính + 3 sheet
+        lọc) nên không nhận generator, mà openpyxl vốn cũng giữ trọn bảng tính trong RAM — đổi riêng
+        chỗ đọc sang theo lô không tiết kiệm được gì. Muốn dứt điểm phải viết lại
+        <code>exporters.py</code> sang chế độ <code>write_only</code>: việc riêng, không gộp vào đây.
+        Vẫn nhẹ hơn bản cũ vì không còn giữ đồng thời chuỗi JSON 19 MB <i>và</i> danh sách đã giải nén
+        (đỉnh cũ ~116 MB).</div>
+      <p><code>iter_lech()</code> đã có sẵn cho ngày viết lại exporter, và đang được test canh.</p>
+
+      <div class="label">Đường lui khi mã đã deploy mà dữ liệu chưa chuyển</div>
+      <div class="caution"><b>Phát hiện lúc chạy app thật, không phải suy đoán.</b> Mã và dữ liệu
+        sang bảng con ở HAI bước rời nhau: deploy trước, chạy script sau. Trong khoảng giữa, mọi
+        lượt lịch sử cũ hiện ra <b>0 lệnh lệch</b> — không lỗi, không log, người dùng tưởng mất
+        sạch dữ liệu audit. Đo qua HTTP: <code>lech_total: 0</code> trong khi
+        <code>lech_json</code> vẫn còn nguyên 93 781 bản ghi.</div>
+      <p><code>_doc_ban_cu()</code> đọc lại từ <code>lech_json</code> khi bảng con rỗng, vẫn cắt
+        trang (trả 40 KB thay vì 30 MB) và <b>ghi WARNING mỗi lần dùng</b> — đây là trạng thái
+        tạm, phải chạy script cho xong. Chậm hơn (0,40 s so với 10,8 ms) nhưng dữ liệu hiện đúng.</p>
+
+      <div class="label">Vì sao script chuyển dữ liệu tách làm ba lệnh rời</div>
+      <p><code>scripts/chuyen_lech_json_sang_bang_con.py</code> có <code>chuyen</code> /
+        <code>doi_chieu</code> / <code>don</code>. Cố ý <b>không</b> gộp: xoá dữ liệu gốc là việc không
+        lùi lại được, nên người vận hành phải nhìn thấy kết quả đối chiếu bằng mắt rồi mới tự quyết
+        định xoá. Bước <code>chuyen</code> chạy lại nhiều lần được (dòng đã có thì bỏ qua); bước
+        <code>doi_chieu</code> trả mã thoát 2 khi có sai lệch để không ai lỡ tay chạy tiếp.</p>
+      <div class="caution"><b>Bước <code>don</code> phải dừng backend trước.</b> <code>VACUUM</code>
+        cần chạy ngoài giao dịch và không có kết nối nào khác đang ghi.</div>
+
+    </div>
+  </div>
+
+  <!-- HN2 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">HN2</span>
+      <span class="card-title">Hiệu năng hạng mục 02 — chốt chặn lượt đối chiếu dùng chung cho 4 module</span>
+      <span class="badge badge-ok">Đã kiểm ở tầng HTTP</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label">Lỗ hổng thật: chốt 26/08 mới bịt một trong bốn cửa</div>
+      <p>Sau sự cố 26/08/2026 (hai pipeline pandas cùng ôm vài trăm MB làm backend hết RAM),
+        chốt "một phiên tại một thời điểm" được thêm — nhưng <b>chỉ cho ACH</b>. Chấm ILO1000,
+        Đối chiếu Song phương và Chấm 459901 vào thẳng, bao nhiêu người bấm cũng chạy. Và ngay
+        cả ACH cũng chỉ tự canh mình, nên chạy ACH cùng lúc với Song phương vẫn lọt.</p>
+      <div class="caution"><b>Cả bốn chạy trên <code>threading.Thread</code> tự tạo, KHÔNG đi
+        qua <code>run_heavy()</code></b> — nên <code>MAX_HEAVY</code> trong
+        <code>concurrency.py</code> không hề ràng buộc chúng. Đây là chỗ dễ đọc nhầm nhất: nhìn
+        thấy có bộ giới hạn việc nặng rồi tưởng đã được che.</div>
+      <p>Đo được pandas giữ <b>5,3 lần</b> kích thước file khi đọc <code>dtype=str</code> (đỉnh
+        5,9×). Trần upload mỗi lượt 500 MB → bốn lượt cùng lúc có thể chạm ~10 GB trên máy 20 GB.</p>
+
+      <div class="label">Hai luật, cố ý khác nhau</div>
+      <table>
+        <tr><th>Phạm vi</th><th>Luật</th><th>Vì sao</th></tr>
+        <tr><td>Cùng một module</td><td><b>Luôn 1 lượt</b>, không nới được</td>
+            <td>Người vận hành xác nhận cùng một menu thì thực tế chỉ một người chạy. Hai lượt
+                cùng module còn tranh nhau cả thư mục tạm, không riêng RAM.</td></tr>
+        <tr><td>Toàn hệ thống</td><td><code>DOI_CHIEU_MAX_SONG_SONG</code>, mặc định <b>3</b></td>
+            <td>Khác menu thì vài người chạy song song là nếp làm việc bình thường — khoá về 1
+                là cản việc thật. Trần 3 chặn đúng trường hợp cả bốn cùng chạy.</td></tr>
+      </table>
+      <p><b>Vì sao không khoá chung về 1</b> dù đó là phương án an toàn nhất: người vận hành nói
+        rõ "cùng menu thường chỉ 1 người, khác menu thì có thể vài người chạy đối chiếu khác
+        nhau". Chốt 1 lượt toàn hệ thống sẽ chặn đúng nếp làm việc đang có.</p>
+
+      <div class="label">Vì sao không giữ bản sao trạng thái job</div>
+      <p><code>backend/core/phien_doi_chieu.py</code> không có sổ job riêng. Mỗi service tự khai
+        một hàm báo cáo "tôi đang bận với job nào" (<code>dang_ky_nguon()</code>), trạng thái vẫn
+        nằm nguyên chỗ cũ. Hai nguồn sự thật về cùng một job là kiểu lỗi tự sinh ra lệch pha.</p>
+      <p>Một module báo cáo lỗi thì bị bỏ qua <b>và ghi log ERROR</b>, không làm chết cửa kiểm
+        tra của ba module còn lại — nhưng phải kêu to, vì đếm hụt nghĩa là chốt tự nới ra âm thầm.</p>
+
+      <div class="label">Bẫy đã sập ngay khi thêm chốt — và nó tự lặp lại</div>
+      <div class="caution"><b>7 test đỏ ở file không liên quan gì tới thay đổi.</b> Một lượt
+        459901 mà luồng nền chưa kịp đặt <code>done=True</code> trước lúc test kết thúc sẽ làm
+        mọi test 459901 SAU đó ăn 409. Đây <b>đúng cái bẫy</b> mà fixture
+        <code>_don_job_ach</code> trong <code>conftest.py</code> đã được viết ra để chặn hồi ACH
+        thêm chốt — nay mở rộng fixture đó cho cả bốn sổ job thay vì viết cơ chế mới.</div>
+
+      <div class="label">Hai lỗi CHỈ lộ ra khi chạy app thật</div>
+      <div class="caution"><b>1. Kiểm tra rồi mới đăng ký là hai bước rời — hai người bấm cùng
+        lúc đều lọt.</b> Bắn 5 request ILO1000 đồng thời qua HTTP: <b>2 lọt thay vì 1</b>. Khe hở
+        nằm ở <code>tao_job()</code> (tạo thư mục, mất mili-giây). Sửa bằng
+        <code>gianh_cho()</code> — context manager giữ khoá qua đúng khoảng kiểm-tra → tạo-job.
+        Khoá KHÔNG giữ trong lúc nhận file, nếu không một lượt upload vài trăm MB chặn cả bốn
+        module.</div>
+      <div class="caution"><b>2. Chấm 459901 có HAI cửa khởi chạy, mới bịt một.</b>
+        <code>/process</code> (tải file lên) và <code>/process_folder</code> (chạy từ thư mục máy
+        chủ) đều nạp pandas y hệt. Bịt một cửa mà bỏ cửa kia thì chốt vô nghĩa.</div>
+      <p>Test canh lỗi 1 phải <b>mô phỏng độ trễ của <code>tao_job()</code></b>: không có nó thì
+        test qua với cả cách cũ lẫn cách mới (đo: cả hai đều ra 1), tức là không canh được gì. Có
+        độ trễ 10 ms: cách cũ cho lọt <b>12/12</b>, cách mới đúng <b>1</b>.</p>
+
+      <div class="label">Giữ nguyên hình dạng dữ liệu trang ACH đang đọc</div>
+      <p>Trang ACH đọc <code>job_id</code>/<code>status</code>/<code>tuoi_giay</code> để hiện nút
+        "Dừng", nên payload 409 giữ khoá <code>job</code> y như cũ. Thêm: endpoint
+        <code>/api/ach/dang-chay</code> trả thêm <code>nghen</code> — thiếu nó thì cửa kiểm tra
+        trước báo "rảnh" trong khi ba module kia đã hết suất, người dùng gửi xong vài trăm MB
+        mới ăn 409, đúng thứ endpoint đó sinh ra để tránh.</p>
+      <p>Khi nghẽn vì module <i>khác</i>, nút "Dừng" <b>không</b> hiện: không có phiên ACH nào để
+        dừng, hiện nút đó là mời người dùng bấm một thứ vô tác dụng rồi tưởng đã dừng được.</p>
+
+    </div>
+  </div>
+
+  <!-- HN3 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">HN3</span>
+      <span class="card-title">Hiệu năng hạng mục 03 — bể kết nối CSDL thay cho mở file mỗi request</span>
+      <span class="badge badge-ok">2,36 ms → 0,02 ms · 1 684 test pass</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label">Chi phí nằm ở MỞ FILE, không phải ở PRAGMA</div>
+      <p>Đo trên máy chủ 10/09/2026: <code>get_db()</code> tốn <b>1,55 ms</b> mỗi request, một
+        truy vấn trên kết nối có sẵn chỉ <b>0,0057 ms</b> — đắt gấp <b>270 lần</b>. Kiểm riêng
+        bằng cách bỏ hết 4 câu PRAGMA: vẫn tốn 1,52 ms. Chênh 0,027 ms.</p>
+      <div class="caution"><b>Nên cách sửa là dùng lại kết nối, KHÔNG phải cắt PRAGMA.</b> Cắt
+        <code>foreign_keys</code>/<code>synchronous</code> đi thì mất an toàn dữ liệu mà không
+        nhanh lên chút nào — đây là kết luận dễ rút nhầm nhất từ con số "4 PRAGMA mỗi request".</div>
+      <p><code>journal_mode</code> thì khác: nó ghi cố định vào file CSDL, đặt một lần lúc khởi
+        động là đủ. Bản cũ chạy nó ở mọi kết nối, kết quả luôn y nhau.</p>
+
+      <div class="label">Vì sao KHÔNG dùng <code>threading.local()</code></div>
+      <div class="caution"><code>get_db()</code> là generator <b>đồng bộ</b> nên FastAPI chạy nó
+        trong threadpool, còn thân hàm <code>async def</code> lại chạy trên luồng event loop.
+        Kết nối gắn theo luồng sẽ bị dùng chéo luồng, và tệ hơn là <b>trộn trạng thái giao dịch
+        giữa hai request khác nhau</b>. Phải là mượn–trả từng request.</div>
+
+      <div class="label">Rollback lúc trả là bắt buộc, không phải cho chắc</div>
+      <p>Bản cũ <code>close()</code> kết nối nên SQLite tự huỷ giao dịch dở. Nay kết nối sống
+        tiếp: không rollback là phần ghi chưa commit của request này rò sang request sau. Có test
+        canh đúng điều đó (<code>test_ghi_chua_commit_khong_ro_sang_request_sau</code>).</p>
+
+      <div class="label">Nỗi lo WAL phình — đo rồi, và nó KHÔNG xảy ra</div>
+      <p>Kế hoạch ban đầu ghi "kết nối sống lâu giữ ảnh chụp đọc → WAL phình dần, cần
+        <code>wal_checkpoint(TRUNCATE)</code> định kỳ". Đo lại thì <b>không cần</b>:</p>
+      <table>
+        <tr><th>Kịch bản</th><th>WAL sau 2 000 / 4 000 / 6 000 lần ghi</th><th>Kết luận</th></tr>
+        <tr><td>Chạy bình thường qua bể</td><td>3,93 → 3,93 → 3,93 MB</td>
+            <td><b>Đứng yên</b> — auto-checkpoint vẫn làm việc</td></tr>
+        <tr><td>Cố tình giữ một kết nối có <code>BEGIN</code> mở</td><td>8,69 → 17,38 → 26,07 MB</td>
+            <td><b>Phình tuyến tính</b>; thả ra là sụp về 0</td></tr>
+      </table>
+      <p>Tức là mối lo có thật, nhưng chỉ khi kết nối giữ <b>giao dịch đang mở</b>. Vì
+        <code>_tra()</code> luôn rollback nên kết nối rảnh trong bể không bao giờ giữ ảnh chụp.
+        Phần còn lại — một request chạy lâu với giao dịch mở — vốn đã có từ trước khi có bể, bể
+        không làm nó tệ thêm. <b>Không thêm checkpoint định kỳ.</b></p>
+
+      <div class="label">Đã soi trước khi làm — không chỗ nào giữ kết nối quá vòng đời request</div>
+      <ul>
+        <li>Không nơi nào gọi <code>get_db()</code> ngoài <code>Depends</code>.</li>
+        <li>Bốn luồng nền trong <code>backend/api/</code> (459901 ×2, Song phương, warm-up Word)
+          <b>không nhận <code>db</code></b>.</li>
+        <li>Ba endpoint Word trong <code>leaves.py</code> dùng <code>await run_heavy(...)</code>
+          nên kết nối vẫn nằm trong vòng đời request.</li>
+        <li>Nhập DB người dùng (<code>staff.py</code>) đọc từ file tạm rồi INSERT qua kết nối
+          thường — <b>không thay thế file CSDL đang chạy</b>, nên handle của bể không bị treo.</li>
+      </ul>
+
+      <div class="label">Hết kết nối thì báo, không treo</div>
+      <p>Bể đầy mà chờ quá <code>_POOL_CHO_GIAY</code> (30 giây) thì ném lỗi nói thẳng phải nâng
+        <code>DB_POOL_SIZE</code>. Request treo im lặng khó lần hơn nhiều so với một lỗi có tên.
+        Kết nối hỏng lúc trả thì bị loại khỏi bể và trừ sổ — không thì bể teo dần tới lúc treo.</p>
+
+    </div>
+  </div>
+
+  <!-- HN4 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">HN4</span>
+      <span class="card-title">Hiệu năng hạng mục 04 — <code>cache_size</code>: đo rồi, KHÔNG làm</span>
+      <span class="badge badge-warn">Bỏ có chủ đích — đừng thêm lại</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label">Kế hoạch nói nên làm; số đo nói không</div>
+      <p>Phương án ban đầu xếp việc nâng <code>cache_size</code>/<code>temp_store</code>/
+        <code>mmap_size</code> làm hạng mục 04, "chỉ có tác dụng sau khi có bể kết nối".
+        Có bể rồi thì đo được: <b>không có tác dụng nào đo được</b>.</p>
+
+      <table>
+        <tr><th>Phép đo</th><th>Kết quả</th></tr>
+        <tr><td>Lần đo đầu (1 lượt/cấu hình)</td><td><code>cache_size=16MB</code> nhanh hơn <b>7,9%</b></td></tr>
+        <tr><td>Đo lại 15 lượt xen kẽ, lấy trung vị</td><td>chênh <b>−0,8%</b> (16 MB còn <i>chậm</i> hơn chút)</td></tr>
+        <tr><td>Nhiễu trong CÙNG một cấu hình</td><td><b>0,711 ms</b> — gấp 13 lần hiệu ứng (0,056 ms)</td></tr>
+      </table>
+      <div class="caution"><b>Con số 7,9% ở lần đo đầu là nhiễu, không phải cải thiện.</b> Một
+        lượt đo mỗi cấu hình là không đủ khi phương sai giữa các lượt lớn hơn thứ đang đo. Ai định
+        thêm lại các PRAGMA này thì đo kiểu xen kẽ nhiều lượt trước, đừng tin một lượt.</div>
+
+      <div class="label">Vì sao không có tác dụng</div>
+      <p>CSDL nhỏ (54 MB, còn ~30 MB sau hạng mục 01) và Windows đã giữ trọn nó trong bộ nhớ đệm
+        file. Bộ đệm trang của SQLite là <b>lớp thứ hai chồng lên một bộ đệm vốn đã nóng</b> — nó
+        tiết kiệm một lần sao chép bộ nhớ, không phải một lần đọc đĩa.</p>
+
+      <div class="label">Riêng <code>mmap_size</code>: còn có lý do để tránh</div>
+      <p>Ngoài chuyện chỉ thêm 0,8% so với <code>cache_size</code> đơn thuần, tài liệu SQLite nêu
+        rõ: với mmap, một lỗi I/O đáng lẽ trả về mã lỗi sạch có thể thành tín hiệu làm <b>chết cả
+        tiến trình</b>. CSDL này <b>đã hỏng thật 3 lần</b> (xem 3 file <code>ksnb_corrupt*.db</code>
+        trong <code>data/</code>) — đổi lỗi đọc được lấy 0,8% là món hời ngược.</p>
+
+    </div>
+  </div>
+
+  <!-- HN5 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">HN5</span>
+      <span class="card-title">Hiệu năng hạng mục 05 — chặn bão sao lưu khi khởi động lại liên tiếp</span>
+      <span class="badge badge-ok">1 694 test pass</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label">Vấn đề</div>
+      <p><code>start_scheduler()</code> sao lưu ngay mỗi lần ứng dụng lên, mà <code>run.py</code>
+        tự khởi động lại tới <code>MAX_RESTARTS=5</code> lần khi gặp sự cố. Mỗi lượt chép nguyên
+        file CSDL (<b>70,6 MB</b> trên máy chủ) và <b>giữ khoá đọc</b> trong lúc chép — đúng lúc
+        hệ thống đang trục trặc thì nó làm việc đó 5 lần liên tiếp.</p>
+
+      <div class="label">Cách sửa và vì sao chọn ngưỡng 4 giờ</div>
+      <p>Bỏ qua lượt lúc khởi động nếu bản gần nhất mới cách đây dưới <code>_TOI_THIEU_GIO</code>.
+        4 giờ đủ dài để nuốt trọn một chuỗi khởi động lại (chúng cách nhau vài giây tới vài phút),
+        đủ ngắn để một lần bật máy buổi sáng sau khi tắt qua đêm vẫn có bản mới. Lượt theo lịch
+        24 giờ không bị ảnh hưởng.</p>
+      <div class="caution"><b>KHÔNG đụng tới <code>_rotate()</code>.</b> Luật giữ bản (mới nhất
+        mỗi ngày trong 7 ngày + 5 bản gần nhất) đã được cân nhắc kỹ, xem docstring đầu file. Đây
+        chỉ là chuyện có chạy lượt này hay không.</p>
+
+      <div class="label">Mốc đọc từ TÊN file, không từ <code>mtime</code></div>
+      <p>Cùng lý do với <code>_ban_tu_sinh()</code>: chép thư mục backup sang ổ khác làm
+        <code>mtime</code> đổi hết, còn tên thì không. Tên lạ không parse được thì coi như chưa có
+        bản — thà backup thừa còn hơn thiếu. Bản đặt tay
+        (<code>ksnb_truoc_nhomA_20260728.db</code>) <b>không</b> được tính, nếu không một bản cũ
+        đặt tay hôm nào đó có thể chặn mất lượt backup thật.</p>
+
+      <div class="label">Lỗi phát hiện lúc chạy thật: bản sao lưu RỖNG vẫn được đóng dấu hợp lệ</div>
+      <div class="caution"><b><code>PRAGMA integrity_check</code> trả "ok" cho một file SQLite
+        rỗng.</b> Tìm thấy <code>data/backups/ksnb_20260910_1404.db</code>: nặng 12,7 MB,
+        integrity_check nói "ok", bên trong <b>không có bảng nào</b>. <code>_verify()</code> cũ chỉ
+        kiểm integrity nên đã cho nó qua — người vận hành chỉ phát hiện vào đúng lúc cần khôi phục.</div>
+      <p><code>_verify()</code> nay kiểm thêm: bảng <code>user_tttt</code> phải tồn tại VÀ có dòng.
+        Mất bảng đó thì không ai đăng nhập được, bản sao lưu vô dụng. Thiếu hẳn bảng rơi vào nhánh
+        <code>sqlite3.Error</code> ("no such table") — đúng ý.</p>
+
+      <div class="label">Sửa kèm: một chỗ nuốt lỗi</div>
+      <p><code>_initial()</code> dùng <code>except Exception: pass</code> — backup hỏng lúc khởi
+        động là im lặng tuyệt đối. Nay ghi ERROR kèm nguyên nhân, vẫn không để một lần hỏng giết
+        luồng và làm mất lượt kế tiếp.</p>
+
+    </div>
+  </div>
+
   <!-- DC1 -->
   <div class="card">
     <div class="card-header">

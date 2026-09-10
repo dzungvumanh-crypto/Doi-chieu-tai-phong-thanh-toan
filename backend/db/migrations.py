@@ -289,6 +289,43 @@ def _create_tables(db_path: str):
             lech_json           TEXT,
             created_at          DATETIME
         )""",
+        # Từng lệnh lệch của một lượt đối soát — MỘT DÒNG MỘT LỆNH.
+        #
+        # Trước đây cả danh sách nằm trong `doi_soat_citad_history.lech_json`
+        # dưới dạng một chuỗi JSON duy nhất. Đo trên máy chủ 10/09/2026: cột đó
+        # chiếm 62,9/68,2 MB (92% toàn CSDL), dòng nặng nhất 19,34 MB, và mở nó
+        # ra tốn 97 MB RAM + 1,0 giây CPU cho MỖI lần bấm "Xem chi tiết".
+        #
+        # `extra_json` giữ mọi khoá KHÔNG có cột riêng: các bản ghi được dựng
+        # bằng `{**r, ...}` trong reconcile.py nên bộ khoá phụ thuộc dòng nguồn,
+        # không cố định. Đếm trên dữ liệu thật: 4 bộ khoá khác nhau, `cong` và
+        # `ghi_chu` có lúc vắng. Không có cột dự phòng này thì một parser thêm
+        # khoá mới sẽ làm mất dữ liệu ÂM THẦM — bản ghi vẫn lưu, chỉ thiếu field.
+        #
+        # `WITHOUT ROWID` + khoá chính `(history_id, seq)`: mọi truy vấn đều là
+        # "lượt nào, từ dòng thứ mấy", đúng thứ tự khoá chính. Bảng tự sắp theo
+        # khoá nên KHÔNG cần index phụ, cũng không cần cột `id` và rowid ẩn.
+        # Đo trên 233 794 dòng thật: bỏ được ~6 MB so với bảng thường có index.
+        """CREATE TABLE IF NOT EXISTS doi_soat_citad_lech (
+            history_id   INTEGER NOT NULL
+                         REFERENCES doi_soat_citad_history(id) ON DELETE CASCADE,
+            seq          INTEGER NOT NULL,
+            so_gd        TEXT,
+            dich_vu      TEXT,
+            loai         TEXT,
+            chieu        TEXT,
+            loai_tien    TEXT,
+            so_tien      INTEGER,
+            ngay         TEXT,
+            status       TEXT,
+            key_agri     TEXT,
+            nh_nhan      TEXT,
+            trang_thai   TEXT,
+            cong         TEXT,
+            ghi_chu      TEXT,
+            extra_json   TEXT,
+            PRIMARY KEY (history_id, seq)
+        ) WITHOUT ROWID""",
         # Sổ trực cuối ngày Phòng Thanh toán — KHÔNG tách bảng lịch sử riêng
         # như doi_chieu_citad, bảng này tự thân là lịch sử. `truc_date` KHÔNG
         # unique (khác bản đầu): KSV "từ chối" (để sửa HAY để huỷ, cả 2 đều

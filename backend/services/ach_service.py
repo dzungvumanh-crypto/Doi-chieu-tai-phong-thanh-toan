@@ -423,3 +423,11 @@ def _cleanup_old_jobs(cutoff: float | None = None):
         except OSError as e:
             log_orphan = f'Không xoá được thư mục ACH mồ côi {d}: {e}'
             logging.getLogger(__name__).warning(log_orphan)
+
+
+# Khai với chốt chặn dùng chung — xem backend/core/phien_doi_chieu.py.
+# `job_dang_chay()` vốn đã có từ 26/08/2026; nay nó vừa phục vụ cửa 409 của
+# chính ACH, vừa là nguồn đếm cho chốt chung của cả bốn module.
+from backend.core.phien_doi_chieu import dang_ky_nguon  # noqa: E402
+
+dang_ky_nguon('ach', 'Đối chiếu ACH', job_dang_chay)

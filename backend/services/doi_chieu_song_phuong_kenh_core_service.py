@@ -84,6 +84,28 @@ def cancel_job(job_id: str) -> bool:
     return False
 
 
+# Job ở một trong các trạng thái này là còn CHIẾM máy chủ.
+_DANG_CHIEM = ("pending", "running")
+
+
+def job_dang_chay() -> dict | None:
+    """Job Song phương đang chiếm máy chủ, None nếu rảnh. Xem `ach_service` cùng tên."""
+    with _lock:
+        for job_id, job in _jobs.items():
+            if job["status"] not in _DANG_CHIEM:
+                continue
+            # Job quá cũ coi như đã chết — không có ngoại lệ này thì một lượt bị
+            # bỏ dở khoá chết tính năng cho tới khi ai đó restart backend.
+            if time.time() - job["_ts"] > CLEANUP_TTL:
+                continue
+            return {
+                "job_id":    job_id,
+                "status":    job["status"],
+                "tuoi_giay": max(0, int(time.time() - job["_ts"])),
+            }
+    return None
+
+
 def tao_job(ngay: str, ma_nh: str) -> tuple[str, Path]:
     """Đăng ký job mới cho "Đối chiếu đến" và trả về (job_id, input_dir).
 
@@ -338,3 +360,10 @@ def _cleanup_old_jobs() -> None:
         job_dir = TEMP_DIR / jid
         if job_dir.exists():
             shutil.rmtree(job_dir, ignore_errors=True)
+
+
+# Khai với chốt chặn dùng chung — xem backend/core/phien_doi_chieu.py.
+# Đặt CUỐI file: `job_dang_chay` phải tồn tại trước khi đem đi khai.
+from backend.core.phien_doi_chieu import dang_ky_nguon  # noqa: E402
+
+dang_ky_nguon("song_phuong", "Đối chiếu Song phương", job_dang_chay)
