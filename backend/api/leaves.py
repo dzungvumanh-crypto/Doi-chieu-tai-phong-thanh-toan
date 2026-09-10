@@ -83,8 +83,6 @@ ACTION_LABELS = {
     "npbb_adjusted_cancel": ("Đơn gốc bị thay bởi đơn điều chỉnh", "grey"),
     "npbb_adjustment_recalled": ("Đơn gốc được khôi phục do đơn điều chỉnh bị rút/hủy", "grey"),
     "npbb_borrow_confirm": ("Xác nhận ứng hạn mức năm sau để tiếp tục NPBB", "orange"),
-    "npbb_auto_cancel_insufficient_quota": ("Hệ thống tự động hủy — hạn mức không đủ để nghỉ phép bắt buộc", "red"),
-    "npbb_auto_cancel_ack": ("Chủ đơn đã xem thông báo hủy tự động", "grey"),
     "cancel":         ("Hủy đơn",            "grey"),
     "direct_create":  ("Khai báo hộ",        "purple"),
     "recall_request": ("Yêu cầu rút đơn",    "orange"),
@@ -971,6 +969,7 @@ def create_leave(
 ):
     if current.get("role") == "admin":
         raise HTTPException(403, "Admin không tham gia quy trình nghỉ phép")
+    _block_if_npbb_pending(current, db)
     leave_id = _create_leave_core(body, current, db)
     db.commit()
     return _leave_to_out(leave_id, db)
@@ -1074,8 +1073,8 @@ def confirm_npbb_borrow(
     staff = db.execute(
         "SELECT join_industry_date FROM user_tttt WHERE id=?", (leave["staff_id"],)
     ).fetchone()
-    # Dùng chung _npbb_remaining_excl với get_npbb_quota_warning/_npbb_auto_cancel_check
-    # — cả 3 nơi PHẢI đo bằng đúng 1 công thức, tránh lệch thước như bug đã sửa.
+    # Dùng chung _npbb_remaining_excl với get_npbb_quota_warning/_npbb_pending_items
+    # — cả 2 nơi PHẢI đo bằng đúng 1 công thức, tránh lệch thước như bug đã sửa.
     leave_days, remaining_excl = _npbb_remaining_excl(
         leave["staff_id"], staff["join_industry_date"], leave_id,
         start, end, leave["spread_dates"], db,
@@ -1638,8 +1637,8 @@ def _npbb_remaining_excl(staff_id: int, join_industry_date, leave_id: int,
                          start: date, end: date, spread_dates_json: Optional[str],
                          db: sqlite3.Connection) -> tuple:
     """(leave_days, remaining_excl) cho 1 đơn NPBB — dùng chung giữa
-    get_npbb_quota_warning, confirm_npbb_borrow và _npbb_auto_cancel_check để
-    CẢ 3 nơi luôn đo bằng đúng 1 cây thước (trước đây warning đo "còn lại đã
+    _npbb_pending_items (qua đó là get_npbb_quota_warning) và confirm_npbb_borrow
+    để CẢ 2 nơi luôn đo bằng đúng 1 cây thước (trước đây warning đo "còn lại đã
     gồm cả NPBB" còn borrow đo "còn lại KHÔNG gồm NPBB", lệch nhau đúng bằng
     leave_days khiến sau khi ứng thành công, còn lại luôn về đúng 0 mà 0 vẫn
     <5 → cảnh báo lặp vô hạn, xem rà soát 2026-09-08).
@@ -1668,28 +1667,14 @@ def _npbb_remaining_excl(staff_id: int, join_industry_date, leave_id: int,
     return leave_days, remaining_excl
 
 
-@router.get("/npbb-quota-warning")
-def get_npbb_quota_warning(
-    db: sqlite3.Connection = Depends(get_db),
-    current: dict = Depends(get_current_staff),
-):
-    """2 loại thông báo NPBB liên quan hạn mức:
+def _npbb_pending_items(staff_id: int, join_industry_date, db: sqlite3.Connection) -> list:
+    """Đơn NPBB đã duyệt, CHƯA tới ngày nghỉ, hạn mức năm đó (KHÔNG tính
+    chính đơn NPBB) không đủ leave_days — dùng chung cho get_npbb_quota_warning
+    (hiện popup cảnh báo) và create_leave/resubmit_leave (chặn tạo đơn khác
+    cho tới khi xử lý xong đơn NPBB này — hủy hoặc "Tiếp tục" ứng năm sau).
 
-    "pending" — đơn NPBB đã duyệt, CHƯA tới ngày nghỉ, hạn mức năm đó (KHÔNG
-    tính chính đơn NPBB) không đủ leave_days — nhắc người dùng chọn hủy đơn
-    hay tiếp tục (ứng phần thiếu sang hạn mức năm sau, xem
-    /{leave_id}/npbb-borrow-confirm). Hiện lại mỗi lần mở trang trong khi
-    điều kiện còn đúng — hạn mức có thể đổi qua lại nên không đánh dấu "đã
-    xem" 1 lần/năm như carryover-notice.
-
-    "auto_cancelled" — đơn NPBB đã bị hệ thống TỰ ĐỘNG hủy (xem
-    _npbb_auto_cancel_check) vì tới đúng ngày đăng ký mà hạn mức vẫn không
-    đủ — chỉ để chủ đơn BIẾT chuyện gì đã xảy ra (không còn lựa chọn xử lý
-    nào nữa, đơn đã 'cancelled'), hiện tới khi chủ đơn xác nhận đã xem qua
-    /{leave_id}/npbb-auto-cancel-ack.
-
-    Loại trừ khỏi "pending" đơn đang có đơn điều chỉnh còn hiệu lực (chưa
-    duyệt xong hẳn) — "Tiếp tục" chặn hẳn với đơn này, hiện cảnh báo chỉ gây
+    Loại trừ đơn đang có đơn điều chỉnh còn hiệu lực (chưa duyệt xong hẳn) —
+    "Tiếp tục" chặn hẳn với đơn này, hiện cảnh báo/chặn tạo đơn khác chỉ gây
     rối. Đơn gốc có đơn điều chỉnh ĐÃ duyệt xong thì tự chuyển 'cancelled'
     (_cancel_adjusted_original) nên không match status='approved' nữa — câu
     này tự động luôn thấy đúng đơn (gốc hoặc điều chỉnh) đang thật sự hiệu
@@ -1700,15 +1685,14 @@ def get_npbb_quota_warning(
            WHERE staff_id=? AND leave_type='bat_buoc' AND status='approved'
              AND start_date >= ?
              {_NO_ACTIVE_ADJ_SQL}""",
-        (current["id"], today.isoformat()),
+        (staff_id, today.isoformat()),
     ).fetchall()
     pending = []
     for r in rows:
         _start = date.fromisoformat(r["start_date"])
         _end   = date.fromisoformat(r["end_date"])
         leave_days, remaining_excl = _npbb_remaining_excl(
-            current["id"], current.get("join_industry_date"), r["id"],
-            _start, _end, r["spread_dates"], db,
+            staff_id, join_industry_date, r["id"], _start, _end, r["spread_dates"], db,
         )
         # Phần NGÀY CỦA NĂM NAY mà đơn này thật sự còn "đòi hỏi" — trừ bớt
         # phần đã ứng sang năm sau từ 1 lần "Tiếp tục" trước đó (nếu có).
@@ -1719,53 +1703,53 @@ def get_npbb_quota_warning(
         _need = leave_days - (r["borrow_next_year_days"] or 0)
         if _need > remaining_excl:
             pending.append({
-                "id": r["id"], "year": _start.year,
-                "remaining": remaining_excl, "leave_days": leave_days,
+                "id": r["id"], "year": _start.year, "start_date": r["start_date"],
+                "end_date": r["end_date"], "remaining": remaining_excl, "leave_days": leave_days,
             })
-
-    auto_cancelled = db.execute(
-        """SELECT lr.id, lr.start_date, lr.end_date, lal.created_at AS cancelled_at
-           FROM leave_records lr
-           JOIN leave_action_logs lal
-                ON lal.leave_id = lr.id AND lal.action = 'npbb_auto_cancel_insufficient_quota'
-           WHERE lr.staff_id=? AND lr.leave_type='bat_buoc' AND lr.status='cancelled'
-             AND NOT EXISTS (
-                 SELECT 1 FROM leave_action_logs ack
-                 WHERE ack.leave_id = lr.id AND ack.action = 'npbb_auto_cancel_ack'
-             )
-           ORDER BY lal.created_at DESC""",
-        (current["id"],),
-    ).fetchall()
-    auto_cancelled_items = [
-        {"id": r["id"], "start_date": r["start_date"], "end_date": r["end_date"],
-         "year": date.fromisoformat(r["start_date"]).year}
-        for r in auto_cancelled
-    ]
-
-    return {
-        "show": bool(pending or auto_cancelled_items),
-        "pending": pending,
-        "auto_cancelled": auto_cancelled_items,
-    }
+    return pending
 
 
-@router.post("/{leave_id}/npbb-auto-cancel-ack")
-def ack_npbb_auto_cancel(
-    leave_id: int,
+def _block_if_npbb_pending(current: dict, db: sqlite3.Connection):
+    """Chặn tạo/nộp đơn nghỉ phép KHÁC khi đang có đơn NPBB "pending" (xem
+    _npbb_pending_items) chưa xử lý xong — buộc giải quyết đơn NPBB đó (hủy
+    hoặc "Tiếp tục" ứng năm sau) trước khi làm tiếp việc khác. Gọi ở đầu
+    create_leave/resubmit_leave (nhân viên TỰ tạo/nộp đơn) — KHÔNG gọi trong
+    _create_leave_core/npbb_adjust_leave (xử lý đúng đơn NPBB đang vướng
+    không được tự chặn chính nó) và KHÔNG gọi trong create_direct_leave
+    (Khai báo hộ — hành động của Tổng hợp/admin thay mặt nhân viên)."""
+    pending = _npbb_pending_items(current["id"], current.get("join_industry_date"), db)
+    if pending:
+        date_label = ", ".join(
+            f"{date.fromisoformat(p['start_date']).strftime('%d/%m/%Y')}"
+            f"-{date.fromisoformat(p['end_date']).strftime('%d/%m/%Y')}"
+            for p in pending
+        )
+        raise HTTPException(
+            409,
+            f"Đơn nghỉ phép bắt buộc ({date_label}) đang chờ xử lý do hạn mức "
+            "không đủ — vui lòng hủy đơn này hoặc xác nhận \"Tiếp tục\" (ứng "
+            "hạn mức năm sau) trước khi tạo/nộp đơn nghỉ phép khác.",
+        )
+
+
+@router.get("/npbb-quota-warning")
+def get_npbb_quota_warning(
     db: sqlite3.Connection = Depends(get_db),
     current: dict = Depends(get_current_staff),
 ):
-    """Chủ đơn xác nhận đã xem thông báo đơn NPBB bị hệ thống tự động hủy —
-    chỉ ghi log để get_npbb_quota_warning không hiện lại nữa, không đổi gì
-    khác (đơn đã 'cancelled' từ trước)."""
-    leave = db.execute("SELECT staff_id FROM leave_records WHERE id=?", (leave_id,)).fetchone()
-    if not leave:
-        raise HTTPException(404, "Không tìm thấy đơn nghỉ phép")
-    if leave["staff_id"] != current["id"] and current["role"] != "admin":
-        raise HTTPException(403, "Chỉ chủ nhân đơn hoặc Admin mới xác nhận được")
-    _log_action(db, leave_id, current["id"], "npbb_auto_cancel_ack", None, "", "")
-    db.commit()
-    return {"ok": True}
+    """Đơn NPBB đã duyệt, CHƯA tới ngày nghỉ, hạn mức năm đó không đủ — nhắc
+    người dùng chọn hủy đơn (thủ công, qua nút "Rút đơn"/"Hủy đơn" có sẵn ở
+    chi tiết đơn) hay tiếp tục (ứng phần thiếu sang hạn mức năm sau, xem
+    /{leave_id}/npbb-borrow-confirm). Hiện lại mỗi lần mở trang trong khi
+    điều kiện còn đúng — hạn mức có thể đổi qua lại nên không đánh dấu "đã
+    xem" 1 lần/năm như carryover-notice. Trong lúc còn "pending" như thế
+    này, create_leave/resubmit_leave chặn không cho tạo/nộp đơn nghỉ phép
+    khác — xem _npbb_pending_items."""
+    pending = _npbb_pending_items(current["id"], current.get("join_industry_date"), db)
+    return {
+        "show": bool(pending),
+        "pending": pending,
+    }
 
 
 @router.get("/my-balance")
@@ -2035,6 +2019,7 @@ def resubmit_leave(
         raise HTTPException(403, "Chỉ chủ nhân đơn mới được nộp lại")
     if leave["status"] != LeaveStatus.REJECTED:
         raise HTTPException(400, "Chỉ có thể nộp lại đơn đã bị từ chối")
+    _block_if_npbb_pending(current, db)
 
     if body.spread_dates:
         spread = sorted(set(body.spread_dates))
@@ -4736,134 +4721,3 @@ def approve_recall(
     return _leave_to_out(leave_id, db)
 
 
-# ─── Tự động hủy NPBB đúng ngày đăng ký nếu hạn mức không đủ ────────────────
-# Mỗi năm chỉ có 1 cơ hội NPBB — nếu tới đúng ngày đăng ký (đơn gốc, hoặc đơn
-# điều chỉnh mới nhất nếu có — status='approved' đã tự phản ánh đúng đơn nào
-# đang hiệu lực, xem _cancel_adjusted_original) mà hạn mức năm đó (KHÔNG tính
-# chính NPBB, xem _npbb_remaining_excl) vẫn không đủ, hệ thống tự chuyển đơn
-# sang "Đã hủy" — không cần chủ đơn tự bấm "Hủy đơn". Popup ở
-# get_npbb_quota_warning/npbb-auto-cancel-ack báo lại việc này cho chủ đơn.
-
-_NPBB_AUTO_CANCEL_CATCHUP_DAYS = 3  # đủ chịu server tắt vài ngày, xem chú thích dưới
-_npbb_auto_cancel_timer: threading.Timer | None = None
-
-
-def _npbb_auto_cancel_check(db_path: str = None) -> int:
-    """Quét 1 lượt, tự hủy các đơn đủ điều kiện. Trả về số đơn đã hủy.
-
-    QUAN TRỌNG — cửa sổ quét PHẢI có cận dưới (start_date >=
-    hôm_nay - _NPBB_AUTO_CANCEL_CATCHUP_DAYS), không được chỉ có
-    "start_date <= hôm nay" — bản đầu tiên (2026-09-08) thiếu cận dưới nên
-    MỌI lần quét đem lại TOÀN BỘ đơn NPBB approved trong lịch sử (kể cả đơn
-    đã nghỉ xong hàng tháng/năm trước) ra xét lại. Hậu quả thật khi phát
-    hiện qua rà soát: chỉ cần hạ hạn mức 1 cán bộ sau đó (thao tác vận hành
-    bình thường) là đơn NPBB đã hoàn thành từ lâu bị hủy ngược — trả lại
-    "đã dùng", trigger revert xoá luôn dòng attendances tương ứng, đơn biến
-    mất khỏi báo cáo, không ai được báo (KSV/Tổng hợp đã duyệt không biết).
-    Mất dữ liệu thật, không phải lỗi giao diện — tuyệt đối không được bỏ
-    cận dưới này dù có sửa gì thêm sau này.
-
-    Cận dưới 3 ngày (không phải đúng "hôm nay") để chịu được trường hợp
-    server tắt/không quét được đúng ngày đơn tới hạn — vẫn bắt kịp trong
-    vài ngày, không bao giờ đụng tới đơn cũ hơn."""
-    db = sqlite3.connect(db_path or DB_PATH, timeout=10)
-    db.row_factory = sqlite3.Row
-    n_cancelled = 0
-    try:
-        db.execute("PRAGMA busy_timeout=10000")
-        today = _vn_now().date()
-        earliest = today - timedelta(days=_NPBB_AUTO_CANCEL_CATCHUP_DAYS)
-        rows = db.execute(
-            f"""SELECT leave_records.id, leave_records.staff_id, leave_records.start_date,
-                      leave_records.end_date, leave_records.spread_dates,
-                      leave_records.borrow_next_year_days, u.join_industry_date
-               FROM leave_records JOIN user_tttt u ON u.id = leave_records.staff_id
-               WHERE leave_records.leave_type='bat_buoc' AND leave_records.status='approved'
-                 AND leave_records.start_date <= ? AND leave_records.start_date >= ?
-                 {_NO_ACTIVE_ADJ_SQL}""",
-            (today.isoformat(), earliest.isoformat()),
-        ).fetchall()
-        for r in rows:
-            start = date.fromisoformat(r["start_date"])
-            end   = date.fromisoformat(r["end_date"])
-            leave_days, remaining_excl = _npbb_remaining_excl(
-                r["staff_id"], r["join_industry_date"], r["id"],
-                start, end, r["spread_dates"], db,
-            )
-            # Trừ phần đã ứng sang năm sau (nếu chủ đơn đã bấm "Tiếp tục" trước
-            # đó) — không thì đơn đã tự giải quyết xong vẫn bị hủy oan, xem
-            # chú thích tương ứng trong get_npbb_quota_warning.
-            _need = leave_days - (r["borrow_next_year_days"] or 0)
-            if _need > remaining_excl:
-                cur = db.execute(
-                    "UPDATE leave_records SET status=?, updated_at=? WHERE id=? AND status='approved'",
-                    (LeaveStatus.CANCELLED, str(_vn_now()), r["id"]),
-                )
-                if cur.rowcount:
-                    _log_action(db, r["id"], r["staff_id"], "npbb_auto_cancel_insufficient_quota",
-                               None, LeaveStatus.APPROVED, LeaveStatus.CANCELLED)
-                    n_cancelled += 1
-        db.commit()
-    finally:
-        db.close()
-    if n_cancelled:
-        _log.info("NPBB auto-cancel: đã tự hủy %d đơn do hạn mức không đủ", n_cancelled)
-    return n_cancelled
-
-
-_NPBB_AUTO_CANCEL_HOUR   = 0   # neo vào 00:30 hằng ngày — đủ sớm để quyết
-_NPBB_AUTO_CANCEL_MINUTE = 30  # định "đúng ngày" trước khi ai kịp bắt đầu
-                                # nghỉ trong ngày đó (khác chu kỳ 12h cũ,
-                                # có thể hủy lúc cán bộ đã nghỉ được nửa buổi).
-
-
-def _npbb_auto_cancel_seconds_until_next_run() -> float:
-    """Số giây từ bây giờ tới lần 00:30 kế tiếp (hôm nay nếu chưa qua, mai
-    nếu đã qua) — dùng làm delay cho cả lần lặp đầu lẫn mỗi lần lặp sau,
-    tự neo lại đúng giờ mỗi ngày, không trôi dần theo giờ server khởi động."""
-    now = _vn_now()
-    target = now.replace(hour=_NPBB_AUTO_CANCEL_HOUR, minute=_NPBB_AUTO_CANCEL_MINUTE,
-                         second=0, microsecond=0)
-    if target <= now:
-        target += timedelta(days=1)
-    return (target - now).total_seconds()
-
-
-def _npbb_auto_cancel_schedule_next(db_path: str):
-    """Lỗi khi TỰ LỊCH (không phải lỗi lúc quét, đã có _run_safe lo) cũng
-    không được làm chết cả chuỗi lịch trong im lặng — bọc try/except riêng,
-    khác bản đầu tiên chỉ bọc lỗi 1 nhánh (_run_safe), nhánh này lỗi thì
-    không còn lần lặp nào sau nữa mà không log gì cả."""
-    global _npbb_auto_cancel_timer
-    try:
-        delay = _npbb_auto_cancel_seconds_until_next_run()
-        _npbb_auto_cancel_timer = threading.Timer(
-            delay,
-            lambda: (_npbb_auto_cancel_schedule_next(db_path), _npbb_auto_cancel_run_safe(db_path)),
-        )
-        _npbb_auto_cancel_timer.daemon = True
-        _npbb_auto_cancel_timer.start()
-    except Exception as exc:
-        _log.error("NPBB auto-cancel: lên lịch lần kế tiếp thất bại: %s", exc, exc_info=True)
-
-
-def _npbb_auto_cancel_run_safe(db_path: str):
-    """Lỗi ở 1 lượt quét không được làm chết luồng lịch."""
-    try:
-        _npbb_auto_cancel_check(db_path)
-    except Exception as exc:
-        _log.error("NPBB auto-cancel thất bại: %s", exc, exc_info=True)
-
-
-def start_npbb_auto_cancel_scheduler(db_path: str = None):
-    """Gọi khi khởi động app: quét ngay (background, bắt kịp ngày bị lỡ do
-    server tắt) + lặp lại 1 lần/ngày neo vào 00:30 (xem
-    _npbb_auto_cancel_seconds_until_next_run)."""
-    _path = db_path or DB_PATH
-    threading.Thread(
-        target=_npbb_auto_cancel_run_safe, args=(_path,), daemon=True,
-        name="npbb-auto-cancel-init",
-    ).start()
-    _npbb_auto_cancel_schedule_next(_path)
-    _log.info("NPBB auto-cancel scheduler khởi động — 1 lần/ngày lúc %02d:%02d",
-             _NPBB_AUTO_CANCEL_HOUR, _NPBB_AUTO_CANCEL_MINUTE)

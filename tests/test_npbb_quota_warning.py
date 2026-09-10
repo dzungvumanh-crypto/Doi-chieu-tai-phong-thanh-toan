@@ -1,5 +1,5 @@
 """Cảnh báo hạn mức không đủ cho NPBB (nghỉ phép bắt buộc) + ứng phép năm sau
-+ tự động hủy đúng ngày đăng ký nếu vẫn không đủ hạn mức.
++ chặn tạo/nộp đơn nghỉ phép khác trong lúc NPBB còn "pending" chưa xử lý.
 
 Khoá lại đúng các lỗi đã tìm và sửa qua rà soát 2026-09-08:
 1. get_npbb_quota_warning và confirm_npbb_borrow trước đây đo "còn lại" bằng
@@ -12,13 +12,18 @@ Khoá lại đúng các lỗi đã tìm và sửa qua rà soát 2026-09-08:
 3. NPBB không bị chặn hạn mức lúc tạo nên chỉ thật sự "tiêu" hạn mức đúng
    ngày đăng ký (start_date) — đơn đã duyệt nhưng ngày nghỉ còn ở tương lai
    không được tính vào "đã dùng" cho tới đúng ngày đó (_calc_used_days).
-4. Tự động hủy đơn NPBB đúng ngày đăng ký nếu hạn mức (không tính NPBB) vẫn
-   không đủ — trừ khi đã "Tiếp tục" (ứng năm sau) từ trước.
+
+Ghi chú: bản đầu tiên (2026-09-08) có thêm cơ chế "tự động hủy đơn NPBB đúng
+ngày đăng ký nếu hạn mức vẫn không đủ" — sau khi phát hiện + sửa 1 lỗi
+nghiêm trọng ở cơ chế đó (quét thiếu cận dưới thời gian, có thể hủy oan đơn
+lịch sử), người dùng quyết định BỎ HẲN việc tự động hủy, quay về chỉ hủy thủ
+công qua đúng popup cảnh báo (2026-09-10) — thay vào đó thêm chặn 409 khi
+tạo/nộp đơn nghỉ phép KHÁC lúc NPBB còn "pending" (test cuối file).
 
 Chạy: .venv\\Scripts\\python.exe -m pytest tests/test_npbb_quota_warning.py -v
 """
 import sqlite3
-from datetime import date, timedelta
+from datetime import date
 
 import pytest
 from fastapi.testclient import TestClient
@@ -27,6 +32,7 @@ from backend.core.deps import get_current_staff
 from backend.database import get_db
 from backend.db.migrations import _create_tables, _ensure_indexes
 from backend.main import app
+from tests.conftest import cap_quyen
 
 
 _DB_PATH_HOLDER: dict = {}
@@ -97,10 +103,12 @@ def _insert_leave(db, staff_id, leave_type, start, end, status="approved", adjus
 
 
 # Mốc ngày cố định, không phụ thuộc "hôm nay" thật — dùng năm xa trong tương
-# lai (2032/2033) để không đụng dữ liệu/kỳ vọng nào khác, và luôn nằm chắc
-# chắn ở tương lai so với ngày chạy test thật.
+# lai (2032) để không đụng dữ liệu/kỳ vọng nào khác, và luôn nằm chắc chắn ở
+# tương lai so với ngày chạy test thật.
 FAR_FUTURE_YEAR = 2032
-PAST_WEEK_YEAR = 2020  # chắc chắn đã qua so với "hôm nay" thật
+# Chỉ dùng cho test _calc_used_days đơn lẻ — năm cố định xa trong quá khứ,
+# không đụng gì tới dữ liệu/kỳ vọng khác.
+PAST_WEEK_YEAR = 2020
 
 
 def test_npbb_tuong_lai_khong_tinh_vao_han_muc(db, staff):
@@ -196,67 +204,38 @@ def test_borrow_confirm_chan_khi_dang_co_dieu_chinh(db, staff):
     assert not any(x["id"] == npbb_id for x in r2.json()["pending"]), r2.json()
 
 
-def test_auto_cancel_huy_khi_toi_han_van_khong_du(db, staff):
-    from backend.api.leaves import _npbb_auto_cancel_check
-    _set_quota(db, staff, PAST_WEEK_YEAR, 3)  # qua it, khong du 5 ngay NPBB
-    npbb_id = _insert_leave(db, staff, "bat_buoc", f"{PAST_WEEK_YEAR}-06-01", f"{PAST_WEEK_YEAR}-06-05")
-
-    n = _npbb_auto_cancel_check(db_path=_DB_PATH_HOLDER["path"])
-    assert n == 1, f"ky vong huy dung 1 don, thuc te n={n}"
-    row = db.execute("SELECT status FROM leave_records WHERE id=?", (npbb_id,)).fetchone()
-    assert row["status"] == "cancelled"
-    log = db.execute(
-        "SELECT action FROM leave_action_logs WHERE leave_id=? AND action='npbb_auto_cancel_insufficient_quota'",
-        (npbb_id,),
-    ).fetchone()
-    assert log is not None
-
-
-def test_auto_cancel_bo_qua_don_da_ung_thanh_cong(db, staff):
-    """Bug goc: neu da 'Tiep tuc' (borrow_next_year_days > 0) truoc do, den
-    dung han KHONG duoc tu huy nua — truoc khi sua, cong thuc raw van thay
-    'thieu' va huy oan don da duoc xu ly xong."""
-    from backend.api.leaves import _npbb_auto_cancel_check
-    _set_quota(db, staff, PAST_WEEK_YEAR, 3)
-    npbb_id = _insert_leave(db, staff, "bat_buoc", f"{PAST_WEEK_YEAR}-06-01", f"{PAST_WEEK_YEAR}-06-05")
-    # Mo phong da "Tiep tuc" thanh cong tu truoc: ung 2 ngay sang nam sau
-    # (5 ngay - 3 con lai = thieu 2).
-    db.execute("UPDATE leave_records SET borrow_next_year_days=2 WHERE id=?", (npbb_id,))
+def test_tao_don_khac_bi_chan_khi_npbb_dang_pending(db, staff):
+    """Nhan vien dang co 1 don NPBB "pending" (han muc khong du, chua xu ly)
+    thi KHONG duoc tao/nop don nghi phep nao KHAC — phai huy hoac "Tiep tuc"
+    xong don NPBB do truoc (yeu cau 2026-09-10)."""
+    _set_quota(db, staff, FAR_FUTURE_YEAR, 12)
+    _set_quota(db, staff, FAR_FUTURE_YEAR + 1, 12)
+    _insert_leave(db, staff, "annual", f"{FAR_FUTURE_YEAR}-03-02", f"{FAR_FUTURE_YEAR}-03-11")
+    npbb_id = _insert_leave(db, staff, "bat_buoc", f"{FAR_FUTURE_YEAR}-06-07", f"{FAR_FUTURE_YEAR}-06-11")
+    ksv_id = db.execute(
+        """INSERT INTO user_tttt (employee_code, full_name, role, is_active, username, pwd_hash)
+           VALUES ('E11','KSV Test','truong_phong',1,'u_e11','x')"""
+    ).lastrowid
     db.commit()
 
-    n = _npbb_auto_cancel_check(db_path=_DB_PATH_HOLDER["path"])
-    assert n == 0, f"BUG: don da ung thanh cong nhung van bi tu huy, n={n}"
-    row = db.execute("SELECT status FROM leave_records WHERE id=?", (npbb_id,)).fetchone()
-    assert row["status"] == "approved"
-
-
-def test_auto_cancel_bo_qua_khi_dang_co_dieu_chinh(db, staff):
-    from backend.api.leaves import _npbb_auto_cancel_check
-    _set_quota(db, staff, PAST_WEEK_YEAR, 3)
-    npbb_id = _insert_leave(db, staff, "bat_buoc", f"{PAST_WEEK_YEAR}-06-01", f"{PAST_WEEK_YEAR}-06-05")
-    _insert_leave(db, staff, "bat_buoc", f"{PAST_WEEK_YEAR}-07-06", f"{PAST_WEEK_YEAR}-07-10",
-                  status="pending_ksv", adjusts_leave_id=npbb_id)
-
-    n = _npbb_auto_cancel_check(db_path=_DB_PATH_HOLDER["path"])
-    assert n == 0
-    row = db.execute("SELECT status FROM leave_records WHERE id=?", (npbb_id,)).fetchone()
-    assert row["status"] == "approved"
-
-
-def test_auto_cancelled_hien_thong_bao_va_tat_sau_khi_ack(db, staff):
-    from backend.api.leaves import _npbb_auto_cancel_check
-    _set_quota(db, staff, PAST_WEEK_YEAR, 3)
-    npbb_id = _insert_leave(db, staff, "bat_buoc", f"{PAST_WEEK_YEAR}-06-01", f"{PAST_WEEK_YEAR}-06-05")
-    _npbb_auto_cancel_check(db_path=_DB_PATH_HOLDER["path"])
-
+    cap_quyen(db, staff, "leaves.create")
     client = _client(db, staff)
-    r1 = client.get("/api/leaves/npbb-quota-warning")
-    assert any(x["id"] == npbb_id for x in r1.json()["auto_cancelled"]), r1.json()
+    r0 = client.get("/api/leaves/npbb-quota-warning")
+    assert any(x["id"] == npbb_id for x in r0.json()["pending"]), "npbb phai dang pending truoc khi test chan"
 
-    r_ack = client.post(f"/api/leaves/{npbb_id}/npbb-auto-cancel-ack", json={})
-    assert r_ack.status_code == 200, r_ack.text
+    body = {
+        "leave_type": "annual",
+        "start_date": f"{FAR_FUTURE_YEAR}-09-01",
+        "end_date": f"{FAR_FUTURE_YEAR}-09-02",
+        "reason": "test",
+        "ksv_approver_id": ksv_id,
+    }
+    r1 = client.post("/api/leaves/", json=body)
+    assert r1.status_code == 409, r1.text
 
-    r2 = client.get("/api/leaves/npbb-quota-warning")
-    assert not any(x["id"] == npbb_id for x in r2.json()["auto_cancelled"]), (
-        f"BUG: thong bao van hien lai sau khi da ack: {r2.json()}"
-    )
+    # Xu ly xong NPBB (Tiep tuc ung nam sau) roi thi tao don khac lai duoc binh thuong.
+    r2 = client.post(f"/api/leaves/{npbb_id}/npbb-borrow-confirm", json={})
+    assert r2.status_code == 200, r2.text
+
+    r3 = client.post("/api/leaves/", json=body)
+    assert r3.status_code == 200, r3.text

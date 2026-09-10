@@ -4,6 +4,28 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 10/09/2026 Nghỉ phép - **Bỏ hẳn "tự động hủy NPBB" — quay về chỉ hủy thủ công, thêm chặn tạo đơn khác khi NPBB chưa xử lý xong**
+    + Đợt trước (08-09/09) đã xây "tự động hủy đơn NPBB đúng ngày đăng ký nếu hạn mức vẫn không đủ" và
+      sửa 1 lỗi nghiêm trọng của cơ chế đó (quét thiếu cận dưới thời gian, có thể hủy oan đơn NPBB đã
+      hoàn thành từ lâu — xem mục 08-09/09 bên dưới). Sau khi cân nhắc lại, quyết định **bỏ hẳn việc tự
+      động hủy** — hệ thống không tự ý hủy đơn nghỉ phép của ai cả, mọi quyết định hủy/tiếp tục đều do
+      chính chủ đơn bấm qua popup cảnh báo sẵn có
+    + Gỡ toàn bộ scheduler `start_npbb_auto_cancel_scheduler`/`_npbb_auto_cancel_check` cùng endpoint
+      `npbb-auto-cancel-ack` và phần "auto_cancelled" trong response `npbb-quota-warning`. Popup cảnh báo
+      (2 lựa chọn Hủy đơn / Tiếp tục) giữ nguyên như đã xây — không đổi điều kiện hiện
+    + ✅ **Thêm ràng buộc mới**: trong lúc còn 1 đơn NPBB "pending" (hạn mức không đủ, chưa xử lý), nhân
+      viên đó KHÔNG được tạo/nộp đơn nghỉ phép nào KHÁC (`create_leave`/`resubmit_leave` chặn 409, nêu rõ
+      khoảng ngày đơn NPBB đang vướng) — buộc giải quyết xong đơn NPBB (hủy hoặc "Tiếp tục" ứng năm sau)
+      trước khi làm tiếp việc khác. Không chặn việc điều chỉnh đúng đơn NPBB đang vướng
+      (`npbb_adjust_leave`) hay khai báo hộ của Tổng hợp/admin (`create_direct_leave`)
+    + Tách hàm dùng chung `_npbb_pending_items` (trước nằm thẳng trong `get_npbb_quota_warning`) để cả
+      popup cảnh báo lẫn chặn tạo đơn mới dùng chung đúng 1 logic, không lệch nhau
+    + Cập nhật bộ test `tests/test_npbb_quota_warning.py`: bỏ 5 test auto-cancel (không còn tính năng để
+      khoá lại), thêm 1 test mới cho đúng hành vi chặn/mở chặn vừa thêm — còn 8 test, pass hết cùng 176
+      test liên quan nghỉ phép/chấm công/nhân sự khác
+
+---
+
 - 08/09/2026 Nghỉ phép - **NPBB: chuẩn lại đúng bản chất "chưa tới ngày chưa tính hạn mức", tự động hủy nếu không đủ, sửa 2 lỗi thật từ review**
     + Rà soát/review đợt cảnh báo hạn mức NPBB (PR #79) phát hiện 2 lỗi thật: (1) `get_npbb_quota_warning` và
       `confirm_npbb_borrow` đo "còn lại" bằng 2 công thức lệch nhau đúng bằng số ngày NPBB — sau khi bấm

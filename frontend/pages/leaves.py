@@ -573,10 +573,9 @@ async def leaves_page(open_id: Optional[int] = None):
     # hạn mức năm sau, xem /npbb-borrow-confirm — luôn giải quyết được vì
     # remaining_excl không phụ thuộc chính NPBB, không lặp vô hạn).
     #
-    # Nếu tới đúng ngày đăng ký mà chưa ai xử lý, hệ thống TỰ ĐỘNG hủy đơn
-    # (_npbb_auto_cancel_check, backend) — phần "auto_cancelled" ở đây chỉ để
-    # THÔNG BÁO lại cho chủ đơn biết chuyện đã xảy ra, không còn lựa chọn xử
-    # lý nào (đơn đã "Đã hủy"), chỉ có nút "Đã biết".
+    # Hệ thống KHÔNG tự động hủy đơn — chủ đơn phải tự xử lý (hủy hoặc "Tiếp
+    # tục") qua đúng popup này; trong lúc còn "pending", backend chặn tạo/nộp
+    # đơn nghỉ phép khác (xem _block_if_npbb_pending) cho tới khi xử lý xong.
     async def _check_npbb_quota_warning():
         try:
             res = await asyncio.to_thread(api.get, "/api/leaves/npbb-quota-warning")
@@ -584,28 +583,6 @@ async def leaves_page(open_id: Optional[int] = None):
             return
         if not isinstance(res, dict) or not res.get("show"):
             return
-
-        for it in (res.get("auto_cancelled") or []):
-            _lid = it["id"]
-            _year = it["year"]
-            _tu = it["start_date"]
-            _den = it["end_date"]
-            with ui.dialog(value=True) as _ac_dp, ui.card().classes("p-6 max-w-lg"):
-                ui.label("🚫 Đơn NPBB đã tự động hủy").classes("text-lg font-bold text-red-900 mb-3")
-                ui.label(
-                    f"Đơn nghỉ phép bắt buộc (từ {_tu} đến {_den}) đã bị hệ thống tự động hủy vì "
-                    f"tới ngày đăng ký mà hạn mức phép năm {_year} vẫn không đủ để nghỉ phép bắt buộc."
-                ).classes("text-sm text-gray-700 leading-relaxed")
-
-                async def _da_biet(l=_lid, dp=_ac_dp):
-                    try:
-                        await asyncio.to_thread(api.post, f"/api/leaves/{l}/npbb-auto-cancel-ack", {})
-                    except Exception as e:
-                        _handle_api_error(e)
-                        return
-                    dp.close()
-
-                ui.button("Đã biết", on_click=_da_biet).classes("bg-red-700 text-white mt-4 w-full")
 
         for it in (res.get("pending") or []):
             _year = it["year"]
