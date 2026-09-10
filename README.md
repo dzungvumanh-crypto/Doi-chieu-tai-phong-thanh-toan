@@ -369,12 +369,22 @@ Kết nối CSDL dùng **bể mượn–trả** (`DB_POOL_SIZE`, mặc định 1
   báo cáo). Muốn điều chỉnh lại: rút/hủy đơn điều chỉnh hiện tại, **đơn gốc tự trở lại "Hoàn thành"**
   rồi lập đơn điều chỉnh mới — không giới hạn số lần. Dialog điều chỉnh **để trống lịch chọn ngày**
   (ngày đơn gốc ghi ở dòng chữ riêng phía trên để đối chiếu), tránh tưởng nhầm đã chọn xong
+- **NPBB chỉ trừ hạn mức từ đúng ngày đăng ký** — đơn đã duyệt nhưng ngày nghỉ còn ở tương lai
+  KHÔNG tính vào "đã dùng" (khác mọi loại nghỉ khác; NPBB vốn không bị chặn hạn mức lúc tạo).
+  Nếu hạn mức năm đó — không kể chính đơn NPBB — không đủ số ngày cần nghỉ, mở màn Nghỉ phép sẽ
+  hiện popup cảnh báo với hai lựa chọn: **Hủy đơn NPBB** (dùng nút *Rút đơn* có sẵn) hoặc
+  **Tiếp tục** (`POST /api/leaves/{id}/npbb-borrow-confirm` — ứng phần thiếu sang hạn mức năm sau;
+  năm sau cũng không đủ thì chặn, phải hủy đơn). **Trong lúc chưa xử lý xong đơn NPBB đó, tạo/nộp
+  đơn nghỉ phép khác bị chặn (409)** — buộc giải quyết dứt điểm trước. Hệ thống **không tự động hủy**
+  đơn của ai; mọi quyết định đều do chính chủ đơn bấm
 - Mẫu đơn xin nghỉ phép năm **riêng theo chức danh** (nhân viên / trưởng - phó phòng / GĐ / PGĐ).
   Đơn của GĐ kính gửi **Tổng Giám đốc Agribank**, không phải Giám đốc TTTT; mẫu NPBB của diện HĐTV
   gửi **Ban Tổ chức Nhân sự**
 - Mẫu đơn cá nhân NPBB (đăng ký / điều chỉnh — "Mẫu 1 TCNS") và báo cáo tổng hợp
   **Mẫu 18** (nội bộ) / **Mẫu 19** (gửi TCNS):
   `GET /api/leaves/export/npbb-batch?year=&mau=18|19[&month=][&preview=true]`.
+  Hai cột **Ngày sinh / Giới tính** lấy từ *Quản lý nhân sự → Hồ sơ cán bộ* (`hr_profiles`);
+  cán bộ chưa khai hồ sơ thì để trống.
   Bỏ trống `month` = cả năm. Bấm vào mẫu sẽ **mở xem trước** (PDF do Word chuyển tạm) rồi mới tải;
   máy chủ không chuyển được PDF thì **tự tải thẳng bản `.docx` gốc** — báo cáo này không phụ thuộc Word
 

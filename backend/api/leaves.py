@@ -2,6 +2,7 @@
 import base64
 import io
 import json
+import logging
 import os
 import re
 import sqlite3
@@ -21,7 +22,9 @@ from backend.core.paths import template_path
 from backend.services.lich_lam_viec import (
     LICH_RONG, LichLamViec, la_ngay_lam_viec, tai_lich,
 )
-from backend.database import get_db, write_audit, _vn_now, compute_annual_leave, compute_carry_over
+from backend.database import (
+    get_db, write_audit, _vn_now, compute_annual_leave, compute_carry_over, DB_PATH,
+)
 from backend.schemas.leaves import (
     LeaveCreate, LeaveReview, TongHopReview,
     DirectLeaveCreate, RecallCreate, LeaveQuotaUpsert,
@@ -29,6 +32,7 @@ from backend.schemas.leaves import (
 from backend.services import leave_pdf
 
 router = APIRouter()
+_log = logging.getLogger(__name__)
 
 LEAVE_TYPE_LABELS = {
     "bat_buoc":    "Nghỉ phép bắt buộc",
@@ -78,6 +82,7 @@ ACTION_LABELS = {
     "npbb_adjust":    ("Điều chỉnh ngày NPBB", "orange"),
     "npbb_adjusted_cancel": ("Đơn gốc bị thay bởi đơn điều chỉnh", "grey"),
     "npbb_adjustment_recalled": ("Đơn gốc được khôi phục do đơn điều chỉnh bị rút/hủy", "grey"),
+    "npbb_borrow_confirm": ("Xác nhận ứng hạn mức năm sau để tiếp tục NPBB", "orange"),
     "cancel":         ("Hủy đơn",            "grey"),
     "direct_create":  ("Khai báo hộ",        "purple"),
     "recall_request": ("Yêu cầu rút đơn",    "orange"),
@@ -127,6 +132,14 @@ def _calc_used_days(staff_id: int, year: int, db: sqlite3.Connection,
     hẳn, xem _cancel_adjusted_original) LẪN đơn điều chỉnh (include_pending=True
     cộng luôn cả pending) cùng cộng vào, ra hạn mức "đã dùng" gấp đôi ảo trong
     lúc đơn điều chỉnh còn đang xử lý.
+
+    NPBB (bat_buoc) KHÁC mọi loại nghỉ khác ở 1 điểm: không bị chặn hạn mức
+    lúc tạo (_check_quota_or_borrow bỏ qua hẳn bat_buoc), nên về bản chất
+    CHƯA "tiêu" hạn mức cho tới đúng ngày đăng ký (start_date) — đơn đã duyệt
+    nhưng ngày nghỉ còn ở tương lai (start_date > hôm nay) hoàn toàn KHÔNG
+    tính vào "đã dùng", dù trạng thái đang 'approved' hay 'pending_*'. Tới
+    đúng start_date thì cộng full 1 lần (không tính dần từng ngày như
+    _calc_occurred_days dùng cho báo cáo năm) — khớp yêu cầu 2026-09-08.
     """
     if include_pending:
         statuses = ("'approved','pending_ksv','pending_tong_hop','pending_gd'")
@@ -141,7 +154,7 @@ def _calc_used_days(staff_id: int, year: int, db: sqlite3.Connection,
     # rơi vào năm đang tính, xem thêm vòng lặp clip theo d.year bên dưới.
     params += [f"{year}-12-31", f"{year}-01-01"]
     rows = db.execute(
-        f"""SELECT spread_dates, start_date, end_date, borrow_next_year_days FROM leave_records
+        f"""SELECT spread_dates, start_date, end_date, borrow_next_year_days, leave_type FROM leave_records
             WHERE staff_id=? {excl} AND status IN ({statuses})
               AND leave_type NOT IN ('thai_san','bao_hiem','khong_luong','hop_cong_tac')
               {_OTHER_NO_QUOTA_SQL}
@@ -149,9 +162,13 @@ def _calc_used_days(staff_id: int, year: int, db: sqlite3.Connection,
               {_NO_ACTIVE_ADJ_SQL}""",
         params,
     ).fetchall()
+    today = _vn_now().date()
     total = 0.0
     _lich: LichLamViec | None = None  # lazy load khi cần
     for row in rows:
+        row_start = date.fromisoformat(row["start_date"])
+        if row["leave_type"] == "bat_buoc" and row_start > today:
+            continue  # chưa tới ngày đăng ký — chưa tính vào hạn mức
         borrow = row["borrow_next_year_days"] or 0.0
         # borrow_next_year_days là số ngày VƯỢT hạn mức năm GỐC (năm chứa
         # start_date, xem _check_quota_or_borrow) bị chuyển sang tính vào năm
@@ -161,14 +178,14 @@ def _calc_used_days(staff_id: int, year: int, db: sqlite3.Connection,
         # ở MỌI năm đơn này chồng lấn tới (thay vì chỉ năm gốc) thì phần ngày
         # đã "ứng" bị trừ 2 lần, tổng dùng cả 2 năm cộng lại hụt mất đúng bằng
         # borrow (bug thật, xem audit — 5 ngày thực tế chỉ còn ra tổng 3).
-        row_start_year = date.fromisoformat(row["start_date"]).year
+        row_start_year = row_start.year
         own_borrow = borrow if row_start_year == year else 0.0
         if row["spread_dates"]:
             yr_count = len([d for d in json.loads(row["spread_dates"]) if d.startswith(str(year))])
         else:
             if _lich is None:
                 _lich = _load_lich(db, date(year, 1, 1), date(year, 12, 31))
-            d = date.fromisoformat(row["start_date"])
+            d = row_start
             e = date.fromisoformat(row["end_date"])
             yr_count = 0
             while d <= e:
@@ -184,12 +201,14 @@ def _calc_used_days(staff_id: int, year: int, db: sqlite3.Connection,
         borrowed_params.append(exclude_id)
     borrowed_params.append(str(year - 1))
     for row in db.execute(
-        f"""SELECT borrow_next_year_days FROM leave_records
+        f"""SELECT borrow_next_year_days, leave_type, start_date FROM leave_records
             WHERE staff_id=? {excl} AND status IN ({statuses})
               AND strftime('%Y', start_date) = ?
               {_NO_ACTIVE_ADJ_SQL}""",
         borrowed_params,
     ).fetchall():
+        if row["leave_type"] == "bat_buoc" and date.fromisoformat(row["start_date"]) > today:
+            continue
         total += row["borrow_next_year_days"] or 0.0
     return total
 
@@ -206,7 +225,7 @@ def _calc_used_days_bulk(staff_ids: list, year: int, db: sqlite3.Connection,
                 if include_pending else "'approved'")
     placeholders = ",".join("?" * len(staff_ids))
     rows = db.execute(
-        f"""SELECT staff_id, spread_dates, start_date, end_date, borrow_next_year_days FROM leave_records
+        f"""SELECT staff_id, spread_dates, start_date, end_date, borrow_next_year_days, leave_type FROM leave_records
             WHERE staff_id IN ({placeholders}) AND status IN ({statuses})
               AND leave_type NOT IN ('thai_san','bao_hiem','khong_luong','hop_cong_tac')
               {_OTHER_NO_QUOTA_SQL}
@@ -214,20 +233,26 @@ def _calc_used_days_bulk(staff_ids: list, year: int, db: sqlite3.Connection,
               {_NO_ACTIVE_ADJ_SQL}""",
         list(staff_ids) + [f"{year}-12-31", f"{year}-01-01"],
     ).fetchall()
+    today = _vn_now().date()
     result = {sid: 0.0 for sid in staff_ids}
     _lich: LichLamViec | None = None
     for row in rows:
+        row_start = date.fromisoformat(row["start_date"])
+        # NPBB chưa tới ngày đăng ký thì chưa tính vào hạn mức — xem chú
+        # thích đầy đủ trong _calc_used_days, cùng 1 quy tắc.
+        if row["leave_type"] == "bat_buoc" and row_start > today:
+            continue
         borrow = row["borrow_next_year_days"] or 0.0
         # Chỉ trừ borrow ở đúng năm GỐC (năm chứa start_date) — xem chú thích
         # đầy đủ trong _calc_used_days, cùng 1 bug/1 cách sửa.
-        row_start_year = date.fromisoformat(row["start_date"]).year
+        row_start_year = row_start.year
         own_borrow = borrow if row_start_year == year else 0.0
         if row["spread_dates"]:
             yr_count = len([d for d in json.loads(row["spread_dates"]) if d.startswith(str(year))])
         else:
             if _lich is None:
                 _lich = _load_lich(db, date(year, 1, 1), date(year, 12, 31))
-            d = date.fromisoformat(row["start_date"])
+            d = row_start
             e = date.fromisoformat(row["end_date"])
             yr_count = 0
             while d <= e:
@@ -237,12 +262,14 @@ def _calc_used_days_bulk(staff_ids: list, year: int, db: sqlite3.Connection,
         result[row["staff_id"]] += yr_count - own_borrow
     # Phần ứng TỪ năm trước SANG năm đang tính — xem chú thích trong _calc_used_days.
     for row in db.execute(
-        f"""SELECT staff_id, borrow_next_year_days FROM leave_records
+        f"""SELECT staff_id, borrow_next_year_days, leave_type, start_date FROM leave_records
             WHERE staff_id IN ({placeholders}) AND status IN ({statuses})
               AND strftime('%Y', start_date) = ?
               {_NO_ACTIVE_ADJ_SQL}""",
         list(staff_ids) + [str(year - 1)],
     ).fetchall():
+        if row["leave_type"] == "bat_buoc" and date.fromisoformat(row["start_date"]) > today:
+            continue
         result[row["staff_id"]] += row["borrow_next_year_days"] or 0.0
     return result
 
@@ -942,6 +969,7 @@ def create_leave(
 ):
     if current.get("role") == "admin":
         raise HTTPException(403, "Admin không tham gia quy trình nghỉ phép")
+    _block_if_npbb_pending(current, db)
     leave_id = _create_leave_core(body, current, db)
     db.commit()
     return _leave_to_out(leave_id, db)
@@ -995,6 +1023,101 @@ def npbb_adjust_leave(
     new_leave_id = _create_leave_core(body, current, db, adjusts_leave_id=leave_id, action="npbb_adjust")
     db.commit()
     return _leave_to_out(new_leave_id, db)
+
+
+@router.post("/{leave_id}/npbb-borrow-confirm")
+def confirm_npbb_borrow(
+    leave_id: int,
+    db: sqlite3.Connection = Depends(get_db),
+    current: dict = Depends(get_current_staff),
+):
+    """Người dùng chọn "Tiếp tục nghỉ phép bắt buộc" ở popup cảnh báo hạn mức
+    (xem npbb-quota-warning) thay vì hủy đơn — NPBB đã duyệt từ trước, nhưng
+    hạn mức năm đó tụt xuống dưới 5 ngày do các đơn KHÁC dùng bớt SAU khi đã
+    đăng ký NPBB (lúc tạo NPBB không kiểm tra hạn mức, xem _check_quota_or_borrow).
+
+    Áp dụng lại đúng cơ chế "ứng phép năm sau" đã có (borrow_next_year_days) —
+    NHƯNG tính NGƯỢC trên 1 đơn NPBB đã tồn tại thay vì lúc tạo mới: dùng nốt
+    phần hạn mức năm nay còn thực sự trống cho đơn này (không tính chính nó),
+    phần còn thiếu ứng sang hạn mức năm sau — chặn cứng nếu năm sau cũng
+    không đủ chỗ ứng (phải hủy đơn NPBB thay vì tiếp tục)."""
+    leave = db.execute("SELECT * FROM leave_records WHERE id=?", (leave_id,)).fetchone()
+    if not leave:
+        raise HTTPException(404, "Không tìm thấy đơn nghỉ phép")
+    if leave["staff_id"] != current["id"] and current["role"] != "admin":
+        raise HTTPException(403, "Chỉ chủ nhân đơn hoặc Admin mới thao tác được")
+    if leave["leave_type"] != "bat_buoc" or leave["status"] != LeaveStatus.APPROVED:
+        raise HTTPException(400, "Chỉ áp dụng cho đơn nghỉ phép bắt buộc đã duyệt")
+    # Đơn đang có đơn điều chỉnh còn hiệu lực (chưa duyệt xong hẳn) — _NO_ACTIVE_ADJ_SQL
+    # khiến MỌI _calc_used_days/_calc_used_days_bulk bỏ qua hẳn dòng này, nên
+    # borrow_next_year_days ghi vào lúc này sẽ KHÔNG có tác dụng gì (không tính
+    # vào năm nào cả) dù API trả về 200 — người dùng tưởng đã xử lý xong nhưng
+    # cảnh báo vẫn hiện lại y nguyên ở lần tải trang sau, y hệt vòng lặp không
+    # lối ra. Chặn hẳn, hướng dẫn chờ đơn điều chỉnh xử lý xong trước (khớp
+    # đúng chặn đã có ở npbb_adjust_leave khi tạo đơn điều chỉnh mới).
+    _active_adj = db.execute(
+        """SELECT id FROM leave_records WHERE adjusts_leave_id=?
+           AND status NOT IN ('rejected','cancelled') LIMIT 1""",
+        (leave_id,),
+    ).fetchone()
+    if _active_adj:
+        raise HTTPException(
+            409,
+            "Đơn này đang có đơn điều chỉnh chưa xử lý xong — vui lòng chờ đơn "
+            "điều chỉnh được duyệt hoặc bị từ chối/rút trước khi xác nhận ứng hạn mức.",
+        )
+
+    start = date.fromisoformat(leave["start_date"])
+    end   = date.fromisoformat(leave["end_date"])
+    year  = start.year
+    staff = db.execute(
+        "SELECT join_industry_date FROM user_tttt WHERE id=?", (leave["staff_id"],)
+    ).fetchone()
+    # Dùng chung _npbb_remaining_excl với get_npbb_quota_warning/_npbb_pending_items
+    # — cả 2 nơi PHẢI đo bằng đúng 1 công thức, tránh lệch thước như bug đã sửa.
+    leave_days, remaining_excl = _npbb_remaining_excl(
+        leave["staff_id"], staff["join_industry_date"], leave_id,
+        start, end, leave["spread_dates"], db,
+    )
+
+    if leave_days <= remaining_excl:
+        # Hạn mức đã đủ trở lại (vd người khác vừa hủy bớt đơn khác) — không
+        # cần ứng, dọn borrow cũ (nếu có từ lần xác nhận trước) về 0.
+        if leave["borrow_next_year_days"]:
+            db.execute(
+                "UPDATE leave_records SET borrow_next_year_days=0, updated_at=? WHERE id=?",
+                (str(_vn_now()), leave_id),
+            )
+            _log_action(db, leave_id, current["id"], "npbb_borrow_confirm", None,
+                       leave["status"], leave["status"])
+            db.commit()
+        return _leave_to_out(leave_id, db)
+
+    overflow = leave_days - max(0.0, remaining_excl)
+    next_year = year + 1
+    q_next = db.execute(
+        "SELECT quota_days FROM leave_quotas WHERE staff_id=? AND year=?",
+        (leave["staff_id"], next_year),
+    ).fetchone()
+    next_quota = (float(q_next["quota_days"]) if q_next
+                  else float(compute_annual_leave(staff["join_industry_date"], next_year)))
+    next_used = _calc_used_days(leave["staff_id"], next_year, db, exclude_id=leave_id, include_pending=True)
+    next_remaining = next_quota - next_used
+    if overflow > next_remaining:
+        raise HTTPException(
+            400,
+            f"Hạn mức phép năm {next_year} cũng không đủ để ứng thêm "
+            f"{overflow:.0f} ngày còn thiếu — vui lòng hủy đơn nghỉ phép bắt buộc "
+            "thay vì tiếp tục.",
+        )
+    db.execute(
+        "UPDATE leave_records SET borrow_next_year_days=?, updated_at=? WHERE id=?",
+        (overflow, str(_vn_now()), leave_id),
+    )
+    _log_action(db, leave_id, current["id"], "npbb_borrow_confirm", None,
+               leave["status"], leave["status"])
+    db.commit()
+    return _leave_to_out(leave_id, db)
 
 
 @router.get("/")
@@ -1510,6 +1633,125 @@ def get_overdue_pending_notice(
     return {"show": bool(items), "items": items}
 
 
+def _npbb_remaining_excl(staff_id: int, join_industry_date, leave_id: int,
+                         start: date, end: date, spread_dates_json: Optional[str],
+                         db: sqlite3.Connection) -> tuple:
+    """(leave_days, remaining_excl) cho 1 đơn NPBB — dùng chung giữa
+    _npbb_pending_items (qua đó là get_npbb_quota_warning) và confirm_npbb_borrow
+    để CẢ 2 nơi luôn đo bằng đúng 1 cây thước (trước đây warning đo "còn lại đã
+    gồm cả NPBB" còn borrow đo "còn lại KHÔNG gồm NPBB", lệch nhau đúng bằng
+    leave_days khiến sau khi ứng thành công, còn lại luôn về đúng 0 mà 0 vẫn
+    <5 → cảnh báo lặp vô hạn, xem rà soát 2026-09-08).
+
+    remaining_excl = hạn mức năm đó nếu KHÔNG tính chính đơn NPBB này — vì
+    NPBB không bị chặn hạn mức lúc tạo (_check_quota_or_borrow bỏ qua hẳn
+    bat_buoc) nên về bản chất chưa "tiêu" hạn mức cho tới khi ngày nghỉ thật
+    sự xảy ra (khớp _calc_occurred_days) — kiểm tra "đủ hạn mức cho NPBB
+    không" phải hỏi phần CÒN LẠI (không kể NPBB) có đủ leave_days hay không,
+    không phải hỏi tổng còn lại (đã trừ cả NPBB) có dưới 5 hay không."""
+    year = start.year
+    if spread_dates_json:
+        leave_days = len(json.loads(spread_dates_json))
+    else:
+        _lich = _load_lich(db, start, end)
+        leave_days = _period_days(start, end, _lich, "bat_buoc")
+    carry_eff = compute_carry_over(staff_id, year, db, effective=True, ref_date=start)
+    q_row = db.execute(
+        "SELECT quota_days FROM leave_quotas WHERE staff_id=? AND year=?",
+        (staff_id, year),
+    ).fetchone()
+    quota = (float(q_row["quota_days"]) if q_row
+             else float(compute_annual_leave(join_industry_date, year)))
+    used_excl = _calc_used_days(staff_id, year, db, exclude_id=leave_id, include_pending=True)
+    remaining_excl = quota + carry_eff - used_excl
+    return leave_days, remaining_excl
+
+
+def _npbb_pending_items(staff_id: int, join_industry_date, db: sqlite3.Connection) -> list:
+    """Đơn NPBB đã duyệt, CHƯA tới ngày nghỉ, hạn mức năm đó (KHÔNG tính
+    chính đơn NPBB) không đủ leave_days — dùng chung cho get_npbb_quota_warning
+    (hiện popup cảnh báo) và create_leave/resubmit_leave (chặn tạo đơn khác
+    cho tới khi xử lý xong đơn NPBB này — hủy hoặc "Tiếp tục" ứng năm sau).
+
+    Loại trừ đơn đang có đơn điều chỉnh còn hiệu lực (chưa duyệt xong hẳn) —
+    "Tiếp tục" chặn hẳn với đơn này, hiện cảnh báo/chặn tạo đơn khác chỉ gây
+    rối. Đơn gốc có đơn điều chỉnh ĐÃ duyệt xong thì tự chuyển 'cancelled'
+    (_cancel_adjusted_original) nên không match status='approved' nữa — câu
+    này tự động luôn thấy đúng đơn (gốc hoặc điều chỉnh) đang thật sự hiệu
+    lực, không cần dò "mới nhất" thủ công."""
+    today = _vn_now().date()
+    rows = db.execute(
+        f"""SELECT id, start_date, end_date, spread_dates, borrow_next_year_days FROM leave_records
+           WHERE staff_id=? AND leave_type='bat_buoc' AND status='approved'
+             AND start_date >= ?
+             {_NO_ACTIVE_ADJ_SQL}""",
+        (staff_id, today.isoformat()),
+    ).fetchall()
+    pending = []
+    for r in rows:
+        _start = date.fromisoformat(r["start_date"])
+        _end   = date.fromisoformat(r["end_date"])
+        leave_days, remaining_excl = _npbb_remaining_excl(
+            staff_id, join_industry_date, r["id"], _start, _end, r["spread_dates"], db,
+        )
+        # Phần NGÀY CỦA NĂM NAY mà đơn này thật sự còn "đòi hỏi" — trừ bớt
+        # phần đã ứng sang năm sau từ 1 lần "Tiếp tục" trước đó (nếu có).
+        # remaining_excl KHÔNG đổi theo borrow của chính đơn này (used_excl
+        # loại hẳn đơn này ra), nên nếu so leave_days thô (không trừ borrow),
+        # cảnh báo sẽ không bao giờ tắt được dù đã ứng thành công — lặp lại
+        # đúng bug đã sửa, chỉ là ở phía "hiện cảnh báo" thay vì "ghi giá trị".
+        _need = leave_days - (r["borrow_next_year_days"] or 0)
+        if _need > remaining_excl:
+            pending.append({
+                "id": r["id"], "year": _start.year, "start_date": r["start_date"],
+                "end_date": r["end_date"], "remaining": remaining_excl, "leave_days": leave_days,
+            })
+    return pending
+
+
+def _block_if_npbb_pending(current: dict, db: sqlite3.Connection):
+    """Chặn tạo/nộp đơn nghỉ phép KHÁC khi đang có đơn NPBB "pending" (xem
+    _npbb_pending_items) chưa xử lý xong — buộc giải quyết đơn NPBB đó (hủy
+    hoặc "Tiếp tục" ứng năm sau) trước khi làm tiếp việc khác. Gọi ở đầu
+    create_leave/resubmit_leave (nhân viên TỰ tạo/nộp đơn) — KHÔNG gọi trong
+    _create_leave_core/npbb_adjust_leave (xử lý đúng đơn NPBB đang vướng
+    không được tự chặn chính nó) và KHÔNG gọi trong create_direct_leave
+    (Khai báo hộ — hành động của Tổng hợp/admin thay mặt nhân viên)."""
+    pending = _npbb_pending_items(current["id"], current.get("join_industry_date"), db)
+    if pending:
+        date_label = ", ".join(
+            f"{date.fromisoformat(p['start_date']).strftime('%d/%m/%Y')}"
+            f"-{date.fromisoformat(p['end_date']).strftime('%d/%m/%Y')}"
+            for p in pending
+        )
+        raise HTTPException(
+            409,
+            f"Đơn nghỉ phép bắt buộc ({date_label}) đang chờ xử lý do hạn mức "
+            "không đủ — vui lòng hủy đơn này hoặc xác nhận \"Tiếp tục\" (ứng "
+            "hạn mức năm sau) trước khi tạo/nộp đơn nghỉ phép khác.",
+        )
+
+
+@router.get("/npbb-quota-warning")
+def get_npbb_quota_warning(
+    db: sqlite3.Connection = Depends(get_db),
+    current: dict = Depends(get_current_staff),
+):
+    """Đơn NPBB đã duyệt, CHƯA tới ngày nghỉ, hạn mức năm đó không đủ — nhắc
+    người dùng chọn hủy đơn (thủ công, qua nút "Rút đơn"/"Hủy đơn" có sẵn ở
+    chi tiết đơn) hay tiếp tục (ứng phần thiếu sang hạn mức năm sau, xem
+    /{leave_id}/npbb-borrow-confirm). Hiện lại mỗi lần mở trang trong khi
+    điều kiện còn đúng — hạn mức có thể đổi qua lại nên không đánh dấu "đã
+    xem" 1 lần/năm như carryover-notice. Trong lúc còn "pending" như thế
+    này, create_leave/resubmit_leave chặn không cho tạo/nộp đơn nghỉ phép
+    khác — xem _npbb_pending_items."""
+    pending = _npbb_pending_items(current["id"], current.get("join_industry_date"), db)
+    return {
+        "show": bool(pending),
+        "pending": pending,
+    }
+
+
 @router.get("/my-balance")
 def get_my_balance(
     year: int = None,
@@ -1777,6 +2019,7 @@ def resubmit_leave(
         raise HTTPException(403, "Chỉ chủ nhân đơn mới được nộp lại")
     if leave["status"] != LeaveStatus.REJECTED:
         raise HTTPException(400, "Chỉ có thể nộp lại đơn đã bị từ chối")
+    _block_if_npbb_pending(current, db)
 
     if body.spread_dates:
         spread = sorted(set(body.spread_dates))
@@ -1998,6 +2241,11 @@ _ROLE_VN = {
     "admin":         "Quản trị viên cấp 1",
     "admin_l2":      "Quản trị viên cấp 2",
 }
+
+# Khớp GIOI_TINH trong backend/services/hr_service.py (không import chéo — dict
+# 3 dòng, tự chứa cho gọn, đúng khuôn mẫu các dict _..._VN tự có sẵn trong file
+# này thay vì phụ thuộc module khác cho 1 mapping nhỏ).
+_GIOI_TINH_VN = {"nam": "Nam", "nu": "Nữ", "khac": "Khác"}
 
 # template_path() chứ không phải os.path.join(): tên thư mục có dấu trên đĩa đang
 # ở dạng NFD, ghép chuỗi NFC từ mã nguồn sẽ không khớp — xem backend/core/paths.py
@@ -3659,10 +3907,12 @@ def export_npbb_batch(
 
     roots = db.execute(
         f"""SELECT lr.*, s.full_name AS staff_name, s.role AS staff_role,
-                  s.join_industry_date, d.name AS dept_name
+                  s.join_industry_date, d.name AS dept_name,
+                  p.dob AS staff_dob, p.gender AS staff_gender
            FROM leave_records lr
-           LEFT JOIN user_tttt s   ON lr.staff_id = s.id
-           LEFT JOIN departments d ON s.department_id = d.id
+           LEFT JOIN user_tttt s     ON lr.staff_id = s.id
+           LEFT JOIN departments d   ON s.department_id = d.id
+           LEFT JOIN hr_profiles p   ON p.staff_id = s.id
            WHERE lr.leave_type='bat_buoc' AND lr.adjusts_leave_id IS NULL
              AND {_period_sql}{_dept_sql}
              AND (lr.status='approved' OR EXISTS(
@@ -3693,6 +3943,9 @@ def export_npbb_batch(
         da_nghi = _calc_used_days(r["staff_id"], year, db)
         rows_data.append({
             "name":       r["staff_name"] or "",
+            "dob":        (date.fromisoformat(str(r["staff_dob"])[:10]).strftime("%d/%m/%Y")
+                           if r["staff_dob"] else ""),
+            "gender":     _GIOI_TINH_VN.get(r["staff_gender"] or "", ""),
             "chuc_vu":    _ROLE_VN.get(r["staff_role"] or "", r["staff_role"] or ""),
             "tong_phep":  tong_phep,
             "da_nghi":    da_nghi,
@@ -3713,8 +3966,8 @@ def export_npbb_batch(
         cells = table.rows[-1].cells
         _npbb_set_cell_text(cells[0], str(idx))
         _npbb_set_cell_text(cells[1], item["name"])
-        _npbb_set_cell_text(cells[2], "")
-        _npbb_set_cell_text(cells[3], "")
+        _npbb_set_cell_text(cells[2], item["dob"])
+        _npbb_set_cell_text(cells[3], item["gender"])
         _npbb_set_cell_text(cells[4], item["chuc_vu"])
         _npbb_set_cell_text(cells[5], "TTTT")
         _npbb_set_cell_text(cells[6], f"{item['tong_phep']:g}")
@@ -3869,12 +4122,13 @@ def _build_attendance_month_sheet(ws, db: sqlite3.Connection, year: int, month: 
     # ký hiệu riêng thì dùng chung "P". "hop_cong_tac" giờ là leave_type thật
     # (đi qua đúng luồng đơn nghỉ phép bình thường) nên tự điền được từ dữ liệu
     # thật, không còn phải để trống như trước khi loại này chưa tồn tại.
-    # "CT" (không phải "H") — bảng attendance_symbols có sẵn "H" = "Đi học"
+    # "B" (không phải "H") — bảng attendance_symbols có sẵn "H" = "Đi học"
     # (dùng bởi hệ chấm công thật của Phòng Kế toán, backend/db/migrations.py
     # ::trg_leave_*_sync_attendance) — dùng lại "H" ở đây cho "họp/công tác"
-    # sẽ đụng ký hiệu, hiểu sai bản chất khi đọc báo cáo. "CT" = "Công tác" đã
-    # có sẵn trong attendance_symbols (review PR #77, Người 1, 2026-09-06).
-    _ATTENDANCE_SYMBOL = {"bat_buoc": "BB", "hop_cong_tac": "CT"}
+    # sẽ đụng ký hiệu, hiểu sai bản chất khi đọc báo cáo. "B" = "Đi công tác"
+    # là ký hiệu chuẩn IPCAS thật (đối chiếu 2026-09-07, thay cho "CT" tự đặt
+    # trước đây — xem migration chuẩn hoá ký hiệu chấm công cùng ngày).
+    _ATTENDANCE_SYMBOL = {"bat_buoc": "BB", "hop_cong_tac": "B"}
 
     staff_ids = [s["id"] for s in staffs]
     leave_symbol_by_staff: dict[int, dict] = {sid: {} for sid in staff_ids}
@@ -4465,3 +4719,5 @@ def approve_recall(
     _log_action(db, leave_id, current["id"], "recall_approve", None, old, LeaveStatus.CANCELLED)
     db.commit()
     return _leave_to_out(leave_id, db)
+
+
