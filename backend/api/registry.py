@@ -30,6 +30,7 @@ from backend.api.duty_export import router as duty_export_router
 from backend.api.cham459901 import router as cham459901_router
 from backend.api.doi_chieu_song_phuong import router as doi_chieu_song_phuong_router
 from backend.api.doi_chieu_song_phuong_kenh_core import router as doi_chieu_song_phuong_kenh_core_router
+from backend.api.doi_chieu_song_phuong_kenh_core_di import router as doi_chieu_song_phuong_kenh_core_di_router
 from backend.api.ilo1000 import router as ilo1000_router
 from backend.api.swift_recon import router as swift_recon_router
 from backend.api.ach import router as ach_router
@@ -70,6 +71,7 @@ _ROUTERS = [
     (cham459901_router,      {}),
     (doi_chieu_song_phuong_router, {}),
     (doi_chieu_song_phuong_kenh_core_router, {}),
+    (doi_chieu_song_phuong_kenh_core_di_router, {}),
     (ilo1000_router, {}),
     (swift_recon_router, {}),
     (ach_router,             {}),

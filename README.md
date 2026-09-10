@@ -530,8 +530,8 @@ Truy cập:
 
 ### Module Đối chiếu Song phương
 - Định tuyến lệnh IPCAS phục vụ đối chiếu song phương tại phòng Thanh toán
-- Menu: **Đối chiếu → Phòng Thanh toán → Đối chiếu Song phương** — 2 thẻ đang dùng: **Phân loại
-  dữ liệu** và **Đối chiếu đến** (thẻ **Đối chiếu đi** còn đang xây, chưa có backend)
+- Menu: **Đối chiếu → Phòng Thanh toán → Đối chiếu Song phương** — 3 thẻ: **Phân loại dữ liệu**,
+  **Đối chiếu đến**, **Đối chiếu đi** (từ 03/09/2026)
 - **Thẻ Phân loại dữ liệu**: upload file ZIP chứa dữ liệu IPCAS (GL02); xử lý bất đồng bộ, theo
   dõi tiến độ real-time. File tải lên được ghi **thẳng từng khối** xuống
   `data/temp_doi_chieu_song_phuong/upload_<token>/`; `process_zip()` nhận **đường dẫn**, kiểm
@@ -552,6 +552,14 @@ Truy cập:
   tuỳ ý không qua allowlist nào, tiền lệ giống lỗ hổng `/api/fs/browse` đã gỡ ở ACH trước đó (xem
   `docs/Implementation-notes.html` card 113). Backend ghi **thẳng từng khối** xuống đĩa job
   (`save_upload_to`), không gom vào RAM trước — cùng khuôn mẫu upload của module ACH
+- **Thẻ Đối chiếu đi** (`/api/doi_chieu_song_phuong_kenh_core_di`): cùng kiến trúc 1 job/1 kết quả
+  cuối như "Đối chiếu đến", nhưng thuật toán Hub↔Core khác đáng kể (không tái dùng được — package
+  riêng `doi_chieu_song_phuong_core_di/`): khoá HUB dùng `SE_TRACE` (tự suy từ TRACE, cột nguồn
+  luôn rỗng trong dữ liệu thật) thay vì `TRACE`, khoá CORE dùng `CRAMOUNT` thay `DRAMOUNT`, thêm
+  cửa sổ hủy CHÉO NGÀY T±3, nhận diện OSB qua `USERID` thay vì `REFERENCE`. Kênh↔Hub-đi đơn giản
+  hơn đến (không lọc "-"/trace-huỷ trước khi khớp). Chi tiết đầy đủ + các bug thật phát hiện khi
+  verify (lstrip số 0 SE_TRACE, guard MtId/MsgId theo NH không áp dụng được cho chiều đi...) xem
+  `docs/Implementation-notes.html` card 118
 - **File CORE đã phân loại sẵn: nhận cả `.csv` lẫn `.xlsx`, và ngày lấy từ NỘI DUNG file**
   (từ 09/09/2026, PR #81). Bước Hub↔Core nhìn tới CORE của T+1..T+3, nhưng tên `{mã NH}_DEN*.csv`
   không mang ngày. Luật cũ 03/09 vá bằng cách chỉ nhận CSV cho ngày T — chặn luôn cả trường hợp
@@ -573,6 +581,10 @@ Truy cập:
   - ⚠️ Tham số `ngay_goc` (dò thêm thư mục ngày T) chỉ có tác dụng khi thư mục nguồn có thư mục
     con dạng `D.M`. `/start_upload` ghi phẳng qua `safe_filename()` nên **hiện là no-op** — nó
     chuẩn bị cho chế độ thư mục máy chủ đã bị gỡ ở PR #70
+  - **Chiều ĐI dùng chung cơ chế này** (`doi_chieu_song_phuong_core_di/pipeline.py::
+    _tim_file_core_hoac_csv_di()`, từ 09/09/2026) — cùng luật TRDATE thật, cùng nhận cả `.csv`
+    lẫn `.xlsx`, khác đúng 1 điểm: cửa sổ CORE rộng gấp đôi (T-3..T+3, phục vụ nhánh "huỷ chéo
+    ngày" chỉ chiều đi mới có)
 - **3 file CSV chi tiết bọc `="..."` quanh cột khoá toàn chữ số** (từ 09/09/2026) —
   `MSGREF`/`TXID` ở hai file `..._hub_chi_tiet.csv`, `MtId/MsgId` ở `..._kenh_chi_tiet.csv`.
   Khoá SP THƯỜNG là chuỗi **16 chữ số thuần**, vượt trần **15 chữ số có nghĩa** của Excel: mở CSV
@@ -581,9 +593,18 @@ Truy cập:
   double-click nay ra đúng nguyên văn, nhưng **Power Query hoặc công cụ khác đọc CSV thô sẽ thấy
   `="..."` bao quanh giá trị** — không phải lỗi. Cột `TRACE`/`CHI_NHANH` cùng dạng dữ liệu
   **chưa** bọc (`docs/Implementation-notes.html` card 128)
-- Phân quyền riêng theo nhóm: `menu.doi_chieu_song_phuong` (xem trang/kiểm tra dữ liệu),
+- **Chiều ĐI: HUB "TPAY" không còn tính là khớp CORE** (từ 09/09/2026) — quay về đúng văn bản gốc
+  chỉ tính `TRANG_THAI_LENH == "SCNL"`, theo xác nhận trực tiếp của Phòng nghiệp vụ (đảo lại một
+  đợt thử nghiệm tạm trước đó dựa trên tương quan dữ liệu quan sát được, xem
+  `doi_chieu_song_phuong_core_di/config.py::TRANG_THAI_HUB_DOI_CHIEU`)
+- **Chiều ĐI: file kết quả có thêm sheet "GhiChu"** (từ 09/09/2026) — tự giải thích vì sao bảng
+  tổng hợp Kênh↔Hub và file chi tiết CSV khác số dòng (cố ý khác phạm vi: bảng chỉ tính SCNL, chi
+  tiết giữ nguyên mọi trạng thái) và ngày nào bị thiếu file HUB/CORE khiến thiếu nhãn T±k — trước
+  đây chỉ giải thích được qua trao đổi trực tiếp, không nằm trong chính file kết quả
+- Phân quyền riêng theo nhóm: `menu.doi_chieu_song_phuong` (xem trang/kiểm tra dữ liệu, cả 3 thẻ),
   `doi_chieu_song_phuong.process` (chạy Phân loại dữ liệu),
-  `doi_chieu_song_phuong_kenh_core.process` (chạy Đối chiếu đến)
+  `doi_chieu_song_phuong_kenh_core.process` (chạy Đối chiếu đến),
+  `doi_chieu_song_phuong_kenh_core_di.process` (chạy Đối chiếu đi)
 
 ### Module Đối chiếu ACH
 - Đối chiếu GL02 (IPCAS/NPO) với MIS PaymentHub theo phiên ACH, cả hai chiều ĐI và ĐẾN
