@@ -106,19 +106,26 @@ def test_mot_module_bao_cao_loi_khong_lam_chet_cua_kiem_tra(caplog):
 
 
 # ── Bốn module thật đều đã khai ──────────────────────────────────────────────
-def test_bon_module_that_deu_da_khai(_don_nguon):
-    """Thiếu một module trong sổ khai = nó không bị đếm, chốt hụt một suất mà
-    không ai biết. Import lại chính các service thật để kiểm."""
+def test_moi_cua_that_deu_da_khai(_don_nguon):
+    """Thiếu một cửa trong sổ khai = nó không bị đếm, chốt hụt một suất mà không
+    ai biết. Đã dính hai lần: "Phân loại dữ liệu" (chiều ĐI) bị bỏ sót lúc viết
+    chốt, và module chiều ĐI vào develop qua PR #86 SAU khi chốt được viết.
+    Test này là thứ duy nhất bắt được cửa thứ N+1 khi có người thêm module mới."""
     phien_doi_chieu._NGUON.clear()
     import importlib
     for ten in (
         "backend.services.ach_service",
         "backend.services.ilo1000_service",
         "backend.services.cham459901_service",
+        "backend.services.doi_chieu_song_phuong_service",
         "backend.services.doi_chieu_song_phuong_kenh_core_service",
+        "backend.services.doi_chieu_song_phuong_kenh_core_di_service",
     ):
         importlib.reload(importlib.import_module(ten))
-    assert set(phien_doi_chieu._NGUON) == {"ach", "ilo1000", "cham459901", "song_phuong"}
+    assert set(phien_doi_chieu._NGUON) == {
+        "ach", "ilo1000", "cham459901",
+        "song_phuong", "song_phuong_di", "song_phuong_kenh_core_di",
+    }
 
 
 # ── gianh_cho(): kiểm tra + đăng ký phải là MỘT thao tác nguyên tử ───────────

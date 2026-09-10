@@ -19,9 +19,8 @@ _DUOI_EXCEL = {".xlsx", ".xls"}
 
 def load_core_den_csv(path: str | Path) -> pd.DataFrame:
     """Đọc 1 file `{ma_nh}_DEN.csv`/`.xlsx` (đã phân loại sẵn, luôn CRAMOUNT ∈ ZERO_AMOUNTS) —
-    tên hàm giữ chữ ".csv" vì dấu vết lịch sử (dùng chung cho cả 2 chiều — chiều đi hiện chỉ ở
-    worktree riêng, `doi_chieu_song_phuong_core_di/pipeline.py::_doc_core_di`, CHƯA merge lên
-    develop tại thời điểm này), thật ra đọc được cả Excel
+    tên hàm giữ chữ ".csv" vì dấu vết lịch sử (dùng chung cho cả 2 chiều, xem
+    `doi_chieu_song_phuong_core_di/pipeline.py::_doc_core_di`), thật ra đọc được cả Excel
     (2026-09-09, yêu cầu Business Owner: người dùng có thể chỉ có sẵn bản Excel thay vì CSV).
 
     Excel dùng `engine="calamine"` — đúng quy ước đã kiểm chứng dữ liệu thật của module này
@@ -38,12 +37,13 @@ def load_core_den_csv(path: str | Path) -> pd.DataFrame:
     thường sau khi đổi sang nộp Excel.
 
     ⚠ 2026-09-09, phát hiện qua rà soát điểm mù kỹ thuật: đường nhanh của `_tim_file_core_hoac_csv`
-    (đúng 1 file + offset 0) đưa thẳng file vào đây mà KHÔNG qua `_doc_trdate_1_file` (hàm duy nhất
-    có try/except quanh việc đọc file) — 1 file `.xlsx` hỏng/giả (đổi đuôi từ file khác, hoặc
-    corrupt) sẽ ném thẳng lỗi gốc của `calamine`/`pandas` (VD `CalamineError: Cannot detect file
-    format`) lên tận `job["error"]`, không tên file, không tiếng Việt — khác hẳn quy ước mọi lỗi
-    khác của module này. Bọc try/except NGAY TẠI ĐÂY (điểm hẹp nhất, mọi đường đọc core đều đi
-    qua) thay vì rải lại ở từng nơi gọi.
+    (chiều đến) / `_tim_file_core_hoac_csv_di` (chiều đi) (đúng 1 file + offset 0) đưa thẳng file
+    vào đây mà KHÔNG qua `_doc_trdate_1_file` (hàm duy nhất có try/except quanh việc đọc file) —
+    1 file `.xlsx` hỏng/giả (đổi đuôi từ file khác, hoặc corrupt) sẽ ném thẳng lỗi gốc của
+    `calamine`/`pandas` (VD `CalamineError: Cannot detect file format`) lên tận `job["error"]`,
+    không tên file, không tiếng Việt — khác hẳn quy ước mọi lỗi khác của module này. Bọc
+    try/except NGAY TẠI ĐÂY (điểm hẹp nhất, mọi đường đọc core đều đi qua) thay vì rải lại ở từng
+    nơi gọi.
 
     Không đặt trần dung lượng riêng cho `.xlsx` (đã thử rồi bỏ, 2026-09-09): số đo "Excel giải nén
     phồng RAM ~40 lần" là thật, nhưng file kênh Excel (`doi_chieu_song_phuong_kenh/load_kenh.py`,
@@ -82,6 +82,16 @@ def build_key_den(df: pd.DataFrame, so_trace: pd.Series) -> pd.Series:
     """Bước 1.4: KEY = TRBRCD + SO_TRACE + DRAMOUNT."""
     dramount = doc_so_tien(df["DRAMOUNT"], nguon="core", ten_cot="DRAMOUNT")
     return df["TRBRCD"].astype(str).str.strip() + so_trace + dramount.astype(str)
+
+
+def build_key_di(df: pd.DataFrame, so_trace: pd.Series) -> pd.Series:
+    """Khoá CORE chiều ĐI (docx `Đối chiếu SP chiều đi.docx` Bước 1.3/2.6): KEY = TRBRCD +
+    SO_TRACE + CRAMOUNT — khác `build_key_den()` ở chỗ dùng CRAMOUNT (ghi có) thay vì DRAMOUNT
+    (ghi nợ). Xác nhận đúng bản chất nghiệp vụ bằng dữ liệu thật: DRAMOUNT của CSV `{ma_nh}_DI*.csv`
+    LUÔN LÀ "0" (511.378/511.378 và 878.092/878.092 dòng khảo sát được), CRAMOUNT không bao giờ
+    là "0" — đối lập hẳn với CSV `_DEN*.csv` (DRAMOUNT mang tiền, CRAMOUNT luôn 0)."""
+    cramount = doc_so_tien(df["CRAMOUNT"], nguon="core_di", ten_cot="CRAMOUNT")
+    return df["TRBRCD"].astype(str).str.strip() + so_trace + cramount.astype(str)
 
 
 def mask_huy_cung_ngay(df: pd.DataFrame) -> pd.Series:

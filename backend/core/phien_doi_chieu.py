@@ -1,11 +1,14 @@
-"""Chốt chặn số lượt đối chiếu nặng chạy cùng lúc — dùng chung cho 5 cửa.
+"""Chốt chặn số lượt đối chiếu nặng chạy cùng lúc — dùng chung cho MỌI cửa nặng.
 
-Vì sao cần: ACH, Chấm ILO1000, Đối chiếu Song phương (chiều ĐẾN), Đối chiếu Song
-phương (phân loại dữ liệu, chiều ĐI) và Chấm 459901 đều nạp trọn dữ liệu vào RAM
-trong chính tiến trình backend. Đo được pandas giữ **5,3 lần** kích
+Hiện có 6: ACH, Chấm ILO1000, Chấm 459901, và ba cửa Đối chiếu Song phương
+(chiều ĐẾN, chiều ĐI, phân loại dữ liệu). Tất cả đều nạp trọn dữ liệu vào RAM
+trong chính tiến trình backend.
+
+THÊM MODULE MỚI thì phải gọi `dang_ky_nguon()` cho nó — quên là nó chạy ngoài
+trần mà không ai biết. Đã dính hai lần, xem `tests/test_chot_phien_doi_chieu.py`. Đo được pandas giữ **5,3 lần** kích
 thước file khi đọc `dtype=str` (đỉnh 5,9×), mà trần một lượt upload là 500 MB.
 
-Cả năm chạy trên `threading.Thread` tự tạo, **không** đi qua `run_heavy()` — nên
+Tất cả chạy trên `threading.Thread` tự tạo, **không** đi qua `run_heavy()` — nên
 `MAX_HEAVY` trong `backend/core/concurrency.py` KHÔNG ràng buộc chúng. Trước file
 này, thứ duy nhất chặn là chốt riêng của ACH; ba module kia vào thẳng, và ACH
 cũng chỉ tự canh mình nên chạy ACH cùng lúc với Song phương vẫn lọt.

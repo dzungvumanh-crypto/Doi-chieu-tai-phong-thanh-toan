@@ -15779,6 +15779,353 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
+  <!-- 132 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">132</span>
+      <span class="card-title">Đối chiếu Song phương chiều ĐI — Kênh↔Hub + Hub↔Core, thiết kế ban đầu (2026-09-03)</span>
+      <span class="badge badge-done">Hoàn thiện</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-blue">Bối cảnh</span> Thẻ "Đối chiếu đi" từ khung "chưa triển khai" thành đầy đủ</div>
+      <p>Trước PR này, tab "Đối chiếu đi" chỉ có khung ghi chú "chưa triển khai" (đã hoãn 2 lần vì
+        thiếu tài liệu + dữ liệu mẫu thật). Người dùng cấp tài liệu chính thức
+        <code>Đối chiếu SP chiều đi.docx</code> + dữ liệu mẫu thật NH 201/311 (01-02/09/2026) —
+        khảo sát trước, lập kế hoạch (<code>PLAN.md</code>, 5 mục: profile dữ liệu, diễn giải luật,
+        logic khớp, thiết kế output, giả định), rồi mới code.</p>
+
+      <div class="label"><span class="pill pill-red">Phát hiện quan trọng nhất</span> Không tái dùng được thuật toán Hub↔Core của "đến"</div>
+      <p>Khảo sát ban đầu (dựa trên tài liệu v3 tổng quát) kết luận Hub↔Core dùng chung 1 thuật
+        toán cho cả 2 chiều — <b>SAI</b>, chỉ đúng cho Kênh↔Hub. Tài liệu chính thức của người chấm
+        cho thấy Hub↔Core chiều đi khác đáng kể:</p>
+      <table>
+        <tr><th></th><th>Đến</th><th>Đi</th></tr>
+        <tr><td>Khoá CORE</td><td><code>TRBRCD+SO_TRACE+DRAMOUNT</code></td><td><code>TRBRCD+SO_TRACE+CRAMOUNT</code> (DRAMOUNT chiều đi luôn = "0", verify 100% 2 file thật)</td></tr>
+        <tr><td>Khoá HUB</td><td><code>CHI_NHANH+TRACE(lstrip0)+SO_TIEN</code></td><td><code>CHI_NHANH+SE_TRACE(hiệu dụng,lstrip0)+SO_TIEN</code> — SE_TRACE nguồn RỖNG 100% dữ liệu thật, luôn tự suy từ TRACE</td></tr>
+        <tr><td>Cửa sổ hủy</td><td>Chỉ cùng ngày ("core T hủy T")</td><td>Thêm hủy CHÉO NGÀY T±3 (6 nhãn mới)</td></tr>
+        <tr><td>Nhận diện OSB</td><td><code>REFERENCE=="1000OSB"</code></td><td><code>USERID=="1000OSB"</code> + thêm "lệnh fx" khi USERID không chứa "API"</td></tr>
+        <tr><td>Nhãn riêng</td><td>—</td><td>"lệnh fx", "core T hub Chờ duyệt chi trả" (WTPA), "core T hub TT lệnh lỗi" (TPER) — 2 nhãn cuối tra HUB GỐC CHƯA LỌC SCNL, 0 ca thật trong mẫu (chưa từng thấy WTPA/TPER)</td></tr>
+      </table>
+      <p>→ Package mới <code>doi_chieu_song_phuong_core_di/</code> (config/match/pipeline/export),
+        KHÔNG đụng package "đến" đã qua review. Kênh↔Hub-đi thì đơn giản hơn đến (không lọc
+        "-"/trace-huỷ trước khi khớp, Bảng 1 chỉ đếm HUB trạng thái SCNL) — viết thêm
+        <code>classify_kenh_hub_di()</code>/<code>summarize_unit_di()</code> ngay trong
+        <code>kenh/process.py</code> hiện có.</p>
+
+      <div class="note"><b>Tự đính chính giữa chừng:</b> bản đầu của kế hoạch đặt nhầm 2 bước
+        WTPA/TPER sang phía HUB — đọc lại đúng nguyên văn docx ("Bước 2.17/2.18... Bước 2: Xử lý
+        file core") mới xác nhận đây là 2 bước áp chót của waterfall CORE-side, ngay trước "CORE
+        THỪA". Một lỗi suy diễn khác: kết luận "core T hủy T" không có ca thật vì "không dòng nào
+        CRAMOUNT=0" — sai, điều kiện docx là TỔNG CỦA CẢ NHÓM (cặp +X/−X) = 0, không phải từng dòng
+        riêng lẻ; đo lại đúng: NH 201 có 24 cặp, NH 311 có 14 cặp. Cả 2 lỗi được agent triển khai tự
+        phát hiện khi code thực tế (không phải nghe theo brief một cách máy móc) và báo lại đúng
+        thay vì âm thầm sửa theo — bài học: brief/kế hoạch viết tay vẫn cần code thực tế + dữ liệu
+        thật để bắt lỗi suy diễn, không phải cứ viết plan chi tiết là hết rủi ro.</div>
+
+      <div class="label"><span class="pill pill-red">Bug thật tìm được khi verify — không phải ở cấp thuật toán</span></div>
+      <table>
+        <tr><th>Bug</th><th>Cách phát hiện</th><th>Fix</th></tr>
+        <tr><td>Khoá HUB↔CORE-đi thiếu <code>lstrip('0')</code> cho SE_TRACE</td><td>Chạy thật NH 201: 0/972 dòng có SE_TRACE bắt đầu bằng "0" khớp được, sau khi thêm lstrip: 912/972. Tổng "hub T core T" tăng 451.838→452.750</td><td>Thêm <code>.lstrip('0')</code> — đúng bẫy đã dính ở "đến" (<code>PREFIX_TRACE_CORE</code>), SO_TRACE phía CORE đã lstrip sẵn nên phía HUB phải đối xứng</td></tr>
+        <tr><td><code>_doc_csv_hub_thu_cong()</code> giả định NOI_DUNG luôn là cột cuối</td><td>Schema HUB đi thật có 17 cột, <code>NGAY_KENH_TRA</code> nằm SAU NOI_DUNG (đến chỉ 14 cột, NOI_DUNG cuối)</td><td>Định vị NOI_DUNG theo TÊN cột trong header, tách trước/sau bằng <code>split()</code>/<code>rsplit()</code> thay vì giả định vị trí</td></tr>
+        <tr><td><code>find_kenh_path()</code> không phân biệt chiều</td><td>Đọc code — 1 thư mục có cả file đi lẫn đến cùng mã NH+loại sẽ chọn nhầm (chưa xảy ra thật, phát hiện khi khảo sát)</td><td>Thêm <code>chieu.lower()</code> vào tập từ khoá bắt buộc khớp</td></tr>
+        <tr><td><b><code>KENH_MTID_PREFIX</code> (guard SPRT theo NH) không áp dụng được cho chiều đi</b></td><td>Chạy thử END-TO-END qua API thật (không phải test đơn vị) — <code>load_kenh_file()</code> raise ngay từ dòng đầu, chặn <b>100% dữ liệu thật cả NH 201 lẫn 311</b>. Verify: 10 ký tự đầu MtId/MsgId của <b>CẢ 2 ngân hàng đều là "0200970405"</b> — giống hệt nhau, không phải mã riêng theo NH như giả định (chỉ verify cho đến, 202/203; 201/311 "chưa verify" ghi sẵn trong code từ trước — nay verify xong hoá ra không dùng được, không phải chỉ thiếu số liệu)</td><td>Thêm tham số <code>chieu</code>, guard chỉ chạy khi <code>chieu=="DEN"</code></td></tr>
+      </table>
+      <div class="note"><b>Vì sao bug cuối không lộ ở test thuật toán:</b> toàn bộ test
+        <code>test_doi_chieu_song_phuong_core_di_algorithm.py</code> (79 test) dựng thẳng
+        DataFrame, không đi qua <code>load_kenh_file()</code> — chỉ lộ ra khi chạy thật qua
+        <code>/api/.../start_upload</code> với file Excel thật. Nhắc lại đúng nguyên tắc dự án:
+        test đơn vị xanh không thay được một lần chạy thật end-to-end bằng dữ liệu thật.</div>
+
+      <div class="label"><span class="pill pill-green">Kết quả verify dữ liệu thật</span></div>
+      <p>End-to-end qua đúng API thật (<code>/api/doi_chieu_song_phuong_kenh_core_di/start_upload</code>),
+        NH 201 ngày 01/09/2026 (511.378 dòng core, 500.058 dòng hub, 487.466+0 dòng kênh SPRT/SPT):
+        hoàn thành 83,8s. Kênh↔Hub cân bằng <b>tuyệt đối 0/0</b> cả SPRT lẫn SPT. Hub↔Core:
+        452.750 "hub T core T" khớp đúng 2 phía, 58.579 CORE THỪA, 48 "core T hủy T", 21.289
+        HUB THỪA, 14.661 khớp OSB — khớp đúng số liệu đo trực tiếp ở tầng thuật toán (không lệch
+        khi ráp qua job/API). NH 311 verify riêng ở tầng thuật toán (770.765 hub T core T, bất biến
+        giữ đúng 2 phía). Đã xoá sạch dữ liệu thật trích ra khi verify, không sót trong repo/scratch.</p>
+
+      <div class="label"><span class="pill pill-gray">Ngoài phạm vi, báo riêng</span></div>
+      <p><code>load_osb.py::find_osb_by_ma_dich_vu()</code> dựng cứng mã dịch vụ
+        <code>f"BPO{ma_nh}"</code>, nhưng dữ liệu thật NH 311 chiều đi có <code>Mã dịch vụ =
+        "BP311"</code> (thiếu chữ "O"). Đây là code CHIỀU ĐẾN có từ trước, đường dự phòng (chỉ chạy
+        khi file OSB đặt tên không chuẩn) nên chưa lộ ra ở luồng chính — không sửa trong PR này
+        (git-theo-module), cần người có dữ liệu OSB 311 thật xác nhận trước khi đổi.</p>
+
+      <p><b>Cố ý chưa làm:</b> tính năng "nhập tay nguyên nhân chênh lệch + lưu lịch sử các lần
+        chấm" (đã chốt sẽ làm cho chiều đi, khác đến) — chưa có đặc tả DB/API/UI, tách PR riêng.</p>
+
+      <p>216 test module Đối chiếu Song phương pass (thêm mới: 79 test thuật toán Hub↔Core-đi +
+        các case Kênh↔Hub-đi/sửa lỗi chung trong file test dùng chung với "đến"), không ảnh hưởng
+        test cũ của chiều đến.</p>
+
+      <div class="label"><span class="pill pill-red">Verify thêm 4 ngày dữ liệu thật độc lập (2026-09-04) — phát hiện bug thứ 5</span></div>
+      <p>Người dùng cấp thêm 4 ngày dữ liệu thật NH 311 (28-31/8/2026), mỗi ngày kèm file "chấm"
+        tay của người soát (nguồn đối chứng độc lập, không phải test do tôi tự viết). Chạy
+        <code>doi_chieu_hub_core_di()</code> trực tiếp cho cả 4 ngày (806k-818k dòng/ngày,
+        43-70 giây/ngày chạy tuần tự — không phân luồng, mỗi ngày đọc/ghi I/O độc lập nên chưa
+        cần thiết), rồi bắt cặp theo khoá nghiệp vụ với cột "check"/"cjhek" người soát tự ghi.</p>
+      <p>Kết quả khớp gần tuyệt đối: "hub T core T" 100% khớp nhãn "kênh {T}" cả 4 ngày; "hub T-1
+        core T" khớp gần tuyệt đối (lệch 1 dòng/ngày ở 2/4 ngày — không đáng kể); "core T hủy T"
+        100% khớp sheet phụ người soát; phát hiện đẹp: mỗi ngày HUB THỪA gần bằng đúng "hub T-1
+        core T" của ngày kế tiếp (43.019→43.018, 37.832→37.832, 39.593→39.593) — xác nhận logic
+        chuyển tiếp qua ngày chạy đúng.</p>
+      <p>Riêng một nhóm ~10-15 dòng/ngày lệch đều: người soát ghi "kênh {T}" (khớp) nhưng code báo
+        "CORE THỪA". Trace tay 3 dòng mẫu → cả 3 có HUB gốc <code>TRANG_THAI_LENH="TPAY"</code>.
+        Đếm nhanh: số dòng TPAY/ngày (11/3/10/15) khớp đúng quy mô số dòng lệch/ngày (10/2/11/10)
+        ở cả 4 ngày độc lập — đủ bằng chứng, không phải suy diễn từ 1 lần trùng hợp. <b>Quyết định
+        tạm thời lúc đó (2026-09-04): thêm TPAY vào <code>TRANG_THAI_HUB_DOI_CHIEU</code></b> — xem
+        card 133 để biết quyết định NGHIỆP VỤ CHÍNH THỨC cuối cùng (đã đảo ngược lại).</p>
+
+      <div class="label"><span class="pill pill-green">Verify dữ liệu thật NH 202/203 lần đầu (2026-09-04) — khoá SPT: mâu thuẫn văn bản, ĐÃ CHỐT bằng xác nhận nghiệp vụ</span></div>
+      <p>Chạy toàn bộ 14 tổ hợp (NH 202 + 203, 7 ngày 27/8-2/9/2026 liên tiếp) — lần đầu có dữ
+        liệu thật cho NH 202/203 (trước chỉ có 201/311) và lần đầu GL02 gốc (chưa phân loại sẵn)
+        đi qua đúng đường giải mã AES thật của chiều đi thay vì CSV đã phân loại. Kênh↔Hub cho SPT
+        (Song Phương Thường) NH 202 khớp <b>0/X mọi ngày</b> khi dùng khoá <code>TXID</code> đúng
+        như code cũ.</p>
+      <div class="note"><b>Tự phản biện lại kết luận ban đầu (2026-09-04, theo yêu cầu người
+        dùng — không được tự suy luận mà không đối chiếu văn bản gốc):</b> bản ghi đầu tiên của
+        mục này kết luận "TXID là bug copy nhầm từ chiều đến, đã sửa xong" — SAI QUY TRÌNH: kết
+        luận đó dựa trên việc so khớp giá trị 2 file mà KHÔNG đọc lại toàn văn tài liệu gốc trước.
+        Đọc lại `Đối chiếu SP chiều đi.docx` (dùng Python `docx` trích toàn bộ 57 đoạn + bảng) thì
+        Bước 1.1 VÀ 2.1, đúng mục "Kênh – hub chiều đi", ghi RÕ RÀNG 2 lần: "...trùng với MSGREF
+        (đối với SP REALTIME) hoặc TXID (đối với SP THƯỜNG)..." — văn bản THẬT SỰ nói TXID cho
+        SPT-đi, không phải im lặng. Đây là mâu thuẫn TRỰC TIẾP giữa văn bản chính thức và dữ liệu
+        thật (TXID→0 dòng khớp, MSGREF→khớp gần hết), <b>chưa có căn cứ để khẳng định bên nào
+        đúng</b>. Nghi vấn hợp lý nhất — không phải kết luận: văn bản "đi" copy nguyên câu SPT/TXID
+        từ mẫu "đến" mà quên cập nhật. Đối chứng riêng: <b>chiều ĐẾN dùng TXID cho SPT là ĐÚNG</b>
+        (verify NH 202 ngày 21/8: TXID="2620210308078343" khớp kênh, MSGREF cùng
+        dòng="R0N268XNV82EG7CO" — khác dạng) — không đụng code/khoá chiều đến, không phải cùng 1
+        vấn đề.</div>
+      <p><b>Trạng thái hiện tại: ĐÃ CHỐT.</b> Người chấm thủ công xác nhận trực tiếp (2026-09-04)
+        dùng MSGREF cho SPT-đi, đúng như dữ liệu thật cho thấy — văn bản "đi" copy nhầm câu
+        SPT/TXID từ mẫu "đến" mà quên cập nhật. <code>config.py::LOAI_KHOA_HUB_DI["SPT"] =
+        "MSGREF"</code> không còn là tạm/suy luận. Người chấm sẽ gửi lại file hướng dẫn đã điều
+        chỉnh để đối chiếu câu chữ mới. Bảng 1 (<code>summarize_unit_di</code>) không bị ảnh hưởng
+        (chỉ đếm tổng 2 phía độc lập); 2 file chi tiết
+        (<code>_hub_chi_tiet.csv</code>/<code>_kenh_chi_tiet.csv</code>) của NH 202 đã chạy đúng
+        MSGREF, không cần chạy lại.</p>
+      <div class="note"><b>Hiệu năng — cache giải mã GL02 trong phiên chạy validation:</b> mỗi
+        GL02 zip mất ~210-260s giải mã (AES + numba). Vòng lặp Hub↔Core-đi quét T-3..T+3 nên 1
+        ngày cần đọc lại GL02 của tối đa 7 ngày khác nhau; chạy 14 tổ hợp (2 NH × 7 ngày, cùng 7
+        file GL02) theo cách ngây thơ sẽ giải mã lặp lại tới ~74 lần (~4,5 giờ). Thêm cache
+        trong RAM theo đường dẫn zip (chỉ trong script chạy tay, KHÔNG sửa `pipeline.py` — luật
+        an toàn "chỉ dùng CSV phân loại sẵn khi offset=0" của PR#71 giữ nguyên cho job thật) đưa
+        về đúng 7 lần giải mã thật + 67 lần dùng cache → tổng 64,8 phút cho cả 14 tổ hợp.</div>
+      <div class="label"><span class="pill pill-blue">OSB — cảnh báo trùng "Mã giao dịch" ban đầu là báo động giả, đã sửa đúng khoá</span></div>
+      <p>Bảng cảnh báo trùng lặp OSB (<code>_canh_bao_osb_trung_ma_gd()</code>) bản đầu so trùng
+        trên cột <b>"Mã giao dịch" đơn lẻ</b> — không đúng khoá thật dùng để khớp (Bước 1.7 docx:
+        "4 ký tự đầu CN thực hiện + Mã giao dịch", đã đọc lại và xác nhận khớp chữ-đối-chữ với
+        code <code>build_key_osb()</code>). Vì mã giao dịch đánh số theo TỪNG CHI NHÁNH chứ không
+        toàn hệ thống, con số "714 mã trùng" (NH 203)/"356 mã" (NH 202) ban đầu báo cáo là <b>báo
+        động giả phần lớn</b> — 2 chi nhánh khác nhau tình cờ trùng số thứ tự. Tính lại đúng khoá
+        composite: NH 203 còn <b>35</b> khoá trùng thật, NH 202 còn <b>22</b>. Đã sửa
+        hàm cảnh báo dùng đúng <code>build_key_osb()</code> thay vì "Mã giao dịch" đơn lẻ.</p>
+      <p>Kiểm thêm theo yêu cầu người dùng: nếu ghép thêm "Số tiền" vào khoá (composite 3 phần:
+        chi nhánh+mã giao dịch+số tiền), <b>cả 35 và 22 khoá còn trùng đều biến mất (0 còn lại)</b>
+        — tức toàn bộ các trường hợp "trùng" hiện tại là 2 giao dịch THẬT KHÁC NHAU (số tiền khác),
+        chỉ tình cờ trùng chi nhánh+mã giao dịch, không phải lỗi dữ liệu hay lỗi khoá. Tuy nhiên
+        văn bản Bước 1.7 KHÔNG nhắc số tiền trong công thức khoá OSB — nên đây là điểm cần trao
+        đổi với người chấm thủ công: có nên bổ sung số tiền vào khoá hay không.</p>
+      <p>Kết quả 14 tổ hợp (7 file GL02 thật, 67 lần cache) đã ghi vào
+        <code>G:\ĐỐI CHIẾU SONG PHƯƠNG\DI\dữ liệu đi\Ket_qua_Doi_chieu_di\NH_202\</code> và
+        <code>NH_203\</code>, mỗi ngày 1 thư mục con, theo yêu cầu người dùng giữ lại làm tư liệu.</p>
+
+      <div class="label"><span class="pill pill-green">Verify chéo với file Ly tự chấm tay, ngày 28/8 — NH 202+203 (2026-09-04)</span></div>
+      <p>Người chấm (Hương Ly) cung cấp trọn gói: văn bản viết lại
+        <code>Đối chiếu SP chiều đi V2.docx</code> (xác nhận SPT=MSGREF + khoá OSB thêm Số tiền —
+        đã sửa code theo đúng văn bản này, xem card ở trên), OSB xuất lại ĐÚNG TỪNG NGÀY (trước
+        đó gộp nhiều ngày, nguyên nhân thật của "356/714 mã trùng"), và file kết quả bà tự chấm
+        tay ngày 28/8 cho cả 2 ngân hàng — cùng schema với <code>core_df</code>/<code>hub_df</code>
+        của code (đã có sẵn cột <code>KETQUADOICHIEU</code>).</p>
+      <p><b>Bẫy phương pháp phát hiện giữa chừng:</b> so sánh thẳng chuỗi <code>KETQUADOICHIEU</code>
+        ban đầu báo "519.806/535.054 dòng lệch" (NH 202) — nhìn tưởng thuật toán sai nặng. Hoá ra
+        gần như toàn bộ là <b>báo động giả do khác quy ước ghi nhãn</b>: Ly ghi số ngày cụ thể
+        ("hub 28 core 28", "osb 28"), code ghi ký hiệu tương đối ("hub T core T", "OSB &
+        28/08/2026"). Quy đổi tay (T=28/8) rồi so lại mới ra số lệch THẬT.</p>
+      <table>
+        <tr><th></th><th>NH 202</th><th>NH 203</th></tr>
+        <tr><td>Core khớp / tổng (sau quy đổi)</td><td>535.047/535.054</td><td>678.647/678.878</td></tr>
+        <tr><td>Hub khớp / tổng (sau quy đổi)</td><td>555.777/555.778</td><td>706.215/706.216</td></tr>
+      </table>
+      <p>Toàn bộ phần lệch còn lại giải thích được, không phải bug thuật toán:</p>
+      <ul>
+        <li><b>NH 203, 182 dòng "core 28.8 hủy 3.9"</b> (Ly khớp core ngày 28/8 với core ngày
+          3/9 — cách T+6 ngày) — NGOÀI cửa sổ T±3 mà docx quy định (chỉ tới T+3=31/8). Không phải
+          lỗi cài đặt sai docx — là câu hỏi nghiệp vụ: cửa sổ hủy chéo ngày có nên rộng hơn T±3
+          không? Cần hỏi Ly/BO, không tự mở rộng cửa sổ khi docx ghi rõ con số 3.</li>
+        <li><b>NH 203, 47 dòng "core 26 hủy 28"</b> (ngày 26/8 = T-2, TRONG cửa sổ) — bị "CORE
+          THỪA" chỉ vì bộ dữ liệu test KHÔNG CÓ file GL02 ngày 26/8 (thư mục staging chỉ dựng
+          27/8-2/9) — lỗi phạm vi dữ liệu test, không phải lỗi code; sẽ tự khớp đúng nếu chạy với
+          đủ file.</li>
+        <li>Vài dòng đơn lẻ (1-2 dòng/loại) mang nhãn Ly-only lạ ("core N Từ chối", "kênh N core
+          28") không khớp bất kỳ bước nào trong docx hiện tại — số lượng cực nhỏ, có thể là ghi
+          chú tay riêng của Ly ngoài thuật toán chính thức, chưa cần xử lý.</li>
+      </ul>
+      <div class="note">Bài học phương pháp (đã lưu vào skill <code>multi-agent-command</code>):
+        khi so KETQUADOICHIEU giữa 2 nguồn dùng quy ước ký hiệu ngày khác nhau, PHẢI quy đổi về
+        cùng 1 hệ (tương đối T/T±N hoặc tuyệt đối dd/mm) trước khi tính "số dòng lệch" — nếu không,
+        con số báo động sẽ sai lệch hoàn toàn quy mô thật của vấn đề.</div>
+
+      <div class="label"><span class="pill pill-green">Phản biện đa agent (2026-09-05) — bác bỏ 2 giả thuyết ban đầu, thêm 1 tính năng an toàn</span></div>
+      <p>Theo yêu cầu người dùng, giao 2 agent phản biện (skill <code>multi-agent-command</code>)
+        quét toàn bộ 22 file (11 ngày × NH 202/203/201/311, dữ liệu đã phân loại sẵn — không cần
+        giải mã lại GL02) để đo QUY MÔ THẬT của 2 nghi vấn tìm được ở phần verify trên.</p>
+      <p><b>Giả thuyết "cửa sổ T±3 cần mở rộng" — BỊ BÁC BỎ.</b> Quét 199 cặp huỷ chéo ngày tìm
+        được trên cả 4 NH: toàn bộ nằm ở cách nhau đúng 1 ngày, 0 cặp ở cách 2-5 ngày dù dữ liệu đủ
+        để kiểm (VD 27/8↔1/9, 27/8↔2/9 đều có sẵn). Người dùng xác nhận thêm nguyên nhân vận hành:
+        hệ thống chấm TUẦN TỰ THEO NGÀY, dữ liệu ngày T+6 chưa tồn tại tại thời điểm chấm ngày T —
+        nên 183 điện Ly gán "hủy 3.9" không phải lỗ hổng cửa sổ cần sửa, mà là giới hạn tự nhiên
+        của việc chấm theo phiên/ngày (không thể "nhìn thấy tương lai").</p>
+      <p><b>Giả thuyết "lệnh fx cần quy tắc khớp huỷ theo REMARK" — ĐÚNG nghiệp vụ nhưng NGUY HIỂM
+        nếu code tự làm.</b> Hiện tượng có thật nhưng cực hiếm (1/45.797 dòng lệnh fx trên cả 11
+        ngày). Agent tìm được 7 nhóm REMARK "công thức" (chi lương NSNN, trợ cấp xã hội — có nhóm
+        tới 572 dòng) dùng chung 1 REMARK cho nhiều giao dịch không liên quan, cùng mức tiền lặp
+        lại cả 2 dấu — nếu code tự ghép cặp theo "REMARK+tổng=0" sẽ ghép NHẦM giao dịch không liên
+        quan trong các nhóm này.</p>
+      <p><b>Giải pháp đã triển khai (quyết định người dùng):</b> KHÔNG để code tự ghép cặp huỷ theo
+        REMARK. Thêm <code>match.py::tim_nhom_lenh_fx_trung_remark()</code> — lọc mọi dòng "lệnh
+        fx" (Bước 2.5) có <code>TRBRCD&amp;REMARK</code> trùng ≥1 dòng lệnh fx khác, xuất NGUYÊN
+        VẸN (không tự ghép) ra file riêng <code>{base_name}_lenh_fx_trung_remark.csv</code> (chỉ
+        ghi khi thực sự có nhóm trùng) để Ly/Trang tự đối chiếu tay trên hệ thống. 7 test mới, 224
+        test song_phuong pass.</p>
+
+    </div>
+  </div>
+
+  <!-- 133 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">133</span>
+      <span class="card-title">Đối chiếu Song phương chiều ĐI — kiểm tra tổng lực đa-agent, 3 quyết định nghiệp vụ chốt, NH 311 lần đầu có đối chứng thủ công (2026-09-05 → 2026-09-07)</span>
+      <span class="badge badge-warn">Còn 1 câu hỏi mở — xem mục cuối</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-red">Yêu cầu người dùng</span> "0,1% sai lệch coi như chương trình lỗi hoàn toàn không khả thi"</div>
+      <p>Người dùng tuyên bố tiêu chuẩn tường minh này (2026-09-06), giao vai tổng chỉ huy kỹ thuật
+        (skill <code>multi-agent-command</code>), chưa mở PR tới khi tự trải nghiệm nghiệm thu.</p>
+
+      <div class="label"><span class="pill pill-green">Đóng khoảng trống dữ liệu bằng thực nghiệm</span></div>
+      <p>Monkeypatch runtime (không sửa file thật) cho <code>_tim_file_core_hoac_csv_di()</code>
+        đọc CSV core ở MỌI offset (an toàn vì <code>tim_file_glob</code> đã tự giới hạn theo thư
+        mục ngày). NH 201 ngày 2/9: <b>CORE 460.946/460.946, HUB 472.800/472.800 — khớp tuyệt đối,
+        0 dòng lệch</b>, kể cả nhãn "core T hủy T+1" lần đầu có ca thật. Ngày 1/9 còn đúng 2 dòng
+        lệch NHÃN (không lệch số liệu) do 1 giao dịch vừa khớp CORE T+2 vừa khớp OSB — cùng câu hỏi
+        thứ tự ưu tiên CORE-trước-OSB đã treo từ trước. <b>Kết luận: <code>match.py</code> đúng
+        tuyệt đối trên dữ liệu đã kiểm — giới hạn duy nhất là cách dò file quá thận trọng.</b></p>
+
+      <div class="label"><span class="pill pill-blue">Rà soát toàn văn docx V2 vs code</span></div>
+      <p>1 điểm KHÔNG KHỚP rõ: docx chỉ ghi "SCNL", code khi đó tự thêm "TPAY" (dựa verify chéo dữ
+        liệu, tự nhận "chưa được BO xác nhận chính thức"). 13 điểm "docx im lặng" — rủi ro cao
+        nhất: <code>lstrip('0')</code> khi ghép khoá; waterfall không loại trước các dòng "sắp
+        thành lệnh fx" của phía đối diện; Bước 2.11-2.16 chỉ bắt cặp 1-1, không bắt nhóm ≥3 dòng
+        cộng dồn = 0. <b>Tự kiểm chứng bằng dữ liệu thật (201/311×3 ngày×SPRT/SPT, 9 tổ hợp) — cả
+        2 rủi ro KHÔNG xảy ra thật</b>: khoá rỗng luôn bị lọc vào "lệnh fx" trước khi vào vùng khớp
+        (0 trường hợp lọt qua, kể cả 2.895 dòng HUB "lệnh fx" thật lần đầu quan sát được ở
+        NH201/3.9); <code>drop_duplicates()</code> 0 khoá trùng trong đúng phạm vi khớp ở cả 9 tổ
+        hợp.</p>
+
+      <div class="label"><span class="pill pill-green">BO chốt 3/4 điểm treo (2026-09-06/07)</span></div>
+      <table>
+        <tr><th>Điểm treo</th><th>Quyết định BO</th><th>Thay đổi code</th></tr>
+        <tr><td>TPAY có nằm trong SCNL không</td><td><b>KHÔNG</b> — đảo ngược quyết định tạm 2026-09-04 (đứng trên bằng chứng tương quan dữ liệu quan sát được trước đó)</td><td><code>config.py::TRANG_THAI_HUB_DOI_CHIEU</code> trở lại đúng nguyên văn docx: chỉ <code>("SCNL",)</code></td></tr>
+        <tr><td>Thứ tự ưu tiên CORE-trước-OSB</td><td>Đúng — giữ nguyên, không đổi</td><td>Không đổi logic, chỉ thêm comment xác nhận đây là quyết định đã chốt bằng lời</td></tr>
+        <tr><td>File OSB sai định dạng có chặn cả job không</td><td><b>CÓ, vẫn chặn đứng</b> — không lùi về "bỏ qua bước OSB, chạy tiếp"</td><td><code>load_osb.py::load_osb_file()</code> chỉ sửa NỘI DUNG thông báo lỗi cho rõ nguyên nhân thường gặp (thiếu 2 dòng tiêu đề) + hành động cần làm</td></tr>
+      </table>
+      <p>Điểm thứ 4 (tự liên hệ Trang xin thêm dữ liệu + chấm tay NH 311) là việc của Business
+        Owner, không phải việc kỹ thuật — kết quả ở mục kế tiếp.</p>
+
+      <div class="label"><span class="pill pill-red">NH 311 lần đầu có đối chứng thủ công, 5 ngày (2026-09-07)</span></div>
+      <p>BO cung cấp 2 bộ dữ liệu chấm tay mới (3 ngày cũ 1-3/9 + 2 ngày mới 4-5/9) — đóng khoảng
+        trống lớn nhất còn treo (NH 311 trước đó chưa từng có đối chứng thủ công). Chạy pipeline
+        CHUẨN (không dùng thực nghiệm nới lỏng CSV), so với chấm tay. Trang dùng script so sánh
+        riêng, lộ ra <b>4 lỗi trong SCRIPT SO SÁNH</b> (không phải lỗi module): đọc nhầm sheet "huỷ
+        cùng ngày" sang sheet chính, không nhận diện GAP khi Trang dùng nhãn kiểu mới, nhãn OSB ghi
+        khoảng trắng không nhất quán, "GD QT OSB"/"QT GD OSB" (đảo từ) chưa có trong danh sách so
+        khớp trực tiếp.</p>
+      <p>Sau khi sửa hết 4 lỗi script: <b>HUB gần khớp tuyệt đối</b> (0-2 dòng lệch thật/ngày, ngày
+        3/9 "Đã cân khớp" — 0 dòng lệch), phần còn lại là gap dữ liệu đã biết (thiếu GL02 T+1) hoặc
+        trạng thái ngoài SCNL (TPAY đã BO xác nhận loại; "TPAY-auth" — trạng thái MỚI phát hiện,
+        CHƯA được BO xác nhận riêng, tạm loại theo luật hiện có).</p>
+
+      <div class="caution"><b>Câu hỏi mở, CHƯA giải thích được — cần hỏi Trang:</b> 62 dòng/5 ngày
+        phía CORE (~46 triệu đồng tổng cộng, số tuyệt đối — <b>Chưa cân khớp, cần hoàn thiện</b>).
+        <b>60/62 dòng có REMARK bắt đầu "MB;"</b> (kênh Mobile Banking). Đã verify KHÔNG có dòng HUB
+        nào cùng ngày có TRACE trùng số trace rút từ REFERENCE các dòng này (đúng công thức docx) —
+        code phân loại "CORE THỪA" đúng theo khoá đã chốt, nhưng Trang vẫn xếp khớp HUB cùng ngày.
+        Trang dùng trường nào để nhận biết các giao dịch MB này khớp HUB, nếu không phải
+        TRACE/SE_TRACE? Nếu có quy tắc riêng cho kênh MB (docx không đề cập), cần bổ sung. Còn 1
+        dòng lẻ phía HUB (4/9, 200.000đ) — quá nhỏ để kết luận mẫu hình, cần hỏi riêng. <b>Đây là lý
+        do duy nhất module chưa ở trạng thái "Hoàn thiện" tuyệt đối</b> — không chặn PR (không có
+        bằng chứng đây là lỗi code, chỉ là quy tắc nghiệp vụ chưa biết), nhưng chưa đóng được.</div>
+
+      <p>Kết quả từng ngày: <code>G:\ĐỐI CHIẾU SONG PHƯƠNG\1 2 3 9 2026 201 311 CO KET QUA CHAM
+        TAY\</code> và <code>...\4 5 9 2026 311 CÓ KET QUA CHAM TAY\Kết quả\</code>, file tổng
+        <code>BANG_TONG_KET_DANH_GIA_311.xlsx</code> ở gốc cả 2 thư mục nguồn.</p>
+
+    </div>
+  </div>
+
+  <!-- 134 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">134</span>
+      <span class="card-title">Đối chiếu Song phương chiều ĐI — Giai đoạn 2: nhận nhiều file GL02/CSV/Excel cùng lúc + sheet "GhiChu" tự giải thích (2026-09-08 → 2026-09-09)</span>
+      <span class="badge badge-done">Hoàn thiện</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-blue">Vấn đề</span> Câu hỏi người dùng 2026-09-08: upload GL02 zip / nhiều file CSV của T-1,T,T+1 có chạy được không</div>
+      <p>Cùng cải tiến như chiều ĐẾN (PR #81, card 129): file core đã phân loại sẵn nay nhận cả
+        <code>.csv</code> lẫn <code>.xlsx</code>, và <b>nộp cùng lúc nhiều file của nhiều ngày khác
+        nhau</b> — hệ thống mở từng file đọc cột <code>TRDATE</code> thật để tự gán đúng offset
+        (<code>_tim_file_core_hoac_csv_di()</code>, <code>_doc_trdate_1_file()</code>), không cần
+        đặt tên file đúng quy ước. Đường nhanh (đúng 1 file + đang hỏi offset 0) vẫn tin luôn không
+        mở file — giữ hiệu năng cho trường hợp phổ biến nhất.</p>
+      <p>Khác biệt duy nhất so với chiều đến: cửa sổ CORE cần đọc rộng gấp đôi
+        (<code>OFFSET_CORE_CAN_DOC = (-3,-2,-1,0,1,2,3)</code>, phục vụ nhánh "huỷ chéo ngày" chỉ
+        chiều đi mới có) — nên cache TRDATE→file theo tổ hợp file gộp được ở mỗi offset, tránh đọc
+        lại cùng 1 file nhiều lần khi mọi offset cùng gộp ra 1 tổ hợp giống nhau (không đảm bảo
+        tuyệt đối 1 file chỉ đọc 1 lần nếu <code>ngay</code>/<code>ngay_goc</code> trỏ tới các thư
+        mục ứng viên khác nhau theo từng offset — không sai kết quả, chỉ chưa tối ưu hết mức).</p>
+
+      <table>
+        <tr><th>Việc đã làm</th><th>Chi tiết</th></tr>
+        <tr><td>Nhận file core dạng Excel</td><td><code>load_core.load_core_den_csv()</code> tự dò đuôi, dùng chung cho cả 2 chiều — tên hàm giữ chữ ".csv" vì dấu vết lịch sử</td></tr>
+        <tr><td>Bắt lỗi file core hỏng</td><td>Try/except đặt NGAY TẠI <code>load_core_den_csv()</code> (điểm hẹp nhất, mọi đường đọc core đều đi qua) — trước đó lỗi gốc <code>calamine</code>/<code>pandas</code> (VD <code>CalamineError</code>) ném thẳng lên <code>job["error"]</code>, không tên file, không tiếng Việt</td></tr>
+        <tr><td>Bỏ trần dung lượng riêng cho .xlsx</td><td>Thử rồi bỏ — "Excel giải nén phồng RAM ~40 lần" là thật, nhưng file kênh Excel (cùng engine calamine) đã chạy thật production với 800 nghìn dòng/ngày, không cần trần riêng</td></tr>
+        <tr><td>Mở rộng <code>ngay_goc</code> sang cả ZIP fallback + <code>_tim_file_hub_di</code></td><td>Người dùng gom HUB/CORE nhiều ngày vào 1 thư mục đặt tên theo ngày T — không vá thì HUB T-1/CORE T+1 bị mất, mirror đúng fix đã phản biện 4 vòng bên chiều đến</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-blue">Giai đoạn 2 — sheet "GhiChu" tự giải thích (2026-09-09, theo card 133)</span></div>
+      <p>Người soát báo "bảng tổng hợp/chi tiết không khớp" + "ngày thiếu nhãn T±k" — đã xác minh
+        (card 123 lịch sử, xem mục trên) KHÔNG phải lỗi số liệu, chỉ là 2 điều file kết quả không
+        tự giải thích: (1) <code>Bang1_KenhHub</code> chỉ tính HUB "SCNL" trong khi file chi tiết
+        CSV giữ nguyên mọi trạng thái — CỐ Ý khác phạm vi; (2) ngày thiếu file HUB/CORE khiến thiếu
+        nhãn "hub T-1 core T"/"hub T core T+k" — dồn hết vào CORE THỪA/HUB THỪA, đúng nhưng không
+        ai đọc file một mình mà biết.</p>
+      <p><code>pipeline.py::doi_chieu_hub_core_di()</code> persist lại các dòng "[HUB T-k]/[CORE
+        T+k] không tìm thấy file..." (trước đây chỉ in log tạm của lần chạy) thành danh sách
+        <code>ghi_chu</code> trong dict trả về. <code>export.py::export_excel_di()</code> và
+        <code>kenh_core_di_service.py::_export_bao_cao_tong_hop()</code> ghi danh sách này + 1 dòng
+        giải thích phạm vi tĩnh (Kênh↔Hub) thành sheet <b>"GhiChu"</b> trong 2 file .xlsx đã có sẵn
+        (<code>hub_core_di_{ma_nh}_{ngay}.xlsx</code> và
+        <code>bao_cao_tong_hop_di_{ma_nh}_{ngay}.xlsx</code>) — không tạo file mới.</p>
+
+      <div class="note">5 test mới: <code>export.export_excel_di</code> có/không có ghi_chu (kể cả
+        <code>ket_qua</code> dựng tay kiểu cũ thiếu hẳn key "ghi_chu" vẫn chạy được, không raise),
+        pipeline persist đúng nội dung khi thiếu HUB T-1, end-to-end qua API tải báo cáo tổng hợp
+        về kiểm sheet "GhiChu" có mặt. 249/249 test song_phuong pass (kể cả chiều đến, kênh,
+        common).</div>
+
+      <p>Còn 62 dòng CORE/5 ngày NH 311 (kênh MB) chưa giải thích được — xem card 133 mục cuối,
+        <b>chưa chặn PR</b> nhưng chưa đóng, cần Trang xác nhận thêm.</p>
+
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-09</footer>
 </div>
 </body>

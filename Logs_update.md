@@ -31,6 +31,26 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
       lui về đường cũ và ghi cảnh báo vào nhật ký
     + ℹ️ **Xuất Excel từ lịch sử vẫn nặng như cũ.** Việc này phải viết lại phần sinh file Excel, để
       riêng một đợt khác
+- 09/09/2026 Đối chiếu Song phương — chiều ĐI - **Nhận nhiều file GL02/CSV/Excel cùng lúc, tự đọc ngày thật bên trong file; bỏ TPAY khỏi diện tính khớp; báo cáo có thêm ghi chú tự giải thích**
+    + ✅ **File core đã phân loại sẵn nay nộp được cả `.xlsx`**, không chỉ `.csv`, và **nộp cùng lúc
+      nhiều file của nhiều ngày khác nhau (T-1, T, T+1…) đã chạy được** — hệ thống tự mở file đọc
+      cột ngày (TRDATE) để biết file nào của ngày nào, không cần đặt tên file đúng quy ước. Cùng
+      cải tiến như chiều ĐẾN (PR #81, mục 09/09/2026 phía trên), áp dụng riêng cho chiều đi
+    + ✅ **Trạng thái HUB "TPAY" không còn được tính là khớp với CORE nữa** — quay lại đúng văn bản
+      gốc (chỉ tính "SCNL"), theo đúng xác nhận trực tiếp của Phòng nghiệp vụ. Trước đó có một đợt
+      thử nghiệm tạm tính TPAY là khớp dựa trên so sánh dữ liệu thật, nay đã bỏ theo đúng chốt này
+    + ✅ **File kết quả (bảng tổng hợp Hub↔Core và báo cáo tổng kết) nay có thêm sheet "GhiChu"**
+      tự giải thích 2 điều hay bị hiểu nhầm là lỗi số liệu: (1) vì sao bảng tổng hợp Kênh↔Hub và
+      file chi tiết CSV có số dòng khác nhau (cố ý khác phạm vi, không phải bỏ sót), và (2) ngày
+      nào bị thiếu file HUB/CORE khiến thiếu nhãn đối chiếu ở ngày đó — trước đây chỉ giải thích
+      được qua trao đổi trực tiếp, không có trong chính file kết quả
+    + ⚠️ **Module còn 1 điểm chưa giải thích được, đã ghi nhận, chưa chặn dùng**: một số dòng CORE
+      thuộc kênh Mobile Banking (giá trị nhỏ so với tổng khối lượng) chưa xác định được quy tắc
+      khớp HUB tương ứng — đang chờ Phòng nghiệp vụ xác nhận thêm, xem `docs/Implementation-notes.html`
+    + ✅ Cấp quyền `Chạy "Đối chiếu đi" (Kênh↔Hub + Hub↔Core)` (đã ghi ở mục 03/09/2026 bên dưới)
+      không đổi gì thêm — đợt này không có quyền mới
+
+---
 
 - 09/09/2026 Báo cáo bàn giao chứng từ - **File Word xuất ra đã in và ký được ngay, không phải sửa tay trong Word nữa**
     + ✅ **Bảng dài tràn sang trang sau nay vẫn còn dòng tiêu đề cột** (STT, Họ và tên, Ngày giao
@@ -529,6 +549,27 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
       đường đọc số liệu bàn giao dùng chung cho báo cáo khối lượng và đóng tập
     + ✅ **Không phải làm gì sau khi cập nhật** — không đổi giao diện, không đổi quyền. Script chỉ
       chạy khi người vận hành gõ lệnh
+
+- 03/09/2026 Đối chiếu Song phương - **⚠️ THÊM TAB "ĐỐI CHIẾU ĐI" — PHẢI CẤP QUYỀN SAU KHI DEPLOY**
+    + Tab "Đối chiếu đi" (Kênh↔Hub + Hub↔Core) trước đây chỉ có khung "chưa triển khai" — nay chạy
+      đầy đủ, cùng cách dùng như tab "Đối chiếu đến" đã có (chọn file, ngày, ngân hàng, bấm Chạy)
+    + **Việc phải làm ngay sau khi deploy:** vào **Phân quyền chức năng**, cấp mục
+      `Chạy "Đối chiếu đi" (Kênh↔Hub + Hub↔Core)` cho các nhóm cần dùng — thiếu mục này thì vẫn
+      **vào xem được** tab mới nhưng bấm nút **Chạy** sẽ báo "Không có quyền truy cập tính năng này"
+    + Vì sao phải làm tay: đây là quyền **mới hoàn toàn**, chưa từng tồn tại nên không nhóm nào có
+      sẵn. Tài khoản Quản trị viên dùng được ngay — **thử bằng tài khoản quản trị sẽ tưởng đã xong**,
+      phải thử bằng tài khoản thường mới biết đã cấp đủ hay chưa (đúng bài học đợt 02/09)
+    + Cách tính chiều đi khác chiều đến ở vài điểm nghiệp vụ (không lọc bớt dữ liệu trước khi đối
+      chiếu Kênh↔Hub, cách nhận diện giao dịch quyết toán/lệnh FX...) — người chấm đã xác nhận quy
+      tắc trước khi triển khai, không cần thao tác gì thêm ngoài việc cấp quyền ở trên
+    + ✅ Không đổi dữ liệu/quyền của tab "Đối chiếu đến" đang dùng
+    + ⚠️ **Bổ sung 10/09/2026 (review Khánh PR#86):** tên file kênh (Excel do ngân hàng đối tác
+      gửi) từ nay BẮT BUỘC phải có chữ "đến" hoặc "đi" trong tên (không dấu cũng được: "den"/"di")
+      — trước đó chỉ cần đủ "kênh" + mã ngân hàng + loại (SPRT/SPT). Đổi để phân biệt 1 thư mục có
+      cả file kênh chiều đến lẫn chiều đi cùng mã NH. **Ảnh hưởng cả tab "Đối chiếu đến" đang
+      dùng** — file kênh cũ đặt tên không có từ khoá chiều giờ không được nhận diện nữa, hệ thống
+      ghi "thiếu file kênh" dù file vẫn nằm đúng chỗ. Cách xử lý: đổi tên file kênh thêm chữ
+      "đến"/"đi" cho khớp chiều thật của file.
 
 - 03/09/2026 Chuẩn hoá văn bản - **Kẻ đúng đường kẻ ngang, không để tên ngân hàng bị cắt đôi, trích yếu 2 dòng không còn lệch**
     + **Đường kẻ ngang dưới Tiêu ngữ, tên đơn vị và trích yếu nay được vẽ đúng.** Quy định đòi

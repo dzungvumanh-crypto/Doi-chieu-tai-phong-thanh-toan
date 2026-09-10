@@ -1,19 +1,17 @@
-"""Job management cho "Đối chiếu đến" — Kênh↔Hub + Hub↔Core chạy TỰ ĐỘNG nối tiếp trong 1 job.
+"""Job management cho "Đối chiếu đi" — Kênh↔Hub + Hub↔Core chạy TỰ ĐỘNG nối tiếp trong 1 job.
 
-Quyết định 2026-08-28: "Đối chiếu đến" không phải 2 tính năng độc lập, mà là 1 chu trình khép
-kín — người dùng đưa 1 thư mục gốc + ngày + ngân hàng, hệ thống tự chạy Kênh↔Hub rồi Hub↔Core,
-chỉ báo 1 kết quả cuối (đúng model ACH: nhiều pha bên trong, 1 job/1 báo cáo cuối). Thay hẳn 2
-service riêng `doi_chieu_song_phuong_kenh_service.py`/`_core_service.py` (đã xoá).
+Mirror `doi_chieu_song_phuong_kenh_core_service.py` (chiều đến) — cùng kiến trúc job/1 báo cáo
+cuối, "lỗi 1 bước không chặn bước còn lại". Tách file riêng (không tham số hoá `chieu` trong cùng
+1 service) vì thuật toán Hub↔Core khác nhau đủ nhiều (`doi_chieu_song_phuong_core_di/` là package
+riêng, không phải nhánh `if/else` trong package "đến") — xem PLAN.md.
 
-Đặt tên `kenh_core`, KHÔNG dùng `_den` — tránh trùng tên module `doi_chieu_song_phuong_den*` đã
-xoá 2026-08-25 (thiết kế sai, dựa trên khoá Ngày+Số tiền), dễ gây nhầm lẫn khi tra lịch sử.
-
-Lỗi 1 bước KHÔNG chặn bước còn lại (đúng triết lý "báo đủ, không crash cả job" toàn dự án) — chỉ
-khi CẢ 2 bước đều lỗi mới đánh dấu job lỗi.
-
-Mỗi lần chạy chỉ ĐÚNG 1 ngân hàng (giữ nguyên quyết định giới hạn RAM của Hub↔Core, card 91) —
-Kênh↔Hub cũng lọc theo `ma_nh` (xem `doi_chieu_song_phuong_kenh/pipeline.py::main_from_dir`).
-"""
+Dùng chung `hub_t_override` với "đến" (bật lại 2026-09-10, review Khánh PR#86 A2) — tái dùng HUB
+đã đọc ở bước Kênh↔Hub (`kenh/pipeline.py::main_from_dir`, `hub_theo_nh[ma_nh]`) cho bước
+Hub↔Core, tránh giải nén + parse lại cùng 1 file HUB zip lần thứ hai trong 1 job. Ban đầu (đến
+2026-09-09) cố tình KHÔNG bật vì tưởng nhầm Kênh↔Hub-đi trả về bản chưa lọc SCNL trong khi
+Hub↔Core-đi cần bản đã lọc — sai: `core_di/pipeline.py::_doc_hub_di_tu_goc()` (hàm xử lý override
+riêng cho chiều đi) tự gọi `_loc_scnl()` bên trong, đúng thiết kế để nhận bản GỐC chưa lọc mà
+`hub_theo_nh[ma_nh]` cung cấp khi `chieu == "DI"` (xem `kenh/pipeline.py:112-115`)."""
 
 import os
 import shutil
@@ -27,15 +25,15 @@ import pandas as pd
 
 from backend.services import doi_chieu_song_phuong_common as common
 from backend.services.doi_chieu_song_phuong_common import do_thoi_gian
-from backend.services.doi_chieu_song_phuong_core import export as core_export
-from backend.services.doi_chieu_song_phuong_core.export import export_excel as export_core_excel
-from backend.services.doi_chieu_song_phuong_core.pipeline import doi_chieu_hub_core
+from backend.services.doi_chieu_song_phuong_core_di import export as core_di_export
+from backend.services.doi_chieu_song_phuong_core_di.export import export_excel_di
+from backend.services.doi_chieu_song_phuong_core_di.pipeline import doi_chieu_hub_core_di
 from backend.services.doi_chieu_song_phuong_kenh import export as kenh_export
 from backend.services.doi_chieu_song_phuong_kenh.export import export_bao_cao
 from backend.services.doi_chieu_song_phuong_kenh.load_hub import hub_filename_glob
 from backend.services.doi_chieu_song_phuong_kenh.pipeline import main_from_dir as kenh_main_from_dir
 
-TEMP_DIR = Path("data/temp_doi_chieu_song_phuong_kenh_core")
+TEMP_DIR = Path("data/temp_doi_chieu_song_phuong_kenh_core_di")
 CLEANUP_TTL = 4 * 3600
 CAC_NGAN_HANG = ("201", "202", "203", "311")
 
@@ -55,11 +53,8 @@ def _new_job(ngay: str, ma_nh: str) -> tuple[str, dict]:
         "ngay": ngay,
         "ma_nh": ma_nh,
         "ket_qua": {
-            "kenh_hub": None, "hub_core": None,  # None nếu bước đó lỗi/bỏ qua
-            # Trạng thái cấp JOB (Phần 3, 2026-08-30) — tách "chưa đối chiếu được" (thiếu cả 1
-            # loại file) khỏi "chênh lệch thật" (số liệu trong "kenh_hub"/"hub_core" ở trên).
-            # KHÔNG đổi nhãn per-row KETQUADOICHIEU/trạng thái đơn vị — chỉ thêm cờ cấp job.
-            "trang_thai": {"kenh_hub": None, "hub_core": None},
+            "kenh_hub_di": None, "hub_core_di": None,  # None nếu bước đó lỗi/bỏ qua
+            "trang_thai": {"kenh_hub_di": None, "hub_core_di": None},
         },
         "stage": 0,
         "cancel_event": threading.Event(),
@@ -89,7 +84,7 @@ _DANG_CHIEM = ("pending", "running")
 
 
 def job_dang_chay() -> dict | None:
-    """Job Song phương đang chiếm máy chủ, None nếu rảnh. Xem `ach_service` cùng tên."""
+    """Job "Đối chiếu đi" đang chiếm máy chủ, None nếu rảnh. Xem `ach_service` cùng tên."""
     with _lock:
         for job_id, job in _jobs.items():
             if job["status"] not in _DANG_CHIEM:
@@ -107,14 +102,9 @@ def job_dang_chay() -> dict | None:
 
 
 def tao_job(ngay: str, ma_nh: str) -> tuple[str, Path]:
-    """Đăng ký job mới cho "Đối chiếu đến" và trả về (job_id, input_dir).
-
-    Tách khỏi `chay_job()` để lớp API ghi THẲNG từng khối file tải lên vào `input_dir`
-    (`save_upload_to()`, backend/core/uploads.py), thay vì gom trọn vào RAM rồi mới đưa xuống đây
-    (2026-09-02, review khanhbq693 PR#70 mục A/B — bỏ hẳn chế độ "chọn thư mục máy chủ", chỉ còn
-    tải file lên; cùng khuôn mẫu `ach_service.py::tao_job()`).
-
-    Upload hỏng giữa chừng thì lớp API phải gọi `bo_job()` để trả lại chỗ."""
+    """Đăng ký job mới cho "Đối chiếu đi" và trả về (job_id, input_dir) — lớp API ghi THẲNG từng
+    khối file tải lên vào `input_dir` (`save_upload_to()`), không gom vào RAM trước. Upload hỏng
+    giữa chừng thì lớp API phải gọi `bo_job()` để trả lại chỗ."""
     if ma_nh not in CAC_NGAN_HANG:
         raise ValueError(f"Mã ngân hàng không hợp lệ: {ma_nh}")
     job_id, job = _new_job(ngay, ma_nh)
@@ -132,7 +122,7 @@ def bo_job(job_id: str) -> None:
 
 
 def chay_job(job_id: str) -> None:
-    """Khởi chạy "Đối chiếu đến" cho job đã nhận đủ file (xem `tao_job()`)."""
+    """Khởi chạy "Đối chiếu đi" cho job đã nhận đủ file (xem `tao_job()`)."""
     job = get_job(job_id)
     if job is None:
         raise LookupError("Job không tồn tại.")
@@ -145,20 +135,26 @@ def chay_job(job_id: str) -> None:
 
 _NHAN_TRANG_THAI = {"da_doi_chieu": "Đã đối chiếu", "chua_doi_chieu": "CHƯA ĐỐI CHIẾU"}
 
+# Giai đoạn 2 (2026-09-09, card 123 Implementation-notes.html) — người soát báo "bảng tổng hợp
+# Kênh↔Hub và file chi tiết hub_chi_tiet.csv không khớp số dòng" tưởng là lỗi số liệu; thật ra 2
+# file CỐ Ý khác phạm vi (Bảng 1 chỉ tính HUB "SCNL", file chi tiết giữ nguyên mọi trạng thái) —
+# điều này trước đây chỉ giải thích được qua hội thoại, không có trong chính file kết quả. Ghi
+# thẳng vào sheet "GhiChu" để người đọc file một mình cũng biết, không hiểu nhầm là bỏ sót.
+_GHI_CHU_PHAM_VI_KENH_HUB = (
+    "Bang1_KenhHub chỉ tính HUB có TRANG_THAI_LENH=\"SCNL\" (đúng docx) — 2 file chi tiết CSV "
+    "(hub_chi_tiet/kenh_chi_tiet, tải riêng ở màn hình kết quả) giữ NGUYÊN mọi trạng thái HUB "
+    "(SCNL/ERPO/CALD/TPAY...) để tra cứu sâu. Số dòng 2 bên khác nhau là CỐ Ý theo đúng phạm vi "
+    "từng file, KHÔNG phải sai lệch số liệu."
+)
+
 
 def _export_bao_cao_tong_hop(
     ket_qua_kenh: dict | None, ket_qua_core: dict | None, trang_thai: dict, out_path: Path,
 ) -> Path | None:
-    """Gộp sheet TrangThai (Phần 3, 2026-08-30) + Bảng 1 (Kênh↔Hub) + TongHop (Hub↔Core) vào 1
-    workbook — "1 báo cáo cuối" theo quyết định 2026-08-28. Bỏ qua sheet nào bước đó không có kết
-    quả (lỗi/thiếu file). Trả None nếu cả 2 bước đều không có kết quả.
-
-    Sheet TrangThai đặt ĐẦU workbook — người nhận file (không xem UI/log) biết ngay bước nào
-    "chưa đối chiếu được" (thiếu dữ liệu 1 bên) thay vì đọc nhầm là "không có chênh lệch".
-
-    `engine="xlsxwriter"` — nhất quán với `core/export.py`/`kenh/export.py` (đã đo nhanh hơn
-    openpyxl ~30%, xem Implementation-notes.html); sheet này nhỏ nên tác động thấp nhưng đổi cho
-    đồng bộ quy ước toàn module, 2026-08-30."""
+    """Gộp sheet TrangThai + Bảng 1 (Kênh↔Hub) + TongHop (Hub↔Core) + GhiChu vào 1 workbook —
+    mirror `doi_chieu_song_phuong_kenh_core_service.py::_export_bao_cao_tong_hop`. `kenh_export.
+    build_bang1_rows()` DÙNG CHUNG được cho cả 2 chiều — nó chỉ đọc `summary`/`chi_tiet` theo dict
+    shape chung, không hardcode nhãn "đến" (xem `process.summarize_unit_di()` trả đúng shape)."""
     if ket_qua_kenh is None and ket_qua_core is None:
         return None
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -169,16 +165,25 @@ def _export_bao_cao_tong_hop(
                 "Trạng thái": _NHAN_TRANG_THAI.get((trang_thai.get(key) or {}).get("trang_thai"), "—"),
                 "Lý do": (trang_thai.get(key) or {}).get("ly_do") or "",
             }
-            for key, nhan in (("kenh_hub", "Kênh↔Hub"), ("hub_core", "Hub↔Core"))
+            for key, nhan in (("kenh_hub_di", "Kênh↔Hub"), ("hub_core_di", "Hub↔Core"))
         ]).to_excel(writer, sheet_name="TrangThai", index=False)
         if ket_qua_kenh is not None:
             kenh_export.build_bang1_rows([ket_qua_kenh]).to_excel(
                 writer, sheet_name="Bang1_KenhHub", index=False,
             )
         if ket_qua_core is not None:
-            core_export.build_tong_hop(
+            core_di_export.build_tong_hop_di(
                 ket_qua_core["core_df"], ket_qua_core["hub_df"],
             ).to_excel(writer, sheet_name="TongHop_HubCore", index=False)
+
+        ghi_chu: list[str] = []
+        if ket_qua_kenh is not None:
+            ghi_chu.append(_GHI_CHU_PHAM_VI_KENH_HUB)
+        if ket_qua_core is not None:
+            ghi_chu.extend(ket_qua_core.get("ghi_chu") or [])
+        if not ghi_chu:
+            ghi_chu = ["Không có ghi chú."]
+        pd.DataFrame({"Ghi chú": ghi_chu}).to_excel(writer, sheet_name="GhiChu", index=False)
     return out_path
 
 
@@ -200,16 +205,13 @@ def _run(job_id: str, goc_dir: str, ngay: str, ma_nh: str, output_dir: str) -> N
             job["logs"].append(msg)
 
     try:
-        log(f"[JOB {job_id}] Bắt đầu Đối chiếu đến — NH {ma_nh}, ngày {ngay}...")
+        log(f"[JOB {job_id}] Bắt đầu Đối chiếu đi — NH {ma_nh}, ngày {ngay}...")
 
         # ── Bước 1/2 — Kênh↔Hub ──────────────────────────────────────────────
         log("=== Bước 1/2 — Kênh↔Hub ===")
-        hub_matches = common.tim_file_glob(goc_dir_p, ngay, hub_filename_glob(ngay, ma_nh))
+        hub_matches = common.tim_file_glob(goc_dir_p, ngay, hub_filename_glob(ngay, ma_nh, "DI"))
         hub_path = None
         if len(hub_matches) > 1:
-            # Đổi 2026-08-30: KHÔNG tự đoán "mới nhất" nữa (khác hành vi cũ) — nhiều người dùng
-            # có thể trỏ chung 1 thư mục server (mode 2) cùng lúc, tự đoán dễ đọc nhầm file người
-            # khác vừa thả vào, ra kết quả sai mà không ai biết.
             log(f"[Kênh↔Hub] [LỖI] {len(hub_matches)} file HUB khớp cùng lúc trong "
                 f"{hub_matches[0].parent} — KHÔNG tự chọn (tránh đọc nhầm khi nhiều người dùng "
                 f"chung thư mục): {', '.join(p.name for p in hub_matches)}. Cần dọn bớt file "
@@ -224,7 +226,7 @@ def _run(job_id: str, goc_dir: str, ngay: str, ma_nh: str, output_dir: str) -> N
             )
             loi.append(f"Kênh↔Hub: {ly_do} — bỏ qua bước này.")
             log(f"[Kênh↔Hub] {loi[-1]}")
-            job["ket_qua"]["trang_thai"]["kenh_hub"] = {
+            job["ket_qua"]["trang_thai"]["kenh_hub_di"] = {
                 "trang_thai": "chua_doi_chieu", "ly_do": ly_do,
             }
         else:
@@ -238,6 +240,7 @@ def _run(job_id: str, goc_dir: str, ngay: str, ma_nh: str, output_dir: str) -> N
                     log_callback=lambda m: log(f"[Kênh↔Hub] {m}"),
                     cancel_event=job["cancel_event"],
                     hub_path_override=hub_path,
+                    chieu="DI",
                 )
             if ket_qua_kenh is None:
                 if job["cancel_event"].is_set():
@@ -245,7 +248,7 @@ def _run(job_id: str, goc_dir: str, ngay: str, ma_nh: str, output_dir: str) -> N
                     log("[JOB] Đã dừng theo yêu cầu.")
                     return
                 loi.append("Kênh↔Hub: không xác định được kết quả (xem log).")
-                job["ket_qua"]["trang_thai"]["kenh_hub"] = {
+                job["ket_qua"]["trang_thai"]["kenh_hub_di"] = {
                     "trang_thai": "chua_doi_chieu", "ly_do": "không xác định được kết quả (xem log)",
                 }
             else:
@@ -263,8 +266,8 @@ def _run(job_id: str, goc_dir: str, ngay: str, ma_nh: str, output_dir: str) -> N
                     chenh_lech[key] = {"chenh_so_mon": s["chenh_so_mon"], "chenh_so_tien": s["chenh_so_tien"]}
                     if dv["canh_bao_trang_thai"]:
                         canh_bao.append({"don_vi": key, "trang_thai": dv["canh_bao_trang_thai"]})
-                job["ket_qua"]["kenh_hub"] = {"chenh_lech": chenh_lech, "canh_bao": canh_bao}
-                job["ket_qua"]["trang_thai"]["kenh_hub"] = {"trang_thai": "da_doi_chieu", "ly_do": None}
+                job["ket_qua"]["kenh_hub_di"] = {"chenh_lech": chenh_lech, "canh_bao": canh_bao}
+                job["ket_qua"]["trang_thai"]["kenh_hub_di"] = {"trang_thai": "da_doi_chieu", "ly_do": None}
 
         job["stage"] = 1
 
@@ -274,35 +277,41 @@ def _run(job_id: str, goc_dir: str, ngay: str, ma_nh: str, output_dir: str) -> N
             job["status"] = "cancelled"
             log("[JOB] Đã dừng theo yêu cầu.")
             return
+        # Review Khánh PR#86 A2 (2026-09-10): bật lại `hub_t_override` — HUB đã đọc ở bước
+        # Kênh↔Hub (`kenh/pipeline.py::main_from_dir`, `hub_theo_nh[ma_nh]`) chiều đi chính là
+        # bản GỐC chưa lọc (`chieu == "DI"` dùng thẳng `hub_raw`, xem `pipeline.py:112-115`) —
+        # đúng thứ `_doc_hub_di_tu_goc()` cần (hàm đó tự gọi `_loc_scnl()` bên trong). Lý do cũ
+        # "tái dùng thẳng sẽ sai" không đúng với chính implementation — đọc + giải nén lại từ đĩa
+        # là tốn không cần thiết mỗi job.
         hub_t_da_doc = (ket_qua_kenh or {}).get("hub_theo_nh", {}).get(ma_nh)
         try:
             with do_thoi_gian(log, "Bước 2/2 Hub↔Core (tổng)"):
-                ket_qua_core = doi_chieu_hub_core(
+                ket_qua_core = doi_chieu_hub_core_di(
                     goc_dir_p, ngay, ma_nh, log_callback=lambda m: log(f"[Hub↔Core] {m}"),
                     hub_t_override=hub_t_da_doc,
                 )
         except ValueError as e:
             loi.append(f"Hub↔Core: {e}")
             log(f"[Hub↔Core] {e}")
-            job["ket_qua"]["trang_thai"]["hub_core"] = {"trang_thai": "chua_doi_chieu", "ly_do": str(e)}
+            job["ket_qua"]["trang_thai"]["hub_core_di"] = {"trang_thai": "chua_doi_chieu", "ly_do": str(e)}
         else:
-            base_name = f"hub_core_{ma_nh}_{ngay}"
+            base_name = f"hub_core_di_{ma_nh}_{ngay}"
             with do_thoi_gian(log, "ghi Excel+CSV Hub↔Core"):
-                hub_core_files = export_core_excel(ket_qua_core, output_dir_p, base_name)
+                hub_core_files = export_excel_di(ket_qua_core, output_dir_p, base_name)
             files.extend(p.name for p in hub_core_files)
 
             core_df, hub_df = ket_qua_core["core_df"], ket_qua_core["hub_df"]
-            job["ket_qua"]["hub_core"] = {
+            job["ket_qua"]["hub_core_di"] = {
                 "so_dong_core": len(core_df),
                 "so_dong_hub": len(hub_df),
                 "phan_bo_core": core_df["KETQUADOICHIEU"].value_counts().to_dict(),
                 "phan_bo_hub": hub_df["KETQUADOICHIEU"].value_counts().to_dict(),
             }
-            job["ket_qua"]["trang_thai"]["hub_core"] = {"trang_thai": "da_doi_chieu", "ly_do": None}
+            job["ket_qua"]["trang_thai"]["hub_core_di"] = {"trang_thai": "da_doi_chieu", "ly_do": None}
 
         job["stage"] = 2
 
-        if job["ket_qua"]["kenh_hub"] is None and job["ket_qua"]["hub_core"] is None:
+        if job["ket_qua"]["kenh_hub_di"] is None and job["ket_qua"]["hub_core_di"] is None:
             job["status"] = "error"
             job["error"] = " | ".join(loi) or "Cả 2 bước đều không có kết quả."
             log(f"[JOB] {job['error']}")
@@ -311,7 +320,7 @@ def _run(job_id: str, goc_dir: str, ngay: str, ma_nh: str, output_dir: str) -> N
         with do_thoi_gian(log, "ghi báo cáo tổng hợp"):
             bao_cao_path = _export_bao_cao_tong_hop(
                 ket_qua_kenh, ket_qua_core, job["ket_qua"]["trang_thai"],
-                output_dir_p / f"bao_cao_tong_hop_{ma_nh}_{ngay}.xlsx",
+                output_dir_p / f"bao_cao_tong_hop_di_{ma_nh}_{ngay}.xlsx",
             )
         if bao_cao_path:
             files.insert(0, bao_cao_path.name)
@@ -341,9 +350,6 @@ def get_output_file(job_id: str, filename: str) -> Path | None:
         return None
     safe_name = os.path.basename(filename)
     path = Path(job["output_dir"]) / safe_name
-    # `is_file()` chứ không phải `exists()` — `input_dir` của tao_job() nằm NGAY TRONG
-    # output_dir (`{output_dir}/_upload/`), nên GET .../download/{job_id}/_upload từng lọt qua
-    # exists() rồi vỡ ở read_bytes() (IsADirectoryError -> 500) thay vì 404 rõ ràng.
     return path if path.is_file() else None
 
 
@@ -363,7 +369,9 @@ def _cleanup_old_jobs() -> None:
 
 
 # Khai với chốt chặn dùng chung — xem backend/core/phien_doi_chieu.py.
-# Đặt CUỐI file: `job_dang_chay` phải tồn tại trước khi đem đi khai.
+# Module này vào develop qua PR #86, SAU khi chốt được viết — khai ở đây để nó
+# không thành cửa thứ sáu lọt ra ngoài trần chạy song song.
 from backend.core.phien_doi_chieu import dang_ky_nguon  # noqa: E402
 
-dang_ky_nguon("song_phuong", "Đối chiếu Song phương (chiều ĐẾN)", job_dang_chay)
+dang_ky_nguon("song_phuong_kenh_core_di", "Đối chiếu Song phương (chiều ĐI)",
+              job_dang_chay)
