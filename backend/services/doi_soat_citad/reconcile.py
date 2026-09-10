@@ -85,6 +85,20 @@ def _ghi_chu_khop_du_nguon(cong, n_dup, n_citad, nguon, chieu_lbl):
     )
 
 
+def _ghi_chu_lech_loai_kenh(loai_citad, loai_agribank):
+    """Ca thật báo 10/09/2026 (Phòng Thanh toán): CITAD và Agribank cùng 1
+    lệnh VND Đi (cùng so_gd/msgref) nhưng KHÁC trường loại lệnh (IH giá trị
+    cao / IL giá trị thấp) — không tự động khớp (đúng, vì đây là dữ liệu
+    lệch thật cần người chấm xem lại), nhưng nếu để rơi thành 2 dòng "Chỉ
+    CITAD"/"Chỉ IPCAS" trống trơn thì người chấm không biết chúng là 1 cặp.
+    Gắn ghi_chú CHÉO (câu chữ tự đổi theo đúng chiều lệch, không hardcode
+    IH trước/IL sau) lên cả 2 dòng để nối lại."""
+    return (
+        f'CITAD loại lệnh {loai_citad.upper()} nhưng Agribank loại lệnh '
+        f'{loai_agribank.upper()} — cùng số GD, nghi lệch phân loại kênh'
+    )
+
+
 def _ipcas_identity_key(r):
     """Khoá MỊN — "đây có phải CÙNG 1 bản ghi IPCAS bị lặp lại y hệt hay
     không". KHÁC khoá khớp lệnh (msgref, hoặc (txid, loai, so_tien) — cố ý
@@ -407,11 +421,17 @@ def run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows):
     # Đến/ngoại tệ bằng dữ liệu thật, giống cách ca Đi đã được xác nhận.
     di_vnd_count = {}
     di_vnd_congs = {}
+    # so_gd -> loai (IH/IL) của CITAD, chỉ VND Đi — dùng để phát hiện lệch
+    # loại kênh khi msgref khớp nhưng loai khác nhau (xem nhánh CITAD Đi và
+    # vòng lặp "IPCAS Đi dư" bên dưới, _ghi_chu_lech_loai_kenh()), KHÔNG
+    # dùng để khớp lệnh.
+    citad_di_vnd_loai = {}
     for r in citad_rows:
         if r['chieu'] == 'di' and r['loai_tien'] == 'VND':
             k = r['so_gd']
             di_vnd_count[k] = di_vnd_count.get(k, 0) + 1
             di_vnd_congs.setdefault(k, []).append(r.get('cong') or '?')
+            citad_di_vnd_loai.setdefault(k, r['loai'])
     di_vnd_seen = set()
 
     # Đếm số dòng CITAD THẬT theo khoá khớp lệnh — dùng để tính đúng số
@@ -492,7 +512,19 @@ def run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows):
             di_vnd_seen.add(sogd)
             # VND Đi: tìm theo msgref
             m = ipcas_di_map.get(sogd)
-            if m:
+            if m and m['loai'] != r['loai']:
+                # Lệch loại kênh IH/IL (ca thật báo 10/09/2026, Phòng Thanh
+                # toán) — msgref khớp (CÙNG 1 lệnh) nhưng CITAD/IPCAS ghi
+                # khác nhau trường loại lệnh. KHÔNG coi là khớp (dữ liệu
+                # lệch thật, cần người chấm xem lại) — nhưng KHÔNG đánh dấu
+                # vào `citad_matched_di_ipcas` để dòng IPCAS này vẫn tự hiện
+                # đúng thành "Chỉ IPCAS" (kèm ghi_chú chéo) ở vòng lặp
+                # "IPCAS Đi dư" bên dưới thay vì bị coi là đã xử lý xong.
+                # Xem _ghi_chu_lech_loai_kenh().
+                row = {**r, 'status': 'only_citad', 'key_agri': '', 'nh_nhan': '', 'trang_thai': ''}
+                row['ghi_chu'] = _ghi_chu_lech_loai_kenh(r['loai'], m['loai'])
+                lech.append(row)
+            elif m:
                 citad_matched_di_ipcas.add(sogd)
                 citad_cong_di[sogd] = r.get('cong')
                 tt = m.get('trang_thai', '')
@@ -524,6 +556,12 @@ def run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows):
                         'key_agri': m.get('msgref', sogd),
                         'nh_nhan': m.get('nh_nhan', ''),
                         'trang_thai': tt,
+                        # Bug thật (rà soát 10/09/2026): PR#82 chép refhub cho
+                        # 3 nhánh 'both'/'only_citad' (nkt_thieu)/'only_ipcas'
+                        # nhưng sót đúng nhánh này — trong khi đây MỚI là nhóm
+                        # cần refhub nhất (IPCAS có lệnh nhưng chưa xong trạng
+                        # thái, người chấm bắt buộc phải tự tra Agribank).
+                        'refhub': m.get('refhub', ''),
                     }
                     ghi_chu_parts = []
                     if tt in ERR_DI:
@@ -606,7 +644,7 @@ def run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows):
             # 'so_gd' để trống — xem ghi chú tương tự trong _dong_thua_nguon():
             # "Chỉ IPCAS" nghĩa là CITAD không có lệnh này, cột "Số GD (CITAD)"
             # không nên hiện số nào.
-            lech.append({
+            only_ipcas_row = {
                 'so_gd': '', 'dich_vu': r.get('kenh', ''), 'loai': r.get('loai', ''),
                 'chieu': 'di', 'loai_tien': 'VND', 'so_tien': r.get('so_tien', 0),
                 'ngay': r.get('ngay', ''), 'status': 'only_ipcas',
@@ -618,7 +656,14 @@ def run_doiSoat_ram(citad_rows, ipcas_rows, hub_rows):
                 # dòng gốc IPCAS nên field này luôn có sẵn, không cần đi qua
                 # đâu khác như 3 nhánh 'both' ở trên.
                 'refhub': r.get('refhub', ''),
-            })
+            }
+            # Chiều ngược lại của check ở nhánh CITAD phía trên — cùng
+            # 1 khoá `k` (msgref == so_gd khi thật sự cùng lệnh), xem
+            # _ghi_chu_lech_loai_kenh().
+            loai_citad = citad_di_vnd_loai.get(k)
+            if loai_citad and loai_citad != r['loai']:
+                only_ipcas_row['ghi_chu'] = _ghi_chu_lech_loai_kenh(loai_citad, r['loai'])
+            lech.append(only_ipcas_row)
         # n_citad: VND Đi luôn đúng 1 khi matched (CITAD trùng đã lọc riêng
         # thành dup_citad ở trên) — trừ thêm 1 khi KHÔNG matched vì dòng
         # "chỉ IPCAS" đại diện đã được sinh riêng ở nhánh `if not matched`

@@ -677,13 +677,19 @@ def _build_history_panel(tab, history_refresh):
                             **({":format": "val => val ? val.toLocaleString('en-US') : val"} if k == "so_tien" else {}),
                         }
                         for k, lbl in [("status", "Trạng thái"), ("so_gd", "Số GD"), ("key_agri", "Số GD (Agribank)"),
-                                       ("so_tien", "Số tiền"), ("ngay", "Ngày"), ("nh_nhan", "Ngân hàng")]
+                                       ("so_tien", "Số tiền"), ("ngay", "Ngày"), ("nh_nhan", "Ngân hàng"),
+                                       ("refhub", "Số RefHub")]
                     ]
                     rows = [
                         {
                             "status": STATUS_LBL.get(rec.get("status"), rec.get("status")),
                             "so_gd": rec.get("so_gd"), "key_agri": rec.get("key_agri"),
                             "so_tien": rec.get("so_tien"), "ngay": rec.get("ngay"), "nh_nhan": rec.get("nh_nhan"),
+                            # Bản lịch sử lưu TRƯỚC 09/09/2026 (khi thêm refhub vào
+                            # reconcile.py) sẽ không có field này trong JSON đã lưu
+                            # — .get() tự trả '' thay vì lỗi, đúng bản chất "chưa
+                            # từng có dữ liệu đó tại thời điểm lưu", không phải bug.
+                            "refhub": rec.get("refhub") or "",
                         }
                         for rec in page_records
                     ]
