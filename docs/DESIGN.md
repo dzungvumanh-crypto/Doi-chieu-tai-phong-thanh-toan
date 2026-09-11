@@ -120,6 +120,18 @@ quyền tự nhân bản, không còn ai chặn được. Đừng "sửa cho nh�
 Vai `admin` đi qua mọi cửa (`require_feature()` cho qua ngay ở dòng đầu) — đó là siêu quyền
 cố ý, không tính là hard-code tính năng.
 
+### Route công khai — chỉ `/` và `/health`
+
+Mọi route khác đều có `Depends(...)`. Hai route này đăng ký thẳng trên `app` trong
+`backend/main.py` (không qua `registry.py`) và không đòi đăng nhập:
+
+- `/` — chuỗi tĩnh.
+- `/health` — `{"status", "db_ok"}`, 200 hoặc 503. Cho script khởi động / người vận hành biết
+  backend đã lên. Vì công khai nên **không** thêm trường nào khác (đường dẫn, phiên bản, backup,
+  lệch giờ): backup và lệch giờ đã có ở màn Nhật ký hệ thống, sau `menu.logs`.
+
+Rà "route nào thiếu Depends" mà đếm ra đúng hai cái này là đúng thiết kế, không phải lỗ.
+
 ### Phạm vi quyền ≠ phạm vi dữ liệu
 
 Hai module của phòng Kế toán từng gate theo mã phòng `ACCT`, nay gate bằng mã quyền

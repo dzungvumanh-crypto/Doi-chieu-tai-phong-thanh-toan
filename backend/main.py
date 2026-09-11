@@ -189,3 +189,30 @@ async def _db_error_handler(request, exc):
 @app.get("/")
 def root():
     return {"message": "PAYMENT CENTER API đang chạy", "docs": "/docs"}
+
+
+# ── Kiểm tra sức khoẻ — KHÔNG cần đăng nhập ───────────────────────────────────
+# Ngoại lệ có chủ đích của "mọi route đều có Depends" (cùng loại với "/"): script
+# khởi động / người vận hành cần biết backend đã lên mà không có tài khoản. Vì công
+# khai nên chỉ hai trường — không đường dẫn, phiên bản hay nội dung lỗi (lỗi vào log).
+# Backup gần nhất và lệch giờ đã có ở màn Nhật ký hệ thống (/api/admin/logs/backup-info,
+# /time-sync — cần menu.logs), không lặp lại ở đây.
+@app.get("/health")
+def health():
+    from pathlib import Path
+    try:
+        # mode=ro: mất file DB thì báo lỗi, KHÔNG lặng lẽ đẻ ra một DB rỗng mới.
+        # Kết nối riêng, không mượn bể: bể cạn thì /health vẫn trả lời ngay thay vì
+        # đứng chờ cùng hàng với request thật (tới _POOL_CHO_GIAY giây).
+        con = sqlite3.connect(Path(DB_PATH).resolve().as_uri() + "?mode=ro", uri=True, timeout=2)
+        try:
+            # Bảng thật chứ không sqlite_master: file 0 byte (bị cắt cụt) SQLite coi là
+            # DB rỗng hợp lệ — sqlite_master không lỗi, báo "ok" trên một DB trắng.
+            con.execute("SELECT 1 FROM user_tttt LIMIT 1").fetchone()
+        finally:
+            con.close()
+    except sqlite3.Error as e:
+        _db_log.error("/health: không đọc được CSDL: %s", e)
+        # 503 để script chỉ cần xem mã HTTP (curl -f) — không phải đọc JSON
+        return JSONResponse(status_code=503, content={"status": "degraded", "db_ok": False})
+    return {"status": "ok", "db_ok": True}
