@@ -44,6 +44,7 @@ from backend.api.attendance import router as attendance_router
 from backend.api.quiz import router as quiz_router
 from backend.api.vb_format import router as vb_format_router
 from backend.api.hr import router as hr_router
+from backend.api.surveys import router as surveys_router
 
 # Thêm router mới: 1 dòng import ở trên + 1 tuple ở đây
 # Format: (router_object, {"prefix": "/api/...", "tags": ["..."]})
@@ -85,6 +86,7 @@ _ROUTERS = [
     (quiz_router,        {}),
     (vb_format_router,   {}),
     (hr_router,          {}),
+    (surveys_router,     {}),
 ]
 
 

@@ -133,6 +133,23 @@ Hai module của phòng Kế toán từng gate theo mã phòng `ACCT`, nay gate 
 
 Đừng nhân danh quy tắc "không hard-code quyền" đi gỡ hai chỗ trên.
 
+### Khảo sát — trả lời theo danh sách người nhận, không theo mã quyền
+
+`menu.surveys` / `surveys.create` / `surveys.view_all` là quyền (tạo, sửa, xem kết quả). Còn
+**trả lời** chỉ cần có dòng trong `survey_recipients` — cùng loại với người được giao duyệt đơn.
+Vì thế `_PENDING_DEFS` (shared.py) và `_KINDS` (pending_work.py) có mục feature `None`, và
+`/surveys/fill` không kiểm `has_feature`. Gate bằng mã quyền thì gửi khảo sát cho nhóm chưa tick
+menu là cả nhóm không trả lời được mà không ai hay. Đừng "sửa cho nhất quán".
+
+`/api/surveys` nằm trong `_SKIP_PREFIXES` của `audit_middleware.py`: middleware ghi cả body, mà
+body của lượt nộp là câu trả lời — khảo sát ẩn danh sẽ lộ nội dung trong Nhật ký hệ thống. Mọi
+thao tác ghi đã tự `write_audit` không kèm nội dung.
+
+Hai quy tắc ẩn danh khác, cùng lý do "khoá ở giao diện chưa đủ":
+- Dòng kết quả ẩn danh xếp **theo nội dung**, không trộn bằng hạt giống cố định. Thứ tự nộp tra
+  được trong Nhật ký (`survey.submit` ghi người + giờ) → hạt giống đoán được là đảo lại được.
+- `PUT` chặn đổi `is_anonymous` khi đã có trả lời (cả hai chiều) và chặn tắt khi đã phát hành.
+
 ## RBAC — deps.py
 
 | Dependency | Roles được phép |

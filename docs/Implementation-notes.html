@@ -51,7 +51,7 @@
 <div class="page">
 
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
-  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-09-05</p>
+  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-09-11</p>
 
   <!-- CI1 -->
   <div class="card">
@@ -180,6 +180,154 @@
         <code>endswith</code> thì có; hotfix không đổi hành vi.</p>
       <p><span class="pill pill-gray">Chưa kiểm</span> Trang Bìa chứng từ chưa mở thử trên trình duyệt sau khi
         sửa — chỉ có ruff F821 sạch + test nạp trang xanh.</p>
+    </div>
+  </div>
+
+  <!-- KS1 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">KS1</span>
+      <span class="card-title">Khảo sát — biểu mẫu kiểu Google Forms, gửi theo nhóm user, hạn chót, thống kê, nhắc ở "Công việc chờ xử lý"</span>
+      <span class="badge badge-info">Mới 11/09/2026 — chưa merge</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label">1. Trả lời KHÔNG gate bằng mã quyền — gate bằng danh sách người nhận</div>
+      <p>Ba mã quyền mới: <code>menu.surveys</code> (thấy menu + danh sách), <code>surveys.create</code>
+        (tạo/sửa/phát hành/đóng/xoá khảo sát của mình), <code>surveys.view_all</code> (xem kết quả
+        khảo sát của người khác). Riêng việc <b>trả lời</b> chỉ cần có dòng trong
+        <code>survey_recipients</code> — cùng loại với <code>ksv_approver_id</code> của đơn nghỉ phép
+        (dữ liệu của hồ sơ, không phải quyền — DESIGN.md mục Phân quyền).</p>
+      <table>
+        <tr><th>Phương án</th><th>Hậu quả</th></tr>
+        <tr><td>Trả lời đòi <code>menu.surveys</code></td><td><span class="pill pill-red">Loại</span>
+          Gửi khảo sát cho nhóm chưa được tick menu → cả nhóm không thấy khảo sát trong "Công việc
+          chờ", không trả lời được, không lỗi, không log. Người tạo nhìn tỷ lệ 0% mà không biết vì sao.</td></tr>
+        <tr><td>Trả lời theo danh sách người nhận <b>(chọn)</b></td><td><span class="pill pill-green">Chọn</span>
+          Dòng "Khảo sát chưa trả lời" ở sidebar và trang <code>/surveys/fill</code> không kiểm
+          <code>has_feature</code> (<code>_PENDING_DEFS</code> nhận <code>None</code>). Người chưa có
+          <code>menu.surveys</code> vẫn trả lời được qua khối chờ; chỉ không có menu để xem lại.</td></tr>
+      </table>
+      <p>Ngoại lệ vai <code>admin</code>: <code>_la_chu()</code> coi admin như chủ mọi khảo sát — cùng
+        tinh thần siêu quyền của <code>require_feature()</code>, không phải hard-code tính năng.</p>
+
+      <div class="label">2. Người nhận CHỐT lúc phát hành, không tra nhóm lúc chạy</div>
+      <table>
+        <tr><th></th><th>Chốt danh sách (chọn)</th><th>Tra <code>group_members</code> mỗi lần</th></tr>
+        <tr><td>Rút người khỏi nhóm để bớt QUYỀN</td><td>Khảo sát vẫn còn, mẫu số không đổi</td>
+            <td>Khảo sát biến mất, tỷ lệ phản hồi tự nhảy — nhóm user trước hết là nhóm phân quyền</td></tr>
+        <tr><td>Người mới vào nhóm sau khi phát hành</td><td><span class="pill pill-gray">Không tự nhận</span> — người tạo bấm Lưu lại để đồng bộ</td>
+            <td>Tự nhận</td></tr>
+      </table>
+      <p><code>dong_bo_nguoi_nhan()</code> chạy lúc phát hành và mỗi lần Lưu khảo sát đang phát hành:
+        thêm người mới; bỏ người không còn trong nhóm <b>nếu chưa trả lời</b>. Người đã trả lời luôn giữ
+        tên — xoá họ khỏi mẫu số thì tỷ lệ vượt 100%. Chỉ lấy tài khoản <code>is_active = 1</code> và
+        chưa xoá.</p>
+
+      <div class="label">3. "Chưa mở" / "Quá hạn" suy ra từ thời gian, không lưu</div>
+      <p><code>surveys.status</code> chỉ có <code>draft / published / closed</code> (ý định người tạo).
+        <code>trang_thai()</code> đọc thêm <code>start_at</code>, <code>deadline</code> để ra
+        <code>scheduled / open / expired</code>. Không cần tác vụ nền đổi trạng thái đúng giờ — máy chủ
+        tắt đúng lúc hết hạn cũng không làm khảo sát "mở mãi". <code>pending_filter()</code> phải khớp
+        đúng điều kiện <code>open</code>; hai hàm nằm cạnh nhau trong <code>survey_service.py</code>.</p>
+      <p><code>start_at</code>/<code>deadline</code> lưu TEXT khuôn cố định <code>YYYY-MM-DD HH:MM:SS</code>
+        để so chuỗi trong SQL. Để sqlite3 tự đổi <code>datetime</code> thì có lúc kèm micro giây có lúc
+        không — so chuỗi giữa hai khuôn đó sai đúng ở giây chót.</p>
+
+      <div class="label">4. Khoá câu hỏi khi đã có người trả lời</div>
+      <p>Câu trả lời lựa chọn lưu <b>số thứ tự</b> lựa chọn (JSON trong <code>survey_answers.value</code>).
+        Chèn/đổi một lựa chọn là mọi câu trả lời cũ trỏ sang ý khác. Google Forms cho sửa kèm cảnh báo;
+        ở đây chặn hẳn bằng "vân tay" <code>(qtype, title, required, options, scale_min, scale_max)</code>
+        — PUT mà vân tay khác thì 409. Mô tả câu và nhãn hai đầu thang đo không ảnh hưởng thống kê nên
+        vẫn sửa được (ghi đè theo <code>order_no</code>). Công tắc "Ẩn danh" khoá trên giao diện khi
+        đã có trả lời hoặc đã phát hành ẩn danh — và backend chặn tắt ẩn danh (409) khi khảo sát không còn
+        là nháp. <span class="pill pill-red">Sửa khi rà trước merge</span> bản đầu chỉ khoá ở giao diện:
+        chủ khảo sát / admin gọi thẳng <code>PUT</code> với <code>is_anonymous: false</code> là thấy tên từng
+        câu trả lời đã nộp trong niềm tin ẩn danh. Bật ẩn danh sau phát hành vẫn cho (chỉ giấu bớt).</p>
+      <p>Đánh đổi: sửa lỗi chính tả trong tiêu đề câu cũng bị chặn — máy không phân biệt được "sửa
+        chính tả" với "đổi nghĩa". Muốn sửa thì xoá khảo sát làm lại (mất câu trả lời).</p>
+
+      <p><b>Xem trước không nộp được.</b> Nút "Xem trước" mở <code>/surveys/fill?id=…&amp;from=edit</code>:
+        có mũi tên "Quay lại soạn thảo", ô nhập thao tác thử được nhưng không có nút Gửi. Người tạo
+        thường cũng nằm trong nhóm nhận — bấm Gửi để thử là ghi câu trả lời thật, và theo mục trên thì
+        câu hỏi bị khoá luôn từ lúc đó. (Google Forms cho nộp từ xem trước; ở đây cố ý không.)</p>
+
+      <div class="label">5. Ẩn danh — và lỗ rò qua middleware nhật ký đã chặn</div>
+      <div class="caution"><code>AuditMiddleware</code> ghi <b>cả body</b> của mọi request ghi. Body của
+        <code>POST /api/surveys/{id}/responses</code> chính là câu trả lời → khảo sát ẩn danh sẽ có nguyên
+        nội dung + <code>actor_id</code> trong <code>audit_logs</code>. Đã thêm <code>/api/surveys</code>
+        vào <code>_SKIP_PREFIXES</code>; mọi thao tác ghi tự <code>write_audit</code> ngữ nghĩa, không
+        kèm nội dung. <b>Đừng gỡ dòng đó</b> để "cho nhật ký đầy đủ".</div>
+      <p>Ẩn danh ở đây là <b>ẩn với người xem kết quả</b>, không phải ẩn ở tầng dữ liệu:
+        <code>survey_responses.staff_id</code> vẫn lưu để chặn trả lời hai lần và tính "chưa trả lời".
+        Người có quyền đọc thẳng file DB vẫn nối được. Màn soạn thảo nói rõ điều này. Kết quả ẩn danh:
+        không tên, không giờ nộp (cả ở bảng tiến độ), và dòng <b>xếp theo nội dung câu trả lời</b> — giữ
+        thứ tự nộp thì ghép với danh sách "ai đã trả lời" là ra ai viết gì.</p>
+      <table>
+        <tr><th>Cách xếp dòng ẩn danh</th><th>Kết quả</th></tr>
+        <tr><td>Trộn bằng <code>random.Random(survey_id)</code> (bản đầu)</td><td><span class="pill pill-red">Loại khi rà trước merge</span>
+          Hạt giống là id khảo sát — ai cũng biết; thứ tự nộp tra được trong Nhật ký hệ thống
+          (<code>survey.submit</code> ghi người + giờ). Người có <code>menu.logs</code> + <code>surveys.view_all</code>
+          (gán được cho người không phải admin) đảo lại phép trộn → ra ai viết dòng nào.</td></tr>
+        <tr><td>Trộn ngẫu nhiên mỗi lần mở</td><td><span class="pill pill-gray">Loại</span> thứ tự nhảy mỗi lần F5, khó đọc; mở nhiều lần cũng không lộ gì nhưng không có lợi gì hơn cách dưới</td></tr>
+        <tr><td>Xếp theo nội dung (JSON các câu trả lời) <b>(chọn)</b></td><td><span class="pill pill-green">Chọn</span>
+          Thứ tự chỉ phụ thuộc chính câu trả lời, ổn định giữa các lần mở, không mang thông tin người/giờ nộp.
+          Test <code>test_an_danh_xep_theo_noi_dung_khong_theo_thu_tu_nop</code> dùng 5 dòng: với 2 dòng, phép
+          trộn cũ tình cờ ra đúng thứ tự và test xanh cả trên mã lỗi.</td></tr>
+      </table>
+      <p><span class="pill pill-gray">Chưa xử lý</span> Người xem kết quả mở trang trước và sau khi <i>một</i>
+        người nộp (thấy trong tab Tiến độ) thì so hai lần là ra câu trả lời của người đó. Google Forms cũng
+        vậy — muốn chặn phải trễ/gộp kết quả, ngoài phạm vi.</p>
+      <p><span class="pill pill-gray">Chưa xử lý</span> Khảo sát có 1–2 người trả lời thì danh sách
+        "Đã trả lời" đủ để suy ra nội dung. Google Forms cũng vậy; không đặt ngưỡng tối thiểu.</p>
+
+      <div class="label">6. Một định nghĩa bảng cho cả cài mới và nâng cấp</div>
+      <p><code>_SURVEY_TABLES</code> ở đầu <code>migrations.py</code>, được trải vào cả
+        <code>_create_tables()</code> lẫn <code>schema_migrations</code>. Khối Quizz chép hai bản giống
+        hệt nhau — sửa một bên quên bên kia là máy cài mới và máy nâng cấp lệch schema.</p>
+
+      <div class="label">7. Biểu đồ thống kê</div>
+      <p>Câu lựa chọn / thang đo / ngày: cột <b>một màu</b> (một chuỗi dữ liệu → không legend), nhãn
+        "số (tỷ lệ%)" ở đầu cột, tooltip khi rê chuột. Lựa chọn dùng cột ngang (nhãn dài đọc trọn),
+        thang đo dùng cột đứng (trục có thứ tự). Không dùng biểu đồ tròn: 5–10 lát gần bằng nhau thì
+        mắt không so được. Tỷ lệ phản hồi là ô số liệu, không vẽ. Câu chọn nhiều tính % trên số người
+        trả lời câu đó nên tổng có thể vượt 100% — màn hình ghi chú rõ.</p>
+
+      <div class="label">8. Sửa thêm khi rà trước merge (11/09/2026, phản biện 2 lượt Sonnet)</div>
+      <table>
+        <tr><th>Lỗi bản đầu</th><th>Sửa</th></tr>
+        <tr><td>Người đang mở biểu mẫu bấm Gửi sau khi chủ vừa Lưu (câu hỏi ghi lại với id mới):
+              <code>kiem_tra_tra_loi</code> bỏ qua id lạ → <b>200 + một bài rỗng</b>, rồi câu hỏi bị khoá vì "đã có người trả lời"</td>
+            <td>Nộp mà có <code>question_id</code> không thuộc khảo sát → 409 "tải lại trang"</td></tr>
+        <tr><td><code>update_survey</code> đếm số bài NGOÀI giao dịch; bài nộp chen giữa lúc đếm và lúc xoá câu hỏi mất sạch câu trả lời (FK CASCADE)</td>
+            <td>Đếm lại sau <code>_ghi_cau_hoi</code> (đã giữ khoá ghi); có bài → rollback + 409. Không cần
+              <code>BEGIN IMMEDIATE</code>: <code>UPDATE surveys</code> trước đó đã mở giao dịch ghi. Test mô phỏng bằng kết
+              nối thứ hai commit xen giữa (<code>test_dua_bai_nop_chen_giua_luc_put_dem_va_xoa_cau_hoi</code>)</td></tr>
+        <tr><td>Bật ẩn danh khi đã có trả lời vẫn được qua API</td><td>409 khi đã có trả lời, cả hai chiều</td></tr>
+        <tr><td><code>surveys.view_all</code> đọc được bản nháp của người khác (<code>GET /{id}</code>, <code>/manage?scope=all</code>)</td>
+            <td>Nháp của người khác → 404 / không liệt kê (admin vẫn thấy)</td></tr>
+        <tr><td>Bấm Gửi hai lần liền → vỡ UNIQUE → 500 dù bài đầu đã lưu</td><td>Bắt <code>IntegrityError</code> → rollback →
+              <b>tra lại</b> đã có bài chưa: có → 409 "đã ghi nhận"; không → 409 "khảo sát vừa thay đổi". Không suy từ loại lỗi
+              được: chủ sửa/xoá khảo sát đúng lúc nộp cũng ra IntegrityError (vỡ FK) mà KHÔNG có bài — lượt rà 2 bắt được
+              bản vá đầu báo "đã ghi nhận" với 0 bài</td></tr>
+      </table>
+
+      <div class="label">Phát hiện nhưng không làm — lý do</div>
+      <table>
+        <tr><th>Việc</th><th>Lý do</th></tr>
+        <tr><td>Nhóm đích bị tắt (<code>user_groups.is_active = 0</code>) không hiện ở ô chọn nhóm → chủ mở khảo sát đang chạy, bấm Lưu là nhóm đó bị rút, người chưa trả lời bị bỏ khỏi danh sách, không báo</td>
+            <td>Hiếm (phải tắt nhóm giữa lúc khảo sát chạy) và cần quyết nghiệp vụ: nhóm tắt thì người trong đó còn nhận khảo sát không. Chưa sửa</td></tr>
+        <tr><td>Nhắc qua email / thông báo đẩy khi sắp hết hạn</td><td>Hệ thống chưa có kênh gửi thư; nhắc duy nhất là khối "Công việc chờ xử lý" — chỉ thấy khi mở hệ thống</td></tr>
+        <tr><td>Gửi theo phòng ban / từng người</td><td>Yêu cầu là "chọn nhóm user". Muốn gửi một phòng thì tạo nhóm user cho phòng đó</td></tr>
+        <tr><td>Mục "Khác…", chia phần, rẽ nhánh theo câu trả lời, tải file, lưới trắc nghiệm</td><td>Ngoài phạm vi đợt này; bảng <code>survey_questions</code> thêm được loại mới mà không đổi schema</td></tr>
+        <tr><td><code>_co_quyen()</code> nay có 4 bản (hr, attendance, handovers, surveys)</td><td>Gom về <code>deps.py</code> là đổi 3 module khác — không làm lẫn vào đợt tính năng mới</td></tr>
+        <tr><td>Giao diện chưa thử trên trình duyệt thật</td><td>Máy phát triển không có trình duyệt tự động. Đã chạy giả lập <code>nicegui.testing.User</code> nối backend thật trên bản sao DB: dựng đủ 5 trang, soạn → phát hành → trả lời bằng thao tác bấm, không lỗi handler. Bố cục/CSS (thanh thao tác cố định đáy, biểu đồ) cần người mở xem</td></tr>
+      </table>
+
+      <div class="label">Sau deploy — phải cấp quyền tay</div>
+      <p>Ba mã quyền đều mới, chưa nhóm nào có (bài học PR #70). Admin vào <b>Phân quyền theo nhóm →
+        Tính năng khác → Khảo sát</b>: tick <code>menu.surveys</code> cho các nhóm sẽ dùng, thêm
+        <code>surveys.create</code> cho người được tạo khảo sát, <code>surveys.view_all</code> cho lãnh đạo.</p>
     </div>
   </div>
 

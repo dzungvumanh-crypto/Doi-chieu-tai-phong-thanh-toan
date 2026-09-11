@@ -4,6 +4,7 @@ import sqlite3
 from fastapi import APIRouter, Depends, Query
 from backend.database import get_db, _vn_now
 from backend.core.deps import get_current_staff, TONG_HOP_CODES
+from backend.services import survey_service
 from backend.services.handover_report_service import (
     compute_period, submitted_at_sql, SUBMITTED_AT_PARAMS,
 )
@@ -164,9 +165,21 @@ def pending_counts(
         _log.error("Không đếm được sổ trực chờ xử lý: %s", e)
         so_truc_count = 0
 
+    # ── Khảo sát chưa trả lời ──
+    # Bọc riêng, cùng lý do với nhánh Sổ trực ở trên.
+    try:
+        sv_where, sv_params = survey_service.pending_filter(current["id"])
+        surveys_count = db.execute(
+            f"""SELECT COUNT(*) FROM survey_recipients r
+                JOIN surveys s ON s.id = r.survey_id WHERE {sv_where}""", sv_params
+        ).fetchone()[0] or 0
+    except sqlite3.Error as e:
+        _log.error("Không đếm được khảo sát chờ trả lời: %s", e)
+        surveys_count = 0
+
     return {
         "leaves": leaves_count, "handovers": handovers_count, "handovers_by_dept": handovers_by_dept,
-        "so_truc": so_truc_count,
+        "so_truc": so_truc_count, "surveys": surveys_count,
     }
 
 
@@ -315,7 +328,26 @@ def pending_items(
     except sqlite3.Error as e:
         _log.error("Không tải được danh sách sổ trực chờ xử lý: %s", e)
 
-    return {"leaves": leaves, "handovers": handovers, "so_truc": so_truc}
+    # ── Khảo sát chưa trả lời — hạn gần nhất lên đầu ──
+    surveys: list = []
+    try:
+        sv_where, sv_params = survey_service.pending_filter(current["id"])
+        rows = db.execute(
+            f"""SELECT s.id, s.title, s.deadline, u.full_name AS created_by_name,
+                       (SELECT COUNT(*) FROM survey_questions q WHERE q.survey_id = s.id) AS question_count
+                FROM survey_recipients r
+                JOIN surveys s ON s.id = r.survey_id
+                LEFT JOIN user_tttt u ON u.id = s.created_by
+                WHERE {sv_where}
+                ORDER BY s.deadline ASC
+                LIMIT {_ITEMS_LIMIT}""",
+            sv_params,
+        ).fetchall()
+        surveys = [dict(r) for r in rows]
+    except sqlite3.Error as e:
+        _log.error("Không tải được danh sách khảo sát chờ trả lời: %s", e)
+
+    return {"leaves": leaves, "handovers": handovers, "so_truc": so_truc, "surveys": surveys}
 
 
 @router.get("/leave-today")
