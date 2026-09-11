@@ -2,6 +2,7 @@
 tài liệu `đối chiếu Song phương.docx`, top-down, dừng ở bước đầu tiên khớp được.
 """
 
+import numpy as np
 import pandas as pd
 
 from . import load_core, load_osb
@@ -15,13 +16,24 @@ KEY_COL = "_KEY"
 
 def _khop_min_count(khoa_nguon: pd.Series, khoa_dich: pd.Series) -> pd.Series:
     """Boolean mask (cùng index `khoa_nguon`) đánh dấu dòng khớp được với `khoa_dich`, dùng
-    min(count) mỗi khoá — không phải merge 1-1 (giống `ach/b5_doi_chieu_di.py:_doi_chieu`)."""
+    min(count) mỗi khoá — không phải merge 1-1 (giống `ach/b5_doi_chieu_di.py:_doi_chieu`).
+
+    `gioi_han` tính bằng `np.minimum(dem_nguon, dem_dich.reindex(...))` (vectorized) thay vì dict
+    comprehension lặp Python qua từng khoá chung — hàm này được `_phan_loai_chuoi_khoa()` gọi lặp
+    lại nhiều lần/lượt chấm (1 lần/offset, cả 2 chiều core↔hub), khoá gần như duy nhất từng dòng ở
+    quy mô thật (~700-800 nghìn dòng/ngày, xem `load_core.py`) nên dict comprehension gần như 1
+    vòng lặp Python/dòng. `reindex` trên index của `dem_nguon` (không phải `concat` trên hợp hai
+    bên) vì 3/4 lần gọi có `khoa_nguon` đã teo lại theo `con_lai` còn `khoa_dich` vẫn là file
+    hub/core đầy đủ — `concat` phải dựng DataFrame trên toàn bộ khoá đích dù nguồn chỉ còn vài
+    nghìn dòng, đo được chậm hơn dict-loop cũ ở đúng tình huống này (Khánh review PR #89,
+    2026-09-10). Benchmark 800.000 dòng, ~720.000 khoá duy nhất, mô phỏng trọn 4 lần gọi/lượt
+    chấm: 7,1s → 3,9s (nhanh gấp 1,8 lần), kết quả giống hệt bit-for-bit (test
+    `TestKhopMinCountVectorized::test_giong_het_ban_dict_loop_tren_du_lieu_ngau_nhien`)."""
     if len(khoa_nguon) == 0 or len(khoa_dich) == 0:
         return pd.Series(False, index=khoa_nguon.index)
     dem_nguon = khoa_nguon.value_counts()
     dem_dich = khoa_dich.value_counts()
-    chung = dem_nguon.index.intersection(dem_dich.index)
-    gioi_han = {k: min(dem_nguon[k], dem_dich[k]) for k in chung}
+    gioi_han = np.minimum(dem_nguon, dem_dich.reindex(dem_nguon.index, fill_value=0))
     cc = khoa_nguon.groupby(khoa_nguon).cumcount()
     han = khoa_nguon.map(gioi_han).fillna(0)
     return cc < han

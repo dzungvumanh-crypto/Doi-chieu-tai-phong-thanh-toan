@@ -600,3 +600,53 @@ class TestTimFile:
 
         p = pipeline._tim_file_hub(tmp_path, "20260822", "202", ngay_goc="20260823")
         assert p is not None and p.name == "doichieugd_20260822__05_DEN_9999_N.zip"
+
+
+# ── match._khop_min_count — vectorized (2026-09-10, thay dict comprehension) ─
+
+def _khop_min_count_DICT_LOOP_THAM_CHIEU(khoa_nguon: pd.Series, khoa_dich: pd.Series) -> pd.Series:
+    """Bản dict-comprehension GỐC trước khi vectorize (giữ lại CHỈ để làm tham chiếu test — xác
+    nhận bản vectorized trong match.py cho kết quả giống hệt bit-for-bit trên dữ liệu ngẫu nhiên,
+    không chỉ đúng trên vài ca tay). Không dùng hàm này ở nơi khác."""
+    if len(khoa_nguon) == 0 or len(khoa_dich) == 0:
+        return pd.Series(False, index=khoa_nguon.index)
+    dem_nguon = khoa_nguon.value_counts()
+    dem_dich = khoa_dich.value_counts()
+    chung = dem_nguon.index.intersection(dem_dich.index)
+    gioi_han = {k: min(dem_nguon[k], dem_dich[k]) for k in chung}
+    cc = khoa_nguon.groupby(khoa_nguon).cumcount()
+    han = khoa_nguon.map(gioi_han).fillna(0)
+    return cc < han
+
+
+class TestKhopMinCountVectorized:
+    def test_khop_1doi1_don_gian(self):
+        khoa_nguon = pd.Series(["A", "B", "C"])
+        khoa_dich = pd.Series(["A", "C", "D"])
+        assert match._khop_min_count(khoa_nguon, khoa_dich).tolist() == [True, False, True]
+
+    def test_rong_1_ben_tra_toan_false(self):
+        khoa_nguon = pd.Series(["A", "B"])
+        assert match._khop_min_count(khoa_nguon, pd.Series([], dtype=str)).tolist() == [False, False]
+
+    def test_trung_khoa_gioi_han_bang_min_count(self):
+        """3 dòng nguồn cùng khoá 'A', đích chỉ có 2 dòng 'A' → đúng 2/3 dòng nguồn khớp
+        (không phải 0 hoặc 3) — đúng ngữ nghĩa min(count), không phải merge 1-nhiều."""
+        khoa_nguon = pd.Series(["A", "A", "A"])
+        khoa_dich = pd.Series(["A", "A", "B"])
+        assert match._khop_min_count(khoa_nguon, khoa_dich).tolist() == [True, True, False]
+
+    @pytest.mark.parametrize("seed", range(20))
+    def test_giong_het_ban_dict_loop_tren_du_lieu_ngau_nhien(self, seed):
+        """Property test: vectorized phải cho kết quả GIỐNG HỆT bản dict-comprehension gốc trên
+        nhiều bộ dữ liệu ngẫu nhiên có khoá trùng lặp (không chỉ đúng trên benchmark thủ công)."""
+        import numpy as np
+        rng = np.random.default_rng(seed)
+        n = rng.integers(50, 400)
+        vocab = [f"K{i}" for i in range(max(5, n // 6))]  # ép nhiều khoá trùng
+        khoa_nguon = pd.Series(rng.choice(vocab, size=n))
+        khoa_dich = pd.Series(rng.choice(vocab, size=rng.integers(10, n)))
+
+        ket_qua_moi = match._khop_min_count(khoa_nguon, khoa_dich)
+        ket_qua_cu = _khop_min_count_DICT_LOOP_THAM_CHIEU(khoa_nguon, khoa_dich)
+        assert ket_qua_moi.equals(ket_qua_cu), f"seed={seed} cho kết quả khác bản dict-loop gốc"

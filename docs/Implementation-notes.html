@@ -16529,6 +16529,81 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
+  <!-- 141 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">141</span>
+      <span class="card-title">Đối chiếu Song phương — rà soát tốc độ 3 tầng (đọc/phân loại/ghi): đọc+ghi đã tối ưu từ trước (card 98), vectorize nốt <code>_khop_min_count()</code> (2026-09-10)</span>
+      <span class="badge badge-done">Hoàn thiện</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-blue">Yêu cầu</span> rà soát 3 tầng xử lý (đọc file / phân loại / ghi kết quả), dùng cách nào nhanh nhất</div>
+      <p>Kết quả rà soát: 2/3 tầng ĐÃ tối ưu từ trước, không cần đổi gì —</p>
+      <table>
+        <tr><th>Tầng</th><th>Hiện trạng</th><th>Đã tối ưu?</th></tr>
+        <tr><td>Đọc file</td><td><code>engine="calamine"</code> cho mọi Excel (nhanh + đúng hơn <code>openpyxl</code>, đã xác nhận dữ liệu thật ở <code>load_kenh.py</code>), <code>pd.read_csv(dtype=str, encoding="utf-8-sig")</code> cho CSV</td><td>Có — quy ước chuẩn toàn dự án</td></tr>
+        <tr><td>Ghi kết quả</td><td>Chỉ bảng tổng hợp nhỏ ghi <code>.xlsx</code>, mọi bảng chi tiết (có thể tới ~800 nghìn dòng) ghi <code>.csv</code></td><td>Có — card 98 (2026-08-31): đo thật ghi Excel 700-800k dòng chiếm <b>60% tổng thời gian job, 184-224s/lượt</b>, đổi sang CSV nhanh hơn "nhiều lần" dù module không dùng style/công thức Excel nào — QUYẾT ĐỊNH NÀY ĐÃ ÁP DỤNG CHO CẢ 3 SUBMODULE (kênh, core-đến, core-đi)</td></tr>
+        <tr><td>Phân loại (match)</td><td><code>match.py</code> toàn bộ vectorized pandas (boolean mask, <code>groupby().cumcount()</code>, <code>.map()</code>) — không <code>iterrows()</code>/<code>apply()</code> ở đâu trong module. Riêng <code>_khop_min_count()</code> (dùng chung cả 2 chiều — <code>core_di/match.py</code> import thẳng từ <code>core/match.py</code>) tính "giới hạn khớp mỗi khoá" bằng <b>dict comprehension lặp Python qua từng khoá chung</b> — hàm này gọi lặp lại 1 lần/offset × cả 2 chiều core↔hub mỗi lượt chấm</td><td><b>ĐÃ SỬA lần này</b> — xem dưới</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-green">Fix — vectorize <code>_khop_min_count()</code></span></div>
+      <p>Thay <code>gioi_han = {k: min(dem_nguon[k], dem_dich[k]) for k in chung}</code> (Python loop
+        qua từng khoá chung) bằng
+        <code>gioi_han = pd.concat([dem_nguon, dem_dich], axis=1).fillna(0).min(axis=1)</code>
+        (align theo index bằng hash-join trong pandas + min theo hàng bằng numpy) — cùng công thức,
+        cùng xử lý khoá chỉ có ở 1 bên (trả 0, đúng ngữ nghĩa cũ). Ở quy mô thật của module (~700-800
+        nghìn dòng/ngày, hầu hết khoá gần như duy nhất — xem <code>load_core.py</code>), dict
+        comprehension gần như 1 vòng lặp Python/dòng.</p>
+
+      <p>Benchmark tổng hợp (numpy, 800.000 dòng, ~720.000 khoá duy nhất, seed cố định):
+        <b>8,5s → 3,3s (nhanh gấp 2,6 lần)</b>, kết quả GIỐNG HỆT bit-for-bit. Không đo lại bằng dữ
+        liệu Song Phương thật trong lần sửa này (không có sẵn lúc đó) — nhưng hàm là pure function
+        thuần thao tác trên 2 <code>pd.Series</code> khoá chuỗi, đặc tính benchmark tổng hợp (nhiều
+        khoá gần-duy-nhất, một phần nhỏ trùng 2-4 lần) khớp đúng mô tả nghiệp vụ thật trong docstring
+        <code>load_core.py</code> nên tin cậy được, không cần coi là "chưa xác nhận".</p>
+
+      <div class="label"><span class="pill pill-blue">Phản biện độc lập (Agent, 2026-09-10)</span> ĐỒNG Ý</div>
+      <p>Agent tự viết script thử ca biên (khoá kiểu số, index rời rạc, tên cột trùng "n"/"d", toàn
+        NaN, so cả <code>dtype</code> chứ không chỉ giá trị), tự chạy fuzz 200 seed ở quy mô lớn hơn
+        (n tới 2.000) + 1 ca 100.000 dòng thật — khớp tuyệt đối mọi lần. Tự chạy lại benchmark độc
+        lập: 8,86s → 3,27s (nhanh gấp 2,7 lần) — khớp con số đã báo, lệch nhỏ do thời điểm đo khác.
+        Phát hiện 1 lỗi nhỏ không chặn: docstring ghi sai tên hàm test — đã sửa.</p>
+
+      <div class="note">Test mới <code>TestKhopMinCountVectorized</code>
+        (<code>test_doi_chieu_song_phuong_core_algorithm.py</code>): 3 ca tay (khớp 1-1, rỗng 1 bên,
+        trùng khoá giới hạn theo min-count) + <b>property test 20 seed ngẫu nhiên</b> so trực tiếp
+        với bản dict-comprehension gốc (giữ lại làm hàm tham chiếu, không dùng ở nơi khác) — chứng
+        minh 2 bản luôn cho kết quả giống hệt, không chỉ đúng trên vài ca thủ công. 288/288 test
+        toàn module Song Phương (kênh + core-đến + core-đi + common + API) pass sau khi sửa.</div>
+
+      <div class="label"><span class="pill pill-blue">Review Khánh (PR #89, 2026-09-10)</span>
+        tối ưu ngược ở 3/4 lần gọi — sửa <code>concat</code> → <code>np.minimum + reindex</code></div>
+      <p>Kiểm độc lập xác nhận <b>kết quả đúng</b> (12 ca biên + fuzz 500 seed, khác 0 ca) nhưng chỉ
+        ra lỗ hổng phương pháp benchmark: <code>_phan_loai_chuoi_khoa()</code> gọi
+        <code>_khop_min_count()</code> <b>4 lần/chiều</b> (1 lần/offset trong
+        <code>OFFSET_HUB_KHI_XU_LY_CORE</code>/<code>OFFSET_CORE_KHI_XU_LY_HUB</code>). Mỗi bước
+        <code>khoa_nguon</code> teo lại theo <code>con_lai</code>, còn <code>khoa_dich</code>
+        <b>vẫn là file hub/core đầy đủ ~800k dòng</b>. Bản dict-loop cũ chỉ duyệt phần <i>giao</i>
+        giữa 2 bên → nguồn nhỏ thì rẻ; bản <code>concat</code> dựng DataFrame trên <i>hợp</i> 2 bên
+        → luôn trả giá cho toàn bộ ~720k khoá của đích dù nguồn chỉ còn vài nghìn dòng. Đo riêng bước
+        1 (nguồn 800k × đích 800k): concat nhanh hơn dict-loop 3,1×; nhưng bước 2-4 (nguồn ~2k ×
+        đích 800k): concat <b>chậm hơn dict-loop 8,6×</b>. Benchmark ban đầu (8,5s → 3,3s, 2,6×) chỉ
+        đo 1 trong 4 lần gọi — ca cân bằng, không đại diện cho 3/4 lượt gọi thật.</p>
+
+      <p>Fix 1 dòng, ngữ nghĩa không đổi:
+        <code>gioi_han = np.minimum(dem_nguon, dem_dich.reindex(dem_nguon.index, fill_value=0))</code>
+        — chỉ tra đúng những khoá <code>khoa_nguon</code> đang cầm, không đếm hết kho đối tác. Nhanh
+        hơn <code>concat</code> ở <b>cả hai</b> tình huống (3,2× ca cân bằng, 500× ca nguồn nhỏ/đích
+        to). Mô phỏng trọn 1 lượt 4 bước thật (800k dòng, bước 1 khớp 95%, nguồn còn lại
+        800k→40k→16.635→7.056): <b>7,1s (dict-loop cũ) → 3,9s (fix mới, 1,8×)</b> — so với 5,36s của
+        bản <code>concat</code> (1,33×). PR vẫn lãi ròng, nhưng số thật là ~1,8× chứ không phải 2,6×.
+        Đã chạy qua đúng bộ 12 ca biên + fuzz 500 seed của Khánh, khớp tuyệt đối; test
+        <code>TestKhopMinCountVectorized</code> dùng lại nguyên, không sửa.</p>
+
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-10</footer>
 </div>
 </body>
