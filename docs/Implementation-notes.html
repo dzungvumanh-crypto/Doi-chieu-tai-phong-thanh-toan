@@ -68,7 +68,8 @@
       <table>
         <tr><th>Phương án</th><th>Phút mỗi vòng PR + merge</th><th>Kết quả</th></tr>
         <tr><td>Cũ: <code>push</code> mọi nhánh + <code>pull_request</code></td><td>3 lượt (push, PR, push develop khi merge)</td>
-            <td><span class="pill pill-red">Bỏ</span> 2 trong 3 lượt kiểm lại đúng nội dung đã kiểm</td></tr>
+            <td><span class="pill pill-red">Bỏ</span> lượt push nhánh trùng hẳn lượt PR; lượt push develop sau merge trùng
+              lượt PR <i>khi develop đứng yên</i> — xem đánh đổi bên dưới</td></tr>
         <tr><td>Bỏ hẳn CI</td><td>0</td>
             <td><span class="pill pill-red">Loại</span> người khác (nhánh nostro, PR của Vũ Mạnh Dũng) cũng đẩy vào develop —
               chạy tại máy phụ thuộc trí nhớ từng người; 2 lỗi F821 hôm nay lọt qua đúng đường đó. CI còn chạy trên máy
@@ -78,8 +79,19 @@
             <td><span class="pill pill-green">Chọn</span> + <code>concurrency</code> huỷ lượt cũ khi PR có commit mới,
               + <code>paths-ignore</code> PR chỉ sửa <code>*.md</code>/<code>docs/**</code></td></tr>
       </table>
-      <p><b>Đánh đổi đã chấp nhận:</b> đẩy thẳng lên develop (không qua PR) — kiểu các commit "docs: ghi lại PR #…" —
-        không có CI. Muốn kiểm thì bấm "Run workflow" hoặc chạy tại máy. PR chỉ sửa tài liệu cũng không có CI.</p>
+      <p><b>Đánh đổi đã chấp nhận:</b></p>
+      <ul>
+        <li><b>Mất lưới "sau khi gộp"</b> (phản biện bắt): CI của PR kiểm bản gộp thử với develop <i>tại lúc đẩy commit
+          cuối</i>. Nhiều người cùng gộp vào develop (nhánh nostro, PR Vũ Mạnh Dũng) → hai PR xanh riêng lẻ, gộp lần lượt,
+          có thể hỏng khi đi chung — trước đây lượt push develop bắt được. Bù bằng quy tắc trong <code>docs/SKILL.md</code>:
+          develop tiến lên sau lượt CI xanh cuối thì <code>gh pr update-branch</code> cho CI chạy lại rồi mới merge.</li>
+        <li>Đẩy thẳng lên develop không có CI — chỉ dùng cho commit tài liệu (kiểu "docs: ghi lại PR #…"). Muốn kiểm thì
+          "Run workflow" hoặc chạy tại máy.</li>
+        <li>PR chỉ sửa <code>*.md</code>/<code>docs/**</code> không có CI. Đã kiểm: không mã/test nào đọc file trong
+          <code>docs/</code> (mọi chỗ nhắc tới đều là chú thích).</li>
+        <li>PR mở vào nhánh khác rồi đổi base sang develop: sự kiện <code>edited</code> không nằm trong mặc định của
+          <code>pull_request</code> → chưa có CI tới lần đẩy kế tiếp.</li>
+      </ul>
       <p><b>Khi CI không chạy được:</b> người dùng chốt dùng chạy tại máy trên đúng commit của PR (ruff cổng đỏ + full
         pytest), dán kết quả vào PR rồi merge — quy tắc ghi ở <code>docs/SKILL.md</code>. PR #93 merge theo cách này
         (commit 3b43e78: ruff sạch, 1891 passed). Không áp dụng khi CI đỏ vì lỗi mã.</p>
