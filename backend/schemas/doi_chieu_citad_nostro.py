@@ -40,6 +40,10 @@ class SessionIn(BaseModel):
     kiem_soat: Optional[str] = ""
     cD: dict = {}   # cD[cong]["gtt"|"gtc"] = {"soMon": float, "soTien": float}
     phD: dict = {}  # phD["gtt"|"gtc_truoc"|"gtc_tu"] = {"soMon": float, "soTien": float}
+    # None = LUÔN tạo bảng MỚI của chính người gọi. Có giá trị = đang lưu
+    # tiếp ĐÚNG bảng đó (`id` cụ thể) — mirror SessionIn.session_id của
+    # doi_chieu_citad.py (Phòng Thanh toán), từ 11/09/2026 (nhiều bảng/kỳ).
+    session_id: Optional[int] = None
 
 
 class CitadBufferIn(BaseModel):

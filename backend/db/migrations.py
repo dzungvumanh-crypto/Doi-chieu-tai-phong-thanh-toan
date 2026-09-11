@@ -2212,6 +2212,117 @@ def _ensure_indexes():
     finally:
         _raw_dc3.close()
 
+    # ── Rebuild doi_chieu_citad_nostro_sessions: khoá `ky` riêng → `id` (2026-09-11) ──
+    # Nostro/Vostro ban đầu port module CITAD-PaymentHub theo đúng mô hình "1 bản
+    # ghi CHUNG/kỳ" (ky TEXT PRIMARY KEY) — xác nhận thực tế nghiệp vụ (11/09/2026):
+    # NHIỀU NGƯỜI cần giữ bảng RIÊNG cho CÙNG 1 kỳ, không ai ghi đè ai — đúng bài
+    # toán Phòng Thanh toán đã giải bằng 3 lần rebuild ở trên. Áp dụng thẳng
+    # SCHEMA CUỐI của PTT (id PK, bỏ hẳn UNIQUE) — không cần đi qua các bước
+    # trung gian (UNIQUE(ngay,staff_id) rồi UNIQUE(ngay,created_by)) vì Nostro
+    # chưa từng cần "1 người 1 bảng/kỳ", đi thẳng luôn.
+    #
+    # KHÁC PTT: không có cột `status` — Nostro không có khái niệm "chốt bản
+    # cuối"/khoá (chưa ai yêu cầu tính năng đó cho module này).
+    _raw_ncs = sqlite3.connect(DB_PATH)
+    _raw_ncs.isolation_level = None
+    try:
+        _cur_ncs = _raw_ncs.cursor()
+        _cur_ncs.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='doi_chieu_citad_nostro_sessions'"
+        )
+        if _cur_ncs.fetchone():
+            _cur_ncs.execute("PRAGMA table_info(doi_chieu_citad_nostro_sessions)")
+            _ncs_cols = {row[1] for row in _cur_ncs.fetchall()}
+            if "id" not in _ncs_cols:  # chưa rebuild lần nào — bảng vẫn khoá theo `ky`
+                _mig_log_ncs = logging.getLogger(__name__)
+                _mig_log_ncs.info(
+                    "Rebuilding doi_chieu_citad_nostro_sessions (khoá ky riêng → id, "
+                    "cho phép nhiều bảng/kỳ)..."
+                )
+                _cur_ncs.execute("PRAGMA foreign_keys = OFF")
+                _cur_ncs.execute("PRAGMA legacy_alter_table = ON")
+                _cur_ncs.execute("BEGIN EXCLUSIVE")
+                try:
+                    _cur_ncs.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type='table' "
+                        "AND name='_doi_chieu_citad_nostro_sessions_bak'"
+                    )
+                    if _cur_ncs.fetchone():
+                        _cur_ncs.execute("DROP TABLE _doi_chieu_citad_nostro_sessions_bak")
+                    _cur_ncs.execute(
+                        "ALTER TABLE doi_chieu_citad_nostro_sessions "
+                        "RENAME TO _doi_chieu_citad_nostro_sessions_bak"
+                    )
+                    _cur_ncs.execute("""
+                        CREATE TABLE doi_chieu_citad_nostro_sessions (
+                            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                            ky          TEXT    NOT NULL,
+                            data        TEXT    NOT NULL,
+                            updated_at  DATETIME,
+                            updated_by  INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+                            created_by  INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL
+                        )
+                    """)
+                    # Bảng cũ CHƯA từng có `id` — không cần giữ id cũ (khác lần
+                    # rebuild PTT thứ 3, lúc đó id cũ đã là khoá ngoại của
+                    # history). Mỗi dòng cũ (1 dòng/kỳ) trở thành đúng 1 bảng,
+                    # id tự sinh mới.
+                    _cur_ncs.execute("""
+                        INSERT INTO doi_chieu_citad_nostro_sessions
+                            (ky, data, updated_at, updated_by, created_by)
+                        SELECT ky, data, updated_at, updated_by, created_by
+                        FROM _doi_chieu_citad_nostro_sessions_bak
+                    """)
+                    _cur_ncs.execute("DROP TABLE _doi_chieu_citad_nostro_sessions_bak")
+                    _cur_ncs.execute("COMMIT")
+                    _mig_log_ncs.info("doi_chieu_citad_nostro_sessions rebuild hoàn tất")
+                except Exception as _ncs_err:
+                    _cur_ncs.execute("ROLLBACK")
+                    logging.getLogger(__name__).error(
+                        "doi_chieu_citad_nostro_sessions rebuild thất bại: %s", _ncs_err
+                    )
+                    raise
+                finally:
+                    _cur_ncs.execute("PRAGMA legacy_alter_table = OFF")
+                    _cur_ncs.execute("PRAGMA foreign_keys = ON")
+    finally:
+        _raw_ncs.close()
+
+    # `doi_chieu_citad_nostro_history` cần biết bảng nào (session_id) mỗi lần lưu
+    # thuộc về — trước đây chỉ có `ky`, không phân biệt được bảng nào trong nhiều
+    # bảng cùng kỳ. ADD COLUMN thường (không cần rebuild) vì chỉ thêm cột mới,
+    # không đổi khoá chính.
+    _raw_nch = sqlite3.connect(DB_PATH)
+    try:
+        _raw_nch.execute(
+            "ALTER TABLE doi_chieu_citad_nostro_history ADD COLUMN session_id "
+            "INTEGER REFERENCES doi_chieu_citad_nostro_sessions(id) ON DELETE SET NULL"
+        )
+        _raw_nch.commit()
+    except Exception as _nch_exc:
+        if "duplicate column" not in str(_nch_exc).lower():
+            raise
+    finally:
+        _raw_nch.close()
+
+    # Backfill 1 lần: tại THỜI ĐIỂM migrate, mỗi `ky` cũ chỉ có ĐÚNG 1 bảng (bất
+    # biến cũ trước khi rebuild ở trên) — nên MỌI lịch sử cũ của `ky` đó chắc
+    # chắn thuộc về đúng bảng vừa được cấp `id` cho `ky` đó. Không khớp được thì
+    # để NULL (giữ đúng semantics "không rõ bảng nào" thay vì gán bừa).
+    _raw_nchb = sqlite3.connect(DB_PATH)
+    try:
+        _raw_nchb.execute("""
+            UPDATE doi_chieu_citad_nostro_history
+            SET session_id = (
+                SELECT id FROM doi_chieu_citad_nostro_sessions s
+                WHERE s.ky = doi_chieu_citad_nostro_history.ky
+            )
+            WHERE session_id IS NULL
+        """)
+        _raw_nchb.commit()
+    finally:
+        _raw_nchb.close()
+
     index_stmts = [
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_entry_staff_date ON document_entries(handover_id, staff_id, transaction_date)",
         "CREATE INDEX IF NOT EXISTS ix_source_users_dept      ON source_users(department_id)",
@@ -2289,6 +2400,17 @@ def _ensure_indexes():
         # khiến mỗi đơn bat_buoc quét lại toàn bộ leave_records, chi phí tăng
         # theo bình phương số dòng thay vì tuyến tính.
         "CREATE INDEX IF NOT EXISTS ix_leave_records_adj ON leave_records(adjusts_leave_id)",
+        # ── Đối chiếu CITAD - PaymentHub N&V — 2026-09-11 ──────────────────────
+        # doi_chieu_citad_history KHÔNG có bản sao chép cho module Nostro/Vostro:
+        # bảng doi_chieu_citad_nostro_history thiếu hẳn index theo `ky`, trong khi
+        # get_reconciliation_history()/get_reconciliation_days() (doi_chieu_citad_nostro_service.py)
+        # đều lọc/join theo `ky` — mỗi lần mở tab "Lịch sử" hay tải 1 bản cũ là
+        # quét toàn bảng, càng nhiều lượt lưu (mọi người trong phòng, mọi kỳ)
+        # càng chậm dần.
+        "CREATE INDEX IF NOT EXISTS ix_doi_chieu_citad_nostro_history_ky ON doi_chieu_citad_nostro_history(ky)",
+        # mirror ix_doi_chieu_citad_history_session_id (PTT) — get_reconciliation_history()
+        # và so_lan_luu trong get_reconciliation_days() lọc/đếm theo session_id.
+        "CREATE INDEX IF NOT EXISTS ix_doi_chieu_citad_nostro_history_session_id ON doi_chieu_citad_nostro_history(session_id)",
     ]
     conn = sqlite3.connect(DB_PATH, timeout=30)
     try:

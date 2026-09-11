@@ -158,11 +158,11 @@ def extension_version(current: dict = Depends(require_feature("menu.doi_chieu_ci
     return {"version": svc.get_extension_latest_version()}
 
 
-# ── Session theo kỳ đối chiếu — 1 bản CHUNG cho cả phòng ──────────────────
-# QUAN TRỌNG: {ky:path} là path converter "tham lam" (khớp cả dấu "/" trong
-# ky="dd/mm/yyyy-dd/mm/yyyy") — mọi route có tiền tố "/session/{ky:path}"
-# phải đăng ký route cụ thể hơn ("/history") TRƯỚC route trần này, giống hệt
-# lưu ý trong backend/api/doi_chieu_citad.py.
+# ── Session theo kỳ đối chiếu — NHIỀU bảng độc lập/kỳ, mỗi bảng 1 chủ ─────
+# Từ 11/09/2026: đổi routing theo `ky:path` (path converter "tham lam") sang
+# `{session_id:int}` (mirror doi_chieu_citad.py — /session-by-id/{session_id})
+# — converter `int` không có vấn đề "tham lam" nên không còn cần lưu ý thứ tự
+# đăng ký route như bản `{ky:path}` cũ.
 @router.get("/sessions")
 def list_sessions(db=Depends(get_db), current: dict = Depends(require_feature("menu.doi_chieu_citad_nostro"))):
     return svc.session_list(db)
@@ -194,18 +194,18 @@ def period_check(
     return svc.check_period_overlap(db, tu_ngay, den_ngay, exclude_ky)
 
 
-@router.get("/session/{ky:path}/history")
+@router.get("/session-by-id/{session_id}/history")
 def get_reconciliation_history(
-    ky: str, db=Depends(get_db), current: dict = Depends(require_feature("menu.doi_chieu_citad_nostro"))
+    session_id: int, db=Depends(get_db), current: dict = Depends(require_feature("menu.doi_chieu_citad_nostro"))
 ):
-    return svc.get_reconciliation_history(db, ky)
+    return svc.get_reconciliation_history(db, session_id)
 
 
-@router.get("/session/{ky:path}")
+@router.get("/session-by-id/{session_id}")
 def get_session(
-    ky: str, db=Depends(get_db), current: dict = Depends(require_feature("menu.doi_chieu_citad_nostro"))
+    session_id: int, db=Depends(get_db), current: dict = Depends(require_feature("menu.doi_chieu_citad_nostro"))
 ):
-    return svc.session_get(db, ky) or {}
+    return svc.session_get(db, session_id) or {}
 
 
 @router.post("/session")
@@ -221,15 +221,27 @@ def save_session(
         raise HTTPException(400, str(e))
     payload = data.model_dump()
     payload["ky"] = ky
-    svc.session_save(db, ky, current["id"], payload)
-    return {"ok": True}
+    session_id = payload.pop("session_id")
+    try:
+        new_session_id = svc.session_save(db, ky, current["id"], payload, session_id)
+    except svc.SessionForbiddenError as e:
+        raise HTTPException(403, str(e))
+    except svc.SessionNotFoundError as e:
+        raise HTTPException(404, str(e))
+    return {"ok": True, "session_id": new_session_id}
 
 
-@router.delete("/session/{ky:path}")
+@router.delete("/session-by-id/{session_id}")
 def delete_session(
-    ky: str, db=Depends(get_db), current: dict = Depends(require_feature("menu.doi_chieu_citad_nostro"))
+    session_id: int, db=Depends(get_db), current: dict = Depends(require_feature("menu.doi_chieu_citad_nostro"))
 ):
-    svc.session_delete(db, ky)
+    is_admin = current["role"] == "admin"
+    try:
+        svc.session_delete(db, session_id, current["id"], is_admin)
+    except svc.SessionNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except svc.SessionForbiddenError as e:
+        raise HTTPException(403, str(e))
     return {"ok": True}
 
 
