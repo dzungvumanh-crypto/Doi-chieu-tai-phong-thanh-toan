@@ -72,3 +72,21 @@ class ExportIn(BaseModel):
     ks: str = ""
     cD: dict = {}
     phD: dict = {}
+
+
+class MonthSummaryIn(BaseModel):
+    """Xem trước tổng tháng (không xuất Excel) — người dùng tick/bỏ tick
+    bảng nào tính vào tổng, gọi lại endpoint này để cập nhật số liệu hiển
+    thị trên màn "Tổng hợp tháng" mỗi lần đổi tick."""
+    session_ids: list[int] = []
+
+
+class MonthSummaryExportIn(BaseModel):
+    """Xuất Excel tổng hợp tháng — cộng dồn cD/phD của các bảng
+    (`session_ids`) người dùng đã tick chọn, xem
+    `svc.combine_sessions_cD_phD()`."""
+    nam: int
+    thang: int
+    session_ids: list[int] = []
+    lb: str = ""
+    ks: str = ""

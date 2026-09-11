@@ -24,8 +24,10 @@ gốc) + toàn bộ nhóm session/lịch sử/export (khoá theo `ky`, không ph
 """
 from __future__ import annotations
 
+import calendar
 import io
 import re
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
@@ -38,6 +40,8 @@ from backend.core.deps import require_feature
 from backend.schemas.doi_chieu_citad_nostro import (
     CitadBufferIn,
     ExportIn,
+    MonthSummaryExportIn,
+    MonthSummaryIn,
     PaymentHubBufferIn,
     SessionIn,
 )
@@ -253,6 +257,66 @@ def get_history_entry(
     if data is None:
         raise HTTPException(404, "Không tìm thấy bản ghi lịch sử này")
     return data
+
+
+# ── Tổng hợp tháng — cộng dồn nhiều bảng/kỳ do người dùng tick chọn ────────
+@router.get("/month-sessions")
+def get_month_sessions(
+    nam: int, thang: int, db=Depends(get_db), current: dict = Depends(require_feature("menu.doi_chieu_citad_nostro"))
+):
+    """Trả 1 lần cả 2 thứ màn "Tổng hợp tháng" cần lúc mở: danh sách bảng
+    của tháng (để tick chọn) và danh sách ngày còn thiếu (để nhắc chấm bù) —
+    gộp chung tránh 2 round-trip."""
+    return {
+        "sessions": svc.get_sessions_for_month(db, nam, thang),
+        "missing_days": svc.get_month_missing_days(db, nam, thang),
+    }
+
+
+@router.post("/month-summary")
+def month_summary(
+    data: MonthSummaryIn, db=Depends(get_db), current: dict = Depends(require_feature("menu.doi_chieu_citad_nostro"))
+):
+    """Xem trước tổng (không xuất Excel) — gọi lại mỗi khi người dùng
+    tick/bỏ tick bảng nào đó trên màn "Tổng hợp tháng"."""
+    cD, phD = svc.combine_sessions_cD_phD(db, data.session_ids)
+    ci, hub = svc.compute_totals({"cD": cD, "phD": phD})
+    return {
+        "ci": {loai: {fld: float(ci[loai][fld]) for fld in ("soMon", "soTien")} for loai in ci},
+        "hub": {loai: {fld: float(hub[loai][fld]) for fld in ("soMon", "soTien")} for loai in hub},
+    }
+
+
+@router.post("/month-summary/export")
+async def export_month_summary(
+    data: MonthSummaryExportIn, db=Depends(get_db),
+    current: dict = Depends(require_feature("menu.doi_chieu_citad_nostro")),
+):
+    if not data.session_ids:
+        raise HTTPException(400, "Chưa chọn bảng nào để tính vào tổng tháng.")
+    try:
+        first = datetime(data.nam, data.thang, 1)
+        last_day = calendar.monthrange(data.nam, data.thang)[1]
+        last = datetime(data.nam, data.thang, last_day)
+    except ValueError as e:
+        raise HTTPException(400, f"Tháng/năm không hợp lệ: {e}")
+    cD, phD = svc.combine_sessions_cD_phD(db, data.session_ids)
+    export_data = ExportIn(
+        tu_ngay=first.strftime("%d/%m/%Y"),
+        den_ngay=last.strftime("%d/%m/%Y"),
+        sheet_name=f"Thang_{data.thang:02d}.{data.nam}",
+        lb=data.lb,
+        ks=data.ks,
+        cD=cD,
+        phD=phD,
+    )
+    buf = await run_heavy(svc.build_xlsx_nostro, export_data)
+    fname = _safe_filename(f"Tong_hop_thang_{data.thang:02d}.{data.nam}.xlsx")
+    return StreamingResponse(
+        io.BytesIO(buf),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
 
 
 # ── Xuất Excel ────────────────────────────────────────────────────────────

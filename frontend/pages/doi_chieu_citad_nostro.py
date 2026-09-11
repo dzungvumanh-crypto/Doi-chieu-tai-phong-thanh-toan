@@ -723,6 +723,167 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
         history_refresh["fn"] = load_history
         ui.timer(0.1, load_history, once=True)
 
+    def _parse_ky_range_local(ky: str):
+        """Bản rút gọn của `_parse_ky_range()` bên
+        `backend/services/doi_chieu_citad_nostro_service.py` — dùng để tính
+        cảnh báo chồng ngày NGAY TRÊN TRÌNH DUYỆT (không gọi thêm API) khi
+        người dùng tick/bỏ tick bảng ở màn "Tổng hợp tháng"."""
+        try:
+            tu_s, den_s = ky.split("-", 1)
+            tu = datetime.datetime.strptime(tu_s.strip(), "%d/%m/%Y")
+            den = datetime.datetime.strptime(den_s.strip(), "%d/%m/%Y")
+            return (tu, den) if tu <= den else (den, tu)
+        except Exception:
+            return None
+
+    def _build_month_summary_panel():
+        with ui.row().classes("w-full items-end gap-3 flex-wrap mb-2"):
+            nam_input = ui.number("Năm", value=datetime.date.today().year, format="%.0f").props(
+                "dense outlined"
+            ).classes("w-28")
+            thang_input = ui.number("Tháng", value=datetime.date.today().month, min=1, max=12, format="%.0f").props(
+                "dense outlined"
+            ).classes("w-24")
+            ui.button("Tải danh sách bảng", icon="search", on_click=lambda: load_month()).props("outline")
+            lb_thang_input = ui.input("Người lập bảng", value="").props("dense outlined").classes("w-52")
+            ks_thang_input = ui.input("Người kiểm soát", value="").props("dense outlined").classes("w-52")
+
+        missing_box = ui.column().classes("w-full")
+        checklist_box = ui.column().classes("w-full gap-0 border border-gray-200 rounded-xl overflow-hidden")
+        overlap_box = ui.column().classes("w-full")
+        with ui.row().classes("w-full items-center gap-4 p-3 bg-amber-50 border border-amber-200 rounded-lg mt-2") as total_box:
+            total_label = ui.label("Chưa tính tổng — tải danh sách bảng rồi tick chọn.").classes(
+                "text-sm text-amber-800 flex-grow"
+            )
+            xuat_thang_btn = ui.button("Xuất Excel tháng", icon="download").props("outline")
+
+        state = {"sessions": [], "checks": {}}  # session_id -> ui.checkbox
+
+        def _recompute_overlap():
+            overlap_box.clear()
+            checked_ids = [sid for sid, cb in state["checks"].items() if cb.value]
+            ranges = []
+            for s in state["sessions"]:
+                if s["session_id"] in checked_ids:
+                    rng = _parse_ky_range_local(s["ky"])
+                    if rng:
+                        ranges.append((s["ky"], rng[0], rng[1]))
+            chong = []
+            for i in range(len(ranges)):
+                for j in range(i + 1, len(ranges)):
+                    _, s1, e1 = ranges[i]
+                    _, s2, e2 = ranges[j]
+                    if s1 <= e2 and s2 <= e1:
+                        chong.append((ranges[i][0], ranges[j][0]))
+            if chong:
+                with overlap_box:
+                    with ui.row().classes("w-full items-start gap-2 p-2 bg-red-50 border border-red-200 rounded-lg"):
+                        ui.icon("warning").classes("text-red-600")
+                        noi_dung = "; ".join(f"{a} ↔ {b}" for a, b in chong)
+                        ui.label(f"⚠ Các bảng đang tick CHỒNG NGÀY nhau: {noi_dung} — có thể bị tính trùng.").classes(
+                            "text-sm text-red-700"
+                        )
+
+        async def _recompute_total():
+            checked_ids = [sid for sid, cb in state["checks"].items() if cb.value]
+            if not checked_ids:
+                total_label.text = "Chưa chọn bảng nào — tổng tháng = 0."
+                return
+            try:
+                res = await asyncio.to_thread(
+                    api.post, "/api/doi-chieu-citad-nostro/month-summary", {"session_ids": checked_ids}
+                )
+            except Exception as e:
+                if _handle_api_error(e):
+                    return
+                total_label.text = f"Lỗi tính tổng: {e}"
+                return
+            ci, hub = res["ci"], res["hub"]
+            parts = []
+            for loai, ten in (("gtt", "GTT"), ("gtc", "GTC")):
+                dfm = ci[loai]["soMon"] - hub[loai]["soMon"]
+                dft = ci[loai]["soTien"] - hub[loai]["soTien"]
+                khop = dfm == 0 and dft == 0
+                dau = "✓" if khop else "⚠"
+                parts.append(
+                    f"{dau} {ten}: CITAD {fmt(ci[loai]['soMon'])}/{fmt(ci[loai]['soTien'])} — "
+                    f"HUB {fmt(hub[loai]['soMon'])}/{fmt(hub[loai]['soTien'])} — "
+                    f"Chênh lệch {fmt(dfm)}/{fmt(dft)}"
+                )
+            total_label.text = f"Đang tính trên {len(checked_ids)} bảng — " + "  |  ".join(parts)
+
+        async def _on_check_change():
+            _recompute_overlap()
+            await _recompute_total()
+
+        async def load_month():
+            try:
+                res = await asyncio.to_thread(
+                    api.get, "/api/doi-chieu-citad-nostro/month-sessions",
+                    params={"nam": int(nam_input.value), "thang": int(thang_input.value)},
+                )
+            except Exception as e:
+                if _handle_api_error(e):
+                    return
+                ui.notify(f"Lỗi tải danh sách tháng: {e}", type="negative")
+                return
+            state["sessions"] = res["sessions"]
+            state["checks"] = {}
+
+            missing_box.clear()
+            with missing_box:
+                if res["missing_days"]:
+                    with ui.row().classes("w-full items-start gap-2 p-2 bg-red-50 border border-red-200 rounded-lg mb-2"):
+                        ui.icon("event_busy").classes("text-red-600")
+                        ui.label(
+                            f"⚠ Còn {len(res['missing_days'])} ngày CHƯA ai chấm trong tháng này — "
+                            "cần chấm bù: " + ", ".join(res["missing_days"])
+                        ).classes("text-sm text-red-700")
+                else:
+                    with ui.row().classes("w-full items-center gap-2 p-2 bg-emerald-50 border border-emerald-200 rounded-lg mb-2"):
+                        ui.icon("check_circle").classes("text-emerald-600")
+                        ui.label("Đã đủ bảng phủ hết mọi ngày trong tháng.").classes("text-sm text-emerald-700")
+
+            checklist_box.clear()
+            with checklist_box:
+                if not res["sessions"]:
+                    ui.label("Chưa có bảng nào cho tháng này.").classes("text-sm text-gray-500 p-3")
+                for s in res["sessions"]:
+                    with ui.row().classes(
+                        "w-full items-center gap-2 px-3 py-1.5 border-b border-gray-200 last:border-b-0"
+                    ):
+                        cb = ui.checkbox(value=True, on_change=lambda: asyncio.create_task(_on_check_change()))
+                        state["checks"][s["session_id"]] = cb
+                        name = s["created_by_name"] or s["created_by_username"] or "(không rõ)"
+                        ui.label(f"{s['ky']} — {name}").classes("text-sm flex-grow")
+
+            _recompute_overlap()
+            await _recompute_total()
+
+        async def _do_download_month_export():
+            checked_ids = [sid for sid, cb in state["checks"].items() if cb.value]
+            if not checked_ids:
+                ui.notify("Chưa chọn bảng nào để xuất.", type="warning")
+                return
+            try:
+                content = await asyncio.to_thread(
+                    api.post_download, "/api/doi-chieu-citad-nostro/month-summary/export", {
+                        "nam": int(nam_input.value), "thang": int(thang_input.value),
+                        "session_ids": checked_ids,
+                        "lb": lb_thang_input.value, "ks": ks_thang_input.value,
+                    },
+                )
+            except Exception as e:
+                if _handle_api_error(e):
+                    return
+                ui.notify(f"Lỗi xuất Excel tháng: {e}", type="negative")
+                return
+            fname = f"Tong_hop_thang_{int(thang_input.value):02d}.{int(nam_input.value)}.xlsx"
+            ui.download(content, fname)
+
+        xuat_thang_btn.on_click(_do_download_month_export)
+        ui.timer(0.1, load_month, once=True)
+
     async def _do_download_export():
         try:
             content = await asyncio.to_thread(
@@ -855,6 +1016,7 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
             ).classes("w-full border-b border-gray-200 mb-1") as tabs:
                 tab_doi_chieu = ui.tab("Đối chiếu")
                 tab_lich_su = ui.tab("Lịch sử")
+                tab_tong_hop_thang = ui.tab("Tổng hợp tháng")
                 tab_extension = ui.tab("Kết nối Extension")
 
             with ui.tab_panels(tabs, value=tab_doi_chieu).classes("w-full"):
@@ -968,6 +1130,17 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
                     with _section_card("Lịch sử đối chiếu", icon="history", accent="blue"):
                         with ui.column().classes("w-full gap-2 p-4"):
                             _build_history_panel()
+
+                with ui.tab_panel(tab_tong_hop_thang):
+                    with _section_card("Tổng hợp tháng", icon="calendar_view_month", accent="amber"):
+                        with ui.column().classes("w-full gap-2 p-4"):
+                            ui.label(
+                                "Cộng dồn số liệu của các bảng (kỳ) trong 1 tháng thành báo cáo tháng — "
+                                "bạn tự tick chọn bảng nào tính vào tổng (bỏ tick bảng nào bị trùng ngày "
+                                "với bảng khác). Danh sách hiện TẤT CẢ bảng của cả phòng cho tháng đó, "
+                                "không riêng bảng của bạn."
+                            ).classes("text-sm text-gray-500")
+                            _build_month_summary_panel()
 
                 with ui.tab_panel(tab_extension):
                     with _section_card("Kết nối Extension Chrome", icon="extension", accent="rose"):

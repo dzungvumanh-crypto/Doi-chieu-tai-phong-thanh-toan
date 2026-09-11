@@ -26,6 +26,7 @@ chiều Đến, không có ngoại tệ, chỉ 1 nguồn HUB nên chỉ 1 cặp 
 """
 from __future__ import annotations
 
+import calendar
 import hashlib
 import io
 import json
@@ -576,6 +577,101 @@ def get_history_entry_data(db: sqlite3.Connection, history_id: int) -> dict | No
         "SELECT data FROM doi_chieu_citad_nostro_history WHERE id=?", (history_id,)
     ).fetchone()
     return json.loads(row["data"]) if row else None
+
+
+# ── Tổng hợp tháng — cộng dồn NHIỀU bảng (nhiều kỳ/nhiều người) thành 1 báo
+# cáo tháng, người dùng tự chọn bảng nào tính vào tổng (tự tick, tránh tính
+# trùng khi có bảng chồng ngày — xác nhận yêu cầu thực tế 11/09/2026: file
+# Excel mẫu cũ của phòng có dòng "Cả tháng" = cộng dồn các dòng theo NGÀY;
+# công cụ mới không chấm theo ngày mà theo "kỳ" tự do nên "Cả tháng" ở đây =
+# cộng dồn các BẢNG (kỳ) người dùng chọn, không phải cộng theo ngày) ────────
+def _month_range(nam: int, thang: int) -> tuple[datetime, datetime]:
+    last_day = calendar.monthrange(nam, thang)[1]
+    return datetime(nam, thang, 1), datetime(nam, thang, last_day)
+
+
+def get_sessions_for_month(db: sqlite3.Connection, nam: int, thang: int) -> list[dict]:
+    """Mọi bảng có kỳ GIAO (dù chỉ 1 phần) với tháng nam-thang — dùng cho
+    màn "Tổng hợp tháng" chọn bảng tính vào tổng. Trả phẳng, sắp theo ngày
+    bắt đầu kỳ, y hệt cách sắp của `get_reconciliation_days()`."""
+    thang_start, thang_end = _month_range(nam, thang)
+    rows = db.execute(
+        """SELECT s.id AS session_id, s.ky, s.created_by,
+                  u.username AS created_by_username, u.full_name AS created_by_name
+           FROM doi_chieu_citad_nostro_sessions s
+           LEFT JOIN user_tttt u ON u.id = s.created_by"""
+    ).fetchall()
+    out = []
+    for r in rows:
+        rng = _parse_ky_range(r["ky"])
+        if not rng:
+            continue
+        s, e = rng
+        if s > thang_end or e < thang_start:
+            continue  # kỳ nằm ngoài tháng, không liên quan
+        out.append({
+            "session_id": r["session_id"],
+            "ky": r["ky"],
+            "created_by": r["created_by"],
+            "created_by_username": r["created_by_username"],
+            "created_by_name": r["created_by_name"],
+        })
+    out.sort(key=lambda d: _parse_ky_start(d["ky"]) or datetime.min)
+    return out
+
+
+def get_month_missing_days(db: sqlite3.Connection, nam: int, thang: int) -> list[str]:
+    """Những ngày trong tháng CHƯA có bảng nào (bất kỳ ai) phủ tới — để
+    nhắc chấm bù. Tính trên TẤT CẢ bảng đang có của tháng (không phụ thuộc
+    bảng nào được tick vào tổng ở màn hình — mục đích khác nhau: đây là hỏi
+    "ngày nào chưa ai chấm", không phải "ngày nào đang được cộng vào tổng")."""
+    thang_start, thang_end = _month_range(nam, thang)
+    covered: set[datetime] = set()
+    for sess in get_sessions_for_month(db, nam, thang):
+        rng = _parse_ky_range(sess["ky"])
+        if not rng:
+            continue
+        s, e = max(rng[0], thang_start), min(rng[1], thang_end)
+        d = s
+        while d <= e:
+            covered.add(d)
+            d += timedelta(days=1)
+    missing = []
+    d = thang_start
+    while d <= thang_end:
+        if d not in covered:
+            missing.append(d.strftime("%d/%m/%Y"))
+        d += timedelta(days=1)
+    return missing
+
+
+def combine_sessions_cD_phD(db: sqlite3.Connection, session_ids: list[int]) -> tuple[dict, dict]:
+    """Cộng dồn cD/phD (bằng Decimal, xem `_dec()`) của các bảng được người
+    dùng tick chọn — kết quả có CÙNG cấu trúc với cD/phD của 1 bảng đơn, nên
+    dùng thẳng lại được `build_xlsx_nostro()` (chỉ khác tu_ngay/den_ngay
+    truyền vào là cả tháng thay vì 1 kỳ) mà không cần viết hàm xuất Excel
+    riêng cho báo cáo tháng."""
+    dec_cD = {c: {l: {"soMon": Decimal(0), "soTien": Decimal(0)} for l in LOAI_CITAD} for c in CONGS}
+    dec_phD = {r: {"soMon": Decimal(0), "soTien": Decimal(0)} for r in ("gtt", "gtc_truoc", "gtc_tu")}
+    for sid in session_ids:
+        sess = session_get(db, sid)
+        if not sess:
+            continue
+        cD = sess.get("cD") or {}
+        for c in CONGS:
+            cd = cD.get(c, {}) or {}
+            for l in LOAI_CITAD:
+                src = cd.get(l, {}) or {}
+                for fld in ("soMon", "soTien"):
+                    dec_cD[c][l][fld] += _dec(src.get(fld, 0))
+        phD = sess.get("phD") or {}
+        for r in ("gtt", "gtc_truoc", "gtc_tu"):
+            src = phD.get(r, {}) or {}
+            for fld in ("soMon", "soTien"):
+                dec_phD[r][fld] += _dec(src.get(fld, 0))
+    cD_out = {c: {l: {fld: float(dec_cD[c][l][fld]) for fld in ("soMon", "soTien")} for l in LOAI_CITAD} for c in CONGS}
+    phD_out = {r: {fld: float(dec_phD[r][fld]) for fld in ("soMon", "soTien")} for r in ("gtt", "gtc_truoc", "gtc_tu")}
+    return cD_out, phD_out
 
 
 # ── Xuất Excel ──────────────────────────────────────────────────────────
