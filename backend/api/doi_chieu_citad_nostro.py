@@ -24,20 +24,25 @@ gốc) + toàn bộ nhóm session/lịch sử/export (khoá theo `ky`, không ph
 """
 from __future__ import annotations
 
+import calendar
 import io
 import re
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 
 from backend.database import get_db
 from backend.core import audit_queue
+from backend.core.enums import StaffRole
 from backend.core.net import header_ip_dang_tin
 from backend.core.concurrency import run_heavy
 from backend.core.deps import require_feature
 from backend.schemas.doi_chieu_citad_nostro import (
     CitadBufferIn,
     ExportIn,
+    MonthSummaryExportIn,
+    MonthSummaryIn,
     PaymentHubBufferIn,
     SessionIn,
 )
@@ -49,6 +54,27 @@ from backend.services import doi_chieu_citad_nostro_service as svc
 
 def _safe_filename(name: str) -> str:
     return re.sub(r'[\r\n"\\]', '_', name)
+
+
+def _can_delete_any_session(current: dict, db) -> bool:
+    """"Xoá được bảng của NGƯỜI KHÁC" — mirror đúng logic
+    `require_feature()._check()` (deps.py) nhưng trả `bool` thay vì raise:
+    admin qua ngay (siêu quyền cố ý, xem docs/DESIGN.md mục Phân quyền —
+    KHÔNG tính là hard-code), người khác phải được cấp mã
+    `doi_chieu_citad_nostro.delete_any` qua Phân quyền theo nhóm. Review
+    PR #90: bản đầu gate thẳng `current["role"] == "admin"`, trái quy tắc
+    "không hard-code quyền" — đã sửa."""
+    if current["role"] == StaffRole.ADMIN:
+        return True
+    row = db.execute(
+        """SELECT 1 FROM group_features gf
+           JOIN group_members gm ON gm.group_id = gf.group_id
+           JOIN user_groups g ON g.id = gm.group_id AND g.is_active = 1
+           WHERE gm.staff_id = ? AND gf.feature_code = ?
+           LIMIT 1""",
+        (current["id"], "doi_chieu_citad_nostro.delete_any"),
+    ).fetchone()
+    return bool(row)
 
 
 router = APIRouter(prefix="/api/doi-chieu-citad-nostro", tags=["doi-chieu-citad-nostro"])
@@ -158,11 +184,11 @@ def extension_version(current: dict = Depends(require_feature("menu.doi_chieu_ci
     return {"version": svc.get_extension_latest_version()}
 
 
-# ── Session theo kỳ đối chiếu — 1 bản CHUNG cho cả phòng ──────────────────
-# QUAN TRỌNG: {ky:path} là path converter "tham lam" (khớp cả dấu "/" trong
-# ky="dd/mm/yyyy-dd/mm/yyyy") — mọi route có tiền tố "/session/{ky:path}"
-# phải đăng ký route cụ thể hơn ("/history") TRƯỚC route trần này, giống hệt
-# lưu ý trong backend/api/doi_chieu_citad.py.
+# ── Session theo kỳ đối chiếu — NHIỀU bảng độc lập/kỳ, mỗi bảng 1 chủ ─────
+# Từ 11/09/2026: đổi routing theo `ky:path` (path converter "tham lam") sang
+# `{session_id:int}` (mirror doi_chieu_citad.py — /session-by-id/{session_id})
+# — converter `int` không có vấn đề "tham lam" nên không còn cần lưu ý thứ tự
+# đăng ký route như bản `{ky:path}` cũ.
 @router.get("/sessions")
 def list_sessions(db=Depends(get_db), current: dict = Depends(require_feature("menu.doi_chieu_citad_nostro"))):
     return svc.session_list(db)
@@ -194,18 +220,18 @@ def period_check(
     return svc.check_period_overlap(db, tu_ngay, den_ngay, exclude_ky)
 
 
-@router.get("/session/{ky:path}/history")
+@router.get("/session-by-id/{session_id}/history")
 def get_reconciliation_history(
-    ky: str, db=Depends(get_db), current: dict = Depends(require_feature("menu.doi_chieu_citad_nostro"))
+    session_id: int, db=Depends(get_db), current: dict = Depends(require_feature("menu.doi_chieu_citad_nostro"))
 ):
-    return svc.get_reconciliation_history(db, ky)
+    return svc.get_reconciliation_history(db, session_id)
 
 
-@router.get("/session/{ky:path}")
+@router.get("/session-by-id/{session_id}")
 def get_session(
-    ky: str, db=Depends(get_db), current: dict = Depends(require_feature("menu.doi_chieu_citad_nostro"))
+    session_id: int, db=Depends(get_db), current: dict = Depends(require_feature("menu.doi_chieu_citad_nostro"))
 ):
-    return svc.session_get(db, ky) or {}
+    return svc.session_get(db, session_id) or {}
 
 
 @router.post("/session")
@@ -221,15 +247,32 @@ def save_session(
         raise HTTPException(400, str(e))
     payload = data.model_dump()
     payload["ky"] = ky
-    svc.session_save(db, ky, current["id"], payload)
-    return {"ok": True}
+    session_id = payload.pop("session_id")
+    try:
+        new_session_id = svc.session_save(db, ky, current["id"], payload, session_id)
+    except svc.SessionForbiddenError as e:
+        raise HTTPException(403, str(e))
+    except svc.SessionNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        # `ky` trên form khác `ky` của bảng đang lưu tiếp (session_id cũ,
+        # người dùng đổi ô ngày mà chưa tách bảng) — review PR #90: trước
+        # đây lọt qua thành 500 vì chỉ bắt 2 exception trên.
+        raise HTTPException(400, str(e))
+    return {"ok": True, "session_id": new_session_id}
 
 
-@router.delete("/session/{ky:path}")
+@router.delete("/session-by-id/{session_id}")
 def delete_session(
-    ky: str, db=Depends(get_db), current: dict = Depends(require_feature("menu.doi_chieu_citad_nostro"))
+    session_id: int, db=Depends(get_db), current: dict = Depends(require_feature("menu.doi_chieu_citad_nostro"))
 ):
-    svc.session_delete(db, ky)
+    is_admin_any = _can_delete_any_session(current, db)
+    try:
+        svc.session_delete(db, session_id, current["id"], is_admin_any)
+    except svc.SessionNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except svc.SessionForbiddenError as e:
+        raise HTTPException(403, str(e))
     return {"ok": True}
 
 
@@ -241,6 +284,66 @@ def get_history_entry(
     if data is None:
         raise HTTPException(404, "Không tìm thấy bản ghi lịch sử này")
     return data
+
+
+# ── Tổng hợp tháng — cộng dồn nhiều bảng/kỳ do người dùng tick chọn ────────
+@router.get("/month-sessions")
+def get_month_sessions(
+    nam: int, thang: int, db=Depends(get_db), current: dict = Depends(require_feature("menu.doi_chieu_citad_nostro"))
+):
+    """Trả 1 lần cả 2 thứ màn "Tổng hợp tháng" cần lúc mở: danh sách bảng
+    của tháng (để tick chọn) và danh sách ngày còn thiếu (để nhắc chấm bù) —
+    gộp chung tránh 2 round-trip."""
+    return {
+        "sessions": svc.get_sessions_for_month(db, nam, thang),
+        "missing_days": svc.get_month_missing_days(db, nam, thang),
+    }
+
+
+@router.post("/month-summary")
+def month_summary(
+    data: MonthSummaryIn, db=Depends(get_db), current: dict = Depends(require_feature("menu.doi_chieu_citad_nostro"))
+):
+    """Xem trước tổng (không xuất Excel) — gọi lại mỗi khi người dùng
+    tick/bỏ tick bảng nào đó trên màn "Tổng hợp tháng"."""
+    cD, phD = svc.combine_sessions_cD_phD(db, data.session_ids)
+    ci, hub = svc.compute_totals({"cD": cD, "phD": phD})
+    return {
+        "ci": {loai: {fld: float(ci[loai][fld]) for fld in ("soMon", "soTien")} for loai in ci},
+        "hub": {loai: {fld: float(hub[loai][fld]) for fld in ("soMon", "soTien")} for loai in hub},
+    }
+
+
+@router.post("/month-summary/export")
+async def export_month_summary(
+    data: MonthSummaryExportIn, db=Depends(get_db),
+    current: dict = Depends(require_feature("menu.doi_chieu_citad_nostro")),
+):
+    if not data.session_ids:
+        raise HTTPException(400, "Chưa chọn bảng nào để tính vào tổng tháng.")
+    try:
+        first = datetime(data.nam, data.thang, 1)
+        last_day = calendar.monthrange(data.nam, data.thang)[1]
+        last = datetime(data.nam, data.thang, last_day)
+    except ValueError as e:
+        raise HTTPException(400, f"Tháng/năm không hợp lệ: {e}")
+    cD, phD = svc.combine_sessions_cD_phD(db, data.session_ids)
+    export_data = ExportIn(
+        tu_ngay=first.strftime("%d/%m/%Y"),
+        den_ngay=last.strftime("%d/%m/%Y"),
+        sheet_name=f"Thang_{data.thang:02d}.{data.nam}",
+        lb=data.lb,
+        ks=data.ks,
+        cD=cD,
+        phD=phD,
+    )
+    buf = await run_heavy(svc.build_xlsx_nostro, export_data)
+    fname = _safe_filename(f"Tong_hop_thang_{data.thang:02d}.{data.nam}.xlsx")
+    return StreamingResponse(
+        io.BytesIO(buf),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
 
 
 # ── Xuất Excel ────────────────────────────────────────────────────────────

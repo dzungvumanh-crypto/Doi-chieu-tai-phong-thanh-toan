@@ -40,6 +40,10 @@ class SessionIn(BaseModel):
     kiem_soat: Optional[str] = ""
     cD: dict = {}   # cD[cong]["gtt"|"gtc"] = {"soMon": float, "soTien": float}
     phD: dict = {}  # phD["gtt"|"gtc_truoc"|"gtc_tu"] = {"soMon": float, "soTien": float}
+    # None = LUÔN tạo bảng MỚI của chính người gọi. Có giá trị = đang lưu
+    # tiếp ĐÚNG bảng đó (`id` cụ thể) — mirror SessionIn.session_id của
+    # doi_chieu_citad.py (Phòng Thanh toán), từ 11/09/2026 (nhiều bảng/kỳ).
+    session_id: Optional[int] = None
 
 
 class CitadBufferIn(BaseModel):
@@ -68,3 +72,21 @@ class ExportIn(BaseModel):
     ks: str = ""
     cD: dict = {}
     phD: dict = {}
+
+
+class MonthSummaryIn(BaseModel):
+    """Xem trước tổng tháng (không xuất Excel) — người dùng tick/bỏ tick
+    bảng nào tính vào tổng, gọi lại endpoint này để cập nhật số liệu hiển
+    thị trên màn "Tổng hợp tháng" mỗi lần đổi tick."""
+    session_ids: list[int] = []
+
+
+class MonthSummaryExportIn(BaseModel):
+    """Xuất Excel tổng hợp tháng — cộng dồn cD/phD của các bảng
+    (`session_ids`) người dùng đã tick chọn, xem
+    `svc.combine_sessions_cD_phD()`."""
+    nam: int
+    thang: int
+    session_ids: list[int] = []
+    lb: str = ""
+    ks: str = ""
