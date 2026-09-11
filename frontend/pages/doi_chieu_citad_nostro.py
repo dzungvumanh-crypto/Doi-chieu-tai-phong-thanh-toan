@@ -152,13 +152,21 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
     history_refresh = {"fn": None}
     current_user = api.get_current_user() or {}
     current_staff_id = current_user.get("id")
-    is_admin = current_user.get("role") == "admin"
+    # "Xoá bảng của người khác" là QUYỀN (mã doi_chieu_citad_nostro.delete_any,
+    # cấp qua Phân quyền theo nhóm) — KHÔNG hard-code role="admin" (review
+    # PR #90, sai ở bản đầu, xem docs/DESIGN.md mục Phân quyền). api.has_feature()
+    # đã tự cho admin qua ở dòng đầu (siêu quyền cố ý) nên không cần check
+    # role riêng ở đây nữa.
+    can_delete_any = api.has_feature("doi_chieu_citad_nostro.delete_any")
     # session_id: None = form chưa gắn với bảng nào đã lưu — Lưu tiếp theo sẽ
     # tạo bảng MỚI của chính người đang thao tác (nhiều người có thể có bảng
     # riêng cho cùng 1 kỳ, không ai ghi đè ai — xem
     # backend/services/doi_chieu_citad_nostro_service.py::session_save()).
     # Có giá trị = đang sửa tiếp ĐÚNG bảng đó.
-    view_state = {"readonly": False, "session_id": None, "created_by": None}
+    # "ky": kỳ của bảng ĐANG GẮN với session_id hiện tại — dùng để phát hiện
+    # người dùng tự đổi ô ngày trong lúc còn gắn 1 bảng cũ (xem
+    # _on_ky_changed() bên dưới, mirror _on_ngay_changed_sync() của PTT).
+    view_state = {"readonly": False, "session_id": None, "created_by": None, "ky": None}
 
     data = {
         "cD": {c: {loai: {"soMon": 0.0, "soTien": 0.0} for loai in LOAI_CITAD} for c in CONGS},
@@ -305,6 +313,7 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
     def apply_session_data(sess: dict):
         view_state["session_id"] = sess.get("_meta_session_id")
         view_state["created_by"] = sess.get("_meta_created_by")
+        view_state["ky"] = sess.get("ky") or None
         _refresh_delete_btn()
         tu_ngay, den_ngay = "", ""
         ky = sess.get("ky", "")
@@ -367,10 +376,11 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
 
     def _refresh_delete_btn():
         """Nút "Xoá bảng này" chỉ hiện khi ĐANG xem/sửa 1 bảng đã lưu
-        (`session_id` khác None) VÀ (là chủ bảng HOẶC admin) — đúng chính
-        sách xoá đã chốt: chủ bảng tự xoá + admin xoá được bất kỳ bảng nào."""
+        (`session_id` khác None) VÀ (là chủ bảng HOẶC có quyền xoá bảng
+        người khác) — đúng chính sách xoá đã chốt: chủ bảng tự xoá + admin
+        (hoặc người được cấp mã delete_any) xoá được bất kỳ bảng nào."""
         can_delete = view_state["session_id"] is not None and (
-            view_state["created_by"] == current_staff_id or is_admin
+            view_state["created_by"] == current_staff_id or can_delete_any
         )
         delete_btn.set_visibility(can_delete)
 
@@ -452,15 +462,22 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
         except Exception as e:
             if _handle_api_error(e):
                 return
-            # 403/404 (bảng bị xoá hoặc không phải bảng của mình) — bỏ gắn
-            # session_id cũ, lần Lưu kế tiếp sẽ tạo bảng MỚI thay vì lặp lại
-            # đúng lỗi này mãi.
-            view_state["session_id"] = None
-            _refresh_delete_btn()
+            # review PR #90: TRƯỚC đây gỡ session_id ở đây cho MỌI lỗi (kể cả
+            # lỗi mạng thoáng qua) — bấm Lưu lại sau 1 lỗi tạm thời sẽ ÂM THẦM
+            # tạo bảng MỚI thay vì báo lại đúng lỗi cũ. api.post() không giữ
+            # mã trạng thái HTTP tới tận đây (chỉ còn chuỗi thông báo — xem
+            # frontend/api_client.py::_raise_http_error, gói mọi lỗi 4xx/5xx
+            # thường thành Exception(str) đồng nhất) nên KHÔNG đoán mò 403/404
+            # qua nội dung chuỗi (dễ vỡ nếu đổi câu chữ). Ca đáng lo nhất —
+            # đổi ô ngày trong lúc còn gắn bảng cũ — đã chặn TRƯỚC khi gửi ở
+            # _on_ky_changed() bên dưới, nên KHÔNG tự gỡ session_id ở đây nữa:
+            # cứ báo lỗi thật, để nguyên trạng thái gắn, người dùng tự quyết
+            # định (bấm lại/tải lại trang) thay vì âm thầm nhân bản bảng.
             ui.notify(f"Lỗi lưu: {e}", type="negative")
             return
         view_state["session_id"] = resp.get("session_id")
         view_state["created_by"] = current_staff_id
+        view_state["ky"] = f"{tu_ngay_input.value}-{den_ngay_input.value}"
         _refresh_delete_btn()
         if history_refresh.get("fn"):
             await history_refresh["fn"]()
@@ -549,10 +566,17 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
         is_owner = view_state["created_by"] == current_staff_id
         with ui.dialog() as dialog, ui.card().classes("w-full max-w-lg"):
             ui.label("Xoá bảng này?").classes("text-base font-bold text-red-700")
+            # review PR #90: câu cũ nói "lịch sử vẫn còn ở tab Lịch sử" là SAI —
+            # tab đó liệt kê THEO BẢNG, bảng mất thì không còn đường nào mở lại
+            # lịch sử của nó (dữ liệu lịch sử thật ra vẫn nằm trong CSDL, mồ côi,
+            # nhưng không có UI nào truy cập được — coi như mất với người dùng).
             if is_owner:
-                msg = "Đây là bảng của bạn. Xoá xong KHÔNG hoàn tác được (lịch sử các lần lưu trước đó vẫn còn ở tab \"Lịch sử\" nhưng bảng hiện hành sẽ mất)."
+                msg = "Đây là bảng của bạn. Xoá xong KHÔNG hoàn tác được — kể cả lịch sử các lần lưu trước đó của bảng này cũng KHÔNG xem lại được nữa."
             else:
-                msg = "Đây là bảng của NGƯỜI KHÁC — bạn đang xoá với quyền Admin. Hành động này KHÔNG hoàn tác được."
+                msg = (
+                    "Đây là bảng của NGƯỜI KHÁC — bạn đang xoá với quyền xoá bảng người khác. "
+                    "Hành động này KHÔNG hoàn tác được, kể cả lịch sử các lần lưu trước đó."
+                )
             ui.label(msg).classes("text-sm text-gray-500")
             with ui.row().classes("w-full justify-end gap-2 mt-3"):
                 ui.button("Huỷ", on_click=dialog.close).props("outline")
@@ -852,7 +876,11 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
                     with ui.row().classes(
                         "w-full items-center gap-2 px-3 py-1.5 border-b border-gray-200 last:border-b-0"
                     ):
-                        cb = ui.checkbox(value=True, on_change=lambda: asyncio.create_task(_on_check_change()))
+                        # Truyền THẲNG hàm async, KHÔNG bọc asyncio.create_task —
+                        # task mới không có slot stack của NiceGUI, ui.notify()
+                        # bên trong sẽ ném RuntimeError âm thầm (xem review PR #90,
+                        # mục "Event handler async" trong docs/DESIGN.md).
+                        cb = ui.checkbox(value=True, on_change=_on_check_change)
                         state["checks"][s["session_id"]] = cb
                         name = s["created_by_name"] or s["created_by_username"] or "(không rõ)"
                         ui.label(f"{s['ky']} — {name}").classes("text-sm flex-grow")
@@ -1036,6 +1064,34 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
                                 kiem_soat_input = ui.input("Người kiểm soát", value="").props("dense outlined").classes("w-52")
                                 nap_citad_btn = ui.button("Nạp CITAD", icon="cloud_download", on_click=load_citad_buffer).props("outline").classes("rounded-lg")
                                 nap_ph_btn = ui.button("Nạp PaymentHub", icon="cloud_download", on_click=load_phub_buffer).props("outline").classes("rounded-lg")
+
+                            def _on_ky_changed():
+                                """Người dùng tự gõ/đổi ô ngày trong lúc còn gắn 1
+                                bảng cũ (`view_state["session_id"]` khác None) —
+                                coi như bắt đầu bảng MỚI, gỡ gắn NGAY (không đợi
+                                bấm Lưu mới phát hiện). Mirror
+                                `_on_ngay_changed_sync()` của PTT
+                                (`frontend/pages/doi_chieu_citad.py`). Review
+                                PR #90: thiếu bước này khiến Lưu lần 1 (ky mới,
+                                session_id cũ) ăn lỗi "kỳ không khớp", Lưu lần 2
+                                mới vô tình tạo bảng mới — người dùng không biết
+                                vì sao lần đầu lỗi."""
+                                if view_state["session_id"] is None:
+                                    return
+                                ky_now = f"{tu_ngay_input.value}-{den_ngay_input.value}"
+                                if ky_now != view_state.get("ky"):
+                                    view_state["session_id"] = None
+                                    view_state["created_by"] = None
+                                    view_state["ky"] = None
+                                    _refresh_delete_btn()
+                                    ui.notify(
+                                        "Đã đổi sang kỳ khác — lưu tiếp theo sẽ tạo bảng MỚI, "
+                                        "không ghi đè bảng đang xem trước đó.",
+                                        type="info",
+                                    )
+
+                            tu_ngay_input.on_value_change(_on_ky_changed)
+                            den_ngay_input.on_value_change(_on_ky_changed)
                             with ui.row().classes("w-full items-center gap-2 px-4 pb-3"):
                                 ui.icon("event_note").classes("text-indigo-600 text-sm")
                                 ky_dang_cham_label = ui.label("").classes("text-sm font-bold text-indigo-700")

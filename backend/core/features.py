@@ -108,6 +108,13 @@ FEATURES: dict[str, str] = {
     # SONG với menu.doi_chieu_citad ở trên, không phải phân hệ con của nó —
     # nghiệp vụ/nguồn dữ liệu khác hẳn (xem doi_chieu_citad_nostro_service.py).
     "menu.doi_chieu_citad_nostro": "Đối chiếu CITAD - PaymentHub — Phòng QLTK Nostro, Vostro (menu)",
+    # 11/09/2026: nhiều bảng độc lập/kỳ (mỗi bảng 1 chủ) — chủ bảng tự xoá
+    # bảng mình (kiểm bằng created_by, không phải quyền). Mã này là quyền
+    # THÊM: xoá được bảng của NGƯỜI KHÁC — không hard-code role="admin"
+    # (đã sai ở bản đầu, xem review PR #90) vì admin đã tự qua mọi
+    # require_feature() rồi (siêu quyền cố ý, xem docs/DESIGN.md mục Phân
+    # quyền), cấp thêm mã này cho Trưởng/Phó phòng được mà không cần sửa code.
+    "doi_chieu_citad_nostro.delete_any": "Xoá bảng đối chiếu của người khác (Phòng QLTK Nostro, Vostro)",
     # Đối soát CITAD ↔ IPCAS — Phòng Thanh toán
     "menu.doi_soat_citad":      "Đối soát chênh lệch CITAD cuối ngày — CITAD ↔ IPCAS (menu)",
     # Sổ trực cuối ngày — Phòng Thanh toán
@@ -236,7 +243,10 @@ FEATURE_GROUPS: list[dict] = [
             {
                 "label": "Phòng QLTK Nostro, Vostro",
                 "menus": [
-                    {"code": "menu.doi_chieu_citad_nostro", "actions": []},
+                    {
+                        "code": "menu.doi_chieu_citad_nostro",
+                        "actions": ["doi_chieu_citad_nostro.delete_any"],
+                    },
                 ],
             },
             {

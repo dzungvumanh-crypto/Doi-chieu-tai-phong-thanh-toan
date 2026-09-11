@@ -34,6 +34,7 @@ from fastapi.responses import Response, StreamingResponse
 
 from backend.database import get_db
 from backend.core import audit_queue
+from backend.core.enums import StaffRole
 from backend.core.net import header_ip_dang_tin
 from backend.core.concurrency import run_heavy
 from backend.core.deps import require_feature
@@ -53,6 +54,27 @@ from backend.services import doi_chieu_citad_nostro_service as svc
 
 def _safe_filename(name: str) -> str:
     return re.sub(r'[\r\n"\\]', '_', name)
+
+
+def _can_delete_any_session(current: dict, db) -> bool:
+    """"Xoá được bảng của NGƯỜI KHÁC" — mirror đúng logic
+    `require_feature()._check()` (deps.py) nhưng trả `bool` thay vì raise:
+    admin qua ngay (siêu quyền cố ý, xem docs/DESIGN.md mục Phân quyền —
+    KHÔNG tính là hard-code), người khác phải được cấp mã
+    `doi_chieu_citad_nostro.delete_any` qua Phân quyền theo nhóm. Review
+    PR #90: bản đầu gate thẳng `current["role"] == "admin"`, trái quy tắc
+    "không hard-code quyền" — đã sửa."""
+    if current["role"] == StaffRole.ADMIN:
+        return True
+    row = db.execute(
+        """SELECT 1 FROM group_features gf
+           JOIN group_members gm ON gm.group_id = gf.group_id
+           JOIN user_groups g ON g.id = gm.group_id AND g.is_active = 1
+           WHERE gm.staff_id = ? AND gf.feature_code = ?
+           LIMIT 1""",
+        (current["id"], "doi_chieu_citad_nostro.delete_any"),
+    ).fetchone()
+    return bool(row)
 
 
 router = APIRouter(prefix="/api/doi-chieu-citad-nostro", tags=["doi-chieu-citad-nostro"])
@@ -232,6 +254,11 @@ def save_session(
         raise HTTPException(403, str(e))
     except svc.SessionNotFoundError as e:
         raise HTTPException(404, str(e))
+    except ValueError as e:
+        # `ky` trên form khác `ky` của bảng đang lưu tiếp (session_id cũ,
+        # người dùng đổi ô ngày mà chưa tách bảng) — review PR #90: trước
+        # đây lọt qua thành 500 vì chỉ bắt 2 exception trên.
+        raise HTTPException(400, str(e))
     return {"ok": True, "session_id": new_session_id}
 
 
@@ -239,9 +266,9 @@ def save_session(
 def delete_session(
     session_id: int, db=Depends(get_db), current: dict = Depends(require_feature("menu.doi_chieu_citad_nostro"))
 ):
-    is_admin = current["role"] == "admin"
+    is_admin_any = _can_delete_any_session(current, db)
     try:
-        svc.session_delete(db, session_id, current["id"], is_admin)
+        svc.session_delete(db, session_id, current["id"], is_admin_any)
     except svc.SessionNotFoundError as e:
         raise HTTPException(404, str(e))
     except svc.SessionForbiddenError as e:

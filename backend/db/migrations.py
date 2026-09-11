@@ -2212,6 +2212,23 @@ def _ensure_indexes():
     finally:
         _raw_dc3.close()
 
+    # ── ADD COLUMN session_id cho doi_chieu_citad_nostro_history (2026-09-11) ──
+    # Đặt TRƯỚC khối rebuild sessions ngay dưới đây — backfill bên trong khối đó
+    # cần cột này đã tồn tại. ADD COLUMN thường (không rebuild), an toàn chạy mỗi
+    # lần khởi động — tự bỏ qua nếu cột đã có (bắt lỗi "duplicate column").
+    _raw_nch = sqlite3.connect(DB_PATH)
+    try:
+        _raw_nch.execute(
+            "ALTER TABLE doi_chieu_citad_nostro_history ADD COLUMN session_id "
+            "INTEGER REFERENCES doi_chieu_citad_nostro_sessions(id) ON DELETE SET NULL"
+        )
+        _raw_nch.commit()
+    except Exception as _nch_exc:
+        if "duplicate column" not in str(_nch_exc).lower():
+            raise
+    finally:
+        _raw_nch.close()
+
     # ── Rebuild doi_chieu_citad_nostro_sessions: khoá `ky` riêng → `id` (2026-09-11) ──
     # Nostro/Vostro ban đầu port module CITAD-PaymentHub theo đúng mô hình "1 bản
     # ghi CHUNG/kỳ" (ky TEXT PRIMARY KEY) — xác nhận thực tế nghiệp vụ (11/09/2026):
@@ -2274,6 +2291,32 @@ def _ensure_indexes():
                         FROM _doi_chieu_citad_nostro_sessions_bak
                     """)
                     _cur_ncs.execute("DROP TABLE _doi_chieu_citad_nostro_sessions_bak")
+
+                    # Backfill session_id cho lịch sử cũ — CHỈ Ở ĐÂY, trong CÙNG
+                    # transaction vừa rebuild, KHÔNG đặt thành khối riêng chạy
+                    # mỗi lần khởi động (review PR #90: bản đầu đặt backfill
+                    # NGOÀI transaction này, thành khối riêng không có điều
+                    # kiện canh — chạy lại ở MỌI lần khởi động sau. Hậu quả đã
+                    # tái hiện thật: xoá 1 bảng → FK ON DELETE SET NULL đặt
+                    # session_id lịch sử của bảng đó về NULL [đúng, cố ý] →
+                    # khởi động lại → backfill chạy lại, subquery
+                    # `WHERE s.ky = history.ky` gán NHẦM lịch sử mồ côi đó
+                    # sang 1 bảng KHÁC bất kỳ cùng `ky` [sai — lịch sử của
+                    # người A bị gắn sang bảng của người B]). Đặt trong khối
+                    # `if "id" not in _ncs_cols` này thì CHỈ chạy đúng 1 lần
+                    # trong đời DB (điều kiện đó chỉ đúng đúng 1 lần), và tại
+                    # THỜI ĐIỂM NÀY mỗi `ky` cũ chỉ có ĐÚNG 1 bảng (bất biến
+                    # trước khi rebuild) nên khớp đúng chắc chắn — không còn
+                    # nguy cơ gán nhầm ở lần khởi động sau.
+                    _cur_ncs.execute("""
+                        UPDATE doi_chieu_citad_nostro_history
+                        SET session_id = (
+                            SELECT id FROM doi_chieu_citad_nostro_sessions s
+                            WHERE s.ky = doi_chieu_citad_nostro_history.ky
+                        )
+                        WHERE session_id IS NULL
+                    """)
+
                     _cur_ncs.execute("COMMIT")
                     _mig_log_ncs.info("doi_chieu_citad_nostro_sessions rebuild hoàn tất")
                 except Exception as _ncs_err:
@@ -2287,41 +2330,6 @@ def _ensure_indexes():
                     _cur_ncs.execute("PRAGMA foreign_keys = ON")
     finally:
         _raw_ncs.close()
-
-    # `doi_chieu_citad_nostro_history` cần biết bảng nào (session_id) mỗi lần lưu
-    # thuộc về — trước đây chỉ có `ky`, không phân biệt được bảng nào trong nhiều
-    # bảng cùng kỳ. ADD COLUMN thường (không cần rebuild) vì chỉ thêm cột mới,
-    # không đổi khoá chính.
-    _raw_nch = sqlite3.connect(DB_PATH)
-    try:
-        _raw_nch.execute(
-            "ALTER TABLE doi_chieu_citad_nostro_history ADD COLUMN session_id "
-            "INTEGER REFERENCES doi_chieu_citad_nostro_sessions(id) ON DELETE SET NULL"
-        )
-        _raw_nch.commit()
-    except Exception as _nch_exc:
-        if "duplicate column" not in str(_nch_exc).lower():
-            raise
-    finally:
-        _raw_nch.close()
-
-    # Backfill 1 lần: tại THỜI ĐIỂM migrate, mỗi `ky` cũ chỉ có ĐÚNG 1 bảng (bất
-    # biến cũ trước khi rebuild ở trên) — nên MỌI lịch sử cũ của `ky` đó chắc
-    # chắn thuộc về đúng bảng vừa được cấp `id` cho `ky` đó. Không khớp được thì
-    # để NULL (giữ đúng semantics "không rõ bảng nào" thay vì gán bừa).
-    _raw_nchb = sqlite3.connect(DB_PATH)
-    try:
-        _raw_nchb.execute("""
-            UPDATE doi_chieu_citad_nostro_history
-            SET session_id = (
-                SELECT id FROM doi_chieu_citad_nostro_sessions s
-                WHERE s.ky = doi_chieu_citad_nostro_history.ky
-            )
-            WHERE session_id IS NULL
-        """)
-        _raw_nchb.commit()
-    finally:
-        _raw_nchb.close()
 
     index_stmts = [
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_entry_staff_date ON document_entries(handover_id, staff_id, transaction_date)",
