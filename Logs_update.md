@@ -4,6 +4,10 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 11/09/2026 Kiểm tra tự động trên GitHub — **không đổi gì với người dùng, không cần làm gì sau khi cập nhật**
+    + Mỗi lần đẩy mã lên, GitHub nay quét thêm lỗi "dùng tên chưa có" (loại lỗi vừa làm hỏng Chấm ILO1000
+      và trang Đóng chứng từ) và **báo đỏ** nếu có, để người gộp mã sửa trước khi đưa sang máy chính
+
 - 11/09/2026 Sửa lỗi — **Màn hình Chấm ILO1000 không ra file kết quả; trang Đóng chứng từ không mở được**
     + ✅ **Màn hình "Chấm ILO1000" nay trả được file kết quả.** Từ khi ra mắt (bản 02/09/2026), mọi lượt
       chấm trên màn hình này chạy hết các bước rồi báo lỗi "name 'os' is not defined" ở bước cuối,

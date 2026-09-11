@@ -26,14 +26,34 @@ jobs:
         with:
           python-version: "3.10"
           cache: pip
+          # Mặc định khoá cache chỉ theo requirements.txt — sửa requirements-dev.txt
+          # (thêm ruff, pytest-cov) sẽ không làm mới cache.
+          cache-dependency-path: requirements*.txt
 
       - name: Cài thư viện
-        # requirements-dev.txt = requirements.txt + pytest. pytest vẫn KHÔNG
-        # nằm trong requirements.txt: file đó được `deploy.bat` pip install
-        # trên máy chính, không cần bộ chạy test ở đó.
+        id: cai
+        # requirements-dev.txt = requirements.txt + pytest, pytest-cov, ruff. Ba
+        # thứ đó KHÔNG nằm trong requirements.txt: file đó được `deploy.bat` pip
+        # install trên máy chính, không cần công cụ phát triển ở đó.
         run: pip install -r requirements-dev.txt
 
+      # Cổng đỏ — tên chưa định nghĩa / dùng biến trước khi gán / lỗi cú pháp.
+      # Test xanh không bắt được các lỗi này khi chúng nằm trên nhánh không test nào
+      # đi qua: 2 lỗi thật đã lọt develop như vậy (docs/DESIGN.md, mục "Lỗi tên
+      # chưa định nghĩa"). Cấu hình và lý do chọn luật: ruff.toml.
+      # CI đỏ KHÔNG tự khoá nút Merge (repo riêng tư gói Free không bật được bảo vệ
+      # nhánh) — quy trình bù: `gh pr checks` xanh hết mới merge (docs/SKILL.md).
+      - name: Ruff — cổng đỏ (F821, F823, E9)
+        run: python -m ruff check . --select F821,F823,E9
+
+      # Các bước dưới vẫn chạy khi cổng ruff đỏ — một lượt CI thấy đủ mọi kết quả —
+      # nhưng KHÔNG chạy khi bước cài hỏng, để lỗi gốc không bị ba bước đỏ theo che lấp.
+      - name: Ruff — báo cáo (không làm đỏ CI)
+        if: ${{ !cancelled() && steps.cai.outcome == 'success' }}
+        run: python -m ruff check . --exit-zero --statistics
+
       - name: Chạy pytest
+        if: ${{ !cancelled() && steps.cai.outcome == 'success' }}
         env:
           # backend/core/config.py raise ngay khi khởi động nếu thiếu biến này.
           # Giá trị chỉ dùng cho lần chạy test, không phải khoá thật.
@@ -45,4 +65,5 @@ jobs:
           # nén lại, nên giá trị gì cũng được, miễn có đặt.
           DOI_CHIEU_ZIP_PASSWORD: ci-mat-khau-zip-gia-lap
           PYTHONIOENCODING: utf-8
-        run: python -m pytest -q
+        # Đo phủ ở chế độ báo cáo, chưa đặt ngưỡng — xem Implementation-notes card CI1.
+        run: python -m pytest -q --cov=backend --cov=frontend --cov-report=term:skip-covered

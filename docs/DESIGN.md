@@ -210,7 +210,9 @@ qua review, cùng được `ruff check --select F821` bắt trong một lần ch
 khối diff — không thấy dòng `import` đã mất ở đầu file, không thấy dòng định nghĩa 50 dòng bên dưới.
 
 **Quy tắc:** sau khi xoá import, đổi tên, đổi `lambda` thành tham chiếu thẳng, hay chuyển mã giữa các
-hàm/file → chạy `ruff check backend frontend --select F821,E9` và phải sạch. Còn 48 lời gọi
+hàm/file → chạy `ruff check . --select F821,F823,E9` và phải sạch. Từ 11/09/2026 CI chạy lệnh này
+và báo **đỏ** (`.github/workflows/tests.yml`, cấu hình ở `ruff.toml`). Đỏ **không tự khoá** nút
+Merge — repo riêng tư gói Free không bật được bảo vệ nhánh; `gh pr checks` phải xanh mới merge. Còn 48 lời gọi
 `ensure_future`/`create_task` ở 10 trang (không tính chú thích) — dọn hàng loạt mà không chạy lệnh này là gặp lại lỗi thứ hai.
 
 ## Leave Approval Workflow

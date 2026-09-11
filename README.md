@@ -31,7 +31,7 @@ source venv/bin/activate
 pip install -r requirements.txt
 
 # Máy phát triển (muốn chạy pytest) dùng file này thay cho dòng trên —
-# nó đã bao gồm toàn bộ requirements.txt, chỉ thêm pytest
+# nó đã bao gồm toàn bộ requirements.txt, chỉ thêm pytest, pytest-cov, ruff
 pip install -r requirements-dev.txt
 ```
 
@@ -251,7 +251,7 @@ Truy cập:
 │   └── *.truoc-utf8.log    # Phần log ghi trước bản vá UTF-8, run.py tự tách ra một lần
 ├── init_db.py               # Khởi tạo DB + seed data
 ├── run.py                   # Launcher (chạy backend + frontend song song; ép UTF-8 cho tiến trình con)
-├── .github/workflows/       # CI — chạy pytest mỗi lần push / mở PR
+├── .github/workflows/       # CI — ruff (cổng đỏ F821/F823/E9) + pytest mỗi lần push / mở PR
 ├── docs/                    # Tài liệu dự án (README.md, CLAUDE.md, Logs_update.md ở gốc)
 │   ├── DESIGN.md                # Patterns & business logic
 │   ├── SKILL.md                 # Nguyên tắc & quy ước làm việc
@@ -1432,17 +1432,20 @@ Backend tự **cảnh báo trong log khi khởi động** nếu đang lắng ngh
 # Cài thư viện (đúng những gì máy chính cần)
 pip install -r requirements.txt
 
-# Máy phát triển: thêm pytest (đã gồm sẵn requirements.txt)
+# Máy phát triển: thêm pytest, pytest-cov, ruff (đã gồm sẵn requirements.txt)
 pip install -r requirements-dev.txt
 
 # Chạy test
 python -m pytest -q
 
 # Quét tên chưa định nghĩa / thiếu import — bắt được thứ test không đi qua
-# (docs/DESIGN.md, mục "Lỗi tên chưa định nghĩa"). Chạy sau khi xoá import, đổi
-# lambda thành tham chiếu thẳng, hay chuyển mã giữa các hàm. Chưa có trong
-# requirements-dev.txt thì cài tạm: pip install ruff
-ruff check backend frontend --select F821,E9
+# (docs/DESIGN.md, mục "Lỗi tên chưa định nghĩa"). CI chạy đúng lệnh này và báo
+# ĐỎ nếu có cảnh báo (không tự khoá nút Merge — xem docs/SKILL.md). Chạy trước
+# khi đẩy code để khỏi đợi CI.
+ruff check . --select F821,F823,E9
+
+# Toàn bộ bộ luật trong ruff.toml — CI chỉ báo cáo, không chặn
+ruff check . --statistics
 
 # Khởi tạo DB lần đầu
 python init_db.py

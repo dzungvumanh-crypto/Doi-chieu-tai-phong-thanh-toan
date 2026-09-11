@@ -18,3 +18,12 @@
 -r requirements.txt
 
 pytest>=8.0
+
+# Do phu test o CI -- che do bao cao, chua dat nguong. Chan tren <8 cung ly do
+# ghim ruff ben duoi: ban lon moi doi hanh vi thi so phu doi theo ma khong ai sua ma.
+pytest-cov>=5.0,<8
+
+# Quet tinh (xem ruff.toml). GHIM CUNG phien ban: ban moi co the them hoac doi
+# luat, CI tu do/xanh doi theo ma khong ai sua dong ma nao. Nang phien ban la
+# mot thay doi co chu y, chay lai ca hai luot ruff truoc khi merge.
+ruff==0.16.7

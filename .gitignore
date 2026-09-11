@@ -71,3 +71,7 @@ MCB.xlsx
 # Van ban that dung de thu module Chuan hoa van ban (co ten don vi, ten nguoi that)
 # va ban ket qua do chinh module sinh ra - khong day len repo.
 /979-QyD-NHNo-PC*/test/
+
+# File do pytest-cov sinh ra khi chay test co do phu (CI va may phat trien)
+.coverage
+.coverage.*

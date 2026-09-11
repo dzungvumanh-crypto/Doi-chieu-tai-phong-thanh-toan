@@ -1,0 +1,24 @@
+# Cấu hình ruff — quét tĩnh mã Python (xem docs/DESIGN.md, mục "Lỗi tên chưa định nghĩa").
+#
+# CI chạy HAI lượt:
+#   1. Cổng đỏ:  ruff check . --select F821,F823,E9
+#      Tên chưa định nghĩa / dùng biến cục bộ trước khi gán / lỗi cú pháp. Lúc bật: 0 cảnh báo.
+#      Hai lỗi thật đã lọt develop qua review + toàn bộ test xanh (ILO1000 thiếu `import os`,
+#      trang Đóng chứng từ dùng hàm trước khi định nghĩa) — cả hai đều chỉ quét tĩnh bắt được.
+#      CI đỏ KHÔNG tự khoá nút Merge: repo riêng tư gói Free không bật được bảo vệ nhánh.
+#      Quy trình bù: `gh pr checks` phải xanh hết mới merge (docs/SKILL.md).
+#   2. Báo cáo, không làm đỏ CI: ruff check . --exit-zero  (bộ luật bên dưới)
+#      Để có số nền; muốn nâng luật nào lên cổng đỏ thì dọn về 0 trước rồi thêm vào lượt 1.
+
+target-version = "py310"   # khớp Python của máy chính và CI
+# "./" = chỉ thư mục ở gốc repo. Viết trần "data" thì ruff bỏ qua MỌI thư mục tên data ở bất kỳ
+# cấp nào — một file .py sau này nằm trong …/data/ sẽ lọt khỏi cổng đỏ mà không ai hay.
+extend-exclude = ["./data", "./Plan", "./Upgrade"]
+
+[lint]
+select = ["F", "E9", "B"]
+ignore = [
+    "B008",  # gọi hàm trong giá trị mặc định — `x = Depends(...)` / `Query(...)` là cách viết chuẩn của FastAPI (~900 chỗ)
+    "B904",  # raise trong except không kèm `from` — `raise HTTPException(...)` trong except là chủ ý (~115 chỗ)
+    "B905",  # zip() không có strict= — nhiễu, không bắt lỗi thật nào trong dự án (~50 chỗ)
+]
