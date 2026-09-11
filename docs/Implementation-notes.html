@@ -16476,6 +16476,30 @@ This may happen if you try to create UI from a background task.</pre>
         minh 2 bản luôn cho kết quả giống hệt, không chỉ đúng trên vài ca thủ công. 288/288 test
         toàn module Song Phương (kênh + core-đến + core-đi + common + API) pass sau khi sửa.</div>
 
+      <div class="label"><span class="pill pill-blue">Review Khánh (PR #89, 2026-09-10)</span>
+        tối ưu ngược ở 3/4 lần gọi — sửa <code>concat</code> → <code>np.minimum + reindex</code></div>
+      <p>Kiểm độc lập xác nhận <b>kết quả đúng</b> (12 ca biên + fuzz 500 seed, khác 0 ca) nhưng chỉ
+        ra lỗ hổng phương pháp benchmark: <code>_phan_loai_chuoi_khoa()</code> gọi
+        <code>_khop_min_count()</code> <b>4 lần/chiều</b> (1 lần/offset trong
+        <code>OFFSET_HUB_KHI_XU_LY_CORE</code>/<code>OFFSET_CORE_KHI_XU_LY_HUB</code>). Mỗi bước
+        <code>khoa_nguon</code> teo lại theo <code>con_lai</code>, còn <code>khoa_dich</code>
+        <b>vẫn là file hub/core đầy đủ ~800k dòng</b>. Bản dict-loop cũ chỉ duyệt phần <i>giao</i>
+        giữa 2 bên → nguồn nhỏ thì rẻ; bản <code>concat</code> dựng DataFrame trên <i>hợp</i> 2 bên
+        → luôn trả giá cho toàn bộ ~720k khoá của đích dù nguồn chỉ còn vài nghìn dòng. Đo riêng bước
+        1 (nguồn 800k × đích 800k): concat nhanh hơn dict-loop 3,1×; nhưng bước 2-4 (nguồn ~2k ×
+        đích 800k): concat <b>chậm hơn dict-loop 8,6×</b>. Benchmark ban đầu (8,5s → 3,3s, 2,6×) chỉ
+        đo 1 trong 4 lần gọi — ca cân bằng, không đại diện cho 3/4 lượt gọi thật.</p>
+
+      <p>Fix 1 dòng, ngữ nghĩa không đổi:
+        <code>gioi_han = np.minimum(dem_nguon, dem_dich.reindex(dem_nguon.index, fill_value=0))</code>
+        — chỉ tra đúng những khoá <code>khoa_nguon</code> đang cầm, không đếm hết kho đối tác. Nhanh
+        hơn <code>concat</code> ở <b>cả hai</b> tình huống (3,2× ca cân bằng, 500× ca nguồn nhỏ/đích
+        to). Mô phỏng trọn 1 lượt 4 bước thật (800k dòng, bước 1 khớp 95%, nguồn còn lại
+        800k→40k→16.635→7.056): <b>7,1s (dict-loop cũ) → 3,9s (fix mới, 1,8×)</b> — so với 5,36s của
+        bản <code>concat</code> (1,33×). PR vẫn lãi ròng, nhưng số thật là ~1,8× chứ không phải 2,6×.
+        Đã chạy qua đúng bộ 12 ca biên + fuzz 500 seed của Khánh, khớp tuyệt đối; test
+        <code>TestKhopMinCountVectorized</code> dùng lại nguyên, không sửa.</p>
+
     </div>
   </div>
 
