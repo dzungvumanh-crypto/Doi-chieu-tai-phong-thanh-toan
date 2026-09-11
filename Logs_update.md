@@ -4,6 +4,14 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 11/09/2026 Sửa lỗi — **Màn hình Chấm ILO1000 không ra file kết quả; trang Đóng chứng từ không mở được**
+    + ✅ **Màn hình "Chấm ILO1000" nay trả được file kết quả.** Từ khi ra mắt (bản 02/09/2026), mọi lượt
+      chấm trên màn hình này chạy hết các bước rồi báo lỗi "name 'os' is not defined" ở bước cuối,
+      không tải được file nào. Đây là lỗi của chương trình, **không phải do file đầu vào**. Công cụ
+      chấm chạy riêng bên ngoài hệ thống không bị ảnh hưởng
+    + ✅ **Trang "Đóng chứng từ" mở được trở lại.** Từ bản 30/08/2026, mở trang là hiện lỗi thay vì
+      danh sách bìa. Dữ liệu bìa đã tạo không bị ảnh hưởng
+
 - 11/09/2026 Đối chiếu Song phương — **Bước so Hub với Core chạy nhanh hơn, kết quả không đổi**
     + ✅ **Bước so khớp Hub↔Core ở cả thẻ "Đối chiếu đến" lẫn "Đối chiếu đi" nhanh hơn khoảng 2–4 lần**
       (tuỳ máy). Đo thử với một ngày cỡ 800 nghìn dòng: phần việc này từ 7–14 giây còn khoảng 3–4

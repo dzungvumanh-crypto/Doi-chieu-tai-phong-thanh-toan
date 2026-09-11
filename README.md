@@ -1438,6 +1438,12 @@ pip install -r requirements-dev.txt
 # Chạy test
 python -m pytest -q
 
+# Quét tên chưa định nghĩa / thiếu import — bắt được thứ test không đi qua
+# (docs/DESIGN.md, mục "Lỗi tên chưa định nghĩa"). Chạy sau khi xoá import, đổi
+# lambda thành tham chiếu thẳng, hay chuyển mã giữa các hàm. Chưa có trong
+# requirements-dev.txt thì cài tạm: pip install ruff
+ruff check backend frontend --select F821,E9
+
 # Khởi tạo DB lần đầu
 python init_db.py
 

@@ -49,13 +49,8 @@ async def bundles_page():
                     list_dept_sel  = ui.select(_list_dept_opts, label="Lọc theo phòng", value=None).classes("w-64")
                     list_year_sel  = ui.select(_year_opts,      label="Năm",            value=None).classes("w-36")
                     list_month_sel = ui.select(_month_opts,     label="Tháng",          value=None).classes("w-36")
-                    # Truyền thẳng hàm async, KHÔNG bọc ensure_future/create_task:
-                    # task mới có ngăn xếp slot rỗng nên _handle_api_error() gọi
-                    # ui.notify / ui.navigate sẽ ném RuntimeError và bị nuốt —
-                    # phiên hết hạn mà bấm Lọc thì màn hình đứng im, không báo gì.
-                    # (docs/DESIGN.md — "Event handler async")
-                    ui.button("Lọc", icon="filter_list", on_click=load_groups
-                              ).classes("bg-red-700 text-white")
+                    # on_click gắn ở dưới, sau `async def load_groups` — xem chú thích ở đó.
+                    btn_loc = ui.button("Lọc", icon="filter_list").classes("bg-red-700 text-white")
 
                 bundles_loading = ui.row().classes("w-full justify-center items-center py-6 hidden")
                 with bundles_loading:
@@ -186,6 +181,13 @@ async def bundles_page():
                                                   on_click=lambda g_id=gid, d=bundle_lbl: _delete_group(g_id, d)
                                                   ).classes("bg-red-600 text-white text-xs px-3 py-1")
 
+                # Truyền thẳng hàm async, KHÔNG bọc ensure_future/create_task: task mới
+                # có ngăn xếp slot rỗng → ui.notify / ui.navigate ném RuntimeError và bị
+                # nuốt (docs/DESIGN.md — "Event handler async").
+                # Phải gắn SAU `async def load_groups`: `load_groups` là biến cục bộ của
+                # bundles_page, nhắc tới trước dòng định nghĩa là UnboundLocalError ngay
+                # lúc dựng trang (bản 30/08/2026 làm vậy → trang không mở được; ruff F821).
+                btn_loc.on_click(load_groups)
                 list_dept_sel.on("update:model-value",  load_groups)
                 list_year_sel.on("update:model-value",  load_groups)
                 list_month_sel.on("update:model-value", load_groups)
