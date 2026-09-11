@@ -6,11 +6,18 @@ Viết sau review PR #57: 2182 dòng thêm mà 0 test, trong đó có 1 blocker 
 dùng GÕ TAY → ValueError → 500 làm sập tab Lịch sử). Mỗi test dưới đây gắn
 với đúng một lỗi đã sửa, để không tái diễn.
 
+11/09/2026: đổi mô hình "1 bản ghi CHUNG/kỳ" (khoá `ky`) sang "nhiều bảng độc
+lập/kỳ" (khoá `id`, mỗi bảng 1 chủ `created_by`) — mirror PTT
+(`doi_chieu_citad_service.py`). `_SCHEMA` + các test liên quan tới
+`session_save`/`session_delete` cập nhật theo đúng schema/chữ ký mới; test
+"người lập bảng không bị người lưu sau chiếm chỗ" viết lại vì hành vi cũ
+("lưu cùng `ky` là ghi đè") không còn tồn tại — giờ chỉ ghi đè khi CHÍNH CHỦ
+truyền đúng `session_id`.
+
 Test ở tầng service với SQLite in-memory (không chạy migrations thật, không
 dựng TestClient) — logic cần canh là công thức + parse ngày + quy tắc
-created_by, không dính RBAC.
+created_by/session_id, không dính RBAC.
 """
-import json
 import sqlite3
 
 import pytest
@@ -20,7 +27,8 @@ from backend.services import doi_chieu_citad_nostro_service as svc
 _SCHEMA = """
 CREATE TABLE user_tttt (id INTEGER PRIMARY KEY, username TEXT, full_name TEXT);
 CREATE TABLE doi_chieu_citad_nostro_sessions (
-    ky         TEXT PRIMARY KEY,
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    ky         TEXT NOT NULL,
     data       TEXT NOT NULL,
     updated_at DATETIME,
     updated_by INTEGER,
@@ -29,6 +37,7 @@ CREATE TABLE doi_chieu_citad_nostro_sessions (
 CREATE TABLE doi_chieu_citad_nostro_history (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     ky         TEXT NOT NULL,
+    session_id INTEGER,
     staff_id   INTEGER NOT NULL,
     data       TEXT NOT NULL,
     created_at DATETIME NOT NULL
@@ -81,29 +90,88 @@ def test_sap_xep_theo_thoi_gian_khong_theo_chuoi(db):
     assert [s["ky"] for s in svc.session_list(db)][0] == "05/01/2027-06/01/2027"
 
 
-# ══════════════════════════════════════════════════════════════
-# Người lập bảng cố định, không đổi theo người lưu sau cùng
-# ══════════════════════════════════════════════════════════════
-
-def test_nguoi_lap_bang_khong_bi_nguoi_luu_sau_chiem_cho(db):
-    ky = "01/08/2026-05/08/2026"
-    svc.session_save(db, ky, 1, _sess(ky))          # An lập bảng
-    svc.session_save(db, ky, 2, _sess(ky))          # Bình lưu đè
-
-    dong = svc.get_reconciliation_days(db)[0]
-    assert dong["created_by_username"] == "anlv"    # vẫn là người lập bảng
-    assert dong["so_lan_luu"] == 2                  # lịch sử ghi đủ cả 2 lượt
-
-    row = db.execute("SELECT updated_by FROM doi_chieu_citad_nostro_sessions WHERE ky=?", (ky,)).fetchone()
-    assert row["updated_by"] == 2                   # người lưu sau cùng là Bình
-
-
 def test_loc_theo_ten_nguoi_cham_khop_ca_username_lan_ho_ten(db):
     ky = "01/08/2026-05/08/2026"
     svc.session_save(db, ky, 1, _sess(ky))
     assert len(svc.get_reconciliation_days(db, nguoi_cham="anlv")) == 1
     assert len(svc.get_reconciliation_days(db, nguoi_cham="văn an")) == 1
     assert len(svc.get_reconciliation_days(db, nguoi_cham="binhpt")) == 0
+
+
+# ══════════════════════════════════════════════════════════════
+# Nhiều bảng độc lập/kỳ — không ai ghi đè ai (11/09/2026)
+# ══════════════════════════════════════════════════════════════
+
+def test_hai_nguoi_cung_ky_ra_hai_bang_rieng_khong_de_nhau(db):
+    """Đổi khác PTT ở tên gọi nhưng cùng bản chất: `session_id=None` LUÔN
+    tạo bảng mới, kể cả trùng `ky` với bảng người khác."""
+    ky = "01/08/2026-05/08/2026"
+    sid_an = svc.session_save(db, ky, 1, _sess(ky))
+    sid_binh = svc.session_save(db, ky, 2, _sess(ky))
+    assert sid_an != sid_binh
+
+    dong = svc.get_reconciliation_days(db)
+    assert {r["session_id"] for r in dong} == {sid_an, sid_binh}
+    assert {r["created_by_username"] for r in dong} == {"anlv", "binhpt"}
+    for r in dong:
+        assert r["so_lan_luu"] == 1  # mỗi bảng có đúng 1 lần lưu của riêng nó
+
+
+def test_nguoi_lap_bang_khong_bi_nguoi_luu_sau_chiem_cho(db):
+    """`created_by` cố định khi CHÍNH CHỦ lưu tiếp (truyền đúng
+    `session_id`) — `updated_by` đổi theo người lưu sau cùng."""
+    ky = "01/08/2026-05/08/2026"
+    sid = svc.session_save(db, ky, 1, _sess(ky))  # An lập bảng
+    sid2 = svc.session_save(db, ky, 1, _sess(ky), session_id=sid)  # An tự lưu tiếp
+    assert sid2 == sid
+
+    dong = svc.get_reconciliation_days(db)[0]
+    assert dong["created_by_username"] == "anlv"
+    assert dong["so_lan_luu"] == 1  # 2 lần lưu LIÊN TIẾP của CÙNG 1 người gộp vào 1 dòng lịch sử
+
+    row = db.execute(
+        "SELECT updated_by, created_by FROM doi_chieu_citad_nostro_sessions WHERE id=?", (sid,)
+    ).fetchone()
+    assert row["updated_by"] == 1
+    assert row["created_by"] == 1
+
+
+def test_nguoi_khac_khong_sua_duoc_bang_khong_phai_cua_minh(db):
+    ky = "01/08/2026-05/08/2026"
+    sid = svc.session_save(db, ky, 1, _sess(ky))
+    with pytest.raises(svc.SessionForbiddenError):
+        svc.session_save(db, ky, 2, _sess(ky), session_id=sid)
+
+
+def test_sua_tiep_ky_khac_voi_ky_cua_bang_bi_tu_choi(db):
+    ky = "01/08/2026-05/08/2026"
+    sid = svc.session_save(db, ky, 1, _sess(ky))
+    with pytest.raises(ValueError):
+        svc.session_save(db, "02/08/2026-06/08/2026", 1, _sess("02/08/2026-06/08/2026"), session_id=sid)
+
+
+def test_sua_tiep_bang_da_bi_xoa_bao_khong_tim_thay(db):
+    ky = "01/08/2026-05/08/2026"
+    sid = svc.session_save(db, ky, 1, _sess(ky))
+    svc.session_delete(db, sid, staff_id=1, is_admin=False)
+    with pytest.raises(svc.SessionNotFoundError):
+        svc.session_save(db, ky, 1, _sess(ky), session_id=sid)
+
+
+def test_xoa_bang_chi_chu_bang_hoac_admin(db):
+    ky = "01/08/2026-05/08/2026"
+    sid = svc.session_save(db, ky, 1, _sess(ky))
+
+    with pytest.raises(svc.SessionForbiddenError):
+        svc.session_delete(db, sid, staff_id=2, is_admin=False)  # Bình không phải chủ, không phải admin
+
+    svc.session_delete(db, sid, staff_id=2, is_admin=True)  # Bình là admin → xoá được
+    assert svc.session_get(db, sid) is None
+
+
+def test_xoa_bang_khong_ton_tai_bao_khong_tim_thay(db):
+    with pytest.raises(svc.SessionNotFoundError):
+        svc.session_delete(db, 999, staff_id=1, is_admin=True)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -143,6 +211,17 @@ def test_bao_chong_ngay_va_ho_ngay(db):
     assert tu_bao["overlaps"] == []
 
 
+def test_chong_ngay_khong_bao_lap_khi_nhieu_bang_cung_ky(db):
+    """Từ 11/09/2026 nhiều bảng có thể trùng `ky` (nhiều người cùng chấm 1
+    kỳ) — `check_period_overlap` phải DISTINCT, không báo trùng N lần cho
+    cùng 1 kỳ có N bảng."""
+    ky = "01/08/2026-05/08/2026"
+    svc.session_save(db, ky, 1, _sess(ky))
+    svc.session_save(db, ky, 2, _sess(ky))
+    chong = svc.check_period_overlap(db, "04/08/2026", "08/08/2026")
+    assert chong["overlaps"] == ["01/08/2026-05/08/2026"]  # đúng 1 lần, không lặp
+
+
 # ══════════════════════════════════════════════════════════════
 # Công thức đối chiếu
 # ══════════════════════════════════════════════════════════════
@@ -176,3 +255,64 @@ def test_o_trong_va_chuoi_rong_tinh_la_0_khong_ne_ngoai_le():
     ci, hub = svc.compute_totals(sess)
     assert ci["gtt"] == {"soMon": 0.0, "soTien": 0.0}
     assert hub["gtc"] == {"soMon": 0.0, "soTien": 0.0}
+
+
+def test_cong_don_khong_du_nhi_phan_nhu_float_thuong():
+    """Bug thật đã xảy ra ở module gốc Phòng Thanh toán (25/08/2026):
+    0.1+0.1+0.1 != 0.3 bằng float thường. `compute_totals()` cộng bằng
+    Decimal nên không dính dư nhị phân dù 5 cổng đều có số lẻ."""
+    cD = {c: {"gtt": {"soMon": 1, "soTien": 0.1}, "gtc": {"soMon": 0, "soTien": 0}} for c in svc.CONGS}
+    # 3 cổng đầu góp 0.1, 2 cổng sau góp 0 tiền (vẫn 1 món) — đủ 3 lần cộng
+    # 0.1 gây dư nhị phân, soMon vẫn khớp bình thường (5 cổng x 1 món = 5).
+    for c in list(svc.CONGS)[3:]:
+        cD[c]["gtt"]["soTien"] = 0
+    sess = {"cD": cD, "phD": {"gtt": {"soMon": 5, "soTien": 0.3}, "gtc_truoc": {}, "gtc_tu": {}}}
+    assert (0.1 + 0.1 + 0.1) != 0.3  # xác nhận đây đúng là ca gây dư nhị phân
+    assert svc.is_reconciliation_matched(sess) is True
+
+
+# ══════════════════════════════════════════════════════════════
+# Tổng hợp tháng — cộng dồn nhiều bảng/kỳ (11/09/2026)
+# ══════════════════════════════════════════════════════════════
+
+def test_tong_hop_thang_tim_dung_bang_giao_voi_thang(db):
+    trong_thang = svc.session_save(db, "05/07/2026-10/07/2026", 1, _sess("05/07/2026-10/07/2026"))
+    giao_dau_thang = svc.session_save(db, "28/06/2026-02/07/2026", 1, _sess("28/06/2026-02/07/2026"))
+    ngoai_thang = svc.session_save(db, "01/08/2026-05/08/2026", 1, _sess("01/08/2026-05/08/2026"))
+
+    ket_qua = svc.get_sessions_for_month(db, 2026, 7)
+    ids = {r["session_id"] for r in ket_qua}
+    assert ids == {trong_thang, giao_dau_thang}
+    assert ngoai_thang not in ids
+
+
+def test_tong_hop_thang_bao_dung_ngay_con_thieu(db):
+    svc.session_save(db, "01/07/2026-05/07/2026", 1, _sess("01/07/2026-05/07/2026"))
+    svc.session_save(db, "10/07/2026-31/07/2026", 1, _sess("10/07/2026-31/07/2026"))
+    # Tháng 7/2026 có 31 ngày — thiếu đúng 06,07,08,09/07 (giữa 2 kỳ đã chấm)
+    missing = svc.get_month_missing_days(db, 2026, 7)
+    assert missing == ["06/07/2026", "07/07/2026", "08/07/2026", "09/07/2026"]
+
+
+def test_tong_hop_thang_het_ngay_thieu_khi_du_ca_thang(db):
+    svc.session_save(db, "01/07/2026-31/07/2026", 1, _sess("01/07/2026-31/07/2026"))
+    assert svc.get_month_missing_days(db, 2026, 7) == []
+
+
+def test_tong_hop_thang_cong_dung_nhieu_bang_duoc_chon(db):
+    s1 = _sess("01/07/2026-15/07/2026")
+    s1["cD"] = {c: {"gtt": {"soMon": 1, "soTien": 100}, "gtc": {"soMon": 0, "soTien": 0}} for c in svc.CONGS}
+    s2 = _sess("16/07/2026-31/07/2026")
+    s2["cD"] = {c: {"gtt": {"soMon": 2, "soTien": 200}, "gtc": {"soMon": 0, "soTien": 0}} for c in svc.CONGS}
+    sid1 = svc.session_save(db, s1["ky"], 1, s1)
+    sid2 = svc.session_save(db, s2["ky"], 1, s2)
+
+    cD, phD = svc.combine_sessions_cD_phD(db, [sid1, sid2])
+    for c in svc.CONGS:
+        assert cD[c]["gtt"]["soMon"] == 3       # 1 + 2
+        assert cD[c]["gtt"]["soTien"] == 300     # 100 + 200
+
+    # Chỉ chọn 1 bảng thì chỉ cộng đúng bảng đó — không tự động cộng hết
+    cD_chi_s1, _ = svc.combine_sessions_cD_phD(db, [sid1])
+    for c in svc.CONGS:
+        assert cD_chi_s1[c]["gtt"]["soMon"] == 1
