@@ -53,6 +53,68 @@
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
   <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-09-11</p>
 
+  <!-- Z11 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">Z11</span>
+      <span class="card-title">PR#90 — Đối chiếu CITAD-PaymentHub N&amp;V: nhiều bảng độc lập/kỳ, Tổng hợp tháng, Decimal, proxy 404</span>
+      <span class="badge badge-warn">Đã merge (22b8d4b) — còn 1 lỗi giao diện chờ vá</span>
+    </div>
+    <div class="card-body">
+      <p>PR của datphan175. Nối tiếp <b>Z10</b>. Mô hình "1 bản ghi chung/kỳ" (khoá <code>ky</code>) đổi sang
+        "nhiều bảng/kỳ, mỗi bảng 1 chủ" — đi thẳng tới schema cuối của Phòng Thanh toán (id PK, không UNIQUE), bỏ
+        qua các bước trung gian PTT từng đi, và <b>không</b> có <code>status</code> draft/final.</p>
+
+      <p><b>Review bắt 2 lỗi thật trước merge (đã sửa trong 591c06c):</b></p>
+      <table>
+        <tr><th>Lỗi</th><th>Bản đầu</th><th>Bản merge</th></tr>
+        <tr><td>Backfill <code>history.session_id</code></td>
+            <td>Khối riêng, không điều kiện canh → chạy <b>mọi lần khởi động</b>. Xoá bảng → FK
+              <code>ON DELETE SET NULL</code> → restart → subquery <code>WHERE s.ky = history.ky</code> gắn lịch sử mồ côi
+              sang bảng <b>người khác</b> cùng kỳ (tái hiện được bằng script)</td>
+            <td>Nằm <b>trong</b> transaction rebuild (<code>if "id" not in cols</code>) — đúng 1 lần/đời DB, lúc mỗi
+              <code>ky</code> còn đúng 1 bảng. <code>ADD COLUMN</code> dời lên trước rebuild. Đã kiểm: lịch sử bảng đã xoá giữ
+              <code>NULL</code>; FK của history vẫn trỏ <code>doi_chieu_citad_nostro_sessions</code> (không bị đổi sang
+              <code>_bak</code> nhờ <code>legacy_alter_table=ON</code>)</td></tr>
+        <tr><td>Đổi ô ngày khi đang gắn bảng</td>
+            <td><code>ValueError</code> "kỳ không khớp" → 500; frontend gỡ <code>session_id</code> ở mọi lỗi → lần Lưu thứ
+              hai lặng lẽ đẻ bảng trùng</td>
+            <td>Backend 400; <code>_on_ky_changed()</code> gỡ gắn ngay khi đổi ngày; nhánh <code>except</code> không còn gỡ
+              <code>session_id</code></td></tr>
+      </table>
+
+      <p><b>Đánh đổi đã chấp nhận:</b></p>
+      <ul>
+        <li><b>Không quay lui được sau migrate.</b> Code cũ dùng <code>ON CONFLICT(ky)</code> — trên bảng mới (không
+          UNIQUE theo <code>ky</code>) ném "ON CONFLICT clause does not match any PRIMARY KEY or UNIQUE constraint" (đã
+          chạy thử), mọi lượt Lưu chết. Revert thì phải khôi phục DB từ bản sao lưu trước deploy.</li>
+        <li><b>Xoá bảng = mất đường xem lịch sử của bảng đó.</b> Dòng history vẫn nằm trong DB (<code>session_id</code>
+          NULL) nhưng tab Lịch sử liệt kê theo bảng nên không UI nào mở tới. Dialog xoá đã nói thẳng điều này.</li>
+        <li><b>Bảng đang gắn bị người khác xoá → mọi lượt Lưu báo 404</b> tới khi đổi ngày/tải lại trang.
+          <code>api.post()</code> không giữ mã HTTP tới handler nên không phân biệt 404 với lỗi mạng; tác giả chọn báo lỗi
+          lặp lại thay vì âm thầm tạo bảng mới.</li>
+        <li><b>Tổng hợp tháng tick sẵn mọi bảng.</b> Đúng ca PR sinh ra để giải (nhiều người chấm cùng kỳ) thì tổng mặc
+          định cộng trùng — chỉ có cảnh báo đỏ "chồng ngày", không tự bỏ tick.</li>
+        <li><code>_can_delete_any_session()</code> chép lại truy vấn của <code>require_feature()</code> để trả <code>bool</code>
+          thay vì raise — sửa cách tra quyền ở <code>deps.py</code> thì phải sửa cả chỗ này.</li>
+      </ul>
+
+      <p><b>⚠ Còn tồn — chưa vá, merge theo quyết định chủ repo:</b> "Tải để sửa tiếp" bảng của chính mình → form khoá
+        chỉ đọc. <code>apply_session_data()</code> gắn <code>view_state</code> trước rồi gán <code>tu_ngay_input.value</code>,
+        sau đó <code>den_ngay_input.value</code>; NiceGUI gọi <code>on_value_change</code> <b>đồng bộ</b> ngay lúc gán
+        (<code>binding.py</code> <code>BindableProperty.__set__</code>) → <code>_on_ky_changed()</code> thấy kỳ ghép
+        "từ mới – đến cũ" ≠ kỳ bảng → gỡ <code>session_id</code> và <code>created_by</code> → <code>is_owner</code> sai →
+        <code>_set_form_readonly(True)</code>. Xảy ra khi "Đến ngày" trên form khác của bảng và "Từ ngày" cũng khác. Vá:
+        cờ "đang nạp" (<code>try/finally</code>) trong <code>apply_session_data</code>, <code>_on_ky_changed()</code> bỏ qua
+        khi cờ bật — chỉ dời thứ tự gán thì còn thông báo "đổi kỳ" sai khi chuyển bảng X → Y.</p>
+
+      <p><b>Kiểm trước merge:</b> CI bị GitHub chặn thanh toán (không bước nào chạy) → chạy tại máy trên đúng
+        <code>8b15d1b</code> sau <code>gh pr update-branch</code>, worktree sạch, biến môi trường như CI: ruff
+        F821/F823/E9 sạch, <b>1903 passed</b>. Chạy lần đầu thiếu <code>DOI_CHIEU_ZIP_PASSWORD</code> (worktree không có
+        <code>.env</code>) → 23 test ACH đỏ; lỗi môi trường, không liên quan PR.</p>
+    </div>
+  </div>
+
   <!-- CI2 -->
   <div class="card">
     <div class="card-header">

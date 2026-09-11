@@ -4,6 +4,30 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 11/09/2026 **Đối chiếu CITAD - PaymentHub (Phòng QLTK Nostro, Vostro)** - mỗi người có bảng riêng cho cùng một kỳ, thêm tab "Tổng hợp tháng"
+    + ✅ **Không còn ghi đè bảng của nhau.** Trước đây mỗi kỳ chỉ có một bảng chung cả phòng, ai lưu
+      sau là đè số liệu người trước. Nay mỗi lần lưu kỳ mới là một bảng riêng của người đang làm;
+      người khác mở ra chỉ xem được, không sửa được. Bảng đã lưu trước khi cập nhật vẫn giữ nguyên
+    + ✅ **Tab "Lịch sử"** xếp theo kỳ → từng bảng của từng người → từng lần lưu. Bảng của mình có nút
+      "Tải để sửa tiếp"
+    + ✅ **Tab mới "Tổng hợp tháng"**: chọn tháng, tick những bảng muốn cộng vào tổng rồi xuất Excel
+      tháng. Có cảnh báo đỏ khi hai bảng đang tick trùng ngày nhau (dễ cộng hai lần) và danh sách
+      những ngày trong tháng chưa ai chấm
+    + ✅ **Hết báo "Chênh lệch" giả** khi số liệu thực ra khớp nhau
+    + ✅ **File Excel in ra nằm giữa trang A4**, chữ và cột to hơn
+    + ✅ **Extension gửi được số liệu** ở máy chủ trước đây cứ báo "Chưa gửi được số liệu về máy chủ -
+      sẽ tự thử lại" mãi không xong
+    + ⚠️ **Muốn đổi sang kỳ khác thì cứ sửa ô ngày** — hệ thống hiểu là bắt đầu bảng mới, bảng đang
+      xem không bị ghi đè
+    + ⚠️ **Xoá bảng rồi thì lịch sử các lần lưu của bảng đó cũng không xem lại được nữa.** Mỗi người
+      tự xoá được bảng của mình; muốn cho ai đó (vd trưởng phòng) xoá được bảng của người khác, quản
+      trị viên vào *Phân quyền theo nhóm → Phòng QLTK Nostro, Vostro* tick
+      **"Xoá bảng đối chiếu của người khác"**
+    + ⚠️ **Lỗi đã biết, đang chờ vá:** mở lại bảng của chính mình từ tab "Lịch sử" có thể bị khoá
+      chỉ đọc và báo "bảng của người khác" (khi ngày của bảng khác cả hai ô ngày đang hiện trên màn
+      hình). Tạm thời: gõ sẵn đúng **"Đến ngày"** của kỳ đó vào ô trên màn hình Đối chiếu trước, rồi
+      mới sang tab "Lịch sử" bấm "Tải để sửa tiếp"
+
 - 11/09/2026 Kiểm tra tự động trên GitHub chỉ chạy khi mở PR — **không đổi gì với người dùng**
     + Trước đây mỗi lần đẩy mã chạy kiểm tra hai lần, gộp mã xong lại chạy thêm lần nữa trên đúng nội
       dung vừa kiểm — tốn gấp ba số phút GitHub cho phép và GitHub đã tạm chặn kiểm tra ngày 11/09.

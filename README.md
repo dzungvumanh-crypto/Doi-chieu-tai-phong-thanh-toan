@@ -726,10 +726,23 @@ Kết nối CSDL dùng **bể mượn–trả** (`DB_POOL_SIZE`, mặc định 1
 - **Kỳ đối chiếu linh hoạt** (Từ ngày – Đến ngày, gộp được nhiều ngày) thay vì 1 dòng/ngày cố định.
   Trước khi lưu có **cảnh báo (không chặn)** nếu kỳ mới chồng ngày với kỳ đã lưu, hoặc bỏ hở ngày so
   với kỳ liền trước
-- Mỗi kỳ là **một bản ghi chung cả phòng** (`doi_chieu_citad_nostro_sessions`, khoá theo `ky`) — ai
-  lưu sau cùng là bản hiện hành, nhưng cột **người chấm** ở tab Lịch sử luôn hiển thị **người lập
-  bảng** (người lưu đầu tiên), không đổi theo người lưu sau. Mỗi lần bấm Lưu ghi thêm 1 dòng vào
-  `doi_chieu_citad_nostro_history` để xem/tải lại từng bản cũ
+- **Nhiều bảng độc lập cho cùng một kỳ, mỗi bảng một chủ** (từ 11/09/2026, PR#90 — trước đó là
+  một bản ghi chung cả phòng khoá theo `ky`, ai lưu sau ghi đè người trước).
+  `doi_chieu_citad_nostro_sessions` khoá theo `id`; lưu khi form chưa gắn bảng nào là **tạo bảng
+  mới**, gắn rồi thì lưu tiếp đúng bảng đó — chỉ chủ bảng (`created_by`) sửa được, người khác chỉ
+  xem. Đổi ô ngày trong lúc đang gắn bảng = bắt đầu bảng mới. Mỗi lần lưu ghi
+  `doi_chieu_citad_nostro_history` kèm `session_id`
+- **Xoá bảng**: chủ bảng tự xoá bảng mình; xoá bảng **người khác** cần quyền
+  `doi_chieu_citad_nostro.delete_any` (admin tự có). Xoá rồi thì lịch sử các lần lưu của bảng đó
+  cũng không còn xem được trên giao diện
+- Tab **Lịch sử** 3 tầng: kỳ → từng bảng (của từng người) → từng lần lưu
+- Tab **Tổng hợp tháng**: liệt kê mọi bảng có kỳ giao với tháng, **tự tick chọn** bảng nào cộng
+  vào tổng (cảnh báo khi các bảng đang tick chồng ngày nhau), báo những ngày trong tháng chưa bảng
+  nào phủ tới, xuất Excel tháng cùng mẫu với Excel một kỳ
+- Tổng CITAD / HUB / Chênh lệch cộng bằng `Decimal` (backend lẫn frontend) — tránh báo "Chênh
+  lệch" giả do dư số thực, cùng lỗi đã gặp ở module Phòng Thanh toán
+- Tiền tố `/api/doi-chieu-citad-nostro/` đi qua proxy cổng frontend (`frontend/api_proxy.py`) —
+  thiếu nó thì Extension ở máy chủ chỉ mở cổng frontend nhận 404 và tự thử lại mãi
 - Kèm **Extension trình duyệt riêng** (`extension_citad_nv/`) — **không** dùng chung
   `extension_citad/` của Phòng Thanh toán, 2 gói có 2 ID khác nhau, cài song song được. Một mã kết
   nối dùng được cho cả 2 gói nếu một người làm cả 2 module
