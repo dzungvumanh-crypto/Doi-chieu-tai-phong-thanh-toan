@@ -4,6 +4,11 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 11/09/2026 Kiểm tra tự động trên GitHub chỉ chạy khi mở PR — **không đổi gì với người dùng**
+    + Trước đây mỗi lần đẩy mã chạy kiểm tra hai lần, gộp mã xong lại chạy thêm lần nữa trên đúng nội
+      dung vừa kiểm — tốn gấp ba số phút GitHub cho phép và GitHub đã tạm chặn kiểm tra ngày 11/09.
+      Nay chỉ chạy một lần mỗi khi mở hoặc cập nhật yêu cầu gộp mã (PR); PR chỉ sửa tài liệu thì bỏ qua
+
 - 11/09/2026 Menu mới **Khảo sát** — tạo phiếu hỏi ý kiến như Google Forms, gửi cho từng nhóm, có hạn chót và thống kê
     + ✅ **Nằm ở nhóm "Tính năng khác" → "Khảo sát".** Người được giao tạo khảo sát soạn câu hỏi
       (gõ chữ ngắn, đoạn văn, chọn một, chọn nhiều, danh sách thả xuống, chấm điểm theo thang, chọn
