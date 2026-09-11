@@ -23,6 +23,10 @@ _KINDS = {
     "so_truc":   ("Sổ trực chờ xử lý",
                   "Sổ trực cuối ngày đang chờ đến lượt bạn xác nhận",
                   "menu.so_truc"),
+    # None: không cần mã quyền — xem _PENDING_DEFS trong frontend/shared.py
+    "surveys":   ("Khảo sát chưa trả lời",
+                  "Khảo sát đang mở được gửi tới bạn mà bạn chưa trả lời",
+                  None),
 }
 
 # so_truc.status → (nhãn, màu badge) — khớp _STATUS_LABEL trong frontend/pages/so_truc.py.
@@ -53,6 +57,8 @@ def _cols(kind: str) -> list[str]:
                 "Người nộp", "Ngày bàn giao", "Ghi chú", ""]
     if kind == "so_truc":
         return ["Ngày trực", "GDV 1", "GDV 2", "KSV", "Trạng thái", "Ghi chú", ""]
+    if kind == "surveys":
+        return ["Khảo sát", "Người tạo", "Số câu hỏi", "Hạn chót", ""]
     return ["Người xin nghỉ", "Phòng", "Loại phép", "Từ ngày", "Đến ngày",
             "Lý do", "Trạng thái", ""]
 
@@ -68,6 +74,14 @@ def _render_row(kind: str, it: dict):
             (it["entered_by_name"] or "—", ""),
             (_dmy(it.get("submit_date")) or "—", "whitespace-nowrap"),
             (it["notes"] or "—", "text-xs text-gray-500 max-w-[16rem] truncate"),
+        ]
+    elif kind == "surveys":
+        dl = it.get("deadline") or ""
+        cells = [
+            (it["title"], "font-medium text-gray-900"),
+            (it.get("created_by_name") or "—", ""),
+            (str(it.get("question_count") or 0), ""),
+            (f"{_dmy(dl[:10])} {dl[11:16]}".strip() or "—", "whitespace-nowrap text-red-800"),
         ]
     elif kind == "so_truc":
         cells = [
@@ -115,6 +129,8 @@ def _goto(kind: str, it: dict):
                        f'&month={it["month"]}&entry={it["entry_id"]}')
     elif kind == "so_truc":
         ui.navigate.to(f'/so_truc?ngay={it["truc_date"]}')
+    elif kind == "surveys":
+        ui.navigate.to(f'/surveys/fill?id={it["id"]}')
     else:
         from nicegui import app
         app.storage.user["_leaves_goto"] = (
@@ -133,7 +149,7 @@ async def pending_work_page(kind: str):
         return
 
     title, subtitle, feature = _KINDS[kind]
-    if not api.has_feature(feature):
+    if feature and not api.has_feature(feature):
         ui.navigate.to("/home")
         return
 

@@ -158,6 +158,8 @@ MENU_TREE = [
         "icon": "apps",
         "items": [
             ("quiz",      "Ôn tập",            "school"),
+            # "poll" thuộc bộ Material Icons gốc — cùng lý do với ba icon ở trên.
+            ("surveys",   "Khảo sát",          "poll"),
             ("vb_format", "Chuẩn hoá văn bản", "description"),
         ],
     },
@@ -399,10 +401,14 @@ def _o_chon_ngay_trong(label: str):
 
 # ─── Khối "Công việc chờ xử lý" ───────────────────────────────────────────────
 # key → (nhãn, icon, khoá đếm trong /pending-counts, feature cần có để mở được)
+# feature None = không cần mã quyền: khảo sát trả lời được khi có tên trong danh
+# sách người nhận (xem docstring backend/api/surveys.py). Đặt "menu.surveys" ở
+# đây thì người được gửi khảo sát mà nhóm chưa tick menu sẽ không bao giờ thấy nó.
 _PENDING_DEFS = [
     ("handovers", "Chứng từ chờ xác nhận",  "receipt_long", "menu.handovers"),
     ("leaves",    "Đơn nghỉ phép chờ duyệt", "event_busy",   "menu.leaves"),
     ("so_truc",   "Sổ trực chờ xử lý",      "assignment_turned_in", "menu.so_truc"),
+    ("surveys",   "Khảo sát chưa trả lời",  "poll",         None),
 ]
 
 
@@ -450,7 +456,7 @@ def _pending_section():
         for key, _lbl, _ico, feat in _PENDING_DEFS:
             cnt = (counts or {}).get(key, 0)
             # Có việc nhưng không có quyền mở màn hình đó thì đừng dựng link chết
-            if not isinstance(cnt, int) or cnt <= 0 or not api.has_feature(feat):
+            if not isinstance(cnt, int) or cnt <= 0 or (feat and not api.has_feature(feat)):
                 continue
             row, badge = rows[key]
             badge.set_text(str(cnt))

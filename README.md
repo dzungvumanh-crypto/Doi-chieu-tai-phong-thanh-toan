@@ -914,6 +914,32 @@ người làm báo cáo không có cách nào biết. Đo trên dữ liệu th�
 
 ---
 
+### Module Khảo sát
+- Nhóm **Tính năng khác** → **Khảo sát** (`/surveys`). Biểu mẫu kiểu Google Forms, dùng chung cả cơ quan
+- **Soạn** (`/surveys/edit`): 7 loại câu — trả lời ngắn, đoạn văn, trắc nghiệm chọn một, hộp kiểm chọn
+  nhiều, danh sách thả xuống, thang đo tuyến tính (0/1 → 2…10, có nhãn hai đầu), ngày. Mỗi câu đặt được
+  *bắt buộc*, đổi thứ tự, nhân bản. Tuỳ chọn *Ẩn danh* và *Cho phép sửa câu trả lời trước hạn chót*
+- **Gửi tới nhóm user** (chọn nhiều nhóm) + **hạn chót** bắt buộc + giờ bắt đầu tuỳ chọn. Danh sách người
+  nhận được **chốt lúc phát hành**; sửa nhóm khi đang mở thì bấm Lưu để đồng bộ (người đã trả lời luôn giữ)
+- **Nhắc việc**: khảo sát đang mở mà chưa trả lời hiện ở khối **Công việc chờ xử lý** → *Khảo sát chưa
+  trả lời* (`/pending/surveys`), tự hết khi đã nộp, quá hạn hoặc bị đóng
+- **Trả lời** (`/surveys/fill`) không cần mã quyền — có tên trong danh sách người nhận là trả lời được
+- **Thống kê** (`/surveys/results`): số người nhận / đã trả lời / tỷ lệ; biểu đồ cột theo từng câu
+  (điểm trung bình cho thang đo, danh sách chữ cho câu tự luận); bảng từng câu trả lời; tiến độ ai
+  đã/chưa trả lời; xuất Excel 3 sheet. Ẩn danh thì không hiện tên và giờ nộp
+- ⚠️ Đã có người trả lời thì **câu hỏi bị khoá** (chỉ đổi được tên, mô tả, nhóm nhận, thời hạn) — sửa
+  lựa chọn lúc đó làm câu trả lời cũ trỏ sang ý khác
+- ⚠️ **Ẩn danh**: đã phát hành ẩn danh thì không tắt được; đã có trả lời thì không đổi được (cả hai chiều).
+  Dòng kết quả ẩn danh xếp theo nội dung, không theo thứ tự nộp. Giới hạn đã biết: người xem kết quả mở
+  trang trước và sau khi *một* người nộp thì so hai lần là ra bài của người đó (Google Forms cũng vậy)
+- Bảng DB: `surveys`, `survey_questions`, `survey_target_groups`, `survey_recipients`,
+  `survey_responses`, `survey_answers`
+- Phân quyền: `menu.surveys` (menu + danh sách) + `surveys.create` (tạo/sửa/phát hành/đóng/xoá khảo sát
+  của mình) + `surveys.view_all` (xem kết quả khảo sát của mọi người). Người tạo luôn xem được kết quả
+  khảo sát của mình
+
+---
+
 ### Module Chuẩn hoá văn bản (QĐ 979/QyĐ-NHNo-PC)
 - Nhóm **Tính năng khác** → **Chuẩn hoá văn bản** (`/vb_format`). Dùng chung cho cả cơ quan, không thuộc phòng nào
 - Tải một file **`.docx`** lên → hệ thống sửa về đúng thể thức và kỹ thuật trình bày theo
@@ -1234,7 +1260,7 @@ Chấm công & Lịch trực ─ Phòng Kế toán ───── Chấm công
                    Phòng Thanh toán ── Phân lịch trực / Sổ trực cuối ngày
 Quản lý nhân sự ── Hồ sơ cán bộ / Tra cứu & Thống kê / Nhắc lịch
 Danh sách CN TTQT ─ menu phẳng, không có nhóm cha
-Tính năng khác ─── Ôn tập / Chuẩn hoá văn bản
+Tính năng khác ─── Ôn tập / Khảo sát / Chuẩn hoá văn bản
 ```
 
 Tầng "phòng" **chỉ còn ở cấp 2** của Đối chiếu, Báo cáo và Chấm công & Lịch trực, và chỉ liệt kê phòng đang thực sự có tính năng. Trước đây menu chia theo phòng ở cấp 1; cách đó buộc người dùng phải biết chức năng mình cần thuộc phòng nào mới tìm ra.

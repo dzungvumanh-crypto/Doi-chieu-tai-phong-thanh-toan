@@ -138,6 +138,15 @@ FEATURES: dict[str, str] = {
     "quiz.upload":           "Tải bộ câu hỏi lên / đổi tên bộ",
     "quiz.delete":           "Xoá bộ câu hỏi",
 
+    # Khảo sát — biểu mẫu gửi tới nhóm user. `menu.surveys` mở menu và danh sách
+    # "Khảo sát của tôi". TRẢ LỜI không cần mã nào: có tên trong danh sách người
+    # nhận là trả lời được (dữ liệu của khảo sát, như người được giao duyệt đơn).
+    # Người tạo luôn xem được kết quả khảo sát của mình; `surveys.view_all` là
+    # để lãnh đạo xem kết quả khảo sát của mọi người.
+    "menu.surveys":          "Khảo sát (menu)",
+    "surveys.create":        "Tạo / sửa / phát hành khảo sát",
+    "surveys.view_all":      "Xem kết quả khảo sát của mọi người",
+
     # Chuẩn hoá văn bản — dùng chung cả cơ quan. Tách quyền sửa quy chuẩn ra
     # riêng: thông số trình bày là của cả đơn vị, một người đổi là mọi văn bản
     # người khác chạy sau đó đều theo số mới — không để chung với quyền dùng.
@@ -333,6 +342,7 @@ FEATURE_GROUPS: list[dict] = [
                 "label": None,
                 "menus": [
                     {"code": "menu.quiz", "actions": ["quiz.upload", "quiz.delete"]},
+                    {"code": "menu.surveys", "actions": ["surveys.create", "surveys.view_all"]},
                     {"code": "menu.vb_format", "actions": ["vb_format.config"]},
                 ],
             },
