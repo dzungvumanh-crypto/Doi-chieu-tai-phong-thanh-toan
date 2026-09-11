@@ -4,6 +4,12 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 11/09/2026 Địa chỉ kiểm tra nhanh **/health** — **không đổi gì với người dùng**
+    + Mở `http://<máy chủ>:8000/health` (không cần đăng nhập) để biết phần máy chủ đã chạy và đọc
+      được dữ liệu chưa: hiện `"status": "ok"` là ổn; báo `"degraded"` là máy chủ chạy nhưng không
+      đọc được file dữ liệu — xem `backend.log`
+    + Không hiện thông tin gì khác. Ngày sao lưu gần nhất và lệch giờ vẫn xem ở màn *Nhật ký hệ thống*
+
 - 11/09/2026 **Đối chiếu CITAD - PaymentHub (Phòng QLTK Nostro, Vostro)** - mỗi người có bảng riêng cho cùng một kỳ, thêm tab "Tổng hợp tháng"
     + ✅ **Không còn ghi đè bảng của nhau.** Trước đây mỗi kỳ chỉ có một bảng chung cả phòng, ai lưu
       sau là đè số liệu người trước. Nay mỗi lần lưu kỳ mới là một bảng riêng của người đang làm;

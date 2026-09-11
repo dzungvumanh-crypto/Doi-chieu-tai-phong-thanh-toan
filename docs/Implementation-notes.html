@@ -53,6 +53,46 @@
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
   <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-09-11</p>
 
+  <!-- HL1 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">HL1</span>
+      <span class="card-title"><code>GET /health</code> công khai — mục 1.1 kế hoạch cải tiến, bỏ phần <code>/api/health/detail</code></span>
+      <span class="badge badge-info">11/09/2026</span>
+    </div>
+    <div class="card-body">
+      <div class="label">1. Bỏ tầng "chi tiết" mà kế hoạch bản 2 đề xuất</div>
+      <p>Kế hoạch (và bản rà soát) đề xuất thêm <code>/api/health/detail</code> trả <code>pool_free</code>,
+        <code>backup_moi_nhat</code>, <code>lech_gio_giay</code> sau một mã quyền mới. Đọc mã trước khi làm thì
+        2/3 trường đã có sẵn ở màn Nhật ký hệ thống: <code>/api/admin/logs/backup-info</code> và
+        <code>/api/admin/logs/time-sync</code>, cùng gate <code>menu.logs</code>. Trường còn lại (<code>pool_free</code>)
+        chưa có ai cần. Làm theo kế hoạch là thêm một mã quyền + một endpoint trùng — không làm.</p>
+
+      <div class="label">2. Ba chi tiết không đọc ra được từ mã</div>
+      <table>
+        <tr><th>Chi tiết</th><th>Vì sao</th></tr>
+        <tr><td>Mở DB bằng URI <code>?mode=ro</code></td>
+            <td><code>sqlite3.connect()</code> thường TẠO file rỗng khi đường dẫn không có → <code>/health</code> báo "ok" trên một
+              DB trắng, và lần khởi động sau backend dùng luôn file đó. Test đặt file thiếu trong thư mục <b>có thật</b>:
+              để thư mục cha không tồn tại thì connect thường cũng lỗi và test xanh cả khi bỏ <code>mode=ro</code> (đã thử)</td></tr>
+        <tr><td>Kết nối riêng, không mượn bể</td>
+            <td>Bể cạn thì <code>_muon()</code> chờ tới <code>_POOL_CHO_GIAY</code> — đúng lúc hệ thống quá tải, <code>/health</code>
+              treo theo thay vì trả lời. <code>timeout=2</code> cho khoá ghi</td></tr>
+        <tr><td>503 thay vì 200 + <code>db_ok: false</code></td><td>Script chỉ cần mã HTTP (<code>curl -f</code>), không phải đọc JSON</td></tr>
+        <tr><td>Hỏi <code>user_tttt</code>, không <code>sqlite_master</code></td>
+            <td>File 0 byte (bị cắt cụt) SQLite coi là DB rỗng hợp lệ — <code>sqlite_master</code> không lỗi, báo "ok" sai (phản biện bắt)</td></tr>
+      </table>
+      <p>Mở chỉ-đọc trên DB chế độ WAL có thể để lại <code>-wal</code> (0 byte) và <code>-shm</code> khi còn tiến trình khác
+        đang giữ DB — bình thường với WAL, app chạy cũng tự tạo.</p>
+
+      <div class="label">3. Chưa làm</div>
+      <p><span class="pill pill-gray">Giới hạn</span> <code>DATABASE_URL</code> trỏ đường dẫn mạng UNC (<code>&#92;&#92;srv&#92;share&#92;x.db</code>) thì
+        <code>as_uri()</code> ra <code>file://srv/share/…</code>, SQLite từ chối → 503 dù file có thật. Máy chính để DB ở ổ cục bộ.</p>
+      <p><span class="pill pill-gray">Chưa</span> <code>start.bat</code> / <code>deploy.bat</code> chưa gọi <code>/health</code> để chờ
+        backend lên — cần xem luồng khởi động trên máy chính trước khi sửa file <code>.bat</code> (CRLF, cmd.exe).</p>
+    </div>
+  </div>
+
   <!-- Z11 -->
   <div class="card">
     <div class="card-header">

@@ -1492,6 +1492,10 @@ python init_db.py
 # Chạy toàn bộ hệ thống
 python run.py
 
+# Backend đã lên và đọc được CSDL chưa — không cần đăng nhập. 200 = ổn, 503 = không đọc
+# được CSDL (xem backend.log). Dùng được trong script: curl -f trả mã lỗi khi 503.
+curl -f http://127.0.0.1:8000/health
+
 # Chạy backend riêng (development)
 uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
 
