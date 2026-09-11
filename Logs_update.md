@@ -4,6 +4,15 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 11/09/2026 Đối chiếu Song phương — **Bước so Hub với Core chạy nhanh hơn, kết quả không đổi**
+    + ✅ **Bước so khớp Hub↔Core ở cả thẻ "Đối chiếu đến" lẫn "Đối chiếu đi" nhanh hơn khoảng 2–4 lần**
+      (tuỳ máy). Đo thử với một ngày cỡ 800 nghìn dòng: phần việc này từ 7–14 giây còn khoảng 3–4
+      giây. Đọc file và ghi file kết quả không thay đổi, nên tổng thời gian cả lượt chấm giảm
+      ít hơn con số trên
+    + ✅ **Kết quả chấm giữ nguyên từng dòng** — chỉ đổi cách tính cho nhanh hơn, không đổi quy tắc
+      khớp. Đã so với cách cũ trên hàng trăm bộ dữ liệu ngẫu nhiên và các trường hợp đặc biệt
+      (trùng số, thiếu số, trống), không lệch dòng nào
+
 - 10/09/2026 Đối chiếu CITAD — **Bắt được kiểu "khớp khống": cùng số giao dịch nhưng một bên ghi giá trị cao, bên kia ghi giá trị thấp**
     + ✅ **Lệnh cùng số giao dịch mà hai bên ghi khác loại nay không còn bị coi là khớp.** Ca thật
       Phòng Thanh toán báo ngày 10/09: một lệnh VND đi, CITAD và Agribank ghi giống hệt nhau mọi thứ —

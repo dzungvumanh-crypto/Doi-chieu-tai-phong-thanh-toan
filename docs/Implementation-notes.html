@@ -16547,7 +16547,10 @@ This may happen if you try to create UI from a background task.</pre>
         <tr><td>Phân loại (match)</td><td><code>match.py</code> toàn bộ vectorized pandas (boolean mask, <code>groupby().cumcount()</code>, <code>.map()</code>) — không <code>iterrows()</code>/<code>apply()</code> ở đâu trong module. Riêng <code>_khop_min_count()</code> (dùng chung cả 2 chiều — <code>core_di/match.py</code> import thẳng từ <code>core/match.py</code>) tính "giới hạn khớp mỗi khoá" bằng <b>dict comprehension lặp Python qua từng khoá chung</b> — hàm này gọi lặp lại 1 lần/offset × cả 2 chiều core↔hub mỗi lượt chấm</td><td><b>ĐÃ SỬA lần này</b> — xem dưới</td></tr>
       </table>
 
-      <div class="label"><span class="pill pill-green">Fix — vectorize <code>_khop_min_count()</code></span></div>
+      <div class="label"><span class="pill pill-amber">Bản đầu (đã thay) — vectorize <code>_khop_min_count()</code></span></div>
+      <p><b>⚠ Đoạn này mô tả bản <code>concat</code> ban đầu, ĐÃ BỊ THAY</b> bằng <code>np.minimum + reindex</code>
+        trước khi merge (commit 08c3254) — con số 2,6× dưới đây chỉ đo 1/4 lần gọi. Số đúng và lý do: mục
+        "Review Khánh" cuối card.</p>
       <p>Thay <code>gioi_han = {k: min(dem_nguon[k], dem_dich[k]) for k in chung}</code> (Python loop
         qua từng khoá chung) bằng
         <code>gioi_han = pd.concat([dem_nguon, dem_dich], axis=1).fillna(0).min(axis=1)</code>

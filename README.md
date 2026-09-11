@@ -588,6 +588,11 @@ Kết nối CSDL dùng **bể mượn–trả** (`DB_POOL_SIZE`, mặc định 1
   hơn đến (không lọc "-"/trace-huỷ trước khi khớp). Chi tiết đầy đủ + các bug thật phát hiện khi
   verify (lstrip số 0 SE_TRACE, guard MtId/MsgId theo NH không áp dụng được cho chiều đi...) xem
   `docs/Implementation-notes.html` card 118
+- **Khớp Hub↔Core theo "min(count) mỗi khoá"** (`_khop_min_count()`, dùng chung cả 2 chiều): khoá
+  trùng N lần bên nguồn chỉ khớp tối đa bằng số lần khoá đó có bên đích, không ghép 1-nhiều. Gọi 4
+  lần/chiều (1 lần/offset); từ bước 2 nguồn đã teo theo phần còn lại nhưng đích vẫn là file đầy đủ
+  — nên giới hạn khớp tính bằng `reindex` theo khoá **nguồn**, không dựng bảng trên hợp 2 bên
+  (11/09/2026, PR #89; `docs/Implementation-notes.html` card 141)
 - **File CORE đã phân loại sẵn: nhận cả `.csv` lẫn `.xlsx`, và ngày lấy từ NỘI DUNG file**
   (từ 09/09/2026, PR #81). Bước Hub↔Core nhìn tới CORE của T+1..T+3, nhưng tên `{mã NH}_DEN*.csv`
   không mang ngày. Luật cũ 03/09 vá bằng cách chỉ nhận CSV cho ngày T — chặn luôn cả trường hợp
