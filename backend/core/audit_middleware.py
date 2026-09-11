@@ -52,6 +52,12 @@ _SKIP_PREFIXES = (
     # lưu tiến độ và bỏ bài dở: đều là thao tác của một người trên bài của
     # chính họ, không ai cần tra soát.
     "/api/quiz",
+    # Khảo sát — lý do KHÁC hẳn các dòng trên: middleware này ghi cả BODY của
+    # request, mà body của POST /{id}/responses chính là câu trả lời. Khảo sát
+    # ẩn danh sẽ có nguyên nội dung + actor_id nằm trong audit_logs, ai xem được
+    # Nhật ký hệ thống là đọc được ai viết gì. Mọi thao tác ghi của khảo sát đã
+    # tự `write_audit` ngữ nghĩa (không kèm nội dung) trong backend/api/surveys.py.
+    "/api/surveys",
 )
 
 _ID_RE = re.compile(r"/\d+")

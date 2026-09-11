@@ -146,6 +146,7 @@ MODULES = [
     ("/api/attendance",            "bảng chấm công"),
     ("/api/dtbb",                  "DTBB"),
     ("/api/quiz",                  "ôn tập trắc nghiệm"),
+    ("/api/surveys",               "khảo sát"),
     ("/api/vb-format",             "chuẩn hoá văn bản"),
     ("/api/hr",                    "hồ sơ nhân sự"),
     ("/api/admin/logs",            "nhật ký & sao lưu"),

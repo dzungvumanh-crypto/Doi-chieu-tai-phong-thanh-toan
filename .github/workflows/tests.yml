@@ -1,4 +1,11 @@
-# Chạy pytest cho mọi push và pull request vào develop.
+# Chạy ruff + pytest cho pull request vào develop (và chạy tay khi cần).
+#
+# Vì sao KHÔNG chạy theo push nữa (11/09/2026): mỗi lần push từng chạy HAI lượt
+# (push + pull_request) trên cùng nội dung, và merge xong lại thêm một lượt push
+# develop — kiểm lại đúng thứ PR vừa kiểm. Windows bị tính gấp đôi phút, quota
+# gói Free cạn và GitHub chặn job giữa lúc đang mở PR. Nay: 1 lượt mỗi lần cập
+# nhật PR, 0 lượt khi merge. Đẩy thẳng lên develop (không qua PR) thì KHÔNG có CI
+# — muốn kiểm thì bấm "Run workflow" (workflow_dispatch) hoặc chạy tại máy.
 #
 # Vì sao windows-latest chứ không phải ubuntu (rẻ và nhanh hơn): dự án chỉ chạy
 # trên Windows. Tên thư mục template tiếng Việt ở dạng NFD và `tests/test_paths.py`
@@ -10,10 +17,19 @@
 name: Tests
 
 on:
-  push:
-    branches: ["**"]
   pull_request:
     branches: [develop]
+    # PR chỉ sửa tài liệu thì bỏ qua. PR sửa cả mã lẫn tài liệu vẫn chạy — bỏ qua
+    # chỉ xảy ra khi MỌI file đổi đều khớp các mẫu dưới.
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+  workflow_dispatch:
+
+# Đẩy thêm commit vào PR đang chạy CI thì huỷ lượt cũ — nó kiểm mã đã lỗi thời.
+concurrency:
+  group: tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   pytest:

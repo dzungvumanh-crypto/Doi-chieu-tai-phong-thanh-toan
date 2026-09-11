@@ -11,6 +11,79 @@ from datetime import datetime
 from backend.database import DB_PATH
 
 
+# ── Khảo sát — 2026-09-11 ─────────────────────────────────────────────────────
+# Một định nghĩa, dùng ở CẢ _create_tables() (cài mới) lẫn schema_migrations (DB
+# đang chạy). Khối Quizz chép hai bản giống hệt nhau — sửa một bên quên bên kia
+# là máy cài mới và máy nâng cấp có schema khác nhau mà không ai hay.
+_SURVEY_TABLES = [
+    # status: draft | published | closed. "Chưa mở" / "quá hạn" suy ra từ
+    # start_at / deadline (xem survey_service.trang_thai) — không lưu.
+    # start_at / deadline là TEXT khuôn 'YYYY-MM-DD HH:MM:SS' để so chuỗi trong SQL.
+    """CREATE TABLE IF NOT EXISTS surveys (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        title        VARCHAR(300) NOT NULL,
+        description  TEXT,
+        status       TEXT NOT NULL DEFAULT 'draft',
+        is_anonymous INTEGER NOT NULL DEFAULT 0,
+        allow_edit   INTEGER NOT NULL DEFAULT 0,
+        start_at     TEXT,
+        deadline     TEXT,
+        created_by   INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+        created_at   TEXT NOT NULL,
+        updated_at   TEXT,
+        published_at TEXT,
+        closed_at    TEXT
+    )""",
+    # options: JSON list chuỗi. Câu trả lời lưu SỐ THỨ TỰ lựa chọn, nên câu hỏi
+    # bị khoá sửa khi đã có người trả lời (xem survey_service.dau_van_tay_cau_hoi).
+    """CREATE TABLE IF NOT EXISTS survey_questions (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        survey_id       INTEGER NOT NULL REFERENCES surveys(id) ON DELETE CASCADE,
+        order_no        INTEGER NOT NULL,
+        qtype           TEXT NOT NULL,
+        title           TEXT NOT NULL,
+        description     TEXT,
+        required        INTEGER NOT NULL DEFAULT 0,
+        options         TEXT,
+        scale_min       INTEGER NOT NULL DEFAULT 1,
+        scale_max       INTEGER NOT NULL DEFAULT 5,
+        scale_min_label TEXT,
+        scale_max_label TEXT
+    )""",
+    """CREATE TABLE IF NOT EXISTS survey_target_groups (
+        survey_id INTEGER NOT NULL REFERENCES surveys(id) ON DELETE CASCADE,
+        group_id  INTEGER NOT NULL REFERENCES user_groups(id) ON DELETE CASCADE,
+        PRIMARY KEY (survey_id, group_id)
+    )""",
+    # Danh sách người nhận CHỐT lúc phát hành — không tra nhóm lúc chạy
+    # (lý do: survey_service.dong_bo_nguoi_nhan).
+    """CREATE TABLE IF NOT EXISTS survey_recipients (
+        survey_id INTEGER NOT NULL REFERENCES surveys(id) ON DELETE CASCADE,
+        staff_id  INTEGER NOT NULL REFERENCES user_tttt(id) ON DELETE CASCADE,
+        added_at  TEXT,
+        PRIMARY KEY (survey_id, staff_id)
+    )""",
+    # Mỗi người mỗi khảo sát MỘT bài — sửa câu trả lời là ghi đè, không thêm bài.
+    """CREATE TABLE IF NOT EXISTS survey_responses (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        survey_id    INTEGER NOT NULL REFERENCES surveys(id) ON DELETE CASCADE,
+        staff_id     INTEGER NOT NULL REFERENCES user_tttt(id) ON DELETE CASCADE,
+        submitted_at TEXT NOT NULL,
+        updated_at   TEXT,
+        UNIQUE (survey_id, staff_id)
+    )""",
+    """CREATE TABLE IF NOT EXISTS survey_answers (
+        response_id INTEGER NOT NULL REFERENCES survey_responses(id) ON DELETE CASCADE,
+        question_id INTEGER NOT NULL REFERENCES survey_questions(id) ON DELETE CASCADE,
+        value       TEXT NOT NULL,
+        PRIMARY KEY (response_id, question_id)
+    )""",
+    "CREATE INDEX IF NOT EXISTS ix_survey_questions_sv  ON survey_questions(survey_id, order_no)",
+    "CREATE INDEX IF NOT EXISTS ix_survey_recipients_st ON survey_recipients(staff_id)",
+    "CREATE INDEX IF NOT EXISTS ix_surveys_creator      ON surveys(created_by)",
+]
+
+
 # ── Tạo tables (fresh install) ────────────────────────────────────────────────
 def _create_tables(db_path: str):
     """Tạo tất cả bảng nếu chưa có — idempotent."""
@@ -463,6 +536,7 @@ def _create_tables(db_path: str):
             is_correct   INTEGER,
             time_ms      INTEGER
         )""",
+        *_SURVEY_TABLES,
         # ── Quản lý nhân sự — 2026-08-28 ──────────────────────────────────────
         # `recruit_date` cố ý KHÔNG có ở đây: "Ngày tuyển dụng" chính là "Ngày vào
         # ngành" đã nằm ở `user_tttt.join_industry_date` — một mốc thì một cột.
@@ -1759,6 +1833,8 @@ def _ensure_indexes():
                     updated_at = datetime('now','+7 hours')
                 WHERE attendances.status = 'auto';
             END""",
+        # ── Khảo sát — 2026-09-11 (định nghĩa ở _SURVEY_TABLES đầu file) ──
+        *_SURVEY_TABLES,
     ]
     _mig_log = logging.getLogger(__name__)
 

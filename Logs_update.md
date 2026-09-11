@@ -4,6 +4,33 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 11/09/2026 Kiểm tra tự động trên GitHub chỉ chạy khi mở PR — **không đổi gì với người dùng**
+    + Trước đây mỗi lần đẩy mã chạy kiểm tra hai lần, gộp mã xong lại chạy thêm lần nữa trên đúng nội
+      dung vừa kiểm — tốn gấp ba số phút GitHub cho phép và GitHub đã tạm chặn kiểm tra ngày 11/09.
+      Nay chỉ chạy một lần mỗi khi mở hoặc cập nhật yêu cầu gộp mã (PR); PR chỉ sửa tài liệu thì bỏ qua
+
+- 11/09/2026 Menu mới **Khảo sát** — tạo phiếu hỏi ý kiến như Google Forms, gửi cho từng nhóm, có hạn chót và thống kê
+    + ✅ **Nằm ở nhóm "Tính năng khác" → "Khảo sát".** Người được giao tạo khảo sát soạn câu hỏi
+      (gõ chữ ngắn, đoạn văn, chọn một, chọn nhiều, danh sách thả xuống, chấm điểm theo thang, chọn
+      ngày), chọn **nhóm người nhận**, đặt **hạn chót** rồi bấm "Lưu & phát hành"
+    + ✅ **Người nhận thấy ngay ở khối "Công việc chờ xử lý"** trên cùng thanh menu, dòng *"Khảo sát
+      chưa trả lời"* kèm số. Trả lời xong, hết hạn hoặc người tạo đóng khảo sát thì dòng đó tự mất
+    + ✅ **Thống kê tự cập nhật**: bao nhiêu người đã trả lời / chưa trả lời (có danh sách tên để nhắc),
+      biểu đồ từng câu, điểm trung bình, xuất ra Excel
+    + ✅ **Tuỳ chọn ẩn danh**: người xem kết quả không thấy tên và giờ nộp của từng người. Hệ thống vẫn
+      ghi nhận *ai đã trả lời* để không ai trả lời hai lần và để biết ai chưa làm
+    + ⚠️ **Sau khi cập nhật phải cấp quyền bằng tay** — chưa nhóm nào có sẵn. Quản trị viên vào
+      *Phân quyền theo nhóm → Tính năng khác → Khảo sát*:
+        + Tick **"Khảo sát"** cho mọi nhóm sẽ dùng (để thấy menu và xem lại khảo sát của mình)
+        + Tick thêm **"Tạo / sửa / phát hành khảo sát"** cho người được giao đi hỏi ý kiến
+        + Tick **"Xem kết quả khảo sát của mọi người"** cho lãnh đạo nếu cần
+        + Người **chỉ trả lời** không cần quyền gì: được gửi tới là thấy ở "Công việc chờ xử lý"
+    + ⚠️ **Đã có người trả lời thì không sửa được câu hỏi nữa** (vẫn gia hạn, đổi tên, đổi nhóm nhận
+      được). Muốn đổi câu hỏi thì phải làm khảo sát mới
+    + ⚠️ **Chọn ẩn danh hay không ngay từ lúc soạn**: đã phát hành ở chế độ ẩn danh thì không tắt được,
+      đã có người trả lời thì không đổi được — để người trả lời không bị lộ tên sau khi đã nộp
+    + ℹ️ Chưa có nhắc qua email — chỉ nhắc khi người nhận mở hệ thống
+
 - 11/09/2026 Kiểm tra tự động trên GitHub — **không đổi gì với người dùng, không cần làm gì sau khi cập nhật**
     + Mỗi lần đẩy mã lên, GitHub nay quét thêm lỗi "dùng tên chưa có" (loại lỗi vừa làm hỏng Chấm ILO1000
       và trang Đóng chứng từ) và **báo đỏ** nếu có, để người gộp mã sửa trước khi đưa sang máy chính
