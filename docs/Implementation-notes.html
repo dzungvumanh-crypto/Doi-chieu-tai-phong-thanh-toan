@@ -53,6 +53,76 @@
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
   <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-09-05</p>
 
+  <!-- HF1 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">HF1</span>
+      <span class="card-title">Hotfix 2 lỗi "tên chưa định nghĩa" (ruff F821) — ILO1000 không ra kết quả, trang Bìa chứng từ không mở được</span>
+      <span class="badge badge-info">11/09/2026 — chưa merge</span>
+    </div>
+    <div class="card-body">
+
+      <p>Phát hiện khi rà <code>docs/RA_SOAT_KE_HOACH_CAI_TIEN_TTTT_2026-09-11.md</code>: chạy thử
+        <code>ruff check --select F821</code> trên toàn mã ra đúng 2 chỗ, cả 2 là lỗi thật đã nằm trên
+        <code>develop</code> và đã qua review.</p>
+      <table>
+        <tr><th>Chỗ</th><th>Hậu quả</th><th>Vì sao test không bắt</th></tr>
+        <tr><td><code>ilo1000_service._run()</code> gọi <code>os.listdir</code>, file không <code>import os</code> (commit 8fd8052, 01/09)</td>
+            <td>Mọi lượt chạy tới bước gom file kết quả → <code>NameError</code> → nhánh <code>except</code> → job
+              <code>error</code>. Không lượt nào trả được kết quả.</td>
+            <td>Các test cũ đưa file giả → <code>main_from_dir</code> trả <code>None</code> → return trước dòng lỗi.
+              Test mới <code>test_ilo1000_job_thu_ket_qua.py</code> giả lập pipeline ghi ra file thật.</td></tr>
+        <tr><td><code>bundles_page</code>: <code>on_click=load_groups</code> ở trên, <code>async def load_groups</code> ở dưới (commit 1026349, 30/08)</td>
+            <td><code>load_groups</code> là biến cục bộ của hàm → nhắc trước dòng định nghĩa là
+              <code>UnboundLocalError</code> lúc dựng trang. Nhánh luôn chạy → trang không mở được.</td>
+            <td>Không test nào dựng trang; <code>test_kiem_nap_trang_frontend</code> chỉ kiểm import.
+              Lưới thật là ruff F821 (Đợt 1 mục 1.3 của kế hoạch cải tiến).</td></tr>
+      </table>
+
+      <div class="label">Nguyên nhân gốc — để lần sau rút kinh nghiệm</div>
+      <table>
+        <tr><th></th><th>ILO1000</th><th>Bìa chứng từ</th></tr>
+        <tr><td>Thay đổi sinh lỗi</td>
+            <td>Rebase PR#68 (224 commit, 44 xung đột). Cùng commit đổi <code>os.path.basename()</code> →
+              <code>safe_filename()</code> (chú thích trong file còn ghi). <code>import os</code> trông như thừa
+              nên bị bỏ; <code>os.listdir</code> ở dưới vẫn dùng. <i>Độ tin cậy: trung bình–cao</i> — bản trước
+              rebase không còn trong repo để đối chiếu.</td>
+            <td>Commit sửa hiệu năng "trang chứng từ kéo cả kho" tiện tay dọn
+              <code>ensure_future</code> theo DESIGN.md. Việc dọn không nằm trong mục tiêu của commit.</td></tr>
+        <tr><td>Kiểu thay đổi</td><td colspan="2">Sửa <b>phụ, máy móc</b>, vùi trong một thay đổi lớn. Review đọc
+              từng khối diff — dòng import đã mất ở đầu file và dòng định nghĩa ở 50 dòng dưới đều nằm ngoài khối.</td></tr>
+        <tr><td>Lưới nào lẽ ra bắt</td><td colspan="2">Chỉ quét tĩnh. Test không đi qua hai nhánh này; riêng ILO1000
+              còn bị <code>except Exception</code> của luồng nền đổi lỗi lập trình thành "job lỗi" trông như lỗi
+              dữ liệu đầu vào.</td></tr>
+      </table>
+      <div class="note"><b>Rút ra:</b> (1) Test xanh không chứng minh tên nào tồn tại trên nhánh chưa test đi qua.
+        (2) Sau khi xoá import / đổi <code>lambda</code> thành tham chiếu thẳng / chuyển mã giữa hàm →
+        <code>ruff check --select F821,E9</code> phải sạch. (3) Sửa phụ không thuộc mục tiêu thì tách commit
+        riêng để review nhìn thấy. Quy tắc đã ghi vào <code>docs/DESIGN.md</code> mục
+        <i>Lỗi tên chưa định nghĩa</i>; lưới tự động là mục 1.3 của kế hoạch cải tiến (ruff chặn merge cho F821/E9).</div>
+
+      <div class="label">Lỗi thứ hai do sửa lỗi khác đẻ ra</div>
+      <p>Commit 1026349 bỏ <code>lambda: asyncio.ensure_future(load_groups())</code> đúng theo DESIGN.md
+        mục "Event handler async". Nhưng <code>lambda</code> hoãn việc tra tên tới lúc bấm; bỏ nó thì tên bị
+        tra ngay lúc dựng trang, khi hàm chưa có. Còn <b>48 lời gọi <code>ensure_future</code>/<code>create_task</code>
+        ở 10 trang</b> (đếm theo token, không tính chú thích) — ai đi "sửa cho đúng quy tắc" hàng loạt sẽ gặp lại đúng bẫy này ở chỗ nào hàm được định
+        nghĩa sau nút. Chạy ruff F821 sau mỗi lần sửa.</p>
+
+      <div class="label">Cách sửa đã chọn</div>
+      <table>
+        <tr><th>Phương án</th><th>Kết quả</th></tr>
+        <tr><td>Dời cả <code>async def load_groups</code> (~80 dòng) lên trước nút</td><td><span class="pill pill-red">Loại</span> diff lớn cho một hotfix</td></tr>
+        <tr><td><code>on_click=lambda: load_groups()</code></td><td><span class="pill pill-gray">Chạy được</span> NiceGUI await coroutine trả về trong slot cha — nhưng đọc giống hệt mẫu cấm, người sau dễ "sửa" lại</td></tr>
+        <tr><td>Tạo nút không handler, gắn <code>btn_loc.on_click(load_groups)</code> sau định nghĩa <b>(chọn)</b></td><td><span class="pill pill-green">Chọn</span> cùng chỗ với 3 dòng <code>.on("update:model-value", load_groups)</code> sẵn có</td></tr>
+      </table>
+      <p>ILO1000: thêm <code>import os</code>, giữ nguyên dòng cũ. Không đổi sang <code>Path.glob('*.xlsx')</code>
+        dù file đã import <code>Path</code> — trên Windows glob không phân biệt hoa/thường còn
+        <code>endswith</code> thì có; hotfix không đổi hành vi.</p>
+      <p><span class="pill pill-gray">Chưa kiểm</span> Trang Bìa chứng từ chưa mở thử trên trình duyệt sau khi
+        sửa — chỉ có ruff F821 sạch + test nạp trang xanh.</p>
+    </div>
+  </div>
+
   <!-- DC2 -->
   <div class="card">
     <div class="card-header">

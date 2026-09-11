@@ -189,6 +189,30 @@ handler ngoại lệ toàn cục → **màn hình không đổi gì, cũng khôn
 Truyền thẳng thì `handle_event()` await coroutine bên trong `with parent_slot:` nên slot còn nguyên qua
 mọi `await`. Nếu buộc phải chạy trong task rời, mọi thao tác UI phải nằm trong `with element:`.
 
+> ⚠ **Bỏ `lambda` là đổi thời điểm tra tên.** `lambda: f()` chỉ tra `f` lúc bấm; `on_click=f` tra
+> **ngay lúc dựng trang**. Nếu `async def f` nằm **bên dưới** nút trong cùng hàm trang thì `f` là biến
+> cục bộ chưa gán → `UnboundLocalError`, cả trang không mở được. Hàm định nghĩa sau thì tạo nút trước
+> rồi gắn sau: `btn = ui.button(...)` … `async def f(): …` … `btn.on_click(f)`.
+> Đã xảy ra thật: `bundles.py` (30/08/2026), vá 11/09/2026. Xem mục *Lỗi tên chưa định nghĩa* dưới đây.
+
+## Lỗi tên chưa định nghĩa — test xanh không chứng minh gì, chạy ruff F821
+
+Python chỉ tra tên **lúc chạy tới dòng đó**. Tên sai / thiếu import / dùng trước khi định nghĩa nằm
+trên nhánh không test nào đi qua thì cả bộ test vẫn xanh. Hai lỗi thật cùng lọt vào `develop`, cùng
+qua review, cùng được `ruff check --select F821` bắt trong một lần chạy (11/09/2026):
+
+| Lỗi | Sinh ra từ | Vì sao test không bắt |
+|---|---|---|
+| `ilo1000_service._run()` gọi `os.listdir`, file không `import os` → ILO1000 **không bao giờ trả kết quả** | Đổi `os.path.basename()` → `safe_filename()` lúc rebase PR#68; `import os` trông như thừa nên bị bỏ (suy luận — bản trước rebase không còn trong repo), `os.listdir` 60 dòng dưới còn dùng | Test đưa file giả → pipeline trả `None` → return trước dòng lỗi. `except Exception` trong luồng nền đổi `NameError` thành job `error` trông như lỗi dữ liệu |
+| `bundles_page`: `on_click=load_groups` đứng trước `async def load_groups` → **trang không mở được** | Dọn `ensure_future` theo mục trên, làm **kèm** trong một commit sửa hiệu năng khác | Không test nào dựng trang; `test_kiem_nap_trang_frontend` chỉ kiểm import |
+
+Điểm chung: cả hai là **sửa phụ, sửa máy móc** nằm trong một thay đổi lớn hơn. Người review đọc từng
+khối diff — không thấy dòng `import` đã mất ở đầu file, không thấy dòng định nghĩa 50 dòng bên dưới.
+
+**Quy tắc:** sau khi xoá import, đổi tên, đổi `lambda` thành tham chiếu thẳng, hay chuyển mã giữa các
+hàm/file → chạy `ruff check backend frontend --select F821,E9` và phải sạch. Còn 48 lời gọi
+`ensure_future`/`create_task` ở 10 trang (không tính chú thích) — dọn hàng loạt mà không chạy lệnh này là gặp lại lỗi thứ hai.
+
 ## Leave Approval Workflow
 ```
 pending_ksv → pending_tong_hop → pending_gd → approved | rejected | cancelled
