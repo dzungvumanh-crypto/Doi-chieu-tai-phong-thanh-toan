@@ -57,5 +57,8 @@ chạy 1 lượt Agent vai "Phản biện" theo đúng protocol của skill `mul
 - 1 lượt ĐỒNG Ý duy nhất không phải là đóng vấn đề cho thay đổi rủi ro cao (logic tài chính/khớp
   giao dịch, phân quyền, xoá dữ liệu) — nói thẳng với người dùng rằng mới chỉ có 1 lượt Sonnet, để
   họ tự quyết có cần thêm phản biện (Opus/`ultra`, tốn thêm) hay không, không tự quyết thay.
+- **Trước `gh pr merge`: `gh pr checks <số>` phải xanh hết.** Repo riêng tư gói Free không bật được bảo
+  vệ nhánh — CI đỏ (kể cả cổng ruff F821/F823/E9) KHÔNG tự khoá nút Merge, chỉ hiện dấu ✗. Đỏ thì sửa,
+  không merge "vì chắc chỉ là lỗi vặt".
 - Module đối chiếu (ACH/ILO1000/459901/Song phương) có thêm chi tiết riêng ở
   `docs/CHECKLIST-TRUOC-KHI-MO-PR.md` mục I — đọc kèm khi PR chạm vào 1 trong 4 module đó.

@@ -53,6 +53,136 @@
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
   <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-09-05</p>
 
+  <!-- CI1 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">CI1</span>
+      <span class="card-title">CI: ruff cổng đỏ cho F821/F823/E9, báo cáo phần còn lại; đo phủ test (số nền)</span>
+      <span class="badge badge-info">11/09/2026 — mục 1.3 kế hoạch cải tiến</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label">1. Hai lượt ruff, chỉ một lượt làm đỏ CI</div>
+      <div class="caution"><b>Đỏ không có nghĩa là bị chặn.</b> Repo riêng tư, tài khoản gói Free →
+        <code>GET …/branches/develop/protection</code> trả 403 "Upgrade to GitHub Pro". Không bật được bảo vệ nhánh,
+        nên CI đỏ chỉ hiện dấu ✗, nút Merge vẫn bấm được. Quy trình bù ghi ở <code>docs/SKILL.md</code>:
+        <code>gh pr checks</code> xanh hết mới <code>gh pr merge</code>. Card S (<i>Chốt chặn /api/fs/browse + CI chạy pytest</i>) đã ghi cùng giới hạn này.</div>
+      <table>
+        <tr><th>Lượt</th><th>Luật</th><th>Lúc bật</th><th>Vì sao</th></tr>
+        <tr><td><b>Cổng đỏ</b></td><td><code>F821, F823, E9</code></td><td>0 cảnh báo</td>
+            <td>Tên chưa định nghĩa / biến dùng trước khi gán / lỗi cú pháp — không có báo nhầm, và là loại lỗi test
+              không bắt được (card HF1: 2 lỗi thật lọt develop 12 ngày). Để chế độ báo cáo thì lần thứ ba vẫn lọt.</td></tr>
+        <tr><td>Báo cáo (<code>--exit-zero</code>)</td><td><code>F, E9, B</code> trừ B008/B904/B905</td><td>81 cảnh báo</td>
+            <td>Lấy số nền. 59 cái <code>--fix</code> tự sửa được (chủ yếu F401 import thừa) nhưng rải ~50 file — diff
+              lớn cho thứ vô hại, để PR dọn riêng.</td></tr>
+      </table>
+      <p>Bỏ qua ba luật vì là nhiễu với dự án này, đo trên <code>develop</code> 4b1465e: <code>B008</code> 903 chỗ
+        (<code>Depends()</code>/<code>Query()</code> trong tham số — cách viết chuẩn của FastAPI), <code>B904</code> 115
+        (<code>raise HTTPException</code> trong <code>except</code> là chủ ý), <code>B905</code> 49. Không bỏ thì lần chạy đầu
+        ra 1.148 cảnh báo và câu hỏi "có chấp nhận cảnh báo trên mã cũ không" bị trả lời dựa trên nhiễu.</p>
+      <p><code>ruff==0.16.7</code> ghim cứng trong <code>requirements-dev.txt</code>: bản mới thêm/đổi luật thì CI tự đỏ mà
+        không ai sửa dòng mã nào. Nâng phiên bản là một thay đổi có chủ ý.</p>
+      <p>Bước pytest có <code>if: ${{ !cancelled() }}</code> — ruff đỏ vẫn chạy test, để một lượt CI thấy đủ cả hai kết quả
+        thay vì sửa ruff xong mới biết test cũng đỏ.</p>
+
+      <div class="label">2. Đo phủ test — số nền 11/09/2026 (1864 test, không tính Khảo sát chưa merge)</div>
+      <table>
+        <tr><th>Vùng</th><th>Phủ</th></tr>
+        <tr><td>Toàn bộ (<code>backend</code> + <code>frontend</code>)</td><td>42%</td></tr>
+        <tr><td><code>backend/</code></td><td><b>65%</b> — <code>api/</code> 51%, <code>services/</code> 70%</td></tr>
+        <tr><td><code>frontend/</code></td><td><b>5%</b> — <code>pages/</code> 4%</td></tr>
+      </table>
+      <div class="note">Đừng đọc con số 42%. Frontend kéo tụt vì test chỉ <b>import</b> trang, không dựng trang — thân các hàm
+        <code>*_page</code> gần như không dòng nào chạy. Nghĩa là với frontend, ruff F821 là lưới duy nhất. Khi đặt ngưỡng
+        "không được giảm" (dự kiến sau 1 tháng có số), đặt riêng cho <code>backend/</code>.</div>
+      <p>Chi phí: trên máy phát triển 120,6 s → 135,3 s (+12%). Hai lượt đo không cùng tập test (lượt trước có 18 test Khảo
+        sát) nên số chỉ để ước lượng. Chưa đặt ngưỡng, chỉ in báo cáo <code>term:skip-covered</code>.</p>
+
+      <div class="label">3. Chưa làm</div>
+      <p><span class="pill pill-gray">Chưa rà</span> 81 cảnh báo lượt báo cáo chưa xem từng cái. 3 cái <code>B023</code> ở
+        <code>doi_soat_citad/parsers.py</code> đã xem — báo nhầm (hàm <code>gv()</code> gọi ngay trong cùng vòng lặp).
+        <code>F841</code> (11 biến gán mà không dùng) đáng xem trước: đôi khi là dấu vết của một dòng bị xoá nhầm.</p>
+      <p><span class="pill pill-gray">Theo dõi</span> Vài test chờ luồng nền theo hạn giờ — ngắn nhất
+        <code>test_ach_checkpoint_api.py</code> 5 s, còn lại 10–20 s. Đo phủ làm mã chậm đi và máy CI yếu hơn máy phát
+        triển: nếu test đó bắt đầu chập chờn trên CI thì nới hạn giờ, đừng tắt đo phủ.</p>
+      <p><code>extend-exclude</code> viết <code>"./data"</code> chứ không <code>"data"</code>: viết trần thì ruff bỏ qua mọi
+        thư mục tên <code>data</code> ở mọi cấp. Hiện chưa lộ vì dòng <code>data/</code> trong <code>.gitignore</code> cũng không
+        neo gốc — mọi thư mục <code>data</code> lồng bên dưới đều không được commit (bẫy riêng, chưa sửa).</p>
+      <p><code>.coverage</code> thêm vào <code>.gitignore</code> — chạy pytest có <code>--cov</code> trên máy phát triển sẽ
+        đẻ ra file này ở gốc repo.</p>
+    </div>
+  </div>
+
+  <!-- HF1 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">HF1</span>
+      <span class="card-title">Hotfix 2 lỗi "tên chưa định nghĩa" (ruff F821) — ILO1000 không ra kết quả, trang Bìa chứng từ không mở được</span>
+      <span class="badge badge-info">11/09/2026 — chưa merge</span>
+    </div>
+    <div class="card-body">
+
+      <p>Phát hiện khi rà <code>docs/RA_SOAT_KE_HOACH_CAI_TIEN_TTTT_2026-09-11.md</code>: chạy thử
+        <code>ruff check --select F821</code> trên toàn mã ra đúng 2 chỗ, cả 2 là lỗi thật đã nằm trên
+        <code>develop</code> và đã qua review.</p>
+      <table>
+        <tr><th>Chỗ</th><th>Hậu quả</th><th>Vì sao test không bắt</th></tr>
+        <tr><td><code>ilo1000_service._run()</code> gọi <code>os.listdir</code>, file không <code>import os</code> (commit 8fd8052, 01/09)</td>
+            <td>Mọi lượt chạy tới bước gom file kết quả → <code>NameError</code> → nhánh <code>except</code> → job
+              <code>error</code>. Không lượt nào trả được kết quả.</td>
+            <td>Các test cũ đưa file giả → <code>main_from_dir</code> trả <code>None</code> → return trước dòng lỗi.
+              Test mới <code>test_ilo1000_job_thu_ket_qua.py</code> giả lập pipeline ghi ra file thật.</td></tr>
+        <tr><td><code>bundles_page</code>: <code>on_click=load_groups</code> ở trên, <code>async def load_groups</code> ở dưới (commit 1026349, 30/08)</td>
+            <td><code>load_groups</code> là biến cục bộ của hàm → nhắc trước dòng định nghĩa là
+              <code>UnboundLocalError</code> lúc dựng trang. Nhánh luôn chạy → trang không mở được.</td>
+            <td>Không test nào dựng trang; <code>test_kiem_nap_trang_frontend</code> chỉ kiểm import.
+              Lưới thật là ruff F821 (Đợt 1 mục 1.3 của kế hoạch cải tiến).</td></tr>
+      </table>
+
+      <div class="label">Nguyên nhân gốc — để lần sau rút kinh nghiệm</div>
+      <table>
+        <tr><th></th><th>ILO1000</th><th>Bìa chứng từ</th></tr>
+        <tr><td>Thay đổi sinh lỗi</td>
+            <td>Rebase PR#68 (224 commit, 44 xung đột). Cùng commit đổi <code>os.path.basename()</code> →
+              <code>safe_filename()</code> (chú thích trong file còn ghi). <code>import os</code> trông như thừa
+              nên bị bỏ; <code>os.listdir</code> ở dưới vẫn dùng. <i>Độ tin cậy: trung bình–cao</i> — bản trước
+              rebase không còn trong repo để đối chiếu.</td>
+            <td>Commit sửa hiệu năng "trang chứng từ kéo cả kho" tiện tay dọn
+              <code>ensure_future</code> theo DESIGN.md. Việc dọn không nằm trong mục tiêu của commit.</td></tr>
+        <tr><td>Kiểu thay đổi</td><td colspan="2">Sửa <b>phụ, máy móc</b>, vùi trong một thay đổi lớn. Review đọc
+              từng khối diff — dòng import đã mất ở đầu file và dòng định nghĩa ở 50 dòng dưới đều nằm ngoài khối.</td></tr>
+        <tr><td>Lưới nào lẽ ra bắt</td><td colspan="2">Chỉ quét tĩnh. Test không đi qua hai nhánh này; riêng ILO1000
+              còn bị <code>except Exception</code> của luồng nền đổi lỗi lập trình thành "job lỗi" trông như lỗi
+              dữ liệu đầu vào.</td></tr>
+      </table>
+      <div class="note"><b>Rút ra:</b> (1) Test xanh không chứng minh tên nào tồn tại trên nhánh chưa test đi qua.
+        (2) Sau khi xoá import / đổi <code>lambda</code> thành tham chiếu thẳng / chuyển mã giữa hàm →
+        <code>ruff check --select F821,E9</code> phải sạch. (3) Sửa phụ không thuộc mục tiêu thì tách commit
+        riêng để review nhìn thấy. Quy tắc đã ghi vào <code>docs/DESIGN.md</code> mục
+        <i>Lỗi tên chưa định nghĩa</i>; lưới tự động là card CI1 (ruff làm đỏ CI khi có F821/F823/E9 — không tự khoá nút Merge).</div>
+
+      <div class="label">Lỗi thứ hai do sửa lỗi khác đẻ ra</div>
+      <p>Commit 1026349 bỏ <code>lambda: asyncio.ensure_future(load_groups())</code> đúng theo DESIGN.md
+        mục "Event handler async". Nhưng <code>lambda</code> hoãn việc tra tên tới lúc bấm; bỏ nó thì tên bị
+        tra ngay lúc dựng trang, khi hàm chưa có. Còn <b>48 lời gọi <code>ensure_future</code>/<code>create_task</code>
+        ở 10 trang</b> (đếm theo token, không tính chú thích) — ai đi "sửa cho đúng quy tắc" hàng loạt sẽ gặp lại đúng bẫy này ở chỗ nào hàm được định
+        nghĩa sau nút. Chạy ruff F821 sau mỗi lần sửa.</p>
+
+      <div class="label">Cách sửa đã chọn</div>
+      <table>
+        <tr><th>Phương án</th><th>Kết quả</th></tr>
+        <tr><td>Dời cả <code>async def load_groups</code> (~80 dòng) lên trước nút</td><td><span class="pill pill-red">Loại</span> diff lớn cho một hotfix</td></tr>
+        <tr><td><code>on_click=lambda: load_groups()</code></td><td><span class="pill pill-gray">Chạy được</span> NiceGUI await coroutine trả về trong slot cha — nhưng đọc giống hệt mẫu cấm, người sau dễ "sửa" lại</td></tr>
+        <tr><td>Tạo nút không handler, gắn <code>btn_loc.on_click(load_groups)</code> sau định nghĩa <b>(chọn)</b></td><td><span class="pill pill-green">Chọn</span> cùng chỗ với 3 dòng <code>.on("update:model-value", load_groups)</code> sẵn có</td></tr>
+      </table>
+      <p>ILO1000: thêm <code>import os</code>, giữ nguyên dòng cũ. Không đổi sang <code>Path.glob('*.xlsx')</code>
+        dù file đã import <code>Path</code> — trên Windows glob không phân biệt hoa/thường còn
+        <code>endswith</code> thì có; hotfix không đổi hành vi.</p>
+      <p><span class="pill pill-gray">Chưa kiểm</span> Trang Bìa chứng từ chưa mở thử trên trình duyệt sau khi
+        sửa — chỉ có ruff F821 sạch + test nạp trang xanh.</p>
+    </div>
+  </div>
+
   <!-- DC2 -->
   <div class="card">
     <div class="card-header">
