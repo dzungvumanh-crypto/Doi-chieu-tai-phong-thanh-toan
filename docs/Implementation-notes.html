@@ -53,6 +53,51 @@
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
   <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-09-11</p>
 
+  <!-- LV1 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">LV1</span>
+      <span class="card-title">Chẻ trang Nghỉ phép — nhát đầu: tách ngăn kéo chi tiết đơn (728 dòng) (Đợt 2)</span>
+      <span class="badge badge-info">12/09/2026</span>
+    </div>
+    <div class="card-body">
+      <p><code>frontend/pages/leaves.py</code> (6.473 dòng, một hàm 6.125 dòng, 193 hàm lồng nhau) → gói
+        <code>frontend/pages/leaves/</code>. Nhát đầu chọn <code>open_detail</code> vì ranh giới đo được là rõ nhất:
+        728 dòng, 42 hàm lồng bên trong, nhưng chỉ mượn <b>17 tên</b> của hàm trang.</p>
+      <table>
+        <tr><th>File</th><th>Dòng</th><th>Chứa gì</th></tr>
+        <tr><td><code>__init__.py</code></td><td>5.456</td><td>Trang + phần chưa tách</td></tr>
+        <tr><td><code>_chung.py</code></td><td>343</td><td>Hằng số + 9 helper cấp module, nguyên văn</td></tr>
+        <tr><td><code>_chi_tiet_don.py</code></td><td>780</td><td>Ngăn kéo chi tiết + <code>ChiTietCtx</code></td></tr>
+      </table>
+
+      <div class="label">1. Vì sao là `ctx` chứ không phải 17 tham số</div>
+      <div class="caution">Ba trong 17 thứ (<code>leave_tabs</code>, <code>_nav_pending</code>, <code>_nav_pending_th</code>)
+        được tạo <b>SAU</b> chỗ định nghĩa <code>open_detail</code>. Closure cũ chạy được vì Python tra tên lúc <b>gọi</b>
+        (người dùng bấm mở đơn thì trang đã dựng xong). Truyền theo giá trị lúc định nghĩa là ba thứ đó bằng
+        <code>None</code> — hỏng đúng lúc bấm nút, và <b>không test nào bắt</b> vì không test nào dựng trang.
+        <code>ctx</code> đọc thuộc tính lúc gọi nên giữ nguyên hành vi ấy.</div>
+
+      <div class="label">2. Kế hoạch nói "chuyển nguyên văn" — không làm được, và đây là bằng chứng</div>
+      <p>74 chỗ trong thân phải đổi thành <code>ctx.&lt;tên&gt;</code>. Đổi bằng bộ tách token của Python (chỉ chạm token tên,
+        không chạm chuỗi/chú thích) vẫn <b>sót 2 chỗ nằm trong f-string</b> — Python 3.10 coi cả f-string là một token.
+        <b>Ruff F821 bắt được cả hai</b> ngay lần chạy đầu. Đúng lý do mục 1.3 phải làm trước Đợt 2.</p>
+
+      <div class="label">3. Lưới an toàn</div>
+      <ul>
+        <li><code>tests/test_leaves_chi_tiet_ctx.py</code>: mọi trường của <code>ChiTietCtx</code> phải được trang gán
+          (thêm trường mà quên gán → <code>None</code> lặng lẽ); và thân đã tách không còn mượn tên nào ngoài <code>ctx</code>.</li>
+        <li>3 test cũ đọc thẳng <code>frontend/pages/leaves.py</code> nay đọc <b>cả gói</b>
+          (<code>_ma_trang_nghi_phep()</code>) — các nhát tách sau không làm chúng đỏ vì lý do không liên quan.</li>
+      </ul>
+
+      <div class="label">4. Chưa làm</div>
+      <p><span class="pill pill-red">Chưa mở thử trên trình duyệt</span> Không test nào <b>dựng</b> trang. NiceGUI có
+        <code>nicegui.testing</code> (fixture <code>user</code>) nhưng cần thêm <code>pytest-asyncio</code> — thêm thư viện test
+        là quyết định của người dùng, chưa làm. Với 10 tab còn lại của Đợt 2 thì đây là lưới đáng có.</p>
+    </div>
+  </div>
+
   <!-- NL1 -->
   <div class="card">
     <div class="card-header">

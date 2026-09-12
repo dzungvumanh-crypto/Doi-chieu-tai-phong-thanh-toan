@@ -216,7 +216,8 @@ Truy cập:
 │       ├── bundles.py       # Gom tập + in bìa
 │       ├── storage.py       # Lưu trữ tập (số hộp, vị trí kệ) + In bìa hồ sơ M01/LHS
 │       ├── ttqt_branches.py # Danh sách CN thực hiện TTQT
-│       ├── leaves.py        # Nghỉ phép
+│       ├── leaves/          # Nghỉ phép — gói: __init__.py (trang) + _chung.py (helper)
+│       │                   #   + _chi_tiet_don.py (ngăn kéo chi tiết đơn)
 │       ├── duty_schedule.py # Lịch trực
 │       ├── cham_459901.py   # Phân loại bút toán TK 459901
 │       ├── doi_chieu_song_phuong.py # Đối chiếu song phương (định tuyến lệnh IPCAS)

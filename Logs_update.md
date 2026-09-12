@@ -4,6 +4,11 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 12/09/2026 Sắp xếp lại mã nguồn trang Nghỉ phép — **không đổi gì với người dùng**
+    + Trang Nghỉ phép trước nay nằm trong một file rất lớn, khó sửa an toàn. Nay tách dần thành nhiều
+      file nhỏ; đợt này tách riêng phần "xem chi tiết một đơn"
+    + Màn hình, thao tác và số liệu giữ nguyên. Nếu thấy bất thường khi mở chi tiết đơn, báo ngay
+
 - 12/09/2026 Nhật ký ghi rõ lý do khi một việc chạy nền hỏng — **không đổi gì với người dùng**
     + Trước đây một số việc phụ hỏng thì hệ thống bỏ qua hoàn toàn im lặng. Nay các chỗ đó ghi lại lý do
       vào nhật ký, ví dụ: đổi ngày lễ âm lịch sang dương lịch hỏng (làm thiếu ngày lễ trong gợi ý phân
