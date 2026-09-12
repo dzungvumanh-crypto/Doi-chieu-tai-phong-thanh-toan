@@ -17437,7 +17437,103 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-10</footer>
+  <!-- 142 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">142</span>
+      <span class="card-title">Đối chiếu OSB (GL02 ↔ OSB chi tiết hạch toán, TK trung gian 519910) — spike test trên dữ liệu thật xác nhận offset=0 đủ, phát hiện 2 lỗi trong đề bài giao việc trước khi viết code sản xuất (2026-09-13)</span>
+      <span class="badge badge-done">Module mới — spike đã verify, code sản xuất đã viết + 6 test pass</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-blue">Câu hỏi cần trả lời trước khi viết code</span> có cần cửa sổ lệch ngày T±1 khi so khớp GL02↔OSB không?</div>
+      <p>Viết 1 script spike tạm (KHÔNG đưa vào <code>backend/services/</code>) chạy trên dữ liệu
+        thật 3 ngày (01/07, 31/07, 04/04/2026, TK 519910) do người dùng cung cấp
+        (<code>G:\NGOC HA\OSB file chấm gửi a Dũng\</code>), so kết quả tự tính với 6 cặp file
+        "hà chấm" thủ công. Kết quả: <b>offset=0 (đúng ngày) tái lập ĐÚNG 100% mọi file hà chấm
+        đang có — 0 dòng thừa, 0 dòng thiếu ở mọi ngày/case</b>, không cần T±1.</p>
+      <table>
+        <tr><th>Ngày</th><th>Case</th><th>Script: GL02 chênh</th><th>Script: OSB chênh</th><th>Hà chấm (GL02)</th><th>Hà chấm (OSB)</th><th>Thừa</th><th>Thiếu</th></tr>
+        <tr><td>01/07</td><td>Nợ</td><td>1</td><td>4</td><td>1</td><td>4</td><td>0</td><td>0</td></tr>
+        <tr><td>01/07</td><td>Có</td><td>2</td><td>5</td><td>2</td><td>5</td><td>0</td><td>0</td></tr>
+        <tr><td>31/07</td><td>Nợ</td><td>1</td><td>0</td><td>1</td><td>—</td><td>0</td><td>0</td></tr>
+        <tr><td>31/07</td><td>Có</td><td>1</td><td>3</td><td>—</td><td>3</td><td>0</td><td>0</td></tr>
+        <tr><td>04/04</td><td>Nợ</td><td>1</td><td>1</td><td>1</td><td>1</td><td>0</td><td>0</td></tr>
+        <tr><td>04/04</td><td>Có</td><td>2</td><td>3</td><td>2</td><td>3</td><td>0</td><td>0</td></tr>
+      </table>
+      <p>Không có nhóm "hà chấm" nào thiếu file tham chiếu bị tính nhầm — 31/07 chỉ có 2/4 file
+        tham chiếu (thực tế nghiệp vụ ngày đó không phát sinh chênh lệch phía còn lại). REMARK &lt;
+        7 ký tự: 0 dòng cả 3 ngày. Nhóm "Mã giao dịch" có &gt;2 dòng khi đánh dấu Hủy: 0 cả 3 ngày —
+        chưa quan sát được rủi ro này trên mẫu thật, nhưng code vẫn tổng quát hoá (không giả định
+        đúng 2 dòng/nhóm) và log cảnh báo nếu xảy ra.</p>
+
+      <div class="label"><span class="pill pill-red">Lỗi 1 — đề bài giao việc bị NGƯỢC chiều cột OSB</span> "TK ghi nợ"/"TK ghi có" phải CÙNG TÊN với case, không chéo</div>
+      <p>Đề bài ban đầu mô tả: case "Chênh lệch Nợ" lọc OSB theo <code>"TK ghi có"==519910</code>,
+        case "Chênh lệch Có" lọc theo <code>"TK ghi nợ"==519910</code> (chéo). Đọc lại NGUYÊN VĂN 2
+        note gốc bằng <code>python-docx</code> (không suy đoán):</p>
+      <ul>
+        <li><code>OSB - Hà note chấm.docx</code> có <b>lỗi copy-paste</b> — đoạn hướng dẫn "Xác định
+          các giao dịch chênh lệch nợ 519910" và đoạn "...chênh lệch có 519910" đều viết giống hệt
+          nhau "tại cột TK ghi nợ: chỉ lấy các dòng giao dịch có giá trị=519910" — bản thân note
+          này không phân biệt được 2 case, không dùng làm căn cứ được.</li>
+        <li><code>TH - Note chấm OSB.docx</code> viết RÕ RÀNG: "Chênh lệch Nợ — File OSB: chỉ lấy
+          dữ liệu tại cột TK ghi Nợ", "Chênh lệch Có — File OSB: chỉ lấy dữ liệu tại cột TK ghi Có"
+          — đúng công thức CÙNG TÊN.</li>
+      </ul>
+      <p>Verify độc lập bằng chính dữ liệu (không chỉ dựa vào văn bản): 2 file
+        <code>DULIEUCHITIETHACHTOAN_*.xlsx</code> cấp mỗi ngày luôn tách sẵn theo đúng 1 chiều — 1
+        file 100% dòng "TK ghi nợ"=519910, file kia 100% dòng "TK ghi có"=519910 (xác nhận cả 3
+        ngày). File "hà chấm" case "Có" chỉ chứa dòng "TK ghi có"=519910. Dùng công thức CÙNG TÊN
+        khớp 100% (bảng trên); thử lại công thức CHÉO (theo đúng chữ đề bài ban đầu) làm case Có
+        ngày 01/07 bung ra <b>393 dòng "chênh lệch" giả thay vì 5 dòng thật</b>.</p>
+
+      <div class="label"><span class="pill pill-red">Lỗi 2 — dedupe OSB theo "Mã giao dịch" (như đề bài mô tả) phá vỡ cặp Hủy hợp lệ</span></div>
+      <p>Một cặp Hủy hợp lệ (cùng Mã giao dịch, cùng Số tiền TRÁI DẤU, "IPCAS Trace" khác nhau — 1
+        chân có trace thật, 1 chân trace rỗng) bị <code>drop_duplicates(subset=["Mã giao dịch"])</code>
+        coi là "trùng" và xoá mất 1 chân. Hậu quả: nhóm chỉ còn 1 dòng, bước đánh dấu Hủy
+        (điều kiện đếm ≥2 dòng) không bao giờ kích hoạt được — 0 dòng Hủy nào bị đánh dấu trong
+        toàn bộ ngày, và OSB case Có ngày 01/07 bung ra đúng 393 dòng "chênh lệch" giả nói trên
+        (gần khớp số cặp Hủy bị xoá nhầm: 389 nhóm/778 dòng).</p>
+      <p><b>Fix:</b> chỉ dedupe khi TOÀN BỘ CỘT giống hệt nhau
+        (<code>drop_duplicates()</code> không <code>subset</code>) — 2 chân của 1 cặp Hủy luôn
+        khác nhau ít nhất ở "IPCAS Trace"/"Số tiền" nên không bị gộp nhầm. Áp dụng cách này, cả 3
+        ngày đều 0 dòng bị coi là trùng thật, Hủy được đánh dấu đúng (389/21/54 nhóm tương ứng 3
+        ngày) → khớp 100% với hà chấm.</p>
+
+      <div class="label"><span class="pill pill-green">Code sản xuất</span> <code>backend/services/doi_chieu_osb/</code> (worktree <code>TTTT-doi-chieu-osb</code>, nhánh <code>feature/doi-chieu-osb</code>)</div>
+      <p>6 file theo khuôn <code>doi_chieu_song_phuong_core/</code>: <code>config.py</code> (TK
+        trung gian + cột bắt buộc + 2 lỗi trên đã ghi thẳng vào docstring để không ai vô tình đảo
+        ngược lại), <code>load_gl02.py</code> (mirror <code>ach/b2_xu_ly_gl02.py</code> — ưu tiên
+        7-Zip/WinRAR qua <code>zip_utils.py</code>, fallback <code>pyzipper</code>; xử lý được ZIP
+        có NHIỀU file CSV thành viên/nhiều ngày gộp chung — xác nhận thật ở ZIP ngày 31/07 có 10
+        file, 4,53 triệu dòng, 1 file gộp trọn cả tháng 01/07→31/07), <code>load_osb.py</code> (tái
+        dùng <code>load_osb_file()</code> của <code>doi_chieu_song_phuong_core</code>, không chép
+        lại), <code>match.py</code> (min-count, vectorized <code>np.minimum</code>+<code>reindex</code>,
+        viết lại tại chỗ thay vì import hàm riêng <code>_khop_min_count</code> của module khác —
+        tránh phụ thuộc ngầm vào 1 hàm có gạch dưới của module khác), <code>export.py</code> (4 file
+        <code>.xlsx</code> đóng gói 1 ZIP — số dòng chênh lệch rất nhỏ nên không áp quy ước
+        "CSV cho bulk detail" của dự án), <code>pipeline.py</code> (orchestrator).</p>
+      <p>519908 (TK trung gian thứ 2 nêu trong <code>TH - Note chấm OSB.docx</code>) <b>CHƯA có dữ
+        liệu thật xác nhận</b> — cấu hình tạm giống 519910, ghi rõ trong <code>config.py</code>;
+        nếu sai thì bộ lọc GL02 rỗng hoàn toàn (hiện rõ trong log, không sai âm thầm) nhưng vẫn cần
+        verify bằng dữ liệu thật trước khi dùng trong sản xuất.</p>
+
+      <div class="note">Test mới <code>tests/services/doi_chieu_osb/test_pipeline.py</code> (6
+        test, fixture DataFrame tự tạo — KHÔNG phụ thuộc đường dẫn <code>G:\...</code>): cặp khớp
+        đúng Nợ/Có, 1 dòng chênh lệch Nợ, 1 dòng chênh lệch Có, 1 cặp Hủy hợp lệ, 1 REMARK &lt; 7
+        ký tự, và 2 test khẳng định trực tiếp 2 lỗi ở trên (chiều cột cùng tên, dedupe toàn cột) để
+        không ai vô tình đảo ngược lại. <code>python -m pytest tests/services/doi_chieu_osb/ -q</code>:
+        6 passed. Toàn bộ 1924 test của repo (bao gồm 6 test mới) pass sau khi thêm module —
+        không có regression.</div>
+
+      <div class="note">Script spike gốc (<code>scratch/spike_osb_gl02.py</code>, chạy trong phiên
+        test — không nằm trong repo) là bằng chứng đã verify bằng dữ liệu thật; giữ lại theo yêu
+        cầu người giao việc, không xoá.</div>
+
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-13</footer>
 </div>
 </body>
 </html>
