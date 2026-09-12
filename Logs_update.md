@@ -4,6 +4,13 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 12/09/2026 Nhật ký ghi lại thao tác chạy chậm — **không đổi gì với người dùng**
+    + Thao tác nào chạy lâu bất thường sẽ được ghi một dòng cảnh báo vào `logs/app.log` (kèm đường
+      dẫn và số mili giây). Chỉ để biết chỗ nào cần làm nhanh hơn — **không chặn, không đổi** bất kỳ
+      thao tác nào
+    + Phần lớn việc vốn dĩ lâu (dựng bản in đơn nghỉ phép qua Word, nộp file đối chiếu, tải/xuất file)
+      đã được đặt mức chờ riêng nên không bị ghi nhầm
+
 - 11/09/2026 Địa chỉ kiểm tra nhanh **/health** — **không đổi gì với người dùng**
     + Mở `http://<máy chủ>:8000/health` (không cần đăng nhập) để biết phần máy chủ đã chạy và đọc
       được dữ liệu chưa: hiện `"status": "ok"` là ổn; báo `"degraded"` là máy chủ chạy nhưng không

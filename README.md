@@ -159,6 +159,7 @@ Truy cập:
 │   │   ├── paths.py         # Đường dẫn template có dấu — chống lệch chuẩn hoá Unicode NFC/NFD
 │   │   ├── net.py           # IP thật của người dùng — chỉ tin X-Client-IP từ máy đáng tin
 │   │   ├── uploads.py       # Trần kích thước upload + làm sạch tên file (chống ghi ra ngoài thư mục)
+│   │   ├── slow_request.py  # Ghi WARNING khi request chậm quá ngưỡng (SLOW_REQUEST_MS)
 │   │   └── rate_limit.py    # Chặn dò mật khẩu — đếm theo tên đăng nhập VÀ theo địa chỉ máy
 │   ├── api/
 │   │   ├── auth.py          # Đăng nhập / đăng xuất / đổi mật khẩu
