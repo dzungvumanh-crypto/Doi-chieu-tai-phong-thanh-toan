@@ -2,8 +2,11 @@
 Tiện ích lịch: ngày nghỉ lễ VN, ngày làm việc, cutoff, thứ Sáu.
 """
 import calendar
+import logging
 from datetime import date, timedelta
 from typing import List
+
+_log = logging.getLogger(__name__)
 
 try:
     from lunardate import LunarDate
@@ -42,7 +45,10 @@ def get_vn_holidays(year: int) -> List[dict]:
                 solar = LunarDate(year, lm, ld).toSolarDate()
                 holidays.append({"date": solar.strftime("%Y-%m-%d"), "label": label})
             except Exception:
-                pass
+                # Đổi âm→dương hỏng là MẤT HẲN một ngày lễ khỏi danh sách gợi ý —
+                # im lặng thì người phân lịch trực không biết vì sao thiếu.
+                _log.warning("Không đổi được ngày lễ âm lịch %s (%d/%d) năm %d",
+                             label, ld, lm, year, exc_info=True)
     else:
         _FALLBACK_2026 = [
             ("2026-02-17", "Tết Nguyên Đán (mùng 1)"),

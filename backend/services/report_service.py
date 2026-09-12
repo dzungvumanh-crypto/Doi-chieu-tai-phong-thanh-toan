@@ -33,8 +33,8 @@ def _get_month_from_date(date_str: str) -> int:
         parts = str(date_str).strip().split('/')
         if len(parts) >= 2:
             return int(parts[1])
-    except Exception:
-        pass
+    except (ValueError, TypeError):
+        pass        # ô ngày trống / sai khuôn → 0, dòng đó không vào cột tháng nào
     return 0
 
 
@@ -43,8 +43,8 @@ def _get_year_from_date(date_str: str) -> int:
         parts = str(date_str).strip().split('/')
         if len(parts) >= 3:
             return int(parts[2][:4])
-    except Exception:
-        pass
+    except (ValueError, TypeError):
+        pass        # như trên
     return 0
 
 

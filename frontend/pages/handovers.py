@@ -664,7 +664,7 @@ async def handovers_page():
         try:
             await ui.context.client.connected()
         except Exception:
-            pass
+            pass        # hết giờ chờ / người dùng đóng tab — vẫn dựng tiếp phần còn lại
 
         saved = app.storage.tab
         init_dept  = saved.get("hv_dept",  default_dept)

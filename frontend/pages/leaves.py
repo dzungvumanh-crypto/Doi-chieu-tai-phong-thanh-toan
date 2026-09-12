@@ -2,6 +2,8 @@
 
 import asyncio
 
+import logging
+
 import datetime as _dt_mod
 
 from typing import Optional
@@ -11,6 +13,8 @@ from nicegui import ui, app
 import frontend.api_client as api
 
 import frontend.ui_kit as ui_kit
+
+_log = logging.getLogger(__name__)
 
 from frontend.shared import _sidebar, _content_area, _page_header, _require_auth, _handle_api_error
 
@@ -533,7 +537,7 @@ async def leaves_page(open_id: Optional[int] = None):
                 try:
                     await asyncio.to_thread(api.post, "/api/leaves/carryover-notice/ack", {})
                 except Exception:
-                    pass
+                    pass        # ghi nhận "đã đọc" hỏng thì lần sau hiện lại — không đáng chặn
                 _cn_dp.close()
             ui.button("Đã hiểu", on_click=_ack).classes("bg-red-700 text-white mt-4 w-full")
     ui.timer(0.8, _check_carryover_notice, once=True)
@@ -1888,7 +1892,8 @@ async def leaves_page(open_id: Optional[int] = None):
                 }
                 r_gd_select.update()
             except Exception:
-                pass
+                # Hỏng thì ô chọn GĐ rỗng — người dùng thấy ngay là không chọn được ai
+                _log.warning("Không nạp được danh sách GĐ/PGĐ", exc_info=True)
 
             r_gd_select.value = lv.get("gd_approver_id")
 
@@ -2807,7 +2812,8 @@ async def leaves_page(open_id: Optional[int] = None):
 
                     except Exception:
 
-                        pass
+                        # Số đơn lỗi có báo cho người dùng ở dưới, nhưng lý do thì chỉ còn ở đây
+                        _log.warning("Duyệt hàng loạt: đơn %s lỗi", i, exc_info=True)
 
 
 
@@ -2822,7 +2828,7 @@ async def leaves_page(open_id: Optional[int] = None):
                                  "comment": None})
                             ok_count += 1
                         except Exception:
-                            pass
+                            _log.warning("Chuyển GĐ hàng loạt: đơn %s lỗi", i, exc_info=True)
 
                 _sel.clear()
                 _export_sel.clear()
@@ -2906,7 +2912,8 @@ async def leaves_page(open_id: Optional[int] = None):
 
                     except Exception:
 
-                        pass
+                        # Số đơn lỗi có báo cho người dùng ở dưới, nhưng lý do thì chỉ còn ở đây
+                        _log.warning("Duyệt hàng loạt: đơn %s lỗi", i, exc_info=True)
 
                 _sel.clear()
 
@@ -3249,8 +3256,8 @@ async def leaves_page(open_id: Optional[int] = None):
                     def _go_page(e):
                         try:
                             _goto(int(e.value))
-                        except Exception:
-                            pass
+                        except (ValueError, TypeError):
+                            pass        # gõ dở / không phải số → chờ lần gõ sau
                     ui.input("Đến trang", on_change=_go_page).props("dense outlined").classes("w-20 text-xs")
 
         def _draw_table(leaves: list, show_name: bool = False, show_checkbox: bool = True,
@@ -3673,7 +3680,7 @@ async def leaves_page(open_id: Optional[int] = None):
                 try:
                     _ck.set_value(False)
                 except Exception:
-                    pass
+                    pass        # checkbox của lần vẽ trước đã bị gỡ — xem chú thích trên
 
         leave_tabs.on_value_change(_on_leave_tab_change)
 

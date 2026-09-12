@@ -91,8 +91,8 @@ def backup_db(
     finally:
         try:
             os.unlink(tmp_path)
-        except Exception:
-            pass
+        except OSError:
+            pass        # file đã bị xoá / đang bị giữ — bản tải về đã gửi xong rồi
 
     # Ghi vào audit_logs, KHÔNG phải login_logs: tải backup không phải sự kiện
     # đăng nhập. Dòng cũ nằm trong login_logs với success=1 làm mọi thống kê

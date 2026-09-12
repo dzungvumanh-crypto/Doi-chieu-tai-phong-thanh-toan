@@ -816,7 +816,12 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
             try:
                 await asyncio.to_thread(api.delete, "/api/doi-chieu-citad/citad-buffer")
             except Exception:
-                pass
+                # Bộ đệm nằm trong RAM của backend và KHÔNG tự hết hạn (doi_chieu_citad_service:
+                # _citad_buffer/_ph_buffer, chỉ save/get/clear) — xoá hỏng thì lần "Nạp" sau sẽ
+                # ghi đè số của lượt cũ lên ô đang nhập. Phải báo, không được im lặng.
+                ui.notify("Không xoá được bộ đệm sau khi nạp — bấm Nạp lần sau có thể ra số cũ. "
+                          "Báo quản trị khởi động lại backend nếu thấy số lạ.",
+                          type="warning", timeout=6000)
         recalc()
         msg = f"Đã nạp {count} mục từ CITAD"
         if skipped:
@@ -874,7 +879,12 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
             try:
                 await asyncio.to_thread(api.delete, "/api/doi-chieu-citad/paymenthub-buffer")
             except Exception:
-                pass
+                # Bộ đệm nằm trong RAM của backend và KHÔNG tự hết hạn (doi_chieu_citad_service:
+                # _citad_buffer/_ph_buffer, chỉ save/get/clear) — xoá hỏng thì lần "Nạp" sau sẽ
+                # ghi đè số của lượt cũ lên ô đang nhập. Phải báo, không được im lặng.
+                ui.notify("Không xoá được bộ đệm sau khi nạp — bấm Nạp lần sau có thể ra số cũ. "
+                          "Báo quản trị khởi động lại backend nếu thấy số lạ.",
+                          type="warning", timeout=6000)
         recalc()
         # Buffer CHỈ có mục Napas/PSS-MDP (trường hợp thường gặp nhất — người
         # dùng quét đúng trang PaymentHub, đúng ý cũ, nhưng giờ không còn nhận

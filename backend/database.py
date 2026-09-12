@@ -36,7 +36,8 @@ def write_audit(
             from backend.core.sessions import get_session_ip
             ip = get_session_ip(db, actor_id)
         except Exception:
-            pass
+            # Lui về ip=None — dòng nhật ký thiếu IP vẫn hơn là mất hẳn dòng đó.
+            _log.info("Không tra được IP phiên của actor %s", actor_id, exc_info=True)
     db.execute(
         "INSERT INTO audit_logs (actor_id, action, target_type, target_id, detail, ip_address, created_at) VALUES (?,?,?,?,?,?,?)",
         (actor_id, action, target_type, target_id, detail, ip, _vn_now()),

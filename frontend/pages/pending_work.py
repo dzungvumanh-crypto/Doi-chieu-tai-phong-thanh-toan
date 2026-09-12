@@ -164,7 +164,7 @@ async def pending_work_page(kind: str):
         try:
             await ui.context.client.connected()
         except Exception:
-            pass
+            pass        # hết giờ chờ / người dùng đóng tab — vẫn dựng tiếp phần còn lại
 
         try:
             data = await asyncio.to_thread(api.get, "/api/dashboard/pending-items")

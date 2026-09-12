@@ -771,8 +771,11 @@ def _require_auth():
             api.clear_auth()
             ui.notify("Tài khoản này đang được đăng nhập từ thiết bị khác", type="warning", timeout=4000)
             client.open("/login?reason=displaced")
-        except Exception:
-            pass  # network hiccup — bỏ qua
+        except Exception as e:
+            # Chỉ lỗi mạng mới được im lặng (mất wifi vài giây là chuyện thường). Lỗi khác
+            # lặp lại mỗi 60 giây mà không ai biết — đây là khối duy nhất chạy theo chu kỳ.
+            if not api.la_loi_mang(e):
+                _log.warning("Heartbeat phiên lỗi", exc_info=True)
     ui.timer(60, _session_heartbeat)
 
     return True

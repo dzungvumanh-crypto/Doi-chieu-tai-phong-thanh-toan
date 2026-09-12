@@ -211,8 +211,8 @@ def export_staff_excel(
         created = ""
         try:
             created = _dt.fromisoformat(str(r["created_at"])).strftime("%d/%m/%Y")
-        except Exception:
-            pass
+        except (ValueError, TypeError):
+            pass        # sai khuôn → để ô trống trong Excel
         ws.append([
             idx,
             r["full_name"] or "",

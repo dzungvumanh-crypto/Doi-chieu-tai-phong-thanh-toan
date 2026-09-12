@@ -310,7 +310,7 @@ async def cham_459901_page():
                             api.post, f'/api/cham459901/cancel/{state["task_token"]}'
                         )
                     except Exception:
-                        pass
+                        pass        # job có thể chưa kịp tạo — dọn dẹp thôi, không báo lỗi
 
                 # ── Poll progress cho đến khi done ─────────────────────────────
                 poll_fails = 0

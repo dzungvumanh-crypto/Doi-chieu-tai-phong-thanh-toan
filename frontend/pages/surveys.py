@@ -215,7 +215,7 @@ async def surveys_page():
     try:
         await ui.context.client.connected()
     except Exception:
-        pass
+        pass        # hết giờ chờ / người dùng đóng tab — vẫn dựng tiếp phần còn lại
     # Tuần tự, KHÔNG asyncio.gather: gather bọc mỗi coroutine thành task riêng →
     # mất ngăn xếp slot của NiceGUI, ui.notify trong nhánh lỗi sẽ ném RuntimeError
     # (xem "Event handler async" trong docs/DESIGN.md).

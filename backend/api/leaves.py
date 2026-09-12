@@ -1513,8 +1513,8 @@ def export_leaves(
         try:
             from datetime import datetime as _dt
             created = _dt.fromisoformat(str(created)).strftime("%d/%m/%Y")
-        except Exception:
-            pass
+        except (ValueError, TypeError):
+            pass        # sai khuôn → giữ nguyên chuỗi thô
         # Ngày nghỉ: liệt kê từng ngày nếu không liên nhau
         import json as _j
         if lv["spread_dates"]:
