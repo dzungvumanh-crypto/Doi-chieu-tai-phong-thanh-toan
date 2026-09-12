@@ -163,6 +163,10 @@ app.add_middleware(BodySizeLimitMiddleware, max_bytes=MAX_REQUEST_BYTES)
 from backend.core.security_headers import SecurityHeadersMiddleware
 app.add_middleware(SecurityHeadersMiddleware)
 
+# Ngoài CÙNG (thêm sau chót): đo trọn thời gian của mọi lớp bên trong — kể cả
+# audit, trần kích thước và CORS. Chỉ đọc và ghi log, không đụng vào phản hồi.
+from backend.core.slow_request import SlowRequestMiddleware
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_settings.ALLOWED_ORIGINS,
@@ -170,6 +174,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.add_middleware(SlowRequestMiddleware)
 
 apply_routers(app)
 

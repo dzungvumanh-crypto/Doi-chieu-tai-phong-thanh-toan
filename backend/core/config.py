@@ -60,6 +60,14 @@ class Settings:
     NTP_TIMEOUT_SEC: float = float(os.getenv("NTP_TIMEOUT_SEC", "3"))
     NTP_DRIFT_THRESHOLD_SEC: int = int(os.getenv("NTP_DRIFT_THRESHOLD_SEC", "5"))
 
+    # Ngưỡng ghi WARNING "request chậm" (backend/core/slow_request.py). Đường vốn
+    # dĩ lâu (Word, nộp file đối chiếu, xuất Excel) có ngưỡng riêng trong file đó.
+    SLOW_REQUEST_MS: int = int(os.getenv("SLOW_REQUEST_MS", "1500"))
+    # Tiền tố đường dẫn KHÔNG theo dõi, phân cách bằng dấu phẩy. Để trống là theo dõi tất.
+    SLOW_REQUEST_EXCLUDE: list = [
+        p.strip() for p in os.getenv("SLOW_REQUEST_EXCLUDE", "").split(",") if p.strip()
+    ]
+
 # ── Mật khẩu file ZIP do hệ thống nguồn cấp ──────────────────────────────────
 # Ba module dùng chung một mật khẩu: Đối chiếu ACH, Chấm 459901, Đối chiếu
 # Song phương. Trước đây nó nằm CỨNG trong mã (`ZIP_PASSWORD = b"..."`) ở cả ba

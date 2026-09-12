@@ -53,6 +53,64 @@
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
   <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-09-11</p>
 
+  <!-- SR1 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">SR1</span>
+      <span class="card-title">Nhật ký "request chậm" — ASGI thuần, ngưỡng riêng cho việc chậm có chủ đích (mục 1.2)</span>
+      <span class="badge badge-info">12/09/2026</span>
+    </div>
+    <div class="card-body">
+      <div class="label">1. Vì sao KHÔNG dùng BaseHTTPMiddleware</div>
+      <p>Kế hoạch ghi "middleware ghi WARNING khi request vượt ngưỡng". Viết bằng
+        <code>BaseHTTPMiddleware</code> thì <code>call_next</code> trả về ngay khi có <b>header</b>, chưa gửi thân.
+        Đo thử (script ở scratchpad, không vào repo): phản hồi stream mất <b>518 ms</b> thật thì
+        <code>BaseHTTPMiddleware</code> ghi <b>2 ms</b>.</p>
+      <table>
+        <tr><th></th><th>BaseHTTPMiddleware</th><th>ASGI thuần (chọn)</th></tr>
+        <tr><td>Mốc dừng</td><td>Có header</td><td><code>http.response.body</code> cuối cùng</td></tr>
+        <tr><td>Tải file 100 MB chậm</td><td><span class="pill pill-red">Không thấy</span> hiện ra như 20 ms</td>
+            <td><span class="pill pill-green">Thấy</span> đúng thời gian thật</td></tr>
+        <tr><td>Client ngắt giữa chừng</td><td>—</td><td>Không có mốc cuối → không ghi. Đó là lỗi đường truyền, không phải chậm
+          (bắt <code>Exception</code> chứ không <code>BaseException</code> nên <code>CancelledError</code> đi thẳng)</td></tr>
+        <tr><td>Route ném lỗi 500</td><td>—</td><td><span class="pill pill-red">Bản đầu bỏ sót</span> phản hồi 500 do
+          <code>ServerErrorMiddleware</code> dựng, mà nó nằm NGOÀI middleware này → không mảnh thân nào đi qua. Đo được: request
+          121 ms kết thúc bằng lỗi ghi <b>0 dòng</b>. Nay bọc <code>try/except Exception</code> → ghi kèm "ném ngoại lệ".
+          "Chạy 30 giây rồi sập" chính là ca cần thấy nhất (phản biện bắt)</td></tr>
+      </table>
+      <p>Cùng khuôn với <code>security_headers.py</code> và <code>BodySizeLimitMiddleware</code> — dự án đã có tiền lệ ASGI thuần.
+        Gắn <b>ngoài cùng</b> (<code>add_middleware</code> sau chót) nên bao trọn cả audit, trần kích thước và CORS.</p>
+
+      <div class="label">2. Ngưỡng phẳng 1,5 giây là vô dụng nếu không trừ chỗ chậm có chủ đích</div>
+      <table>
+        <tr><th>Đường</th><th>Ngưỡng</th><th>Vì sao</th></tr>
+        <tr><td>Mặc định</td><td><code>SLOW_REQUEST_MS</code> = 1500</td><td>Đổi ở <code>.env</code></td></tr>
+        <tr><td>Đoạn đường dẫn <b>chứa</b> <code>export</code> / <code>preview</code> / <code>download</code></td><td>8000</td>
+            <td>Dựng bản in qua Word lần đầu 5–7 giây là <b>đúng thiết kế</b> (DESIGN.md); xuất Excel báo cáo lớn cũng lâu.
+              Xét theo <b>đoạn</b> và dùng "chứa" chứ không "kết thúc bằng": tên route thật đủ kiểu gạch nối —
+              <code>/export-db</code>, <code>/export-summary</code>, <code>/parse-preview</code>, <code>/extension-download</code>,
+              <code>/month-summary/export</code>. <span class="pill pill-red">Bản đầu sót</span> tất cả các dạng này → đúng thứ log rác mà bảng ngưỡng sinh ra để tránh</td></tr>
+        <tr><td>10 module nặng (<code>/api/ach</code>, <code>/api/ilo1000</code>, <code>/api/swift-recon</code>, …)</td><td>10000</td>
+            <td>Nộp file hàng trăm MB. <b>Không loại trừ hẳn</b>: upload chạy đồng bộ, chậm bất thường ở đó chính là thứ cần thấy</td></tr>
+        <tr><td><code>SLOW_REQUEST_EXCLUDE</code></td><td>Không theo dõi</td><td>Danh sách tiền tố trong <code>.env</code>, mặc định rỗng</td></tr>
+      </table>
+      <p>Khớp tiền tố theo <b>đoạn</b> (<code>/api/ach</code> không nuốt <code>/api/achilles</code>) và <b>tiền tố dài nhất thắng</b>,
+        không phải ngưỡng lớn nhất — thêm một tiền tố con ngưỡng thấp hơn thì phải là cái đó quyết định.</p>
+      <p>Log kêu liên tục thì không ai đọc nữa — đó là lý do duy nhất của bảng ngưỡng này, không phải để giấu số liệu.</p>
+
+      <div class="label">3. Chưa làm</div>
+      <div class="label">3. Vẫn ở ngưỡng mặc định dù cũng là việc dựng file</div>
+      <p><code>/api/reports/generate-dept-zip</code>, <code>/generate-word</code>, <code>/api/bundles/handover-archive-excel</code>,
+        <code>/cover-bulk</code>, <code>/api/th-reports/generate</code>, <code>/api/staff/import-db</code>,
+        <code>/api/quiz/sets/upload</code> — tên không chứa export/preview/download nên chạy ở ngưỡng 1500 ms.
+        <b>Cố ý không nới</b>: đây là thao tác hiếm (vài lần một tháng), một dòng WARNING không thành log rác, mà lại
+        đúng là số liệu cần để biết chúng lâu bao nhiêu. Nới ngưỡng trước khi có số là tự bịt mắt.</p>
+
+      <p><span class="pill pill-gray">Chưa</span> Không gom thống kê (p95, top đường chậm) — mới chỉ một dòng WARNING mỗi lượt
+        vượt ngưỡng, đọc bằng <code>logs/app.log</code>. Đủ để xếp ưu tiên tối ưu; dựng bảng thống kê là việc của đợt sau nếu số liệu cho thấy cần.</p>
+    </div>
+  </div>
+
   <!-- HL1 -->
   <div class="card">
     <div class="card-header">
