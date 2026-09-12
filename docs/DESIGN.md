@@ -263,6 +263,26 @@ Rà 12/09/2026 (`backend/` + `frontend/`): 39 khối `except Exception: pass` �
 Hai chỗ đang **mất dữ liệu âm thầm** (đổi ngày lễ âm lịch hỏng → thiếu hẳn một ngày lễ; duyệt hàng
 loạt đơn nghỉ phép → mất lý do từng đơn lỗi) nay có log. Xem card *NL1* trong Implementation-notes.
 
+## Trang Nghỉ phép là một GÓI, không phải một file
+
+`frontend/pages/leaves/` — đang chẻ dần từ một file 6.473 dòng (một hàm 6.125 dòng):
+
+| File | Chứa gì |
+|---|---|
+| `__init__.py` | `@ui.page("/leaves")` + phần trang chưa tách |
+| `_chung.py` | Hằng số + helper cấp module (nguyên văn từ bản cũ) |
+| `_chi_tiet_don.py` | Ngăn kéo chi tiết một đơn (728 dòng) + `ChiTietCtx` |
+
+**Tách một phần ra thì state đi qua một `ctx` dataclass, KHÔNG qua tham số rời.** Lý do: vài thứ
+(`leave_tabs`, `_nav_pending`, `_nav_pending_th`) được tạo **sau** chỗ định nghĩa hàm đã tách.
+Closure cũ chạy được vì Python tra tên lúc **gọi**; truyền theo giá trị lúc định nghĩa là ba thứ
+đó bằng `None` — hỏng đúng lúc người dùng bấm nút, không test nào bắt. `ctx` đọc thuộc tính lúc
+gọi nên giữ nguyên hành vi đó. `tests/test_leaves_chi_tiet_ctx.py` canh mọi trường của `ctx` đều
+được trang gán.
+
+> Test nào cần đọc mã trang (kiểm chuỗi) thì nối **cả gói**, đừng trỏ vào một file —
+> xem `_ma_trang_nghi_phep()` trong `tests/test_nghi_phep_buoc_th_va_gd.py`.
+
 ## Leave Approval Workflow
 ```
 pending_ksv → pending_tong_hop → pending_gd → approved | rejected | cancelled
