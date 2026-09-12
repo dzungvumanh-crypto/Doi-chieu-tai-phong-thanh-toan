@@ -4,6 +4,16 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 12/09/2026 Nhật ký ghi rõ lý do khi một việc chạy nền hỏng — **không đổi gì với người dùng**
+    + Trước đây một số việc phụ hỏng thì hệ thống bỏ qua hoàn toàn im lặng. Nay các chỗ đó ghi lại lý do
+      vào nhật ký, ví dụ: đổi ngày lễ âm lịch sang dương lịch hỏng (làm thiếu ngày lễ trong gợi ý phân
+      lịch trực), hay đơn nào bị lỗi khi duyệt/từ chối nhiều đơn nghỉ phép cùng lúc
+    + Ghi ở đâu: việc của phần máy chủ vào `logs/app.log` (xem được ở màn *Nhật ký hệ thống*); việc của
+      phần giao diện vào `logs/frontend.log` (phải mở file, màn Nhật ký không hiện)
+    + **Một thay đổi có thấy được:** ở màn Đối chiếu CITAD, nếu sau khi "Nạp" mà hệ thống không dọn được
+      dữ liệu tạm thì nay sẽ hiện cảnh báo — trước đây im lặng, và lần "Nạp" sau có thể điền lại số của
+      lượt trước lên ô đang nhập
+
 - 12/09/2026 Nhật ký ghi lại thao tác chạy chậm — **không đổi gì với người dùng**
     + Thao tác nào chạy lâu bất thường sẽ được ghi một dòng cảnh báo vào `logs/app.log` (kèm đường
       dẫn và số mili giây). Chỉ để biết chỗ nào cần làm nhanh hơn — **không chặn, không đổi** bất kỳ

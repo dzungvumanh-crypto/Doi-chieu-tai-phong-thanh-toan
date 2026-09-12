@@ -24,7 +24,7 @@ async def bundles_page():
         try:
             await ui.context.client.connected()
         except Exception:
-            pass
+            pass        # hết giờ chờ / người dùng đóng tab — vẫn dựng tiếp phần còn lại
         with ui.tabs().classes("mb-4") as tabs:
             t_list = ui.tab("Danh sách bìa chứng từ")
             t_new  = ui.tab("Tạo bìa chứng từ")

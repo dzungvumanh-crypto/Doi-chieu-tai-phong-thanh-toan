@@ -244,6 +244,25 @@ và báo **đỏ** (`.github/workflows/tests.yml`, cấu hình ở `ruff.toml`).
 Merge — repo riêng tư gói Free không bật được bảo vệ nhánh; `gh pr checks` phải xanh mới merge. Còn 48 lời gọi
 `ensure_future`/`create_task` ở 10 trang (không tính chú thích) — dọn hàng loạt mà không chạy lệnh này là gặp lại lỗi thứ hai.
 
+## Nuốt lỗi — ba lựa chọn, không có lựa chọn thứ tư
+
+`except Exception: pass` trần là thứ bị cấm (SKILL.md). Gặp một khối như vậy, chọn ĐÚNG MỘT trong ba:
+
+| Tình huống | Làm gì |
+|---|---|
+| Chỉ một loại lỗi cụ thể là bình thường (sai khuôn ngày, file đã xoá, ống đã đóng) | **Thu hẹp** `except (ValueError, TypeError)` / `OSError` / `sqlite3.Error`… — lỗi lập trình sẽ nổ ra thay vì bị nuốt |
+| Bỏ qua được nhưng có mất mát (thiếu một dòng dữ liệu, một ngày lễ, một đơn trong lô) | **Ghi log** `_log.warning(..., exc_info=True)` kèm ngữ cảnh (id nào, năm nào) |
+| Thật sự không quan trọng (dọn dẹp, hâm nóng, chờ WebSocket) | **Ghi lý do ngay tại dòng** `pass  # …` — người sau đọc là biết đây là chủ ý |
+
+Rà 12/09/2026 (`backend/` + `frontend/`): 39 khối `except Exception: pass` → **15 thu hẹp, 10 thêm log,
+10 giữ nguyên kèm lý do, 4 đổi thành cảnh báo cho người dùng**.
+
+> Mức log: `root.setLevel(INFO)` trong `backend/main.py` → **`_log.debug()` không ra file nào**. Muốn thấy
+> thì dùng `info` trở lên. Log của tiến trình **frontend** đi vào `logs/frontend.log`, KHÔNG vào
+> `logs/app.log` và KHÔNG hiện ở màn Nhật ký hệ thống (màn đó chỉ đọc `app.log`).
+Hai chỗ đang **mất dữ liệu âm thầm** (đổi ngày lễ âm lịch hỏng → thiếu hẳn một ngày lễ; duyệt hàng
+loạt đơn nghỉ phép → mất lý do từng đơn lỗi) nay có log. Xem card *NL1* trong Implementation-notes.
+
 ## Leave Approval Workflow
 ```
 pending_ksv → pending_tong_hop → pending_gd → approved | rejected | cancelled

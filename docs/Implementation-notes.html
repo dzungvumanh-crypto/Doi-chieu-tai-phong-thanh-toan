@@ -53,6 +53,56 @@
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
   <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-09-11</p>
 
+  <!-- NL1 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">NL1</span>
+      <span class="card-title">Rà 39 khối nuốt lỗi <code>except Exception: pass</code> (mục 1.4)</span>
+      <span class="badge badge-info">12/09/2026</span>
+    </div>
+    <div class="card-body">
+      <p>Không đổi luồng xử lý chỗ nào — chỉ làm lộ ra thứ đang bị giấu. Quy tắc chọn cách xử lý ghi ở
+        <code>docs/DESIGN.md</code> mục <i>Nuốt lỗi</i>.</p>
+      <table>
+        <tr><th>Cách xử lý</th><th>Số chỗ</th><th>Ví dụ</th></tr>
+        <tr><td><b>Thu hẹp loại lỗi</b> — cách tốt nhất: lỗi lập trình nổ ra thay vì bị nuốt</td><td>15</td>
+            <td><code>(ValueError, TypeError)</code> cho đổi khuôn ngày; <code>OSError</code> cho xoá file tạm / <code>p.kill()</code>;
+              <code>sqlite3.Error</code> cho đóng kết nối; <code>(OSError, csv.Error, ValueError)</code> cho đọc ngày trong CSV CITAD</td></tr>
+        <tr><td><b>Thêm log</b> — bỏ qua được nhưng CÓ mất mát</td><td>10</td><td>xem ba ca dưới</td></tr>
+        <tr><td><b>Giữ nguyên + ghi lý do tại dòng</b></td><td>10</td>
+            <td>chờ WebSocket kết nối (5 trang), hâm nóng Word, ghi nhận "đã đọc" thông báo, bỏ tick checkbox đã bị gỡ khỏi DOM</td></tr>
+        <tr><td><b>Đổi hành vi</b> — 4 chỗ xoá bộ đệm đối chiếu CITAD</td><td>4</td>
+            <td>Phản biện chỉ ra chú thích đầu tiên của tôi <b>sai sự thật</b>: bộ đệm nằm trong RAM backend và KHÔNG tự hết hạn
+              (<code>doi_chieu_citad_service</code>: chỉ <code>save/get/clear</code>). Xoá hỏng → lần "Nạp" sau ghi đè số của lượt cũ lên
+              ô đang nhập, trên màn đối chiếu tiền. Nay <code>ui.notify</code> cảnh báo thay vì im lặng</td></tr>
+      </table>
+
+      <div class="label">Ba chỗ đang mất thông tin âm thầm</div>
+      <table>
+        <tr><th>Chỗ</th><th>Hậu quả khi im lặng</th></tr>
+        <tr><td><code>duty_calendar_utils._FIXED_LUNAR</code> — đổi ngày âm sang dương hỏng</td>
+            <td><b>Thiếu hẳn một ngày lễ</b> khỏi danh sách gợi ý của Phân lịch trực. Người phân lịch không có cách nào biết
+              vì sao thiếu. Nay <code>WARNING</code> kèm tên lễ + năm</td></tr>
+        <tr><td><code>leaves.py</code> — duyệt / từ chối / chuyển GĐ <b>hàng loạt</b></td>
+            <td>Số đơn lỗi đã báo cho người dùng, nhưng <b>lý do</b> thì mất hẳn — không ai tra được vì sao 2/10 đơn không xử lý được.
+              Nay <code>WARNING</code> kèm id từng đơn</td></tr>
+        <tr><td><code>shared.py</code> — heartbeat phiên, chạy <b>mỗi 60 giây</b></td>
+            <td>Khối duy nhất chạy theo chu kỳ: nuốt cả lỗi lập trình, lặp mãi mà không ai biết. Nay chỉ lỗi mạng mới im
+              (<code>api.la_loi_mang()</code> — helper sẵn có), còn lại ghi <code>WARNING</code> (phản biện bắt)</td></tr>
+      </table>
+
+      <div class="label">Chưa làm</div>
+      <p><span class="pill pill-gray">Chưa</span> 28 khối <code>pass</code> bắt lỗi <b>hẹp</b> sẵn (<code>ValueError</code>,
+        <code>OSError</code>, <code>queue.Empty</code>…) — không nằm trong phạm vi mục này, vì chúng đã nói rõ loại lỗi nào được phép bỏ qua.</p>
+      <p><span class="pill pill-gray">Chưa</span> Không thêm luật ruff <code>BLE001</code> (cấm bắt rộng) vào cổng đỏ:
+        <code>ruff check . --select BLE001</code> ra <b>474</b> cảnh báo — phần lớn là <code>except Exception as e</code> có xử lý tử tế,
+        không phải nuốt lỗi. Đợt này chỉ nhắm nhóm <b>nuốt im lặng</b> (thân chỉ có <code>pass</code>). Rải <code>noqa</code> khắp 474 chỗ
+        còn khó đọc hơn.</p>
+      <p><span class="pill pill-gray">Phạm vi</span> Quét <code>backend/</code> + <code>frontend/</code>. Ngoài đó còn
+        <code>run.py:236</code> (vòng chờ backend lên) và vài chỗ trong <code>scripts/</code> — không thuộc mã chạy của hệ thống.</p>
+    </div>
+  </div>
+
   <!-- SR1 -->
   <div class="card">
     <div class="card-header">

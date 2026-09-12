@@ -64,7 +64,7 @@ async def dashboard_page():
         try:
             await ui.context.client.connected()
         except Exception:
-            pass
+            pass        # hết giờ chờ / người dùng đóng tab — vẫn dựng tiếp phần còn lại
 
         _today = _date.today()
         _has_so_truc = api.has_feature("menu.so_truc")

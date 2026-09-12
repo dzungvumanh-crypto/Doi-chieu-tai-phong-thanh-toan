@@ -681,8 +681,8 @@ def get_entry_history(
             try:
                 ts_dt = datetime.fromisoformat(str(ts))
                 ts = ts_dt.strftime("%H:%M:%S  %d/%m/%Y")
-            except Exception:
-                pass
+            except (ValueError, TypeError):
+                pass        # mốc thời gian sai khuôn → giữ nguyên chuỗi thô, vẫn đọc được
 
         history_items.append(EntryHistoryItem(
             id=log["id"],

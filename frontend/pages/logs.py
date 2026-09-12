@@ -1,8 +1,11 @@
 """Trang lịch sử lỗi và cảnh báo hệ thống."""
 import asyncio
+import logging
 from nicegui import ui
 import frontend.api_client as api
 from frontend.shared import _sidebar, _content_area, _page_header, _require_auth, _handle_api_error
+
+_log = logging.getLogger(__name__)
 
 _LOG_LEVEL_CFG = {
     "ERROR":   ("Lỗi",       "bg-red-100 text-red-700 border-red-300"),
@@ -145,7 +148,8 @@ async def logs_page():
                     else:
                         backup_info_label.set_text(f"Chưa có backup tự động{them}")
             except Exception:
-                pass
+                # Hỏng thì nhãn giữ nguyên chữ cũ — người xem không biết số liệu đã cũ
+                _log.warning("Không lấy được thông tin backup gần nhất", exc_info=True)
 
             # ── Badge lệch giờ so với nguồn NTP ──────────────────────────────
             drift_badge = ui.label("").classes("text-xs px-2 py-0.5 rounded border ml-2")
@@ -165,6 +169,6 @@ async def logs_page():
                 drift_badge.classes(replace=f"{_base_cls} {color}")
                 drift_badge.set_text(txt)
             except Exception:
-                pass
+                _log.warning("Không lấy được trạng thái lệch giờ NTP", exc_info=True)
 
         await _load("", 1)

@@ -137,8 +137,8 @@ def logout_session() -> None:
             headers=_headers(),
             json={},
         )
-    except Exception:
-        pass
+    except httpx.HTTPError:
+        pass        # token có thể đã vô hiệu / backend không trả lời — phiên vẫn bị xoá ở dưới
 
 
 def _headers():

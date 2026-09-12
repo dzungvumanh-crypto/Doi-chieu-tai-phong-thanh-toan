@@ -184,7 +184,7 @@ class _WordServer:
         try:
             for line in proc.stdout:
                 q.put(line.strip())
-        except Exception:                            # noqa: BLE001 — ống đóng giữa chừng
+        except (OSError, ValueError):                # ống đóng giữa chừng khi Word tắt
             pass
         finally:
             q.put(None)                              # None = tiến trình đã chết
@@ -205,18 +205,18 @@ class _WordServer:
                     p.stdin.write("QUIT\n")
                     p.stdin.flush()
                     p.wait(timeout=15)
-            except Exception:                        # noqa: BLE001 — đằng nào cũng kill bên dưới
-                pass
+            except (OSError, ValueError, subprocess.TimeoutExpired):
+                pass                                 # đằng nào cũng kill ở dưới
             if p.poll() is None:
                 _kill_pids(_STALE_PID_FILE)
                 try:
                     p.kill()
-                except Exception:                    # noqa: BLE001
+                except OSError:                      # đã chết trước đó
                     pass
             for s in (p.stdin, p.stdout):
                 try:
                     s.close()
-                except Exception:                    # noqa: BLE001
+                except (OSError, ValueError):        # ống đã đóng
                     pass
         if self.dir:
             shutil.rmtree(self.dir, ignore_errors=True)

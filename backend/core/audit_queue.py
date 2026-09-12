@@ -93,7 +93,8 @@ def _real_ip(db, actor_id, hdr_ip, client_ip) -> str | None:
             if sess_ip:
                 return sess_ip
         except Exception:
-            pass
+            # Tra IP hỏng thì lui về địa chỉ kết nối — KHÔNG được làm mất dòng nhật ký.
+            _log.info("Không tra được IP phiên của actor %s", actor_id, exc_info=True)
     return client_ip
 
 
@@ -139,8 +140,8 @@ def _vong_lap() -> None:
                 try:
                     if db is not None:
                         db.close()
-                except Exception:
-                    pass
+                except sqlite3.Error:
+                    pass        # kết nối đã hỏng sẵn — vòng sau mở lại
                 db = None
             finally:
                 _q.task_done()
@@ -148,8 +149,8 @@ def _vong_lap() -> None:
         if db is not None:
             try:
                 db.close()
-            except Exception:
-                pass
+            except sqlite3.Error:
+                pass        # đang tắt máy, không còn gì để cứu
 
 
 def start() -> None:
