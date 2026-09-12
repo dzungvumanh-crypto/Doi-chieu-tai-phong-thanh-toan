@@ -5,6 +5,8 @@ module này (xem `docs/Implementation-notes.html`):
   1) chiều cột OSB "TK ghi nợ"/"TK ghi có" phải CÙNG TÊN với case (Nợ<->ghi Nợ, Có<->ghi Có).
   2) dedupe OSB phải theo TOÀN BỘ CỘT, không theo riêng "Mã giao dịch" (phá vỡ cặp Hủy hợp lệ).
 """
+import io
+
 import pandas as pd
 import pytest
 
@@ -169,7 +171,6 @@ def test_khoa_a_b_dung_cong_thuc(gl02_df):
 def load_gl02_process(gl02_df):
     """Helper: chạy đúng phần xử lý (không I/O) của `read_gl02_zip()` bằng cách monkeypatch
     `_doc_zip()` qua gọi trực tiếp hàm nội bộ — tránh phải tạo ZIP thật cho 1 test đơn giản."""
-    import types
     from backend.services.doi_chieu_osb import load_gl02 as m
 
     original = m._doc_zip
@@ -179,3 +180,117 @@ def load_gl02_process(gl02_df):
     finally:
         m._doc_zip = original
     return df, n_short
+
+
+# ─── Ca biên: xuất file KHÔNG lọt cột nội bộ (review code trước PR) ────────────
+
+def test_export_khong_lot_cot_noi_bo(gl02_df, osb_df, monkeypatch):
+    """`export.py::_osb_export_df()` phải dùng WHITELIST — 3 cột nội bộ ('SO_TIEN_NUM', 'KHOA_C',
+    'LOAI_GIAO_DICH') KHÔNG được lọt ra file Excel dù có mặt trong DataFrame trước khi xuất."""
+    monkeypatch.setattr(load_gl02, "_doc_zip", lambda zip_path, log_callback=None: gl02_df.copy())
+    monkeypatch.setattr(load_osb, "load_osb_file",
+                         lambda p: osb_df if p == "osb1" else osb_df.iloc[0:0])
+
+    ket_qua = pipeline.chay_doi_chieu_osb("dummy.zip", ["osb1", "osb2"], MA_TK, NGAY)
+
+    import zipfile
+    with zipfile.ZipFile(io.BytesIO(ket_qua["zip_bytes"])) as zf:
+        for name in zf.namelist():
+            if not name.endswith("_OSB.xlsx"):
+                continue
+            df = pd.read_excel(io.BytesIO(zf.read(name)))
+            for cot_noi_bo in ("SO_TIEN_NUM", "KHOA_C", "LOAI_GIAO_DICH"):
+                assert cot_noi_bo not in df.columns, f"{name} lọt cột nội bộ {cot_noi_bo}"
+        for name in zf.namelist():
+            if not name.endswith("_GL02.xlsx"):
+                continue
+            df = pd.read_excel(io.BytesIO(zf.read(name)))
+            for cot_noi_bo in ("DRAMOUNT_NUM", "CRAMOUNT_NUM", "KHOA_CHENH_LECH_CO",
+                               "KHOA_CHENH_LECH_NO"):
+                assert cot_noi_bo not in df.columns, f"{name} lọt cột nội bộ {cot_noi_bo}"
+
+
+# ─── Ca biên: REMARK rỗng hoàn toàn ─────────────────────────────────────────────
+
+def test_remark_rong_khong_crash():
+    """REMARK = '' (rỗng thật, khác 'LCN' ngắn) không được làm crash pipeline — Số trace ra rỗng
+    (`''[1:7] == ''`, slice Python không bao giờ ném lỗi kể cả chuỗi rỗng/ngắn hơn chỉ số)."""
+    df = pd.DataFrame([_gl02_row("", dramount="70000", cramount="0")])
+    result, n_short = load_gl02_process(df)
+    assert len(result) == 1
+    assert result["SO_TRACE"].iloc[0] == ""
+    assert result["KHOA_CHENH_LECH_CO"].iloc[0] == "70000"  # "" + "70000"
+    assert n_short == 1  # len("") = 0 < 7
+
+
+def test_remark_rong_co_the_khop_nham_neu_trung_tien_hanh_vi_hien_tai(monkeypatch):
+    """QUYẾT ĐỊNH: đây là rủi ro khoá rỗng ĐÃ BIẾT (mục B, lượt phản biện thiết kế) — module CHỈ
+    log cảnh báo (`n_remark_ngan`), KHÔNG thêm rào chắn loại khoá rỗng khỏi tập khớp. Lý do không
+    chặn: một REMARK rỗng/ngắn là dữ liệu thật hợp lệ (không phải lỗi định dạng) — tự loại nó khỏi
+    so khớp sẽ khiến 1 giao dịch thật luôn bị báo "chênh lệch" dù có mặt đúng ở cả 2 phía, sai theo
+    hướng ngược lại. Test này xác nhận CỤ THỂ hành vi hiện tại: 1 dòng GL02 REMARK rỗng + 1 dòng
+    OSB IPCAS Trace rỗng, TRÙNG số tiền -> bị coi là khớp (không xuất hiện trong "chênh lệch") dù
+    trong thực tế đây có thể là 2 giao dịch khác nhau tình cờ cùng thiếu trace + cùng số tiền."""
+    gl02 = pd.DataFrame([_gl02_row("", dramount="80000", cramount="0")])
+    osb = pd.DataFrame([_osb_row("GDX", "", "80.000", tk_no="519101", tk_co=MA_TK)])
+
+    monkeypatch.setattr(load_gl02, "_doc_zip", lambda zip_path, log_callback=None: gl02.copy())
+    monkeypatch.setattr(load_osb, "load_osb_file",
+                         lambda p: osb if p == "osb1" else osb.iloc[0:0])
+
+    ket_qua = pipeline.chay_doi_chieu_osb("dummy.zip", ["osb1", "osb2"], MA_TK, NGAY)
+
+    # Hành vi HIỆN TẠI: 2 dòng khoá rỗng+cùng tiền bị coi là khớp -> 0 dòng "chênh lệch Có".
+    assert len(ket_qua["co"]["gl02"]) == 0
+    assert len(ket_qua["co"]["osb"]) == 0
+    assert ket_qua["canh_bao"]["remark_ngan"] == 1
+
+
+# ─── Ca biên: ô tiền để trống (rỗng/NaN) ────────────────────────────────────────
+
+def test_dramount_cramount_trong_khong_crash():
+    """DRAMOUNT/CRAMOUNT để trống (chuỗi rỗng) -> `doc_so_tien()` coi là 0 (hành vi ĐÃ CÓ sẵn của
+    hàm dùng chung `backend/services/ach/so_tien.py`, module này không tự bịa quy tắc riêng)."""
+    df = pd.DataFrame([_gl02_row("[123456] trong tien", dramount="", cramount="")])
+    result, _ = load_gl02_process(df)
+    assert result["DRAMOUNT_NUM"].iloc[0] == 0
+    assert result["CRAMOUNT_NUM"].iloc[0] == 0
+    # DRAMOUNT=0 và CRAMOUNT=0 -> dòng này không lọt vào subset của case Nợ lẫn Có (cả 2 đều lọc
+    # theo != 0) khi chạy qua pipeline — không kiểm ở đây (đã cover ở test end-to-end khác).
+
+
+def test_so_tien_osb_trong_khong_crash():
+    """Cột 'Số tiền' OSB để trống -> `doc_so_tien()` coi là 0, không crash `process_osb()`."""
+    df = pd.DataFrame([_osb_row("GDY", "654321", "", tk_no="519101", tk_co=MA_TK)])
+    result, n_over2 = load_osb.process_osb(df)
+    assert n_over2 == 0
+    assert result["SO_TIEN_NUM"].iloc[0] == 0
+    assert result["KHOA_C"].iloc[0] == "654321" + "0"
+
+
+# ─── Ca biên: GL02/OSB 0 dòng sau khi lọc ───────────────────────────────────────
+
+def test_pipeline_gl02_va_osb_0_dong_sau_loc(monkeypatch):
+    """GL02 0 dòng sau lọc (VD tài khoản không tồn tại trong file — LOCAC không khớp `ma_tk` ở
+    dòng nào) VÀ OSB 0 dòng (file trống) -> `chay_doi_chieu_osb()` phải chạy hết, trả kết quả rỗng
+    hợp lệ, KHÔNG crash. Đây là nhánh `if len(gl02_df) == 0 or len(osb_df) == 0` trong
+    `match.py::khop_case()` — trước đây CHƯA có test nào gọi tới thật qua pipeline end-to-end."""
+    gl02_khong_khop = pd.DataFrame([
+        _gl02_row("[999999] khong khop tk", dramount="10000", cramount="0"),
+    ])
+    gl02_khong_khop["LOCAC"] = "000000"  # KHÔNG khớp MA_TK -> bị lọc sạch ở read_gl02_zip()
+    osb_rong = pd.DataFrame(columns=list(_osb_row("x", "x", "0", "519101", MA_TK).keys()))
+
+    monkeypatch.setattr(load_gl02, "_doc_zip",
+                         lambda zip_path, log_callback=None: gl02_khong_khop.copy())
+    monkeypatch.setattr(load_osb, "load_osb_file", lambda p: osb_rong.copy())
+
+    ket_qua = pipeline.chay_doi_chieu_osb("dummy.zip", ["osb1", "osb2"], MA_TK, NGAY)
+
+    assert len(ket_qua["no"]["gl02"]) == 0
+    assert len(ket_qua["no"]["osb"]) == 0
+    assert len(ket_qua["co"]["gl02"]) == 0
+    assert len(ket_qua["co"]["osb"]) == 0
+    assert ket_qua["canh_bao"]["nhom_huy_qua_2"] == 0
+    assert isinstance(ket_qua["zip_bytes"], bytes)
+    assert len(ket_qua["zip_bytes"]) > 0

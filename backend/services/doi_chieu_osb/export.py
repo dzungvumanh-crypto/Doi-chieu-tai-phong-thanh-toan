@@ -10,13 +10,9 @@ import zipfile
 
 import pandas as pd
 
-from .config import GL02_EXPORT_COLS
+from .config import GL02_EXPORT_COLS, OSB_EXPORT_COLS
 
 __all__ = ["build_result_zip"]
-
-# Cột nội bộ dùng để tính toán, KHÔNG xuất ra file cho người dùng đọc.
-_COT_NOI_BO_GL02 = {"DRAMOUNT_NUM", "CRAMOUNT_NUM", "KHOA_CHENH_LECH_CO", "KHOA_CHENH_LECH_NO"}
-_COT_NOI_BO_OSB = {"SO_TIEN_NUM", "KHOA_C"}
 
 
 def _gl02_export_df(df: pd.DataFrame) -> pd.DataFrame:
@@ -28,7 +24,12 @@ def _gl02_export_df(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _osb_export_df(df: pd.DataFrame) -> pd.DataFrame:
-    cols = [c for c in df.columns if c not in _COT_NOI_BO_OSB]
+    """WHITELIST (không phải blacklist) — chỉ giữ đúng 28 cột gốc file OSB
+    (`config.OSB_EXPORT_COLS`). Cột nội bộ module tự tính thêm (`SO_TIEN_NUM`, `KHOA_C`,
+    `LOAI_GIAO_DICH`, ...) tự động KHÔNG lọt ra file mà không cần nhớ cập nhật 1 blacklist riêng
+    mỗi khi thêm cột nội bộ mới — đã dính lỗi thật với cách blacklist cũ (`LOAI_GIAO_DICH` thêm
+    sau nhưng quên thêm vào blacklist, lọt ra file Excel, phát hiện lúc review code trước PR)."""
+    cols = [c for c in OSB_EXPORT_COLS if c in df.columns]
     return df[cols]
 
 

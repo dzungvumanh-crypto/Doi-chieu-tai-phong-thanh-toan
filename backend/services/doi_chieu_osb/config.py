@@ -30,6 +30,21 @@ GL02_EXPORT_COLS = [
     "CUSTOMER", "TRTP", "REFERENCE", "REMARK", "DRAMOUNT", "CRAMOUNT",
 ]
 
+# Toàn bộ cột gốc muốn giữ lại khi xuất file chênh lệch phía OSB (28 cột nguyên bản của file
+# `DULIEUCHITIETHACHTOAN_*.xlsx`/`load_osb_file()`, đúng khuôn file "hà chấm" thủ công) — WHITELIST
+# (không phải blacklist): `export.py::_osb_export_df()` chỉ giữ đúng các cột trong danh sách này,
+# nên các cột NỘI BỘ module tự tính thêm (`SO_TIEN_NUM`, `KHOA_C`, `LOAI_GIAO_DICH`, ...) tự động
+# KHÔNG lọt ra file mà không cần nhớ liệt kê từng cột nội bộ mới vào 1 blacklist riêng (đã dính lỗi
+# thật: `LOAI_GIAO_DICH` thêm sau nhưng quên thêm vào blacklist, lọt ra file Excel — review code
+# phát hiện trước khi mở PR).
+OSB_EXPORT_COLS = [
+    "STT", "Kênh", "Mã dịch vụ", "Dịch vụ", "Chiều giao dịch", "Mã giao dịch", "IPCAS Trace",
+    "Mã giao dịch gốc", "Seq", "CN thực hiện", "CN hạch toán", "TK ghi nợ", "TK ghi có",
+    "Tài khoản chuyên thu", "Tiền tệ", "Số tiền", "Số bút toán OSB", "Ref nợ", "Ref có",
+    "Ngày giao dịch", "Ngày tổng hợp", "Ngày hạch toán", "Nội dung giao dịch", "Kiểu giao dịch",
+    "Mã GL tổng OSB", "Mã hạch toán tổng IPCAS", "Trạng thái hạch toán tổng IPCAS", "Mã lỗi",
+]
+
 CCY_VND = "VND"
 # Bước 1 (2 note gốc): loại các dòng REFERENCE=1000OSB khỏi GL02 trước khi tính chênh lệch —
 # đây là chính điện quyết toán OSB hàng ngày, không phải giao dịch cần đối chiếu từng dòng.
