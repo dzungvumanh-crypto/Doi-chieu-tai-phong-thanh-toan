@@ -17513,18 +17513,43 @@ This may happen if you try to create UI from a background task.</pre>
         tránh phụ thuộc ngầm vào 1 hàm có gạch dưới của module khác), <code>export.py</code> (4 file
         <code>.xlsx</code> đóng gói 1 ZIP — số dòng chênh lệch rất nhỏ nên không áp quy ước
         "CSV cho bulk detail" của dự án), <code>pipeline.py</code> (orchestrator).</p>
-      <p>519908 (TK trung gian thứ 2 nêu trong <code>TH - Note chấm OSB.docx</code>) <b>CHƯA có dữ
-        liệu thật xác nhận</b> — cấu hình tạm giống 519910, ghi rõ trong <code>config.py</code>;
-        nếu sai thì bộ lọc GL02 rỗng hoàn toàn (hiện rõ trong log, không sai âm thầm) nhưng vẫn cần
-        verify bằng dữ liệu thật trước khi dùng trong sản xuất.</p>
+      <p><s>519908 (TK trung gian thứ 2 nêu trong <code>TH - Note chấm OSB.docx</code>) CHƯA có dữ
+        liệu thật xác nhận — cấu hình tạm giống 519910...</s> — xem mục "Xác nhận trực tiếp từ Hà"
+        bên dưới: đã BỎ HẲN khỏi phạm vi, không còn là "tạm cấu hình" nữa.</p>
 
-      <div class="note">Test mới <code>tests/services/doi_chieu_osb/test_pipeline.py</code> (6
-        test, fixture DataFrame tự tạo — KHÔNG phụ thuộc đường dẫn <code>G:\...</code>): cặp khớp
-        đúng Nợ/Có, 1 dòng chênh lệch Nợ, 1 dòng chênh lệch Có, 1 cặp Hủy hợp lệ, 1 REMARK &lt; 7
-        ký tự, và 2 test khẳng định trực tiếp 2 lỗi ở trên (chiều cột cùng tên, dedupe toàn cột) để
-        không ai vô tình đảo ngược lại. <code>python -m pytest tests/services/doi_chieu_osb/ -q</code>:
-        6 passed. Toàn bộ 1924 test của repo (bao gồm 6 test mới) pass sau khi thêm module —
-        không có regression.</div>
+      <div class="note">Review code trước PR (agent khác, đọc trực tiếp code) tìm thêm 1 lỗi:
+        <code>export.py::_osb_export_df()</code> dùng BLACKLIST (<code>_COT_NOI_BO_OSB = {"SO_TIEN_NUM",
+        "KHOA_C"}</code>) nên cột nội bộ <code>LOAI_GIAO_DICH</code> (thêm sau, quên liệt kê vào
+        blacklist) lọt ra file <code>Chenh_lech_*_OSB.xlsx</code>. Fix: đổi sang WHITELIST
+        (<code>config.OSB_EXPORT_COLS</code>, đúng 28 cột gốc file OSB) — cột nội bộ mới thêm sau
+        này tự động không lọt ra nữa, không cần nhớ cập nhật 1 danh sách loại trừ riêng. Thêm 6 test
+        ca biên cùng đợt (REMARK rỗng hoàn toàn — xác nhận không crash + ghi rõ hành vi khớp-nhầm-
+        nếu-trùng-tiền là rủi ro CỐ Ý không chặn thêm; ô tiền để trống; GL02/OSB 0 dòng sau lọc chạy
+        hết pipeline không crash; cột nội bộ không lọt ra export).</div>
+
+      <div class="label"><span class="pill pill-green">Xác nhận trực tiếp từ Hà (người chấm tay, tác giả note gốc) — 2026-09-13</span></div>
+      <p>Người dùng hỏi thẳng Hà 3 điểm còn nghi vấn từ lượt phản biện thiết kế, có trả lời xác
+        nhận — sửa lại đúng theo trả lời, không còn là suy đoán từ dữ liệu mẫu nữa:</p>
+      <table>
+        <tr><th>Điểm</th><th>Trước</th><th>Sau khi Hà xác nhận</th></tr>
+        <tr><td>Phạm vi tài khoản</td><td><code>TAI_KHOAN</code> có cả 519910 và 519908 (519908 "chưa verify, tạm cấu hình")</td><td>Hà: "chỉ chấm TK 519910, không chấm 519908" — 519908 chỉ là ví dụ minh hoạ trong note TH, không phải phạm vi thật. <b>Bỏ hẳn 519908 khỏi <code>TAI_KHOAN</code></b> — truyền <code>ma_tk="519908"</code> giờ tự <code>raise ValueError</code>.</td></tr>
+        <tr><td>Điều kiện đánh dấu Hủy</td><td><code>count &gt;= 2 and sum == 0</code> (mọi nhóm ≥2 dòng tổng=0 đều thành Hủy)</td><td>Hà: "Cặp GD được xác định là Huỷ thì luôn luôn là 1 cặp có 2 dòng. Nếu có nhiều hơn 2 dòng... thì sẽ KHÔNG đánh dấu... để người chấm chấm thủ công." Sửa <code>count == 2 and sum == 0</code> — nhóm &gt;2 dòng tổng=0 đi tiếp vào bước khớp bình thường, tự hiện ra "chênh lệch" nếu không khớp được.</td></tr>
+        <tr><td>Vị trí cắt REMARK</td><td>Docstring: "note gốc sai 1 ký tự, đã tự verify bằng data" (chỉ tự suy luận)</td><td>Hà xác nhận trực tiếp: đúng vị trí 2-7 (6 ký tự) = đúng nội dung trong ngoặc vuông <code>[...]</code>; note gốc ghi nhầm "2-6". <b>Chỉ sửa docstring</b>, KHÔNG đổi logic/thuật toán (đã đúng từ đầu).</td></tr>
+      </table>
+      <p>3/3 ngày dữ liệu mẫu (01/07, 31/07, 04/04/2026) không có nhóm Hủy &gt;2 dòng nên sửa điều
+        kiện Hủy không đổi kết quả trên mẫu này — nhưng đã chạy lại TOÀN BỘ pipeline sản xuất
+        (không phải script spike) trên cả 3 ngày để xác nhận số dòng chênh lệch vẫn y hệt lần
+        verify trước (bảng ở đầu mục này), không có sai sót nào khác lọt vào theo các sửa đổi này.</p>
+
+      <div class="note">Test mới <code>tests/services/doi_chieu_osb/test_pipeline.py</code> (13
+        test tổng cộng, fixture DataFrame tự tạo — KHÔNG phụ thuộc đường dẫn <code>G:\...</code>):
+        cặp khớp đúng Nợ/Có, 1 dòng chênh lệch Nợ, 1 dòng chênh lệch Có, 1 cặp Hủy hợp lệ (đúng 2
+        dòng), 1 nhóm 3 dòng tổng=0 KHÔNG được đánh dấu Hủy (test mới theo xác nhận của Hà), 1
+        REMARK &lt; 7 ký tự, REMARK rỗng hoàn toàn, ô tiền để trống, GL02/OSB 0 dòng sau lọc, cột
+        nội bộ không lọt ra export, và 2 test khẳng định trực tiếp 2 lỗi thiết kế ban đầu (chiều cột
+        cùng tên, dedupe toàn cột) để không ai vô tình đảo ngược lại.
+        <code>python -m pytest tests/services/doi_chieu_osb/ -q</code>: 13 passed. Toàn bộ test của
+        repo pass sau mỗi đợt sửa — không có regression.</div>
 
       <div class="note">Script spike gốc (<code>scratch/spike_osb_gl02.py</code>, chạy trong phiên
         test — không nằm trong repo) là bằng chứng đã verify bằng dữ liệu thật; giữ lại theo yêu

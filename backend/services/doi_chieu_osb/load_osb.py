@@ -55,11 +55,19 @@ def read_osb_files(paths, log_callback=None) -> pd.DataFrame:
 
 
 def process_osb(df: pd.DataFrame, log_callback=None) -> tuple[pd.DataFrame, int]:
-    """Đánh dấu "Hủy" (nhóm theo "Mã giao dịch", đếm ≥2 dòng VÀ tổng Số tiền = 0 -> toàn nhóm =
-    Hủy — TỔNG QUÁT, không giả định đúng 2 dòng/nhóm) + dựng Khoá C ("IPCAS Trace" + Số tiền).
+    """Đánh dấu "Hủy" (nhóm theo "Mã giao dịch", ĐÚNG 2 dòng VÀ tổng Số tiền = 0 -> cả nhóm = Hủy)
+    + dựng Khoá C ("IPCAS Trace" + Số tiền).
 
-    Trả `(df, n_nhom_huy_qua_2)` — số nhóm Hủy có > 2 dòng (chỉ log cảnh báo để biết có xảy ra
-    thật hay không, không phải lỗi)."""
+    ⚠️ Điều kiện "ĐÚNG 2 dòng" (không phải "≥2 dòng") — xác nhận trực tiếp với Hà (người chấm tay,
+    tác giả note gốc) 2026-09-13: "Cặp GD được xác định là Huỷ thì luôn luôn là 1 cặp có 2 dòng.
+    Nếu có nhiều hơn 2 dòng cùng chung 1 'Mã giao dịch' và tổng tiền = 0 thì sẽ KHÔNG đánh dấu các
+    GD đó là Huỷ, để người chấm chấm thủ công." Nhóm >2 dòng tổng=0 CỐ Ý không vào `huy_keys` — các
+    dòng đó vẫn đi tiếp vào bước khớp bình thường (không bị loại khỏi subset như dòng Hủy thật);
+    nếu không tìm được cặp khớp, chúng tự nhiên hiện ra như "chênh lệch" để người chấm xử lý tay —
+    KHÔNG cần thêm nhánh xử lý đặc biệt nào khác.
+
+    Trả `(df, n_nhom_huy_qua_2)` — số nhóm >2 dòng tổng=0 (CỐ Ý không đánh dấu Hủy, không phải lỗi
+    hệ thống — chỉ log để người vận hành biết có bao nhiêu nhóm cần tự chấm tay)."""
     _log = log_callback or (lambda m: None)
     df = df.copy()
     df["Mã giao dịch"] = df["Mã giao dịch"].astype(str).str.strip()
@@ -69,12 +77,14 @@ def process_osb(df: pd.DataFrame, log_callback=None) -> tuple[pd.DataFrame, int]
     df["SO_TIEN_NUM"] = doc_so_tien(df["Số tiền"], "osb", "Số tiền")
 
     grp = df.groupby("Mã giao dịch")["SO_TIEN_NUM"].agg(["sum", "count"])
-    huy_keys = set(grp[(grp["count"] >= 2) & (grp["sum"] == 0)].index)
-    over2 = grp[grp["count"] > 2]
+    huy_keys = set(grp[(grp["count"] == 2) & (grp["sum"] == 0)].index)
+    over2 = grp[(grp["count"] > 2) & (grp["sum"] == 0)]
     n_over2 = len(over2)
     if n_over2:
-        _log(f"[{_BUOC}] CẢNH BÁO: {n_over2:,} nhóm 'Mã giao dịch' có > 2 dòng khi đánh dấu Hủy — "
-             f"kiểm tra lại nếu bất thường: {over2.reset_index().to_dict('records')[:10]}")
+        _log(f"[{_BUOC}] {n_over2:,} nhóm 'Mã giao dịch' có > 2 dòng VÀ tổng Số tiền = 0 — CỐ Ý "
+             f"KHÔNG đánh dấu Hủy (Hà xác nhận 2026-09-13: cặp Hủy luôn đúng 2 dòng, >2 dòng phải "
+             f"để người chấm xử lý tay, không phải lỗi hệ thống): "
+             f"{over2.reset_index().to_dict('records')[:10]}")
 
     df["LOAI_GIAO_DICH"] = np.where(df["Mã giao dịch"].isin(huy_keys), "Hủy", "")
     _log(f"[{_BUOC}] đánh dấu Hủy: {len(huy_keys):,} nhóm, "

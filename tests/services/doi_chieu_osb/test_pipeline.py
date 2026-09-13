@@ -100,6 +100,29 @@ def test_process_osb_danh_dau_huy_dung(osb_df):
     assert (khong_huy["LOAI_GIAO_DICH"] == "").all()
 
 
+def test_nhom_3_dong_tong_0_khong_danh_dau_huy(osb_df):
+    """Xác nhận trực tiếp Hà (người chấm tay) 2026-09-13: cặp Hủy LUÔN đúng 2 dòng — nhóm ≥3 dòng
+    cùng "Mã giao dịch" dù tổng Số tiền = 0 KHÔNG được đánh dấu Hủy, để người chấm xử lý tay. 3
+    dòng cùng "GD004", tổng = 100.000 - 60.000 - 40.000 = 0."""
+    them = pd.DataFrame([
+        _osb_row("GD004", "111", "100.000", tk_no="519101", tk_co=MA_TK),
+        _osb_row("GD004", "222", "-60.000", tk_no="519101", tk_co=MA_TK),
+        _osb_row("GD004", "333", "-40.000", tk_no="519101", tk_co=MA_TK),
+    ])
+    df_vao = pd.concat([osb_df, them], ignore_index=True)
+
+    df, n_over2 = load_osb.process_osb(df_vao)
+
+    assert n_over2 == 1  # đúng 1 nhóm >2 dòng + tổng=0 ("GD004")
+    nhom_gd004 = df[df["Mã giao dịch"] == "GD004"]
+    assert len(nhom_gd004) == 3
+    # CẢ 3 dòng đều KHÔNG bị đánh dấu Hủy (khác hành vi cũ ">=2 dòng" sẽ đánh dấu cả 3 là Hủy).
+    assert (nhom_gd004["LOAI_GIAO_DICH"] != "Hủy").all()
+    # Cặp Hủy hợp lệ GD003 (đúng 2 dòng) vẫn phải ra Hủy như cũ — không bị ảnh hưởng bởi sửa đổi.
+    nhom_gd003 = df[df["Mã giao dịch"] == "GD003"]
+    assert (nhom_gd003["LOAI_GIAO_DICH"] == "Hủy").all()
+
+
 def test_dedupe_theo_ma_giao_dich_se_pha_cap_huy_neu_lam_sai(osb_df):
     """Chứng minh CỤ THỂ vì sao KHÔNG được dedupe theo 'Mã giao dịch': làm vậy sẽ chỉ còn 1 dòng
     GD003 thay vì 2, khiến nhóm không còn đủ ≥2 dòng để nhận diện Hủy."""

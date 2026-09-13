@@ -9,14 +9,14 @@ này — xem `docs/Implementation-notes.html`.
 # "customer" = giá trị cột CUSTOMER trên GL02 dùng để lọc đúng dòng của tài khoản này.
 # 519910: verify ĐẦY ĐỦ bằng dữ liệu thật 3 ngày (01/07, 31/07, 04/04/2026) — khớp 100% với
 # file "hà chấm" ở offset=0.
-# 519908: CHƯA có dữ liệu thật xác nhận — suy từ `TH - Note chấm OSB.docx` (tài liệu dùng TK này
-# làm ví dụ minh hoạ cách chấm, không kèm số liệu thật để verify). Nếu giá trị "customer" sai,
-# hậu quả là bộ lọc GL02 rỗng hoàn toàn (không có dòng nào), hiện rõ trong log
-# "[GL02] sau lọc ...: 0 dòng" — không sai âm thầm — nhưng CẦN verify bằng dữ liệu thật trước khi
-# dùng TK này trong sản xuất.
+# 519908: NGOÀI PHẠM VI module này — Hà (người chấm tay, tác giả note gốc) xác nhận trực tiếp
+# 2026-09-13: "chỉ chấm TK 519910, không chấm 519908". Dữ liệu 519908 trong `TH - Note chấm
+# OSB.docx` chỉ để MINH HOẠ cách đọc đúng TK 519910, không phải phạm vi cần chấm thật — KHÔNG
+# thêm lại TK này vào `TAI_KHOAN` trừ khi có yêu cầu nghiệp vụ mới + dữ liệu thật để verify.
+# `TAI_KHOAN` giờ chỉ có 1 key — `read_gl02_zip()` tự raise `ValueError` nếu ai truyền `ma_tk`
+# khác "519910" (xem `load_gl02.py`), đúng hành vi mong muốn.
 TAI_KHOAN = {
     "519910": {"customer": "1000-000000001"},
-    "519908": {"customer": "1000-000000001"},
 }
 
 # ─── Cột bắt buộc GL02 (CSV bên trong ZIP GL02_{ngày}_{chi_nhánh}.zip) ─────────
@@ -52,12 +52,14 @@ REFERENCE_LOAI_TRU = "1000OSB"
 
 # ─── Số trace GL02 ──────────────────────────────────────────────────────────────
 # "Số trace" = REMARK[SO_TRACE_START:SO_TRACE_END] (slice Python, 0-indexed) = ký tự thứ 2 đến
-# thứ 7 (1-indexed), tức 6 ký tự. ⚠️ Note gốc (`OSB - Hà note chấm.docx`) viết "ký tự thứ 2 đến
-# ký tự thứ 6" (5 ký tự) — ĐÃ VERIFY SAI 1 KÝ TỰ bằng dữ liệu thật (4 dòng mẫu từ 3 ngày khác
-# nhau, khớp đúng "trace, tiền" trong file hà chấm chỉ khi dùng công thức 6 ký tự [1:7], không
-# phải 5 ký tự [1:6]). Áp dụng CƠ HỌC bất kể REMARK có định dạng "[123456] ..." hay không (REMARK
-# ngắn/khác định dạng thì Số trace chỉ là 1 chuỗi ký tự bất kỳ — không có ý nghĩa số trace thật,
-# nhưng vẫn tính cơ học đúng công thức, không có nhánh đặc biệt).
+# thứ 7 (1-indexed), tức 6 ký tự. ĐÃ XÁC NHẬN TRỰC TIẾP với Hà (người chấm tay, tác giả note gốc)
+# 2026-09-13: đúng là vị trí 2-7 (6 ký tự), khớp với ý "lấy nội dung trong ngoặc vuông [...]" —
+# note gốc (`OSB - Hà note chấm.docx`) ghi nhầm thành "2-6" (5 ký tự). Với REMARK dạng chuẩn
+# "[xxxxxx] ..." thì vị trí 2-7 luôn trùng đúng 6 ký tự bên trong ngoặc vuông. Áp dụng CƠ HỌC bất
+# kể REMARK có định dạng "[123456] ..." hay không (REMARK ngắn/khác định dạng thì Số trace chỉ là
+# 1 chuỗi ký tự bất kỳ — không có ý nghĩa số trace thật, nhưng vẫn tính cơ học đúng công thức,
+# không có nhánh đặc biệt) — đã verify khớp 4 dòng mẫu từ 3 ngày dữ liệu thật khác nhau trước khi
+# có xác nhận trực tiếp này.
 SO_TRACE_START = 1
 SO_TRACE_END = 7
 
