@@ -84,7 +84,24 @@ def da_co_duong_ke(p) -> bool:
     xml = ke.xml
     # Đoạn kế tiếp: nới tay hơn — một đoạn RỖNG chỉ chứa hình thì hình đó gần
     # như chắc chắn là vạch, và đó cũng đúng thứ phần mềm này tự vẽ ra.
-    return _co_hinh_duong_ke(xml) or "<w:drawing" in xml or "<v:rect" in xml
+    if _co_hinh_duong_ke(xml) or "<w:drawing" in xml or "<v:rect" in xml:
+        return True
+
+    # Xa hơn một đoạn: vạch neo vào một dòng TRỐNG bên dưới. Gặp thật trên Tờ
+    # trình Microgateway — trích yếu, một dòng trống, rồi dòng trống chứa
+    # Straight Connector; soi mỗi đoạn liền dưới thì vẽ thêm vạch thứ hai
+    # ngay trên vạch của tác giả. Chỉ đi qua dòng không có chữ (gặp chữ là
+    # sang phần khác), tối đa 3 dòng, và chỉ nhận đúng hình đường thẳng.
+    for _ in range(3):
+        if "".join(t.text or "" for t in ke.iter(qn("w:t"))).strip():
+            return False
+        ke = ke.getnext()
+        if ke is None or ke.tag != qn("w:p"):
+            return False
+        xml = ke.xml
+        if _co_hinh_duong_ke(xml):
+            return True
+    return False
 
 
 def go_gach_chan(p) -> bool:

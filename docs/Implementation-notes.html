@@ -53,6 +53,207 @@
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
   <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-09-14</p>
 
+  <!-- VB8 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">VB8</span>
+      <span class="card-title">Chuẩn hoá văn bản — rà lại 2 file thật: vai tên đơn vị, đề mục "Căn cứ trình", gạch đôi khi có Track Changes, gạch trôi 2,25 cm, khoảng sau số La Mã</span>
+      <span class="badge badge-done">Xong — 158 test module pass (+19), toàn bộ 1966 pass; đã in thử bằng Word; 1 lượt phản biện Sonnet</span>
+    </div>
+    <div class="card-body">
+
+      <p>Chạy lại 2 file trong <code>Dữ liệu test/Chuẩn hoá văn bản/</code>, in trước/sau bằng Word, so từng trang và
+        so từng ký tự. Chữ không bị đổi ngầm. Sửa 5 lỗi người dùng chọn (#1 #2 #4 #5 #7 của lượt rà); đo toạ độ
+        chữ trong PDF để xác nhận #7. Chạy kiểu cũ/mới trên 2 file <code>979-QyD-NHNo-PC (Trình bày VB)/test/</code>:
+        chỉ "TB Swift code" khác — và khác theo hướng đúng (xem #5).</p>
+
+      <table>
+        <tr><th>#</th><th>Triệu chứng</th><th>Nguyên nhân</th><th>Sửa</th></tr>
+        <tr><td>1</td><td>Tờ trình bàn giao: TRUNG TÂM THANH TOÁN mất đậm, PHÒNG KSNB&amp;HTVH thành đậm, <b>hai vạch kẻ</b></td>
+            <td>Chữ đậm nằm giữa khối → <code>theo_dam_khoi_ten_dv</code> bỏ qua (hàng rào "đậm phải ở cuối") → đoán "dòng cuối là ban hành". Vạch tác giả vẽ trong dòng trống giữa khối không được đọc</td>
+            <td><code>nhan_dien.theo_vach_khoi_ten_dv()</code> chạy trước: dòng sát trên vạch = ban hành, dòng dưới vạch = <code>bang_the_thuc</code></td></tr>
+        <tr><td>2</td><td>"I. Căn cứ trình" (số tự động) in đậm nghiêng, "II. Nội dung trình" đậm thẳng</td>
+            <td>Số "I." không nằm trong <code>p.text</code> → chỉ còn "Căn cứ trình" → khớp <code>RE_CAN_CU</code></td>
+            <td><code>RE_DE_MUC_CAN_CU</code>: "Căn cứ" + ≤30 ký tự không số, không <code>; , .</code> (cho phép ":" cuối) → không phải căn cứ</td></tr>
+        <tr><td>4</td><td>Microgateway (còn Track Changes): "– - Thực hiện…" trên 8 dòng</td>
+            <td>Gỡ <code>numPr</code> khỏi đoạn nhưng bản chụp <code>w:pPrChange</code> còn → Word hiểu tác giả vừa xoá dấu gạch, vẽ dấu cũ màu đỏ; Reject All thì hai dấu ở lại</td>
+            <td><code>_go_danh_so_tu_dong</code> gỡ luôn <code>numPr</code> trong bản chụp; nhánh đổi style thì đổi <code>pStyle</code> của bản chụp theo</td></tr>
+        <tr><td>5</td><td>"- Tài liệu hướng dẫn…" (lề 1,25 treo 0,25 — gạch ở 1 cm) ra 2,25 cm</td>
+            <td><code>_giu_thut_muc_con</code> so riêng lề trái &gt; 0 → coi là mục con, giữ lề rồi cộng thụt dòng đầu 1 cm</td>
+            <td>So <b>vị trí dấu gạch</b> (lề + thụt đầu gốc) với <code>muc_gach_pho_bien()</code> — mức gạch gặp nhiều nhất ở lời văn ngoài bảng; giữ nguyên độ sâu tương đối</td></tr>
+        <tr><td>7</td><td>Khoảng "I.    Căn cứ" nới từ 0,75 lên 1,27 cm (do VB7)</td>
+            <td>VB7 gỡ mọi tab tác giả nằm giữa số và thụt treo — kể cả tab 993 đang vừa khít "I."</td>
+            <td>Đo số rộng nhất của cấp (<code>_be_rong_so_lon_nhat_twip</code>): tab tác giả còn vừa → giữ; có tab mà tràn → đặt sát sau số; không có tab → thụt treo nhưng không hẹp hơn số</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-amber">#5</span> Vì sao mốc là "mức gạch phổ biến của văn bản", không phải 1 cm cố định</div>
+      <p>Mốc cố định 1 cm sửa được file bàn giao nhưng ép phẳng bullet mặc định của Word: cấp 1 treo ở 0, cấp 2 ở
+        0,63 cm — cả hai đều ≤ 1 cm, mất phân cấp mà không ai hay. Mức phổ biến của chính văn bản thì cấp 1 là mốc,
+        cấp 2 vẫn sâu hơn. Hoà thì lấy mức nông hơn (giữ test cũ "mục cha lề 0, mục con 1,5"). Lề mục con = độ sâu
+        hơn mốc, nên hết thụt treo cũng không trôi.</p>
+      <table>
+        <tr><th>File</th><th>Trước</th><th>Sau</th></tr>
+        <tr><td>TB Swift code — "- Tên chi nhánh\t: VIETNAM…" (lề 5,24 treo 3,99)</td>
+            <td>lề 5,24 + thụt 1 → gạch ở <b>6,24 cm</b></td><td>lề 0 + thụt 1 → gạch 1 cm; dòng 2 về lề 0</td></tr>
+        <tr><td>TB Swift code — Nơi nhận (bullet treo 0,94)</td><td>gạch ở 0,94 cm</td><td>gạch sát lề ô như bản gốc</td></tr>
+      </table>
+      <div class="caution"><b>Mất:</b> "- Tên chi nhánh : VIETNAM BANK…" tác giả dùng thụt treo 5,24 để dòng 2 thẳng cột
+        giá trị sau dấu ":". Chuẩn hoá ép thụt dòng đầu dương nên dòng 2 về lề 0. Trước đây còn tệ hơn (dòng đầu
+        bắt đầu ở 6,24 cm). Giữ được cột thì phải cho phép thụt treo trong lời văn — trái quy chuẩn, không làm.</div>
+
+      <div class="label"><span class="pill pill-amber">#7</span> Ước lượng số mục, không đếm</div>
+      <p>Số lớn nhất = số đoạn cùng <code>abstractNum</code> + cùng cấp trong văn bản (+ <code>w:start</code>). Đánh số lại
+        giữa chừng, hay cấp 2 bắt đầu lại dưới mỗi mục cha, đều làm ước <b>dư</b> → khoảng hở rộng hơn cần một
+        chút, không bao giờ để số tràn. Đếm đúng phải giả lập cả luật restart / <code>lvlOverride</code> của Word — không
+        đáng. Đo cả dãy vì số La Mã rộng nhất không phải số lớn nhất ("VIII" &gt; "X"). Khoảng hở tối thiểu
+        0,35 em. Kết quả đo trên PDF: chữ sau "I.", "II.", "III." cùng ở 137,5 pt (tab 1045 twip); bản gốc 121 pt,
+        bản VB7 149 pt.</p>
+      <div class="caution">Máy thiếu Times New Roman (<code>do_chu</code> không đo được) → lùi về cách VB7. Placeholder cấp cha
+        trong <code>lvlText</code> kiểu "%1.%2." được thay bằng "8" (chữ số rộng như nhau) — ước, không đọc số thật.</div>
+
+      <div class="label"><span class="pill pill-amber">#1</span> Dòng dưới vạch nhận <code>bang_the_thuc</code></div>
+      <p>"PHÒNG KSNB&amp;HTVH" dưới vạch không thuộc hai vai của Điều 8.2 (có thể là đơn vị soạn thảo). Gán vai nào
+        cũng là áp luật của vai đó (cỡ, đậm, hoa). <code>bang_the_thuc</code> chỉ kéo giãn dòng/cách đoạn, giữ nguyên
+        cỡ 13 thường của tác giả. Chỉ nhận vạch trong <b>dòng trống</b>, sát khối (≤ 1 dòng trống mỗi phía): vạch neo
+        vào dòng có chữ có thể đặt lệch đi đâu cũng được, đọc vị trí thật là việc của trình dàn trang.</p>
+
+      <div class="label"><span class="pill pill-amber">#2</span> Đánh đổi</div>
+      <p>Dòng căn cứ viết cẩu thả, ngắn, không số, không chấm câu ("Căn cứ nhu cầu thực tế") sẽ ra lời văn
+        thường, không nghiêng. Chấp nhận: sai kiểu chữ một dòng lời văn nhẹ hơn đề mục in nghiêng lệch khỏi các
+        đề mục cùng cấp.</p>
+
+      <div class="label"><span class="pill pill-red">Phản biện</span> 3 lỗi có bằng chứng — đã sửa trước khi mở PR</div>
+      <table>
+        <tr><th>Lỗi</th><th>Tái hiện</th><th>Sửa</th></tr>
+        <tr><td>#5 hồi quy: dòng gạch thụt đầu 1,27 cm (lề 0, dán từ văn bản khác) ra lề 0,27 cm</td>
+            <td>4 gạch thụt 1 cm + 1 gạch thụt 1,27 cm</td>
+            <td>Giữ lại điều kiện cũ "tác giả CÓ đặt lề trái" trước khi so với mốc</td></tr>
+        <tr><td>#5 hồi quy: 3 dòng "- Ban …" sát lề dưới "Kính trình:" kéo mốc về 0 → gạch lời văn thành mục con, trôi 2 cm</td>
+            <td>Tờ trình có Kính trình nhiều nơi ngoài bảng</td>
+            <td>Cùng điều kiện trên; mốc tính riêng theo từng mã thể thức (dòng "- Ban …" ngoài bảng hiện vẫn mang mã
+              <code>noi_dung</code> nên chính điều kiện lề trái mới chặn được)</td></tr>
+        <tr><td>#7 hiệu năng O(n²): mỗi đoạn có số duyệt cả cây XML, đo tới 200 số</td>
+            <td>1.500 đoạn List Number: 52 s trong hàm, 63 s cả lượt</td>
+            <td>Đếm một lần/lượt (<code>_dem_muc_danh_so</code>), nhớ kết quả đo theo cấp + kiểu chữ trong <code>bo_nho</code>
+              truyền từ <code>chuan_hoa</code>; bullet thoát trước khi đếm → <b>2,1 s trong hàm, 12 s cả lượt</b></td></tr>
+        <tr><td>#2 dòng căn cứ quên ";" ("Căn cứ Luật Các tổ chức tín dụng") mất nghiêng</td>
+            <td><code>phan_loai</code> ra <code>noi_dung</code></td>
+            <td>Đề mục phải có chữ đầu sau "Căn cứ" viết <b>thường</b> — căn cứ viện dẫn mở đầu bằng tên loại viết hoa</td></tr>
+      </table>
+      <p>Nghi vấn đóng luôn: <code>startOverride</code> nay được tính vào số bắt đầu (test); tab <code>w:val="clear"</code>
+        bị bỏ qua khi chọn và không bao giờ bị gỡ (gỡ là trả tab của style về); <code>w:ilvl</code> không phải số → không đo.
+        Còn lại (không sửa): bản chụp Track Changes dùng một style danh sách <b>khác</b> style hiện tại thì vẫn giữ
+        đánh số trong bản chụp — hiếm, chỉ lộ khi Reject.</p>
+
+      <div class="label"><span class="pill pill-blue">Chưa sửa</span> Lượt rà này thấy mà người dùng chưa chọn</div>
+      <ul>
+        <li><b>Khối chữ ký tách trang</b> (Microgateway): giãn dòng 1,3 → 1,2 làm hàng bảng Nơi nhận / chữ ký rơi
+          vào chỗ ngắt, "GIÁM ĐỐC" trang 3, tên người ký trang 4. Engine không đặt <code>cantSplit</code>. Chờ người
+          dùng chốt.</li>
+        <li><b>Trích yếu lệch phải so với vạch</b>: thành phần canh giữa có <code>thut_cm=None</code> nên giữ thụt dòng
+          đầu 1,25 cm của tác giả.</li>
+        <li>Đề mục "5. Tình hình kiểm thử" mồ côi cuối trang (style tắt <code>keepNext</code>); danh sách a/b/c style
+          ListParagraph có <code>contextualSpacing</code> nên cách đoạn không đều; "Theo quyết định số 2628/QĐ-…" không
+          viết hoa tên loại (luật viện dẫn chỉ lo Phần/Chương/Mục/Điều).</li>
+      </ul>
+
+    </div>
+  </div>
+
+  <!-- VB7 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">VB7</span>
+      <span class="card-title">Chuẩn hoá văn bản — Tờ trình Microgateway: trích yếu cỡ 12, "I." bị nuốt vào trích yếu, số tiền bị chèn dấu cách</span>
+      <span class="badge badge-done">Xong — 131 test module pass, +11 test; đã in thử bằng Word</span>
+    </div>
+    <div class="card-body">
+
+      <p>Người dùng báo hai chỗ trên bản đã chuẩn hoá; soi nhật ký lộ thêm chỗ thứ ba (nặng nhất) và
+        sửa xong chỗ thứ nhất thì đẻ ra chỗ thứ tư. So nhật ký + chữ đầu ra trước/sau trên 4 file
+        thật (2 file trong <code>Dữ liệu test/Chuẩn hoá văn bản/</code>, 2 file trong
+        <code>979-QyD-NHNo-PC (Trình bày VB)/test/</code>): chỉ khác đúng các chỗ dưới đây.</p>
+
+      <table>
+        <tr><th>#</th><th>Triệu chứng</th><th>Nguyên nhân</th><th>Sửa</th></tr>
+        <tr><td>1</td><td>"V/v đăng ký gói phần mềm…" dưới "TỜ TRÌNH" ra cỡ 12, bỏ đậm</td>
+            <td>Lượt 1 thấy chữ "V/v" là gán <code>trich_yeu_cong_van</code>; luật "đoạn dưới tên loại là
+              trích yếu" chỉ nhận <code>noi_dung</code>/<code>bang</code></td>
+            <td>Luật đó nhận thêm <code>trich_yeu_cong_van</code> — vai do vị trí quyết định, không do chữ viết tắt</td></tr>
+        <tr><td>2</td><td>"I. Căn cứ trình" cỡ 12 canh giữa, "II. Nội dung trình" cỡ 14 căn đều</td>
+            <td>Trích yếu "…3.0" không có dấu kết câu → <code>_noi_dai_trich_yeu</code> nối sang đoạn có chữ
+              kế tiếp, dù cách <b>7 dòng trống</b></td>
+            <td>Dừng nối khi có dòng trống xen giữa, hoặc dòng sau mở đầu bằng số La Mã</td></tr>
+        <tr><td>3</td><td><span class="pill pill-red">Đổi số liệu</span> ô bảng phí "10.000" → "10. 000" (cả 5.000, 40.000, 1.000)</td>
+            <td><code>RE_KHOAN</code> / <code>RE_SO_DAU</code> đọc "5.000" là khoản "5." rồi chuẩn thành "5. "</td>
+            <td>Thêm <code>(?!\d)</code> sau dấu phân cách ở cả hai regex</td></tr>
+        <tr><td>4</td><td>(sinh ra từ sửa #1) vẽ thêm vạch thứ hai ngay trên vạch có sẵn của tác giả</td>
+            <td>Vạch tác giả neo ở dòng trống <b>thứ hai</b> dưới trích yếu; <code>da_co_duong_ke</code> chỉ soi một đoạn</td>
+            <td>Soi tiếp tối đa 3 dòng không chữ, chỉ nhận đúng hình đường thẳng</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-red">#3</span> Vì sao đây là lỗi nặng nhất</div>
+      <p>Số tiền trong Tờ trình trình ký bị đổi, nhật ký chỉ ghi "sửa chữ (viết hoa / đánh số / gạch đầu
+        dòng)" — người kiểm tra không có lý do để soi ô số. Cùng regex còn phá "15/9/2026 là hạn…" thành
+        "15. 9/2026…" và "1.1. Phạm vi" thành "1. 1. Phạm vi" nếu đứng đầu đoạn. Có sẵn trong mọi lượt
+        chạy trước đây, không riêng file này.</p>
+
+      <div class="label"><span class="pill pill-amber">Đánh đổi</span> Dừng nối trích yếu ở dòng trống</div>
+      <p>Trích yếu xuống dòng cho cân thì hai dòng luôn liền nhau. Văn bản nào người soạn chèn dòng trống
+        <b>giữa</b> hai dòng của cùng một trích yếu sẽ mất phần nối — dòng dưới thành lời văn. Chấp nhận:
+        bỏ sót một dòng trích yếu nhìn ra ngay, còn nuốt nhầm đề mục "I." thì in sai cả khối mà trông như
+        phần mềm cố ý.</p>
+      <div class="note">Kiểm "số La Mã" chứ không kiểm cả "1." / "a)": dòng khớp khoản / điểm đã mang mã
+        <code>khoan</code> / <code>diem</code> từ lượt 1 nên điều kiện "chỉ nối <code>noi_dung</code>/<code>bang</code>"
+        chặn sẵn. "I. Căn cứ trình" in thường nên không thành <code>muc_la_ma</code> — chỉ nó lọt.</div>
+
+      <div class="label"><span class="pill pill-amber">#5</span> Số tự động "a.        Giao Trung tâm…" cách chữ ~1,5 cm (người dùng báo lượt 2)</div>
+      <p>Sau số tự động Word chèn một <b>tab</b>. Danh sách dựng bằng thụt treo thì tab dừng ở lề trái — chữ sát
+        số. Quy chuẩn ép lời văn về lề trái 0 + thụt dòng đầu 1 cm: hết thụt treo, tab trôi tới điểm dừng mặc
+        định 2,54 cm. Sửa trong <code>ap_dung._giu_tab_sau_so()</code>: đặt tab stop riêng tại
+        <i>vị trí số + thụt treo khai trong định nghĩa cấp</i> (không có thì 360 twip).</p>
+      <table>
+        <tr><th>Cách</th><th>Vì sao không chọn / chọn</th></tr>
+        <tr><td>Đổi <code>w:suff</code> của cấp danh sách thành dấu cách</td>
+            <td>Nằm trong <code>abstractNum</code> dùng chung — đổi là đổi cả đoạn cùng danh sách còn giữ thụt treo (ô bảng)</td></tr>
+        <tr><td>Giữ nguyên thụt treo cho đoạn có số</td>
+            <td>Trái quy chuẩn thụt dòng đầu 1 cm; số tự động sẽ lệch lề so với số gõ tay "2." ngay trên</td></tr>
+        <tr><td><span class="pill pill-green">Tab stop riêng trên đoạn</span></td>
+            <td>Chỉ đụng đúng đoạn đó, chạy lại không sinh thêm</td></tr>
+      </table>
+      <p>In thử bằng Word lộ thêm hai chỗ cùng họ, sửa luôn:</p>
+      <ul>
+        <li><b><code>_hieu_luc_doan()</code> không biết thụt lề trong định nghĩa danh sách.</b> "1. Thực trạng"
+          (file bàn giao chứng từ) không tự khai lề trái → Word lấy lề 927 của danh sách, engine đọc là 0 nên
+          không ép về 0 → số ở 2,6 cm, lệch hẳn "2. Giải pháp" ở 1 cm. Nay đọc theo thứ tự của Word:
+          đoạn → định nghĩa danh sách → style. <b>Ảnh hưởng rộng:</b> mọi đoạn có số tự động mà không tự khai
+          thụt lề giờ được ép lề như lời văn — trước đây lọt.</li>
+        <li><b>Tab tác giả đặt theo bố cục cũ.</b> "III.Đề xuất triển khai" dính sát (có từ trước đợt này):
+          tab ở 993 twip, số dời về 567 thì "III." tràn qua nó và Word <b>đặt chữ sát số chứ không nhảy tab
+          kế tiếp</b> (đo bằng bản in). Gỡ tab khai trên đoạn nằm giữa vị trí số và chỗ chữ bắt đầu; tab xa
+          hơn (canh cột trong dòng) giữ nguyên.</li>
+      </ul>
+      <div class="caution"><b>Còn hở:</b> số rộng hơn khoảng thụt treo của cấp (ví dụ "10." ở cỡ lớn với treo
+        360) vẫn dính chữ. Đo bề rộng số tự động phải tự đếm lại cả danh sách — không làm. Tab khai ở style
+        (không trên đoạn) cũng không gỡ. <b>→ Đã đo ở VB8</b> (ước lượng số mục, không đếm chính xác);
+        cách gỡ tab của mục này còn làm nới khoảng "I." / "II." lên 1,27 cm — cũng sửa ở VB8.</div>
+
+      <div class="label"><span class="pill pill-blue">Chưa sửa</span> Hai điều thấy trên file này</div>
+      <ul>
+        <li><b>File còn Track Changes chưa chấp nhận</b> (tác giả "Linh Nguyen"). python-docx không đọc run nằm
+          trong <code>&lt;w:ins&gt;</code> → phần chữ được chèn thêm không được nhận diện, không đổi phông/cỡ;
+          <code>p.text</code> đọc ra "Microgateway3.0" (thiếu dấu cách chèn thêm) và ". Thẩm quyền phê duyệt"
+          (số mục nằm trong phần chèn). Không sửa: xử lý đúng phải quyết định chấp nhận hay giữ nguyên
+          sửa đổi của người khác — việc của người soạn. Đáng cân nhắc thêm cảnh báo vào <code>luu_y</code>.</li>
+        <li>Mục "III." / "IV." gõ tay in thường vẫn ra <code>noi_dung</code> (không phải <code>muc_la_ma</code>).
+          Đúng như người dùng yêu cầu ("I." giống "II."), nhưng nghĩa là đề mục La Mã in thường không được ép
+          đậm/hoa theo <code>muc_la_ma</code>. <code>muc_la_ma</code> đòi in hoa có chủ ý (câu thường mở đầu bằng
+          chữ I/V/X).</li>
+      </ul>
+
+    </div>
+  </div>
+
   <!-- NK2 -->
   <div class="card">
     <div class="card-header">

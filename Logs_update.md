@@ -4,6 +4,18 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 14/09/2026 Chuẩn hoá văn bản - sửa các lỗi thấy khi chạy thử trên Tờ trình thật
+    + ✅ **Không còn đổi số tiền trong bảng**: ô "10.000", "5.000" trước đây có thể bị sửa thành "10. 000"
+    + ✅ Dòng "V/v …" ngay dưới "TỜ TRÌNH" nay ra cỡ 14 in đậm (trước ra cỡ 12 in thường); đề mục
+      "I. Căn cứ trình" không còn bị dính vào trích yếu và không còn bị in nghiêng
+    + ✅ Khối tên đơn vị: khi người soạn đã tự kẻ vạch dưới "TRUNG TÂM THANH TOÁN" và ghi tên phòng bên
+      dưới vạch, hệ thống giữ nguyên như vậy — không còn bỏ đậm dòng trung tâm, không vẽ thêm vạch thứ hai
+    + ✅ Số tự động "a.", "I.", "II." không còn cách chữ quá xa (~1,5 cm), cũng không dính sát chữ
+    + ✅ Gạch đầu dòng không còn bị đẩy lùi vào 2,25 cm, và không còn hiện hai dấu gạch "– -" ở văn bản
+      đang bật theo dõi sửa đổi (Track Changes)
+    + ⚠️ Văn bản còn sửa đổi chưa chấp nhận (Track Changes) thì phần chữ **chèn thêm** chưa được chuẩn hoá.
+      Nên chấp nhận hết sửa đổi trong Word rồi mới tải lên
+
 - 14/09/2026 Nhật ký hệ thống gọn hơn — chỉ ghi khi có thao tác thật
     + **Nghỉ phép:** chỉ mở màn hình, bấm "Đã hiểu" ở thông báo, hay bấm *Xem trước* đơn chưa gửi thì **không**
       còn sinh dòng nhật ký. Lập đơn, duyệt, huỷ, gửi lại, nhập hạn mức… vẫn ghi như cũ
