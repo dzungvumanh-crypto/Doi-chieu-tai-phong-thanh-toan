@@ -22,14 +22,14 @@ Cùng một màu là bắt họ đọc lại tất cả.
 import logging
 import re
 
-from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_COLOR_INDEX, WD_LINE_SPACING
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_COLOR_INDEX, WD_LINE_SPACING, WD_TAB_ALIGNMENT
 from docx.oxml.ns import qn
 from docx.oxml import parse_xml
 from docx.oxml.ns import nsdecls
-from docx.shared import Cm, Mm, Pt, RGBColor
+from docx.shared import Cm, Length, Mm, Pt, RGBColor, Twips
 from docx.text.paragraph import Paragraph
 
-from . import nhan_dien
+from . import do_chu, nhan_dien
 
 _log = logging.getLogger(__name__)
 
@@ -130,6 +130,19 @@ def _hieu_luc_doan(p: Paragraph, thuoc_tinh: str):
     gia_tri = getattr(p.paragraph_format, thuoc_tinh)
     if gia_tri is not None:
         return gia_tri
+    # Thụt lề của đoạn có số tự động: Word lấy thụt lề trong ĐỊNH NGHĨA DANH
+    # SÁCH trước style. Bỏ bước này thì đoạn "1. Thực trạng" (không tự khai lề)
+    # bị đọc là lề 0 → không ép về 0 → chữ thụt 1,6 cm + 1 cm, lệch hẳn so với
+    # "2. Giải pháp" ngay dưới (đoạn này có lề ở style nên được ép về 0).
+    if thuoc_tinh in ("left_indent", "first_line_indent"):
+        ind = _ind_danh_so(p)
+        if thuoc_tinh == "left_indent" and "left" in ind:
+            return Twips(ind["left"])
+        if thuoc_tinh == "first_line_indent":
+            if "hanging" in ind:
+                return Twips(-ind["hanging"])
+            if "firstLine" in ind:
+                return Twips(ind["firstLine"])
     style = p.style
     for _ in range(10):
         if style is None:
@@ -234,9 +247,35 @@ def _them(ds: list, loai: str, mo_ta: str) -> None:
         ds.append((loai, mo_ta))
 
 
-def _giu_thut_muc_con(p: Paragraph, hien_cm: float, mong_cm: float,
-                      chung: dict) -> bool:
-    """Đoạn gạch đầu dòng đang thụt sâu hơn mức chung — giữ nguyên, đừng ép về 0.
+def muc_gach_pho_bien(khoi, ma_list: list[str]) -> dict[str, float]:
+    """Vị trí dấu gạch (cm, lề trái + thụt dòng đầu) gặp NHIỀU NHẤT, theo TỪNG mã thể thức.
+
+    Là mốc "cấp ngoài cùng" cho `_le_muc_con`. Đo TRƯỚC khi áp định dạng —
+    sau đó mọi đoạn đã bị ép cùng một mức, không còn gì để so. Hoà thì lấy mức
+    nông hơn.
+
+    Tách theo mã vì mỗi thành phần có mức thụt riêng: gộp chung thì 3 dòng
+    "- Ban …" của khối Kính trình (sát lề) kéo mốc về 0 và mọi gạch đầu dòng
+    của lời văn (thụt 1 cm) thành "mục con" — phản biện tái hiện được.
+    """
+    dem: dict[str, dict[float, int]] = {}
+    for (p, _tb), ma in zip(khoi, ma_list):
+        if ma in ("trong", "bang") or not nhan_dien.RE_GACH_DAU.match((p.text or "").strip()):
+            continue
+        le = _hieu_luc_doan(p, "left_indent")
+        dau = _hieu_luc_doan(p, "first_line_indent")
+        vi_tri = round(((le.cm if le is not None else 0.0)
+                        + (dau.cm if dau is not None else 0.0)) * 20) / 20
+        theo_ma = dem.setdefault(ma, {})
+        theo_ma[vi_tri] = theo_ma.get(vi_tri, 0) + 1
+    return {ma: min(d, key=lambda v: (-d[v], v)) for ma, d in dem.items()}
+
+
+def _le_muc_con(p: Paragraph, hien_cm: float, dau_cm: float, mong_cm: float,
+                thut, muc_gach_cm: float | None, chung: dict) -> float | None:
+    """Đoạn gạch đầu dòng thụt sâu hơn cấp ngoài cùng — trả lề trái phải đặt (cm).
+
+    None = không phải mục con, ép về mức chung như lời văn thường.
 
     Quy chuẩn đặt `le_trai_cm = 0` cho lời văn để dọn những khoảng thụt vô cớ
     do sao chép qua lại. Nhưng gạch đầu dòng thụt sâu hơn là **cách duy nhất
@@ -248,15 +287,32 @@ def _giu_thut_muc_con(p: Paragraph, hien_cm: float, mong_cm: float,
     hàng với chính mục cha của chúng, đọc ra thành năm mục ngang cấp — sai
     nghĩa, không lỗi nào báo.
 
-    Chỉ giữ khi đủ ba điều, để không nhận nhầm khoảng thụt vô cớ thành phân cấp:
-    mức chung là 0 (không đụng tới thành phần có thụt riêng), đoạn thụt SÂU HƠN
-    mức chung, và đoạn mở đầu bằng dấu gạch đầu dòng.
+    Chỉ nhận khi: mức chung là 0 (không đụng thành phần có thụt riêng), đoạn mở
+    đầu bằng dấu gạch, tác giả CÓ đặt lề trái (thụt dòng đầu lệch 1,27 cm vì dán
+    từ văn bản khác không phải phân cấp — vẫn dọn về lề 0), và DẤU GẠCH đứng
+    sâu hơn `muc_gach_cm` — vị trí gạch phổ biến nhất của cùng thành phần.
+
+    So vị trí dấu gạch (lề trái + thụt dòng đầu), KHÔNG so riêng lề trái: danh
+    sách dựng bằng thụt treo (lề 709, treo 142) có gạch ở đúng 1 cm, ngang hàng
+    mọi gạch khác. Chỉ nhìn lề trái thì nhận nhầm là mục con, giữ lề 709 rồi
+    cộng thêm thụt dòng đầu 1 cm → gạch trôi ra 2,25 cm (Tờ trình bàn giao
+    chứng từ, "Tài liệu trình kèm"). So với mốc CỦA VĂN BẢN chứ không với 1 cm
+    cố định: bullet mặc định của Word để cấp 1 ở 0 và cấp 2 ở 0,63 cm — mốc cố
+    định là ép phẳng cả hai cấp.
+
+    Lề trả về giữ nguyên độ sâu tương đối: gạch sâu hơn mốc bao nhiêu thì sau
+    chuẩn hoá vẫn sâu hơn gạch cấp ngoài cùng bấy nhiêu.
     """
     if not chung.get("giu_thut_muc_con") or mong_cm != 0.0:
-        return False
+        return None
+    if not nhan_dien.RE_GACH_DAU.match((p.text or "").strip()):
+        return None
     if hien_cm <= mong_cm + 0.02:
-        return False
-    return bool(nhan_dien.RE_GACH_DAU.match((p.text or "").strip()))
+        return None
+    if muc_gach_cm is None or thut is None:
+        return hien_cm
+    sau_hon = hien_cm + dau_cm - muc_gach_cm
+    return mong_cm + sau_hon if sau_hon > 0.02 else None
 
 
 def _dong_bo_dau_doan(p: Paragraph, co, dam, phong: str | None) -> bool:
@@ -318,7 +374,8 @@ def _dong_bo_dau_doan(p: Paragraph, co, dam, phong: str | None) -> bool:
     return da_sua
 
 
-def _dinh_dang_doan(p: Paragraph, ma: str, tp: dict, chung: dict) -> list[tuple[str, str]]:
+def _dinh_dang_doan(p: Paragraph, ma: str, tp: dict, chung: dict,
+                    muc_gach_cm: float | None = None) -> list[tuple[str, str]]:
     """Áp cỡ chữ / kiểu chữ / căn lề cho đoạn.
 
     Trả `[(loại, mô tả), …]`. `loại` là "chung" khi sửa đổi đó áp đồng loạt
@@ -390,9 +447,10 @@ def _dinh_dang_doan(p: Paragraph, ma: str, tp: dict, chung: dict) -> list[tuple[
 
     # ── Thụt dòng đầu và thụt cả đoạn ──
     thut = tp.get("thut_cm")
+    dau_goc = _hieu_luc_doan(p, "first_line_indent")
+    dau_goc_cm = 0.0 if dau_goc is None else dau_goc.cm
     if thut is not None:
-        hien = _hieu_luc_doan(p, "first_line_indent")
-        hien_cm = 0.0 if hien is None else hien.cm
+        hien_cm = dau_goc_cm
         if abs(hien_cm - float(thut)) > 0.02:
             pf.first_line_indent = Cm(float(thut))
             _them(ghi_nhan, "chung", "thụt dòng đầu theo từng thành phần thể thức")
@@ -400,7 +458,11 @@ def _dinh_dang_doan(p: Paragraph, ma: str, tp: dict, chung: dict) -> list[tuple[
     if le_trai is not None:
         hien = _hieu_luc_doan(p, "left_indent")
         hien_cm = 0.0 if hien is None else hien.cm
-        if _giu_thut_muc_con(p, hien_cm, float(le_trai), chung):
+        le_con = _le_muc_con(p, hien_cm, dau_goc_cm, float(le_trai), thut,
+                             muc_gach_cm, chung)
+        if le_con is not None:
+            if abs(hien_cm - le_con) > 0.02:
+                pf.left_indent = Cm(le_con)
             _them(ghi_nhan, "chung", "giữ nguyên thụt lề của mục con")
         elif abs(hien_cm - float(le_trai)) > 0.02:
             pf.left_indent = Cm(float(le_trai))
@@ -512,21 +574,52 @@ def _kieu_danh_so(doc, p: Paragraph) -> str | None:
     thì đổi thành chữ gõ tay đồng nghĩa với tự đếm lại toàn bộ, sai một chỗ là
     lệch số cả văn bản mà không ai biết. Mặc định để nguyên và ghi cảnh báo.
     """
+    co_danh_so, lvl = _tim_lvl(p)
+    if not co_danh_so:
+        return None
+    if lvl is None:
+        return "khong_ro"
+    fmt = lvl.find(qn("w:numFmt"))
+    val = fmt.get(qn("w:val")) if fmt is not None else None
+    return "bullet" if val == "bullet" else "so"
+
+
+def _ind_danh_so(p: Paragraph) -> dict[str, int]:
+    """Thụt lề (twip) khai trong định nghĩa cấp danh sách của đoạn: left / hanging / firstLine."""
+    _co, lvl = _tim_lvl(p)
+    ind = lvl.find(qn("w:pPr") + "/" + qn("w:ind")) if lvl is not None else None
+    if ind is None:
+        return {}
+    ket_qua: dict[str, int] = {}
+    for khoa, ten in (("left", "w:left"), ("left", "w:start"),
+                      ("hanging", "w:hanging"), ("firstLine", "w:firstLine")):
+        v = ind.get(qn(ten))
+        if v is not None and v.lstrip("-").isdigit() and khoa not in ket_qua:
+            ket_qua[khoa] = int(v)
+    return ket_qua
+
+
+def _tim_lvl(p: Paragraph):
+    """`(có đánh số tự động không, thẻ w:lvl đang áp cho đoạn)`.
+
+    Có đánh số mà không tra ra được định nghĩa cấp (thiếu numbering part,
+    numId trỏ vào hư không) thì trả `(True, None)`.
+    """
     numPr = _tim_numPr(p)
     if numPr is None:
-        return None
+        return False, None
     nut_id = numPr.find(qn("w:numId"))
     if nut_id is None:
-        return None
+        return False, None
     num_id = nut_id.get(qn("w:val"))
     nut_lvl = numPr.find(qn("w:ilvl"))
     muc = nut_lvl.get(qn("w:val")) if nut_lvl is not None else "0"
     if num_id in (None, "0"):
-        return None
+        return False, None
     try:
-        goc = doc.part.numbering_part.element
+        goc = p.part.numbering_part.element
     except (AttributeError, KeyError, NotImplementedError, ValueError):
-        return "khong_ro"
+        return True, None
 
     abs_id = None
     for num in goc.findall(qn("w:num")):
@@ -535,18 +628,250 @@ def _kieu_danh_so(doc, p: Paragraph) -> str | None:
             abs_id = el.get(qn("w:val")) if el is not None else None
             break
     if abs_id is None:
-        return "khong_ro"
+        return True, None
 
     for abs_num in goc.findall(qn("w:abstractNum")):
         if abs_num.get(qn("w:abstractNumId")) != abs_id:
             continue
         for lvl in abs_num.findall(qn("w:lvl")):
-            if lvl.get(qn("w:ilvl")) != muc:
-                continue
-            fmt = lvl.find(qn("w:numFmt"))
-            val = fmt.get(qn("w:val")) if fmt is not None else None
-            return "bullet" if val == "bullet" else "so"
-    return "khong_ro"
+            if lvl.get(qn("w:ilvl")) == muc:
+                return True, lvl
+    return True, None
+
+
+# Khoảng từ đầu số tới đầu chữ khi cấp đánh số không khai thụt treo — 0,25 inch,
+# đúng mức Word tự đặt cho danh sách mới.
+_KHOANG_SAU_SO_TWIP = 360
+# Khoảng hở tối thiểu giữa đuôi số và đầu chữ, tính theo cỡ chữ — rộng hơn một
+# dấu cách (0,25 em) một chút cho số và chữ không trông như dính nhau.
+_HO_SAU_SO_EM = 0.35
+
+
+def _so_theo_dinh_dang(n: int, fmt: str | None) -> str | None:
+    """Số `n` viết theo `w:numFmt`. None = định dạng không biết cách viết."""
+    if fmt in (None, "decimal"):
+        return str(n)
+    if fmt == "decimalZero":
+        return f"{n:02d}"
+    if fmt in ("upperRoman", "lowerRoman"):
+        la_ma, con = "", n
+        for gia_tri, ky_hieu in ((1000, "M"), (900, "CM"), (500, "D"), (400, "CD"),
+                                 (100, "C"), (90, "XC"), (50, "L"), (40, "XL"),
+                                 (10, "X"), (9, "IX"), (5, "V"), (4, "IV"), (1, "I")):
+            while con >= gia_tri:
+                la_ma += ky_hieu
+                con -= gia_tri
+        return la_ma if fmt == "upperRoman" else la_ma.lower()
+    if fmt in ("upperLetter", "lowerLetter"):
+        chu = chr(ord("A") + (n - 1) % 26) * ((n - 1) // 26 + 1)
+        return chu if fmt == "upperLetter" else chu.lower()
+    return None
+
+
+def _bat(rPr, the: str) -> bool | None:
+    """Thẻ bật/tắt (w:b, w:i) trong rPr: True / False / None nếu không khai."""
+    el = rPr.find(qn(the)) if rPr is not None else None
+    if el is None:
+        return None
+    return el.get(qn("w:val")) not in ("0", "false", "off")
+
+
+def _dem_muc_danh_so(goc_vb) -> tuple[dict, dict]:
+    """Một lượt qua cả văn bản: số đoạn theo (numId, cấp) và số đoạn theo style.
+
+    Chỉ numPr của chính đoạn — bỏ bản chụp cũ trong `w:pPrChange`. Đoạn không
+    tự khai numPr thì đếm theo `pStyle` (đánh số khai trên style).
+    """
+    theo_num: dict[tuple[str, str], int] = {}
+    theo_style: dict[str, int] = {}
+    for el in goc_vb.iter(qn("w:p")):
+        ppr = el.pPr
+        if ppr is None:
+            continue
+        numPr = ppr.numPr
+        if numPr is not None:
+            nid = numPr.find(qn("w:numId"))
+            il = numPr.find(qn("w:ilvl"))
+            if nid is not None:
+                khoa = (nid.get(qn("w:val")), il.get(qn("w:val")) if il is not None else "0")
+                theo_num[khoa] = theo_num.get(khoa, 0) + 1
+        elif ppr.pStyle is not None:
+            theo_style[ppr.pStyle.val] = theo_style.get(ppr.pStyle.val, 0) + 1
+    return theo_num, theo_style
+
+
+def _be_rong_so_lon_nhat_twip(p: Paragraph, lvl, bo_nho: dict | None = None) -> int | None:
+    """Chỗ (twip) cần để số RỘNG NHẤT của cấp danh sách này lọt, kèm khoảng hở.
+
+    Lấy số rộng nhất cả cấp chứ không phải số của riêng đoạn: "I." và "III."
+    cùng cấp phải có chữ thẳng hàng. Số lớn nhất ước bằng số đoạn cùng
+    abstractNum + cùng cấp trong văn bản, cộng số bắt đầu lớn nhất (kể cả
+    `startOverride`) — đánh số lại giữa chừng thì ước DƯ, tức khoảng hở rộng
+    hơn cần một chút, không bao giờ để số tràn. Số La Mã rộng nhất không phải
+    số lớn nhất ("VIII" rộng hơn "X") nên đo cả dãy.
+
+    `bo_nho`: một dict dùng chung cho cả lượt chuẩn hoá. Không có nó thì mỗi đoạn
+    có số lại duyệt cả cây XML — phản biện đo được 1.500 đoạn đánh số mất ~1 phút.
+    """
+    if bo_nho is None:
+        bo_nho = {}
+    cap = lvl.get(qn("w:ilvl")) or "0"
+    if not cap.isdigit():
+        return None
+    fmt_el = lvl.find(qn("w:numFmt"))
+    fmt = fmt_el.get(qn("w:val")) if fmt_el is not None else None
+    if _so_theo_dinh_dang(1, fmt) is None:
+        return None                     # bullet / định dạng lạ: không viết được số
+    try:
+        goc = p.part.numbering_part.element
+    except (AttributeError, KeyError, NotImplementedError, ValueError):
+        return None
+    abs_id = lvl.getparent().get(qn("w:abstractNumId"))
+
+    # ── Số bắt đầu và danh sách numId dùng chung abstractNum ──
+    bat_dau = lvl.find(qn("w:start"))
+    dau = int(bat_dau.get(qn("w:val"))) if bat_dau is not None and         (bat_dau.get(qn("w:val")) or "").isdigit() else 1
+    num_ids: set[str] = set()
+    for num in goc.findall(qn("w:num")):
+        el = num.find(qn("w:abstractNumId"))
+        if el is None or el.get(qn("w:val")) != abs_id:
+            continue
+        num_ids.add(num.get(qn("w:numId")))
+        for ov in num.findall(qn("w:lvlOverride")):
+            so = ov.find(qn("w:startOverride"))
+            if ov.get(qn("w:ilvl")) == cap and so is not None and                     (so.get(qn("w:val")) or "").isdigit():
+                dau = max(dau, int(so.get(qn("w:val"))))
+
+    # ── Đếm số mục cùng cấp (đếm một lần cho cả văn bản) ──
+    if "dem" not in bo_nho:
+        bo_nho["dem"] = _dem_muc_danh_so(p._p.getroottree().getroot())
+    theo_num, theo_style = bo_nho["dem"]
+    dem = sum(n for (nid, il), n in theo_num.items() if nid in num_ids and il == cap)
+    pPr = p._p.pPr
+    if (pPr is None or pPr.numPr is None) and p.style is not None:
+        dem += theo_style.get(p.style.style_id, 0)
+
+    mau_el = lvl.find(qn("w:lvlText"))
+    mau = mau_el.get(qn("w:val")) if mau_el is not None else f"%{int(cap) + 1}."
+
+    # ── Kiểu chữ của số: rPr của cấp đè lên dấu đoạn, dấu đoạn đè lên run đầu ──
+    rpr_lvl = lvl.find(qn("w:rPr"))
+    rpr_dau = pPr.find(qn("w:rPr")) if pPr is not None else None
+    run0 = p.runs[0] if p.runs else None
+    co = None
+    for rpr in (rpr_lvl, rpr_dau):
+        sz = rpr.find(qn("w:sz")) if rpr is not None else None
+        if sz is not None and (sz.get(qn("w:val")) or "").isdigit():
+            co = int(sz.get(qn("w:val"))) / 2
+            break
+    if co is None:
+        hl = _hieu_luc_run(run0, p, "size") if run0 is not None else None
+        co = hl.pt if hl is not None else 14.0
+    kieu = {}
+    for the, thuoc in (("w:b", "bold"), ("w:i", "italic")):
+        gt = _bat(rpr_lvl, the)
+        if gt is None:
+            gt = _bat(rpr_dau, the)
+        if gt is None:
+            gt = bool(_hieu_luc_run(run0, p, thuoc)) if run0 is not None else False
+        kieu[thuoc] = gt
+
+    # ── Đo (nhớ theo cấp + kiểu chữ: các đoạn cùng cấp khỏi đo lại) ──
+    khoa = ("do", fmt, mau, dau, dem, co, kieu["bold"], kieu["italic"])
+    if khoa in bo_nho:
+        return bo_nho[khoa]
+    rong_nhat = 0.0
+    ket_qua: int | None = None
+    for n in range(dau, dau + min(max(dem, 1), 200)):
+        chu = re.sub(r"%(\d)", lambda m: _so_theo_dinh_dang(n, fmt)
+                     if m.group(1) == str(int(cap) + 1) else "8", mau)
+        w = do_chu.be_rong_pt(chu, co, kieu["bold"], kieu["italic"])
+        if w is None:
+            break
+        rong_nhat = max(rong_nhat, w)
+    else:
+        ket_qua = int(round((rong_nhat + _HO_SAU_SO_EM * co) * 20))
+    bo_nho[khoa] = ket_qua
+    return ket_qua
+
+
+def _giu_tab_sau_so(p: Paragraph, bo_nho: dict | None = None) -> bool:
+    """Đặt điểm dừng tab ngay sau số tự động khi đoạn không còn thụt treo.
+
+    Sau số tự động Word chèn một TAB. Danh sách dựng bằng thụt treo (lề trái
+    1,5 cm, treo 0,5 cm) thì tab dừng ở chính lề trái — chữ nằm sát sau số.
+    Chuẩn hoá ép lời văn về lề trái 0 + thụt dòng đầu 1 cm: hết thụt treo, tab
+    trôi tới điểm dừng MẶC ĐỊNH kế tiếp (2,54 cm). Gặp thật trên Tờ trình
+    Microgateway: "a.        Giao Trung tâm Thanh toán" — cách ~1,5 cm.
+
+    Đặt tab stop RIÊNG trên đoạn, không đổi `w:suff` thành dấu cách: `suff`
+    nằm trong định nghĩa danh sách dùng chung, đổi là đổi luôn những đoạn
+    cùng danh sách mà vẫn giữ thụt treo (ô bảng chẳng hạn).
+
+    Chọn điểm dừng theo thứ tự:
+      1. Tab tác giả tự đặt trên đoạn mà số RỘNG NHẤT của cấp đó vẫn lọt → giữ
+         nguyên. "I. Căn cứ trình" có tab 993 vừa khít — thay bằng thụt treo
+         720 của danh sách là nới khoảng cách từ 0,75 lên 1,27 cm vô cớ.
+      2. Có tab tác giả nhưng số tràn qua ("III." ở 567 tràn tab 993) → đặt
+         ngay sau số rộng nhất. Tác giả đã tỏ ý muốn khoảng hẹp hơn thụt treo.
+      3. Không có tab nào → thụt treo của cấp (hoặc 360), nhưng không hẹp hơn
+         số rộng nhất — "10." rộng hơn treo 360 thì chữ không dính số.
+    Đo không được (máy thiếu phông, định dạng số lạ) thì lùi về bước 3 không
+    có chặn dưới. Tab `clear` (xoá tab của style) không phải tab tác giả đặt —
+    bỏ qua, và không bao giờ gỡ (gỡ là trả tab của style về).
+
+    `bo_nho`: dict dùng chung cho cả lượt, xem `_be_rong_so_lon_nhat_twip`.
+    """
+    co_danh_so, lvl = _tim_lvl(p)
+    if not co_danh_so:
+        return False
+    if lvl is not None:
+        suff = lvl.find(qn("w:suff"))
+        if suff is not None and suff.get(qn("w:val")) in ("space", "nothing"):
+            return False
+
+    # Còn thụt treo thì lề trái đã là điểm dừng của tab, không có gì hỏng.
+    # Đọc giá trị HIỆU LỰC (gồm cả thụt lề của định nghĩa danh sách) — đoạn
+    # không tự khai lề trái thì Word lấy lề của danh sách, tính là 0 thì tab
+    # đặt TRƯỚC vị trí số, vô tác dụng.
+    dau = _hieu_luc_doan(p, "first_line_indent")
+    if dau is not None and dau < 0:
+        return False
+    vi_tri_so = Length(int(_hieu_luc_doan(p, "left_indent") or 0) + int(dau or 0)).twips
+
+    treo = _ind_danh_so(p).get("hanging")
+    dich = vi_tri_so + (treo if treo else _KHOANG_SAU_SO_TWIP)
+    pf = p.paragraph_format
+
+    # ── Chọn điểm dừng ──
+    tab = [(i, int(t.position.twips)) for i, t in enumerate(pf.tab_stops)
+           if t.alignment != WD_TAB_ALIGNMENT.CLEAR]
+    rong = _be_rong_so_lon_nhat_twip(p, lvl, bo_nho) if lvl is not None else None
+    if rong is not None:
+        can = vi_tri_so + rong
+        tab_tac_gia = sorted(t for _, t in tab if vi_tri_so < t < dich - 20)
+        vua = [t for t in tab_tac_gia if t >= can]
+        if vua:
+            dich = vua[0]
+        elif tab_tac_gia:
+            dich = can
+        else:
+            dich = max(dich, can)
+
+    # Tab tác giả đặt GIỮA vị trí số và chỗ chữ phải bắt đầu mà số tràn qua là
+    # tab của bố cục cũ. Để lại thì Word đặt chữ dính sát số, KHÔNG nhảy sang
+    # điểm dừng kế tiếp — đo thật trên "III.Đề xuất triển khai" (tab 993 của
+    # tác giả, số bắt đầu ở 567). Chỉ gỡ tab khai trên chính đoạn; tab ở style
+    # thì không đụng.
+    cu = [i for i, t in tab if vi_tri_so < t < dich - 20]
+    da_co = any(abs(t - dich) <= 20 for _, t in tab)
+    if da_co and not cu:
+        return False
+    for i in reversed(cu):
+        del pf.tab_stops[i]
+    if not da_co:
+        pf.tab_stops.add_tab_stop(Twips(dich))
+    return True
 
 
 def _go_danh_so_tu_dong(doc, p: Paragraph) -> None:
@@ -559,15 +884,33 @@ def _go_danh_so_tu_dong(doc, p: Paragraph) -> None:
       khác cùng style cũng mất dấu đầu dòng, kể cả đoạn phần mềm chưa xét tới.
       Thay vào đó đổi đoạn này về style thường — cách đó cũng gỡ luôn phần thụt
       lề riêng của style danh sách, thứ mà quy định không cho phép.
+
+    Văn bản còn Track Changes thì sửa luôn BẢN CHỤP CŨ trong `w:pPrChange`.
+    Để nguyên thì Word so bản chụp (còn đánh số) với hiện tại (hết) và hiểu là
+    tác giả vừa xoá dấu gạch — vẫn vẽ dấu gạch cũ màu đỏ cạnh "- " gõ tay: bản
+    in có hiện sửa đổi ra "– - Thực hiện…" (Tờ trình Microgateway, 8 dòng), còn
+    người nhận bấm Reject All thì hai dấu gạch ở lại vĩnh viễn. Bản chụp chỉ
+    mất đúng thẻ đánh số — mọi sửa định dạng khác của tác giả vẫn còn.
     """
     pPr = p._p.pPr
+    cu = [el for el in pPr.findall(qn("w:pPrChange") + "/" + qn("w:pPr"))] \
+        if pPr is not None else []
     if pPr is not None and pPr.numPr is not None:
         pPr.remove(pPr.numPr)
+        for chup in cu:
+            for numPr in chup.findall(qn("w:numPr")):
+                chup.remove(numPr)
         return
+    style_cu = p.style.style_id if p.style is not None else None
     try:
         p.style = doc.styles["Normal"]
     except KeyError:                       # tài liệu không có style "Normal"
         _log.warning("Không đổi được style danh sách về Normal")
+        return
+    for chup in cu:
+        ps = chup.find(qn("w:pStyle"))
+        if ps is not None and ps.get(qn("w:val")) == style_cu:
+            ps.set(qn("w:val"), p.style.style_id)
 
 
 def go_bullet_tu_dong(doc, khoi, ky_tu: str = "-") -> set[int]:

@@ -194,7 +194,10 @@ def viet_hoa_tu_dien(txt: str, td: "TuDien | None") -> list[Sua]:
 
 
 # ── Đánh số và gạch đầu dòng ─────────────────────────────────────────────────
-RE_SO_DAU = re.compile(r"^(\d{1,2})\s*([.)/])\s*")
+# `(?!\d)`: "5.000" (số tiền), "15/9/2026", "1.1." không phải số thứ tự khoản.
+# Thiếu nó thì ô bảng phí "10.000" bị sửa thành "10. 000" — gặp thật trên Tờ
+# trình Microgateway, đổi số liệu mà nhật ký chỉ ghi "sửa chữ".
+RE_SO_DAU = re.compile(r"^(\d{1,2})\s*([.)/])(?!\d)\s*")
 RE_CHU_DAU = re.compile(rf"^([{CHU_CAI_DIEM}]{{1,2}})\s*([).\/])\s+")
 RE_LA_MA_DAU = re.compile(r"^([IVXLCDM]+)\s*([.)/])\s+")
 
