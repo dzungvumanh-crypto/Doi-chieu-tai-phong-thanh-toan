@@ -67,7 +67,7 @@ import secrets
 import sqlite3
 import threading
 import zipfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 from backend.core.config import BASE_DIR
@@ -101,15 +101,69 @@ _buffer_lock = threading.Lock()
 _citad_buffer: dict[str, dict] = {}
 _ph_buffer: dict[str, dict] = {}
 
+# Hạn dùng 1 mục buffer — không có hạn dùng thì 1 mục quét cũ (hôm khác, lúc
+# test, hoặc quét xong quên bấm "Nạp") nằm lại VÔ THỜI HẠN và bị nạp nhầm vào
+# bảng cùng lượt với dữ liệu vừa quét mới (vd: quét EUR ra 0 nên không gửi gì
+# — xem content.js autoSaveIfNew() — rồi quét USD, "Nạp" kéo theo cả 1 mục EUR
+# cũ còn sót). Mốc thời gian do SERVER tự gắn lúc lưu (_vn_now()), không dùng
+# field `ts` client gửi lên (chỉ giờ:phút:giây hiển thị, không đáng tin).
+# Tên field KHÔNG được bắt đầu bằng "_sa" (vd "_saved_at") — FastAPI's
+# jsonable_encoder() mặc định sqlalchemy_safe=True, tự ý ÂM THẦM loại bỏ mọi
+# key bắt đầu bằng "_sa" khỏi response JSON (tưởng đó là thuộc tính nội bộ
+# SQLAlchemy như "_sa_instance_state"). Vô hại cho TTL (lọc diễn ra hoàn toàn
+# phía server trước khi trả JSON) nhưng field sẽ biến mất khó hiểu nếu debug
+# qua Network tab — đặt tên tránh dính đúng prefix đó.
+_BUFFER_TTL = timedelta(hours=4)
+
+
+def _purge_expired(bucket: dict[str, dict]) -> None:
+    now = _vn_now()
+    stale = [k for k, v in bucket.items() if now - v.get("_scan_ts", now) > _BUFFER_TTL]
+    for k in stale:
+        bucket.pop(k, None)
+
+
+# Đọc nhầm loại tiền lúc quét (bug thật 14/09/2026): trang CITAD đổi ô chọn
+# loại tiền (vd USD → EUR) NGAY LẬP TỨC, nhưng bảng kết quả trên trang chỉ
+# cập nhật SAU khi truy vấn lại xong — nếu Extension đọc đúng lúc giữa 2 mốc
+# đó, số liệu CŨ (còn của USD) bị gắn nhầm nhãn loại tiền MỚI (EUR) rồi gửi
+# lên server. Không sửa được ở Extension (đổi rồi phải bắt mọi máy trạm cài
+# lại) nên chặn ở đây: nếu 2 loại tiền KHÁC nhau, cùng cổng/chiều/loại DV, mà
+# soMon VÀ soTien TRÙNG TUYỆT ĐỐI — xác suất 2 dòng tiền độc lập trùng thật cả
+# 2 trị này gần như bằng 0 — gắn cờ nghi vấn cho FE cảnh báo. KHÔNG chặn lưu/
+# xoá gì (lỡ trùng thật thì vẫn còn nguyên số liệu, chỉ mất công kiểm tra lại
+# bằng mắt, an toàn hơn tự ý loại bỏ có thể mất đúng số liệu thật).
+def _annotate_currency_duplicates(items: list[dict]) -> None:
+    for it in items:
+        it.pop("_suspect_dup_tien", None)
+    for i, a in enumerate(items):
+        if a.get("source"):
+            continue
+        for b in items[i + 1:]:
+            if b.get("source"):
+                continue
+            if (a.get("cong") == b.get("cong") and a.get("loai") == b.get("loai")
+                    and a.get("chieu") == b.get("chieu") and a.get("tien") != b.get("tien")
+                    and a.get("soMon") == b.get("soMon") and a.get("soTien") == b.get("soTien")):
+                a["_suspect_dup_tien"] = b.get("tien")
+                b["_suspect_dup_tien"] = a.get("tien")
+
 
 def buffer_save_citad(owner: str, data: dict) -> None:
     with _buffer_lock:
+        data["_scan_ts"] = _vn_now()
         _citad_buffer.setdefault(owner, {})[data["key"]] = data
 
 
 def buffer_get_citad(owner: str) -> list:
     with _buffer_lock:
-        return list(_citad_buffer.get(owner, {}).values())
+        bucket = _citad_buffer.get(owner)
+        if bucket is None:
+            return []
+        _purge_expired(bucket)
+        items = list(bucket.values())
+    _annotate_currency_duplicates(items)
+    return items
 
 
 def buffer_clear_citad(owner: str) -> None:
@@ -120,13 +174,21 @@ def buffer_clear_citad(owner: str) -> None:
 def buffer_save_ph(owner: str, items: list) -> None:
     with _buffer_lock:
         bucket = _ph_buffer.setdefault(owner, {})
+        now = _vn_now()
         for item in items:
+            item["_scan_ts"] = now
             bucket[item["key"]] = item
 
 
 def buffer_get_ph(owner: str) -> list:
     with _buffer_lock:
-        return list(_ph_buffer.get(owner, {}).values())
+        bucket = _ph_buffer.get(owner)
+        if bucket is None:
+            return []
+        _purge_expired(bucket)
+        items = list(bucket.values())
+    _annotate_currency_duplicates(items)
+    return items
 
 
 def buffer_clear_ph(owner: str) -> None:
