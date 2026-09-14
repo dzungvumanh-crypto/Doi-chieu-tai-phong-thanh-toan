@@ -4,6 +4,13 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 14/09/2026 Nhật ký hệ thống gọn hơn — chỉ ghi khi có thao tác thật
+    + **Nghỉ phép:** chỉ mở màn hình, bấm "Đã hiểu" ở thông báo, hay bấm *Xem trước* đơn chưa gửi thì **không**
+      còn sinh dòng nhật ký. Lập đơn, duyệt, huỷ, gửi lại, nhập hạn mức… vẫn ghi như cũ
+    + **Đối chiếu ACH / Song phương:** mỗi lần chọn file hoặc bấm kiểm tra đủ file trước khi chạy không còn
+      sinh dòng. Lượt **chạy** và **dừng** đối chiếu vẫn ghi
+    + Các dòng loại này đã ghi từ trước **vẫn còn** trong nhật ký, tự hết hạn sau 365 ngày
+
 - 12/09/2026 Sắp xếp lại mã nguồn trang Nghỉ phép — **không đổi gì với người dùng**
     + Trang Nghỉ phép trước nay nằm trong một file rất lớn, khó sửa an toàn. Nay tách dần thành nhiều
       file nhỏ; đợt này tách riêng phần "xem chi tiết một đơn"

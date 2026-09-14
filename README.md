@@ -304,6 +304,7 @@ Kết nối CSDL dùng **bể mượn–trả** (`DB_POOL_SIZE`, mặc định 1
 - **Công việc chờ xử lý**: khối ở đầu sidebar, hiện trên mọi trang — số chứng từ chờ xác nhận và đơn nghỉ phép chờ duyệt của **chính người đang đăng nhập**; bấm vào mở màn hình theo dõi `/pending/<loại>` có đủ chi tiết và link nhảy thẳng tới ô cần xử lý
 - **Nhật ký thao tác** (audit log): middleware ghi tập trung mọi request thay đổi dữ liệu (POST/PUT/PATCH/DELETE) vào bảng `audit_logs` — ai, làm gì, kết quả HTTP, IP, thời gian; tự dọn sau 365 ngày
   - **Kèm tóm tắt dữ liệu gửi lên** (`backend/core/audit_body.py`): query string + body JSON, để cột *Chi tiết* nói được **đã sửa cái gì** chứ không chỉ "HTTP 200". Ba giới hạn cố ý — chỉ đọc body JSON ≤ 8 KB (bỏ qua multipart/file), **che khoá nhạy cảm** (mật khẩu, token, ảnh chữ ký — nhật ký xuất Excel được nên coi như đã công khai), và cắt còn tối đa 800 ký tự
+  - **Không ghi request không phải thao tác nghiệp vụ** (`_SKIP_EXACT` trong `audit_middleware.py`): mở màn Nghỉ phép (bật sẵn Word), bấm "Đã hiểu" thông báo, xem trước đơn / file hạn mức, dò tên file ACH, kiểm tra đủ file Song phương. Lập đơn, duyệt, chạy / dừng đối chiếu vẫn ghi
   - **Bấm một dòng** để mở hộp thoại xem đầy đủ, kể cả nguyên văn bản ghi
   - **Lọc** theo phương thức, từ khoá, **khoảng ngày, người thao tác, module** (`GET /api/admin/logs/audit/filters` đổ dữ liệu vào hai ô chọn — chỉ liệt kê người đã thực sự có dòng trong nhật ký)
 - Nhật ký đăng nhập và nhật ký lỗi/cảnh báo hệ thống (admin xem, lọc theo user/thời gian)

@@ -51,7 +51,58 @@
 <div class="page">
 
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
-  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-09-11</p>
+  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-09-14</p>
+
+  <!-- NK2 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">NK2</span>
+      <span class="card-title">Nhật ký hệ thống chỉ ghi thao tác thật — bỏ dòng "mở màn hình / chọn file" ở Nghỉ phép, ACH, Song phương</span>
+      <span class="badge badge-info">14/09/2026</span>
+    </div>
+    <div class="card-body">
+      <p>Người dùng yêu cầu: Nghỉ phép phải có thao tác (lập đơn, duyệt…) mới ghi; rút gọn nhật ký của ACH và
+        Song phương. Đo trên bản DB thật (3.641 dòng, 19/05–12/09/2026):</p>
+      <table>
+        <tr><th>Request</th><th>Số dòng</th><th>Sinh ra khi</th></tr>
+        <tr><td><code>POST /api/ach/validate</code></td><td>310</td><td>Mỗi lần chọn / bỏ file — trong khi chỉ có <b>23</b> lượt chạy ACH</td></tr>
+        <tr><td><code>POST /api/leaves/preview/warmup</code></td><td>32</td><td>Tự gọi lúc <b>mở</b> màn Nghỉ phép (bật sẵn Word)</td></tr>
+        <tr><td><code>POST /api/leaves/carryover-notice/ack</code></td><td>30</td><td>Bấm "Đã hiểu" ở popup thông báo</td></tr>
+        <tr><td><code>POST …song_phuong_kenh_core/check_readiness</code></td><td>27</td><td>Bấm kiểm tra đủ file trước khi chạy</td></tr>
+      </table>
+      <p>Thêm vào <code>_SKIP_EXACT</code> (kèm <code>/api/leaves/preview</code>, <code>…/import/preview</code> và
+        <code>check_readiness</code> chiều đi). Tách điều kiện thành <code>bo_qua(method, path)</code> để test gọi thẳng.</p>
+
+      <div class="label">1. Danh sách đen, không phải danh sách trắng</div>
+      <table>
+        <tr><th>Cách</th><th>Quên khai một endpoint mới thì</th></tr>
+        <tr><td>Chỉ ghi các thao tác đã khai (trắng)</td><td><span class="pill pill-red">Mất vết một thao tác thật</span>, không ai hay</td></tr>
+        <tr><td>Bỏ qua các request đã khai (đen) — <b>chọn</b></td><td><span class="pill pill-gray">Thừa một dòng nhật ký</span></td></tr>
+      </table>
+
+      <div class="label">2. "Rút gọn" hiểu là bớt dòng, không phải cắt chữ</div>
+      <p>Dòng ACH / Song phương trong DB chỉ có <code>HTTP 200</code> — nội dung không dài; cái làm nhật ký dài là số
+        dòng kiểm tra trước. Lượt chạy thật (<code>/api/ach/start</code>, <code>/cancel</code>, <code>/continue</code>,
+        <code>start_upload</code>, <code>/process</code>) <b>vẫn ghi</b>. Nếu người dùng muốn nói khác (ví dụ đổi nhãn cột
+        Công việc) thì đây là chỗ cần hỏi lại.</p>
+
+      <div class="label">3. Lưới an toàn</div>
+      <div class="caution">Gõ sai một đường trong <code>_SKIP_EXACT</code> thì không lỗi gì — dòng vẫn ghi như cũ. Test
+        <code>test_moi_muc_bo_qua_khop_route_that</code> đối chiếu từng mục với route thật của <code>app</code>; route bị đổi
+        tên cũng đỏ ở đây. Kèm test ngược: lập đơn, 3 bước duyệt, huỷ, nhập hạn mức, chạy ACH/Song phương vẫn ghi.</div>
+
+      <div class="label">4. Phát hiện nhưng không sửa</div>
+      <ul>
+        <li><span class="pill pill-gray">Dòng cũ còn nguyên</span> ~400 dòng đã ghi trước đó không xoá — xoá nhật ký là việc
+          khó đảo ngược, để tự hết hạn 365 ngày. Muốn dọn ngay thì người dùng quyết.</li>
+        <li><span class="pill pill-gray">Nhãn ACH dừng / tiếp tục không bao giờ khớp</span> <code>_WORK</code> khai
+          <code>/api/ach/cancel/{job_id}</code> nhưng <code>_norm()</code> chỉ đổi đoạn <b>toàn số</b> thành <code>{id}</code>; job id
+          ACH là chuỗi hex (<code>536cd1debb60</code>) → rơi về nhãn chung "Thực hiện — đối chiếu ACH". Ngoài phạm vi yêu cầu.</li>
+        <li><span class="pill pill-gray">Song phương Kênh–Hub–Core</span> <code>start_upload</code> / <code>cancel</code> chưa có nhãn
+          riêng, hiện "Thực hiện — đối chiếu song phương" (vẫn đọc được).</li>
+      </ul>
+    </div>
+  </div>
 
   <!-- LV1 -->
   <div class="card">
