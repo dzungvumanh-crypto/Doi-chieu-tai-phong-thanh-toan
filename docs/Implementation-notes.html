@@ -17236,7 +17236,79 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-10</footer>
+  <!-- 142 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">142</span>
+      <span class="card-title">Chấm 459901 — thêm điều kiện TRBRCD=1000 cho "Chuyển chi nhánh", xác nhận bằng dữ liệu thật Tháng 5-8 (2026-09-13/14)</span>
+      <span class="badge badge-done">Hoàn thiện</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-blue">Bối cảnh</span> đối chiếu dữ liệu thật Tháng 5/6/7 phát hiện nhóm "Chuyển chi nhánh" lệch nhiều so với chấm tay</div>
+      <p>Người dùng cung cấp dữ liệu thật 4 tháng (<code>G:\NGOC HA\459 file chấm gửi a Dũng\</code>)
+        kèm kết quả chấm tay của người chấm thật ("chị Hà"). Chạy <code>process_files()</code> thật
+        (không mô phỏng) trên Tháng 5/6/7, so với file chấm tay bằng khoá 8 trường
+        (TRDATE|TRBRCD|USERID|JOURSEQ|DYTRSEQ|REFERENCE|DRAMOUNT|CRAMOUNT) — nhóm "Chuyển chi nhánh"
+        lệch 652/2808 (Tháng 5), 12/742 (Tháng 6), 486/1090 (Tháng 7), gần như toàn bộ do bước
+        "Lệnh Đi" (chạy trước trong thác nước) giành mất khi 2 vế giao dịch tình cờ cùng mã chi
+        nhánh.</p>
+
+      <div class="label"><span class="pill pill-gray">Quyết định nghiệp vụ</span> người dùng hỏi trực tiếp người chấm tay ("chị Hà"), xác nhận 2 lần</div>
+      <p>Lần 1 (13/09): "2 vế cùng mã chi nhánh → đúng là Lệnh Đi, không phải Chuyển chi nhánh" —
+        xác nhận thác nước hiện tại làm ĐÚNG cho case đó, không cần đổi thứ tự. Đồng thời chốt quy
+        tắc chính thức "Chuyển chi nhánh" (chị Hà viết lại 07/09): <b>1 cặp giao dịch bắt buộc có 1
+        vế <code>TRBRCD='1000'</code> và 1 vế <code>TRBRCD≠'1000'</code></b> — hàm <code>_mark_ccn()</code>
+        trước đó hoàn toàn không xét cột này, chỉ ghép theo (số tiền + REMARK) cân Nợ=Có.</p>
+      <p>Khi tự tay verify bằng dữ liệu thật, tìm được 1 cặp Tháng 5 (REFERENCE
+        <code>1000API4370587</code>/<code>1000API009635716</code>, 450.000.000đ) chị Hà chấm là
+        "Chuyển chi nhánh" nhưng TRBRCD 2 vế là <code>3407</code>/<code>2122</code> — KHÔNG vế nào
+        là 1000, mâu thuẫn quy tắc. Hỏi lại lần 2: chị Hà <b>khẳng định lại nguyên văn quy tắc
+        TRBRCD=1000</b>, giải thích case đó là chị chấm bằng cách tra hệ thống thanh toán live (dữ
+        liệu GL02 không có dấu hiệu để máy tự nhận ra) — không phải quy tắc sai, mà là 1 lớp case
+        nằm ngoài khả năng của thuật toán chỉ đọc GL02, vẫn phải rơi về "GD khác" chấm tay.</p>
+
+      <div class="label"><span class="pill pill-green">Fix</span> <code>_mark_ccn()</code> — thêm điều kiện <code>has_1000 &amp; has_non1000</code></div>
+      <p>Thêm 3 dòng, tái dùng đúng pattern <code>is_1000 = df['TRBRCD'] == '1000'</code> đã có sẵn
+        trong <code>_mark_can_cn()</code> ngay bên dưới — nhóm (theo khoá số tiền+REMARK hiện có)
+        chỉ được coi là Chuyển chi nhánh khi vừa có ≥1 dòng TRBRCD=1000, vừa có ≥1 dòng khác 1000.
+        Không đổi thứ tự thác nước, không đụng hàm nào khác. <code>tests/test_cham459901_algorithm.py</code>:
+        sửa data 2 test cũ (thêm đúng cấu trúc 1 vế 1000 để không vi phạm luật mới), thêm 2 test phủ
+        định (2 vế cùng khác 1000 / 2 vế cùng 1000 → không phải CCN). 142/142 test module pass.</p>
+
+      <div class="label"><span class="pill pill-blue">Kiểm chứng bằng dữ liệu thật sau khi sửa</span></div>
+      <table>
+        <tr><th>Tháng</th><th>Chuyển chi nhánh — trước fix</th><th>Chuyển chi nhánh — sau fix</th></tr>
+        <tr><td>5</td><td>652/2808 lệch</td><td>654/2808 lệch</td></tr>
+        <tr><td>6</td><td>12/742 lệch</td><td>38/742 lệch</td></tr>
+        <tr><td>7</td><td>486/1090 lệch</td><td>512/1090 lệch</td></tr>
+      </table>
+      <p>Số lệch KHÔNG giảm sau fix — nhưng đây không phải fix hỏng: phần lớn dòng "lệch" là các
+        giao dịch chị Hà chấm bằng cách tra hệ thống live (xác nhận ở trên), thuật toán chỉ đọc GL02
+        không có cách tái tạo lại bước đó. Fix vẫn đúng theo quy tắc chính thức chị Hà xác nhận, chỉ
+        là quy tắc đó không phủ hết mọi case chấm tay lịch sử.</p>
+
+      <div class="label"><span class="pill pill-warn">Hiệu ứng phụ đã biết, đã được xác nhận chấp nhận được</span></div>
+      <p>Tháng 6 xuất hiện <b>3 dòng regression</b>: trước fix khớp ĐÚNG ở "GD khác" (373/373), sau
+        fix bị xếp SAI sang "Cân CN" (370/373, GD khác còn khớp; 3 dòng lệch). Cơ chế: 3 dòng này
+        được giải phóng khỏi ứng viên Chuyển chi nhánh (không thoả điều kiện mới), rơi xuống bước
+        Cân CN phía sau và trùng ngẫu nhiên khoá (TRBRCD+số tiền, không có REMARK) với dòng khác
+        không liên quan. Đây là rủi ro "khoá khớp không duy nhất" đã biết của thiết kế
+        <code>_mark_can_cn()</code> từ trước (không phải lỗi mới do diff này tạo ra cấu trúc khoá),
+        nhưng diff này làm lộ ra 3 ca cụ thể. Agent phản biện (2026-09-14) đánh giá đây là nghi vấn
+        cần người dùng xác nhận trước khi mở PR (đổi khoá khớp giao dịch = rủi ro cao theo
+        <code>docs/CHECKLIST-TRUOC-KHI-MO-PR.md</code> mục I) — <b>người dùng đã xác nhận (14/09):
+        chấp nhận đánh đổi, giữ nguyên fix theo đúng quy tắc chị Hà đã khẳng định.</b></p>
+
+      <div class="note">Branch: <code>fix/cham459901-ccn-trbrcd-1000</code> (tách từ
+        <code>develop</code>). Đợt này chỉ sửa <code>_mark_ccn()</code> — 4 nhóm còn lại (1000 Hoàn
+        trả, Cân CN, Điện KO offline — phần lệch còn lại là các case cần tra hệ thống live, không
+        tự động hoá được từ GL02) không đổi gì thêm trong PR này.</div>
+
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-14</footer>
 </div>
 </body>
 </html>

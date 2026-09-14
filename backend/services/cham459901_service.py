@@ -769,7 +769,9 @@ def _mark_ccn(df: pd.DataFrame) -> pd.Series:
     được nhận diện cùng 1 nhóm (xem Implementation-notes.html) — nếu không, chân lẻ rơi xuống
     bước Cân CN phía sau và có thể bị ghép nhầm với giao dịch không liên quan trùng số tiền tròn.
     Nhóm không cân bằng tuyệt đối (VD REMARK trùng lặp giữa nhiều giao dịch khác nhau)
-    bị loại bỏ hoàn toàn — không tách một phần — để rơi về GD khác chấm thủ công."""
+    bị loại bỏ hoàn toàn — không tách một phần — để rơi về GD khác chấm thủ công.
+    Bắt buộc nhóm có 1 vế TRBRCD=1000 và 1 vế khác 1000 — chị Hà xác nhận 13/09/2026: 2 vế
+    cùng chi nhánh là Lệnh Đi (đã giành trước ở bước trên), không phải Chuyển chi nhánh."""
     if len(df) == 0:
         return pd.Series(dtype=bool)
     amt = df[['DRAMOUNT', 'CRAMOUNT']].abs().max(axis=1).round(0)
@@ -780,7 +782,11 @@ def _mark_ccn(df: pd.DataFrame) -> pd.Series:
     dr_any  = (df['DRAMOUNT'] != 0).groupby(key).transform('any')
     cr_any  = (df['CRAMOUNT'] != 0).groupby(key).transform('any')
 
-    return (sum_cr - sum_dr).abs().lt(1) & dr_any & cr_any
+    is_1000 = df['TRBRCD'] == '1000'
+    has_1000 = is_1000.groupby(key).transform('any')
+    has_non1000 = (~is_1000).groupby(key).transform('any')
+
+    return (sum_cr - sum_dr).abs().lt(1) & dr_any & cr_any & has_1000 & has_non1000
 
 
 def _mark_can_cn(df: pd.DataFrame) -> pd.Series:
