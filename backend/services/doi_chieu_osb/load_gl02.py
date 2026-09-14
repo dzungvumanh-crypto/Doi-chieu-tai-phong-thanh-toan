@@ -15,6 +15,12 @@ TOÀN BỘ CỘT (`drop_duplicates()` không `subset` — chỉ loại bản sao
 file, KHÔNG dedupe theo 1-2 cột riêng lẻ vì sẽ xoá nhầm dữ liệu thật, xem lỗi tương tự đã phát
 hiện ở `load_osb.py`), rồi mới lọc theo TRDATE = ngày đang cần. Sau khi lọc đầy đủ (LOCAC/CCY/
 CUSTOMER/REFERENCE), số dòng chênh lệch tính ra khớp 100% với file "hà chấm" cả 3 ngày.
+
+Verify thêm dữ liệu thật ngày 31/08/2026: 1 ZIP có thể chứa file `.xlsx` thay vì `.csv`
+(`1000_gl02_2026083120260831.xlsx`, tên ZIP `GL02_20260603_1000.zip` SAI ngày nhưng nội dung
+đúng 31/08 — code đọc theo TRDATE thật bên trong nên không bị ảnh hưởng bởi tên file sai). `.csv`
+và `.xlsx` bình đẳng, đọc bằng `pd.read_csv`/`pd.read_excel(engine="calamine")` tương ứng, cùng 1
+bộ validate cột bắt buộc sau khi đọc — không có nhánh ưu tiên đuôi nào.
 """
 import io
 import os
@@ -40,12 +46,28 @@ from backend.services.ach.zip_utils import (
 from .config import CCY_VND, GL02_REQUIRED_COLS, REFERENCE_LOAI_TRU, SO_TRACE_END, SO_TRACE_START, TAI_KHOAN
 
 _BUOC = "OSB-GL02"
+_DUOI_HOP_LE = (".csv", ".xlsx", ".xls")
 
 
-def _doc_1_csv(raw: bytes, ten_file: str) -> pd.DataFrame:
-    enc = _detect_encoding_from_bytes(raw[:512])
-    df = pd.read_csv(io.BytesIO(raw), dtype=str, encoding=enc, low_memory=False,
-                      encoding_errors="replace")
+def _la_file_hop_le(ten_file: str) -> bool:
+    return ten_file.lower().endswith(_DUOI_HOP_LE)
+
+
+def _doc_1_file(raw: bytes, ten_file: str) -> pd.DataFrame:
+    """Đọc 1 file thành viên trong ZIP GL02 — `.csv` (đa số ngày) hoặc `.xlsx`/`.xls` (verify thật
+    31/08/2026: `1000_gl02_2026083120260831.xlsx`, 17 cột, có thêm 1 cột "trace, tiền" thừa giữa
+    REMARK và DRAMOUNT — không cần xử lý gì đặc biệt, `usecols` không có nên cột thừa tự bị bỏ qua
+    ở bước validate cột bắt buộc bên dưới). Mirror đúng tinh thần
+    `doi_chieu_song_phuong_core/load_core.py::load_core_den_csv()` (2026-09-09: "file core đã
+    phân loại sẵn giờ chấp nhận cả .csv lẫn .xlsx") — không có ưu tiên đuôi nào hơn đuôi nào, đúng
+    khuôn cột bắt buộc là dùng được, đọc bằng `engine="calamine"` cho Excel (đúng quy ước chuẩn dự
+    án — `openpyxl` từng đọc sai/mất dữ liệu âm thầm với file lỗi thẻ `<dimension>`)."""
+    if ten_file.lower().endswith((".xlsx", ".xls")):
+        df = pd.read_excel(io.BytesIO(raw), dtype=str, engine="calamine")
+    else:
+        enc = _detect_encoding_from_bytes(raw[:512])
+        df = pd.read_csv(io.BytesIO(raw), dtype=str, encoding=enc, low_memory=False,
+                          encoding_errors="replace")
     df.columns = [c.strip() for c in df.columns]
     missing = GL02_REQUIRED_COLS - set(df.columns)
     if missing:
@@ -68,15 +90,15 @@ def _doc_zip_tool(zip_path: str, tool_path: str, tool_type: str, log_callback=No
             raise RuntimeError(r.stderr.decode(errors="replace"))
         frames = []
         for name in sorted(os.listdir(tmp_dir)):
-            if not name.lower().endswith(".csv"):
+            if not _la_file_hop_le(name):
                 continue
             with open(os.path.join(tmp_dir, name), "rb") as f:
                 raw = f.read()
-            df = _doc_1_csv(raw, name)
+            df = _doc_1_file(raw, name)
             _log(f"[{_BUOC}] {name}: {len(df):,} dòng")
             frames.append(df)
         if not frames:
-            raise ValueError(f"ZIP GL02 '{zip_path}' không có file .csv nào bên trong.")
+            raise ValueError(f"ZIP GL02 '{zip_path}' không có file .csv/.xlsx nào bên trong.")
         return pd.concat(frames, ignore_index=True)
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -87,14 +109,14 @@ def _doc_zip_pyzipper(zip_path: str, log_callback=None) -> pd.DataFrame:
     frames = []
     with pyzipper.AESZipFile(zip_path, "r") as z:
         z.setpassword(zip_password())
-        names = [n for n in sorted(z.namelist()) if n.lower().endswith(".csv")]
+        names = [n for n in sorted(z.namelist()) if _la_file_hop_le(n)]
         if not names:
-            raise ValueError(f"ZIP GL02 '{zip_path}' không có file .csv nào bên trong.")
+            raise ValueError(f"ZIP GL02 '{zip_path}' không có file .csv/.xlsx nào bên trong.")
         for name in names:
             if log_callback:
                 log_callback(f"[{_BUOC}] Đang nạp {name} vào bộ nhớ (cách dự phòng)...")
             raw = z.read(name)
-            df = _doc_1_csv(raw, name)
+            df = _doc_1_file(raw, name)
             _log(f"[{_BUOC}] {name}: {len(df):,} dòng")
             frames.append(df)
     return pd.concat(frames, ignore_index=True)

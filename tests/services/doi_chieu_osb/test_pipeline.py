@@ -8,8 +8,10 @@ module này (xem `docs/Implementation-notes.html`):
 import io
 
 import pandas as pd
+import pyzipper
 import pytest
 
+from backend.core.config import zip_password
 from backend.services.doi_chieu_osb import load_gl02, load_osb, match, pipeline
 
 MA_TK = "519910"
@@ -317,3 +319,28 @@ def test_pipeline_gl02_va_osb_0_dong_sau_loc(monkeypatch):
     assert ket_qua["canh_bao"]["nhom_huy_qua_2"] == 0
     assert isinstance(ket_qua["zip_bytes"], bytes)
     assert len(ket_qua["zip_bytes"]) > 0
+
+
+# ─── Ca biên: ZIP GL02 chứa file .xlsx thay vì .csv ─────────────────────────────
+
+def test_gl02_zip_doc_duoc_file_xlsx(tmp_path):
+    """Verify dữ liệu thật 31/08/2026: 1 ZIP GL02 (`GL02_20260603_1000.zip`, tên SAI ngày nhưng nội
+    dung đúng 31/08) chứa file `1000_gl02_2026083120260831.xlsx` thay vì `.csv`. `read_gl02_zip()`
+    phải đọc được cả 2 đuôi — dựng 1 ZIP AES thật (không mock) chứa đúng 1 file `.xlsx`."""
+    df = pd.DataFrame([_gl02_row("[123456] xlsx test", dramount="100000", cramount="0")])
+    xlsx_buf = io.BytesIO()
+    with pd.ExcelWriter(xlsx_buf, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Sheet1")
+
+    zip_path = tmp_path / "gl02_xlsx_test.zip"
+    with pyzipper.AESZipFile(str(zip_path), "w", compression=pyzipper.ZIP_DEFLATED,
+                              encryption=pyzipper.WZ_AES) as zf:
+        zf.setpassword(zip_password())
+        zf.writestr("1000_gl02_2026083120260831.xlsx", xlsx_buf.getvalue())
+
+    result, n_short = load_gl02.read_gl02_zip(str(zip_path), MA_TK, NGAY)
+
+    assert len(result) == 1
+    assert result["REMARK"].iloc[0] == "[123456] xlsx test"
+    assert result["DRAMOUNT_NUM"].iloc[0] == 100000
+    assert n_short == 0
