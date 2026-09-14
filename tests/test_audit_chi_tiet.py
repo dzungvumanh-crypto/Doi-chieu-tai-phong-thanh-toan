@@ -254,8 +254,10 @@ def test_endpoint_bo_loc_liet_ke_nguoi_va_module(client_nhat_ky):
 # ── Bỏ qua request không phải thao tác nghiệp vụ ─────────────────────────────
 def test_moi_muc_bo_qua_khop_route_that():
     """Gõ sai một đường trong _SKIP_EXACT thì không lỗi gì, dòng nhật ký vẫn
-    ghi như cũ — chỉ test này bắt được. Route đổi tên cũng rơi vào đây."""
-    import re
+    ghi như cũ — chỉ test này bắt được. Route đổi tên cũng rơi vào đây.
+
+    Chỉ tham số kiểu int mới thành {id}: lúc chạy, middleware chỉ đổi đoạn TOÀN
+    SỐ. Khai `/api/ach/cancel/{id}` (job_id là chuỗi hex) sẽ không bao giờ khớp."""
     from fastapi.routing import APIRoute
     from backend.core.audit_middleware import _SKIP_EXACT
     from backend.main import app
@@ -263,7 +265,10 @@ def test_moi_muc_bo_qua_khop_route_that():
     co_that = set()
     for r in app.routes:
         if isinstance(r, APIRoute):
-            path = re.sub(r"\{[^}]+\}", "{id}", r.path)
+            path = r.path
+            for p in r.dependant.path_params:
+                if p.field_info.annotation is int:
+                    path = path.replace("{" + p.name + "}", "{id}")
             co_that.update((m, path) for m in r.methods)
     thieu = sorted(_SKIP_EXACT - co_that)
     assert not thieu, f"Mục bỏ qua không khớp route nào: {thieu}"

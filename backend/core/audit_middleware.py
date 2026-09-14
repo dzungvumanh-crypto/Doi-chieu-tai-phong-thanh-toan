@@ -73,7 +73,8 @@ _SKIP_EXACT = {
     ("PATCH", "/api/leaves/quotas/staff/{id}/join-date"),
 
     # ── POST nhưng KHÔNG phải thao tác nghiệp vụ (người dùng yêu cầu 14/09/2026) ──
-    # Chỉ đọc / dọn đường, không ghi dữ liệu nghiệp vụ nào. Ghi lại thì mở màn
+    # Chỉ đọc / dọn đường, không ghi dữ liệu nghiệp vụ nào (riêng `ack` ghi cờ
+    # "đã đọc thông báo" của chính người bấm — không phải hồ sơ). Ghi lại thì mở màn
     # hình hay chọn file cũng thành một dòng "Thực hiện …" (đo trên máy thật:
     # 310 dòng /api/ach/validate so với 23 lượt chạy ACH).
     ("POST", "/api/leaves/preview/warmup"),          # tự gọi lúc MỞ màn Nghỉ phép
