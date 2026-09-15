@@ -84,6 +84,67 @@ _SURVEY_TABLES = [
 ]
 
 
+# ── Thi đua khen thưởng — 2026-09-15 ───────────────────────────────────────────
+# Một định nghĩa dùng ở cả _create_tables() lẫn schema_migrations (lý do: xem
+# khối Khảo sát ngay trên). "Đơn vị" theo dõi 3 mức: toàn Trung tâm Thanh toán
+# (thi_dua_don_vi.department_id NULL), từng phòng (department_id có giá trị),
+# từng cá nhân (thi_dua_ca_nhan, khoá theo staff_id).
+_THI_DUA_TABLES = [
+    """CREATE TABLE IF NOT EXISTS thi_dua_don_vi (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        year              INTEGER NOT NULL,
+        department_id     INTEGER REFERENCES departments(id) ON DELETE SET NULL,
+        danh_hieu         TEXT NOT NULL,
+        so_quyet_dinh     TEXT,
+        ngay_quyet_dinh   DATE,
+        co_quan_ban_hanh  TEXT,
+        ghi_chu           TEXT,
+        created_by        INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+        created_at        DATETIME NOT NULL,
+        updated_at        DATETIME NOT NULL
+    )""",
+    # cap: dang | chuyen_mon | cong_doan — backend.core.enums.ThiDuaCap.
+    """CREATE TABLE IF NOT EXISTS thi_dua_ca_nhan (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        staff_id          INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+        year              INTEGER NOT NULL,
+        cap               TEXT NOT NULL CHECK(cap IN ('dang','chuyen_mon','cong_doan')),
+        danh_hieu         TEXT NOT NULL,
+        so_quyet_dinh     TEXT,
+        ngay_quyet_dinh   DATE,
+        co_quan_ban_hanh  TEXT,
+        ghi_chu           TEXT,
+        created_by        INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+        created_at        DATETIME NOT NULL,
+        updated_at        DATETIME NOT NULL
+    )""",
+    # File quyết định công nhận lưu thẳng BLOB — quan hệ 1:1 với sáng kiến, không
+    # cần bảng đính kèm đa hình kiểu hr_attachments.
+    """CREATE TABLE IF NOT EXISTS thi_dua_sang_kien (
+        id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+        staff_id           INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+        year               INTEGER NOT NULL,
+        ten_sang_kien      TEXT NOT NULL,
+        so_quyet_dinh      TEXT,
+        ngay_quyet_dinh    DATE,
+        co_quan_cong_nhan  TEXT,
+        ghi_chu            TEXT,
+        file_name          TEXT,
+        file_mime          TEXT,
+        file_size          INTEGER,
+        file_content       BLOB,
+        created_by         INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+        created_at         DATETIME NOT NULL,
+        updated_at         DATETIME NOT NULL
+    )""",
+    "CREATE INDEX IF NOT EXISTS ix_thi_dua_don_vi_year     ON thi_dua_don_vi(year)",
+    "CREATE INDEX IF NOT EXISTS ix_thi_dua_ca_nhan_staff   ON thi_dua_ca_nhan(staff_id)",
+    "CREATE INDEX IF NOT EXISTS ix_thi_dua_ca_nhan_year    ON thi_dua_ca_nhan(year)",
+    "CREATE INDEX IF NOT EXISTS ix_thi_dua_sang_kien_staff ON thi_dua_sang_kien(staff_id)",
+    "CREATE INDEX IF NOT EXISTS ix_thi_dua_sang_kien_year  ON thi_dua_sang_kien(year)",
+]
+
+
 # ── Tạo tables (fresh install) ────────────────────────────────────────────────
 def _create_tables(db_path: str):
     """Tạo tất cả bảng nếu chưa có — idempotent."""
@@ -537,6 +598,7 @@ def _create_tables(db_path: str):
             time_ms      INTEGER
         )""",
         *_SURVEY_TABLES,
+        *_THI_DUA_TABLES,
         # ── Quản lý nhân sự — 2026-08-28 ──────────────────────────────────────
         # `recruit_date` cố ý KHÔNG có ở đây: "Ngày tuyển dụng" chính là "Ngày vào
         # ngành" đã nằm ở `user_tttt.join_industry_date` — một mốc thì một cột.
@@ -1835,6 +1897,8 @@ def _ensure_indexes():
             END""",
         # ── Khảo sát — 2026-09-11 (định nghĩa ở _SURVEY_TABLES đầu file) ──
         *_SURVEY_TABLES,
+        # ── Thi đua khen thưởng — 2026-09-15 (định nghĩa ở _THI_DUA_TABLES đầu file) ──
+        *_THI_DUA_TABLES,
     ]
     _mig_log = logging.getLogger(__name__)
 
