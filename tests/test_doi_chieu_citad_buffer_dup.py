@@ -15,6 +15,14 @@ soMon VÀ soTien TRÙNG TUYỆT ĐỐI — xác suất trùng thật giữa 2 d�
 lập gần như bằng 0 — gắn cờ `_suspect_dup_tien` để frontend cảnh báo, KHÔNG
 chặn lưu (khoá lại đúng hành vi "vẫn lưu, chỉ cảnh báo" đã thống nhất, tránh
 âm thầm mất dữ liệu thật nếu chẳng may 2 loại tiền trùng số thật).
+
+Follow-up (review PR#100, Người 1, 14/09/2026): cảnh báo báo SAI gần như mọi
+lượt nạp PaymentHub. `content_paymenthub.js` `_doSaveBaoCao()` gửi đủ cả 4
+dòng (ih/il × đến/đi) của 1 kênh đã đọc được, kể cả dòng thật sự 0 món/0 đồng
+— chỉ bỏ hẳn khi CẢ 4 dòng cùng 0 (`saveBaoCao()`). 2 loại tiền cùng có 1
+dòng trống (rất thường gặp) trùng 0/0 với nhau, bị gắn cờ dù không hề đọc
+nhầm gì. Sửa: loại dòng 0/0 trước khi so (`_is_empty_buffer_item()`). CITAD
+(`content.js` `autoSaveIfNew()`) không gặp vì đã return sớm khi toàn 0.
 """
 from backend.services import doi_chieu_citad_service as svc
 
@@ -101,3 +109,38 @@ def test_ap_dung_ca_cho_buffer_paymenthub():
     items = {i["tien"]: i for i in svc.buffer_get_ph(OWNER)}
     assert items["USD"].get("_suspect_dup_tien") == "EUR"
     assert items["EUR"].get("_suspect_dup_tien") == "USD"
+
+
+def _ph_rows(tien, den_ih=(0, 0.0), di_ih=(0, 0.0), den_il=(0, 0.0), di_il=(0, 0.0)):
+    # _doSaveBaoCao() luôn gửi đủ 4 dòng của 1 kênh đã đọc được (kể cả dòng
+    # 0/0 thật sự không có giao dịch) — mô phỏng đúng payload thật đó.
+    specs = [("den", "ih", den_ih), ("di", "ih", di_ih), ("den", "il", den_il), ("di", "il", di_il)]
+    return [
+        {"key": f"ph_{tien}_{chieu}_{loai}", "loai": loai, "chieu": chieu, "tien": tien,
+         "soMon": so_mon, "soTien": so_tien}
+        for chieu, loai, (so_mon, so_tien) in specs
+    ]
+
+
+def test_paymenthub_dong_0_0_khong_bi_gan_co_du_trung_2_loai_tien():
+    # USD và EUR đều chỉ có giao dịch ở den_ih — 3 dòng còn lại của cả 2 đều
+    # 0/0, trùng nhau nhưng KHÔNG phải dấu hiệu đọc nhầm gì (bug thật đã báo).
+    svc.buffer_save_ph(OWNER, _ph_rows("USD", den_ih=(5, 1000.0)))
+    svc.buffer_save_ph(OWNER, _ph_rows("EUR", den_ih=(2, 50.0)))
+
+    items = svc.buffer_get_ph(OWNER)
+    for it in items:
+        if it["soMon"] == 0 and it["soTien"] == 0:
+            assert "_suspect_dup_tien" not in it, it
+    by_row = {(i["tien"], i["chieu"], i["loai"]): i for i in items}
+    assert "_suspect_dup_tien" not in by_row[("USD", "den", "ih")]
+    assert "_suspect_dup_tien" not in by_row[("EUR", "den", "ih")]
+
+
+def test_paymenthub_dong_khac_0_trung_tuyet_doi_van_bi_gan_co():
+    svc.buffer_save_ph(OWNER, _ph_rows("USD", den_ih=(5, 1000.0)))
+    svc.buffer_save_ph(OWNER, _ph_rows("EUR", den_ih=(5, 1000.0)))  # trùng thật
+
+    by_row = {(i["tien"], i["chieu"], i["loai"]): i for i in svc.buffer_get_ph(OWNER)}
+    assert by_row[("USD", "den", "ih")].get("_suspect_dup_tien") == "EUR"
+    assert by_row[("EUR", "den", "ih")].get("_suspect_dup_tien") == "USD"

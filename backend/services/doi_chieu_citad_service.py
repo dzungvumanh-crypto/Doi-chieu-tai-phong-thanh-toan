@@ -133,14 +133,27 @@ def _purge_expired(bucket: dict[str, dict]) -> None:
 # 2 trị này gần như bằng 0 — gắn cờ nghi vấn cho FE cảnh báo. KHÔNG chặn lưu/
 # xoá gì (lỡ trùng thật thì vẫn còn nguyên số liệu, chỉ mất công kiểm tra lại
 # bằng mắt, an toàn hơn tự ý loại bỏ có thể mất đúng số liệu thật).
+#
+# Dòng 0 món/0 đồng PHẢI loại trước khi so — PaymentHub (content_paymenthub.js
+# _doSaveBaoCao(), dòng ~275-291) gửi đủ cả 4 dòng (ih/il × đến/đi) của 1 kênh
+# đã đọc được, kể cả dòng thật sự không có giao dịch (0/0), chỉ bỏ hẳn khi
+# CẢ 4 dòng cùng 0 (saveBaoCao(), dòng ~256). Không loại thì 2 loại tiền cùng
+# có 1 dòng trống (rất thường gặp) sẽ trùng 0/0 với nhau, gắn cờ nghi vấn SAI
+# ở hầu như mọi lượt nạp — cảnh báo mất tác dụng vì người dùng quen tay bỏ
+# qua (review PR#100, Người 1, 14/09/2026). CITAD (content.js autoSaveIfNew())
+# không gặp vì đã return sớm khi toàn 0, không có dòng 0/0 nào lọt vào buffer.
+def _is_empty_buffer_item(it: dict) -> bool:
+    return not it.get("soMon") and not it.get("soTien")
+
+
 def _annotate_currency_duplicates(items: list[dict]) -> None:
     for it in items:
         it.pop("_suspect_dup_tien", None)
     for i, a in enumerate(items):
-        if a.get("source"):
+        if a.get("source") or _is_empty_buffer_item(a):
             continue
         for b in items[i + 1:]:
-            if b.get("source"):
+            if b.get("source") or _is_empty_buffer_item(b):
                 continue
             if (a.get("cong") == b.get("cong") and a.get("loai") == b.get("loai")
                     and a.get("chieu") == b.get("chieu") and a.get("tien") != b.get("tien")
