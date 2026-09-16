@@ -53,6 +53,70 @@
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
   <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-09-16</p>
 
+  <!-- TV1 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">TV1</span>
+      <span class="card-title">Chặn trên <code>pandas&lt;3.0.0</code> — vì sao chặn pandas chứ không nâng openpyxl (PR #105)</span>
+      <span class="badge badge-warn">Đã merge — CI về cấu trúc KHÔNG bắt được lỗi này</span>
+    </div>
+    <div class="card-body">
+
+      <p><code>requirements.txt</code> ghim <code>openpyxl==3.1.2</code> nhưng để <code>pandas&gt;=2.0.0</code>
+        không chặn trên. pandas 3.x (bản mới nhất trên PyPI hiện là 3.0.5) nâng yêu cầu tối thiểu của openpyxl
+        lên <code>3.1.5</code> → máy cài mới kéo về pandas 3.x rồi mọi đường xuất/đọc Excel qua pandas hỏng.</p>
+
+      <p><b>pip KHÔNG chặn việc này.</b> <code>openpyxl</code> nằm trong <b>extra</b> <code>excel</code> của
+        pandas, không phải dependency bắt buộc — pip cài pandas 3.x cạnh <code>openpyxl==3.1.2</code> bình
+        thường. Lỗi chỉ nổ <b>lúc chạy</b>, khi pandas gọi <code>import_optional_dependency()</code> và so
+        phiên bản. Đừng trông vào bước cài như một lưới an toàn.</p>
+
+      <table>
+        <tr><th style="width:26%">Hai lựa chọn</th><th style="width:37%">Hệ quả</th><th style="width:37%">Quyết định</th></tr>
+        <tr>
+          <td><b>Nâng <code>openpyxl</code> lên ≥3.1.5</b></td>
+          <td><code>_shift_merges()</code> trong <code>backend/services/swift_recon/template_exporters.py</code>
+            tự viết tay để <b>bù một lỗi có thật của openpyxl</b> (<code>insert_rows</code>/<code>delete_rows</code>
+            không dịch vùng gộp ô) và nó dịch merge <b>vô điều kiện</b>. Nếu bản mới đã vá lỗi gốc ở thượng nguồn
+            → <b>dịch hai lần</b>, file Excel SWIFT sai vùng gộp, không lỗi, không log.</td>
+          <td>❌ Bỏ. Không test nào canh hành vi này; ghim <code>3.1.2</code> có từ commit đầu tiên, không ai
+            biết nó đang che chắn cho đoạn bù đó.</td>
+        </tr>
+        <tr>
+          <td><b>Chặn <code>pandas&lt;3.0.0</code></b></td>
+          <td>Giữ nguyên hành vi đã chạy ổn định. Cùng kiểu chặn trên đã có sẵn trong file
+            (<code>numpy&gt;=1.22,&lt;2.6</code>).</td>
+          <td>✅ Chọn.</td>
+        </tr>
+      </table>
+
+      <p><b>Lý do thứ hai, độc lập với openpyxl — và là lý do mạnh hơn:</b> pandas 3.0 đặt string dtype làm
+        mặc định (PDEP-14), đổi hành vi <code>.astype(str)</code> với NA. Chính điều mà
+        <code>backend/services/ach/so_tien.py</code> đã ghi chú, và module đó sinh ra để chặn lỗi
+        <i>"sai 1000 lần, im lặng"</i> trong số tiền ACH. <b>Kể cả không có chuyện openpyxl, pandas 3.0 vẫn
+        phải chặn.</b> Comment trong <code>requirements.txt</code> hiện chỉ nhắc openpyxl — người sau thấy
+        openpyxl được nâng sẽ tưởng gỡ được chặn trên. Nên bổ sung ý này khi có dịp sửa file.</p>
+
+      <p class="caution"><b>⚠ CI không thể tái hiện lỗi này.</b> pandas 3.x đòi <code>Python&gt;=3.11</code>;
+        <code>.github/workflows/tests.yml</code> ghim <code>python-version: "3.10"</code>, còn
+        <code>docs/CONTRIBUTING.md</code> cho phép "Python 3.10 trở lên". Người chạy 3.11+ gặp lỗi thật trong
+        khi CI xanh — đúng tình huống sinh ra PR này. <b>CI xanh không chứng minh môi trường đồng đội xanh.</b></p>
+
+      <p class="note"><b>⚠ Cùng loại bệnh, chưa xử lý:</b> <code>pypdfium2&gt;=4.30</code> cũng không chặn trên,
+        PyPI đã ra 5.x và máy dev đang chạy <b>5.13.0</b> — việc nhảy major đã xảy ra âm thầm. Nó rơi vào phần
+        ký PDF đơn nghỉ phép (<code>insert_obj</code>/<code>gen_content</code>/<code>stamp()</code>), chỗ mà
+        DESIGN.md mô tả là hỏng rất im lặng.</p>
+
+      <p><b>Bẫy khi kiểm PR này:</b> mô tả PR báo "23 lỗi có sẵn trên develop" trong
+        <code>test_ach_gl02_misden_algorithm.py</code>. Con số tái hiện được, nhưng nguyên nhân là
+        <b>thiếu biến <code>DOI_CHIEU_ZIP_PASSWORD</code></b> (<code>.env</code> bị gitignore nên checkout/venv
+        mới không có). Đặt biến vào → <code>1966 passed, 0 failed</code>. Develop không hỏng dòng nào. Chạy
+        pytest trên môi trường mới mà thiếu <code>.env</code> thì cả 4 module đối chiếu trượt sạch — kiểm
+        <code>.env</code> trước khi kết luận "lỗi có sẵn".</p>
+
+    </div>
+  </div>
+
   <!-- DC3 -->
   <div class="card">
     <div class="card-header">

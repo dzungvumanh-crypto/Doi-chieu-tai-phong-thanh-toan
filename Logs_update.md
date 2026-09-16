@@ -4,6 +4,14 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 16/09/2026 Thư viện — chặn `pandas` phiên bản 3 để không hỏng phần xuất file Excel
+    + ✅ **Cần chạy lại `start.bat` một lần** sau đợt này để máy tự cài đúng phiên bản thư viện
+    + ℹ️ Không đổi màn hình nào, không đổi dữ liệu. Đây là việc bên trong: `pandas` vừa ra bản mới (bản 3)
+      đòi một thư viện Excel đời cao hơn bản hệ thống đang dùng. Máy nào cài mới hôm nay sẽ tự kéo về bản 3
+      rồi **mọi chức năng xuất Excel báo lỗi** — nay đã chặn lại
+    + ℹ️ Máy chính đang chạy Python 3.10 nên **chưa từng dính lỗi này** (bản `pandas` 3 đòi Python 3.11 trở lên).
+      Chặn trước để máy cài mới hoặc nâng Python về sau không vấp
+
 - 16/09/2026 Đối chiếu CITAD — hết cảnh "Nạp" ra số của loại tiền hôm đó không có giao dịch
     + ✅ **Dữ liệu đã quét nay tự hết hạn sau 4 giờ**: trước đây một lượt quét cũ (hôm khác, lúc chạy thử)
       nằm lại trong máy chủ vô thời hạn, đến khi bấm "Nạp CITAD" thì bị kéo vào bảng cùng với số vừa quét
