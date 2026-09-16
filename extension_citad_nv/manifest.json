@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "CITAD - PaymentHub N&V | Lấy số liệu đối chiếu (TTTT)",
+  "name": "CITAD - PaymentHub N&V | Lấy số liệu đối chiếu (TTTT) v1.1",
   "version": "1.1",
   "description": "Tự động lấy số liệu CITAD (Tra cứu dữ liệu VNĐ + ngoại tệ USD/EUR) và PaymentHub (Lập bảng kê phí chia sẻ CITAD) vào module Đối chiếu CITAD - PaymentHub N&V của app TTTT — Extension RIÊNG cho Phòng QLTK Nostro, Vostro, không dùng chung với Extension của Phòng Thanh toán.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApt76DWH2+N/44qvTMqc+/DxBC9G9s8ci5LSh65ZYLc9Qg6lfApw7wGZObM2Ojqo94mHNqWhegmOVX7sfj9wfHsSkzfZozijIu1ejy4DftqDbYNqjYpDpOMNFLXoPudY6Boq6XLoK7AcsPKawge3MhIJo6RFnMRFJ9GOcSA5hrtebd7bvYKVc9GsqtDbE+sSHdQ/8qRjiT+hMWuSPFm6V2pCT4NZFvXbuHimGPiywZ6nVyzvIgaKGBkmwYRxI70W/oY97dRSayOZupVEAR5rEoYvu2CZJUxpzWBLRHVcHqrBUZWTzjNHsUM6eq4c3hJNwkN3nh9QnAT6ShZfqmXQD7wIDAQAB",
