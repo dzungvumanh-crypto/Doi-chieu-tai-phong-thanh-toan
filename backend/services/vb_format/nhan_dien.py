@@ -79,12 +79,24 @@ RE_SO_KY_HIEU  = re.compile(r"^Số\s*:", re.I)
 RE_DIA_DANH_NGAY = re.compile(
     r"^.{1,45}?,\s*ngày\s*\d{0,2}\s*tháng\s*\d{0,2}\s*năm\s*\d{0,4}\s*\.?$", re.I)
 RE_CAN_CU      = re.compile(r"^Căn\s+cứ\b", re.I)
+# Đề mục "Căn cứ trình" / "Căn cứ pháp lý:" — không phải một dòng căn cứ. Dòng
+# căn cứ thật viện dẫn văn bản (có số hiệu, ngày) hoặc chấm câu ở cuối; đề mục
+# thì ngắn, không số, không chấm câu. Số "I." của đề mục do Word tự đánh không
+# nằm trong chữ của đoạn, nên bộ nhận diện chỉ thấy "Căn cứ trình" — gặp thật
+# trên Tờ trình bàn giao chứng từ: in đậm NGHIÊNG trong khi "II. Nội dung
+# trình" ngay dưới in đậm thẳng.
+#
+# Chữ đầu sau "Căn cứ" phải viết THƯỜNG: dòng căn cứ viện dẫn văn bản mở đầu
+# bằng tên loại viết hoa ("Căn cứ Luật Các tổ chức tín dụng", "Căn cứ Điều lệ
+# Agribank") — người soạn quên dấu ";" cuối dòng thì vẫn là căn cứ, vẫn nghiêng.
+RE_DE_MUC_CAN_CU = re.compile(r"^(?i:căn\s+cứ)\s+(\w)[^\d;,.]{0,30}:?$")
 RE_TRICH_YEU_CV = re.compile(r"^V/v\b", re.I)
 RE_PHAN_CHUONG = re.compile(r"^(Phần|Chương)\s+([IVXLCDM]+|\d+)\s*\.?$", re.I)
 RE_MUC         = re.compile(r"^(Tiểu\s+mục|Mục)\s+(\d+|[IVXLCDM]+)\s*\.?$", re.I)
 RE_MUC_LA_MA   = re.compile(r"^([IVXLCDM]+)\s*[.)/]\s*(.+)$")
 RE_DIEU        = re.compile(r"^Điều\s+\d+\s*[.:]")
-RE_KHOAN       = re.compile(r"^(\d{1,2})\s*[.)/]\s*(.*)$")
+# `(?!\d)`: "5.000" / "15/9/2026" là số, không phải khoản — xem `bien_doi.RE_SO_DAU`.
+RE_KHOAN       = re.compile(r"^(\d{1,2})\s*[.)/](?!\d)\s*(.*)$")
 RE_DIEM        = re.compile(rf"^([{CHU_CAI_DIEM}]{{1,2}})\s*[).]\s+(.*)$")
 # Mẫu 06 của Phụ lục V ghi "Kính gửi ……." không có dấu hai chấm — đòi dấu
 # hai chấm là bỏ sót. Nhóm 1 giữ phần đứng SAU để phân biệt gửi một nơi
@@ -177,7 +189,9 @@ def _doan_doc_lap(txt: str, trong_bang: bool) -> str | None:
     if RE_KY_HIEU_SOAN.match(t):
         return "ky_hieu_nguoi_soan"
     if RE_CAN_CU.match(t):
-        return "can_cu"
+        de_muc = RE_DE_MUC_CAN_CU.match(t)
+        if not (de_muc and de_muc.group(1).islower()):
+            return "can_cu"
     if RE_PHAN_CHUONG.match(t):
         return "phan_chuong"
     if RE_MUC.match(t):
@@ -223,6 +237,17 @@ def _noi_dai_trich_yeu(ma: list[str], txt: list[str], i: int, ke_tiep,
       * nhiều nhất 3 dòng. Trích yếu dài hơn thế thì gần như chắc chắn đã lấn
         sang lời văn, và ép đậm + canh giữa cả một đoạn lời văn là hỏng to hơn
         việc bỏ sót một dòng trích yếu.
+      * có dòng TRỐNG xen giữa là dừng. Ngắt dòng cho cân thì hai dòng liền
+        nhau; dòng trống là người soạn tách khối.
+      * dòng sau mở đầu bằng số La Mã ("I.", "II.") là dừng — đó là đề mục
+        mới. Mã `noi_dung` không nói lên điều đó: "I. Căn cứ trình" in thường
+        nên lượt 1 không gán `muc_la_ma`. ("1." / "a)" thì lượt 1 đã gán
+        `khoan` / `diem` nên điều kiện đầu chặn sẵn.)
+
+    Gặp thật trên Tờ trình Microgateway: trích yếu "… Microgateway 3.0" không
+    có dấu kết câu, cách 7 dòng trống là "I. Căn cứ trình" — bị nuốt làm dòng
+    thứ hai của trích yếu, ra cỡ 12 canh giữa trong khi "II. Nội dung trình"
+    ngay dưới là cỡ 14 căn đều.
     """
     for _ in range(2):
         truoc = _gon(txt[i])
@@ -231,7 +256,10 @@ def _noi_dai_trich_yeu(ma: list[str], txt: list[str], i: int, ke_tiep,
         j = ke_tiep(i)
         if j < 0 or ma[j] not in ("noi_dung", "bang"):
             return
-        if len(_gon(txt[j])) > 200:
+        if j != i + 1:
+            return
+        sau = _gon(txt[j])
+        if len(sau) > 200 or RE_MUC_LA_MA.match(sau):
             return
         ma[j] = ma_dich
         i = j
@@ -344,6 +372,58 @@ def cap_gach_dau_dong(ma: list[str], txt: list[str]) -> list[int]:
     return cap
 
 
+def theo_vach_khoi_ten_dv(ma: list[str], co_vach: list[bool]) -> bool:
+    """Cắt khối tên đơn vị tại VẠCH KẺ tác giả tự vẽ. Trả True nếu có đổi.
+
+    Vạch kẻ nằm dưới tên đơn vị ban hành (Điều 8.2) — nên vạch đặt GIỮA khối
+    nói thẳng: dòng ngay trên vạch là dòng cuối của tên đơn vị ban hành, những
+    dòng dưới vạch không thuộc hai vai đó. Gặp thật trên Tờ trình bàn giao
+    chứng từ:
+
+        NGÂN HÀNG NÔNG NGHIỆP                 (thường)
+        VÀ PHÁT TRIỂN NÔNG THÔN VIỆT NAM      (thường)
+        TRUNG TÂM THANH TOÁN                  (ĐẬM)
+        ────────  (Straight Connector trong một dòng trống)
+        PHÒNG KSNB&HTVH                       (thường, cỡ 13)
+
+    Không đọc vạch thì luật "dòng cuối là ban hành" bỏ đậm TTTT, ép đậm dòng
+    PHÒNG và vẽ thêm vạch thứ hai dưới nó — hai vạch, sai cả vai.
+
+    Dòng dưới vạch nhận `bang_the_thuc`: không biết nó là gì thì không áp luật
+    của ai (giữ cỡ, đậm, hoa/thường của tác giả), chỉ kéo giãn dòng về khối đầu.
+    Dòng trên vạch: `theo_dam_khoi_ten_dv` chạy sau chia tiếp theo chữ đậm;
+    ở đây chỉ bảo đảm dòng sát vạch là ban hành.
+
+    Chỉ nhận vạch trong dòng TRỐNG, cách dòng tên liền trên và liền dưới không
+    quá một dòng trống. Vạch neo vào chính dòng có chữ có thể đặt lệch đi bất cứ
+    đâu — đọc vị trí thật của nó là việc của trình dàn trang, không đoán.
+    """
+    khoi = [i for i, m in enumerate(ma) if m in ("ten_dv_chu_quan", "ten_dv_ban_hanh")]
+    if len(khoi) < 2:
+        return False
+    for j in range(khoi[0] + 1, khoi[-1]):
+        if not co_vach[j] or ma[j] != "trong":
+            continue
+        tren = [i for i in khoi if i < j]
+        duoi = [i for i in khoi if i > j]
+        if j - tren[-1] > 2 or duoi[0] - j > 2:
+            continue
+        if any(ma[k] != "trong" for k in range(tren[-1] + 1, duoi[0]) if k != j):
+            continue
+        for i in duoi:
+            ma[i] = "bang_the_thuc"
+        # Dòng sát vạch là ban hành; dòng ban hành liền trên nó (tên dài nhiều
+        # dòng) giữ nguyên, dòng ban hành rời rạc xa hơn thì về chủ quản.
+        ma[tren[-1]] = "ten_dv_ban_hanh"
+        lien = True
+        for i in reversed(tren[:-1]):
+            lien = lien and ma[i] == "ten_dv_ban_hanh"
+            if not lien:
+                ma[i] = "ten_dv_chu_quan"
+        return True
+    return False
+
+
 def theo_dam_khoi_ten_dv(ma: list[str], dam: list[bool]) -> bool:
     """Chia lại khối tên đơn vị theo CHỮ ĐẬM tác giả đã đặt. Trả True nếu có đổi.
 
@@ -440,7 +520,13 @@ def _sua_theo_ngu_canh(ma: list[str], txt: list[str], trong_bang: list[bool],
         j = _ke_tiep(i)
         # Chỉ nhận khi đoạn kế là câu thường ngắn; "Căn cứ …" hay "Điều 1." đi
         # ngay sau tên loại nghĩa là văn bản KHÔNG có trích yếu.
-        if j >= 0 and ma[j] in ("noi_dung", "bang") and len(_gon(txt[j])) <= 200:
+        #
+        # "V/v …" dưới tên loại cũng là trích yếu của VĂN BẢN CÓ TÊN LOẠI (cỡ 14
+        # đậm), không phải trích yếu công văn (cỡ 12 thường). Lượt 1 gán
+        # `trich_yeu_cong_van` chỉ vì chữ "V/v"; vai thể thức do vị trí quyết
+        # định. Gặp thật: Tờ trình ghi "V/v đăng ký gói phần mềm…" ra cỡ 12.
+        if (j >= 0 and ma[j] in ("noi_dung", "bang", "trich_yeu_cong_van")
+                and len(_gon(txt[j])) <= 200):
             ma[j] = "trich_yeu"
             _noi_dai_trich_yeu(ma, txt, j, _ke_tiep)
 

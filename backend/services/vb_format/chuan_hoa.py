@@ -151,6 +151,10 @@ def chuan_hoa(du_lieu: bytes, cau_hinh: dict | None = None) -> tuple[bytes, dict
                                   ap_dung.nhom_bang(doc, khoi))
     # Chia lại khối tên đơn vị theo chữ đậm tác giả đã đặt — phải làm TRƯỚC khi
     # `_dinh_dang_doan` ép đậm/thường theo mã, vì lúc đó tín hiệu gốc mất sạch.
+    nhan_dien.theo_vach_khoi_ten_dv(
+        ma_list,
+        [not p.text.strip() and duong_ke._co_hinh_duong_ke(p._p.xml) for p, _ in khoi],
+    )
     nhan_dien.theo_dam_khoi_ten_dv(
         ma_list,
         [bool(p.runs) and bool(ap_dung._hieu_luc_run(p.runs[0], p, "bold"))
@@ -160,6 +164,11 @@ def chuan_hoa(du_lieu: bytes, cau_hinh: dict | None = None) -> tuple[bytes, dict
     cap_gach = (nhan_dien.cap_gach_dau_dong(ma_list, [p.text for p, _ in khoi])
                 if cfg["chung"].get("phan_cap_gach_dau_dong")
                 else [0] * len(ma_list))
+
+    # Mốc cấp ngoài cùng của gạch đầu dòng — đo trước khi vòng lặp ép thụt lề.
+    muc_gach = ap_dung.muc_gach_pho_bien(khoi, ma_list)
+    # Số đoạn đánh số / bề rộng số đã đo — dùng chung cả lượt (xem `_giu_tab_sau_so`).
+    bo_nho_so: dict = {}
 
     nhat_ky: list[dict] = []
     luu_y: list[str] = []
@@ -221,7 +230,7 @@ def chuan_hoa(du_lieu: bytes, cau_hinh: dict | None = None) -> tuple[bytes, dict
                 viec.append("ghép cụm từ không cho tách dòng")
 
         # ── Định dạng ──
-        dinh_dang = ap_dung._dinh_dang_doan(p, ma, tp, cfg["chung"])
+        dinh_dang = ap_dung._dinh_dang_doan(p, ma, tp, cfg["chung"], muc_gach.get(ma))
         rieng = [mo_ta for loai, mo_ta in dinh_dang if loai == "rieng"]
         for loai, mo_ta in dinh_dang:
             if loai == "chung":
@@ -237,6 +246,14 @@ def chuan_hoa(du_lieu: bytes, cau_hinh: dict | None = None) -> tuple[bytes, dict
             p.paragraph_format.left_indent = Cm(
                 (cap - 1) * float(cfg["chung"].get("thut_muc_con_cm") or 1.0))
             viec.append(f"thụt lề mục con (cấp {cap})")
+
+        # ── Tab sau số tự động ──
+        # Sau mọi bước thụt lề: vị trí điểm dừng tính từ lề cuối cùng của đoạn.
+        # Bỏ ô bảng số liệu — `_dinh_dang_doan` không đụng thụt lề của chúng.
+        if ma != "bang" and ap_dung._giu_tab_sau_so(p, bo_nho_so):
+            mo_ta = "đặt điểm dừng tab sát sau số tự động (hết thụt treo)"
+            if mo_ta not in sua_chung:
+                sua_chung.append(mo_ta)
 
         # ── Nén cho vừa một dòng ──
         # Chạy SAU khi áp cỡ chữ: nén bao nhiêu phụ thuộc cỡ chữ cuối cùng,

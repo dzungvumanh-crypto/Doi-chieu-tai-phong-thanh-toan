@@ -371,6 +371,42 @@ def test_nhan_ra_danh_sach_tu_dong_khai_bao_tren_STYLE():
     assert kieu["Điều 1. Trách nhiệm thi hành"] is None
 
 
+def test_so_tu_dong_het_thut_treo_thi_co_tab_stop_sat_sau_so():
+    """Tờ trình Microgateway: "a.        Giao Trung tâm…" — ép thụt dòng đầu 1 cm
+    làm mất thụt treo, tab sau số trôi tới điểm dừng mặc định 2,54 cm."""
+    du_lieu, _ = chuan_hoa(_van_ban_co_danh_sach())
+    p = _tim([p for p, _ in ap_dung.duyet_doan(Document(io.BytesIO(du_lieu)))], "Bước một")
+    pf = p.paragraph_format
+    assert pf.first_line_indent is not None and pf.first_line_indent >= 0
+    so = (int(pf.left_indent or 0) + int(pf.first_line_indent)) // 635   # EMU → twip
+    tab = [int(t.position.twips) for t in pf.tab_stops]
+    assert any(so < t <= so + 720 for t in tab), tab
+
+    # Chạy lại không đẻ thêm tab stop
+    lan2, _ = chuan_hoa(du_lieu)
+    p2 = _tim([p for p, _ in ap_dung.duyet_doan(Document(io.BytesIO(lan2)))], "Bước một")
+    assert len(p2.paragraph_format.tab_stops) == len(tab)
+
+
+def test_tab_cu_cua_tac_gia_nam_giua_so_va_chu_bi_go():
+    """"III.Đề xuất triển khai": tab tác giả đặt theo bố cục cũ nằm giữa số và chữ, số dời về
+    1 cm thì "III." tràn qua tab đó và Word đặt chữ dính sát số."""
+    from docx.shared import Twips
+
+    doc = Document(io.BytesIO(_van_ban_co_danh_sach()))
+    p = _tim([p for p, _ in ap_dung.duyet_doan(doc)], "Bước một")
+    p.paragraph_format.tab_stops.add_tab_stop(Twips(800))
+    p.paragraph_format.tab_stops.add_tab_stop(Twips(3544))
+    ra = io.BytesIO()
+    doc.save(ra)
+
+    du_lieu, _ = chuan_hoa(ra.getvalue())
+    p = _tim([p for p, _ in ap_dung.duyet_doan(Document(io.BytesIO(du_lieu)))], "Bước một")
+    tab = [int(t.position.twips) for t in p.paragraph_format.tab_stops]
+    assert 800 not in tab
+    assert 3544 in tab, "tab ở xa (canh cột trong dòng) phải giữ nguyên"
+
+
 def test_bullet_tu_dong_thanh_gach_dau_dong_con_danh_so_thi_canh_bao():
     du_lieu, bao_cao = chuan_hoa(_van_ban_co_danh_sach())
     doan = [p for p, _ in ap_dung.duyet_doan(Document(io.BytesIO(du_lieu)))]
@@ -866,6 +902,25 @@ def test_logo_trong_doan_khong_bi_coi_la_duong_ke():
     p = doc.add_paragraph("Độc lập - Tự do - Hạnh phúc")
     p._p.append(parse_xml(_DUONG_KE_NEO.replace('prst="line"', 'prst="rect"')))
     assert not duong_ke.da_co_duong_ke(p)
+
+
+def test_vach_cach_mot_dong_trong_van_tinh_la_da_co():
+    """Tờ trình Microgateway: trích yếu, dòng trống, rồi dòng trống chứa vạch.
+    Soi mỗi đoạn liền dưới thì vẽ thêm vạch thứ hai ngay trên vạch tác giả."""
+    from docx.oxml import parse_xml
+
+    doc = Document()
+    p = doc.add_paragraph("Về việc đăng ký gói phần mềm")
+    doc.add_paragraph("")
+    doc.add_paragraph("")._p.append(parse_xml(_DUONG_KE_NEO))
+    assert duong_ke.da_co_duong_ke(p)
+
+    # Có chữ xen giữa thì vạch đó thuộc phần khác
+    doc2 = Document()
+    p2 = doc2.add_paragraph("Về việc đăng ký gói phần mềm")
+    doc2.add_paragraph("I. Căn cứ trình")
+    doc2.add_paragraph("")._p.append(parse_xml(_DUONG_KE_NEO))
+    assert not duong_ke.da_co_duong_ke(p2)
 
 
 def _sect_pr(du_lieu: bytes):
@@ -1646,6 +1701,53 @@ def test_trich_yeu_cong_van_da_ket_cau_thi_khong_nuot_loi_van():
     assert ma[2] == "noi_dung"
 
 
+def test_v_v_duoi_ten_loai_la_trich_yeu_van_ban_co_ten_loai():
+    """Tờ trình ghi "V/v …" dưới "TỜ TRÌNH" — vai là trích yếu cỡ 14 đậm, không
+    phải trích yếu công văn cỡ 12. Gặp thật: Tờ trình Microgateway ra cỡ 12."""
+    ma = nhan_dien.phan_loai([
+        ("Số: 1/TTr-TTTT", False),
+        ("TỜ TRÌNH", False),
+        ("V/v đăng ký gói phần mềm SWIFT Microgateway 3.0", False),
+        ("Kính trình: Tổng Giám đốc", False),
+    ])
+    assert ma[2] == "trich_yeu"
+
+
+@pytest.mark.parametrize("giua", [[], [""] * 7], ids=["lien_nhau", "cach_dong_trong"])
+def test_trich_yeu_khong_nuot_de_muc_la_ma_in_thuong(giua):
+    """"I. Căn cứ trình" in thường nên lượt 1 không gán `muc_la_ma` — từng bị
+    nuốt làm dòng hai của trích yếu (không kết câu), ra cỡ 12 canh giữa trong
+    khi "II. Nội dung trình" là lời văn cỡ 14."""
+    doan = ["TỜ TRÌNH", "V/v đăng ký gói phần mềm SWIFT Microgateway 3.0",
+            *giua, "I. Căn cứ trình", "Căn cứ Quy định số 16/QyĐ-HĐTV;",
+            "II. Nội dung trình"]
+    ma = nhan_dien.phan_loai([("Số: 1/TTr-TTTT", False)] + [(t, False) for t in doan])
+    theo = dict(zip(["Số"] + doan, ma))
+    assert theo["V/v đăng ký gói phần mềm SWIFT Microgateway 3.0"] == "trich_yeu"
+    assert theo["I. Căn cứ trình"] == theo["II. Nội dung trình"] == "noi_dung"
+
+
+@pytest.mark.parametrize("so", ["5.000", "10.000", "15/9/2026 là hạn chót", "1.1. Phạm vi"])
+def test_so_lieu_dau_doan_khong_bi_coi_la_so_thu_tu_khoan(so):
+    """Ô bảng phí "10.000" từng bị sửa thành "10. 000" — đổi số liệu Tờ trình."""
+    cfg = quy_chuan.mac_dinh()["danh_so"]
+    for ma in ("khoan", "noi_dung"):
+        assert bien_doi.chuan_danh_so(so, ma, cfg) == [], (so, ma)
+    assert nhan_dien.phan_loai([(so, True)]) != ["khoan"]
+
+
+def test_trich_yeu_cach_dong_trong_thi_khong_noi_dai():
+    """Ngắt dòng cho cân thì hai dòng liền nhau; dòng trống là tách khối."""
+    ma = nhan_dien.phan_loai([
+        ("Số: 1/NHNo-TTTT", False),
+        ("V/v Thông báo thay đổi địa chỉ", False),
+        ("", False),
+        ("Trung tâm Thanh toán thông báo", False),
+    ])
+    assert ma[1] == "trich_yeu_cong_van"
+    assert ma[3] == "noi_dung"
+
+
 def test_chuc_danh_ghep_ngoai_danh_sach_van_duoc_nhan():
     """Liệt kê từng chức danh ghép thì danh sách không bao giờ đủ — "TRƯỞNG
     NHÓM" lọt qua dù đã có TRƯỞNG PHÒNG / TRƯỞNG BAN / TRƯỞNG ĐƠN VỊ."""
@@ -1728,3 +1830,230 @@ def test_le_trai_doan_co_mat_tren_man_cau_hinh():
     thuoc_tinh = set(quy_chuan.QUY_CHUAN_MAC_DINH["thanh_phan"]["noi_dung"])
     thieu = [k for k in thuoc_tinh if f'"{k}"' not in nguon]
     assert not thieu, f"thuộc tính không có ô trên màn Cấu hình: {thieu}"
+
+
+# ── Rà 2 file thật trong Dữ liệu test/Chuẩn hoá văn bản (14/09/2026) ─────────
+def _can_phong_times():
+    if do_chu.be_rong_pt("III.", 14, True) is None:
+        pytest.skip("máy không có Times New Roman để đo bề rộng số")
+
+
+def _tab_sau_so(tab_tac_gia: int) -> list[int]:
+    from docx.shared import Twips
+
+    doc = Document(io.BytesIO(_van_ban_co_danh_sach()))
+    p = _tim([p for p, _ in ap_dung.duyet_doan(doc)], "Bước một")
+    p.paragraph_format.tab_stops.add_tab_stop(Twips(tab_tac_gia))
+    ra = io.BytesIO()
+    doc.save(ra)
+    du_lieu, _ = chuan_hoa(ra.getvalue())
+    p = _tim([p for p, _ in ap_dung.duyet_doan(Document(io.BytesIO(du_lieu)))], "Bước một")
+    return [int(t.position.twips) for t in p.paragraph_format.tab_stops]
+
+
+def test_tab_tac_gia_con_vua_so_thi_giu_nguyen():
+    """"I. Căn cứ trình": tab 993 của tác giả vừa khít số — từng bị thay bằng thụt
+    treo 720 của danh sách, khoảng cách số–chữ nới từ 0,75 lên 1,27 cm."""
+    _can_phong_times()
+    assert _tab_sau_so(900) == [900]
+
+
+def test_tab_tac_gia_bi_so_tran_thi_dat_sat_sau_so_khong_theo_thut_treo():
+    """Số tràn tab của tác giả → đặt ngay sau số rộng nhất, không nhảy tới thụt
+    treo của danh sách (tác giả đã tỏ ý muốn khoảng hẹp)."""
+    _can_phong_times()
+    tab = _tab_sau_so(600)
+    assert 600 not in tab and len(tab) == 1
+    rong = do_chu.be_rong_pt("1.", 14) * 20
+    assert 567 + rong < tab[0] < 567 + 360, tab
+
+
+def test_so_la_ma_rong_nhat_khong_phai_so_lon_nhat():
+    assert [ap_dung._so_theo_dinh_dang(n, "upperRoman") for n in (4, 8, 10)] == ["IV", "VIII", "X"]
+    assert ap_dung._so_theo_dinh_dang(27, "lowerLetter") == "aa"
+
+
+def _doan_co_ban_chup_track_changes(tren_style: bool) -> bytes:
+    from docx.oxml import parse_xml
+    from docx.oxml.ns import nsdecls
+
+    doc = Document()
+    doc.add_paragraph("Lời văn thường.")
+    p = doc.add_paragraph("Thực hiện đặt mua gói phần mềm;", style="List Bullet")
+    pPr = p._p.get_or_add_pPr()
+    st_numPr = doc.styles["List Bullet"].element.pPr.numPr
+    if not tren_style:
+        pPr.append(parse_xml(st_numPr.xml))
+    chup = parse_xml(
+        f'<w:pPrChange {nsdecls("w")} w:id="1" w:author="Tac gia" w:date="2026-07-01T00:00:00Z">'
+        f'<w:pPr><w:pStyle w:val="ListBullet"/>{"" if tren_style else st_numPr.xml}</w:pPr>'
+        '</w:pPrChange>')
+    pPr.append(chup)
+    ra = io.BytesIO()
+    doc.save(ra)
+    return ra.getvalue()
+
+
+@pytest.mark.parametrize("tren_style", [False, True], ids=["numPr_tren_doan", "numPr_tren_style"])
+def test_bo_bullet_tu_dong_sua_ca_ban_chup_track_changes(tren_style):
+    """Tờ trình Microgateway: bản chụp w:pPrChange còn đánh số → Word vẽ dấu gạch cũ
+    màu đỏ cạnh "- " gõ tay ("– - Thực hiện…"), Reject All thì hai dấu gạch ở lại."""
+    du_lieu, _ = chuan_hoa(_doan_co_ban_chup_track_changes(tren_style))
+    doc = Document(io.BytesIO(du_lieu))
+    p = _tim(doc.paragraphs, "- Thực hiện")
+    chup = p._p.pPr.find(qn_w("pPrChange"))
+    assert chup is not None, "bản ghi sửa đổi của tác giả phải còn"
+    from lxml import etree
+    xml = etree.tostring(chup, encoding="unicode")
+    assert "numPr" not in xml
+    if tren_style:
+        # Đoạn đã đổi về Normal; bản chụp còn ListBullet thì Reject vẫn trả bullet về.
+        assert 'w:val="ListBullet"' not in xml
+
+
+def qn_w(ten: str) -> str:
+    from docx.oxml.ns import qn
+    return qn(f"w:{ten}")
+
+
+def _gach_va_le(*dong: tuple[str, float, float]) -> dict[str, float]:
+    from docx.shared import Cm
+
+    doc = Document()
+    doc.add_paragraph("Lời văn thường.")
+    for t, le, dau in dong:
+        pf = doc.add_paragraph(t).paragraph_format
+        pf.left_indent, pf.first_line_indent = Cm(le), Cm(dau)
+    ra = io.BytesIO()
+    doc.save(ra)
+    return dict(_dong_va_le(chuan_hoa(ra.getvalue())[0]))
+
+
+def test_gach_thut_treo_ngang_hang_khong_bi_coi_la_muc_con():
+    """Tờ trình bàn giao chứng từ: "- Tài liệu hướng dẫn…" lề 1,25 treo 0,25 → gạch
+    ở 1 cm như mọi gạch khác, từng bị giữ lề rồi cộng thụt 1 cm → trôi ra 2,25 cm."""
+    ds = _gach_va_le(("- Mục một;", 0, 1), ("- Mục hai;", 0, 1),
+                     ("- Tài liệu hướng dẫn sử dụng.", 1.25, -0.25))
+    assert ds["- Tài liệu hướng dẫn sử dụng."] == 0.0
+
+
+def test_bullet_mac_dinh_cua_word_van_giu_phan_cap():
+    """Word để cấp 1 ở 0, cấp 2 ở 0,63 cm (thụt treo) — so với mốc 1 cm cố định là
+    ép phẳng cả hai cấp. So với mốc của chính văn bản thì cấp 2 vẫn sâu hơn."""
+    ds = _gach_va_le(("- Cấp một thứ nhất;", 0.63, -0.63), ("- Cấp một thứ hai;", 0.63, -0.63),
+                     ("- Cấp hai;", 1.27, -0.63))
+    assert ds["- Cấp một thứ nhất;"] == 0.0
+    assert ds["- Cấp hai;"] == pytest.approx(0.6, abs=0.1)
+
+
+@pytest.mark.parametrize("dong, ma", [
+    ("Căn cứ trình", "noi_dung"),
+    ("Căn cứ pháp lý:", "noi_dung"),
+    ("Căn cứ Luật Các tổ chức tín dụng;", "can_cu"),
+    ("Căn cứ Luật Các tổ chức tín dụng", "can_cu"),        # quên dấu ";" vẫn là căn cứ
+    ("Căn cứ Điều lệ Agribank", "can_cu"),
+    ("Căn cứ nhu cầu thực tế về việc chuyển đổi số, chuẩn hóa quy trình", "can_cu"),
+])
+def test_de_muc_can_cu_khong_phai_dong_can_cu(dong, ma):
+    """"I. Căn cứ trình" đánh số tự động → chữ của đoạn chỉ còn "Căn cứ trình",
+    từng bị ép nghiêng như dòng căn cứ trong khi "II. Nội dung trình" in thẳng."""
+    assert nhan_dien.phan_loai([(dong, False)])[0] == ma
+
+
+def test_vach_tac_gia_giua_khoi_ten_dv_quyet_dinh_vai():
+    """Tờ trình bàn giao chứng từ: vạch dưới TRUNG TÂM THANH TOÁN, dòng PHÒNG ở dưới
+    vạch. Từng bỏ đậm TTTT, ép đậm PHÒNG và vẽ vạch thứ hai."""
+    from docx.oxml import parse_xml
+    from docx.oxml.ns import nsdecls
+
+    doc = Document()
+    doc.add_paragraph().add_run("NGÂN HÀNG NÔNG NGHIỆP")
+    doc.add_paragraph().add_run("VÀ PHÁT TRIỂN NÔNG THÔN VIỆT NAM")
+    doc.add_paragraph().add_run("TRUNG TÂM THANH TOÁN").bold = True
+    doc.add_paragraph()._p.append(parse_xml(
+        f'<w:r {nsdecls("w", "v")}><w:pict><v:line from="0,0" to="100pt,0"/></w:pict></w:r>'))
+    doc.add_paragraph().add_run("PHÒNG KSNB&HTVH")
+    doc.add_paragraph("TỜ TRÌNH")
+    doc.add_paragraph("V/v triển khai chức năng Bàn giao chứng từ")
+    ra = io.BytesIO()
+    doc.save(ra)
+
+    du_lieu, _ = chuan_hoa(ra.getvalue())
+    kq = _dam_va_ke(du_lieu)
+    assert kq["TRUNG TÂM THANH TOÁN"] == (True, True)
+    assert kq["PHÒNG KSNB&HTVH"] == (False, False)
+    body = Document(io.BytesIO(du_lieu)).element.body.xml
+    khoi_dau = body[:body.index("TỜ TRÌNH")]
+    assert khoi_dau.count("<v:line") == 1, "không vẽ thêm vạch thứ hai"
+
+
+def test_vach_chi_nhan_trong_dong_trong_giua_khoi():
+    """Vạch trong dòng có chữ, hoặc không nằm giữa khối, thì không cắt."""
+    ma = ["ten_dv_chu_quan", "ten_dv_ban_hanh", "trong", "ten_loai"]
+    assert not nhan_dien.theo_vach_khoi_ten_dv(ma, [False, False, True, False])
+    ma = ["ten_dv_chu_quan", "ten_dv_chu_quan", "ten_dv_ban_hanh"]
+    assert not nhan_dien.theo_vach_khoi_ten_dv(ma, [False, True, False])
+
+    ma = ["ten_dv_chu_quan", "ten_dv_chu_quan", "trong", "ten_dv_ban_hanh"]
+    assert nhan_dien.theo_vach_khoi_ten_dv(ma, [False, False, True, False])
+    assert ma == ["ten_dv_chu_quan", "ten_dv_ban_hanh", "trong", "bang_the_thuc"]
+
+
+def test_thut_dau_dong_lech_khong_co_le_trai_khong_phai_muc_con():
+    """Phản biện: dòng gạch dán từ văn bản khác thụt đầu 1,27 cm (lề trái 0) từng bị
+    đặt lề 0,27 cm — lệch khỏi mọi gạch khác. Không có lề trái thì không phải phân cấp."""
+    ds = _gach_va_le(*[(f"- Mục gạch số {i};", 0, 1) for i in range(4)],
+                     ("- Mục gạch dán từ văn bản khác;", 0, 1.27))
+    assert ds["- Mục gạch dán từ văn bản khác;"] == 0.0
+
+
+def test_gach_sat_le_khoi_kinh_trinh_khong_day_gach_loi_van_thanh_muc_con():
+    """Phản biện: 3 dòng "- Ban …" sát lề dưới "Kính trình:" kéo mốc gạch về 0; gạch đầu
+    dòng lời văn (lề 0, thụt đầu 1 cm) từng thành "mục con", lề 1 cm → gạch ở 2 cm."""
+    from docx.shared import Cm
+
+    doc = Document()
+    for t in ("TỜ TRÌNH", "Về việc đăng ký gói phần mềm", "Kính trình:",
+              "- Ban Tổng Giám đốc;", "- Ban Pháp chế;", "- Ban Công nghệ thông tin."):
+        doc.add_paragraph(t)
+    doc.add_paragraph("Trung tâm Thanh toán kính trình nội dung như sau đây để xem xét.")
+    for t in ("- Thực hiện đăng ký gói phần mềm theo hợp đồng;", "- Bố trí kinh phí theo kế hoạch năm;"):
+        doc.add_paragraph(t).paragraph_format.first_line_indent = Cm(1.0)
+    ra = io.BytesIO()
+    doc.save(ra)
+
+    ds = dict(_dong_va_le(chuan_hoa(ra.getvalue())[0]))
+    assert ds["- Thực hiện đăng ký gói phần mềm theo hợp đồng;"] == 0.0
+    assert ds["- Bố trí kinh phí theo kế hoạch năm;"] == 0.0
+
+
+def test_dem_so_muc_mot_lan_cho_ca_van_ban():
+    """Phản biện: mỗi đoạn có số từng duyệt cả cây XML — 1.500 đoạn mất ~1 phút."""
+    import time
+
+    doc = Document()
+    for i in range(800):
+        doc.add_paragraph(f"Nội dung mục số {i} của danh sách", style="List Number")
+    ra = io.BytesIO()
+    doc.save(ra)
+    bat_dau = time.perf_counter()
+    chuan_hoa(ra.getvalue())
+    assert time.perf_counter() - bat_dau < 20
+
+
+def test_start_override_tinh_vao_so_lon_nhat():
+    """Danh sách bắt đầu lại từ "10." phải đo như "10.", không như "1."."""
+    _can_phong_times()
+    from docx.oxml import parse_xml
+    from docx.oxml.ns import nsdecls
+
+    doc = Document(io.BytesIO(_van_ban_co_danh_sach()))
+    p = _tim([p for p, _ in ap_dung.duyet_doan(doc)], "Bước một")
+    _co, lvl = ap_dung._tim_lvl(p)
+    rong_goc = ap_dung._be_rong_so_lon_nhat_twip(p, lvl)
+    goc = p.part.numbering_part.element
+    num_id = doc.styles["List Number"].element.pPr.numPr.numId.val
+    num = next(n for n in goc.findall(qn_w("num")) if n.get(qn_w("numId")) == str(num_id))
+    num.append(parse_xml(f'<w:lvlOverride {nsdecls("w")} w:ilvl="{lvl.get(qn_w("ilvl"))}">'
+                         '<w:startOverride w:val="10"/></w:lvlOverride>'))
+    assert ap_dung._be_rong_so_lon_nhat_twip(p, lvl) > rong_goc

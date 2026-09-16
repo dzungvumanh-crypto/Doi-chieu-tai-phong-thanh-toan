@@ -990,6 +990,12 @@ người làm báo cáo không có cách nào biết. Đo trên dữ liệu th�
   - **Giữ thụt lề tác giả đã tự đặt**: gạch đầu dòng thụt sâu hơn mức chung là cách duy nhất trong
     `.docx` để nói "đây là mục con"; ép `left_indent` về 0 là xoá phẳng phân cấp đó. Lời văn thường
     thụt vô cớ thì vẫn dọn về 0 như cũ
+  - **"Sâu hơn" so vị trí DẤU GẠCH** (lề trái + thụt dòng đầu) với mức gạch gặp nhiều nhất ở lời văn
+    cùng thành phần của chính văn bản (`ap_dung.muc_gach_pho_bien()`), không so riêng lề trái: danh sách
+    thụt treo (lề 1,25 treo 0,25) có gạch ở 1 cm như mọi gạch khác, từng bị coi là mục con rồi trôi
+    ra 2,25 cm. Không dùng mốc 1 cm cố định — bullet mặc định của Word (cấp 1 ở 0, cấp 2 ở 0,63 cm)
+    sẽ bị ép phẳng. Lề mục con giữ đúng độ sâu tương đối so với cấp ngoài cùng. Đoạn không đặt lề
+    trái (chỉ thụt dòng đầu lệch, vd dán từ văn bản khác) không bao giờ là mục con
   - **Tự nhận mục con** (bật sẵn): dòng gạch đầu dòng kết thúc bằng `:` mở một danh sách con; mục
     con dùng ký tự `+` và thụt thêm 1 cm. Danh sách con **đóng** ở dòng kết thúc bằng `.` — nhưng
     chỉ khi các dòng trên đã dùng `;` (quy ước Điều 15.4), vì người soạn chấm câu mọi dòng bằng `.`
@@ -998,6 +1004,21 @@ người làm báo cáo không có cách nào biết. Đo trên dữ liệu th�
 - **Số của danh sách tự động ăn theo cỡ chữ của đoạn**: số thứ tự / dấu chấm tròn do Word sinh lúc
   hiển thị, lấy định dạng từ `w:pPr/w:rPr` (dấu đoạn) chứ không từ `<w:r>` nào — sửa cỡ chữ từng run
   không chạm tới nó, nên số "4." "I." in ra bằng nửa con chữ. Chỉ đồng bộ ở đoạn CÓ `numPr`
+- **Tab sau số tự động** (`ap_dung._giu_tab_sau_so()`): ép thụt dòng đầu 1 cm làm mất thụt treo,
+  tab sau số trôi tới điểm dừng mặc định 2,54 cm ("a.        Giao…"). Đặt tab stop riêng trên đoạn,
+  không đổi `w:suff` của danh sách dùng chung. Chỗ đặt tính theo **bề rộng số rộng nhất của cấp**
+  (đo bằng `do_chu`, số mục ước bằng số đoạn cùng `abstractNum` + cấp — ước dư, không bao giờ tràn):
+  tab tác giả còn vừa thì giữ; có tab mà số tràn ("III." qua tab 993) thì đặt sát sau số; không có
+  tab thì lấy thụt treo của cấp nhưng không hẹp hơn số. Máy thiếu Times New Roman → lấy thụt treo.
+  Đếm số mục một lần cho cả lượt (1.500 đoạn đánh số: 12 s thay vì 63 s); có tính `startOverride`
+- **Thụt lề trong định nghĩa danh sách được tính là thụt lề của đoạn** (`_hieu_luc_doan()` đọc đoạn →
+  `abstractNum` → style, đúng thứ tự Word): đoạn số tự động không tự khai lề trước đây bị đọc là 0 nên
+  không bị ép, số in ở 2,6 cm lệch hẳn mục ngay dưới
+- **Văn bản còn Track Changes**: đổi bullet tự động thành "- " thì gỡ luôn đánh số trong bản chụp
+  `w:pPrChange` — để lại thì Word vẽ dấu gạch cũ màu đỏ cạnh dấu gạch mới ("– - Thực hiện…"), Reject All
+  thì hai dấu gạch ở lại. Chữ nằm trong `<w:ins>` vẫn **không** được nhận diện (python-docx không đọc)
+- **Số liệu đầu đoạn không phải số thứ tự khoản**: "5.000", "15/9/2026", "1.1." bị chặn bằng `(?!\d)`
+  — từng sửa ô bảng phí "10.000" thành "10. 000"
 - **Không đánh thêm số trang khi văn bản đã có**: soi đủ sáu chỗ (header/footer × mặc định/trang
   đầu/trang chẵn). Trước đây chỉ soi header mặc định nên văn bản đánh số ở chân trang bị đè thêm
 - **"Kính trình:"** được nhận như "Kính gửi" — Mẫu 16 Phụ lục V (Phiếu trình chuyển) dùng đúng chữ này
@@ -1036,6 +1057,16 @@ người làm báo cáo không có cách nào biết. Đo trên dữ liệu th�
   bắt được cả trường hợp tên đơn vị ban hành dài trải hai dòng mà dòng sau mở đầu bằng danh từ
   ("BAN TRIỂN KHAI … / TỔ TRIỂN KHAI …"). Bỏ qua khi cả khối cùng đậm (tác giả không phân biệt) hoặc
   khi các dòng đậm không liền nhau ở cuối khối
+- **Vạch kẻ tác giả vẽ giữa khối tên đơn vị đi trước chữ đậm** (`nhan_dien.theo_vach_khoi_ten_dv()`):
+  vạch nằm trong một dòng trống giữa khối thì dòng ngay trên là đơn vị ban hành, dòng dưới vạch
+  ("PHÒNG KSNB&HTVH" dưới "TRUNG TÂM THANH TOÁN") nhận `bang_the_thuc` — giữ cỡ/đậm của tác giả. Không
+  có luật này thì dòng cuối bị ép đậm + vẽ vạch thứ hai. Vạch neo vào dòng có chữ thì không đọc
+- **Đề mục "Căn cứ trình" / "Căn cứ pháp lý:" không phải dòng căn cứ** (`RE_DE_MUC_CAN_CU`): số "I."
+  đánh tự động không nằm trong chữ của đoạn nên từng bị in nghiêng như căn cứ. Dòng ≤ 30 ký tự sau
+  "Căn cứ", chữ đầu viết thường, không số, không `; , .` → lời văn. "Căn cứ Luật …" quên dấu `;` vẫn là căn cứ
+- **Trích yếu**: "V/v …" ngay dưới tên loại là trích yếu văn bản có tên loại (cỡ 14 đậm), không phải
+  trích yếu công văn; nối dài trích yếu dừng khi có dòng trống xen giữa hoặc dòng sau mở đầu bằng số
+  La Mã ("I. Căn cứ trình" từng bị nuốt vào trích yếu)
 - **Tên đơn vị dài trình bày nhiều dòng** (Điều 8.2): khối in hoa đầu văn bản được gom thành từng
   **cụm** trước khi lấy cụm cuối làm đơn vị ban hành. "NGÂN HÀNG NÔNG NGHIỆP / VÀ PHÁT TRIỂN NÔNG
   THÔN VIỆT NAM" là MỘT tên xuống dòng — đọc mỗi dòng là một cấp đơn vị thì nửa trên bị bỏ in đậm.
