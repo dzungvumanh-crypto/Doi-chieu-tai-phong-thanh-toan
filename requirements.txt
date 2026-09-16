@@ -3,7 +3,9 @@ uvicorn[standard]==0.29.0
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 bcrypt==4.0.1
-python-multipart>=0.0.31
+# <0.1: goi 0.0.x, moi ban la mot ranh gioi pha vo. Nam tren duong nhan file
+# upload cua FastAPI -> 20 module API (swift_recon, ach, cham459901, citad...).
+python-multipart>=0.0.31,<0.1
 nicegui==2.12.1
 httpx==0.27.0
 python-dotenv==1.0.1
@@ -13,15 +15,20 @@ python-docx==1.1.2
 # cua Windows (cp1252), ky tu co dau lam pip chet voi UnicodeDecodeError truoc khi ra mang.
 # Don nghi phep ban PDF: pypdfium2 dung anh xem truoc + dan anh chu ky len trang;
 # Pillow doc file PNG chu ky. Chuyen .docx -> .pdf do Word tren may dam nhiem.
-# --- Chan tren: giu sang la "ban da chay that", khong phai "ban moi nhat PyPI" ---
-# Khai >=X khong chan tren nghia la may cai moi hom nay keo ve bat ky ban nao.
-# Da xay ra am tham: pypdfium2 nhay 4.x -> 5.x, Pillow nhay 10.x -> 12.x, khong
-# ai quyet dinh ca. Tran dat NGAY TREN ban dang duoc test, nen may dang chay ban
-# cu hon van thoa -- chay start.bat pip KHONG nang va KHONG ha gi.
+# --- Moi dong deu phai co CHAN TREN ---
+# Khai >=X khong chan tren nghia la may cai moi hom nay keo ve bat ky ban nao,
+# khong ai quyet dinh. Da xay ra am tham that: pypdfium2 nhay 4.x -> 5.13.0,
+# Pillow nhay 10.x -> 12.3.0, python-calamine 0.2 -> 0.8.2.
+#
+# Tran dat o ranh gioi PHA VO ke tiep -- major, hoac MINOR voi goi 0.x (semver:
+# 0.y.z "anything may change"). Tran vi the RONG hon ban dang chay: Pillow<13 om
+# ca 10/11/12. Muc tieu la chan cu nhay ke tiep, KHONG phai ghim chinh xac; pip
+# luon lay ban moi nhat con thoa. Ban dang cai tren may chu va may dev deu thoa
+# -> chay start.bat pip KHONG nang va KHONG ha gi.
+#
+# Tran KHONG chan ban va bao mat: va trong cung dong hien hanh van chay ve.
 # Nang tran la thay doi CO CHU Y: chay lai toan bo test roi moi sua dong nay.
-# Thu vien 0.x: ranh gioi pha vo la MINOR (0.4 -> 0.5), khong phai major.
-# numba co y KHONG chan: numpy<2.6 da gian tiep ghim no, va
-# doi_chieu_song_phuong_service.py co san duong lui khi thieu numba.
+# tests/test_requirements_ascii.py canh khong cho them dong thieu chan tren.
 pypdfium2>=4.30,<6
 Pillow>=10.0,<13
 openpyxl==3.1.2
@@ -40,5 +47,10 @@ xlrd>=2.0.1,<3
 # 0.3.0 -- da doi chieu 2026/2027/2028: ra ngay giong het nhau.
 lunardate>=0.2.0,<0.4
 beautifulsoup4>=4.12,<5
-numba>=0.60.0
+# <0.68: numba la goi 0.x RUI RO NHAT bo nay -- backend bien dich JIT, ghim cung
+# llvmlite<0.50 (mot nhi phan LLVM khong he co ten trong file nay). Duong lui o
+# doi_chieu_song_phuong_service.py:43-48 chi bat ImportError, tuc chi do khi numba
+# VANG MAT; numba CO MAT nhung doi API thi @njit nem TypingError luc GOI lan dau
+# (bien dich luoi), khong phai luc import -> khong nhanh nao lui ve zf.open().
+numba>=0.60.0,<0.68
 numpy>=1.22,<2.6
