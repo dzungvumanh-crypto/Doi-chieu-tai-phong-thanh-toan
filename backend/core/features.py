@@ -172,6 +172,16 @@ FEATURES: dict[str, str] = {
     "menu.hr_lookup":        "Tra cứu & Thống kê nhân sự (menu)",
     "hr.export":             "Xuất Excel danh sách cán bộ",
     "menu.hr_reminders":     "Nhắc lịch nhân sự (menu)",
+
+    # Thi đua khen thưởng — Phòng Tổng hợp. `menu.thi_dua` là quyền xem/tra cứu
+    # chung; ba mã quản lý theo đúng ba loại dữ liệu nhập (đơn vị/cá nhân/sáng
+    # kiến), không có khái niệm "chủ sở hữu bản ghi" như Khảo sát — ai có mã
+    # quản lý thì sửa/xoá được mọi bản ghi, giống hr.edit_all.
+    "menu.thi_dua":              "Thi đua khen thưởng (menu)",
+    "thi_dua.manage_unit":       "Nhập danh hiệu thi đua đơn vị",
+    "thi_dua.manage_individual": "Nhập danh hiệu thi đua cá nhân",
+    "thi_dua.manage_initiative": "Nhập sáng kiến cá nhân",
+    "thi_dua.export":            "Xuất Excel báo cáo thi đua khen thưởng",
 }
 
 # ── Cấu trúc màn hình phân quyền ──────────────────────────────────────────────
@@ -282,6 +292,15 @@ FEATURE_GROUPS: list[dict] = [
                 "label": "Phòng Tổng hợp",
                 "menus": [
                     {"code": "menu.th_reports", "actions": []},
+                    {
+                        "code": "menu.thi_dua",
+                        "actions": [
+                            "thi_dua.manage_unit",
+                            "thi_dua.manage_individual",
+                            "thi_dua.manage_initiative",
+                            "thi_dua.export",
+                        ],
+                    },
                 ],
             },
         ],

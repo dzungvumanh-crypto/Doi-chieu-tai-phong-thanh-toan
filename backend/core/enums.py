@@ -46,3 +46,9 @@ ROLE_RANK = {
 }
 
 VALID_ROLES = frozenset(r.value for r in StaffRole)
+
+
+class ThiDuaCap(str, Enum):
+    DANG        = "dang"
+    CHUYEN_MON  = "chuyen_mon"
+    CONG_DOAN   = "cong_doan"

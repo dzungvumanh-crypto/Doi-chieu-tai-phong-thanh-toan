@@ -95,6 +95,7 @@ MENU_TREE = [
                 "icon": "summarize",
                 "items": [
                     ("th_reports", "Báo cáo dữ liệu thanh toán", "payments"),
+                    ("thi_dua",    "Thi đua khen thưởng",        "military_tech"),
                 ],
             },
         ],
