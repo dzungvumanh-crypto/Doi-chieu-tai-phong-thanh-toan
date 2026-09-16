@@ -171,12 +171,19 @@ def download_extension(current: dict = Depends(require_feature("menu.doi_chieu_c
         content = svc.build_extension_zip()
     except FileNotFoundError as e:
         raise HTTPException(500, str(e))
+    # Tên file kèm version — đọc thẳng manifest.json (get_extension_latest_version())
+    # thay vì ghi cứng, để khỏi phải nhớ sửa 2 chỗ mỗi lần bump version. Tên gốc
+    # KHÁC gói của Phòng Thanh toán ("extension_citad.zip") — 2 gói Extension
+    # riêng, tải về cùng thư mục mà trùng tên là cài nhầm.
+    try:
+        version = svc.get_extension_latest_version()
+        fname = f"extension_citad_nv_v{version}.zip"
+    except Exception:
+        fname = "extension_citad_nv.zip"
     return Response(
         content=content,
         media_type="application/zip",
-        # Tên KHÁC gói của Phòng Thanh toán ("extension_citad.zip") — 2 gói
-        # Extension riêng, tải về cùng thư mục mà trùng tên là cài nhầm.
-        headers={"Content-Disposition": 'attachment; filename="extension_citad_nv.zip"'},
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
     )
 
 

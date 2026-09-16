@@ -1217,7 +1217,16 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
                 return
             ui.notify(f"Lỗi: {e}", type="negative")
             return
-        ui.download(content, "extension_citad_nv.zip")
+        # ui.download() tự đặt tên file phía trình duyệt — Content-Disposition
+        # của response API không có tác dụng ở đây, nên phải tự kèm version
+        # vào tên file NGAY TẠI ĐÂY (không đọc lại từ header). Đọc version thất
+        # bại thì vẫn tải được, chỉ mất phần số trong tên, không chặn tải.
+        try:
+            version = (await asyncio.to_thread(api.get, "/api/doi-chieu-citad-nostro/extension-version"))["version"]
+            fname = f"extension_citad_nv_v{version}.zip"
+        except Exception:
+            fname = "extension_citad_nv.zip"
+        ui.download(content, fname)
 
     # ── Nhắc cập nhật Extension — mirror đúng pattern của doi_chieu_citad.py
     # (Phòng Thanh toán). Bản 1.1 (14/09/2026) thêm content_citad_nostro_fx.js
