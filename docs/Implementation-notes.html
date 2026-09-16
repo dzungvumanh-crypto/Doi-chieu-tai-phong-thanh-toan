@@ -53,6 +53,71 @@
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
   <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-09-16</p>
 
+  <!-- DS1 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">DS1</span>
+      <span class="card-title">Đối soát CITAD ↔ IPCAS — ERRC bị lọc mất + lệnh Đến trùng khoá giữa nhiều ngân hàng gửi (PR #110)</span>
+      <span class="badge badge-warn">Đã merge — 2 điểm chưa chốt, xem cuối card</span>
+    </div>
+    <div class="card-body">
+
+      <p><b>Lỗi 1 — ERRC.</b> <code>KEEP_DI</code> (parsers.py) không có <code>ERRC</code> (hạch toán huỷ lỗi) nên
+        dòng IPCAS Đi bị bỏ ngay lúc đọc file → lệnh CITAD cùng msgref thành "Chỉ CITAD" giả (msgref 11418711,
+        15/09/2026). Sửa: chỉ thêm <code>ERRC</code> vào <code>KEEP_DI</code>. <b>Không</b> đưa vào
+        <code>ERR_DI</code> → có CITAD thì ra <i>Lệch trạng thái</i>, không có CITAD thì ra <i>Chỉ IPCAS</i>.</p>
+
+      <p><b>Lỗi 2 — khoá VND Đến <code>(txid, loại, số tiền)</code> trùng giữa nhiều ngân hàng gửi.</b>
+        <code>ipcas_den_map</code> giữ 1 dòng đại diện cho cả khoá → mọi dòng CITAD cùng khoá đều "khớp" dòng đó.
+        Ca thật 10008309 / 500.000đ: CITAD 4 ngân hàng, IPCAS 3 → lệnh thứ 4 biến mất khỏi báo cáo.</p>
+
+      <table>
+        <tr><th style="width:28%">Quyết định</th><th>Lý do / đánh đổi</th></tr>
+        <tr>
+          <td>Chỉ rẽ nhánh khi <code>citad_den_vnd_count[k] &gt; 1</code></td>
+          <td>Khoá có 1 dòng CITAD (&gt;99%) chạy y nguyên mã cũ — giới hạn phạm vi rủi ro. Vòng "IPCAS Đến dư"
+            cũ <b>bỏ qua</b> các khoá này, vòng mới đếm dư theo <code>(khoá, ngân hàng)</code>; bỏ một bên là
+            đếm đôi hoặc sót.</td>
+        </tr>
+        <tr>
+          <td>So <b>6 số cuối</b> mã ngân hàng (<code>_ma_nh_6so</code>)</td>
+          <td>2 số đầu là mã cổng tạo báo cáo, lệch giữa CITAD/IPCAS. Dữ liệu 15/09: khớp nguyên mã 95,6%, thêm 1,0%
+            sau khi bỏ 2 số đầu, còn 0,34% lệch thật.</td>
+        </tr>
+        <tr>
+          <td>Mã ngân hàng gửi CITAD đọc từ <b>dòng tiêu đề nhóm</b>, kế thừa qua sheet (<code>nh_gui_ref</code>)</td>
+          <td>File CITAD không có cột ngân hàng gửi. Crystal Reports cắt nhóm sang sheet mới không lặp tiêu đề
+            (ca 10009779). Regex đòi ký tự sau dấu "-" không phải số để không nhầm dòng tổng tiền.</td>
+        </tr>
+      </table>
+
+      <p class="caution"><b>⚠ Chưa chốt 1 — phụ thuộc định dạng file, lỗi ồn chứ không im.</b> Kiểm khi review
+        (so với develop, cùng đầu vào):</p>
+      <table>
+        <tr><th>Khoá Đến có ≥2 dòng CITAD</th><th>Trước</th><th>Sau PR #110</th></tr>
+        <tr><td>CITAD không đọc được mã (<code>nh_gui</code> rỗng)</td><td>khớp 2</td><td>2 Chỉ CITAD + 2 Chỉ IPCAS</td></tr>
+        <tr><td><code>NH_NHAN</code> IPCAS chỉ có tên, không có số</td><td>khớp 2</td><td>2 Chỉ CITAD + 1 Chỉ IPCAS</td></tr>
+        <tr><td>6 số cuối mã lệch giữa 2 nguồn</td><td>khớp 2</td><td>khớp 1 + 1 cặp lệch</td></tr>
+        <tr><td>Cùng 1 ngân hàng gửi 2 lệnh, IPCAS có 1</td><td>khớp 2</td><td>khớp 2 — <b>vẫn sót</b>, như cũ</td></tr>
+      </table>
+      <p>Tác giả đo trên dữ liệu thật 15/09 (140.523 dòng): 0 dòng mất/thừa ngoài các lệch thật — nhưng đó là
+        <b>một ngày</b>, và mẫu IPCAS trong test đều ghi tên chữ ("NH TEST") nên không test nào canh việc cột
+        <code>NH_NHAN</code> chiều Đến có mã số. Nếu một ngày báo cáo có hàng loạt cặp Chỉ CITAD/Chỉ IPCAS mang
+        ghi chú "nhiều ngân hàng gửi khác nhau" → nghi định dạng file đổi trước khi nghi dữ liệu. Hướng sửa đề
+        xuất: mã rỗng / không dòng IPCAS nào có mã số thì lui về cách khớp cũ.</p>
+
+      <p class="note"><b>⚠ Chưa chốt 2 — ERRC không có CITAD giờ hiện "Chỉ IPCAS".</b> ERPO/CALD cùng tình huống
+        được loại (thất bại bình thường, chưa đi kênh). Chưa hỏi Phòng Thanh toán ERRC lẻ có phải chênh lệch cần
+        báo không. Nếu không → thêm <code>ERRC</code> vào <code>ERR_DI</code>. Ngoài ra msgref có ERRC + trạng
+        thái khác SCNL (vd WFPG) thì dòng nào thắng tuỳ thứ tự file (<code>PRIORITY_DI</code> chỉ có SCNL) —
+        kết quả vẫn là Lệch trạng thái nên không sai nặng.</p>
+
+      <p><b>Merge bằng chạy tại máy</b> (CI bị chặn billing): commit <code>8734bc3</code>, Python 3.10.0,
+        ruff F821/F823/E9 sạch, <code>2010 passed</code>. Kết quả dán ở PR #110.</p>
+
+    </div>
+  </div>
+
   <!-- TD1 -->
   <div class="card">
     <div class="card-header">
