@@ -4,6 +4,18 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 16/09/2026 Chấm 459901 — nhóm **Chuyển chi nhánh** chấm chặt hơn theo đúng quy tắc phòng Thanh toán
+    + ✅ Một cặp chỉ được xếp vào **Chuyển chi nhánh** khi có **một vế mã chi nhánh `1000` và một vế
+      mã khác**. Trước đây phần mềm chỉ ghép theo số tiền + nội dung (REMARK) mà không nhìn mã chi
+      nhánh, nên cặp hai vế cùng chi nhánh cũng bị xếp nhầm vào đây
+    + ⚠️ **Số dòng nhóm Chuyển chi nhánh sẽ ít đi so với các tháng trước.** Phần bị loại không mất —
+      rơi xuống nhóm *Cân CN* hoặc *GD khác* ở các bước sau. Tổng số dòng của 7 file vẫn đúng bằng
+      số dòng dữ liệu đầu vào như cũ
+    + ⚠️ Có một số giao dịch thực tế **là** chuyển chi nhánh nhưng không có vế `1000` — người chấm
+      tay nhận ra được vì tra hệ thống thanh toán, còn dữ liệu GL02 không có dấu hiệu nào để phần
+      mềm tự biết. Những ca này vẫn nằm ở *GD khác* và **vẫn phải chấm tay** như trước
+    + ℹ️ Không đổi gì ở 6 nhóm còn lại, không đổi thứ tự phân loại, không đổi cách xuất file
+
 - 16/09/2026 Thư viện — chặn `pandas` phiên bản 3 để không hỏng phần xuất file Excel
     + ✅ **Cần chạy lại `start.bat` một lần** sau đợt này để máy tự cài đúng phiên bản thư viện
     + ℹ️ Không đổi màn hình nào, không đổi dữ liệu. Đây là việc bên trong: `pandas` vừa ra bản mới (bản 3)
