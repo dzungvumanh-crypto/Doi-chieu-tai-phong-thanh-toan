@@ -5,10 +5,10 @@
 ## Cài đặt
 
 ### 1. Yêu cầu
-- **Python 3.10.x** — đúng dòng này, không phải "3.10 trở lên". CI chạy `python-version: "3.10"`
+- **Python 3.12.x** — đúng dòng này, không phải "3.12 trở lên". CI chạy `python-version: "3.12"`
   (`.github/workflows/tests.yml`), nên chạy bản khác là chạy thứ **CI không hề kiểm**. Đã xảy ra
-  thật: `pandas` 3.x đòi Python ≥3.11, người dùng 3.11+ gặp lỗi xuất Excel trong khi CI vẫn xanh
-  (PR #105). ⚠️ Python 3.10 **hết hỗ trợ 31/10/2026** — kế hoạch chuyển 3.12: issue #108.
+  thật: `pandas` 3.x đòi Python ≥3.11, người dùng 3.11+ gặp lỗi xuất Excel trong khi CI (lúc đó
+  ghim 3.10) vẫn xanh (PR #105).
 - Windows / Linux / macOS
 - **Microsoft Word** trên máy chạy backend — chỉ cần cho việc xuất **đơn nghỉ phép bản PDF**
   (Word chuyển `.docx` → `.pdf`). Không có Word thì hệ thống vẫn chạy đủ, riêng phần ký đơn
@@ -137,8 +137,8 @@ Truy cập:
 - **Từ máy khác trong LAN**: http://[IP-máy-chủ]:8080
 
 > **Windows — dùng `start.bat`.** Script tự kiểm tra `.venv` và **vá tại chỗ** (~2 giây) khi thư mục dự án
-> được mang sang máy khác (chạy từ USB), thay vì xoá và cài lại toàn bộ thư viện. Máy mới cần **Python 3.10.x**;
-> bản 3.11/3.12 sẽ buộc cài lại thư viện và **cần internet**.
+> được mang sang máy khác (chạy từ USB), thay vì xoá và cài lại toàn bộ thư viện. Máy mới cần **Python 3.12.x**;
+> bản khác sẽ buộc cài lại thư viện và **cần internet**.
 >
 > Sửa file `.bat` / `.ps1` phải giữ xuống dòng **CRLF** — `.gitattributes` đã ép sẵn khi clone/checkout,
 > nhưng công cụ ghi file thường mặc định LF và `cmd.exe` chạy sai file .bat dạng LF mà không báo lỗi rõ.

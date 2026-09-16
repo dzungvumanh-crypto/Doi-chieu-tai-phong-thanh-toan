@@ -34,18 +34,36 @@ Khi nhiều người cùng sửa code, nếu không có quy tắc thì sẽ xả
 
 ### Bước 1 — Cài Python
 
-Tải **Python 3.10.x** tại: https://www.python.org/downloads/
+Tải **Python 3.12.x** tại: https://www.python.org/downloads/
 
-> ⚠️ **Đúng dòng 3.10, không phải "3.10 trở lên".** CI chạy `python-version: "3.10"`. Cài bản
+> ⚠️ **Đúng dòng 3.12, không phải "3.12 trở lên".** CI chạy `python-version: "3.12"`. Cài bản
 > khác nghĩa là bạn chạy thứ CI không hề kiểm — lỗi chỉ hiện trên máy bạn, còn PR vẫn xanh, và
 > không ai nhìn ra vì sao. Đã xảy ra thật: `pandas` 3.x đòi Python ≥3.11, nên người cài 3.11+
-> bị hỏng toàn bộ phần xuất Excel trong khi CI không tài nào tái hiện được (PR #105).
+> bị hỏng toàn bộ phần xuất Excel trong khi CI (lúc đó ghim 3.10) không tài nào tái hiện được
+> (PR #105).
 >
 > `start.bat` cũng vá `.venv` tại chỗ khi mang dự án sang máy khác (chạy từ USB) — bản Python
 > khác là buộc cài lại toàn bộ thư viện và **cần internet**.
+
+> **Đang dùng 3.10 và cần nâng?** Trên máy có cả hai bản thì `python` thường vẫn trỏ vào bản cũ,
+> chỉ `py` mới thấy bản mới — nên phải gõ `py -3.12` tường minh. Chạy trong **CMD**:
 >
-> Python 3.10 hết hỗ trợ **31/10/2026**. Việc chuyển sang 3.12 phải làm đồng loạt cả nhóm,
-> CI và máy chủ — không ai tự nâng lẻ. Kế hoạch ở issue #108.
+> ```cmd
+> cd /d <thư-mục-dự-án>
+> ren .venv .venv_310_backup
+> py -3.12 -m venv .venv
+> .venv\Scripts\python.exe --version
+> ```
+>
+> Dòng cuối **phải** ra `Python 3.12.x` rồi mới cài thư viện — nếu không thì venv vừa dựng lại
+> bằng bản cũ, cài xong test vẫn xanh mà chẳng kiểm được gì. Đổi tên thay vì xoá để còn đường lui
+> (`ren .venv_310_backup .venv`). Cài xong:
+>
+> ```cmd
+> .venv\Scripts\python.exe -m pip install --upgrade pip
+> .venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+> .venv\Scripts\python.exe -m pytest -q
+> ```
 
 Khi cài, **nhớ tích vào ô "Add Python to PATH"** trước khi bấm Install.
 
