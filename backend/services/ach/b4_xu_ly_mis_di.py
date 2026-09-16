@@ -26,6 +26,11 @@ from .zip_utils import (
 
 _TRANG_THAI_LOAI_TRU = {'CALD', 'ERPO', 'TPER'}
 
+# Mục 3 (bổ sung 16.09.2026, Thảo xác nhận) — trạng thái chứng minh lệnh ĐÃ đi
+# kênh dù MSGREF không tìm thấy trên GW sạch (VD GW trích xuất thiếu dòng) —
+# xem nhánh C.2b trong khop_voi_gw().
+_TRANG_THAI_DA_DI_KENH = {'SCNL', 'TXRT'}
+
 _COLS = [
     'NGAY_GIAO_DICH', 'CHI_NHANH', 'REFHUB', 'MSGREF', 'MSGSEQ', 'TXID',
     'KENH_THANH_TOAN', 'TRANG_THAI_LENH', 'SO_TIEN', 'TRACE',
@@ -458,6 +463,12 @@ def khop_voi_gw(df_mis_di: pd.DataFrame, dict_gw_count: dict, df_gw: pd.DataFram
     thái khác ngoài TPAY phát sinh theo thời gian (đã thấy TXPR/TXCA thực tế) và muốn
     xử lý đồng nhất, không liệt kê danh sách trắng cố định.
 
+    Requirement C.2b (bổ sung 16.09.2026, Thảo xác nhận) — trong nhóm thừa, dòng có
+    TRANG_THAI_LENH ∈ SCNL/TXRT (biến `_TRANG_THAI_DA_DI_KENH`) được coi là ĐÃ đi
+    kênh bất kể MSGREF có tìm thấy trên GW sạch hay không — vào thẳng nhánh 1B
+    (df_khop_dung, MATCH_TYPE='TIMEOUT'), KHÔNG rơi vào TIMEOUT_KHONG_KENH. Áp dụng
+    SONG SONG với điều kiện MSGREF ở C.2 (một trong hai đúng là đủ), không thay thế.
+
     Trả về (df_khop_dung, df_timeout).
     """
     _log   = log_callback or print
@@ -474,9 +485,12 @@ def khop_voi_gw(df_mis_di: pd.DataFrame, dict_gw_count: dict, df_gw: pd.DataFram
 
     mask_xet_trong_nhom_thua = mask_nhom_thua
     mask_co_tren_gw          = msgref_mis.isin(msgref_gw_set)
+    # C.2b — trạng thái tự chứng minh đã đi kênh, không phụ thuộc MSGREF-trên-GW.
+    mask_da_di_kenh_theo_trang_thai = df_mis_di['TRANG_THAI_LENH'].isin(_TRANG_THAI_DA_DI_KENH)
+    mask_da_di_kenh = mask_co_tren_gw | mask_da_di_kenh_theo_trang_thai
 
-    mask_timeout      = mask_xet_trong_nhom_thua & ~mask_co_tren_gw   # nhánh 1A
-    mask_timeout_that = mask_xet_trong_nhom_thua & mask_co_tren_gw    # nhánh 1B
+    mask_timeout      = mask_xet_trong_nhom_thua & ~mask_da_di_kenh   # nhánh 1A
+    mask_timeout_that = mask_xet_trong_nhom_thua & mask_da_di_kenh    # nhánh 1B
 
     df = df_mis_di.copy()
     df['MATCH_TYPE'] = ''

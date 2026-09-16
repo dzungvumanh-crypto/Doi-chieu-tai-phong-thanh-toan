@@ -417,9 +417,16 @@ async def cham_ach_page():
                                 ).props('dense').classes('text-orange-900 font-medium')
                                 ui.label(
                                     f'Đủ PDF + GW + MIS_đi để tính Timeout không đi kênh, nhưng '
-                                    f'thiếu {thieu} — các phần đối chiếu khác (NPO/MIS thừa, huỷ, '
-                                    f'OSB...) sẽ ghi "CHƯA ĐỐI CHIẾU ĐƯỢC" thay vì số liệu thật.'
+                                    f'thiếu {thieu} — các mục sau sẽ ghi "CHƯA ĐỐI CHIẾU ĐƯỢC" thay vì '
+                                    f'số liệu thật: NPO_đi thừa, MIS_đi thừa, NPO_đến thừa, MIS_đến thừa, '
+                                    f'MIS khớp (đi/đến), huỷ trong/khác ngày — và file OSB riêng sẽ '
+                                    f'KHÔNG được tạo.'
                                 ).classes('text-xs text-orange-700')
+                                ui.label(
+                                    '(Đây là do thiếu file GL02/MIS_đến của CHÍNH NGÀY đang chạy — '
+                                    'khác với file tuỳ chọn "MIS đến thừa T-1", thiếu file đó KHÔNG '
+                                    'ảnh hưởng gì.)'
+                                ).classes('text-xs text-orange-700 italic mt-1')
 
                         def _on_chi_tim_timeout_change(val: bool):
                             state['chi_tim_timeout'] = val

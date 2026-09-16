@@ -550,10 +550,12 @@ class TestKhopVoiGw:
         assert khop.iloc[0]['MATCH_TYPE'] == ''
 
     def test_nhom_thua_khong_phai_tpay_cung_bi_xet_timeout(self):
-        """Cập nhật 2026-08-03: nhóm thừa, trạng thái SCNL (không phải TPAY), MSGREF
+        """Cập nhật 2026-08-03: nhóm thừa, trạng thái TXCA (không phải TPAY), MSGREF
         KHÔNG có trên GW sạch → vẫn là nhánh 1A (timeout), y hệt TPAY — KHÔNG còn
-        được miễn trừ chỉ vì khác TPAY."""
-        df_mis_di = _mis_di([_row('R1', '1000', 'SCNL', '111', session=SID,
+        được miễn trừ chỉ vì khác TPAY. Dùng TXCA thay vì SCNL ở đây (đổi 16.09.2026)
+        vì SCNL nay thuộc ngoại lệ C.2b riêng — xem
+        test_scnl_khong_co_msgref_tren_gw_van_la_khop_dung."""
+        df_mis_di = _mis_di([_row('R1', '1000', 'TXCA', '111', session=SID,
                                   so_tien='500000', msgref='MSGR1')])
         dict_gw = {}  # nhóm thừa: COUNT_MIS=1 > COUNT_GW=0
         df_gw = pd.DataFrame([_gw_row('9999999999', 'KHAC_MSGREF')])
@@ -645,6 +647,43 @@ class TestKhopVoiGw:
         assert len(khop) == 2
         assert set(khop['REFHUB']) == {'R1', 'R3'}
         assert (khop['MATCH_TYPE'] == 'TIMEOUT').all()
+
+    def test_scnl_khong_co_msgref_tren_gw_van_la_khop_dung(self):
+        """Cập nhật 16.09.2026 (Thảo xác nhận, C.2b): nhóm thừa, trạng thái SCNL,
+        MSGREF KHÔNG có trên GW sạch — KHÁC test_nhom_thua_khong_phai_tpay_...
+        (đã bị thay hành vi): SCNL tự chứng minh đã đi kênh, không rơi vào
+        TIMEOUT_KHONG_KENH nữa mà vào thẳng khớp đúng."""
+        df_mis_di = _mis_di([_row('R1', '1000', 'SCNL', '111', session=SID,
+                                  so_tien='500000', msgref='MSGR1')])
+        dict_gw = {}  # nhóm thừa theo COUNT
+        df_gw = pd.DataFrame([_gw_row('9999999999', 'KHAC_MSGREF')])  # MSGREF không khớp
+        khop, timeout = khop_voi_gw(df_mis_di, dict_gw, df_gw)
+        assert len(timeout) == 0
+        assert len(khop) == 1
+        assert khop.iloc[0]['MATCH_TYPE'] == 'TIMEOUT'
+
+    def test_txrt_khong_co_msgref_tren_gw_van_la_khop_dung(self):
+        """Đối xứng SCNL — TXRT cũng thuộc `_TRANG_THAI_DA_DI_KENH`."""
+        df_mis_di = _mis_di([_row('R1', '1000', 'TXRT', '111', session=SID,
+                                  so_tien='500000', msgref='MSGR1')])
+        dict_gw = {}
+        df_gw = pd.DataFrame([_gw_row('9999999999', 'KHAC_MSGREF')])
+        khop, timeout = khop_voi_gw(df_mis_di, dict_gw, df_gw)
+        assert len(timeout) == 0
+        assert len(khop) == 1
+        assert khop.iloc[0]['MATCH_TYPE'] == 'TIMEOUT'
+
+    def test_scnl_khac_voi_trang_thai_thuong_van_bi_xet_timeout_neu_khong_co_msgref(self):
+        """SCNL/TXRT là NGOẠI LỆ RIÊNG — trạng thái khác (VD TPAY) không có MSGREF
+        trên GW vẫn phải rơi vào TIMEOUT_KHONG_KENH như cũ, không bị ảnh hưởng bởi
+        thay đổi C.2b."""
+        df_mis_di = _mis_di([_row('R1', '1000', 'TPAY', '111', session=SID,
+                                  so_tien='500000', msgref='MSGR1')])
+        dict_gw = {}
+        df_gw = pd.DataFrame([_gw_row('9999999999', 'KHAC_MSGREF')])
+        khop, timeout = khop_voi_gw(df_mis_di, dict_gw, df_gw)
+        assert len(timeout) == 1
+        assert len(khop) == 0
 
     def test_chuan_hoa_msgref_dau_nhay_don(self):
         """MSGREF có dấu nháy đơn đầu ở 1 hoặc cả 2 bên vẫn phải so khớp đúng sau

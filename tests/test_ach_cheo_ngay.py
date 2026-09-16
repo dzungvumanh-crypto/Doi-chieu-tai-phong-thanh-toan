@@ -4,7 +4,9 @@ thừa T-2 ⟷ NPO thừa T-1, cả 2 chiều đi/đến).
 Chạy: .venv\\Scripts\\python.exe -m pytest tests/test_ach_cheo_ngay.py -v
 """
 import os
+from datetime import datetime
 
+import openpyxl
 import pandas as pd
 import pytest
 
@@ -14,9 +16,14 @@ from backend.services.ach.b11_doi_chieu_cheo_ngay import (
     ket_qua_mis_di_thua_t2, ket_qua_mis_den_thua_t2,
     KETQUA_OSB_DI_KHOP, KETQUA_OSB_DI_CHUA, KETQUA_OSB_DEN_KHOP, KETQUA_OSB_DEN_CHUA,
     KETQUA_KHONG_CO_QT, KETQUA_THUONG_KHOP, KETQUA_THUONG_CHUA,
+    doc_npo_di_thua_t2, doi_chieu_huy_cheo_ngay, HUY_NGAY_T1, NPO_NGAY_T2,
+    doc_qt_di_thua_t2, doi_chieu_huy_cheo_ngay_qt,
+    doc_timeout_cu,
 )
 from backend.services.ach.pipeline import (
     _tim_file_ngoai_output, _tim_file_thua_t2, _tim_di_zip_ngay_khac, _tim_gw_xlsx,
+    _tim_file_npo_di_thua_t2, xuat_excel_huy_cheo_ngay_t2, _tim_file_qt_di_thua_t2,
+    _tim_file_timeout_cu,
 )
 
 
@@ -607,3 +614,368 @@ class TestKetQuaMisDenThuaT2:
         df_npo = pd.DataFrame([_npo_den_thua_row('9999', '1', 1)])
         ket_qua = ket_qua_mis_den_thua_t2(mis_t2, qt_den, df_npo)
         assert ket_qua.loc[0, 'KET_QUA'] == KETQUA_OSB_DEN_KHOP
+
+
+# ── Mục 5 (bổ sung 11.09.2026, đã nối vào main_from_dir()) — đối chiếu chéo
+# NPO_đi thừa T-2 với huỷ khác ngày T-1 ──────────────────────────────────────
+
+class TestDocNpoDiThuaT2:
+    def test_tinh_dung_so_trace_tu_reference(self, tmp_path):
+        path = tmp_path / 'npo_thua_t2.csv'
+        pd.DataFrame({
+            'TRBRCD': ['5612'],
+            'REFERENCE': ['ABCDEFG142088610XYZ'],  # ký tự 8-19 = '142088610XY'... theo đúng slice [7:19]
+            'CRAMOUNT': ['200000'],
+        }).to_csv(path, index=False, encoding='utf-8-sig')
+        df = doc_npo_di_thua_t2(str(path))
+        assert df.loc[0, 'SO_TRACE'] == 'ABCDEFG142088610XYZ'[7:19].lstrip('0')
+
+    def test_reference_ngan_nhung_co_gia_tri_ra_so_trace_0(self, tmp_path):
+        """REFERENCE có giá trị thật nhưng NGẮN hơn 8 ký tự (ví dụ 'AB') —
+        `.str[7:19]` trả về CHUỖI RỖNG '' (không phải NaN, đã verify hành vi
+        pandas thật), rơi vào nhánh where(_stripped != '', ..., '0') → SO_TRACE
+        = '0'. Chỉ REFERENCE THỰC SỰ THIẾU (ô trống/NaN) mới ra ''."""
+        path = tmp_path / 'npo_thua_t2.csv'
+        pd.DataFrame({
+            'TRBRCD': ['5612'],
+            'REFERENCE': ['AB'],
+            'CRAMOUNT': ['200000'],
+        }).to_csv(path, index=False, encoding='utf-8-sig')
+        df = doc_npo_di_thua_t2(str(path))
+        assert df.loc[0, 'SO_TRACE'] == '0'
+
+    def test_reference_thieu_ra_so_trace_rong_khong_phai_0(self, tmp_path):
+        """Nhánh NaN của công thức gốc — REFERENCE THỰC SỰ THIẾU (ô trống, đọc
+        ra NaN dưới dtype=str) thì SO_TRACE = '' (KHÔNG phải '0'). Đây là lỗi
+        từng bị phản biện phát hiện khi rút gọn công thức."""
+        path = tmp_path / 'npo_thua_t2.csv'
+        pd.DataFrame({
+            'TRBRCD': ['5612'],
+            'REFERENCE': [''],
+            'CRAMOUNT': ['200000'],
+        }).to_csv(path, index=False, encoding='utf-8-sig')
+        df = doc_npo_di_thua_t2(str(path))
+        assert df.loc[0, 'SO_TRACE'] == ''
+
+    def test_thieu_cot_bao_loi(self, tmp_path):
+        path = tmp_path / 'npo_thua_t2.csv'
+        pd.DataFrame({'TRBRCD': ['5612']}).to_csv(path, index=False)
+        with pytest.raises(ValueError, match='thiếu cột'):
+            doc_npo_di_thua_t2(str(path))
+
+
+class TestDoiChieuHuyCheoNgay:
+    def _npo_t2(self, trbrcd, so_trace, cramount):
+        return {'TRBRCD': trbrcd, 'SO_TRACE': so_trace, 'CRAMOUNT': cramount,
+                '_CHECK_TRUNG': trbrcd + so_trace}
+
+    def _huy_t1(self, trbrcd, so_trace, cramount):
+        return {'TRBRCD': trbrcd, 'SO_TRACE': so_trace, 'CRAMOUNT': cramount}
+
+    def test_khop_dung_cap_1doi1(self):
+        npo_t2 = pd.DataFrame([self._npo_t2('5612', '142088610', 1000000)])
+        huy_t1 = pd.DataFrame([self._huy_t1('5612', '142088610', -1000000)])
+        ket_qua_npo, ket_qua_huy = doi_chieu_huy_cheo_ngay(npo_t2, huy_t1)
+        assert ket_qua_npo.loc[0, 'KET_QUA'] == HUY_NGAY_T1
+        assert ket_qua_huy.loc[0, 'KET_QUA'] == NPO_NGAY_T2
+
+    def test_khong_gan_nham_khi_nhieu_dong_cung_khoa(self):
+        """Phản ví dụ phát hiện qua phản biện: 2 dòng NPO thừa T-2 (không liên
+        quan huỷ) + 1 dòng huỷ T-1 cùng khoá, tổng = 0 — KHÔNG được gắn nhãn cho
+        dòng nào (mơ hồ, không phải cặp 1-đối-1)."""
+        npo_t2 = pd.DataFrame([
+            self._npo_t2('5612', '142088610', 1000000),
+            self._npo_t2('5612', '142088610', 2000000),
+        ])
+        huy_t1 = pd.DataFrame([self._huy_t1('5612', '142088610', -3000000)])
+        ket_qua_npo, ket_qua_huy = doi_chieu_huy_cheo_ngay(npo_t2, huy_t1)
+        assert (ket_qua_npo['KET_QUA'] == '').all()
+        assert (ket_qua_huy['KET_QUA'] == '').all()
+
+    def test_tong_khac_0_khong_khop(self):
+        npo_t2 = pd.DataFrame([self._npo_t2('5612', '142088610', 1000000)])
+        huy_t1 = pd.DataFrame([self._huy_t1('5612', '142088610', -500000)])
+        ket_qua_npo, ket_qua_huy = doi_chieu_huy_cheo_ngay(npo_t2, huy_t1)
+        assert ket_qua_npo.loc[0, 'KET_QUA'] == ''
+        assert ket_qua_huy.loc[0, 'KET_QUA'] == ''
+
+    def test_giu_du_toan_bo_dong(self):
+        npo_t2 = pd.DataFrame([
+            self._npo_t2('5612', '142088610', 1000000),
+            self._npo_t2('9999', '000000001', 500000),
+        ])
+        huy_t1 = pd.DataFrame([self._huy_t1('5612', '142088610', -1000000)])
+        ket_qua_npo, ket_qua_huy = doi_chieu_huy_cheo_ngay(npo_t2, huy_t1)
+        assert len(ket_qua_npo) == 2
+        assert len(ket_qua_huy) == 1
+
+    def test_khong_co_file_t2_tra_ve_nguyen_ban(self):
+        huy_t1 = pd.DataFrame([self._huy_t1('5612', '142088610', -1000000)])
+        ket_qua_npo, ket_qua_huy = doi_chieu_huy_cheo_ngay(None, huy_t1)
+        assert ket_qua_npo is None
+        assert ket_qua_huy is huy_t1
+
+
+# ── Mục 5.1 (bổ sung 14.09.2026) — đối xứng Mục 5 nhưng nguồn QT ────────────
+
+class TestDocQtDiThuaT2:
+    def test_tinh_dung_check_trung_va_so_tien(self, tmp_path):
+        path = tmp_path / 'qt_di_thua_t2.csv'
+        pd.DataFrame({
+            'CN thực hiện': ['5612 - CN A'],
+            'Mã giao dịch': ['0142088610'],
+            'SO_TIEN': ['200.000'],
+        }).to_csv(path, index=False, encoding='utf-8-sig')
+        df = doc_qt_di_thua_t2(str(path))
+        assert df.loc[0, 'SO_TIEN'] == 200000
+        assert df.loc[0, '_CHECK_TRUNG'] == '5612' + '142088610'
+
+    def test_thieu_cot_bao_loi(self, tmp_path):
+        path = tmp_path / 'qt_di_thua_t2.csv'
+        pd.DataFrame({'CN thực hiện': ['5612 - CN A']}).to_csv(path, index=False, encoding='utf-8-sig')
+        with pytest.raises(ValueError, match='thiếu cột'):
+            doc_qt_di_thua_t2(str(path))
+
+    def test_cn_thuc_hien_sai_dinh_dang_bao_loi(self, tmp_path):
+        path = tmp_path / 'qt_di_thua_t2.csv'
+        pd.DataFrame({
+            'CN thực hiện': ['CN không có mã số'],
+            'Mã giao dịch': ['142088610'],
+            'SO_TIEN': ['200000'],
+        }).to_csv(path, index=False, encoding='utf-8-sig')
+        with pytest.raises(ValueError, match='CN thực hiện'):
+            doc_qt_di_thua_t2(str(path))
+
+
+class TestDoiChieuHuyCheoNgayQt:
+    def _qt_t2(self, cn, ma_gd, so_tien):
+        ma_cn = cn.split(' - ')[0].strip()
+        return {'CN thực hiện': cn, 'Mã giao dịch': ma_gd, 'SO_TIEN': so_tien,
+                '_CHECK_TRUNG': ma_cn + ma_gd.lstrip('0')}
+
+    def _huy_t1(self, cn, ma_gd, kieu, so_tien):
+        return {'CN thực hiện': cn, 'Mã giao dịch': ma_gd, 'Kiểu giao dịch': kieu, 'SO_TIEN': so_tien}
+
+    def test_khop_dung_cap_1doi1(self):
+        qt_t2  = pd.DataFrame([self._qt_t2('5612 - CN A', '142088610', 1000000)])
+        huy_t1 = pd.DataFrame([self._huy_t1('5612 - CN A', '142088610', 'Cancel', -1000000)])
+        ket_qua_qt, ket_qua_huy = doi_chieu_huy_cheo_ngay_qt(qt_t2, huy_t1)
+        assert ket_qua_qt.loc[0, 'KET_QUA'] == HUY_NGAY_T1
+        assert ket_qua_huy.loc[0, 'KET_QUA'] == NPO_NGAY_T2
+
+    def test_cot_tra_ve_van_ten_so_tien_khong_sot_cot_tam(self):
+        """Không được sót tên cột tạm CRAMOUNT/TRBRCD/SO_TRACE (mượn của
+        doi_chieu_huy_cheo_ngay() gốc, cột NPO) trong kết quả trả về."""
+        qt_t2  = pd.DataFrame([self._qt_t2('5612 - CN A', '142088610', 1000000)])
+        huy_t1 = pd.DataFrame([self._huy_t1('5612 - CN A', '142088610', 'Cancel', -1000000)])
+        ket_qua_qt, ket_qua_huy = doi_chieu_huy_cheo_ngay_qt(qt_t2, huy_t1)
+        assert 'SO_TIEN' in ket_qua_qt.columns and 'CRAMOUNT' not in ket_qua_qt.columns
+        assert 'SO_TIEN' in ket_qua_huy.columns and 'CRAMOUNT' not in ket_qua_huy.columns
+        assert 'TRBRCD' not in ket_qua_huy.columns
+        assert 'SO_TRACE' not in ket_qua_huy.columns
+
+    def test_tong_khac_0_khong_khop(self):
+        qt_t2  = pd.DataFrame([self._qt_t2('5612 - CN A', '142088610', 1000000)])
+        huy_t1 = pd.DataFrame([self._huy_t1('5612 - CN A', '142088610', 'Cancel', -500000)])
+        ket_qua_qt, ket_qua_huy = doi_chieu_huy_cheo_ngay_qt(qt_t2, huy_t1)
+        assert ket_qua_qt.loc[0, 'KET_QUA'] == ''
+        assert ket_qua_huy.loc[0, 'KET_QUA'] == ''
+
+    def test_khong_co_file_t2_tra_ve_nguyen_ban(self):
+        huy_t1 = pd.DataFrame([self._huy_t1('5612 - CN A', '142088610', 'Cancel', -1000000)])
+        ket_qua_qt, ket_qua_huy = doi_chieu_huy_cheo_ngay_qt(None, huy_t1)
+        assert ket_qua_qt is None
+        assert ket_qua_huy is huy_t1
+
+
+# ── Dò file "NPO_đi thừa T-2" — pipeline.py::_tim_file_npo_di_thua_t2() ──────
+
+class TestTimFileNpoDiThuaT2:
+    def test_khop_ten_may_tu_xuat_csv(self, tmp_path):
+        f = tmp_path / 'NPO_DI_THUA_20260903.csv'
+        f.write_text('x')
+        assert _tim_file_npo_di_thua_t2(str(tmp_path)) == [str(f)]
+
+    def test_khop_ten_nguoi_cham_go_tay(self, tmp_path):
+        f = tmp_path / 'NPO đi thừa 03.09.xlsx'
+        f.write_text('x')
+        assert _tim_file_npo_di_thua_t2(str(tmp_path)) == [str(f)]
+
+    def test_khong_bat_nham_mis_di_thua(self, tmp_path):
+        (tmp_path / 'MIS_DI_THUA_20260903.csv').write_text('x')
+        assert _tim_file_npo_di_thua_t2(str(tmp_path)) == []
+
+    def test_loai_tru_file_bao_cao_t2_ketqua(self, tmp_path):
+        f = tmp_path / 'NPO_DI_THUA_20260903.csv'
+        f.write_text('x')
+        (tmp_path / 'NPO_DI_THUA_T2_KETQUA_20260903.csv').write_text('x')
+        assert _tim_file_npo_di_thua_t2(str(tmp_path)) == [str(f)]
+
+    def test_bo_qua_file_trong_thu_muc_output(self, tmp_path):
+        out = tmp_path / 'Output'
+        out.mkdir()
+        (out / 'NPO_DI_THUA_20260903.csv').write_text('x')
+        assert _tim_file_npo_di_thua_t2(str(tmp_path)) == []
+
+
+# ── Dò file "QT đi thừa T-2" — pipeline.py::_tim_file_qt_di_thua_t2() ───────
+
+class TestTimFileQtDiThuaT2:
+    def test_khop_ten_may_tu_xuat_csv(self, tmp_path):
+        f = tmp_path / 'QT_DI_THUA_20260903.csv'
+        f.write_text('x')
+        assert _tim_file_qt_di_thua_t2(str(tmp_path)) == [str(f)]
+
+    def test_khong_bat_nham_npo_di_thua(self, tmp_path):
+        (tmp_path / 'NPO_DI_THUA_20260903.csv').write_text('x')
+        assert _tim_file_qt_di_thua_t2(str(tmp_path)) == []
+
+    def test_loai_tru_file_bao_cao_t2_ketqua(self, tmp_path):
+        f = tmp_path / 'QT_DI_THUA_20260903.csv'
+        f.write_text('x')
+        (tmp_path / 'QT_DI_THUA_T2_KETQUA_20260903.csv').write_text('x')
+        assert _tim_file_qt_di_thua_t2(str(tmp_path)) == [str(f)]
+
+    def test_bo_qua_file_trong_thu_muc_output(self, tmp_path):
+        out = tmp_path / 'Output'
+        out.mkdir()
+        (out / 'QT_DI_THUA_20260903.csv').write_text('x')
+        assert _tim_file_qt_di_thua_t2(str(tmp_path)) == []
+
+
+# ── Báo cáo Mục 5 — pipeline.py::xuat_excel_huy_cheo_ngay_t2() ──────────────
+
+class TestXuatExcelHuyCheoNgayT2:
+    def test_ketqua_none_khong_tao_file(self, tmp_path):
+        ket_qua = xuat_excel_huy_cheo_ngay_t2(
+            str(tmp_path), datetime(2026, 9, 3), None, None,
+        )
+        assert ket_qua is None
+        assert list(tmp_path.iterdir()) == []
+
+    def test_co_du_lieu_tao_2_sheet(self, tmp_path):
+        df_npo = pd.DataFrame([{'TRBRCD': '5612', 'SO_TRACE': '142088610',
+                                'CRAMOUNT': 1000000, 'KET_QUA': HUY_NGAY_T1}])
+        df_huy = pd.DataFrame([{'TRBRCD': '5612', 'SO_TRACE': '142088610',
+                                'CRAMOUNT': -1000000, 'KET_QUA': NPO_NGAY_T2}])
+        path = xuat_excel_huy_cheo_ngay_t2(
+            str(tmp_path), datetime(2026, 9, 3), df_npo, df_huy,
+        )
+        assert path == str(tmp_path / '20260903_ACH_HuyCheoNgay.xlsx')
+        wb = openpyxl.load_workbook(path)
+        assert set(wb.sheetnames) == {'NPO_THUA_T2_KETQUA', 'HUY_KHAC_NGAY_KETQUA'}
+        assert wb['NPO_THUA_T2_KETQUA']['D1'].value == 'KET_QUA'
+        assert wb['NPO_THUA_T2_KETQUA']['D2'].value == HUY_NGAY_T1
+        assert wb['HUY_KHAC_NGAY_KETQUA']['D2'].value == NPO_NGAY_T2
+
+    def test_them_2_sheet_qt_khi_co(self, tmp_path):
+        """Mục 5.1 (14.09.2026) — có thêm tham số df_qt_thua_t2_ketqua/
+        df_huy_khac_ngay_qt_ketqua thì có thêm đúng 2 sheet QT, không đụng 2
+        sheet NPO cũ."""
+        df_npo = pd.DataFrame([{'TRBRCD': '5612', 'SO_TRACE': '142088610',
+                                'CRAMOUNT': 1000000, 'KET_QUA': HUY_NGAY_T1}])
+        df_huy = pd.DataFrame([{'TRBRCD': '5612', 'SO_TRACE': '142088610',
+                                'CRAMOUNT': -1000000, 'KET_QUA': NPO_NGAY_T2}])
+        df_qt_t2  = pd.DataFrame([{'CN thực hiện': '5612 - CN A', 'Mã giao dịch': '142088610',
+                                   'SO_TIEN': 1000000, 'KET_QUA': HUY_NGAY_T1}])
+        df_qt_huy = pd.DataFrame([{'CN thực hiện': '5612 - CN A', 'Mã giao dịch': '142088610',
+                                   'SO_TIEN': -1000000, 'KET_QUA': NPO_NGAY_T2}])
+        path = xuat_excel_huy_cheo_ngay_t2(
+            str(tmp_path), datetime(2026, 9, 3), df_npo, df_huy,
+            df_qt_thua_t2_ketqua=df_qt_t2, df_huy_khac_ngay_qt_ketqua=df_qt_huy,
+        )
+        wb = openpyxl.load_workbook(path)
+        assert set(wb.sheetnames) == {
+            'NPO_THUA_T2_KETQUA', 'HUY_KHAC_NGAY_KETQUA',
+            'QT_THUA_T2_KETQUA', 'HUY_KHAC_NGAY_QT_KETQUA',
+        }
+
+    def test_khong_co_npo_nhung_co_qt_van_tao_file(self, tmp_path):
+        """Ngày không có file NPO_đi thừa T-2 (df_npo_thua_t2_ketqua=None) nhưng
+        CÓ file QT đi thừa T-2 — vẫn phải xuất file, không bị bỏ qua theo điều
+        kiện cũ (chỉ xét riêng NPO)."""
+        df_qt_t2 = pd.DataFrame([{'CN thực hiện': '5612 - CN A', 'Mã giao dịch': '142088610',
+                                  'SO_TIEN': 1000000, 'KET_QUA': HUY_NGAY_T1}])
+        path = xuat_excel_huy_cheo_ngay_t2(
+            str(tmp_path), datetime(2026, 9, 3), None, None,
+            df_qt_thua_t2_ketqua=df_qt_t2, df_huy_khac_ngay_qt_ketqua=None,
+        )
+        assert path is not None
+        wb = openpyxl.load_workbook(path)
+        assert 'QT_THUA_T2_KETQUA' in wb.sheetnames
+
+
+# ── Mục 8 (bổ sung 14.09.2026) — dò + đọc file "TO ko đi kênh ngày cũ" ──────
+# Khác các hàm T-2 khác ở trên: KHÔNG giới hạn 1 file, nghiệp vụ có thể đẩy
+# nhiều ngày cũ khác nhau cùng lúc.
+
+def _timeout_cu_row(chi_nhanh, so_tien, trace, se_trace='', ngay_giao_dich='12/09/2026'):
+    return {'CHI_NHANH': chi_nhanh, 'SO_TIEN': str(so_tien), 'TRACE': trace, 'SE_TRACE': se_trace,
+            'NGAY_GIAO_DICH': ngay_giao_dich}
+
+
+class TestTimFileTimeoutCu:
+    def test_khop_ten_sheet_chuan_timeout_khong_kenh(self, tmp_path):
+        f = tmp_path / 'TIMEOUT_KHONG_KENH_20260912.csv'
+        f.write_text('x')
+        assert _tim_file_timeout_cu(str(tmp_path)) == [str(f)]
+
+    def test_khop_ten_nghiep_vu_to_ko_di_kenh(self, tmp_path):
+        f = tmp_path / 'TO ko đi kênh ngày 12.09.xlsx'
+        f.write_text('x')
+        assert _tim_file_timeout_cu(str(tmp_path)) == [str(f)]
+
+    def test_tim_thay_nhieu_file_cung_luc_khong_raise(self, tmp_path):
+        """Khác _tim_file_npo_di_thua_t2()/_tim_file_qt_di_thua_t2() (raise khi >1
+        file) — Mục 8 cho phép nhiều file của nhiều ngày cũ khác nhau cùng lúc."""
+        f1 = tmp_path / 'TIMEOUT_KHONG_KENH_20260910.csv'
+        f2 = tmp_path / 'TO ko đi kênh ngày 11.09.xlsx'
+        f3 = tmp_path / 'TIMEOUT_KHONG_KENH_20260912.csv'
+        f1.write_text('x'); f2.write_text('x'); f3.write_text('x')
+        assert sorted(_tim_file_timeout_cu(str(tmp_path))) == sorted([str(f1), str(f2), str(f3)])
+
+    def test_khong_bat_nham_npo_di_thua(self, tmp_path):
+        (tmp_path / 'NPO_DI_THUA_20260912.csv').write_text('x')
+        assert _tim_file_timeout_cu(str(tmp_path)) == []
+
+    def test_loai_tru_file_bao_cao_tu_xuat(self, tmp_path):
+        f = tmp_path / 'TIMEOUT_KHONG_KENH_20260912.csv'
+        f.write_text('x')
+        (tmp_path / 'TIMEOUT_KHONG_KENH_KETQUA_20260912.csv').write_text('x')
+        assert _tim_file_timeout_cu(str(tmp_path)) == [str(f)]
+
+    def test_bo_qua_file_trong_thu_muc_output(self, tmp_path):
+        out = tmp_path / 'Output'
+        out.mkdir()
+        (out / 'TIMEOUT_KHONG_KENH_20260912.csv').write_text('x')
+        assert _tim_file_timeout_cu(str(tmp_path)) == []
+
+
+class TestDocTimeoutCu:
+    def test_doc_dung_cau_truc(self, tmp_path):
+        path = tmp_path / 'TIMEOUT_KHONG_KENH_20260912.csv'
+        pd.DataFrame([_timeout_cu_row('1240', 3_000_000, '000142755985')]).to_csv(path, index=False)
+        df = doc_timeout_cu(str(path))
+        assert len(df) == 1
+
+    def test_thieu_cot_bao_loi_ro(self, tmp_path):
+        path = tmp_path / 'TIMEOUT_KHONG_KENH_20260912.csv'
+        pd.DataFrame([{'CHI_NHANH': '1240'}]).to_csv(path, index=False)
+        with pytest.raises(ValueError, match='thiếu cột'):
+            doc_timeout_cu(str(path))
+
+    def test_so_tien_ngan_nghin_khong_bi_hieu_la_thap_phan(self, tmp_path):
+        path = tmp_path / 'TIMEOUT_KHONG_KENH_20260912.csv'
+        pd.DataFrame([
+            _timeout_cu_row('1240', '3.000.000', '000142755985'),
+            _timeout_cu_row('1240', '180.000',   '000142755986'),
+        ]).to_csv(path, index=False)
+        df = doc_timeout_cu(str(path))
+        assert df['SO_TIEN'].tolist() == ['3000000', '180000']
+
+    def test_doc_xlsx_nguoi_cham_tu_dat_ten(self, tmp_path):
+        path = tmp_path / 'TO ko đi kênh ngày 12.09.xlsx'
+        pd.DataFrame([_timeout_cu_row('1240', 3_000_000, '000142755985')]).to_excel(path, index=False)
+        df = doc_timeout_cu(str(path))
+        assert len(df) == 1
+        assert df.loc[0, 'CHI_NHANH'] == '1240'
