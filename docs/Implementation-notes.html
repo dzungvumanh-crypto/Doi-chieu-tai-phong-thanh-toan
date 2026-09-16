@@ -171,6 +171,128 @@
     </div>
   </div>
 
+  <!-- TV2 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">TV2</span>
+      <span class="card-title">Chan tren cho MOI thu vien + luoi canh — va vi sao ra soat thu cong mot luot la khong du (PR #107)</span>
+      <span class="badge badge-done">Da merge — 2001 test xanh, khong may nao bi ep nang/ha</span>
+    </div>
+    <div class="card-body">
+
+      <p>Nối tiếp <b>TV1</b>. Rà cả file thì cùng lớp lỗi đó còn ở 10 dòng khác, và <b>ba cái đã trôi
+        major rồi</b> mà không ai quyết định: <code>pypdfium2</code> 4.x&rarr;5.13.0,
+        <code>Pillow</code> 10.x&rarr;12.3.0, <code>python-calamine</code> 0.2&rarr;0.8.2.</p>
+
+      <p class="note"><b>Tính chất quan trọng nhất — không máy nào bị ép nâng hay hạ.</b> Trần đặt ở
+        <b>ranh giới phá vỡ kế tiếp</b>, tức rộng hơn bản đang chạy (<code>Pillow&lt;13</code> ôm cả
+        10/11/12). <code>start.bat</code> gọi <code>pip install</code> <b>không có</b>
+        <code>--upgrade</code>, mà pip chỉ can thiệp khi bản đã cài <i>vi phạm</i> spec. Đã kiểm bằng
+        <code>packaging.specifiers</code> trên 13 gói, đối chiếu <code>pip list</code> thật của máy chủ:
+        tất cả đều thoả.</p>
+
+      <p><b>Gói 0.x thì MINOR mới là ranh giới phá vỡ</b> (semver: <code>0.y.z</code> "anything may
+        change"), không phải major — nên <code>pyzipper&lt;0.5</code>, <code>python-calamine&lt;0.9</code>,
+        <code>lunardate&lt;0.4</code>, <code>python-multipart&lt;0.1</code>. Dự án đã theo kỷ luật này
+        sẵn: <code>requirements-dev.txt</code> chặn <code>pytest-cov&lt;8</code> và ghim
+        <code>ruff==0.16.7</code> với đúng lý lẽ ấy.</p>
+
+      <table>
+        <tr><th style="width:30%">Lượt phản biện bắt được</th><th style="width:44%">Kiểm chứng</th><th style="width:26%">Đã vá</th></tr>
+        <tr>
+          <td>Sót <code>python-multipart&gt;=0.0.31</code></td>
+          <td>Đang chạy 0.0.32, gói <code>0.0.x</code>, nằm trên đường nhận file upload của FastAPI
+            &rarr; 20 module API, đúng nhóm mà PR viện dẫn để biện minh cho chính nó.</td>
+          <td><code>,&lt;0.1</code></td>
+        </tr>
+        <tr>
+          <td><b>Lý do miễn trừ <code>numba</code> SAI</b></td>
+          <td>Lý do ghi ban đầu: "<code>numpy&lt;2.6</code> đã gián tiếp ghìm numba". Metadata numba
+            0.67 đòi <code>numpy&lt;2.6,&gt;=1.22</code> — <b>giống hệt từng ký tự</b> dòng numpy trong
+            file. Tức dòng numpy <b>chép ra TỪ</b> numba, quan hệ nhân quả bị đảo ngược.</td>
+          <td>Chặn thật <code>,&lt;0.68</code></td>
+        </tr>
+        <tr>
+          <td>Comment tự mô tả sai phạm vi</td>
+          <td>Viết "trần đặt NGAY TRÊN bản đang được test" trong khi <code>Pillow&lt;13</code> rộng
+            ba major. Comment sai nguy hiểm hơn không comment: người sau tưởng đã có lưới.</td>
+          <td>Viết lại</td>
+        </tr>
+      </table>
+
+      <p class="caution"><b>⚠ Đường lui bắt <code>ImportError</code> KHÔNG đỡ được API đổi tên.</b> Hai
+        chỗ trong repo cùng dính đúng một nhầm lẫn này:<br>
+        &bull; <code>doi_chieu_song_phuong_service.py:43-48</code> — <code>except ImportError</code> chỉ
+        đỡ khi numba <b>vắng mặt</b>. numba <b>có mặt nhưng đổi API</b> thì <code>@njit</code> biên dịch
+        <b>lười</b>, nên ném <code>TypingError</code> lúc <b>GỌI</b> (dòng 362), không phải lúc import
+        &rarr; không nhánh nào lui về <code>zf.open()</code>. (Đỡ một phần: CRC32 ở dòng 372-378 bắt được
+        sai lệch, nên hỏng là hỏng <i>ầm ĩ</i>, không âm thầm.)<br>
+        &bull; <code>duty_calendar_utils.py:11-15</code> — xem TV3 bên dưới, nghiêm trọng hơn vì ở đó
+        hỏng <b>âm thầm</b>.</p>
+
+      <p><b>Lưới canh mới</b> <code>tests/test_requirements_ascii.py::test_moi_yeu_cau_deu_co_chan_tren</code>:
+        mọi dòng requirement đều phải có chặn trên, miễn trừ phải khai tường minh. Không có nó thì PR
+        này chỉ là một lần quét tay và dòng thứ 12 sẽ lại lẻn vào. Cùng kiểu với
+        <code>tests/test_paths.py</code> canh vụ thư mục NFD.</p>
+
+      <p class="note"><b>Bằng chứng nó cần thiết:</b> test bắt được cái thứ 11 <b>ngay khi vừa viết
+        xong</b> — <code>pytest&gt;=8.0</code> trong <code>requirements-dev.txt</code>, trong khi chính
+        file đó đã chặn <code>pytest-cov&lt;8</code> và ghim <code>ruff==</code>. Rà thủ công của con
+        người vừa bỏ sót nó xong.</p>
+
+      <p><b>Đã cân nhắc và bỏ:</b> lockfile (<code>pip freeze</code>). Nó giải đúng khe "CI test bản mới
+        nhất còn thoả, máy chủ chạy bản cũ hơn", nhưng ghim cả ~80 gói bắc cầu gồm wheel biên dịch, làm
+        nhánh tự vá <code>.venv</code> của <code>start.bat:95-125</code> gãy thường xuyên hơn, và
+        <b>buộc giải quyết ngay</b> khe <code>lunardate</code> 0.2.2/0.3.0 — biến PR 1 file thành PR
+        chạm mã lịch trực. Bước trung gian rẻ hơn nếu sau này cần: sinh <code>constraints.txt</code> từ
+        máy chủ, chỉ dùng <code>-c</code> ở CI.</p>
+
+    </div>
+  </div>
+
+  <!-- TV3 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">TV3</span>
+      <span class="card-title">lunardate — luoi an toan bi vo hieu dung luc can no nhat (issue #109)</span>
+      <span class="badge badge-warn">Chua va — tran &lt;0.4 dang la lop bao ve DUY NHAT</span>
+    </div>
+    <div class="card-body">
+
+      <p><code>backend/services/duty_calendar_utils.py</code> có sẵn bảng cứng dự phòng
+        <code>_FALLBACK_2026</code> (dòng 53-63) đúng cho tình huống thư viện hỏng. Vấn đề: nó
+        <b>không bao giờ chạy</b>.</p>
+
+      <table>
+        <tr><th style="width:8%">#</th><th>Mắt xích</th></tr>
+        <tr><td>1</td><td>Dòng 11-15 đặt cờ bằng <code>try: from lunardate import LunarDate / except ImportError: _LUNAR_OK = False</code></td></tr>
+        <tr><td>2</td><td>Bản 0.4 chỉ <b>bỏ phương thức</b> <code>toSolarDate()</code>, package vẫn còn &rarr; <code>import</code> <b>thành công</b> &rarr; <code>_LUNAR_OK = True</code></td></tr>
+        <tr><td>3</td><td>Nhánh <code>else</code> chứa <code>_FALLBACK_2026</code> bị bỏ qua hoàn toàn</td></tr>
+        <tr><td>4</td><td>Dòng 45 gọi <code>.toSolarDate()</code> &rarr; <code>AttributeError</code></td></tr>
+        <tr><td>5</td><td>Dòng 47 <code>except Exception</code> nuốt, chỉ <code>_log.warning()</code></td></tr>
+      </table>
+
+      <p class="caution"><b>Hậu quả: mất trọn 5 ngày Tết + Giỗ Tổ</b> khỏi danh sách gợi ý ngày lễ của
+        lịch trực. Không lỗi ra màn hình, chỉ 6 dòng WARNING trong <code>logs/app.log</code>. <b>Không
+        có test nào chạm <code>get_vn_holidays()</code>.</b></p>
+
+      <p><b>Vì sao chưa vá trong PR #107:</b> đổi thẳng sang <code>to_solar_date()</code> là hỏng máy
+        chủ — máy chủ đang <code>lunardate 0.2.2</code>, bản đó <b>không có</b> tên mới. Sửa đúng thì
+        phải nâng sàn <code>&gt;=0.3</code>, kéo theo ép máy chủ nâng thư viện — việc có chủ ý, không
+        nhét vào PR khai báo phiên bản.</p>
+
+      <p><b>Bản vá đề xuất, chạy được trên CẢ 0.2.2 lẫn 0.3.0, không đụng sàn:</b></p>
+      <pre>_doi_am_duong = getattr(LunarDate, "to_solar_date", None) or LunarDate.toSolarDate
+...
+solar = _doi_am_duong(LunarDate(year, lm, ld))</pre>
+
+      <p class="note"><b>Chưa gấp:</b> đã đối chiếu 0.2.2 vs 0.3.0 cho 2026/2027/2028 — ra ngày
+        <b>giống hệt nhau</b>. Khe lệch phiên bản giữa máy chủ và máy dev hiện không gây sai số liệu.
+        Đây là nợ có hẹn giờ, không phải lỗi đang chảy máu.</p>
+
+    </div>
+  </div>
+
   <!-- TV1 -->
   <div class="card">
     <div class="card-header">

@@ -5,7 +5,10 @@
 ## Cài đặt
 
 ### 1. Yêu cầu
-- Python 3.10+
+- **Python 3.10.x** — đúng dòng này, không phải "3.10 trở lên". CI chạy `python-version: "3.10"`
+  (`.github/workflows/tests.yml`), nên chạy bản khác là chạy thứ **CI không hề kiểm**. Đã xảy ra
+  thật: `pandas` 3.x đòi Python ≥3.11, người dùng 3.11+ gặp lỗi xuất Excel trong khi CI vẫn xanh
+  (PR #105). ⚠️ Python 3.10 **hết hỗ trợ 31/10/2026** — kế hoạch chuyển 3.12: issue #108.
 - Windows / Linux / macOS
 - **Microsoft Word** trên máy chạy backend — chỉ cần cho việc xuất **đơn nghỉ phép bản PDF**
   (Word chuyển `.docx` → `.pdf`). Không có Word thì hệ thống vẫn chạy đủ, riêng phần ký đơn

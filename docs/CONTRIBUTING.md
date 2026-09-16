@@ -34,7 +34,18 @@ Khi nhiều người cùng sửa code, nếu không có quy tắc thì sẽ xả
 
 ### Bước 1 — Cài Python
 
-Tải Python 3.10 trở lên tại: https://www.python.org/downloads/
+Tải **Python 3.10.x** tại: https://www.python.org/downloads/
+
+> ⚠️ **Đúng dòng 3.10, không phải "3.10 trở lên".** CI chạy `python-version: "3.10"`. Cài bản
+> khác nghĩa là bạn chạy thứ CI không hề kiểm — lỗi chỉ hiện trên máy bạn, còn PR vẫn xanh, và
+> không ai nhìn ra vì sao. Đã xảy ra thật: `pandas` 3.x đòi Python ≥3.11, nên người cài 3.11+
+> bị hỏng toàn bộ phần xuất Excel trong khi CI không tài nào tái hiện được (PR #105).
+>
+> `start.bat` cũng vá `.venv` tại chỗ khi mang dự án sang máy khác (chạy từ USB) — bản Python
+> khác là buộc cài lại toàn bộ thư viện và **cần internet**.
+>
+> Python 3.10 hết hỗ trợ **31/10/2026**. Việc chuyển sang 3.12 phải làm đồng loạt cả nhóm,
+> CI và máy chủ — không ai tự nâng lẻ. Kế hoạch ở issue #108.
 
 Khi cài, **nhớ tích vào ô "Add Python to PATH"** trước khi bấm Install.
 

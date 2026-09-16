@@ -38,6 +38,18 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
       mềm tự biết. Những ca này vẫn nằm ở *GD khác* và **vẫn phải chấm tay** như trước
     + ℹ️ Không đổi gì ở 6 nhóm còn lại, không đổi thứ tự phân loại, không đổi cách xuất file
 
+- 16/09/2026 Thư viện — chặn phiên bản cho toàn bộ thư viện, không chỉ riêng `pandas`
+    + ✅ **Cần chạy lại `start.bat` một lần** — máy sẽ **không** cài lại hay đổi thư viện nào,
+      chỉ ghi nhận khai báo mới. Đã kiểm trước: mọi thư viện đang có trên máy chủ đều hợp lệ
+    + ℹ️ Rà tiếp sau đợt `pandas` thì thấy 10 thư viện khác cũng không khai giới hạn. Ba cái
+      **đã tự nhảy lên đời mới từ lúc nào không ai biết** — trong đó có thư viện dựng ảnh chữ ký
+      trên đơn nghỉ phép, và thư viện đọc file Excel của các màn hình đối chiếu
+    + ⚠️ Một cái suýt gây hỏng thật: thư viện tính **ngày âm lịch** sắp bỏ cách gọi cũ mà hệ thống
+      đang dùng. Nếu để nó tự lên đời, lịch trực sẽ **mất trọn 5 ngày Tết và Giỗ Tổ** khỏi danh
+      sách gợi ý, không báo lỗi gì. Đã chặn lại; cách sửa triệt để ghi ở issue #109
+    + ℹ️ Thêm một bước kiểm tự động: từ nay ai thêm thư viện mà quên khai giới hạn thì máy báo lỗi
+      ngay, không đợi đến lúc hỏng
+
 - 16/09/2026 Thư viện — chặn `pandas` phiên bản 3 để không hỏng phần xuất file Excel
     + ✅ **Cần chạy lại `start.bat` một lần** sau đợt này để máy tự cài đúng phiên bản thư viện
     + ℹ️ Không đổi màn hình nào, không đổi dữ liệu. Đây là việc bên trong: `pandas` vừa ra bản mới (bản 3)
