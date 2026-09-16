@@ -4,6 +4,21 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 16/09/2026 Đối chiếu CITAD — hết cảnh "Nạp" ra số của loại tiền hôm đó không có giao dịch
+    + ✅ **Dữ liệu đã quét nay tự hết hạn sau 4 giờ**: trước đây một lượt quét cũ (hôm khác, lúc chạy thử)
+      nằm lại trong máy chủ vô thời hạn, đến khi bấm "Nạp CITAD" thì bị kéo vào bảng cùng với số vừa quét
+    + ✅ **Thêm nút "Xoá dữ liệu đã quét"** ở màn Đối chiếu CITAD — xoá ngay phần Extension đã gửi lên nhưng
+      chưa nạp, dùng khi vừa quét nhầm hoặc quét thử. Không đụng số đang hiện trên màn hình hay bảng đã lưu
+    + ✅ **Cảnh báo khi nghi đọc nhầm loại tiền**: trên trang CITAD, ô chọn loại tiền đổi ngay nhưng bảng số
+      liệu phía dưới cập nhật chậm hơn — quét đúng lúc đó thì số của USD có thể bị gắn nhãn EUR. Nay nếu hai
+      loại tiền ra số **giống hệt nhau**, hệ thống báo để tự soi lại trên CITAD. **Số vẫn được nạp bình
+      thường**, đây chỉ là nhắc kiểm tra, không chặn
+    + ⚠️ Cảnh báo này chỉ bật khi **cả hai** loại tiền cùng có số trong máy chủ. Không thấy cảnh báo **không**
+      có nghĩa là số chắc chắn đúng — vẫn nên soi lại như thường lệ
+    + ⚠️ Màn **Đối chiếu CITAD của Phòng QLTK Nostro, Vostro chưa được sửa** — vẫn có thể nạp nhầm dữ liệu
+      quét cũ. Sẽ vá ở đợt sau; trong lúc chờ, nếu thấy số lạ thì báo để khởi động lại backend
+    + ℹ️ **Không phải cài lại Extension** — toàn bộ thay đổi nằm ở máy chủ và màn hình web
+
 - 14/09/2026 Chuẩn hoá văn bản - sửa các lỗi thấy khi chạy thử trên Tờ trình thật
     + ✅ **Không còn đổi số tiền trong bảng**: ô "10.000", "5.000" trước đây có thể bị sửa thành "10. 000"
     + ✅ Dòng "V/v …" ngay dưới "TỜ TRÌNH" nay ra cỡ 14 in đậm (trước ra cỡ 12 in thường); đề mục

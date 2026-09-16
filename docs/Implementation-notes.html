@@ -51,7 +51,92 @@
 <div class="page">
 
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
-  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-09-14</p>
+  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-09-16</p>
+
+  <!-- DC3 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">DC3</span>
+      <span class="card-title">Đối chiếu CITAD — bộ đệm Extension nạp nhầm dữ liệu cũ / sai loại tiền (PR #100)</span>
+      <span class="badge badge-warn">Đã merge — bản sao ở Nostro CHƯA vá, 2 comment đã sai</span>
+    </div>
+    <div class="card-body">
+
+      <p>Hai lỗi khác gốc, cùng hiện ra một triệu chứng: bấm "Nạp CITAD" thì bảng hiện số của loại tiền
+        hôm đó <b>không hề có giao dịch</b>.</p>
+
+      <table>
+        <tr><th style="width:18%">Lỗi</th><th style="width:41%">Vì sao xảy ra</th><th style="width:41%">Cách xử lý đã chọn</th></tr>
+        <tr>
+          <td><b>Bộ đệm không có hạn dùng</b></td>
+          <td><code>_citad_buffer</code>/<code>_ph_buffer</code> là dict RAM, không gắn ngày. Extension
+            <b>không gửi gì</b> khi quét ra 0 (<code>content.js autoSaveIfNew()</code> — cố ý, để không nhầm
+            "trang chưa load xong" với "thật sự không có"), nên một mục EUR gửi lên từ hôm khác nằm lại
+            <b>vô thời hạn</b> và bị nạp kèm lượt USD mới.</td>
+          <td><code>_BUFFER_TTL = 4 giờ</code> + mốc <code>_scan_ts</code> do <b>server</b> gắn bằng
+            <code>_vn_now()</code> lúc lưu. Không dùng field <code>ts</code> client gửi lên: nó chỉ là
+            giờ:phút:giây hiển thị, không có ngày, và do client tự khai.</td>
+        </tr>
+        <tr>
+          <td><b>Đọc nhầm loại tiền lúc quét</b></td>
+          <td>Ô chọn loại tiền trên trang CITAD đổi giá trị <b>ngay</b>, nhưng bảng kết quả chỉ cập nhật
+            <b>sau</b> khi truy vấn lại xong. Extension đọc đúng lúc giữa 2 mốc đó thì số CŨ (của USD) bị
+            gắn nhãn loại tiền MỚI (EUR) rồi gửi lên.</td>
+          <td>Xử lý <b>hoàn toàn ở server</b> — <code>_annotate_currency_duplicates()</code>. Sửa ở Extension
+            thì phải bắt mọi máy trạm cài lại: chi phí vận hành cao, đã bỏ phương án đó.</td>
+        </tr>
+      </table>
+
+      <div class="label">Vì sao cảnh báo chứ không chặn lưu</div>
+      <p>2 loại tiền khác nhau, cùng cổng/chiều/loại DV, mà <code>soMon</code> <b>và</b> <code>soTien</code>
+        trùng tuyệt đối — xác suất 2 dòng tiền độc lập trùng thật cả 2 trị gần như bằng 0. Nhưng
+        "gần như" không phải "bằng": tự ý loại bỏ thì lỡ trùng thật là <b>mất số liệu thật, âm thầm</b>.
+        Gắn cờ <code>_suspect_dup_tien</code> cho frontend cảnh báo, số vẫn nạp vào bảng bình thường —
+        người dùng chỉ mất công soi lại bằng mắt.</p>
+
+      <div class="note"><b>Dòng 0 món/0 đồng phải loại trước khi so.</b>
+        <code>content_paymenthub.js _doSaveBaoCao()</code> gửi đủ cả 4 dòng (ih/il × đến/đi) của một kênh
+        đọc được, kể cả dòng thật sự không có giao dịch — chỉ bỏ hẳn khi <b>cả 4</b> cùng 0. Không loại thì
+        2 loại tiền cùng có 1 dòng trống (rất thường gặp) trùng 0/0 với nhau, gắn cờ <b>sai ở hầu như mọi
+        lượt nạp</b> → người dùng quen tay bỏ qua, cảnh báo mất tác dụng. CITAD không dính vì
+        <code>autoSaveIfNew()</code> đã return sớm khi toàn 0.</div>
+
+      <div class="label">Giới hạn của cách phát hiện này — đừng quảng cáo quá</div>
+      <p>Cờ chỉ bật khi <b>cả dòng đúng lẫn dòng gắn nhãn sai cùng nằm trong bộ đệm</b>. Nếu lượt quét USD
+        chưa từng được lưu thì dòng EUR mang số USD nạp vào <b>không có cảnh báo nào</b>.
+        <b>Không có cảnh báo không chứng minh được là số đúng.</b></p>
+
+      <div class="caution"><b>Còn mở sau khi merge — 4 điểm, đã ghi vào PR #100.</b>
+        <ol>
+          <li><code>doi_chieu_citad_nostro_service.py:154-185</code> vẫn là <b>bản sao nguyên văn chưa vá</b>
+            của đúng đoạn buffer này — dict RAM, không hạn dùng, cùng luồng "Nạp"
+            (<code>doi_chieu_citad_nostro.py:401,436</code>), và <b>chưa có nút "Xoá dữ liệu đã quét"</b>.
+            Nửa "đọc nhầm loại tiền" không áp dụng (schema Nostro không có field <code>tien</code>) nhưng
+            nửa TTL áp dụng nguyên vẹn — Nostro đối chiếu <b>theo kỳ</b> nên mục sót vắt qua kỳ còn khó
+            phát hiện hơn bên Thanh toán.</li>
+          <li><code>frontend/pages/doi_chieu_citad.py:824</code> và <code>:901</code> vẫn ghi bộ đệm
+            <i>"KHÔNG tự hết hạn … chỉ save/get/clear"</i> — chính PR này làm câu đó sai.</li>
+          <li>TTL xoá luôn nhóm mục <b>đang được cố ý giữ lại</b>: <code>doi_chieu_citad.py:770-773</code>
+            ghi rõ chủ ý không xoá buffer khi <code>skipped &gt; 0</code> để người quét nhầm cổng dùng lại
+            sau. Sau 4 giờ thì mất. Đổi hành vi ngược một ý định đã ghi thành văn, PR không nhắc.</li>
+          <li><code>_annotate_currency_duplicates()</code> chạy <b>ngoài</b> <code>_buffer_lock</code> và ghi
+            vào chính các dict còn nằm trong buffer (<code>list(bucket.values())</code> là bản sao nông).
+            Rủi ro thật gần như bằng 0 (cùng owner, FE gọi 2 bucket khác nhau) — đẩy lời gọi vào trong
+            <code>with</code> là xong.</li>
+        </ol>
+      </div>
+
+      <div class="label">Kiểm trước khi merge</div>
+      <p>CI <b>không chạy</b> (GitHub chặn vì billing — đỏ sau 2 giây, không bước nào chạy). Người dùng đồng ý
+        merge bằng chạy tại máy. Trên đúng commit <code>3d09870</code> (đã <code>update-branch</code> gộp
+        develop): <code>ruff --select F821,F823,E9</code> sạch; <b>1978 pass, 0 fail</b>, exit 0. Kết quả đã
+        dán lên PR bằng <code>gh pr comment</code>.</p>
+      <p><span class="pill pill-gray">Đính chính</span> Test plan của PR ghi "45 fail còn lại là lỗi môi
+        trường có sẵn" — không phải. Do máy chạy thiếu <code>DOI_CHIEU_ZIP_PASSWORD</code>; đặt đủ biến như
+        CI thì suite xanh hoàn toàn.</p>
+
+    </div>
+  </div>
 
   <!-- VB8 -->
   <div class="card">
