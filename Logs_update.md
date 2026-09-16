@@ -4,6 +4,28 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 16/09/2026 Thi đua khen thưởng — màn hình mới cho Phòng Tổng hợp
+    + ✅ **Menu mới: Báo cáo → Phòng Tổng hợp → Thi đua khen thưởng.** Trước đây không có chỗ nào
+      trong phần mềm lưu dữ liệu này, nên báo cáo nghỉ phép vẫn phải bỏ trống cột "xếp loại thi đua"
+    + ✅ Lưu **3 loại dữ liệu**: danh hiệu của **đơn vị** (toàn Trung tâm hoặc từng phòng), danh hiệu
+      của **cá nhân** theo cấp (Đảng / chuyên môn / công đoàn), và **sáng kiến** của cá nhân. Sáng kiến
+      đính kèm được **file quyết định** (PDF, Word, ảnh — tối đa 15 MB mỗi file), tải về lại lúc nào cũng được
+    + ✅ **Tra cứu và xuất Excel**: một bảng tổng hợp danh hiệu đơn vị + cá nhân theo năm, một bảng
+      sáng kiến theo từng người. Có ô lọc theo năm, theo cán bộ, theo cấp và ô tìm kiếm tự do
+    + ✅ **Nhập sẵn từ Excel** cho cả 3 loại, dành cho phần đang theo dõi tay bằng Excel từ trước: bấm
+      **"Tải file mẫu"**, điền vào, tải lên lại. Bấm **"Xem trước"** để máy soát lỗi từng dòng (báo rõ
+      dòng nào sai vì sao) — thấy đúng rồi mới bấm **"Nhập vào hệ thống"**
+    + ⚠️ **Chưa ai nhìn thấy menu này cho tới khi được cấp quyền.** Người quản trị vào
+      **Phân quyền theo nhóm → Phòng Tổng hợp → Thi đua khen thưởng** rồi tick ô cho nhóm cần dùng.
+      Tài khoản quản trị thấy ngay từ đầu nên dễ tưởng là đã xong cho mọi người
+    + ⚠️ **Nhập cùng một file Excel hai lần là dữ liệu bị nhân đôi.** Phần mềm chưa biết tự nhận ra
+      dòng đã có. Lỡ nhập trùng thì phải vào xoá tay từng thẻ một — chưa có nút xoá hàng loạt. Nhập
+      xong nên mở danh sách soát lại số dòng ngay
+    + ⚠️ File Excel **tự làm** mà có cột **"Giới tính (Nam/Nữ)"** đứng trước cột **"Năm"** thì máy nhận
+      nhầm cột và báo `Năm không hợp lệ: 'Nam'` ở mọi dòng. Dùng file mẫu tải từ phần mềm thì không dính
+    + ℹ️ Không đổi màn hình nào đang có, không đổi dữ liệu cũ, không phải cài lại Extension. Chỉ cần
+      chạy lại phần mềm như thường lệ
+
 - 16/09/2026 Chấm 459901 — nhóm **Chuyển chi nhánh** chấm chặt hơn theo đúng quy tắc phòng Thanh toán
     + ✅ Một cặp chỉ được xếp vào **Chuyển chi nhánh** khi có **một vế mã chi nhánh `1000` và một vế
       mã khác**. Trước đây phần mềm chỉ ghép theo số tiền + nội dung (REMARK) mà không nhìn mã chi

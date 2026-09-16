@@ -174,6 +174,7 @@ Truy cập:
 │   │   ├── reports.py       # Báo cáo hậu kiểm
 │   │   ├── handover_reports.py # Báo cáo bàn giao chứng từ (đúng hạn/quá hạn)
 │   │   ├── th_reports.py    # Báo cáo tổng hợp (phòng TH)
+│   │   ├── thi_dua.py       # Thi đua khen thưởng (phòng TH)
 │   │   ├── swift_recon.py   # Đối chiếu điện SWIFT (phòng Swift)
 │   │   ├── duty_schedule.py # Lịch trực
 │   │   ├── duty_staff.py    # Cán bộ trực
@@ -224,6 +225,7 @@ Truy cập:
 │       ├── reports.py       # Báo cáo hậu kiểm
 │       ├── handover_reports.py # Báo cáo bàn giao chứng từ (đúng hạn/quá hạn)
 │       ├── th_reports.py    # Báo cáo tổng hợp
+│       ├── thi_dua.py       # Thi đua khen thưởng
 │       ├── swift_recon.py   # Đối chiếu điện SWIFT (phòng Swift)
 │       ├── user_management.py # Quản lý tài khoản (admin)
 │       ├── login_logs.py    # Nhật ký đăng nhập (admin)
@@ -901,6 +903,32 @@ người làm báo cáo không có cách nào biết. Đo trên dữ liệu th�
   thành viên LHQ từ 2011 nhưng mẫu D00054 (soạn khoảng 2010) không có dòng, không gộp vào đâu được,
   phải hỏi NHNN
 
+### Module Thi đua khen thưởng (Phòng Tổng hợp)
+- Menu: **Báo cáo → Phòng Tổng hợp → Thi đua khen thưởng** (`/thi_dua`). Trước đây hệ thống không có
+  nơi lưu dữ liệu này — báo cáo nghỉ phép phải bỏ trống cột "xếp loại thi đua" vì không có nguồn
+- Phân quyền:
+
+  | Việc | Mã quyền |
+  |---|---|
+  | Vào màn hình, tra cứu, tải file quyết định | `menu.thi_dua` |
+  | Thêm/sửa/xoá danh hiệu **đơn vị** | `thi_dua.manage_unit` |
+  | Thêm/sửa/xoá danh hiệu **cá nhân** | `thi_dua.manage_individual` |
+  | Thêm/sửa/xoá **sáng kiến** + file quyết định | `thi_dua.manage_initiative` |
+  | Xuất Excel 2 bảng tổng hợp | `thi_dua.export` |
+
+- Ba loại dữ liệu độc lập, ba bảng: `thi_dua_don_vi` (`department_id` **NULL = toàn Trung tâm**, có giá
+  trị = từng phòng), `thi_dua_ca_nhan` (cấp `dang` / `chuyen_mon` / `cong_doan`), `thi_dua_sang_kien`
+  (file quyết định lưu **BLOB 1:1 ngay trong bảng**, trần 15 MB, nhận `.pdf/.doc/.docx/.jpg/.jpeg/.png`)
+- **Quyền phẳng, không có khái niệm "chủ sở hữu bản ghi"** như Khảo sát: ai có mã quản lý thì sửa/xoá
+  được mọi bản ghi cùng loại. Cố ý — đây là quyết định đã ban hành của cơ quan, người nhập chỉ là thư ký
+- Nhập lô từ Excel cho cả 3 loại: tự sinh file mẫu, **dò cột theo tên tiêu đề** (thêm/bớt/đổi thứ tự cột
+  tuỳ ý miễn còn đúng tên), `dry_run` xem trước rồi mới ghi, báo lỗi theo từng dòng
+
+⚠️ **Nhập lô chưa chống trùng** — nhập lại cùng một file là dữ liệu nhân đôi, không cảnh báo, không có
+nút hoàn tác (phải xoá tay từng thẻ). Đo thật: 20.000 dòng ghi hết 1,24 giây. Cùng với ba món nợ khác
+(dò cột `nam`/`cap` quá lỏng, `except Exception` trần ở `_doc_ngay()`, lượt "Xem trước" vẫn ghi Nhật ký)
+— xem card **TD1** trong [`docs/Implementation-notes.html`](docs/Implementation-notes.html).
+
 ### Module Ôn tập (Quizz)
 - Nhóm **Tính năng khác** → **Ôn tập** (`/quiz`). Dùng chung cho cả cơ quan, không thuộc phòng nào
 - **Bộ câu hỏi chỉ tải lên một lần** — người sau chọn bộ có sẵn để ôn, không phải nhập lại.
@@ -1314,7 +1342,7 @@ Quản lý chứng từ ─ Bàn giao chứng từ / Đóng chứng từ / Lưu 
                    Phòng QLTK Nostro, Vostro ─ Đối chiếu CITAD - PaymentHub
                    Phòng Kế toán ──── Đối chiếu DTBB
 Báo cáo ────────── Phòng KSNB & HTVH ─ Báo cáo hậu kiểm / Báo cáo bàn giao chứng từ
-                   Phòng Tổng hợp ──── Báo cáo dữ liệu thanh toán
+                   Phòng Tổng hợp ──── Báo cáo dữ liệu thanh toán / Thi đua khen thưởng
 Nghỉ phép ──────── menu phẳng, không có nhóm cha
 Chấm công & Lịch trực ─ Phòng Kế toán ───── Chấm công
                    Phòng Thanh toán ── Phân lịch trực / Sổ trực cuối ngày

@@ -53,6 +53,124 @@
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
   <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-09-16</p>
 
+  <!-- TD1 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">TD1</span>
+      <span class="card-title">Thi đua khen thưởng — module mới cho Phòng Tổng hợp (PR #106): quyền phẳng, BLOB 1:1, và món nợ nhập lô trùng</span>
+      <span class="badge badge-warn">Đã merge kèm nợ đã biết — người dùng chốt 16/09/2026</span>
+    </div>
+    <div class="card-body">
+
+      <p>Hệ thống trước đây không có nơi lưu dữ liệu thi đua khen thưởng — báo cáo nghỉ phép phải bỏ trống
+        cột "xếp loại thi đua" vì không có nguồn. PR này thêm 3 bảng, 26 route, 1 trang
+        (<code>/thi_dua</code>) và 5 mã quyền.</p>
+
+      <h3>Ba quyết định thiết kế không hiển nhiên</h3>
+      <table>
+        <tr><th style="width:24%">Chọn gì</th><th style="width:38%">Vì sao, và cái bị bỏ</th><th style="width:38%">Đánh đổi đã chấp nhận</th></tr>
+        <tr>
+          <td><b>Quyền phẳng — không có "chủ sở hữu bản ghi"</b></td>
+          <td>Khảo sát phân biệt người tạo với người trả lời vì <i>trả lời</i> là dữ liệu của từng người.
+            Thi đua thì ngược lại: mọi bản ghi đều là quyết định đã ban hành của cơ quan, người nhập chỉ
+            là thư ký. Lấy khuôn <code>hr.edit_all</code>.</td>
+          <td>Ai có <code>thi_dua.manage_*</code> thì sửa/xoá được <b>mọi</b> bản ghi cùng loại, kể cả
+            của người khác nhập. Vết duy nhất là <code>audit_logs</code>. Chấp nhận vì đây là dữ liệu
+            một phòng, không phải hồ sơ cá nhân.</td>
+        </tr>
+        <tr>
+          <td><b>File quyết định lưu BLOB 1:1 ngay trong <code>thi_dua_sang_kien</code></b></td>
+          <td>Đã có <code>hr_attachments</code> kiểu đa hình (<code>section</code> + <code>item_id</code>),
+            nhưng ở đây quan hệ là <b>1 sáng kiến ↔ 0 hoặc 1 file</b>. Mượn bảng đa hình để chở một quan hệ
+            1:1 là thêm một chỗ phải nhớ dọn khi xoá sáng kiến.</td>
+          <td><b>DB chính phình theo file.</b> Trần 15 MB/file, và <code>backup_service</code> chép cả file
+            <code>ksnb.db</code>, giữ 7 ngày + 5 bản gần nhất → mỗi MB nằm trong DB nhân lên khoảng 12 lần
+            trên đĩa. DB hiện <b>22 MB</b>. Đây là hộ thứ hai đổ BLOB vào <code>ksnb.db</code> sau
+            <code>hr_attachments</code> — nợ tích luỹ, không phải PR này đẻ ra, nhưng đến lúc phải tính.</td>
+        </tr>
+        <tr>
+          <td><b><code>department_id</code> NULL = "Toàn Trung tâm"</b></td>
+          <td>Ba mức theo dõi (toàn Trung tâm / từng phòng / từng cá nhân) gom vào 2 bảng thay vì 3, bằng
+            cách để NULL mang nghĩa "cấp cao nhất".</td>
+          <td>Khoá ngoại khai <code>ON DELETE SET NULL</code> → nếu có ngày nào xoá cứng một phòng thì danh
+            hiệu <b>cấp phòng tự biến thành cấp toàn Trung tâm</b>, không lỗi, không log. Hiện an toàn vì
+            <b>toàn repo không có câu <code>DELETE FROM departments</code> nào</b> (đã grep). Ai định thêm
+            đường xoá cứng phòng ban phải quay lại chỗ này.</td>
+        </tr>
+      </table>
+
+      <h3>Nợ đã biết — merge kèm, không phải chưa thấy</h3>
+      <p>Người dùng chốt merge sau khi đã đọc phần này. Ghi lại để người sửa sau không mất công tìm lại.</p>
+      <table>
+        <tr><th style="width:30%">Vấn đề</th><th style="width:36%">Bằng chứng (chạy thật, không suy luận)</th><th style="width:34%">Hướng sửa</th></tr>
+        <tr>
+          <td><b>Nhập lô không chống trùng</b> — mức cao</td>
+          <td>Nhập cùng một file Excel hai lần → <b>2 dòng</b> trong DB, không cảnh báo. Đo thêm: 20.000
+            dòng nhập hết <b>1,24 giây</b>, tức nhân đôi một file 5.000 dòng xảy ra trong khoảng 0,3 giây.
+            Không có nút xoá hàng loạt để lùi — phải xoá tay từng thẻ.</td>
+          <td>UNIQUE index <code>(year, department_id, danh_hieu)</code> /
+            <code>(staff_id, year, cap, danh_hieu)</code> / <code>(staff_id, year, ten_sang_kien)</code>
+            + <code>INSERT OR IGNORE</code>, và <code>dry_run</code> đếm riêng số dòng "đã có".</td>
+        </tr>
+        <tr>
+          <td><b>Dò cột bằng "chứa chuỗi" quá lỏng với <code>nam</code> / <code>cap</code></b> — mức trung bình</td>
+          <td><code>_dinh_vi_cot()</code> khớp kiểu <i>cụm từ nằm trong ô tiêu đề</i>, mà hai cụm này chỉ dài
+            3 ký tự. File có cột <b>"Giới tính (Nam/Nữ)"</b> đứng trước cột "Năm" thì cột giới tính cướp vai
+            cột Năm; chạy ra: <code>da_them = 0</code>, mọi dòng báo <code>Năm không hợp lệ: 'Nam'</code>.</td>
+          <td>Hỏng <b>to tiếng</b> nên không mất dữ liệu — đó là điểm cứu. Nhưng thông báo chỉ sai chỗ.
+            Riêng hai trường này khớp <b>bằng</b> (<code>h == "nam"</code>) thay vì <code>in</code>.</td>
+        </tr>
+        <tr>
+          <td><code>except Exception</code> trần ở <code>_doc_ngay()</code></td>
+          <td><code>backend/api/thi_dua.py:449</code>, quanh phép cộng ngày serial của Excel.</td>
+          <td>Trái DESIGN.md mục <i>Nuốt lỗi</i>. Thu hẹp <code>(ValueError, OverflowError, TypeError)</code>.</td>
+        </tr>
+        <tr>
+          <td>Lượt "Xem trước" vẫn để lại dòng Nhật ký</td>
+          <td><code>POST .../import?dry_run=true</code> không ghi dữ liệu nào nhưng không nằm trong
+            <code>_SKIP_EXACT</code> — <code>dry_run</code> là query param nên không tách được theo path.</td>
+          <td>Đúng loại rác card <b>NK2</b> vừa dọn. Tách route <code>/import/preview</code> riêng như
+            <code>leaves.py</code> đã làm.</td>
+        </tr>
+        <tr>
+          <td><code>_sang_kien_out()</code> là mã chết</td>
+          <td><code>backend/api/thi_dua.py:276-279</code> — không nơi nào gọi;
+            <code>list_sang_kien</code> tự tính <code>has_file</code> bằng SQL.</td>
+          <td>Xoá.</td>
+        </tr>
+      </table>
+
+      <h3>Tác động ra ngoài phạm vi — đã kiểm bằng chạy thật</h3>
+      <p>Ghi lại vì đây là thứ không đọc ra được từ diff, và lần sau có PR thêm module thì làm y hệt.</p>
+      <ul>
+        <li><b>Bảng route</b>: dựng <code>app.routes</code> ở cả hai nhánh rồi diff — <b>356 → 382,
+          +26 route mới, 0 route cũ bị đổi, 0 bị mất</b>, dependency của route cũ giữ nguyên từng dòng.
+          Đây là cách chắc nhất để loại nỗi lo "tab trình duyệt đang mở lúc deploy ăn 422".</li>
+        <li><b>Migration tự lành</b>: dựng DB đúng trạng thái <code>develop</code>
+          (<code>_create_tables</code> + <code>_ensure_indexes</code>), chạy migration của PR
+          <b>2 lần liên tiếp</b> → <code>sqlite_master</code> lần 1 giống hệt lần 2. So với develop: đúng
+          <b>+3 bảng, +5 index</b>, không đụng bảng nào khác. Toàn <code>CREATE TABLE IF NOT EXISTS</code>,
+          không có <code>ALTER</code> nên không dính bẫy "sửa chữ trong ALTER đã chạy là vô tác dụng".</li>
+        <li><b>Revert được</b>: DB đã migrate + code <code>develop</code> → <code>_ensure_indexes()</code>
+          bản cũ chạy sạch, schema không đổi. 3 bảng mới nằm im.</li>
+        <li><b>Extension</b>: 0 file trong <code>extension_citad_nv/</code>, 4 endpoint <code>*-buffer</code>
+          không đụng tới → không phải ra bản extension mới, không phải cài lại máy trạm.</li>
+      </ul>
+
+      <p class="caution"><b>⚠ Merge bằng chạy tại máy, không qua CI.</b> <code>gh pr checks</code> đỏ sau
+        <b>3 giây với 0 bước nào chạy</b> — GitHub chặn vì thanh toán, không phải lỗi mã (xem
+        <code>docs/SKILL.md</code>). Nhánh đã <code>gh pr update-branch</code> cho ngang develop rồi chạy
+        trên đúng commit <code>5dac77e</code>, worktree riêng, cây sạch:
+        <code>ruff check . --select F821,F823,E9</code> exit 0 và <code>pytest -q</code> exit 0,
+        <b>1999 passed</b>. Kết quả đã dán vào PR bằng <code>gh pr comment</code> trước khi merge.</p>
+
+      <p class="note"><b>⚠ Sau deploy không ai thấy menu này.</b> Cả 5 mã quyền mặc định <b>không</b> thuộc
+        nhóm nào — quản trị phải vào <b>Phân quyền theo nhóm → Phòng Tổng hợp → Thi đua khen thưởng</b>
+        tick ô. Vai <code>admin</code> đi qua mọi cửa nên admin thấy ngay, dễ tưởng đã xong.</p>
+
+    </div>
+  </div>
+
   <!-- TV1 -->
   <div class="card">
     <div class="card-header">
