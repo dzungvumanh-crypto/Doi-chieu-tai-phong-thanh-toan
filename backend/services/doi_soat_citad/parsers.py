@@ -534,7 +534,19 @@ def _parse_ipcas_text(text, filename, ngay_cham):
             # thuong (chua tung di kenh) -> reconcile.py tu bo qua o vong lap
             # "IPCAS Di du", khong tinh vao "Chi Agribank".
             # Bo: rong
-            KEEP_DI = {'SCNL', 'WFPG', 'SBFL', 'RFED', 'SDEB', 'SBSC', 'RTSC', 'ERPO', 'CALD'}
+            #
+            # ERRC (them 16/09/2026, bug that PR lich su 44 ngay 15/09/2026):
+            # lenh bi "hach toan huy loi" tai IPCAS. Truoc day khong nam trong
+            # KEEP_DI nen bi loai ngay luc doc file, khong bao gio toi duoc
+            # reconcile.py de so khop - lenh CITAD tuong ung roi thanh "Chi
+            # CITAD" (ngu y IPCAS khong co gi) du IPCAS THAT SU co 1 dong huy
+            # loi cho msgref do. Them ERRC vao day de dong nay duoc giu lai -
+            # ERRC khong nam trong VALID_DI (reconcile.py) nen se tu ra dung
+            # 'lech_trang_thai' (khong phai khop hoan toan, cung khong con
+            # bien mat thanh "Chi CITAD" gia) - khong can them gi vao ERR_DI,
+            # nguoi dung xac nhan phan theo doi/xu ly ERRC da lam thu cong o
+            # khau khac, khong can ghi chu rieng.
+            KEEP_DI = {'SCNL', 'WFPG', 'SBFL', 'RFED', 'SDEB', 'SBSC', 'RTSC', 'ERPO', 'CALD', 'ERRC'}
             if tt not in KEEP_DI:
                 continue
             # Yêu cầu Phòng Thanh toán 27/08/2026: SCNL báo lệnh đã sang kênh
