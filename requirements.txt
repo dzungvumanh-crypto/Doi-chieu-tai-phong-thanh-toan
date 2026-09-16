@@ -17,7 +17,11 @@ pypdfium2>=4.30
 Pillow>=10.0
 openpyxl==3.1.2
 pyzipper>=0.3.6
-pandas>=2.0.0
+# Chan tren <3.0.0: pandas 3.x doi requirement toi thieu openpyxl len 3.1.5,
+# xung dot voi ban ghim o tren (openpyxl==3.1.2). Nang openpyxl thay vi chan
+# pandas se anh huong toi moi cho dang dung openpyxl de xuat Excel trong repo,
+# rui ro rong hon pham vi da kiem trong PR nay.
+pandas>=2.0.0,<3.0.0
 xlsxwriter>=3.2.0
 python-calamine>=0.2.0
 xlrd>=2.0.1

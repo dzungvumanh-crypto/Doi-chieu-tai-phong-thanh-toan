@@ -700,6 +700,15 @@ Kết nối CSDL dùng **bể mượn–trả** (`DB_POOL_SIZE`, mặc định 1
   tải `.zip` ngay trên màn hình, ghép nối bằng *mã kết nối* cá nhân
   (`doi_chieu_citad_extension_tokens`, chỉ lưu hash SHA-256, tạo mã mới tự thu hồi mã cũ).
   Chỉ chạy trên Chromium (Chrome/Edge/Cốc Cốc), phải cài tay từng máy
+- **Bộ đệm số liệu Extension quét** nằm trong RAM backend, tách theo người. Từ 16/09/2026 mục quá
+  **4 giờ tự bị loại** khi đọc bộ đệm, và có nút **"Xoá dữ liệu đã quét"** để xoá tay ngay. Trước
+  đó mục quét cũ nằm lại vô thời hạn nên lượt *"Nạp"* kéo theo cả số của hôm khác — xem
+  `docs/Implementation-notes.html` mục **DC3**. Bộ đệm mất khi restart backend (RAM, không phải DB)
+- ⚠️ Nếu 2 loại tiền cùng cổng/chiều/loại DV ra **số món và số tiền trùng tuyệt đối**, màn hình cảnh
+  báo *nghi đọc nhầm loại tiền lúc quét* (ô chọn loại tiền trên trang CITAD đổi trước khi bảng kết
+  quả kịp tải lại). **Chỉ cảnh báo, vẫn nạp số bình thường** — không chặn, tránh mất số liệu thật
+  nếu chẳng may trùng thật. Cảnh báo chỉ bật khi cả 2 loại tiền cùng có mặt trong bộ đệm, nên
+  **không có cảnh báo không chứng minh được là số đúng**
 - Hai ô **Lập bảng** / **Kiểm soát** vừa gõ tay tự do, vừa bấm chọn từ danh sách nhân viên
   **Phòng Thanh toán** (tra theo `code='PAYMENT'`, không phụ thuộc id phòng).
   Tên không nằm trong danh sách (người đã nghỉ / chuyển phòng / gõ tay kiểu khác) vẫn được giữ
@@ -721,6 +730,10 @@ Kết nối CSDL dùng **bể mượn–trả** (`DB_POOL_SIZE`, mặc định 1
   là **âm thầm thu hồi mã module kia của chính mình** → 1 trong 2 Extension bị 403. Nay tách hẳn 2
   bảng, tạo/thu hồi ở phòng nào chỉ ảnh hưởng đúng phòng đó
 - Menu: **Đối chiếu → Phòng QLTK Nostro, Vostro → Đối chiếu CITAD - PaymentHub**
+- ⚠️ **Bộ đệm Extension của module này CHƯA có hạn dùng** (`doi_chieu_citad_nostro_service.py`) —
+  vẫn là bản sao chưa vá của đoạn đã sửa bên Phòng Thanh toán 16/09/2026, và chưa có nút
+  *"Xoá dữ liệu đã quét"*. Mục quét cũ còn sót vẫn có thể bị nạp nhầm; thấy số lạ thì khởi động
+  lại backend. Xem `docs/Implementation-notes.html` mục **DC3**
 - Nguồn số liệu khác hẳn: CITAD lấy ở trang **"Tra cứu dữ liệu"** (không phải "Bảng kê giao dịch"),
   chỉ chiều **Đi**, chỉ **giao dịch thành công**, chỉ VNĐ, đủ 5 cổng; PaymentHub lấy dòng
   **Tổng cộng** ở trang "Lập bảng kê phí chia sẻ CITAD"

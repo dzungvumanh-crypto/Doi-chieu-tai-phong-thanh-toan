@@ -4,6 +4,41 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 16/09/2026 Chấm 459901 — nhóm **Chuyển chi nhánh** chấm chặt hơn theo đúng quy tắc phòng Thanh toán
+    + ✅ Một cặp chỉ được xếp vào **Chuyển chi nhánh** khi có **một vế mã chi nhánh `1000` và một vế
+      mã khác**. Trước đây phần mềm chỉ ghép theo số tiền + nội dung (REMARK) mà không nhìn mã chi
+      nhánh, nên cặp hai vế cùng chi nhánh cũng bị xếp nhầm vào đây
+    + ⚠️ **Số dòng nhóm Chuyển chi nhánh sẽ ít đi so với các tháng trước.** Phần bị loại không mất —
+      rơi xuống nhóm *Cân CN* hoặc *GD khác* ở các bước sau. Tổng số dòng của 7 file vẫn đúng bằng
+      số dòng dữ liệu đầu vào như cũ
+    + ⚠️ Có một số giao dịch thực tế **là** chuyển chi nhánh nhưng không có vế `1000` — người chấm
+      tay nhận ra được vì tra hệ thống thanh toán, còn dữ liệu GL02 không có dấu hiệu nào để phần
+      mềm tự biết. Những ca này vẫn nằm ở *GD khác* và **vẫn phải chấm tay** như trước
+    + ℹ️ Không đổi gì ở 6 nhóm còn lại, không đổi thứ tự phân loại, không đổi cách xuất file
+
+- 16/09/2026 Thư viện — chặn `pandas` phiên bản 3 để không hỏng phần xuất file Excel
+    + ✅ **Cần chạy lại `start.bat` một lần** sau đợt này để máy tự cài đúng phiên bản thư viện
+    + ℹ️ Không đổi màn hình nào, không đổi dữ liệu. Đây là việc bên trong: `pandas` vừa ra bản mới (bản 3)
+      đòi một thư viện Excel đời cao hơn bản hệ thống đang dùng. Máy nào cài mới hôm nay sẽ tự kéo về bản 3
+      rồi **mọi chức năng xuất Excel báo lỗi** — nay đã chặn lại
+    + ℹ️ Máy chính đang chạy Python 3.10 nên **chưa từng dính lỗi này** (bản `pandas` 3 đòi Python 3.11 trở lên).
+      Chặn trước để máy cài mới hoặc nâng Python về sau không vấp
+
+- 16/09/2026 Đối chiếu CITAD — hết cảnh "Nạp" ra số của loại tiền hôm đó không có giao dịch
+    + ✅ **Dữ liệu đã quét nay tự hết hạn sau 4 giờ**: trước đây một lượt quét cũ (hôm khác, lúc chạy thử)
+      nằm lại trong máy chủ vô thời hạn, đến khi bấm "Nạp CITAD" thì bị kéo vào bảng cùng với số vừa quét
+    + ✅ **Thêm nút "Xoá dữ liệu đã quét"** ở màn Đối chiếu CITAD — xoá ngay phần Extension đã gửi lên nhưng
+      chưa nạp, dùng khi vừa quét nhầm hoặc quét thử. Không đụng số đang hiện trên màn hình hay bảng đã lưu
+    + ✅ **Cảnh báo khi nghi đọc nhầm loại tiền**: trên trang CITAD, ô chọn loại tiền đổi ngay nhưng bảng số
+      liệu phía dưới cập nhật chậm hơn — quét đúng lúc đó thì số của USD có thể bị gắn nhãn EUR. Nay nếu hai
+      loại tiền ra số **giống hệt nhau**, hệ thống báo để tự soi lại trên CITAD. **Số vẫn được nạp bình
+      thường**, đây chỉ là nhắc kiểm tra, không chặn
+    + ⚠️ Cảnh báo này chỉ bật khi **cả hai** loại tiền cùng có số trong máy chủ. Không thấy cảnh báo **không**
+      có nghĩa là số chắc chắn đúng — vẫn nên soi lại như thường lệ
+    + ⚠️ Màn **Đối chiếu CITAD của Phòng QLTK Nostro, Vostro chưa được sửa** — vẫn có thể nạp nhầm dữ liệu
+      quét cũ. Sẽ vá ở đợt sau; trong lúc chờ, nếu thấy số lạ thì báo để khởi động lại backend
+    + ℹ️ **Không phải cài lại Extension** — toàn bộ thay đổi nằm ở máy chủ và màn hình web
+
 - 14/09/2026 Chuẩn hoá văn bản - sửa các lỗi thấy khi chạy thử trên Tờ trình thật
     + ✅ **Không còn đổi số tiền trong bảng**: ô "10.000", "5.000" trước đây có thể bị sửa thành "10. 000"
     + ✅ Dòng "V/v …" ngay dưới "TỜ TRÌNH" nay ra cỡ 14 in đậm (trước ra cỡ 12 in thường); đề mục

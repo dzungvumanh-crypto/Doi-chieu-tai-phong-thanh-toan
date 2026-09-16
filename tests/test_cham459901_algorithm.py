@@ -179,9 +179,10 @@ class TestMarkCCN:
         """Regression — dữ liệu thật Tháng 5: 2 chân cùng 1 giao dịch Chuyển chi nhánh do 2
         chi nhánh khác nhau gõ REMARK khác case ('chuyen tien' / 'CHUYEN TIEN') vẫn phải được
         nhận diện cùng 1 nhóm — trước đây rơi xuống Cân CN và bị ghép nhầm với giao dịch khác
-        trùng số tiền tròn (xem Implementation-notes.html)."""
+        trùng số tiền tròn (xem Implementation-notes.html). 1 vế TRBRCD=1000, 1 vế khác — đúng
+        cấu trúc bắt buộc theo quy tắc chị Hà xác nhận 13/09/2026."""
         df = pd.DataFrame([
-            _tk_row('REF1', dr=450000000, trbrcd='2122', remark='chuyen tien'),
+            _tk_row('REF1', dr=450000000, trbrcd='1000', remark='chuyen tien'),
             _tk_row('REF2', cr=450000000, trbrcd='3407', remark='CHUYEN TIEN'),
         ])
         mask = svc._mark_ccn(df)
@@ -189,11 +190,31 @@ class TestMarkCCN:
 
     def test_remark_leading_trailing_space_ignored(self):
         df = pd.DataFrame([
-            _tk_row('REF1', dr=500000, remark=' Chuyen khoan A '),
-            _tk_row('REF2', cr=500000, remark='Chuyen khoan A'),
+            _tk_row('REF1', dr=500000, trbrcd='1000', remark=' Chuyen khoan A '),
+            _tk_row('REF2', cr=500000, trbrcd='6604', remark='Chuyen khoan A'),
         ])
         mask = svc._mark_ccn(df)
         assert mask.tolist() == [True, True]
+
+    def test_both_legs_same_branch_not_ccn(self):
+        """Cả 2 vế cùng chi nhánh (không có vế nào 1000) — chị Hà xác nhận 13/09/2026: đó là
+        Lệnh Đi, không phải Chuyển chi nhánh. _mark_ccn phải loại nhóm này."""
+        df = pd.DataFrame([
+            _tk_row('REF1', dr=500000, trbrcd='2122', remark='chuyen tien'),
+            _tk_row('REF2', cr=500000, trbrcd='2122', remark='CHUYEN TIEN'),
+        ])
+        mask = svc._mark_ccn(df)
+        assert not mask.any()
+
+    def test_both_legs_trbrcd_1000_not_ccn(self):
+        """Cả 2 vế đều TRBRCD=1000 — không thoả cấu trúc bắt buộc "1 vế 1000 + 1 vế khác 1000",
+        phải bị loại khỏi CCN."""
+        df = pd.DataFrame([
+            _tk_row('REF1', dr=500000, trbrcd='1000', remark='chuyen tien'),
+            _tk_row('REF2', cr=500000, trbrcd='1000', remark='CHUYEN TIEN'),
+        ])
+        mask = svc._mark_ccn(df)
+        assert not mask.any()
 
 
 # ── _mark_can_cn ───────────────────────────────────────────────────────────────

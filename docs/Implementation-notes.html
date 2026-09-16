@@ -51,7 +51,156 @@
 <div class="page">
 
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
-  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-09-14</p>
+  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-09-16</p>
+
+  <!-- TV1 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">TV1</span>
+      <span class="card-title">Chặn trên <code>pandas&lt;3.0.0</code> — vì sao chặn pandas chứ không nâng openpyxl (PR #105)</span>
+      <span class="badge badge-warn">Đã merge — CI về cấu trúc KHÔNG bắt được lỗi này</span>
+    </div>
+    <div class="card-body">
+
+      <p><code>requirements.txt</code> ghim <code>openpyxl==3.1.2</code> nhưng để <code>pandas&gt;=2.0.0</code>
+        không chặn trên. pandas 3.x (bản mới nhất trên PyPI hiện là 3.0.5) nâng yêu cầu tối thiểu của openpyxl
+        lên <code>3.1.5</code> → máy cài mới kéo về pandas 3.x rồi mọi đường xuất/đọc Excel qua pandas hỏng.</p>
+
+      <p><b>pip KHÔNG chặn việc này.</b> <code>openpyxl</code> nằm trong <b>extra</b> <code>excel</code> của
+        pandas, không phải dependency bắt buộc — pip cài pandas 3.x cạnh <code>openpyxl==3.1.2</code> bình
+        thường. Lỗi chỉ nổ <b>lúc chạy</b>, khi pandas gọi <code>import_optional_dependency()</code> và so
+        phiên bản. Đừng trông vào bước cài như một lưới an toàn.</p>
+
+      <table>
+        <tr><th style="width:26%">Hai lựa chọn</th><th style="width:37%">Hệ quả</th><th style="width:37%">Quyết định</th></tr>
+        <tr>
+          <td><b>Nâng <code>openpyxl</code> lên ≥3.1.5</b></td>
+          <td><code>_shift_merges()</code> trong <code>backend/services/swift_recon/template_exporters.py</code>
+            tự viết tay để <b>bù một lỗi có thật của openpyxl</b> (<code>insert_rows</code>/<code>delete_rows</code>
+            không dịch vùng gộp ô) và nó dịch merge <b>vô điều kiện</b>. Nếu bản mới đã vá lỗi gốc ở thượng nguồn
+            → <b>dịch hai lần</b>, file Excel SWIFT sai vùng gộp, không lỗi, không log.</td>
+          <td>❌ Bỏ. Không test nào canh hành vi này; ghim <code>3.1.2</code> có từ commit đầu tiên, không ai
+            biết nó đang che chắn cho đoạn bù đó.</td>
+        </tr>
+        <tr>
+          <td><b>Chặn <code>pandas&lt;3.0.0</code></b></td>
+          <td>Giữ nguyên hành vi đã chạy ổn định. Cùng kiểu chặn trên đã có sẵn trong file
+            (<code>numpy&gt;=1.22,&lt;2.6</code>).</td>
+          <td>✅ Chọn.</td>
+        </tr>
+      </table>
+
+      <p><b>Lý do thứ hai, độc lập với openpyxl — và là lý do mạnh hơn:</b> pandas 3.0 đặt string dtype làm
+        mặc định (PDEP-14), đổi hành vi <code>.astype(str)</code> với NA. Chính điều mà
+        <code>backend/services/ach/so_tien.py</code> đã ghi chú, và module đó sinh ra để chặn lỗi
+        <i>"sai 1000 lần, im lặng"</i> trong số tiền ACH. <b>Kể cả không có chuyện openpyxl, pandas 3.0 vẫn
+        phải chặn.</b> Comment trong <code>requirements.txt</code> hiện chỉ nhắc openpyxl — người sau thấy
+        openpyxl được nâng sẽ tưởng gỡ được chặn trên. Nên bổ sung ý này khi có dịp sửa file.</p>
+
+      <p class="caution"><b>⚠ CI không thể tái hiện lỗi này.</b> pandas 3.x đòi <code>Python&gt;=3.11</code>;
+        <code>.github/workflows/tests.yml</code> ghim <code>python-version: "3.10"</code>, còn
+        <code>docs/CONTRIBUTING.md</code> cho phép "Python 3.10 trở lên". Người chạy 3.11+ gặp lỗi thật trong
+        khi CI xanh — đúng tình huống sinh ra PR này. <b>CI xanh không chứng minh môi trường đồng đội xanh.</b></p>
+
+      <p class="note"><b>⚠ Cùng loại bệnh, chưa xử lý:</b> <code>pypdfium2&gt;=4.30</code> cũng không chặn trên,
+        PyPI đã ra 5.x và máy dev đang chạy <b>5.13.0</b> — việc nhảy major đã xảy ra âm thầm. Nó rơi vào phần
+        ký PDF đơn nghỉ phép (<code>insert_obj</code>/<code>gen_content</code>/<code>stamp()</code>), chỗ mà
+        DESIGN.md mô tả là hỏng rất im lặng.</p>
+
+      <p><b>Bẫy khi kiểm PR này:</b> mô tả PR báo "23 lỗi có sẵn trên develop" trong
+        <code>test_ach_gl02_misden_algorithm.py</code>. Con số tái hiện được, nhưng nguyên nhân là
+        <b>thiếu biến <code>DOI_CHIEU_ZIP_PASSWORD</code></b> (<code>.env</code> bị gitignore nên checkout/venv
+        mới không có). Đặt biến vào → <code>1966 passed, 0 failed</code>. Develop không hỏng dòng nào. Chạy
+        pytest trên môi trường mới mà thiếu <code>.env</code> thì cả 4 module đối chiếu trượt sạch — kiểm
+        <code>.env</code> trước khi kết luận "lỗi có sẵn".</p>
+
+    </div>
+  </div>
+
+  <!-- DC3 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">DC3</span>
+      <span class="card-title">Đối chiếu CITAD — bộ đệm Extension nạp nhầm dữ liệu cũ / sai loại tiền (PR #100)</span>
+      <span class="badge badge-warn">Đã merge — bản sao ở Nostro CHƯA vá, 2 comment đã sai</span>
+    </div>
+    <div class="card-body">
+
+      <p>Hai lỗi khác gốc, cùng hiện ra một triệu chứng: bấm "Nạp CITAD" thì bảng hiện số của loại tiền
+        hôm đó <b>không hề có giao dịch</b>.</p>
+
+      <table>
+        <tr><th style="width:18%">Lỗi</th><th style="width:41%">Vì sao xảy ra</th><th style="width:41%">Cách xử lý đã chọn</th></tr>
+        <tr>
+          <td><b>Bộ đệm không có hạn dùng</b></td>
+          <td><code>_citad_buffer</code>/<code>_ph_buffer</code> là dict RAM, không gắn ngày. Extension
+            <b>không gửi gì</b> khi quét ra 0 (<code>content.js autoSaveIfNew()</code> — cố ý, để không nhầm
+            "trang chưa load xong" với "thật sự không có"), nên một mục EUR gửi lên từ hôm khác nằm lại
+            <b>vô thời hạn</b> và bị nạp kèm lượt USD mới.</td>
+          <td><code>_BUFFER_TTL = 4 giờ</code> + mốc <code>_scan_ts</code> do <b>server</b> gắn bằng
+            <code>_vn_now()</code> lúc lưu. Không dùng field <code>ts</code> client gửi lên: nó chỉ là
+            giờ:phút:giây hiển thị, không có ngày, và do client tự khai.</td>
+        </tr>
+        <tr>
+          <td><b>Đọc nhầm loại tiền lúc quét</b></td>
+          <td>Ô chọn loại tiền trên trang CITAD đổi giá trị <b>ngay</b>, nhưng bảng kết quả chỉ cập nhật
+            <b>sau</b> khi truy vấn lại xong. Extension đọc đúng lúc giữa 2 mốc đó thì số CŨ (của USD) bị
+            gắn nhãn loại tiền MỚI (EUR) rồi gửi lên.</td>
+          <td>Xử lý <b>hoàn toàn ở server</b> — <code>_annotate_currency_duplicates()</code>. Sửa ở Extension
+            thì phải bắt mọi máy trạm cài lại: chi phí vận hành cao, đã bỏ phương án đó.</td>
+        </tr>
+      </table>
+
+      <div class="label">Vì sao cảnh báo chứ không chặn lưu</div>
+      <p>2 loại tiền khác nhau, cùng cổng/chiều/loại DV, mà <code>soMon</code> <b>và</b> <code>soTien</code>
+        trùng tuyệt đối — xác suất 2 dòng tiền độc lập trùng thật cả 2 trị gần như bằng 0. Nhưng
+        "gần như" không phải "bằng": tự ý loại bỏ thì lỡ trùng thật là <b>mất số liệu thật, âm thầm</b>.
+        Gắn cờ <code>_suspect_dup_tien</code> cho frontend cảnh báo, số vẫn nạp vào bảng bình thường —
+        người dùng chỉ mất công soi lại bằng mắt.</p>
+
+      <div class="note"><b>Dòng 0 món/0 đồng phải loại trước khi so.</b>
+        <code>content_paymenthub.js _doSaveBaoCao()</code> gửi đủ cả 4 dòng (ih/il × đến/đi) của một kênh
+        đọc được, kể cả dòng thật sự không có giao dịch — chỉ bỏ hẳn khi <b>cả 4</b> cùng 0. Không loại thì
+        2 loại tiền cùng có 1 dòng trống (rất thường gặp) trùng 0/0 với nhau, gắn cờ <b>sai ở hầu như mọi
+        lượt nạp</b> → người dùng quen tay bỏ qua, cảnh báo mất tác dụng. CITAD không dính vì
+        <code>autoSaveIfNew()</code> đã return sớm khi toàn 0.</div>
+
+      <div class="label">Giới hạn của cách phát hiện này — đừng quảng cáo quá</div>
+      <p>Cờ chỉ bật khi <b>cả dòng đúng lẫn dòng gắn nhãn sai cùng nằm trong bộ đệm</b>. Nếu lượt quét USD
+        chưa từng được lưu thì dòng EUR mang số USD nạp vào <b>không có cảnh báo nào</b>.
+        <b>Không có cảnh báo không chứng minh được là số đúng.</b></p>
+
+      <div class="caution"><b>Còn mở sau khi merge — 4 điểm, đã ghi vào PR #100.</b>
+        <ol>
+          <li><code>doi_chieu_citad_nostro_service.py:154-185</code> vẫn là <b>bản sao nguyên văn chưa vá</b>
+            của đúng đoạn buffer này — dict RAM, không hạn dùng, cùng luồng "Nạp"
+            (<code>doi_chieu_citad_nostro.py:401,436</code>), và <b>chưa có nút "Xoá dữ liệu đã quét"</b>.
+            Nửa "đọc nhầm loại tiền" không áp dụng (schema Nostro không có field <code>tien</code>) nhưng
+            nửa TTL áp dụng nguyên vẹn — Nostro đối chiếu <b>theo kỳ</b> nên mục sót vắt qua kỳ còn khó
+            phát hiện hơn bên Thanh toán.</li>
+          <li><code>frontend/pages/doi_chieu_citad.py:824</code> và <code>:901</code> vẫn ghi bộ đệm
+            <i>"KHÔNG tự hết hạn … chỉ save/get/clear"</i> — chính PR này làm câu đó sai.</li>
+          <li>TTL xoá luôn nhóm mục <b>đang được cố ý giữ lại</b>: <code>doi_chieu_citad.py:770-773</code>
+            ghi rõ chủ ý không xoá buffer khi <code>skipped &gt; 0</code> để người quét nhầm cổng dùng lại
+            sau. Sau 4 giờ thì mất. Đổi hành vi ngược một ý định đã ghi thành văn, PR không nhắc.</li>
+          <li><code>_annotate_currency_duplicates()</code> chạy <b>ngoài</b> <code>_buffer_lock</code> và ghi
+            vào chính các dict còn nằm trong buffer (<code>list(bucket.values())</code> là bản sao nông).
+            Rủi ro thật gần như bằng 0 (cùng owner, FE gọi 2 bucket khác nhau) — đẩy lời gọi vào trong
+            <code>with</code> là xong.</li>
+        </ol>
+      </div>
+
+      <div class="label">Kiểm trước khi merge</div>
+      <p>CI <b>không chạy</b> (GitHub chặn vì billing — đỏ sau 2 giây, không bước nào chạy). Người dùng đồng ý
+        merge bằng chạy tại máy. Trên đúng commit <code>3d09870</code> (đã <code>update-branch</code> gộp
+        develop): <code>ruff --select F821,F823,E9</code> sạch; <b>1978 pass, 0 fail</b>, exit 0. Kết quả đã
+        dán lên PR bằng <code>gh pr comment</code>.</p>
+      <p><span class="pill pill-gray">Đính chính</span> Test plan của PR ghi "45 fail còn lại là lỗi môi
+        trường có sẵn" — không phải. Do máy chạy thiếu <code>DOI_CHIEU_ZIP_PASSWORD</code>; đặt đủ biến như
+        CI thì suite xanh hoàn toàn.</p>
+
+    </div>
+  </div>
 
   <!-- VB8 -->
   <div class="card">
@@ -17437,7 +17586,79 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-10</footer>
+  <!-- 142 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">142</span>
+      <span class="card-title">Chấm 459901 — thêm điều kiện TRBRCD=1000 cho "Chuyển chi nhánh", xác nhận bằng dữ liệu thật Tháng 5-8 (2026-09-13/14)</span>
+      <span class="badge badge-done">Hoàn thiện</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-blue">Bối cảnh</span> đối chiếu dữ liệu thật Tháng 5/6/7 phát hiện nhóm "Chuyển chi nhánh" lệch nhiều so với chấm tay</div>
+      <p>Người dùng cung cấp dữ liệu thật 4 tháng (<code>G:\NGOC HA\459 file chấm gửi a Dũng\</code>)
+        kèm kết quả chấm tay của người chấm thật ("chị Hà"). Chạy <code>process_files()</code> thật
+        (không mô phỏng) trên Tháng 5/6/7, so với file chấm tay bằng khoá 8 trường
+        (TRDATE|TRBRCD|USERID|JOURSEQ|DYTRSEQ|REFERENCE|DRAMOUNT|CRAMOUNT) — nhóm "Chuyển chi nhánh"
+        lệch 652/2808 (Tháng 5), 12/742 (Tháng 6), 486/1090 (Tháng 7), gần như toàn bộ do bước
+        "Lệnh Đi" (chạy trước trong thác nước) giành mất khi 2 vế giao dịch tình cờ cùng mã chi
+        nhánh.</p>
+
+      <div class="label"><span class="pill pill-gray">Quyết định nghiệp vụ</span> người dùng hỏi trực tiếp người chấm tay ("chị Hà"), xác nhận 2 lần</div>
+      <p>Lần 1 (13/09): "2 vế cùng mã chi nhánh → đúng là Lệnh Đi, không phải Chuyển chi nhánh" —
+        xác nhận thác nước hiện tại làm ĐÚNG cho case đó, không cần đổi thứ tự. Đồng thời chốt quy
+        tắc chính thức "Chuyển chi nhánh" (chị Hà viết lại 07/09): <b>1 cặp giao dịch bắt buộc có 1
+        vế <code>TRBRCD='1000'</code> và 1 vế <code>TRBRCD≠'1000'</code></b> — hàm <code>_mark_ccn()</code>
+        trước đó hoàn toàn không xét cột này, chỉ ghép theo (số tiền + REMARK) cân Nợ=Có.</p>
+      <p>Khi tự tay verify bằng dữ liệu thật, tìm được 1 cặp Tháng 5 (REFERENCE
+        <code>1000API4370587</code>/<code>1000API009635716</code>, 450.000.000đ) chị Hà chấm là
+        "Chuyển chi nhánh" nhưng TRBRCD 2 vế là <code>3407</code>/<code>2122</code> — KHÔNG vế nào
+        là 1000, mâu thuẫn quy tắc. Hỏi lại lần 2: chị Hà <b>khẳng định lại nguyên văn quy tắc
+        TRBRCD=1000</b>, giải thích case đó là chị chấm bằng cách tra hệ thống thanh toán live (dữ
+        liệu GL02 không có dấu hiệu để máy tự nhận ra) — không phải quy tắc sai, mà là 1 lớp case
+        nằm ngoài khả năng của thuật toán chỉ đọc GL02, vẫn phải rơi về "GD khác" chấm tay.</p>
+
+      <div class="label"><span class="pill pill-green">Fix</span> <code>_mark_ccn()</code> — thêm điều kiện <code>has_1000 &amp; has_non1000</code></div>
+      <p>Thêm 3 dòng, tái dùng đúng pattern <code>is_1000 = df['TRBRCD'] == '1000'</code> đã có sẵn
+        trong <code>_mark_can_cn()</code> ngay bên dưới — nhóm (theo khoá số tiền+REMARK hiện có)
+        chỉ được coi là Chuyển chi nhánh khi vừa có ≥1 dòng TRBRCD=1000, vừa có ≥1 dòng khác 1000.
+        Không đổi thứ tự thác nước, không đụng hàm nào khác. <code>tests/test_cham459901_algorithm.py</code>:
+        sửa data 2 test cũ (thêm đúng cấu trúc 1 vế 1000 để không vi phạm luật mới), thêm 2 test phủ
+        định (2 vế cùng khác 1000 / 2 vế cùng 1000 → không phải CCN). 142/142 test module pass.</p>
+
+      <div class="label"><span class="pill pill-blue">Kiểm chứng bằng dữ liệu thật sau khi sửa</span></div>
+      <table>
+        <tr><th>Tháng</th><th>Chuyển chi nhánh — trước fix</th><th>Chuyển chi nhánh — sau fix</th></tr>
+        <tr><td>5</td><td>652/2808 lệch</td><td>654/2808 lệch</td></tr>
+        <tr><td>6</td><td>12/742 lệch</td><td>38/742 lệch</td></tr>
+        <tr><td>7</td><td>486/1090 lệch</td><td>512/1090 lệch</td></tr>
+      </table>
+      <p>Số lệch KHÔNG giảm sau fix — nhưng đây không phải fix hỏng: phần lớn dòng "lệch" là các
+        giao dịch chị Hà chấm bằng cách tra hệ thống live (xác nhận ở trên), thuật toán chỉ đọc GL02
+        không có cách tái tạo lại bước đó. Fix vẫn đúng theo quy tắc chính thức chị Hà xác nhận, chỉ
+        là quy tắc đó không phủ hết mọi case chấm tay lịch sử.</p>
+
+      <div class="label"><span class="pill pill-warn">Hiệu ứng phụ đã biết, đã được xác nhận chấp nhận được</span></div>
+      <p>Tháng 6 xuất hiện <b>3 dòng regression</b>: trước fix khớp ĐÚNG ở "GD khác" (373/373), sau
+        fix bị xếp SAI sang "Cân CN" (370/373, GD khác còn khớp; 3 dòng lệch). Cơ chế: 3 dòng này
+        được giải phóng khỏi ứng viên Chuyển chi nhánh (không thoả điều kiện mới), rơi xuống bước
+        Cân CN phía sau và trùng ngẫu nhiên khoá (TRBRCD+số tiền, không có REMARK) với dòng khác
+        không liên quan. Đây là rủi ro "khoá khớp không duy nhất" đã biết của thiết kế
+        <code>_mark_can_cn()</code> từ trước (không phải lỗi mới do diff này tạo ra cấu trúc khoá),
+        nhưng diff này làm lộ ra 3 ca cụ thể. Agent phản biện (2026-09-14) đánh giá đây là nghi vấn
+        cần người dùng xác nhận trước khi mở PR (đổi khoá khớp giao dịch = rủi ro cao theo
+        <code>docs/CHECKLIST-TRUOC-KHI-MO-PR.md</code> mục I) — <b>người dùng đã xác nhận (14/09):
+        chấp nhận đánh đổi, giữ nguyên fix theo đúng quy tắc chị Hà đã khẳng định.</b></p>
+
+      <div class="note">Branch: <code>fix/cham459901-ccn-trbrcd-1000</code> (tách từ
+        <code>develop</code>). Đợt này chỉ sửa <code>_mark_ccn()</code> — 4 nhóm còn lại (1000 Hoàn
+        trả, Cân CN, Điện KO offline — phần lệch còn lại là các case cần tra hệ thống live, không
+        tự động hoá được từ GL02) không đổi gì thêm trong PR này.</div>
+
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-14</footer>
 </div>
 </body>
 </html>
