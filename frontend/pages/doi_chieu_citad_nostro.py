@@ -449,8 +449,11 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
         cD, phD = _snapshot_cD_phD()
         return {
             "ky": f"{tu_ngay_input.value}-{den_ngay_input.value}",
-            "lap_bang": lap_bang_input.value,
-            "kiem_soat": kiem_soat_input.value,
+            # or "" — ui.select() (khác ui.input cũ) chưa chọn gì thì .value là
+            # None, không phải "". SessionIn.lap_bang là Optional[str] nên None
+            # không né HTTP, nhưng ghi None đè lên tên đã lưu thì mất trắng.
+            "lap_bang": lap_bang_input.value or "",
+            "kiem_soat": kiem_soat_input.value or "",
             "cD": cD,
             "phD": phD,
             "session_id": view_state["session_id"],
@@ -537,10 +540,15 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
         for ccy in LOAI_TIEN:
             recalc(ccy)
         if skipped_no_ccy:
+            # Trước đây khuyên "quét lại" — sai nếu nguyên nhân là Extension bản
+            # 1.0 (chưa gửi field `ccy`): quét lại bằng bản cũ vẫn ra kết quả cũ.
+            # Nói thẳng khả năng đúng nhất — tab "Kết nối Extension" đã tự kiểm
+            # version và nhắc riêng nếu đúng là bản cũ.
             ui.notify(
                 f"Bỏ qua {skipped_no_ccy} mục PaymentHub cũ không xác định được loại tiền — "
-                "quét lại trên trang PaymentHub (nhớ chọn đúng Loại tiền).",
-                type="warning", timeout=6000,
+                "có thể do Extension đang cài là bản cũ (trước 1.1, chưa biết Loại tiền). "
+                "Kiểm tab \"Kết nối Extension\", cài lại bản mới nếu có nhắc, rồi quét lại.",
+                type="warning", timeout=8000,
             )
         ui.notify(f"Đã nạp {count} mục từ PaymentHub", type="positive")
 
@@ -1071,7 +1079,11 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
                     api.post_download, "/api/doi-chieu-citad-nostro/month-summary/export", {
                         "nam": int(nam_input.value), "thang": int(thang_input.value),
                         "session_ids": checked_ids,
-                        "lb": lb_thang_input.value, "ks": ks_thang_input.value,
+                        # or "" — xem chú thích ở get_session_payload(); ở đây BẮT
+                        # BUỘC vì MonthSummaryExportIn.lb là str (không Optional),
+                        # gửi None là 422, mà 2 ô này không được apply_session_data()
+                        # gán giá trị nên luôn None cho tới khi người dùng tự chọn.
+                        "lb": lb_thang_input.value or "", "ks": ks_thang_input.value or "",
                     },
                 )
             except Exception as e:
@@ -1092,7 +1104,9 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
                 api.post_download, "/api/doi-chieu-citad-nostro/export", {
                     "tu_ngay": tu_ngay_input.value, "den_ngay": den_ngay_input.value,
                     "sheet_name": f"{tu_ngay_input.value}_{den_ngay_input.value}".replace("/", "."),
-                    "lb": lap_bang_input.value, "ks": kiem_soat_input.value,
+                    # or "" — ExportIn.lb/ks là str bắt buộc, không Optional; None
+                    # (chưa chọn tên trong ui.select) là 422, xem get_session_payload().
+                    "lb": lap_bang_input.value or "", "ks": kiem_soat_input.value or "",
                     "cD": cD,
                     "phD": phD,
                 },
@@ -1204,6 +1218,81 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
             ui.notify(f"Lỗi: {e}", type="negative")
             return
         ui.download(content, "extension_citad_nv.zip")
+
+    # ── Nhắc cập nhật Extension — mirror đúng pattern của doi_chieu_citad.py
+    # (Phòng Thanh toán). Bản 1.1 (14/09/2026) thêm content_citad_nostro_fx.js
+    # và đổi key buffer PaymentHub (ph_{loai} -> ph_{loai}_{ccy}) — máy còn cài
+    # bản 1.0 thì Nạp PaymentHub sẽ bỏ qua MỌI mục (thiếu `ccy`) và USD/EUR bên
+    # CITAD không lấy được gì (không có script quét trang ngoại tệ), không có
+    # cách nào tự phát hiện nếu không chủ động hỏi version như dưới đây.
+    _ACK_STORAGE_KEY = "citad_nostro_ext_update_ack"
+
+    async def _get_installed_extension_version() -> str | None:
+        js = f"""
+            return await new Promise((resolve) => {{
+                if (!(window.chrome && chrome.runtime && chrome.runtime.sendMessage)) {{
+                    resolve(null);
+                    return;
+                }}
+                try {{
+                    chrome.runtime.sendMessage({_EXTENSION_ID!r}, {{type: 'GET_VERSION'}}, (response) => {{
+                        if (chrome.runtime.lastError || !response || !response.ok) {{
+                            resolve(null);
+                        }} else {{
+                            resolve(response.version || null);
+                        }}
+                    }});
+                }} catch (e) {{
+                    resolve(null);
+                }}
+            }});
+        """
+        try:
+            return await ui.run_javascript(js, timeout=3.0)
+        except Exception:
+            return None
+
+    async def _check_extension_update():
+        installed = await _get_installed_extension_version()
+        if not installed:
+            return  # không cài/không rõ — im lặng bỏ qua, không đoán bừa
+        try:
+            latest = (await asyncio.to_thread(api.get, "/api/doi-chieu-citad-nostro/extension-version"))["version"]
+        except Exception:
+            return
+        if installed == latest:
+            return
+        try:
+            acked = await ui.run_javascript(f"return localStorage.getItem({_ACK_STORAGE_KEY!r})", timeout=2.0)
+        except Exception:
+            acked = None
+        if acked == latest:
+            return  # đã xác nhận đúng bản mới nhất này rồi — không hiện lại
+
+        with ui.dialog().props("persistent") as dialog, ui.card().classes("w-full max-w-lg"):
+            ui.label("⚠ Có bản cập nhật mới cho Extension").classes("text-lg font-bold text-orange-600")
+            ui.label(
+                f"Đang dùng: {installed}  —  Bản mới nhất: {latest}"
+            ).classes("text-sm font-bold text-gray-700")
+            ui.label(
+                "Vào chrome://extensions, gỡ bản Extension cũ, rồi tải lại bản mới bên dưới và "
+                "\"Load unpacked\" lại thư mục vừa giải nén."
+            ).classes("text-sm text-gray-500")
+            with ui.row().classes("w-full justify-end gap-2 mt-3"):
+                ui.button(
+                    "Tải Extension mới", icon="download", on_click=do_download_extension
+                ).props("outline")
+
+                async def _confirm_update():
+                    await ui.run_javascript(
+                        f"localStorage.setItem({_ACK_STORAGE_KEY!r}, {latest!r})"
+                    )
+                    dialog.close()
+
+                ui.button("Đã xác nhận", icon="check", on_click=_confirm_update).classes(
+                    "bg-orange-600 hover:bg-orange-700 text-white rounded-lg"
+                )
+        dialog.open()
 
     with ui.row().classes("w-full"):
         await _sidebar("doi_chieu_citad_nostro")
@@ -1417,3 +1506,4 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
                                 ui.button("Thu hồi mã", icon="link_off", on_click=do_revoke_extension_token).props("outline color=negative")
                                 ui.button("Tải Extension (.zip)", icon="download", on_click=do_download_extension).props("outline")
                             ui.timer(0.1, refresh_extension_status, once=True)
+                            ui.timer(0.1, _check_extension_update, once=True)
