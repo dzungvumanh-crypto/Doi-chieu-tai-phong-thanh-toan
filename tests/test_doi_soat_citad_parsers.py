@@ -14,6 +14,7 @@ khoa học) — vỡ ngay với số tiền CITAD dùng dấu chấm làm phân 
 nghìn kiểu Việt Nam ("790.840" đồng bị hiểu nhầm thành số thập phân
 790,84 rồi làm tròn ra 791). Test dưới đây khoá cả 2 lần sửa.
 """
+from backend.services.doi_soat_citad import parsers
 from backend.services.doi_soat_citad.parsers import _parse_ipcas_text, _parse_so_tien
 
 _IPCAS_HEADER = (
@@ -87,3 +88,85 @@ def test_ipcas_di_trang_thai_la_khong_nam_trong_keep_di_van_bi_loc():
     text = _IPCAS_HEADER + "\n" + _ipcas_di_row("99999999", "MA_LA_HOAN_TOAN", so_tien=1000)
     rows = _parse_ipcas_text(text, "HQTTTHA1_doichieugd_20260915__03_DI_9999_N.csv", "15/09/2026")
     assert rows == []
+
+
+class _FakeWs:
+    """Worksheet giả, đủ interface cell_value()/nrows/ncols giống
+    _XlrdWs/_OpenpyxlWs trong parsers.py — dùng để test _extract_bank_group()
+    không cần dựng file .xls thật."""
+
+    def __init__(self, rows):
+        self._rows = rows
+        self.nrows = len(rows)
+        self.ncols = max((len(r) for r in rows), default=0)
+
+    def cell_value(self, row, col):
+        try:
+            v = self._rows[row][col]
+        except IndexError:
+            return ''
+        return v if v is not None else ''
+
+
+def test_extract_bank_group_nhan_dien_dong_nhom():
+    """Bug thật xác nhận dữ liệu 15/09/2026 (txid=10008309): file CITAD
+    chiều Đến có dòng "tiêu đề nhóm ngân hàng gửi" dạng "<mã> - <tên>" xen
+    kẽ với các khối giao dịch — parsers.py trước đây bỏ qua hoàn toàn."""
+    ws = _FakeWs([['', '', '01203003 - Ngân hàng TMCP ABC', '', '', '']])
+    assert parsers._extract_bank_group(ws, 0, 2) == '203003'
+
+
+def test_extract_bank_group_ma_o_cot_lech():
+    """Mã ngân hàng có thể nằm lệch 1 cột so với i_so_gd tuỳ dòng — xác
+    nhận thực tế qua nhiều file mẫu."""
+    ws = _FakeWs([['', "79204017 - NH Quan doi", '', '', '', '']])
+    assert parsers._extract_bank_group(ws, 0, 2) == '204017'
+
+
+def test_extract_bank_group_khong_nham_dong_giao_dich_thuong():
+    ws = _FakeWs([['', '', '10008309', '', 'Chuyển có giá trị thấp', '']])
+    assert parsers._extract_bank_group(ws, 0, 2) is None
+
+
+def test_extract_bank_group_khong_nham_dong_tong_so_tien():
+    # dong tong dang "<ma> - <so tien>" — khong co chu cai sau dau gach,
+    # KHONG duoc nham thanh dong nhom (_RE_BANK_GROUP doi ky tu sau "-"
+    # phai la chu, khong phai chu so).
+    ws = _FakeWs([['', '', '01203003 - 500,000,000', '', '', '']])
+    assert parsers._extract_bank_group(ws, 0, 2) is None
+
+
+def test_nh_gui_ke_thua_qua_sheet_moi():
+    """Test tích hợp — khoá lại đúng bug thật 16/09/2026 (txid=10009779,
+    dòng 2 triệu): khi Crystal Reports chia 1 nhóm ngân hàng qua nhiều
+    sheet, dòng ĐẦU TIÊN của sheet mới (chưa gặp dòng tiêu đề ngân hàng
+    nào) vẫn phải mang đúng mã ngân hàng còn dang dở từ sheet TRƯỚC —
+    không được coi là "chưa xác định" (rỗng). Gọi thẳng `_parse_sheet()`
+    2 lần với CHUNG 1 `nh_gui_ref`, đúng cách `parse_citad_xls()` làm khi
+    xử lý nhiều sheet trong 1 file — không cần dựng file .xls thật."""
+    chieu_ref, cong_ref, ngay_ref, loai_tien_ref = [None], [None], [None], [None]
+    nh_gui_ref = ['']
+
+    # Sheet 0: header "...chuyển tiền đến..." để chieu='den', 1 dòng nhóm
+    # ngân hàng (203002) rồi 1 giao dịch, KẾT THÚC sheet mà KHÔNG có dòng
+    # nhóm nào khác sau đó (mô phỏng đúng "nhóm bị cắt ngang giữa sheet").
+    ws0 = _FakeWs([
+        ['', 'BÁO CÁO CHUYỂN TIỀN ĐẾN', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''],
+        ['', '', '203002 - Ngân hàng ABC', '', '', '', '', '', '', '', '', '', '', '', '', '', ''],
+        ['', '', '10000001', '', '', 'Chuyển có giá trị thấp', '', '', '', '', '', '', '', '', '', '500.000', ''],
+    ])
+    rows0 = parsers._parse_sheet(ws0, 'test.xls', True, chieu_ref, cong_ref, ngay_ref,
+                                  loai_tien_ref, nh_gui_ref)
+    assert len(rows0) == 1
+    assert rows0[0]['nh_gui'] == '203002'
+    assert nh_gui_ref[0] == '203002'  # da ghi lai dung trang thai cuoi
+
+    # Sheet 1: KHÔNG có dòng tiêu đề ngân hàng nào — dòng giao dịch đầu
+    # tiên phải kế thừa đúng '203002' từ nh_gui_ref, không phải rỗng.
+    ws1 = _FakeWs([
+        ['', '', '10000002', '', '', 'Chuyển có giá trị thấp', '', '', '', '', '', '', '', '', '', '750.000', ''],
+    ])
+    rows1 = parsers._parse_sheet(ws1, 'test.xls', False, chieu_ref, cong_ref, ngay_ref,
+                                  loai_tien_ref, nh_gui_ref)
+    assert len(rows1) == 1
+    assert rows1[0]['nh_gui'] == '203002'
