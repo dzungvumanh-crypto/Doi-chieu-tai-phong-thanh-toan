@@ -16,6 +16,20 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
       thống. Máy chủ chưa từng rơi vào lỗi treo 30 giây ở trên; nguyên nhân cảnh báo vẫn đang tìm
     + ℹ️ Không đổi màn hình, không đổi dữ liệu, không phải cài lại Extension. Chạy lại phần mềm như thường lệ
 
+- 16/09/2026 Đối soát CITAD ↔ IPCAS — sửa 2 chỗ làm **mất lệnh lệch** khỏi báo cáo
+    + ✅ **Lệnh Đến cùng số giao dịch, cùng số tiền nhưng từ nhiều ngân hàng gửi khác nhau** nay được so
+      riêng từng ngân hàng. Trước đây phần mềm chỉ so một dòng đại diện, nên nếu CITAD có 4 lệnh mà IPCAS
+      chỉ có 3 thì lệnh thiếu **không hiện ra** (ca thật: số GD 10008309, 500.000đ)
+    + ✅ **Lệnh Đi IPCAS trạng thái `ERRC` (hạch toán huỷ lỗi)** không còn bị bỏ lúc đọc file. Trước đây
+      lệnh CITAD tương ứng hiện nhầm là **Chỉ CITAD** như thể IPCAS không có gì; nay hiện ở
+      **Lệch trạng thái** để người chấm thấy IPCAS có bản ghi
+    + ⚠️ **Có thể xuất hiện thêm dòng Chỉ IPCAS mang trạng thái `ERRC`** — lệnh huỷ lỗi mà CITAD không có.
+      Nếu Phòng Thanh toán thấy loại này không cần báo, báo lại để loại trừ như `ERPO`/`CALD`
+    + ⚠️ Nếu một ngày báo cáo đột nhiên có **rất nhiều cặp Chỉ CITAD / Chỉ IPCAS** kèm ghi chú
+      *"nhiều ngân hàng gửi khác nhau"* → nhiều khả năng file xuất từ CITAD hoặc IPCAS đổi định dạng
+      (mất mã ngân hàng), không phải lệch thật. Báo lại kỹ thuật trước khi xử lý
+    + ℹ️ Không đổi màn hình, không đổi dữ liệu cũ, không cần chạy script. Chỉ cần chạy lại phần mềm
+
 - 16/09/2026 Thi đua khen thưởng — màn hình mới cho Phòng Tổng hợp
     + ✅ **Menu mới: Báo cáo → Phòng Tổng hợp → Thi đua khen thưởng.** Trước đây không có chỗ nào
       trong phần mềm lưu dữ liệu này, nên báo cáo nghỉ phép vẫn phải bỏ trống cột "xếp loại thi đua"

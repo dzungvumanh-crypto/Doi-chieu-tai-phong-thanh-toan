@@ -790,6 +790,12 @@ Request vượt số kết nối thì xếp hàng chờ (tối đa 30 giây, qu�
 - **Phát hiện IPCAS/Hub hạch toán trùng**: cùng 1 lệnh ghi nhiều lần sẽ hiện thành từng dòng
   **Chỉ Agribank** riêng (đúng số lần dư), kèm ghi chú "N lần" trên dòng đã khớp — không gộp lại
   thành 1 dòng như trước
+- **Lệnh Đến trùng số GD + số tiền giữa nhiều ngân hàng gửi** (từ 16/09/2026, PR #110) được tách theo
+  mã ngân hàng gửi (đọc từ dòng tiêu đề nhóm trong file CITAD, so 6 số cuối với `NH_NHAN` của IPCAS) —
+  trước đây chỉ khớp 1 dòng đại diện nên lệnh thiếu bị nuốt mất. ⚠️ Nhánh này cần **cả hai file có mã
+  ngân hàng**; thiếu mã thì khoá trùng hiện thành cặp Chỉ CITAD/Chỉ IPCAS
+- ⚠️ **Lệnh Đi trạng thái `ERRC` (hạch toán huỷ lỗi) nay được đọc vào** (16/09/2026) — có CITAD thì
+  ra **Lệch trạng thái** thay vì "Chỉ CITAD" giả; không có CITAD thì ra **Chỉ IPCAS**
 - **Cặp "hạch toán nhầm rồi huỷ"** (GDV hạch toán tay sai chi nhánh rồi huỷ, hạch toán lại) được
   nhận ra qua `REFHUB` và **loại khỏi đối soát** — không tính khớp, không tính lệch
 - ⚠️ **Lệnh Đến trạng thái PYED/PYEK nay VẪN hiện nếu không khớp CITAD.** Trước 24/08/2026 hai
