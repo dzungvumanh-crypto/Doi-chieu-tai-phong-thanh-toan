@@ -44,16 +44,21 @@ def init_progress() -> str:
     return task_token
 
 
+def _thu_muc_upload(task_token: str) -> Path:
+    """Đường dẫn DUY NHẤT của thư mục upload một lượt — mọi chỗ tạo/xoá đều đi qua đây."""
+    return TEMP_DIR / f"upload_{task_token}"
+
+
 def tao_thu_muc_upload(task_token: str) -> Path:
     """Thư mục nhận file tải lên của một lượt: `data/temp_doi_chieu_osb/upload_<token>/`."""
-    d = TEMP_DIR / f"upload_{task_token}"
+    d = _thu_muc_upload(task_token)
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
 def bo_luot(task_token: str) -> None:
     """Huỷ một lượt chưa chạy (upload lỗi/đứt): xoá thư mục và entry tiến độ."""
-    shutil.rmtree(TEMP_DIR / f"upload_{task_token}", ignore_errors=True)
+    shutil.rmtree(_thu_muc_upload(task_token), ignore_errors=True)
     _progress.pop(task_token, None)
 
 
@@ -118,8 +123,12 @@ def run_process(
     `finally` xoá thư mục `upload_<token>` (file GL02 zip + OSB xlsx vừa nhận) SAU khi xử lý
     xong, kể cả nhánh THÀNH CÔNG — trước đó chỉ nhánh upload hỏng mới được `bo_luot()` dọn
     (review Khánh, PR #103). `process()` đã đọc hết dữ liệu cần vào RAM/kết quả xuất ra
-    `TEMP_DIR/<result_token>/` trước khi hàm này trả về, nên xoá thư mục upload lúc này an toàn."""
-    upload_dir = gl02_path.parent
+    `TEMP_DIR/<result_token>/` trước khi hàm này trả về, nên xoá thư mục upload lúc này an toàn.
+
+    Thư mục xoá dựng từ `task_token`, KHÔNG suy ra từ `gl02_path.parent`: nếu sau này có đường
+    chạy thẳng từ thư mục trên máy chủ (như Chấm 459901), `parent` là thư mục dữ liệu thật và
+    `rmtree` sẽ xoá sạch nó."""
+    upload_dir = _thu_muc_upload(task_token)
     try:
         result = process(gl02_path, osb_paths, ma_tk, ngay, task_token)
         if task_token in _progress:
