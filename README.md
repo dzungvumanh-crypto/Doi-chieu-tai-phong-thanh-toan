@@ -297,7 +297,9 @@ Từ 10/09/2026 cả bốn dùng chung một chốt (`backend/core/phien_doi_chi
 Bị chặn → HTTP 409 kèm câu nói rõ module nào đang chạy. Trước đó chỉ ACH có chốt, và nó cũng chỉ
 tự canh mình.
 
-Kết nối CSDL dùng **bể mượn–trả** (`DB_POOL_SIZE`, mặc định 16) thay vì mở tệp ở từng request.
+Kết nối CSDL dùng **bể mượn–trả** (`DB_POOL_SIZE`, mặc định 48) thay vì mở tệp ở từng request.
+Request vượt số kết nối thì xếp hàng chờ (tối đa 30 giây, quá thì trả 503 và ghi cảnh báo vào
+`logs/app.log`) — trước 17/09/2026 quá ~88 request cùng lúc là cả hệ thống đứng 30 giây.
 
 ## Chức năng
 

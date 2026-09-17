@@ -71,6 +71,22 @@ Riêng `database is locked` chỉ log WARNING và bỏ qua, thử lại ở lầ
 > `no such table` từng nằm trong danh sách nuốt lỗi. Hậu quả: migration viết sai tên bảng
 > thất bại **im lặng** — không log, không chặn khởi động, cột không được thêm. Đừng đưa lại vào.
 
+## Bể kết nối CSDL — chỉ mượn qua `get_db`
+Mọi request mượn kết nối bằng `Depends(get_db)`. **Không gọi `_muon()` trực tiếp** ở chỗ nào khác
+(ngoại lệ duy nhất: `khoi_tao_pool()` lúc khởi động).
+
+`get_db` có sub-dependency `_qua_cong_db()`: một cổng `async` cho tối đa `DB_POOL_SIZE` request qua cùng
+lúc, phần dư chờ bằng `await` — **không giữ luồng**. Không có cổng thì request chờ kết nối đứng chiếm
+luồng threadpool (40), request đang cầm kết nối hết luồng để chạy tiếp → hai bên chờ nhau. Đo 16/09/2026:
+78 request đồng thời chậm nhất 268 ms, **90 request cả hệ thống đứng 31 giây** rồi ăn 500.
+
+Cổng chỉ đúng khi mọi lượt mượn đều đi qua nó. Gọi `_muon()` thẳng từ luồng khác là cổng cho qua đủ
+suất trong khi bể thiếu kết nối → mở lại đúng lỗi trên. Nâng `DB_POOL_SIZE` hay số luồng **không** sửa
+được: chỉ dời ngưỡng. Xem card 143 trong Implementation-notes, test `tests/test_be_ket_noi_khoa_cheo.py`.
+
+> Lỗi ném trong dependency chỉ ra console uvicorn, **không** vào `logs/app.log`. Cổng hết giờ chờ nên
+> tự `_log.warning` trước khi trả 503 — đừng bỏ dòng log đó.
+
 ## Authentication & Sessions
 - JWT verify bởi `get_current_staff` trong `deps.py` — role đọc từ **DB** mỗi request, không lấy từ token
 - Session lưu trong DB (`backend/core/sessions.py` → bảng `login_sessions`) — **không** mất khi restart

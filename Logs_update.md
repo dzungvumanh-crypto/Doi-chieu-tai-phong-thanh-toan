@@ -4,6 +4,18 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 17/09/2026 Sửa lỗi hệ thống **đứng hẳn 30 giây** khi nhiều người mở màn hình cùng lúc
+    + ✅ Trước đây khi khoảng **15 người trở lên** mở trang cùng một lúc (điển hình: vừa khởi động lại
+      phần mềm, mọi trình duyệt đang mở tự tải lại), **toàn bộ** hệ thống treo khoảng 30 giây rồi một
+      nửa số người nhận lỗi. Đo trên máy thử: 90 yêu cầu cùng lúc → treo 31 giây; nay 120 yêu cầu cùng
+      lúc vẫn xong dưới 1 giây, không lỗi
+    + ✅ Lúc đông người bình thường **không nhanh hơn cũng không chậm hơn** — đã đo so sánh hai bản
+    + ✅ Nếu vẫn quá tải thật thì người dùng nhận thông báo "Hệ thống bận, vui lòng thử lại" thay vì lỗi
+      chung chung, và **màn Nhật ký hệ thống có ghi lại** (trước đây lỗi này không ghi ở đâu cả)
+    + ⚠️ **Chưa phải lời giải cho các cảnh báo "Request chậm" 1,5–2,5 giây** đang thấy ở Nhật ký hệ
+      thống. Máy chủ chưa từng rơi vào lỗi treo 30 giây ở trên; nguyên nhân cảnh báo vẫn đang tìm
+    + ℹ️ Không đổi màn hình, không đổi dữ liệu, không phải cài lại Extension. Chạy lại phần mềm như thường lệ
+
 - 16/09/2026 Thi đua khen thưởng — màn hình mới cho Phòng Tổng hợp
     + ✅ **Menu mới: Báo cáo → Phòng Tổng hợp → Thi đua khen thưởng.** Trước đây không có chỗ nào
       trong phần mềm lưu dữ liệu này, nên báo cáo nghỉ phép vẫn phải bỏ trống cột "xếp loại thi đua"
