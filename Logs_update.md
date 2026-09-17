@@ -4,6 +4,14 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 17/09/2026 Chấm 459901 - **Bỏ ô "Chọn thư mục server"**, chỉ còn "Tải nhiều file lên"
+    + ⚠️ Ai đang dán đường dẫn thư mục trên máy chủ để chạy: từ bản này phải **kéo-thả hoặc chọn file** từ
+      máy mình. Cách nhận diện file (GL02, HUB đi, HUB đến, tồn tháng trước) và kết quả phân loại không đổi
+    + ℹ️ Lý do: ô này cho người dùng trỏ vào thư mục trên máy chủ — cửa rủi ro bảo mật đã phải vá nhiều lần.
+      Đối chiếu ACH, Song phương, ILO1000 đã bỏ từ trước; Chấm 459901 là màn hình cuối cùng còn giữ
+    + ℹ️ Người vận hành: dòng cấu hình thư mục của Chấm 459901 trong file cấu hình máy chủ không còn tác
+      dụng, để nguyên cũng không sao; khi cập nhật hệ thống sẽ không còn nhắc dòng này nữa
+
 - 17/09/2026 Đối chiếu OSB (Phòng Thanh toán) - màn hình mới
     + ✅ Menu mới **Đối chiếu → Phòng Thanh toán → Đối chiếu OSB**: so sổ cái GL02 với file OSB chi tiết
       hạch toán của tài khoản trung gian **519910**, ra danh sách **Chênh lệch Nợ** và **Chênh lệch Có**

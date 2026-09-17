@@ -88,7 +88,6 @@ BACKUP_PASSWORD=<mật khẩu nén bản sao lưu>
 | Biến | Thiếu thì sao |
 |---|---|
 | `DOI_CHIEU_ZIP_PASSWORD` | Đối chiếu ACH / Chấm 459901 / Đối chiếu Song phương báo lỗi rõ khi giải nén; phần còn lại chạy bình thường. Trước 20/08/2026 mật khẩu này nằm cứng trong mã nguồn nên **đã đi vào lịch sử git** — nếu chưa đổi thì coi như đã lộ. |
-| `CHAM459901_FOLDER_ROOTS` | Chấm 459901 **khoá** chế độ *Chọn thư mục server* (bấm vào báo lỗi nói rõ phải thêm gì); chế độ tải file lên không ảnh hưởng. Đây là danh sách thư mục được phép quét, ngăn nhau bằng dấu `;` — đường dẫn người dùng gõ phải nằm trong đó. |
 | `BACKUP_PASSWORD` | Bản sao lưu ghi ra `.db` **không mã hoá** (chứa mã băm mật khẩu toàn bộ tài khoản), kèm cảnh báo trong log mỗi lần backup. Xem mục [Backup tự động](#backup-tự-động). |
 
 > `start.bat` **tự sinh `BACKUP_PASSWORD`** nếu `.env` chưa có, và in ra màn hình đúng một lần —
@@ -98,7 +97,7 @@ BACKUP_PASSWORD=<mật khẩu nén bản sao lưu>
 > **Nâng cấp máy đang chạy:** `deploy.bat` không chép đè `.env` của máy đích, nên biến mới thêm vào
 > giữa vòng đời hệ thống **không tự sang**. Từ 22/08/2026 `deploy.bat` in cảnh báo (bước 1/8, nhắc lại
 > ở khung tổng kết cuối) khi `.env` máy đích còn thiếu biến thuộc loại phải gõ tay — hiện là
-> `DOI_CHIEU_ZIP_PASSWORD` và `CHAM459901_FOLDER_ROOTS`. Biến mới cùng loại thì thêm vào bảng `CHI_CANH_BAO` trong
+> `DOI_CHIEU_ZIP_PASSWORD`. Biến mới cùng loại thì thêm vào bảng `CHI_CANH_BAO` trong
 > `scripts/deploy_env_check.py`; chỉ đưa vào đó thứ mà **thiếu là gãy tính năng**, không thì bảng
 > thành danh sách dài ai cũng bỏ qua.
 
@@ -558,13 +557,10 @@ Request vượt số kết nối thì xếp hàng chờ (tối đa 30 giây, qu�
   HUB đến (`Danh sach...den`) để chấm nhóm *1000 Hoàn trả*, và file tồn tháng trước
   (`459_TON_T<n>.xlsx`) ghép nối tiếp vào dữ liệu tháng này. Thiếu **cả 2** file HUB thì
   bỏ qua nhóm 1000 Hoàn trả; chỉ có 1/2 thì bỏ cả hai và báo rõ trên màn hình
-- Hai cách nạp dữ liệu hiển thị đồng thời: **tải file lên**, hoặc **chọn thư mục trên máy
-  chủ** (dữ liệu đã nằm sẵn ở đó, khỏi upload). Chế độ thứ hai chỉ quét trong các thư mục
-  khai ở `CHAM459901_FOLDER_ROOTS`; đường dẫn ngoài phạm vi bị từ chối **trước khi** kiểm
-  tra tồn tại, để endpoint không thành máy dò cây thư mục của máy chủ
-- Chế độ chọn thư mục **gõ/dán đường dẫn**, không có nút *Duyệt...*. Hộp thoại duyệt cây thư
-  mục đã bị gỡ cùng endpoint `/api/fs/browse` vì nó cho **mọi người đăng nhập liệt kê sạch ổ
-  đĩa máy chủ**
+- **Chỉ tải file lên.** Chế độ *Chọn thư mục server* (`/process_folder`, biến
+  `CHAM459901_FOLDER_ROOTS`) đã **gỡ hẳn ngày 17/09/2026** — module cuối cùng còn giữ nó, đồng bộ
+  với ACH / Song phương / ILO1000. `tests/test_khong_nhan_duong_dan_thu_muc.py` quét mọi route,
+  route nào nhận tham số trông như đường dẫn trên máy chủ là fail
 - File tải lên được ghi **thẳng từng khối** xuống `data/temp_cham459901/upload_<token>/`
   (`save_upload_to`), `process_files()` nhận **đường dẫn** chứ không nhận bytes. CSV bên trong
   ZIP đọc qua `zf.open()` — luồng giải nén, không có lúc nào cả file nằm trong RAM (đo: CSV

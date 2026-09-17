@@ -2,8 +2,7 @@
 Chuyển chi nhánh/Điện KO offline/Cân CN/GD khác).
 
 I/O làm việc với ĐƯỜNG DẪN file đã nằm trên máy chủ (`backend/api/cham459901.py`
-ghi thẳng từng khối xuống `data/temp_cham459901/upload_<token>/`, hoặc — với
-`process_folder` — dùng thẳng đường dẫn có sẵn trên server), không nhận bytes:
+ghi thẳng từng khối xuống `data/temp_cham459901/upload_<token>/`), không nhận bytes:
 một lượt có thể là nhiều ZIP vài trăm MB, ôm hết vào RAM rồi mới đọc là trả giá
 gấp đôi bộ nhớ cho cùng một kết quả. Chỉ file con BÊN TRONG ZIP mới đi qua bytes,
 và cũng chỉ khi buộc phải thế (xem `_doc_zip`).
@@ -272,8 +271,7 @@ def process_files(
     7 xlsx → trả metadata.
 
     `tên hiển thị` là tên gốc người dùng chọn, chỉ dùng để viết thông báo lỗi;
-    `đường dẫn` là file đã nằm trên máy chủ (ghi từ upload, hoặc đã có sẵn khi
-    chạy từ thư mục server). Hai thứ tách nhau vì tên trên đĩa đã qua
+    `đường dẫn` là file vừa ghi từ upload xuống máy chủ. Hai thứ tách nhau vì tên trên đĩa đã qua
     `safe_filename()` nên có thể khác tên người dùng nhìn thấy — báo lỗi bằng
     tên đã bị cắt là bắt họ đi tìm một file không tồn tại.
 

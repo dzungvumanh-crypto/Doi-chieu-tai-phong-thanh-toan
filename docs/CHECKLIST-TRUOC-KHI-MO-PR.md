@@ -17,7 +17,11 @@ Mỗi mục ghi: quy tắc — vì sao — PR đã từng dính. PR chỉ để 
   là đọc/ghi đè được bất kỳ file nào trên máy chủ. Quyết định cuối của dự án: **bỏ hẳn** chế độ
   "chọn thư mục máy chủ", chỉ còn upload từ máy người dùng. Nếu thấy code nhận đường dẫn thư mục
   server quay lại — đó gần chắc là tái phát, không phải tính năng mới hợp lệ; grep
-  `Logs_update.md` xem đã có quyết định gỡ nó chưa (xem mục G8). — PR #3, #8, #19, #43, #63, #68, #70
+  `Logs_update.md` xem đã có quyết định gỡ nó chưa (xem mục G8). Gỡ theo từng module: ACH
+  13/08/2026, Song phương + ILO1000 02/09/2026, Chấm 459901 17/09/2026 (module cuối) — không còn
+  ngoại lệ nào. `tests/test_khong_nhan_duong_dan_thu_muc.py` quét mọi route qua OpenAPI và fail
+  khi có tham số tên chứa `path`/`folder`/`dir`/`thu_muc`/`duong_dan`: dính thì **đổi tên tham
+  số**, đừng nới regex. — PR #3, #8, #19, #43, #63, #68, #70
 - [ ] **Test path-traversal với cả `/` lẫn `\`.** Uvicorn giải mã `%2F` bị chặn nhưng `%5C` thì
   không; `pathlib` trên Windows coi `\` là dấu phân cách nên `Path('data/x') / '..\\..\\data'`
   thoát ra ngoài — bẫy này lặp lại 2 lần độc lập trên 2 module khác nhau. — PR #43, #63
