@@ -377,3 +377,23 @@ def test_dedupe_don_theo_ngay_cho_ket_qua_giong_het_dedupe_toan_tap(monkeypatch)
     assert len(result) == 2
     assert set(result["REMARK"]) == {"[111111] dong goc", "[222222] dong khac"}
     assert (result["TRDATE"] == NGAY).all()
+
+
+def test_trdate_khoang_trang_thua_van_loc_dung_ngay(monkeypatch):
+    """Lý do PHẢI strip riêng TRDATE TRƯỚC khi filter (không strip cùng lúc với các cột khác SAU
+    filter): nếu TRDATE có khoảng trắng thừa mà so sánh `== ngay` trước khi strip, dòng đó bị loại
+    NHẦM (rơi mất khỏi kết quả) thay vì được nhận đúng ngày. Test này khoá lại: TRDATE dạng
+    `" 20260701"`/`"20260701 "` vẫn phải khớp `ngay="20260701"`."""
+    full = pd.DataFrame([
+        _gl02_row("[111111] khoang trang dau", dramount="100000", cramount="0"),
+        _gl02_row("[222222] khoang trang cuoi", dramount="200000", cramount="0"),
+    ])
+    full.loc[0, "TRDATE"] = f" {NGAY}"
+    full.loc[1, "TRDATE"] = f"{NGAY} "
+
+    monkeypatch.setattr(load_gl02, "_doc_zip", lambda zip_path, log_callback=None: full.copy())
+
+    result, _ = load_gl02.read_gl02_zip("dummy.zip", MA_TK, NGAY)
+
+    assert len(result) == 2
+    assert set(result["REMARK"]) == {"[111111] khoang trang dau", "[222222] khoang trang cuoi"}
