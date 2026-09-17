@@ -42,11 +42,24 @@ Tải **Python 3.12.x** tại: https://www.python.org/downloads/
 > bị hỏng toàn bộ phần xuất Excel trong khi CI (lúc đó ghim 3.10) không tài nào tái hiện được
 > (PR #105).
 >
-> `start.bat` cũng vá `.venv` tại chỗ khi mang dự án sang máy khác (chạy từ USB) — bản Python
-> khác là buộc cài lại toàn bộ thư viện và **cần internet**.
+> `start.bat` cũng vá `.venv` tại chỗ khi mang dự án sang máy khác (chạy từ USB) — nhưng chỉ
+> vá được khi máy mới có **cùng bản Python**. Bản khác là buộc cài lại toàn bộ thư viện và
+> **cần internet**. Nên **mọi máy cắm chung USB đều phải cài 3.12**, không riêng máy bạn hay
+> dùng nhất.
 
 > **Đang dùng 3.10 và cần nâng?** Trên máy có cả hai bản thì `python` thường vẫn trỏ vào bản cũ,
-> chỉ `py` mới thấy bản mới — nên phải gõ `py -3.12` tường minh. Chạy trong **CMD**:
+> chỉ `py` mới thấy bản mới — nên phải gõ `py -3.12` tường minh.
+>
+> **Tắt ứng dụng trước** (đóng cửa sổ `start.bat`) — venv đang dùng thì `ren` báo *Access is
+> denied*. Rồi chạy trong **CMD**:
+>
+> ```cmd
+> py -3.12 --version
+> ```
+>
+> Chưa ra `Python 3.12.x` thì **dừng ở đây**, cài 3.12 trước, đóng và mở lại CMD. Đừng động vào
+> `.venv` khi chưa chắc có 3.12 — xoá venv xong mới phát hiện thiếu Python là không chạy được
+> ứng dụng. Có 3.12 rồi thì:
 >
 > ```cmd
 > cd /d <thư-mục-dự-án>
@@ -56,18 +69,37 @@ Tải **Python 3.12.x** tại: https://www.python.org/downloads/
 > ```
 >
 > Dòng cuối **phải** ra `Python 3.12.x` rồi mới cài thư viện — nếu không thì venv vừa dựng lại
-> bằng bản cũ, cài xong test vẫn xanh mà chẳng kiểm được gì. Đổi tên thay vì xoá để còn đường lui
-> (`ren .venv_310_backup .venv`). Cài xong:
+> bằng bản cũ, cài xong test vẫn xanh mà chẳng kiểm được gì. Đổi tên thay vì xoá để còn đường
+> lui. **Lui về** (CMD) — phải xoá venv mới trước, `ren` không ghi đè thư mục đã có:
+>
+> ```cmd
+> rmdir /s /q .venv
+> ren .venv_310_backup .venv
+> ```
+>
+> Cài thư viện và kiểm (CMD):
 >
 > ```cmd
 > .venv\Scripts\python.exe -m pip install --upgrade pip
 > .venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 > .venv\Scripts\python.exe -m pytest -q
 > ```
+>
+> Xanh hết mới xoá bản sao lưu: `rmdir /s /q .venv_310_backup`. Nó đã nằm trong `.gitignore`
+> nên để đó không bị commit nhầm, chỉ tốn ~1 GB ổ đĩa.
+>
+> **Cắm USB sang máy khác** (đã có 3.12): venv trỏ vào Python của máy cũ nên báo *No Python
+> at ...*. Không cần cài lại — trỏ lại vào 3.12 của máy này, giữ nguyên thư viện (CMD):
+>
+> ```cmd
+> py -3.12 -m venv --upgrade .venv
+> ```
 
 Khi cài, **nhớ tích vào ô "Add Python to PATH"** trước khi bấm Install.
 
-Kiểm tra cài thành công: mở PowerShell, gõ `python --version`
+Kiểm tra cài thành công: mở **CMD**, gõ `py -3.12 --version` → phải ra `Python 3.12.x`.
+Đừng kiểm bằng `python --version`: trên máy từng cài bản khác, `python` có thể vẫn trỏ vào
+bản cũ dù 3.12 đã cài xong.
 
 ### Bước 2 — Cài Git
 
