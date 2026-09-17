@@ -19,9 +19,10 @@ Mỗi mục ghi: quy tắc — vì sao — PR đã từng dính. PR chỉ để 
   server quay lại — đó gần chắc là tái phát, không phải tính năng mới hợp lệ; grep
   `Logs_update.md` xem đã có quyết định gỡ nó chưa (xem mục G8). Gỡ theo từng module: ACH
   13/08/2026, Song phương + ILO1000 02/09/2026, Chấm 459901 17/09/2026 (module cuối) — không còn
-  ngoại lệ nào. `tests/test_khong_nhan_duong_dan_thu_muc.py` quét mọi route qua OpenAPI và fail
-  khi có tham số tên chứa `path`/`folder`/`dir`/`thu_muc`/`duong_dan`: dính thì **đổi tên tham
-  số**, đừng nới regex. — PR #3, #8, #19, #43, #63, #68, #70
+  ngoại lệ nào. `tests/test_khong_nhan_duong_dan_thu_muc.py` quét đầu vào mọi route (OpenAPI +
+  khoá đọc từ `body: dict`) và fail khi tên có từ `path`/`folder`/`dir` hoặc chứa
+  `thu_muc`/`duong_dan`: dính thì **đổi tên tham số**, đừng nới luật. Test chỉ bắt theo TÊN —
+  rà tay vẫn cần. — PR #3, #8, #19, #43, #63, #68, #70
 - [ ] **Test path-traversal với cả `/` lẫn `\`.** Uvicorn giải mã `%2F` bị chặn nhưng `%5C` thì
   không; `pathlib` trên Windows coi `\` là dấu phân cách nên `Path('data/x') / '..\\..\\data'`
   thoát ra ngoài — bẫy này lặp lại 2 lần độc lập trên 2 module khác nhau. — PR #43, #63

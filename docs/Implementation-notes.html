@@ -18612,20 +18612,27 @@ This may happen if you try to create UI from a background task.</pre>
         không đổi.</p>
 
       <div class="label"><span class="pill pill-green">Lưới canh</span> quét OpenAPI toàn hệ thống, không canh từng module</div>
-      <p><code>tests/test_khong_nhan_duong_dan_thu_muc.py</code> đọc <code>app.openapi()</code>: fail khi
-        tham số query/path/body hoặc trường schema có tên khớp
-        <code>folder|thu_muc|duong_dan|dir|path</code>, hoặc đường dẫn route chứa
-        <code>folder</code>/<code>/api/fs</code>/<code>browse</code>. Đã kiểm: <b>chạy trên mã trước khi
-        gỡ thì fail đúng 2 chỗ</b> (<code>FolderRequest.folder_path</code>,
-        <code>/api/cham459901/process_folder</code>); sau khi gỡ, toàn hệ thống 0 tham số khớp.</p>
+      <p><code>tests/test_khong_nhan_duong_dan_thu_muc.py</code> quét <b>đầu vào</b> của mọi route: tham số
+        query/path trong <code>app.openapi()</code>, trường của schema dùng làm thân request (lần theo
+        <code>$ref</code>, không quét schema trả về), và khoá đọc bằng <code>body[...]</code> /
+        <code>body.get(...)</code> trong <code>backend/api/</code> — 6 route khai <code>body: dict</code> không
+        có schema nên OpenAPI không liệt kê tên trường. Tên bị tách theo <b>từ</b> (snake_case + camelCase):
+        <code>folder</code>/<code>dir</code>/<code>path</code> đứng thành từ, hoặc chứa <code>thu_muc</code>/<code>duong_dan</code>.
+        Route chứa <code>folder</code>/<code>/api/fs</code>/<code>browse</code> cũng fail. Đã kiểm: <b>chạy trên mã
+        trước khi gỡ thì fail</b> (<code>FolderRequest.folder_path</code>, <code>/api/cham459901/process_folder</code>);
+        sau khi gỡ, toàn hệ thống 0 chỗ khớp.</p>
       <ul>
-        <li><b>Giới hạn đã biết:</b> đây là dây báo động theo <b>tên</b>, không phải chứng minh. Tham số
-          đặt tên khác (<code>src</code>, <code>nguon</code>) mà vẫn là đường dẫn thì lọt. Chấp nhận vì
-          mọi lần tái phát trong lịch sử đều mang tên <code>folder_path</code> — mã chép nguyên từ nhánh cũ.</li>
-        <li>Regex cố ý rộng (<code>path</code>, <code>dir</code>). Dính mà tham số không phải đường dẫn
-          máy chủ thì <b>đổi tên tham số</b>, đừng nới regex — ghi rõ trong docstring test và checklist.</li>
-        <li>Upload multipart hiện ra trong OpenAPI dạng schema <code>Body_…</code> với trường
-          <code>files</code> — không khớp, không cần ngoại lệ.</li>
+        <li><b>Giới hạn đã biết:</b> dây báo động theo <b>tên</b>, không phải chứng minh. Tham số đặt tên khác
+          (<code>src</code>, <code>nguon</code>) mà vẫn là đường dẫn thì lọt; body dict đọc bằng biến trung gian
+          (<code>k = "folder_path"; body[k]</code>) cũng lọt; trang NiceGUI tự đọc file theo ô người dùng gõ thì
+          test không thấy (chỉ quét app FastAPI). Chấp nhận vì mọi lần tái phát trong lịch sử đều là mã chép
+          nguyên từ nhánh cũ, mang đúng tên <code>folder_path</code>.</li>
+        <li><b>Vì sao tách theo từ, không so chuỗi con:</b> bản đầu dùng regex chuỗi con và quét cả schema trả
+          về — phản biện chỉ ra <code>direction</code>, <code>redirect_url</code>, <code>xpath</code> sẽ làm test đỏ,
+          và trường <i>đầu ra</i> <code>file_path</code> vô hại cũng đỏ. Luật "dính thì đổi tên" khi đó buộc đổi
+          tên trường nghiệp vụ hợp lý. <code>test_ten_nghi_theo_tu_khong_theo_chuoi_con</code> khoá cả hai chiều.</li>
+        <li>Dính mà tham số không phải đường dẫn máy chủ thì <b>đổi tên tham số</b>, đừng nới luật — ghi rõ trong
+          docstring test và checklist.</li>
       </ul>
 
       <div class="label"><span class="pill pill-blue">Không làm</span></div>
