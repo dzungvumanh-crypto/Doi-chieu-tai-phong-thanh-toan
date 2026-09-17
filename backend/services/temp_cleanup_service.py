@@ -1,7 +1,7 @@
 """Dọn thư mục file tạm theo lịch — 23h hằng ngày.
 
-Năm tính năng có file nằm trên đĩa: ACH, Chấm 459901, Đối chiếu song phương,
-Đối soát CITAD, Chuẩn hoá văn bản. Cả bốn đều tự dọn rác của mình, nhưng chỉ dọn KHI CÓ NGƯỜI DÙNG
+Sáu tính năng có file nằm trên đĩa: ACH, Chấm 459901, Đối chiếu song phương,
+Đối soát CITAD, Chuẩn hoá văn bản, Đối chiếu OSB. Cả sáu đều tự dọn rác của mình, nhưng chỉ dọn KHI CÓ NGƯỜI DÙNG
 TÍNH NĂNG: `_cleanup_old_results()` nằm ngay đầu `process_zip()`,
 `_cleanup_old_jobs()` nằm trong `finally` của một lượt chạy. Nghỉ dùng một tháng
 thì kết quả của tháng trước nằm nguyên trên đĩa — mà đây là file Excel/CSV của cả
@@ -50,7 +50,7 @@ _moc_da_don: float = 0.0
 
 def run_cleanup(cutoff: float | None = None) -> None:
     """Gọi hàm dọn của từng service. Một service lỗi không được chặn service kia."""
-    from backend.services import ach_service, cham459901_service
+    from backend.services import ach_service, cham459901_service, doi_chieu_osb_job
     from backend.services import doi_chieu_song_phuong_service as sp
     from backend.services.doi_soat_citad import temp_files as citad_tmp
     from backend.api import vb_format as vb_format_api
@@ -62,6 +62,7 @@ def run_cleanup(cutoff: float | None = None) -> None:
         ("Đối chiếu song phương", sp._cleanup_old_results),
         ("Đối soát CITAD", citad_tmp._cleanup_old_results),
         ("Chuẩn hoá văn bản", vb_format_api._don_file_cu),
+        ("Đối chiếu OSB", doi_chieu_osb_job._cleanup_old_results),
     ):
         try:
             ham(cutoff)
