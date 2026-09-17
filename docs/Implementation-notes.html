@@ -53,6 +53,36 @@
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
   <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-09-17</p>
 
+  <!-- TV5 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">TV5</span>
+      <span class="card-title">Gỡ thư mục bản gốc QĐ 979 khỏi repo — chỉ gỡ theo dõi, không viết lại lịch sử</span>
+      <span class="badge badge-done">Chờ merge</span>
+    </div>
+    <div class="card-body">
+
+      <p><code>979-QyD-NHNo-PC (Trình bày VB)/</code> (7 file Word/PDF, ~800 KB) không được mã chạy trên máy
+        chính đọc. Người đọc duy nhất là <code>scripts/tach_mau_vb.py</code> — chạy tay, kết quả đã commit ở
+        <code>templates/vb_mau/</code>; <code>quy_chuan.py</code> đã mã hoá quy định. Dùng
+        <code>git rm --cached</code> + luật <code>/979-QyD-NHNo-PC*/</code> trong <code>.gitignore</code>.</p>
+
+      <table>
+        <tr><th style="width:30%">Đánh đổi</th><th>Chi tiết</th></tr>
+        <tr><td>File vẫn còn trong lịch sử git</td>
+          <td>Không chạy <code>git filter-repo</code> / force-push: phải viết lại mọi commit trên ~30 nhánh
+            đang mở, mọi bản clone phải clone lại. 800 KB không đáng. Văn bản là quy định nội bộ đã ban hành,
+            không phải dữ liệu nhạy cảm — nếu sau này cần xoá hẳn vì lý do bảo mật thì đó là việc riêng.</td></tr>
+        <tr><td><code>git pull</code> ở máy dev khác xoá thư mục trên đĩa</td>
+          <td>Git xoá file bị gỡ ở upstream. Máy chính không bị (deploy.bat không chép thư mục này). Đã ghi cảnh
+            báo ở Logs_update; README ghi rõ script cần tự chép thư mục vào.</td></tr>
+        <tr><td>Các nhánh cũ vẫn chứa thư mục</td>
+          <td>Nhánh nào merge develop sau PR này thì tự mất; nhánh cũ merge thẳng mà không đụng thư mục thì git
+            không đưa lại.</td></tr>
+      </table>
+    </div>
+  </div>
+
   <!-- TV4 -->
   <div class="card">
     <div class="card-header">

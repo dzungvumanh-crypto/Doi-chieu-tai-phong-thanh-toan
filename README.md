@@ -1137,7 +1137,9 @@ nút hoàn tác (phải xoá tay từng thẻ). Đo thật: 20.000 dòng ghi h�
   - **Phần "Ghi chú" của Phụ lục được giữ nguyên** (đoạn ghi chú ở Mẫu 07 và các chú thích chân
     trang ở Mẫu 04, Mẫu 17) — người soạn **tự xoá trước khi phát hành**
   - 18 file nằm ở `templates/vb_mau/`, sinh bằng `python scripts/tach_mau_vb.py`. Chỉ chạy lại khi
-    Phụ lục V có bản mới; máy chính không chạy script này
+    Phụ lục V có bản mới; máy chính không chạy script này. Script đọc bản gốc ở thư mục
+    `979-QyD-NHNo-PC (Trình bày VB)/` ở gốc dự án — thư mục này **không có trên GitHub** (gỡ
+    17/09/2026), phải tự chép vào trước khi chạy
 - **Ba việc được làm tự động:**
 
   | Nhóm | Nội dung |

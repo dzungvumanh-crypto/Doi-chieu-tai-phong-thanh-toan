@@ -71,6 +71,9 @@ MCB.xlsx
 # nen khong can day 800 KB nhi phan len repo - va file nen thi git khong dien duoc
 # thay doi. Dung dai dien cho phan co dau tieng Viet (cung ly do da ghi o muc "MA CB.xlsx").
 /979-QyD-NHNo-PC*.7z
+# Ca thu muc ban goc cung khong day len (go khoi repo 17/09/2026). Chi scripts/tach_mau_vb.py
+# doc no, chay tay; ket qua da nam o templates/vb_mau/. May can chay lai script tu chep thu muc vao.
+/979-QyD-NHNo-PC*/
 
 # Van ban that dung de thu module Chuan hoa van ban (co ten don vi, ten nguoi that)
 # va ban ket qua do chinh module sinh ra - khong day len repo.
