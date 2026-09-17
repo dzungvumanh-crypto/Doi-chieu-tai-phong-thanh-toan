@@ -4,6 +4,18 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 17/09/2026 Sửa lỗi hệ thống **đứng hẳn 30 giây** khi nhiều người mở màn hình cùng lúc
+    + ✅ Trước đây khi khoảng **15 người trở lên** mở trang cùng một lúc (điển hình: vừa khởi động lại
+      phần mềm, mọi trình duyệt đang mở tự tải lại), **toàn bộ** hệ thống treo khoảng 30 giây rồi một
+      nửa số người nhận lỗi. Đo trên máy thử: 90 yêu cầu cùng lúc → treo 31 giây; nay 120 yêu cầu cùng
+      lúc vẫn xong dưới 1 giây, không lỗi
+    + ✅ Lúc đông người bình thường **không nhanh hơn cũng không chậm hơn** — đã đo so sánh hai bản
+    + ✅ Nếu vẫn quá tải thật thì người dùng nhận thông báo "Hệ thống bận, vui lòng thử lại" thay vì lỗi
+      chung chung, và **màn Nhật ký hệ thống có ghi lại** (trước đây lỗi này không ghi ở đâu cả)
+    + ⚠️ **Chưa phải lời giải cho các cảnh báo "Request chậm" 1,5–2,5 giây** đang thấy ở Nhật ký hệ
+      thống. Máy chủ chưa từng rơi vào lỗi treo 30 giây ở trên; nguyên nhân cảnh báo vẫn đang tìm
+    + ℹ️ Không đổi màn hình, không đổi dữ liệu, không phải cài lại Extension. Chạy lại phần mềm như thường lệ
+
 - 16/09/2026 Đối soát CITAD ↔ IPCAS — sửa 2 chỗ làm **mất lệnh lệch** khỏi báo cáo
     + ✅ **Lệnh Đến cùng số giao dịch, cùng số tiền nhưng từ nhiều ngân hàng gửi khác nhau** nay được so
       riêng từng ngân hàng. Trước đây phần mềm chỉ so một dòng đại diện, nên nếu CITAD có 4 lệnh mà IPCAS
