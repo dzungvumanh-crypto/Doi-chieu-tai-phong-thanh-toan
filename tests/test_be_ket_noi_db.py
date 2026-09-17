@@ -34,7 +34,9 @@ def be(tmp_path, monkeypatch):
 
 
 def _dung(m):
-    """Mượn qua đúng đường mà FastAPI đi: generator get_db()."""
+    """Mượn qua generator get_db() — KHÔNG đi qua cổng `_qua_cong_db` (cổng là
+    dependency async, chỉ FastAPI mới giải). Cổng có test riêng:
+    tests/test_be_ket_noi_khoa_cheo.py."""
     g = m.get_db()
     return g, next(g)
 

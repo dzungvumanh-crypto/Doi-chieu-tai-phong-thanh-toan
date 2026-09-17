@@ -17963,7 +17963,88 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-14</footer>
+  <!-- 143 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">143</span>
+      <span class="card-title">Bể kết nối CSDL và threadpool khoá chéo — quá ~88 request đồng thời là cả hệ thống đứng 30 giây (2026-09-16/17)</span>
+      <span class="badge badge-done">Hoàn thiện</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-blue">Bối cảnh</span> truy nguyên cảnh báo <code>slow.request</code> 1,5–2,5 s trên máy chủ</div>
+      <p>Trong lúc tìm nguyên nhân các cảnh báo, tự tạo tải trên máy dev (N người ảo cùng mở trang chủ, mỗi
+        người 6 request đúng cụm chậm trong log). Không thấy chậm dần mà là <b>một vực</b>: 78 request đồng
+        thời chậm nhất 268 ms, 90 request thì <b>mọi</b> request đứng 31 giây và ~40 cái ăn 500
+        <code>Hết kết nối CSDL sau 30 giây chờ</code> — kể cả request bị từ chối ở bước kiểm token.</p>
+
+      <div class="label"><span class="pill pill-red">Cơ chế</span> hai hàng chờ chờ nhau</div>
+      <p><code>get_db()</code> là generator đồng bộ → FastAPI mượn 1 luồng (bể anyio 40 token) để chạy
+        <code>_muon()</code>. Request đã cầm kết nối cần <b>thêm</b> luồng cho <code>get_current_staff</code> /
+        <code>require_feature</code> / thân endpoint. Khi 48 kết nối đã ra ngoài, request mới đứng chờ kết nối
+        <b>trong lúc giữ luồng</b>; đủ 40 cái như vậy thì bên cầm kết nối không còn luồng để chạy tiếp và
+        trả kết nối → kẹt tới hết <code>_POOL_CHO_GIAY</code>. Ngưỡng khớp số: 48 + 40 = 88 (78 chạy, 90 đứng).
+        FastAPI đã tự chặn đúng kiểu kẹt này ở chiều <b>trả</b> (limiter riêng trong
+        <code>fastapi/concurrency.py</code>, có chú thích nói thẳng về bể kết nối), chiều <b>mượn</b> thì không.</p>
+
+      <div class="label"><span class="pill pill-green">Fix</span> cổng async trước khi mượn — <code>_qua_cong_db()</code></div>
+      <p>Dependency <code>async</code> giữ <code>anyio.Semaphore(_POOL_MAX)</code>, là sub-dependency của
+        <code>get_db</code>. Phần dư chờ bằng <code>await</code> trên event loop, không chiếm luồng. Qua cổng rồi
+        thì <code>_muon()</code> luôn lấy được kết nối ngay, nên không còn luồng nào đứng chờ kết nối. FastAPI
+        thoát dependency ngược thứ tự vào → kết nối về bể trước, cổng nhả suất sau.</p>
+
+      <table>
+        <tr><th>Phương án</th><th>Vì sao không chọn</th></tr>
+        <tr><td>Nâng <code>DB_POOL_SIZE</code></td><td>Chỉ dời vực sang <code>N + 40</code>, không xoá. Thêm kết nối SQLite cũng không nhanh hơn</td></tr>
+        <tr><td>Nâng số luồng anyio</td><td>Cùng lý do — vực dời sang <code>48 + M</code></td></tr>
+        <tr><td><code>get_db</code> thành <code>async</code>, gọi <code>_muon()</code> trên loop</td><td>Bể cạn thì <code>_muon()</code> chờ đồng bộ → <b>chặn cả event loop</b>, tệ hơn lỗi gốc</td></tr>
+        <tr><td><b>Cổng async (đã chọn)</b></td><td>Xoá hẳn điều kiện kẹt; ~50 dòng, một file; không đổi chữ ký endpoint nào</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-blue">Kiểm chứng</span> backend thật, cùng máy, cùng kịch bản</div>
+      <table>
+        <tr><th>Tải</th><th>Trước sửa</th><th>Sau sửa</th></tr>
+        <tr><td>10 người / 60 req</td><td>max 281–513 ms (6 lượt)</td><td>max 279–475 ms (6 lượt)</td></tr>
+        <tr><td>13 người / 78 req</td><td>max 377–449 ms (8 lượt)</td><td>max 385–575 ms (8 lượt)</td></tr>
+        <tr><td>15 người / 90 req</td><td><b>31 s, ~40 lỗi 500</b></td><td>max 549 ms, 90/90 thành công</td></tr>
+        <tr><td>20 người / 120 req</td><td><b>31 s, lỗi 500</b></td><td>max 817 ms, 120/120</td></tr>
+        <tr><td>40 người / 240 req</td><td>—</td><td>max 2,76 s, 240/240</td></tr>
+      </table>
+      <p>Tải nhẹ: hai bản chồng lên nhau. Lượt đầu bản mới trông chậm hơn ~30% nhưng đó là do chạy lúc máy
+        nguội — đổi thứ tự chạy lại thì mất. <code>tests/test_be_ket_noi_khoa_cheo.py</code> thu nhỏ về
+        2 kết nối + 2 luồng: bản cũ 8/10 request ăn 500 sau 26 s, bản mới 10/10 trong ~0,1 s.</p>
+
+      <div class="label"><span class="pill pill-warn">Đánh đổi / rủi ro còn lại</span></div>
+      <ul>
+        <li><b><code>get_db</code> phải là đường DUY NHẤT gọi <code>_muon()</code></b> (ngoài <code>khoi_tao_pool()</code>).
+          Chỗ nào mượn thẳng từ bể là không đi qua cổng → cổng cho qua 48 request trong khi bể thiếu kết nối →
+          mở lại đúng lỗi này. Hiện đúng (đã grep); đã ghi vào DESIGN.md.</li>
+        <li>Hết giờ chờ nay trả <b>503</b> (trước: 500) và <b>ghi WARNING vào <code>app.log</code></b> kèm
+          <code>pool_stats()</code>. Bản cũ ném <code>RuntimeError</code> trong dependency → chỉ ra console
+          uvicorn, không bao giờ tới màn Nhật ký hệ thống.</li>
+        <li>Endpoint <code>def</code> không dùng CSDL nhưng giữ luồng lâu vẫn có thể làm request khác chậm — đó
+          là xếp hàng, không phải kẹt; <code>MAX_HEAVY_TASKS</code> đã lo phần việc nặng.</li>
+      </ul>
+
+      <div class="label"><span class="pill pill-gray">Phát hiện nhưng không sửa trong PR này</span></div>
+      <ul>
+        <li><b>Chưa giải thích được cảnh báo 1,5–2,5 s gốc.</b> Máy chủ chưa từng chạm vực này (log không có dòng
+          ~30000 ms "ném ngoại lệ"; cảnh báo đều HTTP 200). Đã loại: khoá CSDL, job đối chiếu tranh GIL, bcrypt
+          (nhả GIL — đo: 4 lượt song song 636 ms), CPU yếu (8 lõi / 20 GB), mã chậm (<code>/api/staff/</code>
+          0,9 ms truy vấn; lúc vắng người mọi endpoint 18–35 ms). Còn lại: đĩa / antivirus / tiến trình khác
+          trên máy chủ — cần số đo lúc cao điểm.</li>
+        <li><code>DATABASE_URL</code> ở <code>backend/core/config.py</code> viết cứng, bỏ qua biến môi trường. Không
+          ảnh hưởng máy thật, nhưng ai dựng backend thử "trỏ vào bản sao CSDL" sẽ ghi nhầm vào CSDL thật (đã
+          dính trong đợt đo này, kiểm lại không để lại dữ liệu). Để PR riêng.</li>
+        <li>README ghi <code>DB_POOL_SIZE</code> mặc định 16, mã là 48 — sửa luôn trong PR này (chỉ tài liệu).</li>
+      </ul>
+
+      <div class="note">Branch: <code>fix/be-ket-noi-khoa-cheo</code>. Chỉ đổi <code>backend/database.py</code> + test + tài liệu.</div>
+
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-17</footer>
 </div>
 </body>
 </html>

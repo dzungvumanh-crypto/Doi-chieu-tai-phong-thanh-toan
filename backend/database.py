@@ -1,4 +1,5 @@
 """SQLite connection factory — raw SQL, no ORM."""
+import asyncio
 import logging
 import os
 import queue
@@ -7,6 +8,10 @@ import threading
 import time
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
+
+import anyio
+from fastapi import Depends, HTTPException
+
 from backend.core.config import settings
 
 _log = logging.getLogger(__name__)
@@ -312,7 +317,52 @@ def pool_stats() -> dict:
             "dang_muon": max(0, da_tao - ranh)}
 
 
-def get_db():
+# ── Cổng vào bể: xếp hàng trên event loop, KHÔNG giữ luồng ──
+# `get_db()` là generator đồng bộ nên FastAPI mượn một luồng của threadpool (40
+# token) để chạy `_muon()`. Bể cạn thì luồng đó đứng chờ kết nối, mà request đang
+# CẦM kết nối lại cần thêm luồng để chạy dependency kế tiếp và thân endpoint. Đủ
+# 40 luồng cùng đứng chờ là hai bên chờ nhau tới hết `_POOL_CHO_GIAY`: đo trên máy
+# dev 16/09/2026, 78 request đồng thời chậm nhất 268 ms, 90 request thì MỌI request
+# đứng 31 giây rồi ~40 cái ăn 500. Ngưỡng ≈ 48 kết nối + 40 luồng.
+#
+# Cổng này cho tối đa `_POOL_MAX` request qua cùng lúc; phần dư chờ bằng `await`
+# nên không chiếm luồng nào. Qua cổng rồi thì `_muon()` luôn có kết nối ngay — vì
+# `get_db` là đường DUY NHẤT mượn từ bể (ngoài `khoi_tao_pool()` lúc khởi động).
+# Thêm chỗ nào gọi `_muon()` trực tiếp là mở lại đúng lỗi này.
+#
+# FastAPI thoát dependency theo thứ tự ngược lúc vào: `get_db` trả kết nối về bể
+# TRƯỚC, cổng mới nhả suất sau — không có khoảnh khắc nào suất trống mà kết nối
+# chưa về. Chiều trả thì FastAPI đã tự dùng limiter riêng (fastapi/concurrency.py).
+_cong_db: "tuple[asyncio.AbstractEventLoop, anyio.Semaphore] | None" = None
+
+
+def _lay_cong() -> anyio.Semaphore:
+    # Gắn theo event loop: semaphore tạo ở loop này không dùng được ở loop khác
+    # (test chạy mỗi ca một loop). Không có await giữa kiểm và gán nên không tranh chấp.
+    global _cong_db
+    loop = asyncio.get_running_loop()
+    if _cong_db is None or _cong_db[0] is not loop:
+        _cong_db = (loop, anyio.Semaphore(_POOL_MAX))
+    return _cong_db[1]
+
+
+async def _qua_cong_db():
+    cong = _lay_cong()
+    try:
+        with anyio.fail_after(_POOL_CHO_GIAY):
+            await cong.acquire()
+    except TimeoutError:
+        # Log ở đây vì lỗi ném ra trong dependency chỉ hiện ở console uvicorn,
+        # KHÔNG vào logs/app.log — người vận hành sẽ không bao giờ thấy.
+        _log.warning("Hết lượt vào CSDL sau %.0f giây chờ — %s", _POOL_CHO_GIAY, pool_stats())
+        raise HTTPException(status_code=503, detail="Hệ thống bận, vui lòng thử lại")
+    try:
+        yield
+    finally:
+        cong.release()
+
+
+def get_db(_luot: None = Depends(_qua_cong_db)):
     conn = _muon()
     try:
         yield conn
