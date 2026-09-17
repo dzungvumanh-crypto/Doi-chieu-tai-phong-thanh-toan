@@ -18124,6 +18124,83 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
+  <!-- 144 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">144</span>
+      <span class="card-title">Cảnh báo "Request chậm" kèm trạng thái bên trong backend — và nghi phạm GIL được mở lại (2026-09-17)</span>
+      <span class="badge badge-done">Hoàn thiện</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-blue">Bối cảnh</span> 5 lần loại trừ vẫn chưa ra nguyên nhân cảnh báo 1,5–2,5 s</div>
+      <p>Đã loại bằng số đo: khoá CSDL (không có <code>db.contention</code>), bcrypt (nhả GIL), CPU yếu (8 lõi/20 GB),
+        mã chậm (lúc vắng mọi endpoint 18–35 ms), Windows Defender (<code>New-MpPerformanceRecording</code> 20 phút
+        giờ cao điểm có cảnh báo: file bị quét lâu nhất 49 ms, <code>ksnb.db</code>/<code>-wal</code> không lọt top 15).
+        Đoán từ ngoài vào không còn hướng — nên cho mỗi dòng cảnh báo tự chụp trạng thái bên trong.</p>
+
+      <div class="label"><span class="pill pill-red">Sửa lại một kết luận sai</span> job đối chiếu tranh GIL</div>
+      <p>Ngày 16/09 loại giả thuyết này vì <em>cạnh mốc bắt đầu</em> ACH 16:45:46 không có request nhẹ nào chậm. Sai:
+        mốc đó chỉ là lúc nhận file xong, pipeline chạy nền <b>nhiều phút</b> sau — và cụm chậm 16:50–16:53 nằm gọn
+        trong khoảng đó. Log 17/09 cho thêm một cặp: 09:06:51 Chấm 459901 ghi Excel 1.294.464 dòng → 09:10:58
+        <code>/api/auth/me</code> 2771 ms.</p>
+      <p>Đo trong một tiến trình (FastAPI + bể CSDL thật, luồng nền ghi Excel openpyxl write-only), 40 lượt × 6 request:</p>
+      <table>
+        <tr><th>Tình huống</th><th>switchinterval 5 ms (mặc định)</th><th>1 ms</th></tr>
+        <tr><td>Không có job nền</td><td>trung vị 5 ms, max 37 ms</td><td>6 ms, 16 ms</td></tr>
+        <tr><td>1 luồng ghi Excel</td><td>trung vị 314–345 ms, max 434–655 ms</td><td>234 ms, 432 ms</td></tr>
+        <tr><td>2 luồng ghi Excel</td><td>trung vị 737–749 ms, <b>max 2,6–3,4 s</b></td><td>516 ms, 865 ms</td></tr>
+      </table>
+      <p>Đúng độ lớn cảnh báo trên máy chủ. 8 lõi không giúp: chỉ một luồng chạy mã Python tại một thời điểm.
+        <b>Chưa chứng minh trên máy chủ</b> — card này chính là để chứng minh (cột <code>đối chiếu</code> + <code>loop chặn</code>).</p>
+
+      <div class="label"><span class="pill pill-green">Thay đổi</span> <code>backend/core/slow_request.py</code></div>
+      <p>Đuôi mỗi dòng: <code>loop chặn tối đa N ms, trễ tổng M ms · luồng a/40 chờ b · kết nối CSDL c/48 xếp cổng d · đang xử lý e · việc nặng f/4 · đối chiếu g</code>.
+        Phần đầu dòng giữ nguyên để bộ lọc cũ vẫn khớp.</p>
+      <ul>
+        <li><b>Đo loop bằng task nền</b> ngủ 50 ms/nhịp, ghi độ trễ lúc thức (60 s gần nhất). Không đo từ trong request
+          được: loop bị chặn thì chính middleware cũng không chạy.</li>
+        <li><b>Cộng phần "đang ngủ quá giờ"</b> lúc chụp. Dòng cảnh báo được ghi ngay khi loop vừa thoát chỗ chặn — task
+          đo chưa kịp thức ghi mẫu. Bản đầu thiếu chỗ này, test
+          <code>test_async_def_chan_loop_hien_trong_canh_bao</code> bắt được: chặn 300 ms mà báo "0 ms".</li>
+        <li><b>Hai chỉ số, không phải một</b> — phản biện bắt được. Bản đầu chỉ có "chặn tối đa". Tranh GIL làm loop
+          đói thành nhiều quãng ngắn nên max nhỏ trong khi tổng lớn:
+          <table>
+            <tr><th>Luồng CPU nền, 2 s</th><th>chặn tối đa</th><th>trễ tổng (trừ nền)</th></tr>
+            <tr><td>0</td><td>28 ms</td><td>12 ms</td></tr>
+            <tr><td>1</td><td>44 ms</td><td>210–225 ms</td></tr>
+            <tr><td>2</td><td>59–91 ms</td><td>220–364 ms</td></tr>
+            <tr><td>3</td><td>138–231 ms</td><td>791–889 ms</td></tr>
+          </table>
+          Chỉ max thì dòng log trên máy chủ gợi ý "không phải GIL" — đúng cái PR này cần chứng minh.
+          Nền trừ 16 ms/nhịp: <code>asyncio.sleep</code> trên Windows tự trễ tới một nhịp timer.</li>
+        <li>Chụp trạng thái hỏng → vẫn ghi dòng chính, đuôi ghi "không lấy được trạng thái (lỗi)".</li>
+      </ul>
+
+      <div class="label"><span class="pill pill-warn">Đánh đổi</span></div>
+      <ul>
+        <li>Task đo thức 20 lần/giây suốt đời tiến trình — chi phí không đo được so với tải thật.</li>
+        <li>Độ chính xác ±50 ms (một nhịp) cho max; tổng đủ tách rảnh (~12 ms) khỏi đói GIL (hàng trăm ms).</li>
+        <li>Giữ mẫu 5 phút (6000 mẫu) — request upload ngưỡng 10 s có thể kéo dài hơn 60 s.</li>
+        <li><code>tat_do_tre</code> không ném khi task đã chết vì lỗi (lifespan còn xả audit ngay sau), nhưng
+          không nuốt lệnh huỷ từ ngoài.</li>
+        <li>Không bật trong app không chạy lifespan (test tí hon) → ghi rõ "không đo", không in số giả.</li>
+      </ul>
+
+      <div class="label"><span class="pill pill-gray">Chưa làm — chờ số đo máy chủ</span></div>
+      <ul>
+        <li><b>Nếu xác nhận GIL:</b> lời giải thật là chạy pipeline đối chiếu ở <b>tiến trình riêng</b> (hiện là
+          <code>threading.Thread</code> trong tiến trình web, xem <code>phien_doi_chieu.py</code>). Đụng 6 module đối chiếu
+          (logic khớp giao dịch — rủi ro cao theo CHECKLIST mục I), phải truyền trạng thái job qua ranh giới tiến trình.</li>
+        <li><code>sys.setswitchinterval(0.001)</code> giảm được ~30% trung vị, max 2,6 s → 0,86 s với 2 luồng — biện pháp tạm,
+          chưa áp: nó đổi hành vi toàn tiến trình, cần đo thông lượng job trước.</li>
+      </ul>
+
+      <div class="note">Branch: <code>feat/slow-request-kem-trang-thai</code>. Không đổi hành vi request nào.</div>
+
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-17</footer>
 </div>
 </body>

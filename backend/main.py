@@ -133,7 +133,11 @@ async def lifespan(app: FastAPI):
     import asyncio as _asyncio
     from backend.services.time_sync import check_drift_and_log as _check_drift
     _asyncio.get_event_loop().run_in_executor(None, _check_drift)
+    # Đo event loop bị chặn — để dòng "Request chậm" nói được loop có đứng không
+    from backend.core import slow_request as _slow_request
+    _slow_request.bat_do_tre()
     yield
+    await _slow_request.tat_do_tre()
     # Xả nốt dòng audit đang chờ trước khi tiến trình chết
     audit_queue.stop()
     from backend.database import dong_pool as _dong_pool

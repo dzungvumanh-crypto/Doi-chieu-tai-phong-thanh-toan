@@ -13,8 +13,12 @@ Hai điểm thiết kế:
   liên tục ở những đường vốn dĩ lâu (dựng bản in qua Word 5–7 giây lần đầu, nộp
   file đối chiếu hàng trăm MB), và log kêu liên tục thì không ai đọc nữa.
 """
+import asyncio
+import collections
 import logging
 import time
+
+import anyio.to_thread
 
 from backend.core.config import settings
 
@@ -64,6 +68,108 @@ def _nguong_ms(path: str) -> int | None:
     return settings.SLOW_REQUEST_MS
 
 
+# ── Trạng thái kèm theo mỗi dòng cảnh báo ──
+# Chỉ biết "request X mất 2 giây" thì không biết nó bận hay đứng chờ, và chờ cái gì.
+# 17/09/2026 đã loại lần lượt khoá CSDL, job đối chiếu, bcrypt, CPU, Defender mà
+# vẫn không ra nguyên nhân các cảnh báo 1,5–2,5 s — đoán từ ngoài vào hết đường.
+# Nên mỗi dòng tự chụp tình trạng bên trong backend đúng lúc nó chậm.
+#
+# Chỉ số quan trọng nhất là EVENT LOOP BỊ CHẶN: một `async def` gọi hàm đồng bộ nặng
+# (giải nén, đọc file, pandas) mà không `await` thì MỌI request đứng theo, 8 lõi rảnh
+# cũng vô ích. Không đo từ trong request được — lúc loop bị chặn thì chính middleware
+# này cũng không chạy — nên có một task nền ngủ từng nhịp ngắn và ghi độ trễ khi thức.
+_NHIP_GIAY = 0.05
+# Nền: asyncio.sleep trên Windows tự trễ tới một nhịp timer (15,6 ms) dù máy rảnh. Không
+# trừ thì "tổng trễ" của request 2 s lúc rảnh đã ~300 ms — đọc nhầm thành loop bị đói.
+_NEN_GIAY = 0.016
+_mau_tre: "collections.deque[tuple[float, float]]" = collections.deque(maxlen=6000)  # ~5 phút
+_task_do_tre: "asyncio.Task | None" = None
+_ngu_tu = 0.0          # lúc task đo bắt đầu nhịp ngủ hiện tại
+_dang_xu_ly = 0
+
+
+async def _do_tre_vong_lap():
+    global _ngu_tu
+    while True:
+        t = _ngu_tu = time.monotonic()
+        await asyncio.sleep(_NHIP_GIAY)
+        xong = time.monotonic()
+        _mau_tre.append((xong, max(0.0, xong - t - _NHIP_GIAY)))
+
+
+def bat_do_tre() -> None:
+    """Gọi trong lifespan, sau khi event loop chạy."""
+    global _task_do_tre
+    if _task_do_tre is not None and not _task_do_tre.done():
+        _task_do_tre.cancel()           # gọi hai lần: không để task cũ chạy mồ côi
+    _mau_tre.clear()
+    _task_do_tre = asyncio.get_running_loop().create_task(_do_tre_vong_lap())
+
+
+async def tat_do_tre() -> None:
+    global _task_do_tre
+    if _task_do_tre is None:
+        return
+    task, _task_do_tre = _task_do_tre, None
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        if asyncio.current_task().cancelling():
+            raise                        # chính lúc tắt máy bị huỷ từ ngoài — không nuốt
+    except Exception:
+        # Không được ném: lifespan còn xả audit và đóng bể CSDL ngay sau lời gọi này
+        _log.warning("Task đo trễ event loop đã chết vì lỗi", exc_info=True)
+
+
+def tre_loop_ms(tu: float) -> "tuple[float, float] | None":
+    """(chặn lâu nhất, tổng trễ trừ nền) tính bằng ms kể từ mốc `tu`. None = không đo.
+
+    Cần CẢ HAI: `async def` gọi hàm đồng bộ là một cú chặn dài → max lớn. Luồng nền
+    giữ GIL thì loop bị đói thành nhiều quãng ngắn → max chỉ 120–290 ms trong khi tổng
+    trễ ~1 s cho request 2 s (phản biện đo 17/09/2026). Chỉ nhìn max là kết luận nhầm
+    "không phải GIL".
+    """
+    if _task_do_tre is None:
+        return None
+    # Mẫu ghi lúc THỨC DẬY; lần chặn bắt đầu trước `tu` mà kết thúc sau vẫn tính.
+    mau = [tre for luc, tre in _mau_tre if luc >= tu]
+    # Dòng cảnh báo được ghi NGAY khi loop vừa thoát chỗ chặn — task đo chưa kịp thức
+    # để ghi mẫu. Không cộng phần "đang ngủ quá giờ" này thì đúng ca cần bắt lại báo 0.
+    mau.append(max(0.0, time.monotonic() - _ngu_tu - _NHIP_GIAY))
+    return max(mau) * 1000, sum(max(0.0, t - _NEN_GIAY) for t in mau) * 1000
+
+
+def trang_thai(tu: float) -> str:
+    """Một dòng ngắn: loop, luồng, kết nối CSDL, tải. Không bao giờ raise."""
+    try:
+        from backend import database as _db
+        from backend.core import concurrency as _cc, phien_doi_chieu as _pdc
+
+        phan = []
+        tre = tre_loop_ms(tu)
+        phan.append("loop trễ không đo" if tre is None
+                    else f"loop chặn tối đa {round(tre[0])} ms, trễ tổng {round(tre[1])} ms")
+
+        lim = anyio.to_thread.current_default_thread_limiter()
+        phan.append(f"luồng {lim.borrowed_tokens}/{round(lim.total_tokens)} chờ {lim.statistics().tasks_waiting}")
+
+        be = _db.pool_stats()
+        cong = _db._cong_db
+        xep = cong[1].statistics().tasks_waiting if cong and cong[0] is asyncio.get_running_loop() else 0
+        phan.append(f"kết nối CSDL {be['dang_muon']}/{be['toi_da']} xếp cổng {xep}")
+
+        phan.append(f"đang xử lý {_dang_xu_ly}")
+        nang = _cc._limiter
+        phan.append(f"việc nặng {nang.borrowed_tokens if nang else 0}/{_cc.MAX_HEAVY}")
+        phan.append(f"đối chiếu {len(_pdc.dang_chay())}")
+        return " · ".join(phan)
+    except Exception as exc:
+        # Chụp trạng thái chỉ để chẩn đoán — hỏng thì vẫn phải ghi được dòng cảnh báo chính
+        # Một dòng: màn Nhật ký đọc app.log theo dòng, xuống dòng là mất phần sau
+        return f"không lấy được trạng thái ({type(exc).__name__}: {' '.join(str(exc).split())})"
+
+
 class SlowRequestMiddleware:
     """Đo từ lúc nhận request tới lúc gửi xong byte cuối của phản hồi."""
 
@@ -71,22 +177,31 @@ class SlowRequestMiddleware:
         self.app = app
 
     async def __call__(self, scope, receive, send):
+        global _dang_xu_ly
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
+        _dang_xu_ly += 1
+        try:
+            await self._do(scope, receive, send)
+        finally:
+            _dang_xu_ly -= 1
+
+    async def _do(self, scope, receive, send):
         nguong = _nguong_ms(scope.get("path", ""))
         if nguong is None:
             return await self.app(scope, receive, send)
 
         t0 = time.perf_counter()
+        t0_loop = time.monotonic()
         tt = {"ma": 0, "da_ghi": False}
 
         def ghi(ket_qua: str):
             ms = (time.perf_counter() - t0) * 1000
             if ms >= nguong:
                 _log.warning(
-                    "Request chậm: %s %s — %d ms (ngưỡng %d ms, %s)",
+                    "Request chậm: %s %s — %d ms (ngưỡng %d ms, %s) | %s",
                     scope.get("method", "?"), scope.get("path", "?"),
-                    round(ms), nguong, ket_qua,
+                    round(ms), nguong, ket_qua, trang_thai(t0_loop),
                 )
 
         async def send_do(message):

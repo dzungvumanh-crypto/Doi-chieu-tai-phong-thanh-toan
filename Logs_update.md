@@ -4,6 +4,15 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 17/09/2026 Cảnh báo "Request chậm" nay **tự ghi lý do đi kèm**
+    + ✅ Mỗi dòng cảnh báo ở **Nhật ký hệ thống** có thêm phần đuôi sau dấu `|`, cho biết lúc đó phần
+      mềm đang bận gì: có job đối chiếu nào đang chạy không, có bao nhiêu người đang dùng, CSDL có bị
+      xếp hàng không. Không đổi cách hoạt động của bất kỳ màn hình nào
+    + ℹ️ **Nhờ người vận hành:** sau khi cập nhật, khi thấy cảnh báo "Request chậm" thì chụp lại
+      **nguyên dòng** (cả phần sau dấu `|`) gửi kỹ thuật. Đặc biệt để ý khi đang có người chạy Đối chiếu
+      ACH / Chấm 459901 / Song phương — nghi phạm hiện tại là các job này làm chậm cả hệ thống
+    + ℹ️ Không đổi dữ liệu, không phải cài lại Extension. Chạy lại phần mềm như thường lệ
+
 - 17/09/2026 Nâng Python lên 3.12 — **máy chủ đã nâng xong** (3.12.10)
     + ℹ️ Python 3.10 hết được hỗ trợ vá lỗi bảo mật từ 31/10/2026, nên nâng trước hạn. Không đổi màn
       hình nào, không đổi dữ liệu. Toàn bộ 2013 bài kiểm tra tự động chạy đạt trên bản mới
