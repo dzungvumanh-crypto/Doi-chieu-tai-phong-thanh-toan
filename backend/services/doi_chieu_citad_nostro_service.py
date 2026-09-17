@@ -39,7 +39,7 @@ from decimal import Decimal
 
 from backend.core.config import BASE_DIR
 from backend.database import _vn_now
-from backend.schemas.doi_chieu_citad_nostro import ExportIn, CONGS, CONG_LABEL, LOAI_CITAD
+from backend.schemas.doi_chieu_citad_nostro import ExportIn, CONGS, CONG_LABEL, LOAI_CITAD, LOAI_TIEN, CCY_LABEL
 
 EXTENSION_DIR = BASE_DIR / "extension_citad_nv"
 
@@ -338,6 +338,29 @@ def _dec(v) -> Decimal:
         return Decimal(0)
 
 
+def _is_legacy_flat_cD(cD: dict) -> bool:
+    """Bảng lưu TRƯỚC 14/09/2026 (chưa có khái niệm nhiều loại tiền) có `cD`
+    phẳng {cong: {...}} ngay từ đầu. Từ 14/09/2026, `cD` lồng thêm 1 lớp
+    ngoài: {ccy: {cong: {...}}}. Khoá của lớp cũ luôn thuộc CONGS ("1"/"9"/
+    "12"/"17"/"18"), khoá của lớp mới luôn thuộc LOAI_TIEN ("VND"/"USD"/
+    "EUR") — 2 tập không giao nhau nên phân biệt được chắc chắn, không cần
+    thêm cờ đánh dấu riêng hay migrate dữ liệu cũ trong DB."""
+    return any(k in CONGS for k in cD.keys())
+
+
+def get_ccy_slice(sess: dict, ccy: str) -> tuple[dict, dict]:
+    """cD/phD của ĐÚNG 1 loại tiền trong 1 bảng — bảng cũ (trước
+    14/09/2026) coi TOÀN BỘ là VNĐ (USD/EUR rỗng), vì lúc đó phòng chỉ mới
+    chấm VNĐ (xem [[doi-chieu-citad-nostro-fx]]). Trả về CÙNG cấu trúc phẳng
+    cũ (cD[cong][loai], phD[row]) để dùng thẳng lại `compute_totals()` mà
+    không phải sửa gì hàm đó."""
+    cD_all = sess.get("cD", {}) or {}
+    phD_all = sess.get("phD", {}) or {}
+    if _is_legacy_flat_cD(cD_all):
+        return (cD_all, phD_all) if ccy == "VND" else ({}, {})
+    return (cD_all.get(ccy, {}) or {}, phD_all.get(ccy, {}) or {})
+
+
 def compute_totals(sess: dict) -> tuple[dict, dict]:
     """Tổng CITAD (5 cổng) và Tổng HUB, riêng gtt/gtc — công thức duy nhất,
     dùng chung cho `is_reconciliation_matched()` và `build_xlsx_nostro()` để
@@ -371,11 +394,16 @@ def compute_totals(sess: dict) -> tuple[dict, dict]:
 
 
 def is_reconciliation_matched(sess: dict) -> bool:
-    ci, hub = compute_totals(sess)
-    return all(
-        ci[loai]["soMon"] == hub[loai]["soMon"] and ci[loai]["soTien"] == hub[loai]["soTien"]
-        for loai in LOAI_CITAD
-    )
+    # Khớp cả kỳ = khớp cả 3 loại tiền, không riêng VNĐ.
+    for ccy in LOAI_TIEN:
+        cD, phD = get_ccy_slice(sess, ccy)
+        ci, hub = compute_totals({"cD": cD, "phD": phD})
+        if not all(
+            ci[loai]["soMon"] == hub[loai]["soMon"] and ci[loai]["soTien"] == hub[loai]["soTien"]
+            for loai in LOAI_CITAD
+        ):
+            return False
+    return True
 
 
 def get_reconciliation_status(db: sqlite3.Connection, ky: str) -> dict:
@@ -498,11 +526,28 @@ def check_period_overlap(db: sqlite3.Connection, tu_ngay: str, den_ngay: str, ex
     return {"overlaps": overlaps, "gap_before": gap_before}
 
 
+def _ccy_has_data(sess: dict, ccy: str) -> bool:
+    """Bảng có nhập số liệu KHÁC 0 cho đúng loại tiền này không (cD hoặc
+    phD) — dùng để lọc theo Loại tiền ở Lịch sử/Tổng hợp tháng, giúp tìm
+    bảng khi 1 tháng có nhiều bảng nhưng không phải bảng nào cũng đã chấm
+    đủ cả 3 loại tiền."""
+    cD, phD = get_ccy_slice(sess, ccy)
+    for cong_data in cD.values():
+        for loai_data in (cong_data or {}).values():
+            if _nv(loai_data.get("soMon", 0)) or _nv(loai_data.get("soTien", 0)):
+                return True
+    for row_data in phD.values():
+        if _nv((row_data or {}).get("soMon", 0)) or _nv((row_data or {}).get("soTien", 0)):
+            return True
+    return False
+
+
 def get_reconciliation_days(
     db: sqlite3.Connection,
     tu_ngay: str | None = None,
     den_ngay: str | None = None,
     nguoi_cham: str | None = None,
+    ccy: str | None = None,
 ) -> list:
     """1 dòng/BẢNG (`session_id`) — từ 11/09/2026 mỗi kỳ có thể có NHIỀU bảng
     (nhiều người chấm riêng), nên không còn "1 dòng/kỳ" như trước. Trả về
@@ -513,9 +558,17 @@ def get_reconciliation_days(
     Lọc/sắp xếp bằng Python vì `ky` lưu dạng text — so sánh chuỗi trong SQL
     sai thứ tự thời gian. Ngày lọc do người dùng GÕ TAY (ô lọc là input tự
     do) nên phải parse bằng `_parse_ddmmyyyy()` trả None, KHÔNG dùng thẳng
-    `strptime` — gõ dở "01/08" mà ném ValueError là sập cả trang lịch sử."""
+    `strptime` — gõ dở "01/08" mà ném ValueError là sập cả trang lịch sử.
+
+    `ccy` (từ 14/09/2026): lọc thêm theo loại tiền — chỉ giữ bảng có nhập
+    số liệu khác 0 cho đúng loại tiền đó (`_ccy_has_data()`). Phải nạp cột
+    `s.data` (JSON, có thể nặng) chỉ khi CÓ lọc theo ccy — không đọc thừa
+    khi không cần, đúng nghĩa lọc "phụ", không phải đường đọc chính."""
+    select_cols = "s.id AS session_id, s.ky, s.updated_at, s.created_by"
+    if ccy:
+        select_cols += ", s.data"
     rows = db.execute(
-        """SELECT s.id AS session_id, s.ky, s.updated_at, s.created_by,
+        f"""SELECT {select_cols},
                   u.username AS created_by_username, u.full_name AS created_by_name,
                   (SELECT COUNT(*) FROM doi_chieu_citad_nostro_history h WHERE h.session_id = s.id) AS so_lan_luu
            FROM doi_chieu_citad_nostro_sessions s
@@ -525,6 +578,7 @@ def get_reconciliation_days(
     tu_dt = _parse_ddmmyyyy(tu_ngay) if tu_ngay else None
     den_dt = _parse_ddmmyyyy(den_ngay) if den_ngay else None
     nguoi_kw = nguoi_cham.strip().lower() if nguoi_cham else None
+    ccy = ccy if ccy in LOAI_TIEN else None
 
     parsed = []
     for r in rows:
@@ -539,6 +593,8 @@ def get_reconciliation_days(
             hay = f"{r['created_by_username'] or ''} {r['created_by_name'] or ''}".lower()
             if nguoi_kw not in hay:
                 continue
+        if ccy and not _ccy_has_data(json.loads(r["data"]), ccy):
+            continue
         parsed.append((d, r["created_by_name"] or r["created_by_username"] or "", {
             "session_id": r["session_id"],
             "ky": r["ky"],
@@ -590,13 +646,20 @@ def _month_range(nam: int, thang: int) -> tuple[datetime, datetime]:
     return datetime(nam, thang, 1), datetime(nam, thang, last_day)
 
 
-def get_sessions_for_month(db: sqlite3.Connection, nam: int, thang: int) -> list[dict]:
+def get_sessions_for_month(db: sqlite3.Connection, nam: int, thang: int, ccy: str | None = None) -> list[dict]:
     """Mọi bảng có kỳ GIAO (dù chỉ 1 phần) với tháng nam-thang — dùng cho
     màn "Tổng hợp tháng" chọn bảng tính vào tổng. Trả phẳng, sắp theo ngày
-    bắt đầu kỳ, y hệt cách sắp của `get_reconciliation_days()`."""
+    bắt đầu kỳ, y hệt cách sắp của `get_reconciliation_days()`.
+
+    `ccy` (từ 14/09/2026): lọc thêm theo loại tiền, cùng cơ chế
+    `_ccy_has_data()` — chỉ nạp cột `s.data` khi có lọc."""
     thang_start, thang_end = _month_range(nam, thang)
+    ccy = ccy if ccy in LOAI_TIEN else None
+    select_cols = "s.id AS session_id, s.ky, s.created_by"
+    if ccy:
+        select_cols += ", s.data"
     rows = db.execute(
-        """SELECT s.id AS session_id, s.ky, s.created_by,
+        f"""SELECT {select_cols},
                   u.username AS created_by_username, u.full_name AS created_by_name
            FROM doi_chieu_citad_nostro_sessions s
            LEFT JOIN user_tttt u ON u.id = s.created_by"""
@@ -609,6 +672,8 @@ def get_sessions_for_month(db: sqlite3.Connection, nam: int, thang: int) -> list
         s, e = rng
         if s > thang_end or e < thang_start:
             continue  # kỳ nằm ngoài tháng, không liên quan
+        if ccy and not _ccy_has_data(json.loads(r["data"]), ccy):
+            continue
         out.append({
             "session_id": r["session_id"],
             "ky": r["ky"],
@@ -647,30 +712,37 @@ def get_month_missing_days(db: sqlite3.Connection, nam: int, thang: int) -> list
 
 def combine_sessions_cD_phD(db: sqlite3.Connection, session_ids: list[int]) -> tuple[dict, dict]:
     """Cộng dồn cD/phD (bằng Decimal, xem `_dec()`) của các bảng được người
-    dùng tick chọn — kết quả có CÙNG cấu trúc với cD/phD của 1 bảng đơn, nên
-    dùng thẳng lại được `build_xlsx_nostro()` (chỉ khác tu_ngay/den_ngay
-    truyền vào là cả tháng thay vì 1 kỳ) mà không cần viết hàm xuất Excel
-    riêng cho báo cáo tháng."""
-    dec_cD = {c: {l: {"soMon": Decimal(0), "soTien": Decimal(0)} for l in LOAI_CITAD} for c in CONGS}
-    dec_phD = {r: {"soMon": Decimal(0), "soTien": Decimal(0)} for r in ("gtt", "gtc_truoc", "gtc_tu")}
+    dùng tick chọn — riêng theo TỪNG loại tiền (`get_ccy_slice()` tự coi
+    bảng cũ trước 14/09/2026 là VNĐ). Output LỒNG theo `ccy`
+    (`cD_out[ccy][cong][loai]`, `phD_out[ccy][row]`) — khớp đúng contract
+    mới của `ExportIn`, dùng thẳng lại được `build_xlsx_nostro()` (báo cáo
+    tháng chỉ khác tu_ngay/den_ngay truyền vào là cả tháng thay vì 1 kỳ)."""
+    dec_cD = {ccy: {c: {l: {"soMon": Decimal(0), "soTien": Decimal(0)} for l in LOAI_CITAD} for c in CONGS} for ccy in LOAI_TIEN}
+    dec_phD = {ccy: {r: {"soMon": Decimal(0), "soTien": Decimal(0)} for r in ("gtt", "gtc_truoc", "gtc_tu")} for ccy in LOAI_TIEN}
     for sid in session_ids:
         sess = session_get(db, sid)
         if not sess:
             continue
-        cD = sess.get("cD") or {}
-        for c in CONGS:
-            cd = cD.get(c, {}) or {}
-            for l in LOAI_CITAD:
-                src = cd.get(l, {}) or {}
+        for ccy in LOAI_TIEN:
+            cD, phD = get_ccy_slice(sess, ccy)
+            for c in CONGS:
+                cd = cD.get(c, {}) or {}
+                for l in LOAI_CITAD:
+                    src = cd.get(l, {}) or {}
+                    for fld in ("soMon", "soTien"):
+                        dec_cD[ccy][c][l][fld] += _dec(src.get(fld, 0))
+            for r in ("gtt", "gtc_truoc", "gtc_tu"):
+                src = phD.get(r, {}) or {}
                 for fld in ("soMon", "soTien"):
-                    dec_cD[c][l][fld] += _dec(src.get(fld, 0))
-        phD = sess.get("phD") or {}
-        for r in ("gtt", "gtc_truoc", "gtc_tu"):
-            src = phD.get(r, {}) or {}
-            for fld in ("soMon", "soTien"):
-                dec_phD[r][fld] += _dec(src.get(fld, 0))
-    cD_out = {c: {l: {fld: float(dec_cD[c][l][fld]) for fld in ("soMon", "soTien")} for l in LOAI_CITAD} for c in CONGS}
-    phD_out = {r: {fld: float(dec_phD[r][fld]) for fld in ("soMon", "soTien")} for r in ("gtt", "gtc_truoc", "gtc_tu")}
+                    dec_phD[ccy][r][fld] += _dec(src.get(fld, 0))
+    cD_out = {
+        ccy: {c: {l: {fld: float(dec_cD[ccy][c][l][fld]) for fld in ("soMon", "soTien")} for l in LOAI_CITAD} for c in CONGS}
+        for ccy in LOAI_TIEN
+    }
+    phD_out = {
+        ccy: {r: {fld: float(dec_phD[ccy][r][fld]) for fld in ("soMon", "soTien")} for r in ("gtt", "gtc_truoc", "gtc_tu")}
+        for ccy in LOAI_TIEN
+    }
     return cD_out, phD_out
 
 
@@ -678,7 +750,7 @@ def combine_sessions_cD_phD(db: sqlite3.Connection, session_ids: list[int]) -> t
 def build_xlsx_nostro(data: ExportIn) -> bytes:
     from openpyxl import Workbook
     from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
-    import re
+    from openpyxl.worksheet.page import PageMargins
 
     TNR = "Times New Roman"
 
@@ -695,191 +767,196 @@ def build_xlsx_nostro(data: ExportIn) -> bytes:
     def Fill(h):
         return PatternFill("solid", fgColor=h)
 
-    sess = {"cD": data.cD, "phD": data.phD}
-    ci, hub = compute_totals(sess)
-
-    wb = Workbook()
-    ws = wb.active
-    safe_sheet_name = re.sub(r'[:\\/?*\[\]]', '_', data.sheet_name) or 'Sheet1'
-    ws.title = safe_sheet_name[:31]
     NUM = '#,##0'
     BLU = '4472C4'
-    for col, wd in zip('ABCDEF', [24, 20, 26, 20, 26, 20]):
-        ws.column_dimensions[col].width = wd
 
-    def hcell(r, c, val, fill=BLU, color='FFFFFF', bold=True):
-        cell = ws.cell(r, c)
-        cell.value = val
-        cell.font = F(bold=bold, color=color)
-        cell.alignment = AL(wrap=True)
-        cell.fill = Fill(fill)
-        cell.border = Bdr()
-        return cell
+    # 1 sheet/loại tiền, cùng bố cục — data.cD/data.phD LỒNG theo ccy
+    # (`{ccy: {...}}`, xem SessionIn/ExportIn). `ws` do caller tạo sẵn
+    # (wb.create_sheet), cD/phD đã là lát PHẲNG của đúng 1 loại tiền.
+    def _write_sheet(ws, cD: dict, phD: dict, ccy: str):
+        ci, hub = compute_totals({"cD": cD, "phD": phD})
 
-    ws.merge_cells('A1:F1')
-    ws['A1'] = 'BÁO CÁO ĐỐI CHIẾU CITAD - PAYMENTHUB — PHÒNG QLTK NOSTRO, VOSTRO'
-    ws['A1'].font = F(bold=True, size=15)
-    ws['A1'].alignment = AL()
-    ws.row_dimensions[1].height = 22
-    ws.merge_cells('A2:F2')
-    ws['A2'] = f"Kỳ đối chiếu: {data.tu_ngay} - {data.den_ngay}"
-    ws['A2'].font = F(bold=True)
-    ws['A2'].alignment = AL()
+        for col, wd in zip('ABCDEF', [24, 20, 26, 20, 26, 20]):
+            ws.column_dimensions[col].width = wd
 
-    row = 4
-    hcell(row, 1, 'Cổng CITAD')
-    hcell(row, 2, 'GTT - Số món')
-    hcell(row, 3, 'GTT - Số tiền')
-    hcell(row, 4, 'GTC - Số món')
-    hcell(row, 5, 'GTC - Số tiền')
-    row += 1
-    cD = data.cD or {}
-    for cong in CONGS:
-        c = cD.get(cong, {}) or {}
-        gtt = c.get('gtt', {}) or {}
-        gtc = c.get('gtc', {}) or {}
-        vals = [CONG_LABEL.get(cong, f'Cổng {cong}'), _nv(gtt.get('soMon', 0)), _nv(gtt.get('soTien', 0)),
-                _nv(gtc.get('soMon', 0)), _nv(gtc.get('soTien', 0))]
-        for ci2, v in enumerate(vals, start=1):
-            cell = ws.cell(row, ci2)
-            cell.value = v
+        def hcell(r, c, val, fill=BLU, color='FFFFFF', bold=True):
+            cell = ws.cell(r, c)
+            cell.value = val
+            cell.font = F(bold=bold, color=color)
+            cell.alignment = AL(wrap=True)
+            cell.fill = Fill(fill)
             cell.border = Bdr()
-            cell.alignment = AL('left' if ci2 == 1 else 'right')
-            if ci2 > 1:
-                cell.number_format = NUM
+            return cell
+
+        ws.merge_cells('A1:F1')
+        ws['A1'] = f'BÁO CÁO ĐỐI CHIẾU CITAD - PAYMENTHUB — PHÒNG QLTK NOSTRO, VOSTRO ({CCY_LABEL.get(ccy, ccy)})'
+        ws['A1'].font = F(bold=True, size=15)
+        ws['A1'].alignment = AL()
+        ws.row_dimensions[1].height = 22
+        ws.merge_cells('A2:F2')
+        ws['A2'] = f"Kỳ đối chiếu: {data.tu_ngay} - {data.den_ngay}"
+        ws['A2'].font = F(bold=True)
+        ws['A2'].alignment = AL()
+
+        row = 4
+        hcell(row, 1, 'Cổng CITAD')
+        hcell(row, 2, 'GTT - Số món')
+        hcell(row, 3, 'GTT - Số tiền')
+        hcell(row, 4, 'GTC - Số món')
+        hcell(row, 5, 'GTC - Số tiền')
         row += 1
-    ws.cell(row, 1).value = 'Tổng cộng 5 cổng'
-    ws.cell(row, 1).font = F(bold=True)
-    ws.cell(row, 1).border = Bdr()
-    for ci2, v in [(2, ci['gtt']['soMon']), (3, ci['gtt']['soTien']),
-                   (4, ci['gtc']['soMon']), (5, ci['gtc']['soTien'])]:
-        cell = ws.cell(row, ci2)
-        cell.value = float(v)
-        cell.number_format = NUM
-        cell.font = F(bold=True)
-        cell.alignment = AL('right')
-        cell.border = Bdr()
-        cell.fill = Fill('DCE6F1')
-    row += 2
+        for cong in CONGS:
+            c = cD.get(cong, {}) or {}
+            gtt = c.get('gtt', {}) or {}
+            gtc = c.get('gtc', {}) or {}
+            vals = [CONG_LABEL.get(cong, f'Cổng {cong}'), _nv(gtt.get('soMon', 0)), _nv(gtt.get('soTien', 0)),
+                    _nv(gtc.get('soMon', 0)), _nv(gtc.get('soTien', 0))]
+            for ci2, v in enumerate(vals, start=1):
+                cell = ws.cell(row, ci2)
+                cell.value = v
+                cell.border = Bdr()
+                cell.alignment = AL('left' if ci2 == 1 else 'right')
+                if ci2 > 1:
+                    cell.number_format = NUM
+            row += 1
+        ws.cell(row, 1).value = 'Tổng cộng 5 cổng'
+        ws.cell(row, 1).font = F(bold=True)
+        ws.cell(row, 1).border = Bdr()
+        for ci2, v in [(2, ci['gtt']['soMon']), (3, ci['gtt']['soTien']),
+                       (4, ci['gtc']['soMon']), (5, ci['gtc']['soTien'])]:
+            cell = ws.cell(row, ci2)
+            cell.value = float(v)
+            cell.number_format = NUM
+            cell.font = F(bold=True)
+            cell.alignment = AL('right')
+            cell.border = Bdr()
+            cell.fill = Fill('DCE6F1')
+        row += 2
 
-    hcell(row, 1, 'HUB (PaymentHub)')
-    hcell(row, 2, 'GTT - Số món')
-    hcell(row, 3, 'GTT - Số tiền')
-    hcell(row, 4, 'GTC - Số món')
-    hcell(row, 5, 'GTC - Số tiền')
-    row += 1
-    phD = data.phD or {}
-    gtt_h = phD.get('gtt', {}) or {}
-    gtc_truoc = phD.get('gtc_truoc', {}) or {}
-    gtc_tu = phD.get('gtc_tu', {}) or {}
-    ws.cell(row, 1).value = 'GTT'
-    ws.cell(row, 1).border = Bdr()
-    ws.cell(row, 2).value = _nv(gtt_h.get('soMon', 0))
-    ws.cell(row, 3).value = _nv(gtt_h.get('soTien', 0))
-    ws.cell(row, 4).value = None
-    ws.cell(row, 5).value = None
-    for ci2 in (2, 3):
-        ws.cell(row, ci2).number_format = NUM
-        ws.cell(row, ci2).border = Bdr()
-        ws.cell(row, ci2).alignment = AL('right')
-    ws.cell(row, 4).border = Bdr()
-    ws.cell(row, 5).border = Bdr()
-    row += 1
-    ws.cell(row, 1).value = 'GTC — Trước 15h30'
-    ws.cell(row, 1).border = Bdr()
-    ws.cell(row, 4).value = _nv(gtc_truoc.get('soMon', 0))
-    ws.cell(row, 5).value = _nv(gtc_truoc.get('soTien', 0))
-    for ci2 in (1, 2, 3, 4, 5):
-        ws.cell(row, ci2).border = Bdr()
-    ws.cell(row, 4).number_format = NUM
-    ws.cell(row, 5).number_format = NUM
-    ws.cell(row, 4).alignment = AL('right')
-    ws.cell(row, 5).alignment = AL('right')
-    row += 1
-    ws.cell(row, 1).value = 'GTC — Từ 15h30'
-    ws.cell(row, 4).value = _nv(gtc_tu.get('soMon', 0))
-    ws.cell(row, 5).value = _nv(gtc_tu.get('soTien', 0))
-    for ci2 in (1, 2, 3, 4, 5):
-        ws.cell(row, ci2).border = Bdr()
-    ws.cell(row, 4).number_format = NUM
-    ws.cell(row, 5).number_format = NUM
-    ws.cell(row, 4).alignment = AL('right')
-    ws.cell(row, 5).alignment = AL('right')
-    row += 1
-    ws.cell(row, 1).value = 'Tổng HUB'
-    ws.cell(row, 1).font = F(bold=True)
-    for ci2, v in [(2, hub['gtt']['soMon']), (3, hub['gtt']['soTien']),
-                   (4, hub['gtc']['soMon']), (5, hub['gtc']['soTien'])]:
-        cell = ws.cell(row, ci2)
-        cell.value = float(v)
-        cell.number_format = NUM
-        cell.font = F(bold=True)
-        cell.alignment = AL('right')
-        cell.fill = Fill('DCE6F1')
-        cell.border = Bdr()
-    ws.cell(row, 1).border = Bdr()
-    ws.cell(row, 1).fill = Fill('DCE6F1')
-    row += 2
+        hcell(row, 1, 'HUB (PaymentHub)')
+        hcell(row, 2, 'GTT - Số món')
+        hcell(row, 3, 'GTT - Số tiền')
+        hcell(row, 4, 'GTC - Số món')
+        hcell(row, 5, 'GTC - Số tiền')
+        row += 1
+        gtt_h = phD.get('gtt', {}) or {}
+        gtc_truoc = phD.get('gtc_truoc', {}) or {}
+        gtc_tu = phD.get('gtc_tu', {}) or {}
+        ws.cell(row, 1).value = 'GTT'
+        ws.cell(row, 1).border = Bdr()
+        ws.cell(row, 2).value = _nv(gtt_h.get('soMon', 0))
+        ws.cell(row, 3).value = _nv(gtt_h.get('soTien', 0))
+        ws.cell(row, 4).value = None
+        ws.cell(row, 5).value = None
+        for ci2 in (2, 3):
+            ws.cell(row, ci2).number_format = NUM
+            ws.cell(row, ci2).border = Bdr()
+            ws.cell(row, ci2).alignment = AL('right')
+        ws.cell(row, 4).border = Bdr()
+        ws.cell(row, 5).border = Bdr()
+        row += 1
+        ws.cell(row, 1).value = 'GTC — Trước 15h30'
+        ws.cell(row, 1).border = Bdr()
+        ws.cell(row, 4).value = _nv(gtc_truoc.get('soMon', 0))
+        ws.cell(row, 5).value = _nv(gtc_truoc.get('soTien', 0))
+        for ci2 in (1, 2, 3, 4, 5):
+            ws.cell(row, ci2).border = Bdr()
+        ws.cell(row, 4).number_format = NUM
+        ws.cell(row, 5).number_format = NUM
+        ws.cell(row, 4).alignment = AL('right')
+        ws.cell(row, 5).alignment = AL('right')
+        row += 1
+        ws.cell(row, 1).value = 'GTC — Từ 15h30'
+        ws.cell(row, 4).value = _nv(gtc_tu.get('soMon', 0))
+        ws.cell(row, 5).value = _nv(gtc_tu.get('soTien', 0))
+        for ci2 in (1, 2, 3, 4, 5):
+            ws.cell(row, ci2).border = Bdr()
+        ws.cell(row, 4).number_format = NUM
+        ws.cell(row, 5).number_format = NUM
+        ws.cell(row, 4).alignment = AL('right')
+        ws.cell(row, 5).alignment = AL('right')
+        row += 1
+        ws.cell(row, 1).value = 'Tổng HUB'
+        ws.cell(row, 1).font = F(bold=True)
+        for ci2, v in [(2, hub['gtt']['soMon']), (3, hub['gtt']['soTien']),
+                       (4, hub['gtc']['soMon']), (5, hub['gtc']['soTien'])]:
+            cell = ws.cell(row, ci2)
+            cell.value = float(v)
+            cell.number_format = NUM
+            cell.font = F(bold=True)
+            cell.alignment = AL('right')
+            cell.fill = Fill('DCE6F1')
+            cell.border = Bdr()
+        ws.cell(row, 1).border = Bdr()
+        ws.cell(row, 1).fill = Fill('DCE6F1')
+        row += 2
 
-    diff_gtt_mon = ci['gtt']['soMon'] - hub['gtt']['soMon']
-    diff_gtt_tien = ci['gtt']['soTien'] - hub['gtt']['soTien']
-    diff_gtc_mon = ci['gtc']['soMon'] - hub['gtc']['soMon']
-    diff_gtc_tien = ci['gtc']['soTien'] - hub['gtc']['soTien']
-    hcell(row, 1, 'Chênh lệch (CITAD − HUB)', fill='FFE699', color='7F0000')
-    hcell(row, 2, 'GTT - Số món', fill='FFE699', color='7F0000')
-    hcell(row, 3, 'GTT - Số tiền', fill='FFE699', color='7F0000')
-    hcell(row, 4, 'GTC - Số món', fill='FFE699', color='7F0000')
-    hcell(row, 5, 'GTC - Số tiền', fill='FFE699', color='7F0000')
-    row += 1
-    ws.cell(row, 1).value = ''
-    ws.cell(row, 1).fill = Fill('FFE699')
-    ws.cell(row, 1).border = Bdr()
-    for ci2, v in [(2, diff_gtt_mon), (3, diff_gtt_tien), (4, diff_gtc_mon), (5, diff_gtc_tien)]:
-        cell = ws.cell(row, ci2)
-        # v là Decimal (ci/hub cộng dồn bằng _dec()) nên CHÍNH XÁC TUYỆT ĐỐI —
-        # khớp thật mới ra đúng 0, không có dư nhị phân nào phải làm tròn/che
-        # đi. Luôn ghi giá trị thật (không còn `v if v else 0`) — cùng lý do
-        # đã sửa ở build_xlsx() gốc Phòng Thanh toán.
-        cell.value = float(v)
-        cell.number_format = NUM
-        cell.font = F(bold=True, color='006100' if v == 0 else 'FF0000')
-        cell.alignment = AL('right')
-        cell.fill = Fill('FFE699')
-        cell.border = Bdr()
-    row += 2
+        diff_gtt_mon = ci['gtt']['soMon'] - hub['gtt']['soMon']
+        diff_gtt_tien = ci['gtt']['soTien'] - hub['gtt']['soTien']
+        diff_gtc_mon = ci['gtc']['soMon'] - hub['gtc']['soMon']
+        diff_gtc_tien = ci['gtc']['soTien'] - hub['gtc']['soTien']
+        hcell(row, 1, 'Chênh lệch (CITAD − HUB)', fill='FFE699', color='7F0000')
+        hcell(row, 2, 'GTT - Số món', fill='FFE699', color='7F0000')
+        hcell(row, 3, 'GTT - Số tiền', fill='FFE699', color='7F0000')
+        hcell(row, 4, 'GTC - Số món', fill='FFE699', color='7F0000')
+        hcell(row, 5, 'GTC - Số tiền', fill='FFE699', color='7F0000')
+        row += 1
+        ws.cell(row, 1).value = ''
+        ws.cell(row, 1).fill = Fill('FFE699')
+        ws.cell(row, 1).border = Bdr()
+        for ci2, v in [(2, diff_gtt_mon), (3, diff_gtt_tien), (4, diff_gtc_mon), (5, diff_gtc_tien)]:
+            cell = ws.cell(row, ci2)
+            # v là Decimal (ci/hub cộng dồn bằng _dec()) nên CHÍNH XÁC TUYỆT ĐỐI —
+            # khớp thật mới ra đúng 0, không có dư nhị phân nào phải làm tròn/che
+            # đi. Luôn ghi giá trị thật (không còn `v if v else 0`) — cùng lý do
+            # đã sửa ở build_xlsx() gốc Phòng Thanh toán.
+            cell.value = float(v)
+            cell.number_format = NUM
+            cell.font = F(bold=True, color='006100' if v == 0 else 'FF0000')
+            cell.alignment = AL('right')
+            cell.fill = Fill('FFE699')
+            cell.border = Bdr()
+        row += 2
 
-    ws.merge_cells(f'A{row}:C{row}')
-    ws.cell(row, 1).value = '                  LẬP BẢNG'
-    ws.cell(row, 1).font = F(bold=True)
-    ws.cell(row, 1).alignment = AL()
-    ws.merge_cells(f'D{row}:F{row}')
-    ws.cell(row, 4).value = 'KIỂM SOÁT'
-    ws.cell(row, 4).font = F(bold=True)
-    ws.cell(row, 4).alignment = AL()
-    row += 4
-    ws.cell(row, 2).value = data.lb
-    ws.cell(row, 2).font = F(bold=True)
-    ws.cell(row, 2).alignment = AL()
-    ws.merge_cells(f'D{row}:F{row}')
-    ws.cell(row, 4).value = data.ks
-    ws.cell(row, 4).font = F(bold=True)
-    ws.cell(row, 4).alignment = AL()
+        ws.merge_cells(f'A{row}:C{row}')
+        ws.cell(row, 1).value = '                  LẬP BẢNG'
+        ws.cell(row, 1).font = F(bold=True)
+        ws.cell(row, 1).alignment = AL()
+        ws.merge_cells(f'D{row}:F{row}')
+        ws.cell(row, 4).value = 'KIỂM SOÁT'
+        ws.cell(row, 4).font = F(bold=True)
+        ws.cell(row, 4).alignment = AL()
+        row += 4
+        ws.cell(row, 2).value = data.lb
+        ws.cell(row, 2).font = F(bold=True)
+        ws.cell(row, 2).alignment = AL()
+        ws.merge_cells(f'D{row}:F{row}')
+        ws.cell(row, 4).value = data.ks
+        ws.cell(row, 4).font = F(bold=True)
+        ws.cell(row, 4).alignment = AL()
 
-    ws.print_area = f'A1:F{row}'
-    from openpyxl.worksheet.page import PageMargins
-    ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
-    ws.page_setup.paperSize = ws.PAPERSIZE_A4
-    ws.page_setup.fitToPage = True
-    ws.page_setup.fitToWidth = 1
-    ws.page_setup.fitToHeight = 1
-    ws.sheet_properties.pageSetUpPr.fitToPage = True
-    ws.page_margins = PageMargins(left=0.3, right=0.3, top=0.3, bottom=0.3, header=0.1, footer=0.1)
-    # Cân bảng vào giữa trang (ngang lẫn dọc) thay vì dồn về góc trên-trái —
-    # bảng ngắn hơn nhiều so với khổ A4 ngang nên để mặc định sẽ trông lệch,
-    # trống hẳn nửa dưới/nửa phải trang in. Cùng convention với
-    # duty_export_service.py::build_xlsx_week.
-    ws.print_options.horizontalCentered = True
-    ws.print_options.verticalCentered = True
+        ws.print_area = f'A1:F{row}'
+        ws.page_setup.orientation = ws.ORIENTATION_LANDSCAPE
+        ws.page_setup.paperSize = ws.PAPERSIZE_A4
+        ws.page_setup.fitToPage = True
+        ws.page_setup.fitToWidth = 1
+        ws.page_setup.fitToHeight = 1
+        ws.sheet_properties.pageSetUpPr.fitToPage = True
+        ws.page_margins = PageMargins(left=0.3, right=0.3, top=0.3, bottom=0.3, header=0.1, footer=0.1)
+        # Cân bảng vào giữa trang (ngang lẫn dọc) thay vì dồn về góc trên-trái —
+        # bảng ngắn hơn nhiều so với khổ A4 ngang nên để mặc định sẽ trông lệch,
+        # trống hẳn nửa dưới/nửa phải trang in. Cùng convention với
+        # duty_export_service.py::build_xlsx_week.
+        ws.print_options.horizontalCentered = True
+        ws.print_options.verticalCentered = True
+
+    wb = Workbook()
+    wb.remove(wb.active)  # bỏ sheet trắng mặc định — tự tạo đủ 3 sheet dưới đây
+    for ccy in LOAI_TIEN:
+        ws = wb.create_sheet(title=ccy)
+        cD_ccy = (data.cD or {}).get(ccy, {}) or {}
+        phD_ccy = (data.phD or {}).get(ccy, {}) or {}
+        _write_sheet(ws, cD_ccy, phD_ccy, ccy)
 
     buf = io.BytesIO()
     wb.save(buf)

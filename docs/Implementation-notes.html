@@ -18231,6 +18231,87 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">145</span>
+      <span class="card-title">Đối chiếu CITAD ↔ PaymentHub (Phòng QLTK Nostro, Vostro) — thêm USD/EUR bên cạnh VNĐ (2026-09-14)</span>
+      <span class="badge badge-done">Hoàn thiện</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-blue">Yêu cầu</span> module này (xem card 105) trước 14/09/2026 chỉ chấm VNĐ — phòng xác nhận thực tế có cả USD/EUR, cần thêm 2 tab nữa vào CÙNG 1 kỳ đối chiếu (không tách bảng riêng theo loại tiền)</div>
+
+      <p><b>Nguồn dữ liệu 2 phía KHÁC hẳn nhau, không đối xứng:</b></p>
+      <table>
+        <tr><th>Phía</th><th>VNĐ</th><th>USD/EUR</th></tr>
+        <tr><td>CITAD</td><td>Module <code>TraCuuDuLieu</code> (tab D) — quét bởi <code>content_citad_nostro.js</code>, có cả GTT+GTC</td>
+            <td>Module RIÊNG <code>TraCuuDuLieuNgoaiTe</code> (tab L) — quét bởi <code>content_citad_nostro_fx.js</code> (mới). <b>CHỈ có "Chuyển Có giá trị cao" (<code>cboDichVu</code> value <code>FH</code>)</b>, không có lựa chọn "giá trị thấp" nào cả — ngoại tệ không đi qua kênh GTT, khớp đúng thực tế PaymentHub (cột GTT luôn ra 0 khi lọc USD/EUR, xác nhận qua ảnh chụp thật). Có thêm control "Nguồn dữ liệu" (<code>rdbDuLieuCI</code>/<code>rdbDuLieuRPC</code>) mà trang VNĐ không có — bắt buộc đang chọn <code>rdbDuLieuCI</code> mới lưu, cùng tinh thần chặn "Đi"/"Thành công" đã có.</td></tr>
+        <tr><td>PaymentHub</td><td colspan="2">1 trang DUY NHẤT cho cả 3 loại tiền (<code>final-settlement-citad/charges</code>) — chỉ đổi dropdown Loại tiền (<code>#ccy</code>, values <code>""</code>=Tất cả/<code>VND</code>/<code>USD</code>/<code>EUR</code>) rồi Truy vấn lại, không có trang riêng như CITAD. <code>content_paymenthub_nostro.js</code> phải đọc thêm dropdown này để biết đang lưu số của loại tiền nào.</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-amber">Quyết định cấu trúc dữ liệu</span> lồng thêm 1 lớp <code>ccy</code> ngoài cùng, KHÔNG migrate DB</div>
+      <p><code>cD</code>/<code>phD</code> đổi từ phẳng (<code>cD[cong][loai]</code>) sang lồng
+        (<code>cD[ccy][cong][loai]</code>, <code>ccy</code> ∈ <code>LOAI_TIEN = ("VND","USD","EUR")</code>).
+        Bảng lưu TRƯỚC 14/09/2026 vẫn ở dạng phẳng cũ trong DB — <b>không chạy migration nào</b>, phân biệt
+        2 dạng bằng tập khoá của <code>cD</code>: khoá dạng cũ luôn ∈ <code>CONGS</code> ("1"/"9"/"12"/"17"/"18"),
+        khoá dạng mới luôn ∈ <code>LOAI_TIEN</code> — 2 tập không giao nhau nên phân biệt chắc chắn
+        (<code>_is_legacy_flat_cD()</code>). <code>get_ccy_slice(sess, ccy)</code> (backend) và
+        <code>_get_ccy_slice()</code> (frontend, mirror tay — frontend không import được service backend,
+        khác tiến trình) coi bảng cũ là <b>toàn bộ VNĐ</b>, USD/EUR trả rỗng. <code>compute_totals()</code>
+        KHÔNG đổi chữ ký — vẫn chỉ nhận lát phẳng 1 loại tiền, mọi caller tự gọi
+        <code>get_ccy_slice()</code> trước.</p>
+
+      <div class="label"><span class="pill pill-blue">Excel</span> 1 workbook, 3 sheet (VND/USD/EUR)</div>
+      <p><code>build_xlsx_nostro()</code> tách phần thân cũ thành helper nội bộ <code>_write_sheet(ws, cD, phD, ccy)</code>,
+        gọi 3 lần (<code>wb.create_sheet(title=ccy)</code>) — tiêu đề mỗi sheet có thêm nhãn loại tiền
+        (<code>CCY_LABEL</code>) để phân biệt khi in riêng từng sheet. <code>combine_sessions_cD_phD()</code>
+        (dùng cho "Tổng hợp tháng") cũng đổi output sang lồng theo <code>ccy</code>, cộng dồn riêng từng loại
+        tiền qua các bảng được tick.</p>
+
+      <div class="label"><span class="pill pill-amber">Đổi ngữ nghĩa</span> <code>is_reconciliation_matched()</code> — "khớp" giờ = khớp CẢ 3 loại tiền</div>
+      <p>Loop qua <code>LOAI_TIEN</code>, false ngay khi 1 loại tiền không khớp. Hệ quả: bảng chỉ mới chấm
+        VNĐ (USD/EUR chưa ai chấm, toàn 0) tự động coi USD/EUR "khớp" (0=0) — không phân biệt được
+        "chưa chấm" với "chấm rồi và khớp". <b>Chưa gây hại thật</b>: hàm này chỉ được gọi từ
+        <code>get_reconciliation_status()</code>, mà hàm đó hiện KHÔNG có nơi nào gọi (đã kiểm, xem
+        docstring hàm) — không đổi hành vi bất kỳ màn hình nào đang chạy. Nếu sau này có màn hình dùng lại
+        hàm này, cần quyết định lại ngữ nghĩa "chưa chấm" trước khi tin số liệu.</p>
+
+      <div class="label"><span class="pill pill-amber">Câm lặng phát sinh — đã sửa trong lượt rà soát</span></div>
+      <p><code>content_paymenthub_nostro.js</code> TRƯỚC 14/09/2026 tự lưu <b>vô điều kiện</b> mỗi khi bảng
+        "Tổng cộng" đổi (không có bộ lọc nào phải khớp, khác hẳn CITAD). Thêm điều kiện đọc <code>ccy</code>
+        khiến khi dropdown Loại tiền đang ở "Tất cả" thì script <b>im lặng hoàn toàn</b> — khác hành vi cũ,
+        dễ khiến người dùng tưởng đã tự lưu. Đã thêm toast cảnh báo (giới hạn 1 lần/tổ hợp số liệu, không
+        spam theo <code>MutationObserver</code>). Riêng <code>content_citad_nostro_fx.js</code> im lặng khi
+        bộ lọc không khớp (chiều/trạng thái/nguồn dữ liệu/loại dịch vụ/loại tiền) là <b>giữ nguyên quy ước
+        đã có từ <code>content_citad_nostro.js</code> gốc</b> — không phải hồi quy mới, không sửa.</p>
+
+      <div class="label"><span class="pill pill-green">Sửa sau review (16/09/2026)</span></div>
+      <ul>
+        <li><b>422 khi Xuất Excel chưa chọn tên:</b> 4 ô tên đổi sang <code>ui.select</code> có giá trị mặc định <code>None</code>,
+          trong khi <code>ExportIn.lb/ks</code> và <code>MonthSummaryExportIn.lb/ks</code> bắt buộc <code>str</code>. Thêm
+          <code>or ""</code> ở cả 3 chỗ gửi payload — đúng lỗi đã sửa cho Phòng Thanh toán ở commit <code>485270a</code>,
+          lần đầu chỉ chép một nửa bản vá đó.</li>
+        <li><b>Nhắc cài lại Extension:</b> bản 1.1 đổi key buffer PaymentHub và thêm script ngoại tệ; máy còn bản 1.0 thì
+          Nạp PaymentHub bỏ qua mọi mục. Trang Nostro nay tự hỏi version Extension (bản 1.0 đã trả lời được
+          <code>GET_VERSION</code>) và hiện hộp thoại nhắc, mirror <code>doi_chieu_citad.py</code>.</li>
+      </ul>
+
+      <div class="label"><span class="pill pill-amber">Chưa xác minh</span> số tiền ngoại tệ có phần lẻ</div>
+      <p><code>content_citad_nostro_fx.js::readResult()</code> và <code>content_paymenthub_nostro.js::_num()</code> bỏ mọi
+        ký tự không phải chữ số — đúng với VNĐ. Nếu trang CITAD/PaymentHub hiển thị USD/EUR có xu
+        (<code>1,234.56</code>) thì số đọc ra gấp 100 lần; hai phía cùng sai thì chênh lệch vẫn bằng 0 nên
+        <b>không tự lộ</b>, chỉ làm số trên Excel sai. Cần mở trang thật lọc USD để chốt.</p>
+
+      <div class="note">Test: sửa 1 ca vỡ do đổi cấu trúc trả về (<code>test_tong_hop_thang_cong_dung_nhieu_bang_duoc_chon</code>,
+        thêm lớp <code>["VND"]</code>) — 31/31 test <code>test_doi_chieu_citad_nostro.py</code> pass. Đã tự
+        kiểm bằng cách chạy app thật (<code>run.py</code>) + gọi API thật (không chỉ gọi hàm Python đơn lẻ):
+        lưu/đọc/xuất Excel 1 bảng đủ 3 loại tiền, và tạo 1 bảng kiểu CŨ (phẳng, ghi trực tiếp qua
+        <code>svc.session_save()</code>) rồi đọc lại/xuất Excel/tổng hợp tháng — VNĐ ra đúng số cũ, USD/EUR
+        ra 0, không lỗi. Dữ liệu test đã xoá sạch sau khi kiểm.</div>
+
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-17</footer>
 </div>
 </body>
