@@ -73,7 +73,7 @@ def test_run_process_deletes_upload_dir_even_on_success(tmp_path, monkeypatch):
 
 def test_run_process_khong_xoa_thu_muc_chua_file_nam_ngoai_upload(tmp_path, monkeypatch):
     """Thư mục xoá phải dựng từ `task_token`, không suy ra từ `gl02_path.parent`. File nằm ở thư
-    mục dữ liệu thật trên máy chủ (kiểu chế độ chọn thư mục của Chấm 459901) thì thư mục đó
+    mục dữ liệu thật trên máy chủ (kiểu chế độ chọn thư mục Chấm 459901 từng có) thì thư mục đó
     phải còn nguyên — `rmtree(gl02_path.parent)` sẽ xoá sạch nó."""
     temp_dir = tmp_path / "temp"
     monkeypatch.setattr(job, "TEMP_DIR", temp_dir)

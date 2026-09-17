@@ -18576,6 +18576,80 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
+  <!-- 149 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">149</span>
+      <span class="card-title">Chấm 459901: bỏ hẳn chế độ "Chọn thư mục server" — module cuối cùng, kèm lưới canh toàn hệ thống (2026-09-17)</span>
+      <span class="badge badge-done">Hoàn thiện</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-blue">Bối cảnh</span> luật chung và ngoại lệ mâu thuẫn nhau</div>
+      <p><code>docs/CHECKLIST-TRUOC-KHI-MO-PR.md</code> mục A ghi như luật chung: <i>"Quyết định cuối
+        của dự án: bỏ hẳn chế độ chọn thư mục máy chủ"</i>. Nhưng card 02/09/2026 (Song phương +
+        ILO1000) cố ý <b>miễn</b> Chấm 459901 vì nó đã có allowlist fail-closed
+        (<code>CHAM459901_FOLDER_ROOTS</code>), "để lại thành việc riêng sau". Checklist không nhắc
+        ngoại lệ → người rà PR sau đọc checklist sẽ coi <code>/process_folder</code> là lỗi, đọc card
+        thì coi là hợp lệ. Người dùng chốt 17/09/2026: bỏ.</p>
+
+      <table>
+        <tr><th>Module</th><th>Ngày gỡ</th></tr>
+        <tr><td>ACH (+ <code>/api/fs/browse</code>)</td><td>13/08/2026 — commit 9b3d310</td></tr>
+        <tr><td>Song phương + ILO1000</td><td>02/09/2026 — PR #70</td></tr>
+        <tr><td>Chấm 459901</td><td>17/09/2026 — card này</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-amber">Đánh đổi</span> mất tiện ích "dữ liệu đã nằm sẵn trên máy chủ"</div>
+      <p>Allowlist của 459901 <b>đúng</b> — kiểm phạm vi trước kiểm tồn tại, <code>resolve()</code>
+        trước khi so, có test cho đi ngược <code>..</code>. Bỏ không phải vì nó hỏng, mà vì: (1) mỗi
+        cửa nhận đường dẫn là một chỗ phải canh riêng — lịch sử dự án là 7 PR tái phát, thường do chép
+        mã cũ sang module mới; (2) chính <code>_quet_thu_muc()</code> từng đọc byte mọi file trong thư
+        mục (PR #63) — cửa đúng hôm nay vẫn là chỗ lỗi mới dễ mọc; (3) module mới (Đối chiếu OSB) chép
+        khuôn 459901, và PR #103 suýt mang theo <code>rmtree(gl02_path.parent)</code> — vô hại chỉ vì
+        OSB không có chế độ thư mục. Cái giá: dữ liệu vài trăm MB phải đi qua trình duyệt (trần
+        <code>MAX_REQUEST_MB</code> 600). Backend đã ghi thẳng từng khối xuống đĩa nên RAM backend
+        không đổi.</p>
+
+      <div class="label"><span class="pill pill-green">Lưới canh</span> quét OpenAPI toàn hệ thống, không canh từng module</div>
+      <p><code>tests/test_khong_nhan_duong_dan_thu_muc.py</code> quét <b>đầu vào</b> của mọi route: tham số
+        query/path trong <code>app.openapi()</code>, trường của schema dùng làm thân request (lần theo
+        <code>$ref</code>, không quét schema trả về), và khoá đọc bằng <code>body[...]</code> /
+        <code>body.get(...)</code> trong <code>backend/api/</code> — 6 route khai <code>body: dict</code> không
+        có schema nên OpenAPI không liệt kê tên trường. Tên bị tách theo <b>từ</b> (snake_case + camelCase):
+        <code>folder</code>/<code>dir</code>/<code>path</code> đứng thành từ, hoặc chứa <code>thu_muc</code>/<code>duong_dan</code>.
+        Route chứa <code>folder</code>/<code>/api/fs</code>/<code>browse</code> cũng fail. Đã kiểm: <b>chạy trên mã
+        trước khi gỡ thì fail</b> (<code>FolderRequest.folder_path</code>, <code>/api/cham459901/process_folder</code>);
+        sau khi gỡ, toàn hệ thống 0 chỗ khớp.</p>
+      <ul>
+        <li><b>Giới hạn đã biết:</b> dây báo động theo <b>tên</b>, không phải chứng minh. Tham số đặt tên khác
+          (<code>src</code>, <code>nguon</code>) mà vẫn là đường dẫn thì lọt; body dict đọc bằng biến trung gian
+          (<code>k = "folder_path"; body[k]</code>) cũng lọt; trang NiceGUI tự đọc file theo ô người dùng gõ thì
+          test không thấy (chỉ quét app FastAPI). Chấp nhận vì mọi lần tái phát trong lịch sử đều là mã chép
+          nguyên từ nhánh cũ, mang đúng tên <code>folder_path</code>.</li>
+        <li><b>Vì sao tách theo từ, không so chuỗi con:</b> bản đầu dùng regex chuỗi con và quét cả schema trả
+          về — phản biện chỉ ra <code>direction</code>, <code>redirect_url</code>, <code>xpath</code> sẽ làm test đỏ,
+          và trường <i>đầu ra</i> <code>file_path</code> vô hại cũng đỏ. Luật "dính thì đổi tên" khi đó buộc đổi
+          tên trường nghiệp vụ hợp lý. <code>test_ten_nghi_theo_tu_khong_theo_chuoi_con</code> khoá cả hai chiều.</li>
+        <li>Dính mà tham số không phải đường dẫn máy chủ thì <b>đổi tên tham số</b>, đừng nới luật — ghi rõ trong
+          docstring test và checklist.</li>
+      </ul>
+
+      <div class="label"><span class="pill pill-blue">Không làm</span></div>
+      <ul>
+        <li><b>Không xoá dòng <code>CHAM459901_FOLDER_ROOTS</code> trong <code>.env</code> máy chính</b> —
+          <code>deploy.bat</code> cố ý không đụng <code>.env</code> máy đích. Dòng thừa vô hại, không mã nào
+          đọc nữa. <code>deploy_env_check.py</code> đã thôi cảnh báo thiếu biến này.</li>
+        <li>Giữ nguyên các nhắc tới <code>process_folder</code> trong <code>Logs_update.md</code>, <code>Plan/</code>,
+          các card cũ — đó là lịch sử.</li>
+        <li>Test gộp nhiều ZIP / thiếu file GL02 của đường thư mục bị xoá cùng endpoint; hành vi tương
+          ứng của <code>/process</code> đã có test riêng (<code>test_cham459901_nhieu_zip.py</code>,
+          <code>test_missing_zip_returns_400</code>).</li>
+      </ul>
+
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-17</footer>
 </div>
 </body>
