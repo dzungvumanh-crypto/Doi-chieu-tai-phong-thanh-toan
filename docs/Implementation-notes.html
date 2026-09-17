@@ -51,7 +51,87 @@
 <div class="page">
 
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
-  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-09-16</p>
+  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-09-17</p>
+
+  <!-- TV4 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">TV4</span>
+      <span class="card-title">Nâng Python 3.10 → 3.12 — và vì sao một nửa thay đổi đi vào develop qua PR #112 (PR #111, issue #108)</span>
+      <span class="badge badge-done">Đã merge — máy chủ 3.12.10, 2013 test xanh</span>
+    </div>
+    <div class="card-body">
+
+      <p>Python 3.10 hết hỗ trợ <b>31/10/2026</b>. Đích 3.12 (hỗ trợ tới 10/2028). Đổi đồng bộ
+        <code>tests.yml</code>, <code>ruff.toml</code> (<code>py312</code>), README, CONTRIBUTING,
+        <code>start.bat</code> — vì chính sự lệch giữa các chỗ khai phiên bản đã sinh ra PR #105.</p>
+
+      <p class="caution"><b>⚠ Thứ tự bắt buộc: mọi máy lên 3.12 TRƯỚC, rồi mới đổi CI/tài liệu.</b> Mã viết
+        cho 3.10 gần như luôn chạy trên 3.12, nhưng mã viết cho 3.12 thường <b>không</b> chạy trên 3.10.
+        Ví dụ thật: Python 3.12 cảnh báo <code>utcnow()</code> và gợi ý <code>datetime.UTC</code> — thứ đó
+        ném <code>AttributeError</code> trên 3.10, mà <code>security.py:21</code> nằm trên đường đăng nhập.
+        Và cổng ruff F821/E9 không bắt được.</p>
+
+      <table>
+        <tr><th style="width:32%">Bẫy gặp trong lúc nâng</th><th style="width:40%">Điều đã xảy ra</th><th style="width:28%">Chặn bằng gì</th></tr>
+        <tr>
+          <td><code>python</code> ≠ <code>py</code> trên máy có hai bản</td>
+          <td>Cài 3.12 xong, <code>python</code> vẫn trỏ 3.10. Venv dựng bằng <code>python</code> ra 3.10,
+            test vẫn 2001 xanh → <b>tưởng đã nâng xong</b>.</td>
+          <td>CONTRIBUTING bắt gõ <code>py -3.12</code> và kiểm <code>--version</code> trước khi cài thư viện</td>
+        </tr>
+        <tr>
+          <td>Bước phá đi trước bước kiểm</td>
+          <td>Trên máy <code>HP</code>: xoá <code>.venv</code> xong <code>py -3.12</code> mới báo
+            <i>No suitable Python runtime found</i> → ứng dụng không còn venv nào chạy được.</td>
+          <td>Kiểm <code>py -3.12 --version</code> <b>trước</b> khi động vào venv</td>
+        </tr>
+        <tr>
+          <td>Bản sao lưu venv không bị ignore</td>
+          <td>Đổi tên thành <code>.venv_310_backup</code>, mà <code>git-save.bat</code> chạy
+            <code>git add -A</code> → sẽ commit <b>11.049 file / 936 MB</b> (đo bằng <code>--dry-run</code>).</td>
+          <td><code>.gitignore</code>: <code>.venv*/</code></td>
+        </tr>
+        <tr>
+          <td>Venv trên USB chỉ dùng chung giữa các máy <b>cùng bản Python</b></td>
+          <td>Venv dựng trên máy <code>HP</code> cắm sang máy <code>Administrator</code> báo
+            <i>No Python at C:\Users\HP\...</i>.</td>
+          <td>Mọi máy cắm chung USB cùng 3.12; đổi máy thì <code>py -3.12 -m venv --upgrade .venv</code></td>
+        </tr>
+        <tr>
+          <td>Cùng dòng khai báo, khác numpy</td>
+          <td><code>numpy&gt;=1.22,&lt;2.6</code>: 3.12 cài <b>2.5.3</b>, 3.10 cài <b>2.2.6</b> (numpy 2.3+ đòi
+            Python ≥3.11). CI test bản numpy máy 3.10 không có.</td>
+          <td>Nâng đồng loạt, không máy nào lệch</td>
+        </tr>
+      </table>
+
+      <p class="caution"><b>⚠ Một nửa thay đổi đi vào develop qua PR #112, không phải PR #111.</b> Nhánh
+        <code>fix/be-ket-noi-khoa-cheo</code> được phiên song song tạo trong <b>cùng thư mục</b>
+        <code>D:\System</code> lúc thư mục đang checkout nhánh nâng 3.12 → nó mọc ra từ commit
+        <code>ccfe18d</code> (bản đầu, chưa vá) thay vì từ <code>develop</code>. Merge #112 là kéo theo
+        <code>tests.yml</code> 3.12 và hướng dẫn nâng cấp còn cả bốn bẫy trên. Từ lúc đó tới khi merge
+        #111, develop chứa hướng dẫn lỗi. Đọc lịch sử git: việc đổi CI sang 3.12 nằm dưới merge của #112.</p>
+
+      <p class="note"><b>Rút ra:</b> hai phiên (người hoặc Claude) làm song song thì <b>mỗi phiên một
+        worktree</b> — không chuyển nhánh trong thư mục chung. Tạo nhánh mới luôn từ
+        <code>origin/develop</code> tường minh (<code>git checkout -b &lt;tên&gt; origin/develop</code>),
+        đừng từ HEAD hiện tại. Trên USB, worktree đòi <code>git -c safe.directory=*</code> vì FAT/exFAT không
+        ghi quyền sở hữu — dùng theo từng lệnh, <b>không</b> thêm vào cấu hình Git toàn cục.</p>
+
+      <p><b>Đã kiểm trước khi đổi:</b> mọi thư viện đang ghim có wheel chạy trên 3.12 Windows. Ba gói trông
+        như thiếu thực ra không: <code>bcrypt</code> dùng tag <code>cp36-abi3</code> (mọi CPython 3.6+),
+        <code>pypdfium2</code>/<code>ruff</code> dùng <code>py3-none-win_amd64</code>. Kiểm wheel bằng cách
+        tìm chuỗi <code>cp312</code> trong tên file là <b>sai</b> — bỏ sót cả hai loại tag này.</p>
+
+      <p><b>Để lại:</b> cảnh báo test nhảy ~456 → 2466, chủ yếu do <code>datetime.utcnow()</code> (5 chỗ trong
+        <code>backend/core/</code>). Vẫn chạy, không làm đỏ CI. Không đổi vội sang
+        <code>datetime.now(timezone.utc)</code>: nó trả datetime <b>có</b> múi giờ, mà
+        <code>rate_limit.py:50</code> (<code>lu - now</code>) và <code>:65</code> (<code>now - ws</code>) trừ với
+        datetime naive từ <code>strptime</code> → <code>TypeError</code> trên đường đăng nhập.</p>
+
+    </div>
+  </div>
 
   <!-- DS1 -->
   <div class="card">

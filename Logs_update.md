@@ -4,6 +4,16 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 17/09/2026 Nâng Python lên 3.12 — **máy chủ đã nâng xong** (3.12.10)
+    + ℹ️ Python 3.10 hết được hỗ trợ vá lỗi bảo mật từ 31/10/2026, nên nâng trước hạn. Không đổi màn
+      hình nào, không đổi dữ liệu. Toàn bộ 2013 bài kiểm tra tự động chạy đạt trên bản mới
+    + ⚠️ **Mọi máy cắm chung USB dự án phải cài Python 3.12.** Cắm sang máy còn 3.10 là phần mềm không
+      chạy được. Cách nâng từng bước (chạy bằng CMD) ở `docs/CONTRIBUTING.md`, mục *Cài Python*
+    + ⚠️ Cắm USB sang máy khác (đã có 3.12) mà `start.bat` báo **"No Python at ..."** thì không cần cài
+      lại gì — mở CMD ở thư mục dự án, chạy `py -3.12 -m venv --upgrade .venv`
+    + ℹ️ Nếu trên máy còn thư mục `.venv_310_backup` (bản sao lưu lúc nâng): chạy thử phần mềm ổn định
+      vài ngày rồi xoá được, tiết kiệm ~1 GB. Nó đã được loại khỏi git nên để đó không bị đẩy nhầm lên
+
 - 17/09/2026 Sửa lỗi hệ thống **đứng hẳn 30 giây** khi nhiều người mở màn hình cùng lúc
     + ✅ Trước đây khi khoảng **15 người trở lên** mở trang cùng một lúc (điển hình: vừa khởi động lại
       phần mềm, mọi trình duyệt đang mở tự tải lại), **toàn bộ** hệ thống treo khoảng 30 giây rồi một
