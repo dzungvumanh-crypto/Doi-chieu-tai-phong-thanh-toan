@@ -743,8 +743,19 @@ Request vượt số kết nối thì xếp hàng chờ (tối đa 30 giây, qu�
   *"Xoá dữ liệu đã quét"*. Mục quét cũ còn sót vẫn có thể bị nạp nhầm; thấy số lạ thì khởi động
   lại backend. Xem `docs/Implementation-notes.html` mục **DC3**
 - Nguồn số liệu khác hẳn: CITAD lấy ở trang **"Tra cứu dữ liệu"** (không phải "Bảng kê giao dịch"),
-  chỉ chiều **Đi**, chỉ **giao dịch thành công**, chỉ VNĐ, đủ 5 cổng; PaymentHub lấy dòng
+  chỉ chiều **Đi**, chỉ **giao dịch thành công**, đủ 5 cổng; PaymentHub lấy dòng
   **Tổng cộng** ở trang "Lập bảng kê phí chia sẻ CITAD"
+- **Ba loại tiền VNĐ / USD / EUR trong cùng một kỳ** (từ 17/09/2026, PR#104) — 3 tab con trên cùng
+  một bảng, không cộng chung với nhau. USD/EUR bên CITAD lấy ở trang riêng **"Tra cứu dữ liệu ngoại
+  tệ"** (chỉ có Chuyển Có giá trị cao, nên GTT luôn 0; script `content_citad_nostro_fx.js`);
+  PaymentHub vẫn một trang, Extension đọc thêm ô **Loại tiền** — để "Tất cả" thì không tự lưu
+- Bảng lưu trước 17/09/2026 (dữ liệu phẳng, chưa có lớp loại tiền) **không migrate**: đọc lại tự coi
+  là VNĐ, USD/EUR bằng 0 (`get_ccy_slice()`). Excel xuất 3 sheet VND/USD/EUR; Lịch sử và Tổng hợp
+  tháng lọc được theo loại tiền
+- ⚠️ Cần **Extension `extension_citad_nv` bản 1.1** — bản 1.0 không gửi loại tiền nên Nạp PaymentHub
+  bỏ qua mọi mục. Trang tự hỏi phiên bản Extension đang cài và hiện hộp thoại nhắc cài lại
+- ⚠️ **Chưa xác minh trên trang thật:** Extension đọc số tiền bằng cách bỏ mọi ký tự không phải chữ
+  số (đúng với VNĐ). Nếu USD/EUR hiển thị có xu thì số đọc ra gấp 100 lần — xem card **145**
 - Công thức: Tổng CITAD (GTT/GTC) = cộng 5 cổng; Tổng HUB (GTC) = Trước 15h30 + Từ 15h30;
   Chênh lệch = Tổng CITAD − Tổng HUB
 - **Kỳ đối chiếu linh hoạt** (Từ ngày – Đến ngày, gộp được nhiều ngày) thay vì 1 dòng/ngày cố định.

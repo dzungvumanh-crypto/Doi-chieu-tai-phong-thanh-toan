@@ -41,6 +41,7 @@ from backend.core.deps import require_feature
 from backend.schemas.doi_chieu_citad_nostro import (
     CitadBufferIn,
     ExportIn,
+    LOAI_TIEN,
     MonthSummaryExportIn,
     MonthSummaryIn,
     PaymentHubBufferIn,
@@ -170,12 +171,19 @@ def download_extension(current: dict = Depends(require_feature("menu.doi_chieu_c
         content = svc.build_extension_zip()
     except FileNotFoundError as e:
         raise HTTPException(500, str(e))
+    # Tên file kèm version — đọc thẳng manifest.json (get_extension_latest_version())
+    # thay vì ghi cứng, để khỏi phải nhớ sửa 2 chỗ mỗi lần bump version. Tên gốc
+    # KHÁC gói của Phòng Thanh toán ("extension_citad.zip") — 2 gói Extension
+    # riêng, tải về cùng thư mục mà trùng tên là cài nhầm.
+    try:
+        version = svc.get_extension_latest_version()
+        fname = f"extension_citad_nv_v{version}.zip"
+    except Exception:
+        fname = "extension_citad_nv.zip"
     return Response(
         content=content,
         media_type="application/zip",
-        # Tên KHÁC gói của Phòng Thanh toán ("extension_citad.zip") — 2 gói
-        # Extension riêng, tải về cùng thư mục mà trùng tên là cài nhầm.
-        headers={"Content-Disposition": 'attachment; filename="extension_citad_nv.zip"'},
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
     )
 
 
@@ -199,10 +207,11 @@ def get_reconciliation_days(
     tu_ngay: str | None = None,
     den_ngay: str | None = None,
     nguoi_cham: str | None = None,
+    ccy: str | None = None,
     db=Depends(get_db),
     current: dict = Depends(require_feature("menu.doi_chieu_citad_nostro")),
 ):
-    return svc.get_reconciliation_days(db, tu_ngay, den_ngay, nguoi_cham)
+    return svc.get_reconciliation_days(db, tu_ngay, den_ngay, nguoi_cham, ccy)
 
 
 @router.get("/period-check")
@@ -289,13 +298,16 @@ def get_history_entry(
 # ── Tổng hợp tháng — cộng dồn nhiều bảng/kỳ do người dùng tick chọn ────────
 @router.get("/month-sessions")
 def get_month_sessions(
-    nam: int, thang: int, db=Depends(get_db), current: dict = Depends(require_feature("menu.doi_chieu_citad_nostro"))
+    nam: int, thang: int, ccy: str | None = None,
+    db=Depends(get_db), current: dict = Depends(require_feature("menu.doi_chieu_citad_nostro")),
 ):
     """Trả 1 lần cả 2 thứ màn "Tổng hợp tháng" cần lúc mở: danh sách bảng
     của tháng (để tick chọn) và danh sách ngày còn thiếu (để nhắc chấm bù) —
-    gộp chung tránh 2 round-trip."""
+    gộp chung tránh 2 round-trip. `ccy`: lọc danh sách bảng theo loại tiền
+    (giúp tìm bảng) — KHÔNG lọc `missing_days`, vẫn hỏi "ngày nào chưa ai
+    chấm" chung cho cả 3 loại tiền, đúng ý nghĩa gốc của trường đó."""
     return {
-        "sessions": svc.get_sessions_for_month(db, nam, thang),
+        "sessions": svc.get_sessions_for_month(db, nam, thang, ccy),
         "missing_days": svc.get_month_missing_days(db, nam, thang),
     }
 
@@ -305,13 +317,17 @@ def month_summary(
     data: MonthSummaryIn, db=Depends(get_db), current: dict = Depends(require_feature("menu.doi_chieu_citad_nostro"))
 ):
     """Xem trước tổng (không xuất Excel) — gọi lại mỗi khi người dùng
-    tick/bỏ tick bảng nào đó trên màn "Tổng hợp tháng"."""
+    tick/bỏ tick bảng nào đó trên màn "Tổng hợp tháng". Trả riêng theo từng
+    loại tiền: {"VND": {"ci":..., "hub":...}, "USD": {...}, "EUR": {...}}."""
     cD, phD = svc.combine_sessions_cD_phD(db, data.session_ids)
-    ci, hub = svc.compute_totals({"cD": cD, "phD": phD})
-    return {
-        "ci": {loai: {fld: float(ci[loai][fld]) for fld in ("soMon", "soTien")} for loai in ci},
-        "hub": {loai: {fld: float(hub[loai][fld]) for fld in ("soMon", "soTien")} for loai in hub},
-    }
+    out = {}
+    for ccy in LOAI_TIEN:
+        ci, hub = svc.compute_totals({"cD": cD.get(ccy, {}), "phD": phD.get(ccy, {})})
+        out[ccy] = {
+            "ci": {loai: {fld: float(ci[loai][fld]) for fld in ("soMon", "soTien")} for loai in ci},
+            "hub": {loai: {fld: float(hub[loai][fld]) for fld in ("soMon", "soTien")} for loai in hub},
+        }
+    return out
 
 
 @router.post("/month-summary/export")

@@ -307,12 +307,17 @@ def test_tong_hop_thang_cong_dung_nhieu_bang_duoc_chon(db):
     sid1 = svc.session_save(db, s1["ky"], 1, s1)
     sid2 = svc.session_save(db, s2["ky"], 1, s2)
 
+    # combine_sessions_cD_phD trả LỒNG theo ccy (từ 14/09/2026) — 2 bảng ở
+    # trên lưu bằng _sess() (cD phẳng, không có lớp ccy) nên get_ccy_slice()
+    # coi toàn bộ là VNĐ, USD/EUR phải ra 0.
     cD, phD = svc.combine_sessions_cD_phD(db, [sid1, sid2])
     for c in svc.CONGS:
-        assert cD[c]["gtt"]["soMon"] == 3       # 1 + 2
-        assert cD[c]["gtt"]["soTien"] == 300     # 100 + 200
+        assert cD["VND"][c]["gtt"]["soMon"] == 3       # 1 + 2
+        assert cD["VND"][c]["gtt"]["soTien"] == 300     # 100 + 200
+        assert cD["USD"][c]["gtt"]["soMon"] == 0
+        assert cD["EUR"][c]["gtt"]["soMon"] == 0
 
     # Chỉ chọn 1 bảng thì chỉ cộng đúng bảng đó — không tự động cộng hết
     cD_chi_s1, _ = svc.combine_sessions_cD_phD(db, [sid1])
     for c in svc.CONGS:
-        assert cD_chi_s1[c]["gtt"]["soMon"] == 1
+        assert cD_chi_s1["VND"][c]["gtt"]["soMon"] == 1

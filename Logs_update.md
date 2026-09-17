@@ -4,6 +4,21 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 17/09/2026 Đối chiếu CITAD - PaymentHub (Phòng QLTK Nostro, Vostro) - thêm **USD và EUR**
+    + ✅ Mỗi bảng đối chiếu nay có 3 tab **VNĐ / USD / EUR** trong cùng một kỳ. Ba loại tiền tính riêng,
+      không cộng chung. File Excel xuất ra có 3 sheet tương ứng, kể cả Excel tổng hợp tháng
+    + ✅ Số USD/EUR bên CITAD lấy ở trang **"Tra cứu dữ liệu ngoại tệ"**: chọn chiều Đi, Thành công,
+      Chuyển Có giá trị cao, Dữ liệu tại CI, đúng loại tiền rồi Truy vấn — Extension tự lưu như trang VNĐ
+    + ⚠️ Trên trang PaymentHub **phải chọn đúng Loại tiền** (VND/USD/EUR) trước khi Truy vấn. Để "Tất cả"
+      thì Extension không lưu và hiện cảnh báo màu cam
+    + ⚠️ **Phải cài lại Extension** (bản 1.1). Mở màn hình đối chiếu sẽ tự hiện hộp thoại nhắc nếu máy còn
+      bản cũ — bấm "Tải Extension mới", gỡ bản cũ ở chrome://extensions rồi cài lại
+    + ✅ Tab Lịch sử và Tổng hợp tháng có thêm ô **lọc theo loại tiền**. Các ô Người lập bảng / Người
+      kiểm soát / Tên người chấm có danh sách nhân viên trong phòng để bấm chọn, vẫn gõ tay được
+    + ℹ️ Các bảng đã lưu trước đây vẫn mở, sửa, xuất Excel bình thường — số cũ nằm ở tab VNĐ
+    + ⚠️ **Nhờ kiểm tra lần đầu dùng USD/EUR:** so số tiền trên màn hình đối chiếu với số trên trang
+      CITAD/PaymentHub. Nếu thấy **gấp 100 lần** (lệch 2 chữ số) thì báo kỹ thuật ngay
+
 - 17/09/2026 Cảnh báo "Request chậm" nay **tự ghi lý do đi kèm**
     + ✅ Mỗi dòng cảnh báo ở **Nhật ký hệ thống** có thêm phần đuôi sau dấu `|`, cho biết lúc đó phần
       mềm đang bận gì: có job đối chiếu nào đang chạy không, có bao nhiêu người đang dùng, CSDL có bị
