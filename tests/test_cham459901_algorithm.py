@@ -216,6 +216,32 @@ class TestMarkCCN:
         mask = svc._mark_ccn(df)
         assert not mask.any()
 
+    def test_group_larger_than_pair_still_matched_if_balanced(self):
+        """Dữ liệu thật Tháng 5 (G:\\NGOC HA\\...\\Tháng 5): nhóm >2 dòng do REMARK là văn
+        bản mẫu lặp lại hàng loạt (VD nhiều khoản phụ cấp khác nhau cùng nội dung) vẫn phải
+        được nhận diện — mỗi nhóm là NHIỀU giao dịch Chuyển chi nhánh độc lập trùng khoá
+        ngẫu nhiên, chị Hà vẫn chấm đúng là Chuyển chi nhánh. Cố tình ép group_size==2 từng
+        làm lệch Tháng 5 tăng 654→853 dòng (verify thật) — không được tái ép giới hạn này."""
+        df = pd.DataFrame([
+            _tk_row('REF1', dr=20000000, trbrcd='1000', remark='tai tro'),
+            _tk_row('REF2', cr=20000000, trbrcd='1700', remark='tai tro'),
+            _tk_row('REF3', dr=20000000, trbrcd='1000', remark='tai tro'),
+            _tk_row('REF4', cr=20000000, trbrcd='1700', remark='tai tro'),
+        ])
+        mask = svc._mark_ccn(df)
+        assert mask.tolist() == [True, True, True, True]
+
+    def test_blank_trbrcd_not_counted_as_other_branch(self):
+        """Regression PR #102 (review Khánh 16/09/2026): TRBRCD rỗng (dữ liệu thiếu, không
+        phải mã chi nhánh thật) không được tính là "vế khác 1000" — nếu không, cặp
+        1000 + rỗng lọt qua như 1 Chuyển chi nhánh hợp lệ dù không rõ vế kia là chi nhánh nào."""
+        df = pd.DataFrame([
+            _tk_row('REF1', dr=500000, trbrcd='1000', remark='X'),
+            _tk_row('REF2', cr=500000, trbrcd='', remark='X'),
+        ])
+        mask = svc._mark_ccn(df)
+        assert not mask.any()
+
 
 # ── _mark_can_cn ───────────────────────────────────────────────────────────────
 

@@ -770,8 +770,17 @@ def _mark_ccn(df: pd.DataFrame) -> pd.Series:
     bước Cân CN phía sau và có thể bị ghép nhầm với giao dịch không liên quan trùng số tiền tròn.
     Nhóm không cân bằng tuyệt đối (VD REMARK trùng lặp giữa nhiều giao dịch khác nhau)
     bị loại bỏ hoàn toàn — không tách một phần — để rơi về GD khác chấm thủ công.
-    Bắt buộc nhóm có 1 vế TRBRCD=1000 và 1 vế khác 1000 — chị Hà xác nhận 13/09/2026: 2 vế
-    cùng chi nhánh là Lệnh Đi (đã giành trước ở bước trên), không phải Chuyển chi nhánh."""
+    Bắt buộc nhóm có 1 vế TRBRCD=1000 và 1 vế khác 1000 VÀ KHÔNG RỖNG — chị Hà xác nhận
+    13/09/2026: 2 vế cùng chi nhánh là Lệnh Đi (đã giành trước ở bước trên), không phải
+    Chuyển chi nhánh. TRBRCD rỗng là dữ liệu thiếu, không phải một chi nhánh thật, nên
+    không được tính là "vế khác 1000" (review PR #102, Khánh, 16/09/2026).
+
+    Cố ý KHÔNG ép nhóm phải đúng 2 dòng dù quy tắc nói "1 cặp": dữ liệu thật Tháng 5 có
+    nhiều nhóm 4-16 dòng do REMARK là văn bản mẫu lặp lại hàng loạt (VD nhiều khoản phụ cấp
+    khác nhau cùng nội dung "phụ cấp bàn xóm trưởng tháng 5") — mỗi nhóm là NHIỀU giao dịch
+    Chuyển chi nhánh độc lập trùng khoá ngẫu nhiên, chị Hà vẫn chấm đúng là Chuyển chi nhánh.
+    Đã thử ép group_size==2: lệch Tháng 5 tăng từ 654 lên 853 dòng (verify thật, không phải
+    suy đoán) — revert ngay, giữ nguyên kiểm ở mức NHÓM như thiết kế gốc."""
     if len(df) == 0:
         return pd.Series(dtype=bool)
     amt = df[['DRAMOUNT', 'CRAMOUNT']].abs().max(axis=1).round(0)
@@ -783,8 +792,9 @@ def _mark_ccn(df: pd.DataFrame) -> pd.Series:
     cr_any  = (df['CRAMOUNT'] != 0).groupby(key).transform('any')
 
     is_1000 = df['TRBRCD'] == '1000'
+    is_other_branch = ~is_1000 & (df['TRBRCD'] != '')
     has_1000 = is_1000.groupby(key).transform('any')
-    has_non1000 = (~is_1000).groupby(key).transform('any')
+    has_non1000 = is_other_branch.groupby(key).transform('any')
 
     return (sum_cr - sum_dr).abs().lt(1) & dr_any & cr_any & has_1000 & has_non1000
 
