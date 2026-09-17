@@ -186,6 +186,7 @@ Truy cập:
 │   │   ├── duty_stats.py    # Thống kê lịch trực
 │   │   ├── duty_export.py   # Xuất lịch trực
 │   │   ├── cham459901.py    # Phân loại bút toán TK 459901
+│   │   ├── doi_chieu_osb.py # Đối chiếu OSB (GL02 ↔ OSB chi tiết hạch toán, TK 519910)
 │   │   ├── doi_chieu_song_phuong.py # Đối chiếu song phương (định tuyến lệnh IPCAS)
 │   │   ├── ttqt_branches.py # Danh mục CN thực hiện TTQT (CRUD + import/export Excel)
 │   │   ├── logs.py          # Nhật ký hệ thống (admin)
@@ -201,6 +202,8 @@ Truy cập:
 │       ├── log_cleanup_service.py  # Dọn login_logs / audit_logs quá hạn theo lịch
 │       ├── time_sync.py            # Cảnh báo lệch giờ máy chủ so NTP (không tự sửa, có cache)
 │       ├── cham459901_service.py   # Xử lý ZIP/Excel + phân loại bút toán 459901
+│       ├── doi_chieu_osb/          # Đối chiếu OSB: đọc GL02/OSB, khớp, xuất 4 file Excel
+│       ├── doi_chieu_osb_job.py    # Job nền + tiến độ + dọn file tạm của Đối chiếu OSB
 │       ├── doi_chieu_song_phuong_service.py # Định tuyến lệnh IPCAS theo NH + chiều → 8 CSV
 │       ├── swift_recon/            # Đối chiếu điện SWIFT (parse, so khớp, export Excel)
 │       └── duty_*                  # Xếp lịch trực, ràng buộc, thống kê, xuất file (6 module)
@@ -225,6 +228,7 @@ Truy cập:
 │       │                   #   + _chi_tiet_don.py (ngăn kéo chi tiết đơn)
 │       ├── duty_schedule.py # Lịch trực
 │       ├── cham_459901.py   # Phân loại bút toán TK 459901
+│       ├── doi_chieu_osb.py # Đối chiếu OSB
 │       ├── doi_chieu_song_phuong.py # Đối chiếu song phương (định tuyến lệnh IPCAS)
 │       ├── reports.py       # Báo cáo hậu kiểm
 │       ├── handover_reports.py # Báo cáo bàn giao chứng từ (đúng hạn/quá hạn)
@@ -249,7 +253,7 @@ Truy cập:
 │   ├── ksnb.db             # SQLite database (tự tạo khi chạy lần đầu)
 │   ├── backups/            # Backup tự động — xem mục "Backup tự động"
 │   └── temp_*/             # File tải lên + kết quả tạm của ACH / Chấm 459901 /
-│                           #   Đối chiếu song phương / Đối soát CITAD. Sống hết ngày làm
+│                           #   Đối chiếu song phương / Đối soát CITAD / Đối chiếu OSB. Sống hết ngày làm
 │                           #   việc, temp_cleanup_service xoá sạch lúc 23h (không chờ ai
 │                           #   mở menu). Backend bật giữa ngày chỉ dọn rác của hôm trước
 ├── logs/
@@ -284,11 +288,12 @@ Truy cập:
 
 ## Giới hạn tài nguyên máy chủ
 
-Bốn module đối chiếu nặng (ACH, Chấm ILO1000, Đối chiếu Song phương, Chấm 459901) nạp file bằng
+Các module đối chiếu nặng (ACH, Chấm ILO1000, Đối chiếu Song phương, Chấm 459901, Đối chiếu OSB) nạp file bằng
 pandas ngay trong tiến trình backend — đo được pandas giữ **~5,3 lần** kích thước file. Trần upload
 mỗi lượt 500 MB, nên bốn lượt cùng lúc có thể chạm ~10 GB.
 
-Từ 10/09/2026 cả bốn dùng chung một chốt (`backend/core/phien_doi_chieu.py`):
+Từ 10/09/2026 các module này dùng chung một chốt (`backend/core/phien_doi_chieu.py`; Đối chiếu OSB
+tham gia từ 17/09/2026):
 
 | Phạm vi | Giới hạn | Chỉnh được không |
 |---|---|---|
@@ -566,6 +571,31 @@ Request vượt số kết nối thì xếp hàng chờ (tối đa 30 giây, qu�
   114 MB → đỉnh 0,1 MB thay vì 256 MB). Workbook Excel trong ZIP vẫn phải qua RAM: calamine
   đọc nhảy vị trí nên không nhận luồng tuần tự
 - Phân quyền riêng theo nhóm (`menu.cham_459901`, `cham_459901.process`)
+
+### Module Đối chiếu OSB
+- So sổ cái **GL02** (IPCAS) với file **OSB chi tiết hạch toán** cho tài khoản trung gian OSB
+  **519910**, ra danh sách *Chênh lệch Nợ* và *Chênh lệch Có* — tự động hoá cách chấm tay đang làm
+- Menu: **Đối chiếu → Phòng Thanh toán → Đối chiếu OSB**
+- Mỗi lượt: 1 ngày + 1 tài khoản (hiện chỉ 519910, khai ở `config.TAI_KHOAN`); tải đúng **1 file
+  `.zip` GL02** và **1 hoặc nhiều file `.xlsx` OSB** (thường 2 file/ngày — một bản *TK ghi nợ*, một
+  bản *TK ghi có*)
+- ZIP GL02 có thể chứa nhiều file `.csv`/`.xlsx` gộp nhiều ngày: đọc hết, lọc đúng `TRDATE` của
+  ngày đã chọn, **không** dựa vào tên file ZIP (đã gặp ZIP đặt tên sai ngày)
+- GL02 lọc `LOCAC=519910`, `CCY=VND`, `CUSTOMER=1000-000000001`, bỏ dòng `REFERENCE=1000OSB`
+  (điện quyết toán OSB hằng ngày). *Số trace* = ký tự thứ 2–7 của `REMARK`
+- Khoá so khớp: **Nợ** = số trace + `CRAMOUNT`, so với OSB có *TK ghi nợ* = 519910; **Có** = số trace
+  + `DRAMOUNT`, so với *TK ghi có* = 519910 (cùng tên, không chéo). Khớp theo **số lần xuất hiện**
+  của mỗi khoá, không ghép 1-1
+- OSB: nhóm **đúng 2 dòng** cùng *Mã giao dịch*, tổng tiền = 0 → *Hủy*, loại khỏi so khớp. Nhóm
+  từ 3 dòng trở lên tổng = 0 **cố ý không** đánh Hủy — màn hình báo số nhóm để chấm tay
+- Kết quả: 1 file ZIP gồm 4 file Excel `Chenh_lech_{No,Co}_{GL02,OSB}.xlsx`. Cảnh báo trên màn
+  hình khi có dòng GL02 `REMARK` dưới 7 ký tự (số trace không đáng tin)
+- **Chỉ tải file lên**, không có chế độ chọn thư mục máy chủ. File ghi thẳng từng khối xuống
+  `data/temp_doi_chieu_osb/upload_<token>/` và **bị xoá ngay khi chạy xong** (cả khi lỗi); kết quả
+  sống hết ngày làm việc, 23h dọn
+- Dùng chung chốt `phien_doi_chieu` với các module đối chiếu khác (1 lượt/module)
+- Phân quyền riêng theo nhóm (`menu.doi_chieu_osb`, `doi_chieu_osb.process`) — mới thêm nên chưa
+  nhóm nào được tick, chỉ admin thấy menu
 
 ### Module Đối chiếu Song phương
 - Định tuyến lệnh IPCAS phục vụ đối chiếu song phương tại phòng Thanh toán
@@ -1362,7 +1392,7 @@ Menu nhóm theo **chức năng**, không theo phòng ban. Hover để mở flyou
 
 ```
 Quản lý chứng từ ─ Bàn giao chứng từ / Đóng chứng từ / Lưu trữ
-Đối chiếu ──────── Phòng Thanh toán ─ Chấm 459901 / Song phương / ILO1000 / ACH / CITAD / Đối soát CITAD
+Đối chiếu ──────── Phòng Thanh toán ─ Chấm 459901 / Đối chiếu OSB / Song phương / ILO1000 / ACH / CITAD / Đối soát CITAD
                    Phòng Swift ────── Đối chiếu điện SWIFT
                    Phòng QLTK Nostro, Vostro ─ Đối chiếu CITAD - PaymentHub
                    Phòng Kế toán ──── Đối chiếu DTBB

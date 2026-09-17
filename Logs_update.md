@@ -4,6 +4,21 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 17/09/2026 Đối chiếu OSB (Phòng Thanh toán) - màn hình mới
+    + ✅ Menu mới **Đối chiếu → Phòng Thanh toán → Đối chiếu OSB**: so sổ cái GL02 với file OSB chi tiết
+      hạch toán của tài khoản trung gian **519910**, ra danh sách **Chênh lệch Nợ** và **Chênh lệch Có**
+      — thay cho việc chấm tay
+    + ✅ Chọn ngày, kéo-thả 1 file .zip GL02 và các file .xlsx OSB của ngày đó (thường 2 file), bấm Chạy.
+      Tải về 1 file .zip gồm 4 file Excel: chênh lệch Nợ và Có, mỗi loại một bản phía GL02 và một bản phía OSB
+    + ℹ️ File GL02 gộp nhiều ngày vẫn dùng được — hệ thống tự lấy đúng ngày đã chọn, không dựa vào tên file
+    + ⚠️ Cặp giao dịch Hủy chỉ được nhận ra khi **đúng 2 dòng** cùng Mã giao dịch và tổng tiền bằng 0. Nhóm
+      từ 3 dòng trở lên có tổng bằng 0 **không** tự đánh dấu Hủy — màn hình báo số nhóm như vậy, cần chấm tay
+    + ⚠️ Màn hình báo có dòng GL02 nội dung dưới 7 ký tự thì số trace của các dòng đó không đáng tin — nên
+      kiểm tra lại các dòng này
+    + ⚠️ Chưa nhóm nào được cấp quyền: quản trị cần tick **Đối chiếu OSB** ở màn Phân quyền theo nhóm cho
+      nhóm cần dùng
+    + ℹ️ File tải lên được xoá ngay sau khi chạy xong; file kết quả tải lại được đến hết ngày, 23h tự xoá
+
 - 17/09/2026 Gỡ thư mục bản gốc **QĐ 979** (`979-QyD-NHNo-PC (Trình bày VB)`) khỏi GitHub
     + ℹ️ Không đổi màn hình nào. Chuẩn hoá văn bản và tab Mẫu trình bày sẵn vẫn chạy như cũ — quy chuẩn
       đã nằm trong mã, 18 mẫu trắng đã nằm ở `templates/vb_mau/`
