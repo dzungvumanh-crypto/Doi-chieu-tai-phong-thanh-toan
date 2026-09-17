@@ -129,7 +129,7 @@ async def doi_chieu_osb_page():
                     state["files"][e.name] = e.content.read()
                     _render_file_list()
 
-                uploader = ui.upload(
+                ui.upload(
                     on_upload=on_upload,
                     auto_upload=True,
                     multiple=True,
@@ -153,14 +153,6 @@ async def doi_chieu_osb_page():
             result_area = ui.column().classes("w-full")
 
             # ── Helpers & handlers ────────────────────────────────────────────
-            def _reset_all():
-                state["files"] = {}
-                state["task_token"] = None
-                state["result"] = None
-                uploader.reset()
-                _render_file_list()
-                result_area.clear()
-
             # Gắn THẲNG hàm async, KHÔNG bọc asyncio.create_task — xem docs/DESIGN.md mục
             # "Event handler async": task mới có ngăn xếp slot rỗng nên ui.notify/ui.navigate
             # trong nhánh lỗi ném RuntimeError, im lặng không có traceback.

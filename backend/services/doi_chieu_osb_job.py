@@ -19,6 +19,7 @@ import uuid
 from pathlib import Path
 
 from backend.core.config import BASE_DIR
+from backend.core.don_dep import moc_don_gan_nhat
 from backend.services.doi_chieu_osb.pipeline import chay_doi_chieu_osb
 
 TEMP_DIR = BASE_DIR / "data" / "temp_doi_chieu_osb"
@@ -56,6 +57,28 @@ def bo_luot(task_token: str) -> None:
     _progress.pop(task_token, None)
 
 
+def _cleanup_old_results(cutoff: float | None = None) -> None:
+    """Xóa thư mục `upload_<token>`/kết quả và progress entry cũ hơn `cutoff`.
+
+    Mirror `cham459901_service._cleanup_old_results()` — mốc mặc định là 23h gần nhất đã trôi
+    qua (`backend/core/don_dep.py`). Trước khi có hàm này, `bo_luot()` chỉ được gọi ở nhánh
+    upload hỏng — một lượt chạy THÀNH CÔNG để nguyên `upload_<token>/` (file GL02 zip gốc + các
+    file OSB) trên đĩa vĩnh viễn, không ai dọn (review Khánh, PR #103)."""
+    cutoff = moc_don_gan_nhat() if cutoff is None else cutoff
+
+    if TEMP_DIR.exists():
+        for sub in TEMP_DIR.iterdir():
+            try:
+                if sub.is_dir() and sub.stat().st_mtime < cutoff:
+                    shutil.rmtree(sub)
+            except OSError as e:
+                log.warning("Không xóa được %s: %s", sub, e)
+
+    stale = [k for k, v in list(_progress.items()) if v.get("_ts", 0) < cutoff]
+    for k in stale:
+        _progress.pop(k, None)
+
+
 def get_progress(task_token: str) -> dict | None:
     p = _progress.get(task_token)
     if p is None:
@@ -90,7 +113,13 @@ def _set_prog(task_token: str | None, pct: int | None = None, msg: str | None = 
 def run_process(
     gl02_path: Path, osb_paths: list[Path], ma_tk: str, ngay: str, task_token: str,
 ) -> None:
-    """Chạy `process()` — cập nhật progress và bắt lỗi. Chạy trong `threading.Thread` riêng."""
+    """Chạy `process()` — cập nhật progress và bắt lỗi. Chạy trong `threading.Thread` riêng.
+
+    `finally` xoá thư mục `upload_<token>` (file GL02 zip + OSB xlsx vừa nhận) SAU khi xử lý
+    xong, kể cả nhánh THÀNH CÔNG — trước đó chỉ nhánh upload hỏng mới được `bo_luot()` dọn
+    (review Khánh, PR #103). `process()` đã đọc hết dữ liệu cần vào RAM/kết quả xuất ra
+    `TEMP_DIR/<result_token>/` trước khi hàm này trả về, nên xoá thư mục upload lúc này an toàn."""
+    upload_dir = gl02_path.parent
     try:
         result = process(gl02_path, osb_paths, ma_tk, ngay, task_token)
         if task_token in _progress:
@@ -111,6 +140,8 @@ def run_process(
             _progress[task_token].update({
                 "done": True, "error": str(e), "msg": "Lỗi xử lý — xem log server",
             })
+    finally:
+        shutil.rmtree(upload_dir, ignore_errors=True)
 
 
 def process(
@@ -119,6 +150,7 @@ def process(
 ) -> dict:
     """Chạy `chay_doi_chieu_osb()` thật, LƯU `zip_bytes` xuống đĩa trong thư mục job (không giữ
     trong RAM lâu), trả metadata gọn cho response `/progress`."""
+    _cleanup_old_results()
     t0 = time.time()
     _set_prog(task_token, 10, "Đang đối chiếu GL02 <-> OSB...")
 

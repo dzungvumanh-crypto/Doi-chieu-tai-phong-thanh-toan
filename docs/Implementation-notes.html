@@ -17558,7 +17558,67 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-13</footer>
+  <!-- 143 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">143</span>
+      <span class="card-title">Đối chiếu OSB — sửa 3 điểm review Khánh trên PR #103: dọn rác file tạm, bỏ mã chết, giảm khối lượng strip/dedupe (2026-09-17)</span>
+      <span class="badge badge-done">Hoàn thiện</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-red">Lỗi thật — nên xong trước khi merge</span> rác file tạm không bao giờ được dọn</div>
+      <p><code>backend/services/doi_chieu_osb_job.py::bo_luot()</code> trước đây chỉ được gọi ở
+        NHÁNH UPLOAD HỎNG (<code>backend/api/doi_chieu_osb.py</code>, 3 chỗ) — một lượt chạy
+        THÀNH CÔNG để nguyên <code>data/temp_doi_chieu_osb/upload_&lt;token&gt;/</code> (file GL02
+        .zip gốc + các file OSB .xlsx) trên đĩa vĩnh viễn. Module cũng chưa có
+        <code>_cleanup_old_results()</code> và chưa nằm trong sổ đăng ký của
+        <code>temp_cleanup_service.py::run_cleanup()</code> — 5 module đối chiếu kia (ACH, Chấm
+        459901, Đối chiếu song phương, Đối soát CITAD, Chuẩn hoá văn bản) đều có mặt ở đó, module
+        này thì không.</p>
+
+      <div class="label"><span class="pill pill-green">Fix</span> mirror đúng khuôn <code>cham459901_service.py</code></div>
+      <ul>
+        <li>Thêm <code>_cleanup_old_results(cutoff)</code> vào <code>doi_chieu_osb_job.py</code> —
+          xoá thư mục quá hạn mốc 23h (<code>backend/core/don_dep.py</code>) + progress entry cũ,
+          gọi ở đầu <code>process()</code> (mirror <code>process_files()</code> của cham459901).</li>
+        <li>Đăng ký vào <code>temp_cleanup_service.run_cleanup()</code> — nay 6 module.</li>
+        <li><code>run_process()</code> thêm khối <code>finally: shutil.rmtree(upload_dir, ...)</code>
+          — xoá <code>upload_&lt;token&gt;/</code> SAU khi xử lý xong, kể cả nhánh thành công.</li>
+        <li>Test mới <code>tests/test_doi_chieu_osb_cleanup_wiring.py</code> (mirror
+          <code>test_cham459901_cleanup_wiring.py</code>) — gọi <code>run_cleanup()</code> thật,
+          xác nhận thư mục quá hạn THỰC SỰ bị xoá; + 1 test riêng xác nhận
+          <code>run_process()</code> xoá <code>upload_&lt;token&gt;/</code> ở nhánh thành công.</li>
+      </ul>
+
+      <div class="label"><span class="pill pill-blue">Dọn</span> bỏ mã chết <code>_reset_all()</code></div>
+      <p><code>frontend/pages/doi_chieu_osb.py</code> định nghĩa nhưng không nơi nào gọi — bản gốc
+        <code>cham_459901.py</code> gọi ở 2 chỗ (huỷ job đang chạy, xoá kết quả trên server), cả
+        hai kịch bản đó KHÔNG tồn tại ở module OSB (job chạy vài giây, không có nút hủy; không có
+        API xoá kết quả). Bỏ hẳn thay vì gắn vào 1 nút "Làm lại" giả — người dùng đã có sẵn nút
+        xoá từng file trong danh sách + chọn lại file rồi bấm Chạy lại, không cần thêm control.</p>
+
+      <div class="label"><span class="pill pill-amber">Tối ưu</span> lọc TRDATE trước khi strip/dedupe toàn cột</div>
+      <p><code>load_gl02.py::read_gl02_zip()</code> trước đây strip + <code>drop_duplicates()</code>
+        trên TOÀN BỘ dữ liệu đã gộp (tới 4,53 triệu dòng × 17 cột, theo chính PR #103) rồi mới lọc
+        theo <code>TRDATE</code> — trong khi phần lớn số dòng đó bị vứt ngay ở bước lọc ngày. Đổi
+        thành: strip riêng <code>TRDATE</code> → lọc ngày → strip phần cột còn lại → dedupe trên
+        tập đã lọc. Kết quả cuối Y HỆT: 2 dòng trùng khít mọi cột đương nhiên cùng <code>TRDATE</code>,
+        nên lọc ngày trước rồi dedupe trên tập con luôn cho đúng kết quả như dedupe toàn tập rồi
+        lọc. Thêm test <code>test_dedupe_don_theo_ngay_cho_ket_qua_giong_het_dedupe_toan_tap</code>
+        khoá lại: dòng trùng khít ở NGÀY KHÁC không được lẫn vào hay ảnh hưởng kết quả ngày đang lọc.</p>
+
+      <div class="note">Test: <code>tests/services/doi_chieu_osb/</code> 15/15 pass (thêm 1 test
+        mới), <code>tests/test_doi_chieu_osb_cleanup_wiring.py</code> 2/2 pass (mới). Import-check
+        <code>backend.main</code>/<code>frontend.main</code> không lỗi (không có <code>ruff</code>
+        cài trên máy để chạy đúng lệnh Khánh dùng, dùng import-check thay thế cho lỗi cú
+        pháp/tên biến chưa khai báo). Khánh chỉ nêu đúng 3 điểm (1/3/5, đánh số theo comment gốc)
+        — không có điểm nào khác bị bỏ sót.</div>
+
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-17</footer>
 </div>
 </body>
 </html>

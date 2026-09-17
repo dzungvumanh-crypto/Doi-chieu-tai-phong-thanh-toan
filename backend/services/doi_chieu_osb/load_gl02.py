@@ -153,18 +153,25 @@ def read_gl02_zip(zip_path: str, ma_tk: str, ngay: str,
         )
     khach_hang = TAI_KHOAN[ma_tk]["customer"]
 
+    # Lọc TRDATE TRƯỚC khi strip/dedupe toàn cột (review Khánh, PR #103): ZIP có thể gộp tới
+    # 4,53 triệu dòng nhiều ngày trong khi phần cần dùng chỉ là 1 ngày — strip+dedupe trên toàn
+    # bộ trước rồi mới lọc lãng phí gấp nhiều lần. Kết quả cuối Y HỆT thứ tự cũ: 2 dòng trùng
+    # khít nhau (mọi cột) đương nhiên cùng TRDATE, nên lọc ngày trước rồi mới dedupe trên tập
+    # con cho đúng kết quả như dedupe toàn tập rồi lọc.
     full = _doc_zip(zip_path, log_callback)
-    for c in full.columns:
-        full[c] = full[c].astype(str).str.strip()
-
-    truoc = len(full)
-    full = full.drop_duplicates()
-    if truoc != len(full):
-        _log(f"[{_BUOC}] gộp {truoc:,} dòng -> dedupe TOÀN CỘT -> {len(full):,} dòng "
-             f"(loại {truoc - len(full):,} dòng trùng thật)")
-
+    full["TRDATE"] = full["TRDATE"].astype(str).str.strip()
     df = full[full["TRDATE"] == ngay].copy()
     _log(f"[{_BUOC}] TRDATE == {ngay}: {len(df):,} dòng")
+
+    for c in df.columns:
+        if c != "TRDATE":
+            df[c] = df[c].astype(str).str.strip()
+
+    truoc = len(df)
+    df = df.drop_duplicates()
+    if truoc != len(df):
+        _log(f"[{_BUOC}] {truoc:,} dòng -> dedupe TOÀN CỘT -> {len(df):,} dòng "
+             f"(loại {truoc - len(df):,} dòng trùng thật)")
 
     mask = (
         (df["LOCAC"] == ma_tk)

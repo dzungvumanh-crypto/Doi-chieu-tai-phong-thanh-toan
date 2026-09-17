@@ -344,3 +344,36 @@ def test_gl02_zip_doc_duoc_file_xlsx(tmp_path):
     assert result["REMARK"].iloc[0] == "[123456] xlsx test"
     assert result["DRAMOUNT_NUM"].iloc[0] == 100000
     assert n_short == 0
+
+
+# ─── Regression: lọc TRDATE TRƯỚC strip/dedupe (review Khánh, PR #103) ──────────
+
+def test_dedupe_don_theo_ngay_cho_ket_qua_giong_het_dedupe_toan_tap(monkeypatch):
+    """`read_gl02_zip()` đổi thứ tự: lọc TRDATE trước, strip+dedupe sau (để giảm khối lượng xử lý
+    khi ZIP gộp nhiều ngày). Test này khoá lại tính đúng đắn của thứ tự mới: dòng trùng khít NGÀY
+    ĐANG LỌC vẫn bị dedupe còn 1; dòng của NGÀY KHÁC (kể cả trùng lặp ở ngày đó) không được lẫn
+    vào hay ảnh hưởng tới kết quả của ngày đang lọc."""
+    ngay_khac = "20260702"
+    rows = [
+        _gl02_row("[111111] dong goc", dramount="100000", cramount="0"),
+        _gl02_row("[111111] dong goc", dramount="100000", cramount="0"),  # trùng khít dòng trên
+        _gl02_row("[222222] dong khac", dramount="200000", cramount="0"),
+    ]
+    gl02_ngay_khac = pd.DataFrame([
+        _gl02_row("[333333] ngay khac", dramount="300000", cramount="0"),
+        _gl02_row("[333333] ngay khac", dramount="300000", cramount="0"),  # trùng khít, NGÀY KHÁC
+    ])
+    gl02_ngay_khac["TRDATE"] = ngay_khac
+    full = pd.concat([pd.DataFrame(rows), gl02_ngay_khac], ignore_index=True)
+
+    monkeypatch.setattr(load_gl02, "_doc_zip", lambda zip_path, log_callback=None: full.copy())
+
+    result, _ = load_gl02.read_gl02_zip("dummy.zip", MA_TK, NGAY)
+
+    # Dedupe đúng: còn 2 dòng của NGAY (dòng gốc dedupe còn 1 + dòng khác), không lẫn dòng
+    # của ngay_khac vào (nếu dedupe chạy SAI thứ tự — toàn tập trước khi lọc ngày — vẫn ra đúng
+    # 2 dòng ở case đơn giản này, nhưng test khoá luôn cả nội dung để bắt lỗi nếu code lọc nhầm
+    # ngày sau khi đã dedupe/strip sai cột).
+    assert len(result) == 2
+    assert set(result["REMARK"]) == {"[111111] dong goc", "[222222] dong khac"}
+    assert (result["TRDATE"] == NGAY).all()
