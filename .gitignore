@@ -4,6 +4,10 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
+# Moi thu muc bat dau bang .venv -- gom ban sao luu khi nang Python
+# (.venv_310_backup ~936 MB). git-save.bat chay `git add -A`, thieu dong nay la
+# commit nguyen venv cu vao repo.
+.venv*/
 
 # Database & secrets
 data/
