@@ -18312,6 +18312,65 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">146</span>
+      <span class="card-title">Chấm 459901 — vá lỗ hổng TRBRCD rỗng trong <code>_mark_ccn()</code>, revert 1 fix sai đã thử (2026-09-17)</span>
+      <span class="badge badge-done">Hoàn thiện</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-blue">Bối cảnh</span> review của Khánh trên PR #102 (đã merge) nêu 2 điểm không chặn merge</div>
+      <p>PR #102 thêm điều kiện "1 vế TRBRCD=1000, 1 vế khác 1000" cho nhóm Chuyển chi nhánh.
+        Khánh chỉ ra: (1) mã kiểm ở mức <b>NHÓM</b> ("cả nhóm có ≥1 dòng 1000 và ≥1 dòng khác")
+        trong khi quy tắc chị Hà nói "1 <b>CẶP</b>"; (2) TRBRCD rỗng (<code>_load_data</code> đọc
+        bằng <code>keep_default_na=False</code> nên ô trống ra <code>''</code>, không phải NaN)
+        bị tính nhầm là "khác 1000".</p>
+
+      <div class="label"><span class="pill pill-red">Đã thử và REVERT</span> ép <code>group_size == 2</code> cho đúng nghĩa "cặp"</div>
+      <p>Verify thật trên dữ liệu Tháng 5 (<code>G:\NGOC HA\459 file chấm gửi a Dũng\Tháng 5</code>,
+        chạy <code>process_files()</code> đầy đủ, so REFERENCE với <code>hà chấm - Chuyển chi
+        nhánh.xlsx</code>): ép về đúng 2 dòng làm lệch tăng từ <b>654 → 853 dòng</b>. Nguyên nhân:
+        dữ liệu thật có nhiều nhóm 4-16 dòng do REMARK là văn bản mẫu lặp lại hàng loạt (VD nhiều
+        khoản phụ cấp/tài trợ khác nhau cùng nội dung "phụ cấp bàn xóm trưởng tháng 5 năm 2026")
+        — mỗi nhóm là NHIỀU giao dịch Chuyển chi nhánh <b>độc lập</b> trùng khoá amt+REMARK ngẫu
+        nhiên, chị Hà vẫn chấm đúng toàn bộ là Chuyển chi nhánh. Ví dụ thật (group size=4):</p>
+      <pre>REFERENCE        TRBRCD  DR/CR        REMARK
+1000API6100029   1000    DR 20tr      TAI TRO KINH PHI XAY DUNG NHA DAI DOAN KET CHO GD BA...
+1000API5199403   1700    CR 20tr      (REMARK giống hệt, giao dịch KHÁC)
+1000API7299752   1000    DR 20tr      (REMARK giống hệt, giao dịch KHÁC)
+1000API6900004   1700    CR 20tr      (REMARK giống hệt, giao dịch KHÁC)</pre>
+      <p>Đây là 2 cặp Chuyển chi nhánh độc lập, không phải 1 nhóm 4 dòng — nhưng vì key chỉ dựa
+        vào amt+REMARK (không có id giao dịch), không có cách tách "cặp nào với cặp nào" một cách
+        đáng tin cậy. Thiết kế gốc (kiểm ở mức NHÓM, chấp nhận cả nhóm nếu cân Nợ=Có + có đủ 2 loại
+        TRBRCD) hoá ra là lựa chọn đúng cho tình huống này — ví dụ Khánh nêu (1000/1000/1000/2122)
+        là hợp lệ về mặt lý thuyết nhưng không đại diện cho phân bố dữ liệu thật. Đã revert, giữ
+        nguyên kiểm tra mức nhóm.</p>
+
+      <div class="label"><span class="pill pill-green">Đã giữ lại</span> loại TRBRCD rỗng khỏi "vế khác 1000"</div>
+      <p><code>is_other_branch = ~is_1000 & (df['TRBRCD'] != '')</code> thay cho <code>~is_1000</code>
+        đơn thuần. Verify: quét toàn bộ 4 tháng dữ liệu thật (5/6/7/8-2026, ~5,1 triệu dòng GL02
+        gộp) — <b>0 dòng nào có TRBRCD rỗng</b>. Chạy lại <code>process_files()</code> Tháng 5 với
+        fix này: kết quả giống hệt bản chưa sửa (663 lệch/2808, không đổi) — xác nhận fix an toàn
+        tuyệt đối trên dữ liệu hiện có, chỉ là rào chắn phòng ngừa cho dữ liệu tháng khác có thể
+        phát sinh ô trống.</p>
+
+      <div class="label"><span class="pill pill-amber">Số lệch tuyệt đối, không phải đánh giá "tốt/xấu"</span></div>
+      <p>Theo <code>docs/SKILL.md</code>, không dùng %. Tháng 5: 663/2808 dòng lệch (662 thiếu,
+        1 thừa) — CHƯA cân khớp, cần chấm tay tiếp phần còn lại. Số 663 khác 654 Khánh nêu do chạy
+        lại không kèm file tồn tháng trước (<code>ton=None</code>) trong lần verify này; không ảnh
+        hưởng kết luận vì so sánh A/B (có fix vs không fix) dùng CÙNG bộ file, cùng điều kiện.</p>
+
+      <div class="note">Test: thêm 1 test mới (<code>test_group_larger_than_pair_still_matched_if_balanced</code>,
+        mô phỏng đúng case thật ở trên) + 1 test TRBRCD rỗng
+        (<code>test_blank_trbrcd_not_counted_as_other_branch</code>) vào <code>TestMarkCCN</code>.
+        88/88 test <code>test_cham459901_algorithm.py</code>, 144/144 test module <code>cham459901</code>,
+        2023/2023 toàn bộ suite pass. Xoá sạch thư mục kết quả tạm sau khi verify thật
+        (<code>data/temp_cham459901/</code>).</div>
+
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-17</footer>
 </div>
 </body>
