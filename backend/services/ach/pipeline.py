@@ -41,6 +41,7 @@ from .b12_ghi_chu_timeout import (
 )
 from .b13_xu_ly_gw_den import xu_ly_gw_den, doi_chieu_gw_den
 from .b15_napas import doc_pdf_napas, doc_napas_csv, doi_chieu_napas_gw
+from .b16_phub_loi import doc_phub, doc_gw_di_cho_phub, xu_ly_phub_loi
 
 _COLS_NPO = _cfg.COLS_NPO
 # Điểm 4 — thêm cột ghi chú đối chiếu chéo ngày CHỈ trên sheet NPO_DI_THUA/
@@ -277,6 +278,22 @@ def _tim_file_timeout_cu(input_dir: str) -> list:
             continue
         chuan = _chuan_hoa_ten_file(os.path.splitext(ten)[0])
         if chuan.startswith(_TIEN_TO_TIMEOUT_CU) and 'ketqua' not in chuan and 'thuacu' not in chuan:
+            found.append(f)
+    return sorted(found)
+
+
+def _tim_file_phub(input_dir: str) -> list:
+    """Mục 3 (bổ sung 11.09.2026, Thảo xác nhận ưu tiên làm 16.09.2026) — dò TOÀN
+    BỘ file pHub "Danh sách giao dịch chuyển tiền đi" người dùng tự nạp thêm.
+    KHÔNG giới hạn 1 file như `_tim_gw_den_xlsx()` — nghiệp vụ có thể đẩy vào
+    nhiều file pHub của nhiều ngày khác nhau cùng lúc để map (NOTE gốc văn bản:
+    "có thể đẩy vào nhiều file pHub... để map"), đối xứng `_tim_file_timeout_cu()`
+    (Mục 8). Input TÙY CHỌN — không có file nào → trả [], KHÔNG raise, không
+    chặn luồng chính."""
+    found = []
+    for f in _tim_file_ngoai_output(input_dir, '*.xlsx'):
+        chuan = _chuan_hoa_ten_file(os.path.splitext(os.path.basename(f))[0])
+        if chuan.startswith('phub'):
             found.append(f)
     return sorted(found)
 
@@ -1337,6 +1354,80 @@ def xuat_excel_timeout_cu(output_dir: str, ngay_dt: datetime,
     return output_path
 
 
+# ─── Mục 3 (bổ sung 11.09.2026, Thảo xác nhận ưu tiên làm 16.09.2026) — file ──
+# pHub "Danh sách giao dịch chuyển tiền đi" riêng, độc lập với đối chiếu ACH ──
+# chính (NOTE gốc văn bản), giống Mục 4/6/7/8 ──────────────────────────────────
+
+def _viet_tong_ket_phub(workbook, ws, session_id, ngay_str, df_ketqua: pd.DataFrame):
+    """Đếm số dòng theo từng giá trị TRANG_THAI_CAP_NHAT (Hoàn thành / TT lệnh lỗi
+    ngày T / Trạng thái khác) — kết quả của `xu_ly_phub_loi()`."""
+    fmt_label  = workbook.add_format({'bold': True, 'font_size': 10})
+    fmt_header = workbook.add_format({'bold': True, 'font_size': 10,
+                                      'bg_color': '#DDEBF7', 'border': 1})
+    fmt_num    = workbook.add_format({'font_size': 10, 'num_format': '#,##0'})
+    fmt_val    = workbook.add_format({'font_size': 10})
+
+    ws.write(0, 0, 'Chỉ tiêu',     fmt_header)
+    ws.write(0, 1, 'Số giao dịch', fmt_header)
+    ws.set_column(0, 0, 45); ws.set_column(1, 1, 16)
+
+    dem = df_ketqua['TRANG_THAI_CAP_NHAT'].value_counts()
+    data = [
+        ('Ngày đối chiếu', ngay_str),
+        ('Session',         session_id),
+        ('', ''),
+        ('Hoàn thành (khớp GW, Ghi chú ACSP/ACSC)',   int(dem.get('Hoàn thành', 0))),
+        ('TT lệnh lỗi ngày T (khớp TO ko đi kênh)',   int(dem.get('TT lệnh lỗi ngày T', 0))),
+        ('Trạng thái khác (không khớp bên nào)',      int(dem.get('Trạng thái khác', 0))),
+        ('', ''),
+        ('TỔNG',                                      len(df_ketqua)),
+    ]
+    for row_idx, (label, val) in enumerate(data, start=1):
+        ws.write_string(row_idx, 0, label, fmt_label)
+        if isinstance(val, int):
+            ws.write(row_idx, 1, val, fmt_num)
+        else:
+            ws.write(row_idx, 1, val, fmt_val)
+
+
+def xuat_excel_phub_loi(output_dir: str, session_id: str, ngay_dt: datetime,
+                        df_ketqua: pd.DataFrame = None, log_callback=None) -> str | None:
+    """Mục 3 (bổ sung 11.09.2026, Thảo xác nhận ưu tiên làm 16.09.2026) — xuất kết
+    quả `xu_ly_phub_loi()` (b16_phub_loi.py). Xuất RIÊNG khỏi doi_chieu_<ngày>.xlsx
+    chính — module độc lập với đối chiếu ACH (đúng NOTE gốc văn bản: "Xây dựng
+    thành module riêng độc lập với đối chiếu"), theo đúng phong cách
+    `xuat_excel_gw_den()`/`xuat_excel_timeout_cu()`: 1 sheet TONG_KET + 1 sheet
+    chi tiết toàn bộ df_ketqua. Trả None nếu không có file pHub nào
+    (`df_ketqua is None`) — không tạo file thừa, giống `xuat_excel_napas()`."""
+    if df_ketqua is None:
+        return None
+    _log         = log_callback or print
+    ngay_str     = ngay_dt.strftime('%Y%m%d')
+    ngay_display = ngay_dt.strftime('%d/%m/%Y')
+    output_path  = os.path.join(output_dir, f'{ngay_str}_ACH_PHUBLOI.xlsx')
+
+    workbook = xlsxwriter.Workbook(output_path, {'strings_to_numbers': False})
+
+    ws0 = workbook.add_worksheet('TONG_KET')
+    _viet_tong_ket_phub(workbook, ws0, session_id, ngay_display, df_ketqua)
+
+    ws1 = workbook.add_worksheet('PHUB_KET_QUA')
+    ws1.set_tab_color(_CAM)
+    if len(df_ketqua) > CSV_THRESHOLD:
+        csv_path = os.path.join(output_dir, f'PHUB_KET_QUA_{ngay_str}.csv')
+        df_ketqua.to_csv(csv_path, index=False, encoding='utf-8-sig')
+        ws1.write(0, 0, f'[Dữ liệu lớn - xem file: {os.path.basename(csv_path)}]')
+        ws1.write(1, 0, f'Tổng số dòng: {len(df_ketqua):,}')
+        ws1.write(2, 0, 'LƯU Ý: Mở file CSV qua Excel > Data > Từ Văn bản/CSV (không double-click trực tiếp).')
+        _log(f'[CSV] PHUB_KET_QUA: {len(df_ketqua):,} dòng → {csv_path}')
+    else:
+        _viet_sheet(workbook, ws1, df_ketqua, _CAM)
+
+    workbook.close()
+    _log(f'[DONE] File pHub lỗi (Mục 3): {output_path}')
+    return output_path
+
+
 # ─── Cancel helper ────────────────────────────────────────────────────────────
 
 def _cancelled(ev) -> bool:
@@ -1479,6 +1570,12 @@ def main_from_dir(input_dir: str, output_dir: str,
     # giới hạn số lượng (đối chiếu gộp toàn bộ, xem doi_chieu_timeout_cu() ở B12).
     timeout_cu_files = _tim_file_timeout_cu(input_dir)
 
+    # Mục 3 (bổ sung 11.09.2026, tùy chọn) — file pHub "Danh sách giao dịch
+    # chuyển tiền đi" người dùng tự nạp thêm, KHÔNG giới hạn số lượng (đối chiếu
+    # gộp toàn bộ với GW đi + TO ko đi kênh, xem `xu_ly_phub_loi()` ở B16, gọi
+    # sau khi df_gw_raw/df_timeout/df_timeout_cu sẵn sàng ở Phase 2 bên dưới).
+    phub_paths = _tim_file_phub(input_dir)
+
     # Điểm 2 (tùy chọn) — file Quyết toán OSB "QT" (đi và/hoặc đến, tự phân loại
     # theo nội dung cột 'Chiều giao dịch', không theo tên file). Không có → bỏ qua
     # nhánh OSB, luồng ACH chính vẫn chạy bình thường.
@@ -1537,6 +1634,7 @@ def main_from_dir(input_dir: str, output_dir: str,
         f'MIS_đi thừa T-2={len(mis_di_thua_t2_files)}, MIS_đến thừa T-2={len(mis_den_thua_t2_files)}, '
         f'NPO_đi thừa T-2={len(npo_di_thua_t2_files)}, QT đi thừa T-2={len(qt_di_thua_t2_files)}, '
         f'TO ko đi kênh ngày cũ (Mục 8)={len(timeout_cu_files)}, '
+        f'pHub (Mục 3)={len(phub_paths)}, '
         f'QT đi={"có" if df_qt_di is not None else "không"}, QT đến={"có" if df_qt_den is not None else "không"}, '
         f'GW đến (Mục 4)={"có" if gw_den_path else "không"}, '
         f'Napas PDF (Mục 6)={"có" if napas_pdf_path else "không"}, '
@@ -1804,6 +1902,32 @@ def main_from_dir(input_dir: str, output_dir: str,
         df_timeout_cu, df_npo_di_thua, df_qt_di_thua, df_dien_huy_trong_ngay, log_callback,
     )
 
+    # Mục 3 (bổ sung 11.09.2026, Thảo xác nhận ưu tiên làm 16.09.2026) — đối chiếu
+    # pHub "Danh sách giao dịch chuyển tiền đi" với GW đi (Bước 2 — Ghi chú chứa
+    # ACSP:NOAN/ACSP:AUTH/ACSC:AUTH) và TO ko đi kênh (Bước 3-6 — CN trace tiền),
+    # gộp CẢ df_timeout của ngày đang chạy LẪN df_timeout_cu (Mục 8, ngày cũ
+    # người dùng tự nạp) làm nguồn "TO ko đi kênh" — văn bản không phân biệt
+    # timeout ngày nào, chỉ cần khớp CN trace tiền. Module ĐỘC LẬP với đối chiếu
+    # ACH chính (đúng NOTE gốc văn bản) — 1 lỗi ở đây KHÔNG được làm sập pipeline
+    # chính, bọc try/except log rõ, đúng tinh thần Mục 4/6/7 (input tùy chọn).
+    df_phub_ketqua = None
+    if phub_paths:
+        try:
+            df_phub_list = [doc_phub(f, log_callback) for f in phub_paths]
+            df_phub      = pd.concat(df_phub_list, ignore_index=True)
+            df_gw_phub   = doc_gw_di_cho_phub(gw_path, session_id, log_callback)
+            nguon_timeout_gop = [
+                d for d in (df_timeout, df_timeout_cu) if d is not None and len(d) > 0
+            ]
+            df_timeout_gop_phub = (
+                pd.concat(nguon_timeout_gop, ignore_index=True) if nguon_timeout_gop
+                else pd.DataFrame(columns=['CHI_NHANH', 'TRACE', 'SE_TRACE', 'SO_TIEN'])
+            )
+            df_phub_ketqua = xu_ly_phub_loi(df_phub, df_gw_phub, df_timeout_gop_phub, log_callback)
+        except Exception as e:
+            log(f'[Mục 3][WARN] Bỏ qua đối chiếu pHub — lỗi khi xử lý {len(phub_paths)} file: {e}')
+            df_phub_ketqua = None
+
     # Mục 5.1 — đối chiếu chéo QT đi thừa T-2 với "huỷ khác ngày" của QT đi T-1
     # (df_qt_huy_khac_ngay vừa tính ở trên, KHÔNG phải file mới).
     df_qt_di_thua_t2 = doc_qt_di_thua_t2(qt_di_thua_t2_files[0]) if qt_di_thua_t2_files else None
@@ -1906,6 +2030,11 @@ def main_from_dir(input_dir: str, output_dir: str,
 
     # Mục 8 (bổ sung 14.09.2026) — chỉ xuất khi có ít nhất 1 file timeout ngày cũ.
     xuat_excel_timeout_cu(output_dir, ngay_dt, df_timeout_cu_ketqua, log_callback)
+
+    # Mục 3 (bổ sung 11.09.2026) — chỉ xuất khi có ít nhất 1 file pHub được xử lý
+    # thành công (df_phub_ketqua is None khi không có file, hoặc khi lỗi đã bị
+    # bắt và log ở trên).
+    xuat_excel_phub_loi(output_dir, session_id, ngay_dt, df_phub_ketqua, log_callback)
 
     log(f'[TIMING] Phase 3 Excel: {time.perf_counter()-_t2:.1f}s')
     log(f'[TIMING] TỔNG: {time.perf_counter()-_t0:.1f}s')
