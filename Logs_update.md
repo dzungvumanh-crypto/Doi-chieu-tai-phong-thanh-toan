@@ -4,6 +4,13 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 17/09/2026 Gỡ thư mục bản gốc **QĐ 979** (`979-QyD-NHNo-PC (Trình bày VB)`) khỏi GitHub
+    + ℹ️ Không đổi màn hình nào. Chuẩn hoá văn bản và tab Mẫu trình bày sẵn vẫn chạy như cũ — quy chuẩn
+      đã nằm trong mã, 18 mẫu trắng đã nằm ở `templates/vb_mau/`
+    + ℹ️ Máy chính không bị ảnh hưởng: `deploy.bat` vốn không chép thư mục này sang
+    + ⚠️ Máy phát triển khác chạy `git pull` sẽ **mất thư mục này trên đĩa**. Cần giữ (để chạy lại
+      `scripts/tach_mau_vb.py`) thì chép ra chỗ khác trước khi pull, xong chép lại vào gốc dự án
+
 - 17/09/2026 Đối chiếu CITAD - PaymentHub (Phòng QLTK Nostro, Vostro) - thêm **USD và EUR**
     + ✅ Mỗi bảng đối chiếu nay có 3 tab **VNĐ / USD / EUR** trong cùng một kỳ. Ba loại tiền tính riêng,
       không cộng chung. File Excel xuất ra có 3 sheet tương ứng, kể cả Excel tổng hợp tháng
