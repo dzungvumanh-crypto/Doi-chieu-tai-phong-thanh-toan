@@ -5,7 +5,10 @@
 ## Cài đặt
 
 ### 1. Yêu cầu
-- Python 3.10+
+- **Python 3.12.x** — đúng dòng này, không phải "3.12 trở lên". CI chạy `python-version: "3.12"`
+  (`.github/workflows/tests.yml`), nên chạy bản khác là chạy thứ **CI không hề kiểm**. Đã xảy ra
+  thật: `pandas` 3.x đòi Python ≥3.11, người dùng 3.11+ gặp lỗi xuất Excel trong khi CI (lúc đó
+  ghim 3.10) vẫn xanh (PR #105).
 - Windows / Linux / macOS
 - **Microsoft Word** trên máy chạy backend — chỉ cần cho việc xuất **đơn nghỉ phép bản PDF**
   (Word chuyển `.docx` → `.pdf`). Không có Word thì hệ thống vẫn chạy đủ, riêng phần ký đơn
@@ -134,8 +137,9 @@ Truy cập:
 - **Từ máy khác trong LAN**: http://[IP-máy-chủ]:8080
 
 > **Windows — dùng `start.bat`.** Script tự kiểm tra `.venv` và **vá tại chỗ** (~2 giây) khi thư mục dự án
-> được mang sang máy khác (chạy từ USB), thay vì xoá và cài lại toàn bộ thư viện. Máy mới cần **Python 3.10.x**;
-> bản 3.11/3.12 sẽ buộc cài lại thư viện và **cần internet**.
+> được mang sang máy khác (chạy từ USB), thay vì xoá và cài lại toàn bộ thư viện. Máy mới cần **Python 3.12.x**;
+> bản khác sẽ buộc cài lại thư viện và **cần internet**. Nên **mọi máy cắm chung USB phải cùng cài 3.12** —
+> một máy còn 3.10 là mỗi lần cắm qua lại phải dựng lại venv. Chi tiết nâng cấp: `docs/CONTRIBUTING.md`.
 >
 > Sửa file `.bat` / `.ps1` phải giữ xuống dòng **CRLF** — `.gitattributes` đã ép sẵn khi clone/checkout,
 > nhưng công cụ ghi file thường mặc định LF và `cmd.exe` chạy sai file .bat dạng LF mà không báo lỗi rõ.
@@ -174,6 +178,7 @@ Truy cập:
 │   │   ├── reports.py       # Báo cáo hậu kiểm
 │   │   ├── handover_reports.py # Báo cáo bàn giao chứng từ (đúng hạn/quá hạn)
 │   │   ├── th_reports.py    # Báo cáo tổng hợp (phòng TH)
+│   │   ├── thi_dua.py       # Thi đua khen thưởng (phòng TH)
 │   │   ├── swift_recon.py   # Đối chiếu điện SWIFT (phòng Swift)
 │   │   ├── duty_schedule.py # Lịch trực
 │   │   ├── duty_staff.py    # Cán bộ trực
@@ -224,6 +229,7 @@ Truy cập:
 │       ├── reports.py       # Báo cáo hậu kiểm
 │       ├── handover_reports.py # Báo cáo bàn giao chứng từ (đúng hạn/quá hạn)
 │       ├── th_reports.py    # Báo cáo tổng hợp
+│       ├── thi_dua.py       # Thi đua khen thưởng
 │       ├── swift_recon.py   # Đối chiếu điện SWIFT (phòng Swift)
 │       ├── user_management.py # Quản lý tài khoản (admin)
 │       ├── login_logs.py    # Nhật ký đăng nhập (admin)
@@ -292,7 +298,9 @@ Từ 10/09/2026 cả bốn dùng chung một chốt (`backend/core/phien_doi_chi
 Bị chặn → HTTP 409 kèm câu nói rõ module nào đang chạy. Trước đó chỉ ACH có chốt, và nó cũng chỉ
 tự canh mình.
 
-Kết nối CSDL dùng **bể mượn–trả** (`DB_POOL_SIZE`, mặc định 16) thay vì mở tệp ở từng request.
+Kết nối CSDL dùng **bể mượn–trả** (`DB_POOL_SIZE`, mặc định 48) thay vì mở tệp ở từng request.
+Request vượt số kết nối thì xếp hàng chờ (tối đa 30 giây, quá thì trả 503 và ghi cảnh báo vào
+`logs/app.log`) — trước 17/09/2026 quá ~88 request cùng lúc là cả hệ thống đứng 30 giây.
 
 ## Chức năng
 
@@ -700,6 +708,15 @@ Kết nối CSDL dùng **bể mượn–trả** (`DB_POOL_SIZE`, mặc định 1
   tải `.zip` ngay trên màn hình, ghép nối bằng *mã kết nối* cá nhân
   (`doi_chieu_citad_extension_tokens`, chỉ lưu hash SHA-256, tạo mã mới tự thu hồi mã cũ).
   Chỉ chạy trên Chromium (Chrome/Edge/Cốc Cốc), phải cài tay từng máy
+- **Bộ đệm số liệu Extension quét** nằm trong RAM backend, tách theo người. Từ 16/09/2026 mục quá
+  **4 giờ tự bị loại** khi đọc bộ đệm, và có nút **"Xoá dữ liệu đã quét"** để xoá tay ngay. Trước
+  đó mục quét cũ nằm lại vô thời hạn nên lượt *"Nạp"* kéo theo cả số của hôm khác — xem
+  `docs/Implementation-notes.html` mục **DC3**. Bộ đệm mất khi restart backend (RAM, không phải DB)
+- ⚠️ Nếu 2 loại tiền cùng cổng/chiều/loại DV ra **số món và số tiền trùng tuyệt đối**, màn hình cảnh
+  báo *nghi đọc nhầm loại tiền lúc quét* (ô chọn loại tiền trên trang CITAD đổi trước khi bảng kết
+  quả kịp tải lại). **Chỉ cảnh báo, vẫn nạp số bình thường** — không chặn, tránh mất số liệu thật
+  nếu chẳng may trùng thật. Cảnh báo chỉ bật khi cả 2 loại tiền cùng có mặt trong bộ đệm, nên
+  **không có cảnh báo không chứng minh được là số đúng**
 - Hai ô **Lập bảng** / **Kiểm soát** vừa gõ tay tự do, vừa bấm chọn từ danh sách nhân viên
   **Phòng Thanh toán** (tra theo `code='PAYMENT'`, không phụ thuộc id phòng).
   Tên không nằm trong danh sách (người đã nghỉ / chuyển phòng / gõ tay kiểu khác) vẫn được giữ
@@ -721,9 +738,24 @@ Kết nối CSDL dùng **bể mượn–trả** (`DB_POOL_SIZE`, mặc định 1
   là **âm thầm thu hồi mã module kia của chính mình** → 1 trong 2 Extension bị 403. Nay tách hẳn 2
   bảng, tạo/thu hồi ở phòng nào chỉ ảnh hưởng đúng phòng đó
 - Menu: **Đối chiếu → Phòng QLTK Nostro, Vostro → Đối chiếu CITAD - PaymentHub**
+- ⚠️ **Bộ đệm Extension của module này CHƯA có hạn dùng** (`doi_chieu_citad_nostro_service.py`) —
+  vẫn là bản sao chưa vá của đoạn đã sửa bên Phòng Thanh toán 16/09/2026, và chưa có nút
+  *"Xoá dữ liệu đã quét"*. Mục quét cũ còn sót vẫn có thể bị nạp nhầm; thấy số lạ thì khởi động
+  lại backend. Xem `docs/Implementation-notes.html` mục **DC3**
 - Nguồn số liệu khác hẳn: CITAD lấy ở trang **"Tra cứu dữ liệu"** (không phải "Bảng kê giao dịch"),
-  chỉ chiều **Đi**, chỉ **giao dịch thành công**, chỉ VNĐ, đủ 5 cổng; PaymentHub lấy dòng
+  chỉ chiều **Đi**, chỉ **giao dịch thành công**, đủ 5 cổng; PaymentHub lấy dòng
   **Tổng cộng** ở trang "Lập bảng kê phí chia sẻ CITAD"
+- **Ba loại tiền VNĐ / USD / EUR trong cùng một kỳ** (từ 17/09/2026, PR#104) — 3 tab con trên cùng
+  một bảng, không cộng chung với nhau. USD/EUR bên CITAD lấy ở trang riêng **"Tra cứu dữ liệu ngoại
+  tệ"** (chỉ có Chuyển Có giá trị cao, nên GTT luôn 0; script `content_citad_nostro_fx.js`);
+  PaymentHub vẫn một trang, Extension đọc thêm ô **Loại tiền** — để "Tất cả" thì không tự lưu
+- Bảng lưu trước 17/09/2026 (dữ liệu phẳng, chưa có lớp loại tiền) **không migrate**: đọc lại tự coi
+  là VNĐ, USD/EUR bằng 0 (`get_ccy_slice()`). Excel xuất 3 sheet VND/USD/EUR; Lịch sử và Tổng hợp
+  tháng lọc được theo loại tiền
+- ⚠️ Cần **Extension `extension_citad_nv` bản 1.1** — bản 1.0 không gửi loại tiền nên Nạp PaymentHub
+  bỏ qua mọi mục. Trang tự hỏi phiên bản Extension đang cài và hiện hộp thoại nhắc cài lại
+- ⚠️ **Chưa xác minh trên trang thật:** Extension đọc số tiền bằng cách bỏ mọi ký tự không phải chữ
+  số (đúng với VNĐ). Nếu USD/EUR hiển thị có xu thì số đọc ra gấp 100 lần — xem card **145**
 - Công thức: Tổng CITAD (GTT/GTC) = cộng 5 cổng; Tổng HUB (GTC) = Trước 15h30 + Từ 15h30;
   Chênh lệch = Tổng CITAD − Tổng HUB
 - **Kỳ đối chiếu linh hoạt** (Từ ngày – Đến ngày, gộp được nhiều ngày) thay vì 1 dòng/ngày cố định.
@@ -770,6 +802,12 @@ Kết nối CSDL dùng **bể mượn–trả** (`DB_POOL_SIZE`, mặc định 1
 - **Phát hiện IPCAS/Hub hạch toán trùng**: cùng 1 lệnh ghi nhiều lần sẽ hiện thành từng dòng
   **Chỉ Agribank** riêng (đúng số lần dư), kèm ghi chú "N lần" trên dòng đã khớp — không gộp lại
   thành 1 dòng như trước
+- **Lệnh Đến trùng số GD + số tiền giữa nhiều ngân hàng gửi** (từ 16/09/2026, PR #110) được tách theo
+  mã ngân hàng gửi (đọc từ dòng tiêu đề nhóm trong file CITAD, so 6 số cuối với `NH_NHAN` của IPCAS) —
+  trước đây chỉ khớp 1 dòng đại diện nên lệnh thiếu bị nuốt mất. ⚠️ Nhánh này cần **cả hai file có mã
+  ngân hàng**; thiếu mã thì khoá trùng hiện thành cặp Chỉ CITAD/Chỉ IPCAS
+- ⚠️ **Lệnh Đi trạng thái `ERRC` (hạch toán huỷ lỗi) nay được đọc vào** (16/09/2026) — có CITAD thì
+  ra **Lệch trạng thái** thay vì "Chỉ CITAD" giả; không có CITAD thì ra **Chỉ IPCAS**
 - **Cặp "hạch toán nhầm rồi huỷ"** (GDV hạch toán tay sai chi nhánh rồi huỷ, hạch toán lại) được
   nhận ra qua `REFHUB` và **loại khỏi đối soát** — không tính khớp, không tính lệch
 - ⚠️ **Lệnh Đến trạng thái PYED/PYEK nay VẪN hiện nếu không khớp CITAD.** Trước 24/08/2026 hai
@@ -887,6 +925,32 @@ người làm báo cáo không có cách nào biết. Đo trên dữ liệu th�
   nước mẹ không (Cayman → United Kingdom, Guam → United States…); (2) **South Sudan** — quốc gia
   thành viên LHQ từ 2011 nhưng mẫu D00054 (soạn khoảng 2010) không có dòng, không gộp vào đâu được,
   phải hỏi NHNN
+
+### Module Thi đua khen thưởng (Phòng Tổng hợp)
+- Menu: **Báo cáo → Phòng Tổng hợp → Thi đua khen thưởng** (`/thi_dua`). Trước đây hệ thống không có
+  nơi lưu dữ liệu này — báo cáo nghỉ phép phải bỏ trống cột "xếp loại thi đua" vì không có nguồn
+- Phân quyền:
+
+  | Việc | Mã quyền |
+  |---|---|
+  | Vào màn hình, tra cứu, tải file quyết định | `menu.thi_dua` |
+  | Thêm/sửa/xoá danh hiệu **đơn vị** | `thi_dua.manage_unit` |
+  | Thêm/sửa/xoá danh hiệu **cá nhân** | `thi_dua.manage_individual` |
+  | Thêm/sửa/xoá **sáng kiến** + file quyết định | `thi_dua.manage_initiative` |
+  | Xuất Excel 2 bảng tổng hợp | `thi_dua.export` |
+
+- Ba loại dữ liệu độc lập, ba bảng: `thi_dua_don_vi` (`department_id` **NULL = toàn Trung tâm**, có giá
+  trị = từng phòng), `thi_dua_ca_nhan` (cấp `dang` / `chuyen_mon` / `cong_doan`), `thi_dua_sang_kien`
+  (file quyết định lưu **BLOB 1:1 ngay trong bảng**, trần 15 MB, nhận `.pdf/.doc/.docx/.jpg/.jpeg/.png`)
+- **Quyền phẳng, không có khái niệm "chủ sở hữu bản ghi"** như Khảo sát: ai có mã quản lý thì sửa/xoá
+  được mọi bản ghi cùng loại. Cố ý — đây là quyết định đã ban hành của cơ quan, người nhập chỉ là thư ký
+- Nhập lô từ Excel cho cả 3 loại: tự sinh file mẫu, **dò cột theo tên tiêu đề** (thêm/bớt/đổi thứ tự cột
+  tuỳ ý miễn còn đúng tên), `dry_run` xem trước rồi mới ghi, báo lỗi theo từng dòng
+
+⚠️ **Nhập lô chưa chống trùng** — nhập lại cùng một file là dữ liệu nhân đôi, không cảnh báo, không có
+nút hoàn tác (phải xoá tay từng thẻ). Đo thật: 20.000 dòng ghi hết 1,24 giây. Cùng với ba món nợ khác
+(dò cột `nam`/`cap` quá lỏng, `except Exception` trần ở `_doc_ngay()`, lượt "Xem trước" vẫn ghi Nhật ký)
+— xem card **TD1** trong [`docs/Implementation-notes.html`](docs/Implementation-notes.html).
 
 ### Module Ôn tập (Quizz)
 - Nhóm **Tính năng khác** → **Ôn tập** (`/quiz`). Dùng chung cho cả cơ quan, không thuộc phòng nào
@@ -1084,7 +1148,9 @@ người làm báo cáo không có cách nào biết. Đo trên dữ liệu th�
   - **Phần "Ghi chú" của Phụ lục được giữ nguyên** (đoạn ghi chú ở Mẫu 07 và các chú thích chân
     trang ở Mẫu 04, Mẫu 17) — người soạn **tự xoá trước khi phát hành**
   - 18 file nằm ở `templates/vb_mau/`, sinh bằng `python scripts/tach_mau_vb.py`. Chỉ chạy lại khi
-    Phụ lục V có bản mới; máy chính không chạy script này
+    Phụ lục V có bản mới; máy chính không chạy script này. Script đọc bản gốc ở thư mục
+    `979-QyD-NHNo-PC (Trình bày VB)/` ở gốc dự án — thư mục này **không có trên GitHub** (gỡ
+    17/09/2026), phải tự chép vào trước khi chạy
 - **Ba việc được làm tự động:**
 
   | Nhóm | Nội dung |
@@ -1301,7 +1367,7 @@ Quản lý chứng từ ─ Bàn giao chứng từ / Đóng chứng từ / Lưu 
                    Phòng QLTK Nostro, Vostro ─ Đối chiếu CITAD - PaymentHub
                    Phòng Kế toán ──── Đối chiếu DTBB
 Báo cáo ────────── Phòng KSNB & HTVH ─ Báo cáo hậu kiểm / Báo cáo bàn giao chứng từ
-                   Phòng Tổng hợp ──── Báo cáo dữ liệu thanh toán
+                   Phòng Tổng hợp ──── Báo cáo dữ liệu thanh toán / Thi đua khen thưởng
 Nghỉ phép ──────── menu phẳng, không có nhóm cha
 Chấm công & Lịch trực ─ Phòng Kế toán ───── Chấm công
                    Phòng Thanh toán ── Phân lịch trực / Sổ trực cuối ngày

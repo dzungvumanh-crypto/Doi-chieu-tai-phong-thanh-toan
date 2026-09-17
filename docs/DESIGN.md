@@ -71,6 +71,45 @@ Riêng `database is locked` chỉ log WARNING và bỏ qua, thử lại ở lầ
 > `no such table` từng nằm trong danh sách nuốt lỗi. Hậu quả: migration viết sai tên bảng
 > thất bại **im lặng** — không log, không chặn khởi động, cột không được thêm. Đừng đưa lại vào.
 
+## Đọc dòng "Request chậm"
+Mỗi dòng `slow.request` kèm trạng thái lúc request kết thúc (`backend/core/slow_request.py::trang_thai`):
+
+```
+Request chậm: GET /api/auth/me — 2771 ms (ngưỡng 1500 ms, HTTP 200) | loop chặn tối đa 140 ms, trễ tổng 1380 ms · luồng 3/40 chờ 0 · kết nối CSDL 2/48 xếp cổng 0 · đang xử lý 5 · việc nặng 0/4 · đối chiếu 1
+```
+
+| Thấy | Nghĩa là |
+|---|---|
+| `trễ tổng` lớn (hàng trăm ms trở lên), `chặn tối đa` nhỏ, `đối chiếu` ≥ 1 | Luồng đối chiếu giữ GIL — loop bị đói thành nhiều quãng ngắn (card 144) |
+| `chặn tối đa` gần bằng `trễ tổng` và lớn | Một cú chặn liền: `async def` gọi hàm đồng bộ nặng không `await` |
+| `luồng 40/40 chờ >0` | Threadpool cạn — endpoint `def` giữ luồng lâu |
+| `kết nối CSDL 48/48`, `xếp cổng >0` | Bể CSDL cạn (xem mục dưới) |
+| Mọi số đều thấp | Thời gian mất ngoài Python: đĩa, mạng, tiến trình khác |
+
+Hai chi tiết đừng "đơn giản hoá":
+- **Phải có cả `trễ tổng`, không chỉ `chặn tối đa`.** Tranh GIL không tạo một cú chặn dài mà làm loop đói
+  liên tục: đo 3 luồng CPU × 2 s → max 138–231 ms nhưng tổng 790–890 ms (rảnh: tổng 12 ms). Chỉ nhìn
+  max là kết luận nhầm "không phải GIL". Tổng đã trừ nền 16 ms/nhịp (sleep trên Windows tự trễ một
+  nhịp timer).
+- **Phải cộng phần task đo đang ngủ quá giờ** — dòng log được ghi ngay khi loop vừa thoát chỗ chặn,
+  trước khi task đo kịp thức. Bỏ đi thì đúng ca cần bắt báo 0.
+
+## Bể kết nối CSDL — chỉ mượn qua `get_db`
+Mọi request mượn kết nối bằng `Depends(get_db)`. **Không gọi `_muon()` trực tiếp** ở chỗ nào khác
+(ngoại lệ duy nhất: `khoi_tao_pool()` lúc khởi động).
+
+`get_db` có sub-dependency `_qua_cong_db()`: một cổng `async` cho tối đa `DB_POOL_SIZE` request qua cùng
+lúc, phần dư chờ bằng `await` — **không giữ luồng**. Không có cổng thì request chờ kết nối đứng chiếm
+luồng threadpool (40), request đang cầm kết nối hết luồng để chạy tiếp → hai bên chờ nhau. Đo 16/09/2026:
+78 request đồng thời chậm nhất 268 ms, **90 request cả hệ thống đứng 31 giây** rồi ăn 500.
+
+Cổng chỉ đúng khi mọi lượt mượn đều đi qua nó. Gọi `_muon()` thẳng từ luồng khác là cổng cho qua đủ
+suất trong khi bể thiếu kết nối → mở lại đúng lỗi trên. Nâng `DB_POOL_SIZE` hay số luồng **không** sửa
+được: chỉ dời ngưỡng. Xem card 143 trong Implementation-notes, test `tests/test_be_ket_noi_khoa_cheo.py`.
+
+> Lỗi ném trong dependency chỉ ra console uvicorn, **không** vào `logs/app.log`. Cổng hết giờ chờ nên
+> tự `_log.warning` trước khi trả 503 — đừng bỏ dòng log đó.
+
 ## Authentication & Sessions
 - JWT verify bởi `get_current_staff` trong `deps.py` — role đọc từ **DB** mỗi request, không lấy từ token
 - Session lưu trong DB (`backend/core/sessions.py` → bảng `login_sessions`) — **không** mất khi restart

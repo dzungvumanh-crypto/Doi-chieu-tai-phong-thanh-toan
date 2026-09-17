@@ -12,8 +12,9 @@
 # canh đúng hành vi không chuẩn hoá của Windows — chạy trên Linux là kiểm sai môi
 # trường thật, xanh hay đỏ đều không nói lên điều gì.
 #
-# Python 3.10 cố định: README ghi rõ máy mới cần 3.10.x, bản 3.11/3.12 buộc cài
-# lại toàn bộ thư viện.
+# Python 3.12 cố định: README và CONTRIBUTING ghi rõ máy mới cần đúng 3.12.x, bản
+# khác buộc cài lại toàn bộ thư viện. Ghim ở đây phải khớp hai file đó — lệch là
+# đồng đội chạy thứ CI không kiểm (đã xảy ra: PR #105).
 name: Tests
 
 on:
@@ -40,7 +41,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: "3.12"
           cache: pip
           # Mặc định khoá cache chỉ theo requirements.txt — sửa requirements-dev.txt
           # (thêm ruff, pytest-cov) sẽ không làm mới cache.

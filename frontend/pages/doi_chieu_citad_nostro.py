@@ -21,6 +21,7 @@ chỉ dùng CHUNG cơ chế token ở tầng service — xem docstring ở đó)
 import asyncio
 import datetime
 import json
+import logging
 from decimal import Decimal
 
 from nicegui import ui
@@ -35,6 +36,8 @@ from frontend.shared import _sidebar, _content_area, _require_auth, _handle_api_
 # khoá "key" trong manifest.json thì PHẢI tính lại ID này (SHA-256 của DER
 # public key, lấy 16 byte đầu, mỗi nibble ánh xạ 0-15 -> 'a'-'p').
 _EXTENSION_ID = "khkonpnidmecnmmhohlmjamfolkpaeko"
+
+_log = logging.getLogger(__name__)
 
 _ACCENT = {
     "blue": ("bg-blue-50", "text-blue-600", "border-blue-100", "bg-blue-50/40"),
@@ -93,6 +96,27 @@ LOAI_CITAD = ["gtt", "gtc"]
 LOAI_LBL = {"gtt": "Giá trị Thấp", "gtc": "Giá trị Cao"}
 HUB_ROWS = ["gtt", "gtc_truoc", "gtc_tu"]
 HUB_LBL = {"gtt": "GTT", "gtc_truoc": "GTC — Trước 15h30", "gtc_tu": "GTC — Từ 15h30"}
+# Giữ ĐỒNG BỘ với LOAI_TIEN/CCY_LABEL trong backend/schemas/doi_chieu_citad_nostro.py
+# — frontend không import được schema backend (khác tiến trình).
+LOAI_TIEN = ["VND", "USD", "EUR"]
+CCY_LABEL = {"VND": "VNĐ", "USD": "USD", "EUR": "EUR"}
+
+
+def _is_legacy_flat_cD(cD: dict) -> bool:
+    """Bảng lưu TRƯỚC 14/09/2026 (chưa có nhiều loại tiền) có `cD` phẳng
+    {cong: {...}} — mirror `_is_legacy_flat_cD()` trong
+    backend/services/doi_chieu_citad_nostro_service.py, xem đó để biết vì
+    sao 2 tập khoá (CONGS vs LOAI_TIEN) không giao nhau nên phân biệt được."""
+    return any(k in CONGS for k in (cD or {}).keys())
+
+
+def _get_ccy_slice(sess: dict, ccy: str) -> tuple:
+    """Mirror `get_ccy_slice()` bên backend — bảng cũ coi toàn bộ là VNĐ."""
+    cD_all = sess.get("cD") or {}
+    phD_all = sess.get("phD") or {}
+    if _is_legacy_flat_cD(cD_all):
+        return (cD_all, phD_all) if ccy == "VND" else ({}, {})
+    return (cD_all.get(ccy) or {}, phD_all.get(ccy) or {})
 
 
 def nv(v):
@@ -168,50 +192,61 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
     # _on_ky_changed() bên dưới, mirror _on_ngay_changed_sync() của PTT).
     view_state = {"readonly": False, "session_id": None, "created_by": None, "ky": None}
 
+    # Lồng thêm 1 lớp `ccy` ngoài cùng — 3 tab con VND/USD/EUR trong CÙNG 1
+    # kỳ đối chiếu (quyết định 14/09/2026), mọi chỗ dùng data["cD"]... cũ chỉ
+    # cần thêm data[ccy]["cD"]... phía trước.
     data = {
-        "cD": {c: {loai: {"soMon": 0.0, "soTien": 0.0} for loai in LOAI_CITAD} for c in CONGS},
-        "phD": {r: {"soMon": 0.0, "soTien": 0.0} for r in HUB_ROWS},
+        ccy: {
+            "cD": {c: {loai: {"soMon": 0.0, "soTien": 0.0} for loai in LOAI_CITAD} for c in CONGS},
+            "phD": {r: {"soMon": 0.0, "soTien": 0.0} for r in HUB_ROWS},
+        }
+        for ccy in LOAI_TIEN
     }
     inputs = {
-        "cE": {c: {loai: {} for loai in LOAI_CITAD} for c in CONGS},
-        "phE": {r: {} for r in HUB_ROWS},
+        ccy: {
+            "cE": {c: {loai: {} for loai in LOAI_CITAD} for c in CONGS},
+            "phE": {r: {} for r in HUB_ROWS},
+        }
+        for ccy in LOAI_TIEN
     }
-    tong_labels = {"citad": {}, "hub": {}, "diff": {}}
+    tong_labels = {ccy: {"citad": {}, "hub": {}, "diff": {}} for ccy in LOAI_TIEN}
 
     tu_ngay_input = None
     den_ngay_input = None
     lap_bang_input = None
     kiem_soat_input = None
 
-    def _compute_totals():
+    def _compute_totals(ccy: str):
         """Cộng dồn bằng Decimal (`_dec()`), KHÔNG bằng float trực tiếp —
         cộng 5 cổng có thể sinh dư nhị phân dù về bản chất đã khớp tuyệt
         đối (xem docstring `_dec()` phía trên). Trả về Decimal — `recalc()`
         so `== 0`/`> 0` chính xác tuyệt đối, `fmt()` tự hoá float khi hiển
         thị (qua `nv()` roundtrip qua `str()`, không mất chính xác)."""
+        d = data[ccy]
         ci = {loai: {"soMon": Decimal(0), "soTien": Decimal(0)} for loai in LOAI_CITAD}
         for c in CONGS:
             for loai in LOAI_CITAD:
-                ci[loai]["soMon"] += _dec(data["cD"][c][loai]["soMon"])
-                ci[loai]["soTien"] += _dec(data["cD"][c][loai]["soTien"])
+                ci[loai]["soMon"] += _dec(d["cD"][c][loai]["soMon"])
+                ci[loai]["soTien"] += _dec(d["cD"][c][loai]["soTien"])
         hub = {
-            "gtt": {"soMon": _dec(data["phD"]["gtt"]["soMon"]), "soTien": _dec(data["phD"]["gtt"]["soTien"])},
+            "gtt": {"soMon": _dec(d["phD"]["gtt"]["soMon"]), "soTien": _dec(d["phD"]["gtt"]["soTien"])},
             "gtc": {
-                "soMon": _dec(data["phD"]["gtc_truoc"]["soMon"]) + _dec(data["phD"]["gtc_tu"]["soMon"]),
-                "soTien": _dec(data["phD"]["gtc_truoc"]["soTien"]) + _dec(data["phD"]["gtc_tu"]["soTien"]),
+                "soMon": _dec(d["phD"]["gtc_truoc"]["soMon"]) + _dec(d["phD"]["gtc_tu"]["soMon"]),
+                "soTien": _dec(d["phD"]["gtc_truoc"]["soTien"]) + _dec(d["phD"]["gtc_tu"]["soTien"]),
             },
         }
         return ci, hub
 
-    def recalc():
-        ci, hub = _compute_totals()
+    def recalc(ccy: str):
+        ci, hub = _compute_totals(ccy)
+        tl = tong_labels[ccy]
         for loai in LOAI_CITAD:
             for fld in ("soMon", "soTien"):
                 ci_val, hub_val = ci[loai][fld], hub[loai][fld]
-                tong_labels["citad"][(loai, fld)].text = fmt(ci_val) if ci_val else '—'
-                tong_labels["hub"][(loai, fld)].text = fmt(hub_val) if hub_val else '—'
+                tl["citad"][(loai, fld)].text = fmt(ci_val) if ci_val else '—'
+                tl["hub"][(loai, fld)].text = fmt(hub_val) if hub_val else '—'
                 df_val = ci_val - hub_val
-                lbl = tong_labels["diff"][(loai, fld)]
+                lbl = tl["diff"][(loai, fld)]
                 if df_val == 0 and ci_val == 0 and hub_val == 0:
                     lbl.text = '—'
                     lbl.classes(remove='text-red-600 text-green-700')
@@ -223,7 +258,7 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
                     lbl.text = f'{sign}{fmt(df_val)}'
                     lbl.classes(remove='text-green-700', add='text-red-600')
 
-    def build_citad_grid(container):
+    def build_citad_grid(container, ccy: str):
         with container:
             n_cols = 5  # Cổng | GTT Số món | GTT Số tiền | GTC Số món | GTC Số tiền
             with ui.grid(columns=n_cols).classes("w-full gap-0 p-4"):
@@ -240,15 +275,15 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
                     )
                     for loai in LOAI_CITAD:
                         for fld, fld_lbl in (("soMon", "m"), ("soTien", "t")):
-                            def _on_change(e, _c=c, _l=loai, _f=fld):
-                                data["cD"][_c][_l][_f] = nv(e.value)
+                            def _on_change(e, _ccy=ccy, _c=c, _l=loai, _f=fld):
+                                data[_ccy]["cD"][_c][_l][_f] = nv(e.value)
                                 _apply_cell_bg(e.sender)
-                                recalc()
+                                recalc(_ccy)
                             inp = ui.input(value='', on_change=_on_change).props(
                                 'dense outlined input-class="text-right"'
                             ).classes("w-full border-r border-b border-gray-300 py-1.5")
                             inp.on('blur', lambda _, _i=inp: _set_input(_i, fmt(_i.value)))
-                            inputs["cE"][c][loai][fld] = inp
+                            inputs[ccy]["cE"][c][loai][fld] = inp
                 # Dòng Tổng cộng — chỉ hiển thị (label), không phải input.
                 ui.label("Tổng cộng 5 cổng").classes(
                     "text-sm font-bold flex items-center justify-center py-1.5 bg-blue-50"
@@ -258,9 +293,9 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
                         lbl = ui.label('—').classes(
                             "text-sm font-bold flex items-center justify-end pr-2 py-1.5 bg-blue-50"
                         )
-                        tong_labels["citad"][(loai, fld)] = lbl
+                        tong_labels[ccy]["citad"][(loai, fld)] = lbl
 
-    def build_hub_grid(container):
+    def build_hub_grid(container, ccy: str):
         with container:
             with ui.grid(columns=3).classes("w-full gap-0 p-4"):
                 header_cls = "bg-emerald-600 text-white text-sm font-bold text-center py-2 border-r border-emerald-700"
@@ -273,25 +308,25 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
                         "border-r border-b border-gray-300"
                     )
                     for fld in ("soMon", "soTien"):
-                        def _on_change(e, _r=r, _f=fld):
-                            data["phD"][_r][_f] = nv(e.value)
+                        def _on_change(e, _ccy=ccy, _r=r, _f=fld):
+                            data[_ccy]["phD"][_r][_f] = nv(e.value)
                             _apply_cell_bg(e.sender)
-                            recalc()
+                            recalc(_ccy)
                         inp = ui.input(value='', on_change=_on_change).props(
                             'dense outlined input-class="text-right"'
                         ).classes("w-full border-r border-b border-gray-300 py-1.5")
                         inp.on('blur', lambda _, _i=inp: _set_input(_i, fmt(_i.value)))
-                        inputs["phE"][r][fld] = inp
+                        inputs[ccy]["phE"][r][fld] = inp
                 ui.label("Tổng HUB (GTT)").classes("text-sm font-bold flex items-center justify-center py-1.5 bg-emerald-50")
                 for fld in ("soMon", "soTien"):
                     lbl = ui.label('—').classes("text-sm font-bold flex items-center justify-end pr-2 py-1.5 bg-emerald-50")
-                    tong_labels["hub"][("gtt", fld)] = lbl
+                    tong_labels[ccy]["hub"][("gtt", fld)] = lbl
                 ui.label("Tổng HUB (GTC = Trước+Từ 15h30)").classes("text-sm font-bold flex items-center justify-center py-1.5 bg-emerald-50")
                 for fld in ("soMon", "soTien"):
                     lbl = ui.label('—').classes("text-sm font-bold flex items-center justify-end pr-2 py-1.5 bg-emerald-50")
-                    tong_labels["hub"][("gtc", fld)] = lbl
+                    tong_labels[ccy]["hub"][("gtc", fld)] = lbl
 
-    def build_diff_grid(container):
+    def build_diff_grid(container, ccy: str):
         with container:
             with ui.grid(columns=5).classes("w-full gap-0 p-4"):
                 header_cls = "bg-amber-600 text-white text-sm font-bold text-center py-2 border-r border-amber-700"
@@ -308,7 +343,7 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
                         lbl = ui.label('—').classes(
                             "text-sm font-bold flex items-center justify-end pr-2 py-1.5 border-r border-gray-300 bg-amber-50"
                         )
-                        tong_labels["diff"][(loai, fld)] = lbl
+                        tong_labels[ccy]["diff"][(loai, fld)] = lbl
 
     def apply_session_data(sess: dict):
         view_state["session_id"] = sess.get("_meta_session_id")
@@ -323,25 +358,42 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
             tu_ngay_input.value = tu_ngay
         if den_ngay:
             den_ngay_input.value = den_ngay
-        lap_bang_input.value = sess.get("lap_bang", "") or ""
-        kiem_soat_input.value = sess.get("kiem_soat", "") or ""
-        cD = sess.get("cD", {}) or {}
-        for c in CONGS:
-            cd = cD.get(c, {}) or {}
-            for loai in LOAI_CITAD:
-                src = cd.get(loai, {}) or {}
+        # Bơm giá trị cũ vào .options TRƯỚC khi gán .value — ô đổi thành
+        # ui.select(with_input) nên giá trị không có trong .options (người
+        # ký đã nghỉ/chuyển phòng, hoặc chỉ đơn giản không có trong danh sách
+        # gợi ý) sẽ bị ChoiceElement tự đổi thành None nếu không bơm trước.
+        # PHẢI gọi .update() ngay sau khi đổi .options (đọc docstring
+        # ui.select()) — mirror đúng doi_chieu_citad.py::apply_session_data().
+        lap_bang = sess.get("lap_bang", "") or ""
+        if lap_bang and lap_bang not in (lap_bang_input.options or []):
+            lap_bang_input.options = [*(lap_bang_input.options or []), lap_bang]
+            lap_bang_input.update()
+        lap_bang_input.value = lap_bang
+        kiem_soat = sess.get("kiem_soat", "") or ""
+        if kiem_soat and kiem_soat not in (kiem_soat_input.options or []):
+            kiem_soat_input.options = [*(kiem_soat_input.options or []), kiem_soat]
+            kiem_soat_input.update()
+        kiem_soat_input.value = kiem_soat
+        # Bảng cũ trước 14/09/2026 (cD phẳng, chỉ VNĐ) coi qua _get_ccy_slice()
+        # như toàn bộ là VNĐ — loop đủ 3 ccy luôn tự xoá sạch USD/EUR đang
+        # hiển thị trước đó (không cần bước reset riêng).
+        for ccy in LOAI_TIEN:
+            cD, phD = _get_ccy_slice(sess, ccy)
+            for c in CONGS:
+                cd = cD.get(c, {}) or {}
+                for loai in LOAI_CITAD:
+                    src = cd.get(loai, {}) or {}
+                    for fld in ("soMon", "soTien"):
+                        v = nv(src.get(fld, 0))
+                        data[ccy]["cD"][c][loai][fld] = v
+                        _set_input(inputs[ccy]["cE"][c][loai][fld], fmt(v))
+            for r in HUB_ROWS:
+                src = phD.get(r, {}) or {}
                 for fld in ("soMon", "soTien"):
                     v = nv(src.get(fld, 0))
-                    data["cD"][c][loai][fld] = v
-                    _set_input(inputs["cE"][c][loai][fld], fmt(v))
-        phD = sess.get("phD", {}) or {}
-        for r in HUB_ROWS:
-            src = phD.get(r, {}) or {}
-            for fld in ("soMon", "soTien"):
-                v = nv(src.get(fld, 0))
-                data["phD"][r][fld] = v
-                _set_input(inputs["phE"][r][fld], fmt(v))
-        recalc()
+                    data[ccy]["phD"][r][fld] = v
+                    _set_input(inputs[ccy]["phE"][r][fld], fmt(v))
+            recalc(ccy)
 
     def _set_form_readonly(readonly: bool):
         """Khoá/mở các ô nhập tay khi xem 1 bản từ tab "Lịch sử" (chỉ xem,
@@ -353,13 +405,14 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
         `recalc()` tính lại)."""
         view_state["readonly"] = readonly
         all_inputs = [tu_ngay_input, den_ngay_input, lap_bang_input, kiem_soat_input]
-        for c in CONGS:
-            for loai in LOAI_CITAD:
+        for ccy in LOAI_TIEN:
+            for c in CONGS:
+                for loai in LOAI_CITAD:
+                    for fld in ("soMon", "soTien"):
+                        all_inputs.append(inputs[ccy]["cE"][c][loai][fld])
+            for r in HUB_ROWS:
                 for fld in ("soMon", "soTien"):
-                    all_inputs.append(inputs["cE"][c][loai][fld])
-        for r in HUB_ROWS:
-            for fld in ("soMon", "soTien"):
-                all_inputs.append(inputs["phE"][r][fld])
+                    all_inputs.append(inputs[ccy]["phE"][r][fld])
         for inp in all_inputs:
             if readonly:
                 inp.props("readonly")
@@ -384,13 +437,23 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
         )
         delete_btn.set_visibility(can_delete)
 
+    def _snapshot_cD_phD() -> tuple:
+        """cD/phD LỒNG theo ccy của TOÀN BỘ 3 tab (không riêng tab đang xem)
+        — dùng chung cho `get_session_payload()` (Lưu) và `_do_download_export()`
+        (Xuất Excel), Excel luôn đủ 3 sheet dù đang mở tab nào."""
+        cD = {ccy: {c: {loai: dict(data[ccy]["cD"][c][loai]) for loai in LOAI_CITAD} for c in CONGS} for ccy in LOAI_TIEN}
+        phD = {ccy: {r: dict(data[ccy]["phD"][r]) for r in HUB_ROWS} for ccy in LOAI_TIEN}
+        return cD, phD
+
     def get_session_payload() -> dict:
-        cD = {c: {loai: dict(data["cD"][c][loai]) for loai in LOAI_CITAD} for c in CONGS}
-        phD = {r: dict(data["phD"][r]) for r in HUB_ROWS}
+        cD, phD = _snapshot_cD_phD()
         return {
             "ky": f"{tu_ngay_input.value}-{den_ngay_input.value}",
-            "lap_bang": lap_bang_input.value,
-            "kiem_soat": kiem_soat_input.value,
+            # or "" — ui.select() (khác ui.input cũ) chưa chọn gì thì .value là
+            # None, không phải "". SessionIn.lap_bang là Optional[str] nên None
+            # không né HTTP, nhưng ghi None đè lên tên đã lưu thì mất trắng.
+            "lap_bang": lap_bang_input.value or "",
+            "kiem_soat": kiem_soat_input.value or "",
             "cD": cD,
             "phD": phD,
             "session_id": view_state["session_id"],
@@ -411,13 +474,16 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
         for item in items:
             cong = str(item.get("cong", ""))
             loai = item.get("loai", "")
+            # Mặc định "VND" khớp default của CitadBufferIn.ccy — script CITAD
+            # VNĐ cũ (content_citad_nostro.js) không gửi field này.
+            ccy = item.get("ccy", "VND")
             so_mon, so_tien = item.get("soMon", 0), item.get("soTien", 0)
-            if cong not in CONGS or loai not in LOAI_CITAD:
+            if cong not in CONGS or loai not in LOAI_CITAD or ccy not in LOAI_TIEN:
                 continue
-            data["cD"][cong][loai]["soMon"] = nv(so_mon)
-            data["cD"][cong][loai]["soTien"] = nv(so_tien)
-            _set_input(inputs["cE"][cong][loai]["soMon"], fmt(so_mon))
-            _set_input(inputs["cE"][cong][loai]["soTien"], fmt(so_tien))
+            data[ccy]["cD"][cong][loai]["soMon"] = nv(so_mon)
+            data[ccy]["cD"][cong][loai]["soTien"] = nv(so_tien)
+            _set_input(inputs[ccy]["cE"][cong][loai]["soMon"], fmt(so_mon))
+            _set_input(inputs[ccy]["cE"][cong][loai]["soTien"], fmt(so_tien))
             count += 1
         try:
             await asyncio.to_thread(api.delete, "/api/doi-chieu-citad-nostro/citad-buffer")
@@ -428,7 +494,8 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
             ui.notify("Không xoá được bộ đệm sau khi nạp — bấm Nạp lần sau có thể ra số cũ. "
                       "Báo quản trị khởi động lại backend nếu thấy số lạ.",
                       type="warning", timeout=6000)
-        recalc()
+        for ccy in LOAI_TIEN:
+            recalc(ccy)
         ui.notify(f"Đã nạp {count} mục từ CITAD", type="positive")
 
     async def load_phub_buffer():
@@ -443,15 +510,23 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
             ui.notify("Chưa có dữ liệu PaymentHub. Dùng Extension!", type="warning")
             return
         count = 0
+        skipped_no_ccy = 0
         for item in items:
             loai = item.get("loai", "")
+            # KHÔNG default "VND" — PaymentHub buffer là list tự do (không qua
+            # Pydantic ép field), item thiếu `ccy` là buffer CŨ trước khi nâng
+            # cấp (content_paymenthub_nostro.js chưa gửi field này) hoặc lúc
+            # đang lọc "Tất cả" — bỏ qua thẳng, không ngầm gán nhầm loại tiền.
+            ccy = item.get("ccy")
             so_mon, so_tien = item.get("soMon", 0), item.get("soTien", 0)
-            if loai not in HUB_ROWS:
+            if loai not in HUB_ROWS or ccy not in LOAI_TIEN:
+                if loai in HUB_ROWS:
+                    skipped_no_ccy += 1
                 continue
-            data["phD"][loai]["soMon"] = nv(so_mon)
-            data["phD"][loai]["soTien"] = nv(so_tien)
-            _set_input(inputs["phE"][loai]["soMon"], fmt(so_mon))
-            _set_input(inputs["phE"][loai]["soTien"], fmt(so_tien))
+            data[ccy]["phD"][loai]["soMon"] = nv(so_mon)
+            data[ccy]["phD"][loai]["soTien"] = nv(so_tien)
+            _set_input(inputs[ccy]["phE"][loai]["soMon"], fmt(so_mon))
+            _set_input(inputs[ccy]["phE"][loai]["soTien"], fmt(so_tien))
             count += 1
         try:
             await asyncio.to_thread(api.delete, "/api/doi-chieu-citad-nostro/paymenthub-buffer")
@@ -462,7 +537,19 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
             ui.notify("Không xoá được bộ đệm sau khi nạp — bấm Nạp lần sau có thể ra số cũ. "
                       "Báo quản trị khởi động lại backend nếu thấy số lạ.",
                       type="warning", timeout=6000)
-        recalc()
+        for ccy in LOAI_TIEN:
+            recalc(ccy)
+        if skipped_no_ccy:
+            # Trước đây khuyên "quét lại" — sai nếu nguyên nhân là Extension bản
+            # 1.0 (chưa gửi field `ccy`): quét lại bằng bản cũ vẫn ra kết quả cũ.
+            # Nói thẳng khả năng đúng nhất — tab "Kết nối Extension" đã tự kiểm
+            # version và nhắc riêng nếu đúng là bản cũ.
+            ui.notify(
+                f"Bỏ qua {skipped_no_ccy} mục PaymentHub cũ không xác định được loại tiền — "
+                "có thể do Extension đang cài là bản cũ (trước 1.1, chưa biết Loại tiền). "
+                "Kiểm tab \"Kết nối Extension\", cài lại bản mới nếu có nhắc, rồi quét lại.",
+                type="warning", timeout=8000,
+            )
         ui.notify(f"Đã nạp {count} mục từ PaymentHub", type="positive")
 
     async def _save_session_now():
@@ -708,17 +795,71 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
 
             ui.timer(0.1, _load_entries, once=True)
 
+    # ── Danh sách tên Phòng QLTK Nostro, Vostro cho các ô "Người lập bảng"/
+    # "Người kiểm soát"/"Tên người chấm" — mirror đúng pattern
+    # `_load_payment_staff_names()` của doi_chieu_citad.py (Phòng Thanh
+    # toán), chỉ khác mã phòng ("NOSTRO" thay "PAYMENT"). Tra department
+    # theo CODE, không hardcode id — tránh phụ thuộc thứ tự tạo phòng ban.
+    async def _fetch_nostro_staff_names() -> set:
+        try:
+            depts = await asyncio.to_thread(api.get, "/api/departments/")
+            dept = next((d for d in depts if d.get("code") == "NOSTRO"), None)
+            if not dept:
+                _log.warning(
+                    "Không tìm thấy phòng ban code='NOSTRO' — các ô chọn tên không có gợi ý"
+                )
+                return set()
+            staff = await asyncio.to_thread(
+                api.get, "/api/staff/", {"department_id": dept["id"], "active_only": True}
+            )
+        except Exception as e:
+            # Danh sách gợi ý — lỗi ở đây không được chặn cả trang, nhưng PHẢI
+            # ghi log: options rỗng nhìn y hệt "phòng không có ai", không có
+            # log thì không có đường nào biết vì sao tên biến mất.
+            _log.warning("Không tải được danh sách nhân viên Phòng QLTK Nostro, Vostro: %s", e)
+            return set()
+        return {s["full_name"] for s in staff if s.get("full_name")}
+
+    def _merge_options(sel, names: set) -> None:
+        # GỘP vào options đang có, KHÔNG ghi đè — apply_session_data() tự
+        # bơm tên người ký cũ (đã nghỉ/chuyển phòng) vào options để giữ được
+        # giá trị. Gán đè cả danh sách thì ChoiceElement._update_options()
+        # thấy .value không còn trong options nữa và đổi ngay thành None.
+        # PHẢI gọi .update() ngay sau khi đổi .options (đọc docstring ui.select()).
+        sel.options = sorted({*(sel.options or []), *names})
+        sel.update()
+
+    async def _load_main_staff_names():
+        names = await _fetch_nostro_staff_names()
+        for sel in (lap_bang_input, kiem_soat_input):
+            _merge_options(sel, names)
+
     def _build_history_panel():
         with ui.row().classes("w-full items-end gap-3 flex-wrap mb-2"):
             tu_input = _date_filter_input("Từ ngày")
             den_input = _date_filter_input("Đến ngày")
-            nguoi_input = ui.input("Tên người chấm", value="").props("dense outlined clearable").classes("w-52")
+            nguoi_input = ui.select(
+                [], label="Tên người chấm", with_input=True, new_value_mode="add-unique"
+            ).props("dense outlined clearable").classes("w-52")
+
+            async def _load_history_staff_names():
+                _merge_options(nguoi_input, await _fetch_nostro_staff_names())
+
+            ui.timer(0.1, _load_history_staff_names, once=True)
+            # Lọc theo loại tiền — giúp tìm bảng khi 1 tháng có nhiều bảng
+            # nhưng không phải bảng nào cũng chấm đủ cả 3 loại tiền. Chỉ giữ
+            # bảng có nhập số liệu khác 0 cho đúng loại tiền đang chọn
+            # (svc._ccy_has_data()) — "" = Tất cả, không lọc.
+            ccy_input = ui.select({"": "Tất cả loại tiền", **CCY_LABEL}, value="").props(
+                "dense outlined"
+            ).classes("w-40")
             ui.button("Tìm", icon="search", on_click=lambda: load_history()).props("outline")
 
             async def clear_filter():
                 tu_input.value = ""
                 den_input.value = ""
                 nguoi_input.value = ""
+                ccy_input.value = ""
                 await load_history()
 
             ui.button("Xoá lọc", icon="clear", on_click=clear_filter).props("outline color=grey dense")
@@ -730,7 +871,7 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
                 rows = await asyncio.to_thread(
                     api.get, "/api/doi-chieu-citad-nostro/reconciliation-days",
                     params={"tu_ngay": tu_input.value or None, "den_ngay": den_input.value or None,
-                            "nguoi_cham": nguoi_input.value or None},
+                            "nguoi_cham": nguoi_input.value or None, "ccy": ccy_input.value or None},
                 )
             except Exception as e:
                 if _handle_api_error(e):
@@ -778,17 +919,39 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
             thang_input = ui.number("Tháng", value=datetime.date.today().month, min=1, max=12, format="%.0f").props(
                 "dense outlined"
             ).classes("w-24")
+            # Lọc theo loại tiền — cùng cơ chế với Lịch sử, giúp tìm bảng khi
+            # 1 tháng có nhiều bảng nhưng không phải bảng nào cũng chấm đủ cả
+            # 3 loại tiền. Chỉ lọc DANH SÁCH BẢNG, không lọc "ngày còn thiếu".
+            # on_change tự gọi load_month() ngay khi đổi — khác 3 ô Năm/Tháng/
+            # tên (cần bấm "Tải danh sách bảng" mới áp dụng), vì đây là dropdown
+            # chọn 1 trong 4 giá trị cố định, không phải gõ tay từng ký tự.
+            ccy_thang_input = ui.select(
+                {"": "Tất cả loại tiền", **CCY_LABEL}, value="", on_change=lambda: load_month()
+            ).props("dense outlined").classes("w-40")
             ui.button("Tải danh sách bảng", icon="search", on_click=lambda: load_month()).props("outline")
-            lb_thang_input = ui.input("Người lập bảng", value="").props("dense outlined").classes("w-52")
-            ks_thang_input = ui.input("Người kiểm soát", value="").props("dense outlined").classes("w-52")
+            lb_thang_input = ui.select(
+                [], label="Người lập bảng", with_input=True, new_value_mode="add-unique"
+            ).props("dense outlined").classes("w-52")
+            ks_thang_input = ui.select(
+                [], label="Người kiểm soát", with_input=True, new_value_mode="add-unique"
+            ).props("dense outlined").classes("w-52")
+
+            async def _load_month_staff_names():
+                names = await _fetch_nostro_staff_names()
+                for sel in (lb_thang_input, ks_thang_input):
+                    _merge_options(sel, names)
+
+            ui.timer(0.1, _load_month_staff_names, once=True)
 
         missing_box = ui.column().classes("w-full")
         checklist_box = ui.column().classes("w-full gap-0 border border-gray-200 rounded-xl overflow-hidden")
         overlap_box = ui.column().classes("w-full")
         with ui.row().classes("w-full items-center gap-4 p-3 bg-amber-50 border border-amber-200 rounded-lg mt-2") as total_box:
-            total_label = ui.label("Chưa tính tổng — tải danh sách bảng rồi tick chọn.").classes(
-                "text-sm text-amber-800 flex-grow"
-            )
+            # 1 dòng/loại tiền (VND/USD/EUR) — response /month-summary trả
+            # riêng theo ccy, không gộp chung 1 dòng như trước 14/09/2026.
+            total_container = ui.column().classes("flex-grow gap-1")
+            with total_container:
+                ui.label("Chưa tính tổng — tải danh sách bảng rồi tick chọn.").classes("text-sm text-amber-800")
             xuat_thang_btn = ui.button("Xuất Excel tháng", icon="download").props("outline")
 
         state = {"sessions": [], "checks": {}}  # session_id -> ui.checkbox
@@ -819,9 +982,11 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
                         )
 
         async def _recompute_total():
+            total_container.clear()
             checked_ids = [sid for sid, cb in state["checks"].items() if cb.value]
             if not checked_ids:
-                total_label.text = "Chưa chọn bảng nào — tổng tháng = 0."
+                with total_container:
+                    ui.label("Chưa chọn bảng nào — tổng tháng = 0.").classes("text-sm text-amber-800")
                 return
             try:
                 res = await asyncio.to_thread(
@@ -830,21 +995,26 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
             except Exception as e:
                 if _handle_api_error(e):
                     return
-                total_label.text = f"Lỗi tính tổng: {e}"
+                with total_container:
+                    ui.label(f"Lỗi tính tổng: {e}").classes("text-sm text-red-700")
                 return
-            ci, hub = res["ci"], res["hub"]
-            parts = []
-            for loai, ten in (("gtt", "GTT"), ("gtc", "GTC")):
-                dfm = ci[loai]["soMon"] - hub[loai]["soMon"]
-                dft = ci[loai]["soTien"] - hub[loai]["soTien"]
-                khop = dfm == 0 and dft == 0
-                dau = "✓" if khop else "⚠"
-                parts.append(
-                    f"{dau} {ten}: CITAD {fmt(ci[loai]['soMon'])}/{fmt(ci[loai]['soTien'])} — "
-                    f"HUB {fmt(hub[loai]['soMon'])}/{fmt(hub[loai]['soTien'])} — "
-                    f"Chênh lệch {fmt(dfm)}/{fmt(dft)}"
-                )
-            total_label.text = f"Đang tính trên {len(checked_ids)} bảng — " + "  |  ".join(parts)
+            with total_container:
+                for ccy in LOAI_TIEN:
+                    ci, hub = res[ccy]["ci"], res[ccy]["hub"]
+                    parts = []
+                    for loai, ten in (("gtt", "GTT"), ("gtc", "GTC")):
+                        dfm = ci[loai]["soMon"] - hub[loai]["soMon"]
+                        dft = ci[loai]["soTien"] - hub[loai]["soTien"]
+                        khop = dfm == 0 and dft == 0
+                        dau = "✓" if khop else "⚠"
+                        parts.append(
+                            f"{dau} {ten}: CITAD {fmt(ci[loai]['soMon'])}/{fmt(ci[loai]['soTien'])} — "
+                            f"HUB {fmt(hub[loai]['soMon'])}/{fmt(hub[loai]['soTien'])} — "
+                            f"Chênh lệch {fmt(dfm)}/{fmt(dft)}"
+                        )
+                    ui.label(
+                        f"[{CCY_LABEL[ccy]}] Đang tính trên {len(checked_ids)} bảng — " + "  |  ".join(parts)
+                    ).classes("text-sm text-amber-800")
 
         async def _on_check_change():
             _recompute_overlap()
@@ -854,7 +1024,8 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
             try:
                 res = await asyncio.to_thread(
                     api.get, "/api/doi-chieu-citad-nostro/month-sessions",
-                    params={"nam": int(nam_input.value), "thang": int(thang_input.value)},
+                    params={"nam": int(nam_input.value), "thang": int(thang_input.value),
+                            "ccy": ccy_thang_input.value or None},
                 )
             except Exception as e:
                 if _handle_api_error(e):
@@ -908,7 +1079,11 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
                     api.post_download, "/api/doi-chieu-citad-nostro/month-summary/export", {
                         "nam": int(nam_input.value), "thang": int(thang_input.value),
                         "session_ids": checked_ids,
-                        "lb": lb_thang_input.value, "ks": ks_thang_input.value,
+                        # or "" — xem chú thích ở get_session_payload(); ở đây BẮT
+                        # BUỘC vì MonthSummaryExportIn.lb là str (không Optional),
+                        # gửi None là 422, mà 2 ô này không được apply_session_data()
+                        # gán giá trị nên luôn None cho tới khi người dùng tự chọn.
+                        "lb": lb_thang_input.value or "", "ks": ks_thang_input.value or "",
                     },
                 )
             except Exception as e:
@@ -923,14 +1098,17 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
         ui.timer(0.1, load_month, once=True)
 
     async def _do_download_export():
+        cD, phD = _snapshot_cD_phD()
         try:
             content = await asyncio.to_thread(
                 api.post_download, "/api/doi-chieu-citad-nostro/export", {
                     "tu_ngay": tu_ngay_input.value, "den_ngay": den_ngay_input.value,
                     "sheet_name": f"{tu_ngay_input.value}_{den_ngay_input.value}".replace("/", "."),
-                    "lb": lap_bang_input.value, "ks": kiem_soat_input.value,
-                    "cD": {c: {loai: dict(data["cD"][c][loai]) for loai in LOAI_CITAD} for c in CONGS},
-                    "phD": {r: dict(data["phD"][r]) for r in HUB_ROWS},
+                    # or "" — ExportIn.lb/ks là str bắt buộc, không Optional; None
+                    # (chưa chọn tên trong ui.select) là 422, xem get_session_payload().
+                    "lb": lap_bang_input.value or "", "ks": kiem_soat_input.value or "",
+                    "cD": cD,
+                    "phD": phD,
                 },
             )
         except Exception as e:
@@ -1039,7 +1217,91 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
                 return
             ui.notify(f"Lỗi: {e}", type="negative")
             return
-        ui.download(content, "extension_citad_nv.zip")
+        # ui.download() tự đặt tên file phía trình duyệt — Content-Disposition
+        # của response API không có tác dụng ở đây, nên phải tự kèm version
+        # vào tên file NGAY TẠI ĐÂY (không đọc lại từ header). Đọc version thất
+        # bại thì vẫn tải được, chỉ mất phần số trong tên, không chặn tải.
+        try:
+            version = (await asyncio.to_thread(api.get, "/api/doi-chieu-citad-nostro/extension-version"))["version"]
+            fname = f"extension_citad_nv_v{version}.zip"
+        except Exception:
+            fname = "extension_citad_nv.zip"
+        ui.download(content, fname)
+
+    # ── Nhắc cập nhật Extension — mirror đúng pattern của doi_chieu_citad.py
+    # (Phòng Thanh toán). Bản 1.1 (14/09/2026) thêm content_citad_nostro_fx.js
+    # và đổi key buffer PaymentHub (ph_{loai} -> ph_{loai}_{ccy}) — máy còn cài
+    # bản 1.0 thì Nạp PaymentHub sẽ bỏ qua MỌI mục (thiếu `ccy`) và USD/EUR bên
+    # CITAD không lấy được gì (không có script quét trang ngoại tệ), không có
+    # cách nào tự phát hiện nếu không chủ động hỏi version như dưới đây.
+    _ACK_STORAGE_KEY = "citad_nostro_ext_update_ack"
+
+    async def _get_installed_extension_version() -> str | None:
+        js = f"""
+            return await new Promise((resolve) => {{
+                if (!(window.chrome && chrome.runtime && chrome.runtime.sendMessage)) {{
+                    resolve(null);
+                    return;
+                }}
+                try {{
+                    chrome.runtime.sendMessage({_EXTENSION_ID!r}, {{type: 'GET_VERSION'}}, (response) => {{
+                        if (chrome.runtime.lastError || !response || !response.ok) {{
+                            resolve(null);
+                        }} else {{
+                            resolve(response.version || null);
+                        }}
+                    }});
+                }} catch (e) {{
+                    resolve(null);
+                }}
+            }});
+        """
+        try:
+            return await ui.run_javascript(js, timeout=3.0)
+        except Exception:
+            return None
+
+    async def _check_extension_update():
+        installed = await _get_installed_extension_version()
+        if not installed:
+            return  # không cài/không rõ — im lặng bỏ qua, không đoán bừa
+        try:
+            latest = (await asyncio.to_thread(api.get, "/api/doi-chieu-citad-nostro/extension-version"))["version"]
+        except Exception:
+            return
+        if installed == latest:
+            return
+        try:
+            acked = await ui.run_javascript(f"return localStorage.getItem({_ACK_STORAGE_KEY!r})", timeout=2.0)
+        except Exception:
+            acked = None
+        if acked == latest:
+            return  # đã xác nhận đúng bản mới nhất này rồi — không hiện lại
+
+        with ui.dialog().props("persistent") as dialog, ui.card().classes("w-full max-w-lg"):
+            ui.label("⚠ Có bản cập nhật mới cho Extension").classes("text-lg font-bold text-orange-600")
+            ui.label(
+                f"Đang dùng: {installed}  —  Bản mới nhất: {latest}"
+            ).classes("text-sm font-bold text-gray-700")
+            ui.label(
+                "Vào chrome://extensions, gỡ bản Extension cũ, rồi tải lại bản mới bên dưới và "
+                "\"Load unpacked\" lại thư mục vừa giải nén."
+            ).classes("text-sm text-gray-500")
+            with ui.row().classes("w-full justify-end gap-2 mt-3"):
+                ui.button(
+                    "Tải Extension mới", icon="download", on_click=do_download_extension
+                ).props("outline")
+
+                async def _confirm_update():
+                    await ui.run_javascript(
+                        f"localStorage.setItem({_ACK_STORAGE_KEY!r}, {latest!r})"
+                    )
+                    dialog.close()
+
+                ui.button("Đã xác nhận", icon="check", on_click=_confirm_update).classes(
+                    "bg-orange-600 hover:bg-orange-700 text-white rounded-lg"
+                )
+        dialog.open()
 
     with ui.row().classes("w-full"):
         await _sidebar("doi_chieu_citad_nostro")
@@ -1070,8 +1332,16 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
                             with ui.row().classes("w-full items-end gap-3 p-4 flex-wrap"):
                                 tu_ngay_input = _date_picker_input("Từ ngày")
                                 den_ngay_input = _date_picker_input("Đến ngày")
-                                lap_bang_input = ui.input("Người lập bảng", value="").props("dense outlined").classes("w-52")
-                                kiem_soat_input = ui.input("Người kiểm soát", value="").props("dense outlined").classes("w-52")
+                                # ui.select(with_input, new_value_mode="add-unique") — vẫn gõ tay
+                                # tự do được như ui.input cũ, thêm được bấm chọn từ danh sách nhân
+                                # sự Phòng QLTK Nostro, Vostro — mirror đúng pattern đã có ở
+                                # doi_chieu_citad.py (Phòng Thanh toán), xem _load_nostro_staff_names().
+                                lap_bang_input = ui.select(
+                                    [], label="Người lập bảng", with_input=True, new_value_mode="add-unique"
+                                ).props("dense outlined").classes("w-52")
+                                kiem_soat_input = ui.select(
+                                    [], label="Người kiểm soát", with_input=True, new_value_mode="add-unique"
+                                ).props("dense outlined").classes("w-52")
                                 nap_citad_btn = ui.button("Nạp CITAD", icon="cloud_download", on_click=load_citad_buffer).props("outline").classes("rounded-lg")
                                 nap_ph_btn = ui.button("Nạp PaymentHub", icon="cloud_download", on_click=load_phub_buffer).props("outline").classes("rounded-lg")
 
@@ -1172,14 +1442,33 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
 
                             ui.timer(2.0, _check_own_sessions_banner)
 
-                        with _section_card("Chênh lệch CITAD − HUB", icon="difference", accent="amber") as diff_card:
-                            build_diff_grid(diff_card)
+                        # 3 tab con VND/USD/EUR — CÙNG 1 kỳ, chung ngày/lập
+                        # bảng/kiểm soát/nút Lưu-Xoá-Xuất Excel ở trên/dưới,
+                        # chỉ số liệu CITAD/HUB/Chênh lệch khác nhau theo tab.
+                        with ui.tabs().props(
+                            "dense active-color=indigo-600 indicator-color=indigo-600 align=left"
+                        ).classes("w-full") as ccy_tabs:
+                            ccy_tab_objs = {ccy: ui.tab(CCY_LABEL[ccy]) for ccy in LOAI_TIEN}
+                        with ui.tab_panels(ccy_tabs, value=ccy_tab_objs["VND"]).classes("w-full"):
+                            for ccy in LOAI_TIEN:
+                                with ui.tab_panel(ccy_tab_objs[ccy]):
+                                    with ui.column().classes("w-full gap-4"):
+                                        with _section_card(
+                                            f"Chênh lệch CITAD − HUB ({CCY_LABEL[ccy]})", icon="difference", accent="amber"
+                                        ) as diff_card:
+                                            build_diff_grid(diff_card, ccy)
 
-                        with _section_card("5 cổng CITAD — Tra cứu dữ liệu", icon="account_balance_wallet", accent="indigo") as citad_card:
-                            build_citad_grid(citad_card)
+                                        with _section_card(
+                                            f"5 cổng CITAD — Tra cứu dữ liệu ({CCY_LABEL[ccy]})",
+                                            icon="account_balance_wallet", accent="indigo",
+                                        ) as citad_card:
+                                            build_citad_grid(citad_card, ccy)
 
-                        with _section_card("PaymentHub — Lập bảng kê phí chia sẻ CITAD", icon="hub", accent="emerald") as hub_card:
-                            build_hub_grid(hub_card)
+                                        with _section_card(
+                                            f"PaymentHub — Lập bảng kê phí chia sẻ CITAD ({CCY_LABEL[ccy]})",
+                                            icon="hub", accent="emerald",
+                                        ) as hub_card:
+                                            build_hub_grid(hub_card, ccy)
 
                         with ui.row().classes("w-full justify-end gap-2"):
                             delete_btn = ui.button("Xoá bảng này", icon="delete", on_click=do_delete_session).props(
@@ -1189,8 +1478,10 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
                             save_btn = ui.button("Lưu đối chiếu", icon="save", on_click=do_save_session).classes(
                                 "bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg"
                             )
-                    recalc()
+                    for ccy in LOAI_TIEN:
+                        recalc(ccy)
                     _refresh_delete_btn()
+                    ui.timer(0.1, _load_main_staff_names, once=True)
 
                 with ui.tab_panel(tab_lich_su):
                     with _section_card("Lịch sử đối chiếu", icon="history", accent="blue"):
@@ -1224,3 +1515,4 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
                                 ui.button("Thu hồi mã", icon="link_off", on_click=do_revoke_extension_token).props("outline color=negative")
                                 ui.button("Tải Extension (.zip)", icon="download", on_click=do_download_extension).props("outline")
                             ui.timer(0.1, refresh_extension_status, once=True)
+                            ui.timer(0.1, _check_extension_update, once=True)

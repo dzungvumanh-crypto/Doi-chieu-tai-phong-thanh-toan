@@ -134,3 +134,148 @@ def test_nguong_theo_duong_dan(monkeypatch):
     assert sr._nguong_ms("/api/achilles/x") == 1500
     # Đoạn riêng, KHÔNG nằm trong tiền tố _kenh_core — khớp theo đoạn từng làm rơi mất module này
     assert sr._nguong_ms("/api/doi_chieu_song_phuong_kenh_core_di/start_upload") == 10000
+
+
+# ── Trạng thái kèm theo dòng cảnh báo ──
+def test_canh_bao_kem_trang_thai_luong_ket_noi_tai(app_thu, caplog):
+    with caplog.at_level(logging.WARNING, logger="slow.request"):
+        app_thu.get("/api/cham")
+    (r,) = _canh_bao(caplog)
+    msg = r.getMessage()
+    for chu in ("luồng ", "kết nối CSDL ", "xếp cổng ", "đang xử lý ", "việc nặng ", "đối chiếu "):
+        assert chu in msg, f"thiếu {chu!r}: {msg}"
+    # Không bật đo trễ (app thử không chạy lifespan) thì phải nói rõ, không in số giả
+    assert "loop trễ không đo" in msg
+
+
+def test_chup_trang_thai_hong_van_ghi_duoc_canh_bao(app_thu, caplog, monkeypatch):
+    from backend import database as _db
+
+    def vo():
+        raise RuntimeError("bể hỏng")
+    monkeypatch.setattr(_db, "pool_stats", vo)
+    with caplog.at_level(logging.WARNING, logger="slow.request"):
+        r = app_thu.get("/api/cham")
+    assert r.status_code == 200
+    (w,) = _canh_bao(caplog)
+    assert "/api/cham" in w.getMessage() and "không lấy được trạng thái" in w.getMessage()
+
+
+def test_do_duoc_event_loop_bi_chan():
+    import asyncio
+
+    async def chay():
+        sr.bat_do_tre()
+        try:
+            await asyncio.sleep(0.12)
+            tu = time.monotonic()
+            time.sleep(0.3)                  # chặn loop — đúng kiểu async def gọi hàm đồng bộ
+            await asyncio.sleep(0.12)        # cho task đo kịp thức dậy ghi mẫu
+            return sr.tre_loop_ms(tu)
+        finally:
+            await sr.tat_do_tre()
+
+    tre = asyncio.run(chay())
+    assert tre is not None and tre[0] >= 200, tre
+    assert sr.tre_loop_ms(0) is None, "tắt rồi mà vẫn báo số"
+
+
+def test_luong_nen_giu_gil_hien_o_tong_tre_du_max_nho():
+    # Đúng ca nghi ngờ trên máy chủ: luồng đối chiếu thuần Python tranh GIL. Loop bị đói
+    # thành nhiều quãng ngắn — max nhỏ, tổng lớn. Chỉ số max một mình sẽ bỏ sót.
+    import asyncio
+    import threading
+
+    dung = threading.Event()
+
+    def ton_cpu():
+        while not dung.is_set():
+            sum(i * i for i in range(2000))
+
+    async def chay():
+        sr.bat_do_tre()
+        try:
+            await asyncio.sleep(0.2)
+            tu = time.monotonic()
+            ts = [threading.Thread(target=ton_cpu) for _ in range(3)]
+            [t.start() for t in ts]
+            try:
+                await asyncio.sleep(1.5)
+            finally:
+                dung.set()
+                [t.join() for t in ts]
+            return sr.tre_loop_ms(tu)
+        finally:
+            await sr.tat_do_tre()
+
+    toi_da, tong = asyncio.run(chay())
+    assert tong >= 150, (toi_da, tong)   # đo: 3 luồng × 2 s ≈ 790–890 ms; rảnh ≈ 12 ms
+
+
+def test_luc_ranh_tong_tre_gan_0():
+    import asyncio
+
+    async def chay():
+        sr.bat_do_tre()
+        try:
+            tu = time.monotonic()
+            await asyncio.sleep(1.0)
+            return sr.tre_loop_ms(tu)
+        finally:
+            await sr.tat_do_tre()
+
+    toi_da, tong = asyncio.run(chay())
+    assert tong < 80, (toi_da, tong)
+
+
+def test_tat_do_tre_khi_task_da_chet_vi_loi_khong_nem():
+    import asyncio
+
+    async def chay():
+        async def vo():
+            raise RuntimeError("chết")
+        sr._task_do_tre = asyncio.get_running_loop().create_task(vo())
+        await asyncio.sleep(0)
+        await sr.tat_do_tre()               # không được ném
+        return sr._task_do_tre
+
+    assert asyncio.run(chay()) is None
+
+
+def test_async_def_chan_loop_hien_trong_canh_bao(monkeypatch, caplog):
+    from contextlib import asynccontextmanager
+
+    monkeypatch.setattr(sr.settings, "SLOW_REQUEST_MS", 50, raising=False)
+    monkeypatch.setattr(sr.settings, "SLOW_REQUEST_EXCLUDE", [], raising=False)
+
+    @asynccontextmanager
+    async def lifespan(_app):
+        sr.bat_do_tre()
+        try:
+            yield
+        finally:
+            await sr.tat_do_tre()
+
+    app = FastAPI(lifespan=lifespan)
+
+    @app.get("/api/chan-loop")
+    async def chan_loop():
+        time.sleep(0.3)
+        return {"ok": True}
+
+    app.add_middleware(sr.SlowRequestMiddleware)
+    with TestClient(app) as cl, caplog.at_level(logging.WARNING, logger="slow.request"):
+        cl.get("/api/chan-loop")
+    (w,) = [r for r in _canh_bao(caplog) if "/api/chan-loop" in r.getMessage()]
+    import re
+    so = int(re.search(r"loop chặn tối đa (\d+) ms", w.getMessage()).group(1))
+    assert so >= 150, w.getMessage()
+
+
+def test_dem_dang_xu_ly_ve_0_ke_ca_khi_route_nem_loi(app_thu):
+    try:
+        app_thu.get("/api/no")
+    except RuntimeError:
+        pass
+    app_thu.get("/api/nhanh")
+    assert sr._dang_xu_ly == 0

@@ -752,3 +752,60 @@ def test_parse_ipcas_khong_co_cot_ngay_kenh_tra_khong_bi_loai_nham():
     )
     rows = parsers._parse_ipcas_text(text, "test.csv", None)
     assert len(rows) == 1
+
+
+def test_vnd_den_citad_4_ngan_hang_ipcas_3_ngan_hang_khong_mat_lenh_that():
+    """Bug thật xác nhận dữ liệu 15/09/2026: txid/so_gd=10008309, so_tien=
+    500.000 — CITAD có 4 dòng thật (4 ngân hàng gửi khác nhau), IPCAS chỉ
+    có 3 dòng thật (3 ngân hàng gửi). Trước sửa: 1 dòng đại diện IPCAS duy
+    nhất (ipcas_den_map, không phân biệt ngân hàng) khớp NHẦM với CẢ 4 dòng
+    CITAD (n_khop tính thừa 4 thay vì đúng 3), dòng CITAD ngân hàng thứ 4
+    (mã 01203003) bị nuốt mất, không bao giờ hiện "Chỉ CITAD". Sau sửa: chỉ
+    3 dòng khớp đúng ngân hàng, dòng ngân hàng thứ 4 phải tự hiện "Chỉ
+    CITAD" kèm ghi_chú nêu rõ mã ngân hàng bị thiếu."""
+    citad = [
+        _citad('10008309', chieu='den', loai='il', so_tien=500_000, cong='1', nh_gui='201001'),
+        _citad('10008309', chieu='den', loai='il', so_tien=500_000, cong='1', nh_gui='202002'),
+        _citad('10008309', chieu='den', loai='il', so_tien=500_000, cong='1', nh_gui='970403'),
+        _citad('10008309', chieu='den', loai='il', so_tien=500_000, cong='1', nh_gui='203003'),  # NH khong co ben IPCAS
+    ]
+    ipcas = [
+        _ipcas(chieu='den', txid='10008309', loai='il', so_tien=500_000,
+               trang_thai='SBSC', nh_nhan='01201001'),
+        _ipcas(chieu='den', txid='10008309', loai='il', so_tien=500_000,
+               trang_thai='SBSC', nh_nhan='01202002'),
+        _ipcas(chieu='den', txid='10008309', loai='il', so_tien=500_000,
+               trang_thai='SBSC', nh_nhan='79970403'),
+    ]
+    n_khop, lech, khop = run_doiSoat_ram(citad, ipcas, [])
+    assert n_khop == 3
+    assert len(khop) == 3 and all(r['status'] == 'both' for r in khop)
+    chi_citad = [r for r in lech if r['status'] == 'only_citad']
+    assert len(chi_citad) == 1
+    assert chi_citad[0]['nh_gui'] == '203003'
+    assert '203003' in chi_citad[0]['ghi_chu']
+    assert not any(r['status'] == 'only_ipcas' for r in lech)
+
+
+def test_vnd_den_nhieu_ngan_hang_ipcas_du_1_ngan_hang_hien_chi_ipcas():
+    """Đối xứng với bug 10008309: IPCAS có thêm 1 ngân hàng CITAD không có
+    — phải hiện "Chỉ IPCAS" kèm mã ngân hàng dư (vòng lặp "IPCAS Đến dư
+    theo ngân hàng" MỚI, không bị vòng lặp cũ bỏ sót vì khoá này đã bị
+    loại khỏi vòng cũ)."""
+    citad = [
+        _citad('10009000', chieu='den', loai='il', so_tien=200_000, cong='1', nh_gui='201001'),
+        _citad('10009000', chieu='den', loai='il', so_tien=200_000, cong='1', nh_gui='202002'),
+    ]
+    ipcas = [
+        _ipcas(chieu='den', txid='10009000', loai='il', so_tien=200_000,
+               trang_thai='SBSC', nh_nhan='01201001'),
+        _ipcas(chieu='den', txid='10009000', loai='il', so_tien=200_000,
+               trang_thai='SBSC', nh_nhan='01202002'),
+        _ipcas(chieu='den', txid='10009000', loai='il', so_tien=200_000,
+               trang_thai='SBSC', nh_nhan='79970999'),  # NH thu 3, CITAD khong co
+    ]
+    n_khop, lech, khop = run_doiSoat_ram(citad, ipcas, [])
+    assert n_khop == 2
+    du = [r for r in lech if r['status'] == 'only_ipcas']
+    assert len(du) == 1
+    assert '970999' in du[0]['ghi_chu']

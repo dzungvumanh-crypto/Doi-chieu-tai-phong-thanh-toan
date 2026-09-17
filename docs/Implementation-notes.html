@@ -51,7 +51,571 @@
 <div class="page">
 
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
-  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-09-14</p>
+  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-09-17</p>
+
+  <!-- TV5 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">TV5</span>
+      <span class="card-title">Gỡ thư mục bản gốc QĐ 979 khỏi repo — chỉ gỡ theo dõi, không viết lại lịch sử</span>
+      <span class="badge badge-done">Đã merge — PR #115</span>
+    </div>
+    <div class="card-body">
+
+      <p><code>979-QyD-NHNo-PC (Trình bày VB)/</code> (7 file Word/PDF, ~800 KB) không được mã chạy trên máy
+        chính đọc. Người đọc duy nhất là <code>scripts/tach_mau_vb.py</code> — chạy tay, kết quả đã commit ở
+        <code>templates/vb_mau/</code>; <code>quy_chuan.py</code> đã mã hoá quy định. Dùng
+        <code>git rm --cached</code> + luật <code>/979-QyD-NHNo-PC*/</code> trong <code>.gitignore</code>.</p>
+
+      <table>
+        <tr><th style="width:30%">Đánh đổi</th><th>Chi tiết</th></tr>
+        <tr><td>File vẫn còn trong lịch sử git</td>
+          <td>Không chạy <code>git filter-repo</code> / force-push: phải viết lại mọi commit trên ~30 nhánh
+            đang mở, mọi bản clone phải clone lại. 800 KB không đáng. Văn bản là quy định nội bộ đã ban hành,
+            không phải dữ liệu nhạy cảm — nếu sau này cần xoá hẳn vì lý do bảo mật thì đó là việc riêng.</td></tr>
+        <tr><td><code>git pull</code> ở máy dev khác xoá thư mục trên đĩa</td>
+          <td>Git xoá file bị gỡ ở upstream. Máy chính không bị (deploy.bat không chép thư mục này). Đã ghi cảnh
+            báo ở Logs_update; README ghi rõ script cần tự chép thư mục vào.</td></tr>
+        <tr><td>Các nhánh cũ vẫn chứa thư mục</td>
+          <td>Nhánh nào merge develop sau PR này thì tự mất; nhánh cũ merge thẳng mà không đụng thư mục thì git
+            không đưa lại.</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <!-- TV4 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">TV4</span>
+      <span class="card-title">Nâng Python 3.10 → 3.12 — và vì sao một nửa thay đổi đi vào develop qua PR #112 (PR #111, issue #108)</span>
+      <span class="badge badge-done">Đã merge — máy chủ 3.12.10, 2013 test xanh</span>
+    </div>
+    <div class="card-body">
+
+      <p>Python 3.10 hết hỗ trợ <b>31/10/2026</b>. Đích 3.12 (hỗ trợ tới 10/2028). Đổi đồng bộ
+        <code>tests.yml</code>, <code>ruff.toml</code> (<code>py312</code>), README, CONTRIBUTING,
+        <code>start.bat</code> — vì chính sự lệch giữa các chỗ khai phiên bản đã sinh ra PR #105.</p>
+
+      <p class="caution"><b>⚠ Thứ tự bắt buộc: mọi máy lên 3.12 TRƯỚC, rồi mới đổi CI/tài liệu.</b> Mã viết
+        cho 3.10 gần như luôn chạy trên 3.12, nhưng mã viết cho 3.12 thường <b>không</b> chạy trên 3.10.
+        Ví dụ thật: Python 3.12 cảnh báo <code>utcnow()</code> và gợi ý <code>datetime.UTC</code> — thứ đó
+        ném <code>AttributeError</code> trên 3.10, mà <code>security.py:21</code> nằm trên đường đăng nhập.
+        Và cổng ruff F821/E9 không bắt được.</p>
+
+      <table>
+        <tr><th style="width:32%">Bẫy gặp trong lúc nâng</th><th style="width:40%">Điều đã xảy ra</th><th style="width:28%">Chặn bằng gì</th></tr>
+        <tr>
+          <td><code>python</code> ≠ <code>py</code> trên máy có hai bản</td>
+          <td>Cài 3.12 xong, <code>python</code> vẫn trỏ 3.10. Venv dựng bằng <code>python</code> ra 3.10,
+            test vẫn 2001 xanh → <b>tưởng đã nâng xong</b>.</td>
+          <td>CONTRIBUTING bắt gõ <code>py -3.12</code> và kiểm <code>--version</code> trước khi cài thư viện</td>
+        </tr>
+        <tr>
+          <td>Bước phá đi trước bước kiểm</td>
+          <td>Trên máy <code>HP</code>: xoá <code>.venv</code> xong <code>py -3.12</code> mới báo
+            <i>No suitable Python runtime found</i> → ứng dụng không còn venv nào chạy được.</td>
+          <td>Kiểm <code>py -3.12 --version</code> <b>trước</b> khi động vào venv</td>
+        </tr>
+        <tr>
+          <td>Bản sao lưu venv không bị ignore</td>
+          <td>Đổi tên thành <code>.venv_310_backup</code>, mà <code>git-save.bat</code> chạy
+            <code>git add -A</code> → sẽ commit <b>11.049 file / 936 MB</b> (đo bằng <code>--dry-run</code>).</td>
+          <td><code>.gitignore</code>: <code>.venv*/</code></td>
+        </tr>
+        <tr>
+          <td>Venv trên USB chỉ dùng chung giữa các máy <b>cùng bản Python</b></td>
+          <td>Venv dựng trên máy <code>HP</code> cắm sang máy <code>Administrator</code> báo
+            <i>No Python at C:\Users\HP\...</i>.</td>
+          <td>Mọi máy cắm chung USB cùng 3.12; đổi máy thì <code>py -3.12 -m venv --upgrade .venv</code></td>
+        </tr>
+        <tr>
+          <td>Cùng dòng khai báo, khác numpy</td>
+          <td><code>numpy&gt;=1.22,&lt;2.6</code>: 3.12 cài <b>2.5.3</b>, 3.10 cài <b>2.2.6</b> (numpy 2.3+ đòi
+            Python ≥3.11). CI test bản numpy máy 3.10 không có.</td>
+          <td>Nâng đồng loạt, không máy nào lệch</td>
+        </tr>
+      </table>
+
+      <p class="caution"><b>⚠ Một nửa thay đổi đi vào develop qua PR #112, không phải PR #111.</b> Nhánh
+        <code>fix/be-ket-noi-khoa-cheo</code> được phiên song song tạo trong <b>cùng thư mục</b>
+        <code>D:\System</code> lúc thư mục đang checkout nhánh nâng 3.12 → nó mọc ra từ commit
+        <code>ccfe18d</code> (bản đầu, chưa vá) thay vì từ <code>develop</code>. Merge #112 là kéo theo
+        <code>tests.yml</code> 3.12 và hướng dẫn nâng cấp còn cả bốn bẫy trên. Từ lúc đó tới khi merge
+        #111, develop chứa hướng dẫn lỗi. Đọc lịch sử git: việc đổi CI sang 3.12 nằm dưới merge của #112.</p>
+
+      <p class="note"><b>Rút ra:</b> hai phiên (người hoặc Claude) làm song song thì <b>mỗi phiên một
+        worktree</b> — không chuyển nhánh trong thư mục chung. Tạo nhánh mới luôn từ
+        <code>origin/develop</code> tường minh (<code>git checkout -b &lt;tên&gt; origin/develop</code>),
+        đừng từ HEAD hiện tại. Trên USB, worktree đòi <code>git -c safe.directory=*</code> vì FAT/exFAT không
+        ghi quyền sở hữu — dùng theo từng lệnh, <b>không</b> thêm vào cấu hình Git toàn cục.</p>
+
+      <p><b>Đã kiểm trước khi đổi:</b> mọi thư viện đang ghim có wheel chạy trên 3.12 Windows. Ba gói trông
+        như thiếu thực ra không: <code>bcrypt</code> dùng tag <code>cp36-abi3</code> (mọi CPython 3.6+),
+        <code>pypdfium2</code>/<code>ruff</code> dùng <code>py3-none-win_amd64</code>. Kiểm wheel bằng cách
+        tìm chuỗi <code>cp312</code> trong tên file là <b>sai</b> — bỏ sót cả hai loại tag này.</p>
+
+      <p><b>Để lại:</b> cảnh báo test nhảy ~456 → 2466, chủ yếu do <code>datetime.utcnow()</code> (5 chỗ trong
+        <code>backend/core/</code>). Vẫn chạy, không làm đỏ CI. Không đổi vội sang
+        <code>datetime.now(timezone.utc)</code>: nó trả datetime <b>có</b> múi giờ, mà
+        <code>rate_limit.py:50</code> (<code>lu - now</code>) và <code>:65</code> (<code>now - ws</code>) trừ với
+        datetime naive từ <code>strptime</code> → <code>TypeError</code> trên đường đăng nhập.</p>
+
+    </div>
+  </div>
+
+  <!-- DS1 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">DS1</span>
+      <span class="card-title">Đối soát CITAD ↔ IPCAS — ERRC bị lọc mất + lệnh Đến trùng khoá giữa nhiều ngân hàng gửi (PR #110)</span>
+      <span class="badge badge-warn">Đã merge — 2 điểm chưa chốt, xem cuối card</span>
+    </div>
+    <div class="card-body">
+
+      <p><b>Lỗi 1 — ERRC.</b> <code>KEEP_DI</code> (parsers.py) không có <code>ERRC</code> (hạch toán huỷ lỗi) nên
+        dòng IPCAS Đi bị bỏ ngay lúc đọc file → lệnh CITAD cùng msgref thành "Chỉ CITAD" giả (msgref 11418711,
+        15/09/2026). Sửa: chỉ thêm <code>ERRC</code> vào <code>KEEP_DI</code>. <b>Không</b> đưa vào
+        <code>ERR_DI</code> → có CITAD thì ra <i>Lệch trạng thái</i>, không có CITAD thì ra <i>Chỉ IPCAS</i>.</p>
+
+      <p><b>Lỗi 2 — khoá VND Đến <code>(txid, loại, số tiền)</code> trùng giữa nhiều ngân hàng gửi.</b>
+        <code>ipcas_den_map</code> giữ 1 dòng đại diện cho cả khoá → mọi dòng CITAD cùng khoá đều "khớp" dòng đó.
+        Ca thật 10008309 / 500.000đ: CITAD 4 ngân hàng, IPCAS 3 → lệnh thứ 4 biến mất khỏi báo cáo.</p>
+
+      <table>
+        <tr><th style="width:28%">Quyết định</th><th>Lý do / đánh đổi</th></tr>
+        <tr>
+          <td>Chỉ rẽ nhánh khi <code>citad_den_vnd_count[k] &gt; 1</code></td>
+          <td>Khoá có 1 dòng CITAD (&gt;99%) chạy y nguyên mã cũ — giới hạn phạm vi rủi ro. Vòng "IPCAS Đến dư"
+            cũ <b>bỏ qua</b> các khoá này, vòng mới đếm dư theo <code>(khoá, ngân hàng)</code>; bỏ một bên là
+            đếm đôi hoặc sót.</td>
+        </tr>
+        <tr>
+          <td>So <b>6 số cuối</b> mã ngân hàng (<code>_ma_nh_6so</code>)</td>
+          <td>2 số đầu là mã cổng tạo báo cáo, lệch giữa CITAD/IPCAS. Dữ liệu 15/09: khớp nguyên mã 95,6%, thêm 1,0%
+            sau khi bỏ 2 số đầu, còn 0,34% lệch thật.</td>
+        </tr>
+        <tr>
+          <td>Mã ngân hàng gửi CITAD đọc từ <b>dòng tiêu đề nhóm</b>, kế thừa qua sheet (<code>nh_gui_ref</code>)</td>
+          <td>File CITAD không có cột ngân hàng gửi. Crystal Reports cắt nhóm sang sheet mới không lặp tiêu đề
+            (ca 10009779). Regex đòi ký tự sau dấu "-" không phải số để không nhầm dòng tổng tiền.</td>
+        </tr>
+      </table>
+
+      <p class="caution"><b>⚠ Chưa chốt 1 — phụ thuộc định dạng file, lỗi ồn chứ không im.</b> Kiểm khi review
+        (so với develop, cùng đầu vào):</p>
+      <table>
+        <tr><th>Khoá Đến có ≥2 dòng CITAD</th><th>Trước</th><th>Sau PR #110</th></tr>
+        <tr><td>CITAD không đọc được mã (<code>nh_gui</code> rỗng)</td><td>khớp 2</td><td>2 Chỉ CITAD + 2 Chỉ IPCAS</td></tr>
+        <tr><td><code>NH_NHAN</code> IPCAS chỉ có tên, không có số</td><td>khớp 2</td><td>2 Chỉ CITAD + 1 Chỉ IPCAS</td></tr>
+        <tr><td>6 số cuối mã lệch giữa 2 nguồn</td><td>khớp 2</td><td>khớp 1 + 1 cặp lệch</td></tr>
+        <tr><td>Cùng 1 ngân hàng gửi 2 lệnh, IPCAS có 1</td><td>khớp 2</td><td>khớp 2 — <b>vẫn sót</b>, như cũ</td></tr>
+      </table>
+      <p>Tác giả đo trên dữ liệu thật 15/09 (140.523 dòng): 0 dòng mất/thừa ngoài các lệch thật — nhưng đó là
+        <b>một ngày</b>, và mẫu IPCAS trong test đều ghi tên chữ ("NH TEST") nên không test nào canh việc cột
+        <code>NH_NHAN</code> chiều Đến có mã số. Nếu một ngày báo cáo có hàng loạt cặp Chỉ CITAD/Chỉ IPCAS mang
+        ghi chú "nhiều ngân hàng gửi khác nhau" → nghi định dạng file đổi trước khi nghi dữ liệu. Hướng sửa đề
+        xuất: mã rỗng / không dòng IPCAS nào có mã số thì lui về cách khớp cũ.</p>
+
+      <p class="note"><b>⚠ Chưa chốt 2 — ERRC không có CITAD giờ hiện "Chỉ IPCAS".</b> ERPO/CALD cùng tình huống
+        được loại (thất bại bình thường, chưa đi kênh). Chưa hỏi Phòng Thanh toán ERRC lẻ có phải chênh lệch cần
+        báo không. Nếu không → thêm <code>ERRC</code> vào <code>ERR_DI</code>. Ngoài ra msgref có ERRC + trạng
+        thái khác SCNL (vd WFPG) thì dòng nào thắng tuỳ thứ tự file (<code>PRIORITY_DI</code> chỉ có SCNL) —
+        kết quả vẫn là Lệch trạng thái nên không sai nặng.</p>
+
+      <p><b>Merge bằng chạy tại máy</b> (CI bị chặn billing): commit <code>8734bc3</code>, Python 3.10.0,
+        ruff F821/F823/E9 sạch, <code>2010 passed</code>. Kết quả dán ở PR #110.</p>
+
+    </div>
+  </div>
+
+  <!-- TD1 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">TD1</span>
+      <span class="card-title">Thi đua khen thưởng — module mới cho Phòng Tổng hợp (PR #106): quyền phẳng, BLOB 1:1, và món nợ nhập lô trùng</span>
+      <span class="badge badge-warn">Đã merge kèm nợ đã biết — người dùng chốt 16/09/2026</span>
+    </div>
+    <div class="card-body">
+
+      <p>Hệ thống trước đây không có nơi lưu dữ liệu thi đua khen thưởng — báo cáo nghỉ phép phải bỏ trống
+        cột "xếp loại thi đua" vì không có nguồn. PR này thêm 3 bảng, 26 route, 1 trang
+        (<code>/thi_dua</code>) và 5 mã quyền.</p>
+
+      <h3>Ba quyết định thiết kế không hiển nhiên</h3>
+      <table>
+        <tr><th style="width:24%">Chọn gì</th><th style="width:38%">Vì sao, và cái bị bỏ</th><th style="width:38%">Đánh đổi đã chấp nhận</th></tr>
+        <tr>
+          <td><b>Quyền phẳng — không có "chủ sở hữu bản ghi"</b></td>
+          <td>Khảo sát phân biệt người tạo với người trả lời vì <i>trả lời</i> là dữ liệu của từng người.
+            Thi đua thì ngược lại: mọi bản ghi đều là quyết định đã ban hành của cơ quan, người nhập chỉ
+            là thư ký. Lấy khuôn <code>hr.edit_all</code>.</td>
+          <td>Ai có <code>thi_dua.manage_*</code> thì sửa/xoá được <b>mọi</b> bản ghi cùng loại, kể cả
+            của người khác nhập. Vết duy nhất là <code>audit_logs</code>. Chấp nhận vì đây là dữ liệu
+            một phòng, không phải hồ sơ cá nhân.</td>
+        </tr>
+        <tr>
+          <td><b>File quyết định lưu BLOB 1:1 ngay trong <code>thi_dua_sang_kien</code></b></td>
+          <td>Đã có <code>hr_attachments</code> kiểu đa hình (<code>section</code> + <code>item_id</code>),
+            nhưng ở đây quan hệ là <b>1 sáng kiến ↔ 0 hoặc 1 file</b>. Mượn bảng đa hình để chở một quan hệ
+            1:1 là thêm một chỗ phải nhớ dọn khi xoá sáng kiến.</td>
+          <td><b>DB chính phình theo file.</b> Trần 15 MB/file, và <code>backup_service</code> chép cả file
+            <code>ksnb.db</code>, giữ 7 ngày + 5 bản gần nhất → mỗi MB nằm trong DB nhân lên khoảng 12 lần
+            trên đĩa. DB hiện <b>22 MB</b>. Đây là hộ thứ hai đổ BLOB vào <code>ksnb.db</code> sau
+            <code>hr_attachments</code> — nợ tích luỹ, không phải PR này đẻ ra, nhưng đến lúc phải tính.</td>
+        </tr>
+        <tr>
+          <td><b><code>department_id</code> NULL = "Toàn Trung tâm"</b></td>
+          <td>Ba mức theo dõi (toàn Trung tâm / từng phòng / từng cá nhân) gom vào 2 bảng thay vì 3, bằng
+            cách để NULL mang nghĩa "cấp cao nhất".</td>
+          <td>Khoá ngoại khai <code>ON DELETE SET NULL</code> → nếu có ngày nào xoá cứng một phòng thì danh
+            hiệu <b>cấp phòng tự biến thành cấp toàn Trung tâm</b>, không lỗi, không log. Hiện an toàn vì
+            <b>toàn repo không có câu <code>DELETE FROM departments</code> nào</b> (đã grep). Ai định thêm
+            đường xoá cứng phòng ban phải quay lại chỗ này.</td>
+        </tr>
+      </table>
+
+      <h3>Nợ đã biết — merge kèm, không phải chưa thấy</h3>
+      <p>Người dùng chốt merge sau khi đã đọc phần này. Ghi lại để người sửa sau không mất công tìm lại.</p>
+      <table>
+        <tr><th style="width:30%">Vấn đề</th><th style="width:36%">Bằng chứng (chạy thật, không suy luận)</th><th style="width:34%">Hướng sửa</th></tr>
+        <tr>
+          <td><b>Nhập lô không chống trùng</b> — mức cao</td>
+          <td>Nhập cùng một file Excel hai lần → <b>2 dòng</b> trong DB, không cảnh báo. Đo thêm: 20.000
+            dòng nhập hết <b>1,24 giây</b>, tức nhân đôi một file 5.000 dòng xảy ra trong khoảng 0,3 giây.
+            Không có nút xoá hàng loạt để lùi — phải xoá tay từng thẻ.</td>
+          <td>UNIQUE index <code>(year, department_id, danh_hieu)</code> /
+            <code>(staff_id, year, cap, danh_hieu)</code> / <code>(staff_id, year, ten_sang_kien)</code>
+            + <code>INSERT OR IGNORE</code>, và <code>dry_run</code> đếm riêng số dòng "đã có".</td>
+        </tr>
+        <tr>
+          <td><b>Dò cột bằng "chứa chuỗi" quá lỏng với <code>nam</code> / <code>cap</code></b> — mức trung bình</td>
+          <td><code>_dinh_vi_cot()</code> khớp kiểu <i>cụm từ nằm trong ô tiêu đề</i>, mà hai cụm này chỉ dài
+            3 ký tự. File có cột <b>"Giới tính (Nam/Nữ)"</b> đứng trước cột "Năm" thì cột giới tính cướp vai
+            cột Năm; chạy ra: <code>da_them = 0</code>, mọi dòng báo <code>Năm không hợp lệ: 'Nam'</code>.</td>
+          <td>Hỏng <b>to tiếng</b> nên không mất dữ liệu — đó là điểm cứu. Nhưng thông báo chỉ sai chỗ.
+            Riêng hai trường này khớp <b>bằng</b> (<code>h == "nam"</code>) thay vì <code>in</code>.</td>
+        </tr>
+        <tr>
+          <td><code>except Exception</code> trần ở <code>_doc_ngay()</code></td>
+          <td><code>backend/api/thi_dua.py:449</code>, quanh phép cộng ngày serial của Excel.</td>
+          <td>Trái DESIGN.md mục <i>Nuốt lỗi</i>. Thu hẹp <code>(ValueError, OverflowError, TypeError)</code>.</td>
+        </tr>
+        <tr>
+          <td>Lượt "Xem trước" vẫn để lại dòng Nhật ký</td>
+          <td><code>POST .../import?dry_run=true</code> không ghi dữ liệu nào nhưng không nằm trong
+            <code>_SKIP_EXACT</code> — <code>dry_run</code> là query param nên không tách được theo path.</td>
+          <td>Đúng loại rác card <b>NK2</b> vừa dọn. Tách route <code>/import/preview</code> riêng như
+            <code>leaves.py</code> đã làm.</td>
+        </tr>
+        <tr>
+          <td><code>_sang_kien_out()</code> là mã chết</td>
+          <td><code>backend/api/thi_dua.py:276-279</code> — không nơi nào gọi;
+            <code>list_sang_kien</code> tự tính <code>has_file</code> bằng SQL.</td>
+          <td>Xoá.</td>
+        </tr>
+      </table>
+
+      <h3>Tác động ra ngoài phạm vi — đã kiểm bằng chạy thật</h3>
+      <p>Ghi lại vì đây là thứ không đọc ra được từ diff, và lần sau có PR thêm module thì làm y hệt.</p>
+      <ul>
+        <li><b>Bảng route</b>: dựng <code>app.routes</code> ở cả hai nhánh rồi diff — <b>356 → 382,
+          +26 route mới, 0 route cũ bị đổi, 0 bị mất</b>, dependency của route cũ giữ nguyên từng dòng.
+          Đây là cách chắc nhất để loại nỗi lo "tab trình duyệt đang mở lúc deploy ăn 422".</li>
+        <li><b>Migration tự lành</b>: dựng DB đúng trạng thái <code>develop</code>
+          (<code>_create_tables</code> + <code>_ensure_indexes</code>), chạy migration của PR
+          <b>2 lần liên tiếp</b> → <code>sqlite_master</code> lần 1 giống hệt lần 2. So với develop: đúng
+          <b>+3 bảng, +5 index</b>, không đụng bảng nào khác. Toàn <code>CREATE TABLE IF NOT EXISTS</code>,
+          không có <code>ALTER</code> nên không dính bẫy "sửa chữ trong ALTER đã chạy là vô tác dụng".</li>
+        <li><b>Revert được</b>: DB đã migrate + code <code>develop</code> → <code>_ensure_indexes()</code>
+          bản cũ chạy sạch, schema không đổi. 3 bảng mới nằm im.</li>
+        <li><b>Extension</b>: 0 file trong <code>extension_citad_nv/</code>, 4 endpoint <code>*-buffer</code>
+          không đụng tới → không phải ra bản extension mới, không phải cài lại máy trạm.</li>
+      </ul>
+
+      <p class="caution"><b>⚠ Merge bằng chạy tại máy, không qua CI.</b> <code>gh pr checks</code> đỏ sau
+        <b>3 giây với 0 bước nào chạy</b> — GitHub chặn vì thanh toán, không phải lỗi mã (xem
+        <code>docs/SKILL.md</code>). Nhánh đã <code>gh pr update-branch</code> cho ngang develop rồi chạy
+        trên đúng commit <code>5dac77e</code>, worktree riêng, cây sạch:
+        <code>ruff check . --select F821,F823,E9</code> exit 0 và <code>pytest -q</code> exit 0,
+        <b>1999 passed</b>. Kết quả đã dán vào PR bằng <code>gh pr comment</code> trước khi merge.</p>
+
+      <p class="note"><b>⚠ Sau deploy không ai thấy menu này.</b> Cả 5 mã quyền mặc định <b>không</b> thuộc
+        nhóm nào — quản trị phải vào <b>Phân quyền theo nhóm → Phòng Tổng hợp → Thi đua khen thưởng</b>
+        tick ô. Vai <code>admin</code> đi qua mọi cửa nên admin thấy ngay, dễ tưởng đã xong.</p>
+
+    </div>
+  </div>
+
+  <!-- TV2 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">TV2</span>
+      <span class="card-title">Chan tren cho MOI thu vien + luoi canh — va vi sao ra soat thu cong mot luot la khong du (PR #107)</span>
+      <span class="badge badge-done">Da merge — 2001 test xanh, khong may nao bi ep nang/ha</span>
+    </div>
+    <div class="card-body">
+
+      <p>Nối tiếp <b>TV1</b>. Rà cả file thì cùng lớp lỗi đó còn ở 10 dòng khác, và <b>ba cái đã trôi
+        major rồi</b> mà không ai quyết định: <code>pypdfium2</code> 4.x&rarr;5.13.0,
+        <code>Pillow</code> 10.x&rarr;12.3.0, <code>python-calamine</code> 0.2&rarr;0.8.2.</p>
+
+      <p class="note"><b>Tính chất quan trọng nhất — không máy nào bị ép nâng hay hạ.</b> Trần đặt ở
+        <b>ranh giới phá vỡ kế tiếp</b>, tức rộng hơn bản đang chạy (<code>Pillow&lt;13</code> ôm cả
+        10/11/12). <code>start.bat</code> gọi <code>pip install</code> <b>không có</b>
+        <code>--upgrade</code>, mà pip chỉ can thiệp khi bản đã cài <i>vi phạm</i> spec. Đã kiểm bằng
+        <code>packaging.specifiers</code> trên 13 gói, đối chiếu <code>pip list</code> thật của máy chủ:
+        tất cả đều thoả.</p>
+
+      <p><b>Gói 0.x thì MINOR mới là ranh giới phá vỡ</b> (semver: <code>0.y.z</code> "anything may
+        change"), không phải major — nên <code>pyzipper&lt;0.5</code>, <code>python-calamine&lt;0.9</code>,
+        <code>lunardate&lt;0.4</code>, <code>python-multipart&lt;0.1</code>. Dự án đã theo kỷ luật này
+        sẵn: <code>requirements-dev.txt</code> chặn <code>pytest-cov&lt;8</code> và ghim
+        <code>ruff==0.16.7</code> với đúng lý lẽ ấy.</p>
+
+      <table>
+        <tr><th style="width:30%">Lượt phản biện bắt được</th><th style="width:44%">Kiểm chứng</th><th style="width:26%">Đã vá</th></tr>
+        <tr>
+          <td>Sót <code>python-multipart&gt;=0.0.31</code></td>
+          <td>Đang chạy 0.0.32, gói <code>0.0.x</code>, nằm trên đường nhận file upload của FastAPI
+            &rarr; 20 module API, đúng nhóm mà PR viện dẫn để biện minh cho chính nó.</td>
+          <td><code>,&lt;0.1</code></td>
+        </tr>
+        <tr>
+          <td><b>Lý do miễn trừ <code>numba</code> SAI</b></td>
+          <td>Lý do ghi ban đầu: "<code>numpy&lt;2.6</code> đã gián tiếp ghìm numba". Metadata numba
+            0.67 đòi <code>numpy&lt;2.6,&gt;=1.22</code> — <b>giống hệt từng ký tự</b> dòng numpy trong
+            file. Tức dòng numpy <b>chép ra TỪ</b> numba, quan hệ nhân quả bị đảo ngược.</td>
+          <td>Chặn thật <code>,&lt;0.68</code></td>
+        </tr>
+        <tr>
+          <td>Comment tự mô tả sai phạm vi</td>
+          <td>Viết "trần đặt NGAY TRÊN bản đang được test" trong khi <code>Pillow&lt;13</code> rộng
+            ba major. Comment sai nguy hiểm hơn không comment: người sau tưởng đã có lưới.</td>
+          <td>Viết lại</td>
+        </tr>
+      </table>
+
+      <p class="caution"><b>⚠ Đường lui bắt <code>ImportError</code> KHÔNG đỡ được API đổi tên.</b> Hai
+        chỗ trong repo cùng dính đúng một nhầm lẫn này:<br>
+        &bull; <code>doi_chieu_song_phuong_service.py:43-48</code> — <code>except ImportError</code> chỉ
+        đỡ khi numba <b>vắng mặt</b>. numba <b>có mặt nhưng đổi API</b> thì <code>@njit</code> biên dịch
+        <b>lười</b>, nên ném <code>TypingError</code> lúc <b>GỌI</b> (dòng 362), không phải lúc import
+        &rarr; không nhánh nào lui về <code>zf.open()</code>. (Đỡ một phần: CRC32 ở dòng 372-378 bắt được
+        sai lệch, nên hỏng là hỏng <i>ầm ĩ</i>, không âm thầm.)<br>
+        &bull; <code>duty_calendar_utils.py:11-15</code> — xem TV3 bên dưới, nghiêm trọng hơn vì ở đó
+        hỏng <b>âm thầm</b>.</p>
+
+      <p><b>Lưới canh mới</b> <code>tests/test_requirements_ascii.py::test_moi_yeu_cau_deu_co_chan_tren</code>:
+        mọi dòng requirement đều phải có chặn trên, miễn trừ phải khai tường minh. Không có nó thì PR
+        này chỉ là một lần quét tay và dòng thứ 12 sẽ lại lẻn vào. Cùng kiểu với
+        <code>tests/test_paths.py</code> canh vụ thư mục NFD.</p>
+
+      <p class="note"><b>Bằng chứng nó cần thiết:</b> test bắt được cái thứ 11 <b>ngay khi vừa viết
+        xong</b> — <code>pytest&gt;=8.0</code> trong <code>requirements-dev.txt</code>, trong khi chính
+        file đó đã chặn <code>pytest-cov&lt;8</code> và ghim <code>ruff==</code>. Rà thủ công của con
+        người vừa bỏ sót nó xong.</p>
+
+      <p><b>Đã cân nhắc và bỏ:</b> lockfile (<code>pip freeze</code>). Nó giải đúng khe "CI test bản mới
+        nhất còn thoả, máy chủ chạy bản cũ hơn", nhưng ghim cả ~80 gói bắc cầu gồm wheel biên dịch, làm
+        nhánh tự vá <code>.venv</code> của <code>start.bat:95-125</code> gãy thường xuyên hơn, và
+        <b>buộc giải quyết ngay</b> khe <code>lunardate</code> 0.2.2/0.3.0 — biến PR 1 file thành PR
+        chạm mã lịch trực. Bước trung gian rẻ hơn nếu sau này cần: sinh <code>constraints.txt</code> từ
+        máy chủ, chỉ dùng <code>-c</code> ở CI.</p>
+
+    </div>
+  </div>
+
+  <!-- TV3 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">TV3</span>
+      <span class="card-title">lunardate — luoi an toan bi vo hieu dung luc can no nhat (issue #109)</span>
+      <span class="badge badge-warn">Chua va — tran &lt;0.4 dang la lop bao ve DUY NHAT</span>
+    </div>
+    <div class="card-body">
+
+      <p><code>backend/services/duty_calendar_utils.py</code> có sẵn bảng cứng dự phòng
+        <code>_FALLBACK_2026</code> (dòng 53-63) đúng cho tình huống thư viện hỏng. Vấn đề: nó
+        <b>không bao giờ chạy</b>.</p>
+
+      <table>
+        <tr><th style="width:8%">#</th><th>Mắt xích</th></tr>
+        <tr><td>1</td><td>Dòng 11-15 đặt cờ bằng <code>try: from lunardate import LunarDate / except ImportError: _LUNAR_OK = False</code></td></tr>
+        <tr><td>2</td><td>Bản 0.4 chỉ <b>bỏ phương thức</b> <code>toSolarDate()</code>, package vẫn còn &rarr; <code>import</code> <b>thành công</b> &rarr; <code>_LUNAR_OK = True</code></td></tr>
+        <tr><td>3</td><td>Nhánh <code>else</code> chứa <code>_FALLBACK_2026</code> bị bỏ qua hoàn toàn</td></tr>
+        <tr><td>4</td><td>Dòng 45 gọi <code>.toSolarDate()</code> &rarr; <code>AttributeError</code></td></tr>
+        <tr><td>5</td><td>Dòng 47 <code>except Exception</code> nuốt, chỉ <code>_log.warning()</code></td></tr>
+      </table>
+
+      <p class="caution"><b>Hậu quả: mất trọn 5 ngày Tết + Giỗ Tổ</b> khỏi danh sách gợi ý ngày lễ của
+        lịch trực. Không lỗi ra màn hình, chỉ 6 dòng WARNING trong <code>logs/app.log</code>. <b>Không
+        có test nào chạm <code>get_vn_holidays()</code>.</b></p>
+
+      <p><b>Vì sao chưa vá trong PR #107:</b> đổi thẳng sang <code>to_solar_date()</code> là hỏng máy
+        chủ — máy chủ đang <code>lunardate 0.2.2</code>, bản đó <b>không có</b> tên mới. Sửa đúng thì
+        phải nâng sàn <code>&gt;=0.3</code>, kéo theo ép máy chủ nâng thư viện — việc có chủ ý, không
+        nhét vào PR khai báo phiên bản.</p>
+
+      <p><b>Bản vá đề xuất, chạy được trên CẢ 0.2.2 lẫn 0.3.0, không đụng sàn:</b></p>
+      <pre>_doi_am_duong = getattr(LunarDate, "to_solar_date", None) or LunarDate.toSolarDate
+...
+solar = _doi_am_duong(LunarDate(year, lm, ld))</pre>
+
+      <p class="note"><b>Chưa gấp:</b> đã đối chiếu 0.2.2 vs 0.3.0 cho 2026/2027/2028 — ra ngày
+        <b>giống hệt nhau</b>. Khe lệch phiên bản giữa máy chủ và máy dev hiện không gây sai số liệu.
+        Đây là nợ có hẹn giờ, không phải lỗi đang chảy máu.</p>
+
+    </div>
+  </div>
+
+  <!-- TV1 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">TV1</span>
+      <span class="card-title">Chặn trên <code>pandas&lt;3.0.0</code> — vì sao chặn pandas chứ không nâng openpyxl (PR #105)</span>
+      <span class="badge badge-warn">Đã merge — CI về cấu trúc KHÔNG bắt được lỗi này</span>
+    </div>
+    <div class="card-body">
+
+      <p><code>requirements.txt</code> ghim <code>openpyxl==3.1.2</code> nhưng để <code>pandas&gt;=2.0.0</code>
+        không chặn trên. pandas 3.x (bản mới nhất trên PyPI hiện là 3.0.5) nâng yêu cầu tối thiểu của openpyxl
+        lên <code>3.1.5</code> → máy cài mới kéo về pandas 3.x rồi mọi đường xuất/đọc Excel qua pandas hỏng.</p>
+
+      <p><b>pip KHÔNG chặn việc này.</b> <code>openpyxl</code> nằm trong <b>extra</b> <code>excel</code> của
+        pandas, không phải dependency bắt buộc — pip cài pandas 3.x cạnh <code>openpyxl==3.1.2</code> bình
+        thường. Lỗi chỉ nổ <b>lúc chạy</b>, khi pandas gọi <code>import_optional_dependency()</code> và so
+        phiên bản. Đừng trông vào bước cài như một lưới an toàn.</p>
+
+      <table>
+        <tr><th style="width:26%">Hai lựa chọn</th><th style="width:37%">Hệ quả</th><th style="width:37%">Quyết định</th></tr>
+        <tr>
+          <td><b>Nâng <code>openpyxl</code> lên ≥3.1.5</b></td>
+          <td><code>_shift_merges()</code> trong <code>backend/services/swift_recon/template_exporters.py</code>
+            tự viết tay để <b>bù một lỗi có thật của openpyxl</b> (<code>insert_rows</code>/<code>delete_rows</code>
+            không dịch vùng gộp ô) và nó dịch merge <b>vô điều kiện</b>. Nếu bản mới đã vá lỗi gốc ở thượng nguồn
+            → <b>dịch hai lần</b>, file Excel SWIFT sai vùng gộp, không lỗi, không log.</td>
+          <td>❌ Bỏ. Không test nào canh hành vi này; ghim <code>3.1.2</code> có từ commit đầu tiên, không ai
+            biết nó đang che chắn cho đoạn bù đó.</td>
+        </tr>
+        <tr>
+          <td><b>Chặn <code>pandas&lt;3.0.0</code></b></td>
+          <td>Giữ nguyên hành vi đã chạy ổn định. Cùng kiểu chặn trên đã có sẵn trong file
+            (<code>numpy&gt;=1.22,&lt;2.6</code>).</td>
+          <td>✅ Chọn.</td>
+        </tr>
+      </table>
+
+      <p><b>Lý do thứ hai, độc lập với openpyxl — và là lý do mạnh hơn:</b> pandas 3.0 đặt string dtype làm
+        mặc định (PDEP-14), đổi hành vi <code>.astype(str)</code> với NA. Chính điều mà
+        <code>backend/services/ach/so_tien.py</code> đã ghi chú, và module đó sinh ra để chặn lỗi
+        <i>"sai 1000 lần, im lặng"</i> trong số tiền ACH. <b>Kể cả không có chuyện openpyxl, pandas 3.0 vẫn
+        phải chặn.</b> Comment trong <code>requirements.txt</code> hiện chỉ nhắc openpyxl — người sau thấy
+        openpyxl được nâng sẽ tưởng gỡ được chặn trên. Nên bổ sung ý này khi có dịp sửa file.</p>
+
+      <p class="caution"><b>⚠ CI không thể tái hiện lỗi này.</b> pandas 3.x đòi <code>Python&gt;=3.11</code>;
+        <code>.github/workflows/tests.yml</code> ghim <code>python-version: "3.10"</code>, còn
+        <code>docs/CONTRIBUTING.md</code> cho phép "Python 3.10 trở lên". Người chạy 3.11+ gặp lỗi thật trong
+        khi CI xanh — đúng tình huống sinh ra PR này. <b>CI xanh không chứng minh môi trường đồng đội xanh.</b></p>
+
+      <p class="note"><b>⚠ Cùng loại bệnh, chưa xử lý:</b> <code>pypdfium2&gt;=4.30</code> cũng không chặn trên,
+        PyPI đã ra 5.x và máy dev đang chạy <b>5.13.0</b> — việc nhảy major đã xảy ra âm thầm. Nó rơi vào phần
+        ký PDF đơn nghỉ phép (<code>insert_obj</code>/<code>gen_content</code>/<code>stamp()</code>), chỗ mà
+        DESIGN.md mô tả là hỏng rất im lặng.</p>
+
+      <p><b>Bẫy khi kiểm PR này:</b> mô tả PR báo "23 lỗi có sẵn trên develop" trong
+        <code>test_ach_gl02_misden_algorithm.py</code>. Con số tái hiện được, nhưng nguyên nhân là
+        <b>thiếu biến <code>DOI_CHIEU_ZIP_PASSWORD</code></b> (<code>.env</code> bị gitignore nên checkout/venv
+        mới không có). Đặt biến vào → <code>1966 passed, 0 failed</code>. Develop không hỏng dòng nào. Chạy
+        pytest trên môi trường mới mà thiếu <code>.env</code> thì cả 4 module đối chiếu trượt sạch — kiểm
+        <code>.env</code> trước khi kết luận "lỗi có sẵn".</p>
+
+    </div>
+  </div>
+
+  <!-- DC3 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">DC3</span>
+      <span class="card-title">Đối chiếu CITAD — bộ đệm Extension nạp nhầm dữ liệu cũ / sai loại tiền (PR #100)</span>
+      <span class="badge badge-warn">Đã merge — bản sao ở Nostro CHƯA vá, 2 comment đã sai</span>
+    </div>
+    <div class="card-body">
+
+      <p>Hai lỗi khác gốc, cùng hiện ra một triệu chứng: bấm "Nạp CITAD" thì bảng hiện số của loại tiền
+        hôm đó <b>không hề có giao dịch</b>.</p>
+
+      <table>
+        <tr><th style="width:18%">Lỗi</th><th style="width:41%">Vì sao xảy ra</th><th style="width:41%">Cách xử lý đã chọn</th></tr>
+        <tr>
+          <td><b>Bộ đệm không có hạn dùng</b></td>
+          <td><code>_citad_buffer</code>/<code>_ph_buffer</code> là dict RAM, không gắn ngày. Extension
+            <b>không gửi gì</b> khi quét ra 0 (<code>content.js autoSaveIfNew()</code> — cố ý, để không nhầm
+            "trang chưa load xong" với "thật sự không có"), nên một mục EUR gửi lên từ hôm khác nằm lại
+            <b>vô thời hạn</b> và bị nạp kèm lượt USD mới.</td>
+          <td><code>_BUFFER_TTL = 4 giờ</code> + mốc <code>_scan_ts</code> do <b>server</b> gắn bằng
+            <code>_vn_now()</code> lúc lưu. Không dùng field <code>ts</code> client gửi lên: nó chỉ là
+            giờ:phút:giây hiển thị, không có ngày, và do client tự khai.</td>
+        </tr>
+        <tr>
+          <td><b>Đọc nhầm loại tiền lúc quét</b></td>
+          <td>Ô chọn loại tiền trên trang CITAD đổi giá trị <b>ngay</b>, nhưng bảng kết quả chỉ cập nhật
+            <b>sau</b> khi truy vấn lại xong. Extension đọc đúng lúc giữa 2 mốc đó thì số CŨ (của USD) bị
+            gắn nhãn loại tiền MỚI (EUR) rồi gửi lên.</td>
+          <td>Xử lý <b>hoàn toàn ở server</b> — <code>_annotate_currency_duplicates()</code>. Sửa ở Extension
+            thì phải bắt mọi máy trạm cài lại: chi phí vận hành cao, đã bỏ phương án đó.</td>
+        </tr>
+      </table>
+
+      <div class="label">Vì sao cảnh báo chứ không chặn lưu</div>
+      <p>2 loại tiền khác nhau, cùng cổng/chiều/loại DV, mà <code>soMon</code> <b>và</b> <code>soTien</code>
+        trùng tuyệt đối — xác suất 2 dòng tiền độc lập trùng thật cả 2 trị gần như bằng 0. Nhưng
+        "gần như" không phải "bằng": tự ý loại bỏ thì lỡ trùng thật là <b>mất số liệu thật, âm thầm</b>.
+        Gắn cờ <code>_suspect_dup_tien</code> cho frontend cảnh báo, số vẫn nạp vào bảng bình thường —
+        người dùng chỉ mất công soi lại bằng mắt.</p>
+
+      <div class="note"><b>Dòng 0 món/0 đồng phải loại trước khi so.</b>
+        <code>content_paymenthub.js _doSaveBaoCao()</code> gửi đủ cả 4 dòng (ih/il × đến/đi) của một kênh
+        đọc được, kể cả dòng thật sự không có giao dịch — chỉ bỏ hẳn khi <b>cả 4</b> cùng 0. Không loại thì
+        2 loại tiền cùng có 1 dòng trống (rất thường gặp) trùng 0/0 với nhau, gắn cờ <b>sai ở hầu như mọi
+        lượt nạp</b> → người dùng quen tay bỏ qua, cảnh báo mất tác dụng. CITAD không dính vì
+        <code>autoSaveIfNew()</code> đã return sớm khi toàn 0.</div>
+
+      <div class="label">Giới hạn của cách phát hiện này — đừng quảng cáo quá</div>
+      <p>Cờ chỉ bật khi <b>cả dòng đúng lẫn dòng gắn nhãn sai cùng nằm trong bộ đệm</b>. Nếu lượt quét USD
+        chưa từng được lưu thì dòng EUR mang số USD nạp vào <b>không có cảnh báo nào</b>.
+        <b>Không có cảnh báo không chứng minh được là số đúng.</b></p>
+
+      <div class="caution"><b>Còn mở sau khi merge — 4 điểm, đã ghi vào PR #100.</b>
+        <ol>
+          <li><code>doi_chieu_citad_nostro_service.py:154-185</code> vẫn là <b>bản sao nguyên văn chưa vá</b>
+            của đúng đoạn buffer này — dict RAM, không hạn dùng, cùng luồng "Nạp"
+            (<code>doi_chieu_citad_nostro.py:401,436</code>), và <b>chưa có nút "Xoá dữ liệu đã quét"</b>.
+            Nửa "đọc nhầm loại tiền" không áp dụng (schema Nostro không có field <code>tien</code>) nhưng
+            nửa TTL áp dụng nguyên vẹn — Nostro đối chiếu <b>theo kỳ</b> nên mục sót vắt qua kỳ còn khó
+            phát hiện hơn bên Thanh toán.</li>
+          <li><code>frontend/pages/doi_chieu_citad.py:824</code> và <code>:901</code> vẫn ghi bộ đệm
+            <i>"KHÔNG tự hết hạn … chỉ save/get/clear"</i> — chính PR này làm câu đó sai.</li>
+          <li>TTL xoá luôn nhóm mục <b>đang được cố ý giữ lại</b>: <code>doi_chieu_citad.py:770-773</code>
+            ghi rõ chủ ý không xoá buffer khi <code>skipped &gt; 0</code> để người quét nhầm cổng dùng lại
+            sau. Sau 4 giờ thì mất. Đổi hành vi ngược một ý định đã ghi thành văn, PR không nhắc.</li>
+          <li><code>_annotate_currency_duplicates()</code> chạy <b>ngoài</b> <code>_buffer_lock</code> và ghi
+            vào chính các dict còn nằm trong buffer (<code>list(bucket.values())</code> là bản sao nông).
+            Rủi ro thật gần như bằng 0 (cùng owner, FE gọi 2 bucket khác nhau) — đẩy lời gọi vào trong
+            <code>with</code> là xong.</li>
+        </ol>
+      </div>
+
+      <div class="label">Kiểm trước khi merge</div>
+      <p>CI <b>không chạy</b> (GitHub chặn vì billing — đỏ sau 2 giây, không bước nào chạy). Người dùng đồng ý
+        merge bằng chạy tại máy. Trên đúng commit <code>3d09870</code> (đã <code>update-branch</code> gộp
+        develop): <code>ruff --select F821,F823,E9</code> sạch; <b>1978 pass, 0 fail</b>, exit 0. Kết quả đã
+        dán lên PR bằng <code>gh pr comment</code>.</p>
+      <p><span class="pill pill-gray">Đính chính</span> Test plan của PR ghi "45 fail còn lại là lỗi môi
+        trường có sẵn" — không phải. Do máy chạy thiếu <code>DOI_CHIEU_ZIP_PASSWORD</code>; đặt đủ biến như
+        CI thì suite xanh hoàn toàn.</p>
+
+    </div>
+  </div>
 
   <!-- VB8 -->
   <div class="card">
@@ -17441,6 +18005,317 @@ This may happen if you try to create UI from a background task.</pre>
   <div class="card">
     <div class="card-header">
       <span class="card-num">142</span>
+      <span class="card-title">Chấm 459901 — thêm điều kiện TRBRCD=1000 cho "Chuyển chi nhánh", xác nhận bằng dữ liệu thật Tháng 5-8 (2026-09-13/14)</span>
+      <span class="badge badge-done">Hoàn thiện</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-blue">Bối cảnh</span> đối chiếu dữ liệu thật Tháng 5/6/7 phát hiện nhóm "Chuyển chi nhánh" lệch nhiều so với chấm tay</div>
+      <p>Người dùng cung cấp dữ liệu thật 4 tháng (<code>G:\NGOC HA\459 file chấm gửi a Dũng\</code>)
+        kèm kết quả chấm tay của người chấm thật ("chị Hà"). Chạy <code>process_files()</code> thật
+        (không mô phỏng) trên Tháng 5/6/7, so với file chấm tay bằng khoá 8 trường
+        (TRDATE|TRBRCD|USERID|JOURSEQ|DYTRSEQ|REFERENCE|DRAMOUNT|CRAMOUNT) — nhóm "Chuyển chi nhánh"
+        lệch 652/2808 (Tháng 5), 12/742 (Tháng 6), 486/1090 (Tháng 7), gần như toàn bộ do bước
+        "Lệnh Đi" (chạy trước trong thác nước) giành mất khi 2 vế giao dịch tình cờ cùng mã chi
+        nhánh.</p>
+
+      <div class="label"><span class="pill pill-gray">Quyết định nghiệp vụ</span> người dùng hỏi trực tiếp người chấm tay ("chị Hà"), xác nhận 2 lần</div>
+      <p>Lần 1 (13/09): "2 vế cùng mã chi nhánh → đúng là Lệnh Đi, không phải Chuyển chi nhánh" —
+        xác nhận thác nước hiện tại làm ĐÚNG cho case đó, không cần đổi thứ tự. Đồng thời chốt quy
+        tắc chính thức "Chuyển chi nhánh" (chị Hà viết lại 07/09): <b>1 cặp giao dịch bắt buộc có 1
+        vế <code>TRBRCD='1000'</code> và 1 vế <code>TRBRCD≠'1000'</code></b> — hàm <code>_mark_ccn()</code>
+        trước đó hoàn toàn không xét cột này, chỉ ghép theo (số tiền + REMARK) cân Nợ=Có.</p>
+      <p>Khi tự tay verify bằng dữ liệu thật, tìm được 1 cặp Tháng 5 (REFERENCE
+        <code>1000API4370587</code>/<code>1000API009635716</code>, 450.000.000đ) chị Hà chấm là
+        "Chuyển chi nhánh" nhưng TRBRCD 2 vế là <code>3407</code>/<code>2122</code> — KHÔNG vế nào
+        là 1000, mâu thuẫn quy tắc. Hỏi lại lần 2: chị Hà <b>khẳng định lại nguyên văn quy tắc
+        TRBRCD=1000</b>, giải thích case đó là chị chấm bằng cách tra hệ thống thanh toán live (dữ
+        liệu GL02 không có dấu hiệu để máy tự nhận ra) — không phải quy tắc sai, mà là 1 lớp case
+        nằm ngoài khả năng của thuật toán chỉ đọc GL02, vẫn phải rơi về "GD khác" chấm tay.</p>
+
+      <div class="label"><span class="pill pill-green">Fix</span> <code>_mark_ccn()</code> — thêm điều kiện <code>has_1000 &amp; has_non1000</code></div>
+      <p>Thêm 3 dòng, tái dùng đúng pattern <code>is_1000 = df['TRBRCD'] == '1000'</code> đã có sẵn
+        trong <code>_mark_can_cn()</code> ngay bên dưới — nhóm (theo khoá số tiền+REMARK hiện có)
+        chỉ được coi là Chuyển chi nhánh khi vừa có ≥1 dòng TRBRCD=1000, vừa có ≥1 dòng khác 1000.
+        Không đổi thứ tự thác nước, không đụng hàm nào khác. <code>tests/test_cham459901_algorithm.py</code>:
+        sửa data 2 test cũ (thêm đúng cấu trúc 1 vế 1000 để không vi phạm luật mới), thêm 2 test phủ
+        định (2 vế cùng khác 1000 / 2 vế cùng 1000 → không phải CCN). 142/142 test module pass.</p>
+
+      <div class="label"><span class="pill pill-blue">Kiểm chứng bằng dữ liệu thật sau khi sửa</span></div>
+      <table>
+        <tr><th>Tháng</th><th>Chuyển chi nhánh — trước fix</th><th>Chuyển chi nhánh — sau fix</th></tr>
+        <tr><td>5</td><td>652/2808 lệch</td><td>654/2808 lệch</td></tr>
+        <tr><td>6</td><td>12/742 lệch</td><td>38/742 lệch</td></tr>
+        <tr><td>7</td><td>486/1090 lệch</td><td>512/1090 lệch</td></tr>
+      </table>
+      <p>Số lệch KHÔNG giảm sau fix — nhưng đây không phải fix hỏng: phần lớn dòng "lệch" là các
+        giao dịch chị Hà chấm bằng cách tra hệ thống live (xác nhận ở trên), thuật toán chỉ đọc GL02
+        không có cách tái tạo lại bước đó. Fix vẫn đúng theo quy tắc chính thức chị Hà xác nhận, chỉ
+        là quy tắc đó không phủ hết mọi case chấm tay lịch sử.</p>
+
+      <div class="label"><span class="pill pill-warn">Hiệu ứng phụ đã biết, đã được xác nhận chấp nhận được</span></div>
+      <p>Tháng 6 xuất hiện <b>3 dòng regression</b>: trước fix khớp ĐÚNG ở "GD khác" (373/373), sau
+        fix bị xếp SAI sang "Cân CN" (370/373, GD khác còn khớp; 3 dòng lệch). Cơ chế: 3 dòng này
+        được giải phóng khỏi ứng viên Chuyển chi nhánh (không thoả điều kiện mới), rơi xuống bước
+        Cân CN phía sau và trùng ngẫu nhiên khoá (TRBRCD+số tiền, không có REMARK) với dòng khác
+        không liên quan. Đây là rủi ro "khoá khớp không duy nhất" đã biết của thiết kế
+        <code>_mark_can_cn()</code> từ trước (không phải lỗi mới do diff này tạo ra cấu trúc khoá),
+        nhưng diff này làm lộ ra 3 ca cụ thể. Agent phản biện (2026-09-14) đánh giá đây là nghi vấn
+        cần người dùng xác nhận trước khi mở PR (đổi khoá khớp giao dịch = rủi ro cao theo
+        <code>docs/CHECKLIST-TRUOC-KHI-MO-PR.md</code> mục I) — <b>người dùng đã xác nhận (14/09):
+        chấp nhận đánh đổi, giữ nguyên fix theo đúng quy tắc chị Hà đã khẳng định.</b></p>
+
+      <div class="note">Branch: <code>fix/cham459901-ccn-trbrcd-1000</code> (tách từ
+        <code>develop</code>). Đợt này chỉ sửa <code>_mark_ccn()</code> — 4 nhóm còn lại (1000 Hoàn
+        trả, Cân CN, Điện KO offline — phần lệch còn lại là các case cần tra hệ thống live, không
+        tự động hoá được từ GL02) không đổi gì thêm trong PR này.</div>
+
+    </div>
+  </div>
+
+  <!-- 143 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">143</span>
+      <span class="card-title">Bể kết nối CSDL và threadpool khoá chéo — quá ~88 request đồng thời là cả hệ thống đứng 30 giây (2026-09-16/17)</span>
+      <span class="badge badge-done">Hoàn thiện</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-blue">Bối cảnh</span> truy nguyên cảnh báo <code>slow.request</code> 1,5–2,5 s trên máy chủ</div>
+      <p>Trong lúc tìm nguyên nhân các cảnh báo, tự tạo tải trên máy dev (N người ảo cùng mở trang chủ, mỗi
+        người 6 request đúng cụm chậm trong log). Không thấy chậm dần mà là <b>một vực</b>: 78 request đồng
+        thời chậm nhất 268 ms, 90 request thì <b>mọi</b> request đứng 31 giây và ~40 cái ăn 500
+        <code>Hết kết nối CSDL sau 30 giây chờ</code> — kể cả request bị từ chối ở bước kiểm token.</p>
+
+      <div class="label"><span class="pill pill-red">Cơ chế</span> hai hàng chờ chờ nhau</div>
+      <p><code>get_db()</code> là generator đồng bộ → FastAPI mượn 1 luồng (bể anyio 40 token) để chạy
+        <code>_muon()</code>. Request đã cầm kết nối cần <b>thêm</b> luồng cho <code>get_current_staff</code> /
+        <code>require_feature</code> / thân endpoint. Khi 48 kết nối đã ra ngoài, request mới đứng chờ kết nối
+        <b>trong lúc giữ luồng</b>; đủ 40 cái như vậy thì bên cầm kết nối không còn luồng để chạy tiếp và
+        trả kết nối → kẹt tới hết <code>_POOL_CHO_GIAY</code>. Ngưỡng khớp số: 48 + 40 = 88 (78 chạy, 90 đứng).
+        FastAPI đã tự chặn đúng kiểu kẹt này ở chiều <b>trả</b> (limiter riêng trong
+        <code>fastapi/concurrency.py</code>, có chú thích nói thẳng về bể kết nối), chiều <b>mượn</b> thì không.</p>
+
+      <div class="label"><span class="pill pill-green">Fix</span> cổng async trước khi mượn — <code>_qua_cong_db()</code></div>
+      <p>Dependency <code>async</code> giữ <code>anyio.Semaphore(_POOL_MAX)</code>, là sub-dependency của
+        <code>get_db</code>. Phần dư chờ bằng <code>await</code> trên event loop, không chiếm luồng. Qua cổng rồi
+        thì <code>_muon()</code> luôn lấy được kết nối ngay, nên không còn luồng nào đứng chờ kết nối. FastAPI
+        thoát dependency ngược thứ tự vào → kết nối về bể trước, cổng nhả suất sau.</p>
+
+      <table>
+        <tr><th>Phương án</th><th>Vì sao không chọn</th></tr>
+        <tr><td>Nâng <code>DB_POOL_SIZE</code></td><td>Chỉ dời vực sang <code>N + 40</code>, không xoá. Thêm kết nối SQLite cũng không nhanh hơn</td></tr>
+        <tr><td>Nâng số luồng anyio</td><td>Cùng lý do — vực dời sang <code>48 + M</code></td></tr>
+        <tr><td><code>get_db</code> thành <code>async</code>, gọi <code>_muon()</code> trên loop</td><td>Bể cạn thì <code>_muon()</code> chờ đồng bộ → <b>chặn cả event loop</b>, tệ hơn lỗi gốc</td></tr>
+        <tr><td><b>Cổng async (đã chọn)</b></td><td>Xoá hẳn điều kiện kẹt; ~50 dòng, một file; không đổi chữ ký endpoint nào</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-blue">Kiểm chứng</span> backend thật, cùng máy, cùng kịch bản</div>
+      <table>
+        <tr><th>Tải</th><th>Trước sửa</th><th>Sau sửa</th></tr>
+        <tr><td>10 người / 60 req</td><td>max 281–513 ms (6 lượt)</td><td>max 279–475 ms (6 lượt)</td></tr>
+        <tr><td>13 người / 78 req</td><td>max 377–449 ms (8 lượt)</td><td>max 385–575 ms (8 lượt)</td></tr>
+        <tr><td>15 người / 90 req</td><td><b>31 s, ~40 lỗi 500</b></td><td>max 549 ms, 90/90 thành công</td></tr>
+        <tr><td>20 người / 120 req</td><td><b>31 s, lỗi 500</b></td><td>max 817 ms, 120/120</td></tr>
+        <tr><td>40 người / 240 req</td><td>—</td><td>max 2,76 s, 240/240</td></tr>
+      </table>
+      <p>Tải nhẹ: hai bản chồng lên nhau. Lượt đầu bản mới trông chậm hơn ~30% nhưng đó là do chạy lúc máy
+        nguội — đổi thứ tự chạy lại thì mất. <code>tests/test_be_ket_noi_khoa_cheo.py</code> thu nhỏ về
+        2 kết nối + 2 luồng: bản cũ 8/10 request ăn 500 sau 26 s, bản mới 10/10 trong ~0,1 s.</p>
+
+      <div class="label"><span class="pill pill-warn">Đánh đổi / rủi ro còn lại</span></div>
+      <ul>
+        <li><b><code>get_db</code> phải là đường DUY NHẤT gọi <code>_muon()</code></b> (ngoài <code>khoi_tao_pool()</code>).
+          Chỗ nào mượn thẳng từ bể là không đi qua cổng → cổng cho qua 48 request trong khi bể thiếu kết nối →
+          mở lại đúng lỗi này. Hiện đúng (đã grep); đã ghi vào DESIGN.md.</li>
+        <li>Hết giờ chờ nay trả <b>503</b> (trước: 500) và <b>ghi WARNING vào <code>app.log</code></b> kèm
+          <code>pool_stats()</code>. Bản cũ ném <code>RuntimeError</code> trong dependency → chỉ ra console
+          uvicorn, không bao giờ tới màn Nhật ký hệ thống.</li>
+        <li>Endpoint <code>def</code> không dùng CSDL nhưng giữ luồng lâu vẫn có thể làm request khác chậm — đó
+          là xếp hàng, không phải kẹt; <code>MAX_HEAVY_TASKS</code> đã lo phần việc nặng.</li>
+      </ul>
+
+      <div class="label"><span class="pill pill-gray">Phát hiện nhưng không sửa trong PR này</span></div>
+      <ul>
+        <li><b>Chưa giải thích được cảnh báo 1,5–2,5 s gốc.</b> Máy chủ chưa từng chạm vực này (log không có dòng
+          ~30000 ms "ném ngoại lệ"; cảnh báo đều HTTP 200). Đã loại: khoá CSDL, job đối chiếu tranh GIL, bcrypt
+          (nhả GIL — đo: 4 lượt song song 636 ms), CPU yếu (8 lõi / 20 GB), mã chậm (<code>/api/staff/</code>
+          0,9 ms truy vấn; lúc vắng người mọi endpoint 18–35 ms). Còn lại: đĩa / antivirus / tiến trình khác
+          trên máy chủ — cần số đo lúc cao điểm.</li>
+        <li><code>DATABASE_URL</code> ở <code>backend/core/config.py</code> viết cứng, bỏ qua biến môi trường. Không
+          ảnh hưởng máy thật, nhưng ai dựng backend thử "trỏ vào bản sao CSDL" sẽ ghi nhầm vào CSDL thật (đã
+          dính trong đợt đo này, kiểm lại không để lại dữ liệu). Để PR riêng.</li>
+        <li>README ghi <code>DB_POOL_SIZE</code> mặc định 16, mã là 48 — sửa luôn trong PR này (chỉ tài liệu).</li>
+      </ul>
+
+      <div class="note">Branch: <code>fix/be-ket-noi-khoa-cheo</code>. Chỉ đổi <code>backend/database.py</code> + test + tài liệu.</div>
+
+    </div>
+  </div>
+
+  <!-- 144 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">144</span>
+      <span class="card-title">Cảnh báo "Request chậm" kèm trạng thái bên trong backend — và nghi phạm GIL được mở lại (2026-09-17)</span>
+      <span class="badge badge-done">Hoàn thiện</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-blue">Bối cảnh</span> 5 lần loại trừ vẫn chưa ra nguyên nhân cảnh báo 1,5–2,5 s</div>
+      <p>Đã loại bằng số đo: khoá CSDL (không có <code>db.contention</code>), bcrypt (nhả GIL), CPU yếu (8 lõi/20 GB),
+        mã chậm (lúc vắng mọi endpoint 18–35 ms), Windows Defender (<code>New-MpPerformanceRecording</code> 20 phút
+        giờ cao điểm có cảnh báo: file bị quét lâu nhất 49 ms, <code>ksnb.db</code>/<code>-wal</code> không lọt top 15).
+        Đoán từ ngoài vào không còn hướng — nên cho mỗi dòng cảnh báo tự chụp trạng thái bên trong.</p>
+
+      <div class="label"><span class="pill pill-red">Sửa lại một kết luận sai</span> job đối chiếu tranh GIL</div>
+      <p>Ngày 16/09 loại giả thuyết này vì <em>cạnh mốc bắt đầu</em> ACH 16:45:46 không có request nhẹ nào chậm. Sai:
+        mốc đó chỉ là lúc nhận file xong, pipeline chạy nền <b>nhiều phút</b> sau — và cụm chậm 16:50–16:53 nằm gọn
+        trong khoảng đó. Log 17/09 cho thêm một cặp: 09:06:51 Chấm 459901 ghi Excel 1.294.464 dòng → 09:10:58
+        <code>/api/auth/me</code> 2771 ms.</p>
+      <p>Đo trong một tiến trình (FastAPI + bể CSDL thật, luồng nền ghi Excel openpyxl write-only), 40 lượt × 6 request:</p>
+      <table>
+        <tr><th>Tình huống</th><th>switchinterval 5 ms (mặc định)</th><th>1 ms</th></tr>
+        <tr><td>Không có job nền</td><td>trung vị 5 ms, max 37 ms</td><td>6 ms, 16 ms</td></tr>
+        <tr><td>1 luồng ghi Excel</td><td>trung vị 314–345 ms, max 434–655 ms</td><td>234 ms, 432 ms</td></tr>
+        <tr><td>2 luồng ghi Excel</td><td>trung vị 737–749 ms, <b>max 2,6–3,4 s</b></td><td>516 ms, 865 ms</td></tr>
+      </table>
+      <p>Đúng độ lớn cảnh báo trên máy chủ. 8 lõi không giúp: chỉ một luồng chạy mã Python tại một thời điểm.
+        <b>Chưa chứng minh trên máy chủ</b> — card này chính là để chứng minh (cột <code>đối chiếu</code> + <code>loop chặn</code>).</p>
+
+      <div class="label"><span class="pill pill-green">Thay đổi</span> <code>backend/core/slow_request.py</code></div>
+      <p>Đuôi mỗi dòng: <code>loop chặn tối đa N ms, trễ tổng M ms · luồng a/40 chờ b · kết nối CSDL c/48 xếp cổng d · đang xử lý e · việc nặng f/4 · đối chiếu g</code>.
+        Phần đầu dòng giữ nguyên để bộ lọc cũ vẫn khớp.</p>
+      <ul>
+        <li><b>Đo loop bằng task nền</b> ngủ 50 ms/nhịp, ghi độ trễ lúc thức (60 s gần nhất). Không đo từ trong request
+          được: loop bị chặn thì chính middleware cũng không chạy.</li>
+        <li><b>Cộng phần "đang ngủ quá giờ"</b> lúc chụp. Dòng cảnh báo được ghi ngay khi loop vừa thoát chỗ chặn — task
+          đo chưa kịp thức ghi mẫu. Bản đầu thiếu chỗ này, test
+          <code>test_async_def_chan_loop_hien_trong_canh_bao</code> bắt được: chặn 300 ms mà báo "0 ms".</li>
+        <li><b>Hai chỉ số, không phải một</b> — phản biện bắt được. Bản đầu chỉ có "chặn tối đa". Tranh GIL làm loop
+          đói thành nhiều quãng ngắn nên max nhỏ trong khi tổng lớn:
+          <table>
+            <tr><th>Luồng CPU nền, 2 s</th><th>chặn tối đa</th><th>trễ tổng (trừ nền)</th></tr>
+            <tr><td>0</td><td>28 ms</td><td>12 ms</td></tr>
+            <tr><td>1</td><td>44 ms</td><td>210–225 ms</td></tr>
+            <tr><td>2</td><td>59–91 ms</td><td>220–364 ms</td></tr>
+            <tr><td>3</td><td>138–231 ms</td><td>791–889 ms</td></tr>
+          </table>
+          Chỉ max thì dòng log trên máy chủ gợi ý "không phải GIL" — đúng cái PR này cần chứng minh.
+          Nền trừ 16 ms/nhịp: <code>asyncio.sleep</code> trên Windows tự trễ tới một nhịp timer.</li>
+        <li>Chụp trạng thái hỏng → vẫn ghi dòng chính, đuôi ghi "không lấy được trạng thái (lỗi)".</li>
+      </ul>
+
+      <div class="label"><span class="pill pill-warn">Đánh đổi</span></div>
+      <ul>
+        <li>Task đo thức 20 lần/giây suốt đời tiến trình — chi phí không đo được so với tải thật.</li>
+        <li>Độ chính xác ±50 ms (một nhịp) cho max; tổng đủ tách rảnh (~12 ms) khỏi đói GIL (hàng trăm ms).</li>
+        <li>Giữ mẫu 5 phút (6000 mẫu) — request upload ngưỡng 10 s có thể kéo dài hơn 60 s.</li>
+        <li><code>tat_do_tre</code> không ném khi task đã chết vì lỗi (lifespan còn xả audit ngay sau), nhưng
+          không nuốt lệnh huỷ từ ngoài.</li>
+        <li>Không bật trong app không chạy lifespan (test tí hon) → ghi rõ "không đo", không in số giả.</li>
+      </ul>
+
+      <div class="label"><span class="pill pill-gray">Chưa làm — chờ số đo máy chủ</span></div>
+      <ul>
+        <li><b>Nếu xác nhận GIL:</b> lời giải thật là chạy pipeline đối chiếu ở <b>tiến trình riêng</b> (hiện là
+          <code>threading.Thread</code> trong tiến trình web, xem <code>phien_doi_chieu.py</code>). Đụng 6 module đối chiếu
+          (logic khớp giao dịch — rủi ro cao theo CHECKLIST mục I), phải truyền trạng thái job qua ranh giới tiến trình.</li>
+        <li><code>sys.setswitchinterval(0.001)</code> giảm được ~30% trung vị, max 2,6 s → 0,86 s với 2 luồng — biện pháp tạm,
+          chưa áp: nó đổi hành vi toàn tiến trình, cần đo thông lượng job trước.</li>
+      </ul>
+
+      <div class="note">Branch: <code>feat/slow-request-kem-trang-thai</code>. Không đổi hành vi request nào.</div>
+
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">145</span>
+      <span class="card-title">Đối chiếu CITAD ↔ PaymentHub (Phòng QLTK Nostro, Vostro) — thêm USD/EUR bên cạnh VNĐ (2026-09-14)</span>
+      <span class="badge badge-done">Hoàn thiện</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-blue">Yêu cầu</span> module này (xem card 105) trước 14/09/2026 chỉ chấm VNĐ — phòng xác nhận thực tế có cả USD/EUR, cần thêm 2 tab nữa vào CÙNG 1 kỳ đối chiếu (không tách bảng riêng theo loại tiền)</div>
+
+      <p><b>Nguồn dữ liệu 2 phía KHÁC hẳn nhau, không đối xứng:</b></p>
+      <table>
+        <tr><th>Phía</th><th>VNĐ</th><th>USD/EUR</th></tr>
+        <tr><td>CITAD</td><td>Module <code>TraCuuDuLieu</code> (tab D) — quét bởi <code>content_citad_nostro.js</code>, có cả GTT+GTC</td>
+            <td>Module RIÊNG <code>TraCuuDuLieuNgoaiTe</code> (tab L) — quét bởi <code>content_citad_nostro_fx.js</code> (mới). <b>CHỈ có "Chuyển Có giá trị cao" (<code>cboDichVu</code> value <code>FH</code>)</b>, không có lựa chọn "giá trị thấp" nào cả — ngoại tệ không đi qua kênh GTT, khớp đúng thực tế PaymentHub (cột GTT luôn ra 0 khi lọc USD/EUR, xác nhận qua ảnh chụp thật). Có thêm control "Nguồn dữ liệu" (<code>rdbDuLieuCI</code>/<code>rdbDuLieuRPC</code>) mà trang VNĐ không có — bắt buộc đang chọn <code>rdbDuLieuCI</code> mới lưu, cùng tinh thần chặn "Đi"/"Thành công" đã có.</td></tr>
+        <tr><td>PaymentHub</td><td colspan="2">1 trang DUY NHẤT cho cả 3 loại tiền (<code>final-settlement-citad/charges</code>) — chỉ đổi dropdown Loại tiền (<code>#ccy</code>, values <code>""</code>=Tất cả/<code>VND</code>/<code>USD</code>/<code>EUR</code>) rồi Truy vấn lại, không có trang riêng như CITAD. <code>content_paymenthub_nostro.js</code> phải đọc thêm dropdown này để biết đang lưu số của loại tiền nào.</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-amber">Quyết định cấu trúc dữ liệu</span> lồng thêm 1 lớp <code>ccy</code> ngoài cùng, KHÔNG migrate DB</div>
+      <p><code>cD</code>/<code>phD</code> đổi từ phẳng (<code>cD[cong][loai]</code>) sang lồng
+        (<code>cD[ccy][cong][loai]</code>, <code>ccy</code> ∈ <code>LOAI_TIEN = ("VND","USD","EUR")</code>).
+        Bảng lưu TRƯỚC 14/09/2026 vẫn ở dạng phẳng cũ trong DB — <b>không chạy migration nào</b>, phân biệt
+        2 dạng bằng tập khoá của <code>cD</code>: khoá dạng cũ luôn ∈ <code>CONGS</code> ("1"/"9"/"12"/"17"/"18"),
+        khoá dạng mới luôn ∈ <code>LOAI_TIEN</code> — 2 tập không giao nhau nên phân biệt chắc chắn
+        (<code>_is_legacy_flat_cD()</code>). <code>get_ccy_slice(sess, ccy)</code> (backend) và
+        <code>_get_ccy_slice()</code> (frontend, mirror tay — frontend không import được service backend,
+        khác tiến trình) coi bảng cũ là <b>toàn bộ VNĐ</b>, USD/EUR trả rỗng. <code>compute_totals()</code>
+        KHÔNG đổi chữ ký — vẫn chỉ nhận lát phẳng 1 loại tiền, mọi caller tự gọi
+        <code>get_ccy_slice()</code> trước.</p>
+
+      <div class="label"><span class="pill pill-blue">Excel</span> 1 workbook, 3 sheet (VND/USD/EUR)</div>
+      <p><code>build_xlsx_nostro()</code> tách phần thân cũ thành helper nội bộ <code>_write_sheet(ws, cD, phD, ccy)</code>,
+        gọi 3 lần (<code>wb.create_sheet(title=ccy)</code>) — tiêu đề mỗi sheet có thêm nhãn loại tiền
+        (<code>CCY_LABEL</code>) để phân biệt khi in riêng từng sheet. <code>combine_sessions_cD_phD()</code>
+        (dùng cho "Tổng hợp tháng") cũng đổi output sang lồng theo <code>ccy</code>, cộng dồn riêng từng loại
+        tiền qua các bảng được tick.</p>
+
+      <div class="label"><span class="pill pill-amber">Đổi ngữ nghĩa</span> <code>is_reconciliation_matched()</code> — "khớp" giờ = khớp CẢ 3 loại tiền</div>
+      <p>Loop qua <code>LOAI_TIEN</code>, false ngay khi 1 loại tiền không khớp. Hệ quả: bảng chỉ mới chấm
+        VNĐ (USD/EUR chưa ai chấm, toàn 0) tự động coi USD/EUR "khớp" (0=0) — không phân biệt được
+        "chưa chấm" với "chấm rồi và khớp". <b>Chưa gây hại thật</b>: hàm này chỉ được gọi từ
+        <code>get_reconciliation_status()</code>, mà hàm đó hiện KHÔNG có nơi nào gọi (đã kiểm, xem
+        docstring hàm) — không đổi hành vi bất kỳ màn hình nào đang chạy. Nếu sau này có màn hình dùng lại
+        hàm này, cần quyết định lại ngữ nghĩa "chưa chấm" trước khi tin số liệu.</p>
+
+      <div class="label"><span class="pill pill-amber">Câm lặng phát sinh — đã sửa trong lượt rà soát</span></div>
+      <p><code>content_paymenthub_nostro.js</code> TRƯỚC 14/09/2026 tự lưu <b>vô điều kiện</b> mỗi khi bảng
+        "Tổng cộng" đổi (không có bộ lọc nào phải khớp, khác hẳn CITAD). Thêm điều kiện đọc <code>ccy</code>
+        khiến khi dropdown Loại tiền đang ở "Tất cả" thì script <b>im lặng hoàn toàn</b> — khác hành vi cũ,
+        dễ khiến người dùng tưởng đã tự lưu. Đã thêm toast cảnh báo (giới hạn 1 lần/tổ hợp số liệu, không
+        spam theo <code>MutationObserver</code>). Riêng <code>content_citad_nostro_fx.js</code> im lặng khi
+        bộ lọc không khớp (chiều/trạng thái/nguồn dữ liệu/loại dịch vụ/loại tiền) là <b>giữ nguyên quy ước
+        đã có từ <code>content_citad_nostro.js</code> gốc</b> — không phải hồi quy mới, không sửa.</p>
+
+      <div class="label"><span class="pill pill-green">Sửa sau review (16/09/2026)</span></div>
+      <ul>
+        <li><b>422 khi Xuất Excel chưa chọn tên:</b> 4 ô tên đổi sang <code>ui.select</code> có giá trị mặc định <code>None</code>,
+          trong khi <code>ExportIn.lb/ks</code> và <code>MonthSummaryExportIn.lb/ks</code> bắt buộc <code>str</code>. Thêm
+          <code>or ""</code> ở cả 3 chỗ gửi payload — đúng lỗi đã sửa cho Phòng Thanh toán ở commit <code>485270a</code>,
+          lần đầu chỉ chép một nửa bản vá đó.</li>
+        <li><b>Nhắc cài lại Extension:</b> bản 1.1 đổi key buffer PaymentHub và thêm script ngoại tệ; máy còn bản 1.0 thì
+          Nạp PaymentHub bỏ qua mọi mục. Trang Nostro nay tự hỏi version Extension (bản 1.0 đã trả lời được
+          <code>GET_VERSION</code>) và hiện hộp thoại nhắc, mirror <code>doi_chieu_citad.py</code>.</li>
+      </ul>
+
+      <div class="label"><span class="pill pill-amber">Chưa xác minh</span> số tiền ngoại tệ có phần lẻ</div>
+      <p><code>content_citad_nostro_fx.js::readResult()</code> và <code>content_paymenthub_nostro.js::_num()</code> bỏ mọi
+        ký tự không phải chữ số — đúng với VNĐ. Nếu trang CITAD/PaymentHub hiển thị USD/EUR có xu
+        (<code>1,234.56</code>) thì số đọc ra gấp 100 lần; hai phía cùng sai thì chênh lệch vẫn bằng 0 nên
+        <b>không tự lộ</b>, chỉ làm số trên Excel sai. Cần mở trang thật lọc USD để chốt.</p>
+
+      <div class="note">Test: sửa 1 ca vỡ do đổi cấu trúc trả về (<code>test_tong_hop_thang_cong_dung_nhieu_bang_duoc_chon</code>,
+        thêm lớp <code>["VND"]</code>) — 31/31 test <code>test_doi_chieu_citad_nostro.py</code> pass. Đã tự
+        kiểm bằng cách chạy app thật (<code>run.py</code>) + gọi API thật (không chỉ gọi hàm Python đơn lẻ):
+        lưu/đọc/xuất Excel 1 bảng đủ 3 loại tiền, và tạo 1 bảng kiểu CŨ (phẳng, ghi trực tiếp qua
+        <code>svc.session_save()</code>) rồi đọc lại/xuất Excel/tổng hợp tháng — VNĐ ra đúng số cũ, USD/EUR
+        ra 0, không lỗi. Dữ liệu test đã xoá sạch sau khi kiểm.</div>
+
+    </div>
+  </div>
+
+  <!-- 146 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">146</span>
       <span class="card-title">Đối chiếu OSB (GL02 ↔ OSB chi tiết hạch toán, TK trung gian 519910) — spike test trên dữ liệu thật xác nhận offset=0 đủ, phát hiện 2 lỗi trong đề bài giao việc trước khi viết code sản xuất (2026-09-13)</span>
       <span class="badge badge-done">Module mới — spike đã verify, code sản xuất đã viết + 6 test pass</span>
     </div>
@@ -17558,10 +18433,10 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
-  <!-- 143 -->
+  <!-- 147 -->
   <div class="card">
     <div class="card-header">
-      <span class="card-num">143</span>
+      <span class="card-num">147</span>
       <span class="card-title">Đối chiếu OSB — sửa 3 điểm review Khánh trên PR #103: dọn rác file tạm, bỏ mã chết, giảm khối lượng strip/dedupe (2026-09-17)</span>
       <span class="badge badge-done">Hoàn thiện</span>
     </div>
@@ -17611,8 +18486,25 @@ This may happen if you try to create UI from a background task.</pre>
         tương đương chứ không phải phân biệt 2 thứ tự) và
         <code>test_trdate_khoang_trang_thua_van_loc_dung_ngay</code> (lý do PHẢI strip riêng
         <code>TRDATE</code> trước khi lọc: <code>TRDATE</code> có khoảng trắng thừa mà so sánh
-        <code>== ngay</code> trước khi strip sẽ loại nhầm dòng đó khỏi kết quả — test này CHỈ pass
-        với thứ tự mới, thêm sau góp ý của 1 lượt Agent phản biện nội bộ).</p>
+        <code>== ngay</code> trước khi strip sẽ loại nhầm dòng đó khỏi kết quả — thêm sau góp ý của 1
+        lượt Agent phản biện nội bộ). <b>Đính chính khi merge:</b> test này KHÔNG phân biệt thứ tự
+        cũ/mới — mã cũ strip mọi cột trước khi lọc nên cũng pass. Nó chặn một biến thể sai khác
+        (lọc trước, strip sau), vẫn đáng giữ.</p>
+
+      <div class="label"><span class="pill pill-red">Sửa khi merge</span> thư mục xoá dựng từ <code>task_token</code>, không từ đường dẫn file</div>
+      <p><code>run_process()</code> ban đầu xoá <code>gl02_path.parent</code> — "thư mục chứa file
+        GL02". Hôm nay đúng vì file luôn nằm trong <code>upload_&lt;token&gt;/</code>. Nhưng nếu
+        module thêm đường chạy thẳng từ thư mục máy chủ (Chấm 459901 còn chế độ này), <code>parent</code>
+        là thư mục dữ liệu thật và <code>rmtree</code> xoá sạch nó — không lỗi, không log
+        (<code>ignore_errors=True</code>). Nay mọi chỗ tạo/xoá đi qua một hàm
+        <code>_thu_muc_upload(task_token)</code>. Test
+        <code>test_run_process_khong_xoa_thu_muc_chua_file_nam_ngoai_upload</code> đặt file ở thư
+        mục ngoài — fail trên mã cũ, pass trên mã mới.</p>
+
+      <div class="label"><span class="pill pill-blue">Số card</span> 142/143 → 146/147</div>
+      <p>PR tạo nhánh từ develop lúc card cuối là 141; trong lúc PR mở, develop đã dùng 142–145
+        (<code>docs/DESIGN.md</code> trỏ tới card 143 = bể kết nối CSDL). Khi gộp develop, hai card
+        OSB được đánh lại số và đặt sau card cuối.</p>
 
       <div class="note">Test: <code>tests/services/doi_chieu_osb/</code> 16/16 pass (thêm 2 test
         mới), <code>tests/test_doi_chieu_osb_cleanup_wiring.py</code> 2/2 pass (mới) — verify bằng

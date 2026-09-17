@@ -4,6 +4,142 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 17/09/2026 Gỡ thư mục bản gốc **QĐ 979** (`979-QyD-NHNo-PC (Trình bày VB)`) khỏi GitHub
+    + ℹ️ Không đổi màn hình nào. Chuẩn hoá văn bản và tab Mẫu trình bày sẵn vẫn chạy như cũ — quy chuẩn
+      đã nằm trong mã, 18 mẫu trắng đã nằm ở `templates/vb_mau/`
+    + ℹ️ Máy chính không bị ảnh hưởng: `deploy.bat` vốn không chép thư mục này sang
+    + ⚠️ Máy phát triển khác chạy `git pull` sẽ **mất thư mục này trên đĩa**. Cần giữ (để chạy lại
+      `scripts/tach_mau_vb.py`) thì chép ra chỗ khác trước khi pull, xong chép lại vào gốc dự án
+
+- 17/09/2026 Đối chiếu CITAD - PaymentHub (Phòng QLTK Nostro, Vostro) - thêm **USD và EUR**
+    + ✅ Mỗi bảng đối chiếu nay có 3 tab **VNĐ / USD / EUR** trong cùng một kỳ. Ba loại tiền tính riêng,
+      không cộng chung. File Excel xuất ra có 3 sheet tương ứng, kể cả Excel tổng hợp tháng
+    + ✅ Số USD/EUR bên CITAD lấy ở trang **"Tra cứu dữ liệu ngoại tệ"**: chọn chiều Đi, Thành công,
+      Chuyển Có giá trị cao, Dữ liệu tại CI, đúng loại tiền rồi Truy vấn — Extension tự lưu như trang VNĐ
+    + ⚠️ Trên trang PaymentHub **phải chọn đúng Loại tiền** (VND/USD/EUR) trước khi Truy vấn. Để "Tất cả"
+      thì Extension không lưu và hiện cảnh báo màu cam
+    + ⚠️ **Phải cài lại Extension** (bản 1.1). Mở màn hình đối chiếu sẽ tự hiện hộp thoại nhắc nếu máy còn
+      bản cũ — bấm "Tải Extension mới", gỡ bản cũ ở chrome://extensions rồi cài lại
+    + ✅ Tab Lịch sử và Tổng hợp tháng có thêm ô **lọc theo loại tiền**. Các ô Người lập bảng / Người
+      kiểm soát / Tên người chấm có danh sách nhân viên trong phòng để bấm chọn, vẫn gõ tay được
+    + ℹ️ Các bảng đã lưu trước đây vẫn mở, sửa, xuất Excel bình thường — số cũ nằm ở tab VNĐ
+    + ⚠️ **Nhờ kiểm tra lần đầu dùng USD/EUR:** so số tiền trên màn hình đối chiếu với số trên trang
+      CITAD/PaymentHub. Nếu thấy **gấp 100 lần** (lệch 2 chữ số) thì báo kỹ thuật ngay
+
+- 17/09/2026 Cảnh báo "Request chậm" nay **tự ghi lý do đi kèm**
+    + ✅ Mỗi dòng cảnh báo ở **Nhật ký hệ thống** có thêm phần đuôi sau dấu `|`, cho biết lúc đó phần
+      mềm đang bận gì: có job đối chiếu nào đang chạy không, có bao nhiêu người đang dùng, CSDL có bị
+      xếp hàng không. Không đổi cách hoạt động của bất kỳ màn hình nào
+    + ℹ️ **Nhờ người vận hành:** sau khi cập nhật, khi thấy cảnh báo "Request chậm" thì chụp lại
+      **nguyên dòng** (cả phần sau dấu `|`) gửi kỹ thuật. Đặc biệt để ý khi đang có người chạy Đối chiếu
+      ACH / Chấm 459901 / Song phương — nghi phạm hiện tại là các job này làm chậm cả hệ thống
+    + ℹ️ Không đổi dữ liệu, không phải cài lại Extension. Chạy lại phần mềm như thường lệ
+
+- 17/09/2026 Nâng Python lên 3.12 — **máy chủ đã nâng xong** (3.12.10)
+    + ℹ️ Python 3.10 hết được hỗ trợ vá lỗi bảo mật từ 31/10/2026, nên nâng trước hạn. Không đổi màn
+      hình nào, không đổi dữ liệu. Toàn bộ 2013 bài kiểm tra tự động chạy đạt trên bản mới
+    + ⚠️ **Mọi máy cắm chung USB dự án phải cài Python 3.12.** Cắm sang máy còn 3.10 là phần mềm không
+      chạy được. Cách nâng từng bước (chạy bằng CMD) ở `docs/CONTRIBUTING.md`, mục *Cài Python*
+    + ⚠️ Cắm USB sang máy khác (đã có 3.12) mà `start.bat` báo **"No Python at ..."** thì không cần cài
+      lại gì — mở CMD ở thư mục dự án, chạy `py -3.12 -m venv --upgrade .venv`
+    + ℹ️ Nếu trên máy còn thư mục `.venv_310_backup` (bản sao lưu lúc nâng): chạy thử phần mềm ổn định
+      vài ngày rồi xoá được, tiết kiệm ~1 GB. Nó đã được loại khỏi git nên để đó không bị đẩy nhầm lên
+
+- 17/09/2026 Sửa lỗi hệ thống **đứng hẳn 30 giây** khi nhiều người mở màn hình cùng lúc
+    + ✅ Trước đây khi khoảng **15 người trở lên** mở trang cùng một lúc (điển hình: vừa khởi động lại
+      phần mềm, mọi trình duyệt đang mở tự tải lại), **toàn bộ** hệ thống treo khoảng 30 giây rồi một
+      nửa số người nhận lỗi. Đo trên máy thử: 90 yêu cầu cùng lúc → treo 31 giây; nay 120 yêu cầu cùng
+      lúc vẫn xong dưới 1 giây, không lỗi
+    + ✅ Lúc đông người bình thường **không nhanh hơn cũng không chậm hơn** — đã đo so sánh hai bản
+    + ✅ Nếu vẫn quá tải thật thì người dùng nhận thông báo "Hệ thống bận, vui lòng thử lại" thay vì lỗi
+      chung chung, và **màn Nhật ký hệ thống có ghi lại** (trước đây lỗi này không ghi ở đâu cả)
+    + ⚠️ **Chưa phải lời giải cho các cảnh báo "Request chậm" 1,5–2,5 giây** đang thấy ở Nhật ký hệ
+      thống. Máy chủ chưa từng rơi vào lỗi treo 30 giây ở trên; nguyên nhân cảnh báo vẫn đang tìm
+    + ℹ️ Không đổi màn hình, không đổi dữ liệu, không phải cài lại Extension. Chạy lại phần mềm như thường lệ
+
+- 16/09/2026 Đối soát CITAD ↔ IPCAS — sửa 2 chỗ làm **mất lệnh lệch** khỏi báo cáo
+    + ✅ **Lệnh Đến cùng số giao dịch, cùng số tiền nhưng từ nhiều ngân hàng gửi khác nhau** nay được so
+      riêng từng ngân hàng. Trước đây phần mềm chỉ so một dòng đại diện, nên nếu CITAD có 4 lệnh mà IPCAS
+      chỉ có 3 thì lệnh thiếu **không hiện ra** (ca thật: số GD 10008309, 500.000đ)
+    + ✅ **Lệnh Đi IPCAS trạng thái `ERRC` (hạch toán huỷ lỗi)** không còn bị bỏ lúc đọc file. Trước đây
+      lệnh CITAD tương ứng hiện nhầm là **Chỉ CITAD** như thể IPCAS không có gì; nay hiện ở
+      **Lệch trạng thái** để người chấm thấy IPCAS có bản ghi
+    + ⚠️ **Có thể xuất hiện thêm dòng Chỉ IPCAS mang trạng thái `ERRC`** — lệnh huỷ lỗi mà CITAD không có.
+      Nếu Phòng Thanh toán thấy loại này không cần báo, báo lại để loại trừ như `ERPO`/`CALD`
+    + ⚠️ Nếu một ngày báo cáo đột nhiên có **rất nhiều cặp Chỉ CITAD / Chỉ IPCAS** kèm ghi chú
+      *"nhiều ngân hàng gửi khác nhau"* → nhiều khả năng file xuất từ CITAD hoặc IPCAS đổi định dạng
+      (mất mã ngân hàng), không phải lệch thật. Báo lại kỹ thuật trước khi xử lý
+    + ℹ️ Không đổi màn hình, không đổi dữ liệu cũ, không cần chạy script. Chỉ cần chạy lại phần mềm
+
+- 16/09/2026 Thi đua khen thưởng — màn hình mới cho Phòng Tổng hợp
+    + ✅ **Menu mới: Báo cáo → Phòng Tổng hợp → Thi đua khen thưởng.** Trước đây không có chỗ nào
+      trong phần mềm lưu dữ liệu này, nên báo cáo nghỉ phép vẫn phải bỏ trống cột "xếp loại thi đua"
+    + ✅ Lưu **3 loại dữ liệu**: danh hiệu của **đơn vị** (toàn Trung tâm hoặc từng phòng), danh hiệu
+      của **cá nhân** theo cấp (Đảng / chuyên môn / công đoàn), và **sáng kiến** của cá nhân. Sáng kiến
+      đính kèm được **file quyết định** (PDF, Word, ảnh — tối đa 15 MB mỗi file), tải về lại lúc nào cũng được
+    + ✅ **Tra cứu và xuất Excel**: một bảng tổng hợp danh hiệu đơn vị + cá nhân theo năm, một bảng
+      sáng kiến theo từng người. Có ô lọc theo năm, theo cán bộ, theo cấp và ô tìm kiếm tự do
+    + ✅ **Nhập sẵn từ Excel** cho cả 3 loại, dành cho phần đang theo dõi tay bằng Excel từ trước: bấm
+      **"Tải file mẫu"**, điền vào, tải lên lại. Bấm **"Xem trước"** để máy soát lỗi từng dòng (báo rõ
+      dòng nào sai vì sao) — thấy đúng rồi mới bấm **"Nhập vào hệ thống"**
+    + ⚠️ **Chưa ai nhìn thấy menu này cho tới khi được cấp quyền.** Người quản trị vào
+      **Phân quyền theo nhóm → Phòng Tổng hợp → Thi đua khen thưởng** rồi tick ô cho nhóm cần dùng.
+      Tài khoản quản trị thấy ngay từ đầu nên dễ tưởng là đã xong cho mọi người
+    + ⚠️ **Nhập cùng một file Excel hai lần là dữ liệu bị nhân đôi.** Phần mềm chưa biết tự nhận ra
+      dòng đã có. Lỡ nhập trùng thì phải vào xoá tay từng thẻ một — chưa có nút xoá hàng loạt. Nhập
+      xong nên mở danh sách soát lại số dòng ngay
+    + ⚠️ File Excel **tự làm** mà có cột **"Giới tính (Nam/Nữ)"** đứng trước cột **"Năm"** thì máy nhận
+      nhầm cột và báo `Năm không hợp lệ: 'Nam'` ở mọi dòng. Dùng file mẫu tải từ phần mềm thì không dính
+    + ℹ️ Không đổi màn hình nào đang có, không đổi dữ liệu cũ, không phải cài lại Extension. Chỉ cần
+      chạy lại phần mềm như thường lệ
+
+- 16/09/2026 Chấm 459901 — nhóm **Chuyển chi nhánh** chấm chặt hơn theo đúng quy tắc phòng Thanh toán
+    + ✅ Một cặp chỉ được xếp vào **Chuyển chi nhánh** khi có **một vế mã chi nhánh `1000` và một vế
+      mã khác**. Trước đây phần mềm chỉ ghép theo số tiền + nội dung (REMARK) mà không nhìn mã chi
+      nhánh, nên cặp hai vế cùng chi nhánh cũng bị xếp nhầm vào đây
+    + ⚠️ **Số dòng nhóm Chuyển chi nhánh sẽ ít đi so với các tháng trước.** Phần bị loại không mất —
+      rơi xuống nhóm *Cân CN* hoặc *GD khác* ở các bước sau. Tổng số dòng của 7 file vẫn đúng bằng
+      số dòng dữ liệu đầu vào như cũ
+    + ⚠️ Có một số giao dịch thực tế **là** chuyển chi nhánh nhưng không có vế `1000` — người chấm
+      tay nhận ra được vì tra hệ thống thanh toán, còn dữ liệu GL02 không có dấu hiệu nào để phần
+      mềm tự biết. Những ca này vẫn nằm ở *GD khác* và **vẫn phải chấm tay** như trước
+    + ℹ️ Không đổi gì ở 6 nhóm còn lại, không đổi thứ tự phân loại, không đổi cách xuất file
+
+- 16/09/2026 Thư viện — chặn phiên bản cho toàn bộ thư viện, không chỉ riêng `pandas`
+    + ✅ **Cần chạy lại `start.bat` một lần** — máy sẽ **không** cài lại hay đổi thư viện nào,
+      chỉ ghi nhận khai báo mới. Đã kiểm trước: mọi thư viện đang có trên máy chủ đều hợp lệ
+    + ℹ️ Rà tiếp sau đợt `pandas` thì thấy 10 thư viện khác cũng không khai giới hạn. Ba cái
+      **đã tự nhảy lên đời mới từ lúc nào không ai biết** — trong đó có thư viện dựng ảnh chữ ký
+      trên đơn nghỉ phép, và thư viện đọc file Excel của các màn hình đối chiếu
+    + ⚠️ Một cái suýt gây hỏng thật: thư viện tính **ngày âm lịch** sắp bỏ cách gọi cũ mà hệ thống
+      đang dùng. Nếu để nó tự lên đời, lịch trực sẽ **mất trọn 5 ngày Tết và Giỗ Tổ** khỏi danh
+      sách gợi ý, không báo lỗi gì. Đã chặn lại; cách sửa triệt để ghi ở issue #109
+    + ℹ️ Thêm một bước kiểm tự động: từ nay ai thêm thư viện mà quên khai giới hạn thì máy báo lỗi
+      ngay, không đợi đến lúc hỏng
+
+- 16/09/2026 Thư viện — chặn `pandas` phiên bản 3 để không hỏng phần xuất file Excel
+    + ✅ **Cần chạy lại `start.bat` một lần** sau đợt này để máy tự cài đúng phiên bản thư viện
+    + ℹ️ Không đổi màn hình nào, không đổi dữ liệu. Đây là việc bên trong: `pandas` vừa ra bản mới (bản 3)
+      đòi một thư viện Excel đời cao hơn bản hệ thống đang dùng. Máy nào cài mới hôm nay sẽ tự kéo về bản 3
+      rồi **mọi chức năng xuất Excel báo lỗi** — nay đã chặn lại
+    + ℹ️ Máy chính đang chạy Python 3.10 nên **chưa từng dính lỗi này** (bản `pandas` 3 đòi Python 3.11 trở lên).
+      Chặn trước để máy cài mới hoặc nâng Python về sau không vấp
+
+- 16/09/2026 Đối chiếu CITAD — hết cảnh "Nạp" ra số của loại tiền hôm đó không có giao dịch
+    + ✅ **Dữ liệu đã quét nay tự hết hạn sau 4 giờ**: trước đây một lượt quét cũ (hôm khác, lúc chạy thử)
+      nằm lại trong máy chủ vô thời hạn, đến khi bấm "Nạp CITAD" thì bị kéo vào bảng cùng với số vừa quét
+    + ✅ **Thêm nút "Xoá dữ liệu đã quét"** ở màn Đối chiếu CITAD — xoá ngay phần Extension đã gửi lên nhưng
+      chưa nạp, dùng khi vừa quét nhầm hoặc quét thử. Không đụng số đang hiện trên màn hình hay bảng đã lưu
+    + ✅ **Cảnh báo khi nghi đọc nhầm loại tiền**: trên trang CITAD, ô chọn loại tiền đổi ngay nhưng bảng số
+      liệu phía dưới cập nhật chậm hơn — quét đúng lúc đó thì số của USD có thể bị gắn nhãn EUR. Nay nếu hai
+      loại tiền ra số **giống hệt nhau**, hệ thống báo để tự soi lại trên CITAD. **Số vẫn được nạp bình
+      thường**, đây chỉ là nhắc kiểm tra, không chặn
+    + ⚠️ Cảnh báo này chỉ bật khi **cả hai** loại tiền cùng có số trong máy chủ. Không thấy cảnh báo **không**
+      có nghĩa là số chắc chắn đúng — vẫn nên soi lại như thường lệ
+    + ⚠️ Màn **Đối chiếu CITAD của Phòng QLTK Nostro, Vostro chưa được sửa** — vẫn có thể nạp nhầm dữ liệu
+      quét cũ. Sẽ vá ở đợt sau; trong lúc chờ, nếu thấy số lạ thì báo để khởi động lại backend
+    + ℹ️ **Không phải cài lại Extension** — toàn bộ thay đổi nằm ở máy chủ và màn hình web
+
 - 14/09/2026 Chuẩn hoá văn bản - sửa các lỗi thấy khi chạy thử trên Tờ trình thật
     + ✅ **Không còn đổi số tiền trong bảng**: ô "10.000", "5.000" trước đây có thể bị sửa thành "10. 000"
     + ✅ Dòng "V/v …" ngay dưới "TỜ TRÌNH" nay ra cỡ 14 in đậm (trước ra cỡ 12 in thường); đề mục
