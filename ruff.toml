@@ -10,7 +10,7 @@
 #   2. Báo cáo, không làm đỏ CI: ruff check . --exit-zero  (bộ luật bên dưới)
 #      Để có số nền; muốn nâng luật nào lên cổng đỏ thì dọn về 0 trước rồi thêm vào lượt 1.
 
-target-version = "py310"   # khớp Python của máy chính và CI
+target-version = "py312"   # khớp Python của máy chủ, máy phát triển và CI — ba nơi PHẢI cùng một bản
 # "./" = chỉ thư mục ở gốc repo. Viết trần "data" thì ruff bỏ qua MỌI thư mục tên data ở bất kỳ
 # cấp nào — một file .py sau này nằm trong …/data/ sẽ lọt khỏi cổng đỏ mà không ai hay.
 extend-exclude = ["./data", "./Plan", "./Upgrade"]

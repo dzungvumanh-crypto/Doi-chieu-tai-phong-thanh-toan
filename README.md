@@ -138,7 +138,8 @@ Truy cập:
 
 > **Windows — dùng `start.bat`.** Script tự kiểm tra `.venv` và **vá tại chỗ** (~2 giây) khi thư mục dự án
 > được mang sang máy khác (chạy từ USB), thay vì xoá và cài lại toàn bộ thư viện. Máy mới cần **Python 3.12.x**;
-> bản khác sẽ buộc cài lại thư viện và **cần internet**.
+> bản khác sẽ buộc cài lại thư viện và **cần internet**. Nên **mọi máy cắm chung USB phải cùng cài 3.12** —
+> một máy còn 3.10 là mỗi lần cắm qua lại phải dựng lại venv. Chi tiết nâng cấp: `docs/CONTRIBUTING.md`.
 >
 > Sửa file `.bat` / `.ps1` phải giữ xuống dòng **CRLF** — `.gitattributes` đã ép sẵn khi clone/checkout,
 > nhưng công cụ ghi file thường mặc định LF và `cmd.exe` chạy sai file .bat dạng LF mà không báo lỗi rõ.
