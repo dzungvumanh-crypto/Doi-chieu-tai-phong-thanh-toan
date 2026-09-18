@@ -35,7 +35,12 @@ _CHUA_XEP_PHONG = "Chưa xếp phòng"
 
 
 def _download_headers(filename: str) -> dict:
-    fallback = "".join(ch if ord(ch) < 128 and ch not in '\\"' else "_" for ch in filename)
+    # 32 <= ord < 127 (không chỉ < 128) — loại luôn ký tự điều khiển (CR/LF...).
+    # Tên file ở đây có thể chứa staff_name (họ tên cán bộ) do admin nhập tự
+    # do, không có ràng buộc định dạng nào chặn \r\n — thiếu chặn này thì một
+    # cái tên "dính" CR/LF chèn thẳng được dòng vào header Content-Disposition.
+    fallback = "".join(
+        ch if 32 <= ord(ch) < 127 and ch not in '\\"' else "_" for ch in filename)
     return {"Content-Disposition": (f'attachment; filename="{fallback}"; '
                                     f"filename*=UTF-8''{quote(filename, safe='')}")}
 

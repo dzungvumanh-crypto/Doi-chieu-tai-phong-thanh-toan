@@ -464,7 +464,10 @@ async def _tab_tong_hop(co_export: bool):
     async def xuat():
         params = {"loai": f_loai.value, "nam": int(f_nam.value), "ky": f_ky.value}
         if f_ky.value == "quy":
-            params["quy"] = int(f_quy.value) if f_quy.value else None
+            if not f_quy.value:
+                ui.notify("Chọn quý", type="warning")
+                return
+            params["quy"] = int(f_quy.value)
         try:
             raw = await asyncio.to_thread(api.download, "/api/xep-loai/export/tong-hop", params)
         except Exception as e:
