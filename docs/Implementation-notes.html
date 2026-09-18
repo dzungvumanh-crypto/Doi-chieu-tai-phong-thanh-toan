@@ -18855,6 +18855,68 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
+  <!-- 151 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">151</span>
+      <span class="card-title">SWIFT recon chạy ở tiến trình riêng; DTBB vào giới hạn việc nặng (2026-09-18)</span>
+      <span class="badge badge-done">Hoàn thiện</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-blue">Bối cảnh</span> việc nặng nào còn chạy trong tiến trình web sau card 150</div>
+      <p>Rà <code>run_heavy()</code> / luồng nền: SWIFT recon và Đối soát CITAD cũng là đối chiếu nhưng chạy qua
+        <code>run_heavy()</code> trong tiến trình web, <b>không</b> khai <code>dang_ky_nguon()</code> nên lưới canh của card 150 không
+        thấy. DTBB gọi <code>asyncio.to_thread</code> trần — lọt ngoài cả giới hạn <code>MAX_HEAVY</code>. Log máy chủ 18/09 (3 dòng
+        <code>slow.request</code> có trạng thái, đều <code>đối chiếu 1</code>, <code>việc nặng 0/4</code>) chưa cho thấy <code>run_heavy</code> gây chậm —
+        người dùng vẫn chọn làm SWIFT + DTBB ngay; CITAD để sau.</p>
+
+      <div class="label"><span class="pill pill-blue">Tiêu chí</span> khi nào đáng tách tiến trình</div>
+      <p>Cả hai: (1) mã Python thuần giữ GIL (pandas xử lý chuỗi, openpyxl, xlrd, docxtpl, cây XML) — việc chạy trong mã C
+        tự nhả GIL thì không (zlib, AES, truy vấn SQLite, bcrypt; đo: nén + AES bản sao CSDL 22 MB mất 0,61 s, loop trễ tối đa
+        13 ms); (2) thời gian lớn hơn nhiều ~0,8 s mở tiến trình. Dưới ~1 s giữ <code>run_heavy()</code>.</p>
+
+      <div class="label"><span class="pill pill-blue">Cách tách SWIFT</span> API giữ nguyên hoàn toàn</div>
+      <table>
+        <tr><th>Ở tiến trình con (<code>swift_recon/tach.py</code>)</th><th>Ở backend (<code>api/swift_recon.py</code>, trong <code>run_heavy</code>)</th></tr>
+        <tr><td>Đọc file, đối chiếu đến/đi, mọi lệnh xuất Excel (kể cả từ lịch sử, mẫu 04/05, bản ghi đang lọc)</td>
+          <td>Ghi file tải lên ra đĩa (con không nhận <code>UploadFile</code>), đọc/ghi lịch sử CSDL, kiểm 400/404 TRƯỚC khi mở con
+          (<code>HTTPException</code> không nên đi qua ranh giới tiến trình), đọc thử 1 file</td></tr>
+      </table>
+      <ul>
+        <li><b>Logic chuyển nguyên văn</b>, chỉ đổi nguồn vào: đường dẫn thay <code>UploadFile</code>, danh sách bản ghi thay CSDL.
+          <code>run_heavy(chay_tach, ...)</code>: luồng chờ ống dẫn không giữ GIL, vẫn nằm trong giới hạn 4 việc nặng.</li>
+        <li><b>Xuất Excel chỉ ghi file của cặp ĐỦ hai bên</b> — bản cũ không đọc file của cặp thiếu, nên file .zip hỏng ở đó không
+          được thành lỗi 422.</li>
+        <li><b>Đọc thử (<code>parse-preview</code>) cố ý KHÔNG tách</b>: đo 5.000 điện — trong luồng 0,38 s, tiến trình 1,20 s. Việc giữ
+          GIL ~0,4 s mà người dùng chờ gấp 3 lần MỖI lần chọn file. Đối chiếu 2,85 → 3,65 s, xuất mẫu 1,35 → 2,07 s: chấp nhận.</li>
+      </ul>
+
+      <div class="label"><span class="pill pill-green">Kiểm</span> SWIFT trước đây không có test nào</div>
+      <ul>
+        <li><code>tests/test_swift_recon_tach.py</code> dựng file đúng định dạng thật (SAA: SpreadsheetML XML; Quản lý điện: bảng HTML)
+          gồm khớp, lệch hai phía, dòng I/O bị lọc, cặp khớp khoá nhưng không Ack; đi qua <b>mọi</b> endpoint.</li>
+        <li><b>Chụp mốc từ mã CŨ</b> trước khi sửa (22 mục: JSON + từng ô của 12 file Excel) → sau khi tách, chạy trong luồng
+          và tiến trình con đều <b>giống hệt mốc</b>. Test giữ phép so luồng ↔ tiến trình (17 s).</li>
+        <li>Lưới canh mới trong <code>test_doi_chieu_chay_tien_trinh_rieng.py</code>: không file <code>backend/api/</code> nào gọi
+          <code>asyncio.to_thread</code>; API SWIFT không import <code>reconcile</code>/<code>exporters</code>/pandas/openpyxl, chỉ dùng
+          <code>parsers.UnknownFileFormat</code>. Gây lỗi cố ý cả hai → đều đỏ.</li>
+        <li>Bài học viết test: đoán "cặp NAK thì lệch" là sai — <code>_ack_ok</code> chỉ cần MỘT bên báo Ack. Sửa dữ liệu, không sửa số.</li>
+        <li>2065 test xanh, ruff F821/F823/E9 sạch.</li>
+      </ul>
+
+      <div class="label"><span class="pill pill-amber">Chưa làm</span></div>
+      <ul>
+        <li><b>Đối soát CITAD</b> (~38.000 dòng, <code>run_heavy</code>) — cùng khuôn với SWIFT; chờ log máy chủ sau khi deploy card 150/151.</li>
+        <li>SWIFT, CITAD không khai <code>dang_ky_nguon()</code> → không tính vào trần 3 lượt đối chiếu. Kiểu hỏi–đáp đồng bộ, dữ liệu
+          nhỏ hơn nhiều (vài nghìn điện/ngày) — chưa đáng thêm 409 cho người dùng.</li>
+        <li>FastAPI mã hoá JSON kết quả đối chiếu (hàng nghìn bản ghi) trên event loop — có từ trước, ngoài phạm vi.</li>
+      </ul>
+
+      <p>Branch: <code>feat/swift-dtbb-tien-trinh</code>.</p>
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-18</footer>
 </div>
 </body>

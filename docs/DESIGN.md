@@ -128,6 +128,17 @@ khuôn `_xu_ly_tach()` của 459901 / OSB; (3) tham số và kết quả pickle 
 
 `DOI_CHIEU_TIEN_TRINH=0` → chạy trong luồng như cũ (khẩn cấp trên máy chủ).
 
+Ngoài 7 cửa đối chiếu, **SWIFT recon** cũng tách (card 151) — kiểu hỏi–đáp đồng bộ, không có
+job: `await run_heavy(chay_tach, tach.<hàm>, ...)`; phần nặng ở `backend/services/swift_recon/tach.py`,
+API chỉ ghi file tải lên ra đĩa + đọc/ghi CSDL.
+
+**Khi nào đáng tách:** mã Python thuần giữ GIL (pandas xử lý chuỗi, openpyxl, xlrd, docxtpl, cây
+XML) **và** chạy lâu hơn nhiều ~0,8 s mở tiến trình. Việc trong mã C tự nhả GIL (zlib, AES, truy
+vấn SQLite, bcrypt) không cần. Dưới ~1 s cứ `run_heavy()` — đọc thử 1 file SWIFT cố ý không tách.
+
+**Không `asyncio.to_thread` trong `backend/api/`** — bể 40 luồng chung, lọt ngoài `MAX_HEAVY`
+(DTBB từng vậy tới 18/09/2026). Test canh: `test_api_khong_dung_asyncio_to_thread`.
+
 > **Test:** `conftest.py` mặc định `DOI_CHIEU_TIEN_TRINH=0` — tiến trình con **không thấy `monkeypatch`**
 > của test. Test vá `svc.TEMP_DIR` mà chạy tiến trình thật là ghi vào `data/temp_*` THẬT (đã xảy ra
 > 18/09/2026). Test cần tiến trình thật thì xin fixture `tien_trinh_that` và chỉ truyền đường dẫn tường minh.

@@ -4,6 +4,13 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 18/09/2026 Đối chiếu điện SWIFT, Đối chiếu DTBB - **không làm chậm màn hình khác**
+    + ✅ Đối chiếu điện SWIFT: phần đọc file, đối chiếu và xuất Excel chạy tách riêng như các màn hình đối
+      chiếu khác — lúc có người đối chiếu SWIFT, các màn hình khác không bị chậm theo. Kết quả không đổi
+    + ℹ️ Mỗi lần bấm Đối chiếu / Xuất Excel ở SWIFT chậm hơn khoảng 1 giây (thời gian khởi động). Bước
+      kiểm tra file ngay khi chọn file vẫn nhanh như cũ
+    + ✅ Đối chiếu DTBB: nhiều người cùng bấm tính một lúc không còn làm cả hệ thống chậm theo
+
 - 18/09/2026 Đối chiếu - **Các màn hình khác không còn bị chậm khi có người đang chạy đối chiếu**
     + ✅ Khi có người chạy Đối chiếu ACH, Chấm ILO1000, Chấm 459901, Đối chiếu OSB hay Đối chiếu Song phương,
       các màn hình khác (đăng nhập, nghỉ phép, chứng từ...) không còn bị chậm hay đứng vài giây theo

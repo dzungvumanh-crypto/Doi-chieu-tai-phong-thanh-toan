@@ -5,6 +5,9 @@ Excel → đọc lại → `os.remove()`. Hàm ghi ném lỗi là dòng `os.remo
 giờ chạy tới, file .xlsx nằm lại %TEMP% vĩnh viễn — mỗi lượt xuất lỗi một file,
 không tiến trình nào dọn.
 
+Từ 18/09/2026 hàm nằm ở `backend/services/swift_recon/tach.py` (chạy trong tiến trình
+con — card 151).
+
 Chạy: .venv/Scripts/python.exe -m pytest tests/test_don_dep_file_tam.py -v
 """
 
@@ -12,7 +15,7 @@ import os
 
 import pytest
 
-from backend.api.swift_recon import _xuat_xlsx
+from backend.services.swift_recon.tach import _xuat_xlsx
 
 
 def test_ghi_thanh_cong_thi_tra_bytes_va_xoa_file():

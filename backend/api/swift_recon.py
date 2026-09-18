@@ -31,6 +31,13 @@ CẬP NHẬT (đợt 3 — quan trọng, đọc trước khi sửa tiếp file n
   Chỉ `async def` + `await run_heavy(...)` mới vừa không chiếm event loop,
   vừa nằm trong giới hạn việc nặng dùng chung toàn hệ thống.
 
+CẬP NHẬT (đợt 4, 18/09/2026 — card 151):
+  Phần nặng (đọc file, đối chiếu, sinh Excel) chạy ở TIẾN TRÌNH RIÊNG qua
+  `chay_tach(tach.<hàm>, ...)` — `backend/services/swift_recon/tach.py`. Ở trong
+  `run_heavy()` chỉ còn phần nhẹ: ghi file tải lên ra đĩa, đọc/ghi lịch sử CSDL,
+  kiểm tra 400/404. Thêm việc nặng mới thì viết ở `tach.py`, đừng viết thẳng ở đây —
+  `tests/test_doi_chieu_chay_tien_trinh_rieng.py` canh chỗ đó.
+
 Đây là router MỚI của bạn — file này bạn tự quản lý, không cần ai duyệt
 logic bên trong. Chỉ có 2 việc còn lại cần Người 1 duyệt riêng:
   1. Đăng ký router này vào backend/api/registry.py
@@ -39,20 +46,20 @@ logic bên trong. Chỉ có 2 việc còn lại cần Người 1 duyệt riêng:
 """
 from __future__ import annotations
 
-import os
-import tempfile
+import contextlib
+from typing import Iterator
 from urllib.parse import quote
 
-import pandas as pd
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 
 from backend.database import get_db
 from backend.core.concurrency import run_heavy
 from backend.core.deps import require_feature
+from backend.core.tien_trinh_doi_chieu import chay_tach
 from backend.core.uploads import safe_filename
 from backend.schemas.swift_recon import ExportFilteredIn
-from backend.services.swift_recon import exporters, parsers, reconcile, template_exporters
+from backend.services.swift_recon import parsers, tach
 from backend.services.swift_recon.history_service import (
     get_recon_detail,
     list_recon_history,
@@ -62,11 +69,8 @@ from backend.services.swift_recon.upload_utils import save_upload_to_path
 
 router = APIRouter(prefix="/api/swift-recon", tags=["swift-recon"])
 
-# Giống hệt ACK_CHECK_DI trong bản gốc — KHÔNG đổi logic đối chiếu.
-ACK_CHECK_DI = {
-    "a_field": "ACK/NAK", "a_ok_values": {"ACK"},
-    "b_field": "Netw. Status", "b_ok_values": {"Network Ack"},
-}
+_TEN = "SWIFT recon"
+_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -81,103 +85,35 @@ def _dl_headers(filename: str) -> dict:
     }
 
 
-def _xuat_xlsx(ghi) -> bytes:
-    """Chạy `ghi(path)` để sinh Excel ra file tạm, trả bytes, LUÔN xoá file tạm.
+@contextlib.contextmanager
+def _tep_tam(uploads: list[UploadFile], kem_ten: bool = True) -> Iterator[tach.Tep]:
+    """Ghi các file tải lên ra đĩa (giải nén nếu .zip) để tiến trình con đọc theo đường
+    dẫn — con không nhận được `UploadFile`. LUÔN dọn file/thư mục tạm khi ra khỏi khối.
 
-    try/finally chứ không phải `os.remove()` đặt sau lệnh ghi: hàm ghi ném lỗi
-    (dữ liệu bất thường, đĩa đầy, openpyxl vỡ) là file .xlsx nằm lại %TEMP%
-    vĩnh viễn — mỗi lượt xuất lỗi một file, không tiến trình nào dọn. Cùng lý
-    do đã ghi ở `backend/api/doi_soat_citad.py::_build_doisoat_xlsx`.
-    """
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as out:
-        out_path = out.name
+    `kem_ten`: lỗi định dạng khi giải nén báo kèm "[tên file]" — giống hệt bản cũ, nơi bước
+    lưu và bước đọc nằm chung một `try` trong `_load_many`. Đọc thử 1 file thì không kèm."""
+    da_luu: tach.Tep = []
+    don: list = []
     try:
-        ghi(out_path)
-        with open(out_path, "rb") as f:
-            return f.read()
+        for up in uploads:
+            try:
+                duong_dan, cleanup = save_upload_to_path(up)
+            except parsers.UnknownFileFormat as e:
+                raise parsers.UnknownFileFormat(f"[{up.filename}] {e}") if kem_ten else e
+            don.append(cleanup)
+            da_luu.append((up.filename, duong_dan))
+        yield da_luu
     finally:
-        try:
-            os.remove(out_path)
-        except OSError:
-            pass
-
-
-def _load(upload: UploadFile, source: str) -> pd.DataFrame:
-    """Lưu file (giải nén nếu là .zip) rồi parse đúng theo `source`
-    ('SAA_DEN'|'QL_DEN'|'QL_DI'|'SAA_DI'). Luôn dọn file/thư mục tạm."""
-    path, cleanup = save_upload_to_path(upload)
-    try:
-        return parsers.load_file(path, source)
-    finally:
-        cleanup()
-
-
-def _load_many(uploads: list[UploadFile], source: str) -> pd.DataFrame:
-    """Parse TỪNG file rồi gộp lại thành 1 DataFrame duy nhất — dùng khi 1
-    bên (thường là SAA) phải xuất nhiều lần trong ngày nên có nhiều file.
-
-    Mỗi file được parse riêng bằng ĐÚNG hàm load_file() hiện có (không sửa
-    parsers.py), lỗi ở file nào báo rõ tên file đó. Gộp bằng pd.concat đơn
-    giản — nếu 2 file vô tình trùng nhau (cùng khoá `_key`), bản ghi trùng
-    vẫn được GIỮ NGUYÊN CẢ HAI (không tự động loại trùng), vì:
-      - Có thể 2 điện khác nhau nhưng vô tình trùng 6/16 ký tự cuối của khoá
-        (hiếm nhưng có thể xảy ra) — tự loại có thể làm mất điện thật.
-      - Nếu người dùng lỡ tải trùng 1 file 2 lần, tổng số dòng sẽ tăng gấp
-        đôi RÕ RÀNG trên giao diện (mỗi ô upload hiện đúng số dòng từng
-        file + tổng cộng) nên dễ phát hiện để tự xoá bớt, thay vì âm thầm
-        loại bỏ sai bản ghi hợp lệ.
-    """
-    if not uploads:
-        raise parsers.UnknownFileFormat("Chưa chọn file nào.")
-    frames = []
-    for up in uploads:
-        try:
-            frames.append(_load(up, source))
-        except parsers.UnknownFileFormat as e:
-            raise parsers.UnknownFileFormat(f"[{up.filename}] {e}")
-    return pd.concat(frames, ignore_index=True)
-
-
-def _to_records(df: pd.DataFrame) -> list:
-    """DataFrame -> list[dict] JSON-safe (NaN/NaT -> None)."""
-    return df.where(pd.notnull(df), None).to_dict(orient="records")
+        for c in don:
+            c()
 
 
 def _join_names(uploads: list[UploadFile]) -> str:
     return "; ".join(u.filename for u in uploads)
 
 
-def _key_match_summary(df_a: pd.DataFrame, df_b: pd.DataFrame, label_a: str, label_b: str) -> pd.DataFrame:
-    """Tổng hợp số lượng điện theo từng loại điện — cột 'Chênh lệch' tính
-    bằng SỐ BẢN GHI THỰC SỰ KHÔNG KHỚP KHOÁ (ONLY_A + ONLY_B theo _msg_type,
-    lấy từ chính reconcile.match_by_key() — ĐÚNG cơ chế khoá dùng ở tab
-    "Kết quả đối chiếu" và file "Chi tiết lệch"), KHÔNG PHẢI hiệu số lượng
-    thô (count_a - count_b) như reconcile.summarize_counts() gốc.
-
-    Lý do đổi: hiệu số lượng thô có thể che giấu sai lệch thật — ví dụ 1 loại
-    điện có 5 bản ghi ở mỗi bên nhưng KHÔNG PHẢI 5 giao dịch trùng khoá (5
-    giao dịch hoàn toàn khác nhau ở 2 bên) vẫn báo "Chênh lệch = 0" nếu tính
-    theo số lượng — trong khi tính theo khoá sẽ báo đúng 10 bản ghi lệch.
-    Không sửa reconcile.py gốc — chỉ dùng lại match_by_key() đã có sẵn."""
-    count_a = df_a.groupby("_msg_type").size().rename(label_a)
-    count_b = df_b.groupby("_msg_type").size().rename(label_b)
-    merged = pd.concat([count_a, count_b], axis=1).fillna(0).astype(int)
-    merged = merged.reset_index().rename(columns={"_msg_type": "Loại điện"})
-
-    mr = reconcile.match_by_key(df_a, df_b)
-    only_a_types = df_a.loc[mr.only_a, "_msg_type"] if len(mr.only_a) else pd.Series(dtype=object)
-    only_b_types = df_b.loc[mr.only_b, "_msg_type"] if len(mr.only_b) else pd.Series(dtype=object)
-    diff_counts = pd.concat([only_a_types, only_b_types]).value_counts()
-    merged["Chênh lệch"] = merged["Loại điện"].map(diff_counts).fillna(0).astype(int)
-    merged = merged.sort_values(by="Loại điện").reset_index(drop=True)
-
-    total_row = {
-        "Loại điện": "TỔNG",
-        label_a: int(merged[label_a].sum()),
-        label_b: int(merged[label_b].sum()),
-        "Chênh lệch": int(merged["Chênh lệch"].sum()),
-    }
-    return pd.concat([merged, pd.DataFrame([total_row])], ignore_index=True)
+def _tai_ve(content: bytes, headers: dict) -> Response:
+    return Response(content=content, media_type=_XLSX, headers=headers)
 
 
 # ── Kiểm tra & đọc thử 1 file ngay khi vừa chọn (trước khi bấm Đối chiếu) ───
@@ -193,14 +129,38 @@ async def parse_preview(
 ):
     if source not in ("SAA_DEN", "QL_DEN", "QL_DI", "SAA_DI"):
         raise HTTPException(400, "source không hợp lệ")
+
+    # CỐ Ý không tách tiến trình: đọc 1 file chỉ giữ GIL ~0,4 s (đo 5.000 điện) mà mở tiến
+    # trình con tốn ~0,8 s — tách là người dùng chờ gấp 3 lần MỖI lần chọn file.
+    def _work() -> int:
+        with _tep_tam([file], kem_ten=False) as tep:
+            return tach.xem_truoc(tep[0][1], source, None, None)
+
     try:
-        df = await run_heavy(_load, file, source)
+        rows = await run_heavy(_work)
     except parsers.UnknownFileFormat as e:
         raise HTTPException(422, str(e))
-    return {"filename": file.filename, "rows": len(df)}
+    return {"filename": file.filename, "rows": rows}
 
 
-# ── Đối chiếu điện đến (mỗi bên có thể gồm NHIỀU file) ──────────────────────
+# ── Đối chiếu (mỗi bên có thể gồm NHIỀU file) ──────────────────────────────
+def _doi_chieu_va_luu(chieu: str, files_a, files_b, files_saa, files_ql, db, current) -> dict:
+    """Phần nặng ở tiến trình con; ghi lịch sử ở đây vì con không mở CSDL."""
+    with _tep_tam(files_a) as tep_a, _tep_tam(files_b) as tep_b:
+        kq = chay_tach(tach.doi_chieu, ten=_TEN, chieu=chieu, tep_a=tep_a, tep_b=tep_b)
+
+    history_saved, history_error = True, None
+    try:
+        save_recon_history(
+            db, recon_type=chieu, performed_by_id=current["id"],
+            file_saa_name=_join_names(files_saa), file_ql_name=_join_names(files_ql),
+            **kq.pop("luu_lich_su"),
+        )
+    except Exception as e:  # noqa: BLE001 — không để lỗi lưu lịch sử chặn mất kết quả đối chiếu
+        history_saved, history_error = False, str(e)
+    return {**kq, "history_saved": history_saved, "history_error": history_error}
+
+
 @router.post("/reconcile-den")
 async def reconcile_den(
     saa_files: list[UploadFile] = File(...),
@@ -208,53 +168,14 @@ async def reconcile_den(
     db=Depends(get_db),
     current: dict = Depends(require_feature("menu.swift_recon")),
 ):
-    # Toàn bộ phần nặng (đọc file, giải nén, pandas, lưu lịch sử) chạy trong
-    # threadpool có giới hạn — chạy thẳng ở đây sẽ giữ event loop và làm treo
-    # cả hệ thống.
-    def _work() -> dict:
-        df_saa = _load_many(saa_files, "SAA_DEN")
-        df_ql = _load_many(ql_files, "QL_DEN")
-
-        merged = reconcile.build_merged_view(df_saa, df_ql, "SAA", "QL")
-        summary = _key_match_summary(df_saa, df_ql, "SAA", "QL")
-        saa_only = reconcile.diff_only_a(df_saa, df_ql)
-        ql_only = reconcile.diff_only_b(df_saa, df_ql)
-
-        total_matched = int((merged["_status"] == "MATCHED").sum()) if len(merged) else 0
-        total_diff = len(merged) - total_matched
-
-        history_saved, history_error = True, None
-        try:
-            save_recon_history(
-                db, recon_type="den", performed_by_id=current["id"],
-                file_saa_name=_join_names(saa_files), file_ql_name=_join_names(ql_files),
-                total_saa=len(df_saa), total_ql=len(df_ql),
-                total_matched=total_matched, total_diff=total_diff,
-                merged_records=_to_records(merged),
-                raw_a_records=_to_records(df_saa),
-                raw_b_records=_to_records(df_ql),
-                summary_records=_to_records(summary),
-                diff_a_only_records=_to_records(saa_only),
-                diff_b_only_records=_to_records(ql_only),
-            )
-        except Exception as e:  # noqa: BLE001 — không để lỗi lưu lịch sử chặn mất kết quả đối chiếu
-            history_saved, history_error = False, str(e)
-
-        return {
-            "summary": _to_records(summary),
-            "records": _to_records(merged),
-            "total_a": len(df_saa), "total_b": len(df_ql),
-            "total_matched": total_matched, "total_diff": total_diff,
-            "history_saved": history_saved, "history_error": history_error,
-        }
-
     try:
-        return await run_heavy(_work)
+        return await run_heavy(_doi_chieu_va_luu, "den", saa_files, ql_files,
+                               saa_files, ql_files, db, current)
     except parsers.UnknownFileFormat as e:
         raise HTTPException(422, str(e))
 
 
-# ── Đối chiếu điện đi (đúng thứ tự QL trước, SAA sau — như bản desktop) ─────
+# Điện đi: đúng thứ tự QL trước, SAA sau — như bản desktop
 @router.post("/reconcile-di")
 async def reconcile_di(
     ql_files: list[UploadFile] = File(...),
@@ -262,53 +183,27 @@ async def reconcile_di(
     db=Depends(get_db),
     current: dict = Depends(require_feature("menu.swift_recon")),
 ):
-    def _work() -> dict:
-        df_ql = _load_many(ql_files, "QL_DI")
-        df_saa = _load_many(saa_files, "SAA_DI")
-
-        merged = reconcile.build_merged_view(df_ql, df_saa, "QL", "SAA", ack_check=ACK_CHECK_DI)
-        summary = _key_match_summary(df_ql, df_saa, "QL", "SAA")
-        ql_only = reconcile.diff_only_a(df_ql, df_saa)
-        saa_only = reconcile.diff_only_b(df_ql, df_saa)
-        di_not_ack = reconcile.extract_matched_not_ack(merged, "QL", "SAA")
-
-        total_matched = int((merged["_status"] == "MATCHED").sum()) if len(merged) else 0
-        total_diff = len(merged) - total_matched
-
-        history_saved, history_error = True, None
-        try:
-            save_recon_history(
-                db, recon_type="di", performed_by_id=current["id"],
-                file_saa_name=_join_names(saa_files), file_ql_name=_join_names(ql_files),
-                total_saa=len(df_saa), total_ql=len(df_ql),
-                total_matched=total_matched, total_diff=total_diff,
-                merged_records=_to_records(merged),
-                raw_a_records=_to_records(df_ql),
-                raw_b_records=_to_records(df_saa),
-                summary_records=_to_records(summary),
-                diff_a_only_records=_to_records(ql_only),
-                diff_b_only_records=_to_records(saa_only),
-                di_not_ack_records=_to_records(di_not_ack),
-            )
-        except Exception as e:  # noqa: BLE001
-            history_saved, history_error = False, str(e)
-
-        return {
-            "summary": _to_records(summary),
-            "records": _to_records(merged),
-            "total_a": len(df_ql), "total_b": len(df_saa),
-            "total_matched": total_matched, "total_diff": total_diff,
-            "history_saved": history_saved, "history_error": history_error,
-        }
-
     try:
-        return await run_heavy(_work)
+        return await run_heavy(_doi_chieu_va_luu, "di", ql_files, saa_files,
+                               saa_files, ql_files, db, current)
     except parsers.UnknownFileFormat as e:
         raise HTTPException(422, str(e))
 
 
 # ── Xuất Excel (nhận lại đúng những file frontend đã có sẵn trong state,
 #    không bắt người dùng chọn file lần 2 — xem frontend/pages/swift_recon.py) ──
+def _xuat_tu_tep(ham, saa_den, ql_den, ql_di, saa_di) -> bytes:
+    """Chặn 400 TRƯỚC khi ghi file/mở tiến trình con (HTTPException không nên đi qua
+    ranh giới tiến trình), rồi chạy `ham` của `tach` trên các file đã ghi ra đĩa."""
+    den, di = bool(saa_den and ql_den), bool(ql_di and saa_di)
+    if not (den or di):
+        raise HTTPException(400, "Chưa có dữ liệu đối chiếu nào để xuất")
+    # Chỉ ghi file của cặp ĐỦ hai bên — bản cũ không đọc file của cặp thiếu, nên file hỏng ở
+    # đó không được thành lỗi 422
+    with _tep_tam(saa_den if den else []) as a, _tep_tam(ql_den if den else []) as b,             _tep_tam(ql_di if di else []) as c, _tep_tam(saa_di if di else []) as d:
+        return chay_tach(ham, ten=_TEN, tep={"saa_den": a, "ql_den": b, "ql_di": c, "saa_di": d})
+
+
 @router.post("/export-summary")
 async def export_summary(
     # LƯU Ý: dùng default_factory=list (KHÔNG dùng Optional/None làm mặc định) —
@@ -321,31 +216,9 @@ async def export_summary(
     saa_di: list[UploadFile] = File(default_factory=list),
     current: dict = Depends(require_feature("menu.swift_recon")),
 ):
-    def _work() -> bytes:
-        summary_den = summary_di = None
-        if saa_den and ql_den:
-            df_saa_den = _load_many(saa_den, "SAA_DEN")
-            df_ql_den = _load_many(ql_den, "QL_DEN")
-            summary_den = _key_match_summary(df_saa_den, df_ql_den, "SAA", "QL")
-
-        if ql_di and saa_di:
-            df_ql_di = _load_many(ql_di, "QL_DI")
-            df_saa_di = _load_many(saa_di, "SAA_DI")
-            summary_di = _key_match_summary(df_ql_di, df_saa_di, "QL", "SAA")
-
-        if summary_den is None and summary_di is None:
-            raise HTTPException(400, "Chưa có dữ liệu đối chiếu nào để xuất")
-
-        return _xuat_xlsx(
-            lambda p: exporters.export_summary_excel(p, summary_den, summary_di))
-
     try:
-        content = await run_heavy(_work)
-        return Response(
-            content=content,
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": 'attachment; filename="Tong_hop_doi_chieu_dien.xlsx"'},
-        )
+        content = await run_heavy(_xuat_tu_tep, tach.xuat_tong_hop, saa_den, ql_den, ql_di, saa_di)
+        return _tai_ve(content, {"Content-Disposition": 'attachment; filename="Tong_hop_doi_chieu_dien.xlsx"'})
     except parsers.UnknownFileFormat as e:
         raise HTTPException(422, str(e))
 
@@ -359,53 +232,28 @@ async def export_diff(
     saa_di: list[UploadFile] = File(default_factory=list),
     current: dict = Depends(require_feature("menu.swift_recon")),
 ):
-    def _work() -> bytes:
-        saa_den_only = ql_den_only = ql_di_only = saa_di_only = di_not_ack = None
-        if saa_den and ql_den:
-            df_saa_den = _load_many(saa_den, "SAA_DEN")
-            df_ql_den = _load_many(ql_den, "QL_DEN")
-            saa_den_only = reconcile.diff_only_a(df_saa_den, df_ql_den)
-            ql_den_only = reconcile.diff_only_b(df_saa_den, df_ql_den)
-
-        if ql_di and saa_di:
-            df_ql_di = _load_many(ql_di, "QL_DI")
-            df_saa_di = _load_many(saa_di, "SAA_DI")
-            ql_di_only = reconcile.diff_only_a(df_ql_di, df_saa_di)
-            saa_di_only = reconcile.diff_only_b(df_ql_di, df_saa_di)
-            merged_di = reconcile.build_merged_view(df_ql_di, df_saa_di, "QL", "SAA", ack_check=ACK_CHECK_DI)
-            di_not_ack = reconcile.extract_matched_not_ack(merged_di, "QL", "SAA")
-
-        if all(x is None for x in (saa_den_only, ql_den_only, ql_di_only, saa_di_only)):
-            raise HTTPException(400, "Chưa có dữ liệu đối chiếu nào để xuất")
-
-        return _xuat_xlsx(lambda p: exporters.export_diff_excel(
-            p, saa_den_only, ql_den_only, ql_di_only, saa_di_only, di_not_ack,
-        ))
-
     try:
-        content = await run_heavy(_work)
-        return Response(
-            content=content,
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": 'attachment; filename="Chi_tiet_lech_doi_chieu_dien.xlsx"'},
-        )
+        content = await run_heavy(_xuat_tu_tep, tach.xuat_chi_tiet, saa_den, ql_den, ql_di, saa_di)
+        return _tai_ve(content, {"Content-Disposition": 'attachment; filename="Chi_tiet_lech_doi_chieu_dien.xlsx"'})
     except parsers.UnknownFileFormat as e:
         raise HTTPException(422, str(e))
 
 
 # ── Xuất Excel THEO BIỂU MẪU (Mẫu 04 / Mẫu 05) — xem cảnh báo giả định ở
 #    đầu file template_exporters.py trước khi dùng cho báo cáo chính thức ──
-def _pick_direction(saa_den, ql_den, ql_di, saa_di) -> tuple:
-    """Chọn đúng CHIỀU đang xuất từ các ô file frontend gửi lên (frontend chỉ
-    gửi file của 1 chiều mỗi lần). Trả về (direction, df_a, source_a, df_b,
-    source_b). Gọi trong thread — có đọc/parse file."""
+def _xuat_theo_mau(loai: str, saa_den, ql_den, ql_di, saa_di) -> tuple[bytes, str]:
+    """Chọn đúng CHIỀU đang xuất từ các ô file frontend gửi lên (frontend chỉ gửi file
+    của 1 chiều mỗi lần), rồi đọc + ghi mẫu ở tiến trình con."""
     if saa_den and ql_den:
-        return ("den", _load_many(saa_den, "SAA_DEN"), "SAA_DEN",
-                _load_many(ql_den, "QL_DEN"), "QL_DEN")
-    if ql_di and saa_di:
-        return ("di", _load_many(ql_di, "QL_DI"), "QL_DI",
-                _load_many(saa_di, "SAA_DI"), "SAA_DI")
-    raise HTTPException(400, "Chưa có dữ liệu đối chiếu nào để xuất")
+        direction, a, source_a, b, source_b = "den", saa_den, "SAA_DEN", ql_den, "QL_DEN"
+    elif ql_di and saa_di:
+        direction, a, source_a, b, source_b = "di", ql_di, "QL_DI", saa_di, "SAA_DI"
+    else:
+        raise HTTPException(400, "Chưa có dữ liệu đối chiếu nào để xuất")
+    with _tep_tam(a) as tep_a, _tep_tam(b) as tep_b:
+        content = chay_tach(tach.xuat_theo_mau, ten=_TEN, loai=loai, direction=direction,
+                            tep_a=tep_a, source_a=source_a, tep_b=tep_b, source_b=source_b)
+    return content, direction
 
 
 @router.post("/export-summary-template")
@@ -417,15 +265,8 @@ async def export_summary_template(
     saa_di: list[UploadFile] = File(default_factory=list),
     current: dict = Depends(require_feature("menu.swift_recon")),
 ):
-    def _work() -> tuple[bytes, str]:
-        direction, df_a, source_a, df_b, source_b = _pick_direction(saa_den, ql_den, ql_di, saa_di)
-
-        content = _xuat_xlsx(lambda p: template_exporters.export_summary_template(
-            p, direction, df_a, source_a, df_b, source_b))
-        return content, direction
-
     try:
-        content, direction = await run_heavy(_work)
+        content, direction = await run_heavy(_xuat_theo_mau, "tong_hop", saa_den, ql_den, ql_di, saa_di)
     except HTTPException:
         raise
     except parsers.UnknownFileFormat as e:
@@ -434,11 +275,7 @@ async def export_summary_template(
         raise HTTPException(500, f"Lỗi khi xuất Excel Tổng hợp theo biểu mẫu: {e}")
 
     fname = f"Tong_hop_theo_bieu_mau_Dien{direction.upper()}.xlsx"
-    return Response(
-        content=content,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
-    )
+    return _tai_ve(content, {"Content-Disposition": f'attachment; filename="{fname}"'})
 
 
 @router.post("/export-diff-template")
@@ -450,15 +287,8 @@ async def export_diff_template(
     saa_di: list[UploadFile] = File(default_factory=list),
     current: dict = Depends(require_feature("menu.swift_recon")),
 ):
-    def _work() -> tuple[bytes, str]:
-        direction, df_a, source_a, df_b, source_b = _pick_direction(saa_den, ql_den, ql_di, saa_di)
-
-        content = _xuat_xlsx(lambda p: template_exporters.export_diff_template(
-            p, direction, df_a, source_a, df_b, source_b))
-        return content, direction
-
     try:
-        content, direction = await run_heavy(_work)
+        content, direction = await run_heavy(_xuat_theo_mau, "chi_tiet", saa_den, ql_den, ql_di, saa_di)
     except HTTPException:
         raise
     except parsers.UnknownFileFormat as e:
@@ -467,11 +297,7 @@ async def export_diff_template(
         raise HTTPException(500, f"Lỗi khi xuất Excel Chi tiết lệch theo biểu mẫu: {e}")
 
     fname = f"Chi_tiet_lech_theo_bieu_mau_Dien{direction.upper()}.xlsx"
-    return Response(
-        content=content,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
-    )
+    return _tai_ve(content, {"Content-Disposition": f'attachment; filename="{fname}"'})
 
 
 # ── Xuất đúng các bản ghi đang lọc trên giao diện (không phải toàn bộ) ──────
@@ -483,28 +309,17 @@ async def export_filtered(
     if not payload.records:
         raise HTTPException(400, "Không có bản ghi nào để xuất")
 
-    def _work() -> bytes:
-        df = pd.DataFrame(payload.records)
-        cols = [c for c in payload.columns if c in df.columns]
-        if cols:
-            df = df[cols]
-
-        return _xuat_xlsx(
-            lambda p: df.to_excel(p, index=False, sheet_name="BanGhiDangLoc"))
-
-    content = await run_heavy(_work)
-    return Response(
-        content=content,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        # `payload.filename` do trình duyệt gửi lên. Ghép thẳng vào header thì
-        # một dấu nháy kép trong tên là vỡ cú pháp Content-Disposition, còn chữ
-        # có dấu là 500 (header phải mã hoá được bằng latin-1). Dùng chung hàm
-        # dựng header RFC 6266 như mọi endpoint tải file khác.
-        headers=_dl_headers(safe_filename(payload.filename, "Ban_ghi_dang_loc.xlsx")),
-    )
+    content = await run_heavy(chay_tach, tach.xuat_ban_ghi, ten=_TEN,
+                              records=payload.records, columns=payload.columns)
+    # `payload.filename` do trình duyệt gửi lên. Ghép thẳng vào header thì
+    # một dấu nháy kép trong tên là vỡ cú pháp Content-Disposition, còn chữ
+    # có dấu là 500 (header phải mã hoá được bằng latin-1). Dùng chung hàm
+    # dựng header RFC 6266 như mọi endpoint tải file khác.
+    return _tai_ve(content, _dl_headers(safe_filename(payload.filename, "Ban_ghi_dang_loc.xlsx")))
 
 
 # ── Lịch sử đối chiếu (đọc từ bảng swift_recon_history) ─────────────────────
+# Đọc CSDL ở luồng của backend; chỉ phần dựng Excel sang tiến trình con.
 @router.get("/history")
 async def get_history(
     limit: int = 100,
@@ -512,6 +327,13 @@ async def get_history(
     current: dict = Depends(require_feature("menu.swift_recon")),
 ):
     return await run_heavy(list_recon_history, db, limit)
+
+
+def _doc_lich_su(db, history_id: int) -> dict:
+    detail = get_recon_detail(db, history_id)
+    if not detail:
+        raise HTTPException(404, "Không tìm thấy")
+    return detail
 
 
 @router.get("/history/{history_id}/export-raw")
@@ -529,28 +351,16 @@ async def export_raw_from_history(
         raise HTTPException(400, "side phải là 'a' hoặc 'b'")
 
     def _work() -> tuple[bytes, dict]:
-        detail = get_recon_detail(db, history_id)
-        if not detail:
-            raise HTTPException(404, "Không tìm thấy")
-
+        detail = _doc_lich_su(db, history_id)
         records = detail["raw_a_records"] if side == "a" else detail["raw_b_records"]
-        df = pd.DataFrame(records)
-        df = df[[c for c in df.columns if not c.startswith("_")]]  # bỏ cột nội bộ (_key, _msg_type...)
-
-        content = _xuat_xlsx(
-            lambda p: df.to_excel(p, index=False, sheet_name="DuLieuDaImport"))
-        return content, detail
+        return chay_tach(tach.xuat_du_lieu_tho, ten=_TEN, records=records), detail
 
     content, detail = await run_heavy(_work)
 
     is_den = detail["recon_type"] == "den"
     side_name = ("SAA" if is_den else "QL") if side == "a" else ("QL" if is_den else "SAA")
     fname = f"DuLieu_{side_name}_{detail['recon_type'].upper()}_lichsu_{history_id}.xlsx"
-    return Response(
-        content=content,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
-    )
+    return _tai_ve(content, {"Content-Disposition": f'attachment; filename="{fname}"'})
 
 
 @router.get("/history/{history_id}")
@@ -574,25 +384,13 @@ async def export_summary_from_history(
     """Sinh Excel Tổng hợp TỪ ĐÚNG snapshot đã lưu tại thời điểm đối chiếu
     (không tính lại từ raw_a/raw_b) — đảm bảo đúng y hệt dữ liệu audit."""
     def _work() -> tuple[bytes, str]:
-        detail = get_recon_detail(db, history_id)
-        if not detail:
-            raise HTTPException(404, "Không tìm thấy")
-        summary_df = pd.DataFrame(detail["summary_records"])
-
-        content = _xuat_xlsx(lambda p: exporters.export_summary_excel(
-            p,
-            summary_den=summary_df if detail["recon_type"] == "den" else None,
-            summary_di=summary_df if detail["recon_type"] == "di" else None,
-        ))
-        return content, detail["recon_type"]
+        detail = _doc_lich_su(db, history_id)
+        return chay_tach(tach.xuat_tong_hop_lich_su, ten=_TEN, recon_type=detail["recon_type"],
+                         summary_records=detail["summary_records"]), detail["recon_type"]
 
     content, recon_type = await run_heavy(_work)
     fname = f"Tong_hop_doi_chieu_Dien{recon_type.upper()}_lichsu_{history_id}.xlsx"
-    return Response(
-        content=content,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
-    )
+    return _tai_ve(content, {"Content-Disposition": f'attachment; filename="{fname}"'})
 
 
 @router.get("/history/{history_id}/export-diff")
@@ -604,32 +402,13 @@ async def export_diff_from_history(
     """Sinh Excel Chi tiết lệch TỪ ĐÚNG snapshot đã lưu tại thời điểm đối
     chiếu (không tính lại) — đảm bảo đúng y hệt dữ liệu audit."""
     def _work() -> tuple[bytes, str]:
-        detail = get_recon_detail(db, history_id)
-        if not detail:
-            raise HTTPException(404, "Không tìm thấy")
-
-        only_a = pd.DataFrame(detail["diff_a_only_records"])
-        only_b = pd.DataFrame(detail["diff_b_only_records"])
-        di_not_ack = pd.DataFrame(detail["di_not_ack_records"]) if detail["di_not_ack_records"] is not None else None
-
-        def _ghi(p):
-            if detail["recon_type"] == "den":
-                exporters.export_diff_excel(
-                    p, saa_den_only=only_a, ql_den_only=only_b,
-                    ql_di_only=None, saa_di_only=None, di_matched_not_ack=None,
-                )
-            else:
-                exporters.export_diff_excel(
-                    p, saa_den_only=None, ql_den_only=None,
-                    ql_di_only=only_a, saa_di_only=only_b, di_matched_not_ack=di_not_ack,
-                )
-
-        return _xuat_xlsx(_ghi), detail["recon_type"]
+        detail = _doc_lich_su(db, history_id)
+        return chay_tach(
+            tach.xuat_chi_tiet_lich_su, ten=_TEN, recon_type=detail["recon_type"],
+            only_a=detail["diff_a_only_records"], only_b=detail["diff_b_only_records"],
+            di_not_ack=detail["di_not_ack_records"],
+        ), detail["recon_type"]
 
     content, recon_type = await run_heavy(_work)
     fname = f"Chi_tiet_lech_doi_chieu_Dien{recon_type.upper()}_lichsu_{history_id}.xlsx"
-    return Response(
-        content=content,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
-    )
+    return _tai_ve(content, {"Content-Disposition": f'attachment; filename="{fname}"'})
