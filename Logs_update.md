@@ -17,6 +17,10 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
     + ℹ️ Người vận hành: nếu phát sinh sự cố với đối chiếu, thêm dòng `DOI_CHIEU_TIEN_TRINH=0` vào file cấu
       hình máy chủ (`.env`) rồi khởi động lại để quay về cách chạy cũ
 
+- 18/09/2026 Chấm 459901, Đối chiếu OSB - **Hiện lại menu bên trái**
+    + ✅ Hai màn hình này trước đây mở ra thì cột menu bên trái trắng trơn, không chuyển sang màn hình khác
+      từ đó được. Nay menu hiện đầy đủ như các màn hình khác. Cách chạy và kết quả không đổi
+
 - 17/09/2026 Chấm 459901 - **Bỏ ô "Chọn thư mục server"**, chỉ còn "Tải nhiều file lên"
     + ⚠️ Ai đang dán đường dẫn thư mục trên máy chủ để chạy: từ bản này phải **kéo-thả hoặc chọn file** từ
       máy mình. Cách nhận diện file (GL02, HUB đi, HUB đến, tồn tháng trước) và kết quả phân loại không đổi
