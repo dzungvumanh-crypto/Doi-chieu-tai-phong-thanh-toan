@@ -53,6 +53,34 @@
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
   <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-09-17</p>
 
+  <!-- SB1 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">SB1</span>
+      <span class="card-title">Menu trái trắng ở Chấm 459901 / Đối chiếu OSB — <code>_sidebar()</code> gọi thiếu <code>await</code></span>
+      <span class="badge badge-done">Đã sửa — 18/09/2026</span>
+    </div>
+    <div class="card-body">
+
+      <p><code>_sidebar()</code> là <code>async def</code>. Gọi thiếu <code>await</code> thì Python chỉ tạo coroutine rồi
+        vứt — không vẽ gì, không ném lỗi, chỉ một dòng <code>RuntimeWarning: coroutine was never awaited</code> ở console
+        frontend (không vào <code>logs/</code>). Trang vẫn mở, phần nội dung bình thường → nhìn qua tưởng lỗi CSS.</p>
+
+      <table>
+        <tr><th style="width:30%">Trang</th><th>Hỏng từ đâu</th></tr>
+        <tr><td>Chấm 459901</td><td>PR #63 (28/08/2026) đổi <code>await _sidebar(...)</code> → <code>_sidebar(...)</code> trong lúc viết lại trang.</td></tr>
+        <tr><td>Đối chiếu OSB</td><td>Thiếu ngay từ bản đầu (PR #103) — cùng mẫu với trang 459901 lúc đó.</td></tr>
+      </table>
+
+      <p class="note">Vì sao test/ruff không bắt: <code>test_kiem_nap_trang_frontend</code> chỉ import trang, không dựng trang;
+        ruff F821 bắt tên chưa định nghĩa, không bắt coroutine bị vứt. Thêm
+        <code>tests/test_frontend_goi_async_thieu_await.py</code>: quét AST mọi file trong <code>frontend/pages/</code>, câu
+        lệnh trần gọi một hàm <code>async</code> cấp module của <code>shared.py</code> là đỏ. Cố ý <b>chỉ</b> bắt câu lệnh trần
+        — truyền coroutine vào <code>gather</code>/<code>create_task</code> là hợp lệ. Không bắt hàm async import từ nơi khác
+        hay gọi qua thuộc tính (<code>shared._sidebar()</code>); hiện không trang nào gọi kiểu đó.</p>
+    </div>
+  </div>
+
   <!-- TV5 -->
   <div class="card">
     <div class="card-header">
