@@ -27,6 +27,7 @@ from pathlib import Path
 
 from backend.core.config import BASE_DIR, zip_password   # mật khẩu ZIP đọc từ .env
 from backend.core.don_dep import moc_don_gan_nhat
+from backend.core.tien_trinh_doi_chieu import chay_tach
 
 try:
     import pyzipper
@@ -117,14 +118,30 @@ def _set_prog(task_token: str | None, pct: int, msg: str) -> None:
     if task_token and task_token in _progress:
         _progress[task_token]["pct"] = pct
         _progress[task_token]["msg"] = msg
+        # Trong tiến trình con: `_progress` là bản sao, phải gửi tiến độ về backend
+        gui_ve = _progress[task_token].get("_gui_ve")
+        if gui_ve:
+            gui_ve(pct, msg)
 
 
 # ─── Public API ───────────────────────────────────────────────────────────────
 
 def run_process(zip_path: Path, task_token: str) -> None:
-    """Chạy process_zip trong background thread; cập nhật progress và bắt lỗi."""
+    """Chạy process_zip ở tiến trình riêng (`chay_tach`); cập nhật progress và bắt lỗi.
+    Kết quả cuối ghi vào `_progress` Ở ĐÂY — `process_zip` trong con chỉ ghi được bản sao."""
+    p = _progress.get(task_token, {})
+
+    def _cap_nhat(pct: int, msg: str) -> None:
+        p["pct"], p["msg"] = pct, msg
+
     try:
-        process_zip(zip_path, task_token)
+        result = chay_tach(
+            _xu_ly_tach, ten="Đối chiếu Song phương (phân loại dữ liệu)",
+            zip_path=zip_path, task_token=task_token,
+            callbacks={"tien_do_callback": _cap_nhat},
+        )
+        if task_token in _progress:
+            _progress[task_token].update({"pct": 100, "msg": "Hoàn thành!", "done": True, "result": result})
     except Exception as e:
         log.error("process_zip lỗi [%s]: %s", task_token, e, exc_info=True)
         if task_token in _progress:
@@ -132,6 +149,17 @@ def run_process(zip_path: Path, task_token: str) -> None:
                 "done": True, "error": str(e),
                 "msg": "Lỗi xử lý — xem log server",
             })
+
+
+def _xu_ly_tach(zip_path: Path, task_token: str, log_callback, cancel_event, tien_do_callback) -> dict:
+    """Điểm vào trong tiến trình con — dựng mục `_progress` cục bộ để `_set_prog` gửi tiến độ
+    về backend. `setdefault`: chạy trong luồng (DOI_CHIEU_TIEN_TRINH=0) thì mục thật đã có.
+    Không có nút Dừng nên `cancel_event` bỏ qua."""
+    _progress.setdefault(task_token, {
+        "pct": 0, "msg": "", "done": False, "error": None, "result": None,
+        "_ts": time.time(), "_gui_ve": tien_do_callback,
+    })
+    return process_zip(zip_path, task_token)
 
 
 def process_zip(

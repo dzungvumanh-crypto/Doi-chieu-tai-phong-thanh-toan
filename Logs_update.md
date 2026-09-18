@@ -4,6 +4,19 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 18/09/2026 Đối chiếu - **Các màn hình khác không còn bị chậm khi có người đang chạy đối chiếu**
+    + ✅ Khi có người chạy Đối chiếu ACH, Chấm ILO1000, Chấm 459901, Đối chiếu OSB hay Đối chiếu Song phương,
+      các màn hình khác (đăng nhập, nghỉ phép, chứng từ...) không còn bị chậm hay đứng vài giây theo
+    + ✅ Một lượt đối chiếu dùng quá nhiều bộ nhớ thì chỉ lượt đó báo lỗi, hệ thống vẫn chạy bình thường —
+      trước đây có thể kéo sập cả hệ thống
+    + ✅ Bấm **Dừng** (ACH, ILO1000, 459901, Song phương): quá 15 giây mà lượt đó chưa tự dừng thì hệ thống
+      dừng hẳn nó
+    + ℹ️ Kết quả đối chiếu không thay đổi. Mỗi lượt khởi động chậm hơn khoảng 1–2 giây
+    + ℹ️ Vẫn giữ tối đa 3 lượt đối chiếu chạy cùng lúc. Hệ thống ghi lại mỗi lượt dùng bao nhiêu bộ nhớ để
+      sau này quyết định có nới giới hạn này không
+    + ℹ️ Người vận hành: nếu phát sinh sự cố với đối chiếu, thêm dòng `DOI_CHIEU_TIEN_TRINH=0` vào file cấu
+      hình máy chủ (`.env`) rồi khởi động lại để quay về cách chạy cũ
+
 - 17/09/2026 Chấm 459901 - **Bỏ ô "Chọn thư mục server"**, chỉ còn "Tải nhiều file lên"
     + ⚠️ Ai đang dán đường dẫn thư mục trên máy chủ để chạy: từ bản này phải **kéo-thả hoặc chọn file** từ
       máy mình. Cách nhận diện file (GL02, HUB đi, HUB đến, tồn tháng trước) và kết quả phân loại không đổi

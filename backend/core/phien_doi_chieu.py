@@ -1,14 +1,15 @@
 """Chốt chặn số lượt đối chiếu nặng chạy cùng lúc — dùng chung cho MỌI cửa nặng.
 
-Hiện có 6: ACH, Chấm ILO1000, Chấm 459901, và ba cửa Đối chiếu Song phương
-(chiều ĐẾN, chiều ĐI, phân loại dữ liệu). Tất cả đều nạp trọn dữ liệu vào RAM
-trong chính tiến trình backend.
+Hiện có 7: ACH, Chấm ILO1000, Chấm 459901, Đối chiếu OSB, và ba cửa Đối chiếu Song
+phương (chiều ĐẾN, chiều ĐI, phân loại dữ liệu). Tất cả đều nạp trọn dữ liệu vào RAM.
+Từ 18/09/2026 phần nặng chạy ở tiến trình con (`tien_trinh_doi_chieu.chay_tach`) — hết
+tranh GIL nhưng KHÔNG giảm RAM: trần dưới đây vẫn cần nguyên như cũ.
 
 THÊM MODULE MỚI thì phải gọi `dang_ky_nguon()` cho nó — quên là nó chạy ngoài
 trần mà không ai biết. Đã dính hai lần, xem `tests/test_chot_phien_doi_chieu.py`. Đo được pandas giữ **5,3 lần** kích
 thước file khi đọc `dtype=str` (đỉnh 5,9×), mà trần một lượt upload là 500 MB.
 
-Tất cả chạy trên `threading.Thread` tự tạo, **không** đi qua `run_heavy()` — nên
+Tất cả khởi chạy từ `threading.Thread` tự tạo, **không** đi qua `run_heavy()` — nên
 `MAX_HEAVY` trong `backend/core/concurrency.py` KHÔNG ràng buộc chúng. Trước file
 này, thứ duy nhất chặn là chốt riêng của ACH; ba module kia vào thẳng, và ACH
 cũng chỉ tự canh mình nên chạy ACH cùng lúc với Song phương vẫn lọt.
@@ -26,7 +27,9 @@ Hai luật, cố ý khác nhau:
   2. **Toàn hệ thống: `MAX_SONG_SONG` lượt.** Khác menu thì vài người chạy song
      song là chuyện bình thường, nên KHÔNG khoá về 1. Mặc định 3: đủ cho nếp làm
      việc thật, mà vẫn chặn trường hợp cả bốn module cùng chạy (worst case
-     4 × 500 MB × 5,3 ≈ 10 GB trên máy 20 GB — sát quá).
+     4 × 500 MB × 5,3 ≈ 10 GB trên máy 20 GB — sát quá; bỏ hẳn trần thì 7 cửa là
+     ~18,5 GB). Người dùng chốt 18/09/2026: giữ 3, đọc dòng "RAM đỉnh" trong
+     logs/app.log vài tuần rồi mới quyết nâng hay đổi sang trần theo RAM (card 150).
 
 Trạng thái job vẫn nằm ở từng service, file này KHÔNG giữ bản sao: mỗi module tự
 khai một hàm báo cáo "tôi đang bận với job nào". Hai nguồn sự thật về cùng một
