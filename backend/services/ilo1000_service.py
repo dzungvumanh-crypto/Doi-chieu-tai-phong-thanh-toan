@@ -2,7 +2,8 @@
 
 Pattern giống ach_service.py:
   - In-memory job store (_jobs dict)
-  - Background thread + cancel_event
+  - Background thread + cancel_event; pipeline chạy ở TIẾN TRÌNH RIÊNG
+    (`chay_tach()`, backend/core/tien_trinh_doi_chieu.py) để không tranh GIL với web
   - Incremental log via polling
   - Auto-cleanup sau TTL
 """
@@ -15,6 +16,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from backend.core.tien_trinh_doi_chieu import chay_tach
 from backend.core.uploads import safe_filename
 from backend.services.ilo1000.pipeline import main_from_dir
 from backend.services.ilo1000.config import CLEANUP_TTL
@@ -126,7 +128,8 @@ def _run(job_id: str, input_dir: str, output_dir: str):
 
     try:
         log(f'[JOB {job_id}] Bắt đầu xử lý ILO1000...')
-        output_path = main_from_dir(
+        output_path = chay_tach(
+            main_from_dir, ten='Chấm ILO1000',
             input_dir=input_dir,
             output_dir=output_dir,
             log_callback=log,

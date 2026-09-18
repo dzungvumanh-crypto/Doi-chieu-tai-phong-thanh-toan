@@ -288,8 +288,8 @@ Truy cập:
 ## Giới hạn tài nguyên máy chủ
 
 Các module đối chiếu nặng (ACH, Chấm ILO1000, Đối chiếu Song phương, Chấm 459901, Đối chiếu OSB) nạp file bằng
-pandas ngay trong tiến trình backend — đo được pandas giữ **~5,3 lần** kích thước file. Trần upload
-mỗi lượt 500 MB, nên bốn lượt cùng lúc có thể chạm ~10 GB.
+pandas — đo được pandas giữ **~5,3 lần** kích thước file. Trần upload mỗi lượt 500 MB, nên bốn
+lượt cùng lúc có thể chạm ~10 GB.
 
 Từ 10/09/2026 các module này dùng chung một chốt (`backend/core/phien_doi_chieu.py`; Đối chiếu OSB
 tham gia từ 17/09/2026):
@@ -301,6 +301,13 @@ tham gia từ 17/09/2026):
 
 Bị chặn → HTTP 409 kèm câu nói rõ module nào đang chạy. Trước đó chỉ ACH có chốt, và nó cũng chỉ
 tự canh mình.
+
+Từ 18/09/2026 **mọi module đối chiếu** chạy pipeline ở **tiến trình riêng**: lúc chúng chạy,
+các màn hình khác không còn bị chậm theo, và nếu một lượt hết bộ nhớ thì chỉ lượt đó báo lỗi,
+backend vẫn sống. Mỗi lượt ghi vào `logs/app.log` một dòng "RAM đỉnh …, bộ nhớ cam kết đỉnh …"
+— trước khi nâng `DOI_CHIEU_MAX_SONG_SONG` dùng số **cam kết đỉnh**: máy thiếu RAM thì Windows
+cắt bớt RAM của tiến trình nên số "RAM đỉnh" đo thấp đúng lúc quan trọng. Muốn quay về cách cũ: `DOI_CHIEU_TIEN_TRINH=0`
+trong `.env` rồi khởi động lại backend.
 
 Kết nối CSDL dùng **bể mượn–trả** (`DB_POOL_SIZE`, mặc định 48) thay vì mở tệp ở từng request.
 Request vượt số kết nối thì xếp hàng chờ (tối đa 30 giây, quá thì trả 503 và ghi cảnh báo vào
@@ -489,9 +496,13 @@ Request vượt số kết nối thì xếp hàng chờ (tối đa 30 giây, qu�
 - Cần **ít nhất 1 người xử lý song phương** trong Lãnh đạo + nhóm trực chính — thiếu hoặc dư
   đều vẫn lập ca, chỉ cảnh báo. Người ở nhóm trực phụ không tính (về sớm)
 - Ngày thường bốc **ngẫu nhiên trong nhóm ít ca nhất**; thứ 6 luân phiên **tất định**.
-  Có tiêu chí phụ tránh hình thành ê-kíp trực cố định
+  Có tiêu chí phụ tránh hình thành ê-kíp trực cố định — cả nhân viên ↔ Lãnh đạo lẫn
+  **cặp nhân viên trực chính** với nhau (nhóm trực phụ không tính)
 - **Ba luật công bằng (mềm)**, áp dụng như nhau cho Lãnh đạo lẫn nhân viên: không quá
-  **2 ca/tuần**, không quá **2 thứ 6/tháng**, không trực thứ 6 ở **2 tuần liên tiếp**.
+  **2 ca/tuần**, không trực **cùng một thứ (T2–T6) quá 2 lần/tháng**, không trực cùng một thứ ở
+  **2 tuần liên tiếp**. Luật cùng-thứ chỉ tính ca thường/thứ 6 — ca cut-off, quyết toán và
+  T7/CN làm bù không tính. Người biết song phương chỉ được kéo vào ca khi không phải phá tầng
+  ưu tiên này; không kéo được thì ca lập kèm cảnh báo thiếu người song phương.
   Thuật toán ưu tiên tránh; pool cạn thì **vẫn lập ca** kèm cảnh báo nêu đích danh người bị
   phá luật — đủ người quan trọng hơn giữ đúng luật mềm. Đường **sửa tay** cũng cảnh báo,
   nhưng hiện chỉ soi các ca **trước** ngày đang sửa (xem card 91 trong Implementation-notes)
