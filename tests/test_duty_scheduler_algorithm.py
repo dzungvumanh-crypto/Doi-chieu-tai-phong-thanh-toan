@@ -1142,9 +1142,9 @@ def test_buoc_vuot_thu6_khi_thieu_nguoi_len_dung_2_loai_canh_bao():
         assert r["shift"] is not None, f"pool nhỏ vẫn phải đủ người ngày {ds}"
         assert len(_members(r["shift"])) == 3
         loai_canh_bao.update(w["type"] for w in r["warnings"])
-    assert "qua_2_thu6_thang" in loai_canh_bao, (
+    assert "qua_2_thu_thang" in loai_canh_bao, (
         "chỉ 1 LD cho 4 thứ 6/tháng phải buộc vượt 2 lần/tháng, kèm cảnh báo")
-    assert "thu6_lien_tiep" in loai_canh_bao, (
+    assert "thu_lien_tiep" in loai_canh_bao, (
         "chỉ 1 LD cho 4 thứ 6/tháng chắc chắn dính liên tiếp, kèm cảnh báo")
 
 
@@ -1204,11 +1204,37 @@ def test_buoc_vuot_2_ca_tuan_khi_thieu_nguoi_len_canh_bao_khong_rieng_ld():
 
 
 def test_mo_phong_3_thang_giu_dong_thoi_ca_3_luat():
-    """Mô phỏng phân lịch 3 tháng liên tiếp (~13 tuần) trên cơ cấu nhân sự vừa
-    phải — bài học cũ: kiểm 1 ca đơn lẻ không bắt được lỗi cân bằng, cân bằng
-    là tính chất của cả CHUỖI ca dài ngày. Xác nhận đồng thời cả 3 luật mềm
-    không bị vi phạm và không phát sinh cảnh báo buộc-vi-phạm nào."""
+    """Mô phỏng phân lịch 3 tháng liên tiếp (~13 tuần) — bài học cũ: kiểm 1 ca
+    đơn lẻ không bắt được lỗi cân bằng, cân bằng là tính chất của cả CHUỖI ca
+    dài ngày. Xác nhận đồng thời SÁU luật:
+      (a) không ai vượt 2 ca/tuần
+      (b) không ai trực CÙNG MỘT THỨ (T2-T6, không chỉ thứ 6) quá 2 lần/tháng
+      (c) không ai trực CÙNG MỘT THỨ ở 2 tuần liên tiếp (T2-T6)
+      (d) không có cặp NV-NV chiếm phần lớn số ca — SMOKE-CHECK bổ sung, không
+          phải bằng chứng chính cho bất cập 3: ở quy mô fixture 12 NV/13 tuần,
+          ngưỡng 0,75 KHÔNG có sức phân biệt code lỗi/đúng (đã tự tái hiện lại
+          đúng bug cũ bằng 3 biến thể monkeypatch × 7 seed-offset, tỷ lệ cao
+          nhất quan sát được chỉ 0,06-0,15 dù bug hay không) — pool 12 người
+          quá rộng so với 2 chỗ trực chính/ngày nên vòng xoay cân bằng tự rải
+          đều cặp đôi bất kể thuật toán chọn người có đúng hay không. Bằng
+          chứng CHÍNH cho bất cập 3 nằm ở 2 test fixture NHỎ, nhạy hơn:
+          `test_duty_bat_cap_2026_09_18.py::test_3_khong_duoc_sinh_e_kip_nhan_vien_co_dinh`
+          và `test_duty_giai_doan2_tester_doc_lap_2026_09_18.py::test_kich_ban_that_2_cap_co_dinh_dong_thoi_thu_hai_va_thu_ba`.
+      (e) không phát sinh cảnh báo buộc-vi-phạm nào (đủ người thì (a)(b)(c) đạt
+          được bằng lựa chọn, không phải bằng cách lờ đi)
+
+    PLAN cảnh báo fixture 4 LD/12 NV cũ (vốn chỉ kiểm riêng thứ 6) có thể quá
+    hẹp khi luật (b)(c) áp cho cả 5 thứ, khuyến nghị nới lên sát quân số thật
+    (7 LD/18 NV, card 91) nếu assertion không đạt được. ĐÃ TỰ KIỂM CHỨNG bằng
+    script độc lập (4 mức seed offset khác nhau, không chỉ seed mặc định của
+    test): fixture 4 LD/12 NV GIỮ NGUYÊN vẫn đạt cả 6 luật với biên độ rộng
+    (cặp NV-NV nhiều nhất chỉ 4/65 ca, xa dưới ngưỡng 0,75×65≈49) — không phải
+    trường hợp "giới hạn cơ cấu" mà PLAN lo ngại, nên KHÔNG nới fixture (nới
+    thêm người mà không cần thiết chỉ làm test yếu đi — dễ đạt hơn thực tế cần
+    kiểm). KHÔNG được nới lỏng assertion."""
+    import json
     from datetime import date, timedelta
+    from backend.services.duty_rules import _TEN_THU as _TEN_THU_TEST
 
     staff = [(i, f"LD {i}", "truong_phong", 0, 0, i) for i in range(1, 5)]        # 4 LD
     staff += [(10 + i, f"NV {i}", "chuyen_vien", 1 if i % 3 == 0 else 0, 0, 10 + i)
@@ -1223,7 +1249,7 @@ def test_mo_phong_3_thang_giu_dong_thoi_ca_3_luat():
         result = generate_schedule_for_week(db, ws, seed=i)
         all_warnings.extend(result["warnings"])
 
-    # (a) không ai vượt 2 ca/ISO-tuần
+    # (a) không ai vượt 2 ca/ISO-tuần — mọi loại ca (không riêng thứ 6)
     theo_tuan: dict = {}
     for r in db.execute("SELECT shift_date, leader_ids, sp_id, nv_ids, nv_phu_ids FROM duty_shifts"):
         d = date.fromisoformat(r["shift_date"])
@@ -1234,29 +1260,67 @@ def test_mo_phong_3_thang_giu_dong_thoi_ca_3_luat():
     vuot_tuan = {(wk, sid): n for wk, m in theo_tuan.items() for sid, n in m.items() if n > 2}
     assert not vuot_tuan, f"vượt 2 ca/tuần trong 3 tháng mô phỏng: {vuot_tuan}"
 
-    # (b) không ai vượt 2 lần thứ 6/tháng
-    theo_thang: dict = {}
-    thu6_rows = []
-    for row in db.execute("SELECT * FROM duty_shifts WHERE shift_type='friday' ORDER BY shift_date"):
+    # (b) + (c) — tổng quát hoá cho CẢ 5 THỨ (T2-T6), không riêng thứ 6.
+    # Nhóm ca theo (tháng, thứ trong tuần) cho luật (b); theo THỨ cho luật (c)
+    # (2 tuần liên tiếp CÙNG một thứ, không so giữa các thứ khác nhau).
+    theo_thang_thu: dict = {}
+    rows_theo_thu: dict = {}
+    for row in db.execute(
+        "SELECT * FROM duty_shifts WHERE shift_type IN ('normal','friday') "
+        "ORDER BY shift_date"
+    ):
         r = dict(row)
-        thu6_rows.append(r)
-        thang = r["shift_date"][:7]
-        cho_thang = theo_thang.setdefault(thang, {})
-        for sid in _members(r):
-            cho_thang[sid] = cho_thang.get(sid, 0) + 1
-    vuot_thang = {(th, sid): n for th, m in theo_thang.items() for sid, n in m.items() if n > 2}
-    assert not vuot_thang, f"vượt 2 lần thứ 6/tháng trong 3 tháng mô phỏng: {vuot_thang}"
-
-    # (c) không ai trực thứ 6 2 tuần liên tiếp
-    for prev, cur in zip(thu6_rows, thu6_rows[1:]):
-        if (date.fromisoformat(cur["shift_date"]) - date.fromisoformat(prev["shift_date"])).days != 7:
+        d = date.fromisoformat(r["shift_date"])
+        if d.weekday() > 4:      # ngày bù T7/CN — ngoài phạm vi luật này
             continue
-        trung = set(_members(prev)) & set(_members(cur))
-        assert not trung, (
-            f"trực thứ 6 liên tiếp {prev['shift_date']}→{cur['shift_date']}: {trung}")
+        thang = r["shift_date"][:7]
+        key = (thang, d.weekday())
+        cho = theo_thang_thu.setdefault(key, {})
+        for sid in _members(r):
+            cho[sid] = cho.get(sid, 0) + 1
+        rows_theo_thu.setdefault(d.weekday(), []).append(r)
 
+    vuot_thang_thu = {k: {sid: n for sid, n in m.items() if n > 2}
+                      for k, m in theo_thang_thu.items() if any(n > 2 for n in m.values())}
+    assert not vuot_thang_thu, (
+        f"vượt 2 lần/thứ/tháng trong 3 tháng mô phỏng: {vuot_thang_thu}")
+
+    for wd, rows in rows_theo_thu.items():
+        for prev, cur in zip(rows, rows[1:]):
+            if (date.fromisoformat(cur["shift_date"])
+                    - date.fromisoformat(prev["shift_date"])).days != 7:
+                continue
+            trung = set(_members(prev)) & set(_members(cur))
+            assert not trung, (
+                f"trực cùng thứ ({_TEN_THU_TEST.get(wd, wd)}) liên tiếp "
+                f"{prev['shift_date']}→{cur['shift_date']}: {trung}")
+
+    # (d) không có cặp NV-NV (nhóm trực chính: nv_ids + sp_id, KHÔNG tính
+    # nv_phu_ids — cùng phạm vi Q4 của _ma_tran_di_cung_nv()) chiếm phần lớn
+    # số ca — ngưỡng 0,75 giữ nguyên như test_khong_tao_ra_e_kip_truc_co_dinh
+    # (cặp Lãnh đạo-nhân viên) để cùng một chuẩn "ê-kíp cố định" trong dự án.
+    # LƯU Ý: ở quy mô 12 NV/13 tuần, ngưỡng này không đủ nhạy để tự nó phát
+    # hiện bất cập 3 tái diễn (xem docstring đầu hàm) — coi đây là smoke-check
+    # rẻ tiền chạy kèm luật (a)(b)(c), không phải lưới an toàn chính.
+    cap_nv: dict = {}
+    tong_ca = 0
+    for row in db.execute("SELECT nv_ids, sp_id FROM duty_shifts"):
+        r = dict(row)
+        nhom = sorted(set(json.loads(r["nv_ids"] or "[]"))
+                     | ({r["sp_id"]} if r["sp_id"] else set()))
+        tong_ca += 1
+        for i in range(len(nhom)):
+            for j in range(i + 1, len(nhom)):
+                cap = (nhom[i], nhom[j])
+                cap_nv[cap] = cap_nv.get(cap, 0) + 1
+    if cap_nv:
+        nhieu_nhat = max(cap_nv.values())
+        assert nhieu_nhat < tong_ca * 0.75, (
+            f"cặp NV-NV đi cùng nhau {nhieu_nhat}/{tong_ca} ca — thành ê-kíp cố định")
+
+    # (e) không phát sinh cảnh báo buộc-vi-phạm nào
     canh_bao_vi_pham = [w for w in all_warnings if w["type"] in
-                        ("qua_tai_tuan", "qua_2_thu6_thang", "thu6_lien_tiep")]
+                        ("qua_tai_tuan", "qua_2_thu_thang", "thu_lien_tiep")]
     assert not canh_bao_vi_pham, (
         f"cơ cấu 4 LD/12 NV đủ rộng cho 3 tháng mà vẫn phải cảnh báo vi phạm: "
         f"{canh_bao_vi_pham}")

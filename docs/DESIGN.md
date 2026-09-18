@@ -128,7 +128,7 @@ khuôn `_xu_ly_tach()` của 459901 / OSB; (3) tham số và kết quả pickle 
 
 `DOI_CHIEU_TIEN_TRINH=0` → chạy trong luồng như cũ (khẩn cấp trên máy chủ).
 
-Ngoài 7 cửa đối chiếu, **SWIFT recon** cũng tách (card 151) — kiểu hỏi–đáp đồng bộ, không có
+Ngoài 7 cửa đối chiếu, **SWIFT recon** cũng tách (card 152) — kiểu hỏi–đáp đồng bộ, không có
 job: `await run_heavy(chay_tach, tach.<hàm>, ...)`; phần nặng ở `backend/services/swift_recon/tach.py`,
 API chỉ ghi file tải lên ra đĩa + đọc/ghi CSDL.
 

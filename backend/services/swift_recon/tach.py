@@ -1,7 +1,7 @@
 """Phần NẶNG của SWIFT recon — chạy ở tiến trình riêng qua `chay_tach()`.
 
 Đọc file SAA/Quản lý điện, đối chiếu, sinh Excel đều là pandas/openpyxl/XML thuần Python —
-chạy trong tiến trình web là giữ GIL, request khác đứng chờ (card 150, 151). API
+chạy trong tiến trình web là giữ GIL, request khác đứng chờ (card 150, 152). API
 (`backend/api/swift_recon.py`) giữ phần nhẹ: ghi file tải lên ra đĩa, đọc/ghi lịch sử
 trong CSDL, kiểm tra 400/404 — rồi gọi các hàm ở đây.
 

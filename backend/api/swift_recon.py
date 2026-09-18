@@ -31,7 +31,7 @@ CẬP NHẬT (đợt 3 — quan trọng, đọc trước khi sửa tiếp file n
   Chỉ `async def` + `await run_heavy(...)` mới vừa không chiếm event loop,
   vừa nằm trong giới hạn việc nặng dùng chung toàn hệ thống.
 
-CẬP NHẬT (đợt 4, 18/09/2026 — card 151):
+CẬP NHẬT (đợt 4, 18/09/2026 — card 152):
   Phần nặng (đọc file, đối chiếu, sinh Excel) chạy ở TIẾN TRÌNH RIÊNG qua
   `chay_tach(tach.<hàm>, ...)` — `backend/services/swift_recon/tach.py`. Ở trong
   `run_heavy()` chỉ còn phần nhẹ: ghi file tải lên ra đĩa, đọc/ghi lịch sử CSDL,

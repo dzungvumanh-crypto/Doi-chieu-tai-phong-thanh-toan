@@ -6,7 +6,7 @@ giờ chạy tới, file .xlsx nằm lại %TEMP% vĩnh viễn — mỗi lượt
 không tiến trình nào dọn.
 
 Từ 18/09/2026 hàm nằm ở `backend/services/swift_recon/tach.py` (chạy trong tiến trình
-con — card 151).
+con — card 152).
 
 Chạy: .venv/Scripts/python.exe -m pytest tests/test_don_dep_file_tam.py -v
 """

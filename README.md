@@ -496,9 +496,13 @@ Request vượt số kết nối thì xếp hàng chờ (tối đa 30 giây, qu�
 - Cần **ít nhất 1 người xử lý song phương** trong Lãnh đạo + nhóm trực chính — thiếu hoặc dư
   đều vẫn lập ca, chỉ cảnh báo. Người ở nhóm trực phụ không tính (về sớm)
 - Ngày thường bốc **ngẫu nhiên trong nhóm ít ca nhất**; thứ 6 luân phiên **tất định**.
-  Có tiêu chí phụ tránh hình thành ê-kíp trực cố định
+  Có tiêu chí phụ tránh hình thành ê-kíp trực cố định — cả nhân viên ↔ Lãnh đạo lẫn
+  **cặp nhân viên trực chính** với nhau (nhóm trực phụ không tính)
 - **Ba luật công bằng (mềm)**, áp dụng như nhau cho Lãnh đạo lẫn nhân viên: không quá
-  **2 ca/tuần**, không quá **2 thứ 6/tháng**, không trực thứ 6 ở **2 tuần liên tiếp**.
+  **2 ca/tuần**, không trực **cùng một thứ (T2–T6) quá 2 lần/tháng**, không trực cùng một thứ ở
+  **2 tuần liên tiếp**. Luật cùng-thứ chỉ tính ca thường/thứ 6 — ca cut-off, quyết toán và
+  T7/CN làm bù không tính. Người biết song phương chỉ được kéo vào ca khi không phải phá tầng
+  ưu tiên này; không kéo được thì ca lập kèm cảnh báo thiếu người song phương.
   Thuật toán ưu tiên tránh; pool cạn thì **vẫn lập ca** kèm cảnh báo nêu đích danh người bị
   phá luật — đủ người quan trọng hơn giữ đúng luật mềm. Đường **sửa tay** cũng cảnh báo,
   nhưng hiện chỉ soi các ca **trước** ngày đang sửa (xem card 91 trong Implementation-notes)
