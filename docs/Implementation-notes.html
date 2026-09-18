@@ -18213,6 +18213,14 @@ This may happen if you try to create UI from a background task.</pre>
       </table>
       <p>Đúng độ lớn cảnh báo trên máy chủ. 8 lõi không giúp: chỉ một luồng chạy mã Python tại một thời điểm.
         <b>Chưa chứng minh trên máy chủ</b> — card này chính là để chứng minh (cột <code>đối chiếu</code> + <code>loop chặn</code>).</p>
+      <p><span class="pill pill-green">Máy chủ xác nhận 18/09/2026 13:31</span> — bản có card 144, <b>chưa</b> có card 150
+        (job đối chiếu vẫn chạy bằng luồng trong backend):<br>
+        <code>GET /api/handovers/grid — 3176 ms | loop chặn tối đa 122 ms, trễ tổng 1081 ms · luồng 0/40 chờ 0 ·
+        kết nối CSDL 0/48 xếp cổng 0 · đang xử lý 2 · việc nặng 0/4 · đối chiếu 1</code><br>
+        Đúng dấu hiệu tranh GIL: tổng lớn, max nhỏ, đang có 1 lượt đối chiếu; threadpool và bể CSDL rảnh — loại nghẽn
+        luồng/CSDL. <code>trễ tổng</code> (1,08 s) thấp hơn thời gian request (3,18 s) là bình thường: nó chỉ đo luồng
+        event loop bị đói; endpoint <code>def</code> chạy trong luồng threadpool, cũng chờ GIL, không được đếm vào đây.
+        Lời giải là card 150 — kiểm lại bằng chính dòng này sau khi deploy.</p>
 
       <div class="label"><span class="pill pill-green">Thay đổi</span> <code>backend/core/slow_request.py</code></div>
       <p>Đuôi mỗi dòng: <code>loop chặn tối đa N ms, trễ tổng M ms · luồng a/40 chờ b · kết nối CSDL c/48 xếp cổng d · đang xử lý e · việc nặng f/4 · đối chiếu g</code>.
