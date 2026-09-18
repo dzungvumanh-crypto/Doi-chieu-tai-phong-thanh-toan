@@ -18815,8 +18815,26 @@ This may happen if you try to create UI from a background task.</pre>
         <tr><td>Nghi vấn: <code>ValueError</code> file xác nhận ACH không mở gói được → rơi nhầm nhánh lỗi</td>
           <td><b>Bác bỏ</b> — mọi <code>raise ValueError</code> ở <code>b4_xu_ly_mis_di.py:570–721</code> chỉ mang chuỗi f-string</td></tr>
       </table>
-      <p>Logic khớp giao dịch không đổi (phản biện xác nhận qua <code>git diff -w</code>). Đây mới là <b>1 lượt Sonnet</b> — thay đổi
-        chạm cả 7 module đối chiếu; có thêm lượt phản biện hay không do người dùng quyết.</p>
+      <p>Logic khớp giao dịch không đổi (phản biện xác nhận qua <code>git diff -w</code>).</p>
+
+      <div class="label"><span class="pill pill-red">Phản biện lượt 2</span> Opus (người dùng yêu cầu) — không chặn merge, 1 lỗi thật + 1 nghi vấn đã xử lý</div>
+      <table>
+        <tr><th>Phát hiện</th><th>Xử lý</th></tr>
+        <tr><td><b>Con chết lúc cha đang xử lý tin cuối</b> → Windows <code>PipeConnection.poll()</code> ném
+          <code>BrokenPipeError [WinError 109]</code> khi ống đã đóng và rỗng (không trả <code>True</code> như Linux). Job vẫn
+          <code>error</code> (không treo) nhưng người dùng thấy "The pipe has been ended", <code>app.log</code> mất dòng mã thoát. Tái hiện 3/3</td>
+          <td>Bắt <code>BrokenPipeError</code> cùng <code>EOFError</code> quanh <code>poll</code>/<code>recv</code>;
+          <code>test_con_chet_luc_cha_dang_xu_ly_tin_cuoi_van_bao_ro</code> (đỏ 3/3 trước khi sửa)</td></tr>
+        <tr><td>Nghi vấn: "RAM đỉnh" là working set — máy thiếu RAM thì Windows cắt working set, số đo <b>thấp</b> đúng lúc
+          quan trọng, mà người dùng định dựa vào nó để nâng trần</td>
+          <td>Ghi thêm <b>bộ nhớ cam kết đỉnh</b> (<code>PeakPagefileUsage</code>) cùng dòng — dùng số này khi quyết trần</td></tr>
+        <tr><td>Ghi chú: <code>_cleanup_old_results()</code> chạy ở đầu pipeline, nay trong con — phần xoá mục <code>_progress</code>
+          quá hạn chỉ xoá bản sao</td>
+          <td>Không sửa: dict <code>_progress</code> của cha vẫn được lượt 23h (<code>temp_cleanup_service</code>) dọn; chỉ muộn hơn</td></tr>
+      </table>
+      <p>Lượt 2 xác nhận thêm: không kịch bản treo mới, không rò handle (40 lượt: 164 → 165), buộc dừng không trả file dở,
+        chốt <code>phien_doi_chieu</code> chỉ có thể báo bận lâu hơn (không bao giờ rảnh sớm), không trạng thái toàn cục nào
+        cha thiết lập lúc chạy mà con cần, tương thích Python 3.10.0, không đưa dữ liệu nhạy cảm mới vào log.</p>
 
       <div class="label"><span class="pill pill-amber">Phát hiện thêm</span> lỗi có từ trước: test 459901 ghi vào <code>data/temp_cham459901</code> thật</div>
       <p>Truy nguồn một thư mục kết quả lạ sau lượt test: <code>test_unrecognized_file_reported_but_does_not_block</code> chạy một job

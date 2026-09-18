@@ -304,8 +304,9 @@ tự canh mình.
 
 Từ 18/09/2026 **mọi module đối chiếu** chạy pipeline ở **tiến trình riêng**: lúc chúng chạy,
 các màn hình khác không còn bị chậm theo, và nếu một lượt hết bộ nhớ thì chỉ lượt đó báo lỗi,
-backend vẫn sống. Mỗi lượt ghi vào `logs/app.log` một dòng "RAM đỉnh …" — dùng số
-này trước khi nâng `DOI_CHIEU_MAX_SONG_SONG`. Muốn quay về cách cũ: `DOI_CHIEU_TIEN_TRINH=0`
+backend vẫn sống. Mỗi lượt ghi vào `logs/app.log` một dòng "RAM đỉnh …, bộ nhớ cam kết đỉnh …"
+— trước khi nâng `DOI_CHIEU_MAX_SONG_SONG` dùng số **cam kết đỉnh**: máy thiếu RAM thì Windows
+cắt bớt RAM của tiến trình nên số "RAM đỉnh" đo thấp đúng lúc quan trọng. Muốn quay về cách cũ: `DOI_CHIEU_TIEN_TRINH=0`
 trong `.env` rồi khởi động lại backend.
 
 Kết nối CSDL dùng **bể mượn–trả** (`DB_POOL_SIZE`, mặc định 48) thay vì mở tệp ở từng request.

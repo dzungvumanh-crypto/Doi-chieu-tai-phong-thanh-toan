@@ -70,6 +70,11 @@ def _ham_chet(log_callback, cancel_event):
     os._exit(7)
 
 
+def _ham_log_roi_chet(log_callback, cancel_event):
+    log_callback("tin cuối")
+    os._exit(9)
+
+
 def _ham_kq_khong_pickle(log_callback, cancel_event):
     return threading.Lock()
 
@@ -149,6 +154,16 @@ def test_con_chet_ngang_bao_loi_khong_treo():
     with pytest.raises(ttdc.LoiTienTrinhCon, match="mã thoát 7"):
         ttdc.chay_tach(_ham_chet, ten="thử")
     assert time.monotonic() - t0 < 20
+
+
+def test_con_chet_luc_cha_dang_xu_ly_tin_cuoi_van_bao_ro():
+    # Windows: con chết khi cha đang bận với tin cuối → lúc cha quay lại, ống đã đóng và rỗng,
+    # PipeConnection.poll() ném BrokenPipeError thay vì trả True (phản biện lượt 2, 3/3 lần).
+    # Người dùng phải thấy câu "dừng bất thường", không phải "The pipe has been ended".
+    def cham(m):
+        time.sleep(0.5)
+    with pytest.raises(ttdc.LoiTienTrinhCon, match="mã thoát 9"):
+        ttdc.chay_tach(_ham_log_roi_chet, ten="thử", log_callback=cham)
 
 
 # ── Dừng ──

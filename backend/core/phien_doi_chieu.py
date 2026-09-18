@@ -28,7 +28,7 @@ Hai luật, cố ý khác nhau:
      song là chuyện bình thường, nên KHÔNG khoá về 1. Mặc định 3: đủ cho nếp làm
      việc thật, mà vẫn chặn trường hợp cả bốn module cùng chạy (worst case
      4 × 500 MB × 5,3 ≈ 10 GB trên máy 20 GB — sát quá; bỏ hẳn trần thì 7 cửa là
-     ~18,5 GB). Người dùng chốt 18/09/2026: giữ 3, đọc dòng "RAM đỉnh" trong
+     ~18,5 GB). Người dùng chốt 18/09/2026: giữ 3, đọc số "bộ nhớ cam kết đỉnh" trong
      logs/app.log vài tuần rồi mới quyết nâng hay đổi sang trần theo RAM (card 150).
 
 Trạng thái job vẫn nằm ở từng service, file này KHÔNG giữ bản sao: mỗi module tự

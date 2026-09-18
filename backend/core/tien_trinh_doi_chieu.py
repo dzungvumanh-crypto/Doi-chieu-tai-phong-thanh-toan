@@ -117,13 +117,15 @@ def chay_tach(
                 p.terminate()
                 return None
 
-            if not nhan.poll(0.25):
-                if not p.is_alive() and not nhan.poll(0):
-                    break
-                continue
             try:
+                if not nhan.poll(0.25):
+                    if not p.is_alive() and not nhan.poll(0):
+                        break
+                    continue
                 tin = nhan.recv()
-            except EOFError:
+            except (BrokenPipeError, EOFError):
+                # Con đã đóng ống. Windows ném BrokenPipeError từ poll() khi ống đã đóng VÀ rỗng
+                # (không trả True như Linux) — gặp khi con chết lúc cha đang xử lý tin cuối.
                 break
             if tin[0] == "log":
                 if log_callback:
@@ -155,7 +157,8 @@ def chay_tach(
         )
 
     loai, noi_dung, ram = ket_thuc[0], ket_thuc[1:-1], ket_thuc[-1]
-    ram_txt = f"{ram / 2**20:,.0f} MB" if ram else "không đo được"
+    ram_txt = (f"{ram[0] / 2**20:,.0f} MB, bộ nhớ cam kết đỉnh {ram[1] / 2**20:,.0f} MB"
+               if ram else "không đo được")
     _log.info("%s: tiến trình con xong sau %.1f s, RAM đỉnh %s (%s)", ten, giay, ram_txt, loai)
 
     if loai == "xong":
@@ -289,8 +292,11 @@ def _ha_uu_tien() -> None:
                      ctypes.get_last_error())
 
 
-def _ram_dinh() -> Optional[int]:
-    """RAM đỉnh (byte) của tiến trình này — số đo để quyết định nới DOI_CHIEU_MAX_SONG_SONG."""
+def _ram_dinh() -> Optional[tuple[int, int]]:
+    """(RAM đỉnh, bộ nhớ cam kết đỉnh) — byte — số đo để quyết định nới DOI_CHIEU_MAX_SONG_SONG.
+
+    Cần CẢ HAI: máy thiếu RAM thì Windows cắt working set nên RAM đỉnh đo THẤP đúng lúc số đo
+    quan trọng nhất; bộ nhớ cam kết (PeakPagefileUsage) là phần tiến trình thật sự đã chiếm."""
     if os.name != "nt":
         return None
     import ctypes
@@ -309,5 +315,5 @@ def _ram_dinh() -> Optional[int]:
     pmc = _PMC()
     pmc.cb = ctypes.sizeof(pmc)
     if k32.K32GetProcessMemoryInfo(k32.GetCurrentProcess(), ctypes.byref(pmc), pmc.cb):
-        return pmc.PeakWorkingSetSize
+        return pmc.PeakWorkingSetSize, pmc.PeakPagefileUsage
     return None
