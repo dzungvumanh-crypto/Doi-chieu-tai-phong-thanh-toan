@@ -18770,6 +18770,31 @@ This may happen if you try to create UI from a background task.</pre>
           xong — sheet nhỏ, để nguyên cho diff gọn.</li>
       </ul>
 
+      <div class="label"><span class="pill pill-red">Phản biện</span> 1 lượt Sonnet — không lỗi nghiêm trọng, 3 lỗi nhẹ đã sửa</div>
+      <table>
+        <tr><th>Phát hiện</th><th>Xử lý</th></tr>
+        <tr><td>Chế độ trong luồng + token 459901 đã bị xoá: <code>_xu_ly_tach</code> (<code>setdefault</code>) dựng mục <code>_progress</code>
+          "ma" với <code>cancel_event=None</code> → <code>AttributeError</code>, mục ma nằm lại (<code>luot_dang_chay</code> tưởng đang chạy)</td>
+          <td>Chỉ dựng mục cục bộ khi <code>trong_tien_trinh_con()</code> — cả 459901, phân loại Song phương, OSB</td></tr>
+        <tr><td>Lưới canh tĩnh so chuỗi <code>"chay_tach("</code> — một docstring là đủ xanh</td><td>Dò lời gọi thật bằng AST</td></tr>
+        <tr><td>Test ILO1000 xin tiến trình thật mà vẫn vá <code>TEMP_DIR</code> (mẫu xấu dễ bị chép); test <code>.env</code> luôn xanh trên CI</td>
+          <td>Bỏ bản vá; test <code>.env</code> báo skipped khi không có <code>.env</code></td></tr>
+        <tr><td><code>_ha_uu_tien()</code> log trước khi gắn bộ chuyển log; các bước chuẩn bị nằm ngoài <code>try</code> → lỗi bị báo "thường do hết bộ nhớ"</td>
+          <td>Gắn bộ chuyển log trước; chuẩn bị vào trong <code>try</code></td></tr>
+        <tr><td>Chưa có test Dừng 459901 qua tiến trình con</td><td>Thêm <code>test_cham459901_dung_toi_duoc_tien_trinh_con</code></td></tr>
+        <tr><td>Nghi vấn: <code>ValueError</code> file xác nhận ACH không mở gói được → rơi nhầm nhánh lỗi</td>
+          <td><b>Bác bỏ</b> — mọi <code>raise ValueError</code> ở <code>b4_xu_ly_mis_di.py:570–721</code> chỉ mang chuỗi f-string</td></tr>
+      </table>
+      <p>Logic khớp giao dịch không đổi (phản biện xác nhận qua <code>git diff -w</code>). Đây mới là <b>1 lượt Sonnet</b> — thay đổi
+        chạm cả 7 module đối chiếu; có thêm lượt phản biện hay không do người dùng quyết.</p>
+
+      <div class="label"><span class="pill pill-amber">Phát hiện thêm</span> lỗi có từ trước: test 459901 ghi vào <code>data/temp_cham459901</code> thật</div>
+      <p>Truy nguồn một thư mục kết quả lạ sau lượt test: <code>test_unrecognized_file_reported_but_does_not_block</code> chạy một job
+        <b>hợp lệ</b> mà không chờ xong — luồng nền chạy tràn qua lúc <code>monkeypatch</code> đã trả <code>TEMP_DIR</code> về thư mục thật.
+        Chạy trên develop gốc (worktree riêng) cũng để lại 1 thư mục mỗi lượt → <b>không do PR này</b>. Chạy riêng từng test thì
+        không lộ (pytest thoát, luồng daemon chết trước khi ghi). Sửa luôn vì một dòng: 3 test không chờ job nay gọi
+        <code>_wait_done()</code>; 3 lượt chạy liền: 0 thư mục.</p>
+
       <p>Branch: <code>feat/doi-chieu-tien-trinh-rieng</code>.</p>
     </div>
   </div>

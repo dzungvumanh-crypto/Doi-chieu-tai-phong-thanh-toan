@@ -22,7 +22,7 @@ import pandas as pd
 
 from backend.core.config import BASE_DIR, zip_password   # mật khẩu ZIP đọc từ .env
 from backend.core.don_dep import moc_don_gan_nhat
-from backend.core.tien_trinh_doi_chieu import chay_tach
+from backend.core.tien_trinh_doi_chieu import chay_tach, trong_tien_trinh_con
 
 try:
     import pyzipper
@@ -284,15 +284,17 @@ def run_process(
 def _xu_ly_tach(
     tep, task_token, hub_di, hub_den, ton, log_callback, cancel_event, tien_do_callback,
 ) -> dict:
-    """Điểm vào trong tiến trình con. Dựng mục `_progress` cục bộ mang `cancel_event` liên
-    tiến trình để `_set_prog` kiểm Dừng như cũ, và gửi pct/msg về backend.
+    """Điểm vào của `chay_tach`. Trong tiến trình con: dựng mục `_progress` cục bộ mang
+    `cancel_event` liên tiến trình để `_set_prog` kiểm Dừng như cũ, và gửi pct/msg về backend.
 
-    `setdefault`: khi chạy trong luồng (DOI_CHIEU_TIEN_TRINH=0) mục thật đã có — giữ nguyên."""
-    _progress.setdefault(task_token, {
-        "pct": 0, "msg": "", "done": False, "error": None, "cancelled": False,
-        "result": None, "cancel_event": cancel_event, "_ts": time.time(),
-        "_gui_ve": tien_do_callback,
-    })
+    Chỉ dựng khi ĐANG Ở TRONG CON: chạy trong luồng (DOI_CHIEU_TIEN_TRINH=0) thì mục thật đã
+    có, hoặc token đã bị xoá — dựng thêm là để lại mục "ma" mà `luot_dang_chay` tưởng đang chạy."""
+    if trong_tien_trinh_con():
+        _progress[task_token] = {
+            "pct": 0, "msg": "", "done": False, "error": None, "cancelled": False,
+            "result": None, "cancel_event": cancel_event, "_ts": time.time(),
+            "_gui_ve": tien_do_callback,
+        }
     return process_files(tep, task_token, hub_di, hub_den, ton)
 
 

@@ -12,8 +12,8 @@ thấy bản vá, sẽ ghi vào `data/temp_*` thật. Chỉ truyền đường d
 
 Chạy: .venv\\Scripts\\python.exe -m pytest tests/test_doi_chieu_chay_tien_trinh_rieng.py -v
 """
+import ast
 import logging
-import re
 from pathlib import Path
 
 import pytest
@@ -32,11 +32,20 @@ def _thay_tach(caplog) -> bool:
 
 # ── 1. Lưới canh tĩnh ──
 
+def _cac_loi_goi(cay: ast.AST) -> set[str]:
+    # Lời gọi THẬT — so chuỗi thì một docstring nhắc "chay_tach()" cũng đủ cho test xanh
+    return {
+        n.func.id if isinstance(n.func, ast.Name) else n.func.attr
+        for n in ast.walk(cay)
+        if isinstance(n, ast.Call) and isinstance(n.func, (ast.Name, ast.Attribute))
+    }
+
+
 def test_moi_cua_doi_chieu_deu_chay_tach():
     thieu = []
     for f in sorted((_GOC / "backend" / "services").rglob("*.py")):
-        ma = f.read_text(encoding="utf-8")
-        if re.search(r"^dang_ky_nguon\(", ma, re.M) and "chay_tach(" not in ma:
+        goi = _cac_loi_goi(ast.parse(f.read_text(encoding="utf-8")))
+        if "dang_ky_nguon" in goi and "chay_tach" not in goi:
             thieu.append(str(f.relative_to(_GOC)))
     assert not thieu, (
         f"Cửa đối chiếu nặng chưa chạy tách tiến trình: {thieu}. Gọi pipeline qua "
@@ -97,6 +106,22 @@ def test_cham459901(tmp_path, caplog):
         assert p["msg"] == p["error"]
         assert p["pct"] >= 5                        # tiến độ từ con về tới _progress của cha
         assert _thay_tach(caplog)
+    finally:
+        svc.bo_luot(token)
+
+
+def test_cham459901_dung_toi_duoc_tien_trinh_con(tmp_path):
+    # Nút Dừng: Event của cha → Event liên tiến trình → _set_prog trong con ném _Cancelled
+    # → về cha đúng kiểu → "Đã dừng". Sai một khâu là lượt chạy tới hết mà không dừng.
+    from backend.services import cham459901_service as svc
+    hong = tmp_path / "GL02.zip"
+    hong.write_bytes(b"khong phai zip")
+    token = svc.init_progress()
+    try:
+        assert svc.cancel_progress(token)
+        svc.run_process([("GL02.zip", hong)], token)
+        p = svc.get_progress(token)
+        assert p["done"] and p["cancelled"] and not p["error"], p
     finally:
         svc.bo_luot(token)
 

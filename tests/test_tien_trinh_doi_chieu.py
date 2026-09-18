@@ -113,6 +113,13 @@ def test_callback_khac_ve_dung_thu_tu_voi_log():
     assert ve == [("summary", {"khop": 3}, "tạm"), ("log", "sau summary")]
 
 
+_ENV = Path(__file__).resolve().parent.parent / ".env"
+
+
+@pytest.mark.skipif(
+    not _ENV.exists() or "SECRET_KEY" not in _ENV.read_text(encoding="utf-8"),
+    reason="không có .env chứa SECRET_KEY (CI) — không có gì để nạp đè, test sẽ xanh giả",
+)
 def test_con_dung_moi_truong_cua_cha_khong_nap_de_env(monkeypatch):
     # config.py nạp .env với override=True — con mà nạp đè thì sửa .env chưa restart là
     # cha/con đọc hai mật khẩu ZIP khác nhau. SECRET_KEY chắc chắn có trong .env.

@@ -39,11 +39,11 @@ def test_job_xong_gom_du_file_xlsx(monkeypatch, tmp_path):
         svc.bo_job(job_id)
 
 
-def test_job_chay_pipeline_that_o_tien_trinh_rieng(monkeypatch, tmp_path, caplog, tien_trinh_that):
+def test_job_chay_pipeline_that_o_tien_trinh_rieng(caplog, tien_trinh_that):
     """Pipeline thật, thư mục rỗng → trả None. Log của nó phải về tới job qua ống dẫn.
     Gọi thẳng trong luồng thì hai assert đầu cũng xanh — nên kiểm thêm dòng PID tiến
-    trình con do `chay_tach()` ghi."""
-    monkeypatch.setattr(svc, 'TEMP_DIR', tmp_path)
+    trình con do `chay_tach()` ghi. KHÔNG vá `TEMP_DIR` (tiến trình con không thấy bản vá) —
+    `bo_job()` dọn thư mục job thật."""
 
     job_id, input_dir = svc.tao_job()
     job = svc.get_job(job_id)

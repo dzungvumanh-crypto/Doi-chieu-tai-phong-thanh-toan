@@ -21,7 +21,7 @@ from pathlib import Path
 
 from backend.core.config import BASE_DIR
 from backend.core.don_dep import moc_don_gan_nhat
-from backend.core.tien_trinh_doi_chieu import chay_tach
+from backend.core.tien_trinh_doi_chieu import chay_tach, trong_tien_trinh_con
 from backend.services.doi_chieu_osb.pipeline import chay_doi_chieu_osb
 
 TEMP_DIR = BASE_DIR / "data" / "temp_doi_chieu_osb"
@@ -177,13 +177,14 @@ def _xu_ly_tach(
     gl02_path: Path, osb_paths: list[Path], ma_tk: str, ngay: str, task_token: str,
     log_callback, cancel_event, tien_do_callback,
 ) -> dict:
-    """Điểm vào trong tiến trình con — dựng mục `_progress` cục bộ để `_set_prog` gửi tiến độ
-    về backend. `setdefault`: chạy trong luồng (DOI_CHIEU_TIEN_TRINH=0) thì mục thật đã có.
+    """Điểm vào của `chay_tach` — trong tiến trình con dựng mục `_progress` cục bộ để
+    `_set_prog` gửi tiến độ về backend (chỉ trong con; xem `cham459901_service._xu_ly_tach`).
     Không có nút Dừng nên `cancel_event` bỏ qua."""
-    _progress.setdefault(task_token, {
-        "pct": 0, "msg": "", "done": False, "error": None, "cancelled": False,
-        "result": None, "_ts": time.time(), "_gui_ve": tien_do_callback,
-    })
+    if trong_tien_trinh_con():
+        _progress[task_token] = {
+            "pct": 0, "msg": "", "done": False, "error": None, "cancelled": False,
+            "result": None, "_ts": time.time(), "_gui_ve": tien_do_callback,
+        }
     return process(gl02_path, osb_paths, ma_tk, ngay, task_token)
 
 

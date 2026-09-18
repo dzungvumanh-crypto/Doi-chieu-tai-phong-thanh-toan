@@ -58,6 +58,13 @@ class _VetLoiCon(Exception):
     ở luồng `_run` in ra cả vết gốc, không chỉ dòng ném lại phía cha."""
 
 
+def trong_tien_trinh_con() -> bool:
+    """True khi đang chạy BÊN TRONG tiến trình con của `chay_tach()`. Dùng khi module phải
+    dựng lại trạng thái cục bộ (mục `_progress`) mà chỉ con cần — chạy trong luồng
+    (DOI_CHIEU_TIEN_TRINH=0) thì trạng thái thật đã có, dựng thêm là đẻ ra mục "ma"."""
+    return os.getenv("KSNB_TIEN_TRINH_CON") == "1"
+
+
 def bat() -> bool:
     """`DOI_CHIEU_TIEN_TRINH=0` → chạy trong luồng như cũ. Đọc lúc gọi để test đổi được."""
     return (os.getenv("DOI_CHIEU_TIEN_TRINH") or "1").strip() != "0"
@@ -206,13 +213,15 @@ def _tien_trinh_con(dich: str, kwargs: dict, ten_cb: list, gui, ev_huy) -> None:
         with khoa:
             gui.send(tin)
 
-    _canh_cha_chet()
-    _ha_uu_tien()
+    # Gắn bộ chuyển log TRƯỚC mọi bước khác — cảnh báo của chúng mới tới được app.log
     goc = logging.getLogger()
     goc.handlers[:] = [_LogVeCha(gui_tin)]
     goc.setLevel(logging.INFO)
 
     try:
+        # Trong try: lỗi ở đây phải về cha đúng nguyên nhân, không thành "thường do hết bộ nhớ"
+        _canh_cha_chet()
+        _ha_uu_tien()
         mod, qual = dich.split(":", 1)
         ham: Any = importlib.import_module(mod)
         for phan in qual.split("."):
