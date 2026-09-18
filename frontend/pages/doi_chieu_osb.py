@@ -45,7 +45,7 @@ async def doi_chieu_osb_page():
     }
 
     with ui.row().classes("w-full"):
-        _sidebar("doi_chieu_osb")
+        await _sidebar("doi_chieu_osb")
         with _content_area():
             _page_header(
                 "Đối chiếu OSB",
