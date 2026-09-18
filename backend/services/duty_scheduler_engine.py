@@ -13,8 +13,8 @@ Chỉ thứ 6 luân phiên tất định; các loại ca khác bốc ngẫu nhi�
 Ba luật mềm bổ sung, áp dụng như nhau cho Lãnh đạo lẫn nhân viên (ưu tiên
 tránh, cảnh báo khi buộc phải phá — không chặn hình thành ca):
   - Không trực quá 2 ca/tuần (mọi loại ca cộng lại).
-  - Không trực thứ 6 quá 2 lần/tháng.
-  - Không trực thứ 6 ở 2 tuần liên tiếp.
+  - Không trực CÙNG MỘT THỨ (T2-T6) quá 2 lần/tháng.
+  - Không trực CÙNG MỘT THỨ (T2-T6) ở 2 tuần liên tiếp.
 """
 import json
 import random
@@ -30,8 +30,8 @@ from backend.services.duty_constraint_service import (
 )
 from backend.services.duty_calendar_utils import get_week_dates, is_friday, week_span
 from backend.services.duty_rules import (
-    get_cau_hinh_ca, resolve_sp_role,
-    dem_ca_trong_tuan, dem_thu6_trong_thang, nguoi_truc_thu6_tuan_truoc,
+    get_cau_hinh_ca, resolve_sp_role, dem_ca_trong_tuan,
+    dem_cung_thu_trong_thang, nguoi_truc_cung_thu_tuan_truoc, _TEN_THU,
 )
 
 _VN_TZ = timezone(timedelta(hours=7))
@@ -214,17 +214,43 @@ def _so_lan_di_cung(db: sqlite3.Connection, year: int,
     return dem
 
 
+def _ma_tran_di_cung_nv(db: sqlite3.Connection, year: int) -> dict:
+    """
+    Đếm số lần mỗi CẶP nhân viên đã cùng có mặt trong NHÓM TRỰC CHÍNH (`nv_ids`
+    + `sp_id`) trong năm — MỘT lượt quét `duty_shifts`, khoá bằng cặp
+    `(min_id, max_id)`.
+
+    KHÔNG tính `nv_phu_ids` (Q4 — trực phụ về sớm hơn, không phải "đi cùng ca"
+    theo nghĩa cần chống ê-kíp). Khác `_so_lan_di_cung()` ở trên — hàm đó đếm
+    NHÂN VIÊN ↔ nhóm LÃNH ĐẠO, không đếm NHÂN VIÊN ↔ NHÂN VIÊN nên bất cập 3
+    (cặp NV cố định lặp mãi, brief Dũng + Hoàng Lan Anh 3 tuần liền) lọt qua.
+    """
+    dem: dict = {}
+    for r in db.execute(
+        "SELECT nv_ids, sp_id FROM duty_shifts WHERE shift_date LIKE ?", (f"{year}-%",)
+    ):
+        nhom = sorted(set(json.loads(r["nv_ids"] or "[]")) | ({r["sp_id"]} if r["sp_id"] else set()))
+        for i in range(len(nhom)):
+            for j in range(i + 1, len(nhom)):
+                cap = (nhom[i], nhom[j])
+                dem[cap] = dem.get(cap, 0) + 1
+    return dem
+
+
 def _sort_by_rotation(db: sqlite3.Connection, candidates: List[dict],
                       year: int, role: str, current_date: str = None,
-                      tranh_sp: bool = False, di_cung: dict = None) -> List[dict]:
+                      tranh_sp: bool = False, di_cung: dict = None,
+                      di_cung_nv: dict = None) -> List[dict]:
     di_cung = di_cung or {}
+    di_cung_nv = di_cung_nv or {}
 
     def sort_key(p: dict):
         tong, gan_nhat = _tong_ca(db, p["id"], year, role)
         s = _get_rotation_state(db, p["id"], year, role)
         return (
             tong,
-            # Ba tiêu chí phụ dưới đây chỉ tách được người khi đã ngang số ca
+            # Bốn tiêu chí phụ dưới đây chỉ tách được người khi đã ngang số ca
+            di_cung_nv.get(p["id"], 0),
             di_cung.get(p["id"], 0),
             bool(p.get("can_do_sp")) if tranh_sp else False,
             _preferred_day_mismatch(gan_nhat, current_date),
@@ -242,21 +268,26 @@ def _sort_by_rotation(db: sqlite3.Connection, candidates: List[dict],
 def _rank_candidates(db: sqlite3.Connection, candidates: List[dict], year: int,
                      role: str, date_str: str, rng: random.Random,
                      randomize: bool, tranh_sp: bool = False,
-                     di_cung: dict = None) -> List[dict]:
+                     di_cung: dict = None, di_cung_nv: dict = None) -> List[dict]:
     """
     Xếp thứ tự ưu tiên trong 1 nhóm ứng viên. Thuần đọc — không ghi vòng xoay.
 
-    Số ca luôn là tiêu chí chính. Hai tiêu chí phụ chỉ tách được người khi đã
+    Số ca luôn là tiêu chí chính. Các tiêu chí phụ chỉ tách được người khi đã
     ngang số ca, không bao giờ đẩy người ít ca xuống cuối:
-      `di_cung`  — số lần đã trực cùng nhóm Lãnh đạo này, để không thành ê-kíp cố định
-      `tranh_sp` — Lãnh đạo đã giữ vai song phương nên ca không cần thêm người biết
-                   song phương nữa
+      `di_cung_nv` — số lần đã trực cùng những người ĐÃ CHỌN trong CHÍNH ca này
+                     (bất cập 3 — chống ê-kíp NV-NV cố định); chèn ngay sau
+                     `tong`, cùng cấp với `di_cung`
+      `di_cung`    — số lần đã trực cùng nhóm Lãnh đạo này, để không thành ê-kíp cố định
+      `tranh_sp`   — Lãnh đạo đã giữ vai song phương nên ca không cần thêm người biết
+                     song phương nữa
     """
     if not candidates:
         return []
     di_cung = di_cung or {}
+    di_cung_nv = di_cung_nv or {}
     if not randomize:
-        return _sort_by_rotation(db, candidates, year, role, date_str, tranh_sp, di_cung)
+        return _sort_by_rotation(db, candidates, year, role, date_str, tranh_sp,
+                                 di_cung, di_cung_nv)
 
     # Ngẫu nhiên trong nhóm ít ca nhất, rồi tới nhóm ít ca kế tiếp
     bang = {p["id"]: _tong_ca(db, p["id"], year, role) for p in candidates}
@@ -266,6 +297,7 @@ def _rank_candidates(db: sqlite3.Connection, candidates: List[dict], year: int,
         rng.shuffle(nhom)
         # sort ổn định — thứ tự ngẫu nhiên được giữ trong từng mức khoá
         nhom.sort(key=lambda p: (
+            di_cung_nv.get(p["id"], 0),
             di_cung.get(p["id"], 0),
             bool(p.get("can_do_sp")) if tranh_sp else False,
             _preferred_day_mismatch(bang[p["id"]][1], date_str),
@@ -316,14 +348,22 @@ def _order_pool(db: sqlite3.Connection, people: List[dict], requests: dict, kind
     return _rank(forced) + ordered
 
 
-def _chon_lanh_dao(ld_order: List[dict], so_ld: int, nv_co_sp: bool) -> List[dict]:
+def _chon_lanh_dao(ld_order: List[dict], so_ld: int, nv_co_sp: bool,
+                   tang: dict) -> List[dict]:
     """Chọn so_ld Lãnh đạo theo thứ tự ưu tiên đã xếp sẵn."""
     # Chỉ khi CẢ pool nhân viên không còn ai biết song phương mới kéo Lãnh đạo
     # biết song phương lên trước — nếu không, việc kéo sẽ lặp lại gần như mỗi
     # ngày và dồn hết ca cho vài người.
+    #
+    # Sort ỔN ĐỊNH theo (tầng, không-biết-SP) — SP chỉ được ưu tiên TRONG CÙNG
+    # tầng, không được vượt tầng của người xếp trước (bất cập 2a: bản cũ chia
+    # đôi cả danh sách theo can_do_sp, bỏ qua tầng hoàn toàn, kéo cả người đang
+    # cần tránh — đã lặp thứ/quá tải tuần — lên trước người tầng tốt hơn nhưng
+    # không biết SP). `sorted()` ổn định nên thứ tự vòng xoay trong cùng
+    # (tầng, biết-SP) được giữ nguyên.
     if not nv_co_sp:
-        ld_order = ([p for p in ld_order if p.get("can_do_sp")]
-                    + [p for p in ld_order if not p.get("can_do_sp")])
+        ld_order = sorted(ld_order, key=lambda p: (tang.get(p["id"], 0),
+                                                    not p.get("can_do_sp")))
 
     leaders = ld_order[:so_ld]
     # Khai nhiều Lãnh đạo mà vơ trúng 2 người cùng biết song phương là lãng phí.
@@ -342,20 +382,61 @@ def _chon_lanh_dao(ld_order: List[dict], so_ld: int, nv_co_sp: bool) -> List[dic
     return leaders
 
 
-def _chia_nhan_vien(nv_order: List[dict], so_chinh: int, so_phu: int,
-                    ld_co_sp: bool) -> Tuple[List[dict], List[dict]]:
+def _chia_nhan_vien(db: sqlite3.Connection, nv_order: List[dict], so_chinh: int,
+                    so_phu: int, ld_co_sp: bool, tang: dict, year: int, role: str,
+                    date_str: str, rng: random.Random, randomize: bool,
+                    di_cung: dict, ma_tran_di_cung_nv: dict
+                    ) -> Tuple[List[dict], List[dict]]:
     """
-    Chia nhân viên thành nhóm trực chính và trực phụ.
+    Chia nhân viên thành nhóm trực chính và trực phụ — chọn TUẦN TỰ từng
+    người, không cắt lát tĩnh `nv_order[:so_chinh]` (bất cập 3: cắt lát khiến
+    2 người luôn đứng cạnh nhau trong bảng xếp hạng bị ghép cùng ca mãi mãi,
+    không bao giờ đi cùng người khác — brief Dũng + Hoàng Lan Anh 3 tuần liền).
 
-    Nếu Lãnh đạo chưa giữ vai song phương thì kéo đúng 1 người biết song phương
-    lên đầu nhóm trực chính — người ở nhóm phụ về sớm nên không thay vai được.
-    Nếu Lãnh đạo đã giữ vai thì `nv_order` vốn đã xếp người không biết song
-    phương lên trước trong từng mức số ca (tham số `tranh_sp`), không cần đảo gì.
+    Người đầu tiên = `nv_order[0]` — giữ nguyên toàn bộ ưu tiên hiện có. Mỗi
+    người kế tiếp chọn trong đúng TẦNG THẤP NHẤT còn lại (tôn trọng `tang` —
+    nếu bỏ qua tầng, tiêu chí chống-cặp mới có thể kéo người đã lặp thứ/quá
+    tải tuần vượt lên trước người sạch, phá lại đúng luật vừa sửa ở B1-B6),
+    xếp hạng trong tầng đó bằng `_rank_candidates()` với tiêu chí phụ mới
+    `di_cung_nv` — số lần đã trực cùng những người ĐÃ CHỌN trong CHÍNH ca này
+    — chèn ngay sau `tong` nên không bao giờ đẩy người ít ca xuống sau người
+    nhiều ca hơn (ràng buộc a).
+
+    Luật SP (Q3 — không dồn ca) áp SAU khi đã chọn xong nhóm trực chính, gộp
+    thành 1 khối duy nhất: nếu Lãnh đạo chưa giữ vai và nhóm vừa chọn không
+    có ai biết song phương thì đảo đúng 1 người, CHỈ trong cùng tầng với
+    người sẽ bị đẩy ra khỏi nhóm trực chính — không để 2 đường sửa danh sách
+    chồng lên nhau như bản cũ (bất cập 2b/4b).
     """
-    if not ld_co_sp:
-        biet_sp = [p for p in nv_order if p.get("can_do_sp")]
+    di_cung = di_cung or {}
+    ma_tran_di_cung_nv = ma_tran_di_cung_nv or {}
+
+    def da_di_cung(a: int, b: int) -> int:
+        return ma_tran_di_cung_nv.get((min(a, b), max(a, b)), 0)
+
+    chinh: List[dict] = []
+    con_lai = list(nv_order)
+    if so_chinh > 0 and con_lai:
+        chinh.append(con_lai.pop(0))
+    while len(chinh) < so_chinh and con_lai:
+        tang_thap_nhat = min(tang.get(p["id"], 0) for p in con_lai)
+        ung_vien = [p for p in con_lai if tang.get(p["id"], 0) == tang_thap_nhat]
+        dn = {p["id"]: sum(da_di_cung(p["id"], x["id"]) for x in chinh) for p in ung_vien}
+        chon = _rank_candidates(db, ung_vien, year, role, date_str, rng, randomize,
+                                tranh_sp=ld_co_sp, di_cung=di_cung, di_cung_nv=dn)[0]
+        chinh.append(chon)
+        con_lai.remove(chon)
+
+    nv_order = chinh + con_lai
+
+    # ── Luật SP (Q3): 1 khối duy nhất, chỉ đảo trong cùng tầng ──
+    if not ld_co_sp and so_chinh > 0 and not any(p.get("can_do_sp") for p in chinh):
+        tang_day_ra = tang.get(chinh[-1]["id"], 0)
+        biet_sp = [p for p in nv_order if p.get("can_do_sp")
+                  and tang.get(p["id"], 0) <= tang_day_ra]
         if biet_sp:
             nv_order = biet_sp[:1] + [p for p in nv_order if p["id"] != biet_sp[0]["id"]]
+
     return nv_order[:so_chinh], nv_order[so_chinh:so_chinh + so_phu]
 
 
@@ -419,21 +500,47 @@ def _generate_ca(db: sqlite3.Connection, date_str: str, year: int,
     requests = get_requests_for_date(db, date_str, year)
     warnings: List[dict] = []
 
-    # ── Tránh lặp: quá 2 ca/tuần, trực thứ 6 quá 2 lần/tháng, thứ 6 2 tuần liền
-    # ── nhau — áp dụng như nhau cho Lãnh đạo lẫn nhân viên. Tầng 2 (đẩy xuống
-    # dưới cả tầng "đã trực trong tuần" bình thường = tầng 1) vì đây là vi phạm
-    # nặng hơn, chỉ chấp nhận khi không còn lựa chọn nào khác.
+    # ── Tránh lặp: quá 2 ca/tuần, trực CÙNG THỨ quá 2 lần/tháng, cùng thứ 2 tuần
+    # ── liền nhau — áp dụng như nhau cho Lãnh đạo lẫn nhân viên, cho cả T2-T6
+    # (trước đây chỉ có ở thứ 6 — mở rộng theo văn bản 18/09/2026). Tầng 2 (đẩy
+    # xuống dưới cả tầng "đã trực trong tuần" bình thường = tầng 1) vì đây là vi
+    # phạm nặng hơn, chỉ chấp nhận khi không còn lựa chọn nào khác.
+    # Ca cut-off/quyết toán không nằm trong ("normal","friday") nên tự "vô hình"
+    # với luật này (Q1); T7/CN làm bù dù mang shift_type='normal' cũng tự loại
+    # vì weekday() >= 5.
     qua_tai_tuan = {sid for sid, n in dem_ca_trong_tuan(db, date_str).items() if n >= 2}
-    du_2_thu6 = set()
-    thu6_lien_tiep = set()
-    if shift_type == "friday":
-        du_2_thu6 = {sid for sid, n in dem_thu6_trong_thang(db, date_str).items() if n >= 2}
-        thu6_lien_tiep = nguoi_truc_thu6_tuan_truoc(db, date_str)
-    tranh = qua_tai_tuan | du_2_thu6 | thu6_lien_tiep
+    qua_2_thu_thang = set()
+    thu_lien_tiep = set()
+    if shift_type in ("normal", "friday") and _date.fromisoformat(date_str).weekday() <= 4:
+        qua_2_thu_thang = {sid for sid, n in
+                           dem_cung_thu_trong_thang(db, date_str, shift_type).items() if n >= 2}
+        thu_lien_tiep = nguoi_truc_cung_thu_tuan_truoc(db, date_str, shift_type)
+    tranh = qua_tai_tuan | qua_2_thu_thang | thu_lien_tiep
     tier_chung = {sid: 2 for sid in tranh}
 
+    # ── Tầng hiệu lực DÙNG CHUNG cho cả xếp pool lẫn 2 bước kéo người song
+    # phương (_chon_lanh_dao / _chia_nhan_vien) — một chỗ tính duy nhất để hai
+    # bước sau không thể đọc tầng khác với _order_pool (gốc bất cập 2a/2b/4b:
+    # trước đây 2 bước kéo SP không hề biết tầng, đảo cả danh sách theo can_do_sp).
+    # Thứ tự ưu tiên đúng như _order_pool đang dùng: đăng ký đích danh (-1, đứng
+    # ngoài mọi tầng) > tier_chung (luật mềm mới, tầng 2) > đã trực trong tuần
+    # (tầng 1) > mặc định (tầng 0).
+    once_ids = set(requests.get("once_ids", set()))
+    week_assignees = get_week_assignees(db, date_str)
+    tang: dict = {}
+    for p in pool["LD"] + pool["NV"]:
+        sid = p["id"]
+        if sid in once_ids:
+            tang[sid] = -1
+        elif sid in tier_chung:
+            tang[sid] = tier_chung[sid]
+        elif sid in week_assignees:
+            tang[sid] = 1
+        else:
+            tang[sid] = 0
+
     ld_order = _order_pool(db, pool["LD"], requests, "LD", year, ld_role, date_str, rng, randomize,
-                           tier_hint=tier_chung)
+                           tier_hint=tang)
 
     # ── Luật cứng: thiếu người so với khai báo thì KHÔNG hình thành ca ──
     if len(ld_order) < so_ld or len(pool["NV"]) < so_chinh + so_phu:
@@ -451,13 +558,15 @@ def _generate_ca(db: sqlite3.Connection, date_str: str, year: int,
     # Chọn Lãnh đạo trước để biết ca đã có người song phương chưa, rồi mới xếp
     # nhân viên — biết điều đó thì mới xếp được đúng thứ tự ưu tiên.
     leaders  = _chon_lanh_dao(ld_order, so_ld,
-                              any(p.get("can_do_sp") for p in pool["NV"]))
+                              any(p.get("can_do_sp") for p in pool["NV"]), tang)
     ld_co_sp = any(p.get("can_do_sp") for p in leaders)
+    di_cung_ld = _so_lan_di_cung(db, year, [p["id"] for p in leaders])
     nv_order = _order_pool(db, pool["NV"], requests, "NV", year, nv_role, date_str,
                            rng, randomize, tranh_sp=ld_co_sp,
-                           di_cung=_so_lan_di_cung(db, year, [p["id"] for p in leaders]),
-                           tier_hint=tier_chung)
-    nv_chinh, nv_phu = _chia_nhan_vien(nv_order, so_chinh, so_phu, ld_co_sp)
+                           di_cung=di_cung_ld, tier_hint=tang)
+    nv_chinh, nv_phu = _chia_nhan_vien(db, nv_order, so_chinh, so_phu, ld_co_sp, tang,
+                                      year, nv_role, date_str, rng, randomize,
+                                      di_cung_ld, _ma_tran_di_cung_nv(db, year))
     sp, sp_warn = resolve_sp_role(leaders, nv_chinh, nv_phu)
     # sp tách khỏi nv_ids để hiển thị riêng, giống đường sửa tay
     nvs = [p for p in nv_chinh if sp is None or p["id"] != sp["id"]]
@@ -478,17 +587,19 @@ def _generate_ca(db: sqlite3.Connection, date_str: str, year: int,
         warnings.append({"date": date_str, "type": "qua_tai_tuan",
                          "msg": f"Ngày {date_str}: {', '.join(qua_tai_that)} phải trực quá "
                                 f"2 ca/tuần vì không đủ người khác"})
-    if du_2_thu6:
-        lap_t6 = [p["full_name"] for p in da_chon if p["id"] in du_2_thu6]
-        if lap_t6:
-            warnings.append({"date": date_str, "type": "qua_2_thu6_thang",
-                             "msg": f"Ngày {date_str}: {', '.join(lap_t6)} phải trực thứ 6 "
+    if qua_2_thu_thang:
+        lap = [p["full_name"] for p in da_chon if p["id"] in qua_2_thu_thang]
+        if lap:
+            ten_thu = _TEN_THU.get(_date.fromisoformat(date_str).weekday(), "")
+            warnings.append({"date": date_str, "type": "qua_2_thu_thang",
+                             "msg": f"Ngày {date_str}: {', '.join(lap)} phải trực {ten_thu} "
                                     f"quá 2 lần trong tháng vì không đủ người khác"})
-    if thu6_lien_tiep:
-        lien_tiep = [p["full_name"] for p in da_chon if p["id"] in thu6_lien_tiep]
+    if thu_lien_tiep:
+        lien_tiep = [p["full_name"] for p in da_chon if p["id"] in thu_lien_tiep]
         if lien_tiep:
-            warnings.append({"date": date_str, "type": "thu6_lien_tiep",
-                             "msg": f"Ngày {date_str}: {', '.join(lien_tiep)} phải trực thứ 6 "
+            ten_thu = _TEN_THU.get(_date.fromisoformat(date_str).weekday(), "")
+            warnings.append({"date": date_str, "type": "thu_lien_tiep",
+                             "msg": f"Ngày {date_str}: {', '.join(lien_tiep)} phải trực {ten_thu} "
                                     f"2 tuần liên tiếp vì không đủ người khác"})
 
     # ── Ghi vòng xoay sau khi đã chốt tổ hợp (tránh tính cho ứng viên bị loại) ──

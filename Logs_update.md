@@ -4,6 +4,18 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 18/09/2026 Phân lịch trực - **Không còn trực trùng thứ nhiều tuần liền, không còn cặp trực cố định**
+    + ✅ Một người không bị xếp trực **cùng một thứ** (thứ Hai … thứ Sáu) ở 2 tuần liên tiếp, và không quá
+      2 lần cùng một thứ trong tháng — trước đây luật này chỉ áp cho thứ Sáu
+    + ✅ Hai nhân viên trực chính không còn bị ghép cặp cố định tuần này qua tuần khác
+    + ✅ Người biết song phương không còn bị kéo vào ca khi đang cần tránh (đã trực cùng thứ tuần trước,
+      đã đủ ca trong tuần)
+    + ⚠️ Đổi lại, thỉnh thoảng lịch tự xếp sẽ có ca **thiếu người xử lý song phương** kèm cảnh báo — xem
+      cảnh báo sau khi tạo lịch và sửa tay ca đó nếu cần
+    + ⚠️ Ai đăng ký nguyện vọng **trực cố định một thứ hằng tuần** (thứ Hai–Năm): luật mới có thể xếp
+      người khác vào tuần kế tiếp, nên đăng ký chỉ chắc chắn được giữ cách tuần
+    + ℹ️ Lịch đã tạo và đã xác nhận không tự đổi. Muốn áp luật mới cho lịch bản thảo thì tạo lại lịch
+
 - 18/09/2026 Đối chiếu - **Các màn hình khác không còn bị chậm khi có người đang chạy đối chiếu**
     + ✅ Khi có người chạy Đối chiếu ACH, Chấm ILO1000, Chấm 459901, Đối chiếu OSB hay Đối chiếu Song phương,
       các màn hình khác (đăng nhập, nghỉ phép, chứng từ...) không còn bị chậm hay đứng vài giây theo

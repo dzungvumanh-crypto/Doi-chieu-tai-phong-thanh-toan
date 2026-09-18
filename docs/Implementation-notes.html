@@ -18855,6 +18855,142 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
+  <!-- 151 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">151</span>
+      <span class="card-title">Phân lịch trực — 4 bất cập luân phiên thứ &amp; cặp trực cố định, nối tiếp card 91 (18/09/2026)</span>
+      <span class="badge badge-done">Hoàn thiện, 2 giai đoạn</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-blue">Bối cảnh</span> căn cứ là văn bản, không phải suy diễn</div>
+      <p>Hai câu trong <code>NHỮNG LƯU Ý KHI XẾP LỊCH TRỰC.docx</code> (18/09/2026) là căn cứ duy nhất
+        cho toàn bộ đợt sửa này, không còn chỗ nào tự suy diễn nghiệp vụ:</p>
+      <ul>
+        <li><i>"Nếu thiếu lãnh đạo cũng chỉ sắp xếp 1 người trực tối đa 02 buổi trong 1 tuần"</i>
+          — nguồn cho Q3 (không dồn ca).</li>
+        <li><i>"Cần xếp đảo ngày trực ở tuần tiếp theo đối với 1 người tránh trùng lịch của tuần cũ"</i>
+          — không giới hạn riêng thứ nào ⇒ luật tránh-lặp-thứ (card 91 vốn chỉ áp thứ 6) mở rộng ra
+          <b>cả T2→T6</b>.</li>
+      </ul>
+      <p>Đợt sửa chạy qua <b>2 giai đoạn</b>, cùng một nhánh <code>duty/luan-phien-thu-va-cap-truc-2026-09-18</code>,
+        có điểm dừng xin xác nhận ở giữa (sau B6) vì bất cập 3 đụng <i>cấu trúc</i> chọn người, rủi ro
+        cao hơn 3 bất cập còn lại:</p>
+      <table>
+        <tr><th>Giai đoạn</th><th>Bước</th><th>Nội dung</th></tr>
+        <tr><td>1</td><td>B0–B6</td><td>Bất cập 1 (luật lặp thứ chỉ áp thứ 6) + bất cập 2 (kéo người
+          song phương phá tầng, ở cả <code>_chon_lanh_dao</code> lẫn <code>_chia_nhan_vien</code>) +
+          bất cập 4 (cùng gốc lỗi với 2b)</td></tr>
+        <tr><td>2</td><td>B7–B11</td><td>Bất cập 3 (cặp nhân viên trực chính cố định) — nội dung card
+          này</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-amber">4 bất cập</span> tóm tắt nguyên nhân và cách sửa</div>
+      <table>
+        <tr><th>#</th><th>Triệu chứng</th><th>Nguyên nhân</th><th>Cách sửa</th></tr>
+        <tr><td>1</td><td>Cặp Dũng + Hoàng Lan Anh lặp y hệt 3 thứ Ba liền (08, 15, 22/09)</td>
+          <td>Luật tránh-lặp-thứ chỉ tồn tại cho <code>shift_type='friday'</code>; T2–T5 dùng
+          <code>shift_type='normal'</code> nên không bao giờ vào nhánh luật</td>
+          <td><code>dem_cung_thu_trong_thang()</code> / <code>nguoi_truc_cung_thu_tuan_truoc()</code>
+          tổng quát hoá theo tham số <code>shift_type</code>, lọc thứ bằng <code>date.weekday()</code>
+          (Python, không <code>strftime('%w')</code> — lệch 1 ngày)</td></tr>
+        <tr><td>2a</td><td>Cảnh báo "phải trực thứ 6 2 tuần liên tiếp" trong khi người khác đang rảnh</td>
+          <td><code>_chon_lanh_dao()</code> chia đôi <code>ld_order</code> theo <code>can_do_sp</code>,
+          bỏ qua tầng <code>_order_pool()</code> đã xếp</td>
+          <td>Sort ổn định theo <code>(tầng, không-biết-SP)</code> — SP chỉ ưu tiên trong cùng tầng</td></tr>
+        <tr><td>2b/4</td><td>Người đã trực trong tuần vẫn bị dồn thêm ca vì là người biết song
+          phương duy nhất — đúng triệu chứng "có người nghỉ, người khác trực 2 ca/tuần"</td>
+          <td><code>_chia_nhan_vien()</code> kéo người biết SP lên đầu <b>bất kể tầng</b></td>
+          <td>Chỉ kéo khi <code>tầng ứng viên ≤ tầng người bị đẩy ra</code>; không ai thoả thì
+          <b>không kéo</b> (Q3), ca nhận cảnh báo <code>no_sp_chinh</code></td></tr>
+        <tr><td>3</td><td>Hai cặp NV cố định lặp mãi (NV11+NV12, NV13+NV14…), không bao giờ đi chéo
+          — khớp dữ liệu thật Dũng + Hoàng Lan Anh</td>
+          <td><code>_so_lan_di_cung()</code> chỉ đếm NV↔nhóm Lãnh đạo, không đếm NV↔NV;
+          <code>_chia_nhan_vien()</code> cắt lát tĩnh <code>nv_order[:so_chinh]</code> nên 2 người
+          đứng cạnh nhau trong bảng xếp hạng luôn vào ca cùng nhau</td>
+          <td>Thêm <code>_ma_tran_di_cung_nv()</code> (đếm cặp NV-NV trong năm); <code>_chia_nhan_vien()</code>
+          chọn <b>tuần tự</b> từng người, mỗi lượt xếp lại phần còn lại bằng <code>_rank_candidates()</code>
+          với tiêu chí phụ mới <code>di_cung_nv</code></td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-red">Đánh đổi đã chốt (Q3)</span> không dồn ca</div>
+      <p>Trước: khi chỉ còn 1 người biết song phương khả dụng cả tuần, hệ thống <b>âm thầm dồn</b>
+        người đó vào ca thứ 2, thứ 3 trong tuần — cảnh báo <code>qua_tai_tuan</code> chỉ bật từ ca thứ
+        3 trở đi nên ca thứ 2 <b>hoàn toàn im lặng</b>. Người dùng chọn hướng ngược lại: từ ca thứ 2
+        trở đi <b>ngừng kéo</b>, chấp nhận cảnh báo <code>no_sp_chinh</code> ("Lãnh đạo và nhóm trực
+        chính không có ai xử lý song phương") thay vì dồn ca — đúng câu văn bản <i>"chỉ sắp xếp 1
+        người trực tối đa 02 buổi trong 1 tuần"</i>. Phần cơ cấu (tuần chỉ có đúng 1 người biết SP)
+        <b>không sửa được bằng mã</b> — đây là giới hạn nguồn lực, không phải lỗi.</p>
+
+      <div class="label"><span class="pill pill-blue">Q4</span> "đi cùng nhau" chỉ tính nhóm trực chính</div>
+      <p><code>_ma_tran_di_cung_nv(db, year) -&gt; {(a,b): n}</code> chỉ đếm <code>nv_ids</code> +
+        <code>sp_id</code> — <b>không</b> tính <code>nv_phu_ids</code>. Người trực phụ về sớm hơn,
+        không cùng xử lý công việc suốt ca với nhóm chính nên không tính là "ê-kíp".</p>
+
+      <div class="label"><span class="pill pill-green">Kiến trúc</span> chọn tuần tự nhưng vẫn tôn trọng tầng</div>
+      <p><code>_chia_nhan_vien()</code> không đơn thuần gọi <code>_rank_candidates()</code> trên toàn bộ
+        danh sách còn lại — làm vậy sẽ <b>phá lại</b> hệ tầng vừa dựng ở B1-B6 (tiêu chí chống-cặp mới
+        không có khái niệm "đã lặp thứ"/"đã trực trong tuần" nên có thể kéo người đang cần tránh vượt
+        lên trước người sạch). Mỗi lượt chọn chỉ xét trong đúng <b>tầng thấp nhất còn lại</b>
+        (<code>tang</code> — cùng dict B4 đã dùng cho toàn bộ đường chọn người), rồi mới xếp hạng trong
+        tầng đó bằng <code>_rank_candidates(..., di_cung_nv=...)</code>. <code>tong</code> (tổng số ca)
+        vẫn luôn là phần tử đầu của <code>sort_key</code> — chống-cặp không bao giờ đẩy người ít ca
+        xuống sau người nhiều ca hơn.</p>
+      <p>Luật SP (kéo 1 người biết song phương khi Lãnh đạo chưa giữ vai) áp <b>sau</b> khi đã chọn
+        xong nhóm trực chính, gộp thành 1 khối duy nhất — tránh lặp lại đúng lỗi bất cập 2b (2 đường
+        sửa danh sách chồng lên nhau, đường sau không biết đường trước đã làm gì).</p>
+
+      <div class="note"><b>B10 — fixture cũ (4 LD/12 NV) không cần nới.</b> PLAN lo ngại luật lặp-thứ áp
+        cho cả 5 thứ sẽ siết quá chặt cơ cấu nhỏ, khuyến nghị nới lên 7 LD/18 NV (quân số thật) nếu
+        assertion không đạt. Đã tự kiểm bằng script độc lập (4 seed offset khác nhau, ngoài phạm vi
+        test): fixture cũ vẫn đạt cả 6 luật với biên độ rộng (cặp NV-NV nhiều nhất 4/65 ca, ngưỡng
+        chặn ở 0,75×65≈49) — <code>test_mo_phong_3_thang_giu_dong_thoi_ca_3_luat()</code> giữ nguyên
+        quy mô nhân sự cũ, chỉ mở rộng từ 3 sang 6 luật kiểm đồng thời.
+        <br><b>Đính chính sau phản biện:</b> ngưỡng 0,75 ở quy mô 12 NV/13 tuần <b>không có sức phân
+        biệt</b> code lỗi/đúng — tái hiện lại đúng bug bất cập 3 bằng 3 biến thể × 7 seed-offset vẫn
+        chỉ ra tỷ lệ 0,06–0,15, không bao giờ chạm 0,75 (pool 12 người quá rộng so với 2 chỗ trực
+        chính/ngày, vòng xoay tự rải đều cặp đôi bất kể thuật toán đúng hay sai). Luật (d) trong bài
+        test này chỉ là <i>smoke-check</i> bổ sung — bằng chứng chính cho bất cập 3 nằm ở 2 test fixture
+        nhỏ hơn, nhạy hơn: <code>test_3_khong_duoc_sinh_e_kip_nhan_vien_co_dinh</code> và
+        <code>test_kich_ban_that_2_cap_co_dinh_dong_thoi_thu_hai_va_thu_ba</code>.</div>
+
+      <div class="label">Kiểm chứng</div>
+      <p>Bộ test phạm vi Sổ trực (6 file, gồm 3 file mới của đợt này —
+        <code>test_duty_ma_tran_di_cung_nv_2026_09_18.py</code>, cộng 2 file test tái hiện/độc lập của
+        Giai đoạn 1): <b>136 passed, 0 failed</b>. Full suite toàn dự án: <b>2032 passed, 24 failed</b>
+        — 24 fail thuộc module ACH/GL02 (<code>test_ach_gl02_misden_algorithm.py</code>,
+        <code>tests/services/doi_chieu_osb/test_pipeline.py</code>), có sẵn từ trước, không liên quan
+        Sổ trực.</p>
+
+
+      <div class="label"><span class="pill pill-red">Phát hiện</span> lúc review PR #121, merge mà chưa sửa (người dùng chốt 18/09/2026)</div>
+      <table>
+        <tr><th>#</th><th>Vấn đề</th><th>Bằng chứng</th><th>Hướng sửa</th></tr>
+        <tr><td>R1</td><td><code>_chon_lanh_dao()</code> chỉ kéo Lãnh đạo biết song phương khi <code>nv_co_sp</code>
+          sai — tức cả pool nhân viên không ai biết SP. Giả định cũ: bước chia nhân viên <i>luôn</i> kéo được người
+          SP. Từ Q3 bước đó có thể từ chối (người SP ở tầng xấu hơn) ⇒ ca không có ai SP dù có Lãnh đạo biết SP
+          <b>cùng tầng</b> với Lãnh đạo vừa chọn.</td>
+          <td>Mô phỏng trên bản sao DB thật (07/09–31/12, 10 seed, 850 ca): 5 ca <code>no_sp_chinh</code>, cả 5 là
+          16/10 — chọn LĐ 59 (không SP, tầng 1) trong khi LĐ 66/51 biết SP cũng tầng 1; NV SP gần nhất ở tầng 1,
+          nhóm chính tầng 0. Bản cũ: 0 ca.</td>
+          <td><code>nv_co_sp</code> chỉ đúng khi có NV biết SP ở tầng ≤ tầng của người thứ <code>so_chinh</code>
+          trong pool NV (nhóm chính chọn tuần tự từ tầng thấp nên tầng đó tính trước được).</td></tr>
+        <tr><td>R2</td><td>Q3 ngừng kéo người SP ngay khi họ đã trực 1 buổi trong tuần (tầng 1), trong khi câu
+          văn bản "tối đa 02 buổi" cho phép buổi thứ 2.</td>
+          <td>Cùng mô phỏng: số lượt "người trực 2 ca/tuần" 187 → 186 — Q3 gần như không giảm dồn ca.</td>
+          <td>Hỏi lại người dùng ý văn bản; nếu là "không quá 2 buổi" thì cho kéo ở tầng ≤ 1.</td></tr>
+        <tr><td>R3</td><td>Đăng ký trực hàng tuần T2–T5 bị luật lặp-thứ đẩy xuống tầng 2 ở tuần kế tiếp → chỉ có hiệu
+          lực cách tuần. Người thứ 2 trở đi của nhóm chính cũng không còn ưu tiên người đăng ký.</td>
+          <td>DB lúc merge không có đăng ký hàng tuần nào đang bật → chưa ai bị ảnh hưởng.</td>
+          <td>Chốt quy tắc: đăng ký hàng tuần có thắng luật lặp-thứ không.</td></tr>
+      </table>
+      <p>Được đổi lại (cùng mô phỏng): lượt trực cùng thứ 2 tuần liền 892 → 0; cặp NV trực chính đi cùng nhau nhiều
+        nhất 16 → 8 lần.</p>
+      <p>Merge: số card gốc của PR là 150, trùng card đối chiếu tiến trình riêng đã vào develop trước — đổi thành 151.</p>
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-18</footer>
 </div>
 </body>
