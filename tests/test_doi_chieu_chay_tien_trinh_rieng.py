@@ -53,6 +53,59 @@ def test_moi_cua_doi_chieu_deu_chay_tach():
     )
 
 
+def test_api_khong_dung_asyncio_to_thread():
+    # to_thread chạy trên bể luồng mặc định của event loop, NGOÀI giới hạn MAX_HEAVY
+    # (concurrency.py) — DTBB từng vậy tới 18/09/2026. Việc nặng: `await run_heavy(...)`; rất nặng: thêm `chay_tach`.
+    vi_pham = []
+    for f in sorted((_GOC / "backend" / "api").rglob("*.py")):
+        for n in ast.walk(ast.parse(f.read_text(encoding="utf-8"))):
+            if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                    and n.func.attr == "to_thread"):
+                vi_pham.append(f"{f.relative_to(_GOC)}:{n.lineno}")
+    assert not vi_pham, f"Dùng run_heavy() thay cho asyncio.to_thread: {vi_pham}"
+
+
+def test_api_swift_khong_tu_lam_viec_nang():
+    # Đọc file / đối chiếu / sinh Excel của SWIFT phải ở backend/services/swift_recon/tach.py
+    # (chạy qua chay_tach). Viết thẳng ở API là quay lại giữ GIL trong tiến trình web.
+    f = _GOC / "backend" / "api" / "swift_recon.py"
+    cay = ast.parse(f.read_text(encoding="utf-8"))
+    cam = {"reconcile", "exporters", "template_exporters", "pandas", "openpyxl"}
+    nap = {a.name.split(".")[-1] for n in ast.walk(cay) if isinstance(n, (ast.Import, ast.ImportFrom))
+           for a in n.names} | {n.module.split(".")[-1] for n in ast.walk(cay)
+                                if isinstance(n, ast.ImportFrom) and n.module}
+    assert not (nap & cam), f"API SWIFT import thư viện/module nặng: {nap & cam}"
+    dung_parsers = {n.attr for n in ast.walk(cay)
+                    if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name)
+                    and n.value.id == "parsers"}
+    assert dung_parsers <= {"UnknownFileFormat"}, f"API SWIFT tự parse file: {dung_parsers}"
+
+    # Gọi thẳng tach.<hàm>(...) là việc nặng quay về tiến trình web — mọi tham chiếu phải là
+    # ĐỐI SỐ của chay_tach / _xuat_tu_ban_ghi / _xuat_tu_tep (trực tiếp
+    # hoặc qua run_heavy). Ngoại lệ cố ý: xem_truoc (việc nhỏ).
+    cha = {id(con): n for n in ast.walk(cay) for con in ast.iter_child_nodes(n)}
+    tach_ra = {"chay_tach", "_xuat_tu_ban_ghi", "_xuat_tu_tep"}
+
+    def _ten(x):
+        return x.id if isinstance(x, ast.Name) else None
+
+    goi_thang = []
+    for n in ast.walk(cay):
+        if not (isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id == "tach"):
+            continue
+        if n.attr in ("Tep", "xem_truoc"):
+            continue
+        p = cha.get(id(n))
+        # run_heavy(tach.x, ...) chạy thẳng trong luồng → không tính; phải là
+        # run_heavy(<hàm tách>, tach.x, ...) hoặc <hàm tách>(tach.x, ...)
+        la_doi_so = isinstance(p, ast.Call) and n in p.args and (
+            _ten(p.func) in tach_ra
+            or (_ten(p.func) == "run_heavy" and p.args and _ten(p.args[0]) in tach_ra))
+        if not la_doi_so:
+            goi_thang.append(f"tach.{n.attr} dòng {n.lineno}")
+    assert not goi_thang, f"API SWIFT gọi thẳng việc nặng, không qua chay_tach: {goi_thang}"
+
+
 # ── 2. Chạy thật từng module ──
 
 def test_ach(tmp_path, caplog):

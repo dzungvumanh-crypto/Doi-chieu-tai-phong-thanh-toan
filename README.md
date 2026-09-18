@@ -302,7 +302,7 @@ tham gia từ 17/09/2026):
 Bị chặn → HTTP 409 kèm câu nói rõ module nào đang chạy. Trước đó chỉ ACH có chốt, và nó cũng chỉ
 tự canh mình.
 
-Từ 18/09/2026 **mọi module đối chiếu** chạy pipeline ở **tiến trình riêng**: lúc chúng chạy,
+Từ 18/09/2026 **mọi module đối chiếu** (và SWIFT recon) chạy pipeline ở **tiến trình riêng**: lúc chúng chạy,
 các màn hình khác không còn bị chậm theo, và nếu một lượt hết bộ nhớ thì chỉ lượt đó báo lỗi,
 backend vẫn sống. Mỗi lượt ghi vào `logs/app.log` một dòng "RAM đỉnh …, bộ nhớ cam kết đỉnh …"
 — trước khi nâng `DOI_CHIEU_MAX_SONG_SONG` dùng số **cam kết đỉnh**: máy thiếu RAM thì Windows
