@@ -123,8 +123,8 @@ def resolve_sp_role(leaders: List[dict], nv_chinh: List[dict],
 #
 # Ba luật mềm, áp dụng như nhau cho CẢ Lãnh đạo lẫn nhân viên:
 #   1. Một người không trực quá 2 ca/tuần (mọi loại ca cộng lại).
-#   2. Một người không trực thứ 6 quá 2 lần/tháng.
-#   3. Một người không trực thứ 6 ở 2 tuần liên tiếp.
+#   2. Một người không trực CÙNG MỘT THỨ (T2-T6) quá 2 lần/tháng.
+#   3. Một người không trực CÙNG MỘT THỨ (T2-T6) ở 2 tuần liên tiếp.
 # ══════════════════════════════════════════════════════════════
 
 def _nguoi_trong_ca(row) -> set:
@@ -160,38 +160,69 @@ def dem_ca_trong_tuan(db: sqlite3.Connection, shift_date: str) -> dict:
     return dem
 
 
-def dem_thu6_trong_thang(db: sqlite3.Connection, shift_date: str) -> dict:
+# Tên thứ trong tuần (chỉ T2-T6 — luật tránh lặp thứ không áp cho T7/CN) —
+# khai riêng ở đây, KHÔNG dùng WEEKDAY_VI của duty_export_service.py: khác mục
+# đích ("T2" cho cột Excel vs "thứ Hai" cho câu cảnh báo) và tránh kéo openpyxl
+# vào tầng luật.
+_TEN_THU = {0: "thứ Hai", 1: "thứ Ba", 2: "thứ Tư", 3: "thứ Năm", 4: "thứ Sáu"}
+
+
+def dem_cung_thu_trong_thang(db: sqlite3.Connection, shift_date: str,
+                              shift_type: str) -> dict:
     """
-    Đếm số ca thứ 6 mỗi người đã có trong CÙNG THÁNG với shift_date (không tính
-    chính ca đang xét) — dùng cho luật "tối đa 2 lần thứ 6/tháng".
+    Đếm số ca mỗi người đã có trong CÙNG THÁNG, CÙNG shift_type, và CÙNG THỨ
+    trong tuần với shift_date (không tính chính ca đang xét) — dùng cho luật
+    "tối đa 2 lần/tháng cùng một thứ". Tổng quát hoá cho cả T2-T6, trước đây
+    chỉ có bản riêng cho thứ 6 (`dem_thu6_trong_thang`).
+
+    Lọc `shift_type` đúng bằng loại ca đang xét ⇒ ca cut-off/quyết toán tự
+    "vô hình" với luật này (Q1), không cần nhánh đặc biệt.
+
+    Lọc thứ bằng Python (`date.weekday()`), KHÔNG bằng `strftime('%w')` của
+    SQLite — `%w` đếm 0=Chủ nhật còn `weekday()` đếm 0=Thứ Hai, lệch nhau 1.
     """
+    d = date.fromisoformat(shift_date)
     thang = shift_date[:7]
     dem: dict = {}
     for r in db.execute(
-        "SELECT leader_ids, sp_id, nv_ids, nv_phu_ids FROM duty_shifts "
-        "WHERE shift_type='friday' AND shift_date LIKE ? AND shift_date < ?",
-        (f"{thang}-%", shift_date)
+        "SELECT shift_date, leader_ids, sp_id, nv_ids, nv_phu_ids FROM duty_shifts "
+        "WHERE shift_type=? AND shift_date LIKE ? AND shift_date < ?",
+        (shift_type, f"{thang}-%", shift_date)
     ):
+        if date.fromisoformat(r["shift_date"]).weekday() != d.weekday():
+            continue
         for sid in _nguoi_trong_ca(r):
             dem[sid] = dem.get(sid, 0) + 1
     return dem
 
 
-def nguoi_truc_thu6_tuan_truoc(db: sqlite3.Connection, shift_date: str) -> set:
+def nguoi_truc_cung_thu_tuan_truoc(db: sqlite3.Connection, shift_date: str,
+                                    shift_type: str) -> set:
     """
-    Ai đã trực thứ 6 đúng 1 TUẦN TRƯỚC (7 ngày trước shift_date) — dùng riêng
-    cho luật "không trực thứ 6 2 tuần liên tiếp". Tách khỏi
-    `dem_thu6_trong_thang()` vì đây là luật về ĐỘ LIỀN KỀ, không phải tổng số
-    lần — một người mới trực 1 thứ 6 trong tháng (chưa chạm mức tối đa 2) vẫn
-    phải tránh nếu đó là thứ 6 ngay tuần trước.
+    Ai đã trực cùng shift_type đúng 1 TUẦN TRƯỚC (7 ngày trước shift_date) —
+    dùng riêng cho luật "không trực cùng thứ ở 2 tuần liên tiếp". Tách khỏi
+    `dem_cung_thu_trong_thang()` vì đây là luật về ĐỘ LIỀN KỀ, không phải tổng
+    số lần — một người mới trực 1 lần trong tháng (chưa chạm mức tối đa 2) vẫn
+    phải tránh nếu đó là cùng thứ tuần trước.
     """
     d = date.fromisoformat(shift_date)
     prev = (d - timedelta(days=7)).isoformat()
     row = db.execute(
         "SELECT leader_ids, sp_id, nv_ids, nv_phu_ids FROM duty_shifts "
-        "WHERE shift_type='friday' AND shift_date=?", (prev,)
+        "WHERE shift_type=? AND shift_date=?", (shift_type, prev)
     ).fetchone()
     return _nguoi_trong_ca(row) if row else set()
+
+
+def dem_thu6_trong_thang(db: sqlite3.Connection, shift_date: str) -> dict:
+    """Vỏ mỏng — thứ 6 là một trường hợp riêng của `dem_cung_thu_trong_thang()`.
+    Giữ nguyên tên + chữ ký để không phải sửa chỗ gọi cũ."""
+    return dem_cung_thu_trong_thang(db, shift_date, "friday")
+
+
+def nguoi_truc_thu6_tuan_truoc(db: sqlite3.Connection, shift_date: str) -> set:
+    """Vỏ mỏng — xem `dem_thu6_trong_thang()`."""
+    return nguoi_truc_cung_thu_tuan_truoc(db, shift_date, "friday")
 
 
 # ══════════════════════════════════════════════════════════════
@@ -284,14 +315,20 @@ def validate_shift_members(db: sqlite3.Connection, shift_date: str, shift_type: 
             canh_bao.append(f"{p['full_name']} đã trực {so_ca_tuan[p['id']]} ca trong "
                             f"tuần này — vượt tối đa 2 ca/tuần.")
 
-    if shift_type == "friday":
-        so_thu6_thang = dem_thu6_trong_thang(db, shift_date)
-        thu6_tuan_truoc = nguoi_truc_thu6_tuan_truoc(db, shift_date)
+    # Mở rộng T2→T6 (trước đây chỉ có ở thứ 6) — Q1: cut-off/quyết toán tự loại
+    # vì không nằm trong ("normal","friday"); T7/CN (nếu có shift_type='normal'
+    # do ngày làm bù) tự loại vì weekday() >= 5.
+    if (shift_type in ("normal", "friday")
+            and date.fromisoformat(shift_date).weekday() <= 4):
+        so_cung_thu_thang = dem_cung_thu_trong_thang(db, shift_date, shift_type)
+        cung_thu_tuan_truoc = nguoi_truc_cung_thu_tuan_truoc(db, shift_date, shift_type)
+        ten_thu = _TEN_THU[date.fromisoformat(shift_date).weekday()]
         for p in leaders + nv_chinh + nv_phu:
-            if so_thu6_thang.get(p["id"], 0) >= 2:
-                canh_bao.append(f"{p['full_name']} đã trực thứ 6 {so_thu6_thang[p['id']]} "
-                                f"lần trong tháng này — vượt tối đa 2 lần/tháng.")
-            if p["id"] in thu6_tuan_truoc:
-                canh_bao.append(f"{p['full_name']} trực thứ 6 2 tuần liên tiếp.")
+            if so_cung_thu_thang.get(p["id"], 0) >= 2:
+                canh_bao.append(f"{p['full_name']} đã trực {ten_thu} "
+                                f"{so_cung_thu_thang[p['id']]} lần trong tháng này — "
+                                f"vượt tối đa 2 lần/tháng.")
+            if p["id"] in cung_thu_tuan_truoc:
+                canh_bao.append(f"{p['full_name']} trực {ten_thu} 2 tuần liên tiếp.")
 
     return loi_cung, canh_bao, nhan_su
