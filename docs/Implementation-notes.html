@@ -63,8 +63,9 @@
     <div class="card-body">
 
       <p><code>_sidebar()</code> là <code>async def</code>. Gọi thiếu <code>await</code> thì Python chỉ tạo coroutine rồi
-        vứt — không vẽ gì, không ném lỗi, chỉ một dòng <code>RuntimeWarning: coroutine was never awaited</code> ở console
-        frontend (không vào <code>logs/</code>). Trang vẫn mở, phần nội dung bình thường → nhìn qua tưởng lỗi CSS.</p>
+        vứt — không vẽ gì, không ném lỗi, chỉ một dòng <code>RuntimeWarning: coroutine was never awaited</code> trong
+        <code>logs/frontend.log</code> (khi chạy bằng <code>run.py</code>) — không vào <code>app.log</code>, không hiện ở màn
+        Nhật ký hệ thống. File đó sẵn có nhiều dòng cùng loại của chính NiceGUI nên dễ bị bỏ qua. Trang vẫn mở, phần nội dung bình thường → nhìn qua tưởng lỗi CSS.</p>
 
       <table>
         <tr><th style="width:30%">Trang</th><th>Hỏng từ đâu</th></tr>
@@ -74,10 +75,11 @@
 
       <p class="note">Vì sao test/ruff không bắt: <code>test_kiem_nap_trang_frontend</code> chỉ import trang, không dựng trang;
         ruff F821 bắt tên chưa định nghĩa, không bắt coroutine bị vứt. Thêm
-        <code>tests/test_frontend_goi_async_thieu_await.py</code>: quét AST mọi file trong <code>frontend/pages/</code>, câu
-        lệnh trần gọi một hàm <code>async</code> cấp module của <code>shared.py</code> là đỏ. Cố ý <b>chỉ</b> bắt câu lệnh trần
-        — truyền coroutine vào <code>gather</code>/<code>create_task</code> là hợp lệ. Không bắt hàm async import từ nơi khác
-        hay gọi qua thuộc tính (<code>shared._sidebar()</code>); hiện không trang nào gọi kiểu đó.</p>
+        <code>tests/test_frontend_goi_async_thieu_await.py</code>: quét AST mọi file trong <code>frontend/pages/</code>, mọi
+        lời gọi tới hàm <code>async</code> cấp module của <code>shared.py</code> phải nằm <b>ngay dưới</b> <code>await</code> — bắt cả
+        câu lệnh trần lẫn <code>x = _sidebar(...)</code>. Đánh đổi: truyền thẳng vào <code>gather</code>/<code>create_task</code>
+        cũng bị đỏ; hiện không trang nào làm vậy với hai hàm này (<code>_sidebar</code>, <code>_logout</code>), cần thì nới test.
+        Không bắt hàm async lồng trong trang hay gọi qua thuộc tính (<code>shared._sidebar()</code>).</p>
     </div>
   </div>
 
