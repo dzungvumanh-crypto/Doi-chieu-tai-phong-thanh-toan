@@ -74,9 +74,9 @@ async def calculate_dtbb(
     try:
         # Parse xlrd là CPU-bound đồng bộ — phải chạy ngoài event loop (lỗi "quên bọc I/O
         # sync trong async" từng làm treo cả server ở PR22). Qua `run_heavy`, KHÔNG
-        # `asyncio.to_thread`: to_thread dùng bể 40 luồng chung, lọt ngoài giới hạn
-        # MAX_HEAVY — nhiều người cùng tính là lặp lại kiểu kẹt 38 giây mà
-        # backend/core/concurrency.py sinh ra để chặn.
+        # `asyncio.to_thread`: to_thread chạy trên ThreadPoolExecutor mặc định của event
+        # loop (tối đa 32 luồng), NGOÀI giới hạn MAX_HEAVY — nhiều người cùng tính là
+        # cùng lúc chừng ấy việc nặng tranh GIL, đúng thứ backend/core/concurrency.py chặn.
         result = await run_heavy(calculate_from_uploads, contents)
     except DtbbFileError as e:
         # detail dạng dict (không chỉ chuỗi) — kèm filenames để FE tô đỏ đúng file lỗi

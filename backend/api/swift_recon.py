@@ -35,7 +35,10 @@ CẬP NHẬT (đợt 4, 18/09/2026 — card 151):
   Phần nặng (đọc file, đối chiếu, sinh Excel) chạy ở TIẾN TRÌNH RIÊNG qua
   `chay_tach(tach.<hàm>, ...)` — `backend/services/swift_recon/tach.py`. Ở trong
   `run_heavy()` chỉ còn phần nhẹ: ghi file tải lên ra đĩa, đọc/ghi lịch sử CSDL,
-  kiểm tra 400/404. Thêm việc nặng mới thì viết ở `tach.py`, đừng viết thẳng ở đây —
+  kiểm tra 400/404. Hai ngoại lệ cố ý, vì mở tiến trình (~0,85 s) đắt hơn chính việc:
+  đọc thử 1 file, và xuất Excel từ bản ghi có sẵn dưới `_NGUONG_TACH_DONG` dòng.
+  Khi có ≥ 2 file lỗi, lỗi báo ra có thể là file khác bản cũ: mọi file được ghi ra
+  đĩa TRƯỚC rồi con mới đọc (bản cũ ghi–đọc xen kẽ). Cả hai lỗi đều thật, vẫn 422. Thêm việc nặng mới thì viết ở `tach.py`, đừng viết thẳng ở đây —
   `tests/test_doi_chieu_chay_tien_trinh_rieng.py` canh chỗ đó.
 
 Đây là router MỚI của bạn — file này bạn tự quản lý, không cần ai duyệt
@@ -110,6 +113,19 @@ def _tep_tam(uploads: list[UploadFile], kem_ten: bool = True) -> Iterator[tach.T
 
 def _join_names(uploads: list[UploadFile]) -> str:
     return "; ".join(u.filename for u in uploads)
+
+
+# Xuất Excel từ bản ghi CÓ SẴN (đang lọc, snapshot lịch sử): ~0,28 s / 1.000 dòng, còn mở
+# tiến trình con ~0,85 s (đo 18/09/2026) — dưới ngưỡng này tách chỉ làm người dùng chờ thêm
+# (bảng tổng hợp vài chục dòng: 0,06 s → 0,9 s). Xuất từ file TẢI LÊN thì luôn tách: đọc
+# file đã nặng sẵn.
+_NGUONG_TACH_DONG = 3000
+
+
+def _xuat_tu_ban_ghi(ham, so_dong: int, **kw) -> bytes:
+    if so_dong < _NGUONG_TACH_DONG:
+        return ham(**kw, log_callback=None, cancel_event=None)
+    return chay_tach(ham, ten=_TEN, **kw)
 
 
 def _tai_ve(content: bytes, headers: dict) -> Response:
@@ -200,8 +216,11 @@ def _xuat_tu_tep(ham, saa_den, ql_den, ql_di, saa_di) -> bytes:
         raise HTTPException(400, "Chưa có dữ liệu đối chiếu nào để xuất")
     # Chỉ ghi file của cặp ĐỦ hai bên — bản cũ không đọc file của cặp thiếu, nên file hỏng ở
     # đó không được thành lỗi 422
-    with _tep_tam(saa_den if den else []) as a, _tep_tam(ql_den if den else []) as b,             _tep_tam(ql_di if di else []) as c, _tep_tam(saa_di if di else []) as d:
-        return chay_tach(ham, ten=_TEN, tep={"saa_den": a, "ql_den": b, "ql_di": c, "saa_di": d})
+    with contextlib.ExitStack() as st:
+        tep = {k: st.enter_context(_tep_tam(v if du else []))
+               for k, v, du in (("saa_den", saa_den, den), ("ql_den", ql_den, den),
+                                ("ql_di", ql_di, di), ("saa_di", saa_di, di))}
+        return chay_tach(ham, ten=_TEN, tep=tep)
 
 
 @router.post("/export-summary")
@@ -309,7 +328,7 @@ async def export_filtered(
     if not payload.records:
         raise HTTPException(400, "Không có bản ghi nào để xuất")
 
-    content = await run_heavy(chay_tach, tach.xuat_ban_ghi, ten=_TEN,
+    content = await run_heavy(_xuat_tu_ban_ghi, tach.xuat_ban_ghi, len(payload.records),
                               records=payload.records, columns=payload.columns)
     # `payload.filename` do trình duyệt gửi lên. Ghép thẳng vào header thì
     # một dấu nháy kép trong tên là vỡ cú pháp Content-Disposition, còn chữ
@@ -353,7 +372,7 @@ async def export_raw_from_history(
     def _work() -> tuple[bytes, dict]:
         detail = _doc_lich_su(db, history_id)
         records = detail["raw_a_records"] if side == "a" else detail["raw_b_records"]
-        return chay_tach(tach.xuat_du_lieu_tho, ten=_TEN, records=records), detail
+        return _xuat_tu_ban_ghi(tach.xuat_du_lieu_tho, len(records), records=records), detail
 
     content, detail = await run_heavy(_work)
 
@@ -385,8 +404,10 @@ async def export_summary_from_history(
     (không tính lại từ raw_a/raw_b) — đảm bảo đúng y hệt dữ liệu audit."""
     def _work() -> tuple[bytes, str]:
         detail = _doc_lich_su(db, history_id)
-        return chay_tach(tach.xuat_tong_hop_lich_su, ten=_TEN, recon_type=detail["recon_type"],
-                         summary_records=detail["summary_records"]), detail["recon_type"]
+        return _xuat_tu_ban_ghi(
+            tach.xuat_tong_hop_lich_su, len(detail["summary_records"]),
+            recon_type=detail["recon_type"], summary_records=detail["summary_records"],
+        ), detail["recon_type"]
 
     content, recon_type = await run_heavy(_work)
     fname = f"Tong_hop_doi_chieu_Dien{recon_type.upper()}_lichsu_{history_id}.xlsx"
@@ -403,8 +424,10 @@ async def export_diff_from_history(
     chiếu (không tính lại) — đảm bảo đúng y hệt dữ liệu audit."""
     def _work() -> tuple[bytes, str]:
         detail = _doc_lich_su(db, history_id)
-        return chay_tach(
-            tach.xuat_chi_tiet_lich_su, ten=_TEN, recon_type=detail["recon_type"],
+        so_dong = sum(len(detail[k] or []) for k in
+                      ("diff_a_only_records", "diff_b_only_records", "di_not_ack_records"))
+        return _xuat_tu_ban_ghi(
+            tach.xuat_chi_tiet_lich_su, so_dong, recon_type=detail["recon_type"],
             only_a=detail["diff_a_only_records"], only_b=detail["diff_b_only_records"],
             di_not_ack=detail["di_not_ack_records"],
         ), detail["recon_type"]

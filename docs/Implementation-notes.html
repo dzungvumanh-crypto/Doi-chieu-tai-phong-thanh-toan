@@ -18890,6 +18890,12 @@ This may happen if you try to create UI from a background task.</pre>
           được thành lỗi 422.</li>
         <li><b>Đọc thử (<code>parse-preview</code>) cố ý KHÔNG tách</b>: đo 5.000 điện — trong luồng 0,38 s, tiến trình 1,20 s. Việc giữ
           GIL ~0,4 s mà người dùng chờ gấp 3 lần MỖI lần chọn file. Đối chiếu 2,85 → 3,65 s, xuất mẫu 1,35 → 2,07 s: chấp nhận.</li>
+        <li><b>Xuất từ bản ghi có sẵn theo ngưỡng</b> (<code>_NGUONG_TACH_DONG</code> = 3.000 dòng): ghi Excel ~0,28 s / 1.000 dòng
+          (đo 500–8.000 dòng × 20 cột), mở tiến trình ~0,85 s lúc máy rảnh → hoà vốn quanh 3.000. Bảng tổng hợp vài chục dòng từng
+          bị đẩy từ 0,06 s lên 0,9 s trước khi có ngưỡng. Xuất từ file tải lên luôn tách (đọc file đã nặng sẵn).</li>
+        <li><b>Đổi có chủ ý: khi ≥ 2 file lỗi, lỗi báo ra có thể là file khác</b>. Bản cũ ghi–đọc xen kẽ từng file; bản mới phải ghi
+          hết ra đĩa rồi con mới đọc (con không nhận <code>UploadFile</code>). Giữ đúng thứ tự cũ thì backend phải tự đọc file — mất
+          mục đích tách. Cả hai lỗi đều thật, vẫn 422.</li>
       </ul>
 
       <div class="label"><span class="pill pill-green">Kiểm</span> SWIFT trước đây không có test nào</div>
@@ -18904,6 +18910,21 @@ This may happen if you try to create UI from a background task.</pre>
         <li>Bài học viết test: đoán "cặp NAK thì lệch" là sai — <code>_ack_ok</code> chỉ cần MỘT bên báo Ack. Sửa dữ liệu, không sửa số.</li>
         <li>2065 test xanh, ruff F821/F823/E9 sạch.</li>
       </ul>
+
+      <div class="label"><span class="pill pill-red">Phản biện</span> 1 lượt Sonnet — không chặn; tự viết script so mã cũ ↔ mới trên kịch bản ngoài bộ mẫu</div>
+      <p>Zip dạng frameset (<code>..._files</code>), nhiều file mỗi bên, mẫu 04/05 chiều ĐI, zip hỏng ở cặp thiếu, XML hỏng, bản ghi lọc có
+        None/bool/dict lồng + tên file có dấu, lịch sử từ zip — mã cũ, mới-trong-luồng, mới-tiến-trình <b>giống hệt</b>; không sót file tạm.</p>
+      <table>
+        <tr><th>Phát hiện</th><th>Xử lý</th></tr>
+        <tr><td>≥ 2 file lỗi → lỗi báo file khác bản cũ</td><td>Chấp nhận có chủ ý — ghi ở trên và ở docstring API</td></tr>
+        <tr><td>Lưới canh SWIFT để lọt gọi thẳng <code>tach.*</code>; ngưỡng log <code>≥ 12</code> trong khi đúng 15</td>
+          <td>Lưới canh AST: mọi <code>tach.&lt;hàm&gt;</code> phải là đối số của hàm tách (trực tiếp hoặc qua <code>run_heavy</code>) — gây lỗi
+          cố ý hai kiểu đều đỏ; test so luồng ↔ tiến trình đặt ngưỡng 0 và đếm đúng 15</td></tr>
+        <tr><td>Chú thích sai: <code>to_thread</code> không dùng "bể 40 luồng chung" mà bể mặc định của event loop (tối đa 32)</td>
+          <td>Sửa ở <code>dtbb.py</code>, test, DESIGN.md — kết luận "ngoài MAX_HEAVY" vẫn đúng</td></tr>
+        <tr><td>Nghi vấn chi phí: đo được 3,1–3,4 s/lượt con</td><td>Đo lại lúc máy rảnh: ~0,85 s (3 s là do đo khi test chạy song song).
+          Ý đúng ở chỗ việc nhỏ cũng bị tách → thêm ngưỡng dòng</td></tr>
+      </table>
 
       <div class="label"><span class="pill pill-amber">Chưa làm</span></div>
       <ul>

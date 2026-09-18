@@ -136,8 +136,8 @@ API chỉ ghi file tải lên ra đĩa + đọc/ghi CSDL.
 XML) **và** chạy lâu hơn nhiều ~0,8 s mở tiến trình. Việc trong mã C tự nhả GIL (zlib, AES, truy
 vấn SQLite, bcrypt) không cần. Dưới ~1 s cứ `run_heavy()` — đọc thử 1 file SWIFT cố ý không tách.
 
-**Không `asyncio.to_thread` trong `backend/api/`** — bể 40 luồng chung, lọt ngoài `MAX_HEAVY`
-(DTBB từng vậy tới 18/09/2026). Test canh: `test_api_khong_dung_asyncio_to_thread`.
+**Không `asyncio.to_thread` trong `backend/api/`** — chạy trên bể luồng mặc định của event loop
+(tối đa 32), NGOÀI giới hạn `MAX_HEAVY` (DTBB từng vậy tới 18/09/2026). Test canh: `test_api_khong_dung_asyncio_to_thread`.
 
 > **Test:** `conftest.py` mặc định `DOI_CHIEU_TIEN_TRINH=0` — tiến trình con **không thấy `monkeypatch`**
 > của test. Test vá `svc.TEMP_DIR` mà chạy tiến trình thật là ghi vào `data/temp_*` THẬT (đã xảy ra

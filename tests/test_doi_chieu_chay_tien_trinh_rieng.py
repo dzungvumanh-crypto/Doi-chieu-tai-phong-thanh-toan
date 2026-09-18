@@ -54,8 +54,8 @@ def test_moi_cua_doi_chieu_deu_chay_tach():
 
 
 def test_api_khong_dung_asyncio_to_thread():
-    # to_thread dùng bể 40 luồng CHUNG, lọt ngoài giới hạn MAX_HEAVY (concurrency.py) — DTBB
-    # từng vậy tới 18/09/2026. Việc nặng: `await run_heavy(...)`; rất nặng: thêm `chay_tach`.
+    # to_thread chạy trên bể luồng mặc định của event loop, NGOÀI giới hạn MAX_HEAVY
+    # (concurrency.py) — DTBB từng vậy tới 18/09/2026. Việc nặng: `await run_heavy(...)`; rất nặng: thêm `chay_tach`.
     vi_pham = []
     for f in sorted((_GOC / "backend" / "api").rglob("*.py")):
         for n in ast.walk(ast.parse(f.read_text(encoding="utf-8"))):
@@ -79,6 +79,31 @@ def test_api_swift_khong_tu_lam_viec_nang():
                     if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name)
                     and n.value.id == "parsers"}
     assert dung_parsers <= {"UnknownFileFormat"}, f"API SWIFT tự parse file: {dung_parsers}"
+
+    # Gọi thẳng tach.<hàm>(...) là việc nặng quay về tiến trình web — mọi tham chiếu phải là
+    # ĐỐI SỐ của chay_tach / _xuat_tu_ban_ghi / _xuat_tu_tep (trực tiếp
+    # hoặc qua run_heavy). Ngoại lệ cố ý: xem_truoc (việc nhỏ).
+    cha = {id(con): n for n in ast.walk(cay) for con in ast.iter_child_nodes(n)}
+    tach_ra = {"chay_tach", "_xuat_tu_ban_ghi", "_xuat_tu_tep"}
+
+    def _ten(x):
+        return x.id if isinstance(x, ast.Name) else None
+
+    goi_thang = []
+    for n in ast.walk(cay):
+        if not (isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id == "tach"):
+            continue
+        if n.attr in ("Tep", "xem_truoc"):
+            continue
+        p = cha.get(id(n))
+        # run_heavy(tach.x, ...) chạy thẳng trong luồng → không tính; phải là
+        # run_heavy(<hàm tách>, tach.x, ...) hoặc <hàm tách>(tach.x, ...)
+        la_doi_so = isinstance(p, ast.Call) and n in p.args and (
+            _ten(p.func) in tach_ra
+            or (_ten(p.func) == "run_heavy" and p.args and _ten(p.args[0]) in tach_ra))
+        if not la_doi_so:
+            goi_thang.append(f"tach.{n.attr} dòng {n.lineno}")
+    assert not goi_thang, f"API SWIFT gọi thẳng việc nặng, không qua chay_tach: {goi_thang}"
 
 
 # ── 2. Chạy thật từng module ──

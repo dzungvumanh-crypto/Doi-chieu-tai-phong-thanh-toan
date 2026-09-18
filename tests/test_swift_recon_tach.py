@@ -208,6 +208,17 @@ def _kiem(kq: dict) -> None:
     assert kq["xuat_loc"]["BanGhiDangLoc"][0] == ["_key", "_status"]
 
 
+def test_xuat_tu_ban_ghi_nho_khong_mo_tien_trinh(swift_client, monkeypatch, caplog):
+    # Mở tiến trình ~0,85 s mà ghi 2 dòng Excel 0,06 s — dưới ngưỡng phải chạy tại chỗ
+    monkeypatch.delenv("DOI_CHIEU_TIEN_TRINH", raising=False)
+    ban_ghi = [{"_key": "000001", "_status": "MATCHED"}]
+    with caplog.at_level(logging.INFO, logger="backend.core.tien_trinh_doi_chieu"):
+        r = swift_client.post("/api/swift-recon/export-filtered",
+                              json={"records": ban_ghi, "columns": ["_key"], "filename": "x.xlsx"})
+    assert r.status_code == 200
+    assert not any("tiến trình riêng" in x.getMessage() for x in caplog.records)
+
+
 def test_moi_endpoint_chay_trong_luong(swift_client):
     _kiem(chup_ket_qua(swift_client))
 
@@ -216,12 +227,17 @@ def test_moi_endpoint_chay_tien_trinh_rieng_cung_ket_qua(monkeypatch, caplog):
     # Cùng dữ liệu, cùng CSDL mới: chạy trong luồng rồi chạy tiến trình con thật — mọi JSON
     # và từng ô Excel phải trùng. Đo 18/09/2026: cũng trùng với bản TRƯỚC khi tách (mốc chụp
     # từ mã cũ, 22 mục, 12 file Excel).
+    from backend.api import swift_recon as api
     with _client_moi() as client:
         kq_luong = chup_ket_qua(client)
     monkeypatch.delenv("DOI_CHIEU_TIEN_TRINH", raising=False)
+    # Ngưỡng 0: cả các lệnh xuất từ bản ghi nhỏ cũng tách — thử đủ mọi hàm của tach.py qua
+    # ranh giới tiến trình (ngưỡng là logic phía cha nên vá được)
+    monkeypatch.setattr(api, "_NGUONG_TACH_DONG", 0)
     with caplog.at_level(logging.INFO, logger="backend.core.tien_trinh_doi_chieu"):
         with _client_moi() as client:
             kq_tach = chup_ket_qua(client)
-    assert sum("tiến trình riêng" in r.getMessage() for r in caplog.records) >= 12
+    # 2 đối chiếu + 4 xuất từ file + 1 bản ghi lọc + 2 lịch sử × 4 lệnh xuất; đọc thử KHÔNG tách
+    assert sum("tiến trình riêng" in r.getMessage() for r in caplog.records) == 15
     _kiem(kq_tach)
     assert kq_tach == kq_luong
