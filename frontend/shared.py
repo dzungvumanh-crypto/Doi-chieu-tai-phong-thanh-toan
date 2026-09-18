@@ -97,6 +97,7 @@ MENU_TREE = [
                 "items": [
                     ("th_reports", "Báo cáo dữ liệu thanh toán", "payments"),
                     ("thi_dua",    "Thi đua khen thưởng",        "military_tech"),
+                    ("xep_loai",   "Xếp loại lao động",          "grade"),
                 ],
             },
         ],

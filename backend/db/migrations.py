@@ -145,6 +145,38 @@ _THI_DUA_TABLES = [
 ]
 
 
+# ── Xếp loại lao động — 2026-09-17 ─────────────────────────────────────────────
+# Một định nghĩa dùng ở cả _create_tables() lẫn schema_migrations (lý do: xem
+# khối Khảo sát ở đầu file). `loai`: lao_dong | tin_nhiem | cap_uy — backend.
+# core.enums.LoaiXepLoai. `ky`: nam | quy — quy đi kèm số quý (1-4), nam thì
+# quy luôn NULL (backend.schemas.xep_loai.XepLoaiIn ép khi validate).
+_XEP_LOAI_TABLES = [
+    """CREATE TABLE IF NOT EXISTS xep_loai_lao_dong (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        staff_id     INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+        loai         TEXT NOT NULL CHECK(loai IN ('lao_dong','tin_nhiem','cap_uy')),
+        ky           TEXT NOT NULL CHECK(ky IN ('nam','quy')),
+        nam          INTEGER NOT NULL,
+        quy          INTEGER,
+        ket_qua      TEXT NOT NULL,
+        ghi_chu      TEXT,
+        created_by   INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+        created_at   DATETIME NOT NULL,
+        updated_at   DATETIME NOT NULL
+    )""",
+    "CREATE INDEX IF NOT EXISTS ix_xep_loai_staff ON xep_loai_lao_dong(staff_id)",
+    "CREATE INDEX IF NOT EXISTS ix_xep_loai_nam   ON xep_loai_lao_dong(nam)",
+    "CREATE INDEX IF NOT EXISTS ix_xep_loai_loai  ON xep_loai_lao_dong(loai)",
+    # Chặn trùng ở tầng CSDL — backend/api/xep_loai.py::_trung_lap() chỉ kiểm
+    # tra rồi mới ghi (check-then-act), hai request cùng lúc lý thuyết vẫn lách
+    # qua được. `quy` NULL với năm nên không dùng thẳng UNIQUE(staff_id, loai,
+    # nam, quy) — SQLite coi nhiều NULL là khác nhau, mất tác dụng đúng lúc cần
+    # nhất (xếp loại theo NĂM). Index trên biểu thức COALESCE(quy,0) né được.
+    "CREATE UNIQUE INDEX IF NOT EXISTS ix_xep_loai_unique "
+    "ON xep_loai_lao_dong(staff_id, loai, nam, COALESCE(quy, 0))",
+]
+
+
 # ── Tạo tables (fresh install) ────────────────────────────────────────────────
 def _create_tables(db_path: str):
     """Tạo tất cả bảng nếu chưa có — idempotent."""
@@ -599,6 +631,7 @@ def _create_tables(db_path: str):
         )""",
         *_SURVEY_TABLES,
         *_THI_DUA_TABLES,
+        *_XEP_LOAI_TABLES,
         # ── Quản lý nhân sự — 2026-08-28 ──────────────────────────────────────
         # `recruit_date` cố ý KHÔNG có ở đây: "Ngày tuyển dụng" chính là "Ngày vào
         # ngành" đã nằm ở `user_tttt.join_industry_date` — một mốc thì một cột.
@@ -1899,6 +1932,8 @@ def _ensure_indexes():
         *_SURVEY_TABLES,
         # ── Thi đua khen thưởng — 2026-09-15 (định nghĩa ở _THI_DUA_TABLES đầu file) ──
         *_THI_DUA_TABLES,
+        # ── Xếp loại lao động — 2026-09-17 (định nghĩa ở _XEP_LOAI_TABLES đầu file) ──
+        *_XEP_LOAI_TABLES,
     ]
     _mig_log = logging.getLogger(__name__)
 

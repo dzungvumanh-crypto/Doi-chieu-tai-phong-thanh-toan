@@ -52,3 +52,14 @@ class ThiDuaCap(str, Enum):
     DANG        = "dang"
     CHUYEN_MON  = "chuyen_mon"
     CONG_DOAN   = "cong_doan"
+
+
+class LoaiXepLoai(str, Enum):
+    LAO_DONG  = "lao_dong"    # Xếp loại lao động — áp dụng mọi cán bộ
+    TIN_NHIEM = "tin_nhiem"   # Kết quả phiếu tín nhiệm — cán bộ có chức danh
+    CAP_UY    = "cap_uy"      # Xếp loại quý đối với Cấp ủy
+
+
+class KyXepLoai(str, Enum):
+    NAM = "nam"
+    QUY = "quy"
