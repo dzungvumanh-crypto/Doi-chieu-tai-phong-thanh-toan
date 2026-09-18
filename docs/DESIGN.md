@@ -110,6 +110,28 @@ suất trong khi bể thiếu kết nối → mở lại đúng lỗi trên. Nâ
 > Lỗi ném trong dependency chỉ ra console uvicorn, **không** vào `logs/app.log`. Cổng hết giờ chờ nên
 > tự `_log.warning` trước khi trả 503 — đừng bỏ dòng log đó.
 
+## Pipeline đối chiếu chạy ở tiến trình riêng — `chay_tach()`
+
+Pipeline nặng (pandas/Excel) chạy trong luồng của backend là giữ GIL, request nhẹ đứng chờ.
+Gọi qua `backend/core/tien_trinh_doi_chieu.py::chay_tach()` thì chạy ở tiến trình con; luồng `_run`
+của service vẫn ở backend và chuyển log về dict job như cũ. Đã áp cho **cả 7 cửa** (18/09/2026) —
+xem card 150. `tests/test_doi_chieu_chay_tien_trinh_rieng.py` đỏ nếu service nào gọi `dang_ky_nguon()`
+mà không gọi `chay_tach()` — **thêm cửa đối chiếu mới thì phải đi qua `chay_tach()`**.
+
+Hàm đưa vào `chay_tach()` phải: (1) ở **cấp module** — con import lại theo tên; lambda/hàm lồng bị
+từ chối bằng `TypeError`; (2) nhận `log_callback` + `cancel_event` và **mọi tiến độ đi qua hai thứ
+đó** (callback khác khai qua `callbacks=`) — ghi vào dict toàn cục của module là ghi vào bản sao
+trong con, màn hình đứng 0% không lỗi. Module nào đang báo tiến độ qua `_progress[token]` thì theo
+khuôn `_xu_ly_tach()` của 459901 / OSB; (3) tham số và kết quả pickle được; (4) trả `None` khi bị huỷ;
+(5) không tự tạo tiến trình con; (6) không đụng `job`/`_jobs` — trả kết quả cho `_run` ghi (khuôn
+`_doi_chieu()` của Song phương ĐẾN/ĐI).
+
+`DOI_CHIEU_TIEN_TRINH=0` → chạy trong luồng như cũ (khẩn cấp trên máy chủ).
+
+> **Test:** `conftest.py` mặc định `DOI_CHIEU_TIEN_TRINH=0` — tiến trình con **không thấy `monkeypatch`**
+> của test. Test vá `svc.TEMP_DIR` mà chạy tiến trình thật là ghi vào `data/temp_*` THẬT (đã xảy ra
+> 18/09/2026). Test cần tiến trình thật thì xin fixture `tien_trinh_that` và chỉ truyền đường dẫn tường minh.
+
 ## Authentication & Sessions
 - JWT verify bởi `get_current_staff` trong `deps.py` — role đọc từ **DB** mỗi request, không lấy từ token
 - Session lưu trong DB (`backend/core/sessions.py` → bảng `login_sessions`) — **không** mất khi restart

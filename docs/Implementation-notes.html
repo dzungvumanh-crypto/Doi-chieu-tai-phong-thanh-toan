@@ -18680,7 +18680,174 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-17</footer>
+  <!-- 150 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">150</span>
+      <span class="card-title">Cả 7 cửa đối chiếu chạy ở tiến trình riêng — không tranh GIL với web (2026-09-18)</span>
+      <span class="badge badge-done">Hoàn thiện</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-blue">Bối cảnh</span> tiếp "Chưa làm" của card 144</div>
+      <p>7 cửa đối chiếu (gồm Đối chiếu OSB mới) chạy pipeline bằng <code>threading.Thread</code> ngay trong tiến trình
+        web. Python chỉ cho một luồng chạy mã Python tại một lúc (GIL) — pipeline pandas/Excel giữ GIL gần như liên tục,
+        request nhẹ đứng chờ tới lượt. 8 lõi không giúp gì. Helper chung:
+        <code>backend/core/tien_trinh_doi_chieu.py::chay_tach()</code>. <b>Không đổi logic khớp giao dịch nào</b> — chỉ đổi
+        chỗ chạy; API, frontend, poll, <code>phien_doi_chieu</code> giữ nguyên.</p>
+      <table>
+        <tr><th>Cửa</th><th>Cách chuyển</th></tr>
+        <tr><td>ILO1000, ACH</td><td>Pipeline đã nhận <code>log_callback</code>/<code>cancel_event</code> → chỉ đổi chỗ gọi. ACH có thêm
+          <code>summary_callback</code> → helper nhận <code>callbacks=</code> tuỳ ý</td></tr>
+        <tr><td>Song phương ĐẾN / ĐI</td><td><code>_run</code> tự điều phối 2 bước nặng + ghi Excel giữa chừng, rải
+          <code>job[...]</code> khắp nơi. Tách thân thành <code>_doi_chieu()</code> cấp module, trả
+          <code>{status, ket_qua, files, error}</code>; <code>stage</code> qua callback. Bọc từng lời gọi pipeline thì DataFrame
+          lớn bị kéo về backend rồi vẫn ghi Excel ở backend — mất tác dụng. Thân giữ nguyên từng dòng
+          (<code>git diff -w</code> chỉ còn các chỗ thay <code>job[...]</code>). Frontend chỉ vẽ <code>ket_qua</code> khi xong nên
+          ghi một lần cuối là đủ</td></tr>
+        <tr><td>459901, phân loại Song phương, OSB</td><td>Báo tiến độ bằng cách ghi thẳng <code>_progress[token]</code> toàn cục —
+          trong con là bản sao. <code>_xu_ly_tach()</code> dựng mục <code>_progress</code> cục bộ trong con (459901: kèm
+          <code>cancel_event</code> liên tiến trình để <code>_set_prog</code> vẫn ném <code>_Cancelled</code>), <code>_set_prog</code> gửi
+          thêm pct/msg về qua callback; kết quả cuối ghi ở <code>run_process</code> phía cha. <code>process_files</code> /
+          <code>process_zip</code> / <code>process</code> không đổi</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-green">Số đo</span> máy dev, cùng khối việc (pandas đọc CSV 300k dòng + groupby + xlsxwriter)</div>
+      <table>
+        <tr><th>Tình huống</th><th>Job xong</th><th>Loop trễ max</th><th>Request nhẹ p95 / max</th></tr>
+        <tr><td>1 job — luồng (cũ)</td><td>15,2 s</td><td>149 ms</td><td>0,53 / 16,8 ms</td></tr>
+        <tr><td>1 job — tiến trình (mới)</td><td>17,1 s</td><td>23 ms</td><td>0,62 / 0,8 ms</td></tr>
+        <tr><td>2 job — luồng (cũ)</td><td>30,6 s</td><td>283 ms</td><td>25 / 75 ms</td></tr>
+        <tr><td>2 job — tiến trình (mới)</td><td>22,5 s</td><td>22 ms</td><td>0,79 / 1,1 ms</td></tr>
+      </table>
+      <p>Loop lúc rảnh ~8–10 ms (nhịp timer Windows) — bản mới coi như không trễ thêm. 2 job luồng mất đúng 2× một
+        job (không song song thật); tiến trình thì song song thật. <b>Chưa đo trên máy chủ với dữ liệu thật</b> — máy
+        dev không có dữ liệu ngân hàng. Dòng <code>slow.request</code> (card 144) và dòng log mới
+        "RAM đỉnh …" sẽ cho số thật.</p>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> một tiến trình mỗi lượt, không dùng bể</div>
+      <table>
+        <tr><th>Phương án</th><th>Vì sao không chọn</th></tr>
+        <tr><td><code>ProcessPoolExecutor</code> dùng chung</td><td>Dừng một job phải giết cả bể (kéo theo job người khác); một job hết RAM làm vỡ cả bể (<code>BrokenProcessPool</code>); RAM không trả giữa các job</td></tr>
+        <tr><td>Nhiều worker uvicorn</td><td>Trạng thái job ở RAM của một tiến trình — poll rơi sang worker khác là 404</td></tr>
+        <tr><td>Hàng đợi SQLite / Celery</td><td>Viết lại kho trạng thái 6 module; Celery không hỗ trợ Windows chính thức. Để dành nếu cần job sống qua restart</td></tr>
+        <tr><td><code>setswitchinterval(0.001)</code></td><td>Giảm triệu chứng, không xoá; đổi hành vi cả tiến trình</td></tr>
+        <tr><td><b>Mỗi lượt một tiến trình spawn (đã chọn)</b></td><td>Tốn ~0,5–2 s khởi động — không đáng so với job nhiều phút</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-blue">Chi tiết không đọc ra từ code</span></div>
+      <ul>
+        <li><b><code>Pipe</code>, không <code>Queue</code>:</b> <code>Queue.put</code> đóng gói ở luồng phụ — kết quả/lỗi không pickle
+          được thì chỉ in traceback ra console, phía cha chờ mãi. <code>Pipe.send</code> đóng gói tại chỗ → nổ ngay trong
+          con, được bắt và gửi về thành lỗi.</li>
+        <li><b>Lỗi giữ nguyên kiểu:</b> con thử cả <code>dumps</code> lẫn <code>loads</code> trước khi gửi (lỗi tự định nghĩa có
+          <code>__init__</code> đòi tham số đóng gói được mà mở không được). Mở không được → <code>LoiTienTrinhCon</code> kèm
+          "TênLỗi: thông điệp". Traceback của con đi kèm làm <code>__cause__</code> nên log job vẫn thấy vết gốc. Cần thật:
+          ACH phân biệt <code>ValueError</code> với <code>LoiDinhDangSoTien</code>; 459901 phân biệt <code>InputError</code> (báo thẳng
+          người dùng) với lỗi hệ thống; <code>_Cancelled</code> của 459901 phải về đúng kiểu mới thành "Đã dừng".</li>
+        <li><b>Dừng:</b> báo cờ huỷ (pipeline tự dừng như cũ); quá <code>HAN_DUNG_GIAY</code> = 15 s thì
+          <code>terminate()</code> và trả <code>None</code> — đúng hợp đồng "bị huỷ trả None" của <code>main_from_dir</code>.</li>
+        <li><b>Con mồ côi:</b> backend bị <code>taskkill /F</code> thì <code>atexit</code> không chạy. Con có luồng chờ trên handle
+          của cha (<code>mp.parent_process().join()</code>), cha chết là <code>os._exit(86)</code>. Tắt bình thường thì
+          <code>daemon=True</code> để multiprocessing tự giết con thay vì chặn backend tắt tới hết job.</li>
+        <li><b>Log:</b> <code>logging</code> trong con gửi về cha ghi hộ; con không tự mở <code>logs/app.log</code> — nhiều tiến
+          trình cùng xoay <code>RotatingFileHandler</code> trên Windows là <code>PermissionError</code>.</li>
+        <li><b>Ưu tiên CPU <code>BELOW_NORMAL</code></b> cho con — CPU đầy thì web, Word, SQLite chạy trước.</li>
+        <li><b>Hàm không import lại được (lambda, hàm lồng) → <code>TypeError</code>, không lặng lẽ chạy trong luồng:</b>
+          lặng lẽ lùi về luồng nghĩa là quay lại tranh GIL mà không ai biết. <code>DOI_CHIEU_TIEN_TRINH=0</code> là
+          công tắc tường minh (test dùng hàm giả; khẩn cấp trên máy chủ).</li>
+        <li><b>Con không nạp đè <code>.env</code></b> (sửa <code>backend/core/config.py</code>): <code>load_dotenv(override=True)</code> chạy
+          lại khi con import <code>config</code> — sửa <code>.env</code> mà chưa restart là cha/con đọc hai mật khẩu ZIP khác nhau.
+          Con tự đặt <code>KSNB_TIEN_TRINH_CON=1</code> trước mọi import backend → <code>override=False</code>.</li>
+        <li><b>Con tự ép stdout UTF-8</b> — con không import <code>backend/main.py</code> (nơi có đoạn ép). Backend khởi động thẳng
+          (không qua <code>run.py</code>, không có <code>PYTHONIOENCODING</code>) thì <code>print()</code> tiếng Việt của ACH ném
+          <code>UnicodeEncodeError</code>, job chết. Test gom bắt được thật lỗi này trước khi thêm đoạn ép.</li>
+      </ul>
+
+      <div class="label"><span class="pill pill-green">Kiểm</span></div>
+      <ul>
+        <li><code>tests/test_tien_trinh_doi_chieu.py</code> — helper (12 ca: log nhiều luồng, callback đúng thứ tự, lỗi đúng kiểu,
+          lỗi không mở gói được, con chết ngang, Dừng hợp tác / cưỡng bức, cha bị giết, môi trường không nạp đè .env).</li>
+        <li><code>tests/test_doi_chieu_chay_tien_trinh_rieng.py</code> — <b>lưới canh tĩnh</b>: service nào gọi
+          <code>dang_ky_nguon()</code> mà không gọi <code>chay_tach()</code> là đỏ (module đối chiếu mới chép khuôn cũ sẽ bị bắt);
+          và chạy thật từng cửa qua tiến trình con với đầu vào hỏng — đi qua đủ log, tiến độ, lỗi đúng kiểu mà không cần
+          dữ liệu ngân hàng.</li>
+        <li>Gây lỗi cố ý để chắc test bắt được: bỏ luồng canh cha, bỏ <code>terminate()</code> quá hạn Dừng, bỏ ép UTF-8 → đều đỏ.</li>
+        <li>2059 test xanh, ruff F821/F823/E9 sạch.</li>
+      </ul>
+
+      <div class="label"><span class="pill pill-red">Sự cố trong lúc làm</span> test ghi vào <code>data/temp_cham459901</code> thật</div>
+      <p>Test API 459901 vá <code>svc.TEMP_DIR</code> sang thư mục tạm — tiến trình con import lại module nên không thấy bản
+        vá, ghi 19 thư mục kết quả vào thư mục dữ liệu thật của máy dev (đã xoá; đều tạo trong lượt test 09:30–09:33,
+        trước đó thư mục rỗng). Sửa tận gốc: <code>conftest.py</code> mặc định <code>DOI_CHIEU_TIEN_TRINH=0</code> cho mọi test;
+        test cần tiến trình thật xin fixture <code>tien_trinh_that</code> và <b>không được</b> vá biến toàn cục module.</p>
+
+      <div class="label"><span class="pill pill-amber">Đánh đổi / chưa làm</span></div>
+      <ul>
+        <li>Một job đơn lẻ chậm thêm ~2 s (khởi động + nạp pandas trong con, ưu tiên thấp).</li>
+        <li><b>Giữ <code>DOI_CHIEU_MAX_SONG_SONG</code> = 3</b> — tách tiến trình giải quyết GIL, không giảm RAM. Người dùng hỏi bỏ
+          hẳn trần; <b>chốt 18/09/2026: giữ 3, theo dõi trước</b>. Lý do không bỏ: 7 cửa × 500 MB × 5,3 ≈ 18,5 GB trên máy 20 GB,
+          và Windows không giết tiến trình ăn RAM — hết RAM là cả máy chậm do đẩy bộ nhớ ra đĩa, tiến trình nào xin cấp phát
+          đúng lúc cạn thì nổ, có thể chính backend. Bước sau khi có số "RAM đỉnh" thật: hoặc nâng số lượt, hoặc đổi trần
+          <b>theo số lượt</b> thành trần <b>theo RAM</b> (ước lượng theo dung lượng file của từng lượt, kiểm RAM trống trước khi
+          mở tiến trình con — phải dời chốt ra sau bước nhận file). Luật "cùng module 1 lượt" giữ ở mọi phương án.</li>
+        <li>Job vẫn mất khi restart backend — như trước, <code>_jobs</code> ở RAM.</li>
+        <li><b>OSB chỉ chạy vài giây</b> — thêm ~1–2 s khởi động là tỉ lệ đáng kể. Vẫn chuyển: mấy giây đó vẫn giữ GIL, và lưới
+          canh tĩnh áp cho mọi cửa (miễn trừ một cửa là mở đường cho cửa sau chép theo).</li>
+        <li>459901 bị <b>buộc</b> dừng (quá 15 s) thì thư mục kết quả dở không được xoá (con bị giết trước bước
+          <code>rmtree</code>) — lượt dọn 23h xử lý. Dừng hợp tác vẫn xoá như cũ.</li>
+        <li>ACH: <code>_thong_ke_mis_di_can_confirm()</code> (đọc sheet xác nhận MIS_đi để đếm) vẫn chạy ở backend sau khi con
+          xong — sheet nhỏ, để nguyên cho diff gọn.</li>
+      </ul>
+
+      <div class="label"><span class="pill pill-red">Phản biện</span> 1 lượt Sonnet — không lỗi nghiêm trọng, 3 lỗi nhẹ đã sửa</div>
+      <table>
+        <tr><th>Phát hiện</th><th>Xử lý</th></tr>
+        <tr><td>Chế độ trong luồng + token 459901 đã bị xoá: <code>_xu_ly_tach</code> (<code>setdefault</code>) dựng mục <code>_progress</code>
+          "ma" với <code>cancel_event=None</code> → <code>AttributeError</code>, mục ma nằm lại (<code>luot_dang_chay</code> tưởng đang chạy)</td>
+          <td>Chỉ dựng mục cục bộ khi <code>trong_tien_trinh_con()</code> — cả 459901, phân loại Song phương, OSB</td></tr>
+        <tr><td>Lưới canh tĩnh so chuỗi <code>"chay_tach("</code> — một docstring là đủ xanh</td><td>Dò lời gọi thật bằng AST</td></tr>
+        <tr><td>Test ILO1000 xin tiến trình thật mà vẫn vá <code>TEMP_DIR</code> (mẫu xấu dễ bị chép); test <code>.env</code> luôn xanh trên CI</td>
+          <td>Bỏ bản vá; test <code>.env</code> báo skipped khi không có <code>.env</code></td></tr>
+        <tr><td><code>_ha_uu_tien()</code> log trước khi gắn bộ chuyển log; các bước chuẩn bị nằm ngoài <code>try</code> → lỗi bị báo "thường do hết bộ nhớ"</td>
+          <td>Gắn bộ chuyển log trước; chuẩn bị vào trong <code>try</code></td></tr>
+        <tr><td>Chưa có test Dừng 459901 qua tiến trình con</td><td>Thêm <code>test_cham459901_dung_toi_duoc_tien_trinh_con</code></td></tr>
+        <tr><td>Nghi vấn: <code>ValueError</code> file xác nhận ACH không mở gói được → rơi nhầm nhánh lỗi</td>
+          <td><b>Bác bỏ</b> — mọi <code>raise ValueError</code> ở <code>b4_xu_ly_mis_di.py:570–721</code> chỉ mang chuỗi f-string</td></tr>
+      </table>
+      <p>Logic khớp giao dịch không đổi (phản biện xác nhận qua <code>git diff -w</code>).</p>
+
+      <div class="label"><span class="pill pill-red">Phản biện lượt 2</span> Opus (người dùng yêu cầu) — không chặn merge, 1 lỗi thật + 1 nghi vấn đã xử lý</div>
+      <table>
+        <tr><th>Phát hiện</th><th>Xử lý</th></tr>
+        <tr><td><b>Con chết lúc cha đang xử lý tin cuối</b> → Windows <code>PipeConnection.poll()</code> ném
+          <code>BrokenPipeError [WinError 109]</code> khi ống đã đóng và rỗng (không trả <code>True</code> như Linux). Job vẫn
+          <code>error</code> (không treo) nhưng người dùng thấy "The pipe has been ended", <code>app.log</code> mất dòng mã thoát. Tái hiện 3/3</td>
+          <td>Bắt <code>BrokenPipeError</code> cùng <code>EOFError</code> quanh <code>poll</code>/<code>recv</code>;
+          <code>test_con_chet_luc_cha_dang_xu_ly_tin_cuoi_van_bao_ro</code> (đỏ 3/3 trước khi sửa)</td></tr>
+        <tr><td>Nghi vấn: "RAM đỉnh" là working set — máy thiếu RAM thì Windows cắt working set, số đo <b>thấp</b> đúng lúc
+          quan trọng, mà người dùng định dựa vào nó để nâng trần</td>
+          <td>Ghi thêm <b>bộ nhớ cam kết đỉnh</b> (<code>PeakPagefileUsage</code>) cùng dòng — dùng số này khi quyết trần</td></tr>
+        <tr><td>Ghi chú: <code>_cleanup_old_results()</code> chạy ở đầu pipeline, nay trong con — phần xoá mục <code>_progress</code>
+          quá hạn chỉ xoá bản sao</td>
+          <td>Không sửa: dict <code>_progress</code> của cha vẫn được lượt 23h (<code>temp_cleanup_service</code>) dọn; chỉ muộn hơn</td></tr>
+      </table>
+      <p>Lượt 2 xác nhận thêm: không kịch bản treo mới, không rò handle (40 lượt: 164 → 165), buộc dừng không trả file dở,
+        chốt <code>phien_doi_chieu</code> chỉ có thể báo bận lâu hơn (không bao giờ rảnh sớm), không trạng thái toàn cục nào
+        cha thiết lập lúc chạy mà con cần, tương thích Python 3.10.0, không đưa dữ liệu nhạy cảm mới vào log.</p>
+
+      <div class="label"><span class="pill pill-amber">Phát hiện thêm</span> lỗi có từ trước: test 459901 ghi vào <code>data/temp_cham459901</code> thật</div>
+      <p>Truy nguồn một thư mục kết quả lạ sau lượt test: <code>test_unrecognized_file_reported_but_does_not_block</code> chạy một job
+        <b>hợp lệ</b> mà không chờ xong — luồng nền chạy tràn qua lúc <code>monkeypatch</code> đã trả <code>TEMP_DIR</code> về thư mục thật.
+        Chạy trên develop gốc (worktree riêng) cũng để lại 1 thư mục mỗi lượt → <b>không do PR này</b>. Chạy riêng từng test thì
+        không lộ (pytest thoát, luồng daemon chết trước khi ghi). Sửa luôn vì một dòng: 3 test không chờ job nay gọi
+        <code>_wait_done()</code>; 3 lượt chạy liền: 0 thư mục.</p>
+
+      <p>Branch: <code>feat/doi-chieu-tien-trinh-rieng</code>.</p>
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-18</footer>
 </div>
 </body>
 </html>

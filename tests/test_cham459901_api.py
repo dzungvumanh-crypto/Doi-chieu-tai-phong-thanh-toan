@@ -111,6 +111,9 @@ class TestProcessEndpoint:
         )
         assert r.status_code == 200
         assert r.json()["unrecognized"] == ["ghi_chu.docx"]
+        # Chờ job xong TRƯỚC khi test kết thúc: luồng nền chạy tràn sang sau khi monkeypatch
+        # trả TEMP_DIR về thư mục thật sẽ ghi kết quả vào data/temp_cham459901 (đo 18/09/2026).
+        _wait_done(admin_client, r.json()["task_token"])
 
     def test_duplicate_hub_kind_reported(self, admin_client, monkeypatch, tmp_path):
         """2 file HUB đi trong cùng 1 lượt -> cảnh báo qua `duplicates`, không chặn (file GL02
@@ -133,6 +136,9 @@ class TestProcessEndpoint:
             "Quay_danh sach giao dich chuyen tien di_1.xlsx",
             "Quay_danh sach giao dich chuyen tien di_2.xlsx",
         }
+        # Chờ job xong TRƯỚC khi test kết thúc: luồng nền chạy tràn sang sau khi monkeypatch
+        # trả TEMP_DIR về thư mục thật sẽ ghi kết quả vào data/temp_cham459901 (đo 18/09/2026).
+        _wait_done(admin_client, r.json()["task_token"])
 
     def test_only_one_hub_file_flagged_partial(self, admin_client, monkeypatch, tmp_path):
         monkeypatch.setattr(svc, "TEMP_DIR", tmp_path)
@@ -147,6 +153,9 @@ class TestProcessEndpoint:
         )
         assert r.status_code == 200
         assert r.json()["hub_partial"] is True
+        # Chờ job xong TRƯỚC khi test kết thúc: luồng nền chạy tràn sang sau khi monkeypatch
+        # trả TEMP_DIR về thư mục thật sẽ ghi kết quả vào data/temp_cham459901 (đo 18/09/2026).
+        _wait_done(admin_client, r.json()["task_token"])
 
 
 class TestCancelEndpoint:

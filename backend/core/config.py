@@ -4,7 +4,10 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).parent.parent.parent
-load_dotenv(BASE_DIR / ".env", override=True)
+# Tiến trình con chạy đối chiếu (backend/core/tien_trinh_doi_chieu.py) đã thừa kế môi trường
+# của backend — KHÔNG nạp đè .env lần nữa: sửa .env mà chưa khởi động lại thì con và cha đọc
+# hai giá trị khác nhau (mật khẩu ZIP, SECRET_KEY...). Cờ do chính tiến trình con tự đặt.
+load_dotenv(BASE_DIR / ".env", override=os.getenv("KSNB_TIEN_TRINH_CON") != "1")
 
 # Fail fast — không dùng fallback để tránh JWT bị forge khi quên set env var
 _secret_key = os.getenv("SECRET_KEY", "")

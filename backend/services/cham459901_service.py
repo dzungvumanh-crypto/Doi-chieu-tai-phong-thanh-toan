@@ -22,6 +22,7 @@ import pandas as pd
 
 from backend.core.config import BASE_DIR, zip_password   # mật khẩu ZIP đọc từ .env
 from backend.core.don_dep import moc_don_gan_nhat
+from backend.core.tien_trinh_doi_chieu import chay_tach, trong_tien_trinh_con
 
 try:
     import pyzipper
@@ -226,6 +227,10 @@ def _set_prog(task_token: str | None, pct: int, msg: str) -> None:
             raise _Cancelled()
         p["pct"] = pct
         p["msg"] = msg
+        # Trong tiến trình con: `_progress` là bản sao, phải gửi tiến độ về backend
+        gui_ve = p.get("_gui_ve")
+        if gui_ve:
+            gui_ve(pct, msg)
 
 
 # ─── Public API ───────────────────────────────────────────────────────────────
@@ -237,9 +242,26 @@ def run_process(
     hub_den: tuple[str, Path] | None = None,
     ton: tuple[str, Path] | None = None,
 ) -> None:
-    """Chạy process_files trong luồng riêng; cập nhật progress và bắt lỗi."""
+    """Chạy process_files ở tiến trình riêng (`chay_tach`); cập nhật progress và bắt lỗi.
+
+    `_Cancelled`/`InputError` ném trong con được mang về đúng kiểu nên các nhánh dưới
+    giữ nguyên. Kết quả cuối ghi vào `_progress` Ở ĐÂY: `process_files` trong con chỉ
+    ghi được vào bản sao."""
+    p = _progress.get(task_token, {})
+
+    def _cap_nhat(pct: int, msg: str) -> None:
+        p["pct"], p["msg"] = pct, msg
+
     try:
-        process_files(tep, task_token, hub_di, hub_den, ton)
+        result = chay_tach(
+            _xu_ly_tach, ten="Chấm 459901",
+            tep=tep, task_token=task_token, hub_di=hub_di, hub_den=hub_den, ton=ton,
+            cancel_event=p.get("cancel_event"), callbacks={"tien_do_callback": _cap_nhat},
+        )
+        if result is None:   # bị buộc dừng sau lệnh Dừng (HAN_DUNG_GIAY)
+            raise _Cancelled()
+        if task_token in _progress:
+            _progress[task_token].update({"pct": 100, "msg": "Hoàn thành!", "done": True, "result": result})
     except _Cancelled:
         if task_token in _progress:
             _progress[task_token].update({
@@ -257,6 +279,23 @@ def run_process(
                 "done": True, "error": str(e),
                 "msg": "Lỗi xử lý — xem log server",
             })
+
+
+def _xu_ly_tach(
+    tep, task_token, hub_di, hub_den, ton, log_callback, cancel_event, tien_do_callback,
+) -> dict:
+    """Điểm vào của `chay_tach`. Trong tiến trình con: dựng mục `_progress` cục bộ mang
+    `cancel_event` liên tiến trình để `_set_prog` kiểm Dừng như cũ, và gửi pct/msg về backend.
+
+    Chỉ dựng khi ĐANG Ở TRONG CON: chạy trong luồng (DOI_CHIEU_TIEN_TRINH=0) thì mục thật đã
+    có, hoặc token đã bị xoá — dựng thêm là để lại mục "ma" mà `luot_dang_chay` tưởng đang chạy."""
+    if trong_tien_trinh_con():
+        _progress[task_token] = {
+            "pct": 0, "msg": "", "done": False, "error": None, "cancelled": False,
+            "result": None, "cancel_event": cancel_event, "_ts": time.time(),
+            "_gui_ve": tien_do_callback,
+        }
+    return process_files(tep, task_token, hub_di, hub_den, ton)
 
 
 def process_files(

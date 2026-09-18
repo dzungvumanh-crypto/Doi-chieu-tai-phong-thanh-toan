@@ -288,8 +288,8 @@ Truy cập:
 ## Giới hạn tài nguyên máy chủ
 
 Các module đối chiếu nặng (ACH, Chấm ILO1000, Đối chiếu Song phương, Chấm 459901, Đối chiếu OSB) nạp file bằng
-pandas ngay trong tiến trình backend — đo được pandas giữ **~5,3 lần** kích thước file. Trần upload
-mỗi lượt 500 MB, nên bốn lượt cùng lúc có thể chạm ~10 GB.
+pandas — đo được pandas giữ **~5,3 lần** kích thước file. Trần upload mỗi lượt 500 MB, nên bốn
+lượt cùng lúc có thể chạm ~10 GB.
 
 Từ 10/09/2026 các module này dùng chung một chốt (`backend/core/phien_doi_chieu.py`; Đối chiếu OSB
 tham gia từ 17/09/2026):
@@ -301,6 +301,13 @@ tham gia từ 17/09/2026):
 
 Bị chặn → HTTP 409 kèm câu nói rõ module nào đang chạy. Trước đó chỉ ACH có chốt, và nó cũng chỉ
 tự canh mình.
+
+Từ 18/09/2026 **mọi module đối chiếu** chạy pipeline ở **tiến trình riêng**: lúc chúng chạy,
+các màn hình khác không còn bị chậm theo, và nếu một lượt hết bộ nhớ thì chỉ lượt đó báo lỗi,
+backend vẫn sống. Mỗi lượt ghi vào `logs/app.log` một dòng "RAM đỉnh …, bộ nhớ cam kết đỉnh …"
+— trước khi nâng `DOI_CHIEU_MAX_SONG_SONG` dùng số **cam kết đỉnh**: máy thiếu RAM thì Windows
+cắt bớt RAM của tiến trình nên số "RAM đỉnh" đo thấp đúng lúc quan trọng. Muốn quay về cách cũ: `DOI_CHIEU_TIEN_TRINH=0`
+trong `.env` rồi khởi động lại backend.
 
 Kết nối CSDL dùng **bể mượn–trả** (`DB_POOL_SIZE`, mặc định 48) thay vì mở tệp ở từng request.
 Request vượt số kết nối thì xếp hàng chờ (tối đa 30 giây, quá thì trả 503 và ghi cảnh báo vào
