@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 from backend.database import get_db, write_audit, _vn_now
 from backend.core.config import settings
-from backend.core.deps import require_admin, require_feature
+from backend.core.deps import require_feature
 from backend.core.net import client_ip as _client_ip
 
 router = APIRouter()

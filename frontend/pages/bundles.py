@@ -1,6 +1,6 @@
 """Trang đóng chứng từ — tạo bìa và quản lý nhóm tập."""
 import asyncio
-from nicegui import ui, app
+from nicegui import ui
 import frontend.api_client as api
 from frontend.shared import _sidebar, _content_area, _page_header, _require_auth, _handle_api_error
 
@@ -17,9 +17,6 @@ async def bundles_page():
 
         from datetime import date as _bd
         _today_b = _bd.today()
-
-        current_user = api.get_current_user()
-        is_admin = current_user and current_user.get("role") in ("admin", "hau_kiem_vien")
 
         try:
             await ui.context.client.connected()

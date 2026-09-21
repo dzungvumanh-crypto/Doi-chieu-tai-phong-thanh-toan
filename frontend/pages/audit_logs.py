@@ -163,11 +163,11 @@ async def audit_logs_page():
 
             with pager_row:
                 ui.button("◀ Trước",
-                          on_click=lambda: asyncio.ensure_future(_load(page=_page[0] - 1)),
+                          on_click=lambda: _load(page=_page[0] - 1),
                 ).classes("text-sm bg-gray-200 text-gray-700").set_enabled(page > 1)
                 ui.label(f"Trang {page} / {pages}").classes("text-sm text-gray-600 px-2")
                 ui.button("Sau ▶",
-                          on_click=lambda: asyncio.ensure_future(_load(page=_page[0] + 1)),
+                          on_click=lambda: _load(page=_page[0] + 1),
                 ).classes("text-sm bg-gray-200 text-gray-700").set_enabled(page < pages)
 
         async def _nap_bo_loc():
@@ -183,17 +183,17 @@ async def audit_logs_page():
             module_opts.update({m["prefix"]: m["label"] for m in data.get("modules", [])})
             module_sel.set_options(module_opts, value="")
 
-        def _xoa_loc():
+        async def _xoa_loc():
             tu_ngay_in.value  = ""
             den_ngay_in.value = ""
             actor_sel.value   = 0
             module_sel.value  = ""
             search_in.value   = ""
-            asyncio.ensure_future(_load(method="", q="", page=1))
+            await _load(method="", q="", page=1)
 
         with filter_row:
             ui.button("Áp dụng lọc", icon="filter_alt",
-                      on_click=lambda: asyncio.ensure_future(_load(page=1))).classes(
+                      on_click=lambda: _load(page=1)).classes(
                 "text-sm bg-gray-700 text-white")
             ui.button("Xoá lọc", icon="filter_alt_off", on_click=_xoa_loc).classes(
                 "text-sm bg-gray-100 text-gray-700")
@@ -219,17 +219,17 @@ async def audit_logs_page():
                 ("DELETE", "Xóa",      "Chỉ xem thao tác xóa dữ liệu"),
             ]:
                 ui.button(lbl,
-                          on_click=lambda mm=m: asyncio.ensure_future(_load(method=mm, page=1))).classes(
+                          on_click=lambda mm=m: _load(method=mm, page=1)).classes(
                     "text-sm bg-gray-100 text-gray-700 hover:bg-gray-200").tooltip(tip)
             search_in = ui.input(placeholder="Tìm người / đường dẫn / nội dung...").props(
                 "dense outlined clearable").classes("w-64")
             search_in.on("keydown.enter",
-                         lambda: asyncio.ensure_future(_load(q=search_in.value or "", page=1)))
+                         lambda: _load(q=search_in.value or "", page=1))
             ui.button("Tìm", icon="search",
-                      on_click=lambda: asyncio.ensure_future(_load(q=search_in.value or "", page=1))).classes(
+                      on_click=lambda: _load(q=search_in.value or "", page=1)).classes(
                 "text-sm bg-gray-700 text-white")
             ui.button("Làm mới", icon="refresh",
-                      on_click=lambda: asyncio.ensure_future(_load(page=1))).classes(
+                      on_click=lambda: _load(page=1)).classes(
                 "text-sm bg-gray-700 text-white").tooltip("Tải lại danh sách, giữ nguyên bộ lọc")
             ui.button("Xuất Excel", icon="download",
                       on_click=_export).classes(

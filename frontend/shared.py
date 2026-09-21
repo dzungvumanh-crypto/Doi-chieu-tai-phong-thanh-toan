@@ -2,7 +2,6 @@
 import asyncio
 import datetime
 import logging
-import os
 from nicegui import ui, app
 import frontend.api_client as api
 import frontend.ui_kit as ui_kit
@@ -764,6 +763,10 @@ def _require_auth():
         if not (tab_data and tab_data.get("session_alive")):
             api.clear_auth()
             client.open("/login")
+    # Cố ý GIỮ ensure_future ở đây: đây là việc nền thật, không phải nạp giao diện.
+    # _tab_check tự `await client.connected()` rồi chỉ gọi api.clear_auth() và
+    # client.open() — cả hai đi qua tham chiếu client, không cần ngăn xếp slot.
+    # Đổi sang ui.timer là thêm một element vào MỌI trang mà chẳng được gì.
     asyncio.ensure_future(_tab_check())
 
     # ── Kiểm tra session bị thay thế mỗi 60 giây ──

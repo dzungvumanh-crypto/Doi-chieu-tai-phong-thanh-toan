@@ -2,7 +2,6 @@
 
 import logging
 import re
-import zipfile
 from datetime import date, timedelta
 from pathlib import Path
 

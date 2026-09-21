@@ -86,11 +86,11 @@ async def login_logs_page():
             # ── Phân trang ──────────────────────────────────────────────────────
             with pager_row:
                 ui.button("◀ Trước",
-                          on_click=lambda: asyncio.ensure_future(_load(_filter[0], _page[0] - 1)),
+                          on_click=lambda: _load(_filter[0], _page[0] - 1),
                 ).classes("text-sm bg-gray-200 text-gray-700").set_enabled(page > 1)
                 ui.label(f"Trang {page} / {pages}").classes("text-sm text-gray-600 px-2")
                 ui.button("Sau ▶",
-                          on_click=lambda: asyncio.ensure_future(_load(_filter[0], _page[0] + 1)),
+                          on_click=lambda: _load(_filter[0], _page[0] + 1),
                 ).classes("text-sm bg-gray-200 text-gray-700").set_enabled(page < pages)
 
         # ── Hàm export Excel ───────────────────────────────────────────────────
@@ -109,10 +109,10 @@ async def login_logs_page():
         with toolbar_row:
             for sf, lbl in [("", "Tất cả"), ("true", "Thành công"), ("false", "Thất bại")]:
                 ui.button(lbl,
-                          on_click=lambda f=sf: asyncio.ensure_future(_load(f, 1))).classes(
+                          on_click=lambda f=sf: _load(f, 1)).classes(
                     "text-sm bg-gray-100 text-gray-700 hover:bg-gray-200")
             ui.button("↻", icon="refresh",
-                      on_click=lambda: asyncio.ensure_future(_load(_filter[0], 1))).classes(
+                      on_click=lambda: _load(_filter[0], 1)).classes(
                 "text-sm bg-gray-700 text-white")
             ui.button("Xuất Excel", icon="download",
                       on_click=_export_logins).classes(
