@@ -16,6 +16,18 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
     + ✅ Sửa lỗi: HKV từ chối một lần *bàn giao lại sau khi mượn* có thể bị xử lý nhầm thành từ chối chứng từ
       mới (ô thành "Bị từ chối", mất số tờ cũ) — lỗi này sẽ xảy ra nếu GDV viết ghi chú giữa chừng; đã chặn
     + ℹ️ Xoá trắng một ô thì ghi chú của ô đó mất theo
+- 21/09/2026 Báo cáo → Phòng Tổng hợp - **Màn hình mới: Xếp loại lao động**
+    + ✅ Lưu và tra cứu **xếp loại lao động** (theo năm hoặc quý), **kết quả phiếu tín nhiệm** (theo năm) và
+      **xếp loại quý Cấp ủy**. Nhập tay từng người hoặc nhập cả danh sách từ file Excel theo file mẫu
+      (có bước xem trước, báo lỗi từng dòng, tự chặn nhập trùng)
+    + ✅ Bảng tổng hợp theo **phòng** hoặc theo **chức danh, chức vụ**, xuất Excel được; tra cứu kết quả
+      **5 năm liên tiếp** của một cán bộ
+    + ℹ️ Phòng và chức vụ trên báo cáo là **lúc được xếp loại** — cán bộ chuyển phòng hay đổi chức vụ sau đó thì
+      báo cáo các kỳ cũ giữ nguyên
+    + ⚠️ **Người vận hành phải làm một việc sau khi cập nhật**: vào **Phân quyền theo nhóm** → tick
+      **"Xếp loại lao động"** cho nhóm cần xem, và hai ô **nhập/sửa/xoá** và **xuất Excel** cho người phụ trách
+      nhập. Đây là quyền MỚI, chưa nhóm nào có sẵn. Người vừa được tick phải **đăng xuất rồi đăng nhập lại**
+    + ℹ️ Màn **Thi đua khen thưởng** đổi sang tông màu cam cho đồng bộ, dữ liệu và cách dùng không đổi
 
 - 21/09/2026 Đối chiếu CITAD cuối ngày - **Mở khoá bảng đã chốt: cấp được cho người khác, không còn chỉ Admin**
     + ⚠️ **Người vận hành phải làm một việc sau khi cập nhật**: vào **Phân quyền theo nhóm** → nhóm cần cấp →

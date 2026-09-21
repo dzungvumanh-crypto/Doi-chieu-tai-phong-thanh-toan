@@ -114,6 +114,66 @@
             hồi <code>cham_ach.process</code> khỏi nhóm còn <code>menu.cham_ach</code> thì khởi động lại tự quay về. Chưa sửa,
             ngoài phạm vi.</td></tr>
         <tr><td>File Excel "Xuất Excel" của lưới</td><td>Chưa thêm cột ghi chú — chưa được yêu cầu.</td></tr>
+  <!-- XL1 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">XL1</span>
+      <span class="card-title">Xếp loại lao động — phòng/chức vụ là ảnh chụp lúc xếp loại, và bài học migration khi sửa <code>CREATE TABLE</code> tại chỗ</span>
+      <span class="badge badge-done">Đã merge — PR #120</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label">Quyết định thiết kế</div>
+      <table>
+        <tr><th style="width:30%">Quyết định</th><th>Lý do</th></tr>
+        <tr><td>Ba loại (lao động / tín nhiệm / Cấp ủy) chung một bảng, phân biệt bằng <code>loai</code></td>
+          <td>Cùng người nhập, cùng hình dạng dữ liệu. Ràng buộc loại ↔ kỳ ↔ thang kết quả nằm một chỗ ở
+            <code>backend/schemas/xep_loai.py</code>; frontend khai lại <code>_KY_HOP_LE</code>/<code>_KET_QUA_THEO_LOAI</code>
+            và phải khớp tay.</td></tr>
+        <tr><td><code>department_id</code>, <code>chuc_vu</code> là <b>ảnh chụp</b> lúc tạo / nhập Excel / đổi người khi sửa</td>
+          <td>Bản đầu JOIN phòng hiện tại qua <code>user_tttt</code> → cán bộ chuyển phòng thì báo cáo năm cũ của cả hai
+            phòng tự đổi, không báo gì. Sửa lúc bảng còn rỗng nên không cần điền lại dữ liệu cũ. Sửa bản ghi mà
+            <b>không</b> đổi người thì giữ nguyên ảnh chụp cũ.</td></tr>
+        <tr><td><code>chuc_vu</code> = <code>user_tttt.role</code>, nhãn lấy từ <code>hr_service.NHAN_CHUC_VU</code></td>
+          <td>Đúng quy ước module Nhân sự. Đánh đổi: <code>role</code> cũng là vai trò phân quyền, admin đổi vai vì lý do
+            quyền thì các lần xếp loại <i>sau đó</i> mang chức vụ mới (bản ghi cũ không đổi vì là ảnh chụp).</td></tr>
+        <tr><td>UNIQUE index trên <code>(staff_id, loai, nam, COALESCE(quy, 0))</code></td>
+          <td>API kiểm trùng kiểu kiểm-rồi-ghi, hai request cùng lúc vẫn lọt. SQLite coi các NULL là khác nhau nên
+            <code>UNIQUE(... quy)</code> vô tác dụng đúng với xếp loại theo năm.</td></tr>
+        <tr><td>Sửa bản ghi thì khoá ô Cán bộ</td>
+          <td>Đổi người = gán lịch sử của người này cho người khác. Người đã xoá mềm không có trong danh sách chọn,
+            nên ô được thêm tạm một mục mang tên lấy từ bản ghi.</td></tr>
+        <tr><td>Cột Năm/Quý trong file Excel phải khớp <b>nguyên tiêu đề</b></td>
+          <td>Dò chuỗi con <code>"nam"</code> khớp nhầm "Quý (để trống nếu xếp theo năm)" hoặc "Năm sinh" nằm bên trái.
+            Các cột khác vẫn dò chuỗi con.</td></tr>
+      </table>
+
+      <div class="label">Migration — sửa <code>CREATE TABLE</code> tại chỗ làm hỏng khởi động</div>
+      <p>Lượt sửa thứ hai thêm 2 cột bằng cách sửa thẳng câu <code>CREATE TABLE IF NOT EXISTS</code>, kèm
+        <code>CREATE INDEX</code> trên 2 cột đó trong <code>_XEP_LOAI_TABLES</code>. DB nào đã tạo bảng ở bản trước thì
+        câu tạo bảng bị bỏ qua, còn câu tạo index báo <code>no such column</code>. Câu đó nằm trong <code>_create_tables()</code>,
+        hàm chạy <b>trước</b> <code>_ensure_indexes()</code> và không bắt lỗi nào, nên backend không lên được. Tái hiện được trên DB dựng từ
+        <code>b1ed5a5</code>.</p>
+      <p>Cách sửa: <code>_XEP_LOAI_TABLES</code> chỉ giữ câu an toàn với bảng cũ. Hai <code>ALTER TABLE ... ADD COLUMN</code> và
+        hai index trên cột mới đi vào <code>schema_migrations</code> (lỗi <code>duplicate column</code> vốn được bỏ qua).
+        <code>tests/test_xep_loai.py</code> dựng bảng schema cũ rồi chạy cả hai hàm 2 lần.</p>
+      <p class="caution">Quy tắc rút ra: bảng đã từng chạy ở <b>bất kỳ</b> máy nào (kể cả DB dev của nhánh) thì thêm cột phải có
+        <code>ALTER</code>, và index trên cột mới <b>không được</b> nằm trong list mà <code>_create_tables()</code> chạy. Kiểm bằng cách dựng DB
+        từ commit cũ rồi chạy <code>_create_tables()</code> + <code>_ensure_indexes()</code> của commit mới. Chỉ chạy
+        <code>_ensure_indexes()</code> thì không lộ lỗi này.</p>
+
+      <div class="label">Biết mà chưa sửa</div>
+      <table>
+        <tr><th style="width:30%">Vấn đề</th><th>Vì sao để lại</th></tr>
+        <tr><td>Comment cạnh 2 câu <code>ALTER</code> trong <code>_ensure_indexes()</code> ghi <code>_XEP_LOAI_TABLES</code> có index trên 2 cột mới</td>
+          <td>Không còn đúng sau <code>dedf7b6</code>. Chỉ là chữ; sửa ở lần chạm file tới.</td></tr>
+        <tr><td><code>xep_loai_page()</code>: lỗi khi gọi <code>/stats/tong-quan</code> thì ô lọc chức vụ lặng lẽ trống; trang gọi route này 2 lần lúc mở</td>
+          <td>Nhãn là dữ liệu tĩnh, trang vẫn dùng được. Nên thêm <code>ui.notify</code> hoặc tách route nhãn riêng.</td></tr>
+        <tr><td>"Xoá lọc" xoá cả Năm → tải toàn bảng, vẽ mỗi bản ghi một thẻ</td>
+          <td>Chỉ khi người dùng tự bấm. Mặc định đã lọc năm hiện tại. Cần phân trang nếu dữ liệu vài năm làm màn chậm.</td></tr>
+        <tr><td>Nhập tay lẫn nhập Excel không kiểm cán bộ có chức danh khi ghi "phiếu tín nhiệm"</td>
+          <td>Yêu cầu gốc ghi "cán bộ có chức danh", nhưng mã không định nghĩa chức danh nào được tính. Cần hỏi Phòng
+            Tổng hợp trước khi chặn, chặn sai là không nhập được.</td></tr>
       </table>
     </div>
   </div>

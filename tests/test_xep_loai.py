@@ -1,0 +1,514 @@
+"""Xếp loại lao động — CRUD, phân quyền, nhập lô Excel, tra cứu/thống kê."""
+import io
+import sqlite3
+
+import openpyxl
+import pytest
+from fastapi.testclient import TestClient
+
+import backend.db.migrations as migrations
+from backend.core.deps import get_current_staff
+from backend.database import get_db
+from backend.db.migrations import _create_tables
+from backend.main import app
+
+_XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+# ── Fixtures ─────────────────────────────────────────────────────────────────
+@pytest.fixture
+def db(tmp_path):
+    duong = tmp_path / "xeploai.db"
+    _create_tables(str(duong))
+    conn = sqlite3.connect(duong, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.executescript(
+        """
+        ALTER TABLE user_tttt ADD COLUMN is_deleted BOOLEAN DEFAULT 0;
+        INSERT INTO departments (id, code, name) VALUES
+            (1, 'TH', 'Phòng Tổng hợp'),
+            (2, 'TT', 'Phòng Thanh toán');
+        INSERT INTO user_tttt (id, employee_code, full_name, role, department_id,
+                               username, pwd_hash, is_active)
+        VALUES (1, 'NS001', 'Nguyễn Văn A', 'chuyen_vien', 1, 'a', 'x', 1),
+               (2, 'NS002', 'Trần Thị B',   'truong_phong', 2, 'b', 'x', 1);
+        INSERT INTO user_groups (id, name, is_active) VALUES (1, 'XL', 1);
+        """
+    )
+    conn.commit()
+    yield conn
+    conn.close()
+
+
+def _cap_quyen(db, staff_id: int, *codes: str):
+    db.execute("INSERT OR IGNORE INTO group_members (group_id, staff_id) VALUES (1, ?)",
+               (staff_id,))
+    for c in codes:
+        db.execute("INSERT OR IGNORE INTO group_features (group_id, feature_code) VALUES (1, ?)",
+                   (c,))
+    db.commit()
+
+
+@pytest.fixture
+def client(db):
+    app.dependency_overrides[get_current_staff] = lambda: {
+        "id": 1, "role": "chuyen_vien", "username": "a", "full_name": "Nguyễn Văn A"}
+
+    def _db():
+        yield db
+
+    app.dependency_overrides[get_db] = _db
+    c = TestClient(app)
+    yield c
+    app.dependency_overrides.clear()
+
+
+def _xlsx_bytes(headers: list, rows: list) -> bytes:
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(headers)
+    for r in rows:
+        ws.append(r)
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+# ── CRUD cơ bản ───────────────────────────────────────────────────────────────
+def test_khong_co_quyen_bi_tu_choi(client):
+    r = client.post("/api/xep-loai", json={
+        "staff_id": 2, "loai": "lao_dong", "ky": "nam", "nam": 2026,
+        "ket_qua": "Hoàn thành tốt nhiệm vụ"})
+    assert r.status_code == 403
+
+
+def test_tao_sua_xoa_xep_loai_lao_dong_theo_nam(client, db):
+    _cap_quyen(db, 1, "menu.xep_loai", "xep_loai.manage")
+    r = client.post("/api/xep-loai", json={
+        "staff_id": 2, "loai": "lao_dong", "ky": "nam", "nam": 2026,
+        "ket_qua": "Hoàn thành tốt nhiệm vụ"})
+    assert r.status_code == 201, r.text
+    rid = r.json()["id"]
+
+    rows = client.get("/api/xep-loai").json()
+    assert len(rows) == 1
+    assert rows[0]["staff_name"] == "Trần Thị B"
+    assert rows[0]["department_name"] == "Phòng Thanh toán"
+    assert rows[0]["chuc_vu_ten"] == "Trưởng phòng"
+    assert rows[0]["quy"] is None
+
+    r = client.put(f"/api/xep-loai/{rid}", json={
+        "staff_id": 2, "loai": "lao_dong", "ky": "nam", "nam": 2026,
+        "ket_qua": "Hoàn thành xuất sắc nhiệm vụ"})
+    assert r.status_code == 200, r.text
+    assert client.get("/api/xep-loai").json()[0]["ket_qua"] == "Hoàn thành xuất sắc nhiệm vụ"
+
+    assert client.delete(f"/api/xep-loai/{rid}").status_code == 200
+    assert client.get("/api/xep-loai").json() == []
+
+
+def test_can_bo_khong_ton_tai_bi_tu_choi(client, db):
+    _cap_quyen(db, 1, "menu.xep_loai", "xep_loai.manage")
+    r = client.post("/api/xep-loai", json={
+        "staff_id": 999, "loai": "lao_dong", "ky": "nam", "nam": 2026,
+        "ket_qua": "Hoàn thành tốt nhiệm vụ"})
+    assert r.status_code == 400
+
+
+def test_sua_ban_ghi_cua_can_bo_da_xoa_mem_khong_doi_nguoi(client, db):
+    # Xếp loại là dữ liệu lịch sử — cán bộ nghỉ việc (xoá mềm) sau khi đã được
+    # xếp loại vẫn phải sửa được các trường khác (ket_qua, ghi_chu) của bản ghi
+    # cũ, miễn không đổi sang người khác. Trước bản sửa này, update_xep_loai()
+    # gọi _staff_ton_tai() vô điều kiện nên sẽ trả 400 dù staff_id không đổi.
+    _cap_quyen(db, 1, "menu.xep_loai", "xep_loai.manage")
+    rid = client.post("/api/xep-loai", json={
+        "staff_id": 2, "loai": "lao_dong", "ky": "nam", "nam": 2026,
+        "ket_qua": "Hoàn thành tốt nhiệm vụ"}).json()["id"]
+    db.execute("UPDATE user_tttt SET is_deleted = 1 WHERE id = 2")
+    db.commit()
+
+    r = client.put(f"/api/xep-loai/{rid}", json={
+        "staff_id": 2, "loai": "lao_dong", "ky": "nam", "nam": 2026,
+        "ket_qua": "Hoàn thành xuất sắc nhiệm vụ", "ghi_chu": "Đã nghỉ việc"})
+    assert r.status_code == 200, r.text
+    row = client.get("/api/xep-loai").json()[0]
+    assert row["ket_qua"] == "Hoàn thành xuất sắc nhiệm vụ"
+    assert row["department_name"] == "Phòng Thanh toán"  # ảnh chụp cũ, không đổi
+    assert row["chuc_vu_ten"] == "Trưởng phòng"
+
+
+def test_sua_doi_sang_can_bo_khac_chup_lai_phong_va_chuc_vu(client, db):
+    # Ngược lại điểm trên — đổi THẬT SỰ sang người khác thì phải xác minh cán bộ
+    # đó tồn tại và chụp lại đúng phòng/chức vụ của người mới, không giữ ảnh
+    # chụp của người cũ.
+    _cap_quyen(db, 1, "menu.xep_loai", "xep_loai.manage")
+    rid = client.post("/api/xep-loai", json={
+        "staff_id": 2, "loai": "lao_dong", "ky": "nam", "nam": 2026,
+        "ket_qua": "Hoàn thành tốt nhiệm vụ"}).json()["id"]
+
+    r = client.put(f"/api/xep-loai/{rid}", json={
+        "staff_id": 1, "loai": "lao_dong", "ky": "nam", "nam": 2026,
+        "ket_qua": "Hoàn thành tốt nhiệm vụ"})
+    assert r.status_code == 200, r.text
+    row = client.get("/api/xep-loai").json()[0]
+    assert row["staff_name"] == "Nguyễn Văn A"
+    assert row["department_name"] == "Phòng Tổng hợp"
+    assert row["chuc_vu_ten"] == "Chuyên viên"
+
+    r = client.put(f"/api/xep-loai/{rid}", json={
+        "staff_id": 999, "loai": "lao_dong", "ky": "nam", "nam": 2026,
+        "ket_qua": "Hoàn thành tốt nhiệm vụ"})
+    assert r.status_code == 400
+
+
+def test_trung_lap_ky_bi_tu_choi(client, db):
+    _cap_quyen(db, 1, "menu.xep_loai", "xep_loai.manage")
+    body = {"staff_id": 2, "loai": "lao_dong", "ky": "nam", "nam": 2026,
+            "ket_qua": "Hoàn thành tốt nhiệm vụ"}
+    assert client.post("/api/xep-loai", json=body).status_code == 201
+    r = client.post("/api/xep-loai", json=body)
+    assert r.status_code == 400
+    assert "đã có xếp loại" in r.json()["detail"].lower()
+
+
+# ── Validate loại ↔ kỳ ↔ kết quả ──────────────────────────────────────────────
+def test_loai_khong_hop_voi_ky_bi_tu_choi(client, db):
+    _cap_quyen(db, 1, "menu.xep_loai", "xep_loai.manage")
+    # tin_nhiem chỉ áp dụng theo năm, không theo quý
+    r = client.post("/api/xep-loai", json={
+        "staff_id": 2, "loai": "tin_nhiem", "ky": "quy", "nam": 2026, "quy": 1,
+        "ket_qua": "Tín nhiệm cao"})
+    assert r.status_code == 422
+
+
+def test_ket_qua_khong_hop_le_bi_tu_choi(client, db):
+    _cap_quyen(db, 1, "menu.xep_loai", "xep_loai.manage")
+    r = client.post("/api/xep-loai", json={
+        "staff_id": 2, "loai": "lao_dong", "ky": "nam", "nam": 2026, "ket_qua": "Giỏi"})
+    assert r.status_code == 422
+
+
+def test_cap_uy_theo_quy_hop_le(client, db):
+    _cap_quyen(db, 1, "menu.xep_loai", "xep_loai.manage")
+    r = client.post("/api/xep-loai", json={
+        "staff_id": 2, "loai": "cap_uy", "ky": "quy", "nam": 2026, "quy": 2,
+        "ket_qua": "Hoàn thành tốt nhiệm vụ"})
+    assert r.status_code == 201, r.text
+    rows = client.get("/api/xep-loai", params={"loai": "cap_uy"}).json()
+    assert rows[0]["quy"] == 2 and rows[0]["nam"] == 2026
+
+
+def test_thieu_quy_khi_ky_la_quy_bi_tu_choi(client, db):
+    _cap_quyen(db, 1, "menu.xep_loai", "xep_loai.manage")
+    r = client.post("/api/xep-loai", json={
+        "staff_id": 2, "loai": "cap_uy", "ky": "quy", "nam": 2026,
+        "ket_qua": "Hoàn thành tốt nhiệm vụ"})
+    assert r.status_code == 422
+
+
+# ── Nhập lô từ Excel ──────────────────────────────────────────────────────────
+def test_import_thieu_quyen_bi_tu_choi(client):
+    content = _xlsx_bytes(["Mã cán bộ", "Năm", "Loại xếp loại", "Kết quả"],
+                          [["NS002", 2026, "Lao động", "Hoàn thành tốt nhiệm vụ"]])
+    r = client.post("/api/xep-loai/import", files={"file": ("mau.xlsx", content, _XLSX_MIME)})
+    assert r.status_code == 403
+
+
+def test_import_template_tai_duoc(client, db):
+    _cap_quyen(db, 1, "menu.xep_loai", "xep_loai.manage")
+    r = client.get("/api/xep-loai/import-template")
+    assert r.status_code == 200 and r.headers["content-type"].startswith(_XLSX_MIME)
+
+
+def test_import_dry_run_khong_ghi_db(client, db):
+    _cap_quyen(db, 1, "menu.xep_loai", "xep_loai.manage")
+    content = _xlsx_bytes(
+        ["Mã cán bộ", "Năm", "Loại xếp loại", "Kết quả"],
+        [["NS002", 2026, "Lao động", "Hoàn thành tốt nhiệm vụ"]])
+    r = client.post("/api/xep-loai/import?dry_run=true",
+                    files={"file": ("mau.xlsx", content, _XLSX_MIME)})
+    assert r.status_code == 200, r.text
+    kq = r.json()
+    assert kq["tong_dong"] == 1 and kq["da_them"] == 1 and kq["loi"] == []
+    assert client.get("/api/xep-loai").json() == []
+
+
+def test_import_bao_loi_ma_can_bo_va_ket_qua_khong_khop(client, db):
+    _cap_quyen(db, 1, "menu.xep_loai", "xep_loai.manage")
+    content = _xlsx_bytes(
+        ["Mã cán bộ", "Năm", "Loại xếp loại", "Kết quả"],
+        [["NS002", 2026, "Lao động", "Hoàn thành tốt nhiệm vụ"],
+         ["NSXXX", 2026, "Lao động", "Hoàn thành tốt nhiệm vụ"],
+         ["NS002", 2026, "Lao động", "Giỏi"]])
+    r = client.post("/api/xep-loai/import?dry_run=false",
+                    files={"file": ("mau.xlsx", content, _XLSX_MIME)})
+    kq = r.json()
+    assert kq["da_them"] == 1
+    assert len(kq["loi"]) == 2
+    rows = client.get("/api/xep-loai").json()
+    assert len(rows) == 1 and rows[0]["ket_qua"] == "Hoàn thành tốt nhiệm vụ"
+
+
+def test_import_theo_quy_va_trung_lap_trong_cung_file(client, db):
+    _cap_quyen(db, 1, "menu.xep_loai", "xep_loai.manage")
+    content = _xlsx_bytes(
+        ["Mã cán bộ", "Năm", "Quý", "Loại xếp loại", "Kết quả"],
+        [["NS002", 2026, 1, "Cấp ủy", "Hoàn thành tốt nhiệm vụ"],
+         ["NS002", 2026, 1, "Cấp ủy", "Hoàn thành xuất sắc nhiệm vụ"]])
+    r = client.post("/api/xep-loai/import?dry_run=false",
+                    files={"file": ("mau.xlsx", content, _XLSX_MIME)})
+    kq = r.json()
+    assert kq["da_them"] == 1
+    assert len(kq["loi"]) == 1 and "đã có xếp loại" in kq["loi"][0]["ly_do"].lower()
+    rows = client.get("/api/xep-loai", params={"loai": "cap_uy"}).json()
+    assert len(rows) == 1 and rows[0]["quy"] == 1
+
+
+def test_import_cot_quy_dung_truoc_cot_nam_khong_bi_hoan_doi(client, db):
+    # Review PR #120: dò cột kiểu chuỗi con khớp nhầm khi Quý đứng trước Năm
+    # (vì "Năm" từng là chuỗi con của chính tiêu đề Quý cũ) — nay so khớp
+    # CHÍNH XÁC cả tiêu đề nên thứ tự cột không còn quan trọng.
+    _cap_quyen(db, 1, "menu.xep_loai", "xep_loai.manage")
+    content = _xlsx_bytes(
+        ["Mã cán bộ", "Quý", "Năm", "Loại xếp loại", "Kết quả"],
+        [["NS002", 2, 2026, "Cấp ủy", "Hoàn thành tốt nhiệm vụ"]])
+    r = client.post("/api/xep-loai/import?dry_run=false",
+                    files={"file": ("mau.xlsx", content, _XLSX_MIME)})
+    kq = r.json()
+    assert kq["da_them"] == 1 and kq["loi"] == []
+    rows = client.get("/api/xep-loai", params={"loai": "cap_uy"}).json()
+    assert len(rows) == 1 and rows[0]["nam"] == 2026 and rows[0]["quy"] == 2
+
+
+def test_import_cot_nam_sinh_dung_truoc_khong_bi_khop_nham(client, db):
+    # Một cột "Năm sinh" (không liên quan) nằm bên trái cột "Năm" thật —
+    # match kiểu chuỗi con cũ sẽ gán nhầm "Năm" vào cột Năm sinh vì dò cột
+    # trái-sang-phải và dừng lại ở lần khớp đầu tiên.
+    _cap_quyen(db, 1, "menu.xep_loai", "xep_loai.manage")
+    content = _xlsx_bytes(
+        ["Mã cán bộ", "Năm sinh", "Năm", "Loại xếp loại", "Kết quả"],
+        [["NS002", 1990, 2026, "Lao động", "Hoàn thành tốt nhiệm vụ"]])
+    r = client.post("/api/xep-loai/import?dry_run=false",
+                    files={"file": ("mau.xlsx", content, _XLSX_MIME)})
+    kq = r.json()
+    assert kq["da_them"] == 1 and kq["loi"] == []
+    rows = client.get("/api/xep-loai", params={"loai": "lao_dong"}).json()
+    assert len(rows) == 1 and rows[0]["nam"] == 2026
+
+
+def test_import_thieu_cot_bat_buoc_bao_400(client, db):
+    _cap_quyen(db, 1, "menu.xep_loai", "xep_loai.manage")
+    content = _xlsx_bytes(["Ghi chú"], [["chỉ có ghi chú"]])
+    r = client.post("/api/xep-loai/import", files={"file": ("mau.xlsx", content, _XLSX_MIME)})
+    assert r.status_code == 400
+
+
+# ── Tra cứu, thống kê ─────────────────────────────────────────────────────────
+def test_stats_tong_hop_theo_phong(client, db):
+    _cap_quyen(db, 1, "menu.xep_loai", "xep_loai.manage")
+    client.post("/api/xep-loai", json={
+        "staff_id": 1, "loai": "lao_dong", "ky": "nam", "nam": 2026,
+        "ket_qua": "Hoàn thành xuất sắc nhiệm vụ"})
+    client.post("/api/xep-loai", json={
+        "staff_id": 2, "loai": "lao_dong", "ky": "nam", "nam": 2026,
+        "ket_qua": "Hoàn thành tốt nhiệm vụ"})
+
+    r = client.get("/api/xep-loai/stats/tong-hop", params={"loai": "lao_dong", "nam": 2026, "ky": "nam"})
+    assert r.status_code == 200, r.text
+    data = r.json()
+    theo_phong = {row["nhom"]: row for row in data["rows"]}
+    assert theo_phong["Phòng Tổng hợp"]["counts"]["Hoàn thành xuất sắc nhiệm vụ"] == 1
+    assert theo_phong["Phòng Thanh toán"]["counts"]["Hoàn thành tốt nhiệm vụ"] == 1
+    assert data["tong"]["total"] == 2
+
+
+def test_stats_tong_hop_liet_ke_du_phong_dang_hoat_dong(client, db):
+    # Phòng chưa có ai được xếp loại kỳ này vẫn phải xuất hiện trong bảng (đếm
+    # 0), không được biến mất — nếu không, người xem không phân biệt được
+    # "phòng chưa có dữ liệu" với "báo cáo thiếu phòng".
+    _cap_quyen(db, 1, "menu.xep_loai")
+    r = client.get("/api/xep-loai/stats/tong-hop", params={"loai": "lao_dong", "nam": 2026, "ky": "nam"})
+    assert r.status_code == 200, r.text
+    ten_phong = {row["nhom"] for row in r.json()["rows"]}
+    assert ten_phong == {"Phòng Tổng hợp", "Phòng Thanh toán"}
+
+
+def test_stats_tong_hop_theo_phong_giu_anh_chup_khi_can_bo_chuyen_phong(client, db):
+    # Điểm review PR #120: thống kê phải theo phòng LÚC xếp loại, không phải
+    # phòng hiện tại — cán bộ chuyển phòng sau đó không được làm đổi báo cáo
+    # của năm cũ.
+    _cap_quyen(db, 1, "menu.xep_loai", "xep_loai.manage")
+    client.post("/api/xep-loai", json={
+        "staff_id": 2, "loai": "lao_dong", "ky": "nam", "nam": 2026,
+        "ket_qua": "Hoàn thành tốt nhiệm vụ"})
+
+    db.execute("UPDATE user_tttt SET department_id = 1 WHERE id = 2")  # TT -> TH
+    db.commit()
+
+    r = client.get("/api/xep-loai/stats/tong-hop", params={"loai": "lao_dong", "nam": 2026, "ky": "nam"})
+    data = r.json()
+    theo_phong = {row["nhom"]: row for row in data["rows"]}
+    assert theo_phong["Phòng Thanh toán"]["counts"]["Hoàn thành tốt nhiệm vụ"] == 1
+    assert theo_phong["Phòng Tổng hợp"]["total"] == 0
+
+
+def test_stats_tong_hop_nhom_theo_chuc_vu(client, db):
+    _cap_quyen(db, 1, "menu.xep_loai", "xep_loai.manage")
+    client.post("/api/xep-loai", json={
+        "staff_id": 1, "loai": "lao_dong", "ky": "nam", "nam": 2026,
+        "ket_qua": "Hoàn thành xuất sắc nhiệm vụ"})  # chuyen_vien
+    client.post("/api/xep-loai", json={
+        "staff_id": 2, "loai": "lao_dong", "ky": "nam", "nam": 2026,
+        "ket_qua": "Hoàn thành tốt nhiệm vụ"})  # truong_phong
+
+    r = client.get("/api/xep-loai/stats/tong-hop",
+                   params={"loai": "lao_dong", "nam": 2026, "ky": "nam", "nhom_theo": "chuc_vu"})
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["nhom_theo"] == "chuc_vu"
+    theo_cv = {row["nhom"]: row for row in data["rows"]}
+    assert theo_cv["Chuyên viên"]["counts"]["Hoàn thành xuất sắc nhiệm vụ"] == 1
+    assert theo_cv["Trưởng phòng"]["counts"]["Hoàn thành tốt nhiệm vụ"] == 1
+    # Chức vụ chưa có ai trong kỳ này vẫn liệt kê với đếm 0.
+    assert theo_cv["Phó phòng"]["total"] == 0
+
+    # Cán bộ lên chức sau đó không làm đổi báo cáo chức vụ của năm cũ.
+    db.execute("UPDATE user_tttt SET role = 'pho_giam_doc' WHERE id = 2")
+    db.commit()
+    r2 = client.get("/api/xep-loai/stats/tong-hop",
+                    params={"loai": "lao_dong", "nam": 2026, "ky": "nam", "nhom_theo": "chuc_vu"})
+    theo_cv2 = {row["nhom"]: row for row in r2.json()["rows"]}
+    assert theo_cv2["Trưởng phòng"]["counts"]["Hoàn thành tốt nhiệm vụ"] == 1
+
+
+def test_stats_tong_hop_nhom_theo_khong_hop_le_bi_tu_choi(client, db):
+    _cap_quyen(db, 1, "menu.xep_loai")
+    r = client.get("/api/xep-loai/stats/tong-hop",
+                   params={"loai": "lao_dong", "nam": 2026, "ky": "nam", "nhom_theo": "xxx"})
+    assert r.status_code == 400
+
+
+def test_stats_tong_hop_thieu_quy_bi_tu_choi(client, db):
+    _cap_quyen(db, 1, "menu.xep_loai")
+    r = client.get("/api/xep-loai/stats/tong-hop", params={"loai": "cap_uy", "nam": 2026, "ky": "quy"})
+    assert r.status_code == 400
+
+
+def test_stats_tong_hop_chuan_hoa_quy_ve_none_khi_ky_la_nam(client, db):
+    # Gọi lệch (ky=nam nhưng vẫn kèm quy) mô phỏng caller ngoài frontend (Swagger,
+    # script) — response và tên file xuất phải phản ánh đúng "theo năm", không
+    # được lặng lẽ giữ nguyên quy=3 rồi in nhầm "QUÝ 3" lên tiêu đề báo cáo năm.
+    _cap_quyen(db, 1, "menu.xep_loai", "xep_loai.manage", "xep_loai.export")
+    client.post("/api/xep-loai", json={
+        "staff_id": 2, "loai": "lao_dong", "ky": "nam", "nam": 2026,
+        "ket_qua": "Hoàn thành tốt nhiệm vụ"})
+    r = client.get("/api/xep-loai/stats/tong-hop",
+                   params={"loai": "lao_dong", "nam": 2026, "ky": "nam", "quy": 3})
+    assert r.status_code == 200, r.text
+    assert r.json()["quy"] is None
+
+    r = client.get("/api/xep-loai/export/tong-hop",
+                   params={"loai": "lao_dong", "nam": 2026, "ky": "nam", "quy": 3})
+    assert r.status_code == 200
+    assert "_q" not in r.headers["content-disposition"]
+
+
+def test_stats_ca_nhan_5_nam_lien_tiep_dien_khoang_trong(client, db):
+    _cap_quyen(db, 1, "menu.xep_loai", "xep_loai.manage")
+    client.post("/api/xep-loai", json={
+        "staff_id": 2, "loai": "lao_dong", "ky": "nam", "nam": 2024,
+        "ket_qua": "Hoàn thành tốt nhiệm vụ"})
+    client.post("/api/xep-loai", json={
+        "staff_id": 2, "loai": "lao_dong", "ky": "nam", "nam": 2026,
+        "ket_qua": "Hoàn thành xuất sắc nhiệm vụ"})
+
+    r = client.get("/api/xep-loai/stats/ca-nhan",
+                   params={"staff_id": 2, "loai": "lao_dong", "den_nam": 2026})
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["tu_nam"] == 2022 and data["den_nam"] == 2026
+    theo_nam = {r["nam"]: r["ket_qua"] for r in data["nam_theo_thu_tu"]}
+    assert theo_nam[2024] == "Hoàn thành tốt nhiệm vụ"
+    assert theo_nam[2026] == "Hoàn thành xuất sắc nhiệm vụ"
+    assert theo_nam[2025] is None
+    assert len(data["nam_theo_thu_tu"]) == 5
+
+
+def test_stats_ca_nhan_loai_chi_theo_quy_bao_loi_ro_thay_vi_rong(client, db):
+    # cap_uy chỉ có ky='quy' — gọi tra cứu 5 năm (chỉ đọc ky='nam') phải báo lỗi
+    # rõ ràng, không được lặng lẽ trả về 5 năm "Chưa có dữ liệu" trong khi dữ
+    # liệu quý vẫn tồn tại thật (xem test dưới).
+    _cap_quyen(db, 1, "menu.xep_loai", "xep_loai.manage")
+    client.post("/api/xep-loai", json={
+        "staff_id": 2, "loai": "cap_uy", "ky": "quy", "nam": 2026, "quy": 1,
+        "ket_qua": "Hoàn thành tốt nhiệm vụ"})
+    r = client.get("/api/xep-loai/stats/ca-nhan", params={"staff_id": 2, "loai": "cap_uy"})
+    assert r.status_code == 400
+    assert "chỉ xếp theo quý" in r.json()["detail"].lower()
+
+
+# ── Xuất Excel ────────────────────────────────────────────────────────────────
+def test_export_thieu_quyen_bi_tu_choi(client, db):
+    _cap_quyen(db, 1, "menu.xep_loai")
+    r = client.get("/api/xep-loai/export/tong-hop", params={"loai": "lao_dong", "nam": 2026, "ky": "nam"})
+    assert r.status_code == 403
+
+
+def test_export_tong_hop_va_ca_nhan_thanh_cong(client, db):
+    _cap_quyen(db, 1, "menu.xep_loai", "xep_loai.manage", "xep_loai.export")
+    client.post("/api/xep-loai", json={
+        "staff_id": 2, "loai": "lao_dong", "ky": "nam", "nam": 2026,
+        "ket_qua": "Hoàn thành tốt nhiệm vụ"})
+
+    r = client.get("/api/xep-loai/export/tong-hop", params={"loai": "lao_dong", "nam": 2026, "ky": "nam"})
+    assert r.status_code == 200 and r.headers["content-type"].startswith(_XLSX_MIME)
+
+    r = client.get("/api/xep-loai/export/ca-nhan", params={"staff_id": 2, "loai": "lao_dong"})
+    assert r.status_code == 200 and r.headers["content-type"].startswith(_XLSX_MIME)
+
+
+# ── Migration nâng cấp DB đã tạo bảng từ bản trước khi có department_id/chuc_vu ──
+def test_migration_them_cot_vao_bang_da_ton_tai_tu_ban_cu(tmp_path, monkeypatch):
+    # Review PR #120 (commit 5be03ca): CREATE TABLE IF NOT EXISTS là no-op trên
+    # DB đã có bảng xep_loai_lao_dong (schema cũ, khớp commit b1ed5a5 — không
+    # có department_id/chuc_vu) — CREATE INDEX ngay sau đó trên 2 cột này báo
+    # "no such column", và _create_tables() không bọc try/except nên crash
+    # ngay lúc khởi động, trước cả khi tới _ensure_indexes(). Mô phỏng đúng
+    # tình huống: dựng schema đầy đủ rồi hạ xep_loai_lao_dong về bản cũ.
+    db_path = str(tmp_path / "xeploai_nang_cap.db")
+    _create_tables(db_path)
+    conn = sqlite3.connect(db_path)
+    conn.execute("DROP TABLE xep_loai_lao_dong")
+    conn.execute(
+        """CREATE TABLE xep_loai_lao_dong (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            staff_id     INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+            loai         TEXT NOT NULL CHECK(loai IN ('lao_dong','tin_nhiem','cap_uy')),
+            ky           TEXT NOT NULL CHECK(ky IN ('nam','quy')),
+            nam          INTEGER NOT NULL,
+            quy          INTEGER,
+            ket_qua      TEXT NOT NULL,
+            ghi_chu      TEXT,
+            created_by   INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+            created_at   DATETIME NOT NULL,
+            updated_at   DATETIME NOT NULL
+        )"""
+    )
+    conn.execute("CREATE INDEX ix_xep_loai_staff ON xep_loai_lao_dong(staff_id)")
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr(migrations, "DB_PATH", db_path)
+    # Chạy 2 lần liên tiếp, mỗi lần cả _create_tables() lẫn _ensure_indexes()
+    # — không được ném lỗi, và lần 2 phải idempotent (duplicate column bị nuốt).
+    for _ in range(2):
+        _create_tables(db_path)
+        migrations._ensure_indexes()
+
+    conn = sqlite3.connect(db_path)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(xep_loai_lao_dong)")}
+    idx = {r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='xep_loai_lao_dong'")}
+    conn.close()
+    assert {"department_id", "chuc_vu"} <= cols
+    assert {"ix_xep_loai_dept", "ix_xep_loai_chucvu", "ix_xep_loai_unique"} <= idx
