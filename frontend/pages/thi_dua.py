@@ -18,10 +18,13 @@ trong cùng một tab (`_section_title()` vẽ tiêu đề từng khu vực):
 
 Mọi danh sách hiển thị dạng LƯỚI THẺ (card grid), không dùng `ui.table` — theo
 yêu cầu người dùng ("chỉ muốn kiểu bố cục card lưới thay cho bảng"), xem
-`_luoi_the()`/`_the_ban_ghi()`. Tông màu chủ đạo của riêng module này là XANH
-LÁ (theo ảnh mẫu người dùng gửi) — chỉ áp dụng cho nội dung tự vẽ trong trang
-này (tab, thẻ, nút, tiêu đề khu vực); không đổi `_page_header()`/`_sidebar()`
-dùng chung toàn hệ thống (vẫn đỏ, vì đó là theme chung của mọi trang khác).
+`_luoi_the()`/`_the_ban_ghi()`. Tông màu chủ đạo của riêng module này là CAM
+(đổi từ xanh lá cũ ngày 2026-09-18, theo yêu cầu người dùng "cho giống trang
+Xếp loại lao động" — xem `frontend/pages/xep_loai.py` cho khuôn gốc: banner
+cam đầu trang, thẻ "dịch vụ" icon tròn cam ở tab Tổng quan, nút đặc/nhạt cùng
+một tông cam) — chỉ áp dụng cho nội dung tự vẽ trong trang này (banner, tab,
+thẻ, nút, tiêu đề khu vực); không đổi `_page_header()`/`_sidebar()` dùng chung
+toàn hệ thống (vẫn đỏ, vì đó là theme chung của mọi trang khác).
 
 Mỗi khu vực có 2 tầng lọc: bộ lọc SERVER-SIDE cũ (Năm/Cán bộ — nút "Lọc" gọi
 lại API) và bộ lọc CLIENT-SIDE mới (Đơn vị/Cấp/Loại + ô Tìm kiếm tự do — lọc
@@ -53,9 +56,9 @@ _CAP_OPTS = {"dang": "Đảng", "chuyen_mon": "Chuyên môn", "cong_doan": "Côn
 # y hệt ở nút "Tạo báo cáo" của th_reports.py vốn đã có sẵn, không phải lỗi
 # trang này). Muốn nút thật sự đổi màu phải dùng prop `color=` của Quasar
 # (cơ chế màu riêng của component, không phải class CSS ngoài).
-_MAU_LOC = "color=green-7"
-_MAU_LUU = "color=green-8"
-_MAU_EXCEL = "color=teal-7"
+_MAU_LOC = "color=orange-6"
+_MAU_LUU = "color=orange-8"
+_MAU_EXCEL = "color=orange-9"
 # Toàn bộ ô nhập/lọc trong trang này dùng chung khung viền bo tròn (theo yêu
 # cầu người dùng "đóng ô vào viền bo tròn") thay vì kiểu gạch chân mặc định
 # của Quasar.
@@ -69,8 +72,8 @@ def _o(v):
 def _section_title(ten: str, icon: str):
     """Tiêu đề một khu vực cuộn trong tab gộp (Thông tin / Tra cứu, thống kê)."""
     with ui.row().classes("items-center gap-2 mb-3"):
-        ui.icon(icon).classes("text-green-800 text-xl")
-        ui.label(ten).classes("text-lg font-bold text-green-900")
+        ui.icon(icon).classes("text-orange-800 text-xl")
+        ui.label(ten).classes("text-lg font-bold text-orange-900")
 
 
 def _luoi_the():
@@ -81,11 +84,11 @@ def _luoi_the():
 
 def _khung_loc():
     """Khung bọc các hàng bộ lọc — tách biệt trực quan khỏi lưới thẻ bên dưới
-    (yêu cầu người dùng: "đóng khung riêng cho các bộ lọc"). Nền xanh lá rất
+    (yêu cầu người dùng: "đóng khung riêng cho các bộ lọc"). Nền cam rất
     nhạt (không trùng nền trắng của `_the_ban_ghi()`) để mắt phân biệt ngay
     đâu là vùng lọc, đâu là vùng dữ liệu."""
     return ui.card().classes(
-        "w-full gap-3 p-4 mb-4 rounded-xl border border-green-100 shadow-sm bg-green-50/60")
+        "w-full gap-3 p-4 mb-4 rounded-xl border border-orange-100 shadow-sm bg-orange-50/60")
 
 
 @contextlib.contextmanager
@@ -99,7 +102,7 @@ def _the_ban_ghi(on_edit=None, on_del=None, on_file=None, has_file: bool = False
     kiện, xem `nicegui/events.py::handle_event()`)."""
     co_nut = bool(on_file or on_edit or on_del)
     with ui.card().classes(
-        "w-full p-4 pr-2 gap-1 rounded-xl border border-green-100 shadow-sm "
+        "w-full p-4 pr-2 gap-1 rounded-xl border border-t-4 border-t-orange-400 shadow-sm "
         "hover:shadow-md transition-shadow relative"
     ) as the:
         if co_nut:
@@ -117,7 +120,7 @@ def _the_ban_ghi(on_edit=None, on_del=None, on_file=None, has_file: bool = False
             yield the
 
 
-def _chip(ten: str, mau: str = "green"):
+def _chip(ten: str, mau: str = "orange"):
     ui.label(ten).classes(
         f"text-xs font-bold text-white bg-{mau}-700 rounded-full px-2 py-0.5 inline-block w-fit")
 
@@ -142,7 +145,7 @@ def _mo_nhap_excel(ten: str, duong_dan: str, tai_lai):
     state = {"bytes": None, "name": None}
 
     with ui.dialog() as hop, ui.card().classes("w-full max-w-lg"):
-        ui.label(f"Nhập {ten} từ Excel").classes("text-lg font-bold text-green-900")
+        ui.label(f"Nhập {ten} từ Excel").classes("text-lg font-bold text-orange-900")
         ui.label("Tải file mẫu, điền dữ liệu theo đúng tên cột rồi tải lên lại."
                   ).classes("text-sm text-gray-600")
 
@@ -205,30 +208,35 @@ def _mo_nhap_excel(ten: str, duong_dan: str, tai_lai):
 
 
 # ── Tab 0: Tổng quan ──────────────────────────────────────────────────────────
-# 1 tile "hero" xanh đậm (Tổng cộng, khuôn ô "All Projects" của ảnh mẫu) + 3
-# tile nhạt cùng tông xanh lá/xanh ngọc — và khuôn card tiêu đề dải màu của
-# `_card()` đổi sang xanh lá cho riêng trang này.
-_TILE_COLORS = ["bg-green-50 border-green-200", "bg-teal-50 border-teal-200",
-                "bg-lime-50 border-lime-200"]
-
-
-def _o_tile(so: int, nhan: str, mau: str):
+# Banner + thẻ "dịch vụ" — khuôn y hệt `frontend/pages/xep_loai.py::_hero_banner()`
+# / `_the_dich_vu()` (đổi tên/nội dung cho đúng module này), theo yêu cầu người
+# dùng "cho giống trang Xếp loại lao động".
+def _hero_banner():
     with ui.element("div").classes(
-        f"flex-1 min-w-[9rem] px-3 py-3 rounded-xl border {mau} "
-        "flex flex-col items-center justify-center"
-    ).style("height:96px"):
+        "w-full rounded-2xl bg-gradient-to-r from-orange-600 to-orange-500 text-white "
+        "px-6 py-6 mb-4 flex items-center justify-between gap-4 flex-wrap shadow-sm"):
+        with ui.column().classes("gap-1"):
+            ui.label("Thi đua khen thưởng — Phòng Tổng hợp").classes("text-xl font-bold")
+            ui.label("Danh hiệu thi đua đơn vị, cá nhân và sáng kiến được công nhận "
+                      "— nhập tay hoặc nhập lô từ Excel").classes("text-orange-50 text-sm")
+        with ui.element("div").classes(
+            "w-16 h-16 rounded-full bg-white/15 flex items-center justify-center shrink-0"):
+            ui.icon("military_tech").classes("text-3xl text-white")
+
+
+def _the_dich_vu(icon: str, so: int, nhan: str, noi_bat: bool = False):
+    with ui.element("div").classes(
+        ("bg-orange-600" if noi_bat else "bg-white") +
+        " flex-1 min-w-[10rem] rounded-xl shadow-sm border border-orange-100 "
+        "flex flex-col items-center justify-center gap-2 py-5 px-3"):
+        with ui.element("div").classes(
+            ("bg-white/20" if noi_bat else "bg-orange-50") +
+            " w-12 h-12 rounded-full flex items-center justify-center"):
+            ui.icon(icon).classes(("text-white" if noi_bat else "text-orange-600") + " text-2xl")
         ui.label(str(so)).classes(
-            "text-3xl leading-none font-bold " + ("text-gray-800" if so else "text-gray-400"))
-        ui.label(nhan).classes("text-xs font-medium text-gray-600 mt-2 text-center leading-tight")
-
-
-def _o_tile_hero(so: int, nhan: str):
-    with ui.element("div").classes(
-        "flex-1 min-w-[9rem] px-3 py-3 rounded-xl bg-green-800 shadow-sm "
-        "flex flex-col items-center justify-center"
-    ).style("height:96px"):
-        ui.label(str(so)).classes("text-3xl leading-none font-bold text-white")
-        ui.label(nhan).classes("text-xs font-medium text-green-100 mt-2 text-center leading-tight")
+            ("text-white" if noi_bat else "text-gray-800") + " text-2xl font-bold leading-none")
+        ui.label(nhan).classes(
+            ("text-orange-50" if noi_bat else "text-gray-500") + " text-xs text-center")
 
 
 async def _tab_tong_quan():
@@ -257,16 +265,17 @@ async def _tab_tong_quan():
         khung.clear()
         with khung:
             with ui.row().classes("w-full gap-3 flex-wrap"):
-                _o_tile(so_don_vi, "Danh hiệu đơn vị", _TILE_COLORS[0])
-                _o_tile(so_ca_nhan, "Danh hiệu cá nhân", _TILE_COLORS[1])
-                _o_tile(so_sang_kien, "Sáng kiến cá nhân", _TILE_COLORS[2])
-                _o_tile_hero(so_don_vi + so_ca_nhan + so_sang_kien, "Tổng cộng")
+                _the_dich_vu("emoji_events", so_don_vi, "Danh hiệu đơn vị")
+                _the_dich_vu("military_tech", so_ca_nhan, "Danh hiệu cá nhân")
+                _the_dich_vu("lightbulb", so_sang_kien, "Sáng kiến cá nhân")
+                _the_dich_vu("summarize", so_don_vi + so_ca_nhan + so_sang_kien, "Tổng cộng",
+                             noi_bat=True)
 
             with ui.row().classes("w-full gap-4 items-start flex-wrap"):
                 with ui.column().classes("flex-1 min-w-[20rem]"):
                     with ui.card().classes("w-full shadow-sm rounded-xl bg-white p-0 overflow-hidden"):
-                        with ui.row().classes("w-full bg-green-50 px-4 py-3 border-b border-green-100"):
-                            ui.label("Danh hiệu gần đây").classes("font-semibold text-green-800")
+                        with ui.row().classes("w-full bg-orange-50 px-4 py-3 border-b border-orange-100"):
+                            ui.label("Danh hiệu gần đây").classes("font-semibold text-orange-900")
                         with ui.column().classes("w-full p-3 gap-2"):
                             gan_day = tong_hop[:8]
                             if not gan_day:
@@ -275,17 +284,17 @@ async def _tab_tong_quan():
                                 with ui.row().classes(
                                     "w-full items-center gap-2 border-b border-gray-100 pb-2 last:border-0"):
                                     ui.icon("emoji_events" if r["loai"] == "Đơn vị" else "military_tech"
-                                            ).classes("text-green-700 text-lg")
+                                            ).classes("text-orange-600 text-lg")
                                     with ui.column().classes("gap-0 flex-1 min-w-0"):
                                         ui.label(r["danh_hieu"]).classes("text-sm font-medium truncate")
                                         ui.label(f"{r['loai']} — {r['doi_tuong'] or '—'}").classes(
                                             "text-xs text-gray-500 truncate")
                                     ui.label(str(r["year"])).classes(
-                                        "text-xs font-semibold text-green-700 bg-green-50 rounded-full px-2 py-0.5")
+                                        "text-xs font-semibold text-orange-700 bg-orange-50 rounded-full px-2 py-0.5")
                 with ui.column().classes("flex-1 min-w-[20rem]"):
                     with ui.card().classes("w-full shadow-sm rounded-xl bg-white p-0 overflow-hidden"):
-                        with ui.row().classes("w-full bg-green-50 px-4 py-3 border-b border-green-100"):
-                            ui.label("Sáng kiến gần đây").classes("font-semibold text-green-800")
+                        with ui.row().classes("w-full bg-orange-50 px-4 py-3 border-b border-orange-100"):
+                            ui.label("Sáng kiến gần đây").classes("font-semibold text-orange-900")
                         with ui.column().classes("w-full p-3 gap-2"):
                             gan_day_sk = sang_kien[:8]
                             if not gan_day_sk:
@@ -299,7 +308,7 @@ async def _tab_tong_quan():
                                         ui.label(r["doi_tuong"] or "—").classes(
                                             "text-xs text-gray-500 truncate")
                                     ui.label(str(r["year"])).classes(
-                                        "text-xs font-semibold text-green-700 bg-green-50 rounded-full px-2 py-0.5")
+                                        "text-xs font-semibold text-orange-700 bg-orange-50 rounded-full px-2 py-0.5")
 
     await tai()
     return tai
@@ -385,7 +394,7 @@ async def _tab_don_vi(dept_opts: dict, can_manage: bool):
     def mo_form(item: dict | None):
         with ui.dialog() as hop, ui.card().classes("w-full max-w-xl"):
             ui.label(("Sửa" if item else "Thêm") + " danh hiệu đơn vị").classes(
-                "text-lg font-bold text-green-900")
+                "text-lg font-bold text-orange-900")
             with ui.grid(columns=2).classes("w-full gap-3"):
                 o_year = ui.number(label="Năm", value=(item or {}).get("year") or _nam_hien_tai(),
                                     min=2000, max=2100, format="%d").props(_O_NHAP)
@@ -492,7 +501,7 @@ async def _tab_ca_nhan(staff_opts: dict, can_manage: bool):
                     ):
                         with ui.row().classes("items-center gap-2"):
                             _chip(str(r["year"]))
-                            _chip(r["cap_nhan"], mau="teal")
+                            _chip(r["cap_nhan"], mau="gray")
                         ui.label(r["staff_name"]).classes("text-sm font-medium text-gray-700")
                         ui.label(r["danh_hieu"]).classes(
                             "text-base font-semibold text-gray-800 leading-snug")
@@ -542,7 +551,7 @@ async def _tab_ca_nhan(staff_opts: dict, can_manage: bool):
     def mo_form(item: dict | None):
         with ui.dialog() as hop, ui.card().classes("w-full max-w-xl"):
             ui.label(("Sửa" if item else "Thêm") + " danh hiệu cá nhân").classes(
-                "text-lg font-bold text-green-900")
+                "text-lg font-bold text-orange-900")
             with ui.grid(columns=2).classes("w-full gap-3"):
                 o_staff = ui.select(staff_opts, label="Cán bộ", with_input=True,
                                      value=(str(item["staff_id"]) if item else None)
@@ -660,7 +669,7 @@ async def _tab_sang_kien(staff_opts: dict, can_manage: bool):
                         with ui.row().classes("items-center gap-2"):
                             _chip(str(r["year"]))
                             if r["has_file"]:
-                                ui.icon("attach_file").classes("text-teal-700 text-sm")
+                                ui.icon("attach_file").classes("text-orange-700 text-sm")
                         ui.label(r["staff_name"]).classes("text-sm font-medium text-gray-700")
                         ui.label(r["ten_sang_kien"]).classes(
                             "text-base font-semibold text-gray-800 leading-snug")
@@ -722,7 +731,7 @@ async def _tab_sang_kien(staff_opts: dict, can_manage: bool):
 
         with ui.dialog() as hop, ui.card().classes("w-full max-w-xl"):
             ui.label(("Sửa" if item else "Thêm") + " sáng kiến cá nhân").classes(
-                "text-lg font-bold text-green-900")
+                "text-lg font-bold text-orange-900")
             with ui.grid(columns=2).classes("w-full gap-3"):
                 o_staff = ui.select(staff_opts, label="Cán bộ", with_input=True,
                                      value=(str(item["staff_id"]) if item else None)
@@ -744,7 +753,7 @@ async def _tab_sang_kien(staff_opts: dict, can_manage: bool):
 
             ui.separator().classes("my-2")
             ui.label(f"File quyết định ({_FILE_ACCEPT.replace(',', ', ')} — tối đa 15 MB)"
-                     ).classes("font-semibold text-sm text-green-800")
+                     ).classes("font-semibold text-sm text-orange-800")
             khung_file = ui.column().classes("w-full gap-1")
 
             def ve_file():
@@ -752,7 +761,7 @@ async def _tab_sang_kien(staff_opts: dict, can_manage: bool):
                 with khung_file:
                     if co_file:
                         with ui.row().classes("items-center gap-2 w-full"):
-                            ui.icon("description").classes("text-green-700")
+                            ui.icon("description").classes("text-orange-700")
                             ui.label(item.get("file_name") or "quyết định").classes(
                                 "text-sm flex-1 truncate")
 
@@ -901,9 +910,9 @@ async def _tab_tong_hop(co_export: bool):
                     with _the_ban_ghi():
                         with ui.row().classes("items-center gap-2"):
                             _chip(str(r["year"]))
-                            _chip(r["loai"], mau=("green" if r["loai"] == "Đơn vị" else "teal"))
+                            _chip(r["loai"], mau=("gray" if r["loai"] == "Đơn vị" else "slate"))
                             if r.get("cap_nhan"):
-                                _chip(r["cap_nhan"], mau="lime")
+                                _chip(r["cap_nhan"], mau="gray")
                         ui.label(r["doi_tuong"] or "—").classes("text-sm font-medium text-gray-700")
                         ui.label(r["danh_hieu"]).classes(
                             "text-base font-semibold text-gray-800 leading-snug")
@@ -980,7 +989,7 @@ async def _tab_sk_stats(staff_opts: dict, co_export: bool):
                         with ui.row().classes("items-center gap-2"):
                             _chip(str(r["year"]))
                             if r.get("has_file"):
-                                ui.icon("attach_file").classes("text-teal-700 text-sm")
+                                ui.icon("attach_file").classes("text-orange-700 text-sm")
                         ui.label(r["doi_tuong"] or "—").classes("text-sm font-medium text-gray-700")
                         ui.label(r["ten_sang_kien"]).classes(
                             "text-base font-semibold text-gray-800 leading-snug")
@@ -1083,8 +1092,9 @@ async def thi_dua_page():
         with _content_area():
             _page_header("Thi đua khen thưởng",
                          "Danh hiệu thi đua đơn vị, cá nhân và sáng kiến được công nhận")
+            _hero_banner()
 
-            with ui.tabs().props("active-color=green-8 indicator-color=green-8").classes("mb-3") as tabs:
+            with ui.tabs().props("active-color=orange-8 indicator-color=orange-8").classes("mb-3") as tabs:
                 tab_tongquan = ui.tab("tongquan", label="Tổng quan",           icon="dashboard")
                 tab_donvi    = ui.tab("donvi",    label="Đơn vị",             icon="emoji_events")
                 tab_canhan   = ui.tab("canhan",   label="Cá nhân",            icon="military_tech")

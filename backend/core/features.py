@@ -193,6 +193,13 @@ FEATURES: dict[str, str] = {
     "thi_dua.manage_individual": "Nhập danh hiệu thi đua cá nhân",
     "thi_dua.manage_initiative": "Nhập sáng kiến cá nhân",
     "thi_dua.export":            "Xuất Excel báo cáo thi đua khen thưởng",
+
+    # Xếp loại lao động — Phòng Tổng hợp. Một mã quản lý duy nhất (không tách
+    # theo loại như thi_dua) vì cả ba loại (xếp loại lao động/phiếu tín nhiệm/
+    # Cấp ủy) đều do cùng cán bộ Phòng Tổng hợp nhập, đúng yêu cầu gốc.
+    "menu.xep_loai":    "Xếp loại lao động (menu)",
+    "xep_loai.manage":  "Nhập / sửa / xoá xếp loại lao động",
+    "xep_loai.export":  "Xuất Excel báo cáo xếp loại lao động",
 }
 
 # ── Cấu trúc màn hình phân quyền ──────────────────────────────────────────────
@@ -315,6 +322,10 @@ FEATURE_GROUPS: list[dict] = [
                             "thi_dua.manage_initiative",
                             "thi_dua.export",
                         ],
+                    },
+                    {
+                        "code": "menu.xep_loai",
+                        "actions": ["xep_loai.manage", "xep_loai.export"],
                     },
                 ],
             },
