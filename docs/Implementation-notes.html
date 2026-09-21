@@ -19504,7 +19504,7 @@ This may happen if you try to create UI from a background task.</pre>
           khi một mình vượt ngân sách — đặt ngân sách thấp không được khoá chết module.</td></tr>
         <tr><td>Trần cứng</td><td><code>tien_trinh_doi_chieu</code></td>
           <td>Mọi tiến trình con (7 cửa + SWIFT) vào MỘT Windows Job Object, <code>JOB_OBJECT_LIMIT_JOB_MEMORY</code> = 13 GB bộ nhớ
-          cam kết cả nhóm. Vượt → <code>MemoryError</code> ở đúng lượt đang xin thêm.</td></tr>
+          cam kết cả nhóm. Vượt → lượt đang xin thêm hỏng: mã Python/numpy nhận <code>MemoryError</code>; thư viện C/Rust (python-calamine của ACH, OpenBLAS) <b>tự kết thúc cả tiến trình</b> — xem phản biện Opus.</td></tr>
       </table>
       <ul>
         <li><b>11,5 / 13 GB:</b> bản đầu đặt ngân sách 11; người dùng nâng lên 11,5 = ACH + Song phương ĐI + ĐẾN (4,5 + 4 + 3) để ba
@@ -19530,7 +19530,7 @@ This may happen if you try to create UI from a background task.</pre>
           lẻ vượt ngân sách; trần số lượt vẫn giữ; đọc <code>.env</code>. Trần cứng chạy tiến trình con thật: trần 0,4 GB + xin 800 MB →
           câu tiếng Việt; tắt trần → cùng 800 MB chạy được (chứng minh lỗi là do trần).</li>
         <li>Gây lỗi cố ý: bỏ bước gán vào nhóm → đỏ; bỏ bước dịch <code>MemoryError</code> → đỏ (ra lỗi thô của numpy).</li>
-        <li>2154 test xanh, ruff F821/F823/E9 sạch.</li>
+        <li>2161 test xanh, ruff F821/F823/E9 sạch.</li>
       </ul>
 
       <div class="label"><span class="pill pill-red">Phản biện</span> 1 lượt Sonnet — không chặn; 1 lỗi trung bình + 2 nhẹ đã sửa</div>
@@ -19550,6 +19550,30 @@ This may happen if you try to create UI from a background task.</pre>
       <p>Xác nhận thêm: bố cục struct x64 đúng (144 byte, <code>JobMemoryLimit</code> ở byte 120); job lồng chạy được (tiến trình test vốn
         đã nằm trong một job mà trần vẫn chặn); trước khi vào nhóm con chỉ kịp nạp vài chục MB; SWIFT vào chung nhóm nhưng không tính
         ngân sách (cố ý). Python 3.10 compile sạch.</p>
+
+      <div class="label"><span class="pill pill-red">Phản biện lượt 2</span> Opus (người dùng yêu cầu) — không chặn; 1 lỗi trung bình + 4 nhẹ đã sửa</div>
+      <table>
+        <tr><th>Phát hiện</th><th>Xử lý</th></tr>
+        <tr><td><b>ACH chạy tiếp sau xác nhận MIS_đi không qua ngân sách</b>: lúc chờ tính 0 GB, lúc chạy tiếp chạy lại cả pipeline
+          (~4,5 GB) mà <code>continue_job</code> không gọi <code>kiem_tra</code>. Khai ILO1000 = 5 là tổng ước tính lên 13,5 > 11,5. Chưa lộ với cấu
+          hình mặc định — sẽ lộ đúng lúc khai số cho module chưa đo</td>
+          <td><code>kiem_tra_ram()</code> + <code>gianh_cho_ram()</code>; API <code>/continue</code> xét trong khoá kết nạp, bị chặn → 409, job giữ nguyên
+          chờ xác nhận. Test qua API thật</td></tr>
+        <tr><td><b>Card nói sai "vượt trần → MemoryError, con vẫn sống"</b>: python-calamine (Rust, ACH đọc GW) và OpenBLAS tự kết
+          thúc cả tiến trình (tái hiện: mã thoát 3221226505 / <code>exit(1)</code>) → câu chung "dừng bất thường"</td>
+          <td>Sửa lời card/README/DESIGN; câu "dừng bất thường" nhắc trần khi trần đang bật</td></tr>
+        <tr><td>ACH dò file GW gom lỗi rồi ném <code>FileNotFoundError</code> SAU vòng lặp — vết không còn chữ <code>MemoryError</code></td>
+          <td>Nhận thêm câu "Unable to allocate" (numpy) trong thông điệp. Không sửa pipeline ACH</td></tr>
+        <tr><td>SWIFT gặp <code>LoiTienTrinhCon</code> → 500 trơn, mất câu tiếng Việt (có từ trước, trần mới làm dễ gặp hơn)</td>
+          <td>Handler chung ở <code>main.py</code> → 503 kèm câu báo</td></tr>
+        <tr><td>Không cảnh báo khi trần cứng nhỏ hơn ngân sách / âm; test 11,5 phụ thuộc <code>.env</code></td>
+          <td>Cảnh báo lúc tạo nhóm; test kiểm hằng số mặc định</td></tr>
+      </table>
+      <p>Xác nhận thêm: <code>JOB_OBJECT_LIMIT_JOB_MEMORY</code> và số "bộ nhớ cam kết đỉnh" (<code>PeakPagefileUsage</code>) cùng một đơn vị —
+        trần không chặn oan lượt ACH 4,19 GB. <code>ThreadPoolExecutor</code> đưa <code>MemoryError</code> về luồng chính, không treo. Để SWIFT
+        trong nhóm là đúng. Gây lỗi cố ý cả 4 phần sửa → đều đỏ.</p>
+      <p><b>Ghi nhận, chưa làm:</b> riêng <code>import numpy</code> đã cam kết ~225 MB/tiến trình con cho bộ đệm OpenBLAS (RAM thật ~12 MB);
+        <code>OPENBLAS_NUM_THREADS=1</code> còn 15 MB. Số đo máy chủ đã gồm phần này nên ước tính vẫn đúng — chỉ là dư địa để nới sau.</p>
 
       <div class="label"><span class="pill pill-amber">Chưa làm</span></div>
       <ul>

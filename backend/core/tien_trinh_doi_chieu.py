@@ -168,9 +168,15 @@ def chay_tach(
             return None
         _log.error("%s: tiến trình PID %s chết sau %.1f s, mã thoát %s, không báo kết quả",
                    ten, p.pid, giay, p.exitcode)
+        # Thư viện viết bằng C/Rust (python-calamine của ACH, OpenBLAS của numpy) cấp phát
+        # thất bại thì TỰ KẾT THÚC cả tiến trình, không ném MemoryError — nên chạm trần cứng
+        # thường ra đúng nhánh này (phản biện Opus 21/09, tái hiện được)
+        tran = tran_ram_gb() if _nhom is not None else 0.0
+        kem_tran = f" (trần bộ nhớ chung cho đối chiếu {_so_vn(tran)} GB)" if tran else ""
         raise LoiTienTrinhCon(
             f"Tiến trình {ten} dừng bất thường (mã thoát {p.exitcode}) mà không báo kết "
-            f"quả — thường do hết bộ nhớ. Backend vẫn chạy bình thường, có thể thử lại."
+            f"quả — thường do hết bộ nhớ{kem_tran}. Có thể do nhiều lượt đối chiếu chạy "
+            f"cùng lúc — chờ một lượt xong rồi thử lại. Backend vẫn chạy bình thường."
         )
 
     loai, noi_dung, ram = ket_thuc[0], ket_thuc[1:-1], ket_thuc[-1]
@@ -186,7 +192,9 @@ def chay_tach(
     # lớn rồi đổi thành "file hỏng", "sai mật khẩu", "sửa file xác nhận" — người dùng sẽ đi
     # kiểm tra file thay vì chờ lượt khác xong. Pickle không giữ __cause__ nên không dựa vào đó
     # được; vết (traceback.format_exc) còn nguyên chuỗi lỗi gốc, cả _ArrayMemoryError của numpy.
-    if isinstance(loi, MemoryError) or "MemoryError" in vet:
+    # "Unable to allocate": numpy — ACH dò file GW gom lỗi rồi ném SAU vòng lặp, vết không còn
+    # chữ MemoryError nhưng thông điệp vẫn giữ câu gốc của numpy
+    if isinstance(loi, MemoryError) or "MemoryError" in vet or "Unable to allocate" in mo_ta:
         # MemoryError thường không kèm thông điệp — để nguyên thì màn hình báo lỗi rỗng
         tran = tran_ram_gb() if os.name == "nt" else 0.0
         _log.warning("%s: tiến trình PID %s hết bộ nhớ (trần chung %s GB)",
@@ -211,7 +219,10 @@ def tran_ram_gb() -> float:
     đổi thì khởi động lại backend. Ô trống/sai → mặc định, không làm backend chết."""
     tho = (os.getenv("DOI_CHIEU_RAM_TRAN_GB") or "").strip().replace(",", ".")
     try:
-        return max(0.0, float(tho)) if tho else _TRAN_RAM_MAC_DINH_GB
+        gb = float(tho) if tho else _TRAN_RAM_MAC_DINH_GB
+        if gb < 0:
+            _log.warning("DOI_CHIEU_RAM_TRAN_GB=%r âm — coi như TẮT trần cứng", tho)
+        return max(0.0, gb)
     except ValueError:
         _log.warning("DOI_CHIEU_RAM_TRAN_GB=%r không phải số — dùng %s GB", tho, _TRAN_RAM_MAC_DINH_GB)
         return _TRAN_RAM_MAC_DINH_GB
@@ -280,6 +291,12 @@ def _lay_nhom():
             return None
         _nhom = nhom
         _log.info("Trần bộ nhớ chung cho đối chiếu: %s GB", _so_vn(tran))
+        from backend.core import phien_doi_chieu   # trễ: tránh vòng import lúc nạp module
+        if tran < phien_doi_chieu.NGAN_SACH_RAM_GB:
+            _log.warning(
+                "Trần cứng %s GB NHỎ HƠN ngân sách xét trước khi chạy %s GB — các lượt được cho "
+                "chạy vẫn có thể chết giữa chừng vì trần. Xem DOI_CHIEU_RAM_TRAN_GB trong .env.",
+                _so_vn(tran), _so_vn(phien_doi_chieu.NGAN_SACH_RAM_GB))
         return _nhom
 
 

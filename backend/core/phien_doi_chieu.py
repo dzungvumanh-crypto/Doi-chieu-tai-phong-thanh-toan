@@ -112,8 +112,9 @@ _KHONG_GIU_RAM = {"awaiting_confirmation"}
 # nhất đã đo chạy được cùng lúc (RAM thật ≈ 4,19 + 3,87 + 2,13 = 10,2 GB, dưới trần cứng 13).
 # Hệ quả: với 4 module đã có số, luật này không chặn tổ hợp 3 lượt nào — nó bắt đầu có tác dụng
 # khi ILO1000/459901/OSB được khai ước tính, hoặc khi nâng MAX_SONG_SONG.
-NGAN_SACH_RAM_GB = _doc_gb(os.getenv("DOI_CHIEU_RAM_NGAN_SACH_GB") or "11.5",
-                           "DOI_CHIEU_RAM_NGAN_SACH_GB") or 11.5
+_NGAN_SACH_MAC_DINH_GB = 11.5
+NGAN_SACH_RAM_GB = (_doc_gb(os.getenv("DOI_CHIEU_RAM_NGAN_SACH_GB") or str(_NGAN_SACH_MAC_DINH_GB),
+                            "DOI_CHIEU_RAM_NGAN_SACH_GB") or _NGAN_SACH_MAC_DINH_GB)
 
 
 def _so_vn(x: float) -> str:
@@ -188,9 +189,20 @@ def kiem_tra(ma_module: str) -> Optional[dict]:
             "dang_chay": dsach,
         }
 
-    # Xét RAM ước tính. Chỉ cộng lượt THẬT SỰ đang giữ RAM (xem _KHONG_GIU_RAM) của module có
-    # số đo. Không có gì đang dùng thì luôn cho qua — kể cả khi ước tính một mình đã vượt
-    # ngân sách (đặt ngân sách thấp không được khoá chết cả module).
+    return kiem_tra_ram(ma_module, dsach)
+
+
+def kiem_tra_ram(ma_module: str, dsach: Optional[list] = None) -> Optional[dict]:
+    """Chỉ luật 3 (RAM ước tính) — dùng riêng cho lượt CHẠY TIẾP của một job đã có (ACH
+    sau xác nhận MIS_đi): luật cùng module và trần số lượt không áp (job đó đã chiếm chỗ),
+    nhưng lúc chờ nó được tính 0 GB nên lúc chạy lại PHẢI xét ngân sách (phản biện Opus
+    21/09: không xét thì tổng ước tính lên 13,5 > 11,5 khi đã khai số cho ILO1000).
+
+    Chỉ cộng lượt THẬT SỰ đang giữ RAM (xem _KHONG_GIU_RAM) của module có số đo. Không có
+    gì đang dùng thì luôn cho qua — kể cả khi ước tính một mình đã vượt ngân sách (đặt
+    ngân sách thấp không được khoá chết cả module)."""
+    if dsach is None:
+        dsach = dang_chay()
     uoc = RAM_UOC_TINH.get(ma_module)
     giu_ram = [j for j in dsach
                if j["module"] in RAM_UOC_TINH and j.get("status") not in _KHONG_GIU_RAM]
@@ -244,3 +256,11 @@ def gianh_cho(ma_module: str) -> Iterator[Optional[dict]]:
     """
     with _lock_ket_nap:
         yield kiem_tra(ma_module)
+
+
+@contextlib.contextmanager
+def gianh_cho_ram(ma_module: str) -> Iterator[Optional[dict]]:
+    """Như `gianh_cho` nhưng chỉ xét RAM — cho bước chạy tiếp một job đã có. Người gọi phải
+    đổi trạng thái job sang đang chạy TRƯỚC khi nhả khoá, không thì hai lượt cùng qua."""
+    with _lock_ket_nap:
+        yield kiem_tra_ram(ma_module)

@@ -43,8 +43,10 @@ def test_so_uoc_tinh_dung_so_nguoi_dung_chot():
 
 
 def test_ngan_sach_mac_dinh_11_5_vua_ach_di_den():
-    # Người dùng chốt 21/09/2026: 11,5 = 4,5 + 4 + 3 — đổi số này là đổi quyết định đó
-    assert pdc.NGAN_SACH_RAM_GB == 11.5
+    # Người dùng chốt 21/09/2026: 11,5 = 4,5 + 4 + 3 — đổi số này là đổi quyết định đó.
+    # Kiểm hằng số mặc định, không kiểm NGAN_SACH_RAM_GB: máy có khai .env thì giá trị đó khác.
+    d = pdc._RAM_UOC_TINH_MAC_DINH
+    assert pdc._NGAN_SACH_MAC_DINH_GB == 11.5 == d["ach"] + d["song_phuong_kenh_core_di"] + d["song_phuong"]
 
 
 def test_ach_di_den_cung_luc_duoc_chay(nguon):
@@ -105,6 +107,32 @@ def test_ach_cho_xac_nhan_khong_tinh_ram(nguon):
     assert pdc.kiem_tra("song_phuong") is None
 
 
+def test_ach_chay_tiep_sau_xac_nhan_phai_xet_ngan_sach(nguon, monkeypatch):
+    # Lúc chờ, ACH tính 0 GB; lúc chạy tiếp là chạy lại cả pipeline 4,5 GB. Phản biện Opus
+    # 21/09: không xét thì khai ILO1000 = 5 là tổng ước tính lên 13,5 > 11,5.
+    monkeypatch.setitem(pdc.RAM_UOC_TINH, "ilo1000", 5.0)
+    pdc.dang_ky_nguon("ach", "ACH", lambda: {"job_id": "a", "status": "awaiting_confirmation"})
+    nguon("ilo1000", "ILO1000", True)
+    nguon("song_phuong_kenh_core_di", "Song phương ĐI", True)
+    nghen = pdc.kiem_tra_ram("ach")
+    assert nghen is not None and "ILO1000 ~5 GB" in nghen["message"]
+
+
+def test_api_ach_chay_tiep_bi_chan_thi_giu_nguyen_cho_xac_nhan(nguon, monkeypatch, admin_client):
+    from backend.services import ach_service
+    monkeypatch.setitem(pdc.RAM_UOC_TINH, "ilo1000", 5.0)
+    pdc.dang_ky_nguon("ach", "ACH", ach_service.job_dang_chay)      # nguồn THẬT của ACH
+    nguon("ilo1000", "ILO1000", True)
+    nguon("song_phuong_kenh_core_di", "Song phương ĐI", True)
+    job_id, job = ach_service._new_job()
+    job["status"] = "awaiting_confirmation"
+    r = admin_client.post(f"/api/ach/continue/{job_id}",
+                          files={"file": ("x.xlsx", b"xac-nhan", "application/octet-stream")})
+    assert r.status_code == 409, r.text
+    assert "chưa đủ bộ nhớ" in r.json()["detail"]["message"]
+    assert job["status"] == "awaiting_confirmation"                    # không bị đẩy sang chạy
+
+
 def test_dang_chay_toan_module_chua_co_so_thi_khong_xet_ngan_sach(nguon, monkeypatch):
     # Ngân sách đặt thấp hơn ước tính 1 module, đang chạy toàn module chưa có số → 0 GB đang
     # dùng, không được chặn (và không ra câu báo danh sách rỗng)
@@ -148,6 +176,21 @@ def _ham_boc_loi_bo_nho(mb, log_callback, cancel_event):
         raise ValueError(f"file không đọc được như Excel ({e})") from e
 
 
+def _ham_gom_loi_roi_nem(mb, log_callback, cancel_event):
+    # Đúng kiểu ACH dò file GW (pipeline.py): gom lỗi vào danh sách, ném SAU vòng lặp — vết
+    # lỗi không còn chữ MemoryError, chỉ còn câu gốc của numpy trong thông điệp
+    loi = []
+    try:
+        _ham_xin_ram(mb, log_callback, cancel_event)
+    except Exception as e:
+        loi.append(("x_GW.xlsx", str(e)))
+    raise FileNotFoundError(f"Không tìm thấy file GW — có {len(loi)} file lỗi khi đọc: {loi}")
+
+
+def _ham_chet_cung(log_callback, cancel_event):
+    os._exit(3)   # như python-calamine / OpenBLAS tự kết thúc khi cấp phát thất bại
+
+
 @pytest.fixture
 def tran(monkeypatch, tien_trinh_that):
     """Nhóm Job Object mới cho mỗi test (nhóm chung được tạo một lần/đời backend)."""
@@ -173,6 +216,38 @@ def test_het_bo_nho_bi_pipeline_boc_lai_van_bao_ro(tran):
     tran("0.4")
     with pytest.raises(ttdc.LoiTienTrinhCon, match="vượt bộ nhớ dành cho đối chiếu"):
         ttdc.chay_tach(_ham_boc_loi_bo_nho, ten="thử", mb=800)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Job Object chỉ có trên Windows")
+def test_loi_bo_nho_bi_gom_roi_nem_sau_van_bao_ro(tran):
+    tran("0.4")
+    with pytest.raises(ttdc.LoiTienTrinhCon, match="vượt bộ nhớ dành cho đối chiếu"):
+        ttdc.chay_tach(_ham_gom_loi_roi_nem, ten="thử", mb=800)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Job Object chỉ có trên Windows")
+def test_chet_cung_khi_co_tran_thi_cau_bao_nhac_tran(tran):
+    # calamine/OpenBLAS không ném MemoryError mà kết thúc cả tiến trình — câu báo phải hướng
+    # người dùng về bộ nhớ và trần, không để họ đi soát file
+    tran("0.4")
+    ttdc.chay_tach(_ham_xin_ram, ten="thử", mb=10)                 # tạo nhóm
+    with pytest.raises(ttdc.LoiTienTrinhCon, match=r"mã thoát 3.*trần bộ nhớ chung cho đối chiếu 0,4 GB"):
+        ttdc.chay_tach(_ham_chet_cung, ten="thử")
+
+
+def test_swift_gap_loi_tien_trinh_con_tra_503_co_cau_tieng_viet(monkeypatch):
+    # Có từ trước PR: SWIFT chỉ bắt UnknownFileFormat → LoiTienTrinhCon ra 500 trơn
+    from backend.api import swift_recon as api
+    from tests.test_swift_recon_tach import _client_moi, _ql_den, _saa_den, _tep
+
+    def _no(*a, **k):
+        raise ttdc.LoiTienTrinhCon("Lượt SWIFT recon vượt bộ nhớ dành cho đối chiếu")
+    monkeypatch.setattr(api, "chay_tach", _no)
+    with _client_moi() as c:
+        r = c.post("/api/swift-recon/reconcile-den", files=[
+            _tep("saa_files", _saa_den(), "a.xls"), _tep("ql_files", _ql_den(), "b.xls")])
+    assert r.status_code == 503
+    assert "vượt bộ nhớ" in r.json()["detail"]
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Job Object chỉ có trên Windows")
