@@ -19094,9 +19094,10 @@ This may happen if you try to create UI from a background task.</pre>
         <tr>
           <td><code>frontend/pages/duty_schedule.py:450</code> — <code>week_label</code> viết trần trong
             <code>with ui.row()</code> (ruff B018)</td>
-          <td>Nhãn "Tuần 21/09 – 25/09" nằm tách trên đầu tab Phân lịch thay vì giữa hai nút ◀ ▶ —
-            nhắc tên một element <b>không</b> di chuyển nó, phải <code>.move()</code></td>
-          <td>Không test nào dựng trang; sai vị trí không ném lỗi, không đổi dữ liệu</td>
+          <td><b>Đính chính (card 155):</b> ban đầu coi là lỗi hiển thị và sửa bằng <code>.move()</code>. Sai —
+            hàng nút nằm <b>dưới</b> bảng, nhãn là đầu đề <b>trên</b> bảng; <code>.move()</code> đẩy tiêu đề tuần
+            xuống dưới bảng. Người dùng chốt giữ giao diện cũ: chỉ xoá dòng mã chết.</td>
+          <td>Biểu thức trần không có tác dụng gì — mã chết, không phải lỗi người dùng thấy</td>
         </tr>
         <tr>
           <td><code>backend/api/leaves.py:2547</code> — <code>carry_original</code> tính rồi bỏ (ruff F841)</td>
@@ -19297,6 +19298,30 @@ This may happen if you try to create UI from a background task.</pre>
       <p><code>_assert_feature_coverage()</code> không chặn khởi động (96 mã, không mã nào thiếu ô tick — đã quét lại
         toàn bộ <code>FEATURE_GROUPS</code>); route đăng ký đúng <code>require_feature</code> với đúng chuỗi mã (đọc
         closure của dependency đã gắn, không tin mắt đọc diff); 2097 test xanh.</p>
+
+      <div class="label"><span class="pill pill-blue">Phản biện trước PR</span> 1 lượt, model mặc định</div>
+      <p>(1) adapter, (2) utcnow, (3) create_task, (4) quyền unlock: <b>ĐỒNG Ý</b> — phản biện tự đọc lại mã NiceGUI
+        (<code>events.py</code>, <code>elements/timer.py</code>) và quét AST độc lập, ra cùng kết luận. Nhóm (5):
+        <b>KHÔNG ĐỒNG Ý có bằng chứng</b>, 3 điểm, đã xử lý cả ba:</p>
+      <table>
+        <tr><th>Điểm</th><th>Xử lý</th></tr>
+        <tr><td><b><code>week_label.move()</code> đẩy tiêu đề tuần từ trên bảng xuống dưới bảng.</b> Cả ba element cùng
+          một slot, thứ tự DOM là thứ tự tạo: nhãn (162) → bảng (163) → hàng nút (455). Card 153 đã đọc nhầm
+          thành "nhãn bị đẩy lên tách rời" — thực ra đó là <b>đầu đề</b> đúng chỗ của nó.</td>
+          <td>Người dùng chốt giữ giao diện cũ. Chỉ xoá dòng mã chết, ghi lý do tại chỗ để người sau không
+          "sửa" lại lần nữa. Bỏ dòng tương ứng khỏi <code>Logs_update.md</code>.</td></tr>
+        <tr><td>Bỏ <code>is_admin</code> ở <code>bundles.py</code> làm <code>current_user</code> thành biến chết</td>
+          <td>Xoá nốt</td></tr>
+        <tr><td>Lưới canh có 2 lỗ: chỉ khớp <code>ast.Attribute</code> (lọt <code>from asyncio import
+          ensure_future</code>), và so <code>_DUOC_PHEP</code> theo tên file (mọi <code>**/shared.py</code> sau này tự
+          được miễn)</td>
+          <td>Bắt thêm <code>ast.Name</code> và <code>background_tasks.create</code> của NiceGUI; so theo đường dẫn
+          tương đối. Gây lỗi cố ý cả hai kiểu — đều đỏ</td></tr>
+      </table>
+      <p>Thêm một ý vận hành từ phản biện, đã kiểm: <code>load_my_features()</code> chỉ được gọi ở
+        <code>login.py</code>, nên người vừa được tick quyền phải <b>đăng nhập lại</b> mới thấy nút. Đã ghi vào
+        <code>Logs_update.md</code> — không có dòng đó thì người vận hành tick xong sẽ báo "tick rồi mà không có nút".</p>
+      <p>Theo SKILL.md: mới <b>1 lượt</b> phản biện cho một thay đổi chạm phân quyền. Người dùng đã quyết merge.</p>
 
       <div class="label"><span class="pill pill-amber">Còn lại</span></div>
       <p><code>staff.py</code> vẫn gate ba chỗ bằng <code>is_admin</code> (<code>_ADMIN_ROLES</code>) — chưa gỡ. Khác

@@ -452,12 +452,12 @@ async def duty_schedule_page():
                                        else ws_ref["value"] + timedelta(weeks=so_tuan))
                     await load_schedule()
 
-                with ui.row().classes("items-center gap-2 mb-2 flex-wrap") as nav_tuan:
+                # week_label KHÔNG nằm trong hàng này: nó là đầu đề của bảng, tạo ở đầu tab
+                # (trước schedule_area). Hàng nút ở DƯỚI bảng — dời nhãn vào đây là đẩy tiêu
+                # đề tuần xuống dưới bảng (người dùng chốt giữ nguyên, 21/09/2026).
+                with ui.row().classes("items-center gap-2 mb-2 flex-wrap"):
                     ui.button(icon="chevron_left",
                               on_click=lambda: _doi_tuan(-1)).props("flat dense")
-                    # week_label được tạo ở đầu tab (trước schedule_area) nên phải DỜI vào
-                    # giữa hai nút, không phải nhắc tên trần — nhắc trần không di chuyển gì.
-                    week_label.move(nav_tuan)
                     ui.button(icon="chevron_right",
                               on_click=lambda: _doi_tuan(1)).props("flat dense")
                     ui.button("Hôm nay",

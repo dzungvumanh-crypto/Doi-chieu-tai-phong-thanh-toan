@@ -20,11 +20,34 @@ import ast
 from pathlib import Path
 
 _GOC = Path(__file__).resolve().parent.parent / "frontend"
-_BOC = {"create_task", "ensure_future"}
+
+# `asyncio.create_task(...)` (Attribute) lẫn `create_task(...)` sau
+# `from asyncio import create_task` (Name) — bắt cả hai, không thì đổi kiểu
+# import là lách được lưới. `background_tasks.create` của chính NiceGUI cũng mở
+# task rời y hệt nên tính luôn.
+_BOC = {"create_task", "ensure_future", "create"}
+_BOC_MODULE = {"asyncio", "background_tasks"}
 
 # Chỗ còn lại được phép: việc nền thật, KHÔNG vẽ giao diện. Thêm vào đây là một
-# quyết định có chủ ý — kèm lý do ngay tại dòng mã đó.
+# quyết định có chủ ý — kèm lý do ngay tại dòng mã đó. So theo ĐƯỜNG DẪN tương
+# đối, không theo tên file: so tên thì một `frontend/pages/shared.py` mới sau
+# này tự được miễn mà không ai để ý.
 _DUOC_PHEP = {"shared.py"}
+
+
+def _la_loi_goi_boc(n: ast.AST) -> bool:
+    if not isinstance(n, ast.Call):
+        return False
+    f = n.func
+    if isinstance(f, ast.Attribute):
+        # asyncio.create_task / background_tasks.create — chặn `create` trần của
+        # đối tượng khác (vd. dialog.create) bằng cách soi tên module.
+        if f.attr == "create":
+            return isinstance(f.value, ast.Name) and f.value.id in _BOC_MODULE
+        return f.attr in _BOC
+    if isinstance(f, ast.Name):
+        return f.id in {"create_task", "ensure_future"}
+    return False
 
 
 def _duyet(f: Path):
@@ -36,8 +59,7 @@ def _duyet(f: Path):
             cha[c] = n
     ra = []
     for n in ast.walk(cay):
-        if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
-                and n.func.attr in _BOC):
+        if _la_loi_goi_boc(n):
             ra.append((n.lineno, isinstance(cha.get(n), ast.Lambda)))
     return ra
 
@@ -58,13 +80,15 @@ def test_create_task_trong_than_ham_chi_con_o_cho_da_khai():
     """Mọi chỗ nạp giao diện phải dùng ui.timer(..., once=True), không phải create_task."""
     thua = []
     for f in sorted(_GOC.rglob("*.py")):
-        if f.name in _DUOC_PHEP:
+        if str(f.relative_to(_GOC)).replace("\\", "/") in _DUOC_PHEP:
             continue
         for dong, trong_lambda in _duyet(f):
             if not trong_lambda:
                 thua.append(f"{f.relative_to(_GOC.parent)}:{dong}")
     assert not thua, (
-        "Nạp giao diện thì dùng ui.timer(0, ham, once=True). Nếu đây thật sự là việc "
-        "nền không vẽ gì, thêm tên file vào _DUOC_PHEP và ghi lý do tại dòng mã:\n"
+        "Nạp giao diện thì dùng ui.timer(0, ham, once=True); handler thì cho NiceGUI "
+        "tự await (kể cả khuôn `lambda: [gán…, ensure_future(…)]` — lambda trả LIST "
+        "nên không được await, phải tách thành `async def`). Nếu đây thật sự là việc "
+        "nền không vẽ gì, thêm đường dẫn file vào _DUOC_PHEP và ghi lý do tại dòng mã:\n"
         + "\n".join(thua)
     )

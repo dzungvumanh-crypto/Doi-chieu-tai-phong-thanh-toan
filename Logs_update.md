@@ -8,6 +8,8 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
     + ⚠️ **Người vận hành phải làm một việc sau khi cập nhật**: vào **Phân quyền theo nhóm** → nhóm cần cấp →
       mục *Đối chiếu CITAD cuối ngày* → tick ô **"Mở khoá bảng đối chiếu đã chốt"**. Đây là ô quyền MỚI, chưa
       nhóm nào có sẵn — không tick thì ngoài Admin không ai mở khoá được
+    + ⚠️ Người vừa được tick quyền phải **đăng xuất rồi đăng nhập lại** mới thấy nút — danh sách
+      quyền chỉ nạp lúc đăng nhập. Tick xong mà vẫn chưa thấy nút thì đăng nhập lại, không phải lỗi
     + ✅ Admin vẫn mở khoá được như trước, không cần tick gì thêm
     + ℹ️ Nút trên màn hình đổi tên từ "Mở khoá (Admin)" thành "Mở khoá" — vì nút này không còn của riêng Admin
 
@@ -15,8 +17,6 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
     + ✅ Sửa 39 nút và ô chọn trên các màn hình Phân lịch trực, Nghỉ phép, Nhật ký hệ thống, Nhật ký đăng nhập,
       Quản lý User, Lưu trữ, Bàn giao, Phân quyền: trước đây một số nút bấm vào **không hiện gì, cũng không báo
       lỗi** — thông báo bị nuốt mất. Nay bấm là có phản hồi
-    + ✅ Màn **Phân lịch trực**: dòng chữ "Tuần ... – ..." nay nằm đúng giữa hai nút mũi tên, trước đây bị đẩy
-      lên tách rời phía trên
     + ℹ️ Không đổi số liệu hay cách tính nào
 
 - 21/09/2026 Toàn hệ thống - **Dọn nợ kỹ thuật, chuẩn bị cho bản Python mới**

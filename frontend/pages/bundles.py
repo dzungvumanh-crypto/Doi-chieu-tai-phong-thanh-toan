@@ -18,8 +18,6 @@ async def bundles_page():
         from datetime import date as _bd
         _today_b = _bd.today()
 
-        current_user = api.get_current_user()
-
         try:
             await ui.context.client.connected()
         except Exception:
