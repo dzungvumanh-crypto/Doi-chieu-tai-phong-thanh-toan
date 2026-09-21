@@ -152,6 +152,18 @@ def test_o_khong_ton_tai_404(ctx):
     assert _ghi(client, "x", eid=999).status_code == 404
 
 
+def test_ky_tu_dieu_khien_bi_loc_de_word_xuat_duoc(ctx):
+    """python-docx ném ValueError với \x0b, \x0c… → file Word báo cáo cả tháng hỏng."""
+    client, conn, _ = ctx
+    assert _ghi(client, "dòng 1\r\ndòng\x0b2\x01\tcuối").status_code == 200
+    note = conn.execute("SELECT notes FROM document_entries WHERE id=100").fetchone()[0]
+    assert note == "dòng 1\ndòng2\tcuối"
+    data = {"overall": {}, "by_dept": [], "late_entries": [{
+        "dept_name": "P", "staff_id": 9, "staff_name": "A", "transaction_date": "2026-08-03",
+        "submitted_date": "2026-08-06", "days_late": 1, "sheet_count": 1, "notes": note}]}
+    build_report_docx(data, 2026, 8)
+
+
 def test_qua_1000_ky_tu_bi_tu_choi(ctx):
     client, _, _ = ctx
     assert _ghi(client, "a" * 1001).status_code == 422

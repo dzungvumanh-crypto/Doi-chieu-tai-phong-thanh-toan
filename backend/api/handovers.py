@@ -2,6 +2,7 @@
 import calendar
 import io
 import logging
+import re
 import sqlite3
 from datetime import date, datetime
 from typing import Optional
@@ -170,7 +171,8 @@ def _ghi_audit_xoa_o(db, current, entry_row, staff_row, dept_id, ly_do: str) -> 
     phong = ", phòng %s" % dept["name"] if dept else ""
     so_to = entry_row["sheet_count"]
     trang_thai = _STATUS_LABEL.get(entry_row["entry_status"], entry_row["entry_status"])
-    # Ghi chú và lịch sử của nó bị xoá theo ô — dòng nhật ký này là bản lưu duy nhất
+    # Ghi chú và lịch sử của nó bị xoá theo ô — dòng này giữ lại nội dung (chỉ ô đã chốt
+    # mới đi qua đây; ô chưa chốt bị xoá thì ghi chú mất hẳn, xem card BG2)
     ghi_chu = f" Ghi chú của ô: {entry_row['notes']}" if entry_row["notes"] else ""
     detail = (
         f"Xoá ô chứng từ — GDV {ten}{ma}, ngày {ngay}, {so_to} tờ{phong}, "
@@ -644,6 +646,8 @@ def resubmit_entry(
 
 
 # ─── Ghi chú ô chứng từ ──────────────────────────────────────────────────────
+_KY_TU_DIEU_KHIEN = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+
 # Tách khỏi entry-upsert: upsert đổi trạng thái (GDV sửa → chờ xác nhận) và chặn ô đã
 # chốt. Ghi chú không phải số liệu → sửa ở mọi trạng thái, không đụng trạng thái.
 @router.put("/entries/{entry_id}/note")
@@ -661,7 +665,9 @@ def update_entry_note(
     if entry["staff_id"] != current["id"]:
         _assert_dept_write_allowed(db, current, _entry_dept(db, entry_id))
 
-    note = body.note.strip() or None
+    # Bỏ ký tự điều khiển (giữ xuống dòng/tab): python-docx từ chối chúng → một ghi chú
+    # dán từ nguồn lạ làm file Word báo cáo cả tháng ném 500
+    note = _KY_TU_DIEU_KHIEN.sub("", body.note.replace("\r\n", "\n")).strip() or None
     if note == (entry["notes"] or None):
         return {"ok": True, "changed": False}
 

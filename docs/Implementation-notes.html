@@ -100,6 +100,13 @@
         <tr><td>Ô chưa nộp / bị từ chối chưa nộp lại</td>
           <td>Không lên báo cáo (báo cáo chỉ xét ô <b>đã nộp muộn</b>) → ghi chú cũng không sang. Ô đổi đúng/quá hạn
             sau khi nộp lại thì ghi chú tự hiện/biến theo.</td></tr>
+        <tr><td>GDV sửa được ghi chú trên ô của GDV khác cùng phòng</td>
+          <td>Nhất quán với <code>entry-upsert</code> (nhập số tờ hộ người cùng phòng). Báo cáo in không kèm tên nên trên
+            bản ký không thấy ai viết — chỉ lịch sử <code>note_edited</code> lưu vết. Muốn "chỉ chủ ô" thì thêm điều kiện
+            <code>staff_id == current.id</code> ở <code>update_entry_note</code>. Phản biện nêu, để người dùng quyết.</td></tr>
+        <tr><td>Ký tự điều khiển trong ghi chú</td>
+          <td>Lọc lúc lưu (giữ xuống dòng/tab). python-docx từ chối chúng → một ghi chú dán từ nguồn lạ làm file Word
+            báo cáo <b>cả tháng</b> ném 500 trong khi màn hình vẫn hiện bình thường. Phát hiện ở lượt phản biện.</td></tr>
         <tr><td>Phạm vi người đọc rộng ra</td>
           <td>Ai có <code>menu.handover_reports</code> đọc được giải trình của mọi phòng.</td></tr>
         <tr><td>Cấp bù <code>cham_ach.process</code> (PR#54)</td>
