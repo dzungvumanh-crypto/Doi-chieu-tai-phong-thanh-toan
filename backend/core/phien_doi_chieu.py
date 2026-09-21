@@ -104,6 +104,10 @@ def _doc_uoc_tinh() -> dict[str, float]:
 
 
 RAM_UOC_TINH = _doc_uoc_tinh()
+# Trạng thái vẫn CHIẾM chỗ (luật cùng module, trần số lượt) nhưng KHÔNG còn tiến trình con giữ
+# RAM: ACH chờ xác nhận MIS_đi — tính 4,5 GB là chặn oan lượt khác tới 4 giờ (phản biện 21/09).
+_KHONG_GIU_RAM = {"awaiting_confirmation"}
+
 NGAN_SACH_RAM_GB = _doc_gb(os.getenv("DOI_CHIEU_RAM_NGAN_SACH_GB") or "11",
                            "DOI_CHIEU_RAM_NGAN_SACH_GB") or 11.0
 
@@ -180,17 +184,19 @@ def kiem_tra(ma_module: str) -> Optional[dict]:
             "dang_chay": dsach,
         }
 
-    # Xét RAM ước tính. Không có lượt nào khác đang chạy thì luôn cho qua — kể cả khi ước tính
-    # một mình đã vượt ngân sách (đặt ngân sách thấp không được khoá chết cả module).
+    # Xét RAM ước tính. Chỉ cộng lượt THẬT SỰ đang giữ RAM (xem _KHONG_GIU_RAM) của module có
+    # số đo. Không có gì đang dùng thì luôn cho qua — kể cả khi ước tính một mình đã vượt
+    # ngân sách (đặt ngân sách thấp không được khoá chết cả module).
     uoc = RAM_UOC_TINH.get(ma_module)
-    if uoc is not None and dsach:
-        dang_dung = sum(RAM_UOC_TINH.get(j["module"], 0.0) for j in dsach)
+    giu_ram = [j for j in dsach
+               if j["module"] in RAM_UOC_TINH and j.get("status") not in _KHONG_GIU_RAM]
+    if uoc is not None and giu_ram:
+        dang_dung = sum(RAM_UOC_TINH[j["module"]] for j in giu_ram)
         if dang_dung + uoc > NGAN_SACH_RAM_GB:
             with _lock:
                 ten_moi = _NGUON.get(ma_module, (ma_module,))[0]
             chi_tiet = ", ".join(
-                f"{j['ten_module']} ~{_so_vn(RAM_UOC_TINH[j['module']])} GB"
-                for j in dsach if j["module"] in RAM_UOC_TINH)
+                f"{j['ten_module']} ~{_so_vn(RAM_UOC_TINH[j['module']])} GB" for j in giu_ram)
             return {
                 "message": (
                     f"Máy chủ chưa đủ bộ nhớ cho thêm một lượt {ten_moi} "

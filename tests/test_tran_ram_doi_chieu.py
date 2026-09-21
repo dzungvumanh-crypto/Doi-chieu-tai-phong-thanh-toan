@@ -81,6 +81,24 @@ def test_mot_minh_vuot_ngan_sach_van_cho_chay(nguon, monkeypatch):
     assert pdc.kiem_tra("ach") is None
 
 
+def test_ach_cho_xac_nhan_khong_tinh_ram(nguon):
+    # Chờ xác nhận MIS_đi: không còn tiến trình con — cộng 4,5 GB là chặn oan tới 4 giờ.
+    # Vẫn tính cho luật cùng module và trần số lượt (không đổi hành vi cũ).
+    pdc.dang_ky_nguon("ach", "ACH", lambda: {"job_id": "a", "status": "awaiting_confirmation"})
+    nguon("song_phuong_kenh_core_di", "ĐI", True)
+    nguon("song_phuong", "ĐẾN", False)                          # 4 + 3 = 7 (không tính ACH)
+    assert pdc.kiem_tra("song_phuong") is None
+
+
+def test_dang_chay_toan_module_chua_co_so_thi_khong_xet_ngan_sach(nguon, monkeypatch):
+    # Ngân sách đặt thấp hơn ước tính 1 module, đang chạy toàn module chưa có số → 0 GB đang
+    # dùng, không được chặn (và không ra câu báo danh sách rỗng)
+    monkeypatch.setattr(pdc, "NGAN_SACH_RAM_GB", 3.0)
+    nguon("ilo1000", "ILO1000", True)
+    nguon("ach", "ACH", False)
+    assert pdc.kiem_tra("ach") is None
+
+
 def test_tran_so_luot_van_giu(nguon):
     # Xét RAM không thay trần số lượt: 3 lượt nhỏ (chưa có số) vẫn bị chặn
     for ma in ("ilo1000", "cham459901", "doi_chieu_osb"):
@@ -106,6 +124,15 @@ def _ham_xin_ram(mb, log_callback, cancel_event):
     return int(a[-1])
 
 
+def _ham_boc_loi_bo_nho(mb, log_callback, cancel_event):
+    # Đúng kiểu 459901/Song phương/ACH: bắt Exception quanh bước đọc lớn rồi đổi thành
+    # "file hỏng" — MemoryError gốc chỉ còn trong vết lỗi
+    try:
+        return _ham_xin_ram(mb, log_callback, cancel_event)
+    except Exception as e:
+        raise ValueError(f"file không đọc được như Excel ({e})") from e
+
+
 @pytest.fixture
 def tran(monkeypatch, tien_trinh_that):
     """Nhóm Job Object mới cho mỗi test (nhóm chung được tạo một lần/đời backend)."""
@@ -123,6 +150,14 @@ def test_vuot_tran_cung_thi_bao_ro_khong_phai_loi_rong(tran):
     assert "0,4 GB" in str(ei.value)
     # Dưới trần thì chạy bình thường — cùng nhóm, cùng trần
     assert ttdc.chay_tach(_ham_xin_ram, ten="thử", mb=100) == 1
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Job Object chỉ có trên Windows")
+def test_het_bo_nho_bi_pipeline_boc_lai_van_bao_ro(tran):
+    # Phản biện 21/09: không nhận ra thì người dùng đi kiểm tra file thay vì chờ lượt khác
+    tran("0.4")
+    with pytest.raises(ttdc.LoiTienTrinhCon, match="vượt bộ nhớ dành cho đối chiếu"):
+        ttdc.chay_tach(_ham_boc_loi_bo_nho, ten="thử", mb=800)
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Job Object chỉ có trên Windows")

@@ -182,15 +182,20 @@ def chay_tach(
         return noi_dung[0]
     du_lieu, mo_ta, vet = noi_dung
     loi = pickle.loads(du_lieu) if du_lieu is not None else None
-    if isinstance(loi, MemoryError):
+    # Xét cả VẾT LỖI, không chỉ kiểu: 459901 / Song phương / ACH bắt Exception quanh bước đọc
+    # lớn rồi đổi thành "file hỏng", "sai mật khẩu", "sửa file xác nhận" — người dùng sẽ đi
+    # kiểm tra file thay vì chờ lượt khác xong. Pickle không giữ __cause__ nên không dựa vào đó
+    # được; vết (traceback.format_exc) còn nguyên chuỗi lỗi gốc, cả _ArrayMemoryError của numpy.
+    if isinstance(loi, MemoryError) or "MemoryError" in vet:
         # MemoryError thường không kèm thông điệp — để nguyên thì màn hình báo lỗi rỗng
-        tran = tran_ram_gb()
-        _log.warning("%s: tiến trình PID %s hết bộ nhớ được cấp (trần chung %s GB)",
-                     ten, p.pid, f"{tran:g}" if tran else "tắt")
+        tran = tran_ram_gb() if os.name == "nt" else 0.0
+        _log.warning("%s: tiến trình PID %s hết bộ nhớ (trần chung %s GB)",
+                     ten, p.pid, _so_vn(tran) if tran else "tắt")
+        vi_sao = (f"vượt bộ nhớ dành cho đối chiếu (trần chung {_so_vn(tran)} GB, hoặc máy chủ "
+                  f"đang thiếu RAM)" if tran else "hết bộ nhớ — máy chủ đang thiếu RAM")
         raise LoiTienTrinhCon(
-            f"Lượt {ten} vượt bộ nhớ dành cho đối chiếu (trần chung "
-            f"{_so_vn(tran)} GB, hoặc máy chủ đang thiếu RAM). Nhiều lượt đối chiếu đang "
-            f"chạy cùng lúc — chờ một lượt xong rồi chạy lại. Backend vẫn chạy bình thường."
+            f"Lượt {ten} {vi_sao}. Có thể do nhiều lượt đối chiếu chạy cùng lúc — chờ một "
+            f"lượt xong rồi chạy lại. Backend vẫn chạy bình thường."
         ) from _VetLoiCon(vet)
     if loi is not None:
         raise loi from _VetLoiCon(vet)

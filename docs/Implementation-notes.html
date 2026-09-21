@@ -19526,8 +19526,26 @@ This may happen if you try to create UI from a background task.</pre>
           lẻ vượt ngân sách; trần số lượt vẫn giữ; đọc <code>.env</code>. Trần cứng chạy tiến trình con thật: trần 0,4 GB + xin 800 MB →
           câu tiếng Việt; tắt trần → cùng 800 MB chạy được (chứng minh lỗi là do trần).</li>
         <li>Gây lỗi cố ý: bỏ bước gán vào nhóm → đỏ; bỏ bước dịch <code>MemoryError</code> → đỏ (ra lỗi thô của numpy).</li>
-        <li>2151 test xanh, ruff F821/F823/E9 sạch.</li>
+        <li>2154 test xanh, ruff F821/F823/E9 sạch.</li>
       </ul>
+
+      <div class="label"><span class="pill pill-red">Phản biện</span> 1 lượt Sonnet — không chặn; 1 lỗi trung bình + 2 nhẹ đã sửa</div>
+      <table>
+        <tr><th>Phát hiện</th><th>Xử lý</th></tr>
+        <tr><td><b>MemoryError bị pipeline bọc lại</b>: 459901 (<code>read_excel</code> → "file hỏng"), phân loại Song phương (giải mã → "sai mật
+          khẩu"), ACH (dò file GW → "N file lỗi"; file xác nhận → quay về chờ xác nhận). Lượt bị trần chặn sẽ bảo người dùng đi sửa file.
+          Tái hiện được</td>
+          <td>Xét cả VẾT LỖI của con (<code>"MemoryError" in vet</code>, gồm <code>_ArrayMemoryError</code> của numpy) — pickle không giữ
+          <code>__cause__</code> nên không dựa vào đó được. Test bọc lỗi kiểu 459901; bỏ điều kiện → đỏ</td></tr>
+        <tr><td>ACH <b>chờ xác nhận MIS_đi</b> vẫn bị tính 4,5 GB dù không còn tiến trình con — chặn oan lượt khác tới 4 giờ</td>
+          <td>Không cộng RAM cho trạng thái này (<code>_KHONG_GIU_RAM</code>); luật cùng module + trần số lượt vẫn tính như cũ</td></tr>
+        <tr><td>Ngân sách đặt thấp hơn ước tính 1 module, đang chạy toàn module chưa có số → vẫn chặn, câu báo danh sách rỗng</td>
+          <td>Chỉ xét ngân sách khi thật sự có RAM ước tính đang dùng</td></tr>
+        <tr><td>Câu chữ: tắt trần vẫn báo "trần chung 0 GB"; "nhiều lượt đang chạy" hiện cả khi một lượt</td><td>Viết lại</td></tr>
+      </table>
+      <p>Xác nhận thêm: bố cục struct x64 đúng (144 byte, <code>JobMemoryLimit</code> ở byte 120); job lồng chạy được (tiến trình test vốn
+        đã nằm trong một job mà trần vẫn chặn); trước khi vào nhóm con chỉ kịp nạp vài chục MB; SWIFT vào chung nhóm nhưng không tính
+        ngân sách (cố ý). Python 3.10 compile sạch.</p>
 
       <div class="label"><span class="pill pill-amber">Chưa làm</span></div>
       <ul>
