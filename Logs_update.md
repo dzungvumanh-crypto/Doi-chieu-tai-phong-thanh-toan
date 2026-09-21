@@ -4,6 +4,14 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 21/09/2026 Chuẩn hoá văn bản - **Báo chỗ đánh số sai thứ tự**
+    + ✅ Sau khi chuẩn hoá, nếu văn bản có Điều / khoản / điểm **nhảy số, trùng số hoặc lùi số** (ví dụ điểm
+      `d) e)` thiếu `đ)`), màn kết quả hiện khung đỏ **"Nghi đánh số sai thứ tự"** kèm số đoạn để tự kiểm tra
+    + ℹ️ Phần mềm **không tự đánh lại số** — đánh lại thì các câu "theo khoản 3 Điều 5" sẽ trỏ sai
+    + ℹ️ Tắt được ở tab Cấu hình → Đánh số → "Soát thứ tự Điều / khoản / điểm"
+    + ✅ Sửa lỗi: tên chương in hoa có chữ "QUYỀN", "TRƯỞNG"… (ví dụ "QUYỀN VÀ TRÁCH NHIỆM") bị định dạng như
+      khối chữ ký; nay được trình bày đúng là tên chương
+
 - 21/09/2026 Đối chiếu - **Không để nhiều lượt đối chiếu cùng lúc làm tràn bộ nhớ máy chủ**
     + ✅ Trước khi cho chạy, hệ thống cộng bộ nhớ ước tính của các lượt đang chạy. Nếu thêm lượt mới
       sẽ vượt mức cho phép, lượt đó được báo **"Máy chủ chưa đủ bộ nhớ…"** kèm tên các lượt đang chạy —

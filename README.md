@@ -1242,6 +1242,12 @@ nút hoàn tác (phải xoá tay từng thẻ). Đo thật: 20.000 dòng ghi h�
   | Viết hoa (Phụ lục IV) | Chữ đầu câu và đầu dòng (có danh sách viết tắt chặn: `TP.`, `v.v.`, `TM.`…); viện dẫn (Phần/Chương/Mục/Tiểu mục/**Điều** viết hoa, *khoản* và *điểm* viết thường — mục V.7); và **từ điển cụm từ** do người dùng tự khai |
   | Đánh số, gạch đầu dòng | Mọi ký tự gạch đầu dòng (`•`, `–`, `*`, `+`…) → `- `; khoản `1)` `1/` → `1.`; điểm `a.` `a/` → `a)`; mục La Mã `I)` `I/` → `I.`; danh sách **chấm tròn** tự động của Word → gạch đầu dòng gõ tay |
 
+- **Soát thứ tự đánh số — chỉ báo, không sửa** (`soat_so.py`, công tắc `danh_so.soat_thu_tu`, mặc định
+  bật): Điều / Chương / Mục / mục La Mã / khoản / tiểu khoản `1.1` / điểm / tiết `(i)` nhảy số, trùng số,
+  lùi số, không bắt đầu từ 1 → khung đỏ riêng trên màn kết quả (khoá `soat_so`). Không tự đánh lại vì mọi
+  câu viện dẫn "khoản 3 Điều 5" sẽ trỏ vào số cũ. Nội dung trong ngoặc kép (trích nguyên văn của văn bản
+  sửa đổi) không đếm chung; mỗi cấp Heading của Word đếm riêng. Xem card VB9
+
 - **Giãn dòng và cách đoạn khác nhau theo từng khối.** Điều 12.6 cho một *dải* (tối thiểu
   dòng đơn, tối đa 1,5) nên phải đo lại từ chính văn bản QĐ 979 mới biết lấy số nào:
 

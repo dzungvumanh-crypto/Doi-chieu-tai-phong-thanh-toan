@@ -24,7 +24,7 @@ import logging
 from docx import Document
 from docx.shared import Cm
 
-from . import ap_dung, bien_doi, do_chu, duong_ke, nhan_dien, quy_chuan
+from . import ap_dung, bien_doi, do_chu, duong_ke, nhan_dien, quy_chuan, soat_so
 
 _log = logging.getLogger(__name__)
 
@@ -117,6 +117,7 @@ def chuan_hoa(du_lieu: bytes, cau_hinh: dict | None = None) -> tuple[bytes, dict
       `doan`       từng đoạn đã sửa: vị trí, thành phần thể thức, trích dẫn, việc đã làm
       `luu_y`      những chỗ CỐ Ý không đụng tới, kèm lý do
       `thong_ke`   số đoạn đọc được / số đoạn đã sửa
+      `soat_so`    chỗ nghi đánh số sai thứ tự — chỉ báo, không sửa
     """
     cfg = quy_chuan.hop_nhat(cau_hinh)
     doc = Document(io.BytesIO(du_lieu))
@@ -160,6 +161,14 @@ def chuan_hoa(du_lieu: bytes, cau_hinh: dict | None = None) -> tuple[bytes, dict
         [bool(p.runs) and bool(ap_dung._hieu_luc_run(p.runs[0], p, "bold"))
          for p, _ in khoi],
     )
+
+    # Soát thứ tự số trên chữ GỐC, trước khi vòng lặp sửa ký hiệu — số không
+    # đổi ("1)" → "1." giữ nguyên số 1) nhưng đọc chữ gốc thì khỏi phụ thuộc
+    # việc lượt sửa chữ có bật hay không.
+    ket_soat = (soat_so.soat_thu_tu(ma_list, [p.text for p, _ in khoi],
+                                    [tb for _, tb in khoi],
+                                    [soat_so.muc_de_muc(p) for p, _ in khoi])
+                if cfg["danh_so"].get("soat_thu_tu") else [])
 
     cap_gach = (nhan_dien.cap_gach_dau_dong(ma_list, [p.text for p, _ in khoi])
                 if cfg["chung"].get("phan_cap_gach_dau_dong")
@@ -330,4 +339,5 @@ def chuan_hoa(du_lieu: bytes, cau_hinh: dict | None = None) -> tuple[bytes, dict
             "tong_doan": sum(1 for m in ma_list if m != "trong"),
             "doan_da_sua": so_doan_sua,
         },
+        "soat_so": ket_soat,
     }

@@ -598,6 +598,13 @@ def _sua_theo_ngu_canh(ma: list[str], txt: list[str], trong_bang: list[bool],
             continue
         if not _la_chuc_danh(_gon(txt[i])):
             continue
+        # Dòng in hoa ngay dưới "Chương III" là TÊN chương, không phải chức danh.
+        # Gặp thật trên TT 15/2024/TT-NHNN: "QUYỀN VÀ TRÁCH NHIỆM" khớp từ khoá
+        # "QUYỀN" nên bị định dạng như khối chữ ký, luật tiêu đề chương phía
+        # dưới không còn với tới vì mã đã khác `noi_dung`.
+        truoc = next((ma[k] for k in range(i - 1, -1, -1) if ma[k] != "trong"), None)
+        if truoc in ("phan_chuong", "muc"):
+            continue
         ma[i] = "quyen_han_chuc_vu"
         j = _ke_tiep(i)
         for _ in range(2):
