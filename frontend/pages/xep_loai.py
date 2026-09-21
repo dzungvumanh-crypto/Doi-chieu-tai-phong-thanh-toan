@@ -52,16 +52,13 @@ _MAU_KET_QUA = {
     "Không hoàn thành nhiệm vụ": "red",
 }
 
-# Chức danh, chức vụ — khuôn backend/api/xep_loai.py::_TEN_CHUC_VU (loại
-# admin/admin_l2 vì là tài khoản hệ thống, không phải chức danh nghiệp vụ).
-_TEN_CHUC_VU = {
-    "chuyen_vien":   "Chuyên viên",
-    "pho_phong":     "Phó phòng",
-    "truong_phong":  "Trưởng phòng",
-    "hau_kiem_vien": "Hậu kiểm viên",
-    "giam_doc":      "Giám đốc",
-    "pho_giam_doc":  "Phó Giám đốc",
-}
+# Nhãn chức danh, chức vụ KHÔNG khai ở đây — lấy từ `chuc_vu_opts` trong
+# response của GET /api/xep-loai/stats/tong-quan (backend đọc từ
+# backend.services.hr_service.NHAN_CHUC_VU, nguồn duy nhất của nhãn này). Nạp
+# một lần lúc mở trang trong xep_loai_page(), truyền xuống _tab_nhap() — khai
+# một bản riêng ở đây từng khiến 3 nơi (module Nhân sự, backend, frontend
+# trang này) phải sửa tay đồng bộ mà không có gì báo khi lệch nhau (phát hiện
+# qua review PR #120).
 _NHOM_THEO_OPTS = {"phong": "Phòng ban", "chuc_vu": "Chức danh, chức vụ"}
 
 # ── Nút — tông cam xuyên suốt trang (đặc/viền, không thêm hue thứ hai) ────────
@@ -86,8 +83,10 @@ def _luoi_the():
 
 
 def _khung_loc():
+    # Viền đậm hơn (border-2 + màu cam đậm hơn) — theo yêu cầu người dùng
+    # "đóng viền đậm khung lọc để phân biệt với phần dữ liệu ở dưới".
     return ui.card().classes(
-        "w-full gap-3 p-4 mb-4 rounded-xl border border-orange-100 shadow-sm bg-orange-50/60")
+        "w-full gap-3 p-4 mb-4 rounded-xl border-2 border-orange-300 shadow-sm bg-orange-50/60")
 
 
 def _chip(ten: str, mau: str = "gray"):
@@ -96,9 +95,11 @@ def _chip(ten: str, mau: str = "gray"):
 
 
 def _the_ban_ghi():
+    # Viền đậm hơn (border-2 + orange-200 quanh thẻ, orange-500 cạnh trên) —
+    # theo yêu cầu người dùng, viền cũ (border 1px xám mặc định) nhìn quá mờ.
     return ui.card().classes(
-        "w-full p-4 pr-2 gap-1 rounded-xl border border-t-4 border-t-orange-400 shadow-sm "
-        "hover:shadow-md transition-shadow relative")
+        "w-full p-4 pr-2 gap-1 rounded-xl border-2 border-orange-200 "
+        "border-t-4 border-t-orange-500 shadow-sm hover:shadow-md transition-shadow relative")
 
 
 def _hero_banner():
@@ -282,7 +283,7 @@ def _mo_nhap_excel(tai_lai):
     hop.open()
 
 
-async def _tab_nhap(dept_opts: dict, staff_opts: dict, can_manage: bool):
+async def _tab_nhap(dept_opts: dict, staff_opts: dict, chuc_vu_opts: dict, can_manage: bool):
     ban_ghi: dict = {}
 
     def ve(rows: list):
@@ -428,25 +429,42 @@ async def _tab_nhap(dept_opts: dict, staff_opts: dict, can_manage: bool):
                     ui.button("Lưu", icon="save", on_click=luu).props(_NUT_CHINH)
         hop.open()
 
+    async def xoa_loc():
+        f_staff.value = None
+        f_dept.value = None
+        f_chuc_vu.value = None
+        f_loai.value = None
+        f_ky.value = None
+        f_nam.value = None
+        f_quy.value = None
+        await tai()
+
     with _khung_loc():
-        with ui.row().classes("w-full items-end gap-3 flex-wrap"):
+        # Lưới cột đều nhau (không dùng width cố định riêng lẻ từng ô) — trước
+        # đây mỗi ô một width khác nhau (w-40/w-56) khiến hàng 2 lệch hàng 1, và
+        # ô "Chức danh, chức vụ" hẹp hơn nội dung "Tất cả chức danh, chức vụ"
+        # nên chữ vỡ dòng (theo phản hồi người dùng).
+        with ui.element("div").classes(
+            "grid grid-cols-2 sm:grid-cols-4 gap-3 w-full"):
             f_staff = ui.select({None: "Tất cả cán bộ", **staff_opts}, label="Cán bộ",
-                                 with_input=True, value=None).classes("w-56").props("outlined dense")
+                                 with_input=True, value=None).classes("w-full").props("outlined dense")
             f_dept = ui.select({None: "Tất cả phòng", **dept_opts}, label="Phòng",
-                                with_input=True, value=None).classes("w-56").props("outlined dense")
-            f_chuc_vu = ui.select({None: "Tất cả chức danh, chức vụ", **_TEN_CHUC_VU},
+                                with_input=True, value=None).classes("w-full").props("outlined dense")
+            f_chuc_vu = ui.select({None: "Tất cả chức vụ", **chuc_vu_opts},
                                    label="Chức danh, chức vụ", value=None
-                                   ).classes("w-56").props("outlined dense")
+                                   ).classes("w-full").props("outlined dense")
             f_loai = ui.select({None: "Tất cả loại", **_LOAI_OPTS}, label="Loại xếp loại",
-                                value=None).classes("w-56").props("outlined dense")
-        with ui.row().classes("w-full items-end gap-3 flex-wrap"):
+                                value=None).classes("w-full").props("outlined dense")
             f_ky = ui.select({None: "Tất cả kỳ", **_KY_LABEL}, label="Kỳ", value=None
-                              ).classes("w-40").props("outlined dense")
+                              ).classes("w-full").props("outlined dense")
             f_nam = ui.number(label="Năm (để trống = tất cả)", format="%d", min=2000, max=2100,
-                               value=_nam_hien_tai()).classes("w-56").props("outlined dense")
+                               value=_nam_hien_tai()).classes("w-full").props("outlined dense")
             f_quy = ui.select({None: "Tất cả quý", **_QUY_OPTS}, label="Quý", value=None
-                               ).classes("w-40").props("outlined dense")
+                               ).classes("w-full").props("outlined dense")
+        with ui.row().classes("w-full items-center gap-2 flex-wrap mt-3"):
             ui.button("Lọc", icon="search", on_click=lambda: tai()).props(_NUT_LOC)
+            ui.button("Xoá lọc", icon="filter_alt_off", on_click=lambda: xoa_loc()).props(
+                "no-caps flat")
             if can_manage:
                 ui.button("Thêm xếp loại", icon="add", on_click=lambda: mo_form(None)
                           ).props(_NUT_CHINH)
@@ -496,7 +514,11 @@ async def _tab_tong_hop(co_export: bool):
 
         khung.clear()
         with khung:
-            if not data["rows"]:
+            # So tong["total"], KHÔNG phải rows rỗng — _tong_hop_data() liệt kê
+            # sẵn mọi phòng/chức vụ với đếm 0 nên rows không bao giờ rỗng, điều
+            # kiện cũ là mã chết và hiện bảng toàn số 0 thay vì báo "chưa có
+            # dữ liệu" (phát hiện qua review PR #120).
+            if not data["tong"]["total"]:
                 ui.label("Không có dữ liệu cho kỳ đã chọn.").classes(
                     "text-gray-500 py-6 text-center w-full")
                 return
@@ -639,6 +661,18 @@ async def xep_loai_page():
         ui.notify(str(e), type="negative")
         return
 
+    # Chỉ cần chuc_vu_opts ở đây (nhãn tĩnh, nạp 1 lần) — dem/gan_day tab Tổng
+    # quan tự tải riêng vì cần làm mới mỗi lần quay lại tab đó. Tách riêng try
+    # để lỗi ở lệnh gọi này (vd. DB bận) chỉ làm ô lọc "Chức danh, chức vụ"
+    # thiếu nhãn, không kéo sập cả trang vốn không cần dữ liệu này để mở.
+    try:
+        tong_quan = await asyncio.to_thread(api.get, "/api/xep-loai/stats/tong-quan")
+        chuc_vu_opts = tong_quan["chuc_vu_opts"]
+    except Exception as e:
+        if _handle_api_error(e):
+            return
+        chuc_vu_opts = {}
+
     dept_name_by_id = {d["id"]: d["name"] for d in depts}
     dept_opts = dict(dept_name_by_id)
     staff_opts = {
@@ -669,7 +703,7 @@ async def xep_loai_page():
                     tai_tong_quan = await _tab_tong_quan()
 
                 with ui.tab_panel(tab_nhap):
-                    await _tab_nhap(dept_opts, staff_opts, can_manage)
+                    await _tab_nhap(dept_opts, staff_opts, chuc_vu_opts, can_manage)
 
                 with ui.tab_panel(tab_tracuu):
                     ui.label("Bảng tổng hợp theo Trung tâm/phòng").classes(

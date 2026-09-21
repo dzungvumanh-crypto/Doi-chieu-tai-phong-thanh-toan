@@ -6,6 +6,7 @@ import openpyxl
 import pytest
 from fastapi.testclient import TestClient
 
+import backend.db.migrations as migrations
 from backend.core.deps import get_current_staff
 from backend.database import get_db
 from backend.db.migrations import _create_tables
@@ -464,3 +465,50 @@ def test_export_tong_hop_va_ca_nhan_thanh_cong(client, db):
 
     r = client.get("/api/xep-loai/export/ca-nhan", params={"staff_id": 2, "loai": "lao_dong"})
     assert r.status_code == 200 and r.headers["content-type"].startswith(_XLSX_MIME)
+
+
+# ── Migration nâng cấp DB đã tạo bảng từ bản trước khi có department_id/chuc_vu ──
+def test_migration_them_cot_vao_bang_da_ton_tai_tu_ban_cu(tmp_path, monkeypatch):
+    # Review PR #120 (commit 5be03ca): CREATE TABLE IF NOT EXISTS là no-op trên
+    # DB đã có bảng xep_loai_lao_dong (schema cũ, khớp commit b1ed5a5 — không
+    # có department_id/chuc_vu) — CREATE INDEX ngay sau đó trên 2 cột này báo
+    # "no such column", và _create_tables() không bọc try/except nên crash
+    # ngay lúc khởi động, trước cả khi tới _ensure_indexes(). Mô phỏng đúng
+    # tình huống: dựng schema đầy đủ rồi hạ xep_loai_lao_dong về bản cũ.
+    db_path = str(tmp_path / "xeploai_nang_cap.db")
+    _create_tables(db_path)
+    conn = sqlite3.connect(db_path)
+    conn.execute("DROP TABLE xep_loai_lao_dong")
+    conn.execute(
+        """CREATE TABLE xep_loai_lao_dong (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            staff_id     INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+            loai         TEXT NOT NULL CHECK(loai IN ('lao_dong','tin_nhiem','cap_uy')),
+            ky           TEXT NOT NULL CHECK(ky IN ('nam','quy')),
+            nam          INTEGER NOT NULL,
+            quy          INTEGER,
+            ket_qua      TEXT NOT NULL,
+            ghi_chu      TEXT,
+            created_by   INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+            created_at   DATETIME NOT NULL,
+            updated_at   DATETIME NOT NULL
+        )"""
+    )
+    conn.execute("CREATE INDEX ix_xep_loai_staff ON xep_loai_lao_dong(staff_id)")
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr(migrations, "DB_PATH", db_path)
+    # Chạy 2 lần liên tiếp, mỗi lần cả _create_tables() lẫn _ensure_indexes()
+    # — không được ném lỗi, và lần 2 phải idempotent (duplicate column bị nuốt).
+    for _ in range(2):
+        _create_tables(db_path)
+        migrations._ensure_indexes()
+
+    conn = sqlite3.connect(db_path)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(xep_loai_lao_dong)")}
+    idx = {r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='xep_loai_lao_dong'")}
+    conn.close()
+    assert {"department_id", "chuc_vu"} <= cols
+    assert {"ix_xep_loai_dept", "ix_xep_loai_chucvu", "ix_xep_loai_unique"} <= idx

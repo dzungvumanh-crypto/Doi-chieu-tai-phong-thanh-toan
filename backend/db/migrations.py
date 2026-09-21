@@ -178,8 +178,14 @@ _XEP_LOAI_TABLES = [
     "CREATE INDEX IF NOT EXISTS ix_xep_loai_staff   ON xep_loai_lao_dong(staff_id)",
     "CREATE INDEX IF NOT EXISTS ix_xep_loai_nam     ON xep_loai_lao_dong(nam)",
     "CREATE INDEX IF NOT EXISTS ix_xep_loai_loai    ON xep_loai_lao_dong(loai)",
-    "CREATE INDEX IF NOT EXISTS ix_xep_loai_dept    ON xep_loai_lao_dong(department_id)",
-    "CREATE INDEX IF NOT EXISTS ix_xep_loai_chucvu  ON xep_loai_lao_dong(chuc_vu)",
+    # ix_xep_loai_dept/chucvu KHÔNG đứng ở đây dù cùng logic — _create_tables()
+    # chạy list này KHÔNG bọc try/except (khác schema_migrations bên dưới), nên
+    # trên DB đã tạo bảng từ TRƯỚC khi có 2 cột department_id/chuc_vu, CREATE
+    # TABLE IF NOT EXISTS là no-op rồi CREATE INDEX trên cột chưa tồn tại sẽ
+    # crash cứng ngay từ _create_tables(), chặn khởi động vĩnh viễn (tự dính lỗi
+    # này 2026-09-21). Định nghĩa 2 index đó nằm trong schema_migrations, xếp
+    # SAU 2 câu ALTER TABLE thêm cột — chỗ duy nhất đảm bảo cột đã tồn tại ở cả
+    # hai trường hợp (cài mới lẫn nâng cấp) trước khi tạo index.
     # Chặn trùng ở tầng CSDL — backend/api/xep_loai.py::_trung_lap() chỉ kiểm
     # tra rồi mới ghi (check-then-act), hai request cùng lúc lý thuyết vẫn lách
     # qua được. `quy` NULL với năm nên không dùng thẳng UNIQUE(staff_id, loai,
@@ -1945,6 +1951,17 @@ def _ensure_indexes():
         *_SURVEY_TABLES,
         # ── Thi đua khen thưởng — 2026-09-15 (định nghĩa ở _THI_DUA_TABLES đầu file) ──
         *_THI_DUA_TABLES,
+        # ── Xếp loại lao động — 2026-09-21: thêm department_id/chuc_vu (ảnh chụp
+        # lúc xếp loại) cho DB đã tạo bảng xep_loai_lao_dong từ trước khi có 2 cột
+        # này. PHẢI đứng TRƯỚC *_XEP_LOAI_TABLES ngay dưới — khối đó có CREATE
+        # INDEX trên cả 2 cột, chạy trước khi cột tồn tại sẽ báo "no such column"
+        # (không nằm trong danh sách lỗi được nuốt, chặn khởi động — đã tự dính
+        # lỗi này khi thêm cột nhưng quên viết ALTER TABLE cho DB cũ).
+        "ALTER TABLE xep_loai_lao_dong ADD COLUMN department_id "
+        "INTEGER REFERENCES departments(id) ON DELETE SET NULL",
+        "ALTER TABLE xep_loai_lao_dong ADD COLUMN chuc_vu TEXT",
+        "CREATE INDEX IF NOT EXISTS ix_xep_loai_dept   ON xep_loai_lao_dong(department_id)",
+        "CREATE INDEX IF NOT EXISTS ix_xep_loai_chucvu ON xep_loai_lao_dong(chuc_vu)",
         # ── Xếp loại lao động — 2026-09-17 (định nghĩa ở _XEP_LOAI_TABLES đầu file) ──
         *_XEP_LOAI_TABLES,
     ]

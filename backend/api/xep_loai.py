@@ -28,6 +28,7 @@ from backend.database import _vn_now, get_db, write_audit
 from backend.schemas.xep_loai import (
     KET_QUA_THEO_LOAI, KY_HOP_LE_THEO_LOAI, TEN_LOAI, XepLoaiIn, _fold, khop_ket_qua,
 )
+from backend.services.hr_service import NHAN_CHUC_VU
 
 router = APIRouter(prefix="/api/xep-loai", tags=["xep-loai"])
 
@@ -60,24 +61,16 @@ def _snapshot_staff(db, staff_id: int) -> tuple[Optional[int], Optional[str]]:
     return (row["department_id"], row["role"]) if row else (None, None)
 
 
-# Nhãn chức danh, chức vụ — khuôn `_ROLE_VN` của backend/api/staff.py (chưa có
-# hằng số dùng chung trong dự án, mỗi module tự khai bản riêng, xem groups.py/
-# leaves.py/handovers.py/hr_service.py — theo đúng quy ước hiện có).
-_TEN_CHUC_VU = {
-    "chuyen_vien":   "Chuyên viên",
-    "pho_phong":     "Phó phòng",
-    "truong_phong":  "Trưởng phòng",
-    "hau_kiem_vien": "Hậu kiểm viên",
-    "giam_doc":      "Giám đốc",
-    "pho_giam_doc":  "Phó Giám đốc",
-    "admin":         "Quản trị viên cấp 1",
-    "admin_l2":      "Quản trị viên cấp 2",
-}
-# Liệt kê sẵn trong bảng tổng hợp theo chức vụ — loại admin/admin_l2 (tài
-# khoản hệ thống, không phải chức danh nghiệp vụ thật, cùng quy ước thi_dua.py
-# loại 2 role này khỏi dropdown cán bộ).
-_CHUC_VU_LIET_KE = ["chuyen_vien", "pho_phong", "truong_phong", "hau_kiem_vien",
-                    "pho_giam_doc", "giam_doc"]
+# Nhãn chức danh, chức vụ — dùng lại NHAN_CHUC_VU của backend/services/
+# hr_service.py (module Nhân sự đã coi user_tttt.role là "chức vụ" và export
+# hằng số này cho frontend qua /api/hr/... đúng để tránh khai trùng — trước
+# đây module này tự khai một bản riêng, comment cũ nói "chưa có hằng số dùng
+# chung" là sai, phát hiện qua review PR #120). admin/admin_l2 không nằm
+# trong NHAN_CHUC_VU (tài khoản hệ thống, không phải chức danh nghiệp vụ) nên
+# thêm nhãn riêng chỉ để hiển thị nếu lỡ có bản ghi gắn cho 2 role đó — không
+# đưa vào danh sách liệt kê sẵn trong bảng tổng hợp.
+_TEN_CHUC_VU = {**NHAN_CHUC_VU, "admin": "Quản trị viên cấp 1", "admin_l2": "Quản trị viên cấp 2"}
+_CHUC_VU_LIET_KE = list(NHAN_CHUC_VU)
 _CHUA_XAC_DINH_CHUC_VU = "Chưa xác định"
 
 
@@ -588,7 +581,10 @@ def stats_tong_quan(
            ORDER BY x.updated_at DESC LIMIT 8""",
         (_CHUA_XEP_PHONG,),
     ).fetchall()
-    return {"dem": dem, "gan_day": [dict(r) for r in gan_day]}
+    # chuc_vu_opts: frontend lấy nhãn chức danh, chức vụ từ đây thay vì tự khai
+    # lại một bản riêng (xem comment ở _TEN_CHUC_VU) — nạp một lần lúc mở trang.
+    return {"dem": dem, "gan_day": [dict(r) for r in gan_day],
+            "chuc_vu_opts": {cv: _TEN_CHUC_VU[cv] for cv in _CHUC_VU_LIET_KE}}
 
 
 @router.get("/stats/tong-hop")
@@ -623,7 +619,8 @@ def _wb_tong_hop(data: dict) -> bytes:
     ten_cot_nhom = "Chức danh, chức vụ" if data["nhom_theo"] == "chuc_vu" else "Trung tâm / Phòng"
     cot = [ten_cot_nhom, *data["categories"], "Tổng"]
     tieu_de = (f"TỔNG HỢP {TEN_LOAI[data['loai']].upper()} NĂM {data['nam']}"
-               + (f" — QUÝ {data['quy']}" if data["quy"] else ""))
+               + (f" — QUÝ {data['quy']}" if data["quy"] else "")
+               + f" — Theo {ten_cot_nhom}")
     ws.cell(row=1, column=1, value=tieu_de).font = Font(bold=True, size=13)
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(cot))
     fill = PatternFill("solid", fgColor="FEE2E2")
