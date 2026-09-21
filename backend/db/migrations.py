@@ -150,23 +150,36 @@ _THI_DUA_TABLES = [
 # khối Khảo sát ở đầu file). `loai`: lao_dong | tin_nhiem | cap_uy — backend.
 # core.enums.LoaiXepLoai. `ky`: nam | quy — quy đi kèm số quý (1-4), nam thì
 # quy luôn NULL (backend.schemas.xep_loai.XepLoaiIn ép khi validate).
+# `department_id`/`chuc_vu` là ẢNH CHỤP phòng ban + chức danh, chức vụ của cán
+# bộ TẠI THỜI ĐIỂM xếp loại (ghi lúc tạo/nhập Excel, xem
+# backend/api/xep_loai.py::_snapshot_staff) — KHÔNG suy ra từ user_tttt lúc
+# xem báo cáo. Cán bộ chuyển phòng hoặc lên/xuống chức sau đó không được làm
+# đổi phòng/chức vụ của các xếp loại năm cũ (phát hiện qua review PR #120
+# trước khi merge, lúc bảng còn rỗng nên sửa thẳng schema, không cần migration
+# backfill). `chuc_vu` lưu nguyên giá trị `user_tttt.role` (backend.core.enums.
+# StaffRole) tại thời điểm đó — dùng để tách báo cáo "cán bộ có chức danh" ra
+# khỏi "cán bộ" nói chung, đúng yêu cầu gốc của tính năng.
 _XEP_LOAI_TABLES = [
     """CREATE TABLE IF NOT EXISTS xep_loai_lao_dong (
-        id           INTEGER PRIMARY KEY AUTOINCREMENT,
-        staff_id     INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
-        loai         TEXT NOT NULL CHECK(loai IN ('lao_dong','tin_nhiem','cap_uy')),
-        ky           TEXT NOT NULL CHECK(ky IN ('nam','quy')),
-        nam          INTEGER NOT NULL,
-        quy          INTEGER,
-        ket_qua      TEXT NOT NULL,
-        ghi_chu      TEXT,
-        created_by   INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
-        created_at   DATETIME NOT NULL,
-        updated_at   DATETIME NOT NULL
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        staff_id      INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+        department_id INTEGER REFERENCES departments(id) ON DELETE SET NULL,
+        chuc_vu       TEXT,
+        loai          TEXT NOT NULL CHECK(loai IN ('lao_dong','tin_nhiem','cap_uy')),
+        ky            TEXT NOT NULL CHECK(ky IN ('nam','quy')),
+        nam           INTEGER NOT NULL,
+        quy           INTEGER,
+        ket_qua       TEXT NOT NULL,
+        ghi_chu       TEXT,
+        created_by    INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+        created_at    DATETIME NOT NULL,
+        updated_at    DATETIME NOT NULL
     )""",
-    "CREATE INDEX IF NOT EXISTS ix_xep_loai_staff ON xep_loai_lao_dong(staff_id)",
-    "CREATE INDEX IF NOT EXISTS ix_xep_loai_nam   ON xep_loai_lao_dong(nam)",
-    "CREATE INDEX IF NOT EXISTS ix_xep_loai_loai  ON xep_loai_lao_dong(loai)",
+    "CREATE INDEX IF NOT EXISTS ix_xep_loai_staff   ON xep_loai_lao_dong(staff_id)",
+    "CREATE INDEX IF NOT EXISTS ix_xep_loai_nam     ON xep_loai_lao_dong(nam)",
+    "CREATE INDEX IF NOT EXISTS ix_xep_loai_loai    ON xep_loai_lao_dong(loai)",
+    "CREATE INDEX IF NOT EXISTS ix_xep_loai_dept    ON xep_loai_lao_dong(department_id)",
+    "CREATE INDEX IF NOT EXISTS ix_xep_loai_chucvu  ON xep_loai_lao_dong(chuc_vu)",
     # Chặn trùng ở tầng CSDL — backend/api/xep_loai.py::_trung_lap() chỉ kiểm
     # tra rồi mới ghi (check-then-act), hai request cùng lúc lý thuyết vẫn lách
     # qua được. `quy` NULL với năm nên không dùng thẳng UNIQUE(staff_id, loai,

@@ -52,6 +52,18 @@ _MAU_KET_QUA = {
     "Không hoàn thành nhiệm vụ": "red",
 }
 
+# Chức danh, chức vụ — khuôn backend/api/xep_loai.py::_TEN_CHUC_VU (loại
+# admin/admin_l2 vì là tài khoản hệ thống, không phải chức danh nghiệp vụ).
+_TEN_CHUC_VU = {
+    "chuyen_vien":   "Chuyên viên",
+    "pho_phong":     "Phó phòng",
+    "truong_phong":  "Trưởng phòng",
+    "hau_kiem_vien": "Hậu kiểm viên",
+    "giam_doc":      "Giám đốc",
+    "pho_giam_doc":  "Phó Giám đốc",
+}
+_NHOM_THEO_OPTS = {"phong": "Phòng ban", "chuc_vu": "Chức danh, chức vụ"}
+
 # ── Nút — tông cam xuyên suốt trang (đặc/viền, không thêm hue thứ hai) ────────
 _NUT_CHINH = "no-caps color=orange-8"     # Lưu / Thêm — hành động ghi dữ liệu
 _NUT_LOC   = "no-caps outline color=orange-8"  # Lọc / Xem / Tra cứu / Excel
@@ -159,15 +171,20 @@ async def _tab_tong_quan():
 
     async def tai():
         try:
-            rows = await asyncio.to_thread(api.get, "/api/xep-loai")
+            # Đếm + 8 dòng gần nhất tính sẵn ở server (/stats/tong-quan) — không
+            # kéo nguyên bảng về đây rồi đếm bằng Python nữa (phát hiện qua
+            # review PR #120: vài trăm cán bộ × nhiều kỳ/năm là hàng nghìn dòng
+            # mỗi năm, mở trang sẽ chậm dần theo thời gian).
+            data = await asyncio.to_thread(api.get, "/api/xep-loai/stats/tong-quan")
         except Exception as e:
             if _handle_api_error(e):
                 return
             ui.notify(str(e), type="negative")
-            rows = []
+            data = {"dem": {k: 0 for k in _LOAI_OPTS}, "gan_day": []}
 
-        dem = {k: sum(1 for r in rows if r["loai"] == k) for k in _LOAI_OPTS}
-        gan_day = sorted(rows, key=lambda r: r["updated_at"] or "", reverse=True)[:8]
+        dem = data["dem"]
+        gan_day = data["gan_day"]
+        tong_so = sum(dem.values())
 
         icon_theo_loai = {"lao_dong": "workspace_premium", "tin_nhiem": "how_to_vote", "cap_uy": "groups"}
 
@@ -176,7 +193,7 @@ async def _tab_tong_quan():
             with ui.row().classes("w-full gap-3 flex-wrap"):
                 for k, ten in _LOAI_OPTS.items():
                     _the_dich_vu(icon_theo_loai[k], dem[k], ten)
-                _the_dich_vu("summarize", len(rows), "Tổng cộng", noi_bat=True)
+                _the_dich_vu("summarize", tong_so, "Tổng cộng", noi_bat=True)
 
             with ui.card().classes("w-full shadow-sm rounded-xl bg-white p-0 overflow-hidden"):
                 with ui.row().classes("w-full bg-orange-50 px-4 py-3 border-b border-orange-100"):
@@ -289,7 +306,8 @@ async def _tab_nhap(dept_opts: dict, staff_opts: dict, can_manage: bool):
                                 _chip(_ky_text(r), mau="orange")
                                 _chip(_LOAI_OPTS[r["loai"]], mau="gray")
                             ui.label(r["staff_name"] or "—").classes("text-sm font-medium text-gray-700")
-                            ui.label(r["department_name"]).classes("text-xs text-gray-500")
+                            ui.label(f"{r['department_name']} — {r['chuc_vu_ten']}").classes(
+                                "text-xs text-gray-500")
                             _chip(r["ket_qua"], mau=_MAU_KET_QUA.get(r["ket_qua"], "gray"))
                             if r.get("ghi_chu"):
                                 ui.label(r["ghi_chu"]).classes("text-xs text-gray-400")
@@ -300,6 +318,8 @@ async def _tab_nhap(dept_opts: dict, staff_opts: dict, can_manage: bool):
             params["staff_id"] = int(f_staff.value)
         if f_dept.value:
             params["department_id"] = int(f_dept.value)
+        if f_chuc_vu.value:
+            params["chuc_vu"] = f_chuc_vu.value
         if f_loai.value:
             params["loai"] = f_loai.value
         if f_ky.value:
@@ -336,9 +356,22 @@ async def _tab_nhap(dept_opts: dict, staff_opts: dict, can_manage: bool):
         with ui.dialog() as hop, ui.card().classes("w-full max-w-xl"):
             ui.label(("Sửa" if item else "Thêm") + " xếp loại lao động").classes("text-lg font-bold")
             with ui.grid(columns=2).classes("w-full gap-3"):
-                o_staff = ui.select(staff_opts, label="Cán bộ", with_input=True,
-                                     value=(str(item["staff_id"]) if item else None)
+                # Sửa bản ghi cũ thì KHOÁ cán bộ, không cho đổi người — xếp
+                # loại là dữ liệu lịch sử (xem comment ở active_only=False phía
+                # dưới), đổi sang người khác coi như gán nhầm lịch sử của người
+                # cũ cho người mới. `staff_opts` không chứa cán bộ đã xoá mềm
+                # (staff.py::list_staff loại cứng is_deleted, không phụ thuộc
+                # active_only) nên phải tự thêm tạm 1 mục hiển thị đúng tên,
+                # không thì ô chọn hiện trống dù đã khoá.
+                staff_id_str = str(item["staff_id"]) if item else None
+                o_staff_opts = staff_opts
+                if item and staff_id_str not in staff_opts:
+                    o_staff_opts = {**staff_opts, staff_id_str: item.get("staff_name") or "—"}
+                o_staff = ui.select(o_staff_opts, label="Cán bộ", with_input=True,
+                                     value=staff_id_str
                                      ).classes("col-span-2 w-full").props("outlined dense")
+                if item:
+                    o_staff.props("disable")
                 o_loai = ui.select(_LOAI_OPTS, label="Loại xếp loại",
                                     value=(item or {}).get("loai") or "lao_dong"
                                     ).classes("col-span-2 w-full").props("outlined dense")
@@ -401,13 +434,16 @@ async def _tab_nhap(dept_opts: dict, staff_opts: dict, can_manage: bool):
                                  with_input=True, value=None).classes("w-56").props("outlined dense")
             f_dept = ui.select({None: "Tất cả phòng", **dept_opts}, label="Phòng",
                                 with_input=True, value=None).classes("w-56").props("outlined dense")
+            f_chuc_vu = ui.select({None: "Tất cả chức danh, chức vụ", **_TEN_CHUC_VU},
+                                   label="Chức danh, chức vụ", value=None
+                                   ).classes("w-56").props("outlined dense")
             f_loai = ui.select({None: "Tất cả loại", **_LOAI_OPTS}, label="Loại xếp loại",
                                 value=None).classes("w-56").props("outlined dense")
         with ui.row().classes("w-full items-end gap-3 flex-wrap"):
             f_ky = ui.select({None: "Tất cả kỳ", **_KY_LABEL}, label="Kỳ", value=None
                               ).classes("w-40").props("outlined dense")
-            f_nam = ui.number(label="Năm (để trống = tất cả)", format="%d", min=2000, max=2100
-                               ).classes("w-56").props("outlined dense")
+            f_nam = ui.number(label="Năm (để trống = tất cả)", format="%d", min=2000, max=2100,
+                               value=_nam_hien_tai()).classes("w-56").props("outlined dense")
             f_quy = ui.select({None: "Tất cả quý", **_QUY_OPTS}, label="Quý", value=None
                                ).classes("w-40").props("outlined dense")
             ui.button("Lọc", icon="search", on_click=lambda: tai()).props(_NUT_LOC)
@@ -424,7 +460,11 @@ async def _tab_nhap(dept_opts: dict, staff_opts: dict, can_manage: bool):
 # ── Tab 2, khu vực 1: Bảng tổng hợp theo Trung tâm/phòng ─────────────────────
 async def _tab_tong_hop(co_export: bool):
     async def tai():
-        params = {"loai": f_loai.value, "nam": int(f_nam.value), "ky": f_ky.value}
+        if not f_nam.value:
+            ui.notify("Nhập năm", type="warning")
+            return
+        params = {"loai": f_loai.value, "nam": int(f_nam.value), "ky": f_ky.value,
+                  "nhom_theo": f_nhom.value}
         if f_ky.value == "quy":
             if not f_quy.value:
                 ui.notify("Chọn quý", type="warning")
@@ -438,17 +478,18 @@ async def _tab_tong_hop(co_export: bool):
             ui.notify(str(e), type="negative")
             return
 
-        columns = [{"name": "dept", "label": "Trung tâm / Phòng", "field": "dept", "align": "left"}]
+        ten_cot_nhom = _NHOM_THEO_OPTS[f_nhom.value]
+        columns = [{"name": "nhom", "label": ten_cot_nhom, "field": "nhom", "align": "left"}]
         for i, cat in enumerate(data["categories"]):
             columns.append({"name": f"c{i}", "label": cat, "field": f"c{i}", "align": "center"})
         columns.append({"name": "total", "label": "Tổng", "field": "total", "align": "center"})
 
         table_rows = []
         for r in data["rows"]:
-            row = {"dept": r["department_name"], "total": r["total"]}
+            row = {"nhom": r["nhom"], "total": r["total"]}
             row.update({f"c{i}": r["counts"].get(cat, 0) for i, cat in enumerate(data["categories"])})
             table_rows.append(row)
-        trow = {"dept": "TỔNG CỘNG", "total": data["tong"]["total"]}
+        trow = {"nhom": "TỔNG CỘNG", "total": data["tong"]["total"]}
         trow.update({f"c{i}": data["tong"]["counts"].get(cat, 0)
                      for i, cat in enumerate(data["categories"])})
         table_rows.append(trow)
@@ -459,10 +500,14 @@ async def _tab_tong_hop(co_export: bool):
                 ui.label("Không có dữ liệu cho kỳ đã chọn.").classes(
                     "text-gray-500 py-6 text-center w-full")
                 return
-            ui.table(columns=columns, rows=table_rows, row_key="dept").classes("w-full")
+            ui.table(columns=columns, rows=table_rows, row_key="nhom").classes("w-full")
 
     async def xuat():
-        params = {"loai": f_loai.value, "nam": int(f_nam.value), "ky": f_ky.value}
+        if not f_nam.value:
+            ui.notify("Nhập năm", type="warning")
+            return
+        params = {"loai": f_loai.value, "nam": int(f_nam.value), "ky": f_ky.value,
+                  "nhom_theo": f_nhom.value}
         if f_ky.value == "quy":
             if not f_quy.value:
                 ui.notify("Chọn quý", type="warning")
@@ -475,7 +520,7 @@ async def _tab_tong_hop(co_export: bool):
                 return
             ui.notify(str(e), type="negative")
             return
-        ui.download(raw, f"tong_hop_xep_loai_{f_loai.value}_{int(f_nam.value)}.xlsx")
+        ui.download(raw, f"tong_hop_xep_loai_{f_nhom.value}_{f_loai.value}_{int(f_nam.value)}.xlsx")
 
     def _doi_loai():
         ky_hop_le = _KY_HOP_LE[f_loai.value]
@@ -485,6 +530,8 @@ async def _tab_tong_hop(co_export: bool):
     with _khung_loc():
         with ui.row().classes("w-full items-end gap-3 flex-wrap"):
             f_loai = ui.select(_LOAI_OPTS, label="Loại xếp loại", value="lao_dong"
+                                ).classes("w-56").props("outlined dense")
+            f_nhom = ui.select(_NHOM_THEO_OPTS, label="Nhóm theo", value="phong"
                                 ).classes("w-56").props("outlined dense")
             f_nam = ui.number(label="Năm", value=_nam_hien_tai(), min=2000, max=2100, format="%d"
                                ).classes("w-40").props("outlined dense")

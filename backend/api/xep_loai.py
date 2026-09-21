@@ -52,6 +52,35 @@ def _staff_ton_tai(db, staff_id: int) -> bool:
     ).fetchone())
 
 
+def _snapshot_staff(db, staff_id: int) -> tuple[Optional[int], Optional[str]]:
+    """Ảnh chụp (phòng ban, chức danh/chức vụ) của cán bộ TẠI THỜI ĐIỂM gọi —
+    dùng khi tạo mới, khi nhập Excel, và khi sửa mà đổi sang staff_id khác.
+    KHÔNG gọi lại lúc tính thống kê — xem comment ở _XEP_LOAI_TABLES."""
+    row = db.execute("SELECT department_id, role FROM user_tttt WHERE id = ?", (staff_id,)).fetchone()
+    return (row["department_id"], row["role"]) if row else (None, None)
+
+
+# Nhãn chức danh, chức vụ — khuôn `_ROLE_VN` của backend/api/staff.py (chưa có
+# hằng số dùng chung trong dự án, mỗi module tự khai bản riêng, xem groups.py/
+# leaves.py/handovers.py/hr_service.py — theo đúng quy ước hiện có).
+_TEN_CHUC_VU = {
+    "chuyen_vien":   "Chuyên viên",
+    "pho_phong":     "Phó phòng",
+    "truong_phong":  "Trưởng phòng",
+    "hau_kiem_vien": "Hậu kiểm viên",
+    "giam_doc":      "Giám đốc",
+    "pho_giam_doc":  "Phó Giám đốc",
+    "admin":         "Quản trị viên cấp 1",
+    "admin_l2":      "Quản trị viên cấp 2",
+}
+# Liệt kê sẵn trong bảng tổng hợp theo chức vụ — loại admin/admin_l2 (tài
+# khoản hệ thống, không phải chức danh nghiệp vụ thật, cùng quy ước thi_dua.py
+# loại 2 role này khỏi dropdown cán bộ).
+_CHUC_VU_LIET_KE = ["chuyen_vien", "pho_phong", "truong_phong", "hau_kiem_vien",
+                    "pho_giam_doc", "giam_doc"]
+_CHUA_XAC_DINH_CHUC_VU = "Chưa xác định"
+
+
 def _trung_lap(db, staff_id: int, loai: str, nam: int, quy, exclude_id: int = None) -> bool:
     q = "SELECT 1 FROM xep_loai_lao_dong WHERE staff_id=? AND loai=? AND nam=? AND quy IS ?"
     params = [staff_id, loai, nam, quy]
@@ -69,6 +98,7 @@ _LOI_TRUNG_LAP = "Cán bộ này đã có xếp loại cho đúng kỳ này — 
 def list_xep_loai(
     staff_id: Optional[int] = Query(None),
     department_id: Optional[int] = Query(None),
+    chuc_vu: Optional[str] = Query(None),
     loai: Optional[str] = Query(None),
     ky: Optional[str] = Query(None),
     nam: Optional[int] = Query(None),
@@ -81,8 +111,11 @@ def list_xep_loai(
         clauses.append("x.staff_id = ?")
         params.append(staff_id)
     if department_id is not None:
-        clauses.append("u.department_id = ?")
+        clauses.append("x.department_id = ?")
         params.append(department_id)
+    if chuc_vu is not None:
+        clauses.append("x.chuc_vu = ?")
+        params.append(chuc_vu)
     if loai is not None:
         clauses.append("x.loai = ?")
         params.append(loai)
@@ -97,18 +130,21 @@ def list_xep_loai(
         params.append(quy)
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     rows = db.execute(
-        f"""SELECT x.id, x.staff_id, u.full_name AS staff_name, u.department_id,
-                   COALESCE(d.name, ?) AS department_name,
+        f"""SELECT x.id, x.staff_id, u.full_name AS staff_name, x.department_id,
+                   COALESCE(d.name, ?) AS department_name, x.chuc_vu,
                    x.loai, x.ky, x.nam, x.quy, x.ket_qua, x.ghi_chu,
                    x.created_at, x.updated_at
             FROM xep_loai_lao_dong x
             LEFT JOIN user_tttt u ON u.id = x.staff_id
-            LEFT JOIN departments d ON d.id = u.department_id
+            LEFT JOIN departments d ON d.id = x.department_id
             {where}
             ORDER BY x.nam DESC, x.quy DESC, u.full_name""",
         (_CHUA_XEP_PHONG, *params),
     ).fetchall()
-    return [dict(r) for r in rows]
+    out = [dict(r) for r in rows]
+    for r in out:
+        r["chuc_vu_ten"] = _TEN_CHUC_VU.get(r["chuc_vu"], r["chuc_vu"] or _CHUA_XAC_DINH_CHUC_VU)
+    return out
 
 
 @router.post("", status_code=201)
@@ -122,13 +158,15 @@ def create_xep_loai(
     if _trung_lap(db, body.staff_id, body.loai.value, body.nam, body.quy):
         raise HTTPException(400, _LOI_TRUNG_LAP)
     now = _vn_now()
+    department_id, chuc_vu = _snapshot_staff(db, body.staff_id)
     try:
         cur = db.execute(
             """INSERT INTO xep_loai_lao_dong
-                   (staff_id, loai, ky, nam, quy, ket_qua, ghi_chu, created_by, created_at, updated_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?)""",
-            (body.staff_id, body.loai.value, body.ky.value, body.nam, body.quy, body.ket_qua,
-             body.ghi_chu, current["id"], now, now),
+                   (staff_id, department_id, chuc_vu, loai, ky, nam, quy, ket_qua, ghi_chu,
+                    created_by, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (body.staff_id, department_id, chuc_vu, body.loai.value, body.ky.value, body.nam,
+             body.quy, body.ket_qua, body.ghi_chu, current["id"], now, now),
         )
     except sqlite3.IntegrityError:
         # Hai request cùng lúc lọt qua _trung_lap() ở trên (check-then-act) —
@@ -149,19 +187,31 @@ def update_xep_loai(
     current: dict = Depends(require_feature("xep_loai.manage")),
     db: sqlite3.Connection = Depends(get_db),
 ):
-    if not db.execute("SELECT 1 FROM xep_loai_lao_dong WHERE id = ?", (item_id,)).fetchone():
+    existing = db.execute(
+        "SELECT staff_id, department_id, chuc_vu FROM xep_loai_lao_dong WHERE id = ?", (item_id,)
+    ).fetchone()
+    if not existing:
         raise HTTPException(404, "Không tìm thấy bản ghi xếp loại")
-    if not _staff_ton_tai(db, body.staff_id):
-        raise HTTPException(400, "Không tìm thấy cán bộ")
+    if body.staff_id != existing["staff_id"]:
+        # Chỉ xác minh cán bộ còn tồn tại VÀ chụp lại phòng ban + chức vụ khi
+        # thật sự đổi người — sửa bản ghi cũ của cán bộ đã nghỉ (chỉ đổi
+        # ket_qua/ghi_chu, không đổi staff_id) không được đòi cán bộ đó phải
+        # "còn tồn tại" (họ đã xoá mềm) và không được âm thầm đổi phòng/chức
+        # vụ đã ghi từ lúc xếp loại.
+        if not _staff_ton_tai(db, body.staff_id):
+            raise HTTPException(400, "Không tìm thấy cán bộ")
+        department_id, chuc_vu = _snapshot_staff(db, body.staff_id)
+    else:
+        department_id, chuc_vu = existing["department_id"], existing["chuc_vu"]
     if _trung_lap(db, body.staff_id, body.loai.value, body.nam, body.quy, exclude_id=item_id):
         raise HTTPException(400, _LOI_TRUNG_LAP)
     try:
         db.execute(
-            """UPDATE xep_loai_lao_dong SET staff_id=?, loai=?, ky=?, nam=?, quy=?, ket_qua=?,
-                   ghi_chu=?, updated_at=?
+            """UPDATE xep_loai_lao_dong SET staff_id=?, department_id=?, chuc_vu=?, loai=?,
+                   ky=?, nam=?, quy=?, ket_qua=?, ghi_chu=?, updated_at=?
                WHERE id=?""",
-            (body.staff_id, body.loai.value, body.ky.value, body.nam, body.quy, body.ket_qua,
-             body.ghi_chu, _vn_now(), item_id),
+            (body.staff_id, department_id, chuc_vu, body.loai.value, body.ky.value, body.nam,
+             body.quy, body.ket_qua, body.ghi_chu, _vn_now(), item_id),
         )
     except sqlite3.IntegrityError:
         raise HTTPException(400, _LOI_TRUNG_LAP)
@@ -191,6 +241,15 @@ def delete_xep_loai(
 # này — cần đường nhập lô, không chỉ gõ tay từng dòng (yêu cầu người dùng).
 # Dò cột theo TÊN tiêu đề (khuôn `thi_dua.py::_dinh_vi_cot`), không theo vị trí
 # cột cố định. `dry_run=True` (mặc định) chỉ xem trước, không ghi DB.
+# "nam"/"quy" so khớp CHÍNH XÁC cả tiêu đề (không phải chuỗi con) — dò kiểu
+# chuỗi con khớp cả "Quý (để trống nếu xếp theo năm)" (chứa cả "quy" lẫn
+# "nam") lẫn một cột "Năm sinh"/"Năm công tác" nằm bên trái cột Năm thật, hai
+# lỗi đều không báo tiêu đề thiếu mà âm thầm gán nhầm cột (phát hiện qua review
+# PR #120). Các trường còn lại (mã cán bộ, loại, kết quả, ghi chú) không có
+# rủi ro tương tự nên vẫn dò kiểu chuỗi con cho linh hoạt.
+_KHOP_CHINH_XAC = {"nam", "quy"}
+
+
 def _dinh_vi_cot(ws, can_tim: dict, bat_buoc: set, max_row: int = 10):
     for ri, row in enumerate(ws.iter_rows(min_row=1, max_row=max_row, values_only=True), 1):
         found = {}
@@ -201,7 +260,8 @@ def _dinh_vi_cot(ws, can_tim: dict, bat_buoc: set, max_row: int = 10):
             for truong, cum_tu in can_tim.items():
                 if truong in found:
                     continue
-                if any(c in h for c in cum_tu):
+                khop = (h in cum_tu) if truong in _KHOP_CHINH_XAC else any(c in h for c in cum_tu)
+                if khop:
                     found[truong] = ci
         if bat_buoc <= set(found):
             return ri, found
@@ -210,8 +270,8 @@ def _dinh_vi_cot(ws, can_tim: dict, bat_buoc: set, max_row: int = 10):
 
 _CAN_XEP_LOAI = {
     "ma_cb": ["ma can bo", "ma cb", "ma nhan vien"],
-    "nam": ["nam"],
-    "quy": ["quy"],
+    "nam": ["nam", "nam xep loai"],
+    "quy": ["quy", "quy xep loai"],
     "loai": ["loai xep loai"],
     "ket_qua": ["ket qua"],
     "ghi_chu": ["ghi chu"],
@@ -256,9 +316,11 @@ def _doc_wb_xep_loai(content: bytes) -> list[dict]:
 
 
 def _mau_workbook() -> bytes:
+    # Tiêu đề "Quý" đơn giản (không kèm giải thích trong ngoặc) — _KHOP_CHINH_XAC
+    # so khớp toàn bộ tiêu đề, ngoặc giải thích sẽ làm sai khớp với chính cột
+    # này. Phần giải thích dời xuống sheet "Hướng dẫn".
     cols = [("Mã cán bộ", 14), ("Họ và tên (chỉ để đối chiếu)", 26), ("Năm", 8),
-            ("Quý (để trống nếu xếp theo năm)", 30), ("Loại xếp loại", 26),
-            ("Kết quả", 34), ("Ghi chú", 30)]
+            ("Quý", 10), ("Loại xếp loại", 26), ("Kết quả", 34), ("Ghi chú", 30)]
     vi_du = ["NV001", "Nguyễn Văn A", 2026, "", "Lao động", "Hoàn thành tốt nhiệm vụ", ""]
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -280,6 +342,8 @@ def _mau_workbook() -> bytes:
     for loai, ten in TEN_LOAI.items():
         ky_txt = "/".join("Năm" if k == "nam" else "Quý" for k in sorted(KY_HOP_LE_THEO_LOAI[loai]))
         ws2.append([ten, ky_txt, " | ".join(KET_QUA_THEO_LOAI[loai])])
+    ws2.append([])
+    ws2.append(["Cột \"Quý\": để trống nếu xếp loại theo năm; điền 1-4 nếu xếp loại theo quý."])
     for col, w in zip("ABC", (26, 16, 60)):
         ws2.column_dimensions[col].width = w
 
@@ -311,9 +375,10 @@ async def import_xep_loai(
         raise HTTPException(400, "Không đọc được dòng dữ liệu nào trong file")
 
     staff_by_code = {
-        str(r["employee_code"] or "").strip(): r["id"]
+        str(r["employee_code"] or "").strip(): (r["id"], r["department_id"], r["role"])
         for r in db.execute(
-            "SELECT id, employee_code FROM user_tttt WHERE is_deleted = 0 OR is_deleted IS NULL")
+            "SELECT id, employee_code, department_id, role FROM user_tttt "
+            "WHERE is_deleted = 0 OR is_deleted IS NULL")
     }
     da_co = {
         (r["staff_id"], r["loai"], r["nam"], r["quy"])
@@ -323,10 +388,11 @@ async def import_xep_loai(
     now = _vn_now()
     for it in items:
         ma_cb = str(it["ma_cb"]).strip()
-        staff_id = staff_by_code.get(ma_cb)
-        if staff_id is None:
+        thong_tin_staff = staff_by_code.get(ma_cb)
+        if thong_tin_staff is None:
             loi.append({"dong": it["dong"], "ly_do": f"Không khớp mã cán bộ: '{ma_cb}'"})
             continue
+        staff_id, department_id, chuc_vu = thong_tin_staff
         loai = _map_loai(it["loai"])
         if loai is None:
             loi.append({"dong": it["dong"],
@@ -374,10 +440,10 @@ async def import_xep_loai(
             try:
                 db.execute(
                     """INSERT INTO xep_loai_lao_dong
-                           (staff_id, loai, ky, nam, quy, ket_qua, ghi_chu, created_by,
-                            created_at, updated_at)
-                       VALUES (?,?,?,?,?,?,?,?,?,?)""",
-                    (staff_id, loai, ky, nam_i, quy_i, ket_qua,
+                           (staff_id, department_id, chuc_vu, loai, ky, nam, quy, ket_qua,
+                            ghi_chu, created_by, created_at, updated_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (staff_id, department_id, chuc_vu, loai, ky, nam_i, quy_i, ket_qua,
                      str(it["ghi_chu"] or "").strip() or None, current["id"], now, now),
                 )
             except sqlite3.IntegrityError:
@@ -397,10 +463,15 @@ async def import_xep_loai(
 # Logic tách khỏi route (`_tong_hop_data`/`_ca_nhan_data`) để route xem
 # (`menu.xep_loai`) và route xuất Excel (`xep_loai.export`) dùng chung, mỗi
 # route tự kiểm đúng mã quyền của mình — khuôn `thi_dua.py::_tong_hop_rows`.
+_NHOM_THEO_HOP_LE = {"phong", "chuc_vu"}
+
+
 def _tong_hop_data(db: sqlite3.Connection, loai: str, nam: int, ky: str,
-                   quy: Optional[int]) -> dict:
+                   quy: Optional[int], nhom_theo: str = "phong") -> dict:
     if loai not in KET_QUA_THEO_LOAI:
         raise HTTPException(400, f"Loại xếp loại không hợp lệ: '{loai}'")
+    if nhom_theo not in _NHOM_THEO_HOP_LE:
+        raise HTTPException(400, f"Cách gom nhóm không hợp lệ: '{nhom_theo}'")
     if ky not in KY_HOP_LE_THEO_LOAI[loai]:
         raise HTTPException(400, f"{TEN_LOAI[loai]} không áp dụng theo "
                                   f"{'quý' if ky == 'quy' else 'năm'}")
@@ -413,30 +484,48 @@ def _tong_hop_data(db: sqlite3.Connection, loai: str, nam: int, ky: str,
     # lẫn file xuất ra không bao giờ lệch nhau.
     quy = quy if ky == "quy" else None
 
+    categories = KET_QUA_THEO_LOAI[loai]
+    # Liệt kê sẵn MỌI nhóm (phòng đang hoạt động, hoặc chức danh/chức vụ) với
+    # đếm 0 — không thì nhóm chưa có ai được xếp loại kỳ này biến mất khỏi
+    # bảng, nhìn như báo cáo thiếu nhóm chứ không phải "nhóm đó chưa có dữ
+    # liệu". Cả `department_id` lẫn `chuc_vu` đọc từ ẢNH CHỤP lúc xếp loại (xem
+    # comment ở backend/db/migrations.py::_XEP_LOAI_TABLES), không phải phòng/
+    # chức vụ hiện tại của cán bộ — chuyển phòng hay lên/xuống chức sau đó
+    # không làm đổi báo cáo của các kỳ cũ.
+    if nhom_theo == "chuc_vu":
+        theo_nhom: dict[str, dict[str, int]] = {
+            _TEN_CHUC_VU[cv]: {c: 0 for c in categories} for cv in _CHUC_VU_LIET_KE
+        }
+    else:
+        theo_nhom = {
+            r["name"]: {c: 0 for c in categories}
+            for r in db.execute("SELECT name FROM departments WHERE is_active = 1")
+        }
+
     rows = db.execute(
-        """SELECT COALESCE(d.name, ?) AS department_name, x.ket_qua, COUNT(*) AS so_luong
+        """SELECT COALESCE(d.name, ?) AS department_name, x.chuc_vu, x.ket_qua,
+                  COUNT(*) AS so_luong
            FROM xep_loai_lao_dong x
-           LEFT JOIN user_tttt u ON u.id = x.staff_id
-           LEFT JOIN departments d ON d.id = u.department_id
+           LEFT JOIN departments d ON d.id = x.department_id
            WHERE x.loai = ? AND x.nam = ? AND x.ky = ? AND x.quy IS ?
-           GROUP BY department_name, x.ket_qua""",
+           GROUP BY department_name, x.chuc_vu, x.ket_qua""",
         (_CHUA_XEP_PHONG, loai, nam, ky, quy),
     ).fetchall()
 
-    categories = KET_QUA_THEO_LOAI[loai]
-    theo_phong: dict[str, dict[str, int]] = {}
     tong: dict[str, int] = {c: 0 for c in categories}
     for r in rows:
-        d = theo_phong.setdefault(r["department_name"], {c: 0 for c in categories})
-        d[r["ket_qua"]] = r["so_luong"]
+        nhan = (r["department_name"] if nhom_theo == "phong"
+                else _TEN_CHUC_VU.get(r["chuc_vu"], r["chuc_vu"] or _CHUA_XAC_DINH_CHUC_VU))
+        d = theo_nhom.setdefault(nhan, {c: 0 for c in categories})
+        d[r["ket_qua"]] = d.get(r["ket_qua"], 0) + r["so_luong"]
         tong[r["ket_qua"]] = tong.get(r["ket_qua"], 0) + r["so_luong"]
 
     out_rows = [
-        {"department_name": ten, "counts": counts, "total": sum(counts.values())}
-        for ten, counts in sorted(theo_phong.items())
+        {"nhom": ten, "counts": counts, "total": sum(counts.values())}
+        for ten, counts in sorted(theo_nhom.items())
     ]
     return {
-        "loai": loai, "nam": nam, "ky": ky, "quy": quy,
+        "loai": loai, "nam": nam, "ky": ky, "quy": quy, "nhom_theo": nhom_theo,
         "categories": categories, "rows": out_rows,
         "tong": {"counts": tong, "total": sum(tong.values())},
     }
@@ -477,16 +566,42 @@ def _ca_nhan_data(db: sqlite3.Connection, staff_id: int, loai: str,
             "tu_nam": tu, "den_nam": den, "nam_theo_thu_tu": nam_theo_thu_tu}
 
 
+@router.get("/stats/tong-quan")
+def stats_tong_quan(
+    current: dict = Depends(require_feature("menu.xep_loai")),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """Số liệu cho tab Tổng quan — đếm theo loại + 8 dòng cập nhật gần nhất,
+    tính thẳng ở server thay vì kéo nguyên bảng `xep_loai_lao_dong` về rồi đếm
+    ở frontend (phát hiện qua review PR #120: vài trăm cán bộ × nhiều kỳ/năm
+    là hàng nghìn dòng mỗi năm, tải hết mỗi lần mở trang sẽ chậm dần)."""
+    dem = {r["loai"]: r["so_luong"] for r in db.execute(
+        "SELECT loai, COUNT(*) AS so_luong FROM xep_loai_lao_dong GROUP BY loai")}
+    dem = {k: dem.get(k, 0) for k in TEN_LOAI}
+    gan_day = db.execute(
+        """SELECT x.id, x.staff_id, u.full_name AS staff_name,
+                  COALESCE(d.name, ?) AS department_name,
+                  x.loai, x.ky, x.nam, x.quy, x.ket_qua, x.updated_at
+           FROM xep_loai_lao_dong x
+           LEFT JOIN user_tttt u ON u.id = x.staff_id
+           LEFT JOIN departments d ON d.id = x.department_id
+           ORDER BY x.updated_at DESC LIMIT 8""",
+        (_CHUA_XEP_PHONG,),
+    ).fetchall()
+    return {"dem": dem, "gan_day": [dict(r) for r in gan_day]}
+
+
 @router.get("/stats/tong-hop")
 def stats_tong_hop(
     loai: str = Query("lao_dong"),
     nam: int = Query(...),
     ky: str = Query("nam"),
     quy: Optional[int] = Query(None),
+    nhom_theo: str = Query("phong"),
     current: dict = Depends(require_feature("menu.xep_loai")),
     db: sqlite3.Connection = Depends(get_db),
 ):
-    return _tong_hop_data(db, loai, nam, ky, quy)
+    return _tong_hop_data(db, loai, nam, ky, quy, nhom_theo)
 
 
 @router.get("/stats/ca-nhan")
@@ -505,7 +620,8 @@ def _wb_tong_hop(data: dict) -> bytes:
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Tổng hợp"
-    cot = ["Trung tâm / Phòng", *data["categories"], "Tổng"]
+    ten_cot_nhom = "Chức danh, chức vụ" if data["nhom_theo"] == "chuc_vu" else "Trung tâm / Phòng"
+    cot = [ten_cot_nhom, *data["categories"], "Tổng"]
     tieu_de = (f"TỔNG HỢP {TEN_LOAI[data['loai']].upper()} NĂM {data['nam']}"
                + (f" — QUÝ {data['quy']}" if data["quy"] else ""))
     ws.cell(row=1, column=1, value=tieu_de).font = Font(bold=True, size=13)
@@ -520,7 +636,7 @@ def _wb_tong_hop(data: dict) -> bytes:
         ws.column_dimensions[openpyxl.utils.get_column_letter(j)].width = 20
     r = 4
     for row in data["rows"]:
-        ws.cell(row=r, column=1, value=row["department_name"])
+        ws.cell(row=r, column=1, value=row["nhom"])
         for j, c in enumerate(data["categories"], start=2):
             ws.cell(row=r, column=j, value=row["counts"].get(c, 0))
         ws.cell(row=r, column=len(cot), value=row["total"])
@@ -541,15 +657,17 @@ async def export_tong_hop(
     nam: int = Query(...),
     ky: str = Query("nam"),
     quy: Optional[int] = Query(None),
+    nhom_theo: str = Query("phong"),
     current: dict = Depends(require_feature("xep_loai.export")),
     db: sqlite3.Connection = Depends(get_db),
 ):
-    data = _tong_hop_data(db, loai, nam, ky, quy)
+    data = _tong_hop_data(db, loai, nam, ky, quy, nhom_theo)
     noi_dung = await run_heavy(_wb_tong_hop, data)
     write_audit(db, current["id"], "xep_loai.export_tong_hop", "xep_loai_lao_dong", None,
-                f"loai={loai}, nam={nam}, ky={ky}, quy={data['quy']}")
+                f"loai={loai}, nam={nam}, ky={ky}, quy={data['quy']}, nhom_theo={nhom_theo}")
     db.commit()
-    ten_file = f"tong_hop_xep_loai_{loai}_{nam}" + (f"_q{data['quy']}" if data["quy"] else "") + ".xlsx"
+    ten_file = (f"tong_hop_xep_loai_{nhom_theo}_{loai}_{nam}"
+                + (f"_q{data['quy']}" if data["quy"] else "") + ".xlsx")
     return Response(content=noi_dung,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers=_download_headers(ten_file))
