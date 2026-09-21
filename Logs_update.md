@@ -4,6 +4,19 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 21/09/2026 Bàn giao chứng từ, Báo cáo bàn giao chứng từ - **Ghi chú cho từng ô chứng từ**
+    + ⚠️ **Người vận hành phải làm một việc sau khi cập nhật**: vào **Phân quyền theo nhóm** → nhóm cần cấp
+      (các nhóm Chuyên viên) → mục *Bàn giao chứng từ* → tick ô **"Viết / sửa ghi chú ô chứng từ"**. Ô quyền MỚI,
+      chưa nhóm nào có sẵn — không tick thì chưa ai viết được ghi chú. Người được tick phải **đăng xuất rồi đăng
+      nhập lại** mới thấy ô ghi chú
+    + ✅ Bấm vào ô đã có số tờ → panel bên phải có mục **Ghi chú**. Sửa được cả khi ô đã xác nhận, không làm ô
+      quay về "Chờ xác nhận". Mỗi lần sửa đều nằm trong Lịch sử thay đổi, kèm tên người nhập
+    + ✅ Ô **nộp quá hạn** thì ghi chú tự hiện ở **Báo cáo bàn giao chứng từ** (màn hình và file Word), cột
+      "Ghi chú" — chỉ nội dung, không ghi tên người viết
+    + ✅ Sửa lỗi: HKV từ chối một lần *bàn giao lại sau khi mượn* có thể bị xử lý nhầm thành từ chối chứng từ
+      mới (ô thành "Bị từ chối", mất số tờ cũ) — lỗi này sẽ xảy ra nếu GDV viết ghi chú giữa chừng; đã chặn
+    + ℹ️ Xoá trắng một ô thì ghi chú của ô đó mất theo
+
 - 21/09/2026 Đối chiếu CITAD cuối ngày - **Mở khoá bảng đã chốt: cấp được cho người khác, không còn chỉ Admin**
     + ⚠️ **Người vận hành phải làm một việc sau khi cập nhật**: vào **Phân quyền theo nhóm** → nhóm cần cấp →
       mục *Đối chiếu CITAD cuối ngày* → tick ô **"Mở khoá bảng đối chiếu đã chốt"**. Đây là ô quyền MỚI, chưa
