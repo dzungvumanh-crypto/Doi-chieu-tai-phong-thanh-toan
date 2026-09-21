@@ -53,6 +53,67 @@
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
   <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-09-21</p>
 
+  <!-- BG2 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">BG2</span>
+      <span class="card-title">Ghi chú ô bàn giao chứng từ — tự sang Báo cáo bàn giao khi ô nộp quá hạn</span>
+      <span class="badge badge-info">Chờ PR — 21/09/2026</span>
+    </div>
+    <div class="card-body">
+
+      <p>Người dùng chốt: chỉ ô có dữ liệu; chỉ giao dịch viên viết; sửa không giới hạn, lưu lịch sử; hiện tên
+        người nhập; sang báo cáo <b>chỉ nội dung</b>; không đánh dấu ô có ghi chú trên lưới.</p>
+
+      <table>
+        <tr><th style="width:30%">Quyết định</th><th>Vì sao</th></tr>
+        <tr><td>Dùng cột <code>document_entries.notes</code> có sẵn</td>
+          <td>Cột có từ bản đầu, chưa từng được ghi (máy thật: 0/2.045 ô). <code>dashboard.py</code> và màn Chứng từ
+            chờ xác nhận đã đọc nó → tự có nội dung. Thêm <code>note_by_id</code>, <code>note_at</code> cho "ai nhập".</td></tr>
+        <tr><td>"Link" sang báo cáo = báo cáo đọc thẳng <code>de.notes</code>, không chép</td>
+          <td>Một nguồn, không lệch. Đánh đổi: file Word là bản chụp lúc xuất — sửa ghi chú sau khi đã ký thì bản ký
+            khác màn hình; lịch sử <code>note_edited</code> vẫn tra lại được.</td></tr>
+        <tr><td>Endpoint riêng <code>PUT /entries/{id}/note</code>, không qua <code>entry-upsert</code></td>
+          <td>Upsert đổi trạng thái (GDV sửa → chờ xác nhận) và chặn ô đã chốt. Ô quá hạn thường đã được HKV chốt
+            trước khi GDV kịp giải trình → phải sửa được ghi chú ở mọi trạng thái mà không đụng trạng thái.</td></tr>
+        <tr><td>"Chỉ GDV" = mã quyền <code>handovers.edit_note</code>, không kiểm <code>role</code></td>
+          <td>Quy tắc không hard-code quyền. <b>Không cấp sẵn</b> — người dùng chốt QTV tự tick ở màn Phân quyền chức
+            năng (ô "Viết / sửa ghi chú ô chứng từ" dưới menu Bàn giao chứng từ). Sau deploy chưa ai viết được cho tới
+            khi tick. Bản trước từng cấp theo nhóm có <i>Mượn lại</i>: trên máy thật kéo theo nhóm "Full quyền" có 1
+            trưởng phòng, và <code>INSERT OR IGNORE</code> không điều kiện thì QTV bỏ tick, khởi động lại là tick quay về.</td></tr>
+        <tr><td>Chỉ ô có dữ liệu</td>
+          <td>Không cần kiểm thêm: panel chỉ mở với ô có <code>entry_id</code>; trigger <code>chk_sheet_count_*</code>
+            không cho tồn tại ô 0 tờ.</td></tr>
+      </table>
+
+      <p class="caution"><b>Lỗi phát hiện và đã sửa kèm:</b> <code>reject_entry()</code> đọc <b>log cuối</b> để biết đang
+        từ chối lần <i>bàn giao lại</i> (→ về Đang mượn, khôi phục số tờ) hay <i>chứng từ mới</i> (→ Bị từ chối). GDV bàn
+        giao lại rồi viết ghi chú thì log cuối là <code>note_edited</code> → ô thành "Bị từ chối" và mất số tờ cũ. Nay
+        bỏ qua các action trong <code>_NON_FLOW_ACTIONS</code>. Thêm action mới không thuộc luồng trạng thái thì đưa
+        vào tuple này. Test đã kiểm: bỏ bản vá → đỏ <code>('rejected', 30)</code>.</p>
+
+      <table>
+        <tr><th style="width:30%">Chưa làm / để ý</th><th>Chi tiết</th></tr>
+        <tr><td>Xoá trắng ô → mất ghi chú + lịch sử</td>
+          <td>Ô bị <code>DELETE</code> như trước. Xoá ô đã chốt: dòng nhật ký <code>handover_entry_delete</code> nay kèm
+            nội dung ghi chú (bản lưu duy nhất). Ô chưa chốt thì không còn dấu vết — giữ nguyên hành vi cũ.</td></tr>
+        <tr><td>Ô chưa nộp / bị từ chối chưa nộp lại</td>
+          <td>Không lên báo cáo (báo cáo chỉ xét ô <b>đã nộp muộn</b>) → ghi chú cũng không sang. Ô đổi đúng/quá hạn
+            sau khi nộp lại thì ghi chú tự hiện/biến theo.</td></tr>
+        <tr><td>GDV sửa được ghi chú trên ô của GDV khác cùng phòng</td>
+          <td>Nhất quán với <code>entry-upsert</code> (nhập số tờ hộ người cùng phòng). Báo cáo in không kèm tên nên trên
+            bản ký không thấy ai viết — chỉ lịch sử <code>note_edited</code> lưu vết. Muốn "chỉ chủ ô" thì thêm điều kiện
+            <code>staff_id == current.id</code> ở <code>update_entry_note</code>. Phản biện nêu, để người dùng quyết.</td></tr>
+        <tr><td>Ký tự điều khiển trong ghi chú</td>
+          <td>Lọc lúc lưu (giữ xuống dòng/tab). python-docx từ chối chúng → một ghi chú dán từ nguồn lạ làm file Word
+            báo cáo <b>cả tháng</b> ném 500 trong khi màn hình vẫn hiện bình thường. Phát hiện ở lượt phản biện.</td></tr>
+        <tr><td>Phạm vi người đọc rộng ra</td>
+          <td>Ai có <code>menu.handover_reports</code> đọc được giải trình của mọi phòng.</td></tr>
+        <tr><td>Cấp bù <code>cham_ach.process</code> (PR#54)</td>
+          <td>Cùng kiểu <code>INSERT OR IGNORE … SELECT</code> không điều kiện → chạy lại <b>mỗi</b> lần khởi động; QTV thu
+            hồi <code>cham_ach.process</code> khỏi nhóm còn <code>menu.cham_ach</code> thì khởi động lại tự quay về. Chưa sửa,
+            ngoài phạm vi.</td></tr>
+        <tr><td>File Excel "Xuất Excel" của lưới</td><td>Chưa thêm cột ghi chú — chưa được yêu cầu.</td></tr>
   <!-- XL1 -->
   <div class="card">
     <div class="card-header">

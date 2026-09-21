@@ -107,6 +107,7 @@ def _late_detail(late_entries: list):
                     ui.label("Ngày nộp").classes("w-32 text-center")
                     ui.label("Số ngày chậm").classes("w-32 text-center")
                     ui.label("Số tờ").classes("w-20 text-center")
+                    ui.label("Ghi chú").classes("w-72")
 
                 for e in rows:
                     days = e["days_late"]
@@ -120,6 +121,10 @@ def _late_detail(late_entries: list):
                             f"w-32 text-center text-xs font-semibold px-2 py-0.5 rounded {day_cls}"
                         )
                         ui.label(str(e["sheet_count"])).classes("w-20 text-center text-sm text-gray-600")
+                        # ui.label hiển thị dạng chữ thuần — không cần escape
+                        ui.label(e.get("notes") or "—").classes(
+                            "w-72 text-sm text-gray-700 whitespace-pre-line break-words"
+                        )
 
 
 @ui.page("/handover_reports")
