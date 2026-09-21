@@ -18862,13 +18862,18 @@ This may happen if you try to create UI from a background task.</pre>
         card 144) cùng loại tải cho <code>trễ tổng 1081 ms · đối chiếu 1</code>, request nhẹ 3,2 s. Cảnh báo chậm 1,5–2,5 s
         truy từ 15/09 coi như đã giải quyết.</p>
       <table>
-        <tr><th>Cửa (21/09)</th><th>Thời gian</th><th>RAM đỉnh</th><th>Cam kết đỉnh</th></tr>
-        <tr><td>ACH (2 lượt)</td><td>174–177 s</td><td>3,93 GB</td><td><b>4,19 GB</b></td></tr>
-        <tr><td>Song phương ĐI</td><td>85 s</td><td>2,29 GB</td><td><b>2,50 GB</b></td></tr>
+        <tr><th>Cửa (21/09, cả ngày)</th><th>Thời gian</th><th>RAM đỉnh</th><th>Cam kết đỉnh</th></tr>
+        <tr><td>ACH (3 lượt)</td><td>174–177 s</td><td>3,93–3,94 GB</td><td><b>4,19 GB</b></td></tr>
+        <tr><td>Song phương ĐI (3 lượt)</td><td>85 / 135 / 136 s</td><td>2,29 / 3,65 / 3,65 GB</td><td><b>2,50–3,87 GB</b></td></tr>
+        <tr><td>Song phương ĐẾN (2 lượt)</td><td>75 / 69 s</td><td>1,63 / 1,93 GB</td><td><b>1,84–2,13 GB</b></td></tr>
         <tr><td>Song phương phân loại (3 lượt)</td><td>~25 s</td><td>1,34–1,35 GB</td><td><b>1,55 GB</b></td></tr>
       </table>
-      <p>ACH một mình vượt ước lượng cũ 500 MB × 5,3 ≈ 2,65 GB/lượt. Trần 3 với 3 cửa đã đo ≈ 8,2 GB / 19,9 GB — giữ 3.
-        Chưa có số: ĐẾN, ILO1000, Chấm 459901, OSB, và ngày cao điểm — chưa đủ để nâng trần.</p>
+      <p><b>RAM theo cỡ dữ liệu, không cố định theo cửa</b> — ĐI 85 s → 2,50 GB nhưng 135 s → 3,87 GB cùng ngày. Ngày
+        cao điểm (cuối tháng) có thể lớn hơn mọi số trên. ACH một mình vượt ước lượng cũ 500 MB × 5,3 ≈ 2,65 GB/lượt.
+        Ba cửa nặng nhất đã đo chạy cùng lúc (ACH + ĐI + ĐẾN — ba module riêng, trần 3 cho phép):
+        4,19 + 3,87 + 2,13 ≈ <b>10,2 GB</b>, chưa tính backend/frontend/Word/Windows. So với <b>Commit Limit</b>
+        (RAM + pagefile) chứ không phải 19,9 GB RAM — chưa đo. Giữ trần 3; chưa đủ số để nâng (thiếu ILO1000,
+        Chấm 459901, OSB, mức nền và ngày cao điểm).</p>
 
       <div class="label"><span class="pill pill-blue">Quyết định</span> một tiến trình mỗi lượt, không dùng bể</div>
       <table>
