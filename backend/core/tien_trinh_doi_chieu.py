@@ -49,7 +49,7 @@ _MA_CHA_CHET = 86
 _BELOW_NORMAL_PRIORITY_CLASS = 0x00004000
 
 # Trần CỨNG bộ nhớ cam kết cho TẤT CẢ tiến trình con đối chiếu cộng lại (Windows Job Object).
-# Lưới an toàn cuối, đứng sau bước xét RAM ước tính của `phien_doi_chieu` (ngân sách 11 GB):
+# Lưới an toàn cuối, đứng sau bước xét RAM ước tính của `phien_doi_chieu` (ngân sách 11,5 GB):
 # ước tính sai thì lượt đang xin thêm bộ nhớ nhận MemoryError, backend và Windows không bị
 # kéo theo. Máy chủ 19,9 GB, lúc rảnh dùng 5,2 GB (21/09/2026) → 13 GB vẫn chừa ~1,7 GB.
 # Windows không tự giết tiến trình ăn RAM: không có trần này thì cạn bộ nhớ là cả máy

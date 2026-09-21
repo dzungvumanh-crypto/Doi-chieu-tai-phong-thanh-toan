@@ -108,8 +108,12 @@ RAM_UOC_TINH = _doc_uoc_tinh()
 # RAM: ACH chờ xác nhận MIS_đi — tính 4,5 GB là chặn oan lượt khác tới 4 giờ (phản biện 21/09).
 _KHONG_GIU_RAM = {"awaiting_confirmation"}
 
-NGAN_SACH_RAM_GB = _doc_gb(os.getenv("DOI_CHIEU_RAM_NGAN_SACH_GB") or "11",
-                           "DOI_CHIEU_RAM_NGAN_SACH_GB") or 11.0
+# 11,5 = ACH + Song phương ĐI + ĐẾN (4,5 + 4 + 3) — người dùng chốt 21/09/2026 để ba lượt nặng
+# nhất đã đo chạy được cùng lúc (RAM thật ≈ 4,19 + 3,87 + 2,13 = 10,2 GB, dưới trần cứng 13).
+# Hệ quả: với 4 module đã có số, luật này không chặn tổ hợp 3 lượt nào — nó bắt đầu có tác dụng
+# khi ILO1000/459901/OSB được khai ước tính, hoặc khi nâng MAX_SONG_SONG.
+NGAN_SACH_RAM_GB = _doc_gb(os.getenv("DOI_CHIEU_RAM_NGAN_SACH_GB") or "11.5",
+                           "DOI_CHIEU_RAM_NGAN_SACH_GB") or 11.5
 
 
 def _so_vn(x: float) -> str:

@@ -129,7 +129,7 @@ khuôn `_xu_ly_tach()` của 459901 / OSB; (3) tham số và kết quả pickle 
 `DOI_CHIEU_TIEN_TRINH=0` → chạy trong luồng như cũ (khẩn cấp trên máy chủ).
 
 **RAM — hai lớp (card 156).** (1) `phien_doi_chieu.kiem_tra`: tổng RAM ước tính các lượt ≤
-`NGAN_SACH_RAM_GB` (11), mức mỗi module ở `_RAM_UOC_TINH_MAC_DINH` + `.env`; module chưa có số
+`NGAN_SACH_RAM_GB` (11,5 = ACH + Song phương ĐI + ĐẾN), mức mỗi module ở `_RAM_UOC_TINH_MAC_DINH` + `.env`; module chưa có số
 không xét. (2) Mọi tiến trình con vào một Windows Job Object trần 13 GB bộ nhớ cam kết — con
 **chờ được gán xong** (`ev_gan`) rồi mới nạp pipeline, vì phần cấp phát trước lúc gán nằm ngoài
 trần. Vượt trần → `MemoryError` trong con → cha đổi thành `LoiTienTrinhCon` có câu tiếng Việt

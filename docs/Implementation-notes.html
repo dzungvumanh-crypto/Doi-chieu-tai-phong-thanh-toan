@@ -19499,7 +19499,7 @@ This may happen if you try to create UI from a background task.</pre>
       <table>
         <tr><th>Lớp</th><th>Ở đâu</th><th>Làm gì</th></tr>
         <tr><td>Xét RAM ước tính</td><td><code>phien_doi_chieu.kiem_tra</code></td>
-          <td>Tổng ước tính các lượt đang chạy + lượt mới ≤ <code>NGAN_SACH_RAM_GB</code> (11). Đứng SAU luật cùng module và trần
+          <td>Tổng ước tính các lượt đang chạy + lượt mới ≤ <code>NGAN_SACH_RAM_GB</code> (11,5). Đứng SAU luật cùng module và trần
           số lượt (không thay). Module chưa có số: không xét, lượt đang chạy của nó tính 0. Máy rảnh thì luôn cho qua, kể cả
           khi một mình vượt ngân sách — đặt ngân sách thấp không được khoá chết module.</td></tr>
         <tr><td>Trần cứng</td><td><code>tien_trinh_doi_chieu</code></td>
@@ -19507,8 +19507,12 @@ This may happen if you try to create UI from a background task.</pre>
           cam kết cả nhóm. Vượt → <code>MemoryError</code> ở đúng lượt đang xin thêm.</td></tr>
       </table>
       <ul>
-        <li><b>11 / 13 GB:</b> ngân sách chừa khoảng cho ước tính lệch (ACH đo 4,19 vs đặt 4,5); trần cứng cao hơn ngân sách để lượt
-          vượt nhẹ không bị từ chối oan, thấp hơn 14,7 GB còn trống để Windows không phải đẩy ra đĩa. Cả ba chỉnh được qua <code>.env</code>.</li>
+        <li><b>11,5 / 13 GB:</b> bản đầu đặt ngân sách 11; người dùng nâng lên 11,5 = ACH + Song phương ĐI + ĐẾN (4,5 + 4 + 3) để ba
+          lượt nặng nhất đã đo chạy được cùng lúc — RAM thật tổ hợp đó ≈ 4,19 + 3,87 + 2,13 = 10,2 GB, dưới trần cứng 13 và dưới 14,7 GB
+          còn trống. <b>Hệ quả đã báo người dùng:</b> với 4 module đã có số, lớp 2 không còn chặn tổ hợp 3 lượt nào (trần số lượt đã chặn
+          lượt thứ tư) — nó có tác dụng khi ILO1000/459901/OSB được khai ước tính, hoặc khi nâng <code>MAX_SONG_SONG</code>. Trần cứng
+          cao hơn ngân sách để lượt vượt nhẹ không bị từ chối oan, thấp hơn 14,7 GB còn trống để Windows không phải đẩy ra đĩa.
+          Cả ba chỉnh được qua <code>.env</code>.</li>
         <li><b>Phản biện số của người dùng:</b> Song phương ĐI đặt 4 GB chỉ hơn số đo cao nhất 3% (3,87) mà nó dao động theo cỡ file
           — ngày file to thì tổng thực vượt ngân sách. Người dùng giữ 4 GB; trần cứng đỡ phần vượt.</li>
         <li><b>Con chờ được gán vào nhóm rồi mới nạp pipeline</b> (<code>ev_gan</code>): PoC cho thấy phần cấp phát TRƯỚC lúc gán nằm

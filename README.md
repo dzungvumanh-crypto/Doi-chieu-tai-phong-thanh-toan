@@ -300,7 +300,7 @@ tham gia từ 17/09/2026):
 |---|---|---|
 | Cùng một module | **1 lượt** | Không — luật cứng |
 | Toàn hệ thống | `DOI_CHIEU_MAX_SONG_SONG`, mặc định **3** | Có, trong `.env` |
-| Tổng RAM ước tính các lượt đang chạy | `DOI_CHIEU_RAM_NGAN_SACH_GB`, mặc định **11 GB** | Có, trong `.env` |
+| Tổng RAM ước tính các lượt đang chạy | `DOI_CHIEU_RAM_NGAN_SACH_GB`, mặc định **11,5 GB** (= ACH + Song phương ĐI + ĐẾN) | Có, trong `.env` |
 | Trần cứng bộ nhớ cho mọi lượt cộng lại | `DOI_CHIEU_RAM_TRAN_GB`, mặc định **13 GB** | Có, trong `.env` |
 
 Mức RAM ước tính mỗi lượt (từ số đo máy chủ 21/09/2026): ACH 4,5 GB · Song phương ĐI 4 GB ·

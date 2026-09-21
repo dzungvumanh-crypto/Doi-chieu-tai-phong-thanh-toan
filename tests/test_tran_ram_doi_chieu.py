@@ -1,7 +1,7 @@
 """Chống tràn RAM khi nhiều đối chiếu chạy cùng lúc — card 156.
 
 Hai lớp:
-  - Xét RAM ƯỚC TÍNH trước khi cho chạy (`phien_doi_chieu.kiem_tra`, ngân sách 11 GB).
+  - Xét RAM ƯỚC TÍNH trước khi cho chạy (`phien_doi_chieu.kiem_tra`, ngân sách 11,5 GB).
   - Trần CỨNG bộ nhớ cam kết cho mọi tiến trình con cộng lại (`tien_trinh_doi_chieu`,
     Windows Job Object, 13 GB) — ước tính sai thì lượt đang xin thêm nhận lỗi rõ ràng,
     backend và Windows không bị kéo theo.
@@ -24,7 +24,7 @@ def nguon(monkeypatch):
     goc = dict(pdc._NGUON)
     pdc._NGUON.clear()
     monkeypatch.setattr(pdc, "RAM_UOC_TINH", dict(pdc._RAM_UOC_TINH_MAC_DINH))
-    monkeypatch.setattr(pdc, "NGAN_SACH_RAM_GB", 11.0)
+    monkeypatch.setattr(pdc, "NGAN_SACH_RAM_GB", 11.5)
     monkeypatch.setattr(pdc, "MAX_SONG_SONG", 3)
 
     def _khai(ma, ten, dang_chay):
@@ -42,14 +42,29 @@ def test_so_uoc_tinh_dung_so_nguoi_dung_chot():
     }
 
 
-def test_vuot_ngan_sach_thi_chan_va_noi_ro(nguon):
+def test_ngan_sach_mac_dinh_11_5_vua_ach_di_den():
+    # Người dùng chốt 21/09/2026: 11,5 = 4,5 + 4 + 3 — đổi số này là đổi quyết định đó
+    assert pdc.NGAN_SACH_RAM_GB == 11.5
+
+
+def test_ach_di_den_cung_luc_duoc_chay(nguon):
+    nguon("ach", "ACH", True)                                   # 4,5
+    nguon("song_phuong_kenh_core_di", "ĐI", True)               # 4
+    nguon("song_phuong", "ĐẾN", False)                          # 3 → đúng 11,5: không VƯỢT
+    assert pdc.kiem_tra("song_phuong") is None
+
+
+def test_vuot_ngan_sach_thi_chan_va_noi_ro(nguon, monkeypatch):
+    # 4 module đã có số không còn tổ hợp 3 lượt nào vượt 11,5 — ca chặn thật sẽ đến khi
+    # khai ước tính cho module chưa đo (ở đây giả định 459901 = 3,5 GB)
+    monkeypatch.setitem(pdc.RAM_UOC_TINH, "cham459901", 3.5)
     nguon("ach", "Đối chiếu ACH", True)                          # 4,5
     nguon("song_phuong_kenh_core_di", "Song phương ĐI", True)   # 4
-    nguon("song_phuong", "Song phương ĐẾN", False)              # 3 → 11,5 > 11
-    nghen = pdc.kiem_tra("song_phuong")
+    nguon("cham459901", "Chấm 459901", False)                   # 3,5 → 12 > 11,5
+    nghen = pdc.kiem_tra("cham459901")
     assert nghen is not None
-    assert "Song phương ĐẾN" in nghen["message"] and "~3 GB" in nghen["message"]
-    assert "Đối chiếu ACH ~4,5 GB" in nghen["message"] and "11 GB" in nghen["message"]
+    assert "Chấm 459901" in nghen["message"] and "~3,5 GB" in nghen["message"]
+    assert "Đối chiếu ACH ~4,5 GB" in nghen["message"] and "11,5 GB" in nghen["message"]
 
 
 def test_duoi_ngan_sach_thi_cho_chay(nguon):
