@@ -9,7 +9,7 @@ import sqlite3
 import threading
 import unicodedata
 from datetime import date, timedelta
-from typing import FrozenSet, List, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from fastapi.responses import StreamingResponse
@@ -23,7 +23,7 @@ from backend.services.lich_lam_viec import (
     LICH_RONG, LichLamViec, la_ngay_lam_viec, tai_lich,
 )
 from backend.database import (
-    get_db, write_audit, _vn_now, compute_annual_leave, compute_carry_over, DB_PATH,
+    get_db, write_audit, _vn_now, compute_annual_leave, compute_carry_over,
 )
 from backend.schemas.leaves import (
     LeaveCreate, LeaveReview, TongHopReview,
@@ -2544,8 +2544,9 @@ def _build_form_ctx(r, leave_id: Optional[int], db: sqlite3.Connection) -> tuple
         float(_q_row["quota_days"]) if _q_row
         else (compute_annual_leave(r["join_industry_date"], start.year) if r["join_industry_date"] else (r["annual_leave_days"] or 12))
     )
-    carry_original = compute_carry_over(r["staff_id"], start.year, db, effective=False)
-    # Carryover hiệu lực theo ngày bắt đầu của đơn (Q1 → có carryover, sau Q1 → 0)
+    # Carryover hiệu lực theo ngày bắt đầu của đơn (Q1 → có carryover, sau Q1 → 0).
+    # Phiếu in CHỈ dùng bản hiệu lực: quỹ phép ghi trên đơn phải là số nhân viên thật sự
+    # dùng được tại ngày xin nghỉ. Bản thô (effective=False) chỉ dành cho tab Hạn mức.
     carry_eff_doc  = compute_carry_over(r["staff_id"], start.year, db, effective=True, ref_date=start)
     # Số ngày đã nghỉ TRONG CÙNG NĂM (trừ đơn hiện tại)
     da_nghi = _calc_used_days(r["staff_id"], start.year, db, exclude_id=leave_id)

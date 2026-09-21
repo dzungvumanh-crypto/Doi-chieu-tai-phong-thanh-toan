@@ -7,7 +7,7 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, date as _date
 
 import anyio
 from fastapi import Depends, HTTPException
@@ -24,6 +24,25 @@ _VN_TZ = timezone(timedelta(hours=7))
 
 def _vn_now() -> datetime:
     return datetime.now(_VN_TZ).replace(tzinfo=None)
+
+
+# ── Adapter date/datetime cho sqlite3 ────────────────────────────────────────
+# Python 3.12 đánh dấu BỎ adapter mặc định. Bỏ hẳn ở bản sau nghĩa là ~146 chỗ
+# truyền thẳng `_vn_now()` / `date` vào câu SQL sẽ ném InterfaceError — hỏng rải
+# rác khắp nơi, không nổ một chỗ dễ thấy.
+#
+# Hai hàm dưới sinh ĐÚNG chuỗi mà bản mặc định của CPython vẫn sinh
+# (`isoformat(" ")` và `isoformat()`), đo lại 21/09/2026 cả trường hợp
+# microsecond = 0. KHÔNG được "cải tiến" thành isoformat("T") hay cắt bớt phần
+# giây lẻ: dữ liệu cũ trong DB đang ở khuôn này, mà rất nhiều câu lệnh so sánh
+# ngày bằng CHUỖI (`LIKE '2026-09-20%'`, `BETWEEN`, `ORDER BY`) — đổi khuôn là
+# dòng mới và dòng cũ không còn so được với nhau.
+#
+# `register_adapter` có tác dụng theo TIẾN TRÌNH, không theo kết nối, nên khai ở
+# đây là phủ luôn mọi `sqlite3.connect()` gọi thẳng (migrations, backup_service,
+# audit_queue…) miễn là module này đã được nạp.
+sqlite3.register_adapter(datetime, lambda v: v.isoformat(" "))
+sqlite3.register_adapter(_date, lambda v: v.isoformat())
 
 
 def write_audit(

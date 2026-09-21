@@ -262,4 +262,6 @@ async def group_features_page():
         ).classes("bg-red-700 text-white mt-2")
         save_btn.set_visibility(False)
 
-        asyncio.ensure_future(load_initial())
+        # Nạp lần đầu bằng timer, không ensure_future — task rời có ngăn xếp slot rỗng
+        # nên ui.* bên trong im lặng không hiện (xem docs/DESIGN.md).
+        ui.timer(0, load_initial, once=True)

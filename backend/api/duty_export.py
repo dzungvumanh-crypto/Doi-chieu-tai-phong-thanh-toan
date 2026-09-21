@@ -1,6 +1,6 @@
 """API xuất Excel lịch trực theo tuần."""
 import sqlite3
-from datetime import date, timedelta
+from datetime import date
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
 

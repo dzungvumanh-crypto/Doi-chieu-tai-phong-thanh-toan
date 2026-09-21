@@ -19074,7 +19074,239 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-18</footer>
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">153</span>
+      <span class="card-title">Rà tổng thể 20/09/2026 — 4 thứ sửa, 5 thứ cố ý để lại (2026-09-20)</span>
+      <span class="badge badge-done">Hoàn thiện</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-blue">Bối cảnh</span> quét cả kho, không theo một tính năng nào</div>
+      <p>Chạy đủ cổng (<code>ruff F821,F823,E9</code> sạch, 2095 test xanh, 384 route chỉ đúng
+        <code>/</code> + <code>/health</code> không có <code>Depends</code>, 0 khối <code>except Exception: pass</code> trần,
+        <code>templates/</code> không còn cặp NFD/NFC trùng tên, <code>ksnb.db</code> <code>integrity_check</code> ok) rồi
+        soi tiếp bộ luật <b>báo cáo</b> của ruff — chỗ hai lỗi thật năm ngoái từng nấp. Hai trong số đó là lỗi thật.</p>
+
+      <div class="label"><span class="pill pill-green">Đã sửa</span></div>
+      <table>
+        <tr><th>Chỗ</th><th>Triệu chứng người dùng thấy</th><th>Vì sao test không bắt</th></tr>
+        <tr>
+          <td><code>frontend/pages/duty_schedule.py:450</code> — <code>week_label</code> viết trần trong
+            <code>with ui.row()</code> (ruff B018)</td>
+          <td>Nhãn "Tuần 21/09 – 25/09" nằm tách trên đầu tab Phân lịch thay vì giữa hai nút ◀ ▶ —
+            nhắc tên một element <b>không</b> di chuyển nó, phải <code>.move()</code></td>
+          <td>Không test nào dựng trang; sai vị trí không ném lỗi, không đổi dữ liệu</td>
+        </tr>
+        <tr>
+          <td><code>backend/api/leaves.py:2547</code> — <code>carry_original</code> tính rồi bỏ (ruff F841)</td>
+          <td>Không sai kết quả, nhưng mỗi lần dựng phiếu nghỉ phép tốn thừa một lượt quét
+            <code>leave_records</code> — mà màn xem trước PDF gọi liên tục</td>
+          <td>Biến thừa không đổi hành vi nào để test bám vào</td>
+        </tr>
+        <tr>
+          <td><code>.venv</code> trỏ Python của user <code>Administrator</code> (máy khác)</td>
+          <td>Mọi lệnh <code>python</code> chết ngay: "No Python at …" — đúng kiểu hỏng khi cắm ổ USB sang máy khác</td>
+          <td>Ngoài phạm vi test; vá bằng <code>python -m venv --upgrade D:\System\.venv</code>, site-packages giữ nguyên</td>
+        </tr>
+        <tr><td>31 import thừa ở <code>backend/</code> + <code>frontend/</code>; file rác rỗng tên <code>--</code> ở gốc</td>
+          <td>Không ảnh hưởng chạy</td>
+          <td>Dọn xong chạy lại <code>ruff F821</code> + cả bộ test — đúng quy tắc của mục
+            <i>Lỗi tên chưa định nghĩa</i> trong DESIGN.md</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> phiếu in dùng carry-over nào</div>
+      <p>Docstring <code>compute_carry_over()</code> ghi <code>effective=False</code> là "dùng để hiển thị / in phiếu",
+        nên dòng chết ở <code>_build_form_ctx()</code> trông như <b>quên đưa vào ctx</b>, không phải rác. Đã soi cả dict ctx:
+        không trường nào cần số thô, và đó là <b>đúng nghiệp vụ</b> — quỹ phép ghi trên đơn phải là số nhân viên thật sự
+        dùng được tại ngày xin nghỉ (sau 31/3 carry-over hết hiệu lực ⇒ 0), không phải số dư thô của năm trước. Số thô chỉ
+        dành cho tab Hạn mức (<code>carry_orig_by_staff</code>, dòng ~3017). Đã ghi lý do này ngay tại chỗ xoá để người sau
+        không "sửa lại cho khớp docstring".</p>
+
+      <div class="label"><span class="pill pill-amber">Không sửa — và vì sao</span></div>
+      <ul>
+        <li><b>5.919 cảnh báo <code>DeprecationWarning</code> adapter <code>date</code>/<code>datetime</code> của sqlite3.</b>
+          Python 3.12 đánh dấu bỏ, 146 chỗ ghi <code>_vn_now()</code> thẳng vào SQL. Chưa vỡ ở 3.12 (bản của máy chủ, máy dev và CI),
+          nhưng khi nâng Python là hỏng <b>hàng loạt chỗ ghi ngày</b>. Sửa đúng cách là khai
+          <code>register_adapter</code>/<code>register_converter</code> một lần ở <code>database.py</code> — một PR riêng, có test, không
+          ghép vào lượt rà.</li>
+        <li><b><code>datetime.utcnow()</code> ở <code>security.py</code>, <code>sessions.py</code>, <code>rate_limit.py</code></b> (5 chỗ) —
+          cũng deprecated. Ở đây UTC là <b>chủ ý</b> (hạn JWT, phiên), không phải chỗ quên <code>_vn_now()</code>; đổi sang
+          <code>datetime.now(UTC)</code> chạm vào đăng nhập nên tách riêng.</li>
+        <li><b>50 lời gọi <code>create_task</code>/<code>ensure_future</code> ở 22 file frontend</b> — món nợ đã biết (DESIGN.md).
+          Con số trong DESIGN.md ghi 48/10 trang, đếm lại là 50/22 file. Dọn hàng loạt là đúng cách sinh lại lỗi
+          <code>bundles.py</code>; phải dọn từng trang kèm chạy trang thật.</li>
+        <li><b>10 cảnh báo B023</b> (<code>thi_dua.py</code>, <code>doi_soat_citad/parsers.py</code>,
+          <code>vb_format/ap_dung.py</code>) — đã đọc từng chỗ: hàm lồng được <b>gọi ngay trong cùng vòng lặp</b>, không lưu lại
+          để gọi sau ⇒ false positive. <code>login.py</code> F811 (<code>conflict_dialog = None</code> rồi
+          <code>with ui.dialog() as conflict_dialog</code>) cũng là khuôn cố ý: closure tra tên lúc bấm, lúc đó dialog đã có thật.</li>
+        <li><b>3 file <code>data/ksnb_corrupt*.db</code></b> (~1,3 MB) vẫn nằm trong <code>data/</code> từ tháng 5. Đúng tên, cố ý giữ;
+          nhưng <code>-shm</code>/<code>-wal</code> của chúng được tạo lại 18/09 ⇒ có thứ gì đó <b>đang mở cả file hỏng</b> khi quét
+          <code>data/*.db</code>. Chưa truy ra chỗ quét — chưa gây hại, ghi lại để lần sau đụng backup thì kiểm.</li>
+      </ul>
+
+      <div class="label"><span class="pill pill-amber">Ngoài mã nguồn</span></div>
+      <p>Backend lúc khởi động cảnh báo <code>Đồng hồ máy chủ lệch -27,57s so với NTP (ngưỡng 5s)</code>.
+        <code>w32tm /query /status</code>: dịch vụ W32Time <i>đang chạy</i> nhưng <code>Last Successful Sync Time: unspecified</code>,
+        nguồn là <b>Local CMOS Clock</b> — chưa đồng bộ lần nào. Giờ trong Nhật ký hệ thống và hạn JWT đều lệch theo.
+        <code>w32tm /resync /force</code> đòi quyền quản trị (0x80070005) nên để người vận hành chạy.</p>
+
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">154</span>
+      <span class="card-title">Dọn nợ của card 153: adapter sqlite3, utcnow, và 39/49 chỗ bọc create_task (2026-09-21)</span>
+      <span class="badge badge-done">Hoàn thiện</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-blue">Bối cảnh</span> ba mục "không sửa" của card 153, nay làm</div>
+      <p>Mỗi mục đều đo trước khi sửa, vì cả ba đều là loại thay đổi dễ trông như vô hại mà đổi hành vi thật.</p>
+
+      <div class="label"><span class="pill pill-green">1. Adapter date/datetime cho sqlite3</span> 8 dòng ở một chỗ, không đụng 146 chỗ ghi ngày</div>
+      <p>Đăng ký lại đúng hành vi mà Python 3.12 đánh dấu bỏ, trong <code>backend/database.py</code>. Rủi ro thật nằm ở
+        <b>khuôn chuỗi</b>: rất nhiều câu lệnh so sánh ngày bằng chuỗi (<code>LIKE</code>, <code>BETWEEN</code>,
+        <code>ORDER BY</code>), nên adapter mới sinh khác một ký tự là dòng mới không còn so được với dòng cũ. Đo bản mặc định
+        rồi khớp từng byte:</p>
+      <table>
+        <tr><th>Giá trị</th><th>Bản mặc định (cũ)</th><th>Adapter mới</th></tr>
+        <tr><td><code>datetime</code> có microsecond</td><td><code>2026-09-21 08:05:03.123456</code></td><td>giống hệt</td></tr>
+        <tr><td><code>datetime</code> microsecond = 0</td><td><code>2026-09-21 08:05:03</code></td><td>giống hệt</td></tr>
+        <tr><td><code>datetime</code> có múi giờ</td><td><code>2026-09-21 08:05:03+07:00</code></td><td>giống hệt</td></tr>
+        <tr><td><code>date</code></td><td><code>2026-09-21</code></td><td>giống hệt</td></tr>
+        <tr><td><code>pandas.Timestamp</code></td><td><code>ProgrammingError</code></td><td><code>ProgrammingError</code> — không đổi</td></tr>
+      </table>
+      <p>Hai điều kiện làm việc này rẻ, đã kiểm: (a) không nơi nào dùng <code>detect_types</code>/<code>PARSE_DECLTYPES</code>
+        nên <b>không cần converter</b>, chỉ adapter; (b) <code>register_adapter</code> có tác dụng theo <b>tiến trình</b> chứ không
+        theo kết nối, nên khai ở <code>database.py</code> là phủ luôn ~25 chỗ gọi thẳng <code>sqlite3.connect()</code>
+        (migrations, backup_service, audit_queue), và cả <code>init_db.py</code> lẫn <code>conftest.py</code> vì cả hai đều nạp
+        module này. Kết quả: <b>5.919 → 1.363</b> cảnh báo khi chạy test; phần còn lại là của thư viện <code>jose</code>.</p>
+
+      <div class="label"><span class="pill pill-green">2. datetime.utcnow() — giữ NAIVE, không đổi sang aware</span></div>
+      <p>Lời khuyên phổ biến là thay bằng <code>datetime.now(UTC)</code>. Ở đây làm vậy là <b>hỏng đăng nhập</b>:
+        <code>rate_limit.py</code> có <code>lu - now</code> và <code>now - ws</code>, trong đó <code>lu</code>/<code>ws</code> do
+        <code>strptime</code> sinh ra nên luôn naive — trộn hai loại là <code>TypeError</code>. Và đường đi đó <b>chỉ chạy khi có
+        tài khoản đang bị khoá</b>, tức lỗi sẽ nổ đúng lúc hệ thống đang chặn kẻ dò mật khẩu. Nên cả ba chỗ dùng
+        <code>datetime.now(timezone.utc).replace(tzinfo=None)</code> qua helper <code>_utcnow()</code> của từng module.
+        Chạy thử đường thật: khoá 5 lần sai → còn 899 giây; phiên đọc lại đúng; <code>expires_at</code> giữ nguyên khuôn chuỗi cũ.</p>
+      <p><b>Chưa làm:</b> <code>python-jose</code> đang 3.3.0 (mới nhất 3.5.0) tự gọi <code>utcnow()</code> — nâng thư viện xác thực
+        là thay đổi chạm toàn bộ đăng nhập, để người dùng quyết riêng.</p>
+
+      <div class="label"><span class="pill pill-green">3. create_task/ensure_future ở frontend — 49 còn 10</span></div>
+      <p>Card 153 xếp mục này là "dọn hàng loạt = sinh lại lỗi <code>bundles.py</code>". Vẫn đúng với cách dọn <b>máy móc</b>.
+        Chỗ thoát nằm ở một dòng trong <code>nicegui/events.py</code>: <i>"await an awaitable result even if the handler is not a
+        coroutine (like a lambda statement)"</i> — NiceGUI await luôn kết quả của lambda, <b>trong</b> <code>with parent_slot:</code>.
+        Nghĩa là chỉ cần bỏ lớp bọc mà <b>giữ nguyên lambda</b>: không đổi thời điểm tra tên nên <b>không có bẫy
+        <code>UnboundLocalError</code></b>, thứ đã hạ <code>bundles.py</code> năm ngoái.</p>
+      <p>Đo bằng <code>nicegui.testing</code> (dựng trang thật, bấm nút, tạo <code>ui.label</code> <i>sau</i> một <code>await</code>):</p>
+      <table>
+        <tr><th>Khuôn</th><th>Ngăn xếp slot sau await</th><th>Dùng cho</th></tr>
+        <tr><td><code>on_click=f</code></td><td>còn nguyên</td><td>handler không đối số</td></tr>
+        <tr><td><code>on_click=lambda: f(doi_so)</code></td><td>còn nguyên</td><td><b>giữ được đối số</b> — khuôn dùng nhiều nhất</td></tr>
+        <tr><td><code>ui.timer(0, f, once=True)</code></td><td>còn nguyên</td><td>nạp lần đầu lúc dựng trang</td></tr>
+        <tr><td><code>lambda: ensure_future(f())</code></td><td><b>RỖNG</b> — ui.* bị nuốt</td><td>khuôn phải bỏ</td></tr>
+      </table>
+      <p>Đã kiểm thứ tự định nghĩa bằng AST trước khi đổi: <b>7 chỗ dùng hàm TRƯỚC dòng định nghĩa nó</b> — đúng những chỗ mà
+        bỏ <code>lambda</code> sẽ làm cả trang không mở được. Giữ lambda nên cả 7 chỗ đó vẫn an toàn. Cũng nhờ đọc
+        <code>expects_arguments</code> mà tránh được một lỗi ngược: <code>audit_logs._load(method, q, page)</code> nhận đối số ở
+        mọi chỗ gọi, đổi thành <code>on_click=_load</code> là mất hết đối số.</p>
+      <p>10 chỗ còn lại nằm trong thân hàm: 9 chỗ đã thành <code>ui.timer(..., once=True)</code>, còn
+        <code>shared.py::_tab_check</code> <b>cố ý giữ</b> — nó tự <code>await client.connected()</code> rồi chỉ gọi
+        <code>api.clear_auth()</code> và <code>client.open()</code>, cả hai đi qua tham chiếu client nên không cần slot.</p>
+      <p><b>Lưới canh mới:</b> <code>tests/test_frontend_khong_boc_create_task.py</code> — cấm hẳn khuôn trong lambda, và bắt mọi
+        chỗ nạp giao diện phải đi qua <code>ui.timer</code>; file nào thật sự cần việc nền phải khai tên vào
+        <code>_DUOC_PHEP</code>. Gây lỗi cố ý cả hai kiểu, cả hai đều đỏ.</p>
+
+      <div class="label"><span class="pill pill-green">Sửa kèm</span></div>
+      <ul>
+        <li><code>bundles.py</code>: xoá <code>is_admin</code> chết — <b>tàn dư của gate quyền theo <code>role</code></b> đã gỡ.
+          Để lại là mồi cho người sau chép lại kiểu gate sai.</li>
+        <li><code>leaves</code>: xoá <code>pending_d</code>/<code>top_d</code> (hai khối dashboard đã bỏ), sửa một chú thích hỏng ký tự.</li>
+        <li><code>login.py</code>: ghi rõ vì sao <code>conflict_dialog = None</code> phải giữ, để không ai "dọn cho gọn" theo F811.</li>
+      </ul>
+
+      <div class="label"><span class="pill pill-amber">Đã phản biện lại, giữ nguyên kết luận</span></div>
+      <ul>
+        <li><b>10 cảnh báo B023</b>: đọc nốt hai chỗ card 153 chưa đọc kỹ (<code>doi_soat_citad/parsers.py::gv</code>,
+          <code>vb_format/ap_dung.py</code> — lambda cho <code>re.sub</code>). Cả hai gọi ngay trong cùng vòng lặp, không lưu lại
+          để gọi sau nên đúng là false positive.</li>
+        <li><b>3 file <code>data/ksnb_corrupt*.db</code></b>: truy xong — <b>không mã nào trong repo quét <code>data/*.db</code></b>
+          (<code>backup_service</code> chỉ đụng <code>data/backups/</code>). Các file <code>-shm</code>/<code>-wal</code> là do công
+          cụ ngoài mở, và <code>data/</code> nằm trong <code>.gitignore</code> nên không vào kho. Không phải vấn đề mã nguồn.</li>
+        <li><b><code>staff.py</code> và <code>doi_chieu_citad.py</code> còn gate nút bằng <code>role</code></b> — vi phạm quy tắc
+          "không hard-code quyền", nhưng sửa là phải khai mã mới ở 4 chỗ rồi gán nhóm: một quyết định nghiệp vụ (ai được
+          thấy nút đó), không gộp vào lượt dọn kỹ thuật.</li>
+      </ul>
+
+      <div class="label"><span class="pill pill-blue">Số liệu</span></div>
+      <table>
+        <tr><th></th><th>Trước</th><th>Sau</th></tr>
+        <tr><td>Test</td><td>2095 xanh</td><td><b>2097 xanh</b> (thêm 2 lưới canh)</td></tr>
+        <tr><td>Cảnh báo khi chạy test</td><td>5.919</td><td><b>1.363</b> (còn lại của <code>jose</code>)</td></tr>
+        <tr><td>Bọc create_task ở frontend</td><td>49 (22 file)</td><td><b>10</b>, không còn chỗ nào trong lambda</td></tr>
+        <tr><td>ruff (lượt báo cáo)</td><td>93</td><td>58</td></tr>
+        <tr><td>Cổng <code>F821,F823,E9</code></td><td>sạch</td><td>sạch (chạy lại sau MỖI bước)</td></tr>
+      </table>
+
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">155</span>
+      <span class="card-title">Mở khoá bảng CITAD đã chốt: gỡ nốt một chỗ hard-code role (2026-09-21)</span>
+      <span class="badge badge-done">Hoàn thiện</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-blue">Bối cảnh</span> chỗ card 154 ghi là "để người dùng quyết"</div>
+      <p>Nút <b>"Mở khoá (Admin)"</b> ở màn Đối chiếu CITAD cuối ngày — đưa một bảng đã "Lưu bảng cuối" (CHỐT)
+        về lại bản tạm cho người lập sửa tiếp. Cả hai tầng đều gate cứng <code>role == "admin"</code>:
+        <code>Depends(require_admin)</code> ở route và <code>current_user.get("role") == "admin"</code> ở trang.
+        Đúng kiểu mà <code>doi_chieu_citad_nostro.delete_any</code> đã sửa sau review PR #90 — chú thích của mã đó
+        trong <code>features.py</code> mô tả chính xác tình huống này, nên làm y khuôn.</p>
+
+      <div class="label"><span class="pill pill-green">4 chỗ</span> thiếu chỗ nào cũng hỏng lặng lẽ</div>
+      <table>
+        <tr><th>#</th><th>Chỗ</th><th>Nội dung</th></tr>
+        <tr><td>1</td><td><code>FEATURES</code></td><td><code>doi_chieu_citad.unlock</code> — "Mở khoá bảng đối chiếu đã chốt"</td></tr>
+        <tr><td>2</td><td><code>FEATURE_GROUPS</code></td><td>thành <code>actions</code> của <code>menu.doi_chieu_citad</code>, cạnh nhau với khuôn Nostro</td></tr>
+        <tr><td>3</td><td>Route</td><td><code>require_admin</code> → <code>require_feature("doi_chieu_citad.unlock")</code>; bỏ import <code>require_admin</code> (không còn chỗ nào dùng trong file)</td></tr>
+        <tr><td>4</td><td>Trang</td><td><code>is_admin</code> → <code>api.has_feature("doi_chieu_citad.unlock")</code></td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-blue">Đánh giá ảnh hưởng</span> không ai mất quyền — đã kiểm cả hai tầng</div>
+      <p>Câu hỏi phải trả lời trước khi đổi: mã này <b>chưa nhóm nào được tick</b>, vậy admin có mất nút không?
+        Không, và phải xác nhận ở <b>cả hai</b> nơi chứ không chỉ backend:</p>
+      <ul>
+        <li><code>deps.py::require_feature</code> dòng đầu: <code>if current["role"] == ADMIN: return current</code> — admin qua thẳng.</li>
+        <li><code>api_client.py::has_feature</code>: <code>if user.get("role") == "admin": return True</code> — admin vẫn <b>thấy</b> nút.
+          Nếu chỉ sửa backend rồi quên chỗ này thì admin gọi được API mà không có nút để bấm.</li>
+      </ul>
+      <p>Nên trước: chỉ admin. Sau: admin + ai được tick. Endpoint chỉ có <b>một</b> chỗ gọi (trang này); test
+        hiện có gọi thẳng <code>svc.session_admin_unlock()</code> nên không đi qua route, không ảnh hưởng.</p>
+      <p>Nhãn nút bỏ chữ "(Admin)" — để nguyên là nói dối người dùng ngay khi admin tick mã này cho Trưởng phòng.</p>
+
+      <div class="label"><span class="pill pill-amber">Việc phải làm sau deploy</span></div>
+      <p>Mã HOÀN TOÀN MỚI, chưa nhóm nào có sẵn — giống bài học PR #70: phải <b>tick tay</b> ở màn Phân quyền theo
+        nhóm thì Trưởng/Phó phòng mới mở khoá được. Đã ghi vào <code>Logs_update.md</code> cho người vận hành.</p>
+
+      <div class="label"><span class="pill pill-blue">Kiểm</span></div>
+      <p><code>_assert_feature_coverage()</code> không chặn khởi động (96 mã, không mã nào thiếu ô tick — đã quét lại
+        toàn bộ <code>FEATURE_GROUPS</code>); route đăng ký đúng <code>require_feature</code> với đúng chuỗi mã (đọc
+        closure của dependency đã gắn, không tin mắt đọc diff); 2097 test xanh.</p>
+
+      <div class="label"><span class="pill pill-amber">Còn lại</span></div>
+      <p><code>staff.py</code> vẫn gate ba chỗ bằng <code>is_admin</code> (<code>_ADMIN_ROLES</code>) — chưa gỡ. Khác
+        CITAD ở chỗ nó dính tới việc admin cấp 2 không được sửa admin cấp 1, tức có ràng buộc nghiệp vụ riêng
+        (<code>acting_is_l2</code>) chứ không chỉ là một nút bật/tắt. Cần quyết định riêng.</p>
+
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-21</footer>
 </div>
 </body>
 </html>

@@ -441,23 +441,28 @@ async def duty_schedule_page():
                     dlg.open()
 
                 # ── Week navigation ──────────────────────────────
-                with ui.row().classes("items-center gap-2 mb-2 flex-wrap"):
+                async def _doi_tuan(so_tuan):
+                    """Dịch tuần đang xem rồi nạp lại. so_tuan=None → tuần chứa hôm nay.
+
+                    Gộp ba nút vào một hàm async thay vì `lambda: [gán…, ensure_future(…)]`:
+                    lambda trả về LIST nên NiceGUI không await được, phải tự mở task —
+                    mà task mới thì ngăn xếp slot rỗng, mọi ui.* trong load_schedule()
+                    rơi vào handler ngoại lệ toàn cục, màn hình đứng im không báo gì."""
+                    ws_ref["value"] = (_week_start(date.today()) if so_tuan is None
+                                       else ws_ref["value"] + timedelta(weeks=so_tuan))
+                    await load_schedule()
+
+                with ui.row().classes("items-center gap-2 mb-2 flex-wrap") as nav_tuan:
                     ui.button(icon="chevron_left",
-                              on_click=lambda: [
-                                  ws_ref.__setitem__("value", ws_ref["value"] - timedelta(weeks=1)),
-                                  asyncio.ensure_future(load_schedule()),
-                              ]).props("flat dense")
-                    week_label
+                              on_click=lambda: _doi_tuan(-1)).props("flat dense")
+                    # week_label được tạo ở đầu tab (trước schedule_area) nên phải DỜI vào
+                    # giữa hai nút, không phải nhắc tên trần — nhắc trần không di chuyển gì.
+                    week_label.move(nav_tuan)
                     ui.button(icon="chevron_right",
-                              on_click=lambda: [
-                                  ws_ref.__setitem__("value", ws_ref["value"] + timedelta(weeks=1)),
-                                  asyncio.ensure_future(load_schedule()),
-                              ]).props("flat dense")
+                              on_click=lambda: _doi_tuan(1)).props("flat dense")
                     ui.button("Hôm nay",
-                              on_click=lambda: [
-                                  ws_ref.__setitem__("value", _week_start(date.today())),
-                                  asyncio.ensure_future(load_schedule()),
-                              ]).props("flat dense color=grey-6").classes("text-xs")
+                              on_click=lambda: _doi_tuan(None)
+                              ).props("flat dense color=grey-6").classes("text-xs")
 
                 if can_write:
                     with ui.row().classes("gap-2 mb-3 flex-wrap"):
@@ -542,7 +547,10 @@ async def duty_schedule_page():
                             ui.button("Xóa tuần", icon="delete_outline",
                                       on_click=do_delete_week).props("color=negative flat")
 
-                asyncio.ensure_future(load_schedule())
+                # Nạp lần đầu qua ui.timer(once=True), KHÔNG ensure_future: task rời có
+                # ngăn xếp slot rỗng nên ui.* bên trong rơi vào handler ngoại lệ toàn cục,
+                # màn hình đứng im. Timer chạy đúng ngữ cảnh trang và sau khi client nối.
+                ui.timer(0, load_schedule, once=True)
 
             # ════════════════════════════════════════════════════
             # TAB 2 — NHÂN VIÊN
@@ -621,7 +629,7 @@ async def duty_schedule_page():
                                     cb_proj.props("dense")
                                     cb_proj.set_enabled(can_manage_staff)
 
-                asyncio.ensure_future(load_staff())
+                ui.timer(0, load_staff, once=True)
 
             # ════════════════════════════════════════════════════
             # TAB 3 — VẮNG MẶT
@@ -742,17 +750,17 @@ async def duty_schedule_page():
                         label="Tháng", value=today_ab.month, min=1, max=12, format="%d"
                     ).classes("w-24")
 
-                    def _on_ab_filter_change():
+                    async def _on_ab_filter_change():
                         ab_year_v["v"]  = int(ab_yr_inp.value or today_ab.year)
                         ab_month_v["v"] = int(ab_mo_inp.value or today_ab.month)
-                        asyncio.ensure_future(load_absences())
+                        await load_absences()
 
                     ab_yr_inp.on("change", lambda _: _on_ab_filter_change())
                     ab_mo_inp.on("change", lambda _: _on_ab_filter_change())
                     ui.button("Tải", icon="refresh",
-                              on_click=lambda: asyncio.ensure_future(load_absences())).props("flat dense color=primary")
+                              on_click=load_absences).props("flat dense color=primary")
 
-                asyncio.ensure_future(load_absences())
+                ui.timer(0, load_absences, once=True)
 
             # ════════════════════════════════════════════════════
             # TAB 4 — THỐNG KÊ (was 3)
@@ -815,7 +823,7 @@ async def duty_schedule_page():
 
                 ui.button("Tải thống kê", icon="refresh",
                           on_click=load_stats).props("flat dense color=primary").classes("mb-1")
-                asyncio.ensure_future(load_stats())
+                ui.timer(0, load_stats, once=True)
 
             # ════════════════════════════════════════════════════
             # TAB 4 — NGÀY ĐẶC BIỆT
@@ -828,12 +836,12 @@ async def duty_schedule_page():
                     yr_sp = ui.number(label="Năm", value=today_yr2, min=2020, max=2099, format="%d").classes("w-28")
                     mo_sp = ui.number(label="Tháng (tuỳ chọn)", value=None, min=1, max=12, format="%d").classes("w-36")
                     ui.button("Tải", icon="refresh",
-                              on_click=lambda: asyncio.ensure_future(load_specials())).props("flat dense color=primary")
+                              on_click=lambda: load_specials()).props("flat dense color=primary")
                     if can_manage_cfg:
                         ui.button("Set Ngày lễ", icon="auto_fix_high",
-                                  on_click=lambda: asyncio.ensure_future(do_seed_holidays())).props("flat dense color=teal")
+                                  on_click=lambda: do_seed_holidays()).props("flat dense color=teal")
                         ui.button("Tính Cut-off", icon="calculate",
-                                  on_click=lambda: asyncio.ensure_future(do_compute_cutoff())).props("flat dense color=orange")
+                                  on_click=lambda: do_compute_cutoff()).props("flat dense color=orange")
 
                 specials_area = ui.column().classes("w-full gap-1")
 
@@ -950,7 +958,7 @@ async def duty_schedule_page():
                     except Exception as e:
                         _handle_api_error(e)
 
-                asyncio.ensure_future(load_specials())
+                ui.timer(0, load_specials, once=True)
 
             # ════════════════════════════════════════════════════
             # TAB 5 — CÀI ĐẶT
@@ -1016,7 +1024,7 @@ async def duty_schedule_page():
                             # là lỗi hết phiên vì nó cần redirect về /login.
                             _handle_api_error(ex)
 
-                    yr_cfg.on("change", lambda: asyncio.ensure_future(load_cfg()))
+                    yr_cfg.on("change", load_cfg)
 
                     if can_manage_cfg:
                         async def do_save_cfg():
@@ -1068,4 +1076,4 @@ async def duty_schedule_page():
                         ui.button("Reset vòng xoay", icon="refresh",
                                   on_click=do_reset_rotation).props("color=negative flat")
 
-                asyncio.ensure_future(load_cfg())
+                ui.timer(0, load_cfg, once=True)

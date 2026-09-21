@@ -1934,7 +1934,7 @@ async def leaves_page(open_id: Optional[int] = None):
 
             ab = ui.button("Phê duyệt", icon="check_circle",
 
-                           on_click=lambda: asyncio.ensure_future(_bulk_approve())).classes(
+                           on_click=_bulk_approve).classes(
 
                 "bg-green-600 text-white")
 
@@ -1942,7 +1942,7 @@ async def leaves_page(open_id: Optional[int] = None):
 
             rb = ui.button("Từ chối", icon="cancel",
 
-                           on_click=lambda: asyncio.ensure_future(_bulk_reject_open())).classes(
+                           on_click=_bulk_reject_open).classes(
 
                 "bg-red-600 text-white")
 
@@ -2416,11 +2416,11 @@ async def leaves_page(open_id: Optional[int] = None):
 
                         with ui.row().classes("w-16 gap-0.5 justify-end shrink-0"):
 
-                            ui.button(icon="info", on_click=lambda l=lv: asyncio.ensure_future(open_detail(l))).props(
+                            ui.button(icon="info", on_click=lambda l=lv: open_detail(l)).props(
 
                                 "flat round dense size=sm").classes("text-blue-600").tooltip("Chi tiết")
 
-                            ui.button(icon="history", on_click=lambda l=lv: asyncio.ensure_future(open_history(l))).props(
+                            ui.button(icon="history", on_click=lambda l=lv: open_history(l)).props(
 
                                 "flat round dense size=sm").classes("text-gray-500").tooltip("Lịch sử")
 
@@ -2735,10 +2735,6 @@ async def leaves_page(open_id: Optional[int] = None):
 
                         by_status = data.get("by_status", {})
 
-                        pending_d = data.get("pending", [])
-
-                        top_d     = data.get("top_staff", [])
-
 
 
                         # Mặc định (chưa lọc theo ngày): số liệu theo phạm vi vai trò từ
@@ -2749,7 +2745,7 @@ async def leaves_page(open_id: Optional[int] = None):
 
                         with _db_area:
 
-                            # Đơn đang ch??
+                            # Đơn đang chờ duyệt
 
                             pass  # bỏ Đơn đang chờ duyệt (đã có trong module Chờ duyệt)
 
@@ -3597,9 +3593,9 @@ async def leaves_page(open_id: Optional[int] = None):
 
 
 
-                cal_year.on("update:model-value",  lambda: asyncio.ensure_future(_reload_cal()))
+                cal_year.on("update:model-value",  _reload_cal)
 
-                cal_month.on("update:model-value", lambda: asyncio.ensure_future(_reload_cal()))
+                cal_month.on("update:model-value", _reload_cal)
 
                 await _reload_cal()
 
@@ -3977,7 +3973,7 @@ async def leaves_page(open_id: Optional[int] = None):
 
 
 
-                    h_year_sel.on("update:model-value", lambda: asyncio.ensure_future(_reload_holidays()))
+                    h_year_sel.on("update:model-value", _reload_holidays)
 
                     await _reload_holidays()
 
@@ -4004,7 +4000,7 @@ async def leaves_page(open_id: Optional[int] = None):
                         if api.has_feature("leaves.quota_admin"):
                             ui.upload(
                                 label="Nhập file hạn mức",
-                                on_upload=lambda e: asyncio.create_task(_qi_on_upload(e)),
+                                on_upload=lambda e: _qi_on_upload(e),
                                 auto_upload=True,
                             ).props('accept=".xlsx" dense flat hide-upload-btn').classes(
                                 "text-gray-700 w-56 shrink-0"
@@ -4012,7 +4008,7 @@ async def leaves_page(open_id: Optional[int] = None):
                                 "File Excel có cột: STT, Họ và tên, Mã cán bộ, Phòng, Chức vụ, Hạn mức, Đã nghỉ"
                             )
                             ui.button("Lịch sử nhập", icon="history",
-                                      on_click=lambda: asyncio.ensure_future(_qi_open_history())
+                                      on_click=lambda: _qi_open_history()
                                       ).props("dense outline").classes("text-gray-700 shrink-0")
 
                     quota_area = ui.column().classes("w-full gap-0")
@@ -4027,7 +4023,7 @@ async def leaves_page(open_id: Optional[int] = None):
                         qi_rows_area = ui.column().classes("w-full gap-0 max-h-96 overflow-y-auto border border-gray-200 rounded")
                         with ui.row().classes("w-full justify-end gap-2 mt-4"):
                             ui.button("Từ chối", on_click=qi_preview_dialog.close).props("flat").classes("text-gray-500")
-                            qi_apply_btn = ui.button("Đồng ý áp dụng", icon="check", on_click=lambda: asyncio.ensure_future(_qi_apply()))
+                            qi_apply_btn = ui.button("Đồng ý áp dụng", icon="check", on_click=lambda: _qi_apply())
                             qi_apply_btn.classes("bg-red-700 text-white")
 
                     def _qi_render_preview():
@@ -4577,7 +4573,7 @@ async def leaves_page(open_id: Optional[int] = None):
 
 
 
-                    q_year_sel.on("update:model-value", lambda: asyncio.ensure_future(_reload_quota()))
+                    q_year_sel.on("update:model-value", _reload_quota)
 
                     await _reload_quota()
 

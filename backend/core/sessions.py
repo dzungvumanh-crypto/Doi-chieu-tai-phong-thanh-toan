@@ -1,6 +1,12 @@
 """DB-backed session store — thay thế in-memory dict."""
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+
+
+def _utcnow() -> datetime:
+    """Giờ UTC NAIVE — thay datetime.utcnow(), bị đánh dấu bỏ từ Python 3.12.
+    Phải là naive: `expires_at` trong DB là chuỗi không kèm múi giờ."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _utc_str(dt: datetime) -> str:
@@ -14,7 +20,7 @@ def set_session(
     session_key: str,
     ttl_hours: int = 8,
 ) -> None:
-    now = datetime.utcnow()
+    now = _utcnow()
     expires_at = _utc_str(now + timedelta(hours=ttl_hours))
     db.execute(
         "INSERT OR REPLACE INTO login_sessions (staff_id, ip_address, expires_at, session_key) VALUES (?,?,?,?)",
@@ -26,7 +32,7 @@ def set_session(
 
 def get_session(db: sqlite3.Connection, staff_id: int):
     """Trả về Row (ip_address, session_key) nếu session còn hạn, ngược lại None."""
-    now_str = _utc_str(datetime.utcnow())
+    now_str = _utc_str(_utcnow())
     return db.execute(
         "SELECT ip_address, session_key FROM login_sessions WHERE staff_id = ? AND expires_at > ?",
         (staff_id, now_str),
