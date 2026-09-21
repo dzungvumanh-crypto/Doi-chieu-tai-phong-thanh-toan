@@ -4,6 +4,16 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 21/09/2026 Đối chiếu - **Không để nhiều lượt đối chiếu cùng lúc làm tràn bộ nhớ máy chủ**
+    + ✅ Trước khi cho chạy, hệ thống cộng bộ nhớ ước tính của các lượt đang chạy. Nếu thêm lượt mới
+      sẽ vượt mức cho phép, lượt đó được báo **"Máy chủ chưa đủ bộ nhớ…"** kèm tên các lượt đang chạy —
+      chờ một lượt xong rồi bấm lại
+    + ✅ Có thêm một lớp bảo vệ cuối: nếu một lượt dùng bộ nhớ vượt dự kiến, chỉ lượt đó báo lỗi
+      **"vượt bộ nhớ dành cho đối chiếu"**; các lượt khác và toàn bộ hệ thống vẫn chạy bình thường
+    + ℹ️ Mức dự kiến lấy từ số đo thật: ACH 4,5 GB, Song phương ĐI 4 GB, ĐẾN 3 GB, phân loại 2 GB.
+      Chấm ILO1000, Chấm 459901, Đối chiếu OSB chưa có số đo nên vẫn theo giới hạn 3 lượt như cũ
+    + ℹ️ Người vận hành: các mức này chỉnh được trong file cấu hình máy chủ (`.env`), xem `.env.example`
+
 - 21/09/2026 Bàn giao chứng từ, Báo cáo bàn giao chứng từ - **Ghi chú cho từng ô chứng từ**
     + ⚠️ **Người vận hành phải làm một việc sau khi cập nhật**: vào **Phân quyền theo nhóm** → nhóm cần cấp
       (các nhóm Chuyên viên) → mục *Bàn giao chứng từ* → tick ô **"Viết / sửa ghi chú ô chứng từ"**. Ô quyền MỚI,

@@ -196,6 +196,20 @@ async def _db_error_handler(request, exc):
     return JSONResponse(status_code=503, content={"detail": "Hệ thống bận, vui lòng thử lại"})
 
 
+from backend.core.tien_trinh_doi_chieu import LoiTienTrinhCon  # noqa: E402
+
+_tien_trinh_log = logging.getLogger("doi_chieu.tien_trinh")
+
+
+@app.exception_handler(LoiTienTrinhCon)
+async def _loi_tien_trinh_con(request, exc):
+    # SWIFT recon gọi chay_tach thẳng trong request và chỉ bắt UnknownFileFormat — không có
+    # handler này thì lượt hết bộ nhớ ra 500 trơn, mất câu tiếng Việt (phản biện Opus 21/09).
+    # Các cửa đối chiếu kiểu job tự bắt lỗi trong _run, không đi qua đây.
+    _tien_trinh_log.warning("%s %s: %s", request.method, request.url.path, exc)
+    return JSONResponse(status_code=503, content={"detail": str(exc)})
+
+
 @app.get("/")
 def root():
     return {"message": "PAYMENT CENTER API đang chạy", "docs": "/docs"}

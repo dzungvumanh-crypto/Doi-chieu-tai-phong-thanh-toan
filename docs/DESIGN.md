@@ -128,6 +128,15 @@ khuôn `_xu_ly_tach()` của 459901 / OSB; (3) tham số và kết quả pickle 
 
 `DOI_CHIEU_TIEN_TRINH=0` → chạy trong luồng như cũ (khẩn cấp trên máy chủ).
 
+**RAM — hai lớp (card 156).** (1) `phien_doi_chieu.kiem_tra`: tổng RAM ước tính các lượt ≤
+`NGAN_SACH_RAM_GB` (11,5 = ACH + Song phương ĐI + ĐẾN), mức mỗi module ở `_RAM_UOC_TINH_MAC_DINH` + `.env`; module chưa có số
+không xét. (2) Mọi tiến trình con vào một Windows Job Object trần 13 GB bộ nhớ cam kết — con
+**chờ được gán xong** (`ev_gan`) rồi mới nạp pipeline, vì phần cấp phát trước lúc gán nằm ngoài
+trần. Vượt trần → mã Python/numpy nhận `MemoryError` (kể cả bị pipeline bọc thành "file hỏng":
+cha xét cả vết lỗi) → `LoiTienTrinhCon` có câu tiếng Việt; thư viện C/Rust (python-calamine,
+OpenBLAS) thì **tự kết thúc cả tiến trình** → câu "dừng bất thường" có nhắc trần. Job chạy TIẾP
+sau khi chờ (ACH xác nhận MIS_đi) phải qua `gianh_cho_ram()` — lúc chờ nó được tính 0 GB.
+
 Ngoài 7 cửa đối chiếu, **SWIFT recon** cũng tách (card 152) — kiểu hỏi–đáp đồng bộ, không có
 job: `await run_heavy(chay_tach, tach.<hàm>, ...)`; phần nặng ở `backend/services/swift_recon/tach.py`,
 API chỉ ghi file tải lên ra đĩa + đọc/ghi CSDL.
