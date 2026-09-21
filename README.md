@@ -300,6 +300,13 @@ tham gia từ 17/09/2026):
 |---|---|---|
 | Cùng một module | **1 lượt** | Không — luật cứng |
 | Toàn hệ thống | `DOI_CHIEU_MAX_SONG_SONG`, mặc định **3** | Có, trong `.env` |
+| Tổng RAM ước tính các lượt đang chạy | `DOI_CHIEU_RAM_NGAN_SACH_GB`, mặc định **11 GB** | Có, trong `.env` |
+| Trần cứng bộ nhớ cho mọi lượt cộng lại | `DOI_CHIEU_RAM_TRAN_GB`, mặc định **13 GB** | Có, trong `.env` |
+
+Mức RAM ước tính mỗi lượt (từ số đo máy chủ 21/09/2026): ACH 4,5 GB · Song phương ĐI 4 GB ·
+Song phương ĐẾN 3 GB · Song phương phân loại 2 GB. ILO1000, 459901, OSB **chưa có số** — chưa xét
+RAM, chỉ chịu hai giới hạn còn lại; có số thì khai `DOI_CHIEU_RAM_UOC_TINH` (xem `.env.example`).
+Lượt vượt trần cứng báo "vượt bộ nhớ dành cho đối chiếu" — các lượt khác và backend chạy bình thường.
 
 Bị chặn → HTTP 409 kèm câu nói rõ module nào đang chạy. Trước đó chỉ ACH có chốt, và nó cũng chỉ
 tự canh mình.

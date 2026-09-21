@@ -19473,6 +19473,73 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
+  <!-- 156 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">156</span>
+      <span class="card-title">Chống tràn RAM khi nhiều đối chiếu chạy cùng lúc — xét RAM ước tính + trần cứng Job Object (2026-09-21)</span>
+      <span class="badge badge-done">Hoàn thiện</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-blue">Bối cảnh</span> số đo máy chủ thật, 21/09/2026 (bộ nhớ cam kết đỉnh)</div>
+      <table>
+        <tr><th>Cửa</th><th>Đo được</th><th>Ước tính (người dùng chốt)</th></tr>
+        <tr><td>ACH</td><td>4,19 GB (3 lượt gần trùng, ~175 s)</td><td>4,5 GB</td></tr>
+        <tr><td>Song phương ĐI</td><td>2,50–3,87 GB (85–136 s)</td><td>4 GB</td></tr>
+        <tr><td>Song phương ĐẾN</td><td>1,84–2,13 GB</td><td>3 GB</td></tr>
+        <tr><td>Song phương phân loại</td><td>1,55 GB</td><td>2 GB</td></tr>
+        <tr><td>ILO1000, 459901, OSB</td><td>chưa có</td><td>chưa đặt — người dùng: lấy số rồi mới đặt</td></tr>
+      </table>
+      <p>Máy chủ 19,9 GB, lúc rảnh dùng 5,2 GB. Trần 3 lượt đếm theo SỐ không phân biệt 3 lượt nhẹ (~4,5 GB) với 3 lượt
+        nặng (ACH + ĐI + ĐẾN ≈ 10,2 GB). Windows không giết tiến trình ăn RAM: cạn là cả máy chậm vì đẩy ra đĩa, và tiến
+        trình xin cấp phát đúng lúc đó — có thể là backend — hỏng.</p>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> hai lớp, cái sau đỡ cái trước sai</div>
+      <table>
+        <tr><th>Lớp</th><th>Ở đâu</th><th>Làm gì</th></tr>
+        <tr><td>Xét RAM ước tính</td><td><code>phien_doi_chieu.kiem_tra</code></td>
+          <td>Tổng ước tính các lượt đang chạy + lượt mới ≤ <code>NGAN_SACH_RAM_GB</code> (11). Đứng SAU luật cùng module và trần
+          số lượt (không thay). Module chưa có số: không xét, lượt đang chạy của nó tính 0. Máy rảnh thì luôn cho qua, kể cả
+          khi một mình vượt ngân sách — đặt ngân sách thấp không được khoá chết module.</td></tr>
+        <tr><td>Trần cứng</td><td><code>tien_trinh_doi_chieu</code></td>
+          <td>Mọi tiến trình con (7 cửa + SWIFT) vào MỘT Windows Job Object, <code>JOB_OBJECT_LIMIT_JOB_MEMORY</code> = 13 GB bộ nhớ
+          cam kết cả nhóm. Vượt → <code>MemoryError</code> ở đúng lượt đang xin thêm.</td></tr>
+      </table>
+      <ul>
+        <li><b>11 / 13 GB:</b> ngân sách chừa khoảng cho ước tính lệch (ACH đo 4,19 vs đặt 4,5); trần cứng cao hơn ngân sách để lượt
+          vượt nhẹ không bị từ chối oan, thấp hơn 14,7 GB còn trống để Windows không phải đẩy ra đĩa. Cả ba chỉnh được qua <code>.env</code>.</li>
+        <li><b>Phản biện số của người dùng:</b> Song phương ĐI đặt 4 GB chỉ hơn số đo cao nhất 3% (3,87) mà nó dao động theo cỡ file
+          — ngày file to thì tổng thực vượt ngân sách. Người dùng giữ 4 GB; trần cứng đỡ phần vượt.</li>
+        <li><b>Con chờ được gán vào nhóm rồi mới nạp pipeline</b> (<code>ev_gan</code>): PoC cho thấy phần cấp phát TRƯỚC lúc gán nằm
+          ngoài trần (đỉnh cả nhóm báo 1.746 MB với trần 1.024 MB).</li>
+        <li><b><code>MemoryError</code> → <code>LoiTienTrinhCon</code> có câu tiếng Việt</b>: <code>MemoryError</code> thường không kèm thông điệp →
+          màn hình báo lỗi rỗng. Thông điệp gốc của numpy vẫn nằm trong vết lỗi (<code>__cause__</code>).</li>
+        <li><b>Gán thất bại chỉ cảnh báo, vẫn chạy</b>: trần cứng là lưới an toàn, không phải điều kiện để đối chiếu được chạy.</li>
+        <li>Ước tính theo MODULE, không theo cỡ file → vẫn kiểm được TRƯỚC khi nhận file như cũ, không phải dời chốt.</li>
+      </ul>
+
+      <div class="label"><span class="pill pill-green">Kiểm</span></div>
+      <ul>
+        <li>PoC trước khi làm: nhóm trần 1 GB — con xin 300 MB chạy, xin 1,5 GB nhận <code>MemoryError</code>, con vẫn sống, mã thoát 0.</li>
+        <li><code>tests/test_tran_ram_doi_chieu.py</code>: đúng 4 số người dùng chốt; vượt/không vượt ngân sách; module chưa có số; lượt đơn
+          lẻ vượt ngân sách; trần số lượt vẫn giữ; đọc <code>.env</code>. Trần cứng chạy tiến trình con thật: trần 0,4 GB + xin 800 MB →
+          câu tiếng Việt; tắt trần → cùng 800 MB chạy được (chứng minh lỗi là do trần).</li>
+        <li>Gây lỗi cố ý: bỏ bước gán vào nhóm → đỏ; bỏ bước dịch <code>MemoryError</code> → đỏ (ra lỗi thô của numpy).</li>
+        <li>2151 test xanh, ruff F821/F823/E9 sạch.</li>
+      </ul>
+
+      <div class="label"><span class="pill pill-amber">Chưa làm</span></div>
+      <ul>
+        <li>Số đo ILO1000 / 459901 / OSB — khai qua <code>DOI_CHIEU_RAM_UOC_TINH</code> khi có.</li>
+        <li>Ghi cỡ file đầu vào vào dòng "RAM đỉnh" để ước tính theo cỡ file (Song phương ĐI dao động 1,5×).</li>
+        <li>Xếp hàng chờ thay cho 409 — chỉ khi thực tế bị chặn nhiều.</li>
+      </ul>
+
+      <p>Branch: <code>feat/doi-chieu-tran-ram</code>.</p>
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-21</footer>
 </div>
 </body>

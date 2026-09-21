@@ -48,6 +48,14 @@ _MA_CHA_CHET = 86
 
 _BELOW_NORMAL_PRIORITY_CLASS = 0x00004000
 
+# Trần CỨNG bộ nhớ cam kết cho TẤT CẢ tiến trình con đối chiếu cộng lại (Windows Job Object).
+# Lưới an toàn cuối, đứng sau bước xét RAM ước tính của `phien_doi_chieu` (ngân sách 11 GB):
+# ước tính sai thì lượt đang xin thêm bộ nhớ nhận MemoryError, backend và Windows không bị
+# kéo theo. Máy chủ 19,9 GB, lúc rảnh dùng 5,2 GB (21/09/2026) → 13 GB vẫn chừa ~1,7 GB.
+# Windows không tự giết tiến trình ăn RAM: không có trần này thì cạn bộ nhớ là cả máy
+# chậm vì đẩy ra đĩa, và tiến trình xin cấp phát đúng lúc đó — có thể là backend — hỏng.
+_TRAN_RAM_MAC_DINH_GB = 13.0
+
 
 class LoiTienTrinhCon(RuntimeError):
     """Tiến trình con chết không báo kết quả, hoặc lỗi của nó không mang về được."""
@@ -92,12 +100,21 @@ def chay_tach(
     ctx = mp.get_context("spawn")
     nhan, gui = ctx.Pipe(duplex=False)
     ev_huy = ctx.Event()
+    ev_gan = ctx.Event()
     # daemon: backend tắt bình thường thì multiprocessing tự giết con, không đứng chờ
     # nó chạy xong (tiến trình không daemon sẽ chặn backend tắt tới hết job).
-    p = ctx.Process(target=_tien_trinh_con, args=(dich, kwargs, list(callbacks), gui, ev_huy),
+    p = ctx.Process(target=_tien_trinh_con,
+                    args=(dich, kwargs, list(callbacks), gui, ev_huy, ev_gan),
                     name=f"doi-chieu:{ten}", daemon=True)
     t0 = time.monotonic()
     p.start()
+    # Con chờ cờ này rồi mới nạp pipeline: bộ nhớ cấp phát TRƯỚC khi vào nhóm nằm ngoài trần
+    try:
+        _gan_vao_nhom(p.pid, ten)
+    except Exception:
+        # Lỗi ở đây mà ném ra là con chạy mồ côi, cha không đọc ống nữa — ghi lại, chạy tiếp
+        _log.warning("%s: lỗi khi gắn trần bộ nhớ — chạy không có trần cứng", ten, exc_info=True)
+    ev_gan.set()
     # Đóng đầu ghi phía cha — còn giữ thì con chết cũng không bao giờ thấy EOF.
     gui.close()
     _log.info("%s: chạy ở tiến trình riêng (PID %s)", ten, p.pid)
@@ -164,9 +181,121 @@ def chay_tach(
     if loai == "xong":
         return noi_dung[0]
     du_lieu, mo_ta, vet = noi_dung
-    if du_lieu is not None:
-        raise pickle.loads(du_lieu) from _VetLoiCon(vet)
+    loi = pickle.loads(du_lieu) if du_lieu is not None else None
+    if isinstance(loi, MemoryError):
+        # MemoryError thường không kèm thông điệp — để nguyên thì màn hình báo lỗi rỗng
+        tran = tran_ram_gb()
+        _log.warning("%s: tiến trình PID %s hết bộ nhớ được cấp (trần chung %s GB)",
+                     ten, p.pid, f"{tran:g}" if tran else "tắt")
+        raise LoiTienTrinhCon(
+            f"Lượt {ten} vượt bộ nhớ dành cho đối chiếu (trần chung "
+            f"{_so_vn(tran)} GB, hoặc máy chủ đang thiếu RAM). Nhiều lượt đối chiếu đang "
+            f"chạy cùng lúc — chờ một lượt xong rồi chạy lại. Backend vẫn chạy bình thường."
+        ) from _VetLoiCon(vet)
+    if loi is not None:
+        raise loi from _VetLoiCon(vet)
     raise LoiTienTrinhCon(mo_ta) from _VetLoiCon(vet)
+
+
+def _so_vn(x: float) -> str:
+    return f"{x:g}".replace(".", ",")
+
+
+def tran_ram_gb() -> float:
+    """Trần cứng (GB) — `DOI_CHIEU_RAM_TRAN_GB`; 0 = tắt. Đọc lúc tạo nhóm (lượt đầu tiên),
+    đổi thì khởi động lại backend. Ô trống/sai → mặc định, không làm backend chết."""
+    tho = (os.getenv("DOI_CHIEU_RAM_TRAN_GB") or "").strip().replace(",", ".")
+    try:
+        return max(0.0, float(tho)) if tho else _TRAN_RAM_MAC_DINH_GB
+    except ValueError:
+        _log.warning("DOI_CHIEU_RAM_TRAN_GB=%r không phải số — dùng %s GB", tho, _TRAN_RAM_MAC_DINH_GB)
+        return _TRAN_RAM_MAC_DINH_GB
+
+
+# ─── Nhóm tiến trình (Windows Job Object) mang trần cứng ───────────────────────
+
+_nhom = None          # handle Job Object, tạo lần đầu cần, giữ suốt đời backend
+_khoa_nhom = threading.Lock()
+
+
+def _winapi():
+    import ctypes
+    from ctypes import wintypes as w
+
+    class _IO(ctypes.Structure):
+        _fields_ = [(n, ctypes.c_ulonglong) for n in ("R", "W", "O", "RB", "WB", "OB")]
+
+    class _CoBan(ctypes.Structure):
+        _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
+                    ("LimitFlags", w.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                    ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", w.DWORD),
+                    ("Affinity", ctypes.c_size_t), ("PriorityClass", w.DWORD), ("SchedulingClass", w.DWORD)]
+
+    class _MoRong(ctypes.Structure):   # JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+        _fields_ = [("Basic", _CoBan), ("Io", _IO), ("ProcessMemoryLimit", ctypes.c_size_t),
+                    ("JobMemoryLimit", ctypes.c_size_t), ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                    ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateJobObjectW.restype = w.HANDLE
+    k32.CreateJobObjectW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p]
+    k32.SetInformationJobObject.argtypes = [w.HANDLE, ctypes.c_int, ctypes.c_void_p, w.DWORD]
+    k32.OpenProcess.restype = w.HANDLE
+    k32.OpenProcess.argtypes = [w.DWORD, w.BOOL, w.DWORD]
+    k32.AssignProcessToJobObject.argtypes = [w.HANDLE, w.HANDLE]
+    k32.CloseHandle.argtypes = [w.HANDLE]
+    return ctypes, k32, _MoRong
+
+
+def _lay_nhom():
+    """Job Object dùng chung cho mọi tiến trình con; None nếu tắt / không phải Windows /
+    không tạo được (đã ghi cảnh báo)."""
+    global _nhom
+    if os.name != "nt":
+        return None
+    with _khoa_nhom:
+        if _nhom is not None:
+            return _nhom
+        tran = tran_ram_gb()
+        if not tran:
+            return None
+        ctypes, k32, _MoRong = _winapi()
+        nhom = k32.CreateJobObjectW(None, None)
+        if not nhom:
+            _log.warning("Không tạo được nhóm giới hạn bộ nhớ đối chiếu (lỗi Windows %d) — "
+                         "chạy KHÔNG có trần cứng", ctypes.get_last_error())
+            return None
+        info = _MoRong()
+        info.Basic.LimitFlags = 0x00000200            # JOB_OBJECT_LIMIT_JOB_MEMORY
+        info.JobMemoryLimit = int(tran * 2**30)
+        if not k32.SetInformationJobObject(nhom, 9, ctypes.byref(info), ctypes.sizeof(info)):
+            _log.warning("Không đặt được trần bộ nhớ đối chiếu (lỗi Windows %d) — chạy KHÔNG có "
+                         "trần cứng", ctypes.get_last_error())
+            k32.CloseHandle(nhom)
+            return None
+        _nhom = nhom
+        _log.info("Trần bộ nhớ chung cho đối chiếu: %s GB", _so_vn(tran))
+        return _nhom
+
+
+def _gan_vao_nhom(pid: int, ten: str) -> None:
+    """Gán tiến trình con vào nhóm có trần. Thất bại thì CẢNH BÁO rồi cho chạy tiếp: đây là
+    lưới an toàn, không phải điều kiện để đối chiếu được chạy."""
+    nhom = _lay_nhom()
+    if nhom is None:
+        return
+    ctypes, k32, _ = _winapi()
+    h = k32.OpenProcess(0x0100 | 0x0001, False, pid)   # PROCESS_SET_QUOTA | PROCESS_TERMINATE
+    if not h:
+        _log.warning("%s: không mở được tiến trình PID %s để gắn trần bộ nhớ (lỗi Windows %d)",
+                     ten, pid, ctypes.get_last_error())
+        return
+    try:
+        if not k32.AssignProcessToJobObject(nhom, h):
+            _log.warning("%s: không gắn được PID %s vào nhóm trần bộ nhớ (lỗi Windows %d)",
+                         ten, pid, ctypes.get_last_error())
+    finally:
+        k32.CloseHandle(h)
 
 
 def _ten_nap_duoc(ham: Callable) -> str:
@@ -206,7 +335,7 @@ class _LogVeCha(logging.Handler):
             self.handleError(record)
 
 
-def _tien_trinh_con(dich: str, kwargs: dict, ten_cb: list, gui, ev_huy) -> None:
+def _tien_trinh_con(dich: str, kwargs: dict, ten_cb: list, gui, ev_huy, ev_gan) -> None:
     # Trước mọi import của backend — xem backend/core/config.py (không nạp đè .env)
     os.environ["KSNB_TIEN_TRINH_CON"] = "1"
     _ep_utf8()
@@ -225,6 +354,9 @@ def _tien_trinh_con(dich: str, kwargs: dict, ten_cb: list, gui, ev_huy) -> None:
         # Trong try: lỗi ở đây phải về cha đúng nguyên nhân, không thành "thường do hết bộ nhớ"
         _canh_cha_chet()
         _ha_uu_tien()
+        # Chờ cha gán vào nhóm có trần bộ nhớ rồi mới nạp pipeline (pandas...) — cấp phát
+        # trước lúc vào nhóm không bị tính vào trần. Quá 10 s thì chạy tiếp, cha đã cảnh báo.
+        ev_gan.wait(10)
         mod, qual = dich.split(":", 1)
         ham: Any = importlib.import_module(mod)
         for phan in qual.split("."):

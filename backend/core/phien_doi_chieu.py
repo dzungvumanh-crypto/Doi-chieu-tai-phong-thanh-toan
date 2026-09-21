@@ -18,7 +18,7 @@ cũng chỉ tự canh mình nên chạy ACH cùng lúc với Song phương vẫn
 hết RAM và chết giữa lúc đang nhận file của lượt thứ hai — người dùng chỉ thấy
 "[WinError 10054]".
 
-Hai luật, cố ý khác nhau:
+Ba luật, cố ý khác nhau:
 
   1. **Cùng một module: luôn 1 lượt.** Người vận hành xác nhận cùng một menu thì
      thực tế chỉ một người chạy. Đây là luật cứng, không nới được — hai lượt cùng
@@ -30,6 +30,11 @@ Hai luật, cố ý khác nhau:
      4 × 500 MB × 5,3 ≈ 10 GB trên máy 20 GB — sát quá; bỏ hẳn trần thì 7 cửa là
      ~18,5 GB). Người dùng chốt 18/09/2026: giữ 3, đọc số "bộ nhớ cam kết đỉnh" trong
      logs/app.log vài tuần rồi mới quyết nâng hay đổi sang trần theo RAM (card 150).
+
+  3. **RAM ước tính: tổng ≤ `NGAN_SACH_RAM_GB`** (card 156, 21/09/2026). Số lượt không
+     phân biệt 3 lượt nhẹ (~4,5 GB) với 3 lượt nặng (~10 GB). Mỗi module có mức ước tính
+     từ số đo máy chủ thật; module chưa có số không xét luật này. Sau lưới này còn trần
+     CỨNG ở `tien_trinh_doi_chieu` (Job Object) — ước tính sai thì máy vẫn an toàn.
 
 Trạng thái job vẫn nằm ở từng service, file này KHÔNG giữ bản sao: mỗi module tự
 khai một hàm báo cáo "tôi đang bận với job nào". Hai nguồn sự thật về cùng một
@@ -56,6 +61,56 @@ def _doc_so(ten_bien: str, mac_dinh: int) -> int:
 
 
 MAX_SONG_SONG = _doc_so("DOI_CHIEU_MAX_SONG_SONG", 3)
+
+
+# ── Xét RAM trước khi cho chạy (card 156) ──
+# Bộ nhớ cam kết đỉnh ƯỚC TÍNH mỗi lượt, GB — người dùng chốt 21/09/2026 từ số đo máy chủ
+# thật. Module CHƯA có số (ILO1000, 459901, OSB) cố ý vắng mặt: không xét RAM, chỉ còn trần
+# số lượt ở trên + trần cứng của tiến trình con (tien_trinh_doi_chieu, 13 GB). Có số đo thì
+# khai qua `.env` (`DOI_CHIEU_RAM_UOC_TINH`), không cần sửa mã.
+_RAM_UOC_TINH_MAC_DINH = {
+    "ach": 4.5,                        # đo 4,19 GB (3 lượt gần trùng nhau)
+    "song_phuong_kenh_core_di": 4.0,   # Song phương chiều ĐI — đo 2,50–3,87 GB, dao động theo cỡ file
+    "song_phuong": 3.0,                # Song phương chiều ĐẾN — đo 1,84–2,13 GB
+    "song_phuong_di": 2.0,             # Song phương PHÂN LOẠI dữ liệu (mã "_di" là tên cũ) — đo 1,55 GB
+}
+
+
+def _doc_gb(tho: str, ten: str) -> Optional[float]:
+    try:
+        gb = float(tho.strip().replace(",", "."))
+    except ValueError:
+        _log.warning("%s=%r không phải số — bỏ qua", ten, tho)
+        return None
+    if gb <= 0:
+        _log.warning("%s=%r phải lớn hơn 0 — bỏ qua", ten, tho)
+        return None
+    return gb
+
+
+def _doc_uoc_tinh() -> dict[str, float]:
+    """Mặc định + ghi đè từ `DOI_CHIEU_RAM_UOC_TINH=ma=gb,ma=gb` (vd `ilo1000=3.5,cham459901=2`).
+    Số thập phân dùng dấu CHẤM — dấu phẩy đã dùng để ngăn các mục. Mục sai bị bỏ qua kèm
+    cảnh báo, không làm backend chết."""
+    ra = dict(_RAM_UOC_TINH_MAC_DINH)
+    for muc in (os.getenv("DOI_CHIEU_RAM_UOC_TINH") or "").split(","):
+        if not muc.strip():
+            continue
+        ma, _, tho = muc.partition("=")
+        gb = _doc_gb(tho, f"DOI_CHIEU_RAM_UOC_TINH[{ma.strip()}]")
+        if ma.strip() and gb is not None:
+            ra[ma.strip()] = gb
+    return ra
+
+
+RAM_UOC_TINH = _doc_uoc_tinh()
+NGAN_SACH_RAM_GB = _doc_gb(os.getenv("DOI_CHIEU_RAM_NGAN_SACH_GB") or "11",
+                           "DOI_CHIEU_RAM_NGAN_SACH_GB") or 11.0
+
+
+def _so_vn(x: float) -> str:
+    return f"{x:g}".replace(".", ",")
+
 
 # ma_module -> (tên hiển thị, hàm báo cáo job đang chiếm máy chủ)
 _NGUON: dict[str, tuple[str, Callable[[], Optional[dict]]]] = {}
@@ -124,6 +179,27 @@ def kiem_tra(ma_module: str) -> Optional[dict]:
             ),
             "dang_chay": dsach,
         }
+
+    # Xét RAM ước tính. Không có lượt nào khác đang chạy thì luôn cho qua — kể cả khi ước tính
+    # một mình đã vượt ngân sách (đặt ngân sách thấp không được khoá chết cả module).
+    uoc = RAM_UOC_TINH.get(ma_module)
+    if uoc is not None and dsach:
+        dang_dung = sum(RAM_UOC_TINH.get(j["module"], 0.0) for j in dsach)
+        if dang_dung + uoc > NGAN_SACH_RAM_GB:
+            with _lock:
+                ten_moi = _NGUON.get(ma_module, (ma_module,))[0]
+            chi_tiet = ", ".join(
+                f"{j['ten_module']} ~{_so_vn(RAM_UOC_TINH[j['module']])} GB"
+                for j in dsach if j["module"] in RAM_UOC_TINH)
+            return {
+                "message": (
+                    f"Máy chủ chưa đủ bộ nhớ cho thêm một lượt {ten_moi} "
+                    f"(~{_so_vn(uoc)} GB): đang chạy {chi_tiet} — cộng lại vượt "
+                    f"{_so_vn(NGAN_SACH_RAM_GB)} GB dành cho đối chiếu. Chờ một lượt xong "
+                    f"rồi thử lại."
+                ),
+                "dang_chay": dsach,
+            }
 
     return None
 
