@@ -165,10 +165,17 @@ def chuan_hoa(du_lieu: bytes, cau_hinh: dict | None = None) -> tuple[bytes, dict
     # Soát thứ tự số trên chữ GỐC, trước khi vòng lặp sửa ký hiệu — số không
     # đổi ("1)" → "1." giữ nguyên số 1) nhưng đọc chữ gốc thì khỏi phụ thuộc
     # việc lượt sửa chữ có bật hay không.
-    ket_soat = (soat_so.soat_thu_tu(ma_list, [p.text for p, _ in khoi],
-                                    [tb for _, tb in khoi],
-                                    [soat_so.muc_de_muc(p) for p, _ in khoi])
-                if cfg["danh_so"].get("soat_thu_tu") else [])
+    # Soát chỉ là việc phụ: lỗi ở đây không được làm hỏng cả lượt chuẩn hoá
+    # (API sẽ báo "không đọc được file Word" — sai nguyên nhân). Mất gì: phần cảnh báo.
+    ket_soat: list[dict] = []
+    if cfg["danh_so"].get("soat_thu_tu"):
+        try:
+            ket_soat = soat_so.soat_thu_tu(ma_list, [p.text for p, _ in khoi],
+                                           [tb for _, tb in khoi],
+                                           [soat_so.muc_de_muc(p) for p, _ in khoi])
+        except Exception:
+            _log.warning("Soát thứ tự đánh số lỗi — bỏ phần cảnh báo, chuẩn hoá vẫn chạy",
+                         exc_info=True)
 
     cap_gach = (nhan_dien.cap_gach_dau_dong(ma_list, [p.text for p, _ in khoi])
                 if cfg["chung"].get("phan_cap_gach_dau_dong")

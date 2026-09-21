@@ -246,6 +246,23 @@
         <tr><td>Tiểu mục không soát</td><td>Hiếm; thêm một cấp chỉ để thêm chỗ có thể báo nhầm</td></tr>
         <tr><td>Chưa soát viện dẫn nội bộ ("khoản 3 Điều 5" có tồn tại không)</td>
             <td>Có sẵn cây để làm, nhưng viện dẫn sang văn bản khác ("khoản 2 Điều 4 Thông tư 15/2024") sẽ báo nhầm. Để lượt sau</td></tr>
+        <tr><td>Trích dẫn mở ngoặc <b>giữa</b> đoạn ("…như sau: “2. Nội dung:") không được che</td>
+            <td>Chỉ nhận khối mở ở đầu đoạn. Các điểm bên trong có thể bị báo "số đầu tiên". Chưa gặp trên 11 file đo</td></tr>
+        <tr><td>"1.5 lần mức lương…", "12.10 giờ" đầu đoạn bị nhận là tiểu khoản; "Moody’s" trong khối trích dẫn đóng khối sớm</td>
+            <td>Hiếm; phân biệt phải đoán ngữ cảnh. Tên chương dài 2 dòng: dòng 2 vẫn có thể thành chức danh (lỗi có từ trước)</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-red">Phản biện trước PR</span> 1 lượt Sonnet — sửa 4 điểm</div>
+      <table>
+        <tr><th>Phát hiện</th><th>Sửa</th></tr>
+        <tr><td>Style có <code>basedOn</code> trỏ về chính nó → <code>muc_de_muc</code> lặp mãi, request treo, giữ một suất <code>run_heavy</code></td>
+            <td>Giới hạn 10 bậc, như <code>ap_dung._hieu_luc_run</code></td></tr>
+        <tr><td><code>outlineLvl w:val</code> không phải số → <code>ValueError</code> → API báo "không đọc được file Word" (sai nguyên nhân)</td>
+            <td>Kiểm <code>isdigit()</code>; lời gọi soát trong <code>chuan_hoa</code> bọc <code>try</code> + <code>_log.warning</code> — soát lỗi thì mất cảnh báo, chuẩn hoá vẫn xong</td></tr>
+        <tr><td>Khoản lệch outline level hoặc tiêu đề không số chen giữa hai khoản → mọi khoản sau báo "số đầu tiên"</td>
+            <td>Văn bản có Điều thì bỏ hẳn việc tách theo cấp Heading — khung do Điều/khoản quyết. Tài liệu HDSD (không có Điều) giữ nguyên hành vi</td></tr>
+        <tr><td>"Điều 300000000" gõ nhầm → dựng danh sách thiếu cả trăm triệu tên (RAM)</td>
+            <td>Chỉ dựng 3 tên đầu</td></tr>
       </table>
 
     </div>

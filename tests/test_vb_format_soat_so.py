@@ -193,6 +193,28 @@ def test_dieu_dat_style_khong_dong_nhat_van_mot_day():
     assert soat_so.soat_thu_tu(ma, dong, tb, lvl) == []
 
 
+def test_van_ban_co_dieu_bo_qua_style_tieu_de():
+    # Khoản 2 lệch outline level, tiêu đề không số chen giữa khoản 2 và 3.
+    dong = ["Điều 1. A", "1. x", "2. y", "Bảng tổng hợp", "3. z", "Điều 2. B"]
+    lvl = [None, None, 3, 2, None, None]
+    tb = [False] * len(dong)
+    ma = nhan_dien.phan_loai(list(zip(dong, tb)))
+    assert soat_so.soat_thu_tu(ma, dong, tb, lvl) == []
+
+
+def test_so_rat_lon_khong_dung_ca_day_thieu():
+    kq = _soat(["Điều 1. A", "Điều 300000000. B"])
+    assert len(kq) == 1 and kq[0]["loi"].endswith("Điều 2, Điều 3, Điều 4 …")
+
+
+def test_style_tu_tham_chieu_khong_treo():
+    doc = Document()
+    st = doc.styles.add_style("Vong", 1)
+    st.element.get_or_add_basedOn().val = st.style_id
+    p = doc.add_paragraph("1. x", style="Vong")
+    assert soat_so.muc_de_muc(p) is None
+
+
 def test_o_bang_bo_qua():
     kq = _soat(["Điều 1. A", "1. x", "5. y"], [False, True, True])
     assert kq == []

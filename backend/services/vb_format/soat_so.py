@@ -237,12 +237,17 @@ def muc_de_muc(p) -> int | None:
         o = pPr.find(qn("w:outlineLvl"))
         if o is None:
             return None
-        v = int(o.get(qn("w:val"), "9"))
+        g = o.get(qn("w:val")) or ""
+        if not g.isdigit():
+            return None
+        v = int(g)
         return v + 1 if v < 9 else 0
 
     v = _lvl(p._p.pPr)
     st = p.style
-    while v is None and st is not None:
+    for _ in range(10):                  # chặn vòng lặp nếu style tự tham chiếu
+        if v is not None or st is None:
+            break
         v = _lvl(st.element.pPr)
         if v is None:
             m = _RE_TEN_DE_MUC.match(st.name or "")
@@ -263,9 +268,15 @@ def soat_thu_tu(ma_list: list[str], txt: list[str], trong_bang: list[bool],
     Nên mỗi cấp tiêu đề đếm riêng, và gặp tiêu đề thì danh sách thường bên dưới
     đánh lại từ đầu. Văn bản soạn toàn style Normal: mọi đoạn cùng cấp None,
     hành vi như không có tham số này.
+
+    Văn bản có Điều thì BỎ `de_muc`: khung đã do Điều / khoản / điểm quyết,
+    style chỉ là trình bày. Người soạn đặt outline level lệch cho một khoản,
+    hay chèn một tiêu đề không số giữa hai khoản, là mọi khoản sau bị báo
+    "số đầu tiên" (phản biện PR VB9, kịch bản P/Q).
     """
     che = vung_trich_dan(txt)
-    de_muc = de_muc or [None] * len(txt)
+    if not de_muc or "dieu" in ma_list:
+        de_muc = [None] * len(txt)
     dang: dict[tuple[str, int | None], int] = {}   # (cấp số, cấp tiêu đề) → số cuối
     khoan_o: dict[int | None, int] = {}             # cấp tiêu đề → số khoản đang mở
     ra: list[dict] = []
@@ -333,8 +344,9 @@ def soat_thu_tu(ma_list: list[str], txt: list[str], trong_bang: list[bool],
                 loi = (f"{_ten(cap, 1, cha_hien)} đánh lại từ đầu dù chưa sang "
                        f"cấp trên mới (số trước là {_ten(cap, truoc, cha_hien)})")
         elif v > truoc + 1:
-            thieu = [_ten(cap, k, cha_hien) for k in range(truoc + 1, v)]
-            ds = ", ".join(thieu[:3]) + (" …" if len(thieu) > 3 else "")
+            # Chỉ dựng 3 tên đầu: "Điều 3000000" gõ nhầm không được dựng cả triệu tên.
+            thieu = [_ten(cap, k, cha_hien) for k in range(truoc + 1, min(v, truoc + 4))]
+            ds = ", ".join(thieu) + (" …" if v - truoc - 1 > 3 else "")
             loi = f"{_ten(cap, v, cha_hien)} đứng sau {_ten(cap, truoc, cha_hien)} — thiếu {ds}"
             if cap == "diem" and "đ)" in ds:
                 loi += " (Điều 12.5.b: điểm theo chữ cái tiếng Việt, sau d) là đ))"
