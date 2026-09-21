@@ -178,6 +178,7 @@ Truy cập:
 │   │   ├── handover_reports.py # Báo cáo bàn giao chứng từ (đúng hạn/quá hạn)
 │   │   ├── th_reports.py    # Báo cáo tổng hợp (phòng TH)
 │   │   ├── thi_dua.py       # Thi đua khen thưởng (phòng TH)
+│   │   ├── xep_loai.py      # Xếp loại lao động (phòng TH)
 │   │   ├── swift_recon.py   # Đối chiếu điện SWIFT (phòng Swift)
 │   │   ├── duty_schedule.py # Lịch trực
 │   │   ├── duty_staff.py    # Cán bộ trực
@@ -233,6 +234,7 @@ Truy cập:
 │       ├── handover_reports.py # Báo cáo bàn giao chứng từ (đúng hạn/quá hạn)
 │       ├── th_reports.py    # Báo cáo tổng hợp
 │       ├── thi_dua.py       # Thi đua khen thưởng
+│       ├── xep_loai.py      # Xếp loại lao động
 │       ├── swift_recon.py   # Đối chiếu điện SWIFT (phòng Swift)
 │       ├── user_management.py # Quản lý tài khoản (admin)
 │       ├── login_logs.py    # Nhật ký đăng nhập (admin)
@@ -992,6 +994,37 @@ người làm báo cáo không có cách nào biết. Đo trên dữ liệu th�
 nút hoàn tác (phải xoá tay từng thẻ). Đo thật: 20.000 dòng ghi hết 1,24 giây. Cùng với ba món nợ khác
 (dò cột `nam`/`cap` quá lỏng, `except Exception` trần ở `_doc_ngay()`, lượt "Xem trước" vẫn ghi Nhật ký)
 — xem card **TD1** trong [`docs/Implementation-notes.html`](docs/Implementation-notes.html).
+
+### Module Xếp loại lao động (Phòng Tổng hợp)
+- Menu: **Báo cáo → Phòng Tổng hợp → Xếp loại lao động** (`/xep_loai`). Ba tab: *Tổng quan*, *Nhập xếp
+  loại*, *Tra cứu, thống kê*
+- Phân quyền:
+
+  | Việc | Mã quyền |
+  |---|---|
+  | Vào màn hình, tra cứu, xem bảng tổng hợp | `menu.xep_loai` |
+  | Thêm/sửa/xoá, nhập lô từ Excel | `xep_loai.manage` |
+  | Xuất Excel bảng tổng hợp và tra cứu cá nhân | `xep_loai.export` |
+
+- Ba loại cùng một bảng `xep_loai_lao_dong` (cột `loai`), mỗi loại có kỳ và thang kết quả cố định,
+  kiểm ở `backend/schemas/xep_loai.py`:
+
+  | Loại | Kỳ | Kết quả hợp lệ |
+  |---|---|---|
+  | Xếp loại lao động | Năm hoặc quý | Hoàn thành xuất sắc / tốt / Hoàn thành / Không hoàn thành nhiệm vụ |
+  | Kết quả phiếu tín nhiệm | Năm | Tín nhiệm cao / Tín nhiệm / Tín nhiệm thấp |
+  | Xếp loại quý — Cấp ủy | Quý | Như xếp loại lao động |
+
+- **Phòng và chức vụ là ảnh chụp lúc xếp loại** (`department_id`, `chuc_vu` = `user_tttt.role` lúc đó),
+  không đọc lại từ hồ sơ khi xem báo cáo. Cán bộ chuyển phòng hay đổi chức vụ sau đó thì báo cáo các kỳ
+  cũ không đổi. Bảng tổng hợp gom được theo **phòng** hoặc theo **chức danh, chức vụ**
+- Một cán bộ chỉ có một bản ghi cho mỗi (loại, năm, quý): chặn ở API **và** bằng UNIQUE index trên
+  `COALESCE(quy, 0)` (SQLite coi các NULL là khác nhau nên không dùng thẳng `quy` được)
+- Nhập lô từ Excel: file mẫu tự sinh, dò cột theo tên tiêu đề (cột **Năm**/**Quý** phải khớp **nguyên
+  tên**), `dry_run` xem trước, báo lỗi theo từng dòng, **có** chống trùng với dữ liệu đã có và trong file
+- Tra cứu cá nhân: 5 năm liên tiếp tới năm chọn, năm thiếu hiện "Chưa có dữ liệu". Chỉ cho hai loại xếp
+  theo năm; Cấp ủy chỉ có theo quý
+- Xem card **XL1** trong [`docs/Implementation-notes.html`](docs/Implementation-notes.html)
 
 ### Module Ôn tập (Quizz)
 - Nhóm **Tính năng khác** → **Ôn tập** (`/quiz`). Dùng chung cho cả cơ quan, không thuộc phòng nào
