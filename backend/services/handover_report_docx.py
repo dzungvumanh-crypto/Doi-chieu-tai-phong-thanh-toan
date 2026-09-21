@@ -21,10 +21,12 @@ TITLE_SIZE = Pt(16)
 
 # Cột bảng tổng hợp / bảng chi tiết (cm) — vừa khổ A4 ngang trừ lề
 _SUMMARY_WIDTHS = [1.5, 9.0, 3.5, 3.5, 3.5, 3.5]
-_DETAIL_WIDTHS = [1.5, 7.0, 3.5, 3.5, 3.5, 2.5]
+# Bảng chi tiết có thêm cột Ghi chú → co các cột khác, tổng vẫn 24,5 cm như bảng tổng hợp
+_DETAIL_WIDTHS = [1.2, 5.3, 3.0, 3.0, 2.5, 1.8, 7.7]
 
 # Cột "Họ và tên" ở bảng chi tiết — gộp ô theo cán bộ
 _NAME_COL = 1
+_NOTE_COL = 6
 
 
 def _fmt_date(iso: Optional[str]) -> str:
@@ -142,13 +144,14 @@ def _repeat_header_row(table) -> None:
     trPr.append(tbl_header)
 
 
-def _fill_row(table, values: list, widths: list, bold: bool = False) -> None:
-    """Thêm một dòng; cột đầu tiên (STT) và các cột số căn giữa, cột chữ căn trái."""
+def _fill_row(table, values: list, widths: list, bold: bool = False,
+              left_cols: tuple = (1,)) -> None:
+    """Thêm một dòng; cột chữ (left_cols) căn trái, còn lại căn giữa."""
     cells = table.add_row().cells
     for idx, (cell, val, w) in enumerate(zip(cells, values, widths)):
         cell.width = Cm(w)
         para = cell.paragraphs[0]
-        para.alignment = WD_ALIGN_PARAGRAPH.LEFT if idx == 1 else WD_ALIGN_PARAGRAPH.CENTER
+        para.alignment = WD_ALIGN_PARAGRAPH.LEFT if idx in left_cols else WD_ALIGN_PARAGRAPH.CENTER
         run = para.add_run(str(val))
         run.bold = bold
 
@@ -224,7 +227,7 @@ def _add_late_detail(doc: Document, data: dict) -> None:
     for e in late_entries:
         by_dept.setdefault(e.get("dept_name", ""), []).append(e)
 
-    headers = ["STT", "Họ và tên", "Ngày giao dịch", "Ngày nộp", "Số ngày chậm", "Số tờ"]
+    headers = ["STT", "Họ và tên", "Ngày giao dịch", "Ngày nộp", "Số ngày chậm", "Số tờ", "Ghi chú"]
     for idx, (dept_name, rows) in enumerate(by_dept.items(), 1):
         _add_heading(doc, f"{idx}. {dept_name}")
         table = _make_table(doc, headers, _DETAIL_WIDTHS)
@@ -240,7 +243,9 @@ def _add_late_detail(doc: Document, data: dict) -> None:
                     _fmt_date(e.get("submitted_date")),
                     e.get("days_late", 0),
                     e.get("sheet_count", 0),
-                ], _DETAIL_WIDTHS)
+                    # Chỉ nội dung — tên người viết cố ý không đưa vào báo cáo
+                    e.get("notes") or "",
+                ], _DETAIL_WIDTHS, left_cols=(_NAME_COL, _NOTE_COL))
                 stt += 1
 
             last_row = len(table.rows) - 1

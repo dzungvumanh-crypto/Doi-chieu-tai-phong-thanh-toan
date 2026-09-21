@@ -40,7 +40,8 @@ _SCHEMA = """
         id INTEGER PRIMARY KEY, handover_id INTEGER, staff_id INTEGER,
         source_user_id INTEGER, transaction_date TEXT, sheet_count INTEGER,
         notes TEXT, entry_status TEXT, entered_by_id INTEGER,
-        confirmed_by_id INTEGER, confirmed_at TEXT, borrowed_at TEXT, borrow_reason TEXT);
+        confirmed_by_id INTEGER, confirmed_at TEXT, borrowed_at TEXT, borrow_reason TEXT,
+        note_by_id INTEGER, note_at TEXT);
     CREATE TABLE entry_change_logs (
         id INTEGER PRIMARY KEY, entry_id INTEGER, action TEXT, performed_by_id INTEGER,
         timestamp TEXT, old_sheet_count INTEGER, new_sheet_count INTEGER, notes TEXT);

@@ -3,7 +3,7 @@ import calendar
 import io
 import logging
 import sqlite3
-from datetime import date
+from datetime import date, datetime
 from typing import Optional
 
 import openpyxl
@@ -18,7 +18,7 @@ from backend.database import get_db, write_audit, _vn_now
 from backend.schemas.handovers import (
     BorrowRequest, EntryHistoryItem, EntryHistoryOut,
     EntryUpsertRequest, GridEntryOut, GridResponse, HandbackRequest,
-    RejectRequest, ReturnToStaffRequest,
+    NoteRequest, RejectRequest, ReturnToStaffRequest,
 )
 from backend.services.handover_report_service import submitted_at_from_logs
 from backend.services.lich_lam_viec import tai_lich
@@ -134,7 +134,12 @@ _ACTION_LABEL = {
     "rejected_borrow":    ("Từ chối yêu cầu mượn",      "red"),
     "rejected_return":    ("Từ chối bàn giao lại",       "red"),
     "rejected_handover":  ("Từ chối chứng từ mới",       "red"),
+    "note_edited":        ("Sửa ghi chú",                "gray"),
 }
+
+# Dòng lịch sử KHÔNG thuộc luồng trạng thái. Chỗ nào đọc "log cuối" để suy ra đang ở
+# bước nào (reject_entry) phải bỏ qua chúng.
+_NON_FLOW_ACTIONS = ("note_edited",)
 
 _STATUS_LABEL = {
     EntryStatus.PENDING:   "Chờ xác nhận",
@@ -165,9 +170,11 @@ def _ghi_audit_xoa_o(db, current, entry_row, staff_row, dept_id, ly_do: str) -> 
     phong = ", phòng %s" % dept["name"] if dept else ""
     so_to = entry_row["sheet_count"]
     trang_thai = _STATUS_LABEL.get(entry_row["entry_status"], entry_row["entry_status"])
+    # Ghi chú và lịch sử của nó bị xoá theo ô — dòng nhật ký này là bản lưu duy nhất
+    ghi_chu = f" Ghi chú của ô: {entry_row['notes']}" if entry_row["notes"] else ""
     detail = (
         f"Xoá ô chứng từ — GDV {ten}{ma}, ngày {ngay}, {so_to} tờ{phong}, "
-        f"trạng thái trước khi xoá: {trang_thai}. Lý do: {ly_do}"
+        f"trạng thái trước khi xoá: {trang_thai}. Lý do: {ly_do}.{ghi_chu}"
     )
     write_audit(db, current["id"], "handover_entry_delete", "document_entry", entry_row["id"], detail)
 
@@ -575,9 +582,11 @@ def reject_entry(
         return {"ok": True, "message": "Đã từ chối yêu cầu mượn chứng từ"}
 
     # Xét log cuối để phân loại
+    ph = ",".join("?" * len(_NON_FLOW_ACTIONS))
     last_log = db.execute(
-        "SELECT * FROM entry_change_logs WHERE entry_id = ? ORDER BY timestamp DESC LIMIT 1",
-        (entry_id,),
+        f"SELECT * FROM entry_change_logs WHERE entry_id = ? AND action NOT IN ({ph})"
+        " ORDER BY timestamp DESC LIMIT 1",
+        (entry_id, *_NON_FLOW_ACTIONS),
     ).fetchone()
     last_action = last_log["action"] if last_log else None
 
@@ -634,7 +643,51 @@ def resubmit_entry(
     return {"ok": True, "message": "Đã nộp lại chứng từ, chờ HKV xác nhận"}
 
 
+# ─── Ghi chú ô chứng từ ──────────────────────────────────────────────────────
+# Tách khỏi entry-upsert: upsert đổi trạng thái (GDV sửa → chờ xác nhận) và chặn ô đã
+# chốt. Ghi chú không phải số liệu → sửa ở mọi trạng thái, không đụng trạng thái.
+@router.put("/entries/{entry_id}/note")
+def update_entry_note(
+    entry_id: int,
+    body: NoteRequest,
+    db: sqlite3.Connection = Depends(get_db),
+    current: dict = Depends(require_handover_write("handovers.edit_note")),
+):
+    entry = db.execute("SELECT * FROM document_entries WHERE id = ?", (entry_id,)).fetchone()
+    if not entry:
+        raise HTTPException(404, "Không tìm thấy chứng từ")
+    # Như entry-upsert: ô của chính mình thì bỏ qua kiểm phòng (GDV đã chuyển phòng
+    # vẫn giải trình được ô tháng cũ)
+    if entry["staff_id"] != current["id"]:
+        _assert_dept_write_allowed(db, current, _entry_dept(db, entry_id))
+
+    note = body.note.strip() or None
+    if note == (entry["notes"] or None):
+        return {"ok": True, "changed": False}
+
+    now = str(_vn_now())
+    db.execute(
+        "UPDATE document_entries SET notes=?, note_by_id=?, note_at=? WHERE id=?",
+        (note, current["id"], now, entry_id),
+    )
+    db.execute(
+        "INSERT INTO entry_change_logs (entry_id, action, performed_by_id, notes, timestamp) VALUES (?,?,?,?,?)",
+        (entry_id, "note_edited", current["id"], note, now),
+    )
+    db.commit()
+    return {"ok": True, "changed": True}
+
+
 # ─── Lịch sử thay đổi ────────────────────────────────────────────────────────
+def _fmt_ts(raw, fmt: str) -> str:
+    if not raw:
+        return ""
+    try:
+        return datetime.fromisoformat(str(raw)).strftime(fmt)
+    except (ValueError, TypeError):
+        return str(raw)     # mốc thời gian sai khuôn → giữ nguyên chuỗi thô, vẫn đọc được
+
+
 @router.get("/entries/{entry_id}/history", response_model=EntryHistoryOut)
 def get_entry_history(
     entry_id: int,
@@ -642,8 +695,10 @@ def get_entry_history(
     current: dict = Depends(require_feature("menu.handovers")),
 ):
     entry = db.execute(
-        "SELECT de.*, ks.full_name AS s_name, ks.ipcas_code, ks.payment_username, ks.department_id AS s_dept_id "
-        "FROM document_entries de LEFT JOIN user_tttt ks ON de.staff_id = ks.id WHERE de.id = ?",
+        "SELECT de.*, ks.full_name AS s_name, ks.ipcas_code, ks.payment_username, ks.department_id AS s_dept_id, "
+        "       nb.full_name AS nb_name, nb.username AS nb_user "
+        "FROM document_entries de LEFT JOIN user_tttt ks ON de.staff_id = ks.id "
+        "LEFT JOIN user_tttt nb ON de.note_by_id = nb.id WHERE de.id = ?",
         (entry_id,),
     ).fetchone()
     if not entry:
@@ -668,21 +723,16 @@ def get_entry_history(
         elif log["new_sheet_count"] is not None and log["old_sheet_count"] is None:
             label = f"{label} — {log['new_sheet_count']} tờ"
 
-        if log["notes"]:
+        if action_key == "note_edited":
+            label = f"{label}: {log['notes']}" if log["notes"] else "Xoá ghi chú"
+        elif log["notes"]:
             label = f"{label} · Lý do: {log['notes']}"
 
         p_name = log["p_name"] or "?"
         role_label = _ROLE_LABEL.get(log["p_role"] or "", log["p_role"] or "?")
         performer_display = f"{p_name} · {role_label}"
 
-        ts = log["timestamp"] or ""
-        if ts:
-            from datetime import datetime
-            try:
-                ts_dt = datetime.fromisoformat(str(ts))
-                ts = ts_dt.strftime("%H:%M:%S  %d/%m/%Y")
-            except (ValueError, TypeError):
-                pass        # mốc thời gian sai khuôn → giữ nguyên chuỗi thô, vẫn đọc được
+        ts = _fmt_ts(log["timestamp"], "%H:%M:%S  %d/%m/%Y")
 
         history_items.append(EntryHistoryItem(
             id=log["id"],
@@ -721,6 +771,9 @@ def get_entry_history(
         current_status=current_status,
         current_status_label=_STATUS_LABEL.get(current_status, current_status),
         borrow_reason=entry["borrow_reason"],
+        note=entry["notes"],
+        note_by_name=(entry["nb_name"] or entry["nb_user"]) if entry["note_by_id"] else None,
+        note_at=_fmt_ts(entry["note_at"], "%H:%M  %d/%m/%Y") or None,
         logs=history_items,
     )
 

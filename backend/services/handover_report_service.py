@@ -147,7 +147,7 @@ def _fetch_entries(db: sqlite3.Connection, period_start: date, period_end: date)
     bị compute_period bỏ qua.
     """
     return db.execute(
-        f"""SELECT de.id, de.transaction_date, de.sheet_count, de.staff_id,
+        f"""SELECT de.id, de.transaction_date, de.sheet_count, de.staff_id, de.notes,
                    h.received_by_id,
                    d.id AS dept_id, d.name AS dept_name, d.code AS dept_code,
                    {submitted_at_sql()} AS submitted_at,
@@ -233,6 +233,8 @@ def compute_period(db: sqlite3.Connection, year: int, month: int) -> dict:
                 "submitted_date":   submitted.isoformat(),
                 "days_late":        days_late,
                 "sheet_count":      r["sheet_count"],
+                # Ghi chú GDV viết ở lưới bàn giao — chỉ nội dung, không kèm người viết
+                "notes":            r["notes"] or "",
             })
 
     late_entries.sort(key=lambda e: (e["dept_name"], -e["days_late"], e["transaction_date"]))

@@ -1899,6 +1899,14 @@ def _ensure_indexes():
         *_SURVEY_TABLES,
         # ── Thi đua khen thưởng — 2026-09-15 (định nghĩa ở _THI_DUA_TABLES đầu file) ──
         *_THI_DUA_TABLES,
+        # ── Ghi chú ô bàn giao — 2026-09-21 ──
+        # Nội dung ở cột `notes` có sẵn từ đầu (chưa từng được ghi). Hai cột dưới lưu
+        # người/giờ sửa gần nhất; lịch sử đầy đủ ở entry_change_logs (action note_edited).
+        # Thêm cột ở đây thì phải thêm vào bản dựng lại document_entries cuối file.
+        "ALTER TABLE document_entries ADD COLUMN note_by_id INTEGER REFERENCES user_tttt(id)",
+        "ALTER TABLE document_entries ADD COLUMN note_at DATETIME",
+        # Quyền handovers.edit_note KHÔNG cấp sẵn: người dùng chốt QTV tự tick ở màn
+        # Phân quyền chức năng (21/09/2026). Sau deploy chưa ai viết được ghi chú.
     ]
     _mig_log = logging.getLogger(__name__)
 
@@ -2122,7 +2130,9 @@ def _ensure_indexes():
                         confirmed_at DATETIME,
                         borrowed_at DATETIME,
                         borrow_reason TEXT,
-                        staff_id INTEGER REFERENCES user_tttt(id)
+                        staff_id INTEGER REFERENCES user_tttt(id),
+                        note_by_id INTEGER REFERENCES user_tttt(id),
+                        note_at DATETIME
                     )
                 """)
                 _cur_de.execute("INSERT INTO document_entries SELECT * FROM _de_bak")

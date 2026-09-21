@@ -31,6 +31,7 @@ FEATURES: dict[str, str] = {
     "handovers.handback":      "Bàn giao lại chứng từ",
     # Giữ nguyên code "handovers.return_entry" — đổi code sẽ mất quyền đã gán trong group_features
     "handovers.return_entry":  "Chuyển trả chứng từ cho GDV",
+    "handovers.edit_note":     "Viết / sửa ghi chú ô chứng từ",
 
     # Đóng chứng từ — thao tác
     "bundles.generate":        "Tạo bìa chứng từ",
@@ -225,6 +226,7 @@ FEATURE_GROUPS: list[dict] = [
                             "handovers.borrow",
                             "handovers.handback",
                             "handovers.return_entry",
+                            "handovers.edit_note",
                         ],
                     },
                     {
