@@ -178,6 +178,96 @@
     </div>
   </div>
 
+  <!-- VB9 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">VB9</span>
+      <span class="card-title">Chuẩn hoá văn bản — soát thứ tự đánh số (mượn logic legal-merger), chỉ báo không sửa</span>
+      <span class="badge badge-done">Xong — 25 test mới, toàn bộ 2122 pass; chạy trên 11 văn bản thật</span>
+    </div>
+    <div class="card-body">
+
+      <p>Người dùng đưa <code>legal-merger-main.zip</code> (công cụ hợp nhất văn bản sửa đổi vào văn bản gốc) và
+        yêu cầu chỉ lấy <b>logic</b> để nâng Chuẩn hoá văn bản. Phần lớn công cụ đó không dùng được: nó rút văn bản
+        thành chữ thuần rồi dựng lại file Word, đúng thứ card VB979 mục 3 tránh. Lấy 3 ý:</p>
+      <table>
+        <tr><th>Mượn từ legal-merger</th><th>Dùng vào</th></tr>
+        <tr><td>Máy trạng thái của <code>DocumentParser</code>: mỗi cấp nhớ số cuối, gặp cấp trên thì xoá cấp dưới</td>
+            <td><code>soat_so.soat_thu_tu()</code> báo nhảy số / trùng số / lùi số / bắt đầu không từ 1</td></tr>
+        <tr><td>Mask→Parse→Restore: che nội dung trích dẫn trước khi phân tích</td>
+            <td><code>vung_trich_dan()</code>: số trong “Điều 5. … 1. …” của văn bản sửa đổi không đếm chung</td></tr>
+        <tr><td><code>_ROMAN_PAT</code> xếp dài → ngắn</td>
+            <td>Nhận tiết <code>(i)…(xx)</code>; thêm tiểu khoản <code>1.1</code> (bộ nhận diện chưa có hai cấp này)</td></tr>
+      </table>
+      <p><b>Không lấy:</b> <code>PageCleaner</code> (dọn số trang của chữ rút từ PDF — docx không có), <code>OutputWriter</code>
+        (dựng lại docx, mất định dạng), phần đọc lệnh sửa đổi và ghép (tính năng khác hẳn).</p>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> Chỉ báo, không đánh lại số</div>
+      <p>Đánh lại số thì mọi câu viện dẫn "theo khoản 3 Điều 5" trỏ vào số cũ, tức là đổi nghĩa văn bản mà không
+        báo. Cùng lý do với việc không đụng danh sách đánh số tự động (VB979 mục 2). Kết quả nằm ở khoá mới
+        <code>soat_so</code> của báo cáo (khung đỏ riêng trên màn hình), không trộn vào <code>luu_y</code>: khung
+        đó có tiêu đề "cố ý KHÔNG sửa", còn đây là lỗi của người soạn. Công tắc <code>danh_so.soat_thu_tu</code>, mặc định bật.</p>
+
+      <div class="label"><span class="pill pill-amber">Đo trên văn bản thật</span> 4 Thông tư NHNN trong zip + 7 file của dự án</div>
+      <table>
+        <tr><th>Lượt</th><th>Kết quả</th><th>Sửa</th></tr>
+        <tr><td>1</td><td>TT-15: báo "Điều 16 là số đầu", "Chương IV là số đầu". TT-17: 2 lần "khoản 1 đánh lại" trong mẫu biểu phụ lục</td>
+            <td>Tên chương "QUYỀN VÀ TRÁCH NHIỆM" bị nhận là <b>chức danh</b> (từ khoá "QUYỀN") → xoá bộ đếm. Mẫu biểu có
+              Quốc hiệu riêng trong bảng mà Quốc hiệu chưa là mốc văn bản mới</td></tr>
+        <tr><td>2</td><td>File HDSD: 8 cảnh báo, không cái nào đúng</td>
+            <td>Tiêu đề "1." (Heading 1) → "1.1" (Heading 2) → bước "1. 2." (Normal): cùng dáng chữ, khác cấp. Đọc
+              <code>outlineLvl</code> / tên style: mỗi cấp tiêu đề đếm riêng, danh sách thường đánh lại dưới mỗi tiêu đề</td></tr>
+        <tr><td>3</td><td>TT-15/17: "Điều 8 là số đầu", "Chương III là số đầu"</td>
+            <td>Cùng là Điều mà điều có outline level, điều không. Điều/Chương/Mục/mục La Mã không lồng vào chính nó → một
+              dãy duy nhất bất kể style, và xoá bộ đếm cấp dưới ở <b>mọi</b> cấp tiêu đề</td></tr>
+        <tr><td>Cuối</td><td colspan="2"><b>1 cảnh báo trên 11 file, và là lỗi thật</b>: TT 17/2024/TT-NHNN Điều 17 khoản 4
+              đánh điểm <code>d) e)</code>, thiếu <code>đ)</code>. TT-25 và TT-30 (văn bản sửa đổi, đầy trích dẫn) sạch.</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-red">Sửa kèm</span> Tên chương bị định dạng như khối chữ ký</div>
+      <p>Lỗi của bộ nhận diện có từ trước, lộ ra nhờ soát số. <code>_la_chuc_danh</code> khớp từ khoá "QUYỀN" nên dòng in
+        hoa dưới "Chương III" thành <code>quyen_han_chuc_vu</code>, và luật tiêu đề chương không còn với tới vì nó chỉ
+        nhận mã <code>noi_dung</code>. Vá: dòng ngay sau <code>phan_chuong</code> / <code>muc</code> không xét chức danh.
+        <b>Việc này đổi định dạng đầu ra</b> của văn bản có tên chương chứa "QUYỀN", "PHÓ", "TRƯỞNG"… (theo hướng đúng).</p>
+      <p>Cũng vì thế <code>quyen_han_chuc_vu</code> <b>không</b> nằm trong nhóm mốc xoá bộ đếm: đoán theo từ khoá thì có lúc
+        nhầm, và mỗi lần nhầm lại làm các Điều sau bị báo sai theo.</p>
+
+      <div class="label"><span class="pill pill-gray">Đánh đổi / giới hạn</span></div>
+      <table>
+        <tr><th>Điểm</th><th>Lý do / hệ quả</th></tr>
+        <tr><td>Khoản đầu không phải 1 chỉ báo khi có cấp cha (Điều, mục La Mã)</td>
+            <td>Tờ trình phẳng hay có vài danh sách rời, mỗi cái đánh lại từ 1. Không có khung thì không biết đâu là lỗi</td></tr>
+        <tr><td>Danh sách đánh số tự động của Word không được soát</td>
+            <td>Số không có trong <code>p.text</code>. Word tự đếm nên cũng khó sai thứ tự</td></tr>
+        <tr><td>Ngoặc mở không đóng thì không che</td>
+            <td>Che tới hết văn bản là tắt lặng lẽ phần còn lại. Đổi lại, số trong trích dẫn thiếu dấu đóng sẽ bị báo nhầm</td></tr>
+        <tr><td>Chỉ nhận tiết dạng <code>(i)</code>, không nhận <code>i)</code></td>
+            <td><code>i)</code>, <code>v)</code>, <code>x)</code> trùng chữ cái điểm; phân biệt phải đoán theo ngữ cảnh</td></tr>
+        <tr><td>Tiểu mục không soát</td><td>Hiếm; thêm một cấp chỉ để thêm chỗ có thể báo nhầm</td></tr>
+        <tr><td>Chưa soát viện dẫn nội bộ ("khoản 3 Điều 5" có tồn tại không)</td>
+            <td>Có sẵn cây để làm, nhưng viện dẫn sang văn bản khác ("khoản 2 Điều 4 Thông tư 15/2024") sẽ báo nhầm. Để lượt sau</td></tr>
+        <tr><td>Trích dẫn mở ngoặc <b>giữa</b> đoạn ("…như sau: “2. Nội dung:") không được che</td>
+            <td>Chỉ nhận khối mở ở đầu đoạn. Các điểm bên trong có thể bị báo "số đầu tiên". Chưa gặp trên 11 file đo</td></tr>
+        <tr><td>"1.5 lần mức lương…", "12.10 giờ" đầu đoạn bị nhận là tiểu khoản; "Moody’s" trong khối trích dẫn đóng khối sớm</td>
+            <td>Hiếm; phân biệt phải đoán ngữ cảnh. Tên chương dài 2 dòng: dòng 2 vẫn có thể thành chức danh (lỗi có từ trước)</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-red">Phản biện trước PR</span> 1 lượt Sonnet — sửa 4 điểm</div>
+      <table>
+        <tr><th>Phát hiện</th><th>Sửa</th></tr>
+        <tr><td>Style có <code>basedOn</code> trỏ về chính nó → <code>muc_de_muc</code> lặp mãi, request treo, giữ một suất <code>run_heavy</code></td>
+            <td>Giới hạn 10 bậc, như <code>ap_dung._hieu_luc_run</code></td></tr>
+        <tr><td><code>outlineLvl w:val</code> không phải số → <code>ValueError</code> → API báo "không đọc được file Word" (sai nguyên nhân)</td>
+            <td>Kiểm <code>isdigit()</code>; lời gọi soát trong <code>chuan_hoa</code> bọc <code>try</code> + <code>_log.warning</code> — soát lỗi thì mất cảnh báo, chuẩn hoá vẫn xong</td></tr>
+        <tr><td>Khoản lệch outline level hoặc tiêu đề không số chen giữa hai khoản → mọi khoản sau báo "số đầu tiên"</td>
+            <td>Văn bản có Điều thì bỏ hẳn việc tách theo cấp Heading — khung do Điều/khoản quyết. Tài liệu HDSD (không có Điều) giữ nguyên hành vi</td></tr>
+        <tr><td>"Điều 300000000" gõ nhầm → dựng danh sách thiếu cả trăm triệu tên (RAM)</td>
+            <td>Chỉ dựng 3 tên đầu</td></tr>
+      </table>
+
+    </div>
+  </div>
+
   <!-- SB1 -->
   <div class="card">
     <div class="card-header">

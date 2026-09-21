@@ -259,6 +259,9 @@ QUY_CHUAN_MAC_DINH: dict = {
         "bo_bullet_tu_dong": True,  # danh sách chấm tròn của Word → gõ thẳng "- "
         # Danh sách ĐÁNH SỐ tự động của Word: mặc định TẮT — xem docstring danh_so.py.
         "bo_so_tu_dong": False,
+        # Soát thứ tự Điều / khoản / điểm (nhảy số, trùng số, lùi số). Chỉ BÁO
+        # trong kết quả, không sửa — xem docstring soat_so.py.
+        "soat_thu_tu": True,
     },
     # ── Đánh dấu vùng đã sửa ────────────────────────────────────────────────
     "danh_dau": {
