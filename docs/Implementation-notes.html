@@ -18732,6 +18732,18 @@ This may happen if you try to create UI from a background task.</pre>
         job (không song song thật); tiến trình thì song song thật. <b>Chưa đo trên máy chủ với dữ liệu thật</b> — máy
         dev không có dữ liệu ngân hàng. Dòng <code>slow.request</code> (card 144) và dòng log mới
         "RAM đỉnh …" sẽ cho số thật.</p>
+      <p><span class="pill pill-green">Máy chủ xác nhận 21/09/2026</span> — sau khi deploy: 10:39–10:53 chạy 2 lượt ACH
+        (174–177 s) + 1 lượt Song phương ĐI (85 s), <b>không có dòng <code>slow.request</code> nào</b>. Trước khi deploy (18/09 13:31,
+        card 144) cùng loại tải cho <code>trễ tổng 1081 ms · đối chiếu 1</code>, request nhẹ 3,2 s. Cảnh báo chậm 1,5–2,5 s
+        truy từ 15/09 coi như đã giải quyết.</p>
+      <table>
+        <tr><th>Cửa (21/09)</th><th>Thời gian</th><th>RAM đỉnh</th><th>Cam kết đỉnh</th></tr>
+        <tr><td>ACH (2 lượt)</td><td>174–177 s</td><td>3,93 GB</td><td><b>4,19 GB</b></td></tr>
+        <tr><td>Song phương ĐI</td><td>85 s</td><td>2,29 GB</td><td><b>2,50 GB</b></td></tr>
+        <tr><td>Song phương phân loại (3 lượt)</td><td>~25 s</td><td>1,34–1,35 GB</td><td><b>1,55 GB</b></td></tr>
+      </table>
+      <p>ACH một mình vượt ước lượng cũ 500 MB × 5,3 ≈ 2,65 GB/lượt. Trần 3 với 3 cửa đã đo ≈ 8,2 GB / 19,9 GB — giữ 3.
+        Chưa có số: ĐẾN, ILO1000, Chấm 459901, OSB, và ngày cao điểm — chưa đủ để nâng trần.</p>
 
       <div class="label"><span class="pill pill-blue">Quyết định</span> một tiến trình mỗi lượt, không dùng bể</div>
       <table>
