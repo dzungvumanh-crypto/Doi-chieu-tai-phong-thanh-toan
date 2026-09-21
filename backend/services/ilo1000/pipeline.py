@@ -9,16 +9,19 @@ from typing import Callable
 
 from backend.services.lich_lam_viec import LICH_RONG, LichLamViec, la_ngay_lam_viec, tai_lich
 
-from .detect import carryover_window, group_files_by_date
-from .export import export_excel
+from .config import OSB_COL_MA_GD
+from .detect import carryover_window, detect_file_type, group_files_by_date
+from .export import export_excel, export_pool_file
 from .load_citad import load_citad
 from .load_core import load_core
 from .load_eicp import build_eicp_maps, load_eicp
 from .load_hub import load_hub
 from .load_osb import build_osb_key, label_moi_cu, load_osb
+from .load_pool import load_pool_files
 from .process import (
-    detect_huy, match_citad_leftover_with_osb, process_citad, process_core,
-    process_hub, used_citad_keys,
+    build_core_thua_forward, build_core_thua_pool, build_mapdc_label_map,
+    build_pool_label, detect_huy, mark_pool_doi_chieu, label_citad_provenance,
+    process_citad, process_core, process_hub, used_citad_keys, used_label_map_keys,
 )
 
 
@@ -39,6 +42,93 @@ def _osb_carryover_days(ngay_int: int, lich: LichLamViec = LICH_RONG) -> set[int
     for prev in carryover_window(d, lich):
         days.add(int(prev.strftime('%Y%m%d')))
     return days
+
+
+def _hub_forward_window(ngay: date, lich: LichLamViec = LICH_RONG) -> list[date]:
+    """
+    Đối xứng NGƯỢC với `carryover_window()` (chỉ lùi về T-1) — Hub cần nhìn
+    THÊM 1 ngày về SAU (T+1): xác nhận bằng dữ liệu thật 09/09/2026, so
+    chương trình với bản tay Việt — bản tay nạp thêm 14.566 dòng Hub ngày
+    10/09 khi chấm ngày 09/09; thiếu cửa sổ này khiến 14.318/14.345 dòng
+    Core "chưa khớp" đáng lẽ phải mang nhãn 'Chờ đi kênh' (đã tự verify: nạp
+    thêm đúng T+1 rồi chạy lại, số dòng lệch giảm từ 14.345 xuống 27).
+
+    Trả về [T+1] cho ngày thường. Nếu T+1 rơi vào ngày nghỉ (T7/CN/lễ) —
+    CHƯA có dữ liệu thật xác nhận trường hợp này, suy rộng đối xứng với
+    `carryover_window()`: mở rộng tiếp qua hết chuỗi ngày nghỉ, gồm luôn
+    ngày làm việc đầu tiên sau chuỗi đó (phiên Hub thật gần nhất).
+    """
+    days: list[date] = []
+    d = ngay + timedelta(days=1)
+    days.append(d)
+    while not la_ngay_lam_viec(d, lich):
+        d += timedelta(days=1)
+        days.append(d)
+    return days
+
+
+def _hub_carryover_days(ngay_int: int, lich: LichLamViec = LICH_RONG) -> set[int]:
+    """Cửa sổ Hub đầy đủ = `_osb_carryover_days()` (T + về trước) CỘNG
+    `_hub_forward_window()` (T+1 về sau) — xem 2 hàm đó để biết lý do. CHỈ áp
+    dụng cho Hub — Citad/OSB vẫn dùng `_osb_carryover_days()` như cũ (chưa có
+    bằng chứng thật cần mở rộng 2 nguồn đó về phía sau)."""
+    days = _osb_carryover_days(ngay_int, lich)
+    d = date(ngay_int // 10000, (ngay_int // 100) % 100, ngay_int % 100)
+    for fwd in _hub_forward_window(d, lich):
+        days.add(int(fwd.strftime('%Y%m%d')))
+    return days
+
+
+def _ngay_se_bi_hap_thu(date_str: str, day_groups: dict, lich: LichLamViec) -> bool:
+    """
+    True nếu `date_str` là 1 ngày KHÔNG làm việc (T7/CN/lễ) MÀ sẽ được gộp
+    (qua `carryover_window()`) vào báo cáo của 1 ngày LÀM VIỆC khác cũng có
+    mặt trong `day_groups` — khi đó không cần tự xuất file riêng cho nó nữa,
+    dữ liệu đã nằm đủ trong báo cáo ngày hấp thụ (xem `merge_monday_carryover()`
+    ở detect.py — hàm đó đã gộp Core, ở đây chỉ quyết định có xuất FILE riêng
+    hay không, không đụng dữ liệu/thuật toán).
+
+    Chỉ gọi cho ngày đang xét là ngày KHÔNG làm việc; luôn trả False (tự xuất
+    riêng như bình thường) nếu KHÔNG tìm thấy ngày làm việc nào trong CÙNG
+    batch sẽ hấp thụ nó — batch có thể kết thúc đúng vào kỳ nghỉ, chưa có
+    ngày đi làm lại, xuất riêng vẫn còn hơn mất trắng dữ liệu.
+    """
+    ngay = _parse_yyyymmdd(date_str)
+    for other_str in day_groups:
+        if other_str == date_str:
+            continue
+        other_ngay = _parse_yyyymmdd(other_str)
+        if not la_ngay_lam_viec(other_ngay, lich):
+            continue
+        if ngay in carryover_window(other_ngay, lich):
+            return True
+    return False
+
+
+def _parse_yyyymmdd(date_str: str) -> date:
+    return date(int(date_str[:4]), int(date_str[4:6]), int(date_str[6:8]))
+
+
+def _pool_label_from_filename(paths: list[Path], prefixes: tuple[str, ...]) -> str:
+    """
+    Nhãn HIỂN THỊ cho pool tồn đọng cũ (in trên cột TT của sheet Citad, VD
+    "Core 5-8.9") — lấy từ tên file người chấm đặt, bỏ tiền tố quen thuộc
+    (VD "Core thừa 5-8.9.xlsx" → "5-8.9"). CHỈ dùng để hiển thị, không dùng
+    để nhận dạng loại file (luôn theo nội dung, xem detect.py) hay để quyết
+    định dòng nào còn tồn đọng (luôn theo cột 'Đối chiếu') — sai nhãn nhiều
+    nhất chỉ làm dòng chữ khó đọc, không làm sai kết quả khớp.
+
+    Nhiều file cùng loại → lấy tên ĐẦU TIÊN theo thứ tự bảng chữ cái để nhãn
+    ổn định giữa các lần chạy. Không có file nào → chuỗi rỗng.
+    """
+    if not paths:
+        return ''
+    name = sorted(p.stem for p in paths)[0]
+    low = name.lower()
+    for prefix in prefixes:
+        if low.startswith(prefix):
+            return name[len(prefix):].strip()
+    return name.strip()
 
 
 def _dedup_core_batch(core_raw_by_date: dict):
@@ -97,11 +187,23 @@ def _run_one_day(
     log: Callable,
     cancel_event: threading.Event,
     lich: LichLamViec = LICH_RONG,
+    core_pool_label_map: 'dict | None' = None,
+    osb_pool_label_map: 'dict | None' = None,
+    pool_state: 'dict | None' = None,
 ) -> Path | None:
     """Xử lý 1 ngày. Trả None nếu bị cancel hoặc thiếu file thiết yếu.
 
     `core_raw`/`huy_map` được nạp/tính sẵn ở main_from_dir() trên TOÀN BỘ batch
     (không phải chỉ ngày này) — cần vậy để phát hiện đúng Hủy khác ngày.
+
+    `core_pool_label_map`/`osb_pool_label_map`: {Map dc → nhãn} của pool tồn
+    đọng NẠP TỪ BATCH TRƯỚC (VD "Core 5-8.9") — dùng để gán TT của sheet Citad
+    khi không khớp Core/OSB hôm nay, xem `process.label_citad_provenance()`.
+    `pool_state`: dict dùng chung xuyên suốt các ngày trong batch (mutate tại
+    chỗ, không trả về) để `main_from_dir()` tổng hợp pool "thừa" mới sau khi
+    xử lý xong TOÀN BỘ batch — xem `process.py` phần "Pool tồn đọng xuyên
+    batch". Cả 3 tham số này None (mặc định) → hành vi y hệt trước khi có
+    tính năng pool, chỉ khớp Core/OSB hôm nay như cũ.
     """
 
     log(f'[{date_str}] Kiểm tra file đầu vào...')
@@ -130,7 +232,7 @@ def _run_one_day(
 
     log(f'[{date_str}] Đang đọc file song song...')
     with ThreadPoolExecutor(max_workers=4) as ex:
-        f_hub   = ex.submit(load_hub, files.get('hub', []), _osb_carryover_days(ngay_int, lich)) if files.get('hub') else None
+        f_hub   = ex.submit(load_hub, files.get('hub', []), _hub_carryover_days(ngay_int, lich)) if files.get('hub') else None
         f_citad = ex.submit(load_citad, files['citad'], ngay_int)
         f_eicp  = ex.submit(load_eicp,  files.get('eicp', []))
         f_osb   = ex.submit(load_osb, files.get('osb', []), _osb_carryover_days(ngay_int, lich)) if files.get('osb') else None
@@ -179,28 +281,60 @@ def _run_one_day(
     # docx mục III: "Những dòng còn lại tiếp tục map với file OSB ngày cũ và
     # mới" — CITAD còn thừa, không phải Core map trực tiếp OSB (xác nhận với
     # Business Owner 2026-08-19, kiểm chứng khóa bằng dữ liệu thật 11-12/8).
-    log(f'[{date_str}] Khớp Citad còn thừa với OSB...')
+    log(f'[{date_str}] Khớp Citad còn thừa với OSB + pool tồn đọng...')
     used_mapdc = used_citad_keys(core_out, citad_mapdc)
-    osb_key = build_osb_key(osb_df) if not osb_df.empty else None
-    citad_out = match_citad_leftover_with_osb(citad_out, used_mapdc, osb_key)
     if not osb_df.empty:
         osb_df = osb_df.copy()
         osb_df['Nhóm'] = label_moi_cu(osb_df, ngay_int)
+    osb_today_label_map = build_mapdc_label_map(
+        pd.DataFrame({'Map dc': build_osb_key(osb_df)}) if not osb_df.empty else pd.DataFrame(),
+        'Map dc', f'OSB {ngay_int}',
+    )
+    citad_out = citad_out.copy()
+    citad_out['TT'] = label_citad_provenance(
+        citad_out, used_mapdc, ngay_int,
+        core_pool_label_map=core_pool_label_map,
+        osb_today_label_map=osb_today_label_map,
+        osb_pool_label_map=osb_pool_label_map,
+    )
+
+    if pool_state is not None:
+        pool_state.setdefault('citad_mapdc_by_day', {})[ngay_int] = set(
+            citad_out['Map dc'].astype(str)
+        ) if 'Map dc' in citad_out.columns else set()
+        pool_state.setdefault('core_leftover_frames', []).append(build_core_thua_pool(core_out))
+
+        # OSB hôm nay CHƯA bị 1 dòng Citad nào tiêu thụ (khớp Core/pool Core
+        # ưu tiên cao hơn, hoặc không khớp Citad nào cả) vẫn phải mang sang
+        # pool "OSB thừa" của batch sau — cùng nguyên tắc với Core thừa.
+        if not osb_df.empty and 'TT' in citad_out.columns:
+            used_osb_today = used_label_map_keys(citad_out['TT'], citad_out['Map dc'], osb_today_label_map)
+            osb_key_today = build_osb_key(osb_df).astype(str)
+            osb_leftover_today = osb_df.loc[~osb_key_today.isin(used_osb_today)].copy()
+        else:
+            osb_leftover_today = osb_df.iloc[0:0].copy()
+        pool_state.setdefault('osb_leftover_frames', []).append(osb_leftover_today)
 
     # ── Tóm tắt TT ──
     tt_summary = core_out['TT'].value_counts().to_dict() if 'TT' in core_out.columns else {}
     total = len(core_out)
     matched = sum(v for k, v in tt_summary.items() if k not in ('', 'nan'))
-    osb_matched = int((citad_out['TT'] == 'OSB').sum()) if 'TT' in citad_out.columns else 0
+    citad_thua_df = citad_out[citad_out['TT'] == ''] if 'TT' in citad_out.columns else citad_out.iloc[0:0]
+    citad_khop_pool_osb = int(
+        citad_out['TT'].astype(str).str.startswith('OSB').sum()
+    ) if 'TT' in citad_out.columns else 0
     log(
         f'[{date_str}] TT: Hủy={tt_summary.get("Hủy", 0):,} · Đã hủy={tt_summary.get("Đã hủy", 0):,} · '
         f'Khớp citad/hub={matched:,} · Chưa khớp={tt_summary.get("", 0):,} / {total:,} · '
-        f'Citad khớp OSB={osb_matched:,}'
+        f'Citad khớp OSB={citad_khop_pool_osb:,} · Citad thừa={len(citad_thua_df):,}'
     )
 
     # ── Export ──
     log(f'[{date_str}] Xuất file Excel...')
     out_path = export_excel(hub_out, citad_out, eicp_df, core_out, ngay_int, output_dir, osb_df=osb_df)
+    if not citad_thua_df.empty:
+        thua_path = export_pool_file(citad_thua_df, output_dir, f'Citad thừa {ngay.day}.{ngay.month}')
+        log(f'[{date_str}] {len(citad_thua_df):,} dòng Citad thừa (không khớp Core/OSB/pool nào) → {thua_path.name}')
     log(f'[{date_str}] Hoàn thành → {out_path.name}')
     return out_path
 
@@ -252,6 +386,40 @@ def main_from_dir(
 
     log(f'Số ngày cần xử lý: {len(day_groups)}')
 
+    # ── Pool tồn đọng xuyên batch (Core thừa / OSB thừa nạp lại từ lần chấm
+    # trước — người chấm tự nạp lại, giống hub/citad/core/osb) — xem
+    # process.py phần "Pool tồn đọng xuyên batch". Nhãn dải ngày tính từ NGÀY
+    # CỦA BATCH ĐANG XỬ LÝ (day_groups), không phải TRDATE thật tồn đọng bên
+    # trong pool — xem `build_pool_label()`.
+    core_thua_paths = [p for p in all_paths if detect_file_type(p) == 'core_thua']
+    osb_thua_paths  = [p for p in all_paths if detect_file_type(p) == 'osb_thua']
+    old_core_pool = load_pool_files(core_thua_paths)
+    old_osb_pool  = load_pool_files(osb_thua_paths)
+
+    # Nhãn cho FILE MỚI xuất ra (Core/OSB thừa của LẦN NÀY) tính từ ngày của
+    # chính batch đang chấm — xem build_pool_label(). Nhãn hiển thị cho pool
+    # CŨ (chỉ in trên cột TT của Citad, không ảnh hưởng khớp) lấy từ TÊN FILE
+    # cũ — dữ liệu bên trong pool không có cột lưu lại nhãn dải ngày gốc của
+    # chính nó (TRDATE tồn đọng có thể rất cũ, không phản ánh đúng batch nào
+    # đã tạo ra pool — xác nhận thật: pool "Core thừa 5-8.9" chứa cả TRDATE
+    # 25/08, 28/08 lẫn 07-08/09).
+    batch_days  = sorted(_parse_yyyymmdd(d) for d in day_groups)
+    batch_label = build_pool_label(batch_days)
+
+    old_core_pool_label = _pool_label_from_filename(core_thua_paths, ('core thừa', 'core thua'))
+    old_osb_pool_label  = _pool_label_from_filename(osb_thua_paths, ('osb thừa', 'osb thua'))
+
+    core_pool_label_map = build_mapdc_label_map(old_core_pool, 'Map dc', f'Core {old_core_pool_label}')
+    osb_pool_label_map  = build_mapdc_label_map(old_osb_pool, 'Map dc', f'OSB {old_osb_pool_label}')
+
+    if not old_core_pool.empty or not old_osb_pool.empty:
+        log(
+            f'Pool tồn đọng nạp lại: Core thừa {len(old_core_pool):,} dòng · '
+            f'OSB thừa {len(old_osb_pool):,} dòng.'
+        )
+
+    pool_state: dict = {}
+
     # ── Nạp Core TOÀN BỘ các ngày trước, để phát hiện đúng Hủy khác ngày ──
     # (lệnh lập 1 ngày, hủy ngày khác — nếu chỉ xét Core từng ngày riêng lẻ sẽ
     # không bao giờ thấy đủ cặp Nợ/Có để nhận ra là đã hủy)
@@ -278,9 +446,87 @@ def main_from_dir(
     for date_str in sorted(day_groups.keys()):
         if cancel.is_set():
             return None
+
+        # Ngày KHÔNG làm việc (T7/CN/lễ) mà dữ liệu của nó đã được gộp vào
+        # báo cáo của ngày làm việc kế tiếp (merge_monday_carryover() ở
+        # detect.py) thì không tự xuất file riêng nữa — Citad không có phiên
+        # thật ngày đó, file riêng chỉ là bản trùng lặp/thiếu Citad gây nhầm
+        # (xác nhận nghiệp vụ 2026-09-10: chỉ ngày ĐI LÀM mới có "phiên kênh"
+        # thật, cuối tuần dồn hết vào phiên đi làm lại). Không đụng
+        # core_raw_by_date/huy_map — 2 cái đó vẫn tính trên toàn batch như cũ.
+        ngay_dang_xet = _parse_yyyymmdd(date_str)
+        if not la_ngay_lam_viec(ngay_dang_xet, lich) and _ngay_se_bi_hap_thu(date_str, day_groups, lich):
+            log(f'[{date_str}] Bỏ qua xuất báo cáo riêng — ngày nghỉ, dữ liệu đã gộp vào báo cáo ngày làm việc kế tiếp.')
+            continue
+
         core_raw = core_raw_by_date.get(date_str, pd.DataFrame())
-        out = _run_one_day(date_str, day_groups[date_str], core_raw, huy_map, output_dir, log, cancel, lich)
+        out = _run_one_day(
+            date_str, day_groups[date_str], core_raw, huy_map, output_dir, log, cancel, lich,
+            core_pool_label_map=core_pool_label_map,
+            osb_pool_label_map=osb_pool_label_map,
+            pool_state=pool_state,
+        )
         if out:
             output_paths.append(out)
 
+    _export_pool_thua_forward(old_core_pool, old_osb_pool, pool_state, batch_label, output_dir, log)
+
     return output_paths[-1] if output_paths else None
+
+
+def _export_pool_thua_forward(
+    old_core_pool: 'pd.DataFrame',
+    old_osb_pool: 'pd.DataFrame',
+    pool_state: dict,
+    batch_label: str,
+    output_dir: str,
+    log: Callable,
+) -> None:
+    """
+    Sau khi xử lý xong TOÀN BỘ batch: điền cột 'Đối chiếu' cho 2 pool cũ nạp
+    vào (khớp được ngày nào trong batch này thì ghi ngày đó, không thì
+    '#N/A'), rồi xuất pool MỚI (còn tồn đọng + leftover mới phát sinh trong
+    chính batch này) cho lần chấm kế tiếp — xem `process.py` phần "Pool tồn
+    đọng xuyên batch".
+    """
+    import pandas as pd
+
+    citad_mapdc_by_day: dict = pool_state.get('citad_mapdc_by_day', {})
+
+    def _mark(old_pool: 'pd.DataFrame') -> 'pd.DataFrame':
+        if old_pool.empty or 'Map dc' not in old_pool.columns:
+            return old_pool
+        old_pool = old_pool.copy()
+        doi_chieu = old_pool.get('Đối chiếu')
+        for ngay_int in sorted(citad_mapdc_by_day):
+            doi_chieu = mark_pool_doi_chieu(
+                old_pool['Map dc'], doi_chieu, citad_mapdc_by_day[ngay_int], ngay_int,
+            )
+        if doi_chieu is not None:
+            old_pool['Đối chiếu'] = doi_chieu
+        return old_pool
+
+    old_core_pool = _mark(old_core_pool)
+    old_osb_pool  = _mark(old_osb_pool)
+
+    core_leftover_frames = pool_state.get('core_leftover_frames', [])
+    new_core_leftover = pd.concat(core_leftover_frames, ignore_index=True) if core_leftover_frames else pd.DataFrame()
+    core_thua_forward = build_core_thua_forward(old_core_pool, new_core_leftover)
+    if not core_thua_forward.empty:
+        path = export_pool_file(core_thua_forward, output_dir, f'Core thừa {batch_label}')
+        log(f'Pool Core thừa mới cho lần chấm sau: {len(core_thua_forward):,} dòng → {path.name}')
+
+    osb_leftover_frames = pool_state.get('osb_leftover_frames', [])
+    new_osb_leftover = pd.DataFrame()
+    if osb_leftover_frames:
+        new_osb_leftover = pd.concat(osb_leftover_frames, ignore_index=True)
+        # 1 dòng OSB vật lý có thể lặp lại ở NHIỀU ngày trong cùng batch (cửa
+        # sổ carryover trong-batch T/T-1 của load_osb() khác pool xuyên batch
+        # này) — dedup theo 'Mã giao dịch' (khóa tự nhiên của OSB) trước khi
+        # mang sang pool, tránh nhân bản.
+        if OSB_COL_MA_GD in new_osb_leftover.columns:
+            new_osb_leftover = new_osb_leftover.drop_duplicates(subset=[OSB_COL_MA_GD], keep='first')
+    osb_thua_forward = build_core_thua_forward(old_osb_pool, new_osb_leftover)
+    if not osb_thua_forward.empty:
+        path = export_pool_file(osb_thua_forward, output_dir, f'OSB thừa {batch_label}')
+        log(f'Pool OSB thừa mới cho lần chấm sau: {len(osb_thua_forward):,} dòng → {path.name}')

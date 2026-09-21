@@ -880,6 +880,24 @@ class TestLoadHubDateFilter:
         result = load_hub([p])
         assert len(result) == 2
 
+    def test_blank_ngay_gio_kenh_tra_always_kept(self, tmp_path):
+        """Lệnh CHƯA từng đi kênh (VD còn 'Chờ duyệt chi trả', chưa có 'Ngày
+        giờ kênh trả') không có ngày nào để so — lọc theo cửa sổ ngày sẽ loại
+        mất VĨNH VIỄN dù mở cửa sổ rộng tới đâu, vì đây không phải trường hợp
+        "ngày nằm ngoài cửa sổ" mà là "không có ngày". Xác nhận thật
+        09/09/2026: 962/129.858 dòng Hub thuộc loại này, đúng bằng phần lệch
+        còn lại sau khi đã mở cửa sổ Hub T+1 (_hub_carryover_days())."""
+        from backend.services.ilo1000.load_hub import load_hub
+
+        p = tmp_path / 'phub_gop_nhieu_ngay.xlsx'
+        _write_phub_rows(p, [
+            _hub_row_ngay('A001', '10/08/2026 08:00'),
+            _hub_row_ngay('A002', ''),  # chưa đi kênh — rỗng
+            _hub_row_ngay('A003', '15/08/2026 08:00'),  # có ngày nhưng NGOÀI cửa sổ — phải loại
+        ])
+        result = load_hub([p], ngay_ints=20260810)
+        assert set(result[HUB_COL_SO_GD]) == {'A001', 'A002'}
+
 
 # ── Test 12a: EICP không khớp ngày nào — gán vào nhóm nhiều dữ liệu nhất ────
 
@@ -1064,6 +1082,37 @@ class TestPreviousDayEicpCarryover:
         groups = group_files_by_date([citad_path, core14, core13, eicp13])
         assert eicp13 in groups['20260714']['eicp'], (
             "EICP T-1 (13/7) phải được gộp vào ngày T (14/7) qua group_files_by_date() thật"
+        )
+
+    def test_no_false_warning_when_eicp_t1_only_via_fallback(self, tmp_path):
+        """
+        Xác nhận thật batch 18.9.2026: batch chỉ gửi 1 ngày (không có Core/GL02
+        riêng cho T-1), EICP T-1 rời không khớp nhóm ngày nào có sẵn nên rơi vào
+        đường "không khớp ngày nào có sẵn" (group_files_by_date()) và được gán
+        thẳng vào nhóm T. merge_previous_day_eicp() KHÔNG được báo "CẢNH BÁO —
+        thiếu EICP T-1" trong trường hợp này — dữ liệu đã có mặt trong nhóm T,
+        chỉ là không có nhóm ngày T-1 riêng để hàm này tự nhận ra.
+        """
+        from backend.services.ilo1000.detect import group_files_by_date
+
+        # 2026-07-14 = thứ 3, T-1 = 13/7 (thứ 2) — KHÔNG có core13 trong batch
+        citad_path = tmp_path / 'citad.csv'
+        citad_path.write_text(
+            'SERIAL_NO,RELATION_NO,TRX_DATE,AMOUNT,TRX_STATUS,extra\n1,2,20260714,100,OK,\n',
+            encoding='utf-8',
+        )
+        core14 = tmp_path / 'gl02_20260714.csv'
+        core14.write_text('TRDATE,TRBRCD\n20260714,1000\n', encoding='utf-8')
+        eicp13 = tmp_path / 'eicp 13.XLS'
+        eicp13.write_bytes(b'')
+
+        logs = []
+        groups = group_files_by_date([citad_path, core14, eicp13], log=logs.append)
+
+        assert '20260713' not in groups, "Test phải mô phỏng đúng: không có nhóm ngày T-1 riêng"
+        assert eicp13 in groups['20260714']['eicp']
+        assert not any('thiếu EICP T-1' in msg for msg in logs), (
+            f"Không được báo thiếu EICP T-1 — dữ liệu đã gán qua fallback. Logs: {logs}"
         )
 
 
@@ -1353,6 +1402,252 @@ class TestMainFromDirLichNghiLeDai:
         assert set(core_with_db['TRDATE'].astype(str)) == {
             '20260829', '20260830', '20260831', '20260901', '20260902', '20260903',
         }, "Có lịch nghỉ lễ thật từ DB: báo cáo 3/9 phải gộp đủ TRDATE cả 6 ngày trong kỳ nghỉ"
+
+
+class TestMainFromDirBoQuaFileNgayNghi:
+    """
+    Xác nhận nghiệp vụ 2026-09-10: chỉ ngày ĐI LÀM mới có "phiên kênh" Citad
+    thật — cuối tuần dồn hết dữ liệu vào báo cáo ngày đi làm lại (đã đúng từ
+    trước, xem TestMondayCarryover), nhưng trước đây ngày nghỉ VẪN tự xuất
+    thêm 1 file riêng (nếu tình cờ có nhóm ngày của chính nó) — file thừa,
+    không có Citad thật, dễ gây nhầm là báo cáo chính thức. main_from_dir()
+    giờ KHÔNG xuất file cho ngày nghỉ đã được hấp thụ — không đụng thuật toán
+    khớp (process.py), chỉ bớt 1 bước xuất file thừa.
+    """
+
+    def _write_citad(self, path, trx_date):
+        path.write_text(
+            'SERIAL_NO,RELATION_NO,TRX_DATE,AMOUNT,TRX_STATUS,extra\n'
+            f'1,2003OTT26090100001,{trx_date},100000,OK,\n',
+            encoding='utf-8',
+        )
+
+    def _write_core(self, path, trdate):
+        path.write_text(
+            'TRDATE,TRBRCD,USERID,JOURSEQ,DYTRSEQ,LOCAC,CCY,BUSCD,UNIT,TRCD,CUSTOMER,TRTP,REFERENCE,REMARK,DRAMOUNT,CRAMOUNT,CRTDTM\n'
+            f'{trdate},2003,2003OSB,1,1,501202,VND,GL,IB,  ,1000-000007709,Normal,'
+            f'2003OTT26090100001,test,0,100000,{trdate} 09:00:00\n',
+            encoding='utf-8',
+        )
+
+    def test_cuoi_tuan_khong_tu_xuat_file_rieng(self, tmp_path):
+        import pandas as pd
+        from backend.services.ilo1000.pipeline import main_from_dir
+
+        input_dir = tmp_path / 'input'
+        input_dir.mkdir()
+        output_dir = tmp_path / 'output'
+
+        # 05/09/2026 = Thứ 7, 06/09 = CN, 07/09 = Thứ 2 — mỗi ngày có nhóm
+        # riêng (tên file chuẩn 1 ngày), nhưng chỉ Thứ 2 có Citad thật.
+        for d in ('20260905', '20260906', '20260907'):
+            self._write_core(input_dir / f'gl02_{d}.csv', d)
+        self._write_citad(input_dir / 'citad_pool.csv', '20260907')
+
+        main_from_dir(str(input_dir), str(output_dir))
+
+        assert not (output_dir / '20260905.xlsx').exists(), (
+            "Thứ 7 không có Citad thật — không được tự xuất file riêng"
+        )
+        assert not (output_dir / '20260906.xlsx').exists(), (
+            "Chủ nhật không có Citad thật — không được tự xuất file riêng"
+        )
+        assert (output_dir / '20260907.xlsx').exists(), "Thứ 2 (phiên kênh thật) vẫn phải xuất báo cáo"
+
+        core_t2 = pd.read_excel(output_dir / '20260907.xlsx', sheet_name='core', engine='calamine')
+        assert set(core_t2['TRDATE'].astype(str)) == {'20260905', '20260906', '20260907'}, (
+            "Dữ liệu cuối tuần vẫn phải nằm đủ trong báo cáo Thứ 2 — chỉ bớt file thừa, không mất dữ liệu"
+        )
+
+    def test_batch_ket_thuc_dung_ky_nghi_van_tu_xuat_de_khong_mat_du_lieu(self, tmp_path):
+        """Không có ngày làm việc nào trong batch để hấp thụ — vẫn phải tự
+        xuất, không được lặng lẽ bỏ qua (tránh mất trắng dữ liệu)."""
+        import pandas as pd
+        from backend.services.ilo1000.pipeline import main_from_dir
+
+        input_dir = tmp_path / 'input'
+        input_dir.mkdir()
+        output_dir = tmp_path / 'output'
+
+        self._write_core(input_dir / 'gl02_20260905.csv', '20260905')
+        self._write_citad(input_dir / 'citad_pool.csv', '20260905')
+
+        main_from_dir(str(input_dir), str(output_dir))
+
+        assert (output_dir / '20260905.xlsx').exists(), (
+            "Không có ngày làm việc nào hấp thụ trong batch — phải tự xuất, không được bỏ qua"
+        )
+
+
+# ── Test: main_from_dir — pool tồn đọng xuyên batch (Core thừa / OSB thừa) ──
+# Kịch bản: batch trước để lại 1 dòng Core chưa đi kênh (nạp lại bằng file
+# "Core thừa ..."). Batch NÀY (1 ngày) có 1 dòng Citad khớp đúng dòng pool cũ
+# đó (giải quyết xong — không mang tiếp) VÀ phát sinh 1 dòng Core MỚI không
+# khớp gì (phải mang sang pool cho lần chấm sau).
+
+class TestMainFromDirPoolThua:
+    def test_pool_cu_duoc_giai_quyet_va_pool_moi_duoc_xuat(self, tmp_path):
+        import pandas as pd
+        from backend.services.ilo1000.pipeline import main_from_dir
+
+        input_dir = tmp_path / 'input'
+        input_dir.mkdir()
+        output_dir = tmp_path / 'output'
+
+        # Citad hôm nay: RELATION_NO='2003HUB000001' → LEFT(...,4)='2003'; không
+        # có Hub nên Trace=''; AMOUNT=500000 → Map dc = '2003' + '' + '500000'.
+        (input_dir / 'citad_pool.csv').write_text(
+            'SERIAL_NO,RELATION_NO,TRX_DATE,AMOUNT,TRX_STATUS,extra\n'
+            '1,2003HUB000001,20260909,500000,OK,\n',
+            encoding='utf-8',
+        )
+        # Core hôm nay: REFERENCE không chứa API/OTT/BFX/HI → Trace=''; Map dc
+        # = TRBRCD + '' + CRAMOUNT = '7777999999' — KHÔNG khớp Citad nào cả,
+        # không Hủy, không Hub → phải rơi vào pool "Core thừa" mới.
+        (input_dir / 'gl02_20260909.csv').write_text(
+            'TRDATE,TRBRCD,USERID,JOURSEQ,DYTRSEQ,LOCAC,CCY,BUSCD,UNIT,TRCD,CUSTOMER,TRTP,REFERENCE,REMARK,DRAMOUNT,CRAMOUNT,CRTDTM\n'
+            '20260909,7777,1000API0,1,1,501202,VND,GL,IB,  ,1000-000007709,Normal,NEWREF,test,0,999999,20260909 09:00:00\n',
+            encoding='utf-8',
+        )
+        # Pool "Core thừa" cũ nạp lại: 1 dòng có Map dc TRÙNG đúng Citad hôm
+        # nay ('2003500000') — phải được đánh dấu đã khớp (Đối chiếu = ngày
+        # hôm nay) và KHÔNG mang tiếp sang pool mới.
+        pd.DataFrame([{
+            'TRDATE': 20260828, 'TRBRCD': '9999', 'REFERENCE': 'OLDREF',
+            'Map dc': '2003500000', 'TT': 'Chờ đi kênh', 'Đối chiếu': '#N/A',
+        }]).to_excel(input_dir / 'Core thừa 5-8.9.xlsx', index=False, engine='openpyxl')
+
+        main_from_dir(str(input_dir), str(output_dir))
+
+        # ── Cột TT sheet citad: dòng khớp pool cũ phải ghi "Core 5-8.9" ──
+        citad_out = pd.read_excel(output_dir / '20260909.xlsx', sheet_name='citad', engine='calamine')
+        assert citad_out['TT'].iloc[0] == 'Core 5-8.9'
+
+        # ── Pool "Core thừa" MỚI: chỉ còn dòng NEWREF, KHÔNG còn OLDREF ──
+        forward = pd.read_excel(output_dir / 'Core thừa 9.9.xlsx', sheet_name=0, engine='calamine')
+        assert list(forward['REFERENCE']) == ['NEWREF'], (
+            "OLDREF đã khớp Citad hôm nay (Đối chiếu=ngày) — không được mang tiếp; "
+            "NEWREF hôm nay chưa khớp gì — phải mang sang pool mới"
+        )
+
+    def test_pool_moi_xuat_lan_dau_duoc_nhan_dien_dung_o_round_sau(self, tmp_path):
+        """Round ĐẦU TIÊN (chưa có pool cũ nào nạp vào) vẫn phải xuất ra file
+        Core thừa NHẬN DIỆN ĐƯỢC ở round kế tiếp — bug thật đã tìm bằng phản
+        biện Agent vòng 2: build_core_thua_forward() từng thiếu cột 'Đối
+        chiếu' khi old_pool_df rỗng, khiến detect_file_type() trả 'unknown'
+        cho chính file mình vừa xuất ra."""
+        import pandas as pd
+        from backend.services.ilo1000.detect import detect_file_type
+        from backend.services.ilo1000.pipeline import main_from_dir
+
+        input_dir = tmp_path / 'input'
+        input_dir.mkdir()
+        output_dir = tmp_path / 'output'
+
+        # Core hôm nay không khớp gì (Trace rỗng, không Hub/Citad match) →
+        # chắc chắn phát sinh leftover mới, không có pool cũ nào nạp vào.
+        (input_dir / 'citad_pool.csv').write_text(
+            'SERIAL_NO,RELATION_NO,TRX_DATE,AMOUNT,TRX_STATUS,extra\n'
+            '1,9999HUB000009,20260909,1,OK,\n',
+            encoding='utf-8',
+        )
+        (input_dir / 'gl02_20260909.csv').write_text(
+            'TRDATE,TRBRCD,USERID,JOURSEQ,DYTRSEQ,LOCAC,CCY,BUSCD,UNIT,TRCD,CUSTOMER,TRTP,REFERENCE,REMARK,DRAMOUNT,CRAMOUNT,CRTDTM\n'
+            '20260909,7777,1000API0,1,1,501202,VND,GL,IB,  ,1000-000007709,Normal,NEWREF,test,0,999999,20260909 09:00:00\n',
+            encoding='utf-8',
+        )
+
+        main_from_dir(str(input_dir), str(output_dir))
+
+        pool_path = output_dir / 'Core thừa 9.9.xlsx'
+        assert pool_path.exists(), "Phải tự xuất pool ngay ở lần đầu, dù chưa có pool cũ nào nạp vào"
+        assert detect_file_type(pool_path) == 'core_thua', (
+            "File pool tự xuất ra PHẢI được chính detect_file_type() nhận diện lại — "
+            "nếu không, tồn đọng của round này biến mất khỏi pool ở round sau"
+        )
+
+    def test_khong_co_pool_cu_van_chay_binh_thuong(self, tmp_path):
+        """Không có file pool nào trong input — hành vi y hệt trước khi có
+        tính năng này (citad TT = ngày hôm nay cho dòng khớp Core trực tiếp)."""
+        import pandas as pd
+        from backend.services.ilo1000.pipeline import main_from_dir
+
+        input_dir = tmp_path / 'input'
+        input_dir.mkdir()
+        output_dir = tmp_path / 'output'
+
+        (input_dir / 'citad_pool.csv').write_text(
+            'SERIAL_NO,RELATION_NO,TRX_DATE,AMOUNT,TRX_STATUS,extra\n'
+            '1,2003HUB000001,20260909,500000,OK,\n',
+            encoding='utf-8',
+        )
+        (input_dir / 'gl02_20260909.csv').write_text(
+            'TRDATE,TRBRCD,USERID,JOURSEQ,DYTRSEQ,LOCAC,CCY,BUSCD,UNIT,TRCD,CUSTOMER,TRTP,REFERENCE,REMARK,DRAMOUNT,CRAMOUNT,CRTDTM\n'
+            '20260909,2003,1000API0,1,1,501202,VND,GL,IB,  ,1000-000007709,Normal,NEWREF,test,0,500000,20260909 09:00:00\n',
+            encoding='utf-8',
+        )
+
+        main_from_dir(str(input_dir), str(output_dir))
+
+        citad_out = pd.read_excel(output_dir / '20260909.xlsx', sheet_name='citad', engine='calamine')
+        assert citad_out['TT'].iloc[0] == 20260909
+        assert not (output_dir / 'Core thừa 9.9.xlsx').exists(), (
+            "Không có dòng nào chưa khớp — không được tự sinh pool rỗng"
+        )
+
+
+# ── Test end-to-end: Citad còn thừa khớp OSB có TÊN FILE THẬT (không "osb...") ─
+# Trước khi có _sniff_osb_xlsx() (nhận theo nội dung), file OSB gốc thật xuất
+# từ IPCAS (tên "DULIEUCHITIETHACHTOAN_...") KHÔNG được detect_file_type()
+# nhận ra là 'osb' — group_files_by_date() bỏ qua ('unknown'), toàn bộ dữ liệu
+# OSB biến mất khỏi pipeline, Citad còn thừa không bao giờ được khớp OSB dù
+# đúng khóa. Test này xác nhận đường THẬT hoạt động, không chỉ detect_file_type().
+
+class TestMainFromDirOsbRealFilename:
+    def test_citad_leftover_matched_by_osb_with_real_ipcas_filename(self, tmp_path):
+        """Citad có 1 dòng KHÔNG khớp Core nào (RELATION_NO='A1', Trace='' vì
+        không có Hub, AMOUNT=1000 → Map dc='A11000'). File OSB tên thật kiểu
+        IPCAS (không bắt đầu 'osb') có 1 dòng (từ _write_osb_xlsx_for_detect:
+        Mã giao dịch=1, CN thực hiện='A', Số tiền='1000') → build_osb_key() =
+        'A' + '1' + '1000' = 'A11000' — TRÙNG Map dc Citad. Cột TT sheet citad
+        của dòng đó phải được gán 'OSB {ngày}' (label_citad_provenance())."""
+        import pandas as pd
+        from backend.services.ilo1000.pipeline import main_from_dir
+
+        input_dir = tmp_path / 'input'
+        input_dir.mkdir()
+        output_dir = tmp_path / 'output'
+
+        # Citad hôm nay: RELATION_NO='A1' → LEFT(...,4)='A1' (chuỗi ngắn hơn 4
+        # ký tự, giữ nguyên); không có Hub nên Trace=''; AMOUNT=1000 →
+        # Map dc = 'A1' + '' + '1000' = 'A11000'.
+        (input_dir / 'citad_pool.csv').write_text(
+            'SERIAL_NO,RELATION_NO,TRX_DATE,AMOUNT,TRX_STATUS,extra\n'
+            '1,A1,20260909,1000,OK,\n',
+            encoding='utf-8',
+        )
+        # Core hôm nay: REFERENCE không chứa API/OTT/BFX/HI → Trace=''; Map dc
+        # = TRBRCD + '' + CRAMOUNT = '7777999999' — KHÔNG khớp Citad trên, nên
+        # Citad 'A11000' không được Core dùng, vẫn còn thừa để khớp OSB.
+        (input_dir / 'gl02_20260909.csv').write_text(
+            'TRDATE,TRBRCD,USERID,JOURSEQ,DYTRSEQ,LOCAC,CCY,BUSCD,UNIT,TRCD,CUSTOMER,TRTP,REFERENCE,REMARK,DRAMOUNT,CRAMOUNT,CRTDTM\n'
+            '20260909,7777,1000API0,1,1,501202,VND,GL,IB,  ,1000-000007709,Normal,NEWREF,test,0,999999,20260909 09:00:00\n',
+            encoding='utf-8',
+        )
+        # File OSB tên THẬT (kiểu IPCAS xuất ra), KHÔNG bắt đầu bằng 'osb' —
+        # phải được nhận diện qua nội dung (_sniff_osb_xlsx()).
+        osb_file = input_dir / 'DULIEUCHITIETHACHTOAN_15092026_182021_abc123-phuongnguyenthi6.xlsx'
+        _write_osb_xlsx_for_detect(osb_file)
+
+        main_from_dir(str(input_dir), str(output_dir))
+
+        citad_out = pd.read_excel(output_dir / '20260909.xlsx', sheet_name='citad', engine='calamine')
+        row = citad_out[citad_out['Map dc'] == 'A11000']
+        assert len(row) == 1, "Phải có đúng 1 dòng Citad với Map dc 'A11000'"
+        assert str(row['TT'].iloc[0]).startswith('OSB '), (
+            "Citad còn thừa phải được khớp OSB (tên file thật, không 'osb...') "
+            f"— TT thực tế: {row['TT'].iloc[0]!r}"
+        )
 
 
 # ── Test 13: load_core — ZIP GL02 mã hóa AES + dedup CSV rời trùng dữ liệu ──
@@ -1792,6 +2087,81 @@ class TestDetectOSBPool:
         assert groups['20260714']['osb'] == [osb_file]
         assert groups['20260715']['osb'] == [osb_file]
 
+    def test_osb_pool_assigned_to_every_date_group_real_filename(self, tmp_path):
+        """Cùng test trên nhưng với tên file THẬT do IPCAS xuất ra (không bắt
+        đầu bằng 'osb') — group_files_by_date() phải vẫn gán đúng pool 'osb'
+        cho mọi nhóm ngày, dựa vào nhận diện theo NỘI DUNG (_sniff_osb_xlsx())."""
+        from backend.services.ilo1000.detect import group_files_by_date
+
+        osb_file = tmp_path / 'DULIEUCHITIETHACHTOAN_15092026_182021_abc123-phuongnguyenthi6.xlsx'
+        _write_osb_xlsx_for_detect(osb_file)
+        core14 = tmp_path / 'gl02_20260714.csv'
+        core14.write_text('TRDATE,TRBRCD\n20260714,1000\n', encoding='utf-8')
+        core15 = tmp_path / 'gl02_20260715.csv'
+        core15.write_text('TRDATE,TRBRCD\n20260715,1000\n', encoding='utf-8')
+
+        groups = group_files_by_date([osb_file, core14, core15])
+        assert groups['20260714']['osb'] == [osb_file]
+        assert groups['20260715']['osb'] == [osb_file]
+
+
+# ── Test: nhận diện file OSB gốc theo NỘI DUNG (tên file thật IPCAS không ──
+# bắt đầu bằng "osb", VD "DULIEUCHITIETHACHTOAN_...") ───────────────────────
+
+class TestDetectOSBByContent:
+    """Xác nhận thật 2026-09-15: file OSB gốc do IPCAS xuất ra tên bắt đầu
+    bằng 'DULIEUCHITIETHACHTOAN_...', KHÔNG bao giờ 'osb...' — rule tên file
+    cũ bỏ sót hoàn toàn. `_sniff_osb_xlsx()` nhận theo nội dung (đủ 2 cột
+    OSB_COL_MA_GD/OSB_COL_CN_THUC_HIEN), so khớp không phân biệt hoa/thường/
+    khoảng trắng thừa."""
+
+    def test_dulieuchitiethachtoan_filename_detected_by_content(self, tmp_path):
+        from backend.services.ilo1000.detect import detect_file_type
+
+        p = tmp_path / 'DULIEUCHITIETHACHTOAN_15092026_182021_abc123-phuongnguyenthi6.xlsx'
+        _write_osb_xlsx_for_detect(p)
+        assert detect_file_type(p) == 'osb'
+
+    def test_only_one_marker_column_not_falsely_detected(self, tmp_path):
+        """Chỉ có 1 trong 2 cột đánh dấu (thiếu 'Mã giao dịch') — không được
+        nhận nhầm là OSB, tên file cũng không gợi ý gì (không bắt đầu 'osb')."""
+        from backend.services.ilo1000.detect import detect_file_type
+
+        p = tmp_path / 'bao_cao_khac.xlsx'
+        _write_xlsx(p, [{'CN thực hiện': '8405', 'Ghi chú': 'không phải OSB'}])
+        assert detect_file_type(p) == 'unknown'
+
+    def test_lowercase_or_extra_space_column_still_detected(self, tmp_path):
+        """Header lệch casing/khoảng trắng thừa — vẫn phải nhận ra đúng OSB."""
+        from backend.services.ilo1000.detect import detect_file_type
+
+        p = tmp_path / 'DULIEUCHITIETHACHTOAN_16092026_100000_xyz.xlsx'
+        _write_xlsx(p, [{'cn thực hiện ': '8405', ' Mã giao dịch': 144349765, 'Số tiền': '1000'}])
+        assert detect_file_type(p) == 'osb'
+
+    def test_config_sheet_before_sheet1_still_detected(self, tmp_path):
+        """Xác nhận thật 15/09/2026: file OSB gốc IPCAS có 2 sheet, 'Config'
+        (bảng chú giải mã, KHÔNG có header thật) đứng TRƯỚC 'Sheet 1' (chứa
+        header thật) trong thứ tự sheet. Quét mù sheet đầu tiên (0) sẽ đọc
+        nhầm 'Config' và không bao giờ nhận ra được — đây chính là lỗi thật
+        đã tìm thấy khi verify trên dữ liệu thật (không unit test nào khác
+        ở đây tái hiện được, vì `_write_osb_xlsx_for_detect()` chỉ dựng 1
+        sheet). Phải quét đúng sheet 'Sheet 1' theo TÊN, không theo vị trí."""
+        from backend.services.ilo1000.detect import detect_file_type
+
+        p = tmp_path / 'DULIEUCHITIETHACHTOAN_17092026_120000_config_first.xlsx'
+        with pd.ExcelWriter(p) as writer:
+            pd.DataFrame([['Loại CN', 'Mô tả'], ['01', 'Chi nhánh']]).to_excel(
+                writer, sheet_name='Config', index=False, header=False,
+            )
+            pd.DataFrame([['DỮ LIỆU CHI TIẾT HẠCH TOÁN']]).to_excel(
+                writer, sheet_name='Sheet 1', index=False, header=False, startrow=0,
+            )
+            pd.DataFrame([{'Mã giao dịch': 1, 'CN thực hiện': 'A', 'Số tiền': '1000', 'Ngày hạch toán': '09/09/2026'}]).to_excel(
+                writer, sheet_name='Sheet 1', index=False, header=True, startrow=2,
+            )
+        assert detect_file_type(p) == 'osb'
+
 
 # ── Test: nhận diện + pool Hub — tên file Hub không đáng tin về ngày ────────
 
@@ -1819,6 +2189,161 @@ class TestDetectHubPool:
             "Hub phải có mặt ở CẢ 2 ngày trong batch, không chỉ 1 ngày"
         )
         assert groups['20260812']['hub'] == [hub_file]
+
+
+# ── Test: nhận diện pool tồn đọng xuyên batch (Core thừa / OSB thừa) ────────
+# Nhận theo NỘI DUNG (có cột 'Đối chiếu'), KHÔNG theo tên file — xác nhận
+# thật: pool OSB có thể được đặt tên bắt đầu bằng "osb" (VD "OSB thua ngay
+# 5-8.xlsx"), dễ bị nhầm thành file OSB gốc nếu chỉ xét tiền tố tên file.
+
+def _write_xlsx(path, rows):
+    pd.DataFrame(rows).to_excel(path, index=False, engine='openpyxl')
+
+
+class TestDetectPoolXlsx:
+    def test_core_thua_detected_by_content(self, tmp_path):
+        from backend.services.ilo1000.detect import detect_file_type
+
+        p = tmp_path / 'Core thừa 5-8.9.xlsx'
+        _write_xlsx(p, [{
+            'TRDATE': 20260908, 'REFERENCE': '1000API1', 'TT': 'Chờ đi kênh', 'Đối chiếu': '#N/A',
+        }])
+        assert detect_file_type(p) == 'core_thua'
+
+    def test_osb_thua_detected_by_content_even_with_osb_prefix_filename(self, tmp_path):
+        """Tên file bắt đầu bằng 'osb' (trùng rule cũ nhận diện file OSB gốc)
+        — vẫn phải ưu tiên nhận theo nội dung là pool trước."""
+        from backend.services.ilo1000.detect import detect_file_type
+
+        p = tmp_path / 'OSB thua ngay 5-8.xlsx'
+        _write_xlsx(p, [{
+            'Mã giao dịch': 144349765, 'CN thực hiện': '8405', 'Đối chiếu': '#N/A',
+        }])
+        assert detect_file_type(p) == 'osb_thua'
+
+    def test_regular_osb_file_without_doi_chieu_column_stays_osb(self, tmp_path):
+        from backend.services.ilo1000.detect import detect_file_type
+
+        p = tmp_path / 'OSB n 11-12.7.xlsx'
+        _write_osb_xlsx_for_detect(p)
+        assert detect_file_type(p) == 'osb'
+
+    def test_regular_hub_file_without_doi_chieu_column_stays_hub(self, tmp_path):
+        from backend.services.ilo1000.detect import detect_file_type
+
+        p = tmp_path / 'phub_test.xlsx'
+        _write_xlsx(p, [{'Số giao dịch': 'S1', 'STC': '1'}])
+        assert detect_file_type(p) == 'hub'
+
+    def test_corrupt_or_non_xlsx_file_does_not_crash(self, tmp_path):
+        from backend.services.ilo1000.detect import detect_file_type
+
+        p = tmp_path / 'osb_placeholder.xlsx'
+        p.write_text('placeholder', encoding='utf-8')
+        assert detect_file_type(p) == 'osb'  # rơi về rule theo tên file, không crash
+
+    def test_core_thua_detected_with_cham_column_alias(self, tmp_path):
+        """Xác nhận thật 2026-09-15: người chấm tự đổi tên cột 'Đối chiếu'
+        thành 'Cham' khi chỉnh sửa lại file (VD 'Core thua ngay 11.9.xlsx')
+        — vẫn phải nhận ra đúng là pool tồn đọng, không đòi đúng 1 chuỗi."""
+        from backend.services.ilo1000.detect import detect_file_type
+
+        p = tmp_path / 'Core thua ngay 11.9.xlsx'
+        _write_xlsx(p, [{
+            'TRDATE': 20260911, 'REFERENCE': '1000API1', 'TT': 'Chờ đi kênh', 'Cham': '#N/A',
+        }])
+        assert detect_file_type(p) == 'core_thua'
+
+
+class TestLoadPoolFiles:
+    """load_pool_files() đọc file pool tồn đọng — không giả định vị trí
+    header cố định, chuẩn hóa tên cột lệch casing (VD "map dc" → "Map dc")."""
+
+    def test_reads_header_at_row_0(self, tmp_path):
+        from backend.services.ilo1000.load_pool import load_pool_files
+
+        p = tmp_path / 'Core thừa.xlsx'
+        _write_xlsx(p, [
+            {'TRDATE': 20260908, 'REFERENCE': 'R1', 'Map dc': 'M1', 'TT': 'Chờ đi kênh', 'Đối chiếu': '#N/A'},
+        ])
+        out = load_pool_files(p)
+        assert list(out['REFERENCE']) == ['R1']
+        # Không assert đúng literal '#N/A' — pandas/calamine có thể tự đổi
+        # chuỗi này thành NaN tùy engine (đã xác nhận không nhất quán giữa
+        # các lần đọc). Không sao: mark_pool_doi_chieu() coi CẢ NaN lẫn
+        # '#N/A' đều là "chưa khớp" (fillna('') trước khi so sánh).
+        val = out['Đối chiếu'].iloc[0]
+        assert pd.isna(val) or str(val).strip() in ('', '#N/A')
+
+    def test_reads_header_offset_by_blank_row(self, tmp_path):
+        """File 'OSB thừa' thật có 1 dòng trống trước header — phải tự tìm
+        đúng dòng header, không giả định header luôn ở dòng 0."""
+        from backend.services.ilo1000.load_pool import load_pool_files
+
+        p = tmp_path / 'OSB thừa.xlsx'
+        with pd.ExcelWriter(p) as writer:
+            pd.DataFrame([[None]]).to_excel(writer, sheet_name='Sheet1', index=False, header=False, startrow=0)
+            pd.DataFrame([{'Mã giao dịch': 123, 'Map DC': 'M1', 'Đối chiếu': '#N/A'}]).to_excel(
+                writer, sheet_name='Sheet1', index=False, header=True, startrow=1
+            )
+        out = load_pool_files(p)
+        assert list(out['Mã giao dịch']) == ['123']
+
+    def test_cham_column_normalized_to_doi_chieu(self, tmp_path):
+        """Xác nhận thật 2026-09-15: file pool do người chấm chỉnh sửa lại
+        đổi tên cột 'Đối chiếu' thành 'Cham' — phải chuẩn hoá về 'Đối chiếu'
+        để mark_pool_doi_chieu()/build_core_thua_forward() nhận đúng."""
+        from backend.services.ilo1000.load_pool import load_pool_files
+
+        p = tmp_path / 'Core thua ngay 11.9.xlsx'
+        _write_xlsx(p, [{'TRDATE': 20260911, 'REFERENCE': 'R1', 'Cham': '#N/A'}])
+        out = load_pool_files(p)
+        assert 'Đối chiếu' in out.columns
+        assert 'Cham' not in out.columns
+
+    def test_lowercase_map_dc_column_normalized(self, tmp_path):
+        """Xác nhận thật: file 'Core thừa 5-8.9.xlsx' dùng 'map dc' chữ
+        thường — phải chuẩn hóa về 'Map dc' để khớp quy ước code."""
+        from backend.services.ilo1000.load_pool import load_pool_files
+
+        p = tmp_path / 'Core thừa.xlsx'
+        _write_xlsx(p, [{'TRDATE': 20260908, 'REFERENCE': 'R1', 'map dc': 'M1', 'Đối chiếu': '#N/A'}])
+        out = load_pool_files(p)
+        assert 'Map dc' in out.columns
+        assert 'map dc' not in out.columns
+        assert out['Map dc'].iloc[0] == 'M1'
+
+    def test_multiple_files_concatenated(self, tmp_path):
+        from backend.services.ilo1000.load_pool import load_pool_files
+
+        p1 = tmp_path / 'pool1.xlsx'
+        p2 = tmp_path / 'pool2.xlsx'
+        _write_xlsx(p1, [{'REFERENCE': 'R1', 'Đối chiếu': '#N/A'}])
+        _write_xlsx(p2, [{'REFERENCE': 'R2', 'Đối chiếu': '#N/A'}])
+        out = load_pool_files([p1, p2])
+        assert sorted(out['REFERENCE']) == ['R1', 'R2']
+
+    def test_no_paths_returns_empty_df(self):
+        from backend.services.ilo1000.load_pool import load_pool_files
+
+        assert load_pool_files([]).empty
+
+    def test_file_without_doi_chieu_column_returns_empty(self, tmp_path):
+        from backend.services.ilo1000.load_pool import load_pool_files
+
+        p = tmp_path / 'not_a_pool.xlsx'
+        _write_xlsx(p, [{'TRDATE': 20260908, 'REFERENCE': 'R1'}])
+        assert load_pool_files(p).empty
+
+
+def _write_osb_xlsx_for_detect(path):
+    with pd.ExcelWriter(path) as writer:
+        pd.DataFrame([['DỮ LIỆU CHI TIẾT HẠCH TOÁN']]).to_excel(
+            writer, sheet_name='Sheet 1', index=False, header=False, startrow=0
+        )
+        pd.DataFrame([{'Mã giao dịch': 1, 'CN thực hiện': 'A', 'Số tiền': '1000', 'Ngày hạch toán': '09/09/2026'}]).to_excel(
+            writer, sheet_name='Sheet 1', index=False, header=True, startrow=2
+        )
 
 
 # ── Test: load_osb — đọc file OSB thật (title dòng 1, trống dòng 2, header dòng 3) ─
@@ -2016,6 +2541,104 @@ class TestOsbCarryoverDays:
         assert _osb_carryover_days(20260801) == {20260801, 20260731}
 
 
+# ── Test: _hub_forward_window/_hub_carryover_days — cửa sổ Hub nhìn thêm
+# T+1 (mở rộng qua ngày nghỉ nếu có) — xác nhận thật 09/09/2026: so với bản
+# tay Việt, chương trình thiếu 14.566 dòng Hub ngày 10/09 khi chấm ngày 09/09,
+# làm 14.318/14.345 dòng Core "chưa khớp" đáng lẽ phải là 'Chờ đi kênh'. Đã
+# tự verify: thêm đúng T+1 rồi chạy lại, số dòng lệch giảm 14.345 → 27. ────
+
+class TestHubForwardWindow:
+    def test_regular_day_returns_next_day_only(self):
+        from datetime import date
+        from backend.services.ilo1000.pipeline import _hub_forward_window
+
+        assert _hub_forward_window(date(2026, 9, 9)) == [date(2026, 9, 10)]
+
+    def test_friday_extends_through_weekend_to_monday(self):
+        """11/09/2026 là thứ 6 — T+1 rơi vào thứ 7 (nghỉ), phải mở rộng qua
+        CN tới hết thứ 2 (phiên Hub thật gần nhất) — CHƯA có dữ liệu thật xác
+        nhận case này, chỉ suy rộng đối xứng với carryover_window()."""
+        from datetime import date
+        from backend.services.ilo1000.pipeline import _hub_forward_window
+
+        assert _hub_forward_window(date(2026, 9, 11)) == [
+            date(2026, 9, 12), date(2026, 9, 13), date(2026, 9, 14),
+        ]
+
+    def test_month_boundary(self):
+        from datetime import date
+        from backend.services.ilo1000.pipeline import _hub_forward_window
+
+        assert _hub_forward_window(date(2026, 8, 31)) == [date(2026, 9, 1)]
+
+
+class TestHubCarryoverDays:
+    def test_combines_backward_and_forward(self):
+        from backend.services.ilo1000.pipeline import _hub_carryover_days
+
+        # 09/09/2026 (thứ 4): backward = {9,8}; forward = {10}
+        assert _hub_carryover_days(20260909) == {20260908, 20260909, 20260910}
+
+    def test_monday_backward_extends_but_forward_stays_next_day(self):
+        """10/08/2026 là thứ 2 — backward gồm cả cuối tuần trước (7,8,9/08),
+        forward chỉ thêm đúng 11/08 (thứ 3, ngày thường kế tiếp)."""
+        from backend.services.ilo1000.pipeline import _hub_carryover_days
+
+        assert _hub_carryover_days(20260810) == {
+            20260807, 20260808, 20260809, 20260810, 20260811,
+        }
+
+
+# ── Test: extract_gl02_date_range — tên file GL02 ghi 1 khoảng ngày ─────────
+
+class TestGl02DateRange:
+    """Xác nhận thật 2026-09-10: file "1000_gl02_2026090520260908.csv" (16 số
+    = 20260905+20260908 ghép liền) chứa TRDATE cả 4 ngày 05,06,07,08/09 trộn
+    lẫn. Trước khi sửa, `extract_date()` chỉ lấy 8 số ĐẦU làm khóa nhóm duy
+    nhất — Thứ 2 07/09 (ngày làm việc đầy đủ, không có file GL02/zip riêng
+    của chính nó) không bao giờ có nhóm để xử lý → 47.966/110.481 dòng Core
+    mất trắng khỏi MỌI file kết quả, không log, không lỗi."""
+
+    def test_single_date_filename_unchanged(self):
+        from pathlib import Path
+        from backend.services.ilo1000.detect import extract_gl02_date_range
+
+        assert extract_gl02_date_range(Path('gl02_20260706.csv')) == ['20260706']
+
+    def test_range_filename_expands_every_day_inclusive(self):
+        from pathlib import Path
+        from backend.services.ilo1000.detect import extract_gl02_date_range
+
+        out = extract_gl02_date_range(Path('1000_gl02_2026090520260908.csv'))
+        assert out == ['20260905', '20260906', '20260907', '20260908']
+
+    def test_unrecognized_filename_returns_empty(self):
+        from pathlib import Path
+        from backend.services.ilo1000.detect import extract_gl02_date_range
+
+        assert extract_gl02_date_range(Path('khong_ro_ngay.csv')) == []
+
+    def test_group_files_by_date_creates_group_for_middle_day_with_no_own_file(self, tmp_path):
+        """Ngày giữa khoảng (07/09, không có file GL02/zip riêng) vẫn phải có
+        nhóm riêng để xử lý — đây là chỗ dữ liệu từng mất trắng."""
+        from backend.services.ilo1000.detect import group_files_by_date
+
+        core_range = tmp_path / '1000_gl02_2026090520260908.csv'
+        core_range.write_text('TRDATE,TRBRCD\n20260907,1000\n', encoding='utf-8')
+        citad_path = tmp_path / 'citad.csv'
+        citad_path.write_text(
+            'SERIAL_NO,RELATION_NO,TRX_DATE,AMOUNT,TRX_STATUS,extra\n1,2,20260907,100,OK,\n',
+            encoding='utf-8',
+        )
+
+        groups = group_files_by_date([core_range, citad_path])
+
+        assert set(groups.keys()) == {'20260905', '20260906', '20260907', '20260908'}
+        for d in ('20260905', '20260906', '20260907', '20260908'):
+            assert core_range in groups[d]['core'], f'Ngày {d} phải được gán file core (dải ngày)'
+            assert citad_path in groups[d]['citad']
+
+
 # ── Test: _filter_core_by_date — 1 file GL02 gốc chứa nhiều ngày trộn lẫn ───
 
 class TestFilterCoreByDate:
@@ -2098,3 +2721,316 @@ class TestDedupCoreBatch:
         from backend.services.ilo1000.pipeline import _dedup_core_batch
 
         assert _dedup_core_batch({}).empty
+
+
+# ── Test: build_pool_label — nhãn dải ngày tính từ NGÀY BATCH, không phải
+# TRDATE tồn đọng bên trong pool (xác nhận thật: pool "Core thừa 5-8.9" chứa
+# TRDATE lẫn 25/08, 28/08 — nếu tính theo min-max TRDATE sẽ ra nhãn sai) ────
+
+class TestBuildPoolLabel:
+    def test_single_day(self):
+        from datetime import date
+        from backend.services.ilo1000.process import build_pool_label
+
+        assert build_pool_label([date(2026, 9, 9)]) == '9.9'
+
+    def test_range_same_month(self):
+        from datetime import date
+        from backend.services.ilo1000.process import build_pool_label
+
+        days = [date(2026, 9, 5), date(2026, 9, 6), date(2026, 9, 7), date(2026, 9, 8)]
+        assert build_pool_label(days) == '5-8.9'
+
+    def test_range_crosses_month(self):
+        from datetime import date
+        from backend.services.ilo1000.process import build_pool_label
+
+        assert build_pool_label([date(2026, 8, 25), date(2026, 9, 8)]) == '25.8-8.9'
+
+    def test_unsorted_input_still_correct(self):
+        from datetime import date
+        from backend.services.ilo1000.process import build_pool_label
+
+        days = [date(2026, 9, 8), date(2026, 9, 5)]
+        assert build_pool_label(days) == '5-8.9'
+
+    def test_empty_returns_empty_string(self):
+        from backend.services.ilo1000.process import build_pool_label
+
+        assert build_pool_label([]) == ''
+        assert build_pool_label(None) == ''
+
+
+# ── Test: build_mapdc_label_map — {Map dc → nhãn} dùng chung cho cả pool ────
+
+class TestBuildMapdcLabelMap:
+    def test_maps_every_key_to_same_label(self):
+        from backend.services.ilo1000.process import build_mapdc_label_map
+
+        df = pd.DataFrame([{'Map dc': 'M1'}, {'Map dc': 'M2'}])
+        out = build_mapdc_label_map(df, 'Map dc', 'Core 5-8.9')
+        assert out == {'M1': 'Core 5-8.9', 'M2': 'Core 5-8.9'}
+
+    def test_blank_key_excluded(self):
+        from backend.services.ilo1000.process import build_mapdc_label_map
+
+        df = pd.DataFrame([{'Map dc': ''}, {'Map dc': 'M1'}])
+        out = build_mapdc_label_map(df, 'Map dc', 'X')
+        assert out == {'M1': 'X'}
+
+    def test_empty_df_returns_empty_dict(self):
+        from backend.services.ilo1000.process import build_mapdc_label_map
+
+        assert build_mapdc_label_map(pd.DataFrame(), 'Map dc', 'X') == {}
+
+    def test_missing_column_returns_empty_dict(self):
+        from backend.services.ilo1000.process import build_mapdc_label_map
+
+        assert build_mapdc_label_map(pd.DataFrame([{'other': 1}]), 'Map dc', 'X') == {}
+
+
+# ── Test: is_core_tt_resolved / build_core_thua_pool — dòng Core nào phải
+# mang sang pool "Core thừa" của batch sau ──────────────────────────────────
+
+class TestCoreThuaPool:
+    def test_citad_match_is_resolved(self):
+        from backend.services.ilo1000.process import is_core_tt_resolved
+
+        assert is_core_tt_resolved('citad 9.9') is True
+
+    def test_huy_da_huy_quyet_toan_osb_are_resolved(self):
+        from backend.services.ilo1000.process import is_core_tt_resolved
+
+        for tt in ('Hủy', 'Đã hủy', 'quyết toán', 'OSB'):
+            assert is_core_tt_resolved(tt) is True, tt
+
+    def test_hoan_thanh_khong_duoc_coi_la_da_xong(self):
+        """Việt xác nhận trực tiếp (2026-09-13): Trạng thái Hub phản ánh thời
+        điểm TRA CỨU, không phải thời điểm đang chấm — 1 giao dịch 'chờ đi
+        kênh' của ngày đang chấm, nếu tra muộn 1-2 ngày, Hub sẽ tự báo 'Hoàn
+        thành' dù nó KHÔNG đi kênh đúng ngày đang chấm. Coi 'Hoàn thành' là
+        đã xong sẽ làm mất dấu các giao dịch này khỏi pool tồn đọng — do đó
+        PHẢI vẫn coi là CHƯA xong (mang vào pool). Từng bị sửa sai thành
+        resolved=True dựa trên suy diễn từ 1 mẫu dữ liệu nhỏ — đã tự sửa lại
+        khi Việt xác nhận trực tiếp."""
+        from backend.services.ilo1000.process import is_core_tt_resolved
+
+        assert is_core_tt_resolved('Hoàn thành') is False
+
+    def test_raw_hub_status_not_resolved(self):
+        """'Chờ đi kênh'/'Chờ duyệt chi trả'/'TT Lệnh lỗi' — nhãn Trạng thái
+        thô từ Hub (bước fallback 3/4 của process_core()) — vẫn CHƯA xong,
+        phải mang sang pool. Xác nhận đúng dữ liệu thật `Core thừa 5-8.9.xlsx`."""
+        from backend.services.ilo1000.process import is_core_tt_resolved
+
+        for tt in ('Chờ đi kênh', 'Chờ duyệt chi trả', 'TT Lệnh lỗi', ''):
+            assert is_core_tt_resolved(tt) is False, tt
+
+    def test_none_not_resolved(self):
+        from backend.services.ilo1000.process import is_core_tt_resolved
+
+        assert is_core_tt_resolved(None) is False
+
+    def test_build_core_thua_pool_keeps_only_unresolved(self):
+        from backend.services.ilo1000.process import build_core_thua_pool
+
+        core_out = pd.DataFrame([
+            {'REFERENCE': 'R1', 'TT': 'citad 9.9'},
+            {'REFERENCE': 'R2', 'TT': 'Chờ đi kênh'},
+            {'REFERENCE': 'R3', 'TT': 'Hủy'},
+            {'REFERENCE': 'R4', 'TT': ''},
+        ])
+        out = build_core_thua_pool(core_out)
+        assert sorted(out['REFERENCE']) == ['R2', 'R4']
+
+    def test_empty_core_returns_empty(self):
+        from backend.services.ilo1000.process import build_core_thua_pool
+
+        assert build_core_thua_pool(pd.DataFrame()).empty
+
+
+# ── Test: build_core_thua_forward — hợp pool cũ chưa khớp + leftover mới ────
+
+class TestBuildCoreThuaForward:
+    def test_combines_unresolved_old_and_new_leftover(self):
+        from backend.services.ilo1000.process import build_core_thua_forward
+
+        old_pool = pd.DataFrame([
+            {'REFERENCE': 'OLD1', 'Đối chiếu': '#N/A'},
+            {'REFERENCE': 'OLD2', 'Đối chiếu': 20260909},  # đã khớp — loại
+        ])
+        new_leftover = pd.DataFrame([{'REFERENCE': 'NEW1', 'Đối chiếu': None}])
+        out = build_core_thua_forward(old_pool, new_leftover)
+        assert sorted(out['REFERENCE']) == ['NEW1', 'OLD1']
+
+    def test_old_pool_none_only_new_leftover(self):
+        from backend.services.ilo1000.process import build_core_thua_forward
+
+        new_leftover = pd.DataFrame([{'REFERENCE': 'NEW1'}])
+        out = build_core_thua_forward(None, new_leftover)
+        assert list(out['REFERENCE']) == ['NEW1']
+
+    def test_both_empty_returns_empty_df(self):
+        from backend.services.ilo1000.process import build_core_thua_forward
+
+        out = build_core_thua_forward(pd.DataFrame(), pd.DataFrame())
+        assert out.empty
+
+    def test_old_pool_without_doi_chieu_column_treated_as_all_unresolved(self):
+        """Pool cũ chưa từng qua vòng đối chiếu nào (chưa có cột 'Đối chiếu')
+        — coi như toàn bộ còn tồn đọng, không loại dòng nào."""
+        from backend.services.ilo1000.process import build_core_thua_forward
+
+        old_pool = pd.DataFrame([{'REFERENCE': 'OLD1'}])
+        out = build_core_thua_forward(old_pool, pd.DataFrame())
+        assert list(out['REFERENCE']) == ['OLD1']
+
+    def test_ket_qua_luon_co_cot_doi_chieu_ngay_ca_khi_pool_cu_rong(self):
+        """Phản biện Agent vòng 2 (2026-09-13) phát hiện + tái lập: lần đầu
+        bật tính năng (old_pool_df rỗng, KHÔNG có pool cũ nạp vào), kết quả
+        trước đây THIẾU hẳn cột 'Đối chiếu' (vì new_leftover_df — từ
+        process_core()/OSB thô — chưa từng có cột này) → file xuất ra ở round
+        này bị detect.py::_sniff_pool_xlsx() coi là 'unknown' ở round SAU
+        (bắt buộc có cột 'Đối chiếu'), toàn bộ tồn đọng lặng lẽ biến mất khỏi
+        pool. Bắt buộc cột này luôn có mặt trong kết quả, giá trị mặc định
+        '#N/A' (chưa từng đối chiếu lần nào)."""
+        from backend.services.ilo1000.process import build_core_thua_forward
+
+        new_leftover = pd.DataFrame([{'TRDATE': 20260909, 'REFERENCE': 'R1', 'Map dc': 'M1', 'TT': 'Chờ đi kênh'}])
+        out = build_core_thua_forward(pd.DataFrame(), new_leftover)
+        assert 'Đối chiếu' in out.columns
+        assert out['Đối chiếu'].iloc[0] == '#N/A'
+
+    def test_cot_doi_chieu_rong_trong_new_leftover_duoc_dien_na(self):
+        """new_leftover_df có sẵn cột 'Đối chiếu' nhưng để rỗng/NaN (không
+        phải trường hợp thật hiện tại, nhưng phòng caller khác) — vẫn phải
+        chuẩn hoá về '#N/A', không để rỗng lọt ra file xuất."""
+        from backend.services.ilo1000.process import build_core_thua_forward
+
+        new_leftover = pd.DataFrame([{'REFERENCE': 'R1', 'Đối chiếu': ''}, {'REFERENCE': 'R2', 'Đối chiếu': None}])
+        out = build_core_thua_forward(pd.DataFrame(), new_leftover)
+        assert list(out['Đối chiếu']) == ['#N/A', '#N/A']
+
+
+# ── Test: mark_pool_doi_chieu — điền cột Đối chiếu, không ghi đè dòng đã
+# khớp từ trước ──────────────────────────────────────────────────────────────
+
+class TestMarkPoolDoiChieu:
+    def test_new_match_gets_ngay_int(self):
+        from backend.services.ilo1000.process import mark_pool_doi_chieu
+
+        map_dc = pd.Series(['M1', 'M2'])
+        out = mark_pool_doi_chieu(map_dc, None, {'M1'}, 20260909)
+        assert list(out) == [20260909, '#N/A']
+
+    def test_already_resolved_not_overwritten(self):
+        """Dòng đã khớp ngày 20260905 từ vòng trước — dù Map dc của nó (do
+        trùng lặp giả định) tình cờ có mặt trong citad_mapdc_keys hôm nay,
+        vẫn GIỮ NGUYÊN ngày cũ, không ghi đè '#N/A' hay ngày mới."""
+        from backend.services.ilo1000.process import mark_pool_doi_chieu
+
+        map_dc = pd.Series(['M1'])
+        existing = pd.Series([20260905])
+        out = mark_pool_doi_chieu(map_dc, existing, {'M1'}, 20260909)
+        assert list(out) == [20260905]
+
+    def test_pending_na_string_still_pending(self):
+        from backend.services.ilo1000.process import mark_pool_doi_chieu
+
+        map_dc = pd.Series(['M1', 'M2'])
+        existing = pd.Series(['#N/A', '#N/A'])
+        out = mark_pool_doi_chieu(map_dc, existing, {'M2'}, 20260910)
+        assert list(out) == ['#N/A', 20260910]
+
+
+# ── Test: label_citad_provenance — cột TT của SHEET CITAD (khác cột TT của
+# sheet Core) theo đúng thứ tự ưu tiên B1 tài liệu gốc ──────────────────────
+
+class TestLabelCitadProvenance:
+    def test_matched_today_core_gets_ngay_int(self):
+        from backend.services.ilo1000.process import label_citad_provenance
+
+        citad_df = pd.DataFrame([{'Map dc': 'M1'}])
+        out = label_citad_provenance(citad_df, {'M1'}, 20260909)
+        assert out.iloc[0] == 20260909
+
+    def test_matched_core_pool_when_not_matched_today(self):
+        from backend.services.ilo1000.process import label_citad_provenance
+
+        citad_df = pd.DataFrame([{'Map dc': 'M1'}])
+        out = label_citad_provenance(
+            citad_df, used_citad_mapdc=set(), ngay_int=20260909,
+            core_pool_label_map={'M1': 'Core 5-8.9'},
+        )
+        assert out.iloc[0] == 'Core 5-8.9'
+
+    def test_priority_today_core_over_pool(self):
+        """Khớp được Core hôm nay thì KHÔNG được rơi xuống nhãn pool cũ, dù
+        Map dc đó (giả định trùng) cũng có trong core_pool_label_map."""
+        from backend.services.ilo1000.process import label_citad_provenance
+
+        citad_df = pd.DataFrame([{'Map dc': 'M1'}])
+        out = label_citad_provenance(
+            citad_df, used_citad_mapdc={'M1'}, ngay_int=20260909,
+            core_pool_label_map={'M1': 'Core 5-8.9'},
+        )
+        assert out.iloc[0] == 20260909
+
+    def test_falls_through_to_osb_today_then_osb_pool(self):
+        from backend.services.ilo1000.process import label_citad_provenance
+
+        citad_df = pd.DataFrame([{'Map dc': 'M1'}, {'Map dc': 'M2'}])
+        out = label_citad_provenance(
+            citad_df, used_citad_mapdc=set(), ngay_int=20260909,
+            core_pool_label_map={},
+            osb_today_label_map={'M1': 'OSB 9.9'},
+            osb_pool_label_map={'M2': 'OSB 5-8.9'},
+        )
+        assert list(out) == ['OSB 9.9', 'OSB 5-8.9']
+
+    def test_no_match_anywhere_stays_blank(self):
+        """Không khớp Core hôm nay, không khớp pool Core, không khớp OSB nào
+        — đây là 'Citad thừa' của ngày, để RỖNG cho người chấm tay điều tra,
+        không tự suy luận thêm."""
+        from backend.services.ilo1000.process import label_citad_provenance
+
+        citad_df = pd.DataFrame([{'Map dc': 'M9'}])
+        out = label_citad_provenance(citad_df, set(), 20260909)
+        assert out.iloc[0] == ''
+
+    def test_empty_citad_df_returns_empty_series(self):
+        from backend.services.ilo1000.process import label_citad_provenance
+
+        out = label_citad_provenance(pd.DataFrame(), set(), 20260909)
+        assert len(out) == 0
+
+
+# ── Test: used_label_map_keys — tổng quát used_citad_keys() cho hướng
+# ngược (biết OSB hôm nay/pool nào đã bị 1 dòng Citad tiêu thụ) ─────────────
+
+class TestUsedLabelMapKeys:
+    def test_matched_key_included(self):
+        from backend.services.ilo1000.process import used_label_map_keys
+
+        tt = pd.Series(['OSB 20260909'])
+        map_dc = pd.Series(['M1'])
+        assert used_label_map_keys(tt, map_dc, {'M1': 'OSB 20260909'}) == {'M1'}
+
+    def test_key_overridden_by_higher_priority_not_used(self):
+        """M1 có trong label_map nhưng TT thực tế lại là nhãn khác (VD Core
+        hôm nay chiếm trước) → không tính là đã dùng."""
+        from backend.services.ilo1000.process import used_label_map_keys
+
+        tt = pd.Series([20260909])
+        map_dc = pd.Series(['M1'])
+        assert used_label_map_keys(tt, map_dc, {'M1': 'OSB 20260909'}) == set()
+
+    def test_empty_label_map_returns_empty_set(self):
+        from backend.services.ilo1000.process import used_label_map_keys
+
+        assert used_label_map_keys(pd.Series(['x']), pd.Series(['M1']), {}) == set()
+
+    def test_empty_tt_returns_empty_set(self):
+        from backend.services.ilo1000.process import used_label_map_keys
+
+        assert used_label_map_keys(pd.Series([], dtype=str), pd.Series([], dtype=str), {'M1': 'x'}) == set()

@@ -1,5 +1,6 @@
 """Xuất kết quả ra file Excel (1 file / ngày)."""
 
+import re
 from pathlib import Path
 
 import pandas as pd
@@ -111,5 +112,32 @@ def export_excel(
         _write_sheet('Tóm tắt', summary)
         tong_hop_startrow = len(summary) + 3
         _write_sheet('Tóm tắt', tong_hop, startrow=tong_hop_startrow)
+
+    return out_path
+
+
+def export_pool_file(df: pd.DataFrame, output_dir: 'str | Path', name: str) -> Path:
+    """
+    Xuất 1 file Excel đơn-sheet — dùng cho các file "tồn đọng"/"thừa" xuyên
+    batch (Core thừa, OSB thừa, Citad thừa — xem `process.py` phần "Pool tồn
+    đọng xuyên batch"). `name` là tên file KHÔNG kèm đuôi (VD "Core thừa
+    5-8.9") — người chấm tự nạp lại file này làm input phụ cho lần chấm kế
+    tiếp, nên tên phải giữ nguyên dấu tiếng Việt, không cần an toàn cho URL.
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    safe_name = re.sub(r'[\\/:*?"<>|]', '_', name).strip() or 'pool'
+    out_path = output_dir / f'{safe_name}.xlsx'
+
+    with pd.ExcelWriter(str(out_path), engine='xlsxwriter') as writer:
+        hdr_fmt = writer.book.add_format({
+            'bold': True, 'bg_color': '#C00000', 'font_color': '#FFFFFF',
+            'border': 1, 'text_wrap': True,
+        })
+        ws = writer.book.add_worksheet('Sheet1')
+        writer.sheets['Sheet1'] = ws
+        for col_idx, col_name in enumerate(df.columns):
+            ws.write(0, col_idx, col_name, hdr_fmt)
+        df.to_excel(writer, sheet_name='Sheet1', index=False, header=False, startrow=1)
 
     return out_path

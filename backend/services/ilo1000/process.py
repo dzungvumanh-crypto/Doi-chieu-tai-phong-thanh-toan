@@ -354,6 +354,12 @@ def match_citad_leftover_with_osb(
 
     Dòng Citad ĐÃ khớp Core (Map dc nằm trong `used_citad_mapdc`) không đụng
     tới cột 'TT' (giữ rỗng) — đã được coi là xử lý xong ở sheet Core.
+
+    Giữ nguyên hàm này (không đụng) cho tương thích ngược — pipeline thật đã
+    chuyển sang dùng `label_citad_provenance()` (đầy đủ hơn: phân biệt được
+    khớp Core hôm nay / khớp pool Core thừa cũ / khớp OSB hôm nay / khớp pool
+    OSB thừa cũ / không khớp gì), xem module docstring phần "Pool tồn đọng
+    xuyên batch" bên dưới.
     """
     df = citad_df.copy()
     df['TT'] = ''
@@ -370,3 +376,254 @@ def match_citad_leftover_with_osb(
     matched = leftover_mask & map_dc.isin(osb_key_set)
     df.loc[matched, 'TT'] = 'OSB'
     return df
+
+
+# ── Pool tồn đọng xuyên batch (Core thừa / OSB thừa) ─────────────────────────
+# Bổ sung theo tài liệu "CÁC BƯỚC LÀM ĐỐI CHIẾU ILO" (mục "Tại bảng chấm"
+# B1-B3) + đối chiếu dữ liệu chấm tay thật 09.09.2026 của người chấm Việt.
+#
+# Người chấm tay giữ 2 file "Core thừa {nhãn}.xlsx" / "OSB thừa {nhãn}.xlsx"
+# SỐNG XUYÊN NHIỀU LẦN CHẤM (nhiều batch input khác nhau) — mỗi lần chấm 1
+# batch mới, các dòng Core/OSB của batch TRƯỚC chưa kịp đi kênh được nạp lại
+# làm input phụ, so với Citad của batch MỚI; dòng nào khớp thì coi là xong,
+# dòng nào chưa khớp thì tiếp tục mang sang batch sau nữa (có thể mang qua
+# NHIỀU batch liên tiếp — xác nhận qua dữ liệu thật: pool "Core thừa 5-8.9"
+# vẫn còn lẫn 9 dòng TRDATE 25/08 và 28/08, tức đã tồn đọng qua hơn 1 lần
+# chấm trước đó, không phải chỉ mới sinh từ batch 5-8/9).
+#
+# QUYẾT ĐỊNH THIẾT KẾ (xem docs/Implementation-notes.html): nhãn dải ngày
+# ("5-8.9", "9.9"...) tính từ NGÀY CỦA BATCH ĐANG XỬ LÝ (input đưa vào lần
+# chấm đó), KHÔNG PHẢI từ TRDATE thật của các dòng còn tồn đọng bên trong —
+# xác nhận qua dữ liệu thật: pool "Core thừa 5-8.9.xlsx" chứa 16.658 dòng
+# nhưng TRDATE phân bố {25/08: 1, 28/08: 8, 07/09: 4, 08/09: 16.645} — nếu
+# tính nhãn theo min-max TRDATE thực tế sẽ ra "25.8-8.9", sai với nhãn thật
+# "5-8.9" (đúng bằng dải ngày batch 5-8/9 đã được chấm, bất kể trong đó có
+# lẫn stragglers rất cũ từ nhiều batch trước nữa).
+
+
+def build_pool_label(days: 'list' = None) -> str:
+    """
+    Nhãn dải ngày kiểu "5-8.9" (nhiều ngày cùng tháng), "9.9" (1 ngày), hoặc
+    "25.8-8.9" (khác tháng) — tính từ danh sách `datetime.date` của các ngày
+    ĐÃ XỬ LÝ trong batch (không phải từ TRDATE của dữ liệu tồn đọng, xem
+    comment ở trên). `days` rỗng/None → trả chuỗi rỗng.
+    """
+    if not days:
+        return ''
+    days = sorted(days)
+    lo, hi = days[0], days[-1]
+    if lo == hi:
+        return f'{lo.day}.{lo.month}'
+    if lo.month == hi.month:
+        return f'{lo.day}-{hi.day}.{lo.month}'
+    return f'{lo.day}.{lo.month}-{hi.day}.{hi.month}'
+
+
+def build_mapdc_label_map(df: pd.DataFrame, mapdc_col: str, label: str) -> dict:
+    """
+    {Map dc → `label`} cho TOÀN BỘ dòng của 1 pool (Core thừa hoặc OSB thừa
+    hoặc OSB hôm nay) — cả pool dùng CHUNG 1 nhãn (không phải tính riêng theo
+    từng dòng), nên không cần giữ "lần đầu tiên" như `_first_match()`.
+    """
+    if df is None or df.empty or mapdc_col not in df.columns:
+        return {}
+    keys = df[mapdc_col].astype(str)
+    keys = keys[keys != '']
+    if keys.empty:
+        return {}
+    return dict.fromkeys(keys, label)
+
+
+# TT của Core coi là ĐÃ XỬ LÝ XONG (không phải "còn chờ đi kênh") — mọi giá
+# trị khác (kể cả rỗng, kể cả nhãn Trạng thái thô từ Hub như "Chờ đi kênh"
+# HOẶC "Hoàn thành") vẫn phải mang sang pool "Core thừa" của batch sau. Xem
+# process_core(): nhãn 'citad {d}.{m}' sinh ở bước khớp Citad, 'Hủy'/'Đã
+# hủy'/'quyết toán'/'OSB' sinh ở bước 1/1.5/1.6 — CHỈ 4 GIÁ TRỊ NÀY coi là
+# xong, không thêm bất kỳ giá trị Trạng thái thô nào khác của Hub.
+#
+# 'Hoàn thành' CỐ Ý KHÔNG nằm trong danh sách — xác nhận trực tiếp từ người
+# chấm Việt (2026-09-13): Trạng thái Hub phản ánh TÌNH TRẠNG TẠI THỜI ĐIỂM
+# TRA CỨU, không phải tại thời điểm đang chấm. "Chấm ngày 3, những lệnh đi
+# SAU ngày 3 (cả 'hoàn thành' hay 'chờ đi kênh') đều phải theo dõi, vì ngày 4
+# đi là ngày chờ đi kênh CỦA NGÀY 3, nhưng tại thời điểm tra cứu nó ĐÃ hoàn
+# thành." Và: "Nếu chấm hàng ngày, sáng tra dữ liệu ngay thì ít tình trạng
+# lung tung; để 1-2 ngày mới tra thì 'chờ đi kênh' sẽ tự chuyển thành 'hoàn
+# thành'." Tức 'Hoàn thành' KHÔNG chứng minh giao dịch đã đi kênh ĐÚNG NGÀY
+# đang chấm — chỉ chứng minh nó đã đi kênh TRƯỚC thời điểm tra cứu (có thể là
+# hôm sau, hôm sau nữa). Coi 'Hoàn thành' là "xong" sẽ làm mất dấu các giao
+# dịch thật sự thuộc phiên "chờ đi kênh" của ngày đang chấm.
+#
+# (Từng có 1 lần SỬA SAI thêm 'Hoàn thành' vào đây — suy diễn từ việc 2 dòng
+# 'Hoàn thành' không xuất hiện trong 1 mẫu pool CỦA BATCH KHÁC, KHÔNG PHẢI
+# bằng chứng đủ mạnh. Đã tự sửa lại đúng khi được Việt xác nhận trực tiếp —
+# bài học: không suy diễn ý nghĩa 1 giá trị dữ liệu thô từ 1 mẫu nhỏ, phải
+# hỏi khi chưa chắc, xem SKILL.md.)
+#
+# 'Đã hủy' CŨNG có thể cần xem lại tương tự (Việt: "nhiều khi tổng Đã hủy
+# không bằng 0... làm sau [khác ngày] có thể 2-3 ngày sau mới hủy... tổng
+# không bằng 0 cũng phải tìm [nguyên nhân]") — tức 1 dòng 'Đã hủy' riêng lẻ
+# không chắc đã "xong" nếu group (REFERENCE, TRBRCD) của nó chưa net về 0.
+# CHƯA SỬA phần này — Việt đang xem lại, sẽ xác nhận thêm; xem
+# project_ilo1000_pool_ton_dong_xuyen_batch_2026-09-13 (memory).
+_CORE_TT_DA_XONG = {'Hủy', 'Đã hủy', 'quyết toán', 'OSB'}
+
+
+def is_core_tt_resolved(tt) -> bool:
+    """True nếu dòng Core này đã coi là xử lý xong, không cần mang sang pool
+    'Core thừa' nữa (đã khớp Citad hôm nay, hoặc Hủy/Đã hủy/quyết toán/OSB —
+    CỐ Ý KHÔNG gồm 'Hoàn thành', xem cảnh báo ở `_CORE_TT_DA_XONG`)."""
+    s = ('' if tt is None else str(tt)).strip()
+    if s in _CORE_TT_DA_XONG:
+        return True
+    return s.lower().startswith('citad ')
+
+
+def build_core_thua_pool(core_out: pd.DataFrame) -> pd.DataFrame:
+    """Lọc `core_out` (đã có cột 'TT' từ `process_core()`) về đúng các dòng
+    còn CHỜ ĐI KÊNH thật sự — nguyên liệu để gộp vào pool 'Core thừa' mang
+    sang batch chấm sau (xem `build_core_thua_forward()`)."""
+    if core_out.empty or 'TT' not in core_out.columns:
+        return core_out.iloc[0:0].copy()
+    resolved = core_out['TT'].map(is_core_tt_resolved)
+    return core_out.loc[~resolved].copy()
+
+
+def build_core_thua_forward(
+    old_pool_df: pd.DataFrame,
+    new_leftover_df: pd.DataFrame,
+    doi_chieu_col: str = 'Đối chiếu',
+) -> pd.DataFrame:
+    """
+    Pool 'Core thừa' MỚI mang sang batch kế tiếp = (dòng pool CŨ mà cột
+    `doi_chieu_col` VẪN CÒN chưa khớp — rỗng hoặc '#N/A') HỢP (dòng Core mới
+    còn chờ đi kênh của chính batch vừa chấm, xem `build_core_thua_pool()`).
+    Dòng pool cũ ĐÃ khớp (có `doi_chieu_col` là 1 ngày cụ thể) bị LOẠI — coi
+    là xử lý xong, không mang tiếp.
+    """
+    old_unresolved = pd.DataFrame()
+    if old_pool_df is not None and not old_pool_df.empty:
+        if doi_chieu_col in old_pool_df.columns:
+            col = old_pool_df[doi_chieu_col]
+            dc = col.where(col.notna(), '').astype(str).str.strip()
+            old_unresolved = old_pool_df.loc[(dc == '') | (dc == '#N/A')].copy()
+        else:
+            # Pool cũ chưa từng qua vòng đối chiếu nào (chưa có cột này) —
+            # coi như toàn bộ còn tồn đọng, không loại dòng nào.
+            old_unresolved = old_pool_df.copy()
+
+    parts = [d for d in (old_unresolved, new_leftover_df) if d is not None and not d.empty]
+    if not parts:
+        return pd.DataFrame()
+    result = pd.concat(parts, ignore_index=True)
+
+    # BẮT BUỘC cột `doi_chieu_col` luôn có mặt trong kết quả, kể cả khi
+    # `old_pool_df` rỗng (lần đầu bật tính năng, hoặc pool vừa sạch) — dòng
+    # Core/OSB leftover mới phát sinh trong CHÍNH batch này chưa từng có cột
+    # này (đến từ `process_core()`/dữ liệu OSB thô). Thiếu cột này thì file
+    # xuất ra ở round này sẽ KHÔNG được `detect.py::_sniff_pool_xlsx()` nhận
+    # diện là pool ở round SAU (yêu cầu bắt buộc có cột 'Đối chiếu') — toàn bộ
+    # tồn đọng của round này lặng lẽ biến mất khỏi pool, không log không lỗi
+    # (phát hiện qua phản biện Agent vòng 2, 2026-09-13, tái lập được bằng
+    # code thật — xem docs/Implementation-notes.html card 122).
+    if doi_chieu_col not in result.columns:
+        result[doi_chieu_col] = '#N/A'
+    else:
+        result[doi_chieu_col] = result[doi_chieu_col].where(result[doi_chieu_col].notna(), '#N/A')
+        blank_mask = result[doi_chieu_col].astype(str).str.strip() == ''
+        result.loc[blank_mask, doi_chieu_col] = '#N/A'
+
+    return result
+
+
+def mark_pool_doi_chieu(
+    map_dc: pd.Series,
+    existing: 'pd.Series | None',
+    citad_mapdc_keys: set,
+    ngay_int: int,
+) -> pd.Series:
+    """
+    Điền cột 'Đối chiếu' cho pool tồn đọng (Core thừa/OSB thừa): dòng nào
+    CHƯA khớp (`existing` rỗng hoặc '#N/A') mà `map_dc` nằm trong
+    `citad_mapdc_keys` (Map dc của Citad batch đang chấm) → ghi `ngay_int`;
+    còn lại → '#N/A'. Dòng ĐÃ khớp từ trước (`existing` là 1 ngày cụ thể)
+    giữ NGUYÊN, không bị ghi đè lại thành '#N/A' — 1 khi đã xác nhận đi kênh
+    thành công thì không "quên" ở lần chấm sau.
+    """
+    map_dc = map_dc.astype(str)
+    if existing is None:
+        existing = pd.Series([''] * len(map_dc), index=map_dc.index)
+    existing_s = existing.where(existing.notna(), '').astype(str).str.strip()
+    already_resolved = ~existing_s.isin(('', '#N/A'))
+
+    result = pd.Series(index=map_dc.index, dtype=object)
+    result.loc[already_resolved] = existing.loc[already_resolved]
+
+    pending = ~already_resolved
+    matched = pending & map_dc.isin(citad_mapdc_keys)
+    result.loc[matched] = ngay_int
+    result.loc[pending & ~matched] = '#N/A'
+    return result
+
+
+def used_label_map_keys(tt: pd.Series, map_dc: pd.Series, label_map: dict) -> set:
+    """
+    Tổng quát hóa `used_citad_keys()` cho hướng ngược lại: tập các Map dc
+    trong `label_map` THỰC SỰ được ít nhất 1 dòng (của `tt`/`map_dc`, cùng
+    index) chọn trúng — tức `tt == label_map[map_dc]`. Dùng để biết dòng OSB
+    hôm nay/pool nào đã bị 1 dòng Citad "tiêu thụ" (gán TT bằng đúng nhãn của
+    nó), tránh nhầm với key có mặt trong `label_map` nhưng bị nhãn ưu tiên cao
+    hơn (Core hôm nay, Core thừa pool) ghi đè trước — xem `label_citad_provenance()`.
+    """
+    if tt is None or len(tt) == 0 or not label_map:
+        return set()
+    mapped = map_dc.astype(str).map(label_map)
+    really_used = tt.astype(str) == mapped.fillna('\0__none__')
+    return set(map_dc.astype(str)[really_used])
+
+
+def label_citad_provenance(
+    citad_df: pd.DataFrame,
+    used_citad_mapdc: set,
+    ngay_int: int,
+    core_pool_label_map: 'dict | None' = None,
+    osb_today_label_map: 'dict | None' = None,
+    osb_pool_label_map: 'dict | None' = None,
+) -> pd.Series:
+    """
+    Cột TT của SHEET CITAD (khác nghĩa cột TT của sheet Core) — cho biết mỗi
+    dòng Citad khớp trúng nguồn nào: (1) Core hôm nay → ghi `ngay_int`; (2)
+    pool Core thừa cũ → nhãn có sẵn trong `core_pool_label_map` (VD "Core
+    5-8.9"); (3) OSB hôm nay → nhãn trong `osb_today_label_map`; (4) pool OSB
+    thừa cũ → nhãn trong `osb_pool_label_map`; còn lại → RỖNG (= "Citad thừa"
+    của ngày này, xuất riêng cho người chấm tay điều tra tiếp — không tự suy
+    luận thêm).
+
+    Bước (1)→(2) ĐÚNG thứ tự tài liệu gốc (mục "Tại bảng chấm" B1: lọc N/A
+    rồi mới Vlookup Core thừa). Thứ tự (3) trước (4) — OSB hôm nay ưu tiên
+    hơn pool OSB cũ — là LỰA CHỌN CỦA CODE, KHÔNG PHẢI mô tả trong tài liệu:
+    docx chỉ có 1 bước Vlookup duy nhất trên 1 sheet đã DÁN GỘP OSB cũ+mới
+    làm chung ("Tạo cột Đối chiếu: Copy Phần OSB ngày T-1... sang"), không
+    tách 2 mức ưu tiên riêng. Phản biện Agent vòng 2 (2026-09-13) xác nhận:
+    dữ liệu mẫu thật (`Cham OSB` 09.09) có 0 khóa Map dc trùng giữa OSB hôm
+    nay và pool OSB cũ — nên thứ tự (3)/(4) CHƯA từng ảnh hưởng kết quả thật,
+    nhưng CHƯA được Việt xác nhận nếu có va chạm thật trong tương lai (xem
+    câu hỏi A2 gửi Việt).
+    """
+    if citad_df.empty or 'Map dc' not in citad_df.columns:
+        return pd.Series(dtype=object)
+
+    map_dc = citad_df['Map dc'].astype(str)
+    tt = pd.Series('', index=citad_df.index, dtype=object)
+
+    remaining = ~map_dc.isin(used_citad_mapdc)
+    tt.loc[~remaining] = ngay_int
+
+    for label_map in (core_pool_label_map, osb_today_label_map, osb_pool_label_map):
+        if not label_map or not remaining.any():
+            continue
+        found = remaining & map_dc.isin(label_map)
+        if found.any():
+            tt.loc[found] = map_dc.loc[found].map(label_map)
+            remaining = remaining & ~found
+
+    return tt
