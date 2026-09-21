@@ -99,22 +99,22 @@ async def logs_page():
             # ── Phân trang ──────────────────────────────────────────────────────
             with pager_row:
                 ui.button("◀ Trước",
-                          on_click=lambda: asyncio.ensure_future(_load(_level[0], _page[0] - 1)),
+                          on_click=lambda: _load(_level[0], _page[0] - 1),
                 ).classes("text-sm bg-gray-200 text-gray-700").set_enabled(page > 1)
                 ui.label(f"Trang {page} / {pages}").classes("text-sm text-gray-600 px-2")
                 ui.button("Sau ▶",
-                          on_click=lambda: asyncio.ensure_future(_load(_level[0], _page[0] + 1)),
+                          on_click=lambda: _load(_level[0], _page[0] + 1),
                 ).classes("text-sm bg-gray-200 text-gray-700").set_enabled(page < pages)
 
         # ── Gắn controls vào toolbar ────────────────────────────────────────────
         with toolbar_row:
             ui.button("↻ Làm mới", icon="refresh",
-                      on_click=lambda: asyncio.ensure_future(_load(_level[0], 1))).classes(
+                      on_click=lambda: _load(_level[0], 1)).classes(
                 "bg-gray-700 text-white text-sm")
             ui.separator().props("vertical")
             for _code, _vn in [("", "Tất cả"), ("ERROR", "Lỗi"), ("WARNING", "Cảnh báo"), ("INFO", "Thông tin")]:
                 ui.button(_vn,
-                          on_click=lambda c=_code: asyncio.ensure_future(_load(c, 1))).classes(
+                          on_click=lambda c=_code: _load(c, 1)).classes(
                     "text-sm bg-gray-100 text-gray-700 hover:bg-gray-200")
             ui.separator().props("vertical")
 

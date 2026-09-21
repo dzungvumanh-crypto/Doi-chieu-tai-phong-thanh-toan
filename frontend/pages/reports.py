@@ -1,6 +1,6 @@
 """Trang báo cáo hậu kiểm — upload 4 file, tạo báo cáo phòng (ZIP) + báo cáo tổng hợp (Word)"""
 import asyncio
-from nicegui import ui, app
+from nicegui import ui
 import frontend.api_client as api
 from frontend.shared import (
     _sidebar, _content_area, _page_header, _require_auth,

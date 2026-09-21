@@ -48,7 +48,7 @@ from backend.database import get_db
 from backend.core import audit_queue
 from backend.core.net import header_ip_dang_tin
 from backend.core.concurrency import run_heavy
-from backend.core.deps import require_admin, require_feature
+from backend.core.deps import require_feature
 from backend.schemas.doi_chieu_citad import (
     CitadBufferIn,
     ExportIn,
@@ -304,11 +304,14 @@ def delete_session(
 def unlock_session(
     session_id: int,
     db=Depends(get_db),
-    current: dict = Depends(require_admin),
+    current: dict = Depends(require_feature("doi_chieu_citad.unlock")),
 ):
-    """Chỉ Admin — mở khoá ĐÚNG 1 bảng (`session_id`) đã "Lưu bản cuối" về
-    lại bản tạm để người lập bảng sửa tiếp. Không phải xoá số liệu, chỉ đổi
-    status."""
+    """Mở khoá ĐÚNG 1 bảng (`session_id`) đã "Lưu bản cuối" về lại bản tạm để
+    người lập bảng sửa tiếp. Không phải xoá số liệu, chỉ đổi status.
+
+    Gate bằng mã quyền, KHÔNG bằng role="admin": admin vẫn qua vì
+    require_feature() cho siêu quyền đi thẳng, còn người khác thì cấp được ở
+    màn Phân quyền theo nhóm mà không phải sửa mã (xem docs/DESIGN.md)."""
     try:
         svc.session_admin_unlock(db, session_id)
     except svc.SessionNotFoundError as e:

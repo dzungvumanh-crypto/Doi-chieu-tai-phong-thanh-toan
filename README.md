@@ -729,6 +729,10 @@ Request vượt số kết nối thì xếp hàng chờ (tối đa 30 giây, qu�
   từng bản cũ. Đổi ô ngày sau khi đã "Tải" 1 bảng sẽ tự tách khỏi bảng đó (không ghi đè nhầm)
 - Vào bảng **tạm** của người khác (qua tab *Lịch sử*) vẫn chỉ bổ sung được Napas/PSS-MDP như cũ,
   không sửa được ô nào khác và không chốt bản cuối hộ được
+- **Mở khoá bảng đã chốt**: bảng đã "Lưu bảng cuối" thì không ai sửa được nữa; đưa nó về lại bản
+  tạm cần quyền `doi_chieu_citad.unlock` (admin tự có). Từ 21/09/2026 quyền này **cấp được cho
+  người khác** ở màn *Phân quyền theo nhóm* — trước đó gate cứng theo vai admin trong mã nguồn.
+  Mã mới nên chưa nhóm nào có sẵn, phải tick tay một lần sau khi cập nhật
 - **Sổ trực cuối ngày** coi một ngày là *đã đối chiếu, đã khớp* nếu **bất kỳ** bảng nào của ngày
   đó đã "Lưu bảng cuối" và khớp. ⚠️ Nghĩa là nếu người A chốt bảng khớp còn người B chốt bảng
   lệch cho cùng ngày, Sổ trực **không** cảnh báo — cảnh báo này chỉ là nhắc phụ trợ, không chặn

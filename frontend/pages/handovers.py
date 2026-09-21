@@ -691,8 +691,6 @@ async def handovers_page():
         sel_year.value  = init_year
         sel_month.value = init_month
 
-        ui.on('hv_open_panel', lambda e: asyncio.ensure_future(
-            open_entry_panel(e.args['entry_id'], e.args.get('user_name', ''))
-        ))
+        ui.on('hv_open_panel', lambda e: open_entry_panel(e.args['entry_id'], e.args.get('user_name', '')))
 
         await load_grid()

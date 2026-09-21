@@ -108,6 +108,13 @@ FEATURES: dict[str, str] = {
     # Nhãn phải khớp tên menu ở frontend/shared.py, phần mô tả sau dấu — mới
     # nói rõ đối chiếu/đối soát với hệ thống nào.
     "menu.doi_chieu_citad":     "Đối chiếu CITAD cuối ngày — CITAD ↔ PaymentHub (menu)",
+    # Mở lại bảng đã "Lưu bảng cuối" (CHỐT) về bản tạm để người lập sửa tiếp.
+    # Trước 21/09/2026 gate cứng role="admin" ở cả route lẫn nút — cùng lỗi đã
+    # sửa cho doi_chieu_citad_nostro.delete_any bên dưới. Không ai mất quyền:
+    # admin vẫn qua mọi require_feature() ở dòng đầu (siêu quyền cố ý, xem
+    # docs/DESIGN.md mục Phân quyền); mã này để cấp thêm cho Trưởng/Phó phòng
+    # mà không phải sửa mã nguồn rồi deploy lại.
+    "doi_chieu_citad.unlock":   "Mở khoá bảng đối chiếu đã chốt (CITAD ↔ PaymentHub)",
     # Đối chiếu CITAD ↔ PaymentHub — Phòng QLTK Nostro, Vostro. Module SONG
     # SONG với menu.doi_chieu_citad ở trên, không phải phân hệ con của nó —
     # nghiệp vụ/nguồn dữ liệu khác hẳn (xem doi_chieu_citad_nostro_service.py).
@@ -254,7 +261,10 @@ FEATURE_GROUPS: list[dict] = [
                     },
                     {"code": "menu.cham_ach", "actions": ["cham_ach.process"]},
                     {"code": "menu.cham_ilo1000", "actions": []},
-                    {"code": "menu.doi_chieu_citad", "actions": []},
+                    {
+                        "code": "menu.doi_chieu_citad",
+                        "actions": ["doi_chieu_citad.unlock"],
+                    },
                     {"code": "menu.doi_soat_citad", "actions": []},
                 ],
             },

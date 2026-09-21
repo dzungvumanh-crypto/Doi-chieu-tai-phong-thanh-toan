@@ -4,6 +4,27 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 21/09/2026 Đối chiếu CITAD cuối ngày - **Mở khoá bảng đã chốt: cấp được cho người khác, không còn chỉ Admin**
+    + ⚠️ **Người vận hành phải làm một việc sau khi cập nhật**: vào **Phân quyền theo nhóm** → nhóm cần cấp →
+      mục *Đối chiếu CITAD cuối ngày* → tick ô **"Mở khoá bảng đối chiếu đã chốt"**. Đây là ô quyền MỚI, chưa
+      nhóm nào có sẵn — không tick thì ngoài Admin không ai mở khoá được
+    + ⚠️ Người vừa được tick quyền phải **đăng xuất rồi đăng nhập lại** mới thấy nút — danh sách
+      quyền chỉ nạp lúc đăng nhập. Tick xong mà vẫn chưa thấy nút thì đăng nhập lại, không phải lỗi
+    + ✅ Admin vẫn mở khoá được như trước, không cần tick gì thêm
+    + ℹ️ Nút trên màn hình đổi tên từ "Mở khoá (Admin)" thành "Mở khoá" — vì nút này không còn của riêng Admin
+
+- 21/09/2026 Phân lịch trực, Nghỉ phép, Nhật ký, Quản lý User - **Nút bấm không còn "im lặng không phản hồi"**
+    + ✅ Sửa 39 nút và ô chọn trên các màn hình Phân lịch trực, Nghỉ phép, Nhật ký hệ thống, Nhật ký đăng nhập,
+      Quản lý User, Lưu trữ, Bàn giao, Phân quyền: trước đây một số nút bấm vào **không hiện gì, cũng không báo
+      lỗi** — thông báo bị nuốt mất. Nay bấm là có phản hồi
+    + ℹ️ Không đổi số liệu hay cách tính nào
+
+- 21/09/2026 Toàn hệ thống - **Dọn nợ kỹ thuật, chuẩn bị cho bản Python mới**
+    + ✅ Sửa chỗ ghi ngày giờ xuống cơ sở dữ liệu theo cách bản Python mới yêu cầu — nếu không, khi nâng Python
+      thì **hàng loạt chỗ lưu ngày sẽ hỏng**. Khuôn ngày giờ lưu ra **giữ nguyên y hệt**, dữ liệu cũ đọc bình thường
+    + ✅ Sửa cách tính giờ ở phần đăng nhập và khoá tài khoản theo cùng lý do trên
+    + ℹ️ Không có thay đổi nào người dùng nhìn thấy ở ba mục này
+
 - 18/09/2026 Đối chiếu điện SWIFT, Đối chiếu DTBB - **không làm chậm màn hình khác**
     + ✅ Đối chiếu điện SWIFT: phần đọc file, đối chiếu và xuất Excel chạy tách riêng như các màn hình đối
       chiếu khác — lúc có người đối chiếu SWIFT, các màn hình khác không bị chậm theo. Kết quả không đổi

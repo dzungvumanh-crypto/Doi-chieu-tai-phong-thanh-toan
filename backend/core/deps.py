@@ -5,7 +5,7 @@ from fastapi.security import OAuth2PasswordBearer
 from backend.core.enums import StaffRole
 from backend.database import get_db, compute_annual_leave
 from backend.core.security import decode_token
-from backend.core.sessions import get_session_ip, get_session
+from backend.core.sessions import get_session
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 

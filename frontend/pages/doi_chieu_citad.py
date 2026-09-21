@@ -646,7 +646,8 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
         btn_luu_cuoi.set_visibility(mode == "edit")
 
         banner_area.clear()
-        is_admin = current_user.get("role") == "admin"
+        # Quyền mở khoá đi qua Phân quyền theo nhóm, không đọc role (21/09/2026).
+        co_quyen_mo_khoa = api.has_feature("doi_chieu_citad.unlock")
         with banner_area:
             if mode == "napas_only":
                 with ui.row().classes(
@@ -672,8 +673,10 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
                     ui.button("Bỏ xem, làm bảng mới", icon="edit", on_click=_exit_readonly_view).props(
                         "dense flat color=amber-8"
                     )
-                    if is_admin:
-                        ui.button("Mở khoá (Admin)", icon="lock_open", on_click=_admin_unlock).props(
+                    if co_quyen_mo_khoa:
+                        # Bỏ chữ "(Admin)" khỏi nhãn: nút này không còn của riêng
+                        # admin nữa, ai được tick mã quyền cũng thấy.
+                        ui.button("Mở khoá", icon="lock_open", on_click=_admin_unlock).props(
                             "dense outline color=red"
                         )
 
