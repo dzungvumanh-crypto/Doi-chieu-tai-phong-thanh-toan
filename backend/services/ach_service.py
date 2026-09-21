@@ -2,7 +2,8 @@
 
 Mỗi job:
   - Nhận các file đã upload (lưu vào temp dir)
-  - Chạy pipeline trong background thread
+  - Chạy pipeline trong background thread; pipeline chạy ở TIẾN TRÌNH RIÊNG
+    (`chay_tach()`, backend/core/tien_trinh_doi_chieu.py) để không tranh GIL với web
   - Trả log theo dạng polling
   - Hỗ trợ cancel và download kết quả
 """
@@ -20,6 +21,7 @@ from typing import Any
 
 import pandas as pd
 
+from backend.core.tien_trinh_doi_chieu import chay_tach
 from backend.core.uploads import safe_filename
 from backend.services.ach.pipeline import main_from_dir
 from backend.services.ach.b4_xu_ly_mis_di import _doc_sheet_confirm_mis_di
@@ -301,12 +303,13 @@ def _run(job_id: str, input_dir: str, output_dir: str, ngay: str | None,
 
     try:
         log(f'[JOB {job_id}] Bắt đầu xử lý...')
-        output_path = main_from_dir(
+        output_path = chay_tach(
+            main_from_dir, ten='Đối chiếu ACH',
             input_dir=input_dir,
             output_dir=output_dir,
             ngay=ngay,
             log_callback=log,
-            summary_callback=on_summary,
+            callbacks={'summary_callback': on_summary},
             cancel_event=job['cancel_event'],
             dung_sau_mis_di=dung_sau_mis_di,
             xac_nhan_path=xac_nhan_path,

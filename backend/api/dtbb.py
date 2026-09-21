@@ -1,5 +1,4 @@
 """Đối chiếu số liệu DTBB — Phòng Kế toán. Raw SQL thuần, không ORM."""
-import asyncio
 import io
 import sqlite3
 from typing import List
@@ -7,6 +6,7 @@ from typing import List
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
+from backend.core.concurrency import run_heavy
 from backend.core.deps import require_feature
 from backend.database import get_db, write_audit, _vn_now
 from backend.schemas.dtbb import (
@@ -72,10 +72,12 @@ async def calculate_dtbb(
         contents.append((name, data))
 
     try:
-        # Parse xlrd là CPU-bound đồng bộ — bọc asyncio.to_thread để không chặn event
-        # loop backend khi nhiều file/nhiều người dùng tính toán cùng lúc (đúng loại
-        # lỗi "quên bọc I/O sync trong async" đã từng làm treo cả server ở PR22).
-        result = await asyncio.to_thread(calculate_from_uploads, contents)
+        # Parse xlrd là CPU-bound đồng bộ — phải chạy ngoài event loop (lỗi "quên bọc I/O
+        # sync trong async" từng làm treo cả server ở PR22). Qua `run_heavy`, KHÔNG
+        # `asyncio.to_thread`: to_thread chạy trên ThreadPoolExecutor mặc định của event
+        # loop (tối đa 32 luồng), NGOÀI giới hạn MAX_HEAVY — nhiều người cùng tính là
+        # cùng lúc chừng ấy việc nặng tranh GIL, đúng thứ backend/core/concurrency.py chặn.
+        result = await run_heavy(calculate_from_uploads, contents)
     except DtbbFileError as e:
         # detail dạng dict (không chỉ chuỗi) — kèm filenames để FE tô đỏ đúng file lỗi
         # trong danh sách đã chọn, không phải regex lại chuỗi thông báo.

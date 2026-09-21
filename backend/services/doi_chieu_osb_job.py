@@ -4,7 +4,8 @@
 Khuôn "job chạy nền + polling tiến độ" mirror `cham459901_service.py` — dùng chung cho MỌI module
 đối chiếu trong dự án kể cả module xử lý NHANH: `phien_doi_chieu.gianh_cho()` là khoá mutex CHUNG
 chặn 2 lượt chạy cùng lúc (module nào cũng cần, không phải vì lý do quy mô), và `threading.Thread`
-tránh chiếm threadpool 40 token dùng chung của Starlette.
+tránh chiếm threadpool 40 token dùng chung của Starlette. Bản thân phép đối chiếu chạy ở
+tiến trình riêng qua `chay_tach()` (backend/core/tien_trinh_doi_chieu.py) để không tranh GIL.
 
 Job này đo thật chỉ vài giây (không như ACH/459901 chạy nhiều phút) — KHÔNG cần
 `cancel_progress()`/checkpoint giữa chừng như cham459901, nhưng VẪN PHẢI qua
@@ -20,6 +21,7 @@ from pathlib import Path
 
 from backend.core.config import BASE_DIR
 from backend.core.don_dep import moc_don_gan_nhat
+from backend.core.tien_trinh_doi_chieu import chay_tach, trong_tien_trinh_con
 from backend.services.doi_chieu_osb.pipeline import chay_doi_chieu_osb
 
 TEMP_DIR = BASE_DIR / "data" / "temp_doi_chieu_osb"
@@ -113,6 +115,10 @@ def _set_prog(task_token: str | None, pct: int | None = None, msg: str | None = 
             p["pct"] = pct
         if msg is not None:
             p["msg"] = msg
+        # Trong tiến trình con: `_progress` là bản sao, phải gửi tiến độ về backend
+        gui_ve = p.get("_gui_ve")
+        if gui_ve:
+            gui_ve(pct, msg)
 
 
 def run_process(
@@ -129,8 +135,22 @@ def run_process(
     chạy thẳng từ thư mục trên máy chủ (như Chấm 459901), `parent` là thư mục dữ liệu thật và
     `rmtree` sẽ xoá sạch nó."""
     upload_dir = _thu_muc_upload(task_token)
+    p = _progress.get(task_token, {})
+
+    def _cap_nhat(pct: int | None, msg: str | None) -> None:
+        if pct is not None:
+            p["pct"] = pct
+        if msg is not None:
+            p["msg"] = msg
+
     try:
-        result = process(gl02_path, osb_paths, ma_tk, ngay, task_token)
+        # Tiến trình riêng (`chay_tach`): job chỉ vài giây nhưng suốt mấy giây đó giữ GIL.
+        # Kết quả cuối ghi vào `_progress` ở dưới — `process` trong con chỉ ghi được bản sao.
+        result = chay_tach(
+            _xu_ly_tach, ten="Đối chiếu OSB",
+            gl02_path=gl02_path, osb_paths=osb_paths, ma_tk=ma_tk, ngay=ngay,
+            task_token=task_token, callbacks={"tien_do_callback": _cap_nhat},
+        )
         if task_token in _progress:
             _progress[task_token].update({
                 "pct": 100, "msg": "Hoàn thành!", "done": True, "result": result,
@@ -151,6 +171,21 @@ def run_process(
             })
     finally:
         shutil.rmtree(upload_dir, ignore_errors=True)
+
+
+def _xu_ly_tach(
+    gl02_path: Path, osb_paths: list[Path], ma_tk: str, ngay: str, task_token: str,
+    log_callback, cancel_event, tien_do_callback,
+) -> dict:
+    """Điểm vào của `chay_tach` — trong tiến trình con dựng mục `_progress` cục bộ để
+    `_set_prog` gửi tiến độ về backend (chỉ trong con; xem `cham459901_service._xu_ly_tach`).
+    Không có nút Dừng nên `cancel_event` bỏ qua."""
+    if trong_tien_trinh_con():
+        _progress[task_token] = {
+            "pct": 0, "msg": "", "done": False, "error": None, "cancelled": False,
+            "result": None, "_ts": time.time(), "_gui_ve": tien_do_callback,
+        }
+    return process(gl02_path, osb_paths, ma_tk, ngay, task_token)
 
 
 def process(

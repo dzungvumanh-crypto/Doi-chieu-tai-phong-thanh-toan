@@ -18213,6 +18213,14 @@ This may happen if you try to create UI from a background task.</pre>
       </table>
       <p>Đúng độ lớn cảnh báo trên máy chủ. 8 lõi không giúp: chỉ một luồng chạy mã Python tại một thời điểm.
         <b>Chưa chứng minh trên máy chủ</b> — card này chính là để chứng minh (cột <code>đối chiếu</code> + <code>loop chặn</code>).</p>
+      <p><span class="pill pill-green">Máy chủ xác nhận 18/09/2026 13:31</span> — bản có card 144, <b>chưa</b> có card 150
+        (job đối chiếu vẫn chạy bằng luồng trong backend):<br>
+        <code>GET /api/handovers/grid — 3176 ms | loop chặn tối đa 122 ms, trễ tổng 1081 ms · luồng 0/40 chờ 0 ·
+        kết nối CSDL 0/48 xếp cổng 0 · đang xử lý 2 · việc nặng 0/4 · đối chiếu 1</code><br>
+        Đúng dấu hiệu tranh GIL: tổng lớn, max nhỏ, đang có 1 lượt đối chiếu; threadpool và bể CSDL rảnh — loại nghẽn
+        luồng/CSDL. <code>trễ tổng</code> (1,08 s) thấp hơn thời gian request (3,18 s) là bình thường: nó chỉ đo luồng
+        event loop bị đói; endpoint <code>def</code> chạy trong luồng threadpool, cũng chờ GIL, không được đếm vào đây.
+        Lời giải là card 150 — kiểm lại bằng chính dòng này sau khi deploy.</p>
 
       <div class="label"><span class="pill pill-green">Thay đổi</span> <code>backend/core/slow_request.py</code></div>
       <p>Đuôi mỗi dòng: <code>loop chặn tối đa N ms, trễ tổng M ms · luồng a/40 chờ b · kết nối CSDL c/48 xếp cổng d · đang xử lý e · việc nặng f/4 · đối chiếu g</code>.
@@ -18680,7 +18688,393 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-17</footer>
+  <!-- 150 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">150</span>
+      <span class="card-title">Cả 7 cửa đối chiếu chạy ở tiến trình riêng — không tranh GIL với web (2026-09-18)</span>
+      <span class="badge badge-done">Hoàn thiện</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-blue">Bối cảnh</span> tiếp "Chưa làm" của card 144</div>
+      <p>7 cửa đối chiếu (gồm Đối chiếu OSB mới) chạy pipeline bằng <code>threading.Thread</code> ngay trong tiến trình
+        web. Python chỉ cho một luồng chạy mã Python tại một lúc (GIL) — pipeline pandas/Excel giữ GIL gần như liên tục,
+        request nhẹ đứng chờ tới lượt. 8 lõi không giúp gì. Helper chung:
+        <code>backend/core/tien_trinh_doi_chieu.py::chay_tach()</code>. <b>Không đổi logic khớp giao dịch nào</b> — chỉ đổi
+        chỗ chạy; API, frontend, poll, <code>phien_doi_chieu</code> giữ nguyên.</p>
+      <table>
+        <tr><th>Cửa</th><th>Cách chuyển</th></tr>
+        <tr><td>ILO1000, ACH</td><td>Pipeline đã nhận <code>log_callback</code>/<code>cancel_event</code> → chỉ đổi chỗ gọi. ACH có thêm
+          <code>summary_callback</code> → helper nhận <code>callbacks=</code> tuỳ ý</td></tr>
+        <tr><td>Song phương ĐẾN / ĐI</td><td><code>_run</code> tự điều phối 2 bước nặng + ghi Excel giữa chừng, rải
+          <code>job[...]</code> khắp nơi. Tách thân thành <code>_doi_chieu()</code> cấp module, trả
+          <code>{status, ket_qua, files, error}</code>; <code>stage</code> qua callback. Bọc từng lời gọi pipeline thì DataFrame
+          lớn bị kéo về backend rồi vẫn ghi Excel ở backend — mất tác dụng. Thân giữ nguyên từng dòng
+          (<code>git diff -w</code> chỉ còn các chỗ thay <code>job[...]</code>). Frontend chỉ vẽ <code>ket_qua</code> khi xong nên
+          ghi một lần cuối là đủ</td></tr>
+        <tr><td>459901, phân loại Song phương, OSB</td><td>Báo tiến độ bằng cách ghi thẳng <code>_progress[token]</code> toàn cục —
+          trong con là bản sao. <code>_xu_ly_tach()</code> dựng mục <code>_progress</code> cục bộ trong con (459901: kèm
+          <code>cancel_event</code> liên tiến trình để <code>_set_prog</code> vẫn ném <code>_Cancelled</code>), <code>_set_prog</code> gửi
+          thêm pct/msg về qua callback; kết quả cuối ghi ở <code>run_process</code> phía cha. <code>process_files</code> /
+          <code>process_zip</code> / <code>process</code> không đổi</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-green">Số đo</span> máy dev, cùng khối việc (pandas đọc CSV 300k dòng + groupby + xlsxwriter)</div>
+      <table>
+        <tr><th>Tình huống</th><th>Job xong</th><th>Loop trễ max</th><th>Request nhẹ p95 / max</th></tr>
+        <tr><td>1 job — luồng (cũ)</td><td>15,2 s</td><td>149 ms</td><td>0,53 / 16,8 ms</td></tr>
+        <tr><td>1 job — tiến trình (mới)</td><td>17,1 s</td><td>23 ms</td><td>0,62 / 0,8 ms</td></tr>
+        <tr><td>2 job — luồng (cũ)</td><td>30,6 s</td><td>283 ms</td><td>25 / 75 ms</td></tr>
+        <tr><td>2 job — tiến trình (mới)</td><td>22,5 s</td><td>22 ms</td><td>0,79 / 1,1 ms</td></tr>
+      </table>
+      <p>Loop lúc rảnh ~8–10 ms (nhịp timer Windows) — bản mới coi như không trễ thêm. 2 job luồng mất đúng 2× một
+        job (không song song thật); tiến trình thì song song thật. <b>Chưa đo trên máy chủ với dữ liệu thật</b> — máy
+        dev không có dữ liệu ngân hàng. Dòng <code>slow.request</code> (card 144) và dòng log mới
+        "RAM đỉnh …" sẽ cho số thật.</p>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> một tiến trình mỗi lượt, không dùng bể</div>
+      <table>
+        <tr><th>Phương án</th><th>Vì sao không chọn</th></tr>
+        <tr><td><code>ProcessPoolExecutor</code> dùng chung</td><td>Dừng một job phải giết cả bể (kéo theo job người khác); một job hết RAM làm vỡ cả bể (<code>BrokenProcessPool</code>); RAM không trả giữa các job</td></tr>
+        <tr><td>Nhiều worker uvicorn</td><td>Trạng thái job ở RAM của một tiến trình — poll rơi sang worker khác là 404</td></tr>
+        <tr><td>Hàng đợi SQLite / Celery</td><td>Viết lại kho trạng thái 6 module; Celery không hỗ trợ Windows chính thức. Để dành nếu cần job sống qua restart</td></tr>
+        <tr><td><code>setswitchinterval(0.001)</code></td><td>Giảm triệu chứng, không xoá; đổi hành vi cả tiến trình</td></tr>
+        <tr><td><b>Mỗi lượt một tiến trình spawn (đã chọn)</b></td><td>Tốn ~0,5–2 s khởi động — không đáng so với job nhiều phút</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-blue">Chi tiết không đọc ra từ code</span></div>
+      <ul>
+        <li><b><code>Pipe</code>, không <code>Queue</code>:</b> <code>Queue.put</code> đóng gói ở luồng phụ — kết quả/lỗi không pickle
+          được thì chỉ in traceback ra console, phía cha chờ mãi. <code>Pipe.send</code> đóng gói tại chỗ → nổ ngay trong
+          con, được bắt và gửi về thành lỗi.</li>
+        <li><b>Lỗi giữ nguyên kiểu:</b> con thử cả <code>dumps</code> lẫn <code>loads</code> trước khi gửi (lỗi tự định nghĩa có
+          <code>__init__</code> đòi tham số đóng gói được mà mở không được). Mở không được → <code>LoiTienTrinhCon</code> kèm
+          "TênLỗi: thông điệp". Traceback của con đi kèm làm <code>__cause__</code> nên log job vẫn thấy vết gốc. Cần thật:
+          ACH phân biệt <code>ValueError</code> với <code>LoiDinhDangSoTien</code>; 459901 phân biệt <code>InputError</code> (báo thẳng
+          người dùng) với lỗi hệ thống; <code>_Cancelled</code> của 459901 phải về đúng kiểu mới thành "Đã dừng".</li>
+        <li><b>Dừng:</b> báo cờ huỷ (pipeline tự dừng như cũ); quá <code>HAN_DUNG_GIAY</code> = 15 s thì
+          <code>terminate()</code> và trả <code>None</code> — đúng hợp đồng "bị huỷ trả None" của <code>main_from_dir</code>.</li>
+        <li><b>Con mồ côi:</b> backend bị <code>taskkill /F</code> thì <code>atexit</code> không chạy. Con có luồng chờ trên handle
+          của cha (<code>mp.parent_process().join()</code>), cha chết là <code>os._exit(86)</code>. Tắt bình thường thì
+          <code>daemon=True</code> để multiprocessing tự giết con thay vì chặn backend tắt tới hết job.</li>
+        <li><b>Log:</b> <code>logging</code> trong con gửi về cha ghi hộ; con không tự mở <code>logs/app.log</code> — nhiều tiến
+          trình cùng xoay <code>RotatingFileHandler</code> trên Windows là <code>PermissionError</code>.</li>
+        <li><b>Ưu tiên CPU <code>BELOW_NORMAL</code></b> cho con — CPU đầy thì web, Word, SQLite chạy trước.</li>
+        <li><b>Hàm không import lại được (lambda, hàm lồng) → <code>TypeError</code>, không lặng lẽ chạy trong luồng:</b>
+          lặng lẽ lùi về luồng nghĩa là quay lại tranh GIL mà không ai biết. <code>DOI_CHIEU_TIEN_TRINH=0</code> là
+          công tắc tường minh (test dùng hàm giả; khẩn cấp trên máy chủ).</li>
+        <li><b>Con không nạp đè <code>.env</code></b> (sửa <code>backend/core/config.py</code>): <code>load_dotenv(override=True)</code> chạy
+          lại khi con import <code>config</code> — sửa <code>.env</code> mà chưa restart là cha/con đọc hai mật khẩu ZIP khác nhau.
+          Con tự đặt <code>KSNB_TIEN_TRINH_CON=1</code> trước mọi import backend → <code>override=False</code>.</li>
+        <li><b>Con tự ép stdout UTF-8</b> — con không import <code>backend/main.py</code> (nơi có đoạn ép). Backend khởi động thẳng
+          (không qua <code>run.py</code>, không có <code>PYTHONIOENCODING</code>) thì <code>print()</code> tiếng Việt của ACH ném
+          <code>UnicodeEncodeError</code>, job chết. Test gom bắt được thật lỗi này trước khi thêm đoạn ép.</li>
+      </ul>
+
+      <div class="label"><span class="pill pill-green">Kiểm</span></div>
+      <ul>
+        <li><code>tests/test_tien_trinh_doi_chieu.py</code> — helper (12 ca: log nhiều luồng, callback đúng thứ tự, lỗi đúng kiểu,
+          lỗi không mở gói được, con chết ngang, Dừng hợp tác / cưỡng bức, cha bị giết, môi trường không nạp đè .env).</li>
+        <li><code>tests/test_doi_chieu_chay_tien_trinh_rieng.py</code> — <b>lưới canh tĩnh</b>: service nào gọi
+          <code>dang_ky_nguon()</code> mà không gọi <code>chay_tach()</code> là đỏ (module đối chiếu mới chép khuôn cũ sẽ bị bắt);
+          và chạy thật từng cửa qua tiến trình con với đầu vào hỏng — đi qua đủ log, tiến độ, lỗi đúng kiểu mà không cần
+          dữ liệu ngân hàng.</li>
+        <li>Gây lỗi cố ý để chắc test bắt được: bỏ luồng canh cha, bỏ <code>terminate()</code> quá hạn Dừng, bỏ ép UTF-8 → đều đỏ.</li>
+        <li>2059 test xanh, ruff F821/F823/E9 sạch.</li>
+      </ul>
+
+      <div class="label"><span class="pill pill-red">Sự cố trong lúc làm</span> test ghi vào <code>data/temp_cham459901</code> thật</div>
+      <p>Test API 459901 vá <code>svc.TEMP_DIR</code> sang thư mục tạm — tiến trình con import lại module nên không thấy bản
+        vá, ghi 19 thư mục kết quả vào thư mục dữ liệu thật của máy dev (đã xoá; đều tạo trong lượt test 09:30–09:33,
+        trước đó thư mục rỗng). Sửa tận gốc: <code>conftest.py</code> mặc định <code>DOI_CHIEU_TIEN_TRINH=0</code> cho mọi test;
+        test cần tiến trình thật xin fixture <code>tien_trinh_that</code> và <b>không được</b> vá biến toàn cục module.</p>
+
+      <div class="label"><span class="pill pill-amber">Đánh đổi / chưa làm</span></div>
+      <ul>
+        <li>Một job đơn lẻ chậm thêm ~2 s (khởi động + nạp pandas trong con, ưu tiên thấp).</li>
+        <li><b>Giữ <code>DOI_CHIEU_MAX_SONG_SONG</code> = 3</b> — tách tiến trình giải quyết GIL, không giảm RAM. Người dùng hỏi bỏ
+          hẳn trần; <b>chốt 18/09/2026: giữ 3, theo dõi trước</b>. Lý do không bỏ: 7 cửa × 500 MB × 5,3 ≈ 18,5 GB trên máy 20 GB,
+          và Windows không giết tiến trình ăn RAM — hết RAM là cả máy chậm do đẩy bộ nhớ ra đĩa, tiến trình nào xin cấp phát
+          đúng lúc cạn thì nổ, có thể chính backend. Bước sau khi có số "RAM đỉnh" thật: hoặc nâng số lượt, hoặc đổi trần
+          <b>theo số lượt</b> thành trần <b>theo RAM</b> (ước lượng theo dung lượng file của từng lượt, kiểm RAM trống trước khi
+          mở tiến trình con — phải dời chốt ra sau bước nhận file). Luật "cùng module 1 lượt" giữ ở mọi phương án.</li>
+        <li>Job vẫn mất khi restart backend — như trước, <code>_jobs</code> ở RAM.</li>
+        <li><b>OSB chỉ chạy vài giây</b> — thêm ~1–2 s khởi động là tỉ lệ đáng kể. Vẫn chuyển: mấy giây đó vẫn giữ GIL, và lưới
+          canh tĩnh áp cho mọi cửa (miễn trừ một cửa là mở đường cho cửa sau chép theo).</li>
+        <li>459901 bị <b>buộc</b> dừng (quá 15 s) thì thư mục kết quả dở không được xoá (con bị giết trước bước
+          <code>rmtree</code>) — lượt dọn 23h xử lý. Dừng hợp tác vẫn xoá như cũ.</li>
+        <li>ACH: <code>_thong_ke_mis_di_can_confirm()</code> (đọc sheet xác nhận MIS_đi để đếm) vẫn chạy ở backend sau khi con
+          xong — sheet nhỏ, để nguyên cho diff gọn.</li>
+      </ul>
+
+      <div class="label"><span class="pill pill-red">Phản biện</span> 1 lượt Sonnet — không lỗi nghiêm trọng, 3 lỗi nhẹ đã sửa</div>
+      <table>
+        <tr><th>Phát hiện</th><th>Xử lý</th></tr>
+        <tr><td>Chế độ trong luồng + token 459901 đã bị xoá: <code>_xu_ly_tach</code> (<code>setdefault</code>) dựng mục <code>_progress</code>
+          "ma" với <code>cancel_event=None</code> → <code>AttributeError</code>, mục ma nằm lại (<code>luot_dang_chay</code> tưởng đang chạy)</td>
+          <td>Chỉ dựng mục cục bộ khi <code>trong_tien_trinh_con()</code> — cả 459901, phân loại Song phương, OSB</td></tr>
+        <tr><td>Lưới canh tĩnh so chuỗi <code>"chay_tach("</code> — một docstring là đủ xanh</td><td>Dò lời gọi thật bằng AST</td></tr>
+        <tr><td>Test ILO1000 xin tiến trình thật mà vẫn vá <code>TEMP_DIR</code> (mẫu xấu dễ bị chép); test <code>.env</code> luôn xanh trên CI</td>
+          <td>Bỏ bản vá; test <code>.env</code> báo skipped khi không có <code>.env</code></td></tr>
+        <tr><td><code>_ha_uu_tien()</code> log trước khi gắn bộ chuyển log; các bước chuẩn bị nằm ngoài <code>try</code> → lỗi bị báo "thường do hết bộ nhớ"</td>
+          <td>Gắn bộ chuyển log trước; chuẩn bị vào trong <code>try</code></td></tr>
+        <tr><td>Chưa có test Dừng 459901 qua tiến trình con</td><td>Thêm <code>test_cham459901_dung_toi_duoc_tien_trinh_con</code></td></tr>
+        <tr><td>Nghi vấn: <code>ValueError</code> file xác nhận ACH không mở gói được → rơi nhầm nhánh lỗi</td>
+          <td><b>Bác bỏ</b> — mọi <code>raise ValueError</code> ở <code>b4_xu_ly_mis_di.py:570–721</code> chỉ mang chuỗi f-string</td></tr>
+      </table>
+      <p>Logic khớp giao dịch không đổi (phản biện xác nhận qua <code>git diff -w</code>).</p>
+
+      <div class="label"><span class="pill pill-red">Phản biện lượt 2</span> Opus (người dùng yêu cầu) — không chặn merge, 1 lỗi thật + 1 nghi vấn đã xử lý</div>
+      <table>
+        <tr><th>Phát hiện</th><th>Xử lý</th></tr>
+        <tr><td><b>Con chết lúc cha đang xử lý tin cuối</b> → Windows <code>PipeConnection.poll()</code> ném
+          <code>BrokenPipeError [WinError 109]</code> khi ống đã đóng và rỗng (không trả <code>True</code> như Linux). Job vẫn
+          <code>error</code> (không treo) nhưng người dùng thấy "The pipe has been ended", <code>app.log</code> mất dòng mã thoát. Tái hiện 3/3</td>
+          <td>Bắt <code>BrokenPipeError</code> cùng <code>EOFError</code> quanh <code>poll</code>/<code>recv</code>;
+          <code>test_con_chet_luc_cha_dang_xu_ly_tin_cuoi_van_bao_ro</code> (đỏ 3/3 trước khi sửa)</td></tr>
+        <tr><td>Nghi vấn: "RAM đỉnh" là working set — máy thiếu RAM thì Windows cắt working set, số đo <b>thấp</b> đúng lúc
+          quan trọng, mà người dùng định dựa vào nó để nâng trần</td>
+          <td>Ghi thêm <b>bộ nhớ cam kết đỉnh</b> (<code>PeakPagefileUsage</code>) cùng dòng — dùng số này khi quyết trần</td></tr>
+        <tr><td>Ghi chú: <code>_cleanup_old_results()</code> chạy ở đầu pipeline, nay trong con — phần xoá mục <code>_progress</code>
+          quá hạn chỉ xoá bản sao</td>
+          <td>Không sửa: dict <code>_progress</code> của cha vẫn được lượt 23h (<code>temp_cleanup_service</code>) dọn; chỉ muộn hơn</td></tr>
+      </table>
+      <p>Lượt 2 xác nhận thêm: không kịch bản treo mới, không rò handle (40 lượt: 164 → 165), buộc dừng không trả file dở,
+        chốt <code>phien_doi_chieu</code> chỉ có thể báo bận lâu hơn (không bao giờ rảnh sớm), không trạng thái toàn cục nào
+        cha thiết lập lúc chạy mà con cần, tương thích Python 3.10.0, không đưa dữ liệu nhạy cảm mới vào log.</p>
+
+      <div class="label"><span class="pill pill-amber">Phát hiện thêm</span> lỗi có từ trước: test 459901 ghi vào <code>data/temp_cham459901</code> thật</div>
+      <p>Truy nguồn một thư mục kết quả lạ sau lượt test: <code>test_unrecognized_file_reported_but_does_not_block</code> chạy một job
+        <b>hợp lệ</b> mà không chờ xong — luồng nền chạy tràn qua lúc <code>monkeypatch</code> đã trả <code>TEMP_DIR</code> về thư mục thật.
+        Chạy trên develop gốc (worktree riêng) cũng để lại 1 thư mục mỗi lượt → <b>không do PR này</b>. Chạy riêng từng test thì
+        không lộ (pytest thoát, luồng daemon chết trước khi ghi). Sửa luôn vì một dòng: 3 test không chờ job nay gọi
+        <code>_wait_done()</code>; 3 lượt chạy liền: 0 thư mục.</p>
+
+      <p>Branch: <code>feat/doi-chieu-tien-trinh-rieng</code>.</p>
+    </div>
+  </div>
+
+  <!-- 151 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">151</span>
+      <span class="card-title">Phân lịch trực — 4 bất cập luân phiên thứ &amp; cặp trực cố định, nối tiếp card 91 (18/09/2026)</span>
+      <span class="badge badge-done">Hoàn thiện, 2 giai đoạn</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-blue">Bối cảnh</span> căn cứ là văn bản, không phải suy diễn</div>
+      <p>Hai câu trong <code>NHỮNG LƯU Ý KHI XẾP LỊCH TRỰC.docx</code> (18/09/2026) là căn cứ duy nhất
+        cho toàn bộ đợt sửa này, không còn chỗ nào tự suy diễn nghiệp vụ:</p>
+      <ul>
+        <li><i>"Nếu thiếu lãnh đạo cũng chỉ sắp xếp 1 người trực tối đa 02 buổi trong 1 tuần"</i>
+          — nguồn cho Q3 (không dồn ca).</li>
+        <li><i>"Cần xếp đảo ngày trực ở tuần tiếp theo đối với 1 người tránh trùng lịch của tuần cũ"</i>
+          — không giới hạn riêng thứ nào ⇒ luật tránh-lặp-thứ (card 91 vốn chỉ áp thứ 6) mở rộng ra
+          <b>cả T2→T6</b>.</li>
+      </ul>
+      <p>Đợt sửa chạy qua <b>2 giai đoạn</b>, cùng một nhánh <code>duty/luan-phien-thu-va-cap-truc-2026-09-18</code>,
+        có điểm dừng xin xác nhận ở giữa (sau B6) vì bất cập 3 đụng <i>cấu trúc</i> chọn người, rủi ro
+        cao hơn 3 bất cập còn lại:</p>
+      <table>
+        <tr><th>Giai đoạn</th><th>Bước</th><th>Nội dung</th></tr>
+        <tr><td>1</td><td>B0–B6</td><td>Bất cập 1 (luật lặp thứ chỉ áp thứ 6) + bất cập 2 (kéo người
+          song phương phá tầng, ở cả <code>_chon_lanh_dao</code> lẫn <code>_chia_nhan_vien</code>) +
+          bất cập 4 (cùng gốc lỗi với 2b)</td></tr>
+        <tr><td>2</td><td>B7–B11</td><td>Bất cập 3 (cặp nhân viên trực chính cố định) — nội dung card
+          này</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-amber">4 bất cập</span> tóm tắt nguyên nhân và cách sửa</div>
+      <table>
+        <tr><th>#</th><th>Triệu chứng</th><th>Nguyên nhân</th><th>Cách sửa</th></tr>
+        <tr><td>1</td><td>Cặp Dũng + Hoàng Lan Anh lặp y hệt 3 thứ Ba liền (08, 15, 22/09)</td>
+          <td>Luật tránh-lặp-thứ chỉ tồn tại cho <code>shift_type='friday'</code>; T2–T5 dùng
+          <code>shift_type='normal'</code> nên không bao giờ vào nhánh luật</td>
+          <td><code>dem_cung_thu_trong_thang()</code> / <code>nguoi_truc_cung_thu_tuan_truoc()</code>
+          tổng quát hoá theo tham số <code>shift_type</code>, lọc thứ bằng <code>date.weekday()</code>
+          (Python, không <code>strftime('%w')</code> — lệch 1 ngày)</td></tr>
+        <tr><td>2a</td><td>Cảnh báo "phải trực thứ 6 2 tuần liên tiếp" trong khi người khác đang rảnh</td>
+          <td><code>_chon_lanh_dao()</code> chia đôi <code>ld_order</code> theo <code>can_do_sp</code>,
+          bỏ qua tầng <code>_order_pool()</code> đã xếp</td>
+          <td>Sort ổn định theo <code>(tầng, không-biết-SP)</code> — SP chỉ ưu tiên trong cùng tầng</td></tr>
+        <tr><td>2b/4</td><td>Người đã trực trong tuần vẫn bị dồn thêm ca vì là người biết song
+          phương duy nhất — đúng triệu chứng "có người nghỉ, người khác trực 2 ca/tuần"</td>
+          <td><code>_chia_nhan_vien()</code> kéo người biết SP lên đầu <b>bất kể tầng</b></td>
+          <td>Chỉ kéo khi <code>tầng ứng viên ≤ tầng người bị đẩy ra</code>; không ai thoả thì
+          <b>không kéo</b> (Q3), ca nhận cảnh báo <code>no_sp_chinh</code></td></tr>
+        <tr><td>3</td><td>Hai cặp NV cố định lặp mãi (NV11+NV12, NV13+NV14…), không bao giờ đi chéo
+          — khớp dữ liệu thật Dũng + Hoàng Lan Anh</td>
+          <td><code>_so_lan_di_cung()</code> chỉ đếm NV↔nhóm Lãnh đạo, không đếm NV↔NV;
+          <code>_chia_nhan_vien()</code> cắt lát tĩnh <code>nv_order[:so_chinh]</code> nên 2 người
+          đứng cạnh nhau trong bảng xếp hạng luôn vào ca cùng nhau</td>
+          <td>Thêm <code>_ma_tran_di_cung_nv()</code> (đếm cặp NV-NV trong năm); <code>_chia_nhan_vien()</code>
+          chọn <b>tuần tự</b> từng người, mỗi lượt xếp lại phần còn lại bằng <code>_rank_candidates()</code>
+          với tiêu chí phụ mới <code>di_cung_nv</code></td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-red">Đánh đổi đã chốt (Q3)</span> không dồn ca</div>
+      <p>Trước: khi chỉ còn 1 người biết song phương khả dụng cả tuần, hệ thống <b>âm thầm dồn</b>
+        người đó vào ca thứ 2, thứ 3 trong tuần — cảnh báo <code>qua_tai_tuan</code> chỉ bật từ ca thứ
+        3 trở đi nên ca thứ 2 <b>hoàn toàn im lặng</b>. Người dùng chọn hướng ngược lại: từ ca thứ 2
+        trở đi <b>ngừng kéo</b>, chấp nhận cảnh báo <code>no_sp_chinh</code> ("Lãnh đạo và nhóm trực
+        chính không có ai xử lý song phương") thay vì dồn ca — đúng câu văn bản <i>"chỉ sắp xếp 1
+        người trực tối đa 02 buổi trong 1 tuần"</i>. Phần cơ cấu (tuần chỉ có đúng 1 người biết SP)
+        <b>không sửa được bằng mã</b> — đây là giới hạn nguồn lực, không phải lỗi.</p>
+
+      <div class="label"><span class="pill pill-blue">Q4</span> "đi cùng nhau" chỉ tính nhóm trực chính</div>
+      <p><code>_ma_tran_di_cung_nv(db, year) -&gt; {(a,b): n}</code> chỉ đếm <code>nv_ids</code> +
+        <code>sp_id</code> — <b>không</b> tính <code>nv_phu_ids</code>. Người trực phụ về sớm hơn,
+        không cùng xử lý công việc suốt ca với nhóm chính nên không tính là "ê-kíp".</p>
+
+      <div class="label"><span class="pill pill-green">Kiến trúc</span> chọn tuần tự nhưng vẫn tôn trọng tầng</div>
+      <p><code>_chia_nhan_vien()</code> không đơn thuần gọi <code>_rank_candidates()</code> trên toàn bộ
+        danh sách còn lại — làm vậy sẽ <b>phá lại</b> hệ tầng vừa dựng ở B1-B6 (tiêu chí chống-cặp mới
+        không có khái niệm "đã lặp thứ"/"đã trực trong tuần" nên có thể kéo người đang cần tránh vượt
+        lên trước người sạch). Mỗi lượt chọn chỉ xét trong đúng <b>tầng thấp nhất còn lại</b>
+        (<code>tang</code> — cùng dict B4 đã dùng cho toàn bộ đường chọn người), rồi mới xếp hạng trong
+        tầng đó bằng <code>_rank_candidates(..., di_cung_nv=...)</code>. <code>tong</code> (tổng số ca)
+        vẫn luôn là phần tử đầu của <code>sort_key</code> — chống-cặp không bao giờ đẩy người ít ca
+        xuống sau người nhiều ca hơn.</p>
+      <p>Luật SP (kéo 1 người biết song phương khi Lãnh đạo chưa giữ vai) áp <b>sau</b> khi đã chọn
+        xong nhóm trực chính, gộp thành 1 khối duy nhất — tránh lặp lại đúng lỗi bất cập 2b (2 đường
+        sửa danh sách chồng lên nhau, đường sau không biết đường trước đã làm gì).</p>
+
+      <div class="note"><b>B10 — fixture cũ (4 LD/12 NV) không cần nới.</b> PLAN lo ngại luật lặp-thứ áp
+        cho cả 5 thứ sẽ siết quá chặt cơ cấu nhỏ, khuyến nghị nới lên 7 LD/18 NV (quân số thật) nếu
+        assertion không đạt. Đã tự kiểm bằng script độc lập (4 seed offset khác nhau, ngoài phạm vi
+        test): fixture cũ vẫn đạt cả 6 luật với biên độ rộng (cặp NV-NV nhiều nhất 4/65 ca, ngưỡng
+        chặn ở 0,75×65≈49) — <code>test_mo_phong_3_thang_giu_dong_thoi_ca_3_luat()</code> giữ nguyên
+        quy mô nhân sự cũ, chỉ mở rộng từ 3 sang 6 luật kiểm đồng thời.
+        <br><b>Đính chính sau phản biện:</b> ngưỡng 0,75 ở quy mô 12 NV/13 tuần <b>không có sức phân
+        biệt</b> code lỗi/đúng — tái hiện lại đúng bug bất cập 3 bằng 3 biến thể × 7 seed-offset vẫn
+        chỉ ra tỷ lệ 0,06–0,15, không bao giờ chạm 0,75 (pool 12 người quá rộng so với 2 chỗ trực
+        chính/ngày, vòng xoay tự rải đều cặp đôi bất kể thuật toán đúng hay sai). Luật (d) trong bài
+        test này chỉ là <i>smoke-check</i> bổ sung — bằng chứng chính cho bất cập 3 nằm ở 2 test fixture
+        nhỏ hơn, nhạy hơn: <code>test_3_khong_duoc_sinh_e_kip_nhan_vien_co_dinh</code> và
+        <code>test_kich_ban_that_2_cap_co_dinh_dong_thoi_thu_hai_va_thu_ba</code>.</div>
+
+      <div class="label">Kiểm chứng</div>
+      <p>Bộ test phạm vi Sổ trực (6 file, gồm 3 file mới của đợt này —
+        <code>test_duty_ma_tran_di_cung_nv_2026_09_18.py</code>, cộng 2 file test tái hiện/độc lập của
+        Giai đoạn 1): <b>136 passed, 0 failed</b>. Full suite toàn dự án: <b>2032 passed, 24 failed</b>
+        — 24 fail thuộc module ACH/GL02 (<code>test_ach_gl02_misden_algorithm.py</code>,
+        <code>tests/services/doi_chieu_osb/test_pipeline.py</code>), có sẵn từ trước, không liên quan
+        Sổ trực.</p>
+
+
+      <div class="label"><span class="pill pill-red">Phát hiện</span> lúc review PR #121, merge mà chưa sửa (người dùng chốt 18/09/2026)</div>
+      <table>
+        <tr><th>#</th><th>Vấn đề</th><th>Bằng chứng</th><th>Hướng sửa</th></tr>
+        <tr><td>R1</td><td><code>_chon_lanh_dao()</code> chỉ kéo Lãnh đạo biết song phương khi <code>nv_co_sp</code>
+          sai — tức cả pool nhân viên không ai biết SP. Giả định cũ: bước chia nhân viên <i>luôn</i> kéo được người
+          SP. Từ Q3 bước đó có thể từ chối (người SP ở tầng xấu hơn) ⇒ ca không có ai SP dù có Lãnh đạo biết SP
+          <b>cùng tầng</b> với Lãnh đạo vừa chọn.</td>
+          <td>Mô phỏng trên bản sao DB thật (07/09–31/12, 10 seed, 850 ca): 5 ca <code>no_sp_chinh</code>, cả 5 là
+          16/10 — chọn LĐ 59 (không SP, tầng 1) trong khi LĐ 66/51 biết SP cũng tầng 1; NV SP gần nhất ở tầng 1,
+          nhóm chính tầng 0. Bản cũ: 0 ca.</td>
+          <td><code>nv_co_sp</code> chỉ đúng khi có NV biết SP ở tầng ≤ tầng của người thứ <code>so_chinh</code>
+          trong pool NV (nhóm chính chọn tuần tự từ tầng thấp nên tầng đó tính trước được).</td></tr>
+        <tr><td>R2</td><td>Q3 ngừng kéo người SP ngay khi họ đã trực 1 buổi trong tuần (tầng 1), trong khi câu
+          văn bản "tối đa 02 buổi" cho phép buổi thứ 2.</td>
+          <td>Cùng mô phỏng: số lượt "người trực 2 ca/tuần" 187 → 186 — Q3 gần như không giảm dồn ca.</td>
+          <td>Hỏi lại người dùng ý văn bản; nếu là "không quá 2 buổi" thì cho kéo ở tầng ≤ 1.</td></tr>
+        <tr><td>R3</td><td>Đăng ký trực hàng tuần T2–T5 bị luật lặp-thứ đẩy xuống tầng 2 ở tuần kế tiếp → chỉ có hiệu
+          lực cách tuần. Người thứ 2 trở đi của nhóm chính cũng không còn ưu tiên người đăng ký.</td>
+          <td>DB lúc merge không có đăng ký hàng tuần nào đang bật → chưa ai bị ảnh hưởng.</td>
+          <td>Chốt quy tắc: đăng ký hàng tuần có thắng luật lặp-thứ không.</td></tr>
+      </table>
+      <p>Được đổi lại (cùng mô phỏng): lượt trực cùng thứ 2 tuần liền 892 → 0; cặp NV trực chính đi cùng nhau nhiều
+        nhất 16 → 8 lần.</p>
+      <p>Merge: số card gốc của PR là 150, trùng card đối chiếu tiến trình riêng đã vào develop trước — đổi thành 151.</p>
+    </div>
+  </div>
+
+  <!-- 152 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">152</span>
+      <span class="card-title">SWIFT recon chạy ở tiến trình riêng; DTBB vào giới hạn việc nặng (2026-09-18)</span>
+      <span class="badge badge-done">Hoàn thiện</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-blue">Bối cảnh</span> việc nặng nào còn chạy trong tiến trình web sau card 150</div>
+      <p>Rà <code>run_heavy()</code> / luồng nền: SWIFT recon và Đối soát CITAD cũng là đối chiếu nhưng chạy qua
+        <code>run_heavy()</code> trong tiến trình web, <b>không</b> khai <code>dang_ky_nguon()</code> nên lưới canh của card 150 không
+        thấy. DTBB gọi <code>asyncio.to_thread</code> trần — lọt ngoài cả giới hạn <code>MAX_HEAVY</code>. Log máy chủ 18/09 (3 dòng
+        <code>slow.request</code> có trạng thái, đều <code>đối chiếu 1</code>, <code>việc nặng 0/4</code>) chưa cho thấy <code>run_heavy</code> gây chậm —
+        người dùng vẫn chọn làm SWIFT + DTBB ngay; CITAD để sau.</p>
+
+      <div class="label"><span class="pill pill-blue">Tiêu chí</span> khi nào đáng tách tiến trình</div>
+      <p>Cả hai: (1) mã Python thuần giữ GIL (pandas xử lý chuỗi, openpyxl, xlrd, docxtpl, cây XML) — việc chạy trong mã C
+        tự nhả GIL thì không (zlib, AES, truy vấn SQLite, bcrypt; đo: nén + AES bản sao CSDL 22 MB mất 0,61 s, loop trễ tối đa
+        13 ms); (2) thời gian lớn hơn nhiều ~0,8 s mở tiến trình. Dưới ~1 s giữ <code>run_heavy()</code>.</p>
+
+      <div class="label"><span class="pill pill-blue">Cách tách SWIFT</span> API giữ nguyên hoàn toàn</div>
+      <table>
+        <tr><th>Ở tiến trình con (<code>swift_recon/tach.py</code>)</th><th>Ở backend (<code>api/swift_recon.py</code>, trong <code>run_heavy</code>)</th></tr>
+        <tr><td>Đọc file, đối chiếu đến/đi, mọi lệnh xuất Excel (kể cả từ lịch sử, mẫu 04/05, bản ghi đang lọc)</td>
+          <td>Ghi file tải lên ra đĩa (con không nhận <code>UploadFile</code>), đọc/ghi lịch sử CSDL, kiểm 400/404 TRƯỚC khi mở con
+          (<code>HTTPException</code> không nên đi qua ranh giới tiến trình), đọc thử 1 file</td></tr>
+      </table>
+      <ul>
+        <li><b>Logic chuyển nguyên văn</b>, chỉ đổi nguồn vào: đường dẫn thay <code>UploadFile</code>, danh sách bản ghi thay CSDL.
+          <code>run_heavy(chay_tach, ...)</code>: luồng chờ ống dẫn không giữ GIL, vẫn nằm trong giới hạn 4 việc nặng.</li>
+        <li><b>Xuất Excel chỉ ghi file của cặp ĐỦ hai bên</b> — bản cũ không đọc file của cặp thiếu, nên file .zip hỏng ở đó không
+          được thành lỗi 422.</li>
+        <li><b>Đọc thử (<code>parse-preview</code>) cố ý KHÔNG tách</b>: đo 5.000 điện — trong luồng 0,38 s, tiến trình 1,20 s. Việc giữ
+          GIL ~0,4 s mà người dùng chờ gấp 3 lần MỖI lần chọn file. Đối chiếu 2,85 → 3,65 s, xuất mẫu 1,35 → 2,07 s: chấp nhận.</li>
+        <li><b>Xuất từ bản ghi có sẵn theo ngưỡng</b> (<code>_NGUONG_TACH_DONG</code> = 3.000 dòng): ghi Excel ~0,28 s / 1.000 dòng
+          (đo 500–8.000 dòng × 20 cột), mở tiến trình ~0,85 s lúc máy rảnh → hoà vốn quanh 3.000. Bảng tổng hợp vài chục dòng từng
+          bị đẩy từ 0,06 s lên 0,9 s trước khi có ngưỡng. Xuất từ file tải lên luôn tách (đọc file đã nặng sẵn).</li>
+        <li><b>Đổi có chủ ý: khi ≥ 2 file lỗi, lỗi báo ra có thể là file khác</b>. Bản cũ ghi–đọc xen kẽ từng file; bản mới phải ghi
+          hết ra đĩa rồi con mới đọc (con không nhận <code>UploadFile</code>). Giữ đúng thứ tự cũ thì backend phải tự đọc file — mất
+          mục đích tách. Cả hai lỗi đều thật, vẫn 422.</li>
+      </ul>
+
+      <div class="label"><span class="pill pill-green">Kiểm</span> SWIFT trước đây không có test nào</div>
+      <ul>
+        <li><code>tests/test_swift_recon_tach.py</code> dựng file đúng định dạng thật (SAA: SpreadsheetML XML; Quản lý điện: bảng HTML)
+          gồm khớp, lệch hai phía, dòng I/O bị lọc, cặp khớp khoá nhưng không Ack; đi qua <b>mọi</b> endpoint.</li>
+        <li><b>Chụp mốc từ mã CŨ</b> trước khi sửa (22 mục: JSON + từng ô của 12 file Excel) → sau khi tách, chạy trong luồng
+          và tiến trình con đều <b>giống hệt mốc</b>. Test giữ phép so luồng ↔ tiến trình (17 s).</li>
+        <li>Lưới canh mới trong <code>test_doi_chieu_chay_tien_trinh_rieng.py</code>: không file <code>backend/api/</code> nào gọi
+          <code>asyncio.to_thread</code>; API SWIFT không import <code>reconcile</code>/<code>exporters</code>/pandas/openpyxl, chỉ dùng
+          <code>parsers.UnknownFileFormat</code>. Gây lỗi cố ý cả hai → đều đỏ.</li>
+        <li>Bài học viết test: đoán "cặp NAK thì lệch" là sai — <code>_ack_ok</code> chỉ cần MỘT bên báo Ack. Sửa dữ liệu, không sửa số.</li>
+        <li>2065 test xanh, ruff F821/F823/E9 sạch.</li>
+      </ul>
+
+      <div class="label"><span class="pill pill-red">Phản biện</span> 1 lượt Sonnet — không chặn; tự viết script so mã cũ ↔ mới trên kịch bản ngoài bộ mẫu</div>
+      <p>Zip dạng frameset (<code>..._files</code>), nhiều file mỗi bên, mẫu 04/05 chiều ĐI, zip hỏng ở cặp thiếu, XML hỏng, bản ghi lọc có
+        None/bool/dict lồng + tên file có dấu, lịch sử từ zip — mã cũ, mới-trong-luồng, mới-tiến-trình <b>giống hệt</b>; không sót file tạm.</p>
+      <table>
+        <tr><th>Phát hiện</th><th>Xử lý</th></tr>
+        <tr><td>≥ 2 file lỗi → lỗi báo file khác bản cũ</td><td>Chấp nhận có chủ ý — ghi ở trên và ở docstring API</td></tr>
+        <tr><td>Lưới canh SWIFT để lọt gọi thẳng <code>tach.*</code>; ngưỡng log <code>≥ 12</code> trong khi đúng 15</td>
+          <td>Lưới canh AST: mọi <code>tach.&lt;hàm&gt;</code> phải là đối số của hàm tách (trực tiếp hoặc qua <code>run_heavy</code>) — gây lỗi
+          cố ý hai kiểu đều đỏ; test so luồng ↔ tiến trình đặt ngưỡng 0 và đếm đúng 15</td></tr>
+        <tr><td>Chú thích sai: <code>to_thread</code> không dùng "bể 40 luồng chung" mà bể mặc định của event loop (tối đa 32)</td>
+          <td>Sửa ở <code>dtbb.py</code>, test, DESIGN.md — kết luận "ngoài MAX_HEAVY" vẫn đúng</td></tr>
+        <tr><td>Nghi vấn chi phí: đo được 3,1–3,4 s/lượt con</td><td>Đo lại lúc máy rảnh: ~0,85 s (3 s là do đo khi test chạy song song).
+          Ý đúng ở chỗ việc nhỏ cũng bị tách → thêm ngưỡng dòng</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-amber">Chưa làm</span></div>
+      <ul>
+        <li><b>Đối soát CITAD</b> (~38.000 dòng, <code>run_heavy</code>) — cùng khuôn với SWIFT; chờ log máy chủ sau khi deploy card 150/151.</li>
+        <li>SWIFT, CITAD không khai <code>dang_ky_nguon()</code> → không tính vào trần 3 lượt đối chiếu. Kiểu hỏi–đáp đồng bộ, dữ liệu
+          nhỏ hơn nhiều (vài nghìn điện/ngày) — chưa đáng thêm 409 cho người dùng.</li>
+        <li>FastAPI mã hoá JSON kết quả đối chiếu (hàng nghìn bản ghi) trên event loop — có từ trước, ngoài phạm vi.</li>
+      </ul>
+
+      <p>Branch: <code>feat/swift-dtbb-tien-trinh</code>.</p>
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-18</footer>
 </div>
 </body>
 </html>

@@ -4,6 +4,38 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 18/09/2026 Đối chiếu điện SWIFT, Đối chiếu DTBB - **không làm chậm màn hình khác**
+    + ✅ Đối chiếu điện SWIFT: phần đọc file, đối chiếu và xuất Excel chạy tách riêng như các màn hình đối
+      chiếu khác — lúc có người đối chiếu SWIFT, các màn hình khác không bị chậm theo. Kết quả không đổi
+    + ℹ️ Mỗi lần bấm Đối chiếu / Xuất Excel ở SWIFT chậm hơn khoảng 1 giây (thời gian khởi động). Bước
+      kiểm tra file ngay khi chọn file vẫn nhanh như cũ
+    + ✅ Đối chiếu DTBB: nhiều người cùng bấm tính một lúc không còn làm cả hệ thống chậm theo
+
+- 18/09/2026 Phân lịch trực - **Không còn trực trùng thứ nhiều tuần liền, không còn cặp trực cố định**
+    + ✅ Một người không bị xếp trực **cùng một thứ** (thứ Hai … thứ Sáu) ở 2 tuần liên tiếp, và không quá
+      2 lần cùng một thứ trong tháng — trước đây luật này chỉ áp cho thứ Sáu
+    + ✅ Hai nhân viên trực chính không còn bị ghép cặp cố định tuần này qua tuần khác
+    + ✅ Người biết song phương không còn bị kéo vào ca khi đang cần tránh (đã trực cùng thứ tuần trước,
+      đã đủ ca trong tuần)
+    + ⚠️ Đổi lại, thỉnh thoảng lịch tự xếp sẽ có ca **thiếu người xử lý song phương** kèm cảnh báo — xem
+      cảnh báo sau khi tạo lịch và sửa tay ca đó nếu cần
+    + ⚠️ Ai đăng ký nguyện vọng **trực cố định một thứ hằng tuần** (thứ Hai–Năm): luật mới có thể xếp
+      người khác vào tuần kế tiếp, nên đăng ký chỉ chắc chắn được giữ cách tuần
+    + ℹ️ Lịch đã tạo và đã xác nhận không tự đổi. Muốn áp luật mới cho lịch bản thảo thì tạo lại lịch
+
+- 18/09/2026 Đối chiếu - **Các màn hình khác không còn bị chậm khi có người đang chạy đối chiếu**
+    + ✅ Khi có người chạy Đối chiếu ACH, Chấm ILO1000, Chấm 459901, Đối chiếu OSB hay Đối chiếu Song phương,
+      các màn hình khác (đăng nhập, nghỉ phép, chứng từ...) không còn bị chậm hay đứng vài giây theo
+    + ✅ Một lượt đối chiếu dùng quá nhiều bộ nhớ thì chỉ lượt đó báo lỗi, hệ thống vẫn chạy bình thường —
+      trước đây có thể kéo sập cả hệ thống
+    + ✅ Bấm **Dừng** (ACH, ILO1000, 459901, Song phương): quá 15 giây mà lượt đó chưa tự dừng thì hệ thống
+      dừng hẳn nó
+    + ℹ️ Kết quả đối chiếu không thay đổi. Mỗi lượt khởi động chậm hơn khoảng 1–2 giây
+    + ℹ️ Vẫn giữ tối đa 3 lượt đối chiếu chạy cùng lúc. Hệ thống ghi lại mỗi lượt dùng bao nhiêu bộ nhớ để
+      sau này quyết định có nới giới hạn này không
+    + ℹ️ Người vận hành: nếu phát sinh sự cố với đối chiếu, thêm dòng `DOI_CHIEU_TIEN_TRINH=0` vào file cấu
+      hình máy chủ (`.env`) rồi khởi động lại để quay về cách chạy cũ
+
 - 18/09/2026 Chấm 459901, Đối chiếu OSB - **Hiện lại menu bên trái**
     + ✅ Hai màn hình này trước đây mở ra thì cột menu bên trái trắng trơn, không chuyển sang màn hình khác
       từ đó được. Nay menu hiện đầy đủ như các màn hình khác. Cách chạy và kết quả không đổi
