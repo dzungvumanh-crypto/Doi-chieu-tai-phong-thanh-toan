@@ -19692,7 +19692,7 @@ This may happen if you try to create UI from a background task.</pre>
         <tr><th>Lưới</th><th>Bắt được gì</th><th>Vì sao cần cả hai</th></tr>
         <tr><td><code>pytest.ini</code>: <code>error::DeprecationWarning:backend</code> / <code>:frontend</code></td>
           <td>Mã dự án gọi API bị bỏ <b>trên nhánh test có chạy</b> → đỏ</td>
-          <td>Chỉ thấy nhánh đã chạy. Khớp theo module <b>nơi gọi</b>, nên cảnh báo sinh trong thư viện (python-jose vẫn gọi <code>utcnow</code>) không tính</td></tr>
+          <td>Chỉ thấy nhánh đã chạy. Khớp theo module <b>nơi gọi</b>, nên cảnh báo sinh trong thư viện (python-jose vẫn gọi <code>utcnow</code>) không tính. <b>Nhưng</b> thư viện cảnh báo bằng <code>stacklevel</code> (pandas, pydantic, lunardate) trỏ về dòng gọi trong <code>backend/</code> → vẫn đỏ. Pydantic không ghim (đi kèm fastapi): CI đỏ ở đây sau khi thư viện lên bản là tín hiệu thật, không phải CI hỏng</td></tr>
         <tr><td><code>test_ma_du_an_khong_goi_utcnow</code> (quét AST)</td>
           <td>Mọi lời gọi <code>.utcnow</code> trong <code>backend/ frontend/ tests/</code>, kể cả nhánh không test nào tới</td>
           <td>Quét chữ thường thì bắt nhầm docstring "thay datetime.utcnow()" — đọc AST chỉ tính lời gọi thật</td></tr>
@@ -19717,6 +19717,9 @@ This may happen if you try to create UI from a background task.</pre>
           Giỗ Tổ 26/04; giả thư viện chỉ có tên mới / chỉ có tên cũ; thiếu thư viện → log ERROR, không bịa ngày.</li>
         <li>2195 test xanh, ruff F821/F823/E9 sạch.</li>
       </ul>
+
+      <div class="label"><span class="pill pill-red">Phản biện</span> 1 lượt Sonnet — 5/5 đồng ý, 3 góp ý chú thích đã sửa</div>
+      <p>Đã thử hoàn lại từng phần sửa → test tương ứng đỏ (tên cũ trần trên 0.3.0 bị lưới cảnh báo biến thành lỗi rồi bị <code>except</code> nuốt → còn 4 ngày → đỏ). Sửa theo góp ý: chú thích <code>requirements.txt</code> (câu "gọi đúng tên cũ → mất Tết" đã lỗi thời) và <code>pytest.ini</code> (nói rõ cảnh báo thư viện có <code>stacklevel</code> vẫn tính). Điểm yếu còn lại: không test nào chạy lunardate 0.2.2 thật — chỉ bản giả <code>_AmCu</code>. Ngoài phạm vi, có từ trước: danh sách lễ âm không có 30 Tết.</p>
 
       <div class="label"><span class="pill pill-amber">Chưa làm</span></div>
       <ul>
