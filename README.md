@@ -190,6 +190,7 @@ Truy cập:
 │   │   ├── doi_chieu_song_phuong.py # Đối chiếu song phương (định tuyến lệnh IPCAS)
 │   │   ├── ttqt_branches.py # Danh mục CN thực hiện TTQT (CRUD + import/export Excel)
 │   │   ├── logs.py          # Nhật ký hệ thống (admin)
+│   │   ├── monitor.py       # Giám sát hệ thống — tổng quan tải, CSDL, ổ đĩa, sao lưu (menu.monitor)
 │   │   └── holidays.py      # Quản lý ngày lễ (admin)
 │   └── services/
 │       ├── bundle_service.py       # Thuật toán gom tập (max 350 tờ)
@@ -337,6 +338,12 @@ Request vượt số kết nối thì xếp hàng chờ (tối đa 30 giây, qu�
   - **Bấm một dòng** để mở hộp thoại xem đầy đủ, kể cả nguyên văn bản ghi
   - **Lọc** theo phương thức, từ khoá, **khoảng ngày, người thao tác, module** (`GET /api/admin/logs/audit/filters` đổ dữ liệu vào hai ô chọn — chỉ liệt kê người đã thực sự có dòng trong nhật ký)
 - Nhật ký đăng nhập và nhật ký lỗi/cảnh báo hệ thống (admin xem, lọc theo user/thời gian)
+- **Giám sát hệ thống** (`/monitor`, mã quyền `menu.monitor` — tách khỏi `menu.logs`): một màn tổng quan tự làm
+  mới 30 giây — trạng thái chung xanh/cam/đỏ kèm danh sách vấn đề; CPU/RAM máy chủ, RAM backend; tải hiện tại (request
+  đang xử lý, luồng, kết nối CSDL, việc nặng, backend có bị đứng trong 1 phút qua); CSDL đọc được không + dung lượng
+  file/WAL/sao lưu/nhật ký/file tạm, dung lượng ổ còn trống; sao lưu tự động gần nhất, lệch giờ NTP; người dùng 24 giờ
+  (phiên, đăng nhập đúng/sai, tài khoản bị khoá, thao tác ghi); lượt đối chiếu đang chạy, Word nền; số lỗi/cảnh báo/
+  request chậm trong `app.log` 24 giờ + 5 lỗi gần nhất. Chỉ đọc. Ngưỡng cảnh báo ở đầu `backend/api/monitor.py`
 - **Ảnh chữ ký cá nhân** (menu *Quản lý người dùng*, mọi vai trò kể cả chuyên viên): tải lên ảnh
   **PNG nền trong suốt**, tối đa 2 MB, mỗi người một ảnh. Ảnh lưu trong DB (bảng `user_signatures`)
   nên đi cùng bản sao lưu `.db`; chỉ xem/sửa/xoá được ảnh **của chính mình**. Dùng để ký đơn nghỉ phép
