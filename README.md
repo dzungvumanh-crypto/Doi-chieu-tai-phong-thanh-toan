@@ -590,6 +590,30 @@ Request vượt số kết nối thì xếp hàng chờ (tối đa 30 giây, qu�
   đọc nhảy vị trí nên không nhận luồng tuần tự
 - Phân quyền riêng theo nhóm (`menu.cham_459901`, `cham_459901.process`)
 
+### Module Chấm TK 459901-1000-000000000
+- Chấm sổ `LOCAC = 459901`, `CUSTOMER = 1000-000000000`, `CCY = VND` — **khác sổ** của module Chấm 459901 ở trên
+  (hai mã CUSTOMER, hai thư mục tạm, hai bảng tiến độ, hai cặp mã quyền, không dùng chung dữ liệu). Module Chấm 459901 cũ **không bị sửa**
+- Menu: **Đối chiếu → Phòng Thanh toán → Chấm TK 459901-1000-000000000**
+- Tải **một hoặc nhiều** file GL02 (ZIP mã hoá hoặc Excel — đọc bằng đúng bộ đọc của module Chấm 459901) + tuỳ chọn
+  **1 file tồn tháng trước** (tên chứa `459` và từ `TON` hoặc `mã 0`, ví dụ `459-mã 0.xlsx`); thiếu file tồn vẫn chấm bình thường
+- Phân loại thác nước **3 nhóm**, xuất 3 file Excel:
+  1. **GD cân ITT** — các dòng cùng `REFERENCE` có Tổng `DRAMOUNT` = Tổng `CRAMOUNT` (≥ 2 dòng, ít nhất một dòng khác 0)
+  2. **Điện KO offline** — trên phần còn lại, gom theo số tiền; nhóm có Tổng Nợ = Tổng Có (vế Có là điện KO có
+     `Remitting Amount:VND<số tiền>` ở REMARK, vế Nợ đối ứng khác REFERENCE). Nhóm cân mà không có chuỗi vẫn vào
+     đây nhưng ghi chú "cần soát lại" ở cột `GHI_CHU`
+  3. **GD khác** — phần dư, chấm thủ công
+- Số tiền so sánh bằng `Decimal` chính xác (không `round()`/`==` trên float)
+- Tải xuống: `459901-1000-000000000_GD_can_ITT_<ngày>.xlsx` (và `_GD_dien_KO_offline_`, `_GD_khac_`). Mỗi file có cột **STT**
+  (số thứ tự, cột A) đứng trước các cột GL02; dòng TỔNG CỘNG ở cuối. File GD khác của tháng này dùng lại làm file tồn tháng sau được
+- **Không tính sai âm thầm**: ô tiền là chữ (vd `1,000`), ô dạng `1.000` (mơ hồ) hoặc thiếu cột `REFERENCE` → báo lỗi nêu rõ file/cột/dòng;
+  dòng trùng hoàn toàn, Excel dài sát trần 1.048.576 dòng, GL02 không có dòng nào của TK → cảnh báo cam ở màn kết quả (khoá `canh_bao`),
+  không tự xoá dữ liệu
+- Nút **Reset** (cạnh Xử lý, có hộp xác nhận) xoá file đã chọn + kết quả trên màn hình để chấm lại; khoá lúc đang chạy (dùng nút Dừng)
+- Màn hình báo rõ khi **không chọn file tồn** (kết quả sẽ khác bản chấm có tồn) và khi file tồn không có dòng nào của tài khoản
+- Chỉ tải file lên, không có chế độ chọn thư mục server; xử lý ở tiến trình riêng như các module đối chiếu khác
+- Phân quyền riêng theo nhóm (`menu.cham_459901_000000000`, `cham_459901_000000000.process`) — **không tự cấp**, phải tick
+  ở màn Phân quyền theo nhóm
+
 ### Module Đối chiếu OSB
 - So sổ cái **GL02** (IPCAS) với file **OSB chi tiết hạch toán** cho tài khoản trung gian OSB
   **519910**, ra danh sách *Chênh lệch Nợ* và *Chênh lệch Có* — tự động hoá cách chấm tay đang làm

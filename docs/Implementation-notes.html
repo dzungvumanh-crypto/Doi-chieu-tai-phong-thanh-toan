@@ -19731,6 +19731,125 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">158</span>
+      <span class="card-title">Chấm TK 459901-1000-000000000: module mới cho sổ CUSTOMER 1000-000000000 (2026-09-21)</span>
+      <span class="badge badge-info">Chờ review</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-blue">Bối cảnh</span> hai sổ, cùng LOCAC 459901, khác CUSTOMER</div>
+      <p>Phòng Thanh toán cần chấm thêm sổ <b>459901-1000-000000000</b> (<code>CUSTOMER = 1000-000000000</code>). Module Chấm 459901 sẵn có
+        lọc <code>CUSTOMER = 1000-000007709</code> và phân 7 nhóm. Hai mã là <b>hai sổ khác nhau</b> nên làm <b>module riêng</b>: thư mục tạm, bảng tiến độ,
+        cửa chốt <code>phien_doi_chieu</code>, mã quyền, tên file tải về đều riêng; tên menu và tiêu đề trang mang đủ mã để người dùng phân biệt.</p>
+      <p><b>Phạm vi PR: chỉ phần của người làm module này.</b> Module 459901 cũ (<code>cham459901_service.py</code>, <code>cham_459901.py</code>) và các file test
+        của người khác <b>không bị sửa</b> — chỉ được <b>import</b> để dùng lại bộ đọc GL02 và các helper ghi XML. File dùng chung chỉ <b>thêm dòng</b>, không sửa/xoá dòng cũ:
+        <code>registry.py</code> (1 import + 1 tuple), <code>features.py</code> (2 mã + 1 dòng nhóm), <code>frontend/shared.py</code> (1 dòng menu), <code>audit_labels.py</code> (2 dòng),
+        <code>slow_request.py</code> (1 dòng), <code>temp_cleanup_service.py</code> (1 import + 1 dòng).</p>
+
+      <div class="label"><span class="pill pill-green">Quy tắc phân loại</span> thác nước 3 bước, mô tả ở ảnh yêu cầu</div>
+      <table>
+        <tr><th>Nhóm</th><th>Điều kiện</th></tr>
+        <tr><td>GD cân ITT</td><td>Các dòng <b>cùng REFERENCE</b> có Tổng DRAMOUNT = Tổng CRAMOUNT, so <b>Decimal chính xác</b> (không dung sai). Cần ≥ 2 dòng và ít nhất 1 dòng khác 0
+          (nhóm toàn 0 hoặc dòng lẻ không phải một cặp). <b>Không đòi đủ hai phía Nợ/Có</b> — đúng chữ yêu cầu — nên cặp Cancel/Normal cùng REFERENCE, cùng phía, dấu ngược nhau (tổng triệt tiêu) cũng vào đây.
+          REFERENCE rỗng không được gom chung</td></tr>
+        <tr><td>Điện KO offline</td><td>Trên phần CÒN LẠI: gom theo <b>số tiền tuyệt đối</b> (Decimal chính xác); nhóm ≥ 2 dòng, Tổng Nợ = Tổng Có thì cả nhóm là KO. Khoá là số tiền chứ không phải REFERENCE — vế Có
+          (…ITT, REMARK <code>Remitting Amount:VND&lt;số tiền&gt;</code>) và vế Nợ đối ứng (…OTT) khác REFERENCE nhau</td></tr>
+        <tr><td>GD khác</td><td>Phần dư — chấm thủ công. Dòng có chuỗi <code>Remitting Amount:VND</code> mà nhóm chưa cân gắn GHI_CHU "Nghi ngờ Điện KO offline"</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-amber">Chỗ lệch chữ yêu cầu — cần người duyệt biết</span></div>
+      <ul>
+        <li><b>"Cột CRAMOUNT chứa chuỗi Remitting Amount:VND"</b>: CRAMOUNT là cột số. Người dùng xác nhận chuỗi nằm ở <b>REMARK</b> (module cũ cũng tìm ở đó); so khớp không phân biệt hoa/thường.</li>
+        <li><b>Yêu cầu nhảy DK1 → DK3</b> (thiếu DK2), không nói ghép cặp KO theo khoá nào. Người dùng chọn "theo số tiền".</li>
+        <li><b>Bản chấm tay tháng 7 và tháng 8/2026 xếp vào Điện offline cặp KHÔNG có chuỗi</b>: dòng NAPAS (tồn) + bút toán "điều chỉnh mã khách hàng" đối ứng (T7: 7.465.869.595.881; T8: 989.304.217.800).
+          Luật "bắt buộc có chuỗi" chỉ khớp 40/42 (T7). Nên nhóm cân theo số tiền mà <b>không dòng nào có chuỗi</b> vẫn vào KO (khớp mẫu) và bị gắn GHI_CHU
+          "Không có 'Remitting Amount:VND' — chỉ khớp theo số tiền, cần soát lại"; màn hình hiện cảnh báo kèm số dòng. Hai tháng liền cùng kiểu ⇒ mẫu lặp lại hằng tháng.
+          Muốn chặt hơn thì bỏ nhánh <code>ko_thieu_chuoi</code> trong <code>_mark_ko()</code>, 2 dòng đó rơi về GD khác.</li>
+        <li><b>Cân ITT không đòi đủ hai phía Nợ/Có</b> (quyết định của người làm PR, sau phản biện): bản đầu có điều kiện "đủ hai phía" — điều kiện tự thêm, không có trong yêu cầu — làm cặp huỷ
+          cùng phía (Cancel −X / Normal +X) rơi sang KO trong khi docstring viết "vào Cân ITT". Dữ liệu T7/T8 đều TRTP=Normal nên kết quả thật không đổi (đã chạy lại chứng minh).</li>
+      </ul>
+
+      <div class="label"><span class="pill pill-blue">Kiểm trên dữ liệu thật</span> so từng dòng với bản chấm tay của phòng</div>
+      <table>
+        <tr><th>Kỳ</th><th>Đầu vào</th><th>Chương trình</th><th>Chấm tay</th><th>Nội dung từng dòng</th></tr>
+        <tr><td>Tháng 8/2026</td><td>2 file GL02 Excel thật (1.203.330 dòng) + <code>459_TON.xlsx</code></td><td>428 / 30 / 6</td><td>428 / 30 / 6</td><td>giống hệt cả 3 nhóm</td></tr>
+        <tr><td>Tháng 8 không tồn</td><td>chỉ 2 file GL02</td><td>426 / 28 / 4</td><td>—</td><td>thiếu 6 dòng tồn + 2 dòng đối ứng rơi về GD khác (giải thích được)</td></tr>
+        <tr><td>Tháng 7/2026</td><td>dựng lại GL02 từ chính 3 file chấm tay + file tồn thật (zip 172 MB mã hoá, không có mật khẩu trên máy dev)</td><td>940 / 42 / 6</td><td>940 / 42 / 6</td><td>giống hệt cả 3 nhóm</td></tr>
+      </table>
+      <p>Kiểm sau MỖI lần đổi logic (Decimal, điều kiện Cân ITT, hàm ghi Excel riêng, chặn ô <code>1.000</code>) — kết quả thật không đổi, không cảnh báo nào báo nhầm.
+        <b>Chưa kiểm:</b> đường đọc <code>.zip</code> trên file thật (dùng lại <code>_doc_zip</code> của module cũ, có test riêng; đường Excel đã chạy thật ở T8).</p>
+
+      <div class="label"><span class="pill pill-green">Cách làm</span></div>
+      <table>
+        <tr><th>Việc</th><th>Cách</th></tr>
+        <tr><td>Đọc ZIP/Excel, dò tiêu đề</td><td><b>Import</b> <code>_doc_tep</code>, <code>InputError</code>, <code>_Cancelled</code> và helper XML từ <code>cham459901_service</code> — một bản duy nhất, không sửa file đó</td></tr>
+        <tr><td>Cột STT ở 3 file xuất</td><td>Hàm ghi riêng <code>_ghi_excel</code> trong module mới (cùng khuôn stream/style XML, STT là cột A dạng <b>số</b>, liên tục xuyên sheet khi tách quá trần dòng, nhãn TỔNG CỘNG ở cột B).
+          Không thêm tham số vào <code>_write_excel</code> của module cũ (phần của người khác). File GD khác của tháng này dùng lại làm file tồn tháng sau vẫn đọc được (có test)</td></tr>
+        <tr><td>Số tiền</td><td><code>DRAMOUNT</code>/<code>CRAMOUNT</code> (float) chỉ để ghi Excel; mọi phép so sánh/cộng dùng cột phụ <code>_DR_DEC</code>/<code>_CR_DEC</code> (<code>Decimal</code> dựng từ chuỗi gốc), tổng tự cộng
+          bằng vòng lặp để chắc chắn không rơi về float. Checklist mục E (PR #60, #61). Bốn ca mà bản float cũ SAI đã chứng minh: 10,0004≈10,0000; 2<sup>53</sup>+1≈2<sup>53</sup>; gom nhóm KO làm tròn; có test</td></tr>
+        <tr><td>Lọc tài khoản</td><td>Lọc TỪNG BẢNG ngay khi đọc rồi mới gộp (module cũ gộp cả tháng rồi mới lọc) — file GL02 cả tháng vài triệu dòng mà TK này chỉ vài nghìn</td></tr>
+        <tr><td>File tồn</td><td>Đọc bằng chính bộ đọc GL02; cột thiếu (CRTDTM) để rỗng, cột tay <code>chấm</code> bị bỏ. Nhận diện tên: <code>459</code> + <code>ton</code> <b>như một từ</b> hoặc <code>ma 0</code> sau khi bỏ dấu (tên thật <code>459-mã 0.xlsx</code>, ảnh yêu cầu ghi <code>459_mã 0</code>)</td></tr>
+        <tr><td>Tiến độ, tiến trình con, cửa chốt, dọn tạm</td><td>Của riêng module, đúng khuôn <code>_xu_ly_tach</code>/<code>chay_tach</code>; cửa <code>cham459901_000000000</code> tự khai <code>dang_ky_nguon</code> ở cuối file</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-green">Giao diện</span></div>
+      <ul>
+        <li>Banner xanh navy như hai trang CITAD cuối ngày (<code>_navy_header</code> chép y nguyên — mỗi trang giữ bản riêng, không đụng <code>shared.py</code>); không còn dòng breadcrumb (giống hai trang đó).</li>
+        <li>Nút <b>Reset</b> (viền đỏ, có hộp xác nhận): xoá file đã chọn + kết quả trên màn hình; <b>khoá lúc đang chạy</b> (Reset giữa chừng làm trang mất <code>task_token</code> còn lượt nền vẫn chạy và chiếm cửa chốt của người khác — muốn dừng thì có nút Dừng).
+          Mọi lối thoát của <code>do_process</code> gom về <code>_ket_thuc_chay()</code>; lỗi dựng màn hình kết quả được <code>ui.notify</code> chứ không nuốt.</li>
+        <li><b>Quên file tồn</b> làm kết quả lệch bản chấm đầy đủ (T8: 426/28/4 thay vì 428/30/6) mà màn hình từng không nói gì → nay báo vàng NGAY khi bấm Xử lý và cảnh báo cam ở kết quả (trường <code>ton_provided</code>).</li>
+        <li>File khoá <code>~$…xlsx</code> của Office (Excel đang mở file, có thật trong thư mục T8) bị bỏ qua ở backend, frontend và <code>classify_upload_filename</code>; nếu không, <code>~$459_TON.xlsx</code> bị nhận là file tồn và đè mất file tồn thật.</li>
+      </ul>
+
+      <div class="label"><span class="pill pill-amber">Không tính sai âm thầm</span> chạy thử thật từng nghi vấn trước khi sửa</div>
+      <table>
+        <tr><th>#</th><th>Tình huống</th><th>Trước</th><th>Nay</th></tr>
+        <tr><td>1</td><td>Ô tiền là chữ, vd <code>"1,000"</code></td><td><code>to_numeric(errors='coerce').fillna(0)</code> đổi thành 0 → cặp Nợ/Có không cân, rơi xuống GD khác</td><td><b>Báo lỗi</b> nêu file, cả 2 cột, số dòng, ví dụ. Ô TRỐNG vẫn là 0</td></tr>
+        <tr><td>2</td><td>Ô tiền <code>"1.000"</code>/<code>"180.000"</code> (cách viết VN của một nghìn)</td><td>Đọc thành 1/180 — sai gấp 1000 lần</td><td><b>Báo lỗi</b> "mơ hồ" (VND không có phần lẻ 3 chữ số). Không tự đoán dấu chấm/phẩy</td></tr>
+        <tr><td>3</td><td>File thiếu cột <code>REFERENCE</code></td><td>Điền rỗng → không cặp nào cân ITT</td><td><b>Báo lỗi</b></td></tr>
+        <tr><td>4</td><td>Cùng dữ liệu vào 2 lần (tên khác nhau; hoặc tồn trùng GL02)</td><td>Dòng nhân đôi mà vẫn cân</td><td><b>Cảnh báo</b> "N dòng trùng hoàn toàn" — không tự xoá (hai bút toán giống hệt có thể là thật). API còn chặn trùng tên KHÁC HOA/THƯỜNG (NTFS coi là một file)</td></tr>
+        <tr><td>5</td><td>File Excel dài sát trần 1.048.576 dòng</td><td>Excel cắt đuôi, mất dòng không dấu vết</td><td><b>Cảnh báo</b> từ 1.048.000 dòng, chỉ với file Excel (CSV trong zip dài cỡ đó là bình thường)</td></tr>
+        <tr><td>6</td><td>GL02 không có dòng nào của TK nhưng có file tồn</td><td>Kết quả chỉ còn dòng tồn, trông như bình thường</td><td><b>Cảnh báo</b></td></tr>
+      </table>
+      <p>Cảnh báo đi qua một cơ chế chung: khoá <code>canh_bao</code> (danh sách chuỗi) trong kết quả, giao diện lặp qua và hiện từng dòng cam.</p>
+
+      <div class="label"><span class="pill pill-blue">Phản biện trước PR</span> 1 lượt agent, model mặc định (theo <code>docs/SKILL.md</code>), tự tái hiện từng điểm trước khi sửa</div>
+      <p>Không có lỗi chặn. 30 phép "gây lỗi cố ý": 24 bị test bắt, 6 sống sót → đã thêm test, nay đều đỏ đúng test mong đợi khi phá lại. Điểm đã xử lý:
+        (a) tên file có "tổng/Boston/Anton" bị nhận nhầm là tồn (<code>_bo_dau</code> biến "tổng"→"tong" chứa "ton"; module cũ không dính vì không bỏ dấu) → khớp <code>ton</code> như một từ;
+        (b) trùng tên khác hoa/thường; (c) ô <code>1.000</code> mơ hồ; (d) cặp huỷ cùng phía (xem trên); (e) <code>mkdir</code> upload nằm ngoài <code>try</code> → mục tiến độ mồ côi giữ cửa 409 tới 4 giờ;
+        (f) lỗi dựng màn hình kết quả làm kẹt nút; (g) test cho <code>bo_luot</code> khi lỗi, trần 413, dọn <code>_progress</code>.
+        <b>Chỉ 1 lượt Sonnet</b> — logic khớp giao dịch tài chính là rủi ro cao (checklist mục I): người duyệt quyết có cần thêm lượt hay không. Skill <code>bank-reconciliation</code> mà checklist nhắc không có trong môi trường làm PR; các bẫy nghiệp vụ được dán thẳng vào brief.</p>
+
+      <div class="label"><span class="pill pill-amber">Bẫy khi gắn vào hệ thống</span></div>
+      <ul>
+        <li><b><code>audit_labels.MODULES</code> khớp <code>startswith</code>, kết quả đầu tiên thắng</b>: <code>/api/cham459901</code> là tiền tố chuỗi của <code>/api/cham459901_000000000</code> nên dòng của module mới phải đứng TRƯỚC dòng cũ (thêm dòng, không sửa dòng cũ). Có test.</li>
+        <li><b><code>slow_request._NGUONG_RIENG</code> khớp theo ĐOẠN đường dẫn</b> nên KHÔNG dính tiền tố cũ — phải thêm dòng riêng, không thì lượt xử lý file bị ghi "request chậm" ở ngưỡng 1,5 s.</li>
+        <li><b>Lịch dọn 23h</b> (<code>temp_cleanup_service</code>) phải thêm dòng riêng — có test chạy <code>run_cleanup()</code> thật.</li>
+        <li><b>Test của module KHÔNG sửa file test của người khác</b>: sổ tiến độ dọn bằng fixture autouse trong file test của mình (thay vì <code>conftest._don_job_ach</code>); test đồng bộ phân loại tên file, dọn thư mục tạm, tiến trình con thật đặt cả trong <code>tests/test_cham459901_000000000.py</code>.</li>
+        <li>Frontend giữ bản sao <code>_classify_upload_filename</code> (không import backend); test canh hai bản không trôi khỏi nhau, gồm tên có dấu.</li>
+      </ul>
+
+      <div class="label"><span class="pill pill-amber">Việc phải làm sau deploy</span></div>
+      <p>Mã quyền MỚI <code>menu.cham_459901_000000000</code> / <code>cham_459901_000000000.process</code> — <b>không tự cấp</b> cho nhóm nào (cố ý không tự sao quyền từ menu 1000-000007709: việc của người quản trị).
+        Phải tick ở Phân quyền theo nhóm, người được tick đăng nhập lại mới thấy menu. Đã ghi vào <code>Logs_update.md</code>. Thử bằng tài khoản THƯỜNG (không chỉ admin): có test 4 mức quyền
+        (không quyền / chỉ xem / được chạy / chỉ có quyền module cũ) trong <code>tests/test_cham459901_000000000_quyen.py</code>.</p>
+
+      <div class="label"><span class="pill pill-blue">Kiểm</span> số thật trên đúng commit head, Python 3.12 (đúng CI)</div>
+      <p><b>2312 test xanh (1 skip có sẵn)</b>; ruff <code>F821,F823,E9</code> sạch. Test của module mới: <b>123</b> (nhận diện tên tồn/file khoá, Cân ITT, Điện KO, Decimal chính xác, đọc/lọc/ghép tồn, zip mã hoá, dừng, vòng đời job, API, phân quyền người thường,
+        path-traversal <code>/</code> và <code>\</code>, không tính sai âm thầm, cột STT, nối hệ thống chung). Chạy app từ clone + click-through bằng trình duyệt thật: banner, upload nhiều file, Xử lý, cảnh báo, Reset, tải 3 file.</p>
+
+      <div class="label"><span class="pill pill-amber">Còn mở — không sửa trong PR này (không thuộc phần của người làm module)</span></div>
+      <ul>
+        <li><b>RAM (PR #125)</b>: cửa mới chưa khai số trong <code>RAM_UOC_TINH</code> (giống module 459901 cũ, ILO1000, OSB). Số đo thật: bộ nhớ cam kết đỉnh ~2,5 GB (RAM ~1,9 GB) cho 1,2 triệu dòng. Người duyệt quyết có khai không.</li>
+        <li><b>Module 459901 cũ</b> còn các lỗi câm lặng tương tự (ô tiền chữ → 0, dòng trùng, Excel bị cắt) và chưa vá file khoá <code>~$</code> — cố ý không đụng.</li>
+        <li><code>accept=".zip,.xlsx"</code> ở ô tải chặn <code>.xls/.xlsm/.xlsb</code> dù backend nhận (giống module cũ); frontend ghi đè âm thầm hai file cùng tên khác thư mục; vòng poll coi 404 như mất mạng (giống module cũ).</li>
+      </ul>
+
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-22</footer>
 </div>
 </body>
