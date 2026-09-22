@@ -10,9 +10,8 @@ _log = logging.getLogger(__name__)
 
 try:
     from lunardate import LunarDate
-    _LUNAR_OK = True
 except ImportError:
-    _LUNAR_OK = False
+    LunarDate = None
 
 # ── Ngày lễ dương lịch cố định (tháng, ngày) ─────────────────────────────────
 _FIXED_SOLAR = {
@@ -33,34 +32,35 @@ _LUNAR_HOLIDAYS = {
 }
 
 
+def _doi_am_duong(ld) -> date:
+    # lunardate 0.3 đổi tên toSolarDate -> to_solar_date, bản sau bỏ tên cũ. Máy chủ
+    # đang 0.2.2 (chỉ tên cũ), máy dev 0.3.0 (cả hai) -> tra lúc chạy, không ghim bản.
+    doi = getattr(ld, "to_solar_date", None) or ld.toSolarDate
+    return doi()
+
+
 def get_vn_holidays(year: int) -> List[dict]:
     """Trả danh sách ngày nghỉ lễ VN năm `year`. Mỗi phần tử: {'date': 'YYYY-MM-DD', 'label': str}"""
     holidays = []
     for (m, d), label in _FIXED_SOLAR.items():
         holidays.append({"date": f"{year}-{m:02d}-{d:02d}", "label": label})
 
-    if _LUNAR_OK:
-        for (lm, ld), label in _LUNAR_HOLIDAYS.items():
-            try:
-                solar = LunarDate(year, lm, ld).toSolarDate()
-                holidays.append({"date": solar.strftime("%Y-%m-%d"), "label": label})
-            except Exception:
-                # Đổi âm→dương hỏng là MẤT HẲN một ngày lễ khỏi danh sách gợi ý —
-                # im lặng thì người phân lịch trực không biết vì sao thiếu.
-                _log.warning("Không đổi được ngày lễ âm lịch %s (%d/%d) năm %d",
-                             label, ld, lm, year, exc_info=True)
-    else:
-        _FALLBACK_2026 = [
-            ("2026-02-17", "Tết Nguyên Đán (mùng 1)"),
-            ("2026-02-18", "Tết Nguyên Đán (mùng 2)"),
-            ("2026-02-19", "Tết Nguyên Đán (mùng 3)"),
-            ("2026-02-20", "Tết Nguyên Đán (mùng 4)"),
-            ("2026-02-21", "Tết Nguyên Đán (mùng 5)"),
-            ("2026-04-28", "Giỗ Tổ Hùng Vương"),
-        ]
-        for ds, label in _FALLBACK_2026:
-            if ds.startswith(str(year)):
-                holidays.append({"date": ds, "label": label})
+    if LunarDate is None:
+        # Thiếu thư viện là thiếu trọn 6 ngày lễ âm lịch. Không có bảng cứng dự
+        # phòng: bảng cũ chỉ có năm 2026, ghi sai ngày Giỗ Tổ, và không bao giờ
+        # chạy khi thư viện có mặt mà đổi API (issue #109) — lưới giả tệ hơn không lưới.
+        _log.error("Thiếu thư viện lunardate — năm %d không có ngày lễ âm lịch", year)
+        return holidays
+
+    for (lm, ld), label in _LUNAR_HOLIDAYS.items():
+        try:
+            solar = _doi_am_duong(LunarDate(year, lm, ld))
+            holidays.append({"date": solar.strftime("%Y-%m-%d"), "label": label})
+        except Exception:
+            # Đổi âm→dương hỏng là MẤT HẲN một ngày lễ khỏi danh sách gợi ý —
+            # im lặng thì người phân lịch trực không biết vì sao thiếu.
+            _log.warning("Không đổi được ngày lễ âm lịch %s (%d/%d) năm %d",
+                         label, ld, lm, year, exc_info=True)
     return holidays
 
 

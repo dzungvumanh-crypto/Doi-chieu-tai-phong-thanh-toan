@@ -4,6 +4,12 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 22/09/2026 Phân lịch trực - **Ngày lễ âm lịch không còn phụ thuộc phiên bản thư viện lịch âm**
+    + ✅ Danh sách gợi ý ngày lễ (Tết, Giỗ Tổ) vẫn đủ khi thư viện lịch âm được nâng lên bản mới
+    + ✅ Sửa lỗi: bảng ngày lễ dự phòng ghi Giỗ Tổ Hùng Vương 2026 là 28/04 — đúng là **26/04**. Bảng này nay bỏ;
+      nếu máy thiếu thư viện lịch âm, `logs/app.log` ghi rõ dòng ERROR thay vì tự điền ngày
+    + ℹ️ Không có thay đổi giao diện, không cần cài thêm gì
+
 - 21/09/2026 Chuẩn hoá văn bản - **Báo chỗ đánh số sai thứ tự**
     + ✅ Sau khi chuẩn hoá, nếu văn bản có Điều / khoản / điểm **nhảy số, trùng số hoặc lùi số** (ví dụ điểm
       `d) e)` thiếu `đ)`), màn kết quả hiện khung đỏ **"Nghi đánh số sai thứ tự"** kèm số đoạn để tự kiểm tra

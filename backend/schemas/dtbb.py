@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class DtbbCurrencyOut(BaseModel):
@@ -10,7 +10,7 @@ class DtbbCurrencyOut(BaseModel):
     group1_native: float
     group2_native: float
     tk413_native: float
-    class Config: from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class DtbbCalculateResult(BaseModel):
@@ -83,7 +83,7 @@ class DtbbHistoryItem(BaseModel):
     updated_at: Optional[datetime] = None
     confirmed_by_name: Optional[str] = None
     confirmed_at: Optional[datetime] = None
-    class Config: from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class DtbbReportDetailOut(DtbbHistoryItem):
