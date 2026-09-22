@@ -193,6 +193,12 @@ _ITEMS_LIMIT = 200
 # Cùng nguồn với handover_report_service để hai màn hình không nói hai con số.
 _SUBMIT_AT_SQL = submitted_at_sql()
 
+# Lần bàn giao lại gần nhất sau khi mượn. Chỉ dùng cho màn theo dõi: người xác nhận cần
+# biết chứng từ vừa quay về hôm nào. Báo cáo đúng hạn / quá hạn vẫn tính theo lần nộp
+# đầu (_SUBMIT_AT_SQL) — mượn ra rồi trả lại không được biến chứng từ nộp đúng hạn thành trễ.
+_RETURNED_AT_SQL = """(SELECT MAX(ret.timestamp) FROM entry_change_logs ret
+                        WHERE ret.entry_id = de.id AND ret.action = 'returned')"""
+
 
 def _iso_date(raw) -> str | None:
     """'2026-08-04 13:45:08.27' → '2026-08-04'. Không có log nộp → None."""
@@ -264,6 +270,8 @@ def pending_items(
                        de.sheet_count       AS sheet_count,
                        de.notes             AS notes,
                        {_SUBMIT_AT_SQL}     AS submit_at,
+                       {_RETURNED_AT_SQL}   AS returned_at,
+                       de.borrow_reason     AS borrow_reason,
                        d.id                 AS dept_id,
                        d.name               AS dept_name,
                        owner.full_name      AS staff_name,
@@ -282,6 +290,13 @@ def pending_items(
         ).fetchall()
         for r in rows:
             y, m, dd = _split_iso(r["transaction_date"])
+            # Chờ xác nhận mà có lần bàn giao lại mới hơn lần nộp → đây là lượt trả sau
+            # mượn. So với submit_at thay vì xem log cuối là 'returned': sau khi trả,
+            # sửa ghi chú cũng ghi log (note_edited) và sẽ che mất. Có borrow_reason là
+            # đang chờ duyệt YÊU CẦU MƯỢN (cũng ở pending_confirm) — lượt trả cũ không tính.
+            ret_at, sub_at = r["returned_at"], r["submit_at"]
+            is_handback = (bool(ret_at) and not r["borrow_reason"]
+                           and (not sub_at or str(ret_at) > str(sub_at)))
             handovers.append({
                 "entry_id":         r["entry_id"],
                 "staff_name":       r["staff_name"] or "",
@@ -291,7 +306,8 @@ def pending_items(
                 "sheet_count":      r["sheet_count"],
                 "entered_by_name":  r["entered_by_name"] or "",
                 "transaction_date": r["transaction_date"],
-                "submit_date":      _iso_date(r["submit_at"]),
+                "submit_date":      _iso_date(ret_at if is_handback else sub_at),
+                "is_handback":      is_handback,
                 "notes":            r["notes"] or "",
                 "year":             y,
                 "month":            m,
