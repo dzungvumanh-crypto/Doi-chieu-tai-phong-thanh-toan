@@ -38,6 +38,9 @@ def client(admin_client):
             (1, "PATCH",  "/api/leaves/120/cancel",    "HTTP 500",       f"{homnay} 08:06:00"),
             (2, "DELETE", "/api/bundles/8",            "HTTP 403",       f"{homnay} 09:00:00"),
             (2, "staff_create", "user_tttt",           "Tạo tài khoản",  f"{homnay} 09:30:00"),
+            # Mã ngữ nghĩa KHÔNG có trong _SEMANTIC — vẫn là thành công (write_audit chỉ ghi khi xong)
+            (2, "survey.create", "survey",             "Tạo khảo sát X", f"{homnay} 09:40:00"),
+            (2, "POST", "/api/doi-chieu-citad-nostro/session", "HTTP 200", f"{homnay} 09:50:00"),
             # Dòng ghi tay qua audit_queue (token Extension sai) — không có "HTTP" → thất bại
             (None, "POST", "/api/doi-chieu-citad/citad-buffer", "Thất bại: mã sai", f"{homnay} 10:00:00"),
             (1, "POST",   "/api/leaves/",              "HTTP 200",       "2026-01-01 08:00:00"),
@@ -51,6 +54,8 @@ def client(admin_client):
                ("an", None, "10.0.0.1", 0, f"{homnay} 07:49:00"),
                # Mật khẩu ĐÚNG nhưng bị chặn vì đang mở ở máy khác — có staff_id
                *[("an", 1, "10.0.0.1", 0, f"{homnay} 07:4{i}:00") for i in range(5)],
+               *[("tuan", None, "10.0.0.12", 0,
+                  (_vn_now() - timedelta(days=d)).strftime("%Y-%m-%d 06:00:00")) for d in range(1, 6)],
                ("an", 1, "10.0.0.1", 1, "2026-01-01 07:00:00")],
     )
     conn.commit()
@@ -76,8 +81,10 @@ def test_loc_that_bai_khop_cach_man_hinh_to_mau(client):
     ghi_tay = [e for e in loi["entries"] if e["action"] == "POST"][0]
     assert ghi_tay["result"] == "Thất bại" and ghi_tay["detail"] == "Thất bại: mã sai"
     ok = _audit(client, ket_qua="ok")
-    assert ok["total"] == 4                     # gồm cả dòng ngữ nghĩa staff_create
+    assert ok["total"] == 6                     # gồm cả dòng ngữ nghĩa staff_create, survey.create
     assert all(e["result_ok"] for e in ok["entries"])
+    ks = [e for e in ok["entries"] if e["action"] == "survey.create"][0]
+    assert ks["result"] == "Thành công"
 
 
 def test_nut_sua_gom_ca_put_va_patch(client):
@@ -132,6 +139,12 @@ def test_nostro_khong_bi_nhan_nham_la_citad_cuoi_ngay():
     assert "PaymentHub" in describe_work("POST", "/api/doi-chieu-citad-nostro/session")
 
 
+def test_loc_module_khong_lan_sang_module_tien_to_dai_hon(client):
+    """Chọn "đối chiếu CITAD cuối ngày" không được ra dòng CITAD - PaymentHub (-nostro)."""
+    assert _audit(client, module="/api/doi-chieu-citad")["total"] == 1
+    assert _audit(client, module="/api/doi-chieu-citad-nostro")["total"] == 1
+
+
 # ── Tab Đăng nhập ──
 def _logins(client, **params):
     r = client.get("/api/admin/logs/logins", params=params)
@@ -141,7 +154,9 @@ def _logins(client, **params):
 
 def test_dang_nhap_tim_theo_ten_va_ip(client):
     assert _logins(client, q="Bình")["total"] == 5
-    assert _logins(client, q="10.0.0.1")["total"] == 8
+    assert _logins(client, q="10.0.0.1")["total"] == 13             # chứa chuỗi: dính cả .12
+    assert _logins(client, ip="10.0.0.1")["total"] == 8               # khớp đúng
+    assert _logins(client, tai_khoan="an")["total"] == 8              # không kéo "tuan"
     homnay = _vn_now().strftime("%Y-%m-%d")
     assert _logins(client, tu_ngay=homnay)["total"] == 12
 
@@ -163,12 +178,16 @@ def test_tong_quan_dem_va_chi_ra_cho_can_chu_y(client):
     r = client.get("/api/admin/logs/tong-quan", params={"so_ngay": 1})
     assert r.status_code == 200, r.text
     d = r.json()
-    assert d["so"]["thao_tac"] == 6 and d["so"]["that_bai"] == 3
+    assert d["so"]["thao_tac"] == 8 and d["so"]["that_bai"] == 3
     assert d["so"]["dang_nhap"] == 1 and d["so"]["dang_nhap_sai"] == 11
     chu_y = d["chu_y"]
     # Tài khoản bị dò mật khẩu đứng đầu, kèm bộ lọc mở đúng danh sách
-    assert chu_y[0]["tab"] == "dang-nhap" and chu_y[0]["loc"]["q"] == "binh"
-    assert not any(m["tab"] == "dang-nhap" and m["loc"]["q"] == "an" for m in chu_y)
+    homnay = _vn_now().strftime("%Y-%m-%d")
+    assert chu_y[0]["tab"] == "dang-nhap"
+    assert chu_y[0]["loc"] == {"success": "false", "tai_khoan": "binh",
+                               "tu_ngay": homnay, "den_ngay": homnay}
+    tk = {m["loc"].get("tai_khoan") for m in chu_y if m["tab"] == "dang-nhap"}
+    assert "an" not in tk                       # 5 lượt trùng phiên — mật khẩu đúng
     # Lỗi 500 xếp trước lỗi 403
     thao_tac = [m for m in chu_y if m["tab"] == "thao-tac"]
     assert thao_tac[0]["muc"] == "loi" and "lỗi hệ thống" in thao_tac[0]["noi_dung"]
@@ -179,6 +198,9 @@ def test_tong_quan_dem_va_chi_ra_cho_can_chu_y(client):
 def test_tong_quan_7_ngay_lui_moc(client):
     d = client.get("/api/admin/logs/tong-quan", params={"so_ngay": 7}).json()
     assert d["tu_ngay"] == (_vn_now() - timedelta(days=6)).strftime("%Y-%m-%d")
+    # "tuan" sai 1 lần/ngày × 5 ngày: cộng dồn đủ ngưỡng nhưng không ngày nào mang cờ
+    # trên danh sách → không được báo (đếm theo ngày, cùng đơn vị với cờ từng dòng)
+    assert not any(m["loc"].get("tai_khoan") == "tuan" for m in d["chu_y"])
 
 
 # ── Tab Lỗi hệ thống ──
@@ -199,3 +221,14 @@ def test_nhat_ky_loi_tim_chu_va_loc_ngay(tmp_path, monkeypatch):
     assert logs._parse_log_file(tu_ngay="2026-09-21")[1] == 2
     assert logs._parse_log_file(den_ngay="2026-09-21")[1] == 2        # trọn ngày 21
     assert logs._parse_log_file("ERROR", tu_ngay="2026-09-21")[1] == 1
+
+
+def test_loc_loi_gom_ca_critical(tmp_path, monkeypatch):
+    """Tổng quan (_quet_log) đếm ERROR + CRITICAL rồi mở tab với level=ERROR —
+    lọc ERROR mà bỏ CRITICAL thì con số không lần lại được."""
+    from backend.api import logs
+    p = tmp_path / "app.log"
+    p.write_text("2026-09-20 08:00:00 CRITICAL backend.main — Sập\n"
+                 "2026-09-20 08:01:00 ERROR    backend.api.x — Hỏng\n", encoding="utf-8")
+    monkeypatch.setattr(logs, "_LOG_PATH", str(p))
+    assert logs._parse_log_file("ERROR")[1] == 2

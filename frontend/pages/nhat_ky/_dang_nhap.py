@@ -19,6 +19,10 @@ class TabDangNhap(TabNhatKy):
 
     def __init__(self, ctx):
         super().__init__(ctx)
+        # Khớp ĐÚNG (không phải tìm chứa chuỗi) — đặt bằng cách bấm tên đăng nhập / IP
+        # trên dòng hoặc từ mục "Cần chú ý"
+        self.tai_khoan = ""
+        self.ip = ""
         with ui.row().classes("w-full items-center gap-2 flex-wrap"):
             self.ngay = BoLocNgay(self._doi_loc)
         with ui.row().classes("w-full items-center gap-2 flex-wrap mt-2"):
@@ -44,20 +48,29 @@ class TabDangNhap(TabNhatKy):
     def tham_so(self) -> dict:
         tu, den = self.ngay.api()
         return {"tu_ngay": tu, "den_ngay": den, "success": self.ket_qua.value or "",
-                "q": (self.tim.value or "").strip()}
+                "q": (self.tim.value or "").strip(), "tai_khoan": self.tai_khoan, "ip": self.ip}
 
     def tham_so_url(self) -> dict:
         return {**self.ngay.url(), "success": self.ket_qua.value or "",
-                "q": (self.tim.value or "").strip()}
+                "q": (self.tim.value or "").strip(), "tai_khoan": self.tai_khoan, "ip": self.ip}
 
     def dat_loc(self, loc: dict):
         self.ngay.dat(loc)
         self.ket_qua.value = loc.get("success", "") if loc.get("success", "") in _KET_QUA else ""
         self.tim.value = loc.get("q", "")
+        self.tai_khoan = loc.get("tai_khoan", "")
+        self.ip = loc.get("ip", "")
+
+    async def _loc_dung(self, truong: str, gia_tri: str):
+        """Bấm tên đăng nhập / IP trên dòng — thêm vào bộ lọc đang có."""
+        setattr(self, truong, gia_tri or "")
+        await self.tai()
 
     async def _go(self, truong: str):
         if truong == "ngay":
             self.ngay.dat({"khoang": "tat_ca"})
+        elif truong in ("tai_khoan", "ip"):
+            setattr(self, truong, "")
         else:
             getattr(self, truong).value = ""
         await self.tai()
@@ -72,6 +85,10 @@ class TabDangNhap(TabNhatKy):
             the.append((f"Thời gian: {self.ngay.mo_ta()}", lambda: self._go("ngay")))
         if self.ket_qua.value:
             the.append((f"Kết quả: {_KET_QUA[self.ket_qua.value]}", lambda: self._go("ket_qua")))
+        if self.tai_khoan:
+            the.append((f"Tài khoản: {self.tai_khoan}", lambda: self._go("tai_khoan")))
+        if self.ip:
+            the.append((f"Máy: {self.ip}", lambda: self._go("ip")))
         if (self.tim.value or "").strip():
             the.append((f"Tìm: “{self.tim.value.strip()}”", lambda: self._go("tim")))
         the_loc(self.khung_the, the, self._xoa_het)
@@ -125,10 +142,17 @@ class TabDangNhap(TabNhatKy):
             # Lượt sai không lưu staff_id (chưa xác thực được là ai) → không có họ tên;
             # hiện tên đăng nhập đã gõ làm dòng chính
             with ui.column().classes("w-56 shrink-0 gap-0"):
-                ui.label(e.get("full_name") or e.get("username") or "—").classes("text-sm truncate")
                 if e.get("full_name"):
-                    ui.label(e.get("username") or "").classes("text-xs font-mono text-gray-500 truncate")
-            ui.label(e.get("ip_address") or "—").classes("text-xs font-mono text-gray-600 w-32 shrink-0")
+                    ui.label(e["full_name"]).classes("text-sm truncate")
+                tk = ui.label(e.get("username") or "").classes(
+                    "text-xs font-mono text-blue-800 hover:underline truncate cursor-pointer")
+                tk.tooltip("Chỉ xem tài khoản này")
+                tk.on("click.stop", lambda _, e=e: self._loc_dung("tai_khoan", e.get("username")))
+            may = ui.label(e.get("ip_address") or "—").classes("text-xs font-mono text-gray-600 w-32 shrink-0")
+            if e.get("ip_address"):
+                may.classes("text-blue-800 hover:underline cursor-pointer")
+                may.tooltip("Chỉ xem máy này")
+                may.on("click.stop", lambda _, e=e: self._loc_dung("ip", e.get("ip_address")))
             ui.label(e.get("detail") or "").classes("text-xs text-gray-600 flex-1 truncate")
             if nghi:
                 ui.label(f"⚠ Nghi dò mật khẩu · sai {e.get('so_sai_ngay')} lần trong ngày").classes(

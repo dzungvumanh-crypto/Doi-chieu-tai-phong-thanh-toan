@@ -171,6 +171,17 @@ _MODULE = MODULES
 _VERB = {"POST": "Thực hiện", "PUT": "Cập nhật", "PATCH": "Cập nhật", "DELETE": "Xóa"}
 
 
+_METHOD_GHI = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+def _ngu_nghia(action: str) -> bool:
+    """Dòng do write_audit ghi (action là mã như 'staff_create', 'survey.create',
+    'hr.profile.update'…) — chỉ ghi SAU khi thao tác thành công. Không so với _SEMANTIC:
+    nhiều mã chưa có nhãn ở đó (survey.*, hr.*, vb_format.*) mà vẫn là thành công, và
+    _SQL_THAT_BAI (backend/api/logs.py) cũng chia theo đúng ranh giới method này."""
+    return action not in _METHOD_GHI
+
+
 def describe_work(action: str, target_type: str) -> str:
     """Mô tả 'công việc đã làm' bằng tiếng Việt dễ đọc."""
     if action in _SEMANTIC:
@@ -187,7 +198,7 @@ def describe_work(action: str, target_type: str) -> str:
 
 def describe_result(detail: str, action: str) -> str:
     """Dịch mã HTTP trong detail sang kết quả tiếng Việt."""
-    if action in _SEMANTIC:
+    if _ngu_nghia(action):
         return "Thành công"           # write_audit chỉ ghi khi thao tác thành công
     m = re.search(r"HTTP\s+(\d+)", detail or "")
     if not m:
@@ -252,7 +263,7 @@ def describe_target(target_type: str) -> dict | None:
 
 def result_ok(detail: str, action: str) -> bool:
     """True nếu kết quả là thành công (để tô màu)."""
-    if action in _SEMANTIC:
+    if _ngu_nghia(action):
         return True
     m = re.search(r"HTTP\s+(\d+)", detail or "")
     return bool(m) and int(m.group(1)) < 300

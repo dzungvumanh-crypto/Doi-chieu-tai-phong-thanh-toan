@@ -52,7 +52,10 @@ class TabTongQuan(TabNhatKy):
 
     def _loc_tab(self, loc: dict) -> dict:
         """Bộ lọc backend gửi kèm dùng `tu_ngay`; đổi sang khoảng chọn nhanh tương ứng
-        để tab đích hiện nút "Hôm nay"/"7 ngày" thay vì hai ô ngày."""
+        để tab đích hiện nút "Hôm nay"/"7 ngày" thay vì hai ô ngày. Mục có `den_ngay`
+        (nghi dò mật khẩu — tính theo MỘT ngày) thì giữ nguyên ngày đó."""
+        if loc.get("den_ngay"):
+            return dict(loc)
         ra = dict(loc)
         ra.pop("tu_ngay", None)
         ra["khoang"] = _KHOANG_TAB[self.khoang.value]

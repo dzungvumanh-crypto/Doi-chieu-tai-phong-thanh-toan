@@ -119,11 +119,39 @@
             "±10 phút" chịu ảnh hưởng nhẹ. Chưa sửa.</td></tr>
         <tr><td>Nhãn hồ sơ có thể là năm (<code>#2026</code>)</td>
           <td>Đường nào đặt năm trước mã hồ sơ. Bộ lọc vẫn đúng (cùng đường), chỉ nhãn kém nghĩa.</td></tr>
+        <tr><td>"Lịch sử hồ sơ" chỉ gồm dòng do middleware ghi</td>
+          <td>Dòng <code>write_audit</code> ngữ nghĩa lưu <code>target_type</code> kiểu <code>"hr_profile"</code> + id ở
+            <code>target_id</code> (vd <code>hr.py</code>) — không nối được với khoá đường dẫn. Cần quy ước chung
+            khoá hồ sơ cho cả hai loại dòng; chưa làm.</td></tr>
       </table>
 
-      <p class="note">Kiểm: <code>tests/test_nhat_ky_de_dung.py</code> (13 test) + chạy app thật bằng Playwright trên DB
+      <table>
+        <tr><th style="width:30%">Phản biện trước PR — đã sửa</th><th>Kịch bản hỏng</th></tr>
+        <tr><td><code>result_ok</code>/<code>describe_result</code> coi mọi action KHÔNG phải POST/PUT/PATCH/DELETE là thành công</td>
+          <td>Trước chỉ tin <code>_SEMANTIC</code>: <code>survey.*</code>, <code>hr.*</code>, <code>vb_format.*</code>,
+            <code>ttqt_branch.*</code> thành công mà tô cam + ghi "Thất bại"; lọc "Thành công" ra dòng cam. Nay cùng ranh
+            giới với <code>_SQL_THAT_BAI</code>. Không <code>write_audit</code> nào ghi lượt thất bại (đã grep).</td></tr>
+        <tr><td>Tổng quan đếm lỗi chỉ trên <code>app.log</code>; lọc "Lỗi" gồm CRITICAL</td>
+          <td>Đếm qua <code>_file_log</code> (cả .1–.3) mà tab Lỗi chỉ đọc app.log → thẻ 120 lỗi, bấm vào ra 15.</td></tr>
+        <tr><td>"Cần chú ý" dò mật khẩu gộp theo (tài khoản, NGÀY)</td>
+          <td>Gộp cả khoảng 30 ngày: sai 1 lần/ngày × 5 ngày thành mục đỏ, bấm vào không dòng nào mang cờ.</td></tr>
+        <tr><td>Lọc khớp đúng <code>tai_khoan</code> / <code>ip</code></td>
+          <td>Mục chú ý dùng <code>q</code> (LIKE) → "an" kéo cả "lan", "tuan"; 10.0.0.1 kéo cả 10.0.0.12. Bấm tên
+            đăng nhập / IP trên dòng cũng lọc khớp đúng.</td></tr>
+        <tr><td>Lọc module loại tiền tố dài hơn là module khác</td>
+          <td>Chọn "đối chiếu CITAD cuối ngày" ra cả dòng CITAD-PaymentHub (<code>-nostro</code>).</td></tr>
+        <tr><td><code>ui.tabs(value=tab_dau)</code></td>
+          <td>Để mặc định "tong-quan" thì lần đồng bộ đầu của <code>tab_panels</code> tải Tổng quan (quét app.log) dù
+            mở <code>?tab=loi</code> — tải thừa, không sai kết quả.</td></tr>
+      </table>
+
+      <p class="note">Kiểm: <code>tests/test_nhat_ky_de_dung.py</code> + chạy app thật bằng Playwright trên DB
         dev — Tổng quan → bấm thẻ/mục chú ý, bấm tên người, nhãn hồ sơ, gỡ thẻ lọc, lượt đăng nhập → thao tác trong
-        ngày, link có lọc sẵn, <code>/logs</code> chuyển hướng; console trình duyệt không lỗi. Tài khoản thử đã xoá.</p>
+        ngày, link có lọc sẵn, <code>/logs</code> chuyển hướng; console trình duyệt không lỗi. Tài khoản thử đã xoá.
+        Phản biện: 1 lượt Agent (model mặc định).</p>
+    </div>
+  </div>
+
   <!-- BG3 -->
   <div class="card">
     <div class="card-header">

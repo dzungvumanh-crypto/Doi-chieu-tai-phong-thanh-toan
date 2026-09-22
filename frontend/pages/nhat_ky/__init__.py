@@ -38,16 +38,20 @@ async def nhat_ky_page(request: Request):
 
     loc = dict(request.query_params)
     tab_dau = loc.pop("tab", "tong-quan")
+    if tab_dau not in {t[0] for t in _TAB}:
+        tab_dau = "tong-quan"
     ctx = NhatKyCtx()
 
     with _content_area():
         _page_header("Nhật ký hệ thống",
                      "Ai đã làm gì, ai đăng nhập, hệ thống gặp lỗi gì — lưu 12 tháng gần nhất")
-        with ui.tabs(on_change=ctx.khi_doi_tab).props(
+        # value=tab_dau ngay từ đầu: để mặc định rồi mới chuyển thì lần đồng bộ đầu của
+        # tab_panels bắn on_change → tải Tổng quan (quét app.log) dù người dùng mở tab khác
+        with ui.tabs(value=tab_dau, on_change=ctx.khi_doi_tab).props(
                 "dense no-caps align=left active-color=red-9 indicator-color=red-9").classes(
                 "text-gray-600 border-b border-gray-200 w-full") as ctx.tabs:
             the = {ten: ui.tab(ten, label=nhan, icon=icon) for ten, nhan, icon, _ in _TAB}
-        with ui.tab_panels(ctx.tabs, value="tong-quan").props("animated=false").classes(
+        with ui.tab_panels(ctx.tabs, value=tab_dau).props("animated=false").classes(
                 "w-full bg-transparent"):
             for ten, _, _, lop in _TAB:
                 with ui.tab_panel(the[ten]).classes("px-0"):

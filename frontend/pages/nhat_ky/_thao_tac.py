@@ -4,6 +4,7 @@ Mỗi dòng đọc như một câu: giờ · người · việc · hồ sơ · k
 nhãn hồ sơ là lọc theo đó; bấm dòng mở ngăn chi tiết bên phải.
 """
 import asyncio
+import logging
 from datetime import date
 
 from nicegui import ui
@@ -17,6 +18,7 @@ from ._chung import (TOGGLE_PROPS, BoLocNgay, TabNhatKy, gio, phan_trang, the_lo
 _LOAI = {"": "Mọi loại", "POST": "Thêm mới", "PUT": "Sửa", "DELETE": "Xoá"}
 _KET_QUA = {"": "Mọi kết quả", "ok": "Thành công", "loi": "Thất bại"}
 _API = "/api/admin/logs/audit"
+_log = logging.getLogger(__name__)
 
 
 def _mau_ket_qua(ok: bool) -> str:
@@ -97,6 +99,7 @@ class TabThaoTac(TabNhatKy):
         try:
             data = await asyncio.to_thread(api.get, f"{_API}/filters")
         except Exception:
+            _log.warning("Không nạp được danh sách người / chức năng cho bộ lọc", exc_info=True)
             return
         chon_nguoi, chon_module = self.nguoi.value, self.module.value
         self.nguoi.options = {a["id"]: a["label"] for a in data.get("actors", [])}

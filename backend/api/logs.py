@@ -56,7 +56,9 @@ def _parse_log_file(level_filter: str = "", page: int = 1, q: str = "",
     parsed.reverse()
 
     if level_filter and level_filter.upper() not in ("ALL", ""):
-        parsed = [e for e in parsed if e["level"] == level_filter.upper()]
+        # "Lỗi" gồm cả CRITICAL — Tổng quan (_quet_log) đếm chung hai mức làm một
+        muc = {"ERROR", "CRITICAL"} if level_filter.upper() == "ERROR" else {level_filter.upper()}
+        parsed = [e for e in parsed if e["level"] in muc]
     # ts dạng "YYYY-MM-DD HH:MM:SS" — so chuỗi là so thời gian
     if _NGAY_RE.match(tu_ngay or ""):
         parsed = [e for e in parsed if e["ts"] >= tu_ngay]
@@ -131,13 +133,15 @@ def export_login_logs(
     q:        str = Query(""),
     tu_ngay:  str = Query(""),
     den_ngay: str = Query(""),
+    tai_khoan: str = Query(""),
+    ip:       str = Query(""),
     _: dict = Depends(require_feature("menu.logs")),
     db: sqlite3.Connection = Depends(get_db),
 ):
     import openpyxl
     from openpyxl.styles import Alignment, Font, PatternFill
 
-    where, params = _login_where(success, q, tu_ngay, den_ngay)
+    where, params = _login_where(success, q, tu_ngay, den_ngay, tai_khoan, ip)
 
     rows = db.execute(
         f"""SELECT ll.*, ks.full_name
@@ -205,8 +209,17 @@ _JOIN_NGUOI = ("LEFT JOIN user_tttt ks ON ks.id = ll.staff_id"
                " OR (ll.staff_id IS NULL AND ks.username = ll.username)")
 
 
-def _login_where(success: str, q: str = "", tu_ngay: str = "", den_ngay: str = ""):
+def _login_where(success: str, q: str = "", tu_ngay: str = "", den_ngay: str = "",
+                 tai_khoan: str = "", ip: str = ""):
     clauses, params = [], []
+    # Khớp ĐÚNG — dùng khi bấm từ mục "Cần chú ý" hoặc bấm tên/IP trên dòng: tìm chứa
+    # chuỗi thì "an" kéo cả "lan", "tuan"; IP 10.0.0.1 kéo cả 10.0.0.12
+    if tai_khoan:
+        clauses.append("ll.username = ?")
+        params.append(tai_khoan)
+    if ip:
+        clauses.append("ll.ip_address = ?")
+        params.append(ip)
     if success == "true":
         clauses.append("ll.success = 1")
     elif success == "false":
@@ -232,10 +245,12 @@ def get_login_logs(
     q:        str = Query(""),
     tu_ngay:  str = Query(""),
     den_ngay: str = Query(""),
+    tai_khoan: str = Query(""),
+    ip:       str = Query(""),
     _: dict = Depends(require_feature("menu.logs")),
     db: sqlite3.Connection = Depends(get_db),
 ):
-    where, params = _login_where(success, q, tu_ngay, den_ngay)
+    where, params = _login_where(success, q, tu_ngay, den_ngay, tai_khoan, ip)
 
     total = db.execute(
         f"SELECT COUNT(*) FROM login_logs ll {_JOIN_NGUOI} {where}",
@@ -341,6 +356,12 @@ def _audit_where(method: str, q: str, tu_ngay: str = "", den_ngay: str = "",
     if module:
         clauses.append("al.target_type LIKE ?")
         params.append(f"{module}%")
+        # Tiền tố dài hơn là module KHÁC ('/api/doi-chieu-citad' vs '-nostro') — loại ra
+        # để lọc khớp đúng nhãn describe_work() hiện trên dòng (khớp tiền tố đầu tiên)
+        from backend.services.audit_labels import MODULES
+        for dai in (p for p, _ in MODULES if p != module and p.startswith(module)):
+            clauses.append("al.target_type NOT LIKE ?")
+            params.append(f"{dai}%")
     where = "WHERE " + " AND ".join(clauses) if clauses else ""
     return where, params
 
@@ -592,32 +613,39 @@ def _nhom_thao_tac_loi(db, tu: str) -> list[dict]:
 
 def _nhom_dang_nhap_sai(db, tu: str) -> list[dict]:
     from backend.core.rate_limit import MAX_FAILURES_IP
+    # Đếm THEO NGÀY — cùng đơn vị với cờ "nghi dò mật khẩu" trên từng dòng (so_sai_ngay).
+    # Cộng dồn cả khoảng 30 ngày thì người gõ sai mỗi ngày một lần thành "sai 5 lần",
+    # bấm vào lại không dòng nào mang cờ — báo động giả.
     ds = []
     for r in db.execute(
-        f"""SELECT username, COUNT(*) AS n, MIN(created_at) AS dau, MAX(created_at) AS cuoi
+        f"""SELECT username, substr(created_at, 1, 10) AS ngay, COUNT(*) AS n,
+                  MAX(created_at) AS cuoi
            FROM login_logs WHERE {_SQL_SAI_MK} AND created_at >= ?
-           GROUP BY username HAVING n >= ? ORDER BY n DESC LIMIT ?""",
+           GROUP BY username, ngay HAVING n >= ? ORDER BY n DESC LIMIT ?""",
         (tu, NGUONG_NGHI_VAN, _SO_MUC_CHU_Y),
     ):
         ds.append({
             "muc": "loi",
-            "noi_dung": f"Tài khoản \"{r['username']}\" nhập sai mật khẩu {r['n']} lần",
+            "noi_dung": f"Tài khoản \"{r['username']}\" nhập sai mật khẩu {r['n']} lần trong ngày",
             "thoi_gian": str(r["cuoi"])[:16], "tab": "dang-nhap",
-            "loc": {"success": "false", "q": r["username"], "tu_ngay": tu},
+            "loc": {"success": "false", "tai_khoan": r["username"],
+                    "tu_ngay": r["ngay"], "den_ngay": r["ngay"]},
         })
     # Một máy thử nhiều tài khoản khác nhau — từng tài khoản có thể dưới ngưỡng
     for r in db.execute(
-        f"""SELECT ip_address, COUNT(*) AS n, COUNT(DISTINCT username) AS so_tk,
-                  MAX(created_at) AS cuoi
+        f"""SELECT ip_address, substr(created_at, 1, 10) AS ngay, COUNT(*) AS n,
+                  COUNT(DISTINCT username) AS so_tk, MAX(created_at) AS cuoi
            FROM login_logs WHERE {_SQL_SAI_MK} AND created_at >= ? AND ip_address IS NOT NULL
-           GROUP BY ip_address HAVING n >= ? ORDER BY n DESC LIMIT ?""",
+           GROUP BY ip_address, ngay HAVING n >= ? ORDER BY n DESC LIMIT ?""",
         (tu, MAX_FAILURES_IP, _SO_MUC_CHU_Y),
     ):
         ds.append({
             "muc": "loi",
-            "noi_dung": f"Máy {r['ip_address']} đăng nhập sai {r['n']} lần vào {r['so_tk']} tài khoản",
+            "noi_dung": (f"Máy {r['ip_address']} nhập sai mật khẩu {r['n']} lần vào "
+                         f"{r['so_tk']} tài khoản trong ngày"),
             "thoi_gian": str(r["cuoi"])[:16], "tab": "dang-nhap",
-            "loc": {"success": "false", "q": r["ip_address"], "tu_ngay": tu},
+            "loc": {"success": "false", "ip": r["ip_address"],
+                    "tu_ngay": r["ngay"], "den_ngay": r["ngay"]},
         })
     return ds
 
@@ -655,16 +683,18 @@ def get_tong_quan(
     # `def` chứ không `async def`: quét app.log tới vài MB, phải nằm trong bể luồng
     from datetime import datetime, timedelta
     from pathlib import Path
-    from backend.api.monitor import _file_log, _quet_log
+    from backend.api.monitor import _quet_log
 
     tu = (_vn_now() - timedelta(days=so_ngay - 1)).strftime("%Y-%m-%d")
 
     def dem(sql: str) -> int:
         return db.execute(sql, (tu,)).fetchone()[0]
 
-    # Giờ trong app.log là giờ máy (formatter logging), không phải _vn_now()
+    # Giờ trong app.log là giờ máy (formatter logging), không phải _vn_now().
+    # Chỉ app.log — đúng file tab Lỗi hệ thống đọc. Đếm cả app.log.1–3 (_file_log) thì
+    # thẻ báo 120 lỗi mà bấm vào ra 15, mục chú ý lấy từ file cũ bấm vào ra rỗng.
     moc = datetime.strptime(tu, "%Y-%m-%d")
-    nk = _quet_log(_file_log(Path(_LOG_PATH), moc), moc, so_loi_gan=2000)
+    nk = _quet_log([Path(_LOG_PATH)], moc, so_loi_gan=2000)
     return {
         "tu_ngay": tu,
         "so": {
