@@ -168,20 +168,11 @@ MENU_TREE = [
     },
 ]
 
-# Hai nhóm dưới đây trước nằm inline trong _sidebar(). Tách ra module-level để
+# Nhóm dưới đây trước nằm inline trong _sidebar(). Tách ra module-level để
 # breadcrumb đọc được — nếu không sẽ phải chép lại nhãn ở chỗ thứ hai và hai
 # bản sao sẽ lệch nhau ngay lần đổi tên đầu tiên.
-DEPT_NHATKY = {
-    "id": "nhatky",
-    "label": "Nhật ký hệ thống",
-    "icon": "terminal",
-    "items": [
-        ("audit-logs", "Nhật ký hệ thống",        "history"),
-        ("logs",       "Lịch sử lỗi & cảnh báo", "error_outline"),
-        ("login-logs", "Nhật ký đăng nhập",       "login"),
-    ],
-}
-
+# (Nhật ký hệ thống từng là nhóm 3 mục; nay là một mục phẳng, 4 tab bên trong —
+# xem frontend/pages/nhat_ky/.)
 DEPT_PHANQUYEN = {
     "id": "phanquyen",
     "label": "Phân quyền chức năng",
@@ -204,7 +195,7 @@ def _build_breadcrumbs() -> dict[str, list[str]]:
         return out
 
     paths: dict[str, list[str]] = {}
-    for node in [*MENU_TREE, DEPT_NHATKY, DEPT_PHANQUYEN]:
+    for node in [*MENU_TREE, DEPT_PHANQUYEN]:
         # Menu phẳng cấp 1: đường dẫn 1 đoạn → _current_breadcrumb() tự bỏ qua,
         # tiêu đề trang không bị lặp lại chính nó.
         if isinstance(node, tuple):
@@ -686,7 +677,7 @@ async def _sidebar(current_page: str) -> dict:
 
             # Nhật ký hệ thống — admin luôn thấy, user khác cần feature
             if user_role == "admin" or api.has_feature("menu.logs"):
-                _dept_group(DEPT_NHATKY, current_page, check_features=False)
+                _nav_item("audit-logs", "Nhật ký hệ thống", "history", current_page)
 
             # Phân quyền chức năng — hai cấp quản trị, hard-coded (không phải
             # feature): nếu gate bằng feature thì ai được cấp feature đó sẽ tự

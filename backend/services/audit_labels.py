@@ -145,6 +145,16 @@ MODULES = [
     # "/api/cham459901" là tiền tố chuỗi của "/api/cham459901_000000000".
     ("/api/cham459901_000000000",  "chấm 459901-1000-000000000"),
     ("/api/cham459901",            "chấm 459901"),
+    ("/api/ilo1000",               "chấm ILO1000"),
+    ("/api/doi_chieu_osb",         "đối chiếu OSB"),
+    # -nostro phải đứng TRƯỚC: tra theo tiền tố, dòng dưới cũng khớp đường của nó
+    ("/api/doi-chieu-citad-nostro", "đối chiếu CITAD - PaymentHub"),
+    ("/api/doi-chieu-citad",       "đối chiếu CITAD cuối ngày"),
+    ("/api/doi-soat-citad",        "đối soát chênh lệch CITAD"),
+    ("/api/so-truc",               "sổ trực cuối ngày"),
+    ("/api/thi-dua",               "thi đua khen thưởng"),
+    ("/api/xep-loai",              "xếp loại lao động"),
+    ("/api/ttqt-branches",         "danh sách CN TTQT"),
     ("/api/th-reports",            "báo cáo Tổng hợp"),
     ("/api/reports",               "báo cáo hậu kiểm"),
     ("/api/departments",           "phòng ban"),
@@ -181,7 +191,10 @@ def describe_result(detail: str, action: str) -> str:
         return "Thành công"           # write_audit chỉ ghi khi thao tác thành công
     m = re.search(r"HTTP\s+(\d+)", detail or "")
     if not m:
-        return detail or "—"
+        # Dòng middleware mang mô tả tự viết (token Extension sai — doi_chieu_citad.py):
+        # result_ok() coi là thất bại; câu mô tả đã nằm ở cột Chi tiết, lặp lại ở ô
+        # Kết quả chỉ làm ô đó dài tràn hàng.
+        return "Thất bại" if detail else "—"
     code = int(m.group(1))
     if code < 300:
         return "Thành công"
@@ -213,6 +226,28 @@ def describe_detail(detail: str) -> str:
     """
     d = (detail or "").strip()
     return _TIEN_TO_HTTP.sub("", d).strip()
+
+
+_SO_RE = re.compile(r"/(\d+)(?=/|$)")
+
+
+def describe_target(target_type: str) -> dict | None:
+    """Hồ sơ bị tác động, suy từ đường dẫn: '/api/leaves/123/cancel' →
+    {"nhan": "nghỉ phép #123", "khoa": "/api/leaves/123"}.
+
+    `khoa` là tham số `doi_tuong` của GET /audit — bấm vào nhãn là ra toàn bộ lịch
+    sử của hồ sơ đó. Lấy số ĐẦU TIÊN trong đường dẫn nên đường nào đặt năm lên trước
+    mã hồ sơ sẽ ra nhãn "#2026"; chấp nhận vì đó vẫn là một bộ lọc đúng (mọi thao
+    tác trên cùng đường ấy), chỉ nhãn là kém nghĩa.
+    """
+    p = target_type or ""
+    m = _SO_RE.search(p)
+    if not m:
+        return None
+    ten = next((n for pre, n in _MODULE if p.startswith(pre)), None)
+    if ten is None:
+        return None
+    return {"nhan": f"{ten} #{m.group(1)}", "khoa": p[:m.end()]}
 
 
 def result_ok(detail: str, action: str) -> bool:

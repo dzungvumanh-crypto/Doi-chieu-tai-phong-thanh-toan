@@ -4,6 +4,22 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 22/09/2026 Nhật ký hệ thống - **Gom 3 mục thành một màn, dễ tra hơn**
+    + ✅ Ba mục menu cũ (Nhật ký hệ thống, Lịch sử lỗi & cảnh báo, Nhật ký đăng nhập) nay là **một mục** với 4 tab:
+      *Tổng quan · Thao tác · Đăng nhập · Lỗi hệ thống*
+    + ✅ Tab **Tổng quan** mở ra đầu tiên: hôm nay / 7 ngày / 30 ngày có bao nhiêu thao tác, bao nhiêu thao tác
+      thất bại, đăng nhập thất bại, lỗi hệ thống — và danh sách **"Cần chú ý"** (tài khoản bị nhập sai mật khẩu nhiều
+      lần, thao tác thất bại lặp lại, lỗi lặp lại). Bấm vào mục nào là ra đúng danh sách đó
+    + ✅ Lọc là ra ngay, không còn nút "Áp dụng lọc". Có nút chọn nhanh Hôm nay / 7 ngày / 30 ngày, lọc riêng
+      **thao tác thất bại**, và các điều kiện đang lọc hiện thành thẻ có dấu ✕ để bỏ từng cái
+    + ✅ Bấm **tên người** để chỉ xem người đó; bấm nhãn hồ sơ (vd *nghỉ phép #123*) để xem **toàn bộ lịch sử** của
+      hồ sơ ấy; bấm một dòng để xem chi tiết và các thao tác khác của cùng người trong 10 phút quanh đó
+    + ✅ Nhật ký đăng nhập tìm được theo tên, tài khoản, địa chỉ máy; lượt nghi dò mật khẩu được tô đỏ
+    + ✅ Sửa lỗi: nút lọc "Sửa" trước đây bỏ sót các thao tác như huỷ đơn nghỉ phép, sửa lưu trữ tập chứng từ
+    + ✅ Có thể gửi đường link màn hình đang lọc cho đồng nghiệp — họ mở ra thấy đúng danh sách đó
+    + ℹ️ Nút **Tải bản sao CSDL** chuyển sang tab Tổng quan. Không cần phân quyền lại — ai đang xem được Nhật ký thì
+      xem được cả 4 tab
+
 - 22/09/2026 Công việc chờ xử lý - **Chứng từ chờ xác nhận: ngày bàn giao lại sau mượn, ghi chú hiện đủ**
     + ✅ Chứng từ **bàn giao lại sau khi mượn** nay hiện **ngày trả lại**, không còn hiện ngày nộp lần đầu; dưới ngày
       có dòng "(bàn giao lại)" để phân biệt với chứng từ nộp mới
