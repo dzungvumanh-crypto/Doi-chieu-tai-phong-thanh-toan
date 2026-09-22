@@ -19731,6 +19731,82 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">158</span>
+      <span class="card-title">Menu Giám sát hệ thống — <code>/monitor</code> + <code>/api/admin/monitor/overview</code> (2026-09-22)</span>
+      <span class="badge badge-done">Hoàn thiện</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-blue">Thiết kế</span> gom số liệu đã có, không thêm bộ đo chạy nền</div>
+      <p>Gần như mọi con số đã tồn tại nhưng rải rác: tải bên trong backend chỉ hiện trong dòng log "Request chậm", backup + lệch giờ
+        nằm ở thanh công cụ màn Nhật ký, phiên đối chiếu chỉ lộ ra khi bị 409. Màn mới đọc lại đúng các nguồn đó; phần đo thêm
+        (RAM/CPU máy, dung lượng thư mục, đếm log 24 h) chỉ chạy <b>khi có người mở trang</b>.</p>
+      <table>
+        <tr><th>Quyết định</th><th>Chọn</th><th>Vì sao</th></tr>
+        <tr><td>Mã quyền</td><td><b><code>menu.monitor</code> riêng</b>, không dùng lại <code>menu.logs</code></td>
+          <td>Xem tải máy chủ ≠ đọc nhật ký ai làm gì. Gộp chung thì cấp cho người vận hành xem máy là lộ luôn nhật ký thao tác.
+            Hệ quả: nhóm đang có <code>menu.logs</code> <b>không tự thấy</b> menu mới — admin phải tick thêm ở màn Phân quyền</td></tr>
+        <tr><td>RAM / CPU</td><td>ctypes (<code>GlobalMemoryStatusEx</code>, <code>GetSystemTimes</code>)</td>
+          <td>Không thêm <code>psutil</code> vào requirements (thêm gói = thêm bước cài trên máy chủ). Máy không phải Windows → hiện "—"</td></tr>
+        <tr><td>CPU</td><td>Lấy mẫu 0,3 s ngay trong request</td>
+          <td>Lưu mẫu toàn cục giữa hai lần gọi thì nhiều người mở trang cùng lúc làm số lẫn nhau. Ngủ trong luồng nhả GIL, chỉ giữ 1 luồng/0,3 s</td></tr>
+        <tr><td>Số liệu tải</td><td>Tách <code>slow_request.so_lieu_tai()</code> trả dict; <code>trang_thai()</code> định dạng từ đó</td>
+          <td>Một nguồn cho hai chỗ đọc. Dòng log giữ nguyên từng chữ — <code>test_slow_request</code> vẫn xanh</td></tr>
+        <tr><td>Endpoint</td><td><code>async def</code>; phần đụng đĩa/CSDL/NTP qua <code>anyio.to_thread.run_sync</code></td>
+          <td>Bộ đếm luồng của anyio phải đọc trên event loop; phần chặn đi bể 40 luồng như endpoint <code>def</code>. Không <code>asyncio.to_thread</code> (DESIGN.md)</td></tr>
+        <tr><td>Đếm log 24 h</td><td>Cắt chuỗi theo vị trí cố định, không regex từng dòng</td>
+          <td>app.log tới 5 MB, trang tự làm mới 30 s. Giờ trong log là giờ <b>máy</b> (logging dùng localtime) → so bằng <code>datetime.now()</code>, không <code>_vn_now()</code>.
+            Đọc thêm <code>app.log.1</code> khi file hiện tại mới xoay vòng trong 24 h</td></tr>
+        <tr><td>Ngưỡng cảnh báo</td><td>Backend tính (<code>danh_gia()</code>, hàm thuần)</td>
+          <td>Frontend chỉ vẽ — một bảng ngưỡng duy nhất, test được không cần máy thật</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-amber">Ngưỡng</span> chọn theo lịch vận hành hiện có — chỉnh ở đầu <code>backend/api/monitor.py</code></div>
+      <table>
+        <tr><th>Mục</th><th>Cảnh báo</th><th>Lỗi</th></tr>
+        <tr><td>Ổ đĩa còn trống</td><td>&lt; 15 % hoặc &lt; 10 GB</td><td>&lt; 5 % hoặc &lt; 2 GB</td></tr>
+        <tr><td>Sao lưu tự động</td><td>≥ 26 giờ (lịch 24 h + dư 2 h)</td><td>≥ 50 giờ, hoặc chưa có bản nào</td></tr>
+        <tr><td>Backend đứng liền (1 phút)</td><td>≥ 1000 ms</td><td>—</td></tr>
+        <tr><td>Xếp hàng chờ luồng / chờ kết nối CSDL</td><td>&gt; 0</td><td>—</td></tr>
+        <tr><td>RAM máy · WAL · đăng nhập sai 24 h · hàng đợi nhật ký</td><td>≥ 90 % · &gt; 200 MB · ≥ 20 · ≥ 10 % sức chứa</td><td>—</td></tr>
+        <tr><td>Có dòng ERROR trong 24 h</td><td>&gt; 0</td><td>—</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-amber">Giới hạn đã biết</span></div>
+      <ul>
+        <li>"Backend chạy được" tính từ lúc module router được nạp, không phải lúc tiến trình tạo — lệch vài giây lúc khởi động.</li>
+        <li>RAM backend là working set của <b>riêng</b> tiến trình backend; tiến trình con đối chiếu không cộng vào.</li>
+        <li>Trang không nói gì về tiến trình <b>frontend</b> (NiceGUI) — nó là tiến trình khác, backend không nhìn thấy.</li>
+        <li>Máy dev không chạy backend liên tục nên luôn báo "sao lưu trễ" — đúng sự thật, không phải lỗi.</li>
+      </ul>
+
+      <div class="label"><span class="pill pill-green">Kiểm</span></div>
+      <ul>
+        <li><code>tests/test_monitor.py</code>: 403 khi không quyền và khi chỉ có <code>menu.logs</code>; đếm đăng nhập đúng cửa sổ 24 h; không lộ đường dẫn backup;
+          đếm log bỏ dòng traceback; xoay vòng log; <code>danh_gia()</code> lỗi xếp trước cảnh báo.</li>
+        <li>Chạy bộ thu thập trên CSDL thật (chỉ đọc) của máy dev: CPU, RAM, ổ D:, NTP ra số hợp lý.</li>
+      </ul>
+
+      <div class="label"><span class="pill pill-red">Phản biện</span> 1 lượt Sonnet — 4 lỗi có bằng chứng, đã sửa 4, giữ nguyên 1 điểm</div>
+      <table>
+        <tr><th>Lỗi</th><th>Sửa</th></tr>
+        <tr><td>Tải lỗi → banner <b>xanh</b> lần trước vẫn nằm đó ("xanh khi đang hỏng")</td>
+          <td>Frontend xoá khung, vẽ banner đỏ "Không lấy được số liệu". Backend bọc <code>so_lieu_tai()</code> — hỏng thì khối đó báo lỗi, không 500 cả màn</td></tr>
+        <tr><td>Người chỉ có <code>menu.monitor</code> đọc được nội dung 5 dòng lỗi + <code>job_id</code>/<code>task_token</code> đối chiếu</td>
+          <td><code>loi_gan</code> chỉ trả khi có <code>menu.logs</code> (tách <code>deps.co_quyen()</code> từ <code>require_feature</code>, một câu SQL); job chỉ còn module/trạng thái/tuổi</td></tr>
+        <tr><td>Chỉ đọc <code>app.log.1</code>, <code>backupCount=3</code> → lúc log tuôn nhiều thì đếm hụt</td>
+          <td>Đọc lần lượt tới <code>.3</code> chừng nào file còn bắt đầu sau mốc; vẫn hụt thì báo "số đếm có thể thiếu"</td></tr>
+        <tr><td>Không đọc được dung lượng ổ → im lặng xanh</td><td>Thêm cảnh báo</td></tr>
+      </table>
+      <p><b>Không sửa:</b> "giữ kết nối CSDL suốt request". <code>require_feature</code> đã mượn kết nối qua <code>get_db</code>, dependency sống tới hết
+        request — bỏ <code>get_db</code> ở endpoint không rút ngắn được gì. Chi phí thật: 1/48 kết nối × ~0,4 s mỗi 30 s mỗi tab. Thêm ngưỡng
+        request chậm riêng 5 s cho <code>/api/admin/monitor</code> để lượt hỏi NTP khi hết cache không tự đẻ cảnh báo.
+        Không thêm breadcrumb: mục phẳng cấp 1 cố ý không có (cùng luật mọi mục phẳng).</p>
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-22</footer>
 </div>
 </body>
