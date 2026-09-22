@@ -28,6 +28,7 @@ _log = logging.getLogger("slow.request")
 # Đây là những đường CHẬM LÀ BÌNH THƯỜNG; chậm hơn cả mức này mới đáng kêu.
 _NGUONG_RIENG = (
     ("/api/leaves/preview", 8000),               # Word dựng bản in: lần đầu 5–7 s (DESIGN.md)
+    ("/api/admin/monitor", 5000),                # đo CPU 0,3 s + hỏi NTP khi hết cache (tới 3 s)
     ("/api/ach", 10000),                         # nộp + chạy đối chiếu, file hàng trăm MB
     ("/api/ilo1000", 10000),
     ("/api/cham459901", 10000),
@@ -141,29 +142,51 @@ def tre_loop_ms(tu: float) -> "tuple[float, float] | None":
     return max(mau) * 1000, sum(max(0.0, t - _NEN_GIAY) for t in mau) * 1000
 
 
+def so_lieu_tai(tu: float) -> dict:
+    """Số liệu tải bên trong backend kể từ mốc `tu` (monotonic). CÓ THỂ raise.
+
+    Phải gọi trên event loop: bộ đếm luồng của anyio gắn theo loop đang chạy. Dùng
+    chung cho dòng "Request chậm" và màn Giám sát hệ thống — một nguồn, hai chỗ đọc.
+    """
+    from backend import database as _db
+    from backend.core import concurrency as _cc, phien_doi_chieu as _pdc
+
+    tre = tre_loop_ms(tu)
+    lim = anyio.to_thread.current_default_thread_limiter()
+    be = _db.pool_stats()
+    cong = _db._cong_db
+    xep = cong[1].statistics().tasks_waiting if cong and cong[0] is asyncio.get_running_loop() else 0
+    nang = _cc.heavy_stats()
+    return {
+        "loop_chan_max_ms": None if tre is None else round(tre[0]),
+        "loop_tre_tong_ms": None if tre is None else round(tre[1]),
+        "luong_dung": lim.borrowed_tokens,
+        "luong_toi_da": round(lim.total_tokens),
+        "luong_cho": lim.statistics().tasks_waiting,
+        "csdl_dang_muon": be["dang_muon"],
+        "csdl_toi_da": be["toi_da"],
+        "csdl_xep_cong": xep,
+        "dang_xu_ly": _dang_xu_ly,
+        "nang_dang_chay": nang["dang_chay"],
+        "nang_dang_cho": nang["dang_cho"],
+        "nang_toi_da": nang["max"],
+        "doi_chieu": _pdc.dang_chay(),
+    }
+
+
 def trang_thai(tu: float) -> str:
     """Một dòng ngắn: loop, luồng, kết nối CSDL, tải. Không bao giờ raise."""
     try:
-        from backend import database as _db
-        from backend.core import concurrency as _cc, phien_doi_chieu as _pdc
-
-        phan = []
-        tre = tre_loop_ms(tu)
-        phan.append("loop trễ không đo" if tre is None
-                    else f"loop chặn tối đa {round(tre[0])} ms, trễ tổng {round(tre[1])} ms")
-
-        lim = anyio.to_thread.current_default_thread_limiter()
-        phan.append(f"luồng {lim.borrowed_tokens}/{round(lim.total_tokens)} chờ {lim.statistics().tasks_waiting}")
-
-        be = _db.pool_stats()
-        cong = _db._cong_db
-        xep = cong[1].statistics().tasks_waiting if cong and cong[0] is asyncio.get_running_loop() else 0
-        phan.append(f"kết nối CSDL {be['dang_muon']}/{be['toi_da']} xếp cổng {xep}")
-
-        phan.append(f"đang xử lý {_dang_xu_ly}")
-        nang = _cc._limiter
-        phan.append(f"việc nặng {nang.borrowed_tokens if nang else 0}/{_cc.MAX_HEAVY}")
-        phan.append(f"đối chiếu {len(_pdc.dang_chay())}")
+        s = so_lieu_tai(tu)
+        phan = [
+            "loop trễ không đo" if s["loop_chan_max_ms"] is None
+            else f"loop chặn tối đa {s['loop_chan_max_ms']} ms, trễ tổng {s['loop_tre_tong_ms']} ms",
+            f"luồng {s['luong_dung']}/{s['luong_toi_da']} chờ {s['luong_cho']}",
+            f"kết nối CSDL {s['csdl_dang_muon']}/{s['csdl_toi_da']} xếp cổng {s['csdl_xep_cong']}",
+            f"đang xử lý {s['dang_xu_ly']}",
+            f"việc nặng {s['nang_dang_chay']}/{s['nang_toi_da']}",
+            f"đối chiếu {len(s['doi_chieu'])}",
+        ]
         return " · ".join(phan)
     except Exception as exc:
         # Chụp trạng thái chỉ để chẩn đoán — hỏng thì vẫn phải ghi được dòng cảnh báo chính

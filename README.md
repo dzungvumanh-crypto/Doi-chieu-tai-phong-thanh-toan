@@ -190,6 +190,7 @@ Truy cập:
 │   │   ├── doi_chieu_song_phuong.py # Đối chiếu song phương (định tuyến lệnh IPCAS)
 │   │   ├── ttqt_branches.py # Danh mục CN thực hiện TTQT (CRUD + import/export Excel)
 │   │   ├── logs.py          # Nhật ký hệ thống (admin)
+│   │   ├── monitor.py       # Giám sát hệ thống — tổng quan tải, CSDL, ổ đĩa, sao lưu (menu.monitor)
 │   │   └── holidays.py      # Quản lý ngày lễ (admin)
 │   └── services/
 │       ├── bundle_service.py       # Thuật toán gom tập (max 350 tờ)
@@ -330,13 +331,19 @@ Request vượt số kết nối thì xếp hàng chờ (tối đa 30 giây, qu�
 - Quản lý nhóm cán bộ và phân quyền tính năng theo nhóm
 - Dashboard tổng quan: KPI người dùng & phòng nghiệp vụ, bảng nghỉ phép hôm nay theo phòng, biểu đồ cột tỷ lệ nộp chứng từ đúng hạn/muộn theo 4 phòng (chọn tháng/năm để xem). **Mọi vai trò đều vào Trang chủ sau khi đăng nhập**
 - **Chủ đề kỷ niệm 2-9**: từ 25/8 đến hết 3/9 hằng năm, Trang chủ và trang Đăng nhập tự đổi nền + hiện khẩu hiệu chào mừng Cách mạng Tháng Tám và Quốc khánh; hết khoảng ngày tự trở lại giao diện thường. Khoảng ngày và nội dung nằm trong `frontend/le_29.py`
-- **Công việc chờ xử lý**: khối ở đầu sidebar, hiện trên mọi trang — số chứng từ chờ xác nhận và đơn nghỉ phép chờ duyệt của **chính người đang đăng nhập**; bấm vào mở màn hình theo dõi `/pending/<loại>` có đủ chi tiết và link nhảy thẳng tới ô cần xử lý
+- **Công việc chờ xử lý**: khối ở đầu sidebar, hiện trên mọi trang — số chứng từ chờ xác nhận và đơn nghỉ phép chờ duyệt của **chính người đang đăng nhập**; bấm vào mở màn hình theo dõi `/pending/<loại>` có đủ chi tiết và link nhảy thẳng tới ô cần xử lý. Với chứng từ, cột *Ngày bàn giao* của lượt **bàn giao lại sau mượn** là ngày trả lại (kèm dòng "(bàn giao lại)"); cột *Ghi chú* là ghi chú của ô ở màn Bàn giao chứng từ
 - **Nhật ký thao tác** (audit log): middleware ghi tập trung mọi request thay đổi dữ liệu (POST/PUT/PATCH/DELETE) vào bảng `audit_logs` — ai, làm gì, kết quả HTTP, IP, thời gian; tự dọn sau 365 ngày
   - **Kèm tóm tắt dữ liệu gửi lên** (`backend/core/audit_body.py`): query string + body JSON, để cột *Chi tiết* nói được **đã sửa cái gì** chứ không chỉ "HTTP 200". Ba giới hạn cố ý — chỉ đọc body JSON ≤ 8 KB (bỏ qua multipart/file), **che khoá nhạy cảm** (mật khẩu, token, ảnh chữ ký — nhật ký xuất Excel được nên coi như đã công khai), và cắt còn tối đa 800 ký tự
   - **Không ghi request không phải thao tác nghiệp vụ** (`_SKIP_EXACT` trong `audit_middleware.py`): mở màn Nghỉ phép (bật sẵn Word), bấm "Đã hiểu" thông báo, xem trước đơn / file hạn mức, dò tên file ACH, kiểm tra đủ file Song phương. Lập đơn, duyệt, chạy / dừng đối chiếu vẫn ghi
   - **Bấm một dòng** để mở hộp thoại xem đầy đủ, kể cả nguyên văn bản ghi
   - **Lọc** theo phương thức, từ khoá, **khoảng ngày, người thao tác, module** (`GET /api/admin/logs/audit/filters` đổ dữ liệu vào hai ô chọn — chỉ liệt kê người đã thực sự có dòng trong nhật ký)
 - Nhật ký đăng nhập và nhật ký lỗi/cảnh báo hệ thống (admin xem, lọc theo user/thời gian)
+- **Giám sát hệ thống** (`/monitor`, mã quyền `menu.monitor` — tách khỏi `menu.logs`): một màn tổng quan tự làm
+  mới 30 giây — trạng thái chung xanh/cam/đỏ kèm danh sách vấn đề; CPU/RAM máy chủ, RAM backend; tải hiện tại (request
+  đang xử lý, luồng, kết nối CSDL, việc nặng, backend có bị đứng trong 1 phút qua); CSDL đọc được không + dung lượng
+  file/WAL/sao lưu/nhật ký/file tạm, dung lượng ổ còn trống; sao lưu tự động gần nhất, lệch giờ NTP; người dùng 24 giờ
+  (phiên, đăng nhập đúng/sai, tài khoản bị khoá, thao tác ghi); lượt đối chiếu đang chạy, Word nền; số lỗi/cảnh báo/
+  request chậm trong `app.log` 24 giờ + 5 lỗi gần nhất. Chỉ đọc. Ngưỡng cảnh báo ở đầu `backend/api/monitor.py`
 - **Ảnh chữ ký cá nhân** (menu *Quản lý người dùng*, mọi vai trò kể cả chuyên viên): tải lên ảnh
   **PNG nền trong suốt**, tối đa 2 MB, mỗi người một ảnh. Ảnh lưu trong DB (bảng `user_signatures`)
   nên đi cùng bản sao lưu `.db`; chỉ xem/sửa/xoá được ảnh **của chính mình**. Dùng để ký đơn nghỉ phép

@@ -19,6 +19,7 @@ from backend.api.handover_reports import router as handover_reports_router
 from backend.api.holidays import router as holidays_router
 from backend.api.leaves import router as leaves_router
 from backend.api.logs import router as logs_router
+from backend.api.monitor import router as monitor_router
 from backend.api.reports import router as reports_router
 from backend.api.staff import router as staff_router
 from backend.api.th_reports import router as th_reports_router
@@ -62,6 +63,7 @@ _ROUTERS = [
     (leaves_router,      {"prefix": "/api/leaves",         "tags": ["leaves"]}),
     (delegations_router, {"prefix": "/api/delegations",    "tags": ["delegations"]}),
     (logs_router,        {"prefix": "/api/admin/logs",     "tags": ["admin-logs"]}),
+    (monitor_router,     {"prefix": "/api/admin/monitor",  "tags": ["admin-monitor"]}),
     (dashboard_router,   {"prefix": "/api/dashboard",      "tags": ["dashboard"]}),
     (holidays_router,    {"prefix": "/api/admin/holidays", "tags": ["holidays"]}),
     (reports_router,     {}),

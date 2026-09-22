@@ -21,6 +21,8 @@ FEATURES: dict[str, str] = {
     "menu.th_reports":         "Báo cáo dữ liệu thanh toán (menu)",
     "menu.staff":              "Quản lý User (menu)",
     "menu.logs":               "Nhật ký hệ thống (menu)",
+    # Tách khỏi menu.logs: xem tải máy chủ khác quyền đọc nhật ký (ai làm gì) — xem backend/api/monitor.py
+    "menu.monitor":            "Giám sát hệ thống (menu)",
     "menu.ttqt_branches":      "Danh sách CN TTQT (menu)",
 
     # Bàn giao chứng từ — thao tác
@@ -467,6 +469,7 @@ FEATURE_GROUPS: list[dict] = [
                         ],
                     },
                     {"code": "menu.logs", "actions": []},
+                    {"code": "menu.monitor", "actions": []},
                 ],
             },
         ],
