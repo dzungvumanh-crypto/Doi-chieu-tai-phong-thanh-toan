@@ -53,6 +53,54 @@
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
   <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-09-21</p>
 
+  <!-- BG3 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">BG3</span>
+      <span class="card-title">Chứng từ chờ xác nhận — bàn giao lại sau mượn hiện ngày trả, ghi chú hiện đủ</span>
+      <span class="badge badge-info">Chưa commit — 22/09/2026</span>
+    </div>
+    <div class="card-body">
+
+      <table>
+        <tr><th style="width:30%">Quyết định</th><th>Vì sao</th></tr>
+        <tr><td>Chỉ đổi ngày ở <code>/api/dashboard/pending-items</code>, KHÔNG đổi <code>submitted_at_sql()</code></td>
+          <td>Hàm đó là nguồn chung của báo cáo đúng hạn / quá hạn và lịch sử ô. Đổi ở đó thì chứng từ nộp đúng hạn,
+            mượn ra rồi trả sau 2 tuần sẽ thành "quá hạn" trên báo cáo đã ký. Màn theo dõi cần biết "chứng từ quay về
+            hôm nào"; báo cáo cần "nộp lần đầu hôm nào" — hai câu hỏi khác nhau.</td></tr>
+        <tr><td>Nhận biết lượt trả = <code>MAX(returned)</code> mới hơn ngày nộp còn hiệu lực</td>
+          <td>Không đọc "log cuối là <code>returned</code>": trả xong mà sửa ghi chú thì log cuối là
+            <code>note_edited</code> (cùng bẫy card BG2 đã gặp ở <code>reject_entry()</code>). So với ngày nộp để một
+            lượt trả cũ đã xác nhận không đè lên lần nộp mới sau khi bị từ chối.</td></tr>
+        <tr><td>Thêm dòng "(bàn giao lại)" dưới ngày</td>
+          <td>Cùng một cột mà hai nghĩa ngày khác nhau — không ghi rõ thì người xác nhận so với ngày chứng từ sẽ tưởng
+            GDV nộp trễ.</td></tr>
+        <tr><td>Ghi chú: không phải thêm nguồn</td>
+          <td>Cột đã đọc <code>de.notes</code> từ trước, BG2 ghi vào đúng cột đó. Việc thật là bỏ <code>truncate</code>
+            — ghi chú giải trình dài bị cắt còn một dòng, trông như trống.</td></tr>
+      </table>
+
+      <p class="caution"><b>Phản biện bắt được, đã sửa:</b> <i>yêu cầu mượn</i> cũng đưa ô về <code>pending_confirm</code>
+        (<code>borrow_entry()</code>). Ô từng mượn–trả rồi xin mượn lần hai có <code>returned</code> mới hơn ngày nộp → bị gắn
+        "(bàn giao lại)" kèm ngày trả cũ. Nay loại ô có <code>borrow_reason</code>.</p>
+
+      <table>
+        <tr><th style="width:30%">Chưa làm / để ý</th><th>Chi tiết</th></tr>
+        <tr><td>Hai màn, hai "Ngày bàn giao"</td>
+          <td>Ngăn lịch sử ở màn Bàn giao chứng từ vẫn hiện ngày nộp <b>lần đầu</b> (cùng nguồn báo cáo đúng hạn). Bấm
+            "Chuyển đến trang" từ màn chờ sẽ thấy ngày khác. Để nguyên: ngăn đó là ngày tính hạn; dòng "(bàn giao lại)"
+            bên màn chờ nói rõ đây là ngày khác.</td></tr>
+        <tr><td>GDV sửa số tờ sau khi bàn giao lại</td>
+          <td><code>entry-upsert</code> ghi log <code>handover</code> → màn chờ vẫn hiện "(bàn giao lại)", nhưng
+            <code>reject_entry()</code> xét log cuối là <code>handover</code> nên từ chối theo kiểu chứng từ mới (→ Bị từ
+            chối, không về Đang mượn). Lỗi có từ trước, ngoài phạm vi yêu cầu — chưa sửa.</td></tr>
+      </table>
+
+      <p class="note">Test: <code>tests/test_pending_ngay_ban_giao_lai.py</code> — nộp lần đầu, trả sau mượn có sửa ghi
+        chú, lượt trả cũ + từ chối + nộp mới, và xin mượn lần hai sau lượt trả đã xác nhận.</p>
+    </div>
+  </div>
+
   <!-- BG2 -->
   <div class="card">
     <div class="card-header">

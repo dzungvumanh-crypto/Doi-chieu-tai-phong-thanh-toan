@@ -72,8 +72,12 @@ def _render_row(kind: str, it: dict):
             (f'{it["staff_name"]}' + (f' · {it["staff_code"]}' if it["staff_code"] else ""), ""),
             (f'{it["sheet_count"]:,}', "font-semibold text-blue-800"),
             (it["entered_by_name"] or "—", ""),
-            (_dmy(it.get("submit_date")) or "—", "whitespace-nowrap"),
-            (it["notes"] or "—", "text-xs text-gray-500 max-w-[16rem] truncate"),
+            # Bàn giao lại sau mượn: backend đã đổi sang ngày trả, ghi rõ để khỏi nhầm lần nộp đầu
+            ((_dmy(it.get("submit_date")) or "—")
+             + ("\n(bàn giao lại)" if it.get("is_handback") else ""),
+             "whitespace-pre-line"),
+            # Ghi chú nhập ở màn Bàn giao chứng từ — hiện đủ, không cắt một dòng
+            (it["notes"] or "—", "text-xs text-gray-500 whitespace-pre-line break-words"),
         ]
     elif kind == "surveys":
         dl = it.get("deadline") or ""

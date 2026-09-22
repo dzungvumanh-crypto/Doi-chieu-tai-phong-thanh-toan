@@ -4,6 +4,12 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 22/09/2026 Công việc chờ xử lý - **Chứng từ chờ xác nhận: ngày bàn giao lại sau mượn, ghi chú hiện đủ**
+    + ✅ Chứng từ **bàn giao lại sau khi mượn** nay hiện **ngày trả lại**, không còn hiện ngày nộp lần đầu; dưới ngày
+      có dòng "(bàn giao lại)" để phân biệt với chứng từ nộp mới
+    + ✅ Cột **Ghi chú** hiện đủ nội dung ghi chú nhập ở màn Bàn giao chứng từ (trước đây bị cắt còn một dòng)
+    + ℹ️ Báo cáo đúng hạn / quá hạn **không đổi** — vẫn tính theo lần nộp đầu tiên
+
 - 22/09/2026 Quản lý hệ thống - **Màn hình mới: Giám sát hệ thống**
     + ✅ Một màn xem nhanh tình trạng toàn hệ thống: máy chủ còn khoẻ không (CPU, bộ nhớ, ổ đĩa còn trống),
       hệ thống đang bận tới đâu, cơ sở dữ liệu đọc được không, sao lưu tự động lần cuối lúc nào, đồng hồ máy chủ
