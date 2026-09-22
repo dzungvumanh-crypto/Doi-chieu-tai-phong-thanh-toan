@@ -82,6 +82,10 @@ FEATURES: dict[str, str] = {
     "menu.cham_459901":    "Chấm 459901 — Phân loại bút toán TK 459901 (menu)",
     "cham_459901.process": "Xử lý file 459901 (ZIP hoặc Excel)",
 
+    # Chấm 459901-1000-000000000 — Phòng Thanh toán (sổ khác với 1000-000007709 ở trên)
+    "menu.cham_459901_000000000":    "Chấm TK 459901-1000-000000000 — Cân ITT / Điện KO offline / GD khác (menu)",
+    "cham_459901_000000000.process": "Xử lý file TK 459901-1000-000000000 (ZIP hoặc Excel)",
+
     # Đối chiếu OSB — Phòng Thanh toán
     "menu.doi_chieu_osb":    "Đối chiếu OSB — GL02 <-> OSB TK 519910 (menu)",
     "doi_chieu_osb.process": "Chạy đối chiếu OSB",
@@ -259,6 +263,7 @@ FEATURE_GROUPS: list[dict] = [
                 "label": "Phòng Thanh toán",
                 "menus": [
                     {"code": "menu.cham_459901", "actions": ["cham_459901.process"]},
+                    {"code": "menu.cham_459901_000000000", "actions": ["cham_459901_000000000.process"]},
                     {"code": "menu.doi_chieu_osb", "actions": ["doi_chieu_osb.process"]},
                     {
                         "code": "menu.doi_chieu_song_phuong",

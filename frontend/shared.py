@@ -46,6 +46,7 @@ MENU_TREE = [
                 "icon": "payments",
                 "items": [
                     ("cham_459901",           "Chấm 459901",            "task_alt"),
+                    ("cham_459901_000000000", "Chấm TK 459901-1000-000000000",  "task_alt"),
                     ("doi_chieu_osb",         "Đối chiếu OSB",          "account_balance_wallet"),
                     ("doi_chieu_song_phuong", "Đối chiếu Song phương",  "account_balance"),
                     ("cham_ilo1000",          "Chấm ILO1000",           "checklist"),
