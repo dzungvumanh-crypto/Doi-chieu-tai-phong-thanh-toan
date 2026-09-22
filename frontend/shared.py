@@ -679,6 +679,10 @@ async def _sidebar(current_page: str) -> dict:
             if user_role == "admin" or api.has_feature("menu.staff"):
                 _nav_item("staff", "Quản lý User", "manage_accounts", current_page)
 
+            # Giám sát hệ thống — mã riêng, không đi chung menu.logs (xem backend/api/monitor.py)
+            if api.has_feature("menu.monitor"):
+                _nav_item("monitor", "Giám sát hệ thống", "speed", current_page)
+
             # Nhật ký hệ thống — admin luôn thấy, user khác cần feature
             if user_role == "admin" or api.has_feature("menu.logs"):
                 _dept_group(DEPT_NHATKY, current_page, check_features=False)

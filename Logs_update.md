@@ -4,6 +4,18 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 22/09/2026 Quản lý hệ thống - **Màn hình mới: Giám sát hệ thống**
+    + ✅ Một màn xem nhanh tình trạng toàn hệ thống: máy chủ còn khoẻ không (CPU, bộ nhớ, ổ đĩa còn trống),
+      hệ thống đang bận tới đâu, cơ sở dữ liệu đọc được không, sao lưu tự động lần cuối lúc nào, đồng hồ máy chủ
+      có lệch giờ không, bao nhiêu người đang đăng nhập, đối chiếu nào đang chạy, và số lỗi trong 24 giờ qua
+    + ✅ Dòng trên cùng báo **xanh / cam / đỏ** và liệt kê từng việc cần chú ý bằng câu dễ hiểu
+      (ví dụ "Ổ D: gần đầy — còn 1,8 GB"). Màn tự làm mới mỗi 30 giây, tắt được
+    + ⚠️ **Người vận hành phải làm một việc sau khi cập nhật**: Admin thấy menu ngay. Người khác cần vào
+      **Phân quyền theo nhóm** → mục *Quản lý hệ thống* → tick **"Giám sát hệ thống"**. Đây là quyền MỚI, tách riêng
+      khỏi "Nhật ký hệ thống" — nhóm đang xem được Nhật ký **không** tự có. Người vừa được tick phải **đăng xuất rồi
+      đăng nhập lại**
+    + ℹ️ Màn hình chỉ để xem, không có nút thao tác nào
+
 - 22/09/2026 Phân lịch trực - **Ngày lễ âm lịch không còn phụ thuộc phiên bản thư viện lịch âm**
     + ✅ Danh sách gợi ý ngày lễ (Tết, Giỗ Tổ) vẫn đủ khi thư viện lịch âm được nâng lên bản mới
     + ✅ Sửa lỗi: bảng ngày lễ dự phòng ghi Giỗ Tổ Hùng Vương 2026 là 28/04 — đúng là **26/04**. Bảng này nay bỏ;
