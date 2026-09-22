@@ -28,6 +28,40 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
       nếu máy thiếu thư viện lịch âm, `logs/app.log` ghi rõ dòng ERROR thay vì tự điền ngày
     + ℹ️ Không có thay đổi giao diện, không cần cài thêm gì
 
+- 21/09/2026 Đối chiếu → Phòng Thanh toán - **Màn hình MỚI "Chấm TK 459901-1000-000000000"**
+    + ⚠️ **Người vận hành phải làm một việc sau khi cập nhật**: vào **Phân quyền theo nhóm** → nhóm cần cấp →
+      mục *Đối chiếu → Phòng Thanh toán* → tick ô **"Chấm TK 459901-1000-000000000"** (và ô **"Xử lý file…"**
+      bên dưới để bấm được nút Xử lý). Đây là ô quyền MỚI, chưa nhóm nào có sẵn — không tick thì ngoài Admin
+      không ai thấy menu
+    + ⚠️ Người vừa được tick quyền phải **đăng xuất rồi đăng nhập lại** mới thấy menu — danh sách quyền chỉ nạp
+      lúc đăng nhập
+    + ✅ Chấm sổ **1000-000000000** (khác với sổ 1000-000007709 của màn "Chấm 459901" — màn đó **không đổi gì**):
+      tải file GL02 (zip hoặc Excel) + file tồn tháng trước (`459-mã 0…` hoặc `459_TON…`, không bắt buộc) → ra 3 file
+      Excel: **GD cân ITT** (cùng REFERENCE, Nợ = Có), **Điện KO offline** (cùng số tiền, Nợ = Có), **GD khác**
+      (còn lại, chấm thủ công)
+    + ✅ Đã chạy thử trên dữ liệu tháng 7 và tháng 8/2026 của phòng, **khớp từng dòng** với bản chấm tay:
+      tháng 7 = 940 / 42 / 6 dòng, tháng 8 = 428 / 30 / 6 dòng (tháng 8 chạy trên 2 file Excel thật, 1,2 triệu dòng, ~1 phút)
+    + ✅ Cả 3 file xuất ra có cột **STT** (số thứ tự 1, 2, 3…) ở cột A; dòng TỔNG CỘNG ở cột B
+    + ✅ Số tiền được so sánh **chính xác từng đồng** (không dung sai, không làm tròn)
+    + ✅ **Không còn tính sai âm thầm khi file đầu vào có vấn đề.** Chặn kèm giải thích: ô tiền là chữ (vd `1,000` — trước đây
+      bị hiểu thành 0), ô dạng `1.000` (mơ hồ giữa "một nghìn" và 1,000 — máy đọc thành 1, sai gấp 1000 lần), file thiếu cột
+      REFERENCE. Cảnh báo cam trên màn hình kết quả: có dòng trùng hoàn toàn (một file chọn hai lần / file tồn trùng GL02),
+      file Excel dài sát trần 1.048.576 dòng (nghi bị cắt bớt), GL02 không có dòng nào của TK
+    + ✅ Có nút **Reset** cạnh nút Xử lý để bỏ file đã chọn + kết quả trên màn hình và chấm lại từ đầu (có hỏi xác nhận). Nút bị khoá
+      lúc đang chạy — muốn dừng thì bấm **Dừng**. Kết quả trên máy chủ không bị xoá bởi Reset (tự dọn lúc 23h, hoặc bấm "Xóa kết quả")
+    + ✅ Tiêu đề trang dùng banner xanh đậm giống màn Đối chiếu / Đối soát CITAD cuối ngày (dòng "Đối chiếu / Phòng Thanh toán" phía trên
+      tiêu đề không còn)
+    + ✅ File khoá tạm của Excel (`~$…xlsx`, sinh ra khi đang mở file) nằm lẫn khi kéo-thả cả thư mục sẽ được **tự bỏ qua**;
+      tên file GL02 có chữ như "Tổng hợp" không còn bị nhận nhầm là file tồn
+    + ⚠️ **Nhớ tải kèm file tồn tháng trước** (`459_TON…` / `459-mã 0…`). Không có thì vẫn chấm được, nhưng các giao dịch tồn không
+      được tính và kết quả sẽ khác bản chấm đầy đủ (tháng 8: 426/28/4 thay vì 428/30/6). Màn hình sẽ **báo ngay khi bấm Xử lý** và
+      ở phần kết quả nếu thiếu file tồn
+    + ⚠️ Cặp dòng NAPAS (dòng tồn) + bút toán "điều chỉnh mã khách hàng" của nó (tháng 7: 7.465.869.595.881, tháng 8:
+      989.304.217.800) được xếp vào Điện KO offline dù không có chuỗi "Remitting Amount:VND" — đúng như bản chấm tay,
+      chương trình **ghi chú ở cột GHI_CHU để soát lại**
+    + ℹ️ Cặp huỷ cùng REFERENCE, cùng một phía, dấu ngược nhau (Cancel −X / Normal +X, tổng triệt tiêu) được xếp vào **GD cân ITT**
+      theo đúng yêu cầu "cùng REFERENCE, Tổng Nợ = Tổng Có" (dữ liệu tháng 7, 8 không có trường hợp này)
+
 - 21/09/2026 Chuẩn hoá văn bản - **Báo chỗ đánh số sai thứ tự**
     + ✅ Sau khi chuẩn hoá, nếu văn bản có Điều / khoản / điểm **nhảy số, trùng số hoặc lùi số** (ví dụ điểm
       `d) e)` thiếu `đ)`), màn kết quả hiện khung đỏ **"Nghi đánh số sai thứ tự"** kèm số đoạn để tự kiểm tra

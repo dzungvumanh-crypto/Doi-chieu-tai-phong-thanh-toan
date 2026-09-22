@@ -115,6 +115,7 @@ _WORK = {
     "PATCH /api/delegations/{id}/deactivate":     "Ngừng ủy quyền duyệt",
     # Đối chiếu
     "POST /api/cham459901/process":               "Chấm đối chiếu 459901",
+    "POST /api/cham459901_000000000/process":     "Chấm đối chiếu 459901-1000-000000000",
     "POST /api/doi_chieu_song_phuong/process":    "Đối chiếu song phương",
     "POST /api/ach/start":                        "Chạy đối chiếu ACH",
     "POST /api/ach/continue/{job_id}":            "Tiếp tục ACH sau Checkpoint MIS_đi",
@@ -140,6 +141,9 @@ MODULES = [
     ("/api/swift-recon",           "đối chiếu SWIFT"),
     ("/api/doi_chieu_song_phuong", "đối chiếu song phương"),
     ("/api/ach",                   "đối chiếu ACH"),
+    # Dòng dài hơn PHẢI đứng trước: describe_work() khớp startswith, kết quả đầu tiên thắng —
+    # "/api/cham459901" là tiền tố chuỗi của "/api/cham459901_000000000".
+    ("/api/cham459901_000000000",  "chấm 459901-1000-000000000"),
     ("/api/cham459901",            "chấm 459901"),
     ("/api/th-reports",            "báo cáo Tổng hợp"),
     ("/api/reports",               "báo cáo hậu kiểm"),

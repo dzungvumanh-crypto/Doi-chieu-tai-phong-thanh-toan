@@ -51,6 +51,7 @@ _moc_da_don: float = 0.0
 def run_cleanup(cutoff: float | None = None) -> None:
     """Gọi hàm dọn của từng service. Một service lỗi không được chặn service kia."""
     from backend.services import ach_service, cham459901_service, doi_chieu_osb_job
+    from backend.services import cham459901_000000000_service
     from backend.services import doi_chieu_song_phuong_service as sp
     from backend.services.doi_soat_citad import temp_files as citad_tmp
     from backend.api import vb_format as vb_format_api
@@ -59,6 +60,7 @@ def run_cleanup(cutoff: float | None = None) -> None:
     for ten, ham in (
         ("ACH", ach_service._cleanup_old_jobs),
         ("Chấm 459901", cham459901_service._cleanup_old_results),
+        ("Chấm 459901-1000-000000000", cham459901_000000000_service._cleanup_old_results),
         ("Đối chiếu song phương", sp._cleanup_old_results),
         ("Đối soát CITAD", citad_tmp._cleanup_old_results),
         ("Chuẩn hoá văn bản", vb_format_api._don_file_cu),

@@ -32,6 +32,7 @@ _NGUONG_RIENG = (
     ("/api/ach", 10000),                         # nộp + chạy đối chiếu, file hàng trăm MB
     ("/api/ilo1000", 10000),
     ("/api/cham459901", 10000),
+    ("/api/cham459901_000000000", 10000),        # đoạn riêng, KHÔNG nằm trong tiền tố trên
     ("/api/doi_chieu_song_phuong", 10000),
     ("/api/doi_chieu_song_phuong_kenh_core", 10000),
     ("/api/doi_chieu_song_phuong_kenh_core_di", 10000),   # đoạn riêng, KHÔNG nằm trong tiền tố trên

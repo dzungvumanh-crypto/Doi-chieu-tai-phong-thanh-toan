@@ -39,6 +39,7 @@ def nguon(monkeypatch):
 def test_so_uoc_tinh_dung_so_nguoi_dung_chot():
     assert pdc._RAM_UOC_TINH_MAC_DINH == {
         "ach": 4.5, "song_phuong_kenh_core_di": 4.0, "song_phuong": 3.0, "song_phuong_di": 2.0,
+        "cham459901_000000000": 2.5,   # PR #128 — số đo máy dev
     }
 
 

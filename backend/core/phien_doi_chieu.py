@@ -65,14 +65,15 @@ MAX_SONG_SONG = _doc_so("DOI_CHIEU_MAX_SONG_SONG", 3)
 
 # ── Xét RAM trước khi cho chạy (card 156) ──
 # Bộ nhớ cam kết đỉnh ƯỚC TÍNH mỗi lượt, GB — người dùng chốt 21/09/2026 từ số đo máy chủ
-# thật. Module CHƯA có số (ILO1000, 459901, OSB) cố ý vắng mặt: không xét RAM, chỉ còn trần
-# số lượt ở trên + trần cứng của tiến trình con (tien_trinh_doi_chieu, 13 GB). Có số đo thì
-# khai qua `.env` (`DOI_CHIEU_RAM_UOC_TINH`), không cần sửa mã.
+# thật (trừ dòng ghi "máy dev"). Module CHƯA có số (ILO1000, 459901, OSB) cố ý vắng mặt:
+# không xét RAM, chỉ còn trần số lượt ở trên + trần cứng của tiến trình con
+# (tien_trinh_doi_chieu, 13 GB). Có số đo thì khai qua `.env` (`DOI_CHIEU_RAM_UOC_TINH`), không cần sửa mã.
 _RAM_UOC_TINH_MAC_DINH = {
     "ach": 4.5,                        # đo 4,19 GB (3 lượt gần trùng nhau)
     "song_phuong_kenh_core_di": 4.0,   # Song phương chiều ĐI — đo 2,50–3,87 GB, dao động theo cỡ file
     "song_phuong": 3.0,                # Song phương chiều ĐẾN — đo 1,84–2,13 GB
     "song_phuong_di": 2.0,             # Song phương PHÂN LOẠI dữ liệu (mã "_di" là tên cũ) — đo 1,55 GB
+    "cham459901_000000000": 2.5,       # Chấm TK 459901-1000-000000000 — đo 2,5 GB trên MÁY DEV (1,2 triệu dòng), chưa đo máy chủ
 }
 
 
