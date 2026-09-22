@@ -8,7 +8,7 @@ Chạy: .venv/Scripts/python.exe -m pytest tests/test_ra_soat_bao_mat_2.py -v
 """
 
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -45,7 +45,7 @@ def _db_that(tmp_path, must_change=0):
         (10, "NV010", "Nguoi dung", "chuyen_vien", 1, "nd",
          get_password_hash("MatKhauCu@1"), must_change),
     )
-    het_han = (datetime.utcnow() + timedelta(hours=8)).strftime("%Y-%m-%d %H:%M:%S")
+    het_han = (datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=8)).strftime("%Y-%m-%d %H:%M:%S")
     conn.execute(
         "INSERT INTO login_sessions (staff_id, ip_address, expires_at, session_key)"
         " VALUES (?,?,?,?)", (10, "127.0.0.1", het_han, _SK),

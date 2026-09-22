@@ -41,10 +41,10 @@ pandas>=2.0.0,<3.0.0
 xlsxwriter>=3.2.0,<4
 python-calamine>=0.2.0,<0.9
 xlrd>=2.0.1,<3
-# <0.4: ban 0.3 da bao toSolarDate() deprecated, ban sau se BO han. File
-# backend/services/duty_calendar_utils.py goi dung ten cu -> mat 5 ngay Tet +
-# Gio To khoi lich truc, chi con mot dong log. May chu dang 0.2.2, may dev
-# 0.3.0 -- da doi chieu 2026/2027/2028: ra ngay giong het nhau.
+# <0.4: phong ngua thuan tuy. Ban 0.3 doi ten toSolarDate -> to_solar_date;
+# duty_calendar_utils._doi_am_duong() tra ca hai ten nen chay tren 0.2.2 (may
+# chu) lan 0.3.0 (may dev) - issue #109. Nang tran thi chay
+# tests/test_gio_utc_va_ngay_le_am.py truoc.
 lunardate>=0.2.0,<0.4
 beautifulsoup4>=4.12,<5
 # <0.68: numba la goi 0.x RUI RO NHAT bo nay -- backend bien dich JIT, ghim cung

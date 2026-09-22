@@ -19676,7 +19676,62 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-21</footer>
+  <!-- 157 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">157</span>
+      <span class="card-title">Dọn nợ Python 3.12: bỏ <code>datetime.utcnow()</code> (#113) + lunardate đổi tên hàm (#109) (2026-09-22)</span>
+      <span class="badge badge-done">Hoàn thiện</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-blue">#113</span> phần mã đã có sẵn trên develop — việc còn lại là lưới canh</div>
+      <p>Ba helper <code>_utcnow()</code> (naive) ở <code>security.py</code> / <code>sessions.py</code> / <code>rate_limit.py</code> đã vào develop trước đó
+        nhưng issue chưa đóng. Còn thiếu: test chạm đúng nhánh trừ datetime, 1 chỗ trong test, và lưới để lần sau không lọt.</p>
+      <table>
+        <tr><th>Lưới</th><th>Bắt được gì</th><th>Vì sao cần cả hai</th></tr>
+        <tr><td><code>pytest.ini</code>: <code>error::DeprecationWarning:backend</code> / <code>:frontend</code></td>
+          <td>Mã dự án gọi API bị bỏ <b>trên nhánh test có chạy</b> → đỏ</td>
+          <td>Chỉ thấy nhánh đã chạy. Khớp theo module <b>nơi gọi</b>, nên cảnh báo sinh trong thư viện (python-jose vẫn gọi <code>utcnow</code>) không tính. <b>Nhưng</b> thư viện cảnh báo bằng <code>stacklevel</code> (pandas, pydantic, lunardate) trỏ về dòng gọi trong <code>backend/</code> → vẫn đỏ. Pydantic không ghim (đi kèm fastapi): CI đỏ ở đây sau khi thư viện lên bản là tín hiệu thật, không phải CI hỏng</td></tr>
+        <tr><td><code>test_ma_du_an_khong_goi_utcnow</code> (quét AST)</td>
+          <td>Mọi lời gọi <code>.utcnow</code> trong <code>backend/ frontend/ tests/</code>, kể cả nhánh không test nào tới</td>
+          <td>Quét chữ thường thì bắt nhầm docstring "thay datetime.utcnow()" — đọc AST chỉ tính lời gọi thật</td></tr>
+      </table>
+      <p>Bật lưới thứ nhất lộ ngay 4 chỗ <code>class Config: from_attributes = True</code> (Pydantic v1, bị bỏ ở v3) trong
+        <code>schemas/dtbb.py</code> + <code>schemas/attendance.py</code> → đổi sang <code>model_config = ConfigDict(...)</code>. Cảnh báo cả bộ test: 2466 → 1430.</p>
+
+      <div class="label"><span class="pill pill-blue">#109</span> bỏ hẳn bảng cứng <code>_FALLBACK_2026</code> thay vì sửa cho nó chạy</div>
+      <table>
+        <tr><th>Phương án</th><th>Vì sao không / có</th></tr>
+        <tr><td>Cho bảng cứng chạy cả khi thư viện có mà hỏng</td>
+          <td>Không: bảng chỉ có năm 2026 (đã sang tháng 9), và <b>ghi sai Giỗ Tổ</b> — 28/04 trong khi 10/3 âm 2026 là <b>26/04</b>. Lưới đó chạy là bịa ra một ngày lễ sai</td></tr>
+        <tr><td><b>Bỏ bảng, thiếu thư viện → <code>_log.error</code>, chỉ trả 4 ngày lễ dương</b></td>
+          <td>Có: lịch trực vẫn mở được, người đọc log biết đúng nguyên nhân. Không ném lỗi lúc import vì <code>duty_constraints</code> là router — thiếu một thư viện lịch âm không nên làm cả backend không khởi động</td></tr>
+      </table>
+      <p><code>_doi_am_duong()</code> tra <code>to_solar_date</code> trước, lùi về <code>toSolarDate</code> — chạy trên 0.2.2 (máy chủ) lẫn 0.3.0 (máy dev) mà không phải
+        nâng sàn. Trần <code>lunardate&lt;0.4</code> giữ lại, giờ chỉ còn là phòng ngừa.</p>
+
+      <div class="label"><span class="pill pill-green">Kiểm</span></div>
+      <ul>
+        <li><code>tests/test_gio_utc_va_ngay_le_am.py</code>: khoá tài khoản đi qua cả <code>now - ws</code> và <code>lu - now</code>; ngày lễ 2026 đủ 10, Tết 17/02,
+          Giỗ Tổ 26/04; giả thư viện chỉ có tên mới / chỉ có tên cũ; thiếu thư viện → log ERROR, không bịa ngày.</li>
+        <li>2195 test xanh, ruff F821/F823/E9 sạch.</li>
+      </ul>
+
+      <div class="label"><span class="pill pill-red">Phản biện</span> 1 lượt Sonnet — 5/5 đồng ý, 3 góp ý chú thích đã sửa</div>
+      <p>Đã thử hoàn lại từng phần sửa → test tương ứng đỏ (tên cũ trần trên 0.3.0 bị lưới cảnh báo biến thành lỗi rồi bị <code>except</code> nuốt → còn 4 ngày → đỏ). Sửa theo góp ý: chú thích <code>requirements.txt</code> (câu "gọi đúng tên cũ → mất Tết" đã lỗi thời) và <code>pytest.ini</code> (nói rõ cảnh báo thư viện có <code>stacklevel</code> vẫn tính). Điểm yếu còn lại: không test nào chạy lunardate 0.2.2 thật — chỉ bản giả <code>_AmCu</code>. Ngoài phạm vi, có từ trước: danh sách lễ âm không có 30 Tết.</p>
+
+      <div class="label"><span class="pill pill-amber">Chưa làm</span></div>
+      <ul>
+        <li>#108 còn: ký PDF đơn nghỉ phép + xuất Excel trên máy chủ 3.12, máy các thành viên khác, xoá <code>.venv_310_backup</code> — việc tay trên máy chủ.</li>
+        <li>python-jose tự gọi <code>utcnow</code> — thư viện, chờ bản mới; không ảnh hưởng vì cảnh báo không quy về mã dự án.</li>
+      </ul>
+
+      <p>Branch: <code>fix/issue-113-109-utc-lich-am</code>.</p>
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-22</footer>
 </div>
 </body>
 </html>
