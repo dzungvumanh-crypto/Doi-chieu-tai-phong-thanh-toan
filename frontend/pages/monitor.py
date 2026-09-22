@@ -202,7 +202,7 @@ def _ve_nguoi_dung(nd: dict):
               goi_y="Khoá do nhập sai mật khẩu nhiều lần — tự mở sau thời gian khoá")
         _dong("Thao tác ghi dữ liệu", _so(nd.get("thao_tac")))
         if api.has_feature("menu.logs"):
-            ui.link("Xem nhật ký đăng nhập →", "/login-logs").classes("text-xs text-red-700 mt-1")
+            ui.link("Xem nhật ký đăng nhập →", "/audit-logs?tab=dang-nhap&khoang=7&success=false").classes("text-xs text-red-700 mt-1")
 
 
 def _ve_doi_chieu(t: dict):
@@ -243,7 +243,7 @@ def _ve_nhat_ky(nk: dict):
                     ui.label(e["nguon"]).classes("text-xs font-mono text-gray-500 w-40 shrink-0 truncate")
                     ui.label(e["msg"]).classes("text-xs text-gray-800 flex-1 break-all")
         if api.has_feature("menu.logs"):
-            ui.link("Xem Lịch sử lỗi & cảnh báo →", "/logs").classes("text-xs text-red-700 mt-1")
+            ui.link("Xem lỗi hệ thống →", "/audit-logs?tab=loi&khoang=7").classes("text-xs text-red-700 mt-1")
 
 
 @ui.page("/monitor")

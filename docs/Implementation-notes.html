@@ -53,6 +53,105 @@
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
   <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-09-21</p>
 
+  <!-- NK3 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">NK3</span>
+      <span class="card-title">Nhật ký hệ thống thành một màn 4 tab — Tổng quan · Thao tác · Đăng nhập · Lỗi hệ thống</span>
+      <span class="badge badge-info">Chưa commit — 22/09/2026</span>
+    </div>
+    <div class="card-body">
+      <p>Người dùng: admin và người được giao giám sát hệ thống, cùng mã <code>menu.logs</code> (người dùng chốt
+        22/09/2026: <b>không</b> tách mã quyền riêng cho tab Lỗi). Ba mục menu cũ (<code>/audit-logs</code>,
+        <code>/logs</code>, <code>/login-logs</code>) gom thành một; hai địa chỉ cũ chuyển hướng sang tab tương ứng.</p>
+
+      <table>
+        <tr><th style="width:30%">Quyết định</th><th>Vì sao</th></tr>
+        <tr><td>Gom <b>chỗ vào</b>, không gom dữ liệu</td>
+          <td>Ba bảng trả lời ba câu hỏi khác nhau. Cái khó dùng là tên menu na ná và không bấm được từ chỗ này sang
+            chỗ kia — sửa bằng tab + lối tắt (bấm tên người, nhãn hồ sơ, lượt đăng nhập, mục "Cần chú ý").</td></tr>
+        <tr><td>Tab Tổng quan KHÔNG vẽ lại RAM/đĩa/CSDL</td>
+          <td>Màn Giám sát (<code>menu.monitor</code>) đã có — hai nơi là hai bộ ngưỡng. Tổng quan dùng lại
+            <code>monitor._quet_log()</code> để đếm lỗi app.log cùng một cách.</td></tr>
+        <tr><td>Bộ lọc ghi lên địa chỉ trang (<code>history.replaceState</code>)</td>
+          <td>Gửi link là người nhận thấy đúng danh sách; tải lại trang không mất lọc. Khoảng chọn nhanh ghi là
+            <code>khoang=7</code> chứ không ghi ngày cụ thể — link mở hôm sau vẫn là "7 ngày gần nhất".</td></tr>
+        <tr><td><code>TabNhatKy.tai()</code> so bộ lọc với lần tải trước, trùng thì bỏ</td>
+          <td>Handler <code>async</code> của NiceGUI chạy SAU khi mã gán giá trị vào ô lọc: đặt 6 ô từ địa chỉ trang
+            là 6 lượt <code>on_change</code> đến muộn. Cờ bật/tắt không chặn được (đã tắt trước khi handler chạy).
+            Kèm số lượt <code>_luot</code>: lượt cũ về sau lượt mới thì không vẽ đè.</td></tr>
+        <tr><td>Không truyền thẳng <code>on_change=self.tai</code></td>
+          <td>NiceGUI thấy hàm có tham số là nhét sự kiện vào tham số đầu — <code>page</code> thành đối tượng sự kiện.
+            Mỗi tab bọc qua <code>_doi_loc()</code> không tham số.</td></tr>
+        <tr><td>"Thất bại" lọc bằng SQL <code>_SQL_THAT_BAI</code>, viết lại đúng quy tắc <code>result_ok()</code></td>
+          <td>Lệch là bấm "Thất bại" ra dòng tô xanh. Test <code>test_loc_that_bai_khop_cach_man_hinh_to_mau</code>
+            canh. Dòng ghi tay không có "HTTP" (token Extension sai) là thất bại, ô Kết quả hiện "Thất bại" thay vì
+            cả câu (câu đó đã ở cột Chi tiết).</td></tr>
+        <tr><td>"Nghi dò mật khẩu" = lượt thất bại có <code>staff_id</code> rỗng</td>
+          <td><code>auth.py</code> gắn <code>staff_id</code> cho lượt thất bại <b>chỉ khi mật khẩu đã đúng</b> mà bị chặn
+            vì tài khoản đang mở ở máy khác. Đếm cả loại đó thì "datphanduy" bị báo sai mật khẩu 7 lần trong khi 5
+            lần là trùng phiên (phát hiện khi chạy thử trên DB dev). Ngưỡng lấy thẳng <code>rate_limit.MAX_FAILURES</code>.</td></tr>
+        <tr><td>Nhật ký đăng nhập nối người theo <code>staff_id</code> <b>hoặc</b> tên đăng nhập</td>
+          <td>Lượt sai mật khẩu không có <code>staff_id</code> → gõ họ tên vào ô tìm không ra đúng loại dòng cần tìm
+            nhất. <code>user_tttt.username</code> UNIQUE nên phép nối không nhân dòng.</td></tr>
+        <tr><td>Nút "Sửa" = PUT <b>và</b> PATCH</td>
+          <td>Lỗi có sẵn ở bản cũ: lọc riêng PUT làm mất huỷ đơn, sửa lưu trữ, sửa ngày vào ngành (đều PATCH).</td></tr>
+        <tr><td>Nhãn hồ sơ suy từ số đầu tiên trong đường dẫn (<code>describe_target</code>)</td>
+          <td>Không cần cột mới hay sửa dữ liệu cũ (<code>target_id</code> chỉ có ở 63/3.647 dòng). Lọc hồ sơ dùng
+            <code>= khoa OR LIKE khoa || '/%'</code> — <code>LIKE '/api/leaves/12%'</code> trần dính cả đơn 120.</td></tr>
+      </table>
+
+      <p class="note">Thêm 9 tiền tố vào <code>MODULES</code> (CITAD, CITAD-PaymentHub, OSB, ILO1000, sổ trực, thi đua,
+        xếp loại, CN TTQT, đối soát CITAD) — trước đó các thao tác này hiện "Thực hiện /api/…" và ô Chức năng không lọc
+        được. <code>-nostro</code> phải đứng trước <code>doi-chieu-citad</code> (so theo tiền tố).
+        <code>test_moi_route_ghi_du_lieu_deu_co_nhan_module</code> đỏ nếu route ghi dữ liệu mới chưa có nhãn.</p>
+
+      <table>
+        <tr><th style="width:30%">Chưa làm</th><th>Lý do / ghi chú</th></tr>
+        <tr><td>Tab Lỗi chỉ đọc <code>app.log</code>, không đọc <code>app.log.1–3</code></td>
+          <td>Vẫn <code>readlines()</code> cả file 5 MB mỗi lần chuyển trang như bản cũ. Đọc thêm 3 file cũ là 20 MB/lượt —
+            cần đọc lùi từ cuối file trước. Để đợt sau; màn hình có dòng chữ báo rõ giới hạn này.</td></tr>
+        <tr><td>Mã truy vết (request id) nối dòng thao tác với vết lỗi</td>
+          <td>Đợt sau. Việc khó: job đối chiếu chạy ở luồng/tiến trình riêng (<code>chay_tach</code>) không tự mang theo
+            <code>contextvars</code>.</td></tr>
+        <tr><td>Giờ dòng audit là giờ luồng nền ghi, không phải giờ request đến</td>
+          <td><code>audit_queue._vong_lap</code> gọi <code>_vn_now()</code> lúc ghi. Hàng đợi kẹt thì lệch; ngăn chi tiết
+            "±10 phút" chịu ảnh hưởng nhẹ. Chưa sửa.</td></tr>
+        <tr><td>Nhãn hồ sơ có thể là năm (<code>#2026</code>)</td>
+          <td>Đường nào đặt năm trước mã hồ sơ. Bộ lọc vẫn đúng (cùng đường), chỉ nhãn kém nghĩa.</td></tr>
+        <tr><td>"Lịch sử hồ sơ" chỉ gồm dòng do middleware ghi</td>
+          <td>Dòng <code>write_audit</code> ngữ nghĩa lưu <code>target_type</code> kiểu <code>"hr_profile"</code> + id ở
+            <code>target_id</code> (vd <code>hr.py</code>) — không nối được với khoá đường dẫn. Cần quy ước chung
+            khoá hồ sơ cho cả hai loại dòng; chưa làm.</td></tr>
+      </table>
+
+      <table>
+        <tr><th style="width:30%">Phản biện trước PR — đã sửa</th><th>Kịch bản hỏng</th></tr>
+        <tr><td><code>result_ok</code>/<code>describe_result</code> coi mọi action KHÔNG phải POST/PUT/PATCH/DELETE là thành công</td>
+          <td>Trước chỉ tin <code>_SEMANTIC</code>: <code>survey.*</code>, <code>hr.*</code>, <code>vb_format.*</code>,
+            <code>ttqt_branch.*</code> thành công mà tô cam + ghi "Thất bại"; lọc "Thành công" ra dòng cam. Nay cùng ranh
+            giới với <code>_SQL_THAT_BAI</code>. Không <code>write_audit</code> nào ghi lượt thất bại (đã grep).</td></tr>
+        <tr><td>Tổng quan đếm lỗi chỉ trên <code>app.log</code>; lọc "Lỗi" gồm CRITICAL</td>
+          <td>Đếm qua <code>_file_log</code> (cả .1–.3) mà tab Lỗi chỉ đọc app.log → thẻ 120 lỗi, bấm vào ra 15.</td></tr>
+        <tr><td>"Cần chú ý" dò mật khẩu gộp theo (tài khoản, NGÀY)</td>
+          <td>Gộp cả khoảng 30 ngày: sai 1 lần/ngày × 5 ngày thành mục đỏ, bấm vào không dòng nào mang cờ.</td></tr>
+        <tr><td>Lọc khớp đúng <code>tai_khoan</code> / <code>ip</code></td>
+          <td>Mục chú ý dùng <code>q</code> (LIKE) → "an" kéo cả "lan", "tuan"; 10.0.0.1 kéo cả 10.0.0.12. Bấm tên
+            đăng nhập / IP trên dòng cũng lọc khớp đúng.</td></tr>
+        <tr><td>Lọc module loại tiền tố dài hơn là module khác</td>
+          <td>Chọn "đối chiếu CITAD cuối ngày" ra cả dòng CITAD-PaymentHub (<code>-nostro</code>).</td></tr>
+        <tr><td><code>ui.tabs(value=tab_dau)</code></td>
+          <td>Để mặc định "tong-quan" thì lần đồng bộ đầu của <code>tab_panels</code> tải Tổng quan (quét app.log) dù
+            mở <code>?tab=loi</code> — tải thừa, không sai kết quả.</td></tr>
+      </table>
+
+      <p class="note">Kiểm: <code>tests/test_nhat_ky_de_dung.py</code> + chạy app thật bằng Playwright trên DB
+        dev — Tổng quan → bấm thẻ/mục chú ý, bấm tên người, nhãn hồ sơ, gỡ thẻ lọc, lượt đăng nhập → thao tác trong
+        ngày, link có lọc sẵn, <code>/logs</code> chuyển hướng; console trình duyệt không lỗi. Tài khoản thử đã xoá.
+        Phản biện: 1 lượt Agent (model mặc định).</p>
+    </div>
+  </div>
+
   <!-- BG3 -->
   <div class="card">
     <div class="card-header">

@@ -238,9 +238,7 @@ Truy cập:
 │       ├── xep_loai.py      # Xếp loại lao động
 │       ├── swift_recon.py   # Đối chiếu điện SWIFT (phòng Swift)
 │       ├── user_management.py # Quản lý tài khoản (admin)
-│       ├── login_logs.py    # Nhật ký đăng nhập (admin)
-│       ├── audit_logs.py    # Nhật ký thao tác — lịch sử ghi dữ liệu (admin)
-│       ├── logs.py          # Nhật ký lỗi & cảnh báo (admin)
+│       ├── nhat_ky/         # Nhật ký hệ thống — 1 trang 4 tab: Tổng quan · Thao tác · Đăng nhập · Lỗi hệ thống
 │       └── change_password.py # Đổi mật khẩu
 ├── templates/                       # ⚠ Tên thư mục có dấu — xem ghi chú bên dưới
 │   ├── bia_mau_goc.docx             # Mẫu bìa tập chứng từ
@@ -335,9 +333,12 @@ Request vượt số kết nối thì xếp hàng chờ (tối đa 30 giây, qu�
 - **Nhật ký thao tác** (audit log): middleware ghi tập trung mọi request thay đổi dữ liệu (POST/PUT/PATCH/DELETE) vào bảng `audit_logs` — ai, làm gì, kết quả HTTP, IP, thời gian; tự dọn sau 365 ngày
   - **Kèm tóm tắt dữ liệu gửi lên** (`backend/core/audit_body.py`): query string + body JSON, để cột *Chi tiết* nói được **đã sửa cái gì** chứ không chỉ "HTTP 200". Ba giới hạn cố ý — chỉ đọc body JSON ≤ 8 KB (bỏ qua multipart/file), **che khoá nhạy cảm** (mật khẩu, token, ảnh chữ ký — nhật ký xuất Excel được nên coi như đã công khai), và cắt còn tối đa 800 ký tự
   - **Không ghi request không phải thao tác nghiệp vụ** (`_SKIP_EXACT` trong `audit_middleware.py`): mở màn Nghỉ phép (bật sẵn Word), bấm "Đã hiểu" thông báo, xem trước đơn / file hạn mức, dò tên file ACH, kiểm tra đủ file Song phương. Lập đơn, duyệt, chạy / dừng đối chiếu vẫn ghi
-  - **Bấm một dòng** để mở hộp thoại xem đầy đủ, kể cả nguyên văn bản ghi
-  - **Lọc** theo phương thức, từ khoá, **khoảng ngày, người thao tác, module** (`GET /api/admin/logs/audit/filters` đổ dữ liệu vào hai ô chọn — chỉ liệt kê người đã thực sự có dòng trong nhật ký)
-- Nhật ký đăng nhập và nhật ký lỗi/cảnh báo hệ thống (admin xem, lọc theo user/thời gian)
+- **Màn Nhật ký hệ thống** (`/audit-logs`, mã `menu.logs`) — một mục menu, 4 tab (`frontend/pages/nhat_ky/`); `/logs` và `/login-logs` cũ tự chuyển sang tab tương ứng
+  - **Tổng quan** (`GET /api/admin/logs/tong-quan?so_ngay=1|7|30`): số thao tác, thao tác thất bại, lượt đăng nhập, đăng nhập thất bại, lỗi app.log; danh sách **"Cần chú ý"** (tài khoản sai mật khẩu ≥ ngưỡng khoá, máy thử nhiều tài khoản, thao tác thất bại gộp theo việc + người, lỗi app.log gộp các lần trùng) — mỗi mục kèm bộ lọc, bấm là mở đúng danh sách. Kèm thông tin sao lưu, lệch giờ NTP và nút tải bản sao CSDL. Sức khoẻ máy chủ không vẽ lại ở đây — xem màn Giám sát
+  - **Thao tác**: lọc khoảng ngày (chọn nhanh Hôm nay / 7 / 30 ngày / Tất cả / Tuỳ chọn), người, chức năng, loại (Thêm / Sửa = PUT+PATCH / Xoá), **kết quả Thành công / Thất bại**, từ khoá — chọn là lọc ngay, điều kiện đang lọc hiện thành thẻ gỡ được. Bấm tên người để lọc theo người; bấm nhãn hồ sơ (vd "nghỉ phép #123", suy từ đường dẫn) để xem **toàn bộ lịch sử hồ sơ đó** (`doi_tuong`). Bấm dòng mở ngăn chi tiết: tóm tắt, gợi ý ý nghĩa kết quả, nội dung đã gửi, **thao tác của cùng người trong ±10 phút** (`GET /audit/{id}/lan-can`), thông tin kỹ thuật
+  - **Đăng nhập**: lọc khoảng ngày, kết quả, tìm theo tài khoản / họ tên / IP; tô **"Nghi dò mật khẩu"** khi một tài khoản sai mật khẩu ≥ `rate_limit.MAX_FAILURES` lần trong ngày (chỉ lượt sai mật khẩu — lượt bị chặn vì đang mở ở máy khác không tính). Bấm lượt thành công → thao tác của người đó trong ngày
+  - **Lỗi hệ thống**: đọc `logs/app.log` (chưa đọc file đã xoay vòng), lọc mức (mặc định Lỗi), ngày, từ khoá; vết kỹ thuật gập sẵn
+  - Bộ lọc ghi lên địa chỉ trang (`?tab=…&khoang=…`) — gửi link là người nhận thấy đúng danh sách
 - **Giám sát hệ thống** (`/monitor`, mã quyền `menu.monitor` — tách khỏi `menu.logs`): một màn tổng quan tự làm
   mới 30 giây — trạng thái chung xanh/cam/đỏ kèm danh sách vấn đề; CPU/RAM máy chủ, RAM backend; tải hiện tại (request
   đang xử lý, luồng, kết nối CSDL, việc nặng, backend có bị đứng trong 1 phút qua); CSDL đọc được không + dung lượng
