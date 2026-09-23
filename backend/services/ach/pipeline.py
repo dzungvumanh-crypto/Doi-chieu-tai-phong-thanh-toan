@@ -41,7 +41,6 @@ from .b12_ghi_chu_timeout import (
 )
 from .b13_xu_ly_gw_den import xu_ly_gw_den, doi_chieu_gw_den
 from .b15_napas import doc_pdf_napas, doc_napas_csv, doi_chieu_napas_gw
-from .b16_phub_loi import doc_phub, doc_gw_di_cho_phub, xu_ly_phub_loi
 
 _COLS_NPO = _cfg.COLS_NPO
 # Điểm 4 — thêm cột ghi chú đối chiếu chéo ngày CHỈ trên sheet NPO_DI_THUA/
@@ -1987,6 +1986,11 @@ def main_from_dir(input_dir: str, output_dir: str,
             os.path.join(output_dir, f'TIMEOUT_KHONG_KENH_{ngay_dt.strftime("%Y%m%d")}.csv'),
             index=False, encoding='utf-8-sig',
         )
+
+    # Kho bền vững "Gộp pHub nhiều ngày" (bản-2, data/ach_phub_lichsu/) đã bị
+    # gỡ (Luồng A, 23.09.2026) — máy chủ thật là 1 máy đơn, không đủ ổ đĩa
+    # giữ ~534.000 dòng CSV/ngày trong 30 ngày. Xuất GW-cho-pHub theo ô tick
+    # (không ghi kho) sẽ làm lại ở A4, sau khi màn Gộp bản-3 (Luồng C) xong.
 
     output_path = os.path.join(output_dir, f'doi_chieu_{ngay_dt.strftime("%Y%m%d")}.xlsx')
     xuat_excel(

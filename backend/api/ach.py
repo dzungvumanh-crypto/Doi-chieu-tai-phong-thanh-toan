@@ -272,3 +272,8 @@ def download_file(
         media_type=media,
         headers=_dl_headers(filename),
     )
+
+
+# ─── Gộp pHub nhiều ngày (bản-2 "kho 30 ngày" đã gỡ, Luồng A 23.09.2026) ──────
+# Bản-3 (server không lưu gì, nhận N file trong 1 request) sẽ thêm lại
+# POST/GET /phub-gop ở Luồng C — xem pipeline/PLAN.md mục 4.

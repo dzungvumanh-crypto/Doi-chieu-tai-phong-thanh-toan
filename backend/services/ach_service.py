@@ -431,3 +431,9 @@ def _cleanup_old_jobs(cutoff: float | None = None):
 from backend.core.phien_doi_chieu import dang_ky_nguon  # noqa: E402
 
 dang_ky_nguon('ach', 'Đối chiếu ACH', job_dang_chay)
+
+
+# Kết quả pHub gộp nhiều ngày — bản-2 "kho 30 ngày" (`danh_sach_ngay_phub()`,
+# `gop_phub()`, `tai_ket_qua_gop()`) đã bị gỡ (Luồng A, 23.09.2026). Bản-3
+# (nhận N file trong 1 request, không lưu gì trên server) sẽ thêm lại ở
+# Luồng C — xem `pipeline/PLAN.md` mục 4.

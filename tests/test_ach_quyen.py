@@ -103,3 +103,8 @@ class TestCoQuyenChay:
 
     def test_cancel_qua_duoc_cua_quyen(self, client_duoc_chay):
         assert client_duoc_chay.post('/api/ach/cancel/job-khong-co').status_code == 404
+
+
+# TestQuyenPhubGop (bản-2, kho 30 ngày) đã xoá cùng Luồng A (23.09.2026) — 3
+# endpoint /phub-lichsu, /phub-gop, /phub-gop/{ma}/tai không còn tồn tại.
+# Luồng C sẽ thêm lại test quyền cho endpoint bản-3 khi dựng xong.

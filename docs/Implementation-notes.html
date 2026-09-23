@@ -16503,7 +16503,80 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-10</footer>
+  <!-- 144 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">144</span>
+      <span class="card-title">ACH — gỡ bỏ hoàn toàn kho pHub 30 ngày (bản-2), Luồng A của kế hoạch
+        4 luồng B→A→D→C (2026-09-23)</span>
+      <span class="badge badge-warn">Chưa commit</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-red">Vì sao bỏ</span> Máy chủ thật là 1 máy đơn, không đủ ổ đĩa</div>
+      <p>Card 143 mô tả kho <code>data/ach_phub_lichsu/</code> giữ 30 ngày × ~534.000 dòng CSV/ngày —
+        thiết kế đó giả định máy chủ có nhiều dung lượng dự phòng. Xác minh lại với người dùng
+        (19/09/2026): máy chủ thật KHÔNG có dự phòng đó, ghi kho mỗi lượt chạy ACH có MIS_đi là
+        <b>rủi ro đang sống</b> — ai chạy ACH trước khi dọn là tự đổ dữ liệu ra đĩa. Quyết định: huỷ
+        hẳn kho bền vững, thay bằng "bản-3" (Luồng C, làm sau): người vận hành tự tải/tự giữ 2 file
+        mỗi ngày trên máy mình, khi cần gộp thì nạp lại N×2 file + 1 file pHub trong CÙNG 1 request —
+        server không lưu gì ngoài <code>data/temp_ach/</code> (tự dọn 23h, đã có sẵn cho mọi output
+        khác của module).</p>
+
+      <div class="label"><span class="pill pill-blue">Đã xoá</span> Toàn bộ đường ghi/đọc kho</div>
+      <ul>
+        <li><code>backend/services/ach/phub_lichsu.py</code> — xoá cả file (146 dòng, kho bền vững).</li>
+        <li><code>pipeline.py</code>: import <code>phub_lichsu</code> + <code>doc_gw_di_cho_phub</code>,
+          và khối gọi <code>doc_gw_di_cho_phub()</code> → <code>phub_lichsu.luu_nguyen_lieu()</code> cuối
+          mỗi lượt chạy có MIS_đi.</li>
+        <li><code>ach_service.py</code>: <code>danh_sach_ngay_phub()</code>, <code>gop_phub()</code> bản
+          cũ (đọc kho), <code>tai_ket_qua_gop()</code>.</li>
+        <li><code>api/ach.py</code>: 3 endpoint <code>GET /phub-lichsu</code>, <code>POST /phub-gop</code>,
+          <code>GET /phub-gop/&#123;ma&#125;/tai</code> (bản cũ) — Luồng C sẽ thêm lại 2 endpoint cuối
+          với chữ ký khác (nhận N file, không còn "chọn ngày trong kho").</li>
+        <li><code>frontend/pages/cham_ach.py</code>: card "Gộp kết quả pHub nhiều ngày" (172 dòng) —
+          <b>màn hình này tạm biến mất</b> cho tới khi Luồng C xong. Chấp nhận có ý thức (quyết định
+          A-1), không gộp chung một đợt với Luồng C.</li>
+      </ul>
+
+      <div class="label"><span class="pill pill-blue">Giữ lại, đổi thành hàm thuần</span> <code>phub_gop.py</code></div>
+      <p>Thuật toán khớp/gộp (<code>gop_phub()</code>, <code>_khoa_sap_xep_ngay()</code>,
+        <code>_ngay_gui_lenh()</code>, <code>_viet_tong_ket_gop()</code>,
+        <code>xuat_excel_phub_gop()</code>) vẫn còn nguyên giá trị cho Luồng C — chỉ đổi chữ ký
+        <code>gop_phub()</code> từ <code>(df_phub, ngay_list, log_callback=None)</code> (tự đọc kho qua
+        <code>phub_lichsu.nap_nguyen_lieu()</code>) sang
+        <code>(df_phub, df_gw, df_timeout, ngay_list, log_callback=None)</code> — nhận thẳng dữ liệu đã
+        nạp sẵn, không tự đi tìm file nào.</p>
+
+      <div class="caution"><b>Thay đổi kèm theo, tự quyết vì kế hoạch không nêu chi tiết:</b> cảnh báo
+        "ngày thiếu GW-cho-pHub" (trước đây <code>nap_nguyen_lieu()</code> sinh ra khi 1 ngày có file
+        TIMEOUT nhưng thiếu file GW) không còn được <code>gop_phub()</code> tự sinh ra nữa — hàm chỉ
+        nhận dữ liệu đã gộp sẵn, không biết ngày nào thiếu file gì. Trách nhiệm này chuyển hẳn sang
+        <code>phan_loai_file_gop()</code> (Luồng C, C-a — hàm đó biết chính xác bộ file người dùng vừa
+        nạp trong request). Vì vậy <code>gop_phub()</code> đổi kiểu trả về từ
+        <code>(df_ketqua, canh_bao, thong_ke)</code> thành <code>(df_ketqua, thong_ke)</code> —
+        <code>xuat_excel_phub_gop()</code> KHÔNG đổi vì <code>canh_bao</code> ở đó vốn đã là tham số
+        độc lập truyền từ ngoài vào, không lấy từ kết quả <code>gop_phub()</code>.</p>
+
+      <div class="label"><span class="pill pill-blue">Test</span> Xoá đúng phần phụ thuộc kho, giữ phần thuật toán</div>
+      <p><code>tests/test_ach_phub_gop.py</code>: xoá <code>TestKhoLuuNguyenLieu</code>,
+        <code>TestNapNguyenLieu</code>, <code>TestGopPhubGoiDonLichSu</code>, <code>TestApiPhubGop</code>
+        (18 test, phụ thuộc <code>phub_lichsu</code>/endpoint đã xoá), viết lại <code>TestGopPhub</code>
+        (4→3 test — bỏ <code>test_ngay_thieu_gw_van_gop_kem_canh_bao</code> vì cảnh báo đó không còn
+        sinh ở tầng này) dựng <code>df_gw</code>/<code>df_timeout</code> trực tiếp thay vì qua kho, giữ
+        nguyên <code>TestXuatExcelPhubGop</code> (2 test, không đổi). <code>tests/test_ach_quyen.py</code>:
+        xoá <code>TestQuyenPhubGop</code> (4 test, endpoint không còn tồn tại).</p>
+
+      <div class="note"><code>python -m pytest tests/test_ach_*.py -q</code>: <b>443/443 pass</b>
+        (461 trước A2, trừ 18 test đã xoá cùng code phụ thuộc kho). Toàn dự án
+        <code>python -m pytest -q</code>: <b>2013 passed</b> trước và sau (không giảm). Grep
+        <code>phub_lichsu</code> toàn repo sau khi xong: chỉ còn nhắc tên trong comment/docstring giải
+        thích lịch sử, không còn reference thật nào tới module đã xoá.</div>
+
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-23</footer>
 </div>
 </body>
 </html>

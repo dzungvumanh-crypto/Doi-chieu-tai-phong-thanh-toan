@@ -282,6 +282,12 @@ async def cham_ach_page():
                             'Tôi hiểu, chạy thẳng luôn', icon='play_arrow', color='orange-8',
                         ).classes('font-semibold')
 
+            # ── Gộp kết quả pHub nhiều ngày ──────────────────────────────────────
+            # Bản-2 "kho 30 ngày" đã bị gỡ (Luồng A, 23.09.2026) — màn hình này
+            # tạm thời biến mất cho tới khi Luồng C dựng lại bản-3 (server không
+            # lưu gì, nạp N file trong 1 request) ở tab Báo cáo. Quyết định A-1
+            # đã chốt: chấp nhận khoảng trống tính năng này, không gộp A+C.
+
             # ── Tiến trình ────────────────────────────────────────────────────
             progress_card = ui.card().classes('w-full p-4 mb-4')
             progress_card.set_visibility(False)
