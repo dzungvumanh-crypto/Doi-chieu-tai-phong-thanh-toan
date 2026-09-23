@@ -559,6 +559,91 @@ class TestCitadTTLabel:
             assert label == 'citad 5.5', f"Label sai: {label!r}"
 
 
+# ── Test 6b: Citad TT label theo TRX_DATE TỪNG DÒNG (PLAN_B1 Q4, 2026-09-23) ─
+
+class TestCitadLabelTheoDong:
+    def test_2_ngay_2_nhan_khac_nhau(self):
+        """Cửa sổ Citad chứa 2 ngày (07/09 + 08/09) → mỗi dòng mang đúng nhãn
+        TRX_DATE thật của chính nó, không phải nhãn chung theo ngay_int=T."""
+        citad_df = pd.DataFrame([
+            {'SERIAL_NO': 'S1', 'RELATION_NO': 'AAAA0001', 'TRX_DATE': '20260907',
+             'AMOUNT': '100000', 'TRX_STATUS': 'OK'},
+            {'SERIAL_NO': 'S2', 'RELATION_NO': 'BBBB0002', 'TRX_DATE': '20260908',
+             'AMOUNT': '200000', 'TRX_STATUS': 'OK'},
+        ])
+        hub_lookups = {'stc_to_trace': {}}
+        out, mapdc_to_ngay = process_citad(citad_df, hub_lookups, 20260907)
+        map_dc_s1 = out.loc[out['SERIAL_NO'] == 'S1', 'Map dc'].iloc[0]
+        map_dc_s2 = out.loc[out['SERIAL_NO'] == 'S2', 'Map dc'].iloc[0]
+        assert mapdc_to_ngay[map_dc_s1] == 'citad 7.9'
+        assert mapdc_to_ngay[map_dc_s2] == 'citad 8.9'
+
+    def test_thieu_cot_trx_date_roi_ve_ngay_int(self):
+        """Không có cột TRX_DATE (df tự dựng, gọi lẻ) → nhãn rơi về theo
+        `ngay_int` như hành vi cũ trước B1."""
+        citad_df = pd.DataFrame([{
+            'SERIAL_NO': 'S1', 'RELATION_NO': 'AAAA0001',
+            'AMOUNT': '100000', 'TRX_STATUS': 'OK',
+        }])
+        hub_lookups = {'stc_to_trace': {}}
+        _, mapdc_to_ngay = process_citad(citad_df, hub_lookups, 20260907)
+        for label in mapdc_to_ngay.values():
+            assert label == 'citad 7.9'
+
+    def test_trx_date_rong_roi_ve_ngay_int(self):
+        """TRX_DATE rỗng/không đúng 8 chữ số ở 1 dòng cụ thể → riêng dòng đó
+        rơi về nhãn theo ngay_int, không làm hỏng các dòng khác."""
+        citad_df = pd.DataFrame([
+            {'SERIAL_NO': 'S1', 'RELATION_NO': 'AAAA0001', 'TRX_DATE': '',
+             'AMOUNT': '100000', 'TRX_STATUS': 'OK'},
+            {'SERIAL_NO': 'S2', 'RELATION_NO': 'BBBB0002', 'TRX_DATE': '20260908',
+             'AMOUNT': '200000', 'TRX_STATUS': 'OK'},
+        ])
+        hub_lookups = {'stc_to_trace': {}}
+        out, mapdc_to_ngay = process_citad(citad_df, hub_lookups, 20260907)
+        map_dc_s1 = out.loc[out['SERIAL_NO'] == 'S1', 'Map dc'].iloc[0]
+        map_dc_s2 = out.loc[out['SERIAL_NO'] == 'S2', 'Map dc'].iloc[0]
+        assert mapdc_to_ngay[map_dc_s1] == 'citad 7.9'
+        assert mapdc_to_ngay[map_dc_s2] == 'citad 8.9'
+
+    def test_khoa_trung_2_ngay_ngay_som_hon_thang(self):
+        """2 dòng Citad KHÁC ngày nhưng cùng Map dc (trùng khoá) — dòng có
+        TRX_DATE SỚM HƠN phải thắng trong dict lookup, bất kể thứ tự dòng
+        trong DataFrame đầu vào (B4)."""
+        citad_df = pd.DataFrame([
+            # Dòng TRX_DATE MUỘN hơn (08/09) xuất hiện TRƯỚC trong DataFrame —
+            # cố ý đảo thứ tự để chắc chắn kết quả không phụ thuộc thứ tự dòng.
+            {'SERIAL_NO': 'S2', 'RELATION_NO': 'CCCC0003', 'TRX_DATE': '20260908',
+             'AMOUNT': '300000', 'TRX_STATUS': 'OK'},
+            {'SERIAL_NO': 'S1', 'RELATION_NO': 'CCCC0003', 'TRX_DATE': '20260907',
+             'AMOUNT': '300000', 'TRX_STATUS': 'OK'},
+        ])
+        hub_lookups = {'stc_to_trace': {}}
+        _, mapdc_to_ngay = process_citad(citad_df, hub_lookups, 20260907)
+        # Cả 2 dòng cùng RELATION_NO/AMOUNT, không Hub (Trace='') → Map dc trùng
+        assert len(mapdc_to_ngay) == 1
+        assert list(mapdc_to_ngay.values())[0] == 'citad 7.9', (
+            "Khoá trùng giữa 2 TRX_DATE — phiên SỚM HƠN (07/09) phải thắng, "
+            "không phụ thuộc thứ tự dòng đầu vào"
+        )
+
+    def test_log_khoa_trung_khong_im_lang(self):
+        """Có khoá trùng nhiều TRX_DATE → phải log cảnh báo, không im lặng
+        chọn bừa (đúng luật skill bank-reconciliation)."""
+        citad_df = pd.DataFrame([
+            {'SERIAL_NO': 'S2', 'RELATION_NO': 'DDDD0004', 'TRX_DATE': '20260908',
+             'AMOUNT': '400000', 'TRX_STATUS': 'OK'},
+            {'SERIAL_NO': 'S1', 'RELATION_NO': 'DDDD0004', 'TRX_DATE': '20260907',
+             'AMOUNT': '400000', 'TRX_STATUS': 'OK'},
+        ])
+        hub_lookups = {'stc_to_trace': {}}
+        logs = []
+        process_citad(citad_df, hub_lookups, 20260907, log=logs.append)
+        assert any('khoá Map dc trùng' in m for m in logs), (
+            f"Phải log cảnh báo khoá trùng, nhận: {logs!r}"
+        )
+
+
 # ── Test 7: Citad AMOUNT "ltd" → TRX_STATUS ──────────────────────────────────
 
 class TestCitadAmountLtd:
@@ -1650,6 +1735,135 @@ class TestMainFromDirOsbRealFilename:
         )
 
 
+# ── Test end-to-end: cửa sổ Citad "tới" — Core ngày T khớp Citad phiên T+1 ──
+# (PLAN_B1, chốt 2026-09-23 — tái lập đúng kịch bản "14.688 dòng Chờ đi kênh
+# thật ra đã đi kênh ngày hôm sau" đã phân tích ở mục 0 của kế hoạch.)
+
+class TestMainFromDirCitadCutoffQuaPhien:
+    def test_core_ngay_t_khop_citad_phien_t_cong_1(self, tmp_path):
+        import pandas as pd
+        from backend.services.ilo1000.pipeline import main_from_dir
+
+        input_dir = tmp_path / 'input'
+        input_dir.mkdir()
+        output_dir = tmp_path / 'output'
+
+        # ── Core 07/09 (dòng A) — REFERENCE dạng OTT → Trace = TRBRCD +
+        # REFERENCE[4:16] = '2003' + 'OTT260907000' = '2003OTT260907000'.
+        # Map dc = TRBRCD + Trace + CRAMOUNT = '2003' + '2003OTT260907000' + '100000'.
+        (input_dir / 'gl02_20260907.csv').write_text(
+            'TRDATE,TRBRCD,USERID,JOURSEQ,DYTRSEQ,LOCAC,CCY,BUSCD,UNIT,TRCD,CUSTOMER,TRTP,REFERENCE,REMARK,DRAMOUNT,CRAMOUNT,CRTDTM\n'
+            '20260907,2003,1000API0,1,1,501202,VND,GL,IB,  ,1000-000007709,Normal,'
+            '2003OTT26090700001,test,0,100000,20260907 09:00:00\n',
+            encoding='utf-8',
+        )
+        # ── Core 08/09 (dòng B) — REFERENCE không chứa API/OTT/BFX/HI → Trace=''
+        # → Map dc = '9999' + '' + '222222' — KHÔNG khớp Citad nào trong batch.
+        (input_dir / 'gl02_20260908.csv').write_text(
+            'TRDATE,TRBRCD,USERID,JOURSEQ,DYTRSEQ,LOCAC,CCY,BUSCD,UNIT,TRCD,CUSTOMER,TRTP,REFERENCE,REMARK,DRAMOUNT,CRAMOUNT,CRTDTM\n'
+            '20260908,9999,1000API0,1,1,501202,VND,GL,IB,  ,1000-000007709,Normal,'
+            'NOMATCHB,test,0,222222,20260908 09:00:00\n',
+            encoding='utf-8',
+        )
+        # ── 1 file Citad chứa CẢ TRX_DATE 07/09 lẫn 08/09 trong CÙNG 1 file
+        # (đúng thực tế: cổng Citad xuất theo NGÀY THẬT của phiên, không theo
+        # ngày báo cáo Core). Dòng khớp A nằm ở phiên 08/09 (SERIAL_NO='STCA1'
+        # → tra Hub ra Trace='2003OTT260907000', RELATION_NO left4='2003',
+        # AMOUNT=100000 → Map dc trùng dòng A). Dòng còn lại (07/09) không
+        # khớp gì — vẫn phải hiện "Citad thừa" ở đúng báo cáo 07/09.
+        (input_dir / 'citad_pool.csv').write_text(
+            'SERIAL_NO,RELATION_NO,TRX_DATE,AMOUNT,TRX_STATUS,extra\n'
+            'DUMMY07,ZZZZ00001,20260907,1,OK,\n'
+            'STCA1,2003HUB0001,20260908,100000,OK,\n',
+            encoding='utf-8',
+        )
+        # ── pHub: STC='STCA1', Trace (Số Trace 1)='2003OTT260907000', 'Ngày
+        # giờ kênh trả'=08/09 — đường CŨ (không có cửa sổ tới) chắc chắn gán
+        # Trạng thái Hub 'Chờ đi kênh' khi chấm ngày 07/09 (Ngày > ngay_dc_day).
+        hub_file = input_dir / 'phub_di_20260907.xlsx'
+        hub_rows = pd.DataFrame([{
+            'Số giao dịch': 'A1', 'Số Ref Hub': 'REFA1',
+            'Số thành công': 'STCA1', 'Số Trace 1': '2003OTT260907000',
+            'Số tiền thực chuyển': '100000', 'Trạng thái': 'Hoàn thành',
+            'Ngày giờ kênh trả': '08/09/2026 08:00', 'Nội dung chuyển tiền': '',
+        }])
+        with pd.ExcelWriter(hub_file) as writer:
+            hub_rows.to_excel(writer, index=False, header=True, startrow=1)
+
+        main_from_dir(str(input_dir), str(output_dir))
+
+        # ── Core 07/09: dòng A phải mang nhãn 'citad 8.9' (ngày Citad THẬT
+        # của chính dòng khớp), KHÔNG phải 'citad 7.9' và KHÔNG 'Chờ đi kênh' ──
+        core_07 = pd.read_excel(output_dir / '20260907.xlsx', sheet_name='core', engine='calamine')
+        row_a = core_07[core_07['REFERENCE'] == '2003OTT26090700001']
+        assert len(row_a) == 1
+        assert row_a['TT'].iloc[0] == 'citad 8.9', (
+            f"Dòng A phải khớp Citad phiên 08/09 với nhãn đúng ngày thật, nhận: {row_a['TT'].iloc[0]!r}"
+        )
+
+        # ── Sheet citad của báo cáo 07/09 KHÔNG được chứa dòng TRX_DATE=08/09 ──
+        citad_07 = pd.read_excel(output_dir / '20260907.xlsx', sheet_name='citad', engine='calamine')
+        assert set(citad_07['TRX_DATE'].astype(str)) == {'20260907'}, (
+            "Sheet citad của báo cáo 07/09 chỉ được chứa đúng TRX_DATE=07/09"
+        )
+        # Dòng DUMMY07 (07/09, không khớp gì) vẫn phải hiện là Citad thừa của 07/09
+        assert (citad_07['SERIAL_NO'] == 'DUMMY07').any()
+        dummy_tt = citad_07.loc[citad_07['SERIAL_NO'] == 'DUMMY07', 'TT'].iloc[0]
+        assert dummy_tt == '' or pd.isna(dummy_tt)
+
+        # ── Core 08/09: dòng B chưa khớp gì → TT rỗng ──
+        core_08 = pd.read_excel(output_dir / '20260908.xlsx', sheet_name='core', engine='calamine')
+        row_b = core_08[core_08['REFERENCE'] == 'NOMATCHB']
+        assert len(row_b) == 1
+        assert row_b['TT'].iloc[0] == '' or pd.isna(row_b['TT'].iloc[0])
+
+        # ── Sheet citad của báo cáo 08/09: dòng STCA1 (đã bị Core 07/09 tiêu
+        # thụ, Q5) KHÔNG được hiện là "Citad thừa" (TT phải khác rỗng) ──
+        citad_08 = pd.read_excel(output_dir / '20260908.xlsx', sheet_name='citad', engine='calamine')
+        row_stca1 = citad_08[citad_08['SERIAL_NO'] == 'STCA1']
+        assert len(row_stca1) == 1
+        assert row_stca1['TT'].iloc[0] != '' and not pd.isna(row_stca1['TT'].iloc[0]), (
+            "Q5: dòng Citad đã bị Core của NGÀY KHÁC (07/09) dùng không được "
+            "hiện nhầm là Citad thừa ở báo cáo 08/09"
+        )
+
+        # ── 'Citad thừa 8.9.xlsx' (nếu có) không được chứa dòng STCA1 ──
+        thua_08 = output_dir / 'Citad thừa 8.9.xlsx'
+        if thua_08.exists():
+            thua_df = pd.read_excel(thua_08, sheet_name=0, engine='calamine')
+            assert not (thua_df.get('SERIAL_NO', pd.Series(dtype=str)) == 'STCA1').any()
+
+
+# ── Test hồi quy: batch 1 ngày — cửa sổ Citad "tới" không đổi gì (mục 0b) ───
+
+class TestMainFromDirCitadCutoffBatch1NgayKhongDoi:
+    def test_batch_1_ngay_ket_qua_y_het_truoc_khi_sua(self, tmp_path):
+        """Không có Citad T+1 trong input (batch chỉ 1 ngày) → không mở rộng
+        được gì, kết quả phải y hệt trước B1."""
+        import pandas as pd
+        from backend.services.ilo1000.pipeline import main_from_dir
+
+        input_dir = tmp_path / 'input'
+        input_dir.mkdir()
+        output_dir = tmp_path / 'output'
+
+        (input_dir / 'citad_pool.csv').write_text(
+            'SERIAL_NO,RELATION_NO,TRX_DATE,AMOUNT,TRX_STATUS,extra\n'
+            '1,2003HUB000001,20260909,500000,OK,\n',
+            encoding='utf-8',
+        )
+        (input_dir / 'gl02_20260909.csv').write_text(
+            'TRDATE,TRBRCD,USERID,JOURSEQ,DYTRSEQ,LOCAC,CCY,BUSCD,UNIT,TRCD,CUSTOMER,TRTP,REFERENCE,REMARK,DRAMOUNT,CRAMOUNT,CRTDTM\n'
+            '20260909,2003,1000API0,1,1,501202,VND,GL,IB,  ,1000-000007709,Normal,NEWREF,test,0,500000,20260909 09:00:00\n',
+            encoding='utf-8',
+        )
+
+        main_from_dir(str(input_dir), str(output_dir))
+
+        citad_out = pd.read_excel(output_dir / '20260909.xlsx', sheet_name='citad', engine='calamine')
+        assert citad_out['TT'].iloc[0] == 20260909
+
+
 # ── Test 13: load_core — ZIP GL02 mã hóa AES + dedup CSV rời trùng dữ liệu ──
 
 def _gl02_core_row(ref='REF1', dr='0', cr='1000000', trbrcd='1000', journseq='1'):
@@ -2015,10 +2229,10 @@ class TestLoadCitadMultiDayFile:
             {'id': 'L1', 'serial': 'S1', 'rel': '1220HUB1', 'trdate': '20260714', 'amt': '1000000'},
             {'id': 'L2', 'serial': 'S2', 'rel': '1220HUB2', 'trdate': '20260715', 'amt': '2000000'},
         ])
-        df14 = load_citad([p], ngay_int=20260714)
+        df14 = load_citad([p], ngay_ints=20260714)
         assert list(df14['SERIAL_NO']) == ['S1']
 
-        df15 = load_citad([p], ngay_int=20260715)
+        df15 = load_citad([p], ngay_ints=20260715)
         assert list(df15['SERIAL_NO']) == ['S2']
 
     def test_no_ngay_int_keeps_all_days(self, tmp_path):
@@ -2032,6 +2246,20 @@ class TestLoadCitadMultiDayFile:
         ])
         df = load_citad([p])
         assert len(df) == 2
+
+    def test_ngay_ints_tap_nhieu_ngay(self, tmp_path):
+        """Truyền `set` 2 ngày — cửa sổ Citad tới (PLAN_B1) — giữ CẢ 2 ngày,
+        loại ngày thứ 3 không nằm trong tập."""
+        from backend.services.ilo1000.load_citad import load_citad
+
+        p = tmp_path / 'citad.csv'
+        self._write_citad_csv(p, [
+            {'id': 'L1', 'serial': 'S1', 'rel': '1220HUB1', 'trdate': '20260714', 'amt': '1000000'},
+            {'id': 'L2', 'serial': 'S2', 'rel': '1220HUB2', 'trdate': '20260715', 'amt': '2000000'},
+            {'id': 'L3', 'serial': 'S3', 'rel': '1220HUB3', 'trdate': '20260716', 'amt': '3000000'},
+        ])
+        df = load_citad([p], ngay_ints={20260714, 20260715})
+        assert set(df['SERIAL_NO']) == {'S1', 'S2'}
 
 
 class TestDetectCitadPoolAcrossDays:
@@ -2588,6 +2816,52 @@ class TestHubCarryoverDays:
             20260807, 20260808, 20260809, 20260810, 20260811,
         }
 
+    def test_batch_days_mo_rong_bang_dung_citad(self):
+        """Q7 (2026-09-23, hệ quả bắt buộc của Q1=(b)): truyền `batch_days` →
+        cửa sổ tới RỘNG BẰNG ĐÚNG `_citad_forward_days()`, không còn giới hạn
+        1 phiên kế tiếp như khi không truyền `batch_days`."""
+        from backend.services.ilo1000.pipeline import _hub_carryover_days
+
+        assert _hub_carryover_days(20260909, batch_days={20260909, 20260910, 20260911}) == {
+            20260908, 20260909, 20260910, 20260911,
+        }
+
+
+class TestCitadForwardDays:
+    def test_batch_nhieu_ngay_lien_tiep_lay_du_ca_batch(self):
+        """Q1 → (b): cửa sổ của ngày ĐẦU batch gồm ĐỦ CẢ batch, không chỉ 1
+        phiên kế tiếp."""
+        from backend.services.ilo1000.pipeline import _citad_forward_days
+
+        assert _citad_forward_days(20260907, {20260907, 20260908, 20260909}) == {
+            20260907, 20260908, 20260909,
+        }
+
+    def test_batch_1_ngay_khong_mo_rong(self):
+        """Batch chỉ có đúng ngày T — cửa sổ chỉ có T (không có Citad T+1
+        trong input thì không mở rộng được gì, xem PLAN_B1 mục 0b)."""
+        from backend.services.ilo1000.pipeline import _citad_forward_days
+
+        assert _citad_forward_days(20260907, {20260907}) == {20260907}
+
+    def test_ngay_giua_batch_khong_lay_lui(self):
+        """Q2: không thêm cửa sổ lùi — ngày T=8 ở giữa batch {7,8,9} chỉ lấy
+        các ngày >= T, không lấy lại ngày 7 (đã qua)."""
+        from backend.services.ilo1000.pipeline import _citad_forward_days
+
+        assert _citad_forward_days(20260908, {20260907, 20260908, 20260909}) == {
+            20260908, 20260909,
+        }
+
+    def test_vat_thang(self):
+        """Batch vắt tháng — so sánh bằng số nguyên YYYYMMDD vẫn đúng thứ tự
+        thời gian nhờ định dạng cố định 8 chữ số."""
+        from backend.services.ilo1000.pipeline import _citad_forward_days
+
+        assert _citad_forward_days(20260829, {20260829, 20260901, 20260903}) == {
+            20260829, 20260901, 20260903,
+        }
+
 
 # ── Test: extract_gl02_date_range — tên file GL02 ghi 1 khoảng ngày ─────────
 
@@ -2987,6 +3261,20 @@ class TestLabelCitadProvenance:
             osb_pool_label_map={'M2': 'OSB 5-8.9'},
         )
         assert list(out) == ['OSB 9.9', 'OSB 5-8.9']
+
+    def test_cross_day_used_map_thang_truoc_pool_cu(self):
+        """Q5 (PLAN_B1, chốt 2026-09-23): dòng đã bị Core NGÀY KHÁC trong cùng
+        batch tiêu thụ (cross_day_used_map) phải thắng trước core_pool_label_map,
+        không hiện nhầm nhãn pool cũ hay rơi về rỗng."""
+        from backend.services.ilo1000.process import label_citad_provenance
+
+        citad_df = pd.DataFrame([{'Map dc': 'M1'}])
+        out = label_citad_provenance(
+            citad_df, used_citad_mapdc=set(), ngay_int=20260908,
+            core_pool_label_map={'M1': 'Core 5-8.9'},
+            cross_day_used_map={'M1': 20260907},
+        )
+        assert out.iloc[0] == 20260907
 
     def test_no_match_anywhere_stays_blank(self):
         """Không khớp Core hôm nay, không khớp pool Core, không khớp OSB nào

@@ -67,12 +67,43 @@ def _hub_forward_window(ngay: date, lich: LichLamViec = LICH_RONG) -> list[date]
     return days
 
 
-def _hub_carryover_days(ngay_int: int, lich: LichLamViec = LICH_RONG) -> set[int]:
-    """Cửa sổ Hub đầy đủ = `_osb_carryover_days()` (T + về trước) CỘNG
-    `_hub_forward_window()` (T+1 về sau) — xem 2 hàm đó để biết lý do. CHỈ áp
-    dụng cho Hub — Citad/OSB vẫn dùng `_osb_carryover_days()` như cũ (chưa có
-    bằng chứng thật cần mở rộng 2 nguồn đó về phía sau)."""
+def _citad_forward_days(ngay_int: int, batch_days: set[int]) -> set[int]:
+    """
+    Cửa sổ Citad = T ∪ MỌI ngày LỚN HƠN HOẶC BẰNG T có mặt trong batch đang
+    chấm (Q1 → (b), chốt 2026-09-23 qua AskUserQuestion) — đúng cách bản tay
+    Việt làm: dán hết Citad của cả batch vào 1 sheet rồi VLOOKUP 1 lần. KHÔNG
+    còn giới hạn "chỉ 1 phiên kế tiếp" như đề xuất ban đầu của kế hoạch (dựa
+    trên `_hub_forward_window()`) — brief 2026-09-23 đính chính lại thành
+    "mọi ngày Citad có mặt trong batch". KHÔNG thêm cửa sổ LÙI (Q2): Core của
+    ngày T không thể đã đi kênh ở phiên của ngày TRƯỚC T.
+
+    `batch_days`: tập `ngay_int` (YYYYMMDD) của TOÀN BỘ các ngày có nhóm file
+    trong batch (`day_groups.keys()` ở `main_from_dir()`) — không cần biết
+    trước ngày nào THẬT SỰ có dữ liệu Citad; `load_citad()` tự lọc về đúng
+    TRX_DATE có thật, ngày không có Citad thật trong tập này không sinh ra
+    dòng nào. So sánh bằng SỐ NGUYÊN (không parse `date`) vẫn đúng thứ tự
+    thời gian vì `ngay_int` luôn có định dạng cố định 8 chữ số (YYYYMMDD).
+    """
+    return {d for d in batch_days if d >= ngay_int}
+
+
+def _hub_carryover_days(
+    ngay_int: int,
+    lich: LichLamViec = LICH_RONG,
+    batch_days: 'set[int] | None' = None,
+) -> set[int]:
+    """Cửa sổ Hub đầy đủ = `_osb_carryover_days()` (T + về trước) CỘNG cửa sổ
+    tới. Cửa sổ tới ƯU TIÊN `batch_days` nếu có: dùng `_citad_forward_days()`
+    — RỘNG BẰNG ĐÚNG cửa sổ Citad (Q7, chốt 2026-09-23, hệ quả BẮT BUỘC của
+    Q1 → (b)) — nếu Hub chỉ mở 1 phiên kế tiếp như trước trong khi Citad đã mở
+    rộng ra cả batch, dòng Citad ở ngày xa hơn trong cửa sổ sẽ có Trace rỗng
+    (không tra được qua Hub/EICP) → khoá `Map dc` cụt → khớp nhầm.
+    `batch_days=None` (hàm thuần gọi lẻ, không biết batch — VD test cũ) → rơi
+    về hành vi CŨ: chỉ 1 chuỗi nghỉ kế tiếp (`_hub_forward_window()`)."""
     days = _osb_carryover_days(ngay_int, lich)
+    if batch_days is not None:
+        days |= _citad_forward_days(ngay_int, batch_days)
+        return days
     d = date(ngay_int // 10000, (ngay_int // 100) % 100, ngay_int % 100)
     for fwd in _hub_forward_window(d, lich):
         days.add(int(fwd.strftime('%Y%m%d')))
@@ -190,6 +221,7 @@ def _run_one_day(
     core_pool_label_map: 'dict | None' = None,
     osb_pool_label_map: 'dict | None' = None,
     pool_state: 'dict | None' = None,
+    batch_days: 'set[int] | None' = None,
 ) -> Path | None:
     """Xử lý 1 ngày. Trả None nếu bị cancel hoặc thiếu file thiết yếu.
 
@@ -204,6 +236,12 @@ def _run_one_day(
     xử lý xong TOÀN BỘ batch — xem `process.py` phần "Pool tồn đọng xuyên
     batch". Cả 3 tham số này None (mặc định) → hành vi y hệt trước khi có
     tính năng pool, chỉ khớp Core/OSB hôm nay như cũ.
+
+    `batch_days`: tập `ngay_int` của TOÀN BỘ các ngày có nhóm file trong batch
+    (`day_groups.keys()` ở `main_from_dir()`) — cửa sổ Citad "tới" (PLAN_B1,
+    Q1=(b), chốt 2026-09-23) = T ∪ mọi ngày > T trong tập này, xem
+    `_citad_forward_days()`. None (mặc định) → coi batch chỉ có đúng ngày này
+    (không mở rộng gì, hệt hành vi cũ).
     """
 
     log(f'[{date_str}] Kiểm tra file đầu vào...')
@@ -227,13 +265,20 @@ def _run_one_day(
     }
     core_raw = _filter_core_by_date(core_raw, core_dates)
 
+    # ── Cửa sổ Citad "tới" = T ∪ mọi ngày > T có mặt trong batch (Q1=(b)) —
+    # Hub PHẢI mở cửa sổ tới RỘNG BẰNG ĐÚNG cửa sổ này (Q7, bắt buộc): nếu
+    # không, dòng Citad ở ngày xa hơn sẽ có Trace rỗng (không tra được qua
+    # Hub/EICP) → khoá Map dc cụt → khớp nhầm. batch_days=None (chưa biết
+    # batch) → cả 2 cửa sổ coi như chỉ có đúng ngày này (không đổi gì).
+    citad_window = _citad_forward_days(ngay_int, batch_days if batch_days is not None else {ngay_int})
+
     # ── Load song song (I/O bound) — Core đã nạp sẵn từ main_from_dir() ──
     import pandas as pd
 
     log(f'[{date_str}] Đang đọc file song song...')
     with ThreadPoolExecutor(max_workers=4) as ex:
-        f_hub   = ex.submit(load_hub, files.get('hub', []), _hub_carryover_days(ngay_int, lich)) if files.get('hub') else None
-        f_citad = ex.submit(load_citad, files['citad'], ngay_int)
+        f_hub   = ex.submit(load_hub, files.get('hub', []), _hub_carryover_days(ngay_int, lich, batch_days=batch_days)) if files.get('hub') else None
+        f_citad = ex.submit(load_citad, files['citad'], citad_window)
         f_eicp  = ex.submit(load_eicp,  files.get('eicp', []))
         f_osb   = ex.submit(load_osb, files.get('osb', []), _osb_carryover_days(ngay_int, lich)) if files.get('osb') else None
 
@@ -268,7 +313,7 @@ def _run_one_day(
         return None
 
     log(f'[{date_str}] Xử lý Citad...')
-    citad_out, citad_mapdc = process_citad(citad_raw, hub_lookups, ngay_int)
+    citad_out, citad_mapdc = process_citad(citad_raw, hub_lookups, ngay_int, log=log)
     if cancel_event.is_set():
         return None
 
@@ -276,6 +321,16 @@ def _run_one_day(
     core_out = process_core(core_raw, citad_mapdc, hub_lookups, ngay_int, huy_map)
     if cancel_event.is_set():
         return None
+
+    # ── Lọc citad_out về ĐÚNG TRX_DATE == T trước khi tính TT/xuất/tồn đọng ──
+    # citad_raw/citad_mapdc ở trên dùng CẢ CỬA SỔ (để Core tra được), nhưng
+    # sheet 'citad' xuất ra và mọi phần tồn đọng phía sau CHỈ được chứa đúng 1
+    # ngày T — nếu không, dòng T+1 sẽ xuất hiện ở BÁO CÁO CỦA 2 NGÀY, "Citad
+    # thừa" đếm trùng, và citad_mapdc_by_day[T] lẫn khoá của T+1 (PLAN_B1 mục 2).
+    if 'TRX_DATE' in citad_out.columns:
+        citad_out = citad_out[
+            citad_out['TRX_DATE'].fillna('').astype(str).str.strip() == date_str
+        ].copy()
 
     # ── Khớp Citad còn thừa (chưa được Core dùng) với OSB ──
     # docx mục III: "Những dòng còn lại tiếp tục map với file OSB ngày cũ và
@@ -290,12 +345,20 @@ def _run_one_day(
         pd.DataFrame({'Map dc': build_osb_key(osb_df)}) if not osb_df.empty else pd.DataFrame(),
         'Map dc', f'OSB {ngay_int}',
     )
+    # Q5 (PLAN_B1, chốt 2026-09-23): Citad ở TRX_DATE=T có thể đã bị Core của
+    # MỘT NGÀY KHÁC trong cùng batch "tiêu thụ" trước (cửa sổ tới giờ rộng
+    # bằng cả batch, xem `_citad_forward_days()`) — đọc dict tích luỹ TỪ CÁC
+    # NGÀY ĐÃ XỬ LÝ TRƯỚC ngày này (main_from_dir() luôn duyệt tăng dần) để
+    # không hiện nhầm "Citad thừa" ở báo cáo của chính ngày T.
+    cross_day_used_map = pool_state.get('citad_used_cross_day') if pool_state is not None else None
+
     citad_out = citad_out.copy()
     citad_out['TT'] = label_citad_provenance(
         citad_out, used_mapdc, ngay_int,
         core_pool_label_map=core_pool_label_map,
         osb_today_label_map=osb_today_label_map,
         osb_pool_label_map=osb_pool_label_map,
+        cross_day_used_map=cross_day_used_map,
     )
 
     if pool_state is not None:
@@ -303,6 +366,13 @@ def _run_one_day(
             citad_out['Map dc'].astype(str)
         ) if 'Map dc' in citad_out.columns else set()
         pool_state.setdefault('core_leftover_frames', []).append(build_core_thua_pool(core_out))
+
+        # Ghi lại các Map dc mà Core của NGÀY NÀY vừa dùng, cho các NGÀY SAU
+        # trong batch tra lại (đoạn trên) — setdefault để ngày SỚM HƠN "chiếm"
+        # trước nếu (hiếm) trùng khoá giữa nhiều ngày.
+        cd_used = pool_state.setdefault('citad_used_cross_day', {})
+        for k in used_mapdc:
+            cd_used.setdefault(k, ngay_int)
 
         # OSB hôm nay CHƯA bị 1 dòng Citad nào tiêu thụ (khớp Core/pool Core
         # ưu tiên cao hơn, hoặc không khớp Citad nào cả) vẫn phải mang sang
@@ -386,6 +456,11 @@ def main_from_dir(
 
     log(f'Số ngày cần xử lý: {len(day_groups)}')
 
+    # Cửa sổ Citad/Hub "tới" (Q1=(b)/Q7, PLAN_B1) cần biết TOÀN BỘ ngày có
+    # nhóm file trong batch — không chỉ ngày có Citad thật; load_citad() tự
+    # lọc về đúng TRX_DATE thật có trong file, xem `_citad_forward_days()`.
+    batch_days_int = {int(d) for d in day_groups}
+
     # ── Pool tồn đọng xuyên batch (Core thừa / OSB thừa nạp lại từ lần chấm
     # trước — người chấm tự nạp lại, giống hub/citad/core/osb) — xem
     # process.py phần "Pool tồn đọng xuyên batch". Nhãn dải ngày tính từ NGÀY
@@ -465,6 +540,7 @@ def main_from_dir(
             core_pool_label_map=core_pool_label_map,
             osb_pool_label_map=osb_pool_label_map,
             pool_state=pool_state,
+            batch_days=batch_days_int,
         )
         if out:
             output_paths.append(out)

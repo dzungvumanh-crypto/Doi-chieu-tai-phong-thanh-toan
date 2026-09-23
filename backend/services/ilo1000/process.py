@@ -1,5 +1,7 @@
 """Logic đối chiếu ILO1000: tính Trace, Map dc, phát hiện Hủy, điền TT."""
 
+from typing import Callable
+
 import pandas as pd
 
 from .config import (
@@ -125,9 +127,23 @@ def process_hub(hub_df: pd.DataFrame, eicp_maps: dict, ngay_int: int) -> tuple[p
 
 # ── CITAD ─────────────────────────────────────────────────────────────────────
 
-def process_citad(citad_df: pd.DataFrame, hub_lookups: dict, ngay_int: int) -> tuple[pd.DataFrame, dict]:
+def process_citad(
+    citad_df: pd.DataFrame,
+    hub_lookups: dict,
+    ngay_int: int,
+    log: 'Callable[[str], None] | None' = None,
+) -> tuple[pd.DataFrame, dict]:
     """
     Trả về (citad_df đã xử lý, citad_mapdc_to_ngay dict).
+
+    `citad_mapdc_to_ngay` gán nhãn theo TRX_DATE CỦA TỪNG DÒNG (PLAN_B1 mục
+    3/8 Q4 — mặc định, chốt 2026-09-23), không còn 1 nhãn chung cho cả
+    `citad_df`: khi cửa sổ nạp Citad mở rộng sang phiên sau
+    (`pipeline._citad_forward_days()`), 1 dòng Citad TRX_DATE=08/09 khớp Core
+    TRX_DATE=07/09 phải mang đúng nhãn "citad 8.9" — ngày Citad THẬT của
+    chính dòng đó — không phải "citad 7.9" (ngày báo cáo T). Dòng thiếu/lỗi
+    TRX_DATE rơi về nhãn theo `ngay_int` như cũ (tương thích test gọi thẳng
+    hàm này + file Citad thiếu cột).
     """
     df = citad_df.copy()
 
@@ -154,14 +170,44 @@ def process_citad(citad_df: pd.DataFrame, hub_lookups: dict, ngay_int: int) -> t
 
     df['Ngày'] = ngay_int
 
-    # Label TT cho citad match: 'citad {day}.{month}' — khớp format thủ công
-    day   = ngay_int % 100
-    month = (ngay_int // 100) % 100
-    citad_label = f'citad {day}.{month}'
+    # Label TT theo TRX_DATE TỪNG DÒNG — 'citad {day}.{month}'; dòng thiếu/lỗi
+    # TRX_DATE (không đúng 8 chữ số) rơi về nhãn theo ngay_int (ngày báo cáo).
+    fallback_label = f'citad {ngay_int % 100}.{(ngay_int // 100) % 100}'
+    if 'TRX_DATE' in df.columns:
+        trx = _safe_str(df['TRX_DATE'])
+        valid = trx.str.match(r'^\d{8}$', na=False)
+        dd = pd.to_numeric(trx.str[6:8], errors='coerce').astype('Int64').astype(str)
+        mm = pd.to_numeric(trx.str[4:6], errors='coerce').astype('Int64').astype(str)
+        row_label = 'citad ' + dd + '.' + mm
+        citad_label_series = row_label.where(valid, fallback_label)
+    else:
+        trx = pd.Series('', index=df.index)
+        citad_label_series = pd.Series(fallback_label, index=df.index)
 
-    # ── Build lookup: Map dc → label citad (để core tra TT) — giữ first match ──
-    citad_label_series = pd.Series(citad_label, index=df.index)
-    mapdc_to_ngay = _first_match(df['Map dc'], citad_label_series)
+    # ── Sắp theo TRX_DATE TĂNG DẦN trước khi dựng dict Map dc → nhãn: khi cửa
+    # sổ chứa nhiều ngày, 2 giao dịch khác nhau có thể trùng khoá Map dc
+    # (TRBRCD+Trace+AMOUNT — Trace rỗng khi thiếu Hub làm khoá cụt, xem
+    # PLAN_B1 mục 7 rủi ro 1). `_first_match()` giữ lần xuất hiện ĐẦU theo THỨ
+    # TỰ DÒNG — sắp theo TRX_DATE tăng dần để phiên SỚM NHẤT luôn thắng, không
+    # phụ thuộc thứ tự file/dòng không xác định.
+    sort_idx = trx.sort_values(kind='stable').index
+    mapdc_to_ngay = _first_match(
+        df['Map dc'].loc[sort_idx], citad_label_series.loc[sort_idx],
+    )
+
+    # ── Log (không im lặng chọn bừa) số khoá Map dc trùng ở NHIỀU TRX_DATE ──
+    if log is not None and 'TRX_DATE' in df.columns:
+        keys = df['Map dc'].astype(str)
+        nonblank = keys != ''
+        if nonblank.any():
+            n_trx_by_key = df.loc[nonblank].groupby(keys[nonblank])['TRX_DATE'].nunique()
+            dup = n_trx_by_key[n_trx_by_key > 1]
+            if not dup.empty:
+                examples = ', '.join(dup.index[:5])
+                log(
+                    f'[WARN] {len(dup)} khoá Map dc trùng ở nhiều TRX_DATE trong cửa sổ '
+                    f'Citad — phiên sớm nhất thắng (VD: {examples})'
+                )
 
     return df, mapdc_to_ngay
 
@@ -588,15 +634,26 @@ def label_citad_provenance(
     core_pool_label_map: 'dict | None' = None,
     osb_today_label_map: 'dict | None' = None,
     osb_pool_label_map: 'dict | None' = None,
+    cross_day_used_map: 'dict | None' = None,
 ) -> pd.Series:
     """
     Cột TT của SHEET CITAD (khác nghĩa cột TT của sheet Core) — cho biết mỗi
-    dòng Citad khớp trúng nguồn nào: (1) Core hôm nay → ghi `ngay_int`; (2)
-    pool Core thừa cũ → nhãn có sẵn trong `core_pool_label_map` (VD "Core
-    5-8.9"); (3) OSB hôm nay → nhãn trong `osb_today_label_map`; (4) pool OSB
-    thừa cũ → nhãn trong `osb_pool_label_map`; còn lại → RỖNG (= "Citad thừa"
-    của ngày này, xuất riêng cho người chấm tay điều tra tiếp — không tự suy
-    luận thêm).
+    dòng Citad khớp trúng nguồn nào: (0) đã bị Core của MỘT NGÀY KHÁC trong
+    CÙNG BATCH tiêu thụ → nhãn trong `cross_day_used_map` (PLAN_B1 Q5, chốt
+    2026-09-23 — xem dưới); (1) Core hôm nay → ghi `ngay_int`; (2) pool Core
+    thừa cũ → nhãn có sẵn trong `core_pool_label_map` (VD "Core 5-8.9"); (3)
+    OSB hôm nay → nhãn trong `osb_today_label_map`; (4) pool OSB thừa cũ →
+    nhãn trong `osb_pool_label_map`; còn lại → RỖNG (= "Citad thừa" của ngày
+    này, xuất riêng cho người chấm tay điều tra tiếp — không tự suy luận
+    thêm).
+
+    `cross_day_used_map` ({Map dc → ngay_int ngày đã dùng}, mới — Q5): do cửa
+    sổ Citad giờ rộng bằng cả batch (`_citad_forward_days()`, Q1=(b)), 1 dòng
+    Citad TRX_DATE=T có thể bị Core của NGÀY KHÁC (T-1, hoặc bất kỳ ngày nào
+    trước đó trong batch mà cửa sổ của nó cũng vươn tới T) tiêu thụ trước khi
+    đến lượt báo cáo của chính ngày T — không đánh dấu thì dòng đó hiện nhầm
+    "Citad thừa" ở báo cáo ngày T dù thực ra đã xong. Kiểm TRƯỚC 3 pool label
+    khác — dữ liệu trong CHÍNH batch đang chạy mới hơn pool từ batch cũ.
 
     Bước (1)→(2) ĐÚNG thứ tự tài liệu gốc (mục "Tại bảng chấm" B1: lọc N/A
     rồi mới Vlookup Core thừa). Thứ tự (3) trước (4) — OSB hôm nay ưu tiên
@@ -618,7 +675,7 @@ def label_citad_provenance(
     remaining = ~map_dc.isin(used_citad_mapdc)
     tt.loc[~remaining] = ngay_int
 
-    for label_map in (core_pool_label_map, osb_today_label_map, osb_pool_label_map):
+    for label_map in (cross_day_used_map, core_pool_label_map, osb_today_label_map, osb_pool_label_map):
         if not label_map or not remaining.any():
             continue
         found = remaining & map_dc.isin(label_map)
