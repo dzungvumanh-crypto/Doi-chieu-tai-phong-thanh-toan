@@ -223,15 +223,21 @@ async def continue_job(
 def poll_job(
     job_id: str,
     since: int = 0,
-    _=Depends(_XEM),
+    current: dict = Depends(_XEM),
 ):
     """
     Polling tiến độ.
     since: chỉ trả log từ dòng thứ `since` trở đi (tránh gửi lại log cũ).
     Trả về {status, logs, files, error}.
+
+    Vá cùng lớp lỗ hổng tải chéo đã vá ở /download (D4c, 23/09/2026) — CHỈ
+    người đã tạo job mới xem được log/tiến trình. Trước đây endpoint này trả
+    log cho bất kỳ ai biết job_id, không kiểm chủ job. Job cũ/giả lập không
+    có `nguoi_tao_id` (None) cũng bị chặn — None != current['id'] luôn đúng,
+    thà chặn nhầm còn hơn lộ dữ liệu (docs/SKILL.md).
     """
     job = ach_service.get_job(job_id)
-    if job is None:
+    if job is None or job.get('nguoi_tao_id') != current['id']:
         raise HTTPException(404, 'Job không tồn tại hoặc đã hết hạn.')
 
     return {

@@ -312,3 +312,36 @@ class TestD4KetQuaTheoChuJob:
             assert r2.status_code == 404
         finally:
             app.dependency_overrides.clear()
+
+
+# ─── D4 tiếp — vá cùng lớp lỗ hổng ở /poll (23/09/2026, ngoài PLAN.md gốc) ────
+# PLAN.md mục D4 chỉ liệt kê /download; /poll bị bỏ ngoài phạm vi lúc đó (xem
+# CODE_REPORT.md PHẦN 6, "Quyết định tự chọn" #1) — nay vá nốt cho nhất quán,
+# dùng ĐÚNG cách xử lý (job.get('nguoi_tao_id') != current['id'] -> 404).
+
+class TestD4PollTheoChuJob:
+    def test_nguoi_khac_khong_poll_duoc_job_cua_toi(self, job_gia_lap):
+        """B biết job_id của A -> GET /poll trả 404, không lộ log/tiến trình."""
+        conn = _db_nhieu_nguoi({
+            _STAFF_A: ['menu.cham_ach', 'cham_ach.process'],
+            _STAFF_B: ['menu.cham_ach', 'cham_ach.process'],
+        })
+        job_id_a = job_gia_lap(_STAFF_A)
+        try:
+            r = _client_la(_STAFF_B, StaffRole.CHUYEN_VIEN, conn).get(f'/api/ach/poll/{job_id_a}')
+            assert r.status_code == 404
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_chinh_chu_van_poll_duoc_job_cua_minh(self, job_gia_lap):
+        """Đối chứng: A KHÔNG bị vạ lây bởi việc chặn B — vẫn theo dõi tiến
+        trình job của chính mình bình thường (đúng luồng _poll() trong
+        frontend/pages/cham_ach.py, gọi bằng phiên đăng nhập của chính chủ job)."""
+        conn = _db_nhieu_nguoi({_STAFF_A: ['menu.cham_ach', 'cham_ach.process']})
+        job_id_a = job_gia_lap(_STAFF_A)
+        try:
+            r = _client_la(_STAFF_A, StaffRole.CHUYEN_VIEN, conn).get(f'/api/ach/poll/{job_id_a}')
+            assert r.status_code == 200
+            assert r.json()['status'] == 'done'
+        finally:
+            app.dependency_overrides.clear()
