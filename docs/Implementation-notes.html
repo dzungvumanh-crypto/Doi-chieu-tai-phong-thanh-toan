@@ -16712,6 +16712,72 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">149</span>
+      <span class="card-title">ACH — Luồng D4 (cuối): vá lỗ hổng tải chéo <code>/download</code> + liệt kê
+        <code>GET /api/ach/ket-qua</code> theo chủ job (D-5, 23/09/2026)</span>
+      <span class="badge badge-done">Xong — 473/473 test ACH pass (6 test bảo mật mới)</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-red">Lỗ hổng CÓ THẬT, có từ trước Luồng D4 — không phải do các luồng khác gây ra</span></div>
+      <p><code>GET /api/ach/download/{job_id}/{filename}</code> trước đây <b>không kiểm ai là chủ job</b> —
+        biết <code>job_id</code> (12 ký tự hex, sinh bởi <code>uuid.uuid4().hex[:12]</code>) là tải được
+        báo cáo <code>doi_chieu_*.xlsx</code> của BẤT KỲ AI khác đang/đã chạy trên cùng máy chủ. Tab "Báo cáo"
+        mới (D-5, liệt kê job CŨ thay vì chỉ báo trống) làm lỗ hổng này DỄ khai thác hơn nếu không vá cùng lúc —
+        vì vậy D4 làm SAU CÙNG, sau khi mọi luồng khác (B/A/D1-D3/C/A4) đã xong.</p>
+
+      <div class="label"><span class="pill pill-blue">PHẠM VI DỮ LIỆU, KHÔNG PHẢI QUYỀN — không thêm mã quyền mới</span></div>
+      <p>Theo đúng nguyên tắc <a href="DESIGN.md">docs/DESIGN.md</a> mục "Phạm vi quyền ≠ phạm vi dữ liệu":
+        job giờ mang thêm <code>nguoi_tao_id</code> (gắn NGAY lúc <code>tao_job()</code>, lấy từ
+        <code>current['id']</code> của chính người gọi <code>POST /start</code> —
+        <code>Depends(_CHAY)</code>, KHÔNG lấy từ token/role). <code>GET /api/ach/ket-qua</code> và
+        <code>GET /download</code> chỉ SO SÁNH <code>job['nguoi_tao_id'] == current['id']</code>, không đọc
+        role hay mã quyền nào — vẫn dùng đúng 2 mã có sẵn <code>menu.cham_ach</code>/<code>cham_ach.process</code>,
+        không sửa <code>FEATURES</code>/<code>FEATURE_GROUPS</code>.</p>
+
+      <div class="label"><span class="pill pill-gray">Vai <code>admin</code> mặc định KHÔNG có ngoại lệ ở đây</span></div>
+      <p><code>require_feature()</code> cho <code>admin</code> qua CỬA QUYỀN ngay lập tức (bypass check
+        <code>group_features</code>) — nhưng đó là quyền TRUY CẬP endpoint, không phải quyền THẤY DỮ LIỆU của
+        người khác. D4 KHÔNG code ngoại lệ riêng cho admin: mặc định admin cũng chỉ thấy/tải được job của
+        CHÍNH MÌNH qua <code>/ket-qua</code> và <code>/download</code>, giống mọi người dùng khác — đúng
+        PLAN.md mục D4b ("nếu muốn admin thấy hết thì phải nói rõ, mặc định cũng chỉ thấy job của mình").
+        Có test riêng xác nhận hành vi này (<code>test_admin_mac_dinh_cung_chi_thay_job_cua_chinh_minh</code>).</p>
+
+      <div class="label"><span class="pill pill-green">404, không phải 403 — không lộ job có tồn tại hay không</span></div>
+      <p><code>/download</code> khi job không tồn tại HOẶC tồn tại nhưng không phải của mình đều trả CÙNG
+        một thông điệp 404 "File không tồn tại hoặc job đã hết hạn." — khớp đúng thông điệp gốc endpoint này
+        đã dùng từ trước cho case "job không tồn tại", để người B biết <code>job_id</code> của A không phân
+        biệt được 2 tình huống "job không có thật" và "job có thật nhưng không phải của mình".</p>
+
+      <div class="label"><span class="pill pill-blue">"Còn sống" = job trong <code>_jobs</code> (RAM) còn <code>files</code> + <code>output_dir</code> còn trên đĩa</span></div>
+      <p><code>danh_sach_ket_qua()</code> (<code>ach_service.py</code>) không quét thư mục <code>data/temp_ach/</code>
+        — chỉ lọc trực tiếp dict <code>_jobs</code> (đã có <code>job['nguoi_tao_id']</code>) rồi kiểm
+        <code>os.path.isdir(job['output_dir'])</code>. Sau khi <code>_cleanup_old_jobs()</code> (mốc dọn 23h,
+        card 144) xoá job khỏi <code>_jobs</code>, hàm này tự nhiên không còn thấy job đó nữa — <b>không có
+        nhánh lỗi nào cần bắt riêng</b>, danh sách rỗng và trả 200 bình thường (đã test:
+        <code>test_sau_khi_don_23h_danh_sach_rong_khong_loi</code>). Job đang chạy/lỗi/pending chưa có
+        <code>files</code> nên tự động không lọt vào danh sách — chỉ job <code>done</code> hoặc
+        <code>awaiting_confirmation</code> (đã có file Checkpoint để tải) mới hiện.</p>
+
+      <div class="label"><span class="pill pill-gray">Quyết định tự chọn — chỉ vá đúng <code>/download</code>, KHÔNG mở rộng sang <code>/poll</code>/<code>/cancel</code>/<code>/continue</code></span></div>
+      <p>PLAN.md mục D4 chỉ liệt kê <code>/download</code> là endpoint cần vá cùng <code>/ket-qua</code> mới.
+        <code>GET /poll/{job_id}</code> hiện vẫn trả log/summary cho BẤT KỲ ai biết <code>job_id</code> —
+        đây là RỦI RO CÒN LẠI, chưa được xử lý trong đợt D4 này (ngoài phạm vi được giao, tự ý mở rộng sẽ vi
+        phạm nguyên tắc "không tự mở rộng bài toán"). Ghi rõ ở đây để reviewer/người tổng chỉ huy quyết định
+        có cần một đợt vá riêng cho <code>/poll</code>/<code>/cancel</code>/<code>/continue</code> hay không —
+        mức rủi ro thấp hơn <code>/download</code> (log tiến trình, không phải file kết quả đầy đủ) nhưng vẫn
+        là rò dữ liệu giữa người dùng nếu ai đó cố tình đoán/thử <code>job_id</code>.</p>
+
+      <div class="note"><code>python -m pytest tests/test_ach_*.py -q</code>: <b>473 passed, 0 failed</b>
+        (467 sau Luồng A4 + 6 test mới <code>TestD4KetQuaTheoChuJob</code> trong
+        <code>tests/test_ach_quyen.py</code>, đúng 5 mục bắt buộc của PLAN.md mục D4.5 + 1 test đối chứng
+        "chính chủ không bị vạ lây"). 0 dòng lệch, không dùng %.</div>
+
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-23</footer>
 </div>
 </body>

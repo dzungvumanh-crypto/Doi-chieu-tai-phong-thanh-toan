@@ -80,7 +80,7 @@ _jobs: dict[str, dict[str, Any]] = {}
 _lock = threading.Lock()
 
 
-def _new_job() -> tuple[str, dict]:
+def _new_job(nguoi_tao_id: int | None = None) -> tuple[str, dict]:
     job_id = uuid.uuid4().hex[:12]
     job    = {
         # pending | running | awaiting_confirmation | done | error | cancelled
@@ -99,6 +99,11 @@ def _new_job() -> tuple[str, dict]:
         'xac_nhan_file':  None,   # tên file <ngày>_ACH_ConfirmMISdi.xlsx khi đang chờ xác nhận
         'xac_nhan_count': None,   # số giao dịch MIS_đi cần chấm (đọc từ sheet MIS_DI_CONFIRM) — None nếu không đếm được
         'xac_nhan_tong_tien': None,  # tổng SO_TIEN các giao dịch cần chấm — None nếu không đếm được
+        # D4a (23/09/2026) — chủ job, lấy từ current['id'] của người gọi /start
+        # (backend/api/ach.py). PHẠM VI DỮ LIỆU (docs/DESIGN.md), KHÔNG phải
+        # mã quyền mới — chỉ dùng để so sánh "có phải người tạo không" ở
+        # `danh_sach_ket_qua()` và endpoint /download (D4b, D4c).
+        'nguoi_tao_id':  nguoi_tao_id,
     }
     with _lock:
         _jobs[job_id] = job
@@ -157,7 +162,7 @@ def job_dang_chay() -> dict | None:
     return None
 
 
-def tao_job() -> tuple[str, Path]:
+def tao_job(nguoi_tao_id: int | None = None) -> tuple[str, Path]:
     """Đăng ký một job mới ở trạng thái 'pending' và trả về (job_id, input_dir).
 
     Tách khỏi `chay_job()` để lớp API ghi THẲNG từng khối file tải lên vào
@@ -169,8 +174,12 @@ def tao_job() -> tuple[str, Path]:
     vẫn lọt qua cửa kiểm tra rồi mới tranh nhau RAM.
 
     Upload hỏng giữa chừng thì lớp API phải gọi `bo_job()` để trả lại chỗ.
+
+    nguoi_tao_id — chủ job (D4a, 23/09/2026), gắn NGAY lúc tạo (không đợi tới
+    `chay_job()`) vì job đã có mặt trong `_jobs` và có thể bị hỏi/tải ngay
+    trong lúc còn đang nhận file.
     """
-    job_id, job = _new_job()
+    job_id, job = _new_job(nguoi_tao_id)
     input_dir = TEMP_DIR / job_id / 'input'
     input_dir.mkdir(parents=True, exist_ok=True)
     Path(job['output_dir']).mkdir(parents=True, exist_ok=True)
@@ -380,6 +389,36 @@ def _run(job_id: str, input_dir: str, output_dir: str, ngay: str | None,
         # giấy tờ.
         gc.collect()
         _cleanup_old_jobs()
+
+
+def danh_sach_ket_qua(nguoi_tao_id: int) -> list[dict]:
+    """D4b (23/09/2026) — liệt kê job ACH CÒN SỐNG trên máy chủ (output_dir
+    còn tồn tại trên đĩa, chưa bị `_cleanup_old_jobs()` dọn 23h) và ĐÃ CÓ file
+    kết quả, của ĐÚNG `nguoi_tao_id`.
+
+    Đây là PHẠM VI DỮ LIỆU (docs/DESIGN.md — "Phạm vi quyền ≠ phạm vi dữ
+    liệu"), KHÔNG phải quyền: hàm chỉ so `job['nguoi_tao_id']` với id truyền
+    vào, không đọc role/mã quyền của ai — không suy ra hay tự cấp thêm quyền
+    nào từ đây. Trả `[]` (không lỗi) nếu người này chưa có job nào còn sống —
+    kể cả khi `data/temp_ach/` vừa bị dọn 23h (job tương ứng đã bị
+    `_cleanup_old_jobs()` xoá khỏi `_jobs` nên vòng lặp dưới đây đơn giản
+    không thấy nó nữa, không có nhánh nào có thể ném lỗi ở đây).
+
+    Job đang `running`/`pending`/`error` chưa có `files` nên tự động không
+    lọt qua điều kiện `j.get('files')` — chỉ `done`/`awaiting_confirmation`
+    (đã có file để tải, kể cả file cần điền Checkpoint) mới xuất hiện.
+    """
+    with _lock:
+        cua_minh = [
+            (jid, dict(j)) for jid, j in _jobs.items()
+            if j.get('nguoi_tao_id') == nguoi_tao_id and j.get('files')
+        ]
+    cua_minh.sort(key=lambda t: t[1].get('_ts', 0), reverse=True)
+    return [
+        {'job_id': jid, 'ngay': j.get('ngay'), 'files': list(j['files'])}
+        for jid, j in cua_minh
+        if os.path.isdir(j['output_dir'])
+    ]
 
 
 def get_output_file(job_id: str, filename: str) -> Path | None:

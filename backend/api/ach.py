@@ -59,7 +59,7 @@ async def start_job(
     ngay_doi_chieu: str = Form(''),
     bo_qua_checkpoint: bool = Form(False),
     tao_gw_cho_phub: bool = Form(False),
-    _=Depends(_CHAY),
+    current: dict = Depends(_CHAY),
 ):
     """
     Nhận nhiều file (PDF, GL02.zip, GW.xlsx, MIS_DI.zip x2, MIS_DEN.zip x2).
@@ -108,7 +108,10 @@ async def start_job(
     with phien_doi_chieu.gianh_cho('ach') as nghen:
         if nghen:
             raise HTTPException(409, nghen)
-        job_id, input_dir = ach_service.tao_job()
+        # D4a (23/09/2026) — gắn chủ job NGAY lúc tạo, lấy từ chính người gọi
+        # (Depends(_CHAY) trả dict nhân sự, KHÔNG lấy từ token/role). Dùng để
+        # lọc "kết quả của tôi" ở /ket-qua + chặn tải chéo ở /download (D4b, D4c).
+        job_id, input_dir = ach_service.tao_job(nguoi_tao_id=current['id'])
 
     # Ghi THẲNG từng khối xuống thư mục job, không gom vào RAM trước. Bản cũ
     # giữ cả lượt (tới 500 MB) trong một dict bytes rồi mới đưa xuống đĩa: đỉnh
@@ -261,9 +264,26 @@ def cancel_job(
 def download_file(
     job_id: str,
     filename: str,
-    _=Depends(_XEM),
+    current: dict = Depends(_XEM),
 ):
-    """Tải file kết quả (.xlsx hoặc .csv)."""
+    """Tải file kết quả (.xlsx hoặc .csv).
+
+    D4c (23/09/2026, vá lỗ hổng có sẵn từ trước) — CHỈ người đã tạo job
+    (`job['nguoi_tao_id']`) mới tải được. Trước đây endpoint này không kiểm
+    chủ job: biết `job_id` (12 ký tự hex, không dò được) là tải được file của
+    bất kỳ ai (PLAN.md rủi ro #7). Trả 404 (không phải 403) khi job không
+    thuộc về mình — cùng thông điệp với "job không tồn tại" để không lộ cho
+    người không liên quan biết job_id đó CÓ tồn tại hay không.
+
+    Đây là PHẠM VI DỮ LIỆU (docs/DESIGN.md), không phải quyền: `admin` vẫn đi
+    qua `require_feature()` như mọi nơi khác, nhưng KHÔNG có ngoại lệ nào ở
+    đây cho vai admin thấy/tải job của người khác — mặc định giống mọi
+    người dùng khác (PLAN.md mục D4b, chưa có yêu cầu mở rộng riêng).
+    """
+    job = ach_service.get_job(job_id)
+    if job is None or job.get('nguoi_tao_id') != current['id']:
+        raise HTTPException(404, 'File không tồn tại hoặc job đã hết hạn.')
+
     path = ach_service.get_output_file(job_id, filename)
     if path is None:
         raise HTTPException(404, 'File không tồn tại hoặc job đã hết hạn.')
@@ -278,6 +298,21 @@ def download_file(
         media_type=media,
         headers=_dl_headers(filename),
     )
+
+
+@router.get('/ket-qua')
+def danh_sach_ket_qua(current: dict = Depends(_XEM)):
+    """D4b (23/09/2026) — liệt kê job ACH CÒN SỐNG trên máy chủ (output_dir
+    chưa bị dọn 23h) và ĐÃ CÓ file kết quả, CHỈ của chính người đang đăng
+    nhập — tab "Báo cáo" dùng để hiện thêm các lượt chạy CŨ (không phải lượt
+    vừa chạy trong phiên trình duyệt hiện tại, cái đó tab đã tự nhớ sẵn).
+
+    PHẠM VI DỮ LIỆU (docs/DESIGN.md — "Phạm vi quyền ≠ phạm vi dữ liệu"),
+    KHÔNG PHẢI quyền: không có mã quyền mới nào phát sinh ở đây, `admin`
+    cũng chỉ thấy job của chính mình (mặc định, PLAN.md mục D4b chưa có yêu
+    cầu mở rộng riêng cho vai admin).
+    """
+    return ach_service.danh_sach_ket_qua(current['id'])
 
 
 # ─── Gộp pHub nhiều ngày — bản-3 (Luồng C, 23.09.2026) ────────────────────────

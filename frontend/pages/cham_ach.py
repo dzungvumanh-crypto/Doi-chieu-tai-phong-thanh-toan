@@ -506,6 +506,26 @@ async def cham_ach_page():
                                 'hoặc "Đối chiếu đến" trước.'
                             ).classes('text-sm text-gray-400 italic')
 
+                    # ── D4/D-5 (23/09/2026) — kết quả CŨ còn sống trên máy chủ ──────
+                    # Khác card phía trên (chỉ nhớ job của phiên trình duyệt HIỆN TẠI,
+                    # mất khi F5): đây là các lượt chạy TRƯỚC ĐÓ (kể cả tab/máy khác,
+                    # kể cả sau F5) mà server còn giữ (chưa tới mốc dọn 23h). Lọc theo
+                    # CHÍNH người đang đăng nhập ở BACKEND (`GET /api/ach/ket-qua`) —
+                    # đây là phạm vi DỮ LIỆU, không phải quyền (docs/DESIGN.md).
+                    with ui.card().classes('w-full p-5 mb-4'):
+                        with ui.row().classes('w-full items-center justify-between'):
+                            ui.label('Kết quả khác của bạn còn trên máy chủ').classes(
+                                'text-base font-semibold text-red-800')
+                            btn_lam_moi_ket_qua_cu = ui.button(
+                                icon='refresh', color='grey-6').props('flat dense round')
+                        ui.label(
+                            'Các lượt chạy TRƯỚC ĐÓ của chính bạn (kể cả sau khi tải lại trang) '
+                            'mà máy chủ chưa dọn — kết quả bị dọn tự động sau 23h mỗi ngày.'
+                        ).classes('text-xs text-gray-500 mb-2')
+                        ket_qua_cu_container = ui.column().classes('w-full gap-2')
+                        with ket_qua_cu_container:
+                            ui.label('Đang tải...').classes('text-xs text-gray-400 italic')
+
                     # ── Luồng C (23/09/2026) — Gộp kết quả pHub nhiều ngày ──────────
                     # Bản-2 "kho 30 ngày" đã gỡ (Luồng A). Bản-3: server KHÔNG lưu gì
                     # ngoài kết quả cuối — nạp N file TIMEOUT_KHONG_KENH_*.csv + N file
@@ -1113,10 +1133,15 @@ async def cham_ach_page():
                 btn_cancel.set_visibility(True)
                 run_state['timer'] = ui.timer(_POLL_INTERVAL, _poll)
 
-            def _nut_tai(fname: str):
+            def _nut_tai(fname: str, job_id: str | None = None):
+                """job_id=None → job vừa chạy trong phiên hiện tại
+                (`run_state['job_id']`). Truyền `job_id` tường minh khi tải kết
+                quả của một lượt CŨ (D4 — card "Kết quả khác của bạn còn trên
+                máy chủ"), không phải job đang mở của phiên này."""
                 icon = 'table_chart' if fname.endswith('.xlsx') else 'description'
                 color = 'green-7' if fname.endswith('.xlsx') else 'blue-7'
-                url   = f'/api/ach/download/{run_state["job_id"]}/{fname}'
+                jid   = job_id or run_state['job_id']
+                url   = f'/api/ach/download/{jid}/{fname}'
 
                 async def _tai_ket_qua(u=url, name=fname):
                     try:
@@ -1128,6 +1153,40 @@ async def cham_ach_page():
                     ui.download(content, name)
 
                 ui.button(fname, icon=icon, color=color).on('click', _tai_ket_qua).classes('text-xs')
+
+            async def _tai_ket_qua_cu():
+                """D4 (23/09/2026) — nạp danh sách job CŨ của CHÍNH người đang
+                đăng nhập từ `GET /api/ach/ket-qua` (backend đã lọc theo
+                `nguoi_tao_id`, xem backend/api/ach.py). Bỏ qua job trùng với
+                `run_state['job_id']` — job đó đã hiện ở card "lượt chạy gần
+                nhất" phía trên, không cần lặp lại."""
+                ket_qua_cu_container.clear()
+                try:
+                    jobs = await asyncio.to_thread(api.get, '/api/ach/ket-qua')
+                except Exception as e:
+                    with ket_qua_cu_container:
+                        if not _handle_api_error(e):
+                            ui.label(f'Không tải được danh sách: {e}').classes(
+                                'text-xs text-red-600')
+                    return
+
+                jobs = [j for j in jobs if j.get('job_id') != run_state.get('job_id')]
+                with ket_qua_cu_container:
+                    if not jobs:
+                        ui.label(
+                            'Không có kết quả nào khác của bạn còn trên máy chủ.'
+                        ).classes('text-xs text-gray-400 italic')
+                        return
+                    for j in jobs:
+                        ngay_txt = f" — ngày {j['ngay']}" if j.get('ngay') else ''
+                        with ui.column().classes('w-full gap-1 mb-1 p-3 rounded border bg-gray-50'):
+                            ui.label(f"Job {j['job_id']}{ngay_txt}").classes(
+                                'text-sm font-semibold text-red-800')
+                            with ui.row().classes('flex-wrap gap-2'):
+                                for fname in j.get('files', []):
+                                    _nut_tai(fname, job_id=j['job_id'])
+
+            btn_lam_moi_ket_qua_cu.on('click', _tai_ket_qua_cu)
 
             def _render_bao_cao(files: list[str]):
                 """D3 — thay hẳn danh sách tải phẳng bằng card theo nhóm nghiệp vụ."""
@@ -1347,6 +1406,12 @@ async def cham_ach_page():
             btn_run_den.on('click', on_run_den)
             btn_cancel.on('click', on_cancel)
             btn_open_checkpoint.on('click', _open_pending_checkpoint)
+
+            # D4 — nạp danh sách "kết quả khác của bạn" ngay khi mở trang, không
+            # đợi người dùng bấm nút làm mới trước. Truyền THẲNG (không
+            # `asyncio.create_task`) — hàm async gọi trực tiếp trong lúc trang
+            # đang dựng vẫn nằm trong đúng slot NiceGUI (docs/DESIGN.md).
+            await _tai_ket_qua_cu()
 
 
 def _ngay_input():
