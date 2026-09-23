@@ -204,11 +204,20 @@ def validate_files(
 async def continue_job(
     job_id: str,
     file: UploadFile,
-    _=Depends(_CHAY),
+    current: dict = Depends(_CHAY),
 ):
     """Checkpoint xác nhận thủ công tại MIS_đi (Bước 3) — nhận file
     <ngày>_ACH_ConfirmMISdi.xlsx đã điền cột LOAI_BO (và REFHUB bổ sung nếu có),
-    chạy lại toàn bộ pipeline áp dụng MIS_đi chuẩn rồi tiếp tục tới báo cáo cuối."""
+    chạy lại toàn bộ pipeline áp dụng MIS_đi chuẩn rồi tiếp tục tới báo cáo cuối.
+
+    Vá cùng lớp lỗ hổng tải chéo đã vá ở /download, /poll (D4c, 23/09/2026) —
+    CHỈ người đã tạo job mới tiếp tục được job qua Checkpoint. Kiểm chủ job
+    TRƯỚC khi đọc nội dung file tải lên — biết trước là bị chặn thì không cần
+    tốn công đọc/ghi dữ liệu của một request không hợp lệ."""
+    job = ach_service.get_job(job_id)
+    if job is None or job.get('nguoi_tao_id') != current['id']:
+        raise HTTPException(404, 'Job không tồn tại hoặc đã hết hạn.')
+
     data = await read_limited(file, ten='File xác nhận')
     try:
         ach_service.continue_job(job_id, data, file.filename or 'xac_nhan.xlsx')
@@ -258,8 +267,15 @@ def poll_job(
 @router.post('/cancel/{job_id}')
 def cancel_job(
     job_id: str,
-    _=Depends(_CHAY),
+    current: dict = Depends(_CHAY),
 ):
+    """Vá cùng lớp lỗ hổng tải chéo đã vá ở /download, /poll, /continue (D4c,
+    23/09/2026) — CHỈ người đã tạo job mới huỷ được job. Trước đây bất kỳ ai
+    biết job_id là huỷ được job người khác đang chạy."""
+    job = ach_service.get_job(job_id)
+    if job is None or job.get('nguoi_tao_id') != current['id']:
+        raise HTTPException(404, 'Job không tồn tại hoặc đã kết thúc.')
+
     ok = ach_service.cancel_job(job_id)
     if not ok:
         raise HTTPException(404, 'Job không tồn tại hoặc đã kết thúc.')

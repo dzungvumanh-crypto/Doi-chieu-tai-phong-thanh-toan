@@ -345,3 +345,82 @@ class TestD4PollTheoChuJob:
             assert r.json()['status'] == 'done'
         finally:
             app.dependency_overrides.clear()
+
+
+# ─── D4 tiếp — vá cùng lớp lỗ hổng ở /cancel + /continue (23/09/2026, ngoài
+# PLAN.md gốc) ──────────────────────────────────────────────────────────────
+# /cancel và /continue NGUY HIỂM HƠN /poll: cho phép CAN THIỆP CHỦ ĐỘNG (huỷ
+# job hoặc tiếp tục job qua Checkpoint của người khác), không chỉ đọc lén.
+# Dùng đúng khuôn `job.get('nguoi_tao_id') != current['id']` -> 404 đã áp
+# dụng ở /download, /poll — không tự bịa cách xử lý riêng.
+
+class TestD4CancelContinueTheoChuJob:
+    def test_nguoi_khac_khong_huy_duoc_job_cua_toi(self, job_gia_lap):
+        """B biết job_id của A (đang 'running') -> POST /cancel trả 404,
+        job của A KHÔNG bị huỷ (vẫn 'running' sau khi B thử)."""
+        conn = _db_nhieu_nguoi({
+            _STAFF_A: ['menu.cham_ach', 'cham_ach.process'],
+            _STAFF_B: ['menu.cham_ach', 'cham_ach.process'],
+        })
+        job_id_a = job_gia_lap(_STAFF_A)
+        ach_service.get_job(job_id_a)['status'] = 'running'
+        try:
+            r = _client_la(_STAFF_B, StaffRole.CHUYEN_VIEN, conn).post(f'/api/ach/cancel/{job_id_a}')
+            assert r.status_code == 404
+            assert ach_service.get_job(job_id_a)['status'] == 'running'
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_chinh_chu_van_huy_duoc_job_cua_minh(self, job_gia_lap):
+        """Đối chứng: A KHÔNG bị vạ lây — vẫn huỷ được job đang 'running' của
+        chính mình."""
+        conn = _db_nhieu_nguoi({_STAFF_A: ['menu.cham_ach', 'cham_ach.process']})
+        job_id_a = job_gia_lap(_STAFF_A)
+        ach_service.get_job(job_id_a)['status'] = 'running'
+        try:
+            r = _client_la(_STAFF_A, StaffRole.CHUYEN_VIEN, conn).post(f'/api/ach/cancel/{job_id_a}')
+            assert r.status_code == 200
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_nguoi_khac_khong_tiep_tuc_duoc_job_cua_toi(self, job_gia_lap):
+        """B biết job_id của A (đang 'awaiting_confirmation') -> POST
+        /continue kèm file trả 404, job của A KHÔNG đổi trạng thái."""
+        conn = _db_nhieu_nguoi({
+            _STAFF_A: ['menu.cham_ach', 'cham_ach.process'],
+            _STAFF_B: ['menu.cham_ach', 'cham_ach.process'],
+        })
+        job_id_a = job_gia_lap(_STAFF_A)
+        ach_service.get_job(job_id_a)['status'] = 'awaiting_confirmation'
+        try:
+            r = _client_la(_STAFF_B, StaffRole.CHUYEN_VIEN, conn).post(
+                f'/api/ach/continue/{job_id_a}',
+                files={'file': ('a.xlsx', b'x', 'application/vnd.ms-excel')},
+            )
+            assert r.status_code == 404
+            assert ach_service.get_job(job_id_a)['status'] == 'awaiting_confirmation'
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_chinh_chu_van_tiep_tuc_duoc_job_cua_minh(self, job_gia_lap, monkeypatch):
+        """Đối chứng: A KHÔNG bị vạ lây — qua được lớp kiểm chủ job của
+        api/ach.py, tới đúng `ach_service.continue_job()`. `continue_job()`
+        thật spawn thread chạy pipeline thật (đã có test riêng cho lớp state
+        machine đó ở test_ach_checkpoint_api.py/test_ach_tao_gw_cho_phub_toggle.py)
+        — ở đây monkeypatch thành no-op để chỉ kiểm ĐÚNG lớp ownership của
+        api/ach.py, không lẫn với việc dựng input_dir/pipeline thật."""
+        conn = _db_nhieu_nguoi({_STAFF_A: ['menu.cham_ach', 'cham_ach.process']})
+        job_id_a = job_gia_lap(_STAFF_A)
+        goi_voi = {}
+        monkeypatch.setattr(
+            ach_service, 'continue_job',
+            lambda job_id, data, filename: goi_voi.update(job_id=job_id))
+        try:
+            r = _client_la(_STAFF_A, StaffRole.CHUYEN_VIEN, conn).post(
+                f'/api/ach/continue/{job_id_a}',
+                files={'file': ('a.xlsx', b'x', 'application/vnd.ms-excel')},
+            )
+            assert r.status_code == 200
+            assert goi_voi['job_id'] == job_id_a
+        finally:
+            app.dependency_overrides.clear()

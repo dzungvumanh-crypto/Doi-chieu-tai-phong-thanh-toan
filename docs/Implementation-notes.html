@@ -16786,6 +16786,35 @@ This may happen if you try to create UI from a background task.</pre>
         (473 sau Luồng D4 + 2 test mới <code>TestD4PollTheoChuJob</code> trong
         <code>tests/test_ach_quyen.py</code>). 0 dòng lệch, không dùng %.</div>
 
+      <div class="label"><span class="pill pill-green">Bổ sung 23/09/2026 — <code>/cancel</code> + <code>/continue</code> đã vá</span></div>
+      <p>Người tổng chỉ huy giao tiếp vá nốt <code>POST /cancel/{job_id}</code> và
+        <code>POST /continue/{job_id}</code> — hai endpoint NGUY HIỂM HƠN <code>/poll</code> vì cho phép
+        CAN THIỆP CHỦ ĐỘNG (huỷ job hoặc tiếp tục job qua Checkpoint của người khác biết
+        <code>job_id</code>), không chỉ đọc lén log. Dùng ĐÚNG khuôn D4c/poll:
+        <code>job.get('nguoi_tao_id') != current['id']</code> → 404, đặt TRƯỚC khi gọi
+        <code>ach_service.cancel_job()</code>/<code>continue_job()</code> (<code>/continue</code> kiểm
+        TRƯỚC cả khi đọc nội dung file tải lên, tránh tốn công xử lý dữ liệu của request không hợp lệ).
+        Không có ngoại lệ riêng cho <code>admin</code> — nhất quán với <code>/download</code>/<code>/poll</code>/
+        <code>/ket-qua</code> (mặc định admin cũng chỉ huỷ/tiếp tục được job của chính mình).</p>
+
+      <p>2 test đã có sẵn tại <code>tests/test_ach_tran_upload.py</code> (<code>test_gui_lenh_dung_chua_lam_may_chu_ranh_ngay</code>,
+        <code>test_dung_o_buoc_cho_xac_nhan_thi_ranh_ngay</code>) dựng job trực tiếp bằng
+        <code>ach_service._new_job()</code> (không qua <code>/start</code>) rồi gọi <code>/cancel</code> bằng
+        <code>admin_client</code> — job đó không có <code>nguoi_tao_id</code> khớp admin nên bắt đầu bị 404 sau
+        khi vá. Đã sửa 2 test này truyền <code>nguoi_tao_id=1</code> (khớp <code>_fake_admin()['id']</code> trong
+        <code>tests/conftest.py</code>) thay vì nới lỏng endpoint — hành vi chặn là ĐÚNG mục tiêu vá, test phải
+        khớp hành vi mới, không phải ngược lại.</p>
+
+      <div class="label"><span class="pill pill-gray"><code>/cancel</code>/<code>/continue</code> giờ là 4/4 endpoint cùng lớp đã vá — không còn endpoint nào khác biết được của module ACH lộ theo <code>job_id</code></span></div>
+      <p><code>/download</code>, <code>/poll</code>, <code>/cancel</code>, <code>/continue</code> — đủ 4 endpoint
+        nhận <code>job_id</code> làm tham số của module ACH đã kiểm ownership. Chưa rà các module đối chiếu khác
+        (ILO1000/459901/Song phương) có cùng lớp rủi ro hay không — ngoài phạm vi nhiệm vụ nhỏ này.</p>
+
+      <div class="note"><code>python -m pytest tests/test_ach_*.py -q</code>: <b>479 passed, 0 failed</b>
+        (475 sau vá <code>/poll</code> + 4 test mới <code>TestD4CancelContinueTheoChuJob</code> trong
+        <code>tests/test_ach_quyen.py</code>). <code>python -m pytest -q</code> toàn dự án:
+        <b>2031 passed, 0 failed</b> (2027 + 4). 0 dòng lệch, không dùng %.</div>
+
     </div>
   </div>
 
