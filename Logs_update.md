@@ -4,6 +4,17 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 23/09/2026 Chuẩn hoá văn bản - **Sửa 6 điểm trình bày theo QĐ 979**
+    + ✅ Đường kẻ ngang có sẵn trong văn bản nay được **chỉnh đúng độ dài**: dưới Tiêu ngữ dài bằng dòng chữ,
+      dưới tên đơn vị dài **một nửa** dòng chữ, cả hai canh giữa. Trước đây đường kẻ cũ giữ nguyên nên ngắn hơn chữ
+    + ℹ️ Đường kẻ dưới tên đơn vị **không** kéo tới 2/3: Điều 8.2 chỉ cho phép từ 1/3 đến 1/2 dòng chữ
+    + ✅ Dòng "Kính trình: …" kẻ bảng không còn bị gãy thành hai dòng — cột tự co giãn theo chữ, cả dòng canh giữa
+    + ✅ Có khoảng cách giữa dòng Kính gửi / Kính trình và mục "I." bên dưới
+    + ✅ Số thứ tự tự động (I. II. IV. …) cách chữ **đúng một dấu cách**, giống số gõ tay
+    + ✅ Chỗ để ký giữa chức vụ và họ tên rộng hơn (theo cỡ chữ của khối ký)
+    + ✅ Khối "PHÊ DUYỆT CỦA PHÓ TỔNG GIÁM ĐỐC" cách tên người ký một dòng, không còn dính sát
+    + ℹ️ Trong tab Cấu hình có thêm hai ô tắt/bật: *một dấu cách sau số tự động* và *tính lại bảng Kính gửi*
+
 - 22/09/2026 Nhật ký hệ thống - **Gom 3 mục thành một màn, dễ tra hơn**
     + ✅ Ba mục menu cũ (Nhật ký hệ thống, Lịch sử lỗi & cảnh báo, Nhật ký đăng nhập) nay là **một mục** với 4 tab:
       *Tổng quan · Thao tác · Đăng nhập · Lỗi hệ thống*

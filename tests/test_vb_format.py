@@ -371,10 +371,15 @@ def test_nhan_ra_danh_sach_tu_dong_khai_bao_tren_STYLE():
     assert kieu["Điều 1. Trách nhiệm thi hành"] is None
 
 
+# Ba test tab dưới đây kiểm nhánh ĐIỂM DỪNG TAB — từ 23/09/2026 mặc định là
+# một dấu cách sau số (`danh_so.dau_cach_sau_so`), nhánh tab chỉ chạy khi tắt cờ.
+_CAU_HINH_TAB = {"danh_so": {"dau_cach_sau_so": False}}
+
+
 def test_so_tu_dong_het_thut_treo_thi_co_tab_stop_sat_sau_so():
     """Tờ trình Microgateway: "a.        Giao Trung tâm…" — ép thụt dòng đầu 1 cm
     làm mất thụt treo, tab sau số trôi tới điểm dừng mặc định 2,54 cm."""
-    du_lieu, _ = chuan_hoa(_van_ban_co_danh_sach())
+    du_lieu, _ = chuan_hoa(_van_ban_co_danh_sach(), _CAU_HINH_TAB)
     p = _tim([p for p, _ in ap_dung.duyet_doan(Document(io.BytesIO(du_lieu)))], "Bước một")
     pf = p.paragraph_format
     assert pf.first_line_indent is not None and pf.first_line_indent >= 0
@@ -383,7 +388,7 @@ def test_so_tu_dong_het_thut_treo_thi_co_tab_stop_sat_sau_so():
     assert any(so < t <= so + 720 for t in tab), tab
 
     # Chạy lại không đẻ thêm tab stop
-    lan2, _ = chuan_hoa(du_lieu)
+    lan2, _ = chuan_hoa(du_lieu, _CAU_HINH_TAB)
     p2 = _tim([p for p, _ in ap_dung.duyet_doan(Document(io.BytesIO(lan2)))], "Bước một")
     assert len(p2.paragraph_format.tab_stops) == len(tab)
 
@@ -400,7 +405,7 @@ def test_tab_cu_cua_tac_gia_nam_giua_so_va_chu_bi_go():
     ra = io.BytesIO()
     doc.save(ra)
 
-    du_lieu, _ = chuan_hoa(ra.getvalue())
+    du_lieu, _ = chuan_hoa(ra.getvalue(), _CAU_HINH_TAB)
     p = _tim([p for p, _ in ap_dung.duyet_doan(Document(io.BytesIO(du_lieu)))], "Bước một")
     tab = [int(t.position.twips) for t in p.paragraph_format.tab_stops]
     assert 800 not in tab
@@ -597,8 +602,11 @@ def test_khoi_dau_ve_spacing_0_0_ke_ca_o_bang_khong_nhan_ra(cong_van):
         return (0.0 if tr is None else tr.pt, 0.0 if sa is None else sa.pt)
 
     for mo_dau in ("NGÂN HÀNG", "CỘNG HO", "Độc lập", "Số:", "V/v",
-                   "trên hệ thống", "Hà Nội,", "Kính gửi"):
+                   "trên hệ thống", "Hà Nội,"):
         assert _sp(_tim(doan, mo_dau)) == (0.0, 0.0), mo_dau
+    # Kính gửi KHÔNG thuộc khối đầu: Mẫu 05/06/08 đặt cách đoạn 6 pt, để 0 thì
+    # dính sát mục "I." ngay dưới (VB goc 23/09/2026).
+    assert _sp(_tim(doan, "Kính gửi")) == (0.0, 6.0)
 
 
 def test_loi_van_bo_khoang_truoc_giu_khoang_sau(cong_van):
@@ -1846,7 +1854,7 @@ def _tab_sau_so(tab_tac_gia: int) -> list[int]:
     p.paragraph_format.tab_stops.add_tab_stop(Twips(tab_tac_gia))
     ra = io.BytesIO()
     doc.save(ra)
-    du_lieu, _ = chuan_hoa(ra.getvalue())
+    du_lieu, _ = chuan_hoa(ra.getvalue(), _CAU_HINH_TAB)
     p = _tim([p for p, _ in ap_dung.duyet_doan(Document(io.BytesIO(du_lieu)))], "Bước một")
     return [int(t.position.twips) for t in p.paragraph_format.tab_stops]
 

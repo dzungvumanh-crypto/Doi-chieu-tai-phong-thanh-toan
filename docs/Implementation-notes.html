@@ -51,7 +51,132 @@
 <div class="page">
 
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
-  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-09-21</p>
+  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-09-23</p>
+
+  <!-- VB10 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">VB10</span>
+      <span class="card-title">Chuẩn hoá văn bản — vạch kẻ có sẵn, bảng Kính trình, một dấu cách sau số, khối chữ ký</span>
+      <span class="badge badge-done">Xong — 20 test mới; dựng PDF bằng Word để đo; 1 lượt phản biện</span>
+    </div>
+    <div class="card-body">
+
+      <p>Nguồn: <code>Dữ liệu test/Chuẩn hoá văn bản/20260923</code> (bản gốc cỡ 8 + bản đã chuẩn hoá) và 6 nhận xét
+        của người dùng. Mọi con số dưới đây đo trên PDF do chính Word dựng ra (script COM → <code>SaveAs2</code> →
+        pypdfium2), không đoán từ XML. Đối chiếu với QĐ 979 (Điều 7, 8, 12, 13, 15) và Phụ lục V trước khi sửa, như người dùng yêu cầu.</p>
+
+      <table>
+        <tr><th>#</th><th>Nhận xét</th><th>Nguyên nhân thật</th><th>Sửa</th></tr>
+        <tr><td>1</td><td>Vạch dưới TRUNG TÂM THANH TOÁN nên dài 2/3; dưới Tiêu ngữ bằng dòng chữ</td>
+            <td>Vạch có sẵn của tác giả vẽ cho chữ cỡ 8, phần mềm thấy "đã có vạch" thì không đụng → sau khi chữ lên cỡ 12–13
+              còn 63% / 73%</td>
+            <td><code>duong_ke.chinh_duong_ke_co_san()</code>: chỉnh tại chỗ độ dài + canh giữa. Tên đơn vị 0,4 → <b>0,5</b></td></tr>
+        <tr><td>2</td><td>Kính trình kẻ bảng — chuẩn hoá cách trình bày</td>
+            <td>Cột 70,8 pt vừa cỡ 8; ở cỡ 14 "Kính / trình:" gãy hai dòng</td>
+            <td><code>bang_kinh_gui.py</code>: tính lại bề ngang cột theo chữ, lề ô 0, canh giữa, bỏ viền</td></tr>
+        <tr><td>3</td><td>Khoảng Kính trình → "I." ?</td>
+            <td>(a) <code>kinh_gui</code> ép cách đoạn 0; (b) ô có <code>w:contextualSpacing</code> nuốt luôn 6 pt</td>
+            <td>Cách đoạn 6 pt (Mẫu 05/06/08) + tắt contextualSpacing cho thành phần khai khoảng riêng</td></tr>
+        <tr><td>4</td><td>"I." "II." "IV." cách chữ xa, "III." chuẩn — lấy 1 dấu cách</td>
+            <td>"III." gõ tay; ba số kia tự động, sau số là TAB tới thụt treo 1,27 cm</td>
+            <td><code>w:suff="space"</code> trên cấp danh sách (<code>dat_dau_cach_sau_so</code>); La Mã gõ tay trong lời văn cũng về một dấu cách</td></tr>
+        <tr><td>5</td><td>Tăng khoảng GIÁM ĐỐC → tên để ký</td>
+            <td>5 dòng trống giữ dấu đoạn cỡ 8 (đoạn trống bị vòng chuẩn hoá bỏ qua)</td>
+            <td><code>chua_cho_ky()</code>: dòng trống lấy cỡ 14, dòng đơn → ~1,6 cm thành ~3,4 cm</td></tr>
+        <tr><td>6</td><td>Tên và "PHÊ DUYỆT CỦA PHÓ TỔNG GIÁM ĐỐC" phải cách nhau, thử 1 dòng</td>
+            <td>Bản gốc có before 12 pt; luật <code>bo_khoang_truoc_doan</code> xoá về 0</td>
+            <td>Khối ký ngay dưới họ tên: before = 1 dòng (1,15 × cỡ chữ = 16,1 pt) — đúng Mẫu 06</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-red">Không làm theo</span> Vạch dưới tên đơn vị dài 2/3</div>
+      <p>Điều 8.2: "độ dài bằng từ <b>1/3 đến 1/2</b> độ dài của dòng chữ". Đo 10 mẫu Phụ lục V có tên đơn vị: 0,46–0,57,
+        đa số 0,50–0,52. 2/3 vượt dải. Lấy <b>1/2</b> — cận trên, gần ý người dùng nhất mà vẫn đúng quy định. Tiêu ngữ
+        giữ 1,0 (Điều 7.2 "bằng độ dài của dòng chữ"; mẫu đo 0,93–0,97). Trích yếu giữ 0,4: trích yếu dài cả dòng (~440 pt)
+        mà kẻ 1/2 là vạch 220 pt, dài hơn hẳn tên đơn vị.</p>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> Chỉnh vạch cũ TẠI CHỖ, không xoá rồi vẽ lại</div>
+      <p>Vị trí dọc của vạch do tác giả đặt (neo theo đoạn, cách chữ bao nhiêu). Xoá rồi vẽ đoạn vạch mới là đổi luôn
+        khoảng cách tới dòng "Số:" bên dưới. Chỉ đổi độ dài + vị trí ngang (<code>wp:align center</code> theo cột — các dòng
+        có vạch đều canh giữa nên vạch cân dưới chữ). Word ghi mỗi hình <b>hai lần</b> (DrawingML trong <code>mc:Choice</code>
+        + VML trong <code>mc:Fallback</code>) → sửa cả hai, kể cả <code>a:ext</code> trong <code>a:xfrm</code>, không thì Word
+        mới và cũ vẽ hai độ dài. Kết quả đo: 79/158 pt (0,50), 158/158 (1,00), 177/428 (0,41), cả ba lệch tâm ≤ 1 px.</p>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> Giữ bảng Kính trình, không gộp thành một đoạn</div>
+      <p>Người soạn kẻ bảng vì tên người nhận dài xuống dòng thì dòng hai phải thụt ngang chữ đầu tên — gõ dấu cách
+        không làm được. Gộp về một đoạn là mất tính năng đó. Cột trái: một nơi = "Kính trình: " (có dấu cách); nhiều nơi =
+        "Kính gửi" không tính dấu ":" → gạch đầu dòng bắt đầu <b>dưới dấu hai chấm</b> (chữ của Điều 15.4.a, khớp Mẫu 08).
+        Cột phải dư 2% + 2 pt vì Pillow và Word dàn chữ lệch nhau vài phần nghìn. Chỉ nhận bảng mọi hàng đúng 2 ô và ô trái
+        chỉ có "Kính gửi/trình:"; dạng khác (ô gộp, "Kính gửi: X" chung ô) không đoán. Card VB5 từng để lỗi này "chưa sửa — cần
+        mở file", nay đã có file.</p>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> Kính gửi cách đoạn 6 pt, không còn 0/0 như khối đầu</div>
+      <p>Card VB979 mục 13 gộp Kính gửi vào nhóm "khối đầu, 0/0" — không có lý do riêng nào cho Kính gửi. Mẫu 05, 06, 08
+        đều đặt 6/6 cho dòng Kính gửi và từng dòng "- …"; Điều 12.6 đòi tối thiểu 6 pt; Kính gửi thuộc phần nội dung.
+        Test <code>test_khoi_dau_ve_spacing_0_0…</code> đã đổi theo.</p>
+      <div class="caution"><b>Bẫy <code>contextualSpacing</code>:</b> đặt after = 6 pt rồi mà vẫn dính. Thẻ này ("Don't add space
+        between paragraphs of the same style") bỏ khoảng cách khi hai đoạn cùng style — cả văn bản dùng Normal là bỏ gần hết.
+        Hộp Paragraph vẫn hiện "After: 6 pt". Đã thử gỡ thẻ trên chính file rồi dựng PDF: hiện đúng 6 pt. Chỉ tắt cho thành phần
+        quy chuẩn <b>khai riêng</b> khoảng > 0 (hiện chỉ Kính gửi); lời văn không đụng để khỏi đổi bố cục những văn bản dựng khít cố ý.</div>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> Một dấu cách sau số = <code>w:suff</code>, không phải tab tính toán</div>
+      <p>Điểm dừng tab là vị trí cố định: số hẹp ("I.") thì hở rộng, số rộng ("VIII.") tràn qua là nhảy sang điểm dừng kế
+        tiếp. <code>suff="space"</code> bảo Word chèn đúng một dấu cách, không đo gì. Đánh đổi: <code>suff</code> nằm trong
+        định nghĩa cấp danh sách, dùng chung → cấp nào có mặt trong ô bảng số liệu (<code>bang</code>) thì để nguyên (bảng giữ
+        thụt treo của tác giả). Nhánh điểm dừng tab (<code>_giu_tab_sau_so</code>) vẫn còn, chạy khi tắt
+        <code>danh_so.dau_cach_sau_so</code>; ba test tab cũ chạy với cờ tắt.</p>
+      <p>La Mã gõ tay in thường ("III.⇥Thẩm quyền") rơi vào <code>noi_dung</code> nên luật "I) → I." cũ không với tới — nay áp
+        cả <code>noi_dung</code> nhưng chỉ chữ I/V/X: "C. " "D. " "M. " đầu câu nhiều khả năng là tên viết tắt.</p>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> Chỗ ký: giữ số dòng tác giả để, chỉ đổi cỡ</div>
+      <p>QĐ 979 không nêu chỗ ký cao bao nhiêu. Không tự thêm/bớt dòng — chỉ sửa đúng cái sai (dòng trống còn cỡ 8 trong khối
+        cỡ 14). Dòng trống có hình (ảnh chữ ký, dấu) để yên. Khối phê duyệt nhận bằng <b>vị trí</b> (<code>quyen_han_chuc_vu</code>
+        mà đoạn có chữ liền trước là <code>ho_ten_nguoi_ky</code>), không bằng chữ "PHÊ DUYỆT" — cùng áp cho "Ý KIẾN CỦA…".
+        1 dòng = 1,15 × cỡ chữ (chiều cao dòng đơn của Times New Roman: (1825+443+87)/2048), không dùng
+        <code>beforeLines</code> vì đơn vị "dòng" của Word phụ thuộc lưới tài liệu.</p>
+
+      <div class="label"><span class="pill pill-red">Phản biện</span> 1 lượt Sonnet trước PR — 4 lỗi có bằng chứng, đã sửa cả 4</div>
+      <table>
+        <tr><th>Phản biện chỉ ra</th><th>Sửa</th></tr>
+        <tr><td>Bảng Kính gửi <b>nhiều nơi</b>: cột trái cắt dấu ":" cho gạch nằm đúng dưới nó → Word dựng PDF ra
+              "Kính / trình:" gãy hai dòng — đúng lỗi đang sửa. Test cũ khẳng định chính con số sai</td>
+            <td>Cột trái = "Kính gửi:" + 1 pt. Gạch đầu dòng lệch ~4 pt so với "dưới dấu hai chấm" — trong ô bảng chữ không
+              tràn sang ô bên được, đó là giá phải trả. Đã dựng PDF kiểm lại</td></tr>
+        <tr><td>Hai chữ ký <b>song song</b> cùng một hàng bảng: ô phải đứng ngay sau họ tên ô trái theo thứ tự XML → bị
+              cộng 1 dòng, tụt so với bên trái</td>
+            <td><code>la_khoi_ky_moi(…, khoi)</code>: cùng <code>w:tr</code> với họ tên thì không phải khối "bên dưới". Đã dựng PDF</td></tr>
+        <tr><td>Đã có dòng trống giữa họ tên và "PHÊ DUYỆT…" vẫn cộng thêm 1 dòng → cách 2 dòng</td>
+            <td>Chỉ cộng khi khối mới đứng <b>liền</b> sau họ tên</td></tr>
+        <tr><td><code>suff="nothing"</code> bị đổi thành "space" → tác giả tự gõ dấu cách trong lvlText thành hai dấu cách</td>
+            <td>Chỉ đổi tab; "nothing" để yên (khớp <code>_giu_tab_sau_so</code>)</td></tr>
+        <tr><td>Nhẹ: <code>w:rPr</code> nối sau <code>w:sectPr</code>/<code>w:pPrChange</code>; <code>_SAU_SZ</code> thiếu <code>w:rPrChange</code></td>
+            <td>Chèn trước hai thẻ đó; thêm vào danh sách</td></tr>
+        <tr><td>Nghi vấn: hai vạch neo chung một đoạn; vạch trong nhóm hình cùng logo; <code>layoutInCell="0"</code> thì
+              "column" là cột trang</td>
+            <td><code>_thu_vach</code>: không đúng MỘT vạch rời thì không đụng. <code>layoutInCell="0"</code> trong ô bảng: giữ
+              tâm cũ (dời mép trái nửa phần chênh) thay vì canh giữa</td></tr>
+        <tr><td>Nghi vấn: bảng Kính gửi có ô gộp / lưới ≠ 2 cột vẫn bị sửa 2 gridCol đầu</td>
+            <td>Có <code>gridSpan</code>/<code>vMerge</code> hoặc lưới ≠ 2 cột → để nguyên</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-gray">Thấy nhưng không sửa</span></div>
+      <table>
+        <tr><th>Hiện tượng</th><th>Vì sao để lại</th></tr>
+        <tr><td><code>w:lvlOverride</code> có <code>w:lvl</code> riêng: <code>suff</code> chỉ đặt vào abstractNum, Word dùng bản
+              ghi đè → không tác dụng mà nhật ký vẫn báo đã sửa (phản biện nêu, nghi vấn)</td>
+            <td><code>_tim_lvl</code> dùng chung cho cả module đang bỏ qua lvlOverride — sửa là đụng mọi chỗ đọc thụt lề danh
+              sách. Chưa gặp trên file thật</td></tr>
+        <tr><td>Chỗ ký chỉ đủ khi tác giả để ≥ 4 dòng trống; file để 1–2 dòng thì vẫn hẹp</td>
+            <td>Quy định không có con số; thêm dòng là đoán thay người soạn. Cần người dùng chốt mức tối thiểu nếu muốn</td></tr>
+        <tr><td>Dòng trống ở nơi khác (giữa các mục lời văn) vẫn giữ cỡ chữ bản gốc</td>
+            <td>Ngoài phạm vi yêu cầu; đổi hàng loạt là đổi bố cục mọi văn bản. Chỉ sửa trong khối ký</td></tr>
+        <tr><td>"TỜ TRÌNH" dính sát dòng "Số:" / địa danh (khối đầu 0/0)</td>
+            <td>Không nằm trong 6 nhận xét; Phụ lục II xếp chúng theo ô, không nêu khoảng cách</td></tr>
+        <tr><td><code>contextualSpacing</code> trong lời văn có thể làm khoảng giữa đoạn &lt; 6 pt (Điều 12.6)</td>
+            <td>Chưa gặp trên file thật; tắt đại trà là đổi bố cục văn bản dựng khít có chủ ý</td></tr>
+      </table>
+    </div>
+  </div>
 
   <!-- NK3 -->
   <div class="card">
