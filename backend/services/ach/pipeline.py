@@ -327,7 +327,7 @@ def _tim_di_zip_ngay_khac(input_dir: str, log_callback=None) -> list:
     return found
 
 
-def _tim_gw_xlsx(input_dir: str, log_callback=None) -> str:
+def _tim_gw_xlsx(input_dir: str, log_callback=None) -> str | None:
     """Dò ĐÚNG 1 file GW đi hợp lệ (có 'BRCD'+'SessionId' ở 8 dòng đầu 1 sheet nào đó).
 
     Audit 18/09/2026 — trước đây return NGAY khi gặp candidate hợp lệ ĐẦU TIÊN, không
@@ -337,7 +337,13 @@ def _tim_gw_xlsx(input_dir: str, log_callback=None) -> str:
     liệu MIS_đi SESSION=NULL của ngày kia rơi vào GW sai, đẩy sai "Timeout không đi kênh"
     lên gấp ~18 lần mà không có cảnh báo nào (194 dòng thay vì đúng 11, dữ liệu thật
     15+16/09/2026). Nay dò HẾT toàn bộ candidate hợp lệ, ≥2 file thì raise rõ tên — đúng
-    tinh thần `_tim_napas_pdf()`/`_tim_file_thua_t2()` đã làm cho các loại file khác."""
+    tinh thần `_tim_napas_pdf()`/`_tim_file_thua_t2()` đã làm cho các loại file khác.
+
+    D1 (23/09/2026) — GW đi không còn là sàn bắt buộc CHUNG cho cả 3 tab (chỉ Tab 1
+    cần nó). 0 file hợp lệ VÀ không có file nào lỗi khi đọc → trả None (thiếu file,
+    KHÔNG raise) để Tab 2 "Đối chiếu đến" chạy được mà không cần GW đi. Có file lỗi
+    đọc (`loi_doc`) vẫn raise — đó là file THẬT SỰ có mặt nhưng hỏng, khác hẳn "không
+    nạp file GW đi", cần người dùng biết ngay, không âm thầm coi như thiếu."""
     _log      = log_callback or print
     abs_dir   = os.path.abspath(input_dir)
     all_xlsx  = glob.glob(os.path.join(abs_dir, '**', '*.xlsx'), recursive=True)
@@ -373,7 +379,11 @@ def _tim_gw_xlsx(input_dir: str, log_callback=None) -> str:
             f'Không tìm thấy file GW .xlsx hợp lệ trong: {abs_dir} — '
             f'có {len(loi_doc)} file lỗi khi đọc (không phải thiếu file): {loi_doc}'
         )
-    raise FileNotFoundError('Không tìm thấy file GW .xlsx trong: ' + abs_dir)
+    # D1 — thật sự không có file GW đi nào trong thư mục (khác trường hợp có file
+    # nhưng đọc lỗi ở trên): trả None, KHÔNG raise. main_from_dir() tự tắt nhóm
+    # Đi + Timeout (ly_do_thieu_di/ly_do_thieu_timeout), Tab 2 vẫn chạy bình thường.
+    _log(f'[GW đi] Không tìm thấy file GW .xlsx trong: {abs_dir} — bỏ qua nhóm Đi/Timeout.')
+    return None
 
 
 def _tim_gw_den_xlsx(input_dir: str, log_callback=None) -> str | None:
@@ -583,7 +593,9 @@ def _viet_tong_ket(workbook, ws, session_id, ngay_display, ngay_display_t2,
                    n_osb_t2_di, s_osb_t2_di,
                    n_thuong_t2_den, s_thuong_t2_den,
                    n_osb_t2_den, s_osb_t2_den,
-                   ly_do_thieu_tang1: str = None,
+                   ly_do_thieu_di: str = None,
+                   ly_do_thieu_den: str = None,
+                   ly_do_thieu_timeout: str = None,
                    n_gwden_khop: int = None, s_gwden_khop: int = None,
                    n_napas_di: int = None, s_napas_di: int = None,
                    n_napas_den: int = None, s_napas_den: int = None):
@@ -596,9 +608,13 @@ def _viet_tong_ket(workbook, ws, session_id, ngay_display, ngay_display_t2,
     trong mẫu (GW thừa, NPO_DI/MIS_DI thừa, SESSION_NULL_BI_LOAI) KHÔNG còn hiển
     thị ở đây — vẫn xem được ở sheet riêng cùng tên, không mất dữ liệu.
 
-    ly_do_thieu_tang1 — 2026-08-21 (chi_tim_timeout): khi có, TOÀN BỘ chỉ tiêu
-    Tầng 1 (mọi dòng trừ "GW đi"/"TO ko đi kênh", Tầng 0) bị bỏ trống + gắn nhãn
-    "CHƯA ĐỐI CHIẾU ĐƯỢC" thay vì hiện số — tránh đọc nhầm 0 = đã khớp hết."""
+    ly_do_thieu_di/ly_do_thieu_den/ly_do_thieu_timeout — chạy giản lược theo file
+    đang có (2026-09-16, thay `ly_do_thieu_tang1` cũ chỉ gộp GL02/MIS_đến): khi có
+    giá trị, toàn bộ chỉ tiêu thuộc ĐÚNG nhóm đó (đi/đến/timeout) bị bỏ trống + gắn
+    nhãn "CHƯA ĐỐI CHIẾU ĐƯỢC" thay vì hiện số — tránh đọc nhầm 0 = đã khớp hết.
+    3 nhóm độc lập nhau: thiếu MIS_đi làm rỗng Timeout (`ly_do_thieu_timeout`) VÀ
+    Chiều đi (`ly_do_thieu_di`, vì MIS_đi khớp NPO cần cả GL02 lẫn MIS_đi); thiếu
+    MIS_đến chỉ làm rỗng Chiều đến (`ly_do_thieu_den`)."""
     fmt_label   = workbook.add_format({'bold': True, 'font_size': 10})
     fmt_section = workbook.add_format({'bold': True, 'font_size': 10, 'bg_color': '#DDEBF7'})
     fmt_header  = workbook.add_format({'bold': True, 'font_size': 10, 'bg_color': '#DDEBF7', 'border': 1})
@@ -611,19 +627,22 @@ def _viet_tong_ket(workbook, ws, session_id, ngay_display, ngay_display_t2,
     ws.set_column(3, 3, 3)
     ws.set_column(4, 4, 55); ws.set_column(5, 5, 14); ws.set_column(6, 6, 20)
 
-    # chi_tim_timeout — Tầng 1 (mọi thứ trừ GW đi/Timeout) bị bỏ trống hẳn, KHÔNG
-    # tính (kể cả để cộng dồn) khi thiếu GL02/MIS_đến — 0 giả sẽ làm sai luôn các
-    # tổng dưới đây nếu không chặn ở đây.
-    if ly_do_thieu_tang1:
+    # Chạy giản lược theo file đang có — mỗi nhóm bỏ trống ĐỘC LẬP theo đúng lý do
+    # của riêng nó, KHÔNG tính (kể cả để cộng dồn) khi thiếu — 0 giả sẽ làm sai
+    # luôn các tổng dưới đây nếu không chặn ở đây.
+    if ly_do_thieu_di:
         (n_di_khop, s_di_khop, n_npo_di_thua, s_npo_di_thua,
          n_huy_trong_ngay, s_huy_trong_ngay, n_huy_khac_ngay, s_huy_khac_ngay,
          n_mis_di_thua, s_mis_di_thua,
-         n_den_khop, s_den_khop, n_npo_den_thua, s_npo_den_thua,
+         n_osb_di_khop_cn, s_osb_di_khop_cn, s_qt_di_tong,
+         n_thuong_t2_di, s_thuong_t2_di, n_osb_t2_di, s_osb_t2_di) = (None,) * 17
+    if ly_do_thieu_den:
+        (n_den_khop, s_den_khop, n_npo_den_thua, s_npo_den_thua,
          n_mis_den_thua, s_mis_den_thua,
-         n_osb_di_khop_cn, s_osb_di_khop_cn, n_osb_den_khop_cn, s_osb_den_khop_cn,
-         s_qt_di_tong, s_qt_den_tong,
-         n_thuong_t2_di, s_thuong_t2_di, n_osb_t2_di, s_osb_t2_di,
-         n_thuong_t2_den, s_thuong_t2_den, n_osb_t2_den, s_osb_t2_den) = (None,) * 30
+         n_osb_den_khop_cn, s_osb_den_khop_cn, s_qt_den_tong,
+         n_thuong_t2_den, s_thuong_t2_den, n_osb_t2_den, s_osb_t2_den) = (None,) * 13
+    if ly_do_thieu_timeout:
+        n_timeout, s_timeout = None, None
 
     # "Mis đi/đến" và "IPCAS" (Tổng NPO cần đối) suy ra từ các khoản đã có —
     # _tong_an_toan trả None nếu bất kỳ phần nào chưa tính được (Tầng 1 bị tắt).
@@ -642,17 +661,19 @@ def _viet_tong_ket(workbook, ws, session_id, ngay_display, ngay_display_t2,
     n_npo_den_tong = _tong_an_toan(n_den_khop, n_npo_den_thua)
     s_npo_den_tong = _tong_an_toan(s_den_khop, s_npo_den_thua)
 
-    _hau_to = f'  [CHƯA ĐỐI CHIẾU ĐƯỢC — thiếu {ly_do_thieu_tang1}]' if ly_do_thieu_tang1 else ''
+    _hau_to_di      = f'  [CHƯA ĐỐI CHIẾU ĐƯỢC — thiếu {ly_do_thieu_di}]' if ly_do_thieu_di else ''
+    _hau_to_den     = f'  [CHƯA ĐỐI CHIẾU ĐƯỢC — thiếu {ly_do_thieu_den}]' if ly_do_thieu_den else ''
+    _hau_to_timeout = f'  [CHƯA ĐỐI CHIẾU ĐƯỢC — thiếu {ly_do_thieu_timeout}]' if ly_do_thieu_timeout else ''
 
-    lbl_di_khop_npo  = f'Lệnh đi ngày {ngay_display} hạch toán NPO ngày {ngay_display}{_hau_to}'
-    lbl_den_khop_npo = f'Lệnh đến ngày {ngay_display} hạch toán NPO ngày {ngay_display}{_hau_to}'
-    lbl_di_khop_qt   = f'Lệnh OSB đi ngày {ngay_display} hạch toán QT ngày {ngay_display}{_hau_to}'
-    lbl_den_khop_qt  = f'Lệnh OSB đến ngày {ngay_display} hạch toán QT ngày {ngay_display}{_hau_to}'
+    lbl_di_khop_npo  = f'Lệnh đi ngày {ngay_display} hạch toán NPO ngày {ngay_display}{_hau_to_di}'
+    lbl_den_khop_npo = f'Lệnh đến ngày {ngay_display} hạch toán NPO ngày {ngay_display}{_hau_to_den}'
+    lbl_di_khop_qt   = f'Lệnh OSB đi ngày {ngay_display} hạch toán QT ngày {ngay_display}{_hau_to_di}'
+    lbl_den_khop_qt  = f'Lệnh OSB đến ngày {ngay_display} hạch toán QT ngày {ngay_display}{_hau_to_den}'
 
     # Mỗi dòng: (label_di, n_di, s_di, label_den, n_den, s_den). label=None → ô
     # trống.
     # Mục 4 (bổ sung 11.09.2026) — GW đến khớp MIS_đến qua TXID/MSGREF. Cố ý KHÔNG
-    # nằm trong nhóm bị bỏ trống bởi ly_do_thieu_tang1: Mục 4 chỉ phụ thuộc
+    # nằm trong nhóm bị bỏ trống bởi ly_do_thieu_den: Mục 4 chỉ phụ thuộc
     # MIS_đến, không phụ thuộc GL02 — thiếu GL02 đơn thuần không cản Mục 4 chạy.
     # None (Mục 4 không chạy vì thiếu file đến_GW hoặc thiếu MIS_đến) → để trống ô,
     # không hiện số 0 giả.
@@ -660,9 +681,9 @@ def _viet_tong_ket(workbook, ws, session_id, ngay_display, ngay_display_t2,
 
     # Mục 6/7 (bổ sung 11.09.2026 + 14.09.2026) — Tổng Napas (BC.03 PDF hoặc CSV chi
     # tiết, ưu tiên CSV — xem xuat_excel()) đối chiếu GHI NỢ=chiều đi/GHI CÓ=chiều
-    # đến. Cố ý KHÔNG nằm trong nhóm bị bỏ trống bởi ly_do_thieu_tang1, giống Mục 4
+    # đến. Cố ý KHÔNG nằm trong nhóm bị bỏ trống bởi ly_do_thieu_di/den, giống Mục 4
     # — Mục 6/7 chỉ phụ thuộc file Napas tùy chọn của chính nó, không phụ thuộc
-    # GL02/MIS_đến. None (không có file Napas) → để trống ô, không hiện số 0 giả.
+    # GL02/MIS_đến/MIS_đi. None (không có file Napas) → để trống ô, không hiện số 0 giả.
     lbl_napas_di  = f'Napas Ghi nợ (đi) ngày {ngay_display}'  if n_napas_di  is not None else None
     lbl_napas_den = f'Napas Ghi có (đến) ngày {ngay_display}' if n_napas_den is not None else None
 
@@ -700,21 +721,21 @@ def _viet_tong_ket(workbook, ws, session_id, ngay_display, ngay_display_t2,
         (lbl_chenh_gw_mis_di, n_chenh_gw_mis_di, s_chenh_gw_mis_di,
          lbl_chenh_gw_mis_den, n_chenh_gw_mis_den, s_chenh_gw_mis_den),
         (None, None, None, None, None, None),
-        (f'Mis đi ngày {ngay_display}{_hau_to}',  n_mis_di_tong,  s_mis_di_tong,
-         f'Mis đến ngày {ngay_display}{_hau_to}', n_mis_den_tong, s_mis_den_tong),
+        (f'Mis đi ngày {ngay_display}{_hau_to_di}',  n_mis_di_tong,  s_mis_di_tong,
+         f'Mis đến ngày {ngay_display}{_hau_to_den}', n_mis_den_tong, s_mis_den_tong),
         (None, None, None, None, None, None),
         (lbl_di_khop_npo, n_di_khop, s_di_khop, lbl_den_khop_npo, n_den_khop, s_den_khop),
         (None, None, None, None, None, None),
         (lbl_di_khop_qt, n_osb_di_khop_cn, s_osb_di_khop_cn,
          lbl_den_khop_qt, n_osb_den_khop_cn, s_osb_den_khop_cn),
         (None, None, None, None, None, None),
-        (f'IPCAS{_hau_to}', n_npo_di_tong, s_npo_di_tong, f'IPCAS{_hau_to}', n_npo_den_tong, s_npo_den_tong),
+        (f'IPCAS{_hau_to_di}', n_npo_di_tong, s_npo_di_tong, f'IPCAS{_hau_to_den}', n_npo_den_tong, s_npo_den_tong),
         (None, None, None, None, None, None),
         # 1 dòng duy nhất mang cả nhãn lẫn số liệu T-2 (khớp mẫu cập nhật
         # 2026-08-07: công thức đặt ở CHÍNH dòng tiêu đề, không tách dòng phụ).
-        (f'Điện thanh toán thường đi (không phải OSB) ngày {ngay_display_t2} hạch toán ngày {ngay_display}{_hau_to}',
+        (f'Điện thanh toán thường đi (không phải OSB) ngày {ngay_display_t2} hạch toán ngày {ngay_display}{_hau_to_di}',
          n_thuong_t2_di, s_thuong_t2_di,
-         f'Điện thanh toán thường đến (không phải OSB) ngày {ngay_display_t2} hạch toán ngày {ngay_display}{_hau_to}',
+         f'Điện thanh toán thường đến (không phải OSB) ngày {ngay_display_t2} hạch toán ngày {ngay_display}{_hau_to_den}',
          n_thuong_t2_den, s_thuong_t2_den),
         # Lặp lại Y HỆT dòng "khớp NPO cùng ngày" phía trên (cùng nhãn, cùng số
         # liệu n_di_khop/s_di_khop) — đúng mẫu (dòng 21, giống hệt dòng 10), làm
@@ -723,23 +744,40 @@ def _viet_tong_ket(workbook, ws, session_id, ngay_display, ngay_display_t2,
         # giống nhau"). Đối xứng với dòng lặp lại lbl_di_khop_qt ở mục OSB bên
         # dưới, đã làm đúng từ đầu.
         (lbl_di_khop_npo, n_di_khop, s_di_khop, lbl_den_khop_npo, n_den_khop, s_den_khop),
-        (f'huỷ trong ngày {ngay_display}{_hau_to}',     n_huy_trong_ngay, s_huy_trong_ngay, None, None, None),
-        (f'huỷ khác ngày {ngay_display}{_hau_to}',      n_huy_khac_ngay,  s_huy_khac_ngay,  None, None, None),
-        (f'TO ko đi kênh ngày {ngay_display}', n_timeout,        s_timeout,        None, None, None),
+        (f'huỷ trong ngày {ngay_display}{_hau_to_di}',     n_huy_trong_ngay, s_huy_trong_ngay, None, None, None),
+        (f'huỷ khác ngày {ngay_display}{_hau_to_di}',      n_huy_khac_ngay,  s_huy_khac_ngay,  None, None, None),
+        (f'TO ko đi kênh ngày {ngay_display}{_hau_to_timeout}', n_timeout, s_timeout, None, None, None),
         (None, None, None, None, None, None),
-        (f'OSB{_hau_to}', None, s_qt_di_tong, f'OSB{_hau_to}', None, s_qt_den_tong),
+        (f'OSB{_hau_to_di}', None, s_qt_di_tong, f'OSB{_hau_to_den}', None, s_qt_den_tong),
         (None, None, None, None, None, None),
-        (f'Điện OSB đi ngày {ngay_display_t2} hạch toán QT ngày {ngay_display}{_hau_to}', n_osb_t2_di, s_osb_t2_di,
-         f'Điện OSB đến ngày {ngay_display_t2} hạch toán QT ngày {ngay_display}{_hau_to}', n_osb_t2_den, s_osb_t2_den),
+        (f'Điện OSB đi ngày {ngay_display_t2} hạch toán QT ngày {ngay_display}{_hau_to_di}', n_osb_t2_di, s_osb_t2_di,
+         f'Điện OSB đến ngày {ngay_display_t2} hạch toán QT ngày {ngay_display}{_hau_to_den}', n_osb_t2_den, s_osb_t2_den),
         (lbl_di_khop_qt, n_osb_di_khop_cn, s_osb_di_khop_cn,
          lbl_den_khop_qt, n_osb_den_khop_cn, s_osb_den_khop_cn),
     ]
 
+    # Banner cảnh báo gộp — liệt kê ĐÚNG các file thiếu (không trùng lặp dù 1 file
+    # ảnh hưởng >1 nhóm, VD MIS_đi vừa thuộc ly_do_thieu_di vừa ly_do_thieu_timeout)
+    # và ĐÚNG các nhóm nghiệp vụ bị ảnh hưởng.
+    _file_thieu_ban = []
+    for _ly_do in (ly_do_thieu_timeout, ly_do_thieu_di, ly_do_thieu_den):
+        for _f in (_ly_do or '').split(', '):
+            if _f and _f not in _file_thieu_ban:
+                _file_thieu_ban.append(_f)
+    _nhom_anh_huong = [
+        nhan for nhan, ly_do in (
+            ('Timeout không đi kênh', ly_do_thieu_timeout),
+            ('Chiều đi', ly_do_thieu_di),
+            ('Chiều đến', ly_do_thieu_den),
+        ) if ly_do
+    ]
+
     row0 = 0
-    if ly_do_thieu_tang1:
+    if _nhom_anh_huong:
         ws.merge_range(0, 0, 0, 6,
-            f'⚠ THIẾU FILE {ly_do_thieu_tang1.upper()} — CHỈ TÍNH ĐƯỢC "TO KO ĐI KÊNH" '
-            f'(TIMEOUT KHÔNG ĐI KÊNH), CÁC CHỈ TIÊU KHÁC BÊN DƯỚI CHƯA ĐỐI CHIẾU ĐƯỢC',
+            f'⚠ THIẾU FILE {", ".join(_file_thieu_ban).upper()} — CHƯA ĐỐI CHIẾU '
+            f'ĐƯỢC: {", ".join(_nhom_anh_huong)}. Các chỉ tiêu còn lại vẫn hiện số '
+            f'liệu thật.',
             fmt_canh_bao)
         ws.set_row(0, 30)
         row0 = 1
@@ -786,7 +824,9 @@ def xuat_excel(output_path: str, session_id: str,
                df_gwden_khop=None,
                n_napas_di=None, s_napas_di=None, n_napas_den=None, s_napas_den=None,
                log_callback=None, summary_callback=None,
-               ly_do_thieu_tang1: str = None):
+               ly_do_thieu_di: str = None,
+               ly_do_thieu_den: str = None,
+               ly_do_thieu_timeout: str = None):
     """n_napas_di/s_napas_di/n_napas_den/s_napas_den (Mục 6/7, bổ sung
     11.09.2026 + 14.09.2026) — số ĐÃ ĐƯỢC CHỌN NGUỒN bởi nơi gọi (main_from_dir()):
     ưu tiên CSV chi tiết (Mục 7) khi có, chỉ dùng PDF BC.03 (Mục 6) khi không có
@@ -854,6 +894,23 @@ def xuat_excel(output_path: str, session_id: str,
     n_mis_den_thua = len(df_mis_den_thua) if df_mis_den_thua is not None else 0
     s_mis_den_thua = _tong_tien(df_mis_den_thua, 'SO_TIEN')
 
+    # Chạy giản lược theo file đang có — bỏ trống ĐÚNG nhóm theo lý do thiếu TRƯỚC
+    # khi đưa vào summary_callback (UI "Kết quả tạm thời" — 3 tab đi/đến/timeout),
+    # tránh hiện "0" giả cho phần chưa tính được (feedback_binary_match_status).
+    # _viet_tong_ket() tự làm lại đúng khối null-hoá này cho sheet TONG_KET —
+    # không phụ thuộc thứ tự gọi ở đây.
+    if ly_do_thieu_di:
+        (n_mis_di_khop, s_mis_di_khop, n_npo_di_thua, s_npo_di_thua,
+         n_huy_trong_ngay, s_huy_trong_ngay, n_huy_khac_ngay, s_huy_khac_ngay,
+         n_mis_di_thua, s_mis_di_thua,
+         n_osb_di_khop_cn, s_osb_di_khop_cn) = (None,) * 12
+    if ly_do_thieu_den:
+        (n_mis_den_khop, s_mis_den_khop, n_npo_den_thua, s_npo_den_thua,
+         n_mis_den_thua, s_mis_den_thua,
+         n_osb_den_khop_cn, s_osb_den_khop_cn) = (None,) * 8
+    if ly_do_thieu_timeout:
+        n_timeout, s_timeout = None, None
+
     if summary_callback:
         summary_callback({
             'khop_npo_di':        n_mis_di_khop,       'tien_khop_npo_di':  s_mis_di_khop,
@@ -863,10 +920,10 @@ def xuat_excel(output_path: str, session_id: str,
             'timeout':            n_timeout,            'tien_timeout':      s_timeout,
             'huy_trong_ngay':     n_huy_trong_ngay,      'tien_huy_trong_ngay': s_huy_trong_ngay,
             'huy_khac_ngay':      n_huy_khac_ngay,       'tien_huy_khac_ngay':  s_huy_khac_ngay,
-            'thua_di':            n_npo_di_thua + n_mis_di_thua,
-            'tien_thua_di':       s_npo_di_thua + s_mis_di_thua,
-            'thua_den':           n_npo_den_thua + n_mis_den_thua,
-            'tien_thua_den':      s_npo_den_thua + s_mis_den_thua,
+            'thua_di':            _tong_an_toan(n_npo_di_thua, n_mis_di_thua),
+            'tien_thua_di':       _tong_an_toan(s_npo_di_thua, s_mis_di_thua),
+            'thua_den':           _tong_an_toan(n_npo_den_thua, n_mis_den_thua),
+            'tien_thua_den':      _tong_an_toan(s_npo_den_thua, s_mis_den_thua),
         })
 
     df_gw_can_doi_chieu_clean = (
@@ -875,28 +932,32 @@ def xuat_excel(output_path: str, session_id: str,
     )
     _log         = log_callback or print
 
-    # 2026-08-21 (chi_tim_timeout) — sheet phụ thuộc GL02/MIS_đến hiện "CHƯA ĐỐI
-    # CHIẾU ĐƯỢC" thay vì "(Không có dữ liệu)" khi df is None (bị bỏ qua vì thiếu
-    # file, không phải 0 dòng thật) — None ở đây phân biệt msg cho từng sheet.
-    _msg_thieu_tang1 = (
-        f'CHƯA ĐỐI CHIẾU ĐƯỢC — thiếu file {ly_do_thieu_tang1}' if ly_do_thieu_tang1 else None
-    )
+    # Chạy giản lược theo file đang có (2026-09-16) — sheet phụ thuộc GL02/MIS_đi/
+    # MIS_đến hiện "CHƯA ĐỐI CHIẾU ĐƯỢC" thay vì "(Không có dữ liệu)" khi df is
+    # None (bị bỏ qua vì thiếu file, không phải 0 dòng thật). 3 msg riêng đúng 3
+    # nhóm (đi/đến/timeout) thay vì 1 msg gộp — xem ly_do_thieu_di/den/timeout.
+    def _msg_thieu(ly_do):
+        return f'CHƯA ĐỐI CHIẾU ĐƯỢC — thiếu file {ly_do}' if ly_do else None
+
+    _msg_thieu_di      = _msg_thieu(ly_do_thieu_di)
+    _msg_thieu_den     = _msg_thieu(ly_do_thieu_den)
+    _msg_thieu_timeout = _msg_thieu(ly_do_thieu_timeout)
 
     sheets = [
         ('TONG_KET',           None,                                                     '#FFFFFF', None),
-        ('MIS_DI_KHOP',        _clean(df_mis_di_khop,  _COLS_MIS_DI, 'MIS_DI_KHOP'),   _XANH_LA, _msg_thieu_tang1),
-        ('NPO_DI_THUA',        _clean(df_npo_di_thua,  _COLS_NPO_THUA, 'NPO_DI_THUA'), _DO, _msg_thieu_tang1),
-        ('DIEN_DI_HUY_TRONG_NGAY', _clean(df_dien_huy_trong_ngay, _COLS_NPO, 'DIEN_DI_HUY_TRONG_NGAY'), _XANH_LAM, _msg_thieu_tang1),
-        ('DIEN_DI_HUY_KHAC_NGAY',  _clean(df_dien_huy_khac_ngay,  _COLS_NPO, 'DIEN_DI_HUY_KHAC_NGAY'),  _XANH_LAM, _msg_thieu_tang1),
-        ('MIS_DI_THUA',        _clean(df_mis_di_thua,  _COLS_MIS_DI, 'MIS_DI_THUA'),   _DO, _msg_thieu_tang1),
-        ('TIMEOUT_KHONG_KENH', _clean(df_timeout, _COLS_TIMEOUT, 'TIMEOUT'),             _CAM, None),
-        ('SESSION_NULL_BI_LOAI', df_session_null_bi_loai,                                _CAM, None),
-        ('CAP_CN_TIEN',        df_cap_cn_tien,                                           _CAM, None),
-        ('GW_THUA_XAC_DINH',   df_gw_thua_xac_dinh_clean,                                _DO, None),
-        ('GW_CAN_DOI_CHIEU',   df_gw_can_doi_chieu_clean,                                _CAM, None),
-        ('MIS_DEN_KHOP',       _clean(df_mis_den_khop, _COLS_MIS_DEN, 'MIS_DEN_KHOP'), _XANH_LA, _msg_thieu_tang1),
-        ('NPO_DEN_THUA',       _clean(df_npo_den_thua, _COLS_NPO_THUA, 'NPO_DEN_THUA'), _DO, _msg_thieu_tang1),
-        ('MIS_DEN_THUA',       _clean(df_mis_den_thua, _COLS_MIS_DEN, 'MIS_DEN_THUA'), _DO, _msg_thieu_tang1),
+        ('MIS_DI_KHOP',        _clean(df_mis_di_khop,  _COLS_MIS_DI, 'MIS_DI_KHOP'),   _XANH_LA, _msg_thieu_di),
+        ('NPO_DI_THUA',        _clean(df_npo_di_thua,  _COLS_NPO_THUA, 'NPO_DI_THUA'), _DO, _msg_thieu_di),
+        ('DIEN_DI_HUY_TRONG_NGAY', _clean(df_dien_huy_trong_ngay, _COLS_NPO, 'DIEN_DI_HUY_TRONG_NGAY'), _XANH_LAM, _msg_thieu_di),
+        ('DIEN_DI_HUY_KHAC_NGAY',  _clean(df_dien_huy_khac_ngay,  _COLS_NPO, 'DIEN_DI_HUY_KHAC_NGAY'),  _XANH_LAM, _msg_thieu_di),
+        ('MIS_DI_THUA',        _clean(df_mis_di_thua,  _COLS_MIS_DI, 'MIS_DI_THUA'),   _DO, _msg_thieu_di),
+        ('TIMEOUT_KHONG_KENH', _clean(df_timeout, _COLS_TIMEOUT, 'TIMEOUT'),             _CAM, _msg_thieu_timeout),
+        ('SESSION_NULL_BI_LOAI', df_session_null_bi_loai,                                _CAM, _msg_thieu_timeout),
+        ('CAP_CN_TIEN',        df_cap_cn_tien,                                           _CAM, _msg_thieu_timeout),
+        ('GW_THUA_XAC_DINH',   df_gw_thua_xac_dinh_clean,                                _DO, _msg_thieu_timeout),
+        ('GW_CAN_DOI_CHIEU',   df_gw_can_doi_chieu_clean,                                _CAM, _msg_thieu_timeout),
+        ('MIS_DEN_KHOP',       _clean(df_mis_den_khop, _COLS_MIS_DEN, 'MIS_DEN_KHOP'), _XANH_LA, _msg_thieu_den),
+        ('NPO_DEN_THUA',       _clean(df_npo_den_thua, _COLS_NPO_THUA, 'NPO_DEN_THUA'), _DO, _msg_thieu_den),
+        ('MIS_DEN_THUA',       _clean(df_mis_den_thua, _COLS_MIS_DEN, 'MIS_DEN_THUA'), _DO, _msg_thieu_den),
         ('RAW_GW',             df_gw_clean,                                              _XANH_LAM, None),
     ]
 
@@ -941,7 +1002,9 @@ def xuat_excel(output_path: str, session_id: str,
                     n_osb_t2_di, s_osb_t2_di,
                     n_thuong_t2_den, s_thuong_t2_den,
                     n_osb_t2_den, s_osb_t2_den,
-                    ly_do_thieu_tang1=ly_do_thieu_tang1,
+                    ly_do_thieu_di=ly_do_thieu_di,
+                    ly_do_thieu_den=ly_do_thieu_den,
+                    ly_do_thieu_timeout=ly_do_thieu_timeout,
                     n_gwden_khop=n_gwden_khop, s_gwden_khop=s_gwden_khop,
                     n_napas_di=n_napas_di, s_napas_di=s_napas_di,
                     n_napas_den=n_napas_den, s_napas_den=s_napas_den,
@@ -963,35 +1026,48 @@ def xuat_excel(output_path: str, session_id: str,
 
 def _viet_tong_ket_osb(workbook, ws, session_id, ngay_str,
                        n_di_khop, s_di_khop, n_di_mis_thua, n_di_qt_thua,
-                       n_den_khop, s_den_khop, n_den_mis_thua, n_den_qt_thua):
+                       n_den_khop, s_den_khop, n_den_mis_thua, n_den_qt_thua,
+                       ly_do_thieu_di: str = None, ly_do_thieu_den: str = None):
+    """ly_do_thieu_di/ly_do_thieu_den (2026-09-16) — chạy giản lược theo file
+    đang có mở ra khả năng file OSB riêng được xuất khi CHỈ 1 chiều đủ dữ liệu
+    (xem điều kiện gọi `xuat_excel_osb()` ở `main_from_dir()`). Khi có giá trị,
+    toàn bộ chỉ tiêu của ĐÚNG chiều đó ghi "CHƯA ĐỐI CHIẾU ĐƯỢC" thay vì số 0 —
+    tránh đúng lỗi "0 giả" mà `xuat_excel()` chính đã xử lý (feedback_binary_match_status)."""
     fmt_label  = workbook.add_format({'bold': True, 'font_size': 10})
     fmt_header = workbook.add_format({'bold': True, 'font_size': 10,
                                       'bg_color': '#DDEBF7', 'border': 1})
     fmt_num    = workbook.add_format({'font_size': 10, 'num_format': '#,##0'})
     fmt_val    = workbook.add_format({'font_size': 10})
+    fmt_thieu  = workbook.add_format({'font_size': 10, 'italic': True, 'font_color': '#808080'})
 
     ws.write(0, 0, 'Chỉ tiêu',           fmt_header)
     ws.write(0, 1, 'Số giao dịch',       fmt_header)
     ws.write(0, 2, 'Tổng số tiền (VND)', fmt_header)
     ws.set_column(0, 0, 40); ws.set_column(1, 1, 16); ws.set_column(2, 2, 22)
 
+    _nhan_thieu_di  = f'CHƯA ĐỐI CHIẾU ĐƯỢC — thiếu file {ly_do_thieu_di}'  if ly_do_thieu_di  else None
+    _nhan_thieu_den = f'CHƯA ĐỐI CHIẾU ĐƯỢC — thiếu file {ly_do_thieu_den}' if ly_do_thieu_den else None
+
     data = [
-        ('Ngày đối chiếu', ngay_str, ''),
-        ('Session',         session_id, ''),
-        ('', '', ''),
-        ('=== CHIỀU ĐI ===', '', ''),
-        ('OSB đã quyết toán (MIS khớp QT đi)', n_di_khop, s_di_khop),
-        ('OSB chưa khớp — phía MIS_đi thừa', n_di_mis_thua, ''),
-        ('OSB chưa khớp — phía QT đi',        n_di_qt_thua, ''),
-        ('', '', ''),
-        ('=== CHIỀU ĐẾN ===', '', ''),
-        ('OSB đã quyết toán (MIS khớp QT đến)', n_den_khop, s_den_khop),
-        ('OSB chưa khớp — phía MIS_đến thừa', n_den_mis_thua, ''),
-        ('OSB chưa khớp — phía QT đến',        n_den_qt_thua, ''),
+        ('Ngày đối chiếu', ngay_str, '', None),
+        ('Session',         session_id, '', None),
+        ('', '', '', None),
+        ('=== CHIỀU ĐI ===', '', '', None),
+        ('OSB đã quyết toán (MIS khớp QT đi)', n_di_khop, s_di_khop, _nhan_thieu_di),
+        ('OSB chưa khớp — phía MIS_đi thừa', n_di_mis_thua, '', _nhan_thieu_di),
+        ('OSB chưa khớp — phía QT đi',        n_di_qt_thua, '', _nhan_thieu_di),
+        ('', '', '', None),
+        ('=== CHIỀU ĐẾN ===', '', '', None),
+        ('OSB đã quyết toán (MIS khớp QT đến)', n_den_khop, s_den_khop, _nhan_thieu_den),
+        ('OSB chưa khớp — phía MIS_đến thừa', n_den_mis_thua, '', _nhan_thieu_den),
+        ('OSB chưa khớp — phía QT đến',        n_den_qt_thua, '', _nhan_thieu_den),
     ]
 
-    for row_idx, (label, val, tien) in enumerate(data, start=1):
+    for row_idx, (label, val, tien, thieu) in enumerate(data, start=1):
         ws.write_string(row_idx, 0, label, fmt_label)
+        if thieu:
+            ws.merge_range(row_idx, 1, row_idx, 2, thieu, fmt_thieu)
+            continue
         if isinstance(val, int):
             ws.write(row_idx, 1, val, fmt_num)
         else:
@@ -1005,12 +1081,19 @@ def _viet_tong_ket_osb(workbook, ws, session_id, ngay_str,
 def xuat_excel_osb(output_dir: str, session_id: str, ngay_dt: datetime,
                    df_osb_di_khop=None, df_di_chua_khop=None,
                    df_osb_den_khop=None, df_den_chua_khop=None,
-                   log_callback=None) -> str:
+                   log_callback=None,
+                   ly_do_thieu_di: str = None,
+                   ly_do_thieu_den: str = None) -> str:
     """Điểm 2 (2026-07-31, Implementation-notes.html mục 56/63b) — đối chiếu lệnh
     OSB (đi & đến) qua file Quyết toán OSB "QT", xuất RIÊNG khỏi
     doi_chieu_<ngày>.xlsx chính (không đụng số liệu/sheet báo cáo chính). 5 sheet:
     TONG_KET, OSB_DI_DA_QUYET_TOAN, OSB_DEN_DA_QUYET_TOAN, DI_CHUA_KHOP (gộp OSB-
-    MIS chưa khớp + QT chưa khớp, phân biệt cột NGUON), DEN_CHUA_KHOP (tương tự)."""
+    MIS chưa khớp + QT chưa khớp, phân biệt cột NGUON), DEN_CHUA_KHOP (tương tự).
+
+    ly_do_thieu_di/ly_do_thieu_den (2026-09-16) — từ khi hàm này được phép gọi
+    khi CHỈ 1 chiều đủ dữ liệu (chạy giản lược theo file đang có), phải truyền
+    xuống để mọi sheet của chiều còn thiếu ghi "CHƯA ĐỐI CHIẾU ĐƯỢC" thay vì 0/
+    (Không có dữ liệu) — nếu không sẽ lẫn "chưa tính" với "đã tính ra 0"."""
     _log        = log_callback or print
     ngay_str    = ngay_dt.strftime('%Y%m%d')
     ngay_display = ngay_dt.strftime('%d/%m/%Y')
@@ -1027,6 +1110,9 @@ def xuat_excel_osb(output_dir: str, session_id: str, ngay_dt: datetime,
     def _dem_nguon(df, nguon):
         return int((df['NGUON'] == nguon).sum()) if df is not None and len(df) else 0
 
+    _msg_thieu_di  = f'CHƯA ĐỐI CHIẾU ĐƯỢC — thiếu file {ly_do_thieu_di}'  if ly_do_thieu_di  else None
+    _msg_thieu_den = f'CHƯA ĐỐI CHIẾU ĐƯỢC — thiếu file {ly_do_thieu_den}' if ly_do_thieu_den else None
+
     workbook = xlsxwriter.Workbook(output_path, {'strings_to_numbers': False})
 
     ws0 = workbook.add_worksheet('TONG_KET')
@@ -1040,18 +1126,20 @@ def xuat_excel_osb(output_dir: str, session_id: str, ngay_dt: datetime,
         _tong_tien(df_osb_den_khop, 'SO_TIEN'),
         _dem_nguon(df_den_chua_khop, 'MIS'),
         _dem_nguon(df_den_chua_khop, 'QT'),
+        ly_do_thieu_di=ly_do_thieu_di,
+        ly_do_thieu_den=ly_do_thieu_den,
     )
 
     sheets = [
-        ('OSB_DI_DA_QUYET_TOAN',  df_di_khop_clean,  _XANH_LA),
-        ('OSB_DEN_DA_QUYET_TOAN', df_den_khop_clean, _XANH_LA),
-        ('DI_CHUA_KHOP',          df_di_ck_clean,     _DO),
-        ('DEN_CHUA_KHOP',         df_den_ck_clean,    _DO),
+        ('OSB_DI_DA_QUYET_TOAN',  df_di_khop_clean,  _XANH_LA, _msg_thieu_di),
+        ('OSB_DEN_DA_QUYET_TOAN', df_den_khop_clean, _XANH_LA, _msg_thieu_den),
+        ('DI_CHUA_KHOP',          df_di_ck_clean,     _DO,     _msg_thieu_di),
+        ('DEN_CHUA_KHOP',         df_den_ck_clean,    _DO,     _msg_thieu_den),
     ]
-    for sheet_name, df, color in sheets:
+    for sheet_name, df, color, msg in sheets:
         ws = workbook.add_worksheet(sheet_name)
         ws.set_tab_color(color)
-        _viet_sheet(workbook, ws, df, color)
+        _viet_sheet(workbook, ws, df, color, msg_khi_thieu=msg)
 
     workbook.close()
     _log(f'[DONE] File OSB: {output_path}')
@@ -1373,80 +1461,6 @@ def xuat_excel_timeout_cu(output_dir: str, ngay_dt: datetime,
     return output_path
 
 
-# ─── Mục 3 (bổ sung 11.09.2026, Thảo xác nhận ưu tiên làm 16.09.2026) — file ──
-# pHub "Danh sách giao dịch chuyển tiền đi" riêng, độc lập với đối chiếu ACH ──
-# chính (NOTE gốc văn bản), giống Mục 4/6/7/8 ──────────────────────────────────
-
-def _viet_tong_ket_phub(workbook, ws, session_id, ngay_str, df_ketqua: pd.DataFrame):
-    """Đếm số dòng theo từng giá trị TRANG_THAI_CAP_NHAT (Hoàn thành / TT lệnh lỗi
-    ngày T / Trạng thái khác) — kết quả của `xu_ly_phub_loi()`."""
-    fmt_label  = workbook.add_format({'bold': True, 'font_size': 10})
-    fmt_header = workbook.add_format({'bold': True, 'font_size': 10,
-                                      'bg_color': '#DDEBF7', 'border': 1})
-    fmt_num    = workbook.add_format({'font_size': 10, 'num_format': '#,##0'})
-    fmt_val    = workbook.add_format({'font_size': 10})
-
-    ws.write(0, 0, 'Chỉ tiêu',     fmt_header)
-    ws.write(0, 1, 'Số giao dịch', fmt_header)
-    ws.set_column(0, 0, 45); ws.set_column(1, 1, 16)
-
-    dem = df_ketqua['TRANG_THAI_CAP_NHAT'].value_counts()
-    data = [
-        ('Ngày đối chiếu', ngay_str),
-        ('Session',         session_id),
-        ('', ''),
-        ('Hoàn thành (khớp GW, Ghi chú ACSP/ACSC)',   int(dem.get('Hoàn thành', 0))),
-        ('TT lệnh lỗi ngày T (khớp TO ko đi kênh)',   int(dem.get('TT lệnh lỗi ngày T', 0))),
-        ('Trạng thái khác (không khớp bên nào)',      int(dem.get('Trạng thái khác', 0))),
-        ('', ''),
-        ('TỔNG',                                      len(df_ketqua)),
-    ]
-    for row_idx, (label, val) in enumerate(data, start=1):
-        ws.write_string(row_idx, 0, label, fmt_label)
-        if isinstance(val, int):
-            ws.write(row_idx, 1, val, fmt_num)
-        else:
-            ws.write(row_idx, 1, val, fmt_val)
-
-
-def xuat_excel_phub_loi(output_dir: str, session_id: str, ngay_dt: datetime,
-                        df_ketqua: pd.DataFrame = None, log_callback=None) -> str | None:
-    """Mục 3 (bổ sung 11.09.2026, Thảo xác nhận ưu tiên làm 16.09.2026) — xuất kết
-    quả `xu_ly_phub_loi()` (b16_phub_loi.py). Xuất RIÊNG khỏi doi_chieu_<ngày>.xlsx
-    chính — module độc lập với đối chiếu ACH (đúng NOTE gốc văn bản: "Xây dựng
-    thành module riêng độc lập với đối chiếu"), theo đúng phong cách
-    `xuat_excel_gw_den()`/`xuat_excel_timeout_cu()`: 1 sheet TONG_KET + 1 sheet
-    chi tiết toàn bộ df_ketqua. Trả None nếu không có file pHub nào
-    (`df_ketqua is None`) — không tạo file thừa, giống `xuat_excel_napas()`."""
-    if df_ketqua is None:
-        return None
-    _log         = log_callback or print
-    ngay_str     = ngay_dt.strftime('%Y%m%d')
-    ngay_display = ngay_dt.strftime('%d/%m/%Y')
-    output_path  = os.path.join(output_dir, f'{ngay_str}_ACH_PHUBLOI.xlsx')
-
-    workbook = xlsxwriter.Workbook(output_path, {'strings_to_numbers': False})
-
-    ws0 = workbook.add_worksheet('TONG_KET')
-    _viet_tong_ket_phub(workbook, ws0, session_id, ngay_display, df_ketqua)
-
-    ws1 = workbook.add_worksheet('PHUB_KET_QUA')
-    ws1.set_tab_color(_CAM)
-    if len(df_ketqua) > CSV_THRESHOLD:
-        csv_path = os.path.join(output_dir, f'PHUB_KET_QUA_{ngay_str}.csv')
-        df_ketqua.to_csv(csv_path, index=False, encoding='utf-8-sig')
-        ws1.write(0, 0, f'[Dữ liệu lớn - xem file: {os.path.basename(csv_path)}]')
-        ws1.write(1, 0, f'Tổng số dòng: {len(df_ketqua):,}')
-        ws1.write(2, 0, 'LƯU Ý: Mở file CSV qua Excel > Data > Từ Văn bản/CSV (không double-click trực tiếp).')
-        _log(f'[CSV] PHUB_KET_QUA: {len(df_ketqua):,} dòng → {csv_path}')
-    else:
-        _viet_sheet(workbook, ws1, df_ketqua, _CAM)
-
-    workbook.close()
-    _log(f'[DONE] File pHub lỗi (Mục 3): {output_path}')
-    return output_path
-
-
 # ─── Cancel helper ────────────────────────────────────────────────────────────
 
 def _cancelled(ev) -> bool:
@@ -1460,8 +1474,7 @@ def main_from_dir(input_dir: str, output_dir: str,
                   cancel_event=None,
                   dung_sau_mis_di: bool = False,
                   xac_nhan_path: str = None,
-                  summary_callback=None,
-                  chi_tim_timeout: bool = False) -> str | None:
+                  summary_callback=None) -> str | None:
     """
     Chạy pipeline đối chiếu ACH từ thư mục đã có file.
     Trả về đường dẫn file .xlsx kết quả, hoặc None nếu cancelled.
@@ -1472,14 +1485,16 @@ def main_from_dir(input_dir: str, output_dir: str,
     dict số liệu các nhóm nghiệp vụ thật (khớp NPO/OSB đi-đến, timeout, huỷ,
     thừa...) — phục vụ hiển thị "Kết quả tạm thời" ở UI, không ảnh hưởng file xuất.
 
-    chi_tim_timeout — 2026-08-21 (xem project_ach_gl02_optional_tiered_deps): mặc
-    định False giữ nguyên hành vi cũ (bắt buộc đủ GL02 + MIS_đến×2, thiếu là raise
-    FileNotFoundError). True cho phép chạy khi thiếu GL02 và/hoặc MIS_đến — CHỈ
-    tính phần Tầng 0 (Timeout không đi kênh + MIS_đi khớp GW + GW-thừa +
-    Checkpoint, độc lập GL02/MIS_đến), Tầng 1 (NPO/MIS thừa đi-đến, huỷ, Điểm 2
-    OSB, Điểm 4 chéo ngày T-2) bị TẮT HẲN và ghi rõ "CHƯA ĐỐI CHIẾU ĐƯỢC" thay vì
-    hiện số 0 (tránh hiểu nhầm "đã khớp hết" — xem feedback_binary_match_status).
-    KHÔNG miễn trừ yêu cầu tối thiểu PDF+GW+MIS_đi×2 — thiếu 1 trong 3 vẫn raise.
+    Chạy giản lược theo file đang có (2026-09-16, thay cho cờ `chi_tim_timeout`
+    trước đây phải tự tay tick mới bật; mở rộng D1 23/09/2026 — GW đi không còn
+    bắt buộc) — sàn bắt buộc DUY NHẤT còn lại là PDF (session). Thiếu GL02/
+    MIS_đến/MIS_đi/GW đi (bất kỳ tổ hợp nào) không còn raise — pipeline tự động
+    chạy phần còn tính được, ghi rõ "CHƯA ĐỐI CHIẾU ĐƯỢC" cho phần phải bỏ qua
+    thay vì hiện số 0 giả (xem feedback_binary_match_status).
+    Thiếu MIS_đi HOẶC GW đi (D-2, đã chốt) kéo theo Timeout không đi kênh +
+    GW-thừa + MIS_đi khớp GW + Checkpoint + Chiều đi (NPO/OSB) cũng KHÔNG tính
+    được (`ly_do_thieu_timeout`/`ly_do_thieu_di`) — Business Owner đã chấp nhận
+    đánh đổi này (2026-09-16, mở rộng 23/09/2026).
 
     dung_sau_mis_di=True — Checkpoint xác nhận thủ công tại MIS_đi (Điểm 1,
     2026-07-31 — Bước 1): dừng ngay sau `_process_mis_di()` (bước 5), TRƯỚC khi gọi
@@ -1535,24 +1550,38 @@ def main_from_dir(input_dir: str, output_dir: str,
     mis_di_files  = _tim_file(input_dir, '*_DI_*.zip')
     mis_den_files = _tim_file(input_dir, '*_DEN_*.zip')
 
-    # Tầng 0 (Timeout không đi kênh + GW-thừa + Checkpoint) — LUÔN bắt buộc, không
-    # được miễn trừ bởi chi_tim_timeout: đây là mức tối thiểu thật sự.
-    if len(mis_di_files) < 2:
-        raise FileNotFoundError(f'Cần 2 file MIS_DI zip, chỉ tìm thấy {len(mis_di_files)}')
-
-    # Tầng 1 (NPO/MIS thừa đi-đến, huỷ, Điểm 2/4) — cần GL02 + MIS_đến×2. Bắt buộc
-    # như cũ trừ khi chi_tim_timeout=True (2026-08-21, xem
-    # project_ach_gl02_optional_tiered_deps): khi đó cho phép chạy thiếu, Tầng 1 sẽ
-    # tự tắt và ghi rõ "CHƯA ĐỐI CHIẾU ĐƯỢC" (xử lý ở dưới), không phải raise.
+    # Chạy giản lược theo file đang có (2026-09-16, mở rộng D1 23/09/2026) —
+    # GL02/MIS_đến/MIS_đi/GW đi đều độc lập, KHÔNG raise khi thiếu; chỉ PDF (đã
+    # kiểm ở doc_session() phía trên) còn là sàn bắt buộc thật sự cho TOÀN BỘ.
+    # GW đi (D1) không còn là sàn bắt buộc CHUNG — chỉ nhóm Đi + Timeout (Tab 1)
+    # cần nó, Tab 2 "Đối chiếu đến" chạy độc lập không cần GW đi.
     thieu_gl02    = not gl02_files
     thieu_mis_den = len(mis_den_files) < 2
-    if not chi_tim_timeout:
-        if thieu_gl02:
-            raise FileNotFoundError('Không tìm thấy GL02*.zip')
-        if thieu_mis_den:
-            raise FileNotFoundError(f'Cần 2 file MIS_DEN zip, chỉ tìm thấy {len(mis_den_files)}')
-    tang1_thieu = thieu_gl02 or thieu_mis_den
-    ly_do_thieu_tang1 = ', '.join(
+    thieu_mis_di  = len(mis_di_files) < 2
+    thieu_gw      = gw_path is None
+
+    # 3 lý do thiếu, ánh xạ đúng 3 nhóm nghiệp vụ (3 tab UI) — xem docstring:
+    # - timeout: Timeout không đi kênh/GW-thừa/MIS_đi khớp GW/Checkpoint — phụ
+    #   thuộc MIS_đi VÀ GW đi (không phụ thuộc GL02/MIS_đến).
+    # - di: MIS_đi khớp NPO/NPO_đi thừa/huỷ/OSB đi — phụ thuộc GL02, MIS_đi VÀ
+    #   GW đi.
+    # - den: MIS_đến khớp NPO/NPO_đến thừa/OSB đến — phụ thuộc GL02 + MIS_đến,
+    #   KHÔNG phụ thuộc MIS_đi/GW đi.
+    #
+    # D-2 (23/09/2026, đã chốt, KHÔNG tự đổi) — thiếu GW đi thì TẮT HẲN cả nhóm
+    # Đi và Timeout, không chạy một phần kèm cảnh báo. Lý do nghiệp vụ:
+    # `_process_mis_di()` dùng GW GỐC (df_gw_goc) để giữ lại các dòng
+    # SESSION=NULL; không có GW thì các dòng đó rơi hết khỏi df_mis_di mà không
+    # ai biết — số liệu chiều đi tính ra sẽ SAI (không phải chỉ thiếu), khác hẳn
+    # kiểu "thiếu file tùy chọn, bỏ qua nhánh phụ" của GL02/MIS_đến/MIS_đi.
+    ly_do_thieu_timeout = ', '.join(
+        n for n, thieu in (('MIS_đi', thieu_mis_di), ('GW đi', thieu_gw)) if thieu
+    ) or None
+    ly_do_thieu_di = ', '.join(
+        n for n, thieu in (('GL02', thieu_gl02), ('MIS_đi', thieu_mis_di), ('GW đi', thieu_gw))
+        if thieu
+    ) or None
+    ly_do_thieu_den = ', '.join(
         n for n, thieu in (('GL02', thieu_gl02), ('MIS_đến', thieu_mis_den)) if thieu
     ) or None
 
@@ -1589,10 +1618,11 @@ def main_from_dir(input_dir: str, output_dir: str,
     # giới hạn số lượng (đối chiếu gộp toàn bộ, xem doi_chieu_timeout_cu() ở B12).
     timeout_cu_files = _tim_file_timeout_cu(input_dir)
 
-    # Mục 3 (bổ sung 11.09.2026, tùy chọn) — file pHub "Danh sách giao dịch
-    # chuyển tiền đi" người dùng tự nạp thêm, KHÔNG giới hạn số lượng (đối chiếu
-    # gộp toàn bộ với GW đi + TO ko đi kênh, xem `xu_ly_phub_loi()` ở B16, gọi
-    # sau khi df_gw_raw/df_timeout/df_timeout_cu sẵn sàng ở Phase 2 bên dưới).
+    # Mục 3 (sửa 18.09.2026) — kết quả pHub chuyển hẳn sang màn "Gộp nhiều ngày"
+    # (phub_gop.py), không còn xử lý theo từng ngày ở đây (Q1 — thay thế hoàn
+    # toàn). `_tim_file_phub()` GIỮ LẠI chỉ để CẢNH BÁO — người dùng có thể vẫn
+    # quen thả file pHub vào thư mục ngày; bỏ hẳn hàm này thì file đó bị im lặng
+    # bỏ qua, đúng kiểu hỏng lặng lẽ mà dự án cấm.
     phub_paths = _tim_file_phub(input_dir)
 
     # Điểm 2 (tùy chọn) — file Quyết toán OSB "QT" (đi và/hoặc đến, tự phân loại
@@ -1653,11 +1683,15 @@ def main_from_dir(input_dir: str, output_dir: str,
         f'MIS_đi thừa T-2={len(mis_di_thua_t2_files)}, MIS_đến thừa T-2={len(mis_den_thua_t2_files)}, '
         f'NPO_đi thừa T-2={len(npo_di_thua_t2_files)}, QT đi thừa T-2={len(qt_di_thua_t2_files)}, '
         f'TO ko đi kênh ngày cũ (Mục 8)={len(timeout_cu_files)}, '
-        f'pHub (Mục 3)={len(phub_paths)}, '
+        f'pHub trong thư mục (bỏ qua, xem màn Gộp)={len(phub_paths)}, '
         f'QT đi={"có" if df_qt_di is not None else "không"}, QT đến={"có" if df_qt_den is not None else "không"}, '
         f'GW đến (Mục 4)={"có" if gw_den_path else "không"}, '
         f'Napas PDF (Mục 6)={"có" if napas_pdf_path else "không"}, '
         f'Napas CSV ISS/BEN (Mục 7)={"có" if napas_iss_path else "không"}/{"có" if napas_ben_path else "không"}')
+
+    if phub_paths:
+        log(f'[Mục 3] Bỏ qua {len(phub_paths)} file pHub trong thư mục — kết quả pHub nay '
+            f'chỉ tính ở màn Gộp nhiều ngày.')
 
     if _cancelled(cancel_event):
         log('[CANCELLED] Người dùng đã dừng. Không xử lý.')
@@ -1665,37 +1699,46 @@ def main_from_dir(input_dir: str, output_dir: str,
 
     _t0 = time.perf_counter()
 
-    # Phase 1: B2 + B3 + B6 + B4_IO + B13(Mục 4, tùy chọn) song song. GL02/MIS_đến
-    # chỉ submit khi có đủ file — chi_tim_timeout=True cho phép thiếu, npo_di/
-    # npo_den/df_mis_den ở lại None (Tầng 1 sẽ tự tắt ở Phase 2 bên dưới). GW đến
-    # chỉ submit khi tìm thấy file (Mục 4 là input tùy chọn, không chặn luồng chính).
+    # Phase 1: B2 + B3 + B6 + B4_IO + B13(Mục 4, tùy chọn) song song. GL02/MIS_đến/
+    # MIS_đi/GW đi chỉ submit khi có đủ file — thiếu thì npo_di/npo_den/df_mis_den/
+    # df_mis_di/dict_gw_count/df_gw_raw/df_gw_goc ở lại None (nhóm phụ thuộc sẽ tự
+    # tắt ở Phase 2 bên dưới, D1 23/09/2026). GW đến chỉ submit khi tìm thấy file
+    # (Mục 4 là input tùy chọn, không chặn luồng chính).
     with ThreadPoolExecutor(max_workers=5) as ex:
         f_gl02       = ex.submit(xu_ly_gl02, gl02_files[0], log_callback) if not thieu_gl02 else None
-        f_gw         = ex.submit(xu_ly_gw,        gw_path, session_id, log_callback)
+        f_gw         = ex.submit(xu_ly_gw, gw_path, session_id, log_callback) if not thieu_gw else None
         f_mis_den    = (
             ex.submit(xu_ly_mis_den, mis_den_files, session_id, ngay_dt, log_callback)
             if not thieu_mis_den else None
         )
-        f_mis_di_raw = ex.submit(_doc_mis_di_raw, mis_di_files, session_id, log_callback)
+        f_mis_di_raw = (
+            ex.submit(_doc_mis_di_raw, mis_di_files, session_id, log_callback)
+            if not thieu_mis_di else None
+        )
         f_gw_den     = (
             ex.submit(xu_ly_gw_den, gw_den_path, session_id, log_callback)
             if gw_den_path else None
         )
 
-        dict_gw_count, df_gw_raw, df_gw_goc = f_gw.result()
+        dict_gw_count, df_gw_raw, df_gw_goc = f_gw.result() if f_gw else (None, None, None)
 
         if _cancelled(cancel_event):
             log('[CANCELLED] Người dùng đã dừng sau B3.')
             if f_gl02: f_gl02.result()
             if f_mis_den: f_mis_den.result()
-            f_mis_di_raw.result()
+            if f_mis_di_raw: f_mis_di_raw.result()
             if f_gw_den: f_gw_den.result()
             return None
 
-        df_mis_di_data = f_mis_di_raw.result()
+        df_mis_di_data = f_mis_di_raw.result() if f_mis_di_raw else None
         # Mục 2 — bỏ trạng thái CALD/ERPO/TPER (bước 1), lọc session (bước 2).
-        df_mis_di = _process_mis_di(
-            df_mis_di_data, session_id, ngay_dt, df_gw_goc, log_callback,
+        # D-2 (23/09/2026, đã chốt) — thiếu GW đi thì KHÔNG gọi _process_mis_di():
+        # hàm này dùng df_gw_goc để giữ lại các dòng SESSION=NULL, thiếu GW thì các
+        # dòng đó rơi hết mà không biết. df_mis_di=None kéo theo khop_voi_gw() không
+        # chạy (dưới), tự tắt cả nhóm Đi + Timeout đúng ly_do_thieu_di/timeout ở trên.
+        df_mis_di = (
+            _process_mis_di(df_mis_di_data, session_id, ngay_dt, df_gw_goc, log_callback)
+            if df_mis_di_data is not None and not thieu_gw else None
         )
 
         npo_di, npo_den = f_gl02.result() if f_gl02 else (None, None)
@@ -1710,8 +1753,8 @@ def main_from_dir(input_dir: str, output_dir: str,
 
     # Mục 4 (bổ sung 11.09.2026) — đối chiếu GW đến với MIS_đến qua TXID/MSGREF,
     # NGAY SAU khi df_mis_den sẵn sàng. Thiếu 1 trong 2 (không có file đến_GW, hoặc
-    # thiếu MIS_đến do chi_tim_timeout) → bỏ qua nhánh, KHÔNG raise, không chặn
-    # luồng chính (đúng tinh thần file tùy chọn như Điểm 2/OSB).
+    # thiếu MIS_đến — chạy giản lược theo file đang có) → bỏ qua nhánh, KHÔNG
+    # raise, không chặn luồng chính (đúng tinh thần file tùy chọn như Điểm 2/OSB).
     df_gwden_khop = df_gwden_thua = df_misden_thua_gwden = None
     if df_gw_den is not None and df_mis_den is not None:
         df_gwden_khop, df_gwden_thua, df_misden_thua_gwden = doi_chieu_gw_den(
@@ -1721,12 +1764,14 @@ def main_from_dir(input_dir: str, output_dir: str,
         log('[Mục 4] Bỏ qua đối chiếu GW đến — thiếu MIS_đến (GL02/MIS_đến chưa đủ).')
 
     # Mục 7 (bổ sung 14.09.2026) — đối chiếu CSV Napas chi tiết (ISS/BEN) với GW
-    # qua MsgId=MSGREF, ngay khi df_gw_raw/df_gw_den sẵn sàng. Chiều đi chỉ cần
-    # df_gw_raw (luôn có, không phụ thuộc GL02/MIS_đến). Chiều đến cần df_gw_den —
-    # KHÔNG cần df_mis_den (khác điều kiện Mục 4): thiếu BEN, hoặc có BEN nhưng
-    # thiếu file đến_GW → bỏ qua nhánh chi tiết chiều đến, KHÔNG raise.
+    # qua MsgId=MSGREF, ngay khi df_gw_raw/df_gw_den sẵn sàng. Chiều đi cần
+    # df_gw_raw — D1 (23/09/2026): GW đi không còn LUÔN CÓ, thiếu GW đi thì bỏ
+    # qua đối chiếu chi tiết chiều đi (không raise), TONG_KET vẫn dùng số PDF nếu
+    # có. Chiều đến cần df_gw_den — KHÔNG cần df_mis_den (khác điều kiện Mục 4):
+    # thiếu BEN, hoặc có BEN nhưng thiếu file đến_GW → bỏ qua nhánh chi tiết chiều
+    # đến, KHÔNG raise.
     df_napas_di_khop = df_napas_di_thua = df_gwdi_thua_napas = None
-    if napas_iss_path:
+    if napas_iss_path and df_gw_raw is not None:
         df_napas_iss = doc_napas_csv(napas_iss_path, log_callback)
         # TONG_KET ưu tiên số từ CSV chi tiết (đếm được từng dòng) — ghi đè số PDF
         # (Mục 6) đã gán ở trên, CHỈ dùng PDF khi không có CSV cho chiều này.
@@ -1736,6 +1781,9 @@ def main_from_dir(input_dir: str, output_dir: str,
             df_napas_iss, df_gw_raw, 'MSGREF', log_callback,
         )
         log('[Mục 6/7] TONG_KET chiều đi lấy số từ CSV chi tiết (có ISS).')
+    elif napas_iss_path and df_gw_raw is None:
+        log('[Mục 6/7] Bỏ qua đối chiếu chi tiết Napas chiều đi — có ISS nhưng '
+            'thiếu file GW đi. TONG_KET chiều đi (nếu có) vẫn dùng số PDF.')
     elif n_napas_di is not None:
         log('[Mục 6/7] TONG_KET chiều đi lấy số từ PDF (không có ISS).')
 
@@ -1754,7 +1802,10 @@ def main_from_dir(input_dir: str, output_dir: str,
     elif n_napas_den is not None:
         log('[Mục 6/7] TONG_KET chiều đến lấy số từ PDF (không có BEN).')
 
-    if dung_sau_mis_di:
+    # D1 (23/09/2026) — cả 2 hàm dưới đây đọc trực tiếp df_gw_goc (tra SessionId
+    # trên GW gốc), thiếu GW đi (thieu_gw) thì KHÔNG gọi được, đúng D-2 (tắt hẳn
+    # nhóm Đi + Timeout khi thiếu GW đi).
+    if dung_sau_mis_di and df_mis_di_data is not None and not thieu_gw:
         log(f'[TIMING] Đến checkpoint MIS_đi: {time.perf_counter()-_t0:.1f}s')
         df_bi_loai = tim_giao_dich_bi_loai_session_null(
             df_mis_di_data, session_id, ngay_dt, df_gw_goc, log_callback,
@@ -1764,15 +1815,24 @@ def main_from_dir(input_dir: str, output_dir: str,
         )
         log(f'[CHECKPOINT] Dừng để chờ xác nhận thủ công. File: {xac_nhan_out_path}')
         return xac_nhan_out_path
+    elif dung_sau_mis_di and thieu_gw:
+        log('[CHECKPOINT] Bỏ qua — thiếu GW đi, không có gì để xác nhận. Chạy thẳng.')
+    elif dung_sau_mis_di:
+        log('[CHECKPOINT] Bỏ qua — thiếu MIS_đi, không có gì để xác nhận. Chạy thẳng.')
 
     # Audit 2026-08-04 — LUÔN tính (không chỉ ở Checkpoint) để giao dịch SESSION=NULL
     # bị loại (mọi lý do — xem tim_toan_bo_giao_dich_bi_loai_session_null()) không
-    # còn biến mất hoàn toàn khỏi báo cáo cuối khi chạy thẳng/chạy tiếp.
-    df_session_null_bi_loai = tim_toan_bo_giao_dich_bi_loai_session_null(
-        df_mis_di_data, session_id, ngay_dt, df_gw_goc, log_callback,
+    # còn biến mất hoàn toàn khỏi báo cáo cuối khi chạy thẳng/chạy tiếp. None khi
+    # thiếu MIS_đi (thieu_mis_di) hoặc thiếu GW đi (thieu_gw, D1) — không có gì để
+    # tính, sheet sẽ ghi rõ "CHƯA ĐỐI CHIẾU ĐƯỢC" thay vì "(Không có dữ liệu)"
+    # (ly_do_thieu_timeout).
+    df_session_null_bi_loai = (
+        tim_toan_bo_giao_dich_bi_loai_session_null(
+            df_mis_di_data, session_id, ngay_dt, df_gw_goc, log_callback,
+        ) if df_mis_di_data is not None and not thieu_gw else None
     )
 
-    if xac_nhan_path:
+    if xac_nhan_path and df_mis_di is not None:
         def _doc_them_ngay_khac():
             zip_khac = _tim_di_zip_ngay_khac(input_dir, log_callback)
             if not zip_khac:
@@ -1786,10 +1846,14 @@ def main_from_dir(input_dir: str, output_dir: str,
             doc_them_ngay_khac=_doc_them_ngay_khac,
         )
 
-    # Mục 3 — so khớp CN TIỀN giữa MIS_đi (đã confirm nếu có) và GW.
-    df_mis_di_khop_gw, df_timeout = khop_voi_gw(df_mis_di, dict_gw_count, df_gw_raw, log_callback)
-
-    df_cap_cn_tien = _tao_cap_cn_tien(df_mis_di, df_timeout, dict_gw_count)
+    # Mục 3 — so khớp CN TIỀN giữa MIS_đi (đã confirm nếu có) và GW. None khi
+    # thiếu MIS_đi — đây chính là "Timeout không đi kênh" nên khi thiếu, cả nhóm
+    # timeout (ly_do_thieu_timeout) không tính được, không phải raise.
+    if df_mis_di is not None:
+        df_mis_di_khop_gw, df_timeout = khop_voi_gw(df_mis_di, dict_gw_count, df_gw_raw, log_callback)
+        df_cap_cn_tien = _tao_cap_cn_tien(df_mis_di, df_timeout, dict_gw_count)
+    else:
+        df_mis_di_khop_gw = df_timeout = df_cap_cn_tien = None
 
     if _cancelled(cancel_event):
         log('[CANCELLED] Người dùng đã dừng trước Phase 2.')
@@ -1798,19 +1862,23 @@ def main_from_dir(input_dir: str, output_dir: str,
     _t1 = time.perf_counter()
 
     # Phase 2: B5 + B7 + C.1a (GW-thừa) song song. Mục 4 — đối chiếu NPO_đi với
-    # "điện MIS_đi khớp đúng" (đầu ra mục 3), không phải MIS_đi thô. doi_chieu_di/
-    # doi_chieu_den cần GL02 (npo_di/npo_den) — bỏ qua khi thiếu (chi_tim_timeout);
-    # GW-thừa (Tầng 0, không cần GL02/MIS_đến) luôn chạy.
+    # "điện MIS_đi khớp đúng" (đầu ra mục 3), không phải MIS_đi thô. doi_chieu_di
+    # cần CẢ GL02 (npo_di) LẪN MIS_đi (df_mis_di_khop_gw) — bỏ qua khi thiếu 1
+    # trong 2 (ly_do_thieu_di). doi_chieu_den chỉ cần GL02+MIS_đến (ly_do_thieu_den),
+    # không phụ thuộc MIS_đi. GW-thừa cần MIS_đi (ly_do_thieu_timeout).
     with ThreadPoolExecutor(max_workers=3) as ex:
         f_di = (
             ex.submit(doi_chieu_di, npo_di, df_mis_di_khop_gw, log_callback)
-            if npo_di is not None else None
+            if (npo_di is not None and df_mis_di_khop_gw is not None) else None
         )
         f_den = (
             ex.submit(doi_chieu_den, npo_den, df_mis_den, log_callback)
             if (npo_den is not None and df_mis_den is not None) else None
         )
-        f_gwthua = ex.submit(tim_nhom_gw_thua, df_mis_di, df_gw_raw, log_callback)
+        f_gwthua = (
+            ex.submit(tim_nhom_gw_thua, df_mis_di, df_gw_raw, log_callback)
+            if df_mis_di is not None and df_gw_raw is not None else None
+        )
 
         if f_di:
             df_mis_di_khop, df_npo_di_thua, df_mis_di_thua = f_di.result()
@@ -1820,7 +1888,10 @@ def main_from_dir(input_dir: str, output_dir: str,
             df_mis_den_khop, df_npo_den_thua, df_mis_den_thua = f_den.result()
         else:
             df_mis_den_khop = df_npo_den_thua = df_mis_den_thua = None
-        df_gw_thua_xac_dinh, df_gw_can_doi_chieu = f_gwthua.result()
+        if f_gwthua:
+            df_gw_thua_xac_dinh, df_gw_can_doi_chieu = f_gwthua.result()
+        else:
+            df_gw_thua_xac_dinh = df_gw_can_doi_chieu = None
 
     if _cancelled(cancel_event):
         log('[CANCELLED] Người dùng đã dừng sau Phase 2.')
@@ -1868,17 +1939,30 @@ def main_from_dir(input_dir: str, output_dir: str,
 
     # Điểm 2 — đối chiếu lệnh OSB (đi & đến) qua QT, độc lập hoàn toàn với Điểm
     # 3/4 (dùng df_mis_di_thua/df_mis_den_thua, không đụng df_npo_..._thua). Không
-    # có file QT nào → bỏ qua hẳn, không tạo file OSB. Thiếu GL02/MIS_đến →
-    # df_mis_..._thua không đáng tin cậy, Business Owner đã chốt (2026-08-03):
-    # TẮT HẲN Điểm 2, không chạy kèm cảnh báo.
+    # có file QT nào → bỏ qua hẳn, không tạo file OSB. Thiếu GL02/MIS_đi (đi) hoặc
+    # GL02/MIS_đến (đến) → df_mis_..._thua bên đó không đáng tin cậy, TẮT HẲN vế
+    # tương ứng.
+    #
+    # LƯU Ý NGUỒN GỐC QUYẾT ĐỊNH (đính chính 2026-09-16): quyết định gốc 2026-08-03
+    # (xem project_ach_gl02_optional_tiered_deps) chỉ chốt "tắt hẳn Điểm 2 khi thiếu
+    # GL02" ở phạm vi TOÀN BỘ Điểm 2 (gộp cả 2 chiều) — KHÔNG hề nói tới việc tách
+    # theo từng chiều. Việc tách riêng từng chiều dưới đây ban đầu là suy luận kỹ
+    # thuật của người viết code (2026-09-16), sau đó ĐÃ ĐƯỢC CHỊ THẢO (Business
+    # Owner) XÁC NHẬN CÙNG NGÀY: "OSB hay điện thường thì cũng tách riêng chiều đi
+    # và chiều đến" — đúng tinh thần "điện thường" (Mục 4/5, `ket_qua_mis_..._t2()`)
+    # vốn đã tách riêng theo `ly_do_thieu_di`/`ly_do_thieu_den` từ trước, nay OSB
+    # làm nhất quán theo đúng cách đó. Không còn là suy diễn chưa xác nhận.
     df_osb_di_khop = df_di_chua_khop = df_osb_den_khop = df_den_chua_khop = None
     if df_qt_di is not None and df_mis_di_thua is not None:
         df_osb_di_khop, df_di_chua_khop = doi_chieu_osb_di(df_mis_di_thua, df_qt_di, log_callback)
     if df_qt_den is not None and df_mis_den_thua is not None:
         df_osb_den_khop, df_den_chua_khop = doi_chieu_osb_den(df_mis_den_thua, df_qt_den, log_callback)
-    if tang1_thieu and (df_qt_di is not None or df_qt_den is not None):
-        log(f'[ĐIỂM 2] Bỏ qua đối chiếu OSB — thiếu {ly_do_thieu_tang1}, '
-            f'không đủ dữ liệu để xác định MIS_đi/MIS_đến thừa đáng tin cậy.')
+    if ly_do_thieu_di and df_qt_di is not None and df_mis_di_thua is None:
+        log(f'[ĐIỂM 2] Bỏ qua đối chiếu OSB đi — thiếu {ly_do_thieu_di}, '
+            f'không đủ dữ liệu để xác định MIS_đi thừa đáng tin cậy.')
+    if ly_do_thieu_den and df_qt_den is not None and df_mis_den_thua is None:
+        log(f'[ĐIỂM 2] Bỏ qua đối chiếu OSB đến — thiếu {ly_do_thieu_den}, '
+            f'không đủ dữ liệu để xác định MIS_đến thừa đáng tin cậy.')
 
     # Mục 2 (bổ sung 11.09.2026) — loại khỏi MIS_đi/đến thừa các dòng OSB đã
     # khớp QT (đã tính ở khối trên), tránh hiện trùng với file OSB riêng.
@@ -1920,32 +2004,6 @@ def main_from_dir(input_dir: str, output_dir: str,
     df_timeout_cu_ketqua, df_npo_di_thua, df_qt_di_thua = doi_chieu_timeout_cu(
         df_timeout_cu, df_npo_di_thua, df_qt_di_thua, df_dien_huy_trong_ngay, log_callback,
     )
-
-    # Mục 3 (bổ sung 11.09.2026, Thảo xác nhận ưu tiên làm 16.09.2026) — đối chiếu
-    # pHub "Danh sách giao dịch chuyển tiền đi" với GW đi (Bước 2 — Ghi chú chứa
-    # ACSP:NOAN/ACSP:AUTH/ACSC:AUTH) và TO ko đi kênh (Bước 3-6 — CN trace tiền),
-    # gộp CẢ df_timeout của ngày đang chạy LẪN df_timeout_cu (Mục 8, ngày cũ
-    # người dùng tự nạp) làm nguồn "TO ko đi kênh" — văn bản không phân biệt
-    # timeout ngày nào, chỉ cần khớp CN trace tiền. Module ĐỘC LẬP với đối chiếu
-    # ACH chính (đúng NOTE gốc văn bản) — 1 lỗi ở đây KHÔNG được làm sập pipeline
-    # chính, bọc try/except log rõ, đúng tinh thần Mục 4/6/7 (input tùy chọn).
-    df_phub_ketqua = None
-    if phub_paths:
-        try:
-            df_phub_list = [doc_phub(f, log_callback) for f in phub_paths]
-            df_phub      = pd.concat(df_phub_list, ignore_index=True)
-            df_gw_phub   = doc_gw_di_cho_phub(gw_path, session_id, log_callback)
-            nguon_timeout_gop = [
-                d for d in (df_timeout, df_timeout_cu) if d is not None and len(d) > 0
-            ]
-            df_timeout_gop_phub = (
-                pd.concat(nguon_timeout_gop, ignore_index=True) if nguon_timeout_gop
-                else pd.DataFrame(columns=['CHI_NHANH', 'TRACE', 'SE_TRACE', 'SO_TIEN'])
-            )
-            df_phub_ketqua = xu_ly_phub_loi(df_phub, df_gw_phub, df_timeout_gop_phub, log_callback)
-        except Exception as e:
-            log(f'[Mục 3][WARN] Bỏ qua đối chiếu pHub — lỗi khi xử lý {len(phub_paths)} file: {e}')
-            df_phub_ketqua = None
 
     # Mục 5.1 — đối chiếu chéo QT đi thừa T-2 với "huỷ khác ngày" của QT đi T-1
     # (df_qt_huy_khac_ngay vừa tính ở trên, KHÔNG phải file mới).
@@ -2013,14 +2071,21 @@ def main_from_dir(input_dir: str, output_dir: str,
         n_napas_di=n_napas_di, s_napas_di=s_napas_di,
         n_napas_den=n_napas_den, s_napas_den=s_napas_den,
         log_callback=log_callback,
-        ly_do_thieu_tang1=ly_do_thieu_tang1,
+        ly_do_thieu_di=ly_do_thieu_di,
+        ly_do_thieu_den=ly_do_thieu_den,
+        ly_do_thieu_timeout=ly_do_thieu_timeout,
     )
 
-    if not tang1_thieu and (df_qt_di is not None or df_qt_den is not None):
+    # Ghi file OSB riêng khi có ÍT NHẤT 1 chiều khớp được đáng tin cậy — mỗi
+    # chiều đã tự tắt ở khối Điểm 2 phía trên nếu thiếu file của đúng chiều đó
+    # (2026-09-16, tách khỏi cờ `tang1_thieu` gộp cả 2 chiều trước đây).
+    if df_osb_di_khop is not None or df_osb_den_khop is not None:
         xuat_excel_osb(
             output_dir, session_id, ngay_dt,
             df_osb_di_khop, df_di_chua_khop, df_osb_den_khop, df_den_chua_khop,
             log_callback,
+            ly_do_thieu_di=ly_do_thieu_di,
+            ly_do_thieu_den=ly_do_thieu_den,
         )
 
     # Mục 4 (bổ sung 11.09.2026) — chỉ xuất khi nhánh thực sự chạy (có cả file
@@ -2054,11 +2119,6 @@ def main_from_dir(input_dir: str, output_dir: str,
 
     # Mục 8 (bổ sung 14.09.2026) — chỉ xuất khi có ít nhất 1 file timeout ngày cũ.
     xuat_excel_timeout_cu(output_dir, ngay_dt, df_timeout_cu_ketqua, log_callback)
-
-    # Mục 3 (bổ sung 11.09.2026) — chỉ xuất khi có ít nhất 1 file pHub được xử lý
-    # thành công (df_phub_ketqua is None khi không có file, hoặc khi lỗi đã bị
-    # bắt và log ở trên).
-    xuat_excel_phub_loi(output_dir, session_id, ngay_dt, df_phub_ketqua, log_callback)
 
     log(f'[TIMING] Phase 3 Excel: {time.perf_counter()-_t2:.1f}s')
     log(f'[TIMING] TỔNG: {time.perf_counter()-_t0:.1f}s')

@@ -429,9 +429,11 @@ class TestTimGwXlsx:
         ket_qua = _tim_gw_xlsx(str(tmp_path))
         assert ket_qua == str(f)
 
-    def test_khong_co_file_nao_bao_loi_khong_tim_thay(self, tmp_path):
-        with pytest.raises(FileNotFoundError, match='Không tìm thấy file GW .xlsx trong'):
-            _tim_gw_xlsx(str(tmp_path))
+    def test_khong_co_file_nao_tra_ve_none(self, tmp_path):
+        """D1 (23/09/2026) — 0 file GW hợp lệ không còn raise, trả None để Tab 2
+        "Đối chiếu đến" chạy được không cần GW đi (khác nhánh ≥2 file, vẫn raise,
+        xem test_2_file_hop_le_bao_loi_ro_ten_ca_hai)."""
+        assert _tim_gw_xlsx(str(tmp_path)) is None
 
     def test_file_loi_doc_duoc_phan_biet_voi_khong_tim_thay(self, tmp_path):
         """File tên có 'GW' nhưng nội dung hỏng (không phải xlsx thật) — thông báo
