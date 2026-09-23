@@ -107,4 +107,28 @@ class TestCoQuyenChay:
 
 # TestQuyenPhubGop (bản-2, kho 30 ngày) đã xoá cùng Luồng A (23.09.2026) — 3
 # endpoint /phub-lichsu, /phub-gop, /phub-gop/{ma}/tai không còn tồn tại.
-# Luồng C sẽ thêm lại test quyền cho endpoint bản-3 khi dựng xong.
+# Bên dưới là bản-3 (Luồng C, 23.09.2026): POST /phub-gop cần cham_ach.process
+# (_CHAY); GET /phub-gop/{ma}/tai chỉ cần menu.cham_ach (_XEM) — đúng khuôn
+# 2 mức quyền của module này (xem docstring đầu file).
+
+class TestQuyenPhubGop:
+    def test_gop_bi_tu_choi_neu_chi_co_quyen_xem(self, client_chi_xem):
+        r = client_chi_xem.post(
+            '/api/ach/phub-gop', files={'files': ('a.xlsx', b'x', 'application/vnd.ms-excel')}
+        )
+        assert r.status_code == 403
+
+    def test_gop_qua_duoc_cua_quyen_neu_co_quyen_chay(self, client_duoc_chay):
+        """400 (file không hợp lệ/không nhận diện được loại) chứ KHÔNG phải
+        403 — đã qua lớp quyền, chạm tới logic phân loại file thật."""
+        r = client_duoc_chay.post(
+            '/api/ach/phub-gop', files={'files': ('a.txt', b'x', 'text/plain')}
+        )
+        assert r.status_code == 400
+
+    def test_tai_ket_qua_van_xem_duoc_chi_voi_quyen_xem(self, client_chi_xem):
+        """404 (job/mã không tồn tại) chứ KHÔNG phải 403 — quyền xem vẫn qua,
+        giống hệt /download của lượt chạy chính."""
+        r = client_chi_xem.get(
+            '/api/ach/phub-gop/khong-ton-tai/tai', params={'filename': 'a.xlsx'})
+        assert r.status_code == 404

@@ -477,14 +477,158 @@ async def cham_ach_page():
                                 'hoặc "Đối chiếu đến" trước.'
                             ).classes('text-sm text-gray-400 italic')
 
-                    # TODO Luồng C: khối UI "Gộp kết quả pHub nhiều ngày" đặt tại đây.
-                    # Bản-2 "kho 30 ngày" đã gỡ (Luồng A, 23.09.2026). Bản-3 (server
-                    # không lưu gì, nạp N file TIMEOUT + N file GW-cho-pHub + 1 file
-                    # pHub trong CÙNG 1 request) sẽ thêm UI ở đây — xem pipeline/PLAN.md
-                    # mục 4 (Luồng C) + mục 5 (D3, C-d). CỐ Ý không dùng chung khoá
-                    # `run_state['running']`/`gianh_cho('ach')` (C-K đã chốt, rủi ro
-                    # RAM đã được người dùng chấp nhận có ý thức — không tự "sửa cho
-                    # đúng").
+                    # ── Luồng C (23/09/2026) — Gộp kết quả pHub nhiều ngày ──────────
+                    # Bản-2 "kho 30 ngày" đã gỡ (Luồng A). Bản-3: server KHÔNG lưu gì
+                    # ngoài kết quả cuối — nạp N file TIMEOUT_KHONG_KENH_*.csv + N file
+                    # GW_CHO_PHUB_*.csv (chị Thảo tự giữ trên máy mình) + 1 file pHub
+                    # trong CÙNG 1 request. CỐ Ý dùng state RIÊNG (`phub_state`), KHÔNG
+                    # dùng chung `run_state`/khoá `gianh_cho('ach')` (C-K đã chốt —
+                    # rủi ro chồng RAM đã được người dùng chấp nhận CÓ Ý THỨC, xem
+                    # docs/Implementation-notes.html + pipeline/PLAN.md mục 4 C-K —
+                    # KHÔNG tự ý "sửa cho đúng" bằng cách bọc khoá vào đây).
+                    phub_state = {'files': {}}
+
+                    with ui.card().classes('w-full p-5 mb-4'):
+                        ui.label('Gộp kết quả pHub nhiều ngày').classes(
+                            'text-base font-semibold text-red-800 mb-1')
+                        ui.label(
+                            'Nạp N file TIMEOUT_KHONG_KENH_*.csv + N file GW_CHO_PHUB_*.csv đã '
+                            'tải về từ các lượt chạy trước + ĐÚNG 1 file pHub (.xlsx) trong CÙNG '
+                            'một lượt. Xem 1 ngày cũng phải qua đây (nạp đủ bộ 3 loại file của '
+                            'ngày đó) — kết quả KHÔNG lưu lại trên máy chủ, tải về ngay để giữ.'
+                        ).classes('text-xs text-gray-500 mb-3')
+
+                        phub_file_label = ui.label('Chưa chọn file nào').classes(
+                            'text-xs text-gray-400 italic mb-2')
+
+                        async def on_upload_phub(e):
+                            data = e.content.read()
+                            phub_state['files'][e.name] = data
+                            names = ', '.join(phub_state['files'].keys())
+                            phub_file_label.set_text(
+                                f'Đã chọn ({len(phub_state["files"])} file, '
+                                f'{_tong_mb(phub_state):.0f} MB): {names}')
+                            phub_file_label.classes(
+                                remove='text-gray-400 italic', add='text-green-700 font-medium')
+
+                        async def on_clear_phub():
+                            phub_state['files'].clear()
+                            phub_file_label.set_text('Chưa chọn file nào')
+                            phub_file_label.classes(
+                                remove='text-green-700 font-medium', add='text-gray-400 italic')
+                            phub_ket_qua_container.clear()
+
+                        ui.upload(
+                            on_upload=on_upload_phub, auto_upload=True, multiple=True,
+                        ).props(
+                            'accept=".xlsx,.csv" flat dense label="Chọn file (có thể chọn nhiều)..."'
+                        ).classes('w-full mb-1')
+                        ui.button('Xóa tất cả file', icon='delete_outline', color='grey-6',
+                                  on_click=on_clear_phub).props('flat dense').classes('text-xs')
+
+                        with ui.row().classes('gap-3 mt-4 items-center'):
+                            btn_gop_phub = ui.button('Gộp', icon='merge_type', color='red-8').classes(
+                                'font-semibold')
+                            if not co_quyen_chay:
+                                btn_gop_phub.props('disable')
+                                btn_gop_phub.tooltip('Bạn không có quyền thực hiện thao tác này')
+
+                        phub_ket_qua_container = ui.column().classes('w-full mt-3 gap-2')
+
+                    async def _dam_bao_tran_dung_luong_phub():
+                        """Trần dung lượng dùng CHUNG `_MAX_UPLOAD`/ACH_MAX_UPLOAD_MB với
+                        Tab 1/2 (backend/api/ach.py) — lấy qua /api/ach/validate nếu
+                        `run_state['max_total_mb']` chưa có sẵn (VD người dùng vào thẳng
+                        tab Báo cáo, chưa từng chọn file ở 2 tab kia)."""
+                        if run_state['max_total_mb'] is not None:
+                            return
+                        try:
+                            res = await asyncio.to_thread(
+                                api.post, '/api/ach/validate', {'filenames': []})
+                            run_state['max_total_mb'] = res.get('max_total_mb')
+                        except Exception:
+                            pass   # không lấy được trần thì máy chủ vẫn tự chặn 413
+
+                    def _render_phub_ket_qua(res: dict):
+                        phub_ket_qua_container.clear()
+                        tong_ket = res.get('tong_ket') or {}
+                        canh_bao = res.get('canh_bao') or []
+                        ma       = res.get('ma')
+                        ten_file = res.get('ten_file')
+                        with phub_ket_qua_container:
+                            with ui.row().classes('w-full gap-3 flex-wrap'):
+                                for label, key in [
+                                    ('Hoàn thành', 'hoan_thanh'),
+                                    ('TT lệnh lỗi ngày T', 'tt_lenh_loi'),
+                                    ('Trạng thái khác', 'trang_thai_khac'),
+                                    ('Tổng', 'tong'),
+                                ]:
+                                    with ui.column().classes(
+                                        'flex-1 min-w-[9rem] p-3 rounded-lg border bg-gray-50 gap-0'
+                                    ):
+                                        ui.label(label).classes('text-xs font-medium text-gray-600')
+                                        ui.label(f'{tong_ket.get(key, 0):,}').classes(
+                                            'text-xl font-bold text-red-700')
+                            if canh_bao:
+                                with ui.column().classes(
+                                    'w-full gap-1 mt-1 p-3 rounded bg-orange-50 border border-orange-200'
+                                ):
+                                    for c in canh_bao:
+                                        ui.label(f'⚠ {c}').classes('text-xs text-orange-800')
+                            if ten_file:
+                                url = f'/api/ach/phub-gop/{ma}/tai'
+
+                                async def _tai_ket_qua_phub(u=url, name=ten_file):
+                                    try:
+                                        content = await asyncio.to_thread(
+                                            api.download, u, params={'filename': name})
+                                    except Exception as e:
+                                        if not _handle_api_error(e):
+                                            ui.notify(str(e), type='negative')
+                                        return
+                                    ui.download(content, name)
+
+                                ui.button(ten_file, icon='table_chart', color='green-7').on(
+                                    'click', _tai_ket_qua_phub
+                                ).classes('text-xs mt-2')
+
+                    async def _thuc_hien_gop_phub():
+                        if not phub_state['files']:
+                            ui.notify('Chưa chọn file nào.', type='warning')
+                            return
+
+                        await _dam_bao_tran_dung_luong_phub()
+                        loi_dung_luong = _qua_tran_dung_luong(phub_state)
+                        if loi_dung_luong:
+                            ui.notify(loi_dung_luong, type='negative', timeout=0)
+                            return
+
+                        btn_gop_phub.props('disable')
+                        phub_ket_qua_container.clear()
+                        with phub_ket_qua_container:
+                            ui.label('Đang gộp...').classes('text-xs text-gray-500 italic')
+
+                        try:
+                            res = await asyncio.to_thread(
+                                api.post_upload, '/api/ach/phub-gop',
+                                files=[('files', (name, data, 'application/octet-stream'))
+                                       for name, data in phub_state['files'].items()],
+                                timeout=300.0,
+                            )
+                        except Exception as e:
+                            phub_ket_qua_container.clear()
+                            if not _handle_api_error(e):
+                                with phub_ket_qua_container:
+                                    ui.label(_giai_thich_loi_upload(phub_state, e)).classes(
+                                        'text-xs text-red-600')
+                            return
+                        finally:
+                            if co_quyen_chay:
+                                btn_gop_phub.props(remove='disable')
+
+                        _render_phub_ket_qua(res)
+
+                    btn_gop_phub.on('click', _thuc_hien_gop_phub)
 
             # ── Tiến trình (CHUNG) ───────────────────────────────────────────
             progress_card = ui.card().classes('w-full p-4 mb-4')

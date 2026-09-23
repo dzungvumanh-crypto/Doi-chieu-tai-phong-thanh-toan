@@ -12,6 +12,7 @@ Import `pipeline` (chỉ `_viet_sheet`/`CSV_THRESHOLD`), `b16` — KHÔNG đư�
 `pipeline` import ngược (tránh vòng import). An toàn vì Luồng A đã gỡ chiều
 `pipeline → phub_gop` (pipeline không còn import gì từ module này).
 """
+import io
 import os
 
 import pandas as pd
@@ -21,10 +22,140 @@ from .b16_phub_loi import (
     doc_phub, xu_ly_phub_loi, _tao_cn_trace_tien_phub, _tao_cn_trace_tien_timeout,
 )
 from .pipeline import _viet_sheet, CSV_THRESHOLD
+from .so_tien import doc_so_tien
 
 _CAM = '#FFA500'   # đồng bộ màu tab với Mục 3 cũ (pipeline.py)
 
-__all__ = ['doc_phub', 'gop_phub', 'xuat_excel_phub_gop']
+__all__ = ['doc_phub', 'gop_phub', 'xuat_excel_phub_gop', 'phan_loai_file_gop']
+
+# ─── Luồng C (bản-3, 23.09.2026) — phân loại N file người dùng nạp trong CÙNG ──
+# 1 lượt gộp, theo NỘI DUNG chứ không theo tên file (feedback_nhan_dien_file_
+# theo_noi_dung). GW-cho-pHub/Timeout luôn là .csv do chính pipeline này xuất
+# ra (A4/Mục 8); chỉ pHub là .xlsx gốc từ Hub, chưa qua xử lý.
+_COT_MSGREF        = 'MSGREF'
+_COT_GHI_CHU       = 'Ghi chú'
+_COLS_GW_TOI_THIEU = {_COT_MSGREF, _COT_GHI_CHU}
+_COLS_TIMEOUT_TOI_THIEU = {'CHI_NHANH', 'TRACE', 'SE_TRACE', 'SO_TIEN'}
+# C-N (chốt 23.09.2026) — tên cột ngày do pipeline ghi thêm vào CẢ HAI file
+# TIMEOUT_KHONG_KENH_<ngày>.csv và GW_CHO_PHUB_<ngày>.csv (A4, chưa làm ở đợt
+# này). Lớp đọc dưới đây CHỈ cần cột này ở file TIMEOUT (gop_phub() chỉ đọc
+# df_timeout['NGAY_TIMEOUT'], không cần ngày trên file GW).
+_COT_NGAY_DOI_CHIEU = 'NGAY_DOI_CHIEU'
+
+
+def _doc_csv_gop(noi_dung: bytes) -> pd.DataFrame:
+    """Đọc 1 file .csv (GW-cho-pHub hoặc Timeout) — dtype=str, tự dò dấu phân
+    cách (cùng luật `_doc_file_thua_t2()` ở b11_doi_chieu_cheo_ngay.py: người
+    giữ file trên máy mình có thể đã mở bằng Excel rồi lưu lại, đổi dấu phẩy
+    thành tab mà vẫn giữ đuôi .csv)."""
+    df = pd.read_csv(io.BytesIO(noi_dung), dtype=str, encoding='utf-8-sig',
+                     sep=None, engine='python')
+    df.columns = [str(c).strip() for c in df.columns]
+    return df
+
+
+def _la_file_phub(noi_dung: bytes) -> bool:
+    """.xlsx có dòng header chứa 'Số thành công' (dò 30 dòng đầu — đủ cho cấu
+    trúc thật: dòng 0 tiêu đề gộp, dòng 1 header, xem `doc_phub()`/b16)."""
+    try:
+        raw = pd.read_excel(io.BytesIO(noi_dung), header=None, dtype=str,
+                            engine='calamine', nrows=30)
+    except Exception:
+        return False
+    return bool(raw.isin(['Số thành công']).any().any())
+
+
+def phan_loai_file_gop(
+    danh_sach: list[tuple[str, bytes]],
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, list[str]]:
+    """Phân loại N file người dùng vừa nạp trong 1 lượt Gộp (Luồng C bản-3) —
+    theo NỘI DUNG, không theo tên file:
+      - .xlsx có dòng header chứa 'Số thành công'  → pHub (bắt buộc đúng 1 file)
+      - .csv có cột MSGREF + Ghi chú                → GW-cho-pHub
+      - .csv có cột CHI_NHANH/TRACE/SE_TRACE/SO_TIEN → Timeout không đi kênh
+
+    Trả `(df_phub, df_gw, df_timeout, canh_bao)`. `df_timeout['NGAY_TIMEOUT']`
+    lấy từ cột `NGAY_DOI_CHIEU` (C-N) của từng file Timeout.
+
+    File lạ (không khớp loại nào) → raise ngay, nêu tên — KHÔNG âm thầm bỏ
+    qua (tinh thần dự án: dữ liệu tài chính không được rơi rụng lặng lẽ).
+    File Timeout THIẾU cột `NGAY_DOI_CHIEU` (định dạng cũ, trước khi A4 xuất
+    cột ngày) → KHÔNG đoán ngày, dữ liệu file đó bị loại khỏi lượt gộp, kèm
+    1 dòng cảnh báo nêu đích danh file — các file/ngày khác còn hợp lệ vẫn
+    gộp bình thường (không raise cho cả lượt)."""
+    phub_files:  list[tuple[str, bytes]] = []
+    gw_dfs:      list[pd.DataFrame] = []
+    timeout_dfs: list[pd.DataFrame] = []
+    canh_bao:    list[str] = []
+    la:          list[str] = []
+
+    for ten, noi_dung in danh_sach:
+        duoi = ten.lower().rsplit('.', 1)[-1] if '.' in ten else ''
+
+        if duoi == 'xlsx' and _la_file_phub(noi_dung):
+            phub_files.append((ten, noi_dung))
+            continue
+
+        if duoi == 'csv':
+            try:
+                df = _doc_csv_gop(noi_dung)
+            except Exception as e:
+                la.append(f"{ten} (không đọc được CSV: {e})")
+                continue
+            cols = set(df.columns)
+
+            if _COLS_GW_TOI_THIEU.issubset(cols):
+                df = df[[_COT_MSGREF, _COT_GHI_CHU]].copy()
+                df[_COT_MSGREF]  = df[_COT_MSGREF].astype(str).str.strip().str.lstrip("'")
+                df[_COT_GHI_CHU] = df[_COT_GHI_CHU].fillna('').astype(str)
+                gw_dfs.append(df)
+                continue
+
+            if _COLS_TIMEOUT_TOI_THIEU.issubset(cols):
+                if _COT_NGAY_DOI_CHIEU not in df.columns:
+                    canh_bao.append(
+                        f"File Timeout '{ten}' thiếu cột {_COT_NGAY_DOI_CHIEU} (định dạng cũ) "
+                        "— KHÔNG đoán ngày, dữ liệu của file này bị BỎ QUA khỏi lượt gộp. Tải "
+                        "lại bằng file TIMEOUT_KHONG_KENH_*.csv mới nhất do chương trình xuất ra."
+                    )
+                    continue
+                df = df.copy()
+                df['SO_TIEN'] = doc_so_tien(
+                    df['SO_TIEN'], f'Timeout gộp: {ten}', ten_cot='SO_TIEN').astype(str)
+                df['NGAY_TIMEOUT'] = df[_COT_NGAY_DOI_CHIEU].astype(str).str.strip()
+                timeout_dfs.append(df)
+                continue
+
+        la.append(ten)
+
+    if la:
+        raise ValueError(
+            f"{len(la)} file không nhận diện được loại (không phải pHub .xlsx / "
+            f"GW-cho-pHub .csv / Timeout .csv): {la}"
+        )
+
+    if len(phub_files) != 1:
+        if not phub_files:
+            raise ValueError(
+                "Không tìm thấy file pHub nào (.xlsx có cột 'Số thành công') trong lượt nạp này."
+            )
+        raise ValueError(
+            f"Tìm thấy {len(phub_files)} file pHub hợp lệ, cần đúng 1: "
+            f"{[t for t, _ in phub_files]}"
+        )
+
+    ten_phub, noi_dung_phub = phub_files[0]
+    try:
+        df_phub = doc_phub(io.BytesIO(noi_dung_phub))
+    except ValueError as e:
+        raise ValueError(f"File pHub '{ten_phub}': {e}") from e
+
+    df_gw = (pd.concat(gw_dfs, ignore_index=True) if gw_dfs
+             else pd.DataFrame(columns=[_COT_MSGREF, _COT_GHI_CHU]))
+    df_timeout = (pd.concat(timeout_dfs, ignore_index=True) if timeout_dfs
+                  else pd.DataFrame(columns=['CHI_NHANH', 'TRACE', 'SE_TRACE', 'SO_TIEN', 'NGAY_TIMEOUT']))
+
+    return df_phub, df_gw, df_timeout, canh_bao
 
 
 def _to_yyyymmdd_display(ngay: str) -> str:

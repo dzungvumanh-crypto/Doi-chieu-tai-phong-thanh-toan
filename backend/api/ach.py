@@ -1,5 +1,6 @@
 """API endpoints cho tính năng Chấm đối chiếu ACH."""
 
+import asyncio
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
@@ -57,7 +58,6 @@ async def start_job(
     files: list[UploadFile],
     ngay_doi_chieu: str = Form(''),
     bo_qua_checkpoint: bool = Form(False),
-    chi_tim_timeout: bool = Form(False),
     _=Depends(_CHAY),
 ):
     """
@@ -69,10 +69,10 @@ async def start_job(
     2026-07-31, xem project_ach_chay_thang_bo_qua_checkpoint). Mặc định False —
     hành vi Checkpoint bắt buộc như từ trước tới nay không đổi.
 
-    chi_tim_timeout=True (2026-08-21, xem project_ach_gl02_optional_tiered_deps)
-    — người dùng xác nhận tay (checkbox) đang thiếu GL02/MIS_đến, chỉ muốn chạy
-    để tìm "Timeout không đi kênh" (Tầng 0). Mặc định False — vẫn bắt buộc đủ
-    file như cũ, không đổi hành vi.
+    Chạy giản lược theo file đang có LUÔN bật (2026-09-16, thay cờ
+    `chi_tim_timeout` trước đây phải tự tay tick mới chạy được khi thiếu GL02/
+    MIS_đến/MIS_đi) — `main_from_dir()` tự động chạy phần còn tính được, không
+    cần xác nhận trước, không có tham số nào ở đây điều khiển việc đó nữa.
 
     LƯU Ý (bug thật phát hiện 2026-07-31, sửa cùng lúc): `ngay_doi_chieu`/
     `bo_qua_checkpoint` PHẢI khai báo `Form(...)` tường minh — khi route có
@@ -151,8 +151,7 @@ async def start_job(
         raise
 
     ngay = ngay_doi_chieu.strip() or None
-    ach_service.chay_job(job_id, ngay, bo_qua_checkpoint=bo_qua_checkpoint,
-                        chi_tim_timeout=chi_tim_timeout)
+    ach_service.chay_job(job_id, ngay, bo_qua_checkpoint=bo_qua_checkpoint)
     return {'job_id': job_id}
 
 
@@ -274,6 +273,79 @@ def download_file(
     )
 
 
-# ─── Gộp pHub nhiều ngày (bản-2 "kho 30 ngày" đã gỡ, Luồng A 23.09.2026) ──────
-# Bản-3 (server không lưu gì, nhận N file trong 1 request) sẽ thêm lại
-# POST/GET /phub-gop ở Luồng C — xem pipeline/PLAN.md mục 4.
+# ─── Gộp pHub nhiều ngày — bản-3 (Luồng C, 23.09.2026) ────────────────────────
+# Bản-2 "kho 30 ngày" đã gỡ (Luồng A). Bản-3 nhận N file TRONG 1 REQUEST
+# (không còn khái niệm "chọn ngày trong kho"), server không lưu gì ngoài kết
+# quả cuối. Xem `pipeline/PLAN.md` mục 4.
+
+@router.post('/phub-gop')
+async def phub_gop_endpoint(
+    files: list[UploadFile],
+    _=Depends(_CHAY),
+):
+    """Nhận N file TIMEOUT_KHONG_KENH_*.csv + N file GW_CHO_PHUB_*.csv (đã tải
+    về từ các lượt chạy ACH trước, người dùng tự giữ trên máy mình) + ĐÚNG 1
+    file pHub (.xlsx) trong CÙNG 1 request — phân loại theo NỘI DUNG
+    (`phub_gop.phan_loai_file_gop()`), gộp, trả kết quả ngay.
+
+    C-K (chốt 23/09/2026, NGƯỜI DÙNG ĐÃ CHẤP NHẬN CÓ Ý THỨC — không phải sơ
+    suất): endpoint này CỐ Ý KHÔNG chiếm khoá dùng chung
+    `phien_doi_chieu.gianh_cho('ach')`, chạy ĐỒNG BỘ như bản-2. Nếu ai đó bấm
+    Gộp đúng lúc một job ACH/ILO1000/459901/Song phương nặng khác đang chạy,
+    hai khối dữ liệu pandas cùng nằm trong RAM backend. Rủi ro này đã được
+    người dùng biết và chấp nhận — KHÔNG tự ý bọc `gianh_cho('ach')` vào đây
+    khi review/sửa sau này, xem `docs/Implementation-notes.html` (card "ACH —
+    Luồng C") + `pipeline/PLAN.md` mục 4 (C-K) trước khi định đổi.
+    """
+    if not files:
+        raise HTTPException(400, 'Cần upload ít nhất 1 file.')
+
+    noi_dung: list[tuple[str, bytes]] = []
+    tong = 0
+    da_dung: set[str] = set()
+    for f in files:
+        ten = safe_filename(f.filename, f'file_{len(noi_dung)}.dat')
+        if ten in da_dung:
+            raise HTTPException(
+                400,
+                f"Có hai file cùng tên '{ten}' trong một lượt gộp — đổi tên hoặc bỏ bớt rồi thử lại.",
+            )
+        da_dung.add(ten)
+        try:
+            data = await read_limited(f, max_bytes=_MAX_UPLOAD - tong, ten=f"File '{ten}'")
+        except HTTPException as e:
+            if e.status_code != 413:
+                raise
+            raise HTTPException(
+                413, f'Tổng kích thước file vượt quá {_MAX_UPLOAD // (1024 * 1024)} MB.')
+        tong += len(data)
+        noi_dung.append((ten, data))
+
+    try:
+        ket_qua = await asyncio.to_thread(ach_service.gop_phub, noi_dung)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return ket_qua
+
+
+@router.get('/phub-gop/{ma}/tai')
+def tai_ket_qua_phub_gop(
+    ma: str,
+    filename: str,
+    _=Depends(_XEM),
+):
+    """Tải 1 file kết quả (Excel, và CSV nếu vượt ngưỡng dòng) của lượt Gộp `ma`."""
+    path = ach_service.tai_ket_qua_gop(ma, filename)
+    if path is None:
+        raise HTTPException(404, 'File không tồn tại hoặc đã hết hạn.')
+
+    if filename.endswith('.xlsx'):
+        media = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    else:
+        media = 'text/csv; charset=utf-8-sig'
+
+    return Response(
+        content=path.read_bytes(),
+        media_type=media,
+        headers=_dl_headers(filename),
+    )

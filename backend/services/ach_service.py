@@ -24,6 +24,7 @@ from backend.core.uploads import safe_filename
 from backend.services.ach.pipeline import main_from_dir
 from backend.services.ach.b4_xu_ly_mis_di import _doc_sheet_confirm_mis_di
 from backend.services.ach.so_tien import LoiDinhDangSoTien
+from backend.services.ach import phub_gop
 
 from backend.core.config import BASE_DIR
 from backend.core.don_dep import moc_don_gan_nhat
@@ -184,30 +185,27 @@ def bo_job(job_id: str) -> None:
     shutil.rmtree(TEMP_DIR / job_id, ignore_errors=True)
 
 
-def chay_job(job_id: str, ngay: str | None, bo_qua_checkpoint: bool = False,
-             chi_tim_timeout: bool = False) -> None:
+def chay_job(job_id: str, ngay: str | None, bo_qua_checkpoint: bool = False) -> None:
     """Khởi chạy pipeline cho job đã nhận đủ file (xem `tao_job()`).
 
-    chi_tim_timeout=True (2026-08-21, xem project_ach_gl02_optional_tiered_deps)
-    — chạy được khi thiếu GL02/MIS_đến, chỉ tìm "Timeout không đi kênh" (Tầng 0).
-    Nhớ vào job để `continue_job()` giữ đúng chế độ khi chạy lại sau Checkpoint."""
+    Chạy giản lược theo file đang có LUÔN bật (2026-09-16, thay cờ
+    `chi_tim_timeout` trước đây phải tự tay tick) — `main_from_dir()` tự động
+    chạy phần còn tính được khi thiếu GL02/MIS_đến/MIS_đi, không cần báo trước."""
     job = get_job(job_id)
     if job is None:
         raise LookupError('Job không tồn tại.')
     job['ngay'] = ngay
-    job['chi_tim_timeout'] = chi_tim_timeout
     thread = threading.Thread(
         target=_run,
         args=(job_id, job['input_dir'], job['output_dir'], ngay),
-        kwargs={'dung_sau_mis_di': not bo_qua_checkpoint,
-                'chi_tim_timeout': chi_tim_timeout},
+        kwargs={'dung_sau_mis_di': not bo_qua_checkpoint},
         daemon=True,
     )
     thread.start()
 
 
 def start_job(saved_files: dict[str, bytes], ngay: str | None,
-             bo_qua_checkpoint: bool = False, chi_tim_timeout: bool = False) -> str:
+             bo_qua_checkpoint: bool = False) -> str:
     """
     Tạo job mới, lưu file vào disk, chạy pipeline trong background thread.
     saved_files: {filename: bytes}
@@ -229,8 +227,7 @@ def start_job(saved_files: dict[str, bytes], ngay: str | None,
     for filename, data in saved_files.items():
         (input_dir / safe_filename(filename)).write_bytes(data)
 
-    chay_job(job_id, ngay, bo_qua_checkpoint=bo_qua_checkpoint,
-             chi_tim_timeout=chi_tim_timeout)
+    chay_job(job_id, ngay, bo_qua_checkpoint=bo_qua_checkpoint)
     return job_id
 
 
@@ -257,10 +254,7 @@ def continue_job(job_id: str, xac_nhan_bytes: bytes, xac_nhan_filename: str) -> 
     thread = threading.Thread(
         target=_run,
         args=(job_id, job['input_dir'], job['output_dir'], job['ngay']),
-        # Giữ đúng chi_tim_timeout của lần chạy đầu (2026-08-21) — nếu không
-        # truyền lại, lần chạy tiếp sẽ đòi đủ GL02/MIS_đến và hỏng giữa chừng.
-        kwargs={'xac_nhan_path': str(saved_path),
-                'chi_tim_timeout': job.get('chi_tim_timeout', False)},
+        kwargs={'xac_nhan_path': str(saved_path)},
         daemon=True,
     )
     thread.start()
@@ -283,8 +277,7 @@ def _thong_ke_mis_di_can_confirm(xac_nhan_path: str) -> tuple[int | None, int | 
 
 
 def _run(job_id: str, input_dir: str, output_dir: str, ngay: str | None,
-        dung_sau_mis_di: bool = False, xac_nhan_path: str | None = None,
-        chi_tim_timeout: bool = False):
+        dung_sau_mis_di: bool = False, xac_nhan_path: str | None = None):
     job = get_job(job_id)
     if job is None:
         return
@@ -310,7 +303,6 @@ def _run(job_id: str, input_dir: str, output_dir: str, ngay: str | None,
             cancel_event=job['cancel_event'],
             dung_sau_mis_di=dung_sau_mis_di,
             xac_nhan_path=xac_nhan_path,
-            chi_tim_timeout=chi_tim_timeout,
         )
 
         if output_path is None:
@@ -319,7 +311,14 @@ def _run(job_id: str, input_dir: str, output_dir: str, ngay: str | None,
             log('[JOB] Đã dừng theo yêu cầu.')
             return
 
-        if dung_sau_mis_di:
+        # Dừng ở Checkpoint hay không phải xét theo TÊN FILE main_from_dir() thật
+        # sự trả về, KHÔNG phải tham số đầu vào dung_sau_mis_di — 2026-09-16, thiếu
+        # MIS_đi khiến pipeline tự bỏ qua Checkpoint và chạy thẳng tới báo cáo cuối
+        # (xem `if dung_sau_mis_di and df_mis_di_data is not None` trong
+        # pipeline.py::main_from_dir()) dù dung_sau_mis_di vẫn là True ở đây — tin
+        # vào tham số đầu vào sẽ gắn nhầm job ĐÃ XONG thành "đang chờ xác nhận" và
+        # đưa file báo cáo cuối ra dưới vỏ bọc "file cần xác nhận".
+        if dung_sau_mis_di and os.path.basename(output_path).endswith('_ACH_ConfirmMISdi.xlsx'):
             # Dừng ở Checkpoint — chờ người dùng tải + điền + upload lại file xác nhận.
             # LƯU Ý: phải tính xac_nhan_count/tong_tien TRƯỚC khi đổi status — nơi
             # khác (API poll) có thể đọc job ngay khi thấy status đổi, không được để race.
@@ -433,7 +432,64 @@ from backend.core.phien_doi_chieu import dang_ky_nguon  # noqa: E402
 dang_ky_nguon('ach', 'Đối chiếu ACH', job_dang_chay)
 
 
-# Kết quả pHub gộp nhiều ngày — bản-2 "kho 30 ngày" (`danh_sach_ngay_phub()`,
-# `gop_phub()`, `tai_ket_qua_gop()`) đã bị gỡ (Luồng A, 23.09.2026). Bản-3
-# (nhận N file trong 1 request, không lưu gì trên server) sẽ thêm lại ở
-# Luồng C — xem `pipeline/PLAN.md` mục 4.
+# ─── Gộp kết quả pHub nhiều ngày — bản-3 (Luồng C, 23.09.2026) ────────────────
+# Bản-2 "kho 30 ngày" (`danh_sach_ngay_phub()`, `gop_phub()` đọc kho,
+# `tai_ket_qua_gop()`) đã bị gỡ (Luồng A). Bản-3: nhận N file TRONG 1 request,
+# KHÔNG lưu gì trên server ngoài đúng kết quả cuối — chạy ĐỒNG BỘ (C-K đã
+# chốt, KHÔNG chiếm khoá `gianh_cho('ach')`, xem docstring endpoint ở
+# backend/api/ach.py + docs/Implementation-notes.html card 147).
+
+def gop_phub(files: list[tuple[str, bytes]]) -> dict:
+    """Gộp N file TIMEOUT + N file GW-cho-pHub + 1 file pHub (đã đọc sẵn vào
+    RAM ở lớp API — không ghi input xuống đĩa, đúng nguyên tắc "không lưu gì
+    trên server" của bản-3). Ghi DUY NHẤT file kết quả ra
+    `TEMP_DIR/phubgop_<mã>/` (tái dùng `TEMP_DIR`, KHÔNG tạo thư mục mới nào
+    khác dưới `data/`) — thư mục này không nằm trong `_jobs` nên tự rơi vào
+    nhánh "thư mục mồ côi" của `_cleanup_old_jobs()`, dọn 23h như mọi output
+    ACH khác (C-R đã chốt, không cần hạn riêng).
+
+    Trả `{'ma', 'tong_ket', 'canh_bao', 'ten_file'}`. Raise `ValueError` khi
+    input không hợp lệ (0/≥2 file pHub, file lạ, không xác định được ngày nào
+    để gộp) — lớp API map sang 400."""
+    _cleanup_old_jobs()   # dọn kết quả gộp cũ (mồ côi) trước khi ghi thêm
+
+    df_phub, df_gw, df_timeout, canh_bao = phub_gop.phan_loai_file_gop(files)
+
+    # ngay_list — QUYẾT ĐỊNH TỰ CHỌN (PLAN.md không nêu, C-a chỉ trả 4 giá trị,
+    # không có ngay_list): suy ra từ NGAY_TIMEOUT thực tế có trong df_timeout
+    # (sau khi đã loại các file thiếu cột NGAY_DOI_CHIEU). Hạn chế đã biết: nếu
+    # TOÀN BỘ file Timeout của lượt gộp đều có 0 dòng (R6 — mọi giao dịch trong
+    # ngày đã khớp GW, không gì rơi vào Timeout) VÀ đó là ngày DUY NHẤT trong
+    # lượt, ngay_list sẽ rỗng vì không còn cách nào khác lấy được ngày từ nội
+    # dung file (C-N cấm đọc tên file/gõ tay) — raise lỗi rõ ràng thay vì để
+    # `xuat_excel_phub_gop()` crash IndexError khi ngay_sorted[0]. Xem
+    # pipeline/CODE_REPORT.md phần Luồng C để biết lý do đầy đủ.
+    ngay_list = sorted({n for n in df_timeout['NGAY_TIMEOUT'] if n}) if len(df_timeout) else []
+    if not ngay_list:
+        raise ValueError(
+            'Không xác định được ngày nào từ các file TIMEOUT đã nạp (thiếu cột NGAY_DOI_CHIEU '
+            'hoặc không có dòng dữ liệu nào) — không có gì để gộp.'
+        )
+
+    df_ketqua, thong_ke = phub_gop.gop_phub(df_phub, df_gw, df_timeout, ngay_list)
+
+    ma = 'phubgop_' + uuid.uuid4().hex[:12]
+    out_dir = TEMP_DIR / ma
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = phub_gop.xuat_excel_phub_gop(str(out_dir), ngay_list, df_ketqua, canh_bao)
+
+    return {
+        'ma':       ma,
+        'tong_ket': thong_ke,
+        'canh_bao': canh_bao,
+        'ten_file': os.path.basename(out_path),
+    }
+
+
+def tai_ket_qua_gop(ma: str, filename: str) -> Path | None:
+    """Tải 1 file kết quả của lượt Gộp `ma` — chặn path traversal bằng
+    `os.path.basename()` cho CẢ `ma` lẫn `filename` (mẫu `get_output_file()`)."""
+    safe_ma   = os.path.basename(ma)
+    safe_name = os.path.basename(filename)
+    path = TEMP_DIR / safe_ma / safe_name
+    return path if path.exists() else None

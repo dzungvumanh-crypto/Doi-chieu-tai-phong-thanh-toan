@@ -16576,6 +16576,85 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">147</span>
+      <span class="card-title">ACH — Luồng C: bản-3 "Gộp kết quả pHub nhiều ngày" — server không lưu
+        input, KHÔNG chiếm khoá dùng chung (C-K, 23/09/2026)</span>
+      <span class="badge badge-warn">Chưa commit</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-red">C-K — CỐ Ý KHÔNG chiếm khoá <code>gianh_cho('ach')</code></span></div>
+      <p><code>POST /api/ach/phub-gop</code> chạy ĐỒNG BỘ (như bản-2 cũ) và KHÔNG đi qua
+        <code>phien_doi_chieu.gianh_cho('ach')</code> — khác mọi endpoint nặng khác của 4 module đối
+        chiếu (ACH/ILO1000/459901/Song phương), vốn luôn giữ khoá dùng chung để tránh 2 pipeline pandas
+        cùng ôm RAM (tiền lệ thật 26/08/2026: backend chết khi 2 lượt chạy chồng nhau). <b>Đây là rủi ro
+        NGƯỜI DÙNG ĐÃ BIẾT VÀ CHẤP NHẬN CÓ Ý THỨC (23/09/2026), không phải sơ suất khi code.</b></p>
+
+      <div class="caution"><b>Reviewer/agent sau — KHÔNG tự ý "sửa lại cho đúng"</b> bằng cách bọc
+        <code>gianh_cho('ach')</code> vào endpoint này. Muốn đổi quyết định này phải hỏi lại người dùng
+        trước, không tự quyết. Xem <code>pipeline/PLAN.md</code> mục 4 (mã quyết định <b>C-K</b>) +
+        docstring của <code>phub_gop_endpoint()</code> trong <code>backend/api/ach.py</code>.</p>
+
+      <div class="label"><span class="pill pill-blue">Vì sao chấp nhận được</span> Dữ liệu Luồng C nhỏ hơn hẳn 1 lượt chạy ACH chính</div>
+      <p>Input của 1 lượt Gộp là vài file CSV tóm tắt theo ngày (TIMEOUT_KHONG_KENH/GW_CHO_PHUB) + 1 file
+        pHub — nhỏ hơn nhiều so với bộ MIS_DI/MIS_DEN .zip vài trăm MB của 1 lượt chạy ACH chính. Rủi ro
+        chồng RAM vẫn có thật (2 khối dữ liệu pandas cùng lúc trong backend) nhưng ở quy mô nhỏ hơn hẳn
+        tình huống 26/08/2026 — đây là lý do nghiệp vụ người dùng chấp nhận đánh đổi, KHÔNG phải vì rủi
+        ro bằng không.</p>
+
+      <div class="label"><span class="pill pill-blue">"Không lưu gì trên server"</span> — chỉ áp cho INPUT, không áp cho OUTPUT</div>
+      <p>File người dùng tải lên (TIMEOUT/GW/pHub) đọc thẳng vào RAM (<code>phan_loai_file_gop()</code>),
+        KHÔNG ghi xuống đĩa — khác hẳn <code>/start</code> (ghi từng khối thẳng ra
+        <code>input_dir</code>). Chỉ đúng 1 file kết quả (<code>GOP_PHUBLOI_&lt;ngày đầu&gt;_&lt;ngày
+        cuối&gt;.xlsx</code>, kèm CSV nếu vượt <code>CSV_THRESHOLD</code>) được ghi ra
+        <code>data/temp_ach/phubgop_&lt;mã&gt;/</code> — tái dùng đúng <code>TEMP_DIR</code> đã có, không
+        tạo thư mục mới nào khác dưới <code>data/</code> (đúng ràng buộc ổ đĩa đã làm hỏng bản-2 pHub,
+        xem card 144). Thư mục này KHÔNG nằm trong <code>_jobs</code> (không phải 1 job ACH thật) nên tự
+        rơi vào nhánh "thư mục mồ côi" sẵn có của <code>_cleanup_old_jobs()</code> — dọn 23h theo đúng
+        lịch chung, không cần cơ chế hạn riêng (C-R).</p>
+
+      <div class="label"><span class="pill pill-green">C-N — cột ngày <code>NGAY_DOI_CHIEU</code>, KHÔNG đọc tên file</span></div>
+      <p>Lớp phân loại (<code>phan_loai_file_gop()</code>) nhận diện loại file THEO NỘI DUNG (pHub: dòng
+        header chứa 'Số thành công'; GW-cho-pHub: có cột MSGREF+Ghi chú; Timeout: có
+        CHI_NHANH/TRACE/SE_TRACE/SO_TIEN) — không theo tên file. Ngày của mỗi dòng Timeout lấy từ cột
+        <code>NGAY_DOI_CHIEU</code> do pipeline ghi thêm lúc xuất (A4, <b>CHƯA làm ở đợt này</b> — xem
+        mục "Giới hạn đã biết" bên dưới). File Timeout bản cũ (chưa có cột này) bị LOẠI khỏi lượt gộp
+        kèm 1 dòng cảnh báo nêu đích danh tên file — KHÔNG đoán ngày, KHÔNG raise cho cả lượt (các
+        ngày/file khác vẫn gộp bình thường).</p>
+
+      <div class="label"><span class="pill pill-gray">Giới hạn đã biết — Luồng C xong TRƯỚC A4</span></div>
+      <p>Theo đúng thứ tự PLAN.md (B → A1-A3 → D1-D3 → C → A4 → D4), Luồng C hoàn thành TRƯỚC khi A4
+        (xuất cột <code>NGAY_DOI_CHIEU</code> vào <code>TIMEOUT_KHONG_KENH_*.csv</code>/
+        <code>GW_CHO_PHUB_*.csv</code>) được code. Hệ quả: chưa có file THẬT nào trên máy chủ mang cột
+        này để chạy thử end-to-end với dữ liệu thật — toàn bộ test của Luồng C dùng file CSV/XLSX giả lập
+        tự dựng (<code>tests/test_ach_phub_gop.py::TestPhanLoaiFileGop</code>,
+        <code>TestAchServiceGopPhub</code>). Logic khớp (<code>phub_gop.gop_phub()</code>, không sửa ở
+        Luồng C) đã được xác nhận khớp bản-2 cũ (0/223 dòng lệch, <code>pipeline/TEST_REPORT.md</code>)
+        — Luồng C chỉ thay tầng ĐỌC dữ liệu đầu vào, không đổi công thức khớp.</p>
+
+      <div class="label"><span class="pill pill-blue">ngày_list — quyết định tự chọn, PLAN.md không nêu</span></div>
+      <p><code>phan_loai_file_gop()</code> (C-a) chỉ trả 4 giá trị
+        <code>(df_phub, df_gw, df_timeout, canh_bao)</code>, không có tham số ngày. Ở tầng gọi
+        (<code>ach_service.gop_phub()</code>, C-b), <code>ngay_list</code> được suy ra từ tập
+        <code>NGAY_TIMEOUT</code> thực tế có trong <code>df_timeout</code> sau khi loại các file thiếu
+        cột ngày. Giới hạn đã biết: nếu MỌI file Timeout của lượt gộp đều 0 dòng (kịch bản R6 — mọi giao
+        dịch trong ngày đã khớp GW, không gì rơi vào Timeout) VÀ đó là ngày DUY NHẤT trong lượt, không
+        còn cách nào khác lấy được "ngày" từ nội dung file (C-N cấm đọc tên file/gõ tay) —
+        <code>ach_service.gop_phub()</code> raise <code>ValueError</code> rõ ràng thay vì để
+        <code>xuat_excel_phub_gop()</code> crash <code>IndexError</code> khi <code>ngay_sorted[0]</code>
+        trên danh sách rỗng. Đây là đánh đổi CÓ CHỦ ĐÍCH, chưa được PLAN.md/người dùng xác nhận trực
+        tiếp — nếu gặp trong thực tế cần quyết định thêm (VD: cho phép người dùng tự nhập ngày dự phòng
+        cho trường hợp hiếm này).</p>
+
+      <div class="note"><code>python -m pytest tests/test_ach_*.py -q</code>: <b>453 passed, 2 skipped</b>
+        (442 sau Luồng D + 11 test mới của Luồng C: 8 <code>TestPhanLoaiFileGop</code>/
+        <code>TestAchServiceGopPhub</code> + 3 <code>TestQuyenPhubGop</code>). 0 dòng lệch, không dùng %.</div>
+
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-23</footer>
 </div>
 </body>
