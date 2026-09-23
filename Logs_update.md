@@ -4,6 +4,15 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 23/09/2026 Toàn hệ thống - **Tăng tốc**
+    + ✅ Nhiều người cùng gửi file đối chiếu / xem trước đơn nghỉ phép không còn làm các màn hình khác đứng chờ
+    + ✅ **Nghỉ phép → Dashboard** (lãnh đạo, Tổng hợp, quản trị): mở nhanh hơn — mặc định chỉ tải đơn **từ đầu năm trước**
+      cùng mọi đơn còn đang chờ duyệt. Tìm theo khoảng ngày cũ hơn thì hệ thống tự tải thêm; muốn xem hết thì bấm
+      **"Tải cả các năm trước"** cạnh dòng đếm số đơn
+    + ⚠️ Khi chưa chọn ngày, 5 ô tổng quan (nhất là ô **Hoàn thành**) nay đếm từ đầu năm trước, không còn cộng dồn mọi năm —
+      con số sẽ nhỏ hơn trước, không phải mất dữ liệu
+    + ✅ Lưu nhật ký thao tác và tra cứu dữ liệu nhẹ hơn cho máy chủ
+
 - 23/09/2026 Chuẩn hoá văn bản - **Sửa 6 điểm trình bày theo QĐ 979**
     + ✅ Đường kẻ ngang có sẵn trong văn bản nay được **chỉnh đúng độ dài**: dưới Tiêu ngữ dài bằng dòng chữ,
       dưới tên đơn vị dài **một nửa** dòng chữ, cả hai canh giữa. Trước đây đường kẻ cũ giữ nguyên nên ngắn hơn chữ

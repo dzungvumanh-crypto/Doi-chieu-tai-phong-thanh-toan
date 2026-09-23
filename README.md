@@ -322,6 +322,14 @@ Kết nối CSDL dùng **bể mượn–trả** (`DB_POOL_SIZE`, mặc định 4
 Request vượt số kết nối thì xếp hàng chờ (tối đa 30 giây, quá thì trả 503 và ghi cảnh báo vào
 `logs/app.log`) — trước 17/09/2026 quá ~88 request cùng lúc là cả hệ thống đứng 30 giây.
 
+Tiến trình **frontend** gọi backend qua một bể luồng riêng (`FRONTEND_IO_THREADS`, mặc định 64 —
+trước 23/09/2026 là bể mặc định 12 luồng dùng chung cho mọi người dùng, vài lượt gửi file dài là cả
+giao diện đứng). Bể thiếu thì `logs/frontend.log` có dòng *"Lời gọi backend chờ … ms mới có luồng"*.
+
+Thống kê truy vấn (`PRAGMA optimize`) được cập nhật trong lượt dọn nhật ký — lúc khởi động và 12 giờ
+một lần. Câu nào chậm đi bất thường sau khi nâng cấp: `DELETE FROM sqlite_stat1;` rồi khởi động lại
+backend để quay về như cũ (xem card HN6 trong Implementation-notes).
+
 ## Chức năng
 
 ### Module Nhân sự & Tài khoản
@@ -397,6 +405,8 @@ Request vượt số kết nối thì xếp hàng chờ (tối đa 30 giây, qu�
   đúng bằng hành vi cũ
 - Nhập hạn mức phép hàng loạt từ file Excel (xem trước / áp dụng / hoàn tác); sửa tay số ngày "Đã dùng" của từng người — cả hai cách đều thay thế lẫn nhau, không cộng dồn
 - Bản ghi hạn mức nhập từ Excel / sửa tay không phải đơn nghỉ thật: bị ẩn khỏi danh sách đơn, lịch, kiểm tra trùng ngày, số liệu Dashboard, Trang chủ và Báo cáo bàn giao
+- Dashboard toàn trung tâm tải đơn **từ đầu năm trước + mọi đơn còn chờ duyệt** (`GET /api/leaves/?scope=all&tu_nam=…`;
+  bỏ `tu_nam` thì trả tất cả như cũ). Lọc ngày lùi quá mốc thì tự tải đủ; nút "Tải cả các năm trước" để tìm theo tên trên mọi năm
 - Khai báo hộ; ngày nghỉ lẻ không liên tục (`spread_dates`)
 - Bảng nghỉ phép hôm nay trên Trang chủ theo từng phòng — **chỉ đếm đơn đã duyệt** (lịch tháng trong menu thì hiện cả đơn đang chờ, kèm nhãn trạng thái)
 - Chống duyệt trùng: hai người (hoặc hai tab) bấm duyệt cùng lúc thì chỉ lần đầu có hiệu lực, lần sau báo đơn đã được xử lý

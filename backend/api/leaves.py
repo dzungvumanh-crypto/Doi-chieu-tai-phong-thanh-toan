@@ -1123,6 +1123,7 @@ def confirm_npbb_borrow(
 @router.get("/")
 def list_leaves(
     scope: str = "mine",
+    tu_nam: Optional[int] = Query(None, ge=2000, le=2100),
     db: sqlite3.Connection = Depends(get_db),
     current: dict = Depends(get_current_staff),
 ):
@@ -1200,6 +1201,13 @@ def list_leaves(
 
     else:
         raise HTTPException(400, "scope phải là mine | pending | declared | dept | all")
+
+    # Giới hạn theo năm — chỉ khi bên gọi xin (Dashboard toàn trung tâm). Không có
+    # nó `scope=all` trả MỌI đơn từ trước tới nay, mỗi lần mở trang, phình theo năm.
+    # Đơn còn chờ duyệt thì luôn trả dù cũ bao lâu: 5 ô tổng quan đếm chúng.
+    if tu_nam is not None:
+        clauses.append("(end_date >= ? OR status IN ('pending_ksv','pending_tong_hop','pending_gd'))")
+        params.append(f"{tu_nam:04d}-01-01")
 
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
     # 1 câu duy nhất cho cả danh sách (không phải 1 câu id + N câu _leave_to_out

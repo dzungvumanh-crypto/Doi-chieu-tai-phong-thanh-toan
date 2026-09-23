@@ -313,6 +313,20 @@ def _fmt_ngay_vn(iso_str: str) -> str:
 
 
 
+def _loc_lui_qua_moc(tu_nam, from_d, to_d, crd) -> bool:
+    """Bộ lọc ngày ở Dashboard có chạm tới trước 01/01/`tu_nam` (mốc đã tải) không.
+
+    Có "đến ngày" mà bỏ trống "từ ngày" nghĩa là mở về quá khứ — cũng tính là lùi quá
+    mốc. `tu_nam` None = đã tải toàn bộ, không bao giờ cần tải thêm."""
+    if not tu_nam:
+        return False
+    from datetime import date as _date
+    moc = _date(tu_nam, 1, 1)
+    if (from_d or to_d) and (from_d is None or from_d < moc):
+        return True
+    return crd is not None and crd < moc
+
+
 def _gd_display(leave: dict) -> str:
 
     """Thêm (TUQ) nếu PGĐ ký thay GĐ."""
