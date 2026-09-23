@@ -68,7 +68,7 @@ def _stub_main_from_dir(*, xac_nhan_ket_qua='ok', loi_msg='Giá trị LOAI_BO kh
     """
     def _fn(input_dir, output_dir, ngay=None, log_callback=None, cancel_event=None,
            dung_sau_mis_di=False, xac_nhan_path=None, summary_callback=None,
-           chi_tim_timeout=False):
+           tao_gw_cho_phub=False):
         import os
         os.makedirs(output_dir, exist_ok=True)
         if dung_sau_mis_di:
@@ -287,7 +287,7 @@ def _stub_main_from_dir_dem_that(so_dong_xac_nhan=3, so_tien_moi_dong=100000):
     đường đi API → xac_nhan_count/xac_nhan_tong_tien trong poll response."""
     def _fn(input_dir, output_dir, ngay=None, log_callback=None, cancel_event=None,
            dung_sau_mis_di=False, xac_nhan_path=None, summary_callback=None,
-           chi_tim_timeout=False):
+           tao_gw_cho_phub=False):
         import os
         os.makedirs(output_dir, exist_ok=True)
         if dung_sau_mis_di:

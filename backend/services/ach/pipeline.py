@@ -41,6 +41,10 @@ from .b12_ghi_chu_timeout import (
 )
 from .b13_xu_ly_gw_den import xu_ly_gw_den, doi_chieu_gw_den
 from .b15_napas import doc_pdf_napas, doc_napas_csv, doi_chieu_napas_gw
+# A4 (23.09.2026) — chỉ dùng lại để xuất GW_CHO_PHUB_<ngày>.csv theo ô tick tuỳ
+# chọn (không còn ghi kho 30 ngày bản-2 đã bị gỡ ở Luồng A, xem comment ở cuối
+# main_from_dir()).
+from .b16_phub_loi import doc_gw_di_cho_phub
 
 _COLS_NPO = _cfg.COLS_NPO
 # Điểm 4 — thêm cột ghi chú đối chiếu chéo ngày CHỈ trên sheet NPO_DI_THUA/
@@ -1474,7 +1478,8 @@ def main_from_dir(input_dir: str, output_dir: str,
                   cancel_event=None,
                   dung_sau_mis_di: bool = False,
                   xac_nhan_path: str = None,
-                  summary_callback=None) -> str | None:
+                  summary_callback=None,
+                  tao_gw_cho_phub: bool = False) -> str | None:
     """
     Chạy pipeline đối chiếu ACH từ thư mục đã có file.
     Trả về đường dẫn file .xlsx kết quả, hoặc None nếu cancelled.
@@ -1508,6 +1513,13 @@ def main_from_dir(input_dir: str, output_dir: str,
     `khop_voi_gw()`/Phase 2/báo cáo cuối như bình thường, KHÔNG dừng lại lần 2 (đã
     bỏ hẳn Checkpoint xác nhận Timeout cũ). Không dùng đồng thời với
     dung_sau_mis_di=True (mutually exclusive — dung_sau_mis_di luôn dừng trước).
+
+    tao_gw_cho_phub — ô tick tuỳ chọn ở Tab 1 (A4, 23.09.2026), mặc định TẮT.
+    Bật thì xuất thêm `GW_CHO_PHUB_<ngày>.csv` (đọc lại GW đi, chỉ MSGREF+Ghi
+    chú, dùng cho màn Gộp pHub bản-3 — Luồng C) — không ghi kho trên server,
+    chỉ nằm trong output_dir của job như mọi file tải-về khác. Cần GW đi
+    (thieu_gw=False) mới xuất được; thêm ~66 giây vào lượt chạy (đo thật, xem
+    docs/Implementation-notes.html) nên mặc định TẮT.
     """
     def log(msg):
         print(msg)
@@ -2039,16 +2051,46 @@ def main_from_dir(input_dir: str, output_dir: str,
     # Mục 8 — luôn xuất TIMEOUT_KHONG_KENH dạng file riêng (df_timeout đã có
     # GHI_CHU từ Mục 1.1) để mang sang ngày hôm sau làm input "TO ko đi kênh
     # ngày cũ" cho lần chạy kế tiếp (input cho _tim_file_timeout_cu()).
+    #
+    # C-N (23.09.2026) — thêm cột NGAY_DOI_CHIEU (YYYYMMDD của lượt chạy này)
+    # để màn Gộp pHub bản-3 (Luồng C) nhận diện đúng ngày của file mà KHÔNG cần
+    # đọc tên file/gõ tay (phan_loai_file_gop() đọc lại cột này). Cột mới KHÔNG
+    # lọt vào sheet TIMEOUT_KHONG_KENH của Mục 1.1 lượt chạy hiện tại — chỗ đó
+    # dùng _clean(df_timeout, _COLS_TIMEOUT, ...) whitelist không có tên cột
+    # này. Cột này SẼ lọt vào sheet TIMEOUT_CU_KETQUA (Mục 8) của LƯỢT CHẠY SAU
+    # khi file này được nạp lại làm "TO ko đi kênh ngày cũ" — đã chốt: không
+    # được biến cột này thành bắt buộc, và không xoá nó khỏi sheet đó nếu chưa
+    # hỏi lại người dùng (xem PLAN.md mục 4.3 + rủi ro 4).
     if df_timeout is not None:
+        df_timeout = df_timeout.copy()
+        df_timeout['NGAY_DOI_CHIEU'] = ngay_dt.strftime('%Y%m%d')
         df_timeout.to_csv(
             os.path.join(output_dir, f'TIMEOUT_KHONG_KENH_{ngay_dt.strftime("%Y%m%d")}.csv'),
             index=False, encoding='utf-8-sig',
         )
 
-    # Kho bền vững "Gộp pHub nhiều ngày" (bản-2, data/ach_phub_lichsu/) đã bị
-    # gỡ (Luồng A, 23.09.2026) — máy chủ thật là 1 máy đơn, không đủ ổ đĩa
-    # giữ ~534.000 dòng CSV/ngày trong 30 ngày. Xuất GW-cho-pHub theo ô tick
-    # (không ghi kho) sẽ làm lại ở A4, sau khi màn Gộp bản-3 (Luồng C) xong.
+    # A4 (23.09.2026) — xuất GW_CHO_PHUB_<ngày>.csv theo ô tick tuỳ chọn, thay
+    # cho kho bền vững "Gộp pHub nhiều ngày" (bản-2, data/ach_phub_lichsu/) đã
+    # bị gỡ ở Luồng A — máy chủ thật là 1 máy đơn, không đủ ổ đĩa giữ ~534.000
+    # dòng CSV/ngày trong 30 ngày. File này CHỈ nằm trong output_dir của job
+    # (tự lọt vào job['files'] qua cơ chế liệt kê thư mục có sẵn) — quên tick
+    # thì KHÔNG lấy lại được (C-S đã chấp nhận), không ghi ra data/ nào khác.
+    # Lỗi ở đây KHÔNG được làm sập báo cáo chính — đây là input TUỲ CHỌN cho
+    # màn Gộp (Luồng C), đúng tinh thần các khối Mục 4/6/7 khác trong hàm này.
+    if tao_gw_cho_phub and gw_path is not None:
+        _t_gw_phub = time.perf_counter()
+        try:
+            df_gw_phub = doc_gw_di_cho_phub(gw_path, session_id, log_callback)
+            df_gw_phub['NGAY_DOI_CHIEU'] = ngay_dt.strftime('%Y%m%d')
+            df_gw_phub.to_csv(
+                os.path.join(output_dir, f'GW_CHO_PHUB_{ngay_dt.strftime("%Y%m%d")}.csv'),
+                index=False, encoding='utf-8-sig',
+            )
+            log(f'[TIMING] GW-cho-pHub: {time.perf_counter()-_t_gw_phub:.1f}s')
+        except Exception as e:
+            log(f'[GW-cho-pHub][WARN] Bỏ qua — không xuất được GW_CHO_PHUB: {e}')
+    elif tao_gw_cho_phub and gw_path is None:
+        log('[GW-cho-pHub][WARN] Bỏ qua — không có file GW đi để đọc lại.')
 
     output_path = os.path.join(output_dir, f'doi_chieu_{ngay_dt.strftime("%Y%m%d")}.xlsx')
     xuat_excel(

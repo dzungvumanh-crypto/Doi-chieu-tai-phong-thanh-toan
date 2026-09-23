@@ -185,20 +185,29 @@ def bo_job(job_id: str) -> None:
     shutil.rmtree(TEMP_DIR / job_id, ignore_errors=True)
 
 
-def chay_job(job_id: str, ngay: str | None, bo_qua_checkpoint: bool = False) -> None:
+def chay_job(job_id: str, ngay: str | None, bo_qua_checkpoint: bool = False,
+            tao_gw_cho_phub: bool = False) -> None:
     """Khởi chạy pipeline cho job đã nhận đủ file (xem `tao_job()`).
 
     Chạy giản lược theo file đang có LUÔN bật (2026-09-16, thay cờ
     `chi_tim_timeout` trước đây phải tự tay tick) — `main_from_dir()` tự động
-    chạy phần còn tính được khi thiếu GL02/MIS_đến/MIS_đi, không cần báo trước."""
+    chạy phần còn tính được khi thiếu GL02/MIS_đến/MIS_đi, không cần báo trước.
+
+    tao_gw_cho_phub — ô tick tuỳ chọn Tab 1 (A4, 23.09.2026), mặc định TẮT,
+    xem docstring `main_from_dir()`."""
     job = get_job(job_id)
     if job is None:
         raise LookupError('Job không tồn tại.')
     job['ngay'] = ngay
+    # Ghi lại lựa chọn ô tick vào job — Checkpoint (`continue_job()`) chạy lại
+    # TOÀN BỘ pipeline từ đầu (không resume state), phải đọc lại đúng lựa chọn
+    # ban đầu, không phải luôn mặc định False (thiếu bước này là ô tick vô tác
+    # dụng lặng lẽ mỗi khi job đi qua Checkpoint — xem PLAN.md rủi ro 10).
+    job['tao_gw_cho_phub'] = tao_gw_cho_phub
     thread = threading.Thread(
         target=_run,
         args=(job_id, job['input_dir'], job['output_dir'], ngay),
-        kwargs={'dung_sau_mis_di': not bo_qua_checkpoint},
+        kwargs={'dung_sau_mis_di': not bo_qua_checkpoint, 'tao_gw_cho_phub': tao_gw_cho_phub},
         daemon=True,
     )
     thread.start()
@@ -254,7 +263,10 @@ def continue_job(job_id: str, xac_nhan_bytes: bytes, xac_nhan_filename: str) -> 
     thread = threading.Thread(
         target=_run,
         args=(job_id, job['input_dir'], job['output_dir'], job['ngay']),
-        kwargs={'xac_nhan_path': str(saved_path)},
+        kwargs={
+            'xac_nhan_path': str(saved_path),
+            'tao_gw_cho_phub': job.get('tao_gw_cho_phub', False),
+        },
         daemon=True,
     )
     thread.start()
@@ -277,7 +289,8 @@ def _thong_ke_mis_di_can_confirm(xac_nhan_path: str) -> tuple[int | None, int | 
 
 
 def _run(job_id: str, input_dir: str, output_dir: str, ngay: str | None,
-        dung_sau_mis_di: bool = False, xac_nhan_path: str | None = None):
+        dung_sau_mis_di: bool = False, xac_nhan_path: str | None = None,
+        tao_gw_cho_phub: bool = False):
     job = get_job(job_id)
     if job is None:
         return
@@ -303,6 +316,7 @@ def _run(job_id: str, input_dir: str, output_dir: str, ngay: str | None,
             cancel_event=job['cancel_event'],
             dung_sau_mis_di=dung_sau_mis_di,
             xac_nhan_path=xac_nhan_path,
+            tao_gw_cho_phub=tao_gw_cho_phub,
         )
 
         if output_path is None:

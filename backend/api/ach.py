@@ -58,6 +58,7 @@ async def start_job(
     files: list[UploadFile],
     ngay_doi_chieu: str = Form(''),
     bo_qua_checkpoint: bool = Form(False),
+    tao_gw_cho_phub: bool = Form(False),
     _=Depends(_CHAY),
 ):
     """
@@ -75,10 +76,12 @@ async def start_job(
     cần xác nhận trước, không có tham số nào ở đây điều khiển việc đó nữa.
 
     LƯU Ý (bug thật phát hiện 2026-07-31, sửa cùng lúc): `ngay_doi_chieu`/
-    `bo_qua_checkpoint` PHẢI khai báo `Form(...)` tường minh — khi route có
-    `list[UploadFile]`, FastAPI KHÔNG tự suy luận tham số kiểu đơn giản khác là
-    Form field (khác giả định trước đó); để mặc định thường sẽ luôn nhận giá trị
-    default, không đọc được dữ liệu client gửi lên.
+    `bo_qua_checkpoint`/`tao_gw_cho_phub` PHẢI khai báo `Form(...)` tường minh —
+    khi route có `list[UploadFile]`, FastAPI KHÔNG tự suy luận tham số kiểu đơn
+    giản khác là Form field (khác giả định trước đó); để mặc định thường sẽ
+    luôn nhận giá trị default, không đọc được dữ liệu client gửi lên.
+
+    tao_gw_cho_phub — ô tick tuỳ chọn Tab 1 (A4, 23.09.2026), mặc định False.
     """
     if not files:
         raise HTTPException(400, 'Cần upload ít nhất 1 file.')
@@ -151,7 +154,11 @@ async def start_job(
         raise
 
     ngay = ngay_doi_chieu.strip() or None
-    ach_service.chay_job(job_id, ngay, bo_qua_checkpoint=bo_qua_checkpoint)
+    ach_service.chay_job(
+        job_id, ngay,
+        bo_qua_checkpoint=bo_qua_checkpoint,
+        tao_gw_cho_phub=tao_gw_cho_phub,
+    )
     return {'job_id': job_id}
 
 

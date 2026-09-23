@@ -304,6 +304,20 @@ def _make_gw_xlsx(tmp_path, name: str = 'di GW 11.07.xlsx'):
     return str(path)
 
 
+def _make_gw_xlsx_co_ghi_chu(tmp_path, name: str = 'di GW 11.07.xlsx'):
+    """Biến thể của `_make_gw_xlsx()` có thêm cột 'Ghi chú' — cột này
+    `doc_gw_di_cho_phub()` (A4) đòi phải có, `_make_gw_xlsx()` gốc không có
+    (không cần cho các test khác, tách riêng để không ảnh hưởng chúng)."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = 'đi GW 11.07'
+    ws.append(['BRCD', 'STTLMAMT', 'MSGREF', 'SessionId', 'PrcFlg', 'Ghi chú'])
+    ws.append(['1000', '500000', 'MSGREF1', _SID, 'Lệnh Hoàn thành', 'ACSP:AUTH:AUTH:/AIR/168283'])
+    path = tmp_path / name
+    wb.save(str(path))
+    return str(path)
+
+
 def _make_pdf(tmp_path, name='ACH_20260711_VBAAVNVN_NRT_16362_N03_1.pdf'):
     path = tmp_path / name
     path.write_bytes(b'%PDF-fake-content-not-parsed')
@@ -418,6 +432,125 @@ class TestMainFromDirChayGianLuoc:
 
         with pytest.raises(FileNotFoundError):
             main_from_dir(str(tmp_path), str(tmp_path / 'out'))
+
+
+# ─── A4 (23/09/2026) — xuất GW_CHO_PHUB_<ngày>.csv theo ô tick tuỳ chọn ──────
+# Đọc lại doc_gw_di_cho_phub() (b16_phub_loi.py, KHÔNG bị gỡ — chỉ mất lời gọi
+# ở Luồng A). Mặc định TẮT (C1 đã chốt), gộp thêm cột NGAY_DOI_CHIEU (C-N) vào
+# CẢ HAI file CSV (TIMEOUT_KHONG_KENH + GW_CHO_PHUB).
+
+class TestGwChoPhubA4:
+    def test_mac_dinh_tat_khong_xuat_file_khong_ton_them_thoi_gian(self, tmp_path, monkeypatch):
+        """Không truyền tao_gw_cho_phub (mặc định False) — KHÔNG có file
+        GW_CHO_PHUB_*.csv trong output_dir, KHÔNG có dòng log [TIMING] GW-cho-pHub."""
+        monkeypatch.setenv('DOI_CHIEU_ZIP_PASSWORD', 'test_password')
+        _make_pdf(tmp_path)
+        _make_gw_xlsx_co_ghi_chu(tmp_path)
+        _make_mis_di_zip(tmp_path, 'doichieugd_20260711__01_DI_9999_N.zip', [_mis_di_row()])
+        _make_mis_di_zip(tmp_path, 'doichieugd_20260711__02_DI_9999_N.zip', [])
+        out_dir = tmp_path / 'out'
+        logs = []
+
+        output_path = main_from_dir(
+            str(tmp_path), str(out_dir), ngay='11/07/2026', log_callback=logs.append,
+        )
+
+        assert output_path is not None
+        assert not (out_dir / 'GW_CHO_PHUB_20260711.csv').exists()
+        assert not any('GW-cho-pHub' in l for l in logs)
+
+    def test_tick_bat_xuat_file_co_cot_ngay(self, tmp_path, monkeypatch):
+        """tao_gw_cho_phub=True + có GW hợp lệ (cột 'Ghi chú') — xuất
+        GW_CHO_PHUB_<ngày>.csv với cột NGAY_DOI_CHIEU=YYYYMMDD, có log [TIMING]."""
+        monkeypatch.setenv('DOI_CHIEU_ZIP_PASSWORD', 'test_password')
+        _make_pdf(tmp_path)
+        _make_gw_xlsx_co_ghi_chu(tmp_path)
+        _make_mis_di_zip(tmp_path, 'doichieugd_20260711__01_DI_9999_N.zip', [_mis_di_row()])
+        _make_mis_di_zip(tmp_path, 'doichieugd_20260711__02_DI_9999_N.zip', [])
+        out_dir = tmp_path / 'out'
+        logs = []
+
+        output_path = main_from_dir(
+            str(tmp_path), str(out_dir), ngay='11/07/2026', log_callback=logs.append,
+            tao_gw_cho_phub=True,
+        )
+
+        assert output_path is not None
+        csv_path = out_dir / 'GW_CHO_PHUB_20260711.csv'
+        assert csv_path.exists()
+        df = pd.read_csv(csv_path, dtype=str, encoding='utf-8-sig')
+        assert list(df.columns) == ['MSGREF', 'Ghi chú', 'NGAY_DOI_CHIEU']
+        assert (df['NGAY_DOI_CHIEU'] == '20260711').all()
+        assert any('[TIMING] GW-cho-pHub' in l for l in logs)
+
+    def test_tick_bat_nhung_khong_co_gw_khong_loi_khong_tao_file(self, tmp_path, monkeypatch):
+        """tao_gw_cho_phub=True nhưng không có GW đi (0 file) — không raise,
+        không tạo file, chỉ log cảnh báo bỏ qua."""
+        monkeypatch.setenv('DOI_CHIEU_ZIP_PASSWORD', 'test_password')
+        _make_pdf(tmp_path)
+        _make_gl02_zip(tmp_path, [_gl02_row(cramount='0', dramount='100000')])
+        _make_mis_den_zip(tmp_path, 'doichieugd_20260711__01_DEN_9999_N.zip', [_mis_den_row()])
+        _make_mis_den_zip(tmp_path, 'doichieugd_20260711__02_DEN_9999_N.zip', [])
+        out_dir = tmp_path / 'out'
+        logs = []
+
+        output_path = main_from_dir(
+            str(tmp_path), str(out_dir), log_callback=logs.append, tao_gw_cho_phub=True,
+        )
+
+        assert output_path is not None
+        assert not any((out_dir).glob('GW_CHO_PHUB_*.csv'))
+        assert any('GW-cho-pHub' in l and 'WARN' in l for l in logs)
+
+    def test_loi_doc_gw_cho_phub_khong_lam_sap_bao_cao_chinh(self, tmp_path, monkeypatch):
+        """GW đi hợp lệ cho pipeline chính nhưng THIẾU cột 'Ghi chú' (dùng
+        `_make_gw_xlsx()` gốc) — doc_gw_di_cho_phub() raise ValueError bên
+        trong, KHÔNG được làm sập báo cáo chính (input tuỳ chọn, đúng tinh thần
+        các khối Mục 4/6/7 khác)."""
+        monkeypatch.setenv('DOI_CHIEU_ZIP_PASSWORD', 'test_password')
+        _make_pdf(tmp_path)
+        _make_gw_xlsx(tmp_path)   # KHÔNG có cột 'Ghi chú'
+        _make_mis_di_zip(tmp_path, 'doichieugd_20260711__01_DI_9999_N.zip', [_mis_di_row()])
+        _make_mis_di_zip(tmp_path, 'doichieugd_20260711__02_DI_9999_N.zip', [])
+        out_dir = tmp_path / 'out'
+        logs = []
+
+        output_path = main_from_dir(
+            str(tmp_path), str(out_dir), log_callback=logs.append, tao_gw_cho_phub=True,
+        )
+
+        assert output_path is not None   # báo cáo chính vẫn ra, không sập
+        assert not any(out_dir.glob('GW_CHO_PHUB_*.csv'))
+        assert any('GW-cho-pHub' in l and 'WARN' in l for l in logs)
+
+    def test_timeout_khong_kenh_luon_co_cot_ngay_du_khong_tick(self, tmp_path, monkeypatch):
+        """C-N: TIMEOUT_KHONG_KENH_<ngày>.csv luôn có cột NGAY_DOI_CHIEU, KHÔNG
+        phụ thuộc ô tick GW-cho-pHub (2 tính năng độc lập)."""
+        monkeypatch.setenv('DOI_CHIEU_ZIP_PASSWORD', 'test_password')
+        _make_pdf(tmp_path)
+        _make_gw_xlsx(tmp_path)
+        # MSGREF khác GW ở trên (MSGREF1), trạng thái TPAY (không thuộc
+        # _TRANG_THAI_DA_DI_KENH) — rơi đúng nhánh 1A "Timeout không đi kênh".
+        _make_mis_di_zip(tmp_path, 'doichieugd_20260711__01_DI_9999_N.zip',
+                         [_mis_di_row(refhub='REF_TIMEOUT', chi_nhanh='9999',
+                                      so_tien='777000', trang_thai='TPAY')])
+        _make_mis_di_zip(tmp_path, 'doichieugd_20260711__02_DI_9999_N.zip', [])
+        out_dir = tmp_path / 'out'
+
+        output_path = main_from_dir(str(tmp_path), str(out_dir), ngay='11/07/2026')
+
+        assert output_path is not None
+        csv_path = out_dir / 'TIMEOUT_KHONG_KENH_20260711.csv'
+        assert csv_path.exists()
+        df = pd.read_csv(csv_path, dtype=str, encoding='utf-8-sig')
+        assert len(df) >= 1
+        assert 'NGAY_DOI_CHIEU' in df.columns
+        assert (df['NGAY_DOI_CHIEU'] == '20260711').all()
+        # Cột mới KHÔNG lọt vào sheet TIMEOUT_KHONG_KENH của CHÍNH lượt chạy
+        # này (whitelist _COLS_TIMEOUT trong xuat_excel() — Mục 1.1).
+        wb = openpyxl.load_workbook(output_path)
+        header = [c.value for c in next(wb['TIMEOUT_KHONG_KENH'].iter_rows(min_row=1, max_row=1))]
+        assert 'NGAY_DOI_CHIEU' not in header
 
 
 # ─── ach_service._run() — trạng thái job khi thiếu MIS_đi (bug thật, xem docstring đầu file) ─

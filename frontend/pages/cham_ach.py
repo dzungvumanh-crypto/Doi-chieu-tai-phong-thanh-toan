@@ -142,6 +142,10 @@ _BAO_CAO_REGISTRY: list[tuple[re.Pattern, str, str]] = [
      'Timeout không đi kênh (mang sang ngày sau)',
      'Input "TO ko đi kênh ngày cũ" (Mục 8) cho lượt chạy kế tiếp — cũng là '
      'nguyên liệu cho màn Gộp kết quả pHub (Luồng C).'),
+    (re.compile(r'^GW_CHO_PHUB_\d{8}\.csv$'),
+     'GW-cho-pHub (A4, chỉ xuất khi tick)',
+     'Chỉ xuất khi tick "Tạo file GW-cho-pHub" ở Tab 1 — nguyên liệu cho màn '
+     'Gộp kết quả pHub (Luồng C). Máy chủ không giữ bản sao, tải về ngay.'),
     (re.compile(r'^NPO_DI_THUA_\d{8}\.csv$'),
      'NPO_đi thừa (mang sang ngày sau)',
      'Input đối chiếu chéo ngày (Mục 5) cho lượt chạy kế tiếp.'),
@@ -232,6 +236,7 @@ async def cham_ach_page():
         'checkpoint_mode': 'inline',   # Tab 'di' — 'inline' | 'deferred'
         'pending_checkpoint_res': None,
         'bo_qua_checkpoint': False,    # Tab 'di' — chạy thẳng, bỏ qua Checkpoint
+        'tao_gw_cho_phub': False,      # Tab 'di' — ô tick A4, xuất GW_CHO_PHUB_*.csv, mặc định TẮT
         'max_total_mb': None,
         'mis_di_thieu': False,         # Tab 'di' — hint nút Chạy
         'last_files': [],              # file kết quả job GẦN NHẤT — hiện ở tab Báo cáo
@@ -376,6 +381,30 @@ async def cham_ach_page():
                             _cap_nhat_hint_chay()
 
                         bo_qua_checkbox.on_value_change(lambda e: _on_bo_qua_change(e.value))
+
+                        # ── Ô tick A4 (23.09.2026) — xuất GW-cho-pHub, mặc định TẮT ──
+                        # C1 đã chốt: server KHÔNG lưu gì (C-S) — quên tick nghĩa là
+                        # ngày hôm nay VĨNH VIỄN không có file để gộp pHub sau này. Nhãn
+                        # phải nói rõ hậu quả (rủi ro #6, PLAN.md), không viết chung
+                        # chung kiểu "Tạo file phụ".
+                        with ui.row().classes(
+                            'w-full items-start gap-2 mt-3 p-3 rounded bg-amber-50 border border-amber-200'
+                        ):
+                            ui.icon('info').classes('text-amber-700 mt-1')
+                            with ui.column().classes('gap-0'):
+                                gw_cho_phub_checkbox = ui.checkbox(
+                                    'Tạo file GW-cho-pHub (dùng cho màn Gộp pHub sau này)'
+                                ).props('dense').classes('text-amber-900 font-medium')
+                                ui.label(
+                                    'KHÔNG tick thì hôm nay KHÔNG có file GW-cho-pHub để gộp pHub sau này, '
+                                    'và KHÔNG lấy lại được (máy chủ không lưu bản sao — muốn có lại phải chạy '
+                                    'lại toàn bộ đối chiếu ngày này). Bật thêm khoảng 1 phút vào lượt chạy.'
+                                ).classes('text-xs text-amber-700')
+
+                        def _on_gw_cho_phub_change(val: bool):
+                            run_state['tao_gw_cho_phub'] = val
+
+                        gw_cho_phub_checkbox.on_value_change(lambda e: _on_gw_cho_phub_change(e.value))
 
                         bo_qua_confirm_dialog = ui.dialog()
                         with bo_qua_confirm_dialog, ui.card().classes('p-5').style('min-width: 420px'):
@@ -1200,6 +1229,9 @@ async def cham_ach_page():
 
                 ngay = ngay_input.value.strip() if ngay_input.value else None
                 bo_qua = run_state['bo_qua_checkpoint'] if tab_key == 'di' else False
+                # A4 — ô tick chỉ có ý nghĩa ở Tab 1 (Timeout + Đối chiếu đi), Tab 2
+                # không có ô này, luôn gửi False.
+                tao_gw_cho_phub = run_state['tao_gw_cho_phub'] if tab_key == 'di' else False
 
                 try:
                     _append_log('Đang upload file...')
@@ -1211,6 +1243,7 @@ async def cham_ach_page():
                         data={
                             'ngay_doi_chieu': ngay or '',
                             'bo_qua_checkpoint': str(bo_qua).lower(),
+                            'tao_gw_cho_phub': str(tao_gw_cho_phub).lower(),
                         },
                         timeout=600.0,   # bộ file ACH có thể tới hàng trăm MB
                     )

@@ -16655,6 +16655,63 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">148</span>
+      <span class="card-title">ACH — Luồng A4: xuất <code>GW_CHO_PHUB_&lt;ngày&gt;.csv</code> theo ô tick
+        + cột <code>NGAY_DOI_CHIEU</code> (C-N, 23/09/2026)</span>
+      <span class="badge badge-done">Xong — 467/467 test ACH pass (12 test mới)</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-blue">Đọc lại <code>doc_gw_di_cho_phub()</code>, KHÔNG ghi kho</span></div>
+      <p>Luồng A xoá lời gọi (không xoá hàm) trong <code>b16_phub_loi.py</code>. A4 import lại và gọi trong
+        <code>main_from_dir()</code> — CHỈ khi ô tick <code>tao_gw_cho_phub</code> bật VÀ có GW đi
+        (<code>gw_path is not None</code>). File ghi thẳng vào <code>output_dir</code> của job (tự lọt vào
+        <code>job['files']</code> qua cơ chế liệt kê thư mục có sẵn) — KHÔNG có thư mục kho nào khác dưới
+        <code>data/</code>, đúng bài học đã làm hỏng bản-2 (card 144).</p>
+
+      <div class="label"><span class="pill pill-red">Lỗi ở đây KHÔNG được làm sập báo cáo chính</span></div>
+      <p>Đây là input TUỲ CHỌN cho màn Gộp (Luồng C), không phải số liệu đối chiếu chính — bọc
+        <code>try/except</code> quanh <code>doc_gw_di_cho_phub()</code>, log <code>[GW-cho-pHub][WARN]</code>
+        và tiếp tục xuất <code>doi_chieu_*.xlsx</code> bình thường, đúng tinh thần các khối "input tuỳ chọn"
+        khác trong <code>main_from_dir()</code> (Napas PDF/CSV, pHub Mục 3).</p>
+
+      <div class="label"><span class="pill pill-green">C-N — cột <code>NGAY_DOI_CHIEU</code> ghi vào CẢ HAI file</span></div>
+      <p><code>TIMEOUT_KHONG_KENH_&lt;ngày&gt;.csv</code> VÀ <code>GW_CHO_PHUB_&lt;ngày&gt;.csv</code> đều
+        có thêm cột <code>NGAY_DOI_CHIEU</code> (giá trị <code>YYYYMMDD</code> của lượt chạy) — để màn Gộp
+        (Luồng C, đã code <code>phan_loai_file_gop()</code> đọc cột này) nhận diện ngày theo NỘI DUNG, không
+        theo tên file. Cột này KHÔNG lọt vào sheet <code>TIMEOUT_KHONG_KENH</code> của CHÍNH lượt chạy hiện
+        tại (<code>xuat_excel()</code> dùng whitelist <code>_COLS_TIMEOUT</code>, không có tên cột này) —
+        nhưng SẼ lọt vào sheet <code>TIMEOUT_CU_KETQUA</code> (Mục 8) của LƯỢT CHẠY SAU khi file này được
+        nạp lại làm "TO ko đi kênh ngày cũ" (<code>xuat_excel_timeout_cu()</code> ghi toàn bộ cột của df,
+        không whitelist). Đây là hệ quả ĐÃ BIẾT và chấp nhận được (PLAN.md mục 4.3 + rủi ro 4) — không tự ý
+        ẩn/xoá cột này nếu chưa hỏi lại người dùng.</p>
+
+      <div class="label"><span class="pill pill-gray">Cột mới KHÔNG bắt buộc — file cũ vẫn đọc được</span></div>
+      <p><code>_doc_file_thua_t2()</code> (b11) chỉ kiểm cột THIẾU trong danh sách bắt buộc
+        (<code>CHI_NHANH/TRACE/SE_TRACE/SO_TIEN/NGAY_GIAO_DICH</code>), cột thừa được chấp nhận — file
+        TIMEOUT chị Thảo còn giữ từ trước A4 (chưa có <code>NGAY_DOI_CHIEU</code>) vẫn đọc/khớp bình thường,
+        đã test riêng (<code>tests/test_ach_gw_cho_phub_a4.py</code>).</p>
+
+      <div class="label"><span class="pill pill-blue">Chuỗi 4 chỗ của ô tick — bẫy đã có tiền lệ thật</span></div>
+      <p>Route <code>/api/ach/start</code> có <code>list[UploadFile]</code> nên FastAPI KHÔNG tự suy tham
+        số đơn giản khác là Form field — <code>tao_gw_cho_phub: bool = Form(False)</code> phải khai tường
+        minh, giống bẫy đã gặp với <code>ngay_doi_chieu</code>/<code>bo_qua_checkpoint</code>. Phát hiện
+        thêm khi code: <code>continue_job()</code> (Checkpoint) chạy lại TOÀN BỘ pipeline từ đầu (không
+        resume state) — nếu không lưu lựa chọn vào <code>job['tao_gw_cho_phub']</code> và đọc lại đúng giá
+        trị đó khi continue, ô tick sẽ ÂM THẦM rơi về False mỗi khi job đi qua Checkpoint dù người dùng đã
+        tick ở lần /start đầu tiên. Đã sửa + có test bắt cả 2 lần gọi
+        (<code>tests/test_ach_tao_gw_cho_phub_toggle.py::test_continue_sau_checkpoint_giu_nguyen_lua_chon_ban_dau</code>).</p>
+
+      <div class="note"><code>python -m pytest tests/test_ach_*.py -q</code>: <b>467 passed, 0 failed</b>
+        (455 sau Luồng C + 12 test mới: 5 <code>TestGwChoPhubA4</code> trong
+        <code>test_ach_chay_gian_luoc.py</code> + 4 trong <code>test_ach_gw_cho_phub_a4.py</code> + 3 trong
+        <code>test_ach_tao_gw_cho_phub_toggle.py</code>). 0 dòng lệch, không dùng %.</div>
+
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-23</footer>
 </div>
 </body>
