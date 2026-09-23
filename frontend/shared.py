@@ -773,6 +773,12 @@ def _require_auth():
             api.clear_auth()
             ui.notify("Tài khoản này đang được đăng nhập từ thiết bị khác", type="warning", timeout=4000)
             client.open("/login?reason=displaced")
+        except api.SessionExpiredError:
+            # Hết hạn 8 giờ / bị đăng xuất: đưa về đăng nhập ngay. Trước 23/09/2026 nhánh này
+            # rơi xuống dưới → chỉ ghi WARNING kèm traceback mỗi phút, mỗi tab còn mở (cả
+            # đêm), người dùng không biết gì tới lúc bấm nút thì ăn lỗi.
+            ui.notify("Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.", type="warning", timeout=4000)
+            client.open("/login")
         except Exception as e:
             # Chỉ lỗi mạng mới được im lặng (mất wifi vài giây là chuyện thường). Lỗi khác
             # lặp lại mỗi 60 giây mà không ai biết — đây là khối duy nhất chạy theo chu kỳ.

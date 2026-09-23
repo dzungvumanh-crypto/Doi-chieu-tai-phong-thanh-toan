@@ -365,7 +365,9 @@ Request vượt số kết nối thì xếp hàng chờ (tối đa 30 giây, qu�
   các dòng có `role` sai chính tả, `department_id` không tồn tại, hoặc thiếu Mã cán bộ; khớp theo
   **Mã cán bộ**. ⚠️ **Số liệu phép (`used_leave_days`, `annual_leave_days`, `carryover_notice_year`)
   của tài khoản đã có thì KHÔNG bị đè** — đó là dữ liệu của module Nghỉ phép, nơi có batch nhập +
-  hoàn tác riêng; tài khoản mới thì vẫn lấy theo file. `tests/test_import_db_an_toan.py` canh việc này
+  hoàn tác riêng; tài khoản mới thì vẫn lấy theo file. Chỉ ghi cột **trùng đúng tên** (phân biệt
+  hoa/thường) với bảng `user_tttt` của máy này — cột khác bị bỏ và báo lại (`ignored_columns`); tên
+  cột lấy từ file từng được ghép thẳng vào câu SQL. `tests/test_import_db_an_toan.py` canh việc này
 
 ### Module Nghỉ phép
 - Cán bộ tạo đơn xin nghỉ (phép năm, ốm, việc riêng, khác)
@@ -1598,6 +1600,16 @@ Cấu hình trong `backend/services/backup_service.py`.
 > Trước đây luật dọn glob `ksnb_*.db` và sắp **theo tên**: `'2' < 'b' < 't'` nên bản đặt tay
 > luôn bị coi là "mới nhất", vừa chiếm chỗ vĩnh viễn vừa làm màn hình Admin báo sai ngày
 > backup gần nhất. `tests/test_backup_rotation.py` canh việc này.
+
+**Bản sao lưu hỏng — `HONG_ksnb_YYYYMMDD_HHMM.db` / `.zip`.** Mỗi bản vừa chụp được kiểm
+(`integrity_check` + số dòng `user_tttt` khớp nguồn). Không đạt thì đổi sang tên này và:
+
+- **không** tính vào vòng giữ 7 ngày — file chính hỏng nhiều ngày liền không đẩy bản tốt cuối cùng ra ngoài;
+- **không** được coi là "sao lưu gần nhất" → màn Giám sát báo *sao lưu đã ngừng N giờ* khi hỏng kéo dài;
+- không chép sang `BACKUP_EXTRA_DIR`; chỉ giữ 3 bản hỏng mới nhất để điều tra.
+
+Thấy file `HONG_…` trong `data/backups/` là dấu hiệu **CSDL chính có thể đã hỏng** — xem dòng ERROR
+"Backup vừa tạo KHÔNG toàn vẹn" trong `logs/app.log`. `tests/test_backup_ban_hong_khong_chiem_cho.py` canh việc này.
 
 **Thư mục backup phụ** (`BACKUP_EXTRA_DIR` trong `.env`, nên đặt ở ổ/máy khác): mỗi bản backup được
 chép sang đó rồi **áp cùng luật dọn**. Tức là phần mềm chủ động xoá file trên ổ/máy ngoài — vẫn chỉ
