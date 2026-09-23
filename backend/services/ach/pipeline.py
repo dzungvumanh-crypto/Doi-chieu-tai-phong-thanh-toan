@@ -329,13 +329,24 @@ def _tim_di_zip_ngay_khac(input_dir: str, log_callback=None) -> list:
 
 
 def _tim_gw_xlsx(input_dir: str, log_callback=None) -> str:
+    """Dò ĐÚNG 1 file GW đi hợp lệ (có 'BRCD'+'SessionId' ở 8 dòng đầu 1 sheet nào đó).
+
+    Audit 18/09/2026 — trước đây return NGAY khi gặp candidate hợp lệ ĐẦU TIÊN, không
+    kiểm còn candidate hợp lệ nào khác không. Chạy thật xác nhận hậu quả: nạp nhầm GW đi
+    của 2 ngày vào chung 1 thư mục (vd lỡ gộp file gốc nhiều ngày để "chạy 1 thể") KHÔNG
+    báo lỗi gì — âm thầm dùng 1 trong 2 file theo thứ tự `glob()` (không xác định), dữ
+    liệu MIS_đi SESSION=NULL của ngày kia rơi vào GW sai, đẩy sai "Timeout không đi kênh"
+    lên gấp ~18 lần mà không có cảnh báo nào (194 dòng thay vì đúng 11, dữ liệu thật
+    15+16/09/2026). Nay dò HẾT toàn bộ candidate hợp lệ, ≥2 file thì raise rõ tên — đúng
+    tinh thần `_tim_napas_pdf()`/`_tim_file_thua_t2()` đã làm cho các loại file khác."""
     _log      = log_callback or print
     abs_dir   = os.path.abspath(input_dir)
     all_xlsx  = glob.glob(os.path.join(abs_dir, '**', '*.xlsx'), recursive=True)
     candidates = [f for f in all_xlsx if 'GW' in os.path.basename(f).upper()]
     if not candidates:
         candidates = all_xlsx
-    loi_doc = []  # Audit 2026-08-04 — file lỗi khi đọc, phân biệt với "thật sự thiếu file"
+    loi_doc  = []  # Audit 2026-08-04 — file lỗi khi đọc, phân biệt với "thật sự thiếu file"
+    hop_le   = []  # Audit 18/09/2026 — TẤT CẢ candidate hợp lệ, không dừng ở cái đầu tiên
     for f in candidates:
         try:
             xl = pd.ExcelFile(f, engine='calamine')
@@ -344,11 +355,20 @@ def _tim_gw_xlsx(input_dir: str, log_callback=None) -> str:
                                         nrows=8, dtype=str, engine='calamine')
                 flat = set(str(v).strip() for v in df_peek.values.flatten() if str(v) != 'nan')
                 if 'BRCD' in flat and 'SessionId' in flat:
-                    return f
+                    hop_le.append(f)
+                    break
         except Exception as e:
             loi_doc.append((os.path.basename(f), str(e)))
             _log(f'[WARN] Lỗi đọc "{os.path.basename(f)}" khi dò file GW, thử file khác: {e}')
             continue
+    if len(hop_le) == 1:
+        return hop_le[0]
+    if len(hop_le) > 1:
+        ten = [os.path.basename(f) for f in hop_le]
+        raise FileNotFoundError(
+            f'Có {len(hop_le)} file GW đi hợp lệ trong: {abs_dir} — chỉ được có ĐÚNG 1 file '
+            f'(có thể lỡ nạp nhầm dữ liệu gốc của nhiều ngày cùng lúc). Giữ lại đúng 1 file: {ten}'
+        )
     if loi_doc:
         raise FileNotFoundError(
             f'Không tìm thấy file GW .xlsx hợp lệ trong: {abs_dir} — '

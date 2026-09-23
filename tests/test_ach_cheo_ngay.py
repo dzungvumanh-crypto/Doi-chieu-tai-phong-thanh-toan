@@ -459,6 +459,22 @@ class TestTimGwXlsx:
         ket_qua = _tim_gw_xlsx(str(tmp_path))
         assert ket_qua == str(f_dung)
 
+    def test_2_file_hop_le_bao_loi_ro_ten_ca_hai(self, tmp_path):
+        """Audit 18/09/2026 — trước đây return NGAY khi gặp file hợp lệ đầu tiên,
+        không kiểm còn file hợp lệ khác không. Chạy thật xác nhận hậu quả: lỡ nạp
+        GW đi của 2 ngày (vd cố tình gộp file gốc nhiều ngày để chạy 1 thể) không
+        báo lỗi gì, âm thầm dùng 1 trong 2 theo thứ tự glob() — làm sai "Timeout
+        không đi kênh" gấp ~18 lần (194 dòng thay vì đúng 11, dữ liệu thật
+        15+16/09/2026) mà không có cảnh báo nào. Nay phải raise rõ tên cả 2 file."""
+        f1 = tmp_path / 'đi GW 15.09.xlsx'
+        f2 = tmp_path / 'đi GW 16.09.xlsx'
+        _tao_gw_xlsx_hop_le(f1)
+        _tao_gw_xlsx_hop_le(f2)
+        with pytest.raises(FileNotFoundError, match='Có 2 file GW đi hợp lệ') as exc:
+            _tim_gw_xlsx(str(tmp_path))
+        assert 'đi GW 15.09.xlsx' in str(exc.value)
+        assert 'đi GW 16.09.xlsx' in str(exc.value)
+
 
 # ── Báo cáo "KẾT QUẢ" đối chiếu MIS thừa T-2 (docx NGUYEN TAC DOI CHIEU DIEN
 # MIS THUA NGAY T-1, 2026-08-07) — góc nhìn ngược GHI_CHU_T2: gắn nhãn KET_QUA
