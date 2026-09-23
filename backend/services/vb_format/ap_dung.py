@@ -375,7 +375,8 @@ def _dong_bo_dau_doan(p: Paragraph, co, dam, phong: str | None) -> bool:
 
 
 def _dinh_dang_doan(p: Paragraph, ma: str, tp: dict, chung: dict,
-                    muc_gach_cm: float | None = None) -> list[tuple[str, str]]:
+                    muc_gach_cm: float | None = None,
+                    truoc_pt: float | None = None) -> list[tuple[str, str]]:
     """Áp cỡ chữ / kiểu chữ / căn lề cho đoạn.
 
     Trả `[(loại, mô tả), …]`. `loại` là "chung" khi sửa đổi đó áp đồng loạt
@@ -505,19 +506,78 @@ def _dinh_dang_doan(p: Paragraph, ma: str, tp: dict, chung: dict,
             pf.space_after = Pt(float(cach))
             _them(ghi_nhan, "rieng" if ep_chinh_xac else "chung",
                   f"cách đoạn → {_so(cach)} pt")
+        if ep_chinh_xac and float(cach) > 0 and _tat_cach_doan_cung_style(p):
+            _them(ghi_nhan, "rieng", "tắt «không cách đoạn cùng style»")
     # ── Khoảng trống TRƯỚC đoạn ──
     # Khoảng cách giữa hai đoạn là `space_after` của đoạn trên CỘNG
     # `space_before` của đoạn dưới. Để cả hai cùng có giá trị thì con số thật
     # không hiện ở đâu cả: file đặt 7pt/7pt cho ra khoảng cách 14pt, mà hộp
     # Paragraph của Word chỉ hiện hai số 7. Đưa `space_before` về 0 để khoảng
     # cách chỉ do `space_after` quyết định — đúng một nguồn, nhìn là biết.
-    if chung.get("bo_khoang_truoc_doan"):
-        hien_tr = _hieu_luc_doan(p, "space_before")
-        if hien_tr is not None and hien_tr.pt > _SAI_SO_PT:
-            pf.space_before = Pt(0)
-            _them(ghi_nhan, "chung", "bỏ khoảng trống trước đoạn")
+    #
+    # `truoc_pt` = bên gọi ĐÒI một khoảng trước đoạn (khối phê duyệt dưới họ
+    # tên người ký — xem `la_khoi_ky_moi`). Ép chính xác, không bỏ về 0.
+    hien_tr = _hieu_luc_doan(p, "space_before")
+    hien_tr_pt = 0.0 if hien_tr is None else hien_tr.pt
+    if truoc_pt is not None:
+        if abs(hien_tr_pt - float(truoc_pt)) > _SAI_SO_PT:
+            pf.space_before = Pt(float(truoc_pt))
+            _them(ghi_nhan, "rieng", f"cách khối trên {_so(truoc_pt)} pt (một dòng)")
+    elif chung.get("bo_khoang_truoc_doan") and hien_tr_pt > _SAI_SO_PT:
+        pf.space_before = Pt(0)
+        _them(ghi_nhan, "chung", "bỏ khoảng trống trước đoạn")
 
     return ghi_nhan
+
+
+# Thẻ đứng SAU w:contextualSpacing trong w:pPr theo lược đồ.
+_SAU_CONTEXTUAL = ("w:mirrorIndents", "w:suppressOverlap", "w:jc", "w:textDirection",
+                   "w:textAlignment", "w:textboxTightWrap", "w:outlineLvl", "w:divId",
+                   "w:cnfStyle", "w:rPr", "w:sectPr", "w:pPrChange")
+
+
+def _tat_cach_doan_cung_style(p: Paragraph) -> bool:
+    """Tắt `w:contextualSpacing` đang có hiệu lực trên đoạn. Trả True nếu có sửa.
+
+    Thẻ này (ô "Don't add space between paragraphs of the same style") bảo Word
+    BỎ khoảng cách đoạn khi đoạn kề cùng style — cả văn bản dùng "Normal" thì
+    nghĩa là bỏ gần hết. Gặp thật (VB goc 23/09/2026): ô "Kính trình:" đã được
+    đặt cách đoạn 6 pt mà vẫn dính sát "I. Căn cứ trình"; gỡ thẻ là hiện đúng
+    6 pt (đã dựng PDF bằng Word để đo). Hộp Paragraph vẫn hiện "After: 6 pt" nên
+    không ai nhìn ra vì sao.
+
+    Chỉ gọi cho thành phần quy chuẩn KHAI RIÊNG khoảng cách > 0: ở đó con số là
+    điều khoản, không phải thói quen. Lời văn thường không đụng — đổi hàng loạt
+    là đổi bố cục của những văn bản người soạn cố ý dựng khít.
+    """
+    pPr = p._p.get_or_add_pPr()
+    el = pPr.find(qn("w:contextualSpacing"))
+    if el is not None:
+        if el.get(qn("w:val")) in ("0", "false", "off"):
+            return False
+        el.set(qn("w:val"), "0")
+        return True
+
+    # Không khai trên đoạn — xem style có bật không.
+    style, bat = p.style, False
+    for _ in range(10):
+        if style is None:
+            break
+        st_pPr = style.element.find(qn("w:pPr"))
+        cs = st_pPr.find(qn("w:contextualSpacing")) if st_pPr is not None else None
+        if cs is not None:
+            bat = cs.get(qn("w:val")) not in ("0", "false", "off")
+            break
+        style = style.base_style
+    if not bat:
+        return False
+    moi = parse_xml(f'<w:contextualSpacing {nsdecls("w")} w:val="0"/>')
+    moc = next((pPr.find(qn(t)) for t in _SAU_CONTEXTUAL if pPr.find(qn(t)) is not None), None)
+    if moc is not None:
+        moc.addprevious(moi)
+    else:
+        pPr.append(moi)
+    return True
 
 
 def _ep_hoa_thuong(p: Paragraph, kieu: str | None) -> set[int]:
@@ -536,6 +596,140 @@ def _ep_hoa_thuong(p: Paragraph, kieu: str | None) -> set[int]:
             r.text = moi
             da_doi.add(i)
     return da_doi
+
+
+# ── Khối chữ ký ──────────────────────────────────────────────────────────────
+# Chiều cao một dòng đơn của Times New Roman = 1,15 × cỡ chữ (ascent 1825 +
+# descent 443 + lineGap 87 trên 2048 đơn vị/em) — đúng con số Word dùng cho
+# giãn dòng "Single".
+_DONG_DON_TNR = 1.15
+
+# Thẻ đứng SAU w:sz / w:szCs trong w:rPr theo lược đồ — chèn sz trước thẻ đầu tiên gặp.
+_SAU_SZ = ("w:highlight", "w:u", "w:effect", "w:bdr", "w:shd", "w:fitText",
+           "w:vertAlign", "w:rtl", "w:cs", "w:em", "w:lang", "w:eastAsianLayout",
+           "w:specVanish", "w:oMath", "w:rPrChange")
+
+
+def mot_dong_pt(co_pt: float) -> float:
+    return round(float(co_pt) * _DONG_DON_TNR, 1)
+
+
+def _hang_bang(p: Paragraph) -> list:
+    """Mọi `w:tr` bao quanh đoạn, từ trong ra ngoài."""
+    ket_qua, el = [], p._p.getparent()
+    while el is not None:
+        if el.tag == qn("w:tr"):
+            ket_qua.append(el)
+        el = el.getparent()
+    return ket_qua
+
+
+def la_khoi_ky_moi(ma_list: list[str], i: int, khoi=None) -> bool:
+    """Đoạn `i` mở đầu một khối ký THỨ HAI ngay DƯỚI họ tên người ký.
+
+    Mẫu 06 (Tờ trình): dưới "Họ và tên" là khối "PHÊ DUYỆT CỦA [NGƯỜI CÓ THẨM
+    QUYỀN]" / "Ý KIẾN CỦA [LÃNH ĐẠO]", cách một dòng trống. Nhận bằng vị trí,
+    không bằng chữ: `quyen_han_chuc_vu` mà đoạn có chữ liền trước là họ tên.
+
+    Hai ca KHÔNG phải (phản biện dựng lại được cả hai):
+
+    * **Hai chữ ký song song** — ô trái "KT. GIÁM ĐỐC … Nguyễn Văn A", ô phải
+      "TRƯỞNG PHÒNG … Trần Văn B" cùng một hàng bảng. Thứ tự đọc XML đặt ô phải
+      ngay sau họ tên ô trái, nhưng trên trang nó nằm NGANG chứ không ở dưới;
+      cộng khoảng trước là chữ ký bên phải tụt một dòng. Chặn: đoạn nằm trong
+      cùng hàng bảng (`w:tr`) với họ tên.
+    * **Tác giả đã để dòng trống** giữa họ tên và khối mới — cộng thêm một dòng
+      nữa là cách hai dòng.
+
+    `khoi = None` (gọi riêng lẻ trong test) thì bỏ qua kiểm hàng bảng.
+    """
+    if ma_list[i] != "quyen_han_chuc_vu":
+        return False
+    j = next((k for k in range(i - 1, -1, -1) if ma_list[k] != "trong"), -1)
+    if j < 0 or ma_list[j] != "ho_ten_nguoi_ky":
+        return False
+    if j != i - 1:
+        return False                       # đã có dòng trống ngăn cách
+    if khoi is not None:
+        hang_ten = _hang_bang(khoi[j][0])
+        if any(any(h is t for t in hang_ten) for h in _hang_bang(khoi[i][0])):
+            return False
+    return True
+
+
+def chua_cho_ky(khoi, ma_list: list[str], co_pt: float) -> int:
+    """Dòng trống giữa chức vụ và họ tên người ký lấy cỡ chữ của khối ký. Trả số dòng đã sửa.
+
+    Chỗ ký là các dòng TRỐNG tác giả để giữa "GIÁM ĐỐC" và họ tên. Chiều cao
+    dòng trống do cỡ chữ của DẤU ĐOẠN quyết định — mà vòng chuẩn hoá bỏ qua
+    đoạn trống (mã `trong`), nên chúng giữ nguyên cỡ của bản gốc. Gặp thật (VB
+    goc 23/09/2026): 5 dòng trống cỡ 8 dưới chức vụ đã lên cỡ 14 → chỗ ký chỉ
+    còn ~1,6 cm. Đưa dòng trống về cỡ 14, dòng đơn, cách đoạn 0: 5 dòng ≈ 2,8 cm.
+
+    Giữ nguyên SỐ dòng tác giả để — không tự thêm hay bớt: quy định không nêu
+    chỗ ký cao bao nhiêu, và mỗi người ký một cỡ chữ ký.
+    Dòng trống có hình (ảnh chữ ký, con dấu) thì để yên.
+    """
+    so = 0
+    nua_diem = str(int(round(float(co_pt) * 2)))
+    for i, ma in enumerate(ma_list):
+        if ma != "quyen_han_chuc_vu":
+            continue
+        j = next((k for k in range(i + 1, len(ma_list)) if ma_list[k] != "trong"), -1)
+        if j < 0 or ma_list[j] != "ho_ten_nguoi_ky":
+            continue
+        for k in range(i + 1, j):
+            p = khoi[k][0]
+            xml = p._p.xml
+            if "<w:drawing" in xml or "<w:pict" in xml:
+                continue
+            da_sua = False
+            for r in p.runs:
+                if r.font.size is None or abs(r.font.size.pt - float(co_pt)) > _SAI_SO_PT:
+                    r.font.size = Pt(float(co_pt))
+                    da_sua = True
+            pPr = p._p.get_or_add_pPr()
+            rPr = pPr.find(qn("w:rPr"))
+            if rPr is None:
+                rPr = parse_xml(f'<w:rPr {nsdecls("w")}/>')
+                # Lược đồ: rPr đứng TRƯỚC sectPr và pPrChange (văn bản bật Track Changes).
+                moc = next((pPr.find(qn(t)) for t in ("w:sectPr", "w:pPrChange")
+                            if pPr.find(qn(t)) is not None), None)
+                if moc is not None:
+                    moc.addprevious(rPr)
+                else:
+                    pPr.append(rPr)
+            for ten in ("w:sz", "w:szCs"):
+                el = rPr.find(qn(ten))
+                if el is not None:
+                    if el.get(qn("w:val")) != nua_diem:
+                        el.set(qn("w:val"), nua_diem)
+                        da_sua = True
+                    continue
+                moi = parse_xml(f'<{ten} {nsdecls("w")} w:val="{nua_diem}"/>')
+                if ten == "w:szCs" and rPr.find(qn("w:sz")) is not None:
+                    rPr.find(qn("w:sz")).addnext(moi)
+                else:
+                    moc = next((rPr.find(qn(t)) for t in _SAU_SZ
+                                if rPr.find(qn(t)) is not None), None)
+                    if moc is not None:
+                        moc.addprevious(moi)
+                    else:
+                        rPr.append(moi)
+                da_sua = True
+            pf = p.paragraph_format
+            for thuoc in ("space_before", "space_after"):
+                v = _hieu_luc_doan(p, thuoc)
+                if v is None or v.pt > _SAI_SO_PT:
+                    setattr(pf, thuoc, Pt(0))
+                    da_sua = True
+            ls = _hieu_luc_doan(p, "line_spacing")
+            if not isinstance(ls, (int, float)) or abs(float(ls) - 1.0) > 0.01:
+                pf.line_spacing_rule = WD_LINE_SPACING.MULTIPLE
+                pf.line_spacing = 1.0
+                da_sua = True
+            so += da_sua
+    return so
 
 
 # ── Danh sách tự động của Word ───────────────────────────────────────────────
@@ -872,6 +1066,58 @@ def _giu_tab_sau_so(p: Paragraph, bo_nho: dict | None = None) -> bool:
     if not da_co:
         pf.tab_stops.add_tab_stop(Twips(dich))
     return True
+
+
+def dat_dau_cach_sau_so(khoi, ma_list: list[str]) -> int:
+    """Sau số / dấu tự động của Word là MỘT dấu cách thay cho tab. Trả số cấp đã đổi.
+
+    Người dùng chốt 23/09/2026: khoảng từ ký hiệu đầu dòng tới chữ là đúng một
+    dấu cách, như số gõ tay "III. Thẩm quyền" — `bien_doi.chuan_danh_so` đã ép
+    "1. " / "a) " / "- " cho chữ gõ tay, số tự động thì chưa. Gặp thật (VB goc):
+    "I." "II." "IV." tự động cách chữ ~0,9 cm (tab tới thụt treo 1,27 cm của
+    danh sách), còn "III." gõ tay cách một dấu cách — cùng cấp mà hai kiểu.
+
+    Tab không làm được "một dấu cách": điểm dừng tab là một vị trí cố định, số
+    hẹp ("I.") thì hở rộng, số rộng ("VIII.") tràn qua là nhảy sang điểm dừng
+    kế tiếp. `w:suff="space"` bảo Word chèn đúng một dấu cách sau số, không đo gì.
+
+    `suff` nằm trong ĐỊNH NGHĨA cấp danh sách, dùng chung mọi đoạn cùng cấp —
+    nên cấp nào có đoạn nằm trong ô bảng SỐ LIỆU (`bang`) thì để nguyên: bảng
+    giữ thụt treo của người soạn, đổi tab sang dấu cách là lệch cột của họ.
+    """
+    cap_dung: list = []
+    cap_cam: list = []
+    for (p, _tb), ma in zip(khoi, ma_list):
+        if ma == "trong":
+            continue
+        co, lvl = _tim_lvl(p)
+        if not co or lvl is None:
+            continue
+        dich = cap_cam if ma == "bang" else cap_dung
+        if not any(lvl is x for x in dich):
+            dich.append(lvl)
+
+    so = 0
+    for lvl in cap_dung:
+        if any(lvl is x for x in cap_cam):
+            continue
+        suff = lvl.find(qn("w:suff"))
+        if suff is not None:
+            # "nothing": tác giả tự gõ khoảng cách vào lvlText ("Điều %1. ") —
+            # đổi sang "space" là thành hai dấu cách. Chỉ đổi tab.
+            if suff.get(qn("w:val")) in ("space", "nothing"):
+                continue
+            suff.set(qn("w:val"), "space")
+        else:
+            # Lược đồ: w:suff đứng ngay TRƯỚC w:lvlText.
+            moi = parse_xml(f'<w:suff {nsdecls("w")} w:val="space"/>')
+            moc = lvl.find(qn("w:lvlText"))
+            if moc is not None:
+                moc.addprevious(moi)
+            else:
+                lvl.append(moi)
+        so += 1
+    return so
 
 
 def _go_danh_so_tu_dong(doc, p: Paragraph) -> None:

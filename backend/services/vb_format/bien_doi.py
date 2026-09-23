@@ -248,9 +248,14 @@ def chuan_danh_so(txt: str, ma: str, cfg: dict,
                 return []
 
     # ── Mục La Mã: "I)" "I/" → "I." ──
-    if cfg.get("chuan_muc_la_ma") and ma == "muc_la_ma":
+    # Đề mục La Mã in THƯỜNG ("III. Thẩm quyền phê duyệt") không khớp
+    # `muc_la_ma` (luật đó đòi phần sau in hoa) nên rơi vào `noi_dung` — vẫn
+    # phải về đúng một dấu cách sau số như mọi ký hiệu đầu dòng khác. Ở
+    # `noi_dung` chỉ nhận I/V/X: "C. " "D. " "M. " đầu câu nhiều khả năng là
+    # viết tắt tên người hơn là số La Mã.
+    if cfg.get("chuan_muc_la_ma") and ma in ("muc_la_ma", "noi_dung"):
         m = RE_LA_MA_DAU.match(txt)
-        if m:
+        if m and (ma == "muc_la_ma" or re.fullmatch(r"[IVX]+", m.group(1))):
             chuan = f"{m.group(1)}. "
             if m.group(0) != chuan and len(txt) > m.end():
                 return [(0, m.end(), chuan)]

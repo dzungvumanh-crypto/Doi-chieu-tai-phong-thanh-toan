@@ -1149,8 +1149,11 @@ nút hoàn tác (phải xoá tay từng thẻ). Đo thật: 20.000 dòng ghi h�
   phông sẽ in qua Pillow. "NGÂN HÀNG NÔNG NGHIỆP VÀ PHÁT TRIỂN NÔNG THÔN VIỆT NAM" cỡ 12 đậm đo được
   238,0 pt / ô 241,2 pt. Tràn thì nén `w:spacing` tối đa **−24 twip** (đúng mức Phụ lục V dùng),
   **không hạ cỡ chữ**; hết trần vẫn tràn thì dừng và ghi cảnh báo
+- **Độ dài vạch**: Tiêu ngữ **bằng** dòng chữ; tên đơn vị ban hành **1/2** (cận trên của dải 1/3–1/2
+  ở Điều 8.2, đúng mức đo trên Phụ lục V 0,50–0,57); trích yếu 0,4. Không lấy 2/3 — vượt dải quy định
 - **Ba cách kẻ vạch sẵn, ba cách xử lý**: hình vẽ (`<v:line>`, Straight Connector) thì **giữ
-  nguyên**; gạch chân (`w:u`) và viền dưới của đoạn (`w:pBdr/w:bottom`) thì **gỡ rồi vẽ lại** — hai
+  lại nhưng chỉnh độ dài theo quy định và canh giữa** (vạch vẽ cho cỡ chữ cũ sẽ ngắn hơn chữ sau
+  chuẩn hoá; sửa cả bản DrawingML lẫn VML, giữ vị trí dọc tác giả đặt); gạch chân (`w:u`) và viền dưới của đoạn (`w:pBdr/w:bottom`) thì **gỡ rồi vẽ lại** — hai
   cách sau không cắt ngắn được (gạch chân dài đúng bằng chữ, viền đoạn dài hết bề ngang đoạn) nên
   không làm được yêu cầu "1/3 đến 1/2 dòng chữ". Chỉ nhấc riêng `w:bottom`, giữ viền trên/trái/phải
 - **Không vẽ chồng lên đường kẻ có sẵn**: Word neo hình vẽ tay vào *chính đoạn có chữ*
@@ -1272,7 +1275,7 @@ nút hoàn tác (phải xoá tay từng thẻ). Đo thật: 20.000 dòng ghi h�
   |---|---|
   | Thể thức trình bày | Khổ giấy A4, lề 30/20/20/20 mm, đánh số trang canh giữa lề trên (bỏ trang 1), phông Times New Roman (đặt cho cả nhánh `w:cs` để chữ có dấu không lệch phông), màu chữ đen, **giãn dòng 1,2** và cách đoạn 6 pt cho lời văn, thụt dòng đầu 1 cm, chuẩn hoá Tiêu ngữ về “Độc lập - Tự do - Hạnh phúc” (gạch NỐI, mỗi bên một dấu cách — Điều 7.2), và **cỡ chữ / kiểu chữ / căn lề / giãn dòng riêng cho 28 thành phần thể thức** theo Phụ lục III |
   | Viết hoa (Phụ lục IV) | Chữ đầu câu và đầu dòng (có danh sách viết tắt chặn: `TP.`, `v.v.`, `TM.`…); viện dẫn (Phần/Chương/Mục/Tiểu mục/**Điều** viết hoa, *khoản* và *điểm* viết thường — mục V.7); và **từ điển cụm từ** do người dùng tự khai |
-  | Đánh số, gạch đầu dòng | Mọi ký tự gạch đầu dòng (`•`, `–`, `*`, `+`…) → `- `; khoản `1)` `1/` → `1.`; điểm `a.` `a/` → `a)`; mục La Mã `I)` `I/` → `I.`; danh sách **chấm tròn** tự động của Word → gạch đầu dòng gõ tay |
+  | Đánh số, gạch đầu dòng | Mọi ký tự gạch đầu dòng (`•`, `–`, `*`, `+`…) → `- `; khoản `1)` `1/` → `1.`; điểm `a.` `a/` → `a)`; mục La Mã `I)` `I/` → `I.` (kể cả đề mục in thường "III. Thẩm quyền…"); danh sách **chấm tròn** tự động của Word → gạch đầu dòng gõ tay. **Sau mọi ký hiệu đầu dòng đúng MỘT dấu cách** — số tự động của Word dùng `w:suff="space"` thay cho tab (công tắc `danh_so.dau_cach_sau_so`; cấp danh sách có mặt trong bảng số liệu thì giữ tab) |
 
 - **Soát thứ tự đánh số — chỉ báo, không sửa** (`soat_so.py`, công tắc `danh_so.soat_thu_tu`, mặc định
   bật): Điều / Chương / Mục / mục La Mã / khoản / tiểu khoản `1.1` / điểm / tiết `(i)` nhảy số, trùng số,
@@ -1300,11 +1303,18 @@ nút hoàn tác (phải xoá tay từng thẻ). Đo thật: 20.000 dòng ghi h�
   nằm trong danh sách cụm từ liền dòng để chặn hẳn
 - **"Kính gửi" có hai cách trình bày** (Điều 15.4.a): gửi **một** nơi thì cả cụm nằm trên một
   dòng và **canh giữa** (mẫu 06, 09); gửi **nhiều** nơi thì chỉ có chữ "Kính gửi:" đứng
-  riêng rồi liệt kê xuống dòng, để **sát trái** (mẫu 08). Hai tình huống có hai mục cấu hình riêng
+  riêng rồi liệt kê xuống dòng, để **sát trái** (mẫu 08). Hai tình huống có hai mục cấu hình riêng.
+  Cách đoạn **6 pt** (Mẫu 05/06/08), không 0 như khối đầu — để 0 thì dính sát mục "I." bên dưới
+- **Khối Kính gửi dựng bằng bảng hai cột** (`bang_kinh_gui.py`, công tắc `chung.chuan_bang_kinh_gui`):
+  giữ bảng (nó giúp tên dài xuống dòng thụt thẳng hàng), tính lại bề ngang cột theo chữ ở cỡ mới,
+  lề ô 0, canh giữa, bỏ viền. Gửi nhiều nơi thì cột trái không tính dấu ":" → gạch đầu dòng nằm dưới
+  dấu hai chấm (Điều 15.4.a)
+- **Khối chữ ký**: dòng trống chừa chỗ ký giữa chức vụ và họ tên lấy cỡ chữ của khối ký (giữ nguyên số
+  dòng tác giả để); khối "PHÊ DUYỆT CỦA…" / "Ý KIẾN CỦA…" ngay dưới họ tên cách **một dòng** (Mẫu 06)
 - **Khoảng trống trước đoạn (Spacing Before) luôn được đưa về 0.** Khoảng cách thật giữa
   hai đoạn là *After của đoạn trên + Before của đoạn dưới*, nên 7pt/7pt cho ra **14pt** mà
   hộp Paragraph chỉ hiện hai số 7. Đưa Before về 0 để chỉ còn một nguồn quyết định.
-  Khối đầu trang, Kính gửi và khối cuối về **0/0**; lời văn giữ After sẵn có nếu đã ≥ 6pt
+  Khối đầu trang và khối cuối về **0/0**, Kính gửi **0/6**; lời văn giữ After sẵn có nếu đã ≥ 6pt
   (Điều 12.6 chỉ nêu mức tối thiểu). Ô bảng trong khối đầu cũng về 0/0 — khối đó hay được
   dựng bằng bảng hai cột; bảng số liệu giữa văn bản không bị ảnh hưởng
 - **Xuống dòng để trình bày thì KHÔNG viết hoa chữ đầu.** Phụ lục IV mục I nói "đầu một *câu
