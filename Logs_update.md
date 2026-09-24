@@ -4,6 +4,15 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 24/09/2026 Quản lý hệ thống - **Thư mục file tạm trên máy chủ không còn phình mãi**
+    + ✅ Sửa lỗi: file tạm của **Chấm ILO1000** và **Đối chiếu song phương chiều ĐẾN / ĐI** không bao giờ bị xoá
+      sau mỗi lần khởi động lại máy chủ, nên `data/temp_*` cứ lớn dần. Nay dọn lúc 23h hằng ngày như các tính năng khác
+    + ✅ Lần khởi động đầu tiên sau khi cập nhật tự dọn hết phần rác cũ — không cần xoá tay
+    + ✅ **Chuẩn hoá văn bản**: mỗi lượt chạy (kể cả lượt báo lỗi) được lưu lại **30 ngày** trong
+      `data/temp_vb_format/`, mỗi lượt một thư mục bắt đầu bằng ngày giờ, gồm file gốc, file kết quả, cấu hình đã
+      dùng và nhật ký sửa đổi — để rà soát khi có người báo "máy sửa sai". Nhật ký hệ thống ghi ngày giờ + mã rút gọn của từng lượt để tìm đúng thư mục
+    + ℹ️ Muốn đổi số ngày lưu: thêm dòng `VB_FORMAT_LUU_NGAY=<số ngày>` vào file `.env` rồi khởi động lại
+
 - 23/09/2026 Toàn hệ thống - **Tăng tốc**
     + ✅ Nhiều người cùng gửi file đối chiếu / xem trước đơn nghỉ phép không còn làm các màn hình khác đứng chờ
     + ✅ **Nghỉ phép → Dashboard** (lãnh đạo, Tổng hợp, quản trị): mở nhanh hơn — mặc định chỉ tải đơn **từ đầu năm trước**

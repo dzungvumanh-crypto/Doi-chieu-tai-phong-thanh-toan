@@ -16,6 +16,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from backend.core.don_dep import moc_don_gan_nhat, xoa_thu_muc_cu
 from backend.core.tien_trinh_doi_chieu import chay_tach
 from backend.core.uploads import safe_filename
 from backend.services.ilo1000.pipeline import main_from_dir
@@ -171,20 +172,23 @@ def get_output_file(job_id: str, filename: str) -> Path | None:
     return path if path.is_file() else None
 
 
-def _cleanup_old_jobs():
-    now = time.time()
+def _cleanup_old_jobs(cutoff: float | None = None):
+    """Xoá job cũ hơn mốc 23h gần nhất khỏi RAM + đĩa, kèm thư mục mồ côi.
+
+    Cùng khuôn `ach_service._cleanup_old_jobs()`. Bản cũ chỉ xoá job còn nhớ trong RAM
+    (TTL 4 giờ) và chỉ chạy khi có người chạy ILO1000 — restart backend là thư mục của
+    mọi job trước đó nằm lại `data/temp_ilo1000` mãi mãi.
+    """
+    cutoff = moc_don_gan_nhat() if cutoff is None else cutoff
     with _lock:
         expired = [
             jid for jid, j in _jobs.items()
-            if j['status'] in ('done', 'error', 'cancelled')
-            and now - j['_ts'] > CLEANUP_TTL
+            if j['status'] in ('done', 'error', 'cancelled') and j['_ts'] < cutoff
         ]
         for jid in expired:
             del _jobs[jid]
-    for jid in expired:
-        job_dir = TEMP_DIR / jid
-        if job_dir.exists():
-            shutil.rmtree(job_dir, ignore_errors=True)
+        con_song = set(_jobs)
+    xoa_thu_muc_cu(TEMP_DIR, cutoff, con_song)
 
 
 # Khai với chốt chặn dùng chung — xem backend/core/phien_doi_chieu.py.
