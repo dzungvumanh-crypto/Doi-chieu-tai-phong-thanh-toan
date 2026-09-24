@@ -14579,6 +14579,105 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">126</span>
+      <span class="card-title">Chấm ILO1000 — phân biệt "chưa đối chiếu được (thiếu nguồn)" với "đã kiểm mà không khớp" (2026-09-24)</span>
+      <span class="badge badge-info">Code + test xong (249/249 pass), xác nhận trên dữ liệu thật, CHƯA commit — chờ phản biện B9</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-red">Nguyên nhân gốc</span> thiếu 1 file pool làm cả cột TT lẫn cách hiểu "TT rỗng" đều sai, không có tín hiệu nào phân biệt được</div>
+      <p>Batch <code>19-21.9.2026</code> chạy thiếu file <code>Core thừa 18.9.xlsx</code> (11.821
+        dòng tồn đọng từ lần chấm trước) — <code>label_citad_provenance()</code> không có
+        <code>core_pool_label_map</code> để tra, khiến <b>11.694 dòng Citad</b> rơi thẳng vào TT rỗng
+        = "Citad thừa", không phân biệt được với dòng THẬT SỰ không có đối tác nào (bình thường chỉ
+        có 8 dòng). Người chấm nhìn báo cáo không biết đây là "chưa kiểm được vì thiếu dữ liệu đầu
+        vào" hay "đã kiểm kỹ mà không khớp" — 2 việc cần 2 hành động khác hẳn nhau (nạp bù file vs.
+        điều tra giao dịch thật). Mở rộng khảo sát phát hiện thêm: <b>thiếu Hub còn nguy hiểm hơn
+        thiếu pool</b> — Hub rỗng làm <code>Trace</code> Citad rỗng theo, <code>Map dc</code> (khoá
+        đối chiếu) bị CỤT, trong khi Core vẫn tự tính <code>Trace</code> riêng từ <code>REFERENCE</code>
+        → 2 bên LỆCH KHOÁ HỆ THỐNG, không chỉ "thiếu thông tin" — dòng đã hiện "đã khớp" cũng có thể
+        khớp SAI mà không có dấu hiệu gì khác trên chính dòng đó.</p>
+
+      <div class="label"><span class="pill pill-blue">Cơ chế</span> cột mới "Ghi chú đối chiếu" cuối sheet <code>citad</code>/<code>core</code>, phát hiện qua <code>kiem_nguon()</code></div>
+      <p><code>kiem_nguon(ten, paths, df, cot_khoa)</code> (hàm thuần, <code>process.py</code>) gom
+        đúng 3 kiểu hỏng cho MỖI nguồn: không có file / có file nhưng đọc ra 0 dòng / thiếu cột khoá
+        cần để dựng khoá tra (<code>Map dc</code>, STC...). Dùng chung cho 4 nguồn nhưng ở 2 mức thời
+        gian khác nhau: <b>pool Core thừa/pool OSB thừa tính theo cả BATCH</b> (<code>main_from_dir()</code>,
+        vì pool nạp 1 lần dùng chung mọi ngày), <b>Hub/OSB hôm nay tính THEO TỪNG NGÀY</b>
+        (<code>_run_one_day()</code>, vì cửa sổ ngày khác nhau mỗi ngày). Kết quả gộp lại thành 1 cột
+        <code>'Ghi chú đối chiếu'</code> qua <code>ghi_chu_thieu_nguon()</code>, không đổi giá trị cột
+        <code>TT</code> hiện có (đổi TT sẽ làm hỏng logic lọc "Citad thừa" đang dựa vào <code>TT==''</code>).</p>
+      <p><b>Bẫy kỹ thuật đã tránh (B1↔tính năng này):</b> <code>hub_raw</code> trong
+        <code>_run_one_day()</code> đã lọc theo cửa sổ ngày (bao gồm phần mở rộng "nhìn tới" do B1
+        thêm) — rỗng KHÔNG chắc là thiếu file, có thể chỉ vì cửa sổ ngày đó không có dòng khớp (hành
+        vi BÌNH THƯỜNG). Chỉ khi có file NHƯNG <code>hub_raw</code> (đã lọc) rỗng mới đọc lại
+        <code>load_hub()</code> KHÔNG áp cửa sổ, để phân biệt "file thật sự thiếu/rỗng" với "cửa sổ
+        hẹp" — tránh báo động giả cho trường hợp hoàn toàn bình thường này.</p>
+
+      <div class="label"><span class="pill pill-amber">Quyết định quan trọng nhất (Q-A, chốt 2026-09-23)</span> thiếu Hub đánh dấu MỌI DÒNG, thiếu pool/OSB hôm nay chỉ đánh dấu dòng chưa khớp</div>
+      <p><b>Thiếu Hub</b> → ghi chú áp cho <b>MỌI dòng</b> sheet <code>citad</code> VÀ
+        <code>core</code>, kể cả dòng đã có <code>TT</code> (đã khớp) — vì thiếu Hub làm SAI khoá hệ
+        thống, không phải chỉ thiếu thông tin; dòng "đã khớp" vẫn có thể khớp SAI mà không cách nào
+        nhận ra chỉ từ chính dòng đó. <b>Thiếu pool Core thừa/pool OSB thừa/OSB hôm nay</b> → CHỈ
+        đánh dấu dòng <code>TT</code> RỖNG (thiết kế gốc, không đổi) — 3 nguồn này chỉ làm thiếu 1
+        khả năng tra cứu, không làm sai khoá đang có. Hệ quả kéo theo (Q-B, tự quyết kỹ thuật): khi
+        thiếu Hub, pool "Core thừa" mới xuất sang batch sau vẫn PHẢI mang theo ghi chú trên toàn bộ
+        dòng — để cột này gán TRƯỚC <code>build_core_thua_pool()</code> (không phải SAU như bản
+        nháp đầu của kế hoạch, đã bị Q-A/Q-B chốt sau ghi đè), người chấm mở file pool ở batch sau
+        vẫn thấy rõ cảnh báo "batch trước thiếu Hub".</p>
+
+      <table>
+        <tr><th>Thay đổi</th><th>Chi tiết</th></tr>
+        <tr><td><code>process.py::kiem_nguon()</code> (mới, hàm thuần)</td><td>Gom 3 kiểu hỏng, dùng chung 4 nguồn</td></tr>
+        <tr><td><code>process.py::ghi_chu_thieu_nguon()</code> (mới, hàm thuần)</td><td>Tham số <code>nguon_thieu_moi_dong</code> (Hub) áp mọi dòng, <code>nguon_thieu_tt_rong</code> (pool/OSB hôm nay) chỉ áp dòng TT rỗng</td></tr>
+        <tr><td><code>pipeline.py::main_from_dir()</code></td><td>Tính thiếu pool theo BATCH, log CẢNH BÁO, truyền xuống <code>_run_one_day()</code></td></tr>
+        <tr><td><code>pipeline.py::_run_one_day()</code></td><td>Tính thiếu Hub/OSB hôm nay theo NGÀY; gán cột <code>'Ghi chú đối chiếu'</code> cho <code>core_out</code> TRƯỚC <code>build_core_thua_pool()</code>, cho <code>citad_out</code> trước khi tách <code>citad_thua_df</code></td></tr>
+        <tr><td><code>export.py</code></td><td><code>citad_cols</code>/<code>core_cols</code> thêm cột mới ở CUỐI (test khoá theo chỉ số cột 0/3/5 vẫn pass); thêm tham số <code>canh_bao</code> — chèn khối cảnh báo lên ĐẦU sheet <code>'Tóm tắt'</code> khi lượt chạy có thiếu nguồn</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-green">Xác nhận trên dữ liệu thật — 2 kịch bản quan trọng nhất</span></div>
+      <table>
+        <tr><th>Kịch bản</th><th>Kết quả</th></tr>
+        <tr><td>Tái lập ĐÚNG sự cố gốc (batch 19-21.9.2026, bỏ <code>Core thừa 18.9.xlsx</code>)</td>
+          <td><b>11.694/11.694</b> dòng Citad thừa đều có ghi chú <code>'Pool Core thừa: không có
+            file trong dữ liệu vào'</code> — khớp CHÍNH XÁC con số sự cố gốc; 0 dòng đã khớp bị ghi
+            chú nhầm (batch này không thiếu Hub)</td></tr>
+        <tr><td>Thiếu Hub hoàn toàn (cùng batch, xoá cả 2 file pHub)</td>
+          <td><b>55.764/55.764</b> dòng sheet <code>citad</code> và <b>58.783/58.783</b> dòng sheet
+            <code>core</code> đều có ghi chú chứa "Hub" — <b>kể cả 62 dòng Core đã có TT (đã khớp
+            Citad)</b>, đúng yêu cầu Q-A trên dữ liệu thật, không chỉ trên test giả lập</td></tr>
+      </table>
+      <p>Ngoài 2 kịch bản trên, tester còn tự dựng thêm ca "Hub CÓ file nhưng cửa sổ ngày hẹp" (0
+        dòng ghi chú, không báo động giả) và so khớp toàn bộ 8 file/sheet của 1 batch ĐỦ cả 4 nguồn
+        với baseline HEAD trước thay đổi (dựng bằng <code>git worktree</code>, không dùng
+        <code>git stash</code>) — <b>0 dòng lệch</b>, cột mới rỗng 100% đúng thiết kế. Chi tiết đầy
+        đủ: <code>pipeline/TEST_REPORT_chua_doi_chieu.md</code>.</p>
+      <p><b>249/249 test module ILO1000 pass</b> (236 cũ không đổi + 13 mới, không sửa test nào đã
+        có). Toàn bộ suite dự án 1652/1675 pass — 23 lỗi còn lại vẫn ở
+        <code>test_ach_gl02_misden_algorithm.py</code> (thiếu biến môi trường
+        <code>DOI_CHIEU_ZIP_PASSWORD</code> trong <code>.env</code> của worktree), không liên quan
+        thay đổi này.</p>
+
+      <div class="label"><span class="pill pill-gray">Câu hỏi mở Q-C — đã chốt CHẤP NHẬN, không phải bug</span></div>
+      <p>Bất kỳ batch nào không đính kèm file "OSB thừa"/"Core thừa" — kể cả lần chấm đầu tiên hợp
+        lệ, chưa từng có pool — sẽ LUÔN có ghi chú "Pool ... không có file trong dữ liệu vào" trên
+        mọi dòng Citad còn thừa của batch đó, vì chương trình không có cách nào biết pool CÓ NÊN tồn
+        tại hay không ở lần chạy này. Đây KHÔNG phải lỗi phát sinh của tính năng này — là hệ quả trực
+        tiếp của 2 quyết định đã chốt TRƯỚC khi giao việc (Q2=(a) "giữ nguyên khi thiếu pool cũ", Q3=(a)
+        "chấp nhận báo động giả, viết ghi chú TRUNG TÍNH thay vì lời kết tội"). Nếu về sau thấy ghi
+        chú này xuất hiện quá thường xuyên gây nhiễu, cần quay lại hỏi Q-C gốc (có luồng/ngày nào
+        THIẾT KẾ SẴN không bao giờ có OSB/pool, để loại trừ khỏi cảnh báo) — cố ý KHÔNG tự suy diễn
+        câu trả lời này khi code.</p>
+
+      <p><b>Còn treo trước khi mở PR:</b> B9 (1 lượt Agent phản biện, theo đúng luật
+        <code>docs/SKILL.md</code> cho thay đổi chạm logic đối chiếu tài chính) chưa chạy. Chi tiết
+        đầy đủ mọi quyết định thiết kế: <code>pipeline/CODE_REPORT_chua_doi_chieu.md</code>.</p>
+
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-24</footer>
 </div>
 </body>

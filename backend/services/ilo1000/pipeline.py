@@ -9,7 +9,7 @@ from typing import Callable
 
 from backend.services.lich_lam_viec import LICH_RONG, LichLamViec, la_ngay_lam_viec, tai_lich
 
-from .config import OSB_COL_MA_GD
+from .config import HUB_COL_SO_GD, OSB_COL_MA_GD
 from .detect import carryover_window, detect_file_type, group_files_by_date
 from .export import export_excel, export_pool_file
 from .load_citad import load_citad
@@ -20,7 +20,8 @@ from .load_osb import build_osb_key, label_moi_cu, load_osb
 from .load_pool import load_pool_files
 from .process import (
     build_core_thua_forward, build_core_thua_pool, build_mapdc_label_map,
-    build_pool_label, detect_huy, mark_pool_doi_chieu, label_citad_provenance,
+    build_pool_label, detect_huy, ghi_chu_thieu_nguon, kiem_nguon,
+    mark_pool_doi_chieu, label_citad_provenance,
     process_citad, process_core, process_hub, used_citad_keys, used_label_map_keys,
 )
 
@@ -222,6 +223,7 @@ def _run_one_day(
     osb_pool_label_map: 'dict | None' = None,
     pool_state: 'dict | None' = None,
     batch_days: 'set[int] | None' = None,
+    nguon_thieu_pool: 'list[str] | None' = None,
 ) -> Path | None:
     """Xử lý 1 ngày. Trả None nếu bị cancel hoặc thiếu file thiết yếu.
 
@@ -242,6 +244,11 @@ def _run_one_day(
     Q1=(b), chốt 2026-09-23) = T ∪ mọi ngày > T trong tập này, xem
     `_citad_forward_days()`. None (mặc định) → coi batch chỉ có đúng ngày này
     (không mở rộng gì, hệt hành vi cũ).
+
+    `nguon_thieu_pool`: danh sách ghi chú "thiếu nguồn" đã tính SẴN theo BATCH
+    ở `main_from_dir()` (pool Core thừa/pool OSB thừa — xem `process.kiem_nguon()`).
+    Hàm này tự tính thêm phần THEO NGÀY (Hub/OSB hôm nay) rồi gộp lại thành cột
+    'Ghi chú đối chiếu' của sheet citad/core (PLAN_chua_doi_chieu.md, Q-A/Q-B).
     """
 
     log(f'[{date_str}] Kiểm tra file đầu vào...')
@@ -303,6 +310,34 @@ def _run_one_day(
         f'OSB {len(osb_df):,} (kể cả carryover) · CORE {len(core_raw):,} dòng'
     )
 
+    # ── Thiếu nguồn (theo NGÀY) — Hub/OSB hôm nay ────────────────────────────
+    # Hub: `hub_raw` ở trên đã LỌC THEO CỬA SỔ NGÀY (`_hub_carryover_days()`,
+    # B1) — rỗng có thể chỉ vì cửa sổ hẹp (hành vi BÌNH THƯỜNG, KHÔNG phải
+    # thiếu nguồn), không phải vì file không có dữ liệu. Chỉ khi `hub_raw`
+    # rỗng mới đọc lại KHÔNG áp cửa sổ để phân biệt 2 trường hợp — phần lớn
+    # ngày `hub_raw` có dữ liệu nên không phải trả thêm chi phí đọc file lần 2.
+    hub_paths = files.get('hub', [])
+    hub_check_df = hub_raw
+    if hub_paths and hub_raw.empty:
+        hub_check_df = load_hub(hub_paths)
+    ghi_chu_hub = kiem_nguon('Hub', hub_paths, hub_check_df, [HUB_COL_SO_GD])
+
+    # OSB hôm nay: không có ambiguity kiểu Hub ở trên (cửa sổ OSB chỉ lùi về
+    # T-1/chuỗi nghỉ, không phải mở rộng do B1) — dùng thẳng `osb_df` đã lọc.
+    osb_paths = files.get('osb', [])
+    ghi_chu_osb = kiem_nguon('OSB hôm nay', osb_paths, osb_df, [OSB_COL_MA_GD])
+
+    for msg in (ghi_chu_hub, ghi_chu_osb):
+        if msg:
+            log(f'[{date_str}] [WARN] {msg}')
+
+    # Q-A (PLAN_chua_doi_chieu.md, chốt 2026-09-23): thiếu Hub làm SAI khoá hệ
+    # thống (không chỉ thiếu thông tin) → ghi chú áp cho MỌI DÒNG kể cả dòng
+    # đã có TT. Thiếu pool/OSB hôm nay → CHỈ áp cho dòng TT rỗng (thiết kế gốc).
+    nguon_thieu_moi_dong = [ghi_chu_hub] if ghi_chu_hub else []
+    nguon_thieu_tt_rong  = list(nguon_thieu_pool or []) + ([ghi_chu_osb] if ghi_chu_osb else [])
+    canh_bao_ngay = nguon_thieu_moi_dong + nguon_thieu_tt_rong
+
     # ── Build EICP maps ──
     eicp_maps = build_eicp_maps(eicp_df)
 
@@ -321,6 +356,15 @@ def _run_one_day(
     core_out = process_core(core_raw, citad_mapdc, hub_lookups, ngay_int, huy_map)
     if cancel_event.is_set():
         return None
+
+    # ── Ghi chú đối chiếu sheet core — CHỈ Hub (pool/OSB hôm nay không tham
+    # gia process_core(), xem PLAN mục 1 "Sheet nào nhận ghi chú"). Gán TRƯỚC
+    # `build_core_thua_pool()` (bên dưới, trong khối pool_state) CHỦ Ý (Q-B,
+    # chốt 2026-09-23): khi thiếu Hub, pool "Core thừa" xuất sang batch sau
+    # PHẢI mang theo ghi chú này trên toàn bộ dòng, để người chấm không mất
+    # dấu cảnh báo — khác với bản nháp đầu của PLAN mục 1 (gán SAU, giữ ghi
+    # chú ngoài pool), bị Q-A/Q-B (quyết định SAU, cụ thể hơn) ghi đè.
+    core_out['Ghi chú đối chiếu'] = ghi_chu_thieu_nguon(core_out['TT'], nguon_thieu_moi_dong, None)
 
     # ── PLAN_B3 (2026-09-23): log tổng hợp Trace Hub trùng ≥2 giao dịch —
     # số tuyệt đối, không %. Chi tiết "giải bằng Số tiền/chi nhánh/không giải
@@ -374,6 +418,14 @@ def _run_one_day(
         cross_day_used_map=cross_day_used_map,
     )
 
+    # Ghi chú đối chiếu sheet citad — CẢ 4 nguồn (pool Core thừa/pool OSB
+    # thừa/OSB hôm nay/Hub). Gán TRƯỚC khi tách `citad_thua_df` (bên dưới) để
+    # file "Citad thừa {d}.{m}.xlsx" tự mang theo cột này (`export_pool_file()`
+    # ghi mọi cột — PLAN mục 2.2).
+    citad_out['Ghi chú đối chiếu'] = ghi_chu_thieu_nguon(
+        citad_out['TT'], nguon_thieu_moi_dong, nguon_thieu_tt_rong,
+    )
+
     if pool_state is not None:
         pool_state.setdefault('citad_mapdc_by_day', {})[ngay_int] = set(
             citad_out['Map dc'].astype(str)
@@ -414,7 +466,10 @@ def _run_one_day(
 
     # ── Export ──
     log(f'[{date_str}] Xuất file Excel...')
-    out_path = export_excel(hub_out, citad_out, eicp_df, core_out, ngay_int, output_dir, osb_df=osb_df)
+    out_path = export_excel(
+        hub_out, citad_out, eicp_df, core_out, ngay_int, output_dir, osb_df=osb_df,
+        canh_bao=canh_bao_ngay,
+    )
     if not citad_thua_df.empty:
         thua_path = export_pool_file(citad_thua_df, output_dir, f'Citad thừa {ngay.day}.{ngay.month}')
         log(f'[{date_str}] {len(citad_thua_df):,} dòng Citad thừa (không khớp Core/OSB/pool nào) → {thua_path.name}')
@@ -506,6 +561,16 @@ def main_from_dir(
             f'OSB thừa {len(old_osb_pool):,} dòng.'
         )
 
+    # ── Thiếu nguồn (theo BATCH) — pool Core thừa/OSB thừa không có/0 dòng/
+    # thiếu cột 'Map dc' → không dựng được label_map để tra, mọi dòng Citad
+    # còn thừa của MỌI ngày trong batch không phân biệt được "chưa đối chiếu
+    # với pool" và "đã kiểm mà không khớp" (PLAN_chua_doi_chieu.md mục 2.1) ──
+    ghi_chu_pool_core = kiem_nguon('Pool Core thừa', core_thua_paths, old_core_pool, ['Map dc'])
+    ghi_chu_pool_osb  = kiem_nguon('Pool OSB thừa',  osb_thua_paths,  old_osb_pool,  ['Map dc'])
+    nguon_thieu_pool = [x for x in (ghi_chu_pool_core, ghi_chu_pool_osb) if x]
+    for msg in nguon_thieu_pool:
+        log(f'[WARN] {msg} — dòng Citad thừa liên quan sẽ ghi chú "chưa đối chiếu", không phải "không khớp".')
+
     pool_state: dict = {}
 
     # ── Nạp Core TOÀN BỘ các ngày trước, để phát hiện đúng Hủy khác ngày ──
@@ -554,6 +619,7 @@ def main_from_dir(
             osb_pool_label_map=osb_pool_label_map,
             pool_state=pool_state,
             batch_days=batch_days_int,
+            nguon_thieu_pool=nguon_thieu_pool,
         )
         if out:
             output_paths.append(out)

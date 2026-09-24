@@ -14,11 +14,15 @@ def export_excel(
     ngay_int: int,
     output_dir: str | Path,
     osb_df: pd.DataFrame | None = None,
+    canh_bao: list[str] | None = None,
 ) -> Path:
     """
     Ghi file Excel với 6 sheet: hub, citad, eicp, core, osb, Tóm tắt.
     `osb_df` (tùy chọn — module OSB chưa bắt buộc): dữ liệu OSB cũ+mới đã gộp
     cho ngày đang chấm, kèm cột 'Nhóm' ('OSB mới'/'OSB cũ').
+    `canh_bao` (tùy chọn — PLAN_chua_doi_chieu.md B7): danh sách câu cảnh báo
+    "thiếu nguồn" của lượt chạy này (pool Core thừa/pool OSB thừa/OSB hôm
+    nay/Hub) — in thành khối riêng ở ĐẦU sheet 'Tóm tắt', trước 2 bảng hiện có.
     Trả về Path đến file đã tạo.
     """
     output_dir = Path(output_dir)
@@ -37,11 +41,15 @@ def export_excel(
     ]
     # 'TT': '' (đã khớp Core, hoặc còn thừa chưa xử lý) | 'OSB' (Citad còn thừa
     # sau Core, khớp được với OSB — xem process.match_citad_leftover_with_osb()).
-    citad_cols = ['SERIAL_NO', 'RELATION_NO', 'TRX_DATE', 'AMOUNT', 'Trace', 'Map dc', 'Ngày', 'TT']
+    # 'Ghi chú đối chiếu' (PLAN_chua_doi_chieu.md, thêm CUỐI — tests khẳng định
+    # theo CHỈ SỐ CỘT 0/3/5, xem test_citad_sheet_every_row_keeps_all_columns):
+    # lý do "chưa đối chiếu được" khi thiếu nguồn — xem process.kiem_nguon().
+    citad_cols = ['SERIAL_NO', 'RELATION_NO', 'TRX_DATE', 'AMOUNT', 'Trace', 'Map dc', 'Ngày', 'TT', 'Ghi chú đối chiếu']
     core_cols  = [
         'TRDATE', 'TRBRCD', 'USERID', 'JOURSEQ', 'DYTRSEQ', 'LOCAC', 'CCY',
         'BUSCD', 'UNIT', 'TRCD', 'CUSTOMER', 'TRTP', 'REFERENCE', 'REMARK',
         'DRAMOUNT', 'CRAMOUNT', 'CRTDTM', 'Trace', 'Trace2', 'Map dc', 'Ngày', 'TT',
+        'Ghi chú đối chiếu',
     ]
     osb_cols = ['Mã giao dịch', 'CN thực hiện', 'Số tiền', 'Ngày hạch toán', 'Nhóm']
 
@@ -80,6 +88,15 @@ def export_excel(
         ['Citad', len(citad_df), '',      citad_amt],
     ], columns=['Sheet', 'Số món', 'Tổng Nợ', 'Tổng Có / Số tiền'])
 
+    # ── Cảnh báo thiếu nguồn (PLAN_chua_doi_chieu.md B7) — chèn LÊN ĐẦU sheet
+    # 'Tóm tắt', đẩy 2 bảng hiện có xuống. `canh_bao` rỗng/None → không chèn gì,
+    # 2 bảng cũ giữ nguyên vị trí (hành vi cũ, test hiện có không đổi).
+    canh_bao_df = (
+        pd.DataFrame({'Cảnh báo — thiếu nguồn (chưa đối chiếu được)': canh_bao})
+        if canh_bao else None
+    )
+    summary_startrow = len(canh_bao) + 2 if canh_bao else 0
+
     # ── Ghi Excel ──
     # Mỗi ngày xuất riêng 1 file (`_run_one_day` gọi hàm này 1 lần/ngày) nên
     # mỗi sheet chỉ chứa dữ liệu 1 ngày (~70-75 nghìn dòng trên dữ liệu thật
@@ -109,8 +126,10 @@ def export_excel(
         _write_sheet('eicp',  eicp_df)
         _write_sheet('core',  core_out)
         _write_sheet('osb',   osb_out)
-        _write_sheet('Tóm tắt', summary)
-        tong_hop_startrow = len(summary) + 3
+        if canh_bao_df is not None:
+            _write_sheet('Tóm tắt', canh_bao_df)
+        _write_sheet('Tóm tắt', summary, startrow=summary_startrow)
+        tong_hop_startrow = summary_startrow + len(summary) + 3
         _write_sheet('Tóm tắt', tong_hop, startrow=tong_hop_startrow)
 
     return out_path

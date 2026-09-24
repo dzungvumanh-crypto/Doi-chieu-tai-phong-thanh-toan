@@ -51,6 +51,57 @@ def _trace_trung(trace_col: pd.Series) -> set:
     return set(s[dup])
 
 
+# ── Thiếu nguồn — "chưa đối chiếu" khác "đã kiểm mà không khớp" ──────────────
+# PLAN_chua_doi_chieu.md — dùng chung cho 4 nguồn: pool Core thừa, pool OSB
+# thừa, OSB hôm nay, Hub. Gom 3 kiểu hỏng: không có file / có file nhưng đọc
+# ra 0 dòng / thiếu cột khoá cần để dựng khoá tra (Map dc, STC...).
+
+def kiem_nguon(
+    ten: str,
+    paths: list,
+    df: 'pd.DataFrame | None',
+    cot_khoa: list[str],
+) -> 'str | None':
+    """Trả về câu ghi chú mô tả lý do `ten` bị thiếu, hoặc None nếu nguồn hợp
+    lệ. Hàm THUẦN — không log, caller tự quyết log WARNING nếu cần.
+
+    LƯU Ý (Hub, xem PLAN mục 0/B1): `df` truyền vào phải là dữ liệu đã đọc để
+    biết THẬT SỰ có dòng nào không — không truyền thẳng bản đã lọc theo cửa sổ
+    ngày nếu cửa sổ hẹp là hành vi BÌNH THƯỜNG (VD `_hub_carryover_days()`),
+    kẻo nhầm "cửa sổ hẹp" thành "thiếu nguồn". Caller (pipeline.py) tự chọn
+    `df` phù hợp cho từng nguồn."""
+    if not paths:
+        return f'{ten}: không có file trong dữ liệu vào'
+    if df is None or df.empty:
+        return f'{ten}: có file nhưng đọc ra 0 dòng'
+    thieu_cot = [c for c in cot_khoa if c not in df.columns]
+    if thieu_cot:
+        return f"{ten}: thiếu cột {', '.join(thieu_cot)}"
+    return None
+
+
+def ghi_chu_thieu_nguon(
+    tt: pd.Series,
+    nguon_thieu_moi_dong: 'list[str] | None' = None,
+    nguon_thieu_tt_rong: 'list[str] | None' = None,
+) -> pd.Series:
+    """Cột 'Ghi chú đối chiếu' cho sheet citad/core.
+
+    `nguon_thieu_moi_dong`: lý do áp cho MỌI DÒNG kể cả dòng đã có TT (Q-A —
+    dùng cho Hub: thiếu Hub làm SAI khoá hệ thống, dòng "đã khớp" cũng có thể
+    khớp SAI, không có dấu hiệu gì khác trên chính dòng đó để phân biệt).
+    `nguon_thieu_tt_rong`: lý do CHỈ áp cho dòng TT RỖNG — thiết kế gốc cho
+    pool Core thừa/pool OSB thừa/OSB hôm nay, KHÔNG đổi."""
+    ld_moi_dong = '; '.join(x for x in (nguon_thieu_moi_dong or []) if x)
+    ld_tt_rong  = '; '.join(x for x in (nguon_thieu_tt_rong or []) if x)
+
+    note = pd.Series(ld_moi_dong, index=tt.index, dtype=object)
+    if ld_tt_rong:
+        empty_mask = tt.isna() | (tt.astype(str).str.strip() == '')
+        note.loc[empty_mask] = f'{ld_moi_dong}; {ld_tt_rong}' if ld_moi_dong else ld_tt_rong
+    return note
+
+
 # ── HUB ──────────────────────────────────────────────────────────────────────
 
 def process_hub(hub_df: pd.DataFrame, eicp_maps: dict, ngay_int: int) -> tuple[pd.DataFrame, dict]:

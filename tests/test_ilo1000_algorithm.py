@@ -3721,3 +3721,405 @@ class TestTraceTrungThatB3:
         # CHÍNH dòng đó ('1000000'), KHÔNG phải Trạng thái của dòng SAI
         # ('Hoàn thành') và KHÔNG phải Số tiền của dòng SAI ('10000').
         assert core_out['TT'].iloc[0] == '1000000'
+
+
+# ── PLAN_chua_doi_chieu.md — B1: kiem_nguon() gom 3 kiểu hỏng "thiếu nguồn" ──
+
+class TestKiemNguon:
+    """Dùng chung cho 4 nguồn (pool Core thừa/pool OSB thừa/OSB hôm nay/Hub):
+    không có file / có file nhưng đọc ra 0 dòng / thiếu cột khoá."""
+
+    def test_khong_co_file(self):
+        from backend.services.ilo1000.process import kiem_nguon
+
+        ket_qua = kiem_nguon('Hub', [], pd.DataFrame({'Map dc': ['x']}), ['Map dc'])
+        assert ket_qua == 'Hub: không có file trong dữ liệu vào'
+
+    def test_file_0_dong(self):
+        from pathlib import Path
+        from backend.services.ilo1000.process import kiem_nguon
+
+        ket_qua = kiem_nguon('Pool Core thừa', [Path('a.xlsx')], pd.DataFrame(), ['Map dc'])
+        assert ket_qua == 'Pool Core thừa: có file nhưng đọc ra 0 dòng'
+
+    def test_thieu_cot_khoa(self):
+        from pathlib import Path
+        from backend.services.ilo1000.process import kiem_nguon
+
+        df = pd.DataFrame({'TT': ['x']})
+        ket_qua = kiem_nguon('Pool OSB thừa', [Path('a.xlsx')], df, ['Map dc'])
+        assert ket_qua == "Pool OSB thừa: thiếu cột Map dc"
+
+    def test_hop_le_tra_ve_none(self):
+        from pathlib import Path
+        from backend.services.ilo1000.process import kiem_nguon
+
+        df = pd.DataFrame({'Map dc': ['m1', 'm2']})
+        assert kiem_nguon('Pool Core thừa', [Path('a.xlsx')], df, ['Map dc']) is None
+
+
+# ── B3: ghi_chu_thieu_nguon() — "mọi dòng" (Hub, Q-A) khác "chỉ TT rỗng" ────
+
+class TestGhiChuThieuNguon:
+    def test_khong_thieu_nguon_nao_tra_ve_rong(self):
+        from backend.services.ilo1000.process import ghi_chu_thieu_nguon
+
+        tt = pd.Series(['citad 1.9', '', 'Hủy'])
+        note = ghi_chu_thieu_nguon(tt, None, None)
+        assert list(note) == ['', '', '']
+
+    def test_thieu_pool_chi_ghi_dong_tt_rong(self):
+        from backend.services.ilo1000.process import ghi_chu_thieu_nguon
+
+        tt = pd.Series(['citad 1.9', '', 'Hủy'])
+        note = ghi_chu_thieu_nguon(tt, None, ['Pool Core thừa: không có file trong dữ liệu vào'])
+        assert list(note) == ['', 'Pool Core thừa: không có file trong dữ liệu vào', '']
+
+    def test_thieu_hub_ghi_moi_dong_ke_ca_da_khop(self):
+        """Q-A (chốt 2026-09-23): thiếu Hub làm SAI khoá hệ thống — ghi chú
+        áp cho MỌI DÒNG, kể cả dòng đã có TT (đã khớp)."""
+        from backend.services.ilo1000.process import ghi_chu_thieu_nguon
+
+        tt = pd.Series(['citad 1.9', '', 'Hủy'])
+        note = ghi_chu_thieu_nguon(tt, ['Hub: không có file trong dữ liệu vào'], None)
+        assert list(note) == ['Hub: không có file trong dữ liệu vào'] * 3
+
+    def test_thieu_ca_hub_va_pool_dong_tt_rong_gop_ca_2_ly_do(self):
+        from backend.services.ilo1000.process import ghi_chu_thieu_nguon
+
+        tt = pd.Series(['citad 1.9', ''])
+        note = ghi_chu_thieu_nguon(tt, ['Hub thiếu'], ['OSB thiếu'])
+        assert note.iloc[0] == 'Hub thiếu'
+        assert note.iloc[1] == 'Hub thiếu; OSB thiếu'
+
+
+# ── e2e — Q-A/Q-B: thiếu Hub → ghi chú MỌI dòng citad+core, kể cả dòng đã
+# khớp; pool "Core thừa" mới xuất sang batch sau cũng mang theo ghi chú ─────
+
+class TestMainFromDirThieuHub:
+    def test_thieu_hub_ghi_chu_moi_dong_va_mang_sang_pool(self, tmp_path):
+        import pandas as pd
+        from backend.services.ilo1000.pipeline import main_from_dir
+
+        input_dir = tmp_path / 'input'
+        input_dir.mkdir()
+        output_dir = tmp_path / 'output'
+
+        # Citad: khớp đúng Core hôm nay (Map dc = '2003' + '' + '500000').
+        (input_dir / 'citad_pool.csv').write_text(
+            'SERIAL_NO,RELATION_NO,TRX_DATE,AMOUNT,TRX_STATUS,extra\n'
+            '1,2003HUB000001,20260909,500000,OK,\n',
+            encoding='utf-8',
+        )
+        # Core: dòng A khớp Citad (TRBRCD=2003, CRAMOUNT=500000); dòng B
+        # không khớp gì (TRBRCD=7777, CRAMOUNT=999999) → còn tồn đọng, mang
+        # sang pool "Core thừa" của batch sau.
+        (input_dir / 'gl02_20260909.csv').write_text(
+            'TRDATE,TRBRCD,USERID,JOURSEQ,DYTRSEQ,LOCAC,CCY,BUSCD,UNIT,TRCD,CUSTOMER,TRTP,REFERENCE,REMARK,DRAMOUNT,CRAMOUNT,CRTDTM\n'
+            '20260909,2003,1000API0,1,1,501202,VND,GL,IB,  ,1000-000007709,Normal,NEWREF,test,0,500000,20260909 09:00:00\n'
+            '20260909,7777,1000API0,1,1,501202,VND,GL,IB,  ,1000-000007709,Normal,NEWREF2,test,0,999999,20260909 09:00:00\n',
+            encoding='utf-8',
+        )
+        # KHÔNG có file Hub nào trong input.
+
+        main_from_dir(str(input_dir), str(output_dir))
+
+        citad_out = pd.read_excel(output_dir / '20260909.xlsx', sheet_name='citad', engine='calamine')
+        core_out = pd.read_excel(output_dir / '20260909.xlsx', sheet_name='core', engine='calamine')
+
+        # Dòng Citad đã khớp Core hôm nay (TT != rỗng) VẪN phải có ghi chú.
+        assert (citad_out['TT'] != '').any()
+        assert citad_out['Ghi chú đối chiếu'].astype(str).str.contains('Hub').all(), (
+            "Thiếu Hub phải ghi chú cho MỌI dòng citad, kể cả dòng đã khớp"
+        )
+
+        # Core: dòng A đã khớp Citad ('citad ...') và dòng B chưa khớp — CẢ 2
+        # đều phải có ghi chú (Q-A: không lọc theo TT cho trường hợp Hub).
+        core_tt = core_out['TT'].fillna('')
+        assert (core_tt == '').any() and (core_tt != '').any()
+        assert core_out['Ghi chú đối chiếu'].astype(str).str.contains('Hub').all()
+
+        # Pool "Core thừa 9.9.xlsx" mới xuất ra phải MANG THEO ghi chú (Q-B).
+        pool_path = output_dir / 'Core thừa 9.9.xlsx'
+        assert pool_path.exists()
+        pool_df = pd.read_excel(pool_path, sheet_name=0, engine='calamine')
+        assert 'Ghi chú đối chiếu' in pool_df.columns
+        assert pool_df['Ghi chú đối chiếu'].astype(str).str.contains('Hub').all()
+
+
+# ── e2e — thiết kế gốc: thiếu pool/OSB hôm nay CHỈ ghi chú dòng Citad TT
+# rỗng, sheet core hoàn toàn KHÔNG bị ảnh hưởng (Hub đầy đủ ở test này) ─────
+
+class TestMainFromDirThieuPoolOsbHomNay:
+    def test_chi_ghi_chu_dong_tt_rong_khong_dung_toi_sheet_core(self, tmp_path):
+        import pandas as pd
+        from backend.services.ilo1000.pipeline import main_from_dir
+
+        input_dir = tmp_path / 'input'
+        input_dir.mkdir()
+        output_dir = tmp_path / 'output'
+
+        # Citad: dòng S1 khớp Core hôm nay; dòng S2 không khớp gì (còn thừa).
+        (input_dir / 'citad_pool.csv').write_text(
+            'SERIAL_NO,RELATION_NO,TRX_DATE,AMOUNT,TRX_STATUS,extra\n'
+            'S1,2003HUB000001,20260909,500000,OK,\n'
+            'S2,9999ZZZZ0001,20260909,1,OK,\n',
+            encoding='utf-8',
+        )
+        (input_dir / 'gl02_20260909.csv').write_text(
+            'TRDATE,TRBRCD,USERID,JOURSEQ,DYTRSEQ,LOCAC,CCY,BUSCD,UNIT,TRCD,CUSTOMER,TRTP,REFERENCE,REMARK,DRAMOUNT,CRAMOUNT,CRTDTM\n'
+            '20260909,2003,1000API0,1,1,501202,VND,GL,IB,  ,1000-000007709,Normal,NEWREF,test,0,500000,20260909 09:00:00\n',
+            encoding='utf-8',
+        )
+        # Hub ĐẦY ĐỦ — không được flag "thiếu Hub".
+        hub_file = input_dir / 'phub_di_20260909.xlsx'
+        hub_rows = pd.DataFrame([{
+            'Số giao dịch': 'X1', 'Số Ref Hub': 'RX', 'Số thành công': 'ZZZ',
+            'Số Trace 1': '999999', 'Số tiền thực chuyển': '1',
+            'Trạng thái': 'Hoàn thành', 'Ngày giờ kênh trả': '09/09/2026 08:00',
+            'Nội dung chuyển tiền': '',
+        }])
+        with pd.ExcelWriter(hub_file) as writer:
+            hub_rows.to_excel(writer, index=False, header=True, startrow=1)
+        # KHÔNG có pool Core thừa/pool OSB thừa/OSB hôm nay nào trong input.
+
+        main_from_dir(str(input_dir), str(output_dir))
+
+        citad_out = pd.read_excel(output_dir / '20260909.xlsx', sheet_name='citad', engine='calamine')
+        core_out = pd.read_excel(output_dir / '20260909.xlsx', sheet_name='core', engine='calamine')
+
+        row_a = citad_out[citad_out['SERIAL_NO'] == 'S1'].iloc[0]
+        row_b = citad_out[citad_out['SERIAL_NO'] == 'S2'].iloc[0]
+        assert row_a['TT'] != '' and (pd.isna(row_a['Ghi chú đối chiếu']) or row_a['Ghi chú đối chiếu'] == ''), (
+            "Dòng đã khớp không được ghi chú khi CHỈ thiếu pool/OSB hôm nay (Hub đủ)"
+        )
+        assert row_b['TT'] == '' or pd.isna(row_b['TT'])
+        assert str(row_b['Ghi chú đối chiếu']).strip() != '', (
+            "Dòng TT rỗng phải có ghi chú khi thiếu pool/OSB hôm nay"
+        )
+
+        # Sheet core hoàn toàn KHÔNG bị ảnh hưởng bởi pool/OSB hôm nay thiếu.
+        assert core_out['Ghi chú đối chiếu'].fillna('').astype(str).eq('').all()
+
+
+# ── e2e — đủ cả 4 nguồn: không có ghi chú nào, sheet Tóm tắt không có khối
+# cảnh báo (B7) ──────────────────────────────────────────────────────────────
+
+class TestMainFromDirDayDuNguon:
+    def test_day_du_nguon_khong_co_ghi_chu_va_khong_co_canh_bao(self, tmp_path):
+        import pandas as pd
+        import openpyxl
+        from backend.services.ilo1000.pipeline import main_from_dir
+
+        input_dir = tmp_path / 'input'
+        input_dir.mkdir()
+        output_dir = tmp_path / 'output'
+
+        (input_dir / 'citad_pool.csv').write_text(
+            'SERIAL_NO,RELATION_NO,TRX_DATE,AMOUNT,TRX_STATUS,extra\n'
+            '1,2003HUB000001,20260909,500000,OK,\n',
+            encoding='utf-8',
+        )
+        (input_dir / 'gl02_20260909.csv').write_text(
+            'TRDATE,TRBRCD,USERID,JOURSEQ,DYTRSEQ,LOCAC,CCY,BUSCD,UNIT,TRCD,CUSTOMER,TRTP,REFERENCE,REMARK,DRAMOUNT,CRAMOUNT,CRTDTM\n'
+            '20260909,2003,1000API0,1,1,501202,VND,GL,IB,  ,1000-000007709,Normal,NEWREF,test,0,500000,20260909 09:00:00\n',
+            encoding='utf-8',
+        )
+        # Hub
+        hub_file = input_dir / 'phub_di_20260909.xlsx'
+        hub_rows = pd.DataFrame([{
+            'Số giao dịch': 'X1', 'Số Ref Hub': 'RX', 'Số thành công': 'ZZZ',
+            'Số Trace 1': '999999', 'Số tiền thực chuyển': '1',
+            'Trạng thái': 'Hoàn thành', 'Ngày giờ kênh trả': '09/09/2026 08:00',
+            'Nội dung chuyển tiền': '',
+        }])
+        with pd.ExcelWriter(hub_file) as writer:
+            hub_rows.to_excel(writer, index=False, header=True, startrow=1)
+        # OSB hôm nay (dùng lại helper _write_osb_xlsx/_osb_row định nghĩa ở
+        # dưới file — module đã nạp hết trước khi test chạy, không có vấn đề
+        # thứ tự khai báo).
+        _write_osb_xlsx(input_dir / 'OSB n 9.9.xlsx', [
+            _osb_row('999', '9999 - CN X', '1', '09/09/2026'),
+        ])
+        # Pool Core thừa (Map dc không đụng dữ liệu hôm nay — chỉ cần có mặt)
+        pd.DataFrame([{
+            'TRDATE': 20260828, 'TRBRCD': '9999', 'REFERENCE': 'OLDREF',
+            'Map dc': 'ZZZZ999999', 'TT': 'Chờ đi kênh', 'Đối chiếu': '#N/A',
+        }]).to_excel(input_dir / 'Core thừa 5-8.9.xlsx', index=False, engine='openpyxl')
+        # Pool OSB thừa
+        pd.DataFrame([{
+            'Mã giao dịch': 'OLDGD', 'CN thực hiện': '9999',
+            'Map dc': 'YYYY888888', 'TT': 'OSB', 'Đối chiếu': '#N/A',
+        }]).to_excel(input_dir / 'OSB thừa 5-8.9.xlsx', index=False, engine='openpyxl')
+
+        main_from_dir(str(input_dir), str(output_dir))
+
+        citad_out = pd.read_excel(output_dir / '20260909.xlsx', sheet_name='citad', engine='calamine')
+        core_out = pd.read_excel(output_dir / '20260909.xlsx', sheet_name='core', engine='calamine')
+        assert citad_out['Ghi chú đối chiếu'].fillna('').astype(str).eq('').all()
+        assert core_out['Ghi chú đối chiếu'].fillna('').astype(str).eq('').all()
+
+        wb = openpyxl.load_workbook(output_dir / '20260909.xlsx', data_only=True)
+        ws = wb['Tóm tắt']
+        values = [c.value for row in ws.iter_rows() for c in row if c.value is not None]
+        assert not any('Cảnh báo' in str(v) for v in values), (
+            "Đủ cả 4 nguồn — sheet Tóm tắt không được có khối cảnh báo"
+        )
+
+
+# ── B7: export_excel(canh_bao=...) chèn khối cảnh báo lên ĐẦU sheet Tóm tắt,
+# không làm lệch vị trí 2 bảng hiện có ──────────────────────────────────────
+
+class TestExportCanhBaoSheetTomTat:
+    def test_canh_bao_len_dau_khong_lam_lech_2_bang_cu(self, tmp_path):
+        from backend.services.ilo1000.export import export_excel
+        import openpyxl
+
+        core_df = pd.DataFrame([
+            {'TRBRCD': '1220', 'REFERENCE': 'REF1', 'DRAMOUNT': 0, 'CRAMOUNT': 1_000_000, 'TT': 'citad 6.7'},
+        ])
+        out_path = export_excel(
+            pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), core_df, 20260706, tmp_path,
+            canh_bao=['Hub: không có file trong dữ liệu vào'],
+        )
+
+        wb = openpyxl.load_workbook(out_path, data_only=True)
+        ws = wb['Tóm tắt']
+        rows = [tuple(c.value for c in row) for row in ws.iter_rows()]
+
+        assert rows[0][0] == 'Cảnh báo — thiếu nguồn (chưa đối chiếu được)'
+        assert rows[1][0] == 'Hub: không có file trong dữ liệu vào'
+
+        header_idx = next(i for i, r in enumerate(rows) if r[0] == 'Tình trạng')
+        assert rows[header_idx][:2] == ('Tình trạng', 'Số giao dịch')
+
+        sheet_header_idx = next(i for i, r in enumerate(rows) if r[0] == 'Sheet')
+        assert rows[sheet_header_idx][:4] == ('Sheet', 'Số món', 'Tổng Nợ', 'Tổng Có / Số tiền')
+
+    def test_khong_truyen_canh_bao_giu_nguyen_hanh_vi_cu(self, tmp_path):
+        """`canh_bao=None` (mặc định) — 2 bảng cũ giữ nguyên vị trí, không có
+        khối cảnh báo nào chèn thêm (hồi quy cho test cũ TestExportTongHop)."""
+        from backend.services.ilo1000.export import export_excel
+        import openpyxl
+
+        core_df = pd.DataFrame([
+            {'TRBRCD': '1220', 'REFERENCE': 'REF1', 'DRAMOUNT': 0, 'CRAMOUNT': 1_000_000, 'TT': 'citad 6.7'},
+        ])
+        out_path = export_excel(pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), core_df, 20260706, tmp_path)
+
+        wb = openpyxl.load_workbook(out_path, data_only=True)
+        ws = wb['Tóm tắt']
+        rows = [tuple(c.value for c in row) for row in ws.iter_rows()]
+        assert rows[0][0] == 'Tình trạng', "Không truyền canh_bao — bảng Tóm tắt phải ở ngay đầu như cũ"
+
+
+# ── Khuyến nghị REVIEW_chua_doi_chieu.md mục 1 (B9, không chặn nhưng nên làm
+# trước commit): khoá lại nhánh rủi ro cao nhất — phân biệt "Hub CÓ file
+# nhưng dữ liệu nằm ngoài cửa sổ ngày (B1 hẹp, hành vi BÌNH THƯỜNG)" với "Hub
+# CÓ file nhưng đọc ra 0 dòng thật (file hỏng/sai định dạng, THIẾU NGUỒN thật
+# sự)" — trước chỉ được xác nhận bằng script tạm của tester/reviewer, chưa có
+# test tự động nào trong `tests/` khoá hành vi này lại.
+
+class TestMainFromDirHubCuaSoHepVs0Dong:
+    def test_hub_co_file_nhung_ngoai_cua_so_khong_bao_dong_gia(self, tmp_path):
+        """Kịch bản A (REVIEW mục 1): Hub CÓ file, có 1 dòng dữ liệu THẬT
+        nhưng ngày giao dịch (01/01/2026) nằm ngoài hẳn cửa sổ carryover của
+        ngày đang chấm (09/09/2026) — đây là hành vi BÌNH THƯỜNG (cửa sổ B1
+        hẹp), KHÔNG phải thiếu nguồn. Đủ cả 4 nguồn còn lại để cô lập đúng 1
+        biến số đang kiểm (giống TestMainFromDirDayDuNguon)."""
+        import pandas as pd
+        from backend.services.ilo1000.pipeline import main_from_dir
+
+        input_dir = tmp_path / 'input'
+        input_dir.mkdir()
+        output_dir = tmp_path / 'output'
+
+        (input_dir / 'citad_pool.csv').write_text(
+            'SERIAL_NO,RELATION_NO,TRX_DATE,AMOUNT,TRX_STATUS,extra\n'
+            '1,2003HUB000001,20260909,500000,OK,\n',
+            encoding='utf-8',
+        )
+        (input_dir / 'gl02_20260909.csv').write_text(
+            'TRDATE,TRBRCD,USERID,JOURSEQ,DYTRSEQ,LOCAC,CCY,BUSCD,UNIT,TRCD,CUSTOMER,TRTP,REFERENCE,REMARK,DRAMOUNT,CRAMOUNT,CRTDTM\n'
+            '20260909,2003,1000API0,1,1,501202,VND,GL,IB,  ,1000-000007709,Normal,NEWREF,test,0,500000,20260909 09:00:00\n',
+            encoding='utf-8',
+        )
+        # Hub CÓ file, CÓ dữ liệu thật — nhưng ngày giao dịch 01/01/2026, cách
+        # xa ngày đang chấm (09/09/2026), chắc chắn ngoài mọi cửa sổ carryover.
+        hub_file = input_dir / 'phub_di_20260909.xlsx'
+        hub_rows = pd.DataFrame([{
+            'Số giao dịch': 'X1', 'Số Ref Hub': 'RX', 'Số thành công': 'ZZZ',
+            'Số Trace 1': '999999', 'Số tiền thực chuyển': '1',
+            'Trạng thái': 'Hoàn thành', 'Ngày giờ kênh trả': '01/01/2026 08:00',
+            'Nội dung chuyển tiền': '',
+        }])
+        with pd.ExcelWriter(hub_file) as writer:
+            hub_rows.to_excel(writer, index=False, header=True, startrow=1)
+        # OSB hôm nay
+        _write_osb_xlsx(input_dir / 'OSB n 9.9.xlsx', [
+            _osb_row('999', '9999 - CN X', '1', '09/09/2026'),
+        ])
+        # Pool Core thừa / Pool OSB thừa — đầy đủ, không đụng dữ liệu hôm nay.
+        pd.DataFrame([{
+            'TRDATE': 20260828, 'TRBRCD': '9999', 'REFERENCE': 'OLDREF',
+            'Map dc': 'ZZZZ999999', 'TT': 'Chờ đi kênh', 'Đối chiếu': '#N/A',
+        }]).to_excel(input_dir / 'Core thừa 5-8.9.xlsx', index=False, engine='openpyxl')
+        pd.DataFrame([{
+            'Mã giao dịch': 'OLDGD', 'CN thực hiện': '9999',
+            'Map dc': 'YYYY888888', 'TT': 'OSB', 'Đối chiếu': '#N/A',
+        }]).to_excel(input_dir / 'OSB thừa 5-8.9.xlsx', index=False, engine='openpyxl')
+
+        logs = []
+        main_from_dir(str(input_dir), str(output_dir), log_callback=logs.append)
+
+        assert not any('Hub' in msg and '[WARN]' in msg for msg in logs), (
+            "Hub CÓ file với dữ liệu thật (dù ngoài cửa sổ ngày) KHÔNG được báo động giả 'thiếu Hub'"
+        )
+
+        citad_out = pd.read_excel(output_dir / '20260909.xlsx', sheet_name='citad', engine='calamine')
+        core_out = pd.read_excel(output_dir / '20260909.xlsx', sheet_name='core', engine='calamine')
+        assert citad_out['Ghi chú đối chiếu'].fillna('').astype(str).eq('').all()
+        assert core_out['Ghi chú đối chiếu'].fillna('').astype(str).eq('').all()
+
+    def test_hub_co_file_nhung_doc_ra_0_dong_co_canh_bao(self, tmp_path):
+        """Kịch bản B (REVIEW mục 1): Hub CÓ file nhưng đọc ra 0 dòng thật
+        (chỉ có header, không có dòng dữ liệu nào — VD file hỏng/sai định
+        dạng) — PHẢI coi là thiếu nguồn thật sự, có cảnh báo + ghi chú, khác
+        hẳn kịch bản A ở trên (KHÔNG được lẫn lộn 2 ca này)."""
+        import pandas as pd
+        from backend.services.ilo1000.pipeline import main_from_dir
+
+        input_dir = tmp_path / 'input'
+        input_dir.mkdir()
+        output_dir = tmp_path / 'output'
+
+        (input_dir / 'citad_pool.csv').write_text(
+            'SERIAL_NO,RELATION_NO,TRX_DATE,AMOUNT,TRX_STATUS,extra\n'
+            '1,2003HUB000001,20260909,500000,OK,\n',
+            encoding='utf-8',
+        )
+        (input_dir / 'gl02_20260909.csv').write_text(
+            'TRDATE,TRBRCD,USERID,JOURSEQ,DYTRSEQ,LOCAC,CCY,BUSCD,UNIT,TRCD,CUSTOMER,TRTP,REFERENCE,REMARK,DRAMOUNT,CRAMOUNT,CRTDTM\n'
+            '20260909,2003,1000API0,1,1,501202,VND,GL,IB,  ,1000-000007709,Normal,NEWREF,test,0,500000,20260909 09:00:00\n',
+            encoding='utf-8',
+        )
+        # Hub CÓ file, CÓ header đúng cột, nhưng KHÔNG có dòng dữ liệu nào.
+        hub_file = input_dir / 'phub_di_20260909.xlsx'
+        empty_hub_df = pd.DataFrame(columns=[
+            'Số giao dịch', 'Số Ref Hub', 'Số thành công', 'Số Trace 1',
+            'Số tiền thực chuyển', 'Trạng thái', 'Ngày giờ kênh trả', 'Nội dung chuyển tiền',
+        ])
+        with pd.ExcelWriter(hub_file) as writer:
+            empty_hub_df.to_excel(writer, index=False, header=True, startrow=1)
+
+        logs = []
+        main_from_dir(str(input_dir), str(output_dir), log_callback=logs.append)
+
+        assert any('Hub: có file nhưng đọc ra 0 dòng' in msg for msg in logs), (
+            "Hub có file nhưng 0 dòng thật PHẢI được cảnh báo là thiếu nguồn"
+        )
+
+        citad_out = pd.read_excel(output_dir / '20260909.xlsx', sheet_name='citad', engine='calamine')
+        core_out = pd.read_excel(output_dir / '20260909.xlsx', sheet_name='core', engine='calamine')
+        assert citad_out['Ghi chú đối chiếu'].astype(str).str.contains('Hub').all()
+        assert core_out['Ghi chú đối chiếu'].astype(str).str.contains('Hub').all()
