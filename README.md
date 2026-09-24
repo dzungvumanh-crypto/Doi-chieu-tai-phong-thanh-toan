@@ -997,6 +997,11 @@ backend để quay về như cũ (xem card HN6 trong Implementation-notes).
   1 phiên gần nhất), có dòng ngăn cách khi sang tháng khác; xuất Excel vẫn bắt buộc chọn khoảng ngày
 - Phân quyền: `menu.so_truc` (vào module, xem lịch sử) + `so_truc.ksv_confirm`
   (được xuất hiện trong danh sách chọn KSV)
+- **Kiểm soát chéo** (từ 24/09/2026): KSV phải vừa có `so_truc.ksv_confirm` vừa là trưởng/phó
+  phòng Phòng Thanh toán (admin luôn được); ô GDV1/GDV2 chỉ hiện người không giữ chức danh
+  (`/gdv-only-candidates`), ô Trực phụ vẫn hiện cả phòng (`/gdv-candidates`). Backend chặn
+  KSV trùng GDV của cùng bản ghi ở cả lưu nháp, chuyển KSV và KSV tự sửa; lưu nháp cũng chặn
+  GDV1 trùng GDV2. Xem `docs/DESIGN.md` mục *Phạm vi quyền ≠ phạm vi dữ liệu*
 
 ### Module Báo cáo dữ liệu thanh toán (Phòng Tổng hợp)
 - Menu: **Báo cáo → Phòng Tổng hợp → Báo cáo dữ liệu thanh toán**. Quyền: `menu.th_reports`

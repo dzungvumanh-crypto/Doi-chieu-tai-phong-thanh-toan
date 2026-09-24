@@ -223,8 +223,19 @@ Hai module của phòng Kế toán từng gate theo mã phòng `ACCT`, nay gate 
   hình** và thấy bảng công phòng Kế toán; đó là quyết định của admin khi tick ô, không phải lỗi.
 - "Người kiểm soát" ký bảng công vẫn bắt buộc là trưởng/phó phòng `ACCT` đang active — đó là
   yêu cầu của **chứng từ**, không phải quyền truy cập.
+- **Sổ trực cuối ngày** (24/09/2026, PR #133): người được chọn làm **KSV** phải qua cả hai lớp:
+  có mã `so_truc.ksv_confirm` **và** là trưởng/phó phòng `PAYMENT` (`list_ksv_candidates()`,
+  admin đi qua mọi cửa). Ô **GDV1/GDV2** chỉ hiện người **không** giữ chức danh trưởng/phó phòng
+  (`list_gdv_only_candidates()`). Đó là yêu cầu của chứng từ: người ký kiểm soát phải đúng cấp.
+  ⚠ Hệ quả: tick `so_truc.ksv_confirm` cho một chuyên viên thì **không có tác dụng**, không lỗi.
 
-Đừng nhân danh quy tắc "không hard-code quyền" đi gỡ hai chỗ trên.
+Đừng nhân danh quy tắc "không hard-code quyền" đi gỡ các chỗ trên.
+
+> Sổ trực: luật "GDV không giữ chức danh" chỉ lọc ở ô chọn — backend không kiểm. Thứ backend
+> thật sự chặn là **KSV ≠ GDV** của cùng bản ghi (`save_draft`, `forward_to_ksv`,
+> `ksv_finalize_edit`). Siết danh sách KSV cũng siết luôn bước kiểm "KSV còn hợp lệ" của
+> `forward_to_ksv()` — bản ghi đã khoá một KSV không còn đủ điều kiện thì không đẩy lại được,
+> GDV phải "Huỷ phiên trực" rồi lập lại.
 
 ### Khảo sát — trả lời theo danh sách người nhận, không theo mã quyền
 
