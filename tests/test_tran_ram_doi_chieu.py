@@ -125,13 +125,32 @@ def test_api_ach_chay_tiep_bi_chan_thi_giu_nguyen_cho_xac_nhan(nguon, monkeypatc
     pdc.dang_ky_nguon("ach", "ACH", ach_service.job_dang_chay)      # nguồn THẬT của ACH
     nguon("ilo1000", "ILO1000", True)
     nguon("song_phuong_kenh_core_di", "Song phương ĐI", True)
-    job_id, job = ach_service._new_job()
+    # nguoi_tao_id=1 khớp _fake_admin()['id'] (tests/conftest.py) — D4c (23/09/2026)
+    # kiểm chủ job TRƯỚC cả bước xét RAM ở đây; job không chủ (None) sẽ bị 404
+    # ngay từ lớp ownership, không còn chạm tới nhánh 409 mà test này muốn kiểm.
+    job_id, job = ach_service._new_job(nguoi_tao_id=1)
     job["status"] = "awaiting_confirmation"
     r = admin_client.post(f"/api/ach/continue/{job_id}",
                           files={"file": ("x.xlsx", b"xac-nhan", "application/octet-stream")})
     assert r.status_code == 409, r.text
     assert "chưa đủ bộ nhớ" in r.json()["detail"]["message"]
     assert job["status"] == "awaiting_confirmation"                    # không bị đẩy sang chạy
+
+
+def test_api_ach_chay_tiep_khong_phai_chu_job_bi_chan_truoc_ca_xet_ram(nguon, monkeypatch, admin_client):
+    """Đối chứng của test trên — D4c (kiểm chủ job) phải đứng TRƯỚC bước xét
+    ngân sách RAM: người KHÔNG phải chủ job nhận 404 (không phải 409), và job
+    KHÔNG đổi trạng thái/mất dữ liệu dù ngân sách RAM lúc đó thừa sức chạy."""
+    from backend.services import ach_service
+    pdc.dang_ky_nguon("ach", "ACH", ach_service.job_dang_chay)
+    # Không khai nguồn nào khác đang chạy — ngân sách RAM dư dả, nếu D4c không
+    # đứng trước thì request này sẽ lọt qua xét RAM và đổi được trạng thái job.
+    job_id, job = ach_service._new_job(nguoi_tao_id=999)   # chủ job KHÁC admin_client (id=1)
+    job["status"] = "awaiting_confirmation"
+    r = admin_client.post(f"/api/ach/continue/{job_id}",
+                          files={"file": ("x.xlsx", b"xac-nhan", "application/octet-stream")})
+    assert r.status_code == 404, r.text
+    assert job["status"] == "awaiting_confirmation"                    # không bị đẩy sang chạy/xoá
 
 
 def test_dang_chay_toan_module_chua_co_so_thi_khong_xet_ngan_sach(nguon, monkeypatch):
