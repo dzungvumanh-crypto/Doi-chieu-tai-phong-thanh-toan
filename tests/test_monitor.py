@@ -206,3 +206,177 @@ def test_khong_doc_duoc_o_dia_thi_canh_bao():
     d = _tot()
     d["dia"]["o_dia"] = None
     assert [c["nhom"] for c in mon.danh_gia(d)] == ["Ổ đĩa"]
+
+
+# ── Số liệu cho biểu đồ ──
+def test_theo_gio_du_24_o_ke_ca_gio_khong_co_ban_ghi(tmp_path):
+    # Thiếu ô là trục thời gian co lại: hai cột cách nhau 6 tiếng trông như liền nhau
+    den = datetime(2026, 9, 24, 10, 30)
+    p = tmp_path / "app.log"
+    p.write_text("\n".join([
+        f"{den - timedelta(hours=1):%Y-%m-%d %H:%M:%S} ERROR    x — a",
+        f"{den - timedelta(hours=1):%Y-%m-%d %H:%M:%S} WARNING  x — b",
+        f"{den - timedelta(hours=6):%Y-%m-%d %H:%M:%S} ERROR    x — c",
+    ]) + "\n", encoding="utf-8")
+    tg = mon._quet_log([p], den - timedelta(hours=24), den)["theo_gio"]
+    assert len(tg) == 24
+    assert [o["gio"] for o in tg][-3:] == ["08", "09", "10"]     # cũ → mới, kết ở giờ hiện tại
+    assert tg[-2] == {"gio": "09", "loi": 1, "canh_bao": 1}
+    assert tg[-7]["loi"] == 1 and tg[-1] == {"gio": "10", "loi": 0, "canh_bao": 0}
+
+
+def test_dang_nhap_theo_gio_tach_dung_va_sai(ctx):
+    client, conn = ctx
+    cap_quyen(conn, 2, "menu.monitor")
+    gio_nay = _vn_now().replace(minute=5, second=0, microsecond=0)
+    conn.executemany("INSERT INTO login_logs (username, success, created_at) VALUES (?,?,?)",
+                     [("a", 1, gio_nay), ("b", 0, gio_nay), ("c", 0, gio_nay),
+                      ("d", 1, gio_nay - timedelta(days=2))])       # ngoài 24h
+    conn.commit()
+    tg = client.get("/api/admin/monitor/overview").json()["nguoi_dung"]["theo_gio"]
+    assert len(tg) == 24 and tg[-1] == {"gio": gio_nay.strftime("%H"), "ok": 1, "sai": 2}
+    assert sum(o["ok"] + o["sai"] for o in tg) == 3
+
+
+def test_thanh_phan_dia_cong_du_phan_da_dung(ctx):
+    client, conn = ctx
+    cap_quyen(conn, 2, "menu.monitor")
+    dia = client.get("/api/admin/monitor/overview").json()["dia"]
+    biet = sum(dia[k] or 0 for k in ("csdl", "wal", "sao_luu", "nhat_ky", "tam"))
+    assert dia["khac"] >= 0
+    assert biet + dia["khac"] == dia["da_dung"]                     # cột xếp chồng khớp phần đã dùng
+    assert dia["da_dung"] + dia["o_dia"]["con_trong"] == dia["o_dia"]["tong"]
+
+
+# ── Bộ lấy mẫu tải 24 giờ ──
+_SCHEMA_MAU = """
+CREATE TABLE monitor_samples (ts TEXT PRIMARY KEY, cpu REAL, ram_pct REAL, ram_backend INTEGER,
+                              luong_pct REAL, csdl_pct REAL, nang_pct REAL, doi_chieu INTEGER, loop_ms INTEGER);
+"""
+
+
+def _mau(ts, **kw):
+    m = {"ts": ts, "cpu": None, "ram_pct": None, "ram_backend": None, "luong_pct": None,
+         "csdl_pct": None, "nang_pct": None, "doi_chieu": None, "loop_ms": None}
+    m.update(kw)
+    return m
+
+
+def test_lich_su_lay_DINH_tung_o_va_de_trong_o_khong_co_mau(tmp_path):
+    from backend.services import giam_sat_mau as gs
+
+    db = sqlite3.connect(tmp_path / "m.db")
+    db.executescript(_SCHEMA_MAU)
+    bay_gio = _vn_now().replace(second=0, microsecond=0)
+    # Ba mẫu trong CÙNG một ô 10 phút: 40 / 91 / 55 → ô đó phải là 91, không phải 62
+    for phut, cpu in ((2, 40.0), (5, 91.0), (8, 55.0)):
+        gs.ghi(str(tmp_path / "m.db"), _mau((bay_gio - timedelta(minutes=phut)).strftime("%Y-%m-%d %H:%M:%S"), cpu=cpu))
+    ls = gs.doc_lich_su(db, gio=24, buoc_phut=10)
+    db.close()
+
+    assert len(ls) == 144                                   # 24 giờ / 10 phút
+    o_cuoi = ls[-1]
+    assert o_cuoi["cpu"] == 91.0, "phải lấy đỉnh, không phải trung bình"
+    # Ô không có mẫu để TRỐNG (None) chứ không tô 0: 0 là nói dối rằng lúc đó máy rảnh
+    assert ls[0]["cpu"] is None and ls[-5]["cpu"] is None
+
+
+def test_lich_su_bo_qua_dong_hong_va_tra_none_khi_chua_co_bang(tmp_path):
+    from backend.services import giam_sat_mau as gs
+
+    db = sqlite3.connect(tmp_path / "m.db")
+    assert gs.doc_lich_su(db) is None                       # bảng chưa có → màn hình tự ẩn biểu đồ
+    db.executescript(_SCHEMA_MAU)
+    bay_gio = _vn_now().replace(second=0, microsecond=0)
+    db.execute("INSERT INTO monitor_samples (ts, cpu) VALUES (?, ?)", ("khong-phai-ngay", 50.0))
+    db.execute("INSERT INTO monitor_samples (ts, cpu) VALUES (?, ?)",
+               (bay_gio.strftime("%Y-%m-%d %H:%M:%S"), 33.0))
+    db.commit()
+    ls = gs.doc_lich_su(db)
+    db.close()
+    assert ls[-1]["cpu"] == 33.0                            # một dòng hỏng không làm hỏng cả biểu đồ
+
+
+def test_ghi_don_dong_qua_han(tmp_path):
+    from backend.services import giam_sat_mau as gs
+
+    p = str(tmp_path / "m.db")
+    db = sqlite3.connect(p)
+    db.executescript(_SCHEMA_MAU)
+    db.commit()
+    cu = (_vn_now() - timedelta(days=gs.GIU_NGAY + 1)).strftime("%Y-%m-%d %H:%M:%S")
+    gs.ghi(p, _mau(cu, cpu=10.0))
+    gs.ghi(p, _mau(_vn_now().strftime("%Y-%m-%d %H:%M:%S"), cpu=20.0), don=True)
+    con_lai = [r[0] for r in db.execute("SELECT ts FROM monitor_samples").fetchall()]
+    db.close()
+    assert cu not in con_lai and len(con_lai) == 1
+
+
+def test_overview_tra_lich_su(ctx):
+    client, conn = ctx
+    cap_quyen(conn, 2, "menu.monitor")
+    conn.executescript(_SCHEMA_MAU)
+    conn.execute("INSERT INTO monitor_samples (ts, ram_pct) VALUES (?, ?)",
+                 (_vn_now().strftime("%Y-%m-%d %H:%M:%S"), 88.0))
+    conn.commit()
+    d = client.get("/api/admin/monitor/overview").json()
+    assert d["lich_su_buoc_phut"] == 10 and len(d["lich_su"]) == 144
+    assert d["lich_su"][-1]["ram_pct"] == 88.0
+
+
+def test_task_nen_that_su_ghi_duoc_mot_dong(tmp_path, monkeypatch):
+    """Chạy thật task nền: chup() → ghi() → có dòng trong CSDL.
+
+    Test từng hàm rời không bắt được lỗi nối dây (task không chạy, sai đường dẫn CSDL,
+    chup() ném vì gọi ngoài event loop) — mà đó đúng là kiểu hỏng làm biểu đồ trống trơn.
+    """
+    import asyncio
+
+    from backend.core import slow_request as sr
+    from backend.services import giam_sat_mau as gs
+
+    p = str(tmp_path / "m.db")
+    con = sqlite3.connect(p)
+    con.executescript(_SCHEMA_MAU)
+    con.commit()
+    con.close()
+    monkeypatch.setattr(gs, "CHU_KY_GIAY", 0.05)
+
+    async def chay():
+        sr.bat_do_tre()                     # mẫu đọc độ trễ loop từ bộ đo này
+        gs.bat_dau(p)
+        try:
+            await asyncio.sleep(0.4)        # đủ cho vài lượt lấy mẫu
+        finally:
+            await gs.dung()
+            await sr.tat_do_tre()
+
+    asyncio.run(chay())
+
+    con = sqlite3.connect(p)
+    rows = con.execute("SELECT ts, luong_pct, csdl_pct, loop_ms FROM monitor_samples").fetchall()
+    con.close()
+    assert rows, "task nền không ghi được dòng nào"
+    ts, luong, csdl, loop_ms = rows[-1]
+    assert len(ts) == 19 and luong is not None and csdl is not None
+    assert loop_ms is not None and loop_ms >= 0
+
+
+def test_o_thoi_gian_nam_dung_luoi_10_phut_du_mo_trang_luc_nao(tmp_path, monkeypatch):
+    """Mốc ô phải là 10:00 / 10:10 … chứ không tính lùi từ phút hiện tại.
+
+    Phản biện 24/09 đo được: tính lùi từ phút hiện tại thì mở trang lúc 10:37 ra các mốc
+    10:37 / 10:27 / … — KHÔNG mốc nào rơi vào giờ tròn, mà nhãn trục chỉ vẽ ở giờ tròn
+    → cả ba biểu đồ 24 giờ mất sạch nhãn thời gian trong ~90 % số lần mở trang.
+    """
+    from backend.services import giam_sat_mau as gs
+
+    db = sqlite3.connect(tmp_path / "m.db")
+    db.executescript(_SCHEMA_MAU)
+    for phut in (37, 5, 0, 59):                     # gồm cả phút lẻ lẫn phút tròn
+        monkeypatch.setattr(gs, "_vn_now",
+                            lambda p=phut: datetime(2026, 9, 24, 10, p, 12))
+        ls = gs.doc_lich_su(db, gio=24, buoc_phut=10)
+        assert all(int(o["luc"][3:]) % 10 == 0 for o in ls), f"phút {phut}: ô lệch lưới"
+        assert sum(1 for o in ls if o["luc"].endswith(":00")) == 24, f"phút {phut}: thiếu mốc giờ tròn"
+    db.close()
