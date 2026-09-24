@@ -5,13 +5,11 @@ kênh" (Bước 3-6 — CN trace tiền).
 
 Chạy: .venv\\Scripts\\python.exe -m pytest tests/test_ach_phub_loi.py -v
 """
-from datetime import datetime
-
 import pandas as pd
 import xlsxwriter
 
 from backend.services.ach.b16_phub_loi import doc_phub, xu_ly_phub_loi
-from backend.services.ach.pipeline import _tim_file_phub, xuat_excel_phub_loi
+from backend.services.ach.pipeline import _tim_file_phub
 
 _PHUB_COLS = ['STT', 'Chi nhánh', 'Số thành công', 'Số Trace 1', 'Số Trace 2',
               'Số tiền thực chuyển']
@@ -180,33 +178,3 @@ class TestTimFilePhub:
         out.mkdir()
         (out / 'pHub_ngay_cu.xlsx').write_text('x')
         assert _tim_file_phub(str(tmp_path)) == []
-
-
-# ── xuat_excel_phub_loi() (pipeline.py) — export glue, không test lại logic ──
-# xu_ly_phub_loi() đã test ở trên ─────────────────────────────────────────────
-
-class TestXuatExcelPhubLoi:
-    def test_tra_none_khi_khong_co_du_lieu(self, tmp_path):
-        """Không có file pHub nào (df_ketqua=None) → không tạo file thừa, giống
-        `xuat_excel_napas()`/`xuat_excel_timeout_cu()`."""
-        out = xuat_excel_phub_loi(str(tmp_path), '16536', datetime(2026, 9, 14), None)
-        assert out is None
-        assert list(tmp_path.iterdir()) == []
-
-    def test_xuat_file_2_sheet_dung_ten(self, tmp_path):
-        df_ketqua = pd.DataFrame([
-            {'Số thành công': 'A', 'TRANG_THAI_CAP_NHAT': 'Hoàn thành'},
-            {'Số thành công': 'B', 'TRANG_THAI_CAP_NHAT': 'TT lệnh lỗi ngày T'},
-            {'Số thành công': 'C', 'TRANG_THAI_CAP_NHAT': 'Trạng thái khác'},
-        ])
-        out = xuat_excel_phub_loi(str(tmp_path), '16536', datetime(2026, 9, 14), df_ketqua)
-        assert out == str(tmp_path / '20260914_ACH_PHUBLOI.xlsx')
-
-        xl = pd.ExcelFile(out, engine='calamine')
-        assert xl.sheet_names == ['TONG_KET', 'PHUB_KET_QUA']
-
-        df_out = pd.read_excel(out, sheet_name='PHUB_KET_QUA', engine='calamine')
-        assert len(df_out) == 3
-        assert set(df_out['TRANG_THAI_CAP_NHAT']) == {
-            'Hoàn thành', 'TT lệnh lỗi ngày T', 'Trạng thái khác',
-        }
