@@ -60,6 +60,17 @@ _TEN_TU_SINH = re.compile(r"^ksnb_(\d{8})_(\d{4})\.(?:db|zip)$")
 # Dùng cho glob: phải quét cả hai đuôi, thư mục có thể lẫn bản cũ chưa mã hoá.
 _DUOI_TU_SINH = ("ksnb_*.db", "ksnb_*.zip")
 
+# Bản vừa tạo mà `_verify()` chê thì đổi sang tên này. Cố ý KHÔNG bắt đầu bằng "ksnb_":
+#   - `_rotate()` không tính nó vào vòng giữ. Trước 23/09/2026 bản hỏng vẫn chiếm một
+#     suất "bản của ngày": file chính hỏng liên tục `_GIU_NGAY` ngày (hỏng thường phát
+#     hiện muộn) là bản TỐT cuối cùng bị xoá.
+#   - `last_backup_info()` không coi nó là "bản gần nhất" (cũng không đếm nhầm vào bản
+#     đặt tay) → hỏng kéo dài thì màn Giám sát tự kêu "sao lưu đã ngừng N giờ".
+_TEN_HONG = re.compile(r"^HONG_ksnb_(\d{8})_(\d{4})\.(?:db|zip)$")
+_DUOI_HONG = ("HONG_ksnb_*.db", "HONG_ksnb_*.zip")
+# Giữ vài bản hỏng gần nhất để điều tra — không để phình mãi khi hỏng kéo dài nhiều ngày.
+_GIU_BAN_HONG = 3
+
 # Ref timer toàn cục để có thể hủy khi test
 _timer: threading.Timer | None = None
 
@@ -106,6 +117,23 @@ def _rotate(backup_dir: Path):
             # Trước đây nuốt im lặng. File bị khoá (đang mở bằng công cụ xem DB)
             # thì thư mục cứ phình mà không ai biết vì sao.
             _log.warning("Không xoá được backup cũ %s: %s", p.name, exc)
+
+
+def _don_ban_hong(backup_dir: Path) -> None:
+    """Giữ `_GIU_BAN_HONG` bản hỏng mới nhất (mốc đọc từ tên), xoá phần cũ hơn."""
+    ban = []
+    for mau in _DUOI_HONG:
+        for p in backup_dir.glob(mau):
+            m = _TEN_HONG.match(p.name)
+            if m:
+                ban.append((m.group(1) + m.group(2), p))
+    ban.sort(key=lambda t: t[0])
+    for _, p in ban[:-_GIU_BAN_HONG]:
+        try:
+            p.unlink()
+            _log.info("Dọn bản sao lưu hỏng cũ: %s", p.name)
+        except OSError as exc:
+            _log.warning("Không xoá được bản sao lưu hỏng cũ %s: %s", p.name, exc)
 
 
 # Bảng bắt buộc phải có VÀ có dữ liệu trong một bản sao lưu dùng được. Chọn
@@ -243,11 +271,19 @@ def run_backup(db_path: str = "data/ksnb.db") -> Path:
 
         # Chống rủi ro backup ra bản hỏng — cảnh báo nhưng vẫn giữ file để điều tra.
         # Phải kiểm TRƯỚC khi nén: sau khi nén thì không mở bằng sqlite3 được nữa.
-        if not _verify(dst, so_dong_nguon):
-            _log.error("Backup vừa tạo KHÔNG toàn vẹn: %s (file chính có thể đã hỏng)", dst)
+        hong = not _verify(dst, so_dong_nguon)
+        if hong:
+            # replace, không rename: trên Windows rename ném lỗi nếu đã có bản hỏng cùng phút
+            dst = dst.replace(dst.with_name("HONG_" + dst.name))
+            _log.error("Backup vừa tạo KHÔNG toàn vẹn — cất riêng thành %s, không tính vào "
+                       "vòng giữ bản sao lưu (file chính có thể đã hỏng)", dst.name)
 
         dst = _ma_hoa(dst)
         _rotate(_BACKUP_DIR)
+        _don_ban_hong(_BACKUP_DIR)
+        if hong:
+            # Không chép bản hỏng sang thư mục phụ: ở đó `_rotate()` cũng không dọn nó
+            return dst
         _mirror(dst)
         _log.info("Backup hoàn tất → %s", dst)
         return dst

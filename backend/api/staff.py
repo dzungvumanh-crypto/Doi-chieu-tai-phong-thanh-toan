@@ -461,7 +461,8 @@ def import_users_db(
     kể cả tự nâng mình lên `admin`. Vì thế chặn theo VAI TRÒ THẬT chứ không chỉ
     theo feature, y hệt lý do đã ghi ở `/export-db`.
 
-    Ba thứ trong file cố ý KHÔNG được tin:
+    Bốn thứ trong file cố ý KHÔNG được tin:
+      - Tên cột — chỉ ghi cột trùng đúng tên với bảng thật (xem chú thích ở thân hàm).
       - `role` sai chính tả → tài khoản rớt khỏi mọi kiểm tra quyền (xem
         `_kiem_tra_role` trong schemas/staff.py) → bỏ dòng, báo lại.
       - `department_id` trỏ vào phòng không tồn tại → bỏ dòng, báo lại. Nhờ vậy
@@ -494,8 +495,18 @@ def import_users_db(
     if not rows:
         raise HTTPException(400, "File không có dữ liệu user_tttt")
 
+    # ── Chỉ nhận cột có thật trên hệ thống này ──
+    # Tên cột đến từ FILE rồi ghép thẳng vào câu SQL bên dưới. Một cột tên
+    # `role='admin', full_name` thành `SET role='admin', full_name = ?`: QTV cấp 2
+    # tự nâng mình lên cấp 1, lọt qua bước kiểm `role_moi` (file không có cột
+    # `role` đúng tên). So KHỚP ĐÚNG tên, phân biệt hoa/thường: SQLite coi `ROLE`
+    # và `role` là một cột, nên cột `ROLE` cũng ghi được vào `role` mà
+    # `"role" in cols` vẫn False — lách y hệt. Tên cột ở đây lấy từ lược đồ thật
+    # nên an toàn để ghép chuỗi.
+    cot_that = {r[1] for r in db.execute("PRAGMA table_info(user_tttt)").fetchall()}
     cols = list(rows[0].keys())
-    non_id_cols = [c for c in cols if c != "id"]
+    non_id_cols = [c for c in cols if c in cot_that and c != "id"]
+    cot_la = [c for c in cols if c not in cot_that]
     dept_ids = {r["id"] for r in db.execute("SELECT id FROM departments").fetchall()}
 
     inserted = updated = 0
@@ -567,9 +578,15 @@ def import_users_db(
     if bo_qua:
         chi_tiet += f", bỏ qua {len(bo_qua)} dòng ({'; '.join(bo_qua[:5])}"
         chi_tiet += " …)" if len(bo_qua) > 5 else ")"
+    # Cắt ngắn: tên cột do file tự đặt, dài bao nhiêu cũng được
+    cot_la_ngan = [c[:40] for c in cot_la]
+    if cot_la:
+        chi_tiet += f", bỏ qua cột lạ: {', '.join(repr(c) for c in cot_la_ngan[:5])}"
+        chi_tiet += " …" if len(cot_la) > 5 else ""
     write_audit(db, current["id"], "staff_import_db", "staff", None, chi_tiet, _client_ip(request))
     db.commit()
-    return {"inserted": inserted, "updated": updated, "skipped": bo_qua}
+    return {"inserted": inserted, "updated": updated, "skipped": bo_qua,
+            "ignored_columns": cot_la_ngan}
 
 
 # ─── Nhập Ngày vào ngành hàng loạt từ Excel ─────────────────────────────────

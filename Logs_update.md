@@ -12,6 +12,18 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
     + ⚠️ Khi chưa chọn ngày, 5 ô tổng quan (nhất là ô **Hoàn thành**) nay đếm từ đầu năm trước, không còn cộng dồn mọi năm —
       con số sẽ nhỏ hơn trước, không phải mất dữ liệu
     + ✅ Lưu nhật ký thao tác và tra cứu dữ liệu nhẹ hơn cho máy chủ
+- 23/09/2026 Nhiều màn hình - **Sửa lỗi sau đợt rà soát toàn hệ thống**
+    + ✅ **Nghỉ phép**: duyệt / từ chối / huỷ đơn xong thì ở lại đúng tab đang đứng. Trước đây, vào thẳng tab
+      "Chờ duyệt" từ thanh bên rồi duyệt ngay thì bị đưa về Dashboard
+    + ✅ **Hết phiên đăng nhập** (sau 8 giờ): màn hình tự chuyển về trang đăng nhập kèm thông báo. Trước đây trang vẫn
+      đứng yên, chỉ tới lúc bấm nút mới báo lỗi
+    + ✅ **Bàn giao chứng từ**: mạng chậm không còn làm trang chỉ hiện nửa trên
+    + ✅ **Quản lý người dùng → Nhập file DB**: cột trong file không có trên hệ thống này bị bỏ qua và được báo tên cụ thể;
+      siết kiểm tra để file nhập không đổi được vai trò ngoài quy định
+    + ✅ **Sao lưu tự động**: bản sao lưu bị kiểm là hỏng được cất riêng (tên bắt đầu bằng `HONG_`) và không còn chiếm
+      chỗ của bản tốt trong 7 ngày lưu giữ
+    + ⚠️ Thấy file `HONG_…` trong thư mục sao lưu, hoặc màn Giám sát báo *sao lưu đã ngừng*, là dấu hiệu cơ sở dữ liệu
+      chính có thể đã hỏng — báo ngay cho người quản trị
 
 - 23/09/2026 Chuẩn hoá văn bản - **Sửa 6 điểm trình bày theo QĐ 979**
     + ✅ Đường kẻ ngang có sẵn trong văn bản nay được **chỉnh đúng độ dài**: dưới Tiêu ngữ dài bằng dòng chữ,

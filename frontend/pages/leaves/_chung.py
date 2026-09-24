@@ -340,6 +340,17 @@ def _gd_display(leave: dict) -> str:
     return name
 
 
+def _ten_tab(value):
+    """Giá trị của ui.tabs → tên tab (chuỗi), để cất vào app.storage.user.
+
+    Chưa bấm tab nào thì `leave_tabs.value` vẫn là ĐỐI TƯỢNG Tab gán lúc dựng trang.
+    Cất nguyên đối tượng đó thì hỏng hai chỗ: không ghi ra JSON được (cả lượt lưu phiên
+    của người dùng thất bại — log "Tab is not JSON serializable"), và sang trang mới nó
+    không khớp tab nào vừa dựng → duyệt xong bị bật về Dashboard."""
+    props = getattr(value, "props", None)
+    return props.get("name") if props is not None else value
+
+
 def _approver_cell(name: str, is_pending: bool, width_cls: str):
     """1 ô "KSV/TH/Ban lãnh đạo xác nhận" trong bảng danh sách đơn — đang chờ
     đúng cấp này duyệt (is_pending) thì hiện icon loading thay vì tên (tên

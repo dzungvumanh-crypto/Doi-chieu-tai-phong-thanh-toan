@@ -82,3 +82,10 @@ MCB.xlsx
 # File do pytest-cov sinh ra khi chay test co do phu (CI va may phat trien)
 .coverage
 .coverage.*
+
+# File nen o GOC repo (tai lieu / ma nguon ben ngoai tai ve de tham khao). git-save.bat
+# chay `git add -A` nen file nao roi vao goc cung bi commit - vd legal-merger-main.zip
+# 3,4 MB (21/09/2026). Repo khong co file nen nao duoc theo doi o goc (kiem 23/09/2026).
+/*.zip
+/*.7z
+/*.rar

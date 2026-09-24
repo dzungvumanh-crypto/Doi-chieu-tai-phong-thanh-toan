@@ -248,10 +248,24 @@ async def handovers_page():
         # được định nghĩa trước chỗ đọc query param, và phải xoá được sau khi dùng.
         focus_entry: list = [None]
 
+        def _kho_tab() -> dict | None:
+            """app.storage.tab, hoặc None khi WebSocket chưa nối — NiceGUI ném RuntimeError.
+
+            Mạng chậm quá 3 giây (hết giờ `client.connected()` bên dưới) thì trước đây
+            dòng đọc bộ lọc ném lỗi và phần còn lại của trang không dựng — log 22/09/2026.
+            Thiếu kho chỉ mất việc nhớ bộ lọc qua F5, không đáng làm hỏng cả trang."""
+            try:
+                return app.storage.tab
+            except RuntimeError:
+                return None
+
         def _save_filter_state():
-            app.storage.tab["hv_dept"]  = sel_dept.value
-            app.storage.tab["hv_year"]  = sel_year.value
-            app.storage.tab["hv_month"] = sel_month.value
+            kho = _kho_tab()
+            if kho is None:
+                return
+            kho["hv_dept"]  = sel_dept.value
+            kho["hv_year"]  = sel_year.value
+            kho["hv_month"] = sel_month.value
 
         # ── Side panel renderer ───────────────────────────────────────────────
         async def open_entry_panel(entry_id: int, user_name: str):
@@ -705,7 +719,7 @@ async def handovers_page():
         except Exception:
             pass        # hết giờ chờ / người dùng đóng tab — vẫn dựng tiếp phần còn lại
 
-        saved = app.storage.tab
+        saved = _kho_tab() or {}
         init_dept  = saved.get("hv_dept",  default_dept)
         init_year  = saved.get("hv_year",  default_year)
         init_month = saved.get("hv_month", default_month)

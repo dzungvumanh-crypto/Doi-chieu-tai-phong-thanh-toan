@@ -16,7 +16,7 @@ from frontend.pages.leaves import _chi_tiet_don
 from frontend.pages.leaves._chung import (
     _LEAVE_STATUS, _LEAVE_TYPE, _STATUS_GROUP,
     _fetch_preview, _open_sign_dialog,
-    _fmt_leave_dates, _fmt_ngay_vn, _gd_display, _approver_cell, _loc_lui_qua_moc,
+    _fmt_leave_dates, _fmt_ngay_vn, _gd_display, _approver_cell, _loc_lui_qua_moc, _ten_tab,
 )
 
 _log = logging.getLogger(__name__)
@@ -2533,11 +2533,11 @@ async def leaves_page(open_id: Optional[int] = None):
         # về "Chờ duyệt"/"Chờ xác nhận TT" như trước nữa (kể cả khi thao tác từ
         # Dashboard hay bất kỳ tab nào khác).
         def _nav_pending():
-            app.storage.user["_leaves_goto_raw"] = leave_tabs.value
+            app.storage.user["_leaves_goto_raw"] = _ten_tab(leave_tabs.value)
             ui.navigate.to("/leaves")
 
         def _nav_pending_th():
-            app.storage.user["_leaves_goto_raw"] = leave_tabs.value
+            app.storage.user["_leaves_goto_raw"] = _ten_tab(leave_tabs.value)
             ui.navigate.to("/leaves")
 
         # Ba thứ này tạo sau chỗ dựng _ctx ở trên — gán bổ sung để ngăn kéo chi tiết
@@ -2670,7 +2670,9 @@ async def leaves_page(open_id: Optional[int] = None):
 
         leave_tabs.on_value_change(_on_leave_tab_change)
 
-        with ui.tab_panels(leave_tabs, value=_default_tab).classes("w-full"):
+        # Truyền TÊN tab chứ không truyền đối tượng: tab_panels gắn hai chiều với
+        # leave_tabs nên giá trị này thành luôn `leave_tabs.value` — xem _ten_tab().
+        with ui.tab_panels(leave_tabs, value=_ten_tab(_default_tab)).classes("w-full"):
 
             if t_dashboard:
 
