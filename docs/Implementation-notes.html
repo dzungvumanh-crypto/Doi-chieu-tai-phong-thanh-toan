@@ -53,6 +53,91 @@
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
   <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-09-23</p>
 
+  <!-- HN6 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">HN6</span>
+      <span class="card-title">Hiệu năng hạng mục 06 — bể luồng frontend, danh sách đơn theo năm, ghi audit theo lô, dọn index + thống kê truy vấn</span>
+      <span class="badge badge-done">Xong P1–P4 — 22 test mới; số đo máy chủ chưa có</span>
+    </div>
+    <div class="card-body">
+
+      <p>Từ đợt rà soát 23/09/2026 (xem RS2 ở nhánh sửa lỗi). Bốn việc độc lập, mỗi việc tự lùi lại được. Số đo dưới
+        đây lấy trên máy dev — <b>chưa có số máy chủ</b>; chạy <code>scripts/do_hieu_nang.py</code> trước/sau khi deploy.</p>
+
+      <table>
+        <tr><th>#</th><th>Vấn đề</th><th>Sửa</th><th>Đo / bằng chứng</th></tr>
+        <tr><td>P1</td><td>443 lời gọi <code>asyncio.to_thread</code> của MỌI người dùng chung bể mặc định
+            <code>min(32, lõi+4)</code> = 12 luồng; gửi file giữ luồng tới 600 s</td>
+            <td><code>frontend/be_luong.py</code>: bể 64 luồng (<code>FRONTEND_IO_THREADS</code>), ghi WARNING khi chờ luồng &gt; 0,5 s</td>
+            <td>Test: 12 việc dài + bể 12 → việc ngắn chờ ≥ 0,25 s; bể 64 → &lt; 0,2 s</td></tr>
+        <tr><td>P2</td><td><code>scope=all</code> trả mọi đơn từ trước tới nay mỗi lần mở trang Nghỉ phép</td>
+            <td>Tham số <code>tu_nam</code>; Dashboard tải từ đầu năm trước + đơn đang chờ; tự tải đủ khi lọc lùi quá mốc</td>
+            <td>Dữ liệu dev chỉ 70 đơn — lợi ích lộ ra theo năm, không đo được hôm nay</td></tr>
+        <tr><td>P3</td><td>Luồng audit commit từng dòng, <code>synchronous</code> FULL</td>
+            <td>Vét dòng đang chờ (≤ 200) vào 1 giao dịch; <code>synchronous=NORMAL</code></td>
+            <td>SSD máy dev: 500 dòng 505 ms → 1 ms. Lúc vắng khách lô = 1 dòng, như cũ</td></tr>
+        <tr><td>P4</td><td>17 index thừa thời ORM; CSDL chưa từng ANALYZE</td>
+            <td>DROP 17 index; <code>PRAGMA optimize=0x10002</code> trong lượt dọn nhật ký (khởi động + 12 giờ)</td>
+            <td>Bản sao DB dev: optimize 91 ms, 85 dòng thống kê; 2 kế hoạch truy vấn đổi (dưới)</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> P1 — nới bể frontend, ngược với nguyên tắc ở backend</div>
+      <p>Backend cố ý KHÔNG nới bể 40 luồng (card H): việc nặng giữ GIL, nới chỉ thêm người giành GIL. Luồng frontend
+        thì gần như chỉ chờ mạng — nhả GIL suốt lúc chờ — nên nới rẻ; áp lực đổ về backend, nơi đã có cổng CSDL chờ bằng
+        <code>await</code> và <code>MAX_HEAVY</code>. 64 &lt; 100 kết nối tối đa của <code>httpx.Client</code> dùng chung — nhiều
+        luồng hơn số kết nối chỉ dời chỗ xếp hàng vào trong httpx. Không đổi 443 chỗ gọi sang <code>httpx.AsyncClient</code>:
+        đúng về lâu dài nhưng là thay đổi lớn, còn đây là một dòng <code>set_default_executor</code>.</p>
+      <p>Bể có đo sẵn: dòng WARNING <i>"Lời gọi backend chờ … ms mới có luồng"</i> trong <code>logs/frontend.log</code> (tối đa
+        1 dòng/phút). Không thấy dòng đó = bể đủ; thấy lặp lại = nâng biến môi trường, không cần sửa mã.</p>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> P2 — giới hạn nhưng không được hụt âm thầm</div>
+      <p>Dashboard lọc <code>all_leaves</code> ngay trong tiến trình frontend (tên, trạng thái, khoảng ngày, 5 ô tổng quan).
+        Cắt cứng theo năm thì tìm đơn cũ ra 0 kết quả mà không ai biết vì sao. Ba lớp chống:</p>
+      <ul>
+        <li><code>_loc_lui_qua_moc()</code>: lọc ngày chạm trước 01/01 của mốc (kể cả "đến ngày" mà bỏ trống "từ ngày" — mở
+          về quá khứ) → tự tải toàn bộ rồi mới lọc.</li>
+        <li>Dòng đếm ghi <i>"(từ năm … + đơn đang chờ duyệt)"</i> + nút <b>Tải cả các năm trước</b> — cho tìm theo tên không kèm ngày.</li>
+        <li>Backend luôn trả đơn còn chờ duyệt dù cũ bao lâu; không truyền <code>tu_nam</code> thì trả như cũ (mọi nơi gọi khác không đổi).</li>
+      </ul>
+      <div class="caution"><b>Đổi số hiển thị:</b> khi chưa lọc ngày, 5 ô tổng quan và "N / M đơn" nay đếm trên đơn từ đầu năm
+        trước (trước đây: mọi năm). Ô "Hoàn thành" vì thế nhỏ đi so với hôm qua — đã ghi ⚠️ trong Logs_update.</div>
+      <p>Mốc "năm trước" chứ không "năm nay": tháng 1–3 người duyệt vẫn cần xem đơn cuối năm cũ (chuyển phép Q1).
+        <code>all_leaves[:] = …</code> thay tại chỗ chứ không gán lại — mọi hàm lọc/đếm là closure giữ tham chiếu tới chính danh sách đó.</p>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> P3 — lô lỗi thử lại NGUYÊN LÔ một lần, không thử từng dòng</div>
+      <p>Lỗi thường gặp là khoá CSDL quá 10 s. Thử từng dòng thì 200 dòng × 10 s = luồng ghi đứng nửa tiếng trong khi hàng đợi
+        đầy dần. Lỗi lần 2 → bỏ cả lô, 1 dòng <b>ERROR</b> (trước đây: bỏ 1 dòng, 1 WARNING mỗi dòng).
+        Nâng lên ERROR theo phản biện: lỗi không tạm thời (đĩa đầy) là mất tới 200 dòng nhật ký kiểm soát của nhiều người
+        cùng lúc — ERROR mới được đếm vào mục "lỗi" ở màn Giám sát và tab Tổng quan của Nhật ký hệ thống. Không chờ gom cho đủ lô —
+        chỉ vét những dòng ĐANG chờ sẵn, nên độ trễ ghi không đổi. <code>NORMAL</code> ở chế độ WAL không làm hỏng CSDL khi
+        mất điện, chỉ có thể mất giao dịch cuối chưa checkpoint — cùng mức với bể kết nối.</p>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> P4 — chỉ xoá index không dòng mã nào tạo; giữ index trùng UNIQUE</div>
+      <p>17 cái bị xoá: index trên khoá chính INTEGER (rowid) + bản sao y hệt của index <code>_ensure_indexes()</code> vẫn tạo.
+        GIỮ <code>ix_public_holidays_date</code>, <code>ix_duty_staff_meta_user</code>, <code>ux_dtbb_reports_date_branch</code>:
+        trên DB mới chúng trùng ràng buộc UNIQUE của bảng, nhưng DB tạo từ bản cũ có thể thiếu ràng buộc đó — khi ấy chính
+        index đang giữ tính duy nhất. <code>ux_so_truc_active_date</code> là index một phần (<code>WHERE status != 'cancelled'</code>),
+        không trùng. Test canh: không tên nào vừa DROP vừa CREATE ở chỗ khác.</p>
+      <p><code>PRAGMA optimize</code> trần từ SQLite 3.46 chỉ xét bảng mà <b>kết nối đó</b> đã truy vấn — kết nối dọn nhật ký
+        chỉ đụng 2 bảng log. Phải <code>0x10002</code> (xét mọi bảng). Kế hoạch đổi trên bản sao DB dev:</p>
+      <table>
+        <tr><th>Câu</th><th>Trước</th><th>Sau</th></tr>
+        <tr><td>Đơn theo phòng (70 dòng)</td><td>tra <code>ix_leave_records_staff</code></td><td>quét bảng — bảng nhỏ quét rẻ hơn tra</td></tr>
+        <tr><td>Audit theo người + thời gian</td><td>tra <code>ix_audit_logs_actor</code> + sắp xếp tạm</td><td>tra <code>ix_audit_logs_created</code>, bỏ bước sắp xếp</td></tr>
+      </table>
+      <div class="caution"><b>Lùi lại P4 nếu câu nào chậm đi:</b> <code>DELETE FROM sqlite_stat1;</code> rồi khởi động lại backend
+        (SQLite quay về phỏng đoán cố định như trước) và bỏ <code>_toi_uu_thong_ke()</code>. Index đã DROP không cần tạo lại —
+        không câu nào dùng chúng.</div>
+
+      <div class="label"><span class="pill pill-gray">Chưa làm</span></div>
+      <ul>
+        <li>Chuyển frontend sang <code>httpx.AsyncClient</code> (bỏ hẳn bể luồng) — lớn, chỉ đáng khi P1 vẫn báo chờ.</li>
+        <li>P5 (lưu tạm kết quả màn Giám sát), P6 (nâng FastAPI/Starlette) — ngoài phạm vi đợt này.</li>
+      </ul>
+    </div>
+  </div>
+
   <!-- RS2 -->
   <div class="card">
     <div class="card-header">

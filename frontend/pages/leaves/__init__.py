@@ -16,7 +16,7 @@ from frontend.pages.leaves import _chi_tiet_don
 from frontend.pages.leaves._chung import (
     _LEAVE_STATUS, _LEAVE_TYPE, _STATUS_GROUP,
     _fetch_preview, _open_sign_dialog,
-    _fmt_leave_dates, _fmt_ngay_vn, _gd_display, _approver_cell, _ten_tab,
+    _fmt_leave_dates, _fmt_ngay_vn, _gd_display, _approver_cell, _loc_lui_qua_moc, _ten_tab,
 )
 
 _log = logging.getLogger(__name__)
@@ -647,7 +647,10 @@ async def leaves_page(open_id: Optional[int] = None):
 
             return []
 
-
+        # Dashboard toàn trung tâm chỉ tải đơn từ đầu NĂM TRƯỚC (đủ kỳ chuyển phép Q1) +
+        # mọi đơn còn chờ duyệt. Tải hết từ trước tới nay thì mỗi lần mở trang một nặng
+        # hơn. Tìm lùi quá mốc này thì _tim_kiem() tự tải đủ — xem khối Bộ lọc tìm kiếm.
+        _pham_vi_all = {"tu_nam": _dt_mod.date.today().year - 1}
 
         try:
 
@@ -657,7 +660,8 @@ async def leaves_page(open_id: Optional[int] = None):
 
                 asyncio.to_thread(api.get, "/api/leaves/", {"scope": "pending"}),
 
-                asyncio.to_thread(api.get, "/api/leaves/", {"scope": "all"}) if can_all else _empty(),
+                asyncio.to_thread(api.get, "/api/leaves/", {"scope": "all", "tu_nam": _pham_vi_all["tu_nam"]})
+                if can_all else _empty(),
 
                 asyncio.to_thread(api.get, "/api/leaves/", {"scope": "dept"}) if can_dept else _empty(),
 
@@ -2838,6 +2842,10 @@ async def leaves_page(open_id: Optional[int] = None):
 
                                 _f_count  = ui.label("").classes("text-sm font-medium text-red-800 flex-1")
 
+                                # lambda: hai hàm dưới định nghĩa SAU nút (xem DESIGN.md, mục Event handler async)
+                                _f_all_btn = ui.button("Tải cả các năm trước", icon="history",
+                                    on_click=lambda: _tai_toan_bo_va_loc()).props("flat dense").classes("text-red-700")
+
                                 _f_mine_state = {"active": False}
 
                                 _f_mine_btn = ui.button("👤 Đơn của tôi", icon="person",
@@ -2846,7 +2854,7 @@ async def leaves_page(open_id: Optional[int] = None):
 
                                 ui.button("Tìm kiếm", icon="search",
 
-                                          on_click=lambda: _apply_filter()).classes("bg-red-700 text-white")
+                                          on_click=lambda: _tim_kiem()).classes("bg-red-700 text-white")
 
                                 ui.button("Xóa lọc", icon="clear",
 
@@ -3007,7 +3015,10 @@ async def leaves_page(open_id: Optional[int] = None):
 
                                 filtered.append(lv)
 
-                            _f_count.set_text(f"{len(filtered)} / {len(all_leaves)} đơn")
+                            _tu_nam = _pham_vi_all["tu_nam"]
+                            _f_count.set_text(f"{len(filtered)} / {len(all_leaves)} đơn"
+                                              + (f" (từ năm {_tu_nam} + đơn đang chờ duyệt)" if _tu_nam else ""))
+                            _f_all_btn.set_visibility(bool(_tu_nam))
 
                             _all_container.clear()
 
@@ -3021,8 +3032,41 @@ async def leaves_page(open_id: Optional[int] = None):
 
                             # 5 ô tổng quan luôn theo đúng khoảng ngày đang lọc (không theo
                             # tên/trạng thái/phòng/loại đơn — chỉ riêng ngày) — không chọn
-                            # ngày nào thì tính trên toàn bộ đơn (from_d=to_d=None).
+                            # ngày nào thì tính trên toàn bộ đơn ĐÃ TẢI (from_d=to_d=None):
+                            # từ đầu năm trước, hoặc tất cả sau khi bấm "Tải cả các năm trước".
                             _render_kpi_cards(_status_counts_by_date(from_d, to_d))
+
+
+
+                        async def _tai_toan_bo():
+                            """Bỏ giới hạn năm: tải mọi đơn rồi thay NỘI DUNG all_leaves tại chỗ
+                            (các hàm lọc/đếm đều giữ tham chiếu tới chính danh sách này)."""
+                            try:
+                                ds = await asyncio.to_thread(api.get, "/api/leaves/", {"scope": "all"})
+                            except Exception as e:
+                                _handle_api_error(e)
+                                return False
+                            all_leaves[:] = ds if isinstance(ds, list) else []
+                            _pham_vi_all["tu_nam"] = None
+                            # Phòng chỉ có ở đơn cũ (đã giải thể / đổi tên) cũng phải chọn được
+                            _depts = sorted({lv.get("department_name") or "" for lv in all_leaves
+                                             if lv.get("department_name")})
+                            _f_dept.set_options({"": "Tất cả phòng", **{d: d for d in _depts}},
+                                                value=_f_dept.value if _f_dept.value in _depts else "")
+                            return True
+
+                        async def _tai_toan_bo_va_loc():
+                            if await _tai_toan_bo():
+                                _apply_filter()
+
+                        async def _tim_kiem():
+                            """Như _apply_filter, nhưng tải đủ trước nếu bộ lọc ngày chạm quá mốc
+                            đã tải. Không có bước này thì tìm đơn cũ ra 0 kết quả mà không ai
+                            biết là do chưa tải — đúng kiểu hỏng âm thầm."""
+                            if _loc_lui_qua_moc(_pham_vi_all["tu_nam"], _parse_date(_f_from.value),
+                                                _parse_date(_f_to.value), _parse_date(_f_cr.value)):
+                                await _tai_toan_bo()
+                            _apply_filter()
 
 
 
@@ -3052,11 +3096,11 @@ async def leaves_page(open_id: Optional[int] = None):
 
 
 
-                        _f_name.on("keydown.enter", lambda _: _apply_filter())
+                        _f_name.on("keydown.enter", lambda _: _tim_kiem())
 
-                        _f_from.on("keydown.enter", lambda _: _apply_filter())
+                        _f_from.on("keydown.enter", lambda _: _tim_kiem())
 
-                        _f_to.on("keydown.enter",   lambda _: _apply_filter())
+                        _f_to.on("keydown.enter",   lambda _: _tim_kiem())
 
 
 

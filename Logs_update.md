@@ -4,6 +4,15 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 23/09/2026 Toàn hệ thống - **Tăng tốc**
+    + ✅ Nhiều người cùng gửi file đối chiếu / xem trước đơn nghỉ phép không còn làm các màn hình khác đứng chờ
+    + ✅ **Nghỉ phép → Dashboard** (lãnh đạo, Tổng hợp, quản trị): mở nhanh hơn — mặc định chỉ tải đơn **từ đầu năm trước**
+      cùng mọi đơn còn đang chờ duyệt. Tìm theo khoảng ngày cũ hơn thì hệ thống tự tải thêm; muốn xem hết thì bấm
+      **"Tải cả các năm trước"** cạnh dòng đếm số đơn
+    + ⚠️ Khi chưa chọn ngày, 5 ô tổng quan (nhất là ô **Hoàn thành**) nay đếm từ đầu năm trước, không còn cộng dồn mọi năm —
+      con số sẽ nhỏ hơn trước, không phải mất dữ liệu
+    + ✅ Lưu nhật ký thao tác và tra cứu dữ liệu nhẹ hơn cho máy chủ
+
 - 23/09/2026 Nhiều màn hình - **Sửa lỗi sau đợt rà soát toàn hệ thống**
     + ✅ **Nghỉ phép**: duyệt / từ chối / huỷ đơn xong thì ở lại đúng tab đang đứng. Trước đây, vào thẳng tab
       "Chờ duyệt" từ thanh bên rồi duyệt ngay thì bị đưa về Dashboard

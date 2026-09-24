@@ -2634,6 +2634,32 @@ def _ensure_indexes():
         # mirror ix_doi_chieu_citad_history_session_id (PTT) — get_reconciliation_history()
         # và so_lan_luu trong get_reconciliation_days() lọc/đếm theo session_id.
         "CREATE INDEX IF NOT EXISTS ix_doi_chieu_citad_nostro_history_session_id ON doi_chieu_citad_nostro_history(session_id)",
+        # ── Dọn index thời ORM cũ — 2026-09-23 (cùng loại với ix_ksnb_staff_* ở trên) ──
+        # Không dòng mã nào còn tạo chúng; chúng nằm lại trong DB từ thời SQLAlchemy.
+        # Hai nhóm, đều không câu truy vấn nào cần:
+        #   - index trên khoá chính INTEGER (tức rowid) — SQLite tra thẳng rowid;
+        #   - bản sao y hệt của index mà danh sách trên vẫn tạo (ghi chú bên phải).
+        # Mỗi cái bắt SQLite ghi thêm một cây B mỗi lần thêm/sửa dòng. CỐ Ý GIỮ các index
+        # trùng ràng buộc UNIQUE (ix_public_holidays_date, ix_duty_staff_meta_user,
+        # ux_dtbb_reports_date_branch): DB tạo từ bản cũ có thể thiếu ràng buộc trong
+        # bảng, khi đó chính index đó đang giữ tính duy nhất.
+        "DROP INDEX IF EXISTS ix_departments_id",
+        "DROP INDEX IF EXISTS ix_source_users_id",
+        "DROP INDEX IF EXISTS ix_bundle_groups_id",
+        "DROP INDEX IF EXISTS ix_leave_records_id",
+        "DROP INDEX IF EXISTS ix_bundles_id",
+        "DROP INDEX IF EXISTS ix_bundle_items_id",
+        "DROP INDEX IF EXISTS ix_delegation_records_id",
+        "DROP INDEX IF EXISTS ix_entry_change_logs_id",
+        "DROP INDEX IF EXISTS ix_public_holidays_id",
+        "DROP INDEX IF EXISTS ix_login_logs_id",
+        "DROP INDEX IF EXISTS ix_leave_action_logs_id",
+        "DROP INDEX IF EXISTS ix_delegation_records_giam_doc_id",      # = ix_delegation_gd
+        "DROP INDEX IF EXISTS ix_delegation_records_pho_giam_doc_id",  # = ix_delegation_pgd
+        "DROP INDEX IF EXISTS ix_entry_change_logs_performed_by_id",   # = ix_entry_change_logs_actor
+        "DROP INDEX IF EXISTS ix_entry_change_logs_entry_id",          # = ix_entry_change_logs_entry
+        "DROP INDEX IF EXISTS ix_leave_action_logs_leave_id",          # = ix_leave_action_logs
+        "DROP INDEX IF EXISTS ix_login_logs_created_at",               # = ix_login_logs_created
     ]
     conn = sqlite3.connect(DB_PATH, timeout=30)
     try:
