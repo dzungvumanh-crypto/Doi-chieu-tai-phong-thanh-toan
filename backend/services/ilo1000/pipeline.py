@@ -322,6 +322,19 @@ def _run_one_day(
     if cancel_event.is_set():
         return None
 
+    # ── PLAN_B3 (2026-09-23): log tổng hợp Trace Hub trùng ≥2 giao dịch —
+    # số tuyệt đối, không %. Chi tiết "giải bằng Số tiền/chi nhánh/không giải
+    # được" từng Trace đã có log WARNING riêng ở process_core() khi không
+    # giải được — dòng này chỉ cho biết QUY MÔ ảnh hưởng của ngày đang chấm.
+    dup_traces_hub = hub_lookups.get('trace_trung', {}).get('keys', set())
+    if dup_traces_hub and 'Trace' in core_out.columns:
+        n_core_anh_huong = int(core_out['Trace'].astype(str).isin(dup_traces_hub).sum())
+        log(
+            f'[{date_str}] Trace Hub trùng: {len(dup_traces_hub):,} nhóm · '
+            f'{n_core_anh_huong:,} dòng Core rơi vào nhóm này (xem log WARNING '
+            f'phía trên nếu có Trace không giải được bằng Số tiền/chi nhánh).'
+        )
+
     # ── Lọc citad_out về ĐÚNG TRX_DATE == T trước khi tính TT/xuất/tồn đọng ──
     # citad_raw/citad_mapdc ở trên dùng CẢ CỬA SỔ (để Core tra được), nhưng
     # sheet 'citad' xuất ra và mọi phần tồn đọng phía sau CHỈ được chứa đúng 1

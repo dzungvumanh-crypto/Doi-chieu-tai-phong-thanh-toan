@@ -1,13 +1,19 @@
 """Logic đối chiếu ILO1000: tính Trace, Map dc, phát hiện Hủy, điền TT."""
 
+import logging
 from typing import Callable
 
 import pandas as pd
 
+from backend.services.ach.so_tien import LoiDinhDangSoTien, doc_so_tien
+
 from .config import (
     HUB_COL_SO_GD, HUB_COL_STC, HUB_COL_TRACE, HUB_COL_TRACE2_RAW,
     HUB_COL_TRANG_THAI, HUB_COL_NGAY_GIO, HUB_COL_NOI_DUNG, HUB_COL_SO_TIEN,
+    HUB_COL_CHI_NHANH,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _safe_str(s) -> pd.Series:
@@ -20,6 +26,31 @@ def _first_match(keys: pd.Series, values: pd.Series) -> dict:
     return dict(zip(keys[mask], values[mask]))
 
 
+def _first_match_unique(keys: pd.Series, values: pd.Series) -> dict:
+    """PLAN_B3 — khác `_first_match()`: khoá xuất hiện ≥2 LẦN bị LOẠI HẲN
+    (không đoán đại "dòng đầu"), chỉ giữ khoá xác định được ĐÚNG 1 dòng.
+    Dùng cho khoá phụ (Trace, Số tiền[, Chi nhánh]) của nhóm Trace trùng —
+    "lọc Số tiền" phải biết CÒN LẠI BAO NHIÊU ứng viên để quyết định đi tiếp
+    xuống khoá chi nhánh hay dừng ở Q3 (PLAN_B3 mục 3.3); `_first_match()`
+    (giữ dòng đầu vô điều kiện) sẽ khớp "trúng" ngay ở bước Số tiền dù vẫn
+    còn ≥2 ứng viên cùng số tiền khác chi nhánh — sai với đúng ý đồ nghiệp
+    vụ "lọc Số tiền trước, KHÔNG giải được thì mới xét chi nhánh"."""
+    nonblank = keys.astype(bool)
+    counts = keys[nonblank].value_counts()
+    unique_keys = set(counts[counts == 1].index)
+    mask = nonblank & keys.isin(unique_keys)
+    return dict(zip(keys[mask], values[mask]))
+
+
+def _trace_trung(trace_col: pd.Series) -> set:
+    """Tập giá trị Trace (Hub) xuất hiện ≥2 lần — Trace rỗng KHÔNG tính là
+    trùng (PLAN_B3 mục 4/B2)."""
+    s = trace_col.fillna('').astype(str)
+    nonblank = s != ''
+    dup = nonblank & s.duplicated(keep=False)
+    return set(s[dup])
+
+
 # ── HUB ──────────────────────────────────────────────────────────────────────
 
 def process_hub(hub_df: pd.DataFrame, eicp_maps: dict, ngay_int: int) -> tuple[pd.DataFrame, dict]:
@@ -29,12 +60,14 @@ def process_hub(hub_df: pd.DataFrame, eicp_maps: dict, ngay_int: int) -> tuple[p
         'stc_to_trace':    {STC → Trace text}  ← để citad dùng
         'trace_trangthai': {Trace text → Trạng thái}
         'trace_sotien':    {Trace text → Số tiền}
+        'trace_trung':     {'keys', 'theo_tien', 'theo_tien_cn', 'ung_vien'} — xem PLAN_B3
     }
     """
     df = hub_df.copy()
 
     if df.empty:
         empty_dicts = {k: {} for k in ('stc_to_trace', 'trace_trangthai', 'trace_sotien')}
+        empty_dicts['trace_trung'] = {'keys': set(), 'theo_tien': {}, 'theo_tien_cn': {}, 'ung_vien': {}}
         return df, empty_dicts
 
     hub_to_core: dict = eicp_maps.get('hub_to_core', {})
@@ -117,10 +150,80 @@ def process_hub(hub_df: pd.DataFrame, eicp_maps: dict, ngay_int: int) -> tuple[p
     trace_trangthai = _first_match(trace_col, tt_col)
     trace_sotien    = _first_match(trace_col, sotien_col)
 
+    # ── PLAN_B3 (2026-09-23): khoá phụ Số tiền / mã chi nhánh phát lệnh —
+    # CHỈ cho các dòng Hub có Trace xuất hiện ≥2 lần (batch thật 29/8-3/9:
+    # 132.401 dòng Hub, chỉ 38 nhóm/76 dòng rơi vào đây — B0 đã xác nhận).
+    # 3 dict ở trên GIỮ NGUYÊN, không đụng — đây chỉ là dữ liệu THÊM.
+    dup_traces = _trace_trung(trace_col)
+    theo_tien: dict = {}
+    theo_tien_cn: dict = {}
+    ung_vien: dict = {}
+    if dup_traces:
+        sub_mask = trace_col.isin(dup_traces)
+        sub_trace = trace_col.loc[sub_mask]
+        sub_tt    = tt_col.loc[sub_mask]
+        sub_sotien_text = sotien_col.loc[sub_mask]
+        sub_cn = _safe_str(
+            df.get(HUB_COL_CHI_NHANH, pd.Series('', index=df.index))
+        ).loc[sub_mask]
+
+        # `ung_vien` (chỉ để LOG khi Q3/Q4 xảy ra ở process_core(), không
+        # dùng để khớp) KHÔNG phụ thuộc việc parse Số tiền có thành công hay
+        # không — điền cho TOÀN BỘ nhóm trùng trước.
+        for tr, ttv, sv, cn in zip(sub_trace, sub_tt, sub_sotien_text, sub_cn):
+            ung_vien.setdefault(tr, []).append((ttv, sv, cn))
+
+        # PLAN mục 3.1: "bỏ bước lọc theo Số tiền cho NHÓM ĐÓ" (số ít) — gọi
+        # doc_so_tien() TỪNG NHÓM TRACE RIÊNG (KHÔNG gộp cả 38 nhóm vào 1 lời
+        # gọi) để 1 dòng Số tiền sai định dạng chỉ làm mất khoá phụ của ĐÚNG
+        # nhóm chứa dòng đó, không lan sang các nhóm sạch còn lại. Sửa theo
+        # phản biện B10 (2026-09-24) — bản đầu gọi 1 lần trên cả 76 dòng/38
+        # nhóm gộp, 1 dòng lỗi tắt khoá phụ của TOÀN BỘ 38 nhóm, rộng hơn ý
+        # PLAN. Quy mô vòng lặp = số Trace trùng (vài chục), không phải tổng
+        # số dòng Hub — chấp nhận được (skill bank-reconciliation).
+        for tr in dup_traces:
+            idx_tr = sub_trace.index[sub_trace == tr]
+            try:
+                sotien_int_tr = doc_so_tien(
+                    df.loc[idx_tr, HUB_COL_SO_TIEN], f'pHub (nhóm Trace trùng {tr!r})',
+                )
+            except LoiDinhDangSoTien as e:
+                logger.error(
+                    'Nhóm Trace trùng %r có Số tiền pHub không đúng định dạng — '
+                    'bỏ khoá phụ Số tiền/chi nhánh CHỈ CHO NHÓM NÀY (%d nhóm '
+                    'khác vẫn dùng được khoá phụ bình thường), process_core() '
+                    'giữ hành vi cũ (_first_match, dòng đầu theo thứ tự file) '
+                    'cho các dòng của nhóm này: %s', tr, len(dup_traces) - 1, e,
+                )
+                continue
+
+            val_tr  = pd.Series(
+                list(zip(sub_tt.loc[idx_tr], sub_sotien_text.loc[idx_tr])), index=idx_tr,
+            )
+            key1_tr = pd.Series(list(zip(sub_trace.loc[idx_tr], sotien_int_tr)), index=idx_tr)
+            key2_tr = pd.Series(
+                list(zip(sub_trace.loc[idx_tr], sotien_int_tr, sub_cn.loc[idx_tr])), index=idx_tr,
+            )
+            # `_first_match_unique()` — KHÁC 3 dict cũ (không giữ đại "dòng
+            # đầu" khi khoá ghép vẫn còn ≥2 ứng viên trùng nhau) — xem lý do
+            # ở docstring hàm đó. Bước lọc Số tiền phải THẤY được là còn ≥2
+            # ứng viên để nhường cho bước lọc chi nhánh, không "khớp nhầm"
+            # ngay ở bước đầu. Áp dụng TRONG PHẠM VI 1 nhóm Trace — khoá ghép
+            # chỉ có thể trùng giữa các dòng CÙNG Trace nên không khác gì áp
+            # dụng trên toàn bộ 38 nhóm gộp lại, chỉ khác ở phạm vi lỗi.
+            theo_tien.update(_first_match_unique(key1_tr, val_tr))
+            theo_tien_cn.update(_first_match_unique(key2_tr, val_tr))
+
     lookups = {
         'stc_to_trace':    stc_to_trace,
         'trace_trangthai': trace_trangthai,
         'trace_sotien':    trace_sotien,
+        'trace_trung': {
+            'keys':         dup_traces,
+            'theo_tien':    theo_tien,
+            'theo_tien_cn': theo_tien_cn,
+            'ung_vien':     ung_vien,
+        },
     }
     return df, lookups
 
@@ -274,6 +377,45 @@ def detect_huy(df: pd.DataFrame) -> dict:
     return {k: _label(k) for k in huy_keys}
 
 
+def _khop_trace_trung(
+    trace_s: pd.Series,
+    cramount_s: pd.Series,
+    trbrcd_s: pd.Series,
+    trace_trung: dict,
+) -> pd.Series:
+    """
+    PLAN_B3 — với các dòng Core có Trace nằm trong nhóm Hub Trace trùng: chọn
+    đúng 1 dòng Hub bằng khoá phụ Số tiền trước, mã chi nhánh phát lệnh sau
+    (Q5, xác nhận 2026-09-23). Trả về Series CÙNG INDEX với `trace_s`: giá trị
+    TT đã chọn (Trạng thái của dòng Hub đó, hoặc Số tiền nếu Trạng thái rỗng —
+    LUÔN cùng 1 dòng Hub, xem `trace_trung['theo_tien']`), hoặc NaN nếu không
+    giải được (0 hoặc vẫn còn ≥2 ứng viên sau cả 2 bước lọc — Q3/Q4 PLAN_B3
+    mục 7, caller giữ hành vi cũ + log cảnh báo). Hàm THUẦN — không log.
+    """
+    theo_tien    = trace_trung.get('theo_tien', {})
+    theo_tien_cn = trace_trung.get('theo_tien_cn', {})
+
+    def _cascade(pair):
+        if not isinstance(pair, tuple):
+            return pd.NA
+        trang_thai, so_tien = pair
+        return trang_thai if trang_thai != '' else so_tien
+
+    key1 = pd.Series(list(zip(trace_s, cramount_s)), index=trace_s.index)
+    result = key1.map(theo_tien).map(_cascade)
+
+    remain = result.isna()
+    if remain.any():
+        idx2 = trace_s.index[remain]
+        key2 = pd.Series(
+            list(zip(trace_s.loc[idx2], cramount_s.loc[idx2], trbrcd_s.loc[idx2])),
+            index=idx2,
+        )
+        result.loc[idx2] = key2.map(theo_tien_cn).map(_cascade)
+
+    return result
+
+
 def process_core(
     core_df: pd.DataFrame,
     citad_mapdc: dict,
@@ -351,6 +493,9 @@ def process_core(
     trace_sot  = hub_lookups.get('trace_sotien',    {})
 
     mask = tt == ''
+    # PLAN_B3: chụp lại đúng phạm vi các dòng bước 3/4 SẮP xử lý — override
+    # Trace trùng bên dưới CHỈ được đụng vào tập này, không mở rộng ra ngoài.
+    mask_truoc_hub = mask.copy()
     if mask.any():
         hub_result = df.loc[mask, 'Trace'].astype(str).map(trace_tt)
         found_idx  = hub_result.dropna().index
@@ -362,6 +507,39 @@ def process_core(
         hub_result2 = df.loc[mask, 'Trace'].astype(str).map(trace_sot)
         found_idx   = hub_result2.dropna().index
         tt.loc[found_idx] = hub_result2.loc[found_idx].astype(str)
+
+    # ── PLAN_B3 (2026-09-23): Trace Hub trùng ≥2 giao dịch khác nhau —
+    # _first_match() ở bước 3/4 trên chỉ giữ "dòng đầu theo thứ tự file", có
+    # thể SAI (ca thật REFERENCE '1000API141779571': giữ nhầm dòng Hub 'HT
+    # lỗi' 10.000đ trong khi CRAMOUNT Core = 1.000.000 khớp đúng dòng Hub
+    # 'Chờ đi kênh'). Ghi đè CHỈ các dòng có Trace ∈ tập trùng, CHỈ trong
+    # đúng phạm vi `mask_truoc_hub` (đúng các dòng bước 3/4 vừa xử lý) —
+    # không đụng dòng nào khác, không đổi thứ tự 4 bước ưu tiên ở trên.
+    trace_trung = hub_lookups.get('trace_trung', {})
+    dup_traces  = trace_trung.get('keys', set())
+    if dup_traces and mask_truoc_hub.any():
+        trung_mask = mask_truoc_hub & df['Trace'].astype(str).isin(dup_traces)
+        if trung_mask.any():
+            chosen = _khop_trace_trung(
+                df.loc[trung_mask, 'Trace'].astype(str),
+                cramount.loc[trung_mask],
+                brcd.loc[trung_mask],
+                trace_trung,
+            )
+            resolved = chosen.notna()
+            if resolved.any():
+                idx_resolved = chosen.index[resolved]
+                tt.loc[idx_resolved] = chosen.loc[idx_resolved].astype(str)
+            if (~resolved).any():
+                ung_vien_map = trace_trung.get('ung_vien', {})
+                for tr in sorted(set(df.loc[chosen.index[~resolved], 'Trace'].astype(str))):
+                    logger.warning(
+                        "Trace trùng %r — lọc Số tiền/chi nhánh không chọn được "
+                        "đúng 1 ứng viên (0 hoặc ≥2 ứng viên còn lại sau khi lọc), "
+                        "giữ hành vi cũ (chọn dòng Hub đầu theo thứ tự file). "
+                        "Ứng viên Hub (Trạng thái, Số tiền, Chi nhánh): %s",
+                        tr, ung_vien_map.get(tr, []),
+                    )
 
     df['TT'] = tt
     return df

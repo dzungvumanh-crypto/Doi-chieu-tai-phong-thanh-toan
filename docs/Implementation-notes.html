@@ -14477,7 +14477,109 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-21</footer>
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">125</span>
+      <span class="card-title">Chấm ILO1000 — Trace Hub trùng ≥2 giao dịch khác nhau, thêm khoá phụ Số tiền rồi mã chi nhánh (2026-09-23/24)</span>
+      <span class="badge badge-info">Code + test xong (236/236 pass), phản biện B10 ĐỒNG Ý về logic tài chính, CHƯA commit</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-red">Nguyên nhân gốc</span> <code>_first_match()</code> giữ "dòng đầu theo thứ tự file" khi Trace trùng — đúng VLOOKUP Excel nhưng có thể sai</div>
+      <p>Hub xuất ra có thể chứa <b>≥2 dòng khác nhau cùng 1 giá trị Trace</b> (khác số tiền, khác
+        khách hàng, khác trạng thái) — batch thật 29/8-3/9/2026 (132.401 dòng Hub) có <b>38 nhóm/76
+        dòng</b> rơi vào tình huống này. 3 dict tra cứu cũ (<code>stc_to_trace</code>/
+        <code>trace_trangthai</code>/<code>trace_sotien</code>, xây bằng <code>_first_match()</code>)
+        chỉ giữ được DÒNG ĐẦU theo thứ tự file — đúng hành vi VLOOKUP của Excel, nhưng không đảm bảo
+        đúng giao dịch. Ca thật <code>REFERENCE 1000API141779571</code>: Hub có dòng 10.000đ/"HT lỗi"
+        đứng TRƯỚC dòng 1.000.000đ/"Chờ đi kênh" cùng Trace <code>141779571</code> — Core có
+        <code>CRAMOUNT = 1.000.000</code>, đáng lẽ khớp đúng dòng thứ 2, nhưng chương trình giữ nhầm
+        dòng đầu ("HT lỗi").</p>
+
+      <div class="label"><span class="pill pill-blue">Xác nhận nghiệp vụ (Việt)</span> khoá phụ Số tiền trước, mã chi nhánh phát lệnh sau — CHỈ áp trong nhóm Trace trùng</div>
+      <p>Khi Trace trùng: lọc tiếp bằng <b>Số tiền</b> (so <code>CRAMOUNT</code> Core với "Số tiền
+        thực chuyển" Hub) trước; nếu vẫn còn ≥2 ứng viên mới lọc thêm bằng <b>mã chi nhánh phát
+        lệnh</b> (so <code>TRBRCD</code> Core với cột <code>Chi nhánh</code> Hub). Áp dụng ĐÚNG cho
+        các dòng thuộc nhóm Trace trùng — không đưa Số tiền/chi nhánh vào khoá tra cứu của MỌI giao
+        dịch "cho nhất quán" (sẽ đổi hành vi của hàng trăm nghìn dòng KHÔNG liên quan).</p>
+      <p><b>Phát hiện khi khảo sát (B0), sửa nghi vấn ban đầu của kế hoạch:</b> pHub <b>CÓ SẴN cột
+        <code>Chi nhánh</code></b> (VD giá trị <code>"1000"</code>) — không cần suy ra từ tiền tố 4
+        ký tự đầu của <code>Số giao dịch</code> như giả thuyết ban đầu (độ tin cậy trung bình lúc lập
+        kế hoạch, chưa mở được file thật). Tự mở file pHub thật xác nhận trực tiếp trước khi code.</p>
+
+      <table>
+        <tr><th>Thay đổi</th><th>Chi tiết</th></tr>
+        <tr><td><code>config.py</code></td><td>Thêm <code>HUB_COL_CHI_NHANH = 'Chi nhánh'</code>, đưa vào <code>HUB_COLS_KEEP</code>/<code>HUB_COL_RENAME</code></td></tr>
+        <tr><td><code>process.py::process_hub()</code></td><td>Thêm <code>lookups['trace_trung']</code> ({<code>keys</code>, <code>theo_tien</code>, <code>theo_tien_cn</code>, <code>ung_vien</code>}) — CHỈ build cho nhóm Trace trùng; 3 dict cũ giữ nguyên 100% code cũ</td></tr>
+        <tr><td><code>process.py::_first_match_unique()</code> (mới)</td><td>Khác <code>_first_match()</code>: khoá xuất hiện ≥2 lần bị LOẠI HẲN (không đoán đại "dòng đầu") — xem mục "Quyết định lệch kế hoạch" dưới</td></tr>
+        <tr><td><code>process.py::_khop_trace_trung()</code> (mới, hàm thuần)</td><td>Chọn đúng dòng Hub theo Số tiền rồi chi nhánh; trạng thái/số tiền LUÔN lấy từ CÙNG 1 dòng Hub đã chọn (tránh bước 3 và bước 4 chọn nhầm 2 dòng khác nhau)</td></tr>
+        <tr><td><code>process.py::process_core()</code></td><td>Sau bước 3/4 gốc (giữ nguyên), ghi đè TT CHỈ tại các dòng Trace ∈ nhóm trùng VÀ thuộc đúng phạm vi bước 3/4 vừa xử lý (<code>mask_truoc_hub</code>) — không đụng dòng đã xử lý ở bước Hủy/Quyết toán/OSB/Citad</td></tr>
+        <tr><td><code>pipeline.py::_run_one_day()</code></td><td>Thêm 1 dòng log tổng hợp: số nhóm Trace trùng + số dòng Core bị ảnh hưởng trong ngày (số tuyệt đối, không %)</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-amber">Quyết định lệch câu chữ kế hoạch — có lý do, có test chứng minh</span></div>
+      <p><b>1. <code>_first_match_unique()</code> thay vì <code>_first_match()</code> cho khoá ghép:</b>
+        nếu dùng <code>_first_match()</code> (giữ "dòng đầu" vô điều kiện), tình huống "2 dòng Hub
+        cùng Trace VÀ cùng Số tiền, khác chi nhánh" sẽ bị bước lọc Số tiền "khớp nhầm" ngay lập tức,
+        không bao giờ rơi được xuống bước lọc chi nhánh — ngược ý đồ nghiệp vụ. Viết test tái hiện lỗi
+        này trước khi sửa (đỏ với <code>_first_match</code>, xanh với <code>_first_match_unique</code>).
+        Trên dữ liệu thật hiện có KHÔNG đổi kết quả gì (0/38 nhóm có ≥2 dòng cùng Số tiền), chỉ khác
+        khi có ca thật kiểu này xuất hiện sau này.</p>
+      <p><b>2. Phạm vi <code>try/except LoiDinhDangSoTien</code> quanh <code>doc_so_tien()</code> —
+        sửa lại sau phản biện B10:</b> bản đầu gọi <code>doc_so_tien()</code> 1 lần trên TOÀN BỘ
+        76 dòng/38 nhóm gộp lại — 1 dòng Số tiền sai định dạng ở BẤT KỲ nhóm nào sẽ tắt khoá phụ của
+        CẢ 38 nhóm (kể cả 37 nhóm sạch), rộng hơn ý PLAN ("bỏ bước lọc theo Số tiền cho <i>nhóm đó</i>"
+        — số ít). Sửa: gọi <code>doc_so_tien()</code> THEO TỪNG NHÓM TRACE riêng — 1 dòng lỗi giờ chỉ
+        làm mất khoá phụ của ĐÚNG nhóm chứa dòng đó. Thêm test
+        <code>test_so_tien_sai_dinh_dang_chi_mat_khoa_phu_dung_nhom_do</code> khoá đúng hành vi
+        này (2 nhóm, 1 nhóm lỗi 1 nhóm sạch — xác nhận nhóm sạch không bị ảnh hưởng). Tác động thực
+        tế trên dữ liệu hiện có = 0 (0/38 nhóm có Số tiền sai định dạng).</p>
+
+      <div class="label"><span class="pill pill-green">Xác nhận qua kịch bản "Citad chưa về" (agent phản biện B10 tự dựng lại độc lập)</span></div>
+      <p>Dựng lại batch thật 31/8-4/9/2026 (bỏ Citad ngày 04/09 mô phỏng "chấm hôm nay, Citad ngày
+        mai chưa về"), chạy <code>main_from_dir()</code> 2 lần (bản chỉ có B1, và bản có cả B1+B3),
+        so cột TT theo khoá (REFERENCE, TRBRCD, CRAMOUNT, TRDATE) trên toàn bộ 158.906 dòng Core:</p>
+      <table>
+        <tr><th>REFERENCE</th><th>TRBRCD</th><th>CRAMOUNT</th><th>TT (B1-only)</th><th>TT (B1+B3)</th></tr>
+        <tr><td>1000API141779571 (ca gốc)</td><td>8010</td><td>1.000.000</td><td>HT lỗi</td><td><b>Chờ đi kênh</b></td></tr>
+        <tr><td>1000API142351741 (STT4 — xem nghi vấn dưới)</td><td>7608</td><td>9.000.000</td><td>Hoàn thành</td><td><b>Chờ đi kênh</b></td></tr>
+        <tr><td>1000API5655684 (ca MỚI, ngày 04/09, ngoài 5 ca đã biết)</td><td>4303</td><td>10.000.000</td><td>Chờ đi kênh</td><td><b>Hoàn thành</b></td></tr>
+      </table>
+      <p>Đúng <b>3/158.906 dòng lệch</b> giữa 2 bản, không dòng nào khác bị đổi ngoài dự kiến —
+        <b>Chưa cân khớp trước khi có B3</b> (3 dòng TT sai), <b>Đã cân khớp sau khi có B3</b> (0 dòng
+        lệch còn lại, đúng 3 dòng đó được sửa đúng — luật <code>docs/SKILL.md</code>, không dùng %).</p>
+
+      <div class="label"><span class="pill pill-gray">Cố ý KHÔNG tự sửa — nghi vấn dữ liệu trong chính file xác nhận của Việt</span></div>
+      <p>STT4 (<code>Can_xac_nhan_thu_cong_Trace_trung.xlsx</code>, REFERENCE
+        <code>1000API142351741</code>, TRDATE 20260903, TRBRCD 7608, CRAMOUNT 9.000.000): Hub có 2
+        ứng viên cùng Trace — 550.000đ/"Hoàn thành" (REMARK không khớp Core) và
+        9.000.000đ/"Chờ đi kênh" (REMARK khớp CHÍNH XÁC REMARK Core, cột "Khớp đúng số tiền Core?" =
+        CÓ). Cột <code>"TT người chấm thủ công"</code> trong file lại ghi <code>"Hoàn thành"</code> —
+        trạng thái của ứng viên KHÔNG khớp REMARK/Số tiền, khác hẳn 4 ca còn lại (STT1,2,3,5) đều
+        thống nhất REMARK+Số tiền+"TT người chấm thủ công". Nghi đây là lỗi nhập liệu trong chính file
+        xác nhận — <b>KHÔNG tự sửa, không đưa vào assertion tự động</b> (đúng luật dự án "không suy
+        diễn ý nghĩa cột dữ liệu"). Cần Việt xác nhận lại riêng ca này trước khi coi "5/5 ca khớp" là
+        phát biểu chính thức. Agent phản biện B10 tự mở lại file gốc độc lập, xác nhận đúng bất
+        thường này, không chặn merge.</p>
+
+      <div class="label"><span class="pill pill-gray">Câu hỏi mở, không chặn — cần Việt xác nhận thêm 1 câu</span></div>
+      <p>Số tiền so sánh dùng cố định <code>CRAMOUNT</code> (Core) với "Số tiền thực chuyển" (Hub) —
+        đúng trên toàn bộ 76 dòng/38 nhóm đã khảo sát, nhưng chưa phải xác nhận nghiệp vụ chính thức
+        (có thể có giao dịch ghi ở <code>DRAMOUNT</code> thay vì <code>CRAMOUNT</code>, hoặc Hub trừ
+        phí làm lệch 2 số — chưa gặp trên dữ liệu hiện có). Thứ tự "Số tiền trước, chi nhánh sau" đọc
+        từ nguyên văn Việt ("Số tiền <i>hoặc</i> mã chi nhánh phát lệnh") — chữ "hoặc" cũng có thể đọc
+        là "dùng cái nào cũng được", cần Việt xác nhận lại bằng 1 câu.</p>
+
+      <p>236/236 test module ILO1000 pass (210 cũ không đổi + 26 mới — 4 lớp bảo đảm PLAN mục 5: cấu
+        trúc code chỉ ghi đè theo chỉ số dòng, test bất biến, property test sinh dữ liệu ngẫu nhiên,
+        đối chiếu ca thật). Toàn bộ suite dự án 1638/1661 pass — 23 lỗi còn lại ở
+        <code>test_ach_gl02_misden_algorithm.py</code>, môi trường thiếu biến
+        <code>DOI_CHIEU_ZIP_PASSWORD</code> trong <code>.env</code> của worktree, không liên quan B3.</p>
+
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-24</footer>
 </div>
 </body>
 </html>

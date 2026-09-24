@@ -10,10 +10,15 @@ HUB_COL_SO_TIEN    = 'Số tiền thực chuyển'
 HUB_COL_TRANG_THAI = 'Trạng thái'
 HUB_COL_NGAY_GIO   = 'Ngày giờ kênh trả'
 HUB_COL_NOI_DUNG   = 'Nội dung chuyển tiền'
+# Mã chi nhánh phát lệnh — dùng làm khoá phụ khi Trace Hub trùng ≥2 giao dịch
+# (PLAN_B3). Xác nhận thật 2026-09-23: pHub CÓ sẵn cột này (VD "1000"), KHÔNG
+# cần suy ra từ tiền tố "Số giao dịch" như giả thuyết ban đầu.
+HUB_COL_CHI_NHANH  = 'Chi nhánh'
 
 HUB_COLS_KEEP = [
     HUB_COL_SO_GD, HUB_COL_SO_REF, HUB_COL_STC, HUB_COL_TRACE, HUB_COL_TRACE2_RAW,
     HUB_COL_SO_TIEN, HUB_COL_TRANG_THAI, HUB_COL_NGAY_GIO, HUB_COL_NOI_DUNG,
+    HUB_COL_CHI_NHANH,
 ]
 
 # Map tên cột thực tế trong file pHub → tên chuẩn của pipeline
@@ -28,6 +33,7 @@ HUB_COL_RENAME = {
     'Trạng thái':        HUB_COL_TRANG_THAI,
     'Ngày giờ kênh trả': HUB_COL_NGAY_GIO,
     'Nội dung chuyển tiền': HUB_COL_NOI_DUNG,
+    'Chi nhánh':          HUB_COL_CHI_NHANH,
 }
 
 # ── Tên cột CITAD (UUID CSVs) ─────────────────────────────────────────────────

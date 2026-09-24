@@ -11,7 +11,9 @@ import pytest
 
 from backend.services.ilo1000.process import (
     _first_match,
+    _khop_trace_trung,
     _safe_str,
+    _trace_trung,
     detect_huy,
     process_hub,
     process_citad,
@@ -20,12 +22,13 @@ from backend.services.ilo1000.process import (
 from backend.services.ilo1000.config import (
     HUB_COL_SO_GD, HUB_COL_STC, HUB_COL_TRACE,
     HUB_COL_TRANG_THAI, HUB_COL_NGAY_GIO, HUB_COL_NOI_DUNG, HUB_COL_SO_TIEN,
+    HUB_COL_CHI_NHANH,
 )
 
 
 # ── Helper ────────────────────────────────────────────────────────────────────
 
-def _hub_row(so_gd, stc, trace, trang_thai, ngay_gio, noi_dung='', so_tien='1000000'):
+def _hub_row(so_gd, stc, trace, trang_thai, ngay_gio, noi_dung='', so_tien='1000000', chi_nhanh='1000'):
     """Tạo 1 dòng hub với đầy đủ cột chuẩn."""
     return {
         HUB_COL_SO_GD:      so_gd,
@@ -35,6 +38,7 @@ def _hub_row(so_gd, stc, trace, trang_thai, ngay_gio, noi_dung='', so_tien='1000
         HUB_COL_NGAY_GIO:   ngay_gio,
         HUB_COL_NOI_DUNG:   noi_dung,
         HUB_COL_SO_TIEN:    so_tien,
+        HUB_COL_CHI_NHANH:  chi_nhanh,
         'Số Ref Hub':       'REF' + so_gd,
     }
 
@@ -3322,3 +3326,398 @@ class TestUsedLabelMapKeys:
         from backend.services.ilo1000.process import used_label_map_keys
 
         assert used_label_map_keys(pd.Series([], dtype=str), pd.Series([], dtype=str), {'M1': 'x'}) == set()
+
+
+# ── PLAN_B3 — Trace trùng giữa ≥2 giao dịch Hub → khoá phụ Số tiền, rồi chi
+# nhánh (Q5, xác nhận 2026-09-23). Xem pipeline/PLAN_B3_trace_trung.md. ────────
+
+class TestTraceTrung:
+    """B2 — hàm thuần _trace_trung(): tập Trace Hub xuất hiện ≥2 lần."""
+
+    def test_khong_trung(self):
+        assert _trace_trung(pd.Series(['A', 'B', 'C'])) == set()
+
+    def test_trung_2(self):
+        assert _trace_trung(pd.Series(['A', 'B', 'A'])) == {'A'}
+
+    def test_trung_3(self):
+        assert _trace_trung(pd.Series(['A', 'A', 'A', 'B'])) == {'A'}
+
+    def test_trace_rong_khong_tinh_la_trung(self):
+        assert _trace_trung(pd.Series(['', '', 'B'])) == set()
+
+
+class TestProcessHubTraceTrungLookups:
+    """B3 — process_hub() build thêm lookups['trace_trung'] CHỈ cho nhóm
+    trùng; 3 dict cũ (stc_to_trace/trace_trangthai/trace_sotien) không đổi."""
+
+    def test_3_dict_cu_khong_doi_khi_co_trace_trung(self):
+        df = pd.DataFrame([
+            _hub_row('S001', 'STC1', 'TR1', 'HT lỗi', '', so_tien='10000'),
+            _hub_row('S002', 'STC2', 'TR1', 'Chờ đi kênh', '', so_tien='1000000'),
+            _hub_row('S003', 'STC3', 'TR2', 'Hoàn thành', '', so_tien='500000'),
+        ])
+        hub_out, lookups = process_hub(df, {}, 20260512)
+        # Hành vi VLOOKUP cũ: giữ dòng ĐẦU cho TR1 — không bị đụng bởi tính năng mới
+        assert lookups['trace_trangthai']['TR1'] == 'HT lỗi'
+        assert lookups['trace_sotien']['TR1'] == '10000'
+        assert lookups['stc_to_trace']['STC1'] == 'TR1'
+
+    def test_trace_trung_chi_chua_trace_thuc_su_trung(self):
+        df = pd.DataFrame([
+            _hub_row('S001', 'STC1', 'TR1', 'HT lỗi', '', so_tien='10000'),
+            _hub_row('S002', 'STC2', 'TR1', 'Chờ đi kênh', '', so_tien='1000000'),
+            _hub_row('S003', 'STC3', 'TR2', 'Hoàn thành', '', so_tien='500000'),
+        ])
+        _, lookups = process_hub(df, {}, 20260512)
+        assert lookups['trace_trung']['keys'] == {'TR1'}
+
+    def test_theo_tien_dict_dung_cap_trang_thai_so_tien(self):
+        df = pd.DataFrame([
+            _hub_row('S001', 'STC1', 'TR1', 'HT lỗi', '', so_tien='10000'),
+            _hub_row('S002', 'STC2', 'TR1', 'Chờ đi kênh', '', so_tien='1000000'),
+        ])
+        _, lookups = process_hub(df, {}, 20260512)
+        theo_tien = lookups['trace_trung']['theo_tien']
+        assert theo_tien[('TR1', 10000)] == ('HT lỗi', '10000')
+        assert theo_tien[('TR1', 1000000)] == ('Chờ đi kênh', '1000000')
+
+    def test_theo_tien_cn_dict_gom_ca_chi_nhanh(self):
+        df = pd.DataFrame([
+            _hub_row('S001', 'STC1', 'TR1', 'HT lỗi', '', so_tien='10000', chi_nhanh='1400'),
+            _hub_row('S002', 'STC2', 'TR1', 'Chờ đi kênh', '', so_tien='1000000', chi_nhanh='2207'),
+        ])
+        _, lookups = process_hub(df, {}, 20260512)
+        theo_tien_cn = lookups['trace_trung']['theo_tien_cn']
+        assert theo_tien_cn[('TR1', 10000, '1400')] == ('HT lỗi', '10000')
+        assert theo_tien_cn[('TR1', 1000000, '2207')] == ('Chờ đi kênh', '1000000')
+
+    def test_khong_co_trace_trung_thi_dict_moi_rong(self):
+        df = pd.DataFrame([_hub_row('S001', 'STC1', 'TR1', 'Hoàn thành', '')])
+        _, lookups = process_hub(df, {}, 20260512)
+        assert lookups['trace_trung']['keys'] == set()
+        assert lookups['trace_trung']['theo_tien'] == {}
+
+    def test_hub_rong_van_co_key_trace_trung(self):
+        """Đảm bảo caller (process_core) luôn `.get('trace_trung', {})` an
+        toàn kể cả khi Hub rỗng."""
+        hub_out, lookups = process_hub(pd.DataFrame(), {}, 20260512)
+        assert lookups['trace_trung'] == {'keys': set(), 'theo_tien': {}, 'theo_tien_cn': {}, 'ung_vien': {}}
+
+    def test_so_tien_sai_dinh_dang_bo_khoa_phu_khong_crash(self):
+        """doc_so_tien() ném lỗi trên mẫu lạ — process_hub() PHẢI bắt, log
+        ERROR, và trả dict rỗng cho khoá phụ (không crash toàn bộ lượt chạy)."""
+        df = pd.DataFrame([
+            _hub_row('S001', 'STC1', 'TR1', 'HT lỗi', '', so_tien='1.5'),  # mẫu lạ
+            _hub_row('S002', 'STC2', 'TR1', 'Chờ đi kênh', '', so_tien='1000000'),
+        ])
+        hub_out, lookups = process_hub(df, {}, 20260512)  # không được raise
+        assert lookups['trace_trung']['theo_tien'] == {}
+        assert lookups['trace_trung']['theo_tien_cn'] == {}
+        # 3 dict cũ vẫn hoạt động bình thường — không bị ảnh hưởng bởi lỗi Số tiền
+        assert lookups['trace_trangthai']['TR1'] == 'HT lỗi'
+
+    def test_so_tien_sai_dinh_dang_chi_mat_khoa_phu_dung_nhom_do(self):
+        """Phản biện B10 mục 10 (2026-09-24): doc_so_tien() PHẢI gọi theo
+        TỪNG NHÓM Trace riêng — 1 dòng Số tiền sai định dạng ở nhóm TR1 chỉ
+        được làm mất khoá phụ của ĐÚNG nhóm TR1, nhóm TR2 (sạch) vẫn phải
+        dùng được khoá phụ Số tiền bình thường. Bản sửa lỗi trước đây gọi
+        doc_so_tien() 1 lần trên CẢ 2 nhóm gộp — 1 dòng lỗi sẽ tắt khoá phụ
+        của CẢ TR1 lẫn TR2 (sai phạm vi so với PLAN mục 3.1 "nhóm đó")."""
+        df = pd.DataFrame([
+            _hub_row('S001', 'STC1', 'TR1', 'HT lỗi', '', so_tien='1.5'),        # TR1: mẫu lạ
+            _hub_row('S002', 'STC2', 'TR1', 'Chờ đi kênh', '', so_tien='1000000'),
+            _hub_row('S003', 'STC3', 'TR2', 'Hoàn thành', '', so_tien='10000'),  # TR2: sạch
+            _hub_row('S004', 'STC4', 'TR2', 'Chờ đi kênh', '', so_tien='500000'),
+        ])
+        _, lookups = process_hub(df, {}, 20260512)
+        theo_tien = lookups['trace_trung']['theo_tien']
+        # TR1 mất khoá phụ (nhóm chứa dòng lỗi)
+        assert ('TR1', 1000000) not in theo_tien
+        # TR2 KHÔNG bị ảnh hưởng — vẫn có khoá phụ bình thường
+        assert theo_tien[('TR2', 10000)] == ('Hoàn thành', '10000')
+        assert theo_tien[('TR2', 500000)] == ('Chờ đi kênh', '500000')
+
+
+class TestKhopTraceTrung:
+    """B4 — hàm thuần _khop_trace_trung(): 5 tình huống ở PLAN_B3 mục 3.3."""
+
+    def _trace_trung_dict(self, theo_tien=None, theo_tien_cn=None):
+        return {'theo_tien': theo_tien or {}, 'theo_tien_cn': theo_tien_cn or {}}
+
+    def test_loc_so_tien_con_dung_1(self):
+        trace_trung = self._trace_trung_dict(theo_tien={
+            ('TR1', 10000): ('HT lỗi', '10000'),
+            ('TR1', 1000000): ('Chờ đi kênh', '1000000'),
+        })
+        result = _khop_trace_trung(
+            pd.Series(['TR1']), pd.Series([1000000]), pd.Series(['1400']), trace_trung,
+        )
+        assert result.iloc[0] == 'Chờ đi kênh'
+
+    def test_loc_so_tien_con_2_loc_chi_nhanh_con_dung_1(self):
+        """2 dòng Hub cùng Trace VÀ cùng số tiền, khác chi nhánh → chọn theo
+        chi nhánh của Core (TRBRCD)."""
+        trace_trung = self._trace_trung_dict(
+            theo_tien={},  # cùng (Trace, Số tiền) nên _first_match ở process_hub chỉ giữ 1 — mô
+                           # phỏng bằng theo_tien rỗng để bước 1 luôn trượt, đi thẳng bước 2
+            theo_tien_cn={
+                ('TR1', 500000, '1400'): ('Hoàn thành', '500000'),
+                ('TR1', 500000, '2207'): ('Chờ đi kênh', '500000'),
+            },
+        )
+        result = _khop_trace_trung(
+            pd.Series(['TR1']), pd.Series([500000]), pd.Series(['2207']), trace_trung,
+        )
+        assert result.iloc[0] == 'Chờ đi kênh'
+
+    def test_van_con_trung_sau_2_buoc_tra_ve_na(self):
+        """Q3: cả 2 bước lọc đều không tìm được (chi nhánh Core không khớp
+        ứng viên nào) → trả NaN, caller giữ hành vi cũ + log cảnh báo."""
+        trace_trung = self._trace_trung_dict(theo_tien_cn={
+            ('TR1', 500000, '9999'): ('Hoàn thành', '500000'),
+        })
+        result = _khop_trace_trung(
+            pd.Series(['TR1']), pd.Series([500000]), pd.Series(['2207']), trace_trung,
+        )
+        assert pd.isna(result.iloc[0])
+
+    def test_so_tien_khong_khop_ung_vien_nao_tra_ve_na(self):
+        """Q4: Core CRAMOUNT không trùng Số tiền ứng viên nào → 0 ứng viên,
+        trả NaN (không tự chọn ứng viên gần nhất)."""
+        trace_trung = self._trace_trung_dict(theo_tien={
+            ('TR1', 10000): ('HT lỗi', '10000'),
+            ('TR1', 1000000): ('Chờ đi kênh', '1000000'),
+        })
+        result = _khop_trace_trung(
+            pd.Series(['TR1']), pd.Series([999999]), pd.Series(['1400']), trace_trung,
+        )
+        assert pd.isna(result.iloc[0])
+
+    def test_trang_thai_rong_thi_cascade_sang_so_tien(self):
+        """Rủi ro 4 (PLAN mục 8): Trạng thái VÀ Số tiền phải lấy từ CÙNG 1
+        dòng Hub — Trạng thái rỗng thì rơi về Số tiền của ĐÚNG dòng đó."""
+        trace_trung = self._trace_trung_dict(theo_tien={
+            ('TR1', 1000000): ('', '1000000'),
+        })
+        result = _khop_trace_trung(
+            pd.Series(['TR1']), pd.Series([1000000]), pd.Series(['1400']), trace_trung,
+        )
+        assert result.iloc[0] == '1000000'
+
+    def test_nhieu_dong_doc_lap_nhau(self):
+        trace_trung = self._trace_trung_dict(theo_tien={
+            ('TR1', 100): ('Hoàn thành', '100'),
+            ('TR2', 200): ('Chờ đi kênh', '200'),
+        })
+        result = _khop_trace_trung(
+            pd.Series(['TR1', 'TR2', 'TR3']),
+            pd.Series([100, 200, 300]),
+            pd.Series(['1', '2', '3']),
+            trace_trung,
+        )
+        assert result.iloc[0] == 'Hoàn thành'
+        assert result.iloc[1] == 'Chờ đi kênh'
+        assert pd.isna(result.iloc[2])
+
+
+class TestTraceTrungThatB3:
+    """PLAN_B3 mục 6 — dữ liệu THẬT từ
+    G:\\Cham ILO1000\\ĐI\\Kết quả\\Can_xac_nhan_thu_cong_Trace_trung.xlsx và
+    batch G:\\Cham ILO1000\\ĐI\\du lieu\\ (29/8-3/9/2026). Chỉ giữ các trường
+    tham gia khoá (Trace, số tiền, trạng thái, chi nhánh, REFERENCE) — không
+    chép tên khách hàng vào repo.
+
+    LƯU Ý (ghi trong CODE_REPORT_B3.md): STT 4 của file xác nhận (REFERENCE
+    '1000API142351741', TRBRCD 7608, CRAMOUNT 9000000) có REMARK khớp CHÍNH
+    XÁC "Nội dung chuyển tiền" của ứng viên Hub 9.000.000đ/'Chờ đi kênh' —
+    cùng bằng chứng REMARK-khớp như 4 ca còn lại — nhưng cột "TT người chấm
+    thủ công" trong file lại ghi 'Hoàn thành' (trạng thái của ứng viên
+    550.000đ, KHÔNG khớp REMARK). Nghi đây là lỗi nhập liệu trong chính file
+    xác nhận (không phải lỗi thuật toán) — KHÔNG đưa STT4 vào assertion tự
+    động, không tự "sửa" cho khớp. Xem CODE_REPORT_B3.md mục kết luận B0.
+    """
+
+    def _eicp_maps(self):
+        return {}
+
+    def test_ca_that_1000API141779571_chon_dung_dong_hub(self):
+        """Ca chính của cả đợt sửa (PLAN mục 0/6). Hub: dòng A (Trace
+        '141779571', 10.000, 'HT lỗi') đứng TRƯỚC dòng B (cùng Trace,
+        1.000.000, 'Chờ đi kênh') — đúng thứ tự trong pHub thật. Core
+        REFERENCE '1000API141779571', TRBRCD '8010', CRAMOUNT 1000000."""
+        hub_df = pd.DataFrame([
+            _hub_row('SA', 'STCA', '141779571', 'HT lỗi', '', so_tien='10000', chi_nhanh='8010'),
+            _hub_row('SB', 'STCB', '141779571', 'Chờ đi kênh', '04/09/2026 08:40:13',
+                      so_tien='1000000', chi_nhanh='8010'),
+        ])
+        hub_out, hub_lookups = process_hub(hub_df, self._eicp_maps(), 20260903)
+
+        # Chứng minh đường CŨ (_first_match trần trên chính dữ liệu này) cho
+        # ra 'HT lỗi' — bài học: phải tự chạy cả 2 phía, không suy luận suông
+        # (memory feedback_verify_claim_ca_2_phia_truoc_khi_viet_vao_pr).
+        trace_col = hub_out['Trace'].fillna('').astype(str)
+        tt_col = _safe_str(hub_out[HUB_COL_TRANG_THAI])
+        duong_cu = _first_match(trace_col, tt_col)
+        assert duong_cu['141779571'] == 'HT lỗi', 'Đường cũ phải cho kết quả SAI trên chính ca này'
+
+        core_df = pd.DataFrame([_core_row('1000API141779571', '8010', 1000000)])
+        core_out = process_core(core_df, {}, hub_lookups, 20260903)
+        assert core_out['TT'].iloc[0] == 'Chờ đi kênh', (
+            f"Đường MỚI phải chọn đúng dòng Hub theo Số tiền — nhận {core_out['TT'].iloc[0]!r}"
+        )
+
+    def test_4_ca_truoc_day_doan_dung_van_dung(self):
+        """4/5 ca còn lại (STT 1,2,3,5 trong file xác nhận — STT6 KHÔNG phải
+        Trace trùng, STT4 bị loại vì nghi lỗi nhập liệu, xem docstring lớp
+        này) — số liệu nguyên văn từ Can_xac_nhan_thu_cong_Trace_trung.xlsx."""
+        hub_rows = [
+            # STT1: Trace 142018270, TRBRCD Core 1400, CRAMOUNT 1000000 → 'Chờ đi kênh'
+            _hub_row('H1a', 'S1a', '142018270', 'Chờ đi kênh', '04/09/2026 08:32:02', so_tien='1000000', chi_nhanh='1400'),
+            _hub_row('H1b', 'S1b', '142018270', 'Hoàn thành', '03/09/2026 00:24:12', so_tien='480000', chi_nhanh='7801'),
+            # STT2: Trace 142427661, TRBRCD Core 2207, CRAMOUNT 50000 → 'Chờ đi kênh'
+            _hub_row('H2a', 'S2a', '142427661', 'Chờ đi kênh', '28/08/2026 10:29:09', so_tien='7000000', chi_nhanh='1000'),
+            _hub_row('H2b', 'S2b', '142427661', 'Chờ đi kênh', '04/09/2026 08:21:10', so_tien='50000', chi_nhanh='2207'),
+            # STT3: Trace 142539180, TRBRCD Core 3526, CRAMOUNT 1292679 → 'Chờ đi kênh'
+            _hub_row('H3a', 'S3a', '142539180', 'Chờ đi kênh', '04/09/2026 08:31:41', so_tien='1292679', chi_nhanh='3526'),
+            _hub_row('H3b', 'S3b', '142539180', 'Hoàn thành', '03/09/2026 00:56:17', so_tien='700000', chi_nhanh='5008'),
+        ]
+        hub_df = pd.DataFrame(hub_rows)
+        hub_out, hub_lookups = process_hub(hub_df, self._eicp_maps(), 20260903)
+
+        core_rows = [
+            _core_row('1000API142018270', '1400', 1000000),
+            _core_row('1000API142427661', '2207', 50000),
+            _core_row('1000API142539180', '3526', 1292679),
+        ]
+        core_out = process_core(pd.DataFrame(core_rows), {}, hub_lookups, 20260903)
+        assert list(core_out['TT']) == ['Chờ đi kênh', 'Chờ đi kênh', 'Chờ đi kênh']
+
+    def test_trung_ca_so_tien_phai_dung_chi_nhanh(self):
+        """2 dòng Hub cùng Trace VÀ cùng Số tiền, khác chi nhánh — Số tiền
+        không đủ phân biệt, phải rơi xuống khoá phụ chi nhánh (dự phòng,
+        CHƯA từng cần dùng trên dữ liệu thật — B0 xác nhận 0/38 nhóm cần)."""
+        hub_df = pd.DataFrame([
+            _hub_row('HA', 'STA', 'TRX', 'Hoàn thành', '', so_tien='500000', chi_nhanh='1400'),
+            _hub_row('HB', 'STB', 'TRX', 'Chờ đi kênh', '', so_tien='500000', chi_nhanh='2207'),
+        ])
+        hub_out, hub_lookups = process_hub(hub_df, self._eicp_maps(), 20260903)
+
+        core_df = pd.DataFrame([_core_row('1000API' + 'TRX', '2207', 500000)])
+        core_out = process_core(core_df, {}, hub_lookups, 20260903)
+        assert core_out['TT'].iloc[0] == 'Chờ đi kênh'
+
+    def test_van_con_trung_sau_2_buoc(self):
+        """Q3 (đề xuất mặc định planner): không giải được dù đã lọc cả 2 bước
+        → giữ hành vi cũ (_first_match, dòng đầu theo thứ tự file), không để
+        trống, không tự chọn bừa."""
+        hub_df = pd.DataFrame([
+            _hub_row('HA', 'STA', 'TRY', 'Hoàn thành', '', so_tien='500000', chi_nhanh='1400'),
+            _hub_row('HB', 'STB', 'TRY', 'Chờ đi kênh', '', so_tien='500000', chi_nhanh='1400'),
+        ])
+        hub_out, hub_lookups = process_hub(hub_df, self._eicp_maps(), 20260903)
+
+        core_df = pd.DataFrame([_core_row('1000API' + 'TRY', '1400', 500000)])
+        core_out = process_core(core_df, {}, hub_lookups, 20260903)
+        # Không giải được (2 ứng viên cùng Số tiền, cùng chi nhánh) → hành vi
+        # cũ: _first_match giữ dòng ĐẦU ('Hoàn thành')
+        assert core_out['TT'].iloc[0] == 'Hoàn thành'
+
+    def test_so_tien_khong_khop_ung_vien_nao(self):
+        """Q4 (đề xuất mặc định planner): CRAMOUNT Core không trùng Số tiền
+        ứng viên Hub nào → giữ hành vi cũ, không tự bỏ khớp."""
+        hub_df = pd.DataFrame([
+            _hub_row('HA', 'STA', 'TRZ', 'HT lỗi', '', so_tien='10000', chi_nhanh='1400'),
+            _hub_row('HB', 'STB', 'TRZ', 'Chờ đi kênh', '', so_tien='1000000', chi_nhanh='1400'),
+        ])
+        hub_out, hub_lookups = process_hub(hub_df, self._eicp_maps(), 20260903)
+
+        core_df = pd.DataFrame([_core_row('1000API' + 'TRZ', '1400', 777777)])
+        core_out = process_core(core_df, {}, hub_lookups, 20260903)
+        assert core_out['TT'].iloc[0] == 'HT lỗi'  # hành vi cũ — dòng đầu
+
+    def test_dong_khong_trung_khong_doi(self):
+        """Lớp bảo đảm (2), PLAN mục 5: Hub có CẢ nhóm trùng lẫn nhóm không
+        trùng — TT của các dòng Trace KHÔNG trùng phải bằng đúng TT tính
+        thẳng từ _first_match() (đường cũ)."""
+        hub_df = pd.DataFrame([
+            _hub_row('HA', 'STA', 'TRDUP', 'HT lỗi', '', so_tien='10000'),
+            _hub_row('HB', 'STB', 'TRDUP', 'Chờ đi kênh', '', so_tien='1000000'),
+            _hub_row('HC', 'STC', 'TRSOLO1', 'Hoàn thành', '', so_tien='300000'),
+            _hub_row('HD', 'STD', 'TRSOLO2', 'Chờ đi kênh', '', so_tien='400000'),
+        ])
+        hub_out, hub_lookups = process_hub(hub_df, self._eicp_maps(), 20260903)
+
+        trace_col = hub_out['Trace'].fillna('').astype(str)
+        tt_col = _safe_str(hub_out[HUB_COL_TRANG_THAI])
+        duong_cu = _first_match(trace_col, tt_col)
+
+        core_df = pd.DataFrame([
+            _core_row('1000API' + 'TRDUP', '1400', 1000000),
+            _core_row('1000API' + 'TRSOLO1', '1400', 300000),
+            _core_row('1000API' + 'TRSOLO2', '1400', 400000),
+        ])
+        core_out = process_core(core_df, {}, hub_lookups, 20260903)
+
+        # Dòng KHÔNG trùng (TRSOLO1/TRSOLO2) phải y hệt đường cũ
+        assert core_out['TT'].iloc[1] == duong_cu[core_out['Trace'].iloc[1]]
+        assert core_out['TT'].iloc[2] == duong_cu[core_out['Trace'].iloc[2]]
+        assert core_out['TT'].iloc[1] == 'Hoàn thành'
+        assert core_out['TT'].iloc[2] == 'Chờ đi kênh'
+        # Dòng TRÙNG (TRDUP) đã được sửa đúng (không còn = đường cũ 'HT lỗi')
+        assert core_out['TT'].iloc[0] == 'Chờ đi kênh'
+        assert duong_cu[core_out['Trace'].iloc[0]] == 'HT lỗi'
+
+    def test_khong_co_trace_trung_ket_qua_y_het_duong_cu(self):
+        """Lớp bảo đảm (3), PLAN mục 5 — property test: Hub KHÔNG có Trace
+        nào trùng → process_core() phải cho kết quả GIỐNG HỆT TỪNG DÒNG kết
+        quả tính bằng đường cũ (_first_match), với dữ liệu sinh có cấu trúc
+        (nhiều Trace khác nhau, không trùng)."""
+        import random
+        rnd = random.Random(20260923)
+
+        hub_rows = []
+        core_rows = []
+        trang_thais = ['Hoàn thành', 'Chờ đi kênh', 'HT lỗi', 'Đã hủy']
+        for i in range(30):
+            trace = f'TR{i:04d}'
+            so_tien = rnd.randint(10_000, 9_999_000)
+            tt = rnd.choice(trang_thais)
+            hub_rows.append(_hub_row(f'S{i}', f'STC{i}', trace, tt, '', so_tien=str(so_tien)))
+            ref = '1000API' + trace
+            core_rows.append(_core_row(ref, '1400', so_tien))
+
+        hub_df = pd.DataFrame(hub_rows)
+        hub_out, hub_lookups = process_hub(hub_df, self._eicp_maps(), 20260903)
+        assert hub_lookups['trace_trung']['keys'] == set(), 'Dữ liệu sinh phải KHÔNG có Trace trùng'
+
+        trace_col = hub_out['Trace'].fillna('').astype(str)
+        tt_col = _safe_str(hub_out[HUB_COL_TRANG_THAI])
+        duong_cu = _first_match(trace_col, tt_col)
+
+        core_df = pd.DataFrame(core_rows)
+        core_out = process_core(core_df, {}, hub_lookups, 20260903)
+
+        for i in range(len(core_out)):
+            trace_i = core_out['Trace'].iloc[i]
+            assert core_out['TT'].iloc[i] == duong_cu[trace_i], (
+                f"Dòng {i} (Trace={trace_i}) lệch đường cũ dù KHÔNG có Trace nào trùng"
+            )
+
+    def test_buoc4_so_tien_cung_dong_hub_voi_buoc3(self):
+        """Rủi ro 4 (PLAN mục 8): bước 3 (Trạng thái) và bước 4 (Số tiền,
+        fallback khi Trạng thái rỗng) PHẢI chọn CÙNG 1 dòng Hub cho 1 giao
+        dịch trùng — Trạng thái rỗng của dòng ĐÚNG (theo Số tiền) phải cho ra
+        Số tiền của CHÍNH dòng đó, không phải dòng SAI (đầu tiên theo VLOOKUP)."""
+        hub_df = pd.DataFrame([
+            _hub_row('HA', 'STA', 'TRB4', 'Hoàn thành', '', so_tien='10000'),        # dòng SAI, đứng trước
+            _hub_row('HB', 'STB', 'TRB4', '', '', so_tien='1000000'),                # dòng ĐÚNG, Trạng thái rỗng
+        ])
+        hub_out, hub_lookups = process_hub(hub_df, self._eicp_maps(), 20260903)
+
+        core_df = pd.DataFrame([_core_row('1000API' + 'TRB4', '1400', 1000000)])
+        core_out = process_core(core_df, {}, hub_lookups, 20260903)
+        # Trạng thái của dòng ĐÚNG là rỗng → phải cascade sang Số tiền của
+        # CHÍNH dòng đó ('1000000'), KHÔNG phải Trạng thái của dòng SAI
+        # ('Hoàn thành') và KHÔNG phải Số tiền của dòng SAI ('10000').
+        assert core_out['TT'].iloc[0] == '1000000'
