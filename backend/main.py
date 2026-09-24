@@ -136,7 +136,12 @@ async def lifespan(app: FastAPI):
     # Đo event loop bị chặn — để dòng "Request chậm" nói được loop có đứng không
     from backend.core import slow_request as _slow_request
     _slow_request.bat_do_tre()
+    # Lấy mẫu tải mỗi phút cho màn Giám sát nhìn lại 24 giờ. Phải SAU bat_do_tre():
+    # mẫu đọc luôn độ trễ loop, chưa bật bộ đo thì cột đó rỗng.
+    from backend.services import giam_sat_mau as _giam_sat_mau
+    _giam_sat_mau.bat_dau(_db_file)
     yield
+    await _giam_sat_mau.dung()
     await _slow_request.tat_do_tre()
     # Xả nốt dòng audit đang chờ trước khi tiến trình chết
     audit_queue.stop()

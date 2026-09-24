@@ -20552,24 +20552,49 @@ This may happen if you try to create UI from a background task.</pre>
         phần–toàn thể, so độ lớn giữa vài mục, và diễn biến theo thời gian. Phần còn lại giữ nguyên số hoặc chuyển sang thanh mức.</p>
       <table>
         <tr><th>Khối</th><th>Chọn</th><th>Vì sao</th></tr>
-        <tr><td><b>Độ phản hồi backend 5 phút</b></td><td>Cột theo thời gian <span class="pill pill-green">mới</span></td>
-          <td>Nguồn <b>duy nhất</b> có lịch sử thật mà không phải dựng bộ lấy mẫu chạy nền: deque ~5 phút của task đo trễ đã có sẵn.
-            Lấy <b>đỉnh</b> mỗi ô 5 giây, không lấy trung bình — cú chặn 1,2 s bị trung bình hoá thành 240 ms là mất đúng thứ cần thấy</td></tr>
+        <tr><td><b>CPU · RAM · ba bể tài nguyên · độ phản hồi — 24 giờ</b></td><td>Ba biểu đồ đường <span class="pill pill-green">mới</span></td>
+          <td>Người dùng chốt 24/09: "không thể theo dõi 24/24, lúc vào xem cần thấy tổng quát thời gian qua". Xem mục <i>Bộ lấy mẫu</i> dưới đây</td></tr>
         <tr><td><b>Lỗi/cảnh báo theo giờ</b> · <b>Đăng nhập theo giờ</b></td><td>Cột xếp chồng 24 giờ <span class="pill pill-green">mới</span></td>
           <td>Trả lời câu mà con số tổng che mất: "dồn vào một lúc hay rải đều". Cụm 11 lượt đăng nhập sai trong một giờ = dò mật khẩu;
             tổng "14 lượt/24 giờ" thì không đọc ra. Đủ 24 ô kể cả giờ trống — thiếu ô là trục thời gian co lại, hai cột cách nhau 6 tiếng trông như liền nhau</td></tr>
         <tr><td><b>Dung lượng dự án chiếm</b></td><td>Cột ngang so độ lớn <span class="pill pill-amber">đã đổi</span></td>
           <td>Bản đầu vẽ cột xếp chồng "toàn bộ ổ đĩa" — <b>ảnh chụp cho thấy vô dụng</b>: Windows + phần trống chiếm 99 %, bốn mục của
             dự án gộp lại là một vệt không đọc được. Tách làm hai: ổ còn bao nhiêu chỗ → thanh mức; dự án chiếm chỗ ở đâu → cột ngang có nhãn số</td></tr>
-        <tr><td><b>CPU · RAM · các bể (luồng, kết nối, việc nặng, đối chiếu) · tuổi bản sao lưu</b></td><td>Thanh mức, KHÔNG biểu đồ</td>
+        <tr><td><b>CPU · RAM · các bể · tuổi bản sao lưu — giá trị HIỆN TẠI</b></td><td>Thanh mức, KHÔNG biểu đồ</td>
           <td>Đều là <b>một tỷ lệ so với trần</b>. Thanh mức đọc nhanh hơn mọi loại biểu đồ và tốn 8px. Vẽ đồng hồ/vòng tròn cho một
-            con số là đổi chỗ đọc được lấy chỗ trang trí</td></tr>
+            con số là đổi chỗ đọc được lấy chỗ trang trí. (Diễn biến theo thời gian của chính các số này nằm ở ba biểu đồ 24 giờ — hai việc khác nhau)</td></tr>
         <tr><td><b>Tên máy, PID, thời gian chạy, giờ NTP, lỗi gần nhất, lượt đối chiếu đang chạy, danh sách cảnh báo</b></td><td>Chữ / số</td>
           <td>Không phải số để so — là sự việc cụ thể. Ba con số headline (lỗi / cảnh báo / request chậm) để cỡ lớn, KHÔNG dựng thành biểu đồ ba cột</td></tr>
       </table>
-      <p><b>Không có lịch sử CPU/RAM.</b> Muốn đường CPU theo thời gian thì phải có bộ lấy mẫu chạy nền + nơi lưu — đổi hẳn thiết kế
-        "không đo gì chạy nền" của card 158. Gom ở trình duyệt thì mất sạch khi tải lại trang, và một biểu đồ "quên hết sau F5" dễ gây hiểu nhầm
-        hơn là không có. Chưa làm, chờ người dùng quyết.</p>
+
+      <div class="label"><span class="pill pill-red">Đảo quyết định của card 158</span> nay CÓ một bộ đo chạy nền — bộ duy nhất của dự án</div>
+      <p>Card 158 cố ý không đo gì chạy nền: mọi số là ảnh chụp lúc mở trang. Nhưng người vận hành không ngồi canh 24/24 — mở trang lúc 3h chiều
+        thấy RAM 40 % thì <b>không cách nào biết 10h sáng nó đã lên 94 %</b>, mà đó mới là thứ cần biết. Người dùng chốt 24/09/2026.
+        <code>backend/services/giam_sat_mau.py</code>: một task trên event loop, mỗi phút một dòng.</p>
+      <table>
+        <tr><th>Quyết định</th><th>Vì sao</th></tr>
+        <tr><td><b>Lưu vào bảng CSDL</b> (<code>monitor_samples</code>), không phải bộ nhớ</td>
+          <td>Restart backend (deploy, treo, mất điện) là mất sạch lịch sử — mà <b>vừa restart xong lại đúng là lúc cần xem trước đó đã xảy ra chuyện gì</b>.
+            1 dòng/phút × 7 ngày ≈ 10.000 dòng, vài trăm KB; tự dọn mỗi ~60 lần ghi</td></tr>
+        <tr><td>Mỗi ô 10 phút lấy <b>MAX</b>, không lấy trung bình</td>
+          <td>Câu hỏi là "có lúc nào cận ngưỡng". Trung bình 10 phút biến một phút chạm 95 % thành 45 % — tức là xoá đúng thứ đi tìm</td></tr>
+        <tr><td>Ô không có mẫu trả <b><code>None</code></b>, không phải 0; đường biểu đồ <b>không</b> <code>connectNulls</code></td>
+          <td>Quãng backend không chạy phải hiện ra là <b>vết đứt</b>. Tô 0 là nói dối rằng lúc ấy máy rảnh; nối liền là vẽ ra dữ liệu không tồn tại</td></tr>
+        <tr><td>Ba bể quy về <b>% sức chứa của chính nó</b> rồi vẽ chung một trục</td>
+          <td>Luồng 40, kết nối 48, việc nặng 4 — ba đơn vị khác nhau. Quy về % là cách duy nhất chung được một trục; <b>hai trục y là điều cấm</b>,
+            vì tỷ lệ giữa hai thang do người vẽ tự đặt nên biểu đồ tự bịa ra tương quan</td></tr>
+        <tr><td>Độ phản hồi (ms) là biểu đồ <b>riêng</b></td><td>Cùng lý do: ms không chung trục được với %</td></tr>
+        <tr><td>CPU tính bằng <b>hiệu hai lần đọc đồng hồ CPU cách nhau 1 phút</b></td>
+          <td>Trung bình cả phút, đúng câu hỏi hơn ảnh chụp 0,3 giây. Ô "CPU hiện tại" nay cũng lấy từ mẫu này → bỏ được <code>time.sleep(0,3)</code>
+            trên đường request mỗi lần mở/làm mới trang</td></tr>
+        <tr><td>Task chạy trên event loop, phần <b>ghi</b> đẩy sang luồng</td>
+          <td>Bộ đếm luồng/bể của anyio chỉ đọc được trên loop; còn ghi đĩa thì không được chặn loop. Kết nối CSDL <b>riêng, ngắn</b> — không mượn bể
+            (bể là của request; task nền giữ suất trong đó là lấy mất chỗ của người dùng)</td></tr>
+        <tr><td>Một lượt ghi hỏng chỉ <code>_log.warning</code>, không giết task</td>
+          <td>CSDL khoá / đĩa đầy không được làm chết cả bộ đo — nhưng phải kêu, im lặng nghĩa là biểu đồ thủng mà không ai biết vì sao</td></tr>
+      </table>
+      <p><b>Đã bỏ</b> biểu đồ "độ phản hồi 5 phút" (ô 5 giây, đọc thẳng deque của <code>slow_request</code>) cùng hàm <code>chuoi_tre()</code>:
+        biểu đồ 24 giờ phủ luôn việc của nó, giữ cả hai là hai chỗ cùng trả lời một câu hỏi.</p>
 
       <div class="label"><span class="pill pill-blue">Nền tối</span> chỉ riêng trang này</div>
       <p>Bước màu <b>chọn riêng cho nền tối</b>, không phải lật màu của nền sáng. Nền trang <code>#0d0d0d</code>, nền thẻ/vùng vẽ
@@ -20588,8 +20613,14 @@ This may happen if you try to create UI from a background task.</pre>
         <li>Dựng trang demo dùng <b>chính các hàm vẽ thật</b> + dữ liệu mẫu, chụp bằng Chrome headless. Bốn lượt chụp lộ ra 6 lỗi mà test
           không bao giờ bắt được: cột ổ đĩa vô dụng, nhãn trục bị cắt, nhãn ngưỡng tràn mép, nút trùng màu dữ liệu, nhãn thanh mức đặt sai chỗ,
           thẻ bị kéo cao.</li>
-        <li><code>tests/test_monitor.py</code> thêm 4 test: đủ 24 ô giờ kể cả giờ trống, tách đúng đăng nhập thành công/sai theo giờ,
-          cột dung lượng cộng khớp phần đã dùng, chuỗi độ trễ lấy đỉnh từng ô (và trả <code>None</code> khi bộ đo tắt).</li>
+        <li><code>tests/test_monitor.py</code>: đủ 24 ô giờ kể cả giờ trống; tách đúng đăng nhập thành công/sai theo giờ;
+          cột dung lượng cộng khớp phần đã dùng; lịch sử lấy ĐỈNH từng ô và để trống ô không có mẫu; dòng <code>ts</code> hỏng không
+          làm hỏng cả biểu đồ; dọn dòng quá hạn; và một test <b>chạy thật task nền</b> (<code>bat_dau</code> → ngủ → có dòng trong CSDL)
+          — test từng hàm rời không bắt được lỗi nối dây, mà đó đúng là kiểu hỏng làm biểu đồ trống trơn.</li>
+        <li>Lỗi test bắt được ngay: mẫu ghi trong phút hiện tại (có phần giây) rơi ra ngoài ô cuối → ô người xem nhìn đầu tiên luôn trống.</li>
+        <li>Hai lỗi nữa chỉ ảnh chụp mới thấy: 24 nhãn giờ trên ~430 px dính thành vệt "16:07:08:09…" (nay 3 giờ một nhãn); trục mili giây
+          hiện "1,200 ms" — ECharts tự chèn dấu phẩy hàng nghìn và NiceGUI <b>không cho</b> truyền hàm JS để đổi, mà trong tiếng Việt dấu
+          phẩy là dấu thập phân nên đọc thành 1,2 ms → bỏ hẳn nhãn trục dọc của biểu đồ đó, vạch ngưỡng + câu chú dẫn + tooltip đã đủ.</li>
       </ul>
     </div>
   </div>

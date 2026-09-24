@@ -1972,6 +1972,23 @@ def _ensure_indexes():
         "ALTER TABLE document_entries ADD COLUMN note_at DATETIME",
         # Quyền handovers.edit_note KHÔNG cấp sẵn: người dùng chốt QTV tự tick ở màn
         # Phân quyền chức năng (21/09/2026). Sau deploy chưa ai viết được ghi chú.
+
+        # ── Lịch sử tải máy chủ cho màn Giám sát — 2026-09-24 ──
+        # Một dòng mỗi phút (backend/services/giam_sat_mau.py), tự xoá sau 7 ngày:
+        # ~10.000 dòng, vài trăm KB. Nằm trong CSDL chứ không phải bộ nhớ vì restart
+        # backend là mất sạch — mà vừa restart xong lại đúng là lúc cần xem trước đó
+        # đã xảy ra chuyện gì. `ts` là khoá chính nên đã có sẵn chỉ mục để lọc theo giờ.
+        """CREATE TABLE IF NOT EXISTS monitor_samples (
+            ts          TEXT PRIMARY KEY,
+            cpu         REAL,
+            ram_pct     REAL,
+            ram_backend INTEGER,
+            luong_pct   REAL,
+            csdl_pct    REAL,
+            nang_pct    REAL,
+            doi_chieu   INTEGER,
+            loop_ms     INTEGER
+        )""",
     ]
     _mig_log = logging.getLogger(__name__)
 

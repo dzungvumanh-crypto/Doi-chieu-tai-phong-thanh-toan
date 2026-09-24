@@ -248,20 +248,115 @@ def test_thanh_phan_dia_cong_du_phan_da_dung(ctx):
     assert dia["da_dung"] + dia["o_dia"]["con_trong"] == dia["o_dia"]["tong"]
 
 
-def test_chuoi_tre_lay_dinh_tung_o_va_tra_none_khi_khong_do():
-    import time as _t
-    from backend.core import slow_request as sr
+# ── Bộ lấy mẫu tải 24 giờ ──
+_SCHEMA_MAU = """
+CREATE TABLE monitor_samples (ts TEXT PRIMARY KEY, cpu REAL, ram_pct REAL, ram_backend INTEGER,
+                              luong_pct REAL, csdl_pct REAL, nang_pct REAL, doi_chieu INTEGER, loop_ms INTEGER);
+"""
 
-    assert sr.chuoi_tre() is None                                   # chưa bật bộ đo
-    sr._task_do_tre = object()                                      # giả "đang đo"
-    try:
-        now = _t.monotonic()
-        sr._mau_tre.clear()
-        sr._mau_tre.extend([(now - 1, 0.5), (now - 2, 0.02), (now - 7, 0.3)])
-        s = sr.chuoi_tre(cua_so_giay=10, buoc_giay=5)
-        assert [o["giay_truoc"] for o in s] == [5, 0]               # cũ → mới
-        assert s[-1]["ms"] == round((0.5 - sr._NEN_GIAY) * 1000)    # ĐỈNH, không phải trung bình
-        assert s[0]["ms"] == round((0.3 - sr._NEN_GIAY) * 1000)
-    finally:
-        sr._task_do_tre = None
-        sr._mau_tre.clear()
+
+def _mau(ts, **kw):
+    m = {"ts": ts, "cpu": None, "ram_pct": None, "ram_backend": None, "luong_pct": None,
+         "csdl_pct": None, "nang_pct": None, "doi_chieu": None, "loop_ms": None}
+    m.update(kw)
+    return m
+
+
+def test_lich_su_lay_DINH_tung_o_va_de_trong_o_khong_co_mau(tmp_path):
+    from backend.services import giam_sat_mau as gs
+
+    db = sqlite3.connect(tmp_path / "m.db")
+    db.executescript(_SCHEMA_MAU)
+    bay_gio = _vn_now().replace(second=0, microsecond=0)
+    # Ba mẫu trong CÙNG một ô 10 phút: 40 / 91 / 55 → ô đó phải là 91, không phải 62
+    for phut, cpu in ((2, 40.0), (5, 91.0), (8, 55.0)):
+        gs.ghi(str(tmp_path / "m.db"), _mau((bay_gio - timedelta(minutes=phut)).strftime("%Y-%m-%d %H:%M:%S"), cpu=cpu))
+    ls = gs.doc_lich_su(db, gio=24, buoc_phut=10)
+    db.close()
+
+    assert len(ls) == 144                                   # 24 giờ / 10 phút
+    o_cuoi = ls[-1]
+    assert o_cuoi["cpu"] == 91.0, "phải lấy đỉnh, không phải trung bình"
+    # Ô không có mẫu để TRỐNG (None) chứ không tô 0: 0 là nói dối rằng lúc đó máy rảnh
+    assert ls[0]["cpu"] is None and ls[-5]["cpu"] is None
+
+
+def test_lich_su_bo_qua_dong_hong_va_tra_none_khi_chua_co_bang(tmp_path):
+    from backend.services import giam_sat_mau as gs
+
+    db = sqlite3.connect(tmp_path / "m.db")
+    assert gs.doc_lich_su(db) is None                       # bảng chưa có → màn hình tự ẩn biểu đồ
+    db.executescript(_SCHEMA_MAU)
+    bay_gio = _vn_now().replace(second=0, microsecond=0)
+    db.execute("INSERT INTO monitor_samples (ts, cpu) VALUES (?, ?)", ("khong-phai-ngay", 50.0))
+    db.execute("INSERT INTO monitor_samples (ts, cpu) VALUES (?, ?)",
+               (bay_gio.strftime("%Y-%m-%d %H:%M:%S"), 33.0))
+    db.commit()
+    ls = gs.doc_lich_su(db)
+    db.close()
+    assert ls[-1]["cpu"] == 33.0                            # một dòng hỏng không làm hỏng cả biểu đồ
+
+
+def test_ghi_don_dong_qua_han(tmp_path):
+    from backend.services import giam_sat_mau as gs
+
+    p = str(tmp_path / "m.db")
+    db = sqlite3.connect(p)
+    db.executescript(_SCHEMA_MAU)
+    db.commit()
+    cu = (_vn_now() - timedelta(days=gs.GIU_NGAY + 1)).strftime("%Y-%m-%d %H:%M:%S")
+    gs.ghi(p, _mau(cu, cpu=10.0))
+    gs.ghi(p, _mau(_vn_now().strftime("%Y-%m-%d %H:%M:%S"), cpu=20.0), don=True)
+    con_lai = [r[0] for r in db.execute("SELECT ts FROM monitor_samples").fetchall()]
+    db.close()
+    assert cu not in con_lai and len(con_lai) == 1
+
+
+def test_overview_tra_lich_su(ctx):
+    client, conn = ctx
+    cap_quyen(conn, 2, "menu.monitor")
+    conn.executescript(_SCHEMA_MAU)
+    conn.execute("INSERT INTO monitor_samples (ts, ram_pct) VALUES (?, ?)",
+                 (_vn_now().strftime("%Y-%m-%d %H:%M:%S"), 88.0))
+    conn.commit()
+    d = client.get("/api/admin/monitor/overview").json()
+    assert d["lich_su_buoc_phut"] == 10 and len(d["lich_su"]) == 144
+    assert d["lich_su"][-1]["ram_pct"] == 88.0
+
+
+def test_task_nen_that_su_ghi_duoc_mot_dong(tmp_path, monkeypatch):
+    """Chạy thật task nền: chup() → ghi() → có dòng trong CSDL.
+
+    Test từng hàm rời không bắt được lỗi nối dây (task không chạy, sai đường dẫn CSDL,
+    chup() ném vì gọi ngoài event loop) — mà đó đúng là kiểu hỏng làm biểu đồ trống trơn.
+    """
+    import asyncio
+
+    from backend.core import slow_request as sr
+    from backend.services import giam_sat_mau as gs
+
+    p = str(tmp_path / "m.db")
+    con = sqlite3.connect(p)
+    con.executescript(_SCHEMA_MAU)
+    con.commit()
+    con.close()
+    monkeypatch.setattr(gs, "CHU_KY_GIAY", 0.05)
+
+    async def chay():
+        sr.bat_do_tre()                     # mẫu đọc độ trễ loop từ bộ đo này
+        gs.bat_dau(p)
+        try:
+            await asyncio.sleep(0.4)        # đủ cho vài lượt lấy mẫu
+        finally:
+            await gs.dung()
+            await sr.tat_do_tre()
+
+    asyncio.run(chay())
+
+    con = sqlite3.connect(p)
+    rows = con.execute("SELECT ts, luong_pct, csdl_pct, loop_ms FROM monitor_samples").fetchall()
+    con.close()
+    assert rows, "task nền không ghi được dòng nào"
+    ts, luong, csdl, loop_ms = rows[-1]
+    assert len(ts) == 19 and luong is not None and csdl is not None
+    assert loop_ms is not None and loop_ms >= 0

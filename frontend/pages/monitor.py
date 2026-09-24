@@ -182,9 +182,9 @@ def _ve(khung, d: dict):
                     ui.icon("error" if c["muc"] == "loi" else "warning").classes("text-base").style(f"color:{m}")
                     ui.label(f"{c['nhom']}: {c['noi_dung']}").classes("text-sm").style(f"color:{_MUC2}")
 
-        # Độ phản hồi trải ngang cả hàng: đây là biểu đồ duy nhất có trục thời gian
-        # "vừa xảy ra", nén vào 1/3 chiều ngang là mất hết chi tiết cụm
-        _ve_phan_hoi(d["tai"] or {})
+        # Ba biểu đồ nhìn lại 24 giờ đặt NGAY dưới dải trạng thái: câu hỏi đầu tiên của
+        # người mở trang là "hôm nay có lúc nào suýt hỏng không", không phải "ngay lúc này ra sao"
+        _ve_lich_su(d)
 
         with ui.element("div").classes(
                 "w-full grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4").style("align-items:start"):
@@ -210,41 +210,115 @@ def _ve_loi(khung, e: Exception):
             ui.label(str(e)[:300]).classes("text-xs break-all").style(f"color:{_MO}")
 
 
-def _ve_phan_hoi(t: dict):
-    """Độ phản hồi của backend, 5 phút gần nhất — diễn biến theo thời gian, đúng chỗ cho biểu đồ."""
-    with _the("Độ phản hồi của backend — 5 phút gần nhất", "show_chart"):
-        series = t.get("tre_series")
-        if series is None:
-            ui.label("Chưa đo (backend vừa khởi động hoặc bộ đo đã tắt)").classes("text-sm").style(f"color:{_MO}")
-            return
-        buoc = t.get("tre_buoc_giay", 5)
-        dinh = max((o["ms"] for o in series), default=0)
-        ui.label(f"Mỗi cột = {buoc} giây, cột càng cao càng có lúc hệ thống đứng lại. "
-                 f"Cao nhất trong 5 phút: {dinh} ms.").classes("text-xs").style(f"color:{_MO}")
-        # Chỉ ghi nhãn ở mốc phút chẵn ("-4 phút"), các ô giữa để trống — "-4:55" là
-        # cách đọc của máy, người vận hành không cần biết giây thứ mấy
-        nhan = [("bây giờ" if o["giay_truoc"] == 0
-                 else f"-{o['giay_truoc'] // 60} phút" if o["giay_truoc"] % 60 == 0 else "")
-                for o in series]
-        opt = _khung_do(180)
-        opt.update({
-            # bottom 24: nhãn trục nằm gọn trong thẻ — để mặc định 4 thì chữ bị cắt mất nửa dưới
-            "grid": {"left": 4, "right": 12, "top": 10, "bottom": 24, "containLabel": True},
-            "tooltip": {"trigger": "axis", "formatter": "{b}: {c} ms",
-                        "backgroundColor": _THE, "borderColor": _VIEN,
-                        "textStyle": {"color": _MUC1, "fontSize": 11}},
-            "xAxis": {**_truc_gio(nhan), "axisLabel": {"color": _MO, "fontSize": 10, "interval": 0}},
-            "yAxis": {**_truc_so(" ms"), "minInterval": 50},
-            # Một chuỗi → không cần chú thích, tiêu đề thẻ đã gọi tên nó
-            "series": [{**_cot("Đứng lâu nhất", _S1, [o["ms"] for o in series]),
-                        "markLine": {"silent": True, "symbol": "none",
-                                     "lineStyle": {"color": _LOI, "type": "dashed", "width": 1},
-                                     # insideEndTop: để mặc định thì chữ rơi ra ngoài mép phải và bị cắt
-                                     "label": {"formatter": "ngưỡng 1000 ms", "color": _LOI, "fontSize": 10,
-                                               "position": "insideEndTop"},
-                                     "data": [{"yAxis": 1000}]}}],
-        })
-        _ve_do(opt)
+def _duong(ten: str, mau: str, so: list) -> dict:
+    """Đường 2px, không chấm điểm (144 điểm mà chấm hết thì thành dải hạt).
+
+    `connectNulls` để MẶC ĐỊNH (False): ô không có mẫu là backend lúc ấy không chạy,
+    đường phải ĐỨT ở đó. Nối liền qua chỗ trống là vẽ ra một đoạn dữ liệu không hề tồn tại.
+    """
+    return {"name": ten, "type": "line", "data": so, "showSymbol": False, "smooth": False,
+            "lineStyle": {"width": 2, "color": mau}, "itemStyle": {"color": mau}}
+
+
+def _vach_nguong(muc: float, chu: str) -> dict:
+    return {"silent": True, "symbol": "none",
+            "lineStyle": {"color": _LOI, "type": "dashed", "width": 1},
+            # insideEndTop: để mặc định thì chữ rơi ra ngoài mép phải và bị cắt
+            "label": {"formatter": chu, "color": _LOI, "fontSize": 10, "position": "insideEndTop"},
+            "data": [{"yAxis": muc}]}
+
+
+_CACH_GIO_NHAN = 3      # ghi nhãn giờ cách nhau 3 tiếng
+
+
+def _truc_luc(ls: list) -> dict:
+    """Trục thời gian: chỉ ghi nhãn mỗi 3 giờ tròn.
+
+    Ghi nhãn ở MỌI giờ tròn (24 nhãn trên ~430 px) thì chữ dính vào nhau thành một
+    vệt "16:07:08:09:20:21…" không đọc được gì — ảnh chụp lần đầu đúng như vậy.
+    """
+    nhan = [o["luc"] if o["luc"].endswith(":00") and int(o["luc"][:2]) % _CACH_GIO_NHAN == 0 else ""
+            for o in ls]
+    return {"type": "category", "data": nhan,
+            "axisTick": {"show": False}, "axisLine": {"lineStyle": {"color": _TRUC}},
+            "axisLabel": {"color": _MO, "fontSize": 10, "interval": 0},
+            "splitLine": {"show": False}}
+
+
+def _do_24h(ls: list, chuoi: list, don_vi: str, tran: "float | None", vach: "tuple | None",
+            an_nhan_y: bool = False, cao: int = 170):
+    if vach:
+        chuoi[0]["markLine"] = _vach_nguong(*vach)
+    opt = _khung_do(cao)
+    opt.update({
+        "grid": {"left": 4, "right": 12, "top": 10, "bottom": 40, "containLabel": True},
+        "tooltip": {"trigger": "axis", "backgroundColor": _THE, "borderColor": _VIEN,
+                    "textStyle": {"color": _MUC1, "fontSize": 11}},
+        "xAxis": _truc_luc(ls),
+        # ECharts tự chèn dấu PHẨY hàng nghìn ("1,200 ms") mà không cho thay bằng hàm
+        # JS qua NiceGUI — trong tiếng Việt dấu phẩy là dấu thập phân nên đọc thành 1,2 ms.
+        # Với trục mili giây thì bỏ hẳn nhãn: vạch ngưỡng + câu chú dẫn + tooltip đã nói đủ.
+        "yAxis": {**_truc_so(don_vi), **({"max": tran} if tran else {}),
+                  **({"axisLabel": {"show": False}} if an_nhan_y else {})},
+        "series": chuoi,
+    })
+    # Từ 2 chuỗi trở lên mới cần chú thích; một chuỗi thì tiêu đề thẻ đã gọi tên nó
+    if len(chuoi) > 1:
+        opt["legend"] = _chu_thich([s["name"] for s in chuoi])
+    _ve_do(opt)
+
+
+def _ve_lich_su(d: dict):
+    """Ba biểu đồ nhìn lại 24 giờ — lý do tồn tại của cả bộ lấy mẫu nền.
+
+    Người vận hành không ngồi canh 24/24: mở trang lúc 3h chiều mà RAM đang 40 % thì
+    không có cách nào biết 10h sáng nó đã lên 93 %. Ba biểu đồ này trả lời đúng câu
+    "trong một ngày qua đã có lúc nào cận ngưỡng chưa".
+    """
+    ls = d.get("lich_su")
+    if not ls:
+        with _the("Nhìn lại 24 giờ qua", "show_chart"):
+            ui.label("Chưa có số liệu — bộ lấy mẫu bắt đầu ghi từ lúc backend khởi động, "
+                     "mỗi phút một điểm.").classes("text-sm").style(f"color:{_MO}")
+        return
+    buoc = d.get("lich_su_buoc_phut", 10)
+
+    def dinh(cot):
+        return max((o[cot] for o in ls if o[cot] is not None), default=None)
+
+    with ui.element("div").classes(
+            "w-full grid grid-cols-1 xl:grid-cols-3 gap-4").style("align-items:start"):
+        # 1) CPU + RAM: hai chuỗi CÙNG đơn vị % → chung một trục. Không bao giờ hai trục y.
+        with _the("CPU & RAM máy chủ — 24 giờ", "memory"):
+            _chu_dan(f"Cao nhất: CPU {_pt(dinh('cpu'))}, RAM {_pt(dinh('ram_pct'))}. "
+                     f"Mỗi điểm là mức CAO NHẤT trong {buoc} phút.")
+            _do_24h(ls, [_duong("CPU", _S1, [o["cpu"] for o in ls]),
+                         _duong("RAM", _S2, [o["ram_pct"] for o in ls])],
+                    " %", 100, (90, "ngưỡng 90 %"))
+
+        # 2) Ba bể tài nguyên quy về % SỨC CHỨA của chính nó — nhờ vậy chung được một trục
+        with _the("Mức dùng bể tài nguyên — 24 giờ", "speed"):
+            _chu_dan("Tính theo phần trăm sức chứa của từng bể (luồng 40, kết nối 48, việc nặng 4). "
+                     "Chạm 100 % là có người phải xếp hàng chờ.")
+            _do_24h(ls, [_duong("Luồng xử lý", _S1, [o["luong_pct"] for o in ls]),
+                         _duong("Kết nối CSDL", _S2, [o["csdl_pct"] for o in ls]),
+                         _duong("Việc nặng", _S3, [o["nang_pct"] for o in ls])],
+                    " %", 100, (90, "gần đầy"))
+
+        # 3) Độ phản hồi: ms — đơn vị khác hẳn nên PHẢI là biểu đồ riêng
+        with _the("Độ phản hồi của backend — 24 giờ", "timer"):
+            _chu_dan(f"Lần đứng lâu nhất trong mỗi {buoc} phút. Cao nhất 24 giờ qua: "
+                     f"{_so(dinh('loop_ms'))} ms. Dưới 100 ms là bình thường.")
+            _do_24h(ls, [_duong("Đứng lâu nhất", _S1, [o["loop_ms"] for o in ls])],
+                    " ms", None, (1000, "ngưỡng 1000 ms"), an_nhan_y=True)
+
+
+def _chu_dan(chu: str):
+    ui.label(chu).classes("text-xs leading-snug").style(f"color:{_MO}")
+
+
+def _pt(v) -> str:
+    return "—" if v is None else f"{v:g} %".replace(".", ",")
 
 
 def _ve_may_chu(m: dict):

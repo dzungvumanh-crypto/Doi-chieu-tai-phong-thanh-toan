@@ -32,10 +32,10 @@ _log = logging.getLogger(__name__)
 _BAT_DAU = time.time()
 _GB = 1024 ** 3
 _CUA_SO_LOOP_GIAY = 60          # đo event loop trong 60 giây gần nhất
-# Biểu đồ độ phản hồi: 5 phút = tuổi tối đa của deque mẫu trong slow_request; ô 5 giây
-# → 60 cột, đủ thưa để nhìn ra cụm mà không thành hàng rào kẻ sọc
-_CUA_SO_TRE_GIAY = 300
-_BUOC_TRE_GIAY = 5
+# Biểu đồ nhìn lại: 24 giờ, ô 10 phút → 144 điểm. Ô 5 phút (288 điểm) thì trên màn
+# hình thường mỗi điểm chưa tới 2 px, không đọc thêm được gì mà gói JSON gấp đôi.
+_GIO_LICH_SU = 24
+_BUOC_LICH_SU_PHUT = 10
 
 # ── Ngưỡng cảnh báo ──
 _DIA_TRONG_LOI = (0.05, 2 * _GB)        # còn < 5 % HOẶC < 2 GB → lỗi
@@ -94,23 +94,36 @@ def _ram_backend() -> int | None:
     return None
 
 
-def _cpu_phan_tram(giay: float = 0.3) -> float | None:
-    """CPU cả máy trong `giay` giây. Ngủ trong luồng — nhả GIL, không giữ gì khác."""
+def _doc_dong_ho_cpu() -> "tuple[int, int, int] | None":
+    """(idle, kernel, user) — đồng hồ CPU cộng dồn của Windows, đơn vị 100 ns.
+
+    Tách riêng để bộ lấy mẫu (`services/giam_sat_mau.py`) lấy hiệu hai lần đọc cách
+    nhau một phút, thay vì phải ngủ giữa hai lần đọc như đường đo tức thời bên dưới.
+    """
     if os.name != "nt":
         return None
     import ctypes
     from ctypes import wintypes
 
-    def _chup():
-        idle, kernel, user = wintypes.FILETIME(), wintypes.FILETIME(), wintypes.FILETIME()
-        if not ctypes.windll.kernel32.GetSystemTimes(ctypes.byref(idle), ctypes.byref(kernel), ctypes.byref(user)):
-            return None
-        so = lambda ft: (ft.dwHighDateTime << 32) | ft.dwLowDateTime  # noqa: E731
-        return so(idle), so(kernel), so(user)
+    idle, kernel, user = wintypes.FILETIME(), wintypes.FILETIME(), wintypes.FILETIME()
+    if not ctypes.windll.kernel32.GetSystemTimes(ctypes.byref(idle), ctypes.byref(kernel), ctypes.byref(user)):
+        return None
+    so = lambda ft: (ft.dwHighDateTime << 32) | ft.dwLowDateTime  # noqa: E731
+    return so(idle), so(kernel), so(user)
 
-    a = _chup()
+
+def _cpu_phan_tram(giay: float = 0.3) -> float | None:
+    """CPU cả máy trong `giay` giây — đường LUI khi chưa có mẫu nền nào.
+
+    Bình thường ô CPU lấy từ mẫu gần nhất của bộ lấy mẫu (trung bình cả phút, đúng
+    câu hỏi "có lúc nào cận ngưỡng" hơn một ảnh chụp 0,3 giây), nên đường này chỉ
+    chạy trong ít phút đầu sau khi bật backend. Ngủ trong luồng — nhả GIL.
+    """
+    a = _doc_dong_ho_cpu()
+    if a is None:
+        return None
     time.sleep(giay)
-    b = _chup()
+    b = _doc_dong_ho_cpu()
     if not a or not b:
         return None
     idle, kernel, user = (b[i] - a[i] for i in range(3))
@@ -298,6 +311,7 @@ def _nguoi_dung(db: sqlite3.Connection) -> dict:
 def _thu_thap_dong_bo(db: sqlite3.Connection, current: dict) -> dict:
     """Mọi phần đụng đĩa / CSDL / mạng — chạy trong luồng, không trên event loop."""
     from backend.services.backup_service import last_backup_info
+    from backend.services.giam_sat_mau import doc_lich_su
     from backend.services.time_sync import check_drift
     from backend.api.logs import _LOG_PATH
 
@@ -305,6 +319,12 @@ def _thu_thap_dong_bo(db: sqlite3.Connection, current: dict) -> dict:
     # Giờ trong app.log là giờ MÁY (logging dùng localtime), không phải _vn_now()
     moc_log = datetime.now() - timedelta(hours=24)
     ram = _ram_may()
+    lich_su = doc_lich_su(db, _GIO_LICH_SU, _BUOC_LICH_SU_PHUT)
+    # CPU: lấy từ mẫu nền gần nhất (trung bình cả phút). Chỉ tự đo 0,3 giây khi chưa
+    # có mẫu nào — vài phút đầu sau khi bật backend, hoặc máy không phải Windows.
+    cpu = next((o["cpu"] for o in reversed(lich_su or []) if o["cpu"] is not None), None)
+    if cpu is None:
+        cpu = _cpu_phan_tram()
     nhat_ky = _quet_log(_file_log(log_path, moc_log), moc_log, datetime.now())
     # Nội dung dòng lỗi là nội dung nhật ký — chỉ người có menu.logs mới đọc; số đếm thì ai cũng thấy
     nhat_ky["xem_noi_dung"] = co_quyen(db, current, "menu.logs")
@@ -317,7 +337,7 @@ def _thu_thap_dong_bo(db: sqlite3.Connection, current: dict) -> dict:
             "pid": os.getpid(),
             "chay_tu": datetime.fromtimestamp(_BAT_DAU).strftime("%Y-%m-%d %H:%M:%S"),
             "chay_giay": int(time.time() - _BAT_DAU),
-            "cpu": _cpu_phan_tram(),
+            "cpu": cpu,
             "ram": ram,
             "ram_backend": _ram_backend(),
         },
@@ -327,6 +347,8 @@ def _thu_thap_dong_bo(db: sqlite3.Connection, current: dict) -> dict:
         "dong_ho": check_drift(),
         "nhat_ky": nhat_ky,
         "nguoi_dung": _nguoi_dung(db),
+        "lich_su": lich_su,
+        "lich_su_buoc_phut": _BUOC_LICH_SU_PHUT,
     }
 
 
@@ -344,10 +366,6 @@ def _tai_hien_tai() -> dict:
     tai["hang_doi_nhat_ky"] = audit_queue._q.qsize()
     tai["hang_doi_nhat_ky_toi_da"] = audit_queue.MAX_QUEUE
     tai["word_nen"] = leave_pdf._server.alive()
-    # Chuỗi cho biểu đồ độ phản hồi — nguồn duy nhất có sẵn lịch sử thật (deque ~5 phút
-    # của task đo trễ), không phải dựng thêm bộ lấy mẫu chạy nền nào
-    tai["tre_series"] = slow_request.chuoi_tre(_CUA_SO_TRE_GIAY, _BUOC_TRE_GIAY)
-    tai["tre_buoc_giay"] = _BUOC_TRE_GIAY
     return tai
 
 

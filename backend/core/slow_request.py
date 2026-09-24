@@ -142,30 +142,6 @@ def tre_loop_ms(tu: float) -> "tuple[float, float] | None":
     return max(mau) * 1000, sum(max(0.0, t - _NEN_GIAY) for t in mau) * 1000
 
 
-def chuoi_tre(cua_so_giay: float = 300.0, buoc_giay: float = 5.0) -> "list[dict] | None":
-    """Độ trễ event loop CAO NHẤT trong từng ô `buoc_giay` giây, cũ → mới. None = không đo.
-
-    Cho biểu đồ ở màn Giám sát. Lấy MAX chứ không trung bình: một cú chặn 1,2 s nằm
-    trong ô 5 giây đúng là thứ cần thấy, lấy trung bình sẽ chia nó thành 240 ms rồi
-    kết luận "bình thường". Không cộng phần task đo đang ngủ quá giờ (khác
-    `tre_loop_ms`): ở đây không có request nào vừa kết thúc để phải bù.
-
-    Cửa sổ tối đa bằng tuổi của `_mau_tre` (~5 phút); ô nào chưa có mẫu thì bằng 0,
-    nên biểu đồ vừa bật backend sẽ phẳng ở phần đầu — đúng, không phải thiếu dữ liệu.
-    """
-    if _task_do_tre is None:
-        return None
-    now = time.monotonic()
-    so_o = max(1, int(cua_so_giay / buoc_giay))
-    dinh = [0.0] * so_o
-    for luc, tre in _mau_tre:
-        i = so_o - 1 - int((now - luc) / buoc_giay)
-        if 0 <= i < so_o:
-            dinh[i] = max(dinh[i], max(0.0, tre - _NEN_GIAY) * 1000)
-    return [{"giay_truoc": round((so_o - 1 - i) * buoc_giay), "ms": round(ms)}
-            for i, ms in enumerate(dinh)]
-
-
 def so_lieu_tai(tu: float) -> dict:
     """Số liệu tải bên trong backend kể từ mốc `tu` (monotonic). CÓ THỂ raise.
 

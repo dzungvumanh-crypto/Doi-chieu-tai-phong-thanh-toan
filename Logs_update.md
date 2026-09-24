@@ -4,15 +4,22 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
-- 24/09/2026 Giám sát hệ thống - **Nền tối + biểu đồ**
+- 24/09/2026 Giám sát hệ thống - **Nền tối + biểu đồ nhìn lại 24 giờ**
     + ✅ Màn hình chuyển sang **nền tối** cho đỡ chói mắt khi mở lâu
-    + ✅ Thêm biểu đồ ở những chỗ con số không nói hết: **độ phản hồi của máy chủ trong 5 phút gần nhất**
-      (cột càng cao càng có lúc hệ thống đứng lại, có vạch mốc 1 giây), **lỗi và cảnh báo theo từng giờ**,
-      **đăng nhập đúng/sai theo từng giờ** (thấy được cụm đăng nhập sai dồn vào một giờ — dấu hiệu dò mật khẩu),
-      và **cột so dung lượng** các thư mục đang chiếm chỗ trên ổ
-    + ℹ️ CPU, bộ nhớ, các mức tải và độ trễ sao lưu vẫn hiển thị bằng **thanh mức** chứ không phải biểu đồ:
-      một con số so với mức trần thì thanh mức đọc nhanh hơn
-    + ℹ️ Chưa có biểu đồ CPU/bộ nhớ theo thời gian — muốn có thì máy chủ phải ghi lại số đo liên tục, sẽ báo sau
+    + ✅ **Ba biểu đồ 24 giờ qua** ngay đầu màn hình — để mở lên là biết *cả ngày hôm nay đã có lúc nào
+      suýt quá tải chưa*, không cần ngồi canh: **CPU và RAM máy chủ** (có vạch mốc 90 %), **mức dùng các
+      bể tài nguyên** (luồng, kết nối cơ sở dữ liệu, việc nặng — tính theo % sức chứa), và **độ phản hồi
+      của máy chủ** (lần đứng lâu nhất mỗi 10 phút, có vạch mốc 1 giây)
+    + ℹ️ Mỗi điểm trên biểu đồ là mức **cao nhất** trong 10 phút, không phải trung bình — lấy trung bình
+      thì một phút chạm 95 % sẽ bị san thành 45 % và không ai thấy
+    + ℹ️ Khoảng thời gian backend không chạy (tắt máy, cập nhật) để **đứt đoạn** trên biểu đồ, không nối
+      liền và không vẽ thành 0
+    + ✅ Biểu đồ **lỗi/cảnh báo theo từng giờ**, **đăng nhập đúng/sai theo từng giờ** (thấy được cụm đăng
+      nhập sai dồn vào một giờ — dấu hiệu dò mật khẩu), và **cột so dung lượng** các thư mục trên ổ
+    + ℹ️ CPU, bộ nhớ, các mức tải và độ trễ sao lưu **hiện tại** vẫn hiển thị bằng thanh mức: một con số
+      so với mức trần thì thanh mức đọc nhanh hơn biểu đồ
+    + ℹ️ Máy chủ ghi một dòng số đo mỗi phút vào cơ sở dữ liệu, tự xoá sau 7 ngày (khoảng 10.000 dòng,
+      vài trăm KB — không ảnh hưởng tốc độ)
 
 - 24/09/2026 Quản lý hệ thống - **Nhật ký cho biết lúc hệ thống chậm thì máy chủ đang bận việc gì** — không đổi gì với người dùng
     + ✅ Dòng cảnh báo **"Request chậm"** nay kể **tên** các lượt đối chiếu đang chạy lúc đó
