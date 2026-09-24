@@ -60,7 +60,6 @@ def chup() -> dict:
     from backend.core import slow_request
 
     tai = slow_request.so_lieu_tai(_moc_truoc or time.monotonic() - CHU_KY_GIAY)
-    tre = slow_request.tre_loop_ms(_moc_truoc or time.monotonic() - CHU_KY_GIAY)
     _moc_truoc = time.monotonic()
     ram = _ram_may()
 
@@ -77,8 +76,9 @@ def chup() -> dict:
         "nang_pct": pct(tai["nang_dang_chay"], tai["nang_toi_da"]),
         "doi_chieu": len(tai["doi_chieu"]),
         # Đỉnh trong phút vừa rồi, không phải trung bình: một cú chặn 1,2 s bị chia
-        # cho 60 giây thành 20 ms là mất đúng thứ cần thấy
-        "loop_ms": None if tre is None else round(tre[0]),
+        # cho 60 giây thành 20 ms là mất đúng thứ cần thấy. `so_lieu_tai` đã đo sẵn
+        # đúng khoảng này — gọi lại `tre_loop_ms` là đo hai lần cùng một thứ.
+        "loop_ms": tai["loop_chan_max_ms"],
     }
 
 
@@ -112,17 +112,26 @@ def doc_lich_su(db: sqlite3.Connection, gio: int = 24, buoc_phut: int = 10) -> "
     Ô không có mẫu nào trả `None` (không phải 0) — backend tắt trong khoảng đó thì
     đường biểu đồ ĐỨT ở đúng chỗ, chứ tô số 0 là nói dối rằng máy lúc ấy rảnh.
     """
-    den = _vn_now().replace(second=0, microsecond=0)
+    # Ô phải NẰM ĐÚNG LƯỚI `buoc_phut` (10:00, 10:10, …), không phải tính lùi từ phút
+    # hiện tại: mở trang lúc 10:37 thì các mốc thành 10:37 / 10:27 / … và KHÔNG mốc nào
+    # rơi vào giờ tròn → trục thời gian của cả ba biểu đồ trống trơn (phản biện đo: 90 %
+    # số lần mở trang). Cắt xuống lưới còn làm biểu đồ đứng yên giữa các lượt làm mới 30 s.
+    now = _vn_now()
+    den = now.replace(minute=(now.minute // buoc_phut) * buoc_phut, second=0, microsecond=0)
     tu = den - timedelta(hours=gio)
     try:
         rows = db.execute(
             f"SELECT {', '.join(_COT)} FROM monitor_samples WHERE ts >= ? ORDER BY ts",
             (tu.strftime("%Y-%m-%d %H:%M:%S"),)).fetchall()
-    except sqlite3.Error:
-        return None         # bảng chưa có (CSDL cũ chưa chạy migration) — màn hình tự ẩn biểu đồ
+    except sqlite3.Error as e:
+        # Bảng chưa có (CSDL cũ chưa chạy migration) là bình thường — màn hình tự ẩn biểu đồ.
+        # Mọi lỗi khác (CSDL khoá, file hỏng) phải kêu, nếu không biểu đồ trống mà không ai biết vì sao.
+        if "no such table" not in str(e).lower():
+            _log.warning("Không đọc được lịch sử giám sát", exc_info=True)
+        return None
 
     so_o = (gio * 60) // buoc_phut
-    # Mốc đầu ô cuối cùng, lùi dần về trước — để ô cuối luôn là "vừa xong"
+    # Nhãn của một ô là mốc ĐẦU ô đó; ô cuối cùng bắt đầu tại `den` và còn đang chạy dở
     moc = [den - timedelta(minutes=buoc_phut * i) for i in range(so_o - 1, -1, -1)]
     o = [{"luc": m.strftime("%H:%M"), **{c: None for c in _COT[1:]}} for m in moc]
     for r in rows:
@@ -147,7 +156,12 @@ def doc_lich_su(db: sqlite3.Connection, gio: int = 24, buoc_phut: int = 10) -> "
 # ── Vòng đời ──
 async def _vong_lap(db_path: str) -> None:
     lan = 0
-    chup()                       # mẫu mồi: đặt mốc CPU + mốc thời gian, KHÔNG ghi
+    try:
+        chup()                   # mẫu mồi: đặt mốc CPU + mốc thời gian, KHÔNG ghi
+    except Exception:
+        # NGOÀI try của vòng lặp thì lỗi ở đây giết task ngay lúc khởi động mà không log
+        # gì tới tận lúc tắt máy: biểu đồ trống vĩnh viễn trong khi /health vẫn xanh.
+        _log.warning("Mẫu mồi của bộ lấy mẫu giám sát lỗi — vẫn chạy tiếp", exc_info=True)
     while True:
         await asyncio.sleep(CHU_KY_GIAY)
         try:

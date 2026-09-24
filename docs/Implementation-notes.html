@@ -20596,6 +20596,27 @@ This may happen if you try to create UI from a background task.</pre>
       <p><b>Đã bỏ</b> biểu đồ "độ phản hồi 5 phút" (ô 5 giây, đọc thẳng deque của <code>slow_request</code>) cùng hàm <code>chuoi_tre()</code>:
         biểu đồ 24 giờ phủ luôn việc của nó, giữ cả hai là hai chỗ cùng trả lời một câu hỏi.</p>
 
+      <div class="label"><span class="pill pill-red">Phản biện</span> 1 lượt Sonnet — 1 lỗi phải sửa, 3 điểm nên sửa, đã sửa cả 4</div>
+      <table>
+        <tr><th>Mức</th><th>Lỗi</th><th>Sửa</th></tr>
+        <tr><td><b>Phải sửa</b></td>
+          <td><b>Trục thời gian của cả ba biểu đồ 24 giờ trống trơn ở ~90 % số lần mở trang.</b> Ô tính lùi từ phút hiện tại
+            (10:37 → 10:37 / 10:27 / …) nên không mốc nào rơi vào giờ tròn, mà nhãn chỉ vẽ ở giờ tròn. <b>Ảnh chụp của tôi không lộ ra</b>
+            vì dữ liệu mẫu rơi đúng phút 40</td>
+          <td>Cắt <code>den</code> xuống <b>lưới <code>buoc_phut</code></b> (10:30, 10:40…). Thêm lợi: biểu đồ đứng yên giữa các lượt
+            làm mới 30 s thay vì trôi từng chút. <code>test_o_thoi_gian_nam_dung_luoi_10_phut_du_mo_trang_luc_nao</code> thử cả phút 37/5/0/59</td></tr>
+        <tr><td>Nên sửa</td><td>Mẫu mồi <code>chup()</code> nằm NGOÀI <code>try</code> của vòng lặp → ném lúc khởi động là task chết im,
+          biểu đồ trống vĩnh viễn trong khi <code>/health</code> vẫn xanh</td><td>Bọc <code>try</code> + log, chạy tiếp</td></tr>
+        <tr><td>Nên sửa</td><td><code>doc_lich_su</code> nuốt MỌI <code>sqlite3.Error</code> (kể cả <i>database is locked</i>) không log</td>
+          <td>Chỉ im lặng với <code>no such table</code> (CSDL cũ chưa migrate); còn lại <code>_log.warning</code></td></tr>
+        <tr><td>Nhỏ</td><td>Gọi <code>tre_loop_ms()</code> hai lần mỗi mẫu; chú thích nói sai nhãn ô</td>
+          <td>Dùng lại <code>loop_chan_max_ms</code> mà <code>so_lieu_tai()</code> đã đo; sửa chú thích</td></tr>
+      </table>
+      <p>Phản biện <b>đo trực tiếp</b> và xác nhận các điểm còn lại: <code>DELETE … WHERE ts &lt; ?</code> đi theo chỉ mục (không quét bảng);
+        <code>doc_lich_su</code> với bảng đầy 10.080 dòng mất <b>19 ms</b>; CPU tính bằng hiệu bộ đếm cộng dồn nên máy ngủ / NTP nhảy không
+        làm sai tỷ lệ; chỉ một bộ lấy mẫu chạy (không có worker thứ hai, tiến trình con đối chiếu không chạy lifespan).
+        <b>Mới một lượt Sonnet</b> cho một thay đổi chạm vòng đời tiến trình và ghi vào CSDL nghiệp vụ.</p>
+
       <div class="label"><span class="pill pill-blue">Nền tối</span> chỉ riêng trang này</div>
       <p>Bước màu <b>chọn riêng cho nền tối</b>, không phải lật màu của nền sáng. Nền trang <code>#0d0d0d</code>, nền thẻ/vùng vẽ
         <code>#1a1a19</code>. Màu trạng thái luôn kèm biểu tượng + chữ, không để màu nói một mình.</p>

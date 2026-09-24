@@ -360,3 +360,23 @@ def test_task_nen_that_su_ghi_duoc_mot_dong(tmp_path, monkeypatch):
     ts, luong, csdl, loop_ms = rows[-1]
     assert len(ts) == 19 and luong is not None and csdl is not None
     assert loop_ms is not None and loop_ms >= 0
+
+
+def test_o_thoi_gian_nam_dung_luoi_10_phut_du_mo_trang_luc_nao(tmp_path, monkeypatch):
+    """Mốc ô phải là 10:00 / 10:10 … chứ không tính lùi từ phút hiện tại.
+
+    Phản biện 24/09 đo được: tính lùi từ phút hiện tại thì mở trang lúc 10:37 ra các mốc
+    10:37 / 10:27 / … — KHÔNG mốc nào rơi vào giờ tròn, mà nhãn trục chỉ vẽ ở giờ tròn
+    → cả ba biểu đồ 24 giờ mất sạch nhãn thời gian trong ~90 % số lần mở trang.
+    """
+    from backend.services import giam_sat_mau as gs
+
+    db = sqlite3.connect(tmp_path / "m.db")
+    db.executescript(_SCHEMA_MAU)
+    for phut in (37, 5, 0, 59):                     # gồm cả phút lẻ lẫn phút tròn
+        monkeypatch.setattr(gs, "_vn_now",
+                            lambda p=phut: datetime(2026, 9, 24, 10, p, 12))
+        ls = gs.doc_lich_su(db, gio=24, buoc_phut=10)
+        assert all(int(o["luc"][3:]) % 10 == 0 for o in ls), f"phút {phut}: ô lệch lưới"
+        assert sum(1 for o in ls if o["luc"].endswith(":00")) == 24, f"phút {phut}: thiếu mốc giờ tròn"
+    db.close()
