@@ -147,6 +147,66 @@ def test_token_khong_thoat_ra_ngoai_thu_muc(client):
     assert r.status_code in (307, 404)
 
 
+# ── Phiên lưu lại để rà soát ─────────────────────────────────────────────────
+
+def _thu_muc_phien():
+    from backend.api import vb_format as vb_api
+    ds = list(vb_api.TEMP_DIR.iterdir())
+    assert len(ds) == 1
+    return ds[0]
+
+
+def test_phien_luu_du_dau_vao_ket_qua_va_nhat_ky(client):
+    import json
+    goc = _file_word()
+    r = client.post("/api/vb-format/chuan-hoa",
+                    files={"file": ("quyet_dinh.docx", goc, _DOCX_MIME)})
+    token = r.json()["token"]
+
+    d = _thu_muc_phien()
+    assert d.name.endswith("_" + token) and d.name[:8].isdigit(), "tên phải bắt đầu bằng ngày"
+    assert (d / "goc.docx").read_bytes() == goc
+    assert (d / "ket_qua.docx").exists()
+    assert json.loads((d / "bao_cao.json").read_text(encoding="utf-8"))["thong_ke"]["tong_doan"] == 4
+    assert isinstance(json.loads((d / "cau_hinh.json").read_text(encoding="utf-8")), dict)
+    phien = json.loads((d / "phien.json").read_text(encoding="utf-8"))
+    assert phien["trang_thai"] == "xong"
+    assert phien["ten_goc"] == "quyet_dinh.docx"
+    assert phien["nguoi_id"] == 1
+
+
+def test_luot_loi_van_luu_file_goc_va_vet_loi(client):
+    """Lượt lỗi là lượt cần rà nhất — phải còn file gốc để chạy lại."""
+    import json
+    client.post("/api/vb-format/chuan-hoa",
+                files={"file": ("hong.docx", b"day khong phai zip", _DOCX_MIME)})
+    d = _thu_muc_phien()
+    assert (d / "goc.docx").read_bytes() == b"day khong phai zip"
+    assert not (d / "ket_qua.docx").exists()
+    phien = json.loads((d / "phien.json").read_text(encoding="utf-8"))
+    assert phien["trang_thai"] == "loi"
+    assert "Traceback" in phien["loi"]
+
+
+def test_nhat_ky_khong_ghi_nguyen_token(client):
+    """Token + `menu.vb_format` là tải được file — Nhật ký chỉ được ghi 8 ký tự đầu."""
+    r = client.post("/api/vb-format/chuan-hoa",
+                    files={"file": ("a.docx", _file_word(), _DOCX_MIME)})
+    token = r.json()["token"]
+    chi_tiet = client.app.dependency_overrides[get_db]().execute(
+        "SELECT detail FROM audit_logs WHERE action='vb_format.chuan_hoa'").fetchone()[0]
+    assert token[:8] in chi_tiet
+    assert token not in chi_tiet
+
+
+def test_token_ky_tu_dai_dien_khong_lay_duoc_phien_nguoi_khac(client):
+    """Token được đem đi `glob` — "*" mà lọt qua là tải được kết quả của người khác."""
+    client.post("/api/vb-format/chuan-hoa",
+                files={"file": ("a.docx", _file_word(), _DOCX_MIME)})
+    for token in ("*", "?" * 32, "[0-9a-f]*"):
+        assert client.get(f"/api/vb-format/tai-ve/{token}").status_code == 404
+
+
 @pytest.fixture
 def client_chi_xem(tmp_path, monkeypatch):
     """TestClient của một chuyên viên CHỈ được cấp `menu.vb_format`.

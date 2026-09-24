@@ -25,6 +25,7 @@ from typing import Any
 
 import pandas as pd
 
+from backend.core.don_dep import moc_don_gan_nhat, xoa_thu_muc_cu
 from backend.core.tien_trinh_doi_chieu import chay_tach
 from backend.services import doi_chieu_song_phuong_common as common
 from backend.services.doi_chieu_song_phuong_common import do_thoi_gian
@@ -368,19 +369,22 @@ def get_output_file(job_id: str, filename: str) -> Path | None:
     return path if path.is_file() else None
 
 
-def _cleanup_old_jobs() -> None:
-    now = time.time()
+def _cleanup_old_jobs(cutoff: float | None = None) -> None:
+    """Xoá job cũ hơn mốc 23h gần nhất khỏi RAM + đĩa, kèm thư mục mồ côi.
+
+    Cùng khuôn `ach_service._cleanup_old_jobs()` — xem `ilo1000_service` cùng tên về lỗi
+    thư mục mồ côi sau khi restart backend.
+    """
+    cutoff = moc_don_gan_nhat() if cutoff is None else cutoff
     with _lock:
         expired = [
             jid for jid, j in _jobs.items()
-            if j["status"] in ("done", "error", "cancelled") and now - j["_ts"] > CLEANUP_TTL
+            if j["status"] in ("done", "error", "cancelled") and j["_ts"] < cutoff
         ]
         for jid in expired:
             del _jobs[jid]
-    for jid in expired:
-        job_dir = TEMP_DIR / jid
-        if job_dir.exists():
-            shutil.rmtree(job_dir, ignore_errors=True)
+        con_song = set(_jobs)
+    xoa_thu_muc_cu(TEMP_DIR, cutoff, con_song)
 
 
 # Khai với chốt chặn dùng chung — xem backend/core/phien_doi_chieu.py.

@@ -71,6 +71,10 @@ class Settings:
         p.strip() for p in os.getenv("SLOW_REQUEST_EXCLUDE", "").split(",") if p.strip()
     ]
 
+    # Số ngày giữ lại mỗi phiên Chuẩn hoá văn bản (file gốc + kết quả + nhật ký) trong
+    # data/temp_vb_format để rà soát lỗi. Các tính năng khác vẫn dọn lúc 23h cùng ngày.
+    VB_FORMAT_LUU_NGAY: int = max(1, int(os.getenv("VB_FORMAT_LUU_NGAY", "30")))
+
 # ── Mật khẩu file ZIP do hệ thống nguồn cấp ──────────────────────────────────
 # Ba module dùng chung một mật khẩu: Đối chiếu ACH, Chấm 459901, Đối chiếu
 # Song phương. Trước đây nó nằm CỨNG trong mã (`ZIP_PASSWORD = b"..."`) ở cả ba

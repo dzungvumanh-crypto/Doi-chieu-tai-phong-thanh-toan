@@ -20365,7 +20365,93 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
-  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-22</footer>
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">160</span>
+      <span class="card-title"><code>data/temp_*</code> phình mãi trên máy chủ — 3 tính năng ngoài lịch dọn 23h; lưu phiên Chuẩn hoá văn bản để rà soát (2026-09-24)</span>
+      <span class="badge badge-done">Hoàn thiện</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-red">Nguyên nhân</span> lịch dọn 23h chỉ biết 7/10 thư mục</div>
+      <p><code>temp_cleanup_service</code> (27/08) gọi hàm dọn của 6 tính năng. Ba tính năng vào sau không được khai thêm, và hàm dọn riêng của chúng
+        chỉ chạy khi có job vừa xong, chỉ xoá job <b>còn nhớ trong RAM</b> quá TTL 4 giờ. Restart backend là RAM trống → thư mục của mọi job trước đó
+        không còn ai xoá. Không lỗi, không log.</p>
+      <table>
+        <tr><th>Thư mục</th><th>Trước</th><th>Sau</th></tr>
+        <tr><td><code>temp_ilo1000</code></td><td rowspan="3">Chỉ xoá job trong RAM, TTL 4 h, chỉ khi có job xong; ngoài lịch 23h</td>
+          <td rowspan="3">Khuôn ACH: job trong RAM hết hạn theo mốc 23h + quét thư mục mồ côi theo mtime, bỏ qua job còn sống. Có trong lịch 23h</td></tr>
+        <tr><td><code>temp_doi_chieu_song_phuong_kenh_core</code></td></tr>
+        <tr><td><code>temp_doi_chieu_song_phuong_kenh_core_di</code></td></tr>
+        <tr><td><code>temp_vb_format</code></td><td>Dọn 23h cùng ngày</td><td>Giữ <code>VB_FORMAT_LUU_NGAY</code> ngày (mặc định 30) — xem dưới</td></tr>
+      </table>
+      <p>Lần khởi động đầu sau khi cập nhật, lượt dọn nền (mốc = 23h hôm qua) xoá sạch rác cũ của ba thư mục trên — không cần dọn tay.</p>
+
+      <div class="label"><span class="pill pill-blue">Thiết kế</span></div>
+      <table>
+        <tr><th>Quyết định</th><th>Vì sao</th></tr>
+        <tr><td>Helper chung <code>don_dep.xoa_thu_muc_cu(thu_muc, cutoff, giu)</code>, chỉ dùng cho 3 service mới + vb_format</td>
+          <td>Các service cũ (ACH, 459901, 459901-1000-000000000, Song phương, OSB, CITAD) đã có vòng quét riêng chạy đúng — không đụng để giữ phạm vi thay đổi nhỏ</td></tr>
+        <tr><td>Giữ <code>CLEANUP_TTL</code> 4 h ở 3 service</td>
+          <td>Hằng này còn dùng trong <code>job_dang_chay()</code> để coi job treo là đã chết (mở khoá tính năng). Chỉ hàm dọn chuyển sang mốc 23h</td></tr>
+        <tr><td>Test canh <code>test_don_temp_du_nguon.py</code> quét mã tìm mọi chuỗi <code>temp_xxx</code> rồi so với <code>TEMP_DIR</code> của các hàm trong <code>_nguon_don()</code></td>
+          <td>Đúng kiểu lỗi đã xảy ra: thêm tính năng có thư mục tạm mà quên khai vào lịch. Nay đỏ ngay</td></tr>
+      </table>
+      <p><b>Đánh đổi:</b> job ILO1000 / kênh core nằm trong RAM tới 23h thay vì 4 h (dict log nhỏ — cùng mức ACH đang chịu). Đổi lại người dùng
+        tải lại kết quả được suốt ngày, đúng chính sách chung.</p>
+
+      <div class="label"><span class="pill pill-blue">Thiết kế</span> Chuẩn hoá văn bản — mỗi lượt là một phiên</div>
+      <table>
+        <tr><th>File trong <code>temp_vb_format/&lt;YYYYMMDD_HHMMSS&gt;_&lt;token&gt;/</code></th><th>Để làm gì</th></tr>
+        <tr><td><code>goc.docx</code></td><td>Đầu vào nguyên văn — chạy lại <code>chuan_hoa()</code> để dò lỗi</td></tr>
+        <tr><td><code>cau_hinh.json</code></td><td>Cấu hình <b>đã áp</b> cho lượt đó. Cấu hình đổi được về sau; thiếu file này thì không tái hiện được</td></tr>
+        <tr><td><code>phien.json</code></td><td>Ai, lúc nào, tên file, <code>dang_chay | xong | loi</code>, vết lỗi. Ghi <code>dang_chay</code> TRƯỚC khi chạy — backend chết giữa chừng vẫn còn dấu</td></tr>
+        <tr><td><code>ket_qua.docx</code> + <code>bao_cao.json</code></td><td>Chỉ có khi xong. <code>bao_cao.json</code> là nhật ký sửa đổi đúng như người dùng thấy</td></tr>
+      </table>
+      <ul>
+        <li><b>Lượt lỗi cũng lưu file gốc</b> — trước đây lượt lỗi không để lại gì, mà đó là lượt cần rà nhất.</li>
+        <li>Tên thư mục bắt đầu bằng ngày giờ để sắp theo tên là theo thời gian. Nhật ký hệ thống (<code>vb_format.chuan_hoa</code>) và dòng log lỗi chỉ ghi
+          <b>ngày giờ + 8 ký tự đầu token</b> (<code>_ma_phien()</code>): <code>/tai-ve/{token}</code> chỉ đòi <code>menu.vb_format</code>, ghi nguyên token là ai đọc được Nhật ký
+          cũng tải được văn bản người khác suốt 30 ngày. Tìm thư mục: <code>dir *_&lt;8 ký tự&gt;*</code>.</li>
+        <li>Ghi file phiên qua <code>anyio.to_thread.run_sync</code> (bể 40 luồng chung, không <code>asyncio.to_thread</code>) — file tải lên tới <code>MAX_UPLOAD_MB</code>, máy chạy trên ổ USB.</li>
+        <li>Mở <code>goc.docx</code> bằng Word ngay trong thư mục phiên sinh file <code>~$…</code> → mtime thư mục mới lại → phiên được giữ thêm trọn hạn. Vô hại; muốn xem thì chép file ra chỗ khác.</li>
+        <li><code>/tai-ve/{token}</code> nay tìm bằng <code>glob("*_" + token)</code> nên <b>phải</b> kiểm token đúng 32 ký tự hex trước — token <code>*</code> lọt qua là tải được kết quả phiên người khác. Có test.</li>
+        <li>Mốc xoá = mốc 23h − (số ngày − 1) ngày: đặt <code>1</code> là đúng hành vi cũ. Không còn gọi dọn trong đường đi của request — với hạn 30 ngày thì việc đó chỉ tốn stat.</li>
+      </ul>
+      <p><b>Đánh đổi:</b> văn bản của mọi người dùng nằm trên đĩa máy chủ 30 ngày thay vì vài giờ — ai có quyền vào thư mục <code>data/</code> của máy chủ đọc được.
+        Dung lượng không đáng kể (file Word vài trăm KB × vài chục lượt/ngày). Cần ngắn hơn thì hạ <code>VB_FORMAT_LUU_NGAY</code> trong <code>.env</code>.</p>
+
+      <div class="label"><span class="pill pill-amber">Giới hạn đã biết</span></div>
+      <ul>
+        <li>Chưa xem được <code>data/</code> trên máy chủ thật (máy dev trống). Nếu thư mục đang phình là một trong 7 thư mục <b>đã</b> có lịch dọn thì nguyên nhân khác:
+          file bị khoá (ai đó mở Excel thẳng từ <code>data/</code>) — tìm dòng <code>Không xoá được</code> trong <code>logs/app.log</code>; hoặc máy chủ đang chạy bản cũ trước 27/08.</li>
+        <li>Phiên tạo trước khi cập nhật (thư mục chỉ có <code>&lt;token&gt;</code>, không có ngày) không tải lại được qua <code>/tai-ve</code> — chỉ ảnh hưởng người đang dở tay đúng lúc deploy.</li>
+      </ul>
+
+      <div class="label"><span class="pill pill-red">Phản biện</span> 1 lượt Sonnet — 6 điểm có bằng chứng, sửa cả 6</div>
+      <table>
+        <tr><th>Lỗi</th><th>Sửa</th></tr>
+        <tr><td>Nhật ký ghi nguyên tên thư mục = nguyên token → tải được văn bản người khác 30 ngày</td><td><code>_ma_phien()</code> chỉ ghi 8 ký tự đầu; có test</td></tr>
+        <tr><td><code>xoa_thu_muc_cu</code> bỏ <code>ignore_errors</code>: gặp file khoá là dừng, xoá dở → mtime mới → vb_format bị gia hạn thêm 30 ngày; hai lượt dọn chạy cùng lúc sinh WARNING giả</td>
+          <td>Bỏ qua <code>FileNotFoundError</code>; lỗi khác thì quét lại <code>ignore_errors=True</code> rồi log. Không dùng <code>onerror</code> — lỗi thời trên 3.12, <code>pytest.ini</code> biến cảnh báo đó thành lỗi</td></tr>
+        <tr><td>Ghi <code>goc.docx</code> + JSON đồng bộ trong <code>async def</code></td><td>Gom vào <code>_ghi_phien()</code> chạy trong luồng</td></tr>
+        <tr><td><code>test_lich_don_goi_ca_ba_service_moi</code> gọi <code>run_cleanup()</code> thật nhưng chỉ vá 3/10 <code>TEMP_DIR</code> → dọn <code>data/temp_*</code> THẬT của máy test</td>
+          <td>Vá <code>TEMP_DIR</code> của mọi nguồn trong <code>_nguon_don()</code>. Các lượt chạy trước khi sửa: <code>data/temp_*</code> máy dev đều rỗng nên không mất gì</td></tr>
+        <tr><td>Test canh chỉ <code>assert trong_ma</code> — regex hụt dần vẫn xanh</td><td><code>len(trong_ma) &gt;= 10</code></td></tr>
+        <tr><td>Docstring lịch dọn nói cả mười "tự dọn khi có người dùng" — vb_format nay chỉ dọn theo lịch</td><td>Sửa câu</td></tr>
+      </table>
+      <p>PR chạm vào xoá dữ liệu và quyền tải file mà mới có 1 lượt phản biện Sonnet — đã báo người dùng.</p>
+
+      <div class="label"><span class="pill pill-green">Kiểm</span></div>
+      <ul>
+        <li><code>tests/test_don_temp_du_nguon.py</code>: đủ 10 thư mục trong lịch; thư mục mồ côi bị xoá, job đang chạy + file trong ngày được giữ (3 service); đi qua đúng <code>run_cleanup()</code>; hạn 30 ngày và hạn 1 ngày.</li>
+        <li><code>tests/test_vb_format_api.py</code>: phiên đủ 5 file; lượt lỗi còn <code>goc.docx</code> + traceback; token <code>*</code> / <code>?</code> / <code>[...]</code> trả 404; Nhật ký không chứa nguyên token.</li>
+        <li>Toàn bộ 2420 test xanh trên nền develop 11bafac; <code>ruff --select F821,F823,E9</code> sạch.</li>
+      </ul>
+    </div>
+  </div>
+
+  <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-24</footer>
 </div>
 </body>
 </html>

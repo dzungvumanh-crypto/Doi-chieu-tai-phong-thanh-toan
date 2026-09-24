@@ -252,10 +252,11 @@ Truy cập:
 ├── data/
 │   ├── ksnb.db             # SQLite database (tự tạo khi chạy lần đầu)
 │   ├── backups/            # Backup tự động — xem mục "Backup tự động"
-│   └── temp_*/             # File tải lên + kết quả tạm của ACH / Chấm 459901 /
-│                           #   Đối chiếu song phương / Đối soát CITAD / Đối chiếu OSB. Sống hết ngày làm
-│                           #   việc, temp_cleanup_service xoá sạch lúc 23h (không chờ ai
-│                           #   mở menu). Backend bật giữa ngày chỉ dọn rác của hôm trước
+│   └── temp_*/             # File tải lên + kết quả tạm của ACH / Chấm 459901 (2 sổ) / ILO1000 /
+│                           #   Đối chiếu song phương (+ kênh core ĐẾN/ĐI) / Đối soát CITAD / Đối chiếu OSB.
+│                           #   Sống hết ngày làm việc, temp_cleanup_service xoá sạch lúc 23h (không chờ ai
+│                           #   mở menu). Backend bật giữa ngày chỉ dọn rác của hôm trước.
+│                           #   Riêng temp_vb_format giữ VB_FORMAT_LUU_NGAY ngày (mặc định 30) để rà soát
 ├── logs/
 │   ├── app.log             # Log xoay vòng (5 MB × 3 file) — nguồn của màn hình Nhật ký hệ thống
 │   ├── backend.log         # stdout/stderr tiến trình backend (run.py ghi) — xoay khi >20 MB, giữ 3 đời
@@ -1365,8 +1366,10 @@ nút hoàn tác (phải xoá tay từng thẻ). Đo thật: 20.000 dòng ghi h�
   đánh số; màu highlight. Nhập cỡ chữ ra ngoài dải quy định thì **cảnh báo, không chặn**. Nút
   *Khôi phục mặc định theo QĐ 979*. Chỉ **phần khác mặc định** được lưu vào DB — quy định đổi thì các
   mục chưa từng đụng tới tự đi theo mặc định mới
-- File kết quả nằm trong `data/temp_vb_format/`, **sống hết ngày làm việc và bị dọn lúc 23h** cùng các
-  tính năng có file tạm khác
+- Mỗi lượt chuẩn hoá (kể cả lượt **lỗi**) được lưu thành một phiên ở
+  `data/temp_vb_format/<YYYYMMDD_HHMMSS>_<mã>/`: `goc.docx` (file tải lên), `cau_hinh.json` (cấu hình đã áp),
+  `phien.json` (ai, lúc nào, trạng thái, vết lỗi), `ket_qua.docx` + `bao_cao.json` (nhật ký sửa đổi). Nhật ký
+  hệ thống ghi ngày giờ + 8 ký tự đầu của mã (đủ tìm thư mục, không đủ để tải file người khác). Giữ **`VB_FORMAT_LUU_NGAY` ngày** (mặc định 30, `.env`), dọn lúc 23h
 - Bảng DB: `vb_format_config` (đúng một dòng, `CHECK (id = 1)`)
 - Phân quyền riêng theo nhóm: `menu.vb_format` (tải file lên, chuẩn hoá, tải kết quả) +
   `vb_format.config` (sửa thông số quy chuẩn). Tách hai quyền vì quy chuẩn là của cả đơn vị — một
