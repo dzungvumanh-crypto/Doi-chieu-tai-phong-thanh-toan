@@ -210,11 +210,6 @@ async def cham_ach_page():
     # Quyền chạy tách khỏi quyền xem — người chỉ có menu.cham_ach vẫn theo dõi
     # tiến độ và tải kết quả được, nhưng không khởi động/tiếp tục được lần chạy.
     co_quyen_chay = api.has_feature('cham_ach.process')
-    # Huỷ được phiên của NGƯỜI KHÁC đang treo (24/09/2026, Business Owner quyết
-    # định, PR #136) — CHỈ ảnh hưởng việc hiện nút "Dừng" khi máy chủ báo bận với
-    # một job KHÔNG phải của chính phiên trình duyệt này (xem _thuc_hien_chay()).
-    # Không mở rộng sang bất kỳ chỗ nào khác.
-    co_quyen_huy_phien_khac = api.has_feature('cham_ach.huy_phien_khac')
 
     # ── State CHUNG cho cả trang (chạy/poll/checkpoint) ─────────────────────
     # D-3: 1 lượt/lần cho CẢ TRANG — không phải 1 lượt/tab. `active_tab` cho
@@ -1260,24 +1255,14 @@ async def cham_ach_page():
                     return
 
                 if isinstance(dang, dict):
-                    # job của CHÍNH phiên trình duyệt này đã biết từ trước (VD tab khác cùng
-                    # người dùng) — chắc chắn huỷ được, không cần mã quyền mới. Chỉ khi job_id
-                    # còn TRỐNG (mới phát hiện qua /dang-chay, RẤT CÓ THỂ là của người khác) mới
-                    # cần xét cham_ach.huy_phien_khac trước khi cho bấm "Dừng".
-                    la_job_da_biet = bool(run_state['job_id'])
-                    if not la_job_da_biet:
-                        run_state['job_id'] = dang.get('job_id')
-                    co_the_dung = la_job_da_biet or co_quyen_huy_phien_khac
-                    if co_the_dung:
-                        ui.notify(_mo_ta_phien_dang_chay(dang), type='negative', timeout=0)
-                    else:
-                        ui.notify(
-                            'Máy chủ đang bận với phiên của người khác — chờ họ hoàn tất '
-                            'hoặc xong tự động sau tối đa 4 giờ.',
-                            type='negative', timeout=0,
-                        )
-                    btn_cancel.set_visibility(co_the_dung)
-                    running_bar.set_visibility(co_the_dung)
+                    # 24/09/2026 lượt 2 (review Khánh, đảo ngược lượt 1): không còn phân
+                    # biệt "job đã biết của chính phiên này" hay "job của người khác" —
+                    # backend /cancel cũng đã bỏ kiểm chủ job (ai có cham_ach.process
+                    # cũng huỷ được). Máy chủ báo bận thì LUÔN hiện nút Dừng kèm mô tả.
+                    run_state['job_id'] = dang.get('job_id')
+                    ui.notify(_mo_ta_phien_dang_chay(dang), type='negative', timeout=0)
+                    btn_cancel.set_visibility(True)
+                    running_bar.set_visibility(True)
                     return
 
                 if dang == 'khong_hoi_duoc':

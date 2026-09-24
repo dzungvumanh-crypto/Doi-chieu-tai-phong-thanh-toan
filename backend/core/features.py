@@ -111,13 +111,6 @@ FEATURES: dict[str, str] = {
     # (backend/api/ach.py, frontend/pages/cham_ach.py) đòi đúng mã `menu.cham_ach`.
     "menu.cham_ach":            "Chấm đối chiếu ACH (menu)",
     "cham_ach.process":         "Chạy đối chiếu ACH",
-    # Huỷ phiên ACH của NGƯỜI KHÁC đang treo (24/09/2026, quyết định Business Owner,
-    # PR #136) — mặc định nút "Dừng" chỉ huỷ được phiên của chính mình (D4c). Nếu
-    # người A dừng ở Checkpoint rồi bỏ đi (đóng trình duyệt), phiên đó chiếm chốt
-    # dùng chung tới 4 giờ (CLEANUP_TTL) mà không ai — kể cả admin — gỡ được. Mã
-    # này CHỈ mở rộng phạm vi cho đúng POST /cancel/{job_id}, KHÔNG áp dụng cho
-    # /continue, /poll, /download (những chỗ đó vẫn chỉ chủ job — xem deps.py).
-    "cham_ach.huy_phien_khac":  "Huỷ được phiên đối chiếu ACH của người khác đang treo, không chỉ của chính mình",
     # Đối chiếu CITAD ↔ PaymentHub — Phòng Thanh toán
     # Nhãn phải khớp tên menu ở frontend/shared.py, phần mô tả sau dấu — mới
     # nói rõ đối chiếu/đối soát với hệ thống nào.
@@ -284,7 +277,7 @@ FEATURE_GROUPS: list[dict] = [
                     },
                     {
                         "code": "menu.cham_ach",
-                        "actions": ["cham_ach.process", "cham_ach.huy_phien_khac"],
+                        "actions": ["cham_ach.process"],
                     },
                     {"code": "menu.cham_ilo1000", "actions": []},
                     {

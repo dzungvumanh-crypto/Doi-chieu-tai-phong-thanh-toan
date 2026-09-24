@@ -21266,6 +21266,73 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">169</span>
+      <span class="card-title">ACH — nút "Dừng" huỷ được job của người khác, KHÔNG cần mã quyền riêng
+        — đảo ngược quyết định lượt 1 sau khi review lượt 2 chỉ ra 2 bug thật (24/09/2026)</span>
+      <span class="badge badge-done">Xong — review Khánh lượt 2, PR #136</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-red">Lượt 1 (24/09, sáng)</span> thêm mã quyền
+        <code>cham_ach.huy_phien_khac</code> — ĐÃ ĐẢO NGƯỢC, không còn tồn tại</div>
+      <p>Bài toán ban đầu có thật: nếu người A dừng ở Checkpoint chờ xác nhận MIS_đi rồi đóng trình
+        duyệt bỏ đi, phiên đó chiếm chốt dùng chung <code>gianh_cho('ach')</code> tới 4 giờ
+        (<code>CLEANUP_TTL</code>) mà không ai — kể cả admin thường — gỡ được. Lượt 1 giải quyết bằng
+        cách thêm hẳn 1 mã quyền mới (đủ 4 chỗ theo <a href="DESIGN.md">DESIGN.md</a>) cho phép huỷ-hộ,
+        kèm logic frontend đoán "job vừa phát hiện qua <code>/dang-chay</code> là của chính phiên trình
+        duyệt này hay của người khác" để quyết định có hiện nút Dừng hay không.</p>
+
+      <div class="label"><span class="pill pill-red">Lượt 2 — Khánh chỉ ra 2 bug thật trong logic đoán</span></div>
+      <table>
+        <tr><th>Bug</th><th>Hậu quả</th></tr>
+        <tr><td>Tab mới (đóng/mở lại trình duyệt) thì <code>run_state['job_id']</code> luôn rỗng</td>
+          <td>Trang đoán nhầm "đây là job của người khác" dù chính chủ job (đã chạy tới bước chờ xác
+            nhận MIS_đi) đáng lẽ vẫn huỷ được — ẩn nút Dừng, báo sai</td></tr>
+        <tr><td><code>run_state['job_id'] = dang.get('job_id')</code> chạy KỂ CẢ KHI không cho huỷ</td>
+          <td>Lần bấm "Chạy" thứ hai, biến trạng thái coi nhầm job của NGƯỜI KHÁC là "đã biết" — hiện
+            nút Dừng SAI, bấm vào ăn 404 khó hiểu</td></tr>
+      </table>
+      <p>Business Owner quyết định theo đúng đề xuất của Khánh: <b>đảo ngược lượt 1</b>, quay lại đúng
+        hành vi trước D4c — bất kỳ ai có <code>cham_ach.process</code> cũng huỷ được job đang chạy/đang
+        chờ xác nhận của BẤT KỲ AI, không phân biệt chủ job. Lý do: thực tế thường chỉ 1 người chạy
+        Chấm ACH cùng lúc, không đáng thêm cả mã quyền + logic đoán "phiên của ai" — nhất là khi chính
+        logic đoán đó đang có 2 bug thật.</p>
+
+      <div class="label"><span class="pill pill-blue">Đánh đổi được ghi rõ</span> rủi ro chỉ là mất công
+        chạy lại, không lộ hay mất dữ liệu</div>
+      <p>Nút "Dừng" chỉ giải phóng chốt dùng chung <code>gianh_cho('ach')</code>, KHÔNG đụng tới dữ liệu
+        của ai — khác hẳn <code>/poll</code> (đọc log), <code>/download</code> (tải file kết quả),
+        <code>/continue</code> (nộp file xác nhận) vẫn GIỮ NGUYÊN chỉ chủ job vì 3 endpoint đó đụng tới
+        dữ liệu thật. Câu thông báo <code>_mo_ta_phien_dang_chay()</code> đã ghi rõ job nào, đã chạy bao
+        lâu trước khi hiện nút Dừng — người bấm nhầm huỷ job của đồng nghiệp thì họ chỉ mất công chạy
+        lại, không mất số liệu đã nộp (job <code>awaiting_confirmation</code> huỷ về <code>cancelled</code>
+        ngay, không xoá file đã sinh ra ở các bước trước).</p>
+
+      <div class="label"><span class="pill pill-green">Đã gỡ sạch</span> đủ 4 chỗ đã thêm ở lượt 1, không
+        để lại mồ côi</div>
+      <ul>
+        <li><code>backend/core/features.py</code>: xoá entry <code>FEATURES</code> + khỏi mảng
+          <code>actions</code> của <code>menu.cham_ach</code> trong <code>FEATURE_GROUPS</code>.</li>
+        <li><code>backend/api/ach.py::cancel_job()</code>: bỏ hẳn điều kiện kiểm
+          <code>nguoi_tao_id</code> lẫn nhánh <code>co_quyen(...)</code> — route chỉ còn
+          <code>Depends(_CHAY)</code>.</li>
+        <li><code>frontend/pages/cham_ach.py</code>: xoá biến quyền + toàn bộ nhánh
+          <code>la_job_da_biet</code>/<code>co_the_dung</code> trong <code>_thuc_hien_chay()</code> —
+          máy chủ báo bận là LUÔN hiện nút Dừng kèm mô tả, không phân biệt phiên của ai.</li>
+        <li><code>tests/test_ach_quyen.py</code>: xoá <code>TestCancelHuyPhienKhac</code> (4 test cho mã
+          quyền đã gỡ), sửa lại test <code>/cancel</code> khớp hành vi mới (200 thay vì 404 cho người
+          không phải chủ job) trong <code>TestCancelKhongPhanBietChuJob</code> — tách khỏi
+          <code>TestD4ContinueTheoChuJob</code> vì <code>/continue</code> không đổi hành vi.</li>
+      </ul>
+
+      <div class="note">Grep <code>huy_phien_khac</code> toàn bộ <code>backend/</code>,
+        <code>frontend/</code>, <code>tests/</code> (mã nguồn <code>.py</code>) sau khi gỡ: 0 kết quả.</div>
+
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-24</footer>
 </div>
 </body>

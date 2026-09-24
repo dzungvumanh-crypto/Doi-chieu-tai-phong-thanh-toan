@@ -1,7 +1,6 @@
 """API endpoints cho tính năng Chấm đối chiếu ACH."""
 
 import shutil
-import sqlite3
 import uuid
 from urllib.parse import quote
 
@@ -11,8 +10,7 @@ from pydantic import BaseModel
 
 from backend.core import phien_doi_chieu
 from backend.core.concurrency import run_heavy
-from backend.core.deps import co_quyen, require_feature
-from backend.database import get_db
+from backend.core.deps import require_feature
 from backend.core.uploads import (
     MAX_REQUEST_BYTES,
     read_limited,
@@ -278,22 +276,24 @@ def poll_job(
 def cancel_job(
     job_id: str,
     current: dict = Depends(_CHAY),
-    db: sqlite3.Connection = Depends(get_db),
 ):
-    """Vá cùng lớp lỗ hổng tải chéo đã vá ở /download, /poll, /continue (D4c,
-    23/09/2026) — mặc định CHỈ người đã tạo job mới huỷ được job. Trước đây
-    bất kỳ ai biết job_id là huỷ được job người khác đang chạy.
+    """Đảo ngược quyết định 24/09/2026 lượt 1 (review Khánh, PR #136, lượt 2):
+    KHÔNG kiểm chủ job ở đây — bất kỳ ai có `cham_ach.process` cũng huỷ được
+    job đang chạy/đang chờ xác nhận, bất kể job của ai. Đúng hành vi gốc
+    trước khi có D4c: nút "Dừng" chỉ giải phóng chốt dùng chung
+    `gianh_cho('ach')`, không đụng dữ liệu của ai — khác `/poll`, `/download`,
+    `/continue` (đọc log, tải file kết quả, nộp file xác nhận) vẫn GIỮ NGUYÊN
+    chỉ chủ job vì các endpoint đó đụng tới dữ liệu.
 
-    Ngoại lệ 24/09/2026 (Business Owner, PR #136) — mã quyền
-    `cham_ach.huy_phien_khac`: nếu một phiên `awaiting_confirmation` bị bỏ dở
-    (người tạo đóng trình duyệt, không quay lại xác nhận), nó chiếm chốt dùng
-    chung `gianh_cho('ach')` tới 4 giờ (`CLEANUP_TTL`) mà không ai — kể cả
-    admin thường — gỡ được. Người được cấp mã này huỷ được job của BẤT KỲ ai
-    qua ĐÚNG endpoint này. `/continue`, `/poll`, `/download` KHÔNG nằm trong
-    phạm vi mã quyền này — vẫn chỉ chủ job, không tự ý mở rộng thêm."""
+    Lý do đảo ngược: mã quyền huỷ-hộ riêng thêm ở lượt 1 + logic đoán "job đã
+    biết của phiên trình duyệt này hay của người khác" ở frontend có 2 bug
+    thật (job_id rỗng ở tab mới đoán nhầm là job người khác; job_id gán lại
+    dù không cho huỷ khiến lần Chạy sau đoán sai) — thực tế thường chỉ 1
+    người chạy cùng lúc nên không đáng thêm cả mã quyền + logic đoán chủ
+    phiên chỉ để tránh 1 rủi ro nhỏ (mất công chạy lại, không mất dữ liệu).
+    Xem docs/Implementation-notes.html card về ACH — "Dừng" cho lịch sử đầy đủ."""
     job = ach_service.get_job(job_id)
-    la_chu_job = job is not None and job.get('nguoi_tao_id') == current['id']
-    if job is None or not (la_chu_job or co_quyen(db, current, 'cham_ach.huy_phien_khac')):
+    if job is None:
         raise HTTPException(404, 'Job không tồn tại hoặc đã kết thúc.')
 
     ok = ach_service.cancel_job(job_id)

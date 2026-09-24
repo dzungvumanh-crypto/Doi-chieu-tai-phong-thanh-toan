@@ -395,42 +395,17 @@ class TestD4PollTheoChuJob:
             app.dependency_overrides.clear()
 
 
-# ─── D4 tiếp — vá cùng lớp lỗ hổng ở /cancel + /continue (23/09/2026, ngoài
-# PLAN.md gốc) ──────────────────────────────────────────────────────────────
-# /cancel và /continue NGUY HIỂM HƠN /poll: cho phép CAN THIỆP CHỦ ĐỘNG (huỷ
-# job hoặc tiếp tục job qua Checkpoint của người khác), không chỉ đọc lén.
-# Dùng đúng khuôn `job.get('nguoi_tao_id') != current['id']` -> 404 đã áp
-# dụng ở /download, /poll — không tự bịa cách xử lý riêng.
+# ─── D4 tiếp — vá cùng lớp lỗ hổng ở /continue (23/09/2026, ngoài PLAN.md
+# gốc) ─────────────────────────────────────────────────────────────────────
+# /continue NGUY HIỂM HƠN /poll: cho phép CAN THIỆP CHỦ ĐỘNG (tiếp tục job
+# qua Checkpoint của người khác bằng cách nộp file xác nhận), không chỉ đọc
+# lén. Dùng đúng khuôn `job.get('nguoi_tao_id') != current['id']` -> 404 đã
+# áp dụng ở /download, /poll — không tự bịa cách xử lý riêng.
+#
+# /cancel KHÔNG còn theo khuôn này — xem TestCancelKhongPhanBietChuJob bên
+# dưới (24/09/2026 lượt 2, đảo ngược quyết định lượt 1 sau review Khánh).
 
-class TestD4CancelContinueTheoChuJob:
-    def test_nguoi_khac_khong_huy_duoc_job_cua_toi(self, job_gia_lap):
-        """B biết job_id của A (đang 'running') -> POST /cancel trả 404,
-        job của A KHÔNG bị huỷ (vẫn 'running' sau khi B thử)."""
-        conn = _db_nhieu_nguoi({
-            _STAFF_A: ['menu.cham_ach', 'cham_ach.process'],
-            _STAFF_B: ['menu.cham_ach', 'cham_ach.process'],
-        })
-        job_id_a = job_gia_lap(_STAFF_A)
-        ach_service.get_job(job_id_a)['status'] = 'running'
-        try:
-            r = _client_la(_STAFF_B, StaffRole.CHUYEN_VIEN, conn).post(f'/api/ach/cancel/{job_id_a}')
-            assert r.status_code == 404
-            assert ach_service.get_job(job_id_a)['status'] == 'running'
-        finally:
-            app.dependency_overrides.clear()
-
-    def test_chinh_chu_van_huy_duoc_job_cua_minh(self, job_gia_lap):
-        """Đối chứng: A KHÔNG bị vạ lây — vẫn huỷ được job đang 'running' của
-        chính mình."""
-        conn = _db_nhieu_nguoi({_STAFF_A: ['menu.cham_ach', 'cham_ach.process']})
-        job_id_a = job_gia_lap(_STAFF_A)
-        ach_service.get_job(job_id_a)['status'] = 'running'
-        try:
-            r = _client_la(_STAFF_A, StaffRole.CHUYEN_VIEN, conn).post(f'/api/ach/cancel/{job_id_a}')
-            assert r.status_code == 200
-        finally:
-            app.dependency_overrides.clear()
-
+class TestD4ContinueTheoChuJob:
     def test_nguoi_khac_khong_tiep_tuc_duoc_job_cua_toi(self, job_gia_lap):
         """B biết job_id của A (đang 'awaiting_confirmation') -> POST
         /continue kèm file trả 404, job của A KHÔNG đổi trạng thái."""
@@ -474,18 +449,20 @@ class TestD4CancelContinueTheoChuJob:
             app.dependency_overrides.clear()
 
 
-# ─── cham_ach.huy_phien_khac (24/09/2026, Business Owner quyết định, PR #136) ─
-# Mã quyền mới CHỈ mở rộng phạm vi cho ĐÚNG POST /cancel/{job_id} — không đụng
-# /continue, /poll, /download (những chỗ đó vẫn chỉ chủ job, xem docs/DESIGN.md
-# mục "Phạm vi quyền ≠ phạm vi dữ liệu" — đây LÀ quyền thật, khác lớp ownership
-# ở D4, vì admin app cấp được qua màn Phân quyền theo nhóm).
-class TestCancelHuyPhienKhac:
-    def test_co_quyen_huy_duoc_job_nguoi_khac(self, job_gia_lap):
-        """B được cấp cham_ach.huy_phien_khac -> huỷ được job 'running' của A
-        (không phải chủ job) -> 200, job của A chuyển 'cancelled'/cờ huỷ được đặt."""
+# ─── /cancel — KHÔNG kiểm chủ job (24/09/2026 lượt 2, review Khánh PR #136) ──
+# Đảo ngược quyết định lượt 1 (mã quyền huỷ-hộ riêng + logic đoán "job của ai"
+# ở frontend) — logic đoán đó có 2 bug thật (xem
+# frontend/pages/cham_ach.py::_thuc_hien_chay()). Quay về hành vi TRƯỚC D4c:
+# bất kỳ ai có `cham_ach.process` cũng huỷ được job đang chạy/chờ xác nhận,
+# bất kể job của ai — nút "Dừng" chỉ giải phóng chốt dùng chung, không đụng
+# dữ liệu (khác /poll, /download, /continue — vẫn CHỈ chủ job, không đổi).
+class TestCancelKhongPhanBietChuJob:
+    def test_nguoi_khac_cung_huy_duoc_job_dang_cho_xac_nhan(self, job_gia_lap):
+        """B không phải chủ job A -> vẫn huỷ được job 'awaiting_confirmation'
+        của A (200), job chuyển 'cancelled'."""
         conn = _db_nhieu_nguoi({
             _STAFF_A: ['menu.cham_ach', 'cham_ach.process'],
-            _STAFF_B: ['menu.cham_ach', 'cham_ach.process', 'cham_ach.huy_phien_khac'],
+            _STAFF_B: ['menu.cham_ach', 'cham_ach.process'],
         })
         job_id_a = job_gia_lap(_STAFF_A)
         ach_service.get_job(job_id_a)['status'] = 'awaiting_confirmation'
@@ -496,38 +473,39 @@ class TestCancelHuyPhienKhac:
         finally:
             app.dependency_overrides.clear()
 
-    def test_khong_co_quyen_van_bi_chan_huy_job_nguoi_khac(self, job_gia_lap):
-        """Đối chứng — hành vi D4c KHÔNG đổi cho người chưa được cấp mã mới:
-        C không có cham_ach.huy_phien_khac -> vẫn 404, job của A không đổi."""
-        conn = _db_nhieu_nguoi({
-            _STAFF_A: ['menu.cham_ach', 'cham_ach.process'],
-            _STAFF_C: ['menu.cham_ach', 'cham_ach.process'],
-        })
-        job_id_a = job_gia_lap(_STAFF_A)
-        ach_service.get_job(job_id_a)['status'] = 'awaiting_confirmation'
-        try:
-            r = _client_la(_STAFF_C, StaffRole.CHUYEN_VIEN, conn).post(f'/api/ach/cancel/{job_id_a}')
-            assert r.status_code == 404
-            assert ach_service.get_job(job_id_a)['status'] == 'awaiting_confirmation'
-        finally:
-            app.dependency_overrides.clear()
-
-    def test_chu_job_luon_huy_duoc_du_khong_co_ma_quyen_moi(self, job_gia_lap):
-        """Chủ job A KHÔNG được cấp cham_ach.huy_phien_khac vẫn huỷ được job
-        của chính mình — mã quyền mới chỉ MỞ RỘNG thêm, không thu hẹp quyền cũ."""
+    def test_chinh_chu_van_huy_duoc_job_cua_minh(self, job_gia_lap):
+        """Đối chứng: chủ job vẫn huỷ được job đang 'running' của chính mình."""
         conn = _db_nhieu_nguoi({_STAFF_A: ['menu.cham_ach', 'cham_ach.process']})
         job_id_a = job_gia_lap(_STAFF_A)
         ach_service.get_job(job_id_a)['status'] = 'running'
         try:
             r = _client_la(_STAFF_A, StaffRole.CHUYEN_VIEN, conn).post(f'/api/ach/cancel/{job_id_a}')
-            assert r.status_code == 200, r.text
+            assert r.status_code == 200
         finally:
             app.dependency_overrides.clear()
 
-    def test_admin_mac_dinh_cung_huy_duoc_moi_job_qua_sieu_quyen_co_san(self, job_gia_lap):
-        """admin đi qua require_feature()/co_quyen() ở MỌI nơi (siêu quyền có sẵn,
-        không phải do cham_ach.huy_phien_khac) — không phải hành vi mới, chỉ xác
-        nhận không bị đổi bởi thay đổi này."""
+    def test_khong_co_cham_ach_process_van_403(self, job_gia_lap):
+        """Đối chứng: sàn quyền cham_ach.process (require_feature qua _CHAY)
+        vẫn áp dụng như cũ — bỏ kiểm chủ job không có nghĩa là bỏ luôn sàn
+        quyền chạy (đã có test riêng ở TestChiCoQuyenXem, kiểm lại ở đây cho
+        rõ ràng buộc job cụ thể của người khác cũng bị chặn 403 trước khi tới
+        logic huỷ)."""
+        conn = _db_nhieu_nguoi({
+            _STAFF_A: ['menu.cham_ach', 'cham_ach.process'],
+            _STAFF_C: ['menu.cham_ach'],
+        })
+        job_id_a = job_gia_lap(_STAFF_A)
+        ach_service.get_job(job_id_a)['status'] = 'running'
+        try:
+            r = _client_la(_STAFF_C, StaffRole.CHUYEN_VIEN, conn).post(f'/api/ach/cancel/{job_id_a}')
+            assert r.status_code == 403
+            assert ach_service.get_job(job_id_a)['status'] == 'running'
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_admin_van_huy_duoc_qua_sieu_quyen_co_san(self, job_gia_lap):
+        """admin đi qua require_feature() ở MỌI nơi (siêu quyền có sẵn) —
+        không phải hành vi mới, chỉ xác nhận không bị đổi bởi thay đổi này."""
         conn = _db_nhieu_nguoi({_STAFF_A: ['menu.cham_ach', 'cham_ach.process']})
         job_id_a = job_gia_lap(_STAFF_A)
         ach_service.get_job(job_id_a)['status'] = 'running'
