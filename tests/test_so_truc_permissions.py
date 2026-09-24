@@ -12,7 +12,6 @@ Theo đúng pattern có sẵn ở tests/test_duty_permissions.py: TestClient +
 dependency_overrides cho get_current_staff/get_db, DB SQLite in-memory tự
 tạo schema tối thiểu (KHÔNG chạy migrations thật — nhanh, cô lập).
 """
-import json
 import sqlite3
 from datetime import datetime
 
@@ -77,9 +76,15 @@ def db():
     conn.row_factory = sqlite3.Row
     conn.executescript(_SCHEMA)
     conn.execute("INSERT INTO departments (id, code, name) VALUES (1, 'PAYMENT', 'Phòng Thanh toán')")
-    for uid, name in ((GDV1, "GDV 1"), (GDV2, "GDV 2"), (KSV, "KSV"), (NGOAI, "Người ngoài")):
+    # KSV giữ chức danh 'pho_phong' TRONG BẢNG user_tttt (khác _dang_nhap(role=...) chỉ set
+    # role của phiên đăng nhập/JWT) — list_ksv_candidates() từ 23/09/2026 lọc thêm theo đúng
+    # cột này (chỉ trưởng/phó phòng), thiếu dòng này KSV sẽ rớt khỏi danh sách chọn.
+    for uid, name, role in (
+        (GDV1, "GDV 1", "chuyen_vien"), (GDV2, "GDV 2", "chuyen_vien"),
+        (KSV, "KSV", "pho_phong"), (NGOAI, "Người ngoài", "chuyen_vien"),
+    ):
         conn.execute(
-            "INSERT INTO user_tttt (id, full_name, department_id) VALUES (?, ?, 1)", (uid, name)
+            "INSERT INTO user_tttt (id, full_name, department_id, role) VALUES (?, ?, 1, ?)", (uid, name, role)
         )
     # Nhóm quyền, đúng cách require_feature() thật sự kiểm tra (join 3 bảng
     # group_*) — "lớp NGOÀI" (menu.so_truc, ai cũng cần để vào module) cấp
@@ -177,6 +182,7 @@ def test_khong_route_nao_tra_ve_500(client, db):
     calls = [
         ("GET", "/api/so-truc/history"),
         ("GET", "/api/so-truc/gdv-candidates"),
+        ("GET", "/api/so-truc/gdv-only-candidates"),
         ("GET", "/api/so-truc/ksv-candidates"),
         ("GET", f"/api/so-truc/{_NGAY}"),
         ("GET", f"/api/so-truc/{_NGAY}/citad-status"),
@@ -192,6 +198,73 @@ def test_gdv_candidates_tra_dung_nguoi_phong_thanh_toan(client, db):
     assert r.status_code == 200
     ids = [c["id"] for c in r.json()]
     assert GDV1 in ids and GDV2 in ids
+
+
+def test_gdv_only_candidates_loai_truong_pho_phong(client, db):
+    """Người dùng chốt 23/09/2026: "gdv là chỉ hiện tên những người không có
+    chức danh trong phòng", "ksv mới là có chức danh" — GDV1/GDV2 (dùng
+    /gdv-only-candidates) phải loại trưởng/phó phòng, đối xứng với điều kiện
+    role đã áp cho KSV. Ô "Trực phụ" (/gdv-candidates) KHÔNG đổi — vẫn hiện
+    cả trưởng/phó phòng như trước (người dùng chốt giữ nguyên)."""
+    _dang_nhap(GDV1)
+    r_gdv_only = client.get("/api/so-truc/gdv-only-candidates")
+    r_truc_phu = client.get("/api/so-truc/gdv-candidates")
+    assert r_gdv_only.status_code == 200 and r_truc_phu.status_code == 200
+    ids_gdv_only = [c["id"] for c in r_gdv_only.json()]
+    ids_truc_phu = [c["id"] for c in r_truc_phu.json()]
+    # KSV (id=3) trong fixture db mang role='pho_phong', cùng Phòng Thanh toán.
+    assert KSV not in ids_gdv_only
+    assert KSV in ids_truc_phu
+    assert GDV1 in ids_gdv_only and GDV2 in ids_gdv_only
+
+
+def test_ksv_candidates_khong_hien_nguoi_phong_khac(client, db):
+    """`so_truc.ksv_confirm` gán cho 1 nhóm lỡ có người phòng khác (department_id
+    khác PAYMENT) — người đó KHÔNG được hiện trong danh sách chọn KSV của Phòng
+    Thanh toán, dù đúng quyền VÀ đúng chức danh (cô lập đúng 1 biến: phòng ban).
+    KSV cùng phòng (fixture `db`) vẫn phải còn."""
+    db.execute("INSERT INTO departments (id, code, name) VALUES (2, 'OTHER', 'Phòng khác')")
+    db.execute(
+        "INSERT INTO user_tttt (id, full_name, department_id, role) VALUES (88, 'Truong phong khac', 2, 'pho_phong')"
+    )
+    db.execute("INSERT INTO group_members (group_id, staff_id) VALUES (2, 88)")  # nhóm 'KSV Thanh toan'
+    db.commit()
+    _dang_nhap(GDV1)
+    r = client.get("/api/so-truc/ksv-candidates")
+    assert r.status_code == 200
+    ids = [c["id"] for c in r.json()]
+    assert 88 not in ids
+    assert KSV in ids
+
+
+def test_ksv_candidates_khong_hien_chuyen_vien_du_co_quyen(client, db):
+    """Người dùng chốt 23/09/2026: "KSV chỉ cho chọn trưởng phòng và các phó phòng
+    thôi". Một chuyên viên cùng Phòng Thanh toán, có đủ quyền `so_truc.ksv_confirm`
+    (lỡ gán nhầm hoặc gán chung nhóm) vẫn KHÔNG được hiện — thiếu đúng chức danh."""
+    db.execute(
+        "INSERT INTO user_tttt (id, full_name, department_id, role) VALUES (77, 'Chuyen vien co quyen', 1, 'chuyen_vien')"
+    )
+    db.execute("INSERT INTO group_members (group_id, staff_id) VALUES (2, 77)")  # nhóm 'KSV Thanh toan'
+    db.commit()
+    _dang_nhap(GDV1)
+    r = client.get("/api/so-truc/ksv-candidates")
+    assert r.status_code == 200
+    ids = [c["id"] for c in r.json()]
+    assert 77 not in ids
+    assert KSV in ids
+
+
+def test_ksv_candidates_truong_phong_cung_hop_le(client, db):
+    """Cả 'truong_phong' lẫn 'pho_phong' đều hợp lệ, không chỉ 1 trong 2."""
+    db.execute(
+        "INSERT INTO user_tttt (id, full_name, department_id, role) VALUES (66, 'Truong phong', 1, 'truong_phong')"
+    )
+    db.execute("INSERT INTO group_members (group_id, staff_id) VALUES (2, 66)")
+    db.commit()
+    _dang_nhap(GDV1)
+    r = client.get("/api/so-truc/ksv-candidates")
+    ids = [c["id"] for c in r.json()]
+    assert 66 in ids
 
 
 # ══════════════════════════════════════════════════════════════
@@ -226,6 +299,59 @@ def test_dung_gdv_thi_sua_duoc(client, db):
     r = client.post(
         f"/api/so-truc/{_NGAY}/save-draft",
         json={"gdv1_id": GDV1, "gdv2_id": GDV2, "ghi_chu": "cap nhat", "truc_phu_ids": []},
+    )
+    assert r.status_code == 200
+
+
+def test_save_draft_chan_gdv_trung_nhau(client, db):
+    """Frontend đã chặn (do_save_draft) nhưng gọi thẳng API là bỏ qua được —
+    khác forward-ksv/ksv-finalize-edit, save-draft từng thiếu kiểm ở backend.
+    Ca lưu nháp LẦN ĐẦU (chưa có bản ghi nào, đi qua _insert_new_draft) phải
+    chặn được, không chỉ ca sửa bản ghi đã có."""
+    _dang_nhap(GDV1)
+    r = client.post(
+        f"/api/so-truc/{_NGAY}/save-draft",
+        json={"gdv1_id": GDV1, "gdv2_id": GDV1, "ghi_chu": "", "truc_phu_ids": []},
+    )
+    assert r.status_code == 400
+    assert "không được trùng nhau" in r.json()["detail"]
+
+
+def test_save_draft_de_trong_1_gdv_van_luu_duoc(client, db):
+    """Chỉ chặn khi CẢ HAI đều có giá trị và trùng nhau — để trống 1 trong 2
+    (soạn nháp dở, chưa chọn xong) không bị chặn oan."""
+    _dang_nhap(GDV1)
+    r = client.post(
+        f"/api/so-truc/{_NGAY}/save-draft",
+        json={"gdv1_id": GDV1, "gdv2_id": None, "ghi_chu": "", "truc_phu_ids": []},
+    )
+    assert r.status_code == 200
+
+
+def test_save_draft_chan_trung_ksv_da_khoa(client, db):
+    """Rà soát 23/09/2026 phát hiện: sau khi KSV đã bị khoá (vd sau reject_fix),
+    save_draft() không hề kiểm gdv1_id/gdv2_id với ksv_id — lưu êm 1 bản ghi
+    tự mâu thuẫn (GDV trùng KSV), chỉ lộ ra khi forward_to_ksv() kế tiếp báo
+    lỗi. Tái hiện bằng script thật rồi mới vá — cùng câu kiểm với
+    forward_to_ksv()/ksv_finalize_edit()."""
+    _seed_record(db, status="draft", ksv_id=KSV, ksv_decision="reject_fix")
+    _dang_nhap(GDV1)
+    r = client.post(
+        f"/api/so-truc/{_NGAY}/save-draft",
+        json={"gdv1_id": GDV1, "gdv2_id": KSV, "ghi_chu": "sua nham", "truc_phu_ids": []},
+    )
+    assert r.status_code == 400
+    assert "không được trùng" in r.json()["detail"]
+
+
+def test_save_draft_ksv_da_khoa_nhung_gdv_khac_van_luu_duoc(client, db):
+    """Câu kiểm mới không được chặn oan — GDV không trùng KSV đã khoá vẫn lưu
+    bình thường."""
+    _seed_record(db, status="draft", ksv_id=KSV, ksv_decision="reject_fix")
+    _dang_nhap(GDV1)
+    r = client.post(
+        f"/api/so-truc/{_NGAY}/save-draft",
+        json={"gdv1_id": GDV1, "gdv2_id": GDV2, "ghi_chu": "sua dung", "truc_phu_ids": []},
     )
     assert r.status_code == 200
 
@@ -364,6 +490,39 @@ def test_request_edit_nhanh_ksv_roi_tu_chot_lai_approved(client, db):
     assert d2["reject_reason"] is None
 
 
+def test_ksv_finalize_edit_chan_ksv_trung_gdv(client, db):
+    """ksv_finalize_edit() có thêm kiểm KSV không được trùng GDV1/GDV2 (cùng lý
+    do forward_to_ksv() — chặn tự phê duyệt chính mình) nhưng ban đầu thiếu
+    test riêng — bổ sung theo đúng cặp dương/âm như forward_to_ksv."""
+    _seed_record(db, status="approved", ksv_id=KSV, ksv_decided_by=KSV,
+                 ksv_decided_at=datetime.now().isoformat())
+    _dang_nhap(KSV, role="pho_phong")
+    r1 = client.post(f"/api/so-truc/{_NGAY}/request-edit", json={"reason": "KSV tu sua lai"})
+    assert r1.status_code == 200
+
+    r2 = client.post(
+        f"/api/so-truc/{_NGAY}/ksv-finalize-edit",
+        json={"gdv1_id": KSV, "gdv2_id": GDV2, "ghi_chu": "", "truc_phu_ids": []},
+    )
+    assert r2.status_code == 400
+    assert "không thể tự xác nhận" in r2.json()["detail"].lower()
+
+
+def test_ksv_finalize_edit_ksv_khac_gdv_van_binh_thuong(client, db):
+    """Đối chứng — KSV khác cả 2 GDV thì không bị chặn bởi ràng buộc mới."""
+    _seed_record(db, status="approved", ksv_id=KSV, ksv_decided_by=KSV,
+                 ksv_decided_at=datetime.now().isoformat())
+    _dang_nhap(KSV, role="pho_phong")
+    r1 = client.post(f"/api/so-truc/{_NGAY}/request-edit", json={"reason": "KSV tu sua lai"})
+    assert r1.status_code == 200
+
+    r2 = client.post(
+        f"/api/so-truc/{_NGAY}/ksv-finalize-edit",
+        json={"gdv1_id": GDV1, "gdv2_id": GDV2, "ghi_chu": "", "truc_phu_ids": []},
+    )
+    assert r2.status_code == 200
+
+
 # ══════════════════════════════════════════════════════════════
 # HÀNH VI — is_deleted=1 không được xuất hiện/dùng làm KSV (fix review)
 # ══════════════════════════════════════════════════════════════
@@ -392,6 +551,29 @@ def test_forward_ksv_chan_ksv_da_xoa(client, db):
     )
     assert r.status_code == 400
     assert "không còn quyền" in r.json()["detail"].lower()
+
+
+def test_forward_ksv_chan_ksv_trung_gdv(client, db):
+    """Ảnh người dùng gửi: 1 phó phòng vừa hợp lệ làm GDV (cán bộ trong phòng) vừa
+    hợp lệ làm KSV (đúng chức danh + đúng quyền) — không được chọn CHÍNH MÌNH làm
+    KSV cho bản ghi mà mình đứng tên GDV, mất tác dụng kiểm soát chéo."""
+    _dang_nhap(KSV)  # chính KSV đứng tên GDV1 trong payload — phải là 1 trong 2 GDV mới qua được lớp "người ngoài"
+    r = client.post(
+        f"/api/so-truc/{_NGAY}/forward-ksv",
+        json={"gdv1_id": KSV, "gdv2_id": GDV2, "ghi_chu": "", "ksv_id": KSV, "truc_phu_ids": []},
+    )
+    assert r.status_code == 400
+    assert "không thể tự xác nhận" in r.json()["detail"].lower()
+
+
+def test_forward_ksv_ksv_khac_gdv_van_binh_thuong(client, db):
+    """Đối chứng — KSV khác cả 2 GDV thì không bị chặn bởi ràng buộc mới."""
+    _dang_nhap(GDV1)
+    r = client.post(
+        f"/api/so-truc/{_NGAY}/forward-ksv",
+        json={"gdv1_id": GDV1, "gdv2_id": GDV2, "ghi_chu": "", "ksv_id": KSV, "truc_phu_ids": []},
+    )
+    assert r.status_code == 200
 
 
 # ══════════════════════════════════════════════════════════════

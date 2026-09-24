@@ -51,7 +51,50 @@
 <div class="page">
 
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
-  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-09-23</p>
+  <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-09-24</p>
+
+  <!-- ST1 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">ST1</span>
+      <span class="card-title">Sổ trực cuối ngày — kiểm soát chéo GDV/KSV, tách danh sách theo chức danh (PR #133)</span>
+      <span class="badge badge-done">done · 2026-09-24</span>
+    </div>
+    <div class="card-body">
+      <p>PR của datphan175, review + merge 24/09/2026. Tiếp nối card 78 (khoá theo đúng người). Trước PR, một phó phòng vừa
+        đứng tên GDV vừa được chọn làm KSV cho chính bản ghi đó — tự phê duyệt chính mình.</p>
+
+      <table>
+        <tr><th>Luật</th><th>Chặn ở đâu</th><th>Gọi thẳng API có lọt?</th></tr>
+        <tr><td>KSV ≠ GDV1/GDV2 cùng bản ghi</td><td><code>save_draft</code> (KSV đã khoá), <code>forward_to_ksv</code>, <code>ksv_finalize_edit</code></td><td><span class="pill pill-green">Không</span></td></tr>
+        <tr><td>GDV1 ≠ GDV2</td><td>Thêm vào <code>save_draft</code> (trước nhánh tạo mới)</td><td><span class="pill pill-green">Không</span></td></tr>
+        <tr><td>KSV phải là trưởng/phó phòng PAYMENT + có <code>so_truc.ksv_confirm</code></td><td><code>list_ksv_candidates()</code>, <code>forward_to_ksv</code> dùng lại để kiểm</td><td><span class="pill pill-green">Không</span></td></tr>
+        <tr><td>GDV không giữ chức danh</td><td>Chỉ ô chọn (<code>/gdv-only-candidates</code>)</td><td><span class="pill pill-red">Có</span> — chấp nhận, xem dưới</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> Lọc KSV theo <code>role</code> — không phải hard-code quyền</div>
+      <p>Người dùng chốt: "KSV chỉ cho chọn trưởng phòng và các phó phòng". Cùng loại với người kiểm soát ký bảng công phòng
+        ACCT (DESIGN.md, <i>Phạm vi quyền ≠ phạm vi dữ liệu</i>): yêu cầu của chứng từ, không phải quyền vào menu. Hai lớp độc lập —
+        mã quyền do admin tick VÀ chức danh. Đã ghi ngoại lệ vào DESIGN.md để người sau không "sửa cho nhất quán".</p>
+      <div class="caution"><b>Hỏng lặng lẽ có chủ đích:</b> tick <code>so_truc.ksv_confirm</code> cho chuyên viên → không hiện trong
+        danh sách KSV, không lỗi, không log. Đã báo trong Logs_update (⚠️) cho quản trị viên.</div>
+
+      <div class="label"><span class="pill pill-blue">Đánh đổi</span> Luật GDV chỉ ở giao diện</div>
+      <p>Backend không kiểm GDV thuộc danh sách hẹp (cũng chưa từng kiểm GDV thuộc PAYMENT). Gọi thẳng API vẫn đặt được phó phòng
+        làm GDV — nhưng người đó không làm KSV của chính bản ghi ấy được, nên kiểm soát chéo vẫn đứng. Form có lưới an toàn: GDV
+        đã lưu mà nay không còn trong danh sách hẹp vẫn được thêm vào ô chọn với tên hiện có, tránh mở form thấy trống rồi lưu mất.</p>
+
+      <div class="label"><span class="pill pill-gray">Chưa làm</span></div>
+      <ul>
+        <li><code>forward_to_ksv()</code> gọi <code>_insert_new_draft()</code> TRƯỚC khi kiểm — lần chuyển đầu bị báo lỗi (vd KSV trùng
+          GDV) vẫn để lại bản ghi nháp khoá theo 2 GDV đã nhập. Lỗi có từ trước; sửa bằng cách đưa các câu kiểm lên trước lệnh chèn.</li>
+        <li><code>ksv_confirm()</code> không kiểm KSV ≠ GDV — bản ghi <code>pending_ksv</code> tạo trước PR mà trùng vẫn duyệt được. DB máy dev
+          không có ca nào; máy chính kiểm bằng <code>SELECT id FROM so_truc_records WHERE status&lt;&gt;'cancelled' AND ksv_id IN (gdv1_id, gdv2_id)</code>.</li>
+        <li>Siết <code>list_ksv_candidates()</code> siết luôn bước "KSV còn hợp lệ" của <code>forward_to_ksv()</code>: bản ghi đã khoá KSV là
+          chuyên viên/người phòng khác thì kẹt, chỉ còn đường "Huỷ phiên trực".</li>
+      </ul>
+    </div>
+  </div>
 
   <!-- HN6 -->
   <div class="card">

@@ -4,6 +4,16 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 24/09/2026 Sổ trực cuối ngày - **Kiểm soát chéo GDV / KSV**
+    + ✅ Người đứng tên GDV không còn tự chọn chính mình làm KSV xác nhận sổ trực của mình — hệ thống báo lỗi và không lưu
+    + ✅ Ô chọn **KSV** chỉ còn trưởng phòng / phó phòng Phòng Thanh toán (đã được cấp quyền xác nhận sổ trực)
+    + ✅ Ô chọn **GDV 1 / GDV 2** chỉ còn cán bộ không giữ chức danh trưởng / phó phòng. Ô **Trực phụ** vẫn hiện cả phòng như cũ
+    + ✅ Không chọn được cùng một người cho cả GDV 1 và GDV 2, kể cả khi chỉ bấm "Lưu nháp"
+    + ⚠️ Quản trị viên: cấp quyền "Xác nhận / Từ chối sổ trực" cho một **chuyên viên** sẽ không có tác dụng — người đó
+      vẫn không hiện trong danh sách chọn KSV
+    + ⚠️ Sổ trực đang dở mà KSV đã chọn là chuyên viên hoặc người phòng khác thì không chuyển lại cho KSV được nữa — bấm
+      **"Huỷ phiên trực"** rồi lập lại
+
 - 24/09/2026 Quản lý hệ thống - **Thư mục file tạm trên máy chủ không còn phình mãi**
     + ✅ Sửa lỗi: file tạm của **Chấm ILO1000** và **Đối chiếu song phương chiều ĐẾN / ĐI** không bao giờ bị xoá
       sau mỗi lần khởi động lại máy chủ, nên `data/temp_*` cứ lớn dần. Nay dọn lúc 23h hằng ngày như các tính năng khác

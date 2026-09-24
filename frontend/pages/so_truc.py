@@ -506,22 +506,38 @@ async def so_truc_page(request: _StarletteRequest):
             ).classes("w-full mt-2")
 
             async def _ks_load_options():
+                # GDV1/GDV2 chỉ hiện người KHÔNG giữ chức danh (loại trưởng/phó
+                # phòng — xem gdv-only-candidates); Trực phụ vẫn hiện mọi cán bộ
+                # trong phòng như cũ (chỉ liệt kê để biết, không lọc theo
+                # chức danh — người dùng chốt 23/09/2026 giữ nguyên).
                 try:
-                    candidates = await asyncio.to_thread(api.get, "/api/so-truc/gdv-candidates")
+                    gdv_only, truc_phu_candidates = await asyncio.gather(
+                        asyncio.to_thread(api.get, "/api/so-truc/gdv-only-candidates"),
+                        asyncio.to_thread(api.get, "/api/so-truc/gdv-candidates"),
+                    )
                 except Exception as e:
                     if _handle_api_error(e):
                         return
                     ui.notify(f"Lỗi tải danh sách GDV: {e}", type="negative")
                     return
-                options = {c["id"]: c["full_name"] for c in candidates}
-                ks_gdv1_select.options = options
-                ks_gdv2_select.options = options
-                ks_truc_phu_select.options = options
-                if rec.get("gdv1_id") in options:
+                gdv_options = {c["id"]: c["full_name"] for c in gdv_only}
+                # Bản ghi có thể đã gán GDV1/GDV2 là người sau này giữ chức danh
+                # (hoặc lập từ trước khi có luật lọc này) — vẫn phải hiện đúng
+                # tên hiện có, không để trống im lặng khiến lưu lại là mất dữ liệu.
+                if rec.get("gdv1_id") and rec["gdv1_id"] not in gdv_options:
+                    gdv_options[rec["gdv1_id"]] = rec.get("gdv1_name") or "?"
+                if rec.get("gdv2_id") and rec["gdv2_id"] not in gdv_options:
+                    gdv_options[rec["gdv2_id"]] = rec.get("gdv2_name") or "?"
+                ks_gdv1_select.options = gdv_options
+                ks_gdv2_select.options = gdv_options
+                ks_truc_phu_select.options = {c["id"]: c["full_name"] for c in truc_phu_candidates}
+                if rec.get("gdv1_id") in gdv_options:
                     ks_gdv1_select.value = rec["gdv1_id"]
-                if rec.get("gdv2_id") in options:
+                if rec.get("gdv2_id") in gdv_options:
                     ks_gdv2_select.value = rec["gdv2_id"]
-                ks_truc_phu_select.value = [uid for uid in rec.get("truc_phu_ids", []) if uid in options]
+                ks_truc_phu_select.value = [
+                    uid for uid in rec.get("truc_phu_ids", []) if uid in ks_truc_phu_select.options
+                ]
                 ks_gdv1_select.update()
                 ks_gdv2_select.update()
                 ks_truc_phu_select.update()
@@ -534,6 +550,12 @@ async def so_truc_page(request: _StarletteRequest):
                     return
                 if ks_gdv1_select.value == ks_gdv2_select.value:
                     ui.notify("GDV 1 và GDV 2 không được trùng nhau", type="warning")
+                    return
+                if my_id in (ks_gdv1_select.value, ks_gdv2_select.value):
+                    ui.notify(
+                        "KSV không được trùng với GDV đang trực — không thể tự xác nhận sổ trực của chính mình",
+                        type="warning",
+                    )
                     return
                 try:
                     await asyncio.to_thread(
@@ -638,28 +660,45 @@ async def so_truc_page(request: _StarletteRequest):
             ksv_select = ui.select({}, label="Chọn KSV xác nhận").props("dense outlined").classes("w-64 mt-2")
 
         async def _load_gdv_options():
+            # GDV1/GDV2 chỉ hiện người KHÔNG giữ chức danh (loại trưởng/phó
+            # phòng — xem gdv-only-candidates); Trực phụ vẫn hiện mọi cán bộ
+            # trong phòng như cũ (chỉ liệt kê để biết, không lọc theo chức
+            # danh — người dùng chốt 23/09/2026 giữ nguyên).
             try:
-                candidates = await asyncio.to_thread(api.get, "/api/so-truc/gdv-candidates")
+                gdv_only, truc_phu_candidates = await asyncio.gather(
+                    asyncio.to_thread(api.get, "/api/so-truc/gdv-only-candidates"),
+                    asyncio.to_thread(api.get, "/api/so-truc/gdv-candidates"),
+                )
             except Exception as e:
                 if _handle_api_error(e):
                     return
                 ui.notify(f"Lỗi tải danh sách GDV: {e}", type="negative")
                 return
-            options = {c["id"]: c["full_name"] for c in candidates}
-            gdv1_select.options = options
-            gdv2_select.options = options
-            truc_phu_select.options = options
-            if rec.get("gdv1_id") in options:
+            gdv_options = {c["id"]: c["full_name"] for c in gdv_only}
+            # Bản ghi có thể đã gán GDV1/GDV2 là người sau này giữ chức danh
+            # (hoặc lập từ trước khi có luật lọc này) — vẫn phải hiện đúng tên
+            # hiện có, không để trống im lặng khiến lưu lại là mất dữ liệu.
+            if rec.get("gdv1_id") and rec["gdv1_id"] not in gdv_options:
+                gdv_options[rec["gdv1_id"]] = rec.get("gdv1_name") or "?"
+            if rec.get("gdv2_id") and rec["gdv2_id"] not in gdv_options:
+                gdv_options[rec["gdv2_id"]] = rec.get("gdv2_name") or "?"
+            gdv1_select.options = gdv_options
+            gdv2_select.options = gdv_options
+            truc_phu_select.options = {c["id"]: c["full_name"] for c in truc_phu_candidates}
+            if rec.get("gdv1_id") in gdv_options:
                 gdv1_select.value = rec["gdv1_id"]
-            elif my_id in options:
+            elif my_id in gdv_options:
                 # Sổ trực CHƯA có ai lập (gdv1_id trống) — mặc định GDV 1 là
                 # chính người đang mở form này (thường đúng thực tế: ai lập
                 # sổ thì tự nhiên là 1 trong 2 GDV trực). Vẫn SỬA được nếu
-                # sai — chỉ là gợi ý mặc định, không khoá.
+                # sai — chỉ là gợi ý mặc định, không khoá. Không gợi ý nếu
+                # người mở form đang giữ chức danh (không còn là GDV hợp lệ).
                 gdv1_select.value = my_id
-            if rec.get("gdv2_id") in options:
+            if rec.get("gdv2_id") in gdv_options:
                 gdv2_select.value = rec["gdv2_id"]
-            truc_phu_select.value = [uid for uid in rec.get("truc_phu_ids", []) if uid in options]
+            truc_phu_select.value = [
+                uid for uid in rec.get("truc_phu_ids", []) if uid in truc_phu_select.options
+            ]
             gdv1_select.update()
             gdv2_select.update()
             truc_phu_select.update()
@@ -683,6 +722,12 @@ async def so_truc_page(request: _StarletteRequest):
         async def do_save_draft():
             if gdv1_select.value and gdv2_select.value and gdv1_select.value == gdv2_select.value:
                 ui.notify("GDV 1 và GDV 2 không được trùng nhau", type="warning")
+                return
+            if ksv_locked_id and ksv_locked_id in (gdv1_select.value, gdv2_select.value):
+                ui.notify(
+                    "GDV không được trùng với KSV đã chọn — không thể tự xác nhận sổ trực của chính mình",
+                    type="warning",
+                )
                 return
             try:
                 await asyncio.to_thread(
@@ -712,6 +757,12 @@ async def so_truc_page(request: _StarletteRequest):
             ksv_id_to_send = ksv_locked_id if ksv_select is None else ksv_select.value
             if not ksv_id_to_send:
                 ui.notify("Phải chọn KSV xác nhận", type="warning")
+                return
+            if ksv_id_to_send in (gdv1_select.value, gdv2_select.value):
+                ui.notify(
+                    "KSV không được trùng với GDV đang trực — không thể tự xác nhận sổ trực của chính mình",
+                    type="warning",
+                )
                 return
             try:
                 await asyncio.to_thread(
