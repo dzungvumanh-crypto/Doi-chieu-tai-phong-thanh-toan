@@ -4,6 +4,17 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 24/09/2026 Phòng Thanh toán - Chấm đối chiếu ACH (PR #136, xử lý review Khánh)
+    + ⚠️ **Mã quyền mới cần cấp tay sau deploy**: `cham_ach.huy_phien_khac` — cho phép huỷ được phiên
+      đối chiếu ACH của NGƯỜI KHÁC đang treo ở màn hình chờ xác nhận (trước đây nút "Dừng" chỉ huỷ
+      được phiên của chính mình; ai đó đóng trình duyệt bỏ dở là phiên đó chiếm máy chủ tới 4 giờ mà
+      không ai — kể cả admin thường — gỡ được). Cấp qua **Phân quyền theo nhóm**, gộp vào nhóm
+      `menu.cham_ach` cùng `cham_ach.process` — mặc định KHÔNG nhóm nào có, phải tick tay
+    + ✅ Kết quả pHub gộp nhiều ngày ("Gộp kết quả pHub nhiều ngày", tab Báo cáo) không còn ảnh hưởng
+      RAM/số lượt chạy đồng thời khác biệt so với mọi việc nặng khác của hệ thống — chỉ đổi cách chạy
+      bên trong, không đổi cách dùng
+    + ℹ️ Không có tính năng/màn hình mới nào khác — đợt này chỉ vá kỹ thuật theo review trước khi merge
+
 - 24/09/2026 Sổ trực cuối ngày - **Kiểm soát chéo GDV / KSV**
     + ✅ Người đứng tên GDV không còn tự chọn chính mình làm KSV xác nhận sổ trực của mình — hệ thống báo lỗi và không lưu
     + ✅ Ô chọn **KSV** chỉ còn trưởng phòng / phó phòng Phòng Thanh toán (đã được cấp quyền xác nhận sổ trực)

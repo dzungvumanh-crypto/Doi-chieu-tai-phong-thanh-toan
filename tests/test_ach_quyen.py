@@ -472,3 +472,67 @@ class TestD4CancelContinueTheoChuJob:
             assert goi_voi['job_id'] == job_id_a
         finally:
             app.dependency_overrides.clear()
+
+
+# ─── cham_ach.huy_phien_khac (24/09/2026, Business Owner quyết định, PR #136) ─
+# Mã quyền mới CHỈ mở rộng phạm vi cho ĐÚNG POST /cancel/{job_id} — không đụng
+# /continue, /poll, /download (những chỗ đó vẫn chỉ chủ job, xem docs/DESIGN.md
+# mục "Phạm vi quyền ≠ phạm vi dữ liệu" — đây LÀ quyền thật, khác lớp ownership
+# ở D4, vì admin app cấp được qua màn Phân quyền theo nhóm).
+class TestCancelHuyPhienKhac:
+    def test_co_quyen_huy_duoc_job_nguoi_khac(self, job_gia_lap):
+        """B được cấp cham_ach.huy_phien_khac -> huỷ được job 'running' của A
+        (không phải chủ job) -> 200, job của A chuyển 'cancelled'/cờ huỷ được đặt."""
+        conn = _db_nhieu_nguoi({
+            _STAFF_A: ['menu.cham_ach', 'cham_ach.process'],
+            _STAFF_B: ['menu.cham_ach', 'cham_ach.process', 'cham_ach.huy_phien_khac'],
+        })
+        job_id_a = job_gia_lap(_STAFF_A)
+        ach_service.get_job(job_id_a)['status'] = 'awaiting_confirmation'
+        try:
+            r = _client_la(_STAFF_B, StaffRole.CHUYEN_VIEN, conn).post(f'/api/ach/cancel/{job_id_a}')
+            assert r.status_code == 200, r.text
+            assert ach_service.get_job(job_id_a)['status'] == 'cancelled'
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_khong_co_quyen_van_bi_chan_huy_job_nguoi_khac(self, job_gia_lap):
+        """Đối chứng — hành vi D4c KHÔNG đổi cho người chưa được cấp mã mới:
+        C không có cham_ach.huy_phien_khac -> vẫn 404, job của A không đổi."""
+        conn = _db_nhieu_nguoi({
+            _STAFF_A: ['menu.cham_ach', 'cham_ach.process'],
+            _STAFF_C: ['menu.cham_ach', 'cham_ach.process'],
+        })
+        job_id_a = job_gia_lap(_STAFF_A)
+        ach_service.get_job(job_id_a)['status'] = 'awaiting_confirmation'
+        try:
+            r = _client_la(_STAFF_C, StaffRole.CHUYEN_VIEN, conn).post(f'/api/ach/cancel/{job_id_a}')
+            assert r.status_code == 404
+            assert ach_service.get_job(job_id_a)['status'] == 'awaiting_confirmation'
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_chu_job_luon_huy_duoc_du_khong_co_ma_quyen_moi(self, job_gia_lap):
+        """Chủ job A KHÔNG được cấp cham_ach.huy_phien_khac vẫn huỷ được job
+        của chính mình — mã quyền mới chỉ MỞ RỘNG thêm, không thu hẹp quyền cũ."""
+        conn = _db_nhieu_nguoi({_STAFF_A: ['menu.cham_ach', 'cham_ach.process']})
+        job_id_a = job_gia_lap(_STAFF_A)
+        ach_service.get_job(job_id_a)['status'] = 'running'
+        try:
+            r = _client_la(_STAFF_A, StaffRole.CHUYEN_VIEN, conn).post(f'/api/ach/cancel/{job_id_a}')
+            assert r.status_code == 200, r.text
+        finally:
+            app.dependency_overrides.clear()
+
+    def test_admin_mac_dinh_cung_huy_duoc_moi_job_qua_sieu_quyen_co_san(self, job_gia_lap):
+        """admin đi qua require_feature()/co_quyen() ở MỌI nơi (siêu quyền có sẵn,
+        không phải do cham_ach.huy_phien_khac) — không phải hành vi mới, chỉ xác
+        nhận không bị đổi bởi thay đổi này."""
+        conn = _db_nhieu_nguoi({_STAFF_A: ['menu.cham_ach', 'cham_ach.process']})
+        job_id_a = job_gia_lap(_STAFF_A)
+        ach_service.get_job(job_id_a)['status'] = 'running'
+        try:
+            r = _client_la(1, StaffRole.ADMIN, conn).post(f'/api/ach/cancel/{job_id_a}')
+            assert r.status_code == 200, r.text
+        finally:
+            app.dependency_overrides.clear()
