@@ -252,10 +252,11 @@ Truy cập:
 ├── data/
 │   ├── ksnb.db             # SQLite database (tự tạo khi chạy lần đầu)
 │   ├── backups/            # Backup tự động — xem mục "Backup tự động"
-│   └── temp_*/             # File tải lên + kết quả tạm của ACH / Chấm 459901 /
-│                           #   Đối chiếu song phương / Đối soát CITAD / Đối chiếu OSB. Sống hết ngày làm
-│                           #   việc, temp_cleanup_service xoá sạch lúc 23h (không chờ ai
-│                           #   mở menu). Backend bật giữa ngày chỉ dọn rác của hôm trước
+│   └── temp_*/             # File tải lên + kết quả tạm của ACH / Chấm 459901 (2 sổ) / ILO1000 /
+│                           #   Đối chiếu song phương (+ kênh core ĐẾN/ĐI) / Đối soát CITAD / Đối chiếu OSB.
+│                           #   Sống hết ngày làm việc, temp_cleanup_service xoá sạch lúc 23h (không chờ ai
+│                           #   mở menu). Backend bật giữa ngày chỉ dọn rác của hôm trước.
+│                           #   Riêng temp_vb_format giữ VB_FORMAT_LUU_NGAY ngày (mặc định 30) để rà soát
 ├── logs/
 │   ├── app.log             # Log xoay vòng (5 MB × 3 file) — nguồn của màn hình Nhật ký hệ thống
 │   ├── backend.log         # stdout/stderr tiến trình backend (run.py ghi) — xoay khi >20 MB, giữ 3 đời
@@ -322,6 +323,14 @@ Kết nối CSDL dùng **bể mượn–trả** (`DB_POOL_SIZE`, mặc định 4
 Request vượt số kết nối thì xếp hàng chờ (tối đa 30 giây, quá thì trả 503 và ghi cảnh báo vào
 `logs/app.log`) — trước 17/09/2026 quá ~88 request cùng lúc là cả hệ thống đứng 30 giây.
 
+Tiến trình **frontend** gọi backend qua một bể luồng riêng (`FRONTEND_IO_THREADS`, mặc định 64 —
+trước 23/09/2026 là bể mặc định 12 luồng dùng chung cho mọi người dùng, vài lượt gửi file dài là cả
+giao diện đứng). Bể thiếu thì `logs/frontend.log` có dòng *"Lời gọi backend chờ … ms mới có luồng"*.
+
+Thống kê truy vấn (`PRAGMA optimize`) được cập nhật trong lượt dọn nhật ký — lúc khởi động và 12 giờ
+một lần. Câu nào chậm đi bất thường sau khi nâng cấp: `DELETE FROM sqlite_stat1;` rồi khởi động lại
+backend để quay về như cũ (xem card HN6 trong Implementation-notes).
+
 ## Chức năng
 
 ### Module Nhân sự & Tài khoản
@@ -365,7 +374,9 @@ Request vượt số kết nối thì xếp hàng chờ (tối đa 30 giây, qu�
   các dòng có `role` sai chính tả, `department_id` không tồn tại, hoặc thiếu Mã cán bộ; khớp theo
   **Mã cán bộ**. ⚠️ **Số liệu phép (`used_leave_days`, `annual_leave_days`, `carryover_notice_year`)
   của tài khoản đã có thì KHÔNG bị đè** — đó là dữ liệu của module Nghỉ phép, nơi có batch nhập +
-  hoàn tác riêng; tài khoản mới thì vẫn lấy theo file. `tests/test_import_db_an_toan.py` canh việc này
+  hoàn tác riêng; tài khoản mới thì vẫn lấy theo file. Chỉ ghi cột **trùng đúng tên** (phân biệt
+  hoa/thường) với bảng `user_tttt` của máy này — cột khác bị bỏ và báo lại (`ignored_columns`); tên
+  cột lấy từ file từng được ghép thẳng vào câu SQL. `tests/test_import_db_an_toan.py` canh việc này
 
 ### Module Nghỉ phép
 - Cán bộ tạo đơn xin nghỉ (phép năm, ốm, việc riêng, khác)
@@ -397,6 +408,8 @@ Request vượt số kết nối thì xếp hàng chờ (tối đa 30 giây, qu�
   đúng bằng hành vi cũ
 - Nhập hạn mức phép hàng loạt từ file Excel (xem trước / áp dụng / hoàn tác); sửa tay số ngày "Đã dùng" của từng người — cả hai cách đều thay thế lẫn nhau, không cộng dồn
 - Bản ghi hạn mức nhập từ Excel / sửa tay không phải đơn nghỉ thật: bị ẩn khỏi danh sách đơn, lịch, kiểm tra trùng ngày, số liệu Dashboard, Trang chủ và Báo cáo bàn giao
+- Dashboard toàn trung tâm tải đơn **từ đầu năm trước + mọi đơn còn chờ duyệt** (`GET /api/leaves/?scope=all&tu_nam=…`;
+  bỏ `tu_nam` thì trả tất cả như cũ). Lọc ngày lùi quá mốc thì tự tải đủ; nút "Tải cả các năm trước" để tìm theo tên trên mọi năm
 - Khai báo hộ; ngày nghỉ lẻ không liên tục (`spread_dates`)
 - Bảng nghỉ phép hôm nay trên Trang chủ theo từng phòng — **chỉ đếm đơn đã duyệt** (lịch tháng trong menu thì hiện cả đơn đang chờ, kèm nhãn trạng thái)
 - Chống duyệt trùng: hai người (hoặc hai tab) bấm duyệt cùng lúc thì chỉ lần đầu có hiệu lực, lần sau báo đơn đã được xử lý
@@ -1149,8 +1162,11 @@ nút hoàn tác (phải xoá tay từng thẻ). Đo thật: 20.000 dòng ghi h�
   phông sẽ in qua Pillow. "NGÂN HÀNG NÔNG NGHIỆP VÀ PHÁT TRIỂN NÔNG THÔN VIỆT NAM" cỡ 12 đậm đo được
   238,0 pt / ô 241,2 pt. Tràn thì nén `w:spacing` tối đa **−24 twip** (đúng mức Phụ lục V dùng),
   **không hạ cỡ chữ**; hết trần vẫn tràn thì dừng và ghi cảnh báo
+- **Độ dài vạch**: Tiêu ngữ **bằng** dòng chữ; tên đơn vị ban hành **1/2** (cận trên của dải 1/3–1/2
+  ở Điều 8.2, đúng mức đo trên Phụ lục V 0,50–0,57); trích yếu 0,4. Không lấy 2/3 — vượt dải quy định
 - **Ba cách kẻ vạch sẵn, ba cách xử lý**: hình vẽ (`<v:line>`, Straight Connector) thì **giữ
-  nguyên**; gạch chân (`w:u`) và viền dưới của đoạn (`w:pBdr/w:bottom`) thì **gỡ rồi vẽ lại** — hai
+  lại nhưng chỉnh độ dài theo quy định và canh giữa** (vạch vẽ cho cỡ chữ cũ sẽ ngắn hơn chữ sau
+  chuẩn hoá; sửa cả bản DrawingML lẫn VML, giữ vị trí dọc tác giả đặt); gạch chân (`w:u`) và viền dưới của đoạn (`w:pBdr/w:bottom`) thì **gỡ rồi vẽ lại** — hai
   cách sau không cắt ngắn được (gạch chân dài đúng bằng chữ, viền đoạn dài hết bề ngang đoạn) nên
   không làm được yêu cầu "1/3 đến 1/2 dòng chữ". Chỉ nhấc riêng `w:bottom`, giữ viền trên/trái/phải
 - **Không vẽ chồng lên đường kẻ có sẵn**: Word neo hình vẽ tay vào *chính đoạn có chữ*
@@ -1272,7 +1288,7 @@ nút hoàn tác (phải xoá tay từng thẻ). Đo thật: 20.000 dòng ghi h�
   |---|---|
   | Thể thức trình bày | Khổ giấy A4, lề 30/20/20/20 mm, đánh số trang canh giữa lề trên (bỏ trang 1), phông Times New Roman (đặt cho cả nhánh `w:cs` để chữ có dấu không lệch phông), màu chữ đen, **giãn dòng 1,2** và cách đoạn 6 pt cho lời văn, thụt dòng đầu 1 cm, chuẩn hoá Tiêu ngữ về “Độc lập - Tự do - Hạnh phúc” (gạch NỐI, mỗi bên một dấu cách — Điều 7.2), và **cỡ chữ / kiểu chữ / căn lề / giãn dòng riêng cho 28 thành phần thể thức** theo Phụ lục III |
   | Viết hoa (Phụ lục IV) | Chữ đầu câu và đầu dòng (có danh sách viết tắt chặn: `TP.`, `v.v.`, `TM.`…); viện dẫn (Phần/Chương/Mục/Tiểu mục/**Điều** viết hoa, *khoản* và *điểm* viết thường — mục V.7); và **từ điển cụm từ** do người dùng tự khai |
-  | Đánh số, gạch đầu dòng | Mọi ký tự gạch đầu dòng (`•`, `–`, `*`, `+`…) → `- `; khoản `1)` `1/` → `1.`; điểm `a.` `a/` → `a)`; mục La Mã `I)` `I/` → `I.`; danh sách **chấm tròn** tự động của Word → gạch đầu dòng gõ tay |
+  | Đánh số, gạch đầu dòng | Mọi ký tự gạch đầu dòng (`•`, `–`, `*`, `+`…) → `- `; khoản `1)` `1/` → `1.`; điểm `a.` `a/` → `a)`; mục La Mã `I)` `I/` → `I.` (kể cả đề mục in thường "III. Thẩm quyền…"); danh sách **chấm tròn** tự động của Word → gạch đầu dòng gõ tay. **Sau mọi ký hiệu đầu dòng đúng MỘT dấu cách** — số tự động của Word dùng `w:suff="space"` thay cho tab (công tắc `danh_so.dau_cach_sau_so`; cấp danh sách có mặt trong bảng số liệu thì giữ tab) |
 
 - **Soát thứ tự đánh số — chỉ báo, không sửa** (`soat_so.py`, công tắc `danh_so.soat_thu_tu`, mặc định
   bật): Điều / Chương / Mục / mục La Mã / khoản / tiểu khoản `1.1` / điểm / tiết `(i)` nhảy số, trùng số,
@@ -1300,11 +1316,18 @@ nút hoàn tác (phải xoá tay từng thẻ). Đo thật: 20.000 dòng ghi h�
   nằm trong danh sách cụm từ liền dòng để chặn hẳn
 - **"Kính gửi" có hai cách trình bày** (Điều 15.4.a): gửi **một** nơi thì cả cụm nằm trên một
   dòng và **canh giữa** (mẫu 06, 09); gửi **nhiều** nơi thì chỉ có chữ "Kính gửi:" đứng
-  riêng rồi liệt kê xuống dòng, để **sát trái** (mẫu 08). Hai tình huống có hai mục cấu hình riêng
+  riêng rồi liệt kê xuống dòng, để **sát trái** (mẫu 08). Hai tình huống có hai mục cấu hình riêng.
+  Cách đoạn **6 pt** (Mẫu 05/06/08), không 0 như khối đầu — để 0 thì dính sát mục "I." bên dưới
+- **Khối Kính gửi dựng bằng bảng hai cột** (`bang_kinh_gui.py`, công tắc `chung.chuan_bang_kinh_gui`):
+  giữ bảng (nó giúp tên dài xuống dòng thụt thẳng hàng), tính lại bề ngang cột theo chữ ở cỡ mới,
+  lề ô 0, canh giữa, bỏ viền. Gửi nhiều nơi thì cột trái không tính dấu ":" → gạch đầu dòng nằm dưới
+  dấu hai chấm (Điều 15.4.a)
+- **Khối chữ ký**: dòng trống chừa chỗ ký giữa chức vụ và họ tên lấy cỡ chữ của khối ký (giữ nguyên số
+  dòng tác giả để); khối "PHÊ DUYỆT CỦA…" / "Ý KIẾN CỦA…" ngay dưới họ tên cách **một dòng** (Mẫu 06)
 - **Khoảng trống trước đoạn (Spacing Before) luôn được đưa về 0.** Khoảng cách thật giữa
   hai đoạn là *After của đoạn trên + Before của đoạn dưới*, nên 7pt/7pt cho ra **14pt** mà
   hộp Paragraph chỉ hiện hai số 7. Đưa Before về 0 để chỉ còn một nguồn quyết định.
-  Khối đầu trang, Kính gửi và khối cuối về **0/0**; lời văn giữ After sẵn có nếu đã ≥ 6pt
+  Khối đầu trang và khối cuối về **0/0**, Kính gửi **0/6**; lời văn giữ After sẵn có nếu đã ≥ 6pt
   (Điều 12.6 chỉ nêu mức tối thiểu). Ô bảng trong khối đầu cũng về 0/0 — khối đó hay được
   dựng bằng bảng hai cột; bảng số liệu giữa văn bản không bị ảnh hưởng
 - **Xuống dòng để trình bày thì KHÔNG viết hoa chữ đầu.** Phụ lục IV mục I nói "đầu một *câu
@@ -1343,8 +1366,10 @@ nút hoàn tác (phải xoá tay từng thẻ). Đo thật: 20.000 dòng ghi h�
   đánh số; màu highlight. Nhập cỡ chữ ra ngoài dải quy định thì **cảnh báo, không chặn**. Nút
   *Khôi phục mặc định theo QĐ 979*. Chỉ **phần khác mặc định** được lưu vào DB — quy định đổi thì các
   mục chưa từng đụng tới tự đi theo mặc định mới
-- File kết quả nằm trong `data/temp_vb_format/`, **sống hết ngày làm việc và bị dọn lúc 23h** cùng các
-  tính năng có file tạm khác
+- Mỗi lượt chuẩn hoá (kể cả lượt **lỗi**) được lưu thành một phiên ở
+  `data/temp_vb_format/<YYYYMMDD_HHMMSS>_<mã>/`: `goc.docx` (file tải lên), `cau_hinh.json` (cấu hình đã áp),
+  `phien.json` (ai, lúc nào, trạng thái, vết lỗi), `ket_qua.docx` + `bao_cao.json` (nhật ký sửa đổi). Nhật ký
+  hệ thống ghi ngày giờ + 8 ký tự đầu của mã (đủ tìm thư mục, không đủ để tải file người khác). Giữ **`VB_FORMAT_LUU_NGAY` ngày** (mặc định 30, `.env`), dọn lúc 23h
 - Bảng DB: `vb_format_config` (đúng một dòng, `CHECK (id = 1)`)
 - Phân quyền riêng theo nhóm: `menu.vb_format` (tải file lên, chuẩn hoá, tải kết quả) +
   `vb_format.config` (sửa thông số quy chuẩn). Tách hai quyền vì quy chuẩn là của cả đơn vị — một
@@ -1588,6 +1613,16 @@ Cấu hình trong `backend/services/backup_service.py`.
 > Trước đây luật dọn glob `ksnb_*.db` và sắp **theo tên**: `'2' < 'b' < 't'` nên bản đặt tay
 > luôn bị coi là "mới nhất", vừa chiếm chỗ vĩnh viễn vừa làm màn hình Admin báo sai ngày
 > backup gần nhất. `tests/test_backup_rotation.py` canh việc này.
+
+**Bản sao lưu hỏng — `HONG_ksnb_YYYYMMDD_HHMM.db` / `.zip`.** Mỗi bản vừa chụp được kiểm
+(`integrity_check` + số dòng `user_tttt` khớp nguồn). Không đạt thì đổi sang tên này và:
+
+- **không** tính vào vòng giữ 7 ngày — file chính hỏng nhiều ngày liền không đẩy bản tốt cuối cùng ra ngoài;
+- **không** được coi là "sao lưu gần nhất" → màn Giám sát báo *sao lưu đã ngừng N giờ* khi hỏng kéo dài;
+- không chép sang `BACKUP_EXTRA_DIR`; chỉ giữ 3 bản hỏng mới nhất để điều tra.
+
+Thấy file `HONG_…` trong `data/backups/` là dấu hiệu **CSDL chính có thể đã hỏng** — xem dòng ERROR
+"Backup vừa tạo KHÔNG toàn vẹn" trong `logs/app.log`. `tests/test_backup_ban_hong_khong_chiem_cho.py` canh việc này.
 
 **Thư mục backup phụ** (`BACKUP_EXTRA_DIR` trong `.env`, nên đặt ở ổ/máy khác): mỗi bản backup được
 chép sang đó rồi **áp cùng luật dọn**. Tức là phần mềm chủ động xoá file trên ổ/máy ngoài — vẫn chỉ

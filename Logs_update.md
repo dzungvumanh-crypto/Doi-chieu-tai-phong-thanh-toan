@@ -4,6 +4,48 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 24/09/2026 Quản lý hệ thống - **Thư mục file tạm trên máy chủ không còn phình mãi**
+    + ✅ Sửa lỗi: file tạm của **Chấm ILO1000** và **Đối chiếu song phương chiều ĐẾN / ĐI** không bao giờ bị xoá
+      sau mỗi lần khởi động lại máy chủ, nên `data/temp_*` cứ lớn dần. Nay dọn lúc 23h hằng ngày như các tính năng khác
+    + ✅ Lần khởi động đầu tiên sau khi cập nhật tự dọn hết phần rác cũ — không cần xoá tay
+    + ✅ **Chuẩn hoá văn bản**: mỗi lượt chạy (kể cả lượt báo lỗi) được lưu lại **30 ngày** trong
+      `data/temp_vb_format/`, mỗi lượt một thư mục bắt đầu bằng ngày giờ, gồm file gốc, file kết quả, cấu hình đã
+      dùng và nhật ký sửa đổi — để rà soát khi có người báo "máy sửa sai". Nhật ký hệ thống ghi ngày giờ + mã rút gọn của từng lượt để tìm đúng thư mục
+    + ℹ️ Muốn đổi số ngày lưu: thêm dòng `VB_FORMAT_LUU_NGAY=<số ngày>` vào file `.env` rồi khởi động lại
+
+- 23/09/2026 Toàn hệ thống - **Tăng tốc**
+    + ✅ Nhiều người cùng gửi file đối chiếu / xem trước đơn nghỉ phép không còn làm các màn hình khác đứng chờ
+    + ✅ **Nghỉ phép → Dashboard** (lãnh đạo, Tổng hợp, quản trị): mở nhanh hơn — mặc định chỉ tải đơn **từ đầu năm trước**
+      cùng mọi đơn còn đang chờ duyệt. Tìm theo khoảng ngày cũ hơn thì hệ thống tự tải thêm; muốn xem hết thì bấm
+      **"Tải cả các năm trước"** cạnh dòng đếm số đơn
+    + ⚠️ Khi chưa chọn ngày, 5 ô tổng quan (nhất là ô **Hoàn thành**) nay đếm từ đầu năm trước, không còn cộng dồn mọi năm —
+      con số sẽ nhỏ hơn trước, không phải mất dữ liệu
+    + ✅ Lưu nhật ký thao tác và tra cứu dữ liệu nhẹ hơn cho máy chủ
+
+- 23/09/2026 Nhiều màn hình - **Sửa lỗi sau đợt rà soát toàn hệ thống**
+    + ✅ **Nghỉ phép**: duyệt / từ chối / huỷ đơn xong thì ở lại đúng tab đang đứng. Trước đây, vào thẳng tab
+      "Chờ duyệt" từ thanh bên rồi duyệt ngay thì bị đưa về Dashboard
+    + ✅ **Hết phiên đăng nhập** (sau 8 giờ): màn hình tự chuyển về trang đăng nhập kèm thông báo. Trước đây trang vẫn
+      đứng yên, chỉ tới lúc bấm nút mới báo lỗi
+    + ✅ **Bàn giao chứng từ**: mạng chậm không còn làm trang chỉ hiện nửa trên
+    + ✅ **Quản lý người dùng → Nhập file DB**: cột trong file không có trên hệ thống này bị bỏ qua và được báo tên cụ thể;
+      siết kiểm tra để file nhập không đổi được vai trò ngoài quy định
+    + ✅ **Sao lưu tự động**: bản sao lưu bị kiểm là hỏng được cất riêng (tên bắt đầu bằng `HONG_`) và không còn chiếm
+      chỗ của bản tốt trong 7 ngày lưu giữ
+    + ⚠️ Thấy file `HONG_…` trong thư mục sao lưu, hoặc màn Giám sát báo *sao lưu đã ngừng*, là dấu hiệu cơ sở dữ liệu
+      chính có thể đã hỏng — báo ngay cho người quản trị
+
+- 23/09/2026 Chuẩn hoá văn bản - **Sửa 6 điểm trình bày theo QĐ 979**
+    + ✅ Đường kẻ ngang có sẵn trong văn bản nay được **chỉnh đúng độ dài**: dưới Tiêu ngữ dài bằng dòng chữ,
+      dưới tên đơn vị dài **một nửa** dòng chữ, cả hai canh giữa. Trước đây đường kẻ cũ giữ nguyên nên ngắn hơn chữ
+    + ℹ️ Đường kẻ dưới tên đơn vị **không** kéo tới 2/3: Điều 8.2 chỉ cho phép từ 1/3 đến 1/2 dòng chữ
+    + ✅ Dòng "Kính trình: …" kẻ bảng không còn bị gãy thành hai dòng — cột tự co giãn theo chữ, cả dòng canh giữa
+    + ✅ Có khoảng cách giữa dòng Kính gửi / Kính trình và mục "I." bên dưới
+    + ✅ Số thứ tự tự động (I. II. IV. …) cách chữ **đúng một dấu cách**, giống số gõ tay
+    + ✅ Chỗ để ký giữa chức vụ và họ tên rộng hơn (theo cỡ chữ của khối ký)
+    + ✅ Khối "PHÊ DUYỆT CỦA PHÓ TỔNG GIÁM ĐỐC" cách tên người ký một dòng, không còn dính sát
+    + ℹ️ Trong tab Cấu hình có thêm hai ô tắt/bật: *một dấu cách sau số tự động* và *tính lại bảng Kính gửi*
+
 - 22/09/2026 Nhật ký hệ thống - **Gom 3 mục thành một màn, dễ tra hơn**
     + ✅ Ba mục menu cũ (Nhật ký hệ thống, Lịch sử lỗi & cảnh báo, Nhật ký đăng nhập) nay là **một mục** với 4 tab:
       *Tổng quan · Thao tác · Đăng nhập · Lỗi hệ thống*

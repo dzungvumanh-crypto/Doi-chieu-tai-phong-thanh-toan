@@ -32,6 +32,10 @@ app.add_middleware(SecurityHeadersMiddleware)
 # Serve static assets (logo, etc.)
 app.add_static_files('/static', os.path.join(os.path.dirname(__file__), 'static'))
 
+# Bể luồng cho asyncio.to_thread — mặc định chỉ min(32, số lõi + 4); xem frontend/be_luong.py
+from frontend.be_luong import cai_be_luong  # noqa: E402
+app.on_startup(cai_be_luong)
+
 # Proxy /api/* sang backend nội bộ — máy trạm chỉ cần gọi đúng 1 cổng
 # frontend, không cần cổng backend được mở ra ngoài (xem api_proxy.py)
 import frontend.api_proxy  # noqa: E402,F401

@@ -15,7 +15,9 @@ from nicegui import app, ui
 
 import frontend.api_client as api
 from frontend.shared import _handle_api_error
-from frontend.pages.leaves._chung import _LEAVE_TYPE, _fmt_leave_dates, _gd_display, _leave_status_badge
+from frontend.pages.leaves._chung import (
+    _LEAVE_TYPE, _fmt_leave_dates, _gd_display, _leave_status_badge, _ten_tab,
+)
 
 
 @dataclass
@@ -668,7 +670,7 @@ async def mo_chi_tiet(leave: dict, ctx: "ChiTietCtx"):
                                 ctx.detail_drawer.hide()
                                 ui.notify("Đã hủy đơn thành công", type="positive")
                                 # Quay lại đúng tab đang đứng (không ép về "Chờ duyệt")
-                                app.storage.user["_leaves_goto_raw"] = ctx.leave_tabs.value
+                                app.storage.user["_leaves_goto_raw"] = _ten_tab(ctx.leave_tabs.value)
                                 ui.navigate.to("/leaves")
                             except Exception as e:
                                 _handle_api_error(e)
@@ -702,7 +704,7 @@ async def mo_chi_tiet(leave: dict, ctx: "ChiTietCtx"):
                                 # Quay lại đúng tab đang đứng — không ép theo trạng thái đơn
                                 # (trước đây pending_tong_hop luôn nhảy sang "Chờ xác nhận TT"
                                 # dù đang xem từ Dashboard hay tab khác).
-                                app.storage.user["_leaves_goto_raw"] = ctx.leave_tabs.value
+                                app.storage.user["_leaves_goto_raw"] = _ten_tab(ctx.leave_tabs.value)
                                 ui.navigate.to("/leaves")
                             except Exception as e:
                                 _handle_api_error(e)

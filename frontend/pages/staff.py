@@ -317,6 +317,12 @@ async def staff_page():
                                 ui.notify(d, type="warning", timeout=0, close_button="Đóng")
                         else:
                             ui.notify(msg, type="positive")
+                        cot_la = result.get("ignored_columns") or []
+                        if cot_la:
+                            ui.notify(
+                                f"Bỏ qua {len(cot_la)} cột không có trên hệ thống này: "
+                                + ", ".join(cot_la[:5]) + (" …" if len(cot_la) > 5 else ""),
+                                type="warning", timeout=0, close_button="Đóng")
                         await load_staff()
                     except Exception as ex:
                         if _handle_api_error(ex): return

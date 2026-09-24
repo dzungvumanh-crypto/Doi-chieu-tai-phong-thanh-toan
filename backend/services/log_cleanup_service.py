@@ -29,6 +29,22 @@ _INTERVAL_HOURS = 12
 _timer: threading.Timer | None = None
 
 
+def _toi_uu_thong_ke(db: sqlite3.Connection) -> None:
+    """Cập nhật thống kê cho bộ lập kế hoạch truy vấn (bảng sqlite_stat1).
+
+    Trước 23/09/2026 CSDL chưa từng chạy ANALYZE — SQLite chọn index bằng phỏng đoán
+    cố định, bảng có nhiều index trên cùng câu lọc dễ chọn nhầm. `0x10002`: xét MỌI
+    bảng chứ không chỉ bảng kết nối này đã truy vấn (mặc định của `optimize` từ 3.46),
+    và chỉ ANALYZE bảng nào thống kê đã cũ. `analysis_limit` giới hạn số dòng lấy mẫu
+    mỗi index → nhanh kể cả khi bảng lớn. Hỏng thì chỉ cảnh báo: không có thống kê
+    mới vẫn chạy đúng như trước, không đáng làm hỏng lượt dọn nhật ký."""
+    try:
+        db.execute("PRAGMA analysis_limit=1000")
+        db.execute("PRAGMA optimize=0x10002")
+    except sqlite3.Error:
+        _log.warning("PRAGMA optimize thất bại — giữ thống kê cũ", exc_info=True)
+
+
 def run_cleanup(db_path: str = "data/ksnb.db") -> dict:
     """Xoá nhật ký quá hạn. Trả về số dòng đã xoá theo từng bảng."""
     deleted = {"login_logs": 0, "audit_logs": 0}
@@ -48,6 +64,7 @@ def run_cleanup(db_path: str = "data/ksnb.db") -> dict:
             cur = db.execute(f"DELETE FROM {table} WHERE created_at < ?", (cutoff,))
             deleted[table] = cur.rowcount or 0
         db.commit()
+        _toi_uu_thong_ke(db)
     finally:
         db.close()
 

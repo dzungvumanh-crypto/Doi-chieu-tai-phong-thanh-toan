@@ -108,43 +108,85 @@ def _mo_ta(status_code: int, noi_dung: str | None) -> str:
     return f"HTTP {status_code}" + (f" · {noi_dung}" if noi_dung else "")
 
 
+# Số dòng tối đa gom vào MỘT giao dịch. Trước 23/09/2026 mỗi dòng một commit — với
+# `synchronous` mặc định (FULL) là một lần ép ghi đĩa và một lần giành khoá ghi mỗi dòng,
+# đúng lúc request thật cũng đang cần khoá đó. Lúc vắng khách lô chỉ có 1 dòng, như cũ.
+_LO_TOI_DA = 200
+
+
+def _mo_ket_noi() -> sqlite3.Connection:
+    db = sqlite3.connect(DB_PATH, timeout=_WRITE_TIMEOUT)
+    db.row_factory = sqlite3.Row
+    db.execute(f"PRAGMA busy_timeout={_WRITE_TIMEOUT * 1000}")
+    # Cùng mức với bể kết nối (database._tao_ket_noi): ở chế độ WAL, NORMAL không làm
+    # hỏng CSDL khi mất điện — chỉ có thể mất vài giao dịch cuối chưa checkpoint.
+    db.execute("PRAGMA synchronous=NORMAL")
+    return db
+
+
+def _ghi_lo(db: sqlite3.Connection, lo: list[tuple]) -> None:
+    for (method, path, status_code, auth_header, hdr_ip, client_ip,
+         actor_id, detail, noi_dung) in lo:
+        # actor_id truyền tường minh (endpoint không dùng JWT) thắng;
+        # để trống thì suy từ JWT như cũ.
+        actor = actor_id if actor_id is not None else _actor_id(auth_header)
+        db.execute(
+            "INSERT INTO audit_logs (actor_id, action, target_type, target_id,"
+            " detail, ip_address, created_at) VALUES (?,?,?,?,?,?,?)",
+            (actor, method, path, None, detail or _mo_ta(status_code, noi_dung),
+             _real_ip(db, actor, hdr_ip, client_ip), _vn_now()),
+        )
+    db.commit()
+
+
+def _dong(db) -> None:
+    try:
+        if db is not None:
+            db.close()
+    except sqlite3.Error:
+        pass        # kết nối đã hỏng sẵn — lần sau mở lại
+
+
 def _vong_lap() -> None:
-    """Luồng nền: giữ MỘT kết nối, ghi từng dòng cho tới khi nhận tín hiệu dừng."""
+    """Luồng nền: giữ MỘT kết nối, ghi theo lô cho tới khi nhận tín hiệu dừng."""
     db = None
     try:
         while True:
-            item = _q.get()
-            if item is None:            # tín hiệu dừng
-                _q.task_done()
-                return
-            try:
-                if db is None:
-                    db = sqlite3.connect(DB_PATH, timeout=_WRITE_TIMEOUT)
-                    db.row_factory = sqlite3.Row
-                    db.execute(f"PRAGMA busy_timeout={_WRITE_TIMEOUT * 1000}")
-                (method, path, status_code, auth_header, hdr_ip, client_ip,
-                 actor_id, detail, noi_dung) = item
-                # actor_id truyền tường minh (endpoint không dùng JWT) thắng;
-                # để trống thì suy từ JWT như cũ.
-                actor = actor_id if actor_id is not None else _actor_id(auth_header)
-                db.execute(
-                    "INSERT INTO audit_logs (actor_id, action, target_type, target_id,"
-                    " detail, ip_address, created_at) VALUES (?,?,?,?,?,?,?)",
-                    (actor, method, path, None, detail or _mo_ta(status_code, noi_dung),
-                     _real_ip(db, actor, hdr_ip, client_ip), _vn_now()),
-                )
-                db.commit()
-            except Exception:
-                _log.warning("Không ghi được audit cho %s %s", item[0], item[1], exc_info=True)
-                # Kết nối có thể đã hỏng — bỏ đi, vòng sau tự mở lại
+            # Chờ dòng đầu, rồi vét thêm những dòng ĐANG chờ sẵn — không chờ gom cho đủ
+            # lô, nên lúc vắng khách dòng vẫn xuống đĩa ngay như trước.
+            lay_ra = [_q.get()]
+            while len(lay_ra) < _LO_TOI_DA:
                 try:
-                    if db is not None:
-                        db.close()
-                except sqlite3.Error:
-                    pass        # kết nối đã hỏng sẵn — vòng sau mở lại
-                db = None
+                    lay_ra.append(_q.get_nowait())
+                except queue.Empty:
+                    break
+            dung = None in lay_ra               # tín hiệu dừng: ghi nốt phần đã lấy rồi thoát
+            lo = [x for x in lay_ra if x is not None]
+            try:
+                # Lô hỏng thì mở kết nối mới thử lại NGUYÊN LÔ một lần. Không thử từng
+                # dòng: lỗi thường gặp là khoá CSDL quá lâu, 200 dòng × 10 giây chờ là
+                # luồng ghi đứng nửa tiếng trong khi hàng đợi đầy dần.
+                for lan in (1, 2):
+                    if not lo:
+                        break
+                    try:
+                        if db is None:
+                            db = _mo_ket_noi()
+                        _ghi_lo(db, lo)
+                        break
+                    except Exception:
+                        _dong(db)
+                        db = None
+                        if lan == 2:
+                            # ERROR, không WARNING: mất tới 200 dòng nhật ký kiểm soát của nhiều
+                            # người cùng lúc — phải hiện ở mục "lỗi" của màn Giám sát / Nhật ký.
+                            _log.error("Không ghi được %d dòng audit (vd %s %s) — bỏ lô này",
+                                       len(lo), lo[0][0], lo[0][1], exc_info=True)
             finally:
-                _q.task_done()
+                for _ in lay_ra:
+                    _q.task_done()
+            if dung:
+                return
     finally:
         if db is not None:
             try:

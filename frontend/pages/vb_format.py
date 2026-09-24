@@ -483,8 +483,10 @@ async def vb_format_page():
                                     _o_bat("chung", "go_gach_chan_the_thuc",
                                            "Bỏ gạch chân ở dòng thể thức", cfg)
                                     _o_bat("chung", "ve_duong_ke_ngang",
-                                           "Vẽ đường kẻ ngang dưới Tiêu ngữ / tên đơn vị / trích yếu",
-                                           cfg)
+                                           "Vẽ đường kẻ ngang dưới Tiêu ngữ / tên đơn vị / trích yếu "
+                                           "(vạch có sẵn: chỉnh lại độ dài)", cfg)
+                                    _o_bat("chung", "chuan_bang_kinh_gui",
+                                           "Bảng Kính gửi / Kính trình: tính lại bề ngang cột", cfg)
                                     _o_bat("chung", "bo_ngat_trang_thu_cong",
                                            "Bỏ ngắt trang thủ công", cfg)
                                 ui.label(
@@ -602,6 +604,9 @@ async def vb_format_page():
                                 _o_bat("danh_so", "bo_bullet_tu_dong",
                                        "Chuyển danh sách chấm tròn tự động của Word thành "
                                        "gạch đầu dòng gõ tay", cfg)
+                                _o_bat("danh_so", "dau_cach_sau_so",
+                                       "Sau số / dấu đầu dòng tự động là MỘT dấu cách "
+                                       "(như số gõ tay «1. », «a) », «- »)", cfg)
                                 _o_bat("danh_so", "bo_so_tu_dong",
                                        "Chuyển danh sách ĐÁNH SỐ tự động của Word thành số gõ tay",
                                        cfg)

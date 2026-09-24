@@ -24,7 +24,8 @@ import logging
 from docx import Document
 from docx.shared import Cm
 
-from . import ap_dung, bien_doi, do_chu, duong_ke, nhan_dien, quy_chuan, soat_so
+from . import (ap_dung, bang_kinh_gui, bien_doi, do_chu, duong_ke, nhan_dien,
+               quy_chuan, soat_so)
 
 _log = logging.getLogger(__name__)
 
@@ -162,6 +163,12 @@ def chuan_hoa(du_lieu: bytes, cau_hinh: dict | None = None) -> tuple[bytes, dict
          for p, _ in khoi],
     )
 
+    # Một dấu cách sau số tự động — TRƯỚC vòng lặp, để `_giu_tab_sau_so` thấy
+    # `suff="space"` mà bỏ qua, không đặt thêm điểm dừng tab vô dụng.
+    if cfg["danh_so"].get("dau_cach_sau_so"):
+        if ap_dung.dat_dau_cach_sau_so(khoi, ma_list):
+            sua_chung.append("số / dấu đầu dòng tự động: cách chữ đúng một dấu cách")
+
     # Soát thứ tự số trên chữ GỐC, trước khi vòng lặp sửa ký hiệu — số không
     # đổi ("1)" → "1." giữ nguyên số 1) nhưng đọc chữ gốc thì khỏi phụ thuộc
     # việc lượt sửa chữ có bật hay không.
@@ -246,7 +253,11 @@ def chuan_hoa(du_lieu: bytes, cau_hinh: dict | None = None) -> tuple[bytes, dict
                 viec.append("ghép cụm từ không cho tách dòng")
 
         # ── Định dạng ──
-        dinh_dang = ap_dung._dinh_dang_doan(p, ma, tp, cfg["chung"], muc_gach.get(ma))
+        # Khối phê duyệt ngay dưới họ tên người ký: cách một dòng (Mẫu 06).
+        truoc_pt = (ap_dung.mot_dong_pt(tp.get("co") or 14)
+                    if ap_dung.la_khoi_ky_moi(ma_list, stt - 1, khoi) else None)
+        dinh_dang = ap_dung._dinh_dang_doan(p, ma, tp, cfg["chung"], muc_gach.get(ma),
+                                            truoc_pt)
         rieng = [mo_ta for loai, mo_ta in dinh_dang if loai == "rieng"]
         for loai, mo_ta in dinh_dang:
             if loai == "chung":
@@ -310,10 +321,11 @@ def chuan_hoa(du_lieu: bytes, cau_hinh: dict | None = None) -> tuple[bytes, dict
                 co_ve = tp.get("co") or (
                     lambda v: v.pt if v is not None else None)(
                         ap_dung._hieu_luc_run(p.runs[0], p, "size") if p.runs else None)
-                if co_ve and duong_ke.ve_duong_ke(
-                        p, ma, co_ve, dam=bool(tp.get("dam")),
-                        nghieng=bool(tp.get("nghieng"))):
+                kieu_ve = {"dam": bool(tp.get("dam")), "nghieng": bool(tp.get("nghieng"))}
+                if co_ve and duong_ke.ve_duong_ke(p, ma, co_ve, **kieu_ve):
                     viec.append("vẽ đường kẻ ngang bên dưới")
+                elif co_ve and duong_ke.chinh_duong_ke_co_san(p, ma, co_ve, **kieu_ve):
+                    viec.append("chỉnh độ dài đường kẻ có sẵn theo quy định, canh giữa")
 
         # ── Đánh dấu: cụ thể đè lên tổng quát ──
         if bat_mau and (rieng or run_noi_dung or run_lien_dong):
@@ -335,6 +347,22 @@ def chuan_hoa(du_lieu: bytes, cau_hinh: dict | None = None) -> tuple[bytes, dict
                 "trich": (p.text or "")[:90],
                 "viec": viec,
             })
+
+    # ── Chỗ ký: dòng trống giữa chức vụ và họ tên theo cỡ chữ khối ký ──
+    co_ky = cfg["thanh_phan"]["ho_ten_nguoi_ky"].get("co")
+    if co_ky and ap_dung.chua_cho_ky(khoi, ma_list, co_ky):
+        sua_chung.append(f"dòng trống chừa chữ ký → cỡ {ap_dung._so(co_ky)}, dòng đơn")
+
+    # ── Bảng Kính gửi / Kính trình ──
+    # Sau vòng lặp: bề ngang cột tính theo cỡ chữ CUỐI CÙNG của các ô.
+    if cfg["chung"].get("chuan_bang_kinh_gui"):
+        rong_vung_chu = min(
+            (s.page_width - s.left_margin - s.right_margin) / 12700
+            for s in doc.sections)
+        so_bang = bang_kinh_gui.chuan_bang_kinh_gui(
+            khoi, ma_list, rong_vung_chu, ap_dung._hieu_luc_run)
+        if so_bang:
+            sua_chung.append("bảng Kính gửi / Kính trình: bề ngang cột theo chữ, canh giữa, bỏ viền")
 
     ra = io.BytesIO()
     doc.save(ra)

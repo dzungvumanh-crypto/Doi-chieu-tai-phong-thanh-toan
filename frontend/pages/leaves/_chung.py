@@ -313,6 +313,20 @@ def _fmt_ngay_vn(iso_str: str) -> str:
 
 
 
+def _loc_lui_qua_moc(tu_nam, from_d, to_d, crd) -> bool:
+    """Bộ lọc ngày ở Dashboard có chạm tới trước 01/01/`tu_nam` (mốc đã tải) không.
+
+    Có "đến ngày" mà bỏ trống "từ ngày" nghĩa là mở về quá khứ — cũng tính là lùi quá
+    mốc. `tu_nam` None = đã tải toàn bộ, không bao giờ cần tải thêm."""
+    if not tu_nam:
+        return False
+    from datetime import date as _date
+    moc = _date(tu_nam, 1, 1)
+    if (from_d or to_d) and (from_d is None or from_d < moc):
+        return True
+    return crd is not None and crd < moc
+
+
 def _gd_display(leave: dict) -> str:
 
     """Thêm (TUQ) nếu PGĐ ký thay GĐ."""
@@ -324,6 +338,17 @@ def _gd_display(leave: dict) -> str:
         return f"{name} (TUQ)"
 
     return name
+
+
+def _ten_tab(value):
+    """Giá trị của ui.tabs → tên tab (chuỗi), để cất vào app.storage.user.
+
+    Chưa bấm tab nào thì `leave_tabs.value` vẫn là ĐỐI TƯỢNG Tab gán lúc dựng trang.
+    Cất nguyên đối tượng đó thì hỏng hai chỗ: không ghi ra JSON được (cả lượt lưu phiên
+    của người dùng thất bại — log "Tab is not JSON serializable"), và sang trang mới nó
+    không khớp tab nào vừa dựng → duyệt xong bị bật về Dashboard."""
+    props = getattr(value, "props", None)
+    return props.get("name") if props is not None else value
 
 
 def _approver_cell(name: str, is_pending: bool, width_cls: str):
