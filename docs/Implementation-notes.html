@@ -53,6 +53,88 @@
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
   <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-09-23</p>
 
+  <!-- RS2 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">RS2</span>
+      <span class="card-title">Rà soát toàn hệ 23/09/2026 — nâng quyền qua nhập file DB, tab Nghỉ phép, bộ nhớ phiên, sao lưu hỏng</span>
+      <span class="badge badge-done">Xong 7 mục — 17 test mới, gỡ bản vá là đỏ</span>
+    </div>
+    <div class="card-body">
+
+      <p>Nguồn: đọc mã + <code>logs/frontend.log</code> của máy dev. Bốn trong sáu lỗi <b>chỉ</b> lộ ra trong log frontend —
+        không test nào dựng giao diện nên cả bộ 2240 test vẫn xanh. Mỗi mục có test riêng; đã gỡ từng bản vá chạy lại —
+        mọi test đỏ, trừ <code>test_ban_tot_van_chep_sang_thu_muc_phu</code> (cố ý: canh đường ĐÚNG không bị vạ lây).</p>
+
+      <table>
+        <tr><th>#</th><th>Lỗi</th><th>Bằng chứng</th><th>Sửa</th></tr>
+        <tr><td>1</td><td><b>QTV cấp 2 tự nâng lên cấp 1</b> qua <code>POST /api/staff/import-db</code></td>
+            <td>Tái hiện trên DB tạm: cột tên <code>role='admin', full_name</code> → <code>SET role='admin', full_name = ?</code></td>
+            <td>Chỉ ghi cột trùng <b>đúng tên</b> với <code>PRAGMA table_info(user_tttt)</code>; cột lạ trả về ở <code>ignored_columns</code></td></tr>
+        <tr><td>2</td><td>Nghỉ phép: duyệt/huỷ xong bị bật về Dashboard</td>
+            <td>Log: <code>Object of type Tab is not JSON serializable</code></td>
+            <td><code>_ten_tab()</code> ở 4 chỗ ghi <code>_leaves_goto_raw</code> + truyền tên tab cho <code>ui.tab_panels</code></td></tr>
+        <tr><td>3</td><td>Ghi <code>app.storage.user</code> từ luồng phụ</td>
+            <td>1.638 lần <code>There is no current event loop in thread 'asyncio_N'</code></td>
+            <td><code>api_client._sua_kho_user()</code>: tra kho ở luồng gọi, sửa trên event loop</td></tr>
+        <tr><td>4</td><td>Nhịp 60 giây không đưa về /login khi phiên hết hạn</td>
+            <td>Traceback 401 <code>/api/auth/me</code> mỗi phút mỗi tab</td>
+            <td>Thêm nhánh <code>SessionExpiredError</code> trước nhánh <code>Exception</code></td></tr>
+        <tr><td>5</td><td>Bàn giao dựng dở khi WebSocket nối &gt; 3 giây</td>
+            <td>Log 22/09: <code>No connection after 3.0 seconds</code> rồi <code>app.storage.tab can only be used…</code></td>
+            <td><code>_kho_tab()</code> bắt đúng <code>RuntimeError</code>, cả chỗ đọc lẫn chỗ ghi bộ lọc</td></tr>
+        <tr><td>6</td><td>Bản sao lưu hỏng chiếm suất trong vòng giữ 7 ngày</td>
+            <td>Đọc mã: <code>_verify()</code> chê chỉ ghi ERROR, vẫn nén + xoay vòng như bản tốt</td>
+            <td>Đổi tên <code>HONG_ksnb_…</code>, không xoay vòng, không chép thư mục phụ, giữ 3 bản hỏng</td></tr>
+        <tr><td>9</td><td><code>legal-merger-main.zip</code> 3,4 MB + file rỗng <code>--</code> ở gốc chưa ignore</td>
+            <td><code>git-save.bat</code> chạy <code>git add -A</code></td>
+            <td><code>.gitignore</code> chặn <code>/*.zip /*.7z /*.rar</code>; xoá file rỗng <code>--</code> (0 byte, không được theo dõi)</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> 1 — danh sách trắng theo tên thật, phân biệt hoa/thường</div>
+      <p>Có <b>hai</b> đường vòng cùng gốc "tên cột đến từ file". Ngoài tên cột chứa mã SQL, còn đường không cần ký tự lạ nào:
+        SQLite coi <code>ROLE</code> và <code>role</code> là một cột, nên cột <code>ROLE</code> ghi được vào <code>role</code> trong
+        khi <code>"role" in cols</code> (so chuỗi Python) trả False → bước chặn "cấp 2 không được đặt admin" không chạy. Vì thế so
+        <b>khớp đúng</b> với tên trong lược đồ, không so không phân biệt hoa/thường rồi ánh xạ lại.</p>
+      <p>Cột lạ trả ở khoá riêng <code>ignored_columns</code>, không nhét vào <code>skipped</code>: frontend đếm
+        <code>skipped</code> thành "BỎ QUA N <b>dòng</b>" — cột lạ không làm hỏng dòng nào. Đánh đổi: file xuất từ bản hệ thống có
+        cột mà máy này chưa có thì phần đó bị bỏ, nhưng người nhập được báo rõ tên cột.</p>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> 2 — sửa cả gốc lẫn chỗ ghi</div>
+      <p><code>ui.tab_panels(tabs, value=Tab)</code> gắn hai chiều với <code>tabs</code>, nên <code>leave_tabs.value</code> là
+        <b>đối tượng</b> Tab cho tới khi người dùng tự bấm tab. Ca hay gặp nhất: vào "Chờ duyệt" từ sidebar rồi duyệt ngay. Sửa gốc
+        (truyền tên) là đủ cho hôm nay; <code>_ten_tab()</code> ở chỗ ghi để một lệnh <code>set_value(t_x)</code> sau này không mở lại
+        lỗi. Mọi chỗ đọc đều qua <code>_tab_match()</code> vốn nhận cả hai dạng.</p>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> 3 — đẩy việc sửa về loop, không dời <code>clear_auth()</code> ra khỏi <code>api_client</code></div>
+      <p>Kho phải tra <b>ở luồng gọi</b>: <code>app.storage.user</code> dựa vào contextvar của request, thứ <code>to_thread</code> có
+        chép sang còn callback của <code>call_soon_threadsafe</code> thì không. Thứ tự vẫn đúng: lệnh sửa vào hàng đợi của loop
+        <b>trước</b> khi hàm trong luồng trả về, nên chạy xong trước khi coroutine đang <code>await</code> chạy tiếp — trang đăng
+        nhập đọc <code>features</code> ngay sau đó thấy giá trị mới (test canh). Phương án bỏ: chuyển <code>clear_auth()</code> sang
+        <code>_handle_api_error()</code> — 443 chỗ gọi, không phải chỗ nào cũng qua hàm đó (nhịp 60 giây, tải file).</p>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> 6 — tên bản hỏng KHÔNG bắt đầu bằng <code>ksnb_</code></div>
+      <p><code>last_backup_info()</code> đếm "bản đặt tay" = mọi <code>ksnb_*</code> trừ bản tự sinh — đặt <code>ksnb_hong_…</code> là
+        bản hỏng thành bản đặt tay. Bản hỏng không được tính là "gần nhất" nên hỏng kéo dài thì màn Giám sát tự kêu "sao lưu đã
+        ngừng N giờ" — đúng tín hiệu cần, trước đây bản hỏng vẫn hiện là bản mới nhất. Không chép sang <code>BACKUP_EXTRA_DIR</code>
+        vì <code>_rotate()</code> ở đó không dọn nó. Đổi tên thất bại (file bị khoá) thì lỗi nổi lên thành "Backup thất bại" — bản đó
+        khi ấy vẫn mang tên thường; chấp nhận vì là ca hiếm và có dòng ERROR.</p>
+
+      <div class="label"><span class="pill pill-gray">Chưa làm</span> Để người dùng quyết</div>
+      <ul>
+        <li><b>Tầng giữ theo tuần/tháng cho sao lưu</b> — đổi chính sách + dung lượng đĩa, cần số cỡ CSDL máy chủ.</li>
+        <li><b>Đăng nhập đúng xoá bộ đếm sai theo máy</b> (<code>rate_limit.clear_any</code>): có tài khoản hợp lệ là rải mật khẩu
+          không giới hạn. Mức thấp (người trong mạng nội bộ).</li>
+        <li><b>Seed ngày lễ Sổ trực</b>: Tết cố định mùng 1–5, Quốc khánh 1 ngày; ghi <code>holiday</code> đã xác nhận nên thắng
+          <code>public_holidays</code> ở quỹ phép / chấm công — cần xác nhận nghiệp vụ.</li>
+        <li>Đề xuất hiệu năng: bể 12 luồng dùng chung của frontend cho 443 lời gọi <code>to_thread</code> (tải file giữ luồng tới
+          600 giây); <code>scope=all</code> của danh sách đơn không giới hạn năm; nhật ký thao tác commit + fsync từng dòng.</li>
+      </ul>
+      <div class="note">Test frontend (mục 2, 4, 5) canh <b>cấu trúc mã</b> (AST / chuỗi), không dựng trang — dự án chưa có bộ
+        dựng giao diện NiceGUI trong test. Chúng bắt được việc gỡ bản vá, không bắt được lỗi hành vi mới cùng loại.</div>
+    </div>
+  </div>
+
   <!-- VB10 -->
   <div class="card">
     <div class="card-header">
