@@ -319,6 +319,10 @@ backend vẫn sống. Mỗi lượt ghi vào `logs/app.log` một dòng "RAM đ�
 cắt bớt RAM của tiến trình nên số "RAM đỉnh" đo thấp đúng lúc quan trọng. Muốn quay về cách cũ: `DOI_CHIEU_TIEN_TRINH=0`
 trong `.env` rồi khởi động lại backend.
 
+Khi `logs/app.log` có dòng *"Request chậm"*, các dòng ngay trước nó cho biết máy chủ đang bận gì: dòng chậm kể
+tên các lượt đối chiếu đang chạy, còn việc nặng khác (xuất Word/Excel, in đơn, SWIFT…) chạy từ `HEAVY_LOG_MS`
+(mặc định 1000 ms) trở lên thì có dòng `viec_nang` riêng — kèm thời gian phải xếp hàng chờ suất `MAX_HEAVY_TASKS`.
+
 Kết nối CSDL dùng **bể mượn–trả** (`DB_POOL_SIZE`, mặc định 48) thay vì mở tệp ở từng request.
 Request vượt số kết nối thì xếp hàng chờ (tối đa 30 giây, quá thì trả 503 và ghi cảnh báo vào
 `logs/app.log`) — trước 17/09/2026 quá ~88 request cùng lúc là cả hệ thống đứng 30 giây.

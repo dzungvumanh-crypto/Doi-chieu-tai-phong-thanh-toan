@@ -53,6 +53,51 @@
   <h1>⚙ Implementation Notes — PAYMENT CENTER</h1>
   <p class="subtitle">Ghi chú kỹ thuật, quyết định thiết kế, đánh đổi. Cập nhật liên tục. | 2026-09-24</p>
 
+  <!-- NK4 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">NK4</span>
+      <span class="card-title">Nhật ký "việc nặng" — lúc request chậm thì máy chủ đang bận việc gì</span>
+      <span class="badge badge-done">done · 2026-09-24</span>
+    </div>
+    <div class="card-body">
+      <p>Bắt đầu 14/09/2026 (<code>/api/staff/</code> chậm 1,5 s, log không có dòng nào nói lúc đó Song phương đang chạy — phải
+        hỏi người dùng nhớ lại). Bản 14/09 bị bỏ dở chưa commit; làm lại trên develop 24/09 vì mã nền đã đổi hẳn (card 150:
+        đối chiếu chạy ở tiến trình riêng).</p>
+
+      <table>
+        <tr><th>Câu hỏi khi thấy dòng chậm</th><th>Trả lời bằng</th></tr>
+        <tr><td>Lượt đối chiếu nào đang chạy?</td><td>Dòng <code>slow.request</code> kèm tên: <code>đối chiếu 1 (Song phương ĐI)</code> — <span class="pill pill-green">mới</span></td></tr>
+        <tr><td>Lượt đó bắt đầu / xong lúc nào?</td><td><code>chay_tach()</code> đã ghi "chạy ở tiến trình riêng (PID …)" / "xong sau … s" — có từ card 150</td></tr>
+        <tr><td>Việc nặng gắn request (xuất file, in đơn) nào chạy lâu?</td><td>Logger <code>viec_nang</code> trong <code>run_heavy()</code>, ngưỡng <code>HEAVY_LOG_MS</code> — <span class="pill pill-green">mới</span></td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> Không đưa lại <code>chay_nen()</code> của bản 14/09</div>
+      <p>Bản cũ bọc mọi luồng đối chiếu trong <code>chay_nen()</code> để ghi BẮT ĐẦU/KẾT THÚC. Nay <code>chay_tach()</code> đã ghi hai mốc đó,
+        nên bọc thêm là sửa 7 service + 7 API chỉ để mỗi mốc ghi hai lần. Phần duy nhất bản cũ có mà develop thiếu — "chạy cùng với
+        module nào" — nay nằm ngay trong dòng chậm, đúng chỗ người đọc cần.</p>
+      <div class="caution"><b>Hở còn lại:</b> <code>DOI_CHIEU_TIEN_TRINH=0</code> (chế độ khẩn cấp, chạy trong luồng) thì
+        <code>chay_tach()</code> không ghi mốc bắt đầu/kết thúc. Tên lượt đang chạy vẫn có trong dòng chậm — chấp nhận.</div>
+
+      <div class="label"><span class="pill pill-blue">Quyết định</span> Ngưỡng tính cả thời gian chờ suất, và tách riêng ra</div>
+      <p><code>slow.request</code> của đường xuất file có ngưỡng 8 s, nên một lượt xuất 3 s làm màn khác chậm lây mà không để lại dấu
+        vết. Ngưỡng 1 s đo từ lúc gọi <code>run_heavy()</code>; dòng log tách "chạy" với "chờ suất" — chờ lâu nghĩa là cả
+        <code>MAX_HEAVY</code> suất đang bận, chạy lâu nghĩa là chính việc đó nặng. Ghi SAU khi xong nên số "việc nặng khác còn chạy"
+        không đếm chính nó.</p>
+      <p>Hàm bọc chung (SWIFT: <code>run_heavy(_xuat_tu_tep, tach.xuat_tong_hop, …)</code>) in kèm tên hàm được bọc — không thì
+        mọi lượt xuất SWIFT trông như nhau. Quy tắc chung "tham số đầu là hàm (có <code>__qualname__</code>) thì in kèm", không
+        đặc cách tên hàm nào. Không dùng <code>callable()</code>: <code>sqlite3.Connection</code> cũng gọi được, và CITAD truyền
+        <code>db</code> làm tham số đầu ở 4 chỗ — phản biện bắt được trước khi mở PR.</p>
+
+      <div class="label"><span class="pill pill-gray">Chưa làm</span></div>
+      <ul>
+        <li>Việc nặng chạy qua <code>threading.Thread</code> tự tạo (dọn log, dọn temp, sao lưu, hâm Word) không qua
+          <code>run_heavy()</code> nên không có dòng <code>viec_nang</code>. Sao lưu đã tự ghi log riêng; mấy việc còn lại ngắn.</li>
+        <li>Bản 14/09 (patch + stash <code>log-viec-nang ban cu 14/09</code> ở worktree cũ) không còn giá trị sau PR này.</li>
+      </ul>
+    </div>
+  </div>
+
   <!-- ST1 -->
   <div class="card">
     <div class="card-header">
