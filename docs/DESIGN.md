@@ -75,8 +75,16 @@ Riêng `database is locked` chỉ log WARNING và bỏ qua, thử lại ở lầ
 Mỗi dòng `slow.request` kèm trạng thái lúc request kết thúc (`backend/core/slow_request.py::trang_thai`):
 
 ```
-Request chậm: GET /api/auth/me — 2771 ms (ngưỡng 1500 ms, HTTP 200) | loop chặn tối đa 140 ms, trễ tổng 1380 ms · luồng 3/40 chờ 0 · kết nối CSDL 2/48 xếp cổng 0 · đang xử lý 5 · việc nặng 0/4 · đối chiếu 1
+Request chậm: GET /api/auth/me — 2771 ms (ngưỡng 1500 ms, HTTP 200) | loop chặn tối đa 140 ms, trễ tổng 1380 ms · luồng 3/40 chờ 0 · kết nối CSDL 2/48 xếp cổng 0 · đang xử lý 5 · việc nặng 0/4 · đối chiếu 1 (Song phương ĐI)
 ```
+
+Hai nguồn mốc để biết **việc gì** đang chiếm máy chủ lúc đó — đọc các dòng ngay trước dòng chậm:
+- Lượt đối chiếu: `backend.core.tien_trinh_doi_chieu` — "chạy ở tiến trình riêng (PID …)" / "tiến trình con
+  xong sau … s". `DOI_CHIEU_TIEN_TRINH=0` (chạy trong luồng) thì **không có** hai mốc này — chỉ còn tên trong dòng chậm.
+- Việc nặng qua `run_heavy()` (xuất Word/Excel, in đơn, SWIFT…) chạy ≥ `HEAVY_LOG_MS` (mặc định 1000 ms,
+  tính cả chờ suất): logger `viec_nang`, tách "chạy" với "chờ suất". Chờ suất lớn = cả `MAX_HEAVY` suất đang bận.
+
+Lọc cả ba (PowerShell): `Select-String -Path logs\app.log* -Pattern "viec_nang|slow.request|tiến trình"`
 
 | Thấy | Nghĩa là |
 |---|---|

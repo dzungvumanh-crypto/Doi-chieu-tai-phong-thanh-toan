@@ -4,6 +4,15 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 24/09/2026 Quản lý hệ thống - **Nhật ký cho biết lúc hệ thống chậm thì máy chủ đang bận việc gì** — không đổi gì với người dùng
+    + ✅ Dòng cảnh báo **"Request chậm"** nay kể **tên** các lượt đối chiếu đang chạy lúc đó
+      (vd `đối chiếu 1 (Song phương ĐI)`), trước chỉ có con số
+    + ✅ Các việc nặng — xuất Excel/Word, in đơn nghỉ phép, xuất báo cáo SWIFT… — chạy từ **1 giây** trở lên thì ghi
+      một dòng: việc gì, bắt đầu lúc mấy giờ, chạy bao lâu, **phải xếp hàng chờ** bao lâu
+    + ℹ️ Tra cứu: màn *Nhật ký hệ thống* → **Tất cả**, tìm `viec_nang`. Hoặc trên máy chủ mở **PowerShell** (không phải
+      cmd) trong thư mục chương trình: `Select-String -Path logs\app.log* -Pattern "viec_nang|slow.request"`
+    + ℹ️ Đổi ngưỡng 1 giây: thêm dòng `HEAVY_LOG_MS=<số mili giây>` vào `.env` rồi khởi động lại
+
 - 24/09/2026 Sổ trực cuối ngày - **Kiểm soát chéo GDV / KSV**
     + ✅ Người đứng tên GDV không còn tự chọn chính mình làm KSV xác nhận sổ trực của mình — hệ thống báo lỗi và không lưu
     + ✅ Ô chọn **KSV** chỉ còn trưởng phòng / phó phòng Phòng Thanh toán (đã được cấp quyền xác nhận sổ trực)

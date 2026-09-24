@@ -185,7 +185,9 @@ def trang_thai(tu: float) -> str:
             f"kết nối CSDL {s['csdl_dang_muon']}/{s['csdl_toi_da']} xếp cổng {s['csdl_xep_cong']}",
             f"đang xử lý {s['dang_xu_ly']}",
             f"việc nặng {s['nang_dang_chay']}/{s['nang_toi_da']}",
-            f"đối chiếu {len(s['doi_chieu'])}",
+            # Kèm TÊN: "đối chiếu 1" không trả lời được câu hỏi thật — lúc đó cái nào đang chạy
+            f"đối chiếu {len(s['doi_chieu'])}"
+            + (f" ({', '.join(j['ten_module'] for j in s['doi_chieu'])})" if s["doi_chieu"] else ""),
         ]
         return " · ".join(phan)
     except Exception as exc:
