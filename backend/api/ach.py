@@ -219,12 +219,18 @@ async def continue_job(
         raise HTTPException(404, 'Job không tồn tại hoặc đã hết hạn.')
 
     data = await read_limited(file, ten='File xác nhận')
-    try:
-        ach_service.continue_job(job_id, data, file.filename or 'xac_nhan.xlsx')
-    except LookupError as e:
-        raise HTTPException(404, str(e))
-    except ValueError as e:
-        raise HTTPException(400, str(e))
+    # Chạy tiếp là chạy lại TOÀN BỘ pipeline (~4,5 GB) mà lúc chờ xác nhận ACH được tính 0 GB
+    # — phải xét ngân sách RAM. `continue_job` đổi trạng thái sang running trong khoá, nên
+    # lượt khác không lọt qua giữa lúc kiểm và lúc chạy. Bị chặn thì job giữ nguyên chờ xác nhận.
+    with phien_doi_chieu.gianh_cho_ram('ach') as nghen:
+        if nghen:
+            raise HTTPException(409, nghen)
+        try:
+            ach_service.continue_job(job_id, data, file.filename or 'xac_nhan.xlsx')
+        except LookupError as e:
+            raise HTTPException(404, str(e))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
     return {'ok': True}
 
 

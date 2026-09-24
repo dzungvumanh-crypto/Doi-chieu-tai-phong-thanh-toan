@@ -151,13 +151,23 @@ def test_chuyen_vien_phong_th_thay_don_cho_buoc_tong_hop(db):
     assert [x["status"] for x in r.json()] == ["pending_tong_hop"]
 
 
+def _ma_trang_nghi_phep() -> str:
+    """Toàn bộ mã trang Nghỉ phép — nối mọi file trong gói `frontend/pages/leaves/`.
+
+    Trang từng là một file `leaves.py`; 12/09/2026 tách thành gói (`__init__.py`,
+    `_chung.py`, `_chi_tiet_don.py`, rồi sẽ thêm từng tab). Đọc cả gói thì các lần
+    tách sau không làm test này đỏ vì lý do không liên quan.
+    """
+    goi = Path(__file__).resolve().parents[1] / "frontend" / "pages" / "leaves"
+    return chr(10).join(f.read_text(encoding="utf-8") for f in sorted(goi.glob("*.py")))
+
+
 def test_frontend_khong_hardcode_role_o_cac_chot_buoc_tong_hop():
     """Bốn chốt frontend từng chặn theo role phải cùng hỏi feature `leaves.forward_th`.
 
     Chặn tái diễn kiểu "sửa một chỗ, ba chỗ còn lại vẫn khoá".
     """
-    src = Path(__file__).resolve().parents[1] / "frontend" / "pages" / "leaves.py"
-    code = src.read_text(encoding="utf-8")
+    code = _ma_trang_nghi_phep()
 
     assert 'can_forward_th = api.has_feature("leaves.forward_th")' in code
 
@@ -166,7 +176,9 @@ def test_frontend_khong_hardcode_role_o_cac_chot_buoc_tong_hop():
         doan = code[m.start(): m.start() + 120]
         assert "can_forward_th" in doan, f"còn chốt chặn theo role không hỏi feature: {doan!r}"
 
-    assert 'th_act   = status == "pending_tong_hop" and in_pend and (_can_act or can_forward_th)' in code
+    # `ctx.` vì ngăn kéo chi tiết đã tách sang _chi_tiet_don.py (12/09/2026) — nó nhận
+    # can_forward_th qua hộp ngữ cảnh thay vì closure.
+    assert 'th_act   = status == "pending_tong_hop" and in_pend and (_can_act or ctx.can_forward_th)' in code
 
 
 # ── 2. Bước GĐ: PGĐ hết ủy quyền — chặn đúng nhưng phải nói ra lý do ─────────
@@ -208,8 +220,7 @@ def test_pgd_het_uy_quyen_thi_bam_duyet_van_bi_tu_choi(db):
 
 
 def test_frontend_hien_ly_do_khi_pgd_het_uy_quyen():
-    src = Path(__file__).resolve().parents[1] / "frontend" / "pages" / "leaves.py"
-    code = src.read_text(encoding="utf-8")
+    code = _ma_trang_nghi_phep()
     assert 'status == "pending_gd" and not leave.get("gd_can_review", True)' in code
     assert 'lv.get("gd_can_review", True)' in code   # cảnh báo trước khi TH chuyển lên
 
@@ -270,8 +281,7 @@ def test_uy_quyen_vua_cap_lam_pgd_duyet_duoc_ngay(db):
 
 def test_o_tick_khong_mo_nham_tab_ngay_le():
     """can_delegation và can_holiday phải là HAI biến — trước đây dùng chung một."""
-    src = Path(__file__).resolve().parents[1] / "frontend" / "pages" / "leaves.py"
-    code = src.read_text(encoding="utf-8")
+    code = _ma_trang_nghi_phep()
     assert 'can_delegation = api.has_feature("leaves.delegation_admin")' in code
     assert 'can_holiday    = user_role == "admin"' in code
     assert 'ui.tab("Ngày lễ") if can_holiday else None' in code

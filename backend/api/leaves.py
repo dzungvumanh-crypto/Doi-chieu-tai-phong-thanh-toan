@@ -9,7 +9,7 @@ import sqlite3
 import threading
 import unicodedata
 from datetime import date, timedelta
-from typing import FrozenSet, List, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from fastapi.responses import StreamingResponse
@@ -23,7 +23,7 @@ from backend.services.lich_lam_viec import (
     LICH_RONG, LichLamViec, la_ngay_lam_viec, tai_lich,
 )
 from backend.database import (
-    get_db, write_audit, _vn_now, compute_annual_leave, compute_carry_over, DB_PATH,
+    get_db, write_audit, _vn_now, compute_annual_leave, compute_carry_over,
 )
 from backend.schemas.leaves import (
     LeaveCreate, LeaveReview, TongHopReview,
@@ -1123,6 +1123,7 @@ def confirm_npbb_borrow(
 @router.get("/")
 def list_leaves(
     scope: str = "mine",
+    tu_nam: Optional[int] = Query(None, ge=2000, le=2100),
     db: sqlite3.Connection = Depends(get_db),
     current: dict = Depends(get_current_staff),
 ):
@@ -1200,6 +1201,13 @@ def list_leaves(
 
     else:
         raise HTTPException(400, "scope phải là mine | pending | declared | dept | all")
+
+    # Giới hạn theo năm — chỉ khi bên gọi xin (Dashboard toàn trung tâm). Không có
+    # nó `scope=all` trả MỌI đơn từ trước tới nay, mỗi lần mở trang, phình theo năm.
+    # Đơn còn chờ duyệt thì luôn trả dù cũ bao lâu: 5 ô tổng quan đếm chúng.
+    if tu_nam is not None:
+        clauses.append("(end_date >= ? OR status IN ('pending_ksv','pending_tong_hop','pending_gd'))")
+        params.append(f"{tu_nam:04d}-01-01")
 
     where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
     # 1 câu duy nhất cho cả danh sách (không phải 1 câu id + N câu _leave_to_out
@@ -1513,8 +1521,8 @@ def export_leaves(
         try:
             from datetime import datetime as _dt
             created = _dt.fromisoformat(str(created)).strftime("%d/%m/%Y")
-        except Exception:
-            pass
+        except (ValueError, TypeError):
+            pass        # sai khuôn → giữ nguyên chuỗi thô
         # Ngày nghỉ: liệt kê từng ngày nếu không liên nhau
         import json as _j
         if lv["spread_dates"]:
@@ -2544,8 +2552,9 @@ def _build_form_ctx(r, leave_id: Optional[int], db: sqlite3.Connection) -> tuple
         float(_q_row["quota_days"]) if _q_row
         else (compute_annual_leave(r["join_industry_date"], start.year) if r["join_industry_date"] else (r["annual_leave_days"] or 12))
     )
-    carry_original = compute_carry_over(r["staff_id"], start.year, db, effective=False)
-    # Carryover hiệu lực theo ngày bắt đầu của đơn (Q1 → có carryover, sau Q1 → 0)
+    # Carryover hiệu lực theo ngày bắt đầu của đơn (Q1 → có carryover, sau Q1 → 0).
+    # Phiếu in CHỈ dùng bản hiệu lực: quỹ phép ghi trên đơn phải là số nhân viên thật sự
+    # dùng được tại ngày xin nghỉ. Bản thô (effective=False) chỉ dành cho tab Hạn mức.
     carry_eff_doc  = compute_carry_over(r["staff_id"], start.year, db, effective=True, ref_date=start)
     # Số ngày đã nghỉ TRONG CÙNG NĂM (trừ đơn hiện tại)
     da_nghi = _calc_used_days(r["staff_id"], start.year, db, exclude_id=leave_id)

@@ -169,6 +169,16 @@ def get_gdv_candidates(
     return svc.list_gdv_candidates(db)
 
 
+@router.get("/gdv-only-candidates")
+def get_gdv_only_candidates(
+    db=Depends(get_db), current: dict = Depends(require_feature("menu.so_truc"))
+):
+    """Danh sách hẹp hơn /gdv-candidates: loại trưởng/phó phòng — dùng riêng
+    cho ô chọn GDV1/GDV2, tách khỏi ô "Trực phụ" (vẫn dùng /gdv-candidates
+    như cũ, không lọc theo chức danh)."""
+    return svc.list_gdv_only_candidates(db)
+
+
 @router.get("/ksv-candidates")
 def get_ksv_candidates(
     db=Depends(get_db), current: dict = Depends(require_feature("menu.so_truc"))

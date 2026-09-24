@@ -1,6 +1,6 @@
 """Trang quản lý tài khoản cán bộ TTTT."""
 import asyncio
-from nicegui import ui, app
+from nicegui import ui
 import frontend.api_client as api
 from frontend.shared import _sidebar, _content_area, _page_header, _require_auth, _handle_api_error
 
@@ -284,7 +284,7 @@ async def staff_page():
                         if _handle_api_error(e): return
                         ui.notify(str(e), type="negative")
                 if api.has_feature("staff.export"):
-                    ui.button("Xuất Excel", icon="download", on_click=lambda: asyncio.ensure_future(_do_export_excel())).props("dense").classes("bg-green-700 text-white")
+                    ui.button("Xuất Excel", icon="download", on_click=_do_export_excel).props("dense").classes("bg-green-700 text-white")
                     ui.button("Xuất DB", icon="download", on_click=do_export).props("dense outline").classes("text-gray-700")
                 if api.has_feature("staff.import_join_date"):
                     ui.button("Nhập Ngày vào ngành", icon="event",
@@ -317,6 +317,12 @@ async def staff_page():
                                 ui.notify(d, type="warning", timeout=0, close_button="Đóng")
                         else:
                             ui.notify(msg, type="positive")
+                        cot_la = result.get("ignored_columns") or []
+                        if cot_la:
+                            ui.notify(
+                                f"Bỏ qua {len(cot_la)} cột không có trên hệ thống này: "
+                                + ", ".join(cot_la[:5]) + (" …" if len(cot_la) > 5 else ""),
+                                type="warning", timeout=0, close_button="Đóng")
                         await load_staff()
                     except Exception as ex:
                         if _handle_api_error(ex): return

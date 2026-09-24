@@ -21,7 +21,8 @@ chỉ dùng CHUNG cơ chế token ở tầng service — xem docstring ở đó)
 import asyncio
 import datetime
 import json
-from urllib.parse import quote
+import logging
+from decimal import Decimal
 
 from nicegui import ui
 from starlette.requests import Request as _StarletteRequest
@@ -35,6 +36,8 @@ from frontend.shared import _sidebar, _content_area, _require_auth, _handle_api_
 # khoá "key" trong manifest.json thì PHẢI tính lại ID này (SHA-256 của DER
 # public key, lấy 16 byte đầu, mỗi nibble ánh xạ 0-15 -> 'a'-'p').
 _EXTENSION_ID = "khkonpnidmecnmmhohlmjamfolkpaeko"
+
+_log = logging.getLogger(__name__)
 
 _ACCENT = {
     "blue": ("bg-blue-50", "text-blue-600", "border-blue-100", "bg-blue-50/40"),
@@ -93,6 +96,27 @@ LOAI_CITAD = ["gtt", "gtc"]
 LOAI_LBL = {"gtt": "Giá trị Thấp", "gtc": "Giá trị Cao"}
 HUB_ROWS = ["gtt", "gtc_truoc", "gtc_tu"]
 HUB_LBL = {"gtt": "GTT", "gtc_truoc": "GTC — Trước 15h30", "gtc_tu": "GTC — Từ 15h30"}
+# Giữ ĐỒNG BỘ với LOAI_TIEN/CCY_LABEL trong backend/schemas/doi_chieu_citad_nostro.py
+# — frontend không import được schema backend (khác tiến trình).
+LOAI_TIEN = ["VND", "USD", "EUR"]
+CCY_LABEL = {"VND": "VNĐ", "USD": "USD", "EUR": "EUR"}
+
+
+def _is_legacy_flat_cD(cD: dict) -> bool:
+    """Bảng lưu TRƯỚC 14/09/2026 (chưa có nhiều loại tiền) có `cD` phẳng
+    {cong: {...}} — mirror `_is_legacy_flat_cD()` trong
+    backend/services/doi_chieu_citad_nostro_service.py, xem đó để biết vì
+    sao 2 tập khoá (CONGS vs LOAI_TIEN) không giao nhau nên phân biệt được."""
+    return any(k in CONGS for k in (cD or {}).keys())
+
+
+def _get_ccy_slice(sess: dict, ccy: str) -> tuple:
+    """Mirror `get_ccy_slice()` bên backend — bảng cũ coi toàn bộ là VNĐ."""
+    cD_all = sess.get("cD") or {}
+    phD_all = sess.get("phD") or {}
+    if _is_legacy_flat_cD(cD_all):
+        return (cD_all, phD_all) if ccy == "VND" else ({}, {})
+    return (cD_all.get(ccy) or {}, phD_all.get(ccy) or {})
 
 
 def nv(v):
@@ -100,6 +124,21 @@ def nv(v):
         return float(str(v).replace(',', '').replace(' ', '')) if v not in (None, '') else 0.0
     except Exception:
         return 0.0
+
+
+def _dec(v) -> Decimal:
+    """Chuyển sang Decimal CHÍNH XÁC TUYỆT ĐỐI — cùng cơ chế/lý do với
+    `_dec()` trong `frontend/pages/doi_chieu_citad.py` và `_dec()` trong
+    `backend/services/doi_chieu_citad_nostro_service.py`: đi qua `str(v)`
+    trước khi vào Decimal để tránh mở khai triển nhị phân của float. Dùng
+    cho phép CỘNG DỒN 5 cổng ở `_compute_totals()` — cộng nhiều số thực có
+    thể sinh dư nhị phân dù về bản chất đã khớp tuyệt đối (bug thật đã xảy
+    ra ở module gốc Phòng Thanh toán 25/08/2026: hiện "+0,0078125" dù CITAD
+    gốc cộng đúng khớp PaymentHub)."""
+    try:
+        return Decimal(str(v)) if v not in (None, '') else Decimal(0)
+    except Exception:
+        return Decimal(0)
 
 
 def fmt(v):
@@ -135,47 +174,79 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
         return
 
     history_refresh = {"fn": None}
-    view_state = {"readonly": False}
+    current_user = api.get_current_user() or {}
+    current_staff_id = current_user.get("id")
+    # "Xoá bảng của người khác" là QUYỀN (mã doi_chieu_citad_nostro.delete_any,
+    # cấp qua Phân quyền theo nhóm) — KHÔNG hard-code role="admin" (review
+    # PR #90, sai ở bản đầu, xem docs/DESIGN.md mục Phân quyền). api.has_feature()
+    # đã tự cho admin qua ở dòng đầu (siêu quyền cố ý) nên không cần check
+    # role riêng ở đây nữa.
+    can_delete_any = api.has_feature("doi_chieu_citad_nostro.delete_any")
+    # session_id: None = form chưa gắn với bảng nào đã lưu — Lưu tiếp theo sẽ
+    # tạo bảng MỚI của chính người đang thao tác (nhiều người có thể có bảng
+    # riêng cho cùng 1 kỳ, không ai ghi đè ai — xem
+    # backend/services/doi_chieu_citad_nostro_service.py::session_save()).
+    # Có giá trị = đang sửa tiếp ĐÚNG bảng đó.
+    # "ky": kỳ của bảng ĐANG GẮN với session_id hiện tại — dùng để phát hiện
+    # người dùng tự đổi ô ngày trong lúc còn gắn 1 bảng cũ (xem
+    # _on_ky_changed() bên dưới, mirror _on_ngay_changed_sync() của PTT).
+    view_state = {"readonly": False, "session_id": None, "created_by": None, "ky": None}
 
+    # Lồng thêm 1 lớp `ccy` ngoài cùng — 3 tab con VND/USD/EUR trong CÙNG 1
+    # kỳ đối chiếu (quyết định 14/09/2026), mọi chỗ dùng data["cD"]... cũ chỉ
+    # cần thêm data[ccy]["cD"]... phía trước.
     data = {
-        "cD": {c: {loai: {"soMon": 0.0, "soTien": 0.0} for loai in LOAI_CITAD} for c in CONGS},
-        "phD": {r: {"soMon": 0.0, "soTien": 0.0} for r in HUB_ROWS},
+        ccy: {
+            "cD": {c: {loai: {"soMon": 0.0, "soTien": 0.0} for loai in LOAI_CITAD} for c in CONGS},
+            "phD": {r: {"soMon": 0.0, "soTien": 0.0} for r in HUB_ROWS},
+        }
+        for ccy in LOAI_TIEN
     }
     inputs = {
-        "cE": {c: {loai: {} for loai in LOAI_CITAD} for c in CONGS},
-        "phE": {r: {} for r in HUB_ROWS},
+        ccy: {
+            "cE": {c: {loai: {} for loai in LOAI_CITAD} for c in CONGS},
+            "phE": {r: {} for r in HUB_ROWS},
+        }
+        for ccy in LOAI_TIEN
     }
-    tong_labels = {"citad": {}, "hub": {}, "diff": {}}
+    tong_labels = {ccy: {"citad": {}, "hub": {}, "diff": {}} for ccy in LOAI_TIEN}
 
     tu_ngay_input = None
     den_ngay_input = None
     lap_bang_input = None
     kiem_soat_input = None
 
-    def _compute_totals():
-        ci = {loai: {"soMon": 0.0, "soTien": 0.0} for loai in LOAI_CITAD}
+    def _compute_totals(ccy: str):
+        """Cộng dồn bằng Decimal (`_dec()`), KHÔNG bằng float trực tiếp —
+        cộng 5 cổng có thể sinh dư nhị phân dù về bản chất đã khớp tuyệt
+        đối (xem docstring `_dec()` phía trên). Trả về Decimal — `recalc()`
+        so `== 0`/`> 0` chính xác tuyệt đối, `fmt()` tự hoá float khi hiển
+        thị (qua `nv()` roundtrip qua `str()`, không mất chính xác)."""
+        d = data[ccy]
+        ci = {loai: {"soMon": Decimal(0), "soTien": Decimal(0)} for loai in LOAI_CITAD}
         for c in CONGS:
             for loai in LOAI_CITAD:
-                ci[loai]["soMon"] += data["cD"][c][loai]["soMon"]
-                ci[loai]["soTien"] += data["cD"][c][loai]["soTien"]
+                ci[loai]["soMon"] += _dec(d["cD"][c][loai]["soMon"])
+                ci[loai]["soTien"] += _dec(d["cD"][c][loai]["soTien"])
         hub = {
-            "gtt": dict(data["phD"]["gtt"]),
+            "gtt": {"soMon": _dec(d["phD"]["gtt"]["soMon"]), "soTien": _dec(d["phD"]["gtt"]["soTien"])},
             "gtc": {
-                "soMon": data["phD"]["gtc_truoc"]["soMon"] + data["phD"]["gtc_tu"]["soMon"],
-                "soTien": data["phD"]["gtc_truoc"]["soTien"] + data["phD"]["gtc_tu"]["soTien"],
+                "soMon": _dec(d["phD"]["gtc_truoc"]["soMon"]) + _dec(d["phD"]["gtc_tu"]["soMon"]),
+                "soTien": _dec(d["phD"]["gtc_truoc"]["soTien"]) + _dec(d["phD"]["gtc_tu"]["soTien"]),
             },
         }
         return ci, hub
 
-    def recalc():
-        ci, hub = _compute_totals()
+    def recalc(ccy: str):
+        ci, hub = _compute_totals(ccy)
+        tl = tong_labels[ccy]
         for loai in LOAI_CITAD:
             for fld in ("soMon", "soTien"):
                 ci_val, hub_val = ci[loai][fld], hub[loai][fld]
-                tong_labels["citad"][(loai, fld)].text = fmt(ci_val) if ci_val else '—'
-                tong_labels["hub"][(loai, fld)].text = fmt(hub_val) if hub_val else '—'
+                tl["citad"][(loai, fld)].text = fmt(ci_val) if ci_val else '—'
+                tl["hub"][(loai, fld)].text = fmt(hub_val) if hub_val else '—'
                 df_val = ci_val - hub_val
-                lbl = tong_labels["diff"][(loai, fld)]
+                lbl = tl["diff"][(loai, fld)]
                 if df_val == 0 and ci_val == 0 and hub_val == 0:
                     lbl.text = '—'
                     lbl.classes(remove='text-red-600 text-green-700')
@@ -187,7 +258,7 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
                     lbl.text = f'{sign}{fmt(df_val)}'
                     lbl.classes(remove='text-green-700', add='text-red-600')
 
-    def build_citad_grid(container):
+    def build_citad_grid(container, ccy: str):
         with container:
             n_cols = 5  # Cổng | GTT Số món | GTT Số tiền | GTC Số món | GTC Số tiền
             with ui.grid(columns=n_cols).classes("w-full gap-0 p-4"):
@@ -204,15 +275,15 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
                     )
                     for loai in LOAI_CITAD:
                         for fld, fld_lbl in (("soMon", "m"), ("soTien", "t")):
-                            def _on_change(e, _c=c, _l=loai, _f=fld):
-                                data["cD"][_c][_l][_f] = nv(e.value)
+                            def _on_change(e, _ccy=ccy, _c=c, _l=loai, _f=fld):
+                                data[_ccy]["cD"][_c][_l][_f] = nv(e.value)
                                 _apply_cell_bg(e.sender)
-                                recalc()
+                                recalc(_ccy)
                             inp = ui.input(value='', on_change=_on_change).props(
                                 'dense outlined input-class="text-right"'
                             ).classes("w-full border-r border-b border-gray-300 py-1.5")
                             inp.on('blur', lambda _, _i=inp: _set_input(_i, fmt(_i.value)))
-                            inputs["cE"][c][loai][fld] = inp
+                            inputs[ccy]["cE"][c][loai][fld] = inp
                 # Dòng Tổng cộng — chỉ hiển thị (label), không phải input.
                 ui.label("Tổng cộng 5 cổng").classes(
                     "text-sm font-bold flex items-center justify-center py-1.5 bg-blue-50"
@@ -222,9 +293,9 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
                         lbl = ui.label('—').classes(
                             "text-sm font-bold flex items-center justify-end pr-2 py-1.5 bg-blue-50"
                         )
-                        tong_labels["citad"][(loai, fld)] = lbl
+                        tong_labels[ccy]["citad"][(loai, fld)] = lbl
 
-    def build_hub_grid(container):
+    def build_hub_grid(container, ccy: str):
         with container:
             with ui.grid(columns=3).classes("w-full gap-0 p-4"):
                 header_cls = "bg-emerald-600 text-white text-sm font-bold text-center py-2 border-r border-emerald-700"
@@ -237,25 +308,25 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
                         "border-r border-b border-gray-300"
                     )
                     for fld in ("soMon", "soTien"):
-                        def _on_change(e, _r=r, _f=fld):
-                            data["phD"][_r][_f] = nv(e.value)
+                        def _on_change(e, _ccy=ccy, _r=r, _f=fld):
+                            data[_ccy]["phD"][_r][_f] = nv(e.value)
                             _apply_cell_bg(e.sender)
-                            recalc()
+                            recalc(_ccy)
                         inp = ui.input(value='', on_change=_on_change).props(
                             'dense outlined input-class="text-right"'
                         ).classes("w-full border-r border-b border-gray-300 py-1.5")
                         inp.on('blur', lambda _, _i=inp: _set_input(_i, fmt(_i.value)))
-                        inputs["phE"][r][fld] = inp
+                        inputs[ccy]["phE"][r][fld] = inp
                 ui.label("Tổng HUB (GTT)").classes("text-sm font-bold flex items-center justify-center py-1.5 bg-emerald-50")
                 for fld in ("soMon", "soTien"):
                     lbl = ui.label('—').classes("text-sm font-bold flex items-center justify-end pr-2 py-1.5 bg-emerald-50")
-                    tong_labels["hub"][("gtt", fld)] = lbl
+                    tong_labels[ccy]["hub"][("gtt", fld)] = lbl
                 ui.label("Tổng HUB (GTC = Trước+Từ 15h30)").classes("text-sm font-bold flex items-center justify-center py-1.5 bg-emerald-50")
                 for fld in ("soMon", "soTien"):
                     lbl = ui.label('—').classes("text-sm font-bold flex items-center justify-end pr-2 py-1.5 bg-emerald-50")
-                    tong_labels["hub"][("gtc", fld)] = lbl
+                    tong_labels[ccy]["hub"][("gtc", fld)] = lbl
 
-    def build_diff_grid(container):
+    def build_diff_grid(container, ccy: str):
         with container:
             with ui.grid(columns=5).classes("w-full gap-0 p-4"):
                 header_cls = "bg-amber-600 text-white text-sm font-bold text-center py-2 border-r border-amber-700"
@@ -272,9 +343,13 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
                         lbl = ui.label('—').classes(
                             "text-sm font-bold flex items-center justify-end pr-2 py-1.5 border-r border-gray-300 bg-amber-50"
                         )
-                        tong_labels["diff"][(loai, fld)] = lbl
+                        tong_labels[ccy]["diff"][(loai, fld)] = lbl
 
     def apply_session_data(sess: dict):
+        view_state["session_id"] = sess.get("_meta_session_id")
+        view_state["created_by"] = sess.get("_meta_created_by")
+        view_state["ky"] = sess.get("ky") or None
+        _refresh_delete_btn()
         tu_ngay, den_ngay = "", ""
         ky = sess.get("ky", "")
         if "-" in ky:
@@ -283,25 +358,42 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
             tu_ngay_input.value = tu_ngay
         if den_ngay:
             den_ngay_input.value = den_ngay
-        lap_bang_input.value = sess.get("lap_bang", "") or ""
-        kiem_soat_input.value = sess.get("kiem_soat", "") or ""
-        cD = sess.get("cD", {}) or {}
-        for c in CONGS:
-            cd = cD.get(c, {}) or {}
-            for loai in LOAI_CITAD:
-                src = cd.get(loai, {}) or {}
+        # Bơm giá trị cũ vào .options TRƯỚC khi gán .value — ô đổi thành
+        # ui.select(with_input) nên giá trị không có trong .options (người
+        # ký đã nghỉ/chuyển phòng, hoặc chỉ đơn giản không có trong danh sách
+        # gợi ý) sẽ bị ChoiceElement tự đổi thành None nếu không bơm trước.
+        # PHẢI gọi .update() ngay sau khi đổi .options (đọc docstring
+        # ui.select()) — mirror đúng doi_chieu_citad.py::apply_session_data().
+        lap_bang = sess.get("lap_bang", "") or ""
+        if lap_bang and lap_bang not in (lap_bang_input.options or []):
+            lap_bang_input.options = [*(lap_bang_input.options or []), lap_bang]
+            lap_bang_input.update()
+        lap_bang_input.value = lap_bang
+        kiem_soat = sess.get("kiem_soat", "") or ""
+        if kiem_soat and kiem_soat not in (kiem_soat_input.options or []):
+            kiem_soat_input.options = [*(kiem_soat_input.options or []), kiem_soat]
+            kiem_soat_input.update()
+        kiem_soat_input.value = kiem_soat
+        # Bảng cũ trước 14/09/2026 (cD phẳng, chỉ VNĐ) coi qua _get_ccy_slice()
+        # như toàn bộ là VNĐ — loop đủ 3 ccy luôn tự xoá sạch USD/EUR đang
+        # hiển thị trước đó (không cần bước reset riêng).
+        for ccy in LOAI_TIEN:
+            cD, phD = _get_ccy_slice(sess, ccy)
+            for c in CONGS:
+                cd = cD.get(c, {}) or {}
+                for loai in LOAI_CITAD:
+                    src = cd.get(loai, {}) or {}
+                    for fld in ("soMon", "soTien"):
+                        v = nv(src.get(fld, 0))
+                        data[ccy]["cD"][c][loai][fld] = v
+                        _set_input(inputs[ccy]["cE"][c][loai][fld], fmt(v))
+            for r in HUB_ROWS:
+                src = phD.get(r, {}) or {}
                 for fld in ("soMon", "soTien"):
                     v = nv(src.get(fld, 0))
-                    data["cD"][c][loai][fld] = v
-                    _set_input(inputs["cE"][c][loai][fld], fmt(v))
-        phD = sess.get("phD", {}) or {}
-        for r in HUB_ROWS:
-            src = phD.get(r, {}) or {}
-            for fld in ("soMon", "soTien"):
-                v = nv(src.get(fld, 0))
-                data["phD"][r][fld] = v
-                _set_input(inputs["phE"][r][fld], fmt(v))
-        recalc()
+                    data[ccy]["phD"][r][fld] = v
+                    _set_input(inputs[ccy]["phE"][r][fld], fmt(v))
+            recalc(ccy)
 
     def _set_form_readonly(readonly: bool):
         """Khoá/mở các ô nhập tay khi xem 1 bản từ tab "Lịch sử" (chỉ xem,
@@ -313,13 +405,14 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
         `recalc()` tính lại)."""
         view_state["readonly"] = readonly
         all_inputs = [tu_ngay_input, den_ngay_input, lap_bang_input, kiem_soat_input]
-        for c in CONGS:
-            for loai in LOAI_CITAD:
+        for ccy in LOAI_TIEN:
+            for c in CONGS:
+                for loai in LOAI_CITAD:
+                    for fld in ("soMon", "soTien"):
+                        all_inputs.append(inputs[ccy]["cE"][c][loai][fld])
+            for r in HUB_ROWS:
                 for fld in ("soMon", "soTien"):
-                    all_inputs.append(inputs["cE"][c][loai][fld])
-        for r in HUB_ROWS:
-            for fld in ("soMon", "soTien"):
-                all_inputs.append(inputs["phE"][r][fld])
+                    all_inputs.append(inputs[ccy]["phE"][r][fld])
         for inp in all_inputs:
             if readonly:
                 inp.props("readonly")
@@ -334,15 +427,36 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
         _set_form_readonly(False)
         ui.notify("Đã thoát chế độ xem — sẵn sàng nhập mới", type="info")
 
+    def _refresh_delete_btn():
+        """Nút "Xoá bảng này" chỉ hiện khi ĐANG xem/sửa 1 bảng đã lưu
+        (`session_id` khác None) VÀ (là chủ bảng HOẶC có quyền xoá bảng
+        người khác) — đúng chính sách xoá đã chốt: chủ bảng tự xoá + admin
+        (hoặc người được cấp mã delete_any) xoá được bất kỳ bảng nào."""
+        can_delete = view_state["session_id"] is not None and (
+            view_state["created_by"] == current_staff_id or can_delete_any
+        )
+        delete_btn.set_visibility(can_delete)
+
+    def _snapshot_cD_phD() -> tuple:
+        """cD/phD LỒNG theo ccy của TOÀN BỘ 3 tab (không riêng tab đang xem)
+        — dùng chung cho `get_session_payload()` (Lưu) và `_do_download_export()`
+        (Xuất Excel), Excel luôn đủ 3 sheet dù đang mở tab nào."""
+        cD = {ccy: {c: {loai: dict(data[ccy]["cD"][c][loai]) for loai in LOAI_CITAD} for c in CONGS} for ccy in LOAI_TIEN}
+        phD = {ccy: {r: dict(data[ccy]["phD"][r]) for r in HUB_ROWS} for ccy in LOAI_TIEN}
+        return cD, phD
+
     def get_session_payload() -> dict:
-        cD = {c: {loai: dict(data["cD"][c][loai]) for loai in LOAI_CITAD} for c in CONGS}
-        phD = {r: dict(data["phD"][r]) for r in HUB_ROWS}
+        cD, phD = _snapshot_cD_phD()
         return {
             "ky": f"{tu_ngay_input.value}-{den_ngay_input.value}",
-            "lap_bang": lap_bang_input.value,
-            "kiem_soat": kiem_soat_input.value,
+            # or "" — ui.select() (khác ui.input cũ) chưa chọn gì thì .value là
+            # None, không phải "". SessionIn.lap_bang là Optional[str] nên None
+            # không né HTTP, nhưng ghi None đè lên tên đã lưu thì mất trắng.
+            "lap_bang": lap_bang_input.value or "",
+            "kiem_soat": kiem_soat_input.value or "",
             "cD": cD,
             "phD": phD,
+            "session_id": view_state["session_id"],
         }
 
     async def load_citad_buffer():
@@ -360,19 +474,28 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
         for item in items:
             cong = str(item.get("cong", ""))
             loai = item.get("loai", "")
+            # Mặc định "VND" khớp default của CitadBufferIn.ccy — script CITAD
+            # VNĐ cũ (content_citad_nostro.js) không gửi field này.
+            ccy = item.get("ccy", "VND")
             so_mon, so_tien = item.get("soMon", 0), item.get("soTien", 0)
-            if cong not in CONGS or loai not in LOAI_CITAD:
+            if cong not in CONGS or loai not in LOAI_CITAD or ccy not in LOAI_TIEN:
                 continue
-            data["cD"][cong][loai]["soMon"] = nv(so_mon)
-            data["cD"][cong][loai]["soTien"] = nv(so_tien)
-            _set_input(inputs["cE"][cong][loai]["soMon"], fmt(so_mon))
-            _set_input(inputs["cE"][cong][loai]["soTien"], fmt(so_tien))
+            data[ccy]["cD"][cong][loai]["soMon"] = nv(so_mon)
+            data[ccy]["cD"][cong][loai]["soTien"] = nv(so_tien)
+            _set_input(inputs[ccy]["cE"][cong][loai]["soMon"], fmt(so_mon))
+            _set_input(inputs[ccy]["cE"][cong][loai]["soTien"], fmt(so_tien))
             count += 1
         try:
             await asyncio.to_thread(api.delete, "/api/doi-chieu-citad-nostro/citad-buffer")
         except Exception:
-            pass
-        recalc()
+            # Bộ đệm nằm trong RAM của backend và KHÔNG tự hết hạn (doi_chieu_citad_service:
+            # _citad_buffer/_ph_buffer, chỉ save/get/clear) — xoá hỏng thì lần "Nạp" sau sẽ
+            # ghi đè số của lượt cũ lên ô đang nhập. Phải báo, không được im lặng.
+            ui.notify("Không xoá được bộ đệm sau khi nạp — bấm Nạp lần sau có thể ra số cũ. "
+                      "Báo quản trị khởi động lại backend nếu thấy số lạ.",
+                      type="warning", timeout=6000)
+        for ccy in LOAI_TIEN:
+            recalc(ccy)
         ui.notify(f"Đã nạp {count} mục từ CITAD", type="positive")
 
     async def load_phub_buffer():
@@ -387,32 +510,72 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
             ui.notify("Chưa có dữ liệu PaymentHub. Dùng Extension!", type="warning")
             return
         count = 0
+        skipped_no_ccy = 0
         for item in items:
             loai = item.get("loai", "")
+            # KHÔNG default "VND" — PaymentHub buffer là list tự do (không qua
+            # Pydantic ép field), item thiếu `ccy` là buffer CŨ trước khi nâng
+            # cấp (content_paymenthub_nostro.js chưa gửi field này) hoặc lúc
+            # đang lọc "Tất cả" — bỏ qua thẳng, không ngầm gán nhầm loại tiền.
+            ccy = item.get("ccy")
             so_mon, so_tien = item.get("soMon", 0), item.get("soTien", 0)
-            if loai not in HUB_ROWS:
+            if loai not in HUB_ROWS or ccy not in LOAI_TIEN:
+                if loai in HUB_ROWS:
+                    skipped_no_ccy += 1
                 continue
-            data["phD"][loai]["soMon"] = nv(so_mon)
-            data["phD"][loai]["soTien"] = nv(so_tien)
-            _set_input(inputs["phE"][loai]["soMon"], fmt(so_mon))
-            _set_input(inputs["phE"][loai]["soTien"], fmt(so_tien))
+            data[ccy]["phD"][loai]["soMon"] = nv(so_mon)
+            data[ccy]["phD"][loai]["soTien"] = nv(so_tien)
+            _set_input(inputs[ccy]["phE"][loai]["soMon"], fmt(so_mon))
+            _set_input(inputs[ccy]["phE"][loai]["soTien"], fmt(so_tien))
             count += 1
         try:
             await asyncio.to_thread(api.delete, "/api/doi-chieu-citad-nostro/paymenthub-buffer")
         except Exception:
-            pass
-        recalc()
+            # Bộ đệm nằm trong RAM của backend và KHÔNG tự hết hạn (doi_chieu_citad_service:
+            # _citad_buffer/_ph_buffer, chỉ save/get/clear) — xoá hỏng thì lần "Nạp" sau sẽ
+            # ghi đè số của lượt cũ lên ô đang nhập. Phải báo, không được im lặng.
+            ui.notify("Không xoá được bộ đệm sau khi nạp — bấm Nạp lần sau có thể ra số cũ. "
+                      "Báo quản trị khởi động lại backend nếu thấy số lạ.",
+                      type="warning", timeout=6000)
+        for ccy in LOAI_TIEN:
+            recalc(ccy)
+        if skipped_no_ccy:
+            # Trước đây khuyên "quét lại" — sai nếu nguyên nhân là Extension bản
+            # 1.0 (chưa gửi field `ccy`): quét lại bằng bản cũ vẫn ra kết quả cũ.
+            # Nói thẳng khả năng đúng nhất — tab "Kết nối Extension" đã tự kiểm
+            # version và nhắc riêng nếu đúng là bản cũ.
+            ui.notify(
+                f"Bỏ qua {skipped_no_ccy} mục PaymentHub cũ không xác định được loại tiền — "
+                "có thể do Extension đang cài là bản cũ (trước 1.1, chưa biết Loại tiền). "
+                "Kiểm tab \"Kết nối Extension\", cài lại bản mới nếu có nhắc, rồi quét lại.",
+                type="warning", timeout=8000,
+            )
         ui.notify(f"Đã nạp {count} mục từ PaymentHub", type="positive")
 
     async def _save_session_now():
         try:
-            await asyncio.to_thread(api.post, "/api/doi-chieu-citad-nostro/session", get_session_payload())
+            resp = await asyncio.to_thread(api.post, "/api/doi-chieu-citad-nostro/session", get_session_payload())
             ui.notify(f"Đã lưu kỳ {tu_ngay_input.value} - {den_ngay_input.value}", type="positive")
         except Exception as e:
             if _handle_api_error(e):
                 return
+            # review PR #90: TRƯỚC đây gỡ session_id ở đây cho MỌI lỗi (kể cả
+            # lỗi mạng thoáng qua) — bấm Lưu lại sau 1 lỗi tạm thời sẽ ÂM THẦM
+            # tạo bảng MỚI thay vì báo lại đúng lỗi cũ. api.post() không giữ
+            # mã trạng thái HTTP tới tận đây (chỉ còn chuỗi thông báo — xem
+            # frontend/api_client.py::_raise_http_error, gói mọi lỗi 4xx/5xx
+            # thường thành Exception(str) đồng nhất) nên KHÔNG đoán mò 403/404
+            # qua nội dung chuỗi (dễ vỡ nếu đổi câu chữ). Ca đáng lo nhất —
+            # đổi ô ngày trong lúc còn gắn bảng cũ — đã chặn TRƯỚC khi gửi ở
+            # _on_ky_changed() bên dưới, nên KHÔNG tự gỡ session_id ở đây nữa:
+            # cứ báo lỗi thật, để nguyên trạng thái gắn, người dùng tự quyết
+            # định (bấm lại/tải lại trang) thay vì âm thầm nhân bản bảng.
             ui.notify(f"Lỗi lưu: {e}", type="negative")
             return
+        view_state["session_id"] = resp.get("session_id")
+        view_state["created_by"] = current_staff_id
+        view_state["ky"] = f"{tu_ngay_input.value}-{den_ngay_input.value}"
+        _refresh_delete_btn()
         if history_refresh.get("fn"):
             await history_refresh["fn"]()
 
@@ -436,10 +599,16 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
 
         with ui.dialog() as dialog, ui.card().classes("w-full max-w-lg"):
             ui.label(f"Xác nhận lưu đối chiếu kỳ {tu_ngay_input.value} - {den_ngay_input.value}?").classes("text-base font-bold")
-            ui.label(
-                "Đây là bản CHUNG của cả phòng cho kỳ này — lưu sẽ GHI ĐÈ số liệu hiện "
-                "có (nếu người khác đã lưu trước). Bản cũ vẫn xem lại được trong \"Lịch sử đối chiếu\"."
-            ).classes("text-sm text-gray-500")
+            if view_state["session_id"] is None:
+                ui.label(
+                    "Sẽ tạo BẢNG MỚI cho kỳ này — không đụng tới bảng của người khác (nếu "
+                    "có) đã chấm cùng kỳ. Xem tất cả các bảng của kỳ này ở tab \"Lịch sử\"."
+                ).classes("text-sm text-gray-500")
+            else:
+                ui.label(
+                    "Đang lưu tiếp vào bảng bạn đã tạo trước đó cho kỳ này — không ảnh "
+                    "hưởng bảng của người khác."
+                ).classes("text-sm text-gray-500")
             if check.get("overlaps"):
                 with ui.row().classes("w-full items-start gap-2 mt-2 p-2 bg-red-50 border border-red-200 rounded-lg"):
                     ui.icon("warning").classes("text-red-600")
@@ -467,7 +636,61 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
                 )
         dialog.open()
 
+    async def _delete_session_now():
+        session_id = view_state["session_id"]
+        try:
+            await asyncio.to_thread(api.delete, f"/api/doi-chieu-citad-nostro/session-by-id/{session_id}")
+            ui.notify("Đã xoá bảng.", type="positive")
+        except Exception as e:
+            if _handle_api_error(e):
+                return
+            ui.notify(f"Lỗi xoá: {e}", type="negative")
+            return
+        # Xoá xong: gỡ khỏi form (không còn bảng nào đang gắn), reset về
+        # trắng để tránh hiểu nhầm đang xem dữ liệu của bảng vừa xoá.
+        # apply_session_data() với dict trắng tự đặt lại session_id/created_by
+        # về None (gọi kèm _refresh_delete_btn()) — không cần gán tay lại.
+        _set_form_readonly(False)
+        apply_session_data({"ky": "", "lap_bang": "", "kiem_soat": "", "cD": {}, "phD": {}})
+        _own_sessions_state["checked_ky"] = None  # cho banner tự hỏi lại backend
+        if history_refresh.get("fn"):
+            await history_refresh["fn"]()
+
+    def do_delete_session():
+        session_id = view_state["session_id"]
+        if session_id is None:
+            return
+        is_owner = view_state["created_by"] == current_staff_id
+        with ui.dialog() as dialog, ui.card().classes("w-full max-w-lg"):
+            ui.label("Xoá bảng này?").classes("text-base font-bold text-red-700")
+            # review PR #90: câu cũ nói "lịch sử vẫn còn ở tab Lịch sử" là SAI —
+            # tab đó liệt kê THEO BẢNG, bảng mất thì không còn đường nào mở lại
+            # lịch sử của nó (dữ liệu lịch sử thật ra vẫn nằm trong CSDL, mồ côi,
+            # nhưng không có UI nào truy cập được — coi như mất với người dùng).
+            if is_owner:
+                msg = "Đây là bảng của bạn. Xoá xong KHÔNG hoàn tác được — kể cả lịch sử các lần lưu trước đó của bảng này cũng KHÔNG xem lại được nữa."
+            else:
+                msg = (
+                    "Đây là bảng của NGƯỜI KHÁC — bạn đang xoá với quyền xoá bảng người khác. "
+                    "Hành động này KHÔNG hoàn tác được, kể cả lịch sử các lần lưu trước đó."
+                )
+            ui.label(msg).classes("text-sm text-gray-500")
+            with ui.row().classes("w-full justify-end gap-2 mt-3"):
+                ui.button("Huỷ", on_click=dialog.close).props("outline")
+
+                async def _confirm():
+                    dialog.close()
+                    await _delete_session_now()
+
+                ui.button("Xác nhận xoá", icon="delete", on_click=_confirm).classes(
+                    "bg-red-600 hover:bg-red-700 text-white rounded-lg"
+                )
+        dialog.open()
+
     async def _load_history_entry(history_id: int, ky_hien_thi: str):
+        """Xem ĐÚNG 1 lần lưu trong quá khứ (chỉ đọc) — dữ liệu snapshot,
+        không phải trạng thái hiện tại của bảng. Khác `_load_session_by_id()`
+        (tải bảng để SỬA TIẾP)."""
         try:
             sess = await asyncio.to_thread(api.get, f"/api/doi-chieu-citad-nostro/history-entry/{history_id}")
         except Exception as e:
@@ -480,10 +703,37 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
         tabs.set_value(tab_doi_chieu)
         ui.notify(f"Đang xem bản lịch sử (chỉ đọc) — kỳ {ky_hien_thi}", type="positive")
 
-    def _render_history_entries(container, ky: str, entries: list):
+    async def _load_session_by_id(session_id: int, ky_hien_thi: str):
+        """Tải TRẠNG THÁI HIỆN TẠI của 1 bảng cụ thể — sửa tiếp được nếu là
+        chủ bảng (`created_by == current_staff_id`), chỉ xem được nếu không
+        phải chủ (đọc chia sẻ toàn phòng, giống PTT — chỉ sửa/xoá mới giới
+        hạn theo chủ bảng)."""
+        try:
+            sess = await asyncio.to_thread(api.get, f"/api/doi-chieu-citad-nostro/session-by-id/{session_id}")
+        except Exception as e:
+            if _handle_api_error(e):
+                return
+            ui.notify(f"Lỗi tải bảng: {e}", type="negative")
+            return
+        if not sess:
+            ui.notify("Bảng này đã bị xoá.", type="warning")
+            return
+        apply_session_data(sess)
+        is_owner = view_state["created_by"] == current_staff_id
+        _set_form_readonly(not is_owner)
+        tabs.set_value(tab_doi_chieu)
+        if is_owner:
+            ui.notify(f"Đã tải bảng của bạn cho kỳ {ky_hien_thi} — sẵn sàng sửa tiếp", type="positive")
+        else:
+            ui.notify(f"Đang xem bảng của người khác (chỉ đọc) — kỳ {ky_hien_thi}", type="info")
+
+    def _render_history_entries(container, session_id: int, ky: str, entries: list):
+        """Tầng 3: từng lần lưu cụ thể của ĐÚNG 1 bảng (`session_id`) — chỉ
+        xem (snapshot quá khứ), không phải tải để sửa tiếp (xem
+        `_load_session_by_id()` ở tầng 2 cho việc đó)."""
         with container:
             if not entries:
-                ui.label("Chưa có ai lưu đối chiếu cho kỳ này.").classes("text-sm text-gray-500 p-2")
+                ui.label("Chưa có lần lưu nào.").classes("text-sm text-gray-500 p-2")
                 return
             with ui.column().classes("w-full border border-gray-200 rounded-xl gap-0 overflow-hidden"):
                 for i, r in enumerate(entries, start=1):
@@ -499,21 +749,117 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
                         if is_last:
                             ui.badge("Bản hiện hành").props('color="positive"').classes("mr-2")
                         ui.button(
-                            icon="download",
+                            icon="visibility",
                             on_click=lambda _, hid=r["id"], k=ky: _load_history_entry(hid, k),
-                        ).props("outline dense round size=sm").tooltip("Tải bản này")
+                        ).props("outline dense round size=sm").tooltip("Xem bản lưu này (chỉ đọc)")
+
+    def _session_row(container, s: dict):
+        """Tầng 2: 1 dòng/bảng (`session_id`) của 1 người, cho 1 kỳ — mirror
+        _session_row của Phòng Thanh toán, bớt badge Chính thức/Tạm (Nostro
+        không có khái niệm chốt bản cuối)."""
+        with container:
+            is_owner = s["created_by"] == current_staff_id
+            with ui.row().classes(
+                "w-full items-center gap-0 px-2 py-1.5 border-b border-gray-200 last:border-b-0"
+            ):
+                ui.icon("description").classes("text-gray-400 text-sm mr-2")
+                name = s["created_by_name"] or s["created_by_username"] or "(không rõ)"
+                ui.label(name + (" (bạn)" if is_owner else "")).classes(
+                    "text-sm font-bold flex-grow border-r border-gray-200 pr-2 mr-2"
+                )
+                ui.label(f"{s['so_lan_luu']} lần lưu").classes(
+                    "text-xs text-gray-500 border-r border-gray-200 pr-2 mr-2"
+                )
+                ui.label(s["updated_at"] or "").classes(
+                    "text-xs text-gray-400 border-r border-gray-200 pr-2 mr-2"
+                )
+                ui.button(
+                    "Tải để sửa tiếp" if is_owner else "Xem",
+                    icon="edit" if is_owner else "visibility",
+                    on_click=lambda _, sid=s["session_id"], k=s["ky"]: _load_session_by_id(sid, k),
+                ).props("outline dense size=sm").classes("mr-2")
+            entries_container = ui.column().classes("w-full pl-6 pb-2")
+
+            async def _load_entries(sid=s["session_id"], k=s["ky"], cont=entries_container):
+                cont.clear()
+                try:
+                    entries = await asyncio.to_thread(
+                        api.get, f"/api/doi-chieu-citad-nostro/session-by-id/{sid}/history"
+                    )
+                except Exception as e:
+                    if _handle_api_error(e):
+                        return
+                    ui.notify(f"Lỗi: {e}", type="negative")
+                    return
+                _render_history_entries(cont, sid, k, entries)
+
+            ui.timer(0.1, _load_entries, once=True)
+
+    # ── Danh sách tên Phòng QLTK Nostro, Vostro cho các ô "Người lập bảng"/
+    # "Người kiểm soát"/"Tên người chấm" — mirror đúng pattern
+    # `_load_payment_staff_names()` của doi_chieu_citad.py (Phòng Thanh
+    # toán), chỉ khác mã phòng ("NOSTRO" thay "PAYMENT"). Tra department
+    # theo CODE, không hardcode id — tránh phụ thuộc thứ tự tạo phòng ban.
+    async def _fetch_nostro_staff_names() -> set:
+        try:
+            depts = await asyncio.to_thread(api.get, "/api/departments/")
+            dept = next((d for d in depts if d.get("code") == "NOSTRO"), None)
+            if not dept:
+                _log.warning(
+                    "Không tìm thấy phòng ban code='NOSTRO' — các ô chọn tên không có gợi ý"
+                )
+                return set()
+            staff = await asyncio.to_thread(
+                api.get, "/api/staff/", {"department_id": dept["id"], "active_only": True}
+            )
+        except Exception as e:
+            # Danh sách gợi ý — lỗi ở đây không được chặn cả trang, nhưng PHẢI
+            # ghi log: options rỗng nhìn y hệt "phòng không có ai", không có
+            # log thì không có đường nào biết vì sao tên biến mất.
+            _log.warning("Không tải được danh sách nhân viên Phòng QLTK Nostro, Vostro: %s", e)
+            return set()
+        return {s["full_name"] for s in staff if s.get("full_name")}
+
+    def _merge_options(sel, names: set) -> None:
+        # GỘP vào options đang có, KHÔNG ghi đè — apply_session_data() tự
+        # bơm tên người ký cũ (đã nghỉ/chuyển phòng) vào options để giữ được
+        # giá trị. Gán đè cả danh sách thì ChoiceElement._update_options()
+        # thấy .value không còn trong options nữa và đổi ngay thành None.
+        # PHẢI gọi .update() ngay sau khi đổi .options (đọc docstring ui.select()).
+        sel.options = sorted({*(sel.options or []), *names})
+        sel.update()
+
+    async def _load_main_staff_names():
+        names = await _fetch_nostro_staff_names()
+        for sel in (lap_bang_input, kiem_soat_input):
+            _merge_options(sel, names)
 
     def _build_history_panel():
         with ui.row().classes("w-full items-end gap-3 flex-wrap mb-2"):
             tu_input = _date_filter_input("Từ ngày")
             den_input = _date_filter_input("Đến ngày")
-            nguoi_input = ui.input("Tên người chấm", value="").props("dense outlined clearable").classes("w-52")
+            nguoi_input = ui.select(
+                [], label="Tên người chấm", with_input=True, new_value_mode="add-unique"
+            ).props("dense outlined clearable").classes("w-52")
+
+            async def _load_history_staff_names():
+                _merge_options(nguoi_input, await _fetch_nostro_staff_names())
+
+            ui.timer(0.1, _load_history_staff_names, once=True)
+            # Lọc theo loại tiền — giúp tìm bảng khi 1 tháng có nhiều bảng
+            # nhưng không phải bảng nào cũng chấm đủ cả 3 loại tiền. Chỉ giữ
+            # bảng có nhập số liệu khác 0 cho đúng loại tiền đang chọn
+            # (svc._ccy_has_data()) — "" = Tất cả, không lọc.
+            ccy_input = ui.select({"": "Tất cả loại tiền", **CCY_LABEL}, value="").props(
+                "dense outlined"
+            ).classes("w-40")
             ui.button("Tìm", icon="search", on_click=lambda: load_history()).props("outline")
 
             async def clear_filter():
                 tu_input.value = ""
                 den_input.value = ""
                 nguoi_input.value = ""
+                ccy_input.value = ""
                 await load_history()
 
             ui.button("Xoá lọc", icon="clear", on_click=clear_filter).props("outline color=grey dense")
@@ -522,10 +868,10 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
 
         async def load_history():
             try:
-                days = await asyncio.to_thread(
+                rows = await asyncio.to_thread(
                     api.get, "/api/doi-chieu-citad-nostro/reconciliation-days",
                     params={"tu_ngay": tu_input.value or None, "den_ngay": den_input.value or None,
-                            "nguoi_cham": nguoi_input.value or None},
+                            "nguoi_cham": nguoi_input.value or None, "ccy": ccy_input.value or None},
                 )
             except Exception as e:
                 if _handle_api_error(e):
@@ -534,42 +880,235 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
                 return
             list_container.clear()
             with list_container:
-                if not days:
+                if not rows:
                     ui.label("Chưa có kỳ đối chiếu nào được lưu.").classes("text-sm text-gray-500 p-2")
-                for d in days:
-                    with ui.expansion(
-                        f"{d['ky']} — {d['created_by_name'] or d['created_by_username'] or '(không rõ)'} "
-                        f"({d['so_lan_luu']} lần lưu)"
-                    ).classes("w-full border border-gray-200 rounded-xl"):
-                        entries_container = ui.column().classes("w-full p-2")
-
-                        async def _load_entries(ky=d["ky"], cont=entries_container):
-                            cont.clear()
-                            try:
-                                entries = await asyncio.to_thread(
-                                    api.get, f"/api/doi-chieu-citad-nostro/session/{quote(ky, safe='')}/history"
-                                )
-                            except Exception as e:
-                                if _handle_api_error(e):
-                                    return
-                                ui.notify(f"Lỗi: {e}", type="negative")
-                                return
-                            _render_history_entries(cont, ky, entries)
-
-                        ui.timer(0.1, _load_entries, once=True)
+                # Tầng 1: gom theo kỳ — 1 kỳ giờ có thể có NHIỀU bảng (nhiều
+                # người chấm riêng), khác trước đây (1 kỳ = 1 dòng).
+                by_ky: dict[str, list] = {}
+                for r in rows:
+                    by_ky.setdefault(r["ky"], []).append(r)
+                for ky, sessions in by_ky.items():
+                    with ui.expansion(f"{ky} — {len(sessions)} bảng").classes(
+                        "w-full border border-gray-200 rounded-xl"
+                    ):
+                        sessions_container = ui.column().classes("w-full p-2 gap-0")
+                        for s in sessions:
+                            _session_row(sessions_container, s)
 
         history_refresh["fn"] = load_history
         ui.timer(0.1, load_history, once=True)
 
+    def _parse_ky_range_local(ky: str):
+        """Bản rút gọn của `_parse_ky_range()` bên
+        `backend/services/doi_chieu_citad_nostro_service.py` — dùng để tính
+        cảnh báo chồng ngày NGAY TRÊN TRÌNH DUYỆT (không gọi thêm API) khi
+        người dùng tick/bỏ tick bảng ở màn "Tổng hợp tháng"."""
+        try:
+            tu_s, den_s = ky.split("-", 1)
+            tu = datetime.datetime.strptime(tu_s.strip(), "%d/%m/%Y")
+            den = datetime.datetime.strptime(den_s.strip(), "%d/%m/%Y")
+            return (tu, den) if tu <= den else (den, tu)
+        except Exception:
+            return None
+
+    def _build_month_summary_panel():
+        with ui.row().classes("w-full items-end gap-3 flex-wrap mb-2"):
+            nam_input = ui.number("Năm", value=datetime.date.today().year, format="%.0f").props(
+                "dense outlined"
+            ).classes("w-28")
+            thang_input = ui.number("Tháng", value=datetime.date.today().month, min=1, max=12, format="%.0f").props(
+                "dense outlined"
+            ).classes("w-24")
+            # Lọc theo loại tiền — cùng cơ chế với Lịch sử, giúp tìm bảng khi
+            # 1 tháng có nhiều bảng nhưng không phải bảng nào cũng chấm đủ cả
+            # 3 loại tiền. Chỉ lọc DANH SÁCH BẢNG, không lọc "ngày còn thiếu".
+            # on_change tự gọi load_month() ngay khi đổi — khác 3 ô Năm/Tháng/
+            # tên (cần bấm "Tải danh sách bảng" mới áp dụng), vì đây là dropdown
+            # chọn 1 trong 4 giá trị cố định, không phải gõ tay từng ký tự.
+            ccy_thang_input = ui.select(
+                {"": "Tất cả loại tiền", **CCY_LABEL}, value="", on_change=lambda: load_month()
+            ).props("dense outlined").classes("w-40")
+            ui.button("Tải danh sách bảng", icon="search", on_click=lambda: load_month()).props("outline")
+            lb_thang_input = ui.select(
+                [], label="Người lập bảng", with_input=True, new_value_mode="add-unique"
+            ).props("dense outlined").classes("w-52")
+            ks_thang_input = ui.select(
+                [], label="Người kiểm soát", with_input=True, new_value_mode="add-unique"
+            ).props("dense outlined").classes("w-52")
+
+            async def _load_month_staff_names():
+                names = await _fetch_nostro_staff_names()
+                for sel in (lb_thang_input, ks_thang_input):
+                    _merge_options(sel, names)
+
+            ui.timer(0.1, _load_month_staff_names, once=True)
+
+        missing_box = ui.column().classes("w-full")
+        checklist_box = ui.column().classes("w-full gap-0 border border-gray-200 rounded-xl overflow-hidden")
+        overlap_box = ui.column().classes("w-full")
+        with ui.row().classes("w-full items-center gap-4 p-3 bg-amber-50 border border-amber-200 rounded-lg mt-2") as total_box:
+            # 1 dòng/loại tiền (VND/USD/EUR) — response /month-summary trả
+            # riêng theo ccy, không gộp chung 1 dòng như trước 14/09/2026.
+            total_container = ui.column().classes("flex-grow gap-1")
+            with total_container:
+                ui.label("Chưa tính tổng — tải danh sách bảng rồi tick chọn.").classes("text-sm text-amber-800")
+            xuat_thang_btn = ui.button("Xuất Excel tháng", icon="download").props("outline")
+
+        state = {"sessions": [], "checks": {}}  # session_id -> ui.checkbox
+
+        def _recompute_overlap():
+            overlap_box.clear()
+            checked_ids = [sid for sid, cb in state["checks"].items() if cb.value]
+            ranges = []
+            for s in state["sessions"]:
+                if s["session_id"] in checked_ids:
+                    rng = _parse_ky_range_local(s["ky"])
+                    if rng:
+                        ranges.append((s["ky"], rng[0], rng[1]))
+            chong = []
+            for i in range(len(ranges)):
+                for j in range(i + 1, len(ranges)):
+                    _, s1, e1 = ranges[i]
+                    _, s2, e2 = ranges[j]
+                    if s1 <= e2 and s2 <= e1:
+                        chong.append((ranges[i][0], ranges[j][0]))
+            if chong:
+                with overlap_box:
+                    with ui.row().classes("w-full items-start gap-2 p-2 bg-red-50 border border-red-200 rounded-lg"):
+                        ui.icon("warning").classes("text-red-600")
+                        noi_dung = "; ".join(f"{a} ↔ {b}" for a, b in chong)
+                        ui.label(f"⚠ Các bảng đang tick CHỒNG NGÀY nhau: {noi_dung} — có thể bị tính trùng.").classes(
+                            "text-sm text-red-700"
+                        )
+
+        async def _recompute_total():
+            total_container.clear()
+            checked_ids = [sid for sid, cb in state["checks"].items() if cb.value]
+            if not checked_ids:
+                with total_container:
+                    ui.label("Chưa chọn bảng nào — tổng tháng = 0.").classes("text-sm text-amber-800")
+                return
+            try:
+                res = await asyncio.to_thread(
+                    api.post, "/api/doi-chieu-citad-nostro/month-summary", {"session_ids": checked_ids}
+                )
+            except Exception as e:
+                if _handle_api_error(e):
+                    return
+                with total_container:
+                    ui.label(f"Lỗi tính tổng: {e}").classes("text-sm text-red-700")
+                return
+            with total_container:
+                for ccy in LOAI_TIEN:
+                    ci, hub = res[ccy]["ci"], res[ccy]["hub"]
+                    parts = []
+                    for loai, ten in (("gtt", "GTT"), ("gtc", "GTC")):
+                        dfm = ci[loai]["soMon"] - hub[loai]["soMon"]
+                        dft = ci[loai]["soTien"] - hub[loai]["soTien"]
+                        khop = dfm == 0 and dft == 0
+                        dau = "✓" if khop else "⚠"
+                        parts.append(
+                            f"{dau} {ten}: CITAD {fmt(ci[loai]['soMon'])}/{fmt(ci[loai]['soTien'])} — "
+                            f"HUB {fmt(hub[loai]['soMon'])}/{fmt(hub[loai]['soTien'])} — "
+                            f"Chênh lệch {fmt(dfm)}/{fmt(dft)}"
+                        )
+                    ui.label(
+                        f"[{CCY_LABEL[ccy]}] Đang tính trên {len(checked_ids)} bảng — " + "  |  ".join(parts)
+                    ).classes("text-sm text-amber-800")
+
+        async def _on_check_change():
+            _recompute_overlap()
+            await _recompute_total()
+
+        async def load_month():
+            try:
+                res = await asyncio.to_thread(
+                    api.get, "/api/doi-chieu-citad-nostro/month-sessions",
+                    params={"nam": int(nam_input.value), "thang": int(thang_input.value),
+                            "ccy": ccy_thang_input.value or None},
+                )
+            except Exception as e:
+                if _handle_api_error(e):
+                    return
+                ui.notify(f"Lỗi tải danh sách tháng: {e}", type="negative")
+                return
+            state["sessions"] = res["sessions"]
+            state["checks"] = {}
+
+            missing_box.clear()
+            with missing_box:
+                if res["missing_days"]:
+                    with ui.row().classes("w-full items-start gap-2 p-2 bg-red-50 border border-red-200 rounded-lg mb-2"):
+                        ui.icon("event_busy").classes("text-red-600")
+                        ui.label(
+                            f"⚠ Còn {len(res['missing_days'])} ngày CHƯA ai chấm trong tháng này — "
+                            "cần chấm bù: " + ", ".join(res["missing_days"])
+                        ).classes("text-sm text-red-700")
+                else:
+                    with ui.row().classes("w-full items-center gap-2 p-2 bg-emerald-50 border border-emerald-200 rounded-lg mb-2"):
+                        ui.icon("check_circle").classes("text-emerald-600")
+                        ui.label("Đã đủ bảng phủ hết mọi ngày trong tháng.").classes("text-sm text-emerald-700")
+
+            checklist_box.clear()
+            with checklist_box:
+                if not res["sessions"]:
+                    ui.label("Chưa có bảng nào cho tháng này.").classes("text-sm text-gray-500 p-3")
+                for s in res["sessions"]:
+                    with ui.row().classes(
+                        "w-full items-center gap-2 px-3 py-1.5 border-b border-gray-200 last:border-b-0"
+                    ):
+                        # Truyền THẲNG hàm async, KHÔNG bọc asyncio.create_task —
+                        # task mới không có slot stack của NiceGUI, ui.notify()
+                        # bên trong sẽ ném RuntimeError âm thầm (xem review PR #90,
+                        # mục "Event handler async" trong docs/DESIGN.md).
+                        cb = ui.checkbox(value=True, on_change=_on_check_change)
+                        state["checks"][s["session_id"]] = cb
+                        name = s["created_by_name"] or s["created_by_username"] or "(không rõ)"
+                        ui.label(f"{s['ky']} — {name}").classes("text-sm flex-grow")
+
+            _recompute_overlap()
+            await _recompute_total()
+
+        async def _do_download_month_export():
+            checked_ids = [sid for sid, cb in state["checks"].items() if cb.value]
+            if not checked_ids:
+                ui.notify("Chưa chọn bảng nào để xuất.", type="warning")
+                return
+            try:
+                content = await asyncio.to_thread(
+                    api.post_download, "/api/doi-chieu-citad-nostro/month-summary/export", {
+                        "nam": int(nam_input.value), "thang": int(thang_input.value),
+                        "session_ids": checked_ids,
+                        # or "" — xem chú thích ở get_session_payload(); ở đây BẮT
+                        # BUỘC vì MonthSummaryExportIn.lb là str (không Optional),
+                        # gửi None là 422, mà 2 ô này không được apply_session_data()
+                        # gán giá trị nên luôn None cho tới khi người dùng tự chọn.
+                        "lb": lb_thang_input.value or "", "ks": ks_thang_input.value or "",
+                    },
+                )
+            except Exception as e:
+                if _handle_api_error(e):
+                    return
+                ui.notify(f"Lỗi xuất Excel tháng: {e}", type="negative")
+                return
+            fname = f"Tong_hop_thang_{int(thang_input.value):02d}.{int(nam_input.value)}.xlsx"
+            ui.download(content, fname)
+
+        xuat_thang_btn.on_click(_do_download_month_export)
+        ui.timer(0.1, load_month, once=True)
+
     async def _do_download_export():
+        cD, phD = _snapshot_cD_phD()
         try:
             content = await asyncio.to_thread(
                 api.post_download, "/api/doi-chieu-citad-nostro/export", {
                     "tu_ngay": tu_ngay_input.value, "den_ngay": den_ngay_input.value,
                     "sheet_name": f"{tu_ngay_input.value}_{den_ngay_input.value}".replace("/", "."),
-                    "lb": lap_bang_input.value, "ks": kiem_soat_input.value,
-                    "cD": {c: {loai: dict(data["cD"][c][loai]) for loai in LOAI_CITAD} for c in CONGS},
-                    "phD": {r: dict(data["phD"][r]) for r in HUB_ROWS},
+                    # or "" — ExportIn.lb/ks là str bắt buộc, không Optional; None
+                    # (chưa chọn tên trong ui.select) là 422, xem get_session_payload().
+                    "lb": lap_bang_input.value or "", "ks": kiem_soat_input.value or "",
+                    "cD": cD,
+                    "phD": phD,
                 },
             )
         except Exception as e:
@@ -678,7 +1217,91 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
                 return
             ui.notify(f"Lỗi: {e}", type="negative")
             return
-        ui.download(content, "extension_citad_nv.zip")
+        # ui.download() tự đặt tên file phía trình duyệt — Content-Disposition
+        # của response API không có tác dụng ở đây, nên phải tự kèm version
+        # vào tên file NGAY TẠI ĐÂY (không đọc lại từ header). Đọc version thất
+        # bại thì vẫn tải được, chỉ mất phần số trong tên, không chặn tải.
+        try:
+            version = (await asyncio.to_thread(api.get, "/api/doi-chieu-citad-nostro/extension-version"))["version"]
+            fname = f"extension_citad_nv_v{version}.zip"
+        except Exception:
+            fname = "extension_citad_nv.zip"
+        ui.download(content, fname)
+
+    # ── Nhắc cập nhật Extension — mirror đúng pattern của doi_chieu_citad.py
+    # (Phòng Thanh toán). Bản 1.1 (14/09/2026) thêm content_citad_nostro_fx.js
+    # và đổi key buffer PaymentHub (ph_{loai} -> ph_{loai}_{ccy}) — máy còn cài
+    # bản 1.0 thì Nạp PaymentHub sẽ bỏ qua MỌI mục (thiếu `ccy`) và USD/EUR bên
+    # CITAD không lấy được gì (không có script quét trang ngoại tệ), không có
+    # cách nào tự phát hiện nếu không chủ động hỏi version như dưới đây.
+    _ACK_STORAGE_KEY = "citad_nostro_ext_update_ack"
+
+    async def _get_installed_extension_version() -> str | None:
+        js = f"""
+            return await new Promise((resolve) => {{
+                if (!(window.chrome && chrome.runtime && chrome.runtime.sendMessage)) {{
+                    resolve(null);
+                    return;
+                }}
+                try {{
+                    chrome.runtime.sendMessage({_EXTENSION_ID!r}, {{type: 'GET_VERSION'}}, (response) => {{
+                        if (chrome.runtime.lastError || !response || !response.ok) {{
+                            resolve(null);
+                        }} else {{
+                            resolve(response.version || null);
+                        }}
+                    }});
+                }} catch (e) {{
+                    resolve(null);
+                }}
+            }});
+        """
+        try:
+            return await ui.run_javascript(js, timeout=3.0)
+        except Exception:
+            return None
+
+    async def _check_extension_update():
+        installed = await _get_installed_extension_version()
+        if not installed:
+            return  # không cài/không rõ — im lặng bỏ qua, không đoán bừa
+        try:
+            latest = (await asyncio.to_thread(api.get, "/api/doi-chieu-citad-nostro/extension-version"))["version"]
+        except Exception:
+            return
+        if installed == latest:
+            return
+        try:
+            acked = await ui.run_javascript(f"return localStorage.getItem({_ACK_STORAGE_KEY!r})", timeout=2.0)
+        except Exception:
+            acked = None
+        if acked == latest:
+            return  # đã xác nhận đúng bản mới nhất này rồi — không hiện lại
+
+        with ui.dialog().props("persistent") as dialog, ui.card().classes("w-full max-w-lg"):
+            ui.label("⚠ Có bản cập nhật mới cho Extension").classes("text-lg font-bold text-orange-600")
+            ui.label(
+                f"Đang dùng: {installed}  —  Bản mới nhất: {latest}"
+            ).classes("text-sm font-bold text-gray-700")
+            ui.label(
+                "Vào chrome://extensions, gỡ bản Extension cũ, rồi tải lại bản mới bên dưới và "
+                "\"Load unpacked\" lại thư mục vừa giải nén."
+            ).classes("text-sm text-gray-500")
+            with ui.row().classes("w-full justify-end gap-2 mt-3"):
+                ui.button(
+                    "Tải Extension mới", icon="download", on_click=do_download_extension
+                ).props("outline")
+
+                async def _confirm_update():
+                    await ui.run_javascript(
+                        f"localStorage.setItem({_ACK_STORAGE_KEY!r}, {latest!r})"
+                    )
+                    dialog.close()
+
+                ui.button("Đã xác nhận", icon="check", on_click=_confirm_update).classes(
+                    "bg-orange-600 hover:bg-orange-700 text-white rounded-lg"
+                )
+        dialog.open()
 
     with ui.row().classes("w-full"):
         await _sidebar("doi_chieu_citad_nostro")
@@ -693,6 +1316,7 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
             ).classes("w-full border-b border-gray-200 mb-1") as tabs:
                 tab_doi_chieu = ui.tab("Đối chiếu")
                 tab_lich_su = ui.tab("Lịch sử")
+                tab_tong_hop_thang = ui.tab("Tổng hợp tháng")
                 tab_extension = ui.tab("Kết nối Extension")
 
             with ui.tab_panels(tabs, value=tab_doi_chieu).classes("w-full"):
@@ -708,10 +1332,46 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
                             with ui.row().classes("w-full items-end gap-3 p-4 flex-wrap"):
                                 tu_ngay_input = _date_picker_input("Từ ngày")
                                 den_ngay_input = _date_picker_input("Đến ngày")
-                                lap_bang_input = ui.input("Người lập bảng", value="").props("dense outlined").classes("w-52")
-                                kiem_soat_input = ui.input("Người kiểm soát", value="").props("dense outlined").classes("w-52")
+                                # ui.select(with_input, new_value_mode="add-unique") — vẫn gõ tay
+                                # tự do được như ui.input cũ, thêm được bấm chọn từ danh sách nhân
+                                # sự Phòng QLTK Nostro, Vostro — mirror đúng pattern đã có ở
+                                # doi_chieu_citad.py (Phòng Thanh toán), xem _load_nostro_staff_names().
+                                lap_bang_input = ui.select(
+                                    [], label="Người lập bảng", with_input=True, new_value_mode="add-unique"
+                                ).props("dense outlined").classes("w-52")
+                                kiem_soat_input = ui.select(
+                                    [], label="Người kiểm soát", with_input=True, new_value_mode="add-unique"
+                                ).props("dense outlined").classes("w-52")
                                 nap_citad_btn = ui.button("Nạp CITAD", icon="cloud_download", on_click=load_citad_buffer).props("outline").classes("rounded-lg")
                                 nap_ph_btn = ui.button("Nạp PaymentHub", icon="cloud_download", on_click=load_phub_buffer).props("outline").classes("rounded-lg")
+
+                            def _on_ky_changed():
+                                """Người dùng tự gõ/đổi ô ngày trong lúc còn gắn 1
+                                bảng cũ (`view_state["session_id"]` khác None) —
+                                coi như bắt đầu bảng MỚI, gỡ gắn NGAY (không đợi
+                                bấm Lưu mới phát hiện). Mirror
+                                `_on_ngay_changed_sync()` của PTT
+                                (`frontend/pages/doi_chieu_citad.py`). Review
+                                PR #90: thiếu bước này khiến Lưu lần 1 (ky mới,
+                                session_id cũ) ăn lỗi "kỳ không khớp", Lưu lần 2
+                                mới vô tình tạo bảng mới — người dùng không biết
+                                vì sao lần đầu lỗi."""
+                                if view_state["session_id"] is None:
+                                    return
+                                ky_now = f"{tu_ngay_input.value}-{den_ngay_input.value}"
+                                if ky_now != view_state.get("ky"):
+                                    view_state["session_id"] = None
+                                    view_state["created_by"] = None
+                                    view_state["ky"] = None
+                                    _refresh_delete_btn()
+                                    ui.notify(
+                                        "Đã đổi sang kỳ khác — lưu tiếp theo sẽ tạo bảng MỚI, "
+                                        "không ghi đè bảng đang xem trước đó.",
+                                        type="info",
+                                    )
+
+                            tu_ngay_input.on_value_change(_on_ky_changed)
+                            den_ngay_input.on_value_change(_on_ky_changed)
                             with ui.row().classes("w-full items-center gap-2 px-4 pb-3"):
                                 ui.icon("event_note").classes("text-indigo-600 text-sm")
                                 ky_dang_cham_label = ui.label("").classes("text-sm font-bold text-indigo-700")
@@ -724,26 +1384,120 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
 
                             ui.timer(1.0, _refresh_ky_label)
 
-                        with _section_card("Chênh lệch CITAD − HUB", icon="difference", accent="amber") as diff_card:
-                            build_diff_grid(diff_card)
+                            with ui.row().classes(
+                                "w-full items-center gap-2 mx-4 mb-3 p-2 bg-indigo-50 "
+                                "border border-indigo-200 rounded-lg"
+                            ) as own_sessions_banner:
+                                ui.icon("info").classes("text-indigo-600")
+                                own_sessions_label = ui.label("").classes("text-sm text-indigo-800 flex-grow")
+                                own_sessions_btn = ui.button("Tải bảng gần nhất", icon="cloud_download").props(
+                                    "outline dense"
+                                )
+                            own_sessions_banner.set_visibility(False)
 
-                        with _section_card("5 cổng CITAD — Tra cứu dữ liệu", icon="account_balance_wallet", accent="indigo") as citad_card:
-                            build_citad_grid(citad_card)
+                            _own_sessions_state = {"checked_ky": None, "latest_session_id": None, "ky": None}
 
-                        with _section_card("PaymentHub — Lập bảng kê phí chia sẻ CITAD", icon="hub", accent="emerald") as hub_card:
-                            build_hub_grid(hub_card)
+                            async def _do_load_latest_own_session():
+                                sid = _own_sessions_state["latest_session_id"]
+                                k = _own_sessions_state["ky"]
+                                if sid is not None:
+                                    await _load_session_by_id(sid, k)
+
+                            own_sessions_btn.on_click(_do_load_latest_own_session)
+
+                            async def _check_own_sessions_banner():
+                                if view_state["session_id"] is not None:
+                                    own_sessions_banner.set_visibility(False)
+                                    return
+                                tu, den = (tu_ngay_input.value or "").strip(), (den_ngay_input.value or "").strip()
+                                if not tu or not den:
+                                    own_sessions_banner.set_visibility(False)
+                                    return
+                                ky_now = f"{tu}-{den}"
+                                # Tránh gọi API lặp lại mỗi giây khi ky không đổi — chỉ hỏi
+                                # lại backend khi người dùng thực sự đổi ngày.
+                                if ky_now == _own_sessions_state["checked_ky"]:
+                                    return
+                                _own_sessions_state["checked_ky"] = ky_now
+                                try:
+                                    rows = await asyncio.to_thread(
+                                        api.get, "/api/doi-chieu-citad-nostro/reconciliation-days",
+                                        params={"tu_ngay": tu, "den_ngay": den},
+                                    )
+                                except Exception:
+                                    return
+                                mine = [r for r in rows if r["ky"] == ky_now and r["created_by"] == current_staff_id]
+                                if not mine:
+                                    own_sessions_banner.set_visibility(False)
+                                    return
+                                mine.sort(key=lambda r: r["updated_at"] or "", reverse=True)
+                                latest = mine[0]
+                                _own_sessions_state["latest_session_id"] = latest["session_id"]
+                                _own_sessions_state["ky"] = ky_now
+                                own_sessions_label.text = (
+                                    f"Bạn đã có {len(mine)} bảng cho kỳ này — bấm để lưu tiếp bảng gần "
+                                    "nhất, hoặc cứ nhập mới để tạo bảng độc lập."
+                                )
+                                own_sessions_banner.set_visibility(True)
+
+                            ui.timer(2.0, _check_own_sessions_banner)
+
+                        # 3 tab con VND/USD/EUR — CÙNG 1 kỳ, chung ngày/lập
+                        # bảng/kiểm soát/nút Lưu-Xoá-Xuất Excel ở trên/dưới,
+                        # chỉ số liệu CITAD/HUB/Chênh lệch khác nhau theo tab.
+                        with ui.tabs().props(
+                            "dense active-color=indigo-600 indicator-color=indigo-600 align=left"
+                        ).classes("w-full") as ccy_tabs:
+                            ccy_tab_objs = {ccy: ui.tab(CCY_LABEL[ccy]) for ccy in LOAI_TIEN}
+                        with ui.tab_panels(ccy_tabs, value=ccy_tab_objs["VND"]).classes("w-full"):
+                            for ccy in LOAI_TIEN:
+                                with ui.tab_panel(ccy_tab_objs[ccy]):
+                                    with ui.column().classes("w-full gap-4"):
+                                        with _section_card(
+                                            f"Chênh lệch CITAD − HUB ({CCY_LABEL[ccy]})", icon="difference", accent="amber"
+                                        ) as diff_card:
+                                            build_diff_grid(diff_card, ccy)
+
+                                        with _section_card(
+                                            f"5 cổng CITAD — Tra cứu dữ liệu ({CCY_LABEL[ccy]})",
+                                            icon="account_balance_wallet", accent="indigo",
+                                        ) as citad_card:
+                                            build_citad_grid(citad_card, ccy)
+
+                                        with _section_card(
+                                            f"PaymentHub — Lập bảng kê phí chia sẻ CITAD ({CCY_LABEL[ccy]})",
+                                            icon="hub", accent="emerald",
+                                        ) as hub_card:
+                                            build_hub_grid(hub_card, ccy)
 
                         with ui.row().classes("w-full justify-end gap-2"):
+                            delete_btn = ui.button("Xoá bảng này", icon="delete", on_click=do_delete_session).props(
+                                "outline color=negative"
+                            ).classes("rounded-lg")
                             ui.button("Xuất Excel", icon="download", on_click=_do_download_export).props("outline").classes("rounded-lg")
                             save_btn = ui.button("Lưu đối chiếu", icon="save", on_click=do_save_session).classes(
                                 "bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg"
                             )
-                    recalc()
+                    for ccy in LOAI_TIEN:
+                        recalc(ccy)
+                    _refresh_delete_btn()
+                    ui.timer(0.1, _load_main_staff_names, once=True)
 
                 with ui.tab_panel(tab_lich_su):
                     with _section_card("Lịch sử đối chiếu", icon="history", accent="blue"):
                         with ui.column().classes("w-full gap-2 p-4"):
                             _build_history_panel()
+
+                with ui.tab_panel(tab_tong_hop_thang):
+                    with _section_card("Tổng hợp tháng", icon="calendar_view_month", accent="amber"):
+                        with ui.column().classes("w-full gap-2 p-4"):
+                            ui.label(
+                                "Cộng dồn số liệu của các bảng (kỳ) trong 1 tháng thành báo cáo tháng — "
+                                "bạn tự tick chọn bảng nào tính vào tổng (bỏ tick bảng nào bị trùng ngày "
+                                "với bảng khác). Danh sách hiện TẤT CẢ bảng của cả phòng cho tháng đó, "
+                                "không riêng bảng của bạn."
+                            ).classes("text-sm text-gray-500")
+                            _build_month_summary_panel()
 
                 with ui.tab_panel(tab_extension):
                     with _section_card("Kết nối Extension Chrome", icon="extension", accent="rose"):
@@ -761,3 +1515,4 @@ async def doi_chieu_citad_nostro_page(request: _StarletteRequest):
                                 ui.button("Thu hồi mã", icon="link_off", on_click=do_revoke_extension_token).props("outline color=negative")
                                 ui.button("Tải Extension (.zip)", icon="download", on_click=do_download_extension).props("outline")
                             ui.timer(0.1, refresh_extension_status, once=True)
+                            ui.timer(0.1, _check_extension_update, once=True)

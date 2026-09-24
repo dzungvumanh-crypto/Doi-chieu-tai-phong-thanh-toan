@@ -1,6 +1,6 @@
 from datetime import date, datetime
 from typing import Optional, Literal, Dict, List
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 # ─── Ký hiệu công ─────────────────────────────────────────────────────────────
@@ -51,7 +51,7 @@ class AttendanceSymbolOut(BaseModel):
     work_value: float
     color: str
     is_active: bool
-    class Config: from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ─── Chấm công theo ngày / theo tháng ─────────────────────────────────────────
@@ -113,4 +113,4 @@ class AdjustmentOut(BaseModel):
     reviewed_at: Optional[datetime] = None
     reject_reason: Optional[str] = None
     created_at: datetime
-    class Config: from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

@@ -1,4 +1,5 @@
 """SQLite connection factory — raw SQL, no ORM."""
+import asyncio
 import logging
 import os
 import queue
@@ -6,7 +7,11 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, date as _date
+
+import anyio
+from fastapi import Depends, HTTPException
+
 from backend.core.config import settings
 
 _log = logging.getLogger(__name__)
@@ -19,6 +24,25 @@ _VN_TZ = timezone(timedelta(hours=7))
 
 def _vn_now() -> datetime:
     return datetime.now(_VN_TZ).replace(tzinfo=None)
+
+
+# ── Adapter date/datetime cho sqlite3 ────────────────────────────────────────
+# Python 3.12 đánh dấu BỎ adapter mặc định. Bỏ hẳn ở bản sau nghĩa là ~146 chỗ
+# truyền thẳng `_vn_now()` / `date` vào câu SQL sẽ ném InterfaceError — hỏng rải
+# rác khắp nơi, không nổ một chỗ dễ thấy.
+#
+# Hai hàm dưới sinh ĐÚNG chuỗi mà bản mặc định của CPython vẫn sinh
+# (`isoformat(" ")` và `isoformat()`), đo lại 21/09/2026 cả trường hợp
+# microsecond = 0. KHÔNG được "cải tiến" thành isoformat("T") hay cắt bớt phần
+# giây lẻ: dữ liệu cũ trong DB đang ở khuôn này, mà rất nhiều câu lệnh so sánh
+# ngày bằng CHUỖI (`LIKE '2026-09-20%'`, `BETWEEN`, `ORDER BY`) — đổi khuôn là
+# dòng mới và dòng cũ không còn so được với nhau.
+#
+# `register_adapter` có tác dụng theo TIẾN TRÌNH, không theo kết nối, nên khai ở
+# đây là phủ luôn mọi `sqlite3.connect()` gọi thẳng (migrations, backup_service,
+# audit_queue…) miễn là module này đã được nạp.
+sqlite3.register_adapter(datetime, lambda v: v.isoformat(" "))
+sqlite3.register_adapter(_date, lambda v: v.isoformat())
 
 
 def write_audit(
@@ -36,7 +60,8 @@ def write_audit(
             from backend.core.sessions import get_session_ip
             ip = get_session_ip(db, actor_id)
         except Exception:
-            pass
+            # Lui về ip=None — dòng nhật ký thiếu IP vẫn hơn là mất hẳn dòng đó.
+            _log.info("Không tra được IP phiên của actor %s", actor_id, exc_info=True)
     db.execute(
         "INSERT INTO audit_logs (actor_id, action, target_type, target_id, detail, ip_address, created_at) VALUES (?,?,?,?,?,?,?)",
         (actor_id, action, target_type, target_id, detail, ip, _vn_now()),
@@ -311,7 +336,52 @@ def pool_stats() -> dict:
             "dang_muon": max(0, da_tao - ranh)}
 
 
-def get_db():
+# ── Cổng vào bể: xếp hàng trên event loop, KHÔNG giữ luồng ──
+# `get_db()` là generator đồng bộ nên FastAPI mượn một luồng của threadpool (40
+# token) để chạy `_muon()`. Bể cạn thì luồng đó đứng chờ kết nối, mà request đang
+# CẦM kết nối lại cần thêm luồng để chạy dependency kế tiếp và thân endpoint. Đủ
+# 40 luồng cùng đứng chờ là hai bên chờ nhau tới hết `_POOL_CHO_GIAY`: đo trên máy
+# dev 16/09/2026, 78 request đồng thời chậm nhất 268 ms, 90 request thì MỌI request
+# đứng 31 giây rồi ~40 cái ăn 500. Ngưỡng ≈ 48 kết nối + 40 luồng.
+#
+# Cổng này cho tối đa `_POOL_MAX` request qua cùng lúc; phần dư chờ bằng `await`
+# nên không chiếm luồng nào. Qua cổng rồi thì `_muon()` luôn có kết nối ngay — vì
+# `get_db` là đường DUY NHẤT mượn từ bể (ngoài `khoi_tao_pool()` lúc khởi động).
+# Thêm chỗ nào gọi `_muon()` trực tiếp là mở lại đúng lỗi này.
+#
+# FastAPI thoát dependency theo thứ tự ngược lúc vào: `get_db` trả kết nối về bể
+# TRƯỚC, cổng mới nhả suất sau — không có khoảnh khắc nào suất trống mà kết nối
+# chưa về. Chiều trả thì FastAPI đã tự dùng limiter riêng (fastapi/concurrency.py).
+_cong_db: "tuple[asyncio.AbstractEventLoop, anyio.Semaphore] | None" = None
+
+
+def _lay_cong() -> anyio.Semaphore:
+    # Gắn theo event loop: semaphore tạo ở loop này không dùng được ở loop khác
+    # (test chạy mỗi ca một loop). Không có await giữa kiểm và gán nên không tranh chấp.
+    global _cong_db
+    loop = asyncio.get_running_loop()
+    if _cong_db is None or _cong_db[0] is not loop:
+        _cong_db = (loop, anyio.Semaphore(_POOL_MAX))
+    return _cong_db[1]
+
+
+async def _qua_cong_db():
+    cong = _lay_cong()
+    try:
+        with anyio.fail_after(_POOL_CHO_GIAY):
+            await cong.acquire()
+    except TimeoutError:
+        # Log ở đây vì lỗi ném ra trong dependency chỉ hiện ở console uvicorn,
+        # KHÔNG vào logs/app.log — người vận hành sẽ không bao giờ thấy.
+        _log.warning("Hết lượt vào CSDL sau %.0f giây chờ — %s", _POOL_CHO_GIAY, pool_stats())
+        raise HTTPException(status_code=503, detail="Hệ thống bận, vui lòng thử lại")
+    try:
+        yield
+    finally:
+        cong.release()
+
+
+def get_db(_luot: None = Depends(_qua_cong_db)):
     conn = _muon()
     try:
         yield conn

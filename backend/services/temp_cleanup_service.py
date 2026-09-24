@@ -1,8 +1,8 @@
 """Dọn thư mục file tạm theo lịch — 23h hằng ngày.
 
-Năm tính năng có file nằm trên đĩa: ACH, Chấm 459901, Đối chiếu song phương,
-Đối soát CITAD, Chuẩn hoá văn bản. Cả bốn đều tự dọn rác của mình, nhưng chỉ dọn KHI CÓ NGƯỜI DÙNG
-TÍNH NĂNG: `_cleanup_old_results()` nằm ngay đầu `process_zip()`,
+Mười tính năng có file nằm trên đĩa — danh sách ở `_nguon_don()`. Các tính năng
+đối chiếu tự dọn rác của mình, nhưng chỉ dọn KHI CÓ NGƯỜI DÙNG TÍNH NĂNG
+(Chuẩn hoá văn bản thì chỉ được dọn ở đây, giữ `VB_FORMAT_LUU_NGAY` ngày): `_cleanup_old_results()` nằm ngay đầu `process_zip()`,
 `_cleanup_old_jobs()` nằm trong `finally` của một lượt chạy. Nghỉ dùng một tháng
 thì kết quả của tháng trước nằm nguyên trên đĩa — mà đây là file Excel/CSV của cả
 ngày giao dịch, không phải vài KB.
@@ -48,21 +48,42 @@ _timer: threading.Timer | None = None
 _moc_da_don: float = 0.0
 
 
-def run_cleanup(cutoff: float | None = None) -> None:
-    """Gọi hàm dọn của từng service. Một service lỗi không được chặn service kia."""
-    from backend.services import ach_service, cham459901_service
+def _nguon_don() -> list[tuple[str, object]]:
+    """(tên hiển thị, hàm dọn nhận `cutoff`) của mọi tính năng có thư mục `data/temp_*`.
+
+    ILO1000 và hai chiều Song phương kênh core thiếu ở đây tới 24/09/2026: hàm dọn của
+    chúng chỉ chạy khi có job xong và chỉ xoá job còn trong RAM — restart backend là thư
+    mục cũ nằm lại vĩnh viễn, `data/temp_*` trên máy chủ cứ thế phình ra.
+    `tests/test_don_temp_du_nguon.py` đỏ nếu thêm một `temp_*` mới mà quên khai ở đây.
+    """
+    from backend.services import ach_service, cham459901_service, doi_chieu_osb_job
+    from backend.services import cham459901_000000000_service
+    from backend.services import doi_chieu_song_phuong_kenh_core_di_service as kc_di
+    from backend.services import doi_chieu_song_phuong_kenh_core_service as kc_den
     from backend.services import doi_chieu_song_phuong_service as sp
+    from backend.services import ilo1000_service
     from backend.services.doi_soat_citad import temp_files as citad_tmp
     from backend.api import vb_format as vb_format_api
 
-    cutoff = moc_don_gan_nhat() if cutoff is None else cutoff
-    for ten, ham in (
+    return [
         ("ACH", ach_service._cleanup_old_jobs),
         ("Chấm 459901", cham459901_service._cleanup_old_results),
+        ("Chấm 459901-1000-000000000", cham459901_000000000_service._cleanup_old_results),
+        ("Chấm ILO1000", ilo1000_service._cleanup_old_jobs),
         ("Đối chiếu song phương", sp._cleanup_old_results),
+        ("Song phương kênh core ĐẾN", kc_den._cleanup_old_jobs),
+        ("Song phương kênh core ĐI", kc_di._cleanup_old_jobs),
         ("Đối soát CITAD", citad_tmp._cleanup_old_results),
+        # Chuẩn hoá văn bản nhận cùng mốc nhưng tự lùi thêm số ngày lưu phiên
         ("Chuẩn hoá văn bản", vb_format_api._don_file_cu),
-    ):
+        ("Đối chiếu OSB", doi_chieu_osb_job._cleanup_old_results),
+    ]
+
+
+def run_cleanup(cutoff: float | None = None) -> None:
+    """Gọi hàm dọn của từng service. Một service lỗi không được chặn service kia."""
+    cutoff = moc_don_gan_nhat() if cutoff is None else cutoff
+    for ten, ham in _nguon_don():
         try:
             ham(cutoff)
         except Exception as exc:

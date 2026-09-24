@@ -50,6 +50,23 @@ def _fake_db():
 
 
 @pytest.fixture(autouse=True)
+def _doi_chieu_chay_trong_luong(monkeypatch):
+    """Mặc định mọi test chạy pipeline đối chiếu TRONG LUỒNG, không tách tiến trình.
+
+    Tiến trình con import lại module nên không thấy `monkeypatch` của test: test vá
+    `svc.TEMP_DIR` sang thư mục tạm mà chạy tiến trình thật là ghi kết quả vào
+    `data/temp_*` THẬT (đã xảy ra 18/09/2026 — 19 thư mục 459901, đã dọn).
+    Test cần tiến trình thật thì xin fixture `tien_trinh_that`."""
+    monkeypatch.setenv("DOI_CHIEU_TIEN_TRINH", "0")
+
+
+@pytest.fixture
+def tien_trinh_that(monkeypatch):
+    """Bật chạy tách tiến trình thật — chỉ dùng khi test KHÔNG vá biến toàn cục của module."""
+    monkeypatch.delenv("DOI_CHIEU_TIEN_TRINH", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _don_job_ach():
     """Xoá sổ job của CẢ BỐN module đối chiếu trước/sau mỗi test.
 

@@ -133,7 +133,11 @@ async def lifespan(app: FastAPI):
     import asyncio as _asyncio
     from backend.services.time_sync import check_drift_and_log as _check_drift
     _asyncio.get_event_loop().run_in_executor(None, _check_drift)
+    # Đo event loop bị chặn — để dòng "Request chậm" nói được loop có đứng không
+    from backend.core import slow_request as _slow_request
+    _slow_request.bat_do_tre()
     yield
+    await _slow_request.tat_do_tre()
     # Xả nốt dòng audit đang chờ trước khi tiến trình chết
     audit_queue.stop()
     from backend.database import dong_pool as _dong_pool
@@ -163,6 +167,10 @@ app.add_middleware(BodySizeLimitMiddleware, max_bytes=MAX_REQUEST_BYTES)
 from backend.core.security_headers import SecurityHeadersMiddleware
 app.add_middleware(SecurityHeadersMiddleware)
 
+# Ngoài CÙNG (thêm sau chót): đo trọn thời gian của mọi lớp bên trong — kể cả
+# audit, trần kích thước và CORS. Chỉ đọc và ghi log, không đụng vào phản hồi.
+from backend.core.slow_request import SlowRequestMiddleware
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_settings.ALLOWED_ORIGINS,
@@ -170,6 +178,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.add_middleware(SlowRequestMiddleware)
 
 apply_routers(app)
 
@@ -186,6 +196,47 @@ async def _db_error_handler(request, exc):
     return JSONResponse(status_code=503, content={"detail": "Hệ thống bận, vui lòng thử lại"})
 
 
+from backend.core.tien_trinh_doi_chieu import LoiTienTrinhCon  # noqa: E402
+
+_tien_trinh_log = logging.getLogger("doi_chieu.tien_trinh")
+
+
+@app.exception_handler(LoiTienTrinhCon)
+async def _loi_tien_trinh_con(request, exc):
+    # SWIFT recon gọi chay_tach thẳng trong request và chỉ bắt UnknownFileFormat — không có
+    # handler này thì lượt hết bộ nhớ ra 500 trơn, mất câu tiếng Việt (phản biện Opus 21/09).
+    # Các cửa đối chiếu kiểu job tự bắt lỗi trong _run, không đi qua đây.
+    _tien_trinh_log.warning("%s %s: %s", request.method, request.url.path, exc)
+    return JSONResponse(status_code=503, content={"detail": str(exc)})
+
+
 @app.get("/")
 def root():
     return {"message": "PAYMENT CENTER API đang chạy", "docs": "/docs"}
+
+
+# ── Kiểm tra sức khoẻ — KHÔNG cần đăng nhập ───────────────────────────────────
+# Ngoại lệ có chủ đích của "mọi route đều có Depends" (cùng loại với "/"): script
+# khởi động / người vận hành cần biết backend đã lên mà không có tài khoản. Vì công
+# khai nên chỉ hai trường — không đường dẫn, phiên bản hay nội dung lỗi (lỗi vào log).
+# Backup gần nhất và lệch giờ đã có ở màn Nhật ký hệ thống (/api/admin/logs/backup-info,
+# /time-sync — cần menu.logs), không lặp lại ở đây.
+@app.get("/health")
+def health():
+    from pathlib import Path
+    try:
+        # mode=ro: mất file DB thì báo lỗi, KHÔNG lặng lẽ đẻ ra một DB rỗng mới.
+        # Kết nối riêng, không mượn bể: bể cạn thì /health vẫn trả lời ngay thay vì
+        # đứng chờ cùng hàng với request thật (tới _POOL_CHO_GIAY giây).
+        con = sqlite3.connect(Path(DB_PATH).resolve().as_uri() + "?mode=ro", uri=True, timeout=2)
+        try:
+            # Bảng thật chứ không sqlite_master: file 0 byte (bị cắt cụt) SQLite coi là
+            # DB rỗng hợp lệ — sqlite_master không lỗi, báo "ok" trên một DB trắng.
+            con.execute("SELECT 1 FROM user_tttt LIMIT 1").fetchone()
+        finally:
+            con.close()
+    except sqlite3.Error as e:
+        _db_log.error("/health: không đọc được CSDL: %s", e)
+        # 503 để script chỉ cần xem mã HTTP (curl -f) — không phải đọc JSON
+        return JSONResponse(status_code=503, content={"status": "degraded", "db_ok": False})
+    return {"status": "ok", "db_ok": True}

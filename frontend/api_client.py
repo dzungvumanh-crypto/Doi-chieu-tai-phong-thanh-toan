@@ -1,8 +1,9 @@
 """HTTP client kết nối tới FastAPI backend — token lưu per-user qua app.storage.user"""
+import asyncio
 import os
 import httpx
 from typing import Optional, Any, Dict
-from nicegui import app
+from nicegui import app, core
 from dotenv import load_dotenv
 
 load_dotenv(override=True)
@@ -63,9 +64,36 @@ _client = httpx.Client(timeout=httpx.Timeout(10.0))
 _download_client = httpx.Client(timeout=httpx.Timeout(60.0))
 
 
+def _sua_kho_user(sua) -> None:
+    """Gọi `sua(kho)` trên event loop của NiceGUI, với `kho` = app.storage.user.
+
+    Phần lớn hàm trong file này chạy trong `asyncio.to_thread`. Sửa storage từ luồng
+    phụ thì NiceGUI lên lịch việc ghi xuống đĩa từ sai luồng → `RuntimeError: There
+    is no current event loop` (1.638 lần trong logs/frontend.log tới 23/09/2026), còn
+    khi không nổ thì là tạo task từ luồng khác — không an toàn.
+
+    Kho phải tra NGAY ở luồng gọi: nó dựa vào contextvar của request, thứ mà
+    `to_thread` có chép sang còn callback trên loop thì không. Việc sửa đi vào hàng
+    đợi của loop TRƯỚC khi hàm trong luồng trả về, nên chạy xong trước khi coroutine
+    đang `await to_thread(...)` chạy tiếp — bên gọi đọc lại là thấy giá trị mới.
+    """
+    kho = app.storage.user
+    try:
+        asyncio.get_running_loop()
+        tren_loop = True
+    except RuntimeError:
+        tren_loop = False
+    if tren_loop or core.loop is None:
+        sua(kho)
+    else:
+        core.loop.call_soon_threadsafe(sua, kho)
+
+
 def set_token(token: str, user: dict):
-    app.storage.user["token"] = token
-    app.storage.user["user_data"] = user
+    def _ghi(kho):
+        kho["token"] = token
+        kho["user_data"] = user
+    _sua_kho_user(_ghi)
 
 
 def get_current_user() -> Optional[Dict]:
@@ -73,9 +101,10 @@ def get_current_user() -> Optional[Dict]:
 
 
 def clear_auth():
-    app.storage.user.pop("token", None)
-    app.storage.user.pop("user_data", None)
-    app.storage.user.pop("features", None)
+    def _xoa(kho):
+        for k in ("token", "user_data", "features"):
+            kho.pop(k, None)
+    _sua_kho_user(_xoa)
 
 
 def load_my_features() -> None:
@@ -83,10 +112,10 @@ def load_my_features() -> None:
     features=None → admin (all-access). features=[] → không có nhóm nào.
     """
     try:
-        result = get("/api/auth/my-features")
-        app.storage.user["features"] = result.get("features")  # None hoặc list[str]
+        features = get("/api/auth/my-features").get("features")  # None hoặc list[str]
     except Exception:
-        app.storage.user["features"] = []  # safe fallback
+        features = []  # safe fallback
+    _sua_kho_user(lambda kho: kho.__setitem__("features", features))
 
 
 def has_feature(code: str) -> bool:
@@ -137,8 +166,8 @@ def logout_session() -> None:
             headers=_headers(),
             json={},
         )
-    except Exception:
-        pass
+    except httpx.HTTPError:
+        pass        # token có thể đã vô hiệu / backend không trả lời — phiên vẫn bị xoá ở dưới
 
 
 def _headers():

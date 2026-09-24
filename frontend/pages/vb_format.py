@@ -185,6 +185,29 @@ async def vb_format_page():
                                 for w in bc["luu_y"]:
                                     ui.label("• " + w).classes("text-xs text-amber-900")
 
+                        # ── Soát thứ tự đánh số ──
+                        # Chỉ báo: đánh lại số là phải sửa theo mọi câu viện dẫn
+                        # "khoản 3 Điều 5" — phần mềm không làm được việc đó.
+                        if bc.get("soat_so"):
+                            with ui.column().classes(
+                                "w-full mt-4 gap-1 bg-red-50 border border-red-300 "
+                                "rounded-lg p-3"
+                            ):
+                                with ui.row().classes("items-center gap-1"):
+                                    ui.icon("format_list_numbered").classes("text-red-700")
+                                    ui.label(
+                                        f"Nghi đánh số sai thứ tự — {len(bc['soat_so'])} chỗ, "
+                                        "cần tự kiểm tra (phần mềm KHÔNG sửa)"
+                                    ).classes("font-semibold text-red-900 text-sm")
+                                for x in bc["soat_so"][:30]:
+                                    ui.label(
+                                        f"• Đoạn {x['stt']}: {x['loi']} — «{x['trich']}»"
+                                    ).classes("text-xs text-red-900")
+                                if len(bc["soat_so"]) > 30:
+                                    ui.label(
+                                        f"… và {len(bc['soat_so']) - 30} chỗ khác"
+                                    ).classes("text-xs text-red-900 italic")
+
                         # ── Sửa chung ──
                         if bc["sua_chung"]:
                             with _card("Sửa chung cho cả văn bản (không bôi màu)"):
@@ -460,8 +483,10 @@ async def vb_format_page():
                                     _o_bat("chung", "go_gach_chan_the_thuc",
                                            "Bỏ gạch chân ở dòng thể thức", cfg)
                                     _o_bat("chung", "ve_duong_ke_ngang",
-                                           "Vẽ đường kẻ ngang dưới Tiêu ngữ / tên đơn vị / trích yếu",
-                                           cfg)
+                                           "Vẽ đường kẻ ngang dưới Tiêu ngữ / tên đơn vị / trích yếu "
+                                           "(vạch có sẵn: chỉnh lại độ dài)", cfg)
+                                    _o_bat("chung", "chuan_bang_kinh_gui",
+                                           "Bảng Kính gửi / Kính trình: tính lại bề ngang cột", cfg)
                                     _o_bat("chung", "bo_ngat_trang_thu_cong",
                                            "Bỏ ngắt trang thủ công", cfg)
                                 ui.label(
@@ -573,9 +598,15 @@ async def vb_format_page():
                                        cfg)
                                 _o_bat("danh_so", "chuan_muc_la_ma",
                                        "Chuẩn hoá mục La Mã «I)» «I/» → «I.»", cfg)
+                                _o_bat("danh_so", "soat_thu_tu",
+                                       "Soát thứ tự Điều / khoản / điểm (nhảy số, trùng số) — "
+                                       "chỉ báo trong kết quả, không tự đánh lại", cfg)
                                 _o_bat("danh_so", "bo_bullet_tu_dong",
                                        "Chuyển danh sách chấm tròn tự động của Word thành "
                                        "gạch đầu dòng gõ tay", cfg)
+                                _o_bat("danh_so", "dau_cach_sau_so",
+                                       "Sau số / dấu đầu dòng tự động là MỘT dấu cách "
+                                       "(như số gõ tay «1. », «a) », «- »)", cfg)
                                 _o_bat("danh_so", "bo_so_tu_dong",
                                        "Chuyển danh sách ĐÁNH SỐ tự động của Word thành số gõ tay",
                                        cfg)

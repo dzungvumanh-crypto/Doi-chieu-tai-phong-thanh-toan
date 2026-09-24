@@ -12,7 +12,7 @@ from backend.services.duty_staff_service import get_all_staff
 from backend.services.duty_rules import resolve_sp_role
 from backend.services.duty_scheduler_engine import (
     KENH_VONG_XOAY, dieu_chinh_vong_xoay, nv_cua_ca,
-    hoan_vong_xoay_cho_ca, hoan_vong_xoay_cho_ngay,
+    hoan_vong_xoay_cho_ca,
 )
 
 _VN_TZ = timezone(timedelta(hours=7))

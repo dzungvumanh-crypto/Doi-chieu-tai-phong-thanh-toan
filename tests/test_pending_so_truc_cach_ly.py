@@ -25,7 +25,7 @@ CREATE TABLE handovers (id INTEGER PRIMARY KEY, department_id INTEGER);
 CREATE TABLE document_entries (
     id INTEGER PRIMARY KEY, handover_id INTEGER, staff_id INTEGER,
     entry_status TEXT, entered_by_id INTEGER, sheet_count INTEGER DEFAULT 0,
-    transaction_date TEXT, notes TEXT
+    transaction_date TEXT, notes TEXT, borrow_reason TEXT
 );
 CREATE TABLE entry_change_logs (
     id INTEGER PRIMARY KEY, entry_id INTEGER, action TEXT, timestamp DATETIME

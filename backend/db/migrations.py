@@ -11,6 +11,191 @@ from datetime import datetime
 from backend.database import DB_PATH
 
 
+# ── Khảo sát — 2026-09-11 ─────────────────────────────────────────────────────
+# Một định nghĩa, dùng ở CẢ _create_tables() (cài mới) lẫn schema_migrations (DB
+# đang chạy). Khối Quizz chép hai bản giống hệt nhau — sửa một bên quên bên kia
+# là máy cài mới và máy nâng cấp có schema khác nhau mà không ai hay.
+_SURVEY_TABLES = [
+    # status: draft | published | closed. "Chưa mở" / "quá hạn" suy ra từ
+    # start_at / deadline (xem survey_service.trang_thai) — không lưu.
+    # start_at / deadline là TEXT khuôn 'YYYY-MM-DD HH:MM:SS' để so chuỗi trong SQL.
+    """CREATE TABLE IF NOT EXISTS surveys (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        title        VARCHAR(300) NOT NULL,
+        description  TEXT,
+        status       TEXT NOT NULL DEFAULT 'draft',
+        is_anonymous INTEGER NOT NULL DEFAULT 0,
+        allow_edit   INTEGER NOT NULL DEFAULT 0,
+        start_at     TEXT,
+        deadline     TEXT,
+        created_by   INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+        created_at   TEXT NOT NULL,
+        updated_at   TEXT,
+        published_at TEXT,
+        closed_at    TEXT
+    )""",
+    # options: JSON list chuỗi. Câu trả lời lưu SỐ THỨ TỰ lựa chọn, nên câu hỏi
+    # bị khoá sửa khi đã có người trả lời (xem survey_service.dau_van_tay_cau_hoi).
+    """CREATE TABLE IF NOT EXISTS survey_questions (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        survey_id       INTEGER NOT NULL REFERENCES surveys(id) ON DELETE CASCADE,
+        order_no        INTEGER NOT NULL,
+        qtype           TEXT NOT NULL,
+        title           TEXT NOT NULL,
+        description     TEXT,
+        required        INTEGER NOT NULL DEFAULT 0,
+        options         TEXT,
+        scale_min       INTEGER NOT NULL DEFAULT 1,
+        scale_max       INTEGER NOT NULL DEFAULT 5,
+        scale_min_label TEXT,
+        scale_max_label TEXT
+    )""",
+    """CREATE TABLE IF NOT EXISTS survey_target_groups (
+        survey_id INTEGER NOT NULL REFERENCES surveys(id) ON DELETE CASCADE,
+        group_id  INTEGER NOT NULL REFERENCES user_groups(id) ON DELETE CASCADE,
+        PRIMARY KEY (survey_id, group_id)
+    )""",
+    # Danh sách người nhận CHỐT lúc phát hành — không tra nhóm lúc chạy
+    # (lý do: survey_service.dong_bo_nguoi_nhan).
+    """CREATE TABLE IF NOT EXISTS survey_recipients (
+        survey_id INTEGER NOT NULL REFERENCES surveys(id) ON DELETE CASCADE,
+        staff_id  INTEGER NOT NULL REFERENCES user_tttt(id) ON DELETE CASCADE,
+        added_at  TEXT,
+        PRIMARY KEY (survey_id, staff_id)
+    )""",
+    # Mỗi người mỗi khảo sát MỘT bài — sửa câu trả lời là ghi đè, không thêm bài.
+    """CREATE TABLE IF NOT EXISTS survey_responses (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        survey_id    INTEGER NOT NULL REFERENCES surveys(id) ON DELETE CASCADE,
+        staff_id     INTEGER NOT NULL REFERENCES user_tttt(id) ON DELETE CASCADE,
+        submitted_at TEXT NOT NULL,
+        updated_at   TEXT,
+        UNIQUE (survey_id, staff_id)
+    )""",
+    """CREATE TABLE IF NOT EXISTS survey_answers (
+        response_id INTEGER NOT NULL REFERENCES survey_responses(id) ON DELETE CASCADE,
+        question_id INTEGER NOT NULL REFERENCES survey_questions(id) ON DELETE CASCADE,
+        value       TEXT NOT NULL,
+        PRIMARY KEY (response_id, question_id)
+    )""",
+    "CREATE INDEX IF NOT EXISTS ix_survey_questions_sv  ON survey_questions(survey_id, order_no)",
+    "CREATE INDEX IF NOT EXISTS ix_survey_recipients_st ON survey_recipients(staff_id)",
+    "CREATE INDEX IF NOT EXISTS ix_surveys_creator      ON surveys(created_by)",
+]
+
+
+# ── Thi đua khen thưởng — 2026-09-15 ───────────────────────────────────────────
+# Một định nghĩa dùng ở cả _create_tables() lẫn schema_migrations (lý do: xem
+# khối Khảo sát ngay trên). "Đơn vị" theo dõi 3 mức: toàn Trung tâm Thanh toán
+# (thi_dua_don_vi.department_id NULL), từng phòng (department_id có giá trị),
+# từng cá nhân (thi_dua_ca_nhan, khoá theo staff_id).
+_THI_DUA_TABLES = [
+    """CREATE TABLE IF NOT EXISTS thi_dua_don_vi (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        year              INTEGER NOT NULL,
+        department_id     INTEGER REFERENCES departments(id) ON DELETE SET NULL,
+        danh_hieu         TEXT NOT NULL,
+        so_quyet_dinh     TEXT,
+        ngay_quyet_dinh   DATE,
+        co_quan_ban_hanh  TEXT,
+        ghi_chu           TEXT,
+        created_by        INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+        created_at        DATETIME NOT NULL,
+        updated_at        DATETIME NOT NULL
+    )""",
+    # cap: dang | chuyen_mon | cong_doan — backend.core.enums.ThiDuaCap.
+    """CREATE TABLE IF NOT EXISTS thi_dua_ca_nhan (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        staff_id          INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+        year              INTEGER NOT NULL,
+        cap               TEXT NOT NULL CHECK(cap IN ('dang','chuyen_mon','cong_doan')),
+        danh_hieu         TEXT NOT NULL,
+        so_quyet_dinh     TEXT,
+        ngay_quyet_dinh   DATE,
+        co_quan_ban_hanh  TEXT,
+        ghi_chu           TEXT,
+        created_by        INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+        created_at        DATETIME NOT NULL,
+        updated_at        DATETIME NOT NULL
+    )""",
+    # File quyết định công nhận lưu thẳng BLOB — quan hệ 1:1 với sáng kiến, không
+    # cần bảng đính kèm đa hình kiểu hr_attachments.
+    """CREATE TABLE IF NOT EXISTS thi_dua_sang_kien (
+        id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+        staff_id           INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+        year               INTEGER NOT NULL,
+        ten_sang_kien      TEXT NOT NULL,
+        so_quyet_dinh      TEXT,
+        ngay_quyet_dinh    DATE,
+        co_quan_cong_nhan  TEXT,
+        ghi_chu            TEXT,
+        file_name          TEXT,
+        file_mime          TEXT,
+        file_size          INTEGER,
+        file_content       BLOB,
+        created_by         INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+        created_at         DATETIME NOT NULL,
+        updated_at         DATETIME NOT NULL
+    )""",
+    "CREATE INDEX IF NOT EXISTS ix_thi_dua_don_vi_year     ON thi_dua_don_vi(year)",
+    "CREATE INDEX IF NOT EXISTS ix_thi_dua_ca_nhan_staff   ON thi_dua_ca_nhan(staff_id)",
+    "CREATE INDEX IF NOT EXISTS ix_thi_dua_ca_nhan_year    ON thi_dua_ca_nhan(year)",
+    "CREATE INDEX IF NOT EXISTS ix_thi_dua_sang_kien_staff ON thi_dua_sang_kien(staff_id)",
+    "CREATE INDEX IF NOT EXISTS ix_thi_dua_sang_kien_year  ON thi_dua_sang_kien(year)",
+]
+
+
+# ── Xếp loại lao động — 2026-09-17 ─────────────────────────────────────────────
+# Một định nghĩa dùng ở cả _create_tables() lẫn schema_migrations (lý do: xem
+# khối Khảo sát ở đầu file). `loai`: lao_dong | tin_nhiem | cap_uy — backend.
+# core.enums.LoaiXepLoai. `ky`: nam | quy — quy đi kèm số quý (1-4), nam thì
+# quy luôn NULL (backend.schemas.xep_loai.XepLoaiIn ép khi validate).
+# `department_id`/`chuc_vu` là ẢNH CHỤP phòng ban + chức danh, chức vụ của cán
+# bộ TẠI THỜI ĐIỂM xếp loại (ghi lúc tạo/nhập Excel, xem
+# backend/api/xep_loai.py::_snapshot_staff) — KHÔNG suy ra từ user_tttt lúc
+# xem báo cáo. Cán bộ chuyển phòng hoặc lên/xuống chức sau đó không được làm
+# đổi phòng/chức vụ của các xếp loại năm cũ (phát hiện qua review PR #120
+# trước khi merge, lúc bảng còn rỗng nên sửa thẳng schema, không cần migration
+# backfill). `chuc_vu` lưu nguyên giá trị `user_tttt.role` (backend.core.enums.
+# StaffRole) tại thời điểm đó — dùng để tách báo cáo "cán bộ có chức danh" ra
+# khỏi "cán bộ" nói chung, đúng yêu cầu gốc của tính năng.
+_XEP_LOAI_TABLES = [
+    """CREATE TABLE IF NOT EXISTS xep_loai_lao_dong (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        staff_id      INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+        department_id INTEGER REFERENCES departments(id) ON DELETE SET NULL,
+        chuc_vu       TEXT,
+        loai          TEXT NOT NULL CHECK(loai IN ('lao_dong','tin_nhiem','cap_uy')),
+        ky            TEXT NOT NULL CHECK(ky IN ('nam','quy')),
+        nam           INTEGER NOT NULL,
+        quy           INTEGER,
+        ket_qua       TEXT NOT NULL,
+        ghi_chu       TEXT,
+        created_by    INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+        created_at    DATETIME NOT NULL,
+        updated_at    DATETIME NOT NULL
+    )""",
+    "CREATE INDEX IF NOT EXISTS ix_xep_loai_staff   ON xep_loai_lao_dong(staff_id)",
+    "CREATE INDEX IF NOT EXISTS ix_xep_loai_nam     ON xep_loai_lao_dong(nam)",
+    "CREATE INDEX IF NOT EXISTS ix_xep_loai_loai    ON xep_loai_lao_dong(loai)",
+    # ix_xep_loai_dept/chucvu KHÔNG đứng ở đây dù cùng logic — _create_tables()
+    # chạy list này KHÔNG bọc try/except (khác schema_migrations bên dưới), nên
+    # trên DB đã tạo bảng từ TRƯỚC khi có 2 cột department_id/chuc_vu, CREATE
+    # TABLE IF NOT EXISTS là no-op rồi CREATE INDEX trên cột chưa tồn tại sẽ
+    # crash cứng ngay từ _create_tables(), chặn khởi động vĩnh viễn (tự dính lỗi
+    # này 2026-09-21). Định nghĩa 2 index đó nằm trong schema_migrations, xếp
+    # SAU 2 câu ALTER TABLE thêm cột — chỗ duy nhất đảm bảo cột đã tồn tại ở cả
+    # hai trường hợp (cài mới lẫn nâng cấp) trước khi tạo index.
+    # Chặn trùng ở tầng CSDL — backend/api/xep_loai.py::_trung_lap() chỉ kiểm
+    # tra rồi mới ghi (check-then-act), hai request cùng lúc lý thuyết vẫn lách
+    # qua được. `quy` NULL với năm nên không dùng thẳng UNIQUE(staff_id, loai,
+    # nam, quy) — SQLite coi nhiều NULL là khác nhau, mất tác dụng đúng lúc cần
+    # nhất (xếp loại theo NĂM). Index trên biểu thức COALESCE(quy,0) né được.
+    "CREATE UNIQUE INDEX IF NOT EXISTS ix_xep_loai_unique "
+    "ON xep_loai_lao_dong(staff_id, loai, nam, COALESCE(quy, 0))",
+]
+
+
 # ── Tạo tables (fresh install) ────────────────────────────────────────────────
 def _create_tables(db_path: str):
     """Tạo tất cả bảng nếu chưa có — idempotent."""
@@ -463,6 +648,9 @@ def _create_tables(db_path: str):
             is_correct   INTEGER,
             time_ms      INTEGER
         )""",
+        *_SURVEY_TABLES,
+        *_THI_DUA_TABLES,
+        *_XEP_LOAI_TABLES,
         # ── Quản lý nhân sự — 2026-08-28 ──────────────────────────────────────
         # `recruit_date` cố ý KHÔNG có ở đây: "Ngày tuyển dụng" chính là "Ngày vào
         # ngành" đã nằm ở `user_tttt.join_industry_date` — một mốc thì một cột.
@@ -1759,6 +1947,31 @@ def _ensure_indexes():
                     updated_at = datetime('now','+7 hours')
                 WHERE attendances.status = 'auto';
             END""",
+        # ── Khảo sát — 2026-09-11 (định nghĩa ở _SURVEY_TABLES đầu file) ──
+        *_SURVEY_TABLES,
+        # ── Thi đua khen thưởng — 2026-09-15 (định nghĩa ở _THI_DUA_TABLES đầu file) ──
+        *_THI_DUA_TABLES,
+        # ── Xếp loại lao động — 2026-09-21: thêm department_id/chuc_vu (ảnh chụp
+        # lúc xếp loại) cho DB đã tạo bảng xep_loai_lao_dong từ trước khi có 2 cột
+        # này. PHẢI đứng TRƯỚC *_XEP_LOAI_TABLES ngay dưới — khối đó có CREATE
+        # INDEX trên cả 2 cột, chạy trước khi cột tồn tại sẽ báo "no such column"
+        # (không nằm trong danh sách lỗi được nuốt, chặn khởi động — đã tự dính
+        # lỗi này khi thêm cột nhưng quên viết ALTER TABLE cho DB cũ).
+        "ALTER TABLE xep_loai_lao_dong ADD COLUMN department_id "
+        "INTEGER REFERENCES departments(id) ON DELETE SET NULL",
+        "ALTER TABLE xep_loai_lao_dong ADD COLUMN chuc_vu TEXT",
+        "CREATE INDEX IF NOT EXISTS ix_xep_loai_dept   ON xep_loai_lao_dong(department_id)",
+        "CREATE INDEX IF NOT EXISTS ix_xep_loai_chucvu ON xep_loai_lao_dong(chuc_vu)",
+        # ── Xếp loại lao động — 2026-09-17 (định nghĩa ở _XEP_LOAI_TABLES đầu file) ──
+        *_XEP_LOAI_TABLES,
+        # ── Ghi chú ô bàn giao — 2026-09-21 ──
+        # Nội dung ở cột `notes` có sẵn từ đầu (chưa từng được ghi). Hai cột dưới lưu
+        # người/giờ sửa gần nhất; lịch sử đầy đủ ở entry_change_logs (action note_edited).
+        # Thêm cột ở đây thì phải thêm vào bản dựng lại document_entries cuối file.
+        "ALTER TABLE document_entries ADD COLUMN note_by_id INTEGER REFERENCES user_tttt(id)",
+        "ALTER TABLE document_entries ADD COLUMN note_at DATETIME",
+        # Quyền handovers.edit_note KHÔNG cấp sẵn: người dùng chốt QTV tự tick ở màn
+        # Phân quyền chức năng (21/09/2026). Sau deploy chưa ai viết được ghi chú.
     ]
     _mig_log = logging.getLogger(__name__)
 
@@ -1982,7 +2195,9 @@ def _ensure_indexes():
                         confirmed_at DATETIME,
                         borrowed_at DATETIME,
                         borrow_reason TEXT,
-                        staff_id INTEGER REFERENCES user_tttt(id)
+                        staff_id INTEGER REFERENCES user_tttt(id),
+                        note_by_id INTEGER REFERENCES user_tttt(id),
+                        note_at DATETIME
                     )
                 """)
                 _cur_de.execute("INSERT INTO document_entries SELECT * FROM _de_bak")
@@ -2212,6 +2427,125 @@ def _ensure_indexes():
     finally:
         _raw_dc3.close()
 
+    # ── ADD COLUMN session_id cho doi_chieu_citad_nostro_history (2026-09-11) ──
+    # Đặt TRƯỚC khối rebuild sessions ngay dưới đây — backfill bên trong khối đó
+    # cần cột này đã tồn tại. ADD COLUMN thường (không rebuild), an toàn chạy mỗi
+    # lần khởi động — tự bỏ qua nếu cột đã có (bắt lỗi "duplicate column").
+    _raw_nch = sqlite3.connect(DB_PATH)
+    try:
+        _raw_nch.execute(
+            "ALTER TABLE doi_chieu_citad_nostro_history ADD COLUMN session_id "
+            "INTEGER REFERENCES doi_chieu_citad_nostro_sessions(id) ON DELETE SET NULL"
+        )
+        _raw_nch.commit()
+    except Exception as _nch_exc:
+        if "duplicate column" not in str(_nch_exc).lower():
+            raise
+    finally:
+        _raw_nch.close()
+
+    # ── Rebuild doi_chieu_citad_nostro_sessions: khoá `ky` riêng → `id` (2026-09-11) ──
+    # Nostro/Vostro ban đầu port module CITAD-PaymentHub theo đúng mô hình "1 bản
+    # ghi CHUNG/kỳ" (ky TEXT PRIMARY KEY) — xác nhận thực tế nghiệp vụ (11/09/2026):
+    # NHIỀU NGƯỜI cần giữ bảng RIÊNG cho CÙNG 1 kỳ, không ai ghi đè ai — đúng bài
+    # toán Phòng Thanh toán đã giải bằng 3 lần rebuild ở trên. Áp dụng thẳng
+    # SCHEMA CUỐI của PTT (id PK, bỏ hẳn UNIQUE) — không cần đi qua các bước
+    # trung gian (UNIQUE(ngay,staff_id) rồi UNIQUE(ngay,created_by)) vì Nostro
+    # chưa từng cần "1 người 1 bảng/kỳ", đi thẳng luôn.
+    #
+    # KHÁC PTT: không có cột `status` — Nostro không có khái niệm "chốt bản
+    # cuối"/khoá (chưa ai yêu cầu tính năng đó cho module này).
+    _raw_ncs = sqlite3.connect(DB_PATH)
+    _raw_ncs.isolation_level = None
+    try:
+        _cur_ncs = _raw_ncs.cursor()
+        _cur_ncs.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='doi_chieu_citad_nostro_sessions'"
+        )
+        if _cur_ncs.fetchone():
+            _cur_ncs.execute("PRAGMA table_info(doi_chieu_citad_nostro_sessions)")
+            _ncs_cols = {row[1] for row in _cur_ncs.fetchall()}
+            if "id" not in _ncs_cols:  # chưa rebuild lần nào — bảng vẫn khoá theo `ky`
+                _mig_log_ncs = logging.getLogger(__name__)
+                _mig_log_ncs.info(
+                    "Rebuilding doi_chieu_citad_nostro_sessions (khoá ky riêng → id, "
+                    "cho phép nhiều bảng/kỳ)..."
+                )
+                _cur_ncs.execute("PRAGMA foreign_keys = OFF")
+                _cur_ncs.execute("PRAGMA legacy_alter_table = ON")
+                _cur_ncs.execute("BEGIN EXCLUSIVE")
+                try:
+                    _cur_ncs.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type='table' "
+                        "AND name='_doi_chieu_citad_nostro_sessions_bak'"
+                    )
+                    if _cur_ncs.fetchone():
+                        _cur_ncs.execute("DROP TABLE _doi_chieu_citad_nostro_sessions_bak")
+                    _cur_ncs.execute(
+                        "ALTER TABLE doi_chieu_citad_nostro_sessions "
+                        "RENAME TO _doi_chieu_citad_nostro_sessions_bak"
+                    )
+                    _cur_ncs.execute("""
+                        CREATE TABLE doi_chieu_citad_nostro_sessions (
+                            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                            ky          TEXT    NOT NULL,
+                            data        TEXT    NOT NULL,
+                            updated_at  DATETIME,
+                            updated_by  INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL,
+                            created_by  INTEGER REFERENCES user_tttt(id) ON DELETE SET NULL
+                        )
+                    """)
+                    # Bảng cũ CHƯA từng có `id` — không cần giữ id cũ (khác lần
+                    # rebuild PTT thứ 3, lúc đó id cũ đã là khoá ngoại của
+                    # history). Mỗi dòng cũ (1 dòng/kỳ) trở thành đúng 1 bảng,
+                    # id tự sinh mới.
+                    _cur_ncs.execute("""
+                        INSERT INTO doi_chieu_citad_nostro_sessions
+                            (ky, data, updated_at, updated_by, created_by)
+                        SELECT ky, data, updated_at, updated_by, created_by
+                        FROM _doi_chieu_citad_nostro_sessions_bak
+                    """)
+                    _cur_ncs.execute("DROP TABLE _doi_chieu_citad_nostro_sessions_bak")
+
+                    # Backfill session_id cho lịch sử cũ — CHỈ Ở ĐÂY, trong CÙNG
+                    # transaction vừa rebuild, KHÔNG đặt thành khối riêng chạy
+                    # mỗi lần khởi động (review PR #90: bản đầu đặt backfill
+                    # NGOÀI transaction này, thành khối riêng không có điều
+                    # kiện canh — chạy lại ở MỌI lần khởi động sau. Hậu quả đã
+                    # tái hiện thật: xoá 1 bảng → FK ON DELETE SET NULL đặt
+                    # session_id lịch sử của bảng đó về NULL [đúng, cố ý] →
+                    # khởi động lại → backfill chạy lại, subquery
+                    # `WHERE s.ky = history.ky` gán NHẦM lịch sử mồ côi đó
+                    # sang 1 bảng KHÁC bất kỳ cùng `ky` [sai — lịch sử của
+                    # người A bị gắn sang bảng của người B]). Đặt trong khối
+                    # `if "id" not in _ncs_cols` này thì CHỈ chạy đúng 1 lần
+                    # trong đời DB (điều kiện đó chỉ đúng đúng 1 lần), và tại
+                    # THỜI ĐIỂM NÀY mỗi `ky` cũ chỉ có ĐÚNG 1 bảng (bất biến
+                    # trước khi rebuild) nên khớp đúng chắc chắn — không còn
+                    # nguy cơ gán nhầm ở lần khởi động sau.
+                    _cur_ncs.execute("""
+                        UPDATE doi_chieu_citad_nostro_history
+                        SET session_id = (
+                            SELECT id FROM doi_chieu_citad_nostro_sessions s
+                            WHERE s.ky = doi_chieu_citad_nostro_history.ky
+                        )
+                        WHERE session_id IS NULL
+                    """)
+
+                    _cur_ncs.execute("COMMIT")
+                    _mig_log_ncs.info("doi_chieu_citad_nostro_sessions rebuild hoàn tất")
+                except Exception as _ncs_err:
+                    _cur_ncs.execute("ROLLBACK")
+                    logging.getLogger(__name__).error(
+                        "doi_chieu_citad_nostro_sessions rebuild thất bại: %s", _ncs_err
+                    )
+                    raise
+                finally:
+                    _cur_ncs.execute("PRAGMA legacy_alter_table = OFF")
+                    _cur_ncs.execute("PRAGMA foreign_keys = ON")
+    finally:
+        _raw_ncs.close()
+
     index_stmts = [
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_entry_staff_date ON document_entries(handover_id, staff_id, transaction_date)",
         "CREATE INDEX IF NOT EXISTS ix_source_users_dept      ON source_users(department_id)",
@@ -2289,6 +2623,43 @@ def _ensure_indexes():
         # khiến mỗi đơn bat_buoc quét lại toàn bộ leave_records, chi phí tăng
         # theo bình phương số dòng thay vì tuyến tính.
         "CREATE INDEX IF NOT EXISTS ix_leave_records_adj ON leave_records(adjusts_leave_id)",
+        # ── Đối chiếu CITAD - PaymentHub N&V — 2026-09-11 ──────────────────────
+        # doi_chieu_citad_history KHÔNG có bản sao chép cho module Nostro/Vostro:
+        # bảng doi_chieu_citad_nostro_history thiếu hẳn index theo `ky`, trong khi
+        # get_reconciliation_history()/get_reconciliation_days() (doi_chieu_citad_nostro_service.py)
+        # đều lọc/join theo `ky` — mỗi lần mở tab "Lịch sử" hay tải 1 bản cũ là
+        # quét toàn bảng, càng nhiều lượt lưu (mọi người trong phòng, mọi kỳ)
+        # càng chậm dần.
+        "CREATE INDEX IF NOT EXISTS ix_doi_chieu_citad_nostro_history_ky ON doi_chieu_citad_nostro_history(ky)",
+        # mirror ix_doi_chieu_citad_history_session_id (PTT) — get_reconciliation_history()
+        # và so_lan_luu trong get_reconciliation_days() lọc/đếm theo session_id.
+        "CREATE INDEX IF NOT EXISTS ix_doi_chieu_citad_nostro_history_session_id ON doi_chieu_citad_nostro_history(session_id)",
+        # ── Dọn index thời ORM cũ — 2026-09-23 (cùng loại với ix_ksnb_staff_* ở trên) ──
+        # Không dòng mã nào còn tạo chúng; chúng nằm lại trong DB từ thời SQLAlchemy.
+        # Hai nhóm, đều không câu truy vấn nào cần:
+        #   - index trên khoá chính INTEGER (tức rowid) — SQLite tra thẳng rowid;
+        #   - bản sao y hệt của index mà danh sách trên vẫn tạo (ghi chú bên phải).
+        # Mỗi cái bắt SQLite ghi thêm một cây B mỗi lần thêm/sửa dòng. CỐ Ý GIỮ các index
+        # trùng ràng buộc UNIQUE (ix_public_holidays_date, ix_duty_staff_meta_user,
+        # ux_dtbb_reports_date_branch): DB tạo từ bản cũ có thể thiếu ràng buộc trong
+        # bảng, khi đó chính index đó đang giữ tính duy nhất.
+        "DROP INDEX IF EXISTS ix_departments_id",
+        "DROP INDEX IF EXISTS ix_source_users_id",
+        "DROP INDEX IF EXISTS ix_bundle_groups_id",
+        "DROP INDEX IF EXISTS ix_leave_records_id",
+        "DROP INDEX IF EXISTS ix_bundles_id",
+        "DROP INDEX IF EXISTS ix_bundle_items_id",
+        "DROP INDEX IF EXISTS ix_delegation_records_id",
+        "DROP INDEX IF EXISTS ix_entry_change_logs_id",
+        "DROP INDEX IF EXISTS ix_public_holidays_id",
+        "DROP INDEX IF EXISTS ix_login_logs_id",
+        "DROP INDEX IF EXISTS ix_leave_action_logs_id",
+        "DROP INDEX IF EXISTS ix_delegation_records_giam_doc_id",      # = ix_delegation_gd
+        "DROP INDEX IF EXISTS ix_delegation_records_pho_giam_doc_id",  # = ix_delegation_pgd
+        "DROP INDEX IF EXISTS ix_entry_change_logs_performed_by_id",   # = ix_entry_change_logs_actor
+        "DROP INDEX IF EXISTS ix_entry_change_logs_entry_id",          # = ix_entry_change_logs_entry
+        "DROP INDEX IF EXISTS ix_leave_action_logs_leave_id",          # = ix_leave_action_logs
+        "DROP INDEX IF EXISTS ix_login_logs_created_at",               # = ix_login_logs_created
     ]
     conn = sqlite3.connect(DB_PATH, timeout=30)
     try:

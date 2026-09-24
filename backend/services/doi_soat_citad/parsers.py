@@ -106,9 +106,18 @@ def parse_citad_xls(filepath, ngay_cham=None):
     loai_tien_ref = [None]  # truyen loai_tien (VND/USD/EUR) tu sheet dau sang cac sheet sau —
                              # thieu truoc day (khac chieu_ref/cong_ref): sheet 2+ luon bi coi
                              # la VND du sheet dau la ngoai te, sai ca cot doc so tien lan nhan
+    # Truyen "ngan hang gui dang doc" tu sheet nay sang sheet sau — bug that
+    # xac nhan 16/09/2026 (txid=10009779, dong 2 trieu): Crystal Reports khi
+    # chia 1 nhom qua NHIEU SHEET (het dong Excel cho phep giua chung) KHONG
+    # lap lai dong tieu de ngan hang o dau sheet moi — dong DAU TIEN cua
+    # sheet moi (that ra van thuoc dung nhom cu) bi "mat dau" ngan hang neu
+    # bien nay reset ve rong moi sheet (khac han chieu_ref/cong_ref o tren la
+    # HANG SO cho ca file, day la trang thai CUOI CUNG cua sheet truoc, can
+    # ke thua dung nhu vay).
+    nh_gui_ref = ['']
     try:
         for shi, ws in enumerate(sheets):
-            rows = _parse_sheet(ws, filepath, shi == 0, chieu_ref, cong_ref, ngay_ref, loai_tien_ref)
+            rows = _parse_sheet(ws, filepath, shi == 0, chieu_ref, cong_ref, ngay_ref, loai_tien_ref, nh_gui_ref)
             rows_out += rows
     finally:
         # Đóng SAU khi đọc xong toàn bộ ô — read_only mode đọc trực tiếp
@@ -125,7 +134,36 @@ def parse_citad_xls(filepath, ngay_cham=None):
     return rows_out, None
 
 
-def _parse_sheet(ws, filepath, is_first, chieu_ref=None, cong_ref=None, ngay_ref=None, loai_tien_ref=None):
+# Regex nhận diện dòng "tiêu đề nhóm ngân hàng gửi" trong file CITAD chiều
+# Đến — dạng "<6-9 chữ số> - <tên NH>". CHỈ bắt theo MÃ SỐ đầu dòng, KHÔNG
+# dựa vào nội dung tên ngân hàng (xác nhận thực tế 16/09/2026: tên viết
+# không nhất quán "NH..."/"Ngân hàng..." giữa các dòng, có lúc viết liền
+# "NHTMCP..."). Sau dấu "-" phải là 1 ký tự KHÔNG PHẢI chữ số/khoảng trắng
+# (chữ cái bất kỳ, có dấu hay không) — để KHÔNG khớp nhầm 1 dòng số tiền
+# dạng "12345678 - 500000" (không phải dòng nhóm).
+_RE_BANK_GROUP = re.compile(r'^(\d{6,9})\s*-\s*[^\d\s]')
+
+
+def _extract_bank_group(ws, i, i_so_gd):
+    """Đọc dòng `i`, xem có phải dòng "tiêu đề nhóm ngân hàng gửi" không.
+    Thử lần lượt cột i_so_gd-1, i_so_gd, i_so_gd+1 — xác nhận thực tế: mã
+    ngân hàng nằm ở cột nào tuỳ dòng, không cố định. Trả về 6 SỐ CUỐI của
+    mã bắt được (mã chi nhánh ổn định — 2 số đầu là mã CỔNG tạo báo cáo,
+    KHÔNG ổn định giữa CITAD/IPCAS, xem ghi chú ở nơi gọi trong
+    reconcile.py::run_doiSoat_ram), hoặc None nếu không phải dòng nhóm."""
+    for d in (-1, 0, 1):
+        j = i_so_gd + d
+        if j < 0 or j >= ws.ncols:
+            continue
+        val = str(ws.cell_value(i, j)).strip().replace("'", "")
+        m = _RE_BANK_GROUP.match(val)
+        if m:
+            return m.group(1)[-6:]  # regex dam bao san 6-9 chu so, luon >=6
+    return None
+
+
+def _parse_sheet(ws, filepath, is_first, chieu_ref=None, cong_ref=None, ngay_ref=None,
+                  loai_tien_ref=None, nh_gui_ref=None):
     # Detect chiều + loaiTien từ 12 dòng đầu (chỉ sheet đầu có header)
     chieu = 'di'
     loai_tien = 'VND'
@@ -244,7 +282,26 @@ def _parse_sheet(ws, filepath, is_first, chieu_ref=None, cong_ref=None, ngay_ref
                 break
 
     result = []
+    # Ngân hàng gửi của khối dòng giao dịch đang đọc — cập nhật liên tục
+    # trong vòng lặp (khác chiều/cổng là hằng số cố định cho cả file, đây
+    # đổi nhiều lần trong CÙNG 1 sheet). SEED từ `nh_gui_ref` (trạng thái
+    # CUỐI của sheet TRƯỚC, xem parse_citad_xls()) thay vì luôn bắt đầu
+    # rỗng — bug thật xác nhận 16/09/2026 (txid=10009779, dòng 2 triệu):
+    # khi 1 nhóm ngân hàng bị Crystal Reports chia sang sheet mới (hết dòng
+    # Excel cho phép giữa chừng), dòng tiêu đề KHÔNG được lặp lại ở đầu
+    # sheet mới — dòng ĐẦU TIÊN của sheet mới (thật ra vẫn thuộc đúng nhóm
+    # cũ) bị "mất dấu" ngân hàng nếu bắt đầu lại từ rỗng.
+    nh_gui_hien_tai = nh_gui_ref[0] if nh_gui_ref else ''
     for i in range(data_start, ws.nrows):
+        # Nhận diện dòng tiêu đề nhóm ngân hàng gửi TRƯỚC bước lọc so_gd <
+        # 6 chữ số bên dưới — dòng tổng nhóm (số tiền tổng rất lớn) có thể
+        # vô tình khớp cột Nợ/Có nếu chỉ lọc theo độ dài so_gd, bị hiểu
+        # nhầm thành 1 giao dịch thật. Xem _extract_bank_group().
+        ma_nh = _extract_bank_group(ws, i, i_so_gd)
+        if ma_nh:
+            nh_gui_hien_tai = ma_nh
+            continue
+
         so_gd_raw = str(ws.cell_value(i, i_so_gd)).strip().replace("'", "").replace(".0", "")
         so_gd = ''.join(c for c in so_gd_raw if c.isdigit())
         if len(so_gd) < 6:
@@ -285,7 +342,10 @@ def _parse_sheet(ws, filepath, is_first, chieu_ref=None, cong_ref=None, ngay_ref
             'so_tien': so_tien,
             'ngay': ngay,
             'cong': cong,
+            'nh_gui': nh_gui_hien_tai,
         })
+    if nh_gui_ref is not None:
+        nh_gui_ref[0] = nh_gui_hien_tai  # cho sheet sau ke thua
     return result
 
 
@@ -534,7 +594,19 @@ def _parse_ipcas_text(text, filename, ngay_cham):
             # thuong (chua tung di kenh) -> reconcile.py tu bo qua o vong lap
             # "IPCAS Di du", khong tinh vao "Chi Agribank".
             # Bo: rong
-            KEEP_DI = {'SCNL', 'WFPG', 'SBFL', 'RFED', 'SDEB', 'SBSC', 'RTSC', 'ERPO', 'CALD'}
+            #
+            # ERRC (them 16/09/2026, bug that PR lich su 44 ngay 15/09/2026):
+            # lenh bi "hach toan huy loi" tai IPCAS. Truoc day khong nam trong
+            # KEEP_DI nen bi loai ngay luc doc file, khong bao gio toi duoc
+            # reconcile.py de so khop - lenh CITAD tuong ung roi thanh "Chi
+            # CITAD" (ngu y IPCAS khong co gi) du IPCAS THAT SU co 1 dong huy
+            # loi cho msgref do. Them ERRC vao day de dong nay duoc giu lai -
+            # ERRC khong nam trong VALID_DI (reconcile.py) nen se tu ra dung
+            # 'lech_trang_thai' (khong phai khop hoan toan, cung khong con
+            # bien mat thanh "Chi CITAD" gia) - khong can them gi vao ERR_DI,
+            # nguoi dung xac nhan phan theo doi/xu ly ERRC da lam thu cong o
+            # khau khac, khong can ghi chu rieng.
+            KEEP_DI = {'SCNL', 'WFPG', 'SBFL', 'RFED', 'SDEB', 'SBSC', 'RTSC', 'ERPO', 'CALD', 'ERRC'}
             if tt not in KEEP_DI:
                 continue
             # Yêu cầu Phòng Thanh toán 27/08/2026: SCNL báo lệnh đã sang kênh

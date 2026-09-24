@@ -4,7 +4,10 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).parent.parent.parent
-load_dotenv(BASE_DIR / ".env", override=True)
+# Tiến trình con chạy đối chiếu (backend/core/tien_trinh_doi_chieu.py) đã thừa kế môi trường
+# của backend — KHÔNG nạp đè .env lần nữa: sửa .env mà chưa khởi động lại thì con và cha đọc
+# hai giá trị khác nhau (mật khẩu ZIP, SECRET_KEY...). Cờ do chính tiến trình con tự đặt.
+load_dotenv(BASE_DIR / ".env", override=os.getenv("KSNB_TIEN_TRINH_CON") != "1")
 
 # Fail fast — không dùng fallback để tránh JWT bị forge khi quên set env var
 _secret_key = os.getenv("SECRET_KEY", "")
@@ -60,6 +63,18 @@ class Settings:
     NTP_TIMEOUT_SEC: float = float(os.getenv("NTP_TIMEOUT_SEC", "3"))
     NTP_DRIFT_THRESHOLD_SEC: int = int(os.getenv("NTP_DRIFT_THRESHOLD_SEC", "5"))
 
+    # Ngưỡng ghi WARNING "request chậm" (backend/core/slow_request.py). Đường vốn
+    # dĩ lâu (Word, nộp file đối chiếu, xuất Excel) có ngưỡng riêng trong file đó.
+    SLOW_REQUEST_MS: int = int(os.getenv("SLOW_REQUEST_MS", "1500"))
+    # Tiền tố đường dẫn KHÔNG theo dõi, phân cách bằng dấu phẩy. Để trống là theo dõi tất.
+    SLOW_REQUEST_EXCLUDE: list = [
+        p.strip() for p in os.getenv("SLOW_REQUEST_EXCLUDE", "").split(",") if p.strip()
+    ]
+
+    # Số ngày giữ lại mỗi phiên Chuẩn hoá văn bản (file gốc + kết quả + nhật ký) trong
+    # data/temp_vb_format để rà soát lỗi. Các tính năng khác vẫn dọn lúc 23h cùng ngày.
+    VB_FORMAT_LUU_NGAY: int = max(1, int(os.getenv("VB_FORMAT_LUU_NGAY", "30")))
+
 # ── Mật khẩu file ZIP do hệ thống nguồn cấp ──────────────────────────────────
 # Ba module dùng chung một mật khẩu: Đối chiếu ACH, Chấm 459901, Đối chiếu
 # Song phương. Trước đây nó nằm CỨNG trong mã (`ZIP_PASSWORD = b"..."`) ở cả ba
@@ -80,31 +95,6 @@ def zip_password() -> bytes:
             "Thêm vào .env:  DOI_CHIEU_ZIP_PASSWORD=<mật_khẩu_do_đơn_vị_cấp_file_cung_cấp>"
         )
     return raw.encode()
-
-
-# ── Thư mục được phép quét cho "Chấm 459901 → Chọn thư mục server" ───────────
-# Route /api/cham459901/process_folder nhận đường dẫn do người dùng gõ rồi ĐỌC
-# file trên chính máy chủ. Không giới hạn gốc thì nó thành hai thứ khác hẳn ý
-# định ban đầu: một máy dò "thư mục này có tồn tại không" cho mọi đường dẫn trên
-# máy chủ (hai câu lỗi khác nhau là đủ để phân biệt), và — nếu thư mục tình cờ
-# có một file .zip/.xlsx — một cách liệt kê TÊN toàn bộ file còn lại trong đó
-# qua danh sách `unrecognized` trả về.
-#
-# Fail-closed: chưa cấu hình thì route báo lỗi nói rõ phải thêm gì vào .env,
-# KHÔNG mặc định về BASE_DIR. Mặc định "cho tạm một chỗ" là kiểu hàng rào mà
-# người vận hành không biết mình đang dựa vào cho tới lúc nó không đủ.
-# Nhiều thư mục ngăn nhau bằng dấu ";" (quy ước Windows).
-def cham459901_folder_roots() -> list[Path]:
-    """Các thư mục gốc được phép quét. Raise nếu chưa cấu hình."""
-    raw = (os.getenv("CHAM459901_FOLDER_ROOTS") or "").strip()
-    if not raw:
-        raise RuntimeError(
-            "Chưa đặt CHAM459901_FOLDER_ROOTS trong file .env — chức năng "
-            "\"Chọn thư mục server\" của Chấm 459901 bị khoá. Thêm vào .env "
-            "thư mục chứa dữ liệu (nhiều thư mục ngăn bằng dấu ;), ví dụ:  "
-            "CHAM459901_FOLDER_ROOTS=D:\\DuLieu\\459901"
-        )
-    return [Path(x.strip()).resolve() for x in raw.split(";") if x.strip()]
 
 
 settings = Settings()

@@ -2,7 +2,6 @@
 import asyncio
 import datetime
 import logging
-import os
 from nicegui import ui, app
 import frontend.api_client as api
 import frontend.ui_kit as ui_kit
@@ -47,6 +46,8 @@ MENU_TREE = [
                 "icon": "payments",
                 "items": [
                     ("cham_459901",           "Chấm 459901",            "task_alt"),
+                    ("cham_459901_000000000", "Chấm TK 459901-1000-000000000",  "task_alt"),
+                    ("doi_chieu_osb",         "Đối chiếu OSB",          "account_balance_wallet"),
                     ("doi_chieu_song_phuong", "Đối chiếu Song phương",  "account_balance"),
                     ("cham_ilo1000",          "Chấm ILO1000",           "checklist"),
                     ("cham_ach",              "Chấm đối chiếu ACH",     "compare_arrows"),
@@ -95,6 +96,8 @@ MENU_TREE = [
                 "icon": "summarize",
                 "items": [
                     ("th_reports", "Báo cáo dữ liệu thanh toán", "payments"),
+                    ("thi_dua",    "Thi đua khen thưởng",        "military_tech"),
+                    ("xep_loai",   "Xếp loại lao động",          "grade"),
                 ],
             },
         ],
@@ -158,25 +161,18 @@ MENU_TREE = [
         "icon": "apps",
         "items": [
             ("quiz",      "Ôn tập",            "school"),
+            # "poll" thuộc bộ Material Icons gốc — cùng lý do với ba icon ở trên.
+            ("surveys",   "Khảo sát",          "poll"),
             ("vb_format", "Chuẩn hoá văn bản", "description"),
         ],
     },
 ]
 
-# Hai nhóm dưới đây trước nằm inline trong _sidebar(). Tách ra module-level để
+# Nhóm dưới đây trước nằm inline trong _sidebar(). Tách ra module-level để
 # breadcrumb đọc được — nếu không sẽ phải chép lại nhãn ở chỗ thứ hai và hai
 # bản sao sẽ lệch nhau ngay lần đổi tên đầu tiên.
-DEPT_NHATKY = {
-    "id": "nhatky",
-    "label": "Nhật ký hệ thống",
-    "icon": "terminal",
-    "items": [
-        ("audit-logs", "Nhật ký hệ thống",        "history"),
-        ("logs",       "Lịch sử lỗi & cảnh báo", "error_outline"),
-        ("login-logs", "Nhật ký đăng nhập",       "login"),
-    ],
-}
-
+# (Nhật ký hệ thống từng là nhóm 3 mục; nay là một mục phẳng, 4 tab bên trong —
+# xem frontend/pages/nhat_ky/.)
 DEPT_PHANQUYEN = {
     "id": "phanquyen",
     "label": "Phân quyền chức năng",
@@ -199,7 +195,7 @@ def _build_breadcrumbs() -> dict[str, list[str]]:
         return out
 
     paths: dict[str, list[str]] = {}
-    for node in [*MENU_TREE, DEPT_NHATKY, DEPT_PHANQUYEN]:
+    for node in [*MENU_TREE, DEPT_PHANQUYEN]:
         # Menu phẳng cấp 1: đường dẫn 1 đoạn → _current_breadcrumb() tự bỏ qua,
         # tiêu đề trang không bị lặp lại chính nó.
         if isinstance(node, tuple):
@@ -399,10 +395,14 @@ def _o_chon_ngay_trong(label: str):
 
 # ─── Khối "Công việc chờ xử lý" ───────────────────────────────────────────────
 # key → (nhãn, icon, khoá đếm trong /pending-counts, feature cần có để mở được)
+# feature None = không cần mã quyền: khảo sát trả lời được khi có tên trong danh
+# sách người nhận (xem docstring backend/api/surveys.py). Đặt "menu.surveys" ở
+# đây thì người được gửi khảo sát mà nhóm chưa tick menu sẽ không bao giờ thấy nó.
 _PENDING_DEFS = [
     ("handovers", "Chứng từ chờ xác nhận",  "receipt_long", "menu.handovers"),
     ("leaves",    "Đơn nghỉ phép chờ duyệt", "event_busy",   "menu.leaves"),
     ("so_truc",   "Sổ trực chờ xử lý",      "assignment_turned_in", "menu.so_truc"),
+    ("surveys",   "Khảo sát chưa trả lời",  "poll",         None),
 ]
 
 
@@ -450,7 +450,7 @@ def _pending_section():
         for key, _lbl, _ico, feat in _PENDING_DEFS:
             cnt = (counts or {}).get(key, 0)
             # Có việc nhưng không có quyền mở màn hình đó thì đừng dựng link chết
-            if not isinstance(cnt, int) or cnt <= 0 or not api.has_feature(feat):
+            if not isinstance(cnt, int) or cnt <= 0 or (feat and not api.has_feature(feat)):
                 continue
             row, badge = rows[key]
             badge.set_text(str(cnt))
@@ -671,9 +671,13 @@ async def _sidebar(current_page: str) -> dict:
             if user_role == "admin" or api.has_feature("menu.staff"):
                 _nav_item("staff", "Quản lý User", "manage_accounts", current_page)
 
+            # Giám sát hệ thống — mã riêng, không đi chung menu.logs (xem backend/api/monitor.py)
+            if api.has_feature("menu.monitor"):
+                _nav_item("monitor", "Giám sát hệ thống", "speed", current_page)
+
             # Nhật ký hệ thống — admin luôn thấy, user khác cần feature
             if user_role == "admin" or api.has_feature("menu.logs"):
-                _dept_group(DEPT_NHATKY, current_page, check_features=False)
+                _nav_item("audit-logs", "Nhật ký hệ thống", "history", current_page)
 
             # Phân quyền chức năng — hai cấp quản trị, hard-coded (không phải
             # feature): nếu gate bằng feature thì ai được cấp feature đó sẽ tự
@@ -755,6 +759,10 @@ def _require_auth():
         if not (tab_data and tab_data.get("session_alive")):
             api.clear_auth()
             client.open("/login")
+    # Cố ý GIỮ ensure_future ở đây: đây là việc nền thật, không phải nạp giao diện.
+    # _tab_check tự `await client.connected()` rồi chỉ gọi api.clear_auth() và
+    # client.open() — cả hai đi qua tham chiếu client, không cần ngăn xếp slot.
+    # Đổi sang ui.timer là thêm một element vào MỌI trang mà chẳng được gì.
     asyncio.ensure_future(_tab_check())
 
     # ── Kiểm tra session bị thay thế mỗi 60 giây ──
@@ -765,8 +773,17 @@ def _require_auth():
             api.clear_auth()
             ui.notify("Tài khoản này đang được đăng nhập từ thiết bị khác", type="warning", timeout=4000)
             client.open("/login?reason=displaced")
-        except Exception:
-            pass  # network hiccup — bỏ qua
+        except api.SessionExpiredError:
+            # Hết hạn 8 giờ / bị đăng xuất: đưa về đăng nhập ngay. Trước 23/09/2026 nhánh này
+            # rơi xuống dưới → chỉ ghi WARNING kèm traceback mỗi phút, mỗi tab còn mở (cả
+            # đêm), người dùng không biết gì tới lúc bấm nút thì ăn lỗi.
+            ui.notify("Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.", type="warning", timeout=4000)
+            client.open("/login")
+        except Exception as e:
+            # Chỉ lỗi mạng mới được im lặng (mất wifi vài giây là chuyện thường). Lỗi khác
+            # lặp lại mỗi 60 giây mà không ai biết — đây là khối duy nhất chạy theo chu kỳ.
+            if not api.la_loi_mang(e):
+                _log.warning("Heartbeat phiên lỗi", exc_info=True)
     ui.timer(60, _session_heartbeat)
 
     return True

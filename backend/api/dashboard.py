@@ -4,6 +4,7 @@ import sqlite3
 from fastapi import APIRouter, Depends, Query
 from backend.database import get_db, _vn_now
 from backend.core.deps import get_current_staff, TONG_HOP_CODES
+from backend.services import survey_service
 from backend.services.handover_report_service import (
     compute_period, submitted_at_sql, SUBMITTED_AT_PARAMS,
 )
@@ -164,9 +165,21 @@ def pending_counts(
         _log.error("Không đếm được sổ trực chờ xử lý: %s", e)
         so_truc_count = 0
 
+    # ── Khảo sát chưa trả lời ──
+    # Bọc riêng, cùng lý do với nhánh Sổ trực ở trên.
+    try:
+        sv_where, sv_params = survey_service.pending_filter(current["id"])
+        surveys_count = db.execute(
+            f"""SELECT COUNT(*) FROM survey_recipients r
+                JOIN surveys s ON s.id = r.survey_id WHERE {sv_where}""", sv_params
+        ).fetchone()[0] or 0
+    except sqlite3.Error as e:
+        _log.error("Không đếm được khảo sát chờ trả lời: %s", e)
+        surveys_count = 0
+
     return {
         "leaves": leaves_count, "handovers": handovers_count, "handovers_by_dept": handovers_by_dept,
-        "so_truc": so_truc_count,
+        "so_truc": so_truc_count, "surveys": surveys_count,
     }
 
 
@@ -179,6 +192,12 @@ _ITEMS_LIMIT = 200
 # cột đó được gán đúng bằng transaction_date nên luôn trùng ngày chứng từ.
 # Cùng nguồn với handover_report_service để hai màn hình không nói hai con số.
 _SUBMIT_AT_SQL = submitted_at_sql()
+
+# Lần bàn giao lại gần nhất sau khi mượn. Chỉ dùng cho màn theo dõi: người xác nhận cần
+# biết chứng từ vừa quay về hôm nào. Báo cáo đúng hạn / quá hạn vẫn tính theo lần nộp
+# đầu (_SUBMIT_AT_SQL) — mượn ra rồi trả lại không được biến chứng từ nộp đúng hạn thành trễ.
+_RETURNED_AT_SQL = """(SELECT MAX(ret.timestamp) FROM entry_change_logs ret
+                        WHERE ret.entry_id = de.id AND ret.action = 'returned')"""
 
 
 def _iso_date(raw) -> str | None:
@@ -251,6 +270,8 @@ def pending_items(
                        de.sheet_count       AS sheet_count,
                        de.notes             AS notes,
                        {_SUBMIT_AT_SQL}     AS submit_at,
+                       {_RETURNED_AT_SQL}   AS returned_at,
+                       de.borrow_reason     AS borrow_reason,
                        d.id                 AS dept_id,
                        d.name               AS dept_name,
                        owner.full_name      AS staff_name,
@@ -269,6 +290,13 @@ def pending_items(
         ).fetchall()
         for r in rows:
             y, m, dd = _split_iso(r["transaction_date"])
+            # Chờ xác nhận mà có lần bàn giao lại mới hơn lần nộp → đây là lượt trả sau
+            # mượn. So với submit_at thay vì xem log cuối là 'returned': sau khi trả,
+            # sửa ghi chú cũng ghi log (note_edited) và sẽ che mất. Có borrow_reason là
+            # đang chờ duyệt YÊU CẦU MƯỢN (cũng ở pending_confirm) — lượt trả cũ không tính.
+            ret_at, sub_at = r["returned_at"], r["submit_at"]
+            is_handback = (bool(ret_at) and not r["borrow_reason"]
+                           and (not sub_at or str(ret_at) > str(sub_at)))
             handovers.append({
                 "entry_id":         r["entry_id"],
                 "staff_name":       r["staff_name"] or "",
@@ -278,7 +306,8 @@ def pending_items(
                 "sheet_count":      r["sheet_count"],
                 "entered_by_name":  r["entered_by_name"] or "",
                 "transaction_date": r["transaction_date"],
-                "submit_date":      _iso_date(r["submit_at"]),
+                "submit_date":      _iso_date(ret_at if is_handback else sub_at),
+                "is_handback":      is_handback,
                 "notes":            r["notes"] or "",
                 "year":             y,
                 "month":            m,
@@ -315,7 +344,26 @@ def pending_items(
     except sqlite3.Error as e:
         _log.error("Không tải được danh sách sổ trực chờ xử lý: %s", e)
 
-    return {"leaves": leaves, "handovers": handovers, "so_truc": so_truc}
+    # ── Khảo sát chưa trả lời — hạn gần nhất lên đầu ──
+    surveys: list = []
+    try:
+        sv_where, sv_params = survey_service.pending_filter(current["id"])
+        rows = db.execute(
+            f"""SELECT s.id, s.title, s.deadline, u.full_name AS created_by_name,
+                       (SELECT COUNT(*) FROM survey_questions q WHERE q.survey_id = s.id) AS question_count
+                FROM survey_recipients r
+                JOIN surveys s ON s.id = r.survey_id
+                LEFT JOIN user_tttt u ON u.id = s.created_by
+                WHERE {sv_where}
+                ORDER BY s.deadline ASC
+                LIMIT {_ITEMS_LIMIT}""",
+            sv_params,
+        ).fetchall()
+        surveys = [dict(r) for r in rows]
+    except sqlite3.Error as e:
+        _log.error("Không tải được danh sách khảo sát chờ trả lời: %s", e)
+
+    return {"leaves": leaves, "handovers": handovers, "so_truc": so_truc, "surveys": surveys}
 
 
 @router.get("/leave-today")

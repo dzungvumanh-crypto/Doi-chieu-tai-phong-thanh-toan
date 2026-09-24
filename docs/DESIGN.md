@@ -71,6 +71,87 @@ Riêng `database is locked` chỉ log WARNING và bỏ qua, thử lại ở lầ
 > `no such table` từng nằm trong danh sách nuốt lỗi. Hậu quả: migration viết sai tên bảng
 > thất bại **im lặng** — không log, không chặn khởi động, cột không được thêm. Đừng đưa lại vào.
 
+## Đọc dòng "Request chậm"
+Mỗi dòng `slow.request` kèm trạng thái lúc request kết thúc (`backend/core/slow_request.py::trang_thai`):
+
+```
+Request chậm: GET /api/auth/me — 2771 ms (ngưỡng 1500 ms, HTTP 200) | loop chặn tối đa 140 ms, trễ tổng 1380 ms · luồng 3/40 chờ 0 · kết nối CSDL 2/48 xếp cổng 0 · đang xử lý 5 · việc nặng 0/4 · đối chiếu 1
+```
+
+| Thấy | Nghĩa là |
+|---|---|
+| `trễ tổng` lớn (hàng trăm ms trở lên), `chặn tối đa` nhỏ, `đối chiếu` ≥ 1 | Luồng đối chiếu giữ GIL — loop bị đói thành nhiều quãng ngắn (card 144) |
+| `chặn tối đa` gần bằng `trễ tổng` và lớn | Một cú chặn liền: `async def` gọi hàm đồng bộ nặng không `await` |
+| `luồng 40/40 chờ >0` | Threadpool cạn — endpoint `def` giữ luồng lâu |
+| `kết nối CSDL 48/48`, `xếp cổng >0` | Bể CSDL cạn (xem mục dưới) |
+| Mọi số đều thấp | Thời gian mất ngoài Python: đĩa, mạng, tiến trình khác |
+
+Hai chi tiết đừng "đơn giản hoá":
+- **Phải có cả `trễ tổng`, không chỉ `chặn tối đa`.** Tranh GIL không tạo một cú chặn dài mà làm loop đói
+  liên tục: đo 3 luồng CPU × 2 s → max 138–231 ms nhưng tổng 790–890 ms (rảnh: tổng 12 ms). Chỉ nhìn
+  max là kết luận nhầm "không phải GIL". Tổng đã trừ nền 16 ms/nhịp (sleep trên Windows tự trễ một
+  nhịp timer).
+- **Phải cộng phần task đo đang ngủ quá giờ** — dòng log được ghi ngay khi loop vừa thoát chỗ chặn,
+  trước khi task đo kịp thức. Bỏ đi thì đúng ca cần bắt báo 0.
+
+## Bể kết nối CSDL — chỉ mượn qua `get_db`
+Mọi request mượn kết nối bằng `Depends(get_db)`. **Không gọi `_muon()` trực tiếp** ở chỗ nào khác
+(ngoại lệ duy nhất: `khoi_tao_pool()` lúc khởi động).
+
+`get_db` có sub-dependency `_qua_cong_db()`: một cổng `async` cho tối đa `DB_POOL_SIZE` request qua cùng
+lúc, phần dư chờ bằng `await` — **không giữ luồng**. Không có cổng thì request chờ kết nối đứng chiếm
+luồng threadpool (40), request đang cầm kết nối hết luồng để chạy tiếp → hai bên chờ nhau. Đo 16/09/2026:
+78 request đồng thời chậm nhất 268 ms, **90 request cả hệ thống đứng 31 giây** rồi ăn 500.
+
+Cổng chỉ đúng khi mọi lượt mượn đều đi qua nó. Gọi `_muon()` thẳng từ luồng khác là cổng cho qua đủ
+suất trong khi bể thiếu kết nối → mở lại đúng lỗi trên. Nâng `DB_POOL_SIZE` hay số luồng **không** sửa
+được: chỉ dời ngưỡng. Xem card 143 trong Implementation-notes, test `tests/test_be_ket_noi_khoa_cheo.py`.
+
+> Lỗi ném trong dependency chỉ ra console uvicorn, **không** vào `logs/app.log`. Cổng hết giờ chờ nên
+> tự `_log.warning` trước khi trả 503 — đừng bỏ dòng log đó.
+
+## Pipeline đối chiếu chạy ở tiến trình riêng — `chay_tach()`
+
+Pipeline nặng (pandas/Excel) chạy trong luồng của backend là giữ GIL, request nhẹ đứng chờ.
+Gọi qua `backend/core/tien_trinh_doi_chieu.py::chay_tach()` thì chạy ở tiến trình con; luồng `_run`
+của service vẫn ở backend và chuyển log về dict job như cũ. Đã áp cho **cả 7 cửa** (18/09/2026) —
+xem card 150. `tests/test_doi_chieu_chay_tien_trinh_rieng.py` đỏ nếu service nào gọi `dang_ky_nguon()`
+mà không gọi `chay_tach()` — **thêm cửa đối chiếu mới thì phải đi qua `chay_tach()`**.
+
+Hàm đưa vào `chay_tach()` phải: (1) ở **cấp module** — con import lại theo tên; lambda/hàm lồng bị
+từ chối bằng `TypeError`; (2) nhận `log_callback` + `cancel_event` và **mọi tiến độ đi qua hai thứ
+đó** (callback khác khai qua `callbacks=`) — ghi vào dict toàn cục của module là ghi vào bản sao
+trong con, màn hình đứng 0% không lỗi. Module nào đang báo tiến độ qua `_progress[token]` thì theo
+khuôn `_xu_ly_tach()` của 459901 / OSB; (3) tham số và kết quả pickle được; (4) trả `None` khi bị huỷ;
+(5) không tự tạo tiến trình con; (6) không đụng `job`/`_jobs` — trả kết quả cho `_run` ghi (khuôn
+`_doi_chieu()` của Song phương ĐẾN/ĐI).
+
+`DOI_CHIEU_TIEN_TRINH=0` → chạy trong luồng như cũ (khẩn cấp trên máy chủ).
+
+**RAM — hai lớp (card 156).** (1) `phien_doi_chieu.kiem_tra`: tổng RAM ước tính các lượt ≤
+`NGAN_SACH_RAM_GB` (11,5 = ACH + Song phương ĐI + ĐẾN), mức mỗi module ở `_RAM_UOC_TINH_MAC_DINH` + `.env`; module chưa có số
+không xét. (2) Mọi tiến trình con vào một Windows Job Object trần 13 GB bộ nhớ cam kết — con
+**chờ được gán xong** (`ev_gan`) rồi mới nạp pipeline, vì phần cấp phát trước lúc gán nằm ngoài
+trần. Vượt trần → mã Python/numpy nhận `MemoryError` (kể cả bị pipeline bọc thành "file hỏng":
+cha xét cả vết lỗi) → `LoiTienTrinhCon` có câu tiếng Việt; thư viện C/Rust (python-calamine,
+OpenBLAS) thì **tự kết thúc cả tiến trình** → câu "dừng bất thường" có nhắc trần. Job chạy TIẾP
+sau khi chờ (ACH xác nhận MIS_đi) phải qua `gianh_cho_ram()` — lúc chờ nó được tính 0 GB.
+
+Ngoài 7 cửa đối chiếu, **SWIFT recon** cũng tách (card 152) — kiểu hỏi–đáp đồng bộ, không có
+job: `await run_heavy(chay_tach, tach.<hàm>, ...)`; phần nặng ở `backend/services/swift_recon/tach.py`,
+API chỉ ghi file tải lên ra đĩa + đọc/ghi CSDL.
+
+**Khi nào đáng tách:** mã Python thuần giữ GIL (pandas xử lý chuỗi, openpyxl, xlrd, docxtpl, cây
+XML) **và** chạy lâu hơn nhiều ~0,8 s mở tiến trình. Việc trong mã C tự nhả GIL (zlib, AES, truy
+vấn SQLite, bcrypt) không cần. Dưới ~1 s cứ `run_heavy()` — đọc thử 1 file SWIFT cố ý không tách.
+
+**Không `asyncio.to_thread` trong `backend/api/`** — chạy trên bể luồng mặc định của event loop
+(tối đa 32), NGOÀI giới hạn `MAX_HEAVY` (DTBB từng vậy tới 18/09/2026). Test canh: `test_api_khong_dung_asyncio_to_thread`.
+
+> **Test:** `conftest.py` mặc định `DOI_CHIEU_TIEN_TRINH=0` — tiến trình con **không thấy `monkeypatch`**
+> của test. Test vá `svc.TEMP_DIR` mà chạy tiến trình thật là ghi vào `data/temp_*` THẬT (đã xảy ra
+> 18/09/2026). Test cần tiến trình thật thì xin fixture `tien_trinh_that` và chỉ truyền đường dẫn tường minh.
+
 ## Authentication & Sessions
 - JWT verify bởi `get_current_staff` trong `deps.py` — role đọc từ **DB** mỗi request, không lấy từ token
 - Session lưu trong DB (`backend/core/sessions.py` → bảng `login_sessions`) — **không** mất khi restart
@@ -120,6 +201,18 @@ quyền tự nhân bản, không còn ai chặn được. Đừng "sửa cho nh�
 Vai `admin` đi qua mọi cửa (`require_feature()` cho qua ngay ở dòng đầu) — đó là siêu quyền
 cố ý, không tính là hard-code tính năng.
 
+### Route công khai — chỉ `/` và `/health`
+
+Mọi route khác đều có `Depends(...)`. Hai route này đăng ký thẳng trên `app` trong
+`backend/main.py` (không qua `registry.py`) và không đòi đăng nhập:
+
+- `/` — chuỗi tĩnh.
+- `/health` — `{"status", "db_ok"}`, 200 hoặc 503. Cho script khởi động / người vận hành biết
+  backend đã lên. Vì công khai nên **không** thêm trường nào khác (đường dẫn, phiên bản, backup,
+  lệch giờ): backup và lệch giờ đã có ở màn Nhật ký hệ thống, sau `menu.logs`.
+
+Rà "route nào thiếu Depends" mà đếm ra đúng hai cái này là đúng thiết kế, không phải lỗ.
+
 ### Phạm vi quyền ≠ phạm vi dữ liệu
 
 Hai module của phòng Kế toán từng gate theo mã phòng `ACCT`, nay gate bằng mã quyền
@@ -130,8 +223,36 @@ Hai module của phòng Kế toán từng gate theo mã phòng `ACCT`, nay gate 
   hình** và thấy bảng công phòng Kế toán; đó là quyết định của admin khi tick ô, không phải lỗi.
 - "Người kiểm soát" ký bảng công vẫn bắt buộc là trưởng/phó phòng `ACCT` đang active — đó là
   yêu cầu của **chứng từ**, không phải quyền truy cập.
+- **Sổ trực cuối ngày** (24/09/2026, PR #133): người được chọn làm **KSV** phải qua cả hai lớp:
+  có mã `so_truc.ksv_confirm` **và** là trưởng/phó phòng `PAYMENT` (`list_ksv_candidates()`,
+  admin đi qua mọi cửa). Ô **GDV1/GDV2** chỉ hiện người **không** giữ chức danh trưởng/phó phòng
+  (`list_gdv_only_candidates()`). Đó là yêu cầu của chứng từ: người ký kiểm soát phải đúng cấp.
+  ⚠ Hệ quả: tick `so_truc.ksv_confirm` cho một chuyên viên thì **không có tác dụng**, không lỗi.
 
-Đừng nhân danh quy tắc "không hard-code quyền" đi gỡ hai chỗ trên.
+Đừng nhân danh quy tắc "không hard-code quyền" đi gỡ các chỗ trên.
+
+> Sổ trực: luật "GDV không giữ chức danh" chỉ lọc ở ô chọn — backend không kiểm. Thứ backend
+> thật sự chặn là **KSV ≠ GDV** của cùng bản ghi (`save_draft`, `forward_to_ksv`,
+> `ksv_finalize_edit`). Siết danh sách KSV cũng siết luôn bước kiểm "KSV còn hợp lệ" của
+> `forward_to_ksv()` — bản ghi đã khoá một KSV không còn đủ điều kiện thì không đẩy lại được,
+> GDV phải "Huỷ phiên trực" rồi lập lại.
+
+### Khảo sát — trả lời theo danh sách người nhận, không theo mã quyền
+
+`menu.surveys` / `surveys.create` / `surveys.view_all` là quyền (tạo, sửa, xem kết quả). Còn
+**trả lời** chỉ cần có dòng trong `survey_recipients` — cùng loại với người được giao duyệt đơn.
+Vì thế `_PENDING_DEFS` (shared.py) và `_KINDS` (pending_work.py) có mục feature `None`, và
+`/surveys/fill` không kiểm `has_feature`. Gate bằng mã quyền thì gửi khảo sát cho nhóm chưa tick
+menu là cả nhóm không trả lời được mà không ai hay. Đừng "sửa cho nhất quán".
+
+`/api/surveys` nằm trong `_SKIP_PREFIXES` của `audit_middleware.py`: middleware ghi cả body, mà
+body của lượt nộp là câu trả lời — khảo sát ẩn danh sẽ lộ nội dung trong Nhật ký hệ thống. Mọi
+thao tác ghi đã tự `write_audit` không kèm nội dung.
+
+Hai quy tắc ẩn danh khác, cùng lý do "khoá ở giao diện chưa đủ":
+- Dòng kết quả ẩn danh xếp **theo nội dung**, không trộn bằng hạt giống cố định. Thứ tự nộp tra
+  được trong Nhật ký (`survey.submit` ghi người + giờ) → hạt giống đoán được là đảo lại được.
+- `PUT` chặn đổi `is_anonymous` khi đã có trả lời (cả hai chiều) và chặn tắt khi đã phát hành.
 
 ## RBAC — deps.py
 
@@ -188,6 +309,71 @@ handler ngoại lệ toàn cục → **màn hình không đổi gì, cũng khôn
 
 Truyền thẳng thì `handle_event()` await coroutine bên trong `with parent_slot:` nên slot còn nguyên qua
 mọi `await`. Nếu buộc phải chạy trong task rời, mọi thao tác UI phải nằm trong `with element:`.
+
+> ⚠ **Bỏ `lambda` là đổi thời điểm tra tên.** `lambda: f()` chỉ tra `f` lúc bấm; `on_click=f` tra
+> **ngay lúc dựng trang**. Nếu `async def f` nằm **bên dưới** nút trong cùng hàm trang thì `f` là biến
+> cục bộ chưa gán → `UnboundLocalError`, cả trang không mở được. Hàm định nghĩa sau thì tạo nút trước
+> rồi gắn sau: `btn = ui.button(...)` … `async def f(): …` … `btn.on_click(f)`.
+> Đã xảy ra thật: `bundles.py` (30/08/2026), vá 11/09/2026. Xem mục *Lỗi tên chưa định nghĩa* dưới đây.
+
+## Lỗi tên chưa định nghĩa — test xanh không chứng minh gì, chạy ruff F821
+
+Python chỉ tra tên **lúc chạy tới dòng đó**. Tên sai / thiếu import / dùng trước khi định nghĩa nằm
+trên nhánh không test nào đi qua thì cả bộ test vẫn xanh. Hai lỗi thật cùng lọt vào `develop`, cùng
+qua review, cùng được `ruff check --select F821` bắt trong một lần chạy (11/09/2026):
+
+| Lỗi | Sinh ra từ | Vì sao test không bắt |
+|---|---|---|
+| `ilo1000_service._run()` gọi `os.listdir`, file không `import os` → ILO1000 **không bao giờ trả kết quả** | Đổi `os.path.basename()` → `safe_filename()` lúc rebase PR#68; `import os` trông như thừa nên bị bỏ (suy luận — bản trước rebase không còn trong repo), `os.listdir` 60 dòng dưới còn dùng | Test đưa file giả → pipeline trả `None` → return trước dòng lỗi. `except Exception` trong luồng nền đổi `NameError` thành job `error` trông như lỗi dữ liệu |
+| `bundles_page`: `on_click=load_groups` đứng trước `async def load_groups` → **trang không mở được** | Dọn `ensure_future` theo mục trên, làm **kèm** trong một commit sửa hiệu năng khác | Không test nào dựng trang; `test_kiem_nap_trang_frontend` chỉ kiểm import |
+
+Điểm chung: cả hai là **sửa phụ, sửa máy móc** nằm trong một thay đổi lớn hơn. Người review đọc từng
+khối diff — không thấy dòng `import` đã mất ở đầu file, không thấy dòng định nghĩa 50 dòng bên dưới.
+
+**Quy tắc:** sau khi xoá import, đổi tên, đổi `lambda` thành tham chiếu thẳng, hay chuyển mã giữa các
+hàm/file → chạy `ruff check . --select F821,F823,E9` và phải sạch. Từ 11/09/2026 CI chạy lệnh này
+và báo **đỏ** (`.github/workflows/tests.yml`, cấu hình ở `ruff.toml`). Đỏ **không tự khoá** nút
+Merge — repo riêng tư gói Free không bật được bảo vệ nhánh; `gh pr checks` phải xanh mới merge. Còn 48 lời gọi
+`ensure_future`/`create_task` ở 10 trang (không tính chú thích) — dọn hàng loạt mà không chạy lệnh này là gặp lại lỗi thứ hai.
+
+## Nuốt lỗi — ba lựa chọn, không có lựa chọn thứ tư
+
+`except Exception: pass` trần là thứ bị cấm (SKILL.md). Gặp một khối như vậy, chọn ĐÚNG MỘT trong ba:
+
+| Tình huống | Làm gì |
+|---|---|
+| Chỉ một loại lỗi cụ thể là bình thường (sai khuôn ngày, file đã xoá, ống đã đóng) | **Thu hẹp** `except (ValueError, TypeError)` / `OSError` / `sqlite3.Error`… — lỗi lập trình sẽ nổ ra thay vì bị nuốt |
+| Bỏ qua được nhưng có mất mát (thiếu một dòng dữ liệu, một ngày lễ, một đơn trong lô) | **Ghi log** `_log.warning(..., exc_info=True)` kèm ngữ cảnh (id nào, năm nào) |
+| Thật sự không quan trọng (dọn dẹp, hâm nóng, chờ WebSocket) | **Ghi lý do ngay tại dòng** `pass  # …` — người sau đọc là biết đây là chủ ý |
+
+Rà 12/09/2026 (`backend/` + `frontend/`): 39 khối `except Exception: pass` → **15 thu hẹp, 10 thêm log,
+10 giữ nguyên kèm lý do, 4 đổi thành cảnh báo cho người dùng**.
+
+> Mức log: `root.setLevel(INFO)` trong `backend/main.py` → **`_log.debug()` không ra file nào**. Muốn thấy
+> thì dùng `info` trở lên. Log của tiến trình **frontend** đi vào `logs/frontend.log`, KHÔNG vào
+> `logs/app.log` và KHÔNG hiện ở màn Nhật ký hệ thống (màn đó chỉ đọc `app.log`).
+Hai chỗ đang **mất dữ liệu âm thầm** (đổi ngày lễ âm lịch hỏng → thiếu hẳn một ngày lễ; duyệt hàng
+loạt đơn nghỉ phép → mất lý do từng đơn lỗi) nay có log. Xem card *NL1* trong Implementation-notes.
+
+## Trang Nghỉ phép là một GÓI, không phải một file
+
+`frontend/pages/leaves/` — đang chẻ dần từ một file 6.473 dòng (một hàm 6.125 dòng):
+
+| File | Chứa gì |
+|---|---|
+| `__init__.py` | `@ui.page("/leaves")` + phần trang chưa tách |
+| `_chung.py` | Hằng số + helper cấp module (nguyên văn từ bản cũ) |
+| `_chi_tiet_don.py` | Ngăn kéo chi tiết một đơn (728 dòng) + `ChiTietCtx` |
+
+**Tách một phần ra thì state đi qua một `ctx` dataclass, KHÔNG qua tham số rời.** Lý do: vài thứ
+(`leave_tabs`, `_nav_pending`, `_nav_pending_th`) được tạo **sau** chỗ định nghĩa hàm đã tách.
+Closure cũ chạy được vì Python tra tên lúc **gọi**; truyền theo giá trị lúc định nghĩa là ba thứ
+đó bằng `None` — hỏng đúng lúc người dùng bấm nút, không test nào bắt. `ctx` đọc thuộc tính lúc
+gọi nên giữ nguyên hành vi đó. `tests/test_leaves_chi_tiet_ctx.py` canh mọi trường của `ctx` đều
+được trang gán.
+
+> Test nào cần đọc mã trang (kiểm chuỗi) thì nối **cả gói**, đừng trỏ vào một file —
+> xem `_ma_trang_nghi_phep()` trong `tests/test_nghi_phep_buoc_th_va_gd.py`.
 
 ## Leave Approval Workflow
 ```

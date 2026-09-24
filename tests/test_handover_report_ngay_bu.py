@@ -36,6 +36,7 @@ CREATE TABLE document_entries (
     handover_id INTEGER NOT NULL REFERENCES handovers(id),
     transaction_date DATE NOT NULL,
     sheet_count INTEGER NOT NULL,
+    notes TEXT,
     staff_id INTEGER REFERENCES user_tttt(id));
 CREATE TABLE entry_change_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

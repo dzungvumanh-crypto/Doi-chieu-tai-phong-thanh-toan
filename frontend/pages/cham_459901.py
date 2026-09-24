@@ -79,16 +79,12 @@ async def cham_459901_page():
     )
 
     with ui.row().classes("w-full"):
-        _sidebar("cham_459901")
+        await _sidebar("cham_459901")
         with _content_area():
             _page_header("Chấm 459901", "Phân loại bút toán tài khoản trung gian 459901")
 
-            ui.label("Nguồn dữ liệu — chọn 1 trong 2 cách bên dưới").classes(
-                "text-base font-semibold text-red-800 mb-2"
-            )
-
             with ui.row().classes("w-full gap-4 mb-4 items-stretch"):
-                # ── Card A — Tải nhiều file lên ─────────────────────────────
+                # ── Tải file lên (cách nạp dữ liệu duy nhất) ────────────────
                 with ui.card().classes("flex-1 p-5"):
                     ui.label("Tải nhiều file lên").classes(
                         "text-sm font-semibold text-gray-700 mb-1"
@@ -146,22 +142,6 @@ async def cham_459901_page():
                         'accept=".zip,.xlsx" flat dense label="Kéo-thả hoặc chọn file..."'
                     ).classes("w-full")
 
-                # ── Card B — Chọn thư mục server ─────────────────────────────
-                with ui.card().classes("flex-1 p-5"):
-                    ui.label("Chọn thư mục server").classes(
-                        "text-sm font-semibold text-gray-700 mb-1"
-                    )
-                    ui.label(
-                        "Nhập đường dẫn 1 thư mục duy nhất trên server. " + _CLASSIFY_HINT
-                    ).classes("text-xs text-gray-400 mb-3")
-                    # Không có nút "Duyệt...": hộp thoại duyệt cây thư mục máy chủ đã bị
-                    # gỡ cùng `/api/fs/browse` — nó cho mọi người đăng nhập liệt kê sạch
-                    # ổ đĩa máy chủ. Người dùng dán đường dẫn; `/process_folder` chặn
-                    # phạm vi theo CHAM459901_FOLDER_ROOTS.
-                    folder_input = ui.input(
-                        placeholder="Dán đường dẫn — VD: D:\\Data\\459901\\thang8",
-                    ).props("outlined dense clearable").classes("w-full")
-
             with ui.card().classes("w-full p-5 mb-4"):
                 # ── Thanh tiến độ ─────────────────────────────────────────────
                 progress_bar = ui.linear_progress(value=0).classes("w-full mb-1")
@@ -194,7 +174,6 @@ async def cham_459901_page():
                 state["task_token"] = None
                 state["result"]     = None
                 uploader.reset()
-                folder_input.value = ""
                 _render_file_list()
                 result_area.clear()
 
@@ -221,21 +200,10 @@ async def cham_459901_page():
             cancel_btn.on("click", on_cancel_click)
 
             async def do_process():
-                folder_path = (folder_input.value or "").strip()
-                has_files  = bool(state["files"])
-                has_folder = bool(folder_path)
-
-                if not has_files and not has_folder:
-                    ui.notify("Vui lòng chọn file hoặc nhập đường dẫn thư mục", type="warning")
+                if not state["files"]:
+                    ui.notify("Vui lòng chọn file", type="warning")
                     return
-                if has_files and has_folder:
-                    ui.notify(
-                        "Chỉ chọn 1 trong 2 cách nạp dữ liệu — hãy xoá file đã chọn hoặc "
-                        "xoá đường dẫn thư mục",
-                        type="warning",
-                    )
-                    return
-                if has_files and not any(
+                if not any(
                     f.lower().endswith(_DUOI_HOP_LE) for f in state["files"]
                 ):
                     ui.notify(
@@ -250,24 +218,16 @@ async def cham_459901_page():
                 result_area.clear()
 
                 progress_bar.set_value(0)
-                progress_label.set_text(
-                    "0% — Đang tải file lên..." if has_files else "0% — Đang xử lý..."
-                )
+                progress_label.set_text("0% — Đang tải file lên...")
                 progress_bar.set_visibility(True)
                 progress_label.set_visibility(True)
 
                 try:
-                    if has_files:
-                        resp = await asyncio.to_thread(
-                            api.post_upload, "/api/cham459901/process",
-                            files=[('files', (name, data, 'application/octet-stream'))
-                                   for name, data in state["files"].items()],
-                        )
-                    else:
-                        resp = await asyncio.to_thread(
-                            api.post, "/api/cham459901/process_folder",
-                            {"folder_path": folder_path},
-                        )
+                    resp = await asyncio.to_thread(
+                        api.post_upload, "/api/cham459901/process",
+                        files=[('files', (name, data, 'application/octet-stream'))
+                               for name, data in state["files"].items()],
+                    )
                     state["task_token"] = resp["task_token"]
                     unrecognized = resp.get("unrecognized") or []
                     if unrecognized:
@@ -294,11 +254,7 @@ async def cham_459901_page():
                     cancel_btn.set_visibility(False)
                     process_btn.props(remove="loading disable")
                     if not _handle_api_error(e):
-                        # Chế độ thư mục không tải file nào lên — gắn nhãn "Lỗi tải file"
-                        # là chỉ người vận hành đi tìm sai chỗ (câu lỗi hay gặp nhất ở
-                        # đây là ".env chưa khai CHAM459901_FOLDER_ROOTS").
-                        nhan = "Lỗi tải file" if has_files else "Lỗi đọc thư mục"
-                        ui.notify(f"{nhan}: {e}", type="negative", timeout=0,
+                        ui.notify(f"Lỗi tải file: {e}", type="negative", timeout=0,
                                   close_button=True)
                     return
 
@@ -310,7 +266,7 @@ async def cham_459901_page():
                             api.post, f'/api/cham459901/cancel/{state["task_token"]}'
                         )
                     except Exception:
-                        pass
+                        pass        # job có thể chưa kịp tạo — dọn dẹp thôi, không báo lỗi
 
                 # ── Poll progress cho đến khi done ─────────────────────────────
                 poll_fails = 0

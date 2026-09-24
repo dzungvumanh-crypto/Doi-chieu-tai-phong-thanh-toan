@@ -249,3 +249,57 @@ def test_endpoint_bo_loc_liet_ke_nguoi_va_module(client_nhat_ky):
     data = r.json()
     assert [a["label"] for a in data["actors"]] == ["Nguyễn Văn An (2)", "Trần Thị Bình (2)"]
     assert any(m["prefix"] == "/api/bundles" for m in data["modules"])
+
+
+# ── Bỏ qua request không phải thao tác nghiệp vụ ─────────────────────────────
+def test_moi_muc_bo_qua_khop_route_that():
+    """Gõ sai một đường trong _SKIP_EXACT thì không lỗi gì, dòng nhật ký vẫn
+    ghi như cũ — chỉ test này bắt được. Route đổi tên cũng rơi vào đây.
+
+    Chỉ tham số kiểu int mới thành {id}: lúc chạy, middleware chỉ đổi đoạn TOÀN
+    SỐ. Khai `/api/ach/cancel/{id}` (job_id là chuỗi hex) sẽ không bao giờ khớp."""
+    from fastapi.routing import APIRoute
+    from backend.core.audit_middleware import _SKIP_EXACT
+    from backend.main import app
+
+    co_that = set()
+    for r in app.routes:
+        if isinstance(r, APIRoute):
+            path = r.path
+            for p in r.dependant.path_params:
+                if p.field_info.annotation is int:
+                    path = path.replace("{" + p.name + "}", "{id}")
+            co_that.update((m, path) for m in r.methods)
+    thieu = sorted(_SKIP_EXACT - co_that)
+    assert not thieu, f"Mục bỏ qua không khớp route nào: {thieu}"
+
+
+@pytest.mark.parametrize("method, path", [
+    ("POST", "/api/leaves/preview/warmup"),
+    ("POST", "/api/leaves/carryover-notice/ack"),
+    ("POST", "/api/leaves/preview"),
+    ("POST", "/api/leaves/quotas/2026/import/preview"),
+    ("POST", "/api/ach/validate"),
+    ("POST", "/api/doi_chieu_song_phuong_kenh_core/check_readiness"),
+    ("POST", "/api/doi_chieu_song_phuong_kenh_core_di/check_readiness"),
+])
+def test_khong_ghi_request_khong_phai_thao_tac(method, path):
+    from backend.core.audit_middleware import bo_qua
+    assert bo_qua(method, path)
+
+
+@pytest.mark.parametrize("method, path", [
+    ("POST", "/api/leaves/"),                          # lập đơn
+    ("PUT", "/api/leaves/12/ksv-review"),              # duyệt
+    ("POST", "/api/leaves/12/tong-hop-review"),
+    ("PUT", "/api/leaves/12/gd-review"),
+    ("PATCH", "/api/leaves/12/cancel"),
+    ("POST", "/api/leaves/quotas/2026/import/apply"),  # nhập thật, khác bước xem trước
+    ("POST", "/api/ach/start"),
+    ("POST", "/api/ach/cancel/536cd1debb60"),
+    ("POST", "/api/doi_chieu_song_phuong_kenh_core/start_upload"),
+    ("POST", "/api/doi_chieu_song_phuong_kenh_core_di/start_upload"),
+])
+def test_thao_tac_that_van_ghi(method, path):
+    from backend.core.audit_middleware import bo_qua
+    assert not bo_qua(method, path)

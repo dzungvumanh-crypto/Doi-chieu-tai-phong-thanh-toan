@@ -4,6 +4,540 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 24/09/2026 Sổ trực cuối ngày - **Kiểm soát chéo GDV / KSV**
+    + ✅ Người đứng tên GDV không còn tự chọn chính mình làm KSV xác nhận sổ trực của mình — hệ thống báo lỗi và không lưu
+    + ✅ Ô chọn **KSV** chỉ còn trưởng phòng / phó phòng Phòng Thanh toán (đã được cấp quyền xác nhận sổ trực)
+    + ✅ Ô chọn **GDV 1 / GDV 2** chỉ còn cán bộ không giữ chức danh trưởng / phó phòng. Ô **Trực phụ** vẫn hiện cả phòng như cũ
+    + ✅ Không chọn được cùng một người cho cả GDV 1 và GDV 2, kể cả khi chỉ bấm "Lưu nháp"
+    + ⚠️ Quản trị viên: cấp quyền "Xác nhận / Từ chối sổ trực" cho một **chuyên viên** sẽ không có tác dụng — người đó
+      vẫn không hiện trong danh sách chọn KSV
+    + ⚠️ Sổ trực đang dở mà KSV đã chọn là chuyên viên hoặc người phòng khác thì không chuyển lại cho KSV được nữa — bấm
+      **"Huỷ phiên trực"** rồi lập lại
+
+- 24/09/2026 Quản lý hệ thống - **Thư mục file tạm trên máy chủ không còn phình mãi**
+    + ✅ Sửa lỗi: file tạm của **Chấm ILO1000** và **Đối chiếu song phương chiều ĐẾN / ĐI** không bao giờ bị xoá
+      sau mỗi lần khởi động lại máy chủ, nên `data/temp_*` cứ lớn dần. Nay dọn lúc 23h hằng ngày như các tính năng khác
+    + ✅ Lần khởi động đầu tiên sau khi cập nhật tự dọn hết phần rác cũ — không cần xoá tay
+    + ✅ **Chuẩn hoá văn bản**: mỗi lượt chạy (kể cả lượt báo lỗi) được lưu lại **30 ngày** trong
+      `data/temp_vb_format/`, mỗi lượt một thư mục bắt đầu bằng ngày giờ, gồm file gốc, file kết quả, cấu hình đã
+      dùng và nhật ký sửa đổi — để rà soát khi có người báo "máy sửa sai". Nhật ký hệ thống ghi ngày giờ + mã rút gọn của từng lượt để tìm đúng thư mục
+    + ℹ️ Muốn đổi số ngày lưu: thêm dòng `VB_FORMAT_LUU_NGAY=<số ngày>` vào file `.env` rồi khởi động lại
+
+- 23/09/2026 Toàn hệ thống - **Tăng tốc**
+    + ✅ Nhiều người cùng gửi file đối chiếu / xem trước đơn nghỉ phép không còn làm các màn hình khác đứng chờ
+    + ✅ **Nghỉ phép → Dashboard** (lãnh đạo, Tổng hợp, quản trị): mở nhanh hơn — mặc định chỉ tải đơn **từ đầu năm trước**
+      cùng mọi đơn còn đang chờ duyệt. Tìm theo khoảng ngày cũ hơn thì hệ thống tự tải thêm; muốn xem hết thì bấm
+      **"Tải cả các năm trước"** cạnh dòng đếm số đơn
+    + ⚠️ Khi chưa chọn ngày, 5 ô tổng quan (nhất là ô **Hoàn thành**) nay đếm từ đầu năm trước, không còn cộng dồn mọi năm —
+      con số sẽ nhỏ hơn trước, không phải mất dữ liệu
+    + ✅ Lưu nhật ký thao tác và tra cứu dữ liệu nhẹ hơn cho máy chủ
+
+- 23/09/2026 Nhiều màn hình - **Sửa lỗi sau đợt rà soát toàn hệ thống**
+    + ✅ **Nghỉ phép**: duyệt / từ chối / huỷ đơn xong thì ở lại đúng tab đang đứng. Trước đây, vào thẳng tab
+      "Chờ duyệt" từ thanh bên rồi duyệt ngay thì bị đưa về Dashboard
+    + ✅ **Hết phiên đăng nhập** (sau 8 giờ): màn hình tự chuyển về trang đăng nhập kèm thông báo. Trước đây trang vẫn
+      đứng yên, chỉ tới lúc bấm nút mới báo lỗi
+    + ✅ **Bàn giao chứng từ**: mạng chậm không còn làm trang chỉ hiện nửa trên
+    + ✅ **Quản lý người dùng → Nhập file DB**: cột trong file không có trên hệ thống này bị bỏ qua và được báo tên cụ thể;
+      siết kiểm tra để file nhập không đổi được vai trò ngoài quy định
+    + ✅ **Sao lưu tự động**: bản sao lưu bị kiểm là hỏng được cất riêng (tên bắt đầu bằng `HONG_`) và không còn chiếm
+      chỗ của bản tốt trong 7 ngày lưu giữ
+    + ⚠️ Thấy file `HONG_…` trong thư mục sao lưu, hoặc màn Giám sát báo *sao lưu đã ngừng*, là dấu hiệu cơ sở dữ liệu
+      chính có thể đã hỏng — báo ngay cho người quản trị
+
+- 23/09/2026 Chuẩn hoá văn bản - **Sửa 6 điểm trình bày theo QĐ 979**
+    + ✅ Đường kẻ ngang có sẵn trong văn bản nay được **chỉnh đúng độ dài**: dưới Tiêu ngữ dài bằng dòng chữ,
+      dưới tên đơn vị dài **một nửa** dòng chữ, cả hai canh giữa. Trước đây đường kẻ cũ giữ nguyên nên ngắn hơn chữ
+    + ℹ️ Đường kẻ dưới tên đơn vị **không** kéo tới 2/3: Điều 8.2 chỉ cho phép từ 1/3 đến 1/2 dòng chữ
+    + ✅ Dòng "Kính trình: …" kẻ bảng không còn bị gãy thành hai dòng — cột tự co giãn theo chữ, cả dòng canh giữa
+    + ✅ Có khoảng cách giữa dòng Kính gửi / Kính trình và mục "I." bên dưới
+    + ✅ Số thứ tự tự động (I. II. IV. …) cách chữ **đúng một dấu cách**, giống số gõ tay
+    + ✅ Chỗ để ký giữa chức vụ và họ tên rộng hơn (theo cỡ chữ của khối ký)
+    + ✅ Khối "PHÊ DUYỆT CỦA PHÓ TỔNG GIÁM ĐỐC" cách tên người ký một dòng, không còn dính sát
+    + ℹ️ Trong tab Cấu hình có thêm hai ô tắt/bật: *một dấu cách sau số tự động* và *tính lại bảng Kính gửi*
+
+- 22/09/2026 Nhật ký hệ thống - **Gom 3 mục thành một màn, dễ tra hơn**
+    + ✅ Ba mục menu cũ (Nhật ký hệ thống, Lịch sử lỗi & cảnh báo, Nhật ký đăng nhập) nay là **một mục** với 4 tab:
+      *Tổng quan · Thao tác · Đăng nhập · Lỗi hệ thống*
+    + ✅ Tab **Tổng quan** mở ra đầu tiên: hôm nay / 7 ngày / 30 ngày có bao nhiêu thao tác, bao nhiêu thao tác
+      thất bại, đăng nhập thất bại, lỗi hệ thống — và danh sách **"Cần chú ý"** (tài khoản bị nhập sai mật khẩu nhiều
+      lần, thao tác thất bại lặp lại, lỗi lặp lại). Bấm vào mục nào là ra đúng danh sách đó
+    + ✅ Lọc là ra ngay, không còn nút "Áp dụng lọc". Có nút chọn nhanh Hôm nay / 7 ngày / 30 ngày, lọc riêng
+      **thao tác thất bại**, và các điều kiện đang lọc hiện thành thẻ có dấu ✕ để bỏ từng cái
+    + ✅ Bấm **tên người** để chỉ xem người đó; bấm nhãn hồ sơ (vd *nghỉ phép #123*) để xem **toàn bộ lịch sử** của
+      hồ sơ ấy; bấm một dòng để xem chi tiết và các thao tác khác của cùng người trong 10 phút quanh đó
+    + ✅ Nhật ký đăng nhập tìm được theo tên, tài khoản, địa chỉ máy; lượt nghi dò mật khẩu được tô đỏ
+    + ✅ Sửa lỗi: nút lọc "Sửa" trước đây bỏ sót các thao tác như huỷ đơn nghỉ phép, sửa lưu trữ tập chứng từ
+    + ✅ Có thể gửi đường link màn hình đang lọc cho đồng nghiệp — họ mở ra thấy đúng danh sách đó
+    + ℹ️ Nút **Tải bản sao CSDL** chuyển sang tab Tổng quan. Không cần phân quyền lại — ai đang xem được Nhật ký thì
+      xem được cả 4 tab
+
+- 22/09/2026 Công việc chờ xử lý - **Chứng từ chờ xác nhận: ngày bàn giao lại sau mượn, ghi chú hiện đủ**
+    + ✅ Chứng từ **bàn giao lại sau khi mượn** nay hiện **ngày trả lại**, không còn hiện ngày nộp lần đầu; dưới ngày
+      có dòng "(bàn giao lại)" để phân biệt với chứng từ nộp mới
+    + ✅ Cột **Ghi chú** hiện đủ nội dung ghi chú nhập ở màn Bàn giao chứng từ (trước đây bị cắt còn một dòng)
+    + ℹ️ Báo cáo đúng hạn / quá hạn **không đổi** — vẫn tính theo lần nộp đầu tiên
+
+- 22/09/2026 Quản lý hệ thống - **Màn hình mới: Giám sát hệ thống**
+    + ✅ Một màn xem nhanh tình trạng toàn hệ thống: máy chủ còn khoẻ không (CPU, bộ nhớ, ổ đĩa còn trống),
+      hệ thống đang bận tới đâu, cơ sở dữ liệu đọc được không, sao lưu tự động lần cuối lúc nào, đồng hồ máy chủ
+      có lệch giờ không, bao nhiêu người đang đăng nhập, đối chiếu nào đang chạy, và số lỗi trong 24 giờ qua
+    + ✅ Dòng trên cùng báo **xanh / cam / đỏ** và liệt kê từng việc cần chú ý bằng câu dễ hiểu
+      (ví dụ "Ổ D: gần đầy — còn 1,8 GB"). Màn tự làm mới mỗi 30 giây, tắt được
+    + ⚠️ **Người vận hành phải làm một việc sau khi cập nhật**: Admin thấy menu ngay. Người khác cần vào
+      **Phân quyền theo nhóm** → mục *Quản lý hệ thống* → tick **"Giám sát hệ thống"**. Đây là quyền MỚI, tách riêng
+      khỏi "Nhật ký hệ thống" — nhóm đang xem được Nhật ký **không** tự có. Người vừa được tick phải **đăng xuất rồi
+      đăng nhập lại**
+    + ℹ️ Màn hình chỉ để xem, không có nút thao tác nào
+
+- 22/09/2026 Phân lịch trực - **Ngày lễ âm lịch không còn phụ thuộc phiên bản thư viện lịch âm**
+    + ✅ Danh sách gợi ý ngày lễ (Tết, Giỗ Tổ) vẫn đủ khi thư viện lịch âm được nâng lên bản mới
+    + ✅ Sửa lỗi: bảng ngày lễ dự phòng ghi Giỗ Tổ Hùng Vương 2026 là 28/04 — đúng là **26/04**. Bảng này nay bỏ;
+      nếu máy thiếu thư viện lịch âm, `logs/app.log` ghi rõ dòng ERROR thay vì tự điền ngày
+    + ℹ️ Không có thay đổi giao diện, không cần cài thêm gì
+
+- 21/09/2026 Đối chiếu → Phòng Thanh toán - **Màn hình MỚI "Chấm TK 459901-1000-000000000"**
+    + ⚠️ **Người vận hành phải làm một việc sau khi cập nhật**: vào **Phân quyền theo nhóm** → nhóm cần cấp →
+      mục *Đối chiếu → Phòng Thanh toán* → tick ô **"Chấm TK 459901-1000-000000000"** (và ô **"Xử lý file…"**
+      bên dưới để bấm được nút Xử lý). Đây là ô quyền MỚI, chưa nhóm nào có sẵn — không tick thì ngoài Admin
+      không ai thấy menu
+    + ⚠️ Người vừa được tick quyền phải **đăng xuất rồi đăng nhập lại** mới thấy menu — danh sách quyền chỉ nạp
+      lúc đăng nhập
+    + ✅ Chấm sổ **1000-000000000** (khác với sổ 1000-000007709 của màn "Chấm 459901" — màn đó **không đổi gì**):
+      tải file GL02 (zip hoặc Excel) + file tồn tháng trước (`459-mã 0…` hoặc `459_TON…`, không bắt buộc) → ra 3 file
+      Excel: **GD cân ITT** (cùng REFERENCE, Nợ = Có), **Điện KO offline** (cùng số tiền, Nợ = Có), **GD khác**
+      (còn lại, chấm thủ công)
+    + ✅ Đã chạy thử trên dữ liệu tháng 7 và tháng 8/2026 của phòng, **khớp từng dòng** với bản chấm tay:
+      tháng 7 = 940 / 42 / 6 dòng, tháng 8 = 428 / 30 / 6 dòng (tháng 8 chạy trên 2 file Excel thật, 1,2 triệu dòng, ~1 phút)
+    + ✅ Cả 3 file xuất ra có cột **STT** (số thứ tự 1, 2, 3…) ở cột A; dòng TỔNG CỘNG ở cột B
+    + ✅ Số tiền được so sánh **chính xác từng đồng** (không dung sai, không làm tròn)
+    + ✅ **Không còn tính sai âm thầm khi file đầu vào có vấn đề.** Chặn kèm giải thích: ô tiền là chữ (vd `1,000` — trước đây
+      bị hiểu thành 0), ô dạng `1.000` (mơ hồ giữa "một nghìn" và 1,000 — máy đọc thành 1, sai gấp 1000 lần), file thiếu cột
+      REFERENCE. Cảnh báo cam trên màn hình kết quả: có dòng trùng hoàn toàn (một file chọn hai lần / file tồn trùng GL02),
+      file Excel dài sát trần 1.048.576 dòng (nghi bị cắt bớt), GL02 không có dòng nào của TK
+    + ✅ Có nút **Reset** cạnh nút Xử lý để bỏ file đã chọn + kết quả trên màn hình và chấm lại từ đầu (có hỏi xác nhận). Nút bị khoá
+      lúc đang chạy — muốn dừng thì bấm **Dừng**. Kết quả trên máy chủ không bị xoá bởi Reset (tự dọn lúc 23h, hoặc bấm "Xóa kết quả")
+    + ✅ Tiêu đề trang dùng banner xanh đậm giống màn Đối chiếu / Đối soát CITAD cuối ngày (dòng "Đối chiếu / Phòng Thanh toán" phía trên
+      tiêu đề không còn)
+    + ✅ File khoá tạm của Excel (`~$…xlsx`, sinh ra khi đang mở file) nằm lẫn khi kéo-thả cả thư mục sẽ được **tự bỏ qua**;
+      tên file GL02 có chữ như "Tổng hợp" không còn bị nhận nhầm là file tồn
+    + ⚠️ **Nhớ tải kèm file tồn tháng trước** (`459_TON…` / `459-mã 0…`). Không có thì vẫn chấm được, nhưng các giao dịch tồn không
+      được tính và kết quả sẽ khác bản chấm đầy đủ (tháng 8: 426/28/4 thay vì 428/30/6). Màn hình sẽ **báo ngay khi bấm Xử lý** và
+      ở phần kết quả nếu thiếu file tồn
+    + ⚠️ Cặp dòng NAPAS (dòng tồn) + bút toán "điều chỉnh mã khách hàng" của nó (tháng 7: 7.465.869.595.881, tháng 8:
+      989.304.217.800) được xếp vào Điện KO offline dù không có chuỗi "Remitting Amount:VND" — đúng như bản chấm tay,
+      chương trình **ghi chú ở cột GHI_CHU để soát lại**
+    + ℹ️ Cặp huỷ cùng REFERENCE, cùng một phía, dấu ngược nhau (Cancel −X / Normal +X, tổng triệt tiêu) được xếp vào **GD cân ITT**
+      theo đúng yêu cầu "cùng REFERENCE, Tổng Nợ = Tổng Có" (dữ liệu tháng 7, 8 không có trường hợp này)
+
+- 21/09/2026 Chuẩn hoá văn bản - **Báo chỗ đánh số sai thứ tự**
+    + ✅ Sau khi chuẩn hoá, nếu văn bản có Điều / khoản / điểm **nhảy số, trùng số hoặc lùi số** (ví dụ điểm
+      `d) e)` thiếu `đ)`), màn kết quả hiện khung đỏ **"Nghi đánh số sai thứ tự"** kèm số đoạn để tự kiểm tra
+    + ℹ️ Phần mềm **không tự đánh lại số** — đánh lại thì các câu "theo khoản 3 Điều 5" sẽ trỏ sai
+    + ℹ️ Tắt được ở tab Cấu hình → Đánh số → "Soát thứ tự Điều / khoản / điểm"
+    + ✅ Sửa lỗi: tên chương in hoa có chữ "QUYỀN", "TRƯỞNG"… (ví dụ "QUYỀN VÀ TRÁCH NHIỆM") bị định dạng như
+      khối chữ ký; nay được trình bày đúng là tên chương
+
+- 21/09/2026 Đối chiếu - **Không để nhiều lượt đối chiếu cùng lúc làm tràn bộ nhớ máy chủ**
+    + ✅ Trước khi cho chạy, hệ thống cộng bộ nhớ ước tính của các lượt đang chạy. Nếu thêm lượt mới
+      sẽ vượt mức cho phép, lượt đó được báo **"Máy chủ chưa đủ bộ nhớ…"** kèm tên các lượt đang chạy —
+      chờ một lượt xong rồi bấm lại
+    + ✅ Có thêm một lớp bảo vệ cuối: nếu một lượt dùng bộ nhớ vượt dự kiến, chỉ lượt đó báo lỗi
+      **"vượt bộ nhớ dành cho đối chiếu"**; các lượt khác và toàn bộ hệ thống vẫn chạy bình thường
+    + ℹ️ Mức dự kiến lấy từ số đo thật: ACH 4,5 GB, Song phương ĐI 4 GB, ĐẾN 3 GB, phân loại 2 GB.
+      Chấm ILO1000, Chấm 459901, Đối chiếu OSB chưa có số đo nên vẫn theo giới hạn 3 lượt như cũ
+    + ℹ️ Người vận hành: các mức này chỉnh được trong file cấu hình máy chủ (`.env`), xem `.env.example`
+
+- 21/09/2026 Bàn giao chứng từ, Báo cáo bàn giao chứng từ - **Ghi chú cho từng ô chứng từ**
+    + ⚠️ **Người vận hành phải làm một việc sau khi cập nhật**: vào **Phân quyền theo nhóm** → nhóm cần cấp
+      (các nhóm Chuyên viên) → mục *Bàn giao chứng từ* → tick ô **"Viết / sửa ghi chú ô chứng từ"**. Ô quyền MỚI,
+      chưa nhóm nào có sẵn — không tick thì chưa ai viết được ghi chú. Người được tick phải **đăng xuất rồi đăng
+      nhập lại** mới thấy ô ghi chú
+    + ✅ Bấm vào ô đã có số tờ → panel bên phải có mục **Ghi chú**. Sửa được cả khi ô đã xác nhận, không làm ô
+      quay về "Chờ xác nhận". Mỗi lần sửa đều nằm trong Lịch sử thay đổi, kèm tên người nhập
+    + ✅ Ô **nộp quá hạn** thì ghi chú tự hiện ở **Báo cáo bàn giao chứng từ** (màn hình và file Word), cột
+      "Ghi chú" — chỉ nội dung, không ghi tên người viết
+    + ✅ Sửa lỗi: HKV từ chối một lần *bàn giao lại sau khi mượn* có thể bị xử lý nhầm thành từ chối chứng từ
+      mới (ô thành "Bị từ chối", mất số tờ cũ) — lỗi này sẽ xảy ra nếu GDV viết ghi chú giữa chừng; đã chặn
+    + ℹ️ Xoá trắng một ô thì ghi chú của ô đó mất theo
+- 21/09/2026 Báo cáo → Phòng Tổng hợp - **Màn hình mới: Xếp loại lao động**
+    + ✅ Lưu và tra cứu **xếp loại lao động** (theo năm hoặc quý), **kết quả phiếu tín nhiệm** (theo năm) và
+      **xếp loại quý Cấp ủy**. Nhập tay từng người hoặc nhập cả danh sách từ file Excel theo file mẫu
+      (có bước xem trước, báo lỗi từng dòng, tự chặn nhập trùng)
+    + ✅ Bảng tổng hợp theo **phòng** hoặc theo **chức danh, chức vụ**, xuất Excel được; tra cứu kết quả
+      **5 năm liên tiếp** của một cán bộ
+    + ℹ️ Phòng và chức vụ trên báo cáo là **lúc được xếp loại** — cán bộ chuyển phòng hay đổi chức vụ sau đó thì
+      báo cáo các kỳ cũ giữ nguyên
+    + ⚠️ **Người vận hành phải làm một việc sau khi cập nhật**: vào **Phân quyền theo nhóm** → tick
+      **"Xếp loại lao động"** cho nhóm cần xem, và hai ô **nhập/sửa/xoá** và **xuất Excel** cho người phụ trách
+      nhập. Đây là quyền MỚI, chưa nhóm nào có sẵn. Người vừa được tick phải **đăng xuất rồi đăng nhập lại**
+    + ℹ️ Màn **Thi đua khen thưởng** đổi sang tông màu cam cho đồng bộ, dữ liệu và cách dùng không đổi
+
+- 21/09/2026 Đối chiếu CITAD cuối ngày - **Mở khoá bảng đã chốt: cấp được cho người khác, không còn chỉ Admin**
+    + ⚠️ **Người vận hành phải làm một việc sau khi cập nhật**: vào **Phân quyền theo nhóm** → nhóm cần cấp →
+      mục *Đối chiếu CITAD cuối ngày* → tick ô **"Mở khoá bảng đối chiếu đã chốt"**. Đây là ô quyền MỚI, chưa
+      nhóm nào có sẵn — không tick thì ngoài Admin không ai mở khoá được
+    + ⚠️ Người vừa được tick quyền phải **đăng xuất rồi đăng nhập lại** mới thấy nút — danh sách
+      quyền chỉ nạp lúc đăng nhập. Tick xong mà vẫn chưa thấy nút thì đăng nhập lại, không phải lỗi
+    + ✅ Admin vẫn mở khoá được như trước, không cần tick gì thêm
+    + ℹ️ Nút trên màn hình đổi tên từ "Mở khoá (Admin)" thành "Mở khoá" — vì nút này không còn của riêng Admin
+
+- 21/09/2026 Phân lịch trực, Nghỉ phép, Nhật ký, Quản lý User - **Nút bấm không còn "im lặng không phản hồi"**
+    + ✅ Sửa 39 nút và ô chọn trên các màn hình Phân lịch trực, Nghỉ phép, Nhật ký hệ thống, Nhật ký đăng nhập,
+      Quản lý User, Lưu trữ, Bàn giao, Phân quyền: trước đây một số nút bấm vào **không hiện gì, cũng không báo
+      lỗi** — thông báo bị nuốt mất. Nay bấm là có phản hồi
+    + ℹ️ Không đổi số liệu hay cách tính nào
+
+- 21/09/2026 Toàn hệ thống - **Dọn nợ kỹ thuật, chuẩn bị cho bản Python mới**
+    + ✅ Sửa chỗ ghi ngày giờ xuống cơ sở dữ liệu theo cách bản Python mới yêu cầu — nếu không, khi nâng Python
+      thì **hàng loạt chỗ lưu ngày sẽ hỏng**. Khuôn ngày giờ lưu ra **giữ nguyên y hệt**, dữ liệu cũ đọc bình thường
+    + ✅ Sửa cách tính giờ ở phần đăng nhập và khoá tài khoản theo cùng lý do trên
+    + ℹ️ Không có thay đổi nào người dùng nhìn thấy ở ba mục này
+
+- 18/09/2026 Đối chiếu điện SWIFT, Đối chiếu DTBB - **không làm chậm màn hình khác**
+    + ✅ Đối chiếu điện SWIFT: phần đọc file, đối chiếu và xuất Excel chạy tách riêng như các màn hình đối
+      chiếu khác — lúc có người đối chiếu SWIFT, các màn hình khác không bị chậm theo. Kết quả không đổi
+    + ℹ️ Mỗi lần bấm Đối chiếu / Xuất Excel ở SWIFT chậm hơn khoảng 1 giây (thời gian khởi động). Bước
+      kiểm tra file ngay khi chọn file vẫn nhanh như cũ
+    + ✅ Đối chiếu DTBB: nhiều người cùng bấm tính một lúc không còn làm cả hệ thống chậm theo
+
+- 18/09/2026 Phân lịch trực - **Không còn trực trùng thứ nhiều tuần liền, không còn cặp trực cố định**
+    + ✅ Một người không bị xếp trực **cùng một thứ** (thứ Hai … thứ Sáu) ở 2 tuần liên tiếp, và không quá
+      2 lần cùng một thứ trong tháng — trước đây luật này chỉ áp cho thứ Sáu
+    + ✅ Hai nhân viên trực chính không còn bị ghép cặp cố định tuần này qua tuần khác
+    + ✅ Người biết song phương không còn bị kéo vào ca khi đang cần tránh (đã trực cùng thứ tuần trước,
+      đã đủ ca trong tuần)
+    + ⚠️ Đổi lại, thỉnh thoảng lịch tự xếp sẽ có ca **thiếu người xử lý song phương** kèm cảnh báo — xem
+      cảnh báo sau khi tạo lịch và sửa tay ca đó nếu cần
+    + ⚠️ Ai đăng ký nguyện vọng **trực cố định một thứ hằng tuần** (thứ Hai–Năm): luật mới có thể xếp
+      người khác vào tuần kế tiếp, nên đăng ký chỉ chắc chắn được giữ cách tuần
+    + ℹ️ Lịch đã tạo và đã xác nhận không tự đổi. Muốn áp luật mới cho lịch bản thảo thì tạo lại lịch
+
+- 18/09/2026 Đối chiếu - **Các màn hình khác không còn bị chậm khi có người đang chạy đối chiếu**
+    + ✅ Khi có người chạy Đối chiếu ACH, Chấm ILO1000, Chấm 459901, Đối chiếu OSB hay Đối chiếu Song phương,
+      các màn hình khác (đăng nhập, nghỉ phép, chứng từ...) không còn bị chậm hay đứng vài giây theo
+    + ✅ Một lượt đối chiếu dùng quá nhiều bộ nhớ thì chỉ lượt đó báo lỗi, hệ thống vẫn chạy bình thường —
+      trước đây có thể kéo sập cả hệ thống
+    + ✅ Bấm **Dừng** (ACH, ILO1000, 459901, Song phương): quá 15 giây mà lượt đó chưa tự dừng thì hệ thống
+      dừng hẳn nó
+    + ℹ️ Kết quả đối chiếu không thay đổi. Mỗi lượt khởi động chậm hơn khoảng 1–2 giây
+    + ℹ️ Vẫn giữ tối đa 3 lượt đối chiếu chạy cùng lúc. Hệ thống ghi lại mỗi lượt dùng bao nhiêu bộ nhớ để
+      sau này quyết định có nới giới hạn này không
+    + ℹ️ Người vận hành: nếu phát sinh sự cố với đối chiếu, thêm dòng `DOI_CHIEU_TIEN_TRINH=0` vào file cấu
+      hình máy chủ (`.env`) rồi khởi động lại để quay về cách chạy cũ
+
+- 18/09/2026 Chấm 459901, Đối chiếu OSB - **Hiện lại menu bên trái**
+    + ✅ Hai màn hình này trước đây mở ra thì cột menu bên trái trắng trơn, không chuyển sang màn hình khác
+      từ đó được. Nay menu hiện đầy đủ như các màn hình khác. Cách chạy và kết quả không đổi
+
+- 17/09/2026 Chấm 459901 - **Bỏ ô "Chọn thư mục server"**, chỉ còn "Tải nhiều file lên"
+    + ⚠️ Ai đang dán đường dẫn thư mục trên máy chủ để chạy: từ bản này phải **kéo-thả hoặc chọn file** từ
+      máy mình. Cách nhận diện file (GL02, HUB đi, HUB đến, tồn tháng trước) và kết quả phân loại không đổi
+    + ℹ️ Lý do: ô này cho người dùng trỏ vào thư mục trên máy chủ — cửa rủi ro bảo mật đã phải vá nhiều lần.
+      Đối chiếu ACH, Song phương, ILO1000 đã bỏ từ trước; Chấm 459901 là màn hình cuối cùng còn giữ
+    + ℹ️ Người vận hành: dòng cấu hình thư mục của Chấm 459901 trong file cấu hình máy chủ không còn tác
+      dụng, để nguyên cũng không sao; khi cập nhật hệ thống sẽ không còn nhắc dòng này nữa
+
+- 17/09/2026 Đối chiếu OSB (Phòng Thanh toán) - màn hình mới
+    + ✅ Menu mới **Đối chiếu → Phòng Thanh toán → Đối chiếu OSB**: so sổ cái GL02 với file OSB chi tiết
+      hạch toán của tài khoản trung gian **519910**, ra danh sách **Chênh lệch Nợ** và **Chênh lệch Có**
+      — thay cho việc chấm tay
+    + ✅ Chọn ngày, kéo-thả 1 file .zip GL02 và các file .xlsx OSB của ngày đó (thường 2 file), bấm Chạy.
+      Tải về 1 file .zip gồm 4 file Excel: chênh lệch Nợ và Có, mỗi loại một bản phía GL02 và một bản phía OSB
+    + ℹ️ File GL02 gộp nhiều ngày vẫn dùng được — hệ thống tự lấy đúng ngày đã chọn, không dựa vào tên file
+    + ⚠️ Cặp giao dịch Hủy chỉ được nhận ra khi **đúng 2 dòng** cùng Mã giao dịch và tổng tiền bằng 0. Nhóm
+      từ 3 dòng trở lên có tổng bằng 0 **không** tự đánh dấu Hủy — màn hình báo số nhóm như vậy, cần chấm tay
+    + ⚠️ Màn hình báo có dòng GL02 nội dung dưới 7 ký tự thì số trace của các dòng đó không đáng tin — nên
+      kiểm tra lại các dòng này
+    + ⚠️ Chưa nhóm nào được cấp quyền: quản trị cần tick **Đối chiếu OSB** ở màn Phân quyền theo nhóm cho
+      nhóm cần dùng
+    + ℹ️ File tải lên được xoá ngay sau khi chạy xong; file kết quả tải lại được đến hết ngày, 23h tự xoá
+
+- 17/09/2026 Gỡ thư mục bản gốc **QĐ 979** (`979-QyD-NHNo-PC (Trình bày VB)`) khỏi GitHub
+    + ℹ️ Không đổi màn hình nào. Chuẩn hoá văn bản và tab Mẫu trình bày sẵn vẫn chạy như cũ — quy chuẩn
+      đã nằm trong mã, 18 mẫu trắng đã nằm ở `templates/vb_mau/`
+    + ℹ️ Máy chính không bị ảnh hưởng: `deploy.bat` vốn không chép thư mục này sang
+    + ⚠️ Máy phát triển khác chạy `git pull` sẽ **mất thư mục này trên đĩa**. Cần giữ (để chạy lại
+      `scripts/tach_mau_vb.py`) thì chép ra chỗ khác trước khi pull, xong chép lại vào gốc dự án
+
+- 17/09/2026 Đối chiếu CITAD - PaymentHub (Phòng QLTK Nostro, Vostro) - thêm **USD và EUR**
+    + ✅ Mỗi bảng đối chiếu nay có 3 tab **VNĐ / USD / EUR** trong cùng một kỳ. Ba loại tiền tính riêng,
+      không cộng chung. File Excel xuất ra có 3 sheet tương ứng, kể cả Excel tổng hợp tháng
+    + ✅ Số USD/EUR bên CITAD lấy ở trang **"Tra cứu dữ liệu ngoại tệ"**: chọn chiều Đi, Thành công,
+      Chuyển Có giá trị cao, Dữ liệu tại CI, đúng loại tiền rồi Truy vấn — Extension tự lưu như trang VNĐ
+    + ⚠️ Trên trang PaymentHub **phải chọn đúng Loại tiền** (VND/USD/EUR) trước khi Truy vấn. Để "Tất cả"
+      thì Extension không lưu và hiện cảnh báo màu cam
+    + ⚠️ **Phải cài lại Extension** (bản 1.1). Mở màn hình đối chiếu sẽ tự hiện hộp thoại nhắc nếu máy còn
+      bản cũ — bấm "Tải Extension mới", gỡ bản cũ ở chrome://extensions rồi cài lại
+    + ✅ Tab Lịch sử và Tổng hợp tháng có thêm ô **lọc theo loại tiền**. Các ô Người lập bảng / Người
+      kiểm soát / Tên người chấm có danh sách nhân viên trong phòng để bấm chọn, vẫn gõ tay được
+    + ℹ️ Các bảng đã lưu trước đây vẫn mở, sửa, xuất Excel bình thường — số cũ nằm ở tab VNĐ
+    + ⚠️ **Nhờ kiểm tra lần đầu dùng USD/EUR:** so số tiền trên màn hình đối chiếu với số trên trang
+      CITAD/PaymentHub. Nếu thấy **gấp 100 lần** (lệch 2 chữ số) thì báo kỹ thuật ngay
+
+- 17/09/2026 Cảnh báo "Request chậm" nay **tự ghi lý do đi kèm**
+    + ✅ Mỗi dòng cảnh báo ở **Nhật ký hệ thống** có thêm phần đuôi sau dấu `|`, cho biết lúc đó phần
+      mềm đang bận gì: có job đối chiếu nào đang chạy không, có bao nhiêu người đang dùng, CSDL có bị
+      xếp hàng không. Không đổi cách hoạt động của bất kỳ màn hình nào
+    + ℹ️ **Nhờ người vận hành:** sau khi cập nhật, khi thấy cảnh báo "Request chậm" thì chụp lại
+      **nguyên dòng** (cả phần sau dấu `|`) gửi kỹ thuật. Đặc biệt để ý khi đang có người chạy Đối chiếu
+      ACH / Chấm 459901 / Song phương — nghi phạm hiện tại là các job này làm chậm cả hệ thống
+    + ℹ️ Không đổi dữ liệu, không phải cài lại Extension. Chạy lại phần mềm như thường lệ
+
+- 17/09/2026 Nâng Python lên 3.12 — **máy chủ đã nâng xong** (3.12.10)
+    + ℹ️ Python 3.10 hết được hỗ trợ vá lỗi bảo mật từ 31/10/2026, nên nâng trước hạn. Không đổi màn
+      hình nào, không đổi dữ liệu. Toàn bộ 2013 bài kiểm tra tự động chạy đạt trên bản mới
+    + ⚠️ **Mọi máy cắm chung USB dự án phải cài Python 3.12.** Cắm sang máy còn 3.10 là phần mềm không
+      chạy được. Cách nâng từng bước (chạy bằng CMD) ở `docs/CONTRIBUTING.md`, mục *Cài Python*
+    + ⚠️ Cắm USB sang máy khác (đã có 3.12) mà `start.bat` báo **"No Python at ..."** thì không cần cài
+      lại gì — mở CMD ở thư mục dự án, chạy `py -3.12 -m venv --upgrade .venv`
+    + ℹ️ Nếu trên máy còn thư mục `.venv_310_backup` (bản sao lưu lúc nâng): chạy thử phần mềm ổn định
+      vài ngày rồi xoá được, tiết kiệm ~1 GB. Nó đã được loại khỏi git nên để đó không bị đẩy nhầm lên
+
+- 17/09/2026 Sửa lỗi hệ thống **đứng hẳn 30 giây** khi nhiều người mở màn hình cùng lúc
+    + ✅ Trước đây khi khoảng **15 người trở lên** mở trang cùng một lúc (điển hình: vừa khởi động lại
+      phần mềm, mọi trình duyệt đang mở tự tải lại), **toàn bộ** hệ thống treo khoảng 30 giây rồi một
+      nửa số người nhận lỗi. Đo trên máy thử: 90 yêu cầu cùng lúc → treo 31 giây; nay 120 yêu cầu cùng
+      lúc vẫn xong dưới 1 giây, không lỗi
+    + ✅ Lúc đông người bình thường **không nhanh hơn cũng không chậm hơn** — đã đo so sánh hai bản
+    + ✅ Nếu vẫn quá tải thật thì người dùng nhận thông báo "Hệ thống bận, vui lòng thử lại" thay vì lỗi
+      chung chung, và **màn Nhật ký hệ thống có ghi lại** (trước đây lỗi này không ghi ở đâu cả)
+    + ⚠️ **Chưa phải lời giải cho các cảnh báo "Request chậm" 1,5–2,5 giây** đang thấy ở Nhật ký hệ
+      thống. Máy chủ chưa từng rơi vào lỗi treo 30 giây ở trên; nguyên nhân cảnh báo vẫn đang tìm
+    + ℹ️ Không đổi màn hình, không đổi dữ liệu, không phải cài lại Extension. Chạy lại phần mềm như thường lệ
+
+- 16/09/2026 Đối soát CITAD ↔ IPCAS — sửa 2 chỗ làm **mất lệnh lệch** khỏi báo cáo
+    + ✅ **Lệnh Đến cùng số giao dịch, cùng số tiền nhưng từ nhiều ngân hàng gửi khác nhau** nay được so
+      riêng từng ngân hàng. Trước đây phần mềm chỉ so một dòng đại diện, nên nếu CITAD có 4 lệnh mà IPCAS
+      chỉ có 3 thì lệnh thiếu **không hiện ra** (ca thật: số GD 10008309, 500.000đ)
+    + ✅ **Lệnh Đi IPCAS trạng thái `ERRC` (hạch toán huỷ lỗi)** không còn bị bỏ lúc đọc file. Trước đây
+      lệnh CITAD tương ứng hiện nhầm là **Chỉ CITAD** như thể IPCAS không có gì; nay hiện ở
+      **Lệch trạng thái** để người chấm thấy IPCAS có bản ghi
+    + ⚠️ **Có thể xuất hiện thêm dòng Chỉ IPCAS mang trạng thái `ERRC`** — lệnh huỷ lỗi mà CITAD không có.
+      Nếu Phòng Thanh toán thấy loại này không cần báo, báo lại để loại trừ như `ERPO`/`CALD`
+    + ⚠️ Nếu một ngày báo cáo đột nhiên có **rất nhiều cặp Chỉ CITAD / Chỉ IPCAS** kèm ghi chú
+      *"nhiều ngân hàng gửi khác nhau"* → nhiều khả năng file xuất từ CITAD hoặc IPCAS đổi định dạng
+      (mất mã ngân hàng), không phải lệch thật. Báo lại kỹ thuật trước khi xử lý
+    + ℹ️ Không đổi màn hình, không đổi dữ liệu cũ, không cần chạy script. Chỉ cần chạy lại phần mềm
+
+- 16/09/2026 Thi đua khen thưởng — màn hình mới cho Phòng Tổng hợp
+    + ✅ **Menu mới: Báo cáo → Phòng Tổng hợp → Thi đua khen thưởng.** Trước đây không có chỗ nào
+      trong phần mềm lưu dữ liệu này, nên báo cáo nghỉ phép vẫn phải bỏ trống cột "xếp loại thi đua"
+    + ✅ Lưu **3 loại dữ liệu**: danh hiệu của **đơn vị** (toàn Trung tâm hoặc từng phòng), danh hiệu
+      của **cá nhân** theo cấp (Đảng / chuyên môn / công đoàn), và **sáng kiến** của cá nhân. Sáng kiến
+      đính kèm được **file quyết định** (PDF, Word, ảnh — tối đa 15 MB mỗi file), tải về lại lúc nào cũng được
+    + ✅ **Tra cứu và xuất Excel**: một bảng tổng hợp danh hiệu đơn vị + cá nhân theo năm, một bảng
+      sáng kiến theo từng người. Có ô lọc theo năm, theo cán bộ, theo cấp và ô tìm kiếm tự do
+    + ✅ **Nhập sẵn từ Excel** cho cả 3 loại, dành cho phần đang theo dõi tay bằng Excel từ trước: bấm
+      **"Tải file mẫu"**, điền vào, tải lên lại. Bấm **"Xem trước"** để máy soát lỗi từng dòng (báo rõ
+      dòng nào sai vì sao) — thấy đúng rồi mới bấm **"Nhập vào hệ thống"**
+    + ⚠️ **Chưa ai nhìn thấy menu này cho tới khi được cấp quyền.** Người quản trị vào
+      **Phân quyền theo nhóm → Phòng Tổng hợp → Thi đua khen thưởng** rồi tick ô cho nhóm cần dùng.
+      Tài khoản quản trị thấy ngay từ đầu nên dễ tưởng là đã xong cho mọi người
+    + ⚠️ **Nhập cùng một file Excel hai lần là dữ liệu bị nhân đôi.** Phần mềm chưa biết tự nhận ra
+      dòng đã có. Lỡ nhập trùng thì phải vào xoá tay từng thẻ một — chưa có nút xoá hàng loạt. Nhập
+      xong nên mở danh sách soát lại số dòng ngay
+    + ⚠️ File Excel **tự làm** mà có cột **"Giới tính (Nam/Nữ)"** đứng trước cột **"Năm"** thì máy nhận
+      nhầm cột và báo `Năm không hợp lệ: 'Nam'` ở mọi dòng. Dùng file mẫu tải từ phần mềm thì không dính
+    + ℹ️ Không đổi màn hình nào đang có, không đổi dữ liệu cũ, không phải cài lại Extension. Chỉ cần
+      chạy lại phần mềm như thường lệ
+
+- 16/09/2026 Chấm 459901 — nhóm **Chuyển chi nhánh** chấm chặt hơn theo đúng quy tắc phòng Thanh toán
+    + ✅ Một cặp chỉ được xếp vào **Chuyển chi nhánh** khi có **một vế mã chi nhánh `1000` và một vế
+      mã khác**. Trước đây phần mềm chỉ ghép theo số tiền + nội dung (REMARK) mà không nhìn mã chi
+      nhánh, nên cặp hai vế cùng chi nhánh cũng bị xếp nhầm vào đây
+    + ⚠️ **Số dòng nhóm Chuyển chi nhánh sẽ ít đi so với các tháng trước.** Phần bị loại không mất —
+      rơi xuống nhóm *Cân CN* hoặc *GD khác* ở các bước sau. Tổng số dòng của 7 file vẫn đúng bằng
+      số dòng dữ liệu đầu vào như cũ
+    + ⚠️ Có một số giao dịch thực tế **là** chuyển chi nhánh nhưng không có vế `1000` — người chấm
+      tay nhận ra được vì tra hệ thống thanh toán, còn dữ liệu GL02 không có dấu hiệu nào để phần
+      mềm tự biết. Những ca này vẫn nằm ở *GD khác* và **vẫn phải chấm tay** như trước
+    + ℹ️ Không đổi gì ở 6 nhóm còn lại, không đổi thứ tự phân loại, không đổi cách xuất file
+
+- 16/09/2026 Thư viện — chặn phiên bản cho toàn bộ thư viện, không chỉ riêng `pandas`
+    + ✅ **Cần chạy lại `start.bat` một lần** — máy sẽ **không** cài lại hay đổi thư viện nào,
+      chỉ ghi nhận khai báo mới. Đã kiểm trước: mọi thư viện đang có trên máy chủ đều hợp lệ
+    + ℹ️ Rà tiếp sau đợt `pandas` thì thấy 10 thư viện khác cũng không khai giới hạn. Ba cái
+      **đã tự nhảy lên đời mới từ lúc nào không ai biết** — trong đó có thư viện dựng ảnh chữ ký
+      trên đơn nghỉ phép, và thư viện đọc file Excel của các màn hình đối chiếu
+    + ⚠️ Một cái suýt gây hỏng thật: thư viện tính **ngày âm lịch** sắp bỏ cách gọi cũ mà hệ thống
+      đang dùng. Nếu để nó tự lên đời, lịch trực sẽ **mất trọn 5 ngày Tết và Giỗ Tổ** khỏi danh
+      sách gợi ý, không báo lỗi gì. Đã chặn lại; cách sửa triệt để ghi ở issue #109
+    + ℹ️ Thêm một bước kiểm tự động: từ nay ai thêm thư viện mà quên khai giới hạn thì máy báo lỗi
+      ngay, không đợi đến lúc hỏng
+
+- 16/09/2026 Thư viện — chặn `pandas` phiên bản 3 để không hỏng phần xuất file Excel
+    + ✅ **Cần chạy lại `start.bat` một lần** sau đợt này để máy tự cài đúng phiên bản thư viện
+    + ℹ️ Không đổi màn hình nào, không đổi dữ liệu. Đây là việc bên trong: `pandas` vừa ra bản mới (bản 3)
+      đòi một thư viện Excel đời cao hơn bản hệ thống đang dùng. Máy nào cài mới hôm nay sẽ tự kéo về bản 3
+      rồi **mọi chức năng xuất Excel báo lỗi** — nay đã chặn lại
+    + ℹ️ Máy chính đang chạy Python 3.10 nên **chưa từng dính lỗi này** (bản `pandas` 3 đòi Python 3.11 trở lên).
+      Chặn trước để máy cài mới hoặc nâng Python về sau không vấp
+
+- 16/09/2026 Đối chiếu CITAD — hết cảnh "Nạp" ra số của loại tiền hôm đó không có giao dịch
+    + ✅ **Dữ liệu đã quét nay tự hết hạn sau 4 giờ**: trước đây một lượt quét cũ (hôm khác, lúc chạy thử)
+      nằm lại trong máy chủ vô thời hạn, đến khi bấm "Nạp CITAD" thì bị kéo vào bảng cùng với số vừa quét
+    + ✅ **Thêm nút "Xoá dữ liệu đã quét"** ở màn Đối chiếu CITAD — xoá ngay phần Extension đã gửi lên nhưng
+      chưa nạp, dùng khi vừa quét nhầm hoặc quét thử. Không đụng số đang hiện trên màn hình hay bảng đã lưu
+    + ✅ **Cảnh báo khi nghi đọc nhầm loại tiền**: trên trang CITAD, ô chọn loại tiền đổi ngay nhưng bảng số
+      liệu phía dưới cập nhật chậm hơn — quét đúng lúc đó thì số của USD có thể bị gắn nhãn EUR. Nay nếu hai
+      loại tiền ra số **giống hệt nhau**, hệ thống báo để tự soi lại trên CITAD. **Số vẫn được nạp bình
+      thường**, đây chỉ là nhắc kiểm tra, không chặn
+    + ⚠️ Cảnh báo này chỉ bật khi **cả hai** loại tiền cùng có số trong máy chủ. Không thấy cảnh báo **không**
+      có nghĩa là số chắc chắn đúng — vẫn nên soi lại như thường lệ
+    + ⚠️ Màn **Đối chiếu CITAD của Phòng QLTK Nostro, Vostro chưa được sửa** — vẫn có thể nạp nhầm dữ liệu
+      quét cũ. Sẽ vá ở đợt sau; trong lúc chờ, nếu thấy số lạ thì báo để khởi động lại backend
+    + ℹ️ **Không phải cài lại Extension** — toàn bộ thay đổi nằm ở máy chủ và màn hình web
+
+- 14/09/2026 Chuẩn hoá văn bản - sửa các lỗi thấy khi chạy thử trên Tờ trình thật
+    + ✅ **Không còn đổi số tiền trong bảng**: ô "10.000", "5.000" trước đây có thể bị sửa thành "10. 000"
+    + ✅ Dòng "V/v …" ngay dưới "TỜ TRÌNH" nay ra cỡ 14 in đậm (trước ra cỡ 12 in thường); đề mục
+      "I. Căn cứ trình" không còn bị dính vào trích yếu và không còn bị in nghiêng
+    + ✅ Khối tên đơn vị: khi người soạn đã tự kẻ vạch dưới "TRUNG TÂM THANH TOÁN" và ghi tên phòng bên
+      dưới vạch, hệ thống giữ nguyên như vậy — không còn bỏ đậm dòng trung tâm, không vẽ thêm vạch thứ hai
+    + ✅ Số tự động "a.", "I.", "II." không còn cách chữ quá xa (~1,5 cm), cũng không dính sát chữ
+    + ✅ Gạch đầu dòng không còn bị đẩy lùi vào 2,25 cm, và không còn hiện hai dấu gạch "– -" ở văn bản
+      đang bật theo dõi sửa đổi (Track Changes)
+    + ⚠️ Văn bản còn sửa đổi chưa chấp nhận (Track Changes) thì phần chữ **chèn thêm** chưa được chuẩn hoá.
+      Nên chấp nhận hết sửa đổi trong Word rồi mới tải lên
+
+- 14/09/2026 Nhật ký hệ thống gọn hơn — chỉ ghi khi có thao tác thật
+    + **Nghỉ phép:** chỉ mở màn hình, bấm "Đã hiểu" ở thông báo, hay bấm *Xem trước* đơn chưa gửi thì **không**
+      còn sinh dòng nhật ký. Lập đơn, duyệt, huỷ, gửi lại, nhập hạn mức… vẫn ghi như cũ
+    + **Đối chiếu ACH / Song phương:** mỗi lần chọn file hoặc bấm kiểm tra đủ file trước khi chạy không còn
+      sinh dòng. Lượt **chạy** và **dừng** đối chiếu vẫn ghi
+    + Các dòng loại này đã ghi từ trước **vẫn còn** trong nhật ký, tự hết hạn sau 365 ngày
+
+- 12/09/2026 Sắp xếp lại mã nguồn trang Nghỉ phép — **không đổi gì với người dùng**
+    + Trang Nghỉ phép trước nay nằm trong một file rất lớn, khó sửa an toàn. Nay tách dần thành nhiều
+      file nhỏ; đợt này tách riêng phần "xem chi tiết một đơn"
+    + Màn hình, thao tác và số liệu giữ nguyên. Nếu thấy bất thường khi mở chi tiết đơn, báo ngay
+
+- 12/09/2026 Nhật ký ghi rõ lý do khi một việc chạy nền hỏng — **không đổi gì với người dùng**
+    + Trước đây một số việc phụ hỏng thì hệ thống bỏ qua hoàn toàn im lặng. Nay các chỗ đó ghi lại lý do
+      vào nhật ký, ví dụ: đổi ngày lễ âm lịch sang dương lịch hỏng (làm thiếu ngày lễ trong gợi ý phân
+      lịch trực), hay đơn nào bị lỗi khi duyệt/từ chối nhiều đơn nghỉ phép cùng lúc
+    + Ghi ở đâu: việc của phần máy chủ vào `logs/app.log` (xem được ở màn *Nhật ký hệ thống*); việc của
+      phần giao diện vào `logs/frontend.log` (phải mở file, màn Nhật ký không hiện)
+    + **Một thay đổi có thấy được:** ở màn Đối chiếu CITAD, nếu sau khi "Nạp" mà hệ thống không dọn được
+      dữ liệu tạm thì nay sẽ hiện cảnh báo — trước đây im lặng, và lần "Nạp" sau có thể điền lại số của
+      lượt trước lên ô đang nhập
+
+- 12/09/2026 Nhật ký ghi lại thao tác chạy chậm — **không đổi gì với người dùng**
+    + Thao tác nào chạy lâu bất thường sẽ được ghi một dòng cảnh báo vào `logs/app.log` (kèm đường
+      dẫn và số mili giây). Chỉ để biết chỗ nào cần làm nhanh hơn — **không chặn, không đổi** bất kỳ
+      thao tác nào
+    + Phần lớn việc vốn dĩ lâu (dựng bản in đơn nghỉ phép qua Word, nộp file đối chiếu, tải/xuất file)
+      đã được đặt mức chờ riêng nên không bị ghi nhầm
+
+- 11/09/2026 Địa chỉ kiểm tra nhanh **/health** — **không đổi gì với người dùng**
+    + Mở `http://<máy chủ>:8000/health` (không cần đăng nhập) để biết phần máy chủ đã chạy và đọc
+      được dữ liệu chưa: hiện `"status": "ok"` là ổn; báo `"degraded"` là máy chủ chạy nhưng không
+      đọc được file dữ liệu — xem `backend.log`
+    + Không hiện thông tin gì khác. Ngày sao lưu gần nhất và lệch giờ vẫn xem ở màn *Nhật ký hệ thống*
+
+- 11/09/2026 **Đối chiếu CITAD - PaymentHub (Phòng QLTK Nostro, Vostro)** - mỗi người có bảng riêng cho cùng một kỳ, thêm tab "Tổng hợp tháng"
+    + ✅ **Không còn ghi đè bảng của nhau.** Trước đây mỗi kỳ chỉ có một bảng chung cả phòng, ai lưu
+      sau là đè số liệu người trước. Nay mỗi lần lưu kỳ mới là một bảng riêng của người đang làm;
+      người khác mở ra chỉ xem được, không sửa được. Bảng đã lưu trước khi cập nhật vẫn giữ nguyên
+    + ✅ **Tab "Lịch sử"** xếp theo kỳ → từng bảng của từng người → từng lần lưu. Bảng của mình có nút
+      "Tải để sửa tiếp"
+    + ✅ **Tab mới "Tổng hợp tháng"**: chọn tháng, tick những bảng muốn cộng vào tổng rồi xuất Excel
+      tháng. Có cảnh báo đỏ khi hai bảng đang tick trùng ngày nhau (dễ cộng hai lần) và danh sách
+      những ngày trong tháng chưa ai chấm
+    + ✅ **Hết báo "Chênh lệch" giả** khi số liệu thực ra khớp nhau
+    + ✅ **File Excel in ra nằm giữa trang A4**, chữ và cột to hơn
+    + ✅ **Extension gửi được số liệu** ở máy chủ trước đây cứ báo "Chưa gửi được số liệu về máy chủ -
+      sẽ tự thử lại" mãi không xong
+    + ⚠️ **Muốn đổi sang kỳ khác thì cứ sửa ô ngày** — hệ thống hiểu là bắt đầu bảng mới, bảng đang
+      xem không bị ghi đè
+    + ⚠️ **Xoá bảng rồi thì lịch sử các lần lưu của bảng đó cũng không xem lại được nữa.** Mỗi người
+      tự xoá được bảng của mình; muốn cho ai đó (vd trưởng phòng) xoá được bảng của người khác, quản
+      trị viên vào *Phân quyền theo nhóm → Phòng QLTK Nostro, Vostro* tick
+      **"Xoá bảng đối chiếu của người khác"**
+    + ⚠️ **Lỗi đã biết, đang chờ vá:** mở lại bảng của chính mình từ tab "Lịch sử" có thể bị khoá
+      chỉ đọc và báo "bảng của người khác" (khi ngày của bảng khác cả hai ô ngày đang hiện trên màn
+      hình). Tạm thời: gõ sẵn đúng **"Đến ngày"** của kỳ đó vào ô trên màn hình Đối chiếu trước, rồi
+      mới sang tab "Lịch sử" bấm "Tải để sửa tiếp"
+
+- 11/09/2026 Kiểm tra tự động trên GitHub chỉ chạy khi mở PR — **không đổi gì với người dùng**
+    + Trước đây mỗi lần đẩy mã chạy kiểm tra hai lần, gộp mã xong lại chạy thêm lần nữa trên đúng nội
+      dung vừa kiểm — tốn gấp ba số phút GitHub cho phép và GitHub đã tạm chặn kiểm tra ngày 11/09.
+      Nay chỉ chạy một lần mỗi khi mở hoặc cập nhật yêu cầu gộp mã (PR); PR chỉ sửa tài liệu thì bỏ qua
+
+- 11/09/2026 Menu mới **Khảo sát** — tạo phiếu hỏi ý kiến như Google Forms, gửi cho từng nhóm, có hạn chót và thống kê
+    + ✅ **Nằm ở nhóm "Tính năng khác" → "Khảo sát".** Người được giao tạo khảo sát soạn câu hỏi
+      (gõ chữ ngắn, đoạn văn, chọn một, chọn nhiều, danh sách thả xuống, chấm điểm theo thang, chọn
+      ngày), chọn **nhóm người nhận**, đặt **hạn chót** rồi bấm "Lưu & phát hành"
+    + ✅ **Người nhận thấy ngay ở khối "Công việc chờ xử lý"** trên cùng thanh menu, dòng *"Khảo sát
+      chưa trả lời"* kèm số. Trả lời xong, hết hạn hoặc người tạo đóng khảo sát thì dòng đó tự mất
+    + ✅ **Thống kê tự cập nhật**: bao nhiêu người đã trả lời / chưa trả lời (có danh sách tên để nhắc),
+      biểu đồ từng câu, điểm trung bình, xuất ra Excel
+    + ✅ **Tuỳ chọn ẩn danh**: người xem kết quả không thấy tên và giờ nộp của từng người. Hệ thống vẫn
+      ghi nhận *ai đã trả lời* để không ai trả lời hai lần và để biết ai chưa làm
+    + ⚠️ **Sau khi cập nhật phải cấp quyền bằng tay** — chưa nhóm nào có sẵn. Quản trị viên vào
+      *Phân quyền theo nhóm → Tính năng khác → Khảo sát*:
+        + Tick **"Khảo sát"** cho mọi nhóm sẽ dùng (để thấy menu và xem lại khảo sát của mình)
+        + Tick thêm **"Tạo / sửa / phát hành khảo sát"** cho người được giao đi hỏi ý kiến
+        + Tick **"Xem kết quả khảo sát của mọi người"** cho lãnh đạo nếu cần
+        + Người **chỉ trả lời** không cần quyền gì: được gửi tới là thấy ở "Công việc chờ xử lý"
+    + ⚠️ **Đã có người trả lời thì không sửa được câu hỏi nữa** (vẫn gia hạn, đổi tên, đổi nhóm nhận
+      được). Muốn đổi câu hỏi thì phải làm khảo sát mới
+    + ⚠️ **Chọn ẩn danh hay không ngay từ lúc soạn**: đã phát hành ở chế độ ẩn danh thì không tắt được,
+      đã có người trả lời thì không đổi được — để người trả lời không bị lộ tên sau khi đã nộp
+    + ℹ️ Chưa có nhắc qua email — chỉ nhắc khi người nhận mở hệ thống
+
+- 11/09/2026 Kiểm tra tự động trên GitHub — **không đổi gì với người dùng, không cần làm gì sau khi cập nhật**
+    + Mỗi lần đẩy mã lên, GitHub nay quét thêm lỗi "dùng tên chưa có" (loại lỗi vừa làm hỏng Chấm ILO1000
+      và trang Đóng chứng từ) và **báo đỏ** nếu có, để người gộp mã sửa trước khi đưa sang máy chính
+
+- 11/09/2026 Sửa lỗi — **Màn hình Chấm ILO1000 không ra file kết quả; trang Đóng chứng từ không mở được**
+    + ✅ **Màn hình "Chấm ILO1000" nay trả được file kết quả.** Từ khi ra mắt (bản 02/09/2026), mọi lượt
+      chấm trên màn hình này chạy hết các bước rồi báo lỗi "name 'os' is not defined" ở bước cuối,
+      không tải được file nào. Đây là lỗi của chương trình, **không phải do file đầu vào**. Công cụ
+      chấm chạy riêng bên ngoài hệ thống không bị ảnh hưởng
+    + ✅ **Trang "Đóng chứng từ" mở được trở lại.** Từ bản 30/08/2026, mở trang là hiện lỗi thay vì
+      danh sách bìa. Dữ liệu bìa đã tạo không bị ảnh hưởng
+
+- 11/09/2026 Đối chiếu Song phương — **Bước so Hub với Core chạy nhanh hơn, kết quả không đổi**
+    + ✅ **Bước so khớp Hub↔Core ở cả thẻ "Đối chiếu đến" lẫn "Đối chiếu đi" nhanh hơn khoảng 2–4 lần**
+      (tuỳ máy). Đo thử với một ngày cỡ 800 nghìn dòng: phần việc này từ 7–14 giây còn khoảng 3–4
+      giây. Đọc file và ghi file kết quả không thay đổi, nên tổng thời gian cả lượt chấm giảm
+      ít hơn con số trên
+    + ✅ **Kết quả chấm giữ nguyên từng dòng** — chỉ đổi cách tính cho nhanh hơn, không đổi quy tắc
+      khớp. Đã so với cách cũ trên hàng trăm bộ dữ liệu ngẫu nhiên và các trường hợp đặc biệt
+      (trùng số, thiếu số, trống), không lệch dòng nào
+
+- 10/09/2026 Đối chiếu CITAD — **Bắt được kiểu "khớp khống": cùng số giao dịch nhưng một bên ghi giá trị cao, bên kia ghi giá trị thấp**
+    + ✅ **Lệnh cùng số giao dịch mà hai bên ghi khác loại nay không còn bị coi là khớp.** Ca thật
+      Phòng Thanh toán báo ngày 10/09: một lệnh VND đi, CITAD và Agribank ghi giống hệt nhau mọi thứ —
+      cùng số giao dịch, cùng trạng thái đã thành công — chỉ khác đúng một chỗ: CITAD ghi **giá trị
+      cao**, Agribank ghi **giá trị thấp**. Cách so cũ chỉ nhìn số giao dịch nên vẫn tick "khớp", không
+      ai biết có chuyện. Nay lệnh đó tách thành 2 dòng lệch (một bên "Chỉ CITAD", một bên "Chỉ IPCAS"),
+      mỗi dòng có sẵn câu ghi chú chỉ sang dòng kia để người chấm nối lại thành một cặp
+    + ✅ **Bảng chi tiết ở tab "Lịch sử" nay có thêm cột "Số RefHub"** — trước chỉ tab "Kết quả" và file
+      Excel xuất ra mới có. Lượt đối soát lưu trước ngày 09/09 thì cột này để trống, đó là bình thường:
+      thời điểm lưu chưa có số liệu đó
+    + ✅ **Nhóm "Lệch trạng thái" nay cũng hiện số RefHub.** Đây đúng là nhóm cần nhất — Agribank có
+      lệnh nhưng chưa xong trạng thái, người chấm bắt buộc phải tự tra bên Agribank mà lại không có mã
+      để tra. Sót từ đợt 09/09
+    + ⚠️ **Merge kèm 2 lỗi đã biết, chưa vá — chấp nhận có chủ ý.** Rà soát trước khi merge tìm ra và
+      tái hiện được cả hai:
+        + **Mất một cảnh báo quan trọng hơn.** Nếu một lệnh vừa lệch loại **vừa** bị Agribank ghi là
+          thất bại, thì câu cảnh báo cũ *"Agribank ghi nhận thất bại nhưng lệnh THỰC TẾ đã đi kênh
+          CITAD thành công — cần kiểm tra lại"* **biến mất**, chỉ còn câu nói về lệch loại. Đây là cảnh
+          báo tiền đã ra khỏi kênh mà sổ sách báo hỏng — nặng hơn chuyện lệch loại
+        + **Ghi chú nói sai khi CITAD gửi trùng qua 2 cổng.** Nếu cùng một số giao dịch mà CITAD có 2
+          dòng ở 2 cổng khác loại nhau, hệ thống chỉ nhìn dòng đầu rồi kết luận "CITAD ghi loại này,
+          Agribank ghi loại kia" — trong khi CITAD có **cả hai**. Kèm theo là một lệnh khớp thật bị
+          đánh rớt
+    + ⚠️ **Chưa đo trên dữ liệu thật một ngày trọn vẹn.** Quy tắc mới áp cho **mọi** lệnh VND đi, nên
+      cần chạy lại một ngày có sẵn (19/08 hoặc 10/09) và so số lệnh khớp trước/sau. Nếu số cặp "lệch
+      loại" nhảy lên hàng trăm thì đây không phải ca cá biệt mà là khác biệt hệ thống giữa hai file —
+      lúc đó phải nghĩ lại cách xử lý
+    + ℹ️ Tab "Lịch sử" vẫn **chưa có cột Ghi chú**, nên xem lại lượt cũ thì không thấy câu nối cặp
+      IH/IL. Vẫn dò được bằng mắt qua cột "Số GD" và "Số GD (Agribank)"
+
 - 10/09/2026 Hiệu năng toàn hệ thống — **Xem lịch sử đối soát CITAD nhanh gấp 94 lần, và chặn được kiểu sự cố đã làm sập máy chủ 26/08**
     + ✅ **Bấm "Xem chi tiết" ở Lịch sử đối soát CITAD nay ra ngay**, trước phải chờ khoảng 1 giây
       và máy chủ phải ôm 97 MB bộ nhớ cho **mỗi lần một người bấm**. Nguyên nhân: toàn bộ danh sách

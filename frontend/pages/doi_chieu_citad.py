@@ -616,8 +616,8 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
         (5 Cổng CITAD + PaymentHub) lẫn `inputs["napasE"]`/`inputs["pssmdpE"]`
         (Napas/PSS-MDP, cố định từ 04/09/2026) — cả 2 nhóm này readonly CỐ
         ĐỊNH ngay từ lúc dựng grid (chỉ nạp qua Extension, không phân biệt
-        mode). Tham chiếu `btn_nap_citad`/`btn_nap_ph`/`btn_luu_tam`/
-        `btn_luu_cuoi`/`btn_xoa`/`banner_area` — các biến này gán SAU trong
+        mode). Tham chiếu `btn_nap_citad`/`btn_nap_ph`/`btn_xoa_buffer`/
+        `btn_luu_tam`/`btn_luu_cuoi`/`btn_xoa`/`banner_area` — các biến này gán SAU trong
         cùng hàm doi_chieu_citad_page(), nhưng closure chỉ đọc lúc GỌI hàm
         này (sau khi trang đã dựng xong)."""
         view_state["mode"] = mode
@@ -640,12 +640,14 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
         # không biết vì sao không nạp được, tưởng phần mềm lỗi.
         btn_nap_citad.set_visibility(mode in ("edit", "napas_only"))
         btn_nap_ph.set_visibility(mode in ("edit", "napas_only"))
+        btn_xoa_buffer.set_visibility(mode in ("edit", "napas_only"))
         btn_xoa.set_visibility(mode == "edit")
         btn_luu_tam.set_visibility(mode in ("edit", "napas_only"))
         btn_luu_cuoi.set_visibility(mode == "edit")
 
         banner_area.clear()
-        is_admin = current_user.get("role") == "admin"
+        # Quyền mở khoá đi qua Phân quyền theo nhóm, không đọc role (21/09/2026).
+        co_quyen_mo_khoa = api.has_feature("doi_chieu_citad.unlock")
         with banner_area:
             if mode == "napas_only":
                 with ui.row().classes(
@@ -671,8 +673,10 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
                     ui.button("Bỏ xem, làm bảng mới", icon="edit", on_click=_exit_readonly_view).props(
                         "dense flat color=amber-8"
                     )
-                    if is_admin:
-                        ui.button("Mở khoá (Admin)", icon="lock_open", on_click=_admin_unlock).props(
+                    if co_quyen_mo_khoa:
+                        # Bỏ chữ "(Admin)" khỏi nhãn: nút này không còn của riêng
+                        # admin nữa, ai được tick mã quyền cũng thấy.
+                        ui.button("Mở khoá", icon="lock_open", on_click=_admin_unlock).props(
                             "dense outline color=red"
                         )
 
@@ -773,6 +777,7 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
         napas_only = view_state["mode"] == "napas_only"
         count = 0
         skipped = 0
+        dup_warnings = []
         for item in items:
             src = item.get("source", "")
             so_mon = item.get("soMon", 0)
@@ -812,16 +817,34 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
                 _set_input(inputs["gE"][cong][tien][fk_m], fmt(so_mon))
                 _set_input(inputs["gE"][cong][tien][fk_t], fmt(so_tien))
                 count += 1
+                dup_tien = item.get("_suspect_dup_tien")
+                if dup_tien:
+                    dup_warnings.append(f"{tien} (cổng {cong}) trùng số hệt {dup_tien}")
         if skipped == 0:
             try:
                 await asyncio.to_thread(api.delete, "/api/doi-chieu-citad/citad-buffer")
             except Exception:
-                pass
+                # Bộ đệm nằm trong RAM của backend và KHÔNG tự hết hạn (doi_chieu_citad_service:
+                # _citad_buffer/_ph_buffer, chỉ save/get/clear) — xoá hỏng thì lần "Nạp" sau sẽ
+                # ghi đè số của lượt cũ lên ô đang nhập. Phải báo, không được im lặng.
+                ui.notify("Không xoá được bộ đệm sau khi nạp — bấm Nạp lần sau có thể ra số cũ. "
+                          "Báo quản trị khởi động lại backend nếu thấy số lạ.",
+                          type="warning", timeout=6000)
         recalc()
         msg = f"Đã nạp {count} mục từ CITAD"
         if skipped:
             msg += f" — bỏ qua {skipped} mục 5 Cổng (chỉ nạp được Napas/PSS-MDP ở đây)"
         ui.notify(msg, type="positive" if count else "warning")
+        # Nghi đọc nhầm loại tiền lúc quét trên CITAD (dropdown đổi trước khi
+        # bảng kết quả kịp tải lại — xem _annotate_currency_duplicates() ở
+        # service) — vẫn đã nạp số vào bảng bình thường ở trên, chỉ cảnh báo
+        # thêm để người dùng tự đối chiếu lại trên CITAD trước khi tin.
+        if dup_warnings:
+            ui.notify(
+                "⚠ Nghi đọc nhầm loại tiền lúc quét — kiểm tra lại trên CITAD trước khi tin: "
+                + "; ".join(dup_warnings),
+                type="warning", timeout=10000,
+            )
 
     async def load_phub_buffer():
         try:
@@ -841,6 +864,7 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
         count = 0
         skipped = 0
         skipped_napas = 0
+        dup_warnings = []
         for item in items:
             loai, chieu = item.get("loai", ""), item.get("chieu", "")
             tien = item.get("tien", "VNĐ")
@@ -870,11 +894,19 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
                 _set_input(inputs["phE"][tien][fk_m], fmt(so_mon))
                 _set_input(inputs["phE"][tien][fk_t], fmt(so_tien))
                 count += 1
+                dup_tien = item.get("_suspect_dup_tien")
+                if dup_tien:
+                    dup_warnings.append(f"{tien} trùng số hệt {dup_tien}")
         if skipped == 0:
             try:
                 await asyncio.to_thread(api.delete, "/api/doi-chieu-citad/paymenthub-buffer")
             except Exception:
-                pass
+                # Bộ đệm nằm trong RAM của backend và KHÔNG tự hết hạn (doi_chieu_citad_service:
+                # _citad_buffer/_ph_buffer, chỉ save/get/clear) — xoá hỏng thì lần "Nạp" sau sẽ
+                # ghi đè số của lượt cũ lên ô đang nhập. Phải báo, không được im lặng.
+                ui.notify("Không xoá được bộ đệm sau khi nạp — bấm Nạp lần sau có thể ra số cũ. "
+                          "Báo quản trị khởi động lại backend nếu thấy số lạ.",
+                          type="warning", timeout=6000)
         recalc()
         # Buffer CHỈ có mục Napas/PSS-MDP (trường hợp thường gặp nhất — người
         # dùng quét đúng trang PaymentHub, đúng ý cũ, nhưng giờ không còn nhận
@@ -898,6 +930,52 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
         # đây là điều người dùng CẦN chú ý (quét nhầm cổng), không để lẫn vào
         # thông báo "positive" chung chung của các mục nạp thành công khác.
         ui.notify(msg, type="warning" if skipped_napas else ("positive" if count else "warning"))
+        # Xem giải thích ở load_citad_buffer() — nghi đọc nhầm loại tiền lúc
+        # quét, vẫn đã nạp số vào bảng bình thường ở trên, chỉ cảnh báo thêm.
+        if dup_warnings:
+            ui.notify(
+                "⚠ Nghi đọc nhầm loại tiền lúc quét — kiểm tra lại trên PaymentHub trước khi tin: "
+                + "; ".join(dup_warnings),
+                type="warning", timeout=10000,
+            )
+
+    async def _clear_extension_buffer_now():
+        try:
+            await asyncio.to_thread(api.delete, "/api/doi-chieu-citad/citad-buffer")
+            await asyncio.to_thread(api.delete, "/api/doi-chieu-citad/paymenthub-buffer")
+        except Exception as e:
+            if _handle_api_error(e):
+                return
+            ui.notify(f"Lỗi: {e}", type="negative")
+            return
+        ui.notify("Đã xoá dữ liệu Extension đã quét trên server", type="positive")
+
+    def do_clear_extension_buffer():
+        # Buffer server (CITAD + PaymentHub) không tự hết hạn ngay — chỉ tự
+        # loại mục quá 4 giờ (xem _BUFFER_TTL trong service) hoặc bị xoá khi
+        # "Nạp" thành công không sót mục nào. Nút này cho xoá TAY ngay lập
+        # tức — dùng khi vừa quét nhầm/test, muốn chắc chắn lượt "Nạp" tiếp
+        # theo không kéo theo dữ liệu cũ còn sót (vd 1 loại tiền quét ra 0 thì
+        # Extension không gửi gì lên — xem content.js autoSaveIfNew — nên mục
+        # cũ của loại tiền đó vẫn nằm im nếu không xoá).
+        with ui.dialog() as dialog, ui.card():
+            ui.label("Xoá dữ liệu Extension đã quét?").classes("text-base font-bold")
+            ui.label(
+                "Xoá toàn bộ dữ liệu CITAD + PaymentHub mà Extension đã gửi lên nhưng "
+                "chưa \"Nạp\" vào bảng. KHÔNG ảnh hưởng số liệu đang hiện trên màn hình "
+                "hay bảng đã lưu — chỉ xoá phần đang chờ nạp trên server."
+            ).classes("text-sm text-gray-500")
+            with ui.row().classes("w-full justify-end gap-2 mt-3"):
+                ui.button("Huỷ", on_click=dialog.close).props("outline")
+
+                async def _confirm():
+                    dialog.close()
+                    await _clear_extension_buffer_now()
+
+                ui.button("Xác nhận xoá", icon="delete_sweep", on_click=_confirm).classes(
+                    "bg-red-600 hover:bg-red-700 text-white rounded-lg"
+                )
+        dialog.open()
 
     def _mode_for_meta(sess: dict) -> tuple[str, int | None, int | None, str]:
         """Suy ra mode xem/sửa từ _meta_status/_meta_created_by(_username) —
@@ -1809,6 +1887,9 @@ async def doi_chieu_citad_page(request: _StarletteRequest):
                         ).props("dense outlined").classes("w-48")
                         btn_nap_citad = ui.button("Nạp CITAD", icon="cloud_download", on_click=load_citad_buffer).props("outline").classes("rounded-lg")
                         btn_nap_ph = ui.button("Nạp PaymentHub", icon="cloud_download", on_click=load_phub_buffer).props("outline").classes("rounded-lg")
+                        btn_xoa_buffer = ui.button(
+                            "Xoá dữ liệu đã quét", icon="delete_sweep", on_click=do_clear_extension_buffer
+                        ).props("outline color=grey-8").classes("rounded-lg")
                         btn_luu_tam = ui.button(
                             "Lưu bảng tạm", icon="save", on_click=lambda: do_save_session("draft")
                         ).classes("bg-sky-600 hover:bg-sky-700 text-white rounded-lg")

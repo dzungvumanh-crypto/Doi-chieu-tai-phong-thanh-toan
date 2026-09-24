@@ -1,9 +1,11 @@
 """Nhận dạng loại file và nhóm theo ngày cho pipeline ILO1000."""
 
+import logging
 import re
-import zipfile
 from datetime import date, timedelta
 from pathlib import Path
+
+_log = logging.getLogger(__name__)
 
 
 # ── Regex nhận dạng date từ tên file ─────────────────────────────────────────
@@ -80,8 +82,9 @@ def _read_citad_date(path: Path) -> str | None:
                     val = row[idx].strip()
                     if re.match(r'^\d{8}$', val):
                         return val
-    except Exception:
-        pass
+    except (OSError, csv.Error, ValueError) as e:
+        # File hỏng/đang bị giữ → để người dùng chọn ngày bằng tay, không chặn lượt chấm
+        _log.info("Không đọc được TRX_DATE từ %s: %s", path.name, e)
     return None
 
 

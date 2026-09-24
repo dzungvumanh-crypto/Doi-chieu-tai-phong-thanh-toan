@@ -1,14 +1,15 @@
 """Chốt chặn số lượt đối chiếu nặng chạy cùng lúc — dùng chung cho MỌI cửa nặng.
 
-Hiện có 6: ACH, Chấm ILO1000, Chấm 459901, và ba cửa Đối chiếu Song phương
-(chiều ĐẾN, chiều ĐI, phân loại dữ liệu). Tất cả đều nạp trọn dữ liệu vào RAM
-trong chính tiến trình backend.
+Hiện có 7: ACH, Chấm ILO1000, Chấm 459901, Đối chiếu OSB, và ba cửa Đối chiếu Song
+phương (chiều ĐẾN, chiều ĐI, phân loại dữ liệu). Tất cả đều nạp trọn dữ liệu vào RAM.
+Từ 18/09/2026 phần nặng chạy ở tiến trình con (`tien_trinh_doi_chieu.chay_tach`) — hết
+tranh GIL nhưng KHÔNG giảm RAM: trần dưới đây vẫn cần nguyên như cũ.
 
 THÊM MODULE MỚI thì phải gọi `dang_ky_nguon()` cho nó — quên là nó chạy ngoài
 trần mà không ai biết. Đã dính hai lần, xem `tests/test_chot_phien_doi_chieu.py`. Đo được pandas giữ **5,3 lần** kích
 thước file khi đọc `dtype=str` (đỉnh 5,9×), mà trần một lượt upload là 500 MB.
 
-Tất cả chạy trên `threading.Thread` tự tạo, **không** đi qua `run_heavy()` — nên
+Tất cả khởi chạy từ `threading.Thread` tự tạo, **không** đi qua `run_heavy()` — nên
 `MAX_HEAVY` trong `backend/core/concurrency.py` KHÔNG ràng buộc chúng. Trước file
 này, thứ duy nhất chặn là chốt riêng của ACH; ba module kia vào thẳng, và ACH
 cũng chỉ tự canh mình nên chạy ACH cùng lúc với Song phương vẫn lọt.
@@ -17,7 +18,7 @@ cũng chỉ tự canh mình nên chạy ACH cùng lúc với Song phương vẫn
 hết RAM và chết giữa lúc đang nhận file của lượt thứ hai — người dùng chỉ thấy
 "[WinError 10054]".
 
-Hai luật, cố ý khác nhau:
+Ba luật, cố ý khác nhau:
 
   1. **Cùng một module: luôn 1 lượt.** Người vận hành xác nhận cùng một menu thì
      thực tế chỉ một người chạy. Đây là luật cứng, không nới được — hai lượt cùng
@@ -26,7 +27,14 @@ Hai luật, cố ý khác nhau:
   2. **Toàn hệ thống: `MAX_SONG_SONG` lượt.** Khác menu thì vài người chạy song
      song là chuyện bình thường, nên KHÔNG khoá về 1. Mặc định 3: đủ cho nếp làm
      việc thật, mà vẫn chặn trường hợp cả bốn module cùng chạy (worst case
-     4 × 500 MB × 5,3 ≈ 10 GB trên máy 20 GB — sát quá).
+     4 × 500 MB × 5,3 ≈ 10 GB trên máy 20 GB — sát quá; bỏ hẳn trần thì 7 cửa là
+     ~18,5 GB). Người dùng chốt 18/09/2026: giữ 3, đọc số "bộ nhớ cam kết đỉnh" trong
+     logs/app.log vài tuần rồi mới quyết nâng hay đổi sang trần theo RAM (card 150).
+
+  3. **RAM ước tính: tổng ≤ `NGAN_SACH_RAM_GB`** (card 156, 21/09/2026). Số lượt không
+     phân biệt 3 lượt nhẹ (~4,5 GB) với 3 lượt nặng (~10 GB). Mỗi module có mức ước tính
+     từ số đo máy chủ thật; module chưa có số không xét luật này. Sau lưới này còn trần
+     CỨNG ở `tien_trinh_doi_chieu` (Job Object) — ước tính sai thì máy vẫn an toàn.
 
 Trạng thái job vẫn nằm ở từng service, file này KHÔNG giữ bản sao: mỗi module tự
 khai một hàm báo cáo "tôi đang bận với job nào". Hai nguồn sự thật về cùng một
@@ -53,6 +61,66 @@ def _doc_so(ten_bien: str, mac_dinh: int) -> int:
 
 
 MAX_SONG_SONG = _doc_so("DOI_CHIEU_MAX_SONG_SONG", 3)
+
+
+# ── Xét RAM trước khi cho chạy (card 156) ──
+# Bộ nhớ cam kết đỉnh ƯỚC TÍNH mỗi lượt, GB — người dùng chốt 21/09/2026 từ số đo máy chủ
+# thật (trừ dòng ghi "máy dev"). Module CHƯA có số (ILO1000, 459901, OSB) cố ý vắng mặt:
+# không xét RAM, chỉ còn trần số lượt ở trên + trần cứng của tiến trình con
+# (tien_trinh_doi_chieu, 13 GB). Có số đo thì khai qua `.env` (`DOI_CHIEU_RAM_UOC_TINH`), không cần sửa mã.
+_RAM_UOC_TINH_MAC_DINH = {
+    "ach": 4.5,                        # đo 4,19 GB (3 lượt gần trùng nhau)
+    "song_phuong_kenh_core_di": 4.0,   # Song phương chiều ĐI — đo 2,50–3,87 GB, dao động theo cỡ file
+    "song_phuong": 3.0,                # Song phương chiều ĐẾN — đo 1,84–2,13 GB
+    "song_phuong_di": 2.0,             # Song phương PHÂN LOẠI dữ liệu (mã "_di" là tên cũ) — đo 1,55 GB
+    "cham459901_000000000": 2.5,       # Chấm TK 459901-1000-000000000 — đo 2,5 GB trên MÁY DEV (1,2 triệu dòng), chưa đo máy chủ
+}
+
+
+def _doc_gb(tho: str, ten: str) -> Optional[float]:
+    try:
+        gb = float(tho.strip().replace(",", "."))
+    except ValueError:
+        _log.warning("%s=%r không phải số — bỏ qua", ten, tho)
+        return None
+    if gb <= 0:
+        _log.warning("%s=%r phải lớn hơn 0 — bỏ qua", ten, tho)
+        return None
+    return gb
+
+
+def _doc_uoc_tinh() -> dict[str, float]:
+    """Mặc định + ghi đè từ `DOI_CHIEU_RAM_UOC_TINH=ma=gb,ma=gb` (vd `ilo1000=3.5,cham459901=2`).
+    Số thập phân dùng dấu CHẤM — dấu phẩy đã dùng để ngăn các mục. Mục sai bị bỏ qua kèm
+    cảnh báo, không làm backend chết."""
+    ra = dict(_RAM_UOC_TINH_MAC_DINH)
+    for muc in (os.getenv("DOI_CHIEU_RAM_UOC_TINH") or "").split(","):
+        if not muc.strip():
+            continue
+        ma, _, tho = muc.partition("=")
+        gb = _doc_gb(tho, f"DOI_CHIEU_RAM_UOC_TINH[{ma.strip()}]")
+        if ma.strip() and gb is not None:
+            ra[ma.strip()] = gb
+    return ra
+
+
+RAM_UOC_TINH = _doc_uoc_tinh()
+# Trạng thái vẫn CHIẾM chỗ (luật cùng module, trần số lượt) nhưng KHÔNG còn tiến trình con giữ
+# RAM: ACH chờ xác nhận MIS_đi — tính 4,5 GB là chặn oan lượt khác tới 4 giờ (phản biện 21/09).
+_KHONG_GIU_RAM = {"awaiting_confirmation"}
+
+# 11,5 = ACH + Song phương ĐI + ĐẾN (4,5 + 4 + 3) — người dùng chốt 21/09/2026 để ba lượt nặng
+# nhất đã đo chạy được cùng lúc (RAM thật ≈ 4,19 + 3,87 + 2,13 = 10,2 GB, dưới trần cứng 13).
+# Hệ quả: với 4 module đã có số, luật này không chặn tổ hợp 3 lượt nào — nó bắt đầu có tác dụng
+# khi ILO1000/459901/OSB được khai ước tính, hoặc khi nâng MAX_SONG_SONG.
+_NGAN_SACH_MAC_DINH_GB = 11.5
+NGAN_SACH_RAM_GB = (_doc_gb(os.getenv("DOI_CHIEU_RAM_NGAN_SACH_GB") or str(_NGAN_SACH_MAC_DINH_GB),
+                            "DOI_CHIEU_RAM_NGAN_SACH_GB") or _NGAN_SACH_MAC_DINH_GB)
+
+
+def _so_vn(x: float) -> str:
+    return f"{x:g}".replace(".", ",")
+
 
 # ma_module -> (tên hiển thị, hàm báo cáo job đang chiếm máy chủ)
 _NGUON: dict[str, tuple[str, Callable[[], Optional[dict]]]] = {}
@@ -122,6 +190,40 @@ def kiem_tra(ma_module: str) -> Optional[dict]:
             "dang_chay": dsach,
         }
 
+    return kiem_tra_ram(ma_module, dsach)
+
+
+def kiem_tra_ram(ma_module: str, dsach: Optional[list] = None) -> Optional[dict]:
+    """Chỉ luật 3 (RAM ước tính) — dùng riêng cho lượt CHẠY TIẾP của một job đã có (ACH
+    sau xác nhận MIS_đi): luật cùng module và trần số lượt không áp (job đó đã chiếm chỗ),
+    nhưng lúc chờ nó được tính 0 GB nên lúc chạy lại PHẢI xét ngân sách (phản biện Opus
+    21/09: không xét thì tổng ước tính lên 13,5 > 11,5 khi đã khai số cho ILO1000).
+
+    Chỉ cộng lượt THẬT SỰ đang giữ RAM (xem _KHONG_GIU_RAM) của module có số đo. Không có
+    gì đang dùng thì luôn cho qua — kể cả khi ước tính một mình đã vượt ngân sách (đặt
+    ngân sách thấp không được khoá chết cả module)."""
+    if dsach is None:
+        dsach = dang_chay()
+    uoc = RAM_UOC_TINH.get(ma_module)
+    giu_ram = [j for j in dsach
+               if j["module"] in RAM_UOC_TINH and j.get("status") not in _KHONG_GIU_RAM]
+    if uoc is not None and giu_ram:
+        dang_dung = sum(RAM_UOC_TINH[j["module"]] for j in giu_ram)
+        if dang_dung + uoc > NGAN_SACH_RAM_GB:
+            with _lock:
+                ten_moi = _NGUON.get(ma_module, (ma_module,))[0]
+            chi_tiet = ", ".join(
+                f"{j['ten_module']} ~{_so_vn(RAM_UOC_TINH[j['module']])} GB" for j in giu_ram)
+            return {
+                "message": (
+                    f"Máy chủ chưa đủ bộ nhớ cho thêm một lượt {ten_moi} "
+                    f"(~{_so_vn(uoc)} GB): đang chạy {chi_tiet} — cộng lại vượt "
+                    f"{_so_vn(NGAN_SACH_RAM_GB)} GB dành cho đối chiếu. Chờ một lượt xong "
+                    f"rồi thử lại."
+                ),
+                "dang_chay": dsach,
+            }
+
     return None
 
 
@@ -155,3 +257,11 @@ def gianh_cho(ma_module: str) -> Iterator[Optional[dict]]:
     """
     with _lock_ket_nap:
         yield kiem_tra(ma_module)
+
+
+@contextlib.contextmanager
+def gianh_cho_ram(ma_module: str) -> Iterator[Optional[dict]]:
+    """Như `gianh_cho` nhưng chỉ xét RAM — cho bước chạy tiếp một job đã có. Người gọi phải
+    đổi trạng thái job sang đang chạy TRƯỚC khi nhả khoá, không thì hai lượt cùng qua."""
+    with _lock_ket_nap:
+        yield kiem_tra_ram(ma_module)

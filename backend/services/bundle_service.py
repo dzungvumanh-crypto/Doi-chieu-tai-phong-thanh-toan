@@ -14,7 +14,6 @@ trong tập cuối, rồi tạo tập mới 350, tập mới tiếp theo cho ph�
 from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass, field
 from datetime import date
-import math
 
 
 MAX_SHEETS_NORMAL       = 350   # giới hạn chứng từ mặc định

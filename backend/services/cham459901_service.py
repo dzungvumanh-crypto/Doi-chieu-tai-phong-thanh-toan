@@ -2,8 +2,7 @@
 Chuyển chi nhánh/Điện KO offline/Cân CN/GD khác).
 
 I/O làm việc với ĐƯỜNG DẪN file đã nằm trên máy chủ (`backend/api/cham459901.py`
-ghi thẳng từng khối xuống `data/temp_cham459901/upload_<token>/`, hoặc — với
-`process_folder` — dùng thẳng đường dẫn có sẵn trên server), không nhận bytes:
+ghi thẳng từng khối xuống `data/temp_cham459901/upload_<token>/`), không nhận bytes:
 một lượt có thể là nhiều ZIP vài trăm MB, ôm hết vào RAM rồi mới đọc là trả giá
 gấp đôi bộ nhớ cho cùng một kết quả. Chỉ file con BÊN TRONG ZIP mới đi qua bytes,
 và cũng chỉ khi buộc phải thế (xem `_doc_zip`).
@@ -23,6 +22,7 @@ import pandas as pd
 
 from backend.core.config import BASE_DIR, zip_password   # mật khẩu ZIP đọc từ .env
 from backend.core.don_dep import moc_don_gan_nhat
+from backend.core.tien_trinh_doi_chieu import chay_tach, trong_tien_trinh_con
 
 try:
     import pyzipper
@@ -227,6 +227,10 @@ def _set_prog(task_token: str | None, pct: int, msg: str) -> None:
             raise _Cancelled()
         p["pct"] = pct
         p["msg"] = msg
+        # Trong tiến trình con: `_progress` là bản sao, phải gửi tiến độ về backend
+        gui_ve = p.get("_gui_ve")
+        if gui_ve:
+            gui_ve(pct, msg)
 
 
 # ─── Public API ───────────────────────────────────────────────────────────────
@@ -238,9 +242,26 @@ def run_process(
     hub_den: tuple[str, Path] | None = None,
     ton: tuple[str, Path] | None = None,
 ) -> None:
-    """Chạy process_files trong luồng riêng; cập nhật progress và bắt lỗi."""
+    """Chạy process_files ở tiến trình riêng (`chay_tach`); cập nhật progress và bắt lỗi.
+
+    `_Cancelled`/`InputError` ném trong con được mang về đúng kiểu nên các nhánh dưới
+    giữ nguyên. Kết quả cuối ghi vào `_progress` Ở ĐÂY: `process_files` trong con chỉ
+    ghi được vào bản sao."""
+    p = _progress.get(task_token, {})
+
+    def _cap_nhat(pct: int, msg: str) -> None:
+        p["pct"], p["msg"] = pct, msg
+
     try:
-        process_files(tep, task_token, hub_di, hub_den, ton)
+        result = chay_tach(
+            _xu_ly_tach, ten="Chấm 459901",
+            tep=tep, task_token=task_token, hub_di=hub_di, hub_den=hub_den, ton=ton,
+            cancel_event=p.get("cancel_event"), callbacks={"tien_do_callback": _cap_nhat},
+        )
+        if result is None:   # bị buộc dừng sau lệnh Dừng (HAN_DUNG_GIAY)
+            raise _Cancelled()
+        if task_token in _progress:
+            _progress[task_token].update({"pct": 100, "msg": "Hoàn thành!", "done": True, "result": result})
     except _Cancelled:
         if task_token in _progress:
             _progress[task_token].update({
@@ -260,6 +281,23 @@ def run_process(
             })
 
 
+def _xu_ly_tach(
+    tep, task_token, hub_di, hub_den, ton, log_callback, cancel_event, tien_do_callback,
+) -> dict:
+    """Điểm vào của `chay_tach`. Trong tiến trình con: dựng mục `_progress` cục bộ mang
+    `cancel_event` liên tiến trình để `_set_prog` kiểm Dừng như cũ, và gửi pct/msg về backend.
+
+    Chỉ dựng khi ĐANG Ở TRONG CON: chạy trong luồng (DOI_CHIEU_TIEN_TRINH=0) thì mục thật đã
+    có, hoặc token đã bị xoá — dựng thêm là để lại mục "ma" mà `luot_dang_chay` tưởng đang chạy."""
+    if trong_tien_trinh_con():
+        _progress[task_token] = {
+            "pct": 0, "msg": "", "done": False, "error": None, "cancelled": False,
+            "result": None, "cancel_event": cancel_event, "_ts": time.time(),
+            "_gui_ve": tien_do_callback,
+        }
+    return process_files(tep, task_token, hub_di, hub_den, ton)
+
+
 def process_files(
     tep: list[tuple[str, Path]],
     task_token: str | None = None,
@@ -272,8 +310,7 @@ def process_files(
     7 xlsx → trả metadata.
 
     `tên hiển thị` là tên gốc người dùng chọn, chỉ dùng để viết thông báo lỗi;
-    `đường dẫn` là file đã nằm trên máy chủ (ghi từ upload, hoặc đã có sẵn khi
-    chạy từ thư mục server). Hai thứ tách nhau vì tên trên đĩa đã qua
+    `đường dẫn` là file vừa ghi từ upload xuống máy chủ. Hai thứ tách nhau vì tên trên đĩa đã qua
     `safe_filename()` nên có thể khác tên người dùng nhìn thấy — báo lỗi bằng
     tên đã bị cắt là bắt họ đi tìm một file không tồn tại.
 
@@ -769,7 +806,18 @@ def _mark_ccn(df: pd.DataFrame) -> pd.Series:
     được nhận diện cùng 1 nhóm (xem Implementation-notes.html) — nếu không, chân lẻ rơi xuống
     bước Cân CN phía sau và có thể bị ghép nhầm với giao dịch không liên quan trùng số tiền tròn.
     Nhóm không cân bằng tuyệt đối (VD REMARK trùng lặp giữa nhiều giao dịch khác nhau)
-    bị loại bỏ hoàn toàn — không tách một phần — để rơi về GD khác chấm thủ công."""
+    bị loại bỏ hoàn toàn — không tách một phần — để rơi về GD khác chấm thủ công.
+    Bắt buộc nhóm có 1 vế TRBRCD=1000 và 1 vế khác 1000 VÀ KHÔNG RỖNG — chị Hà xác nhận
+    13/09/2026: 2 vế cùng chi nhánh là Lệnh Đi (đã giành trước ở bước trên), không phải
+    Chuyển chi nhánh. TRBRCD rỗng là dữ liệu thiếu, không phải một chi nhánh thật, nên
+    không được tính là "vế khác 1000" (review PR #102, Khánh, 16/09/2026).
+
+    Cố ý KHÔNG ép nhóm phải đúng 2 dòng dù quy tắc nói "1 cặp": dữ liệu thật Tháng 5 có
+    nhiều nhóm 4-16 dòng do REMARK là văn bản mẫu lặp lại hàng loạt (VD nhiều khoản phụ cấp
+    khác nhau cùng nội dung "phụ cấp bàn xóm trưởng tháng 5") — mỗi nhóm là NHIỀU giao dịch
+    Chuyển chi nhánh độc lập trùng khoá ngẫu nhiên, chị Hà vẫn chấm đúng là Chuyển chi nhánh.
+    Đã thử ép group_size==2: lệch Tháng 5 tăng từ 654 lên 853 dòng (verify thật, không phải
+    suy đoán) — revert ngay, giữ nguyên kiểm ở mức NHÓM như thiết kế gốc."""
     if len(df) == 0:
         return pd.Series(dtype=bool)
     amt = df[['DRAMOUNT', 'CRAMOUNT']].abs().max(axis=1).round(0)
@@ -780,7 +828,12 @@ def _mark_ccn(df: pd.DataFrame) -> pd.Series:
     dr_any  = (df['DRAMOUNT'] != 0).groupby(key).transform('any')
     cr_any  = (df['CRAMOUNT'] != 0).groupby(key).transform('any')
 
-    return (sum_cr - sum_dr).abs().lt(1) & dr_any & cr_any
+    is_1000 = df['TRBRCD'] == '1000'
+    is_other_branch = ~is_1000 & (df['TRBRCD'] != '')
+    has_1000 = is_1000.groupby(key).transform('any')
+    has_non1000 = is_other_branch.groupby(key).transform('any')
+
+    return (sum_cr - sum_dr).abs().lt(1) & dr_any & cr_any & has_1000 & has_non1000
 
 
 def _mark_can_cn(df: pd.DataFrame) -> pd.Series:

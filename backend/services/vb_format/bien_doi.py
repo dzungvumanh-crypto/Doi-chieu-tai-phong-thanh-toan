@@ -194,7 +194,10 @@ def viet_hoa_tu_dien(txt: str, td: "TuDien | None") -> list[Sua]:
 
 
 # ── Đánh số và gạch đầu dòng ─────────────────────────────────────────────────
-RE_SO_DAU = re.compile(r"^(\d{1,2})\s*([.)/])\s*")
+# `(?!\d)`: "5.000" (số tiền), "15/9/2026", "1.1." không phải số thứ tự khoản.
+# Thiếu nó thì ô bảng phí "10.000" bị sửa thành "10. 000" — gặp thật trên Tờ
+# trình Microgateway, đổi số liệu mà nhật ký chỉ ghi "sửa chữ".
+RE_SO_DAU = re.compile(r"^(\d{1,2})\s*([.)/])(?!\d)\s*")
 RE_CHU_DAU = re.compile(rf"^([{CHU_CAI_DIEM}]{{1,2}})\s*([).\/])\s+")
 RE_LA_MA_DAU = re.compile(r"^([IVXLCDM]+)\s*([.)/])\s+")
 
@@ -245,9 +248,14 @@ def chuan_danh_so(txt: str, ma: str, cfg: dict,
                 return []
 
     # ── Mục La Mã: "I)" "I/" → "I." ──
-    if cfg.get("chuan_muc_la_ma") and ma == "muc_la_ma":
+    # Đề mục La Mã in THƯỜNG ("III. Thẩm quyền phê duyệt") không khớp
+    # `muc_la_ma` (luật đó đòi phần sau in hoa) nên rơi vào `noi_dung` — vẫn
+    # phải về đúng một dấu cách sau số như mọi ký hiệu đầu dòng khác. Ở
+    # `noi_dung` chỉ nhận I/V/X: "C. " "D. " "M. " đầu câu nhiều khả năng là
+    # viết tắt tên người hơn là số La Mã.
+    if cfg.get("chuan_muc_la_ma") and ma in ("muc_la_ma", "noi_dung"):
         m = RE_LA_MA_DAU.match(txt)
-        if m:
+        if m and (ma == "muc_la_ma" or re.fullmatch(r"[IVX]+", m.group(1))):
             chuan = f"{m.group(1)}. "
             if m.group(0) != chuan and len(txt) > m.end():
                 return [(0, m.end(), chuan)]
