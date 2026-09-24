@@ -206,3 +206,62 @@ def test_khong_doc_duoc_o_dia_thi_canh_bao():
     d = _tot()
     d["dia"]["o_dia"] = None
     assert [c["nhom"] for c in mon.danh_gia(d)] == ["Ổ đĩa"]
+
+
+# ── Số liệu cho biểu đồ ──
+def test_theo_gio_du_24_o_ke_ca_gio_khong_co_ban_ghi(tmp_path):
+    # Thiếu ô là trục thời gian co lại: hai cột cách nhau 6 tiếng trông như liền nhau
+    den = datetime(2026, 9, 24, 10, 30)
+    p = tmp_path / "app.log"
+    p.write_text("\n".join([
+        f"{den - timedelta(hours=1):%Y-%m-%d %H:%M:%S} ERROR    x — a",
+        f"{den - timedelta(hours=1):%Y-%m-%d %H:%M:%S} WARNING  x — b",
+        f"{den - timedelta(hours=6):%Y-%m-%d %H:%M:%S} ERROR    x — c",
+    ]) + "\n", encoding="utf-8")
+    tg = mon._quet_log([p], den - timedelta(hours=24), den)["theo_gio"]
+    assert len(tg) == 24
+    assert [o["gio"] for o in tg][-3:] == ["08", "09", "10"]     # cũ → mới, kết ở giờ hiện tại
+    assert tg[-2] == {"gio": "09", "loi": 1, "canh_bao": 1}
+    assert tg[-7]["loi"] == 1 and tg[-1] == {"gio": "10", "loi": 0, "canh_bao": 0}
+
+
+def test_dang_nhap_theo_gio_tach_dung_va_sai(ctx):
+    client, conn = ctx
+    cap_quyen(conn, 2, "menu.monitor")
+    gio_nay = _vn_now().replace(minute=5, second=0, microsecond=0)
+    conn.executemany("INSERT INTO login_logs (username, success, created_at) VALUES (?,?,?)",
+                     [("a", 1, gio_nay), ("b", 0, gio_nay), ("c", 0, gio_nay),
+                      ("d", 1, gio_nay - timedelta(days=2))])       # ngoài 24h
+    conn.commit()
+    tg = client.get("/api/admin/monitor/overview").json()["nguoi_dung"]["theo_gio"]
+    assert len(tg) == 24 and tg[-1] == {"gio": gio_nay.strftime("%H"), "ok": 1, "sai": 2}
+    assert sum(o["ok"] + o["sai"] for o in tg) == 3
+
+
+def test_thanh_phan_dia_cong_du_phan_da_dung(ctx):
+    client, conn = ctx
+    cap_quyen(conn, 2, "menu.monitor")
+    dia = client.get("/api/admin/monitor/overview").json()["dia"]
+    biet = sum(dia[k] or 0 for k in ("csdl", "wal", "sao_luu", "nhat_ky", "tam"))
+    assert dia["khac"] >= 0
+    assert biet + dia["khac"] == dia["da_dung"]                     # cột xếp chồng khớp phần đã dùng
+    assert dia["da_dung"] + dia["o_dia"]["con_trong"] == dia["o_dia"]["tong"]
+
+
+def test_chuoi_tre_lay_dinh_tung_o_va_tra_none_khi_khong_do():
+    import time as _t
+    from backend.core import slow_request as sr
+
+    assert sr.chuoi_tre() is None                                   # chưa bật bộ đo
+    sr._task_do_tre = object()                                      # giả "đang đo"
+    try:
+        now = _t.monotonic()
+        sr._mau_tre.clear()
+        sr._mau_tre.extend([(now - 1, 0.5), (now - 2, 0.02), (now - 7, 0.3)])
+        s = sr.chuoi_tre(cua_so_giay=10, buoc_giay=5)
+        assert [o["giay_truoc"] for o in s] == [5, 0]               # cũ → mới
+        assert s[-1]["ms"] == round((0.5 - sr._NEN_GIAY) * 1000)    # ĐỈNH, không phải trung bình
+        assert s[0]["ms"] == round((0.3 - sr._NEN_GIAY) * 1000)
+    finally:
+        sr._task_do_tre = None
+        sr._mau_tre.clear()

@@ -20539,6 +20539,61 @@ This may happen if you try to create UI from a background task.</pre>
     </div>
   </div>
 
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">161</span>
+      <span class="card-title">Giám sát hệ thống: nền tối + biểu đồ — chỗ nào đáng vẽ, chỗ nào không (2026-09-24)</span>
+      <span class="badge badge-done">Hoàn thiện</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-blue">Nguyên tắc chọn hình</span> "dữ liệu này có việc gì" quyết định, không phải "cho đẹp"</div>
+      <p>Một con số hiện tại thì <b>biểu đồ một cột là lỗi</b>, không phải trang trí. Chỉ ba loại dữ liệu trên màn này có "hình":
+        phần–toàn thể, so độ lớn giữa vài mục, và diễn biến theo thời gian. Phần còn lại giữ nguyên số hoặc chuyển sang thanh mức.</p>
+      <table>
+        <tr><th>Khối</th><th>Chọn</th><th>Vì sao</th></tr>
+        <tr><td><b>Độ phản hồi backend 5 phút</b></td><td>Cột theo thời gian <span class="pill pill-green">mới</span></td>
+          <td>Nguồn <b>duy nhất</b> có lịch sử thật mà không phải dựng bộ lấy mẫu chạy nền: deque ~5 phút của task đo trễ đã có sẵn.
+            Lấy <b>đỉnh</b> mỗi ô 5 giây, không lấy trung bình — cú chặn 1,2 s bị trung bình hoá thành 240 ms là mất đúng thứ cần thấy</td></tr>
+        <tr><td><b>Lỗi/cảnh báo theo giờ</b> · <b>Đăng nhập theo giờ</b></td><td>Cột xếp chồng 24 giờ <span class="pill pill-green">mới</span></td>
+          <td>Trả lời câu mà con số tổng che mất: "dồn vào một lúc hay rải đều". Cụm 11 lượt đăng nhập sai trong một giờ = dò mật khẩu;
+            tổng "14 lượt/24 giờ" thì không đọc ra. Đủ 24 ô kể cả giờ trống — thiếu ô là trục thời gian co lại, hai cột cách nhau 6 tiếng trông như liền nhau</td></tr>
+        <tr><td><b>Dung lượng dự án chiếm</b></td><td>Cột ngang so độ lớn <span class="pill pill-amber">đã đổi</span></td>
+          <td>Bản đầu vẽ cột xếp chồng "toàn bộ ổ đĩa" — <b>ảnh chụp cho thấy vô dụng</b>: Windows + phần trống chiếm 99 %, bốn mục của
+            dự án gộp lại là một vệt không đọc được. Tách làm hai: ổ còn bao nhiêu chỗ → thanh mức; dự án chiếm chỗ ở đâu → cột ngang có nhãn số</td></tr>
+        <tr><td><b>CPU · RAM · các bể (luồng, kết nối, việc nặng, đối chiếu) · tuổi bản sao lưu</b></td><td>Thanh mức, KHÔNG biểu đồ</td>
+          <td>Đều là <b>một tỷ lệ so với trần</b>. Thanh mức đọc nhanh hơn mọi loại biểu đồ và tốn 8px. Vẽ đồng hồ/vòng tròn cho một
+            con số là đổi chỗ đọc được lấy chỗ trang trí</td></tr>
+        <tr><td><b>Tên máy, PID, thời gian chạy, giờ NTP, lỗi gần nhất, lượt đối chiếu đang chạy, danh sách cảnh báo</b></td><td>Chữ / số</td>
+          <td>Không phải số để so — là sự việc cụ thể. Ba con số headline (lỗi / cảnh báo / request chậm) để cỡ lớn, KHÔNG dựng thành biểu đồ ba cột</td></tr>
+      </table>
+      <p><b>Không có lịch sử CPU/RAM.</b> Muốn đường CPU theo thời gian thì phải có bộ lấy mẫu chạy nền + nơi lưu — đổi hẳn thiết kế
+        "không đo gì chạy nền" của card 158. Gom ở trình duyệt thì mất sạch khi tải lại trang, và một biểu đồ "quên hết sau F5" dễ gây hiểu nhầm
+        hơn là không có. Chưa làm, chờ người dùng quyết.</p>
+
+      <div class="label"><span class="pill pill-blue">Nền tối</span> chỉ riêng trang này</div>
+      <p>Bước màu <b>chọn riêng cho nền tối</b>, không phải lật màu của nền sáng. Nền trang <code>#0d0d0d</code>, nền thẻ/vùng vẽ
+        <code>#1a1a19</code>. Màu trạng thái luôn kèm biểu tượng + chữ, không để màu nói một mình.</p>
+      <table>
+        <tr><th>Chi tiết</th><th>Lý do</th></tr>
+        <tr><td>Không dùng <code>_page_header()</code></td><td>Tiêu đề của nó là chữ đỏ đậm cho nền sáng, đặt lên nền đen gần như không đọc được</td></tr>
+        <tr><td>Không dùng class Tailwind kiểu <code>bg-[#0d0d0d]</code></td><td>Bản Tailwind đóng gói sẵn của NiceGUI có thể không sinh class giá trị tuỳ ý — dùng <code>style()</code></td></tr>
+        <tr><td>Thanh mức dựng bằng <code>div</code> lồng, bỏ <code>ui.linear_progress</code></td><td>Quasar tô đường ray bằng chính màu chính ở độ mờ thấp → trên nền tối gần như vô hình</td></tr>
+        <tr><td>Nút/công tắc ép tông trung tính</td><td>Màu mặc định Quasar là xanh dương — <b>trùng màu đang dùng cho dữ liệu</b> trong biểu đồ (ảnh chụp lần 2 lộ ra)</td></tr>
+        <tr><td>Nhãn thanh mức đặt TRÊN thanh; lưới thẻ <code>align-items:start</code></td><td>Nhãn dưới bị mắt gán cho thanh kế tiếp; không có align-items thì mọi thẻ bị kéo cao bằng thẻ cao nhất hàng</td></tr>
+      </table>
+
+      <div class="label"><span class="pill pill-green">Kiểm</span> có nhìn bằng mắt, không chỉ chạy test</div>
+      <ul>
+        <li>Dựng trang demo dùng <b>chính các hàm vẽ thật</b> + dữ liệu mẫu, chụp bằng Chrome headless. Bốn lượt chụp lộ ra 6 lỗi mà test
+          không bao giờ bắt được: cột ổ đĩa vô dụng, nhãn trục bị cắt, nhãn ngưỡng tràn mép, nút trùng màu dữ liệu, nhãn thanh mức đặt sai chỗ,
+          thẻ bị kéo cao.</li>
+        <li><code>tests/test_monitor.py</code> thêm 4 test: đủ 24 ô giờ kể cả giờ trống, tách đúng đăng nhập thành công/sai theo giờ,
+          cột dung lượng cộng khớp phần đã dùng, chuỗi độ trễ lấy đỉnh từng ô (và trả <code>None</code> khi bộ đo tắt).</li>
+      </ul>
+    </div>
+  </div>
+
   <footer>PAYMENT CENTER · Implementation Notes · Cập nhật: 2026-09-24</footer>
 </div>
 </body>

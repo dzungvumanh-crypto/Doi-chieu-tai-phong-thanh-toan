@@ -358,6 +358,12 @@ backend để quay về như cũ (xem card HN6 trong Implementation-notes).
   file/WAL/sao lưu/nhật ký/file tạm, dung lượng ổ còn trống; sao lưu tự động gần nhất, lệch giờ NTP; người dùng 24 giờ
   (phiên, đăng nhập đúng/sai, tài khoản bị khoá, thao tác ghi); lượt đối chiếu đang chạy, Word nền; số lỗi/cảnh báo/
   request chậm trong `app.log` 24 giờ + 5 lỗi gần nhất. Chỉ đọc. Ngưỡng cảnh báo ở đầu `backend/api/monitor.py`
+  - **Nền tối** (chỉ trang này) — bảng màu chọn riêng cho nền tối; màu trạng thái luôn kèm biểu tượng + chữ
+  - **Biểu đồ** (`ui.echart`) ở đúng ba chỗ dữ liệu có "hình": độ phản hồi backend 5 phút gần nhất (cột 5 giây, lấy
+    ĐỈNH mỗi ô, kèm vạch ngưỡng 1000 ms — nguồn là deque mẫu sẵn có của `slow_request`, không thêm bộ lấy mẫu nền);
+    lỗi/cảnh báo theo từng giờ trong 24 h; đăng nhập thành công/thất bại theo từng giờ; cột ngang so dung lượng các
+    thư mục của dự án. CPU/RAM/các bể tài nguyên/tuổi bản sao lưu dùng **thanh mức** — một tỷ lệ so với trần thì
+    thanh mức đọc nhanh hơn biểu đồ. Xem card 160 trong `docs/Implementation-notes.html`
 - **Ảnh chữ ký cá nhân** (menu *Quản lý người dùng*, mọi vai trò kể cả chuyên viên): tải lên ảnh
   **PNG nền trong suốt**, tối đa 2 MB, mỗi người một ảnh. Ảnh lưu trong DB (bảng `user_signatures`)
   nên đi cùng bản sao lưu `.db`; chỉ xem/sửa/xoá được ảnh **của chính mình**. Dùng để ký đơn nghỉ phép

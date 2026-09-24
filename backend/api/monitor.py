@@ -32,6 +32,10 @@ _log = logging.getLogger(__name__)
 _BAT_DAU = time.time()
 _GB = 1024 ** 3
 _CUA_SO_LOOP_GIAY = 60          # đo event loop trong 60 giây gần nhất
+# Biểu đồ độ phản hồi: 5 phút = tuổi tối đa của deque mẫu trong slow_request; ô 5 giây
+# → 60 cột, đủ thưa để nhìn ra cụm mà không thành hàng rào kẻ sọc
+_CUA_SO_TRE_GIAY = 300
+_BUOC_TRE_GIAY = 5
 
 # ── Ngưỡng cảnh báo ──
 _DIA_TRONG_LOI = (0.05, 2 * _GB)        # còn < 5 % HOẶC < 2 GB → lỗi
@@ -145,7 +149,7 @@ def _dia(data_dir: Path, log_dir: Path) -> dict:
     except OSError:
         o_dia = None
     temp = {p.name: _co_thu_muc(p) for p in sorted(data_dir.glob("temp_*")) if p.is_dir()}
-    return {
+    ra = {
         "o_dia": o_dia,
         "csdl": _co_file(DB_PATH),
         "wal": _co_file(DB_PATH + "-wal"),
@@ -154,17 +158,37 @@ def _dia(data_dir: Path, log_dir: Path) -> dict:
         "tam": sum(temp.values()),
         "tam_chi_tiet": temp,
     }
+    # "khac" = phần ổ đĩa do THỨ KHÁC chiếm (Windows, phần mềm, dữ liệu người dùng).
+    # Tính ở backend để biểu đồ thành phần không phải tự trừ — và để chốt ≥ 0: bốn mục
+    # trên đều nằm dưới BASE_DIR nên tổng của chúng không bao giờ vượt phần đã dùng,
+    # trừ khi thư mục logs nằm ở ổ khác (không phải cấu hình của dự án này).
+    if o_dia:
+        da_dung = o_dia["tong"] - o_dia["con_trong"]
+        biet = sum(ra[k] or 0 for k in ("csdl", "wal", "sao_luu", "nhat_ky", "tam"))
+        ra["da_dung"] = da_dung
+        ra["khac"] = max(0, da_dung - biet)
+    return ra
 
 
 # ── Nhật ký app.log ──
 # Không dùng regex của màn Nhật ký cho từng dòng: file tới 5 MB, trang này tự làm mới
 # định kỳ — cắt chuỗi theo vị trí cố định của formatter nhanh hơn nhiều lần.
 # Khuôn: "2026-09-22 10:00:00 WARNING  slow.request — nội dung"
-def _quet_log(duong_dan: list[Path], moc: datetime, so_loi_gan: int = 5) -> dict:
+def _khoa_gio(den: datetime, so_gio: int = 24) -> list[str]:
+    """Khoá giờ 'YYYY-MM-DD HH' của `so_gio` giờ gần nhất, cũ → mới.
+
+    Biểu đồ phải có đủ ô kể cả giờ không có bản ghi nào — thiếu ô là trục thời gian
+    bị co lại, hai cột cách nhau 6 tiếng trông như hai cột liền nhau."""
+    return [(den - timedelta(hours=i)).strftime("%Y-%m-%d %H") for i in range(so_gio - 1, -1, -1)]
+
+
+def _quet_log(duong_dan: list[Path], moc: datetime, den: "datetime | None" = None,
+              so_loi_gan: int = 5) -> dict:
     moc_s = moc.strftime("%Y-%m-%d %H:%M:%S")
     loi = canh_bao = cham = 0
     loi_gan: list[dict] = []
     tu_luc = None
+    theo_gio: dict[str, dict] = {}
     for p in duong_dan:
         try:
             f = open(p, "r", encoding="utf-8", errors="replace")
@@ -180,19 +204,24 @@ def _quet_log(duong_dan: list[Path], moc: datetime, so_loi_gan: int = 5) -> dict
                 if ts < moc_s:
                     continue
                 muc = dong[20:28].strip()
+                o = theo_gio.setdefault(ts[:13], {"loi": 0, "canh_bao": 0})
                 if muc == "ERROR" or muc == "CRITICAL":
                     loi += 1
+                    o["loi"] += 1
                     nguon, _, msg = dong[29:].partition(" — ")
                     loi_gan.append({"ts": ts, "nguon": nguon.strip(), "msg": msg.strip()[:300]})
                 elif muc == "WARNING":
                     canh_bao += 1
+                    o["canh_bao"] += 1
                     if dong[29:].startswith("slow.request "):
                         cham += 1
     loi_gan.sort(key=lambda x: x["ts"], reverse=True)
     # Dòng cũ nhất đọc được vẫn MỚI hơn mốc = log đã xoay vòng hết → số đếm chỉ phủ một phần
     return {"loi": loi, "canh_bao": canh_bao, "request_cham": cham,
             "loi_gan": loi_gan[:so_loi_gan], "tu_luc": tu_luc,
-            "day_du": tu_luc is None or tu_luc <= moc_s}
+            "day_du": tu_luc is None or tu_luc <= moc_s,
+            "theo_gio": [{"gio": k[11:13], **theo_gio.get(k, {"loi": 0, "canh_bao": 0})}
+                         for k in _khoa_gio(den or moc + timedelta(hours=24))]}
 
 
 _SO_BAN_XOAY = 3        # = backupCount của RotatingFileHandler trong backend/main.py
@@ -240,6 +269,21 @@ def _nguoi_dung(db: sqlite3.Connection) -> dict:
         except sqlite3.Error:
             return None     # bảng chưa có (DB cũ) — hiện "—", không làm hỏng cả màn
 
+    # substr(...,1,13) chứ không strftime(): cột lưu qua adapter datetime nên có phần
+    # thập phân giây, và substr không phải đoán khuôn ngày — cắt đúng "YYYY-MM-DD HH".
+    def theo_gio():
+        try:
+            rows = db.execute(
+                """SELECT substr(created_at, 1, 13) g,
+                          SUM(CASE WHEN success = 1 THEN 1 ELSE 0 END) ok,
+                          SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) sai
+                   FROM login_logs WHERE created_at >= ? GROUP BY g""", (moc_vn,)).fetchall()
+        except sqlite3.Error:
+            return None
+        o = {r[0]: (r[1], r[2]) for r in rows}
+        return [{"gio": k[11:13], "ok": o.get(k, (0, 0))[0], "sai": o.get(k, (0, 0))[1]}
+                for k in _khoa_gio(_vn_now())]
+
     # login_logs / audit_logs ghi giờ VN (_vn_now); login_sessions / rate_limit ghi giờ UTC
     return {
         "phien": dem("SELECT COUNT(*) FROM login_sessions WHERE expires_at > ?", now_utc),
@@ -247,6 +291,7 @@ def _nguoi_dung(db: sqlite3.Connection) -> dict:
         "dang_nhap_sai": dem("SELECT COUNT(*) FROM login_logs WHERE success = 0 AND created_at >= ?", moc_vn),
         "bi_khoa": dem("SELECT COUNT(*) FROM login_rate_limit WHERE locked_until > ?", now_utc),
         "thao_tac": dem("SELECT COUNT(*) FROM audit_logs WHERE created_at >= ?", moc_vn),
+        "theo_gio": theo_gio(),
     }
 
 
@@ -260,7 +305,7 @@ def _thu_thap_dong_bo(db: sqlite3.Connection, current: dict) -> dict:
     # Giờ trong app.log là giờ MÁY (logging dùng localtime), không phải _vn_now()
     moc_log = datetime.now() - timedelta(hours=24)
     ram = _ram_may()
-    nhat_ky = _quet_log(_file_log(log_path, moc_log), moc_log)
+    nhat_ky = _quet_log(_file_log(log_path, moc_log), moc_log, datetime.now())
     # Nội dung dòng lỗi là nội dung nhật ký — chỉ người có menu.logs mới đọc; số đếm thì ai cũng thấy
     nhat_ky["xem_noi_dung"] = co_quyen(db, current, "menu.logs")
     if not nhat_ky["xem_noi_dung"]:
@@ -299,6 +344,10 @@ def _tai_hien_tai() -> dict:
     tai["hang_doi_nhat_ky"] = audit_queue._q.qsize()
     tai["hang_doi_nhat_ky_toi_da"] = audit_queue.MAX_QUEUE
     tai["word_nen"] = leave_pdf._server.alive()
+    # Chuỗi cho biểu đồ độ phản hồi — nguồn duy nhất có sẵn lịch sử thật (deque ~5 phút
+    # của task đo trễ), không phải dựng thêm bộ lấy mẫu chạy nền nào
+    tai["tre_series"] = slow_request.chuoi_tre(_CUA_SO_TRE_GIAY, _BUOC_TRE_GIAY)
+    tai["tre_buoc_giay"] = _BUOC_TRE_GIAY
     return tai
 
 

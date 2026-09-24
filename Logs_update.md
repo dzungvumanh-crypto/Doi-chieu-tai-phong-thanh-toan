@@ -4,6 +4,16 @@ Ghi lại từng đợt push lên GitHub / deploy sang máy chính (qua `deploy.
 
 ---
 
+- 24/09/2026 Giám sát hệ thống - **Nền tối + biểu đồ**
+    + ✅ Màn hình chuyển sang **nền tối** cho đỡ chói mắt khi mở lâu
+    + ✅ Thêm biểu đồ ở những chỗ con số không nói hết: **độ phản hồi của máy chủ trong 5 phút gần nhất**
+      (cột càng cao càng có lúc hệ thống đứng lại, có vạch mốc 1 giây), **lỗi và cảnh báo theo từng giờ**,
+      **đăng nhập đúng/sai theo từng giờ** (thấy được cụm đăng nhập sai dồn vào một giờ — dấu hiệu dò mật khẩu),
+      và **cột so dung lượng** các thư mục đang chiếm chỗ trên ổ
+    + ℹ️ CPU, bộ nhớ, các mức tải và độ trễ sao lưu vẫn hiển thị bằng **thanh mức** chứ không phải biểu đồ:
+      một con số so với mức trần thì thanh mức đọc nhanh hơn
+    + ℹ️ Chưa có biểu đồ CPU/bộ nhớ theo thời gian — muốn có thì máy chủ phải ghi lại số đo liên tục, sẽ báo sau
+
 - 24/09/2026 Quản lý hệ thống - **Nhật ký cho biết lúc hệ thống chậm thì máy chủ đang bận việc gì** — không đổi gì với người dùng
     + ✅ Dòng cảnh báo **"Request chậm"** nay kể **tên** các lượt đối chiếu đang chạy lúc đó
       (vd `đối chiếu 1 (Song phương ĐI)`), trước chỉ có con số
