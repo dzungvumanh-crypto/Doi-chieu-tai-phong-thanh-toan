@@ -18796,6 +18796,90 @@ This may happen if you try to create UI from a background task.</pre>
         <code>develop</code>). Đợt này chỉ sửa <code>_mark_ccn()</code> — 4 nhóm còn lại (1000 Hoàn
         trả, Cân CN, Điện KO offline — phần lệch còn lại là các case cần tra hệ thống live, không
         tự động hoá được từ GL02) không đổi gì thêm trong PR này.</div>
+    </div>
+  </div>
+
+  <!-- 165 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">165</span>
+      <span class="card-title">ACH — 3 tab Chiều đi/Chiều đến/Timeout + "chạy đủ file đến đâu ra kết quả đến đó" (bỏ hẳn checkbox <code>chi_tim_timeout</code>) (2026-09-16)</span>
+      <span class="badge badge-done">Đã xác nhận BO — commit bf33c3d</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-blue">Yêu cầu</span> 2 việc gộp lại cùng 1 lượt, phát hiện ra sau khi hỏi lại</div>
+      <p>Yêu cầu ban đầu đọc theo tên nhánh git là "tách 3 thư mục di/den/timeout" cho
+        <code>backend/services/ach/</code> — khảo sát bằng 3 Agent song song cho thấy việc này KHÔNG khả
+        thi gọn gàng (engine đối chiếu <code>b5_doi_chieu_di.py::_doi_chieu()</code> dùng chung cho 5
+        module khác, <code>b11</code> tự trộn cả 3 chiều trong 1 file...) và không có tiền lệ trong 6
+        module đối chiếu hiện có. Hỏi lại thì ra 2 việc thật: (1) 3 <b>tab giao diện</b> "Chiều đi/Chiều
+        đến/Timeout không đi kênh" ở khu vực "Kết quả tạm thời" trang Chấm ACH; (2) pipeline phải
+        <b>"chạy đủ file đến đâu ra kết quả đến đó"</b> — không fix cứng đòi đủ file mới chạy.</p>
+
+      <div class="label"><span class="pill pill-gray">Quyết định</span> Mở khoá cơ chế giản lược sẵn có sang cả MIS_đi, bỏ hẳn bước tick tay</div>
+      <p>Hạ tầng "chạy giản lược" đã có sẵn từ 21/08/2026 (tham số <code>chi_tim_timeout</code>) nhưng
+        chỉ áp cho GL02/MIS_đến, và bị khoá sau 1 checkbox người dùng phải tự tay tick. Đợt này: (a) mở
+        khoá thêm MIS_đi — trước đây thiếu MIS_đi LUÔN raise, không có ngoại lệ nào (Timeout không đi
+        kênh được coi là bắt buộc tuyệt đối); (b) xoá hẳn tham số/checkbox
+        <code>chi_tim_timeout</code>, biến hành vi giản lược thành MẶC ĐỊNH LUÔN BẬT. Sàn bắt buộc cuối
+        cùng chỉ còn <b>PDF (session) + GW</b>. 1 biến <code>ly_do_thieu_tang1</code> cũ tách thành 3
+        biến độc lập <code>ly_do_thieu_di</code>/<code>ly_do_thieu_den</code>/<code>ly_do_thieu_timeout</code>
+        — ánh xạ đúng 1-1 vào 3 tab UI mới.</p>
+
+      <div class="caution">Thiếu MIS_đi kéo theo <b>Timeout không đi kênh — tính năng cốt lõi của cả
+        module (<code>feedback_ach_core_mission_timeout</code>) — cũng tắt theo</b>. Người dùng (Vũ Mạnh
+        Dũng, dev) xác nhận chấp nhận đánh đổi này VÀ xác nhận đây là <b>quyết định độc lập của dev,
+        không phải yêu cầu trực tiếp từ chị Thảo (Business Owner)</b> lúc bắt đầu — khi rà soát lại phát
+        hiện bộ nhớ dự án <code>project_ach_gl02_optional_tiered_deps</code> (03/08/2026) ghi rõ chị Thảo
+        từng CHỦ ĐỘNG từ chối đúng ý tưởng mở rộng này, chỉ muốn phạm vi hẹp.</div>
+
+      <div class="label"><span class="pill pill-blue">Xác nhận Business Owner (chị Thảo, cùng ngày 2026-09-16)</span> Điểm 2 (OSB) tách riêng từng chiều — ĐÚNG</div>
+      <p>Đã hỏi lại chị Thảo đúng điểm "tách Điểm 2 (OSB) theo từng chiều thay vì tắt hẳn cả 2 khi 1 bên
+        thiếu" (thời điểm viết code chỉ là suy luận kỹ thuật, chưa xác nhận). Trả lời nguyên văn: <i>"OSB
+        hay điện thường thì cũng tách riêng chiều đi và chiều đến ạ"</i> — xác nhận đúng hướng đã làm,
+        nhất quán với "điện thường" (Mục 4/5, <code>ket_qua_mis_..._t2()</code>) vốn đã tách theo
+        <code>ly_do_thieu_di</code>/<code>ly_do_thieu_den</code> từ trước. Không cần sửa code gì thêm —
+        comment trong <code>pipeline.py</code> (khối Điểm 2, <code>main_from_dir()</code>) đã cập nhật
+        ghi rõ đây là quyết định ĐÃ XÁC NHẬN, không còn là suy diễn.</p>
+
+      <div class="label"><span class="pill pill-red">Lỗi phát hiện qua Agent phản biện (lượt 1)</span> Job đã chạy xong bị gắn nhầm "đang chờ xác nhận"</div>
+      <p><code>ach_service.py::_run()</code> trước đây suy đoán "đã dừng ở Checkpoint" chỉ dựa vào tham
+        số ĐẦU VÀO <code>dung_sau_mis_di</code> — nhưng khi thiếu MIS_đi, <code>main_from_dir()</code> tự
+        bỏ qua Checkpoint và chạy thẳng tới báo cáo cuối (đúng kịch bản trọng tâm của tính năng mới) dù
+        <code>dung_sau_mis_di</code> vẫn <code>True</code>. Job ĐÃ XONG bị gắn
+        <code>status='awaiting_confirmation'</code>, đưa nhầm file báo cáo cuối ra dưới vỏ bọc "file cần
+        xác nhận" (sheet <code>MIS_DI_CONFIRM</code> không tồn tại trong file đó). Không crash nhưng hỏng
+        hoàn toàn trải nghiệm — không test nào phủ được vì cả stub test lẫn test mới đều không gọi đúng
+        tổ hợp này. Sửa: xét TÊN FILE thật <code>main_from_dir()</code> trả về
+        (<code>endswith('_ACH_ConfirmMISdi.xlsx')</code>) thay vì suy đoán từ tham số đầu vào.</p>
+
+      <div class="label"><span class="pill pill-red">Lỗi phát hiện qua Agent phản biện (lượt 2)</span> File OSB riêng lộ "0 giả" khi chỉ 1 chiều đủ dữ liệu</div>
+      <p>Quyết định nới điều kiện xuất <code>*_ACH_OSB.xlsx</code> thành "xuất khi ÍT NHẤT 1 chiều đủ dữ
+        liệu" (thay vì bắt buộc cả 2 như cũ) mở ra tình huống mới chưa từng xảy ra trước đây, nhưng
+        <code>xuat_excel_osb()</code>/<code>_viet_tong_ket_osb()</code> KHÔNG được vá theo — chiều còn
+        thiếu hiện thẳng <b>"0 giao dịch, 0 VND"/"(Không có dữ liệu)"</b>, lẫn với "đã đối chiếu, khớp
+        hết" — đúng lỗi <code>feedback_binary_match_status</code> cấm, do chính đợt sửa này tạo ra (không
+        phải lỗi có sẵn). Sửa: thêm tham số <code>ly_do_thieu_di</code>/<code>ly_do_thieu_den</code>
+        xuyên suốt <code>xuat_excel_osb()</code>/<code>_viet_tong_ket_osb()</code>, chiều thiếu ghi rõ
+        "CHƯA ĐỐI CHIẾU ĐƯỢC — thiếu file ...".</p>
+
+      <div class="label"><span class="pill pill-green">Fix thêm</span> UX Checkpoint hứa sai khi MIS_đi vắng mặt</div>
+      <p><code>frontend/pages/cham_ach.py</code>: khi KHÔNG tick "chạy thẳng" (mặc định), hint trước nút
+        "Chạy đối chiếu" luôn nói "Pipeline sẽ dừng lại... để xác nhận" — sai khi bộ file thiếu MIS_đi
+        (pipeline thực tế chạy thẳng, không có Checkpoint nào). Thêm <code>state['mis_di_thieu']</code>
+        cập nhật từ kết quả <code>/api/ach/validate</code>, đổi hint đúng thực tế.</p>
+
+      <div class="note"><code>python -m pytest tests/test_ach_*.py -q</code>: <b>422/422 pass</b> (thêm 2
+        test tái hiện đúng bug Checkpoint sai trạng thái + 2 test tái hiện đúng bug "0 giả" OSB, cùng bộ
+        test viết lại toàn diện cho hành vi giản lược mới). File test đổi tên
+        <code>test_ach_chi_tim_timeout.py</code> → <code>test_ach_chay_gian_luoc.py</code> cho khớp nội
+        dung. 2 lượt Agent phản biện độc lập (không cùng lượt Sonnet mặc định) + 1 lượt kiểm tra tài liệu
+        tham chiếu — không có trích dẫn dòng nào trong <code>docs/TU-DIEN-LENH-THANH-TOAN.md</code> bị
+        lệch. Đã commit chung với phần "GW đi không còn sàn bắt buộc" (D1, xem card 167) trong
+        <code>bf33c3d</code> — hai việc không tách hunk được vì đan xen dòng-với-dòng trong
+        <code>pipeline.py</code>/<code>main_from_dir()</code> (xem <code>pipeline/CODE_REPORT.md</code>
+        PHẦN 3).</div>
 
     </div>
   </div>
@@ -20547,7 +20631,7 @@ This may happen if you try to create UI from a background task.</pre>
         nạp trong request). Vì vậy <code>gop_phub()</code> đổi kiểu trả về từ
         <code>(df_ketqua, canh_bao, thong_ke)</code> thành <code>(df_ketqua, thong_ke)</code> —
         <code>xuat_excel_phub_gop()</code> KHÔNG đổi vì <code>canh_bao</code> ở đó vốn đã là tham số
-        độc lập truyền từ ngoài vào, không lấy từ kết quả <code>gop_phub()</code>.</p>
+        độc lập truyền từ ngoài vào, không lấy từ kết quả <code>gop_phub()</code>.</p></div>
 
       <div class="label"><span class="pill pill-blue">Test</span> Xoá đúng phần phụ thuộc kho, giữ phần thuật toán</div>
       <p><code>tests/test_ach_phub_gop.py</code>: xoá <code>TestKhoLuuNguyenLieu</code>,
@@ -20563,6 +20647,136 @@ This may happen if you try to create UI from a background task.</pre>
         <code>python -m pytest -q</code>: <b>2013 passed</b> trước và sau (không giảm). Grep
         <code>phub_lichsu</code> toàn repo sau khi xong: chỉ còn nhắc tên trong comment/docstring giải
         thích lịch sử, không còn reference thật nào tới module đã xoá.</div>
+
+    </div>
+  </div>
+
+  <!-- 166 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">166</span>
+      <span class="card-title">ACH — Luồng D1-D3: 3 tab cấp cao nhất "Timeout + Đối chiếu đi" gộp
+        chung, "Đối chiếu đến" tách riêng, tab "Báo cáo" làm lại từ đầu (23/09/2026)</span>
+      <span class="badge badge-done">Xong — commit bf33c3d, 5c0f199</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-red">Vì sao gộp</span> Timeout không đi kênh + Đối chiếu đi CHUNG 1 tab, không tách 2</div>
+      <p>Cả hai đi qua đúng MỘT bước <code>khop_voi_gw()</code> (BR-ACH-001,
+        <code>b4_xu_ly_mis_di.py:437</code>): "Timeout không đi kênh" chính là nhánh 1A của kết quả
+        khớp CN_TIỀN giữa MIS_đi và GW, "Chiều đi" (khớp NPO) tiêu thụ tiếp đầu ra của cùng bước đó
+        (<code>df_mis_di_khop_gw</code>). Tách thành 2 tab độc lập nghĩa là phải tính lại
+        <code>khop_voi_gw()</code> hai lần (tốn thời gian gấp đôi, dữ liệu MIS_đi/GW đi phải upload 2
+        lần) hoặc dựng một kho trung gian giữ kết quả giữa 2 lượt chạy — đúng chính thứ vừa làm hỏng
+        bản-2 pHub (kho ghi đĩa sống, xem card 161). Quyết định D0 (đã chốt): <b>cố ý không tách</b>.</p>
+
+      <div class="label"><span class="pill pill-green">Vì sao tách</span> "Đối chiếu đến" ra tab riêng — độc lập THẬT</div>
+      <p>Mô hình 3 chân HUB(MIS_đến) – Core(GL02/NPO_đến) – GW đến hoàn toàn không đụng tới MIS_đi/GW
+        đi/<code>khop_voi_gw()</code>. Trước D1, GW đi vẫn là "sàn bắt buộc nhầm chân" cho cả lượt chạy
+        (xem card 167) nên tab Đến từng bị buộc phải có GW đi mới chạy được — không đúng nghiệp vụ.</p>
+
+      <div class="label"><span class="pill pill-blue">D-3 — khoá dùng chung, không phải hàng đợi</span></div>
+      <p>Chỉ 1 lượt/lần cho CẢ TRANG (giữ nguyên khoá <code>gianh_cho('ach')</code> phía backend, không
+        đổi). Frontend thêm lớp khoá riêng: <code>run_state['job_open']</code> (khác
+        <code>run_state['running']</code>) — job vẫn <b>chiếm slot</b> trong lúc tạm dừng ở Checkpoint
+        xác nhận MIS_đi (<code>running=False</code> nhưng job chưa kết thúc), khoá 2 nút Chạy theo
+        <code>running</code> sẽ mở khoá NHẦM ngay trong lúc chờ xác nhận — đặc biệt ở chế độ Checkpoint
+        "deferred" (chỉ hiện banner, không có dialog modal nào chặn thao tác nền). Không dùng
+        <code>.tooltip()</code> để báo "đang chạy ở tab nào" — <code>Element.tooltip()</code> của
+        NiceGUI 2.12 LUÔN THÊM một <code>Tooltip</code> con mới mỗi lần gọi, không thay thế cái cũ; gọi
+        lặp lại theo trạng thái sẽ CHỒNG NHIỀU tooltip lên cùng 1 nút. Dùng một dòng
+        <code>running_label</code> luôn hiển thị thay cho tooltip.</p>
+
+      <div class="label"><span class="pill pill-blue">D-4 — bỏ lớp tab con trong "Kết quả tạm thời"</span></div>
+      <p>Trước đây 1 card "Kết quả tạm thời" chứa 3 sub-tab Đi/Đến/Timeout lồng bên trong. Nay mỗi tab
+        lớn hiện thẳng bộ thẻ của mình: Tab "Timeout + Đối chiếu đi" hiện
+        <code>_SUMMARY_CARDS_DI</code> + <code>_SUMMARY_CARDS_TIMEOUT</code>; Tab "Đối chiếu đến" hiện
+        <code>_SUMMARY_CARDS_DEN</code> — không còn tab lồng tab.</p>
+
+      <div class="label"><span class="pill pill-blue">D3 — tab Báo cáo làm lại, registry đọc từ code thật</span></div>
+      <p><code>_BAO_CAO_REGISTRY</code> liệt kê theo regex tên file, đối chiếu trực tiếp với khối xuất
+        file cuối <code>main_from_dir()</code> + toàn bộ hàm <code>xuat_excel*()</code> — <b>không chép
+        registry cũ</b>: registry cũ (nếu có) từng trỏ <code>_ACH_PHUBLOI.xlsx</code>, file không còn
+        được xuất từ 18/09/2026 (xem card 161). File không khớp mục nào trong registry rơi vào nhóm "Khác"
+        thay vì biến mất khỏi màn hình — tránh kiểu hỏng lặng lẽ mà dự án cấm. Khối UI "Gộp kết quả
+        pHub nhiều ngày" (Luồng C, chưa làm) chừa sẵn 1 vị trí bằng comment
+        <code>TODO Luồng C</code> ngay trong tab này.</p>
+
+      <div class="caution"><b>Quyết định tự chọn, PLAN.md không nêu chi tiết:</b> checks hiển thị ở
+        validate_card của Tab "Timeout + Đối chiếu đi" gồm CẢ <code>GL02 (.zip)</code>, dù PLAN.md mục
+        D2 chỉ tóm tắt sàn tab này là "PDF + GW đi (+MIS_đi để ra số)". Không hiện GL02 sẽ khiến người
+        dùng khó hiểu vì sao nhóm "Chiều đi" báo CHƯA ĐỐI CHIẾU ĐƯỢC dù đã đủ GW+MIS_đi — GL02 vẫn là
+        input bắt buộc thật của nhánh khớp NPO (<code>ly_do_thieu_di</code>).</p></div>
+
+      <div class="note">Kết quả tải về (mọi file job sinh ra) chuyển hẳn vào tab "Báo cáo" — kể cả khi
+        lượt chạy được khởi động từ Tab 1 hay Tab 2 — vì cả 2 tab dùng chung 1 job/1 thư mục output,
+        không có khái niệm "kết quả riêng của từng tab". Chưa test click-through UI thật (không có
+        công cụ trình duyệt trong phiên làm việc này) — đã kiểm bằng đọc code + biên dịch
+        (<code>py_compile</code>) + bộ quét AST <code>tests/test_frontend_api_client_calls.py</code>
+        (mọi lời gọi <code>api.*</code> đều tồn tại đúng chữ ký).</div>
+
+    </div>
+  </div>
+
+  <!-- 167 -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-num">167</span>
+      <span class="card-title">ACH — D1: GW đi không còn là sàn bắt buộc CHUNG, thiếu GW đi tắt hẳn
+        nhóm Đi + Timeout thay vì chặn toàn bộ lượt chạy (23/09/2026)</span>
+      <span class="badge badge-done">Xong — commit bf33c3d</span>
+    </div>
+    <div class="card-body">
+
+      <div class="label"><span class="pill pill-red">Vì sao đổi</span> "Đối chiếu đến" (Tab 2) không hề cần GW đi</div>
+      <p>Trước D1, <code>_tim_gw_xlsx()</code> raise ngay khi không có file GW đi
+        (<code>pipeline.py:1536</code> gọi vô điều kiện, <code>validate.py::tang0_ok</code> gồm cả
+        PDF+GW) — chặn CẢ lượt chạy kể cả khi người dùng chỉ có nhu cầu đối chiếu chiều Đến (mô hình 3
+        chân HUB–Core–GW đến, không đụng GW đi). Đây là "sàn bắt buộc nhầm chân": GW đi chỉ thật sự cần
+        cho nhóm Đi + Timeout.</p>
+
+      <div class="label"><span class="pill pill-blue">Thay đổi backend</span> <code>_tim_gw_xlsx()</code> — tách rõ 2 nhánh 0 file vs ≥2 file</div>
+      <ul>
+        <li><b>0 file GW đi hợp lệ</b> (và không có file nào lỗi đọc) → trả <code>None</code>, KHÔNG
+          raise (mới, D1). Nhánh riêng, không gộp điều kiện với nhánh ≥2 file.</li>
+        <li><b>≥2 file GW đi hợp lệ</b> → vẫn raise nêu tên cả hai — GIỮ NGUYÊN, đây là fix của Luồng B
+          (commit <code>1c5e534</code>), không đụng.</li>
+        <li>Có file GW nhưng LỖI ĐỌC (<code>loi_doc</code>) → vẫn raise — khác hẳn "không nạp file GW
+          đi", là file THẬT SỰ có mặt nhưng hỏng, không được âm thầm coi như thiếu.</li>
+      </ul>
+
+      <div class="label"><span class="pill pill-red">D-2 (đã chốt, không tự đổi)</span> Thiếu GW đi ⇒ TẮT HẲN cả nhóm Đi VÀ Timeout</div>
+      <p><code>_process_mis_di()</code> (<code>b4_xu_ly_mis_di.py:278</code>) dùng GW GỐC
+        (<code>df_gw_goc</code>) để giữ lại các dòng SESSION=NULL đủ điều kiện qua
+        <code>_loc_session_null_theo_gw_goc()</code>. Không có GW thì các dòng đó RƠI HẾT khỏi MIS_đi
+        mà không ai biết — số liệu chiều đi tính ra sẽ SAI (không phải chỉ thiếu số liệu), khác hẳn
+        kiểu "thiếu file tùy chọn, bỏ qua nhánh phụ" của GL02/MIS_đến/MIS_đi (chạy giản lược,
+        16/09/2026). Vì vậy <code>main_from_dir()</code> KHÔNG gọi <code>_process_mis_di()</code> khi
+        <code>thieu_gw</code>, kéo theo <code>df_mis_di=None</code> → <code>khop_voi_gw()</code>,
+        <code>tim_nhom_gw_thua()</code>, Napas ISS chiều đi, Checkpoint MIS_đi đều tự tắt theo —
+        <code>ly_do_thieu_timeout</code> và <code>ly_do_thieu_di</code> đều thêm nhãn
+        <code>'GW đi'</code>, UI ghi "CHƯA ĐỐI CHIẾU ĐƯỢC". Không chạy một phần kèm cảnh báo.</p>
+
+      <div class="label"><span class="pill pill-blue"><code>validate.py</code></span> <code>tang0_ok</code> chỉ còn PDF</div>
+      <p>Sàn bắt buộc TUYỆT ĐỐI cho CẢ TRANG (chặn hẳn, không có gì để chạy) nay chỉ còn file PDF
+        (session). GW trở thành 1 mục <code>checks</code> thường — sàn bắt buộc THEO TỪNG TAB (Tab
+        "Đi + Timeout" cần GW đi, Tab "Đến" thì không) do FRONTEND tự kiểm và hiển thị, backend giữ
+        nguyên triết lý "có gì chạy nấy".</p>
+
+      <div class="label"><span class="pill pill-green">Test đổi theo — không phải "sửa cho qua"</span></div>
+      <p>3 test cũ đã SAI theo thiết kế mới (tự thay đổi có chủ đích, không phải vá lỗi):
+        <code>test_khong_co_file_nao_bao_loi_khong_tim_thay</code> (kỳ vọng raise khi 0 file) →
+        đổi thành <code>test_khong_co_file_nao_tra_ve_none</code>; <code>TestValidateTang0Ok::
+        test_thieu_gw_thi_tang0_ok_cung_false</code> → đổi thành
+        <code>test_thieu_gw_van_tang0_ok_true</code>; <code>test_thieu_gw_van_raise</code> (thư mục chỉ
+        PDF+MIS_đi, không GW) → thay bằng <code>test_thieu_gw_khong_raise_tab2_den_van_chay</code>
+        (kịch bản đúng D1: PDF+GL02+2×MIS_đến, không GW đi → chạy xong, ĐẾN ra số thật, Đi/Timeout ghi
+        CHƯA ĐỐI CHIẾU ĐƯỢC) + <code>test_2_file_gw_van_raise</code> (giữ nguyên hành vi Luồng B ở mức
+        <code>main_from_dir()</code>, không chỉ ở mức hàm thuần).</p>
+
+      <div class="note"><code>python -m pytest tests/test_ach_*.py -q</code>: <b>444/444 pass</b> (443
+        sau Luồng A + 1 test mới). Toàn dự án <code>python -m pytest -q</code>: <b>1996 passed</b>
+        (1995 trước D1 + 1). 0 dòng lệch, không dùng %.</div>
 
     </div>
   </div>
@@ -20586,7 +20800,7 @@ This may happen if you try to create UI from a background task.</pre>
       <div class="caution"><b>Reviewer/agent sau — KHÔNG tự ý "sửa lại cho đúng"</b> bằng cách bọc
         <code>gianh_cho('ach')</code> vào endpoint này. Muốn đổi quyết định này phải hỏi lại người dùng
         trước, không tự quyết. Xem <code>pipeline/PLAN.md</code> mục 4 (mã quyết định <b>C-K</b>) +
-        docstring của <code>phub_gop_endpoint()</code> trong <code>backend/api/ach.py</code>.</p>
+        docstring của <code>phub_gop_endpoint()</code> trong <code>backend/api/ach.py</code>.</p></div>
 
       <div class="label"><span class="pill pill-blue">Vì sao chấp nhận được</span> Dữ liệu Luồng C nhỏ hơn hẳn 1 lượt chạy ACH chính</div>
       <p>Input của 1 lượt Gộp là vài file CSV tóm tắt theo ngày (TIMEOUT_KHONG_KENH/GW_CHO_PHUB) + 1 file
